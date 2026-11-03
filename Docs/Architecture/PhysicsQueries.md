@@ -9,32 +9,32 @@
 
 ## 検証範囲
 - query値型と実proxy集約コードはクラウド上で直接g++により通常/最適化/sanitizerを検証する。独自allocatorやOSをmockに差し替えない
-- 実Collider/Module/snapshot/旧hitの既定・高bit/0/複数bit・全uint64・全形状・反映時点・wrong thread/未登録拒否をPhysicsBroadphaseQueryTestに追加する。既存Windows.h依存の統合compile/実行は未確認として残す
+- 実Collider/Module/snapshot/旧hitの既定・高bit/0/複数bit・全uint64・全形状・反映時点・wrong thread/未登録拒否をPhysicsBroadphaseQueryTestに追加する。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 統合クエリの公開入口（P4A）
 - SceneQuery::ExecuteQueryはPhysicsQueryDescでRaycastClosest/All、OverlapSphere/Box/Capsule、SweepSphere/Capsuleを公開する。LayerMask、trigger方針、世代付きignore、MaxHitsなどはdescriptorのままproviderへ渡す
 - CoreのIPhysicsSceneQueryProviderに非pure virtualの既定入口を追加する。未対応providerは出力を空にしてUnavailableを返し、既存実装のsource互換を維持する。SceneQueryはowner thread/接続を確認し、非Successとprovider例外では出力を空にする。例外は握り潰さず再送出する
 - PhysicsModuleはreadinessを確認して公開済みBroadphaseの実ExecuteQueryへ委譲する。呼出しだけでsnapshotを更新しない。UserDataは同じsnapshotの値。旧ray/overlap入口の数値契約をこの段で変更しない
-- fake providerの全descriptor伝搬/未対応/成功/各失敗/例外/wrong thread、実Moduleの7種とmetadata/filterの試験を既存bundleへ追加する。既存Windows.h依存により統合compile/実行は未検証。バッチ、solver mask、明示refreshは後続
+- fake providerの全descriptor伝搬/未対応/成功/各失敗/例外/wrong thread、実Moduleの7種とmetadata/filterの試験を既存bundleへ追加する。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った。バッチ、solver mask、明示refreshは後続
 
 ## 同じsnapshotへのbatch（P4B）
 - ExecuteBatchは要求spanと連続hit、要求順のPhysicsQueryBatchResultを受け渡す。戻り値Successはbatch全体を処理できた意味で、個別のSuccess/NoHit/InvalidArgument/IterationLimit等はResultを見る。個別失敗はHitCount=0、FirstHitはその時点のhit末尾とし、後続の要求を継続する
 - SceneQueryはowner thread/接続/非空null spanを確認しproviderへ1回委譲する。未対応providerの既定はUnavailable。全体の非Successと例外は両出力を空にし、例外は再送出する。入力/両出力は非aliasで、同期実行中に有効なこと
 - PhysicsModuleはreadinessを1回確認して同じ公開Broadphaseを逐次問い合わせ、ローカル候補へ詰める。全処理成功後にnoexcept swapで両出力を公開する。hitサイズの加算上限を確認し、確保例外で部分出力を公開しない。準備済み空batchはSuccess/空。暗黙refreshやsnapshotsequence変更はない
-- fake providerの1回委譲/各全体失敗/例外/不正span/wrong threadと実Moduleの混在結果/offset/MaxHits/単発一致/空/未準備/sequence不変の試験を追加。実統合のcompile/実行はWindows.h依存で未確認
+- fake providerの1回委譲/各全体失敗/例外/不正span/wrong threadと実Moduleの混在結果/offset/MaxHits/単発一致/空/未準備/sequence不変の試験を追加。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 相互作用Layer/Mask（P5A）
 - broadphaseのSweepEndpointに所属Layer/Maskを値コピーし、候補ペア追加前に双方の許可を要求する。端点同位置のmin優先、canonical handle順、重複除去は維持する。既定Layer1/Mask全bitなら従来と同じ候補になる
 - ResolveContactsもworking proxyの同じ対称規則を接触計算より前に確認する。拒否pairはsolid押出し/Hit/trigger Beginを作らない。既存triggerの許可を撤回した場合、次stepで既存経路のEndを出す。callback中の変更は次stepのsnapshotに反映する
 - クエリのLayerMaskは検索対象の所属Layerを選ぶもので、相互作用Maskではない。衝突を無効化してもLayerが検索対象なら空間クエリに返る
-- 全32bitの両方向/片側拒否と4096真理値表をCPU実行する。実候補の高bit/0/複数bit/接触端点と実Worldの通知/押出しの試験は既存Physics bundleへ追加し、Windows依存の統合実行は未確認と区別する
+- 全32bitの両方向/片側拒否と4096真理値表をCPU実行する。実候補の高bit/0/複数bit/接触端点と実Worldの通知/押出しの試験は既存Physics bundleへ追加し、2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 明示snapshot更新（P5B、S9=a）
 - SceneQuery::RefreshDynamicSnapshotはGameThreadでproviderへ明示依頼する。未対応providerはUnavailable、初回固定更新前はNotReady。Physicsの固定更新中（通知配送中も含む）はNotReadyとして再入更新しない
 - 現時点では全proxyを候補Broadphaseへ再構築し、完成後にnoexcept moveで公開queryだけ置換する。GR09で静的/動的分離を最適化するまで、呼出しコストは全再構築であり、自動毎frame実行はしない。構築例外で旧公開snapshotを壊さない
 - freshなTransform/shape/metadataと現在の有効性をquery用に評価する。新規/無効化されたcolliderと対応Bodyも反映するが、simulation側のactive cache、working Broadphase、速度、保留impulse、PreFixedの準備位置、接触履歴、通知状態を変更しない
 - GetPublishedSnapshotSequenceは最後の固定更新による公開回数を維持し、明示refreshでは増加しない。同sequence内でquery内容が変わるため、明示呼出し側は自分の検索結果cacheを無効化する。次の通常FixedTickは通常通り進行しsequenceが増える
-- 実Moduleの移動前後/metadata/Body対応/新規・無効化/impulse・準備位置保持/通知中拒否とfake providerの委譲を試験へ追加。Broadphaseの実型がnoexcept move可能であることは独立syntaxで確認。実Core/Module統合compile/実行はWindows.h依存で未確認
+- 実Moduleの移動前後/metadata/Body対応/新規・無効化/impulse・準備位置保持/通知中拒否とfake providerの委譲を試験へ追加。Broadphaseの実型がnoexcept move可能であることは独立syntaxで確認。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 空間候補の訪問境界（P4C）
 - PhysicsBroadphase::VisitProxiesInAabb / VisitProxiesAlongRayはproxy spanを入力順で同期訪問する。visitorはSuccess/NoHitで継続、その他のResultで中断する。訪問API自体のSuccessは走査完了であり幾何hitを意味しない。任意precheckは空間除外より先に呼び、NoHitで除外、その他の非Successで中断する
@@ -65,7 +65,7 @@
 - 旧RaycastHitは同じdistance/point/normal/識別値を返す。同距離は大きいhandleを選ぶ。旧OverlapHitはhandle昇順、Point/Depth/識別値を保持し、Contact.Normalだけ新APIから反転して従来のquery→対象向きへ戻す
 - 新旧で形状の有効条件・数値安全域を統一する。非正規直交のOBBやfloat計算の保証外の巨大形状はInvalidArgumentとして扱う。従来の有限チェックを通ったことだけで、そのような入力の数学的な結果までは保証しない
 - Module/Sceneの失敗出力は空。直接BroadphaseのOverlapは従来どおり成功時だけ追記し、既存要素を消さない。互換変換用のscratch/変換配列を使うため、新規利用では直接ExecuteQueryを推奨する
-- productionで使うspan版adapterをstack bufferで実行し、混在4,000件を新旧4種類の全field/順序で比較する。旧Overlapの符号・同距離・不足buffer/失敗clearも確認する。実Module/所有配列の統合試験は追加するが、Windows.h依存で実行未確認と区別する
+- productionで使うspan版adapterをstack bufferで実行し、混在4,000件を新旧4種類の全field/順序で比較する。旧Overlapの符号・同距離・不足buffer/失敗clearも確認する。実Module/所有配列の統合試験を追加し、2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 - 旧4入口は従来の無filter検索を維持し、Layer=0も返す。新APIのLayerMaskはbit集合を選ぶためLayer=0を除外する。この差は既定Layerでの新旧一致試験と分けて4種の回帰に固定する。内部kernelのfilter適用だけを切り替え、形状やproxy値は書き換えない
 
