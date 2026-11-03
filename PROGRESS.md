@@ -9362,3 +9362,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: DefeatGate は完了した Id の記録を残し、同じ Id の 2 回目の BeginDefeat を無視する。同じ安定 ID で再び出る敵（再配置・雑魚の再出現）を扱うときは、完了済みの Id の BeginDefeat を受け付け直す形が要る
 - Notes: GameplayModule は DefeatGate の完了を全部 ProgressionState へ流すので、進行の定義に無い敵（シ者でない敵）の撃破ごとに警告が 1 行出て診断の数が増える。敵の基底を作るときに、シ者だけを流すか警告を出さない形にするかを決める
 - 要起票: G8-GR17-ENEMY-COMPONENT で、DefeatGate の完了済み Id の再受付と、シ者でない敵の撃破を ProgressionState へ流さない経路を決める
+
+## 2026-11-03 G4-GR07-BODY-CASES（run 20261103-233355 の反復 1、着手）
+- 試験を足す理由（Docs/Testing.md の 3 点。PhysicsFixedStepPipelineTest にケース 20〜26 を足す）
+  - 反証する契約: 固定ステップで駆動するキャラクター本体が、(1) 往復しつつ回る Kinematic の足場に 120 ステップ乗ってもローカル座標で 0.02 m 未満しかずれず、跳んで離れた最初のステップの水平速度が足場の速度 ±0.05 m/s を保つ、(2) 3 m/s で上下する足場の上で足場に対する高さのジッタが 0.01 m 未満、(3) Dynamic の球へ歩くと球が動き、キャラクターはめり込まない（深さ 1e-3 以下）、(4) 限界角を越える 60° の坂では要求速度 0 でも下へ滑り bGrounded=false、(5) GravityScale=0.5 の 1 秒の降下が解析値 ±2%、(6) External の間は要求速度と重力が効かず MoveDelta だけが効き、Walking へ戻すと重力が戻る、(7) GetLinearVelocity が位置差分/dt と 0.005 m/s 以内で一致し、Teleport とめり込みの解消は速度に乗らない
+  - ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、離脱速度の欠け・数 mm のジッタ・速度への瞬間移動の混入・重力の倍率の取り違えは絵にもログにも出ない。小物を押す場面と External を使う場面（GR20 のしがみつき）はまだシーンに無い
+  - 失敗が黙って起きるか: 起きる。どれも外れてもキャラクターは何かしら動き、エラーもログも出ない
+- 計画: 試験ファイルと PhysicsModuleCharacter.cpp を全単位が触るので、単位は直列に回す（U1 重力の倍率・滑り落ち・昇降足場 → U2 足場の離脱速度 → U3 External → U4 小物を押す → U5 速度の一致とタスクの verify）
