@@ -3,6 +3,7 @@
 #include "CameraLateUpdate.h"
 #include "Gameplay/CharacterDriveOptions.h"
 #include "Input/GameInputSettings.h"
+#include "Core/Public/Scene/PhysicsLayerTable.h"
 #include <cstdint>
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
@@ -142,6 +143,7 @@ namespace Game
         bool HasPendingAssetConsumers() const override;
         Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
         const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
+        const NorvesLib::Core::Scene::PhysicsLayerTable& GetPhysicsLayers() const { return m_PhysicsLayers; }
 
         /**
          * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
@@ -161,6 +163,7 @@ namespace Game
 
     private:
         Game::Input::GameInputSettings m_InputSettings;
+        NorvesLib::Core::Scene::PhysicsLayerTable m_PhysicsLayers;
         NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =
             NorvesLib::Core::Container::MakeShared<CameraLateUpdateSlot>();
         /**

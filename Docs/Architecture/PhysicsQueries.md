@@ -76,3 +76,12 @@
 - 垂直Capsule対Boxの面への0.25侵入、接触0、対称な内部配置1.5、および対Sphere/Capsuleの0.25侵入で深さと法線符号を固定する。対称配置は複数の押出し方向が成立し、既存規則で-Xを選ぶ
 - 特に線分がBox内部を横切る深い重なりのDepthは既存接触計算の近似を引き継ぐ。任意の姿勢/複合接触に対しNormal*Depthの一度の適用で完全分離する最小並進ベクトルは保証しない。後続GR07の移動処理は複数接触と反復補正を扱い、未収束を確定hitへ変えない
 - 純Mathと実Physics query kernelのCPU試験でこの契約を確認する。実World/Module/Windows統合の受入れとは区別する
+
+## レイヤーの名前の表（GR08-LAYER-TABLE）
+- 名前とbit割当はAssets/Config/CollisionLayers.jsonに置く。JSONのschemaはcollision-layers.v1、layersはname（文字列）とbit（整数のビット位置）を持つ要素の配列。現在の仮の12名はDefault=0、Terrain=1、Platform=2、Player=3、Hurtbox=4、Hitbox=5、Prop=6、Animal=7、GrassInteract=8、CameraBlock=9、Trigger=10、Perception=11（数値はbit位置）
+- CoreのPhysicsLayerTableは表の型とJSON読み込み、Defaultだけを持ち、ゲーム固有名はデータで決める。取り込み設定などToolsからも同じ表を読めるよう、読み込みをCoreに置く
+- Defaultはbit 0で必須。名前・bitの重複、0〜31の範囲外や整数以外のbit、空の名前は不正。未知のフィールドは無視する。LoadFromJsonは全体の検査に成功した場合だけ表を置換し、失敗時はfalseを返して前の表を保ち、例外を呼び出し元へ出さない
+- TryGetLayerMaskは名前から1ビット（1u << bit）を取得し、TryBuildMaskは名前の列を論理和する。未知の名前があればfalseを返して出力を変えず、0や全bitへ黙って置き換えない。空の列は有効なマスク0として成功する
+- GameApplicationHandlerはOnInitializeでGamePhysicsLayers経由で表を読み、m_PhysicsLayersに保持する。読み込みに失敗した場合は警告を出し、Defaultだけの表で起動を続ける
+- 既存コライダーの既定Layer=1・Mask=全bitとクエリの結果は変えない。使う側のカメラの遮蔽・攻撃判定・知覚・取り込み設定の書き換えは各段階で行う
+- 2026-11-03にWindowsのDebugでPhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTestをctestで実行し、4本すべてが通った（終了コード0）

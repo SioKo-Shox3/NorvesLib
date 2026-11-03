@@ -9328,3 +9328,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
 - Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
 - Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う
+
+- U1 Core に PhysicsLayerTable と JSON の読み込み、既定のデータを足す: 着地(直し 0 回)
+- U2 PhysicsLayerTableTest を足す: 着地(直し 0 回)
+- U3 Game が起動時に既定のレイヤー表を読む: 着地(直し 0 回)
+- U4 文書を足し、タスクの確かめを回す: 着地(直し 0 回)
+
+## 2026-11-03 G1-GR08-LAYER-TABLE（run 20261103-223716 の反復 1、完了）
+- Done: Core に `PhysicsLayerTable`（`Library/Core/Public/Scene/PhysicsLayerTable.h`）を足した。初期は `Default` = bit 0 だけ。`LoadFromJson`（`collision-layers.v1`、`layers` の `name`・`bit`）は全体を候補に組んで検査し、成功したときだけ置き換える。名前・ビットの重複、0〜31 の外・整数でない bit、空の名前、`Default` の欠けと bit 0 以外、壊れた JSON、schema の違いは false で前の表を保ち、例外を出さない。未知のフィールドは無視する。`TryGetLayerMask`（名前→1 ビット）と `TryBuildMask`（名前の列→論理和、空の列は 0）は未知の名前で false を返し出力を変えない
+- Done: 既定のデータ `Assets/Config/CollisionLayers.json` に仮の 12 の名前（Default 0〜Perception 11）を置いた。Game は `Game/Gameplay/Physics/GamePhysicsLayers.*` で `Config/HapticsEffects.json` と同じ読み方で読み、`GameApplicationHandler::OnInitialize` で `m_PhysicsLayers` に持つ。失敗なら警告を出して `Default` だけの表で続ける。使う側（カメラの遮蔽など）とコライダーの既定・クエリは変えていない
+- Done: `PhysicsLayerTableTest`（`SceneQueryRaycastTest` の束）を足し、理由の 3 点を `Docs/Testing.md` に、表の節を `Docs/Architecture/PhysicsQueries.md` に書いた
+- 証拠: `.harness/runs/20261103-223716/G1-GR08-LAYER-TABLE-U4-verify.txt`（verify の 2 行: Debug の SceneQueryRaycastTest・Game のビルド EXIT=0、ctest の PhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTest が 100% Passed）
+- Next: なし。起動時に表が読めたこと（警告が出ないこと）は Game の起動の確かめで見る（後回し）。使う側の書き換えはカメラの遮蔽（G4 の GR06）・攻撃判定（G8 の GR16）・取り込み設定（G17 の GR81）・知覚（G13）の各段階
+- Notes: 既定のデータは既存の `HapticsEffects.json` にそろえて BOM なし・LF で置いた（読み込みは先頭の BOM も受ける）
