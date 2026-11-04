@@ -188,6 +188,39 @@ namespace
         return id;
     }
 
+    void TestNullBackendFallback()
+    {
+        auto failingBackend = MakeUnique<FakeAudioBackend>();
+        failingBackend->bFailInitialize = true;
+        auto strictModule = Private::CreateAudioModuleForBackend(std::move(failingBackend));
+        assert(strictModule != nullptr);
+        assert(!strictModule->Initialize());
+        assert(strictModule->GetBackendStatus().Kind == AudioBackendKind::Platform);
+        assert(!strictModule->GetBackendStatus().bFellBackToNull);
+        strictModule->Shutdown();
+
+        failingBackend = MakeUnique<FakeAudioBackend>();
+        failingBackend->bFailInitialize = true;
+        AudioModuleOptions options;
+        options.bAllowNullBackendFallback = true;
+        auto module = Private::CreateAudioModuleForBackend(std::move(failingBackend), options);
+        assert(module != nullptr);
+        assert(module->Initialize());
+        assert(module->GetBackendStatus().Kind == AudioBackendKind::Null);
+        assert(module->GetBackendStatus().bFellBackToNull);
+        assert(module->GetBackendStatus().Reason == "backend_failure");
+
+        auto& sound = static_cast<Private::SoundSystem&>(module->GetSoundSystem());
+        const SoundId id = RegisterTestSound(sound);
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, SoundPlayParams{}, handle) == AudioResult::Success);
+        assert(sound.IsPlaying(handle));
+        module->Tick(1.0f / 60.0f);
+        assert(!sound.IsPlaying(handle));
+        assert(module->GetAudioService().GetDiagnostics().ActiveVoiceCount == 0);
+        module->Shutdown();
+    }
+
     void TestFadeOutDurationAndDrainedLifetime()
     {
         auto backend = MakeUnique<FakeAudioBackend>();
@@ -875,6 +908,7 @@ int main()
     TestQuarantinedVoiceDoesNotTouchBackend();
     TestDestroyedHandleIsStale();
     TestPanUsesEqualPowerGains();
+    TestNullBackendFallback();
     TestFadeOutDurationAndDrainedLifetime();
     TestLinearFadeIn();
     TestEqualPowerFadeIn();

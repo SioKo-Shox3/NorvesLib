@@ -9781,3 +9781,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 世代が UINT32_MAX のインスタンスを解放したら、service の voice と同じくそのスロットを退役させて再利用しない(UINT32_MAX の次を 1 にすると、最初の世代 1 の handle が新しいインスタンスと一致する)。受入れの記録の「世代の折り返し」の行もこの挙動の書き方に直した。未登録の SoundId への再生は `InvalidState`(抑制による `Rejected` と分ける)。
 - Next: ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。AudioComponent と通常の起動への組み込みは G8-GR72-AUDIO-COMPONENT-BOOT、3D 定位は GR73。
 - Notes: アプリを起動する確かめは無い(実機の鳴り方・フェードの聴感は G8-GR72-AUDIO-CHECK)。受入れの記録の検証の手段の表に、試験していない条件(音量の積の式の照合・フェードイン中の Stop の切り替え・揺らぎの範囲・時刻と距離の境界・本番の `LoadBank` を通した clip の解決とデコード)を明記した。M9 の側の clip の読み込みは触っていない(二重の実装は M9 の受入れの安定の後に統合)。
+- U1 NullAudioBackend と通常起動用の切り替え(フォールバック)・バックエンドの診断の印: 着地(直し 0 回)
