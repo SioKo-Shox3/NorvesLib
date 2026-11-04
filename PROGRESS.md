@@ -9534,3 +9534,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 Animator への値のケースを足す: 着地(直し 0 回)
 - U3 ルート移動のケースを足す: 着地(直し 0 回)
 - U4 同じフレームのカメラの読みのケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 28〜31 を足し、全部通る（設定の再読込・Animator への値・ルート移動・同じフレームのカメラ）。Component の直し: Animator へ渡す Speed と接地を本体の状態ではなくそのフレームのモデルの出力から作る（直す前は最初のフレームの Speed が 0.0325、期待 0）。試験のために設定の置き場（資産の根と相対パス）を差し替える SetProfileSource を足した
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest LoggerSinkTest Game -- /m:1` は終了コード 0。ctest の 5 本（QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・RootMotionTimeQueueTest・PhysicsFixedStepPipelineTest 1.98 秒・PhysicsCharacterMoveTest）は 5/5 Passed。既存のケース 0〜27 の中身は変えていない
+- 測った量: ルート移動は 72 フレーム（固定の段 0・1・2 が 24 フレームずつ）で Animator の差分 1.200000018 m・本体 1.199999809 m・差 2.1e-7 m。Procedural へ戻した後は半段の残りを捨てて入力の向きへ 8 フレームで 0.043 m 進み、Animation へ戻した最初のフレームの差は 2e-9 m。同じフレームのカメラは 72 フレーム（α 0 が 24・中間が 48）で注視点と描画の位置 + オフセットの最大差 2.4e-7 m、描画が動いた 26 フレームで前のフレームの描画の位置との差は最小 0.002 m（遅れがあれば合わない形で比べた）
+- Notes: ルート移動のケースは衝突の無い直進のルートだけを見る（壁に当たったときのルートの差分の扱いは試験していない）。同じフレームのカメラは平滑 0・壁なしの組だけで、平滑ありと衝突で腕が縮む組は既存の TestFollowCameraRenderBinding に任せる。アプリを起動する確かめは無い
+- Next: G4-GR05-COMPONENT-CASES を after に持つ項目（G4-GR07 の犬の受け入れなど）

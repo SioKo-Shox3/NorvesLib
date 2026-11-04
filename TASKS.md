@@ -5316,7 +5316,7 @@
 - notes: 確かめ直しの (b)。今あるのは足場の運搬（PhysicsFixedStepPipelineTest.cpp 844-876 行。足場は sin(frame×0.02) の往復で約 1.2 m/s、0.01 rad/ステップで約 34°/s。ずれ 0.02 と速度の一致を見る）、Teleport と寿命（877-930 行）、固定と可変の一致（947-1010 行）、入力の取り込み（1073-1161 行）。要件 `#### GR07` の受け入れ確認のうち、足場の離脱速度、昇降足場のジッタ、Dynamic の球を押す、押さないときの滑り落ち、`GravityScale`、External は見ていない。G4-S1 の決定: 推奨の (C)（固定と可変の両方を持ちフラグで切り替える）で、既定は (A) 固定ステップの駆動を採る。実装は既にこの形（`CharacterDriveMode::Fixed` が既定、`--character-drive=variable`、TestCharacterDriveEquality が同じ入力で両者の位置の一致を固定、犬の見た目の子 Entity に描画の補間）。理由: Kinematic の速度が位置差分/dt で正しく出て、小物を押す・足場の速度・GR20 の離脱速度が成り立ち、入力列の再生が決定論になる。可変は手触りを比べて悪いときだけ既定を倒す（可逆）。このファイルは `G4-GR05-COMPONENT-CASES` も触るので、そちらはこのタスクの後に回す。`CharacterBodyComponent.h` は Public API なので、足すのは試験に要る最小の読み出しだけにする。やらないこと: 物理ソルバ・接触の解き方の変更、摩擦、複数のコライダー。
 
 ## G4-GR05-COMPONENT-CASES: 移動の Component（QuadrupedLocomotionComponent）の接続（設定の再読込・Animator への値・ルート移動・同フレームのカメラ）を試験し、外れた所を直す
-- status: todo
+- status: done
 - after: G4-GR07-BODY-CASES, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR05
 - needs-gr: GR10, GR11
