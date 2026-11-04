@@ -4823,7 +4823,6 @@
 - verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
-- after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
 
 ## G2-S6-ASSET-SET-P4: `windows-assetcook.yml` の手動起動を、統合の検証と同じ範囲で通るようにする
 - status: done
