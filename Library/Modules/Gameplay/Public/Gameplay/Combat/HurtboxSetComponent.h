@@ -5,6 +5,7 @@
 #include "Gameplay/Combat/CombatHitEvent.h"
 #include "Gameplay/Combat/CombatShape.h"
 #include "Math/Transform.h"
+#include "Text/IdentityPool.h"
 #include "Thread/Thread.h"
 
 namespace NorvesLib::Modules::Gameplay::Combat
@@ -29,6 +30,10 @@ namespace NorvesLib::Modules::Gameplay::Combat
         // AddPart に無効ハンドルを渡すと持ち主へ束縛する。
         Core::EntityHandle Binding;
         CombatShape Shape;
+        // 空なら Binding の Entity の姿勢を使い、空でなければ同 Entity の SkinnedMeshComponent の関節に追従する。
+        Core::Identity JointName;
+        // 当たりのエフェクトの選択に使う表面の名前。
+        Core::Identity SurfaceName;
         uint32_t Faction = ~uint32_t{0};
         float DamageScale = 1.0f;
         EHurtboxFlags Flags = EHurtboxFlags::None;
