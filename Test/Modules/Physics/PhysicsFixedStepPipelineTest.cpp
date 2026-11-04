@@ -192,7 +192,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 31;
+    constexpr uint32_t kCaseCount = 32;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -2792,6 +2792,207 @@ namespace
                      "再開後は新しい差分だけを消費する");
     }
 
+    bool TestGameLocomotionCameraSameFrame(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool passed, const char* contract) {
+            if (!passed)
+                std::cout << "同じフレームの追従: " << contract << '\n';
+            return passed;
+        };
+        auto& engine = *NorvesLib::Core::Engine::GEngine;
+        auto& world = engine.GetWorld();
+        CharacterFixture value;
+        if (!check(CreateCharacterFloor() && CreateCharacter(value, Math::Vector3::Zero), "床と本体を作れる"))
+            return false;
+        world.Tick(kFixedDeltaTime);
+        const bool ready = StepCharacter(processor) && value.Character->GetState().bReady;
+        world.LateTick(kFixedDeltaTime);
+        if (!check(ready, "移動前に物理本体を準備できる"))
+            return false;
+        ApplicationFixedStepTestAccess::ResetRun(processor);
+
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move, jump;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings.push_back(key);
+        jump.Id = "Jump"_id;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::Space);
+        key.Component = EInputAxisComponent::X;
+        jump.Bindings.push_back(key);
+        if (!check(bindings.AddContext("Gameplay"_id, ECursorMode::Normal) &&
+                       bindings.AddAction("Gameplay"_id, move) && bindings.AddAction("Gameplay"_id, jump) &&
+                       mapper.ConfigureWithContext(bindings, "Gameplay"_id), "入力を設定できる"))
+            return false;
+        mapper.Attach(routes);
+
+        // 各固定段の物理処理前を記録し、複数段のフレームでも最後の区間を照合する。
+        struct FixedPositionProbe final : Component::Component, IFixedProbe
+        {
+            Math::Vector3 LastPosition;
+            uint64_t Count = 0;
+            void OnFixed(float) override
+            {
+                LastPosition = GetOwner()->GetPosition();
+                ++Count;
+            }
+        };
+        auto* probe = world.CreateComponent<FixedPositionProbe>(value.Owner);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        auto* cameraOwner = world.SpawnEntity<Entity>();
+        auto* viewSource = world.SpawnEntity<Entity>();
+        auto* follow = cameraOwner ? world.CreateComponent<Game::Gameplay::FollowCameraComponent>(cameraOwner) : nullptr;
+        if (!check(probe && driver && visual && pose && cameraOwner && viewSource && follow,
+                   "移動、見た目、独立したカメラと視線を作れる"))
+            return false;
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            Game::Gameplay::FollowCameraComponent* Follow;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+                Follow->BindInput(nullptr);
+                Follow->BindSceneQuery(nullptr);
+            }
+        } unbind{driver, follow};
+        if (!check(driver->SetVisualRoots(visual, pose) && driver->SetViewSource(viewSource) &&
+                       follow->SetSubject(visual, value.Owner) && follow->SetViewSource(viewSource) &&
+                       visual->IsRenderInterpolationEnabled(), "移動とカメラを同じ見た目と視線に接続できる"))
+            return false;
+        driver->BindInput(&mapper);
+        follow->BindInput(&mapper);
+        follow->BindSceneQuery(&engine.GetSceneQuery());
+        follow->SetPitch(0);
+        follow->SetYaw(0);
+        follow->SetArmLength(5);
+        const Math::Vector3 offset(0, .4f, 0);
+        follow->SetTargetOffset(offset);
+        // 最初のInput群で設定ファイルを読み終えてから、試験用の平滑0を指定する。
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (!check(follow->GetLastCollisionResult() == Camera::CameraCollisionResult::Success &&
+                       follow->SetFollowSmoothing(0, 0), "カメラを初期化して平滑を無効にできる"))
+            return false;
+
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        const int64_t durations[] = {8'333'333, 16'666'667, 25'000'000};
+        uint32_t stepCounts[3]{}, alphaCounts[3]{};
+        uint32_t movingFrames = 0, interpolatedFrames = 0, zeroStepMovingFrames = 0, motionChecks = 0;
+        float maxCameraError = 0, maxInterpolationError = 0, maxMotionError = 0, maxRenderChange = 0;
+        float minPreviousError = std::numeric_limits<float>::infinity();
+        float minMiddleAlpha = 1, maxMiddleAlpha = 0;
+        auto previousRender = visual->GetRenderWorldTransform().position;
+        auto previousBody = value.Owner->GetPosition();
+        const auto startBody = previousBody;
+        probe->LastPosition = previousBody;
+        double inputTime = 0;
+        bool matches = true;
+        unsigned failures = 0;
+        for (unsigned frameIndex = 0; frameIndex < 72; ++frameIndex)
+        {
+            const int64_t raw = durations[frameIndex % 3];
+            const double seconds = double(raw) / 1'000'000'000.0;
+            inputTime += seconds;
+            if (!check(mapper.BeginFrame(inputTime) && mapper.Update(inputTime, float(seconds)), "入力を更新できる"))
+                return false;
+            const auto previousProbeCount = probe->Count;
+            const auto previousCameraTicks = follow->GetCameraTickCount();
+            const auto result = ApplicationFixedStepTestAccess::Simulate(processor, raw);
+            if (!check(result.Status == EFixedStepAdvanceStatus::Advanced && result.DroppedSteps == 0 &&
+                           result.ExecutedSteps <= 2 && value.Character->GetState().bReady &&
+                           probe->Count - previousProbeCount == result.ExecutedSteps &&
+                           follow->GetCameraTickCount() == previousCameraTicks + 1,
+                       "固定段とカメラ群を本番の順に実行できる"))
+                return false;
+            ++stepCounts[result.ExecutedSteps];
+            const float alpha = float(result.RemainderScaledUnits) / 1'000'000'000.0f;
+            if (alpha <= 1e-6f)
+                ++alphaCounts[0];
+            else if (alpha >= 1 - 1e-6f)
+                ++alphaCounts[2];
+            else
+            {
+                ++alphaCounts[1];
+                minMiddleAlpha = std::min(minMiddleAlpha, alpha);
+                maxMiddleAlpha = std::max(maxMiddleAlpha, alpha);
+            }
+            const auto body = value.Owner->GetPosition();
+            const auto render = visual->GetRenderWorldTransform().position;
+            const auto expectedRender = probe->LastPosition + (body - probe->LastPosition) * alpha;
+            const float interpolationError = (render - expectedRender).Length();
+            const auto& collision = follow->GetCollisionOutput();
+            const auto camera = cameraOwner->GetWorldTransform();
+            const auto aim = camera.position + (camera.rotation * Math::Vector3::UnitZ) * collision.EffectiveLength;
+            const float cameraError = (aim - (render + offset)).Length();
+            const float renderChange = (render - previousRender).Length();
+            const float previousError = (aim - (previousRender + offset)).Length();
+            maxCameraError = std::max(maxCameraError, cameraError);
+            maxInterpolationError = std::max(maxInterpolationError, interpolationError);
+            maxRenderChange = std::max(maxRenderChange, renderChange);
+            bool frameMatches = std::isfinite(cameraError) && cameraError <= 1e-4f &&
+                                std::isfinite(interpolationError) && interpolationError <= 1e-4f &&
+                                follow->GetLastCollisionResult() == Camera::CameraCollisionResult::Success &&
+                                !collision.bObstructed && collision.EffectiveLength > 0 &&
+                                (camera.position - collision.Position).Length() <= 1e-4f;
+            if (result.ExecutedSteps > 0)
+            {
+                const auto actual = body - probe->LastPosition;
+                const auto commanded = driver->GetOutput().PlanarDisplacement;
+                const float motionError = std::hypot(actual.x - commanded.x, actual.z - commanded.z);
+                maxMotionError = std::max(maxMotionError, motionError);
+                frameMatches &= std::isfinite(motionError) && motionError <= 1e-4f;
+                ++motionChecks;
+            }
+            else
+                frameMatches &= (body - previousBody).Length() <= 1e-4f;
+            if (alpha > 1e-6f && alpha < 1 - 1e-6f && (body - probe->LastPosition).Length() > .001f &&
+                (render - probe->LastPosition).Length() > 1e-4f && (body - render).Length() > 1e-4f)
+                ++interpolatedFrames;
+            if (renderChange > .001f)
+            {
+                ++movingFrames;
+                if (result.ExecutedSteps == 0)
+                    ++zeroStepMovingFrames;
+                minPreviousError = std::min(minPreviousError, previousError);
+                frameMatches &= std::isfinite(previousError) && previousError > 1e-4f;
+            }
+            if (!frameMatches && failures++ < 4)
+                std::printf("同じフレームの追従: フレーム=%u 段=%llu α=%.9f カメラ差=%.9f 補間差=%.9f 本体=(%.9f, %.9f, %.9f) 描画=(%.9f, %.9f, %.9f) 注視点=(%.9f, %.9f, %.9f)\n",
+                            frameIndex, static_cast<unsigned long long>(result.ExecutedSteps), double(alpha),
+                            double(cameraError), double(interpolationError), double(body.x), double(body.y),
+                            double(body.z), double(render.x), double(render.y), double(render.z),
+                            double(aim.x), double(aim.y), double(aim.z));
+            matches &= frameMatches;
+            previousRender = render;
+            previousBody = body;
+        }
+        const float bodyDistance = (previousBody - startBody).Length();
+        std::printf("同じフレームの追従: 固定段 0=%u 1=%u 2=%u、α 0=%u 中間=%u 1=%u、中間の範囲=[%.9f, %.9f]\n",
+                    stepCounts[0], stepCounts[1], stepCounts[2], alphaCounts[0], alphaCounts[1], alphaCounts[2],
+                    double(minMiddleAlpha), double(maxMiddleAlpha));
+        std::printf("同じフレームの追従: カメラ最大差=%.9f m、補間最大差=%.9f m、本体移動最大差=%.9f m、本体移動距離=%.9f m\n",
+                    double(maxCameraError), double(maxInterpolationError), double(maxMotionError), double(bodyDistance));
+        std::printf("同じフレームの追従: 描画の最大移動=%.9f m、前フレームとの差の最小=%.9f m、移動=%u 中間補間=%u 0段で描画移動=%u 本体照合=%u\n",
+                    double(maxRenderChange), double(minPreviousError), movingFrames, interpolatedFrames,
+                    zeroStepMovingFrames, motionChecks);
+        return check(matches && stepCounts[0] && stepCounts[1] && stepCounts[2] && alphaCounts[1] &&
+                         movingFrames >= 10 && interpolatedFrames >= 10 && zeroStepMovingFrames >= 1 &&
+                         motionChecks >= 10 && bodyDistance > .1f && maxRenderChange > .001f,
+                     "移動と補間を伴う全フレームで、カメラは同じフレームの見た目を追う");
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -2858,6 +3059,8 @@ namespace
             return TestGameLocomotionAnimatorValues(processor);
         case 30:
             return TestGameLocomotionRootMotion(processor);
+        case 31:
+            return TestGameLocomotionCameraSameFrame(processor);
         default:
             return false;
         }

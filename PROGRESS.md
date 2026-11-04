@@ -9533,3 +9533,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 設定の再読込のケースを足し、一時フォルダを読ませる口を Component に足す: 着地(直し 0 回)
 - U2 Animator への値のケースを足す: 着地(直し 0 回)
 - U3 ルート移動のケースを足す: 着地(直し 0 回)
+- U4 同じフレームのカメラの読みのケースを足し、タスクの verify を回す: 着地(直し 0 回)
