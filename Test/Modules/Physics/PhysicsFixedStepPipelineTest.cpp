@@ -192,7 +192,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 30;
+    constexpr uint32_t kCaseCount = 31;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -2555,6 +2555,243 @@ namespace
         return bMatches;
     }
 
+    bool TestGameLocomotionRootMotion(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace Animation;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool passed, const char* contract) {
+            if (!passed)
+                std::cout << "ルート移動: " << contract << '\n';
+            return passed;
+        };
+        ResourceRegistry registry;
+        if (!check(registry.Initialize(), "資産の管理を初期化できる"))
+            return false;
+        auto skeleton = registry.CreateTransient<SkeletonResource>("RootMotionSkeleton");
+        auto meshResource = registry.CreateTransient<SkinnedMeshResource>("RootMotionMesh");
+        auto clip = registry.CreateTransient<AnimationClipResource>("RootMotionClip");
+        auto asset = registry.CreateTransient<SkeletalAssetResource>("RootMotionAsset");
+        auto graph = registry.CreateTransient<AnimGraphResource>("RootMotionGraph");
+        if (!check(skeleton && meshResource && clip && asset && graph, "試験用の資産を作れる"))
+            return false;
+        Container::VariableArray<Skeletal::SkeletalJoint> joints(1);
+        joints[0].Name = "Root";
+        for (size_t i = 0; i < 16; ++i)
+            joints[0].InverseBindMatrix[i] = Math::Matrix4x4::Identity.values[i];
+        skeleton->SetJoints(std::move(joints));
+        Container::VariableArray<Skeletal::SkeletalVertex> vertices(3);
+        for (unsigned i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i].Position = {float(i == 1), float(i == 2), 0};
+            vertices[i].Normal = {0, 0, 1};
+            vertices[i].JointWeights[0] = 1;
+        }
+        meshResource->SetVertices(std::move(vertices));
+        meshResource->SetIndices(Container::VariableArray<uint32_t>{0, 1, 2});
+        Skeletal::SkeletalAnimationClip animation;
+        animation.Name = "forward";
+        animation.DurationSeconds = 1;
+        animation.Metadata.Root.Mode = RootMotionMode::Extract;
+        Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0;
+        channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+        channel.Samples = {{0, {0, 0, 0, 0}}, {1, {1, 0, 0, 0}}};
+        animation.Channels.push_back(std::move(channel));
+        clip->SetClip(std::move(animation));
+        if (!check(skeleton->Load() && meshResource->Load() && clip->Load(),
+                   "骨格・メッシュ・クリップが有効である"))
+            return false;
+        asset->SetResources(meshResource, skeleton, clip);
+        struct ClipResolver final : IClipResolver
+        {
+            Container::TSharedPtr<AnimationClipResource> Clip;
+            Container::TSharedPtr<AnimationClipResource> ResolveClip(Container::StringView name) const override
+            {
+                return name == Container::StringView("forward") ? Clip : Container::TSharedPtr<AnimationClipResource>{};
+            }
+        } resolver;
+        resolver.Clip = clip;
+        AnimGraphReport report;
+        const Container::String graphJson =
+            R"({"version":1,"nodes":[{"id":"forward","type":"clip","clip":"forward","loop":true}],"root":"forward"})";
+        if (!check(asset->Load() && graph->Compile(graphJson, *skeleton, resolver, report) && graph->Load(),
+                   "直進するループのグラフを組める"))
+            return false;
+
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!check(CreateCharacterFloor() && CreateCharacter(value, Math::Vector3::Zero), "床と本体を作れる"))
+            return false;
+        world.Tick(kFixedDeltaTime);
+        const bool ready = StepCharacter(processor) && value.Character->GetState().bReady;
+        world.LateTick(kFixedDeltaTime);
+        if (!check(ready, "移動の前に物理本体を準備できる"))
+            return false;
+        ApplicationFixedStepTestAccess::ResetRun(processor);
+
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move, jump;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings.push_back(key);
+        jump.Id = "Jump"_id;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::Space);
+        key.Component = EInputAxisComponent::X;
+        jump.Bindings.push_back(key);
+        if (!check(bindings.AddContext("Gameplay"_id, ECursorMode::Normal) &&
+                       bindings.AddAction("Gameplay"_id, move) && bindings.AddAction("Gameplay"_id, jump) &&
+                       mapper.ConfigureWithContext(bindings, "Gameplay"_id), "入力を設定できる"))
+            return false;
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        if (!check(driver && pose, "移動と見た目の子を作れる"))
+            return false;
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind() { Driver->BindInput(nullptr); }
+        } unbind{driver};
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(pose);
+        if (!check(mesh != nullptr, "見た目にメッシュを付けられる"))
+            return false;
+        mesh->SetSkeletalAsset(asset);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(pose);
+        if (!check(animator && animator->SetGraph(graph) && driver->SetVisualRoots(visual, pose) &&
+                       driver->SetMotionSource(Game::Gameplay::LocomotionMotionSource::Animation),
+                   "見た目のAnimatorを移動元にできる"))
+            return false;
+        driver->BindInput(&mapper);
+        double inputTime = 0;
+        const auto frame = [&](int64_t raw, FixedStepAdvanceResult& result) {
+            const double seconds = double(raw) / 1'000'000'000.0;
+            inputTime += seconds;
+            if (!mapper.BeginFrame(inputTime) || !mapper.Update(inputTime, float(seconds)))
+                return false;
+            result = ApplicationFixedStepTestAccess::Simulate(processor, raw);
+            return result.Status == EFixedStepAdvanceStatus::Advanced && result.DroppedSteps == 0 &&
+                   value.Character->GetState().bReady;
+        };
+        const int64_t durations[] = {8'333'333, 16'666'667, 25'000'000};
+        uint32_t stepCounts[3]{};
+        uint64_t lastSerial = animator->GetRootMotionFrame().UpdateSerial;
+        const auto start = value.Owner->GetPosition();
+        double rootX = 0, rootZ = 0, maxError = 0;
+        bool matches = true;
+        for (unsigned i = 0; i < 72; ++i)
+        {
+            const int64_t raw = durations[i % 3];
+            FixedStepAdvanceResult result;
+            if (!check(frame(raw, result) && result.ExecutedSteps <= 2, "固定ステップを実行できる"))
+                return false;
+            ++stepCounts[result.ExecutedSteps];
+            const auto observed = animator->GetRootMotionFrame();
+            if (!check(observed.bValid && observed.bConsumed && observed.UpdateSerial != lastSerial &&
+                           observed.Delta.IsFinite() && observed.Delta.X > 0 &&
+                           std::fabs(observed.Delta.X - double(raw) / 1'000'000'000.0) < 1e-5 &&
+                           std::fabs(observed.Delta.Z) < 1e-6 && std::fabs(observed.Delta.Yaw) < 1e-6,
+                       "毎フレーム直進の差分が生成され消費される"))
+                return false;
+            lastSerial = observed.UpdateSerial;
+            rootX += observed.Delta.X;
+            rootZ += observed.Delta.Z;
+            // この列では端数が常に当フレームの長さ以下。一定速度の差分から未消費分を引く。
+            const uint64_t duration = uint64_t(raw) * 60;
+            if (!check(result.RemainderScaledUnits <= duration, "端数は当フレームに収まる"))
+                return false;
+            const double fraction = double(result.RemainderScaledUnits) / double(duration);
+            const auto position = value.Owner->GetPosition();
+            const double expectedX = rootX - observed.Delta.X * fraction;
+            const double expectedZ = rootZ - observed.Delta.Z * fraction;
+            const double error = std::hypot(double(position.x - start.x) - expectedX,
+                                            double(position.z - start.z) - expectedZ);
+            maxError = std::max(maxError, error);
+            if (!std::isfinite(error) || error > 1e-4)
+            {
+                if (matches)
+                    std::printf("ルート移動: フレーム=%u 段=%llu 期待=(%.9f, %.9f) 本体=(%.9f, %.9f) 差=%.9f\n",
+                                i, static_cast<unsigned long long>(result.ExecutedSteps), expectedX, expectedZ,
+                                double(position.x - start.x), double(position.z - start.z), error);
+                matches = false;
+            }
+            if (i % 3 == 2 && !check(result.RemainderScaledUnits == 0, "周期の終わりで端数がゼロになる"))
+                return false;
+        }
+        const auto end = value.Owner->GetPosition();
+        const double finalError = std::hypot(double(end.x - start.x) - rootX, double(end.z - start.z) - rootZ);
+        std::printf("ルート移動: 段数 0=%u 1=%u 2=%u、差分=(%.9f, %.9f) m、本体=(%.9f, %.9f) m、差=%.9f m、最大差=%.9f m\n",
+                    stepCounts[0], stepCounts[1], stepCounts[2], rootX, rootZ,
+                    double(end.x - start.x), double(end.z - start.z), finalError, maxError);
+        if (!check(stepCounts[0] && stepCounts[1] && stepCounts[2] && rootX > 1 &&
+                       std::hypot(double(end.x - start.x), double(end.z - start.z)) > 1 && matches && finalError <= 1e-4,
+                   "0・1・2段と周回を含む全フレームで消費すべき差分と本体が一致する"))
+            return false;
+
+        // 半段ぶんを未消費のまま残し、直交するW入力へ切り替える。
+        FixedStepAdvanceResult pending;
+        if (!check(frame(8'333'333, pending) && pending.ExecutedSteps == 0 &&
+                       pending.RemainderScaledUnits > 0 && animator->GetRootMotionFrame().bValid &&
+                       animator->GetRootMotionFrame().bConsumed && animator->GetRootMotionFrame().UpdateSerial != lastSerial &&
+                       animator->GetRootMotionFrame().Delta.X > .008 &&
+                       std::hypot(double(value.Owner->GetPosition().x - end.x),
+                                  double(value.Owner->GetPosition().z - end.z)) < 1e-6,
+                   "切り替え前に未消費の差分を残せる"))
+            return false;
+        lastSerial = animator->GetRootMotionFrame().UpdateSerial;
+        if (!check(driver->SetMotionSource(Game::Gameplay::LocomotionMotionSource::Procedural),
+                   "手続きの移動へ戻せる"))
+            return false;
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        const auto switchPosition = value.Owner->GetPosition();
+        for (unsigned i = 0; i < 8; ++i)
+        {
+            FixedStepAdvanceResult result;
+            if (!check(frame(16'666'667, result) && result.ExecutedSteps == 1, "切り替え後の固定ステップを実行できる"))
+                return false;
+            const auto observed = animator->GetRootMotionFrame();
+            const auto position = value.Owner->GetPosition();
+            if (!check(observed.bValid && observed.bConsumed && observed.UpdateSerial != lastSerial &&
+                           observed.Delta.X > .01 && std::fabs(double(position.x - switchPosition.x)) < 1e-5 &&
+                           position.z - switchPosition.z > 1e-6f,
+                       "残りと新しいルート差分を捨て、次のフレームから入力方向へ進む"))
+                return false;
+            lastSerial = observed.UpdateSerial;
+        }
+        const auto procedural = value.Owner->GetPosition() - switchPosition;
+        std::printf("ルート移動: 切り替え後の本体移動=(%.9f, %.9f) m\n", double(procedural.x), double(procedural.z));
+
+        // 再びAnimationにしても、切り替え前の半段は再利用されない。
+        if (!check(driver->SetMotionSource(Game::Gameplay::LocomotionMotionSource::Animation),
+                   "再びAnimatorを移動元にできる"))
+            return false;
+        const auto resumePosition = value.Owner->GetPosition();
+        constexpr int64_t resumeDuration = 16'666'667;
+        FixedStepAdvanceResult resumed;
+        if (!check(frame(resumeDuration, resumed) && resumed.ExecutedSteps == 1 &&
+                       resumed.RemainderScaledUnits <= uint64_t(resumeDuration) * 60,
+                   "再開したフレームで固定ステップを実行できる"))
+            return false;
+        const auto observed = animator->GetRootMotionFrame();
+        const auto resumedPosition = value.Owner->GetPosition() - resumePosition;
+        const double expected = observed.Delta.X *
+                                (1 - double(resumed.RemainderScaledUnits) / double(uint64_t(resumeDuration) * 60));
+        const double resumeError = std::hypot(double(resumedPosition.x) - expected, double(resumedPosition.z));
+        std::printf("ルート移動: 再開後の期待=%.9f m、本体=(%.9f, %.9f) m、差=%.9f m\n",
+                    expected, double(resumedPosition.x), double(resumedPosition.z), resumeError);
+        return check(observed.bValid && observed.bConsumed && observed.UpdateSerial != lastSerial &&
+                         observed.Delta.X > .01 && resumeError <= 1e-4,
+                     "再開後は新しい差分だけを消費する");
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -2619,6 +2856,8 @@ namespace
             return TestGameLocomotionProfileReload(processor);
         case 29:
             return TestGameLocomotionAnimatorValues(processor);
+        case 30:
+            return TestGameLocomotionRootMotion(processor);
         default:
             return false;
         }
