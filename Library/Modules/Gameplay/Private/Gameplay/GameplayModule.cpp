@@ -145,7 +145,7 @@ namespace NorvesLib::Modules::Gameplay
 
     void GameplayModule::RegisterCombatComponents(Core::World& world)
     {
-        // 初期化前や World 参加前に作られた Component も、登録可能になった時点で拾う。
+        // 初期化前に作られた Component を登録し、登録待ちはランタイムで再試行する。
         for (auto* entity : world.GetRootEntities())
         {
             RegisterCombatEntity(*entity, m_CombatRuntime);
@@ -159,7 +159,6 @@ namespace NorvesLib::Modules::Gameplay
             return;
         }
         auto& world = m_Engine->GetWorld();
-        RegisterCombatComponents(world);
         m_CombatRuntime.Evaluate(world, m_Engine->GetTimeSystem().GetFrameTimes().World);
     }
 

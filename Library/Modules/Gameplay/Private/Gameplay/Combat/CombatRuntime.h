@@ -51,12 +51,19 @@ namespace NorvesLib::Modules::Gameplay::Combat
             uint64_t RegistrationIndex = 0;
         };
 
+        void RetryPendingRegistrations();
+        void CompactRegistrations();
+
         GameplayModule& m_Module;
         Core::Container::VariableArray<Registration<HitboxComponent>> m_Hitboxes;
         Core::Container::VariableArray<Registration<HurtboxSetComponent>> m_HurtboxSets;
+        Core::Container::VariableArray<HitboxComponent*> m_PendingHitboxes;
+        Core::Container::VariableArray<HurtboxSetComponent*> m_PendingHurtboxSets;
         uint64_t m_NextRegistrationIndex = 1;
         uint64_t m_NextAttackInstanceId = 1;
         double m_WorldTime = 0.0;
         uint64_t m_FrameNumber = 0;
+        uint64_t m_StateRevision = 0;
+        bool m_bEvaluating = false;
     };
 } // namespace NorvesLib::Modules::Gameplay::Combat

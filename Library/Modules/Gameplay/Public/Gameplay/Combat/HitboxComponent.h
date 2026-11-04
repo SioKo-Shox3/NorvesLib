@@ -24,7 +24,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
 
     /// 判定窓と武器ローカルの形状を保持する。操作と通知は GameThread 専用。
     /// ActorId の既定は持ち主の ObjectId。0 の場合と武器の子 Entity には SetActorId が必要。
-    /// モジュール初期化前・World 参加前の生成は、初期化時と LateTick の走査で登録される。
+    /// 初期化時に登録し、World 参加待ちの場合は登録可能になった時点で登録される。
     class HitboxComponent : public Core::Component::Component
     {
         REFLECTION_CLASS(HitboxComponent, Core::Component::Component)
@@ -99,6 +99,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
         bool m_bFirstWindowFrame = false;
         Math::Transform m_PreviousTransform;
         bool m_bPreviousValid = false;
+        uint64_t m_PoseRevision = 0;
         Core::Container::VariableArray<HitRecord> m_HitRecords;
         Core::Component::AnimatorComponent* m_Animator = nullptr;
         uint64_t m_AnimatorComponentId = 0;

@@ -40,7 +40,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
     };
 
     /// 複数の被弾部位。ActorId の既定は持ち主の ObjectId。0 なら明示設定が必要。
-    /// モジュール初期化前・World 参加前の生成は、初期化時と LateTick の走査で登録される。
+    /// 初期化時に登録し、World 参加待ちの場合は登録可能になった時点で登録される。
     class HurtboxSetComponent : public Core::Component::Component
     {
         REFLECTION_CLASS(HurtboxSetComponent, Core::Component::Component)

@@ -120,6 +120,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
         {
             return false;
         }
+        ++m_PoseRevision;
         m_Shape = shape;
         m_bPreviousValid = false;
         m_bFirstWindowFrame = m_bWindowOpen;
@@ -141,6 +142,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
                 return false;
             }
         }
+        ++m_PoseRevision;
         m_bOwnerBinding = entity == nullptr;
         m_Binding = entity != nullptr ? entity->GetEntityHandle() : Core::EntityHandle{};
         m_bPreviousValid = false;
@@ -209,6 +211,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
 
     void HitboxComponent::ResetWindow()
     {
+        ++m_PoseRevision;
         m_bWindowOpen = false;
         m_AttackInstanceId = 0;
         m_WindowOpenedAt = 0.0;

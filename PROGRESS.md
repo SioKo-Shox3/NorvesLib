@@ -9445,3 +9445,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（前回の指摘への対応差分）。
 - Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
 - U1 公開の型と Component の器・モジュールへの登録・窓の開閉: 着地(直し 0 回)
+- U2 GameplayModule::LateTick での 1 フレーム 1 回の評価と配送: 着地(直し 0 回)
