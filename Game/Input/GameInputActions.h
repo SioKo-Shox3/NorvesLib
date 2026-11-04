@@ -16,6 +16,7 @@ namespace Game::InputActions
     inline constexpr auto Swing="Swing"_id;
     inline constexpr auto Jump="Jump"_id;
     inline constexpr auto Sniff="Sniff"_id;
+    inline constexpr auto Interact="Interact"_id;
     inline constexpr auto Confirm="Confirm"_id;
     inline constexpr auto Cancel="Cancel"_id;
 }

@@ -15,6 +15,9 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Platform/PlatformPaths.h"
+#include "Core/Public/Save/GameStateStore.h"
+#include "Core/Public/Save/SaveService.h"
 #include "Core/Public/Rendering/PostProcessStack.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
@@ -32,6 +35,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -51,6 +55,7 @@
 #include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
+#include "GameModes/Grassland/GrasslandMode.h"
 #include "GameModes/InteriorLight/InteriorLightMode.h"
 #include "GameModes/MaterialGallery/MaterialGalleryMode.h"
 #include "GameModes/Wasteland/WastelandMode.h"
@@ -63,6 +68,7 @@
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
 #include "Gameplay/IGameplayModule.h"
+#include "Gameplay/World/InteractionService.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
@@ -3033,6 +3039,18 @@ namespace Game
         return true;
     }
 
+    bool GameApplicationHandler::IsInteractPressed() const
+    {
+        const auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return false;
+        }
+        const auto interact = engine->GetInputMapper().GetAction(
+            Game::InputActions::GameplayContext, Game::InputActions::Interact);
+        return interact.Active && interact.Button.Pressed;
+    }
+
     bool GameApplicationHandler::OnInitialize()
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
@@ -3111,6 +3129,54 @@ namespace Game
         }
 
         m_M6ScriptSmokeController.Initialize();
+        if (NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                gameplay->GetInteractionService().SetInteractPressedSource(
+                    NorvesLib::Core::MakeDelegate(this, &GameApplicationHandler::IsInteractPressed));
+            }
+        }
+
+        NorvesLib::Core::GEngine.GetGameStateStore().LoadKeyLedgerFile("Assets/Data/state_keys.json");
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        const String saveDirectory = Platform::GetUserDataDirectory("Game");
+        if (!saveDirectory.empty())
+        {
+            saveService.Configure(saveDirectory);
+        }
+        else
+        {
+            LOG_WARNING("ユーザーデータの保存先を作成できないため、セーブの保存先を設定しません。");
+        }
+        saveService.SetSnapshotProvider(Delegate<bool, String&>(this, &GameApplicationHandler::ProvideSaveSnapshot));
+        saveService.SetLoadConsumer(
+            Delegate<bool, Span<const uint8_t>>(this, &GameApplicationHandler::ConsumeSavePayload));
+        return true;
+    }
+
+    bool GameApplicationHandler::ProvideSaveSnapshot(String& payloadUtf8)
+    {
+        Game::Save::ProgressSaveData snapshot = m_ProgressSaveData;
+        snapshot.AppVersion = NorvesLib::Core::GEngine.GetVersion();
+        snapshot.SavedAtUnix = static_cast<int64_t>(std::time(nullptr));
+        Game::Save::CaptureStateStore(NorvesLib::Core::GEngine.GetGameStateStore(), snapshot);
+        payloadUtf8 = Game::Save::ToJson(snapshot);
+        return !payloadUtf8.empty();
+    }
+
+    bool GameApplicationHandler::ConsumeSavePayload(Span<const uint8_t> payloadUtf8)
+    {
+        Game::Save::ProgressSaveData loaded;
+        String error;
+        if (!Game::Save::FromJson(payloadUtf8, loaded, &error))
+        {
+            LOG_ERROR("進行データの読み込みに失敗しました: %s", error.c_str());
+            return false;
+        }
+        m_ProgressSaveData = std::move(loaded);
+        Game::Save::ApplyToStateStore(m_ProgressSaveData, NorvesLib::Core::GEngine.GetGameStateStore());
         return true;
     }
 
@@ -3392,6 +3458,7 @@ namespace Game
         }
 
         m_AssetSystemSnapshot = immutableCandidate;
+        NorvesLib::Core::Engine::GEngine->GetTerrainSystem().SetAssetSystem(immutableCandidate);
         LOG_INFO("Asset runtime snapshot reload completed root=\"%s\" manifest=\"%s\"",
                  m_TextureAssetRoot.c_str(),
                  m_TextureAssetManifestPath.c_str());
@@ -3416,6 +3483,10 @@ namespace Game
         {
             LOG_WARNING("COOKED_MISSING_WARN_NOT_SET "
                         "マニフェストが無いときの警告の設定を反映できませんでした");
+        }
+        else
+        {
+            NorvesLib::Core::Engine::GEngine->GetTerrainSystem().SetAssetSystem(immutableCandidate);
         }
     }
 
@@ -3826,6 +3897,12 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                NorvesLib::Core::Module::GetModuleRegistry()))
+        {
+            gameplay->GetInteractionService().SetInteractPressedSource(NorvesLib::Core::Delegate<bool>{});
+        }
+
         m_pGameModeStateMachine = nullptr;
         m_M6ScriptSmokeController.Shutdown();
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
@@ -3855,7 +3932,11 @@ namespace Game
         m_BridgeHost.Stop();
 
         // 終了前の保存処理など
-        // - セーブデータの保存
+        // セーブデータの保存を完了し、ハンドラを参照する呼び出し先を解除する。
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        saveService.FlushAndWait();
+        saveService.SetSnapshotProvider(Delegate<bool, String&>());
+        saveService.SetLoadConsumer(Delegate<bool, Span<const uint8_t>>());
         // - 設定の保存
     }
 
@@ -4137,6 +4218,7 @@ namespace Game
         const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
         const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::NightVillage ||
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
+                                 mode == Game::GameModes::Grassland ||
                                  mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
                                  mode == Game::GameModes::InteriorLight;
         if (viewNames.size() > 1 && !bSwitchable)
@@ -4410,6 +4492,22 @@ namespace Game
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                return mode;
+            });
+        // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
+        stateMachine->Registry().Register(
+            Grassland,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

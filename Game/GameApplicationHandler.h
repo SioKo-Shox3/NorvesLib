@@ -17,6 +17,7 @@
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Pause/PauseMenu.h"
+#include "Save/ProgressSaveData.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneCycleSmoke.h"
@@ -162,6 +163,11 @@ namespace Game
         bool IsTextureCooked(const NorvesLib::Core::Container::String &logicalPath) const;
 
     private:
+        bool ProvideSaveSnapshot(NorvesLib::Core::Container::String& payloadUtf8);
+        bool ConsumeSavePayload(NorvesLib::Core::Container::Span<const uint8_t> payloadUtf8);
+        bool IsInteractPressed() const;
+
+        Game::Save::ProgressSaveData m_ProgressSaveData;
         Game::Input::GameInputSettings m_InputSettings;
         NorvesLib::Core::Scene::PhysicsLayerTable m_PhysicsLayers;
         NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =

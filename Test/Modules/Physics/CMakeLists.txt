@@ -67,6 +67,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
+    MEMBER PhysicsGroundQueryIntegrationTest PhysicsGroundQueryIntegrationTest.cpp
     MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
     MEMBER CombatSweepTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatSweepTest.cpp
     MEMBER CombatLayerTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLayerTest.cpp
@@ -74,11 +75,15 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER CombatMultiHitTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatMultiHitTest.cpp
     MEMBER CombatLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLifecycleTest.cpp
     MEMBER HealthComponentTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/HealthComponentTest.cpp
+    MEMBER EnemyDefinitionLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp
+    MEMBER EnemyPatternSelectionTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyPatternSelectionTest.cpp
+    MEMBER EnemyStateMachineTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyStateMachineTest.cpp
     MEMBER ProgressionStateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/ProgressionStateTest.cpp
     MEMBER DefeatGateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/DefeatGateTest.cpp
     MEMBER EncounterZoneTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterZoneTest.cpp
     MEMBER EncounterLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterLifecycleTest.cpp
     MEMBER EncounterSerializationTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterSerializationTest.cpp
+    MEMBER InteractionPromptTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/InteractionPromptTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
@@ -101,6 +106,7 @@ add_test(NAME PhysicsDynamicsTest COMMAND PhysicsDynamicsTest)
 add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsDynamicsTest --test=PhysicsLifecycleEventTest)
 
 add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsDynamicsTest --test=PhysicsFixedStepPipelineTest)
+add_test(NAME PhysicsGroundQueryIntegrationTest COMMAND PhysicsDynamicsTest --test=PhysicsGroundQueryIntegrationTest)
 set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
 
 
@@ -126,8 +132,12 @@ add_test(NAME CombatFrameRateInvarianceTest COMMAND PhysicsDynamicsTest --test=C
 add_test(NAME CombatMultiHitTest COMMAND PhysicsDynamicsTest --test=CombatMultiHitTest)
 add_test(NAME CombatLifecycleTest COMMAND PhysicsDynamicsTest --test=CombatLifecycleTest)
 add_test(NAME HealthComponentTest COMMAND PhysicsDynamicsTest --test=HealthComponentTest)
+add_test(NAME EnemyDefinitionLoadTest COMMAND PhysicsDynamicsTest --test=EnemyDefinitionLoadTest)
+add_test(NAME EnemyPatternSelectionTest COMMAND PhysicsDynamicsTest --test=EnemyPatternSelectionTest)
+add_test(NAME EnemyStateMachineTest COMMAND PhysicsDynamicsTest --test=EnemyStateMachineTest)
 add_test(NAME ProgressionStateTest COMMAND PhysicsDynamicsTest --test=ProgressionStateTest)
 add_test(NAME DefeatGateTest COMMAND PhysicsDynamicsTest --test=DefeatGateTest)
 add_test(NAME EncounterZoneTest COMMAND PhysicsDynamicsTest --test=EncounterZoneTest)
 add_test(NAME EncounterLifecycleTest COMMAND PhysicsDynamicsTest --test=EncounterLifecycleTest)
 add_test(NAME EncounterSerializationTest COMMAND PhysicsDynamicsTest --test=EncounterSerializationTest)
+add_test(NAME InteractionPromptTest COMMAND PhysicsDynamicsTest --test=InteractionPromptTest)

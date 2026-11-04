@@ -25,7 +25,7 @@ stable namespaceと協調writerが前提。非協調processによる改変、fil
 
 callerの検査済みlocal-drive locatorからworkspaceをhandleで観測する。GetFinalPathNameByHandleWのGUID形式から実物理祖先をvolume rootまで辿る。ここでだけ、handle由来のcanonical ancestorを固定control entryの読み取りに使う。保存された絶対pathやcanonical文字列をその入口に渡さない。
 
-各物理祖先の直下をFindExInfoStandardで列挙し、長名とshort aliasを検査する。固定名のordinal case-insensitive一致が複数、実長名のcase違い、通常file、reparseはConflict。exact lowercaseの実長名1個だけを認識する。header.json、roots.json、pendingにも同じ固定名規則を使う。列挙失敗・上限超過を「storeなし」としない。
+各物理祖先の直下をFindExInfoStandardで列挙し、長名またはshort aliasが固定名.norves-assetcookとordinal case-insensitiveで一致する項目だけを残し、他は読み流す。1directoryに16384を超える項目があっても、読み流した分では上限超過とならない。storeがある階層では、indexのactive claim照合のため同じ階層をもう1回列挙し、長名がclaimのleafと完全一致する項目だけを残す。固定名のordinal case-insensitive一致が複数、実長名のcase違い、short aliasの衝突、通常file、reparseはConflict。exact lowercaseの実長名1個だけを認識し、volume rootのstoreは拒否する。header.json、roots.json、pendingにも同じ固定名規則を使う。列挙失敗・上限超過を「storeなし」としない。
 
 候補はhandleで再観測し、non-reparse/type、volume、物理直親、長名、directory IDを照合する。既存rootがstoreと同じID、またはworkspace祖先ID列にstore IDがあれば別locatorでも拒否する。directory IDはvolume serialと組み合わせ、認証とは扱わない。
 
@@ -60,7 +60,7 @@ control fileはread共有だけで開き、単一linkのregular file、長名/�
 
 ## 上限
 
-物理祖先256、1directoryのentry16384、全列挙entry65536、全store合計4096 roots。header16KiB、index1MiB、JSON深さ8、字句区切り等の予算100000。観測する名前・祖先path・読み込むJSONの延べmetadata32MiBを上限とする。32MiBはDOM/container/値コピーを含むプロセス全heap上限ではない。package payloadは読まない。
+物理祖先256、1directoryのentry16384、全列挙entry65536、全store合計4096 roots。entry数の上限はstoreの制御領域（header.json、roots.json、pending）の列挙と、祖先の列挙で残した一致項目だけに掛かり、読み流した項目は数えない。header16KiB、index1MiB、JSON深さ8、字句区切り等の予算100000。観測する名前・祖先path・読み込むJSONの延べmetadata32MiBを上限とし、名前は制御領域の列挙と祖先の列挙で残した一致項目だけを数え、読み流した項目は数えない。32MiBはDOM/container/値コピーを含むプロセス全heap上限ではない。package payloadは読まない。
 
 ## 検証と後続
 
