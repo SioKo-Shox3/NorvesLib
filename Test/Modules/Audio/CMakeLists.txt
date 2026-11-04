@@ -26,6 +26,7 @@ norves_add_test_bundle(AudioBackendLifetimeTest
     MEMBER AudioBackendLifetimeTest AudioBackendLifetimeTest.cpp
     MEMBER AudioModuleLifecycleTest AudioModuleLifecycleTest.cpp
     MEMBER AudioModuleRegistryTest AudioModuleRegistryTest.cpp
+    MEMBER AudioPlaybackTest AudioPlaybackTest.cpp
 )
 target_link_libraries(AudioBackendLifetimeTest PRIVATE Core NorvesAudioDomain)
 target_include_directories(AudioBackendLifetimeTest PRIVATE
@@ -40,4 +41,5 @@ if(audio_lifetime_link_text MATCHES "XAudio|xaudio|NorvesAudioBackend_XAudio2|No
 endif()
 
 add_test(NAME AudioModuleRegistryTest COMMAND AudioBackendLifetimeTest --test=AudioModuleRegistryTest)
+add_test(NAME AudioPlaybackTest COMMAND AudioBackendLifetimeTest --test=AudioPlaybackTest)
 
