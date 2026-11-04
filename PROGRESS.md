@@ -9781,3 +9781,31 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 世代が UINT32_MAX のインスタンスを解放したら、service の voice と同じくそのスロットを退役させて再利用しない(UINT32_MAX の次を 1 にすると、最初の世代 1 の handle が新しいインスタンスと一致する)。受入れの記録の「世代の折り返し」の行もこの挙動の書き方に直した。未登録の SoundId への再生は `InvalidState`(抑制による `Rejected` と分ける)。
 - Next: ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。AudioComponent と通常の起動への組み込みは G8-GR72-AUDIO-COMPONENT-BOOT、3D 定位は GR73。
 - Notes: アプリを起動する確かめは無い(実機の鳴り方・フェードの聴感は G8-GR72-AUDIO-CHECK)。受入れの記録の検証の手段の表に、試験していない条件(音量の積の式の照合・フェードイン中の Stop の切り替え・揺らぎの範囲・時刻と距離の境界・本番の `LoadBank` を通した clip の解決とデコード)を明記した。M9 の側の clip の読み込みは触っていない(二重の実装は M9 の受入れの安定の後に統合)。
+
+- U1 PoseModifierContext に世界変換・駆動の信号・所有者・関節名の解決・重みの口を足す: 着地(直し 0 回)
+- U2 新しいソースの置き場（空の雛形）と CMake・試験の main の登録: 着地(直し 0 回)
+- U3 モデル空間の回転を関節チェーンへ配る AngleDistribution: 着地(直し 0 回)
+- U4 減衰振動のばねと角度のばね（固定サブステップのアキュムレータ）: 着地(直し 0 回)
+- U5 *.posemod.json のパーサ・型の表・AnimatorComponent の適用口: 着地(直し 0 回)
+- U6 AngleDistribution とばねの試験: 着地(直し 0 回)
+- U7 設定ファイルの試験（拒否と保持・順序・重みのカーブ・文脈の口）: 着地(直し 0 回)
+- U8 文書（Testing.md の 3 点・AnimationRuntime.md）とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR15-POSE-MODIFIER-BASE（run 20261104-190953 の反復 1、完了）
+- Done: `PoseModifierContext` に `MeshToWorld`・最後に受け入れた `AnimDriveSignals`（`GetDriveSignals`/`HasDriveSignals`）・所有者の Entity（Apply の間だけ有効）・`FindJointIndex`（`SkeletonResource::FindJointIndex`）・`Weight`（既定 1）を足した。`AnimatorComponent::SetDriveSignals` は受け入れた信号だけ保存し、`EvaluateAnimation` で文脈に詰める。既存の modifier の順序・失敗時の扱いの試験は書き換えずに通る
+- Done: `Animation/Procedural/AngleDistribution`（関節のグローバル回転の取得・設定と、モデル空間の回転の重み付きの配分。`local = inverse(親のグローバル) * 新しいグローバル`、重みの和 1 ± 1e-4・非有限・並びの誤りは拒否して姿勢不変）、`Animation/Procedural/Spring`（1/120 秒の固定サブステップ・1 回最大 4、超過は捨てた秒数で返す。臨界減衰は `TryCriticalDamp`、減衰振動は閉じた解。スカラー・ベクトル・角度の 3 種）を作った
+- Done: `*.posemod.json`（version 1）のパーサ `ParsePoseModifierConfig`、関数の表 `PoseModifierTypeTable`（組み込みは空）、`AnimatorComponent::ApplyPoseModifiersJson`/`ApplyPoseModifiersFile` を作った。未知の type・未知のキー・重複キー・型違い・範囲外・未知の関節名・未知のパラメータを別のエラーで拒否し、失敗時は前の modifier 群を保つ。成功時は AddModifier 分も含めて丸ごと置き換える。order の既定は Lean 100 / Spine 110 / Look 200 / FootIK 500 / SpringBone 700 / FollowThrough 710
+- Done: `PoseModifierBaseTest`（`SkeletalAnimationSamplingTest` の中、10 試験）と、`Docs/Testing.md` の 3 点・`Docs/Architecture/AnimationRuntime.md` の「姿勢の後処理の土台」
+- 実測: 軸を回した同形の骨格の関節位置の差 9.8e-8 m、拒否時の姿勢の変化 0 バイト、臨界減衰の行き過ぎ 0、dt の分割（1/60×240 と 1/30×120）の位置の差 0・角度の差 1.2e-16 rad、0.1 秒で捨てた秒数の誤差 3.5e-9 s、Reset 後のビット不一致 0
+- 証拠: `.harness/runs/20261104-190953/verify-G9-GR15-POSE-MODIFIER-BASE-U8.txt`（verify のビルド EXIT=0、ctest 3 本 Passed、実行ファイルの直接実行で `PoseModifierBaseTest PASS`）
+- Next: ランナーの評価者の反証（Public API の危険地帯）。個別のモディファイア（傾き・背骨・視線・足 IK・SpringBone・FollowThrough）は後続のタスクで型の表に足す
+- Notes: アプリの起動を要する確かめは無い。型ごとの節は項目の `settings` キーに置く形にした（作り手が `CheckPoseModifierKeys`・`ResolvePoseModifierJoint` で読む）。重みの param は適用のたびに名前で引く（グラフの付け替えでハンドルが変わるため）。配分の空間は、根の親が split の骨格なら RootFrame の回転・それ以外は単位で、`GetJointModelMatrices` が掛けるメッシュの逆変換の前。メッシュに回転があるときは呼び出し側が変換する。ばねの減衰比は (0, 1] で、過減衰は受けない
+- U9 MeshToWorld を所有者のワールド変換にし、メッシュノードの変換を別の欄で渡す（差し戻しの直し）: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR15-POSE-MODIFIER-BASE（run 20261104-190953 の反復 2、差し戻しの直し・完了）
+- Done: `PoseModifierContext::MeshToWorld` を所有者 Entity のワールド変換（`CreateWorldRowVector(position, rotation, scale)`、`SkinnedMeshComponent::TryGetJointWorldMatrix` と同じ式。所有者が無ければ単位）にし、メッシュノードのグローバル変換は新しい欄 `MeshNodeTransform` で渡す。`TestModifierContextDelivery` は所有者に回転・並進・非一様スケールを与え、各関節のモデル行列 × MeshToWorld が `TryGetJointWorldMatrix` と一致することを確かめる形に直した（最大差 0。前の式に戻すと差 1.206 で落ちる）。`AnimationRuntime.md`・`Testing.md` の該当の記述も直した
+- 証拠: `.harness/runs/20261104-190953/verify-G9-GR15-POSE-MODIFIER-BASE-U9.txt`（verify のビルド EXIT=0、ctest 3/3 Passed、直接実行で `PoseModifierBaseTest PASS`・`AnimGraphRuntimeTest PASS`、numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（Public API の危険地帯）
+- Notes: 角度の配分の空間はメッシュノードの逆変換を掛ける前のまま残し、modifier は `MeshNodeTransform` でモデル空間と行き来する（ヘッダと文書に記載）
+- Notes: 要起票: `SetGraph` で別の骨格に付け替えても、設定ファイルから作った modifier（解決済みの関節の添字を持つ）が残る
+- Notes: 要起票: グラフの付け替えで重みの param が無くなると、Apply が毎フレーム false になり、ログも出ないまま姿勢が出なくなる
