@@ -9752,3 +9752,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証(ジョブ・Public API の危険地帯)。リセットの縦の道と ProgressionState との写しは G8-GR76-RESET-LIFETIME、設定は G8-GR76-SETTINGS。
 - Notes: 起動の要る確かめは無い(Game の起動・終了での保存の動きは未確認。終了時は JobSystem の受け付けの停止の後に `OnPreShutdown` が走るので、保留の書き込みは GameThread で同期に書かれる)。
 - Notes: 要起票: Game の毎フレームで `SaveService::Update` を呼んでいない。`GameModeStateMachine::Update` は保留の遷移を先頭で適用した後に Tick を呼び、Tick の中の要求は次のフレームまで残る(`LauncherRoutine::Tick` など)ので、handler のどのコールバックでも「保留なし」とは言えない。`GameModeStateMachine` に保留中の遷移を問う公開の関数を足し(この項目の paths の外)、その値を渡して毎フレーム `Update` を結線する。それまでは自動保存・`Save` の要求は終了時の `FlushAndWait` でだけ書かれる。
+
+- U1 IGroundQuery の型と PhysicsGroundQuery の実装を Core に足す: 着地(直し 1 回)
+- U3 物理の問い合わせの文書と試験の理由を書く: 着地(直し 1 回)
+- U2 PhysicsGroundQueryIntegrationTest を足し、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR14-GROUND-QUERY（run 20261104-192402 の反復 1、完了）
+
+- Done: `Library/Core/Public/Animation/GroundQuery.h` に `EGroundQueryStatus`（Hit / NoHit / NotReady / WrongThread / Unavailable / TooSteep）・`GroundHit`・`GroundProbe`・`IGroundQuery`（`Query` と `QueryBatch(Span<GroundProbe>)`）・`PhysicsGroundQuerySettings`・`PhysicsGroundQuery` を足した。`PhysicsGroundQuery` は Core に置き（Physics モジュールに依存しない）、`SceneQuery::ExecuteQuery` / `ExecuteBatch` の下向きの `RaycastClosest`（MaxHits=1、LayerMask・IgnoreBodies/Colliders、トリガーは常に除外）を使い、結果を状態へ写し、法線の傾きが `MaxSlopeDeg` を超える当たりを TooSteep にする。法線が長さ 0 か有限でない当たり（始点が形状の内側など）は Unavailable。`Docs/Architecture/PhysicsQueries.md` に契約（寿命・GameThread 専用・最大 1 固定ステップ古いスナップショット・地形は別実装）を、`Docs/Testing.md` に試験を足す理由を書いた。`PhysicsGroundQueryIntegrationTest` を `PhysicsDynamicsTest` の束に足した（20° の斜面・3 段の階段の高さ 1e-3 m・法線 0.5°、草の Layer 2・トリガー・自分の Body の除外、固定ステップ前の NotReady、別スレッドの WrongThread、地面の外の NoHit、60° の面の TooSteep、バッチと単発の一致）。
+- 証拠: `.harness/runs/20261104-192402/verify-G9-GR14-GROUND-QUERY-U2.txt`（Debug の PhysicsDynamicsTest のビルド EXIT=0、`PhysicsGroundQueryIntegrationTest` Passed、4 本の ctest 100% Passed、numstat 2 通り一致）。
+- Next: なし（アプリを起動する確かめは無い）。足 IK の重みが下がる部分は G9-GR14-LEG-IK-BALANCE。
+- Notes: QueryBatch は入力と結果を 1 つの `GroundProbe` にまとめ、件数の食い違いを起こさない形にした。有限でない入力・maxDown <= 0 は問い合わせを出さず Unavailable にした。
