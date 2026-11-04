@@ -5549,7 +5549,7 @@
 - notes: 設計はロードマップ 1760 行(中身の JSON)・1766〜1768 行(状態のストア。`Docs/agent-guide/architecture.md` の「新しい Manager を作らず NorvesEngine にサブシステムを足す」)・1780〜1782 行(自動保存)・1792〜1798 行(寝床の採否で形式は変わらない)。JobSystem は `Task::Then` が未実装などの癖があるので、1 つのタスクと完了の印に限る(1892 行)。HDD での FlushFileBuffers の重さは推定で未計測(1887 行)。AngelScript の GetFlag / SetFlag は GR98(G18)の後(1790 行)。危険地帯: ジョブ・Public API なので評価者を通す。やらないこと: 設定のファイル(G8-GR76-SETTINGS)、リセットの縦の道(G8-GR76-RESET-LIFETIME)。
 
 ## G9-GR15-POSE-MODIFIER-BASE: 手続き層と足 IK が共有する姿勢の後処理の土台（文脈の拡張・モデル空間の回転の配分・ばね・骨格単位の設定ファイル）を作る
-- status: done
+- status: doing
 - after: G1-GR01-TICK-CONTRACT-DOC, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS
 - gr: GR15, GR14
 - needs-gr: GR01, GR10, GR12
