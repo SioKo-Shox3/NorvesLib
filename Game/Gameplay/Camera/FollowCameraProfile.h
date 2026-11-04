@@ -15,6 +15,10 @@ namespace Game::Gameplay
         float TraumaDecay = 1.5f, ShakeStrength = .5f;
         NorvesLib::Math::Vector3 ShakeDegrees{1.5f, 1, .5f};
         float LockBias = .35f, LockBreakDegrees = 2, LockArmGain = .25f;
+        // しがみつき中にヨーが対象の向きを追う低域通過の半減期（秒）。
+        float ClingYawHalfLife = .25f;
+        // しがみつき中のヨーの角速度上限（度/秒）。角速度の1秒あたりの変化の上限にも使う。
+        float ClingMaximumYawSpeed = 90;
         bool bAutoFocus = false;
         NorvesLib::Core::Camera::CameraCollisionSettings Collision;
     };

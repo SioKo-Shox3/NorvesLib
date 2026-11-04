@@ -9400,19 +9400,47 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
 - 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
 - Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
-- U1 cook の動きの後処理を直し、合成の四足の試験を足す: 着地(直し 0 回)
-- U2 実物の BVH の回帰を環境変数で回せるようにし、タスクの verify を通す: 着地(直し 1 回)
-- Notes: 実物の V01full では周期が検出されず (2) の周期・閉じが不合格（再帰誤差 約 6.8°・周期内の動き 約 17°、Core の受け入れの比 0.2 を超える）。21 コマ目のスパイクは検出できた。Core の周期判定（SkeletalClipProcessing.cpp、paths の外）の変更待ちで BLOCKED。環境変数なしの verify は通る。
-- U3 ループの受け入れの比と許容を processing のキーにし、実物の profile で緩めて回帰を通す: 着地(直し 1 回)
-- Done: G4-GR128-CLEANUP-CASES 完了。role-profile の processing に `loop_rms_threshold_degrees`（0 超 45 以下、既定 0.05 rad）と `loop_recurrence_ratio`（0 超 1 以下、既定 0.2）を足し、`SkeletalClipProcessing.cpp` の比の固定値を設定へ出した（実行時の周期検出 `MotionAnalysis.cpp` は既定のまま）。周期の平均は継ぎ目の開始より前の周期も使う（開始が 0 のときは従来と同じ）。
-- 実測（V01full、許容 8.5°・比 0.5）: 周期 12.49 コマ、再帰誤差 6.76°、比 約 0.41、averaged_cycles=4、閉じ 平均 0°・最大 0°、21 コマ目のスパイク 23.33°→11.96°。
-- 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、タスクの ctest 5 本 4 Passed・1 Skipped、`MotionProcessingTest`・`SkeletalAnimationSamplingTest` Passed（`MotionProcessingTest` の数値出力は変更前と一致）、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
-- Next: Core（SkeletalClipProcessing・SkeletalRoleProfile）を変えたので、ランナーの評価者の反証を通す。
-- Notes: 試験の閉じの誤差は出力の先頭と末尾のキーで測るため、ループの継ぎ目の補正で構成上 0 になる（整形前の 12.2° との比較は弱い）。
-- U4 接地の最短時間の境目を実行時と同じ許容で比べ、0.05 秒ちょうどの区間を捨てないようにする: 着地(直し 0 回)
-- Done: G4-GR128-CLEANUP-CASES の差し戻しを直した。cook の接地の最短時間（`RigMotionCleanup.cpp` の `close`）を、実行時の `MotionAnalysis.cpp` と同じ float の epsilon の許容付きで比べるようにし、`FootContactOptions::MinimumWindowSeconds`（0.05f）を double に広げた誤差で 0.05 秒ちょうどの区間（60/120/200 fps の 3/6/10 標本）を捨てないようにした（閾値の値は変更前と同じ扱い）。
-- 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（タスクの verify のビルド 終了コード 0、ctest 5 本 4 Passed・1 Skipped 終了コード 0、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
-- Next: ランナーの評価者の反証を通す。
-- Notes: 要起票: `SkeletalClipProcessing.cpp:417` のスパイク除去の格子が float の長さの `ceil` で 1 コマ多くなり BVH のコマとずれる（21 コマ目のスパイクが半分しか消えない）。
-- Notes: 要起票: `cleanup_retime_metadata` で失敗したとき、Event・印・根の移動が書き込まれた後でクリップが変わったまま残る。
-- Notes: 要起票: 周期の平均が継ぎ目の開始より前の周期も使うようになり、`MotionProcessingTest.cpp:420` のコメント「開始から末尾までに収まる周期だけを数える」が実装と合わない。
+
+## 2026-11-03 G4-GR07-MOVER-CASES（run 20261103-233036 の反復 1、着手）
+- 試験の 3 点（Docs/Testing.md）: 反証する契約は、CharacterMover が GR07 の受け入れ確認の数値どおりに動くこと（平地の接地と足元の高さ、45° の壁沿いの移動量と毎ステップのめり込み、段差の登りの進みと止まり、坂の沿面の速さと限界角、階段下りの接地の割合、50 m/s で薄い壁を抜けない、めり込み開始からの押し出しの速さと 1 ステップの上限、全ステップの bit 一致、共面の継ぎ目で止まらない）。
+- ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、段差や継ぎ目での数フレームの引っかかり、坂での沿面の速さの 2 割落ち、階段下りの接地の 1 フレームの切れ、数 mm のめり込みは絵にもログにも出ない。実機の移動の確かめ（煙試験）はまだ無い。
+- 失敗が黙って起きるか: 起きる。数値から外れてもキャラクターは何かしら動き、エラーもログも出ない（接地が 1 フレーム切れると上の層で落下や着地の判定が誤るだけ）。
+- 方針: 期待値は受け入れ確認の数値のまま書き、外れたら CharacterMover を直す。既存のケースと他の 5 本の試験は変えない。測り方の細部（段差・階段の寸法、沿面の速さは毎ステップの 3 次元の移動量÷要求の水平の量）は計画（.harness/relay）で決める。
+- U1 平地・45° の壁・すり抜け・めり込み開始・決定性のケースを足す: 着地(直し 0 回)
+- U2 段差の進みと坂の沿面の速さのケースを足し、外れを直す: 着地(直し 0 回)
+- U3 階段下りと共面の継ぎ目のケースを足し、外れを直してタスクの確かめを回す: 着地(直し 0 回)
+- Done: GR07 の受け入れ確認の 9 ケース（平地・45° の壁・段差・坂・階段下り・すり抜け・めり込み開始・決定性・共面の継ぎ目）を PhysicsCharacterMoveTest に足し、全部通る。外れた 3 つを CharacterMover で直した: 段差 0.20 m の進み（直す前 0.418 m/要求 0.5 m → 0.471 m。縁に当たったら同じ物体の上面の法線で乗るかを決める）、40° の沿面の速さ（直す前 0.766 倍 → 1.000 倍。接地中に歩ける面へ当たったら水平の要求の長さを沿面の移動量に保つ）、階段下りの接地（直す前 10/60 ステップ → 60/60。下降と接地のスナップで縁の丸みに当たったら上面の法線で接地を決める）。残りの 6 ケースは直す前から通った
+- 証拠: `.harness/runs/20261103-233036/G4-GR07-MOVER-CASES-U3-verify.txt`（verify の 2 行: Debug の PhysicsDynamicsTest のビルド EXIT=0、ctest の PhysicsCharacterMoveTest・CharacterPlatformMotionTest・PhysicsFixedStepPipelineTest・PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
+- Next: 重力つきの坂の滑り落ちと着地は G4-GR07-BODY-CASES。起動の確かめは無し（試験だけで閉じる）
+- Notes: 縁の丸みの接触を上面の法線で接地にしたので、カプセルの下の球が段の角に乗っている間は、中心が縁の外へ出ていても接地のまま落ちない（水平に動けば落ちる）。重力つきの縁の振る舞いは BODY-CASES で見る。既定の SkinWidth 0.002・MaximumDepenetrationDistance 1 m は変えずに (1)(7) が通った（めり込み開始の 1 ステップの押し出しは 0.102 m）
+
+## 2026-11-04 G4-GR07-MOVER-CASES（run 20261104-082805 の反復 1、完了に戻す）
+- Done: 前の反復の評価が利用枠で回らず doing に戻っていた。着地した後の変更は TASKS.md・PROGRESS.md だけで、コードは確かめの出力（U3 の verify: ビルド EXIT=0、ctest 6 本 100% Passed）を取った版と同じなので、status を done に戻す。
+- Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。
+
+- U1 Core にロックオンの目標の口 ILockOnTarget と組み込みの 2 実装を足す: 着地(直し 0 回)
+- U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
+- U3 FollowCameraComponent のロックオンを ILockOnTarget 経由に組み替え、表面のアンカーの口を足す: 着地(直し 0 回)
+- U4 しがみつき中のヨーの補正(低域通過・角速度と角加速度の上限・抜けの継続)と試験: 着地(直し 1 回)
+
+## 2026-11-03 G4-GR06-CLING-LOCKON（run 20261103-231220 の反復 2、完了）
+- Done: ロックオンの目標を Core の読み取り専用の口 `ILockOnTarget`（`Library/Core/Public/Camera/LockOnTarget.h`。描画の空間の注視点と半径を `TryResolve` で返す）で受けるようにした。組み込みの実装は `EntityLockOnTarget`（Entity の点）と `JointLockOnTarget`（骨格のジョイント）で、`SetLockOnTarget`・`SetLockOnJoint` はそれを作る形で同じふるまいを保つ。外部の目標（表面のアンカー GR19）は `SetLockOn(TWeakPtr<const ILockOnTarget>)` で受け、試験の偽の実装で動く。しがみつきの状態を `SetClinging`/`IsClinging` で受け、その間はヨーを対象（ロック中は目標）の水平の向きへ臨界減衰で追わせ、角速度と 1 フレームの角速度の変化を `FollowCameraProfile` の `cling`（`yawHalfLife` 既定 0.25 s・`maximumYawSpeed` 既定 90 度/秒。値は仮）で抑える。入りは実測の角速度から始め、抜けは残りの角速度を同じ上限で 0 へ減らす間ヨーの戻しとロックオンのヨーの向けを止める（視点の入力で継続は終わる）。カメラの上方向は世界の上向きのまま。
+- 所有と破棄の順: カメラは目標を所有しない。外部の目標は弱い参照だけを持ち、Camera 群の毎フレームに `lock()` して World から解決する。参照が切れた・Entity が消えた（PendingDestroy・非アクティブ）・ジョイントが無効なら、そのフレームはロックしていない扱いで `ClearLockOn()` する。組み込みの目標はカメラが `TSharedPtr` で持つが、中身は Entity の id とジョイントの番号だけで Entity は所有しない。したがってアンカーの持ち主・目標の Entity はカメラより先に破棄してよく、カメラの `Finalize` はロックとしがみつきの状態を消すだけ。
+- 証拠: `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 100% Passed。新しいケースの出力: 上方向の最大偏差 0 度、10 Hz ±30° の揺れでヨーの角速度の最大 2.11 度/秒・振幅 0.224 度、出入りの角速度の差の最大 1.50 度/秒）。
+- Next: なし（アプリの起動の確かめは無い）。しがみつきの状態の出どころ（GR20 の拘束）と表面のアンカーの解決（GR19）は G10。
+- Notes: しがみつきの補正・角速度の実測は dt が有限で正のときだけ動く（しがみつきでないときの dt ≤ 0 のふるまいは前のまま）。しがみつき中に `SetLockOn` 等を呼んでもヨーの速度は 0 に戻さない（入りの連続を保つため）。
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 1、完了に戻す）
+- Done: 前の run（20261103-231220）で全単位を着地し完了にしたが、評価者が枠切れ（429）で未評価のまま doing に戻されていた。実装は変えずに done に戻し、評価をランナーへ渡す。
+- 証拠: 着地した版（ソース 9 ファイルがこの枝と一致）で取った `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt` と単位の作業ツリーの `unit-verify.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest 4 件 100% Passed）。
+- Next: ランナーの評価者の反証（Public API と Object の寿命に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。
+- U5 しがみつきの入りの初速を上限に切り詰め、ヨーの角速度の実測を全ての変更の後に取る(差し戻しの直し): 着地(直し 0 回)
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 2、差し戻しを直して完了）
+- Done: しがみつきの入りの初速を `ClingMaximumYawSpeed` に切り詰め、しがみつき中の速度の上限を常にその値にした（前は入りが上限を越えていると越えたまま何秒も回り続けた）。ヨーの角速度の実測を `UpdateCamera` の冒頭から全てのヨーの変更（ロックオンの向け・しがみつき・抜けの継続）の後へ移し、途中で返る経路と例外の再送出でも同じ位置で取る（ロックオン中は実測が 1 フレーム古かった）。視点の入力で回った分は実測から除き、入りの初速に持ち込まない（通常の追従で視点の入力が `m_YawVelocity` を 0 にするのとそろえた）。
+- 決定: done-when の (2)「しがみつき中は角速度が上限を越えない」と (3)「入りの前後のフレームの角速度の差 ≤ 上限×dt」は、入る直前の角速度が上限×(1+dt) を越えると両立しない。上限を優先した: 上限を越えた速さで入ったときは入りのフレームで ±上限へ切り詰め、入りの前後の差が上限×dt 以下であることは入る直前の角速度が上限以下のときに保証する。
+- 試験: `TestClingYawTransitions` の上限越えの節を差し替えた（ヨーの戻しが上限を越えて回る最中に入っても全フレーム上限以下。視点の入力 5° の直後に入っても最初のフレームの角速度は上限×dt 以下）。ロックオンの振りの最中（上限以下）に入り・抜ける前後のフレームの差も確かめる。
+- 証拠: `.harness/runs/20261104-082804/verify-G4-GR06-CLING-LOCKON-U5.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド終了コード 0、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 Passed。出力: 上方向の最大偏差 0 度、低域通過の最大角速度 2.11 度/秒・振幅 0.224 度、出入りの最大角速度差 1.50 度/秒・上限越えの入りの最大角速度 90 度/秒・ロックオン中の入りの最大角速度差 1.50 度/秒）。
+- Next: ランナーの評価者の反証（前回の指摘への対応差分）。
+- Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
