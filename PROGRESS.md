@@ -9742,3 +9742,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Library に接地の判定の純関数と接地の metadata の作り方を置き、AnalyzeFootContacts をそれに載せ替える: 着地(直し 0 回)
 - U2 animgraph の clip ノードに markerEvents を足し、marker から同じ名前の点イベントを出す: 着地(直し 0 回)
 - U3 cook の後処理を Library の判定と名前に載せ替える: 着地(直し 0 回)
+- U4 cook の足の印の名前・二重にならないこと・Library と cook の窓の一致を RigSplitCookTest で確かめる: 着地(直し 0 回)
