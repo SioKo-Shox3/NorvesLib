@@ -281,10 +281,8 @@ namespace NorvesLib::Modules::Physics
             c->m_bJump = false;
             c->m_bLaunch = false;
             Math::Vector3 depenetration;
-            // 足場の運搬をめり込み解消として速度から引かないよう、運搬後の形で残った重なりを調べる。
-            PhysicsShapeProxy carried = *self;
-            carried.Capsule.PointA += request.PlatformDisplacement;
-            carried.Capsule.PointB += request.PlatformDisplacement;
+            // 運んでいる足場との重なりは本番の運搬・解消に任せ、速度から引かない。
+            // 運ぶ前の形がほかの物体に重なっているときだけ、解消の量を求めて速度から引く。
             bool bPenetrating = false;
             for (const auto& proxy : m_CharacterQueryProxies)
             {
@@ -294,7 +292,7 @@ namespace NorvesLib::Modules::Physics
                     continue;
                 }
                 Math::GeometryContact contact;
-                if (PhysicsBroadphase::ComputeContact(carried, proxy, contact) && contact.Depth > 0.0f)
+                if (PhysicsBroadphase::ComputeContact(*self, proxy, contact) && contact.Depth > 0.0f)
                 {
                     bPenetrating = true;
                     break;
@@ -302,10 +300,7 @@ namespace NorvesLib::Modules::Physics
             }
             if (bPenetrating)
             {
-                // 足場との重なりは本番の運搬・解消に任せ、その分を速度から引かない。
-                // 運搬後にほかの物体へ残っためり込みの解消だけを求める。
                 auto recoveryRequest = request;
-                recoveryRequest.Shape = carried.Capsule;
                 recoveryRequest.Filter.IgnoreColliders[1] = request.PlatformCollider;
                 recoveryRequest.Displacement = {};
                 recoveryRequest.PlatformDisplacement = {};

@@ -9384,3 +9384,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ（タスクの verify）: ビルド exit 0。ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 0.99 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）は 5/5 Passed（合計 1.20 秒）。`ELEVATOR_JITTER refresh=0 norefresh=0 velocity_error=0`。運搬後の形だけで判定した途中の版では、回る足場（ケース 8）で足場との 1e-6 m の重なりが解消として速度から引かれ 0.12 m/s ずれたため、足場を対象から外す形にした
 - Notes: 前の Notes の「足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる」は、運搬後の形で解消を求める形にしたので解消した。残る限界: 足場の運搬が壁に遮られる場合は、運搬後の形が壁に重なった量を解消として引くので、速度が遮られた分だけ小さく出うる（試験していない）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
 - Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U8 運搬前の形でめり込みを判定し直し、壁に押し付けられた足場の運搬で速度が位置差分と一致することを試験で確かめる: 着地(直し 0 回)

@@ -182,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 27;
+    constexpr uint32_t kCaseCount = 28;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1953,6 +1953,77 @@ namespace
         return true;
     }
 
+    bool TestCharacterPlatformPushedAgainstWall(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floor = CreateCharacterFloor(4);
+        auto* floorCollider = floor ? floor->GetComponent<ColliderComponent>() : nullptr;
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        Entity* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        CharacterFixture value;
+        if (!floorCollider || !body || !mover || !wallCollider ||
+            body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            wallCollider->SetBox(Math::Vector3(.5f, 1, 1)) != EPhysicsResult::Success ||
+            !CreateCharacter(value, Math::Vector3::Zero) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        // 壁の下端を足場の上面より高くし、足場が壁の下を通れるようにする。
+        wall->SetPosition(Math::Vector3(1, 1.01f, 0));
+        mover->Target = Math::Transform(Math::Vector3(0, -.5f, 0));
+
+        unsigned step = 0;
+        bool bVelocityValid = true;
+        const auto checkStep = [&]()
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const float error = (value.Body->GetLinearVelocity() - displacementVelocity).Length();
+            if (!std::isfinite(error) || error > .005f)
+            {
+                if (bVelocityValid)
+                    std::cout << "CHARACTER_WALL_VELOCITY step=" << step << " error=" << error << '\n';
+                bVelocityValid = false;
+            }
+            return true;
+        };
+
+        if (!checkStep() || !value.Character->GetState().bGrounded ||
+            !(value.Character->GetState().GroundCollider == floorCollider->GetColliderHandle()))
+        {
+            return false;
+        }
+        unsigned pinnedSteps = 0;
+        for (step = 1; step <= 90; ++step)
+        {
+            const auto beforeCharacter = value.Owner->GetPosition();
+            const float beforeFloor = floor->GetPosition().x;
+            const float distance = static_cast<float>(step) * 2.0f * kFixedDeltaTime;
+            mover->Target = Math::Transform(Math::Vector3(distance, -.5f, 0));
+            if (!checkStep() || !value.Character->GetState().bGrounded ||
+                !(value.Character->GetState().GroundCollider == floorCollider->GetColliderHandle()))
+            {
+                std::cout << "CHARACTER_WALL_GROUND step=" << step << '\n';
+                return false;
+            }
+            const float floorDelta = floor->GetPosition().x - beforeFloor;
+            if (!std::isfinite(floorDelta) || std::fabs(floorDelta - 2.0f * kFixedDeltaTime) > .0001f)
+            {
+                std::cout << "CHARACTER_WALL_PLATFORM step=" << step << " delta=" << floorDelta << '\n';
+                return false;
+            }
+            if (std::fabs(value.Owner->GetPosition().x - beforeCharacter.x) < .001f)
+                ++pinnedSteps;
+        }
+        std::cout << "CHARACTER_WALL_PINNED steps=" << pinnedSteps << '\n';
+        return bVelocityValid && pinnedSteps >= 10;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -2011,6 +2082,8 @@ namespace
             return TestCharacterPushDynamicSphere(processor);
         case 26:
             return TestCharacterVelocityAndDepenetration(processor);
+        case 27:
+            return TestCharacterPlatformPushedAgainstWall(processor);
         default:
             return false;
         }
