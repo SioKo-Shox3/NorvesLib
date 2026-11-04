@@ -9422,3 +9422,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 GrassField の格納と CPU のクエリを足す: 着地(直し 0 回)
 - U6 GrassFieldSnapshotContractTest を足す: 着地(直し 0 回)
 - U4 草の場の登録先 Vegetation を Engine のメンバに足す: 着地(直し 0 回)
+- U5 GrassFieldQueryTest を足し、タスクの verify を回す: 着地(直し 1 回)

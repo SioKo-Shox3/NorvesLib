@@ -187,15 +187,39 @@ namespace NorvesLib::Core::Vegetation
         {
             const int64_t neighborX = static_cast<int64_t>(chunk.Coord.X) + stepX;
             const int64_t neighborZ = static_cast<int64_t>(chunk.Coord.Z) + stepZ;
-            if (neighborX >= INT32_MIN && neighborX <= INT32_MAX &&
-                neighborZ >= INT32_MIN && neighborZ <= INT32_MAX)
+            const bool bNeighborXValid = neighborX >= INT32_MIN && neighborX <= INT32_MAX;
+            const bool bNeighborZValid = neighborZ >= INT32_MIN && neighborZ <= INT32_MAX;
+            const Chunk* pNeighbor = nullptr;
+            // 該当画素、Z を縮めた X 隣、X を縮めた Z 隣、自チャンクの順に探す。
+            if (bNeighborXValid && bNeighborZValid)
             {
-                const Chunk* pNeighbor = FindChunk({static_cast<int32_t>(neighborX), static_cast<int32_t>(neighborZ)});
-                if (pNeighbor != nullptr)
+                pNeighbor = FindChunk({static_cast<int32_t>(neighborX), static_cast<int32_t>(neighborZ)});
+            }
+            if (pNeighbor != nullptr)
+            {
+                pSource = pNeighbor;
+                sourceX = pixelX - stepX * size;
+                sourceZ = pixelZ - stepZ * size;
+            }
+            else if (stepX != 0 && stepZ != 0)
+            {
+                if (bNeighborXValid)
                 {
-                    pSource = pNeighbor;
-                    sourceX = pixelX - stepX * size;
-                    sourceZ = pixelZ - stepZ * size;
+                    pNeighbor = FindChunk({static_cast<int32_t>(neighborX), chunk.Coord.Z});
+                    if (pNeighbor != nullptr)
+                    {
+                        pSource = pNeighbor;
+                        sourceX = pixelX - stepX * size;
+                    }
+                }
+                if (pNeighbor == nullptr && bNeighborZValid)
+                {
+                    pNeighbor = FindChunk({chunk.Coord.X, static_cast<int32_t>(neighborZ)});
+                    if (pNeighbor != nullptr)
+                    {
+                        pSource = pNeighbor;
+                        sourceZ = pixelZ - stepZ * size;
+                    }
                 }
             }
         }
