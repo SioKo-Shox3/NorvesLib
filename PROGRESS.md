@@ -9312,3 +9312,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 草原の検証用の地形の入力（U6 の成果から始め、崖の端を丸める）: 着地(直し 0 回)
 - U4 AssetCook の --kind world の経路と AssetCookTerrainSmoke: 着地(直し 0 回)
 - U5 CookedTerrainTest の cook の経路のケース (a)〜(g): 着地(直し 0 回)
+- U7 CookAssets.ps1 が一覧の worlds（kind=world）を焼く: 着地(直し 0 回)
