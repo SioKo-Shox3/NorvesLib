@@ -9495,3 +9495,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 試験: `GrassFieldQueryTest` に 2×2 のうち 1 つを欠いた 4 通りの継ぎ目の検査を足した（直す前は最大密度差 0.177 で落ち、直した後は 260 点の最大 0.0022 ＜ 1/255。差は ±1e-3 m の勾配の分）。既存の値（継ぎ目の密度差 1.5676e-05、線形の誤差 1.47e-08）は変わらない。
 - 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U7-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが終了コード 0、ctest の 4 本 100% Passed）。起動の確かめは無い。
 - Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
+- U1 マスクの計算本体（TerrainMasks）と焼きの設定の入口: 着地(直し 0 回)
