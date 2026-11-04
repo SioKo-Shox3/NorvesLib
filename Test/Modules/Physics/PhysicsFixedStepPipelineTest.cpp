@@ -1,9 +1,12 @@
 ﻿// PhysicsFixedStepPipelineTest — M7 fixed-step dispatch と Physics post-step の契約を検証する。
 
 #include "Asset/AssetFileReader.h"
+#include "Animation/SkeletalAssetResource.h"
+#include "Component/AnimatorComponent.h"
 #include "Component/Component.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Ecs/EcsScheduler.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
@@ -17,6 +20,7 @@
 #include "Module/ModuleRegistry.h"
 #include "Object/ObjectHeap.h"
 #include "Object/Resource.h"
+#include "Object/ResourceRegistry.h"
 #include "Object/World.h"
 #include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
@@ -188,7 +192,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 29;
+    constexpr uint32_t kCaseCount = 30;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -2283,6 +2287,274 @@ namespace
         return true;
     }
 
+    bool TestGameLocomotionAnimatorValues(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace Animation;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool bPassed, const char* contract) {
+            if (!bPassed)
+            {
+                std::cout << "Animatorへの値: " << contract << '\n';
+            }
+            return bPassed;
+        };
+        ResourceRegistry registry;
+        if (!check(registry.Initialize(), "資産の管理を初期化できる"))
+        {
+            return false;
+        }
+        auto skeleton = registry.CreateTransient<SkeletonResource>("LocomotionSkeleton");
+        auto meshResource = registry.CreateTransient<SkinnedMeshResource>("LocomotionMesh");
+        auto clip = registry.CreateTransient<AnimationClipResource>("LocomotionClip");
+        auto asset = registry.CreateTransient<SkeletalAssetResource>("LocomotionAsset");
+        auto graph = registry.CreateTransient<AnimGraphResource>("LocomotionGraph");
+        auto emptyGraph = registry.CreateTransient<AnimGraphResource>("LocomotionEmptyGraph");
+        if (!check(skeleton && meshResource && clip && asset && graph && emptyGraph, "試験用の資産を作れる"))
+        {
+            return false;
+        }
+        Container::VariableArray<Skeletal::SkeletalJoint> joints(1);
+        joints[0].Name = "Root";
+        for (size_t i = 0; i < 16; ++i)
+        {
+            joints[0].InverseBindMatrix[i] = Math::Matrix4x4::Identity.values[i];
+        }
+        skeleton->SetJoints(std::move(joints));
+        Container::VariableArray<Skeletal::SkeletalVertex> vertices(3);
+        for (unsigned i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i].Position = {float(i == 1), float(i == 2), 0};
+            vertices[i].Normal = {0, 0, 1};
+            vertices[i].JointWeights[0] = 1;
+        }
+        meshResource->SetVertices(std::move(vertices));
+        meshResource->SetIndices(Container::VariableArray<uint32_t>{0, 1, 2});
+        Skeletal::SkeletalAnimationClip animation;
+        animation.Name = "idle";
+        animation.DurationSeconds = 1;
+        Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0;
+        channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+        channel.Samples = {{0, {0, 0, 0, 0}}, {1, {0, 0, 0, 0}}};
+        animation.Channels.push_back(std::move(channel));
+        clip->SetClip(std::move(animation));
+        if (!check(skeleton->Load() && meshResource->Load() && clip->Load(), "骨格・メッシュ・クリップが有効である"))
+        {
+            return false;
+        }
+        asset->SetResources(meshResource, skeleton, clip);
+        struct ClipResolver final : IClipResolver
+        {
+            Container::TSharedPtr<AnimationClipResource> Clip;
+            Container::TSharedPtr<AnimationClipResource> ResolveClip(Container::StringView name) const override
+            {
+                return name == Container::StringView("idle") ? Clip : Container::TSharedPtr<AnimationClipResource>{};
+            }
+        } resolver;
+        resolver.Clip = clip;
+        AnimGraphReport report;
+        const Container::String graphJson = R"({"version":1,"params":[
+            {"name":"GaitId","type":"int","value":-1},
+            {"name":"GaitWeight0","type":"float","value":-1},
+            {"name":"GaitWeight1","type":"float","value":-1},
+            {"name":"GaitWeight2","type":"float","value":-1},
+            {"name":"GaitWeight3","type":"float","value":-1},
+            {"name":"PitchAngle","type":"float","value":-1},
+            {"name":"BankAngle","type":"float","value":-1},
+            {"name":"ObservedSpeed","type":"float","bind":"speed"},
+            {"name":"ObservedTurn","type":"float","bind":"turnRate"},
+            {"name":"ObservedGrounded","type":"bool","bind":"grounded"}
+            ],"nodes":[{"id":"idle","type":"clip","clip":"idle"}],"root":"idle"})";
+        const Container::String emptyJson =
+            R"({"version":1,"nodes":[{"id":"idle","type":"clip","clip":"idle"}],"root":"idle"})";
+        if (!check(asset->Load() && graph->Compile(graphJson, *skeleton, resolver, report) && graph->Load() &&
+                       emptyGraph->Compile(emptyJson, *skeleton, resolver, report) && emptyGraph->Load(),
+                   "名前付きのグラフとパラメータのないグラフを組める"))
+        {
+            return false;
+        }
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        world.Tick(kFixedDeltaTime);
+        const bool bReady = StepCharacter(processor) && value.Character->GetState().bReady;
+        world.LateTick(kFixedDeltaTime);
+        if (!check(bReady, "入力を与える前に物理本体を準備できる"))
+        {
+            return false;
+        }
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move, jump;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings.push_back(key);
+        key.Source.Code = static_cast<uint16_t>(KeyCode::D);
+        key.Component = EInputAxisComponent::X;
+        move.Bindings.push_back(key);
+        jump.Id = "Jump"_id;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::Space);
+        key.Component = EInputAxisComponent::X;
+        jump.Bindings.push_back(key);
+        if (!bindings.AddContext("Gameplay"_id, ECursorMode::Normal) || !bindings.AddAction("Gameplay"_id, move) ||
+            !bindings.AddAction("Gameplay"_id, jump) || !mapper.ConfigureWithContext(bindings, "Gameplay"_id))
+        {
+            return false;
+        }
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        if (!driver || !pose)
+        {
+            return false;
+        }
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+            }
+        } unbind{driver};
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(pose);
+        if (!mesh)
+        {
+            return false;
+        }
+        mesh->SetSkeletalAsset(asset);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(pose);
+        if (!check(animator && animator->SetGraph(graph) && driver->SetVisualRoots(visual, pose),
+                   "見た目の子へAnimatorとグラフを接続できる"))
+        {
+            return false;
+        }
+        driver->BindInput(&mapper);
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        double inputTime = 0;
+        const auto frame = [&] {
+            inputTime += kFixedDeltaTime;
+            if (!mapper.BeginFrame(inputTime) || !mapper.Update(inputTime, kFixedDeltaTime))
+            {
+                return false;
+            }
+            world.Tick(kFixedDeltaTime);
+            const bool bStepped = StepCharacter(processor);
+            world.LateTick(kFixedDeltaTime);
+            return bStepped && value.Character->GetState().bReady;
+        };
+        Component::AnimatorDebugSnapshot snapshot;
+        const auto find = [&](Identity name, AnimParamType type) -> const AnimParamValue* {
+            for (const auto& param : snapshot.Parameters)
+            {
+                if (param.Name == name && param.Type == type)
+                {
+                    return &param.Value;
+                }
+            }
+            return nullptr;
+        };
+        unsigned frameIndex = 0, mismatches = 0;
+        const auto compareFloat = [&](const char* name, float expected) {
+            const auto* actual = find(Identity(name), AnimParamType::Float);
+            const bool bMatches = actual && std::isfinite(actual->Float) &&
+                                  std::fabs(actual->Float - expected) <= 1e-4f;
+            if (!bMatches && mismatches++ < 4)
+            {
+                std::cout << "Animatorへの値: フレーム=" << frameIndex << " 名前=" << name
+                          << " 実際=" << (actual ? actual->Float : -999) << " 期待=" << expected << '\n';
+            }
+            return bMatches;
+        };
+        bool bMatches = true, bBlended = false, bTurned = false, bGrounded = false, bAirborne = false;
+        for (; frameIndex < 96; ++frameIndex)
+        {
+            if (frameIndex == 20)
+            {
+                input.InjectKeyEvent(KeyCode::D, InputAction::Pressed);
+            }
+            if (frameIndex == 48)
+            {
+                input.InjectKeyEvent(KeyCode::Space, InputAction::Pressed);
+            }
+            if (frameIndex == 49)
+            {
+                input.InjectKeyEvent(KeyCode::Space, InputAction::Released);
+            }
+            if (!frame())
+            {
+                return false;
+            }
+            animator->BuildDebugSnapshot(snapshot);
+            if (!check(snapshot.bReady && snapshot.Parameters.size() == 10, "全パラメータを型付きで観測できる"))
+            {
+                return false;
+            }
+            const auto& output = driver->GetOutput();
+            bMatches &= compareFloat("ObservedSpeed", output.Speed);
+            bMatches &= compareFloat("ObservedTurn", output.TurnRate);
+            bMatches &= compareFloat("PitchAngle", output.Pitch);
+            bMatches &= compareFloat("BankAngle", output.Bank);
+            const auto* gait = find("GaitId"_id, AnimParamType::Int);
+            const auto* grounded = find("ObservedGrounded"_id, AnimParamType::Bool);
+            bMatches &= check(gait && gait->Int == output.Gait, "歩様の識別子がモデルと一致する");
+            bMatches &= check(grounded && grounded->Bool == output.bGrounded, "接地の信号がモデルと一致する");
+            float sum = 0;
+            unsigned activeWeights = 0;
+            const char* names[] = {"GaitWeight0", "GaitWeight1", "GaitWeight2", "GaitWeight3"};
+            for (unsigned i = 0; i < 4; ++i)
+            {
+                bMatches &= compareFloat(names[i], output.GaitWeights[i]);
+                const auto* weight = find(Identity(names[i]), AnimParamType::Float);
+                if (weight)
+                {
+                    sum += weight->Float;
+                    activeWeights += weight->Float > 1e-4f && weight->Float < 1 - 1e-4f;
+                }
+            }
+            bMatches &= check(std::isfinite(sum) && std::fabs(sum - 1) <= 1e-4f, "歩様の重みの合計が1である");
+            bBlended |= activeWeights >= 2;
+            bTurned |= std::fabs(output.TurnRate) > 1e-4f;
+            bGrounded |= output.bGrounded;
+            bAirborne |= !output.bGrounded;
+        }
+        if (!check(bBlended && bTurned && bGrounded && bAirborne, "歩様の遷移・旋回・接地と空中の両方を含む") ||
+            !check(animator->SetGraph(emptyGraph), "名前のパラメータのないグラフへ差し替えられる"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 8; ++i)
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!frame())
+            {
+                return false;
+            }
+            animator->BuildDebugSnapshot(snapshot);
+            const auto delta = value.Owner->GetPosition() - before;
+            if (!check(snapshot.bReady && snapshot.Parameters.empty() && std::hypot(delta.x, delta.z) > 1e-4f,
+                       "名前のパラメータがなくても毎フレーム本体が移動し続ける"))
+            {
+                return false;
+            }
+        }
+        if (bMatches)
+        {
+            std::cout << "Animatorへの値: 96フレームでモデルとの一致、遷移と旋回、空グラフでの移動継続を確認\n";
+        }
+        return bMatches;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -2345,6 +2617,8 @@ namespace
             return TestCharacterPlatformPushedAgainstWall(processor);
         case 28:
             return TestGameLocomotionProfileReload(processor);
+        case 29:
+            return TestGameLocomotionAnimatorValues(processor);
         default:
             return false;
         }
