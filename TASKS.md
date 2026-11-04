@@ -10223,3 +10223,25 @@
 - verify: `ctest --test-dir build -C Debug -R "^(R125HdrBlitVulkanTest|R125HdrLutVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Docs/RenderingValidation/R125HdrChecklist.md, Docs/RenderingValidation/R125HdrOutput.md, TASKS.md, PROGRESS.md
 - notes: 受け入れ確認はロードマップ 4120〜4122 行と要件 `#### GR125`。(2) の Game の起動は作業者が PowerShell で `build/Game/RelWithDebInfo/Game.exe` を引数つきで回し、終了コードとログの行を PROGRESS.md に貼る（起動の台本を新しく作らない。HDR の判定のログの行は G19-GR125-HDR-DISPLAY が出す）。CI や開発機で HDR の表示が使えるかは未確認（ロードマップ 4216 行）なので、合格は「HDR の無い環境で SDR に落ちて起動する」までで、HDR のモニターでの見え方は作者の手の確かめに残す。needs-gr GR100（色と明度の指標）。性能の計測ではないので `gpu: exclusive` は付けない。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
+
+## G5-GR37-TERRAIN-COMPONENT-P1: `Scripts/CookAssets.ps1` の地形（worlds）の変更検出に、スペックの `recipe.paint[].path` が指すペイントの PNG を含める
+- status: todo
+- done-when:
+  - (1) `Scripts/CookAssets.ps1` の worlds の項目について、地形のスペックの `recipe.paint[].path` を読み、変更検出の対象と印の元（`-StampTexts`）に加える。今の対象はスペックと `height_source.path` だけ。パスの解き方は AssetCook の `ReadSpecPath`（`Tools/AssetCook/TerrainSpec.cpp`）と同じにする。相対パスはスペックの置き場所が基準で、絶対パスも受ける。ペイントのファイルが無ければ、高さのファイルと同じく「変更の検出に使うファイルが見つかりません」で止める。
+  - (2) ペイントを持たないスペックは、印の値が今と変わらない（Grassland などを焼き直さない）。
+  - (3) 新しい確かめの台本 `Scripts/Test-CookAssetsTerrainStamp.ps1` が、次の 3 点を確かめ、成功したら `TERRAIN_PAINT_STAMP ok` を出して 0 で終わる。
+    - 用意: `build/` 配下の一時の置き場に、33×33 の高さの fixture（`Test/Core/Asset/Fixtures/Terrain/height_formula_33x33_16bit.png`）とペイントの PNG 1 枚を参照する一時のスペックと一覧を作る。`-SpecDir`・`-RuntimeRoot` をそこへ向けて 1 回焼く。
+    - ペイントの PNG だけを書き換えると、`-CheckStamps` が `status=stale` を出す。
+    - `-Force` を付けずに走らせても焼き直され、`cooked=1` になる。
+    - 書き換えていない状態で走らせると `status=match`・`skipped=1` になる。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-CookAssetsTerrainStamp.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*" -CheckStamps`
+- paths: Scripts/CookAssets.ps1, Scripts/Test-CookAssetsTerrainStamp.ps1, TASKS.md, PROGRESS.md
+- from: G5-GR37-TERRAIN-COMPONENT
+- notes:
+  - 提案の中身はコードで確かめた。`CookAssets.ps1` の 831 行は `$sourceTexts = @($sourceText, $heightText)` だけを印に入れている。一方、AssetCook の `TerrainSpec.cpp` 1196〜1210 行は、ペイントのバイト列を `SourceHash` に入れている。
+  - ペイントだけを変えると、cook は黙って古い NVTRN を使い続け、エラーも出ない。撮影でも気づきにくい。この先、G12-GR93-PAINT（ブラシでマスクを塗り、地形のマスクの cook へ渡す）と G11-GR59-PUDDLE-MASK がこの経路を前提にするので、先に塞ぐ。
+  - 台本を足すのは、この「黙って古いまま」を拾うためで、試験の規律の「失敗が黙って起きる」に当たる。
+  - 台本は `build/` 配下だけに書き、作業ツリーの資産は変えない。
+  - アプリは起動しない。
