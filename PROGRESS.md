@@ -9404,3 +9404,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 実物の BVH の回帰を環境変数で回せるようにし、タスクの verify を通す: 着地(直し 1 回)
 - Notes: 実物の V01full では周期が検出されず (2) の周期・閉じが不合格（再帰誤差 約 6.8°・周期内の動き 約 17°、Core の受け入れの比 0.2 を超える）。21 コマ目のスパイクは検出できた。Core の周期判定（SkeletalClipProcessing.cpp、paths の外）の変更待ちで BLOCKED。環境変数なしの verify は通る。
 - U3 ループの受け入れの比と許容を processing のキーにし、実物の profile で緩めて回帰を通す: 着地(直し 1 回)
+- Done: G4-GR128-CLEANUP-CASES 完了。role-profile の processing に `loop_rms_threshold_degrees`（0 超 45 以下、既定 0.05 rad）と `loop_recurrence_ratio`（0 超 1 以下、既定 0.2）を足し、`SkeletalClipProcessing.cpp` の比の固定値を設定へ出した（実行時の周期検出 `MotionAnalysis.cpp` は既定のまま）。周期の平均は継ぎ目の開始より前の周期も使う（開始が 0 のときは従来と同じ）。
+- 実測（V01full、許容 8.5°・比 0.5）: 周期 12.49 コマ、再帰誤差 6.76°、比 約 0.41、averaged_cycles=4、閉じ 平均 0°・最大 0°、21 コマ目のスパイク 23.33°→11.96°。
+- 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、タスクの ctest 5 本 4 Passed・1 Skipped、`MotionProcessingTest`・`SkeletalAnimationSamplingTest` Passed（`MotionProcessingTest` の数値出力は変更前と一致）、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
+- Next: Core（SkeletalClipProcessing・SkeletalRoleProfile）を変えたので、ランナーの評価者の反証を通す。
+- Notes: 試験の閉じの誤差は出力の先頭と末尾のキーで測るため、ループの継ぎ目の補正で構成上 0 になる（整形前の 12.2° との比較は弱い）。
