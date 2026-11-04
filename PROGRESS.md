@@ -9725,3 +9725,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに書き換えられて MSBuild がスイッチの誤りで止まる。verify は PowerShell(か cmd)で回す。
 - Notes: アプリを起動する確かめは無い。
 - Next: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の Notes の `要起票:`(`CookManagedBootstrap.cpp:457` の workspace を親にする `Absent`)は未起票のまま。
+- U1 IGroundQuery の型と PhysicsGroundQuery の実装を Core に足す: 着地(直し 1 回)
