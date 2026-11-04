@@ -328,9 +328,44 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
     bool VerifyClaims(const Identity& workspace, const Identity& store, const CookManagedStoreIndex& index,
                       const Array<Identity>& chain, Text& error)
     {
+        Array<std::filesystem::path> claimLeaves;
+        claimLeaves.reserve(index.Roots.size());
+        for (const auto& claim : index.Roots)
+        {
+            claimLeaves.push_back(Leaf(claim.RootLeaf));
+        }
+        const auto compareLeaf = [](const std::filesystem::path& leaf, const wchar_t* wanted)
+        {
+            const int value = CompareStringOrdinal(leaf.c_str(), static_cast<int>(leaf.native().size()), wanted,
+                                                   -1, TRUE);
+            if (!value)
+            {
+                throw std::runtime_error("claim_name_comparison_failed");
+            }
+            return value - CSTR_EQUAL;
+        };
+        std::sort(claimLeaves.begin(), claimLeaves.end(),
+                  [&](const std::filesystem::path& a, const std::filesystem::path& b)
+                  {
+                      return compareLeaf(a, b.c_str()) < 0;
+                  });
+        const auto matchesClaim = [&](const wchar_t* name)
+        {
+            const auto found = std::lower_bound(claimLeaves.begin(), claimLeaves.end(), name,
+                                                [&](const std::filesystem::path& leaf, const wchar_t* wanted)
+                                                {
+                                                    return compareLeaf(leaf, wanted) < 0;
+                                                });
+            return found != claimLeaves.end() && compareLeaf(*found, name) == 0;
+        };
         N::Entries entries;
         N::Budget budget;
-        if (!N::Enumerate(workspace, entries, budget, error))
+        if (!N::EnumerateKept(workspace, entries, budget, error,
+                              [&](const WIN32_FIND_DATAW& data)
+                              {
+                                  return matchesClaim(data.cFileName) ||
+                                         (data.cAlternateFileName[0] && matchesClaim(data.cAlternateFileName));
+                              }))
         {
             return false;
         }
@@ -430,7 +465,13 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
             N::Entries entries;
             N::Budget budget;
             const N::Entry* entry = nullptr;
-            if (!N::Enumerate(workspace, entries, budget, error) ||
+            if (!N::EnumerateKept(workspace, entries, budget, error,
+                                  [](const WIN32_FIND_DATAW& data)
+                                  {
+                                      return N::Fold(data.cFileName, N::StoreLeaf) ||
+                                             (data.cAlternateFileName[0] &&
+                                              N::Fold(data.cAlternateFileName, N::StoreLeaf));
+                                  }) ||
                 !N::Fixed(entries, N::StoreLeaf, false, entry, error))
             {
                 return false;
