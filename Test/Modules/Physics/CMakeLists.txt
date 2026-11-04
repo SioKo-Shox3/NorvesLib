@@ -69,6 +69,9 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
     MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
     MEMBER CombatSweepTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatSweepTest.cpp
+    MEMBER HealthComponentTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/HealthComponentTest.cpp
+    MEMBER ProgressionStateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/ProgressionStateTest.cpp
+    MEMBER DefeatGateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/DefeatGateTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
@@ -110,3 +113,6 @@ add_test(NAME DogMovementSmokeGeometryTest COMMAND PhysicsDynamicsTest --test=Do
 
 add_test(NAME FollowCameraBehaviorTest COMMAND PhysicsDynamicsTest --test=FollowCameraBehaviorTest)
 add_test(NAME CombatSweepTest COMMAND PhysicsDynamicsTest --test=CombatSweepTest)
+add_test(NAME HealthComponentTest COMMAND PhysicsDynamicsTest --test=HealthComponentTest)
+add_test(NAME ProgressionStateTest COMMAND PhysicsDynamicsTest --test=ProgressionStateTest)
+add_test(NAME DefeatGateTest COMMAND PhysicsDynamicsTest --test=DefeatGateTest)

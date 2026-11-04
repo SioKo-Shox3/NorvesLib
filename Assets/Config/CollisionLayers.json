@@ -1,0 +1,53 @@
+{
+  "schema": "collision-layers.v1",
+  "layers": [
+    {
+      "name": "Default",
+      "bit": 0
+    },
+    {
+      "name": "Terrain",
+      "bit": 1
+    },
+    {
+      "name": "Platform",
+      "bit": 2
+    },
+    {
+      "name": "Player",
+      "bit": 3
+    },
+    {
+      "name": "Hurtbox",
+      "bit": 4
+    },
+    {
+      "name": "Hitbox",
+      "bit": 5
+    },
+    {
+      "name": "Prop",
+      "bit": 6
+    },
+    {
+      "name": "Animal",
+      "bit": 7
+    },
+    {
+      "name": "GrassInteract",
+      "bit": 8
+    },
+    {
+      "name": "CameraBlock",
+      "bit": 9
+    },
+    {
+      "name": "Trigger",
+      "bit": 10
+    },
+    {
+      "name": "Perception",
+      "bit": 11
+    }
+  ]
+}
