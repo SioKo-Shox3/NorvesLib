@@ -9500,3 +9500,5 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U2-verify.txt`（TEMP・TMP は差し替えず、TEMP 直下 133800 件。verify のビルド 終了コード 0。ctest 6 本のうち `CookManagedUpdateTest`・`TextureManagedCliTest` を含む 5 本 Passed、`CookManagedStoreObservationTest` は `entry_limit` で Failed。親の枝の `CookManagedStoreObservation.cpp` と試験の変更（a900b4e0・ef9c7b72）を一時的に重ねると 6 本すべて Passed、戻した後のビルドも終了コード 0。numstat の 2 通りが一致）。
 - Next: 親の G2-GR82-B4-STATIC-ROOT-FRAME128-P1（`ObserveLocked` の読み流し）が統合されると、verify の 6 本が単独で通る。
 - Notes: `CookManagedStoreObservationTest` が落ちるのは、`CookManagedStoreObservation.cpp`（この項目の paths の外）の `ObserveLocked` がまだ全件をためる列挙だから。この項目の変更が原因ではない。親タスクの枝と Native.h が同じなので、親を取り込むときに衝突しない。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 2): 反復 1 の再実行で `CookManagedStoreObservationTest` だけが `entry_limit` で落ちた。原因は親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `ObserveLocked`（paths の外）がまだ統合されていないことで、親は `after:` でこの項目を待っている。互いに待つので BLOCKED にし、verify から Observation を外す案を推奨として blocked に書いた。
