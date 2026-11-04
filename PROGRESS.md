@@ -9690,3 +9690,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 減衰振動のばねと角度のばね（固定サブステップのアキュムレータ）: 着地(直し 0 回)
 - U5 *.posemod.json のパーサ・型の表・AnimatorComponent の適用口: 着地(直し 0 回)
 - U6 AngleDistribution とばねの試験: 着地(直し 0 回)
+- U7 設定ファイルの試験（拒否と保持・順序・重みのカーブ・文脈の口）: 着地(直し 0 回)

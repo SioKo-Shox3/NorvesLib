@@ -1,7 +1,16 @@
 ﻿// 手続き層と足 IK が共有する姿勢の後処理の土台を検証する。
 #include "Animation/Procedural/AngleDistribution.h"
 #include "Animation/Procedural/Spring.h"
+#include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/SkeletalAssetResource.h"
+#include "Animation/SkeletonResource.h"
+#include "Component/AnimatorComponent.h"
+#include "Component/SkinnedMeshComponent.h"
+#include "Object/Entity.h"
+#include "Object/ResourceRegistry.h"
+#include "Object/World.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -507,6 +516,413 @@ namespace
         std::printf("PoseModifierBaseTest Reset: max_position_error=%.12g max_angle_rad=%.12g max_remainder_error_s=%.12g max_dropped_error_s=%.12g bit_mismatches=0\n",
                     maxPositionError, maxAngleError, maxRemainderError, maxDroppedError);
     }
+    using NorvesLib::Core::AnimationClipResource;
+    using NorvesLib::Core::AnimGraphResource;
+    using NorvesLib::Core::Entity;
+    using NorvesLib::Core::Identity;
+    using NorvesLib::Core::ResourceRegistry;
+    using NorvesLib::Core::SkeletalAssetResource;
+    using NorvesLib::Core::SkeletonResource;
+    using NorvesLib::Core::SkinnedMeshResource;
+    using NorvesLib::Core::World;
+    namespace Component = NorvesLib::Core::Component;
+    namespace Skeletal = NorvesLib::Core::Skeletal;
+
+    struct ModifierCall
+    {
+        int32_t Id;
+        const Animation::IPoseModifier* Instance;
+        float Weight;
+        bool bHasDriveSignals;
+        Animation::AnimDriveSignals Signals;
+        Entity* Owner;
+        int32_t ChildIndex;
+        int32_t MissingIndex;
+        Math::Matrix4x4 MeshToWorld;
+    };
+
+    Container::VariableArray<ModifierCall>* g_ModifierCalls = nullptr;
+
+    class RecordingModifier final : public Animation::IPoseModifier
+    {
+      public:
+        RecordingModifier(int32_t id, Container::VariableArray<ModifierCall>& calls)
+            : m_Id(id), m_Calls(calls)
+        {
+        }
+
+        int32_t Order() const override
+        {
+            return 1000;
+        }
+
+        bool Apply(Animation::LocalPose&, Animation::PoseModifierContext& context) override
+        {
+            m_Calls.push_back({m_Id, this, context.Weight, context.HasDriveSignals(), context.GetDriveSignals(),
+                               context.GetOwner(), context.FindJointIndex(Identity("Child")),
+                               context.FindJointIndex(Identity("NoSuchJoint")), context.MeshToWorld});
+            return true;
+        }
+
+      private:
+        int32_t m_Id;
+        Container::VariableArray<ModifierCall>& m_Calls;
+    };
+
+    template <int32_t Id>
+    bool CreateRecordingModifier(const Procedural::PoseModifierCreateArgs& args,
+                                 Container::TSharedPtr<Animation::IPoseModifier>& out,
+                                 Procedural::PoseModifierConfigReport& report)
+    {
+        const char* const allowed[] = {"joint"};
+        if (!Procedural::CheckPoseModifierKeys(args.Settings, allowed, report))
+        {
+            return false;
+        }
+        int32_t jointIndex = -1;
+        if (!Procedural::ResolvePoseModifierJoint(args.Settings.FindMember("joint"), args.Skeleton, jointIndex, report))
+        {
+            report.Path = Container::String("joint");
+            return false;
+        }
+        Check(g_ModifierCalls != nullptr, "試験用記録先", 0, g_ModifierCalls ? 1.0 : 0.0, 1.0);
+        out = Container::MakeShared<RecordingModifier>(Id, *g_ModifierCalls);
+        return true;
+    }
+
+    enum ModifierId : int32_t
+    {
+        First = 1,
+        Second,
+        Foot,
+        Lean,
+        Custom,
+        Curve,
+        Tail
+    };
+
+    const Procedural::PoseModifierTypeEntry ModifierTypes[] = {
+        {"First", 0, CreateRecordingModifier<First>},
+        {"Second", 0, CreateRecordingModifier<Second>},
+        {"FootIK", 0, CreateRecordingModifier<Foot>},
+        {"Lean", 0, CreateRecordingModifier<Lean>},
+        {"Custom", 300, CreateRecordingModifier<Custom>},
+        {"Curve", 0, CreateRecordingModifier<Curve>}
+    };
+    const Procedural::PoseModifierTypeTable ModifierTable{ModifierTypes};
+
+    void CheckConfig(bool bOk, const char* contract)
+    {
+        Check(bOk, contract, 0, bOk ? 1.0 : 0.0, 1.0);
+    }
+
+    struct ModifierFixture : Animation::IClipResolver
+    {
+        ResourceRegistry Registry;
+        Container::TSharedPtr<SkeletonResource> Skeleton;
+        Container::TSharedPtr<SkinnedMeshResource> Mesh;
+        Container::TSharedPtr<AnimationClipResource> Clip;
+        Container::TSharedPtr<SkeletalAssetResource> Asset;
+        Container::TSharedPtr<AnimGraphResource> Graph;
+        Container::VariableArray<ModifierCall> Calls;
+        World TestWorld;
+        Entity* Owner = nullptr;
+        Component::SkinnedMeshComponent* MeshComponent = nullptr;
+        Component::AnimatorComponent* Animator = nullptr;
+
+        ModifierFixture()
+        {
+            CheckConfig(Registry.Initialize(), "試験用 Registry の初期化");
+            Skeleton = Registry.CreateTransient<SkeletonResource>("ModifierSkeleton");
+            Mesh = Registry.CreateTransient<SkinnedMeshResource>("ModifierMesh");
+            Clip = Registry.CreateTransient<AnimationClipResource>("ModifierClip");
+            Asset = Registry.CreateTransient<SkeletalAssetResource>("ModifierAsset");
+            CheckConfig(Skeleton && Mesh && Clip && Asset, "試験用資源の作成");
+
+            Container::VariableArray<Skeletal::SkeletalJoint> joints(2);
+            joints[0].Name = "Root";
+            joints[1].Name = "Child";
+            joints[1].ParentIndex = 0;
+            for (auto& joint : joints)
+            {
+                joint.InverseBindMatrix.fill(0);
+                for (unsigned i = 0; i < 4; ++i)
+                {
+                    joint.InverseBindMatrix[i * 5] = 1;
+                }
+            }
+            Skeleton->SetJoints(std::move(joints));
+            CheckConfig(Skeleton->Load(), "試験用骨格の読み込み");
+
+            Container::VariableArray<Skeletal::SkeletalVertex> vertices(1);
+            vertices[0].Normal = {0, 1, 0};
+            vertices[0].JointIndices[0] = 1;
+            vertices[0].JointWeights[0] = 1;
+            Mesh->SetVertices(std::move(vertices));
+            Mesh->SetIndices(Container::VariableArray<uint32_t>{0, 0, 0});
+            CheckConfig(Mesh->Load(), "試験用メッシュの読み込み");
+
+            Skeletal::SkeletalAnimationClip clip;
+            clip.Name = "a";
+            clip.DurationSeconds = 1;
+            Skeletal::SkeletalAnimationChannel channel;
+            channel.JointIndex = 0;
+            channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+            channel.Samples.push_back({0, {0, 0, 0, 0}});
+            channel.Samples.push_back({1, {2, 0, 0, 0}});
+            clip.Channels.push_back(std::move(channel));
+            Clip->SetClip(std::move(clip));
+            CheckConfig(Clip->Load(), "試験用クリップの読み込み");
+            Asset->SetClipResources(Mesh, Skeleton, {Clip});
+            CheckConfig(Asset->Load(), "試験用アセットの読み込み");
+
+            Graph = Registry.CreateTransient<AnimGraphResource>("ModifierGraph");
+            Animation::AnimGraphReport graphReport;
+            const char* graphJson =
+                R"({"version":1,"params":[{"name":"Speed","type":"float","value":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})";
+            CheckConfig(Graph && Graph->Compile(Container::String(graphJson), *Skeleton, *this, graphReport) &&
+                            Graph->Load(),
+                        "試験用グラフの読み込み");
+            TestWorld.Initialize();
+            Owner = TestWorld.SpawnEntity<Entity>();
+            CheckConfig(Owner != nullptr, "試験用 Entity の作成");
+            MeshComponent = TestWorld.CreateComponent<Component::SkinnedMeshComponent>(Owner);
+            Animator = TestWorld.CreateComponent<Component::AnimatorComponent>(Owner);
+            CheckConfig(MeshComponent && Animator, "試験用コンポーネントの作成");
+            MeshComponent->SetSkeletalAsset(Asset);
+            CheckConfig(Animator->SetGraph(Graph), "試験用グラフの接続");
+            CheckConfig(g_ModifierCalls == nullptr, "試験用記録先の独立性");
+            g_ModifierCalls = &Calls;
+        }
+
+        ~ModifierFixture()
+        {
+            TestWorld.Finalize();
+            g_ModifierCalls = nullptr;
+        }
+
+        Container::TSharedPtr<AnimationClipResource> ResolveClip(Container::StringView name) const override
+        {
+            return name == Container::StringView("a") ? Clip : Container::TSharedPtr<AnimationClipResource>{};
+        }
+
+        void Tick()
+        {
+            Calls.clear();
+            TestWorld.Tick(0.01f);
+        }
+    };
+
+    const char* ConfigErrorName(Procedural::PoseModifierConfigError error)
+    {
+        using Error = Procedural::PoseModifierConfigError;
+        switch (error)
+        {
+        case Error::UnknownType: return "UnknownType";
+        case Error::UnknownKey: return "UnknownKey";
+        case Error::DuplicateKey: return "DuplicateKey";
+        case Error::TypeMismatch: return "TypeMismatch";
+        case Error::OutOfRange: return "OutOfRange";
+        case Error::UnknownJoint: return "UnknownJoint";
+        case Error::UnknownParam: return "UnknownParam";
+        case Error::FileReadFailed: return "FileReadFailed";
+        default: return "Other";
+        }
+    }
+
+    void PrintConfigError(const Procedural::PoseModifierConfigReport& report)
+    {
+        std::printf("PoseModifierBaseTest 拒否: error=%s path=", ConfigErrorName(report.Error));
+        for (const auto character : report.Path)
+        {
+            std::putchar(static_cast<unsigned char>(character));
+        }
+        std::putchar('\n');
+        std::fflush(stdout);
+    }
+
+    void TestConfigRejectionPreservesModifiers()
+    {
+        // 設定の拒否理由を区別し、失敗後も元の modifier 群をそのまま実行する契約を反証する。
+        ModifierFixture fixture;
+        Procedural::PoseModifierConfigReport report;
+        const char* valid =
+            R"({"version":1,"modifiers":[{"type":"First","order":400,"settings":{"joint":"Root"}},{"type":"Second","order":200,"settings":{"joint":"Child"}}]})";
+        CheckConfig(fixture.Animator->ApplyPoseModifiersJson(Container::String(valid), ModifierTable, &report),
+                    "初期 modifier 群の設定");
+        fixture.Tick();
+        CheckConfig(fixture.Calls.size() == 2 && fixture.Calls[0].Id == Second && fixture.Calls[1].Id == First,
+                    "初期 modifier 群の順序と回数");
+        const auto* previousFirst = fixture.Calls[0].Instance;
+        const auto* previousSecond = fixture.Calls[1].Instance;
+
+        using Error = Procedural::PoseModifierConfigError;
+        const struct RejectionCase
+        {
+            const char* Json;
+            Error Expected;
+        } cases[] = {
+            {R"({"version":1,"modifiers":[{"type":"First","settings":{"joint":"Root"}},{"type":"Missing"}]})", Error::UnknownType},
+            {R"({"version":1,"modifiers":[{"type":"First","settings":{"joint":"Root"}},{"type":"Second","extra":1}]})", Error::UnknownKey},
+            {R"({"version":1,"modifiers":[{"type":"First","settings":{"joint":"Root"}},{"type":"Second","order":2,"order":3}]})", Error::DuplicateKey},
+            {R"({"version":1,"modifiers":[{"type":"First","settings":{"joint":"Root"}},{"type":"Second","order":"5"}]})", Error::TypeMismatch},
+            {R"({"version":1,"modifiers":[{"type":"First","settings":{"joint":"Root"}},{"type":"Second","order":20000}]})", Error::OutOfRange},
+            {R"({"version":1,"modifiers":[{"type":"First","settings":{"joint":"Root"}},{"type":"Second","settings":{"joint":"NoSuchJoint"}}]})", Error::UnknownJoint}
+        };
+        for (const auto& test : cases)
+        {
+            const bool bAccepted = fixture.Animator->ApplyPoseModifiersJson(Container::String(test.Json), ModifierTable, &report);
+            PrintConfigError(report);
+            CheckConfig(!bAccepted && report.Error == test.Expected && !report.Path.empty(), "設定の拒否理由とパス");
+            fixture.Tick();
+            CheckConfig(fixture.Calls.size() == 2 && fixture.Calls[0].Id == Second && fixture.Calls[1].Id == First &&
+                            fixture.Calls[0].Instance == previousFirst && fixture.Calls[1].Instance == previousSecond,
+                        "拒否後の modifier 群の保持");
+        }
+    }
+
+    void TestConfigOrderAndFile()
+    {
+        // 既定順・同順の安定性・無効化と BOM 付きファイルの読み込みを反証する。
+        ModifierFixture fixture;
+        Procedural::PoseModifierConfigReport report;
+        const char* json =
+            R"({"version":1,"modifiers":[{"type":"FootIK","settings":{"joint":"Root"}},{"type":"Lean","settings":{"joint":"Root"}},{"type":"Custom","settings":{"joint":"Child"}},{"type":"Second","order":600,"settings":{"joint":"Root"}},{"type":"First","order":600,"settings":{"joint":"Root"}},{"type":"First","order":50,"enabled":false,"settings":{"joint":"Root"}}]})";
+        CheckConfig(fixture.Animator->ApplyPoseModifiersJson(Container::String(json), ModifierTable, &report),
+                    "順序の設定");
+        const auto checkOrder = [&fixture]()
+        {
+            fixture.Tick();
+            CheckConfig(fixture.Calls.size() == 5 && fixture.Calls[0].Id == Lean && fixture.Calls[1].Id == Custom &&
+                            fixture.Calls[2].Id == Foot && fixture.Calls[3].Id == Second && fixture.Calls[4].Id == First,
+                        "既定順・同順・無効化");
+        };
+        checkOrder();
+
+        const char* boundaries = R"({
+            "version": 1,
+            "modifiers": [
+                {"type":"FootIK","settings":{"joint":"Root"}},
+                {"type":"Lean","settings":{"joint":"Root"}},
+                {"type":"Custom","settings":{"joint":"Root"}},
+                {"type":"First","order":99,"settings":{"joint":"Root"}},
+                {"type":"Second","order":100,"settings":{"joint":"Root"}},
+                {"type":"First","order":299,"settings":{"joint":"Root"}},
+                {"type":"Second","order":300,"settings":{"joint":"Root"}},
+                {"type":"First","order":499,"settings":{"joint":"Root"}},
+                {"type":"Second","order":500,"settings":{"joint":"Root"}}
+            ]
+        })";
+        CheckConfig(fixture.Animator->ApplyPoseModifiersJson(Container::String(boundaries), ModifierTable, &report),
+                    "既定 order の境界設定");
+        fixture.Tick();
+        const int32_t expectedOrder[] = {First, Lean, Second, First, Custom, Second, First, Foot, Second};
+        CheckConfig(fixture.Calls.size() == sizeof(expectedOrder) / sizeof(expectedOrder[0]),
+                    "既定 order の境界での呼び出し回数");
+        for (size_t i = 0; i < fixture.Calls.size(); ++i)
+        {
+            CheckConfig(fixture.Calls[i].Id == expectedOrder[i], "既定 order の境界での呼び出し順");
+        }
+
+        char path[128];
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        std::snprintf(path, sizeof(path), "PoseModifierBaseTest.%llu.posemod.json",
+                      static_cast<unsigned long long>(stamp));
+        std::FILE* file = nullptr;
+        CheckConfig(fopen_s(&file, path, "wbx") == 0 && file != nullptr, "一時設定ファイルの作成");
+        const unsigned char bom[] = {0xef, 0xbb, 0xbf};
+        const bool bWritten = std::fwrite(bom, 1, sizeof(bom), file) == sizeof(bom) &&
+                              std::fwrite(json, 1, std::strlen(json), file) == std::strlen(json);
+        const bool bClosed = std::fclose(file) == 0;
+        const bool bAccepted = bWritten && bClosed &&
+            fixture.Animator->ApplyPoseModifiersFile(Container::String(path), ModifierTable, &report);
+        const bool bRemoved = std::remove(path) == 0;
+        CheckConfig(bWritten && bClosed && bRemoved, "一時設定ファイルの書き込みと削除");
+        CheckConfig(bAccepted, "BOM 付き設定ファイルの読み込み");
+        checkOrder();
+
+        const bool bMissingAccepted = fixture.Animator->ApplyPoseModifiersFile(Container::String(path), ModifierTable, &report);
+        PrintConfigError(report);
+        CheckConfig(!bMissingAccepted && report.Error == Procedural::PoseModifierConfigError::FileReadFailed &&
+                        !report.Path.empty(),
+                    "存在しない設定ファイルの拒否");
+    }
+
+    void TestConfigWeightCurve()
+    {
+        // カーブの補間・範囲端・重み 0 の省略と、後続処理への重み復元を反証する。
+        ModifierFixture fixture;
+        Procedural::PoseModifierConfigReport report;
+        const char* json =
+            R"({"version":1,"modifiers":[{"type":"Curve","weight":{"param":"Speed","curve":[[0,0],[0.5,0.2],[1,1]]},"settings":{"joint":"Root"}}]})";
+        CheckConfig(fixture.Animator->ApplyPoseModifiersJson(Container::String(json), ModifierTable, &report),
+                    "重みカーブの設定");
+        CheckConfig(fixture.Animator->AddModifier(Container::MakeShared<RecordingModifier>(Tail, fixture.Calls)),
+                    "包まれていない後続 modifier の追加");
+        const auto speed = fixture.Animator->FindParam(Identity("Speed"));
+        CheckConfig(speed != Animation::InvalidAnimParam, "Speed パラメータの検索");
+        const float values[] = {0.25f, 0.75f, 2.0f, 0.0f};
+        const float expected[] = {0.1f, 0.6f, 1.0f, 0.0f};
+        for (int i = 0; i < 4; ++i)
+        {
+            CheckConfig(fixture.Animator->SetFloat(speed, values[i]), "Speed の設定");
+            fixture.Tick();
+            const bool bZero = values[i] == 0.0f;
+            CheckConfig(fixture.Calls.size() == (bZero ? 1 : 2), "カーブ modifier の呼び出し回数");
+            if (!bZero)
+            {
+                CheckConfig(fixture.Calls[0].Id == Curve, "カーブ modifier の呼び出し順");
+                CheckWithin(std::fabs(double(fixture.Calls[0].Weight) - expected[i]), 1e-6,
+                            "カーブの区分線形補間", i);
+            }
+            const auto& tail = fixture.Calls[bZero ? 0 : 1];
+            CheckConfig(tail.Id == Tail, "後続 modifier の呼び出し順");
+            CheckWithin(std::fabs(double(tail.Weight) - 1.0), 1e-6, "後続 modifier の重みの復元", i);
+        }
+        const char* unknown =
+            R"({"version":1,"modifiers":[{"type":"Curve","weight":{"param":"MissingSpeed","curve":[[0,0],[1,1]]},"settings":{"joint":"Root"}}]})";
+        const bool bAccepted = fixture.Animator->ApplyPoseModifiersJson(Container::String(unknown), ModifierTable, &report);
+        PrintConfigError(report);
+        CheckConfig(!bAccepted && report.Error == Procedural::PoseModifierConfigError::UnknownParam && !report.Path.empty(),
+                    "未知のカーブパラメータの拒否");
+    }
+
+    void TestModifierContextDelivery()
+    {
+        // 駆動信号・所有者・関節検索・メッシュ変換が modifier に届く契約を反証する。
+        ModifierFixture fixture;
+        Animation::AnimDriveSignals signals;
+        signals.Speed = 2.5f;
+        signals.Velocity = {1.25f, -2.5f, 3.75f};
+        CheckConfig(fixture.Animator->SetDriveSignals(signals), "駆動信号の設定");
+        Math::Matrix4x4 transform = Math::Matrix4x4::Identity;
+        transform.m00 = 0;
+        transform.m01 = 2;
+        transform.m10 = -2;
+        transform.m11 = 0;
+        transform.m22 = 2;
+        transform.m30 = 3;
+        transform.m31 = -4;
+        transform.m32 = 5;
+        fixture.MeshComponent->SetMeshNodeGlobalTransform(transform);
+        CheckConfig(fixture.Animator->AddModifier(Container::MakeShared<RecordingModifier>(First, fixture.Calls)),
+                    "文脈記録 modifier の追加");
+        fixture.Tick();
+        CheckConfig(fixture.Calls.size() == 1, "文脈記録 modifier の呼び出し");
+        const auto& call = fixture.Calls[0];
+        CheckConfig(call.bHasDriveSignals && SameBits(call.Signals.Speed, signals.Speed) &&
+                        SameBits(call.Signals.Velocity, signals.Velocity),
+                    "駆動信号の受け渡し");
+        CheckConfig(call.Owner == fixture.Owner, "所有 Entity の受け渡し");
+        CheckConfig(call.ChildIndex == 1 && call.MissingIndex == -1, "骨格の関節名検索");
+        const auto& meshTransform = fixture.MeshComponent->GetMeshNodeGlobalTransform();
+        for (int i = 0; i < 16; ++i)
+        {
+            Check(SameBits(meshTransform.values[i], transform.values[i]) &&
+                      SameBits(call.MeshToWorld.values[i], meshTransform.values[i]),
+                  "メッシュからワールドへの変換", i, call.MeshToWorld.values[i], meshTransform.values[i]);
+        }
+    }
 } // 無名名前空間
 
 void TestPoseModifierBase()
@@ -517,5 +933,9 @@ void TestPoseModifierBase()
     TestOscillatingSpringTimePartition();
     TestSpringDroppedTime();
     TestSpringReset();
+    TestConfigRejectionPreservesModifiers();
+    TestConfigOrderAndFile();
+    TestConfigWeightCurve();
+    TestModifierContextDelivery();
     std::puts("PoseModifierBaseTest PASS");
 }
