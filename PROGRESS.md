@@ -9417,3 +9417,30 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ## 2026-11-04 G4-GR07-MOVER-CASES（run 20261104-082805 の反復 1、完了に戻す）
 - Done: 前の反復の評価が利用枠で回らず doing に戻っていた。着地した後の変更は TASKS.md・PROGRESS.md だけで、コードは確かめの出力（U3 の verify: ビルド EXIT=0、ctest 6 本 100% Passed）を取った版と同じなので、status を done に戻す。
 - Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。
+
+- U1 Core にロックオンの目標の口 ILockOnTarget と組み込みの 2 実装を足す: 着地(直し 0 回)
+- U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
+- U3 FollowCameraComponent のロックオンを ILockOnTarget 経由に組み替え、表面のアンカーの口を足す: 着地(直し 0 回)
+- U4 しがみつき中のヨーの補正(低域通過・角速度と角加速度の上限・抜けの継続)と試験: 着地(直し 1 回)
+
+## 2026-11-03 G4-GR06-CLING-LOCKON（run 20261103-231220 の反復 2、完了）
+- Done: ロックオンの目標を Core の読み取り専用の口 `ILockOnTarget`（`Library/Core/Public/Camera/LockOnTarget.h`。描画の空間の注視点と半径を `TryResolve` で返す）で受けるようにした。組み込みの実装は `EntityLockOnTarget`（Entity の点）と `JointLockOnTarget`（骨格のジョイント）で、`SetLockOnTarget`・`SetLockOnJoint` はそれを作る形で同じふるまいを保つ。外部の目標（表面のアンカー GR19）は `SetLockOn(TWeakPtr<const ILockOnTarget>)` で受け、試験の偽の実装で動く。しがみつきの状態を `SetClinging`/`IsClinging` で受け、その間はヨーを対象（ロック中は目標）の水平の向きへ臨界減衰で追わせ、角速度と 1 フレームの角速度の変化を `FollowCameraProfile` の `cling`（`yawHalfLife` 既定 0.25 s・`maximumYawSpeed` 既定 90 度/秒。値は仮）で抑える。入りは実測の角速度から始め、抜けは残りの角速度を同じ上限で 0 へ減らす間ヨーの戻しとロックオンのヨーの向けを止める（視点の入力で継続は終わる）。カメラの上方向は世界の上向きのまま。
+- 所有と破棄の順: カメラは目標を所有しない。外部の目標は弱い参照だけを持ち、Camera 群の毎フレームに `lock()` して World から解決する。参照が切れた・Entity が消えた（PendingDestroy・非アクティブ）・ジョイントが無効なら、そのフレームはロックしていない扱いで `ClearLockOn()` する。組み込みの目標はカメラが `TSharedPtr` で持つが、中身は Entity の id とジョイントの番号だけで Entity は所有しない。したがってアンカーの持ち主・目標の Entity はカメラより先に破棄してよく、カメラの `Finalize` はロックとしがみつきの状態を消すだけ。
+- 証拠: `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 100% Passed。新しいケースの出力: 上方向の最大偏差 0 度、10 Hz ±30° の揺れでヨーの角速度の最大 2.11 度/秒・振幅 0.224 度、出入りの角速度の差の最大 1.50 度/秒）。
+- Next: なし（アプリの起動の確かめは無い）。しがみつきの状態の出どころ（GR20 の拘束）と表面のアンカーの解決（GR19）は G10。
+- Notes: しがみつきの補正・角速度の実測は dt が有限で正のときだけ動く（しがみつきでないときの dt ≤ 0 のふるまいは前のまま）。しがみつき中に `SetLockOn` 等を呼んでもヨーの速度は 0 に戻さない（入りの連続を保つため）。
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 1、完了に戻す）
+- Done: 前の run（20261103-231220）で全単位を着地し完了にしたが、評価者が枠切れ（429）で未評価のまま doing に戻されていた。実装は変えずに done に戻し、評価をランナーへ渡す。
+- 証拠: 着地した版（ソース 9 ファイルがこの枝と一致）で取った `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt` と単位の作業ツリーの `unit-verify.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest 4 件 100% Passed）。
+- Next: ランナーの評価者の反証（Public API と Object の寿命に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。
+- U5 しがみつきの入りの初速を上限に切り詰め、ヨーの角速度の実測を全ての変更の後に取る(差し戻しの直し): 着地(直し 0 回)
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 2、差し戻しを直して完了）
+- Done: しがみつきの入りの初速を `ClingMaximumYawSpeed` に切り詰め、しがみつき中の速度の上限を常にその値にした（前は入りが上限を越えていると越えたまま何秒も回り続けた）。ヨーの角速度の実測を `UpdateCamera` の冒頭から全てのヨーの変更（ロックオンの向け・しがみつき・抜けの継続）の後へ移し、途中で返る経路と例外の再送出でも同じ位置で取る（ロックオン中は実測が 1 フレーム古かった）。視点の入力で回った分は実測から除き、入りの初速に持ち込まない（通常の追従で視点の入力が `m_YawVelocity` を 0 にするのとそろえた）。
+- 決定: done-when の (2)「しがみつき中は角速度が上限を越えない」と (3)「入りの前後のフレームの角速度の差 ≤ 上限×dt」は、入る直前の角速度が上限×(1+dt) を越えると両立しない。上限を優先した: 上限を越えた速さで入ったときは入りのフレームで ±上限へ切り詰め、入りの前後の差が上限×dt 以下であることは入る直前の角速度が上限以下のときに保証する。
+- 試験: `TestClingYawTransitions` の上限越えの節を差し替えた（ヨーの戻しが上限を越えて回る最中に入っても全フレーム上限以下。視点の入力 5° の直後に入っても最初のフレームの角速度は上限×dt 以下）。ロックオンの振りの最中（上限以下）に入り・抜ける前後のフレームの差も確かめる。
+- 証拠: `.harness/runs/20261104-082804/verify-G4-GR06-CLING-LOCKON-U5.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド終了コード 0、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 Passed。出力: 上方向の最大偏差 0 度、低域通過の最大角速度 2.11 度/秒・振幅 0.224 度、出入りの最大角速度差 1.50 度/秒・上限越えの入りの最大角速度 90 度/秒・ロックオン中の入りの最大角速度差 1.50 度/秒）。
+- Next: ランナーの評価者の反証（前回の指摘への対応差分）。
+- Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
