@@ -9455,3 +9455,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: CombatMultiHitTest・CombatFrameRateInvarianceTest（直接の窓と合成のクリップの窓の両方）・CombatLifecycleTest を入れた。残りは TickStages.md の割当表とタスクの verify（U7）。
 - 決定: 「配送中に足した購読は次の配送から」の「配送」は 1 件の当たりの 1 回の Broadcast と読む（候補ごとに OnHit・OnHurt・OnAnyHit を複製してから Broadcast。AnimatorComponent::ForwardEvent と同じ約束）。フレーム全体で複製を固定すると、配送中に外して破棄した受け手が同じフレームの後の候補で呼ばれるため採らない。同じフレームの後の候補では足した受け手が呼ばれる。
 - Next: U7（TickStages.md と verify の 2 行）。
+- U7 TickStages.md の割当表とタスクの verify: 着地(直し 0 回)

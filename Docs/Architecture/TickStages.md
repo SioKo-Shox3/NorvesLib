@@ -54,6 +54,8 @@
 | `SkinnedMeshComponent` | Animation（主群）・PoseFinalize | 自前の Animation 時刻更新と PoseFinalize での姿勢評価 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1992` |
 | `ScriptComponent` | Default（主群） | Script の更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/ScriptComponent.cpp:56` |
 | `CharacterBodyComponent` | Movement（主群）・PoseFinalize | 設定に応じ一方の群で可変更新の移動を要求 | World | 非ポーズ時のsimulation | `Library/Modules/Physics/Private/Physics/PhysicsModule.cpp:103` |
+| `HitboxComponent` | 群なし（Module Late で評価） | 攻撃判定の窓と命中を評価し、OnHit を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
+| `HurtboxSetComponent` | 群なし（Module Late で評価） | 部位ごとの被弾を評価し、OnHurt を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
 | `FollowCameraComponent` | Input（主群）・Camera | Input で視線入力、Camera で追従・衝突処理 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Camera/FollowCameraComponent.cpp:109` |
 | `QuadrupedLocomotionComponent` | Input（主群）・PoseFinalize・PostPhysics | 入力収集、ルート移動の取得、物理後の移動終了と見た目の更新 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:212` |
 
@@ -62,6 +64,7 @@
 - PostAnimation という群はない。アニメの姿勢を読んで付ける処理は `SocketAttachmentComponent`・`HoldSlotComponent` と同じ PostPhysics に置く。
 - 新しく `RegisterComponentTick` で登録する型は、同じ変更でこの表に足す。漏れは ctest `TickContractTableTest`(`Scripts/CheckTickContractTable.ps1`)が止める。台本は `Library` と `Game` の `.cpp` から `RegisterComponentTick(<型>::StaticClass()` と `RegisterComponentTick(StaticClass()`(後者はファイル名の型)を集め、この表の 1 列目(バッククォートで囲んだ型名)に無い型、または文書に消えた API の名前があれば失敗する。表の 1 列目は型名をバッククォートで囲んだもの 1 つだけにする。
 - HealthComponentは可変Tickを持たず、ApplyDamageを呼んだ側のTickの中でOnDamaged・OnStaggerBroken・OnDefeatedを通知する。
+- `HitboxComponent`・`HurtboxSetComponent` は `RegisterComponentTick` で群に登録せず、Module Late と同じ進行 gate に従う。判定窓は `BeginAttack` / `EndAttack` の直接呼び出し、または同じ Entity の `AnimatorComponent::OnEvent` の Begin（Name が窓のイベント名と一致）と対応する WindowToken の End で開閉する。
 - GameplayModule::Tick（通常のModule Tick）はDefeatGate::Updateの安全点で、持ち主の破棄を検出して保留を外し、保留のない撃破をOnDefeatCompleted → ProgressionState::MarkDefeatedへ渡す。
 
 ## Bridge進行とポーズの3分類
@@ -87,6 +90,11 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 3. 進行 gate 内で固定ステップを 0 回以上実行する。各回は World の `FixedBegin`（Transform 確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → World の `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → World の `FixedEnd`（Transform 確定・補間履歴の記録・cleanup）の順。固定ステップが 0 回でも次の後段は 1 回実行する。
 4. 進行 gate 内で World の `LateTick`（PostPhysics → Camera → PreRender）→ `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。Module の呼び出しは Running の registry で登録順。
 5. gate 外で振動更新、World の描画同期、SceneQuery の通常 world-AABB 更新を行い、`PostUpdate.ScriptEnd` → `PostUpdate.ModuleTick`（通常の `TickAll`）→ Handler の `OnPreRender` → 描画へ進む。Handler はフレーム内で共有所有し、callback による差し替えでもそのフレームの対象を生存させる。
+
+`PostLateTick.ModuleLateTick` の `GameplayModule::LateTick` は攻撃判定を 1 フレームに 1 回評価する。`CombatRuntime::Evaluate` の先頭で `World::UpdateWorldTransforms` を行い、姿勢評価・固定ステップ・PostPhysics のソケット追従後のシミュレーションの Transform（`GetWorldTransform`）を読む。
+時間は `TimeSystem::GetFrameTimes().World` を使い、ヒットストップに追従する。Module `LateTick` の引数の delta は Unscaled のため攻撃判定には使わない。
+配送は hitbox の登録順 → HurtboxSet の登録順 → 部位の番号で行い、候補ごとに配送直前に世代付きハンドルを再検証して `OnHit`（Hitbox）→ `OnHurt`（HurtboxSet）→ `OnAnyHit`（モジュール）の順に通知する。
+剣の描画・トレイルは描画用に補間された Transform を読む。
 
 通常 world-AABB の更新と、GR08 の物理公開 snapshot / 明示 `RefreshDynamicSnapshot` は別の更新であり、描画同期後に物理 snapshot が暗黙 refresh されるとは扱わない。
 
