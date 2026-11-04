@@ -150,6 +150,7 @@ namespace NorvesLib::Modules::Physics
                 const auto serial = c->m_State.StepSerial;
                 c->m_State = {};
                 c->m_State.StepSerial = serial;
+                c->m_InheritedVelocity = {};
                 c->m_VerticalSpeed = 0;
                 c->m_bAnchor = false;
                 c->m_bJump = false;
@@ -170,10 +171,28 @@ namespace NorvesLib::Modules::Physics
             c->m_bFixedRequest = false;
             if (c->m_Mode == CharacterMovementMode::External)
             {
-                c->ResetMotion(false);
+                // 拘束側が位置を決めるため、保留された変位と回転を衝突判定なしで適用する。
+                auto target = GetFreshWorldTransform(*body.Owner);
+                target.position += c->m_PendingDisplacement;
+                target.rotation = Math::Quaternion(Math::Vector3::UnitY, c->m_PendingYaw) * target.rotation;
+                const auto velocity = body.Component->m_LinearVelocity + c->m_PendingDisplacement / dt;
+                if (!FiniteCharacterVector(target.position) || !FiniteCharacterVector(velocity))
+                {
+                    c->ResetMotion(false);
+                    c->m_State.Result = EPhysicsResult::InvalidArgument;
+                    continue;
+                }
+                body.Owner->SetWorldTransform(target);
+                c->m_PendingDisplacement = {};
+                c->m_PendingYaw = 0;
+                c->ResetSimulationState();
+                c->m_AnchorLocal = {};
+                c->m_PreviousAnchorWorld = {};
+                c->m_PlatformYaw = 0;
+                body.Component->m_LinearVelocity = velocity;
                 c->m_State.bReady = true;
                 c->m_State.Result = EPhysicsResult::Success;
-                c->m_State.Velocity = body.Component->m_LinearVelocity;
+                c->m_State.Velocity = velocity;
                 if (c->m_State.StepSerial != UINT64_MAX)
                     ++c->m_State.StepSerial;
                 continue;
@@ -246,7 +265,13 @@ namespace NorvesLib::Modules::Physics
                 request.bWasGrounded = false;
             }
             const float gravity = 9.81f * c->m_Settings.GravityScale;
+            const Math::Vector3 pushVelocity(c->m_DesiredVelocity.x + c->m_PendingDisplacement.x / dt, 0,
+                                            c->m_DesiredVelocity.z + c->m_PendingDisplacement.z / dt);
             request.Displacement = c->m_DesiredVelocity * dt + c->m_PendingDisplacement;
+            if (!c->m_State.bGrounded)
+            {
+                request.Displacement += c->m_InheritedVelocity * dt;
+            }
             request.Displacement.y += vertical * dt - .5f * gravity * dt * dt;
             request.bAllowGroundSnap = !jumping && !c->m_bTeleportedStep;
             request.bAllowStep = !jumping;
@@ -255,6 +280,45 @@ namespace NorvesLib::Modules::Physics
             c->m_PendingYaw = 0;
             c->m_bJump = false;
             c->m_bLaunch = false;
+            Math::Vector3 depenetration;
+            // 運んでいる足場との重なりは本番の運搬・解消に任せ、速度から引かない。
+            // 運ぶ前の形がほかの物体に重なっているときだけ、解消の量を求めて速度から引く。
+            bool bPenetrating = false;
+            for (const auto& proxy : m_CharacterQueryProxies)
+            {
+                if (proxy.bTrigger || proxy.Collider == self->Collider || proxy.Body == self->Body ||
+                    (request.PlatformCollider.IsValid() && proxy.Collider == request.PlatformCollider))
+                {
+                    continue;
+                }
+                Math::GeometryContact contact;
+                if (PhysicsBroadphase::ComputeContact(*self, proxy, contact) && contact.Depth > 0.0f)
+                {
+                    bPenetrating = true;
+                    break;
+                }
+            }
+            if (bPenetrating)
+            {
+                auto recoveryRequest = request;
+                recoveryRequest.Filter.IgnoreColliders[1] = request.PlatformCollider;
+                recoveryRequest.Displacement = {};
+                recoveryRequest.PlatformDisplacement = {};
+                recoveryRequest.bWasGrounded = false;
+                recoveryRequest.bAllowGroundSnap = false;
+                recoveryRequest.bAllowStep = false;
+                CharacterMoveResult recovered;
+                const auto recoveryStatus = CharacterMover::Move(m_CharacterQueryProxies, c->m_Settings.Movement,
+                                                                  recoveryRequest, m_CharacterScratch, recovered);
+                if (recoveryStatus != Core::Scene::EPhysicsSceneQueryResult::Success)
+                {
+                    c->ResetMotion(false);
+                    c->m_State.Result = EPhysicsResult::InvalidState;
+                    c->m_State.QueryResult = recoveryStatus;
+                    continue;
+                }
+                depenetration = recovered.Displacement;
+            }
             CharacterMoveResult moved;
             const auto status = CharacterMover::Move(m_CharacterQueryProxies, c->m_Settings.Movement, request,
                                                      m_CharacterScratch, moved);
@@ -268,14 +332,54 @@ namespace NorvesLib::Modules::Physics
             auto target = initial;
             target.position += moved.Displacement;
             target.rotation = Math::Quaternion(Math::Vector3::UnitY, requestedYaw) * target.rotation;
-            const auto velocity = body.Component->m_LinearVelocity + moved.Displacement / dt;
+            const auto velocity = body.Component->m_LinearVelocity + (moved.Displacement - depenetration) / dt;
             if (!FiniteCharacterVector(target.position) || !FiniteCharacterVector(velocity))
             {
                 c->ResetMotion(false);
                 c->m_State.Result = EPhysicsResult::InvalidArgument;
                 continue;
             }
+            // SkinWidth の隙間越しに要求速度を渡し、次の積分で小物が先に動けるようにする。
+            PhysicsShapeProxy pushShape = *self;
+            pushShape.Capsule = moved.Shape;
+            pushShape.Capsule.Radius += 2.0f * c->m_Settings.Movement.SkinWidth;
+            for (const auto& proxy : m_CharacterQueryProxies)
+            {
+                if (proxy.bTrigger || proxy.Body == self->Body || !proxy.Body.IsValid() ||
+                    proxy.Body.Index >= m_BodySlots.size())
+                {
+                    continue;
+                }
+                auto& pushedBody = m_BodySlots[proxy.Body.Index];
+                if (!pushedBody.bActive || pushedBody.Generation != proxy.Body.Generation ||
+                    !IsBodyLifecycleActive(pushedBody) ||
+                    pushedBody.Component->m_BodyType != EPhysicsBodyType::Dynamic)
+                {
+                    continue;
+                }
+                Math::GeometryContact contact;
+                if (!PhysicsBroadphase::ComputeContact(pushShape, proxy, contact))
+                {
+                    continue;
+                }
+                const float push = Math::VectorUtils::Dot(pushVelocity, contact.Normal);
+                if (std::isfinite(push) && push > 0.0f)
+                {
+                    auto& pushedVelocity = pushedBody.Component->m_LinearVelocity;
+                    const float normalVelocity = Math::VectorUtils::Dot(pushedVelocity, contact.Normal);
+                    pushedVelocity += contact.Normal * std::fmax(0.0f, push - normalVelocity);
+                }
+            }
             const bool landed = !c->m_State.bGrounded && moved.bGrounded;
+            if (moved.bGrounded)
+            {
+                c->m_InheritedVelocity = {};
+            }
+            else if (c->m_State.bGrounded)
+            {
+                c->m_InheritedVelocity = c->m_State.PlatformVelocity;
+                c->m_InheritedVelocity.y = 0;
+            }
             body.Owner->SetWorldTransform(target);
             // IntegrateDynamicsが記録した通常kinematic移動に、characterの移動分だけ足す。
             body.Component->m_LinearVelocity = velocity;
