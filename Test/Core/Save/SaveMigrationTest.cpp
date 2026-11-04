@@ -1,8 +1,12 @@
 ﻿#include "Save/SaveMigration.h"
+#include "Save/SaveContainer.h"
+#include "Save/SaveSlotStore.h"
 #include "Platform/PlatformFile.h"
 #include "Text/JsonDocument.h"
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
+#include <Windows.h>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Save;
@@ -13,6 +17,107 @@ namespace
     do { if (!(condition)) { std::fprintf(stderr, "確認失敗: %s (%s:%d)\n", #condition, __FILE__, __LINE__); return false; } } while (false)
 
     using Bytes = Container::VariableArray<uint8_t>;
+
+    Container::String ToUtf8(const wchar_t* text)
+    {
+        const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, nullptr, 0, nullptr, nullptr);
+        if (count <= 0)
+        {
+            return {};
+        }
+        Container::VariableArray<char> buffer(count);
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, buffer.data(), count, nullptr, nullptr) != count)
+        {
+            return {};
+        }
+        return Container::String(buffer.data());
+    }
+
+    void RemoveTestDirectory(const Container::WideString& directory)
+    {
+        Container::WideString pattern = directory;
+        pattern.append(L"\\*");
+        WIN32_FIND_DATAW entry{};
+        const HANDLE search = FindFirstFileW(pattern.c_str(), &entry);
+        if (search != INVALID_HANDLE_VALUE)
+        {
+            do
+            {
+                if (std::wcscmp(entry.cFileName, L".") == 0 || std::wcscmp(entry.cFileName, L"..") == 0)
+                {
+                    continue;
+                }
+                Container::WideString child = directory;
+                child.append(L"\\");
+                child.append(entry.cFileName);
+                if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+                {
+                    if ((entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+                    {
+                        RemoveTestDirectory(child);
+                    }
+                }
+                else
+                {
+                    DeleteFileW(child.c_str());
+                }
+            } while (FindNextFileW(search, &entry));
+            FindClose(search);
+        }
+        RemoveDirectoryW(directory.c_str());
+    }
+
+    struct TestDirectory
+    {
+        Container::WideString Wide;
+        Container::String Utf8;
+
+        TestDirectory()
+        {
+            wchar_t temporary[32768]{};
+            const DWORD length = GetTempPathW(static_cast<DWORD>(sizeof(temporary) / sizeof(temporary[0])), temporary);
+            if (length == 0 || length >= sizeof(temporary) / sizeof(temporary[0]))
+            {
+                return;
+            }
+            for (unsigned attempt = 0; attempt < 64; ++attempt)
+            {
+                wchar_t name[128]{};
+                std::swprintf(name, sizeof(name) / sizeof(name[0]), L"NorvesLib-SaveMigrationTest-%lu-%llu-%u",
+                    static_cast<unsigned long>(GetCurrentProcessId()), static_cast<unsigned long long>(GetTickCount64()), attempt);
+                Container::WideString candidate(temporary);
+                candidate.append(name);
+                if (CreateDirectoryW(candidate.c_str(), nullptr))
+                {
+                    Wide = candidate;
+                    Utf8 = ToUtf8(Wide.c_str());
+                    return;
+                }
+                if (GetLastError() != ERROR_ALREADY_EXISTS)
+                {
+                    return;
+                }
+            }
+        }
+
+        ~TestDirectory()
+        {
+            if (!Wide.empty())
+            {
+                RemoveTestDirectory(Wide);
+            }
+        }
+
+        Container::String File(const char* name) const
+        {
+            Container::String path = Utf8;
+            path.append("\\");
+            path.append(name);
+            return path;
+        }
+
+    };
+
 
     Container::Span<const uint8_t> TextBytes(const char* text)
     {
@@ -174,9 +279,36 @@ namespace
         SAVE_MIGRATION_CHECK(MigrateSavePayload(withBom, output) == SaveMigrationResult::Invalid);
         return true;
     }
+    bool TestNewerSlotPreserved()
+    {
+        TestDirectory directory;
+        SAVE_MIGRATION_CHECK(!directory.Utf8.empty());
+        const auto path = directory.File("slot_0.sav");
+        Bytes before;
+        EncodeSaveContainer(TextBytes("{\"formatVersion\":3,\"player\":false}"), 7, before);
+        SAVE_MIGRATION_CHECK(Platform::WriteFileAtomic(path, before, false).bSuccess);
+        SaveSlotStore store(directory.Utf8);
+        const auto result = store.LoadSlot(0);
+        SAVE_MIGRATION_CHECK(result.Status == SaveLoadStatus::RejectedNewerVersion);
+        SAVE_MIGRATION_CHECK(result.QuarantinedPaths.empty() && result.PayloadUtf8.empty());
+        Bytes after;
+        SAVE_MIGRATION_CHECK(Platform::ReadFileBytes(path, after).bSuccess);
+        SAVE_MIGRATION_CHECK(before.size() == after.size() && std::memcmp(before.data(), after.data(), before.size()) == 0);
+        auto pattern = directory.Wide;
+        pattern.append(L"\\*.corrupt-*");
+        WIN32_FIND_DATAW entry{};
+        const HANDLE search = FindFirstFileW(pattern.c_str(), &entry);
+        const DWORD error = GetLastError();
+        if (search != INVALID_HANDLE_VALUE)
+        {
+            FindClose(search);
+        }
+        SAVE_MIGRATION_CHECK(search == INVALID_HANDLE_VALUE && error == ERROR_FILE_NOT_FOUND);
+        return true;
+    }
 } // namespace
 
 int main()
 {
-    return TestFixtures() && TestPreservationAndDefaults() && TestRejectedInputs() ? 0 : 1;
+    return TestFixtures() && TestPreservationAndDefaults() && TestRejectedInputs() && TestNewerSlotPreserved() ? 0 : 1;
 }

@@ -75,15 +75,15 @@ namespace NorvesLib::Core::Save
             }
         }
         SaveContainerInfo info;
-        info.ContainerVersion = static_cast<uint32_t>(ReadLittleEndian(bytes.data() + 4, 4));
-        if (info.ContainerVersion != SaveContainerVersion)
-        {
-            return SaveContainerStatus::UnsupportedContainerVersion;
-        }
         info.HeaderHash = ReadLittleEndian(bytes.data() + 40, 8);
         if (Asset::ComputeAssetPackagePayloadHash(bytes.data(), 40) != info.HeaderHash)
         {
             return SaveContainerStatus::HeaderHashMismatch;
+        }
+        info.ContainerVersion = static_cast<uint32_t>(ReadLittleEndian(bytes.data() + 4, 4));
+        if (info.ContainerVersion != SaveContainerVersion)
+        {
+            return SaveContainerStatus::UnsupportedContainerVersion;
         }
         info.PayloadFormat = static_cast<uint32_t>(ReadLittleEndian(bytes.data() + 8, 4));
         if (info.PayloadFormat != SavePayloadFormatJsonUtf8)

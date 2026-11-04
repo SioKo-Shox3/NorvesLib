@@ -36,6 +36,7 @@ namespace NorvesLib::Core::Save
     };
 
     // ヘッダは48バイトで、整数欄はすべてリトルエンディアン。
+    // ヘッダのバイト 0〜47 の配置は版によらず固定する。
     // 0: magic（4）、4: containerVersion（4）、8: payloadFormat（4）、12: flags（4）。
     // 16: payloadSize（8）、24: payloadHash（8）、32: writeCounter（8）、40: headerHash（8）。
     // headerHash はバイト 0〜39 を対象とし、writeCounter 等の単一ビット反転も検出する。
