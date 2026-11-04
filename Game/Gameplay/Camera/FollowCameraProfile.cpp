@@ -32,7 +32,7 @@ namespace Game::Gameplay
         const auto half = root.FindMember("halfLives"), speed = root.FindMember("speedEffects");
         const auto collision = root.FindMember("collision"), fade = root.FindMember("fade");
         const auto trauma = root.FindMember("trauma"), lock = root.FindMember("lockOn");
-        const auto focus = root.FindMember("focus");
+        const auto focus = root.FindMember("focus"), cling = root.FindMember("cling");
         if (!number(half, "xz", next.PositionHalfLives.x, 0, 10) ||
             !number(half, "y", next.PositionHalfLives.y, 0, 10) || !number(half, "yaw", next.YawHalfLife, 0, 10) ||
             !number(half, "fov", next.FovHalfLife, 0, 10) || !number(half, "focus", next.FocusHalfLife, 0, 10) ||
@@ -54,6 +54,8 @@ namespace Game::Gameplay
             !number(trauma, "roll", next.ShakeDegrees.z, 0, 15) || !number(lock, "maxBias", next.LockBias, 0, .5) ||
             !number(lock, "breakThreshold", next.LockBreakDegrees, 0, 90) ||
             !number(lock, "armGain", next.LockArmGain, 0, 2) ||
+            !number(cling, "yawHalfLife", next.ClingYawHalfLife, 0, 10) ||
+            !number(cling, "maximumYawSpeed", next.ClingMaximumYawSpeed, 1, 720) ||
             !number(focus, "maximumDistance", next.MaximumFocusDistance, .1, 1000))
             return false;
         if (focus.IsValid())

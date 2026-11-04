@@ -33,10 +33,13 @@ namespace Game::Gameplay
     {
         m_Input = nullptr;
         m_Query = nullptr;
-        m_PhysicsRootId = m_ViewSourceId = m_LockOnId = 0;
+        m_PhysicsRootId = m_ViewSourceId = 0;
+        ClearLockOn();
         m_bFollowInitialized = false;
         m_bPreviousSubjectValid = false;
         m_bHasPose = false;
+        m_bClinging = m_bClingContinuing = m_bPreviousTickYawValid = false;
+        m_YawVelocity = m_MeasuredYawRate = 0;
         Core::Component::SpringArmComponent::Finalize();
     }
     Core::Entity* FollowCameraComponent::Resolve(uint64_t id) const
@@ -71,6 +74,10 @@ namespace Game::Gameplay
         m_FollowVelocity = {};
         m_State = {};
         m_bHasPose = false;
+        if (m_bClinging || m_bClingContinuing)
+            m_YawVelocity = 0;
+        m_bClinging = m_bClingContinuing = m_bPreviousTickYawValid = false;
+        m_MeasuredYawRate = 0;
         return true;
     }
     bool FollowCameraComponent::SetViewSource(Core::Entity* view)
@@ -141,10 +148,14 @@ namespace Game::Gameplay
                 {
                     m_TimeSinceLook = 0;
                     m_YawVelocity = 0;
+                    m_bClingContinuing = false;
                 }
                 if (input > m_Profile.LockBreakDegrees)
                     ClearLockOn();
+                const float previousYaw = GetYaw();
                 ApplyIntent(intent);
+                // 視点入力の回転だけを実測から除き、この後のヨーの戻しは実測に含める。
+                m_PreviousTickYaw += std::remainder(GetYaw() - previousYaw, 360.f);
             }
         }
         auto* physical = Resolve(m_PhysicsRootId);
@@ -161,7 +172,8 @@ namespace Game::Gameplay
             }
         if (m_PhysicsRootId && (!visual || visual == physical || !descendant))
             return;
-        if (physical && !m_LockOnId && m_TimeSinceLook >= m_Profile.YawReturnDelay &&
+        if (physical && !m_bClinging && !m_bClingContinuing && !IsLockedOn() &&
+            m_TimeSinceLook >= m_Profile.YawReturnDelay &&
             SubjectSpeed() >= m_Profile.MinimumYawSpeed)
         {
             const auto forward = physical->GetWorldTransform().rotation * Math::Vector3::UnitZ;
@@ -184,6 +196,30 @@ namespace Game::Gameplay
     }
     void FollowCameraComponent::UpdateCamera(float dt)
     {
+        // 途中の戻りと例外の再送出でも、全てのヨー変更後の実測を確定する。
+        try
+        {
+            UpdateCameraBody(dt);
+        }
+        catch (...)
+        {
+            MeasureYawRate(dt);
+            throw;
+        }
+        MeasureYawRate(dt);
+    }
+    void FollowCameraComponent::MeasureYawRate(float dt) noexcept
+    {
+        const float tickYaw = GetYaw();
+        const bool bValidYawDeltaTime = std::isfinite(dt) && dt > 0;
+        m_MeasuredYawRate = bValidYawDeltaTime && m_bPreviousTickYawValid
+            ? std::remainder(tickYaw - m_PreviousTickYaw, 360.f) / dt : 0;
+        m_PreviousTickYaw = tickYaw;
+        m_bPreviousTickYawValid = true;
+    }
+    void FollowCameraComponent::UpdateCameraBody(float dt)
+    {
+        const bool bValidYawDeltaTime = std::isfinite(dt) && dt > 0;
         // 途中で更新に失敗した場合、古い目標位置を次の区間に使わない。
         const bool bPreviousSubjectValid = m_bPreviousSubjectValid;
         m_bPreviousSubjectValid = false;
@@ -238,28 +274,22 @@ namespace Game::Gameplay
         const float speed = std::clamp(SubjectSpeed() / m_Profile.SpeedReference, 0.f, 1.f);
         request.DesiredLength = GetArmLength() + m_Profile.ArmGain * speed * m_Profile.SpeedEffectsStrength;
         auto* camera = owner->GetComponent<Core::Component::CameraComponent>();
-        auto* locked = Resolve(m_LockOnId);
+        auto lockTarget = m_LockOn.lock();
+        auto* world = owner->GetWorld();
+        Core::Camera::LockOnPoint point;
+        bool locked = false;
         Math::Vector3 focusPoint = subject;
-        if (locked)
+        if (lockTarget && world && lockTarget->TryResolve(*world, point))
         {
-            focusPoint = locked->GetRenderWorldTransform().position;
-            if (m_LockJoint != UINT32_MAX)
-            {
-                auto* mesh = locked->GetComponent<Core::Component::SkinnedMeshComponent>();
-                Math::Transform joint;
-                if (mesh && mesh->TryGetJointWorldTransform(m_LockJoint, joint))
-                    focusPoint = joint.position + locked->GetRenderWorldTransform().position -
-                                 locked->GetWorldTransform().position;
-                else
-                    ClearLockOn();
-            }
+            locked = true;
+            focusPoint = point.Position;
             const auto offset = focusPoint - subject;
             const float distance = offset.Length();
             const float fov = camera ? camera->GetFieldOfView() : m_Profile.BaseFov;
             const float screenLimit = GetArmLength() * std::tan(fov * .4f * .01745329252f);
             request.Pivot += offset * std::min(m_Profile.LockBias, screenLimit / std::max(distance, .01f));
-            request.DesiredLength += distance * m_Profile.LockArmGain + m_LockRadius;
-            if (offset.x * offset.x + offset.z * offset.z > 1e-6f)
+            request.DesiredLength += distance * m_Profile.LockArmGain + point.Radius;
+            if (!m_bClinging && !m_bClingContinuing && offset.x * offset.x + offset.z * offset.z > 1e-6f)
             {
                 const float target = float(std::atan2(offset.x, offset.z) * 57.29577951308232 + 180);
                 float yaw = GetYaw();
@@ -269,7 +299,40 @@ namespace Game::Gameplay
             }
         }
         else
-            m_LockOnId = 0;
+            ClearLockOn();
+        if (m_bClinging && bValidYawDeltaTime)
+        {
+            auto forward = visual->GetRenderWorldTransform().rotation * Math::Vector3::UnitZ;
+            if (locked)
+            {
+                const auto offset = focusPoint - subject;
+                if (std::hypot(offset.x, offset.z) >= 1e-4f)
+                    forward = offset;
+            }
+            if (std::hypot(forward.x, forward.z) >= 1e-4f)
+                m_PreviousClingTargetYaw = float(std::atan2(forward.x, forward.z) * 57.29577951308232 + 180);
+            const float yaw = GetYaw();
+            float dampedYaw = yaw, dampedVelocity = m_YawVelocity;
+            if (Math::TryCriticalDamp(dampedYaw, dampedVelocity,
+                                      yaw + std::remainder(m_PreviousClingTargetYaw - yaw, 360.f),
+                                      m_Profile.ClingYawHalfLife, dt))
+            {
+                const float change = m_Profile.ClingMaximumYawSpeed * dt;
+                const float limit = m_Profile.ClingMaximumYawSpeed;
+                float want = (dampedYaw - yaw) / dt;
+                want = std::clamp(want, m_YawVelocity - change, m_YawVelocity + change);
+                m_YawVelocity = std::clamp(want, -limit, limit);
+                SetYaw(yaw + m_YawVelocity * dt);
+            }
+        }
+        else if (m_bClingContinuing && bValidYawDeltaTime)
+        {
+            const float change = m_Profile.ClingMaximumYawSpeed * dt;
+            m_YawVelocity = std::clamp(0.f, m_YawVelocity - change, m_YawVelocity + change);
+            SetYaw(GetYaw() + m_YawVelocity * dt);
+            if (m_YawVelocity == 0)
+                m_bClingContinuing = false;
+        }
         request.Direction = ComputeArmOffset();
         request.DesiredLength = std::min(request.DesiredLength, m_Profile.MaximumArmLength);
         auto candidate = m_State;
@@ -293,6 +356,7 @@ namespace Game::Gameplay
         auto pose = owner->GetWorldTransform();
         pose.position = output.Position;
         // 実効armが0でも方向を定義できる。衝突解決後の位置補間は行わない。
+        // 基本姿勢の上方向は世界の上向きとし、対象のロールやピッチを写さない。
         pose.rotation = Math::QuaternionUtils::LookRotation(request.Direction * -1.f, Math::Vector3::UnitY);
         m_FollowPosition = followPosition;
         m_FollowVelocity = followVelocity;
@@ -400,6 +464,40 @@ namespace Game::Gameplay
         const auto v = body->GetState().Velocity - body->GetState().PlatformVelocity;
         return std::hypot(v.x, v.z);
     }
+    void FollowCameraComponent::SetClinging(bool clinging)
+    {
+        if (m_bClinging == clinging)
+            return;
+        m_bClinging = clinging;
+        if (clinging)
+        {
+            m_bClingContinuing = false;
+            m_YawVelocity = std::clamp(m_MeasuredYawRate,
+                                       -m_Profile.ClingMaximumYawSpeed, m_Profile.ClingMaximumYawSpeed);
+            m_PreviousClingTargetYaw = GetYaw();
+        }
+        else
+            m_bClingContinuing = m_YawVelocity != 0;
+    }
+    bool FollowCameraComponent::IsClinging() const
+    {
+        return m_bClinging;
+    }
+    bool FollowCameraComponent::SetLockOn(Core::Container::TWeakPtr<const Core::Camera::ILockOnTarget> target)
+    {
+        auto resolved = target.lock();
+        if (!resolved)
+            return false;
+        m_LockOn = target;
+        m_OwnedLockOn.reset();
+        if (!m_bClinging && !m_bClingContinuing)
+            m_YawVelocity = 0;
+        return true;
+    }
+    bool FollowCameraComponent::IsLockedOn() const
+    {
+        return !m_LockOn.expired();
+    }
     bool FollowCameraComponent::SetLockOnTarget(Core::Entity* target, float radius)
     {
         if (!std::isfinite(radius) || radius < 0)
@@ -408,10 +506,15 @@ namespace Game::Gameplay
         if (target && (!owner || target->GetWorld() != owner->GetWorld() || target == owner ||
                        target->IsPendingDestroy() || target->GetObjectId() == m_PhysicsRootId))
             return false;
-        m_LockOnId = target ? target->GetObjectId() : 0;
-        m_LockJoint = UINT32_MAX;
-        m_LockRadius = radius;
-        m_YawVelocity = 0;
+        if (!target)
+        {
+            ClearLockOn();
+            return true;
+        }
+        m_OwnedLockOn = Core::Container::MakeShared<Core::Camera::EntityLockOnTarget>(target->GetObjectId(), radius);
+        m_LockOn = m_OwnedLockOn;
+        if (!m_bClinging && !m_bClingContinuing)
+            m_YawVelocity = 0;
         return true;
     }
     bool FollowCameraComponent::SetLockOnJoint(Core::Entity* target, uint32_t jointIndex, float radius)
@@ -425,7 +528,11 @@ namespace Game::Gameplay
         }
         if (!SetLockOnTarget(target, radius))
             return false;
-        m_LockJoint = jointIndex;
+        m_OwnedLockOn =
+            Core::Container::MakeShared<Core::Camera::JointLockOnTarget>(target->GetObjectId(), jointIndex, radius);
+        m_LockOn = m_OwnedLockOn;
+        if (!m_bClinging && !m_bClingContinuing)
+            m_YawVelocity = 0;
         return true;
     }
     void FollowCameraComponent::AddTrauma(float amount)
