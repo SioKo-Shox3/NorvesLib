@@ -1,6 +1,7 @@
 ﻿#include "Gameplay/Combat/CombatRuntime.h"
 
 #include "Gameplay/Combat/CombatGeometry.h"
+#include "Gameplay/Combat/CombatJointBinding.h"
 #include "Gameplay/Combat/HitboxComponent.h"
 #include "Gameplay/Combat/HurtboxSetComponent.h"
 #include "Gameplay/GameplayModule.h"
@@ -353,6 +354,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
             return;
         }
         ++m_StateRevision;
+        m_LastEvaluatedVolumes.clear();
         for (auto& entry : m_Hitboxes)
         {
             if (entry.Component != nullptr)
@@ -384,6 +386,7 @@ namespace NorvesLib::Modules::Gameplay::Combat
             return;
         }
         m_bEvaluating = true;
+        m_LastEvaluatedVolumes.clear();
         RetryPendingRegistrations();
         world.UpdateWorldTransforms();
         ++m_FrameNumber;
@@ -429,13 +432,32 @@ namespace NorvesLib::Modules::Gameplay::Combat
             frame.Binding = bindingHandle;
             frame.bPoseAvailable = bPoseAvailable;
             frame.bUsable = bUsable;
-            if (bPoseAvailable)
+            if (hitbox->m_JointName.IsValid())
+            {
+                frame.bPoseAvailable = bPoseAvailable && ResolveJointPose(*binding, hitbox->m_JointName,
+                    hitbox->m_JointBinding, hitbox->m_WeakJointThreshold, m_Diagnostics, frame.CurrentTransform);
+                if (!frame.bPoseAvailable)
+                {
+                    ++m_Diagnostics.JointUnavailableCount;
+                }
+            }
+            else if (bPoseAvailable)
             {
                 frame.CurrentTransform = binding->GetWorldTransform();
+            }
+            frame.bUsable = bUsable && frame.bPoseAvailable;
+            if (frame.bPoseAvailable)
+            {
                 frame.Volume.Shape = hitbox->m_Shape;
                 frame.Volume.Current = MakePose(frame.CurrentTransform);
                 frame.Volume.Previous = hitbox->m_bPreviousValid && !hitbox->m_bFirstWindowFrame
                     ? MakePose(hitbox->m_PreviousTransform) : frame.Volume.Current;
+                CombatVolumeSnapshot snapshot;
+                snapshot.bHitbox = true;
+                snapshot.RegistrationIndex = entry.RegistrationIndex;
+                snapshot.bWindowOpen = hitbox->m_bWindowOpen;
+                snapshot.Volume = frame.Volume;
+                m_LastEvaluatedVolumes.push_back(snapshot);
             }
             hitboxFrames.push_back(frame);
         }
@@ -466,12 +488,32 @@ namespace NorvesLib::Modules::Gameplay::Combat
                 frame.Binding = part.Binding;
                 frame.bPoseAvailable = owner != nullptr && hurtbox->GetOwner() == owner && binding != nullptr;
                 frame.bUsable = bUsableSet && IsUsableEntity(binding);
-                if (frame.bPoseAvailable)
+                if (part.JointName.IsValid())
+                {
+                    frame.bPoseAvailable = frame.bPoseAvailable && ResolveJointPose(*binding, part.JointName,
+                        hurtbox->m_JointBindings[partIndex], hurtbox->m_WeakJointThreshold,
+                        m_Diagnostics, frame.CurrentTransform);
+                    if (!frame.bPoseAvailable)
+                    {
+                        ++m_Diagnostics.JointUnavailableCount;
+                    }
+                }
+                else if (frame.bPoseAvailable)
                 {
                     frame.CurrentTransform = binding->GetWorldTransform();
+                }
+                frame.bUsable = frame.bUsable && frame.bPoseAvailable;
+                if (frame.bPoseAvailable)
+                {
                     frame.Volume.Shape = part.Shape;
                     frame.Volume.Current = MakePose(frame.CurrentTransform);
                     frame.Volume.Previous = part.bPreviousValid ? MakePose(part.PreviousTransform) : frame.Volume.Current;
+                    CombatVolumeSnapshot snapshot;
+                    snapshot.RegistrationIndex = entry.RegistrationIndex;
+                    snapshot.PartIndex = frame.PartIndex;
+                    snapshot.PartId = frame.PartId;
+                    snapshot.Volume = frame.Volume;
+                    m_LastEvaluatedVolumes.push_back(snapshot);
                 }
                 partFrames.push_back(frame);
             }

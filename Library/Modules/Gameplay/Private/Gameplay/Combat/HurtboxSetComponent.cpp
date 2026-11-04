@@ -114,7 +114,16 @@ namespace NorvesLib::Modules::Gameplay::Combat
         added.bPreviousValid = false;
         const uint32_t index = static_cast<uint32_t>(m_Parts.size());
         m_Parts.push_back(added);
+        m_JointBindings.push_back({});
         return index;
+    }
+
+    void HurtboxSetComponent::SetWeakJointThreshold(const CombatJointInfluenceThreshold& threshold)
+    {
+        if (IsOwnerThread())
+        {
+            m_WeakJointThreshold = threshold;
+        }
     }
 
     uint64_t HurtboxSetComponent::GetActorId() const
