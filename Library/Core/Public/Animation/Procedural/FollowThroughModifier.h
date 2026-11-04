@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/Procedural/Spring.h"
 
 namespace NorvesLib::Core::Animation::Procedural
 {
@@ -30,6 +31,12 @@ namespace NorvesLib::Core::Animation::Procedural
 
       private:
         FollowThroughSettings m_Settings;
+        Container::VariableArray<AngularSpring> m_Springs;
+        Container::VariableArray<Math::Quaternion> m_AnimationRotations;
+        Container::VariableArray<Math::Quaternion> m_OriginalRotations;
+        bool m_bNeedsReset = true;
+        float m_LastDroppedSeconds = 0.0f;
+        float m_LastMassScale = 1.0f;
     };
 
     [[nodiscard]] bool CreateFollowThroughModifier(const PoseModifierCreateArgs& args,

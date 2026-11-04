@@ -9811,3 +9811,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: グラフの付け替えで重みの param が無くなると、Apply が毎フレーム false になり、ログも出ないまま姿勢が出なくなる
 - U1 2 つのモディファイアの雛形・CMake 登録・型の表への登録・試験ファイルの雛形: 着地(直し 0 回)
 - U2 SpringBoneModifier の実装: 着地(直し 0 回)
+- U3 FollowThroughModifier の実装: 着地(直し 0 回)
