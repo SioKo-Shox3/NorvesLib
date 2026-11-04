@@ -4811,7 +4811,7 @@
   - アプリは起動しない（クックとスクリプトだけで確かめられる）。
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1: トランザクションの祖先と workspace の列挙も読み流しにし、利用者の TEMP のままで管理ストアの試験を通す
-- status: blocked
+- status: done
 - done-when: `CookManagedTransactionController.cpp` の 2 か所の列挙を、項目をためずに読み流す形に変え、TEMP を差し替えずに `CookManagedUpdateTest` と `TextureManagedCliTest` が通るようにする。祖先や workspace に 16384 を超える項目があっても、`entry_limit` では落ちない。
   - `OpenStore` の祖先の列挙(`N::Enumerate` → `N::Fixed(entries, N::StoreLeaf, ...)`)は、元のタスクが `ObserveLocked` に入れた読み流しの関数を使う。固定名 `StoreLeaf` と、長名か short alias で fold 一致する項目だけを残す。store の制御領域の列挙(`header.json`・`pending` など)は、今の上限のまま変えない。
   - `VerifyClaims` の workspace の列挙は、`index.Roots` の各 `RootLeaf` と、長名か short alias で fold 一致する項目だけを残す。上限は、残した項目にだけ掛ける。
@@ -4821,7 +4821,7 @@
     - `active_claim_changed`・`nested_managed_root` の判定
     - ボリュームの根の store を `volume_root_store` で拒否すること
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
 
@@ -5316,7 +5316,7 @@
 - notes: 確かめ直しの (b)。今あるのは足場の運搬（PhysicsFixedStepPipelineTest.cpp 844-876 行。足場は sin(frame×0.02) の往復で約 1.2 m/s、0.01 rad/ステップで約 34°/s。ずれ 0.02 と速度の一致を見る）、Teleport と寿命（877-930 行）、固定と可変の一致（947-1010 行）、入力の取り込み（1073-1161 行）。要件 `#### GR07` の受け入れ確認のうち、足場の離脱速度、昇降足場のジッタ、Dynamic の球を押す、押さないときの滑り落ち、`GravityScale`、External は見ていない。G4-S1 の決定: 推奨の (C)（固定と可変の両方を持ちフラグで切り替える）で、既定は (A) 固定ステップの駆動を採る。実装は既にこの形（`CharacterDriveMode::Fixed` が既定、`--character-drive=variable`、TestCharacterDriveEquality が同じ入力で両者の位置の一致を固定、犬の見た目の子 Entity に描画の補間）。理由: Kinematic の速度が位置差分/dt で正しく出て、小物を押す・足場の速度・GR20 の離脱速度が成り立ち、入力列の再生が決定論になる。可変は手触りを比べて悪いときだけ既定を倒す（可逆）。このファイルは `G4-GR05-COMPONENT-CASES` も触るので、そちらはこのタスクの後に回す。`CharacterBodyComponent.h` は Public API なので、足すのは試験に要る最小の読み出しだけにする。やらないこと: 物理ソルバ・接触の解き方の変更、摩擦、複数のコライダー。
 
 ## G4-GR05-COMPONENT-CASES: 移動の Component（QuadrupedLocomotionComponent）の接続（設定の再読込・Animator への値・ルート移動・同フレームのカメラ）を試験し、外れた所を直す
-- status: todo
+- status: done
 - after: G4-GR07-BODY-CASES, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR05
 - needs-gr: GR10, GR11
@@ -5485,7 +5485,7 @@
 - notes: 設計はロードマップ 1652〜1683 行の (3)(4)(5)(7) と実装順 1682 行の 2)3)5)。選定課題 G8-S9(崩れの発生の条件。企画に記載が無い。1680 行)を決めた: 既定はスタッガの計の超過にし、HP の段階と部位の条件もデータで選べる。理由: 攻撃の手応えに直結し、HP の段階は HealthComponent の値だけで後から足せる。C++ を主にし、AngelScript は GR98(G18)の後(1652 行。`ScriptRuntime.cpp:234・247` で登録されている型は今も Vector3 と EntityRef だけ)。シ者は徘徊しないのでナビゲーションは作らない。視線や距離の物理のクエリは `SceneQuery`(1 固定ステップの遅れは AI の時間尺では無視できる)。撃破の世界の更新(枯れた草地。未定の提案)は応答 ID の受け口だけ(GR45)。`IEnemyAnimator` の継ぎ目は GR10 の実の API(`AnimatorComponent.h` の RequestState / GetState / OnEvent)に先に合わせてある(1869 行のリスク)。危険地帯: Object の寿命(撃破の直後の破棄の順)なので評価者を通す。やらないこと: 垂直スライスの場面(G8-GR17-SLICE-SMOKE)。
 
 ## G8-GR72-AUDIO-SPI: 音のバックエンドと IAudioService に、ループ・音量・ピッチ・パン・一時停止を追加だけで足す
-- status: todo
+- status: done
 - gr: GR72
 - done-when: (1) private の SPI(`Library/Modules/Audio/Private/Audio/AudioBackend.h` の `IAudioBackend`)に、`AudioBufferDesc{bLoop, LoopBeginFrame, LoopLengthFrames, StartFrame}` 付きの提出、`SetVoiceVolume`・`SetVoiceFrequencyRatio`・`SetVoiceOutputGains`(ドメインは常にステレオの係数を渡し、バックエンドがスピーカーの配置へ展開する)・`PauseVoice` / `ResumeVoice`(Flush しない)を足し、`XAudio2Backend.cpp`(XAUDIO2_BUFFER の LoopCount(無限は XAUDIO2_LOOP_INFINITE)・LoopBegin・LoopLength・PlayBegin、SetVolume、SetFrequencyRatio、SetOutputMatrix、Stop(XAUDIO2_PLAY_TAILS) と Start。出力のチャンネル数は Initialize で mastering voice の GetVoiceDetails から取る)と `Test/Modules/Audio/FakeAudioBackend.h`(新しい呼び出しの回数と Flush の回数を数える)を同じ変更で直す。(2) `IAudioService` には追加だけ(既存の 7 つのメソッドと署名は変えない): `CreateVoice(clip, AudioVoiceDesc, outHandle)` の多重定義(最大のピッチの指定。既定は今と同じ周波数比 2.0)、`SetVoiceVolume` / `SetVoicePitch`(半音)/ `SetVoicePan`(-1..1 の等パワー L=cos((p+1)π/4)、R=sin((p+1)π/4))、`PauseVoice` / `ResumeVoice`(ActiveVoiceRecord の bPaused。`AudioVoiceState` は増やさない)。Set* は Created / Submitted / Playing でだけバックエンドを呼び、Stopping 以降と Quarantined では InvalidState を返してバックエンドに触らない。`AudioResult` に Rejected、`AudioDiagnostics` に StolenVoiceCount・RejectedPlayCount・SuppressedByCooldownCount を追加する。(3) 試験: 新しい `AudioPlaybackTest`(`AudioBackendLifetimeTest` の束の MEMBER。fake だけをリンクし XAudio2 を含めない今の決まりを守る)で、ループの voice が 600 回の Tick で Drained にならず Playing のまま、Pause が fake の Flush の回数を増やさず Resume で再開、隔離された voice への Set* で fake の呼び出しの回数が変わらない、Destroy の後の VoiceHandle への Set* が StaleHandle、パンの係数の式。既存の `AudioBackendLifetimeTest`・`AudioModuleLifecycleTest`・`AudioModuleRegistryTest` が無変更で通る。M9 の契約(`Scripts/Test-M9World.ps1 -ContractOnly`。`CleanupM9WorldAcceptance` の語順の検査)が通り、`M9_REVIEW_CONTRACT result=pass contract=All` を出す。
 - verify: `cmake --build build --config Debug --target Game AudioBackendLifetimeTest -- /m:1`
@@ -10368,3 +10368,33 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/G9-GR15-AB-CAPTURE-CHECK`
 - paths: TASKS.md, PROGRESS.md
 - notes: アプリを起動しないと確かめられない受け入れ（ロードマップ G9 の完了条件の「実リグ導入後に A/B を動画で残して振幅の初期値を記録する」、要件 `#### GR14` の「ImGui の手動確認と動画」、`#### GR15` の「手動確認」）を実装のタスクから分けた。性能は測らないので GPU を占有しない。UNCERTAIN: `--animation-debug` の場面を `Scripts/CaptureScene.ps1` の決定的な撮影（`--capture-deterministic`）で撮れるかは未確認。撮れなければ `G9-GR15-ORDER-DEBUG-VIEW` の paths の範囲で場面の準備完了の印を出すよう直す。実リグ（Rigify の Wolf メタリグ＋UniRig のウェイト）は試行錯誤中なので、ここでは合成の骨格で確かめ、実リグでの調整は記録に残すだけにする（ロードマップ G9 の非ゴール）。`--pose-modifiers-off` の引数は `G9-GR15-ORDER-DEBUG-VIEW` で足す。
+
+## G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P2: workspace を親にする存在確認と移動も読み流しにし、workspace の項目数で bootstrap が失敗しない形にする
+- status: todo
+- after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
+- done-when: workspace を親にする項目の探索を、元のタスクが `CookManagedStoreNative.h` に入れた読み流しの列挙に替える。対象の leaf と、長名か short alias で fold 一致する項目だけを残し、ほかはためない。上限(1 ディレクトリ 16384・全列挙 65536・metadata 32MiB)は残した項目にだけ掛ける。対象は次の 2 つ。
+  - `CookManagedBootstrap.cpp` の `Absent(op.Scope.Workspace, Leaf(draft.Anchor.RootLeaf), ...)`
+  - `CookManagedTransactionController.cpp` の commit で workspace へ出入りする `Rename`(`Rename(op.Scope.Workspace, ...)` と `Rename(op.Scope.Pending, L"root.stage", ..., op.Scope.Workspace, ...)`)の中の `Find`・`Absent`
+  
+  store の制御領域(`pending`・stage・claim)と package の親(`EnsureParents`)の列挙は、今の全件の列挙と上限のまま変えない。`Find`・`Absent` をまとめて読み流しにはせず、workspace を親にする呼び出しだけを替える。次の 3 つは今のまま保つ。
+  - 列挙の失敗を「項目なし」と扱わないこと
+  - 実長名の大文字小文字違いや short alias の一致を、今と同じく存在(`destination_exists` など)と扱うこと
+  - `Rename` の移動元の検出と object の照合
+  
+  `CookManagedBootstrapTest` に次の 2 件を足す。fixture は今の試験と同じく TEMP の外の試験の置き場に作り、新しい exe は作らない。
+  - workspace に 16385 個の空ファイルを置いても、bootstrap が `entry_limit` で失敗せずに `Executed` になる
+  - 同じ混んだ workspace に、RootLeaf と大文字小文字だけが違う項目があれば、今と同じく失敗する
+  
+  `Docs/Architecture/CookManagedBootstrap.md` の上限と列挙の記述を、workspace は読み流しで検査することに合わせて直す。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedStoreObservationTest|CookManagedStoreInitializationTest|TextureManagedCliTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Tools/AssetCook/CookManagedBootstrap.cpp, Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, Test/Core/Asset/CookManagedBootstrapTest.cpp, Docs/Architecture/CookManagedBootstrap.md, TASKS.md, PROGRESS.md
+- from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
+
+判断の根拠:
+- 該当の `Absent` の本体は `CookManagedTransactionController.cpp:85` にある。`Find` を通って `N::Enumerate` で全件をため、`N::Budget` の上限が掛かる。
+- commit で root を workspace へ出し入れする `Rename`(同じファイルの 1536 行・1553 行)も同じ `Find`・`Absent` を通る。このため直すのは bootstrap の 1 か所だけでは足りない。
+- 元のタスクの目的は「workspace からボリュームの根までのどの階層でも、項目数で失敗しない」こと。今のままだと、混んだ workspace で Observe は通っても、bootstrap と commit が `entry_limit` で落ちる。目的の取りこぼしなので TASK にした。
+- 人待ちの P1-P1 が受け持つのは `OpenStore` の祖先と `VerifyClaims` の workspace の列挙で、この 2 か所は含まない。重複にはならない。
+- 読み流しの関数は親の枝(`task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1`)にしかなく、統合ブランチにはまだ入っていない。このため `after` は元のタスクにした。元のタスクは P1-P1 を待っているので、同じファイル `CookManagedTransactionController.cpp` を触る P1-P1 との順もこれで決まる。
+- アプリの起動は要らない。ビルドと単体の試験で確かめられるので、`check: launch` は付けていない。

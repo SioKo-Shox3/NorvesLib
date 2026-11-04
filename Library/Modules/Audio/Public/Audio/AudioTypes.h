@@ -12,6 +12,8 @@ namespace NorvesLib::Modules::Audio
         InvalidState,
         StaleHandle,
         BackendFailure,
+        // 論理サウンド層が再生要求を断ったときに使い、ボイス層では返さない。
+        Rejected,
     };
 
     enum class AudioVoiceState : uint8_t
@@ -69,5 +71,18 @@ namespace NorvesLib::Modules::Audio
         // Duplicate terminal callbacks coalesced behind a pending event for the same voice.
         uint64_t DroppedEventCount = 0;
         uint32_t QuarantinedVoiceCount = 0;
+        // 論理サウンド層が数え、ボイス層では 0 のまま。
+        uint64_t StolenVoiceCount = 0;
+        uint64_t RejectedPlayCount = 0;
+        uint64_t SuppressedByCooldownCount = 0;
+    };
+
+    struct AudioVoiceDesc
+    {
+        bool bLoop = false;
+        uint32_t LoopBeginFrame = 0;
+        uint32_t LoopLengthFrames = 0;   // 0 はループ開始から末尾まで。
+        uint32_t StartFrame = 0;
+        float MaxPitchSemitones = 12.0f; // 上げられるピッチの上限。12 半音は周波数比 2.0。
     };
 } // namespace NorvesLib::Modules::Audio

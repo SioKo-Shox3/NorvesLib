@@ -9601,12 +9601,61 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
 - Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
 - Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
-- U1 保存先のパス・原子的な書き込み・読み込みの Platform API と AtomicFileWriteTest: 着地(直し 0 回)
-- U4 NVSV の入れ物と移行の関数の列(U2 の差分を当て、移行を解析木の上の素直な形に簡素化): 着地(直し 1 回)
-- U3 SaveSlotStore(スロット・.bak・オートセーブのリング・.corrupt への退避)と SaveSlotFallbackTest、Testing.md、タスクの verify: 着地(直し 1 回)
-## 2026-11-04 G8-GR76-SAVE-STORAGE（run 20261104-182215 の反復 1、完了）
-- Done: `Platform/PlatformPaths.h` の `GetUserDataDirectory`（`SHGetKnownFolderPath(FOLDERID_LocalAppData)` の下の `NorvesLib/<appName>/`、失敗時だけ環境変数、根を差し替える `GetUserDataDirectoryUnder`）と `Platform/PlatformFile.h` の `WriteFileAtomic`（一時ファイル → Flush → `ReplaceFileW`（旧世代を `.bak`）/ `MoveFileExW`、共有違反のやり直し、読み戻しの検証、失敗時の一時ファイルの削除）・`ReadFileBytes`・`CleanupAtomicWriteTemporaries`・ファイル操作の差し替え口 `IFileOperations`。`Save/SaveContainer.h` の NVSV（48 バイトの固定ヘッダ。バイト 40〜47 はヘッダ 0〜39 の FNV-1a64 で、版の欄の破損も検出）。`Save/SaveMigration.h` の formatVersion と移行の段の表（v1→v2。新しい版は `RejectedNewerVersion`、絶対値 2^53 以上の整数は丸めず `Invalid`）。`Save/SaveSlotStore.h`（`slot_N.sav`/`.bak`・`autosave_0..2.sav` のリング、writeCounter で新しい方、壊れたファイルは `.corrupt-<UTC 時刻>` へ退避、新しい版に当たったら何も変えず拒否、保存の前にも壊れた主・`.bak` を退避）。試験 4 本を LoggerSinkTest の束へ、`Docs/Testing.md` に理由。
-- 証拠: `.harness/runs/20261104-182215/verify-G8-GR76-SAVE-STORAGE.txt`（Game・LoggerSinkTest の Debug ビルド ExitCode 0、ctest で SaveContainerTest・AtomicFileWriteTest・SaveMigrationTest・SaveSlotFallbackTest・WorkingDirectoryInputBindingStoreTest・JsonWriterTest・LoggerSinkTest の 7 件 100% Passed、TEMP の試験用ディレクトリの残り 0）。
-- 決定: 移行は JsonDocument の木から JsonWriter で書き直す（数値は double で持つエンジン全体の制約に合わせ、2^53 以上の整数は保存の中身では文字列で持つ）。読み込みでファイルを書き直さない（移した中身は返すだけで、次の保存で今の版になる）。読めない（共有違反など）ファイル・退避の失敗は `IoError`。
-- Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
-- Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。
+
+## 2026-11-04 G4-GR05-COMPONENT-CASES（run 20261104-134159）
+- 試験の 3 点（Docs/Testing.md。ケースを足す前に書く）:
+  - 反証する契約: QuadrupedLocomotionComponent を固定ステップの経路で回したとき、(1) 一時フォルダの locomotion.v1 の設定を書き換えると 0.25 秒の間隔の後の最初のフレームから新しい値で動き、壊れた JSON では前の値のまま動き続けて警告が 1 回だけ出る、(2) 見た目の子の Animator の駆動の信号（Speed・TurnRate・bGrounded）と名前のパラメータ（GaitId・GaitWeight0〜3・PitchAngle・BankAngle）がそのフレームのモデルの出力と一致し、名前のパラメータが無いグラフでも落ちない、(3) Animation を移動の源にすると、固定ステップの回数が 0・1・2 と揺れても Animator のルートの差分の合計と本体の移動量の合計が 1e-4 m 以内で一致し、Procedural へ戻すと残りを捨てて次のフレームから手続きの移動に戻る、(4) 同じフレームの Camera 群の FollowCameraComponent が移動の結果を 1 フレームの遅れなく読む
+  - ほかの手段で気づけるか: 気づきにくい。再読込は手で JSON を書き換えないと起きず、パラメータの名前の食い違いは PublishVisual が設定の失敗を捨てるのでログに出ない。ルート移動の二重・欠けは数 mm 単位で絵に出ず、1 フレームのカメラの遅れは静止画の撮影に出ない
+  - 失敗が黙って起きるか: 起きる。どれも外れても犬は何かしら動き、エラーもログも出ない（壊れた JSON の警告の回数を除く）
+- 計画: 4 つのケースは同じ試験ファイルと Component を触るので、単位は直列に回す（U1 設定の再読込 → U2 Animator への値 → U3 ルート移動 → U4 同じフレームのカメラとタスクの verify）
+- U1 設定の再読込のケースを足し、一時フォルダを読ませる口を Component に足す: 着地(直し 0 回)
+- U2 Animator への値のケースを足す: 着地(直し 0 回)
+- U3 ルート移動のケースを足す: 着地(直し 0 回)
+- U4 同じフレームのカメラの読みのケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 28〜31 を足し、全部通る（設定の再読込・Animator への値・ルート移動・同じフレームのカメラ）。Component の直し: Animator へ渡す Speed と接地を本体の状態ではなくそのフレームのモデルの出力から作る（直す前は最初のフレームの Speed が 0.0325、期待 0）。試験のために設定の置き場（資産の根と相対パス）を差し替える SetProfileSource を足した
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest LoggerSinkTest Game -- /m:1` は終了コード 0。ctest の 5 本（QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・RootMotionTimeQueueTest・PhysicsFixedStepPipelineTest 1.98 秒・PhysicsCharacterMoveTest）は 5/5 Passed。既存のケース 0〜27 の中身は変えていない
+- 測った量: ルート移動は 72 フレーム（固定の段 0・1・2 が 24 フレームずつ）で Animator の差分 1.200000018 m・本体 1.199999809 m・差 2.1e-7 m。Procedural へ戻した後は半段の残りを捨てて入力の向きへ 8 フレームで 0.043 m 進み、Animation へ戻した最初のフレームの差は 2e-9 m。同じフレームのカメラは 72 フレーム（α 0 が 24・中間が 48）で注視点と描画の位置 + オフセットの最大差 2.4e-7 m、描画が動いた 26 フレームで前のフレームの描画の位置との差は最小 0.002 m（遅れがあれば合わない形で比べた）
+- Notes: ルート移動のケースは衝突の無い直進のルートだけを見る（壁に当たったときのルートの差分の扱いは試験していない）。同じフレームのカメラは平滑 0・壁なしの組だけで、平滑ありと衝突で腕が縮む組は既存の TestFollowCameraRenderBinding に任せる。アプリを起動する確かめは無い
+- Next: G4-GR05-COMPONENT-CASES を after に持つ項目（G4-GR07 の犬の受け入れなど）
+
+- U1 private SPI にループ・音量・周波数比・出力係数・一時停止を足し、XAudio2 と fake を同じ変更で直す: 着地(直し 1 回)
+- U2 IAudioService と AudioTypes に追加だけで公開 API を足し、ドメインで実装する: 着地(直し 0 回)
+- U3 AudioPlaybackTest を足し、タスクの verify を通す: 着地(直し 0 回)
+- Done (G8-GR72-AUDIO-SPI、run 20261104-141138): private の `IAudioBackend` に `AudioBufferDesc{bLoop, LoopBeginFrame, LoopLengthFrames, StartFrame}` 付きの提出・voice の作成時の最大周波数比・`SetVoiceVolume`・`SetVoiceFrequencyRatio`・`SetVoiceOutputGains`(ステレオの係数をバックエンドが出力の配置へ展開)・`PauseVoice` / `ResumeVoice`(Flush しない)を足し、XAudio2(LoopCount・LoopBegin・LoopLength・PlayBegin、SetVolume、SetFrequencyRatio、SetOutputMatrix、Stop(XAUDIO2_PLAY_TAILS) と Start、出力のチャンネル数は mastering voice の GetVoiceDetails)と fake を合わせた。`IAudioService` は追加だけ(既存のメソッドと署名は不変): `CreateVoice(clip, AudioVoiceDesc, outHandle)`(ループ点・開始位置・最大ピッチの半音、既定は周波数比 2.0)、`SetVoiceVolume`・`SetVoicePitch`(半音)・`SetVoicePan`(等パワー L=cos((p+1)π/4)、R=sin((p+1)π/4))、`PauseVoice` / `ResumeVoice`(ActiveVoiceRecord の bPaused)。Set* は Created / Submitted / Playing でだけバックエンドを呼び、Stopping・Drained・Quarantined では InvalidState。`AudioResult::Rejected` と `AudioDiagnostics` の StolenVoiceCount・RejectedPlayCount・SuppressedByCooldownCount(この層では 0)を足した。
+- 試験: `AudioPlaybackTest`(`AudioBackendLifetimeTest` の束の MEMBER、fake だけをリンク)で、ループの voice が 600 回の Tick の後も Playing、Pause が Flush を増やさず Resume で再開、隔離された voice への Set* で fake の操作が増えない、Destroy の後の Set* が StaleHandle、パンの式を確かめる。
+- 証拠: `.harness/runs/20261104-141138/G8-GR72-AUDIO-SPI-U3-verify.txt`(Debug の Game・AudioBackendLifetimeTest のビルド成功、ctest の AudioPlaybackTest・AudioBackendLifetimeTest・AudioModuleLifecycleTest・AudioModuleRegistryTest が 4/4 Passed、`M9_REVIEW_CONTRACT result=pass contract=All`、numstat の 2 通りが一致)。
+- Next: 起動の確かめは後回し(無限ループの voice を Stop → Flush したときに Drained が来るか、XAudio2 の実機の鳴り方は G8-GR72-AUDIO-CHECK)。論理サウンド層は G8-GR72-SOUND-SYSTEM。
+- Notes: 危険地帯(Public API)なので評価者を通す。
+- Notes (G8-GR72-AUDIO-SPI、run 20261104-182215): 前回は評価者の枠切れで評価が回らず状態が doing に戻っていた。実装は全単位着地済みで、着地した Library/Modules/Audio・Test/Modules/Audio・Docs/Testing.md は確かめた作業ツリーと一致し、確かめの出力(ビルド exit_code=0、ctest 4/4 Passed、M9_REVIEW_CONTRACT result=pass contract=All)を読み直したので done に戻した。Public API の危険地帯なので評価はランナーの評価で通す。無限ループの voice を Stop → Flush したときの Drained は実機の確かめ(G8-GR72-AUDIO-CHECK)で見る。
+
+- U2 U1 でレビュー済みの差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 1): `CookManagedStoreNative.h` の列挙を、述語で残す項目を選ぶ `EnumerateKept` にした（親タスクの枝 `task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1` の版とバイト単位で同じ。`Enumerate` はすべて残す述語で包むので、store の制御領域の列挙と上限は変わらない）。`CookManagedTransactionController.cpp` の `OpenStore` の祖先の列挙は `StoreLeaf` と長名か short alias で fold 一致する項目だけを、`VerifyClaims` の workspace の列挙は `index.Roots` の各 `RootLeaf` と fold 一致する項目だけを残す。上限は残した項目にだけ掛かる。長名か alias で一致する項目は全部残すので、`active_claim_name_or_alias`・`active_claim_changed`・`nested_managed_root` の判定は前と同じ入力で行われる。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U2-verify.txt`（TEMP・TMP は差し替えず、TEMP 直下 133800 件。verify のビルド 終了コード 0。ctest 6 本のうち `CookManagedUpdateTest`・`TextureManagedCliTest` を含む 5 本 Passed、`CookManagedStoreObservationTest` は `entry_limit` で Failed。親の枝の `CookManagedStoreObservation.cpp` と試験の変更（a900b4e0・ef9c7b72）を一時的に重ねると 6 本すべて Passed、戻した後のビルドも終了コード 0。numstat の 2 通りが一致）。
+- Next: 親の G2-GR82-B4-STATIC-ROOT-FRAME128-P1（`ObserveLocked` の読み流し）が統合されると、verify の 6 本が単独で通る。
+- Notes: `CookManagedStoreObservationTest` が落ちるのは、`CookManagedStoreObservation.cpp`（この項目の paths の外）の `ObserveLocked` がまだ全件をためる列挙だから。この項目の変更が原因ではない。親タスクの枝と Native.h が同じなので、親を取り込むときに衝突しない。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 2): 反復 1 の再実行で `CookManagedStoreObservationTest` だけが `entry_limit` で落ちた。原因は親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `ObserveLocked`（paths の外）がまだ統合されていないことで、親は `after:` でこの項目を待っている。互いに待つので BLOCKED にし、verify から Observation を外す案を推奨として blocked に書いた。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 判断役の判断で、この項目の verify の ctest から `CookManagedStoreObservationTest` を外し、5 本で合否を決める。Observation の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。外した理由は、親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちになっていたため。親の枝を一時的に重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 反復 1 で入れた祖先と workspace の読み流し(コードは変えていない)で、判断役の判断で 5 本に絞った verify が TEMP を差し替えずに通った。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U3-verify.txt`(TEMP 直下 133860 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 87.97 秒・`TextureManagedCliTest` 16.37 秒を含む。作業ツリーの変更なし)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
+- U4 workspace を親にする Find・Absent も一致する項目だけ残す読み流しにする: 着地(直し 0 回)
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 4): 差し戻し(workspace を親にする `Find`/`Absent` が全件をためる列挙のまま)を直した。`Find`・`Absent`・`KnownDirectory`・`Rename` に、leaf と長名か short alias で fold 一致する項目だけを残す読み流しを選ぶ形(既定は今の全件列挙)を足し、workspace を親にする 4 か所だけで使う: `LoadActive` の `KnownDirectory(scope.Workspace, …)` 2 か所、rollback の `Rename` の from 側、`PublishBootstrap` の `Rename` の to 側。`Fixed` は fold 一致する項目しか見ないので判定は前と同じ。store の制御領域・pending の列挙と上限は変えていない。`VerifyClaims` の 2 つの比較ラムダを 1 つにまとめた。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U4-verify.txt`(TEMP・TMP は差し替えず、TEMP 直下 133863 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 86.51 秒・`TextureManagedCliTest` 17.34 秒を含む。numstat の 2 通りが一致)。workspace に 16385 件以上を置いた managed update の再現は回していない(コード読みで、workspace を親にする列挙がすべて読み流しになったことを確かめた)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
+- Notes: 要起票: `Tools/AssetCook/CookManagedBootstrap.cpp:457` 付近にも workspace を親にする `Absent` があり、全件をためる列挙のまま(この項目の paths の外)。bootstrap でも workspace に 16385 件以上あると `entry_limit` になる見込み。
+
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 5): 統合ブランチを取り込んだ後の再検証は、判断役の判断(反復 2)で外すと決めた `CookManagedStoreObservationTest` だけが落ちた。判断の指示 1 のとおり、この項目の 2 本目の verify の ctest から `CookManagedStoreObservationTest` を外して 5 本にした(反復 3 で書き換えが TASKS.md に入っていなかった)。コードは変えていない。
+- 証拠: `.harness/runs/20261104-132212/sync-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-1.txt`(取り込み後の Debug の CookedMeshTest のビルド exit=0)と `sync-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-2.txt`(同じビルドで、5 本の `CookManagedUpdateInventoryTest`・`CookManagedStoreInitializationTest`・`CookManagedUpdateTest` 99.16 秒・`TextureManagedCliTest` 18.00 秒・`RigSplitCookTest` がすべて Passed。落ちたのは外した `CookManagedStoreObservationTest` の `entry_limit` だけ)。
+- Notes: `CookManagedStoreObservationTest` の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちだったため外した。親の枝を重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、6 本の verify で完了させる。
+
+## 2026-11-04 G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1（run 20261104-182212 の反復 1、完了）
+
+- Done: 判断役の判断(選択肢 2)に従い、コードは変えずに統合ブランチ `feature/scene-launcher` の取り込み後の版で 5 本の verify を回し、`status: done` にした。`OpenStore` の祖先・`VerifyClaims` の workspace・workspace を親にする `Find`/`Absent` の列挙は、前の反復で一致する項目だけを残す読み流しにしてある。
+- 証拠: `.harness/runs/20261104-182212/verify-FRAME128-P1-P1.txt`(TEMP・TMP は差し替えず、TEMP 直下 133940 件。Debug の CookedMeshTest のビルド BUILD_EXIT=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 83.32 秒・`TextureManagedCliTest` 15.36 秒を含む。CTEST_EXIT=0)。
+- Notes: `CookManagedStoreObservationTest` の確かめは、親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の 6 本の verify が受け持つ。親が統合されるまで、統合ブランチの上ではこの試験が利用者の TEMP で `entry_limit` によって落ちたまま残る(今と同じ状態)。
+- Notes: この項目の verify を 6 本から 5 本にしたのは、ワーカーではなく判断役が統合ブランチ側の TASKS.md で書き換えたもの。
+- Notes: 要起票: `CookManagedBootstrap.cpp:457` の workspace を親にする `Absent` が全件をためる列挙のまま(この項目の paths の外)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `after` が解けたら、統合ブランチを取り込んで 6 本の verify で完了を確かめる。
