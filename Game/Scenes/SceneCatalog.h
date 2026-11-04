@@ -274,10 +274,25 @@ namespace Game::Scenes
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
+    /// 草原地形の確認用シーンの id。シーンの一覧に載るのは開発ビルドだけ
+    inline constexpr const char* kGrasslandSceneId = "grassland";
+
     /// 負荷シーン mega-stress の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kMegaStressSceneId = "mega-stress";
 
 #if NORVES_BUILD_DEVELOPMENT
+    /// 512 m 四方、原点 (0,0,0) の草原。生成式の谷は z/512 = 0.52 + 0.085 t (1.5 - 0.5 t²)、t = 2x/512 - 1。
+    /// 尾根は谷から -Z へ約 102 m。高さは seed 89021 の生成式と 16bit 量子化から求めた固定値[m]。
+    /// +Z が Yaw 0、Yaw 90 は -X。位置の y は地表からの差ではなく世界座標の高さ。
+    inline constexpr SceneViewDescriptor kGrasslandViews[] = {
+        // 谷底 (160,237) の地表 21.0423 m + 0.6 m。谷の奥へ向けて地表付近を見る既定の視点。
+        {"near", SceneViewKind::FreePose, -82.0f, 2.0f, 0.0f, {160.0f, 21.6423f, 237.0f}},
+        // 谷底 (205,253) の地表 21.1644 m + 1.7 m から、北の尾根 (205,151)、高さ約 36.43 m を見上げる。
+        {"valley", SceneViewKind::FreePose, 180.0f, 7.6f, 0.0f, {205.0f, 22.8644f, 253.0f}},
+        // 谷の西側 (100,220) の地表 21.7679 m + 1.0 m から、東の谷沿いへ低い角度で見渡す。
+        {"low", SceneViewKind::FreePose, -73.5f, 1.0f, 0.0f, {100.0f, 22.7679f, 220.0f}},
+    };
+
     inline constexpr SceneViewDescriptor kSandboxViews[] = {
         // 地面の手前から奥の地平線まで見渡す視点。起動時の既定
         {"overview", SceneViewKind::FreePose, 0.0f, -15.0f, 0.0f, {0.0f, 4.0f, -12.0f}},
@@ -430,7 +445,21 @@ namespace Game::Scenes
             nullptr,
             &kSandboxPath,
         },
-        // 開発ビルドだけ。サンドボックスの次（並びの最後）に置く
+        {
+            kGrasslandSceneId,
+            "草原",
+            "谷と尾根のある 512 m 四方の草原地形。地表すれすれと谷底、低い角度から地形の起伏を確かめる。開発ビルドだけ。",
+            "Assets/Textures/Launcher/sandbox.png",
+            "near",
+            Game::GameModes::Grassland,
+            kGrasslandViews,
+            sizeof(kGrasslandViews) / sizeof(kGrasslandViews[0]),
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+        },
+        // 開発ビルドだけ。負荷シーンは並びの最後に置く
         {
             kMegaStressSceneId,
             "負荷（仮想化ジオメトリ）",

@@ -1,6 +1,7 @@
 ﻿#include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
 
 #include "Asset/AssetFileReader.h"
+#include "Asset/CookedTerrainFormat.h"
 #include "Text/JsonDocument.h"
 
 #include "stb_image.h"
@@ -10,6 +11,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <new>
+#include <stdexcept>
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -694,6 +697,143 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
 
         return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
+    }
+
+    Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::CreateFromCookedTerrain(
+        const Asset::CookedTerrainData &terrain, Container::AnsiString &outError)
+    {
+        outError.clear();
+        if (terrain.CellCountX == 0 || terrain.CellCountZ == 0 || terrain.TileCells == 0 ||
+            terrain.CellCountX == UINT32_MAX || terrain.CellCountZ == UINT32_MAX ||
+            terrain.CellCountX % terrain.TileCells != 0 || terrain.CellCountZ % terrain.TileCells != 0 ||
+            terrain.TileCountX != terrain.CellCountX / terrain.TileCells ||
+            terrain.TileCountZ != terrain.CellCountZ / terrain.TileCells ||
+            !std::isfinite(terrain.CellSizeM) || terrain.CellSizeM <= 0.0f ||
+            !std::isfinite(terrain.OriginX) || !std::isfinite(terrain.OriginY) || !std::isfinite(terrain.OriginZ) ||
+            !std::isfinite(terrain.HeightMinM) || !std::isfinite(terrain.HeightMaxM) ||
+            terrain.HeightMinM > terrain.HeightMaxM)
+        {
+            outError = "NVTRN の格子の寸法・原点・高さの写像が不正です";
+            return {};
+        }
+
+        const uint64_t columns = static_cast<uint64_t>(terrain.CellCountX) + 1;
+        const uint64_t rows = static_cast<uint64_t>(terrain.CellCountZ) + 1;
+        const uint64_t tileCount = static_cast<uint64_t>(terrain.TileCountX) * terrain.TileCountZ;
+        const uint64_t side = static_cast<uint64_t>(terrain.TileCells) + 1;
+        if (columns * rows > std::numeric_limits<size_t>::max() / sizeof(float) ||
+            side * side > std::numeric_limits<size_t>::max() / sizeof(uint16_t) ||
+            tileCount > UINT32_MAX || tileCount > std::numeric_limits<size_t>::max() / sizeof(Asset::AssetBlob))
+        {
+            outError = "NVTRN から作る格子の大きさが格納上限を超えています";
+            return {};
+        }
+        if (terrain.Tiles.size() != tileCount)
+        {
+            outError = "NVTRN のタイル数が格子の寸法と合いません";
+            return {};
+        }
+        const int32_t heightLayer = terrain.FindLayer(Asset::CookedTerrainFormatV0::HeightLayerFourCC);
+        if (heightLayer < 0 ||
+            terrain.Layers[heightLayer].Encoding != Asset::CookedTerrainFormatV0::LayerEncodingRawHeight16 ||
+            terrain.Layers[heightLayer].PixelFormat != Asset::CookedTexturePixelFormat::R16UNorm ||
+            terrain.Layers[heightLayer].ColorSpace != Asset::CookedTextureColorSpace::Linear)
+        {
+            outError = "NVTRN に生の uint16 の HGT0 レイヤがありません";
+            return {};
+        }
+
+        try
+        {
+            // ファイル内のタイル順によらず座標順に並べ、欠落・重複と全 HGT0 の大きさを先に確かめる。
+            Container::VariableArray<Asset::AssetBlob> heightTiles(static_cast<size_t>(tileCount));
+            const size_t tileBytes = static_cast<size_t>(side * side) * sizeof(uint16_t);
+            for (size_t index = 0; index < terrain.Tiles.size(); ++index)
+            {
+                const auto &tile = terrain.Tiles[index];
+                if (tile.TileX >= terrain.TileCountX || tile.TileZ >= terrain.TileCountZ)
+                {
+                    outError = "NVTRN のタイル座標が格子の範囲外です";
+                    return {};
+                }
+                auto &blob = heightTiles[static_cast<size_t>(tile.TileZ) * terrain.TileCountX + tile.TileX];
+                if (blob.IsValid())
+                {
+                    outError = "NVTRN のタイル座標が重複し、必要なタイルが欠けています";
+                    return {};
+                }
+                blob = terrain.GetLayerBlob(static_cast<uint32_t>(index), static_cast<uint32_t>(heightLayer));
+                if (!blob.IsValid() || blob.GetSize() != tileBytes)
+                {
+                    outError = "NVTRN のタイルの HGT0 が欠けているか、大きさが (TileCells + 1) × (TileCells + 1) × 2 バイトと違います";
+                    return {};
+                }
+            }
+
+            auto grid = Container::MakeShared<GridData>();
+            grid->Columns = static_cast<uint32_t>(columns);
+            grid->Rows = static_cast<uint32_t>(rows);
+            grid->FirstX = terrain.OriginX;
+            grid->FirstZ = terrain.OriginZ;
+            grid->Spacing = terrain.CellSizeM;
+            auto bytes = Container::MakeShared<Asset::AssetBlob::ByteArray>(static_cast<size_t>(columns * rows) * sizeof(float));
+            const auto readSample = [side](const Asset::AssetBlob &blob, uint32_t x, uint32_t z)
+            {
+                const size_t offset = (static_cast<size_t>(z) * static_cast<size_t>(side) + x) * sizeof(uint16_t);
+                const uint8_t *data = blob.GetData() + offset;
+                return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
+            };
+            for (uint32_t tz = 0; tz < terrain.TileCountZ; ++tz)
+            {
+                for (uint32_t tx = 0; tx < terrain.TileCountX; ++tx)
+                {
+                    const size_t tileIndex = static_cast<size_t>(tz) * terrain.TileCountX + tx;
+                    const auto &blob = heightTiles[tileIndex];
+                    for (uint32_t z = 0; z <= terrain.TileCells; ++z)
+                    {
+                        for (uint32_t x = 0; x <= terrain.TileCells; ++x)
+                        {
+                            const uint16_t value = readSample(blob, x, z);
+                            // 復元後の float が同じでも、生の標本が違えば共有辺の約束違反とする。
+                            if ((tx > 0 && x == 0 && value != readSample(heightTiles[tileIndex - 1], terrain.TileCells, z)) ||
+                                (tz > 0 && z == 0 && value != readSample(heightTiles[tileIndex - terrain.TileCountX], x, terrain.TileCells)))
+                            {
+                                outError = "NVTRN の隣接タイルの共有辺で HGT0 の標本が一致しません";
+                                return {};
+                            }
+                            // cook と同じ double 補間を float に丸めた高さに、仕様の世界座標の原点を加える。
+                            const float height = static_cast<float>(terrain.OriginY + terrain.DecodeHeightM(value));
+                            if (!std::isfinite(height))
+                            {
+                                outError = "NVTRN から復元した世界座標の高さが有限の float に収まりません";
+                                return {};
+                            }
+                            const size_t column = static_cast<size_t>(tx) * terrain.TileCells + x;
+                            const size_t row = static_cast<size_t>(tz) * terrain.TileCells + z;
+                            const size_t offset = (row * grid->Columns + column) * sizeof(float);
+                            uint32_t bits = 0;
+                            std::memcpy(&bits, &height, sizeof(float));
+                            for (size_t byte = 0; byte < sizeof(float); ++byte)
+                            {
+                                (*bytes)[offset + byte] = static_cast<uint8_t>(bits >> (byte * 8));
+                            }
+                        }
+                    }
+                }
+            }
+            grid->Bytes = Asset::AssetBlob::FromOwnedBytes(bytes);
+            return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
+        }
+        catch (const std::bad_alloc &)
+        {
+            outError = "NVTRN から格子を作るメモリを確保できません";
+            return {};
+        }
+        catch (const std::length_error &)
+        {
+            outError = "NVTRN から作る格子の配列が格納上限を超えています";
+            return {};
+        }
     }
 
     bool LoadTerrainHorizonMeshes(Container::AnsiStringView descriptorPath,

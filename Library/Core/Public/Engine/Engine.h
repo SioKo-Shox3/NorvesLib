@@ -9,6 +9,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
@@ -361,6 +362,16 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        Rendering::Terrain::TerrainSystem& GetTerrainSystem()
+        {
+            return m_TerrainSystem;
+        }
+
+        const Rendering::Terrain::TerrainSystem& GetTerrainSystem() const
+        {
+            return m_TerrainSystem;
+        }
+
         Particle::ParticleSystem& GetParticleSystem()
         {
             return m_ParticleSystem;
@@ -513,6 +524,10 @@ namespace NorvesLib::Core::Engine
         // レンダリングシステム（GEngine配下で実体保持）
         Rendering::RenderWorld m_RenderWorld;
         Container::TSharedPtr<FontAtlas> m_DefaultFontAtlas;
+
+        // m_World より前に宣言し、World の破棄で Component が登録を解除するまで生かす。
+        // 破棄順を保つため、この順序を変えない。
+        Rendering::Terrain::TerrainSystem m_TerrainSystem;
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;
