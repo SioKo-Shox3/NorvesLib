@@ -248,15 +248,30 @@ namespace NorvesLib::Core::Animation
                 }
                 return true;
             }
-            bool AverageAt(double time, double period, uint32_t cycles, Pose& pose, Pose& scratch)
+            bool AverageAt(double time, double period, uint32_t cycles, uint32_t before, Pose& pose, Pose& scratch)
             {
                 if (!At(time, pose))
                 {
                     return false;
                 }
+                if (before > 0)
+                {
+                    if (!At(std::clamp(time - before * period, 0.0, Source.DurationSeconds), scratch))
+                    {
+                        return false;
+                    }
+                    for (size_t joint = 0; joint < Source.JointIndices.size(); ++joint)
+                    {
+                        if (joint != RootSlot)
+                        {
+                            pose.Rotations[joint] = scratch.Rotations[joint];
+                        }
+                    }
+                }
                 for (uint32_t cycle = 1; cycle < cycles; ++cycle)
                 {
-                    if (!At(std::min(Source.DurationSeconds, time + cycle * period), scratch))
+                    const double sampleTime = time + (double(cycle) - before) * period;
+                    if (!At(std::clamp(sampleTime, 0.0, Source.DurationSeconds), scratch))
                     {
                         return false;
                     }
@@ -386,6 +401,8 @@ namespace NorvesLib::Core::Animation
             !std::isfinite(settings.MinimumPeriod) || !std::isfinite(settings.MaximumPeriod) ||
             settings.MinimumPeriod <= 0 || settings.MaximumPeriod <= settings.MinimumPeriod ||
             !std::isfinite(settings.LoopRmsThresholdRadians) || settings.LoopRmsThresholdRadians <= 0 ||
+            !std::isfinite(settings.LoopRecurrenceRatio) || settings.LoopRecurrenceRatio <= 0 ||
+            settings.LoopRecurrenceRatio > 1 ||
             !std::isfinite(settings.MinimumMotionRadians) || settings.MinimumMotionRadians <= 0 ||
             !std::isfinite(settings.SpikeThresholdRadians) || settings.SpikeThresholdRadians < 0 ||
             settings.SpikeThresholdRadians > Pi || settings.SpikeWindowRadius > 16 || settings.SmoothingRadius > 16 ||
@@ -582,7 +599,7 @@ namespace NorvesLib::Core::Animation
                     {
                         return eval.Failure;
                     }
-                    if (motion >= settings.MinimumMotionRadians && score <= motion * 0.2)
+                    if (motion >= settings.MinimumMotionRadians && score <= motion * settings.LoopRecurrenceRatio)
                     {
                         selected = i;
                         report.bLoopDetected = true;
@@ -644,15 +661,44 @@ namespace NorvesLib::Core::Animation
         }
         const size_t samples = size_t(grid) + 1;
         const bool loop = report.bLoopDetected || report.bRangeSelected;
-        const uint32_t cycles =
-            settings.bAverageCycles && loop
-                ? uint32_t(std::clamp(std::floor((source.DurationSeconds - report.StartSeconds) / duration), 1.0, 16.0))
-                : 1;
+        uint32_t cycles = 1, before = 0;
+        if (settings.bAverageCycles && loop)
+        {
+            constexpr double roundingTolerance = 1e-9;
+            const uint32_t availableBefore = uint32_t(std::min(
+                15.0, std::floor(report.StartSeconds / duration + roundingTolerance)));
+            if (availableBefore == 0)
+            {
+                // 開始より前に周期がなければ、従来どおり後ろの周期だけを数える。
+                cycles = uint32_t(std::clamp(std::floor((source.DurationSeconds - report.StartSeconds) / duration),
+                                             1.0, 16.0));
+            }
+            else
+            {
+                const uint32_t availableAfter = uint32_t(std::min(
+                    15.0, std::floor(std::max(0.0, source.DurationSeconds - report.EndSeconds) / duration +
+                                     roundingTolerance)));
+                // 16周期まで、開始に近い順に前後を選ぶ。同じ距離なら前を優先する。
+                for (uint32_t distance = 1;
+                     cycles < 16 && (distance <= availableBefore || distance <= availableAfter); ++distance)
+                {
+                    if (distance <= availableBefore)
+                    {
+                        ++before;
+                        ++cycles;
+                    }
+                    if (cycles < 16 && distance <= availableAfter)
+                    {
+                        ++cycles;
+                    }
+                }
+            }
+        }
         report.AveragedCycles = cycles;
         Pose cyclePose(source.JointIndices.size());
         // 報告と継ぎ目の補正は、出力と同じ周期平均後の端点を使う。
-        if (!eval.AverageAt(report.StartSeconds, duration, cycles, start, cyclePose) ||
-            !eval.AverageAt(report.EndSeconds, duration, cycles, finish, cyclePose))
+        if (!eval.AverageAt(report.StartSeconds, duration, cycles, before, start, cyclePose) ||
+            !eval.AverageAt(report.EndSeconds, duration, cycles, before, finish, cyclePose))
         {
             return eval.Failure;
         }
@@ -695,7 +741,7 @@ namespace NorvesLib::Core::Animation
             {
                 return Status::LimitExceeded;
             }
-            if (!eval.AverageAt(report.StartSeconds + t, duration, cycles, a, cyclePose))
+            if (!eval.AverageAt(report.StartSeconds + t, duration, cycles, before, a, cyclePose))
             {
                 return eval.Failure;
             }
