@@ -771,6 +771,101 @@ namespace
         assert(service->Shutdown() == AudioResult::Success);
     }
 
+
+    void TestSoundBankRejectsInvalidDefinitions()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+
+        const Core::Asset::AssetBlob::ByteArray monoPcm(16 * 2, 0);
+        const auto monoBlob = Core::Asset::AssetBlob::CopyBytes(
+            Core::Container::Span<const uint8_t>(monoPcm.data(), monoPcm.size()),
+            Core::Container::AnsiString("memory/bank-mono"));
+        const auto monoClip = MakeShared<AudioClipResource>(monoBlob, AudioPcmFormat{48000, 1, 16, 2}, 16);
+        const auto stereoClip = MakeClip();
+        struct ClipEntry
+        {
+            const char* Path;
+            TSharedPtr<AudioClipResource> Clip;
+        };
+        const ClipEntry clips[] = {
+            {"Audio/Test/mono.wav", monoClip},
+            {"Audio/Test/stereo.wav", stereoClip},
+        };
+        const Private::SoundBankClipResolver resolveClip(
+            [&clips](const Core::Container::String& path) -> TSharedPtr<AudioClipResource>
+            {
+                for (const auto& clip : clips)
+                {
+                    if (path == clip.Path)
+                    {
+                        return clip.Clip;
+                    }
+                }
+                return {};
+            });
+
+        constexpr char json[] = R"({"version":1,"sounds":[
+            {"id":"Bank.Valid","clips":["Audio/Test/mono.wav"],"spatial":"3d"},
+            {"id":"Bank.Missing","clips":["Audio/Test/missing.wav"]},
+            {"id":"Bank.Stereo3d","clips":["Audio/Test/stereo.wav"],"spatial":"3d"},
+            {"id":"Bank.Unknown","clips":["Audio/Test/mono.wav"],"unknown_key":true}
+        ]})";
+        constexpr char bankKey[] = "Audio/Test/bank.soundbank.json";
+        SoundBankLoadReport report;
+        assert(Private::SoundSystemTestAccess::LoadBankFromText(
+            sound, bankKey, Core::Container::Span<const uint8_t>(
+                reinterpret_cast<const uint8_t*>(json), sizeof(json) - 1), resolveClip, report) == AudioResult::Success);
+        assert(report.LoadedDefinitionCount == 1);
+        assert(report.RejectedDefinitionCount == 3);
+        assert(report.Diagnostics.size() == 3);
+        struct ExpectedDiagnostic
+        {
+            const char* Name;
+            SoundBankRejectReason Reason;
+        };
+        const ExpectedDiagnostic expected[] = {
+            {"Bank.Missing", SoundBankRejectReason::MissingClip},
+            {"Bank.Stereo3d", SoundBankRejectReason::SpatialStereoClip},
+            {"Bank.Unknown", SoundBankRejectReason::UnknownKey},
+        };
+        for (const auto& item : expected)
+        {
+            uint32_t matchingCount = 0;
+            for (const auto& diagnostic : report.Diagnostics)
+            {
+                if (diagnostic.DefinitionName == item.Name && diagnostic.Reason == item.Reason)
+                {
+                    ++matchingCount;
+                }
+            }
+            assert(matchingCount == 1);
+        }
+
+        SoundPlayParams params;
+        SoundInstanceHandle valid;
+        assert(sound.PlayGlobal(SoundId("Bank.Valid"), params, valid) == AudioResult::Success);
+        assert(valid.IsValid() && sound.IsPlaying(valid));
+        assert(fake->CreateCount == 1 && fake->StartCount == 1);
+        for (const auto& item : expected)
+        {
+            SoundInstanceHandle rejected;
+            assert(sound.PlayGlobal(SoundId(item.Name), params, rejected) == AudioResult::InvalidState);
+            assert(!rejected.IsValid());
+        }
+        assert(fake->CreateCount == 1 && fake->StartCount == 1);
+        assert(sound.UnloadBank(bankKey) == AudioResult::Success);
+        SoundInstanceHandle unloaded;
+        assert(sound.PlayGlobal(SoundId("Bank.Valid"), params, unloaded) == AudioResult::InvalidState);
+        assert(!unloaded.IsValid());
+        assert(fake->CreateCount == 1 && fake->StartCount == 1);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
 }
 
 int main()
@@ -791,6 +886,7 @@ int main()
     TestMaxInstancesPolicies();
     TestDedupeWithinFrame();
     TestNoRepeatClipDistribution();
+    TestSoundBankRejectsInvalidDefinitions();
     std::cout << "AudioPlaybackTest: 合格\n";
     return 0;
 }
