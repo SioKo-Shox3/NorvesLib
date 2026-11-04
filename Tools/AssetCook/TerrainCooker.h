@@ -1,6 +1,7 @@
 ﻿// メートル単位の高さ格子を NVTRN v0 に焼き込む API。
 #pragma once
 #include "HeightfieldImport.h"
+#include "TerrainMasks.h"
 #include "Asset/CookedTerrainFormat.h"
 
 namespace NorvesLib::Tools::AssetCook
@@ -14,6 +15,7 @@ namespace NorvesLib::Tools::AssetCook
     {
         double CellSizeM = 1.0;    // 有限で正。
         uint32_t TileCells = 128;  // 2 の冪で 8..1024。grid の幅・高さは TileCells*N+1。
+        const TerrainMaskFields* Masks = nullptr; // null なら HGT0・NRM0 だけ。
     };
 
     struct TerrainBuildResult
