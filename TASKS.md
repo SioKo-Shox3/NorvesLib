@@ -5463,7 +5463,7 @@
 - notes: 設計はロードマップ 1621〜1648 行。Physics のトリガーを使わない理由は 1623〜1627 行(trigger がクエリに混ざる、1 Entity 1 コライダーで PROPERTY が無い、固定ステップごとに束で届く)。選定課題 G8-S6(領域の外へ出たときの規則。ロードマップ 1861 行で「本人に確認する」)を決めた: ResetPolicy をデータの列挙 {FullHeal, KeepDamage} にし、既定は FullHeal(敵を全回復して Dormant に戻す)。理由: 領域の外へ逃げて削る遊び方を防ぐ、よくある作りで、データで KeepDamage に変えられる。退出の規則の適用(体力を戻す)は GR17 の EnemyComponent が OnZoneReset を受けて行う(G8-GR17-ENEMY-COMPONENT)。更新の時点は G8-S2 と同じ Module Late で、カメラの切り替えは次のフレームから見える(ブレンドが秒単位なので差は出ない)。テレポート(GR71)は印で扱う(1864 行)。領域の半径と攻撃の射程の検証・領域の重なりの検証は GR93(G12)。危険地帯: Object の寿命なので評価者を通す。やらないこと: 近接の操作とプロンプト(G8-GR18-INTERACTION)、敵の起動(G8-GR17-ENEMY-COMPONENT)。
 
 ## G8-GR18-INTERACTION: 寝床・ファストトラベル地点などに近づくと出る近接の操作(候補の選択・点滅しないプロンプト・入力で 1 回の起動)を作る
-- status: done
+- status: doing
 - after: G8-GR18-ENCOUNTER-ZONES
 - gr: GR18
 - needs-gr: GR03
