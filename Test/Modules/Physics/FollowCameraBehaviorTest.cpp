@@ -43,7 +43,11 @@ namespace Game::Gameplay
             camera.m_YawVelocity = 0;
         }
         static float Trauma(const FollowCameraComponent& camera) { return camera.m_Trauma; }
-        static uint64_t LockOnId(const FollowCameraComponent& camera) { return camera.m_LockOnId; }
+        static uint64_t LockOnId(const FollowCameraComponent& camera)
+        {
+            auto t = camera.m_LockOn.lock();
+            return t ? t->GetEntityId() : 0;
+        }
     };
 } // namespace Game::Gameplay
 
@@ -550,6 +554,299 @@ namespace
         std::puts("ロックオン: 有効関節の姿勢無効化と存在しない関節の指定で解除");
     }
 
+    class FakeSurfaceAnchor final : public Core::Camera::ILockOnTarget
+    {
+      public:
+        Math::Vector3 Position;
+        float Radius = 0;
+
+        bool TryResolve(const Core::World&, Core::Camera::LockOnPoint& out) const override
+        {
+            out.Position = Position;
+            out.Radius = Radius;
+            return true;
+        }
+        uint64_t GetEntityId() const override { return 0; }
+    };
+
+    // 外部のアンカーが対象の周囲を動いても、弱参照を保ちヨーを追従させる。
+    void TestLockOnMovingSurfaceAnchor()
+    {
+        CameraFixture fixture;
+        auto anchor = Core::Container::MakeShared<FakeSurfaceAnchor>();
+        const auto subject = fixture.Visual->GetRenderWorldTransform().position + fixture.Follow->GetTargetOffset();
+        anchor->Position = subject + Math::Vector3{5, 0, 0};
+        anchor->Radius = .35f;
+        CAMERA_CHECK(fixture.Follow->SetLockOn(anchor));
+        for (unsigned frame = 0; frame < 600; ++frame)
+        {
+            // 移動を滑らかに減速し、終端では既存の静止目標と同じ角度の許容で確かめる。
+            const float elapsed = static_cast<float>(frame + 1) * FrameDelta;
+            const float angle = (1.f - std::exp(-elapsed)) * Math::Constants::PI * .5f;
+            anchor->Position = subject + Math::Vector3{5 * std::cos(angle), 0, 5 * std::sin(angle)};
+            fixture.Step();
+            CAMERA_CHECK(fixture.Follow->IsLockedOn());
+        }
+        const auto direction = anchor->Position - fixture.Owner->GetWorldTransform().position;
+        const float targetYaw = float(std::atan2(direction.x, direction.z) * 57.29577951308232 + 180);
+        CAMERA_NEAR(AngleDelta(fixture.Follow->GetYaw(), targetYaw), 0, .05f);
+        std::puts("表面アンカー: 移動中もロックを維持しヨーが追従");
+    }
+
+    // アンカーの持ち主が先に消えても安全に解除し、切れた弱参照の設定は拒否する。
+    void TestLockOnDestroyedSurfaceAnchor()
+    {
+        CameraFixture fixture;
+        auto anchor = Core::Container::MakeShared<FakeSurfaceAnchor>();
+        anchor->Position = {5, .4f, 0};
+        Core::Container::TWeakPtr<const Core::Camera::ILockOnTarget> target = anchor;
+        CAMERA_CHECK(fixture.Follow->SetLockOn(target));
+        fixture.Advance(10);
+        CAMERA_CHECK(fixture.Follow->IsLockedOn());
+        anchor.reset();
+        fixture.Step();
+        CAMERA_CHECK(!fixture.Follow->IsLockedOn());
+        fixture.Advance(10);
+        CAMERA_CHECK(!fixture.Follow->SetLockOn(target));
+        CAMERA_CHECK(!fixture.Follow->IsLockedOn());
+        std::puts("表面アンカー: 持ち主の破棄後に安全に解除し切れた弱参照を拒否");
+    }
+
+    // 対象のロールにかかわらず、カメラの基本姿勢の上方向を世界上向きに保つ。
+    void TestClingWorldUp()
+    {
+        CameraFixture fixture;
+        fixture.Physical->SetRotation(Math::Quaternion(Math::Vector3::UnitY, .5f) *
+                                      Math::Quaternion(Math::Vector3::UnitZ, Math::Constants::PI * .5f));
+        fixture.Follow->SetClinging(true);
+        CAMERA_CHECK(fixture.Follow->IsClinging());
+        float maximumAngle = 0;
+        for (unsigned frame = 0; frame < 240; ++frame)
+        {
+            fixture.Step();
+            const auto up = fixture.Owner->GetWorldTransform().rotation * Math::Vector3::UnitY;
+            const float cosine = std::clamp(Math::Vector3::Dot(up.Normalized(), Math::Vector3::UnitY), -1.f, 1.f);
+            const float angle = std::acos(cosine) * 180 / Math::Constants::PI;
+            maximumAngle = std::max(maximumAngle, angle);
+            CAMERA_CHECK(std::isfinite(angle) && angle <= 1.f);
+        }
+        std::printf("しがみつきの上方向: 最大偏差=%g度\n", maximumAngle);
+    }
+
+    // 高周波の対象には低域通過で追従する。
+    void TestClingYawFiltering()
+    {
+        CameraFixture fixture;
+        fixture.Follow->SetYaw(180);
+        fixture.Step();
+        fixture.Follow->SetClinging(true);
+        const float maximumSpeed = Access::Profile(*fixture.Follow).ClingMaximumYawSpeed;
+        float minimumYaw = 360, maximumYaw = -360, maximumRate = 0;
+        for (unsigned frame = 0; frame < 240; ++frame)
+        {
+            const float time = static_cast<float>(frame + 1) * FrameDelta;
+            fixture.SetSubjectYaw(30 * std::sin(2 * Math::Constants::PI * 10 * time));
+            const float previous = fixture.Follow->GetYaw();
+            fixture.Step();
+            const float rate = AngleDelta(previous, fixture.Follow->GetYaw()) / FrameDelta;
+            if (frame >= 30)
+            {
+                const float yaw = AngleDelta(180, fixture.Follow->GetYaw());
+                minimumYaw = std::min(minimumYaw, yaw);
+                maximumYaw = std::max(maximumYaw, yaw);
+                maximumRate = std::max(maximumRate, std::fabs(rate));
+                CAMERA_CHECK(std::fabs(rate) <= maximumSpeed + .005f);
+            }
+        }
+        const float amplitude = (maximumYaw - minimumYaw) * .5f;
+        CAMERA_CHECK(amplitude <= 7.5f);
+
+        std::printf("しがみつきの低域通過: 最大角速度=%g度/秒 振幅=%g度\n",
+                    maximumRate, amplitude);
+    }
+
+    // 上限以下での出入りは角速度を滑らかにつなぎ、上限超過から入るときは即座に制限する。
+    void TestClingYawTransitions()
+    {
+        CameraFixture fixture;
+        auto& camera = *fixture.Follow;
+        const auto& profile = Access::Profile(camera);
+        const float rateChange = profile.ClingMaximumYawSpeed * FrameDelta;
+        constexpr float tolerance = .005f;
+        fixture.SetSubjectYaw(0);
+        fixture.Advance(120);
+        CAMERA_NEAR(camera.GetYaw(), 0);
+        const float beforeEntry = camera.GetYaw();
+        fixture.Step();
+        float previousRate = AngleDelta(beforeEntry, camera.GetYaw()) / FrameDelta;
+        fixture.SetSubjectYaw(90);
+        Access::Profile(camera).YawReturnDelay = 0;
+        Access::SetSubjectSpeed(camera, profile.MinimumYawSpeed + 1);
+        camera.SetClinging(true);
+        CAMERA_CHECK(camera.IsClinging());
+        bool moved = false;
+        float maximumChange = 0;
+        for (unsigned frame = 0; frame < 45; ++frame)
+        {
+            const float previous = camera.GetYaw();
+            fixture.Step();
+            const float rate = AngleDelta(previous, camera.GetYaw()) / FrameDelta;
+            maximumChange = std::max(maximumChange, std::fabs(rate - previousRate));
+            CAMERA_CHECK(std::fabs(rate - previousRate) <= rateChange + tolerance);
+            moved |= std::fabs(rate) > tolerance;
+            previousRate = rate;
+        }
+        CAMERA_CHECK(moved && std::fabs(previousRate) > rateChange);
+        camera.SetClinging(false);
+        CAMERA_CHECK(!camera.IsClinging());
+        auto* target = fixture.World.SpawnEntity<Core::Entity>();
+        CAMERA_CHECK(target);
+        target->SetPosition({-5, .4f, 0});
+        bool stopped = false;
+        for (unsigned frame = 0; frame < 120; ++frame)
+        {
+            if (frame == 5)
+                CAMERA_CHECK(camera.SetLockOnTarget(target));
+            const float previous = camera.GetYaw();
+            fixture.Step();
+            const float rate = AngleDelta(previous, camera.GetYaw()) / FrameDelta;
+            maximumChange = std::max(maximumChange, std::fabs(rate - previousRate));
+            CAMERA_CHECK(std::fabs(rate - previousRate) <= rateChange + tolerance);
+            if (std::fabs(rate) <= tolerance)
+            {
+                stopped = true;
+                break;
+            }
+            previousRate = rate;
+        }
+        CAMERA_CHECK(stopped);
+
+        CameraFixture fast;
+        auto& fastCamera = *fast.Follow;
+        auto& fastProfile = Access::Profile(fastCamera);
+        fast.SetSubjectYaw(-180);
+        fast.Step();
+        fastProfile.YawReturnDelay = 0;
+        fastProfile.YawHalfLife = .08f;
+        Access::SetSubjectSpeed(fastCamera, fastProfile.MinimumYawSpeed + 1);
+        fast.SetSubjectYaw(-10);
+        float fastRate = 0;
+        for (unsigned frame = 0; frame < 3; ++frame)
+        {
+            const float previous = fastCamera.GetYaw();
+            fast.Step();
+            fastRate = AngleDelta(previous, fastCamera.GetYaw()) / FrameDelta;
+        }
+        CAMERA_CHECK(std::fabs(fastRate) > fastProfile.ClingMaximumYawSpeed + rateChange);
+        fastCamera.SetClinging(true);
+        float maximumEntryRate = 0;
+        for (unsigned frame = 0; frame < 160; ++frame)
+        {
+            const float previous = fastCamera.GetYaw();
+            fast.Step();
+            const float rate = AngleDelta(previous, fastCamera.GetYaw()) / FrameDelta;
+            maximumEntryRate = std::max(maximumEntryRate, std::fabs(rate));
+            CAMERA_CHECK(std::fabs(rate) <= fastProfile.ClingMaximumYawSpeed + tolerance);
+        }
+
+        // 入力群のApplyIntentで5度回した直後に入り、その回転を初速へ持ち込まない。
+        CameraFixture looking;
+        looking.SetSubjectYaw(-175);
+        looking.Step();
+        using namespace Core::Input;
+        InputSystem source;
+        InputRouter router;
+        source.SetRouter(&router);
+        InputMapper mapper(source.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition look;
+        look.Id = Game::InputActions::Look;
+        look.Settings.Type = EInputMappingValueType::Axis2D;
+        look.Settings.Output = EInputAxisOutput::FrameDelta;
+        InputBinding horizontal;
+        horizontal.Source = {EInputBindingSource::MouseDelta, 0, 0};
+        look.Bindings = {horizontal};
+        CAMERA_CHECK(bindings.AddContext(Game::InputActions::GameplayContext, NorvesLib::ECursorMode::Normal));
+        CAMERA_CHECK(bindings.AddAction(Game::InputActions::GameplayContext, look));
+        CAMERA_CHECK(mapper.ConfigureWithContext(bindings, Game::InputActions::GameplayContext));
+        mapper.Attach(router);
+        looking.Follow->BindInput(&mapper);
+        CAMERA_CHECK(source.BeginFrame(0) && mapper.BeginFrame(0));
+        CAMERA_CHECK(source.InjectRawMouseDelta(5, 0));
+        CAMERA_CHECK(mapper.Update(0, FrameDelta));
+        const float beforeLook = looking.Follow->GetYaw();
+        looking.Step();
+        CAMERA_NEAR(AngleDelta(beforeLook, looking.Follow->GetYaw()), 5, tolerance);
+        source.EndFrame();
+        looking.Follow->BindInput(nullptr);
+        looking.Follow->SetClinging(true);
+        for (unsigned frame = 0; frame < 160; ++frame)
+        {
+            const float previous = looking.Follow->GetYaw();
+            looking.Step();
+            const float rate = AngleDelta(previous, looking.Follow->GetYaw()) / FrameDelta;
+            CAMERA_CHECK(std::fabs(rate) <= profile.ClingMaximumYawSpeed + tolerance);
+            if (frame == 0)
+            {
+                CAMERA_CHECK(std::fabs(rate) <= rateChange + tolerance);
+            }
+        }
+
+        CameraFixture locked;
+        locked.Step();
+        auto* lockTarget = locked.World.SpawnEntity<Core::Entity>();
+        CAMERA_CHECK(lockTarget);
+        lockTarget->SetPosition({-2.5f, .4f, -4.330127f});
+        CAMERA_CHECK(locked.Follow->SetLockOnTarget(lockTarget));
+        float lockRate = 0;
+        bool bLockMoving = false;
+        for (unsigned frame = 0; frame < 120; ++frame)
+        {
+            const float previous = locked.Follow->GetYaw();
+            locked.Step();
+            lockRate = AngleDelta(previous, locked.Follow->GetYaw()) / FrameDelta;
+            CAMERA_CHECK(std::fabs(lockRate) <= profile.ClingMaximumYawSpeed);
+            if (std::fabs(lockRate) >= .3f * profile.ClingMaximumYawSpeed)
+            {
+                bLockMoving = true;
+                break;
+            }
+        }
+        CAMERA_CHECK(bLockMoving);
+        locked.Follow->SetClinging(true);
+        float maximumLockChange = 0;
+        for (unsigned frame = 0; frame < 8; ++frame)
+        {
+            const float previous = locked.Follow->GetYaw();
+            locked.Step();
+            const float rate = AngleDelta(previous, locked.Follow->GetYaw()) / FrameDelta;
+            maximumLockChange = std::max(maximumLockChange, std::fabs(rate - lockRate));
+            CAMERA_CHECK(std::fabs(rate - lockRate) <= rateChange + tolerance);
+            CAMERA_CHECK(std::fabs(rate) <= profile.ClingMaximumYawSpeed + tolerance);
+            lockRate = rate;
+        }
+        locked.Follow->SetClinging(false);
+        bool bLockStopped = false;
+        for (unsigned frame = 0; frame < 120; ++frame)
+        {
+            const float previous = locked.Follow->GetYaw();
+            locked.Step();
+            const float rate = AngleDelta(previous, locked.Follow->GetYaw()) / FrameDelta;
+            maximumLockChange = std::max(maximumLockChange, std::fabs(rate - lockRate));
+            CAMERA_CHECK(std::fabs(rate - lockRate) <= rateChange + tolerance);
+            if (std::fabs(rate) <= tolerance)
+            {
+                bLockStopped = true;
+                break;
+            }
+            lockRate = rate;
+        }
+        CAMERA_CHECK(bLockStopped);
+
+        std::printf("しがみつきの出入り: 最大角速度差=%g度/秒 上限越えの入りの最大角速度=%g度/秒 ロックオン中の入りの最大角速度差=%g度/秒\n",
+                    maximumChange, maximumEntryRate, maximumLockChange);
+    }
+
     // 自動焦点はレイの距離とロック目標の前方射影へ収束し、無効時は初期値を保つ。
     void TestAutoFocus()
     {
@@ -825,6 +1122,11 @@ int main()
     TestLockOnLookBreak();
     TestLockOnDestroyedTarget();
     TestLockOnJoint();
+    TestLockOnMovingSurfaceAnchor();
+    TestLockOnDestroyedSurfaceAnchor();
+    TestClingWorldUp();
+    TestClingYawFiltering();
+    TestClingYawTransitions();
     TestAutoFocus();
     TestProfileParsing();
     TestVariableFixedSteps();

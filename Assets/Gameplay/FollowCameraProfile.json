@@ -39,6 +39,10 @@
     "breakThreshold": 2,
     "armGain": 0.25
   },
+  "cling": {
+    "yawHalfLife": 0.25,
+    "maximumYawSpeed": 90
+  },
   "focus": {
     "enabled": false,
     "maximumDistance": 50

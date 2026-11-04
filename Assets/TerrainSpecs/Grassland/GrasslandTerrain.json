@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "height_source": { "path": "GrasslandHeight.png", "format": "png16", "flip_z": false },
+  "height_mapping": { "min_m": 0.0, "max_m": 64.0 },
+  "cell_size_m": 1.0,
+  "tile_cells": 128,
+  "fit": "error",
+  "require_bit_depth": 16,
+  "seed": 89021,
+  "recipe": {}
+}

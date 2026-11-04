@@ -9417,20 +9417,46 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ## 2026-11-04 G4-GR07-MOVER-CASES（run 20261104-082805 の反復 1、完了に戻す）
 - Done: 前の反復の評価が利用枠で回らず doing に戻っていた。着地した後の変更は TASKS.md・PROGRESS.md だけで、コードは確かめの出力（U3 の verify: ビルド EXIT=0、ctest 6 本 100% Passed）を取った版と同じなので、status を done に戻す。
 - Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。
-- U1 草の種別の表 GrassSpecies と JSON を足す: 着地(直し 0 回)
-- U2 GrassFieldRenderData を FramePacket へ値で渡す経路を足す: 着地(直し 0 回)
-- U3 GrassField の格納と CPU のクエリを足す: 着地(直し 0 回)
-- U6 GrassFieldSnapshotContractTest を足す: 着地(直し 0 回)
-- U4 草の場の登録先 Vegetation を Engine のメンバに足す: 着地(直し 0 回)
-- U5 GrassFieldQueryTest を足し、タスクの verify を回す: 着地(直し 1 回)
-- Done (G5-GR42-GRASS-FIELD-CORE、run 20261104-083832 の反復 1): `Library/Core/{Public,Private}/Vegetation/` に草の場 `GrassField`（32 m のチャンク・int32 の (cx,cz)、LayerA 64×64・LayerB 32×32 の RGBA8、草の無いチャンクは表に載せない）と種別の表 `GrassSpecies`（`Assets/Vegetation/GrassSpecies.json` から読む。仮の 2 種 wet_grass #55684A・dry_grass #6D6A5C）、`IGroundHeightSource`（既定は定数の面）を置いた。クエリは `Sample`・`QueryTopHeight`・`QueryOcclusion`（0.5 m 刻みの消散の積分）・`QuerySurface`・`GetCameraClearance`、有効な濡れ度の式は `ComputeEffectiveWetness` の 1 か所。不変の `GrassFieldRenderData` を `TSharedPtr<const>` で `RenderWorld::SetGrassField` → RenderingCoordinator → `FramePacket::GrassField` へ渡し、`ComputeSceneRevisionHash` には入れない。登録先 `Vegetation` を `Engine::Engine` のメンバに置いた（変わったときだけ描画データを送る `PublishRenderData`）。
-- 試験: `GrassFieldQueryTest`（MathGeometryTest の束）で線形の密度 1285 点の最大誤差 1.5e-8、チャンクの境の密度差 1.6e-5・色味の差 1.6e-5（外周の行を含む）、範囲外は密度 0・bValid=false、草丈一定の遮蔽の光学的厚さの相対誤差 5.1e-8、同じ入力のビット一致。`GrassFieldSnapshotContractTest`（CameraViewConstantsTest の束）で差し替え・解除の後も古いパケットの描画データが変わらず、草だけ違うパケットの SceneRevision が等しい（対照として静的な環境光の倍率を変えるとハッシュが変わる）。試験はチャンクの角で斜めの隣が無いと継ぎ目に段が出る欠陥を見つけ、隣の画素を軸ごとに引く形に直した。
-- 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U5-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが exit_code=0、ctest の 4 本 100% Passed）。起動の確かめは無い（描画側 GR43 がまだ無く、試験だけで閉じる）。
-- Next: 地面の高さを地形（TerrainSystem）へ差し替えるのと保存形式は G5-GR42-GRASS-FIELD-ASSET。描画（ブレードの生成）は GR43。`Vegetation::PublishRenderData` の毎フレームの呼び出しは、草の場を登録する機能（GrassFieldComponent）と一緒に足す。
-- Notes: 斜めの隣のチャンクが無く x の隣と z の隣の両方がある L 字の凹んだ角では、z 方向の継ぎ目の両側が別の代用の画素を引き、角の半画素の範囲で値が食い違いうる（試験していない。草の場の外周の凹んだ角だけ）。
-- Notes: `Library/Core/CMakeLists.txt` の Vegetation の行は Particle の並びの途中に入っている（ビルドには影響しない）。
-- U7 欠けたチャンクの画素の代用を世界の画素座標だけで決め、L 字の並びの継ぎ目を直す: 着地(直し 0 回)
-- Done (G5-GR42-GRASS-FIELD-CORE、run 20261104-083832 の反復 2): 差し戻し（L 字の凹んだ角で z 方向の継ぎ目が食い違う）を直した。`GrassField::ReadPixel` を世界の画素座標で読む形にし、画素のチャンクが無ければ −X・+X・−Z・+Z・斜めの決まった順で最初に見つかった画素を使う（読みに来たチャンクに依らず同じ値。片側だけ欠けた縁は前と同じく縁の画素）。`SetChunk` は種別 ID が 63 を超える画素を拒み、LayerB の A を 0 で格納する。`QueryOcclusion` は非有限の入力で 1 を返し、刻みの数に 2^20 の上限を置く。
-- 試験: `GrassFieldQueryTest` に 2×2 のうち 1 つを欠いた 4 通りの継ぎ目の検査を足した（直す前は最大密度差 0.177 で落ち、直した後は 260 点の最大 0.0022 ＜ 1/255。差は ±1e-3 m の勾配の分）。既存の値（継ぎ目の密度差 1.5676e-05、線形の誤差 1.47e-08）は変わらない。
-- 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U7-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが終了コード 0、ctest の 4 本 100% Passed）。起動の確かめは無い。
-- Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
+
+- U1 Core にロックオンの目標の口 ILockOnTarget と組み込みの 2 実装を足す: 着地(直し 0 回)
+- U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
+- U3 FollowCameraComponent のロックオンを ILockOnTarget 経由に組み替え、表面のアンカーの口を足す: 着地(直し 0 回)
+- U4 しがみつき中のヨーの補正(低域通過・角速度と角加速度の上限・抜けの継続)と試験: 着地(直し 1 回)
+
+## 2026-11-03 G4-GR06-CLING-LOCKON（run 20261103-231220 の反復 2、完了）
+- Done: ロックオンの目標を Core の読み取り専用の口 `ILockOnTarget`（`Library/Core/Public/Camera/LockOnTarget.h`。描画の空間の注視点と半径を `TryResolve` で返す）で受けるようにした。組み込みの実装は `EntityLockOnTarget`（Entity の点）と `JointLockOnTarget`（骨格のジョイント）で、`SetLockOnTarget`・`SetLockOnJoint` はそれを作る形で同じふるまいを保つ。外部の目標（表面のアンカー GR19）は `SetLockOn(TWeakPtr<const ILockOnTarget>)` で受け、試験の偽の実装で動く。しがみつきの状態を `SetClinging`/`IsClinging` で受け、その間はヨーを対象（ロック中は目標）の水平の向きへ臨界減衰で追わせ、角速度と 1 フレームの角速度の変化を `FollowCameraProfile` の `cling`（`yawHalfLife` 既定 0.25 s・`maximumYawSpeed` 既定 90 度/秒。値は仮）で抑える。入りは実測の角速度から始め、抜けは残りの角速度を同じ上限で 0 へ減らす間ヨーの戻しとロックオンのヨーの向けを止める（視点の入力で継続は終わる）。カメラの上方向は世界の上向きのまま。
+- 所有と破棄の順: カメラは目標を所有しない。外部の目標は弱い参照だけを持ち、Camera 群の毎フレームに `lock()` して World から解決する。参照が切れた・Entity が消えた（PendingDestroy・非アクティブ）・ジョイントが無効なら、そのフレームはロックしていない扱いで `ClearLockOn()` する。組み込みの目標はカメラが `TSharedPtr` で持つが、中身は Entity の id とジョイントの番号だけで Entity は所有しない。したがってアンカーの持ち主・目標の Entity はカメラより先に破棄してよく、カメラの `Finalize` はロックとしがみつきの状態を消すだけ。
+- 証拠: `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 100% Passed。新しいケースの出力: 上方向の最大偏差 0 度、10 Hz ±30° の揺れでヨーの角速度の最大 2.11 度/秒・振幅 0.224 度、出入りの角速度の差の最大 1.50 度/秒）。
+- Next: なし（アプリの起動の確かめは無い）。しがみつきの状態の出どころ（GR20 の拘束）と表面のアンカーの解決（GR19）は G10。
+- Notes: しがみつきの補正・角速度の実測は dt が有限で正のときだけ動く（しがみつきでないときの dt ≤ 0 のふるまいは前のまま）。しがみつき中に `SetLockOn` 等を呼んでもヨーの速度は 0 に戻さない（入りの連続を保つため）。
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 1、完了に戻す）
+- Done: 前の run（20261103-231220）で全単位を着地し完了にしたが、評価者が枠切れ（429）で未評価のまま doing に戻されていた。実装は変えずに done に戻し、評価をランナーへ渡す。
+- 証拠: 着地した版（ソース 9 ファイルがこの枝と一致）で取った `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt` と単位の作業ツリーの `unit-verify.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest 4 件 100% Passed）。
+- Next: ランナーの評価者の反証（Public API と Object の寿命に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。
+- U5 しがみつきの入りの初速を上限に切り詰め、ヨーの角速度の実測を全ての変更の後に取る(差し戻しの直し): 着地(直し 0 回)
+
+## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 2、差し戻しを直して完了）
+- Done: しがみつきの入りの初速を `ClingMaximumYawSpeed` に切り詰め、しがみつき中の速度の上限を常にその値にした（前は入りが上限を越えていると越えたまま何秒も回り続けた）。ヨーの角速度の実測を `UpdateCamera` の冒頭から全てのヨーの変更（ロックオンの向け・しがみつき・抜けの継続）の後へ移し、途中で返る経路と例外の再送出でも同じ位置で取る（ロックオン中は実測が 1 フレーム古かった）。視点の入力で回った分は実測から除き、入りの初速に持ち込まない（通常の追従で視点の入力が `m_YawVelocity` を 0 にするのとそろえた）。
+- 決定: done-when の (2)「しがみつき中は角速度が上限を越えない」と (3)「入りの前後のフレームの角速度の差 ≤ 上限×dt」は、入る直前の角速度が上限×(1+dt) を越えると両立しない。上限を優先した: 上限を越えた速さで入ったときは入りのフレームで ±上限へ切り詰め、入りの前後の差が上限×dt 以下であることは入る直前の角速度が上限以下のときに保証する。
+- 試験: `TestClingYawTransitions` の上限越えの節を差し替えた（ヨーの戻しが上限を越えて回る最中に入っても全フレーム上限以下。視点の入力 5° の直後に入っても最初のフレームの角速度は上限×dt 以下）。ロックオンの振りの最中（上限以下）に入り・抜ける前後のフレームの差も確かめる。
+- 証拠: `.harness/runs/20261104-082804/verify-G4-GR06-CLING-LOCKON-U5.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド終了コード 0、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 Passed。出力: 上方向の最大偏差 0 度、低域通過の最大角速度 2.11 度/秒・振幅 0.224 度、出入りの最大角速度差 1.50 度/秒・上限越えの入りの最大角速度 90 度/秒・ロックオン中の入りの最大角速度差 1.50 度/秒）。
+- Next: ランナーの評価者の反証（前回の指摘への対応差分）。
+- Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
+
+- U0 試験と煙の確かめが共用する小さな PNG16 のフィクスチャ: 着地(直し 0 回)
+- U1 高さの取り込み HeightfieldImport と、地形 cook の API の宣言・CMake: 着地(直し 1 回)
+- U2 TerrainCooker（全体の法線・量子化・タイル切り・LOD 誤差・AABB・NRM0・NVTRN の書き出し）: 着地(直し 0 回)
+- U3 TerrainSpec（スペック JSON の解析と cook の取りまとめ・source_hash）: 着地(直し 0 回)
+- U9 草原の検証用の地形の入力（U6 の成果から始め、崖の端を丸める）: 着地(直し 0 回)
+- U4 AssetCook の --kind world の経路と AssetCookTerrainSmoke: 着地(直し 0 回)
+- U5 CookedTerrainTest の cook の経路のケース (a)〜(g): 着地(直し 0 回)
+- U7 CookAssets.ps1 が一覧の worlds（kind=world）を焼く: 着地(直し 0 回)
+- U8 NVTRNv0.md に cook の節と 2049×2049 の計測を書き、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-04 G5-GR89-TERRAIN-COOKER（run 20261104-082802 の反復 3、完了）
+- Done: AssetCook に `--kind world --format nvtrn.v0.height16 --entry-type Trn0` を足した。terrain spec JSON（height_source・height_mapping・cell_size_m・tile_cells・fit・require_bit_depth・smooth・seed・recipe）を解析し、png16/png8/raw16/raw32f/exr を取り込んで、地図全体の量子化と中心差分の法線（NRM0 RG8）、境界 1 標本を共有するタイル切り、stride 1/2/4/8 の LOD 誤差と AABB を NVTRN に書く。manifest に kind=world・Trn0・cooked_hash・source_hash（スペックと高さのファイルのバイト）を出す。CookedTerrainTest に解析面の (a)〜(g)、`AssetCookTerrainSmoke` を cmake -P で登録した。CookAssets.ps1 が一覧の worlds を焼く。草原の地形の入力（`Scripts/Terrain/GenerateGrasslandHeight.py`・`Assets/TerrainSpecs/Grassland/`・`Assets/AssetSets/GrasslandTerrain.json`）を足した。`Docs/Architecture/NVTRNv0.md` に cook の節と 2049×2049 の計測（RelWithDebInfo・i9-13900KF・中央値 415 ms・作業セットのピーク 106 MB・NVTRN 19,988,764 バイト）を書いた。
+- 証拠: `.harness/runs/20261104-082802/verify-G5-GR89-TERRAIN-COOKER-U8.txt`（AssetCook・CookedMeshTest の Debug ビルド exit=0、ctest で CookedTerrainTest・AssetCookTerrainSmoke・AssetCookMeshSmoke・AssetCookTextureSmoke の 4 件 100% Passed、`CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` が `COOK_ASSETS cooked=1 skipped=0` で exit=0）。
+- Next: アプリの起動の確かめは無い。地形のマスクは G5-GR89-TERRAIN-MASKS、描画の経路と目視は G5-GR37-TERRAIN-COMPONENT・G5-GR37-TERRAIN-CHECK。
+- Notes: `-OnlyLogicalPath` で焼くには既存の `build/CookedAssets/manifest.json` が要る（対象外の項目を引き継ぐため）。草原の PNG16 は 0〜64 m の写像で、実際の高さは 20.57〜39.16 m。`seed` は今の高さの処理には使わず、スペックのバイトとして source_hash に入る。
