@@ -9409,3 +9409,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、タスクの ctest 5 本 4 Passed・1 Skipped、`MotionProcessingTest`・`SkeletalAnimationSamplingTest` Passed（`MotionProcessingTest` の数値出力は変更前と一致）、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
 - Next: Core（SkeletalClipProcessing・SkeletalRoleProfile）を変えたので、ランナーの評価者の反証を通す。
 - Notes: 試験の閉じの誤差は出力の先頭と末尾のキーで測るため、ループの継ぎ目の補正で構成上 0 になる（整形前の 12.2° との比較は弱い）。
+- U4 接地の最短時間の境目を実行時と同じ許容で比べ、0.05 秒ちょうどの区間を捨てないようにする: 着地(直し 0 回)

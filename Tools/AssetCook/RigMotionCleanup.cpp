@@ -190,7 +190,13 @@ namespace NorvesLib::Tools::AssetCook::Detail
             ground = std::min(ground, double(minimum));
             size_t begin = SIZE_MAX;
             const auto close = [&](size_t end) {
-                if (begin != SIZE_MAX && (end - begin) * dt >= contactOptions.MinimumWindowSeconds)
+                if (begin == SIZE_MAX)
+                    return;
+                const double length = dt * double(end - begin);
+                // 実行時と同じ許容誤差を加え、float 閾値の double 化で境界の区間を落とさない。
+                const double tolerance =
+                    4 * std::numeric_limits<float>::epsilon() * std::max(length, double(contactOptions.MinimumWindowSeconds));
+                if (length + tolerance >= contactOptions.MinimumWindowSeconds)
                 {
                     windows.push_back({footIndex, float(begin * dt), float(end * dt)});
                     for (size_t i = begin; i < end; ++i)
