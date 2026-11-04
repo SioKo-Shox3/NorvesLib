@@ -9708,3 +9708,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 スプラットの層・SampleSurface・タイル番号・作り方 CreateFromSamples・地形の材質の記述を足す: 着地(直し 0 回)
 - U3 Math に球・カプセルと三角形の掃引を足す: 着地(直し 1 回)
 - U5 高さ場に Raycast(最小最大の格子での 2D-DDA)を足す: 着地(直し 0 回)
+- U7 TerrainSystem に GroundSample・SampleGround・RaycastGround・SampleGroundBatch を足す: 着地(直し 0 回)
