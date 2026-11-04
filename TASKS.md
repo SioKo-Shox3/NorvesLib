@@ -4536,24 +4536,6 @@
 - paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Tools/AssetCook, Test/Core/Rendering, Docs/Plans/GameFeatureRoadmap.md, TASKS.md, PROGRESS.md
 - from: GAME-GR135-VFX
 
-## G2-GR82-B4-STATIC-ROOT-FRAME128-P2: 管理更新の workspace と祖先の列挙を、項目数で失敗しない形にする
-- status: todo
-- done-when: `CookManagedTransactionController.cpp` の 3 か所の `N::Enumerate` を `N::EnumerateKept` に替え、残す項目を次のように絞る。ほかの項目はためずに読み流す。
-  - `Find`(82 行): `leaf` と、長名か short alias で fold 一致する項目
-  - `VerifyClaims`(333 行): 長名か short alias がどれかの claim の `RootLeaf` と fold 一致する項目。完全一致だけにはしない(今の別名の衝突と曖昧さの判定 `active_claim_name_or_alias` を保つため)。
-  - 祖先の走査(433 行): `N::StoreLeaf` と、長名か short alias で fold 一致する項目
-  
-  上限(1 ディレクトリ 16384・全列挙 65536・metadata 32MiB)が掛かるのは、残した項目と、store の制御領域・pending・store の中の走査(467・588・887・953 行)だけにする。次の 3 つは今のまま保つ。
-  - `N::Fixed` が出す Conflict(fold 一致が複数あるとき・実長名の大文字小文字違い・alias の衝突)と `destination_exists`
-  - 列挙の失敗を「無し」と扱わないこと
-  - ボリュームの根の store を拒否すること
-  
-  利用者の TEMP(直下に 16385 を超える項目)のまま、TEMP を差し替えずに `CookManagedUpdateTest` と `TextureManagedCliTest` が通ること。verify の失敗の理由が `volume_busy` のときは、ほかの枠の cook の試験と重なっただけとみなし、コードや verify は変えずに回し直す。
-- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
-- paths: Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, TASKS.md, PROGRESS.md
-- from: G2-GR82-B4-STATIC-ROOT-FRAME128
-
 ## G2-GR82-B4-STATIC-ROOT-FRAME128-P1: 管理ストアの祖先の列挙を、祖先の項目数で失敗しない形にする
 - status: todo
 - after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1
