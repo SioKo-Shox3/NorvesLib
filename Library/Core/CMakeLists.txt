@@ -9,6 +9,7 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Save/GameStateStore.cpp
     Private/Save/SaveContainer.cpp
     Private/Save/SaveMigration.cpp
     Private/Save/SaveSlotStore.cpp
@@ -477,6 +478,7 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Save/GameStateStore.h
     Public/Save/SaveContainer.h
     Public/Save/SaveMigration.h
     Public/Save/SaveSlotStore.h
