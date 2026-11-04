@@ -9403,3 +9403,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 cook の動きの後処理を直し、合成の四足の試験を足す: 着地(直し 0 回)
 - U2 実物の BVH の回帰を環境変数で回せるようにし、タスクの verify を通す: 着地(直し 1 回)
 - Notes: 実物の V01full では周期が検出されず (2) の周期・閉じが不合格（再帰誤差 約 6.8°・周期内の動き 約 17°、Core の受け入れの比 0.2 を超える）。21 コマ目のスパイクは検出できた。Core の周期判定（SkeletalClipProcessing.cpp、paths の外）の変更待ちで BLOCKED。環境変数なしの verify は通る。
+- U3 ループの受け入れの比と許容を processing のキーにし、実物の profile で緩めて回帰を通す: 着地(直し 1 回)

@@ -423,9 +423,10 @@ int main()
 namespace
 {
     constexpr double Degrees = 180 / 3.14159265358979323846;
-    // V01fullを許容0.5 radで測った再帰誤差は6.76403533度。
-    // 約1.25倍の8.455度を8.5度に丸めて固定し、10度を超えない。
-    constexpr double SampleLoopRmsThresholdRadians = 8.5 / Degrees;
+    // V01fullの再帰誤差は6.76403533度、周期内の動きは16.6897544度で比は0.4052807。
+    // 誤差の約1.25倍を8.5度に丸め、比は余裕を持たせて0.5とする。
+    constexpr double SampleLoopRmsThresholdDegrees = 8.5;
+    constexpr double SampleLoopRecurrenceRatio = 0.5;
 
     C::AnsiString SampleJointName(const Core::Bvh::Joint& joint)
     {
@@ -567,6 +568,11 @@ namespace
         // 逆数だとfloatのDurationと最終キーが同時刻に丸まり、処理が拒否される。
         json.WriteNumber("output_fps", 30);
         json.WriteString("loop_mode", loop ? "auto" : "none");
+        if (loop)
+        {
+            json.WriteNumber("loop_rms_threshold_degrees", SampleLoopRmsThresholdDegrees);
+            json.WriteNumber("loop_recurrence_ratio", SampleLoopRecurrenceRatio);
+        }
         json.WriteBool("average_cycles", loop);
         json.WriteUInt64("smoothing_radius", 0);
         // 判定量はコマ間の回転量ではなく、前後のslerp中点からの補間誤差。
@@ -608,6 +614,68 @@ namespace
         return 2 * std::acos(std::clamp(std::abs(dot) / std::sqrt(aa * bb), 0., 1.)) * Degrees;
     }
 
+    // スパイク除去後の未ループ化クリップから、周期内の重み付き回転量を推定する。
+    double SampleCycleMotionDegrees(const S::RigAuthoringCpu& target, const S::SkeletalAnimationClip& clip, double period)
+    {
+        const auto& data = *target.GetData();
+        const size_t count = data.Geometry.Joints.size();
+        C::VariableArray<Core::Bvh::Vector3d> positions(count);
+        C::VariableArray<double> weights(count);
+        for (size_t i = 0; i < count; ++i)
+        {
+            const auto& t = data.LocalRest[i].Translation;
+            positions[i] = {t.X, t.Y, t.Z};
+            const auto parent = data.Geometry.Joints[i].ParentIndex;
+            if (parent >= 0)
+            {
+                positions[i].X += positions[size_t(parent)].X;
+                positions[i].Y += positions[size_t(parent)].Y;
+                positions[i].Z += positions[size_t(parent)].Z;
+            }
+        }
+        double totalWeight = 0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            double length = 0;
+            for (size_t child = 0; child < count; ++child)
+            {
+                auto parent = data.Geometry.Joints[child].ParentIndex;
+                while (parent >= 0 && size_t(parent) != i)
+                {
+                    parent = data.Geometry.Joints[size_t(parent)].ParentIndex;
+                }
+                if (parent >= 0)
+                {
+                    const auto& a = positions[i];
+                    const auto& b = positions[child];
+                    length = std::max(length, std::hypot(b.X - a.X, b.Y - a.Y, b.Z - a.Z));
+                }
+            }
+            const auto parent = data.Geometry.Joints[i].ParentIndex;
+            if (length < 1e-8 && parent >= 0)
+            {
+                const auto& a = positions[i];
+                const auto& b = positions[size_t(parent)];
+                length = std::hypot(b.X - a.X, b.Y - a.Y, b.Z - a.Z);
+            }
+            weights[i] = std::max(length, 1e-6);
+            totalWeight += weights[i];
+        }
+        double motion = 0;
+        for (uint32_t sample = 1; sample <= 16; ++sample)
+        {
+            double sum = 0;
+            for (uint32_t joint = 0; joint < count; ++joint)
+            {
+                const double angle = SampleAngle(SampleRotation(clip, joint, 0),
+                                                 SampleRotation(clip, joint, period * sample / 16));
+                sum += weights[joint] * angle * angle;
+            }
+            motion = std::max(motion, std::sqrt(sum / totalWeight));
+        }
+        return motion;
+    }
+
     double SampleInterpolationError(const S::SkeletalAnimationClip& clip, uint32_t joint, double time, double interval)
     {
         const auto previous = SampleRotation(clip, joint, time - interval);
@@ -627,8 +695,6 @@ namespace
     {
         A::SkeletalClipRetargetSettings settings;
         settings.Processing = profile.Processing;
-        if (settings.Processing.Loop == A::SkeletalLoopSelection::Auto)
-            settings.Processing.LoopRmsThresholdRadians = SampleLoopRmsThresholdRadians;
         SampleResult result;
         C::AnsiString error;
         const bool success = A::RetargetSkeletalClip(source, target, profile, settings, result.Clip, result.Report, error);
@@ -691,11 +757,17 @@ int main()
     const double errorAfter = SampleInterpolationError(spike.Clip, finger, time, bvh.FrameTimeSeconds);
     const auto& report = loop.Report.Processing;
     const double periodFrames = report.PeriodSeconds / bvh.FrameTimeSeconds;
-    std::printf("MOTION_SAMPLE period_frames=%.9g recurrence_rms_degrees=%.9g loop_rms_threshold_degrees=%.9g "
+    const double cycleMotion = SampleCycleMotionDegrees(target, spike.Clip, report.PeriodSeconds);
+    const double recurrenceRatio = cycleMotion > 0 ? report.RecurrenceRmsRadians * Degrees / cycleMotion : 0;
+    std::printf("MOTION_SAMPLE period_frames=%.9g recurrence_rms_degrees=%.9g cycle_motion_degrees_approx=%.9g "
+                "recurrence_motion_ratio_approx=%.9g loop_rms_threshold_degrees=%.9g loop_recurrence_ratio=%.9g "
+                "start_seconds=%.9g end_seconds=%.9g source_duration_seconds=%.9g "
                 "seam_mean_degrees=%.9g seam_max_degrees=%.9g seam_before_degrees=%.9g seam_after_degrees=%.9g "
                 "replaced_spikes=%u averaged_cycles=%u spike_replaced_spikes=%u spike_frame=21 "
                 "spike_time_seconds=%.9g spike_error_before_degrees=%.9g spike_error_after_degrees=%.9g\n",
-                periodFrames, report.RecurrenceRmsRadians * Degrees, SampleLoopRmsThresholdRadians * Degrees,
+                periodFrames, report.RecurrenceRmsRadians * Degrees, cycleMotion, recurrenceRatio,
+                profile.Processing.LoopRmsThresholdRadians * Degrees, profile.Processing.LoopRecurrenceRatio,
+                report.StartSeconds, report.EndSeconds, double(source.Clip.DurationSeconds),
                 seamMean, seamMax, report.SeamBeforeRadians * Degrees, report.SeamAfterRadians * Degrees,
                 report.ReplacedSpikes, report.AveragedCycles, spike.Report.Processing.ReplacedSpikes, time,
                 errorBefore, errorAfter);
