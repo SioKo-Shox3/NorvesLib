@@ -9604,3 +9604,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 保存先のパス・原子的な書き込み・読み込みの Platform API と AtomicFileWriteTest: 着地(直し 0 回)
 - U4 NVSV の入れ物と移行の関数の列(U2 の差分を当て、移行を解析木の上の素直な形に簡素化): 着地(直し 1 回)
 - U3 SaveSlotStore(スロット・.bak・オートセーブのリング・.corrupt への退避)と SaveSlotFallbackTest、Testing.md、タスクの verify: 着地(直し 1 回)
+## 2026-11-04 G8-GR76-SAVE-STORAGE（run 20261104-182215 の反復 1、完了）
+- Done: `Platform/PlatformPaths.h` の `GetUserDataDirectory`（`SHGetKnownFolderPath(FOLDERID_LocalAppData)` の下の `NorvesLib/<appName>/`、失敗時だけ環境変数、根を差し替える `GetUserDataDirectoryUnder`）と `Platform/PlatformFile.h` の `WriteFileAtomic`（一時ファイル → Flush → `ReplaceFileW`（旧世代を `.bak`）/ `MoveFileExW`、共有違反のやり直し、読み戻しの検証、失敗時の一時ファイルの削除）・`ReadFileBytes`・`CleanupAtomicWriteTemporaries`・ファイル操作の差し替え口 `IFileOperations`。`Save/SaveContainer.h` の NVSV（48 バイトの固定ヘッダ。バイト 40〜47 はヘッダ 0〜39 の FNV-1a64 で、版の欄の破損も検出）。`Save/SaveMigration.h` の formatVersion と移行の段の表（v1→v2。新しい版は `RejectedNewerVersion`、絶対値 2^53 以上の整数は丸めず `Invalid`）。`Save/SaveSlotStore.h`（`slot_N.sav`/`.bak`・`autosave_0..2.sav` のリング、writeCounter で新しい方、壊れたファイルは `.corrupt-<UTC 時刻>` へ退避、新しい版に当たったら何も変えず拒否、保存の前にも壊れた主・`.bak` を退避）。試験 4 本を LoggerSinkTest の束へ、`Docs/Testing.md` に理由。
+- 証拠: `.harness/runs/20261104-182215/verify-G8-GR76-SAVE-STORAGE.txt`（Game・LoggerSinkTest の Debug ビルド ExitCode 0、ctest で SaveContainerTest・AtomicFileWriteTest・SaveMigrationTest・SaveSlotFallbackTest・WorkingDirectoryInputBindingStoreTest・JsonWriterTest・LoggerSinkTest の 7 件 100% Passed、TEMP の試験用ディレクトリの残り 0）。
+- 決定: 移行は JsonDocument の木から JsonWriter で書き直す（数値は double で持つエンジン全体の制約に合わせ、2^53 以上の整数は保存の中身では文字列で持つ）。読み込みでファイルを書き直さない（移した中身は返すだけで、次の保存で今の版になる）。読めない（共有違反など）ファイル・退避の失敗は `IoError`。
+- Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
+- Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。
