@@ -784,6 +784,97 @@ namespace
         return false;
     }
 
+    void PrintSweepTriangles(const Terrain::TerrainHeightField&, const Math::Sphere&, const Math::Vector3&, float)
+    {
+    }
+
+    void PrintSweepTriangles(const Terrain::TerrainHeightField& field, const Math::Capsule& capsule,
+        const Math::Vector3& direction, float limit)
+    {
+        const Math::Vector3 unit = Unit(direction);
+        const Math::Vector3 endA = capsule.PointA + unit * limit;
+        const Math::Vector3 endB = capsule.PointB + unit * limit;
+        const double minX = std::fmin(std::fmin(capsule.PointA.x, capsule.PointB.x), std::fmin(endA.x, endB.x)) - capsule.Radius;
+        const double maxX = std::fmax(std::fmax(capsule.PointA.x, capsule.PointB.x), std::fmax(endA.x, endB.x)) + capsule.Radius;
+        const double minZ = std::fmin(std::fmin(capsule.PointA.z, capsule.PointB.z), std::fmin(endA.z, endB.z)) - capsule.Radius;
+        const double maxZ = std::fmax(std::fmax(capsule.PointA.z, capsule.PointB.z), std::fmax(endA.z, endB.z)) + capsule.Radius;
+        const Math::Capsule local(Math::Vector3(0.0f), capsule.PointB - capsule.PointA, capsule.Radius);
+        PrintSweepShape(local);
+        Math::GeometrySweepSettings settings;
+        settings.MaxIterations = 64;
+        for (uint32_t row = 0; row + 1 < GridSize; ++row)
+        {
+            for (uint32_t column = 0; column + 1 < GridSize; ++column)
+            {
+                const double x = static_cast<double>(FirstX) + column * static_cast<double>(Spacing);
+                const double z = static_cast<double>(FirstZ) + row * static_cast<double>(Spacing);
+                if (x > maxX || x + Spacing < minX || z > maxZ || z + Spacing < minZ)
+                {
+                    continue;
+                }
+                // 本体と同じ相対原点・演算順・上向きの巻き順で三角形を作る。
+                const auto vertex = [&](uint32_t c, uint32_t r)
+                {
+                    return Math::Vector3(static_cast<float>((static_cast<double>(FirstX) - capsule.PointA.x) + c * static_cast<double>(Spacing)),
+                        static_cast<float>(static_cast<double>(field.GetGridVertexHeight(c, r)) - capsule.PointA.y),
+                        static_cast<float>((static_cast<double>(FirstZ) - capsule.PointA.z) + r * static_cast<double>(Spacing)));
+                };
+                const Math::Vector3 v00 = vertex(column, row);
+                const Math::Vector3 v10 = vertex(column + 1, row);
+                const Math::Vector3 v01 = vertex(column, row + 1);
+                const Math::Vector3 v11 = vertex(column + 1, row + 1);
+                const Math::Triangle triangles[2] = {
+                    Terrain::UsesMainDiagonal(column, row) ? Math::Triangle(v00, v11, v10) : Math::Triangle(v00, v01, v10),
+                    Terrain::UsesMainDiagonal(column, row) ? Math::Triangle(v00, v01, v11) : Math::Triangle(v10, v01, v11)};
+                for (int index = 0; index < 2; ++index)
+                {
+                    const Math::Triangle& triangle = triangles[index];
+                    const auto hit = Math::SweepCapsule(local, triangle, direction, limit, settings);
+                    std::cout << "診断: 格子=(" << column << "," << row << ") 三角形=" << index
+                              << " 結果=" << static_cast<int>(hit.Result) << " 距離=" << hit.Distance << "\n";
+                    if (hit.Result != Math::EGeometrySweepResult::IterationLimit)
+                    {
+                        continue;
+                    }
+                    for (const Math::Vector3& v : {triangle.V0, triangle.V1, triangle.V2})
+                    {
+                        std::cout << "頂点=(" << v.x << "," << v.y << "," << v.z << ")\n";
+                    }
+                    const Math::Capsule stopped = Move(local, unit * hit.Distance);
+                    const auto stoppedSeparation = Math::ComputeSeparation(stopped, triangle);
+                    const auto projected = [&](const Math::Vector3& point)
+                    {
+                        return std::fabs(static_cast<double>(point.x) * stoppedSeparation.NormalAToB.x)
+                            + std::fabs(static_cast<double>(point.y) * stoppedSeparation.NormalAToB.y)
+                            + std::fabs(static_cast<double>(point.z) * stoppedSeparation.NormalAToB.z);
+                    };
+                    const double roundoff = std::numeric_limits<float>::epsilon() * std::fmax(local.Radius,
+                        std::fmax(projected(stopped.PointA), std::fmax(projected(stopped.PointB), projected(stoppedSeparation.PointB))));
+                    const double approach = static_cast<double>(unit.x) * stoppedSeparation.NormalAToB.x
+                        + static_cast<double>(unit.y) * stoppedSeparation.NormalAToB.y
+                        + static_cast<double>(unit.z) * stoppedSeparation.NormalAToB.z;
+                    const double next = std::fmin(static_cast<double>(limit), hit.Distance
+                        + std::fmax(0.0, stoppedSeparation.Distance - roundoff) / approach);
+                    float nextDistance = static_cast<float>(next);
+                    if (nextDistance > next)
+                    {
+                        nextDistance = std::nextafter(nextDistance, 0.0f);
+                    }
+                    const auto nextSeparation = Math::ComputeSeparation(Move(local, unit * nextDistance), triangle);
+                    std::cout << "停止位置からの次の歩幅: 接近率=" << approach << " 丸め幅=" << roundoff
+                              << " 次距離=" << nextDistance << " 次隙間=" << nextSeparation.Distance << "\n";
+                    for (const float distance : {0.0f, limit * 0.25f, limit * 0.5f, limit * 0.75f, limit, hit.Distance})
+                    {
+                        const auto separation = Math::ComputeSeparation(Move(local, unit * distance), triangle);
+                        std::cout << "距離標本: 移動=" << distance << " 隙間=" << separation.Distance << " 法線=("
+                                  << separation.NormalAToB.x << "," << separation.NormalAToB.y << ","
+                                  << separation.NormalAToB.z << ")\n";
+                    }
+                }
+            }
+        }
+    }
+
     template<typename Shape>
     void CompareSweep(const Terrain::TerrainHeightField& field, const Shape& shape, const Math::Vector3& direction,
         float limit, uint32_t index, uint32_t& mismatches, uint32_t& hits, MaximumError& maximum)
@@ -801,6 +892,7 @@ namespace
                           << " 未確定距離=" << hit.Distance << " 最大距離=" << limit << " 向き=("
                           << direction.x << "," << direction.y << "," << direction.z << ")\n";
                 PrintSweepShape(shape);
+                PrintSweepTriangles(field, shape, direction, limit);
             }
             ++mismatches;
         }

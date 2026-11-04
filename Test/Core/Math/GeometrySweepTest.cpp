@@ -111,6 +111,29 @@ namespace
         assert(Near(initialHit.Normal.z, contact.Normal.z, 1e-6f));
         assert(Near(initialHit.Depth, contact.Depth, 1e-6f));
         std::cout << "triangle_initial_overlap passed\n";
+
+        // 面への到達直前に丸めで微小侵入しても、直前の遠い位置を未確定として返さない。
+        const Capsule roundedCapsule(Vector3(0.0f), Vector3(-0.8640155792f, -0.3685898781f, 0.3248977661f),
+            0.3539831638f);
+        const Triangle roundedTriangle(Vector3(-1.343628883f, -2.345738411f, -0.4134044647f),
+            Vector3(-1.343628883f, -2.365281582f, 0.08659553528f),
+            Vector3(-0.8436288834f, -2.348517895f, -0.4134044647f));
+        const Vector3 roundedDirection(-0.2465348095f, -0.9301862717f, -0.2719818652f);
+        const Vector3 planeNormal = VectorUtils::Normalize(VectorUtils::Cross(
+            roundedTriangle.V1 - roundedTriangle.V0, roundedTriangle.V2 - roundedTriangle.V0));
+        // このケースの最初の接触は低い端点と面。平面までの距離から独立に到達位置を求める。
+        const float planeHitDistance = (VectorUtils::Dot(roundedCapsule.PointB - roundedTriangle.V0, planeNormal)
+            - roundedCapsule.Radius) / -VectorUtils::Dot(VectorUtils::Normalize(roundedDirection), planeNormal);
+        GeometrySweepSettings roundedSettings;
+        roundedSettings.MaxIterations = 64;
+        const auto roundedHit = SweepCapsule(roundedCapsule, roundedTriangle, roundedDirection, 2.473800659f, roundedSettings);
+        assert(roundedHit.Result == EGeometrySweepResult::Hit && !roundedHit.bStartPenetrating);
+        assert(Near(roundedHit.Distance, planeHitDistance, 1e-4f));
+        assert(roundedHit.Distance <= planeHitDistance);
+        const Vector3 roundedOffset = VectorUtils::Normalize(roundedDirection) * roundedHit.Distance;
+        assert(ComputeSeparation(Capsule(roundedCapsule.PointA + roundedOffset,
+            roundedCapsule.PointB + roundedOffset, roundedCapsule.Radius), roundedTriangle).Distance >= 0.0f);
+        std::cout << "カプセルと三角形の丸め: 期待距離=" << planeHitDistance << " 距離=" << roundedHit.Distance << "\n";
     }
 
     template<typename Target>

@@ -9712,3 +9712,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 高さ場に OverlapSphere・OverlapCapsule・OverlapBox・SweepSphere・SweepCapsule を足す: 着地(直し 0 回)
 - U8 TerrainHeightFieldQueryTest を足してタスクの verify を通す: 着地(直し 1 回)
 - U9 OverlapBox の深さを三角形の真下の柱と箱の共通部分の最深点で測る: 着地(直し 0 回)
+- U10 カプセルの掃引が IterationLimit で本当の当たりを隠す原因を突き止めて直す: 着地(直し 0 回)

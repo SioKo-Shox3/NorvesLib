@@ -1316,6 +1316,8 @@ namespace
         const Vector3 unit = SeparationUnit(direction);
         float distance = 0.0f;
         float previousDistance = 0.0f;
+        float upperDistance = 0.0f;
+        bool bBracketed = false;
         GeometrySeparation previous;
         for (uint32_t iteration = 0; iteration < settings.MaxIterations; ++iteration)
         {
@@ -1362,8 +1364,21 @@ namespace
             }
             if (iteration > 0 && separation.Distance < 0.0f)
             {
-                // 並進の丸めで侵入した場合は最後の安全位置を未確定として返す。
-                return MakeSweepResult(EGeometrySweepResult::IterationLimit, previousDistance, previous);
+                // 最近点の再構成にも丸めがあるため、安全幅を引いても微小侵入し得る。
+                // 直前の非接触位置と侵入位置で根を挟み、距離許容内の非接触側まで二分する。
+                upperDistance = distance;
+                bBracketed = true;
+                if (static_cast<double>(upperDistance) - previousDistance <= tolerance)
+                {
+                    return MakeSweepResult(EGeometrySweepResult::Hit, previousDistance, previous);
+                }
+                const float midpoint = static_cast<float>((static_cast<double>(previousDistance) + upperDistance) * 0.5);
+                if (midpoint <= previousDistance || midpoint >= upperDistance || iteration + 1 == settings.MaxIterations)
+                {
+                    return MakeSweepResult(EGeometrySweepResult::IterationLimit, previousDistance, previous);
+                }
+                distance = midpoint;
+                continue;
             }
 
             // 最近点が一致するときは、進行方向と反対側を押し出し方向とする。
@@ -1371,9 +1386,22 @@ namespace
             {
                 separation.NormalAToB = -1.0f * separation.NormalAToB;
             }
-            if (separation.Distance <= 0.0f)
+            if (separation.Distance <= 0.0f
+                || (bBracketed && static_cast<double>(upperDistance) - distance <= tolerance))
             {
                 return MakeSweepResult(EGeometrySweepResult::Hit, distance, separation);
+            }
+            if (bBracketed)
+            {
+                const float midpoint = static_cast<float>((static_cast<double>(distance) + upperDistance) * 0.5);
+                if (midpoint <= distance || midpoint >= upperDistance || iteration + 1 == settings.MaxIterations)
+                {
+                    return MakeSweepResult(EGeometrySweepResult::IterationLimit, distance, separation);
+                }
+                previous = separation;
+                previousDistance = distance;
+                distance = midpoint;
+                continue;
             }
             const double approach = SeparationDot(unit, separation.NormalAToB);
             if (approach <= 0.0)
