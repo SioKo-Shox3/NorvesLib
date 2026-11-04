@@ -80,6 +80,86 @@ Clip nodeのsyncGroupを指定したときだけ同期する。対象は正の�
 
 seedによるseekはイベントとroot deltaの移動区間に含めない。イベントのframe内時刻はclip秒→標準位相→leader秒へ戻し、区分境界を跨いでも同時markerの配送を揃える。周回番号も標準位相に合わせる。GetSyncPhasesはgroup定義順の正規化位相、FindSyncGroupは名前から添字を返す。PoseModifierContextにも同じ位相列を渡す。
 
+## 姿勢の後処理の土台
+
+### 文脈と適用
+
+PoseModifierContextはSkeleton・DeltaSeconds・Parameters・SyncPhasesに加え、MeshToWorld（メッシュからワールドへの変換）とWeight（0〜1、既定1）を渡す。AnimatorComponent.EvaluateAnimationがMeshToWorldへ詰める値はSkinnedMeshComponent.GetMeshNodeGlobalTransformの値。GetDriveSignals／HasDriveSignalsで最後に受け入れた駆動信号と有無を読める。SetDriveSignalsはパラメータへの適用に成功した信号だけを保存し、拒否した信号では保存値を変えない。
+
+GetOwnerは所有Entityを返し、そのポインタはApplyの間だけ有効。GetSkeletonAssetは束縛したSkeletonResource、FindJointIndexはその骨格の名前から添字を解決し、骨格なし・未知名は-1を返す。これらの借用値をmodifierの外へ持ち出さない。GetJointModelMatricesは必要になった時点でFKを一度だけ組み立てる。LocalPoseを書き換えて同じApply内で再取得するときはInvalidateを呼ぶ。Animatorも各modifierの前にInvalidateする。
+
+### 角度の配分
+
+Animation/Procedural/AngleDistribution.hのTryComputeJointGlobalRotation・TrySetJointGlobalRotation・TryDistributeModelRotationは、親から回転だけを合成する。根の親はsplitの骨格ならRootFrameの回転、それ以外は単位回転。ここでのグローバル回転と配分する回転は、GetJointModelMatricesがメッシュの逆変換を掛ける前の空間である。メッシュに回転があるときは呼出側がこの空間とメッシュのモデル空間の間で変換する。
+
+関節の新しいグローバル回転からローカルへ戻す式は `local = inverse(parentGlobal) * newGlobal`。配分は根側から先端側へ指定し、各関節へモデル空間の軸回転を重みに応じて掛ける。重みは有限の非負値、和は1 ± 1e-4。チェーンは空でなく、添字は有効かつ重複せず、後の関節は前の関節の子孫でなければならない。不正な重み・回転・親経路を拒否した場合はfalseを返し、姿勢を一切変更しない。
+
+並進・スケールは書き換えず、チェーン外の子孫のローカル回転も直接書き換えない。スケールは回転の合成に入れず、RootFrameからも各軸のスケールを除いて回転を取り出す。親の非一様スケールによる影響を含む行列の結果とは厳密には一致しない。
+
+### ばね
+
+Animation/Procedural/Spring.hはScalarSpring・VectorSpring・AngularSpringを提供する。AngularSpringは最短の回転差を回転ベクトルにし、角速度をrad/sで扱う。SpringSettingsのFrequencyHzは有限の正数、DampingRatioは有限かつ(0, 1]。1との差が1e-4以下なら臨界減衰としてMath/CriticalDamping.hのTryCriticalDampを使い、それ以外は減衰振動の応答を使う。
+
+SpringStepAccumulatorは1/120秒の固定サブステップを蓄積し、1回のAdvanceで最大4回まで積分する。1ステップ未満の余りは持ち越す。上限後にも1ステップ分に近い時間が残れば、その余り全体を捨てた秒数としてoutDroppedSecondsへ返す。たとえば0.1秒では4/120秒だけ進み、残りを返す。捨てた時間を後のフレームで追い掛けない。
+
+Resetは位置・回転と速度を指定値へ戻し、余りを0にする。既定は位置・速度がゼロ、回転は単位四元数。不正な入力でAdvance／Resetが失敗したときは状態を保持し、Advanceの出力も変更しない。
+
+### *.posemod.json
+
+骨格単位の実行時サイドカー。AnimatorComponent.ApplyPoseModifiersJson／ApplyPoseModifiersFileで明示して読み、cookのハッシュには含めない。ファイルのパスは呼出側が渡し、ディスクを自動探索しない。ファイルはUTF-8で、BOMも受け入れる。
+
+最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。GetBuiltinPoseModifierTypesの組み込みの型の表は空なので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
+
+```json
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "type": "Custom",
+      "order": 300,
+      "enabled": true,
+      "weight": {"param": "Speed", "curve": [[0, 0], [0.5, 0.2], [1, 1]]},
+      "settings": {"joint": "Root"}
+    }
+  ]
+}
+```
+
+- type: 登録表の型名。必須。settingsは型ごとの設定を置くobjectで、内容の検証と生成は登録したfactoryが担う。省略時は無効なJsonValueを渡すため、受け入れるかは型が決める。factoryへ渡したSettingsは呼出中だけ有効で、保持する値はコピーする。
+- order: 0〜10000の整数。小さい順に適用し、同値は配列の記載順を保つ。省略時は次の名前の既定値、それ以外は登録表のDefaultOrderを使う。既定値の名前があっても型が自動登録されるわけではない。
+- enabled: bool、既定true。falseなら中のApplyを呼ばない。
+- weight: 省略時1。0〜1の数値、または `{"param":"Speed","curve":[[0,0],[1,1]]}` の2つの形を取る。paramは既存のFloat parameter名。curveは有限で非負の入力値が厳密増加する2点以上の列で、各重みは有限の0〜1。区分線形で補間し、範囲外は端の値を使う。重み0なら中のApplyを呼ばない。それ以外は文脈のWeightへ渡し、呼出後に元のWeightを復元する。姿勢への重みの反映は各modifierが行う。
+
+| 型名 | 既定のorder |
+|---|---:|
+| Lean | 100 |
+| Spine | 110 |
+| Look | 200 |
+| FootIK | 500 |
+| SpringBone | 700 |
+| FollowThrough | 710 |
+
+PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weightの未知キーと重複キーは拒否し、settingsのキーは型がCheckPoseModifierKeysなどで検証する。factoryの相対パスは `modifiers[i].settings` の下へ結合する。ルートの構文エラーなどではPathが空になることがある。
+
+| Error | 意味 |
+|---|---|
+| None | 成功 |
+| InvalidJson | JSON構文またはファイルのUTF-8が不正 |
+| UnsupportedVersion | 整数のversionが1でない |
+| MissingKey | 必須キーの欠け |
+| UnknownKey / DuplicateKey | 未知キー／重複キー |
+| TypeMismatch / OutOfRange | 型違い／数値の範囲外 |
+| UnknownType | 登録表にない型 |
+| UnknownJoint | 型の設定で解決できない関節名 |
+| UnknownParam | weightのparameterが存在しないかFloatでない |
+| InvalidCurve | 点数・点の形・入力値の順序が不正 |
+| NoSkeleton | Animatorに束縛した骨格がない |
+| Busy | modifierを適用中の再設定 |
+| FileReadFailed | 指定したファイルを読めない |
+| CreateFailed | factoryがない、または生成に失敗 |
+
+全件の検証と生成に成功した場合だけ、AddModifierで追加した分も含め、Animatorのmodifier群を丸ごと置き換える。空配列は群を空にする。構文・設定・ファイルの読込などで失敗した場合は前の群を保持する。
+
 ## ソケットと保持
 
 SkeletonResourceはSetSockets／ApplySocketsJson／ApplySocketsFileで実行時のソケット定義を置換する。失敗時は旧定義を保持する。名前は一意、親は既存joint、offsetは有限な剛体変換（scale=1、単位Quaternion）。JSONの親は関節名、C++のParentJointは現在のresourceの添字。runtime置換はpose revisionとimmutable cooked hashを変更せず、SetJoints／SetSplitSkeleton／Unloadで定義を更新・破棄する。FindSocket/GetSocketsの借用は置換まで有効。
