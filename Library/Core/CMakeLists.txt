@@ -121,6 +121,9 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
+    Private/Animation/Procedural/AngleDistribution.cpp
+    Private/Animation/Procedural/Spring.cpp
+    Private/Animation/Procedural/PoseModifierConfig.cpp
     Private/Animation/AnimationEvents.cpp
     Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
@@ -579,6 +582,9 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
+    Public/Animation/Procedural/AngleDistribution.h
+    Public/Animation/Procedural/Spring.h
+    Public/Animation/Procedural/PoseModifierConfig.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
     Public/Component/HoldSlotComponent.h
