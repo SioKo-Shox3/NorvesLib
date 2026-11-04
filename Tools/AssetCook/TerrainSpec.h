@@ -15,6 +15,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t TileCells = 128;
         uint64_t Seed = 0;
         bool bHasRecipe = false;
+        TerrainRecipe Recipe;
     };
 
     // スペック JSON のバイト列を解析する。specPath は相対パスの基準（その親ディレクトリ）。

@@ -799,6 +799,9 @@ namespace Game
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
         m_bDogMovementSmoke = false;
+        m_bDogMovementAutopilot = false;
+        m_DogMovementAutopilotPath = {};
+        m_DogMovementCaptureDir = {};
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
@@ -1213,6 +1216,45 @@ namespace Game
                     return false;
                 }
                 m_bDogMovementSmoke = true;
+                continue;
+            }
+            String dogAutopilotValue;
+            const bool bDefaultDogAutopilot = args[i] == TEXT("--dog-movement-autopilot");
+            if (bDefaultDogAutopilot ||
+                TryStripPrefix(args[i], TEXT("--dog-movement-autopilot="), dogAutopilotValue))
+            {
+                if (m_bDogMovementAutopilot)
+                {
+                    LOG_ERROR("--dog-movement-autopilot が重複しています");
+                    return false;
+                }
+                if (bDefaultDogAutopilot)
+                {
+                    dogAutopilotValue = TEXT("Assets/Gameplay/DogMovementAutopilot.json");
+                }
+                if (dogAutopilotValue.empty())
+                {
+                    LOG_ERROR("--dog-movement-autopilot には台本のパスを指定してください");
+                    return false;
+                }
+                m_bDogMovementAutopilot = true;
+                m_DogMovementAutopilotPath = dogAutopilotValue;
+                continue;
+            }
+            String dogCaptureDir;
+            if (TryStripPrefix(args[i], TEXT("--dog-movement-capture-dir="), dogCaptureDir))
+            {
+                if (!m_DogMovementCaptureDir.empty())
+                {
+                    LOG_ERROR("--dog-movement-capture-dir が重複しています");
+                    return false;
+                }
+                if (dogCaptureDir.empty())
+                {
+                    LOG_ERROR("--dog-movement-capture-dir には保存先を指定してください");
+                    return false;
+                }
+                m_DogMovementCaptureDir = dogCaptureDir;
                 continue;
             }
             String sceneValue;
@@ -2877,6 +2919,16 @@ namespace Game
             LOG_WARNING("--geom-settle-trace は開発ビルドだけで使えます。無視します");
         }
 #endif
+        if (m_bDogMovementAutopilot && !m_bDogMovementSmoke)
+        {
+            LOG_ERROR("--dog-movement-autopilot には --dog-movement-smoke が必要です");
+            return false;
+        }
+        if (!m_DogMovementCaptureDir.empty() && !m_bDogMovementAutopilot)
+        {
+            LOG_ERROR("--dog-movement-capture-dir には --dog-movement-autopilot が必要です");
+            return false;
+        }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
         {
             LOG_ERROR("犬比較用引数は --dog-movement-smoke と組み合わせ、--animation-debug と併用しないでください");
@@ -4125,11 +4177,18 @@ namespace Game
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
+        const bool bDogAutopilot = m_bDogMovementAutopilot;
+        const auto dogAutopilotPath = m_DogMovementAutopilotPath;
+        const auto dogCaptureDir = m_DogMovementCaptureDir;
         stateMachine->Registry().Register(
-            DogMovementSmoke, [lateCameraSlot, dogDrive](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
+            DogMovementSmoke, [lateCameraSlot, dogDrive, bDogAutopilot, dogAutopilotPath, dogCaptureDir](
+                                  const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
                 auto mode = MakeUnique<DogMovementSmokeMode>();
                 mode->GetData().LateSlot = lateCameraSlot;
                 mode->GetData().Drive = dogDrive;
+                mode->GetData().bAutopilot = bDogAutopilot;
+                mode->GetData().AutopilotPath = dogAutopilotPath;
+                mode->GetData().CaptureDir = dogCaptureDir;
                 return mode;
             });
         stateMachine->Registry().Register(
