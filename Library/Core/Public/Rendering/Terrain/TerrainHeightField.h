@@ -27,6 +27,7 @@
 #include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/VariableArray.h"
+#include "Math/GeometryTypes.h"
 
 #include <cstdint>
 #include <limits>
@@ -96,6 +97,20 @@ namespace NorvesLib::Core::Rendering::Terrain
     {
         Face,
         Smooth
+    };
+
+    /// Raycast の当たり
+    struct TerrainRayHit
+    {
+        /// 正規化した向きでの距離[m]
+        float Distance = 0.0f;
+        /// 当たった点（世界座標）
+        Math::Vector3 Point;
+        /// 当たった三角形の面法線（Y > 0）。原点が地表の下なら零ベクトル
+        Math::Vector3 Normal;
+        /// 当たったセルの番号
+        uint32_t Column = 0;
+        uint32_t Row = 0;
     };
 
     /// 格子の高さ場の頂点の並び。頂点 (column, row) の位置は (FirstX + column × Spacing, FirstZ + row × Spacing)。
@@ -210,6 +225,10 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 法線を重心座標で補間するため、三角形と升目の境界をまたいで連続する。
         /// 格子の範囲外は 3 成分とも NaN。手続きの作り方では種類によらず間隔 0.5 m の既存の法線を返す
         TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind) const;
+
+        /// 格子の最細段と同じ三角形へレイを当て、maxDistance[m] 以内の最近点を返す。向きは内部で正規化する。
+        /// 原点がフットプリント内で地表より下なら距離 0・零法線。手続きの作り方・零方向・不正な距離は false
+        bool Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit) const;
 
         /// 格子から作ったか
         bool IsGrid() const

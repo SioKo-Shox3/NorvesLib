@@ -310,6 +310,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     # 地形
     Private/Rendering/Terrain/TerrainHeightField.cpp
+    Private/Rendering/Terrain/TerrainHeightFieldQuery.cpp
     Private/Rendering/Terrain/TerrainMaterialDesc.cpp
     Private/Rendering/Terrain/TerrainHeightFieldGrid.h
     Private/Rendering/Terrain/TerrainSystem.cpp
