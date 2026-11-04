@@ -1,10 +1,16 @@
 ﻿#pragma once
 
 #include "Audio/IAudioService.h"
+#include "Audio/SoundBankTypes.h"
 #include "Container/String.h"
 #include "Container/VariableArray.h"
 #include "Math/Vector3.h"
 #include "Text/IdentityPool.h"
+
+namespace NorvesLib::Core::Asset
+{
+    class AssetSystem;
+} // namespace NorvesLib::Core::Asset
 
 namespace NorvesLib::Modules::Audio
 {
@@ -86,6 +92,14 @@ namespace NorvesLib::Modules::Audio
     {
     public:
         virtual ~ISoundSystem() = default;
+        /**
+         * @brief GameThread で名前付きバンクを同期に読み込む。
+         * @details ResolveAsset はファイル全体を読むため、GameMode の Enter かロード画面で呼ぶ。
+         */
+        virtual AudioResult LoadBank(const Core::Asset::AssetSystem& assets,
+                                     Core::Container::AnsiStringView bankLogicalPath, SoundBankLoadReport& outReport) = 0;
+        /** @brief GameThread でバンクの定義を外し、そのインスタンスを最短フェードで止める。 */
+        virtual AudioResult UnloadBank(Core::Container::AnsiStringView bankLogicalPath) = 0;
         virtual AudioResult PlayGlobal(SoundId id, const SoundPlayParams& params, SoundInstanceHandle& outHandle) = 0;
         virtual AudioResult PlayAt(SoundId id, const Math::Vector3& position, const SoundPlayParams& params, SoundInstanceHandle& outHandle) = 0;
         virtual AudioResult Stop(SoundInstanceHandle handle, const SoundFade& fade) = 0;

@@ -1,6 +1,8 @@
 ﻿#include "Audio/SoundSystem.h"
 
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioClipLoader.h"
+#include "Asset/AssetSystem.h"
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
@@ -45,6 +47,117 @@ namespace NorvesLib::Modules::Audio::Private
         return true;
     }
 
+    AudioResult SoundSystem::LoadBank(const Core::Asset::AssetSystem& assets,
+                                      Core::Container::AnsiStringView bankLogicalPath, SoundBankLoadReport& outReport)
+    {
+        outReport = {};
+        if (!IsOwnerThread() || m_bShutdown)
+        {
+            return AudioResult::InvalidState;
+        }
+        if (m_Banks.find(Core::Identity(bankLogicalPath)) != m_Banks.end())
+        {
+            return AudioResult::AlreadyInState;
+        }
+        const auto resolved = assets.ResolveAsset(bankLogicalPath, Core::Asset::AssetKind::Raw);
+        if (!resolved.Succeeded())
+        {
+            SoundBankDiagnostic diagnostic;
+            diagnostic.Reason = SoundBankRejectReason::BankNotFound;
+            diagnostic.Detail = Core::Container::String(bankLogicalPath);
+            outReport.Diagnostics.push_back(std::move(diagnostic));
+            return AudioResult::InvalidState;
+        }
+        const SoundBankClipResolver resolveClip([&assets](const Core::Container::String& path)
+        {
+            Core::Container::TSharedPtr<AudioClipResource> clip;
+            if (LoadAudioClip(assets, Core::Container::AnsiStringView(path.data(), path.size()), clip) != AudioClipLoadResult::Success)
+            {
+                return Core::Container::TSharedPtr<AudioClipResource>{};
+            }
+            return clip;
+        });
+        // raw のエントリは入力そのもので、パッケージの見出しは解決時に除かれている。
+        return LoadBankFromText(bankLogicalPath, resolved.Blob.GetSpan(), resolveClip, outReport);
+    }
+
+    AudioResult SoundSystem::LoadBankFromText(Core::Container::AnsiStringView bankKey,
+                                              Core::Container::Span<const uint8_t> jsonBytes,
+                                              const SoundBankClipResolver& resolveClip, SoundBankLoadReport& outReport)
+    {
+        outReport = {};
+        if (!IsOwnerThread() || m_bShutdown)
+        {
+            return AudioResult::InvalidState;
+        }
+        const Core::Identity key(bankKey);
+        if (m_Banks.find(key) != m_Banks.end())
+        {
+            return AudioResult::AlreadyInState;
+        }
+        auto parsed = ParseSoundBank(jsonBytes, resolveClip);
+        outReport = std::move(parsed.Report);
+        if (!parsed.bBankAccepted || m_bShutdown)
+        {
+            return AudioResult::InvalidState;
+        }
+
+        Core::Container::VariableArray<SoundId> registeredIds;
+        const size_t parseDiagnosticCount = outReport.Diagnostics.size();
+        size_t rejectedIndex = 0;
+        uint32_t definitionIndex = 0;
+        for (SoundDefinition& definition : parsed.Definitions)
+        {
+            // パーサが拒否した位置を飛ばし、元の JSON 配列での位置を診断に残す。
+            while (rejectedIndex < parseDiagnosticCount &&
+                   outReport.Diagnostics[rejectedIndex].DefinitionIndex == definitionIndex)
+            {
+                ++rejectedIndex;
+                ++definitionIndex;
+            }
+            const SoundId id = definition.Id;
+            const bool bDuplicate = m_Definitions.find(id) != m_Definitions.end();
+            if (!bDuplicate && RegisterDefinition(std::move(definition)) == AudioResult::Success)
+            {
+                registeredIds.push_back(id);
+            }
+            else
+            {
+                SoundBankDiagnostic diagnostic;
+                diagnostic.DefinitionIndex = definitionIndex;
+                diagnostic.DefinitionName = id.ToString();
+                diagnostic.Reason = bDuplicate ? SoundBankRejectReason::DuplicateId : SoundBankRejectReason::InvalidValue;
+                diagnostic.Detail = bDuplicate ? TEXT("同じ Id の定義が既に登録されています") : TEXT("定義を登録できませんでした");
+                outReport.Diagnostics.push_back(std::move(diagnostic));
+                --outReport.LoadedDefinitionCount;
+                ++outReport.RejectedDefinitionCount;
+            }
+            ++definitionIndex;
+        }
+        m_Banks.emplace(key, std::move(registeredIds));
+        return AudioResult::Success;
+    }
+
+    AudioResult SoundSystem::UnloadBank(Core::Container::AnsiStringView bankLogicalPath)
+    {
+        if (!IsOwnerThread() || m_bShutdown)
+        {
+            return AudioResult::InvalidState;
+        }
+        const auto bank = m_Banks.find(Core::Identity(bankLogicalPath));
+        if (bank == m_Banks.end())
+        {
+            return AudioResult::InvalidState;
+        }
+        auto registeredIds = std::move(bank->second);
+        m_Banks.erase(bank);
+        for (SoundId id : registeredIds)
+        {
+            UnregisterDefinition(id);
+        }
+        return AudioResult::Success;
+    }
+
     AudioResult SoundSystem::RegisterDefinition(SoundDefinition definition)
     {
         if (!IsOwnerThread() || m_bShutdown)
@@ -84,6 +197,16 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 // 登録解除は、進行中の長いフェードも最短の包絡へ置き換える。
                 BeginStop(instance, SoundFade{kMinimumFadeSeconds, SoundFadeCurve::Linear});
+            }
+        }
+        // 直接の登録解除後に同じ Id が再登録されても、古いバンクから解除しない。
+        for (auto& bank : m_Banks)
+        {
+            auto& ids = bank.second;
+            const auto found = std::find(ids.begin(), ids.end(), id);
+            if (found != ids.end())
+            {
+                ids.erase(found);
             }
         }
         m_Definitions.erase(definition);
@@ -629,6 +752,7 @@ namespace NorvesLib::Modules::Audio::Private
                 ReleaseSlot(index);
             }
         }
+        m_Banks.clear();
         m_Definitions.clear();
         m_DefinitionStates.clear();
         return AudioResult::Success;
@@ -675,6 +799,13 @@ namespace NorvesLib::Modules::Audio::Private
         }
         const Instance& instance = m_Instances[handle.Index];
         return instance.bActive && instance.Generation == handle.Generation ? &instance : nullptr;
+    }
+
+    AudioResult SoundSystemTestAccess::LoadBankFromText(SoundSystem& system, Core::Container::AnsiStringView bankKey,
+                                                        Core::Container::Span<const uint8_t> jsonBytes,
+                                                        const SoundBankClipResolver& resolveClip, SoundBankLoadReport& outReport)
+    {
+        return system.LoadBankFromText(bankKey, jsonBytes, resolveClip, outReport);
     }
 
     bool SoundSystemTestAccess::PrepareInstanceGenerationWrap(SoundSystem& system, SoundInstanceHandle& handle)

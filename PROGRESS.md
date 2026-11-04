@@ -9634,3 +9634,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 同時発音の上限と奪取・max_instances の方針・cooldown・dedupe・no-repeat と揺らぎを SoundSystem に足す: 着地(直し 1 回)
 - U4 フェード・寿命・世代の折り返しの試験を AudioPlaybackTest に足す: 着地(直し 0 回)
 - U7 奪取・max_instances・cooldown・dedupe・no-repeat の試験を AudioPlaybackTest に足す: 着地(直し 0 回)
+- U8 ISoundSystem に LoadBank / UnloadBank を足し、バンクの定義を SoundSystem に登録する: 着地(直し 0 回)

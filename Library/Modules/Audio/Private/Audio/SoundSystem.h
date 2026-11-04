@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Audio/ISoundSystem.h"
+#include "Audio/SoundBank.h"
 #include "Container/UnorderedMap.h"
 #include "Debug/DebugConfig.h"
 #include "Random/Random.h"
@@ -29,6 +30,9 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult Shutdown();
         AudioResult RegisterDefinition(SoundDefinition definition);
         AudioResult UnregisterDefinition(SoundId id);
+        AudioResult LoadBank(const Core::Asset::AssetSystem& assets,
+                             Core::Container::AnsiStringView bankLogicalPath, SoundBankLoadReport& outReport) override;
+        AudioResult UnloadBank(Core::Container::AnsiStringView bankLogicalPath) override;
         AudioResult PlayGlobal(SoundId id, const SoundPlayParams& params, SoundInstanceHandle& outHandle) override;
         AudioResult PlayAt(SoundId id, const Math::Vector3& position, const SoundPlayParams& params, SoundInstanceHandle& outHandle) override;
         AudioResult Stop(SoundInstanceHandle handle, const SoundFade& fade) override;
@@ -89,6 +93,9 @@ namespace NorvesLib::Modules::Audio::Private
         };
 
         [[nodiscard]] bool IsOwnerThread() const;
+        AudioResult LoadBankFromText(Core::Container::AnsiStringView bankKey,
+                                     Core::Container::Span<const uint8_t> jsonBytes,
+                                     const SoundBankClipResolver& resolveClip, SoundBankLoadReport& outReport);
         AudioResult Play(SoundId id, const Math::Vector3& position, bool bGlobal,
                          const SoundPlayParams& params, SoundInstanceHandle& outHandle);
         // 上限と抑制の方針は、この入口に集約する。
@@ -112,6 +119,7 @@ namespace NorvesLib::Modules::Audio::Private
         Core::Container::UnorderedMap<SoundId, SoundDefinition, SoundId::Hasher> m_Definitions;
         Core::Container::UnorderedMap<SoundId, DefinitionState, SoundId::Hasher> m_DefinitionStates;
         Core::Container::VariableArray<Instance> m_Instances;
+        Core::Container::UnorderedMap<Core::Identity, Core::Container::VariableArray<SoundId>, Core::Identity::Hasher> m_Banks;
         Core::Container::VariableArray<uint32_t> m_FreeIndices;
         SoundSystemDiagnostics m_Diagnostics;
         float m_MasterVolume = 1.0f;
@@ -128,6 +136,10 @@ namespace NorvesLib::Modules::Audio::Private
     class SoundSystemTestAccess
     {
     public:
+        // UTF-8 の JSON バイト列から、実際の読み込みと同じ登録経路を通す。
+        static AudioResult LoadBankFromText(SoundSystem& system, Core::Container::AnsiStringView bankKey,
+                                            Core::Container::Span<const uint8_t> jsonBytes,
+                                            const SoundBankClipResolver& resolveClip, SoundBankLoadReport& outReport);
         static bool PrepareInstanceGenerationWrap(SoundSystem& system, SoundInstanceHandle& handle);
         [[nodiscard]] static VoiceHandle GetVoiceHandle(const SoundSystem& system, SoundInstanceHandle handle);
     };
