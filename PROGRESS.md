@@ -9495,3 +9495,31 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 試験: `GrassFieldQueryTest` に 2×2 のうち 1 つを欠いた 4 通りの継ぎ目の検査を足した（直す前は最大密度差 0.177 で落ち、直した後は 260 点の最大 0.0022 ＜ 1/255。差は ±1e-3 m の勾配の分）。既存の値（継ぎ目の密度差 1.5676e-05、線形の誤差 1.47e-08）は変わらない。
 - 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U7-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが終了コード 0、ctest の 4 本 100% Passed）。起動の確かめは無い。
 - Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
+
+## 2026-11-03 G4-GR07-BODY-CASES（run 20261103-233355 の反復 1、着手）
+- 試験を足す理由（Docs/Testing.md の 3 点。PhysicsFixedStepPipelineTest にケース 20〜26 を足す）
+  - 反証する契約: 固定ステップで駆動するキャラクター本体が、(1) 往復しつつ回る Kinematic の足場に 120 ステップ乗ってもローカル座標で 0.02 m 未満しかずれず、跳んで離れた最初のステップの水平速度が足場の速度 ±0.05 m/s を保つ、(2) 3 m/s で上下する足場の上で足場に対する高さのジッタが 0.01 m 未満、(3) Dynamic の球へ歩くと球が動き、キャラクターはめり込まない（深さ 1e-3 以下）、(4) 限界角を越える 60° の坂では要求速度 0 でも下へ滑り bGrounded=false、(5) GravityScale=0.5 の 1 秒の降下が解析値 ±2%、(6) External の間は要求速度と重力が効かず MoveDelta だけが効き、Walking へ戻すと重力が戻る、(7) GetLinearVelocity が位置差分/dt と 0.005 m/s 以内で一致し、Teleport とめり込みの解消は速度に乗らない
+  - ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、離脱速度の欠け・数 mm のジッタ・速度への瞬間移動の混入・重力の倍率の取り違えは絵にもログにも出ない。小物を押す場面と External を使う場面（GR20 のしがみつき）はまだシーンに無い
+  - 失敗が黙って起きるか: 起きる。どれも外れてもキャラクターは何かしら動き、エラーもログも出ない
+- 計画: 試験ファイルと PhysicsModuleCharacter.cpp を全単位が触るので、単位は直列に回す（U1 重力の倍率・滑り落ち・昇降足場 → U2 足場の離脱速度 → U3 External → U4 小物を押す → U5 速度の一致とタスクの verify）
+- U1 重力の倍率・滑り落ち・昇降足場のケースを足し、外れたら本体を直す: 着地(直し 0 回)
+- U6 足場の離脱速度のケースを足し、空中で足場の水平速度を引き継ぐ(切り直し): 着地(直し 0 回)
+- U3 External の間は MoveDelta だけが効くようにし、ケースを足す: 着地(直し 0 回)
+- U4 近くの Dynamic の球を押すケースを足し、押し出しを入れる: 着地(直し 0 回)
+- U5 速度の一致と瞬間移動の除外のケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 20〜26 を足し、全部通る（重力の倍率・60° の坂の滑り落ち・昇降足場のジッタ・足場の離脱速度・External・小物を押す・速度の一致）。本体の直し: 足場を離れた後に足場の水平速度を空中で保つ、External の間は MoveDelta の変位と回転だけを衝突なしで適用する、歩いて接した Dynamic の体へ要求の水平速度の法線成分を渡す、めり込みの解消の変位を速度から除く
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1` は exit 0。`ctest ... -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|PhysicsDynamicsTest)$"` は 5/5 Passed（PhysicsFixedStepPipelineTest 0.91 秒、合計 1.11 秒）。既存のケース 0〜19 の試験は変えていない
+- 測った量: 昇降足場のジッタは SceneQuery::RefreshDynamicSnapshot を通す組・通さない組（負の対照）とも 0 m（`ELEVATOR_JITTER refresh=0 norefresh=0`）で、今の経路では差が出ない。球を押すケースは 90 ステップで球 2.02 m・キャラクター 2.97 m 進む。めり込みの解消は直す前に 0.052 m の押し出しが 3.12 m/s として速度に乗っていた
+- Notes: External は衝突を見ずに変位を適用する（拘束側が位置の権限を持つ形。GR20 のしがみつき側で壁の中へ入れない責任を持つ）。小物を押すのは速度の法線成分を上げるだけで、質量・摩擦は扱わない。めり込みの解消の変位は、重なるステップだけ移動 0 の CharacterMover::Move をもう 1 回呼んで求めるので、足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる。足場の離脱速度の引き継ぎは縁からの自然落下・可変駆動の足場からの離脱を個別には試していない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U7 足場の運搬をめり込みの解消と取り違えて速度から引く退行を直し、昇降足場の速度の一致を試験で確かめる: 着地(直し 1 回)
+- Done: 反復 2 で差し戻し（昇降足場が上がるステップで速度が位置差分/dt と約 3 m/s ずれる退行）を直した。めり込みの事前判定と解消だけの要求を、足場の運搬（PlatformDisplacement）だけ平行移動した形で行い、運んでいる足場（PlatformCollider）は判定と解消の対象から外す（足場との重なりは本番の Move の運搬と解消が扱い、速度からは引かない）。ケース 22 に更新ありのキャラクターの毎ステップの速度 y と位置差分/dt の一致（0.005 m/s 以内）を足した。直す前は velocity_error=3.12 で落ち、直した後は 0
+- 確かめ（タスクの verify）: ビルド exit 0。ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 0.99 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）は 5/5 Passed（合計 1.20 秒）。`ELEVATOR_JITTER refresh=0 norefresh=0 velocity_error=0`。運搬後の形だけで判定した途中の版では、回る足場（ケース 8）で足場との 1e-6 m の重なりが解消として速度から引かれ 0.12 m/s ずれたため、足場を対象から外す形にした
+- Notes: 運搬後の形での判定は、足場の運搬が壁に遮られる場面で速度を誤らせたため、次の項で運ぶ前の形に戻した（足場を外す部分は残した）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U8 運搬前の形でめり込みを判定し直し、壁に押し付けられた足場の運搬で速度が位置差分と一致することを試験で確かめる: 着地(直し 0 回)
+- Done: 反復 3 で差し戻し（足場の運搬が静的な壁に遮られるステップで、止まっているキャラクターの速度に足場の速さ約 2 m/s が出る退行）を直した。めり込みの事前判定と解消だけの要求を運ぶ前の形（*self・request.Shape）で行い、運んでいる足場（PlatformCollider）を判定と解消の対象から外す部分は残した。ケース 27（TestCharacterPlatformPushedAgainstWall。回転しない Kinematic の足場が +x へ 2 m/s、キャラクターの高さに静的な壁）を足し kCaseCount を 28 にした。合否は毎ステップの速度と位置差分/dt の差 0.005 m/s 以内と、足場が動くのにキャラクターの x の差分が 0.001 m 未満のステップが 10 以上あること
+- 確かめ: 直す前の版でケース 27 は `CHARACTER_WALL_VELOCITY step=7 error=2`（押し付け 84 ステップ）で落ちた。直した後はケース 8・22・26・27 の単独実行が終了コード 0（押し付け 84 ステップ）。タスクの verify はビルド exit 0、ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 1.02 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）が 5/5 Passed（合計 1.20 秒）。既存のケース 0〜26 と PhysicsCharacterMoveTest の中身は変えていない
+- Notes: 残る限界: 運搬前の形がほかの物体に食い込み、運搬でその物体から離れるステップだけ、解消の分を引きすぎて速度が小さく出うる（試験していない）
+- Notes: 要起票: 空中で壁に当たったとき、足場から引き継いだ水平速度(m_InheritedVelocity)の壁へ向かう成分を消す
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
