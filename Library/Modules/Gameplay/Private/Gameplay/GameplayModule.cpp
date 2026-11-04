@@ -4,6 +4,8 @@
 #include "Container/Containers.h"
 #include "Engine/Engine.h"
 #include "Gameplay/Combat/HealthComponent.h"
+#include "Gameplay/Combat/HitboxComponent.h"
+#include "Gameplay/Combat/HurtboxSetComponent.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Modules::Gameplay
@@ -11,10 +13,34 @@ namespace NorvesLib::Modules::Gameplay
     namespace
     {
         constexpr const char* kGameplayModuleName = "NorvesGameplayModule";
+
+        void RegisterCombatEntity(Core::Entity& entity, Combat::CombatRuntime& runtime)
+        {
+            if (entity.IsPendingDestroy())
+            {
+                return;
+            }
+            for (auto* component : entity.GetComponents())
+            {
+                if (auto* hitbox = Core::CastTo<Combat::HitboxComponent>(component))
+                {
+                    runtime.Register(*hitbox);
+                }
+                else if (auto* hurtbox = Core::CastTo<Combat::HurtboxSetComponent>(component))
+                {
+                    runtime.Register(*hurtbox);
+                }
+            }
+            for (auto* child : entity.GetChildEntities())
+            {
+                RegisterCombatEntity(*child, runtime);
+            }
+        }
     }
 
     GameplayModule::GameplayModule()
         : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId()),
+          m_CombatRuntime(*this),
           m_IsDefeatHoldOwnerAlive(this, &GameplayModule::IsDefeatHoldOwnerAlive)
     {
         m_DefeatGate.OnDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
@@ -50,10 +76,17 @@ namespace NorvesLib::Modules::Gameplay
     void GameplayModule::RegisterReflectedTypes()
     {
         Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(Combat::HitboxComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(Combat::HurtboxSetComponent::StaticClass());
     }
 
     bool GameplayModule::Initialize()
     {
+        if (!IsOwnerThread())
+        {
+            return false;
+        }
+        m_CombatRuntime.ResetTransientState();
         m_bInitialized = m_Engine != nullptr;
         if (!m_bInitialized)
         {
@@ -77,6 +110,7 @@ namespace NorvesLib::Modules::Gameplay
                 NORVES_LOG_WARNING("Gameplay", "進行条件を適用できませんでした。");
             }
         }
+        RegisterCombatComponents(m_Engine->GetWorld());
         return true;
     }
 
@@ -93,13 +127,59 @@ namespace NorvesLib::Modules::Gameplay
         return m_Engine != nullptr && m_Engine->GetWorld().ResolveEntityHandle(owner) != nullptr;
     }
 
+    bool GameplayModule::IsOwnerThread() const
+    {
+        return m_OwnerThreadId == Thread::Thread::GetCurrentThreadId();
+    }
+
+    GameplayModule* GameplayModule::FindBoundModule(const Core::World& world)
+    {
+        auto* module = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+        if (module == nullptr || !module->m_bInitialized || module->m_Engine == nullptr ||
+            &module->m_Engine->GetWorld() != &world)
+        {
+            return nullptr;
+        }
+        return module;
+    }
+
+    void GameplayModule::RegisterCombatComponents(Core::World& world)
+    {
+        // 初期化前や World 参加前に作られた Component も、登録可能になった時点で拾う。
+        for (auto* entity : world.GetRootEntities())
+        {
+            RegisterCombatEntity(*entity, m_CombatRuntime);
+        }
+    }
+
+    void GameplayModule::LateTick(float)
+    {
+        if (!IsOwnerThread() || !m_bInitialized || m_Engine == nullptr)
+        {
+            return;
+        }
+        auto& world = m_Engine->GetWorld();
+        RegisterCombatComponents(world);
+        m_CombatRuntime.Evaluate(world, m_Engine->GetTimeSystem().GetFrameTimes().World);
+    }
+
     void GameplayModule::Shutdown()
     {
+        if (!IsOwnerThread())
+        {
+            return;
+        }
+        m_CombatRuntime.ResetTransientState();
         m_bInitialized = false;
     }
 
     void GameplayModule::Uninstall(Core::Engine::Engine&)
     {
+        if (!IsOwnerThread())
+        {
+            return;
+        }
+        m_CombatRuntime.ResetTransientState();
         m_bInitialized = false;
         m_Engine = nullptr;
     }

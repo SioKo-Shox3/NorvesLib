@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Gameplay/IGameplayModule.h"
+#include "Gameplay/Combat/CombatRuntime.h"
 #include "Gameplay/Progression/DefeatGate.h"
 #include "Gameplay/Progression/ProgressionState.h"
 #include "Thread/Thread.h"
@@ -25,19 +26,26 @@ namespace NorvesLib::Modules::Gameplay
         void RegisterReflectedTypes() override;
         bool Initialize() override;
         void Tick(float deltaTime) override;
+        void LateTick(float deltaTime) override;
         void Shutdown() override;
         void Uninstall(Core::Engine::Engine& engine) override;
 
         ProgressionState& GetProgressionState() override { return m_ProgressionState; }
         DefeatGate& GetDefeatGate() override { return m_DefeatGate; }
+        Core::MulticastDelegate<const Combat::CombatHitEvent&>& GetOnAnyHit() override { return m_CombatRuntime.OnAnyHit; }
+        Combat::CombatRuntime& GetCombatRuntime() { return m_CombatRuntime; }
+        static GameplayModule* FindBoundModule(const Core::World& world);
+        bool IsOwnerThread() const;
 
     private:
         void RegisterWorldSystems(Core::World& world);
+        void RegisterCombatComponents(Core::World& world);
         bool IsDefeatHoldOwnerAlive(Core::EntityHandle owner) const;
 
         Core::Engine::Engine* m_Engine = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bInitialized = false;
+        Combat::CombatRuntime m_CombatRuntime;
         ProgressionState m_ProgressionState;
         DefeatGate m_DefeatGate;
         Core::Delegate<bool, Core::EntityHandle> m_IsDefeatHoldOwnerAlive;
