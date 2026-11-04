@@ -1513,6 +1513,8 @@ namespace
         float maximum[2] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
         float floorMinimum[2] = {floors[0]->GetPosition().y, floors[1]->GetPosition().y};
         float floorMaximum[2] = {floorMinimum[0], floorMinimum[1]};
+        float previousHeight = characters[0].Owner->GetPosition().y;
+        float maximumVelocityError = 0.0f;
         for (unsigned step = 0; step < 120; ++step)
         {
             if (!StepCharacter(processor))
@@ -1521,6 +1523,14 @@ namespace
             {
                 if (i == 0 && !characters[i].Character->GetState().bReady)
                     return false;
+                if (i == 0)
+                {
+                    const float height = characters[0].Owner->GetPosition().y;
+                    const float displacementVelocity = (height - previousHeight) / kFixedDeltaTime;
+                    const float velocityError = std::fabs(characters[0].Body->GetLinearVelocity().y - displacementVelocity);
+                    maximumVelocityError = std::max(velocityError, maximumVelocityError);
+                    previousHeight = height;
+                }
                 const float floorHeight = floors[i]->GetPosition().y;
                 const float gap = characters[i].Owner->GetPosition().y - (floorHeight + .5f);
                 if (!std::isfinite(gap))
@@ -1540,11 +1550,12 @@ namespace
         }
         const float refresh = maximum[0] - minimum[0];
         const float noRefresh = maximum[1] - minimum[1];
-        std::cout << "ELEVATOR_JITTER refresh=" << refresh << " norefresh=" << noRefresh << '\n';
+        std::cout << "ELEVATOR_JITTER refresh=" << refresh << " norefresh=" << noRefresh
+                  << " velocity_error=" << maximumVelocityError << '\n';
         const bool platformsMoved = std::fabs(floorMaximum[0] - floorMinimum[0] - .5f) < .001f &&
                                     std::fabs(floorMaximum[1] - floorMinimum[1] - .5f) < .001f;
         return movers[0]->bRefreshSucceeded && movers[0]->Step == 120 && movers[1]->Step == 120 &&
-               platformsMoved && refresh < .01f;
+               platformsMoved && refresh < .01f && maximumVelocityError <= .005f;
     }
 
     bool TestCharacterPlatformDepartureVelocity(ApplicationProcessor& processor)
