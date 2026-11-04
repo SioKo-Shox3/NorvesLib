@@ -9725,13 +9725,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに書き換えられて MSBuild がスイッチの誤りで止まる。verify は PowerShell(か cmd)で回す。
 - Notes: アプリを起動する確かめは無い。
 - Next: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の Notes の `要起票:`(`CookManagedBootstrap.cpp:457` の workspace を親にする `Absent`)は未起票のまま。
-- U1 IGroundQuery の型と PhysicsGroundQuery の実装を Core に足す: 着地(直し 1 回)
-- U3 物理の問い合わせの文書と試験の理由を書く: 着地(直し 1 回)
-- U2 PhysicsGroundQueryIntegrationTest を足し、タスクの verify を通す: 着地(直し 0 回)
 
-## 2026-11-04 G9-GR14-GROUND-QUERY（run 20261104-192402 の反復 1、完了）
-
-- Done: `Library/Core/Public/Animation/GroundQuery.h` に `EGroundQueryStatus`（Hit / NoHit / NotReady / WrongThread / Unavailable / TooSteep）・`GroundHit`・`GroundProbe`・`IGroundQuery`（`Query` と `QueryBatch(Span<GroundProbe>)`）・`PhysicsGroundQuerySettings`・`PhysicsGroundQuery` を足した。`PhysicsGroundQuery` は Core に置き（Physics モジュールに依存しない）、`SceneQuery::ExecuteQuery` / `ExecuteBatch` の下向きの `RaycastClosest`（MaxHits=1、LayerMask・IgnoreBodies/Colliders、トリガーは常に除外）を使い、結果を状態へ写し、法線の傾きが `MaxSlopeDeg` を超える当たりを TooSteep にする。法線が長さ 0 か有限でない当たり（始点が形状の内側など）は Unavailable。`Docs/Architecture/PhysicsQueries.md` に契約（寿命・GameThread 専用・最大 1 固定ステップ古いスナップショット・地形は別実装）を、`Docs/Testing.md` に試験を足す理由を書いた。`PhysicsGroundQueryIntegrationTest` を `PhysicsDynamicsTest` の束に足した（20° の斜面・3 段の階段の高さ 1e-3 m・法線 0.5°、草の Layer 2・トリガー・自分の Body の除外、固定ステップ前の NotReady、別スレッドの WrongThread、地面の外の NoHit、60° の面の TooSteep、バッチと単発の一致）。
-- 証拠: `.harness/runs/20261104-192402/verify-G9-GR14-GROUND-QUERY-U2.txt`（Debug の PhysicsDynamicsTest のビルド EXIT=0、`PhysicsGroundQueryIntegrationTest` Passed、4 本の ctest 100% Passed、numstat 2 通り一致）。
-- Next: なし（アプリを起動する確かめは無い）。足 IK の重みが下がる部分は G9-GR14-LEG-IK-BALANCE。
-- Notes: QueryBatch は入力と結果を 1 つの `GroundProbe` にまとめ、件数の食い違いを起こさない形にした。有限でない入力・maxDown <= 0 は問い合わせを出さず Unavailable にした。
+- U1 EnemyDefinition の型と JSON の読み込み・検証: 着地(直し 0 回)
+- U7 攻撃のパターンの選択と乱数のシード(レビュー済みの差分を当て直す): 着地(直し 0 回)
+- U3 IEnemyAnimator の継ぎ目と AnimatorComponent への写し: 着地(直し 0 回)
+- U4 EnemyComponent の基底(状態の遷移・攻撃・崩れ・領域の気づき): 着地(直し 0 回)
+- U5 2 段の撃破・最後のシ者の Dormant・ResetPolicy: 着地(直し 1 回)
+- Notes: 撃破の完了(EnemyComponent::OnDefeatCompleted と破棄の予約)は、領域の Cleared が次の領域の評価で確定してから次の TickEnemy で配る(MarkCleared が次の評価まで保留されるため)。配送中の購読の解除は Target を空にするだけで Remove しない(MulticastDelegate::Broadcast が配列を直接回すため)。
+- 要起票: Core の MulticastDelegate::Broadcast が配送中の Remove に耐えない(購読の配列を直接回す)。EnemyComponent は側で避けたが、ほかの購読者にも同じ穴がある。
+- U6 Game の ShishaComponent・仮の定義・Tick の表: 着地(直し 0 回)
+## 2026-11-04 G8-GR17-ENEMY-COMPONENT（run 20261104-182214 の反復 5、完了）
+- Done: `EnemyDefinition`（`Assets/Gameplay/enemies/*.enemy.json` の読み込みと、必須の欠落・未知の参照・負の重み・距離帯の矛盾・未知のキーをファイルとキーのパス付きで拒否する検証）、`EnemyPatternSelector`（重み付きの乱数・直前のペナルティ・クールダウン・距離帯。シードは run seed と EnemyId の FNV-1a）、`IEnemyAnimator` と `AnimatorComponent` への写し、`EnemyComponent`（Dormant → Idle → Alerted → Attack → Collapsed → Defeated を `TStateMachine` で持ち、hitWindow のフェーズで BeginAttack / EndAttack、Exit で必ず EndAttack、崩れの条件は既定 stagger で healthBelow・partHits も選べる、時計は World のチャンネル）、2 段の撃破（OnDefeatStarted → DefeatGate → ProgressionState → MarkCleared → OnDefeatCompleted → MarkForDestroy）、`bIsFinal` の未解放の間の Dormant、OnZoneReset の ResetPolicy を Gameplay モジュールに足した。Game に `ShishaComponent`（Initialize で自分の型の Tick を Default 群に登録）と `shisha_human_01.enemy.json` を足し、`TickStages.md` の割当表に 2 型を載せた。
+- 証拠: `.harness/runs/20261104-182214/verify-G8-GR17-ENEMY-COMPONENT-U6.txt`（Game・PhysicsDynamicsTest の Debug ビルド EXIT_CODE 0、ctest で EnemyStateMachineTest・EnemyPatternSelectionTest・EnemyDefinitionLoadTest・ProgressionStateTest・HealthComponentTest・DefeatGateTest・EncounterZoneTest・CombatLifecycleTest・PhysicsDynamicsTest の 9 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命: 撃破の直後の破棄の順・配送中の購読の解除）。
+- Notes: 起動の要る確かめは無い（シーンに敵は置いていない。垂直スライスは G8-GR17-SLICE-SMOKE）。ShishaComponent の Tick は Initialize での登録のため、World の Tick の収集中に初期化された最初のフレームは動かず、次のフレームから動く。

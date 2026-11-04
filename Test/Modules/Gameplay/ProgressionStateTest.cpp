@@ -1,6 +1,7 @@
 ﻿// 安定 ID と進行条件の検証、読込失敗時の状態保持、解放通知の一回性と状態の往復を反証する。
 #include "Gameplay/Progression/GameplayStableId.h"
 #include "Gameplay/Progression/ProgressionState.h"
+#include "EnemyTestSupport.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -124,6 +125,82 @@ namespace
         PROGRESSION_CHECK(state.LoadDefinitionFromJson(text));
         PROGRESSION_CHECK(!state.IsFinalUnlocked());
     }
+    void FinalEnemyDormantUntilUnlocked()
+    {
+        using namespace NorvesLib::Test::EnemySupport;
+        auto definition = MakeDefinition();
+        definition.Id = "shisha.final";
+        definition.bIsFinal = true;
+        Fixture fixture(definition);
+        auto& progression = fixture.Gameplay.GetProgressionState();
+        PROGRESSION_CHECK(progression.LoadDefinitionFromJson(
+            R"({"version":1,"finalShishaId":"shisha.final","requiredShishaIds":["shisha.first","shisha.second"]})"));
+        PROGRESSION_CHECK(progression.LoadStateFromJson(R"({"version":1,"defeatedEnemyIds":[]})"));
+        fixture.AddZone("zone.final", definition.Id.c_str(), 0.0f);
+        auto* zone = fixture.Zones.back()->GetComponent<W::EncounterZoneComponent>();
+        PROGRESSION_CHECK(zone != nullptr);
+        zone->getbRequiresProgression() = true;
+        fixture.AddSensor(0.0f);
+        fixture.Evaluate();
+        fixture.Enemy->TickEnemy(1.0f);
+        fixture.Enemy->TickEnemy(1.0f);
+        PROGRESSION_CHECK(fixture.Enemy->GetState() == E::EEnemyState::Dormant);
+        PROGRESSION_CHECK(fixture.Gameplay.GetEncounterService().GetZoneState("zone.final") != W::EEncounterZoneState::Engaged);
+        W::EncounterZoneEvent early;
+        early.EnemyId = definition.Id;
+        early.ZoneId = "zone.final";
+        fixture.Gameplay.GetEncounterService().OnZoneEntered.Broadcast(early);
+        progression.MarkDefeated("shisha.first");
+        fixture.Enemy->TickEnemy(0.0f);
+        PROGRESSION_CHECK(fixture.Enemy->GetState() == E::EEnemyState::Dormant);
+        progression.MarkDefeated("shisha.second");
+        fixture.Enemy->TickEnemy(0.0f);
+        fixture.Enemy->TickEnemy(0.0f);
+        fixture.Enemy->TickEnemy(0.0f);
+        PROGRESSION_CHECK(fixture.Enemy->GetState() == E::EEnemyState::Idle);
+
+        const auto unlockedState = progression.SaveStateToJson();
+        PROGRESSION_CHECK(progression.LoadStateFromJson(R"({"version":1,"defeatedEnemyIds":[]})"));
+        Fixture restored(definition);
+        restored.Enemy->TickEnemy(0.0f);
+        PROGRESSION_CHECK(restored.Enemy->GetState() == E::EEnemyState::Dormant);
+        unsigned notifications = 0;
+        C::Delegate<void> onUnlocked = [&]() { ++notifications; };
+        progression.OnFinalUnlocked.Add(onUnlocked);
+        PROGRESSION_CHECK(progression.LoadStateFromJson(unlockedState));
+        restored.Enemy->TickEnemy(0.0f);
+        restored.Enemy->TickEnemy(0.0f);
+        PROGRESSION_CHECK(restored.Enemy->GetState() == E::EEnemyState::Idle && notifications == 0);
+        progression.OnFinalUnlocked.Remove(onUnlocked);
+    }
+
+    void EmptyDefeatResponsesComplete()
+    {
+        using namespace NorvesLib::Test::EnemySupport;
+        auto definition = MakeDefinition();
+        definition.Id = "enemy.responses";
+        PROGRESSION_CHECK(definition.DefeatResponses.empty());
+        Fixture fixture(definition);
+        auto& progression = fixture.Gameplay.GetProgressionState();
+        PROGRESSION_CHECK(progression.LoadDefinitionFromJson(
+            R"({"version":1,"finalShishaId":"shisha.final","requiredShishaIds":["enemy.responses"]})"));
+        PROGRESSION_CHECK(progression.LoadStateFromJson(R"({"version":1,"defeatedEnemyIds":[]})"));
+        fixture.StartIdle();
+        unsigned completed = 0;
+        fixture.Enemy->OnDefeatCompleted.Add([&](const C::Container::String& enemyId)
+        {
+            PROGRESSION_CHECK(enemyId == definition.Id && progression.IsDefeated(enemyId));
+            ++completed;
+        });
+        fixture.Health->ApplyDamage({100.0f, 0.0f});
+        fixture.Animator.bFinished = true;
+        fixture.Enemy->TickEnemy(0.0f);
+        fixture.Gameplay.Tick(0.0f);
+        fixture.Enemy->TickEnemy(0.0f);
+        fixture.Gameplay.Tick(0.0f);
+        fixture.Enemy->TickEnemy(0.0f);
+        PROGRESSION_CHECK(completed == 1 && progression.IsDefeated(definition.Id));
+    }
 } // namespace
 
 int main()
@@ -131,6 +208,8 @@ int main()
     StableIds();
     ProgressionAndRoundTrip();
     EmptyAssetDefinition();
+    FinalEnemyDormantUntilUnlocked();
+    EmptyDefeatResponsesComplete();
     std::puts("ProgressionStateTest: PASS");
     return 0;
 }
