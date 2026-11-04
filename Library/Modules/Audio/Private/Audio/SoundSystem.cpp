@@ -54,12 +54,16 @@ namespace NorvesLib::Modules::Audio::Private
         if (!definition.Id.IsValid() || definition.Clips.empty() ||
             m_Definitions.find(definition.Id) != m_Definitions.end() ||
             static_cast<uint32_t>(definition.Category) >= kSoundCategoryCount ||
-            !std::isfinite(definition.VolumeDb) || !std::isfinite(definition.PitchJitterSemitones))
+            !std::isfinite(definition.VolumeDb) || !std::isfinite(definition.VolumeJitterDb) ||
+            definition.VolumeJitterDb < 0.0f || !std::isfinite(definition.PitchJitterSemitones) ||
+            definition.PitchJitterSemitones < 0.0f || !std::isfinite(definition.DedupeRadius) ||
+            definition.DedupeRadius < 0.0f || definition.Clips.size() > INT32_MAX)
         {
             return AudioResult::Rejected;
         }
         const SoundId id = definition.Id;
         m_Definitions.emplace(id, std::move(definition));
+        m_DefinitionStates.emplace(id, DefinitionState{});
         return AudioResult::Success;
     }
 
@@ -83,6 +87,7 @@ namespace NorvesLib::Modules::Audio::Private
             }
         }
         m_Definitions.erase(definition);
+        m_DefinitionStates.erase(id);
         return AudioResult::Success;
     }
 
@@ -107,14 +112,163 @@ namespace NorvesLib::Modules::Audio::Private
         return Play(id, position, false, params, outHandle);
     }
 
-    AudioResult SoundSystem::CheckPlayAdmission(const SoundDefinition&, const Math::Vector3&, bool)
+    AudioResult SoundSystem::CheckPlayAdmission(const SoundDefinition& definition, Instance& candidate)
     {
+        const DefinitionState& state = m_DefinitionStates.at(definition.Id);
+        if (state.bHasPlayed &&
+            (m_TimeSeconds - state.LastPlayedSeconds) * 1000.0 < definition.CooldownMs)
+        {
+            ++m_Diagnostics.Voice.SuppressedByCooldownCount;
+            return AudioResult::Rejected;
+        }
+        if (definition.DedupeRadius > 0.0f)
+        {
+            const double radiusSquared = static_cast<double>(definition.DedupeRadius) * definition.DedupeRadius;
+            for (uint32_t index = 0; index < state.RecentPlayCount; ++index)
+            {
+                const RecentPlay& recent = state.RecentPlays[index];
+                const bool bWithinWindow = definition.DedupeWindowMs == 0 ? recent.Frame == m_Frame :
+                    (m_TimeSeconds - recent.TimeSeconds) * 1000.0 <= definition.DedupeWindowMs;
+                if (!bWithinWindow)
+                {
+                    continue;
+                }
+                double distanceSquared = 0.0;
+                if (!candidate.bGlobal && !recent.bGlobal)
+                {
+                    const double dx = static_cast<double>(candidate.Position.x) - recent.Position.x;
+                    const double dy = static_cast<double>(candidate.Position.y) - recent.Position.y;
+                    const double dz = static_cast<double>(candidate.Position.z) - recent.Position.z;
+                    distanceSquared = dx * dx + dy * dy + dz * dz;
+                }
+                if (distanceSquared <= radiusSquared)
+                {
+                    ++m_Diagnostics.SuppressedByDedupeCount;
+                    return AudioResult::Rejected;
+                }
+            }
+        }
+
+        uint32_t definitionCount = 0;
+        uint32_t oldestIndex = SoundInstanceHandle::InvalidIndex;
+        for (uint32_t index = 0; index < m_Instances.size(); ++index)
+        {
+            const Instance& instance = m_Instances[index];
+            if (instance.bActive && instance.DefinitionId == definition.Id)
+            {
+                ++definitionCount;
+                if (oldestIndex == SoundInstanceHandle::InvalidIndex ||
+                    instance.PlaySequence < m_Instances[oldestIndex].PlaySequence)
+                {
+                    oldestIndex = index;
+                }
+            }
+        }
+        const bool bDefinitionFull = definition.MaxInstances > 0 && definitionCount >= definition.MaxInstances;
+        if (bDefinitionFull && definition.LimitPolicy == SoundInstanceLimitPolicy::RejectNew)
+        {
+            ++m_Diagnostics.Voice.RejectedPlayCount;
+            return AudioResult::Rejected;
+        }
+
+        const float volumeJitter = definition.VolumeJitterDb > 0.0f ?
+            m_Generator.GetFloat(-definition.VolumeJitterDb, definition.VolumeJitterDb) : 0.0f;
+        const float pitchJitter = definition.PitchJitterSemitones > 0.0f ?
+            m_Generator.GetFloat(-definition.PitchJitterSemitones, definition.PitchJitterSemitones) : 0.0f;
+        candidate.BaseGain = std::pow(10.0f, (definition.VolumeDb + volumeJitter) / 20.0f);
+        candidate.Params.PitchSemitones += pitchJitter;
+        if (!IsValidVolume(candidate.BaseGain) || !IsValidVolume(GetVoiceVolume(candidate)) ||
+            !std::isfinite(candidate.Params.PitchSemitones))
+        {
+            return AudioResult::InvalidState;
+        }
+
+        if (bDefinitionFull)
+        {
+            const AudioResult result = StealInstance(oldestIndex);
+            if (result != AudioResult::Success)
+            {
+                return result;
+            }
+        }
+        if (m_Diagnostics.ActiveInstanceCount >= m_Config.MaxConcurrentVoices)
+        {
+            // 新規は目標音量と最も新しい通し番号で、既存と同じ順序に入れる。
+            const Instance* lowest = &candidate;
+            uint32_t lowestIndex = SoundInstanceHandle::InvalidIndex;
+            for (uint32_t index = 0; index < m_Instances.size(); ++index)
+            {
+                const Instance& instance = m_Instances[index];
+                if (instance.bActive && IsLowerVoiceRank(instance, *lowest))
+                {
+                    lowest = &instance;
+                    lowestIndex = index;
+                }
+            }
+            if (lowestIndex == SoundInstanceHandle::InvalidIndex)
+            {
+                ++m_Diagnostics.Voice.RejectedPlayCount;
+                return AudioResult::Rejected;
+            }
+            return StealInstance(lowestIndex);
+        }
         return AudioResult::Success;
+    }
+
+    bool SoundSystem::IsLowerVoiceRank(const Instance& left, const Instance& right)
+    {
+        if (left.Priority != right.Priority)
+        {
+            return left.Priority < right.Priority;
+        }
+        const float leftAudibility = left.BaseGain * left.Params.Volume * left.Gain;
+        const float rightAudibility = right.BaseGain * right.Params.Volume * right.Gain;
+        if (leftAudibility != rightAudibility)
+        {
+            return leftAudibility < rightAudibility;
+        }
+        return left.PlaySequence < right.PlaySequence;
+    }
+
+    AudioResult SoundSystem::StealInstance(uint32_t index)
+    {
+        const AudioResult result = m_Service.AbortVoice(m_Instances[index].Voice);
+        if (result != AudioResult::Success && result != AudioResult::StaleHandle)
+        {
+            return result;
+        }
+        ReleaseSlot(index);
+        ++m_Diagnostics.Voice.StolenVoiceCount;
+        return AudioResult::Success;
+    }
+
+    void SoundSystem::RecordPlay(SoundId id, const Math::Vector3& position, bool bGlobal)
+    {
+        DefinitionState& state = m_DefinitionStates.at(id);
+        state.bHasPlayed = true;
+        state.LastPlayedSeconds = m_TimeSeconds;
+        state.RecentPlays[state.NextRecentPlay] = RecentPlay{m_TimeSeconds, m_Frame, position, bGlobal};
+        state.NextRecentPlay = (state.NextRecentPlay + 1) % DefinitionState::RecentPlayCapacity;
+        state.RecentPlayCount = std::min(state.RecentPlayCount + 1, DefinitionState::RecentPlayCapacity);
     }
 
     Core::Container::TSharedPtr<AudioClipResource> SoundSystem::SelectClip(const SoundDefinition& definition)
     {
-        return definition.Clips.front();
+        DefinitionState& state = m_DefinitionStates.at(definition.Id);
+        const uint32_t count = static_cast<uint32_t>(definition.Clips.size());
+        uint32_t selected = 0;
+        if (count > 1)
+        {
+            const bool bHasPrevious = state.LastClipIndex < count;
+            selected = static_cast<uint32_t>(m_Generator.GetInt(0,
+                static_cast<int32_t>(count - (bHasPrevious ? 2 : 1))));
+            if (bHasPrevious && selected >= state.LastClipIndex)
+            {
+                ++selected;
+            }
+        }
+        state.LastClipIndex = selected;
+        return definition.Clips[selected];
     }
 
     AudioResult SoundSystem::Play(SoundId id, const Math::Vector3& position, bool bGlobal,
@@ -129,12 +283,6 @@ namespace NorvesLib::Modules::Audio::Private
             return AudioResult::InvalidState;
         }
         const SoundDefinition& definition = found->second;
-        const AudioResult admission = CheckPlayAdmission(definition, position, bGlobal);
-        if (admission != AudioResult::Success)
-        {
-            return admission;
-        }
-
         Instance instance;
         instance.DefinitionId = id;
         instance.Params = params;
@@ -143,7 +291,13 @@ namespace NorvesLib::Modules::Audio::Private
         instance.bGlobal = bGlobal;
         instance.Category = definition.Category;
         instance.FadeOutMs = definition.FadeOutMs;
-        instance.BaseGain = std::pow(10.0f, definition.VolumeDb / 20.0f);
+        instance.Priority = definition.Priority;
+        instance.PlaySequence = UINT64_MAX;
+        const AudioResult admission = CheckPlayAdmission(definition, instance);
+        if (admission != AudioResult::Success)
+        {
+            return admission;
+        }
         instance.FadeSeconds = ResolveFadeSeconds(params.FadeIn, definition.FadeInMs, false);
         instance.Gain = instance.FadeSeconds > 0.0f ? 0.0f : 1.0f;
         instance.FadeStartGain = instance.Gain;
@@ -155,7 +309,7 @@ namespace NorvesLib::Modules::Audio::Private
         }
 
         const AudioVoiceDesc desc{definition.bLoop, definition.LoopBeginFrame, definition.LoopLengthFrames, 0,
-            std::max(12.0f, params.PitchSemitones + std::abs(definition.PitchJitterSemitones))};
+            std::max(12.0f, instance.Params.PitchSemitones)};
         AudioResult result = m_Service.CreateVoice(SelectClip(definition), desc, instance.Voice);
         if (result == AudioResult::Success)
         {
@@ -163,7 +317,7 @@ namespace NorvesLib::Modules::Audio::Private
         }
         if (result == AudioResult::Success)
         {
-            result = m_Service.SetVoicePitch(instance.Voice, params.PitchSemitones);
+            result = m_Service.SetVoicePitch(instance.Voice, instance.Params.PitchSemitones);
         }
         if (result == AudioResult::Success)
         {
@@ -186,6 +340,7 @@ namespace NorvesLib::Modules::Audio::Private
         m_Instances[index] = std::move(instance);
         ++m_Diagnostics.ActiveInstanceCount;
         outHandle = SoundInstanceHandle{index, m_Instances[index].Generation};
+        RecordPlay(id, position, bGlobal);
         return AudioResult::Success;
     }
 
@@ -281,6 +436,8 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return;
         }
+        m_TimeSeconds += deltaSeconds;
+        ++m_Frame;
         // 終端通知を先に回収し、破棄済みの物理ボイスにはパラメータを送らない。
         for (uint32_t index = 0; index < m_Instances.size(); ++index)
         {
@@ -473,6 +630,7 @@ namespace NorvesLib::Modules::Audio::Private
             }
         }
         m_Definitions.clear();
+        m_DefinitionStates.clear();
         return AudioResult::Success;
     }
 
@@ -493,9 +651,15 @@ namespace NorvesLib::Modules::Audio::Private
     {
         const uint32_t generation = m_Instances[index].Generation;
         m_Instances[index] = Instance{};
-        m_Instances[index].Generation = generation == UINT32_MAX ? 1 : generation + 1;
-        m_FreeIndices.push_back(index);
+        m_Instances[index].Generation = generation;
         --m_Diagnostics.ActiveInstanceCount;
+        // 世代を使い切ったスロットは、古いハンドルとの一致を避けるため再利用しない。
+        if (generation == UINT32_MAX)
+        {
+            return;
+        }
+        ++m_Instances[index].Generation;
+        m_FreeIndices.push_back(index);
     }
 
     SoundSystem::Instance* SoundSystem::Resolve(SoundInstanceHandle handle)
