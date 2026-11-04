@@ -9523,3 +9523,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 残る限界: 運搬前の形がほかの物体に食い込み、運搬でその物体から離れるステップだけ、解消の分を引きすぎて速度が小さく出うる（試験していない）
 - Notes: 要起票: 空中で壁に当たったとき、足場から引き継いだ水平速度(m_InheritedVelocity)の壁へ向かう成分を消す
 - Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+
+- U1 入力の列の解析・コースの寸法・期待値の式（純関数）と見本のデータと試験のケース: 着地(直し 0 回)
+- U2 起動の受け入れの台本（-SelfTest つき）: 着地(直し 0 回)
+- U3 起動引数と自動走行のときだけのコースの組み立て: 着地(直し 0 回)
+- U4 自動走行（入力の注入・段階の測定と印・3 枚の撮影・終了）: 着地(直し 2 回)
+## 2026-11-04 G4-GR07-DOG-SMOKE-COURSE（run 20261104-083519 の反復 1〜3、完了。起動の確かめは後回し）
+- Done: `--dog-movement-smoke` に `--dog-movement-autopilot[=<path>]` と `--dog-movement-capture-dir=<dir>` を足した。自動走行のときだけ、床・0.20/0.40 m の段・30°/60° の坂・壁・+X の直線路・往復して回る Kinematic の足場を組み立てる（`DogMovementSmokeRoutine.cpp`）。引数なしと `--dog-movement-smoke` だけの起動は進め役もコースも作らない。
+- Done: 入力の列 `Assets/Gameplay/DogMovementAutopilot.json`（dog_autopilot.v1、12 区間。値は仮）を `DogMovementAutopilotScript` の純関数で読み、`DogMovementAutopilotRunner` が区間ごとに置き直して `InputSystem` へキー・マウスの出来事として流す。段階ごとに `DOG_MOVEMENT_SMOKE stage=<名前>` の印、撮影の保存先があれば低い視点・疾走・壁際で `dog_low/sprint/wall.png`、最後に `stage=complete exit_code=0` か `stage=failed reason=<名前>` で終了する。期待値は `Gameplay/DogLocomotion.json`（locomotion.v1）から求める。
+- Done: 台本 `Scripts/Test-DogMovement.ps1`（-SelfTest で 5 ケース pass）と `DogMovementSmokeGeometryTest` のケース（正しい列・時刻の逆行・未知のキー・範囲外の値・旋回の半径の式）。
+- 証拠: `.harness/runs/20261104-083519/verify-G4-GR07-DOG-SMOKE-COURSE-U4.txt`（`cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の 3 本 `DogMovementSmokeGeometryTest`・`CharacterDriveOptionsTest`・`PhysicsFixedStepPipelineTest` Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
+- Next: 起動の確かめ（G4-GR07-DOG-SMOKE-CHECK）で `Scripts/Test-DogMovement.ps1` を Debug・RelWithDebInfo・Release で回し、印・3 枚の PNG・終了コードを確かめる。
+- Notes: 起動していないので未確認の所: 旋回の区間（W 0〜1 秒の後に D 1〜2.5 秒。カメラが背後へ戻り D の望む向きが犬の右に保たれて上限 min(ω_cap, a_lat/v) に張り付く前提。速歩の手計算で v≈3.4 m/s・期待の半径≈1.284 m、弧 60° に約 0.4 秒）と、標本の各点の旋回の速さが上限の 5 % 以内という条件、Settling で視点の入力（感度 0.15 の前提）で yaw を区間の向きへ合わせる収束、slope_climb の 1 m の上昇、足場のずれ 0.05 m、疾走の FOV の差。重力の基準 9.81 は Runner の定数（物理側に取得口が無い）× GravityScale。外れたら入力の列の値と許容差を直す。
+- Notes: 自動走行の合成入力を背景ウィンドウでも届けるため、自動走行の間だけ InputMapper のフォーカスを立て、Leave で窓の状態に戻す。
+
+## 2026-11-04 G4-GR07-DOG-SMOKE-COURSE（run 20261104-132215 の反復 1、完了に戻す）
+
+- Done: 単位 U1〜U4 はすべて着地済み。前の走行の評価が利用枠（429）で回らず状態が doing に戻っていたため、追加の変更なしで done に戻す。着地した中身（DogMovementSmokeRoutine.cpp・DogMovementAutopilotScript.*・GameApplicationHandler.cpp・DogMovementSmokeGeometryTest.cpp・Test-DogMovement.ps1・DogMovementAutopilot.json）は確かめを回した作業ツリーの中身と一致することを照合した。
+- 証拠: 最後の単位の確かめ（Debug の Game・PhysicsDynamicsTest のビルド終了コード 0、ctest 3 本 Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
+- Next: 起動の確かめは後回しで `G4-GR07-DOG-SMOKE-CHECK` が受け持つ（Debug・Release の台本の pass と 3 枚の PNG の所見）。
+- Notes: この差分はまだ評価を通っていない（前の走行の評価者が枠切れ）。
