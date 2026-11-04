@@ -9692,3 +9692,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 AngleDistribution とばねの試験: 着地(直し 0 回)
 - U7 設定ファイルの試験（拒否と保持・順序・重みのカーブ・文脈の口）: 着地(直し 0 回)
 - U8 文書（Testing.md の 3 点・AnimationRuntime.md）とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR15-POSE-MODIFIER-BASE（run 20261104-190953 の反復 1、完了）
+- Done: `PoseModifierContext` に `MeshToWorld`・最後に受け入れた `AnimDriveSignals`（`GetDriveSignals`/`HasDriveSignals`）・所有者の Entity（Apply の間だけ有効）・`FindJointIndex`（`SkeletonResource::FindJointIndex`）・`Weight`（既定 1）を足した。`AnimatorComponent::SetDriveSignals` は受け入れた信号だけ保存し、`EvaluateAnimation` で文脈に詰める。既存の modifier の順序・失敗時の扱いの試験は書き換えずに通る
+- Done: `Animation/Procedural/AngleDistribution`（関節のグローバル回転の取得・設定と、モデル空間の回転の重み付きの配分。`local = inverse(親のグローバル) * 新しいグローバル`、重みの和 1 ± 1e-4・非有限・並びの誤りは拒否して姿勢不変）、`Animation/Procedural/Spring`（1/120 秒の固定サブステップ・1 回最大 4、超過は捨てた秒数で返す。臨界減衰は `TryCriticalDamp`、減衰振動は閉じた解。スカラー・ベクトル・角度の 3 種）を作った
+- Done: `*.posemod.json`（version 1）のパーサ `ParsePoseModifierConfig`、関数の表 `PoseModifierTypeTable`（組み込みは空）、`AnimatorComponent::ApplyPoseModifiersJson`/`ApplyPoseModifiersFile` を作った。未知の type・未知のキー・重複キー・型違い・範囲外・未知の関節名・未知のパラメータを別のエラーで拒否し、失敗時は前の modifier 群を保つ。成功時は AddModifier 分も含めて丸ごと置き換える。order の既定は Lean 100 / Spine 110 / Look 200 / FootIK 500 / SpringBone 700 / FollowThrough 710
+- Done: `PoseModifierBaseTest`（`SkeletalAnimationSamplingTest` の中、10 試験）と、`Docs/Testing.md` の 3 点・`Docs/Architecture/AnimationRuntime.md` の「姿勢の後処理の土台」
+- 実測: 軸を回した同形の骨格の関節位置の差 9.8e-8 m、拒否時の姿勢の変化 0 バイト、臨界減衰の行き過ぎ 0、dt の分割（1/60×240 と 1/30×120）の位置の差 0・角度の差 1.2e-16 rad、0.1 秒で捨てた秒数の誤差 3.5e-9 s、Reset 後のビット不一致 0
+- 証拠: `.harness/runs/20261104-190953/verify-G9-GR15-POSE-MODIFIER-BASE-U8.txt`（verify のビルド EXIT=0、ctest 3 本 Passed、実行ファイルの直接実行で `PoseModifierBaseTest PASS`）
+- Next: ランナーの評価者の反証（Public API の危険地帯）。個別のモディファイア（傾き・背骨・視線・足 IK・SpringBone・FollowThrough）は後続のタスクで型の表に足す
+- Notes: アプリの起動を要する確かめは無い。型ごとの節は項目の `settings` キーに置く形にした（作り手が `CheckPoseModifierKeys`・`ResolvePoseModifierJoint` で読む）。重みの param は適用のたびに名前で引く（グラフの付け替えでハンドルが変わるため）。配分の空間は、根の親が split の骨格なら RootFrame の回転・それ以外は単位で、`GetJointModelMatrices` が掛けるメッシュの逆変換の前。メッシュに回転があるときは呼び出し側が変換する。ばねの減衰比は (0, 1] で、過減衰は受けない
