@@ -9711,3 +9711,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 TerrainSystem に GroundSample・SampleGround・RaycastGround・SampleGroundBatch を足す: 着地(直し 0 回)
 - U6 高さ場に OverlapSphere・OverlapCapsule・OverlapBox・SweepSphere・SweepCapsule を足す: 着地(直し 0 回)
 - U8 TerrainHeightFieldQueryTest を足してタスクの verify を通す: 着地(直し 1 回)
+- U9 OverlapBox の深さを三角形の真下の柱と箱の共通部分の最深点で測る: 着地(直し 0 回)

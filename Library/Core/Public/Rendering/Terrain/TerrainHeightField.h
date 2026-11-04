@@ -232,7 +232,8 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         /// 格子の各三角形との接触を outContacts に入れ、件数を返す。呼ぶたびに配列を空にする。
         /// 地表の下は固体とし、法線は地形から形へ向く上向きの単位ベクトル。球とカプセルは辺・頂点でも最近点の法線を使う。
-        /// 箱の面法線と揃わない接触は滑らかな地形法線にする。接触点が格子外なら面法線を使う。
+        /// 箱の深さは各三角形の下の鉛直の柱と箱の共通部分の最深点から、面法線に沿って測る。
+        /// 接触点は最深点の面への射影。最深点の XZ が三角形の辺・頂点なら滑らかな地形法線を使い、取得できなければ面法線を使う。
         /// 手続きの作り方では 0。形の値は有限、半径・半長は非負、箱の軸は正規直交であること
         uint32_t OverlapSphere(const Math::Sphere& sphere, Container::VariableArray<Math::GeometryContact>& outContacts) const;
         uint32_t OverlapCapsule(const Math::Capsule& capsule, Container::VariableArray<Math::GeometryContact>& outContacts) const;

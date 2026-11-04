@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -433,15 +434,6 @@ namespace NorvesLib::Core::Rendering::Terrain
                 ? capsule.PointB : capsule.PointA;
         }
 
-        Math::Vector3 GroundReference(const Math::OBB& box, const Math::Triangle&, const Math::Vector3& normal,
-            float& outExtent)
-        {
-            outExtent = std::abs(Math::Vector3::Dot(normal, box.Axes[0])) * box.HalfExtents.x
-                + std::abs(Math::Vector3::Dot(normal, box.Axes[1])) * box.HalfExtents.y
-                + std::abs(Math::Vector3::Dot(normal, box.Axes[2])) * box.HalfExtents.z;
-            return box.Center;
-        }
-
         template<typename Grid, typename Visitor>
         void VisitTriangles(const Grid& grid, const QueryBounds& bounds, const Math::Vector3& origin, Visitor&& visitor)
         {
@@ -513,15 +505,186 @@ namespace NorvesLib::Core::Rendering::Terrain
         {
         }
 
-        void StabilizeNormal(const TerrainHeightField& field, const Math::OBB&, const Math::Vector3& faceNormal,
-            Math::GeometryContact& contact)
+        struct BoxPrismPoint
         {
-            if (Math::Vector3::Dot(contact.Normal, faceNormal) < 0.9999f)
+            double X;
+            double Y;
+            double Z;
+        };
+
+        double CrossXZ(const BoxPrismPoint& a, const BoxPrismPoint& b, const BoxPrismPoint& point)
+        {
+            return (b.X - a.X) * (point.Z - a.Z) - (b.Z - a.Z) * (point.X - a.X);
+        }
+
+        bool ComputeBoxPrismContact(const TerrainHeightField& field, const Math::Triangle& triangle,
+            const Math::OBB& box, const Math::Vector3& origin, Math::GeometryContact& contact)
+        {
+            const BoxPrismPoint vertices[3] = {
+                {triangle.V0.x, triangle.V0.y, triangle.V0.z},
+                {triangle.V1.x, triangle.V1.y, triangle.V1.z},
+                {triangle.V2.x, triangle.V2.y, triangle.V2.z}};
+            const BoxPrismPoint edge1 = {vertices[1].X - vertices[0].X, vertices[1].Y - vertices[0].Y,
+                vertices[1].Z - vertices[0].Z};
+            const BoxPrismPoint edge2 = {vertices[2].X - vertices[0].X, vertices[2].Y - vertices[0].Y,
+                vertices[2].Z - vertices[0].Z};
+            BoxPrismPoint normal = {edge1.Y * edge2.Z - edge1.Z * edge2.Y,
+                edge1.Z * edge2.X - edge1.X * edge2.Z, edge1.X * edge2.Y - edge1.Y * edge2.X};
+            const double normalLength = std::hypot(normal.X, normal.Y, normal.Z);
+            const double area = CrossXZ(vertices[0], vertices[1], vertices[2]);
+            if (!(normalLength > 0.0) || area == 0.0)
             {
-                const TerrainNormal smooth = field.SampleNormal(contact.Point.x, contact.Point.z, TerrainNormalKind::Smooth);
-                contact.Normal = std::isfinite(smooth.X) && std::isfinite(smooth.Y) && std::isfinite(smooth.Z)
-                    && smooth.Y > 0.0f ? Math::Vector3(smooth.X, smooth.Y, smooth.Z) : faceNormal;
+                return false;
             }
+            const double divisor = normal.Y < 0.0 ? -normalLength : normalLength;
+            normal.X /= divisor;
+            normal.Y /= divisor;
+            normal.Z /= divisor;
+
+            const double edgeScale = std::max({std::abs(edge1.X), std::abs(edge1.Z),
+                std::abs(edge2.X), std::abs(edge2.Z)});
+            const auto containsXZ = [&](const BoxPrismPoint& point, bool& bOnBoundary)
+            {
+                bOnBoundary = false;
+                // 共有辺での丸めを吸収し、格子幅に比べた判定の緩みを小さく保つ。
+                const double coordinateScale = std::max({1.0, std::abs(point.X), std::abs(point.Z),
+                    std::abs(vertices[0].X), std::abs(vertices[0].Z), std::abs(vertices[1].X),
+                    std::abs(vertices[1].Z), std::abs(vertices[2].X), std::abs(vertices[2].Z)});
+                const double tolerance = std::abs(area) * 1e-10
+                    + 32.0 * std::numeric_limits<double>::epsilon() * coordinateScale * edgeScale;
+                for (int edge = 0; edge < 3; ++edge)
+                {
+                    const double side = CrossXZ(vertices[edge], vertices[(edge + 1) % 3], point);
+                    if ((area > 0.0 && side < -tolerance) || (area < 0.0 && side > tolerance))
+                    {
+                        return false;
+                    }
+                    bOnBoundary = bOnBoundary || std::abs(side) <= tolerance;
+                }
+                return true;
+            };
+
+            bool bHasCandidate = false;
+            bool bBoundary = false;
+            double maxPenetration = 0.0;
+            BoxPrismPoint deepest = {};
+            const auto consider = [&](const BoxPrismPoint& point, bool bOnBoundary)
+            {
+                const double penetration = (vertices[0].X - point.X) * normal.X
+                    + (vertices[0].Y - point.Y) * normal.Y + (vertices[0].Z - point.Z) * normal.Z;
+                if (!bHasCandidate || penetration > maxPenetration)
+                {
+                    bHasCandidate = true;
+                    bBoundary = bOnBoundary;
+                    maxPenetration = penetration;
+                    deepest = point;
+                }
+            };
+
+            const BoxPrismPoint axes[3] = {{box.Axes[0].x, box.Axes[0].y, box.Axes[0].z},
+                {box.Axes[1].x, box.Axes[1].y, box.Axes[1].z},
+                {box.Axes[2].x, box.Axes[2].y, box.Axes[2].z}};
+            const double half[3] = {box.HalfExtents.x, box.HalfExtents.y, box.HalfExtents.z};
+            BoxPrismPoint corners[8];
+            for (int index = 0; index < 8; ++index)
+            {
+                BoxPrismPoint point = {box.Center.x, box.Center.y, box.Center.z};
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    const double extent = (index & (1 << axis)) ? half[axis] : -half[axis];
+                    point.X += axes[axis].X * extent;
+                    point.Y += axes[axis].Y * extent;
+                    point.Z += axes[axis].Z * extent;
+                }
+                corners[index] = point;
+                bool bOnBoundary = false;
+                if (containsXZ(point, bOnBoundary))
+                {
+                    consider(point, bOnBoundary);
+                }
+            }
+
+            // 箱の各辺と柱の側面の交点を候補に加える。
+            for (int index = 0; index < 8; ++index)
+            {
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    if ((index & (1 << axis)) != 0)
+                    {
+                        continue;
+                    }
+                    const BoxPrismPoint& start = corners[index];
+                    const BoxPrismPoint& end = corners[index | (1 << axis)];
+                    for (int edge = 0; edge < 3; ++edge)
+                    {
+                        const double startSide = CrossXZ(vertices[edge], vertices[(edge + 1) % 3], start);
+                        const double endSide = CrossXZ(vertices[edge], vertices[(edge + 1) % 3], end);
+                        const double difference = startSide - endSide;
+                        if (difference == 0.0)
+                        {
+                            continue;
+                        }
+                        const double t = startSide / difference;
+                        if (t < 0.0 || t > 1.0)
+                        {
+                            continue;
+                        }
+                        const BoxPrismPoint point = {start.X + (end.X - start.X) * t,
+                            start.Y + (end.Y - start.Y) * t, start.Z + (end.Z - start.Z) * t};
+                        bool bOnBoundary = false;
+                        if (containsXZ(point, bOnBoundary))
+                        {
+                            consider(point, true);
+                        }
+                    }
+                }
+            }
+
+            // 三角形の各頂点を通る鉛直線を、箱の 3 組のスラブで切る。
+            for (const BoxPrismPoint& vertex : vertices)
+            {
+                double begin = -std::numeric_limits<double>::infinity();
+                double end = std::numeric_limits<double>::infinity();
+                bool bIntersects = true;
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    const double offset = (vertex.X - box.Center.x) * axes[axis].X
+                        - box.Center.y * axes[axis].Y + (vertex.Z - box.Center.z) * axes[axis].Z;
+                    if (!ClipAxis(offset, axes[axis].Y, -half[axis], half[axis], begin, end))
+                    {
+                        bIntersects = false;
+                        break;
+                    }
+                }
+                if (bIntersects)
+                {
+                    consider({vertex.X, begin, vertex.Z}, true);
+                    consider({vertex.X, end, vertex.Z}, true);
+                }
+            }
+            if (!bHasCandidate || maxPenetration < 0.0)
+            {
+                return false;
+            }
+
+            contact.Depth = static_cast<float>(maxPenetration);
+            contact.Point = Math::Vector3(static_cast<float>(deepest.X + normal.X * maxPenetration + origin.x),
+                static_cast<float>(deepest.Y + normal.Y * maxPenetration + origin.y),
+                static_cast<float>(deepest.Z + normal.Z * maxPenetration + origin.z));
+            const Math::Vector3 faceNormal(static_cast<float>(normal.X),
+                std::max(static_cast<float>(normal.Y), std::numeric_limits<float>::denorm_min()),
+                static_cast<float>(normal.Z));
+            contact.Normal = faceNormal;
+            if (bBoundary)
+            {
+                const TerrainNormal smooth = field.SampleNormal(static_cast<float>(deepest.X + origin.x),
+                    static_cast<float>(deepest.Z + origin.z), TerrainNormalKind::Smooth);
+                if (std::isfinite(smooth.X) && std::isfinite(smooth.Y) && std::isfinite(smooth.Z) && smooth.Y > 0.0f)
+                {
+                    contact.Normal = Math::Vector3(smooth.X, smooth.Y, smooth.Z);
+                }
+            }
+            return true;
         }
 
         template<typename Grid, typename Shape>
@@ -536,28 +699,38 @@ namespace NorvesLib::Core::Rendering::Terrain
             const Shape local = LocalShape(shape, origin);
             VisitTriangles(grid, GetBounds(shape), origin, [&](const Math::Triangle& triangle)
             {
-                const Math::Vector3 faceNormal = FaceNormal(triangle);
-                float extent = 0.0f;
-                const Math::Vector3 reference = GroundReference(local, triangle, faceNormal, extent);
-                const double distance = SignedDistance(reference, triangle, faceNormal);
                 Math::GeometryContact contact;
-                if (distance < 0.0 && ContainsXZ(triangle, reference))
+                if constexpr (std::is_same_v<Shape, Math::OBB>)
                 {
-                    contact.Normal = faceNormal;
-                    contact.Depth = static_cast<float>(-distance + extent);
-                    contact.Point = reference - faceNormal * static_cast<float>(distance) + origin;
-                }
-                else
-                {
-                    if (!Math::ComputeContact(triangle, local, contact))
+                    if (!ComputeBoxPrismContact(field, triangle, local, origin, contact))
                     {
                         return;
                     }
-                    contact.Point += origin;
-                    StabilizeNormal(field, local, faceNormal, contact);
-                    if (!(contact.Normal.y > 0.0f))
+                }
+                else
+                {
+                    const Math::Vector3 faceNormal = FaceNormal(triangle);
+                    float extent = 0.0f;
+                    const Math::Vector3 reference = GroundReference(local, triangle, faceNormal, extent);
+                    const double distance = SignedDistance(reference, triangle, faceNormal);
+                    if (distance < 0.0 && ContainsXZ(triangle, reference))
                     {
                         contact.Normal = faceNormal;
+                        contact.Depth = static_cast<float>(-distance + extent);
+                        contact.Point = reference - faceNormal * static_cast<float>(distance) + origin;
+                    }
+                    else
+                    {
+                        if (!Math::ComputeContact(triangle, local, contact))
+                        {
+                            return;
+                        }
+                        contact.Point += origin;
+                        StabilizeNormal(field, local, faceNormal, contact);
+                        if (!(contact.Normal.y > 0.0f))
+                        {
+                            contact.Normal = faceNormal;
+                        }
                     }
                 }
                 outContacts.push_back(contact);
