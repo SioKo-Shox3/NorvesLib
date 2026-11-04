@@ -2,8 +2,10 @@
 #include "Component/SkinnedMeshComponent.h"
 #include "Object/Entity.h"
 #include "Animation/SkeletonResource.h"
+#include "Platform/PlatformFile.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 namespace NorvesLib::Core::Animation
 {
     int32_t PoseModifierContext::FindJointIndex(Identity name) const
@@ -194,6 +196,109 @@ namespace NorvesLib::Core::Component
         {
             m_Modifiers.clear();
         }
+    }
+    bool AnimatorComponent::ApplyPoseModifiersJson(
+        const Container::String& json, const Animation::Procedural::PoseModifierTypeTable& types,
+        Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        using namespace Animation::Procedural;
+        PoseModifierConfigReport localReport;
+        auto& result = report ? *report : localReport;
+        result = {};
+        if (m_bApplyingModifiers)
+        {
+            result.Error = PoseModifierConfigError::Busy;
+            return false;
+        }
+        if (!m_BoundSkeleton)
+        {
+            result.Error = PoseModifierConfigError::NoSkeleton;
+            return false;
+        }
+        Container::VariableArray<Container::TSharedPtr<Animation::IPoseModifier>> candidate;
+        if (!ParsePoseModifierConfig(json, *m_BoundSkeleton, m_Graph ? &m_Instance.Parameters() : nullptr,
+                                     types, candidate, result))
+        {
+            return false;
+        }
+        std::stable_sort(candidate.begin(), candidate.end(),
+                         [](const auto& a, const auto& b) { return a->Order() < b->Order(); });
+        m_Modifiers = std::move(candidate);
+        return true;
+    }
+    bool AnimatorComponent::ApplyPoseModifiersJson(
+        const Container::String& json, Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        return ApplyPoseModifiersJson(json, Animation::Procedural::GetBuiltinPoseModifierTypes(), report);
+    }
+    bool AnimatorComponent::ApplyPoseModifiersFile(
+        const Container::String& path, const Animation::Procedural::PoseModifierTypeTable& types,
+        Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        using namespace Animation::Procedural;
+        PoseModifierConfigReport localReport;
+        auto& result = report ? *report : localReport;
+        result = {};
+        if (m_bApplyingModifiers)
+        {
+            result.Error = PoseModifierConfigError::Busy;
+            return false;
+        }
+        if (!m_BoundSkeleton)
+        {
+            result.Error = PoseModifierConfigError::NoSkeleton;
+            return false;
+        }
+        Container::VariableArray<uint8_t> bytes;
+        if (!Platform::ReadFileBytes(path, bytes).bSuccess)
+        {
+            result.Error = PoseModifierConfigError::FileReadFailed;
+            result.Path = path;
+            return false;
+        }
+        const size_t skip = bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
+        Container::String json;
+        if constexpr (sizeof(TCHAR) == 1)
+        {
+            // 厳密な UTF-8 の検証は JsonDocument::TryParse が行う。
+            for (size_t i = skip; i < bytes.size(); ++i)
+            {
+                json.push_back(TCHAR(bytes[i]));
+            }
+        }
+        else if (bytes.size() > skip)
+        {
+            const auto length = bytes.size() - skip;
+            if (length > size_t(std::numeric_limits<int>::max()))
+            {
+                result.Error = PoseModifierConfigError::InvalidJson;
+                return false;
+            }
+            const char* data = reinterpret_cast<const char*>(bytes.data() + skip);
+            const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, int(length), nullptr, 0);
+            Container::VariableArray<wchar_t> wide;
+            if (count <= 0)
+            {
+                result.Error = PoseModifierConfigError::InvalidJson;
+                return false;
+            }
+            wide.resize(size_t(count));
+            if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, int(length), wide.data(), count) != count)
+            {
+                result.Error = PoseModifierConfigError::InvalidJson;
+                return false;
+            }
+            for (const auto unit : wide)
+            {
+                json.push_back(TCHAR(unit));
+            }
+        }
+        return ApplyPoseModifiersJson(json, types, &result);
+    }
+    bool AnimatorComponent::ApplyPoseModifiersFile(
+        const Container::String& path, Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        return ApplyPoseModifiersFile(path, Animation::Procedural::GetBuiltinPoseModifierTypes(), report);
     }
     bool AnimatorComponent::Step(float seconds)
     {

@@ -2,6 +2,7 @@
 #include "Component/Component.h"
 #include "Animation/AnimGraphInstance.h"
 #include "Animation/PoseModifier.h"
+#include "Animation/Procedural/PoseModifierConfig.h"
 #include "Animation/SkeletalAssetResource.h"
 
 namespace NorvesLib::Core::Component
@@ -75,6 +76,19 @@ namespace NorvesLib::Core::Component
         [[nodiscard]] bool GetState(Identity machine, Animation::AnimStateStatus&) const;
         [[nodiscard]] bool AddModifier(const Container::TSharedPtr<Animation::IPoseModifier>&);
         void ClearModifiers();
+        // 成功時は AddModifier 分も含めて全件を置き換え、同じ order は設定の記載順を保つ。
+        // 失敗時は現在の modifier 群を保持する。適用中・骨格未設定時は拒否する。
+        [[nodiscard]] bool ApplyPoseModifiersJson(
+            const Container::String& json, const Animation::Procedural::PoseModifierTypeTable& types,
+            Animation::Procedural::PoseModifierConfigReport* report = nullptr);
+        [[nodiscard]] bool ApplyPoseModifiersJson(
+            const Container::String& json, Animation::Procedural::PoseModifierConfigReport* report = nullptr);
+        // 指定パスの実行時サイドカーを読み、JSON と同じ全件置き換えを行う。
+        [[nodiscard]] bool ApplyPoseModifiersFile(
+            const Container::String& path, const Animation::Procedural::PoseModifierTypeTable& types,
+            Animation::Procedural::PoseModifierConfigReport* report = nullptr);
+        [[nodiscard]] bool ApplyPoseModifiersFile(
+            const Container::String& path, Animation::Procedural::PoseModifierConfigReport* report = nullptr);
         void SetFrozen(bool frozen)
         {
             if (m_bFrozen != frozen)
