@@ -5305,7 +5305,7 @@
 - notes: 確かめ直しの (b)。`G4-MOVEMENT-CAMERA` は構文確認だけで done になっていたが、`PhysicsCharacterMoveTest` は実在し、この機の Windows でも通っている（PROGRESS.md 1966 行・1997 行の 5/5 pass）。ただし今の検査（PhysicsCharacterMoveTest.cpp 68-203 行）は、平地の最終位置、壁の 1 回の掃引、段差 0.2/0.4 m、40°/60°、足場の変位の適用を見るだけ。要件 `#### GR07` の受け入れ確認（ロードマップ 272 行）のうち、毎ステップの接地とめり込み、段差の進みの割合、沿面の速さ、階段下り、めり込み開始、全ステップの bit 一致は見ていない。共面の継ぎ目は、ロードマップ 283 行のリスク（`ComputeContact(Capsule, OBB)` が線分の箱内部で SAT の近似を返す）を押さえるために足す。既定の `SkinWidth` は 0.002（CharacterMoveSettings.h）で、要件の設計案の 0.02 と違う。足元の誤差は 0.02 で判定する。既定の `MaximumDepenetrationDistance` 1 m は、1 ステップの押し出し 0.15 m 以下と食い違いうる。外れたら、1 ステップの上限を設定に足して直す（既定の値は仮）。坂を押さずに滑り落ちる確かめには重力が要るので、`G4-GR07-BODY-CASES` で行う。G4-S3 の決定: 推奨の (A) 縦カプセル 1 本（半径 0.30 m・全高 0.8 m は仮。DogMovementSmokeRoutine.cpp 171-172 行と PhysicsFixedStepPipelineTest.cpp 802-803 行が既にこの形）を採る。理由: 完了条件はこれで通せる。(B) 前後 2 球は後から CharacterMover の内側に足せる。(C) は 1 Entity 1 コライダーの制限を外すため、Public API と Object の寿命の危険地帯に当たる。体格は犬のモデルと GR78 のスケールの正規化の後に、見た目で決める。やらないこと: 物理ソルバの変更、複数の形状、摩擦。
 
 ## G4-GR07-BODY-CASES: キャラクター本体を固定ステップの経路で動かす受け入れ確認（足場の離脱速度・昇降足場・小物を押す・滑り落ち）を試験し、外れた所を直す
-- status: todo
+- status: done
 - after: G1-GR08-BROADPHASE-INTEGRATION, G1-GR08-LAYER-TABLE
 - gr: GR07
 - needs-gr: GR08
@@ -9170,3 +9170,12 @@
 - verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|RigMotionCleanupTest|MotionSampleRegressionTest|RigSplitCookTest|RigStaticRootFrameWireTest|SkeletalBvhCookBridgeTest|SkeletalBvhClipImportTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Private/Animation/SkeletalClipProcessing.cpp, Test/Core/Asset/MotionProcessingTest.cpp
 - from: G4-GR128-CLEANUP-CASES
+
+## G4-GR05-COMPONENT-CASES-P1: 空中で壁に当たったとき、足場から引き継いだ水平速度の壁へ向かう成分を消す
+- status: todo
+- done-when: `Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp`（`PhysicsDynamicsTest` の束）にケース 28 を足し（`kCaseCount` を 29 にする）、全部のケースが通る。ケースを足す前に、`Docs/Testing.md` の 3 点を PROGRESS.md に書く。ケース 28 の場面: 回らない Kinematic の足場が +x へ 2 m/s で動き、キャラクターはその上から跳んで離れる。行く手に、跳んだ頂点より低い静的な壁を置く。合否: (a) 壁に当たった後は、壁の上端を越えても、着地するまで +x へ進まない（当たった後の各ステップの x の差分が 0.001 m 未満）。(b) 壁に斜めに当たる組（足場の速度が壁の法線から 45°）では、壁に沿う成分が残る（当たった後の接線方向の速度が、足場の速度の接線成分 ±0.05 m/s）。(c) 毎ステップの速度と位置差分/dt の差が 0.005 m/s 以内。直す前の版でケース 28 が落ちることを確かめ、その出力を PROGRESS.md に書く。直し方: 空中の移動の後、当たった壁の法線（`CharacterMoveResult` に足してよい）へ向かう `m_InheritedVelocity` の成分を消す。既存のケース 0〜27 と `PhysicsCharacterMoveTest` は、試験を変えずに通る。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|PhysicsDynamicsTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Physics/Private/Physics/PhysicsModuleCharacter.cpp, Library/Modules/Physics/Private/Physics/CharacterMover.h, Library/Modules/Physics/Private/Physics/CharacterMover.cpp, Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp, TASKS.md, PROGRESS.md
+- from: G4-GR05-COMPONENT-CASES
+- notes: 原因は `PhysicsModuleCharacter.cpp` の 271〜274 行。空中では毎ステップ、変位に `m_InheritedVelocity * dt` を足すが、この値を 0 に戻すのは着地とテレポートのときだけ（376 行・153 行）。そのため壁に当たっても壁へ向かう成分が残り、壁の縁を越えると急にまた足場の速さで進む。今の `CharacterMoveResult`（`CharacterMover.h` の 22〜34 行）は壁の法線を返していない。G4-GR07-BODY-CASES の Notes（PROGRESS.md 9518 行）に「空中で壁に当たっても引き継いだ足場の水平速度は消えない」と記録がある。足場の離脱のケースは `TestCharacterPlatformDepartureVelocity`（1561 行）、壁に押し付ける足場のケースは `TestCharacterPlatformPushedAgainstWall`（1956 行）なので、組み方はこれに倣う。G4-GR05-COMPONENT-CASES と同じ試験ファイルを触るので、同時には走らない。やらないこと: 空中の操作の制御、壁での摩擦、小物を押す処理の変更。

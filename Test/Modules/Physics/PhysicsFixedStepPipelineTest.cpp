@@ -28,6 +28,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cmath>
@@ -181,7 +182,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 20;
+    constexpr uint32_t kCaseCount = 28;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1397,6 +1398,632 @@ namespace
         return unsmoothedZeroFrames >= (rate == 60 ? 65u : 15u);
     }
 
+    bool TestCharacterGravityScale(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacter(value, Math::Vector3(0, 100, 0)))
+            return false;
+        // 初回の準備を無重力で行い、計測開始時の鉛直速度をゼロにする。
+        CharacterBodySettings settings;
+        settings.GravityScale = 0;
+        if (value.Character->SetSettings(settings) != EPhysicsResult::Success)
+            return false;
+        for (unsigned step = 0; step < 120 && !value.Character->GetState().bReady; ++step)
+            if (!StepCharacter(processor))
+                return false;
+        if (!value.Character->GetState().bReady)
+            return false;
+        const float initialHeight = value.Owner->GetPosition().y;
+        settings.GravityScale = .5f;
+        if (value.Character->SetSettings(settings) != EPhysicsResult::Success)
+            return false;
+        for (unsigned step = 0; step < 60; ++step)
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+        constexpr float expected = 9.81f * .5f * .5f;
+        const float descent = initialHeight - value.Owner->GetPosition().y;
+        if (!std::isfinite(descent) || std::fabs(descent - expected) > expected * .02f)
+        {
+            std::cout << "GRAVITY_SCALE descent=" << descent << " expected=" << expected << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool TestCharacterSteepSlopeSlide(ApplicationProcessor& processor)
+    {
+        Entity* slope = CreateCharacterFloor(20);
+        if (!slope)
+            return false;
+        const float angle = 60.0f * Math::Constants::PI / 180.0f;
+        const Math::Quaternion rotation(Math::Vector3::UnitZ, angle);
+        const Math::Vector3 normal = rotation * Math::Vector3::UnitY;
+        slope->SetPosition(normal * -.5f);
+        slope->SetRotation(rotation);
+        CharacterFixture value;
+        // 半径 .3 の球端が斜面にほぼ接する位置から始める。
+        if (!CreateCharacter(value, Math::Vector3(0, .301f, 0)) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+            return false;
+        const auto initial = value.Owner->GetPosition();
+        for (unsigned step = 0; step < 60; ++step)
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+        const auto final = value.Owner->GetPosition();
+        if (!std::isfinite(final.x) || !std::isfinite(final.y) || final.x > initial.x - .05f ||
+            final.y >= initial.y || value.Character->GetState().bGrounded)
+        {
+            std::cout << "STEEP_SLOPE dx=" << final.x - initial.x << " dy=" << final.y - initial.y
+                      << " grounded=" << value.Character->GetState().bGrounded << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    class CharacterElevatorTick final : public Component::Component, public IFixedProbe
+    {
+      public:
+        bool bMoving = false;
+        bool bRefresh = false;
+        bool bRefreshSucceeded = true;
+        unsigned Step = 0;
+        void OnFixed(float fixedDeltaTime) override
+        {
+            if (!bMoving)
+                return;
+            auto target = GetOwner()->GetWorldTransform();
+            const float direction = (Step / 10) % 2 == 0 ? 1.0f : -1.0f;
+            target.position.y += direction * 3.0f * fixedDeltaTime;
+            GetOwner()->SetWorldTransform(target);
+            ++Step;
+            if (bRefresh && GEngine->GetSceneQuery().RefreshDynamicSnapshot() != EPhysicsSceneQueryResult::Success)
+                bRefreshSucceeded = false;
+        }
+    };
+
+    bool TestCharacterElevatorJitter(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floors[2] = {CreateCharacterFloor(4), CreateCharacterFloor(4)};
+        CharacterElevatorTick* movers[2] = {};
+        CharacterFixture characters[2];
+        if (!floors[0] || !floors[1])
+            return false;
+        floors[1]->SetPosition(Math::Vector3(20, -.5f, 0));
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            auto* body = world.CreateComponent<RigidBodyComponent>(floors[i]);
+            movers[i] = world.CreateComponent<CharacterElevatorTick>(floors[i]);
+            if (!body || !movers[i] || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+                !CreateCharacter(characters[i], Math::Vector3(static_cast<float>(i) * 20, 0, 0)))
+                return false;
+        }
+        // 更新ありの足場を先に処理し、更新なしの足場はその後に動かす。
+        movers[0]->bRefresh = true;
+        for (unsigned step = 0; step < 10; ++step)
+            if (!StepCharacter(processor))
+                return false;
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            if (!characters[i].Character->GetState().bReady || !characters[i].Character->GetState().bGrounded)
+                return false;
+            movers[i]->bMoving = true;
+        }
+        float minimum[2] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        float maximum[2] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+        float floorMinimum[2] = {floors[0]->GetPosition().y, floors[1]->GetPosition().y};
+        float floorMaximum[2] = {floorMinimum[0], floorMinimum[1]};
+        float previousHeight = characters[0].Owner->GetPosition().y;
+        float maximumVelocityError = 0.0f;
+        for (unsigned step = 0; step < 120; ++step)
+        {
+            if (!StepCharacter(processor))
+                return false;
+            for (unsigned i = 0; i < 2; ++i)
+            {
+                if (i == 0 && !characters[i].Character->GetState().bReady)
+                    return false;
+                if (i == 0)
+                {
+                    const float height = characters[0].Owner->GetPosition().y;
+                    const float displacementVelocity = (height - previousHeight) / kFixedDeltaTime;
+                    const float velocityError = std::fabs(characters[0].Body->GetLinearVelocity().y - displacementVelocity);
+                    maximumVelocityError = std::max(velocityError, maximumVelocityError);
+                    previousHeight = height;
+                }
+                const float floorHeight = floors[i]->GetPosition().y;
+                const float gap = characters[i].Owner->GetPosition().y - (floorHeight + .5f);
+                if (!std::isfinite(gap))
+                {
+                    if (i == 0)
+                        return false;
+                    minimum[i] = maximum[i] = std::numeric_limits<float>::quiet_NaN();
+                }
+                else
+                {
+                    minimum[i] = std::min(minimum[i], gap);
+                    maximum[i] = std::max(maximum[i], gap);
+                }
+                floorMinimum[i] = std::min(floorMinimum[i], floorHeight);
+                floorMaximum[i] = std::max(floorMaximum[i], floorHeight);
+            }
+        }
+        const float refresh = maximum[0] - minimum[0];
+        const float noRefresh = maximum[1] - minimum[1];
+        std::cout << "ELEVATOR_JITTER refresh=" << refresh << " norefresh=" << noRefresh
+                  << " velocity_error=" << maximumVelocityError << '\n';
+        const bool platformsMoved = std::fabs(floorMaximum[0] - floorMinimum[0] - .5f) < .001f &&
+                                    std::fabs(floorMaximum[1] - floorMinimum[1] - .5f) < .001f;
+        return movers[0]->bRefreshSucceeded && movers[0]->Step == 120 && movers[1]->Step == 120 &&
+               platformsMoved && refresh < .01f && maximumVelocityError <= .005f;
+    }
+
+    bool TestCharacterPlatformDepartureVelocity(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floor = CreateCharacterFloor(4);
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        CharacterFixture value;
+        if (!body || !mover || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            !CreateCharacter(value, Math::Vector3(1, 0, 0)) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+
+        const auto platformTransform = [](unsigned frame)
+        {
+            const unsigned phase = frame % 120;
+            const float distance = static_cast<float>(phase <= 60 ? phase : 120 - phase) * 2.0f * kFixedDeltaTime;
+            const float angle = static_cast<float>(frame) * kFixedDeltaTime * Math::Constants::PI / 6.0f;
+            return Math::Transform(Math::Vector3(distance, -.5f, 0), Math::Quaternion(Math::Vector3::UnitY, angle));
+        };
+        const auto horizontalError = [](const Math::Vector3& a, const Math::Vector3& b)
+        {
+            const float dx = a.x - b.x;
+            const float dz = a.z - b.z;
+            return std::sqrt(dx * dx + dz * dz);
+        };
+
+        mover->Target = platformTransform(0);
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const auto initialLocal = value.Owner->GetPosition() - floor->GetPosition();
+
+        // 120 ステップの追従後、折り返しから 15 ステップ離れた位置で離脱する。
+        constexpr unsigned departureFrame = 135;
+        for (unsigned frame = 1; frame <= departureFrame; ++frame)
+        {
+            mover->Target = platformTransform(frame);
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+                !value.Character->GetState().bGrounded)
+            {
+                std::cout << "PLATFORM_GROUNDED frame=" << frame << '\n';
+                return false;
+            }
+            const float angle = static_cast<float>(frame) * kFixedDeltaTime * Math::Constants::PI / 6.0f;
+            const auto local = Math::Quaternion(Math::Vector3::UnitY, -angle) *
+                               (value.Owner->GetPosition() - floor->GetPosition());
+            const float drift = (local - initialLocal).Length();
+            if (!std::isfinite(drift) || drift >= .02f)
+            {
+                std::cout << "PLATFORM_LOCAL_DRIFT frame=" << frame << " distance=" << drift << '\n';
+                return false;
+            }
+        }
+
+        const auto expected = value.Character->GetState().PlatformVelocity;
+        const auto analytical = (platformTransform(departureFrame).TransformPoint(initialLocal) -
+                                 platformTransform(departureFrame - 1).TransformPoint(initialLocal)) /
+                                kFixedDeltaTime;
+        const float analyticalError = horizontalError(expected, analytical);
+        if (!std::isfinite(analyticalError) || analyticalError > .05f ||
+            horizontalError(analytical, Math::Vector3(2, 0, 0)) < .45f)
+        {
+            std::cout << "PLATFORM_VELOCITY expected_x=" << expected.x << " expected_z=" << expected.z
+                      << " analytical_x=" << analytical.x << " analytical_z=" << analytical.z << '\n';
+            return false;
+        }
+        if (value.Character->Jump(5) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned frame = departureFrame + 1; frame <= departureFrame + 2; ++frame)
+        {
+            const auto before = value.Owner->GetPosition();
+            mover->Target = platformTransform(frame);
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+                value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+            const auto observed = value.Body->GetLinearVelocity();
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const float bodyError = horizontalError(observed, expected);
+            const float displacementError = horizontalError(displacementVelocity, expected);
+            if (!std::isfinite(bodyError) || !std::isfinite(displacementError) ||
+                bodyError > .05f || displacementError > .05f)
+            {
+                std::cout << "PLATFORM_DEPARTURE frame=" << frame << " body_error=" << bodyError
+                          << " displacement_error=" << displacementError << " expected_x=" << expected.x
+                          << " expected_z=" << expected.z << " observed_x=" << observed.x
+                          << " observed_z=" << observed.z << '\n';
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool TestCharacterExternalMovement(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero) ||
+            !StepCharacter(processor) || !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        // モード切り替えは保留中の Teleport を破棄するため、先に固定ステップで反映する。
+        if (value.Character->Teleport(Math::Vector3(0, 2, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor))
+        {
+            return false;
+        }
+        const auto start = value.Owner->GetPosition();
+        const auto isNear = [](float actual, float expected, float tolerance)
+        {
+            return std::isfinite(actual) && std::fabs(actual - expected) <= tolerance;
+        };
+        const auto nearVector = [&](const Math::Vector3& actual, const Math::Vector3& expected, float tolerance)
+        {
+            return isNear(actual.x, expected.x, tolerance) && isNear(actual.y, expected.y, tolerance) &&
+                   isNear(actual.z, expected.z, tolerance);
+        };
+        if (!nearVector(start, Math::Vector3(0, 2, 0), .005f) ||
+            value.Character->SetMovementMode(CharacterMovementMode::External) != EPhysicsResult::Success ||
+            value.Character->SetDesiredVelocity(Math::Vector3(5, 0, 0)) != EPhysicsResult::Success ||
+            value.Character->Jump(5) != EPhysicsResult::InvalidState ||
+            value.Character->LaunchVertical(5) != EPhysicsResult::InvalidState)
+        {
+            return false;
+        }
+        const auto serial = value.Character->GetState().StepSerial;
+        const auto generation = value.Character->GetMotionGeneration();
+        for (unsigned step = 0; step < 30; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+            const auto& state = value.Character->GetState();
+            if (!nearVector(value.Owner->GetPosition(), start, 1e-4f) || !state.bReady || state.bGrounded ||
+                state.Result != EPhysicsResult::Success || state.StepSerial != serial + step + 1 ||
+                value.Character->GetMotionGeneration() != generation)
+            {
+                std::cout << "EXTERNAL_REST step=" << step << '\n';
+                return false;
+            }
+        }
+        if (value.Character->MoveDelta(Math::Vector3::Zero, .1f) != EPhysicsResult::Success ||
+            value.Character->MoveDelta(Math::Vector3(1, 0, 0), .15f) != EPhysicsResult::Success ||
+            !StepCharacter(processor))
+        {
+            return false;
+        }
+        const auto moved = start + Math::Vector3(1, 0, 0);
+        const auto expectedForward = Math::Quaternion(Math::Vector3::UnitY, .25f) * Math::Vector3::UnitZ;
+        const auto actualForward = value.Owner->GetWorldTransform().rotation * Math::Vector3::UnitZ;
+        const auto& state = value.Character->GetState();
+        if (!nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3(60, 0, 0), .01f) ||
+            !nearVector(state.Velocity, Math::Vector3(60, 0, 0), .01f) ||
+            !nearVector(actualForward, expectedForward, 1e-4f) || !state.bReady || state.bGrounded ||
+            state.Result != EPhysicsResult::Success || state.StepSerial != serial + 31)
+        {
+            std::cout << "EXTERNAL_MOVE x=" << value.Owner->GetPosition().x
+                      << " velocity_x=" << value.Body->GetLinearVelocity().x << '\n';
+            return false;
+        }
+        // 移動と回転は一度だけ消費し、床を横切る要求も衝突で制限しない。
+        if (!StepCharacter(processor) || !nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Owner->GetWorldTransform().rotation * Math::Vector3::UnitZ, expectedForward, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3::Zero, .01f) ||
+            value.Character->MoveDelta(Math::Vector3(0, -3, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor) ||
+            !nearVector(value.Owner->GetPosition(), moved + Math::Vector3(0, -3, 0), 1e-4f))
+        {
+            return false;
+        }
+        // External 中の Teleport は瞬間移動分を速度に含めず、切り替え時には保留入力を破棄する。
+        if (value.Character->Teleport(moved) != EPhysicsResult::Success || !StepCharacter(processor) ||
+            !nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3::Zero, .01f) ||
+            value.Character->MoveDelta(Math::Vector3(2, 0, 0)) != EPhysicsResult::Success ||
+            value.Character->SetMovementMode(CharacterMovementMode::Walking) != EPhysicsResult::Success ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned step = 0; step < 3; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+        }
+        const auto falling = value.Owner->GetPosition();
+        return isNear(falling.x, moved.x, 1e-4f) && isNear(falling.z, moved.z, 1e-4f) &&
+               std::isfinite(falling.y) && falling.y < moved.y - 1e-4f;
+    }
+
+    bool TestCharacterPushDynamicSphere(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        Entity* sphere = world.SpawnEntity<Entity>();
+        auto* collider = sphere ? world.CreateComponent<ColliderComponent>(sphere) : nullptr;
+        auto* body = sphere ? world.CreateComponent<RigidBodyComponent>(sphere) : nullptr;
+        if (!collider || !body || collider->SetSphere(.25f) != EPhysicsResult::Success ||
+            body->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        sphere->SetPosition(Math::Vector3(1.5f, .3f, 0));
+        for (unsigned step = 0; step < 12; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+        }
+        const float sphereStart = sphere->GetPosition().x;
+        const float characterStart = value.Owner->GetPosition().x;
+        if (!value.Character->GetState().bReady || !value.Character->GetState().bGrounded ||
+            value.Character->SetDesiredVelocity(Math::Vector3(2, 0, 0)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        Container::VariableArray<PhysicsOverlapHit> hits;
+        for (unsigned step = 0; step < 90; ++step)
+        {
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            {
+                return false;
+            }
+            PhysicsShapeProxy proxy;
+            if (!PhysicsModuleTestAccess::CopyPublishedProxy(*GFixture->Physics,
+                    value.Collider->GetColliderHandle(), proxy) || proxy.Shape != EPhysicsProxyShape::Capsule ||
+                GEngine->GetSceneQuery().OverlapCapsule(proxy.Capsule, hits) != EPhysicsSceneQueryResult::Success)
+            {
+                return false;
+            }
+            for (const auto& hit : hits)
+            {
+                if (hit.Collider == collider->GetColliderHandle() &&
+                    (!std::isfinite(hit.Contact.Depth) || hit.Contact.Depth > 1e-3f))
+                {
+                    std::cout << "DYNAMIC_PUSH_CONTACT step=" << step << " depth=" << hit.Contact.Depth << '\n';
+                    return false;
+                }
+            }
+        }
+        const float sphereDistance = sphere->GetPosition().x - sphereStart;
+        const float characterDistance = value.Owner->GetPosition().x - characterStart;
+        std::cout << "DYNAMIC_PUSH sphere_distance=" << sphereDistance
+                  << " character_distance=" << characterDistance << '\n';
+        return std::isfinite(sphereDistance) && std::isfinite(characterDistance) &&
+               sphereDistance >= 1.0f && characterDistance >= 1.0f;
+    }
+
+    bool TestCharacterVelocityAndDepenetration(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+
+        unsigned step = 0;
+        const auto checkStep = [&]()
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            {
+                return false;
+            }
+            ++step;
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const auto bodyVelocity = value.Body->GetLinearVelocity();
+            const float error = (bodyVelocity - displacementVelocity).Length();
+            if (!std::isfinite(error) || error > .005f)
+            {
+                std::cout << "CHARACTER_VELOCITY step=" << step << " error=" << error << '\n';
+                return false;
+            }
+            return true;
+        };
+
+        if (!checkStep() || !value.Character->GetState().bGrounded ||
+            value.Character->SetDesiredVelocity(Math::Vector3(3, 0, 0)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        const auto straightStart = value.Owner->GetPosition();
+        for (unsigned i = 0; i < 30; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        const auto straightEnd = value.Owner->GetPosition();
+        if (std::fabs(straightEnd.x - straightStart.x - 1.5f) > .02f ||
+            value.Character->SetDesiredVelocity(Math::Vector3(-1.5f, 0, 2)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 30; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        const auto diagonalEnd = value.Owner->GetPosition();
+        if (std::fabs(diagonalEnd.x - straightEnd.x + .75f) > .02f ||
+            std::fabs(diagonalEnd.z - straightEnd.z - 1.0f) > .02f ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 10; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        if (value.Character->Jump(5) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        bool bAirborne = false;
+        bool bLanded = false;
+        for (unsigned i = 0; i < 120; ++i)
+        {
+            if (!checkStep())
+            {
+                return false;
+            }
+            if (!value.Character->GetState().bGrounded)
+            {
+                bAirborne = true;
+            }
+            else if (bAirborne)
+            {
+                bLanded = true;
+                break;
+            }
+        }
+        if (!bAirborne || !bLanded ||
+            value.Character->Teleport(Math::Vector3(10, 0, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const float teleportError = (value.Owner->GetPosition() - Math::Vector3(10, 0, 0)).Length();
+        const float teleportSpeed = value.Body->GetLinearVelocity().Length();
+        if (!std::isfinite(teleportError) || !std::isfinite(teleportSpeed) ||
+            teleportError > .001f || teleportSpeed > .001f)
+        {
+            std::cout << "CHARACTER_TELEPORT error=" << teleportError << " speed=" << teleportSpeed << '\n';
+            return false;
+        }
+
+        // 左側の面をカプセルへ 0.05 m 食い込ませる。
+        Entity* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        if (!wallCollider || wallCollider->SetBox(Math::Vector3(.5f, 1, 1)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        wall->SetPosition(Math::Vector3(10.75f, 1, 0));
+        const auto beforePush = value.Owner->GetPosition();
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const auto displacement = value.Owner->GetPosition() - beforePush;
+        const float speed = value.Body->GetLinearVelocity().Length();
+        if (!std::isfinite(displacement.Length()) || !std::isfinite(speed) || displacement.x > -.05f || speed > .001f)
+        {
+            std::cout << "CHARACTER_DEPENETRATION displacement_x=" << displacement.x << " speed=" << speed << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool TestCharacterPlatformPushedAgainstWall(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floor = CreateCharacterFloor(4);
+        auto* floorCollider = floor ? floor->GetComponent<ColliderComponent>() : nullptr;
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        Entity* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        CharacterFixture value;
+        if (!floorCollider || !body || !mover || !wallCollider ||
+            body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            wallCollider->SetBox(Math::Vector3(.5f, 1, 1)) != EPhysicsResult::Success ||
+            !CreateCharacter(value, Math::Vector3::Zero) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        // 壁の下端を足場の上面より高くし、足場が壁の下を通れるようにする。
+        wall->SetPosition(Math::Vector3(1, 1.01f, 0));
+        mover->Target = Math::Transform(Math::Vector3(0, -.5f, 0));
+
+        unsigned step = 0;
+        bool bVelocityValid = true;
+        const auto checkStep = [&]()
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const float error = (value.Body->GetLinearVelocity() - displacementVelocity).Length();
+            if (!std::isfinite(error) || error > .005f)
+            {
+                if (bVelocityValid)
+                    std::cout << "CHARACTER_WALL_VELOCITY step=" << step << " error=" << error << '\n';
+                bVelocityValid = false;
+            }
+            return true;
+        };
+
+        if (!checkStep() || !value.Character->GetState().bGrounded ||
+            !(value.Character->GetState().GroundCollider == floorCollider->GetColliderHandle()))
+        {
+            return false;
+        }
+        unsigned pinnedSteps = 0;
+        for (step = 1; step <= 90; ++step)
+        {
+            const auto beforeCharacter = value.Owner->GetPosition();
+            const float beforeFloor = floor->GetPosition().x;
+            const float distance = static_cast<float>(step) * 2.0f * kFixedDeltaTime;
+            mover->Target = Math::Transform(Math::Vector3(distance, -.5f, 0));
+            if (!checkStep() || !value.Character->GetState().bGrounded ||
+                !(value.Character->GetState().GroundCollider == floorCollider->GetColliderHandle()))
+            {
+                std::cout << "CHARACTER_WALL_GROUND step=" << step << '\n';
+                return false;
+            }
+            const float floorDelta = floor->GetPosition().x - beforeFloor;
+            if (!std::isfinite(floorDelta) || std::fabs(floorDelta - 2.0f * kFixedDeltaTime) > .0001f)
+            {
+                std::cout << "CHARACTER_WALL_PLATFORM step=" << step << " delta=" << floorDelta << '\n';
+                return false;
+            }
+            if (std::fabs(value.Owner->GetPosition().x - beforeCharacter.x) < .001f)
+                ++pinnedSteps;
+        }
+        std::cout << "CHARACTER_WALL_PINNED steps=" << pinnedSteps << '\n';
+        return bVelocityValid && pinnedSteps >= 10;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1441,6 +2068,22 @@ namespace
             return TestDynamicInterpolationAt144Hz(processor, 120);
         case 19:
             return TestCharacterAddedAfterTickJoinsNextCollection(processor);
+        case 20:
+            return TestCharacterGravityScale(processor);
+        case 21:
+            return TestCharacterSteepSlopeSlide(processor);
+        case 22:
+            return TestCharacterElevatorJitter(processor);
+        case 23:
+            return TestCharacterPlatformDepartureVelocity(processor);
+        case 24:
+            return TestCharacterExternalMovement(processor);
+        case 25:
+            return TestCharacterPushDynamicSphere(processor);
+        case 26:
+            return TestCharacterVelocityAndDepenetration(processor);
+        case 27:
+            return TestCharacterPlatformPushedAgainstWall(processor);
         default:
             return false;
         }

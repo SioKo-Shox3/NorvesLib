@@ -97,8 +97,6 @@ namespace NorvesLib::Modules::Physics
         const auto result = module ? module->ValidateCharacterAccess(*this) : EPhysicsResult::NotRegistered;
         if (result != EPhysicsResult::Success)
             return result;
-        if (m_Mode != CharacterMovementMode::Walking)
-            return EPhysicsResult::InvalidState;
         const auto sum = m_PendingDisplacement + displacement;
         const float sumYaw = m_PendingYaw + yaw;
         if (!Finite(displacement) || !Finite(sum) || !std::isfinite(yaw) || !std::isfinite(sumYaw))
@@ -232,6 +230,7 @@ namespace NorvesLib::Modules::Physics
         const auto serial = m_State.StepSerial;
         m_State = {};
         m_State.StepSerial = serial;
+        m_InheritedVelocity = {};
         m_VerticalSpeed = 0;
         m_bAnchor = false;
         m_bLandedEvent = false;
