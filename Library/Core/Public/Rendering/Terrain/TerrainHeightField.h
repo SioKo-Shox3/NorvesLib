@@ -86,6 +86,13 @@ namespace NorvesLib::Core::Rendering::Terrain
         float Z = 0.0f;
     };
 
+    /// 法線の種類。面法線と、格子の頂点の法線から補間する滑らかな法線
+    enum class TerrainNormalKind : uint8_t
+    {
+        Face,
+        Smooth
+    };
+
     /// 格子の高さ場の頂点の並び。頂点 (column, row) の位置は (FirstX + column × Spacing, FirstZ + row × Spacing)。
     /// 手続きの作り方では Columns・Rows が 0
     struct TerrainGridLayout
@@ -125,7 +132,7 @@ namespace NorvesLib::Core::Rendering::Terrain
     class TerrainHeightField
     {
     private:
-        /// 格子の高さ場の中身（cpp にある）
+        /// 格子の高さ場の中身（内部ヘッダにある）
         struct GridData;
         /// 格子の作り方を高さ場の生成関数の外から呼ばせないための印
         struct GridTag
@@ -164,6 +171,13 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// (x,z) の法線。高さの中心差分（間隔 sampleSpacing[m]）から求める。格子の作り方では、差分の片側が範囲の外なら
         /// その側は (x,z) の高さを使う片側の差分にし、(x,z) が範囲の外なら 3 成分とも NaN
         TerrainNormal SampleNormal(float x, float z, float sampleSpacing = 0.5f) const;
+
+        /// SampleHeight と同じ三角形を選ぶ。升目内の X・Z の比を fu・fv とすると、対角線上では
+        /// 主対角が fu >= fv、副対角が fu + fv <= 1 の側を使う。
+        /// Face は三角形ごとに一定で境界では不連続になり得る。Smooth は頂点ごとの中心差分（外周は片側差分）の
+        /// 法線を重心座標で補間するため、三角形と升目の境界をまたいで連続する。
+        /// 格子の範囲外は 3 成分とも NaN。手続きの作り方では種類によらず間隔 0.5 m の既存の法線を返す
+        TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind) const;
 
         /// 格子から作ったか
         bool IsGrid() const

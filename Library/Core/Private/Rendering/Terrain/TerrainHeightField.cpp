@@ -1,4 +1,5 @@
 ﻿#include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/Terrain/TerrainHeightFieldGrid.h"
 
 #include "Asset/AssetFileReader.h"
 #include "Asset/CookedTerrainFormat.h"
@@ -349,49 +350,166 @@ namespace NorvesLib::Core::Rendering::Terrain
         return normal;
     }
 
-    /// 格子の高さ場の中身。頂点 (column, row) はエンジンの (FirstX + column × Spacing, FirstZ + row × Spacing)。
-    /// 行 0 が北端（-Z の端）で、列 0 が西端（-X の端）
-    struct TerrainHeightField::GridData
+    void TerrainHeightField::GridData::BuildBlockBounds()
     {
-        /// float32 の little-endian、行優先、見出しなし（Columns × Rows × 4 バイト）
-        Asset::AssetBlob Bytes;
-        uint32_t Columns = 0;
-        uint32_t Rows = 0;
-        double FirstX = 0.0;
-        double FirstZ = 0.0;
-        double Spacing = 1.0;
-        /// 造成の後の頂点の高さ（造成の範囲を囲む頂点の矩形だけ。行優先）。造成が無ければ空
-        Container::VariableArray<float> GradedHeights;
-        uint32_t GradedFirstColumn = 0;
-        uint32_t GradedFirstRow = 0;
-        uint32_t GradedColumns = 0;
-        uint32_t GradedRows = 0;
-
-        /// ファイルの値
-        float FileAt(uint32_t column, uint32_t row) const
+        if (Columns < 2u || Rows < 2u)
         {
-            float value = 0.0f;
-            std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
-                        sizeof(float));
-            return value;
+            BlockColumns = 0;
+            BlockRows = 0;
+            BlockMinHeight.clear();
+            BlockMaxHeight.clear();
+            return;
         }
 
-        /// 頂点の高さ（造成の範囲は造成の後の値）
-        float At(uint32_t column, uint32_t row) const
+        // 加算で切り上げると頂点数が上限近くのときにあふれるため、先に 1 を引いて割る
+        BlockColumns = (Columns - 2u) / kBlockCells + 1u;
+        BlockRows = (Rows - 2u) / kBlockCells + 1u;
+        const size_t blockCount = static_cast<size_t>(BlockColumns) * BlockRows;
+        BlockMinHeight.resize(blockCount);
+        BlockMaxHeight.resize(blockCount);
+        for (uint32_t bz = 0; bz < BlockRows; ++bz)
         {
-            // 符号なしの引き算なので、矩形の左・上の外は大きな値になって外と判定される
-            const uint32_t localColumn = column - GradedFirstColumn;
-            const uint32_t localRow = row - GradedFirstRow;
-            if (localColumn < GradedColumns && localRow < GradedRows)
+            const uint32_t firstRow = bz * kBlockCells;
+            const uint32_t lastRow = firstRow + std::min(kBlockCells, Rows - 1u - firstRow);
+            for (uint32_t bx = 0; bx < BlockColumns; ++bx)
             {
-                return GradedHeights[static_cast<size_t>(localRow) * GradedColumns + localColumn];
+                const uint32_t firstColumn = bx * kBlockCells;
+                const uint32_t lastColumn = firstColumn + std::min(kBlockCells, Columns - 1u - firstColumn);
+                float minHeight = At(firstColumn, firstRow);
+                float maxHeight = minHeight;
+                // 升目の両端の頂点を含むため、隣接ブロックは境界の頂点を共有する
+                for (uint32_t row = firstRow; row <= lastRow; ++row)
+                {
+                    for (uint32_t column = firstColumn; column <= lastColumn; ++column)
+                    {
+                        const float height = At(column, row);
+                        minHeight = std::min(minHeight, height);
+                        maxHeight = std::max(maxHeight, height);
+                    }
+                }
+                const size_t index = static_cast<size_t>(bz) * BlockColumns + bx;
+                BlockMinHeight[index] = minHeight;
+                BlockMaxHeight[index] = maxHeight;
             }
-            float value = 0.0f;
-            std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
-                        sizeof(float));
-            return value;
         }
-    };
+    }
+
+    TerrainNormal TerrainHeightField::SampleNormal(float x, float z, TerrainNormalKind kind) const
+    {
+        if (!m_Grid)
+        {
+            return SampleNormal(x, z, 0.5f);
+        }
+        if (!Contains(x, z))
+        {
+            return TerrainNormal{kOutOfRangeHeight, kOutOfRangeHeight, kOutOfRangeHeight};
+        }
+
+        const GridData &grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t column = std::min(static_cast<uint32_t>(u), grid.Columns - 2u);
+        const uint32_t row = std::min(static_cast<uint32_t>(v), grid.Rows - 2u);
+        const double fu = u - static_cast<double>(column);
+        const double fv = v - static_cast<double>(row);
+        const bool mainDiagonal = UsesMainDiagonal(column, row);
+        const bool firstTriangle = mainDiagonal ? fu >= fv : fu + fv <= 1.0;
+
+        struct NormalComponents
+        {
+            double X;
+            double Y;
+            double Z;
+        };
+        // 高さ差と間隔を先に割らずに正規化し、非常に大きな勾配での中間値のあふれを避ける
+        const auto normalize = [](double nx, double ny, double nz) -> NormalComponents
+        {
+            const double length = std::hypot(nx, ny, nz);
+            return {nx / length, std::max(ny / length, std::numeric_limits<double>::min()), nz / length};
+        };
+
+        NormalComponents normal{};
+        if (kind == TerrainNormalKind::Face)
+        {
+            const double h00 = grid.At(column, row);
+            const double h10 = grid.At(column + 1u, row);
+            const double h01 = grid.At(column, row + 1u);
+            const double h11 = grid.At(column + 1u, row + 1u);
+            double dx = 0.0;
+            double dz = 0.0;
+            if (mainDiagonal)
+            {
+                dx = firstTriangle ? h10 - h00 : h11 - h01;
+                dz = firstTriangle ? h11 - h10 : h01 - h00;
+            }
+            else
+            {
+                dx = firstTriangle ? h10 - h00 : h11 - h01;
+                dz = firstTriangle ? h01 - h00 : h11 - h10;
+            }
+            normal = normalize(-dx, grid.Spacing, -dz);
+        }
+        else
+        {
+            // 重みの並びは 00, 10, 01, 11。高さの補間と同じ比較・同じ重心座標を使う
+            double weights[4] = {};
+            if (mainDiagonal && firstTriangle)
+            {
+                weights[0] = 1.0 - fu;
+                weights[1] = fu - fv;
+                weights[3] = fv;
+            }
+            else if (mainDiagonal)
+            {
+                weights[0] = 1.0 - fv;
+                weights[2] = fv - fu;
+                weights[3] = fu;
+            }
+            else if (firstTriangle)
+            {
+                weights[0] = 1.0 - fu - fv;
+                weights[1] = fu;
+                weights[2] = fv;
+            }
+            else
+            {
+                weights[1] = 1.0 - fv;
+                weights[2] = 1.0 - fu;
+                weights[3] = fu + fv - 1.0;
+            }
+
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                if (weights[index] == 0.0)
+                {
+                    continue;
+                }
+                const uint32_t vertexColumn = column + (index & 1u);
+                const uint32_t vertexRow = row + (index >> 1u);
+                const uint32_t left = vertexColumn > 0u ? vertexColumn - 1u : vertexColumn;
+                const uint32_t right = vertexColumn < grid.Columns - 1u ? vertexColumn + 1u : vertexColumn;
+                const uint32_t north = vertexRow > 0u ? vertexRow - 1u : vertexRow;
+                const uint32_t south = vertexRow < grid.Rows - 1u ? vertexRow + 1u : vertexRow;
+                const double xFactor = left != vertexColumn && right != vertexColumn ? 0.5 : 1.0;
+                const double zFactor = north != vertexRow && south != vertexRow ? 0.5 : 1.0;
+                const double dx = (static_cast<double>(grid.At(right, vertexRow)) - grid.At(left, vertexRow)) * xFactor;
+                const double dz = (static_cast<double>(grid.At(vertexColumn, south)) - grid.At(vertexColumn, north)) * zFactor;
+                const NormalComponents vertexNormal = normalize(-dx, grid.Spacing, -dz);
+                normal.X += weights[index] * vertexNormal.X;
+                normal.Y += weights[index] * vertexNormal.Y;
+                normal.Z += weights[index] * vertexNormal.Z;
+            }
+            normal = normalize(normal.X, normal.Y, normal.Z);
+        }
+
+        TerrainNormal result{static_cast<float>(normal.X), static_cast<float>(normal.Y), static_cast<float>(normal.Z)};
+        // float に丸めたときも上向き成分を保つ
+        if (result.Y == 0.0f)
+        {
+            result.Y = std::numeric_limits<float>::denorm_min();
+        }
+        return result;
+    }
 
     namespace
     {
@@ -696,6 +814,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             return {};
         }
 
+        grid->BuildBlockBounds();
         return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
     }
 
@@ -822,6 +941,7 @@ namespace NorvesLib::Core::Rendering::Terrain
                 }
             }
             grid->Bytes = Asset::AssetBlob::FromOwnedBytes(bytes);
+            grid->BuildBlockBounds();
             return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
         }
         catch (const std::bad_alloc &)
