@@ -456,6 +456,321 @@ namespace
         assert(sound.PlayGlobal(id, params, afterShutdown) == AudioResult::InvalidState);
     }
 
+    SoundDefinition MakeConfiguredTestSound(SoundId id)
+    {
+        SoundDefinition definition;
+        definition.Id = id;
+        definition.Clips.push_back(MakeClip());
+        definition.VolumeJitterDb = 0.0f;
+        definition.PitchJitterSemitones = 0.0f;
+        return definition;
+    }
+
+    TSharedPtr<AudioClipResource> MakeVariantClip(uint8_t marker)
+    {
+        const Core::Asset::AssetBlob::ByteArray pcm(16 * 4, marker);
+        const auto blob = Core::Asset::AssetBlob::CopyBytes(
+            Core::Container::Span<const uint8_t>(pcm.data(), pcm.size()),
+            Core::Container::AnsiString("memory/playback-variant"));
+        return MakeShared<AudioClipResource>(blob, AudioPcmFormat{48000, 2, 16, 4}, 16);
+    }
+
+    void TestVoiceStealingOrderAndStaleEvents()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystemConfig config;
+        config.MaxConcurrentVoices = 4;
+        Private::SoundSystem sound(*service, Random::Generator{12345}, config);
+
+        const SoundId ids[] = {
+            SoundId("AudioPlaybackTest.Steal10"), SoundId("AudioPlaybackTest.Steal50A"),
+            SoundId("AudioPlaybackTest.Steal50B"), SoundId("AudioPlaybackTest.Steal90"),
+            SoundId("AudioPlaybackTest.Steal30"), SoundId("AudioPlaybackTest.Steal200"),
+            SoundId("AudioPlaybackTest.Steal5")};
+        constexpr uint8_t priorities[] = {10, 50, 50, 90, 30, 200, 5};
+        for (uint32_t index = 0; index < 7; ++index)
+        {
+            SoundDefinition definition = MakeConfiguredTestSound(ids[index]);
+            definition.Priority = priorities[index];
+            definition.MaxInstances = 0;
+            definition.CooldownMs = 0;
+            definition.DedupeRadius = 0.0f;
+            assert(sound.RegisterDefinition(std::move(definition)) == AudioResult::Success);
+        }
+
+        SoundPlayParams params;
+        SoundInstanceHandle handles[6];
+        VoiceHandle voices[6];
+        size_t operationIndex = fake->Operations.size();
+        uint32_t liveVoiceCount = 0;
+        for (uint32_t index = 0; index < 6; ++index)
+        {
+            assert(sound.PlayGlobal(ids[index], params, handles[index]) == AudioResult::Success);
+            assert(handles[index].IsValid());
+            voices[index] = Private::SoundSystemTestAccess::GetVoiceHandle(sound, handles[index]);
+            assert(voices[index].IsValid());
+            for (; operationIndex < fake->Operations.size(); ++operationIndex)
+            {
+                const FakeAudioOperation operation = fake->Operations[operationIndex];
+                if (operation == FakeAudioOperation::Create)
+                {
+                    ++liveVoiceCount;
+                }
+                else if (operation == FakeAudioOperation::Destroy)
+                {
+                    assert(liveVoiceCount > 0);
+                    --liveVoiceCount;
+                }
+                assert(liveVoiceCount <= config.MaxConcurrentVoices);
+            }
+            assert(fake->CreateCount >= fake->DestroyCount);
+            assert(fake->CreateCount - fake->DestroyCount == liveVoiceCount);
+            assert(fake->CreateCount - fake->DestroyCount <= 4);
+            if (index == 4)
+            {
+                assert(sound.SetVolume(handles[0], 1.0f) == AudioResult::StaleHandle);
+                assert(!sound.IsPlaying(handles[0]));
+            }
+            if (index == 5)
+            {
+                assert(sound.SetVolume(handles[4], 1.0f) == AudioResult::StaleHandle);
+                assert(!sound.IsPlaying(handles[4]));
+            }
+        }
+        for (uint32_t index = 0; index < 6; ++index)
+        {
+            const bool bExpectedPlaying = index == 1 || index == 2 || index == 3 || index == 5;
+            assert(sound.IsPlaying(handles[index]) == bExpectedPlaying);
+        }
+        assert(sound.GetDiagnostics().ActiveInstanceCount == 4);
+        assert(service->GetDiagnostics().ActiveVoiceCount == 4);
+        assert(sound.GetDiagnostics().Voice.StolenVoiceCount == 2);
+
+        const uint64_t rejectedBefore = sound.GetDiagnostics().Voice.RejectedPlayCount;
+        const uint32_t createdBefore = fake->CreateCount;
+        const uint32_t destroyedBefore = fake->DestroyCount;
+        SoundInstanceHandle rejected;
+        assert(sound.PlayGlobal(ids[6], params, rejected) == AudioResult::Rejected);
+        assert(!rejected.IsValid());
+        assert(sound.GetDiagnostics().Voice.RejectedPlayCount == rejectedBefore + 1);
+        assert(fake->CreateCount == createdBefore);
+        assert(fake->DestroyCount == destroyedBefore);
+
+        const uint64_t staleBefore = service->GetDiagnostics().StaleEventCount;
+        fake->Emit(voices[0], fake->ShutdownEpoch, Private::AudioBackendEventKind::Drained);
+        fake->Emit(voices[4], fake->ShutdownEpoch, Private::AudioBackendEventKind::Drained);
+        service->Tick();
+        sound.Update(1.0f / 60.0f);
+        assert(service->GetDiagnostics().StaleEventCount == staleBefore + 2);
+        assert(service->GetDiagnostics().ActiveVoiceCount == 4);
+        assert(sound.GetDiagnostics().ActiveInstanceCount == 4);
+        const uint32_t survivorIndices[] = {1, 2, 3, 5};
+        for (uint32_t index : survivorIndices)
+        {
+            assert(sound.IsPlaying(handles[index]));
+            assert(Private::SoundSystemTestAccess::GetVoiceHandle(sound, handles[index]) == voices[index]);
+            AudioVoiceState state = AudioVoiceState::Destroyed;
+            assert(service->GetVoiceState(voices[index], state) == AudioResult::Success);
+            assert(state == AudioVoiceState::Playing);
+        }
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestCooldownUsesUpdateTime()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id("AudioPlaybackTest.Cooldown");
+        SoundDefinition definition = MakeConfiguredTestSound(id);
+        definition.CooldownMs = 60;
+        assert(sound.RegisterDefinition(std::move(definition)) == AudioResult::Success);
+
+        constexpr float deltaSeconds = 0.0167f;
+        double expectedTime = 0.0;
+        double lastExpectedPlay = 0.0;
+        bool bHasExpectedPlay = false;
+        uint32_t expectedCount = 0;
+        uint32_t actualCount = 0;
+        const uint32_t createdBefore = fake->CreateCount;
+        const uint64_t suppressedBefore = sound.GetDiagnostics().Voice.SuppressedByCooldownCount;
+        SoundPlayParams params;
+        for (uint32_t index = 0; index < 10; ++index)
+        {
+            const bool bExpectedPlay = !bHasExpectedPlay || expectedTime - lastExpectedPlay >= 0.060;
+            if (bExpectedPlay)
+            {
+                bHasExpectedPlay = true;
+                lastExpectedPlay = expectedTime;
+                ++expectedCount;
+            }
+            SoundInstanceHandle handle;
+            const AudioResult result = sound.PlayGlobal(id, params, handle);
+            if (result == AudioResult::Success)
+            {
+                ++actualCount;
+                assert(handle.IsValid());
+                assert(sound.IsPlaying(handle));
+            }
+            else
+            {
+                assert(result == AudioResult::Rejected);
+                assert(!handle.IsValid());
+            }
+            assert((result == AudioResult::Success) == bExpectedPlay);
+            service->Tick();
+            sound.Update(deltaSeconds);
+            expectedTime += static_cast<double>(deltaSeconds);
+        }
+        assert(expectedCount == 3);
+        assert(actualCount == expectedCount);
+        assert(fake->CreateCount - createdBefore == expectedCount);
+        assert(sound.GetDiagnostics().Voice.SuppressedByCooldownCount - suppressedBefore == 10 - expectedCount);
+        assert(sound.GetDiagnostics().Voice.SuppressedByCooldownCount - suppressedBefore == 7);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestMaxInstancesPolicies()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+
+        const SoundId stopOldestId("AudioPlaybackTest.StopOldest");
+        SoundDefinition stopOldest = MakeConfiguredTestSound(stopOldestId);
+        stopOldest.MaxInstances = 1;
+        stopOldest.LimitPolicy = SoundInstanceLimitPolicy::StopOldest;
+        assert(sound.RegisterDefinition(std::move(stopOldest)) == AudioResult::Success);
+        const SoundId rejectNewId("AudioPlaybackTest.RejectNew");
+        SoundDefinition rejectNew = MakeConfiguredTestSound(rejectNewId);
+        rejectNew.MaxInstances = 1;
+        rejectNew.LimitPolicy = SoundInstanceLimitPolicy::RejectNew;
+        assert(sound.RegisterDefinition(std::move(rejectNew)) == AudioResult::Success);
+
+        SoundPlayParams params;
+        SoundInstanceHandle oldest;
+        SoundInstanceHandle replacement;
+        const uint64_t stolenBefore = sound.GetDiagnostics().Voice.StolenVoiceCount;
+        assert(sound.PlayGlobal(stopOldestId, params, oldest) == AudioResult::Success);
+        assert(sound.IsPlaying(oldest));
+        assert(sound.PlayGlobal(stopOldestId, params, replacement) == AudioResult::Success);
+        assert(sound.SetVolume(oldest, 1.0f) == AudioResult::StaleHandle);
+        assert(!sound.IsPlaying(oldest));
+        assert(replacement.IsValid() && sound.IsPlaying(replacement));
+        assert(sound.GetDiagnostics().Voice.StolenVoiceCount == stolenBefore + 1);
+
+        SoundInstanceHandle retained;
+        SoundInstanceHandle rejected;
+        assert(sound.PlayGlobal(rejectNewId, params, retained) == AudioResult::Success);
+        const uint64_t rejectedBefore = sound.GetDiagnostics().Voice.RejectedPlayCount;
+        const uint32_t createdBefore = fake->CreateCount;
+        assert(sound.PlayGlobal(rejectNewId, params, rejected) == AudioResult::Rejected);
+        assert(!rejected.IsValid());
+        assert(sound.IsPlaying(retained));
+        assert(sound.IsPlaying(replacement));
+        assert(sound.GetDiagnostics().Voice.RejectedPlayCount == rejectedBefore + 1);
+        assert(fake->CreateCount == createdBefore);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestDedupeWithinFrame()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id("AudioPlaybackTest.Dedupe");
+        SoundDefinition definition = MakeConfiguredTestSound(id);
+        definition.DedupeRadius = 1.0f;
+        definition.DedupeWindowMs = 0;
+        assert(sound.RegisterDefinition(std::move(definition)) == AudioResult::Success);
+
+        SoundPlayParams params;
+        SoundInstanceHandle first;
+        SoundInstanceHandle suppressed;
+        SoundInstanceHandle distant;
+        assert(sound.PlayAt(id, Math::Vector3(0.0f, 0.0f, 0.0f), params, first) == AudioResult::Success);
+        assert(sound.PlayAt(id, Math::Vector3(0.5f, 0.0f, 0.0f), params, suppressed) == AudioResult::Rejected);
+        assert(!suppressed.IsValid());
+        assert(sound.PlayAt(id, Math::Vector3(5.0f, 0.0f, 0.0f), params, distant) == AudioResult::Success);
+        assert(sound.IsPlaying(first) && sound.IsPlaying(distant));
+        assert(fake->CreateCount == 2);
+        assert(sound.GetDiagnostics().SuppressedByDedupeCount == 1);
+        service->Tick();
+        sound.Update(1.0f / 60.0f);
+        SoundInstanceHandle nextFrame;
+        assert(sound.PlayAt(id, Math::Vector3(0.0f, 0.0f, 0.0f), params, nextFrame) == AudioResult::Success);
+        assert(sound.IsPlaying(nextFrame));
+        assert(fake->CreateCount == 3);
+        assert(sound.GetDiagnostics().SuppressedByDedupeCount == 1);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestNoRepeatClipDistribution()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id("AudioPlaybackTest.NoRepeat");
+        SoundDefinition definition;
+        definition.Id = id;
+        for (uint8_t marker = 1; marker <= 3; ++marker)
+        {
+            definition.Clips.push_back(MakeVariantClip(marker));
+        }
+        definition.MaxInstances = 1;
+        definition.LimitPolicy = SoundInstanceLimitPolicy::StopOldest;
+        definition.VolumeJitterDb = 0.0f;
+        definition.PitchJitterSemitones = 0.0f;
+        assert(sound.RegisterDefinition(std::move(definition)) == AudioResult::Success);
+
+        constexpr uint32_t playCount = 10000;
+        uint32_t counts[3] = {};
+        uint32_t previous = UINT32_MAX;
+        SoundPlayParams params;
+        for (uint32_t index = 0; index < playCount; ++index)
+        {
+            SoundInstanceHandle handle;
+            assert(sound.PlayGlobal(id, params, handle) == AudioResult::Success);
+            assert(handle.IsValid() && sound.IsPlaying(handle));
+            assert(fake->SubmittedData != nullptr);
+            assert(fake->SubmittedSize == 16 * 4);
+            const uint8_t marker = fake->SubmittedData[0];
+            assert(marker >= 1 && marker <= 3);
+            for (size_t byteIndex = 1; byteIndex < fake->SubmittedSize; ++byteIndex)
+            {
+                assert(fake->SubmittedData[byteIndex] == marker);
+            }
+            const uint32_t selected = marker - 1;
+            assert(selected != previous);
+            ++counts[selected];
+            previous = selected;
+        }
+        assert(fake->CreateCount == playCount);
+        assert(sound.GetDiagnostics().Voice.StolenVoiceCount == playCount - 1);
+        for (uint32_t count : counts)
+        {
+            assert(count * 3 * 100 >= playCount * 95);
+            assert(count * 3 * 100 <= playCount * 105);
+        }
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
 }
 
 int main()
@@ -471,6 +786,11 @@ int main()
     TestMinimumFadeClamp();
     TestShutdownDuringFade();
     TestGenerationWrapRejectsOldHandles();
+    TestVoiceStealingOrderAndStaleEvents();
+    TestCooldownUsesUpdateTime();
+    TestMaxInstancesPolicies();
+    TestDedupeWithinFrame();
+    TestNoRepeatClipDistribution();
     std::cout << "AudioPlaybackTest: 合格\n";
     return 0;
 }
