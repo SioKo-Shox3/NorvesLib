@@ -59,6 +59,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -4598,6 +4599,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
+        packet.GrassField = m_GrassField;
         packet.Scene.RibbonTrails = m_RibbonTrails;
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
@@ -6644,6 +6646,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)
     {
         m_Foliage = foliage;
+    }
+
+    void RenderingCoordinator::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
+    {
+        m_GrassField = std::move(grassField);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)

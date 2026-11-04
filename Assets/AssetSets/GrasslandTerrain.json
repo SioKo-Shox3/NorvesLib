@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "GrasslandTerrain",
+  "package_root": "Cooked/GrasslandTerrain",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [],
+  "worlds": [
+    {
+      "logical_path": "Assets/Terrain/Grassland/Grassland.nvtrn",
+      "source_path": "Assets/TerrainSpecs/Grassland/GrasslandTerrain.json",
+      "package_name": "Grassland/Grassland.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Grassland.nvtrn"
+    }
+  ]
+}
