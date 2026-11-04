@@ -11,6 +11,8 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Combat/HurtboxSetComponent.h
     Public/Gameplay/Enemy/EnemyDefinition.h
     Public/Gameplay/Enemy/EnemyPatternSelector.h
+    Public/Gameplay/Enemy/IEnemyAnimator.h
+    Public/Gameplay/Enemy/AnimatorEnemyAnimator.h
     Public/Gameplay/Progression/GameplayStableId.h
     Public/Gameplay/Progression/ProgressionState.h
     Public/Gameplay/Progression/DefeatGate.h
@@ -27,6 +29,7 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Combat/HurtboxSetComponent.cpp
     Private/Gameplay/Enemy/EnemyDefinition.cpp
     Private/Gameplay/Enemy/EnemyPatternSelector.cpp
+    Private/Gameplay/Enemy/AnimatorEnemyAnimator.cpp
     Private/Gameplay/Combat/CombatRuntime.h
     Private/Gameplay/Combat/CombatRuntime.cpp
     Private/Gameplay/Progression/GameplayStableId.cpp
