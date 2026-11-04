@@ -9314,3 +9314,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 CookedTerrainTest の cook の経路のケース (a)〜(g): 着地(直し 0 回)
 - U7 CookAssets.ps1 が一覧の worlds（kind=world）を焼く: 着地(直し 0 回)
 - U8 NVTRNv0.md に cook の節と 2049×2049 の計測を書き、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-04 G5-GR89-TERRAIN-COOKER（run 20261104-082802 の反復 3、完了）
+- Done: AssetCook に `--kind world --format nvtrn.v0.height16 --entry-type Trn0` を足した。terrain spec JSON（height_source・height_mapping・cell_size_m・tile_cells・fit・require_bit_depth・smooth・seed・recipe）を解析し、png16/png8/raw16/raw32f/exr を取り込んで、地図全体の量子化と中心差分の法線（NRM0 RG8）、境界 1 標本を共有するタイル切り、stride 1/2/4/8 の LOD 誤差と AABB を NVTRN に書く。manifest に kind=world・Trn0・cooked_hash・source_hash（スペックと高さのファイルのバイト）を出す。CookedTerrainTest に解析面の (a)〜(g)、`AssetCookTerrainSmoke` を cmake -P で登録した。CookAssets.ps1 が一覧の worlds を焼く。草原の地形の入力（`Scripts/Terrain/GenerateGrasslandHeight.py`・`Assets/TerrainSpecs/Grassland/`・`Assets/AssetSets/GrasslandTerrain.json`）を足した。`Docs/Architecture/NVTRNv0.md` に cook の節と 2049×2049 の計測（RelWithDebInfo・i9-13900KF・中央値 415 ms・作業セットのピーク 106 MB・NVTRN 19,988,764 バイト）を書いた。
+- 証拠: `.harness/runs/20261104-082802/verify-G5-GR89-TERRAIN-COOKER-U8.txt`（AssetCook・CookedMeshTest の Debug ビルド exit=0、ctest で CookedTerrainTest・AssetCookTerrainSmoke・AssetCookMeshSmoke・AssetCookTextureSmoke の 4 件 100% Passed、`CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` が `COOK_ASSETS cooked=1 skipped=0` で exit=0）。
+- Next: アプリの起動の確かめは無い。地形のマスクは G5-GR89-TERRAIN-MASKS、描画の経路と目視は G5-GR37-TERRAIN-COMPONENT・G5-GR37-TERRAIN-CHECK。
+- Notes: `-OnlyLogicalPath` で焼くには既存の `build/CookedAssets/manifest.json` が要る（対象外の項目を引き継ぐため）。草原の PNG16 は 0〜64 m の写像で、実際の高さは 20.57〜39.16 m。`seed` は今の高さの処理には使わず、スペックのバイトとして source_hash に入る。
