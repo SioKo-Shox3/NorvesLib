@@ -9604,3 +9604,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 EnemyDefinition の型と JSON の読み込み・検証: 着地(直し 0 回)
 - U7 攻撃のパターンの選択と乱数のシード(レビュー済みの差分を当て直す): 着地(直し 0 回)
 - U3 IEnemyAnimator の継ぎ目と AnimatorComponent への写し: 着地(直し 0 回)
+- U4 EnemyComponent の基底(状態の遷移・攻撃・崩れ・領域の気づき): 着地(直し 0 回)

@@ -13,6 +13,7 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Enemy/EnemyPatternSelector.h
     Public/Gameplay/Enemy/IEnemyAnimator.h
     Public/Gameplay/Enemy/AnimatorEnemyAnimator.h
+    Public/Gameplay/Enemy/EnemyComponent.h
     Public/Gameplay/Progression/GameplayStableId.h
     Public/Gameplay/Progression/ProgressionState.h
     Public/Gameplay/Progression/DefeatGate.h
@@ -30,6 +31,7 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Enemy/EnemyDefinition.cpp
     Private/Gameplay/Enemy/EnemyPatternSelector.cpp
     Private/Gameplay/Enemy/AnimatorEnemyAnimator.cpp
+    Private/Gameplay/Enemy/EnemyComponent.cpp
     Private/Gameplay/Combat/CombatRuntime.h
     Private/Gameplay/Combat/CombatRuntime.cpp
     Private/Gameplay/Progression/GameplayStableId.cpp

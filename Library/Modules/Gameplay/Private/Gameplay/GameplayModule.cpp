@@ -6,6 +6,7 @@
 #include "Gameplay/Combat/HealthComponent.h"
 #include "Gameplay/Combat/HitboxComponent.h"
 #include "Gameplay/Combat/HurtboxSetComponent.h"
+#include "Gameplay/Enemy/EnemyComponent.h"
 #include "Gameplay/World/EncounterZoneComponent.h"
 #include "Gameplay/World/ZoneSensorComponent.h"
 #include "Logging/LogMacros.h"
@@ -81,9 +82,9 @@ namespace NorvesLib::Modules::Gameplay
         return true;
     }
 
-    void GameplayModule::RegisterWorldSystems(Core::World&)
+    void GameplayModule::RegisterWorldSystems(Core::World& world)
     {
-        // Component を追加したら、ここでシステムを登録する。
+        Enemy::EnemyComponent::RegisterTick(world);
     }
 
     void GameplayModule::RegisterReflectedTypes()
@@ -91,6 +92,7 @@ namespace NorvesLib::Modules::Gameplay
         Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(Combat::HitboxComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(Combat::HurtboxSetComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(Enemy::EnemyComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::ZoneSensorComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::EncounterZoneComponent::StaticClass());
     }
