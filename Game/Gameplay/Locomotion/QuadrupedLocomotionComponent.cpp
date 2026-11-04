@@ -70,6 +70,19 @@ namespace Game::Gameplay
         m_bProfileReadFailed = false;
         return true;
     }
+    bool QuadrupedLocomotionComponent::SetProfileSource(const Core::Container::AnsiString& assetRoot,
+                                                         Core::Container::AnsiStringView path)
+    {
+        Core::Asset::TextAssetReloadTracker profile(assetRoot);
+        if (!profile.SetPath(path))
+        {
+            return false;
+        }
+        m_Profile = std::move(profile);
+        m_ProfileError.clear();
+        m_bProfileReadFailed = false;
+        return true;
+    }
     bool QuadrupedLocomotionComponent::SetDriveMode(Physics::CharacterDriveMode mode)
     {
         auto* body = Body();
@@ -501,11 +514,11 @@ namespace Game::Gameplay
         {
             const auto& state = body->GetState();
             Core::Animation::AnimDriveSignals signals;
-            const auto relative = state.Velocity - state.PlatformVelocity;
-            signals.Speed = std::hypot(relative.x, relative.z);
+            // モデルが同じ区間で観測した足場に対する速度と接地を、歩様・傾きと揃えて渡す。
+            signals.Speed = m_Output.Speed;
             signals.Velocity = state.Velocity;
             signals.TurnRate = m_Output.TurnRate;
-            signals.bGrounded = state.bGrounded;
+            signals.bGrounded = m_Output.bGrounded;
             signals.GroundNormal = state.GroundNormal;
             (void)animator->SetDriveSignals(signals);
             (void)animator->SetInt(animator->FindParam("GaitId"_id), m_Output.Gait);
