@@ -58,6 +58,7 @@ namespace NorvesLib::Modules::Gameplay::World
         {
             Core::EntityHandle Entity;
             uint64_t Sequence = 0;
+            bool bEngaged = false;
         };
 
         struct ZoneRegistration : Registration
@@ -180,6 +181,22 @@ namespace NorvesLib::Modules::Gameplay::World
         }
     }
 
+    bool EncounterService::IsSensorEngaged(Core::EntityHandle sensorEntity) const
+    {
+        if (!IsOwnerThread() || !sensorEntity.IsValid())
+        {
+            return false;
+        }
+        for (const auto& sensor : m_State->Sensors)
+        {
+            if (sensor.Entity == sensorEntity)
+            {
+                return sensor.bEngaged;
+            }
+        }
+        return false;
+    }
+
     EEncounterZoneState EncounterService::GetZoneState(const Core::Container::String& zoneId) const
     {
         if (!IsOwnerThread())
@@ -230,6 +247,10 @@ namespace NorvesLib::Modules::Gameplay::World
         } guard{m_bEvaluating};
 
         State& state = *m_State;
+        for (auto& sensor : state.Sensors)
+        {
+            sensor.bEngaged = false;
+        }
         const uint64_t evaluationSequence = ++state.EvaluationSequence;
         Core::Container::VariableArray<PendingEvent> events;
         Core::Container::VariableArray<ZoneProfileChange> profileChanges;
@@ -380,6 +401,20 @@ namespace NorvesLib::Modules::Gameplay::World
             auto transitions = registration.Machine.Step(bInside, bAllOutside, bTeleported, worldDeltaSeconds, tuning);
             transitions.bCleared = registration.bClearedThisEvaluation;
             zone->m_State = registration.Machine.GetState();
+            if (registration.Machine.GetState() == EEncounterZoneState::Engaged)
+            {
+                // samples と Sensors は有効なセンサーを同じ順序で保持する。
+                for (size_t index = 0; index < samples.size(); ++index)
+                {
+                    const auto& sample = samples[index];
+                    if (!state.Sensors[index].bEngaged &&
+                        (sample.KindBits & zone->SensorMask.Get()) != 0 &&
+                        IsInsideInflated(shape, sample.Position, tuning.GetEffectiveExitMargin()))
+                    {
+                        state.Sensors[index].bEngaged = true;
+                    }
+                }
+            }
             const EncounterZoneEvent event{registration.Entity, registration.ZoneId, zone->EnemyId.Get(),
                 zone->ProfileId.Get(), zone->ResetPolicy.Get(), evaluationSequence};
 

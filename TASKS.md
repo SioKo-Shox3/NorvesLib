@@ -5463,7 +5463,7 @@
 - notes: 設計はロードマップ 1621〜1648 行。Physics のトリガーを使わない理由は 1623〜1627 行(trigger がクエリに混ざる、1 Entity 1 コライダーで PROPERTY が無い、固定ステップごとに束で届く)。選定課題 G8-S6(領域の外へ出たときの規則。ロードマップ 1861 行で「本人に確認する」)を決めた: ResetPolicy をデータの列挙 {FullHeal, KeepDamage} にし、既定は FullHeal(敵を全回復して Dormant に戻す)。理由: 領域の外へ逃げて削る遊び方を防ぐ、よくある作りで、データで KeepDamage に変えられる。退出の規則の適用(体力を戻す)は GR17 の EnemyComponent が OnZoneReset を受けて行う(G8-GR17-ENEMY-COMPONENT)。更新の時点は G8-S2 と同じ Module Late で、カメラの切り替えは次のフレームから見える(ブレンドが秒単位なので差は出ない)。テレポート(GR71)は印で扱う(1864 行)。領域の半径と攻撃の射程の検証・領域の重なりの検証は GR93(G12)。危険地帯: Object の寿命なので評価者を通す。やらないこと: 近接の操作とプロンプト(G8-GR18-INTERACTION)、敵の起動(G8-GR17-ENEMY-COMPONENT)。
 
 ## G8-GR18-INTERACTION: 寝床・ファストトラベル地点などに近づくと出る近接の操作(候補の選択・点滅しないプロンプト・入力で 1 回の起動)を作る
-- status: todo
+- status: done
 - after: G8-GR18-ENCOUNTER-ZONES
 - gr: GR18
 - needs-gr: GR03
@@ -5530,7 +5530,7 @@
 - notes: 受け入れ確認はロードマップ 1840 行(実機・Reference の段)。XAudio2 の最終のミックスを数値で取る手段(自作の XAPO でピークと RMS を測る)は未使用の API で要検証なので、この項目では作らない(足すなら別の項目)。音を鳴らすので、作者がほかのアプリを使っている間は回さない。
 
 ## G8-GR76-SAVE-STORAGE: ユーザーデータの場所・原子的な書き込み・破損を検出するセーブの入れ物・スロットと予備と退避・旧版からの移行を作る
-- status: todo
+- status: done
 - gr: GR76
 - done-when: (1) `Library/Core/Public/Platform/PlatformPaths.h` の `GetUserDataDirectory(appName)`(`SHGetKnownFolderPath(FOLDERID_LocalAppData)` で `%LOCALAPPDATA%/NorvesLib/<appName>/` を返し、無ければ作る)と `PlatformFile.h` の `WriteFileAtomic(path, bytes, bKeepBackup)`(同じディレクトリの一時ファイルへ書き → FlushFileBuffers → 既存があれば `ReplaceFileW` で旧世代を `.bak` に残し、無ければ `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`、失敗したら一時ファイルを消す、共有違反は短い待ちで数回やり直す、書いた後に読み戻して確かめる)と `ReadFileBytes`。実装は `Library/Core/Private/Platform/Windows/`(`WindowsPlatformProcess.cpp` の隣。`Library/Core/CMakeLists.txt` の明示の列挙へ足し、shell32・ole32 をリンク)。内部は wide の API、境界の `Container::String` は UTF-8。(2) NVSV の入れ物: 48 バイトの固定のヘッダ(magic `NVSV`・containerVersion・payloadFormat(1 = UTF-8 の JSON)・flags・payloadSize・payloadHash(FNV-1a64。`ComputeAssetPackagePayloadHash`(`AssetPackageFormat.h:81`)か `Fnv1aRaw`(`Text/IdentityPool.h:23`))・writeCounter)。(3) `SaveSlotStore`: `slot_N.sav` と `.bak`、オートセーブの `autosave_0..2.sav` のリング(最も古いものへ書く)。読む順は 主 → `.bak` → 次に新しいオートセーブ → 無ければ新規。writeCounter で主と `.bak` の新しい方を選ぶ。検証に失敗したファイルは消さず `.corrupt-<時刻>` へ改名して退避する。(4) `SaveMigration`: formatVersion と `MigrateV1ToV2…` の関数の列(`SceneSerializer.cpp:723` の `MigrateV1Document` の流儀)。新しい版のファイルは読まずに拒否し、ファイルを変えない。`Test/Core/Save/Fixtures` に v1 の見本を置く。 (5) 試験(`LoggerSinkTest` の束。ソースは `Test/Core/Save/*.cpp`): `SaveContainerTest`(往復、ランダムな単一ビットの反転 10,000 回のすべてで破損を検出、全長の切り詰めを検出、未知の containerVersion を拒否)、`AtomicFileWriteTest`(一時ファイルの書き込みの後・Replace の直前・Replace の失敗のそれぞれへ失敗を注入し、元のファイルのバイト列が変わらず一時ファイルが残らない(残っても次の起動で掃除される)、2 回目の保存で `.bak` に旧世代が残る、読み戻しの検証、共有違反のやり直し。注入は製品の経路に試験の分岐を置かず、ファイルの操作の差し替え口で行う)、`SaveMigrationTest`(コミットした v1 の見本を今の版へ移して期待と一致、新しい版は拒否してファイルを変えない)、`SaveSlotFallbackTest`(主の破損で `.bak`、両方の破損でオートセーブのリング、全滅で新規と `.corrupt` への退避(消さない))。試験のファイルは利用者の TEMP の下の一意のディレクトリに置き、`%LOCALAPPDATA%` を汚さない(`GetUserDataDirectory` は根を差し替えて試す)。既存の `WorkingDirectoryInputBindingStoreTest`・`JsonWriterTest` が通る。
 - verify: `cmake --build build --config Debug --target Game LoggerSinkTest -- /m:1`
