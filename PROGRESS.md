@@ -9543,3 +9543,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 最後の単位の確かめ（Debug の Game・PhysicsDynamicsTest のビルド終了コード 0、ctest 3 本 Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
 - Next: 起動の確かめは後回しで `G4-GR07-DOG-SMOKE-CHECK` が受け持つ（Debug・Release の台本の pass と 3 枚の PNG の所見）。
 - Notes: この差分はまだ評価を通っていない（前の走行の評価者が枠切れ）。
+
+- U1 マスクの計算本体（TerrainMasks）と焼きの設定の入口: 着地(直し 0 回)
+- U2 焼きで MSK0・SPL0・SPL1・GRS0 をタイルへ切って埋める: 着地(直し 0 回)
+- U3 スペックの recipe を解析し、ペイントを読んでマスクを計算して焼きへ渡す: 着地(直し 0 回)
+- U4 草原のスペックに規則を書き、NVTRNv0.md に recipe と層を記す: 着地(直し 0 回)
+- U5 CookedTerrainTest にマスクの契約の試験 (a)〜(g) を足し、タスクの verify を通す: 着地(直し 0 回)
+- Done (G5-GR89-TERRAIN-MASKS、run 20261104-132213): 地形の cook で spec の `recipe` とペイント入力から MSK0（R=湿り・G=枯れ草・B=道・A=岩）・SPL0・SPL1（スプラット最大 8 層、最大剰余法で mip0 の総和 255）・GRS0（草密度）を全体格子で一度だけ計算し、タイルの (tile_cells+1)² に切ってフルミップの NVTEX として NVTRN の層に埋める（`Tools/AssetCook/TerrainMasks.{h,cpp}`）。湿りは priority-flood で窪地を埋めた流れ集積の対数・低標高・凹の曲率の合成、雑音は (seed, salt, 格子座標) の splitmix64 でスレッドに依らない。ペイントは 8bit PNG の override・multiply で、source_hash と InputFiles にペイントを配列順に足した。`recipe` が無い spec の出力は変わらない。層は FourCC で引け、GR42・GR45 が後から足せる。草原の spec に土・苔・湿った泥・岩肌・草地の 5 層と草密度の仮の係数を書き、`Docs/Architecture/NVTRNv0.md` に recipe・式・ペイント・層を記した。
+- 草原の焼いた結果（mip0 の重複を除く 263,169 標本）: 最大の重みになる割合 soil 1.2 %・moss 27.7 %・wet_mud 0.5 %・rock_face 0.1 %・meadow 70.4 %。湿りの平均 0.34、岩は 99.9 % が 0、草密度の平均 0.88。最初の仮の係数では meadow が 99.8 % を占めたので、土・苔・草地の重みと低標高の湿りの範囲（実際の高さ 20.6〜39.2 m に合わせて 22〜36 m）・草密度の湿りの減衰（0.35〜0.75）を直した。式の係数は見た目で決まるまで仮。
+- 試験: `CookedTerrainTest` に (a) スプラット 8 層の総和 255±1、(b) 道のペイントの内側で草密度 0、(c) 傾斜に対する岩の単調性と 0・255 の両方、(d) 谷線の湿りが各行で最大（流れ集積だけの重みで検査）、(e) seed を変えると枯れ草とスプラットだけ変わり HGT0・NRM0・湿り・道・岩・草密度は一致、(f) x・z の共有辺の全層のビット一致、(g) ペイント 1 画素の変更で source_hash が変わり InputFiles にペイントが入る、を足した。
+- 証拠: `.harness/runs/20261104-132213/G5-GR89-TERRAIN-MASKS-U5-verify.txt`（verify の 4 行: AssetCook・CookedMeshTest の Debug ビルドが終了コード 0、ctest の CookedTerrainTest・AssetCookTerrainSmoke が 100% Passed で (a)〜(g) の行が出る、CookAssets の Grassland が終了コード 0。草原は U4 で焼き済みのため skipped=1 で、`-Force` でも cooked=1 を確かめた）。起動の確かめは無い（描画は G5-GR37-TERRAIN-COMPONENT）。
+- Next: マスクの層を描画で使うのは GR37・GR42・GR45。道のペイント PNG はまだ無い。
+- Notes: 要起票: `Scripts/CookAssets.ps1` の変更検出は spec と高さファイルだけを見て、ペイントの PNG を見ない（ペイントだけ変えると `-Force` が要る。AssetCook の source_hash はペイントを含む）。
