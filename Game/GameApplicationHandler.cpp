@@ -15,6 +15,9 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Platform/PlatformPaths.h"
+#include "Core/Public/Save/GameStateStore.h"
+#include "Core/Public/Save/SaveService.h"
 #include "Core/Public/Rendering/PostProcessStack.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
@@ -32,6 +35,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -3111,6 +3115,45 @@ namespace Game
         }
 
         m_M6ScriptSmokeController.Initialize();
+
+        NorvesLib::Core::GEngine.GetGameStateStore().LoadKeyLedgerFile("Assets/Data/state_keys.json");
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        const String saveDirectory = Platform::GetUserDataDirectory("Game");
+        if (!saveDirectory.empty())
+        {
+            saveService.Configure(saveDirectory);
+        }
+        else
+        {
+            LOG_WARNING("ユーザーデータの保存先を作成できないため、セーブの保存先を設定しません。");
+        }
+        saveService.SetSnapshotProvider(Delegate<bool, String&>(this, &GameApplicationHandler::ProvideSaveSnapshot));
+        saveService.SetLoadConsumer(
+            Delegate<bool, Span<const uint8_t>>(this, &GameApplicationHandler::ConsumeSavePayload));
+        return true;
+    }
+
+    bool GameApplicationHandler::ProvideSaveSnapshot(String& payloadUtf8)
+    {
+        Game::Save::ProgressSaveData snapshot = m_ProgressSaveData;
+        snapshot.AppVersion = NorvesLib::Core::GEngine.GetVersion();
+        snapshot.SavedAtUnix = static_cast<int64_t>(std::time(nullptr));
+        Game::Save::CaptureStateStore(NorvesLib::Core::GEngine.GetGameStateStore(), snapshot);
+        payloadUtf8 = Game::Save::ToJson(snapshot);
+        return !payloadUtf8.empty();
+    }
+
+    bool GameApplicationHandler::ConsumeSavePayload(Span<const uint8_t> payloadUtf8)
+    {
+        Game::Save::ProgressSaveData loaded;
+        String error;
+        if (!Game::Save::FromJson(payloadUtf8, loaded, &error))
+        {
+            LOG_ERROR("進行データの読み込みに失敗しました: %s", error.c_str());
+            return false;
+        }
+        m_ProgressSaveData = std::move(loaded);
+        Game::Save::ApplyToStateStore(m_ProgressSaveData, NorvesLib::Core::GEngine.GetGameStateStore());
         return true;
     }
 
@@ -3855,7 +3898,11 @@ namespace Game
         m_BridgeHost.Stop();
 
         // 終了前の保存処理など
-        // - セーブデータの保存
+        // セーブデータの保存を完了し、ハンドラを参照する呼び出し先を解除する。
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        saveService.FlushAndWait();
+        saveService.SetSnapshotProvider(Delegate<bool, String&>());
+        saveService.SetLoadConsumer(Delegate<bool, Span<const uint8_t>>());
         // - 設定の保存
     }
 

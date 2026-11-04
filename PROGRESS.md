@@ -9672,3 +9672,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 GameStateStore とキーの台帳: 着地(直し 0 回)
 - U2 ゲームの進行の中身 ProgressSaveData: 着地(直し 0 回)
 - U3 SaveService と NorvesEngine のメンバ: 着地(直し 0 回)
+- U4 Game の結線: 着地(直し 0 回)
