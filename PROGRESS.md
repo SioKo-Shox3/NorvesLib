@@ -9501,3 +9501,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 TerrainComponent を足す: 着地(直し 2 回)
 - U3 草原の一覧に 16 区画を足し、CookAssets で焼けるようにする: 着地(直し 0 回)
 - U7 TerrainHeightFieldTest を足す: 着地(直し 0 回)
+- U6 開発ビルドだけの grassland シーンを足し、地形を TerrainComponent で置く: 着地(直し 0 回)
