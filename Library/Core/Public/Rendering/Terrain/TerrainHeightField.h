@@ -47,6 +47,11 @@ namespace NorvesLib::Core::Rendering::Terrain
         return ((column + row) & 1u) == 0u;
     }
 
+    /// 表面の層がない、または範囲外のときの番号
+    inline constexpr uint8_t kInvalidTerrainSurfaceId = 0xFFu;
+    /// タイルがない、または範囲外のときの番号
+    inline constexpr uint32_t kInvalidTerrainTileId = 0xFFFFFFFFu;
+
     /// 格子の高さ場で範囲の外を引いたときの高さ（NaN。std::isnan で判定する）。法線は 3 成分とも NaN になる
     inline constexpr float kOutOfRangeHeight = std::numeric_limits<float>::quiet_NaN();
 
@@ -104,6 +109,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         double Spacing = 0.0;
     };
 
+    /// CreateFromSamples に渡すスプラット。生成時に高さ場へコピーする
+    struct TerrainSplatSamples
+    {
+        /// 層数（0..8）
+        uint32_t LayerCount = 0;
+        /// 頂点ごとに LayerCount バイト、行優先（Columns × Rows × LayerCount）
+        Container::Span<const uint8_t> Weights;
+        /// 層の名前（LayerCount 個）
+        Container::Span<const Container::AnsiString> LayerNames;
+    };
+
     /// 造成の範囲 1 つ（ワールドの X・Z に沿った箱）。箱の内側は造成の平面の高さにし、外側は箱からの距離 Blend[m] の間で
     /// 元の高さへ smoothstep で戻す（境で高さと傾きがつながる）。角の外は箱からの距離で測るので、境の形は箱の角を丸めた形になる
     struct TerrainGradePad
@@ -146,7 +162,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 手続きの作り方（seed と関数だけで決まる）
         explicit TerrainHeightField(const TerrainHeightFieldParams &params);
 
-        /// 格子の作り方。LoadGrid と CreateFromCookedTerrain だけが呼ぶ
+        /// 格子の作り方。高さ場の生成関数だけが呼ぶ
         TerrainHeightField(GridTag tag, Container::TSharedPtr<const GridData> grid);
 
         /// 切り出した格子（Scripts/Terrain/CropDem.py が書く height.json と、その中の file が指す float32 の格子）を読んで
@@ -164,6 +180,22 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 空を返して outError に理由を書き、成功時は outError を空にする。
         static Container::TSharedPtr<const TerrainHeightField> CreateFromCookedTerrain(const Asset::CookedTerrainData &terrain,
                                                                                        Container::AnsiString &outError);
+
+        /// 行優先の有限な高さの標本から格子を作る。Columns・Rows は 2 以上、Spacing は有限で正。
+        /// splat は省略できる。tileCells が正なら両辺の升目数を割り切る必要がある。
+        /// 不正な値なら空を返して outError に理由を書き、成功時は outError を空にする
+        static Container::TSharedPtr<const TerrainHeightField> CreateFromSamples(const TerrainGridLayout& layout,
+            Container::Span<const float> heights, const TerrainSplatSamples* splat, uint32_t tileCells,
+            Container::AnsiString& outError);
+
+        /// 最近の頂点で重みが最大の層。同点は小さい番号。範囲外・スプラット無しは無効な番号
+        uint8_t SampleSurface(float x, float z) const;
+        /// スプラットの層数。手続きの作り方では 0
+        uint32_t GetSplatLayerCount() const;
+        /// スプラットの層の名前。範囲外は空
+        Container::AnsiStringView GetSplatLayerName(uint32_t layer) const;
+        /// タイルの行優先の番号。外周は最後のタイルに含め、範囲外・タイル無しは無効な番号
+        uint32_t GetTileId(float x, float z) const;
 
         /// (x,z) の高さ[m]。格子の作り方で範囲の外なら kOutOfRangeHeight
         float SampleHeight(float x, float z) const;

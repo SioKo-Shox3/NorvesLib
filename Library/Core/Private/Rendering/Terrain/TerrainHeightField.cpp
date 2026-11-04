@@ -3,6 +3,7 @@
 
 #include "Asset/AssetFileReader.h"
 #include "Asset/CookedTerrainFormat.h"
+#include "Asset/CookedTextureFormat.h"
 #include "Text/JsonDocument.h"
 
 #include "stb_image.h"
@@ -941,6 +942,136 @@ namespace NorvesLib::Core::Rendering::Terrain
                 }
             }
             grid->Bytes = Asset::AssetBlob::FromOwnedBytes(bytes);
+            grid->TileCells = terrain.TileCells;
+            grid->TileCountX = terrain.TileCountX;
+            grid->TileCountZ = terrain.TileCountZ;
+
+            constexpr Asset::AssetPackageFourCC kSplatFourCCs[] = {
+                Asset::MakeAssetPackageFourCC('S', 'P', 'L', '0'),
+                Asset::MakeAssetPackageFourCC('S', 'P', 'L', '1')};
+            const int32_t splatLayers[] = {terrain.FindLayer(kSplatFourCCs[0]), terrain.FindLayer(kSplatFourCCs[1])};
+            if (splatLayers[0] >= 0)
+            {
+                constexpr char kSemanticPrefix[] = "terrain.splat:";
+                constexpr size_t kPrefixLength = sizeof(kSemanticPrefix) - 1;
+                uint32_t groupCounts[2] = {};
+                for (uint32_t group = 0; group < 2; ++group)
+                {
+                    if (splatLayers[group] < 0)
+                    {
+                        continue;
+                    }
+                    const auto& layer = terrain.Layers[splatLayers[group]];
+                    const auto& semantic = layer.Semantic;
+                    if (layer.Encoding != Asset::CookedTerrainFormatV0::LayerEncodingEmbeddedNvtex ||
+                        layer.PixelFormat != Asset::CookedTexturePixelFormat::RGBA8UNorm ||
+                        layer.ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+                        semantic.size() <= kPrefixLength ||
+                        std::memcmp(semantic.data(), kSemanticPrefix, kPrefixLength) != 0)
+                    {
+                        outError = "NVTRN のスプラットの形式・色空間・意味の文字列が約束と違います";
+                        return {};
+                    }
+                    size_t first = kPrefixLength;
+                    for (size_t end = first; end <= semantic.size(); ++end)
+                    {
+                        if (end == semantic.size() || semantic[end] == ',')
+                        {
+                            if (end == first || groupCounts[group] == 4)
+                            {
+                                outError = "NVTRN のスプラットの層の名前が空か、1 レイヤあたり 4 層を超えています";
+                                return {};
+                            }
+                            Container::AnsiString name;
+                            name.append(semantic.data() + first, end - first);
+                            grid->SplatLayerNames.push_back(std::move(name));
+                            ++groupCounts[group];
+                            first = end + 1;
+                        }
+                    }
+                }
+                if (splatLayers[1] >= 0 && groupCounts[0] != 4)
+                {
+                    outError = "NVTRN の SPL1 があるのに SPL0 の層の名前が 4 個ありません";
+                    return {};
+                }
+                grid->SplatLayerCount = groupCounts[0] + groupCounts[1];
+                if (columns * rows > std::numeric_limits<size_t>::max() / grid->SplatLayerCount ||
+                    side * side > std::numeric_limits<size_t>::max() / 4u)
+                {
+                    outError = "NVTRN のスプラットの大きさが格納上限を超えています";
+                    return {};
+                }
+                grid->SplatWeights.resize(static_cast<size_t>(columns * rows) * grid->SplatLayerCount);
+                for (size_t index = 0; index < terrain.Tiles.size(); ++index)
+                {
+                    const auto& tile = terrain.Tiles[index];
+                    // 解析結果の所有するバイト列を生かしたまま、mip0 だけを全体格子へコピーする。
+                    Asset::CookedTextureParseResult textures[2];
+                    Container::Span<const uint8_t> mipBytes[2];
+                    for (uint32_t group = 0; group < 2; ++group)
+                    {
+                        if (splatLayers[group] < 0)
+                        {
+                            continue;
+                        }
+                        textures[group] = Asset::ParseCookedTexture(
+                            terrain.GetLayerBlob(static_cast<uint32_t>(index), static_cast<uint32_t>(splatLayers[group])), true);
+                        const auto& texture = textures[group].Texture;
+                        if (!textures[group].Succeeded() || texture.Width != side || texture.Height != side ||
+                            texture.LayerCount != 1 || texture.PixelFormat != Asset::CookedTexturePixelFormat::RGBA8UNorm ||
+                            texture.ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+                            texture.MipCount != Asset::ComputeCookedTextureFullMipCount(static_cast<uint32_t>(side), static_cast<uint32_t>(side)))
+                        {
+                            outError = "NVTRN のスプラットの NVTEX の形式・大きさ・ミップ数が約束と違います";
+                            return {};
+                        }
+                        mipBytes[group] = texture.GetMipBytes(0);
+                        if (mipBytes[group].size() != static_cast<size_t>(side * side) * 4u)
+                        {
+                            outError = "NVTRN のスプラットの mip0 のバイト数が約束と違います";
+                            return {};
+                        }
+                    }
+                    for (uint32_t z = 0; z <= terrain.TileCells; ++z)
+                    {
+                        for (uint32_t x = 0; x <= terrain.TileCells; ++x)
+                        {
+                            const size_t source = (static_cast<size_t>(z) * static_cast<size_t>(side) + x) * 4u;
+                            const size_t column = static_cast<size_t>(tile.TileX) * terrain.TileCells + x;
+                            const size_t row = static_cast<size_t>(tile.TileZ) * terrain.TileCells + z;
+                            const size_t target = (row * grid->Columns + column) * grid->SplatLayerCount;
+                            uint32_t sum = 0;
+                            for (uint32_t group = 0; group < 2; ++group)
+                            {
+                                if (splatLayers[group] < 0)
+                                {
+                                    continue;
+                                }
+                                for (uint32_t channel = 0; channel < 4; ++channel)
+                                {
+                                    const uint8_t weight = mipBytes[group][source + channel];
+                                    if (channel < groupCounts[group])
+                                    {
+                                        grid->SplatWeights[target + group * 4u + channel] = weight;
+                                        sum += weight;
+                                    }
+                                    else if (weight != 0)
+                                    {
+                                        outError = "NVTRN のスプラットの未使用チャンネルが 0 ではありません";
+                                        return {};
+                                    }
+                                }
+                            }
+                            if (sum != 255)
+                            {
+                                outError = "NVTRN のスプラットの mip0 の重みの和が 255 ではありません";
+                                return {};
+                            }
+                        }
+                    }
+                }
+            }
             grid->BuildBlockBounds();
             return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
         }
@@ -954,6 +1085,149 @@ namespace NorvesLib::Core::Rendering::Terrain
             outError = "NVTRN から作る格子の配列が格納上限を超えています";
             return {};
         }
+    }
+
+    Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::CreateFromSamples(
+        const TerrainGridLayout& layout, Container::Span<const float> heights, const TerrainSplatSamples* splat,
+        uint32_t tileCells, Container::AnsiString& outError)
+    {
+        outError.clear();
+        if (layout.Columns < 2 || layout.Rows < 2 || !std::isfinite(layout.Spacing) || layout.Spacing <= 0.0 ||
+            !std::isfinite(layout.FirstX) || !std::isfinite(layout.FirstZ) ||
+            !std::isfinite(layout.FirstX + (layout.Columns - 1) * layout.Spacing) ||
+            !std::isfinite(layout.FirstZ + (layout.Rows - 1) * layout.Spacing))
+        {
+            outError = "標本から作る格子の寸法・原点・間隔が不正です";
+            return {};
+        }
+        const uint64_t count = static_cast<uint64_t>(layout.Columns) * layout.Rows;
+        if (count > std::numeric_limits<size_t>::max() / sizeof(float) || heights.size() != count || heights.data() == nullptr)
+        {
+            outError = "高さの標本数が格子の寸法と合わないか、格納上限を超えています";
+            return {};
+        }
+        if (tileCells != 0 && ((layout.Columns - 1) % tileCells != 0 || (layout.Rows - 1) % tileCells != 0 ||
+            static_cast<uint64_t>((layout.Columns - 1) / tileCells) * ((layout.Rows - 1) / tileCells) > UINT32_MAX))
+        {
+            outError = "タイルの升目数が格子の両辺を割り切らないか、タイル数が格納上限を超えています";
+            return {};
+        }
+        if (splat != nullptr && (splat->LayerCount > 8 || splat->LayerNames.size() != splat->LayerCount ||
+            (splat->LayerCount != 0 && (count > std::numeric_limits<size_t>::max() / splat->LayerCount ||
+                splat->Weights.data() == nullptr || splat->LayerNames.data() == nullptr)) ||
+            splat->Weights.size() != count * splat->LayerCount))
+        {
+            outError = "スプラットの層数・名前の数・重みの標本数が格子の寸法と合いません";
+            return {};
+        }
+        for (size_t index = 0; index < heights.size(); ++index)
+        {
+            if (!std::isfinite(heights[index]))
+            {
+                outError = "高さの標本に有限でない値があります";
+                return {};
+            }
+        }
+        try
+        {
+            auto grid = Container::MakeShared<GridData>();
+            grid->Columns = layout.Columns;
+            grid->Rows = layout.Rows;
+            grid->FirstX = layout.FirstX;
+            grid->FirstZ = layout.FirstZ;
+            grid->Spacing = layout.Spacing;
+            if (tileCells != 0)
+            {
+                grid->TileCells = tileCells;
+                grid->TileCountX = (layout.Columns - 1) / tileCells;
+                grid->TileCountZ = (layout.Rows - 1) / tileCells;
+            }
+            auto bytes = Container::MakeShared<Asset::AssetBlob::ByteArray>(static_cast<size_t>(count) * sizeof(float));
+            for (size_t index = 0; index < heights.size(); ++index)
+            {
+                uint32_t bits = 0;
+                std::memcpy(&bits, &heights[index], sizeof(float));
+                for (size_t byte = 0; byte < sizeof(float); ++byte)
+                {
+                    (*bytes)[index * sizeof(float) + byte] = static_cast<uint8_t>(bits >> (byte * 8));
+                }
+            }
+            grid->Bytes = Asset::AssetBlob::FromOwnedBytes(bytes);
+            if (splat != nullptr && splat->LayerCount != 0)
+            {
+                grid->SplatLayerCount = splat->LayerCount;
+                grid->SplatWeights.resize(splat->Weights.size());
+                std::memcpy(grid->SplatWeights.data(), splat->Weights.data(), splat->Weights.size());
+                for (uint32_t layer = 0; layer < splat->LayerCount; ++layer)
+                {
+                    grid->SplatLayerNames.push_back(splat->LayerNames[layer]);
+                }
+            }
+            grid->BuildBlockBounds();
+            return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
+        }
+        catch (const std::bad_alloc&)
+        {
+            outError = "標本から格子を作るメモリを確保できません";
+            return {};
+        }
+        catch (const std::length_error&)
+        {
+            outError = "標本から作る格子の配列が格納上限を超えています";
+            return {};
+        }
+    }
+
+    uint8_t TerrainHeightField::SampleSurface(float x, float z) const
+    {
+        if (!m_Grid || m_Grid->SplatLayerCount == 0 || !Contains(x, z))
+        {
+            return kInvalidTerrainSurfaceId;
+        }
+        const GridData& grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t column = std::min(static_cast<uint32_t>(std::round(u)), grid.Columns - 1);
+        const uint32_t row = std::min(static_cast<uint32_t>(std::round(v)), grid.Rows - 1);
+        const size_t offset = (static_cast<size_t>(row) * grid.Columns + column) * grid.SplatLayerCount;
+        uint8_t surfaceId = 0;
+        for (uint32_t layer = 1; layer < grid.SplatLayerCount; ++layer)
+        {
+            if (grid.SplatWeights[offset + layer] > grid.SplatWeights[offset + surfaceId])
+            {
+                surfaceId = static_cast<uint8_t>(layer);
+            }
+        }
+        return surfaceId;
+    }
+
+    uint32_t TerrainHeightField::GetSplatLayerCount() const
+    {
+        return m_Grid ? m_Grid->SplatLayerCount : 0;
+    }
+
+    Container::AnsiStringView TerrainHeightField::GetSplatLayerName(uint32_t layer) const
+    {
+        if (!m_Grid || layer >= m_Grid->SplatLayerCount)
+        {
+            return {};
+        }
+        const auto& name = m_Grid->SplatLayerNames[layer];
+        return Container::AnsiStringView(name.data(), name.size());
+    }
+
+    uint32_t TerrainHeightField::GetTileId(float x, float z) const
+    {
+        if (!m_Grid || m_Grid->TileCells == 0 || !Contains(x, z))
+        {
+            return kInvalidTerrainTileId;
+        }
+        const GridData& grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t tx = std::min(static_cast<uint32_t>(std::floor(u / grid.TileCells)), grid.TileCountX - 1);
+        const uint32_t tz = std::min(static_cast<uint32_t>(std::floor(v / grid.TileCells)), grid.TileCountZ - 1);
+        return tz * grid.TileCountX + tx;
     }
 
     bool LoadTerrainHorizonMeshes(Container::AnsiStringView descriptorPath,

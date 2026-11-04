@@ -9705,3 +9705,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 残課題（non-blocking）: ランチャーのカードの画像は `Assets/Textures/Launcher/sandbox.png` の使い回し。`Scripts/CookAssets.ps1` の変更は `paths:` の外だが done-when (1) の「CookAssets で焼ける」に要るもの。
 - U1 Math に三角形の型・最近点・球/カプセル/OBB と三角形の接触を足す: 着地(直し 0 回)
 - U2 高さ場の格子データを内部ヘッダへ移し、8×8 セルの最小最大の格子と面/滑らかの 2 種の法線を足す: 着地(直し 0 回)
+- U4 スプラットの層・SampleSurface・タイル番号・作り方 CreateFromSamples・地形の材質の記述を足す: 着地(直し 0 回)

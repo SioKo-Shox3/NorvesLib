@@ -21,6 +21,13 @@ namespace NorvesLib::Core::Rendering::Terrain
         double FirstX = 0.0;
         double FirstZ = 0.0;
         double Spacing = 1.0;
+        uint32_t SplatLayerCount = 0;
+        /// 頂点ごとに SplatLayerCount バイト、行優先
+        Container::VariableArray<uint8_t> SplatWeights;
+        Container::VariableArray<Container::AnsiString> SplatLayerNames;
+        uint32_t TileCells = 0;
+        uint32_t TileCountX = 0;
+        uint32_t TileCountZ = 0;
         /// 造成の後の頂点の高さ（造成の範囲を囲む頂点の矩形だけ。行優先）。造成が無ければ空
         Container::VariableArray<float> GradedHeights;
         uint32_t GradedFirstColumn = 0;
