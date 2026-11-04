@@ -9243,7 +9243,7 @@
 
 ## G17-GR33-GPU-CHECK: 頂点の拡張の属性の GPU の試験と既存の見た目の回帰を回し、実物の犬の接線つきの描画を撮って確かめる
 - status: todo
-- after: G17-GR33-RASTER-STREAM, G17-GR33-VISBUFFER-MEGA
+- after: G17-GR33-RASTER-STREAM, G17-GR33-VISBUFFER-MEGA, G2-GR83-ASSET-PREVIEW-SCENE
 - gr: GR33
 - check: launch
 - gpu: exclusive
@@ -9252,7 +9252,7 @@
 - verify: `ctest --test-dir build -C Debug -R "^(MeshVertexAttributeVulkanTest|VisibilityResolveVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest|RenderingVelocityStaticVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingVelocitySkinnedGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 900`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene asset-preview -Views close -Configuration Debug -RequireAssets -GameArgs "asset-preview-model=Models/Generated/dog_trellis2_60k/dog_trellis2_60k.glb" -OutDir .harness/runs/G17-GR33-GPU-CHECK/capture`
 - paths: Docs/RenderingValidation/VertexAttributeAcceptance.md, TASKS.md, PROGRESS.md
-- notes: GPU の試験は利用者のほかのアプリに影響を出しうるので、実装の項目では回さず、この項目で GPU を占有して回す（G5・G12 の GPU の試験と同じ扱い）。`asset-preview` のシーンは G2-GR83-ASSET-PREVIEW-SCENE が作る（まだ無ければ撮影の行は未実行と書く）。撮影の行の論理パスと manifest を渡す引数は、cook で付けた論理パスと G2-GR83-ASSET-PREVIEW-SCENE の引数に合わせて直してよい。実物の資産と cooked はコミットしない（`.harness/runs/` の下）。
+- notes: GPU の試験は利用者のほかのアプリに影響を出しうるので、実装の項目では回さず、この項目で GPU を占有して回す（G5・G12 の GPU の試験と同じ扱い）。`asset-preview` のシーンは G2-GR83-ASSET-PREVIEW-SCENE が作る。撮影の行の論理パスと manifest を渡す引数は、cook で付けた論理パスと G2-GR83-ASSET-PREVIEW-SCENE の引数に合わせて直してよい。実物の資産と cooked はコミットしない（`.harness/runs/` の下）。
 
 ## G17-GR80-REPAIR: 高密度のメッシュの cook に、溶接・縮退と孤立成分の除去・法線の作り直しの修復の段と、その指標の報告を足す
 - status: todo
@@ -9540,6 +9540,8 @@
 - verify: `python -B Test/Tools/Blender/BakeCoreTest.py --assetcook build/Tools/AssetCook/Debug/AssetCook.exe --perceptual build/Test/Core/Rendering/Debug/RenderingPerceptualDiffTest.exe`
 - verify: `ctest --test-dir build -C Debug -R "^(RenderingPerceptualDiffTest|RenderingPerceptualArtificialDifferenceTest|TextureManagedCliTest|AssetCookTextureSmoke)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Scripts/Blender/bake_core.py, Scripts/Blender/common.py, Test/Tools/Blender/BakeCoreTest.py, Test/Core/Rendering/RenderingPerceptualDiffTest.cpp, Docs/Architecture/BakeLowPoly.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: GR129 の手順 5〜8 とデライト（ロードマップ 3173〜3181 行）。選定課題 G17-S10（ベイクの方式）: ロードマップの推奨 (A) Blender（Cycles）のヘッドレスの Python を採る。理由: 新しい C++ の依存とエンジンの変更が要らず（3155 行）、(B) の C++ のベイカは規模 XL、(C) のエンジンの HW RT はスキンと MegaGeometry が TLAS に入らない前提だった（3159 行）。後処理を bpy から分けるのは、Blender を起動せずに試験できるようにするため（盤面の決まりで Blender を回す確かめは起動の扱い）。選定課題 G17-S13（デライト）: 方式が未決なので両方を作って既定は off にし、補正するかは資産ごとの設定で選ぶ（誤補正の恐れ。3181 行）。学習型のデライトは扱わない。
+  置き場は G6-S1 の `Scripts/Blender/`（ロードマップ 3192 行の「NorvesLib の Tools/ 側」の案は、G6 の段と記録の作法を共有するため `Scripts/Blender/` にそろえる。`Scripts/Blender/` は今は無く、G6 の項目が作る）。`common.py` は G6-GR103-RIG-SPEC-VALIDATE が作るので、その後にした（記録の関数を足すときは差分を小さくする）。NVTEX のミップの読みに Python の既存の解析は見当たらないので、`Library/Core/Public/Asset/CookedTextureFormat.h` の配置に従って試験の中で書く。閾値（被覆 60%・2048²×3・相関の閾値）は根拠なしの仮の値で、`BakeLowPoly.md` に仮と書く。試験を足す理由: 縁の黒い滲み・ARM のチャネルの取り違え・契約に合わない glTF は、cook が通っても遠景でだけ・材質の一部でだけ見た目が崩れ、黙って起きる。
 
 ## G18-GR126-RANDOM-STREAMS: 用途別の乱数ストリーム（シード指定・保存と復元）と、CPU と GPU で同じ値を返す位置のハッシュを足し、決定論の方針を文書にする
 - status: todo
