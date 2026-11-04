@@ -9508,3 +9508,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=17 で終了コード 0）。
 - Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` の 3 視点の撮影、区画の LOD の境の亀裂・TLAS・影の確認、TerrainComponent の EndPlay（World の終了・所有者の削除・Component 単体の解除）の実行時の確認を行う。層材質は G5-GR37-TERRAIN-LAYERS。
 - Notes: SceneFileRoundTripTest の地形の 2 ケースは `LoadIntoWorld` が BeginPlay を呼ぶため、JSON の解析とスキーマ照合の後に同じリフレクションの値の適用で復元している（`LoadIntoWorld`・`SpawnPrefab` を通す経路は起動の確かめで見る）。荒野の区画（`WastelandRoutine.cpp` の `PlaceTerrainTile`）は TerrainComponent へ移していない。
+- U10 差し戻しの直し — 地形の読込みを BeginPlay から最初の Tick へ移し、作ってから値を設定しても動くようにする: 着地(直し 0 回)

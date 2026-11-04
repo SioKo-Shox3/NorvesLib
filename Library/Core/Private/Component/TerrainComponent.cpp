@@ -34,6 +34,7 @@ namespace NorvesLib::Core::Component
     TerrainComponent::TerrainComponent(const IUnknown* sourceObject)
         : Component(sourceObject)
     {
+        SetDefaults();
     }
 
     TerrainComponent::~TerrainComponent()
@@ -56,7 +57,6 @@ namespace NorvesLib::Core::Component
             return;
         }
         Component::BeginPlay();
-        SetTickEnabled(false);
 
         Entity* owner = GetOwner();
         World* world = owner ? owner->GetWorld() : nullptr;
@@ -65,64 +65,10 @@ namespace NorvesLib::Core::Component
             LOG_WARNING("TERRAIN_COMPONENT_SKIPPED エンジンまたは所有者の World がありません");
             return;
         }
-        auto& terrainSystem = Engine::GEngine->GetTerrainSystem();
-        auto assetSystem = terrainSystem.GetAssetSystem();
-        if (!assetSystem)
-        {
-            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED 地形を読む資産システムがありません");
-            return;
-        }
-
-        const Container::String terrainPath = GetTerrainPath();
-        const auto resolved = assetSystem->ResolveAsset(terrainPath, Asset::AssetKind::World);
-        if (!resolved.UsedCooked())
-        {
-            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED path=%s クック済み地形を読めません", terrainPath.c_str());
-            return;
-        }
-        const auto parsed = Asset::ParseCookedTerrain(resolved.Blob);
-        if (!parsed.Succeeded())
-        {
-            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED path=%s status=%u 地形を解析できません",
-                        terrainPath.c_str(), static_cast<uint32_t>(parsed.Status));
-            return;
-        }
-        const uint64_t tileCount = static_cast<uint64_t>(parsed.Terrain.TileCountX) * parsed.Terrain.TileCountZ;
-        if (tileCount == 0 || tileCount > std::numeric_limits<uint32_t>::max())
-        {
-            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED 区画の数が扱える範囲にありません");
-            return;
-        }
-        Container::AnsiString error;
-        auto heightField = Rendering::Terrain::TerrainHeightField::CreateFromCookedTerrain(parsed.Terrain, error);
-        if (!heightField)
-        {
-            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED path=%s 高さ場を作れません: %s",
-                        terrainPath.c_str(), error.c_str());
-            return;
-        }
-        const auto handle = terrainSystem.RegisterTerrain(heightField);
-        if (!handle.IsValid())
-        {
-            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED 高さ場を登録できません");
-            return;
-        }
-
-        m_TerrainSystem = &terrainSystem;
-        m_RenderResources = &Engine::GEngine->GetRenderResources();
         m_World = world;
         m_OwnerEntityId = owner->GetObjectId();
-        m_AssetSystem = assetSystem;
-        m_HeightField = heightField;
-        m_TerrainHandle = handle;
-        m_Tiles.reserve(static_cast<size_t>(tileCount));
-        for (uint32_t z = 0; z < parsed.Terrain.TileCountZ; ++z)
-        {
-            for (uint32_t x = 0; x < parsed.Terrain.TileCountX; ++x)
-            {
-                m_Tiles.push_back({x, z});
-            }
-        }
+        m_TerrainSystem = &Engine::GEngine->GetTerrainSystem();
+        m_RenderResources = &Engine::GEngine->GetRenderResources();
 
         if (!world->FindComponentTick(StaticClass()))
         {
@@ -136,11 +82,83 @@ namespace NorvesLib::Core::Component
         SetTickEnabled(true);
     }
 
+    bool TerrainComponent::LoadTerrain()
+    {
+        auto assetSystem = m_TerrainSystem->GetAssetSystem();
+        if (!assetSystem)
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED 地形を読む資産システムがありません");
+            return false;
+        }
+
+        const Container::String terrainPath = GetTerrainPath();
+        const auto resolved = assetSystem->ResolveAsset(terrainPath, Asset::AssetKind::World);
+        if (!resolved.UsedCooked())
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED path=%s クック済み地形を読めません", terrainPath.c_str());
+            return false;
+        }
+        const auto parsed = Asset::ParseCookedTerrain(resolved.Blob);
+        if (!parsed.Succeeded())
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED path=%s status=%u 地形を解析できません",
+                        terrainPath.c_str(), static_cast<uint32_t>(parsed.Status));
+            return false;
+        }
+        const uint64_t tileCount = static_cast<uint64_t>(parsed.Terrain.TileCountX) * parsed.Terrain.TileCountZ;
+        if (tileCount == 0 || tileCount > std::numeric_limits<uint32_t>::max())
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED 区画の数が扱える範囲にありません");
+            return false;
+        }
+        Container::AnsiString error;
+        auto heightField = Rendering::Terrain::TerrainHeightField::CreateFromCookedTerrain(parsed.Terrain, error);
+        if (!heightField)
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED path=%s 高さ場を作れません: %s",
+                        terrainPath.c_str(), error.c_str());
+            return false;
+        }
+        const auto handle = m_TerrainSystem->RegisterTerrain(heightField);
+        if (!handle.IsValid())
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SKIPPED 高さ場を登録できません");
+            return false;
+        }
+
+        m_AssetSystem = assetSystem;
+        m_HeightField = heightField;
+        m_TerrainHandle = handle;
+        m_Tiles.reserve(static_cast<size_t>(tileCount));
+        for (uint32_t z = 0; z < parsed.Terrain.TileCountZ; ++z)
+        {
+            for (uint32_t x = 0; x < parsed.Terrain.TileCountX; ++x)
+            {
+                m_Tiles.push_back({x, z});
+            }
+        }
+
+        return true;
+    }
+
     void TerrainComponent::PlacePendingTiles()
     {
-        if (!bBegunPlay || !m_TerrainHandle.IsValid())
+        if (!bBegunPlay || !m_TerrainSystem || m_bLoadFailed)
         {
             return;
+        }
+        if (!m_TerrainHandle.IsValid())
+        {
+            if (GetTerrainPath().empty())
+            {
+                return;
+            }
+            if (!LoadTerrain())
+            {
+                m_bLoadFailed = true;
+                SetTickEnabled(false);
+                return;
+            }
         }
         const uint32_t configuredBudget = GetTilesPerFrame();
         const uint32_t budget = configuredBudget == 0 ? 1u : configuredBudget;
@@ -272,7 +290,7 @@ namespace NorvesLib::Core::Component
             }
         }
         m_Models.clear();
-        if (m_TerrainSystem)
+        if (m_TerrainSystem && m_TerrainHandle.IsValid())
         {
             m_TerrainSystem->UnregisterTerrain(m_TerrainHandle);
         }
@@ -282,6 +300,7 @@ namespace NorvesLib::Core::Component
         m_Tiles.clear();
         m_NextTile = 0;
         m_PlacedTileCount = 0;
+        m_bLoadFailed = false;
         m_World = nullptr;
         m_OwnerEntityId = 0;
         m_RenderResources = nullptr;

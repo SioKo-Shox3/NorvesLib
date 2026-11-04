@@ -1,4 +1,5 @@
 ﻿// クック済み地形の高さ場と区画メッシュを所有し、フレームごとに区画を配置する。
+// 地形は BeginPlay ではなくパス設定後の最初の Tick で読むため、作成してから値を設定できる。
 // EndPlay でモデルと高さ場の登録を返し、配置途中でも保持した資源を残さない。
 // 所有者の破棄では子 Entity を Inner の連鎖に任せ、所有者が残る場合だけ明示的に外す。
 #pragma once
@@ -49,7 +50,7 @@ namespace NorvesLib::Core::Component
         Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> GetHeightField() const { return m_HeightField; }
         uint32_t GetPlacedTileCount() const { return m_PlacedTileCount; }
         uint32_t GetTileCount() const { return static_cast<uint32_t>(m_Tiles.size()); }
-        /// 欠けた区画を含め、全区画の配置の試行が終わったかを返す。
+        /// 欠けた区画を含め、全区画の配置の試行が終わったかを返す。読込み前と読込み失敗時は偽。
         bool IsFullyPlaced() const { return m_TerrainHandle.IsValid() && m_NextTile == GetTileCount(); }
 
         PROPERTY(Container::String, TerrainPath)
@@ -69,6 +70,7 @@ namespace NorvesLib::Core::Component
         };
 
         void SetDefaults();
+        bool LoadTerrain();
         void PlacePendingTiles();
         bool PlaceTile(const TileCoordinate& tile);
 
@@ -82,6 +84,7 @@ namespace NorvesLib::Core::Component
         // Component を単独で外すと Outer が先に切れるため、所有者を World 内で引き直す。
         uint64_t m_OwnerEntityId = 0;
         bool m_bEndingPlay = false;
+        bool m_bLoadFailed = false;
         Container::VariableArray<TileCoordinate> m_Tiles;
         // Tick 内の生成では ECS の行が未作成なので、即座に発行される ObjectId で子を記録する。
         Container::VariableArray<uint64_t> m_ChildEntityIds;
