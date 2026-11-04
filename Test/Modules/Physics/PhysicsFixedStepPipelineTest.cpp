@@ -1,5 +1,6 @@
 ﻿// PhysicsFixedStepPipelineTest — M7 fixed-step dispatch と Physics post-step の契約を検証する。
 
+#include "Asset/AssetFileReader.h"
 #include "Component/Component.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
@@ -11,6 +12,8 @@
 #include "Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Input/InputRouter.h"
 #include "Input/InputSystem.h"
+#include "Locomotion/QuadrupedLocomotionJson.h"
+#include "Logging/Logger.h"
 #include "Module/ModuleRegistry.h"
 #include "Object/ObjectHeap.h"
 #include "Object/Resource.h"
@@ -32,8 +35,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <type_traits>
@@ -182,7 +188,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 28;
+    constexpr uint32_t kCaseCount = 29;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -2024,6 +2030,259 @@ namespace
         return bVelocityValid && pinnedSteps >= 10;
     }
 
+    bool TestGameLocomotionProfileReload(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace Logging;
+        using namespace Locomotion;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool bPassed, const char* contract) {
+            if (!bPassed)
+            {
+                std::cout << "設定の再読込: " << contract << '\n';
+            }
+            return bPassed;
+        };
+        const auto source = Asset::AssetFileReader().Read("Gameplay/DogLocomotion.json");
+        if (!check(source.Succeeded(), "元の設定を読める"))
+        {
+            return false;
+        }
+        Container::AnsiString reloaded;
+        reloaded.append(reinterpret_cast<const char*>(source.Blob.GetData()), source.Blob.GetSize());
+        // Wだけでは走行指定にならず、歩様1の最高速が目標になる。6→4なら隣の歩様との整合も保つ。
+        const Container::AnsiString speedKey = "\"speedMax\": 4";
+        const auto position = reloaded.find(speedKey);
+        if (!check(position != Container::AnsiString::npos, "歩行の最高速を特定できる"))
+        {
+            return false;
+        }
+        Container::AnsiString initial;
+        initial.append(reloaded.data(), position);
+        initial.append("\"speedMax\": 6");
+        initial.append(reloaded.data() + position + speedKey.size(), reloaded.size() - position - speedKey.size());
+        QuadrupedLocomotionParams initialParams, reloadedParams;
+        Container::String error;
+        const auto parse = [&](const Container::AnsiString& text, QuadrupedLocomotionParams& params) {
+            return ParseQuadrupedLocomotionJson({reinterpret_cast<const uint8_t*>(text.data()), text.size()}, params,
+                                                error);
+        };
+        if (!check(parse(initial, initialParams) && parse(reloaded, reloadedParams) &&
+                       initialParams.Gaits[1].SpeedMax == 6 && reloadedParams.Gaits[1].SpeedMax == 4,
+                   "両方の設定が有効である"))
+        {
+            return false;
+        }
+        struct ProfileFixture
+        {
+            std::filesystem::path Root;
+            ~ProfileFixture()
+            {
+                std::error_code ignored;
+                std::filesystem::remove_all(Root, ignored);
+            }
+            bool Write(const Container::AnsiString& text) const
+            {
+                std::ofstream file(Root / "profile.json", std::ios::binary | std::ios::trunc);
+                file.write(text.data(), static_cast<std::streamsize>(text.size()));
+                file.close();
+                return !file.fail();
+            }
+        } profile;
+        char name[96];
+        std::snprintf(name, sizeof(name), "NorvesComponentProfile_%lu_%lld", GetCurrentProcessId(),
+                      static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        profile.Root = std::filesystem::temp_directory_path() / name;
+        if (!check(std::filesystem::create_directory(profile.Root) && profile.Write(initial), "一時設定を書ける"))
+        {
+            return false;
+        }
+        struct WarningSink final : ILogSink
+        {
+            unsigned Count = 0;
+            void OnLog(const LogEntry& entry) override
+            {
+                if (entry.level == LogLevel::Warning && entry.category == "Locomotion")
+                {
+                    ++Count;
+                }
+            }
+            ~WarningSink() override
+            {
+                Logger::GetInstance().RemoveSink(this);
+                Logger::GetInstance().Shutdown();
+            }
+        } warnings;
+        auto& logger = Logger::GetInstance();
+        logger.Shutdown();
+        LogConfig logConfig;
+        logConfig.minLevel = LogLevel::Trace;
+        logConfig.outputType = LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        if (!check(logger.Initialize(logConfig), "同期ログを初期化できる"))
+        {
+            return false;
+        }
+        logger.AddSink(&warnings);
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        // Componentの最初のInput群から出力を観測できるよう、物理本体だけ先に準備する。
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+        {
+            return false;
+        }
+        world.LateTick(kFixedDeltaTime);
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings = {key};
+        if (!bindings.AddContext("Gameplay"_id, ECursorMode::Normal) || !bindings.AddAction("Gameplay"_id, move) ||
+            !mapper.ConfigureWithContext(bindings, "Gameplay"_id))
+        {
+            return false;
+        }
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        if (!driver)
+        {
+            return false;
+        }
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+            }
+        } unbind{driver};
+        if (!driver->SetProfileSource(profile.Root.generic_string().c_str(), "profile.json"))
+        {
+            return false;
+        }
+        driver->BindInput(&mapper);
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        double inputTime = 0;
+        const auto frame = [&](float dt) {
+            inputTime += dt;
+            if (!mapper.BeginFrame(inputTime) || !mapper.Update(inputTime, dt))
+            {
+                return false;
+            }
+            FrameTimes times;
+            times.Unscaled = dt;
+            times.World = times.Animation = dt * .5f;
+            world.Tick(times);
+            const bool bStepped = StepCharacter(processor);
+            world.LateTick(times);
+            return bStepped && value.Character->GetState().bReady;
+        };
+        const auto speed = [&] {
+            const auto velocity = driver->GetOutput().PlanarVelocity;
+            return std::hypot(velocity.x, velocity.z);
+        };
+        const auto nearSpeed = [&](float expected) {
+            return std::isfinite(speed()) && std::fabs(speed() - expected) < .01f;
+        };
+        // 公開モデルを基準に、既定値4と異なる設定6がdt=0の最初のフレームで使われることを確かめる。
+        const auto observed = value.Character->GetState();
+        LocomotionGroundInfo ground;
+        ground.bReady = observed.bReady;
+        ground.bGrounded = observed.bGrounded;
+        ground.Normal = observed.GroundNormal;
+        ground.Velocity = observed.Velocity;
+        ground.PlatformVelocity = observed.PlatformVelocity;
+        ground.Gravity = 9.81f * value.Character->GetSettings().GravityScale;
+        LocomotionIntent intent;
+        intent.Move = Math::Vector3::UnitZ;
+        LocomotionState initialState, defaultState;
+        LocomotionOutput expected, defaultOutput;
+        if (!check(QuadrupedLocomotionModel::Step(initialState, initialParams, intent, ground, kFixedDeltaTime,
+                                                 expected) == LocomotionStepStatus::Success &&
+                       QuadrupedLocomotionModel::Step(defaultState, reloadedParams, intent, ground, kFixedDeltaTime,
+                                                     defaultOutput) == LocomotionStepStatus::Success &&
+                       (expected.PlanarVelocity - defaultOutput.PlanarVelocity).Length() > .001f && frame(0) &&
+                       (driver->GetOutput().PlanarVelocity - expected.PlanarVelocity).Length() < .0001f,
+                   "最初のフレームは待たずに設定を適用する"))
+        {
+            return false;
+        }
+        // 1/64秒は二進で厳密。16フレームで0.25秒になり、World時間とは別にInputのUnscaled時間を数える。
+        constexpr float inputDelta = 1.0f / 64;
+        for (unsigned i = 0; i < 192; ++i)
+        {
+            if (!frame(inputDelta))
+            {
+                return false;
+            }
+        }
+        if (!check(nearSpeed(6) && driver->GetProfileError().empty() && warnings.Count == 0,
+                   "初期設定の最高速に落ち着く") || !profile.Write(reloaded))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 15; ++i)
+        {
+            if (!check(frame(inputDelta) && nearSpeed(6), "0.25秒に満たない間は以前の最高速を保つ"))
+            {
+                return false;
+            }
+        }
+        const float beforeReload = speed();
+        if (!check(frame(inputDelta) && std::isfinite(speed()) && speed() < beforeReload - .001f && speed() > 4 &&
+                       driver->GetProfileError().empty() && warnings.Count == 0,
+                   "0.25秒を満たす最初のフレームから新しい最高速へ減速する"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 192; ++i)
+        {
+            if (!frame(inputDelta))
+            {
+                return false;
+            }
+        }
+        if (!check(nearSpeed(4), "再読込した最高速に落ち着く") || !profile.Write("{"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 15; ++i)
+        {
+            if (!check(frame(inputDelta) && nearSpeed(4) && driver->GetProfileError().empty() && warnings.Count == 0,
+                       "壊れた設定も次の読込間隔までは観測しない"))
+            {
+                return false;
+            }
+        }
+        if (!check(frame(inputDelta) && nearSpeed(4) && !driver->GetProfileError().empty() && warnings.Count == 1,
+                   "壊れたJSONでは最後の有効値を保ち、警告を1回出す"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 64; ++i)
+        {
+            if (!check(frame(inputDelta) && nearSpeed(4) && !driver->GetProfileError().empty() && warnings.Count == 1,
+                       "同じ壊れたJSONを再観測しても値と警告回数を保つ"))
+            {
+                return false;
+            }
+        }
+        std::cout << "設定の再読込: 初回即時、0.25秒で6→4、壊れたJSONの警告1回を確認\n";
+        return true;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -2084,6 +2343,8 @@ namespace
             return TestCharacterVelocityAndDepenetration(processor);
         case 27:
             return TestCharacterPlatformPushedAgainstWall(processor);
+        case 28:
+            return TestGameLocomotionProfileReload(processor);
         default:
             return false;
         }

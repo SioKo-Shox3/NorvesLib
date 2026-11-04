@@ -70,6 +70,19 @@ namespace Game::Gameplay
         m_bProfileReadFailed = false;
         return true;
     }
+    bool QuadrupedLocomotionComponent::SetProfileSource(const Core::Container::AnsiString& assetRoot,
+                                                         Core::Container::AnsiStringView path)
+    {
+        Core::Asset::TextAssetReloadTracker profile(assetRoot);
+        if (!profile.SetPath(path))
+        {
+            return false;
+        }
+        m_Profile = std::move(profile);
+        m_ProfileError.clear();
+        m_bProfileReadFailed = false;
+        return true;
+    }
     bool QuadrupedLocomotionComponent::SetDriveMode(Physics::CharacterDriveMode mode)
     {
         auto* body = Body();
