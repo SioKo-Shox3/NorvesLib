@@ -1,0 +1,22 @@
+{
+  "id": "leap_slash",
+  "damage": 30,
+  "stagger": 8,
+  "hitStopSeconds": 0.08,
+  "rehit": "oncePerVictim",
+  "perVictim": "highestPriority",
+  "hitFactions": ["enemy"],
+  "hitboxes": [
+    {
+      "joint": "hand_r",
+      "windowEvent": "LeapSlashBlade",
+      "maxDurationSeconds": 0.35,
+      "shape": { "type": "capsule", "pointA": [0, 0, 0.1], "pointB": [0, 0, 0.9], "radius": 0.1 }
+    },
+    {
+      "windowEvent": "LeapSlashLanding",
+      "maxDurationSeconds": 0.15,
+      "shape": { "type": "sphere", "center": [0, 0, 0], "radius": 1.5 }
+    }
+  ]
+}
