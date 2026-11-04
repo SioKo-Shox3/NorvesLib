@@ -10,7 +10,11 @@
 #include "RigSingleCook.h"
 #include "SkeletalRoleFileCook.h"
 #include "SkeletalRoleFileInput.h"
+#include "TerrainSpec.h"
 #include <chrono>
+#if defined(_WIN32)
+#include <psapi.h>
+#endif
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -1211,6 +1215,168 @@ namespace NorvesLib::Tools::AssetCook
                       << "\n";
             return true;
         }
+        // 地形の警告はコンパイル時の実行文字コードなので、標準エラー用に UTF-8 へ揃える。
+        std::string TerrainWarningUtf8(const NorvesLib::Core::Container::AnsiString& warning)
+        {
+#if defined(_WIN32)
+#if defined(_MSVC_EXECUTION_CHARACTER_SET)
+            constexpr UINT sourceCodePage = _MSVC_EXECUTION_CHARACTER_SET;
+#else
+            constexpr UINT sourceCodePage = CP_ACP;
+#endif
+            if (sourceCodePage != CP_UTF8 && !warning.empty() &&
+                warning.size() <= static_cast<size_t>(std::numeric_limits<int>::max()))
+            {
+                const int sourceSize = static_cast<int>(warning.size());
+                const int wideSize = MultiByteToWideChar(sourceCodePage, 0, warning.data(), sourceSize, nullptr, 0);
+                if (wideSize > 0)
+                {
+                    std::wstring wide(static_cast<size_t>(wideSize), L'\0');
+                    if (MultiByteToWideChar(sourceCodePage, 0, warning.data(), sourceSize, wide.data(), wideSize) == wideSize)
+                    {
+                        const int utf8Size = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideSize, nullptr, 0, nullptr, nullptr);
+                        if (utf8Size > 0)
+                        {
+                            std::string utf8(static_cast<size_t>(utf8Size), '\0');
+                            if (WideCharToMultiByte(CP_UTF8, 0, wide.data(), wideSize, utf8.data(), utf8Size, nullptr, nullptr) == utf8Size)
+                            {
+                                return utf8;
+                            }
+                        }
+                    }
+                }
+            }
+#endif
+            return ToStdString(warning);
+        }
+
+        bool CookWorldAsset(const CookOptions& options, std::string& error)
+        {
+            std::filesystem::path inputPath;
+            std::filesystem::path packagePath;
+            std::filesystem::path manifestPath;
+            if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+                !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
+                !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
+            {
+                return false;
+            }
+
+            NorvesLib::Core::Container::VariableArray<uint8_t> specBytes;
+            if (!ReadSkeletalBinaryFile(inputPath, specBytes, error))
+            {
+                return false;
+            }
+
+            const NorvesLib::Core::Container::AnsiString sourceLogicalPath(options.LogicalPath.c_str());
+            const NorvesLib::Core::Container::AnsiString sourceEntryName(options.EntryName.c_str());
+            const NorvesLib::Core::Container::AnsiString variant(options.Variant.empty() ? "default" : options.Variant.c_str());
+            const NorvesLib::Core::Container::AnsiString format(options.Format.c_str());
+            NorvesLib::Core::Container::AnsiString logicalPath;
+            NorvesLib::Core::Container::AnsiString entryName;
+            if (!NormalizeSkeletalManifestPath(sourceLogicalPath, logicalPath, error) ||
+                !NormalizeSkeletalManifestPath(sourceEntryName, entryName, error) ||
+                !ValidateSkeletalAsciiField(variant, error) ||
+                !ValidateSkeletalAsciiField(format, error))
+            {
+                return false;
+            }
+
+            const auto cookStart = std::chrono::steady_clock::now();
+            TerrainSpecCookResult terrainResult;
+            NorvesLib::Core::Container::AnsiString terrainError;
+            if (!CookTerrainSpecFile(inputPath, terrainResult, terrainError))
+            {
+                error.assign(terrainError.data(), terrainError.size());
+                return false;
+            }
+            for (const auto& warning : terrainResult.Warnings)
+            {
+                std::cerr << "\xe8\xad\xa6\xe5\x91\x8a: " << TerrainWarningUtf8(warning) << "\n";
+            }
+
+            const std::filesystem::path manifestParent = manifestPath.parent_path();
+            NorvesLib::Core::Container::AnsiString cookedPackagePath;
+            if (!MakeSkeletalCookedPackageManifestPath(packagePath, manifestParent, cookedPackagePath, error))
+            {
+                return false;
+            }
+
+            uint64_t cookedHash = 0;
+            NorvesLib::Core::Container::VariableArray<uint8_t> packageBytes;
+            if (!BuildSingleSkeletalEntryPackage(
+                    entryName,
+                    NorvesLib::Core::Asset::CookedTerrainFormatV0::PackageEntryType,
+                    terrainResult.Build.NvtrnBytes,
+                    packageBytes,
+                    cookedHash,
+                    error))
+            {
+                return false;
+            }
+
+            NorvesLib::Core::Asset::AssetCookedReference reference;
+            reference.LogicalPath = logicalPath;
+            reference.Kind = AssetKind::World;
+            reference.SourceHash = terrainResult.SourceHash;
+            reference.SourceHashHex = FormatAssetHashHex(reference.SourceHash);
+            reference.Variant = variant;
+            reference.Format = format;
+            reference.CookedPackage = cookedPackagePath;
+            reference.EntryName = entryName;
+            reference.EntryType = NorvesLib::Core::Asset::CookedTerrainFormatV0::PackageEntryType;
+            reference.EntryTypeText = "Trn0";
+            reference.CookedHash = cookedHash;
+            reference.CookedHashHex = FormatAssetHashHex(cookedHash);
+            reference.CookedVersion = 0;
+
+            NorvesLib::Core::Container::AnsiString manifestJson;
+            if (!BuildMergedManifestJson(manifestPath, {&reference, 1}, manifestJson, error))
+            {
+                return false;
+            }
+            if (!WriteSkeletalBinaryFile(packagePath, packageBytes, error) ||
+                !WriteSkeletalTextFile(manifestPath, manifestJson, error))
+            {
+                return false;
+            }
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - cookStart).count();
+            size_t peakWorkingSetBytes = 0;
+#if defined(_WIN32)
+            PROCESS_MEMORY_COUNTERS memoryCounters{};
+            memoryCounters.cb = sizeof(memoryCounters);
+            if (!GetProcessMemoryInfo(GetCurrentProcess(), &memoryCounters, sizeof(memoryCounters)))
+            {
+                error = "failed to get peak working set size";
+                return false;
+            }
+            peakWorkingSetBytes = memoryCounters.PeakWorkingSetSize;
+#endif
+            if (!ValidateSkeletalManifestOutput(manifestPath, manifestJson, error) ||
+                !ValidateWorldAssetSystemOutput(
+                    manifestPath, manifestJson, logicalPath, variant, terrainResult.Build.NvtrnBytes, error))
+            {
+                return false;
+            }
+
+            std::cerr << "AssetCook wrote world package=\"" << packagePath.generic_string()
+                      << "\" manifest=\"" << manifestPath.generic_string()
+                      << "\" spec_bytes=" << specBytes.size()
+                      << " nvtrn_bytes=" << terrainResult.Build.NvtrnBytes.size()
+                      << " source=" << terrainResult.SourceWidth << "x" << terrainResult.SourceHeight
+                      << " bit_depth=" << terrainResult.SourceBitDepth
+                      << " tiles=" << terrainResult.Build.TileCountX << "x" << terrainResult.Build.TileCountZ
+                      << " lods=" << terrainResult.Build.LodCount
+                      << " height_min_m=" << terrainResult.Build.HeightMinM
+                      << " height_max_m=" << terrainResult.Build.HeightMaxM
+                      << " source_hash=" << reference.SourceHashHex.c_str()
+                      << " cooked_hash=" << reference.CookedHashHex.c_str()
+                      << " elapsed_ms=" << elapsedMs
+                      << " peak_working_set_bytes=" << peakWorkingSetBytes
+                      << "\n";
+            return true;
+        }
     }
     namespace Detail
     {
@@ -1371,7 +1537,7 @@ namespace NorvesLib::Tools::AssetCook
             if ((outOptions.InputPath.empty() && !separateOrm) || outOptions.PackagePath.empty() ||
                 outOptions.ManifestPath.empty() || outOptions.LogicalPath.empty() || outOptions.Kind.empty() ||
                 outOptions.EntryName.empty() || outOptions.EntryTypeText.empty() || outOptions.Format.empty() ||
-                outOptions.Variant.empty())
+                (outOptions.Variant.empty() && outOptions.Kind != "world"))
             {
                 error = "missing required arguments";
                 return false;
@@ -1449,9 +1615,22 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
             }
+            else if (outOptions.Kind == "world")
+            {
+                if (outOptions.Format != NorvesLib::Core::Asset::CookedTerrainFormatV0::ManifestFormat)
+                {
+                    error = "--kind world requires --format nvtrn.v0.height16";
+                    return false;
+                }
+                if (outOptions.EntryTypeText != "Trn0")
+                {
+                    error = "--kind world requires --entry-type Trn0";
+                    return false;
+                }
+            }
             else
             {
-                error = "--kind must be raw, texture, model, or audio";
+                error = "--kind must be raw, texture, model, audio, or world";
                 return false;
             }
 
@@ -1547,6 +1726,10 @@ namespace NorvesLib::Tools::AssetCook
         else if (options.Kind == "audio")
         {
             bSucceeded = CookAudioAsset(options, error);
+        }
+        else if (options.Kind == "world")
+        {
+            bSucceeded = CookWorldAsset(options, error);
         }
         outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
         return bSucceeded;
