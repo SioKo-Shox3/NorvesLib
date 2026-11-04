@@ -5,7 +5,7 @@
 NVTRN v0 は、地形の高さとタイルごとのレイヤを格納する cook 済み形式。
 高さは `HGT0` の生の `uint16` 標本として、ほかのレイヤは NVTEX v0 のファイル全体として埋め込む。
 
-cook の本体・実行時の地形・範囲読みは、この文書の範囲外。
+cook の使い方と処理は下の「cook（AssetCook --kind world）」に記す。実行時の地形・範囲読みは、この文書の範囲外。
 
 定数・型・入口は [CookedTerrainFormat.h](../../Library/Core/Public/Asset/CookedTerrainFormat.h)、
 書き出しは [CookedTerrainWriter.cpp](../../Library/Core/Private/Asset/CookedTerrainWriter.cpp) にある。
@@ -261,6 +261,252 @@ FNV-1a64 は暗号学的な真正性を保証するものではない。
 
 World は地形・草の場・散布で共用する種別。
 草の場・散布は将来それぞれ `Gfd0`・`Sct0` を同じ World に載せる予定。
+
+## cook（AssetCook --kind world）
+
+地形スペックの UTF-8 JSON を入力し、NVTRN を 1 件の `Trn0` エントリとしてパッケージへ格納し、
+manifest を作成・更新する。コマンドの形は次のとおり（パスは用途に合わせて指定する）。
+
+```powershell
+build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --kind world --format nvtrn.v0.height16 --entry-type Trn0 --input <spec> --out <package.nvpkg> --manifest <manifest.json> --logical Terrain/Example/Example.nvtrn --entry Terrain/Example/Example.nvtrn
+```
+
+`--kind world` には `--format nvtrn.v0.height16` と `--entry-type Trn0` を使う。
+`Raw` など別の entry type は拒否される。既存の manifest があるときは対象の参照を統合する。
+
+### CookAssets の一覧
+
+[CookAssets.ps1](../../Scripts/CookAssets.ps1) は `Assets/AssetSets/*.json` の省略可能な
+`worlds` 配列から同じ cook を呼ぶ。各項目は次の欄を持つ。
+
+| 欄 | 指定内容 |
+| --- | --- |
+| `logical_path` | 地形の論理パス。`Assets/` 接頭辞は正規化で除く |
+| `source_path` | 地形スペックのパス。リポジトリのルートを基準に解決する |
+| `package_name` | 一覧の `package_root` 以下に作るパッケージの相対パス |
+| `entry_name` | パッケージ内のエントリ名。`Assets/` 接頭辞は正規化で除く |
+| `format` | 省略時 `nvtrn.v0.height16` |
+| `variant` | 省略時は一覧の `default_variant` |
+
+実例は [GrasslandTerrain.json（一覧）](../../Assets/AssetSets/GrasslandTerrain.json)。
+スペック自身と `height_source.path` の入力の両方を変更検出に含める。
+対象を絞る場合は次のように実行する。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*"
+```
+
+`-OnlyLogicalPath` は対象外の項目を既存の `build/CookedAssets/manifest.json` から引き継ぐため、
+対象外の参照がそろった manifest が必要。入力と印が一致する項目は省略し、`-Force` を加えると対象を焼き直す。
+
+### スペック
+
+ルートはオブジェクトで、`version` は整数 `1`。
+ルート・`height_source`・`height_mapping` の未知のキーは拒否する。
+数値は有限であることを求め、整数欄は小数を受け付けない。
+
+| 欄 | 意味・条件・省略時の値 |
+| --- | --- |
+| `height_source` | 必須の入力オブジェクト。以下の欄を持つ |
+| `height_source.path` | 必須。完全な絶対パス、または**スペックの親ディレクトリ**を基準にした相対パス |
+| `height_source.format` | 必須。`png16`・`png8`・`raw16`・`raw32f`・`exr` |
+| `height_source.width` / `height_source.height` | RAW だけに必須の標本数。それぞれ 2..4294967295 の整数。他形式では指定を拒否 |
+| `height_source.endian` | RAW だけに指定可能。`little`（既定）または `big` |
+| `height_source.exr_channel` | EXR だけに指定可能。チャンネル名を完全一致で選ぶ。省略時は単一チャンネル、または `Y` を選択し、選べなければ拒否 |
+| `height_source.flip_z` | 真偽値。既定 `false`。`true` なら z 行を反転する |
+| `height_mapping`（整数入力） | `png16`・`raw16`・`png8` では必須。`min_m` と `max_m` の組、または `scale_m` と省略可能な `offset_m`（既定 0）を指定。両方式の混在と `scale` / `offset` は拒否 |
+| `height_mapping`（浮動小数点入力） | `raw32f`・`exr` は `scale`（既定 1）・`offset`（既定 0）。オブジェクトごと省略可能。`min_m` / `max_m` / `scale_m` / `offset_m` は拒否 |
+| `cell_size_m` | 必須。有限で正の標本間隔 [m] |
+| `tile_cells` | タイルの一辺のセル数。既定 128。8..1024 の 2 の冪 |
+| `fit` | `error`（既定）・`crop`・`resample`。後述の寸法調整 |
+| `require_bit_depth` | 整数 8 または 16。16 は 8bit 入力を拒否する。8 または省略は制限なしで、16/32bit も受け付ける |
+| `smooth` | ガウス平滑化の σ [m]。有限で 0 以上。既定 0（平滑化なし） |
+| `seed` | 0..4294967295 の整数。既定 0。現状の高さ処理には使わず、スペックのバイトとして `source_hash` に影響する |
+| `recipe` | 省略可能なオブジェクト。現状はオブジェクトという形だけを検査し、内部のキーの検査・生成処理は行わない |
+
+整数入力の `min_m/max_m` は `max_m >= min_m` を求め、
+`heightM = min_m + v * (max_m - min_m) / D`（PNG8 は `D=255`、ほかは `65535`）で写像する。
+`scale_m/offset_m` は生の整数値 `v` に `heightM = offset_m + scale_m * v` を適用する。
+RAW32F・EXR は `heightM = offset + scale * v`。入力の単位を推測しない。
+入力値と写像後の高さの NaN / Inf は拒否する。
+
+PNG は 2×2 標本以上で、指定した 8/16bit と実ファイルのビット深度が一致する必要がある。
+RGB/RGBA は全標本で R=G=B を求め、アルファは使わない。
+RAW はヘッダなしの z 行優先・x 昇順で、長さは `width * height * 2`（RAW16）または
+`width * height * 4`（RAW32F、IEEE-754）と一致させる。
+EXR は選んだチャンネルの標本間隔が 1×1 で、half・float・uint を受け付ける。
+
+`fit` は幅・高さをそれぞれ `tile_cells*N+1`（`N>=1`）へ合わせる。
+`error` は不一致を拒否する。`crop` は (x,z)=(0,0) 側を残し、余った大きい座標側を切り捨てる
+（1 タイルに満たなければ拒否）。`resample` は `N=max(1, round((sourceSamples-1)/tile_cells))`
+で近い寸法を選び、入力両端を対応させた双線形補間を行う。標本間隔は `cell_size_m` のままなので、
+寸法調整で地形の物理的な広さも変わる。
+
+PNG8 は `terrain_height_bit_depth=8` を含む警告を出し、1 段の高さ（写像の scale の絶対値）を知らせる。
+16bit への再量子化で元の 256 段が増えるわけではない。`smooth` は段差を均す手段となる。
+σ を標本単位へ変換して半径 `ceil(3*σ/cell_size_m)` の分離ガウスを x、z の順にかけ、
+範囲外の標本位置は端へ丸める。
+
+実際のスペックは [GrasslandTerrain.json](../../Assets/TerrainSpecs/Grassland/GrasslandTerrain.json)。
+PNG16 を 0..64 m に写像し、標本間隔 1 m・128 セル/タイル・`fit=error`・16bit 必須で取り込む。
+
+### 処理の順序と生成値
+
+1. スペックと高さ入力を読み、指定した形式で標本を取り込む。
+2. 高さをメートルへ写像する。
+3. `flip_z` を適用する。
+4. `fit` で格子の寸法を合わせる。
+5. `smooth` を適用する。
+6. 全体の min/max（ヘッダには float で格納）を使い、
+   `round((heightM-min)/(max-min)*65535)` を 0..65535 へ制限して `uint16` 量子化する。
+   全標本が同じ高さなら 0 とする。
+7. 全体格子の中心差分（外周のみ片側差分）から法線を計算する。
+   量子化前の高さの微分を `dx=dh/dx, dz=dh/dz` とし、`normalize(-dx,1,-dz)` を使う。
+   量子化と法線計算は全体を走査する同じループ内で行う。
+8. タイルへ切り出す。各タイルは `(tile_cells+1)²` 標本を持ち、境界 1 標本の高さと法線を共有する。
+9. 量子化した高さを復元し、各タイルの LOD 誤差・高さの min/max・AABB を求める。
+10. HGT0 と NRM0 を NVTRN へ書き、`Trn0` エントリのパッケージと manifest を書く。
+
+`NRM0` は線形 RG8（`RG8UNorm`）の NVTEX 全体を埋め込んだレイヤ。
+R に x、G に z を `round((n*0.5+0.5)*255)`（0..255 に制限）で符号化する。
+読み手は R/G を `n=byte*2/255-1` で戻し、上向きの y を
+`sqrt(max(0,1-x²-z²))` で復元する。ミップは領域平均で生成し、法線の再正規化はしない。
+
+LOD 数は 4、stride は順に 1/2/4/8。LOD0 の誤差は 0。
+各粗いセルの境界を含む全 LOD0 標本について、粗いセルの四隅から両方の対角線による
+三角形補間を計算し、量子化後に復元した LOD0 の高さとの差の絶対値の最大を記録する。
+両対角を含めるため、描画側の対角線の向きに依存しない。単位は m、集計は double、格納は float。
+
+AABB は原点からの相対座標で、タイル (tx,tz)、`T=tile_cells`、`c=cell_size_m` に対し、
+min は `(tx*T*c, tileHeightMin, tz*T*c)`、
+max は `((tx+1)*T*c, tileHeightMax, (tz+1)*T*c)`。
+y の範囲は量子化後に復元した全タイル標本の min/max で、x/z はタイルのセル範囲。
+この cook が生成する原点は (0,0,0)。
+
+### manifest と決定性
+
+`kind=world`、`entry_type=Trn0`、`format=nvtrn.v0.height16`、`cooked_version=0`。
+`cooked_hash` はパッケージに入る NVTRN の全バイトを対象にした payload の FNV-1a64 で、
+NVTRN ヘッダの `PayloadHash`（自身の 8 バイトを除く）とは異なる。
+`source_hash` はスペックと参照した全入力のバイトから求める FNV-1a64。
+現状はスペック、高さファイルの順に、各ファイルのバイト長を uint64 リトルエンディアン 8 バイトで投入し、
+続けてそのファイルの全バイトを投入する。パスの文字列ではなくファイル内容が対象で、
+JSON の空白や seed だけの変更もハッシュを変える。
+
+同じバイナリと同じ入力なら同じ NVTRN バイトを生成する。
+浮動小数点処理の決定性の保証は同じバイナリ内に限り、コンパイラ・構成・実行環境の異なるバイナリ間の
+バイト一致を前提にしない。
+
+### 実装と試験の所在
+
+入口は [SingleAssetCook.cpp](../../Tools/AssetCook/SingleAssetCook.cpp) の `CookWorldAsset`、
+スペックと入力ハッシュは [TerrainSpec.cpp](../../Tools/AssetCook/TerrainSpec.cpp)、
+取り込みは [HeightfieldImport.cpp](../../Tools/AssetCook/HeightfieldImport.cpp)、
+量子化・法線・タイル生成は [TerrainCooker.cpp](../../Tools/AssetCook/TerrainCooker.cpp) にある。
+
+[CookedTerrainTest](../../Test/Core/Asset/CookedTerrainTest.cpp) は形式の検査に加え、解析面で次を検査する。
+
+| 項目 | 検査 |
+| --- | --- |
+| (a) | 高さの最大誤差が半量子化幅 + 2 ULP 以下 |
+| (b) | x/z 両方向の共有辺で HGT0・NRM0 が一致 |
+| (c) | 解析的な法線との最大角度が 0.5 度以下 |
+| (d) | AABB と stride 1/2/4/8 の LOD 誤差が独立した計算と一致 |
+| (e) | PNG16・両 endian の RAW16・RAW32F・EXR の一致と EXR の端数保持 |
+| (f) | 8bit 警告、16bit 必須指定、不正寸法の拒否 |
+| (g) | 再 cook のバイトと payload hash が一致し、入力や seed の変更で source hash が変化 |
+
+[AssetCookTerrainSmoke](../../Tools/AssetCook/AssetCookTerrainSmoke.cmake.in) は CLI から 33×33 の PNG16 を
+16 セル/タイルの 2×2 タイルへ cook し、manifest の kind・entry type・format と 16 桁のハッシュを確認する。
+`--entry-type Raw` が適切な診断で拒否されることも検査する。
+
+### 2049×2049 合成入力の計測
+
+測定日: 2026-11-04。Windows、CPU: 13th Gen Intel(R) Core(TM) i9-13900KF。
+Visual Studio 2022（MSVC 14.44）、x64、**RelWithDebInfo** の AssetCook を使用した。
+
+```powershell
+cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1
+```
+
+入力は 2049×2049 のリトルエンディアン RAW16（8,396,802 バイト）。
+整数座標 `x,z=0..2048`、`seed=89021` とし、次の滑らかな周期関数を最近接整数へ丸めた。
+乱数生成器は使わず、seed の剰余で x の位相を定める。
+
+```text
+v(x,z) = floor(32768
+             + 12000*sin(2*pi*(x + seed%257)/2048)*cos(2*pi*z/2048)
+             + 6000*cos(4*pi*z/2048) + 0.5)
+heightM = -128 + 256*v/65535
+```
+
+`cell_size_m=1`、`tile_cells=128`、`fit=error`、`flip_z=false`、
+`require_bit_depth=16`、`smooth=0`、`recipe={}`。
+2048×2048 セル、16×16 タイル、各タイル 129×129 標本、4 LOD の出力となる。
+次のコマンドで一時ディレクトリを用意する。
+
+```powershell
+$benchDir = Join-Path ([System.IO.Path]::GetTempPath()) ('NvtrnBenchmark-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $benchDir | Out-Null
+```
+
+次の Python 3 台本を `$benchDir/generate.py` に保存する。
+台本は出力先の一時ディレクトリを引数に受け取る。
+
+```python
+import json, math, pathlib, struct, sys
+root = pathlib.Path(sys.argv[1])
+side, seed = 2049, 89021
+with (root / "height.raw").open("wb") as output:
+    for z in range(side):
+        values = [
+            math.floor(32768 + 12000 * math.sin(2 * math.pi * (x + seed % 257) / 2048)
+                       * math.cos(2 * math.pi * z / 2048)
+                       + 6000 * math.cos(4 * math.pi * z / 2048) + 0.5)
+            for x in range(side)
+        ]
+        output.write(struct.pack("<2049H", *values))
+spec = {
+    "version": 1,
+    "height_source": {"path": "height.raw", "format": "raw16", "width": side,
+                      "height": side, "endian": "little", "flip_z": False},
+    "height_mapping": {"min_m": -128.0, "max_m": 128.0},
+    "cell_size_m": 1.0, "tile_cells": 128, "fit": "error",
+    "require_bit_depth": 16, "smooth": 0.0, "seed": seed, "recipe": {}
+}
+(root / "terrain.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+print(f"RAW16 bytes={(root / 'height.raw').stat().st_size} samples={side}x{side} seed={seed}")
+```
+
+PowerShell での実行例。各回は新しい AssetCook プロセスで、
+別のパッケージと manifest を書く。
+
+```powershell
+python (Join-Path $benchDir 'generate.py') $benchDir
+1..3 | ForEach-Object {
+    build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --kind world --format nvtrn.v0.height16 --entry-type Trn0 --input "$benchDir/terrain.json" --out "$benchDir/run$_.nvpkg" --manifest "$benchDir/run$_.manifest.json" --logical Terrain/Benchmark/Height.nvtrn --entry Terrain/Benchmark/Height.nvtrn
+    (Get-Item -LiteralPath "$benchDir/run$_.nvpkg").Length
+}
+```
+
+`AssetCook wrote world ...` の `elapsed_ms`・`peak_working_set_bytes`・`nvtrn_bytes` を採用し、
+パッケージのバイト数は出力ファイル長から取得する。
+`elapsed_ms` は `CookTerrainSpecFile` 呼び出し直前からパッケージ・manifest の書き込み完了までで、
+最初の引数・パス処理とスペックの先読み、および書き込み後の読み戻し検証は含まない。
+`peak_working_set_bytes` はその時点で取得した Windows の `PeakWorkingSetSize`
+（プロセス開始からの作業セットのピーク）で、cook の確保量だけを示す値ではない。
+入力生成・ビルド時間は計測に含めない。ファイルキャッシュを消去せず、3 回を順に実行した。
+
+| 実行 | elapsed_ms [ms] | peak_working_set_bytes [バイト] | NVTRN [バイト] | パッケージ [バイト] |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 415 | 106,610,688 | 19,988,764 | 19,988,956 |
+| 2 | 422 | 106,094,592 | 19,988,764 | 19,988,956 |
+| 3 | 415 | 106,102,784 | 19,988,764 | 19,988,956 |
+| 中央値 | 415 | 106,102,784 | 19,988,764 | 19,988,956 |
+| 範囲（最小～最大） | 415～422 | 106,094,592～106,610,688 | 19,988,764～19,988,764 | 19,988,956～19,988,956 |
+
+3 回とも終了コード 0、`cooked_hash=591a4f15478f4fa7` で一致した。
+この値は上の入力・平滑化なし・同一機械での実測であり、平滑化や別の入力形式の費用を含まない。
 
 ## 読み書きの入口
 

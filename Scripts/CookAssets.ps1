@@ -11,6 +11,9 @@
 # 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h。terrain-tile:<x>,<z> は
 # 荒野の手続きの地形の区画、terrain-tile:dem:<x>,<z> は DEM の格子の区画で、source_path が格子の記述（height.json）、
 # extra_sources が格子のファイルと区画の割り方のヘッダ。一覧の DEM の項目は Scripts/Terrain/WriteTerrainAssetSet.py が書く）を持つ。
+# 一覧の "worlds"（省略可）の各項目は logical_path・source_path・package_name・entry_name と、
+# format（省略時は nvtrn.v0.height16）・variant（省略時は一覧の default_variant）を持ち、地形を NVTRN へ焼く。
+# source_path の地形のスペックと、その場所を基準に height_source.path が指す高さのファイルを変更の検出に含める。
 #
 # 差分クック: 元のファイル・一覧の項目・共通設定・品質の内容から印を求め、変わらないものは前回の結果を使う。
 # 地形（モデルの generate が terrain-tile: で始まる項目）の印は exe を含まず、崖の細部の版と地形の経路のソースの内容を含む。
@@ -759,6 +762,83 @@ foreach ($specFile in $specFiles) {
             if ($isPlacementTerrain) {
                 $placementGroundSelected = $true
             }
+        }
+    }
+
+    # 地形のスペックを NVTRN へ焼く。高さのファイルも通常の印と欠落の検査に含める。
+    $worlds = @()
+    if (Test-PropertyExists -Object $spec -Name "worlds") {
+        if ($spec.worlds -isnot [System.Array]) {
+            throw "$specContext の worlds は配列にしてください"
+        }
+        $worlds = @($spec.worlds)
+    }
+
+    $worldIndex = 0
+    foreach ($world in $worlds) {
+        $context = "$specContext worlds[$worldIndex]"
+        $worldIndex++
+
+        $logicalPath = ConvertTo-LogicalPath `
+            -Path (Get-StringField -Object $world -Name "logical_path" -Context $context) `
+            -Name "$context の logical_path"
+        $entryName = ConvertTo-LogicalPath `
+            -Path (Get-StringField -Object $world -Name "entry_name" -Context $context) `
+            -Name "$context の entry_name"
+        $packageName = ConvertTo-RelativeManifestPath `
+            -Path (Get-StringField -Object $world -Name "package_name" -Context $context) `
+            -Name "$context の package_name"
+        $sourceText = Get-StringField -Object $world -Name "source_path" -Context $context
+        $format = "nvtrn.v0.height16"
+        if (Test-PropertyExists -Object $world -Name "format") {
+            $format = Get-StringField -Object $world -Name "format" -Context $context
+        }
+        $variant = $defaultVariant
+        if (Test-PropertyExists -Object $world -Name "variant") {
+            $variant = Get-StringField -Object $world -Name "variant" -Context $context
+        }
+
+        $key = "$logicalPath|world|$variant"
+        if ($seenKeys.ContainsKey($key)) {
+            throw "$context の logical_path|kind|variant が重複しています: $key"
+        }
+        $seenKeys[$key] = $true
+        $cookedPackage = "$packageRoot/$packageName"
+        if ($seenPackages.ContainsKey($cookedPackage)) {
+            throw "$context の出力パッケージが重複しています: $cookedPackage"
+        }
+        $seenPackages[$cookedPackage] = $true
+
+        $sourcePath = Resolve-RepoPath $sourceText
+        try {
+            $terrainSpec = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            throw "$context の地形のスペックを読めません: $sourceText（$($_.Exception.Message)）"
+        }
+        if (-not (Test-PropertyExists -Object $terrainSpec -Name "height_source")) {
+            throw "$context の地形のスペックに height_source.path がありません: $sourceText"
+        }
+        $heightPath = Get-StringField -Object $terrainSpec.height_source -Name "path" `
+            -Context "$context の地形のスペックの height_source"
+        if (-not [System.IO.Path]::IsPathRooted($heightPath)) {
+            $heightPath = Join-Path (Split-Path -Parent $sourcePath) $heightPath
+        }
+        $heightPath = [System.IO.Path]::GetFullPath($heightPath)
+        # ファイルが無くても相対化できるよう URI で求め、空白などのエスケープを戻す。
+        $repoUri = [System.Uri]::new($RepoRoot + [System.IO.Path]::DirectorySeparatorChar)
+        $heightText = [System.Uri]::UnescapeDataString($repoUri.MakeRelativeUri([System.Uri]::new($heightPath)).ToString())
+        $sourceTexts = @($sourceText, $heightText)
+        $cookArguments = @(
+            "--input", $sourcePath,
+            "--entry-type", "Trn0",
+            "--format", $format
+        )
+        $asset = Invoke-CookEntry -SetName $setName -PackageRootName $packageRoot -Variant $variant -Kind "world" `
+            -LogicalPath $logicalPath -CookedPackage $cookedPackage -EntryName $entryName -Item $world `
+            -SourceTexts $sourceTexts -StampTexts $sourceTexts -CookArguments $cookArguments -SetStateDir $setStateDir
+        if ($null -ne $asset) {
+            $aggregateAssets += $asset
         }
     }
 }

@@ -1,5 +1,6 @@
 ﻿// 単体cookのpackage/manifest/IO/自己検証。bodyのbyte生成規則は従来通り。
 #include "AssetCookOutput.h"
+#include "Asset/CookedTerrainFormat.h"
 #include "NativeCookPath.h"
 
 namespace NorvesLib::Tools::AssetCook::Detail
@@ -1484,6 +1485,42 @@ namespace NorvesLib::Tools::AssetCook::Detail
             return false;
         }
 
+        return true;
+    }
+
+    bool ValidateWorldAssetSystemOutput(
+        const std::filesystem::path& manifestPath,
+        const NorvesLib::Core::Container::AnsiString& manifestJson,
+        const NorvesLib::Core::Container::AnsiString& logicalPath,
+        const NorvesLib::Core::Container::AnsiString& variant,
+        const NorvesLib::Core::Container::VariableArray<uint8_t>& expectedPayload,
+        std::string& error)
+    {
+        const std::filesystem::path manifestParent = manifestPath.parent_path();
+        AssetSystem system{NorvesLib::Core::Container::AnsiString(manifestParent.generic_string().c_str())};
+        const NorvesLib::Core::Container::AnsiString sourceName(manifestPath.generic_string().c_str());
+        if (!system.LoadManifestFromJsonText(ToCoreString(manifestJson), sourceName))
+        {
+            error = "self-validation failed: world AssetSystem manifest load failed";
+            return false;
+        }
+        const auto result = system.ResolveAsset(logicalPath, AssetKind::World, variant);
+        if (!result.Succeeded() || result.Status != AssetResolveStatus::SuccessCooked || !result.UsedCooked())
+        {
+            error = "self-validation failed: world AssetSystem cooked resolve failed";
+            return false;
+        }
+        if (!CompareSkeletalBytes(result.Blob.GetData(), result.Blob.GetSize(), expectedPayload))
+        {
+            error = "self-validation failed: world AssetSystem resolved bytes mismatch";
+            return false;
+        }
+        const auto parsed = NorvesLib::Core::Asset::ParseCookedTerrain(result.Blob);
+        if (!parsed.Succeeded())
+        {
+            error = "self-validation failed: world cooked terrain parse failed";
+            return false;
+        }
         return true;
     }
 

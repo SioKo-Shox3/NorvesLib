@@ -9445,19 +9445,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（前回の指摘への対応差分）。
 - Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
 
-- U1 cook の動きの後処理を直し、合成の四足の試験を足す: 着地(直し 0 回)
-- U2 実物の BVH の回帰を環境変数で回せるようにし、タスクの verify を通す: 着地(直し 1 回)
-- Notes: 実物の V01full では周期が検出されず (2) の周期・閉じが不合格（再帰誤差 約 6.8°・周期内の動き 約 17°、Core の受け入れの比 0.2 を超える）。21 コマ目のスパイクは検出できた。Core の周期判定（SkeletalClipProcessing.cpp、paths の外）の変更待ちで BLOCKED。環境変数なしの verify は通る。
-- U3 ループの受け入れの比と許容を processing のキーにし、実物の profile で緩めて回帰を通す: 着地(直し 1 回)
-- Done: G4-GR128-CLEANUP-CASES 完了。role-profile の processing に `loop_rms_threshold_degrees`（0 超 45 以下、既定 0.05 rad）と `loop_recurrence_ratio`（0 超 1 以下、既定 0.2）を足し、`SkeletalClipProcessing.cpp` の比の固定値を設定へ出した（実行時の周期検出 `MotionAnalysis.cpp` は既定のまま）。周期の平均は継ぎ目の開始より前の周期も使う（開始が 0 のときは従来と同じ）。
-- 実測（V01full、許容 8.5°・比 0.5）: 周期 12.49 コマ、再帰誤差 6.76°、比 約 0.41、averaged_cycles=4、閉じ 平均 0°・最大 0°、21 コマ目のスパイク 23.33°→11.96°。
-- 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest AssetCook SkeletalAnimationSamplingTest -- /m:1` 終了コード 0、タスクの ctest 5 本 4 Passed・1 Skipped、`MotionProcessingTest`・`SkeletalAnimationSamplingTest` Passed（`MotionProcessingTest` の数値出力は変更前と一致）、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
-- Next: Core（SkeletalClipProcessing・SkeletalRoleProfile）を変えたので、ランナーの評価者の反証を通す。
-- Notes: 試験の閉じの誤差は出力の先頭と末尾のキーで測るため、ループの継ぎ目の補正で構成上 0 になる（整形前の 12.2° との比較は弱い）。
-- U4 接地の最短時間の境目を実行時と同じ許容で比べ、0.05 秒ちょうどの区間を捨てないようにする: 着地(直し 0 回)
-- Done: G4-GR128-CLEANUP-CASES の差し戻しを直した。cook の接地の最短時間（`RigMotionCleanup.cpp` の `close`）を、実行時の `MotionAnalysis.cpp` と同じ float の epsilon の許容付きで比べるようにし、`FootContactOptions::MinimumWindowSeconds`（0.05f）を double に広げた誤差で 0.05 秒ちょうどの区間（60/120/200 fps の 3/6/10 標本）を捨てないようにした（閾値の値は変更前と同じ扱い）。
-- 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（タスクの verify のビルド 終了コード 0、ctest 5 本 4 Passed・1 Skipped 終了コード 0、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
-- Next: ランナーの評価者の反証を通す。
-- Notes: 要起票: `SkeletalClipProcessing.cpp:417` のスパイク除去の格子が float の長さの `ceil` で 1 コマ多くなり BVH のコマとずれる（21 コマ目のスパイクが半分しか消えない）。
-- Notes: 要起票: `cleanup_retime_metadata` で失敗したとき、Event・印・根の移動が書き込まれた後でクリップが変わったまま残る。
-- Notes: 要起票: 周期の平均が継ぎ目の開始より前の周期も使うようになり、`MotionProcessingTest.cpp:420` のコメント「開始から末尾までに収まる周期だけを数える」が実装と合わない。
+- U0 試験と煙の確かめが共用する小さな PNG16 のフィクスチャ: 着地(直し 0 回)
+- U1 高さの取り込み HeightfieldImport と、地形 cook の API の宣言・CMake: 着地(直し 1 回)
+- U2 TerrainCooker（全体の法線・量子化・タイル切り・LOD 誤差・AABB・NRM0・NVTRN の書き出し）: 着地(直し 0 回)
+- U3 TerrainSpec（スペック JSON の解析と cook の取りまとめ・source_hash）: 着地(直し 0 回)
+- U9 草原の検証用の地形の入力（U6 の成果から始め、崖の端を丸める）: 着地(直し 0 回)
+- U4 AssetCook の --kind world の経路と AssetCookTerrainSmoke: 着地(直し 0 回)
+- U5 CookedTerrainTest の cook の経路のケース (a)〜(g): 着地(直し 0 回)
+- U7 CookAssets.ps1 が一覧の worlds（kind=world）を焼く: 着地(直し 0 回)
+- U8 NVTRNv0.md に cook の節と 2049×2049 の計測を書き、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-04 G5-GR89-TERRAIN-COOKER（run 20261104-082802 の反復 3、完了）
+- Done: AssetCook に `--kind world --format nvtrn.v0.height16 --entry-type Trn0` を足した。terrain spec JSON（height_source・height_mapping・cell_size_m・tile_cells・fit・require_bit_depth・smooth・seed・recipe）を解析し、png16/png8/raw16/raw32f/exr を取り込んで、地図全体の量子化と中心差分の法線（NRM0 RG8）、境界 1 標本を共有するタイル切り、stride 1/2/4/8 の LOD 誤差と AABB を NVTRN に書く。manifest に kind=world・Trn0・cooked_hash・source_hash（スペックと高さのファイルのバイト）を出す。CookedTerrainTest に解析面の (a)〜(g)、`AssetCookTerrainSmoke` を cmake -P で登録した。CookAssets.ps1 が一覧の worlds を焼く。草原の地形の入力（`Scripts/Terrain/GenerateGrasslandHeight.py`・`Assets/TerrainSpecs/Grassland/`・`Assets/AssetSets/GrasslandTerrain.json`）を足した。`Docs/Architecture/NVTRNv0.md` に cook の節と 2049×2049 の計測（RelWithDebInfo・i9-13900KF・中央値 415 ms・作業セットのピーク 106 MB・NVTRN 19,988,764 バイト）を書いた。
+- 証拠: `.harness/runs/20261104-082802/verify-G5-GR89-TERRAIN-COOKER-U8.txt`（AssetCook・CookedMeshTest の Debug ビルド exit=0、ctest で CookedTerrainTest・AssetCookTerrainSmoke・AssetCookMeshSmoke・AssetCookTextureSmoke の 4 件 100% Passed、`CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` が `COOK_ASSETS cooked=1 skipped=0` で exit=0）。
+- Next: アプリの起動の確かめは無い。地形のマスクは G5-GR89-TERRAIN-MASKS、描画の経路と目視は G5-GR37-TERRAIN-COMPONENT・G5-GR37-TERRAIN-CHECK。
+- Notes: `-OnlyLogicalPath` で焼くには既存の `build/CookedAssets/manifest.json` が要る（対象外の項目を引き継ぐため）。草原の PNG16 は 0〜64 m の写像で、実際の高さは 20.57〜39.16 m。`seed` は今の高さの処理には使わず、スペックのバイトとして source_hash に入る。
