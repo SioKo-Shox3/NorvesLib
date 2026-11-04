@@ -9341,6 +9341,8 @@
 - paths: Library/Core/Public/Asset/AssetManifest.h, Library/Core/Private/Asset/AssetManifest.cpp, Library/Core/Private/Resource/ImportSettings.h, Library/Core/Private/Resource/ImportSettings.cpp, Library/Core/Private/Resource/ImportSettingsJson.cpp, Library/Core/Private/Resource/ImportSettingsHash.cpp, Tools/AssetCook/MeshCooker.cpp, Tools/AssetCook/RigSplitCook.cpp, Tools/AssetCook/RigSplitCook.h, Tools/AssetCook/TextureAssetSetCook.cpp, Tools/AssetCook/AssetCookOutput.cpp, Tools/AssetCook/AssetCookOutput.h, Tools/AssetCook/SingleAssetCook.cpp, Tools/AssetCook/CookBatchReport.cpp, Tools/AssetCook/CookBatchReport.h, Tools/AssetCook/CMakeLists.txt, Tools/AssetCook/AssetCookCollisionSmoke.cmake.in, Game/Bridge/NorvesLibBridgeAdapter.cpp, Test/Core/Asset, Docs/Architecture/ImportSettings.md, Docs/Architecture/NVCOLv0.md, Docs/Architecture/AssetFallbackPolicy.md, Docs/Architecture/AssetCookWorkflow.md, TASKS.md, PROGRESS.md
 - notes: GR81 の手順 (2)(5)（ロードマップ 3093・3099 行）。当てはめの入力は修復の後・簡略化の前のメッシュにする（ロードマップ 3085 行の順「import transform → repair → simplify → collision fit」は工程の並びで、簡略化の設定で衝突の形が変わらないよう、形は修復の出力から求める）。同じ取り込み設定と `MeshCooker.cpp` を G17-GR80-REPAIR・SIMPLIFY が触るので、その後にした。Bridge（`Game/Bridge/NorvesLibBridgeAdapter.cpp`）は `AssetKind` を使っているので、新しい kind を受けたときの扱いを確かめて、必要なら最小の差分で直す。危険地帯（アセットの形式・Public API）なので評価者を通す。試験を足す理由: collision の entry が増分の判定で取り残される・model の再 cook を巻き込むのは、古い当たりや cook の遅さとしてしか見えず黙って起きる。
 
+- notes-board: AssetKind の番号は段階をまたいで次のとおりに割り振る(計画役ごとに決めた番号が重なったため): World = 7(G5。入れ済み)・Material = 8(G6-GR91)・Collision = 9(G17-GR81)・Video = 10(G14-GR127)。ほかの番号を使わない
+
 ## G17-GR81-RUNTIME-BUILDER: collision の資産を読み、Entity にコライダー（根と子の複合）として載せる組み立てを作る
 - status: todo
 - after: G17-GR81-COOK-ENTRY
