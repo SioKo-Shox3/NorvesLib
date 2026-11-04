@@ -16,7 +16,7 @@ AnimatorはAnimation群でUpdate、PoseFinalize群でEvaluate・modifier・Submi
 
 - params: name、type(float/int/bool/trigger)、value（省略時0）、任意bind。bindはspeed、velocityX/Y/Z、accelerationX/Y/Z、turnRate、grounded、groundNormalX/Y/Z。型を厳密に合わせる。float/intだけ任意min/max（intは整数）を片方または両方指定できる。SetFloat/SetInt・bindの書き込み・スクリプトのSetAnimFloatByIndex/SetAnimIntByIndexは範囲へ丸める。既定値が範囲外、min>max、bool/triggerへのmin/max指定はInvalidSchemaで読込失敗。実行時は添字でアクセスする
 - masks: name、root（関節名1つ）かroots（関節名の配列）のどちらか一方、fadeDepth。0は枝の全関節が1、正値は根から深くなるほど1へ立ち上げる。rootsは各根の枝の重みの関節ごとの最大を取り、fadeDepthは各根に同じく効く。root/rootsの両方の指定・空配列はInvalidSchema、重複はDuplicateName、未知の関節名はUnknownJoint。親が後ろに並ぶ骨格も扱う
-- clip: clip（IClipResolverで解決する名前）、loop（既定true）、rate（既定1）。負のnonloopは末尾から開始
+- clip: clip（IClipResolverで解決する名前）、loop（既定true）、rate（既定1）、markerEvents（既定false）。負のnonloopは末尾から開始。markerEventsは真偽値だけを受け付け、型違いはInvalidSchema（marker_events）で読込失敗
 - blend1d: x（float値またはfloatパラメータ名）、samples（position/node）。positionは数値か文字列"nominalSpeed"。"nominalSpeed"は子のClipノードのクリップの公称速度（metadataの明示値、無ければrootの移動から推定。AnimGraphInstance::GetNominalSpeedと同じ値）を位置にする。子がClipノードでないとInvalidSchema、明示の公称速度が正でないとInvalidNominalSpeed、解決後の位置が厳密に増加しないとInvalidSchemaで読込失敗。推定値はインスタンスのmeshの変換に依存するため、推定に頼る位置はインスタンスのInitializeで確かめ、不正ならInitializeが失敗する。実行時のApplyMetadataJsonで公称速度が変わったら次のUpdateで位置を解き直し、不正ならUpdateがfalseを返して前の位置を保つ。範囲外はクランプ
 - blend2d: x/y、axisX/axisY（各2点以上の等間隔格子）、children（行優先）。双線形で混ぜる。軸は明示値で指定し、公称速度からの自動配置は行わない
 - blend2: childrenが2件、weight（float値またはfloatパラメータ名、既定0.5）
@@ -44,9 +44,15 @@ overlayはMetadataRevisionだけを更新し、姿勢revision、cooked receipt�
 - rootMotion: mode（none/inPlace/extract）、joint（省略時はcurveの根または骨格の根）、x/z/yaw（既定true）、nominalSpeed（負値は自動推定）
 - groundOffset: モデル空間Yの基準高さ
 
+イベントとmarkerの命名規約はドット区切り（例 `Foot.LH.Down`）。接地は `Foot.<脚>.Down`・`Foot.<脚>.Up`、脚の記号は `LF`（左前）・`RF`（右前）・`LH`（左後）・`RH`（右後）とする。身震いのように始まりと終わりのある動作は、`*_begin` / `*_end` の2つの点イベントに分けず、endを持つ窓イベント1つで表す。
+
 名前は最大1024文字。未知キーはextrasでは無視し、実行時sidecarでは警告する。glTF由来の長さ値はインポート単位変換を受け、実行時sidecarは変換後のモデル単位で与える。時間の倍率はevents/markers/loopと明示nominalSpeedへ適用する。
 
 イベントはUpdateで蓄積し、AnimatorのPoseFinalizeで配送する。windowはBegin用領域とEnd用領域を予約し、重み閾値割れ・metadata差替え・Reset・グラフ破棄でもinterrupted Endを出す。同期グループ内で同名・同じ周回の重なるwindowは1組へまとめる。複数Updateをまとめて配送してもbatch順を保つ。64件の配送領域、256件の候補、8周の走査上限を超えた分は警告し、開いたwindowの終了を優先する。イベントcallback中のグラフ交換・再初期化・移動は行わない。購読先は配送・グラフ破棄より長く生存させる。
+
+clipノードで `"markerEvents": true` を指定すると、そのノードがmarkerを跨いだときに同じ名前の点イベントを出す。minWeightは `AnimEvent{}` の既定値0.3、Value・IntValueは0。EventIndexは `events` の件数 + markerの添字となる。順再生の `(prev, cur]`（逆再生は `[cur, prev)`）、周回、ループ範囲外の除外は点イベントと同じ。同期グループ内でも、同じ配送batch・周回で別ノードの同名イベントが同時刻に重なる場合の重複除去は点イベントと同じ。既定falseのグラフの配送は変わらない。
+
+markerと同名の点イベントも持つクリップで有効にすると二重に配送されるため、markerEventsはopt-inとする。
 
 ## ルートモーションと解析
 
@@ -54,7 +60,9 @@ ConsumeRootMotionはEntityへ適用するモデル平面のX/Z並進とY軸yaw�
 
 noneは姿勢を変えず、inPlaceは移動を姿勢から除去、extractは除去した移動を消費口へ渡す。stateのrootMotionはinherit/animation/velocity。animationはinPlace/extractの移動を採用し、velocityは消費口への出力を抑える。noneのクリップから状態設定だけで移動を新規抽出しない。レイヤーのroot関節maskとブレンド重みも移動へ反映する。Entityや物理への適用は呼出側が行う。
 
-AnalyzeFootContactsはモデル空間Yと鉛直速度から接地候補を作り、groundOffset・窓・confidence・下書きJSONを返す。水平足滑り、地形、実際の接触は判定しない。DetectCycleはG2の共通処理を再利用し、関節の局所回転から周期と下書きloopを返す。並進だけの周期は対象外。どちらもResource・ファイルを変更せず、人が候補を確認して採用する。
+AnalyzeFootContactsはモデル空間Yと鉛直速度から接地候補を作り、groundOffset・窓・confidence・下書きJSONを返す。接地の判定は `DetectFootContactWindows` 1つにまとめ、cookも同じ関数を呼ぶ。足ごとの最低の高さを基準に、既定では高さ0.03以下かつ鉛直速度の絶対値0.15以下を接地とし、0.05秒未満の窓を除く。窓の中では高さ・鉛直速度のしきい値をともに1.5倍にして接地を維持する。groundOffsetは全足の最低の高さ。下書きはmetadataのloopが有効なら `Foot.<脚>.Down/Up` のmarker、非ループなら窓ごとの同名の点イベントとし、終端まで接地する窓のUpは省く。窓イベントは生成しない。
+
+水平足滑り、地形、実際の接触は判定しない。DetectCycleはG2の共通処理を再利用し、関節の局所回転から周期と下書きloopを返す。並進だけの周期は対象外。どちらもResource・ファイルを変更せず、人が候補を確認して採用する。
 
 ## NVSKEL v1の任意節
 

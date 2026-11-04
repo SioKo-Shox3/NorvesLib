@@ -9743,3 +9743,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 animgraph の clip ノードに markerEvents を足し、marker から同じ名前の点イベントを出す: 着地(直し 0 回)
 - U3 cook の後処理を Library の判定と名前に載せ替える: 着地(直し 0 回)
 - U4 cook の足の印の名前・二重にならないこと・Library と cook の窓の一致を RigSplitCookTest で確かめる: 着地(直し 0 回)
+- U5 名前の規約・markerEvents・cook の名前と試験を文書に書き、タスクの verify を回す: 着地(直し 0 回)
