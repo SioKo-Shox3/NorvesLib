@@ -126,7 +126,7 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 
 文脈の口:
 
-- 反証する契約（`TestModifierContextDelivery`）: 受け入れた駆動信号と有効フラグ、所有 Entity、骨格の関節名検索（既知名の添字・未知名の -1）、回転・スケール・並進を持つ MeshToWorld が Apply に届く。
+- 反証する契約（`TestModifierContextDelivery`）: 受け入れた駆動信号と有効フラグ、所有 Entity、骨格の関節名検索（既知名の添字・未知名の -1）が Apply に届く。所有者に回転・並進・非一様スケールを与え、各関節の記録したモデル行列 × MeshToWorld が TryGetJointWorldMatrix の成功結果と要素ごと 1e-5 × max(1, |値|) 以内で一致する。MeshNodeTransform はメッシュノードのグローバル変換とビット一致し、MeshToWorld はその変換と異なる。
 - ほかの手段で気づけるか: 気づきにくい。信号・所有者・変換の受け渡し漏れは modifier を使う条件が揃うまで現れず、撮影やログから文脈の値を確かめられない。
 - 失敗が黙って起きるか: 起きる。既定値のままでも Apply を呼べるため、条件次第で補正が欠けたり空間がずれたりする。
 

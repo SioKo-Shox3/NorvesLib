@@ -1,6 +1,7 @@
 ﻿#include "Component/AnimatorComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Object/Entity.h"
+#include "Math/MatrixUtils.h"
 #include "Animation/SkeletonResource.h"
 #include "Platform/PlatformFile.h"
 #include <algorithm>
@@ -383,7 +384,16 @@ namespace NorvesLib::Core::Component
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
         context.SyncPhases = m_Instance.GetSyncPhases();
-        context.MeshToWorld = mesh->GetMeshNodeGlobalTransform();
+        if (const auto* owner = mesh->GetOwner())
+        {
+            const auto& world = owner->GetWorldTransform();
+            context.MeshToWorld = Math::MatrixUtils::CreateWorldRowVector(world.position, world.rotation, world.scale);
+        }
+        else
+        {
+            context.MeshToWorld = Math::Matrix4x4::Identity;
+        }
+        context.MeshNodeTransform = mesh->GetMeshNodeGlobalTransform();
         context.SetDriveSignals(m_bHasDriveSignals ? &m_LastDriveSignals : nullptr);
         context.SetOwner(GetOwner());
         context.SetSkeletonAsset(m_BoundSkeleton.get());

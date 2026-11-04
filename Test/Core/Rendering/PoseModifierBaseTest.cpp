@@ -539,6 +539,8 @@ namespace
         int32_t ChildIndex;
         int32_t MissingIndex;
         Math::Matrix4x4 MeshToWorld;
+        Math::Matrix4x4 MeshNodeTransform;
+        Container::VariableArray<Math::Matrix4x4> JointModelMatrices;
     };
 
     Container::VariableArray<ModifierCall>* g_ModifierCalls = nullptr;
@@ -558,9 +560,15 @@ namespace
 
         bool Apply(Animation::LocalPose&, Animation::PoseModifierContext& context) override
         {
+            const auto* models = context.GetJointModelMatrices();
+            if (!models)
+            {
+                return false;
+            }
             m_Calls.push_back({m_Id, this, context.Weight, context.HasDriveSignals(), context.GetDriveSignals(),
                                context.GetOwner(), context.FindJointIndex(Identity("Child")),
-                               context.FindJointIndex(Identity("NoSuchJoint")), context.MeshToWorld});
+                               context.FindJointIndex(Identity("NoSuchJoint")), context.MeshToWorld,
+                               context.MeshNodeTransform, *models});
             return true;
         }
 
@@ -889,8 +897,10 @@ namespace
 
     void TestModifierContextDelivery()
     {
-        // 駆動信号・所有者・関節検索・メッシュ変換が modifier に届く契約を反証する。
+        // 駆動信号・所有者・関節検索と、モデルからワールドおよびメッシュノードの変換が届く契約を反証する。
         ModifierFixture fixture;
+        const Math::Transform ownerWorld({10, -3, 7}, ToFloat(AxisAngle({1, 2, -1}, 0.7)), {1.5f, 0.75f, 2.25f});
+        fixture.Owner->SetWorldTransform(ownerWorld);
         Animation::AnimDriveSignals signals;
         signals.Speed = 2.5f;
         signals.Velocity = {1.25f, -2.5f, 3.75f};
@@ -916,12 +926,36 @@ namespace
         CheckConfig(call.Owner == fixture.Owner, "所有 Entity の受け渡し");
         CheckConfig(call.ChildIndex == 1 && call.MissingIndex == -1, "骨格の関節名検索");
         const auto& meshTransform = fixture.MeshComponent->GetMeshNodeGlobalTransform();
+        CheckConfig(call.JointModelMatrices.size() == fixture.Skeleton->GetPoseRuntime().Parents.size(),
+                    "TestModifierContextDelivery: 全関節のモデル行列の記録");
+        double maxMatrixElementError = 0;
+        for (size_t joint = 0; joint < call.JointModelMatrices.size(); ++joint)
+        {
+            Math::Matrix4x4 expectedWorld;
+            CheckConfig(fixture.MeshComponent->TryGetJointWorldMatrix(static_cast<uint32_t>(joint), expectedWorld),
+                        "TestModifierContextDelivery: 関節のワールド行列の取得");
+            const auto actualWorld = call.JointModelMatrices[joint] * call.MeshToWorld;
+            for (int element = 0; element < 16; ++element)
+            {
+                const double expected = expectedWorld.values[element];
+                const double error = std::fabs(static_cast<double>(actualWorld.values[element]) - expected);
+                const double magnitude = std::fabs(expected);
+                const double limit = 1e-5 * (magnitude > 1.0 ? magnitude : 1.0);
+                RecordMax(maxMatrixElementError, error);
+                CheckWithin(error, limit, "TestModifierContextDelivery: モデル行列 * MeshToWorld とワールド行列の一致",
+                            static_cast<int>(joint * 16 + element));
+            }
+        }
+        bool bDifferentTransforms = false;
         for (int i = 0; i < 16; ++i)
         {
             Check(SameBits(meshTransform.values[i], transform.values[i]) &&
-                      SameBits(call.MeshToWorld.values[i], meshTransform.values[i]),
-                  "メッシュからワールドへの変換", i, call.MeshToWorld.values[i], meshTransform.values[i]);
+                      SameBits(call.MeshNodeTransform.values[i], meshTransform.values[i]),
+                  "メッシュノードのグローバル変換の受け渡し", i, call.MeshNodeTransform.values[i], meshTransform.values[i]);
+            bDifferentTransforms |= !SameBits(call.MeshToWorld.values[i], meshTransform.values[i]);
         }
+        CheckConfig(bDifferentTransforms, "モデルからワールドへの変換とメッシュノードの変換の区別");
+        std::printf("TestModifierContextDelivery maxMatrixElementError=%.17g\n", maxMatrixElementError);
     }
 } // 無名名前空間
 
