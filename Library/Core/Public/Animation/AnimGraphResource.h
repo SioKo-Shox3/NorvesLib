@@ -98,6 +98,8 @@ namespace NorvesLib::Core
             uint32_t Clip = InvalidAnimNode;
             float PlaybackRate = 1;
             bool bLoop = true;
+            /// マーカーを跨いだときに同名の点イベントを配送する。
+            bool bMarkerEvents = false;
             Container::VariableArray<AnimLayer> Layers;
             Container::VariableArray<AnimState> States;
             Container::VariableArray<AnimTransition> Transitions;

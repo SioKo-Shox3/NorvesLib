@@ -9740,3 +9740,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命: 撃破の直後の破棄の順・配送中の購読の解除）。
 - Notes: 起動の要る確かめは無い（シーンに敵は置いていない。垂直スライスは G8-GR17-SLICE-SMOKE）。ShishaComponent の Tick は Initialize での登録のため、World の Tick の収集中に初期化された最初のフレームは動かず、次のフレームから動く。
 - U1 Library に接地の判定の純関数と接地の metadata の作り方を置き、AnalyzeFootContacts をそれに載せ替える: 着地(直し 0 回)
+- U2 animgraph の clip ノードに markerEvents を足し、marker から同じ名前の点イベントを出す: 着地(直し 0 回)
