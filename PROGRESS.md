@@ -9674,3 +9674,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 SaveService と NorvesEngine のメンバ: 着地(直し 0 回)
 - U4 Game の結線: 着地(直し 0 回)
 - U5 SaveServiceTest と試験の文書: 着地(直し 0 回)
+
+## 2026-10-23 SCN-WL-OCCLUSION-FIX（run 20261022-173753 の反復 40）
+- Done: 反復 37 の直し（052bac84。前後を共通の画素で比べる・直す前の GPU 時間を同じビルドで測る起動引数・岩の自分への近い当たりの読み飛ばし）の版で verify を全部回し直して閉じた。`WastelandOcclusion.md` の「直した結果」の表と GPU 時間・回帰を最終の版の値に書き換えた
+- 証拠（`.harness/runs/20261022-173753/`）:
+  - `verify-SCN-WL-OCCLUSION-FIX-12.txt`: Debug の Game のビルド EXIT=0
+  - `-13.txt`〜`-20.txt`: 全 8 組の撮影 CAPTURE result=pass・EXIT=0
+  - `-21.txt`: `--occlusion --expect --verify` result=pass・EXIT=0。決めた 2 層 1.313 → 1.0485・1.273 → 1.0363、ほかの層は変化 0.0002 以内、対照の Y 0.985 / 0.993 倍。前後の画素の xor は terrain-sky 10・rocks-cliff-sky 11・ほか 0 で、共通の画素だけで測った
+  - `aux-SCN-WL-OCCLUSION-FIX-timing-before-2.txt`（直す前、`--wasteland-rtgi-non-caster-occlusion=off`。ゲームのログで引数が効いたことを確かめた）14.733 ms、`-22.txt`（後）15.106 ms。どちらも予算 33.3 ms の内、LightingPass 1.531 → 1.533 ms
+  - `-23.txt`: 回帰の after result=pass（検証レイヤーのログ 4 本とも空、PSNR 64.1 dB 以上）。before は反復 36 の直す前のもの
+  - `aux-SCN-WL-OCCLUSION-FIX-rock-face-40.png`・`.txt`: rocks-sky の contact_near の直す前・後・0.3 倍未満に暗くなった画素（7823）を並べた画を開き、岩の面に黒い斑が無いことを確かめた。`cycles/rocks-sky/occlusion_preview/contact_near.png` と `regression/SCN-WL-OCCLUSION-FIX/after/night-village-diff.png`（最大 42 段・2 段超え 778 画素のまばらな点）も開いた
+- Next: TASKS.md の次の未完
+- Notes: 基準画像の検査は回していない（検証アプリは RTGI を切り、設定の既定も切で、切のときは影を落とさない物が拡散の光線の印に入らず読み飛ばしも効かない。HEAD の版でも同じ値で落ちる前からの差は反復 36 の `aux-...-golden-head.txt`）。GPU 時間の差 +0.37 ms はほとんど FoliagePass（1.915 → 2.211 ms）の揺れ。新しい試験は足していない
+## 2026-11-04 G8-GR76-STATE-AUTOSAVE（run 20261104-185917 の反復 1、完了）
+- Done: `Save/GameStateStore.h`(キーは Identity、値は bool/int64/double、スコープは Persistent/Session。台帳 `Assets/Data/state_keys.json`(空の `keys`)を読み、未登録・型違いのキーの get/set は警告を出して拒否。値が変わったときだけ MulticastDelegate で 1 回通知。Persistent の列挙・名前での適用・スコープ単位のリセット)。`Save/SaveService.h`(`Save(slot)`・`RequestAutosave(reason)`・`Load(slot)`。次の `Update(bModeTransitionPending)` までの要求を 1 回のスナップショットにまとめ、遷移の保留が無く SaveInhibit の参照カウントが 0 のときだけ GameThread でスナップショットを作り、JobSystem へ 1 つのタスクで出して完了の印をポーリングする。書き込み中の要求は完了の後に 1 回で書く。`FlushAndWait` は保留も書いて待つ。投入が拒否されたら同期で書く)。両方を `NorvesEngine` のメンバに足した。`Game/Save/ProgressSaveData`(仕様の JSON、waypoint は id と kind(bed・checkpoint・poi)、mapMask は 16 進の文字列、2^53 以上の ints は文字列、`MigrateSavePayload` を通して v1 も読む。flags/ints/reals を GameStateStore の Persistent と写す)。Game は起動時に台帳の読み込み・保存先(`GetUserDataDirectory("Game")`)・スナップショットの提供と読み込みの受け取りを結線し、`OnPreShutdown` で `FlushAndWait` の後に呼び出し先を外す。試験 `GameStateStoreTest`・`SaveServiceTest` を LoggerSinkTest の束へ、`Docs/Testing.md` に理由。
+- 証拠: `.harness/runs/20261104-185917/verify-G8-GR76-STATE-AUTOSAVE.txt`(Game・LoggerSinkTest の Debug ビルド exit 0・エラー 0、ctest で GameStateStoreTest・SaveServiceTest・SaveContainerTest・AtomicFileWriteTest・SaveMigrationTest・SaveSlotFallbackTest・LoggerSinkTest の 7 件 100% Passed)。
+- 決定: double の Persistent のために `progress.reals{}` を足した(仕様の flags/ints に加えた欄。無ければ空として読む)。v1 の文字列の waypoint は kind=checkpoint として読む。遷移の保留は SaveService が自分で問わず、呼び出し側が `Update` に渡す。
+- Next: ランナーの評価者の反証(ジョブ・Public API の危険地帯)。リセットの縦の道と ProgressionState との写しは G8-GR76-RESET-LIFETIME、設定は G8-GR76-SETTINGS。
+- Notes: 起動の要る確かめは無い(Game の起動・終了での保存の動きは未確認。終了時は JobSystem の受け付けの停止の後に `OnPreShutdown` が走るので、保留の書き込みは GameThread で同期に書かれる)。
+- Notes: 要起票: Game の毎フレームで `SaveService::Update` を呼んでいない。`GameModeStateMachine::Update` は保留の遷移を先頭で適用した後に Tick を呼び、Tick の中の要求は次のフレームまで残る(`LauncherRoutine::Tick` など)ので、handler のどのコールバックでも「保留なし」とは言えない。`GameModeStateMachine` に保留中の遷移を問う公開の関数を足し(この項目の paths の外)、その値を渡して毎フレーム `Update` を結線する。それまでは自動保存・`Save` の要求は終了時の `FlushAndWait` でだけ書かれる。
