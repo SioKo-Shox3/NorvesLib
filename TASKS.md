@@ -5327,7 +5327,7 @@
 - notes: 確かめ直しの (b)。今あるのは入力の取り込みとジャンプの消費（PhysicsFixedStepPipelineTest.cpp 1073-1161 行）、World より後に破棄（1163-1181 行）、設定の JSON の解析と内容の検出（LocomotionProfileReloadTest、Component を通さない）、時間区間のキュー（RootMotionTimeQueueTest、Component を通さない）。要件 `#### GR05` の受け入れ確認の QuadrupedLocomotionComponentTest（Movement 群の結果を Camera 群が同フレームで読む、JSON の再読込、壊れた JSON は前の値を維持）と、ロードマップ 262 行の「Animator のパラメータへ渡す」は Component を通して確かめていない。`PublishVisual`（QuadrupedLocomotionComponent.cpp）はパラメータの設定の失敗を `(void)` で捨てるので、名前の食い違いが黙って起きる。位相の増分は渡していない（位相の正本は G3 の同期グループ。ロードマップ 4451 行）ので、試験しない。設定の読み先は `TextAssetReloadTracker` の既定の資産の置き場（`Gameplay/DogLocomotion.json`）なので、試験が一時フォルダを読ませる口（例: 置き場を受け取る `SetProfileSource`）が要るなら Component に足してよい。グラフの組み方は `Test/Core/Rendering/AnimGraphRuntimeTest.cpp` に倣う。ルート移動の消費の位置（G3-S5）は G3 の実装のとおり固定ステップ側で、この試験はそれを前提にする。GR10・GR11 の確かめ直しで Animator の口が変わるなら、その後に回す（needs-gr）。やらないこと: 歩様の数値の調整、アニメーショングラフの資産の作成。
 
 ## G4-GR128-CLEANUP-CASES: cook の動きの後処理（接地の区間・足の印・導出のルート移動・自然な速さ・速さに合わせた時間の補正・報告）を合成の四足で試験し、実物の BVH の回帰を環境変数で回せるようにする
-- status: doing
+- status: done
 - after: G3-GR11-EVENT-PROPERTIES
 - gr: GR128
 - needs-gr: GR11

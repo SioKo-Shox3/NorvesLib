@@ -9410,3 +9410,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: Core（SkeletalClipProcessing・SkeletalRoleProfile）を変えたので、ランナーの評価者の反証を通す。
 - Notes: 試験の閉じの誤差は出力の先頭と末尾のキーで測るため、ループの継ぎ目の補正で構成上 0 になる（整形前の 12.2° との比較は弱い）。
 - U4 接地の最短時間の境目を実行時と同じ許容で比べ、0.05 秒ちょうどの区間を捨てないようにする: 着地(直し 0 回)
+- Done: G4-GR128-CLEANUP-CASES の差し戻しを直した。cook の接地の最短時間（`RigMotionCleanup.cpp` の `close`）を、実行時の `MotionAnalysis.cpp` と同じ float の epsilon の許容付きで比べるようにし、`FootContactOptions::MinimumWindowSeconds`（0.05f）を double に広げた誤差で 0.05 秒ちょうどの区間（60/120/200 fps の 3/6/10 標本）を捨てないようにした（閾値の値は変更前と同じ扱い）。
+- 証拠: `NorvesLib-1-u1/.harness/unit-verify.txt`（タスクの verify のビルド 終了コード 0、ctest 5 本 4 Passed・1 Skipped 終了コード 0、`NORVES_MOTION_SAMPLE_DIR` ありで `MotionSampleRegressionTest` Passed、numstat の 2 通りが一致）。
+- Next: ランナーの評価者の反証を通す。
+- Notes: 要起票: `SkeletalClipProcessing.cpp:417` のスパイク除去の格子が float の長さの `ceil` で 1 コマ多くなり BVH のコマとずれる（21 コマ目のスパイクが半分しか消えない）。
+- Notes: 要起票: `cleanup_retime_metadata` で失敗したとき、Event・印・根の移動が書き込まれた後でクリップが変わったまま残る。
+- Notes: 要起票: 周期の平均が継ぎ目の開始より前の周期も使うようになり、`MotionProcessingTest.cpp:420` のコメント「開始から末尾までに収まる周期だけを数える」が実装と合わない。
