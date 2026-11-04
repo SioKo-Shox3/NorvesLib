@@ -8888,6 +8888,8 @@
 - paths: Library/Core/Public/Asset/AssetManifest.h, Library/Core/Private/Asset, Library/Core/Public/Asset/CookedVideoFormat.h, Library/Core/CMakeLists.txt, Tools/AssetCook, Test/Core/Asset, TASKS.md, PROGRESS.md
 - notes: ロードマップ 2868 行（クックは `AssetKind::Video`・`Vid0`・`NVVID v0`・`AssetCook --kind video`）、要件 `#### GR127` の設計案の (3)。要件とロードマップの「Video=5」は古い（今は 5・6 を Skeleton・Animation が使う。AssetManifest.h:23-24）。G5-GR89-NVTRN-FORMAT が `AssetKind::World` を足すので、その後に次の空きの値を取る（同じ値をぶつけないため after に挙げた）。資産の種別の追加の規則が 1 つにまとまっていない件（段階をまたぐ注意 4424 行）は、末尾に足して既存の値を変えない、という今の前例に従う。`needs-gr: GR96` は AssetCook の増分の判定と cooker の版（G2 の GR96 の項目）の上に載せるため。AssetCook は 10-02 の後に cook の管理の層（CookOutputPlan など、Tools/AssetCook）が大きく入っているので、既存の kind の追加の経路を読んで同じ形で足す。クック時の dav1d での全フレームのデコードの検査と golden の記録は G14-GR127-DAV1D。危険地帯（アセットの読み込み）。評価者を通す。
 
+- notes-board: AssetKind の番号は段階をまたいで次のとおりに割り振る(計画役ごとに決めた番号が重なったため): World = 7(G5。入れ済み)・Material = 8(G6-GR91)・Collision = 9(G17-GR81)・Video = 10(G14-GR127)。ほかの番号を使わない
+
 ## G14-GR127-VIDEO-RUNTIME: 動画の再生の Domain（デコードのスレッド・時計・フレームの待ち行列・状態）と、音声の再生の位置を足す
 - status: todo
 - after: G14-GR127-VIDEO-COOK, G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT, G12-GR111-PACKAGE-READ, G12-GR111-MANIFEST-INDEX, G12-GR111-PACK-WRITER, G12-GR111-ZSTD-CHUNKS
