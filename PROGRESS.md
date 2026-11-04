@@ -9684,3 +9684,25 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION.txt`（Game・PhysicsDynamicsTest・LoggerSinkTest の Debug ビルド終了コード 0、ctest で InteractionPromptTest・EncounterZoneTest・EncounterLifecycleTest・InputActionRuntimeTest・InputActionMapTest・InputBindingJsonTest・GameInputSettingsTest の 7 件 100% Passed）。
 - Next: ランナーの評価者の反証（Object の寿命の危険地帯）。プロンプトの仮の表示は G8-GR17-SLICE-SMOKE、本来の UI は GR68、日本語は GR69。寝床・ファストトラベルの中身は GR55・GR71。
 - Notes: 起動の確かめ（ゲームの中でキー F を押して InteractionTriggered が 1 回出ること）は後回し。入力の更新 → シミュレーション → `GameplayModule::LateTick` の順なので押した瞬間は同じフレームで見えるが、シミュレーションが止まっているフレームの押下は持ち越さない。Game の結線のため paths の外の `Game/GameApplicationHandler.cpp`・`.h` を触った（done-when (2) が求める結線）。距離の比較は厳密な一致で、視線の角が効くのは距離が等しいときだけ。
+
+- U1 祖先の列挙を固定名の一致だけ残す読み流しにし、claim の照合は claim の長名だけ残す 2 回目の列挙にする: 着地(直し 0 回)
+- U2 文書の列挙の節と上限の節を読み流しの検査に合わせる: 着地(直し 0 回)
+- U3 混んだ祖先の 2 件の試験を足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: 管理ストアの観測（`ObserveLocked`）の祖先の列挙を読み流しにした。workspace からボリュームの根までの各階層で、長名か short alias が `.norves-assetcook` と fold 一致する項目だけを残し、ほかは数えずに読み流す（`CookManagedStoreNative.h` の `EnumerateKept`。既存の `Enumerate` は全部残す述語で包み、ほかの呼び手の振る舞いは同じ）。store がある階層では、claim の照合用に同じ階層をもう 1 回列挙し、長名が claim の leaf と完全一致する項目だけを残す。上限（1 ディレクトリ 16384・全列挙 65536・metadata 32MiB）は制御領域の列挙と残した項目にだけ掛かる。列挙の失敗を store なしとしないこと・固定名の衝突の Conflict・ボリュームの根の store の拒否は変えていない。文書の列挙の節と上限の節も合わせた
+- Done: `CookManagedStoreObservationTest` に、ctest の作業ディレクトリの下に空ファイル 16385 個の祖先を作り、その下の RuntimeRoot で `StoreMissing`（`entry_limit` にならない）になることと、同じ祖先に store（claim 1 件）を置くと祖先の store として検出することの 2 件を足した。祖先の列挙を全件ためる形に一時的に戻すと 1 件目が `expected 0 got 5: cook_managed_store: entry_limit` で落ちることを確かめてから戻した
+- 証拠: `.harness/runs/20261102-172010/verify-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-U3.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0。verify の ctest 6 本は、利用者の TEMP のままで 4/6 合格、TEMP/TMP を空のディレクトリに向けると 6/6 合格。numstat 2 通り一致）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: 利用者の TEMP（直下に約 13 万項目）のままだと `CookManagedUpdateTest`（`update fixture bootstrap: cook_managed_store: entry_limit`）と `TextureManagedCliTest`（258 行の Created）が落ちる。原因はこのタスクの対象外の `CookManagedTransactionController.cpp` の祖先の全件列挙（433 行）で、この変更の前から同じく落ちる
+- 要起票: `CookManagedTransactionController.cpp` の祖先の列挙（433 行）と workspace の列挙（`VerifyClaims` 333 行）も固定名・claim の長名だけ残す読み流しにし、利用者の TEMP のままで `CookManagedUpdateTest`・`TextureManagedCliTest` が通るようにする
+- Notes(G2-GR82-B4-STATIC-ROOT-FRAME128-P1 反復 2): ランナーの再検証の失敗は、ほかの枠と同時に走った cook の試験とボリュームのロックが重なった `volume_busy`。重ならなくても、利用者の TEMP では対象外の TransactionController の全件列挙で UpdateTest・TextureManagedCliTest が落ちるので BLOCKED にした(判断の材料は blocked/ に記載)
+- Notes(G2-GR82-B4-STATIC-ROOT-FRAME128-P1 反復 3): 判断役の決定に従い、前提の項目 G2-GR82-B4-STATIC-ROOT-FRAME128-P2(管理更新の workspace と祖先の列挙を読み流しにし、利用者の TEMP のまま CookManagedUpdateTest・TextureManagedCliTest を通す)を P1 の前に置き、P1 に after を足した。P1 のコードは変えず、P2 の統合後に verify だけ回し直して done にする。
+
+- 要起票: G2-GR82-B4-STATIC-ROOT-FRAME128-P2 管理更新の workspace と祖先の列挙を、項目数で失敗しない形にする(ワーカーが TASKS.md に足した見出しを、統合の前に提案へ移した)
+
+## 2026-11-04 G2-GR82-B4-STATIC-ROOT-FRAME128-P1（run 20261104-185217 の反復 1、完了）
+
+- Done: `ObserveLocked` の祖先(workspace〜ボリュームの根)の列挙を、固定名 `StoreLeaf` と長名か short alias で fold 一致する項目だけ残す読み流しにし、claim の照合は claim の長名だけ残す列挙にした(`CookManagedStoreNative.h` の `EnumerateKept`)。`CookManagedStoreObservationTest` に混んだ祖先(空ファイル 16385 個)の 2 件を足し、`CookManagedStoreObservation.md` の列挙と上限の節を直した。前提の G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の統合後の版で、コードは変えずに verify を回し直した。
+- 証拠: `.harness/runs/20261104-185217/verify-FRAME128-P1.txt`(TEMP・TMP は差し替えず、TEMP 直下 133968 件。Debug の CookedMeshTest のビルド BUILD_EXIT=0。ctest 6 本 100% Passed、`CookManagedStoreObservationTest` 28.66 秒・`CookManagedUpdateTest` 81.04 秒を含む。CTEST_EXIT=0)。
+- Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに書き換えられて MSBuild がスイッチの誤りで止まる。verify は PowerShell(か cmd)で回す。
+- Notes: アプリを起動する確かめは無い。
+- Next: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の Notes の `要起票:`(`CookManagedBootstrap.cpp:457` の workspace を親にする `Absent`)は未起票のまま。
