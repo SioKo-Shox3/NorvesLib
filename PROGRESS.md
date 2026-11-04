@@ -9627,3 +9627,35 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し(無限ループの voice を Stop → Flush したときに Drained が来るか、XAudio2 の実機の鳴り方は G8-GR72-AUDIO-CHECK)。論理サウンド層は G8-GR72-SOUND-SYSTEM。
 - Notes: 危険地帯(Public API)なので評価者を通す。
 - Notes (G8-GR72-AUDIO-SPI、run 20261104-182215): 前回は評価者の枠切れで評価が回らず状態が doing に戻っていた。実装は全単位着地済みで、着地した Library/Modules/Audio・Test/Modules/Audio・Docs/Testing.md は確かめた作業ツリーと一致し、確かめの出力(ビルド exit_code=0、ctest 4/4 Passed、M9_REVIEW_CONTRACT result=pass contract=All)を読み直したので done に戻した。Public API の危険地帯なので評価はランナーの評価で通す。無限ループの voice を Stop → Flush したときの Drained は実機の確かめ(G8-GR72-AUDIO-CHECK)で見る。
+
+- U2 U1 でレビュー済みの差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 1): `CookManagedStoreNative.h` の列挙を、述語で残す項目を選ぶ `EnumerateKept` にした（親タスクの枝 `task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1` の版とバイト単位で同じ。`Enumerate` はすべて残す述語で包むので、store の制御領域の列挙と上限は変わらない）。`CookManagedTransactionController.cpp` の `OpenStore` の祖先の列挙は `StoreLeaf` と長名か short alias で fold 一致する項目だけを、`VerifyClaims` の workspace の列挙は `index.Roots` の各 `RootLeaf` と fold 一致する項目だけを残す。上限は残した項目にだけ掛かる。長名か alias で一致する項目は全部残すので、`active_claim_name_or_alias`・`active_claim_changed`・`nested_managed_root` の判定は前と同じ入力で行われる。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U2-verify.txt`（TEMP・TMP は差し替えず、TEMP 直下 133800 件。verify のビルド 終了コード 0。ctest 6 本のうち `CookManagedUpdateTest`・`TextureManagedCliTest` を含む 5 本 Passed、`CookManagedStoreObservationTest` は `entry_limit` で Failed。親の枝の `CookManagedStoreObservation.cpp` と試験の変更（a900b4e0・ef9c7b72）を一時的に重ねると 6 本すべて Passed、戻した後のビルドも終了コード 0。numstat の 2 通りが一致）。
+- Next: 親の G2-GR82-B4-STATIC-ROOT-FRAME128-P1（`ObserveLocked` の読み流し）が統合されると、verify の 6 本が単独で通る。
+- Notes: `CookManagedStoreObservationTest` が落ちるのは、`CookManagedStoreObservation.cpp`（この項目の paths の外）の `ObserveLocked` がまだ全件をためる列挙だから。この項目の変更が原因ではない。親タスクの枝と Native.h が同じなので、親を取り込むときに衝突しない。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 2): 反復 1 の再実行で `CookManagedStoreObservationTest` だけが `entry_limit` で落ちた。原因は親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `ObserveLocked`（paths の外）がまだ統合されていないことで、親は `after:` でこの項目を待っている。互いに待つので BLOCKED にし、verify から Observation を外す案を推奨として blocked に書いた。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 判断役の判断で、この項目の verify の ctest から `CookManagedStoreObservationTest` を外し、5 本で合否を決める。Observation の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。外した理由は、親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちになっていたため。親の枝を一時的に重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 反復 1 で入れた祖先と workspace の読み流し(コードは変えていない)で、判断役の判断で 5 本に絞った verify が TEMP を差し替えずに通った。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U3-verify.txt`(TEMP 直下 133860 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 87.97 秒・`TextureManagedCliTest` 16.37 秒を含む。作業ツリーの変更なし)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
+- U4 workspace を親にする Find・Absent も一致する項目だけ残す読み流しにする: 着地(直し 0 回)
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 4): 差し戻し(workspace を親にする `Find`/`Absent` が全件をためる列挙のまま)を直した。`Find`・`Absent`・`KnownDirectory`・`Rename` に、leaf と長名か short alias で fold 一致する項目だけを残す読み流しを選ぶ形(既定は今の全件列挙)を足し、workspace を親にする 4 か所だけで使う: `LoadActive` の `KnownDirectory(scope.Workspace, …)` 2 か所、rollback の `Rename` の from 側、`PublishBootstrap` の `Rename` の to 側。`Fixed` は fold 一致する項目しか見ないので判定は前と同じ。store の制御領域・pending の列挙と上限は変えていない。`VerifyClaims` の 2 つの比較ラムダを 1 つにまとめた。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U4-verify.txt`(TEMP・TMP は差し替えず、TEMP 直下 133863 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 86.51 秒・`TextureManagedCliTest` 17.34 秒を含む。numstat の 2 通りが一致)。workspace に 16385 件以上を置いた managed update の再現は回していない(コード読みで、workspace を親にする列挙がすべて読み流しになったことを確かめた)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
+- Notes: 要起票: `Tools/AssetCook/CookManagedBootstrap.cpp:457` 付近にも workspace を親にする `Absent` があり、全件をためる列挙のまま(この項目の paths の外)。bootstrap でも workspace に 16385 件以上あると `entry_limit` になる見込み。
+
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 5): 統合ブランチを取り込んだ後の再検証は、判断役の判断(反復 2)で外すと決めた `CookManagedStoreObservationTest` だけが落ちた。判断の指示 1 のとおり、この項目の 2 本目の verify の ctest から `CookManagedStoreObservationTest` を外して 5 本にした(反復 3 で書き換えが TASKS.md に入っていなかった)。コードは変えていない。
+- 証拠: `.harness/runs/20261104-132212/sync-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-1.txt`(取り込み後の Debug の CookedMeshTest のビルド exit=0)と `sync-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-2.txt`(同じビルドで、5 本の `CookManagedUpdateInventoryTest`・`CookManagedStoreInitializationTest`・`CookManagedUpdateTest` 99.16 秒・`TextureManagedCliTest` 18.00 秒・`RigSplitCookTest` がすべて Passed。落ちたのは外した `CookManagedStoreObservationTest` の `entry_limit` だけ)。
+- Notes: `CookManagedStoreObservationTest` の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちだったため外した。親の枝を重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、6 本の verify で完了させる。
+
+## 2026-11-04 G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1（run 20261104-182212 の反復 1、完了）
+
+- Done: 判断役の判断(選択肢 2)に従い、コードは変えずに統合ブランチ `feature/scene-launcher` の取り込み後の版で 5 本の verify を回し、`status: done` にした。`OpenStore` の祖先・`VerifyClaims` の workspace・workspace を親にする `Find`/`Absent` の列挙は、前の反復で一致する項目だけを残す読み流しにしてある。
+- 証拠: `.harness/runs/20261104-182212/verify-FRAME128-P1-P1.txt`(TEMP・TMP は差し替えず、TEMP 直下 133940 件。Debug の CookedMeshTest のビルド BUILD_EXIT=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 83.32 秒・`TextureManagedCliTest` 15.36 秒を含む。CTEST_EXIT=0)。
+- Notes: `CookManagedStoreObservationTest` の確かめは、親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の 6 本の verify が受け持つ。親が統合されるまで、統合ブランチの上ではこの試験が利用者の TEMP で `entry_limit` によって落ちたまま残る(今と同じ状態)。
+- Notes: この項目の verify を 6 本から 5 本にしたのは、ワーカーではなく判断役が統合ブランチ側の TASKS.md で書き換えたもの。
+- Notes: 要起票: `CookManagedBootstrap.cpp:457` の workspace を親にする `Absent` が全件をためる列挙のまま(この項目の paths の外)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `after` が解けたら、統合ブランチを取り込んで 6 本の verify で完了を確かめる。
