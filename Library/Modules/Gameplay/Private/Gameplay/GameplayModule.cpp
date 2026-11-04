@@ -7,6 +7,7 @@
 #include "Gameplay/Combat/HitboxComponent.h"
 #include "Gameplay/Combat/HurtboxSetComponent.h"
 #include "Gameplay/World/EncounterZoneComponent.h"
+#include "Gameplay/World/InteractableComponent.h"
 #include "Gameplay/World/ZoneSensorComponent.h"
 #include "Logging/LogMacros.h"
 
@@ -47,6 +48,7 @@ namespace NorvesLib::Modules::Gameplay
           m_IsDefeatHoldOwnerAlive(this, &GameplayModule::IsDefeatHoldOwnerAlive)
     {
         m_DefeatGate.OnDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
+        m_InteractionService.SetEngagedQuery(Core::MakeDelegate(&m_EncounterService, &World::EncounterService::IsSensorEngaged));
     }
 
     Core::Identity GameplayModule::GetModuleId() const
@@ -83,6 +85,7 @@ namespace NorvesLib::Modules::Gameplay
         Core::ClassRegistry::Get().RegisterClass(Combat::HurtboxSetComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::ZoneSensorComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::EncounterZoneComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(World::InteractableComponent::StaticClass());
     }
 
     bool GameplayModule::Initialize()
@@ -163,11 +166,13 @@ namespace NorvesLib::Modules::Gameplay
         {
             return;
         }
-        // 攻撃判定を先に評価し(先頭で Transform をそろえる)、遭遇領域はそろった位置を読む。
+        // 攻撃判定を先に評価し(先頭で Transform をそろえる)、遭遇領域と近接の操作はそろった位置を読む。
         auto& world = m_Engine->GetWorld();
         const auto& times = m_Engine->GetTimeSystem().GetFrameTimes();
         m_CombatRuntime.Evaluate(world, times.World);
         m_EncounterService.Evaluate(world, times.GetDelta(Core::Engine::TimeChannel::World));
+        // 近接の操作は遭遇領域の Engaged を読むので、遭遇領域の後に評価する。
+        m_InteractionService.Evaluate(world);
     }
 
     void GameplayModule::Shutdown()
@@ -178,6 +183,7 @@ namespace NorvesLib::Modules::Gameplay
         }
         m_CombatRuntime.ResetTransientState();
         m_bInitialized = false;
+        m_InteractionService.Reset();
         m_EncounterService.Reset();
     }
 

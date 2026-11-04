@@ -162,6 +162,8 @@ namespace Game
         bool IsTextureCooked(const NorvesLib::Core::Container::String &logicalPath) const;
 
     private:
+        bool IsInteractPressed() const;
+
         Game::Input::GameInputSettings m_InputSettings;
         NorvesLib::Core::Scene::PhysicsLayerTable m_PhysicsLayers;
         NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =

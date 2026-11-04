@@ -9669,3 +9669,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 移行は JsonDocument の木から JsonWriter で書き直す（数値は double で持つエンジン全体の制約に合わせ、2^53 以上の整数は保存の中身では文字列で持つ）。読み込みでファイルを書き直さない（移した中身は返すだけで、次の保存で今の版になる）。読めない（共有違反など）ファイル・退避の失敗は `IoError`。
 - Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
 - Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。
+
+## G8-GR18-INTERACTION: 統合ブランチの取り込み(2026-11-04)
+- Done: feature/scene-launcher を取り込み、GameplayModule::LateTick を 1 つにまとめた(攻撃判定 → 遭遇領域 → 近接の操作の順)。TickStages.md の表に Hitbox・Hurtbox と InteractableComponent の行を両方残した。
+- 確かめ: verify のビルド EXIT=0、ctest 7 本すべて Passed(.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION-*.txt)。TickContractTableTest と Combat 系 5 本も Passed。
+- Notes: アプリを起動する確かめは無い(表示は G8-GR17-SLICE-SMOKE・GR68 で扱う)。
+- U1 Gameplay の文脈に Interact のアクションを足す: 着地(直し 0 回)
+- U2 EncounterService にセンサーが Engaged の領域の中にいるかの照会を足す: 着地(直し 0 回)
+- U6 U3 の差分(保存したパッチ)を当て直して確かめる: 着地(直し 0 回)
+- U4 InteractionPromptTest を足す: 着地(直し 0 回)
+- U5 Game が InputMapper の Interact を InteractionService につなぎ、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-04 G8-GR18-INTERACTION（run 20261104-182213 の反復 1、完了）
+- Done: Gameplay の文脈に `Interact`（仮の割当はキー F・ゲームパッドの x）を足し、`InteractableComponent`（PROPERTY 9 個、ClassRegistry と TickStages.md に登録）と `InteractionService`（GameplayModule が持ち、Module Late で EncounterService の後に評価）を作った。候補は優先度 → 距離 → 視線の角で選び、EnterRadius と ExitRadius の差で点滅を防ぎ、選ばれた候補が変わったときだけ `OnPromptChanged` を出す。無効化・破棄は評価を待たずに消す。戦闘中の照会は `EncounterService::IsSensorEngaged` につなぎ、口の照会は差し替えの口だけ（既定は無効）。Game は `InputMapper` の Interact の押した瞬間を `SetInteractPressedSource` につなぐ。
+- 証拠: `.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION.txt`（Game・PhysicsDynamicsTest・LoggerSinkTest の Debug ビルド終了コード 0、ctest で InteractionPromptTest・EncounterZoneTest・EncounterLifecycleTest・InputActionRuntimeTest・InputActionMapTest・InputBindingJsonTest・GameInputSettingsTest の 7 件 100% Passed）。
+- Next: ランナーの評価者の反証（Object の寿命の危険地帯）。プロンプトの仮の表示は G8-GR17-SLICE-SMOKE、本来の UI は GR68、日本語は GR69。寝床・ファストトラベルの中身は GR55・GR71。
+- Notes: 起動の確かめ（ゲームの中でキー F を押して InteractionTriggered が 1 回出ること）は後回し。入力の更新 → シミュレーション → `GameplayModule::LateTick` の順なので押した瞬間は同じフレームで見えるが、シミュレーションが止まっているフレームの押下は持ち越さない。Game の結線のため paths の外の `Game/GameApplicationHandler.cpp`・`.h` を触った（done-when (2) が求める結線）。距離の比較は厳密な一致で、視線の角が効くのは距離が等しいときだけ。
