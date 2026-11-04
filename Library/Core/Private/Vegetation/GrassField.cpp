@@ -88,6 +88,10 @@ namespace NorvesLib::Core::Vegetation
         bool bHasGrass = false;
         for (uint64_t offset = 0; offset < layerABytes; offset += 4)
         {
+            if (layerA[offset + 3] > 63)
+            {
+                return false;
+            }
             bHasGrass = bHasGrass || layerA[offset] != 0;
         }
         if (!bHasGrass)
@@ -106,6 +110,10 @@ namespace NorvesLib::Core::Vegetation
             chunk.Coord = coord;
             chunk.LayerA.assign(layerA.begin(), layerA.end());
             chunk.LayerB.assign(layerB.begin(), layerB.end());
+            for (uint64_t offset = 3; offset < layerBBytes; offset += 4)
+            {
+                chunk.LayerB[offset] = 0;
+            }
             m_Chunks.insert_or_assign(MakeChunkKey(coord), std::move(chunk));
         }
         ++m_Revision;
@@ -173,58 +181,52 @@ namespace NorvesLib::Core::Vegetation
         return true;
     }
 
+    // 世界の画素を読み、欠損時は −X、+X、−Z、+Z、−X−Z、+X−Z、−X+Z、+X+Z の順に探す。
+    // 代用を世界座標だけで決めて凹んだ角でも一致させ、片側だけ欠けた縁では縁の画素へ寄せる。
     const uint8_t* GrassField::ReadPixel(const Chunk& chunk, int32_t pixelX, int32_t pixelZ,
                                         bool bLayerA) const
     {
         const uint32_t resolution = bLayerA ? m_Desc.LayerAResolution : m_Desc.LayerBResolution;
-        const int32_t size = static_cast<int32_t>(resolution);
-        const int32_t stepX = pixelX < 0 ? -1 : (pixelX >= size ? 1 : 0);
-        const int32_t stepZ = pixelZ < 0 ? -1 : (pixelZ >= size ? 1 : 0);
-        const Chunk* pSource = &chunk;
-        int32_t sourceX = ClampPixel(pixelX, resolution);
-        int32_t sourceZ = ClampPixel(pixelZ, resolution);
-        if (stepX != 0 || stepZ != 0)
+        const int64_t size = static_cast<int64_t>(resolution);
+        const int64_t gx = static_cast<int64_t>(chunk.Coord.X) * size + pixelX;
+        const int64_t gz = static_cast<int64_t>(chunk.Coord.Z) * size + pixelZ;
+        const auto readWorldPixel = [this, size, resolution, bLayerA](int64_t x, int64_t z) -> const uint8_t*
         {
-            const int64_t neighborX = static_cast<int64_t>(chunk.Coord.X) + stepX;
-            const int64_t neighborZ = static_cast<int64_t>(chunk.Coord.Z) + stepZ;
-            const bool bNeighborXValid = neighborX >= INT32_MIN && neighborX <= INT32_MAX;
-            const bool bNeighborZValid = neighborZ >= INT32_MIN && neighborZ <= INT32_MAX;
-            const Chunk* pNeighbor = nullptr;
-            // 該当画素、Z を縮めた X 隣、X を縮めた Z 隣、自チャンクの順に探す。
-            if (bNeighborXValid && bNeighborZValid)
+            // 負の余りがある場合は商を下げ、負座標でもチャンク内の画素を非負にする。
+            const int64_t chunkX = x / size - (x % size < 0 ? 1 : 0);
+            const int64_t chunkZ = z / size - (z % size < 0 ? 1 : 0);
+            if (chunkX < INT32_MIN || chunkX > INT32_MAX || chunkZ < INT32_MIN || chunkZ > INT32_MAX)
             {
-                pNeighbor = FindChunk({static_cast<int32_t>(neighborX), static_cast<int32_t>(neighborZ)});
+                return nullptr;
             }
-            if (pNeighbor != nullptr)
+            const Chunk* pSource = FindChunk({static_cast<int32_t>(chunkX), static_cast<int32_t>(chunkZ)});
+            if (pSource == nullptr)
             {
-                pSource = pNeighbor;
-                sourceX = pixelX - stepX * size;
-                sourceZ = pixelZ - stepZ * size;
+                return nullptr;
             }
-            else if (stepX != 0 && stepZ != 0)
+            const uint64_t sourceX = static_cast<uint64_t>(x - chunkX * size);
+            const uint64_t sourceZ = static_cast<uint64_t>(z - chunkZ * size);
+            const auto& pixels = bLayerA ? pSource->LayerA : pSource->LayerB;
+            return pixels.data() + (sourceZ * resolution + sourceX) * 4;
+        };
+        if (const uint8_t* pPixel = readWorldPixel(gx, gz))
+        {
+            return pPixel;
+        }
+        const int32_t neighbors[][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1},
+                                         {-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+        for (const auto& neighbor : neighbors)
+        {
+            if (const uint8_t* pPixel = readWorldPixel(gx + neighbor[0], gz + neighbor[1]))
             {
-                if (bNeighborXValid)
-                {
-                    pNeighbor = FindChunk({static_cast<int32_t>(neighborX), chunk.Coord.Z});
-                    if (pNeighbor != nullptr)
-                    {
-                        pSource = pNeighbor;
-                        sourceX = pixelX - stepX * size;
-                    }
-                }
-                if (pNeighbor == nullptr && bNeighborZValid)
-                {
-                    pNeighbor = FindChunk({chunk.Coord.X, static_cast<int32_t>(neighborZ)});
-                    if (pNeighbor != nullptr)
-                    {
-                        pSource = pNeighbor;
-                        sourceZ = pixelZ - stepZ * size;
-                    }
-                }
+                return pPixel;
             }
         }
-        const auto& pixels = bLayerA ? pSource->LayerA : pSource->LayerB;
-        const uint64_t offset = (static_cast<uint64_t>(sourceZ) * resolution + sourceX) * 4;
+
+        // 双線形補間の読取りでは元のチャンクが近傍にあるが、範囲外の呼出しにも安全に備える。
+        const auto& pixels = bLayerA ? chunk.LayerA : chunk.LayerB;
+        const uint64_t offset = (static_cast<uint64_t>(ClampPixel(pixelZ, resolution)) * resolution +
+                                 ClampPixel(pixelX, resolution)) * 4;
         return pixels.data() + offset;
     }
 
@@ -305,14 +307,23 @@ namespace NorvesLib::Core::Vegetation
 
     float GrassField::QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b) const
     {
-        const Math::Vector3 delta = b - a;
-        const float length = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-        if (length == 0.0f)
+        if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(a.z) ||
+            !std::isfinite(b.x) || !std::isfinite(b.y) || !std::isfinite(b.z))
         {
             return 1.0f;
         }
-        const uint64_t stepCount = static_cast<uint64_t>(std::ceil(length / 0.5f));
-        const uint64_t count = stepCount > 0 ? stepCount : 1;
+        const Math::Vector3 delta = b - a;
+        const float length = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+        if (!std::isfinite(length) || length == 0.0f)
+        {
+            return 1.0f;
+        }
+        // 約 524 km を超える区間は刻みを伸ばし、積分回数と整数変換の範囲を制限する。
+        constexpr uint64_t MaxOcclusionSteps = 1u << 20;
+        const double stepCount = std::ceil(static_cast<double>(length) / 0.5);
+        const uint64_t limitedCount = stepCount >= static_cast<double>(MaxOcclusionSteps) ?
+            MaxOcclusionSteps : static_cast<uint64_t>(stepCount);
+        const uint64_t count = limitedCount > 0 ? limitedCount : 1;
         const float stepLength = length / static_cast<float>(count);
         float tau = 0.0f;
         for (uint64_t index = 0; index < count; ++index)

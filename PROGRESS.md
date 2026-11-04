@@ -9429,3 +9429,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 地面の高さを地形（TerrainSystem）へ差し替えるのと保存形式は G5-GR42-GRASS-FIELD-ASSET。描画（ブレードの生成）は GR43。`Vegetation::PublishRenderData` の毎フレームの呼び出しは、草の場を登録する機能（GrassFieldComponent）と一緒に足す。
 - Notes: 斜めの隣のチャンクが無く x の隣と z の隣の両方がある L 字の凹んだ角では、z 方向の継ぎ目の両側が別の代用の画素を引き、角の半画素の範囲で値が食い違いうる（試験していない。草の場の外周の凹んだ角だけ）。
 - Notes: `Library/Core/CMakeLists.txt` の Vegetation の行は Particle の並びの途中に入っている（ビルドには影響しない）。
+- U7 欠けたチャンクの画素の代用を世界の画素座標だけで決め、L 字の並びの継ぎ目を直す: 着地(直し 0 回)

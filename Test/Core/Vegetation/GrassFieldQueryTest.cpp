@@ -191,6 +191,77 @@ namespace
                   << " 最大色解析誤差=" << maxSeamTintError << "\n";
     }
 
+    void TestMissingCornerSeams(const GrassSpeciesTable& table)
+    {
+        const GrassChunkCoord coords[] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
+        const uint8_t densities[] = {100, 200, 20, 160};
+        double maxDifference = 0.0;
+        uint32_t sampleCount = 0;
+        for (uint32_t missing = 0; missing < 4; ++missing)
+        {
+            GrassField field;
+            field.SetSpeciesTable(table);
+            uint8_t layerA[LayerABytes];
+            uint8_t layerB[LayerBBytes];
+            for (uint32_t offset = 0; offset < LayerBBytes; offset += 4)
+            {
+                layerB[offset] = 128;
+                layerB[offset + 1] = 128;
+                layerB[offset + 2] = 128;
+                layerB[offset + 3] = 255;
+            }
+            for (uint32_t chunkIndex = 0; chunkIndex < 4; ++chunkIndex)
+            {
+                if (chunkIndex == missing)
+                {
+                    continue;
+                }
+                for (uint32_t offset = 0; offset < LayerABytes; offset += 4)
+                {
+                    layerA[offset] = densities[chunkIndex];
+                    layerA[offset + 1] = 128;
+                    layerA[offset + 2] = 128;
+                    layerA[offset + 3] = 0;
+                }
+                Expect(field.SetChunk(coords[chunkIndex],
+                                      Container::Span<const uint8_t>(layerA, LayerABytes),
+                                      Container::Span<const uint8_t>(layerB, LayerBBytes)),
+                       "欠けた角の検査用チャンクを設定できる");
+            }
+
+            double maxCornerDifference = 0.0;
+            for (uint32_t axis = 0; axis < 2; ++axis)
+            {
+                for (uint32_t index = 0; index <= 64; ++index)
+                {
+                    const float along = 30.0f + static_cast<float>(index) * 0.0625f;
+                    const GrassSample left = axis == 0 ? field.Sample(32.0f - 1e-3f, along) :
+                                                        field.Sample(along, 32.0f - 1e-3f);
+                    const GrassSample right = axis == 0 ? field.Sample(32.0f + 1e-3f, along) :
+                                                         field.Sample(along, 32.0f + 1e-3f);
+                    if (!left.bValid || !right.bValid)
+                    {
+                        continue;
+                    }
+                    const double difference = std::fabs(static_cast<double>(left.Density) - right.Density);
+                    if (difference > maxCornerDifference)
+                    {
+                        maxCornerDifference = difference;
+                    }
+                    Expect(difference <= 1.0 / 255.0, "欠けた角の継ぎ目の密度差が 1/255 以下");
+                    ++sampleCount;
+                }
+            }
+            if (maxCornerDifference > maxDifference)
+            {
+                maxDifference = maxCornerDifference;
+            }
+            std::cout << "欠けた角: (" << coords[missing].X << "," << coords[missing].Z
+                      << ") 最大密度差=" << maxCornerDifference << "\n";
+        }
+        std::cout << "L 字の継ぎ目: " << sampleCount << " 点、最大密度差=" << maxDifference << "\n";
+    }
+
     void TestOutside(const GrassField& field)
     {
         const float positionsX[] = {-1.0f, 100.0f};
@@ -320,6 +391,7 @@ int main()
 
     std::cout.precision(9);
     TestLinearDensityAndSeam(linearField);
+    TestMissingCornerSeams(table);
     TestOutside(linearField);
     TestOcclusionAndDeterminism(uniformField, sameUniformField);
     if (g_FailureCount != 0)
