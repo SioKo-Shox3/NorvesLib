@@ -3,9 +3,11 @@
 #include "Component/Component.h"
 #include "Container/PointerTypes.h"
 #include "Delegate/Delegate.h"
+#include "Delegate/MulticastDelegate.h"
 #include "Gameplay/Enemy/EnemyDefinition.h"
 #include "Gameplay/Enemy/EnemyPatternSelector.h"
 #include "Gameplay/Enemy/IEnemyAnimator.h"
+#include "Gameplay/Progression/DefeatGate.h"
 #include "Gameplay/World/EncounterZoneTypes.h"
 #include "GameMode/TStateMachine.h"
 #include "Object/EntityHandle.h"
@@ -63,6 +65,13 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         size_t GetCurrentPhaseIndex() const { return m_CurrentPhaseIndex; }
         void TickEnemy(float worldDeltaSeconds);
 
+        /// HP が 0 になった瞬間、HealthComponent の通知中に配る。受け手は同期で破棄せず MarkForDestroy を使う。
+        Core::MulticastDelegate<const EnemyComponent&> OnDefeatStarted;
+        /// 撃破ゲート完了後、領域があれば次の領域評価で Cleared が確定してから、次の TickEnemy で配る。
+        /// 領域がなければゲート完了後の次の TickEnemy で配る。進行状態への記録と領域の Cleared は通知前に済み、
+        /// 通知後に Entity の破棄を予約する。
+        Core::MulticastDelegate<const Core::Container::String&> OnDefeatCompleted;
+
         /// Default は Animation より前なので、Enter のアニメ要求は同じフレームに反映される。
         /// 型の照合は完全一致のため、派生型はこの登録を自分の型に対して行う。
         static Core::Component::ComponentTickRegistration MakeTickRegistration();
@@ -91,6 +100,7 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         struct Subscription
         {
             EnemyComponent* Target = nullptr;
+            size_t DispatchDepth = 0;
         };
 
         static void EnterCallback(StateMachine& machine, EnemyComponent& context);
@@ -103,6 +113,11 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         void Unsubscribe();
         Core::Entity* FindOwner() const;
         void OnZoneEntered(const World::EncounterZoneEvent& event);
+        void OnZoneReset(const World::EncounterZoneEvent& event);
+        void OnDefeated(const Combat::HealthComponent& health);
+        void BeginDefeatGate(GameplayModule& module, Core::EntityHandle owner);
+        void OnGateDefeatCompleted(const Core::Container::String& enemyId);
+        void CompleteDefeat();
         void OnDamaged(const Combat::HealthComponent& health, const Combat::DamageResult& result);
         void OnStaggerBroken(const Combat::HealthComponent& health);
         void OnHurt(const Combat::CombatHitEvent& event);
@@ -120,6 +135,7 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         IEnemyAnimator* m_Animator = nullptr;
         Core::EntityHandle m_Target;
         Core::Container::String m_EncounterZoneId;
+        DefeatHoldHandle m_DefeatHold;
         float m_StateSeconds = 0.0f;
         float m_PhaseSeconds = 0.0f;
         size_t m_CurrentPhaseIndex = 0;
@@ -132,6 +148,10 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         bool m_bHealthBelowTriggered = false;
         bool m_bZoneEnterPending = false;
         bool m_bPlaying = false;
+        bool m_bDefeatStarted = false;
+        bool m_bDefeatGatePending = false;
+        bool m_bDefeatCompletionPending = false;
+        bool m_bDefeatCompleted = false;
 
         Core::World* m_BoundWorld = nullptr;
         Core::EntityHandle m_BoundOwner;
@@ -143,7 +163,10 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         Core::Container::TSharedPtr<Subscription> m_Subscription;
         Core::Delegate<void, const Combat::HealthComponent&, const Combat::DamageResult&> m_DamagedCallback;
         Core::Delegate<void, const Combat::HealthComponent&> m_StaggerCallback;
+        Core::Delegate<void, const Combat::HealthComponent&> m_DefeatedCallback;
         Core::Delegate<void, const Combat::CombatHitEvent&> m_HurtCallback;
         Core::Delegate<void, const World::EncounterZoneEvent&> m_ZoneCallback;
+        Core::Delegate<void, const World::EncounterZoneEvent&> m_ZoneResetCallback;
+        Core::Delegate<void, const Core::Container::String&> m_DefeatCompletedCallback;
     };
 } // namespace NorvesLib::Modules::Gameplay::Enemy

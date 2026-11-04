@@ -9605,3 +9605,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 攻撃のパターンの選択と乱数のシード(レビュー済みの差分を当て直す): 着地(直し 0 回)
 - U3 IEnemyAnimator の継ぎ目と AnimatorComponent への写し: 着地(直し 0 回)
 - U4 EnemyComponent の基底(状態の遷移・攻撃・崩れ・領域の気づき): 着地(直し 0 回)
+- U5 2 段の撃破・最後のシ者の Dormant・ResetPolicy: 着地(直し 1 回)

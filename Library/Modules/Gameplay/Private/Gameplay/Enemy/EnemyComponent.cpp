@@ -11,6 +11,7 @@
 #include "Object/World.h"
 
 #include <cmath>
+#include <limits>
 
 namespace NorvesLib::Modules::Gameplay::Enemy
 {
@@ -122,6 +123,11 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         m_bFirstAttack = true;
         m_bHealthBelowTriggered = false;
         m_bZoneEnterPending = false;
+        m_bDefeatStarted = false;
+        m_bDefeatGatePending = false;
+        m_bDefeatCompletionPending = false;
+        m_bDefeatCompleted = false;
+        m_DefeatHold = {};
         m_PartHits = 0;
         m_CurrentPatternIndex = -1;
         m_CurrentPhaseIndex = 0;
@@ -222,19 +228,45 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         const auto subscription = m_Subscription;
         m_DamagedCallback = [subscription](const Combat::HealthComponent& health, const Combat::DamageResult& result)
         {
+            ++subscription->DispatchDepth;
             if (subscription->Target) subscription->Target->OnDamaged(health, result);
+            --subscription->DispatchDepth;
         };
         m_StaggerCallback = [subscription](const Combat::HealthComponent& health)
         {
+            ++subscription->DispatchDepth;
             if (subscription->Target) subscription->Target->OnStaggerBroken(health);
+            --subscription->DispatchDepth;
+        };
+        m_DefeatedCallback = [subscription](const Combat::HealthComponent& health)
+        {
+            ++subscription->DispatchDepth;
+            if (subscription->Target) subscription->Target->OnDefeated(health);
+            --subscription->DispatchDepth;
         };
         m_HurtCallback = [subscription](const Combat::CombatHitEvent& event)
         {
+            ++subscription->DispatchDepth;
             if (subscription->Target) subscription->Target->OnHurt(event);
+            --subscription->DispatchDepth;
         };
         m_ZoneCallback = [subscription](const World::EncounterZoneEvent& event)
         {
+            ++subscription->DispatchDepth;
             if (subscription->Target) subscription->Target->OnZoneEntered(event);
+            --subscription->DispatchDepth;
+        };
+        m_ZoneResetCallback = [subscription](const World::EncounterZoneEvent& event)
+        {
+            ++subscription->DispatchDepth;
+            if (subscription->Target) subscription->Target->OnZoneReset(event);
+            --subscription->DispatchDepth;
+        };
+        m_DefeatCompletedCallback = [subscription](const Core::Container::String& enemyId)
+        {
+            ++subscription->DispatchDepth;
+            if (subscription->Target) subscription->Target->OnGateDefeatCompleted(enemyId);
+            --subscription->DispatchDepth;
         };
         if (auto* health = owner ? owner->GetComponent<Combat::HealthComponent>() : nullptr)
         {
@@ -242,6 +274,7 @@ namespace NorvesLib::Modules::Gameplay::Enemy
             m_HealthId = health->GetComponentId();
             health->OnDamaged.Add(m_DamagedCallback);
             health->OnStaggerBroken.Add(m_StaggerCallback);
+            health->OnDefeated.Add(m_DefeatedCallback);
         }
         if (auto* hurtbox = owner ? owner->GetComponent<Combat::HurtboxSetComponent>() : nullptr)
         {
@@ -252,35 +285,51 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         if (m_BoundModule)
         {
             m_BoundModule->GetEncounterService().OnZoneEntered.Add(m_ZoneCallback);
+            m_BoundModule->GetEncounterService().OnZoneReset.Add(m_ZoneResetCallback);
+            m_BoundModule->GetDefeatGate().OnDefeatCompleted.Add(m_DefeatCompletedCallback);
         }
     }
 
     void EnemyComponent::Unsubscribe()
     {
+        const bool bCanRemoveSubscriptions = !m_Subscription || m_Subscription->DispatchDepth == 0;
         if (m_Subscription)
         {
             m_Subscription->Target = nullptr;
         }
-        if (auto* owner = FindOwner())
+        // 配送中の配列は変更せず、残った受け手は Target が空のまま無効にする。
+        if (bCanRemoveSubscriptions)
         {
-            for (auto* component : owner->GetComponents())
+            if (auto* owner = FindOwner())
             {
-                if (component == m_SubscribedHealth && component->GetComponentId() == m_HealthId)
+                for (auto* component : owner->GetComponents())
                 {
-                    m_SubscribedHealth->OnDamaged.Remove(m_DamagedCallback);
-                    m_SubscribedHealth->OnStaggerBroken.Remove(m_StaggerCallback);
-                }
-                if (component == m_SubscribedHurtbox && component->GetComponentId() == m_HurtboxId)
-                {
-                    m_SubscribedHurtbox->OnHurt.Remove(m_HurtCallback);
+                    if (component == m_SubscribedHealth && component->GetComponentId() == m_HealthId)
+                    {
+                        m_SubscribedHealth->OnDamaged.Remove(m_DamagedCallback);
+                        m_SubscribedHealth->OnStaggerBroken.Remove(m_StaggerCallback);
+                        m_SubscribedHealth->OnDefeated.Remove(m_DefeatedCallback);
+                    }
+                    if (component == m_SubscribedHurtbox && component->GetComponentId() == m_HurtboxId)
+                    {
+                        m_SubscribedHurtbox->OnHurt.Remove(m_HurtCallback);
+                    }
                 }
             }
         }
         auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
         if (current && current == m_BoundModule)
         {
-            current->GetEncounterService().OnZoneEntered.Remove(m_ZoneCallback);
+            if (bCanRemoveSubscriptions)
+            {
+                current->GetEncounterService().OnZoneEntered.Remove(m_ZoneCallback);
+                current->GetEncounterService().OnZoneReset.Remove(m_ZoneResetCallback);
+                current->GetDefeatGate().OnDefeatCompleted.Remove(m_DefeatCompletedCallback);
+            }
+            if (m_DefeatHold.IsValid()) current->GetDefeatGate().Release(m_DefeatHold);
         }
+        m_bDefeatGatePending = false;
+        m_DefeatHold = {};
         m_SubscribedHealth = nullptr;
         m_SubscribedHurtbox = nullptr;
         m_HealthId = 0;
@@ -288,8 +337,11 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         m_Subscription.reset();
         m_DamagedCallback.Clear();
         m_StaggerCallback.Clear();
+        m_DefeatedCallback.Clear();
         m_HurtCallback.Clear();
         m_ZoneCallback.Clear();
+        m_ZoneResetCallback.Clear();
+        m_DefeatCompletedCallback.Clear();
     }
 
     Core::Component::ComponentTickRegistration EnemyComponent::MakeTickRegistration()
@@ -316,10 +368,31 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         {
             return;
         }
+        // 領域の Cleared は次の評価で確定する。ゲートの配送も終えてから完了を配る。
+        if (m_bDefeatCompletionPending)
+        {
+            auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+            if (current && current == m_BoundModule &&
+                (m_EncounterZoneId.empty() || current->GetEncounterService().GetZoneState(m_EncounterZoneId) ==
+                    World::EEncounterZoneState::Cleared))
+            {
+                CompleteDefeat();
+                return;
+            }
+        }
         if (auto* owner = GetOwner(); owner && owner->GetWorld() == m_BoundWorld && !m_BoundOwner.IsValid())
         {
             // 更新中に作られた Entity の行は、作成時にはまだ予約状態のことがある。
             m_BoundOwner = owner->GetEntityHandle();
+        }
+        if (m_bDefeatGatePending && m_BoundOwner.IsValid())
+        {
+            auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+            if (current && current == m_BoundModule)
+            {
+                BeginDefeatGate(*current, m_BoundOwner);
+                m_bDefeatGatePending = false;
+            }
         }
         if (!m_Animator && m_BoundOwner.IsValid()) TryBindAnimator();
         const float dt = std::isfinite(worldDeltaSeconds) && worldDeltaSeconds >= 0.0f ? worldDeltaSeconds : 0.0f;
@@ -331,7 +404,7 @@ namespace NorvesLib::Modules::Gameplay::Enemy
     {
         switch (from)
         {
-        case EEnemyState::Dormant: return to == EEnemyState::Idle;
+        case EEnemyState::Dormant: return to == EEnemyState::Idle || to == EEnemyState::Defeated;
         case EEnemyState::Idle: return to == EEnemyState::Alerted || to == EEnemyState::Defeated;
         case EEnemyState::Alerted: return to == EEnemyState::Attack || to == EEnemyState::Collapsed ||
                                          to == EEnemyState::Idle || to == EEnemyState::Defeated;
@@ -364,7 +437,13 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         return true;
     }
 
-    bool EnemyComponent::CanLeaveDormant() const { return m_bHasDefinition; }
+    bool EnemyComponent::CanLeaveDormant() const
+    {
+        if (!m_bHasDefinition) return false;
+        if (!m_Definition.bIsFinal) return true;
+        auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+        return current && current == m_BoundModule && current->GetProgressionState().IsFinalUnlocked();
+    }
     void EnemyComponent::EnterCallback(StateMachine& machine, EnemyComponent& context)
     {
         context.EnterState(machine.GetCurrentState());
@@ -385,7 +464,6 @@ namespace NorvesLib::Modules::Gameplay::Enemy
 
     void EnemyComponent::EnterState(EEnemyState state)
     {
-        if (state == EEnemyState::Defeated) return;
         m_StateSeconds = 0.0f;
         switch (state)
         {
@@ -402,13 +480,13 @@ namespace NorvesLib::Modules::Gameplay::Enemy
             }
             break;
         case EEnemyState::Collapsed: RequestAnimation(m_Definition.AnimStates.Collapsed); break;
+        case EEnemyState::Defeated: RequestAnimation(m_Definition.AnimStates.Defeated); break;
         default: break;
         }
     }
 
     void EnemyComponent::UpdateState(EEnemyState state, float deltaSeconds)
     {
-        if (state == EEnemyState::Defeated) return;
         m_StateSeconds += deltaSeconds;
         switch (state)
         {
@@ -440,6 +518,18 @@ namespace NorvesLib::Modules::Gameplay::Enemy
             }
             break;
         case EEnemyState::Attack: UpdateAttack(deltaSeconds); break;
+        case EEnemyState::Defeated:
+            if (m_DefeatHold.IsValid() &&
+                ((m_Animator && m_Animator->IsFinished()) || m_StateSeconds >= m_Definition.DefeatHoldSeconds))
+            {
+                auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+                if (current && current == m_BoundModule)
+                {
+                    current->GetDefeatGate().Release(m_DefeatHold);
+                    m_DefeatHold = {};
+                }
+            }
+            break;
         case EEnemyState::Collapsed:
             if (m_StateSeconds >= m_Definition.Collapse.RecoverSeconds)
             {
@@ -513,9 +603,10 @@ namespace NorvesLib::Modules::Gameplay::Enemy
 
     void EnemyComponent::OnZoneEntered(const World::EncounterZoneEvent& event)
     {
-        if (event.EnemyId != GetEnemyId()) return;
+        if (event.EnemyId != GetEnemyId() || m_bDefeatStarted || m_LastRequested == EEnemyState::Defeated) return;
         if (GetState() == EEnemyState::Dormant)
         {
+            if (!CanLeaveDormant()) return;
             // 初回 Tick と同じフレームの領域進入を、Idle への保留中に取り落とさない。
             m_EncounterZoneId = event.ZoneId;
             m_bZoneEnterPending = true;
@@ -527,9 +618,102 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         }
     }
 
+    void EnemyComponent::OnZoneReset(const World::EncounterZoneEvent& event)
+    {
+        if (event.EnemyId != GetEnemyId() || m_bDefeatStarted || m_LastRequested == EEnemyState::Defeated) return;
+        if (auto* health = FindHealth())
+        {
+            if (event.ResetPolicy == World::EEncounterResetPolicy::FullHeal) health->ResetHealth();
+            health->ResetStagger();
+        }
+        m_PartHits = 0;
+        m_bHealthBelowTriggered = false;
+        m_bZoneEnterPending = false;
+        // 有限のクールダウンだけを消し、選択器の乱数列を進めない。
+        m_Selector.Advance(std::numeric_limits<float>::max());
+        if (m_LastRequested != EEnemyState::Idle &&
+            (m_LastRequested != EEnemyState::Dormant || CanLeaveDormant()))
+        {
+            RequestTransition(EEnemyState::Idle);
+        }
+    }
+
+    void EnemyComponent::OnDefeated(const Combat::HealthComponent&)
+    {
+        if (m_bDefeatStarted) return;
+        m_bDefeatStarted = true;
+        if (auto* hitbox = FindHitbox()) hitbox->EndAttack();
+        if (auto* owner = FindOwner())
+        {
+            if (auto* hurtbox = owner->GetComponent<Combat::HurtboxSetComponent>()) hurtbox->Disable();
+        }
+        if (auto* health = FindHealth()) health->SetInvulnerable(true);
+
+        auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+        if (current && current == m_BoundModule)
+        {
+            auto* owner = FindOwner();
+            const auto ownerHandle = owner ? owner->GetEntityHandle() : Core::EntityHandle{};
+            if (ownerHandle.IsValid())
+            {
+                BeginDefeatGate(*current, ownerHandle);
+            }
+            else
+            {
+                m_bDefeatGatePending = true;
+            }
+        }
+        else
+        {
+            NORVES_LOG_WARNING("Gameplay", "撃破ゲートがないため、敵は撃破状態に留まります。");
+        }
+        RequestTransition(EEnemyState::Defeated);
+        const auto started = OnDefeatStarted;
+        started.Broadcast(*this);
+    }
+
+    void EnemyComponent::BeginDefeatGate(GameplayModule& module, Core::EntityHandle owner)
+    {
+        const auto enemyId = GetEnemyId();
+        module.GetDefeatGate().BeginDefeat(enemyId);
+        m_DefeatHold = module.GetDefeatGate().AddHold(enemyId, owner);
+        if (!m_DefeatHold.IsValid())
+        {
+            NORVES_LOG_WARNING("Gameplay", "敵の撃破保留を取得できませんでした: %s", enemyId.c_str());
+        }
+    }
+
+    void EnemyComponent::OnGateDefeatCompleted(const Core::Container::String& enemyId)
+    {
+        if (enemyId != GetEnemyId() || !m_bDefeatStarted || m_bDefeatCompletionPending || m_bDefeatCompleted) return;
+        m_bDefeatCompletionPending = true;
+        auto* current = dynamic_cast<GameplayModule*>(FindGameplayModule(Core::Module::GetModuleRegistry()));
+        if (current && current == m_BoundModule && !m_EncounterZoneId.empty())
+        {
+            current->GetEncounterService().MarkCleared(m_EncounterZoneId);
+        }
+    }
+
+    void EnemyComponent::CompleteDefeat()
+    {
+        m_bDefeatCompletionPending = false;
+        m_bDefeatCompleted = true;
+        const auto enemyId = GetEnemyId();
+        const auto completed = OnDefeatCompleted;
+        auto* owner = FindOwner();
+        auto* world = owner ? owner->GetWorld() : nullptr;
+        const auto ownerHandle = owner ? owner->GetEntityHandle() : Core::EntityHandle{};
+        completed.Broadcast(enemyId);
+        if (auto* liveOwner = world ? world->ResolveEntityHandle(ownerHandle) : nullptr)
+        {
+            liveOwner->MarkForDestroy();
+        }
+    }
+
     void EnemyComponent::RequestCollapse()
     {
-        if (GetState() == EEnemyState::Alerted || GetState() == EEnemyState::Attack)
+        if (!m_bDefeatStarted && m_LastRequested != EEnemyState::Defeated &&
+            (GetState() == EEnemyState::Alerted || GetState() == EEnemyState::Attack))
         {
             RequestTransition(EEnemyState::Collapsed);
         }
@@ -537,7 +721,8 @@ namespace NorvesLib::Modules::Gameplay::Enemy
 
     void EnemyComponent::OnDamaged(const Combat::HealthComponent& health, const Combat::DamageResult&)
     {
-        if (m_bHasDefinition && m_Definition.Collapse.Condition == EEnemyCollapseCondition::HealthBelow &&
+        if (!m_bDefeatStarted && m_LastRequested != EEnemyState::Defeated && m_bHasDefinition &&
+            m_Definition.Collapse.Condition == EEnemyCollapseCondition::HealthBelow &&
             !m_bHealthBelowTriggered && static_cast<float>(health.getMaxHealth()) > 0.0f &&
             static_cast<float>(health.getHealth()) / static_cast<float>(health.getMaxHealth()) < m_Definition.Collapse.HealthFraction)
         {
@@ -548,12 +733,14 @@ namespace NorvesLib::Modules::Gameplay::Enemy
 
     void EnemyComponent::OnStaggerBroken(const Combat::HealthComponent&)
     {
-        if (m_bHasDefinition && m_Definition.Collapse.Condition == EEnemyCollapseCondition::Stagger) RequestCollapse();
+        if (!m_bDefeatStarted && m_LastRequested != EEnemyState::Defeated && m_bHasDefinition &&
+            m_Definition.Collapse.Condition == EEnemyCollapseCondition::Stagger) RequestCollapse();
     }
 
     void EnemyComponent::OnHurt(const Combat::CombatHitEvent& event)
     {
-        if (m_bHasDefinition && m_Definition.Collapse.Condition == EEnemyCollapseCondition::PartHits &&
+        if (!m_bDefeatStarted && m_LastRequested != EEnemyState::Defeated && m_bHasDefinition &&
+            m_Definition.Collapse.Condition == EEnemyCollapseCondition::PartHits &&
             event.PartId == m_Definition.Collapse.PartId && m_Definition.Collapse.HitCount > 0)
         {
             if (++m_PartHits >= m_Definition.Collapse.HitCount)

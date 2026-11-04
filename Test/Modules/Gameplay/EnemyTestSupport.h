@@ -52,6 +52,7 @@ namespace NorvesLib::Test::EnemySupport
         definition.AnimStates.Alerted = C::Identity("alerted");
         definition.AnimStates.Collapsed = C::Identity("collapsed");
         definition.AnimStates.Recover = C::Identity("recover");
+        definition.AnimStates.Defeated = C::Identity("defeated");
         definition.AlertDelaySeconds = 0.25f;
         definition.AttackIntervalSeconds = 0.4f;
         definition.Collapse.RecoverSeconds = 0.5f;
@@ -158,7 +159,7 @@ namespace NorvesLib::Test::EnemySupport
         void StartAlerted()
         {
             StartIdle();
-            AddZone("zone.test", "enemy.test", 0.0f);
+            AddZone("zone.test", Enemy->GetEnemyId().c_str(), 0.0f);
             AddSensor(0.0f);
             Evaluate();
             Enemy->TickEnemy(0.0f);
