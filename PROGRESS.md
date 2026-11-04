@@ -9423,3 +9423,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 GrassFieldSnapshotContractTest を足す: 着地(直し 0 回)
 - U4 草の場の登録先 Vegetation を Engine のメンバに足す: 着地(直し 0 回)
 - U5 GrassFieldQueryTest を足し、タスクの verify を回す: 着地(直し 1 回)
+- Done (G5-GR42-GRASS-FIELD-CORE、run 20261104-083832 の反復 1): `Library/Core/{Public,Private}/Vegetation/` に草の場 `GrassField`（32 m のチャンク・int32 の (cx,cz)、LayerA 64×64・LayerB 32×32 の RGBA8、草の無いチャンクは表に載せない）と種別の表 `GrassSpecies`（`Assets/Vegetation/GrassSpecies.json` から読む。仮の 2 種 wet_grass #55684A・dry_grass #6D6A5C）、`IGroundHeightSource`（既定は定数の面）を置いた。クエリは `Sample`・`QueryTopHeight`・`QueryOcclusion`（0.5 m 刻みの消散の積分）・`QuerySurface`・`GetCameraClearance`、有効な濡れ度の式は `ComputeEffectiveWetness` の 1 か所。不変の `GrassFieldRenderData` を `TSharedPtr<const>` で `RenderWorld::SetGrassField` → RenderingCoordinator → `FramePacket::GrassField` へ渡し、`ComputeSceneRevisionHash` には入れない。登録先 `Vegetation` を `Engine::Engine` のメンバに置いた（変わったときだけ描画データを送る `PublishRenderData`）。
+- 試験: `GrassFieldQueryTest`（MathGeometryTest の束）で線形の密度 1285 点の最大誤差 1.5e-8、チャンクの境の密度差 1.6e-5・色味の差 1.6e-5（外周の行を含む）、範囲外は密度 0・bValid=false、草丈一定の遮蔽の光学的厚さの相対誤差 5.1e-8、同じ入力のビット一致。`GrassFieldSnapshotContractTest`（CameraViewConstantsTest の束）で差し替え・解除の後も古いパケットの描画データが変わらず、草だけ違うパケットの SceneRevision が等しい（対照として静的な環境光の倍率を変えるとハッシュが変わる）。試験はチャンクの角で斜めの隣が無いと継ぎ目に段が出る欠陥を見つけ、隣の画素を軸ごとに引く形に直した。
+- 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U5-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが exit_code=0、ctest の 4 本 100% Passed）。起動の確かめは無い（描画側 GR43 がまだ無く、試験だけで閉じる）。
+- Next: 地面の高さを地形（TerrainSystem）へ差し替えるのと保存形式は G5-GR42-GRASS-FIELD-ASSET。描画（ブレードの生成）は GR43。`Vegetation::PublishRenderData` の毎フレームの呼び出しは、草の場を登録する機能（GrassFieldComponent）と一緒に足す。
+- Notes: 斜めの隣のチャンクが無く x の隣と z の隣の両方がある L 字の凹んだ角では、z 方向の継ぎ目の両側が別の代用の画素を引き、角の半画素の範囲で値が食い違いうる（試験していない。草の場の外周の凹んだ角だけ）。
+- Notes: `Library/Core/CMakeLists.txt` の Vegetation の行は Particle の並びの途中に入っている（ビルドには影響しない）。
