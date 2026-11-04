@@ -68,6 +68,51 @@ namespace
         std::cout << "capsule_face_edge_corner_rotation_initial passed\n";
     }
 
+    void CheckTriangleSweep()
+    {
+        const Triangle triangle(Vector3(0.0f, 0.0f, 0.0f), Vector3(2.0f, 0.0f, 0.0f),
+            Vector3(0.0f, 2.0f, 0.0f));
+
+        // 初期の隙間を距離許容内にし、浅い角度で到達距離が早く確定しないことを確かめる。
+        const Triangle shallowTriangle(Vector3(128.0f, 0.0f, 0.0f), Vector3(130.0f, 0.0f, 0.0f),
+            Vector3(128.0f, 2.0f, 0.0f));
+        const float angle = 3.0f * Constants::PI / 180.0f;
+        const Vector3 direction(std::cos(angle), 0.0f, -std::sin(angle));
+        const Sphere shallow(Vector3(128.5f, 0.5f, 1.000075f), 1.0f);
+        const double directionLength = std::sqrt(static_cast<double>(direction.x) * direction.x
+            + static_cast<double>(direction.z) * direction.z);
+        const double expected = (static_cast<double>(shallow.Center.z) - shallow.Radius)
+            * directionLength / -direction.z;
+        const auto shallowHit = SweepSphere(shallow, shallowTriangle, direction, 1.0f);
+        const double error = expected - shallowHit.Distance;
+        std::cout << "triangle_shallow expected_m=" << expected << " actual_m=" << shallowHit.Distance
+            << " error_m=" << error << "\n";
+        assert(shallowHit.Result == EGeometrySweepResult::Hit);
+        assert(error >= 0.0 && error <= 1e-4);
+
+        // 裏面からの半径0の球は、進行方向と逆向きの法線を返す。
+        const Vector3 fromBack(0.0f, 0.0f, 1.0f);
+        const auto backHit = SweepSphere(Sphere(Vector3(0.5f, 0.5f, -1.0f), 0.0f),
+            triangle, fromBack, 2.0f);
+        assert(backHit.Result == EGeometrySweepResult::Hit);
+        assert(Near(backHit.Distance, 1.0f, 1e-4f));
+        assert(VectorUtils::Dot(backHit.Normal, fromBack) < 0.0f);
+        std::cout << "triangle_back_normal passed\n";
+
+        // 中心線が面を貫く初期重なりは、接触判定と同じ法線と深さを返す。
+        const Capsule crossing(Vector3(0.5f, 0.5f, -2.0f), Vector3(0.5f, 0.5f, 1.0f), 0.5f);
+        GeometryContact contact;
+        assert(ComputeContact(triangle, crossing, contact));
+        const auto initialHit = SweepCapsule(crossing, triangle, Vector3(0.0f), 0.0f);
+        assert(initialHit.Result == EGeometrySweepResult::Hit && initialHit.bStartPenetrating);
+        assert(initialHit.Distance == 0.0f);
+        assert(Near(initialHit.Normal.x, contact.Normal.x, 1e-6f));
+        assert(Near(initialHit.Normal.y, contact.Normal.y, 1e-6f));
+        assert(Near(initialHit.Normal.z, contact.Normal.z, 1e-6f));
+        assert(Near(initialHit.Depth, contact.Depth, 1e-6f));
+        std::cout << "triangle_initial_overlap passed\n";
+    }
+
     template<typename Target>
     float ContactOracle(const Capsule& capsule, const Target& target, const Vector3& direction, float maxDistance)
     {
@@ -157,6 +202,7 @@ namespace
 int main()
 {
     CheckCapsuleAcceptance();
+    CheckTriangleSweep();
     const Vector3 right(1.0f, 0.0f, 0.0f);
     const Sphere sphere(Vector3(0.0f), 0.5f);
     const OBB box = BoxAt(Vector3(5.0f, 0.0f, 0.0f));
