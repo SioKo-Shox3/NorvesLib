@@ -344,6 +344,47 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Success;
             }
 
+            AudioResult AbortVoice(VoiceHandle handle) override
+            {
+                ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (record->State == AudioVoiceState::Quarantined)
+                {
+                    return AudioResult::InvalidState;
+                }
+                if (record->State == AudioVoiceState::Playing)
+                {
+                    const AudioBackendStopResult stopResult = m_Backend->StopVoice(handle);
+                    if (stopResult.Result != AudioResult::Success)
+                    {
+                        if (stopResult.bVoiceStopped)
+                        {
+                            QuarantineSlot(handle.Index);
+                        }
+                        return AudioResult::BackendFailure;
+                    }
+                    if (!stopResult.bVoiceStopped || !stopResult.bBuffersFlushed)
+                    {
+                        QuarantineSlot(handle.Index);
+                        return AudioResult::BackendFailure;
+                    }
+                }
+                if (record->bBackendVoiceCreated && m_Backend->DestroyVoice(handle) != AudioResult::Success)
+                {
+                    QuarantineSlot(handle.Index);
+                    return AudioResult::BackendFailure;
+                }
+
+                // XAudio2 の DestroyVoice は音声処理スレッドが空くまで同期的に待つため、
+                // 復帰後にそのボイスのコールバックは来ない。復帰前に届いた通知も、
+                // メールボックスの Close と世代の更新により新しいボイスには混ざらない。
+                ReleaseSlot(handle.Index);
+                return AudioResult::Success;
+            }
+
             AudioResult GetVoiceState(VoiceHandle handle, AudioVoiceState& outState) const override
             {
                 const ActiveVoiceRecord* record = Resolve(handle);

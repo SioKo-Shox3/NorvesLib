@@ -9628,3 +9628,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 危険地帯(Public API)なので評価者を通す。
 - Notes (G8-GR72-AUDIO-SPI、run 20261104-182215): 前回は評価者の枠切れで評価が回らず状態が doing に戻っていた。実装は全単位着地済みで、着地した Library/Modules/Audio・Test/Modules/Audio・Docs/Testing.md は確かめた作業ツリーと一致し、確かめの出力(ビルド exit_code=0、ctest 4/4 Passed、M9_REVIEW_CONTRACT result=pass contract=All)を読み直したので done に戻した。Public API の危険地帯なので評価はランナーの評価で通す。無限ループの voice を Stop → Flush したときの Drained は実機の確かめ(G8-GR72-AUDIO-CHECK)で見る。
 - U1 受入れの閾値と論理サウンド層の決まりを Docs/AudioValidation/GR72Acceptance.md に固定する: 着地(直し 0 回)
+- U2 IAudioService に奪取用の即時破棄 AbortVoice を追加だけで足す: 着地(直し 0 回)
