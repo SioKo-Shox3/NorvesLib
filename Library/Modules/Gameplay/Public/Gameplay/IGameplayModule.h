@@ -5,6 +5,8 @@
 #include "Module/IModule.h"
 #include "Module/ModuleRegistry.h"
 
+#include <cstdint>
+
 namespace NorvesLib::Modules::Gameplay
 {
     class ProgressionState;
@@ -23,6 +25,11 @@ namespace NorvesLib::Modules::Gameplay
     {
     public:
         virtual ~IGameplayModule() = default;
+
+        /// 敵のパターン選択などの再現用の値を取得する。既定値は 0。
+        virtual uint64_t GetRunSeed() const = 0;
+        /// 敵のパターン選択などの再現用の値を、run の開始時に呼び手が設定する。
+        virtual void SetRunSeed(uint64_t seed) = 0;
 
         virtual ProgressionState& GetProgressionState() = 0;
         virtual DefeatGate& GetDefeatGate() = 0;

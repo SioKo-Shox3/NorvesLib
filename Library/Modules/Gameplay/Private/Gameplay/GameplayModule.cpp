@@ -59,6 +59,16 @@ namespace NorvesLib::Modules::Gameplay
         return kGameplayModuleName;
     }
 
+    uint64_t GameplayModule::GetRunSeed() const
+    {
+        return m_RunSeed;
+    }
+
+    void GameplayModule::SetRunSeed(uint64_t seed)
+    {
+        m_RunSeed = seed;
+    }
+
     bool GameplayModule::Install(Core::Engine::Engine& engine)
     {
         if (m_OwnerThreadId != Thread::Thread::GetCurrentThreadId() || m_Engine != nullptr)

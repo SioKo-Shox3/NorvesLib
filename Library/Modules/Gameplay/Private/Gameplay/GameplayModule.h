@@ -31,6 +31,9 @@ namespace NorvesLib::Modules::Gameplay
         void Shutdown() override;
         void Uninstall(Core::Engine::Engine& engine) override;
 
+        uint64_t GetRunSeed() const override;
+        void SetRunSeed(uint64_t seed) override;
+
         ProgressionState& GetProgressionState() override { return m_ProgressionState; }
         DefeatGate& GetDefeatGate() override { return m_DefeatGate; }
         Core::MulticastDelegate<const Combat::CombatHitEvent&>& GetOnAnyHit() override { return m_CombatRuntime.OnAnyHit; }
@@ -47,6 +50,7 @@ namespace NorvesLib::Modules::Gameplay
         Core::Engine::Engine* m_Engine = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bInitialized = false;
+        uint64_t m_RunSeed = 0;
         Combat::CombatRuntime m_CombatRuntime;
         ProgressionState m_ProgressionState;
         DefeatGate m_DefeatGate;
