@@ -1,0 +1,284 @@
+{
+  "schema": "dog_autopilot.v1",
+  "segments": [
+    {
+      "stage": "step_climb",
+      "start": [
+        -10,
+        0,
+        -1
+      ],
+      "yawDeg": 0,
+      "duration": 2.5,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 1.35,
+          "key": "W",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "step_block",
+      "start": [
+        -5,
+        0,
+        -1
+      ],
+      "yawDeg": 0,
+      "duration": 2.5,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 1.35,
+          "key": "W",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "slope_climb",
+      "start": [
+        0,
+        0,
+        -1
+      ],
+      "yawDeg": 0,
+      "duration": 2.5,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 1.8,
+          "key": "W",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "slope_block",
+      "start": [
+        5,
+        0,
+        -1
+      ],
+      "yawDeg": 0,
+      "duration": 2.5,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 1.35,
+          "key": "W",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "platform",
+      "start": [
+        -9,
+        1,
+        -10
+      ],
+      "yawDeg": 0,
+      "duration": 4,
+      "inputs": []
+    },
+    {
+      "stage": "gallop",
+      "start": [
+        -14,
+        0,
+        12
+      ],
+      "yawDeg": 90,
+      "duration": 7,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 0,
+          "key": "LeftShift",
+          "action": "press"
+        },
+        {
+          "t": 6.5,
+          "key": "W",
+          "action": "release"
+        },
+        {
+          "t": 6.5,
+          "key": "LeftShift",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "turn",
+      "start": [
+        9,
+        0,
+        -9
+      ],
+      "yawDeg": 0,
+      "duration": 2.5,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 1,
+          "key": "W",
+          "action": "release"
+        },
+        {
+          "t": 1,
+          "key": "D",
+          "action": "press"
+        },
+        {
+          "t": 2.5,
+          "key": "D",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "jump",
+      "start": [
+        9,
+        0,
+        -3
+      ],
+      "yawDeg": 0,
+      "duration": 3.5,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 1,
+          "key": "Space",
+          "action": "press"
+        },
+        {
+          "t": 1.1,
+          "key": "Space",
+          "action": "release"
+        },
+        {
+          "t": 2.5,
+          "key": "W",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "camera_low",
+      "start": [
+        0,
+        0,
+        -10
+      ],
+      "yawDeg": 0,
+      "duration": 2,
+      "inputs": [
+        {
+          "t": 0.25,
+          "look": [
+            0,
+            -120
+          ]
+        }
+      ]
+    },
+    {
+      "stage": "camera_sprint",
+      "start": [
+        -14,
+        0,
+        12
+      ],
+      "yawDeg": 90,
+      "duration": 4,
+      "inputs": [
+        {
+          "t": 0,
+          "key": "W",
+          "action": "press"
+        },
+        {
+          "t": 0,
+          "key": "LeftShift",
+          "action": "press"
+        },
+        {
+          "t": 3.5,
+          "key": "W",
+          "action": "release"
+        },
+        {
+          "t": 3.5,
+          "key": "LeftShift",
+          "action": "release"
+        }
+      ]
+    },
+    {
+      "stage": "camera_wall",
+      "start": [
+        0,
+        0,
+        -3.8
+      ],
+      "yawDeg": 0,
+      "duration": 2,
+      "inputs": []
+    },
+    {
+      "stage": "hitstop",
+      "start": [
+        0,
+        0,
+        -10
+      ],
+      "yawDeg": 0,
+      "duration": 2,
+      "inputs": [
+        {
+          "t": 0.5,
+          "key": "MouseLeft",
+          "action": "press"
+        },
+        {
+          "t": 0.6,
+          "key": "MouseLeft",
+          "action": "release"
+        }
+      ]
+    }
+  ]
+}

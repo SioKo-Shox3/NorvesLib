@@ -72,6 +72,8 @@ Windows/実GPU/実Blender の未実行結果を host テストで代用しない
   "loop_mode": "auto",
   "minimum_period": 0.2,
   "maximum_period": 2.0,
+  "loop_rms_threshold_degrees": 8.5,
+  "loop_recurrence_ratio": 0.5,
   "extract_root_motion": true,
   "spike_threshold_degrees": 35,
   "spike_window": 2,
@@ -85,6 +87,8 @@ Windows/実GPU/実Blender の未実行結果を host テストで代用しない
 }
 ```
 
+- `loop_rms_threshold_degrees` は周期候補を受け入れる再帰誤差の許容値です（0度超、45度以下）。既定は0.05 rad（約2.86度）です。
+- `loop_recurrence_ratio` は周期内の動きに対する再帰誤差の比の上限です（0超、1以下）。既定は0.2です。動画由来の動きは周期ごとのばらつきが大きいため、必要な場合にそのprofileでだけ両方を明示して緩めます。
 - 外れ値除去は周辺の回転との差と中央値/MADを使います。`spike_threshold_degrees: 0` で無効です。
 - `smoothing_radius` は前後のサンプル数です。ループ時は周期の境界をまたいで平滑化し、末尾キーを先頭と揃えます。`average_cycles` は検出した複数周期の関節回転を平均します。根の軌跡は平均しません。
 - `time_scale` は再生時間の倍率です。2なら長さが2倍になります。`desired_ground_speed` が正なら、接地中の足の動きから測った自然速度を目標速度へ合わせて再生時間を調整します。0ならこの補正をしません。

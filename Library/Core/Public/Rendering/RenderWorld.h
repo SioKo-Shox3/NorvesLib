@@ -247,6 +247,12 @@ namespace NorvesLib::Core::Rendering
         void SetFoliage(const FoliageScene& foliage);
 
         /**
+         * @brief 不変の草の場の描画データを設定する（GameThread 専用）
+         * @param grassField 次の FramePacket へ共有する。設定後は内容を書き換えない
+         */
+        void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
+
+        /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          *
          * 描画コマンド生成前に呼び、FramePacket へコピーした後は保持を空にする。

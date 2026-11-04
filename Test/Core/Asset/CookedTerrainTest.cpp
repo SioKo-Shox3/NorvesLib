@@ -1,13 +1,25 @@
 ﻿#include "Asset/CookedTerrainFormat.h"
+#include "Tools/AssetCook/TerrainSpec.h"
 #include "Tools/AssetCook/TextureCooker.h"
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <utility>
+
+#include "exr.h"
+#include "Library/ThirdParty/stb/stb_image_write.h"
 #if defined(_MSC_VER)
 #include <crtdbg.h>
 #endif
@@ -19,6 +31,7 @@ using NorvesLib::Core::Container::Span;
 using NorvesLib::Core::Container::VariableArray;
 using NorvesLib::Tools::AssetCook::CookRgba8ToNvtex;
 using NorvesLib::Tools::AssetCook::TextureCookResult;
+using namespace NorvesLib::Tools::AssetCook;
 using ByteArray = VariableArray<uint8_t>;
 
 #define CHECK(expression)                                                                                              \
@@ -195,6 +208,502 @@ namespace
         CHECK(ReadLe64(bytes, HeaderOffset::PayloadSize) == bytes.size() - payloadOffset);
         CHECK(ReadLe64(bytes, HeaderOffset::Reserved2) == 0);
     }
+}
+
+
+namespace
+{
+    constexpr uint32_t CookWidth = 65;
+    constexpr uint32_t CookHeight = 49;
+    constexpr uint32_t CookTileCells = 16;
+    constexpr double CookCellSize = 1.75;
+    constexpr double SurfaceA = 0.075;
+    constexpr double SurfaceB = 0.027;
+    constexpr double SurfaceC = 0.16;
+    constexpr double SurfaceK = 0.075;
+    std::filesystem::path TerrainTempRoot;
+
+    void CleanupTerrainTemp()
+    {
+        if (!TerrainTempRoot.empty())
+        {
+            std::error_code error;
+            std::filesystem::remove_all(TerrainTempRoot, error);
+            if (error)
+            {
+                std::cerr << Utf8(u8"一時ディレクトリを削除できません: ") << error.message() << "\n";
+            }
+        }
+    }
+
+    void CreateTerrainTemp()
+    {
+        const auto parent = std::filesystem::temp_directory_path();
+        const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (uint32_t attempt = 0; attempt < 100; ++attempt)
+        {
+            char name[80]{};
+            std::snprintf(name, sizeof(name), "norves-terrain-%llx-%u",
+                          static_cast<unsigned long long>(ticks), attempt);
+            const auto candidate = parent / name;
+            std::error_code error;
+            if (std::filesystem::create_directory(candidate, error))
+            {
+                TerrainTempRoot = candidate;
+                CHECK(std::atexit(CleanupTerrainTemp) == 0);
+                return;
+            }
+            CHECK(!error);
+        }
+        CHECK(false);
+    }
+
+    void WriteTerrainFile(const std::filesystem::path& path, Span<const uint8_t> bytes)
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        CHECK(output.is_open());
+        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        output.close();
+        CHECK(output.good());
+    }
+
+    std::filesystem::path WriteTerrainSpec(const char* name, const char* source, const char* mapping,
+                                           double cellSize, uint32_t seed = 1, const char* extra = "")
+    {
+        char json[2048]{};
+        const int count = std::snprintf(json, sizeof(json),
+            "{\"version\":1,\"height_source\":{%s},\"height_mapping\":{%s},"
+            "\"cell_size_m\":%.17g,\"tile_cells\":16,\"fit\":\"error\",\"seed\":%u%s}\n",
+            source, mapping, cellSize, seed, extra);
+        CHECK(count > 0 && static_cast<size_t>(count) < sizeof(json));
+        const auto path = TerrainTempRoot / name;
+        WriteTerrainFile(path, {reinterpret_cast<const uint8_t*>(json), static_cast<size_t>(count)});
+        return path;
+    }
+
+    TerrainSpecCookResult CookTerrainChecked(const std::filesystem::path& path)
+    {
+        TerrainSpecCookResult result;
+        AnsiString error;
+        const bool bSuccess = CookTerrainSpecFile(path, result, error);
+        if (!bSuccess)
+        {
+            std::cerr << Utf8(u8"地形 cook 失敗: ") << error.c_str() << "\n";
+        }
+        CHECK(bSuccess);
+        return result;
+    }
+
+    double SurfaceHeight(double x, double z)
+    {
+        return SurfaceA * x + SurfaceB * z + SurfaceC * std::sin(SurfaceK * x) * std::cos(SurfaceK * z);
+    }
+
+    // LOD0 の各標本から粗いセルを引き、両対角の三角形を重心座標で評価する。
+    float BruteLodError(const std::array<float, 17 * 17>& heights, uint32_t stride)
+    {
+        double maximum = 0.0;
+        for (uint32_t z = 0; z <= CookTileCells; ++z)
+        {
+            for (uint32_t x = 0; x <= CookTileCells; ++x)
+            {
+                const uint32_t x0 = std::min((x / stride) * stride, CookTileCells - stride);
+                const uint32_t z0 = std::min((z / stride) * stride, CookTileCells - stride);
+                const double u = static_cast<double>(x - x0) / stride;
+                const double v = static_cast<double>(z - z0) / stride;
+                const double h00 = heights[z0 * 17 + x0];
+                const double h10 = heights[z0 * 17 + x0 + stride];
+                const double h01 = heights[(z0 + stride) * 17 + x0];
+                const double h11 = heights[(z0 + stride) * 17 + x0 + stride];
+                const double first = u >= v
+                    ? (1.0 - u) * h00 + (u - v) * h10 + v * h11
+                    : (1.0 - v) * h00 + (v - u) * h01 + u * h11;
+                const double second = u + v <= 1.0
+                    ? (1.0 - u - v) * h00 + u * h10 + v * h01
+                    : (u + v - 1.0) * h11 + (1.0 - u) * h01 + (1.0 - v) * h10;
+                const double actual = heights[z * 17 + x];
+                maximum = std::max(maximum, std::max(std::abs(actual - first), std::abs(actual - second)));
+            }
+        }
+        return static_cast<float>(maximum);
+    }
+
+    ByteArray SaveFloatExr(VariableArray<float>& values, uint32_t width, uint32_t height)
+    {
+        exr_channel channel{};
+        std::memcpy(channel.name, "Y", 2);
+        channel.pixel_type = EXR_PIXEL_FLOAT;
+        channel.x_sampling = 1;
+        channel.y_sampling = 1;
+        exr_part part{};
+        part.width = static_cast<int32_t>(width);
+        part.height = static_cast<int32_t>(height);
+        part.header.part_type = EXR_PART_SCANLINE;
+        part.header.data_window = {0, 0, static_cast<int32_t>(width - 1), static_cast<int32_t>(height - 1)};
+        part.header.display_window = part.header.data_window;
+        part.header.pixel_aspect_ratio = 1.0f;
+        part.header.screen_window_width = 1.0f;
+        part.header.num_channels = 1;
+        part.header.channels = &channel;
+        void* planes[] = {values.data()};
+        part.images = planes;
+        exr_image image{};
+        image.num_parts = 1;
+        image.parts = &part;
+        const exr_allocator allocator{
+            nullptr,
+            [](void*, size_t size) -> void* { return std::malloc(size); },
+            [](void*, void* ptr) { std::free(ptr); }
+        };
+        void* data = nullptr;
+        size_t size = 0;
+        CHECK(exr_save_to_memory(&data, &size, &allocator, &image, EXR_COMPRESSION_NONE) == EXR_SUCCESS);
+        CHECK(data != nullptr && size > 0);
+        ByteArray bytes(size);
+        std::memcpy(bytes.data(), data, size);
+        allocator.free(allocator.user, data);
+        return bytes;
+    }
+
+    void AppendPngBytes(void* context, void* data, int size)
+    {
+        auto& bytes = *static_cast<ByteArray*>(context);
+        const auto* begin = static_cast<const uint8_t*>(data);
+        for (int i = 0; i < size; ++i)
+        {
+            bytes.push_back(begin[i]);
+        }
+    }
+
+    ByteArray SaveGray8Png(uint32_t width, uint32_t height)
+    {
+        ByteArray pixels(static_cast<size_t>(width) * height);
+        for (uint32_t z = 0; z < height; ++z)
+        {
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                pixels[static_cast<size_t>(z) * width + x] = static_cast<uint8_t>((x * 5 + z * 3) & 255);
+            }
+        }
+        ByteArray result;
+        CHECK(stbi_write_png_to_func(AppendPngBytes, &result, static_cast<int>(width), static_cast<int>(height),
+                                     1, pixels.data(), static_cast<int>(width)) != 0);
+        return result;
+    }
+
+
+    void CheckAnalyticTerrain()
+    {
+        const size_t count = static_cast<size_t>(CookWidth) * CookHeight;
+        VariableArray<double> reference(count);
+        double minimum = std::numeric_limits<double>::infinity();
+        double maximum = -std::numeric_limits<double>::infinity();
+        for (uint32_t z = 0; z < CookHeight; ++z)
+        {
+            for (uint32_t x = 0; x < CookWidth; ++x)
+            {
+                const double height = SurfaceHeight(x * CookCellSize, z * CookCellSize);
+                reference[static_cast<size_t>(z) * CookWidth + x] = height;
+                minimum = std::min(minimum, height);
+                maximum = std::max(maximum, height);
+            }
+        }
+        ByteArray raw(count * 2);
+        for (size_t i = 0; i < count; ++i)
+        {
+            const auto value = static_cast<uint16_t>(std::round((reference[i] - minimum) / (maximum - minimum) * 65535.0));
+            WriteLe16(raw, i * 2, value);
+        }
+        WriteTerrainFile(TerrainTempRoot / "surface.raw", Span<const uint8_t>(raw));
+        char mapping[160]{};
+        std::snprintf(mapping, sizeof(mapping), "\"min_m\":%.17g,\"max_m\":%.17g", minimum, maximum);
+        const char* source = "\"path\":\"surface.raw\",\"format\":\"raw16\",\"width\":65,\"height\":49,\"endian\":\"little\",\"flip_z\":false";
+        const auto spec = WriteTerrainSpec("surface.json", source, mapping, CookCellSize);
+        const auto first = CookTerrainChecked(spec);
+        const auto repeated = CookTerrainChecked(spec);
+        CHECK(first.Build.NvtrnBytes == repeated.Build.NvtrnBytes);
+        const uint64_t payloadHash = ComputeAssetPackagePayloadHash(first.Build.NvtrnBytes.data(), first.Build.NvtrnBytes.size());
+        CHECK(payloadHash == ComputeAssetPackagePayloadHash(repeated.Build.NvtrnBytes.data(), repeated.Build.NvtrnBytes.size()));
+        CHECK(first.SourceHash == repeated.SourceHash);
+
+        const auto parsed = ParseCookedTerrain(AssetBlob::CopyBytes(Span<const uint8_t>(first.Build.NvtrnBytes)));
+        CHECK(parsed.Succeeded());
+        const auto& terrain = parsed.Terrain;
+        CHECK(terrain.CellCountX == 64 && terrain.CellCountZ == 48 && terrain.TileCells == CookTileCells);
+        CHECK(terrain.TileCountX == 4 && terrain.TileCountZ == 3 && terrain.LodCount == 4);
+        CHECK(terrain.CellSizeM == static_cast<float>(CookCellSize));
+        const int32_t normalLayer = terrain.FindLayer(TerrainNormalLayerFourCC);
+        CHECK(normalLayer >= 0);
+        VariableArray<ByteArray> normals(terrain.Tiles.size());
+
+        // 範囲端の float 化と復元高さの float 化の丸めを覆うため、最大絶対値の 2 ULP を加える。
+        const float magnitude = static_cast<float>(std::max(std::abs(minimum), std::abs(maximum)));
+        const double ulp = static_cast<double>(std::nextafter(magnitude, std::numeric_limits<float>::infinity())) - magnitude;
+        const double tolerance = (maximum - minimum) / (2.0 * 65535.0) + 2.0 * ulp;
+        double maxHeightError = 0.0;
+        double maxAngleDegrees = 0.0;
+        double maxLodDifference = 0.0;
+        constexpr double DegreesPerRadian = 57.2957795130823208768;
+        for (uint32_t tz = 0; tz < terrain.TileCountZ; ++tz)
+        {
+            for (uint32_t tx = 0; tx < terrain.TileCountX; ++tx)
+            {
+                uint32_t tileIndex = 0;
+                const auto* tile = terrain.FindTile(tx, tz, &tileIndex);
+                CHECK(tile != nullptr);
+                const auto texture = ParseCookedTexture(terrain.GetLayerBlob(tileIndex, static_cast<uint32_t>(normalLayer)));
+                CHECK(texture.Succeeded());
+                CHECK(texture.Texture.PixelFormat == CookedTexturePixelFormat::RG8UNorm);
+                CHECK(texture.Texture.Width == 17 && texture.Texture.Height == 17);
+                const auto mip = texture.Texture.GetMipBytes(0);
+                CHECK(mip.size() == 17 * 17 * 2);
+                normals[tileIndex].resize(mip.size());
+                std::memcpy(normals[tileIndex].data(), mip.data(), mip.size());
+
+                std::array<float, 17 * 17> heights{};
+                float tileMin = std::numeric_limits<float>::infinity();
+                float tileMax = -std::numeric_limits<float>::infinity();
+                for (uint32_t z = 0; z <= CookTileCells; ++z)
+                {
+                    for (uint32_t x = 0; x <= CookTileCells; ++x)
+                    {
+                        const uint32_t gx = tx * CookTileCells + x;
+                        const uint32_t gz = tz * CookTileCells + z;
+                        const size_t local = z * 17 + x;
+                        const float decoded = terrain.DecodeHeightM(terrain.GetHeightSample(tileIndex, x, z));
+                        heights[local] = decoded;
+                        tileMin = std::min(tileMin, decoded);
+                        tileMax = std::max(tileMax, decoded);
+                        const double expected = reference[static_cast<size_t>(gz) * CookWidth + gx];
+                        const double error = std::abs(decoded - expected);
+                        maxHeightError = std::max(maxHeightError, error);
+                        if (error > tolerance)
+                        {
+                            std::cerr << Utf8(u8"高さ不一致 x,z=") << gx << "," << gz
+                                      << Utf8(u8" 実際=") << decoded << Utf8(u8" 期待=") << expected
+                                      << Utf8(u8" 誤差=") << error << Utf8(u8" 許容=") << tolerance << "\n";
+                        }
+                        CHECK(error <= tolerance);
+
+                        const double px = gx * CookCellSize;
+                        const double pz = gz * CookCellSize;
+                        const double dx = SurfaceA + SurfaceC * SurfaceK * std::cos(SurfaceK * px) * std::cos(SurfaceK * pz);
+                        const double dz = SurfaceB - SurfaceC * SurfaceK * std::sin(SurfaceK * px) * std::sin(SurfaceK * pz);
+                        const double invLength = 1.0 / std::sqrt(dx * dx + 1.0 + dz * dz);
+                        const double nx = normals[tileIndex][2 * local] * (2.0 / 255.0) - 1.0;
+                        const double nz = normals[tileIndex][2 * local + 1] * (2.0 / 255.0) - 1.0;
+                        const double ny = std::sqrt(std::max(0.0, 1.0 - nx * nx - nz * nz));
+                        const double dot = std::clamp((-dx * nx + ny - dz * nz) * invLength, -1.0, 1.0);
+                        const double angle = std::acos(dot) * DegreesPerRadian;
+                        maxAngleDegrees = std::max(maxAngleDegrees, angle);
+                        if (angle > 0.5)
+                        {
+                            std::cerr << Utf8(u8"法線不一致 x,z=") << gx << "," << gz
+                                      << Utf8(u8" 角度=") << angle << "\n";
+                        }
+                        CHECK(angle <= 0.5);
+                    }
+                }
+
+                const std::array<float, 3> expectedMin = {
+                    static_cast<float>(tx * CookTileCells * CookCellSize), tileMin,
+                    static_cast<float>(tz * CookTileCells * CookCellSize)};
+                const std::array<float, 3> expectedMax = {
+                    static_cast<float>((tx + 1) * CookTileCells * CookCellSize), tileMax,
+                    static_cast<float>((tz + 1) * CookTileCells * CookCellSize)};
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    if (tile->AabbMin[axis] != expectedMin[axis] || tile->AabbMax[axis] != expectedMax[axis])
+                    {
+                        std::cerr << Utf8(u8"AABB 不一致 tile=") << tx << "," << tz << Utf8(u8" 軸=") << axis
+                                  << Utf8(u8" 実際=") << tile->AabbMin[axis] << "," << tile->AabbMax[axis]
+                                  << Utf8(u8" 期待=") << expectedMin[axis] << "," << expectedMax[axis] << "\n";
+                    }
+                    CHECK(tile->AabbMin[axis] == expectedMin[axis] && tile->AabbMax[axis] == expectedMax[axis]);
+                }
+                for (uint32_t lod = 0; lod < 4; ++lod)
+                {
+                    const float expected = BruteLodError(heights, 1u << lod);
+                    const float actual = tile->LodMaxErrorM[lod];
+                    maxLodDifference = std::max(maxLodDifference, std::abs(static_cast<double>(actual) - expected));
+                    if (actual != expected)
+                    {
+                        std::cerr << std::setprecision(10) << Utf8(u8"LOD 不一致 tile=") << tx << "," << tz
+                                  << " stride=" << (1u << lod) << Utf8(u8" 実際=") << actual
+                                  << Utf8(u8" 期待=") << expected << Utf8(u8" 差=") << (actual - expected) << "\n";
+                    }
+                    CHECK(actual == expected);
+                }
+            }
+        }
+
+        for (uint32_t tz = 0; tz < terrain.TileCountZ; ++tz)
+        {
+            for (uint32_t tx = 0; tx < terrain.TileCountX; ++tx)
+            {
+                uint32_t current = 0;
+                CHECK(terrain.FindTile(tx, tz, &current) != nullptr);
+                for (uint32_t direction = 0; direction < 2; ++direction)
+                {
+                    if ((direction == 0 && tx + 1 == terrain.TileCountX) ||
+                        (direction == 1 && tz + 1 == terrain.TileCountZ))
+                    {
+                        continue;
+                    }
+                    uint32_t adjacent = 0;
+                    CHECK(terrain.FindTile(tx + (direction == 0 ? 1 : 0), tz + (direction == 1 ? 1 : 0), &adjacent) != nullptr);
+                    for (uint32_t i = 0; i <= CookTileCells; ++i)
+                    {
+                        const uint32_t x0 = direction == 0 ? CookTileCells : i;
+                        const uint32_t z0 = direction == 0 ? i : CookTileCells;
+                        const uint32_t x1 = direction == 0 ? 0 : i;
+                        const uint32_t z1 = direction == 0 ? i : 0;
+                        CHECK(terrain.GetHeightSample(current, x0, z0) == terrain.GetHeightSample(adjacent, x1, z1));
+                        const size_t firstPixel = (z0 * 17 + x0) * 2;
+                        const size_t nextPixel = (z1 * 17 + x1) * 2;
+                        CHECK(normals[current][firstPixel] == normals[adjacent][nextPixel]);
+                        CHECK(normals[current][firstPixel + 1] == normals[adjacent][nextPixel + 1]);
+                    }
+                }
+            }
+        }
+
+        std::cout << std::setprecision(10) << Utf8(u8"(a) 最大高さ誤差=") << maxHeightError
+                  << Utf8(u8" m 許容=") << tolerance << Utf8(u8" m、2 ULP=") << 2.0 * ulp << " m\n";
+        std::cout << Utf8(u8"(b) x・z 方向の共有辺は HGT0・NRM0 とも一致\n");
+        std::cout << Utf8(u8"(c) 最大法線角度=") << maxAngleDegrees << Utf8(u8" 度 / 0.5 度\n");
+        std::cout << Utf8(u8"(d) AABB・全 LOD の不一致なし、LOD 最大差=") << maxLodDifference << "\n";
+
+        raw[2 * (22 * CookWidth + 35)] ^= 1;
+        WriteTerrainFile(TerrainTempRoot / "surface.raw", Span<const uint8_t>(raw));
+        const auto changedInput = CookTerrainChecked(spec);
+        CHECK(changedInput.SourceHash != first.SourceHash);
+        raw[2 * (22 * CookWidth + 35)] ^= 1;
+        WriteTerrainFile(TerrainTempRoot / "surface.raw", Span<const uint8_t>(raw));
+        WriteTerrainSpec("surface.json", source, mapping, CookCellSize, 2);
+        const auto changedSpec = CookTerrainChecked(spec);
+        CHECK(changedSpec.SourceHash != first.SourceHash);
+        std::cout << Utf8(u8"(g) cook 再現・payload hash 一致、入力と seed の変更で SourceHash が変化\n");
+    }
+
+    void CheckTerrainFormatsAndRejection()
+    {
+        constexpr uint32_t side = 33;
+        constexpr double scale = 0.015625;
+        constexpr double offset = -31.25;
+        ByteArray little(side * side * 2);
+        ByteArray big(little.size());
+        ByteArray floats(side * side * 4);
+        VariableArray<float> floatValues(side * side);
+        for (uint32_t z = 0; z < side; ++z)
+        {
+            for (uint32_t x = 0; x < side; ++x)
+            {
+                const size_t i = static_cast<size_t>(z) * side + x;
+                const uint16_t value = static_cast<uint16_t>(1985 * x + 62 * z - (7 * x * z) % 61);
+                WriteLe16(little, i * 2, value);
+                big[i * 2] = static_cast<uint8_t>(value >> 8);
+                big[i * 2 + 1] = static_cast<uint8_t>(value);
+                floatValues[i] = static_cast<float>(value);
+                WriteLe32(floats, i * 4, std::bit_cast<uint32_t>(floatValues[i]));
+            }
+        }
+        std::error_code copyError;
+        CHECK(std::filesystem::copy_file("Test/Core/Asset/Fixtures/Terrain/height_formula_33x33_16bit.png",
+                                         TerrainTempRoot / "fixture.png", copyError));
+        CHECK(!copyError);
+        WriteTerrainFile(TerrainTempRoot / "little.raw", Span<const uint8_t>(little));
+        WriteTerrainFile(TerrainTempRoot / "big.raw", Span<const uint8_t>(big));
+        WriteTerrainFile(TerrainTempRoot / "float.raw", Span<const uint8_t>(floats));
+        const ByteArray exr = SaveFloatExr(floatValues, side, side);
+        WriteTerrainFile(TerrainTempRoot / "float.exr", Span<const uint8_t>(exr));
+
+        const char* integerMapping = "\"scale_m\":0.015625,\"offset_m\":-31.25";
+        const char* floatMapping = "\"scale\":0.015625,\"offset\":-31.25";
+        const auto png = CookTerrainChecked(WriteTerrainSpec("png.json",
+            "\"path\":\"fixture.png\",\"format\":\"png16\",\"flip_z\":false", integerMapping, CookCellSize));
+        const auto rawLittle = CookTerrainChecked(WriteTerrainSpec("little.json",
+            "\"path\":\"little.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"little\"",
+            integerMapping, CookCellSize));
+        const auto rawBig = CookTerrainChecked(WriteTerrainSpec("big.json",
+            "\"path\":\"big.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"big\"",
+            integerMapping, CookCellSize));
+        const auto rawFloat = CookTerrainChecked(WriteTerrainSpec("float.json",
+            "\"path\":\"float.raw\",\"format\":\"raw32f\",\"width\":33,\"height\":33,\"endian\":\"little\"",
+            floatMapping, CookCellSize));
+        const auto exrFloat = CookTerrainChecked(WriteTerrainSpec("exr.json",
+            "\"path\":\"float.exr\",\"format\":\"exr\",\"exr_channel\":\"Y\"", floatMapping, CookCellSize));
+        CHECK(png.Build.NvtrnBytes == rawLittle.Build.NvtrnBytes);
+        CHECK(png.Build.NvtrnBytes == rawBig.Build.NvtrnBytes);
+        CHECK(png.Build.NvtrnBytes == rawFloat.Build.NvtrnBytes);
+        CHECK(png.Build.NvtrnBytes == exrFloat.Build.NvtrnBytes);
+
+        for (auto& value : floatValues)
+        {
+            value += 0.25f;
+        }
+        const ByteArray fractionalExr = SaveFloatExr(floatValues, side, side);
+        HeightImportDesc desc;
+        desc.Format = HeightSourceFormat::Exr;
+        desc.ExrChannel = "Y";
+        desc.Scale = scale;
+        desc.Offset = offset;
+        desc.TileCells = CookTileCells;
+        HeightImportResult imported;
+        AnsiString error;
+        const bool bImported = ImportHeightfield(Span<const uint8_t>(fractionalExr), desc, imported, error);
+        if (!bImported)
+        {
+            std::cerr << Utf8(u8"端数付き EXR の取り込み失敗: ") << error.c_str() << "\n";
+        }
+        CHECK(bImported);
+        CHECK(imported.Grid.Width == side && imported.Grid.Height == side && imported.SourceBitDepth == 32);
+        for (size_t i = 0; i < floatValues.size(); ++i)
+        {
+            CHECK(imported.Grid.HeightsM[i] == offset + scale * static_cast<double>(floatValues[i]));
+        }
+        std::cout << Utf8(u8"(e) PNG16・RAW16 両順序・RAW32F・EXR の全バイトと EXR の端数が一致\n");
+
+        const ByteArray png8 = SaveGray8Png(33, 33);
+        WriteTerrainFile(TerrainTempRoot / "gray8.png", Span<const uint8_t>(png8));
+        const char* png8Source = "\"path\":\"gray8.png\",\"format\":\"png8\"";
+        const auto allowedPath = WriteTerrainSpec("gray8.json", png8Source, integerMapping, CookCellSize);
+        const auto allowed = CookTerrainChecked(allowedPath);
+        bool bFoundWarning = false;
+        for (const auto& warning : allowed.Warnings)
+        {
+            bFoundWarning = bFoundWarning || std::strstr(warning.c_str(), "terrain_height_bit_depth=8") != nullptr;
+        }
+        CHECK(bFoundWarning && allowed.SourceBitDepth == 8);
+        const auto strictPath = WriteTerrainSpec("strict.json", png8Source, integerMapping, CookCellSize, 1,
+                                                 ",\"require_bit_depth\":16");
+        TerrainSpecCookResult rejected;
+        error.clear();
+        CHECK(!CookTerrainSpecFile(strictPath, rejected, error));
+        CHECK(std::strstr(error.c_str(), "require_bit_depth=16") != nullptr);
+        CHECK(std::strstr(error.c_str(), "8bit") != nullptr);
+        const ByteArray wrongSize = SaveGray8Png(34, 33);
+        WriteTerrainFile(TerrainTempRoot / "wrong.png", Span<const uint8_t>(wrongSize));
+        const auto wrongPath = WriteTerrainSpec("wrong.json", "\"path\":\"wrong.png\",\"format\":\"png8\"",
+                                                integerMapping, CookCellSize);
+        error.clear();
+        CHECK(!CookTerrainSpecFile(wrongPath, rejected, error));
+        CHECK(std::strstr(error.c_str(), "TileCells=16") != nullptr);
+        CHECK(std::strstr(error.c_str(), "34") != nullptr);
+        std::cout << Utf8(u8"(f) 8bit 警告、16bit 指定と不正寸法の拒否を確認\n");
+    }
+
+    void CheckTerrainCookPath()
+    {
+        CreateTerrainTemp();
+        CheckAnalyticTerrain();
+        CheckTerrainFormatsAndRejection();
+        std::error_code error;
+        std::filesystem::remove_all(TerrainTempRoot, error);
+        CHECK(!error && !std::filesystem::exists(TerrainTempRoot));
+        TerrainTempRoot.clear();
+    }
+
 }
 
 int main()
@@ -391,6 +900,7 @@ int main()
         WriteLe32(changed, HeaderOffset::EndianMarker, 0x04030201u);
         CheckRejection(Utf8(u8"エンディアンの不一致"), changed, CookedTerrainParseStatus::EndianMismatch);
     }
+    CheckTerrainCookPath();
     std::cout << Utf8(u8"CookedTerrainTest 成功\n");
     return 0;
 }
