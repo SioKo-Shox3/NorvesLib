@@ -9499,3 +9499,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 焼きで MSK0・SPL0・SPL1・GRS0 をタイルへ切って埋める: 着地(直し 0 回)
 - U3 スペックの recipe を解析し、ペイントを読んでマスクを計算して焼きへ渡す: 着地(直し 0 回)
 - U4 草原のスペックに規則を書き、NVTRNv0.md に recipe と層を記す: 着地(直し 0 回)
+- U5 CookedTerrainTest にマスクの契約の試験 (a)〜(g) を足し、タスクの verify を通す: 着地(直し 0 回)
