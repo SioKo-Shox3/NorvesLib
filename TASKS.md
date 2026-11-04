@@ -4821,7 +4821,7 @@
     - `active_claim_changed`・`nested_managed_root` の判定
     - ボリュームの根の store を `volume_root_store` で拒否すること
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
 
