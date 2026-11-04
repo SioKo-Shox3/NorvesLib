@@ -12,6 +12,7 @@ set(PRIVATE_SOURCES
     Private/Save/GameStateStore.cpp
     Private/Save/SaveContainer.cpp
     Private/Save/SaveMigration.cpp
+    Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
@@ -481,6 +482,7 @@ set(PUBLIC_HEADERS
     Public/Save/GameStateStore.h
     Public/Save/SaveContainer.h
     Public/Save/SaveMigration.h
+    Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
