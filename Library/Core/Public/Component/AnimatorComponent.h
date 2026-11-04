@@ -70,6 +70,7 @@ namespace NorvesLib::Core::Component
         [[nodiscard]] bool SetBool(Animation::AnimParamHandle, bool);
         [[nodiscard]] bool SetTrigger(Animation::AnimParamHandle);
         [[nodiscard]] bool SetDriveSignals(const Animation::AnimDriveSignals&);
+        bool TryGetLastDriveSignals(Animation::AnimDriveSignals& out) const;
         [[nodiscard]] bool RequestState(Identity machine, Identity state, float seconds);
         [[nodiscard]] bool GetState(Identity machine, Animation::AnimStateStatus&) const;
         [[nodiscard]] bool AddModifier(const Container::TSharedPtr<Animation::IPoseModifier>&);
@@ -125,6 +126,8 @@ namespace NorvesLib::Core::Component
         Container::TSharedPtr<SkeletonResource> m_BoundSkeleton;
         Container::TSharedPtr<SkinnedMeshResource> m_BoundMesh;
         Animation::AnimGraphInstance m_Instance;
+        Animation::AnimDriveSignals m_LastDriveSignals;
+        bool m_bHasDriveSignals = false;
         Animation::LocalPose m_FinalPose;
         Animation::PoseScratch m_ModifierScratch;
         Container::VariableArray<Math::Matrix4x4> m_ModifierModels;

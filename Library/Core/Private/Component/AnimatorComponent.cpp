@@ -4,6 +4,13 @@
 #include "Animation/SkeletonResource.h"
 #include <algorithm>
 #include <cmath>
+namespace NorvesLib::Core::Animation
+{
+    int32_t PoseModifierContext::FindJointIndex(Identity name) const
+    {
+        return m_SkeletonAsset ? m_SkeletonAsset->FindJointIndex(name) : -1;
+    }
+} // namespace NorvesLib::Core::Animation
 namespace NorvesLib::Core::Component
 {
     IMPLEMENT_CLASS(AnimatorComponent, Component)
@@ -138,7 +145,22 @@ namespace NorvesLib::Core::Component
     }
     bool AnimatorComponent::SetDriveSignals(const Animation::AnimDriveSignals& value)
     {
-        return m_Instance.Parameters().ApplyDriveSignals(value);
+        if (!m_Instance.Parameters().ApplyDriveSignals(value))
+        {
+            return false;
+        }
+        m_LastDriveSignals = value;
+        m_bHasDriveSignals = true;
+        return true;
+    }
+    bool AnimatorComponent::TryGetLastDriveSignals(Animation::AnimDriveSignals& out) const
+    {
+        if (!m_bHasDriveSignals)
+        {
+            return false;
+        }
+        out = m_LastDriveSignals;
+        return true;
     }
     bool AnimatorComponent::RequestState(Identity machine, Identity state, float seconds)
     {
@@ -256,6 +278,10 @@ namespace NorvesLib::Core::Component
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
         context.SyncPhases = m_Instance.GetSyncPhases();
+        context.MeshToWorld = mesh->GetMeshNodeGlobalTransform();
+        context.SetDriveSignals(m_bHasDriveSignals ? &m_LastDriveSignals : nullptr);
+        context.SetOwner(GetOwner());
+        context.SetSkeletonAsset(m_BoundSkeleton.get());
         m_bApplyingModifiers = true;
         bool applied = true;
         for (const auto& modifier : m_Modifiers)

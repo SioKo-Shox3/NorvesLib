@@ -9684,3 +9684,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION.txt`（Game・PhysicsDynamicsTest・LoggerSinkTest の Debug ビルド終了コード 0、ctest で InteractionPromptTest・EncounterZoneTest・EncounterLifecycleTest・InputActionRuntimeTest・InputActionMapTest・InputBindingJsonTest・GameInputSettingsTest の 7 件 100% Passed）。
 - Next: ランナーの評価者の反証（Object の寿命の危険地帯）。プロンプトの仮の表示は G8-GR17-SLICE-SMOKE、本来の UI は GR68、日本語は GR69。寝床・ファストトラベルの中身は GR55・GR71。
 - Notes: 起動の確かめ（ゲームの中でキー F を押して InteractionTriggered が 1 回出ること）は後回し。入力の更新 → シミュレーション → `GameplayModule::LateTick` の順なので押した瞬間は同じフレームで見えるが、シミュレーションが止まっているフレームの押下は持ち越さない。Game の結線のため paths の外の `Game/GameApplicationHandler.cpp`・`.h` を触った（done-when (2) が求める結線）。距離の比較は厳密な一致で、視線の角が効くのは距離が等しいときだけ。
+- U1 PoseModifierContext に世界変換・駆動の信号・所有者・関節名の解決・重みの口を足す: 着地(直し 0 回)
