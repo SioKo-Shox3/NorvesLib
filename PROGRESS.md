@@ -9504,3 +9504,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 2): 反復 1 の再実行で `CookManagedStoreObservationTest` だけが `entry_limit` で落ちた。原因は親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `ObserveLocked`（paths の外）がまだ統合されていないことで、親は `after:` でこの項目を待っている。互いに待つので BLOCKED にし、verify から Observation を外す案を推奨として blocked に書いた。
 
 - Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 判断役の判断で、この項目の verify の ctest から `CookManagedStoreObservationTest` を外し、5 本で合否を決める。Observation の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。外した理由は、親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちになっていたため。親の枝を一時的に重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 反復 1 で入れた祖先と workspace の読み流し(コードは変えていない)で、判断役の判断で 5 本に絞った verify が TEMP を差し替えずに通った。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U3-verify.txt`(TEMP 直下 133860 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 87.97 秒・`TextureManagedCliTest` 16.37 秒を含む。作業ツリーの変更なし)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
