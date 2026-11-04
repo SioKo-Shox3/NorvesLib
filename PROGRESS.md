@@ -9744,3 +9744,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 cook の後処理を Library の判定と名前に載せ替える: 着地(直し 0 回)
 - U4 cook の足の印の名前・二重にならないこと・Library と cook の窓の一致を RigSplitCookTest で確かめる: 着地(直し 0 回)
 - U5 名前の規約・markerEvents・cook の名前と試験を文書に書き、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-04 G3-GR11-FOOT-CONTACT-SOURCE（run 20261104-193901 の反復 1、完了）
+- Done: 足の接地の判定を Library の純関数 `DetectFootContactWindows`（足ごとの最低を基準、高さ .03・鉛直速度 .15・最短 .05 秒、窓の中はしきい値 ×1.5〔`FootContactOptions::Hysteresis`〕）1 つにまとめ、`AnalyzeFootContacts` と cook の `ApplyRigMotionCleanup` の両方がそれを呼ぶ（cook の独自の判定を消した）。接地の名前を `Foot.<脚>.Down/Up`（LF・RF・LH・RH）にそろえ、窓から marker / 点イベントを作る `AppendFootContactMetadata` を Library に置いた（ループは marker だけ・既存 marker があれば書かない、ループしないは点イベントで終わりまで接地の Up は書かない）。cook の report に `feet_without_contacts` を足し、接地の無い脚があれば `needs_review`。animgraph の clip ノードに `markerEvents`（既定 false）を足し、指定したノードでは marker を跨いだときに同じ名前の点イベントを出す。AnimationRuntime.md・SkeletalRotationRetarget.md・Testing.md に書いた。
+- 証拠: `.harness/runs/20261104-193901/verify-G3-GR11-FOOT-CONTACT-SOURCE.txt`（SkeletalAnimationSamplingTest・CookedMeshTest・AssetCook の Debug ビルド成功、ctest で SkeletalAnimationSamplingTest・CookedSkeletalAssetTest・CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の 5 件と RigMotionCleanupTest が Passed）。
+- Next: ランナーの評価者の反証（Public API と cook の出力の変更）。
+- Notes: `Test/Core/Asset/RigMotionCleanupTest.cpp`（paths の外）を、旧い形（`<role>_down` の名前・ループでも窓イベント・ループしないクリップにも marker）を固定していたので新しい形に書き換えた（IoU・継ぎ目の Down/Up・既存 marker の保持・時間の補正の検査は残した）。足ごとの最低を基準にしたので、ずっと同じ高さで止まっている足は高い位置でも接地とみなされる（接地なしと区別できない。上下に動き続ける足は接地なしになる）。ループしないクリップの点イベントは、時刻 0 から接地している窓の Down も時刻 0 に書く。marker から出す点イベントの `EventIndex` は events の件数 + marker の添字。起動の要る確かめは無い。
