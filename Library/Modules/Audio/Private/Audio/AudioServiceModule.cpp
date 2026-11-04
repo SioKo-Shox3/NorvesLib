@@ -1,5 +1,6 @@
 ﻿#include "Audio/AudioDomain.h"
 
+#include "Audio/SoundSystem.h"
 #include "CoreTypes.h"
 
 #include <utility>
@@ -16,6 +17,10 @@ namespace NorvesLib::Modules::Audio::Private
             explicit AudioServiceModule(Core::Container::TUniquePtr<IAudioService> service)
                 : m_Service(std::move(service))
             {
+                if (m_Service)
+                {
+                    m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                }
             }
 
             Core::Identity GetModuleId() const override
@@ -38,11 +43,12 @@ namespace NorvesLib::Modules::Audio::Private
                 return m_Service != nullptr && m_Service->Initialize() == AudioResult::Success;
             }
 
-            void Tick(float) override
+            void Tick(float deltaSeconds) override
             {
                 if (m_Service)
                 {
                     m_Service->Tick();
+                    m_SoundSystem->Update(deltaSeconds);
                 }
             }
 
@@ -50,6 +56,7 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 if (m_Service)
                 {
+                    m_SoundSystem->Shutdown();
                     m_Service->Shutdown();
                 }
             }
@@ -63,8 +70,14 @@ namespace NorvesLib::Modules::Audio::Private
                 return *m_Service;
             }
 
+            ISoundSystem& GetSoundSystem() override
+            {
+                return *m_SoundSystem;
+            }
+
         private:
             Core::Container::TUniquePtr<IAudioService> m_Service;
+            Core::Container::TUniquePtr<SoundSystem> m_SoundSystem;
         };
     } // namespace
 

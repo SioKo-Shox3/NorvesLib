@@ -12,6 +12,8 @@ file(GLOB_RECURSE audio_backend_neutral_sources
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioClipResource.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/SoundSystem.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/SoundSystem.cpp"
 )
 foreach(audio_source IN LISTS audio_backend_neutral_sources)
     file(READ "${audio_source}" audio_source_text)
