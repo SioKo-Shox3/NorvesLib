@@ -9497,3 +9497,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
 - U1 マスクの計算本体（TerrainMasks）と焼きの設定の入口: 着地(直し 0 回)
 - U2 焼きで MSK0・SPL0・SPL1・GRS0 をタイルへ切って埋める: 着地(直し 0 回)
+- U3 スペックの recipe を解析し、ペイントを読んでマスクを計算して焼きへ渡す: 着地(直し 0 回)
