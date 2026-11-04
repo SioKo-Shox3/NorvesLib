@@ -9449,3 +9449,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 EncounterZoneTest: 着地(直し 0 回)
 - U4 TickStages.md の割当表と Testing.md の記載: 着地(直し 0 回)
 - U5 EncounterLifecycleTest・EncounterSerializationTest と最終の確かめ: 着地(直し 1 回)
+
+## 2026-11-04 G8-GR18-ENCOUNTER-ZONES（run 20261104-135119 の反復 1、完了）
+- Done: 遭遇領域を物理を使わないサービスで作った。形状（球・箱・Y 軸の円柱）の内側と ExitMargin の外側の判定の純関数、ヒステリシスの状態機械 Outside → Engaged → Resetting → Cleared（境界の往復で連打しない・ResetDelaySeconds 外にいたときだけ Exit・テレポートの印で即評価・Cleared は再び武装しない）、`ZoneProfileStack`（優先度の順、最上位が変わったときだけ `OnActiveProfileChanged(old, new, blendSeconds)`）。`ZoneSensorComponent`・`EncounterZoneComponent`（PROPERTY 付き、`RegisterReflectedTypes` に登録）と `EncounterService`（GameplayModule が持ち `LateTick` で 1 フレーム 1 回評価。登録と参照の解決は最初の評価まで遅らせる。事件は集めてから世代付きのハンドルで再検証して配る。`MarkCleared(ZoneId)` は次の評価で適用。別スレッドからの呼び出しは拒否し、Shutdown で消す）。ResetPolicy は {FullHeal, KeepDamage}、既定 FullHeal。`Docs/Architecture/TickStages.md` の割当表と `Docs/Testing.md` に載せた。
+- 試験: `EncounterZoneTest`・`EncounterLifecycleTest`・`EncounterSerializationTest` を PhysicsDynamicsTest の束に足した。
+- 証拠: `.harness/runs/20261104-135119/verify-G8-GR18-ENCOUNTER-ZONES-U5.txt`（Game・PhysicsDynamicsTest の Debug ビルド終了コード 0、ctest で PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・EncounterZoneTest・EncounterLifecycleTest・EncounterSerializationTest の 5 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命の危険地帯）。敵の起動と ResetPolicy の適用は G8-GR17-ENEMY-COMPONENT、カメラ・音・天候の購読は各項目。
+- Notes: verify の CombatLifecycleTest はこの枝に未登録（G8-GR16-COMBAT-RUNTIME の試験）で、ctest の正規表現に一致しないまま 5 件で通る。退出の遅延の比較は「以上」で、Resetting に移った評価では時間を足さない（遅延 0 秒でも Exit は次の評価から）。`OnActiveProfileChanged` は同じ LateTick の中で配るので、購読側の反映は次のフレーム。起動の要る確かめは無い。

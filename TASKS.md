@@ -5452,7 +5452,7 @@
 - notes: 選定課題 G8-S2(判定を評価する時点)を決めた: `GameplayModule::LateTick`(Module Late。World の Late の群 PostPhysics → Camera → PreRender の後、Handler の OnLateUpdate と描画の同期の前)で 1 フレーム 1 回。理由: ロードマップ 1580・1610 行の「PostAnimation 段」は今の `ETickGroup`(`Library/Core/Public/Component/TickGroup.h`)に無い(「段階をまたぐ注意」4401 行と同じ指摘)。ソケットの追従(`SocketAttachmentComponent`)は PostPhysics の群で動く(`World.cpp:1952-1960`)ので、その後なら姿勢・固定ステップ・ソケットがそろった値を 1 回で読める。Module LateTick の dt は Unscaled(`ApplicationProcessor.cpp:2733`)なので、World のチャンネルの dt は `TimeSystem::GetFrameTimes()` から取る。選定課題 G8-S3(判定窓の開閉)を決めた: GR11 のアニメイベントの Begin / End(窓の終端が必ず配られる。`AnimationEvents.h` の Window・WindowToken)と、直接の Begin / End の 2 つにし、ロードマップ 1602 行の GR11 の前の暫定(位相区間の PhaseInterval::Crossed)は作らない。理由: GR11 が統合ブランチにあり、暫定は捨てるだけの二重の実装になる。選定課題 G8-S4(faction のビット)を決めた: Combat が持つ 32bit のマスクにし、名前とビットの割当はゲームのデータ(G8-GR16-JOINT-DATA-RESPONSE の JSON)に置く。ロードマップ 1606 行の「GR08 の CollisionLayers.h(Core)にそろえる」は採らない。理由: GR08 は「ゲームが名前とビットを決め、Core / Physics にゲーム固有の名前を置かない」と決めた(`Docs/Architecture/PhysicsQueries.md` の冒頭)うえ、そのファイルは無い。「段階をまたぐ注意」81 行のとおり、攻撃判定はシミュレーションの Transform を読み、剣の描画・トレイルは描画用の補間の Transform を読む。犬の被弾の扱いは企画に無い(ロードマップ 1859 行)ので、HurtboxSet は犬にも付けられる形にし、扱いは購読する側に任せる。危険地帯: Object の寿命(配送中の破棄)なので評価者を通す。やらないこと: 関節の束縛、JSON のデータ、DebugDraw、当たりの反応(G8-GR16-JOINT-DATA-RESPONSE)。AngelScript への OnHit(GR98)。
 
 ## G8-GR18-ENCOUNTER-ZONES: 遭遇領域(進入・退出・リセット・撃破済み)と切り替えの受け口を、物理を使わないサービスで作る
-- status: todo
+- status: done
 - after: G8-GR16-GAMEPLAY-MODULE, G1-GR01-TICK-CONTRACT-DOC
 - gr: GR18
 - needs-gr: GR01
