@@ -64,6 +64,172 @@ namespace NorvesLib::Core::Animation
             }
         };
     } // namespace
+    bool DetectFootContactWindows(Container::Span<const float> heights, double sampleInterval,
+                                  const FootContactOptions& options,
+                                  Container::VariableArray<FootContactSampleWindow>& out)
+    {
+        if (heights.size() < 2 || heights.size() - 1 > UINT32_MAX ||
+            !std::isfinite(sampleInterval) || sampleInterval <= 0 ||
+            !std::isfinite(options.HeightThreshold) || options.HeightThreshold <= 0 ||
+            !std::isfinite(options.VerticalSpeedThreshold) || options.VerticalSpeedThreshold <= 0 ||
+            !std::isfinite(options.MinimumWindowSeconds) || options.MinimumWindowSeconds < 0 ||
+            !std::isfinite(options.Hysteresis) || options.Hysteresis < 1)
+        {
+            return false;
+        }
+        float minimum = std::numeric_limits<float>::max();
+        for (const float height : heights)
+        {
+            if (!std::isfinite(height))
+            {
+                return false;
+            }
+            minimum = std::min(minimum, height);
+        }
+        Container::VariableArray<FootContactSampleWindow> windows;
+        size_t begin = SIZE_MAX;
+        double sum = 0;
+        const auto close = [&](size_t end) {
+            if (begin == SIZE_MAX)
+            {
+                return;
+            }
+            const double length = sampleInterval * double(end - begin);
+            const double tolerance =
+                4 * std::numeric_limits<float>::epsilon() * std::max(length, double(options.MinimumWindowSeconds));
+            if (length + tolerance >= options.MinimumWindowSeconds &&
+                float(sampleInterval * end) > float(sampleInterval * begin))
+            {
+                windows.push_back({uint32_t(begin), uint32_t(end), float(sum / double(end - begin))});
+            }
+            begin = SIZE_MAX;
+            sum = 0;
+        };
+        for (size_t i = 0; i + 1 < heights.size(); ++i)
+        {
+            const double height = double(heights[i]) - minimum;
+            const double velocity = std::fabs(double(heights[i + 1]) - heights[i]) / sampleInterval;
+            const double hysteresis = begin == SIZE_MAX ? 1 : options.Hysteresis;
+            if (height <= options.HeightThreshold * hysteresis && velocity <= options.VerticalSpeedThreshold * hysteresis)
+            {
+                if (begin == SIZE_MAX)
+                {
+                    begin = i;
+                }
+                sum += .5 * (std::clamp(1 - height / options.HeightThreshold, 0.0, 1.0) +
+                             std::clamp(1 - velocity / options.VerticalSpeedThreshold, 0.0, 1.0));
+            }
+            else
+            {
+                close(i);
+            }
+        }
+        close(heights.size() - 1);
+        out = std::move(windows);
+        return true;
+    }
+    Identity FootContactEventName(Identity leg, bool bDown)
+    {
+        Container::AnsiString name = "Foot.";
+        for (const auto c : leg.GetView())
+        {
+            name += c;
+        }
+        name += bDown ? ".Down" : ".Up";
+        return Identity(name.c_str());
+    }
+    bool AppendFootContactMetadata(Container::Span<const FootContactWindow> windows,
+                                   Container::Span<const Identity> legs, float duration, bool bLoop,
+                                   ClipMetadata& metadata, uint32_t& coincidentMarkersOmitted)
+    {
+        if (!std::isfinite(duration) || duration <= 0)
+        {
+            return false;
+        }
+        for (const auto& window : windows)
+        {
+            if (!std::isfinite(window.Start) || !std::isfinite(window.End) ||
+                window.Start < 0 || window.End < window.Start || window.End > duration ||
+                std::find(legs.begin(), legs.end(), window.Name) == legs.end())
+            {
+                return false;
+            }
+        }
+        coincidentMarkersOmitted = 0;
+        if (bLoop)
+        {
+            if (!metadata.Markers.empty())
+            {
+                return true;
+            }
+            for (const auto leg : legs)
+            {
+                const FootContactWindow* largest = nullptr;
+                const FootContactWindow* first = nullptr;
+                const FootContactWindow* last = nullptr;
+                for (const auto& window : windows)
+                {
+                    if (window.Name != leg)
+                    {
+                        continue;
+                    }
+                    if (!largest || window.End - window.Start > largest->End - largest->Start)
+                    {
+                        largest = &window;
+                    }
+                    if (window.Start == 0)
+                    {
+                        first = &window;
+                    }
+                    if (window.End == duration)
+                    {
+                        last = &window;
+                    }
+                }
+                if (!largest)
+                {
+                    continue;
+                }
+                float down = largest->Start, up = largest->End;
+                if (first && last && first != last &&
+                    duration - last->Start + first->End >= largest->End - largest->Start)
+                {
+                    down = last->Start;
+                    up = first->End;
+                }
+                metadata.Markers.push_back({FootContactEventName(leg, true), down});
+                metadata.Markers.push_back({FootContactEventName(leg, false), up >= duration ? 0 : up});
+            }
+            std::stable_sort(metadata.Markers.begin(), metadata.Markers.end(),
+                             [](const auto& a, const auto& b) { return a.Time < b.Time; });
+            for (size_t i = 1; i < metadata.Markers.size();)
+            {
+                if (metadata.Markers[i].Time == metadata.Markers[i - 1].Time)
+                {
+                    metadata.Markers.erase(metadata.Markers.begin() + i);
+                    ++coincidentMarkersOmitted;
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+        }
+        else
+        {
+            for (const auto& window : windows)
+            {
+                metadata.Events.push_back({FootContactEventName(window.Name, true), window.Start});
+                if (window.End < duration)
+                {
+                    metadata.Events.push_back({FootContactEventName(window.Name, false), window.End});
+                }
+            }
+            std::stable_sort(metadata.Events.begin(), metadata.Events.end(),
+                             [](const auto& a, const auto& b) { return a.Time < b.Time; });
+        }
+        return true;
+    }
     bool AnalyzeFootContacts(const SkeletalPoseContext& context, const AnimationClipResource& clip,
                              Container::Span<const FootContactSpec> feet, const FootContactOptions& options,
                              FootContactReport& out)
@@ -74,8 +240,11 @@ namespace NorvesLib::Core::Animation
             !std::isfinite(options.HeightThreshold) || options.HeightThreshold <= 0 ||
             !std::isfinite(options.VerticalSpeedThreshold) || options.VerticalSpeedThreshold <= 0 ||
             !std::isfinite(options.MinimumWindowSeconds) || options.MinimumWindowSeconds < 0 ||
+            !std::isfinite(options.Hysteresis) || options.Hysteresis < 1 ||
             options.MaximumSamples < 2 || options.MaximumSamples > 65536)
+        {
             return false;
+        }
         const double steps = std::ceil(duration * options.SampleRate);
         if (!std::isfinite(steps) || steps < 1 || steps + 1 > options.MaximumSamples)
             return false;
@@ -115,67 +284,66 @@ namespace NorvesLib::Core::Animation
         report.Draft.GroundOffset = ground;
         double totalConfidence = 0;
         size_t acceptedSamples = 0;
+        Container::VariableArray<Identity> legs;
         for (size_t foot = 0; foot < feet.size(); ++foot)
         {
-            size_t begin = SIZE_MAX;
-            double sum = 0;
-            const auto close = [&](size_t end) {
-                if (begin == SIZE_MAX)
-                    return;
-                const float start = float(dt * begin), finish = float(dt * end);
-                const double length = dt * double(end - begin);
-                const double tolerance =
-                    4 * std::numeric_limits<float>::epsilon() * std::max(length, double(options.MinimumWindowSeconds));
-                if (finish > start && length + tolerance >= options.MinimumWindowSeconds)
-                {
-                    const float confidence = float(sum / double(end - begin));
-                    report.Windows.push_back({feet[foot].Name, start, finish, confidence});
-                    report.Draft.Events.push_back({feet[foot].Name, start, finish});
-                    totalConfidence += sum;
-                    acceptedSamples += end - begin;
-                }
-                begin = SIZE_MAX;
-                sum = 0;
-            };
-            for (size_t sample = 0; sample + 1 < count; ++sample)
+            legs.push_back(feet[foot].Name);
+            Container::VariableArray<FootContactSampleWindow> windows;
+            if (!DetectFootContactWindows({heights.data() + foot * count, count}, dt, options, windows))
             {
-                const float y = heights[foot * count + sample];
-                const double velocity = std::fabs(double(heights[foot * count + sample + 1]) - y) / dt;
-                const double height = std::max(0.0, double(y) - ground);
-                if (height <= options.HeightThreshold && velocity <= options.VerticalSpeedThreshold)
-                {
-                    if (begin == SIZE_MAX)
-                        begin = sample;
-                    sum +=
-                        .5 * ((1 - height / options.HeightThreshold) + (1 - velocity / options.VerticalSpeedThreshold));
-                }
-                else
-                    close(sample);
+                return false;
             }
-            close(count - 1);
+            for (const auto& window : windows)
+            {
+                report.Windows.push_back({feet[foot].Name, float(dt * window.Begin), float(dt * window.End),
+                                          window.Confidence});
+                const size_t samples = window.End - window.Begin;
+                totalConfidence += double(window.Confidence) * samples;
+                acceptedSamples += samples;
+            }
         }
         std::stable_sort(report.Windows.begin(), report.Windows.end(),
                          [](const auto& a, const auto& b) { return a.Start < b.Start; });
-        std::stable_sort(report.Draft.Events.begin(), report.Draft.Events.end(),
-                         [](const auto& a, const auto& b) { return a.Time < b.Time; });
         report.Confidence = acceptedSamples ? float(totalConfidence / acceptedSamples) : 0;
+        uint32_t omitted = 0;
+        if (!AppendFootContactMetadata(report.Windows, legs, float(duration), clip.GetClipMetadata().Loop.bEnabled,
+                                       report.Draft, omitted))
+        {
+            return false;
+        }
         ClipMetadataReport validation;
         if (!ValidateClipMetadata(report.Draft, float(duration), validation))
+        {
             return false;
+        }
         report.DraftJson = _T("{\"version\":1,\"groundOffset\":");
         Number(report.DraftJson, ground);
         report.DraftJson += _T(",\"events\":[");
-        for (size_t i = 0; i < report.Windows.size(); ++i)
+        for (size_t i = 0; i < report.Draft.Events.size(); ++i)
         {
             if (i)
+            {
                 report.DraftJson += ',';
-            const auto& w = report.Windows[i];
+            }
+            const auto& event = report.Draft.Events[i];
             report.DraftJson += _T("{\"name\":");
-            Quote(report.DraftJson, w.Name);
+            Quote(report.DraftJson, event.Name);
             report.DraftJson += _T(",\"t\":");
-            Number(report.DraftJson, w.Start);
-            report.DraftJson += _T(",\"end\":");
-            Number(report.DraftJson, w.End);
+            Number(report.DraftJson, event.Time);
+            report.DraftJson += '}';
+        }
+        report.DraftJson += _T("],\"markers\":[");
+        for (size_t i = 0; i < report.Draft.Markers.size(); ++i)
+        {
+            if (i)
+            {
+                report.DraftJson += ',';
+            }
+            const auto& marker = report.Draft.Markers[i];
+            report.DraftJson += _T("{\"name\":");
+            Quote(report.DraftJson, marker.Name);
+            report.DraftJson += _T(",\"t\":");
+            Number(report.DraftJson, marker.Time);
             report.DraftJson += '}';
         }
         report.DraftJson += _T("]}");
