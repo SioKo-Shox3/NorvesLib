@@ -9495,14 +9495,51 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 試験: `GrassFieldQueryTest` に 2×2 のうち 1 つを欠いた 4 通りの継ぎ目の検査を足した（直す前は最大密度差 0.177 で落ち、直した後は 260 点の最大 0.0022 ＜ 1/255。差は ±1e-3 m の勾配の分）。既存の値（継ぎ目の密度差 1.5676e-05、線形の誤差 1.47e-08）は変わらない。
 - 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U7-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが終了コード 0、ctest の 4 本 100% Passed）。起動の確かめは無い。
 - Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
-- U1 マスクの計算本体（TerrainMasks）と焼きの設定の入口: 着地(直し 0 回)
-- U2 焼きで MSK0・SPL0・SPL1・GRS0 をタイルへ切って埋める: 着地(直し 0 回)
-- U3 スペックの recipe を解析し、ペイントを読んでマスクを計算して焼きへ渡す: 着地(直し 0 回)
-- U4 草原のスペックに規則を書き、NVTRNv0.md に recipe と層を記す: 着地(直し 0 回)
-- U5 CookedTerrainTest にマスクの契約の試験 (a)〜(g) を足し、タスクの verify を通す: 着地(直し 0 回)
-- Done (G5-GR89-TERRAIN-MASKS、run 20261104-132213): 地形の cook で spec の `recipe` とペイント入力から MSK0（R=湿り・G=枯れ草・B=道・A=岩）・SPL0・SPL1（スプラット最大 8 層、最大剰余法で mip0 の総和 255）・GRS0（草密度）を全体格子で一度だけ計算し、タイルの (tile_cells+1)² に切ってフルミップの NVTEX として NVTRN の層に埋める（`Tools/AssetCook/TerrainMasks.{h,cpp}`）。湿りは priority-flood で窪地を埋めた流れ集積の対数・低標高・凹の曲率の合成、雑音は (seed, salt, 格子座標) の splitmix64 でスレッドに依らない。ペイントは 8bit PNG の override・multiply で、source_hash と InputFiles にペイントを配列順に足した。`recipe` が無い spec の出力は変わらない。層は FourCC で引け、GR42・GR45 が後から足せる。草原の spec に土・苔・湿った泥・岩肌・草地の 5 層と草密度の仮の係数を書き、`Docs/Architecture/NVTRNv0.md` に recipe・式・ペイント・層を記した。
-- 草原の焼いた結果（mip0 の重複を除く 263,169 標本）: 最大の重みになる割合 soil 1.2 %・moss 27.7 %・wet_mud 0.5 %・rock_face 0.1 %・meadow 70.4 %。湿りの平均 0.34、岩は 99.9 % が 0、草密度の平均 0.88。最初の仮の係数では meadow が 99.8 % を占めたので、土・苔・草地の重みと低標高の湿りの範囲（実際の高さ 20.6〜39.2 m に合わせて 22〜36 m）・草密度の湿りの減衰（0.35〜0.75）を直した。式の係数は見た目で決まるまで仮。
-- 試験: `CookedTerrainTest` に (a) スプラット 8 層の総和 255±1、(b) 道のペイントの内側で草密度 0、(c) 傾斜に対する岩の単調性と 0・255 の両方、(d) 谷線の湿りが各行で最大（流れ集積だけの重みで検査）、(e) seed を変えると枯れ草とスプラットだけ変わり HGT0・NRM0・湿り・道・岩・草密度は一致、(f) x・z の共有辺の全層のビット一致、(g) ペイント 1 画素の変更で source_hash が変わり InputFiles にペイントが入る、を足した。
-- 証拠: `.harness/runs/20261104-132213/G5-GR89-TERRAIN-MASKS-U5-verify.txt`（verify の 4 行: AssetCook・CookedMeshTest の Debug ビルドが終了コード 0、ctest の CookedTerrainTest・AssetCookTerrainSmoke が 100% Passed で (a)〜(g) の行が出る、CookAssets の Grassland が終了コード 0。草原は U4 で焼き済みのため skipped=1 で、`-Force` でも cooked=1 を確かめた）。起動の確かめは無い（描画は G5-GR37-TERRAIN-COMPONENT）。
-- Next: マスクの層を描画で使うのは GR37・GR42・GR45。道のペイント PNG はまだ無い。
-- Notes: 要起票: `Scripts/CookAssets.ps1` の変更検出は spec と高さファイルだけを見て、ペイントの PNG を見ない（ペイントだけ変えると `-Force` が要る。AssetCook の source_hash はペイントを含む）。
+
+## 2026-11-03 G4-GR07-BODY-CASES（run 20261103-233355 の反復 1、着手）
+- 試験を足す理由（Docs/Testing.md の 3 点。PhysicsFixedStepPipelineTest にケース 20〜26 を足す）
+  - 反証する契約: 固定ステップで駆動するキャラクター本体が、(1) 往復しつつ回る Kinematic の足場に 120 ステップ乗ってもローカル座標で 0.02 m 未満しかずれず、跳んで離れた最初のステップの水平速度が足場の速度 ±0.05 m/s を保つ、(2) 3 m/s で上下する足場の上で足場に対する高さのジッタが 0.01 m 未満、(3) Dynamic の球へ歩くと球が動き、キャラクターはめり込まない（深さ 1e-3 以下）、(4) 限界角を越える 60° の坂では要求速度 0 でも下へ滑り bGrounded=false、(5) GravityScale=0.5 の 1 秒の降下が解析値 ±2%、(6) External の間は要求速度と重力が効かず MoveDelta だけが効き、Walking へ戻すと重力が戻る、(7) GetLinearVelocity が位置差分/dt と 0.005 m/s 以内で一致し、Teleport とめり込みの解消は速度に乗らない
+  - ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、離脱速度の欠け・数 mm のジッタ・速度への瞬間移動の混入・重力の倍率の取り違えは絵にもログにも出ない。小物を押す場面と External を使う場面（GR20 のしがみつき）はまだシーンに無い
+  - 失敗が黙って起きるか: 起きる。どれも外れてもキャラクターは何かしら動き、エラーもログも出ない
+- 計画: 試験ファイルと PhysicsModuleCharacter.cpp を全単位が触るので、単位は直列に回す（U1 重力の倍率・滑り落ち・昇降足場 → U2 足場の離脱速度 → U3 External → U4 小物を押す → U5 速度の一致とタスクの verify）
+- U1 重力の倍率・滑り落ち・昇降足場のケースを足し、外れたら本体を直す: 着地(直し 0 回)
+- U6 足場の離脱速度のケースを足し、空中で足場の水平速度を引き継ぐ(切り直し): 着地(直し 0 回)
+- U3 External の間は MoveDelta だけが効くようにし、ケースを足す: 着地(直し 0 回)
+- U4 近くの Dynamic の球を押すケースを足し、押し出しを入れる: 着地(直し 0 回)
+- U5 速度の一致と瞬間移動の除外のケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 20〜26 を足し、全部通る（重力の倍率・60° の坂の滑り落ち・昇降足場のジッタ・足場の離脱速度・External・小物を押す・速度の一致）。本体の直し: 足場を離れた後に足場の水平速度を空中で保つ、External の間は MoveDelta の変位と回転だけを衝突なしで適用する、歩いて接した Dynamic の体へ要求の水平速度の法線成分を渡す、めり込みの解消の変位を速度から除く
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1` は exit 0。`ctest ... -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|PhysicsDynamicsTest)$"` は 5/5 Passed（PhysicsFixedStepPipelineTest 0.91 秒、合計 1.11 秒）。既存のケース 0〜19 の試験は変えていない
+- 測った量: 昇降足場のジッタは SceneQuery::RefreshDynamicSnapshot を通す組・通さない組（負の対照）とも 0 m（`ELEVATOR_JITTER refresh=0 norefresh=0`）で、今の経路では差が出ない。球を押すケースは 90 ステップで球 2.02 m・キャラクター 2.97 m 進む。めり込みの解消は直す前に 0.052 m の押し出しが 3.12 m/s として速度に乗っていた
+- Notes: External は衝突を見ずに変位を適用する（拘束側が位置の権限を持つ形。GR20 のしがみつき側で壁の中へ入れない責任を持つ）。小物を押すのは速度の法線成分を上げるだけで、質量・摩擦は扱わない。めり込みの解消の変位は、重なるステップだけ移動 0 の CharacterMover::Move をもう 1 回呼んで求めるので、足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる。足場の離脱速度の引き継ぎは縁からの自然落下・可変駆動の足場からの離脱を個別には試していない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U7 足場の運搬をめり込みの解消と取り違えて速度から引く退行を直し、昇降足場の速度の一致を試験で確かめる: 着地(直し 1 回)
+- Done: 反復 2 で差し戻し（昇降足場が上がるステップで速度が位置差分/dt と約 3 m/s ずれる退行）を直した。めり込みの事前判定と解消だけの要求を、足場の運搬（PlatformDisplacement）だけ平行移動した形で行い、運んでいる足場（PlatformCollider）は判定と解消の対象から外す（足場との重なりは本番の Move の運搬と解消が扱い、速度からは引かない）。ケース 22 に更新ありのキャラクターの毎ステップの速度 y と位置差分/dt の一致（0.005 m/s 以内）を足した。直す前は velocity_error=3.12 で落ち、直した後は 0
+- 確かめ（タスクの verify）: ビルド exit 0。ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 0.99 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）は 5/5 Passed（合計 1.20 秒）。`ELEVATOR_JITTER refresh=0 norefresh=0 velocity_error=0`。運搬後の形だけで判定した途中の版では、回る足場（ケース 8）で足場との 1e-6 m の重なりが解消として速度から引かれ 0.12 m/s ずれたため、足場を対象から外す形にした
+- Notes: 運搬後の形での判定は、足場の運搬が壁に遮られる場面で速度を誤らせたため、次の項で運ぶ前の形に戻した（足場を外す部分は残した）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U8 運搬前の形でめり込みを判定し直し、壁に押し付けられた足場の運搬で速度が位置差分と一致することを試験で確かめる: 着地(直し 0 回)
+- Done: 反復 3 で差し戻し（足場の運搬が静的な壁に遮られるステップで、止まっているキャラクターの速度に足場の速さ約 2 m/s が出る退行）を直した。めり込みの事前判定と解消だけの要求を運ぶ前の形（*self・request.Shape）で行い、運んでいる足場（PlatformCollider）を判定と解消の対象から外す部分は残した。ケース 27（TestCharacterPlatformPushedAgainstWall。回転しない Kinematic の足場が +x へ 2 m/s、キャラクターの高さに静的な壁）を足し kCaseCount を 28 にした。合否は毎ステップの速度と位置差分/dt の差 0.005 m/s 以内と、足場が動くのにキャラクターの x の差分が 0.001 m 未満のステップが 10 以上あること
+- 確かめ: 直す前の版でケース 27 は `CHARACTER_WALL_VELOCITY step=7 error=2`（押し付け 84 ステップ）で落ちた。直した後はケース 8・22・26・27 の単独実行が終了コード 0（押し付け 84 ステップ）。タスクの verify はビルド exit 0、ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 1.02 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）が 5/5 Passed（合計 1.20 秒）。既存のケース 0〜26 と PhysicsCharacterMoveTest の中身は変えていない
+- Notes: 残る限界: 運搬前の形がほかの物体に食い込み、運搬でその物体から離れるステップだけ、解消の分を引きすぎて速度が小さく出うる（試験していない）
+- Notes: 要起票: 空中で壁に当たったとき、足場から引き継いだ水平速度(m_InheritedVelocity)の壁へ向かう成分を消す
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+
+- U1 入力の列の解析・コースの寸法・期待値の式（純関数）と見本のデータと試験のケース: 着地(直し 0 回)
+- U2 起動の受け入れの台本（-SelfTest つき）: 着地(直し 0 回)
+- U3 起動引数と自動走行のときだけのコースの組み立て: 着地(直し 0 回)
+- U4 自動走行（入力の注入・段階の測定と印・3 枚の撮影・終了）: 着地(直し 2 回)
+## 2026-11-04 G4-GR07-DOG-SMOKE-COURSE（run 20261104-083519 の反復 1〜3、完了。起動の確かめは後回し）
+- Done: `--dog-movement-smoke` に `--dog-movement-autopilot[=<path>]` と `--dog-movement-capture-dir=<dir>` を足した。自動走行のときだけ、床・0.20/0.40 m の段・30°/60° の坂・壁・+X の直線路・往復して回る Kinematic の足場を組み立てる（`DogMovementSmokeRoutine.cpp`）。引数なしと `--dog-movement-smoke` だけの起動は進め役もコースも作らない。
+- Done: 入力の列 `Assets/Gameplay/DogMovementAutopilot.json`（dog_autopilot.v1、12 区間。値は仮）を `DogMovementAutopilotScript` の純関数で読み、`DogMovementAutopilotRunner` が区間ごとに置き直して `InputSystem` へキー・マウスの出来事として流す。段階ごとに `DOG_MOVEMENT_SMOKE stage=<名前>` の印、撮影の保存先があれば低い視点・疾走・壁際で `dog_low/sprint/wall.png`、最後に `stage=complete exit_code=0` か `stage=failed reason=<名前>` で終了する。期待値は `Gameplay/DogLocomotion.json`（locomotion.v1）から求める。
+- Done: 台本 `Scripts/Test-DogMovement.ps1`（-SelfTest で 5 ケース pass）と `DogMovementSmokeGeometryTest` のケース（正しい列・時刻の逆行・未知のキー・範囲外の値・旋回の半径の式）。
+- 証拠: `.harness/runs/20261104-083519/verify-G4-GR07-DOG-SMOKE-COURSE-U4.txt`（`cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の 3 本 `DogMovementSmokeGeometryTest`・`CharacterDriveOptionsTest`・`PhysicsFixedStepPipelineTest` Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
+- Next: 起動の確かめ（G4-GR07-DOG-SMOKE-CHECK）で `Scripts/Test-DogMovement.ps1` を Debug・RelWithDebInfo・Release で回し、印・3 枚の PNG・終了コードを確かめる。
+- Notes: 起動していないので未確認の所: 旋回の区間（W 0〜1 秒の後に D 1〜2.5 秒。カメラが背後へ戻り D の望む向きが犬の右に保たれて上限 min(ω_cap, a_lat/v) に張り付く前提。速歩の手計算で v≈3.4 m/s・期待の半径≈1.284 m、弧 60° に約 0.4 秒）と、標本の各点の旋回の速さが上限の 5 % 以内という条件、Settling で視点の入力（感度 0.15 の前提）で yaw を区間の向きへ合わせる収束、slope_climb の 1 m の上昇、足場のずれ 0.05 m、疾走の FOV の差。重力の基準 9.81 は Runner の定数（物理側に取得口が無い）× GravityScale。外れたら入力の列の値と許容差を直す。
+- Notes: 自動走行の合成入力を背景ウィンドウでも届けるため、自動走行の間だけ InputMapper のフォーカスを立て、Leave で窓の状態に戻す。
+
+## 2026-11-04 G4-GR07-DOG-SMOKE-COURSE（run 20261104-132215 の反復 1、完了に戻す）
+
+- Done: 単位 U1〜U4 はすべて着地済み。前の走行の評価が利用枠（429）で回らず状態が doing に戻っていたため、追加の変更なしで done に戻す。着地した中身（DogMovementSmokeRoutine.cpp・DogMovementAutopilotScript.*・GameApplicationHandler.cpp・DogMovementSmokeGeometryTest.cpp・Test-DogMovement.ps1・DogMovementAutopilot.json）は確かめを回した作業ツリーの中身と一致することを照合した。
+- 証拠: 最後の単位の確かめ（Debug の Game・PhysicsDynamicsTest のビルド終了コード 0、ctest 3 本 Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
+- Next: 起動の確かめは後回しで `G4-GR07-DOG-SMOKE-CHECK` が受け持つ（Debug・Release の台本の pass と 3 枚の PNG の所見）。
+- Notes: この差分はまだ評価を通っていない（前の走行の評価者が枠切れ）。
