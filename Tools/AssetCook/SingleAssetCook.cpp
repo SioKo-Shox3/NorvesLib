@@ -11,6 +11,8 @@
 #include "SkeletalRoleFileCook.h"
 #include "SkeletalRoleFileInput.h"
 #include "TerrainSpec.h"
+#include "GrassFieldCooker.h"
+#include "Asset/CookedGrassFieldFormat.h"
 #include <chrono>
 #if defined(_WIN32)
 #include <psapi.h>
@@ -1253,6 +1255,69 @@ namespace NorvesLib::Tools::AssetCook
             return ToStdString(warning);
         }
 
+        bool CookGrassFieldAsset(const CookOptions& options, std::string& error)
+        {
+            std::filesystem::path inputPath, packagePath, manifestPath;
+            if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+                !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
+                !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
+            {
+                return false;
+            }
+            using NorvesLib::Core::Container::AnsiString;
+            using NorvesLib::Core::Container::VariableArray;
+            AnsiString logicalPath, entryName, cookedPackagePath;
+            const AnsiString variant(options.Variant.empty() ? "default" : options.Variant.c_str());
+            if (!NormalizeSkeletalManifestPath(AnsiString(options.LogicalPath.c_str()), logicalPath, error) ||
+                !NormalizeSkeletalManifestPath(AnsiString(options.EntryName.c_str()), entryName, error) ||
+                !ValidateSkeletalAsciiField(variant, error) ||
+                !MakeSkeletalCookedPackageManifestPath(packagePath, manifestPath.parent_path(), cookedPackagePath, error))
+            {
+                return false;
+            }
+            GrassFieldCookResult result;
+            AnsiString cookError;
+            if (!CookGrassFieldSpecFile(inputPath, result, cookError))
+            {
+                error.assign(cookError.data(), cookError.size());
+                return false;
+            }
+            uint64_t cookedHash = 0;
+            VariableArray<uint8_t> packageBytes;
+            constexpr auto EntryType = Core::Asset::CookedGrassFieldFormatV0::PackageEntryType;
+            if (!BuildSingleSkeletalEntryPackage(entryName, EntryType, result.Bytes, packageBytes, cookedHash, error))
+            {
+                return false;
+            }
+            Core::Asset::AssetCookedReference reference;
+            reference.LogicalPath = logicalPath;
+            reference.Kind = AssetKind::World;
+            reference.SourceHash = result.SourceHash;
+            reference.SourceHashHex = FormatAssetHashHex(reference.SourceHash);
+            reference.Variant = variant;
+            reference.Format = Core::Asset::CookedGrassFieldFormatV0::ManifestFormat;
+            reference.CookedPackage = cookedPackagePath;
+            reference.EntryName = entryName;
+            reference.EntryType = EntryType;
+            reference.EntryTypeText = "Gfd0";
+            reference.CookedHash = cookedHash;
+            reference.CookedHashHex = FormatAssetHashHex(cookedHash);
+            reference.CookedVersion = 0;
+            AnsiString manifestJson;
+            if (!BuildMergedManifestJson(manifestPath, {&reference, 1}, manifestJson, error) ||
+                !WriteSkeletalBinaryFile(packagePath, packageBytes, error) ||
+                !WriteSkeletalTextFile(manifestPath, manifestJson, error) ||
+                !ValidateSkeletalManifestOutput(manifestPath, manifestJson, error) ||
+                !ValidatePackageOutput(packagePath, ToStdString(entryName), EntryType,
+                    std::vector<uint8_t>(result.Bytes.begin(), result.Bytes.end()), error))
+            {
+                return false;
+            }
+            std::cout << "GRASS_FIELD_COOKED chunks=" << result.ChunkCount << " species=" << result.SpeciesCount
+                      << " bytes=" << result.Bytes.size() << " payload_hash=" << FormatAssetHashHex(result.PayloadHash).c_str() << "\n";
+            return true;
+        }
+
         bool CookWorldAsset(const CookOptions& options, std::string& error)
         {
             std::filesystem::path inputPath;
@@ -1620,6 +1685,15 @@ namespace NorvesLib::Tools::AssetCook
             }
             else if (outOptions.Kind == "world")
             {
+                if (outOptions.Format == Core::Asset::CookedGrassFieldFormatV0::ManifestFormat)
+                {
+                    if (outOptions.EntryTypeText != "Gfd0")
+                    {
+                        error = "--format nvgfld.v0 には --entry-type Gfd0 を指定してください";
+                        return false;
+                    }
+                    return true;
+                }
                 if (outOptions.Format != NorvesLib::Core::Asset::CookedTerrainFormatV0::ManifestFormat)
                 {
                     error = "--kind world requires --format nvtrn.v0.height16";
@@ -1732,7 +1806,8 @@ namespace NorvesLib::Tools::AssetCook
         }
         else if (options.Kind == "world")
         {
-            bSucceeded = CookWorldAsset(options, error);
+            bSucceeded = options.Format == Core::Asset::CookedGrassFieldFormatV0::ManifestFormat
+                ? CookGrassFieldAsset(options, error) : CookWorldAsset(options, error);
         }
         outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
         return bSucceeded;
