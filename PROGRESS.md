@@ -9726,3 +9726,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: アプリを起動する確かめは無い。
 - Next: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の Notes の `要起票:`(`CookManagedBootstrap.cpp:457` の workspace を親にする `Absent`)は未起票のまま。
 - U1 IGroundQuery の型と PhysicsGroundQuery の実装を Core に足す: 着地(直し 1 回)
+- U3 物理の問い合わせの文書と試験の理由を書く: 着地(直し 1 回)
