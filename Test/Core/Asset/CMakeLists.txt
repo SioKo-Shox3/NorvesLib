@@ -55,6 +55,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalRotationRetargetNativeTest SkeletalRotationRetargetNativeTest.cpp
     MEMBER SkeletalBvhClipTimeTest SkeletalBvhClipTimeTest.cpp
     MEMBER SkeletalBvhClipImportTest SkeletalBvhClipImportTest.cpp
+    MEMBER MotionProcessingTest MotionProcessingTest.cpp
     MEMBER SkeletalBvhCookBridgeTest SkeletalBvhCookBridgeTest.cpp
     MEMBER SkeletalAssetLoaderTest SkeletalAssetLoaderTest.cpp
     MEMBER SkeletalAssetPublicationTest SkeletalAssetPublicationTest.cpp
@@ -315,6 +316,7 @@ add_test(NAME SkeletalRotationRetargetTest COMMAND CookedMeshTest --test=Skeleta
 add_test(NAME SkeletalRotationRetargetNativeTest COMMAND CookedMeshTest --test=SkeletalRotationRetargetNativeTest)
 add_test(NAME SkeletalBvhClipTimeTest COMMAND CookedMeshTest --test=SkeletalBvhClipTimeTest)
 add_test(NAME SkeletalBvhClipImportTest COMMAND CookedMeshTest --test=SkeletalBvhClipImportTest)
+add_test(NAME MotionProcessingTest COMMAND CookedMeshTest --test=MotionProcessingTest)
 add_test(NAME SkeletalBvhCookBridgeTest COMMAND CookedMeshTest --test=SkeletalBvhCookBridgeTest)
 add_test(NAME SkeletalAssetLoaderTest COMMAND CookedMeshTest --test=SkeletalAssetLoaderTest)
 add_test(NAME SkeletalAssetPublicationTest COMMAND CookedMeshTest --test=SkeletalAssetPublicationTest)

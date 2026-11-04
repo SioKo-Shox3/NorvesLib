@@ -9305,29 +9305,115 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261103-163359/verify-G5-GR89-NVTRN-FORMAT-U6.txt`（CookedMeshTest・AssetSystemTest の Debug ビルド exit=0、ctest で AssetManifestTest・AssetSystemTest・CookedTextureTest・CookedTerrainTest の 4 件 100% Passed）
 - Next: なし（アプリの起動の確かめは無い）。前の反復の差分は評価者が枠切れで未評価なので、この反復の後の評価で全体を見る。
 - Notes: AssetManifestTest.cpp は日本語のコメントを MSVC が読めるよう UTF-8 BOM を付けた（行末は元の LF のまま）。
-- U1 Core にロックオンの目標の口 ILockOnTarget と組み込みの 2 実装を足す: 着地(直し 0 回)
-- U2 FollowCameraProfile にしがみつきの節(cling)を足す: 着地(直し 0 回)
-- U3 FollowCameraComponent のロックオンを ILockOnTarget 経由に組み替え、表面のアンカーの口を足す: 着地(直し 0 回)
-- U4 しがみつき中のヨーの補正(低域通過・角速度と角加速度の上限・抜けの継続)と試験: 着地(直し 1 回)
 
-## 2026-11-03 G4-GR06-CLING-LOCKON（run 20261103-231220 の反復 2、完了）
-- Done: ロックオンの目標を Core の読み取り専用の口 `ILockOnTarget`（`Library/Core/Public/Camera/LockOnTarget.h`。描画の空間の注視点と半径を `TryResolve` で返す）で受けるようにした。組み込みの実装は `EntityLockOnTarget`（Entity の点）と `JointLockOnTarget`（骨格のジョイント）で、`SetLockOnTarget`・`SetLockOnJoint` はそれを作る形で同じふるまいを保つ。外部の目標（表面のアンカー GR19）は `SetLockOn(TWeakPtr<const ILockOnTarget>)` で受け、試験の偽の実装で動く。しがみつきの状態を `SetClinging`/`IsClinging` で受け、その間はヨーを対象（ロック中は目標）の水平の向きへ臨界減衰で追わせ、角速度と 1 フレームの角速度の変化を `FollowCameraProfile` の `cling`（`yawHalfLife` 既定 0.25 s・`maximumYawSpeed` 既定 90 度/秒。値は仮）で抑える。入りは実測の角速度から始め、抜けは残りの角速度を同じ上限で 0 へ減らす間ヨーの戻しとロックオンのヨーの向けを止める（視点の入力で継続は終わる）。カメラの上方向は世界の上向きのまま。
-- 所有と破棄の順: カメラは目標を所有しない。外部の目標は弱い参照だけを持ち、Camera 群の毎フレームに `lock()` して World から解決する。参照が切れた・Entity が消えた（PendingDestroy・非アクティブ）・ジョイントが無効なら、そのフレームはロックしていない扱いで `ClearLockOn()` する。組み込みの目標はカメラが `TSharedPtr` で持つが、中身は Entity の id とジョイントの番号だけで Entity は所有しない。したがってアンカーの持ち主・目標の Entity はカメラより先に破棄してよく、カメラの `Finalize` はロックとしがみつきの状態を消すだけ。
-- 証拠: `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 100% Passed。新しいケースの出力: 上方向の最大偏差 0 度、10 Hz ±30° の揺れでヨーの角速度の最大 2.11 度/秒・振幅 0.224 度、出入りの角速度の差の最大 1.50 度/秒）。
-- Next: なし（アプリの起動の確かめは無い）。しがみつきの状態の出どころ（GR20 の拘束）と表面のアンカーの解決（GR19）は G10。
-- Notes: しがみつきの補正・角速度の実測は dt が有限で正のときだけ動く（しがみつきでないときの dt ≤ 0 のふるまいは前のまま）。しがみつき中に `SetLockOn` 等を呼んでもヨーの速度は 0 に戻さない（入りの連続を保つため）。
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-113728 の反復 1、着手）
+- 試験の 3 点（ApplicationFixedStepPipelineTest の固定刻みの時計のケース）:
+  - 反証する契約: `--fixed-frame-dt=` の刻み（1/24・1/30）で回すと、60 Hz の固定ステップの回数が決まった並び（1/24 は 2・3 で合計 120、1/30 は毎フレーム 2）になり、端数の持ち越しで累積がずれず、2 回の新しい実行で各フレームの実行ステップ数・余り・TimeSystem の時刻・FramePacket に載る delta と累積が bit で一致する
+  - ほかの手段で気づけるか: 気づけない。1 ns の端数の落としや並びの入れ替わりは 1 枚の撮影にもログにも出ず、連番の録画（GR66）や 2 回撮った FLIP（G7）でだけ遅れて食い違う
+  - 失敗が黙って起きるか: 起きる。時計が壁時計へ戻っても、刻みの端数を捨てても、エラーにならず時刻が少しずつずれるだけ
+- 試験の 3 点（WorldRenderInterpolationTest の生成直後の補間のケース）:
+  - 反証する契約: 原点でない位置に生成した補間の Entity は、最初のフレーム（0 ステップと 1 ステップ）で描画の位置・MeshProxy の現在と前の変換が生成の位置になり、原点から補間されない
+  - ほかの手段で気づけるか: 気づきにくい。生成の 1〜2 フレームだけ原点の方から滑って見え、落ち着いた後の撮影には出ない
+  - 失敗が黙って起きるか: 起きる
+- Notes: FramePacket の DeltaTime・TotalTime は RenderingCoordinator::BeginFrame が自前の壁時計で作るので、done-when (2) を満たすために paths の外の RenderWorld・RenderingCoordinator に固定刻みの値を受け取る 1 メソッドを足す（決定的な撮影の経路は変えない）
+- Notes: `--capture-deterministic` と `--fixed-frame-dt=` を同時に指定したときは決定的な撮影の 1/60 を優先し、`--fixed-frame-dt` は警告して無視する（刻みを選べる決定的な撮影は G14・G7 の側で要るときに足す）
+- U1 固定刻みのフレームの時計の型と刻みの文字列の解釈を足す: 着地(直し 0 回)
+- U2 原点でない位置に生成した補間の Entity が最初のフレームで原点から補間されないことを押さえる: 着地(直し 0 回)
+- U3 フレームの経過時間を 1 つの差し替えられる口にし、--fixed-frame-dt= を解釈して FramePacket の時間へ渡す: 着地(直し 1 回)
+- U6 レビュー済みの U5 の差分を当て直し、タスクの verify を回す（最後の単位）: 着地(直し 0 回)
 
-## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 1、完了に戻す）
-- Done: 前の run（20261103-231220）で全単位を着地し完了にしたが、評価者が枠切れ（429）で未評価のまま doing に戻されていた。実装は変えずに done に戻し、評価をランナーへ渡す。
-- 証拠: 着地した版（ソース 9 ファイルがこの枝と一致）で取った `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt` と単位の作業ツリーの `unit-verify.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest 4 件 100% Passed）。
-- Next: ランナーの評価者の反証（Public API と Object の寿命に触れる危険地帯）。
-- Notes: 起動の要る確かめは無い。
-- U5 しがみつきの入りの初速を上限に切り詰め、ヨーの角速度の実測を全ての変更の後に取る(差し戻しの直し): 着地(直し 0 回)
+## 2026-11-03 G4-GR02-FIXED-FRAME-CLOCK（run 20261103-223641 の反復 1、完了）
+- Done: `FixedFrameClock`（DeterministicCapture.h。刻みを有理数の ns で持ち、累積を切り上げて k フレーム後の合計 = ceil(k×刻み)、誤差 1 ns 未満）と `--fixed-frame-dt=` の解釈（不正値は警告して無視）、ApplicationProcessor の経過時間を `AcquireFrameDeltaNanoseconds` の 1 つの口にし `--capture-deterministic` は 16'666'667 ns の整数刻みで同じ口を使う。固定刻みのときは FramePacket の DeltaTime・TotalTime を時計の値にする
+- 試験: ApplicationFixedStepPipelineTest のケース 21（1/24 × 48 で 2・3 の交互・合計 120、2 回の子プロセスの記録が bit 一致）・ケース 22（1/30 で毎フレーム 2）、WorldRenderInterpolationTest の生成直後の補間。verify のビルド終了コード 0・ctest 7 件 Passed
+- Notes: 累積は切り捨てでなく切り上げにした（切り捨てだと 1/30 の最初のフレームが 33'333'333 ns で 60 Hz の 2 ステップに 1 ns 届かず 1・2・3 の並びになり done-when の「毎フレーム 2」を満たさない）。整数刻み（分母 1）のふるまいは変わらない
+- Notes: FramePacket に載る値は試験では時計の delta・累積として記録し、パケット自体は作っていない。Game を起動しての確かめ（`--fixed-frame-dt=1/24` で撮影・録画の時刻が刻みどおりに進むこと）は後回し
+- Next: G14（GR66 の連番の録画・GR127）と G7（2 回撮った FLIP）がこの時計を使う
 
-## 2026-11-04 G4-GR06-CLING-LOCKON（run 20261104-082804 の反復 2、差し戻しを直して完了）
-- Done: しがみつきの入りの初速を `ClingMaximumYawSpeed` に切り詰め、しがみつき中の速度の上限を常にその値にした（前は入りが上限を越えていると越えたまま何秒も回り続けた）。ヨーの角速度の実測を `UpdateCamera` の冒頭から全てのヨーの変更（ロックオンの向け・しがみつき・抜けの継続）の後へ移し、途中で返る経路と例外の再送出でも同じ位置で取る（ロックオン中は実測が 1 フレーム古かった）。視点の入力で回った分は実測から除き、入りの初速に持ち込まない（通常の追従で視点の入力が `m_YawVelocity` を 0 にするのとそろえた）。
-- 決定: done-when の (2)「しがみつき中は角速度が上限を越えない」と (3)「入りの前後のフレームの角速度の差 ≤ 上限×dt」は、入る直前の角速度が上限×(1+dt) を越えると両立しない。上限を優先した: 上限を越えた速さで入ったときは入りのフレームで ±上限へ切り詰め、入りの前後の差が上限×dt 以下であることは入る直前の角速度が上限以下のときに保証する。
-- 試験: `TestClingYawTransitions` の上限越えの節を差し替えた（ヨーの戻しが上限を越えて回る最中に入っても全フレーム上限以下。視点の入力 5° の直後に入っても最初のフレームの角速度は上限×dt 以下）。ロックオンの振りの最中（上限以下）に入り・抜ける前後のフレームの差も確かめる。
-- 証拠: `.harness/runs/20261104-082804/verify-G4-GR06-CLING-LOCKON-U5.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド終了コード 0、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 Passed。出力: 上方向の最大偏差 0 度、低域通過の最大角速度 2.11 度/秒・振幅 0.224 度、出入りの最大角速度差 1.50 度/秒・上限越えの入りの最大角速度 90 度/秒・ロックオン中の入りの最大角速度差 1.50 度/秒）。
-- Next: ランナーの評価者の反証（前回の指摘への対応差分）。
-- Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
+- U1 Core に PhysicsLayerTable と JSON の読み込み、既定のデータを足す: 着地(直し 0 回)
+- U2 PhysicsLayerTableTest を足す: 着地(直し 0 回)
+- U3 Game が起動時に既定のレイヤー表を読む: 着地(直し 0 回)
+- U4 文書を足し、タスクの確かめを回す: 着地(直し 0 回)
+
+## 2026-11-03 G1-GR08-LAYER-TABLE（run 20261103-223716 の反復 1、完了）
+- Done: Core に `PhysicsLayerTable`（`Library/Core/Public/Scene/PhysicsLayerTable.h`）を足した。初期は `Default` = bit 0 だけ。`LoadFromJson`（`collision-layers.v1`、`layers` の `name`・`bit`）は全体を候補に組んで検査し、成功したときだけ置き換える。名前・ビットの重複、0〜31 の外・整数でない bit、空の名前、`Default` の欠けと bit 0 以外、壊れた JSON、schema の違いは false で前の表を保ち、例外を出さない。未知のフィールドは無視する。`TryGetLayerMask`（名前→1 ビット）と `TryBuildMask`（名前の列→論理和、空の列は 0）は未知の名前で false を返し出力を変えない
+- Done: 既定のデータ `Assets/Config/CollisionLayers.json` に仮の 12 の名前（Default 0〜Perception 11）を置いた。Game は `Game/Gameplay/Physics/GamePhysicsLayers.*` で `Config/HapticsEffects.json` と同じ読み方で読み、`GameApplicationHandler::OnInitialize` で `m_PhysicsLayers` に持つ。失敗なら警告を出して `Default` だけの表で続ける。使う側（カメラの遮蔽など）とコライダーの既定・クエリは変えていない
+- Done: `PhysicsLayerTableTest`（`SceneQueryRaycastTest` の束）を足し、理由の 3 点を `Docs/Testing.md` に、表の節を `Docs/Architecture/PhysicsQueries.md` に書いた
+- 証拠: `.harness/runs/20261103-223716/G1-GR08-LAYER-TABLE-U4-verify.txt`（verify の 2 行: Debug の SceneQueryRaycastTest・Game のビルド EXIT=0、ctest の PhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTest が 100% Passed）
+- Next: なし。起動時に表が読めたこと（警告が出ないこと）は Game の起動の確かめで見る（後回し）。使う側の書き換えはカメラの遮蔽（G4 の GR06）・攻撃判定（G8 の GR16）・取り込み設定（G17 の GR81）・知覚（G13）の各段階
+- Notes: 既定のデータは既存の `HapticsEffects.json` にそろえて BOM なし・LF で置いた（読み込みは先頭の BOM も受ける）
+
+## G8-GR17-HEALTH-PROGRESSION（2026-11-03）
+
+- Done: `HealthComponent`（体力・無敵・撃破のラッチ・スタッガの計）、Core のヘッダだけの `TStateMachine<TContext, TStateId>`（要求を Update の安全点で適用）、Gameplay モジュールのサービス `ProgressionState`（安定 ID の撃破集合と解放の条件、`Assets/Gameplay/progression.json`）と `DefeatGate`（保留と持ち主の破棄の検出）、試験 `HealthComponentTest`・`ProgressionStateTest`・`DefeatGateTest`・`TStateMachineTest`
+- Done: 統合ブランチ `feature/scene-launcher` を取り込み、`Docs/Architecture/TickStages.md`（統合側の割り当て表に HealthComponent と GameplayModule の 2 行を足す）と `Docs/Testing.md`（両方の試験の理由を残す）の衝突を解いた。verify のビルド（Game・PhysicsDynamicsTest・GameModeStateMachineTest）が EXIT=0、ctest の 7 本と `TickContractTableTest` が合格
+- Notes: アプリを起動する確かめは無い
+- Next: G8-GR17-ENEMY-COMPONENT（敵の基底と状態の遷移）がこの状態機械と撃破の保留を使う
+- U1 Core にヘッダだけの TStateMachine と TStateMachineTest を足す: 着地(直し 0 回)
+- U2 Gameplay モジュールに HealthComponent と HealthComponentTest を足す: 着地(直し 0 回)
+- U3 ProgressionState・DefeatGate を GameplayModule のサービスにし、progression.json と試験 2 本を足す: 着地(直し 0 回)
+- U4 文書(Testing.md・TickStages.md)を足し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G8-GR17-HEALTH-PROGRESSION（run 20261103-223645 の反復 1、完了）
+- Done: Core に依存なしのヘッダだけの `TStateMachine<TContext, TStateId>`（`Library/Core/Public/GameMode/TStateMachine.h`）を置いた。状態の表は {Enter, Update, Exit}、遷移の要求は固定容量の列に積んで Update の先頭（安全点）で FIFO に適用し、Update の中の要求で再入しない。未登録・範囲外・満杯の要求は無視して診断の数と警告を残す。状態の表と列はインラインの配列で、毎フレームの確保をしない
+- Done: Gameplay に `HealthComponent`（PROPERTY: MaxHealth・Health・StaggerThreshold）と `DamageInfo`・`DamageResult`・`EDamageOutcome` を足した。`ApplyDamage` は 0 へのクランプ、無敵、撃破のラッチ（OnDefeated は 1 回だけ、撃破の後は IgnoredAlreadyDefeated）、負値・NaN・無限大の拒否、呼び出しごとの順の減算、任意のスタッガの計（閾値以上で OnStaggerBroken、計を 0 へ）。通知の順は OnDamaged → OnStaggerBroken → OnDefeated。部位の倍率は掛け終えた値（`DamageInfo::Amount`）を受ける。`GameplayModule::RegisterReflectedTypes` で型を登録した
+- Done: `ProgressionState`（Required ⊆ Defeated で解放、Required が空なら解放しない、OnFinalUnlocked は 1 回だけで状態の読込で満たしていた場合は通知しない、未知・規則外の Id は診断の数と警告で無視、定義・状態の JSON の読込は全部か無し）と `DefeatGate`（BeginDefeat → AddHold/Release、GameplayModule::Tick の Update で持ち主の Entity が解決できない保留を外し、保留の無い撃破に OnDefeatCompleted を 1 回だけ）を GameplayModule のサービスにした（`IGameplayModule::GetProgressionState`・`GetDefeatGate`）。DefeatGate の完了を ProgressionState::MarkDefeated へ結線し、Initialize で `Assets/Gameplay/progression.json`（数と名前は未決なので空）を読む。安定 ID の規則（小文字の ASCII・数字・`_` をドットで区切る、128 文字以下）は `IsValidGameplayStableId`
+- Done: 試験 `TStateMachineTest`（GameModeStateMachineTest の束）・`HealthComponentTest`・`ProgressionStateTest`・`DefeatGateTest`（PhysicsDynamicsTest の束）を足し、理由を `Docs/Testing.md` に、HealthComponent の通知の位置と DefeatGate の安全点を `Docs/Architecture/TickStages.md` に書いた
+- 証拠: `.harness/runs/20261103-223645/verify-G8-GR17-HEALTH-PROGRESSION.txt`（verify の 2 行: Debug の Game・PhysicsDynamicsTest・GameModeStateMachineTest のビルド成功、ctest の HealthComponentTest・ProgressionStateTest・DefeatGateTest・TStateMachineTest・GameModeStateMachineTest・SubRoutineTest・GameModeRegistryTest が 7 本とも Passed）
+- Next: なし（アプリを起動する確かめは無い。Game に撃破の場面はまだ無い）。敵の基底と状態の遷移は G8-GR17-ENEMY-COMPONENT、撃破済みの集合のセーブは GR76
+- Notes: DefeatGate は完了した Id の記録を残し、同じ Id の 2 回目の BeginDefeat を無視する。同じ安定 ID で再び出る敵（再配置・雑魚の再出現）を扱うときは、完了済みの Id の BeginDefeat を受け付け直す形が要る
+- Notes: GameplayModule は DefeatGate の完了を全部 ProgressionState へ流すので、進行の定義に無い敵（シ者でない敵）の撃破ごとに警告が 1 行出て診断の数が増える。敵の基底を作るときに、シ者だけを流すか警告を出さない形にするかを決める
+- 要起票: G8-GR17-ENEMY-COMPONENT で、DefeatGate の完了済み Id の再受付と、シ者でない敵の撃破を ProgressionState へ流さない経路を決める
+
+## 2026-11-03 G4-GR128-PROCESSING-CASES 統合ブランチの取り込み（run 20261103-232719 の反復 1、完了）
+
+- 統合ブランチ feature/scene-launcher を取り込み、Docs/Testing.md の衝突は MotionProcessingTest と FollowCameraBehaviorTest の両方の節を残して解いた。実装は変えていない
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0（`.harness/runs/20261103-232719/verify-build.txt`）、ctest 6 件 Passed（MotionProcessingTest・SkeletalBvhClipImportTest・SkeletalBvhClipTimeTest・BvhDecodeTest・BvhEvaluateTest・RigStaticRootFrameWireTest、`.harness/runs/20261103-232719/verify-ctest.txt`）
+- Notes: 要起票: ループのときの平滑（`SmoothChannels`）が、末尾の間隔が短いのに等間隔とみなして折り返すため、継ぎ目のキーを約 2° ゆがめる（平滑ありで継ぎ目の速さが中央値の 2.32 倍。前からある欠陥。近傍を時刻で取り、周期 P で折り返す）
+- U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
+- U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
+- U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-114107 の反復 1〜2、完了）
+- Done: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（`Test/Core/Asset/MotionProcessingTest.cpp`）を足し、`ProcessSkeletalClip` を合成のクリップで (i)〜(vii) 確かめた。足す理由の 3 点は `Docs/Testing.md`。
+- Done: 外れて直した所: 外れ値の置き換えが前後のコマを誤って置き換える・平均の前の継ぎ目の報告・倍周期の選択（U2）、出力の四元数が入力の符号の反転をそのまま持ち込み隣のキーと 180° を越えて飛ぶ（U3。前のキーとの内積が負なら反転。ループの末尾を先頭と float32 で一致させる扱いは保つ）。
+- 実測: スパイク replaced=3・周期 12.4968 コマ、ループ 3 周期の平均で継ぎ目の誤差 0.000793→0.000185 rad、平滑で粗さ 0.1486→0.0815、符号を区別した隣の最大角 0.0249 rad・入力との差 4.2e-8 rad、30→16→30 Hz の往復の最大差 0.0751°、TimeScale=2 で長さ 2→4 秒・距離 4.4721 m のまま・速さ 2.236→1.118 m/s、根の heading の最大 0。
+- 証拠: `.harness/runs/20261103-114107/G4-GR128-PROCESSING-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 成功、ctest の 6 本 `MotionProcessingTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` Passed、numstat の 2 通りが一致）。
+- Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
+- U5 レビュー済みの U4 の差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-163403 の反復 1、差し戻しへの対応、完了）
+- 差し戻し（既定の設定で遅い・振幅の小さいループが検出されない退行）を直した: 周期の候補を短い順に見て、受け入れの判定（RMS ≤ LoopRms、motion ≥ MinimumMotion、RMS ≤ 0.2·motion）を通る最短の候補を選ぶ。どれも通らなければ従来の best×1.25 の規則で選ぶ（検出なし）。
+- `MotionProcessingTest` に 0.07 rad・周期 1 s・長さ 3 s・30 Hz・既定設定の 1 件を足した（直す前は detected=0、直した後は period=0.999999 s・detected=1）。
+- (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
+- 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
+- Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-114107 の反復 1〜2、完了）
+- U1 Docs/Testing.md に MotionProcessingTest を足す理由の 3 点を書く: 着地(直し 0 回)
+- U2 MotionProcessingTest を束へ足し、外れ値・平滑・ループ・周期の平均の試験 (i)(iv)(v) を通す: 着地(直し 1 回)
+- U3 符号の連続・再サンプル往復・時間の補正・heading の試験 (ii)(iii)(vi)(vii) を足して通し、タスクの verify を回す: 着地(直し 0 回)
+- Done: `CookedMeshTest` の束へ `MEMBER MotionProcessingTest`（`Test/Core/Asset/MotionProcessingTest.cpp`）を足し、`ProcessSkeletalClip` を合成のクリップで (i)〜(vii) 確かめた。足す理由の 3 点は `Docs/Testing.md`。
+- Done: 外れて直した所: 外れ値の置き換えが前後のコマを誤って置き換える・平均の前の継ぎ目の報告・倍周期の選択（U2）、出力の四元数が入力の符号の反転をそのまま持ち込み隣のキーと 180° を越えて飛ぶ（U3。前のキーとの内積が負なら反転。ループの末尾を先頭と float32 で一致させる扱いは保つ）。
+- 実測: スパイク replaced=3・周期 12.4968 コマ、ループ 3 周期の平均で継ぎ目の誤差 0.000793→0.000185 rad、平滑で粗さ 0.1486→0.0815、符号を区別した隣の最大角 0.0249 rad・入力との差 4.2e-8 rad、30→16→30 Hz の往復の最大差 0.0751°、TimeScale=2 で長さ 2→4 秒・距離 4.4721 m のまま・速さ 2.236→1.118 m/s、根の heading の最大 0。
+- 証拠: `.harness/runs/20261103-114107/G4-GR128-PROCESSING-CASES-u3-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 成功、ctest の 6 本 `MotionProcessingTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` Passed、numstat の 2 通りが一致）。
+- Notes: ループの出力で、1 周期の間に関節が 360° 回る（四元数が -q に戻る）入力では、末尾のキーを先頭と同じ値にする扱いのため末尾の手前と末尾の間だけ符号が逆になりうる。歩容の関節では起きないので直していない。
+- U5 レビュー済みの U4 の差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-03 G4-GR128-PROCESSING-CASES（run 20261103-163403 の反復 1、差し戻しへの対応、完了）
+- 差し戻し（既定の設定で遅い・振幅の小さいループが検出されない退行）を直した: 周期の候補を短い順に見て、受け入れの判定（RMS ≤ LoopRms、motion ≥ MinimumMotion、RMS ≤ 0.2·motion）を通る最短の候補を選ぶ。どれも通らなければ従来の best×1.25 の規則で選ぶ（検出なし）。
+- `MotionProcessingTest` に 0.07 rad・周期 1 s・長さ 3 s・30 Hz・既定設定の 1 件を足した（直す前は detected=0、直した後は period=0.999999 s・detected=1）。
+- (v) の指標を雑音のない正弦との二乗誤差に変えたところ、三角の重みの平滑は振幅を縮めて誤差を増やしていた（0.0171→0.0840）。半径 2 以上の平滑を局所二次近似の重みにして 0.0171→0.0132 に下がる。
+- 証拠: `.harness/runs/20261103-163403/G4-GR128-PROCESSING-CASES-u5-unit-verify.txt`（`cmake --build build --config Debug --target CookedMeshTest -- /m:1` 終了コード 0、ctest の 6 本 Passed、numstat の 2 通りが一致）。
+- Notes: 局所二次近似の重みは端で負になるため、急変する入力では行き過ぎが出うる（試験していない）。スパイクの候補を極大に限っているため、2 コマ続く外れ値では片方しか置き換えないことがありうる（done-when の外）。
+
+## 2026-11-03 G4-GR07-MOVER-CASES（run 20261103-233036 の反復 1、着手）
+- 試験の 3 点（Docs/Testing.md）: 反証する契約は、CharacterMover が GR07 の受け入れ確認の数値どおりに動くこと（平地の接地と足元の高さ、45° の壁沿いの移動量と毎ステップのめり込み、段差の登りの進みと止まり、坂の沿面の速さと限界角、階段下りの接地の割合、50 m/s で薄い壁を抜けない、めり込み開始からの押し出しの速さと 1 ステップの上限、全ステップの bit 一致、共面の継ぎ目で止まらない）。
+- ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、段差や継ぎ目での数フレームの引っかかり、坂での沿面の速さの 2 割落ち、階段下りの接地の 1 フレームの切れ、数 mm のめり込みは絵にもログにも出ない。実機の移動の確かめ（煙試験）はまだ無い。
+- 失敗が黙って起きるか: 起きる。数値から外れてもキャラクターは何かしら動き、エラーもログも出ない（接地が 1 フレーム切れると上の層で落下や着地の判定が誤るだけ）。
+- 方針: 期待値は受け入れ確認の数値のまま書き、外れたら CharacterMover を直す。既存のケースと他の 5 本の試験は変えない。測り方の細部（段差・階段の寸法、沿面の速さは毎ステップの 3 次元の移動量÷要求の水平の量）は計画（.harness/relay）で決める。
+- U1 平地・45° の壁・すり抜け・めり込み開始・決定性のケースを足す: 着地(直し 0 回)
+- U2 段差の進みと坂の沿面の速さのケースを足し、外れを直す: 着地(直し 0 回)
+- U3 階段下りと共面の継ぎ目のケースを足し、外れを直してタスクの確かめを回す: 着地(直し 0 回)
+- Done: GR07 の受け入れ確認の 9 ケース（平地・45° の壁・段差・坂・階段下り・すり抜け・めり込み開始・決定性・共面の継ぎ目）を PhysicsCharacterMoveTest に足し、全部通る。外れた 3 つを CharacterMover で直した: 段差 0.20 m の進み（直す前 0.418 m/要求 0.5 m → 0.471 m。縁に当たったら同じ物体の上面の法線で乗るかを決める）、40° の沿面の速さ（直す前 0.766 倍 → 1.000 倍。接地中に歩ける面へ当たったら水平の要求の長さを沿面の移動量に保つ）、階段下りの接地（直す前 10/60 ステップ → 60/60。下降と接地のスナップで縁の丸みに当たったら上面の法線で接地を決める）。残りの 6 ケースは直す前から通った
+- 証拠: `.harness/runs/20261103-233036/G4-GR07-MOVER-CASES-U3-verify.txt`（verify の 2 行: Debug の PhysicsDynamicsTest のビルド EXIT=0、ctest の PhysicsCharacterMoveTest・CharacterPlatformMotionTest・PhysicsFixedStepPipelineTest・PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・PhysicsLifecycleEventTest が 100% Passed）
+- Next: 重力つきの坂の滑り落ちと着地は G4-GR07-BODY-CASES。起動の確かめは無し（試験だけで閉じる）
+- Notes: 縁の丸みの接触を上面の法線で接地にしたので、カプセルの下の球が段の角に乗っている間は、中心が縁の外へ出ていても接地のまま落ちない（水平に動けば落ちる）。重力つきの縁の振る舞いは BODY-CASES で見る。既定の SkinWidth 0.002・MaximumDepenetrationDistance 1 m は変えずに (1)(7) が通った（めり込み開始の 1 ステップの押し出しは 0.102 m）
+
+## 2026-11-04 G4-GR07-MOVER-CASES（run 20261104-082805 の反復 1、完了に戻す）
+- Done: 前の反復の評価が利用枠で回らず doing に戻っていた。着地した後の変更は TASKS.md・PROGRESS.md だけで、コードは確かめの出力（U3 の verify: ビルド EXIT=0、ctest 6 本 100% Passed）を取った版と同じなので、status を done に戻す。
+- Next: ランナーの評価者がこの差分（3f13dfe8・20381f35・f896b040）を見る。

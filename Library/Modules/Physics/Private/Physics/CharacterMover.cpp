@@ -150,6 +150,17 @@ namespace NorvesLib::Modules::Physics
                         normal.y = 0;
                         normal.Normalize();
                     }
+                    if (slopeLimit && Request.bWasGrounded && Request.Displacement.y <= 0 &&
+                        normal.y >= WalkableCos)
+                    {
+                        // 歩ける面では、水平要求の長さを沿面の移動量に保つ。
+                        const float horizontalLength = std::sqrt(remaining.x * remaining.x + remaining.z * remaining.z);
+                        Vector3 along(remaining.x, -(normal.x * remaining.x + normal.z * remaining.z) / normal.y,
+                                      remaining.z);
+                        const float alongLength = along.Length();
+                        if (alongLength > MotionEpsilon)
+                            remaining = along * (horizontalLength / alongLength);
+                    }
                     planes[planeCount++] = normal;
                     // 角では既に当たった面へ戻さない。定数回数で打ち切る。
                     for (uint32_t pass = 0; pass < planeCount; ++pass)
@@ -169,6 +180,37 @@ namespace NorvesLib::Modules::Physics
                 result.GroundPoint = hit.Point;
                 result.GroundCollider = hit.Collider;
                 result.GroundBody = hit.Body;
+            }
+            bool StepTop(const Math::Capsule& shape, const Vector3& horizontal, const PhysicsQueryHit& edge,
+                         PhysicsQueryHit& top, bool& walkable)
+            {
+                walkable = false;
+                const float foot = shape.PointA.y - shape.Radius;
+                if (edge.Point.y < foot - Settings.SkinWidth ||
+                    edge.Point.y > foot + Settings.StepHeight + Settings.SkinWidth)
+                    return true;
+                Vector3 origin = edge.Point + horizontal / horizontal.Length() * Settings.SkinWidth;
+                origin.y = foot + Settings.StepHeight + Settings.SkinWidth;
+                Core::Scene::PhysicsQueryDesc query;
+                query.Kind = EPhysicsQueryKind::RaycastClosest;
+                query.Ray = Math::Ray(origin, Vector3(0, -1, 0));
+                query.MaxDistance = Settings.StepHeight + Settings.GroundSnapDistance + 2 * Settings.SkinWidth;
+                query.Filter = Request.Filter;
+                size_t count = 0;
+                Error = PhysicsBroadphase::ExecuteQueryOverProxies(Proxies, query, Scratch.Hits, count);
+                if (Error == EPhysicsSceneQueryResult::NoHit)
+                {
+                    Error = EPhysicsSceneQueryResult::Success;
+                    return true;
+                }
+                if (Error != EPhysicsSceneQueryResult::Success)
+                    return false;
+                if (count && Scratch.Hits[0].Collider == edge.Collider && Scratch.Hits[0].Normal.y >= WalkableCos)
+                {
+                    top = Scratch.Hits[0];
+                    walkable = true;
+                }
+                return true;
             }
             bool Step(Math::Capsule& shape, const Vector3& horizontal, CharacterMoveResult& result)
             {
@@ -197,15 +239,62 @@ namespace NorvesLib::Modules::Physics
                 const float drop = rise + Settings.GroundSnapDistance;
                 if (!Sweep(trial, Vector3(0, -drop, 0), hit, blocked))
                     return false;
-                if (!blocked || hit.Normal.y < WalkableCos)
+                if (!blocked)
                     return true;
-                Translate(trial, Vector3(0, -std::max(0.f, hit.Distance - Settings.SkinWidth), 0));
+                const float distance = hit.Distance;
+                if (hit.Normal.y < WalkableCos)
+                {
+                    // 縁の法線だけで拒否せず、同じ物体の上面を確かめる。
+                    PhysicsQueryHit top;
+                    bool walkable;
+                    if (!StepTop(shape, horizontal, hit, top, walkable))
+                        return false;
+                    if (!walkable)
+                        return true;
+                    hit = top;
+                }
+                Translate(trial, Vector3(0, -std::max(0.f, distance - Settings.SkinWidth), 0));
                 const float heightChange = trial.PointA.y - shape.PointA.y;
                 if (heightChange > Settings.StepHeight + Settings.SkinWidth + MotionEpsilon)
                     return true;
                 shape = trial;
                 result.bStepped = true;
                 Ground(hit, result);
+                return true;
+            }
+            bool GroundSurface(PhysicsQueryHit& hit, bool& walkable)
+            {
+                walkable = hit.Normal.y >= WalkableCos;
+                if (walkable || hit.Normal.y <= MotionEpsilon)
+                {
+                    return true;
+                }
+                // 縁の丸みの法線と、同じ物体の上面の法線を分けて判定する。
+                Vector3 inward(-hit.Normal.x, 0, -hit.Normal.z);
+                inward.Normalize();
+                Vector3 origin = hit.Point + inward * Settings.SkinWidth;
+                origin.y = hit.Point.y + 2 * Settings.SkinWidth;
+                Core::Scene::PhysicsQueryDesc query;
+                query.Kind = EPhysicsQueryKind::RaycastClosest;
+                query.Ray = Math::Ray(origin, Vector3(0, -1, 0));
+                query.MaxDistance = 4 * Settings.SkinWidth;
+                query.Filter = Request.Filter;
+                size_t count = 0;
+                Error = PhysicsBroadphase::ExecuteQueryOverProxies(Proxies, query, Scratch.Hits, count);
+                if (Error == EPhysicsSceneQueryResult::NoHit)
+                {
+                    Error = EPhysicsSceneQueryResult::Success;
+                    return true;
+                }
+                if (Error != EPhysicsSceneQueryResult::Success)
+                {
+                    return false;
+                }
+                if (count && Scratch.Hits[0].Collider == hit.Collider && Scratch.Hits[0].Normal.y >= WalkableCos)
+                {
+                    hit = Scratch.Hits[0];
+                    walkable = true;
+                }
                 return true;
             }
             bool Vertical(Math::Capsule& shape, float distance, CharacterMoveResult& result)
@@ -224,13 +313,25 @@ namespace NorvesLib::Modules::Physics
                 const Vector3 advance(0, std::copysign(travel, distance), 0);
                 Translate(shape, advance);
                 if (distance > 0)
+                {
                     result.bHitCeiling = true;
-                else if (hit.Normal.y >= WalkableCos)
-                    Ground(hit, result);
+                }
                 else
                 {
-                    // 歩けない斜面は足場にせず、残りの下降を面に沿って滑らせる。
-                    return Slide(shape, move - advance, false, &result);
+                    bool walkable;
+                    if (!GroundSurface(hit, walkable))
+                    {
+                        return false;
+                    }
+                    if (walkable)
+                    {
+                        Ground(hit, result);
+                    }
+                    else
+                    {
+                        // 歩けない斜面は足場にせず、残りの下降を面に沿って滑らせる。
+                        return Slide(shape, move - advance, false, &result);
+                    }
                 }
                 return true;
             }
@@ -286,10 +387,19 @@ namespace NorvesLib::Modules::Physics
                 bool blocked;
                 if (!solver.Sweep(result.Shape, Vector3(0, -settings.GroundSnapDistance, 0), hit, blocked))
                     return solver.Error;
-                if (blocked && hit.Normal.y >= solver.WalkableCos)
+                if (blocked)
                 {
-                    Translate(result.Shape, Vector3(0, -std::max(0.f, hit.Distance - settings.SkinWidth), 0));
-                    solver.Ground(hit, result);
+                    const float distance = hit.Distance;
+                    bool walkable;
+                    if (!solver.GroundSurface(hit, walkable))
+                    {
+                        return solver.Error;
+                    }
+                    if (walkable)
+                    {
+                        Translate(result.Shape, Vector3(0, -std::max(0.f, distance - settings.SkinWidth), 0));
+                        solver.Ground(hit, result);
+                    }
                 }
             }
         }
