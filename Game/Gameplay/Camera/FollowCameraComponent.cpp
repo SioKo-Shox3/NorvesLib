@@ -152,7 +152,10 @@ namespace Game::Gameplay
                 }
                 if (input > m_Profile.LockBreakDegrees)
                     ClearLockOn();
+                const float previousYaw = GetYaw();
                 ApplyIntent(intent);
+                // 視点入力の回転だけを実測から除き、この後のヨーの戻しは実測に含める。
+                m_PreviousTickYaw += std::remainder(GetYaw() - previousYaw, 360.f);
             }
         }
         auto* physical = Resolve(m_PhysicsRootId);
@@ -193,12 +196,30 @@ namespace Game::Gameplay
     }
     void FollowCameraComponent::UpdateCamera(float dt)
     {
+        // 途中の戻りと例外の再送出でも、全てのヨー変更後の実測を確定する。
+        try
+        {
+            UpdateCameraBody(dt);
+        }
+        catch (...)
+        {
+            MeasureYawRate(dt);
+            throw;
+        }
+        MeasureYawRate(dt);
+    }
+    void FollowCameraComponent::MeasureYawRate(float dt) noexcept
+    {
         const float tickYaw = GetYaw();
         const bool bValidYawDeltaTime = std::isfinite(dt) && dt > 0;
         m_MeasuredYawRate = bValidYawDeltaTime && m_bPreviousTickYawValid
             ? std::remainder(tickYaw - m_PreviousTickYaw, 360.f) / dt : 0;
         m_PreviousTickYaw = tickYaw;
         m_bPreviousTickYawValid = true;
+    }
+    void FollowCameraComponent::UpdateCameraBody(float dt)
+    {
+        const bool bValidYawDeltaTime = std::isfinite(dt) && dt > 0;
         // 途中で更新に失敗した場合、古い目標位置を次の区間に使わない。
         const bool bPreviousSubjectValid = m_bPreviousSubjectValid;
         m_bPreviousSubjectValid = false;
@@ -297,7 +318,7 @@ namespace Game::Gameplay
                                       m_Profile.ClingYawHalfLife, dt))
             {
                 const float change = m_Profile.ClingMaximumYawSpeed * dt;
-                const float limit = std::max(m_Profile.ClingMaximumYawSpeed, std::fabs(m_YawVelocity) - change);
+                const float limit = m_Profile.ClingMaximumYawSpeed;
                 float want = (dampedYaw - yaw) / dt;
                 want = std::clamp(want, m_YawVelocity - change, m_YawVelocity + change);
                 m_YawVelocity = std::clamp(want, -limit, limit);
@@ -451,7 +472,8 @@ namespace Game::Gameplay
         if (clinging)
         {
             m_bClingContinuing = false;
-            m_YawVelocity = m_MeasuredYawRate;
+            m_YawVelocity = std::clamp(m_MeasuredYawRate,
+                                       -m_Profile.ClingMaximumYawSpeed, m_Profile.ClingMaximumYawSpeed);
             m_PreviousClingTargetYaw = GetYaw();
         }
         else

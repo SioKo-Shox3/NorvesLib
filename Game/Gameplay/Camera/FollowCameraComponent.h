@@ -94,6 +94,8 @@ namespace Game::Gameplay
         void ReloadProfile(float dt);
         float SubjectSpeed() const;
         void UpdateCamera(float dt);
+        void UpdateCameraBody(float dt);
+        void MeasureYawRate(float dt) noexcept;
         NorvesLib::Core::Input::InputMapper* m_Input = nullptr;
         const NorvesLib::Core::Scene::SceneQuery* m_Query = nullptr;
         uint64_t m_PhysicsRootId = 0, m_ViewSourceId = 0;

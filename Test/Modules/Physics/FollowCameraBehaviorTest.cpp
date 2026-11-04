@@ -665,7 +665,7 @@ namespace
                     maximumRate, amplitude);
     }
 
-    // 出入りで角速度が跳ばず、上限超過からも滑らかに減速する。
+    // 上限以下での出入りは角速度を滑らかにつなぎ、上限超過から入るときは即座に制限する。
     void TestClingYawTransitions()
     {
         CameraFixture fixture;
@@ -722,35 +722,129 @@ namespace
         CAMERA_CHECK(stopped);
 
         CameraFixture fast;
-        fast.Follow->SetYaw(359);
+        auto& fastCamera = *fast.Follow;
+        auto& fastProfile = Access::Profile(fastCamera);
+        fast.SetSubjectYaw(-180);
         fast.Step();
-        Core::Component::SpringArmIntent intent;
-        intent.YawDelta = 5;
-        fast.Follow->ApplyIntent(intent);
-        fast.Step();
-        float fastRate = 5 / FrameDelta;
-        fast.Follow->SetClinging(true);
-        bool reachedMaximum = false;
+        fastProfile.YawReturnDelay = 0;
+        fastProfile.YawHalfLife = .08f;
+        Access::SetSubjectSpeed(fastCamera, fastProfile.MinimumYawSpeed + 1);
+        fast.SetSubjectYaw(-10);
+        float fastRate = 0;
+        for (unsigned frame = 0; frame < 3; ++frame)
+        {
+            const float previous = fastCamera.GetYaw();
+            fast.Step();
+            fastRate = AngleDelta(previous, fastCamera.GetYaw()) / FrameDelta;
+        }
+        CAMERA_CHECK(std::fabs(fastRate) > fastProfile.ClingMaximumYawSpeed + rateChange);
+        fastCamera.SetClinging(true);
+        float maximumEntryRate = 0;
         for (unsigned frame = 0; frame < 160; ++frame)
         {
-            const float previous = fast.Follow->GetYaw();
+            const float previous = fastCamera.GetYaw();
             fast.Step();
-            const float rate = AngleDelta(previous, fast.Follow->GetYaw()) / FrameDelta;
-            CAMERA_CHECK(std::fabs(rate - fastRate) <= rateChange + tolerance);
-            if (fastRate > profile.ClingMaximumYawSpeed + rateChange + tolerance)
-                CAMERA_NEAR(rate, fastRate - rateChange, tolerance);
-            else
+            const float rate = AngleDelta(previous, fastCamera.GetYaw()) / FrameDelta;
+            maximumEntryRate = std::max(maximumEntryRate, std::fabs(rate));
+            CAMERA_CHECK(std::fabs(rate) <= fastProfile.ClingMaximumYawSpeed + tolerance);
+        }
+
+        // 入力群のApplyIntentで5度回した直後に入り、その回転を初速へ持ち込まない。
+        CameraFixture looking;
+        looking.SetSubjectYaw(-175);
+        looking.Step();
+        using namespace Core::Input;
+        InputSystem source;
+        InputRouter router;
+        source.SetRouter(&router);
+        InputMapper mapper(source.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition look;
+        look.Id = Game::InputActions::Look;
+        look.Settings.Type = EInputMappingValueType::Axis2D;
+        look.Settings.Output = EInputAxisOutput::FrameDelta;
+        InputBinding horizontal;
+        horizontal.Source = {EInputBindingSource::MouseDelta, 0, 0};
+        look.Bindings = {horizontal};
+        CAMERA_CHECK(bindings.AddContext(Game::InputActions::GameplayContext, NorvesLib::ECursorMode::Normal));
+        CAMERA_CHECK(bindings.AddAction(Game::InputActions::GameplayContext, look));
+        CAMERA_CHECK(mapper.ConfigureWithContext(bindings, Game::InputActions::GameplayContext));
+        mapper.Attach(router);
+        looking.Follow->BindInput(&mapper);
+        CAMERA_CHECK(source.BeginFrame(0) && mapper.BeginFrame(0));
+        CAMERA_CHECK(source.InjectRawMouseDelta(5, 0));
+        CAMERA_CHECK(mapper.Update(0, FrameDelta));
+        const float beforeLook = looking.Follow->GetYaw();
+        looking.Step();
+        CAMERA_NEAR(AngleDelta(beforeLook, looking.Follow->GetYaw()), 5, tolerance);
+        source.EndFrame();
+        looking.Follow->BindInput(nullptr);
+        looking.Follow->SetClinging(true);
+        for (unsigned frame = 0; frame < 160; ++frame)
+        {
+            const float previous = looking.Follow->GetYaw();
+            looking.Step();
+            const float rate = AngleDelta(previous, looking.Follow->GetYaw()) / FrameDelta;
+            CAMERA_CHECK(std::fabs(rate) <= profile.ClingMaximumYawSpeed + tolerance);
+            if (frame == 0)
             {
-                CAMERA_CHECK(std::fabs(rate) <= profile.ClingMaximumYawSpeed + tolerance);
-                reachedMaximum = true;
+                CAMERA_CHECK(std::fabs(rate) <= rateChange + tolerance);
+            }
+        }
+
+        CameraFixture locked;
+        locked.Step();
+        auto* lockTarget = locked.World.SpawnEntity<Core::Entity>();
+        CAMERA_CHECK(lockTarget);
+        lockTarget->SetPosition({-2.5f, .4f, -4.330127f});
+        CAMERA_CHECK(locked.Follow->SetLockOnTarget(lockTarget));
+        float lockRate = 0;
+        bool bLockMoving = false;
+        for (unsigned frame = 0; frame < 120; ++frame)
+        {
+            const float previous = locked.Follow->GetYaw();
+            locked.Step();
+            lockRate = AngleDelta(previous, locked.Follow->GetYaw()) / FrameDelta;
+            CAMERA_CHECK(std::fabs(lockRate) <= profile.ClingMaximumYawSpeed);
+            if (std::fabs(lockRate) >= .3f * profile.ClingMaximumYawSpeed)
+            {
+                bLockMoving = true;
                 break;
             }
-            fastRate = rate;
         }
-        CAMERA_CHECK(reachedMaximum);
+        CAMERA_CHECK(bLockMoving);
+        locked.Follow->SetClinging(true);
+        float maximumLockChange = 0;
+        for (unsigned frame = 0; frame < 8; ++frame)
+        {
+            const float previous = locked.Follow->GetYaw();
+            locked.Step();
+            const float rate = AngleDelta(previous, locked.Follow->GetYaw()) / FrameDelta;
+            maximumLockChange = std::max(maximumLockChange, std::fabs(rate - lockRate));
+            CAMERA_CHECK(std::fabs(rate - lockRate) <= rateChange + tolerance);
+            CAMERA_CHECK(std::fabs(rate) <= profile.ClingMaximumYawSpeed + tolerance);
+            lockRate = rate;
+        }
+        locked.Follow->SetClinging(false);
+        bool bLockStopped = false;
+        for (unsigned frame = 0; frame < 120; ++frame)
+        {
+            const float previous = locked.Follow->GetYaw();
+            locked.Step();
+            const float rate = AngleDelta(previous, locked.Follow->GetYaw()) / FrameDelta;
+            maximumLockChange = std::max(maximumLockChange, std::fabs(rate - lockRate));
+            CAMERA_CHECK(std::fabs(rate - lockRate) <= rateChange + tolerance);
+            if (std::fabs(rate) <= tolerance)
+            {
+                bLockStopped = true;
+                break;
+            }
+            lockRate = rate;
+        }
+        CAMERA_CHECK(bLockStopped);
 
-        std::printf("しがみつきの出入り: 最大角速度差=%g度/秒 上限超過を確認\n",
-                    maximumChange);
+        std::printf("しがみつきの出入り: 最大角速度差=%g度/秒 上限越えの入りの最大角速度=%g度/秒 ロックオン中の入りの最大角速度差=%g度/秒\n",
+                    maximumChange, maximumEntryRate, maximumLockChange);
     }
 
     // 自動焦点はレイの距離とロック目標の前方射影へ収束し、無効時は初期値を保つ。

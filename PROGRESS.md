@@ -9322,3 +9322,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 着地した版（ソース 9 ファイルがこの枝と一致）で取った `.harness/runs/20261103-231220/verify-G4-GR06-CLING-LOCKON-U4.txt` と単位の作業ツリーの `unit-verify.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド成功、ctest 4 件 100% Passed）。
 - Next: ランナーの評価者の反証（Public API と Object の寿命に触れる危険地帯）。
 - Notes: 起動の要る確かめは無い。
+- U5 しがみつきの入りの初速を上限に切り詰め、ヨーの角速度の実測を全ての変更の後に取る(差し戻しの直し): 着地(直し 0 回)
