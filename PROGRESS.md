@@ -9669,3 +9669,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 移行は JsonDocument の木から JsonWriter で書き直す（数値は double で持つエンジン全体の制約に合わせ、2^53 以上の整数は保存の中身では文字列で持つ）。読み込みでファイルを書き直さない（移した中身は返すだけで、次の保存で今の版になる）。読めない（共有違反など）ファイル・退避の失敗は `IoError`。
 - Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
 - Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。
+
+## G8-GR18-INTERACTION: 統合ブランチの取り込み(2026-11-04)
+- Done: feature/scene-launcher を取り込み、GameplayModule::LateTick を 1 つにまとめた(攻撃判定 → 遭遇領域 → 近接の操作の順)。TickStages.md の表に Hitbox・Hurtbox と InteractableComponent の行を両方残した。
+- 確かめ: verify のビルド EXIT=0、ctest 7 本すべて Passed(.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION-*.txt)。TickContractTableTest と Combat 系 5 本も Passed。
+- Notes: アプリを起動する確かめは無い(表示は G8-GR17-SLICE-SMOKE・GR68 で扱う)。
