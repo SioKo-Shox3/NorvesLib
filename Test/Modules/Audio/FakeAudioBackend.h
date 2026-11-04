@@ -25,6 +25,11 @@ namespace NorvesLib::Test::Audio
         QuiesceCallbacks,
         Destroy,
         Shutdown,
+        SetVolume,
+        SetFrequencyRatio,
+        SetOutputGains,
+        Pause,
+        Resume,
     };
 
     class FakeAudioBackend final : public Modules::Audio::Private::IAudioBackend
@@ -43,10 +48,12 @@ namespace NorvesLib::Test::Audio
         Modules::Audio::AudioResult CreateVoice(
             Modules::Audio::VoiceHandle handle,
             const Modules::Audio::AudioPcmFormat&,
+            float maxFrequencyRatio,
             Modules::Audio::Private::AudioBackendEventMailbox& mailbox) override
         {
             Operations.push_back(FakeAudioOperation::Create);
             LastHandle = handle;
+            LastMaxFrequencyRatio = maxFrequencyRatio;
             Mailboxes.push_back(FakeAudioMailboxBinding{handle, &mailbox});
             ++CreateCount;
             return bFailCreate ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
@@ -54,13 +61,54 @@ namespace NorvesLib::Test::Audio
 
         Modules::Audio::AudioResult SubmitVoice(
             Modules::Audio::VoiceHandle,
-            Core::Container::Span<const uint8_t> pcmBytes) override
+            Core::Container::Span<const uint8_t> pcmBytes,
+            const Modules::Audio::Private::AudioBufferDesc& bufferDesc) override
         {
             Operations.push_back(FakeAudioOperation::Submit);
+            LastBufferDesc = bufferDesc;
             SubmittedData = pcmBytes.data();
             SubmittedSize = pcmBytes.size();
             ++SubmitCount;
             return bFailSubmit ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
+        }
+
+        Modules::Audio::AudioResult SetVoiceVolume(Modules::Audio::VoiceHandle, float volume) override
+        {
+            Operations.push_back(FakeAudioOperation::SetVolume);
+            LastVolume = volume;
+            ++SetVolumeCount;
+            return bFailSetVolume ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
+        }
+
+        Modules::Audio::AudioResult SetVoiceFrequencyRatio(Modules::Audio::VoiceHandle, float ratio) override
+        {
+            Operations.push_back(FakeAudioOperation::SetFrequencyRatio);
+            LastFrequencyRatio = ratio;
+            ++SetFrequencyRatioCount;
+            return bFailSetFrequencyRatio ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
+        }
+
+        Modules::Audio::AudioResult SetVoiceOutputGains(Modules::Audio::VoiceHandle, float leftGain, float rightGain) override
+        {
+            Operations.push_back(FakeAudioOperation::SetOutputGains);
+            LastLeftGain = leftGain;
+            LastRightGain = rightGain;
+            ++SetOutputGainsCount;
+            return bFailSetOutputGains ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
+        }
+
+        Modules::Audio::AudioResult PauseVoice(Modules::Audio::VoiceHandle) override
+        {
+            Operations.push_back(FakeAudioOperation::Pause);
+            ++PauseCount;
+            return bFailPause ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
+        }
+
+        Modules::Audio::AudioResult ResumeVoice(Modules::Audio::VoiceHandle) override
+        {
+            Operations.push_back(FakeAudioOperation::Resume);
+            ++ResumeCount;
+            return bFailResume ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
         }
 
         Modules::Audio::AudioResult StartVoice(Modules::Audio::VoiceHandle) override
@@ -83,6 +131,7 @@ namespace NorvesLib::Test::Audio
             {
                 return {Modules::Audio::AudioResult::BackendFailure, true, false};
             }
+            ++FlushCount;
             return {Modules::Audio::AudioResult::Success, true, true};
         }
 
@@ -157,17 +206,34 @@ namespace NorvesLib::Test::Audio
         bool bFailStart = false;
         bool bFailStop = false;
         bool bFailFlush = false;
+        bool bFailSetVolume = false;
+        bool bFailSetFrequencyRatio = false;
+        bool bFailSetOutputGains = false;
+        bool bFailPause = false;
+        bool bFailResume = false;
         bool bFailDestroy = false;
         bool bEmitDrainedDuringQuiesce = false;
         uint32_t CreateCount = 0;
         uint32_t SubmitCount = 0;
         uint32_t StartCount = 0;
         uint32_t StopCount = 0;
+        uint32_t SetVolumeCount = 0;
+        uint32_t SetFrequencyRatioCount = 0;
+        uint32_t SetOutputGainsCount = 0;
+        uint32_t PauseCount = 0;
+        uint32_t ResumeCount = 0;
+        uint32_t FlushCount = 0;
         uint32_t QuiesceCount = 0;
         uint32_t DestroyCount = 0;
         uint32_t ShutdownCount = 0;
         uint64_t ShutdownEpoch = 0;
         Modules::Audio::VoiceHandle LastHandle;
+        Modules::Audio::Private::AudioBufferDesc LastBufferDesc;
+        float LastMaxFrequencyRatio = 0.0f;
+        float LastVolume = 0.0f;
+        float LastFrequencyRatio = 0.0f;
+        float LastLeftGain = 0.0f;
+        float LastRightGain = 0.0f;
         const uint8_t* SubmittedData = nullptr;
         size_t SubmittedSize = 0;
         Modules::Audio::Private::IAudioBackendEventSink* EventSink = nullptr;

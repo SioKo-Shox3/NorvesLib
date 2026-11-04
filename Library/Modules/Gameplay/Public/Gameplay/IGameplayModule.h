@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Delegate/MulticastDelegate.h"
+#include "Gameplay/Combat/CombatHitEvent.h"
 #include "Module/IModule.h"
 #include "Module/ModuleRegistry.h"
 
@@ -25,6 +27,7 @@ namespace NorvesLib::Modules::Gameplay
 
         virtual ProgressionState& GetProgressionState() = 0;
         virtual DefeatGate& GetDefeatGate() = 0;
+        virtual Core::MulticastDelegate<const Combat::CombatHitEvent&>& GetOnAnyHit() = 0;
         virtual World::EncounterService& GetEncounterService() = 0;
         virtual World::InteractionService& GetInteractionService() = 0;
     };
