@@ -729,21 +729,24 @@ namespace NorvesLib::Tools::AssetCook
 
             NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
             NorvesLib::Core::Container::AnsiString meshError;
-            // 手続きの terrain-tile は入力のファイル（高さ場の仕様のヘッダ）を読まず、高さ場の関数から区画を作る
-            // （入力は CookAssets の変更の検出のためだけに渡される）。terrain-tile:dem は入力が DEM の格子の記述で、
-            // 高さ場の読む記述と同じかをクッカーが確かめる
+            // 手続きの terrain-tile は入力ファイルを読まず、高さ場の関数から区画を作る。
+            // terrain-tile:dem は入力が DEM の格子の記述、terrain-tile:nvtrn は NVTRN または地形 spec。
             uint32_t terrainTileX = 0;
             uint32_t terrainTileZ = 0;
-            bool bTerrainDem = false;
+            TerrainTileSource terrainSource = TerrainTileSource::Procedural;
             const bool bTerrainTile =
                 TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView(options.Generate), terrainTileX,
-                                            terrainTileZ, bTerrainDem);
+                                            terrainTileZ, terrainSource);
             const bool cooked =
                 options.Generate == "displaced-sphere"
                     ? CookDisplacedSphereToNvmesh(inputBytes.data(), inputBytes.size(), options.Format, logicalPath,
                                                   meshResult, meshError, options.FallbackMinTriangles,
                                                   options.DagRootMaxClusters)
-                : bTerrainTile && bTerrainDem
+                : bTerrainTile && terrainSource == TerrainTileSource::Nvtrn
+                    ? CookTerrainNvtrnTileToNvmesh(inputBytes.data(), inputBytes.size(), inputPath, terrainTileX,
+                                                   terrainTileZ, options.Format, logicalPath, meshResult, meshError,
+                                                   options.FallbackMinTriangles, options.DagRootMaxClusters)
+                : bTerrainTile && terrainSource == TerrainTileSource::Dem
                     ? CookTerrainDemTileToNvmesh(inputBytes.data(), inputBytes.size(), terrainTileX, terrainTileZ,
                                                  options.Format, logicalPath, meshResult, meshError,
                                                  options.FallbackMinTriangles, options.DagRootMaxClusters,
@@ -1520,11 +1523,11 @@ namespace NorvesLib::Tools::AssetCook
             const bool lodGraph = outOptions.Format == "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
             uint32_t terrainTileX = 0;
             uint32_t terrainTileZ = 0;
-            bool bTerrainDem = false;
+            TerrainTileSource terrainSource = TerrainTileSource::Procedural;
             const bool bKnownGenerate =
                 outOptions.Generate == "displaced-sphere" ||
                 TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView(outOptions.Generate),
-                                            terrainTileX, terrainTileZ, bTerrainDem);
+                                            terrainTileX, terrainTileZ, terrainSource);
             if ((!outOptions.Generate.empty() && (!bKnownGenerate || !lodGraph || outOptions.Kind != "model")) ||
                 (outOptions.FallbackMinTriangles && !lodGraph) || outOptions.FallbackMinTriangles > 1000000 ||
                 (outOptions.DagRootMaxClusters && !lodGraph) || outOptions.DagRootMaxClusters > 1000 ||

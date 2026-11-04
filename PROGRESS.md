@@ -9497,3 +9497,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
 - U1 cook 済みの NVTRN から格子の高さ場を作る: 着地(直し 0 回)
 - U4 TerrainSystem を足して Engine::Engine のメンバにする: 着地(直し 1 回)
+- U2 AssetCook に NVTRN のタイルから区画メッシュを焼く terrain-tile:nvtrn を足す: 着地(直し 0 回)
