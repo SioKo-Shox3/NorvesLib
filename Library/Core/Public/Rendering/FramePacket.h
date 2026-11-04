@@ -7,6 +7,7 @@
 #include "ViewportSnapshot.h"
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/GrassFieldRenderData.h"
 #include "Rendering/PointShadowSnapshot.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
@@ -374,6 +375,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief skinned drawが参照するFramePacket所有のmesh asset lease */
         Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedMeshFrameLeases;
 
+        /**
+         * @brief GameThread が作った不変データを共有し、RenderThread は読むだけにする。
+         * SceneRevision に入れない（草の差し替えで RTGI の履歴が捨てられるため）。
+         */
+        Container::TSharedPtr<const GrassFieldRenderData> GrassField;
+
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
@@ -447,6 +454,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
             SkinnedMeshFrameLeases.clear();
+            GrassField.reset();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();
