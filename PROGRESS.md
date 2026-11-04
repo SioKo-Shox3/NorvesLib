@@ -9755,3 +9755,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
 - U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
 - U3 AssetCook に GrassFieldCooker と照合のコマンドを足す: 着地(直し 0 回)
+- U5 GrassFieldComponent と地形の地面の取り出し口を足す: 着地(直し 0 回)
