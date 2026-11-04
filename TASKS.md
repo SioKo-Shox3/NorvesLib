@@ -5474,7 +5474,7 @@
 - notes: 設計はロードマップ 1639 行(Interactable と選び方)・1645 行(寝床が採られたら ActionId=Rest を GR55 と GR76 が購読。採否で機構は変わらない)。選定課題 G8-S7(近接の操作の入力)を決めた: 新しいアクション `Interact` を Gameplay の文脈に足し、Menu の文脈の `Confirm` は使わない。理由: 文脈が違い(`GameInputActions.h` の GameplayContext と MenuContext)、リバインドも別々にしたい。割当は仮で、データで変えられる。`bRequiresFreeMouth`(「口は一つ」。好感触だが未採用。1867 行)は既定で無効にし、口の状態を渡す口だけ用意する。ゲーム内の文字は ASCII の 95 字だけ(1865 行)なので、PromptTextKey はキーの文字列で持つ。やらないこと: プロンプトの表示、寝床・ファストトラベルの中身(GR55・GR71)。
 
 ## G8-GR17-ENEMY-COMPONENT: シ者の敵の基底(定義のデータ・状態の遷移・攻撃のパターン・2 段の撃破)を作り、領域・攻撃判定・アニメーションとつなぐ
-- status: todo
+- status: done
 - after: G8-GR17-HEALTH-PROGRESSION, G8-GR18-ENCOUNTER-ZONES, G8-GR16-COMBAT-RUNTIME, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR17
 - needs-gr: GR10, GR11
