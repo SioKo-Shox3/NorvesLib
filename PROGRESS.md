@@ -9382,6 +9382,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 足場の運搬をめり込みの解消と取り違えて速度から引く退行を直し、昇降足場の速度の一致を試験で確かめる: 着地(直し 1 回)
 - Done: 反復 2 で差し戻し（昇降足場が上がるステップで速度が位置差分/dt と約 3 m/s ずれる退行）を直した。めり込みの事前判定と解消だけの要求を、足場の運搬（PlatformDisplacement）だけ平行移動した形で行い、運んでいる足場（PlatformCollider）は判定と解消の対象から外す（足場との重なりは本番の Move の運搬と解消が扱い、速度からは引かない）。ケース 22 に更新ありのキャラクターの毎ステップの速度 y と位置差分/dt の一致（0.005 m/s 以内）を足した。直す前は velocity_error=3.12 で落ち、直した後は 0
 - 確かめ（タスクの verify）: ビルド exit 0。ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 0.99 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）は 5/5 Passed（合計 1.20 秒）。`ELEVATOR_JITTER refresh=0 norefresh=0 velocity_error=0`。運搬後の形だけで判定した途中の版では、回る足場（ケース 8）で足場との 1e-6 m の重なりが解消として速度から引かれ 0.12 m/s ずれたため、足場を対象から外す形にした
-- Notes: 前の Notes の「足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる」は、運搬後の形で解消を求める形にしたので解消した。残る限界: 足場の運搬が壁に遮られる場合は、運搬後の形が壁に重なった量を解消として引くので、速度が遮られた分だけ小さく出うる（試験していない）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
+- Notes: 運搬後の形での判定は、足場の運搬が壁に遮られる場面で速度を誤らせたため、次の項で運ぶ前の形に戻した（足場を外す部分は残した）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
 - Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
 - U8 運搬前の形でめり込みを判定し直し、壁に押し付けられた足場の運搬で速度が位置差分と一致することを試験で確かめる: 着地(直し 0 回)
+- Done: 反復 3 で差し戻し（足場の運搬が静的な壁に遮られるステップで、止まっているキャラクターの速度に足場の速さ約 2 m/s が出る退行）を直した。めり込みの事前判定と解消だけの要求を運ぶ前の形（*self・request.Shape）で行い、運んでいる足場（PlatformCollider）を判定と解消の対象から外す部分は残した。ケース 27（TestCharacterPlatformPushedAgainstWall。回転しない Kinematic の足場が +x へ 2 m/s、キャラクターの高さに静的な壁）を足し kCaseCount を 28 にした。合否は毎ステップの速度と位置差分/dt の差 0.005 m/s 以内と、足場が動くのにキャラクターの x の差分が 0.001 m 未満のステップが 10 以上あること
+- 確かめ: 直す前の版でケース 27 は `CHARACTER_WALL_VELOCITY step=7 error=2`（押し付け 84 ステップ）で落ちた。直した後はケース 8・22・26・27 の単独実行が終了コード 0（押し付け 84 ステップ）。タスクの verify はビルド exit 0、ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 1.02 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）が 5/5 Passed（合計 1.20 秒）。既存のケース 0〜26 と PhysicsCharacterMoveTest の中身は変えていない
+- Notes: 残る限界: 運搬前の形がほかの物体に食い込み、運搬でその物体から離れるステップだけ、解消の分を引きすぎて速度が小さく出うる（試験していない）
+- Notes: 要起票: 空中で壁に当たったとき、足場から引き継いだ水平速度(m_InheritedVelocity)の壁へ向かう成分を消す
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）

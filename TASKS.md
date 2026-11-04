@@ -5305,7 +5305,7 @@
 - notes: 確かめ直しの (b)。`G4-MOVEMENT-CAMERA` は構文確認だけで done になっていたが、`PhysicsCharacterMoveTest` は実在し、この機の Windows でも通っている（PROGRESS.md 1966 行・1997 行の 5/5 pass）。ただし今の検査（PhysicsCharacterMoveTest.cpp 68-203 行）は、平地の最終位置、壁の 1 回の掃引、段差 0.2/0.4 m、40°/60°、足場の変位の適用を見るだけ。要件 `#### GR07` の受け入れ確認（ロードマップ 272 行）のうち、毎ステップの接地とめり込み、段差の進みの割合、沿面の速さ、階段下り、めり込み開始、全ステップの bit 一致は見ていない。共面の継ぎ目は、ロードマップ 283 行のリスク（`ComputeContact(Capsule, OBB)` が線分の箱内部で SAT の近似を返す）を押さえるために足す。既定の `SkinWidth` は 0.002（CharacterMoveSettings.h）で、要件の設計案の 0.02 と違う。足元の誤差は 0.02 で判定する。既定の `MaximumDepenetrationDistance` 1 m は、1 ステップの押し出し 0.15 m 以下と食い違いうる。外れたら、1 ステップの上限を設定に足して直す（既定の値は仮）。坂を押さずに滑り落ちる確かめには重力が要るので、`G4-GR07-BODY-CASES` で行う。G4-S3 の決定: 推奨の (A) 縦カプセル 1 本（半径 0.30 m・全高 0.8 m は仮。DogMovementSmokeRoutine.cpp 171-172 行と PhysicsFixedStepPipelineTest.cpp 802-803 行が既にこの形）を採る。理由: 完了条件はこれで通せる。(B) 前後 2 球は後から CharacterMover の内側に足せる。(C) は 1 Entity 1 コライダーの制限を外すため、Public API と Object の寿命の危険地帯に当たる。体格は犬のモデルと GR78 のスケールの正規化の後に、見た目で決める。やらないこと: 物理ソルバの変更、複数の形状、摩擦。
 
 ## G4-GR07-BODY-CASES: キャラクター本体を固定ステップの経路で動かす受け入れ確認（足場の離脱速度・昇降足場・小物を押す・滑り落ち）を試験し、外れた所を直す
-- status: todo
+- status: done
 - after: G1-GR08-BROADPHASE-INTEGRATION, G1-GR08-LAYER-TABLE
 - gr: GR07
 - needs-gr: GR08
