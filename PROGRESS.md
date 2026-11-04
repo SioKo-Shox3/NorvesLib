@@ -9608,3 +9608,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 2 段の撃破・最後のシ者の Dormant・ResetPolicy: 着地(直し 1 回)
 - Notes: 撃破の完了(EnemyComponent::OnDefeatCompleted と破棄の予約)は、領域の Cleared が次の領域の評価で確定してから次の TickEnemy で配る(MarkCleared が次の評価まで保留されるため)。配送中の購読の解除は Target を空にするだけで Remove しない(MulticastDelegate::Broadcast が配列を直接回すため)。
 - 要起票: Core の MulticastDelegate::Broadcast が配送中の Remove に耐えない(購読の配列を直接回す)。EnemyComponent は側で避けたが、ほかの購読者にも同じ穴がある。
+- U6 Game の ShishaComponent・仮の定義・Tick の表: 着地(直し 0 回)

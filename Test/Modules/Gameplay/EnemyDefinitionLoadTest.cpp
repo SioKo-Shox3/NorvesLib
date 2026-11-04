@@ -105,6 +105,11 @@ int main()
     CheckRejected(Replace(valid, R"("maxHealth":300)", R"("unknown":true,"maxHealth":300)"), "unknown", definition);
     CheckRejected(Replace(valid, R"("weight":1)", R"("unknown":true,"weight":1)"), "patterns[0].unknown", definition);
 
+    // 同梱定義を実際の資産ルートから読み、識別子とパターン数を確かめる。
+    EnemyDefinition bundledDefinition;
+    ENEMY_DEFINITION_CHECK(LoadEnemyDefinitionFromAsset("Gameplay/enemies/shisha_human_01.enemy.json", bundledDefinition, error));
+    ENEMY_DEFINITION_CHECK(bundledDefinition.Id == "shisha.human_01" && bundledDefinition.Patterns.size() == 2);
+
     std::puts("EnemyDefinitionLoadTest: PASS");
     return 0;
 }
