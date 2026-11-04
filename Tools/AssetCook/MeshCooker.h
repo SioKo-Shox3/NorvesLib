@@ -160,11 +160,16 @@ namespace NorvesLib::Tools::AssetCook
                                                    uint32_t fallbackMinTriangles = 0,
                                                    uint32_t dagRootMaxClusters = 0);
 
-    // --generate の値 "terrain-tile:<x>,<z>"（荒野の手続きの地形の区画の番号）と "terrain-tile:dem:<x>,<z>"（DEM の格子の
-    // 区画の番号。outDem が真）を読む。形が違う・番号が範囲の外なら false（DEM の区画の数は格子の記述で決まるので、
-    // DEM の番号の範囲はクックのときに確かめる）。
+    enum class TerrainTileSource : uint8_t
+    {
+        Procedural,
+        Dem,
+        Nvtrn,
+    };
+
+    // --generate の区画番号と入力の種類を読む。DEM・NVTRN の区画数は入力から決まるため、クック時に範囲を確かめる。
     [[nodiscard]] bool TryParseTerrainTileGenerate(Core::Container::AnsiStringView generate, uint32_t& outTileX,
-                                                   uint32_t& outTileZ, bool& outDem);
+                                                   uint32_t& outTileZ, TerrainTileSource& outSource);
 
     // --generate の値が "terrain-tile:dem-plain:<x>,<z>"（崖の細部を焼かない DEM の区画。形の解釈は "dem:" と同じで、
     // 撮り比べで崖の手続きの変形を切った版を別の論理パスへ焼くためのもの）か
@@ -197,6 +202,20 @@ namespace NorvesLib::Tools::AssetCook
                                                   uint32_t fallbackMinTriangles = 0,
                                                   uint32_t dagRootMaxClusters = 0,
                                                   bool bAllowCliffDetail = true);
+
+    // NVTRN または地形 spec の区画を NVMESH v1 に焼く。spec の相対パスは inputPath の親を基準に解決する。
+    // 外周の頂点は階層のどの段でも動かさない。
+    [[nodiscard]] bool CookTerrainNvtrnTileToNvmesh(const uint8_t* inputBytes,
+                                                    size_t inputSize,
+                                                    const std::filesystem::path& inputPath,
+                                                    uint32_t tileX,
+                                                    uint32_t tileZ,
+                                                    Core::Container::AnsiStringView format,
+                                                    Core::Container::AnsiStringView logicalPath,
+                                                    MeshCookResult& outResult,
+                                                    Core::Container::AnsiString& error,
+                                                    uint32_t fallbackMinTriangles = 0,
+                                                    uint32_t dagRootMaxClusters = 0);
 
     // DEM の隣り合う 2 区画（B は A の東か南の隣）をクックと同じ引数で LOD の階層まで焼き、境の頂点の位置・法線・UV が
     // 両区画でビット単位で同じで、どの段・根のクラスタの集まり・フォールバックの段でも境の開いた辺が元の 1 升目の辺のまま

@@ -10,13 +10,15 @@
 # glTF を読まずにメッシュを作らせる "generate"（省略可。displaced-sphere は source_path の高さマップで変位した
 # 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h。terrain-tile:<x>,<z> は
 # 荒野の手続きの地形の区画、terrain-tile:dem:<x>,<z> は DEM の格子の区画で、source_path が格子の記述（height.json）、
-# extra_sources が格子のファイルと区画の割り方のヘッダ。一覧の DEM の項目は Scripts/Terrain/WriteTerrainAssetSet.py が書く）を持つ。
+# extra_sources が格子のファイルと区画の割り方のヘッダ。一覧の DEM の項目は Scripts/Terrain/WriteTerrainAssetSet.py が書く。
+# terrain-tile:nvtrn:<x>,<z> は地形スペックか NVTRN の区画で、extra_sources に高さ入力と高さ場のヘッダを入れる）を持つ。
 # 一覧の "worlds"（省略可）の各項目は logical_path・source_path・package_name・entry_name と、
 # format（省略時は nvtrn.v0.height16）・variant（省略時は一覧の default_variant）を持ち、地形を NVTRN へ焼く。
 # source_path の地形のスペックと、その場所を基準に height_source.path が指す高さのファイルを変更の検出に含める。
 #
 # 差分クック: 元のファイル・一覧の項目・共通設定・品質の内容から印を求め、変わらないものは前回の結果を使う。
 # 地形（モデルの generate が terrain-tile: で始まる項目）の印は exe を含まず、崖の細部の版と地形の経路のソースの内容を含む。
+# NVTRN の区画は、さらに高さ入力・NVTRN の生成と読み取りに使うソースの内容も含む。
 # それ以外の印は AssetCook の exe の内容を含む。一覧外のソースやビルド設定・コンパイラの変更による出力差は
 # ReferenceCheck.py --cook-coverage の代表区画の焼き比べで検出する。
 # <RuntimeRoot>/.cookstate/ の stamp は今の exe による旧形式の印で、旧スクリプトとの互換用に残す。
@@ -151,8 +153,31 @@ $TerrainStampSourcePaths = @(
     "Library/ThirdParty/meshoptimizer/upstream/vertexfilter.cpp",
     "Library/ThirdParty/meshoptimizer/upstream/vfetchoptimizer.cpp"
 )
+# NVTRN の区画だけに加える。地形スペックの高さ入力から NVTRN を作り、高さ場へ戻す経路を変更検出に含める。
+$NvtrnTerrainStampSourcePaths = @(
+    "Tools/AssetCook/HeightfieldImport.cpp",
+    "Tools/AssetCook/HeightfieldImport.h",
+    "Tools/AssetCook/TerrainCooker.cpp",
+    "Tools/AssetCook/TerrainCooker.h",
+    "Tools/AssetCook/TerrainSpec.cpp",
+    "Tools/AssetCook/TerrainSpec.h",
+    "Tools/AssetCook/TextureCooker.cpp",
+    "Tools/AssetCook/TextureCooker.h",
+    "Library/Core/Public/Asset/CookedTerrainFormat.h",
+    "Library/Core/Private/Asset/CookedTerrainLoader.cpp",
+    "Library/Core/Private/Asset/CookedTerrainWriter.cpp",
+    "Library/Core/Public/Asset/CookedTextureFormat.h",
+    "Library/Core/Private/Asset/CookedTextureLoader.cpp",
+    "Library/ThirdParty/stb/stb_image.h",
+    "Library/ThirdParty/stb/stb_image_impl.cpp",
+    "Library/ThirdParty/tinyexr/include/exr.h",
+    "Library/ThirdParty/tinyexr/deps/zstd/tinyexr_zstd.c",
+    "Library/ThirdParty/tinyexr/deps/zstd/tinyexr_zstd.h"
+)
+$NvtrnTerrainSourcesInitialized = $false
 $TerrainStampInputs = $null
 $TerrainCookExecutableChecked = $false
+$NvtrnTerrainCookExecutableChecked = $false
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -162,6 +187,24 @@ function Resolve-RepoPath {
     }
 
     return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
+}
+
+# EXR の読み取り先は取り漏れを避け、ソース全体を名前順で追加する。NVTRN の対象があるときだけ読む。
+function Initialize-NvtrnTerrainStampSources {
+    if ($script:NvtrnTerrainSourcesInitialized) {
+        return
+    }
+
+    $relativeDir = "Library/ThirdParty/tinyexr/src"
+    $sourceFiles = @(Get-ChildItem -LiteralPath (Resolve-RepoPath $relativeDir) -File |
+        Where-Object { $_.Extension -in @(".c", ".h", ".inc") } | Sort-Object -Property Name)
+    if ($sourceFiles.Count -eq 0) {
+        throw "NVTRN の変更の検出に使う EXR のソースが見つかりません: $relativeDir"
+    }
+    foreach ($sourceFile in $sourceFiles) {
+        $script:NvtrnTerrainStampSourcePaths += "$relativeDir/$($sourceFile.Name)"
+    }
+    $script:NvtrnTerrainSourcesInitialized = $true
 }
 
 function Test-PropertyExists {
@@ -301,19 +344,31 @@ function Initialize-TerrainStampInputs {
 }
 
 function Assert-TerrainCookExecutableCurrent {
-    if ($script:TerrainCookExecutableChecked) {
+    param([bool]$IsNvtrnTerrain)
+
+    $sourcePaths = @()
+    if (-not $script:TerrainCookExecutableChecked) {
+        $sourcePaths += $script:TerrainStampSourcePaths
+    }
+    if ($IsNvtrnTerrain -and (-not $script:NvtrnTerrainCookExecutableChecked)) {
+        $sourcePaths += $script:NvtrnTerrainStampSourcePaths
+    }
+    if ($sourcePaths.Count -eq 0) {
         return
     }
 
     $executableWriteTime = (Get-Item -LiteralPath $script:AssetCookPath).LastWriteTimeUtc
     # 崖の細部の版を持つ TerrainCliffDetail.h もソース一覧に含む。
-    foreach ($path in $script:TerrainStampSourcePaths) {
+    foreach ($path in $sourcePaths) {
         $sourceWriteTime = (Get-Item -LiteralPath (Resolve-RepoPath $path)).LastWriteTimeUtc
         if ($executableWriteTime -lt $sourceWriteTime) {
             throw "AssetCook が地形のソース $path より古い。先に AssetCook をビルドし直す"
         }
     }
     $script:TerrainCookExecutableChecked = $true
+    if ($IsNvtrnTerrain) {
+        $script:NvtrnTerrainCookExecutableChecked = $true
+    }
 }
 
 # 項目 1 つ分: 印で前回の結果が使えるかを判定し、使えなければ AssetCook を実行する。
@@ -343,7 +398,8 @@ function Invoke-CookEntry {
         [string[]]$StampTexts,
         [string[]]$CookArguments,
         [string]$SetStateDir,
-        [bool]$IsTerrain = $false
+        [bool]$IsTerrain = $false,
+        [bool]$IsNvtrnTerrain = $false
     )
 
     # 対象を絞っているとき、対象外は焼かず、既存のマニフェストの項目（埋め込みの画像を含む）を引き継ぐ
@@ -454,7 +510,7 @@ function Invoke-CookEntry {
     }
 
     if ($IsTerrain) {
-        Assert-TerrainCookExecutableCurrent
+        Assert-TerrainCookExecutableCurrent -IsNvtrnTerrain $IsNvtrnTerrain
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $packagePath) -Force | Out-Null
     Remove-Item -LiteralPath $script:TemporaryManifestPath -ErrorAction SilentlyContinue
@@ -741,22 +797,30 @@ foreach ($specFile in $specFiles) {
         # （source_path は格子の記述で、AssetCook が高さ場の読む記述と同じか・格子のファイルの SHA-256 が記述と合うかを確かめる。
         # 格子のファイルと区画の割り方のヘッダは extra_sources に入れ、どれが変わっても焼き直す）。
         # "terrain-tile:dem-plain:<x>,<z>" は dem と同じ区画を崖の細部（TerrainCliffDetail.cpp）なしで焼く（撮り比べ用）。
+        # "terrain-tile:nvtrn:<x>,<z>" は地形スペックか NVTRN から区画を焼く。
         $isPlacementTerrain = $false
         $isTerrain = $false
+        $isNvtrnTerrain = $false
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
-            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:)?\d+,\d+$')) {
-                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z> だけを指定できます"
+            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:|nvtrn:)?\d+,\d+$')) {
+                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
             $isTerrain = $generate -match '^terrain-tile:'
+            $isNvtrnTerrain = $generate -match '^terrain-tile:nvtrn:\d+,\d+$'
+            if ($isNvtrnTerrain -and (($OnlyPatterns.Count -eq 0) -or (Test-OnlyTarget -LogicalPath $logicalPath))) {
+                Initialize-NvtrnTerrainStampSources
+                $stampTexts += $NvtrnTerrainStampSourcePaths
+            }
             $isPlacementTerrain = ($generate -match '^terrain-tile:dem:\d+,\d+$') -and `
                 ($logicalPath -match '^Models/WastelandTerrain/WastelandDem_\d+_\d+\.generated$') -and `
                 (($OnlyPatterns.Count -eq 0) -or (Test-OnlyTarget -LogicalPath $logicalPath))
         }
         $asset = Invoke-CookEntry -SetName $setName -PackageRootName $packageRoot -Variant $variant -Kind "model" `
             -LogicalPath $logicalPath -CookedPackage $cookedPackage -EntryName $entryName -Item $model `
-            -SourceTexts @($sourceText) -StampTexts $stampTexts -CookArguments $cookArguments -SetStateDir $setStateDir -IsTerrain $isTerrain
+            -SourceTexts @($sourceText) -StampTexts $stampTexts -CookArguments $cookArguments -SetStateDir $setStateDir `
+            -IsTerrain $isTerrain -IsNvtrnTerrain $isNvtrnTerrain
         if ($null -ne $asset) {
             $aggregateAssets += $asset
             if ($isPlacementTerrain) {

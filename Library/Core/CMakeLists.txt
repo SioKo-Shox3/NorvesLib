@@ -9,13 +9,16 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Save/GameStateStore.cpp
     Private/Save/SaveContainer.cpp
     Private/Save/SaveMigration.cpp
+    Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
+    Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
@@ -313,6 +316,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     # 地形
     Private/Rendering/Terrain/TerrainHeightField.cpp
+    Private/Rendering/Terrain/TerrainSystem.cpp
     Private/Rendering/Terrain/TerrainPlacementGround.cpp
     Private/Rendering/MegaGeometryPass.cpp
     Private/Rendering/HiZPyramidPass.cpp
@@ -407,6 +411,7 @@ set(PRIVATE_SOURCES
     Private/Component/MeshComponent.cpp
     Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
+    Private/Component/TerrainComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -480,8 +485,10 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Save/GameStateStore.h
     Public/Save/SaveContainer.h
     Public/Save/SaveMigration.h
+    Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
@@ -726,6 +733,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # 地形
     Public/Rendering/Terrain/TerrainHeightField.h
+    Public/Rendering/Terrain/TerrainSystem.h
     Public/Rendering/Terrain/TerrainPlacementGround.h
     # Object
     Public/Object/Invocation.h
@@ -798,6 +806,7 @@ set(PUBLIC_HEADERS
     Public/Camera/CameraCollisionSolver.h
     Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
+    Public/Animation/GroundQuery.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
     Public/Locomotion/QuadrupedLocomotionJson.h

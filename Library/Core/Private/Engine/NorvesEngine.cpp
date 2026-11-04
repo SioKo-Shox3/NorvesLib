@@ -161,6 +161,26 @@ namespace NorvesLib::Core
         return m_version;
     }
 
+    Save::GameStateStore& NorvesEngine::GetGameStateStore()
+    {
+        return m_GameStateStore;
+    }
+
+    const Save::GameStateStore& NorvesEngine::GetGameStateStore() const
+    {
+        return m_GameStateStore;
+    }
+
+    Save::SaveService& NorvesEngine::GetSaveService()
+    {
+        return m_SaveService;
+    }
+
+    const Save::SaveService& NorvesEngine::GetSaveService() const
+    {
+        return m_SaveService;
+    }
+
     ScriptRuntime& NorvesEngine::GetScriptRuntime()
     {
         return m_ScriptRuntime;

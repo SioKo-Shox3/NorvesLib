@@ -17,6 +17,9 @@
 // クッカーは --generate terrain-tile:dem:<x>,<z> で、この格子を kDemTileCells 升目ごとの区画に分けて焼く。
 // 格子には造成（TerrainGrading。建物の足元と道だけを緩い平面へ寄せる）を掛けられる。造成は頂点の高さを置き換える規則なので、
 // 焼いたメッシュと Game が引く高さは造成の後も一致する（荒野は WastelandTerrain::LoadDemGrid で前哨地の造成を掛けて読む）。
+// cook 済みの NVTRN からも、全タイルの HGT0 をつないで同じ格子の高さ場を作れる。
+// 高さはヘッダの写像と OriginY から復元し、共有辺の標本が一致することを確かめる。
+// この格子も既存の対角線・補間・範囲外の規則をそのまま使う。
 // ---------------------------------------------------------------------------
 
 #include "Container/PointerTypes.h"
@@ -27,6 +30,11 @@
 
 #include <cstdint>
 #include <limits>
+
+namespace NorvesLib::Core::Asset
+{
+    struct CookedTerrainData;
+}
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -119,7 +127,7 @@ namespace NorvesLib::Core::Rendering::Terrain
     private:
         /// 格子の高さ場の中身（cpp にある）
         struct GridData;
-        /// 格子の作り方を LoadGrid の外から呼ばせないための印
+        /// 格子の作り方を高さ場の生成関数の外から呼ばせないための印
         struct GridTag
         {
             explicit GridTag() = default;
@@ -131,7 +139,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 手続きの作り方（seed と関数だけで決まる）
         explicit TerrainHeightField(const TerrainHeightFieldParams &params);
 
-        /// 格子の作り方。LoadGrid だけが呼ぶ
+        /// 格子の作り方。LoadGrid と CreateFromCookedTerrain だけが呼ぶ
         TerrainHeightField(GridTag tag, Container::TSharedPtr<const GridData> grid);
 
         /// 切り出した格子（Scripts/Terrain/CropDem.py が書く height.json と、その中の file が指す float32 の格子）を読んで
@@ -143,6 +151,12 @@ namespace NorvesLib::Core::Rendering::Terrain
         static Container::TSharedPtr<const TerrainHeightField> LoadGrid(Container::AnsiStringView descriptorPath,
                                                                         Container::AnsiString &outError,
                                                                         const TerrainGrading *grading = nullptr);
+
+        /// cook 済みの NVTRN の全タイルの HGT0 をつなぎ、OriginY を加えた世界座標の高さを持つ格子を作る。
+        /// 既存の対角線・補間・範囲外の規則を使う。タイルの欠落・大きさの不一致・共有辺の標本の不一致などは
+        /// 空を返して outError に理由を書き、成功時は outError を空にする。
+        static Container::TSharedPtr<const TerrainHeightField> CreateFromCookedTerrain(const Asset::CookedTerrainData &terrain,
+                                                                                       Container::AnsiString &outError);
 
         /// (x,z) の高さ[m]。格子の作り方で範囲の外なら kOutOfRangeHeight
         float SampleHeight(float x, float z) const;
@@ -163,11 +177,12 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 格子の頂点の並び（手続きの作り方では Columns・Rows が 0）
         TerrainGridLayout GetGridLayout() const;
 
-        /// 格子の頂点 (column, row) の高さ（ファイルの値。造成を渡して読んだときは、造成の範囲だけ造成の後の値）。
+        /// 格子の頂点 (column, row) の高さ（ファイルの値、または NVTRN から復元した世界座標の高さ。造成の範囲は造成の後の値）。
         /// 格子の作り方で、番号が並びの内側のときだけ呼ぶ
         float GetGridVertexHeight(uint32_t column, uint32_t row) const;
 
-        /// 格子のファイルの中身（float32 の little-endian、行優先）。手続きの作り方では空
+        /// 格子の中身（float32 の little-endian、行優先）。LoadGrid では元のファイルの中身、
+        /// CreateFromCookedTerrain では OriginY を加えて組み立てた高さ。手続きの作り方では空
         Container::Span<const uint8_t> GetGridBytes() const;
 
         /// 手続きの作り方の値（格子の作り方では既定の値のままで、意味を持たない）

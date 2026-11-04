@@ -7,11 +7,14 @@
     MEMBER GeometrySweepTest GeometrySweepTest.cpp
     MEMBER CurvesTest CurvesTest.cpp
     MEMBER GrassFieldQueryTest ${CMAKE_SOURCE_DIR}/Test/Core/Vegetation/GrassFieldQueryTest.cpp
+    MEMBER TerrainHeightFieldTest ${CMAKE_SOURCE_DIR}/Test/Core/Terrain/TerrainHeightFieldTest.cpp
     MEMBER MatrixAbstractionTest MatrixAbstractionTest.cpp
 )
-target_link_libraries(MathGeometryTest PRIVATE Core)
+target_link_libraries(MathGeometryTest PRIVATE Core AssetCookLib NorvesThirdParty_TinyEXR)
 target_include_directories(MathGeometryTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
 include(CTest)
@@ -27,3 +30,4 @@ add_test(NAME MatrixAbstractionTest COMMAND MathGeometryTest --test=MatrixAbstra
 
 add_test(NAME CurvesTest COMMAND MathGeometryTest --test=CurvesTest)
 add_test(NAME GrassFieldQueryTest COMMAND MathGeometryTest --test=GrassFieldQueryTest)
+add_test(NAME TerrainHeightFieldTest COMMAND MathGeometryTest --test=TerrainHeightFieldTest)
