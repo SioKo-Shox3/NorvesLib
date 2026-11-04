@@ -67,6 +67,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
+    MEMBER PhysicsGroundQueryIntegrationTest PhysicsGroundQueryIntegrationTest.cpp
     MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
     MEMBER CombatSweepTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatSweepTest.cpp
     MEMBER CombatLayerTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLayerTest.cpp
@@ -102,6 +103,7 @@ add_test(NAME PhysicsDynamicsTest COMMAND PhysicsDynamicsTest)
 add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsDynamicsTest --test=PhysicsLifecycleEventTest)
 
 add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsDynamicsTest --test=PhysicsFixedStepPipelineTest)
+add_test(NAME PhysicsGroundQueryIntegrationTest COMMAND PhysicsDynamicsTest --test=PhysicsGroundQueryIntegrationTest)
 set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
 
 
