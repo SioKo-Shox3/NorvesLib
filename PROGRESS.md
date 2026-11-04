@@ -9740,13 +9740,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命: 撃破の直後の破棄の順・配送中の購読の解除）。
 - Notes: 起動の要る確かめは無い（シーンに敵は置いていない。垂直スライスは G8-GR17-SLICE-SMOKE）。ShishaComponent の Tick は Initialize での登録のため、World の Tick の収集中に初期化された最初のフレームは動かず、次のフレームから動く。
 
-- U1 IGroundQuery の型と PhysicsGroundQuery の実装を Core に足す: 着地(直し 1 回)
-- U3 物理の問い合わせの文書と試験の理由を書く: 着地(直し 1 回)
-- U2 PhysicsGroundQueryIntegrationTest を足し、タスクの verify を通す: 着地(直し 0 回)
-
-## 2026-11-04 G9-GR14-GROUND-QUERY（run 20261104-192402 の反復 1、完了）
-
-- Done: `Library/Core/Public/Animation/GroundQuery.h` に `EGroundQueryStatus`（Hit / NoHit / NotReady / WrongThread / Unavailable / TooSteep）・`GroundHit`・`GroundProbe`・`IGroundQuery`（`Query` と `QueryBatch(Span<GroundProbe>)`）・`PhysicsGroundQuerySettings`・`PhysicsGroundQuery` を足した。`PhysicsGroundQuery` は Core に置き（Physics モジュールに依存しない）、`SceneQuery::ExecuteQuery` / `ExecuteBatch` の下向きの `RaycastClosest`（MaxHits=1、LayerMask・IgnoreBodies/Colliders、トリガーは常に除外）を使い、結果を状態へ写し、法線の傾きが `MaxSlopeDeg` を超える当たりを TooSteep にする。法線が長さ 0 か有限でない当たり（始点が形状の内側など）は Unavailable。`Docs/Architecture/PhysicsQueries.md` に契約（寿命・GameThread 専用・最大 1 固定ステップ古いスナップショット・地形は別実装）を、`Docs/Testing.md` に試験を足す理由を書いた。`PhysicsGroundQueryIntegrationTest` を `PhysicsDynamicsTest` の束に足した（20° の斜面・3 段の階段の高さ 1e-3 m・法線 0.5°、草の Layer 2・トリガー・自分の Body の除外、固定ステップ前の NotReady、別スレッドの WrongThread、地面の外の NoHit、60° の面の TooSteep、バッチと単発の一致）。
-- 証拠: `.harness/runs/20261104-192402/verify-G9-GR14-GROUND-QUERY-U2.txt`（Debug の PhysicsDynamicsTest のビルド EXIT=0、`PhysicsGroundQueryIntegrationTest` Passed、4 本の ctest 100% Passed、numstat 2 通り一致）。
-- Next: なし（アプリを起動する確かめは無い）。足 IK の重みが下がる部分は G9-GR14-LEG-IK-BALANCE。
-- Notes: QueryBatch は入力と結果を 1 つの `GroundProbe` にまとめ、件数の食い違いを起こさない形にした。有限でない入力・maxDown <= 0 は問い合わせを出さず Unavailable にした。
+- U1 GameStateStore とキーの台帳: 着地(直し 0 回)
+- U2 ゲームの進行の中身 ProgressSaveData: 着地(直し 0 回)
+- U3 SaveService と NorvesEngine のメンバ: 着地(直し 0 回)
+- U4 Game の結線: 着地(直し 0 回)
+- U5 SaveServiceTest と試験の文書: 着地(直し 0 回)
+## 2026-11-04 G8-GR76-STATE-AUTOSAVE（run 20261104-185917 の反復 1、完了）
+- Done: `Save/GameStateStore.h`(キーは Identity、値は bool/int64/double、スコープは Persistent/Session。台帳 `Assets/Data/state_keys.json`(空の `keys`)を読み、未登録・型違いのキーの get/set は警告を出して拒否。値が変わったときだけ MulticastDelegate で 1 回通知。Persistent の列挙・名前での適用・スコープ単位のリセット)。`Save/SaveService.h`(`Save(slot)`・`RequestAutosave(reason)`・`Load(slot)`。次の `Update(bModeTransitionPending)` までの要求を 1 回のスナップショットにまとめ、遷移の保留が無く SaveInhibit の参照カウントが 0 のときだけ GameThread でスナップショットを作り、JobSystem へ 1 つのタスクで出して完了の印をポーリングする。書き込み中の要求は完了の後に 1 回で書く。`FlushAndWait` は保留も書いて待つ。投入が拒否されたら同期で書く)。両方を `NorvesEngine` のメンバに足した。`Game/Save/ProgressSaveData`(仕様の JSON、waypoint は id と kind(bed・checkpoint・poi)、mapMask は 16 進の文字列、2^53 以上の ints は文字列、`MigrateSavePayload` を通して v1 も読む。flags/ints/reals を GameStateStore の Persistent と写す)。Game は起動時に台帳の読み込み・保存先(`GetUserDataDirectory("Game")`)・スナップショットの提供と読み込みの受け取りを結線し、`OnPreShutdown` で `FlushAndWait` の後に呼び出し先を外す。試験 `GameStateStoreTest`・`SaveServiceTest` を LoggerSinkTest の束へ、`Docs/Testing.md` に理由。
+- 証拠: `.harness/runs/20261104-185917/verify-G8-GR76-STATE-AUTOSAVE.txt`(Game・LoggerSinkTest の Debug ビルド exit 0・エラー 0、ctest で GameStateStoreTest・SaveServiceTest・SaveContainerTest・AtomicFileWriteTest・SaveMigrationTest・SaveSlotFallbackTest・LoggerSinkTest の 7 件 100% Passed)。
+- 決定: double の Persistent のために `progress.reals{}` を足した(仕様の flags/ints に加えた欄。無ければ空として読む)。v1 の文字列の waypoint は kind=checkpoint として読む。遷移の保留は SaveService が自分で問わず、呼び出し側が `Update` に渡す。
+- Next: ランナーの評価者の反証(ジョブ・Public API の危険地帯)。リセットの縦の道と ProgressionState との写しは G8-GR76-RESET-LIFETIME、設定は G8-GR76-SETTINGS。
+- Notes: 起動の要る確かめは無い(Game の起動・終了での保存の動きは未確認。終了時は JobSystem の受け付けの停止の後に `OnPreShutdown` が走るので、保留の書き込みは GameThread で同期に書かれる)。
+- Notes: 要起票: Game の毎フレームで `SaveService::Update` を呼んでいない。`GameModeStateMachine::Update` は保留の遷移を先頭で適用した後に Tick を呼び、Tick の中の要求は次のフレームまで残る(`LauncherRoutine::Tick` など)ので、handler のどのコールバックでも「保留なし」とは言えない。`GameModeStateMachine` に保留中の遷移を問う公開の関数を足し(この項目の paths の外)、その値を渡して毎フレーム `Update` を結線する。それまでは自動保存・`Save` の要求は終了時の `FlushAndWait` でだけ書かれる。
