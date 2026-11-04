@@ -9570,3 +9570,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: verify の CombatLifecycleTest はこの枝に未登録（G8-GR16-COMBAT-RUNTIME の試験）で、ctest の正規表現に一致しないまま 5 件で通る。退出の遅延の比較は「以上」で、Resetting に移った評価では時間を足さない（遅延 0 秒でも Exit は次の評価から）。`OnActiveProfileChanged` は同じ LateTick の中で配るので、購読側の反映は次のフレーム。起動の要る確かめは無い。
 - U1 Gameplay の文脈に Interact のアクションを足す: 着地(直し 0 回)
 - U2 EncounterService にセンサーが Engaged の領域の中にいるかの照会を足す: 着地(直し 0 回)
+- U6 U3 の差分(保存したパッチ)を当て直して確かめる: 着地(直し 0 回)

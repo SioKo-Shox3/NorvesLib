@@ -11,6 +11,7 @@ namespace NorvesLib::Modules::Gameplay
     namespace World
     {
         class EncounterService;
+        class InteractionService;
     }
 
     /**
@@ -25,6 +26,7 @@ namespace NorvesLib::Modules::Gameplay
         virtual ProgressionState& GetProgressionState() = 0;
         virtual DefeatGate& GetDefeatGate() = 0;
         virtual World::EncounterService& GetEncounterService() = 0;
+        virtual World::InteractionService& GetInteractionService() = 0;
     };
 
     /**

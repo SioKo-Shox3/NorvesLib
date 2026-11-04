@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Gameplay/Combat/HealthComponent.h"
 #include "Gameplay/World/EncounterZoneComponent.h"
+#include "Gameplay/World/InteractableComponent.h"
 #include "Gameplay/World/ZoneSensorComponent.h"
 #include "Logging/LogMacros.h"
 
@@ -21,6 +22,7 @@ namespace NorvesLib::Modules::Gameplay
           m_IsDefeatHoldOwnerAlive(this, &GameplayModule::IsDefeatHoldOwnerAlive)
     {
         m_DefeatGate.OnDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
+        m_InteractionService.SetEngagedQuery(Core::MakeDelegate(&m_EncounterService, &World::EncounterService::IsSensorEngaged));
     }
 
     Core::Identity GameplayModule::GetModuleId() const
@@ -55,6 +57,7 @@ namespace NorvesLib::Modules::Gameplay
         Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::ZoneSensorComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::EncounterZoneComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(World::InteractableComponent::StaticClass());
     }
 
     bool GameplayModule::Initialize()
@@ -99,6 +102,7 @@ namespace NorvesLib::Modules::Gameplay
         {
             const auto& times = m_Engine->GetTimeSystem().GetFrameTimes();
             m_EncounterService.Evaluate(m_Engine->GetWorld(), times.GetDelta(Core::Engine::TimeChannel::World));
+            m_InteractionService.Evaluate(m_Engine->GetWorld());
         }
     }
 
@@ -110,6 +114,7 @@ namespace NorvesLib::Modules::Gameplay
     void GameplayModule::Shutdown()
     {
         m_bInitialized = false;
+        m_InteractionService.Reset();
         m_EncounterService.Reset();
     }
 

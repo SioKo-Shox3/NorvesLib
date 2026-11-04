@@ -4,6 +4,7 @@
 #include "Gameplay/Progression/DefeatGate.h"
 #include "Gameplay/Progression/ProgressionState.h"
 #include "Gameplay/World/EncounterService.h"
+#include "Gameplay/World/InteractionService.h"
 #include "Thread/Thread.h"
 
 namespace NorvesLib::Core
@@ -33,6 +34,7 @@ namespace NorvesLib::Modules::Gameplay
         ProgressionState& GetProgressionState() override { return m_ProgressionState; }
         DefeatGate& GetDefeatGate() override { return m_DefeatGate; }
         World::EncounterService& GetEncounterService() override { return m_EncounterService; }
+        World::InteractionService& GetInteractionService() override { return m_InteractionService; }
 
     private:
         void RegisterWorldSystems(Core::World& world);
@@ -44,6 +46,7 @@ namespace NorvesLib::Modules::Gameplay
         ProgressionState m_ProgressionState;
         DefeatGate m_DefeatGate;
         World::EncounterService m_EncounterService;
+        World::InteractionService m_InteractionService;
         Core::Delegate<bool, Core::EntityHandle> m_IsDefeatHoldOwnerAlive;
     };
 }
