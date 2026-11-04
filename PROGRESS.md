@@ -9669,3 +9669,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 移行は JsonDocument の木から JsonWriter で書き直す（数値は double で持つエンジン全体の制約に合わせ、2^53 以上の整数は保存の中身では文字列で持つ）。読み込みでファイルを書き直さない（移した中身は返すだけで、次の保存で今の版になる）。読めない（共有違反など）ファイル・退避の失敗は `IoError`。
 - Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
 - Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。
+
+- U1 cook 済みの NVTRN から格子の高さ場を作る: 着地(直し 0 回)
+- U4 TerrainSystem を足して Engine::Engine のメンバにする: 着地(直し 1 回)
+- U2 AssetCook に NVTRN のタイルから区画メッシュを焼く terrain-tile:nvtrn を足す: 着地(直し 0 回)
+- U5 TerrainComponent を足す: 着地(直し 2 回)
+- U3 草原の一覧に 16 区画を足し、CookAssets で焼けるようにする: 着地(直し 0 回)
+- U7 TerrainHeightFieldTest を足す: 着地(直し 0 回)
+- U6 開発ビルドだけの grassland シーンを足し、地形を TerrainComponent で置く: 着地(直し 0 回)
+- U9 SceneFileRoundTripTest に TerrainComponent を足し、タスクの verify を全部回す(U8 の切り直し): 着地(直し 0 回)
+- Done (G5-GR37-TERRAIN-COMPONENT、run 20261104-182213 の反復 1): `TerrainHeightField::CreateFromCookedTerrain`（cook 済み NVTRN の全タイルから格子。既存の補間・対角・範囲外の扱いを共有）、`TerrainSystem`（`Engine::Engine` のメンバ。登録・解除・`FindTerrain`・`TSharedPtr<const TerrainHeightField>`）、`TerrainComponent`（値だけの PROPERTY。BeginPlay で NVTRN を読み登録し、区画ごとに子 Entity と `MegaGeometryComponent`〔地形の面・影〕を 1 フレームの予算ずつ作り、EndPlay で返す）、AssetCook の `--generate terrain-tile:nvtrn:<x>,<z>`、草原の 4×4 区画の一覧、開発ビルドだけの `grassland` シーン（視点 near・valley・low）を足した。
+- 試験: `TerrainHeightFieldTest`（MathGeometryTest の束）、`SceneFileRoundTripTest` に TerrainComponent の設定の往復と旧ファイルの既定値の 2 ケース、`AssetCookTerrainSmoke` に区画メッシュの cook（先頭・末尾の区画、spec と生 NVTRN の出力一致、範囲外・破損の拒否）。
+- 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=17 で終了コード 0）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` の 3 視点の撮影、区画の LOD の境の亀裂・TLAS・影の確認、TerrainComponent の EndPlay（World の終了・所有者の削除・Component 単体の解除）の実行時の確認を行う。層材質は G5-GR37-TERRAIN-LAYERS。
+- Notes: SceneFileRoundTripTest の地形の 2 ケースは `LoadIntoWorld` が BeginPlay を呼ぶため、JSON の解析とスキーマ照合の後に同じリフレクションの値の適用で復元している（`LoadIntoWorld`・`SpawnPrefab` を通す経路は起動の確かめで見る）。荒野の区画（`WastelandRoutine.cpp` の `PlaceTerrainTile`）は TerrainComponent へ移していない。
+- U10 差し戻しの直し — 地形の読込みを BeginPlay から最初の Tick へ移し、作ってから値を設定しても動くようにする: 着地(直し 0 回)
+- Done (G5-GR37-TERRAIN-COMPONENT、run 20261104-182213 の反復 2): 評価者の差し戻し（`World::CreateComponent` が値の設定より先に BeginPlay を呼ぶため、grassland の地形が読まれず区画が 1 つも置かれない）を直した。`TerrainComponent` の BeginPlay は参照の記録と Tick の登録だけにし、NVTRN の読込み・高さ場の作成・TerrainSystem への登録は最初の Tick（`PlacePendingTiles`）で一度だけ行う。パスが空の間は待ち、読込みに失敗したら警告を 1 回出して Tick を止める。`TerrainComponent(const IUnknown*)` も既定値を入れる。
+- 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT-iter2.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=1 skipped=16 で終了コード 0）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` を起動し、最初の Tick で `TERRAIN_COMPONENT tiles=16 placed=16` が出て SceneReady に至ることを、3 視点の撮影・亀裂・TLAS・影・EndPlay の確認と合わせて見る。
+- Notes: 残課題（non-blocking）: ランチャーのカードの画像は `Assets/Textures/Launcher/sandbox.png` の使い回し。`Scripts/CookAssets.ps1` の変更は `paths:` の外だが done-when (1) の「CookAssets で焼ける」に要るもの。
