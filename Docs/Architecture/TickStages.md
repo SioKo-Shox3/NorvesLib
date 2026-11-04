@@ -32,7 +32,7 @@
 
 ## Component の割り当て表
 
-表の群は各型の初期設定と登録で対象になる群を示す。主群や mask は後から変更できるが、実際の呼び先は前節の登録条件にも従う。ポーズ分類は後述の 3 分類を使う。処理なしの型も登録されているため表に載せ、その分類は処理がある場合の進行条件を示す。登録が指定する channel は処理なしの型でも delta の問い合わせに使われる。
+表の群は各型の初期設定と登録で対象になる群を示す。主群や mask は後から変更できるが、実際の呼び先は前節の登録条件にも従う。ポーズ分類は後述の 3 分類を使う。処理なしの型も表に載せ、型ごとの登録があるものは処理がある場合の進行条件を示し、未登録のものは関連するサービスの条件を示す。登録が指定する channel は処理なしの型でも delta の問い合わせに使われる。
 
 | 型 | 群（主群と全対象群） | 担当する処理 | 時間の channel | ポーズでの分類 | 登録の場所 |
 |---|---|---|---|---|---|
@@ -56,6 +56,8 @@
 | `CharacterBodyComponent` | Movement（主群）・PoseFinalize | 設定に応じ一方の群で可変更新の移動を要求 | World | 非ポーズ時のsimulation | `Library/Modules/Physics/Private/Physics/PhysicsModule.cpp:103` |
 | `HitboxComponent` | 群なし（Module Late で評価） | 攻撃判定の窓と命中を評価し、OnHit を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
 | `HurtboxSetComponent` | 群なし（Module Late で評価） | 部位ごとの被弾を評価し、OnHurt を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
+| `ZoneSensorComponent` | なし（群に登録しない） | 毎フレームの処理なし。位置は EncounterService が Module Late で読む | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:56` |
+| `EncounterZoneComponent` | なし（群に登録しない） | 毎フレームの処理なし。EncounterService が Module Late で状態機械を進める | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:57` |
 | `FollowCameraComponent` | Input（主群）・Camera | Input で視線入力、Camera で追従・衝突処理 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Camera/FollowCameraComponent.cpp:109` |
 | `QuadrupedLocomotionComponent` | Input（主群）・PoseFinalize・PostPhysics | 入力収集、ルート移動の取得、物理後の移動終了と見た目の更新 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:212` |
 
@@ -66,6 +68,9 @@
 - HealthComponentは可変Tickを持たず、ApplyDamageを呼んだ側のTickの中でOnDamaged・OnStaggerBroken・OnDefeatedを通知する。
 - `HitboxComponent`・`HurtboxSetComponent` は `RegisterComponentTick` で群に登録せず、Module Late と同じ進行 gate に従う。判定窓は `BeginAttack` / `EndAttack` の直接呼び出し、または同じ Entity の `AnimatorComponent::OnEvent` の Begin（Name が窓のイベント名と一致）と対応する WindowToken の End で開閉する。
 - GameplayModule::Tick（通常のModule Tick）はDefeatGate::Updateの安全点で、持ち主の破棄を検出して保留を外し、保留のない撃破をOnDefeatCompleted → ProgressionState::MarkDefeatedへ渡す。
+- `EncounterService` は `GameplayModule::LateTick`（Module Late）で、World の Late の群の後、Handler の `OnLateUpdate` の前に、シミュレーションが進むフレームごとに 1 回評価する。時間は `TimeSystem::GetFrameTimes()` の World channel を使い、`LateTick` の引数の Unscaled は使わない。
+- Component からの登録依頼は評価境界まで保留し、最初の評価では World 内も走査する。事件は集めてから世代付きの Entity ハンドルで再検証し、通知する。
+- `OnActiveProfileChanged` はこの評価中に通知される。Camera 群はその前に終わっているため、通知を Camera 群の更新に反映できるのは次フレーム以降。カメラ側の購読・切り替えは未接続で、画面への反映時点は未保証。
 
 ## Bridge進行とポーズの3分類
 

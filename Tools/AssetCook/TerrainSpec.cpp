@@ -274,6 +274,453 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool ReadSpecPath(const JsonValue& value, const std::filesystem::path& specPath, const AnsiString& field,
+                          std::filesystem::path& out, AnsiString& error)
+        {
+            AnsiString text;
+            if (!ReadText(value, specPath, field.c_str(), text, error))
+            {
+                return false;
+            }
+            try
+            {
+                const auto* pathBegin = reinterpret_cast<const char8_t*>(text.data());
+                const std::filesystem::path input(pathBegin, pathBegin + text.size());
+                if (!input.is_absolute() && (input.has_root_name() || input.has_root_directory()))
+                {
+                    return FailField(specPath, field, value,
+                                     "完全な絶対パスか、スペックの親からの相対パスを指定してください。", error);
+                }
+                out = (input.is_absolute() ? input : specPath.parent_path() / input).lexically_normal();
+            }
+            catch (const std::filesystem::filesystem_error&)
+            {
+                return FailField(specPath, field, value, "ファイルパスとして使える文字列に修正してください。", error);
+            }
+            return true;
+        }
+
+        AnsiString ChildField(const AnsiString& parent, const char* key)
+        {
+            AnsiString field = parent;
+            field += ".";
+            field += key;
+            return field;
+        }
+
+        AnsiString IndexedField(const AnsiString& parent, size_t index)
+        {
+            AnsiString field = parent;
+            char buffer[32];
+            const auto converted = std::to_chars(buffer, buffer + sizeof(buffer), index);
+            field += "[";
+            field.append(buffer, static_cast<size_t>(converted.ptr - buffer));
+            field += "]";
+            return field;
+        }
+
+        bool CheckRecipeObject(const JsonValue& value, const AnsiString& field, const char* const* keys, size_t count,
+                               const std::filesystem::path& path, AnsiString& error)
+        {
+            if (!value.IsObject())
+            {
+                return FailField(path, field, value, "オブジェクトを指定してください。", error);
+            }
+            return CheckKeys(value, field.c_str(), keys, count, path, error);
+        }
+
+        enum class NumberRange { Any, NonNegative, Positive, Unit };
+
+        struct RecipeNumber
+        {
+            const char* Key;
+            double* Destination;
+            NumberRange Range = NumberRange::Any;
+        };
+
+        bool ReadRecipeNumbers(const JsonValue& object, const AnsiString& parent, const RecipeNumber* numbers, size_t count,
+                               const std::filesystem::path& path, AnsiString& error)
+        {
+            for (size_t i = 0; i < count; ++i)
+            {
+                const RecipeNumber& number = numbers[i];
+                const JsonValue value = object.FindMember(number.Key);
+                if (!value.IsValid())
+                {
+                    continue;
+                }
+                const AnsiString field = ChildField(parent, number.Key);
+                if (!ReadNumber(value, path, field.c_str(), *number.Destination, error))
+                {
+                    return false;
+                }
+                const double result = *number.Destination;
+                if ((number.Range == NumberRange::NonNegative && result < 0.0) ||
+                    (number.Range == NumberRange::Positive && result <= 0.0) ||
+                    (number.Range == NumberRange::Unit && (result < 0.0 || result > 1.0)))
+                {
+                    const char* guidance = number.Range == NumberRange::NonNegative ? "0 以上の数値を指定してください。" :
+                                           number.Range == NumberRange::Positive ? "0 より大きい数値を指定してください。" :
+                                           "0 以上 1 以下の数値を指定してください。";
+                    return FailField(path, field, value, guidance, error);
+                }
+            }
+            return true;
+        }
+
+        bool ParseNoise(const JsonValue& value, const AnsiString& field, const std::filesystem::path& path,
+                        TerrainNoiseRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const char* keys[] = {"amplitude", "scale_m"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const RecipeNumber numbers[] = {{"amplitude", &out.Amplitude, NumberRange::NonNegative},
+                                            {"scale_m", &out.ScaleM, NumberRange::Positive}};
+            return ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error);
+        }
+
+        bool ParseBand(const JsonValue& value, const AnsiString& field, const std::filesystem::path& path,
+                       double defaultMin, double defaultMax, TerrainBandRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const char* keys[] = {"min", "max", "soft"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            out.bEnabled = true;
+            out.Min = defaultMin;
+            out.Max = defaultMax;
+            const RecipeNumber numbers[] = {{"min", &out.Min}, {"max", &out.Max}, {"soft", &out.Soft, NumberRange::NonNegative}};
+            if (!ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error))
+            {
+                return false;
+            }
+            if (out.Max < out.Min)
+            {
+                const bool bHasMax = value.FindMember("max").IsValid();
+                const char* key = bHasMax ? "max" : "min";
+                return FailField(path, ChildField(field, key), value.FindMember(key),
+                                 "min を max 以下にするか、max を min 以上にしてください。", error);
+            }
+            return true;
+        }
+
+        bool ParseWetness(const JsonValue& value, const std::filesystem::path& path, TerrainWetnessRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.wetness";
+            const char* keys[] = {"flow_weight", "flow_ref_cells", "low_weight", "low_full_m", "low_zero_m",
+                                  "concave_weight", "concave_full_per_m"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const RecipeNumber numbers[] = {{"flow_weight", &out.FlowWeight}, {"flow_ref_cells", &out.FlowRefCells, NumberRange::Positive},
+                                            {"low_weight", &out.LowWeight}, {"low_full_m", &out.LowFullM},
+                                            {"low_zero_m", &out.LowZeroM}, {"concave_weight", &out.ConcaveWeight},
+                                            {"concave_full_per_m", &out.ConcaveFullPerM, NumberRange::Positive}};
+            if (!ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error))
+            {
+                return false;
+            }
+            if (out.LowZeroM <= out.LowFullM)
+            {
+                const bool bHasZero = value.FindMember("low_zero_m").IsValid();
+                const char* key = bHasZero ? "low_zero_m" : "low_full_m";
+                return FailField(path, ChildField(field, key), value.FindMember(key),
+                                 "low_zero_m を low_full_m より大きくしてください。", error);
+            }
+            return true;
+        }
+
+        bool ParseDryGrass(const JsonValue& value, const std::filesystem::path& path, TerrainDryGrassRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.dry_grass";
+            const char* keys[] = {"base", "noise"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const RecipeNumber numbers[] = {{"base", &out.Base}};
+            return ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error) &&
+                   ParseNoise(value.FindMember("noise"), ChildField(field, "noise"), path, out.Noise, error);
+        }
+
+        bool ParseRock(const JsonValue& value, const std::filesystem::path& path, TerrainRockRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.rock";
+            const char* keys[] = {"slope_start_deg", "slope_full_deg"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const RecipeNumber numbers[] = {{"slope_start_deg", &out.SlopeStartDeg}, {"slope_full_deg", &out.SlopeFullDeg}};
+            if (!ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error))
+            {
+                return false;
+            }
+            if (out.SlopeFullDeg <= out.SlopeStartDeg)
+            {
+                const bool bHasFull = value.FindMember("slope_full_deg").IsValid();
+                const char* key = bHasFull ? "slope_full_deg" : "slope_start_deg";
+                return FailField(path, ChildField(field, key), value.FindMember(key),
+                                 "slope_full_deg を slope_start_deg より大きくしてください。", error);
+            }
+            return true;
+        }
+
+        bool ParseSplat(const JsonValue& value, const std::filesystem::path& path, TerrainRecipe& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.splat";
+            const char* keys[] = {"layers"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const JsonValue layers = value.FindMember("layers");
+            if (!layers.IsValid())
+            {
+                return true;
+            }
+            const AnsiString layersField = ChildField(field, "layers");
+            if (!layers.IsArray() || layers.GetArraySize() > 8)
+            {
+                return FailField(path, layersField, layers, "0 個以上 8 個以下の層の配列を指定してください。", error);
+            }
+            for (size_t i = 0; i < layers.GetArraySize(); ++i)
+            {
+                const JsonValue layer = layers.GetArrayElement(i);
+                const AnsiString layerField = IndexedField(layersField, i);
+                const char* layerKeys[] = {"name", "weight", "slope_deg", "height_m", "wetness", "noise"};
+                if (!CheckRecipeObject(layer, layerField, layerKeys, sizeof(layerKeys) / sizeof(layerKeys[0]), path, error))
+                {
+                    return false;
+                }
+                TerrainSplatLayerRule rule;
+                const JsonValue nameValue = layer.FindMember("name");
+                const AnsiString nameField = ChildField(layerField, "name");
+                if (!ReadText(nameValue, path, nameField.c_str(), rule.Name, error))
+                {
+                    return false;
+                }
+                bool bValidName = rule.Name.size() <= 24;
+                for (char character : rule.Name)
+                {
+                    if (!((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_'))
+                    {
+                        bValidName = false;
+                        break;
+                    }
+                }
+                if (!bValidName)
+                {
+                    return FailField(path, nameField, nameValue, "名前を英小文字・数字・アンダースコアだけの 1 以上 24 以下の文字数にしてください。", error);
+                }
+                for (const TerrainSplatLayerRule& previous : out.SplatLayers)
+                {
+                    if (previous.Name == rule.Name)
+                    {
+                        return FailField(path, nameField, nameValue, "層の名前が重複しています。異なる名前を指定してください。", error);
+                    }
+                }
+                const RecipeNumber numbers[] = {{"weight", &rule.Weight, NumberRange::NonNegative}};
+                if (!ReadRecipeNumbers(layer, layerField, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error) ||
+                    !ParseBand(layer.FindMember("slope_deg"), ChildField(layerField, "slope_deg"), path, 0.0, 90.0, rule.SlopeDeg, error) ||
+                    !ParseBand(layer.FindMember("height_m"), ChildField(layerField, "height_m"), path, -1e9, 1e9, rule.HeightM, error) ||
+                    !ParseBand(layer.FindMember("wetness"), ChildField(layerField, "wetness"), path, 0.0, 1.0, rule.Wetness, error) ||
+                    !ParseNoise(layer.FindMember("noise"), ChildField(layerField, "noise"), path, rule.Noise, error))
+                {
+                    return false;
+                }
+                out.SplatLayers.push_back(std::move(rule));
+            }
+            return true;
+        }
+
+        bool ParseGrassDensity(const JsonValue& value, const std::filesystem::path& path, TerrainGrassDensityRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.grass_density";
+            const char* keys[] = {"base", "slope_start_deg", "slope_zero_deg", "wet_start", "wet_zero", "road_suppress", "rock_suppress"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const RecipeNumber numbers[] = {{"base", &out.Base}, {"slope_start_deg", &out.SlopeStartDeg},
+                                            {"slope_zero_deg", &out.SlopeZeroDeg}, {"wet_start", &out.WetStart},
+                                            {"wet_zero", &out.WetZero}, {"road_suppress", &out.RoadSuppress, NumberRange::Unit},
+                                            {"rock_suppress", &out.RockSuppress, NumberRange::Unit}};
+            if (!ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error))
+            {
+                return false;
+            }
+            if (out.SlopeZeroDeg <= out.SlopeStartDeg)
+            {
+                const bool bHasZero = value.FindMember("slope_zero_deg").IsValid();
+                const char* key = bHasZero ? "slope_zero_deg" : "slope_start_deg";
+                return FailField(path, ChildField(field, key), value.FindMember(key),
+                                 "slope_zero_deg を slope_start_deg より大きくしてください。", error);
+            }
+            if (out.WetZero <= out.WetStart)
+            {
+                const bool bHasZero = value.FindMember("wet_zero").IsValid();
+                const char* key = bHasZero ? "wet_zero" : "wet_start";
+                return FailField(path, ChildField(field, key), value.FindMember(key),
+                                 "wet_zero を wet_start より大きくしてください。", error);
+            }
+            return true;
+        }
+
+        bool ParsePaints(const JsonValue& value, const std::filesystem::path& path, TerrainRecipe& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.paint";
+            if (!value.IsArray())
+            {
+                return FailField(path, field, value, "ペイントの配列を指定してください。", error);
+            }
+            for (size_t i = 0; i < value.GetArraySize(); ++i)
+            {
+                const JsonValue paint = value.GetArrayElement(i);
+                const AnsiString paintField = IndexedField(field, i);
+                const char* keys[] = {"target", "path", "mode"};
+                if (!CheckRecipeObject(paint, paintField, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+                {
+                    return false;
+                }
+                TerrainPaintRule rule;
+                const JsonValue targetValue = paint.FindMember("target");
+                if (targetValue.IsValid())
+                {
+                    const AnsiString targetField = ChildField(paintField, "target");
+                    AnsiString target;
+                    if (!ReadText(targetValue, path, targetField.c_str(), target, error))
+                    {
+                        return false;
+                    }
+                    if (target == "wetness")
+                    {
+                        rule.Target = TerrainPaintTarget::Wetness;
+                    }
+                    else if (target == "dry_grass")
+                    {
+                        rule.Target = TerrainPaintTarget::DryGrass;
+                    }
+                    else if (target == "road")
+                    {
+                        rule.Target = TerrainPaintTarget::Road;
+                    }
+                    else if (target == "rock")
+                    {
+                        rule.Target = TerrainPaintTarget::Rock;
+                    }
+                    else if (target == "grass_density")
+                    {
+                        rule.Target = TerrainPaintTarget::GrassDensity;
+                    }
+                    else
+                    {
+                        bool bFound = false;
+                        constexpr char Prefix[] = "splat.";
+                        if (target.size() > sizeof(Prefix) - 1 && std::memcmp(target.data(), Prefix, sizeof(Prefix) - 1) == 0)
+                        {
+                            for (size_t k = 0; k < out.SplatLayers.size(); ++k)
+                            {
+                                const AnsiString& name = out.SplatLayers[k].Name;
+                                if (target.size() == sizeof(Prefix) - 1 + name.size() &&
+                                    std::memcmp(target.data() + sizeof(Prefix) - 1, name.data(), name.size()) == 0)
+                                {
+                                    rule.Target = TerrainPaintTarget::Splat;
+                                    rule.SplatLayerIndex = static_cast<uint32_t>(k);
+                                    bFound = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!bFound)
+                        {
+                            return FailField(path, targetField, targetValue,
+                                             "wetness・dry_grass・road・rock・grass_density、または存在する splat.<層名> を指定してください。", error);
+                        }
+                    }
+                }
+                const JsonValue modeValue = paint.FindMember("mode");
+                if (modeValue.IsValid())
+                {
+                    const AnsiString modeField = ChildField(paintField, "mode");
+                    AnsiString mode;
+                    if (!ReadText(modeValue, path, modeField.c_str(), mode, error))
+                    {
+                        return false;
+                    }
+                    if (mode == "override")
+                    {
+                        rule.Mode = TerrainPaintMode::Override;
+                    }
+                    else if (mode == "multiply")
+                    {
+                        rule.Mode = TerrainPaintMode::Multiply;
+                    }
+                    else
+                    {
+                        return FailField(path, modeField, modeValue, "override または multiply を指定してください。", error);
+                    }
+                }
+                if (!ReadSpecPath(paint.FindMember("path"), path, ChildField(paintField, "path"), rule.Path, error))
+                {
+                    return false;
+                }
+                out.Paints.push_back(std::move(rule));
+            }
+            return true;
+        }
+
+        bool ParseRecipe(const JsonValue& value, const std::filesystem::path& path, TerrainRecipe& out, AnsiString& error)
+        {
+            const char* keys[] = {"wetness", "dry_grass", "rock", "splat", "grass_density", "paint"};
+            if (!CheckRecipeObject(value, "recipe", keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            return ParseWetness(value.FindMember("wetness"), path, out.Wetness, error) &&
+                   ParseDryGrass(value.FindMember("dry_grass"), path, out.DryGrass, error) &&
+                   ParseRock(value.FindMember("rock"), path, out.Rock, error) &&
+                   ParseSplat(value.FindMember("splat"), path, out, error) &&
+                   ParseGrassDensity(value.FindMember("grass_density"), path, out.GrassDensity, error) &&
+                   ParsePaints(value.FindMember("paint"), path, out, error);
+        }
+
         bool RejectPresent(const JsonValue& object, const char* key, const std::filesystem::path& path,
                            const char* field, const char* guidance, AnsiString& error)
         {
@@ -398,27 +845,9 @@ namespace NorvesLib::Tools::AssetCook
         {
             return false;
         }
-        AnsiString sourcePathText;
-        const JsonValue sourcePathValue = source.FindMember("path");
-        if (!ReadText(sourcePathValue, absoluteSpec, "height_source.path", sourcePathText, outError))
+        if (!ReadSpecPath(source.FindMember("path"), absoluteSpec, "height_source.path", candidate.HeightSourcePath, outError))
         {
             return false;
-        }
-        try
-        {
-            const auto* pathBegin = reinterpret_cast<const char8_t*>(sourcePathText.data());
-            const std::filesystem::path sourcePath(pathBegin, pathBegin + sourcePathText.size());
-            if (!sourcePath.is_absolute() && (sourcePath.has_root_name() || sourcePath.has_root_directory()))
-            {
-                return FailField(absoluteSpec, "height_source.path", sourcePathValue,
-                                 "完全な絶対パスか、スペックの親からの相対パスを指定してください。", outError);
-            }
-            candidate.HeightSourcePath = (sourcePath.is_absolute() ? sourcePath : absoluteSpec.parent_path() / sourcePath).lexically_normal();
-        }
-        catch (const std::filesystem::filesystem_error&)
-        {
-            return FailField(absoluteSpec, "height_source.path", sourcePathValue,
-                             "ファイルパスとして使える文字列に修正してください。", outError);
         }
 
         AnsiString format;
@@ -708,9 +1137,9 @@ namespace NorvesLib::Tools::AssetCook
         const JsonValue recipe = root.FindMember("recipe");
         if (recipe.IsValid())
         {
-            if (!recipe.IsObject())
+            if (!ParseRecipe(recipe, absoluteSpec, candidate.Recipe, outError))
             {
-                return FailField(absoluteSpec, "recipe", recipe, "recipe はオブジェクトで指定してください。", outError);
+                return false;
             }
             candidate.bHasRecipe = true;
         }
@@ -754,19 +1183,49 @@ namespace NorvesLib::Tools::AssetCook
         {
             return FailStage("高さ入力の取り込み", candidate.Spec.HeightSourcePath, detail, outError);
         }
-        if (!BuildCookedTerrain(imported.Grid, {candidate.Spec.CellSizeM, candidate.Spec.TileCells}, candidate.Build, detail))
+        candidate.SourceHash = Core::Asset::CookedTextureFormatV0::Fnv1a64OffsetBasis;
+        HashFile(candidate.SourceHash, {specBytes.data(), specBytes.size()});
+        HashFile(candidate.SourceHash, {heightBytes.data(), heightBytes.size()});
+        candidate.InputFiles.push_back(candidate.Spec.SpecPath);
+        candidate.InputFiles.push_back(candidate.Spec.HeightSourcePath);
+
+        TerrainBuildSettings settings{candidate.Spec.CellSizeM, candidate.Spec.TileCells};
+        TerrainMaskFields fields;
+        if (candidate.Spec.bHasRecipe)
+        {
+            VariableArray<TerrainPaintImage> paints;
+            paints.reserve(candidate.Spec.Recipe.Paints.size());
+            for (const TerrainPaintRule& rule : candidate.Spec.Recipe.Paints)
+            {
+                VariableArray<uint8_t> paintBytes;
+                if (!ReadBinary(rule.Path, paintBytes, detail))
+                {
+                    return FailStage("ペイント入力の読み込み", rule.Path, detail, outError);
+                }
+                TerrainPaintImage image;
+                if (!DecodeTerrainPaintPng({paintBytes.data(), paintBytes.size()}, candidate.Spec.Import.bFlipZ, image, detail))
+                {
+                    return FailStage("ペイント入力の取り込み", rule.Path, detail, outError);
+                }
+                HashFile(candidate.SourceHash, {paintBytes.data(), paintBytes.size()});
+                candidate.InputFiles.push_back(rule.Path);
+                paints.push_back(std::move(image));
+            }
+            if (!ComputeTerrainMasks(imported.Grid, candidate.Spec.CellSizeM, static_cast<uint32_t>(candidate.Spec.Seed),
+                                     candidate.Spec.Recipe, {paints.data(), paints.size()}, fields, detail))
+            {
+                return FailStage("マスクの計算", candidate.Spec.SpecPath, detail, outError);
+            }
+            settings.Masks = &fields;
+        }
+        if (!BuildCookedTerrain(imported.Grid, settings, candidate.Build, detail))
         {
             return FailStage("書き出し", candidate.Spec.HeightSourcePath, detail, outError);
         }
 
-        candidate.SourceHash = Core::Asset::CookedTextureFormatV0::Fnv1a64OffsetBasis;
-        HashFile(candidate.SourceHash, {specBytes.data(), specBytes.size()});
-        HashFile(candidate.SourceHash, {heightBytes.data(), heightBytes.size()});
         candidate.SourceWidth = imported.SourceWidth;
         candidate.SourceHeight = imported.SourceHeight;
         candidate.SourceBitDepth = imported.SourceBitDepth;
-        candidate.InputFiles.push_back(candidate.Spec.SpecPath);
-        candidate.InputFiles.push_back(candidate.Spec.HeightSourcePath);
         candidate.Warnings = std::move(imported.Warnings);
         outResult = std::move(candidate);
         return true;

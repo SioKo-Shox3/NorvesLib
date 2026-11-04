@@ -4,6 +4,7 @@
 #include "Gameplay/Combat/CombatRuntime.h"
 #include "Gameplay/Progression/DefeatGate.h"
 #include "Gameplay/Progression/ProgressionState.h"
+#include "Gameplay/World/EncounterService.h"
 #include "Thread/Thread.h"
 
 namespace NorvesLib::Core
@@ -36,6 +37,7 @@ namespace NorvesLib::Modules::Gameplay
         Combat::CombatRuntime& GetCombatRuntime() { return m_CombatRuntime; }
         static GameplayModule* FindBoundModule(const Core::World& world);
         bool IsOwnerThread() const;
+        World::EncounterService& GetEncounterService() override { return m_EncounterService; }
 
     private:
         void RegisterWorldSystems(Core::World& world);
@@ -48,6 +50,7 @@ namespace NorvesLib::Modules::Gameplay
         Combat::CombatRuntime m_CombatRuntime;
         ProgressionState m_ProgressionState;
         DefeatGate m_DefeatGate;
+        World::EncounterService m_EncounterService;
         Core::Delegate<bool, Core::EntityHandle> m_IsDefeatHoldOwnerAlive;
     };
 }
