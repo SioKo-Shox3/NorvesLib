@@ -10398,3 +10398,19 @@
 - 人待ちの P1-P1 が受け持つのは `OpenStore` の祖先と `VerifyClaims` の workspace の列挙で、この 2 か所は含まない。重複にはならない。
 - 読み流しの関数は親の枝(`task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1`)にしかなく、統合ブランチにはまだ入っていない。このため `after` は元のタスクにした。元のタスクは P1-P1 を待っているので、同じファイル `CookManagedTransactionController.cpp` を触る P1-P1 との順もこれで決まる。
 - アプリの起動は要らない。ビルドと単体の試験で確かめられるので、`check: launch` は付けていない。
+
+## CORE-MULTICAST-REENTRANT: MulticastDelegate::Broadcast を、配送中に購読を足しても外しても壊れない形にする
+- status: todo
+- done-when: `Library/Core/Public/Delegate/MulticastDelegate.h` の `Broadcast` は今、`m_Delegates` を範囲 for でそのまま回している。受け手が配送中に `Remove`・`Clear`・`Add` を呼ぶと、反復子が無効になる(未定義の動作)。これを次の約束を守る形に変える。
+  - 配送中に自分やほかの受け手を `Remove` しても、`Clear` しても、未定義の動作にならない。外された受け手は、その配送の残りでは呼ばれない(外して破棄した受け手を同じ配送で呼ばない)。
+  - 配送を始めた時点で登録されていて、外されなかった受け手は、登録の順に 1 回ずつ呼ばれる。
+  - 配送中に `Add` した受け手は、その配送では呼ばれず、次の配送から呼ばれる。
+  - 受け手の中から同じ delegate の `Broadcast` を呼んでも(入れ子の配送)、上の 3 つが成り立つ。配送中に外した項目は、一番外の配送が終わってから配列から詰める。
+  - 引数は各受け手へ lvalue で渡す。ループの中で `std::forward<Args>` を繰り返して、値渡しの引数が最初の受け手で move されることを無くす。
+  - 配送中でないときの `GetSize`・`IsEmpty`・`Remove`・`Clear` の結果と、`DelegateCopyTest`・`DelegateIdentityTest` の既存の期待値は変えない。
+  - 呼び出し側の局所の複製(`AnimatorComponent::ForwardEvent`・`CombatRuntime`・`EnemyComponent` など)はそのまま残す。持ち主が配送中に破棄される場合への備えなので、この項目では触らない。
+  - 上の 4 つの約束(配送中の Remove・Clear・Add と入れ子の配送)を、`DelegateCopyTest.cpp` に場合として足す。新しい試験の exe は作らない。今の実装に戻すと、Debug でこの試験が落ちる(反復子の検査か期待値の食い違い)。
+- verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(DelegateCopyTest|DelegateIdentityTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Library/Core/Public/Delegate/MulticastDelegate.h, Test/Core/Delegate/DelegateCopyTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1
