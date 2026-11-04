@@ -9430,3 +9430,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 斜めの隣のチャンクが無く x の隣と z の隣の両方がある L 字の凹んだ角では、z 方向の継ぎ目の両側が別の代用の画素を引き、角の半画素の範囲で値が食い違いうる（試験していない。草の場の外周の凹んだ角だけ）。
 - Notes: `Library/Core/CMakeLists.txt` の Vegetation の行は Particle の並びの途中に入っている（ビルドには影響しない）。
 - U7 欠けたチャンクの画素の代用を世界の画素座標だけで決め、L 字の並びの継ぎ目を直す: 着地(直し 0 回)
+- Done (G5-GR42-GRASS-FIELD-CORE、run 20261104-083832 の反復 2): 差し戻し（L 字の凹んだ角で z 方向の継ぎ目が食い違う）を直した。`GrassField::ReadPixel` を世界の画素座標で読む形にし、画素のチャンクが無ければ −X・+X・−Z・+Z・斜めの決まった順で最初に見つかった画素を使う（読みに来たチャンクに依らず同じ値。片側だけ欠けた縁は前と同じく縁の画素）。`SetChunk` は種別 ID が 63 を超える画素を拒み、LayerB の A を 0 で格納する。`QueryOcclusion` は非有限の入力で 1 を返し、刻みの数に 2^20 の上限を置く。
+- 試験: `GrassFieldQueryTest` に 2×2 のうち 1 つを欠いた 4 通りの継ぎ目の検査を足した（直す前は最大密度差 0.177 で落ち、直した後は 260 点の最大 0.0022 ＜ 1/255。差は ±1e-3 m の勾配の分）。既存の値（継ぎ目の密度差 1.5676e-05、線形の誤差 1.47e-08）は変わらない。
+- 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U7-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが終了コード 0、ctest の 4 本 100% Passed）。起動の確かめは無い。
+- Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
