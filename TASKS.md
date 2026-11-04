@@ -9162,3 +9162,11 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G15-GR121-PROMPT-CHECK`
 - paths: Docs/RenderingValidation/UiAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 受け入れ確認はロードマップ 2919 行（パッドの実機の確認を Docs に記録）と要件 `#### GR121` の手動の受入。この PC にパッドが繋がっているとは限らないので、絵の確かめは装置の強制で行い、実機の操作は作者の確認に回す。性能の計測ではないので `gpu: exclusive` は付けない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す（この項目でコードを直さない）。撮影の PNG は開いて見る。
+
+## G4-GR128-CLEANUP-CASES-P1: スパイク除去の標本の格子を入力のコマ数に合わせ、周期の平均が開始より前の周期を選ぶ規則を試験で押さえる
+- status: todo
+- done-when: (1) `ProcessSkeletalClip` のスパイク除去（`Library/Core/Private/Animation/SkeletalClipProcessing.cpp` 417 行）で、`DurationSeconds / SourceIntervalSeconds` が float の丸めの誤差（相対 1e-6 程度）の範囲で整数 N−1 に近いとき、`ceil` で 1 コマ増やさず N コマの格子にする。こうすると格子の間隔が入力のコマの間隔と一致する。整数から離れた比（`SkeletalClipProcessingCases.h` の 2.6 s・1/16 s など）の扱いは変えない。`MotionProcessingTest` に次の 1 件を足す。入力の間隔は 1/120 s か 1/30 s で、長さは `float((N-1)*interval)` が double の `(N-1)*interval` より大きくなる N を使う（この前提を CHECK で確かめる）。1 コマだけに約 23° のスパイクを入れ、出力の fps を入力と同じにして処理する。`ReplacedSpikes == 1` になり、そのコマの出力と外れ値の無い曲線との差が 1° 以下になる（直す前は約半分の 12° が残る。V01full の 21 コマ目で 23.33° → 11.96°）。(2) `MotionProcessingTest.cpp` 420 行のコメントを実装に合わせる。この入力は検出した開始が 1 周期より前にあるので後ろの周期だけを数える、と書く。その前提として `averaged.Report.StartSeconds < averaged.Report.PeriodSeconds` の CHECK を足す。さらに `Loop = Range`・`RangeStart = Period`・`RangeEnd = 2 * Period`・`bAverageCycles = true` の 1 件を足す。この入力は 4 周期なので、前 1・後ろ 2・自分の周期を合わせて `AveragedCycles == 4` になり、`SeamBeforeRadians` が平均なしより小さくなることを確かめる。`MotionProcessingTest` のほかの検査、`RigMotionCleanupTest`・`RigSplitCookTest`・`RigStaticRootFrameWireTest`・`SkeletalBvhCookBridgeTest`・`SkeletalBvhClipImportTest` は試験を変えずに通る。`MotionSampleRegressionTest` は環境変数が無ければ skip のまま通る。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|RigMotionCleanupTest|MotionSampleRegressionTest|RigSplitCookTest|RigStaticRootFrameWireTest|SkeletalBvhCookBridgeTest|SkeletalBvhClipImportTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Animation/SkeletalClipProcessing.cpp, Test/Core/Asset/MotionProcessingTest.cpp
+- from: G4-GR128-CLEANUP-CASES
