@@ -2,6 +2,7 @@
 
 #include "Gameplay/IGameplayModule.h"
 #include "Gameplay/World/EncounterService.h"
+#include "Gameplay/World/InteractionService.h"
 
 namespace NorvesLib::Modules::Gameplay::World
 {
@@ -19,6 +20,7 @@ namespace NorvesLib::Modules::Gameplay::World
         if (auto* module = FindGameplayModule(Core::Module::GetModuleRegistry()); module && GetOwner())
         {
             module->GetEncounterService().RequestRegisterSensor(GetOwner()->GetEntityHandle());
+            module->GetInteractionService().RequestRegisterSensorComponent(GetOwner()->GetEntityHandle(), GetComponentId());
         }
     }
 
@@ -29,14 +31,21 @@ namespace NorvesLib::Modules::Gameplay::World
         if (auto* module = FindGameplayModule(Core::Module::GetModuleRegistry()); module && GetOwner())
         {
             module->GetEncounterService().RequestRegisterSensor(GetOwner()->GetEntityHandle());
+            module->GetInteractionService().RequestRegisterSensorComponent(GetOwner()->GetEntityHandle(), GetComponentId());
         }
     }
 
     void ZoneSensorComponent::Finalize()
     {
-        if (auto* module = FindGameplayModule(Core::Module::GetModuleRegistry()); module && GetOwner())
+        if (auto* module = FindGameplayModule(Core::Module::GetModuleRegistry()))
         {
-            module->GetEncounterService().RequestUnregisterSensor(GetOwner()->GetEntityHandle());
+            const auto handle = GetOwner() ? GetOwner()->GetEntityHandle() : Core::EntityHandle{};
+            if (GetOwner())
+            {
+                module->GetEncounterService().RequestUnregisterSensor(handle);
+            }
+            // 所有関係が先に外れた場合も、登録済みの Component 識別子で解除を依頼する。
+            module->GetInteractionService().RequestUnregisterSensorComponent(handle, GetComponentId());
         }
         m_bTeleported = false;
         Super::Finalize();

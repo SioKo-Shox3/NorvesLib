@@ -60,12 +60,13 @@ namespace StoreObservationTest
     struct Fixture
     {
         std::filesystem::path Root, Spec;
-        Fixture()
+        explicit Fixture(const std::filesystem::path& parent = std::filesystem::temp_directory_path(),
+                         const char* prefix = "norves-store-observation")
         {
             char name[96];
-            std::snprintf(name, sizeof(name), "norves-store-observation-%lu-%llu", GetCurrentProcessId(),
+            std::snprintf(name, sizeof(name), "%s-%lu-%llu", prefix, GetCurrentProcessId(),
                           static_cast<unsigned long long>(GetTickCount64()));
-            Root = std::filesystem::temp_directory_path() / name;
+            Root = parent / name;
             CHECK(std::filesystem::create_directory(Root));
             Spec = Root / "spec.json";
             Write(Spec, "{}");
@@ -385,6 +386,33 @@ namespace StoreObservationTest
             return std::filesystem::path(path);
         }
     };
+    void RunCrowded()
+    {
+        Fixture f(std::filesystem::current_path(), "norves-store-crowded");
+        const auto crowded = f.Workspace("Crowded");
+        const auto workspace = crowded / "Workspace";
+        CHECK(std::filesystem::create_directory(workspace));
+        for (size_t i = 0; i < 16385; ++i)
+        {
+            char name[32];
+            std::snprintf(name, sizeof(name), "entry-%05zu", i);
+            Write(crowded / name, "");
+        }
+        const auto request = f.Request(workspace, "Runtime");
+        const auto missing = Observe(request, Result::StoreMissing, workspace);
+        CHECK(missing.Stores.empty());
+
+        Init(crowded);
+        Own(f.Request(crowded, "Crowded Sibling"));
+        const auto ancestor = Observe(request, Result::StoreMissing, workspace);
+        CHECK(ancestor.Stores.size() == 1);
+        CHECK(!ancestor.Stores[0].bCurrentWorkspace);
+        CHECK(ancestor.Stores[0].Roots.size() == 1);
+        CHECK(ancestor.Stores[0].Roots[0].RootLeaf == "Crowded Sibling");
+        CHECK(ancestor.Stores[0].CanonicalWorkspace.filename() == L"Crowded");
+        CHECK(std::filesystem::equivalent(ancestor.Stores[0].CanonicalWorkspace, crowded));
+        std::printf("store_crowded_ancestor_checked=2\n");
+    }
     CookManagedStoreObservation Run()
     {
         Fixture f;
@@ -626,6 +654,7 @@ int main()
 #else
     try
     {
+        StoreObservationTest::RunCrowded();
         const auto retained = StoreObservationTest::Run();
         CHECK(retained.bRuntimeRootClaimed && retained.Stores[0].Roots[0].RootLeaf == "Runtime Long Name");
         return StoreObservationTest::bAliasCleanupFailed ? 1 : 0;

@@ -210,6 +210,20 @@
               "code": "y"
             }
           ]
+        },
+        {
+          "id": "Interact",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "key",
+              "code": "F"
+            },
+            {
+              "source": "gamepad_button",
+              "code": "x"
+            }
+          ]
         }
       ]
     },

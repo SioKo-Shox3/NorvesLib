@@ -15,6 +15,7 @@ namespace NorvesLib::Modules::Gameplay
     namespace World
     {
         class EncounterService;
+        class InteractionService;
     }
 
     /**
@@ -35,6 +36,7 @@ namespace NorvesLib::Modules::Gameplay
         virtual DefeatGate& GetDefeatGate() = 0;
         virtual Core::MulticastDelegate<const Combat::CombatHitEvent&>& GetOnAnyHit() = 0;
         virtual World::EncounterService& GetEncounterService() = 0;
+        virtual World::InteractionService& GetInteractionService() = 0;
     };
 
     /**

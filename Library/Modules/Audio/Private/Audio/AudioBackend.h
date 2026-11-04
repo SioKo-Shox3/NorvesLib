@@ -173,6 +173,15 @@ namespace NorvesLib::Modules::Audio::Private
         bool bBuffersFlushed = false;
     };
 
+    // 提出するバッファの再生開始位置とループ範囲をフレーム単位で指定する。
+    struct AudioBufferDesc
+    {
+        bool bLoop = false;
+        uint32_t LoopBeginFrame = 0;
+        uint32_t LoopLengthFrames = 0; // 0 はループ開始から末尾まで。
+        uint32_t StartFrame = 0;       // 再生を始めるフレーム。
+    };
+
     class IAudioBackend
     {
     public:
@@ -180,8 +189,18 @@ namespace NorvesLib::Modules::Audio::Private
         virtual AudioResult Initialize(IAudioBackendEventSink& eventSink, uint64_t shutdownEpoch) = 0;
         virtual AudioResult CreateVoice(VoiceHandle handle,
                                         const AudioPcmFormat& format,
+                                        float maxFrequencyRatio,
                                         AudioBackendEventMailbox& mailbox) = 0;
-        virtual AudioResult SubmitVoice(VoiceHandle handle, Core::Container::Span<const uint8_t> pcmBytes) = 0;
+        virtual AudioResult SubmitVoice(VoiceHandle handle,
+                                        Core::Container::Span<const uint8_t> pcmBytes,
+                                        const AudioBufferDesc& bufferDesc) = 0;
+        virtual AudioResult SetVoiceVolume(VoiceHandle handle, float volume) = 0;
+        virtual AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) = 0;
+        // ドメインは常にステレオの左右係数を渡し、バックエンドが出力のスピーカー配置へ展開する。
+        virtual AudioResult SetVoiceOutputGains(VoiceHandle handle, float leftGain, float rightGain) = 0;
+        // 一時停止と再開では提出済みのバッファを保持し、フラッシュしない。
+        virtual AudioResult PauseVoice(VoiceHandle handle) = 0;
+        virtual AudioResult ResumeVoice(VoiceHandle handle) = 0;
         virtual AudioResult StartVoice(VoiceHandle handle) = 0;
         virtual AudioBackendStopResult StopVoice(VoiceHandle handle) = 0;
         virtual void QuiesceCallbacks() = 0;

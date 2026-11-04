@@ -51,6 +51,7 @@
 #include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
+#include "GameModes/Grassland/GrasslandMode.h"
 #include "GameModes/InteriorLight/InteriorLightMode.h"
 #include "GameModes/MaterialGallery/MaterialGalleryMode.h"
 #include "GameModes/Wasteland/WastelandMode.h"
@@ -63,6 +64,7 @@
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
 #include "Gameplay/IGameplayModule.h"
+#include "Gameplay/World/InteractionService.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
@@ -3033,6 +3035,18 @@ namespace Game
         return true;
     }
 
+    bool GameApplicationHandler::IsInteractPressed() const
+    {
+        const auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return false;
+        }
+        const auto interact = engine->GetInputMapper().GetAction(
+            Game::InputActions::GameplayContext, Game::InputActions::Interact);
+        return interact.Active && interact.Button.Pressed;
+    }
+
     bool GameApplicationHandler::OnInitialize()
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
@@ -3111,6 +3125,15 @@ namespace Game
         }
 
         m_M6ScriptSmokeController.Initialize();
+        if (NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                gameplay->GetInteractionService().SetInteractPressedSource(
+                    NorvesLib::Core::MakeDelegate(this, &GameApplicationHandler::IsInteractPressed));
+            }
+        }
         return true;
     }
 
@@ -3392,6 +3415,7 @@ namespace Game
         }
 
         m_AssetSystemSnapshot = immutableCandidate;
+        NorvesLib::Core::Engine::GEngine->GetTerrainSystem().SetAssetSystem(immutableCandidate);
         LOG_INFO("Asset runtime snapshot reload completed root=\"%s\" manifest=\"%s\"",
                  m_TextureAssetRoot.c_str(),
                  m_TextureAssetManifestPath.c_str());
@@ -3416,6 +3440,10 @@ namespace Game
         {
             LOG_WARNING("COOKED_MISSING_WARN_NOT_SET "
                         "マニフェストが無いときの警告の設定を反映できませんでした");
+        }
+        else
+        {
+            NorvesLib::Core::Engine::GEngine->GetTerrainSystem().SetAssetSystem(immutableCandidate);
         }
     }
 
@@ -3826,6 +3854,12 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                NorvesLib::Core::Module::GetModuleRegistry()))
+        {
+            gameplay->GetInteractionService().SetInteractPressedSource(NorvesLib::Core::Delegate<bool>{});
+        }
+
         m_pGameModeStateMachine = nullptr;
         m_M6ScriptSmokeController.Shutdown();
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
@@ -4137,6 +4171,7 @@ namespace Game
         const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
         const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::NightVillage ||
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
+                                 mode == Game::GameModes::Grassland ||
                                  mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
                                  mode == Game::GameModes::InteriorLight;
         if (viewNames.size() > 1 && !bSwitchable)
@@ -4410,6 +4445,22 @@ namespace Game
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                return mode;
+            });
+        // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
+        stateMachine->Registry().Register(
+            Grassland,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
