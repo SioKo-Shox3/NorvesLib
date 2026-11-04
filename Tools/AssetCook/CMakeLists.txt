@@ -114,6 +114,8 @@ add_library(AssetCookLib STATIC
     HeightfieldImport.h
     TerrainCooker.cpp
     TerrainCooker.h
+    TerrainMasks.cpp
+    TerrainMasks.h
     TerrainSpec.cpp
     TerrainSpec.h
     TerrainCliffDetail.cpp

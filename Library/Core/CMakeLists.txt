@@ -9,6 +9,9 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Save/SaveContainer.cpp
+    Private/Save/SaveMigration.cpp
+    Private/Save/SaveSlotStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
@@ -183,6 +186,8 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Platform/Windows/WindowsPlatformProcess.cpp
+    Private/Platform/Windows/WindowsPlatformPaths.cpp
+    Private/Platform/Windows/WindowsPlatformFile.cpp
     Private/Platform/Windows/WindowsPlatformConsole.cpp
     Private/Platform/Windows/WindowsPlatformGraphics.cpp
     Private/Boot/AppLauncher.cpp
@@ -474,6 +479,9 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Save/SaveContainer.h
+    Public/Save/SaveMigration.h
+    Public/Save/SaveSlotStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -525,6 +533,8 @@ set(PUBLIC_HEADERS
     Public/Platform/PlatformApplicationFactory.h
     Public/Platform/PlatformInputDevices.h
     Public/Platform/PlatformProcess.h
+    Public/Platform/PlatformPaths.h
+    Public/Platform/PlatformFile.h
     Public/Platform/PlatformConsole.h
     Public/Boot/AppLauncher.h
     Public/Boot/BootConfig.h
@@ -985,7 +995,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_23)
 
 # Windows固有の設定
 if(WIN32)
-    target_link_libraries(${MODULE_NAME} PRIVATE Xinput)
+    target_link_libraries(${MODULE_NAME} PRIVATE Xinput shell32 ole32)
     target_compile_definitions(${MODULE_NAME} PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN

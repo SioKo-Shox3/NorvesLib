@@ -61,6 +61,10 @@ namespace NorvesLib::Tools::AssetCook
         {
             VariableArray<uint8_t> HeightBytes;
             VariableArray<uint8_t> NormalBytes;
+            VariableArray<uint8_t> MaskBytes;
+            VariableArray<uint8_t> Splat0Bytes;
+            VariableArray<uint8_t> Splat1Bytes;
+            VariableArray<uint8_t> GrassBytes;
         };
 
         uint8_t EncodeNormalComponent(double value)
@@ -113,6 +117,7 @@ namespace NorvesLib::Tools::AssetCook
         outError.clear();
         const uint32_t tileCells = settings.TileCells;
         const double cell = settings.CellSizeM;
+        const auto* masks = settings.Masks;
         if (tileCells < 8 || tileCells > 1024 || (tileCells & (tileCells - 1)) != 0)
         {
             return Fail(outError, "TileCells=%u は無効です。8..1024 の 2 の冪にしてください。", tileCells);
@@ -132,6 +137,32 @@ namespace NorvesLib::Tools::AssetCook
         {
             return Fail(outError, "高さ格子 %u×%u の標本数は %zu 個です。HeightsM に Width*Height=%llu 個を格納してください。",
                         grid.Width, grid.Height, grid.HeightsM.size(), static_cast<unsigned long long>(sampleCount64));
+        }
+        if (masks != nullptr)
+        {
+            if (masks->Width != grid.Width || masks->Height != grid.Height)
+            {
+                return Fail(outError, "マスク格子 %u×%u は高さ格子 %u×%u と一致しません。寸法を揃えてください。",
+                            masks->Width, masks->Height, grid.Width, grid.Height);
+            }
+            if (sampleCount64 > std::numeric_limits<size_t>::max() / 4)
+            {
+                return Fail(outError, "マスク格子 %u×%u の RGBA8 配列が格納上限を超えます。入力寸法を小さくしてください。",
+                            grid.Width, grid.Height);
+            }
+            const size_t rgbaBytes = static_cast<size_t>(sampleCount64) * 4;
+            if (masks->MaskRgba.size() != rgbaBytes || masks->GrassR8.size() != sampleCount64 ||
+                (!masks->Splat0Rgba.empty() && masks->Splat0Rgba.size() != rgbaBytes) ||
+                (!masks->Splat1Rgba.empty() && masks->Splat1Rgba.size() != rgbaBytes))
+            {
+                return Fail(outError, "マスク配列の標本数が高さ格子と一致しません。MaskRgba・Splat は標本数の4倍、GrassR8 は標本数のバイト数にしてください。");
+            }
+            const size_t layerCount = masks->SplatLayerNames.size();
+            if (layerCount > 8 || (layerCount > 0) != !masks->Splat0Rgba.empty() ||
+                (layerCount > 4) != !masks->Splat1Rgba.empty())
+            {
+                return Fail(outError, "スプラット層名と配列が矛盾しています。層名は0..8個とし、1層以上なら SPL0、5層以上なら SPL1 を格納してください。");
+            }
         }
         double minD = grid.HeightsM[0];
         double maxD = minD;
@@ -201,6 +232,10 @@ namespace NorvesLib::Tools::AssetCook
             VariableArray<TileBuffers> buffers(tileCount);
             VariableArray<float> tileHeights(tileSamples);
             VariableArray<uint8_t> rgba(tileSamples * 4);
+            VariableArray<uint8_t> maskRgba(masks != nullptr ? tileSamples * 4 : 0);
+            VariableArray<uint8_t> splat0Rgba(masks != nullptr && !masks->Splat0Rgba.empty() ? tileSamples * 4 : 0);
+            VariableArray<uint8_t> splat1Rgba(masks != nullptr && !masks->Splat1Rgba.empty() ? tileSamples * 4 : 0);
+            VariableArray<uint8_t> grassRgba(masks != nullptr ? tileSamples * 4 : 0);
             CookedTerrainWriteDesc desc;
             desc.CellCountX = grid.Width - 1;
             desc.CellCountZ = grid.Height - 1;
@@ -220,6 +255,50 @@ namespace NorvesLib::Tools::AssetCook
             desc.Layers[1].PixelFormat = CookedTexturePixelFormat::RG8UNorm;
             desc.Layers[1].ColorSpace = CookedTextureColorSpace::Linear;
             desc.Layers[1].Semantic = TerrainNormalSemantic;
+            if (masks != nullptr)
+            {
+                const auto appendLayer = [&](AssetPackageFourCC fourCC, CookedTexturePixelFormat pixelFormat,
+                                             const AnsiString& semantic)
+                {
+                    CookedTerrainLayerDesc layer;
+                    layer.FourCC = fourCC;
+                    layer.Encoding = Format::LayerEncodingEmbeddedNvtex;
+                    layer.PixelFormat = pixelFormat;
+                    layer.ColorSpace = CookedTextureColorSpace::Linear;
+                    layer.Semantic = semantic;
+                    desc.Layers.push_back(std::move(layer));
+                };
+                const auto appendSplatLayer = [&](size_t firstLayer, AssetPackageFourCC fourCC)
+                {
+                    AnsiString semantic = TerrainSplatSemanticPrefix;
+                    const size_t endLayer = std::min(firstLayer + 4, masks->SplatLayerNames.size());
+                    for (size_t index = firstLayer; index < endLayer; ++index)
+                    {
+                        if (index != firstLayer)
+                        {
+                            semantic.push_back(',');
+                        }
+                        const auto& name = masks->SplatLayerNames[index];
+                        if (semantic.size() > Format::MaxSemanticBytes || name.size() > Format::MaxSemanticBytes - semantic.size())
+                        {
+                            return Fail(outError, "スプラットの意味文字列が255文字を超えます。層名を短くしてください。");
+                        }
+                        semantic.append(name);
+                    }
+                    appendLayer(fourCC, CookedTexturePixelFormat::RGBA8UNorm, semantic);
+                    return true;
+                };
+                appendLayer(TerrainMaskLayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, TerrainMaskSemantic);
+                if (!masks->Splat0Rgba.empty() && !appendSplatLayer(0, TerrainSplat0LayerFourCC))
+                {
+                    return false;
+                }
+                if (!masks->Splat1Rgba.empty() && !appendSplatLayer(4, TerrainSplat1LayerFourCC))
+                {
+                    return false;
+                }
+                appendLayer(TerrainGrassLayerFourCC, CookedTexturePixelFormat::R8UNorm, TerrainGrassSemantic);
+            }
             desc.Tiles.resize(tileCount);
             for (uint32_t tz = 0; tz < tileCountZ; ++tz)
             {
@@ -252,6 +331,25 @@ namespace NorvesLib::Tools::AssetCook
                             rgba[localIndex * 4 + 1] = normals[globalIndex].G;
                             rgba[localIndex * 4 + 2] = 0;
                             rgba[localIndex * 4 + 3] = 255;
+                            if (masks != nullptr)
+                            {
+                                for (size_t channel = 0; channel < 4; ++channel)
+                                {
+                                    maskRgba[localIndex * 4 + channel] = masks->MaskRgba[globalIndex * 4 + channel];
+                                    if (!splat0Rgba.empty())
+                                    {
+                                        splat0Rgba[localIndex * 4 + channel] = masks->Splat0Rgba[globalIndex * 4 + channel];
+                                    }
+                                    if (!splat1Rgba.empty())
+                                    {
+                                        splat1Rgba[localIndex * 4 + channel] = masks->Splat1Rgba[globalIndex * 4 + channel];
+                                    }
+                                }
+                                grassRgba[localIndex * 4] = masks->GrassR8[globalIndex];
+                                grassRgba[localIndex * 4 + 1] = 0;
+                                grassRgba[localIndex * 4 + 2] = 0;
+                                grassRgba[localIndex * 4 + 3] = 255;
+                            }
                         }
                     }
                     tile.AabbMin[0] = static_cast<float>(static_cast<double>(tx) * tileCells * cell);
@@ -276,6 +374,31 @@ namespace NorvesLib::Tools::AssetCook
                     data.NormalBytes = std::move(normalTexture.NvtexBytes);
                     tile.LayerBytes.push_back(Span<const uint8_t>(data.HeightBytes.data(), data.HeightBytes.size()));
                     tile.LayerBytes.push_back(Span<const uint8_t>(data.NormalBytes.data(), data.NormalBytes.size()));
+                    if (masks != nullptr)
+                    {
+                        // buffers は全タイル分を確保済みで、各層の所有先を動かさず Span の参照先を保つ。
+                        const auto cookLayer = [&](const VariableArray<uint8_t>& pixels, const char* format,
+                                                   const char* layerName, VariableArray<uint8_t>& bytes)
+                        {
+                            TextureCookResult texture;
+                            if (!CookRgba8ToNvtex(Span<const uint8_t>(pixels.data(), pixels.size()), side, side,
+                                                  format, texture, textureError))
+                            {
+                                return Fail(outError, "タイル (%u, %u) の %s を生成できません: %s。標本数と RGBA8 入力を確認してください。",
+                                            tx, tz, layerName, textureError.c_str());
+                            }
+                            bytes = std::move(texture.NvtexBytes);
+                            tile.LayerBytes.push_back(Span<const uint8_t>(bytes.data(), bytes.size()));
+                            return true;
+                        };
+                        if (!cookLayer(maskRgba, "nvtex.v0.rgba8.linear", "MSK0", data.MaskBytes) ||
+                            (!splat0Rgba.empty() && !cookLayer(splat0Rgba, "nvtex.v0.rgba8.linear", "SPL0", data.Splat0Bytes)) ||
+                            (!splat1Rgba.empty() && !cookLayer(splat1Rgba, "nvtex.v0.rgba8.linear", "SPL1", data.Splat1Bytes)) ||
+                            !cookLayer(grassRgba, "nvtex.v0.r8.linear", "GRS0", data.GrassBytes))
+                        {
+                            return false;
+                        }
+                    }
                 }
             }
 

@@ -9495,21 +9495,177 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 試験: `GrassFieldQueryTest` に 2×2 のうち 1 つを欠いた 4 通りの継ぎ目の検査を足した（直す前は最大密度差 0.177 で落ち、直した後は 260 点の最大 0.0022 ＜ 1/255。差は ±1e-3 m の勾配の分）。既存の値（継ぎ目の密度差 1.5676e-05、線形の誤差 1.47e-08）は変わらない。
 - 証拠: `.harness/runs/20261104-083832/G5-GR42-GRASS-FIELD-CORE-U7-verify.txt`（verify の 4 行: Debug の MathGeometryTest・CameraViewConstantsTest・Game のビルドが終了コード 0、ctest の 4 本 100% Passed）。起動の確かめは無い。
 - Notes: 反復 1 の Notes の「L 字の凹んだ角の食い違い（試験していない）」は解消した。
-- U1 cook 済みの NVTRN から格子の高さ場を作る: 着地(直し 0 回)
-- U4 TerrainSystem を足して Engine::Engine のメンバにする: 着地(直し 1 回)
-- U2 AssetCook に NVTRN のタイルから区画メッシュを焼く terrain-tile:nvtrn を足す: 着地(直し 0 回)
-- U5 TerrainComponent を足す: 着地(直し 2 回)
-- U3 草原の一覧に 16 区画を足し、CookAssets で焼けるようにする: 着地(直し 0 回)
-- U7 TerrainHeightFieldTest を足す: 着地(直し 0 回)
-- U6 開発ビルドだけの grassland シーンを足し、地形を TerrainComponent で置く: 着地(直し 0 回)
-- U9 SceneFileRoundTripTest に TerrainComponent を足し、タスクの verify を全部回す(U8 の切り直し): 着地(直し 0 回)
-- Done (G5-GR37-TERRAIN-COMPONENT、run 20261104-182213 の反復 1): `TerrainHeightField::CreateFromCookedTerrain`（cook 済み NVTRN の全タイルから格子。既存の補間・対角・範囲外の扱いを共有）、`TerrainSystem`（`Engine::Engine` のメンバ。登録・解除・`FindTerrain`・`TSharedPtr<const TerrainHeightField>`）、`TerrainComponent`（値だけの PROPERTY。BeginPlay で NVTRN を読み登録し、区画ごとに子 Entity と `MegaGeometryComponent`〔地形の面・影〕を 1 フレームの予算ずつ作り、EndPlay で返す）、AssetCook の `--generate terrain-tile:nvtrn:<x>,<z>`、草原の 4×4 区画の一覧、開発ビルドだけの `grassland` シーン（視点 near・valley・low）を足した。
-- 試験: `TerrainHeightFieldTest`（MathGeometryTest の束）、`SceneFileRoundTripTest` に TerrainComponent の設定の往復と旧ファイルの既定値の 2 ケース、`AssetCookTerrainSmoke` に区画メッシュの cook（先頭・末尾の区画、spec と生 NVTRN の出力一致、範囲外・破損の拒否）。
-- 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=17 で終了コード 0）。
-- Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` の 3 視点の撮影、区画の LOD の境の亀裂・TLAS・影の確認、TerrainComponent の EndPlay（World の終了・所有者の削除・Component 単体の解除）の実行時の確認を行う。層材質は G5-GR37-TERRAIN-LAYERS。
-- Notes: SceneFileRoundTripTest の地形の 2 ケースは `LoadIntoWorld` が BeginPlay を呼ぶため、JSON の解析とスキーマ照合の後に同じリフレクションの値の適用で復元している（`LoadIntoWorld`・`SpawnPrefab` を通す経路は起動の確かめで見る）。荒野の区画（`WastelandRoutine.cpp` の `PlaceTerrainTile`）は TerrainComponent へ移していない。
-- U10 差し戻しの直し — 地形の読込みを BeginPlay から最初の Tick へ移し、作ってから値を設定しても動くようにする: 着地(直し 0 回)
-- Done (G5-GR37-TERRAIN-COMPONENT、run 20261104-182213 の反復 2): 評価者の差し戻し（`World::CreateComponent` が値の設定より先に BeginPlay を呼ぶため、grassland の地形が読まれず区画が 1 つも置かれない）を直した。`TerrainComponent` の BeginPlay は参照の記録と Tick の登録だけにし、NVTRN の読込み・高さ場の作成・TerrainSystem への登録は最初の Tick（`PlacePendingTiles`）で一度だけ行う。パスが空の間は待ち、読込みに失敗したら警告を 1 回出して Tick を止める。`TerrainComponent(const IUnknown*)` も既定値を入れる。
-- 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT-iter2.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=1 skipped=16 で終了コード 0）。
-- Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` を起動し、最初の Tick で `TERRAIN_COMPONENT tiles=16 placed=16` が出て SceneReady に至ることを、3 視点の撮影・亀裂・TLAS・影・EndPlay の確認と合わせて見る。
-- Notes: 残課題（non-blocking）: ランチャーのカードの画像は `Assets/Textures/Launcher/sandbox.png` の使い回し。`Scripts/CookAssets.ps1` の変更は `paths:` の外だが done-when (1) の「CookAssets で焼ける」に要るもの。
+
+## 2026-11-03 G4-GR07-BODY-CASES（run 20261103-233355 の反復 1、着手）
+- 試験を足す理由（Docs/Testing.md の 3 点。PhysicsFixedStepPipelineTest にケース 20〜26 を足す）
+  - 反証する契約: 固定ステップで駆動するキャラクター本体が、(1) 往復しつつ回る Kinematic の足場に 120 ステップ乗ってもローカル座標で 0.02 m 未満しかずれず、跳んで離れた最初のステップの水平速度が足場の速度 ±0.05 m/s を保つ、(2) 3 m/s で上下する足場の上で足場に対する高さのジッタが 0.01 m 未満、(3) Dynamic の球へ歩くと球が動き、キャラクターはめり込まない（深さ 1e-3 以下）、(4) 限界角を越える 60° の坂では要求速度 0 でも下へ滑り bGrounded=false、(5) GravityScale=0.5 の 1 秒の降下が解析値 ±2%、(6) External の間は要求速度と重力が効かず MoveDelta だけが効き、Walking へ戻すと重力が戻る、(7) GetLinearVelocity が位置差分/dt と 0.005 m/s 以内で一致し、Teleport とめり込みの解消は速度に乗らない
+  - ほかの手段で気づけるか: 気づきにくい。犬の移動の撮影は 1 枚で、離脱速度の欠け・数 mm のジッタ・速度への瞬間移動の混入・重力の倍率の取り違えは絵にもログにも出ない。小物を押す場面と External を使う場面（GR20 のしがみつき）はまだシーンに無い
+  - 失敗が黙って起きるか: 起きる。どれも外れてもキャラクターは何かしら動き、エラーもログも出ない
+- 計画: 試験ファイルと PhysicsModuleCharacter.cpp を全単位が触るので、単位は直列に回す（U1 重力の倍率・滑り落ち・昇降足場 → U2 足場の離脱速度 → U3 External → U4 小物を押す → U5 速度の一致とタスクの verify）
+- U1 重力の倍率・滑り落ち・昇降足場のケースを足し、外れたら本体を直す: 着地(直し 0 回)
+- U6 足場の離脱速度のケースを足し、空中で足場の水平速度を引き継ぐ(切り直し): 着地(直し 0 回)
+- U3 External の間は MoveDelta だけが効くようにし、ケースを足す: 着地(直し 0 回)
+- U4 近くの Dynamic の球を押すケースを足し、押し出しを入れる: 着地(直し 0 回)
+- U5 速度の一致と瞬間移動の除外のケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 20〜26 を足し、全部通る（重力の倍率・60° の坂の滑り落ち・昇降足場のジッタ・足場の離脱速度・External・小物を押す・速度の一致）。本体の直し: 足場を離れた後に足場の水平速度を空中で保つ、External の間は MoveDelta の変位と回転だけを衝突なしで適用する、歩いて接した Dynamic の体へ要求の水平速度の法線成分を渡す、めり込みの解消の変位を速度から除く
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1` は exit 0。`ctest ... -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|PhysicsDynamicsTest)$"` は 5/5 Passed（PhysicsFixedStepPipelineTest 0.91 秒、合計 1.11 秒）。既存のケース 0〜19 の試験は変えていない
+- 測った量: 昇降足場のジッタは SceneQuery::RefreshDynamicSnapshot を通す組・通さない組（負の対照）とも 0 m（`ELEVATOR_JITTER refresh=0 norefresh=0`）で、今の経路では差が出ない。球を押すケースは 90 ステップで球 2.02 m・キャラクター 2.97 m 進む。めり込みの解消は直す前に 0.052 m の押し出しが 3.12 m/s として速度に乗っていた
+- Notes: External は衝突を見ずに変位を適用する（拘束側が位置の権限を持つ形。GR20 のしがみつき側で壁の中へ入れない責任を持つ）。小物を押すのは速度の法線成分を上げるだけで、質量・摩擦は扱わない。めり込みの解消の変位は、重なるステップだけ移動 0 の CharacterMover::Move をもう 1 回呼んで求めるので、足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる。足場の離脱速度の引き継ぎは縁からの自然落下・可変駆動の足場からの離脱を個別には試していない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U7 足場の運搬をめり込みの解消と取り違えて速度から引く退行を直し、昇降足場の速度の一致を試験で確かめる: 着地(直し 1 回)
+- Done: 反復 2 で差し戻し（昇降足場が上がるステップで速度が位置差分/dt と約 3 m/s ずれる退行）を直した。めり込みの事前判定と解消だけの要求を、足場の運搬（PlatformDisplacement）だけ平行移動した形で行い、運んでいる足場（PlatformCollider）は判定と解消の対象から外す（足場との重なりは本番の Move の運搬と解消が扱い、速度からは引かない）。ケース 22 に更新ありのキャラクターの毎ステップの速度 y と位置差分/dt の一致（0.005 m/s 以内）を足した。直す前は velocity_error=3.12 で落ち、直した後は 0
+- 確かめ（タスクの verify）: ビルド exit 0。ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 0.99 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）は 5/5 Passed（合計 1.20 秒）。`ELEVATOR_JITTER refresh=0 norefresh=0 velocity_error=0`。運搬後の形だけで判定した途中の版では、回る足場（ケース 8）で足場との 1e-6 m の重なりが解消として速度から引かれ 0.12 m/s ずれたため、足場を対象から外す形にした
+- Notes: 運搬後の形での判定は、足場の運搬が壁に遮られる場面で速度を誤らせたため、次の項で運ぶ前の形に戻した（足場を外す部分は残した）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+- U8 運搬前の形でめり込みを判定し直し、壁に押し付けられた足場の運搬で速度が位置差分と一致することを試験で確かめる: 着地(直し 0 回)
+- Done: 反復 3 で差し戻し（足場の運搬が静的な壁に遮られるステップで、止まっているキャラクターの速度に足場の速さ約 2 m/s が出る退行）を直した。めり込みの事前判定と解消だけの要求を運ぶ前の形（*self・request.Shape）で行い、運んでいる足場（PlatformCollider）を判定と解消の対象から外す部分は残した。ケース 27（TestCharacterPlatformPushedAgainstWall。回転しない Kinematic の足場が +x へ 2 m/s、キャラクターの高さに静的な壁）を足し kCaseCount を 28 にした。合否は毎ステップの速度と位置差分/dt の差 0.005 m/s 以内と、足場が動くのにキャラクターの x の差分が 0.001 m 未満のステップが 10 以上あること
+- 確かめ: 直す前の版でケース 27 は `CHARACTER_WALL_VELOCITY step=7 error=2`（押し付け 84 ステップ）で落ちた。直した後はケース 8・22・26・27 の単独実行が終了コード 0（押し付け 84 ステップ）。タスクの verify はビルド exit 0、ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 1.02 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）が 5/5 Passed（合計 1.20 秒）。既存のケース 0〜26 と PhysicsCharacterMoveTest の中身は変えていない
+- Notes: 残る限界: 運搬前の形がほかの物体に食い込み、運搬でその物体から離れるステップだけ、解消の分を引きすぎて速度が小さく出うる（試験していない）
+- Notes: 要起票: 空中で壁に当たったとき、足場から引き継いだ水平速度(m_InheritedVelocity)の壁へ向かう成分を消す
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
+
+- U1 入力の列の解析・コースの寸法・期待値の式（純関数）と見本のデータと試験のケース: 着地(直し 0 回)
+- U2 起動の受け入れの台本（-SelfTest つき）: 着地(直し 0 回)
+- U3 起動引数と自動走行のときだけのコースの組み立て: 着地(直し 0 回)
+- U4 自動走行（入力の注入・段階の測定と印・3 枚の撮影・終了）: 着地(直し 2 回)
+## 2026-11-04 G4-GR07-DOG-SMOKE-COURSE（run 20261104-083519 の反復 1〜3、完了。起動の確かめは後回し）
+- Done: `--dog-movement-smoke` に `--dog-movement-autopilot[=<path>]` と `--dog-movement-capture-dir=<dir>` を足した。自動走行のときだけ、床・0.20/0.40 m の段・30°/60° の坂・壁・+X の直線路・往復して回る Kinematic の足場を組み立てる（`DogMovementSmokeRoutine.cpp`）。引数なしと `--dog-movement-smoke` だけの起動は進め役もコースも作らない。
+- Done: 入力の列 `Assets/Gameplay/DogMovementAutopilot.json`（dog_autopilot.v1、12 区間。値は仮）を `DogMovementAutopilotScript` の純関数で読み、`DogMovementAutopilotRunner` が区間ごとに置き直して `InputSystem` へキー・マウスの出来事として流す。段階ごとに `DOG_MOVEMENT_SMOKE stage=<名前>` の印、撮影の保存先があれば低い視点・疾走・壁際で `dog_low/sprint/wall.png`、最後に `stage=complete exit_code=0` か `stage=failed reason=<名前>` で終了する。期待値は `Gameplay/DogLocomotion.json`（locomotion.v1）から求める。
+- Done: 台本 `Scripts/Test-DogMovement.ps1`（-SelfTest で 5 ケース pass）と `DogMovementSmokeGeometryTest` のケース（正しい列・時刻の逆行・未知のキー・範囲外の値・旋回の半径の式）。
+- 証拠: `.harness/runs/20261104-083519/verify-G4-GR07-DOG-SMOKE-COURSE-U4.txt`（`cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1` 終了コード 0、ctest の 3 本 `DogMovementSmokeGeometryTest`・`CharacterDriveOptionsTest`・`PhysicsFixedStepPipelineTest` Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
+- Next: 起動の確かめ（G4-GR07-DOG-SMOKE-CHECK）で `Scripts/Test-DogMovement.ps1` を Debug・RelWithDebInfo・Release で回し、印・3 枚の PNG・終了コードを確かめる。
+- Notes: 起動していないので未確認の所: 旋回の区間（W 0〜1 秒の後に D 1〜2.5 秒。カメラが背後へ戻り D の望む向きが犬の右に保たれて上限 min(ω_cap, a_lat/v) に張り付く前提。速歩の手計算で v≈3.4 m/s・期待の半径≈1.284 m、弧 60° に約 0.4 秒）と、標本の各点の旋回の速さが上限の 5 % 以内という条件、Settling で視点の入力（感度 0.15 の前提）で yaw を区間の向きへ合わせる収束、slope_climb の 1 m の上昇、足場のずれ 0.05 m、疾走の FOV の差。重力の基準 9.81 は Runner の定数（物理側に取得口が無い）× GravityScale。外れたら入力の列の値と許容差を直す。
+- Notes: 自動走行の合成入力を背景ウィンドウでも届けるため、自動走行の間だけ InputMapper のフォーカスを立て、Leave で窓の状態に戻す。
+
+## 2026-11-04 G4-GR07-DOG-SMOKE-COURSE（run 20261104-132215 の反復 1、完了に戻す）
+
+- Done: 単位 U1〜U4 はすべて着地済み。前の走行の評価が利用枠（429）で回らず状態が doing に戻っていたため、追加の変更なしで done に戻す。着地した中身（DogMovementSmokeRoutine.cpp・DogMovementAutopilotScript.*・GameApplicationHandler.cpp・DogMovementSmokeGeometryTest.cpp・Test-DogMovement.ps1・DogMovementAutopilot.json）は確かめを回した作業ツリーの中身と一致することを照合した。
+- 証拠: 最後の単位の確かめ（Debug の Game・PhysicsDynamicsTest のビルド終了コード 0、ctest 3 本 Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
+- Next: 起動の確かめは後回しで `G4-GR07-DOG-SMOKE-CHECK` が受け持つ（Debug・Release の台本の pass と 3 枚の PNG の所見）。
+- Notes: この差分はまだ評価を通っていない（前の走行の評価者が枠切れ）。
+
+- U1 マスクの計算本体（TerrainMasks）と焼きの設定の入口: 着地(直し 0 回)
+- U2 焼きで MSK0・SPL0・SPL1・GRS0 をタイルへ切って埋める: 着地(直し 0 回)
+- U3 スペックの recipe を解析し、ペイントを読んでマスクを計算して焼きへ渡す: 着地(直し 0 回)
+- U4 草原のスペックに規則を書き、NVTRNv0.md に recipe と層を記す: 着地(直し 0 回)
+- U5 CookedTerrainTest にマスクの契約の試験 (a)〜(g) を足し、タスクの verify を通す: 着地(直し 0 回)
+- Done (G5-GR89-TERRAIN-MASKS、run 20261104-132213): 地形の cook で spec の `recipe` とペイント入力から MSK0（R=湿り・G=枯れ草・B=道・A=岩）・SPL0・SPL1（スプラット最大 8 層、最大剰余法で mip0 の総和 255）・GRS0（草密度）を全体格子で一度だけ計算し、タイルの (tile_cells+1)² に切ってフルミップの NVTEX として NVTRN の層に埋める（`Tools/AssetCook/TerrainMasks.{h,cpp}`）。湿りは priority-flood で窪地を埋めた流れ集積の対数・低標高・凹の曲率の合成、雑音は (seed, salt, 格子座標) の splitmix64 でスレッドに依らない。ペイントは 8bit PNG の override・multiply で、source_hash と InputFiles にペイントを配列順に足した。`recipe` が無い spec の出力は変わらない。層は FourCC で引け、GR42・GR45 が後から足せる。草原の spec に土・苔・湿った泥・岩肌・草地の 5 層と草密度の仮の係数を書き、`Docs/Architecture/NVTRNv0.md` に recipe・式・ペイント・層を記した。
+- 草原の焼いた結果（mip0 の重複を除く 263,169 標本）: 最大の重みになる割合 soil 1.2 %・moss 27.7 %・wet_mud 0.5 %・rock_face 0.1 %・meadow 70.4 %。湿りの平均 0.34、岩は 99.9 % が 0、草密度の平均 0.88。最初の仮の係数では meadow が 99.8 % を占めたので、土・苔・草地の重みと低標高の湿りの範囲（実際の高さ 20.6〜39.2 m に合わせて 22〜36 m）・草密度の湿りの減衰（0.35〜0.75）を直した。式の係数は見た目で決まるまで仮。
+- 試験: `CookedTerrainTest` に (a) スプラット 8 層の総和 255±1、(b) 道のペイントの内側で草密度 0、(c) 傾斜に対する岩の単調性と 0・255 の両方、(d) 谷線の湿りが各行で最大（流れ集積だけの重みで検査）、(e) seed を変えると枯れ草とスプラットだけ変わり HGT0・NRM0・湿り・道・岩・草密度は一致、(f) x・z の共有辺の全層のビット一致、(g) ペイント 1 画素の変更で source_hash が変わり InputFiles にペイントが入る、を足した。
+- 証拠: `.harness/runs/20261104-132213/G5-GR89-TERRAIN-MASKS-U5-verify.txt`（verify の 4 行: AssetCook・CookedMeshTest の Debug ビルドが終了コード 0、ctest の CookedTerrainTest・AssetCookTerrainSmoke が 100% Passed で (a)〜(g) の行が出る、CookAssets の Grassland が終了コード 0。草原は U4 で焼き済みのため skipped=1 で、`-Force` でも cooked=1 を確かめた）。起動の確かめは無い（描画は G5-GR37-TERRAIN-COMPONENT）。
+- Next: マスクの層を描画で使うのは GR37・GR42・GR45。道のペイント PNG はまだ無い。
+- Notes: 要起票: `Scripts/CookAssets.ps1` の変更検出は spec と高さファイルだけを見て、ペイントの PNG を見ない（ペイントだけ変えると `-Force` が要る。AssetCook の source_hash はペイントを含む）。
+
+- U1 形状の判定の純関数・ヒステリシスの状態機械・ZoneProfileStack: 着地(直し 0 回)
+- U2 ZoneSensorComponent・EncounterZoneComponent・EncounterService と GameplayModule への結線: 着地(直し 0 回)
+- U3 EncounterZoneTest: 着地(直し 0 回)
+- U4 TickStages.md の割当表と Testing.md の記載: 着地(直し 0 回)
+- U5 EncounterLifecycleTest・EncounterSerializationTest と最終の確かめ: 着地(直し 1 回)
+
+## 2026-11-04 G8-GR18-ENCOUNTER-ZONES（run 20261104-135119 の反復 1、完了）
+- Done: 遭遇領域を物理を使わないサービスで作った。形状（球・箱・Y 軸の円柱）の内側と ExitMargin の外側の判定の純関数、ヒステリシスの状態機械 Outside → Engaged → Resetting → Cleared（境界の往復で連打しない・ResetDelaySeconds 外にいたときだけ Exit・テレポートの印で即評価・Cleared は再び武装しない）、`ZoneProfileStack`（優先度の順、最上位が変わったときだけ `OnActiveProfileChanged(old, new, blendSeconds)`）。`ZoneSensorComponent`・`EncounterZoneComponent`（PROPERTY 付き、`RegisterReflectedTypes` に登録）と `EncounterService`（GameplayModule が持ち `LateTick` で 1 フレーム 1 回評価。登録と参照の解決は最初の評価まで遅らせる。事件は集めてから世代付きのハンドルで再検証して配る。`MarkCleared(ZoneId)` は次の評価で適用。別スレッドからの呼び出しは拒否し、Shutdown で消す）。ResetPolicy は {FullHeal, KeepDamage}、既定 FullHeal。`Docs/Architecture/TickStages.md` の割当表と `Docs/Testing.md` に載せた。
+- 試験: `EncounterZoneTest`・`EncounterLifecycleTest`・`EncounterSerializationTest` を PhysicsDynamicsTest の束に足した。
+- 証拠: `.harness/runs/20261104-135119/verify-G8-GR18-ENCOUNTER-ZONES-U5.txt`（Game・PhysicsDynamicsTest の Debug ビルド終了コード 0、ctest で PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・EncounterZoneTest・EncounterLifecycleTest・EncounterSerializationTest の 5 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命の危険地帯）。敵の起動と ResetPolicy の適用は G8-GR17-ENEMY-COMPONENT、カメラ・音・天候の購読は各項目。
+- Notes: verify の CombatLifecycleTest はこの枝に未登録（G8-GR16-COMBAT-RUNTIME の試験）で、ctest の正規表現に一致しないまま 5 件で通る。退出の遅延の比較は「以上」で、Resetting に移った評価では時間を足さない（遅延 0 秒でも Exit は次の評価から）。`OnActiveProfileChanged` は同じ LateTick の中で配るので、購読側の反映は次のフレーム。起動の要る確かめは無い。
+
+- U1 公開の型と Component の器・モジュールへの登録・窓の開閉: 着地(直し 0 回)
+- U2 GameplayModule::LateTick での 1 フレーム 1 回の評価と配送: 着地(直し 0 回)
+- U3 試験の土台・CMake の登録・CombatLayerTest: 着地(直し 0 回)
+- U5 CombatMultiHitTest: 着地(直し 0 回)
+- U4 CombatFrameRateInvarianceTest: 着地(直し 1 回)
+- U6 CombatLifecycleTest: 着地(直し 1 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 2、途中）
+- Done: CombatMultiHitTest・CombatFrameRateInvarianceTest（直接の窓と合成のクリップの窓の両方）・CombatLifecycleTest を入れた。残りは TickStages.md の割当表とタスクの verify（U7）。
+- 決定: 「配送中に足した購読は次の配送から」の「配送」は 1 件の当たりの 1 回の Broadcast と読む（候補ごとに OnHit・OnHurt・OnAnyHit を複製してから Broadcast。AnimatorComponent::ForwardEvent と同じ約束）。フレーム全体で複製を固定すると、配送中に外して破棄した受け手が同じフレームの後の候補で呼ばれるため採らない。同じフレームの後の候補では足した受け手が呼ばれる。
+- Next: U7（TickStages.md と verify の 2 行）。
+- U7 TickStages.md の割当表とタスクの verify: 着地(直し 0 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 3、完了）
+- Done: `HitboxComponent`・`HurtboxSetComponent`・`AttackProfile`・`CombatHitEvent`（POD）を Gameplay モジュールに足し、`GameplayModule::LateTick` で 1 フレーム 1 回評価する（先頭で `World::UpdateWorldTransforms`、シミュレーションの Transform、`TimeSystem::GetFrameTimes().World` の時間）。窓は `BeginAttack` / `EndAttack` と同じ Entity の `AnimatorComponent::OnEvent`（Name と WindowToken）で開閉し、開くたびに AttackInstanceId を採番、無効化・破棄・最大持続時間で閉じる。再ヒットの方針（OncePerVictim / OncePerPart / Interval）と PerVictimPolicy で間引き、hitbox の登録順 → HurtboxSet の登録順 → 部位の番号で並べ、配る直前に世代付きハンドルで再検証して OnHit → OnHurt → OnAnyHit。faction は 32bit のマスク、自分自身（ActorId）を外す。GameThread 以外を拒否し、Shutdown → Initialize で状態を消す。`Docs/Architecture/TickStages.md` の割当表に 2 型を「群なし（Module Late で評価）」で載せ、フレームの順序の節に評価の時点・時間・配送の順を書いた。試験は CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest を PhysicsDynamicsTest の束に入れた。
+- 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
+- U1 公開の型と Component の器・モジュールへの登録・窓の開閉: 着地(直し 0 回)
+- U2 GameplayModule::LateTick での 1 フレーム 1 回の評価と配送: 着地(直し 0 回)
+- U3 試験の土台・CMake の登録・CombatLayerTest: 着地(直し 0 回)
+- U5 CombatMultiHitTest: 着地(直し 0 回)
+- U4 CombatFrameRateInvarianceTest: 着地(直し 1 回)
+- U6 CombatLifecycleTest: 着地(直し 1 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 2、途中）
+- Done: CombatMultiHitTest・CombatFrameRateInvarianceTest（直接の窓と合成のクリップの窓の両方）・CombatLifecycleTest を入れた。残りは TickStages.md の割当表とタスクの verify（U7）。
+- 決定: 「配送中に足した購読は次の配送から」の「配送」は 1 件の当たりの 1 回の Broadcast と読む（候補ごとに OnHit・OnHurt・OnAnyHit を複製してから Broadcast。AnimatorComponent::ForwardEvent と同じ約束）。フレーム全体で複製を固定すると、配送中に外して破棄した受け手が同じフレームの後の候補で呼ばれるため採らない。同じフレームの後の候補では足した受け手が呼ばれる。
+- Next: U7（TickStages.md と verify の 2 行）。
+- U7 TickStages.md の割当表とタスクの verify: 着地(直し 0 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 3、完了）
+- Done: `HitboxComponent`・`HurtboxSetComponent`・`AttackProfile`・`CombatHitEvent`（POD）を Gameplay モジュールに足し、`GameplayModule::LateTick` で 1 フレーム 1 回評価する（先頭で `World::UpdateWorldTransforms`、シミュレーションの Transform、`TimeSystem::GetFrameTimes().World` の時間）。窓は `BeginAttack` / `EndAttack` と同じ Entity の `AnimatorComponent::OnEvent`（Name と WindowToken）で開閉し、開くたびに AttackInstanceId を採番、無効化・破棄・最大持続時間で閉じる。再ヒットの方針（OncePerVictim / OncePerPart / Interval）と PerVictimPolicy で間引き、hitbox の登録順 → HurtboxSet の登録順 → 部位の番号で並べ、配る直前に世代付きハンドルで再検証して OnHit → OnHurt → OnAnyHit。faction は 32bit のマスク、自分自身（ActorId）を外す。GameThread 以外を拒否し、Shutdown → Initialize で状態を消す。`Docs/Architecture/TickStages.md` の割当表に 2 型を「群なし（Module Late で評価）」で載せ、フレームの順序の節に評価の時点・時間・配送の順を書いた。試験は CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest を PhysicsDynamicsTest の束に入れた。
+- 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
+
+## 2026-11-04 G4-GR05-COMPONENT-CASES（run 20261104-134159）
+- 試験の 3 点（Docs/Testing.md。ケースを足す前に書く）:
+  - 反証する契約: QuadrupedLocomotionComponent を固定ステップの経路で回したとき、(1) 一時フォルダの locomotion.v1 の設定を書き換えると 0.25 秒の間隔の後の最初のフレームから新しい値で動き、壊れた JSON では前の値のまま動き続けて警告が 1 回だけ出る、(2) 見た目の子の Animator の駆動の信号（Speed・TurnRate・bGrounded）と名前のパラメータ（GaitId・GaitWeight0〜3・PitchAngle・BankAngle）がそのフレームのモデルの出力と一致し、名前のパラメータが無いグラフでも落ちない、(3) Animation を移動の源にすると、固定ステップの回数が 0・1・2 と揺れても Animator のルートの差分の合計と本体の移動量の合計が 1e-4 m 以内で一致し、Procedural へ戻すと残りを捨てて次のフレームから手続きの移動に戻る、(4) 同じフレームの Camera 群の FollowCameraComponent が移動の結果を 1 フレームの遅れなく読む
+  - ほかの手段で気づけるか: 気づきにくい。再読込は手で JSON を書き換えないと起きず、パラメータの名前の食い違いは PublishVisual が設定の失敗を捨てるのでログに出ない。ルート移動の二重・欠けは数 mm 単位で絵に出ず、1 フレームのカメラの遅れは静止画の撮影に出ない
+  - 失敗が黙って起きるか: 起きる。どれも外れても犬は何かしら動き、エラーもログも出ない（壊れた JSON の警告の回数を除く）
+- 計画: 4 つのケースは同じ試験ファイルと Component を触るので、単位は直列に回す（U1 設定の再読込 → U2 Animator への値 → U3 ルート移動 → U4 同じフレームのカメラとタスクの verify）
+- U1 設定の再読込のケースを足し、一時フォルダを読ませる口を Component に足す: 着地(直し 0 回)
+- U2 Animator への値のケースを足す: 着地(直し 0 回)
+- U3 ルート移動のケースを足す: 着地(直し 0 回)
+- U4 同じフレームのカメラの読みのケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 28〜31 を足し、全部通る（設定の再読込・Animator への値・ルート移動・同じフレームのカメラ）。Component の直し: Animator へ渡す Speed と接地を本体の状態ではなくそのフレームのモデルの出力から作る（直す前は最初のフレームの Speed が 0.0325、期待 0）。試験のために設定の置き場（資産の根と相対パス）を差し替える SetProfileSource を足した
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest LoggerSinkTest Game -- /m:1` は終了コード 0。ctest の 5 本（QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・RootMotionTimeQueueTest・PhysicsFixedStepPipelineTest 1.98 秒・PhysicsCharacterMoveTest）は 5/5 Passed。既存のケース 0〜27 の中身は変えていない
+- 測った量: ルート移動は 72 フレーム（固定の段 0・1・2 が 24 フレームずつ）で Animator の差分 1.200000018 m・本体 1.199999809 m・差 2.1e-7 m。Procedural へ戻した後は半段の残りを捨てて入力の向きへ 8 フレームで 0.043 m 進み、Animation へ戻した最初のフレームの差は 2e-9 m。同じフレームのカメラは 72 フレーム（α 0 が 24・中間が 48）で注視点と描画の位置 + オフセットの最大差 2.4e-7 m、描画が動いた 26 フレームで前のフレームの描画の位置との差は最小 0.002 m（遅れがあれば合わない形で比べた）
+- Notes: ルート移動のケースは衝突の無い直進のルートだけを見る（壁に当たったときのルートの差分の扱いは試験していない）。同じフレームのカメラは平滑 0・壁なしの組だけで、平滑ありと衝突で腕が縮む組は既存の TestFollowCameraRenderBinding に任せる。アプリを起動する確かめは無い
+- Next: G4-GR05-COMPONENT-CASES を after に持つ項目（G4-GR07 の犬の受け入れなど）
+
+- U1 private SPI にループ・音量・周波数比・出力係数・一時停止を足し、XAudio2 と fake を同じ変更で直す: 着地(直し 1 回)
+- U2 IAudioService と AudioTypes に追加だけで公開 API を足し、ドメインで実装する: 着地(直し 0 回)
+- U3 AudioPlaybackTest を足し、タスクの verify を通す: 着地(直し 0 回)
+- Done (G8-GR72-AUDIO-SPI、run 20261104-141138): private の `IAudioBackend` に `AudioBufferDesc{bLoop, LoopBeginFrame, LoopLengthFrames, StartFrame}` 付きの提出・voice の作成時の最大周波数比・`SetVoiceVolume`・`SetVoiceFrequencyRatio`・`SetVoiceOutputGains`(ステレオの係数をバックエンドが出力の配置へ展開)・`PauseVoice` / `ResumeVoice`(Flush しない)を足し、XAudio2(LoopCount・LoopBegin・LoopLength・PlayBegin、SetVolume、SetFrequencyRatio、SetOutputMatrix、Stop(XAUDIO2_PLAY_TAILS) と Start、出力のチャンネル数は mastering voice の GetVoiceDetails)と fake を合わせた。`IAudioService` は追加だけ(既存のメソッドと署名は不変): `CreateVoice(clip, AudioVoiceDesc, outHandle)`(ループ点・開始位置・最大ピッチの半音、既定は周波数比 2.0)、`SetVoiceVolume`・`SetVoicePitch`(半音)・`SetVoicePan`(等パワー L=cos((p+1)π/4)、R=sin((p+1)π/4))、`PauseVoice` / `ResumeVoice`(ActiveVoiceRecord の bPaused)。Set* は Created / Submitted / Playing でだけバックエンドを呼び、Stopping・Drained・Quarantined では InvalidState。`AudioResult::Rejected` と `AudioDiagnostics` の StolenVoiceCount・RejectedPlayCount・SuppressedByCooldownCount(この層では 0)を足した。
+- 試験: `AudioPlaybackTest`(`AudioBackendLifetimeTest` の束の MEMBER、fake だけをリンク)で、ループの voice が 600 回の Tick の後も Playing、Pause が Flush を増やさず Resume で再開、隔離された voice への Set* で fake の操作が増えない、Destroy の後の Set* が StaleHandle、パンの式を確かめる。
+- 証拠: `.harness/runs/20261104-141138/G8-GR72-AUDIO-SPI-U3-verify.txt`(Debug の Game・AudioBackendLifetimeTest のビルド成功、ctest の AudioPlaybackTest・AudioBackendLifetimeTest・AudioModuleLifecycleTest・AudioModuleRegistryTest が 4/4 Passed、`M9_REVIEW_CONTRACT result=pass contract=All`、numstat の 2 通りが一致)。
+- Next: 起動の確かめは後回し(無限ループの voice を Stop → Flush したときに Drained が来るか、XAudio2 の実機の鳴り方は G8-GR72-AUDIO-CHECK)。論理サウンド層は G8-GR72-SOUND-SYSTEM。
+- Notes: 危険地帯(Public API)なので評価者を通す。
+- Notes (G8-GR72-AUDIO-SPI、run 20261104-182215): 前回は評価者の枠切れで評価が回らず状態が doing に戻っていた。実装は全単位着地済みで、着地した Library/Modules/Audio・Test/Modules/Audio・Docs/Testing.md は確かめた作業ツリーと一致し、確かめの出力(ビルド exit_code=0、ctest 4/4 Passed、M9_REVIEW_CONTRACT result=pass contract=All)を読み直したので done に戻した。Public API の危険地帯なので評価はランナーの評価で通す。無限ループの voice を Stop → Flush したときの Drained は実機の確かめ(G8-GR72-AUDIO-CHECK)で見る。
+
+- U2 U1 でレビュー済みの差分を当て直し、タスクの verify を回す: 着地(直し 0 回)
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 1): `CookManagedStoreNative.h` の列挙を、述語で残す項目を選ぶ `EnumerateKept` にした（親タスクの枝 `task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1` の版とバイト単位で同じ。`Enumerate` はすべて残す述語で包むので、store の制御領域の列挙と上限は変わらない）。`CookManagedTransactionController.cpp` の `OpenStore` の祖先の列挙は `StoreLeaf` と長名か short alias で fold 一致する項目だけを、`VerifyClaims` の workspace の列挙は `index.Roots` の各 `RootLeaf` と fold 一致する項目だけを残す。上限は残した項目にだけ掛かる。長名か alias で一致する項目は全部残すので、`active_claim_name_or_alias`・`active_claim_changed`・`nested_managed_root` の判定は前と同じ入力で行われる。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U2-verify.txt`（TEMP・TMP は差し替えず、TEMP 直下 133800 件。verify のビルド 終了コード 0。ctest 6 本のうち `CookManagedUpdateTest`・`TextureManagedCliTest` を含む 5 本 Passed、`CookManagedStoreObservationTest` は `entry_limit` で Failed。親の枝の `CookManagedStoreObservation.cpp` と試験の変更（a900b4e0・ef9c7b72）を一時的に重ねると 6 本すべて Passed、戻した後のビルドも終了コード 0。numstat の 2 通りが一致）。
+- Next: 親の G2-GR82-B4-STATIC-ROOT-FRAME128-P1（`ObserveLocked` の読み流し）が統合されると、verify の 6 本が単独で通る。
+- Notes: `CookManagedStoreObservationTest` が落ちるのは、`CookManagedStoreObservation.cpp`（この項目の paths の外）の `ObserveLocked` がまだ全件をためる列挙だから。この項目の変更が原因ではない。親タスクの枝と Native.h が同じなので、親を取り込むときに衝突しない。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 2): 反復 1 の再実行で `CookManagedStoreObservationTest` だけが `entry_limit` で落ちた。原因は親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `ObserveLocked`（paths の外）がまだ統合されていないことで、親は `after:` でこの項目を待っている。互いに待つので BLOCKED にし、verify から Observation を外す案を推奨として blocked に書いた。
+
+- Notes (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 判断役の判断で、この項目の verify の ctest から `CookManagedStoreObservationTest` を外し、5 本で合否を決める。Observation の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。外した理由は、親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちになっていたため。親の枝を一時的に重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 3): 反復 1 で入れた祖先と workspace の読み流し(コードは変えていない)で、判断役の判断で 5 本に絞った verify が TEMP を差し替えずに通った。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U3-verify.txt`(TEMP 直下 133860 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 87.97 秒・`TextureManagedCliTest` 16.37 秒を含む。作業ツリーの変更なし)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
+- U4 workspace を親にする Find・Absent も一致する項目だけ残す読み流しにする: 着地(直し 0 回)
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 4): 差し戻し(workspace を親にする `Find`/`Absent` が全件をためる列挙のまま)を直した。`Find`・`Absent`・`KnownDirectory`・`Rename` に、leaf と長名か short alias で fold 一致する項目だけを残す読み流しを選ぶ形(既定は今の全件列挙)を足し、workspace を親にする 4 か所だけで使う: `LoadActive` の `KnownDirectory(scope.Workspace, …)` 2 か所、rollback の `Rename` の from 側、`PublishBootstrap` の `Rename` の to 側。`Fixed` は fold 一致する項目しか見ないので判定は前と同じ。store の制御領域・pending の列挙と上限は変えていない。`VerifyClaims` の 2 つの比較ラムダを 1 つにまとめた。
+- 証拠: `.harness/runs/20261104-132212/G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-U4-verify.txt`(TEMP・TMP は差し替えず、TEMP 直下 133863 件。Debug の CookedMeshTest のビルド exit=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 86.51 秒・`TextureManagedCliTest` 17.34 秒を含む。numstat の 2 通りが一致)。workspace に 16385 件以上を置いた managed update の再現は回していない(コード読みで、workspace を親にする列挙がすべて読み流しになったことを確かめた)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝を統合ブランチに載せ、`CookManagedStoreObservationTest` を含む 6 本の verify で完了させる。
+- Notes: 要起票: `Tools/AssetCook/CookManagedBootstrap.cpp:457` 付近にも workspace を親にする `Absent` があり、全件をためる列挙のまま(この項目の paths の外)。bootstrap でも workspace に 16385 件以上あると `entry_limit` になる見込み。
+
+- Done (G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1、run 20261104-132212 の反復 5): 統合ブランチを取り込んだ後の再検証は、判断役の判断(反復 2)で外すと決めた `CookManagedStoreObservationTest` だけが落ちた。判断の指示 1 のとおり、この項目の 2 本目の verify の ctest から `CookManagedStoreObservationTest` を外して 5 本にした(反復 3 で書き換えが TASKS.md に入っていなかった)。コードは変えていない。
+- 証拠: `.harness/runs/20261104-132212/sync-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-1.txt`(取り込み後の Debug の CookedMeshTest のビルド exit=0)と `sync-G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1-2.txt`(同じビルドで、5 本の `CookManagedUpdateInventoryTest`・`CookManagedStoreInitializationTest`・`CookManagedUpdateTest` 99.16 秒・`TextureManagedCliTest` 18.00 秒・`RigSplitCookTest` がすべて Passed。落ちたのは外した `CookManagedStoreObservationTest` の `entry_limit` だけ)。
+- Notes: `CookManagedStoreObservationTest` の確かめは親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の verify(6 本、変えない)が受け持つ。親が `after:` でこの項目を待ち、この項目の Observation が親の `ObserveLocked` を待つ互いの待ちだったため外した。親の枝を重ねた 6 本の合格は反復 1 の U2 で確かめた。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 は自分の枝(a900b4e0・ac50612e・ef9c7b72)を統合ブランチに載せ、6 本の verify で完了させる。
+
+## 2026-11-04 G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1（run 20261104-182212 の反復 1、完了）
+
+- Done: 判断役の判断(選択肢 2)に従い、コードは変えずに統合ブランチ `feature/scene-launcher` の取り込み後の版で 5 本の verify を回し、`status: done` にした。`OpenStore` の祖先・`VerifyClaims` の workspace・workspace を親にする `Find`/`Absent` の列挙は、前の反復で一致する項目だけを残す読み流しにしてある。
+- 証拠: `.harness/runs/20261104-182212/verify-FRAME128-P1-P1.txt`(TEMP・TMP は差し替えず、TEMP 直下 133940 件。Debug の CookedMeshTest のビルド BUILD_EXIT=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 83.32 秒・`TextureManagedCliTest` 15.36 秒を含む。CTEST_EXIT=0)。
+- Notes: `CookManagedStoreObservationTest` の確かめは、親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の 6 本の verify が受け持つ。親が統合されるまで、統合ブランチの上ではこの試験が利用者の TEMP で `entry_limit` によって落ちたまま残る(今と同じ状態)。
+- Notes: この項目の verify を 6 本から 5 本にしたのは、ワーカーではなく判断役が統合ブランチ側の TASKS.md で書き換えたもの。
+- Notes: 要起票: `CookManagedBootstrap.cpp:457` の workspace を親にする `Absent` が全件をためる列挙のまま(この項目の paths の外)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `after` が解けたら、統合ブランチを取り込んで 6 本の verify で完了を確かめる。
+
+- U1 保存先のパス・原子的な書き込み・読み込みの Platform API と AtomicFileWriteTest: 着地(直し 0 回)
+- U4 NVSV の入れ物と移行の関数の列(U2 の差分を当て、移行を解析木の上の素直な形に簡素化): 着地(直し 1 回)
+- U3 SaveSlotStore(スロット・.bak・オートセーブのリング・.corrupt への退避)と SaveSlotFallbackTest、Testing.md、タスクの verify: 着地(直し 1 回)
+## 2026-11-04 G8-GR76-SAVE-STORAGE（run 20261104-182215 の反復 1、完了）
+- Done: `Platform/PlatformPaths.h` の `GetUserDataDirectory`（`SHGetKnownFolderPath(FOLDERID_LocalAppData)` の下の `NorvesLib/<appName>/`、失敗時だけ環境変数、根を差し替える `GetUserDataDirectoryUnder`）と `Platform/PlatformFile.h` の `WriteFileAtomic`（一時ファイル → Flush → `ReplaceFileW`（旧世代を `.bak`）/ `MoveFileExW`、共有違反のやり直し、読み戻しの検証、失敗時の一時ファイルの削除）・`ReadFileBytes`・`CleanupAtomicWriteTemporaries`・ファイル操作の差し替え口 `IFileOperations`。`Save/SaveContainer.h` の NVSV（48 バイトの固定ヘッダ。バイト 40〜47 はヘッダ 0〜39 の FNV-1a64 で、版の欄の破損も検出）。`Save/SaveMigration.h` の formatVersion と移行の段の表（v1→v2。新しい版は `RejectedNewerVersion`、絶対値 2^53 以上の整数は丸めず `Invalid`）。`Save/SaveSlotStore.h`（`slot_N.sav`/`.bak`・`autosave_0..2.sav` のリング、writeCounter で新しい方、壊れたファイルは `.corrupt-<UTC 時刻>` へ退避、新しい版に当たったら何も変えず拒否、保存の前にも壊れた主・`.bak` を退避）。試験 4 本を LoggerSinkTest の束へ、`Docs/Testing.md` に理由。
+- 証拠: `.harness/runs/20261104-182215/verify-G8-GR76-SAVE-STORAGE.txt`（Game・LoggerSinkTest の Debug ビルド ExitCode 0、ctest で SaveContainerTest・AtomicFileWriteTest・SaveMigrationTest・SaveSlotFallbackTest・WorkingDirectoryInputBindingStoreTest・JsonWriterTest・LoggerSinkTest の 7 件 100% Passed、TEMP の試験用ディレクトリの残り 0）。
+- 決定: 移行は JsonDocument の木から JsonWriter で書き直す（数値は double で持つエンジン全体の制約に合わせ、2^53 以上の整数は保存の中身では文字列で持つ）。読み込みでファイルを書き直さない（移した中身は返すだけで、次の保存で今の版になる）。読めない（共有違反など）ファイル・退避の失敗は `IoError`。
+- Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
+- Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。

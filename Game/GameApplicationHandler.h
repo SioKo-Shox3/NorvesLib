@@ -253,6 +253,9 @@ namespace Game
 
         bool m_bAnimationDebugRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bDogMovementAutopilot = false;
+        NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
+        NorvesLib::Core::Container::String m_DogMovementCaptureDir;
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
         /// ランチャーから始めるか（--scene を省いた起動、--scene=launcher、--scene-cycle-smoke）。ResolveStartupScene が決める

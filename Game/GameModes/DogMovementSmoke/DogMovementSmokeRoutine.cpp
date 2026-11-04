@@ -1,9 +1,11 @@
-﻿#include "Component/CameraComponent.h"
+﻿#include "Asset/AssetFileReader.h"
+#include "Component/CameraComponent.h"
 #include "Component/DirectionalLightComponent.h"
 #include "Component/MeshComponent.h"
 #include "DogMovementSmokeGeometry.h"
 #include "DogMovementSmokeMode.h"
 #include "Engine/Engine.h"
+#include "FileStream/FileStream.h"
 #include "Game/Input/GameInputActions.h"
 #include "GameMode/GameModeContext.h"
 #include "GameMode/GameModeScope.h"
@@ -17,6 +19,8 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
 #include <cmath>
+#include <cstring>
+#include <limits>
 namespace Game::GameModes
 {
     using namespace NorvesLib::Core;
@@ -48,6 +52,11 @@ namespace Game::GameModes
     } // namespace
     void DogMovementSmokeRoutine::Stop(GameModeContext& ctx, DogMovementSmokeData& data)
     {
+        if (data.Runner)
+        {
+            data.Runner->Stop(ctx);
+            data.Runner.reset();
+        }
         data.LateState.reset();
         if (data.HitStop.IsValid())
             (void)ctx.EngineRef.GetTimeSystem().RemoveScale(data.HitStop);
@@ -74,7 +83,9 @@ namespace Game::GameModes
                 ctx.RenderResourcesRef.Materials().Release(material);
             material = {};
         }
-        data.CharacterId = data.CameraOwnerId = 0;
+        data.CharacterId = data.CameraOwnerId = data.PlatformId = 0;
+        data.PlatformTime = 0;
+        data.Script = {};
         data.ReportedReady = false;
     }
     GameModeEnterResult DogMovementSmokeRoutine::Enter(GameModeContext& ctx, DogMovementSmokeData& data)
@@ -88,9 +99,74 @@ namespace Game::GameModes
             ~Guard()
             {
                 if (!Succeeded)
+                {
+                    if (Data.bAutopilot && !Context.EngineRef.IsExitRequested())
+                    {
+                        NORVES_LOG_INFO("DogMovementSmoke", "DOG_MOVEMENT_SMOKE stage=failed reason=setup");
+                        Context.EngineRef.RequestExit(1);
+                    }
                     DogMovementSmokeRoutine::Stop(Context, Data);
+                }
             }
         } guard{ctx, data, succeeded};
+        if (data.bAutopilot)
+        {
+            const char* assetPath = data.AutopilotPath.c_str();
+            if (assetPath[0] == '.' && (assetPath[1] == '/' || assetPath[1] == '\\'))
+            {
+                assetPath += 2;
+            }
+            const bool bAssetPath = std::strncmp(assetPath, "Assets/", 7) == 0 ||
+                                    std::strncmp(assetPath, "Assets\\", 7) == 0;
+            Asset::AssetReadResult asset;
+            Container::VariableArray<uint8_t> pathBytes;
+            Container::Span<const uint8_t> scriptBytes;
+            bool bRead = false;
+            if (bAssetPath)
+            {
+                Asset::AssetReadRequest request;
+                request.InputPath = data.AutopilotPath;
+                Asset::AssetFileReader reader;
+                asset = reader.Read(request);
+                bRead = asset.Succeeded();
+                if (bRead)
+                {
+                    scriptBytes = asset.Blob.GetSpan();
+                }
+            }
+            else
+            {
+                // Assets以外は指定されたファイルを開く。相対パスは作業ディレクトリを基準にする。
+                namespace FS = NorvesLib::FileStream;
+                auto stream = FS::FileStream::CreateUnique(data.AutopilotPath, FS::FileMode::Read,
+                                                            FS::FileAccess::Read, FS::FileShare::Read);
+                if (stream && stream->IsOpen())
+                {
+                    const int64_t size = stream->GetSize();
+                    if (size >= 0 && static_cast<uint64_t>(size) <= std::numeric_limits<size_t>::max())
+                    {
+                        pathBytes.resize(static_cast<size_t>(size));
+                        bRead = pathBytes.empty() || stream->Read(pathBytes.data(), pathBytes.size()) == pathBytes.size();
+                        scriptBytes = {pathBytes.data(), pathBytes.size()};
+                    }
+                }
+            }
+            Container::String error;
+            if (!bRead)
+            {
+                error = TEXT("read_failed");
+            }
+            if (!bRead || !DogMovementAutopilot::ParseAutopilotScript(scriptBytes, data.Script, error))
+            {
+                NORVES_LOG_INFO("DogMovementSmoke", "DOG_MOVEMENT_SMOKE stage=failed reason=autopilot_parse detail=%s",
+                                error.c_str());
+                LOG_ERROR("犬の自動走行の台本を読めないか解析できません: path=%s detail=%s",
+                          data.AutopilotPath.c_str(), error.c_str());
+                ctx.EngineRef.RequestExit(1);
+                return GameModeEnterResult::Failed;
+            }
+            data.PlatformTime = 0;
+        }
         auto& mapper = ctx.EngineRef.GetInputMapper();
         if (mapper.GetActiveContext() != InputActions::GameplayContext)
         {
@@ -174,6 +250,74 @@ namespace Game::GameModes
             !driver->SetVisualRoots(visual, pose) || !driver->SetDriveMode(data.Drive) ||
             !driver->SetViewSource(view) || !follow->SetSubject(visual, physical) || !follow->SetViewSource(view))
             return GameModeEnterResult::Failed;
+        if (data.bAutopilot)
+        {
+            namespace Course = DogMovementAutopilot;
+            floor->SetPosition(Course::Floor.Center.ToVector3());
+            floorVisual->SetLocalPosition({0, Course::Floor.HalfExtents.y, 0});
+            floorVisual->SetLocalScale({2 * Course::Floor.HalfExtents.x, 1, 2 * Course::Floor.HalfExtents.z});
+            wall->SetPosition(Course::Wall.Center.ToVector3());
+            wallVisual->SetLocalScale({Course::Wall.HalfExtents.x / 4, Course::Wall.HalfExtents.y / 1.5f,
+                                       Course::Wall.HalfExtents.z / .1f});
+            if (floorCollider->SetBox(Course::Floor.HalfExtents.ToVector3()) != P::EPhysicsResult::Success ||
+                wallCollider->SetBox(Course::Wall.HalfExtents.ToVector3()) != P::EPhysicsResult::Success)
+            {
+                return GameModeEnterResult::Failed;
+            }
+            const auto addBox = [&](const Course::CourseBox& box, const M::Quaternion& rotation,
+                                    MaterialHandle material, bool bKinematic) -> Entity* {
+                auto* entity = ctx.ScopeRef.SpawnObject<Entity>();
+                if (!entity)
+                {
+                    return nullptr;
+                }
+                entity->SetPosition(box.Center.ToVector3());
+                entity->SetRotation(rotation);
+                auto* boxVisual = ctx.WorldRef.SpawnEntity<Entity>(entity);
+                auto* boxCollider = ctx.WorldRef.CreateComponent<P::ColliderComponent>(entity);
+                if (!boxVisual || !boxCollider ||
+                    boxCollider->SetBox(box.HalfExtents.ToVector3()) != P::EPhysicsResult::Success)
+                {
+                    return nullptr;
+                }
+                // 壁のメッシュは幅8・高さ3・奥行き0.2の箱。形の大きさは子だけに適用する。
+                boxVisual->SetLocalScale({box.HalfExtents.x / 4, box.HalfExtents.y / 1.5f,
+                                          box.HalfExtents.z / .1f});
+                if (!AttachMesh(ctx, boxVisual, wallMesh, material))
+                {
+                    return nullptr;
+                }
+                if (bKinematic)
+                {
+                    auto* platformBody = ctx.WorldRef.CreateComponent<P::RigidBodyComponent>(entity);
+                    if (!platformBody || platformBody->SetBodyType(P::EPhysicsBodyType::Kinematic) !=
+                                             P::EPhysicsResult::Success)
+                    {
+                        return nullptr;
+                    }
+                }
+                return entity;
+            };
+            constexpr float degreesToRadians = 3.14159265358979323846f / 180;
+            if (!addBox(Course::Runway, M::Quaternion(), data.Materials[0], false) ||
+                !addBox(Course::LowStep, M::Quaternion(), data.Materials[1], false) ||
+                !addBox(Course::HighStep, M::Quaternion(), data.Materials[1], false) ||
+                !addBox(Course::LowSlope.Box(),
+                        M::Quaternion(M::Vector3::UnitX, -Course::LowSlope.AngleDegrees * degreesToRadians),
+                        data.Materials[1], false) ||
+                !addBox(Course::HighSlope.Box(),
+                        M::Quaternion(M::Vector3::UnitX, -Course::HighSlope.AngleDegrees * degreesToRadians),
+                        data.Materials[1], false))
+            {
+                return GameModeEnterResult::Failed;
+            }
+            auto* platform = addBox(Course::Platform.Box, M::Quaternion(), data.Materials[2], true);
+            if (!platform)
+            {
+                return GameModeEnterResult::Failed;
+            }
+            data.PlatformId = platform->GetObjectId();
+        }
         driver->BindInput(&mapper);
         follow->BindInput(&mapper);
         follow->BindSceneQuery(&ctx.EngineRef.GetSceneQuery());
@@ -240,6 +384,8 @@ namespace Game::GameModes
                                 int(step == state->PreviousBodyStep), int(cameraAdvanced),
                                 static_cast<unsigned>(follow->GetLastCollisionResult()));
                 state->ObservedStop = true;
+                if (state->TrackingAutopilotHitstop)
+                    state->AutopilotStop = true;
             }
             else if (!stopped && state->ObservedStop && step > state->PreviousBodyStep)
             {
@@ -248,6 +394,8 @@ namespace Game::GameModes
                                 "physics_ns=%lld",
                                 int(cameraAdvanced), static_cast<long long>(times.PhysicsDeltaNanoseconds));
                 state->ObservedStop = false;
+                if (state->TrackingAutopilotHitstop)
+                    state->AutopilotResumed = true;
             }
             state->PreviousBodyStep = step;
             state->PreviousCameraTick = cameraTick;
@@ -258,11 +406,36 @@ namespace Game::GameModes
         if (!camera->BuildCameraProxy(initial))
             return GameModeEnterResult::Failed;
         ctx.EngineRef.GetRenderWorld().SetMainCamera(initial);
+        if (data.bAutopilot)
+        {
+            data.Runner = Container::MakeUnique<DogMovementAutopilotRunner>();
+            if (!data.Runner->Initialize(ctx, data))
+                return GameModeEnterResult::Failed;
+        }
         succeeded = true;
         return GameModeEnterResult::Succeeded;
     }
     void DogMovementSmokeRoutine::Tick(GameModeContext& ctx, DogMovementSmokeData& data, float)
     {
+        if (data.Runner)
+            data.Runner->Tick(ctx, data);
+        if (data.bAutopilot)
+        {
+            namespace Course = DogMovementAutopilot;
+            // GameModeのdtは倍率なしのため、ヒットストップで止まるWorld時間を使う。
+            data.PlatformTime += ctx.EngineRef.GetTimeSystem().GetFrameTimes().World;
+            if (auto* platform = ctx.WorldRef.FindEntityByObjectId(data.PlatformId))
+            {
+                constexpr double pi = 3.14159265358979323846;
+                const float wave = static_cast<float>(std::sin(2 * pi * data.PlatformTime /
+                                                               Course::Platform.PeriodSeconds));
+                const float yaw = static_cast<float>(std::fmod(data.PlatformTime * Course::Platform.YawDegreesPerSecond,
+                                                               360.0) * pi / 180.0);
+                platform->SetPosition(Course::Platform.Box.Center.ToVector3() +
+                                      Course::Platform.TranslationAmplitude.ToVector3() * wave);
+                platform->SetRotation(M::Quaternion(M::Vector3::UnitY, yaw));
+            }
+        }
         if (auto slot = data.LateSlot.lock())
             slot->Arm(data.LateState);
         // 比較用にBiteの押下で100ms停止する。噛みつきの本実装ではなく、Camera/Input継続の確認用。
