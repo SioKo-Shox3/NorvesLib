@@ -9572,3 +9572,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 EncounterService にセンサーが Engaged の領域の中にいるかの照会を足す: 着地(直し 0 回)
 - U6 U3 の差分(保存したパッチ)を当て直して確かめる: 着地(直し 0 回)
 - U4 InteractionPromptTest を足す: 着地(直し 0 回)
+- U5 Game が InputMapper の Interact を InteractionService につなぎ、タスクの verify を通す: 着地(直し 0 回)
