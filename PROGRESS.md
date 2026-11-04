@@ -9449,3 +9449,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 試験の土台・CMake の登録・CombatLayerTest: 着地(直し 0 回)
 - U5 CombatMultiHitTest: 着地(直し 0 回)
 - U4 CombatFrameRateInvarianceTest: 着地(直し 1 回)
+- U6 CombatLifecycleTest: 着地(直し 1 回)
