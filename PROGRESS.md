@@ -9673,3 +9673,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G2-GR82-B4-STATIC-ROOT-FRAME128-P1 反復 3): 判断役の決定に従い、前提の項目 G2-GR82-B4-STATIC-ROOT-FRAME128-P2(管理更新の workspace と祖先の列挙を読み流しにし、利用者の TEMP のまま CookManagedUpdateTest・TextureManagedCliTest を通す)を P1 の前に置き、P1 に after を足した。P1 のコードは変えず、P2 の統合後に verify だけ回し直して done にする。
 
 - 要起票: G2-GR82-B4-STATIC-ROOT-FRAME128-P2 管理更新の workspace と祖先の列挙を、項目数で失敗しない形にする(ワーカーが TASKS.md に足した見出しを、統合の前に提案へ移した)
+
+## 2026-11-04 G2-GR82-B4-STATIC-ROOT-FRAME128-P1（run 20261104-185217 の反復 1、完了）
+
+- Done: `ObserveLocked` の祖先(workspace〜ボリュームの根)の列挙を、固定名 `StoreLeaf` と長名か short alias で fold 一致する項目だけ残す読み流しにし、claim の照合は claim の長名だけ残す列挙にした(`CookManagedStoreNative.h` の `EnumerateKept`)。`CookManagedStoreObservationTest` に混んだ祖先(空ファイル 16385 個)の 2 件を足し、`CookManagedStoreObservation.md` の列挙と上限の節を直した。前提の G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の統合後の版で、コードは変えずに verify を回し直した。
+- 証拠: `.harness/runs/20261104-185217/verify-FRAME128-P1.txt`(TEMP・TMP は差し替えず、TEMP 直下 133968 件。Debug の CookedMeshTest のビルド BUILD_EXIT=0。ctest 6 本 100% Passed、`CookManagedStoreObservationTest` 28.66 秒・`CookManagedUpdateTest` 81.04 秒を含む。CTEST_EXIT=0)。
+- Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに書き換えられて MSBuild がスイッチの誤りで止まる。verify は PowerShell(か cmd)で回す。
+- Notes: アプリを起動する確かめは無い。
+- Next: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の Notes の `要起票:`(`CookManagedBootstrap.cpp:457` の workspace を親にする `Absent`)は未起票のまま。
