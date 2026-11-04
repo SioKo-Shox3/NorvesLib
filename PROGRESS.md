@@ -9725,3 +9725,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに書き換えられて MSBuild がスイッチの誤りで止まる。verify は PowerShell(か cmd)で回す。
 - Notes: アプリを起動する確かめは無い。
 - Next: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1 の Notes の `要起票:`(`CookManagedBootstrap.cpp:457` の workspace を親にする `Absent`)は未起票のまま。
+
+- U1 EnemyDefinition の型と JSON の読み込み・検証: 着地(直し 0 回)
+- U7 攻撃のパターンの選択と乱数のシード(レビュー済みの差分を当て直す): 着地(直し 0 回)
+- U3 IEnemyAnimator の継ぎ目と AnimatorComponent への写し: 着地(直し 0 回)
+- U4 EnemyComponent の基底(状態の遷移・攻撃・崩れ・領域の気づき): 着地(直し 0 回)
+- U5 2 段の撃破・最後のシ者の Dormant・ResetPolicy: 着地(直し 1 回)
+- Notes: 撃破の完了(EnemyComponent::OnDefeatCompleted と破棄の予約)は、領域の Cleared が次の領域の評価で確定してから次の TickEnemy で配る(MarkCleared が次の評価まで保留されるため)。配送中の購読の解除は Target を空にするだけで Remove しない(MulticastDelegate::Broadcast が配列を直接回すため)。
+- 要起票: Core の MulticastDelegate::Broadcast が配送中の Remove に耐えない(購読の配列を直接回す)。EnemyComponent は側で避けたが、ほかの購読者にも同じ穴がある。
+- U6 Game の ShishaComponent・仮の定義・Tick の表: 着地(直し 0 回)
+## 2026-11-04 G8-GR17-ENEMY-COMPONENT（run 20261104-182214 の反復 5、完了）
+- Done: `EnemyDefinition`（`Assets/Gameplay/enemies/*.enemy.json` の読み込みと、必須の欠落・未知の参照・負の重み・距離帯の矛盾・未知のキーをファイルとキーのパス付きで拒否する検証）、`EnemyPatternSelector`（重み付きの乱数・直前のペナルティ・クールダウン・距離帯。シードは run seed と EnemyId の FNV-1a）、`IEnemyAnimator` と `AnimatorComponent` への写し、`EnemyComponent`（Dormant → Idle → Alerted → Attack → Collapsed → Defeated を `TStateMachine` で持ち、hitWindow のフェーズで BeginAttack / EndAttack、Exit で必ず EndAttack、崩れの条件は既定 stagger で healthBelow・partHits も選べる、時計は World のチャンネル）、2 段の撃破（OnDefeatStarted → DefeatGate → ProgressionState → MarkCleared → OnDefeatCompleted → MarkForDestroy）、`bIsFinal` の未解放の間の Dormant、OnZoneReset の ResetPolicy を Gameplay モジュールに足した。Game に `ShishaComponent`（Initialize で自分の型の Tick を Default 群に登録）と `shisha_human_01.enemy.json` を足し、`TickStages.md` の割当表に 2 型を載せた。
+- 証拠: `.harness/runs/20261104-182214/verify-G8-GR17-ENEMY-COMPONENT-U6.txt`（Game・PhysicsDynamicsTest の Debug ビルド EXIT_CODE 0、ctest で EnemyStateMachineTest・EnemyPatternSelectionTest・EnemyDefinitionLoadTest・ProgressionStateTest・HealthComponentTest・DefeatGateTest・EncounterZoneTest・CombatLifecycleTest・PhysicsDynamicsTest の 9 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命: 撃破の直後の破棄の順・配送中の購読の解除）。
+- Notes: 起動の要る確かめは無い（シーンに敵は置いていない。垂直スライスは G8-GR17-SLICE-SMOKE）。ShishaComponent の Tick は Initialize での登録のため、World の Tick の収集中に初期化された最初のフレームは動かず、次のフレームから動く。

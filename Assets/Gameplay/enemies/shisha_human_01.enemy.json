@@ -1,0 +1,93 @@
+{
+  "id": "shisha.human_01",
+  "archetype": "humanoid_medium",
+  "isFinal": false,
+  "maxHealth": 300,
+  "staggerThreshold": 100,
+  "animMachine": "Main",
+  "animStates": {
+    "idle": "Idle",
+    "alerted": "Alert",
+    "collapsed": "Collapse",
+    "recover": "Recover",
+    "defeated": "Defeat"
+  },
+  "attackProfiles": [
+    {
+      "id": "shisha.human_01.slash",
+      "damage": 20,
+      "stagger": 15,
+      "maxDurationSeconds": 0.25,
+      "hitStopSeconds": 0.05
+    },
+    {
+      "id": "shisha.human_01.thrust",
+      "damage": 35,
+      "stagger": 25,
+      "maxDurationSeconds": 0.3,
+      "hitStopSeconds": 0.08
+    }
+  ],
+  "patterns": [
+    {
+      "id": "slash",
+      "animState": "AttackSlash",
+      "attackProfileId": "shisha.human_01.slash",
+      "minDistance": 0,
+      "maxDistance": 2.5,
+      "weight": 2,
+      "cooldownSeconds": 1.5,
+      "phases": [
+        {
+          "id": "windup",
+          "seconds": 0.4,
+          "hitWindow": false
+        },
+        {
+          "id": "active",
+          "seconds": 0.25,
+          "hitWindow": true
+        },
+        {
+          "id": "recovery",
+          "seconds": 0.5,
+          "hitWindow": false
+        }
+      ]
+    },
+    {
+      "id": "thrust",
+      "animState": "AttackThrust",
+      "attackProfileId": "shisha.human_01.thrust",
+      "minDistance": 1.5,
+      "maxDistance": 5,
+      "weight": 1,
+      "cooldownSeconds": 3,
+      "phases": [
+        {
+          "id": "windup",
+          "seconds": 0.7,
+          "hitWindow": false
+        },
+        {
+          "id": "active",
+          "seconds": 0.3,
+          "hitWindow": true
+        },
+        {
+          "id": "recovery",
+          "seconds": 0.8,
+          "hitWindow": false
+        }
+      ]
+    }
+  ],
+  "collapse": {
+    "condition": "stagger",
+    "recoverSeconds": 2.5
+  },
+  "defeat": {
+    "holdSeconds": 2.0
+  },
+  "defeatResponses": []
+}
