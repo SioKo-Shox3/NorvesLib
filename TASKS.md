@@ -10047,7 +10047,8 @@
 - notes: 要件 `#### GR112` の受け入れ確認 A3・A4・A6・A7・A8・A11（ロードマップ 4070〜4078 行）。ロードマップは A3 を Release でも回すと書くが、`--debug-crash` は開発ビルドだけ（G19-GR112-CRASH-HANDLERS の決定。AGENTS.md の絶対規則 8）なので、故意のクラッシュは RelWithDebInfo で回し、Release は動くことまで。A9（Release で 5 分走らせたログの量）は Release にログが無いので回さない。stack-overflow と abort の捕捉が実機で効かないとき（ロードマップ 4167 行の未確認）は、効いた範囲と効かない理由を `CrashReporting.md` に書き、直せるものは直す。報告の窓は `--no-dialog` で抑えて回す（利用者の画面に窓を出さない）。GPU の時間は測らない。
 
 ## G19-GR112-GPU-FAULT-CHECK: 故意の GPU の fault で device lost を起こし、fault の情報と最後に着いたパスが報告に残ることを実機で確かめる
-- status: todo
+- status: backlog
+- parked: GPU のデバイスロストをわざと起こすので、ドライバのやり直し(TDR)が同じ PC のほかのアプリ(ゲームなど)を落としうる。起動を戻しても自動では回さず、人が PC を使ってよいと言ったときに todo へ戻す
 - after: G19-GR112-GPU-LOST
 - gr: GR112
 - check: launch
