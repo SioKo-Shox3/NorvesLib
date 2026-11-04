@@ -9444,3 +9444,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-082804/verify-G4-GR06-CLING-LOCKON-U5.txt`（PhysicsDynamicsTest・LoggerSinkTest・Game の Debug ビルド終了コード 0、ctest で FollowCameraBehaviorTest・CriticalDampingTest・CameraCollisionSolverTest・PhysicsFixedStepPipelineTest の 4 件 Passed。出力: 上方向の最大偏差 0 度、低域通過の最大角速度 2.11 度/秒・振幅 0.224 度、出入りの最大角速度差 1.50 度/秒・上限越えの入りの最大角速度 90 度/秒・ロックオン中の入りの最大角速度差 1.50 度/秒）。
 - Next: ランナーの評価者の反証（前回の指摘への対応差分）。
 - Notes: 残課題（直していない）: 抜けの継続が終わった後、ヨーの戻しとロックオンの向けは速度 0 から通常の減衰で再開するので、その瞬間の角速度の差は上限×dt を越えうる（40° ずれたロックオンで約 10 度/秒）。しがみつき中は加速も上限×dt で抑えるので、静止から 90° 先へ向けると行き過ぎる。関節を見失ったフレームはその場でロックを外す（旧はそのフレームだけ Entity の位置で構図を取った）。`SetLockOnTarget(nullptr)` は `m_YawVelocity` を 0 に戻さない（呼び出し元は無い）。起動の要る確かめは無い。
+- U1 形状の判定の純関数・ヒステリシスの状態機械・ZoneProfileStack: 着地(直し 0 回)

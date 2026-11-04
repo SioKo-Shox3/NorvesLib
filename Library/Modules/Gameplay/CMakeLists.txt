@@ -7,6 +7,8 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Progression/GameplayStableId.h
     Public/Gameplay/Progression/ProgressionState.h
     Public/Gameplay/Progression/DefeatGate.h
+    Public/Gameplay/World/EncounterZoneTypes.h
+    Public/Gameplay/World/ZoneProfileStack.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
@@ -16,6 +18,9 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Progression/DefeatGate.cpp
     Private/Gameplay/Combat/CombatGeometry.h
     Private/Gameplay/Combat/CombatGeometry.cpp
+    Private/Gameplay/World/EncounterZoneMath.h
+    Private/Gameplay/World/EncounterZoneMath.cpp
+    Private/Gameplay/World/ZoneProfileStack.cpp
     Private/Gameplay/GameplayModule.h
     Private/Gameplay/GameplayModule.cpp
 )
