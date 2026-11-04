@@ -9639,3 +9639,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 測った量: ルート移動は 72 フレーム（固定の段 0・1・2 が 24 フレームずつ）で Animator の差分 1.200000018 m・本体 1.199999809 m・差 2.1e-7 m。Procedural へ戻した後は半段の残りを捨てて入力の向きへ 8 フレームで 0.043 m 進み、Animation へ戻した最初のフレームの差は 2e-9 m。同じフレームのカメラは 72 フレーム（α 0 が 24・中間が 48）で注視点と描画の位置 + オフセットの最大差 2.4e-7 m、描画が動いた 26 フレームで前のフレームの描画の位置との差は最小 0.002 m（遅れがあれば合わない形で比べた）
 - Notes: ルート移動のケースは衝突の無い直進のルートだけを見る（壁に当たったときのルートの差分の扱いは試験していない）。同じフレームのカメラは平滑 0・壁なしの組だけで、平滑ありと衝突で腕が縮む組は既存の TestFollowCameraRenderBinding に任せる。アプリを起動する確かめは無い
 - Next: G4-GR05-COMPONENT-CASES を after に持つ項目（G4-GR07 の犬の受け入れなど）
+
+## 2026-11-04 G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1（run 20261104-182212 の反復 1、完了）
+
+- Done: 判断役の判断(選択肢 2)に従い、コードは変えずに統合ブランチ `feature/scene-launcher` の取り込み後の版で 5 本の verify を回し、`status: done` にした。`OpenStore` の祖先・`VerifyClaims` の workspace・workspace を親にする `Find`/`Absent` の列挙は、前の反復で一致する項目だけを残す読み流しにしてある。
+- 証拠: `.harness/runs/20261104-182212/verify-FRAME128-P1-P1.txt`(TEMP・TMP は差し替えず、TEMP 直下 133940 件。Debug の CookedMeshTest のビルド BUILD_EXIT=0。ctest 5 本 100% Passed、`CookManagedUpdateTest` 83.32 秒・`TextureManagedCliTest` 15.36 秒を含む。CTEST_EXIT=0)。
+- Notes: `CookManagedStoreObservationTest` の確かめは、親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の 6 本の verify が受け持つ。親が統合されるまで、統合ブランチの上ではこの試験が利用者の TEMP で `entry_limit` によって落ちたまま残る(今と同じ状態)。
+- Notes: この項目の verify を 6 本から 5 本にしたのは、ワーカーではなく判断役が統合ブランチ側の TASKS.md で書き換えたもの。
+- Notes: 要起票: `CookManagedBootstrap.cpp:457` の workspace を親にする `Absent` が全件をためる列挙のまま(この項目の paths の外)。
+- Next: 親 G2-GR82-B4-STATIC-ROOT-FRAME128-P1 の `after` が解けたら、統合ブランチを取り込んで 6 本の verify で完了を確かめる。
