@@ -9557,3 +9557,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: `Scripts/CookAssets.ps1` の変更検出は spec と高さファイルだけを見て、ペイントの PNG を見ない（ペイントだけ変えると `-Force` が要る。AssetCook の source_hash はペイントを含む）。
 - U1 private SPI にループ・音量・周波数比・出力係数・一時停止を足し、XAudio2 と fake を同じ変更で直す: 着地(直し 1 回)
 - U2 IAudioService と AudioTypes に追加だけで公開 API を足し、ドメインで実装する: 着地(直し 0 回)
+- U3 AudioPlaybackTest を足し、タスクの verify を通す: 着地(直し 0 回)
