@@ -9687,3 +9687,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 PoseModifierContext に世界変換・駆動の信号・所有者・関節名の解決・重みの口を足す: 着地(直し 0 回)
 - U2 新しいソースの置き場（空の雛形）と CMake・試験の main の登録: 着地(直し 0 回)
 - U3 モデル空間の回転を関節チェーンへ配る AngleDistribution: 着地(直し 0 回)
+- U4 減衰振動のばねと角度のばね（固定サブステップのアキュムレータ）: 着地(直し 0 回)
