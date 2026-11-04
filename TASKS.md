@@ -5441,7 +5441,7 @@
 - notes: 設計はロードマップ 807〜853 行（GR42 の 1・3・4）。草は Entity にも MeshProxy にもしない（毎フレームの全 Entity の同期と CPU のカリングに数十万本は載らない。ロードマップ 807 行）。今ある草（荒野の枯れ草の株。`Game/GameModes/Wasteland/WastelandFoliage.{h,cpp}` の `FoliageScatter` が高さ場と地表の分類の地図から区画ごとに株のインスタンスを CPU で作り、`RenderWorld::SetFoliage` で `FoliagePass` へ渡す）は Game 側の手続きの散布で、密度・高さ・種別の場も CPU のクエリも無い。この項目はそれを置き換えず、荒野は今のまま。種別 ID を 6bit にするのは GR43 のブレードの記録の割り付けのため（ロードマップ 1280 行）。地面の高さの取り出し口は `IGroundHeightSource` に統一し、地形への差し替え（TerrainSystem）は G5-GR42-GRASS-FIELD-ASSET で行う（ロードマップ 1279 行）。遮蔽の「見えない」のしきい値と意味は GR24（G13）が決める（選定課題 G13-S4 の推奨 (A): GR24 が `QueryOcclusion` を呼ぶ。ロードマップ 4560 行）。踏み倒し（GR44）と枯れ度（GR45）は別の系統で、草の場の本体を書き換えない。試験を足す理由: 継ぎ目・範囲外・遮蔽の積分の誤りは描画に出ず（クエリは知覚・足音・カメラが使う）、黙って AI の視界やカメラの持ち上げを狂わせる。SceneRevision に入れると RTGI の履歴が草の差し替えで捨てられ、絵では気づきにくい。危険地帯（Public API・RenderThread のデータ契約）なので評価者を通す。
 
 ## G8-GR16-COMBAT-RUNTIME: hitbox・hurtbox・判定窓・多段ヒット防止・通知を、1 フレーム 1 回の評価でつなぐ
-- status: done
+- status: doing
 - after: G8-GR16-GAMEPLAY-MODULE, G1-GR01-TICK-CONTRACT-DOC, G3-GR11-EVENT-PROPERTIES
 - gr: GR16
 - needs-gr: GR01, GR11
