@@ -693,11 +693,338 @@ namespace
         std::cout << Utf8(u8"(f) 8bit 警告、16bit 指定と不正寸法の拒否を確認\n");
     }
 
+    constexpr uint32_t MaskSide = 33;
+    constexpr uint32_t MaskTileSide = CookTileCells + 1;
+
+    void WriteMaskPaint(const ByteArray& pixels)
+    {
+        CHECK(pixels.size() == MaskSide * MaskSide);
+        ByteArray png;
+        CHECK(stbi_write_png_to_func(AppendPngBytes, &png, MaskSide, MaskSide, 1, pixels.data(), MaskSide) != 0);
+        WriteTerrainFile(TerrainTempRoot / "mask-road.png", Span<const uint8_t>(png));
+    }
+
+    CookedTerrainData ParseMaskTerrain(const TerrainSpecCookResult& cooked)
+    {
+        auto parsed = ParseCookedTerrain(AssetBlob::CopyBytes(Span<const uint8_t>(cooked.Build.NvtrnBytes)));
+        CHECK(parsed.Succeeded());
+        CHECK(parsed.Terrain.TileCells == CookTileCells);
+        CHECK(parsed.Terrain.TileCountX == 2 && parsed.Terrain.TileCountZ == 2);
+        return std::move(parsed.Terrain);
+    }
+
+    uint32_t MaskTileIndex(const CookedTerrainData& terrain, uint32_t tx, uint32_t tz)
+    {
+        uint32_t index = 0;
+        CHECK(terrain.FindTile(tx, tz, &index) != nullptr);
+        return index;
+    }
+
+    VariableArray<ByteArray> ReadMaskLayer(const CookedTerrainData& terrain, AssetPackageFourCC fourCC,
+                                          CookedTexturePixelFormat format, uint32_t channels)
+    {
+        const int32_t layer = terrain.FindLayer(fourCC);
+        CHECK(layer >= 0);
+        VariableArray<ByteArray> result(terrain.Tiles.size());
+        for (uint32_t tile = 0; tile < terrain.Tiles.size(); ++tile)
+        {
+            const auto texture = ParseCookedTexture(terrain.GetLayerBlob(tile, static_cast<uint32_t>(layer)), false);
+            CHECK(texture.Succeeded());
+            CHECK(texture.Texture.PixelFormat == format && texture.Texture.ColorSpace == CookedTextureColorSpace::Linear);
+            CHECK(texture.Texture.Width == MaskTileSide && texture.Texture.Height == MaskTileSide);
+            const auto mip = texture.Texture.GetMipBytes(0);
+            CHECK(mip.size() == static_cast<size_t>(MaskTileSide) * MaskTileSide * channels);
+            result[tile].resize(mip.size());
+            std::memcpy(result[tile].data(), mip.data(), mip.size());
+        }
+        return result;
+    }
+
+    uint8_t MaskSample(const CookedTerrainData& terrain, const VariableArray<ByteArray>& layer,
+                       uint32_t x, uint32_t z, uint32_t channels, uint32_t channel)
+    {
+        CHECK(x < MaskSide && z < MaskSide && channel < channels);
+        const uint32_t tx = std::min(x / CookTileCells, terrain.TileCountX - 1);
+        const uint32_t tz = std::min(z / CookTileCells, terrain.TileCountZ - 1);
+        const uint32_t localX = x - tx * CookTileCells;
+        const uint32_t localZ = z - tz * CookTileCells;
+        const uint32_t tile = MaskTileIndex(terrain, tx, tz);
+        return layer[tile][(static_cast<size_t>(localZ) * MaskTileSide + localX) * channels + channel];
+    }
+
+    void CheckTerrainMasks()
+    {
+        ByteArray flat(MaskSide * MaskSide * 2);
+        ByteArray slope(flat.size());
+        ByteArray valley(flat.size());
+        ByteArray paint(MaskSide * MaskSide);
+        constexpr uint32_t valleyX = 16;
+        for (uint32_t z = 0; z < MaskSide; ++z)
+        {
+            for (uint32_t x = 0; x < MaskSide; ++x)
+            {
+                const size_t index = static_cast<size_t>(z) * MaskSide + x;
+                WriteLe16(flat, index * 2, 40);
+                WriteLe16(slope, index * 2, static_cast<uint16_t>(x * x));
+                const uint32_t distance = x < valleyX ? valleyX - x : x - valleyX;
+                WriteLe16(valley, index * 2, static_cast<uint16_t>(distance * 100 + z * 3));
+                paint[index] = x >= 10 && x <= 22 && z >= 10 && z <= 22 ? 255 : 0;
+            }
+        }
+        WriteTerrainFile(TerrainTempRoot / "mask-flat.raw", Span<const uint8_t>(flat));
+        WriteTerrainFile(TerrainTempRoot / "mask-slope.raw", Span<const uint8_t>(slope));
+        WriteTerrainFile(TerrainTempRoot / "mask-valley.raw", Span<const uint8_t>(valley));
+        WriteMaskPaint(paint);
+
+        constexpr const char* flatSource = "\"path\":\"mask-flat.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"little\"";
+        constexpr const char* slopeSource = "\"path\":\"mask-slope.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"little\"";
+        constexpr const char* valleySource = "\"path\":\"mask-valley.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"little\"";
+        constexpr const char* slopeRecipe =
+            ",\"recipe\":{\"dry_grass\":{\"base\":0.5,\"noise\":{\"amplitude\":0.4,\"scale_m\":7}},"
+            "\"splat\":{\"layers\":["
+            "{\"name\":\"soil\",\"noise\":{\"amplitude\":0.8,\"scale_m\":7}},"
+            "{\"name\":\"sand\",\"noise\":{\"amplitude\":0.6,\"scale_m\":11}},"
+            "{\"name\":\"clay\"},{\"name\":\"moss\"},{\"name\":\"rock\"},"
+            "{\"name\":\"snow\"},{\"name\":\"ash\"},{\"name\":\"peat\"}]},"
+            "\"paint\":[{\"target\":\"road\",\"path\":\"mask-road.png\",\"mode\":\"override\"}]}";
+        constexpr const char* flatRecipe =
+            ",\"recipe\":{\"wetness\":{\"flow_weight\":0,\"low_weight\":0,\"concave_weight\":0},"
+            "\"paint\":[{\"target\":\"road\",\"path\":\"mask-road.png\",\"mode\":\"override\"}]}";
+        constexpr const char* valleyRecipe =
+            ",\"recipe\":{\"wetness\":{\"flow_weight\":1,\"low_weight\":0,\"concave_weight\":0}}";
+
+        const auto slopeSpec = WriteTerrainSpec("mask-slope.json", slopeSource, "\"scale_m\":0.05,\"offset_m\":0", 1.0, 17, slopeRecipe);
+        const auto slopeFirst = CookTerrainChecked(slopeSpec);
+        WriteTerrainSpec("mask-slope.json", slopeSource, "\"scale_m\":0.05,\"offset_m\":0", 1.0, 99, slopeRecipe);
+        const auto slopeSecond = CookTerrainChecked(slopeSpec);
+        const auto flatSpec = WriteTerrainSpec("mask-flat.json", flatSource, "\"scale_m\":0.05,\"offset_m\":0", 1.0, 1, flatRecipe);
+        const auto flatCooked = CookTerrainChecked(flatSpec);
+        const auto valleyCooked = CookTerrainChecked(WriteTerrainSpec("mask-valley.json", valleySource,
+            "\"scale_m\":0.01,\"offset_m\":0", 1.0, 1, valleyRecipe));
+
+        const auto slopeTerrain = ParseMaskTerrain(slopeFirst);
+        const auto mask = ReadMaskLayer(slopeTerrain, TerrainMaskLayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        const auto splat0 = ReadMaskLayer(slopeTerrain, TerrainSplat0LayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        const auto splat1 = ReadMaskLayer(slopeTerrain, TerrainSplat1LayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        const auto grass = ReadMaskLayer(slopeTerrain, TerrainGrassLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+
+        for (uint32_t tile = 0; tile < slopeTerrain.Tiles.size(); ++tile)
+        {
+            for (size_t pixel = 0; pixel < MaskTileSide * MaskTileSide; ++pixel)
+            {
+                unsigned sum = 0;
+                for (uint32_t channel = 0; channel < 4; ++channel)
+                {
+                    sum += splat0[tile][pixel * 4 + channel];
+                    sum += splat1[tile][pixel * 4 + channel];
+                }
+                if (sum < 254 || sum > 256)
+                {
+                    std::cerr << Utf8(u8"スプラット合計不一致 tile=") << tile << Utf8(u8" 画素=") << pixel
+                              << Utf8(u8" 合計=") << sum << "\n";
+                }
+                CHECK(sum >= 254 && sum <= 256);
+                for (uint32_t channel = 0; channel < 4; ++channel)
+                {
+                    CHECK(splat0[tile][pixel * 4 + channel] > 0 && splat1[tile][pixel * 4 + channel] > 0);
+                }
+            }
+        }
+        std::cout << Utf8(u8"マスク (a) 全タイルのスプラット 8 チャンネルの合計を確認\n");
+
+        const auto flatTerrain = ParseMaskTerrain(flatCooked);
+        const auto flatMask = ReadMaskLayer(flatTerrain, TerrainMaskLayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        const auto flatGrass = ReadMaskLayer(flatTerrain, TerrainGrassLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+        bool bGrassOutside = false;
+        for (uint32_t tz = 0; tz < flatTerrain.TileCountZ; ++tz)
+        {
+            for (uint32_t tx = 0; tx < flatTerrain.TileCountX; ++tx)
+            {
+                const uint32_t tile = MaskTileIndex(flatTerrain, tx, tz);
+                for (uint32_t z = 0; z < MaskTileSide; ++z)
+                {
+                    for (uint32_t x = 0; x < MaskTileSide; ++x)
+                    {
+                        const uint32_t gx = tx * CookTileCells + x;
+                        const uint32_t gz = tz * CookTileCells + z;
+                        const size_t pixel = static_cast<size_t>(z) * MaskTileSide + x;
+                        const uint8_t road = paint[static_cast<size_t>(gz) * MaskSide + gx];
+                        const uint8_t density = flatGrass[tile][pixel];
+                        if (flatMask[tile][pixel * 4 + 2] != road || (road == 255 && density != 0))
+                        {
+                            std::cerr << Utf8(u8"道路マスク不一致 x,z=") << gx << "," << gz
+                                      << Utf8(u8" 道=") << unsigned(flatMask[tile][pixel * 4 + 2])
+                                      << Utf8(u8" 期待=") << unsigned(road) << Utf8(u8" 草=") << unsigned(density) << "\n";
+                        }
+                        CHECK(flatMask[tile][pixel * 4 + 2] == road);
+                        CHECK(road != 255 || density == 0);
+                        bGrassOutside = bGrassOutside || (road == 0 && density > 0);
+                    }
+                }
+            }
+        }
+        CHECK(bGrassOutside);
+        std::cout << Utf8(u8"マスク (b) 道路ペイント内の草抑制と平坦な外側の草を確認\n");
+
+        bool bRockZero = false;
+        bool bRockFull = false;
+        for (uint32_t z = 0; z < MaskSide; ++z)
+        {
+            uint8_t previous = 0;
+            for (uint32_t x = 0; x < MaskSide; ++x)
+            {
+                const uint8_t rock = MaskSample(slopeTerrain, mask, x, z, 4, 3);
+                if (x > 0 && rock < previous)
+                {
+                    std::cerr << Utf8(u8"岩の単調性不一致 x,z=") << x << "," << z
+                              << Utf8(u8" 前=") << unsigned(previous) << Utf8(u8" 現在=") << unsigned(rock) << "\n";
+                }
+                CHECK(x == 0 || rock >= previous);
+                previous = rock;
+                bRockZero = bRockZero || rock == 0;
+                bRockFull = bRockFull || rock == 255;
+            }
+        }
+        CHECK(bRockZero && bRockFull);
+        std::cout << Utf8(u8"マスク (c) 傾斜に対する岩の単調性と両端の値を確認\n");
+
+        const auto valleyTerrain = ParseMaskTerrain(valleyCooked);
+        const auto valleyMask = ReadMaskLayer(valleyTerrain, TerrainMaskLayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        bool bLowerSample = false;
+        for (uint32_t z = 1; z + 1 < MaskSide; ++z)
+        {
+            const uint8_t center = MaskSample(valleyTerrain, valleyMask, valleyX, z, 4, 0);
+            for (uint32_t x = 0; x < MaskSide; ++x)
+            {
+                const uint8_t wet = MaskSample(valleyTerrain, valleyMask, x, z, 4, 0);
+                if (wet > center)
+                {
+                    std::cerr << Utf8(u8"谷の湿り不一致 x,z=") << x << "," << z
+                              << Utf8(u8" 湿り=") << unsigned(wet) << Utf8(u8" 谷=") << unsigned(center) << "\n";
+                }
+                CHECK(wet <= center);
+                bLowerSample = bLowerSample || wet < center;
+            }
+        }
+        CHECK(bLowerSample);
+        CHECK(MaskSample(valleyTerrain, valleyMask, valleyX, 1, 4, 0) >
+              MaskSample(valleyTerrain, valleyMask, valleyX, MaskSide - 3, 4, 0));
+        std::cout << Utf8(u8"マスク (d) 各行の湿りの最大が谷線上にあることを確認\n");
+
+        const auto secondTerrain = ParseMaskTerrain(slopeSecond);
+        const auto secondMask = ReadMaskLayer(secondTerrain, TerrainMaskLayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        const auto secondSplat = ReadMaskLayer(secondTerrain, TerrainSplat0LayerFourCC, CookedTexturePixelFormat::RGBA8UNorm, 4);
+        const auto secondGrass = ReadMaskLayer(secondTerrain, TerrainGrassLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+        const std::array<AssetPackageFourCC, 2> fixedLayers = {HeightLayerFourCC, TerrainNormalLayerFourCC};
+        bool bDryChanged = false;
+        bool bSplatChanged = false;
+        for (uint32_t tz = 0; tz < slopeTerrain.TileCountZ; ++tz)
+        {
+            for (uint32_t tx = 0; tx < slopeTerrain.TileCountX; ++tx)
+            {
+                const uint32_t firstTile = MaskTileIndex(slopeTerrain, tx, tz);
+                const uint32_t secondTile = MaskTileIndex(secondTerrain, tx, tz);
+                for (const auto fourCC : fixedLayers)
+                {
+                    const int32_t firstLayer = slopeTerrain.FindLayer(fourCC);
+                    const int32_t secondLayer = secondTerrain.FindLayer(fourCC);
+                    CHECK(firstLayer >= 0 && secondLayer >= 0);
+                    const auto firstBlob = slopeTerrain.GetLayerBlob(firstTile, static_cast<uint32_t>(firstLayer));
+                    const auto secondBlob = secondTerrain.GetLayerBlob(secondTile, static_cast<uint32_t>(secondLayer));
+                    CHECK(firstBlob.IsValid() && secondBlob.IsValid() && firstBlob.GetSize() == secondBlob.GetSize());
+                    CHECK(std::memcmp(firstBlob.GetData(), secondBlob.GetData(), firstBlob.GetSize()) == 0);
+                }
+                CHECK(grass[firstTile] == secondGrass[secondTile]);
+                for (size_t pixel = 0; pixel < MaskTileSide * MaskTileSide; ++pixel)
+                {
+                    for (uint32_t channel : {0u, 2u, 3u})
+                    {
+                        const uint8_t first = mask[firstTile][pixel * 4 + channel];
+                        const uint8_t second = secondMask[secondTile][pixel * 4 + channel];
+                        if (first != second)
+                        {
+                            std::cerr << Utf8(u8"seed による固定マスクの不一致 tile=") << tx << "," << tz
+                                      << Utf8(u8" 画素=") << pixel << Utf8(u8" チャンネル=") << channel
+                                      << Utf8(u8" 値=") << unsigned(first) << "," << unsigned(second) << "\n";
+                        }
+                        CHECK(first == second);
+                    }
+                    bDryChanged = bDryChanged || mask[firstTile][pixel * 4 + 1] != secondMask[secondTile][pixel * 4 + 1];
+                    for (uint32_t channel = 0; channel < 4; ++channel)
+                    {
+                        bSplatChanged = bSplatChanged || splat0[firstTile][pixel * 4 + channel] != secondSplat[secondTile][pixel * 4 + channel];
+                    }
+                }
+            }
+        }
+        CHECK(bDryChanged && bSplatChanged);
+        std::cout << Utf8(u8"マスク (e) seed による雑音の変化と他の層の不変を確認\n");
+
+        const std::array<const VariableArray<ByteArray>*, 4> seamLayers = {&mask, &splat0, &splat1, &grass};
+        const std::array<const char*, 4> seamNames = {"MSK0", "SPL0", "SPL1", "GRS0"};
+        for (uint32_t tz = 0; tz < slopeTerrain.TileCountZ; ++tz)
+        {
+            for (uint32_t tx = 0; tx < slopeTerrain.TileCountX; ++tx)
+            {
+                const uint32_t tile = MaskTileIndex(slopeTerrain, tx, tz);
+                for (uint32_t direction = 0; direction < 2; ++direction)
+                {
+                    if ((direction == 0 && tx + 1 == slopeTerrain.TileCountX) ||
+                        (direction == 1 && tz + 1 == slopeTerrain.TileCountZ))
+                    {
+                        continue;
+                    }
+                    const uint32_t adjacent = MaskTileIndex(slopeTerrain, tx + (direction == 0 ? 1 : 0),
+                                                            tz + (direction == 1 ? 1 : 0));
+                    for (size_t layer = 0; layer < seamLayers.size(); ++layer)
+                    {
+                        const uint32_t channels = layer == 3 ? 1 : 4;
+                        for (uint32_t i = 0; i < MaskTileSide; ++i)
+                        {
+                            const uint32_t x0 = direction == 0 ? CookTileCells : i;
+                            const uint32_t z0 = direction == 0 ? i : CookTileCells;
+                            const uint32_t x1 = direction == 0 ? 0 : i;
+                            const uint32_t z1 = direction == 0 ? i : 0;
+                            for (uint32_t channel = 0; channel < channels; ++channel)
+                            {
+                                const uint8_t first = (*seamLayers[layer])[tile][(z0 * MaskTileSide + x0) * channels + channel];
+                                const uint8_t second = (*seamLayers[layer])[adjacent][(z1 * MaskTileSide + x1) * channels + channel];
+                                if (first != second)
+                                {
+                                    std::cerr << Utf8(u8"共有辺不一致 layer=") << seamNames[layer] << Utf8(u8" tile=") << tx << "," << tz
+                                              << Utf8(u8" 方向=") << direction << Utf8(u8" 標本=") << i
+                                              << Utf8(u8" チャンネル=") << channel << Utf8(u8" 値=") << unsigned(first) << "," << unsigned(second) << "\n";
+                                }
+                                CHECK(first == second);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::cout << Utf8(u8"マスク (f) x・z 両方向の共有辺で全マスク層が一致\n");
+
+        CHECK(flatCooked.InputFiles.size() == 3);
+        CHECK(flatCooked.InputFiles[0] == flatSpec && flatCooked.InputFiles[1] == TerrainTempRoot / "mask-flat.raw");
+        CHECK(flatCooked.InputFiles[2] == TerrainTempRoot / "mask-road.png");
+        paint[2 * MaskSide + 2] = 255;
+        WriteMaskPaint(paint);
+        const auto changedPaint = CookTerrainChecked(flatSpec);
+        CHECK(changedPaint.InputFiles == flatCooked.InputFiles);
+        if (changedPaint.SourceHash == flatCooked.SourceHash)
+        {
+            std::cerr << Utf8(u8"ペイント変更前後の source_hash が同じ: ") << flatCooked.SourceHash << "\n";
+        }
+        CHECK(changedPaint.SourceHash != flatCooked.SourceHash);
+        std::cout << Utf8(u8"マスク (g) ペイント入力の登録と 1 画素変更による source_hash の変化を確認\n");
+    }
+
     void CheckTerrainCookPath()
     {
         CreateTerrainTemp();
         CheckAnalyticTerrain();
         CheckTerrainFormatsAndRejection();
+        CheckTerrainMasks();
         std::error_code error;
         std::filesystem::remove_all(TerrainTempRoot, error);
         CHECK(!error && !std::filesystem::exists(TerrainTempRoot));
