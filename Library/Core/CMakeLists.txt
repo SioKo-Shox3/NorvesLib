@@ -11,6 +11,7 @@ set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
+    Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
@@ -53,6 +54,9 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Vegetation/GrassSpecies.cpp
+    Private/Vegetation/GrassField.cpp
+    Private/Vegetation/Vegetation.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -528,6 +532,11 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Vegetation/GrassSpecies.h
+    Public/Vegetation/GrassField.h
+    Public/Vegetation/Vegetation.h
+    Public/Vegetation/GroundHeightSource.h
+    Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h
     Public/Particle/DecalPool.h
     Public/Particle/VfxEffectTypes.h
@@ -771,6 +780,7 @@ set(PUBLIC_HEADERS
     Public/Math/VectorUtils.h
     Public/Math/CriticalDamping.h
     Public/Camera/CameraCollisionSolver.h
+    Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h

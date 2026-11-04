@@ -1,0 +1,78 @@
+﻿cmake_minimum_required(VERSION 3.14)
+
+if(NOT DEFINED ASSET_COOK_EXE OR NOT DEFINED SOURCE_ROOT OR NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "AssetCookTerrainSmoke requires ASSET_COOK_EXE, SOURCE_ROOT and SMOKE_DIR")
+endif()
+
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/Spec" "${SMOKE_DIR}/Cooked")
+configure_file(
+    "${SOURCE_ROOT}/Test/Core/Asset/Fixtures/Terrain/height_formula_33x33_16bit.png"
+    "${SMOKE_DIR}/Spec/height_formula_33x33_16bit.png"
+    COPYONLY)
+file(WRITE "${SMOKE_DIR}/Spec/terrain.json" [=[{
+  "version": 1,
+  "height_source": { "path": "height_formula_33x33_16bit.png", "format": "png16", "flip_z": false },
+  "height_mapping": { "min_m": 0.0, "max_m": 65.535 },
+  "cell_size_m": 1.0, "tile_cells": 16, "fit": "error", "require_bit_depth": 16, "seed": 1, "recipe": {}
+}
+]=])
+
+set(cook_args
+    --input "${SMOKE_DIR}/Spec/terrain.json"
+    --out "${SMOKE_DIR}/Cooked/Smoke.nvpkg"
+    --manifest "${SMOKE_DIR}/manifest.json"
+    --logical Terrain/Smoke/Smoke.nvtrn
+    --kind world
+    --entry Terrain/Smoke/Smoke.nvtrn
+    --format nvtrn.v0.height16)
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}" ${cook_args} --entry-type Trn0
+    RESULT_VARIABLE cook_result
+    OUTPUT_VARIABLE cook_output
+    ERROR_VARIABLE cook_error)
+file(WRITE "${SMOKE_DIR}/cook-stderr.txt" "${cook_error}")
+if(NOT cook_result EQUAL 0)
+    message(FATAL_ERROR "terrain cook failed (${cook_result}): ${cook_output}${cook_error}")
+endif()
+foreach(expected IN ITEMS "AssetCook wrote world" "tiles=2x2")
+    string(FIND "${cook_error}" "${expected}" position)
+    if(position EQUAL -1)
+        message(FATAL_ERROR "terrain cook stderr is missing ${expected}: ${cook_error}")
+    endif()
+endforeach()
+
+file(READ "${SMOKE_DIR}/manifest.json" manifest)
+foreach(field_and_value IN ITEMS
+        "kind;world"
+        "entry_type;Trn0"
+        "format;nvtrn.v0.height16")
+    list(GET field_and_value 0 field)
+    list(GET field_and_value 1 value)
+    string(REPLACE "." "\\." value_regex "${value}")
+    string(REGEX MATCH "\"${field}\"[ \t\r\n]*:[ \t\r\n]*\"${value_regex}\"" match "${manifest}")
+    if(NOT match)
+        message(FATAL_ERROR "terrain manifest is missing ${field}=${value}: ${manifest}")
+    endif()
+endforeach()
+foreach(field IN ITEMS cooked_hash source_hash)
+    string(REGEX MATCH "\"${field}\"[ \t\r\n]*:[ \t\r\n]*\"([0-9a-fA-F]+)\"" match "${manifest}")
+    set(hash "${CMAKE_MATCH_1}")
+    string(LENGTH "${hash}" hash_length)
+    if(NOT match OR NOT hash_length EQUAL 16)
+        message(FATAL_ERROR "terrain manifest ${field} must be 16 hexadecimal digits: ${manifest}")
+    endif()
+endforeach()
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}" ${cook_args} --entry-type Raw
+    RESULT_VARIABLE invalid_result
+    OUTPUT_VARIABLE invalid_output
+    ERROR_VARIABLE invalid_error)
+if(invalid_result EQUAL 0)
+    message(FATAL_ERROR "terrain cook accepted --entry-type Raw")
+endif()
+string(FIND "${invalid_error}" "--kind world requires --entry-type Trn0" invalid_position)
+if(invalid_position EQUAL -1)
+    message(FATAL_ERROR "terrain cook rejected Raw for an unexpected reason: ${invalid_output}${invalid_error}")
+endif()
