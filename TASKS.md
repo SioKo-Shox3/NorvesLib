@@ -5571,7 +5571,7 @@
 - notes: 選定課題 G9-S2（GR15 (e)「剣をくわえた首の振りへの追従」の意味）は推奨の A に決めた: 剣をくわえて頭を大きく振ったとき、首と肩が少し遅れてついていく動きとして作り、小さい既定の重み（0.25、仮）にする。理由: B の「剣が頭に追従する」は GR13 のソケット追従で既に満たされ、A は重み 0 で無効にできるので、どちらの意図でも損がない。遅れの量・周波数・減衰は企画で未定なので設定の値にする。今のコードの事実: `HoldSlotComponent` には占有数を読む `GetOccupancy`（`Library/Core/Public/Component/HoldSlotComponent.h:47`）はあるが、保持物の質量の倍率を読む getter は無い（`TryAcquire` が受けるだけ。同 43-44 行）。G3 の部品を変えずに済むよう、質量の倍率は設定の `heldMassScale` で持つ。球コライダーとの衝突と風の場（GR46）は v1 に入れない（ロードマップ G9 の非ゴール）。出典: 要件 `#### GR15` の (d)(e) と「共通の設計規則」（リセット・固定サブステップ）。
 
 ## G9-GR14-GROUND-QUERY: 足の接地点を問う口（IGroundQuery）と、物理の問い合わせを使う実装を足す
-- status: todo
+- status: done
 - after: G1-GR08-BROADPHASE-INTEGRATION, G1-GR08-LAYER-TABLE
 - gr: GR14
 - needs-gr: GR08
