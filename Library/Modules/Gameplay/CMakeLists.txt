@@ -4,18 +4,38 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/IGameplayModule.h
     Public/Gameplay/Combat/DamageTypes.h
     Public/Gameplay/Combat/HealthComponent.h
+    Public/Gameplay/Combat/CombatShape.h
+    Public/Gameplay/Combat/AttackProfile.h
+    Public/Gameplay/Combat/CombatHitEvent.h
+    Public/Gameplay/Combat/HitboxComponent.h
+    Public/Gameplay/Combat/HurtboxSetComponent.h
     Public/Gameplay/Progression/GameplayStableId.h
     Public/Gameplay/Progression/ProgressionState.h
     Public/Gameplay/Progression/DefeatGate.h
+    Public/Gameplay/World/EncounterZoneTypes.h
+    Public/Gameplay/World/ZoneProfileStack.h
+    Public/Gameplay/World/ZoneSensorComponent.h
+    Public/Gameplay/World/EncounterZoneComponent.h
+    Public/Gameplay/World/EncounterService.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Combat/HealthComponent.cpp
+    Private/Gameplay/Combat/HitboxComponent.cpp
+    Private/Gameplay/Combat/HurtboxSetComponent.cpp
+    Private/Gameplay/Combat/CombatRuntime.h
+    Private/Gameplay/Combat/CombatRuntime.cpp
     Private/Gameplay/Progression/GameplayStableId.cpp
     Private/Gameplay/Progression/ProgressionState.cpp
     Private/Gameplay/Progression/DefeatGate.cpp
     Private/Gameplay/Combat/CombatGeometry.h
     Private/Gameplay/Combat/CombatGeometry.cpp
+    Private/Gameplay/World/EncounterZoneMath.h
+    Private/Gameplay/World/EncounterZoneMath.cpp
+    Private/Gameplay/World/ZoneProfileStack.cpp
+    Private/Gameplay/World/ZoneSensorComponent.cpp
+    Private/Gameplay/World/EncounterZoneComponent.cpp
+    Private/Gameplay/World/EncounterService.cpp
     Private/Gameplay/GameplayModule.h
     Private/Gameplay/GameplayModule.cpp
 )

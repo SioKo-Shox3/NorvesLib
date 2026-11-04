@@ -69,9 +69,16 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
     MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
     MEMBER CombatSweepTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatSweepTest.cpp
+    MEMBER CombatLayerTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLayerTest.cpp
+    MEMBER CombatFrameRateInvarianceTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatFrameRateInvarianceTest.cpp
+    MEMBER CombatMultiHitTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatMultiHitTest.cpp
+    MEMBER CombatLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLifecycleTest.cpp
     MEMBER HealthComponentTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/HealthComponentTest.cpp
     MEMBER ProgressionStateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/ProgressionStateTest.cpp
     MEMBER DefeatGateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/DefeatGateTest.cpp
+    MEMBER EncounterZoneTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterZoneTest.cpp
+    MEMBER EncounterLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterLifecycleTest.cpp
+    MEMBER EncounterSerializationTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterSerializationTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
@@ -114,6 +121,13 @@ add_test(NAME DogMovementSmokeGeometryTest COMMAND PhysicsDynamicsTest --test=Do
 
 add_test(NAME FollowCameraBehaviorTest COMMAND PhysicsDynamicsTest --test=FollowCameraBehaviorTest)
 add_test(NAME CombatSweepTest COMMAND PhysicsDynamicsTest --test=CombatSweepTest)
+add_test(NAME CombatLayerTest COMMAND PhysicsDynamicsTest --test=CombatLayerTest)
+add_test(NAME CombatFrameRateInvarianceTest COMMAND PhysicsDynamicsTest --test=CombatFrameRateInvarianceTest)
+add_test(NAME CombatMultiHitTest COMMAND PhysicsDynamicsTest --test=CombatMultiHitTest)
+add_test(NAME CombatLifecycleTest COMMAND PhysicsDynamicsTest --test=CombatLifecycleTest)
 add_test(NAME HealthComponentTest COMMAND PhysicsDynamicsTest --test=HealthComponentTest)
 add_test(NAME ProgressionStateTest COMMAND PhysicsDynamicsTest --test=ProgressionStateTest)
 add_test(NAME DefeatGateTest COMMAND PhysicsDynamicsTest --test=DefeatGateTest)
+add_test(NAME EncounterZoneTest COMMAND PhysicsDynamicsTest --test=EncounterZoneTest)
+add_test(NAME EncounterLifecycleTest COMMAND PhysicsDynamicsTest --test=EncounterLifecycleTest)
+add_test(NAME EncounterSerializationTest COMMAND PhysicsDynamicsTest --test=EncounterSerializationTest)

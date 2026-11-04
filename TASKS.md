@@ -4821,7 +4821,7 @@
     - `active_claim_changed`・`nested_managed_root` の判定
     - ボリュームの根の store を `volume_root_store` で拒否すること
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreObservationTest|CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedStoreInitializationTest|CookManagedUpdateInventoryTest|CookManagedUpdateTest|TextureManagedCliTest|RigSplitCookTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
 
@@ -5316,7 +5316,7 @@
 - notes: 確かめ直しの (b)。今あるのは足場の運搬（PhysicsFixedStepPipelineTest.cpp 844-876 行。足場は sin(frame×0.02) の往復で約 1.2 m/s、0.01 rad/ステップで約 34°/s。ずれ 0.02 と速度の一致を見る）、Teleport と寿命（877-930 行）、固定と可変の一致（947-1010 行）、入力の取り込み（1073-1161 行）。要件 `#### GR07` の受け入れ確認のうち、足場の離脱速度、昇降足場のジッタ、Dynamic の球を押す、押さないときの滑り落ち、`GravityScale`、External は見ていない。G4-S1 の決定: 推奨の (C)（固定と可変の両方を持ちフラグで切り替える）で、既定は (A) 固定ステップの駆動を採る。実装は既にこの形（`CharacterDriveMode::Fixed` が既定、`--character-drive=variable`、TestCharacterDriveEquality が同じ入力で両者の位置の一致を固定、犬の見た目の子 Entity に描画の補間）。理由: Kinematic の速度が位置差分/dt で正しく出て、小物を押す・足場の速度・GR20 の離脱速度が成り立ち、入力列の再生が決定論になる。可変は手触りを比べて悪いときだけ既定を倒す（可逆）。このファイルは `G4-GR05-COMPONENT-CASES` も触るので、そちらはこのタスクの後に回す。`CharacterBodyComponent.h` は Public API なので、足すのは試験に要る最小の読み出しだけにする。やらないこと: 物理ソルバ・接触の解き方の変更、摩擦、複数のコライダー。
 
 ## G4-GR05-COMPONENT-CASES: 移動の Component（QuadrupedLocomotionComponent）の接続（設定の再読込・Animator への値・ルート移動・同フレームのカメラ）を試験し、外れた所を直す
-- status: todo
+- status: done
 - after: G4-GR07-BODY-CASES, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR05
 - needs-gr: GR10, GR11
@@ -5441,7 +5441,7 @@
 - notes: 設計はロードマップ 807〜853 行（GR42 の 1・3・4）。草は Entity にも MeshProxy にもしない（毎フレームの全 Entity の同期と CPU のカリングに数十万本は載らない。ロードマップ 807 行）。今ある草（荒野の枯れ草の株。`Game/GameModes/Wasteland/WastelandFoliage.{h,cpp}` の `FoliageScatter` が高さ場と地表の分類の地図から区画ごとに株のインスタンスを CPU で作り、`RenderWorld::SetFoliage` で `FoliagePass` へ渡す）は Game 側の手続きの散布で、密度・高さ・種別の場も CPU のクエリも無い。この項目はそれを置き換えず、荒野は今のまま。種別 ID を 6bit にするのは GR43 のブレードの記録の割り付けのため（ロードマップ 1280 行）。地面の高さの取り出し口は `IGroundHeightSource` に統一し、地形への差し替え（TerrainSystem）は G5-GR42-GRASS-FIELD-ASSET で行う（ロードマップ 1279 行）。遮蔽の「見えない」のしきい値と意味は GR24（G13）が決める（選定課題 G13-S4 の推奨 (A): GR24 が `QueryOcclusion` を呼ぶ。ロードマップ 4560 行）。踏み倒し（GR44）と枯れ度（GR45）は別の系統で、草の場の本体を書き換えない。試験を足す理由: 継ぎ目・範囲外・遮蔽の積分の誤りは描画に出ず（クエリは知覚・足音・カメラが使う）、黙って AI の視界やカメラの持ち上げを狂わせる。SceneRevision に入れると RTGI の履歴が草の差し替えで捨てられ、絵では気づきにくい。危険地帯（Public API・RenderThread のデータ契約）なので評価者を通す。
 
 ## G8-GR16-COMBAT-RUNTIME: hitbox・hurtbox・判定窓・多段ヒット防止・通知を、1 フレーム 1 回の評価でつなぐ
-- status: todo
+- status: done
 - after: G8-GR16-GAMEPLAY-MODULE, G1-GR01-TICK-CONTRACT-DOC, G3-GR11-EVENT-PROPERTIES
 - gr: GR16
 - needs-gr: GR01, GR11
@@ -5452,7 +5452,7 @@
 - notes: 選定課題 G8-S2(判定を評価する時点)を決めた: `GameplayModule::LateTick`(Module Late。World の Late の群 PostPhysics → Camera → PreRender の後、Handler の OnLateUpdate と描画の同期の前)で 1 フレーム 1 回。理由: ロードマップ 1580・1610 行の「PostAnimation 段」は今の `ETickGroup`(`Library/Core/Public/Component/TickGroup.h`)に無い(「段階をまたぐ注意」4401 行と同じ指摘)。ソケットの追従(`SocketAttachmentComponent`)は PostPhysics の群で動く(`World.cpp:1952-1960`)ので、その後なら姿勢・固定ステップ・ソケットがそろった値を 1 回で読める。Module LateTick の dt は Unscaled(`ApplicationProcessor.cpp:2733`)なので、World のチャンネルの dt は `TimeSystem::GetFrameTimes()` から取る。選定課題 G8-S3(判定窓の開閉)を決めた: GR11 のアニメイベントの Begin / End(窓の終端が必ず配られる。`AnimationEvents.h` の Window・WindowToken)と、直接の Begin / End の 2 つにし、ロードマップ 1602 行の GR11 の前の暫定(位相区間の PhaseInterval::Crossed)は作らない。理由: GR11 が統合ブランチにあり、暫定は捨てるだけの二重の実装になる。選定課題 G8-S4(faction のビット)を決めた: Combat が持つ 32bit のマスクにし、名前とビットの割当はゲームのデータ(G8-GR16-JOINT-DATA-RESPONSE の JSON)に置く。ロードマップ 1606 行の「GR08 の CollisionLayers.h(Core)にそろえる」は採らない。理由: GR08 は「ゲームが名前とビットを決め、Core / Physics にゲーム固有の名前を置かない」と決めた(`Docs/Architecture/PhysicsQueries.md` の冒頭)うえ、そのファイルは無い。「段階をまたぐ注意」81 行のとおり、攻撃判定はシミュレーションの Transform を読み、剣の描画・トレイルは描画用の補間の Transform を読む。犬の被弾の扱いは企画に無い(ロードマップ 1859 行)ので、HurtboxSet は犬にも付けられる形にし、扱いは購読する側に任せる。危険地帯: Object の寿命(配送中の破棄)なので評価者を通す。やらないこと: 関節の束縛、JSON のデータ、DebugDraw、当たりの反応(G8-GR16-JOINT-DATA-RESPONSE)。AngelScript への OnHit(GR98)。
 
 ## G8-GR18-ENCOUNTER-ZONES: 遭遇領域(進入・退出・リセット・撃破済み)と切り替えの受け口を、物理を使わないサービスで作る
-- status: todo
+- status: done
 - after: G8-GR16-GAMEPLAY-MODULE, G1-GR01-TICK-CONTRACT-DOC
 - gr: GR18
 - needs-gr: GR01
@@ -9861,10 +9861,10 @@
 ## G18-GR102-AOV-EXPORT: 撮影の AOV から、メートルの深度（z と距離）・ビュー空間の法線・空のマスクを EXR に、近遠を決めた深度を 16bit と 8bit の PNG に書き出す
 - status: todo
 - gr: GR102
-- done-when: (1) 書き出し器: `WritePathTracingExrFrame`（`Library/Core/Public/Rendering/PathTracingExrOutput.h:12`。PT の連番の名前の規約で非有限を拒む）の本体を `ExrImageWriter`（`Library/Core/Public/Rendering/ExrImageWriter.h`。任意の名前・多チャンネルの float32 と half）へ切り出し、既存の関数は薄い包みとして残す（PT と R8 の EXR のバイトを変えない）。`PngWriter16`（`Library/Core/Public/Rendering/PngWriter16.h`。グレーと RGB の 16bit、行のフィルタ 0、ビッグエンディアン、`stbi_zlib_compress`、IHDR・IDAT・IEND と CRC32）を足す。(2) AOV の変換: 今の `SaveCapturedAov`（FrameCaptureHdrWriter.cpp:365。開発ビルドだけ。PFM で albedo・ワールドの法線・粗さ・カメラの前方向への距離の深度（空は +∞）などと、カメラを持つ aov.json を書く）の横に、`CapturedFrame::Aov` と aov.json のカメラから次を作る関数を足す: `depth_z`（前方向への射影 m）・`depth_dist`（カメラからの Euclid の距離 m。画素の視線の向きで z から求める）・`normal_view`（ワールドの法線をカメラの回転でビュー空間へ）・`mask`（空 0・物 1）。空の画素は深度 0 とマスク 0 にして非有限を書かない。EXR は `<名前>.export.depth.exr`（Z と距離とマスクのチャンネル）と `<名前>.export.normal.exr`。PNG は `--depth-png-mapping=log|inverse|linear`（既定 log: d = 1 − log(z/zn)/log(zf/zn)、近い = 白・空 = 黒）と `--depth-near=`・`--depth-far=`（既定 0.8・400 m）で 16bit と 8bit を書き、法線は 8bit の (n×0.5+0.5)。(3) 起動引数 `--aov-export=<depth_z,depth_dist,normal_view,mask,...>` を `--capture-aov` と併せて使い（ApplicationProcessor.cpp:2404 の 1 枚の撮影と `MultiViewCapture.cpp:222` の複数の視点の両方）、aov.json に写像・近遠・書いたファイルを足す。既存の PFM の出力と `--capture-aov` だけの動きは変えない。 (4) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `CameraViewConstantsTest` の束へ MEMBER `AovExportWriterTest`（合成の AOV の値とカメラで、z から距離の式・ビュー空間の法線（正面が (0,0,1) に当たる向きの規約を Docs に書き、その値と ±1e-5）・空のマスク、log・inverse・linear の既知の距離の画素の値が式どおり ±1、16bit の PNG の IHDR の bit depth=16 と CRC が正しい、同じ入力を 2 回書いた EXR と PNG がバイトで一致、EXR を読み戻して値が一致）。GPU の `PathTracingExrOutputTest` の不変は `G18-GR102-CHECK` で確かめる。
-- verify: `cmake --build build --config Debug --target CameraViewConstantsTest PathTracingCameraVulkanTest Game -- /m:1`
+- done-when: (1) 書き出し器: `WritePathTracingExrFrame`（`Library/Core/Public/Rendering/PathTracingExrOutput.h:12`。PT の連番の名前の規約で非有限を拒む）の本体を `ExrImageWriter`（`Library/Core/Public/Rendering/ExrImageWriter.h`。任意の名前・多チャンネルの float32 と half）へ切り出し、既存の関数は薄い包みとして残す（PT と R8 の EXR のバイトを変えない）。`PngWriter16`（`Library/Core/Public/Rendering/PngWriter16.h`。グレーと RGB の 16bit、行のフィルタ 0、ビッグエンディアン、`stbi_zlib_compress`、IHDR・IDAT・IEND と CRC32）を足す。(2) AOV の変換: 今の `SaveCapturedAov`（FrameCaptureHdrWriter.cpp:365。開発ビルドだけ。PFM で albedo・ワールドの法線・粗さ・カメラの前方向への距離の深度（空は +∞）などと、カメラを持つ aov.json を書く）の横に、`CapturedFrame::Aov` と aov.json のカメラから次を作る関数を足す: `depth_z`（前方向への射影 m）・`depth_dist`（カメラからの Euclid の距離 m。画素の視線の向きで z から求める）・`normal_view`（ワールドの法線をカメラの回転でビュー空間へ）・`mask`（空 0・物 1）。空の画素は深度 0 とマスク 0 にして非有限を書かない。EXR は `<名前>.export.depth.exr`（Z と距離とマスクのチャンネル）と `<名前>.export.normal.exr`。PNG は `--depth-png-mapping=log|inverse|linear`（既定 log: d = 1 − log(z/zn)/log(zf/zn)、近い = 白・空 = 黒）と `--depth-near=`・`--depth-far=`（既定 0.8・400 m）で 16bit（`<名前>.export.depth16.png`）と 8bit（`<名前>.export.depth8.png`）を書き、法線は 8bit の (n×0.5+0.5)（`<名前>.export.normal8.png`）。(3) 起動引数 `--aov-export=<depth_z,depth_dist,normal_view,mask,...>` を `--capture-aov` と併せて使い（ApplicationProcessor.cpp:2404 の 1 枚の撮影と `MultiViewCapture.cpp:222` の複数の視点の両方）、aov.json に写像・近遠・書いたファイルを足す。既存の PFM の出力と `--capture-aov` だけの動きは変えない。 (4) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `CameraViewConstantsTest` の束へ MEMBER `AovExportWriterTest`（合成の AOV の値とカメラで、z から距離の式・ビュー空間の法線（正面が (0,0,1) に当たる向きの規約を Docs に書き、その値と ±1e-5）・空のマスク、log・inverse・linear の既知の距離の画素の値が式どおり ±1、16bit の PNG の IHDR の bit depth=16 と CRC が正しい、同じ入力を 2 回書いた EXR と PNG がバイトで一致、EXR を読み戻して値が一致）。GPU の `DepthExportVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。既知の距離 2・5・20 m の平面と球を撮り、`depth_z` が期待 ±1e-3 m、`depth_dist` が中心以外で Euclid、球の中心の法線がビュー空間の正面の向き・輪郭の近くで外向き ±0.01、空のマスクが 0）は書いてビルドまで通す。GPU の試験の実行と `PathTracingExrOutputTest` の不変は `G18-GR102-CHECK` で確かめる。
+- verify: `cmake --build build --config Debug --target CameraViewConstantsTest RHITextureUpdateVulkanTest PathTracingCameraVulkanTest Game -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(AovExportWriterTest|CameraViewConstantsTest|R8ExrSequenceValidatorTest)$" --no-tests=error --output-on-failure --timeout 300`
-- paths: Library/Core/Public/Rendering/PathTracingExrOutput.h, Library/Core/Private/Rendering/PathTracingExrOutput.cpp, Library/Core/Public/Rendering/ExrImageWriter.h, Library/Core/Private/Rendering/ExrImageWriter.cpp, Library/Core/Public/Rendering/PngWriter16.h, Library/Core/Private/Rendering/PngWriter16.cpp, Library/Core/Public/Rendering/FrameCaptureHdrWriter.h, Library/Core/Private/Rendering/FrameCaptureHdrWriter.cpp, Library/Core/Public/Rendering/AovExport.h, Library/Core/Private/Rendering/AovExport.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Game/Debug/MultiViewCapture.cpp, Game/Debug/MultiViewCapture.h, Game/GameApplicationHandler.cpp, Library/Core/CMakeLists.txt, Test/Core/Rendering/AovExportWriterTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Rendering/PathTracingExrOutput.h, Library/Core/Private/Rendering/PathTracingExrOutput.cpp, Library/Core/Public/Rendering/ExrImageWriter.h, Library/Core/Private/Rendering/ExrImageWriter.cpp, Library/Core/Public/Rendering/PngWriter16.h, Library/Core/Private/Rendering/PngWriter16.cpp, Library/Core/Public/Rendering/FrameCaptureHdrWriter.h, Library/Core/Private/Rendering/FrameCaptureHdrWriter.cpp, Library/Core/Public/Rendering/AovExport.h, Library/Core/Private/Rendering/AovExport.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Game/Debug/MultiViewCapture.cpp, Game/Debug/MultiViewCapture.h, Game/GameApplicationHandler.cpp, Library/Core/CMakeLists.txt, Test/Core/Rendering/AovExportWriterTest.cpp, Test/Core/Rendering/DepthExportVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
 - notes: ロードマップ 3343〜3349 行（(1) 深度・法線、(2) 書き出し器）と完了条件 3435〜3437 行。ロードマップが新しく作るとした `ExportAovPass` と `FrameCaptureSourceKind` の LinearDepth・ViewNormal は作らない: 10-02 の後に `GBufferAovPass`（GBufferDebugPass.h:105、`Assets/Shaders/gbuffer_aov.frag`）が入り、深度（前方向への距離 m）とワールドの法線を浮動小数で同じフレームから読み出している（`--capture-aov`）ので、足りないのは書き出しの形式と変換だけ。選定課題 G18-S11（深度の既定）は z の深度を既定にし `depth_dist` も出す、PNG の写像の既定は DogGame の既存の深度（`art/renderer/lib.py` の save_depth と同じ対数・近い = 白・z_near 0.8・z_far 400）に合わせる。ComfyUI が 16bit のグレーを期待どおり読むかは未確認なので 8bit も出す。薄い葉を潰す `_soft` の後処理はエンジンへ入れない。`MultiViewCapture`・`GameApplicationHandler.cpp`・`ApplicationProcessor.cpp` は共有のファイルなので差分を小さくする。危険地帯（capture）なので評価者を通す。試験を足す理由: 写像の式・法線の座標系の取り違えは画像が「それらしく」見えるので撮影では気づけず、ControlNet の入力として黙って効く。
 
 ## G19-GR106-PIPELINE-CACHE: VkPipelineCache を検査つきでディスクへ保存・読み込みし、起動のロード中にパイプラインを先に作る（ウォームアップ）
@@ -10133,3 +10133,268 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR123-NONASCII-CHECK`
 - paths: Docs/Platform/NonAsciiPathAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 受け入れ確認はロードマップ 4105〜4106 行と要件 `#### GR123`。needs-gr GR110（実行ファイルからの相対の資産の根。今の開発の Game は資産の根を `NORVES_ASSET_DIR`（`Library/Core/CMakeLists.txt:961` のビルド時の絶対パス）で引くので、写した先でも元の Assets を読む）と GR112（Release の用のログの置き場所。ログが利用者のデータの領域へ移った後に、その非 ASCII のパスで確かめる）。GR110 の前に回すと「資産の根が非 ASCII」の経路は踏めないので、両方を待つ。性能の計測ではないので `gpu: exclusive` は付けない。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
+
+## G18-GR102-CAPTURE-SESSION: カメラの経路のファイルを読んで、場面を止めたまま各フレームの色・深度・法線を連番で書き出す撮影のセッションと、パストレーサーの距離・法線の EXR の経路と、書き出しの台本を足す
+- status: todo
+- after: G18-GR102-AOV-EXPORT
+- gr: GR102
+- done-when: (1) `Library/Core/Public/Rendering/CaptureSession.h`（読み込みと検査は GPU の要らない部品）: `--capture-session=<json>`（{出力先, 解像度, passes: [color, depth_z, depth_dist, normal_view, mask, object_id], 深度の写像と近遠, パストレーサーなら最小の試料数, camera: 視点の名前の列か `camera_path`}）。`camera_path` は {fps, 補間（linear | catmull-rom）, frames: [{frame, position, target か rotation, fovDeg, near, far, aperture?, focus?}]} で、catmull-rom は既存の `CameraPath`（`Library/Core/Public/Input/CameraPath.h`）の補間を使う。(2) 実行: 既存の複数の視点の撮影（`Game/Debug/MultiViewCapture`。視点を置き直して落ち着くのを待ち、決定的な撮影のエポックを始め直して撮る）を、名前の視点に加えて経路のフレームの姿勢（位置・向き・画角・近遠）でも回せるようにし、各フレームで色の PNG と `G18-GR102-AOV-EXPORT` の書き出しを行う（撮影の要求は同時に 1 つなので、1 フレームで撮れない分は次のフレームに回す）。書き出しの間は場面を凍らせる: TAA を切って FXAA、手動の露出、デバッグ描画を出さない、シミュレーションを進めない（`ShouldAdvanceSimulation` を偽）。出力は `<出力先>/<frame>.<pass>.<拡張子>` の連番と `manifest.json`（各フレームのカメラ・近遠・写像・解像度・使った引数）。(3) パストレーサー: `--renderer=path-tracing --path-tracing-debug-output=hit-distance|shading-normal`（ApplicationProcessor.cpp:253・408 に既存）のとき、`MinimumPathTracingSamples` を待って撮った SceneColor を `ExrImageWriter` で `<frame>.pt_distance.exr`・`<frame>.pt_normal.exr` に書く（Test の `R8SequenceRenderer` が手本）。(4) 台本 `Scripts/ExportSceneAov.ps1`（`CaptureScene.ps1` の型）: シーンとセッションの JSON を受けて Game を起動し、ファイルの数・寸法・manifest を検査して、manifest に `git rev-parse HEAD` のコミットを足す。欠けや不一致は終了コード 1。台本は書くだけで、起動しての実行は `G18-GR102-CHECK`。見本のセッション `Scripts/CaptureSessions/sandbox-orbit.json`（sandbox で 8 フレーム）を置く。 (5) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `CameraViewConstantsTest` の束へ MEMBER `CaptureSessionTest`（JSON の読み込み、不正（frame の重複・逆順、近 ≥ 遠、知らない pass、画角の範囲外）の拒否、linear と catmull-rom の中間のフレームの姿勢が手計算と 1e-5 以内、名前の視点の列と経路の両方が同じ撮影の計画（フレームごとの姿勢と pass の列）になる）。既存の `--capture-png`・`--capture-views`・`--capture-aov` の動きは変えない。
+- verify: `cmake --build build --config Debug --target CameraViewConstantsTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CaptureSessionTest|AovExportWriterTest|CameraViewConstantsTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Rendering/CaptureSession.h, Library/Core/Private/Rendering/CaptureSession.cpp, Library/Core/Public/Rendering/FrameCaptureTypes.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/CMakeLists.txt, Game/Debug/MultiViewCapture.cpp, Game/Debug/MultiViewCapture.h, Game/Scenes/SceneViewSwitch.h, Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Scripts/ExportSceneAov.ps1, Scripts/CaptureSessions, Test/Core/Rendering/CaptureSessionTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: ロードマップ 3345 行（CaptureSession）・3353 行（(4) カメラの経路）・3355 行（(5) PT の経路）と完了条件 3438〜3439 行。ロードマップの `Game/Debug/CameraPathPlayer`（SpringArm を迂回して OnUpdate でカメラを動かす）は新しく作らず、今ある複数の視点の撮影の置き直しと `CameraPath` の補間を使う（SCN-CAMERA-PATH・SCN-WL-CAPTURE-FAST の仕組みと重ねない）。G14 の GR66・GR67 のタイムラインにカメラのトラックができたら同じ形式にそろえる（G14 の計画を読む）。PT の場面にはスキン・Mega が入らない（GR104）ので、PT と ラスタの距離の差の比べは `G18-GR102-CHECK` でスキン・Mega を含まない試験の場面で行う。UNCERTAIN: `SceneViewSwitch`（`Game/Scenes/SceneViewSwitch.h`）が名前の無い任意の姿勢を受けられるかは読んで確かめる。受けられなければ姿勢を渡す口を足す（シーンの GameMode を個別に直さない）。共有のファイルの差分を小さくする。危険地帯（capture・RenderThread）なので評価者を通す。
+
+## G18-GR102-OBJECT-ID: 撮影の AOV に画素ごとの物の ID を足し、ID と Entity の名前の対応を manifest に出す
+- status: todo
+- after: G18-GR102-AOV-EXPORT
+- gr: GR102
+- done-when: (1) 撮影のフレームごとに、描いた物（`DrawParams::ObjectId`（DrawCommand.h:104）と MegaGeometry・スキンのインスタンス）へ 1 から始まる詰めた ID（24bit まで）を割り当て、その表を GPU へ渡す。(2) 可視バッファの経路（既定の不透明。記録の種類は `VisibilityBuffer.h:136` の `RecordKind`: MegaGeometryCluster・ProceduralChunk・SkinnedChunk など）では、解決が画素の記録から物を引いて、`GBufferAovPass` の印の出力（`gbuffer_aov.frag` の出力 3 は今 r だけを使い g・b・a は 0）の g に ID を浮動小数で正確に表せる整数（2^24 以下）として書く。可視バッファを使わない GBuffer の経路では、不透明の物を深度の EQUAL で描き直して ID を書く小さなパスで同じ出力を埋める。空・書かなかった画素は 0。 (3) 書き出し: `object_id` の pass で `<名前>.export.object_id.png`（RGBA8 に 24bit の ID を詰める）と、ID → ObjectId → Entity の名前の対応を aov.json（とセッションの manifest.json）に出す。`--aov-export` に `object_id` を足す。(4) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `CameraViewConstantsTest` の束へ MEMBER `ObjectIdTableTest`（同じ物の複数のインスタンス・MegaGeometry・スキンの混在で ID が重ならず 1 から詰まる、24bit を超える数は拒否してログ、RGBA8 への詰め直しの往復）。GPU の `ObjectIdExportVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。2 つの物を置いた fixture で画素の ID が manifest の対応と一致し、輪郭の画素がどちらかの ID になる）は書いてビルドまで通し、実行は `G18-GR102-CHECK`。`--capture-aov` だけの撮影の今の値（印の r と各 PFM）は変えない。
+- verify: `cmake --build build --config Debug --target CameraViewConstantsTest RHITextureUpdateVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ObjectIdTableTest|AovExportWriterTest|CaptureSessionTest|CameraViewConstantsTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Assets/Shaders/gbuffer_aov.frag, Assets/Shaders/Common/VisibilityResolve.glsl, Assets/Shaders, Library/Core/Private/Rendering/GBufferDebugPass.cpp, Library/Core/Private/Rendering/GBufferDebugPass.h, Library/Core/Private/Rendering/VisibilityResolvePass.cpp, Library/Core/Public/Rendering/VisibilityResolvePass.h, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/FrameCaptureTypes.h, Library/Core/Private/Rendering/FrameCaptureReadbackHelper.cpp, Library/Core/Private/Rendering/FrameCaptureHdrWriter.cpp, Library/Core/Public/Rendering/AovExport.h, Library/Core/Private/Rendering/AovExport.cpp, Library/Core/Private/Rendering/ObjectIdExportPass.cpp, Library/Core/Private/Rendering/ObjectIdExportPass.h, Library/Core/CMakeLists.txt, Test/Core/Rendering/ObjectIdTableTest.cpp, Test/Core/Rendering/ObjectIdExportVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: ロードマップ 3351 行（(3) オブジェクト ID。「任意・最後」「ControlNet に seg を使う予定が無ければ作らない」）と 3484 行のリスク。選定課題 G18-S12（オブジェクト ID を作るか）は、作者の決定（必要な機能は全部やる）で作る。方式はロードマップの「専用のパスで全部を描き直す」から、10-02 の後に入った可視バッファの解決で引く方式へ変え、可視バッファを使わない経路だけ描き直す。GBuffer の Material.a は GR26 がシェーディングモデルの ID に使うので使わない。RHI に `R32_UINT`（RHITypes.h:57）と整数の attachment（`IntegerAttachmentVulkanTest`）はあるが、撮影の読み戻しが整数の形式を扱わない（`FrameCaptureReadbackHelper.cpp:629-655` は RGBA8・RGBA16F・RGBA32F・RG16F・R16F だけ）ので、既存の浮動小数の AOV の空きに整数として書く。UNCERTAIN: 解決の段で画素の記録から物（DrawParams）を引く表が今あるかは `VisibilityResolvePass.cpp` と `Common/VisibilityResolve.glsl` を読んで確かめる（無ければ記録 → 物の表を足す）。危険地帯（GBuffer・可視バッファ・capture・RenderThread）なので評価者を通す。撮影しないかぎり描画の結果を変えない。
+
+## G18-GR104-BLAS-RECORD: 下位の加速構造（BLAS）をコマンドリストに記録して作り直し・リフィットできるようにし、キャッシュをハッシュの表にして、重い初回の構築をフレームごとの予算で分ける
+- status: todo
+- gr: GR104
+- done-when: (1) RHI: 今は TLAS だけを記録できる（`VulkanCommandList::RecordTopLevelAccelerationStructureBuild`、VulkanCommandList.cpp:1493・1498・1548）ので、BottomLevel の Build と Update（allowUpdate）も記録できるようにし、scratch とインスタンスのバッファを呼ぶたびに作らず永続の輪から割り当てる。同期の構築（`IAccelerationStructure::Build`）は残す。(2) `RayTracingSceneSubsystem` の BLAS のキャッシュ（RenderingCoordinator.cpp:1901-1960 の `matchesGeometry` の線形の比較）を、幾何の鍵のハッシュの表にする（鍵の欄は今の比較と同じ）。(3) まだ BLAS の無い幾何の初回の構築を、フレームごとの予算（本数と三角形の数。既定は 2 本・100 万三角形で仮）で記録の経路に分け、間に合わなかった物はそのフレームの TLAS に入れず次のフレームに回す（`RT_BLAS` の統計（:1904-1908）に pending の数を足す）。AI の生成の高密度のメッシュ（約 70 万三角形）がフレームを止めない。MegaGeometry の頂点・インデックスのバッファは RT が使える機では作るときに BufferDeviceAddress を付け、複製（`CreateAddressableMeshBuffer`）を避ける（頂点のストライドが 32B でなければ複製のまま）。(4) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: 予算の選び方を純関数にして `RHIRayTracingApiContractTest` の束（CPU）へ MEMBER `BlasBuildBudgetTest`（同じ入力で選ぶ順が決まる、予算の超過分が次へ回る、同じ幾何の多数のインスタンスが 1 つの BLAS を共有する、構築の済んだ物だけを TLAS に入れる）。`RHIAccelerationStructureVulkanTest` にケース（記録した BLAS の Build → Update → TLAS の Update が成功し、rayQuery が当たる）を足し、書いてビルドまで通す（実行は `G18-GR104-CHECK`）。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHIAccelerationStructureVulkanTest RayTracingSceneSnapshotTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(BlasBuildBudgetTest|RHIRayTracingApiContractTest|RHIRayTracingShaderStageCompileTest|PathTracingNonUniformSamplerSpirvTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/RHI/IAccelerationStructure.h, Library/Core/Public/RHI/ICommandList.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.h, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Library/Core/Private/RHI/Vulkan/VulkanBuffer.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Rendering/RayTracingBlasBudget.h, Library/Core/Private/Rendering/RayTracingBlasBudget.cpp, Library/Core/Private/Rendering/MegaGeometryResourceStore.cpp, Library/Core/Private/Rendering/MegaGeometryResourceStore.h, Library/Core/CMakeLists.txt, Test/Core/Rendering/BlasBuildBudgetTest.cpp, Test/Core/Rendering/RHIAccelerationStructureVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: ロードマップ 3362 行（確認した事実）と 3366 行（段階 2 Mega・地形）、完了条件 3445 行。10-02 の後に MegaGeometry は TLAS に入った（`RayTracingSceneSubsystem.h:21-25` の選ぶ規則、`AppendMegaGeometryInstancesFromMirror`。SCN-MEGA-FIX-RT-SELECT・TLAS-REBUILD）ので、段階 2 で残るのは BLAS の共有の索引と初回の構築の予算と記録の経路だけ。地形は MegaGeometry で描かれ同じ経路で TLAS に入る（G5 の `G5-GR37-TERRAIN-COMPONENT`）ので、区画の出し入れでの BLAS の構築・破棄はこの経路に乗る（確かめは `G18-GR104-CHECK`）。この記録の経路は `G18-GR104-SKINNED-BLAS` が毎フレームの作り直しに使う。MegaGeometry のバッファを作る所は `Library/Core/Private/Rendering/MegaGeometryResourceStore.cpp`（ロードマップの行番号 121-125 は古い可能性があるので読み直す）。危険地帯（RenderThread・RHI・RT）なので評価者を通す。BLAS の構築を同期から記録へ変えると既存の RT・DDGI・RTGI・PT の試験すべてに効く（ロードマップ 3488 行）ので、既存の物の構築は既定で今の経路のまま残し、記録の経路は予算に回った物と更新の要る物だけに使う。
+
+## G18-GR104-SKINNED-BLAS: 犬とシ者のスキンメッシュを、骨で変形した後の頂点で毎フレーム BLAS にして TLAS へ入れ、RT の影・RTGI・DDGI・パストレーサーに写して影を落とさせる
+- status: todo
+- after: G18-GR104-BLAS-RECORD
+- gr: GR104
+- done-when: (1) GameThread: `RayTracingSceneSubsystem::BuildFrameSnapshot`（RenderingCoordinator.cpp:1231。今は `DrawPayloadKind::Mesh` の不透明の描画だけ）に、`packet.Scene.SkinnedMeshProxies` からのインスタンスを足す（スキンの印・プロキシの番号・メッシュのハンドル・材質、mask は bCastShadow で分ける）。AssetLease が切れた・パレットが空のプロキシは除く。(2) RenderThread（`BuildAccelerationStructures` の中、TLAS の前）: スキンの変形は既存の `SkinningComputePass` の記録の本体（SkinningComputePass.h:149-155「RenderGraph にも GPU のテストにも使う本体」。出力は 1 頂点 32 バイトの位置・法線・UV、ワールド空間）を、RT 用の出力のバッファ（VertexBuffer・StorageBuffer・BufferDeviceAddress と AS の入力の用途、デバイスローカル、アセット × フレームのスロットごと）に向けて呼ぶ。インデックスはアセットごとにアドレスつきの複製を 1 回作る。計算の書き込み → AS の入力の読みの障壁を張り、`G18-GR104-BLAS-RECORD` の記録の経路で BLAS を作り、TLAS を更新する。出力がワールド空間なので TLAS のインスタンスの変換は単位にする。(3) 方針は毎フレームの作り直し（FastBuild）から始め、リフィット＋N フレームごとの作り直しへ切り替えられる設定を持つ（切り替えの閾値は `G18-GR104-CHECK` の計測で決める。既定は作り直し）。(4) パストレーサー: 物のアドレスのハッシュでシーンの変化を見ている所（PathTracingPass.inl:140-150）にパレットのハッシュを足し、連番（SequenceFrame）の持ち越し（ApplyPathTracingSequenceCarry）に今と前のパレットを運ぶ。動くスキンは通常の累積では毎フレームのリセットになるので、連番の撮影の用途に限ると Docs に書く。スキンの動きぼけは対象外。 (5) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `RHIRayTracingApiContractTest` の束（CPU）へ MEMBER `SkinnedRtSnapshotTest`（スキンのプロキシからインスタンスができ、bCastShadow で mask が分かれ、無効なプロキシを除く。スキンの無い場面のスナップショットは今と同じ）。GPU の `SkinnedBlasVulkanTest`（`RHIAccelerationStructureVulkanTest` の束へ MEMBER。`Assets/Models/M9Skinned/` の 2 関節の fixture を 90 度曲げ、RT 用の出力が CPU の `SkeletalAnimationSampler` の変形と 1e-4 以内、rayQuery が曲げた面に当たる、フレームをまたいで作り直し・リフィットしても TLAS の更新が成功する）は書いてビルドまで通し、実行は `G18-GR104-CHECK`。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHIAccelerationStructureVulkanTest RayTracingSceneSnapshotTest PathTracingVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkinnedRtSnapshotTest|BlasBuildBudgetTest|RHIRayTracingApiContractTest|RHIRayTracingShaderStageCompileTest|SkinnedRenderPathContractTest|SkinnedSubmeshDrawContractTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/SkinningComputePass.h, Library/Core/Private/Rendering/SkinningComputePass.cpp, Library/Core/Private/Rendering/SkinnedRtStore.h, Library/Core/Private/Rendering/SkinnedRtStore.cpp, Library/Core/Private/Rendering/SkinnedMeshGpuStore.cpp, Library/Core/Private/Rendering/SkinnedMeshGpuStore.h, Library/Core/Private/Rendering/PathTracingPass.inl, Library/Core/Public/Rendering/PathTracingPass.h, Library/Core/Private/RHI/Vulkan, Library/Core/CMakeLists.txt, Test/Core/Rendering/SkinnedRtSnapshotTest.cpp, Test/Core/Rendering/SkinnedBlasVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Architecture/RenderingFlow.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: ロードマップ 3364 行（段階 1 スキン）と完了条件 3441〜3444 行。選定課題 G18-S13（スキンの BLAS）: 毎フレームの作り直しから始めて計測し、脚の大きな動きでの劣化を見てリフィットへ移る（推奨）。変形はロードマップの新しい `skin_vertices_rt.comp`（モデル空間）を作らず、10-02 の後に入った計算のスキニング（`SkinningComputePass`、`Assets/Shaders/skinning_compute.comp`。出力 32 バイトはパストレーサーのヒットが読む位置・法線・UV と同じ並び）を使う。理由: 変形の式を 2 つにしない（`FIX-NORMAL-MATRIX-SCALE-CHECK-P1` で法線の行列の規則を揃えたばかり）。パレットはフレームの中で共有済み（`Docs/Architecture/SkinnedPaletteSharing.md`）なので、ロードマップ 3491 行のパレットの確保の重複は今は起きない。巨大なシ者（GR63）を AI の高密度のメッシュのまま入れると毎フレームの作り直しが破綻するので、張り直した低ポリ（GR103）だけを入れる前提を Docs に書く。GR12 の実装は入っていて残りは起動の確かめだけなので needs-gr に書かない。ラスタの通常の影（CSM・VSM）は既にスキンを含むので変えない。UNCERTAIN: `SkinningComputePass` の本体を RenderGraph の外（`BuildAccelerationStructures` の中）から呼ぶときの descriptor と UBO の輪（FrameUseRing）の枠の使い方は、パスの中の呼び方と食い違わないかを読んで確かめる。危険地帯（RenderThread・RHI・RT・スキン）なので評価者を通す。スキンの無い場面の描画の結果と時間を変えない。
+
+## G18-GR104-MASKED-ANYHIT: 切り抜きの材質（葉・穴あき板）を、RT の影・RTGI・DDGI・パストレーサーの光線でもアルファで抜く
+- status: todo
+- after: G18-GR104-SKINNED-BLAS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW
+- gr: GR104
+- needs-gr: GR27
+- done-when: (1) 今は全部の光線が `gl_RayFlagsOpaqueEXT` で、Masked のアルファを無視する（`Assets/Shaders` の DDGI・RTGI/DiffuseIndirect.comp・RayTracing の 2 つの RayGen・PathTracingRayGen.glsl の 8 ファイル・14 か所。grep）。BLAS の幾何の不透明の印は既に Masked で偽になる（RenderingCoordinator.cpp:1374 の `bGeometryOpaque`）。Masked の物を別の instance mask に分け（`Assets/Shaders/Common/RayTracingInstanceMask.glsl`）、DDGI・RTGI・RT の影の rayQuery は Masked の mask を含むときだけ `gl_RayFlagsOpaqueEXT` を外して候補のループ（UV を引き、LOD0 のアルファを GR27 のカットオフで判定し、通れば `rayQueryConfirmIntersectionEXT`）にする。不透明だけの光線の経路は今の速い経路のまま。(2) パストレーサーと RT の影のパイプラインは hit group に any-hit を足す（RHI の口は既にある: `IPipeline.h:28`・`VulkanPipeline.cpp`）。パストレーサーのインスタンスの表にカットオフとアルベドのテクスチャの番号を足す。(3) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `RHIRayTracingShaderStageCompileTest` に any-hit と候補のループのシェーダーのコンパイルのケースを足す（CPU）。GPU の `MaskedRayQueryVulkanTest`（`RHIAccelerationStructureVulkanTest` の束へ MEMBER。穴あきの板の BLAS に、穴を通る光線が当たらず板の部分で当たる。不透明の板では今と同じ）は書いてビルドまで通し、実行は `G18-GR104-CHECK`。Masked の材質の無い場面の RT の結果は変えない。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHIAccelerationStructureVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIRayTracingShaderStageCompileTest|RHIRayTracingApiContractTest|PathTracingNonUniformSamplerSpirvTest|SkinnedRtSnapshotTest|BlasBuildBudgetTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Assets/Shaders/RayTracing, Assets/Shaders/PathTracing, Assets/Shaders/RTGI, Assets/Shaders/DDGI, Assets/Shaders/Common/RayTracingInstanceMask.glsl, Assets/Shaders/Common/AlphaClip.glsl, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Library/Core/Private/Rendering/PathTracingPass.inl, Library/Core/Public/Rendering/PathTracingPass.h, Library/Core/Private/Rendering/RayTracingShadowPass.cpp, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Private/Rendering/DDGIProbePass.cpp, Test/Core/Rendering/RHIRayTracingShaderStageCompileTest.cpp, Test/Core/Rendering/MaskedRayQueryVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: ロードマップ 3368 行（段階 3）と完了条件 3446 行、リスク 3493 行（不透明だけの速い経路の性能を mask で分けて守る）。GR27 の材質のカットオフ（`G5-GR27-MASKED-GBUFFER` の `AlphaCutoff` と `Common/AlphaClip.glsl`）を needs-gr で待ち、判定は同じ関数を使う。G5 の GR27 の notes は「RT・DDGI・RTGI・パストレーサーには切り抜きを反映しない（GR104）」としているので、ここがその残り。ロードマップの `PathTracingPass.inl:480`・`RayTracingShadowPass.cpp:137` は調査のメモの位置で未確認なので読み直す。穴あきの板の影・間接光の golden の差は、再承認の手順（`Scripts/UpdateRenderingGoldenBaselines.ps1`）で `G18-GR104-CHECK` に記録する。危険地帯（RT のシェーダー・RenderThread）なので評価者を通す。
+
+## G18-GR104-FOLIAGE-FUR-PT: パストレーサーの連番の撮影で、基準のカメラの周りの草を板の三角形にして加速構造へ入れ、ファーの体は平均の色と高い粗さの材質で近似する
+- status: todo
+- after: G18-GR104-MASKED-ANYHIT, G5-GR42-GRASS-FIELD-ASSET, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW, G6-GR34-SHELL-PASS, G6-GR34-FUR-LIGHTING, G6-GR34-COAT-SCENE
+- gr: GR104
+- needs-gr: GR42, GR43, GR34
+- done-when: (1) 草: パストレーサーの連番（`CameraProxy::SequenceFrame` が 0 でないとき）だけ、GR42 の草の場のデータと seed から、G5 の草の生成と同じ CPU の写し（`GrassGenerateReference`）で基準のカメラの周りの半径（既定 30 m。仮）の株を選び、葉を板の三角形（上限 20 万三角形。仮）にして SequenceFrame ごとに 1 回 BLAS を作る（`G18-GR104-BLAS-RECORD` の記録の経路）。板は Masked として `G18-GR104-MASKED-ANYHIT` の any-hit で抜く。実時間の RT 影・RTGI・DDGI には草を入れない。(2) ファー: パストレーサーはシェルを入れず、Fur のシェーディングモデル（GR34）の物は体の材質を平均の色・高い粗さ（既定 0.8。仮）に置き換えて描く。置き換えの値は材質のデータで差し替えられる。(3) 試験（足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: `CameraViewConstantsTest` の束へ MEMBER `GrassPathTracingCardsTest`（同じ場と seed とカメラで板の列がビットで一致、上限を超えたら遠い株から落とし数を記録、半径の外の株を入れない、株の位置がラスタの生成の写しと一致）と MEMBER `FurPathTracingMaterialTest`（置き換えの材質の値と、Fur でない材質を変えないこと）。PT の見た目は `G18-GR104-CHECK`。連番でないパストレーサーと実時間の描画は変えない。
+- verify: `cmake --build build --config Debug --target CameraViewConstantsTest RHIRayTracingApiContractTest PathTracingVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(GrassPathTracingCardsTest|FurPathTracingMaterialTest|CameraViewConstantsTest|BlasBuildBudgetTest|RHIRayTracingShaderStageCompileTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Library/Core/Private/Rendering/PathTracingPass.inl, Library/Core/Public/Rendering/PathTracingPass.h, Library/Core/Private/Rendering/GrassPathTracingCards.h, Library/Core/Private/Rendering/GrassPathTracingCards.cpp, Library/Core/Private/Rendering/FurPathTracingMaterial.h, Library/Core/Private/Rendering/FurPathTracingMaterial.cpp, Assets/Shaders/PathTracing, Library/Core/CMakeLists.txt, Test/Core/Rendering/GrassPathTracingCardsTest.cpp, Test/Core/Rendering/FurPathTracingMaterialTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Architecture/RenderingFlow.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- notes: ロードマップ 3370 行（段階 4 草・ファー。方針案）とリスク 3492 行。選定課題 G18-S14（ファーと草をパストレーサーでどう見せるか）は方針案を採る: ファーは入れず体の材質で近似し、草は連番だけ近傍の板で入れる。理由: 草の全本数とシェルを PT に入れるのは現実的でなく（要件 `#### GR104`）、PT の見本は照明・影・GI の構図の確かめが主用途。作者の決定（必要な機能は全部やる）でロードマップの「段階 4 は任意」を作る側にした。草の場のデータと生成の写しの名前は G5 の `G5-GR42-GRASS-FIELD-ASSET`・`G5-GR43-GRASS-GENERATE` の実装に合わせる（名前が違えば読み替えて PROGRESS.md に書く）。ファーのシェーディングモデルの ID は G5 の GR26 と G6 の GR34 の決めた値を使う。危険地帯（RT・パストレーサー）なので評価者を通す。
+
+## G19-GR124-NORT-CHECK: RT のあり・なしで起動画面を朝昼夕に撮って明るさの指標を比べ、RT なしと VRAM を絞ったときの GPU のフレームの時間を測って対応の段の文書に記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- after: G19-GR124-DEVICE-SELECTION, G19-GR124-CAPABILITY-OVERRIDES, G19-GR109-TIMELINE-TRACE, G19-GR109-GPU-HISTORY, G19-GR109-BUDGET-VIEW, G18-GR100-COLOR-METRICS
+- gr: GR124
+- check: launch
+- gpu: exclusive
+- needs-gr: GR109, GR100
+- done-when: (1) `Scripts/CaptureStartupScene.ps1 -SunElevations 10,45,3` を RT あり（既定）と `-ForceNoRt` で撮って両方が成功し、視点 × 太陽の高さごとの mean_luminance と白飛び・黒つぶれの比を `Docs/RenderingValidation/R124NoRtComparison.md`（新規）の表に並べる。許容の差は作者が決める（目標は「RT なしでも低いコントラストの見た目が成り立つ」）ので、表に「判定は作者」の欄を置く。撮った PNG は開いて見る。(2) RT なしで DDGI・RTGI・パストレーサーを求めた起動（`--force-no-rt` と起動画面の RTGI の既定）で警告が出てラスタで続くことを、撮影の Game のログで確かめる。(3) RelWithDebInfo・1280×720 で `-GpuTimingFrames` を付け、RT あり・`-ForceNoRt`・`-ForceNoRt -VramBudgetMiB 4096` の GPU のフレームの時間（中央値・95 パーセンタイル）と VRAM の使用量を GR109 の記録の形で同じ文書に書く。(4) `Docs/Platform/HardwareRequirements.md` の段 A・B の確かめの状態を（日付・コミット・この PC の GPU で RT を切った近似であること）で更新する。段 C は「この PC で確かめられない」と書く。(5) 手での確かめの手順（Vulkan 1.2 に対応しない・適合する GPU が無い環境、またはローダーの ICD を絞った環境で窓が出て、ログに GPU の名前が残り、終了コード 3。統合 GPU の機材が手に入ればそこで段 C を測る）を同じ文書に書き、結果の欄は作者の記入に残す。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -SunElevations 10,45,3 -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/rt`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -SunElevations 10,45,3 -ForceNoRt -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/nort`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -GpuTimingFrames 600 -ForceNoRt -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/nort-timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -GpuTimingFrames 600 -ForceNoRt -VramBudgetMiB 4096 -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/nort-vram`
+- paths: Docs/RenderingValidation/R124NoRtComparison.md, Docs/Platform/HardwareRequirements.md, TASKS.md, PROGRESS.md
+- notes: 受け入れ確認はロードマップ 4112〜4114 行と要件 `#### GR124`。ロードマップ 4113 行は「Release 1280x720」と書くが、AGENTS.md の絶対規則 8 に従い RelWithDebInfo で測る。needs-gr GR109（GPU の時間の記録の形）と GR100（低いコントラストの見た目の指標。ロードマップ 3987 行の (c)）。RT ありの側の撮影は起動画面の既定（RTGI が有効。`Rendering3DTestRoutine.cpp:1679-1684`）。4096 MiB は段 B の機体の VRAM の例として置いた根拠なしの仮の値で、文書に「仮」と書く。最低の VRAM の数は GR88（BC）・GR105（VRAM の予算）・GR80（AI のメッシュの簡略化）の後でないと意味が無い（ロードマップ 4215 行）ので、ここでは測った値を残すだけで要件の数を決めない。性能を測るので `gpu: exclusive`。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
+
+## G19-GR125-HDR-CHECK: HDR の出力を起動して確かめ、SDR の既定の起動が変わらないことを撮り、HDR のモニターでの手の確かめの手順を記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- after: G19-GR125-HDR-PRESENT, G19-GR125-HDR-DISPLAY, G19-GR125-HDR-LUT, G18-GR100-COLOR-METRICS
+- gr: GR125
+- check: launch
+- needs-gr: GR100
+- done-when: (1) 既定の起動（HdrMode = Off）の起動画面を default の視点で撮り、着手の前と変わらない。撮った PNG は開いて見る。(2) Game を `--hdr=auto --exit-after-rendered-frames=120` で起動し、ログに HDR の判定（OS の HDR の有無・列挙された形式・選んだ面・ペーパーホワイトとピーク）が出て、終了コード 0。この PC のモニターで OS の HDR が無効なら SDR に落ちたことをログで確かめる（落ちずに起動することが合格）。OS の HDR が有効なら `--capture-exr` 相当の HDR の撮影を 1 枚残し、色空間と転送の値を PROGRESS.md に書く。(3) GR100 の色と明度の指標で、SDR の撮影と HDR の撮影（あれば）のペーパーホワイトの面の明度が揃うことを記録する。(4) `Docs/RenderingValidation/R125HdrChecklist.md`（新規）に作者の手での確かめの手順と結果の欄を書く: Windows の HDR をオンにして scRGB の 1.0 が OS の SDR の白の水準と一致、ピークの設定でハイライトが頭打ちになる、UI の白がペーパーホワイトと一致、ピークの調整の画面の模様、HDR をオフにすると再起動なしで SDR へ戻る、モニターの型番と HDR の対応。結果の欄は作者の記入に残す。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR125-HDR-CHECK`
+- verify: `ctest --test-dir build -C Debug -R "^(R125HdrBlitVulkanTest|R125HdrLutVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Docs/RenderingValidation/R125HdrChecklist.md, Docs/RenderingValidation/R125HdrOutput.md, TASKS.md, PROGRESS.md
+- notes: 受け入れ確認はロードマップ 4120〜4122 行と要件 `#### GR125`。(2) の Game の起動は作業者が PowerShell で `build/Game/RelWithDebInfo/Game.exe` を引数つきで回し、終了コードとログの行を PROGRESS.md に貼る（起動の台本を新しく作らない。HDR の判定のログの行は G19-GR125-HDR-DISPLAY が出す）。CI や開発機で HDR の表示が使えるかは未確認（ロードマップ 4216 行）なので、合格は「HDR の無い環境で SDR に落ちて起動する」までで、HDR のモニターでの見え方は作者の手の確かめに残す。needs-gr GR100（色と明度の指標）。性能の計測ではないので `gpu: exclusive` は付けない。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
+
+## G5-GR37-TERRAIN-COMPONENT-P1: `Scripts/CookAssets.ps1` の地形（worlds）の変更検出に、スペックの `recipe.paint[].path` が指すペイントの PNG を含める
+- status: todo
+- done-when:
+  - (1) `Scripts/CookAssets.ps1` の worlds の項目について、地形のスペックの `recipe.paint[].path` を読み、変更検出の対象と印の元（`-StampTexts`）に加える。今の対象はスペックと `height_source.path` だけ。パスの解き方は AssetCook の `ReadSpecPath`（`Tools/AssetCook/TerrainSpec.cpp`）と同じにする。相対パスはスペックの置き場所が基準で、絶対パスも受ける。ペイントのファイルが無ければ、高さのファイルと同じく「変更の検出に使うファイルが見つかりません」で止める。
+  - (2) ペイントを持たないスペックは、印の値が今と変わらない（Grassland などを焼き直さない）。
+  - (3) 新しい確かめの台本 `Scripts/Test-CookAssetsTerrainStamp.ps1` が、次の 3 点を確かめ、成功したら `TERRAIN_PAINT_STAMP ok` を出して 0 で終わる。
+    - 用意: `build/` 配下の一時の置き場に、33×33 の高さの fixture（`Test/Core/Asset/Fixtures/Terrain/height_formula_33x33_16bit.png`）とペイントの PNG 1 枚を参照する一時のスペックと一覧を作る。`-SpecDir`・`-RuntimeRoot` をそこへ向けて 1 回焼く。
+    - ペイントの PNG だけを書き換えると、`-CheckStamps` が `status=stale` を出す。
+    - `-Force` を付けずに走らせても焼き直され、`cooked=1` になる。
+    - 書き換えていない状態で走らせると `status=match`・`skipped=1` になる。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-CookAssetsTerrainStamp.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*" -CheckStamps`
+- paths: Scripts/CookAssets.ps1, Scripts/Test-CookAssetsTerrainStamp.ps1, TASKS.md, PROGRESS.md
+- from: G5-GR37-TERRAIN-COMPONENT
+- notes:
+  - 提案の中身はコードで確かめた。`CookAssets.ps1` の 831 行は `$sourceTexts = @($sourceText, $heightText)` だけを印に入れている。一方、AssetCook の `TerrainSpec.cpp` 1196〜1210 行は、ペイントのバイト列を `SourceHash` に入れている。
+  - ペイントだけを変えると、cook は黙って古い NVTRN を使い続け、エラーも出ない。撮影でも気づきにくい。この先、G12-GR93-PAINT（ブラシでマスクを塗り、地形のマスクの cook へ渡す）と G11-GR59-PUDDLE-MASK がこの経路を前提にするので、先に塞ぐ。
+  - 台本を足すのは、この「黙って古いまま」を拾うためで、試験の規律の「失敗が黙って起きる」に当たる。
+  - 台本は `build/` 配下だけに書き、作業ツリーの資産は変えない。
+  - アプリは起動しない。
+
+## G18-GR126-CHECK: 乱数のハッシュが GPU と CPU で一致し、起動のシードがログに出ることを、起動して確かめる
+- status: todo
+- after: G18-GR126-RANDOM-STREAMS, G18-GR126-FIXED-STEP-POLICY
+- gr: GR126
+- check: launch
+- done-when: `RandomHashVulkanTest` が通る（Vulkan が使えない機の skip の終了コード 125 は PROGRESS.md に記録し、合格と扱わない）。`sandbox` の撮影の起動に `--seed=12345` を渡すと Game.log に `RANDOM_MASTER_SEED seed=12345 source=arg` が出て撮影が result=pass で終わり、引数を渡さない撮影では `source=clock` の行が出る。結果を PROGRESS.md に書く。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^RandomHashVulkanTest$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -Views overview -GameArgs seed=12345 -OutDir .harness/runs/scene-capture/G18-GR126-CHECK-seed`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path '.harness/runs/scene-capture/G18-GR126-CHECK-seed/overview.Game.log' -Pattern 'RANDOM_MASTER_SEED seed=12345 source=arg' -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -Views overview -OutDir .harness/runs/scene-capture/G18-GR126-CHECK-clock`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path '.harness/runs/scene-capture/G18-GR126-CHECK-clock/overview.Game.log' -Pattern 'RANDOM_MASTER_SEED seed=[0-9]+ source=clock' -Quiet)) { exit 1 }"`
+- paths: TASKS.md, PROGRESS.md
+- notes: 1 視点の撮影のログの名前は `<視点>.Game.log`（`Scripts/CaptureScene.ps1` 14〜17 行の説明）。UNCERTAIN: `sandbox` の視点に `overview` があるかは `Game/Scenes/SceneCatalog.h` で確かめる（無ければ既定の視点の名前に置き換え、置き換えたことを PROGRESS.md に書く）。直すべき所が見つかったら、ここでは直さず別の項目を足す。
+
+## G18-GR101-CHECK: シェーダーのその場の差し替えと確認ビューアの表示・資産の差し替えを、起動して確かめる
+- status: todo
+- after: G18-GR101-SHADER-PASSES, G18-GR101-ASSET-VIEWER, G18-GR101-ASSET-RELOAD
+- gr: GR101
+- check: launch
+- done-when: (1) `ShaderHotReloadVulkanTest` が通る（skip の 125 は記録し合格と扱わない）。(2) `Scripts/CaptureAssetViewer.ps1` で `Assets/Models/M9Skinned/ThreeClips.gltf` を骨格つきで置き、クリップを名前で選んで撮ると、PNG と metrics.json（三角形・関節・クリップ名・読み込みの ms）が出て終了コード 0。`FiveInfluences.gltf`（影響 5 本）では制約の違反が failures に入って終了コード 1。PNG を開き、骨格の線・回転台の姿が出ていることを目で確かめる。(3) `-ReloadCount 10` で、`ASSET_VIEWER_RELOAD ... version=2` 以降が出てカメラ・クリップ・時刻が保たれ、10 回の後の GPU の資源の数が頭打ちになる（しきい値は初回の計測で決めて PROGRESS.md に書く。頭打ちにならなければ解放の項目を足す）。(4) `--imgui` で起動し、`Assets/Shaders` の照明のシェーダーの定数を一時的に書き換えると `SHADER_RELOAD generation=1` が出て画面が変わり、壊すとエラーが ImGui に出て前の絵のまま描き続ける（書き換えは戻す）。(5) 既定の起動画面の撮影が result=pass で、着手前と見た目が変わらない。結果を PROGRESS.md に書く。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest AssetCook Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^ShaderHotReloadVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureAssetViewer.ps1 -Skeletal Assets/Models/M9Skinned/ThreeClips.gltf -OutDir .harness/runs/asset-viewer/G18-GR101-CHECK-threeclips`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureAssetViewer.ps1 -Skeletal Assets/Models/M9Skinned/ThreeClips.gltf -ReloadCount 10 -OutDir .harness/runs/asset-viewer/G18-GR101-CHECK-reload`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G18-GR101-CHECK-default`
+- paths: TASKS.md, PROGRESS.md
+- notes: (4) はキー操作と目視が要るので作者が確かめて記録する（ワーカーは手順と結果の欄を PROGRESS.md に用意する）。`FiveInfluences.gltf` が cook の段で拒否される（GR86 の既定は拒否）なら、その拒否が failures に理由つきで出れば合格とする。台本の引数の名前は `G18-GR101-ASSET-RELOAD` で決めたものに合わせ、違えば verify の行を直して PROGRESS.md に書く。直すべき所が見つかったら、ここでは直さず別の項目を足す。
+
+## G18-GR98-CHECK: 実行中の Game でスクリプトの数値とコルーチンの書き換えがその場で効くことを、起動して確かめる
+- status: todo
+- after: G18-GR98-RUNTIME-BASE, G18-GR98-API-CORE, G18-GR98-API-GAMEPLAY, G18-GR98-COROUTINES
+- gr: GR98
+- check: launch
+- done-when: `Scripts/Test-M6AngelScriptHotReload.ps1` の既定の確かめと `-CoroutineProbe` が Debug で result=pass（書き換えから 0.5 秒以内にログの値が変わり、コルーチンが BeginPlay からやり直される）。M6 の既存のスモークが着手前より悪化しない。結果と、`G18-GR98-COROUTINES` が記録したコルーチンの Tick の費用・200 体のビルドの時間を PROGRESS.md にまとめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M6AngelScriptHotReload.ps1 -Configuration Debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M6AngelScriptHotReload.ps1 -Configuration Debug -CoroutineProbe`
+- paths: TASKS.md, PROGRESS.md
+- notes: 完了条件 3413 行。Release はログが無効（NORVES_ENABLE_LOGGING）なので Debug で確かめる。直すべき所が見つかったら、ここでは直さず別の項目を足す。
+
+## G18-GR99-CHECK: 入力の再生で同じ操作の再走行が一致し、デバッグの描画・重ね描き・フリーカメラ・調整値の保存が実機で効くことを、起動して確かめる
+- status: todo
+- after: G18-GR99-TUNING, G18-GR99-TUNING-GROUPS, G18-GR99-INPUT-REPLAY, G18-GR99-DEBUG-VIS, G18-GR99-DEBUG-OVERLAY
+- gr: GR99
+- check: launch
+- done-when: (1) `Scripts/Test-InputReplay.ps1` が見本の記録で Game を 2 回走らせ、600 フレームの状態の CSV が完全に一致して result=pass（Debug）。(2) `CaptureScene.ps1 -InputReplay … -CaptureFrames 120,300` で 2 枚の PNG が出て、metrics.json に replay のハッシュ・フレーム・mean_luminance が入り、終了コード 0。(3) `DebugOverlayVulkanTest` が通る（skip の 125 は記録し合格と扱わない）。(4) `--imgui` で起動し、物理の形の線・重ね描き（壁の向こうの線が見える）・文字のラベル・ポーズとコマ送り・デバッグのフリーカメラ・重ね描きの表示（速度と、入っていれば風・濡れ・草の名前）・調整値の保存と再起動の後の値が効くことを目で確かめる（作者が確かめて記録する。ワーカーは手順と結果の欄を PROGRESS.md に用意する）。(5) 既定の起動画面の撮影が result=pass で、着手前と見た目が変わらない。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^DebugOverlayVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-InputReplay.ps1 -Configuration Debug -Replay Scripts/InputReplays/sandbox-walk.nvinput -OutDir .harness/runs/input-replay/G18-GR99-CHECK`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -Views overview -InputReplay Scripts/InputReplays/sandbox-walk.nvinput -CaptureFrames 120,300 -OutDir .harness/runs/scene-capture/G18-GR99-CHECK-replay`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G18-GR99-CHECK-default`
+- paths: TASKS.md, PROGRESS.md
+- notes: 完了条件 3416・3420・3421 行。台本の引数の名前は `G18-GR99-INPUT-REPLAY` で決めたものに合わせ、違えば verify の行を直して PROGRESS.md に書く。CSV が一致しなければ、どのフレームのどの Entity から違うかを記録して直す項目を足す（ここでは直さない）。
+
+## G18-GR100-CHECK: 起動画面の撮影の結果に色と明度の計測をかけ、1920×1080 で数秒で計測の JSON が出ることを確かめる
+- status: todo
+- after: G18-GR100-COLOR-METRICS
+- gr: GR100
+- check: launch
+- done-when: `CaptureStartupScene.ps1` で撮った結果の metrics.json を `Scripts/ColorMetrics.py --metrics-json` に渡すと、全部の視点の `color_metrics.json` と `COLOR_METRICS` の行が出て、`rec709_mean_luma_8bit` が metrics.json の mean_luminance と ±0.5 以内で一致し、1920×1080 の 1 枚あたりの時間（目標は数秒。仮）を PROGRESS.md に記録する。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G18-GR100-CHECK`
+- verify: `python -B Scripts/ColorMetrics.py --metrics-json .harness/runs/startup-capture/G18-GR100-CHECK/metrics.json --rules Scripts/ColorMetrics/color_rules.example.json --out .harness/runs/startup-capture/G18-GR100-CHECK/color_metrics.json`
+- paths: TASKS.md, PROGRESS.md
+- notes: 完了条件 3424・3426 行。撮影は手動の露出・FXAA・グレイン無しで固定するのが望ましい（ロードマップ 3470 行）が、起動画面の既定の撮影の条件を変えないので、条件を結果に書くだけにする。
+
+## G18-GR102-CHECK: 深度・法線・物の ID の書き出しと撮影のセッションを、GPU の試験と起動で確かめる
+- status: todo
+- after: G18-GR102-AOV-EXPORT, G18-GR102-CAPTURE-SESSION, G18-GR102-OBJECT-ID
+- gr: GR102
+- check: launch
+- done-when: (1) `DepthExportVulkanTest`・`ObjectIdExportVulkanTest`・`PathTracingExrOutputTest`（既存。EXR の書き出しを切り出した後もバイトが変わらない）が通る（skip の 125 は記録し合格と扱わない）。(2) `Scripts/ExportSceneAov.ps1` で見本のセッション（sandbox の 8 フレーム）を書き出すと、全フレームの color・depth_z・depth_dist・normal_view・mask・object_id のファイルと manifest.json（各フレームのカメラ・コミット）が揃って終了コード 0。16bit の深度の PNG を OpenCV（`cv2.IMREAD_UNCHANGED`）で読むと uint16 で、寸法が合う。(3) 同じセッションを `--renderer=path-tracing` でも書き出し、スキン・Mega を含まない試験の場面で PT の hit-distance とラスタの depth_dist の差を記録する（許容は初回の計測で決めて PROGRESS.md に書く）。(4) 既定の起動画面の撮影が result=pass で、着手前と見た目が変わらない。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest PathTracingCameraVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(DepthExportVulkanTest|ObjectIdExportVulkanTest|PathTracingExrOutputTest)$" --no-tests=error --output-on-failure --timeout 900`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/ExportSceneAov.ps1 -Scene sandbox -Session Scripts/CaptureSessions/sandbox-orbit.json -OutDir .harness/runs/aov/G18-GR102-CHECK-raster`
+- verify: `python -B -c "import cv2,glob,sys; f=sorted(glob.glob('.harness/runs/aov/G18-GR102-CHECK-raster/*depth16*.png')); sys.exit(0 if f and cv2.imread(f[0], cv2.IMREAD_UNCHANGED).dtype.name=='uint16' else 1)"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/ExportSceneAov.ps1 -Scene sandbox -Session Scripts/CaptureSessions/sandbox-orbit.json -GameArgs renderer=path-tracing -OutDir .harness/runs/aov/G18-GR102-CHECK-pt`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G18-GR102-CHECK-default`
+- paths: TASKS.md, PROGRESS.md
+- notes: 完了条件 3434〜3440 行。台本の引数は `G18-GR102-AOV-EXPORT`・`G18-GR102-CAPTURE-SESSION` で決めたものに合わせ、違えば verify の行を直して PROGRESS.md に書く。sandbox にスキン・Mega が含まれるなら PT の比べには含まない場面（R7 の屋外の試験の場面など）を選び、選んだ場面を書く。ControlNet へ入れた生成の結果の記録（3440 行）は DogGame の側の作業なので作者に回す。直すべき所が見つかったら、ここでは直さず別の項目を足す。
+
+## G18-GR104-CHECK: スキン・切り抜き・草が RT と パストレーサーに写ることと、BLAS の構築の時間を、GPU の試験と起動で確かめて記録する
+- status: todo
+- after: G18-GR104-BLAS-RECORD, G18-GR104-SKINNED-BLAS, G18-GR104-MASKED-ANYHIT, G18-GR104-FOLIAGE-FUR-PT, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS
+- gr: GR104
+- check: launch
+- gpu: exclusive
+- needs-gr: GR37
+- done-when: (1) `RHIAccelerationStructureVulkanTest`・`SkinnedBlasVulkanTest`・`MaskedRayQueryVulkanTest`・`RayTracingSceneSnapshotTest`・`RenderingRayTracingShadowVulkanTest`・`RenderingRayTracingShadowDynamicVulkanTest`・`PathTracingVulkanTest`・`R8PathTracingSequenceFrameVulkanTest` が通る（skip の 125 は記録し合格と扱わない）。(2) 骨つきのパネルの撮影（`-SkinnedProbe`）で、RTGI の入力にスキンが写り床に遮蔽・間接光が出ることを PNG で確かめ、骨つきのパネルの無い既定の撮影は着手前と見た目が変わらない。(3) RelWithDebInfo の 1280×720 で、スキン 1 体の変形＋BLAS の GPU の ms を、毎フレームの作り直しとリフィットで測って PROGRESS.md に記録し、`G18-GR104-SKINNED-BLAS` の切り替えの閾値を決める（GPU の予算は全 R で保留なので合否にしない）。(4) MegaGeometry と地形の区画の静的な BLAS が 1 回だけ作られ（`RT_BLAS` のログ）、同じメッシュの多数のインスタンスが共有し、高密度のメッシュ（約 70 万三角形）の初回の構築でフレームが止まらないことを記録する。(5) 穴あき板の影・間接光に穴が出ることと、アルファを無視していた今との差を golden の再承認の手順で記録する。(6) パストレーサーの連番で草の板とファーの近似が写ることを 1 枚記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target RHIAccelerationStructureVulkanTest RayTracingSceneSnapshotTest RenderingRayTracingShadowVulkanTest PathTracingVulkanTest PathTracingCameraVulkanTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIAccelerationStructureVulkanTest|SkinnedBlasVulkanTest|MaskedRayQueryVulkanTest|RayTracingSceneSnapshotTest|RenderingRayTracingShadowVulkanTest|RenderingRayTracingShadowDynamicVulkanTest|PathTracingVulkanTest|R8PathTracingSequenceFrameVulkanTest)$" --no-tests=error --output-on-failure --timeout 1800`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -OutDir .harness/runs/startup-capture/G18-GR104-CHECK-skinned`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -GpuTimingFrames 300 -GameArgs window-size=1280x720 -OutDir .harness/runs/startup-capture/G18-GR104-CHECK-skinned-timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G18-GR104-CHECK-default`
+- paths: TASKS.md, PROGRESS.md
+- notes: 完了条件 3442〜3446 行。計測は Release でなく RelWithDebInfo（AGENTS.md の絶対規則 8）。`CaptureStartupScene.ps1` には `-Width`・`-Height` が無いので、解像度は `-GameArgs window-size=1280x720`（ApplicationProcessor.cpp:662-666 の `--window-size=`）で渡す。リフィットの比べは `G18-GR104-SKINNED-BLAS` の設定を `-GameArgs` で切り替えて 2 回測る（設定の名前はそのタスクで決めたもの）。地形の区画は G5 の GR37 を待つ（needs-gr）。R7 のラスタ対 PT の比べ（`RasterPathTracingComparison`）にスキンを含む場面をかける確かめは Reference の段で重いので、作者の許可が出たときに 1 回行い、行わなければ未実施と書く。直すべき所が見つかったら、ここでは直さず別の項目を足す。
+
+## G8-GR76-RESET-CHECK: Game を起動してリセットを 50 回繰り返し、資源の数の戻り・検証層の誤り 0・GPU の資源の漏れ・起動画面を確かめる(後回しにしたアプリの起動の確かめ)
+- status: todo
+- after: G8-GR76-RESET-LIFETIME
+- gr: GR76
+- check: launch
+- done-when: (1) `Scripts/Test-GameReset.ps1 -SoakCount 50` が通る: 50 回のリセットの後に、ルートの Entity・テクスチャ / メッシュ / モデルのハンドル・保留中の非同期・voice の数がベースラインへ戻り、終了コードが 0、Vulkan の検証層の VUID が 0。(2) `GameModeScopeResourceLeakVulkanTest` が通る(テクスチャ・メッシュ・モデルのハンドルの数がリセットの前後で一致)。(3) セーブの縦の道: 撃破 → 自動保存 → 死亡の合図 → リセットの後に、撃破済みのシ者が撃破済みのまま作り直されることを `GAME_RESET` の行で確かめる。保存先が `%LOCALAPPDATA%/NorvesLib/Game/` の下で、作業ディレクトリに保存のファイルを作らない。(4) 起動画面(Rendering3DTest)の default の視点の撮影を開き、着手前と変わらないことを見る。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-GameReset.ps1 -SoakCount 50 -Configuration Debug`
+- verify: `ctest --test-dir build -C Debug -R "^GameModeScopeResourceLeakVulkanTest$" --no-tests=error --output-on-failure --timeout 600`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G8-GR76-RESET-CHECK`
+- paths: TASKS.md, PROGRESS.md
+- notes: 受け入れ確認はロードマップ 1847 行(GPU の段の部分)・1849〜1850 行。性能の計測ではないので `gpu: exclusive` は付けない。漏れが見つかったら、原因を PROGRESS.md に書き、直す項目を TASKS.md に足す(この項目で寿命のコードを直さない)。撮影の PNG は開いて見る。
+
+## G9-GR15-AB-CAPTURE-CHECK: 足 IK と手続き層の有無を animation-debug の場面で撮り比べ、既定の起動画面が変わらないことを確かめる
+- status: todo
+- after: G9-GR15-ORDER-DEBUG-VIEW
+- check: launch
+- gr: GR15, GR14
+- done-when: (1) 下の 2 つの撮影がともに成功し（SCENE_READY が出る）、modifier を有効にした撮影と `--pose-modifiers-off` の撮影で、四足の合成のキャラクターの範囲の画素が異なる。(2) 撮った画像と、ImGui の A/B を切り替えて手で録った動画を開いて、旋回で胴が傾く、背骨の波が振幅 0 から足した分だけ出る、頭が目標を向く、尾と耳が遅れて揺れる、斜面と階段で足が浮かず沈まず、接地中に滑らないことを目で確かめる。(3) 既定の起動画面の撮影が、G9 に着手する前の撮影と同じ見た目である（`metrics.json` の値と画像を並べて確かめる）。(4) 目で決めた振幅・重みの初期値と「実リグ・実素材の品質は未検証」を `PROGRESS.md` に書く。満たさないところは、`G9-GR15-ORDER-DEBUG-VIEW` と原因のタスクの paths の範囲で直す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -GameArgs animation-debug -OutDir .harness/runs/scene-capture/G9-GR15-AB-CAPTURE-CHECK-on`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -GameArgs animation-debug,pose-modifiers-off -OutDir .harness/runs/scene-capture/G9-GR15-AB-CAPTURE-CHECK-off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/G9-GR15-AB-CAPTURE-CHECK`
+- paths: TASKS.md, PROGRESS.md
+- notes: アプリを起動しないと確かめられない受け入れ（ロードマップ G9 の完了条件の「実リグ導入後に A/B を動画で残して振幅の初期値を記録する」、要件 `#### GR14` の「ImGui の手動確認と動画」、`#### GR15` の「手動確認」）を実装のタスクから分けた。性能は測らないので GPU を占有しない。UNCERTAIN: `--animation-debug` の場面を `Scripts/CaptureScene.ps1` の決定的な撮影（`--capture-deterministic`）で撮れるかは未確認。撮れなければ `G9-GR15-ORDER-DEBUG-VIEW` の paths の範囲で場面の準備完了の印を出すよう直す。実リグ（Rigify の Wolf メタリグ＋UniRig のウェイト）は試行錯誤中なので、ここでは合成の骨格で確かめ、実リグでの調整は記録に残すだけにする（ロードマップ G9 の非ゴール）。`--pose-modifiers-off` の引数は `G9-GR15-ORDER-DEBUG-VIEW` で足す。
+
+## G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P2: workspace を親にする存在確認と移動も読み流しにし、workspace の項目数で bootstrap が失敗しない形にする
+- status: todo
+- after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
+- done-when: workspace を親にする項目の探索を、元のタスクが `CookManagedStoreNative.h` に入れた読み流しの列挙に替える。対象の leaf と、長名か short alias で fold 一致する項目だけを残し、ほかはためない。上限(1 ディレクトリ 16384・全列挙 65536・metadata 32MiB)は残した項目にだけ掛ける。対象は次の 2 つ。
+  - `CookManagedBootstrap.cpp` の `Absent(op.Scope.Workspace, Leaf(draft.Anchor.RootLeaf), ...)`
+  - `CookManagedTransactionController.cpp` の commit で workspace へ出入りする `Rename`(`Rename(op.Scope.Workspace, ...)` と `Rename(op.Scope.Pending, L"root.stage", ..., op.Scope.Workspace, ...)`)の中の `Find`・`Absent`
+  
+  store の制御領域(`pending`・stage・claim)と package の親(`EnsureParents`)の列挙は、今の全件の列挙と上限のまま変えない。`Find`・`Absent` をまとめて読み流しにはせず、workspace を親にする呼び出しだけを替える。次の 3 つは今のまま保つ。
+  - 列挙の失敗を「項目なし」と扱わないこと
+  - 実長名の大文字小文字違いや short alias の一致を、今と同じく存在(`destination_exists` など)と扱うこと
+  - `Rename` の移動元の検出と object の照合
+  
+  `CookManagedBootstrapTest` に次の 2 件を足す。fixture は今の試験と同じく TEMP の外の試験の置き場に作り、新しい exe は作らない。
+  - workspace に 16385 個の空ファイルを置いても、bootstrap が `entry_limit` で失敗せずに `Executed` になる
+  - 同じ混んだ workspace に、RootLeaf と大文字小文字だけが違う項目があれば、今と同じく失敗する
+  
+  `Docs/Architecture/CookManagedBootstrap.md` の上限と列挙の記述を、workspace は読み流しで検査することに合わせて直す。
+- verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedStoreObservationTest|CookManagedStoreInitializationTest|TextureManagedCliTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Tools/AssetCook/CookManagedBootstrap.cpp, Tools/AssetCook/CookManagedTransactionController.cpp, Tools/AssetCook/CookManagedStoreNative.h, Test/Core/Asset/CookManagedBootstrapTest.cpp, Docs/Architecture/CookManagedBootstrap.md, TASKS.md, PROGRESS.md
+- from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1
+
+判断の根拠:
+- 該当の `Absent` の本体は `CookManagedTransactionController.cpp:85` にある。`Find` を通って `N::Enumerate` で全件をため、`N::Budget` の上限が掛かる。
+- commit で root を workspace へ出し入れする `Rename`(同じファイルの 1536 行・1553 行)も同じ `Find`・`Absent` を通る。このため直すのは bootstrap の 1 か所だけでは足りない。
+- 元のタスクの目的は「workspace からボリュームの根までのどの階層でも、項目数で失敗しない」こと。今のままだと、混んだ workspace で Observe は通っても、bootstrap と commit が `entry_limit` で落ちる。目的の取りこぼしなので TASK にした。
+- 人待ちの P1-P1 が受け持つのは `OpenStore` の祖先と `VerifyClaims` の workspace の列挙で、この 2 か所は含まない。重複にはならない。
+- 読み流しの関数は親の枝(`task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1`)にしかなく、統合ブランチにはまだ入っていない。このため `after` は元のタスクにした。元のタスクは P1-P1 を待っているので、同じファイル `CookManagedTransactionController.cpp` を触る P1-P1 との順もこれで決まる。
+- アプリの起動は要らない。ビルドと単体の試験で確かめられるので、`check: launch` は付けていない。

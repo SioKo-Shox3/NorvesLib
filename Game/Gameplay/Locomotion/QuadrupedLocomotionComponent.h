@@ -39,6 +39,9 @@ namespace Game::Gameplay
         // MapperのJumpイベントを単独で消費する。Mapperはこのcomponentより長生きすること。
         void BindInput(NorvesLib::Core::Input::InputMapper* mapper);
         bool SetProfilePath(NorvesLib::Core::Container::AnsiStringView path);
+        // 資産の根と相対パスを差し替え、次のInput群で即時に再読込する。不正なパスでは変更しない。
+        bool SetProfileSource(const NorvesLib::Core::Container::AnsiString& assetRoot,
+                              NorvesLib::Core::Container::AnsiStringView path);
         bool SetDriveMode(NorvesLib::Modules::Physics::CharacterDriveMode mode);
         bool SetMotionSource(LocomotionMotionSource source);
         // VisualRootはownerの子、VisualPoseはその子孫。可変の傾きはPose側へ置き補間履歴を切らない。

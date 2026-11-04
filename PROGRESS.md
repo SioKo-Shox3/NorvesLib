@@ -9555,12 +9555,65 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-132213/G5-GR89-TERRAIN-MASKS-U5-verify.txt`（verify の 4 行: AssetCook・CookedMeshTest の Debug ビルドが終了コード 0、ctest の CookedTerrainTest・AssetCookTerrainSmoke が 100% Passed で (a)〜(g) の行が出る、CookAssets の Grassland が終了コード 0。草原は U4 で焼き済みのため skipped=1 で、`-Force` でも cooked=1 を確かめた）。起動の確かめは無い（描画は G5-GR37-TERRAIN-COMPONENT）。
 - Next: マスクの層を描画で使うのは GR37・GR42・GR45。道のペイント PNG はまだ無い。
 - Notes: 要起票: `Scripts/CookAssets.ps1` の変更検出は spec と高さファイルだけを見て、ペイントの PNG を見ない（ペイントだけ変えると `-Force` が要る。AssetCook の source_hash はペイントを含む）。
-- U1 private SPI にループ・音量・周波数比・出力係数・一時停止を足し、XAudio2 と fake を同じ変更で直す: 着地(直し 1 回)
-- U2 IAudioService と AudioTypes に追加だけで公開 API を足し、ドメインで実装する: 着地(直し 0 回)
-- U3 AudioPlaybackTest を足し、タスクの verify を通す: 着地(直し 0 回)
-- Done (G8-GR72-AUDIO-SPI、run 20261104-141138): private の `IAudioBackend` に `AudioBufferDesc{bLoop, LoopBeginFrame, LoopLengthFrames, StartFrame}` 付きの提出・voice の作成時の最大周波数比・`SetVoiceVolume`・`SetVoiceFrequencyRatio`・`SetVoiceOutputGains`(ステレオの係数をバックエンドが出力の配置へ展開)・`PauseVoice` / `ResumeVoice`(Flush しない)を足し、XAudio2(LoopCount・LoopBegin・LoopLength・PlayBegin、SetVolume、SetFrequencyRatio、SetOutputMatrix、Stop(XAUDIO2_PLAY_TAILS) と Start、出力のチャンネル数は mastering voice の GetVoiceDetails)と fake を合わせた。`IAudioService` は追加だけ(既存のメソッドと署名は不変): `CreateVoice(clip, AudioVoiceDesc, outHandle)`(ループ点・開始位置・最大ピッチの半音、既定は周波数比 2.0)、`SetVoiceVolume`・`SetVoicePitch`(半音)・`SetVoicePan`(等パワー L=cos((p+1)π/4)、R=sin((p+1)π/4))、`PauseVoice` / `ResumeVoice`(ActiveVoiceRecord の bPaused)。Set* は Created / Submitted / Playing でだけバックエンドを呼び、Stopping・Drained・Quarantined では InvalidState。`AudioResult::Rejected` と `AudioDiagnostics` の StolenVoiceCount・RejectedPlayCount・SuppressedByCooldownCount(この層では 0)を足した。
-- 試験: `AudioPlaybackTest`(`AudioBackendLifetimeTest` の束の MEMBER、fake だけをリンク)で、ループの voice が 600 回の Tick の後も Playing、Pause が Flush を増やさず Resume で再開、隔離された voice への Set* で fake の操作が増えない、Destroy の後の Set* が StaleHandle、パンの式を確かめる。
-- 証拠: `.harness/runs/20261104-141138/G8-GR72-AUDIO-SPI-U3-verify.txt`(Debug の Game・AudioBackendLifetimeTest のビルド成功、ctest の AudioPlaybackTest・AudioBackendLifetimeTest・AudioModuleLifecycleTest・AudioModuleRegistryTest が 4/4 Passed、`M9_REVIEW_CONTRACT result=pass contract=All`、numstat の 2 通りが一致)。
-- Next: 起動の確かめは後回し(無限ループの voice を Stop → Flush したときに Drained が来るか、XAudio2 の実機の鳴り方は G8-GR72-AUDIO-CHECK)。論理サウンド層は G8-GR72-SOUND-SYSTEM。
-- Notes: 危険地帯(Public API)なので評価者を通す。
-- Notes (G8-GR72-AUDIO-SPI、run 20261104-182215): 前回は評価者の枠切れで評価が回らず状態が doing に戻っていた。実装は全単位着地済みで、着地した Library/Modules/Audio・Test/Modules/Audio・Docs/Testing.md は確かめた作業ツリーと一致し、確かめの出力(ビルド exit_code=0、ctest 4/4 Passed、M9_REVIEW_CONTRACT result=pass contract=All)を読み直したので done に戻した。Public API の危険地帯なので評価はランナーの評価で通す。無限ループの voice を Stop → Flush したときの Drained は実機の確かめ(G8-GR72-AUDIO-CHECK)で見る。
+
+- U1 形状の判定の純関数・ヒステリシスの状態機械・ZoneProfileStack: 着地(直し 0 回)
+- U2 ZoneSensorComponent・EncounterZoneComponent・EncounterService と GameplayModule への結線: 着地(直し 0 回)
+- U3 EncounterZoneTest: 着地(直し 0 回)
+- U4 TickStages.md の割当表と Testing.md の記載: 着地(直し 0 回)
+- U5 EncounterLifecycleTest・EncounterSerializationTest と最終の確かめ: 着地(直し 1 回)
+
+## 2026-11-04 G8-GR18-ENCOUNTER-ZONES（run 20261104-135119 の反復 1、完了）
+- Done: 遭遇領域を物理を使わないサービスで作った。形状（球・箱・Y 軸の円柱）の内側と ExitMargin の外側の判定の純関数、ヒステリシスの状態機械 Outside → Engaged → Resetting → Cleared（境界の往復で連打しない・ResetDelaySeconds 外にいたときだけ Exit・テレポートの印で即評価・Cleared は再び武装しない）、`ZoneProfileStack`（優先度の順、最上位が変わったときだけ `OnActiveProfileChanged(old, new, blendSeconds)`）。`ZoneSensorComponent`・`EncounterZoneComponent`（PROPERTY 付き、`RegisterReflectedTypes` に登録）と `EncounterService`（GameplayModule が持ち `LateTick` で 1 フレーム 1 回評価。登録と参照の解決は最初の評価まで遅らせる。事件は集めてから世代付きのハンドルで再検証して配る。`MarkCleared(ZoneId)` は次の評価で適用。別スレッドからの呼び出しは拒否し、Shutdown で消す）。ResetPolicy は {FullHeal, KeepDamage}、既定 FullHeal。`Docs/Architecture/TickStages.md` の割当表と `Docs/Testing.md` に載せた。
+- 試験: `EncounterZoneTest`・`EncounterLifecycleTest`・`EncounterSerializationTest` を PhysicsDynamicsTest の束に足した。
+- 証拠: `.harness/runs/20261104-135119/verify-G8-GR18-ENCOUNTER-ZONES-U5.txt`（Game・PhysicsDynamicsTest の Debug ビルド終了コード 0、ctest で PhysicsBroadphaseQueryTest・PhysicsDynamicsTest・EncounterZoneTest・EncounterLifecycleTest・EncounterSerializationTest の 5 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命の危険地帯）。敵の起動と ResetPolicy の適用は G8-GR17-ENEMY-COMPONENT、カメラ・音・天候の購読は各項目。
+- Notes: verify の CombatLifecycleTest はこの枝に未登録（G8-GR16-COMBAT-RUNTIME の試験）で、ctest の正規表現に一致しないまま 5 件で通る。退出の遅延の比較は「以上」で、Resetting に移った評価では時間を足さない（遅延 0 秒でも Exit は次の評価から）。`OnActiveProfileChanged` は同じ LateTick の中で配るので、購読側の反映は次のフレーム。起動の要る確かめは無い。
+
+- U1 公開の型と Component の器・モジュールへの登録・窓の開閉: 着地(直し 0 回)
+- U2 GameplayModule::LateTick での 1 フレーム 1 回の評価と配送: 着地(直し 0 回)
+- U3 試験の土台・CMake の登録・CombatLayerTest: 着地(直し 0 回)
+- U5 CombatMultiHitTest: 着地(直し 0 回)
+- U4 CombatFrameRateInvarianceTest: 着地(直し 1 回)
+- U6 CombatLifecycleTest: 着地(直し 1 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 2、途中）
+- Done: CombatMultiHitTest・CombatFrameRateInvarianceTest（直接の窓と合成のクリップの窓の両方）・CombatLifecycleTest を入れた。残りは TickStages.md の割当表とタスクの verify（U7）。
+- 決定: 「配送中に足した購読は次の配送から」の「配送」は 1 件の当たりの 1 回の Broadcast と読む（候補ごとに OnHit・OnHurt・OnAnyHit を複製してから Broadcast。AnimatorComponent::ForwardEvent と同じ約束）。フレーム全体で複製を固定すると、配送中に外して破棄した受け手が同じフレームの後の候補で呼ばれるため採らない。同じフレームの後の候補では足した受け手が呼ばれる。
+- Next: U7（TickStages.md と verify の 2 行）。
+- U7 TickStages.md の割当表とタスクの verify: 着地(直し 0 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 3、完了）
+- Done: `HitboxComponent`・`HurtboxSetComponent`・`AttackProfile`・`CombatHitEvent`（POD）を Gameplay モジュールに足し、`GameplayModule::LateTick` で 1 フレーム 1 回評価する（先頭で `World::UpdateWorldTransforms`、シミュレーションの Transform、`TimeSystem::GetFrameTimes().World` の時間）。窓は `BeginAttack` / `EndAttack` と同じ Entity の `AnimatorComponent::OnEvent`（Name と WindowToken）で開閉し、開くたびに AttackInstanceId を採番、無効化・破棄・最大持続時間で閉じる。再ヒットの方針（OncePerVictim / OncePerPart / Interval）と PerVictimPolicy で間引き、hitbox の登録順 → HurtboxSet の登録順 → 部位の番号で並べ、配る直前に世代付きハンドルで再検証して OnHit → OnHurt → OnAnyHit。faction は 32bit のマスク、自分自身（ActorId）を外す。GameThread 以外を拒否し、Shutdown → Initialize で状態を消す。`Docs/Architecture/TickStages.md` の割当表に 2 型を「群なし（Module Late で評価）」で載せ、フレームの順序の節に評価の時点・時間・配送の順を書いた。試験は CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest を PhysicsDynamicsTest の束に入れた。
+- 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
+- U1 公開の型と Component の器・モジュールへの登録・窓の開閉: 着地(直し 0 回)
+- U2 GameplayModule::LateTick での 1 フレーム 1 回の評価と配送: 着地(直し 0 回)
+- U3 試験の土台・CMake の登録・CombatLayerTest: 着地(直し 0 回)
+- U5 CombatMultiHitTest: 着地(直し 0 回)
+- U4 CombatFrameRateInvarianceTest: 着地(直し 1 回)
+- U6 CombatLifecycleTest: 着地(直し 1 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 2、途中）
+- Done: CombatMultiHitTest・CombatFrameRateInvarianceTest（直接の窓と合成のクリップの窓の両方）・CombatLifecycleTest を入れた。残りは TickStages.md の割当表とタスクの verify（U7）。
+- 決定: 「配送中に足した購読は次の配送から」の「配送」は 1 件の当たりの 1 回の Broadcast と読む（候補ごとに OnHit・OnHurt・OnAnyHit を複製してから Broadcast。AnimatorComponent::ForwardEvent と同じ約束）。フレーム全体で複製を固定すると、配送中に外して破棄した受け手が同じフレームの後の候補で呼ばれるため採らない。同じフレームの後の候補では足した受け手が呼ばれる。
+- Next: U7（TickStages.md と verify の 2 行）。
+- U7 TickStages.md の割当表とタスクの verify: 着地(直し 0 回)
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 3、完了）
+- Done: `HitboxComponent`・`HurtboxSetComponent`・`AttackProfile`・`CombatHitEvent`（POD）を Gameplay モジュールに足し、`GameplayModule::LateTick` で 1 フレーム 1 回評価する（先頭で `World::UpdateWorldTransforms`、シミュレーションの Transform、`TimeSystem::GetFrameTimes().World` の時間）。窓は `BeginAttack` / `EndAttack` と同じ Entity の `AnimatorComponent::OnEvent`（Name と WindowToken）で開閉し、開くたびに AttackInstanceId を採番、無効化・破棄・最大持続時間で閉じる。再ヒットの方針（OncePerVictim / OncePerPart / Interval）と PerVictimPolicy で間引き、hitbox の登録順 → HurtboxSet の登録順 → 部位の番号で並べ、配る直前に世代付きハンドルで再検証して OnHit → OnHurt → OnAnyHit。faction は 32bit のマスク、自分自身（ActorId）を外す。GameThread 以外を拒否し、Shutdown → Initialize で状態を消す。`Docs/Architecture/TickStages.md` の割当表に 2 型を「群なし（Module Late で評価）」で載せ、フレームの順序の節に評価の時点・時間・配送の順を書いた。試験は CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest を PhysicsDynamicsTest の束に入れた。
+- 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
+
+## 2026-11-04 G4-GR05-COMPONENT-CASES（run 20261104-134159）
+- 試験の 3 点（Docs/Testing.md。ケースを足す前に書く）:
+  - 反証する契約: QuadrupedLocomotionComponent を固定ステップの経路で回したとき、(1) 一時フォルダの locomotion.v1 の設定を書き換えると 0.25 秒の間隔の後の最初のフレームから新しい値で動き、壊れた JSON では前の値のまま動き続けて警告が 1 回だけ出る、(2) 見た目の子の Animator の駆動の信号（Speed・TurnRate・bGrounded）と名前のパラメータ（GaitId・GaitWeight0〜3・PitchAngle・BankAngle）がそのフレームのモデルの出力と一致し、名前のパラメータが無いグラフでも落ちない、(3) Animation を移動の源にすると、固定ステップの回数が 0・1・2 と揺れても Animator のルートの差分の合計と本体の移動量の合計が 1e-4 m 以内で一致し、Procedural へ戻すと残りを捨てて次のフレームから手続きの移動に戻る、(4) 同じフレームの Camera 群の FollowCameraComponent が移動の結果を 1 フレームの遅れなく読む
+  - ほかの手段で気づけるか: 気づきにくい。再読込は手で JSON を書き換えないと起きず、パラメータの名前の食い違いは PublishVisual が設定の失敗を捨てるのでログに出ない。ルート移動の二重・欠けは数 mm 単位で絵に出ず、1 フレームのカメラの遅れは静止画の撮影に出ない
+  - 失敗が黙って起きるか: 起きる。どれも外れても犬は何かしら動き、エラーもログも出ない（壊れた JSON の警告の回数を除く）
+- 計画: 4 つのケースは同じ試験ファイルと Component を触るので、単位は直列に回す（U1 設定の再読込 → U2 Animator への値 → U3 ルート移動 → U4 同じフレームのカメラとタスクの verify）
+- U1 設定の再読込のケースを足し、一時フォルダを読ませる口を Component に足す: 着地(直し 0 回)
+- U2 Animator への値のケースを足す: 着地(直し 0 回)
+- U3 ルート移動のケースを足す: 着地(直し 0 回)
+- U4 同じフレームのカメラの読みのケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 28〜31 を足し、全部通る（設定の再読込・Animator への値・ルート移動・同じフレームのカメラ）。Component の直し: Animator へ渡す Speed と接地を本体の状態ではなくそのフレームのモデルの出力から作る（直す前は最初のフレームの Speed が 0.0325、期待 0）。試験のために設定の置き場（資産の根と相対パス）を差し替える SetProfileSource を足した
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest LoggerSinkTest Game -- /m:1` は終了コード 0。ctest の 5 本（QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・RootMotionTimeQueueTest・PhysicsFixedStepPipelineTest 1.98 秒・PhysicsCharacterMoveTest）は 5/5 Passed。既存のケース 0〜27 の中身は変えていない
+- 測った量: ルート移動は 72 フレーム（固定の段 0・1・2 が 24 フレームずつ）で Animator の差分 1.200000018 m・本体 1.199999809 m・差 2.1e-7 m。Procedural へ戻した後は半段の残りを捨てて入力の向きへ 8 フレームで 0.043 m 進み、Animation へ戻した最初のフレームの差は 2e-9 m。同じフレームのカメラは 72 フレーム（α 0 が 24・中間が 48）で注視点と描画の位置 + オフセットの最大差 2.4e-7 m、描画が動いた 26 フレームで前のフレームの描画の位置との差は最小 0.002 m（遅れがあれば合わない形で比べた）
+- Notes: ルート移動のケースは衝突の無い直進のルートだけを見る（壁に当たったときのルートの差分の扱いは試験していない）。同じフレームのカメラは平滑 0・壁なしの組だけで、平滑ありと衝突で腕が縮む組は既存の TestFollowCameraRenderBinding に任せる。アプリを起動する確かめは無い
+- Next: G4-GR05-COMPONENT-CASES を after に持つ項目（G4-GR07 の犬の受け入れなど）
