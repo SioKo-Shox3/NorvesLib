@@ -18,6 +18,7 @@ set(PRIVATE_SOURCES
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
+    Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
@@ -799,6 +800,7 @@ set(PUBLIC_HEADERS
     Public/Camera/CameraCollisionSolver.h
     Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
+    Public/Animation/GroundQuery.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
     Public/Locomotion/QuadrupedLocomotionJson.h

@@ -85,3 +85,16 @@
 - GameApplicationHandlerはOnInitializeでGamePhysicsLayers経由で表を読み、m_PhysicsLayersに保持する。読み込みに失敗した場合は警告を出し、Defaultだけの表で起動を続ける
 - 既存コライダーの既定Layer=1・Mask=全bitとクエリの結果は変えない。使う側のカメラの遮蔽・攻撃判定・知覚・取り込み設定の書き換えは各段階で行う
 - 2026-11-03にWindowsのDebugでPhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTestをctestで実行し、4本すべてが通った（終了コード0）
+
+## 足の接地の問い合わせ（GR14）
+- 公開ヘッダは `Library/Core/Public/Animation/GroundQuery.h`、名前空間は `NorvesLib::Core::Animation`。`EGroundQueryStatus` は `Hit`・`NoHit`・`NotReady`・`WrongThread`・`Unavailable`・`TooSteep` を持つ。`GroundHit` は `Point`・`Normal`・`Distance`・`Status`、`GroundProbe` は `OriginAbove`・`MaxDown`・`Result` を持つ
+- `IGroundQuery::Query(originAbove, maxDown, out)` は `originAbove` から真下（-Y）へ `maxDown` まで問い合わせる。`IGroundQuery::QueryBatch(Span<GroundProbe>)` は脚の数だけの問い合わせをまとめて1回で行い、各 `GroundProbe::Result` に結果を返す
+- `PhysicsGroundQuerySettings` は `LayerMask`・`MaxSlopeDeg`（既定50度）・`IgnoreBodies[4]`・`IgnoreColliders[4]` を持つ。レイヤーの名前は企画で未定のため、地面とみなすマスクの値は `PhysicsGroundQuerySettings::LayerMask` で受ける
+- `PhysicsGroundQuery` は Core に置き、Physics モジュールには依存しない。`SceneQuery::ExecuteQuery` / `ExecuteBatch` で `RaycastClosest`（`MaxHits=1`）を使い、`PhysicsQueryFilter` に `LayerMask` と除外対象の Body・Collider を渡す。自分の Body は `IgnoreBodies` に指定し、トリガーは常に `Exclude` とする
+- 物理問い合わせの結果は `Success` → `Hit`、`NoHit` → `NoHit`、`NotReady` → `NotReady`、`WrongThread` → `WrongThread` と写す。それ以外（`Unavailable`・`InvalidArgument`・`IterationLimit` など）は `Unavailable` に写す。有限でない入力や `maxDown <= 0` は物理問い合わせを出さず `Unavailable` とする。バッチ全体が非 `Success` なら、問うた全件をその結果の写しにする
+- 当たりの法線と +Y のなす角が `MaxSlopeDeg` を超える場合は `TooSteep` とし、`Point`・`Normal`・`Distance` は当たりの値で埋める
+- `Hit`・`TooSteep` の `Normal` は単位長に正規化して返す。始点が形状の内側などで、物理側の法線が長さ0か有限でない当たり、または点・距離が有限でない当たりは `Unavailable` とし、`Point`・`Normal`・`Distance` を0にする
+- `PhysicsGroundQuery` は参照する `SceneQuery` の寿命を所有しない。`SceneQuery` と、それを所有する Engine / World より長く生かさない。利用は GameThread 専用とする
+- 姿勢は PoseFinalize の群で確定し、その後に固定ステップが回る（群の順序は `Docs/Architecture/TickStages.md`）。足 IK が読むのは前の固定ステップで公開されたスナップショットで、最大1固定ステップ古い。同じフレームで動いた物体は次の固定ステップまで反映されない
+- 地形（G5 の GR38）は同じ `IGroundQuery` の別実装として差し込む。物理の実装は地形を知らない
+- `PhysicsGroundQueryIntegrationTest`（`PhysicsDynamicsTest` の束の中）で、実 World に Box の20度の斜面と3段の階段を置き、高さを 1e-3 m・法線を0.5度の許容誤差で解析値と照合する。別レイヤーの Box（草の代わり）を `LayerMask` で除き、トリガー・自分の Body の除外も確かめる。固定ステップ前の `NotReady`・別スレッドの `WrongThread`・地面の外の `NoHit`・急な面の `TooSteep` を区別する
