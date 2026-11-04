@@ -9326,6 +9326,8 @@
 - paths: Tools/AssetCook/CollisionFitter.h, Tools/AssetCook/CollisionFitter.cpp, Tools/AssetCook/CMakeLists.txt, Library/Core/Public/Asset/CookedCollisionFormat.h, Library/Core/Private/Asset/CookedCollisionLoader.cpp, Library/Core/CMakeLists.txt, Test/Core/Asset/CollisionFitterTest.cpp, Test/Core/Asset/CookedCollisionTest.cpp, Test/Core/Asset/CMakeLists.txt, Docs/Architecture/NVCOLv0.md, Docs/Testing.md, TASKS.md, PROGRESS.md
 - notes: GR81 の手順 (1)(2)（ロードマップ 3091・3093 行）。選定課題 G17-S6（衝突形状の資産の形式）: ロードマップの案どおり、見た目のメッシュとは別の資産 NVCOL v0 にする（entry の FourCC `Col0`、形式の名前 `nvcol.v0.shapes`、論理パス `<モデルの論理パス>.collision`、`AssetKind::Collision` は G17-GR81-COOK-ENTRY で足す）。理由: 見た目の簡略化・LOD・クラスタの作り直しと独立に更新でき、スキン（骨ごとのカプセル）と静的を同じ形式で持て、NVMESH の版を上げずに済む（3085 行）。選定課題 G17-S7（当てはめの範囲）: ロードマップは「box と capsule だけで足りるなら compound・convex は見送ってよい」（3099・3254 行）とするが、作者の決定（必要な機能は全部やる）に従い、compound・per_bone_capsules・convex を全部作り、凸包はランタイムの形状まで入れる（G17-GR81-CONVEX-RUNTIME）。主人公の犬のカプセル（GR07）は手で決める物で自動の当てはめの対象外。形の値は取り込みの拡大を焼いた空間で持つ（実行時の Entity の拡大と二重に掛けない。3251 行）。この項目は cook・実行時のどちらにも接続しないので、前の段階を待たずに始められる。危険地帯（アセットの形式）なので評価者を通す。試験を足す理由: 当てはめの誤り（軸・半径・回転の符号）は、遊んでいるときに見えない壁・素通りとして出るだけで、撮影・ログでは気づけず黙って起きる。
 
+- notes-board: AssetKind の番号は段階をまたいで次のとおりに割り振る(計画役ごとに決めた番号が重なったため): World = 7(G5。入れ済み)・Material = 8(G6-GR91)・Collision = 9(G17-GR81)・Video = 10(G14-GR127)。ほかの番号を使わない
+
 ## G17-GR81-COOK-ENTRY: 取り込み設定の collision 節で、静的と骨格つきの cook が衝突形状を当てはめて collision の資産を出し、マニフェストで引けるようにする
 - status: todo
 - after: G17-GR81-FIT-CORE, G17-GR80-SIMPLIFY, G2-GR96-MODEL-ANALYSIS, G2-GR96-GENERATORS, G2-GR96-COOKER-REVISION
