@@ -183,6 +183,8 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Platform/Windows/WindowsPlatformProcess.cpp
+    Private/Platform/Windows/WindowsPlatformPaths.cpp
+    Private/Platform/Windows/WindowsPlatformFile.cpp
     Private/Platform/Windows/WindowsPlatformConsole.cpp
     Private/Platform/Windows/WindowsPlatformGraphics.cpp
     Private/Boot/AppLauncher.cpp
@@ -523,6 +525,8 @@ set(PUBLIC_HEADERS
     Public/Platform/PlatformApplicationFactory.h
     Public/Platform/PlatformInputDevices.h
     Public/Platform/PlatformProcess.h
+    Public/Platform/PlatformPaths.h
+    Public/Platform/PlatformFile.h
     Public/Platform/PlatformConsole.h
     Public/Boot/AppLauncher.h
     Public/Boot/BootConfig.h
@@ -982,7 +986,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_23)
 
 # Windows固有の設定
 if(WIN32)
-    target_link_libraries(${MODULE_NAME} PRIVATE Xinput)
+    target_link_libraries(${MODULE_NAME} PRIVATE Xinput shell32 ole32)
     target_compile_definitions(${MODULE_NAME} PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN

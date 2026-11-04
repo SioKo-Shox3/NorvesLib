@@ -46,6 +46,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
+    MEMBER AtomicFileWriteTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/AtomicFileWriteTest.cpp
     MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
     MEMBER CriticalDampingTest ${CMAKE_SOURCE_DIR}/Test/Core/Math/CriticalDampingTest.cpp
     MEMBER RenderTransformHistoryTest ${CMAKE_SOURCE_DIR}/Test/Core/Object/RenderTransformHistoryTest.cpp
@@ -74,3 +75,4 @@ add_test(NAME LocomotionProfileReloadTest COMMAND LoggerSinkTest --test=Locomoti
 add_test(NAME CameraCollisionSolverTest COMMAND LoggerSinkTest --test=CameraCollisionSolverTest)
 add_test(NAME RenderTransformHistoryTest COMMAND LoggerSinkTest --test=RenderTransformHistoryTest)
 add_test(NAME RootMotionTimeQueueTest COMMAND LoggerSinkTest --test=RootMotionTimeQueueTest)
+add_test(NAME AtomicFileWriteTest COMMAND LoggerSinkTest --test=AtomicFileWriteTest)
