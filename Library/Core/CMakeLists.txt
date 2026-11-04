@@ -9,13 +9,16 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Save/GameStateStore.cpp
     Private/Save/SaveContainer.cpp
     Private/Save/SaveMigration.cpp
+    Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
+    Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
@@ -121,6 +124,9 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
+    Private/Animation/Procedural/AngleDistribution.cpp
+    Private/Animation/Procedural/Spring.cpp
+    Private/Animation/Procedural/PoseModifierConfig.cpp
     Private/Animation/AnimationEvents.cpp
     Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
@@ -479,8 +485,10 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Save/GameStateStore.h
     Public/Save/SaveContainer.h
     Public/Save/SaveMigration.h
+    Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
@@ -581,6 +589,9 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
+    Public/Animation/Procedural/AngleDistribution.h
+    Public/Animation/Procedural/Spring.h
+    Public/Animation/Procedural/PoseModifierConfig.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
     Public/Component/HoldSlotComponent.h
@@ -795,6 +806,7 @@ set(PUBLIC_HEADERS
     Public/Camera/CameraCollisionSolver.h
     Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
+    Public/Animation/GroundQuery.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
     Public/Locomotion/QuadrupedLocomotionJson.h
