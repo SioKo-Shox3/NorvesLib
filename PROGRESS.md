@@ -9763,3 +9763,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-192402/verify-G9-GR14-GROUND-QUERY-U2.txt`（Debug の PhysicsDynamicsTest のビルド EXIT=0、`PhysicsGroundQueryIntegrationTest` Passed、4 本の ctest 100% Passed、numstat 2 通り一致）。
 - Next: なし（アプリを起動する確かめは無い）。足 IK の重みが下がる部分は G9-GR14-LEG-IK-BALANCE。
 - Notes: QueryBatch は入力と結果を 1 つの `GroundProbe` にまとめ、件数の食い違いを起こさない形にした。有限でない入力・maxDown <= 0 は問い合わせを出さず Unavailable にした。
+
+- U1 受入れの閾値と論理サウンド層の決まりを Docs/AudioValidation/GR72Acceptance.md に固定する: 着地(直し 0 回)
+- U2 IAudioService に奪取用の即時破棄 AbortVoice を追加だけで足す: 着地(直し 0 回)
+- U3 論理サウンド層の骨格(ISoundSystem・SoundSystem・フェード・自動破棄・所有スレッド・音量の区分)とモジュールの結線: 着地(直し 0 回)
+- U6 SoundBank の JSON の解釈と AudioClipLoader、バンクの cook スモーク: 着地(直し 0 回)
+- U5 同時発音の上限と奪取・max_instances の方針・cooldown・dedupe・no-repeat と揺らぎを SoundSystem に足す: 着地(直し 1 回)
+- U4 フェード・寿命・世代の折り返しの試験を AudioPlaybackTest に足す: 着地(直し 0 回)
+- U7 奪取・max_instances・cooldown・dedupe・no-repeat の試験を AudioPlaybackTest に足す: 着地(直し 0 回)
+- U8 ISoundSystem に LoadBank / UnloadBank を足し、バンクの定義を SoundSystem に登録する: 着地(直し 0 回)
+- U9 バンクの拒否の試験・Docs/Testing.md・負の対照と仕上げの確かめ: 着地(直し 0 回)
+## 2026-11-04 G8-GR72-SOUND-SYSTEM(run 20261104-183018 の反復 2、完了)
+- Done: `NorvesAudioDomain` に論理サウンド層を置いた。公開の `ISoundSystem`(LoadBank / UnloadBank・PlayGlobal・PlayAt・Stop・StopOwner・SetVolume / SetPitch・IsPlaying・全体と区分(Effect・Ambience)の音量・診断)を `IAudioModule::GetSoundSystem()` で出し、`AudioServiceModule::Tick(dt)` が service の Tick の後に `SoundSystem::Update(dt)` を呼ぶ(Shutdown は SoundSystem → service の順)。包絡は線形と等パワー、最短 2/60 秒にクランプして回数・指定値・適用値を診断に出す。Drained の voice は次の Update で DestroyVoice。同時発音は全体の上限(既定 32)と定義ごとの max_instances(StopOldest / RejectNew)、奪取は 優先度 → 可聴度 → 古さを 1 つの比較関数で決め、新しく足した `IAudioService::AbortVoice` で同じ呼び出しの中で止めて破棄してから作る。cooldown と dedupe(同じフレームか窓の内、半径の内)で抑制して数える。clips は注入した `Random::Generator` で直前と重ならないように選び、揺らぎが 0 なら乱数を引かない。GameThread 専用で、Debug だけ所有スレッドを検査する。バンクは `ParseSoundBank`(JsonDocument、定義ごとに MissingClip・SpatialStereoClip・UnknownKey などで拒否して診断)と `AudioClipLoader`(ResolveAsset(Audio) → ParseCookedAudio → TryCreateSubBlob → AudioClipResource)で読み、kind=raw の cook の ctest `AssetCookSoundBankSmoke` を足した。受入れの閾値と結果は `Docs/AudioValidation/GR72Acceptance.md`。
+- 試験: `AudioPlaybackTest` に、fade-out 2.0 秒(dt 1/60 で 120 回目に 0、dt 1/30 で 60 回目、単調、StopVoice 1 回、Drained の後に Destroy・ActiveVoiceCount 0)、fade-in 1.0 秒の線形と等パワー、最短フェードのクランプ、世代の折り返し、フェード中の Shutdown、上限 4 と優先度 [10,50,50,90,30,200](奪取 10 → 30、生存 {50,50,90,200}、Create − Destroy ≤ 4、最下位の新規は Rejected)、cooldown_ms=60 の 10 回(再生 3・抑制 7)、max_instances=1 の 2 方針、同じフレームの dedupe、no-repeat 10,000 回(連続なし、3346 / 3341 / 3313)、バンクの拒否(読込 1・拒否 3)を足した。
+- 負の対照(手元だけ、コミットしない): A 包絡の時間を dt ではなく固定の量で進める → `TestFadeOutDurationAndDrainedLifetime` の dt 1/30 と 1/60 の音量の比較(と StopCount)で落ちる。B 奪取の比較の向きを逆にする → `TestVoiceStealingOrderAndStaleEvents` の優先度 10 の handle の失効の判定で落ちる。どちらも戻した後は合格し、`git diff --stat -- Library` は空。
+- 証拠: `.harness/runs/20261104-183018/verify-G8-GR72-SOUND-SYSTEM-U9.txt`(Debug の Game・AudioBackendLifetimeTest・AssetCook のビルド成功、ctest の AudioPlaybackTest・AudioBackendLifetimeTest・AudioModuleLifecycleTest・AudioModuleRegistryTest・AssetCookRawSmoke・AssetCookAudioSmoke・AssetCookSoundBankSmoke が 7/7 Passed、`M9_REVIEW_CONTRACT result=pass contract=All`、numstat の 2 通りが一致)。
+- 決定: 世代が UINT32_MAX のインスタンスを解放したら、service の voice と同じくそのスロットを退役させて再利用しない(UINT32_MAX の次を 1 にすると、最初の世代 1 の handle が新しいインスタンスと一致する)。受入れの記録の「世代の折り返し」の行もこの挙動の書き方に直した。未登録の SoundId への再生は `InvalidState`(抑制による `Rejected` と分ける)。
+- Next: ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。AudioComponent と通常の起動への組み込みは G8-GR72-AUDIO-COMPONENT-BOOT、3D 定位は GR73。
+- Notes: アプリを起動する確かめは無い(実機の鳴り方・フェードの聴感は G8-GR72-AUDIO-CHECK)。受入れの記録の検証の手段の表に、試験していない条件(音量の積の式の照合・フェードイン中の Stop の切り替え・揺らぎの範囲・時刻と距離の境界・本番の `LoadBank` を通した clip の解決とデコード)を明記した。M9 の側の clip の読み込みは触っていない(二重の実装は M9 の受入れの安定の後に統合)。
