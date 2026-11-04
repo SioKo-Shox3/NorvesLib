@@ -3,6 +3,7 @@
 #include "Audio/AudioClipResource.h"
 #include "Audio/AudioDomain.h"
 #include "Audio/IAudioService.h"
+#include "Audio/SoundSystem.h"
 #include "Asset/AssetBlob.h"
 #include "Container/PointerTypes.h"
 #include "CoreTypes.h"
@@ -21,6 +22,7 @@ namespace
     using namespace NorvesLib;
     using namespace NorvesLib::Modules::Audio;
     using NorvesLib::Test::Audio::FakeAudioBackend;
+    using NorvesLib::Test::Audio::FakeAudioOperation;
 
     TSharedPtr<AudioClipResource> MakeClip()
     {
@@ -172,6 +174,288 @@ namespace
         }
         assert(module->Shutdown() == AudioResult::Success);
     }
+
+    SoundId RegisterTestSound(Private::SoundSystem& sound)
+    {
+        SoundDefinition definition;
+        definition.Id = SoundId("AudioPlaybackTest.Sound");
+        definition.Clips.push_back(MakeClip());
+        definition.VolumeDb = 0.0f;
+        definition.VolumeJitterDb = 0.0f;
+        definition.PitchJitterSemitones = 0.0f;
+        const SoundId id = definition.Id;
+        assert(sound.RegisterDefinition(std::move(definition)) == AudioResult::Success);
+        return id;
+    }
+
+    void TestFadeOutDurationAndDrainedLifetime()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id = RegisterTestSound(sound);
+        SoundPlayParams params;
+        params.Volume = 1.0f;
+
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, params, handle) == AudioResult::Success);
+        assert(fake->CreateCount == 1);
+        const VoiceHandle voice = Private::SoundSystemTestAccess::GetVoiceHandle(sound, handle);
+        assert(voice.IsValid());
+        assert(fake->LastVolume == 1.0f);
+        const uint32_t stopBefore = fake->StopCount;
+        const uint32_t destroyBefore = fake->DestroyCount;
+        assert(sound.Stop(handle, SoundFade{2.0f, SoundFadeCurve::Linear}) == AudioResult::Success);
+
+        float previous = fake->LastVolume;
+        float samples[3] = {};
+        uint32_t zeroFrame = 0;
+        for (uint32_t frame = 1; frame <= 122; ++frame)
+        {
+            service->Tick();
+            sound.Update(1.0f / 60.0f);
+            const float volume = fake->LastVolume;
+            assert(volume <= previous);
+            assert(volume >= 0.0f);
+            if (frame == 30 || frame == 60 || frame == 90)
+            {
+                samples[frame / 30 - 1] = volume;
+            }
+            if (volume == 0.0f && zeroFrame == 0)
+            {
+                zeroFrame = frame;
+            }
+            assert(fake->StopCount == stopBefore + (zeroFrame != 0 ? 1u : 0u));
+            assert(fake->DestroyCount == destroyBefore);
+            previous = volume;
+        }
+        assert(zeroFrame >= 119 && zeroFrame <= 121);
+        fake->Emit(voice, fake->ShutdownEpoch, Private::AudioBackendEventKind::Drained);
+        service->Tick();
+        sound.Update(1.0f / 60.0f);
+        assert(fake->StopCount == stopBefore + 1);
+        assert(fake->DestroyCount == destroyBefore + 1);
+        assert(service->GetDiagnostics().ActiveVoiceCount == 0);
+        assert(!sound.IsPlaying(handle));
+        assert(sound.Stop(handle, SoundFade{2.0f, SoundFadeCurve::Linear}) == AudioResult::StaleHandle);
+
+        SoundInstanceHandle slowerHandle;
+        assert(sound.PlayGlobal(id, params, slowerHandle) == AudioResult::Success);
+        assert(fake->CreateCount == 2);
+        const VoiceHandle slowerVoice = Private::SoundSystemTestAccess::GetVoiceHandle(sound, slowerHandle);
+        assert(slowerVoice.IsValid());
+        const uint32_t slowerStopBefore = fake->StopCount;
+        assert(sound.Stop(slowerHandle, SoundFade{2.0f, SoundFadeCurve::Linear}) == AudioResult::Success);
+
+        previous = fake->LastVolume;
+        zeroFrame = 0;
+        for (uint32_t frame = 1; frame <= 62; ++frame)
+        {
+            service->Tick();
+            sound.Update(1.0f / 30.0f);
+            const float volume = fake->LastVolume;
+            assert(volume <= previous);
+            assert(volume >= 0.0f);
+            if (frame == 15 || frame == 30 || frame == 45)
+            {
+                assert(std::abs(volume - samples[frame / 15 - 1]) <= 1e-4f);
+            }
+            if (volume == 0.0f && zeroFrame == 0)
+            {
+                zeroFrame = frame;
+            }
+            assert(fake->StopCount == slowerStopBefore + (zeroFrame != 0 ? 1u : 0u));
+            previous = volume;
+        }
+        assert(zeroFrame >= 59 && zeroFrame <= 61);
+        fake->Emit(slowerVoice, fake->ShutdownEpoch, Private::AudioBackendEventKind::Drained);
+        service->Tick();
+        sound.Update(1.0f / 30.0f);
+        assert(fake->DestroyCount == destroyBefore + 2);
+        assert(service->GetDiagnostics().ActiveVoiceCount == 0);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestLinearFadeIn()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id = RegisterTestSound(sound);
+        SoundPlayParams params;
+        params.Volume = 1.0f;
+        params.FadeIn = SoundFade{1.0f, SoundFadeCurve::Linear};
+
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, params, handle) == AudioResult::Success);
+        assert(fake->LastVolume == 0.0f);
+        float previous = fake->LastVolume;
+        for (uint32_t frame = 1; frame <= 60; ++frame)
+        {
+            service->Tick();
+            sound.Update(1.0f / 60.0f);
+            const float volume = fake->LastVolume;
+            assert(volume >= previous);
+            assert(volume - previous <= 1.0f / 60.0f + 1e-4f);
+            assert(volume <= 1.0f);
+            assert(std::abs(volume - static_cast<float>(frame) / 60.0f) <= 1e-4f);
+            previous = volume;
+        }
+        assert(std::abs(fake->LastVolume - 1.0f) <= 1e-4f);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestEqualPowerFadeIn()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id = RegisterTestSound(sound);
+        SoundPlayParams params;
+        params.Volume = 1.0f;
+        params.FadeIn = SoundFade{1.0f, SoundFadeCurve::EqualPower};
+
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, params, handle) == AudioResult::Success);
+        assert(fake->LastVolume == 0.0f);
+        for (uint32_t frame = 1; frame <= 60; ++frame)
+        {
+            service->Tick();
+            sound.Update(1.0f / 60.0f);
+            const float volume = fake->LastVolume;
+            const float elapsed = static_cast<float>(frame) / 60.0f;
+            assert(volume >= 0.0f && volume <= 1.0f);
+            assert(std::abs(volume * volume - elapsed) <= 1e-3f);
+        }
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestMinimumFadeClamp()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id = RegisterTestSound(sound);
+        SoundPlayParams params;
+        params.Volume = 1.0f;
+
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, params, handle) == AudioResult::Success);
+        const uint64_t clampedBefore = sound.GetDiagnostics().ClampedFadeCount;
+        const uint32_t stopBefore = fake->StopCount;
+        assert(sound.Stop(handle, SoundFade{0.01f, SoundFadeCurve::Linear}) == AudioResult::Success);
+        const SoundSystemDiagnostics diagnostics = sound.GetDiagnostics();
+        assert(diagnostics.ClampedFadeCount == clampedBefore + 1);
+        assert(std::abs(diagnostics.LastClampedFadeRequestedSeconds - 0.01f) <= 1e-6f);
+        assert(std::abs(diagnostics.LastClampedFadeAppliedSeconds - 2.0f / 60.0f) <= 1e-6f);
+
+        service->Tick();
+        sound.Update(1.0f / 60.0f);
+        assert(fake->LastVolume > 0.0f);
+        assert(fake->StopCount == stopBefore);
+        service->Tick();
+        sound.Update(1.0f / 60.0f);
+        assert(fake->LastVolume == 0.0f);
+        assert(fake->StopCount == stopBefore + 1);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestGenerationWrapRejectsOldHandles()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id = RegisterTestSound(sound);
+        SoundPlayParams params;
+        params.Volume = 1.0f;
+
+        SoundInstanceHandle initialHandle;
+        assert(sound.PlayGlobal(id, params, initialHandle) == AudioResult::Success);
+        assert(initialHandle.IsValid());
+        assert(initialHandle.Generation == 1);
+        SoundInstanceHandle maximumHandle = initialHandle;
+        assert(Private::SoundSystemTestAccess::PrepareInstanceGenerationWrap(sound, maximumHandle));
+        assert(maximumHandle.Generation == UINT32_MAX);
+        const VoiceHandle voice = Private::SoundSystemTestAccess::GetVoiceHandle(sound, maximumHandle);
+        assert(voice.IsValid());
+        assert(sound.Stop(maximumHandle, SoundFade{2.0f / 60.0f, SoundFadeCurve::Linear}) == AudioResult::Success);
+        for (uint32_t frame = 0; frame < 2; ++frame)
+        {
+            service->Tick();
+            sound.Update(1.0f / 60.0f);
+        }
+        assert(fake->StopCount == 1);
+        fake->Emit(voice, fake->ShutdownEpoch, Private::AudioBackendEventKind::Drained);
+        service->Tick();
+        sound.Update(1.0f / 60.0f);
+        assert(fake->DestroyCount == 1);
+
+        SoundInstanceHandle replacementHandle;
+        assert(sound.PlayGlobal(id, params, replacementHandle) == AudioResult::Success);
+        assert(fake->CreateCount == 2);
+        assert(replacementHandle.IsValid());
+        assert(replacementHandle.Generation != 0);
+        assert(replacementHandle.Index != initialHandle.Index || replacementHandle.Generation == 1);
+        assert(sound.SetVolume(maximumHandle, 0.5f) == AudioResult::StaleHandle);
+        assert(sound.Stop(maximumHandle, SoundFade{2.0f, SoundFadeCurve::Linear}) == AudioResult::StaleHandle);
+        const AudioResult initialVolumeResult = sound.SetVolume(initialHandle, 0.5f);
+        const AudioResult initialStopResult = sound.Stop(initialHandle, SoundFade{2.0f, SoundFadeCurve::Linear});
+        if (initialVolumeResult != AudioResult::StaleHandle || initialStopResult != AudioResult::StaleHandle)
+        {
+            std::cerr << "古いハンドルの戻り値: SetVolume=" << static_cast<int>(initialVolumeResult)
+                      << ", Stop=" << static_cast<int>(initialStopResult) << "\n";
+        }
+        assert(initialVolumeResult == AudioResult::StaleHandle);
+        assert(initialStopResult == AudioResult::StaleHandle);
+        assert(sound.IsPlaying(replacementHandle));
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+    }
+
+    void TestShutdownDuringFade()
+    {
+        auto backend = MakeUnique<FakeAudioBackend>();
+        FakeAudioBackend* fake = backend.get();
+        auto service = Private::CreateAudioServiceForBackend(std::move(backend));
+        assert(service->Initialize() == AudioResult::Success);
+        Private::SoundSystem sound(*service, Random::Generator{12345}, {});
+        const SoundId id = RegisterTestSound(sound);
+        SoundPlayParams params;
+        params.Volume = 1.0f;
+
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, params, handle) == AudioResult::Success);
+        assert(sound.Stop(handle, SoundFade{2.0f, SoundFadeCurve::Linear}) == AudioResult::Success);
+        for (uint32_t frame = 0; frame < 30; ++frame)
+        {
+            service->Tick();
+            sound.Update(1.0f / 60.0f);
+        }
+        assert(fake->LastVolume > 0.0f && fake->LastVolume < 1.0f);
+        assert(fake->StopCount == 0);
+        assert(sound.Shutdown() == AudioResult::Success);
+        assert(service->Shutdown() == AudioResult::Success);
+        assert(!fake->Operations.empty());
+        assert(fake->Operations.back() == FakeAudioOperation::Shutdown);
+        assert(service->GetDiagnostics().ActiveVoiceCount == 0);
+        SoundInstanceHandle afterShutdown;
+        assert(sound.PlayGlobal(id, params, afterShutdown) == AudioResult::InvalidState);
+    }
+
 }
 
 int main()
@@ -181,6 +465,12 @@ int main()
     TestQuarantinedVoiceDoesNotTouchBackend();
     TestDestroyedHandleIsStale();
     TestPanUsesEqualPowerGains();
+    TestFadeOutDurationAndDrainedLifetime();
+    TestLinearFadeIn();
+    TestEqualPowerFadeIn();
+    TestMinimumFadeClamp();
+    TestShutdownDuringFade();
+    TestGenerationWrapRejectsOldHandles();
     std::cout << "AudioPlaybackTest: 合格\n";
     return 0;
 }
