@@ -9555,3 +9555,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-132213/G5-GR89-TERRAIN-MASKS-U5-verify.txt`（verify の 4 行: AssetCook・CookedMeshTest の Debug ビルドが終了コード 0、ctest の CookedTerrainTest・AssetCookTerrainSmoke が 100% Passed で (a)〜(g) の行が出る、CookAssets の Grassland が終了コード 0。草原は U4 で焼き済みのため skipped=1 で、`-Force` でも cooked=1 を確かめた）。起動の確かめは無い（描画は G5-GR37-TERRAIN-COMPONENT）。
 - Next: マスクの層を描画で使うのは GR37・GR42・GR45。道のペイント PNG はまだ無い。
 - Notes: 要起票: `Scripts/CookAssets.ps1` の変更検出は spec と高さファイルだけを見て、ペイントの PNG を見ない（ペイントだけ変えると `-Force` が要る。AssetCook の source_hash はペイントを含む）。
+- U1 private SPI にループ・音量・周波数比・出力係数・一時停止を足し、XAudio2 と fake を同じ変更で直す: 着地(直し 1 回)

@@ -3,6 +3,8 @@
 #include "Container/VariableArray.h"
 #include "Thread/Atomic.h"
 
+#include <cmath>
+
 #include <Windows.h>
 #include <xaudio2.h>
 
@@ -39,6 +41,7 @@ namespace NorvesLib::Modules::Audio::Private
         struct XAudio2VoiceRecord
         {
             uint32_t Generation = 0;
+            uint32_t InputChannelCount = 0;
             IXAudio2SourceVoice* Voice = nullptr;
             Core::Container::TUniquePtr<XAudio2VoiceCallback> Callback;
         };
@@ -68,6 +71,9 @@ namespace NorvesLib::Modules::Audio::Private
                     engine->Release();
                     return AudioResult::BackendFailure;
                 }
+                XAUDIO2_VOICE_DETAILS voiceDetails{};
+                masteringVoice->GetVoiceDetails(&voiceDetails);
+                m_OutputChannelCount = voiceDetails.InputChannels;
                 m_EventSink.Store(&eventSink);
                 m_ShutdownEpoch.Store(shutdownEpoch);
                 m_bAcceptingCallbacks.Store(true);
@@ -78,9 +84,12 @@ namespace NorvesLib::Modules::Audio::Private
 
             AudioResult CreateVoice(VoiceHandle handle,
                                     const AudioPcmFormat& format,
+                                    float maxFrequencyRatio,
                                     AudioBackendEventMailbox& mailbox) override
             {
-                if (m_Engine == nullptr || !format.IsSupported() || !handle.IsValid())
+                if (m_Engine == nullptr || !format.IsSupported() || !handle.IsValid() ||
+                    !std::isfinite(maxFrequencyRatio) || maxFrequencyRatio < XAUDIO2_MIN_FREQ_RATIO ||
+                    maxFrequencyRatio > XAUDIO2_MAX_FREQ_RATIO)
                 {
                     return AudioResult::BackendFailure;
                 }
@@ -103,28 +112,128 @@ namespace NorvesLib::Modules::Audio::Private
                 waveFormat.nBlockAlign = format.BlockAlignment;
                 waveFormat.nAvgBytesPerSec = format.SampleRate * format.BlockAlignment;
                 IXAudio2SourceVoice* voice = nullptr;
-                if (FAILED(m_Engine->CreateSourceVoice(&voice, &waveFormat, 0, XAUDIO2_DEFAULT_FREQ_RATIO, callback.get())))
+                if (FAILED(m_Engine->CreateSourceVoice(&voice, &waveFormat, 0, maxFrequencyRatio, callback.get())))
                 {
                     return AudioResult::BackendFailure;
                 }
                 record.Generation = handle.Generation;
+                record.InputChannelCount = format.ChannelCount;
                 record.Voice = voice;
                 record.Callback = std::move(callback);
                 return AudioResult::Success;
             }
 
-            AudioResult SubmitVoice(VoiceHandle handle, Core::Container::Span<const uint8_t> pcmBytes) override
+            AudioResult SubmitVoice(VoiceHandle handle,
+                                    Core::Container::Span<const uint8_t> pcmBytes,
+                                    const AudioBufferDesc& bufferDesc) override
             {
                 XAudio2VoiceRecord* record = Resolve(handle);
-                if (record == nullptr || pcmBytes.empty() || pcmBytes.size() > UINT32_MAX)
+                if (record == nullptr || pcmBytes.empty() || pcmBytes.size() > XAUDIO2_MAX_BUFFER_BYTES)
                 {
                     return AudioResult::BackendFailure;
+                }
+                const uint32_t blockAlignment = record->InputChannelCount * sizeof(int16_t);
+                if (pcmBytes.size() % blockAlignment != 0)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                const uint32_t totalFrames = static_cast<uint32_t>(pcmBytes.size() / blockAlignment);
+                if (bufferDesc.StartFrame >= totalFrames)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                uint32_t loopLength = 0;
+                if (bufferDesc.bLoop)
+                {
+                    if (bufferDesc.LoopBeginFrame >= totalFrames)
+                    {
+                        return AudioResult::BackendFailure;
+                    }
+                    const uint32_t remainingFrames = totalFrames - bufferDesc.LoopBeginFrame;
+                    loopLength = bufferDesc.LoopLengthFrames == 0 ? remainingFrames : bufferDesc.LoopLengthFrames;
+                    // 減算後の範囲で調べ、加算のオーバーフローを防ぐ。ループ開始は再生開始より前でもよい。
+                    if (loopLength > remainingFrames ||
+                        bufferDesc.LoopBeginFrame + loopLength <= bufferDesc.StartFrame)
+                    {
+                        return AudioResult::BackendFailure;
+                    }
                 }
                 XAUDIO2_BUFFER buffer{};
                 buffer.Flags = XAUDIO2_END_OF_STREAM;
                 buffer.AudioBytes = static_cast<UINT32>(pcmBytes.size());
                 buffer.pAudioData = pcmBytes.data();
+                buffer.PlayBegin = bufferDesc.StartFrame;
+                // 長さ0は開始位置も0の場合だけ有効なので、途中開始時は末尾までの長さを明示する。
+                buffer.PlayLength = bufferDesc.StartFrame == 0 ? 0 : totalFrames - bufferDesc.StartFrame;
+                if (bufferDesc.bLoop)
+                {
+                    buffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+                    buffer.LoopBegin = bufferDesc.LoopBeginFrame;
+                    // クリップ全体のループは、末尾ちょうどの明示長を避けて文書化された長さ0で指定する。
+                    buffer.LoopLength = bufferDesc.LoopBeginFrame == 0 && loopLength == totalFrames ? 0 : loopLength;
+                }
                 return SUCCEEDED(record->Voice->SubmitSourceBuffer(&buffer))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                return record != nullptr && SUCCEEDED(record->Voice->SetVolume(volume))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                return record != nullptr && SUCCEEDED(record->Voice->SetFrequencyRatio(ratio))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceOutputGains(VoiceHandle handle, float leftGain, float rightGain) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                if (record == nullptr || record->InputChannelCount < 1 || record->InputChannelCount > 2 ||
+                    m_OutputChannelCount < 1 || m_OutputChannelCount > XAUDIO2_MAX_AUDIO_CHANNELS)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                const uint32_t sourceChannels = record->InputChannelCount;
+                float levels[2 * XAUDIO2_MAX_AUDIO_CHANNELS]{};
+                // 行列は入力チャンネル数 × 出力番号 + 入力番号の順に並べる。
+                if (m_OutputChannelCount == 1)
+                {
+                    const float monoGain = (leftGain + rightGain) * 0.5f;
+                    for (uint32_t source = 0; source < sourceChannels; ++source)
+                    {
+                        levels[source] = monoGain;
+                    }
+                }
+                else
+                {
+                    levels[0] = leftGain;
+                    levels[sourceChannels + (sourceChannels == 1 ? 0 : 1)] = rightGain;
+                }
+                return SUCCEEDED(record->Voice->SetOutputMatrix(nullptr, sourceChannels, m_OutputChannelCount, levels))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult PauseVoice(VoiceHandle handle) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                return record != nullptr && SUCCEEDED(record->Voice->Stop(XAUDIO2_PLAY_TAILS))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult ResumeVoice(VoiceHandle handle) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                return record != nullptr && SUCCEEDED(record->Voice->Start(0))
                     ? AudioResult::Success
                     : AudioResult::BackendFailure;
             }
@@ -213,6 +322,7 @@ namespace NorvesLib::Modules::Audio::Private
                     m_Engine->Release();
                     m_Engine = nullptr;
                 }
+                m_OutputChannelCount = 0;
                 m_ShutdownEpoch.Store(0);
             }
 
@@ -247,6 +357,7 @@ namespace NorvesLib::Modules::Audio::Private
 
             IXAudio2* m_Engine = nullptr;
             IXAudio2MasteringVoice* m_MasteringVoice = nullptr;
+            uint32_t m_OutputChannelCount = 0;
             Thread::Atomic<IAudioBackendEventSink*> m_EventSink{nullptr};
             Thread::Atomic<uint64_t> m_ShutdownEpoch{0};
             Thread::Atomic<bool> m_bAcceptingCallbacks{false};

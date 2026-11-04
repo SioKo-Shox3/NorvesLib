@@ -10,6 +10,8 @@ namespace NorvesLib::Modules::Audio::Private
 {
     namespace
     {
+        constexpr float kDefaultMaxFrequencyRatio = 2.0f;
+
         struct BackendEvent
         {
             VoiceHandle Handle;
@@ -88,14 +90,14 @@ namespace NorvesLib::Modules::Audio::Private
                 record.State = AudioVoiceState::Created;
                 const VoiceHandle handle{index, record.Generation};
 
-                if (m_Backend->CreateVoice(handle, clip->GetFormat(), *record.Mailbox) != AudioResult::Success)
+                if (m_Backend->CreateVoice(handle, clip->GetFormat(), kDefaultMaxFrequencyRatio, *record.Mailbox) != AudioResult::Success)
                 {
                     ReleaseSlot(index);
                     return AudioResult::BackendFailure;
                 }
                 record.bBackendVoiceCreated = true;
 
-                if (m_Backend->SubmitVoice(handle, record.PcmPayload.GetSpan()) != AudioResult::Success)
+                if (m_Backend->SubmitVoice(handle, record.PcmPayload.GetSpan(), AudioBufferDesc{}) != AudioResult::Success)
                 {
                     if (m_Backend->DestroyVoice(handle) == AudioResult::Success)
                     {
