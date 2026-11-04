@@ -10194,3 +10194,32 @@
 - verify: `ctest --test-dir build -C Debug -R "^(GrassPathTracingCardsTest|FurPathTracingMaterialTest|CameraViewConstantsTest|BlasBuildBudgetTest|RHIRayTracingShaderStageCompileTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Library/Core/Private/Rendering/PathTracingPass.inl, Library/Core/Public/Rendering/PathTracingPass.h, Library/Core/Private/Rendering/GrassPathTracingCards.h, Library/Core/Private/Rendering/GrassPathTracingCards.cpp, Library/Core/Private/Rendering/FurPathTracingMaterial.h, Library/Core/Private/Rendering/FurPathTracingMaterial.cpp, Assets/Shaders/PathTracing, Library/Core/CMakeLists.txt, Test/Core/Rendering/GrassPathTracingCardsTest.cpp, Test/Core/Rendering/FurPathTracingMaterialTest.cpp, Test/Core/Rendering/CMakeLists.txt, Docs/Architecture/RenderingFlow.md, Docs/Testing.md, TASKS.md, PROGRESS.md
 - notes: ロードマップ 3370 行（段階 4 草・ファー。方針案）とリスク 3492 行。選定課題 G18-S14（ファーと草をパストレーサーでどう見せるか）は方針案を採る: ファーは入れず体の材質で近似し、草は連番だけ近傍の板で入れる。理由: 草の全本数とシェルを PT に入れるのは現実的でなく（要件 `#### GR104`）、PT の見本は照明・影・GI の構図の確かめが主用途。作者の決定（必要な機能は全部やる）でロードマップの「段階 4 は任意」を作る側にした。草の場のデータと生成の写しの名前は G5 の `G5-GR42-GRASS-FIELD-ASSET`・`G5-GR43-GRASS-GENERATE` の実装に合わせる（名前が違えば読み替えて PROGRESS.md に書く）。ファーのシェーディングモデルの ID は G5 の GR26 と G6 の GR34 の決めた値を使う。危険地帯（RT・パストレーサー）なので評価者を通す。
+
+## G19-GR124-NORT-CHECK: RT のあり・なしで起動画面を朝昼夕に撮って明るさの指標を比べ、RT なしと VRAM を絞ったときの GPU のフレームの時間を測って対応の段の文書に記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- after: G19-GR124-DEVICE-SELECTION, G19-GR124-CAPABILITY-OVERRIDES, G19-GR109-TIMELINE-TRACE, G19-GR109-GPU-HISTORY, G19-GR109-BUDGET-VIEW, G18-GR100-COLOR-METRICS
+- gr: GR124
+- check: launch
+- gpu: exclusive
+- needs-gr: GR109, GR100
+- done-when: (1) `Scripts/CaptureStartupScene.ps1 -SunElevations 10,45,3` を RT あり（既定）と `-ForceNoRt` で撮って両方が成功し、視点 × 太陽の高さごとの mean_luminance と白飛び・黒つぶれの比を `Docs/RenderingValidation/R124NoRtComparison.md`（新規）の表に並べる。許容の差は作者が決める（目標は「RT なしでも低いコントラストの見た目が成り立つ」）ので、表に「判定は作者」の欄を置く。撮った PNG は開いて見る。(2) RT なしで DDGI・RTGI・パストレーサーを求めた起動（`--force-no-rt` と起動画面の RTGI の既定）で警告が出てラスタで続くことを、撮影の Game のログで確かめる。(3) RelWithDebInfo・1280×720 で `-GpuTimingFrames` を付け、RT あり・`-ForceNoRt`・`-ForceNoRt -VramBudgetMiB 4096` の GPU のフレームの時間（中央値・95 パーセンタイル）と VRAM の使用量を GR109 の記録の形で同じ文書に書く。(4) `Docs/Platform/HardwareRequirements.md` の段 A・B の確かめの状態を（日付・コミット・この PC の GPU で RT を切った近似であること）で更新する。段 C は「この PC で確かめられない」と書く。(5) 手での確かめの手順（Vulkan 1.2 に対応しない・適合する GPU が無い環境、またはローダーの ICD を絞った環境で窓が出て、ログに GPU の名前が残り、終了コード 3。統合 GPU の機材が手に入ればそこで段 C を測る）を同じ文書に書き、結果の欄は作者の記入に残す。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -SunElevations 10,45,3 -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/rt`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -SunElevations 10,45,3 -ForceNoRt -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/nort`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -GpuTimingFrames 600 -ForceNoRt -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/nort-timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -GpuTimingFrames 600 -ForceNoRt -VramBudgetMiB 4096 -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR124-NORT-CHECK/nort-vram`
+- paths: Docs/RenderingValidation/R124NoRtComparison.md, Docs/Platform/HardwareRequirements.md, TASKS.md, PROGRESS.md
+- notes: 受け入れ確認はロードマップ 4112〜4114 行と要件 `#### GR124`。ロードマップ 4113 行は「Release 1280x720」と書くが、AGENTS.md の絶対規則 8 に従い RelWithDebInfo で測る。needs-gr GR109（GPU の時間の記録の形）と GR100（低いコントラストの見た目の指標。ロードマップ 3987 行の (c)）。RT ありの側の撮影は起動画面の既定（RTGI が有効。`Rendering3DTestRoutine.cpp:1679-1684`）。4096 MiB は段 B の機体の VRAM の例として置いた根拠なしの仮の値で、文書に「仮」と書く。最低の VRAM の数は GR88（BC）・GR105（VRAM の予算）・GR80（AI のメッシュの簡略化）の後でないと意味が無い（ロードマップ 4215 行）ので、ここでは測った値を残すだけで要件の数を決めない。性能を測るので `gpu: exclusive`。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
+
+## G19-GR125-HDR-CHECK: HDR の出力を起動して確かめ、SDR の既定の起動が変わらないことを撮り、HDR のモニターでの手の確かめの手順を記録する(後回しにしたアプリの起動の確かめ)
+- status: todo
+- after: G19-GR125-HDR-PRESENT, G19-GR125-HDR-DISPLAY, G19-GR125-HDR-LUT, G18-GR100-COLOR-METRICS
+- gr: GR125
+- check: launch
+- needs-gr: GR100
+- done-when: (1) 既定の起動（HdrMode = Off）の起動画面を default の視点で撮り、着手の前と変わらない。撮った PNG は開いて見る。(2) Game を `--hdr=auto --exit-after-rendered-frames=120` で起動し、ログに HDR の判定（OS の HDR の有無・列挙された形式・選んだ面・ペーパーホワイトとピーク）が出て、終了コード 0。この PC のモニターで OS の HDR が無効なら SDR に落ちたことをログで確かめる（落ちずに起動することが合格）。OS の HDR が有効なら `--capture-exr` 相当の HDR の撮影を 1 枚残し、色空間と転送の値を PROGRESS.md に書く。(3) GR100 の色と明度の指標で、SDR の撮影と HDR の撮影（あれば）のペーパーホワイトの面の明度が揃うことを記録する。(4) `Docs/RenderingValidation/R125HdrChecklist.md`（新規）に作者の手での確かめの手順と結果の欄を書く: Windows の HDR をオンにして scRGB の 1.0 が OS の SDR の白の水準と一致、ピークの設定でハイライトが頭打ちになる、UI の白がペーパーホワイトと一致、ピークの調整の画面の模様、HDR をオフにすると再起動なしで SDR へ戻る、モニターの型番と HDR の対応。結果の欄は作者の記入に残す。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -OutDir .harness/runs/startup-capture/G19-GR125-HDR-CHECK`
+- verify: `ctest --test-dir build -C Debug -R "^(R125HdrBlitVulkanTest|R125HdrLutVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Docs/RenderingValidation/R125HdrChecklist.md, Docs/RenderingValidation/R125HdrOutput.md, TASKS.md, PROGRESS.md
+- notes: 受け入れ確認はロードマップ 4120〜4122 行と要件 `#### GR125`。(2) の Game の起動は作業者が PowerShell で `build/Game/RelWithDebInfo/Game.exe` を引数つきで回し、終了コードとログの行を PROGRESS.md に貼る（起動の台本を新しく作らない。HDR の判定のログの行は G19-GR125-HDR-DISPLAY が出す）。CI や開発機で HDR の表示が使えるかは未確認（ロードマップ 4216 行）なので、合格は「HDR の無い環境で SDR に落ちて起動する」までで、HDR のモニターでの見え方は作者の手の確かめに残す。needs-gr GR100（色と明度の指標）。性能の計測ではないので `gpu: exclusive` は付けない。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
