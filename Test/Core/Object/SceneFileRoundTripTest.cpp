@@ -1,6 +1,8 @@
 ﻿#include "Component/BillboardComponent.h"
 #include "Component/Component.h"
 #include "Component/PointLightComponent.h"
+#include "Component/TerrainComponent.h"
+#include "FileStream/FileStream.h"
 #include "Object/PrefabAsset.h"
 #include "Object/SchemaProjection.h"
 #include "Object/World.h"
@@ -21,6 +23,14 @@ namespace
     constexpr float Epsilon = 0.0001f;
     constexpr const char* kSceneFilePath = "SceneFileRoundTripTest.scene.json";
     constexpr const char* kBrokenFilePath = "SceneFileRoundTripTest.broken.json";
+
+    constexpr const char* kTerrainFilePath = "SceneFileRoundTripTest.terrain.scene.json";
+    constexpr const char* kLegacyTerrainFilePath = "SceneFileRoundTripTest.terrain-legacy.scene.json";
+    constexpr const char* kTerrainProperties[] =
+    {
+        "TerrainPath", "TilePathPrefix", "BaseColorR", "BaseColorG", "BaseColorB",
+        "Roughness", "bCastShadow", "TilesPerFrame"
+    };
 
     bool Near(float lhs, float rhs)
     {
@@ -190,6 +200,179 @@ namespace
         std::remove(kSceneFilePath);
     }
 
+    void AssertTerrainNotBegun(const Component::TerrainComponent& terrain)
+    {
+        const ClassProperty* property = terrain.GetClass()->GetProperty(Identity("bBegunPlay"));
+        assert(property != nullptr);
+        PropertyValue value;
+        assert(property->GetPropertyValue(&terrain, value));
+        const bool* bBegun = value.Get<bool>();
+        assert(bBegun != nullptr && !*bBegun);
+    }
+
+    EntitySubtreeSnapshot ReadTerrainScene(const char* filePath, bool bLegacy)
+    {
+        auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+            Container::String(filePath), NorvesLib::FileStream::FileMode::Read,
+            NorvesLib::FileStream::FileAccess::Read);
+        assert(stream && stream->IsOpen());
+        const Container::String json = stream->ReadString();
+        Scene::SceneDocument document;
+        assert(Scene::SceneSerializer::TryParseJson(json, document));
+        assert(document.Roots.size() == 1);
+        assert(document.Roots[0].Root.Components.size() == 1);
+        const Scene::SceneObjectRecord& terrainRecord = document.Roots[0].Root.Components[0].Object;
+        assert(terrainRecord.ClassName == "TerrainComponent");
+        for (size_t index = 0; index < sizeof(kTerrainProperties) / sizeof(kTerrainProperties[0]); ++index)
+        {
+            const bool bPresent = FindPropertyRecord(terrainRecord, kTerrainProperties[index]) != nullptr;
+            assert(bPresent == (!bLegacy || index == 0));
+        }
+
+        Scene::SceneLoadStats stats;
+        Container::VariableArray<EntitySubtreeSnapshot> roots;
+        assert(Scene::SceneSerializer::ReconcileWithSchema(document, roots, stats));
+        assert(roots.size() == 1 && stats.LoadedRoots == 1);
+        assert(stats.DroppedEntities == 0 && stats.DroppedComponents == 0 && stats.DroppedProperties == 0);
+        assert(roots[0].Root.Components.size() == 1);
+        return roots[0];
+    }
+
+    Component::TerrainComponent* RestoreTerrainWithoutBeginPlay(
+        Entity& owner, const EntitySubtreeSnapshot& root, bool bLegacy)
+    {
+        assert(root.Root.Components.size() == 1);
+        const ComponentSubtreeSnapshot& component = root.Root.Components[0];
+        assert(component.OwnerAlias == root.Root.Alias);
+        const IClass* cls = Component::TerrainComponent::StaticClass();
+        assert(component.Object.Class == MakeStableSchemaId("NorvesLib", "Class", cls->GetClassName().GetView()));
+        auto* terrain = CastTo<Component::TerrainComponent>(cls->NewInstance(nullptr));
+        assert(terrain != nullptr);
+        assert(owner.AddInner(terrain));
+        AssertTerrainNotBegun(*terrain);
+
+        // World への配置は BeginPlay を呼ぶため、同じリフレクション経路で値だけ復元する。
+        for (size_t index = 0; index < sizeof(kTerrainProperties) / sizeof(kTerrainProperties[0]); ++index)
+        {
+            const Identity name(kTerrainProperties[index]);
+            const ClassProperty* property = cls->GetProperty(name);
+            assert(property != nullptr);
+            const StablePropertyId propertyId = MakeStableSchemaId(
+                "NorvesLib", "Property", cls->GetClassName().GetView(), name.GetView());
+            const ProjectedPropertyValue* projected = nullptr;
+            for (const ProjectedPropertyValue& candidate : component.Object.Properties)
+            {
+                if (candidate.Property == propertyId)
+                {
+                    assert(projected == nullptr);
+                    projected = &candidate;
+                }
+            }
+            if (bLegacy && index != 0)
+            {
+                assert(projected == nullptr);
+                continue;
+            }
+            assert(projected != nullptr);
+            PropertyValue value;
+            assert(value.DeserializeStable(projected->Type, projected->SerializedValue));
+            assert(property->ApplyValue(terrain, value));
+        }
+        AssertTerrainNotBegun(*terrain);
+        return terrain;
+    }
+
+    // 地形の全設定をシーンファイルへ保存し、読み戻した値を確かめる。
+    void TestTerrainPropertiesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::TerrainComponent::StaticClass();
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* sourceRoot = sourceWorld.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+        auto* source = new Component::TerrainComponent();
+        // AddComponent は BeginPlay を呼ぶため、値の保存だけを対象に Inner として付ける。
+        assert(sourceRoot->AddInner(source));
+        source->SetTerrainPath("Terrain/Example.terrain");
+        source->SetTilePathPrefix("Terrain/Example/Tiles/Tile_");
+        source->SetBaseColor(0.125f, 0.5f, 0.75f);
+        source->SetRoughness(0.375f);
+        source->SetCastShadow(false);
+        source->SetTilesPerFrame(7u);
+        AssertTerrainNotBegun(*source);
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(kTerrainFilePath)));
+        AssertTerrainNotBegun(*source);
+
+        const EntitySubtreeSnapshot savedRoot = ReadTerrainScene(kTerrainFilePath, false);
+        Entity loadedRoot;
+        Component::TerrainComponent* loaded = RestoreTerrainWithoutBeginPlay(loadedRoot, savedRoot, false);
+        assert(loaded->GetTerrainPath() == "Terrain/Example.terrain");
+        assert(loaded->GetTilePathPrefix() == "Terrain/Example/Tiles/Tile_");
+        float r = 0.0f;
+        float g = 0.0f;
+        float b = 0.0f;
+        loaded->GetBaseColor(r, g, b);
+        assert(Near(r, 0.125f) && Near(g, 0.5f) && Near(b, 0.75f));
+        assert(Near(loaded->GetRoughness(), 0.375f));
+        assert(!loaded->GetCastShadow());
+        assert(loaded->GetTilesPerFrame() == 7u);
+        AssertTerrainNotBegun(*loaded);
+
+        assert(loadedRoot.RemoveInner(loaded));
+        delete loaded;
+        sourceWorld.Finalize();
+        assert(std::remove(kTerrainFilePath) == 0);
+    }
+
+    // 旧ファイルに無い地形設定が既定値になることを確かめる。
+    void TestLegacyTerrainPropertiesUseDefaults()
+    {
+        RegisterRequiredClasses();
+        (void)Component::TerrainComponent::StaticClass();
+
+        // 旧形式は TerrainPath だけを持ち、残りの地形設定を省略する。
+        const char* legacyJson = R"json({
+            "formatVersion": 1, "module": "NorvesLib", "roots": [{
+                "formatVersion": 1, "rootAlias": "1", "rootPath": "", "root": {
+                    "alias": "1", "parentAlias": "0",
+                    "object": {"class": "Entity", "classId": "0", "path": "", "properties": []},
+                    "components": [{"alias": "2", "ownerAlias": "1", "object": {
+                        "class": "TerrainComponent", "classId": "0", "path": "", "properties": [{
+                            "name": "TerrainPath", "propertyId": "0", "type": "String", "typeId": "0",
+                            "value": "Terrain/Legacy.terrain"
+                        }]
+                    }}], "children": []
+                }
+            }]
+        })json";
+        std::FILE* file = nullptr;
+        fopen_s(&file, kLegacyTerrainFilePath, "wb");
+        assert(file != nullptr);
+        assert(std::fwrite(legacyJson, 1, std::strlen(legacyJson), file) == std::strlen(legacyJson));
+        assert(std::fclose(file) == 0);
+
+        const EntitySubtreeSnapshot savedRoot = ReadTerrainScene(kLegacyTerrainFilePath, true);
+        Entity loadedRoot;
+        Component::TerrainComponent* loaded = RestoreTerrainWithoutBeginPlay(loadedRoot, savedRoot, true);
+        assert(loaded->GetTerrainPath() == "Terrain/Legacy.terrain");
+        assert(loaded->GetTilePathPrefix().empty());
+        float r = 0.0f;
+        float g = 0.0f;
+        float b = 0.0f;
+        loaded->GetBaseColor(r, g, b);
+        assert(Near(r, 0.30f) && Near(g, 0.27f) && Near(b, 0.22f));
+        assert(Near(loaded->GetRoughness(), 0.9f));
+        assert(loaded->GetCastShadow());
+        assert(loaded->GetTilesPerFrame() == 2u);
+        AssertTerrainNotBegun(*loaded);
+
+        assert(loadedRoot.RemoveInner(loaded));
+        delete loaded;
+        assert(std::remove(kLegacyTerrainFilePath) == 0);
+    }
+
     void TestLoadFailures()
     {
         RegisterRequiredClasses();
@@ -222,6 +405,8 @@ int main()
     std::cout << "SceneFileRoundTripTest start\n";
 
     TestSaveLoadRoundTrip();
+    TestTerrainPropertiesSaveLoadRoundTrip();
+    TestLegacyTerrainPropertiesUseDefaults();
     TestLoadFailures();
 
     std::cout << "SceneFileRoundTripTest passed\n";

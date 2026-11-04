@@ -165,6 +165,7 @@ namespace Game
     private:
         bool ProvideSaveSnapshot(NorvesLib::Core::Container::String& payloadUtf8);
         bool ConsumeSavePayload(NorvesLib::Core::Container::Span<const uint8_t> payloadUtf8);
+        bool IsInteractPressed() const;
 
         Game::Save::ProgressSaveData m_ProgressSaveData;
         Game::Input::GameInputSettings m_InputSettings;

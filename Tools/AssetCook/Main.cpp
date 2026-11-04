@@ -310,7 +310,8 @@ namespace
                 // 区画の番号の形と範囲は SingleAssetCook の検査が確かめる
                 if (value != "displaced-sphere" && value.rfind("terrain-tile:", 0) != 0)
                 {
-                    error = "--generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z> だけを指定できます";
+                    error = "--generate は displaced-sphere・terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・"
+                            "terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z> を指定できます";
                     return false;
                 }
                 outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
@@ -555,6 +556,9 @@ namespace
             << "       AssetCook --input <terrain_spec.json> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind world --entry <entry.nvtrn> --entry-type Trn0 "
             << "--format nvtrn.v0.height16\n"
+            << "       AssetCook --input <terrain_spec.json|terrain.nvtrn> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
+            << "--format nvmesh.v1.mesh3d.pnt.u32.lodgraph --variant default --generate terrain-tile:nvtrn:<x>,<z>\n"
             << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n"
             << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n"
             << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"

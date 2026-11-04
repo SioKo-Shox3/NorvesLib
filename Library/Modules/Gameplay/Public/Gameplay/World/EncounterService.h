@@ -34,6 +34,10 @@ namespace NorvesLib::Modules::Gameplay::World
         /// 呼び出し一回が一フレーム。通知中の再入は拒否する。
         void Evaluate(Core::World& world, float worldDeltaSeconds);
         void MarkCleared(const Core::Container::String& zoneId);
+        /// 直前の Evaluate 終了時、KindBits と SensorMask が交わる Engaged 領域の、
+        /// 有効な退出余白を使う退出範囲にいた登録済みセンサーなら true。
+        /// 無効なハンドル、未登録のセンサー、所有スレッド以外からの呼び出しでは false。
+        bool IsSensorEngaged(Core::EntityHandle sensorEntity) const;
         EEncounterZoneState GetZoneState(const Core::Container::String& zoneId) const;
         Core::Container::String GetActiveProfileId() const;
         /// 購読を保ったまま実行状態を消し、次の評価で全 Entity を拾い直す。

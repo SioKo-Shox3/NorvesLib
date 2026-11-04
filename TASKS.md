@@ -4537,7 +4537,7 @@
 - from: GAME-GR135-VFX
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128-P1: 管理ストアの祖先の列挙を、祖先の項目数で失敗しない形にする
-- status: todo
+- status: done
 - after: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1
 - done-when: `ObserveLocked` は、workspace からボリュームの根までのどの階層でも、固定名 `StoreLeaf` と長名か short alias で fold 一致する項目だけを残し、ほかの項目はためずに読み流す。こうして、祖先に 1 ディレクトリで 16384 を超える項目があっても `entry_limit` で落ちないようにする。上限(1 ディレクトリ 16384・全列挙 65536・metadata 32MiB)は、store の制御領域の列挙(`header.json`・`roots.json`・`pending`)と、読み流しで残した一致の項目にだけ掛ける。次の 3 つは今のまま保つ。
   - 列挙の失敗を「store なし」と扱わないこと
@@ -5121,7 +5121,7 @@
 - notes: 設計はロードマップ 772・780 行（GR89 の (1) の recipe と (4) の標準レイヤ）。新しいソースは `Tools/AssetCook/TerrainMasks.{h,cpp}`。湿り・道・枯れ草の自動の式は見た目の判断で初回に必ずずれる（ロードマップ 1273 行）ので、ペイント入力の上書きを最初から持つ。式の係数は spec の値にし、既定は仮。荒野の地表の分類の地図（`Scripts/Terrain/TerrainMasks.py` が書く surface.png。`TerrainHeightField.h` 250〜290 行付近の `TerrainSurfaceMask`）は Python の別経路で、この項目は触らない（荒野の見た目を変えない）。マスクは CPU の試験で縛る: 総和や単調性が崩れても cook は成功し、撮影では層の混ざり方が少し変わるだけで気づきにくい。BC 化（GR88）が入っていればレイヤの NVTEX はその usage を使ってよいが、待たない（無圧縮の RGBA8・R8 で書く）。
 
 ## G5-GR37-TERRAIN-COMPONENT: cook 済みの地形を読んで区画を MegaGeometry で描き、Game が高さを引ける TerrainComponent と TerrainSystem を足す
-- status: todo
+- status: done
 - after: G5-GR89-TERRAIN-COOKER
 - gr: GR37
 - done-when: (1) AssetCook が NVTRN の各タイルから MegaGeometry の区画メッシュ（NVMESH v1。クラスタと LOD の階層、外周の頂点を全段で固定し隣の区画と境が一致、頂点は Mesh3DVertex、対角は既存の `UsesMainDiagonal`）を焼く（`--generate terrain-tile:nvtrn:<x>,<z>` の形。一覧からは CookAssets で焼ける）。(2) `TerrainHeightField` に、cook 済みの NVTRN（全タイルの高さ）から作る格子の作り方を足す（既存の `LoadGrid` と同じ補間・同じ対角・範囲外は `kOutOfRangeHeight`）。(3) `TerrainSystem`（`Engine::Engine` のメンバ。ParticleSystem と同じ置き方でシングルトンにしない。地形の登録・解除、`FindTerrain(x,z)`・高さ場の共有の参照 `TSharedPtr<const TerrainHeightField>` を返す）と `TerrainComponent`（REFLECTION_CLASS・3 つのコンストラクタ・BeginPlay/EndPlay。PROPERTY は cook 済み地形の論理パス・区画メッシュの論理パスの接頭辞・既定の 1 層の材質の値・bCastShadow など値だけで、リソースのハンドルは保存しない）を足す。BeginPlay で NVTRN を読んで TerrainSystem に登録し、区画ごとに子 Entity と `MegaGeometryComponent`（`MegaTerrainBlend::bTerrainSurface`・影を落とす）を 1 フレームあたりの予算の数ずつ作る（荒野の `PlaceNextTerrainTiles` と同じ型）。EndPlay で子 Entity・モデル・登録を返す。(4) Game に開発ビルドだけのシーン `grassland`（`Game/GameModes/Grassland/`。`Game/Scenes/SceneCatalog.h` に視点 near（地面すれすれ 0.6 m）・valley（谷底から尾根）・low（低い角度で遠くまで））を足し、Grassland の地形を TerrainComponent で置く（材質は既定の 1 層。層材質は G5-GR37-TERRAIN-LAYERS）。(5) 試験: `TerrainHeightFieldTest`（`MathGeometryTest` の束へ MEMBER。ソースは `Test/Core/Terrain/`）が、解析面を cook した NVTRN から作った高さ場で `SampleHeight` が解析値と量子化の幅＋1e-3 以内、区画メッシュの最細段の頂点から補間した高さと `SampleHeight` が乱数 1 万点で最大差 1e-4 以内（対角規則の一致）、`SampleNormal` が単位長で NaN が無い。`SceneFileRoundTripTest` に TerrainComponent の PROPERTY の保存→読込の一致と、項目の無い旧ファイルが既定値で読めるケースを足す。`AssetCookTerrainSmoke` に区画メッシュの cook を足す。いずれも通り、Game がビルドできる。
@@ -5463,7 +5463,7 @@
 - notes: 設計はロードマップ 1621〜1648 行。Physics のトリガーを使わない理由は 1623〜1627 行(trigger がクエリに混ざる、1 Entity 1 コライダーで PROPERTY が無い、固定ステップごとに束で届く)。選定課題 G8-S6(領域の外へ出たときの規則。ロードマップ 1861 行で「本人に確認する」)を決めた: ResetPolicy をデータの列挙 {FullHeal, KeepDamage} にし、既定は FullHeal(敵を全回復して Dormant に戻す)。理由: 領域の外へ逃げて削る遊び方を防ぐ、よくある作りで、データで KeepDamage に変えられる。退出の規則の適用(体力を戻す)は GR17 の EnemyComponent が OnZoneReset を受けて行う(G8-GR17-ENEMY-COMPONENT)。更新の時点は G8-S2 と同じ Module Late で、カメラの切り替えは次のフレームから見える(ブレンドが秒単位なので差は出ない)。テレポート(GR71)は印で扱う(1864 行)。領域の半径と攻撃の射程の検証・領域の重なりの検証は GR93(G12)。危険地帯: Object の寿命なので評価者を通す。やらないこと: 近接の操作とプロンプト(G8-GR18-INTERACTION)、敵の起動(G8-GR17-ENEMY-COMPONENT)。
 
 ## G8-GR18-INTERACTION: 寝床・ファストトラベル地点などに近づくと出る近接の操作(候補の選択・点滅しないプロンプト・入力で 1 回の起動)を作る
-- status: todo
+- status: done
 - after: G8-GR18-ENCOUNTER-ZONES
 - gr: GR18
 - needs-gr: GR03
@@ -5474,7 +5474,7 @@
 - notes: 設計はロードマップ 1639 行(Interactable と選び方)・1645 行(寝床が採られたら ActionId=Rest を GR55 と GR76 が購読。採否で機構は変わらない)。選定課題 G8-S7(近接の操作の入力)を決めた: 新しいアクション `Interact` を Gameplay の文脈に足し、Menu の文脈の `Confirm` は使わない。理由: 文脈が違い(`GameInputActions.h` の GameplayContext と MenuContext)、リバインドも別々にしたい。割当は仮で、データで変えられる。`bRequiresFreeMouth`(「口は一つ」。好感触だが未採用。1867 行)は既定で無効にし、口の状態を渡す口だけ用意する。ゲーム内の文字は ASCII の 95 字だけ(1865 行)なので、PromptTextKey はキーの文字列で持つ。やらないこと: プロンプトの表示、寝床・ファストトラベルの中身(GR55・GR71)。
 
 ## G8-GR17-ENEMY-COMPONENT: シ者の敵の基底(定義のデータ・状態の遷移・攻撃のパターン・2 段の撃破)を作り、領域・攻撃判定・アニメーションとつなぐ
-- status: todo
+- status: done
 - after: G8-GR17-HEALTH-PROGRESSION, G8-GR18-ENCOUNTER-ZONES, G8-GR16-COMBAT-RUNTIME, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR17
 - needs-gr: GR10, GR11
@@ -10398,3 +10398,19 @@
 - 人待ちの P1-P1 が受け持つのは `OpenStore` の祖先と `VerifyClaims` の workspace の列挙で、この 2 か所は含まない。重複にはならない。
 - 読み流しの関数は親の枝(`task/G2-GR82-B4-STATIC-ROOT-FRAME128-P1`)にしかなく、統合ブランチにはまだ入っていない。このため `after` は元のタスクにした。元のタスクは P1-P1 を待っているので、同じファイル `CookManagedTransactionController.cpp` を触る P1-P1 との順もこれで決まる。
 - アプリの起動は要らない。ビルドと単体の試験で確かめられるので、`check: launch` は付けていない。
+
+## CORE-MULTICAST-REENTRANT: MulticastDelegate::Broadcast を、配送中に購読を足しても外しても壊れない形にする
+- status: todo
+- done-when: `Library/Core/Public/Delegate/MulticastDelegate.h` の `Broadcast` は今、`m_Delegates` を範囲 for でそのまま回している。受け手が配送中に `Remove`・`Clear`・`Add` を呼ぶと、反復子が無効になる(未定義の動作)。これを次の約束を守る形に変える。
+  - 配送中に自分やほかの受け手を `Remove` しても、`Clear` しても、未定義の動作にならない。外された受け手は、その配送の残りでは呼ばれない(外して破棄した受け手を同じ配送で呼ばない)。
+  - 配送を始めた時点で登録されていて、外されなかった受け手は、登録の順に 1 回ずつ呼ばれる。
+  - 配送中に `Add` した受け手は、その配送では呼ばれず、次の配送から呼ばれる。
+  - 受け手の中から同じ delegate の `Broadcast` を呼んでも(入れ子の配送)、上の 3 つが成り立つ。配送中に外した項目は、一番外の配送が終わってから配列から詰める。
+  - 引数は各受け手へ lvalue で渡す。ループの中で `std::forward<Args>` を繰り返して、値渡しの引数が最初の受け手で move されることを無くす。
+  - 配送中でないときの `GetSize`・`IsEmpty`・`Remove`・`Clear` の結果と、`DelegateCopyTest`・`DelegateIdentityTest` の既存の期待値は変えない。
+  - 呼び出し側の局所の複製(`AnimatorComponent::ForwardEvent`・`CombatRuntime`・`EnemyComponent` など)はそのまま残す。持ち主が配送中に破棄される場合への備えなので、この項目では触らない。
+  - 上の 4 つの約束(配送中の Remove・Clear・Add と入れ子の配送)を、`DelegateCopyTest.cpp` に場合として足す。新しい試験の exe は作らない。今の実装に戻すと、Debug でこの試験が落ちる(反復子の検査か期待値の食い違い)。
+- verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(DelegateCopyTest|DelegateIdentityTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Library/Core/Public/Delegate/MulticastDelegate.h, Test/Core/Delegate/DelegateCopyTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1

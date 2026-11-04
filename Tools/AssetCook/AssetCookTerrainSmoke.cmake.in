@@ -76,3 +76,134 @@ string(FIND "${invalid_error}" "--kind world requires --entry-type Trn0" invalid
 if(invalid_position EQUAL -1)
     message(FATAL_ERROR "terrain cook rejected Raw for an unexpected reason: ${invalid_output}${invalid_error}")
 endif()
+
+# 同じ地形 spec の先頭と最後の区画を NVMESH に焼き、出力と manifest を確かめる。
+function(cook_nvtrn_tile case_name input_path tile expected_tiles)
+    set(package "${SMOKE_DIR}/Cooked/${case_name}.nvpkg")
+    set(manifest_path "${SMOKE_DIR}/${case_name}.manifest.json")
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input_path}"
+            --out "${package}"
+            --manifest "${manifest_path}"
+            --logical Terrain/Smoke/Tile.nvmesh
+            --kind model
+            --entry Terrain/Smoke/Tile.nvmesh
+            --entry-type Msh0
+            --format nvmesh.v1.mesh3d.pnt.u32.lodgraph
+            --variant default
+            --generate "terrain-tile:nvtrn:${tile}"
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr)
+    if(NOT "${result}" STREQUAL "0")
+        message(FATAL_ERROR "地形区画 ${case_name} の cook が失敗しました (${result}): ${stdout}${stderr}")
+    endif()
+    string(FIND "${stdout}" "TERRAIN_NVTRN_TILE tile=${tile} tiles=${expected_tiles} vertices=289 triangles=512" summary_position)
+    if(summary_position EQUAL -1)
+        message(FATAL_ERROR "地形区画 ${case_name} の要約がありません: ${stdout}${stderr}")
+    endif()
+    if(NOT EXISTS "${package}" OR NOT EXISTS "${manifest_path}")
+        message(FATAL_ERROR "地形区画 ${case_name} のパッケージか manifest がありません")
+    endif()
+    file(SIZE "${package}" package_size)
+    if(package_size EQUAL 0)
+        message(FATAL_ERROR "地形区画 ${case_name} のパッケージが空です")
+    endif()
+    file(READ "${manifest_path}" tile_manifest)
+    string(REGEX MATCH "\"kind\"[ \t\r\n]*:[ \t\r\n]*\"model\"" kind_match "${tile_manifest}")
+    if(NOT kind_match)
+        message(FATAL_ERROR "地形区画 ${case_name} の manifest は kind=model ではありません: ${tile_manifest}")
+    endif()
+    string(REGEX MATCH "\"source_hash\"[ \t\r\n]*:[ \t\r\n]*\"([0-9a-fA-F]+)\"" hash_match "${tile_manifest}")
+    if(NOT hash_match)
+        message(FATAL_ERROR "地形区画 ${case_name} の manifest に source hash がありません: ${tile_manifest}")
+    endif()
+    set("${case_name}_source_hash" "${CMAKE_MATCH_1}" PARENT_SCOPE)
+    message(STATUS "地形区画 ${case_name}: ${stdout}")
+endfunction()
+
+cook_nvtrn_tile(tile_first "${SMOKE_DIR}/Spec/terrain.json" "0,0" "2x2")
+cook_nvtrn_tile(tile_last "${SMOKE_DIR}/Spec/terrain.json" "1,1" "2x2")
+
+# world のパッケージから NVTRN を取り出し、生の NVTRN と spec の両方を通す。
+set(extract_script "${SMOKE_DIR}/extract-terrain.ps1")
+string(ASCII 239 187 191 utf8_bom)
+file(WRITE "${extract_script}" "${utf8_bom}" [=[
+param([string]$PackagePath, [string]$TerrainPath, [string]$BrokenPath, [string]$GridPath)
+$ErrorActionPreference = 'Stop'
+$bytes = [System.IO.File]::ReadAllBytes($PackagePath)
+if ($bytes.Length -lt 96 -or [BitConverter]::ToUInt32($bytes, 32) -ne 1) { throw '地形パッケージが不正です' }
+$table = [int][BitConverter]::ToUInt64($bytes, 40)
+if ($table -lt 0 -or $table + 64 -gt $bytes.Length) { throw 'エントリ表が不正です' }
+$offset = [int][BitConverter]::ToUInt64($bytes, $table + 24)
+$size = [int][BitConverter]::ToUInt64($bytes, $table + 32)
+if ($offset -lt 0 -or $size -lt 8 -or $offset -gt $bytes.Length - $size) { throw '地形データが不正です' }
+$terrain = New-Object byte[] $size
+[Array]::Copy($bytes, $offset, $terrain, 0, $size)
+[System.IO.File]::WriteAllBytes($TerrainPath, $terrain)
+$terrain[$size - 1] = $terrain[$size - 1] -bxor 1
+[System.IO.File]::WriteAllBytes($BrokenPath, $terrain)
+$grid = New-Object byte[] (49 * 33 * 2)
+for ($i = 0; $i -lt 49 * 33; ++$i)
+{
+    $grid[2 * $i] = [byte]($i -band 0xff)
+    $grid[2 * $i + 1] = [byte](($i -shr 8) -band 0xff)
+}
+[System.IO.File]::WriteAllBytes($GridPath, $grid)
+]=])
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${extract_script}"
+        "${SMOKE_DIR}/Cooked/Smoke.nvpkg" "${SMOKE_DIR}/terrain.nvtrn" "${SMOKE_DIR}/broken.nvtrn"
+        "${SMOKE_DIR}/Spec/fractional.raw"
+    RESULT_VARIABLE extract_result
+    OUTPUT_VARIABLE extract_output
+    ERROR_VARIABLE extract_error)
+if(NOT "${extract_result}" STREQUAL "0")
+    message(FATAL_ERROR "地形の取り出しに失敗しました (${extract_result}): ${extract_output}${extract_error}")
+endif()
+cook_nvtrn_tile(tile_raw "${SMOKE_DIR}/terrain.nvtrn" "0,0" "2x2")
+
+# 0.1 m 間隔の 3 区画の端は float への丸めで格子の外へ出る。
+file(WRITE "${SMOKE_DIR}/Spec/fractional.json" [=[{
+  "version": 1,
+  "height_source": { "path": "fractional.raw", "format": "raw16", "width": 49, "height": 33, "endian": "little" },
+  "height_mapping": { "min_m": 0.0, "max_m": 65.535 },
+  "cell_size_m": 0.1, "tile_cells": 16, "fit": "error", "require_bit_depth": 16, "seed": 1, "recipe": {}
+}
+]=])
+cook_nvtrn_tile(tile_fractional "${SMOKE_DIR}/Spec/fractional.json" "2,1" "3x2")
+file(SHA256 "${SMOKE_DIR}/Cooked/tile_first.nvpkg" spec_package_hash)
+file(SHA256 "${SMOKE_DIR}/Cooked/tile_raw.nvpkg" raw_package_hash)
+if(NOT spec_package_hash STREQUAL raw_package_hash OR NOT tile_first_source_hash STREQUAL tile_raw_source_hash)
+    message(FATAL_ERROR "地形 spec と NVTRN のメッシュまたは source hash が一致しません")
+endif()
+
+function(expect_nvtrn_tile_failure case_name input_path tile expected)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input_path}"
+            --out "${SMOKE_DIR}/Cooked/${case_name}.nvpkg"
+            --manifest "${SMOKE_DIR}/${case_name}.manifest.json"
+            --logical Terrain/Smoke/Tile.nvmesh
+            --kind model
+            --entry Terrain/Smoke/Tile.nvmesh
+            --entry-type Msh0
+            --format nvmesh.v1.mesh3d.pnt.u32.lodgraph
+            --variant default
+            --generate "terrain-tile:nvtrn:${tile}"
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr)
+    if("${result}" STREQUAL "0" OR NOT "${result}" MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "地形区画 ${case_name} が正常に拒否されませんでした (${result}): ${stdout}${stderr}")
+    endif()
+    string(FIND "${stdout}${stderr}" "${expected}" diagnostic_position)
+    if(diagnostic_position EQUAL -1)
+        message(FATAL_ERROR "地形区画 ${case_name} の拒否理由が想定と違います: ${stdout}${stderr}")
+    endif()
+    message(STATUS "地形区画 ${case_name} を終了コード ${result} で拒否しました")
+endfunction()
+
+expect_nvtrn_tile_failure(tile_out_of_range "${SMOKE_DIR}/Spec/terrain.json" "2,0" "tiles=2x2")
+expect_nvtrn_tile_failure(tile_broken "${SMOKE_DIR}/broken.nvtrn" "0,0" "NVTRN")

@@ -9,6 +9,11 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Combat/CombatHitEvent.h
     Public/Gameplay/Combat/HitboxComponent.h
     Public/Gameplay/Combat/HurtboxSetComponent.h
+    Public/Gameplay/Enemy/EnemyDefinition.h
+    Public/Gameplay/Enemy/EnemyPatternSelector.h
+    Public/Gameplay/Enemy/IEnemyAnimator.h
+    Public/Gameplay/Enemy/AnimatorEnemyAnimator.h
+    Public/Gameplay/Enemy/EnemyComponent.h
     Public/Gameplay/Progression/GameplayStableId.h
     Public/Gameplay/Progression/ProgressionState.h
     Public/Gameplay/Progression/DefeatGate.h
@@ -17,12 +22,19 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/World/ZoneSensorComponent.h
     Public/Gameplay/World/EncounterZoneComponent.h
     Public/Gameplay/World/EncounterService.h
+    Public/Gameplay/World/InteractionTypes.h
+    Public/Gameplay/World/InteractableComponent.h
+    Public/Gameplay/World/InteractionService.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Combat/HealthComponent.cpp
     Private/Gameplay/Combat/HitboxComponent.cpp
     Private/Gameplay/Combat/HurtboxSetComponent.cpp
+    Private/Gameplay/Enemy/EnemyDefinition.cpp
+    Private/Gameplay/Enemy/EnemyPatternSelector.cpp
+    Private/Gameplay/Enemy/AnimatorEnemyAnimator.cpp
+    Private/Gameplay/Enemy/EnemyComponent.cpp
     Private/Gameplay/Combat/CombatRuntime.h
     Private/Gameplay/Combat/CombatRuntime.cpp
     Private/Gameplay/Progression/GameplayStableId.cpp
@@ -36,6 +48,8 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/World/ZoneSensorComponent.cpp
     Private/Gameplay/World/EncounterZoneComponent.cpp
     Private/Gameplay/World/EncounterService.cpp
+    Private/Gameplay/World/InteractableComponent.cpp
+    Private/Gameplay/World/InteractionService.cpp
     Private/Gameplay/GameplayModule.h
     Private/Gameplay/GameplayModule.cpp
 )
