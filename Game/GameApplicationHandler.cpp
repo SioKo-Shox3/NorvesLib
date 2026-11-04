@@ -64,6 +64,7 @@
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
 #include "Gameplay/IGameplayModule.h"
+#include "Gameplay/World/InteractionService.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
@@ -3034,6 +3035,18 @@ namespace Game
         return true;
     }
 
+    bool GameApplicationHandler::IsInteractPressed() const
+    {
+        const auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return false;
+        }
+        const auto interact = engine->GetInputMapper().GetAction(
+            Game::InputActions::GameplayContext, Game::InputActions::Interact);
+        return interact.Active && interact.Button.Pressed;
+    }
+
     bool GameApplicationHandler::OnInitialize()
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
@@ -3112,6 +3125,15 @@ namespace Game
         }
 
         m_M6ScriptSmokeController.Initialize();
+        if (NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                gameplay->GetInteractionService().SetInteractPressedSource(
+                    NorvesLib::Core::MakeDelegate(this, &GameApplicationHandler::IsInteractPressed));
+            }
+        }
         return true;
     }
 
@@ -3832,6 +3854,12 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                NorvesLib::Core::Module::GetModuleRegistry()))
+        {
+            gameplay->GetInteractionService().SetInteractPressedSource(NorvesLib::Core::Delegate<bool>{});
+        }
+
         m_pGameModeStateMachine = nullptr;
         m_M6ScriptSmokeController.Shutdown();
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");

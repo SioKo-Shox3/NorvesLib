@@ -9670,21 +9670,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API の危険地帯）。状態のストア・自動保存は G8-GR76-STATE-AUTOSAVE、設定は G8-GR76-SETTINGS。
 - Notes: 起動の要る確かめは無い。今ある別々の原子的な書き込み（WorkingDirectoryInputBindingStore など）は触っていない。
 
-- U1 cook 済みの NVTRN から格子の高さ場を作る: 着地(直し 0 回)
-- U4 TerrainSystem を足して Engine::Engine のメンバにする: 着地(直し 1 回)
-- U2 AssetCook に NVTRN のタイルから区画メッシュを焼く terrain-tile:nvtrn を足す: 着地(直し 0 回)
-- U5 TerrainComponent を足す: 着地(直し 2 回)
-- U3 草原の一覧に 16 区画を足し、CookAssets で焼けるようにする: 着地(直し 0 回)
-- U7 TerrainHeightFieldTest を足す: 着地(直し 0 回)
-- U6 開発ビルドだけの grassland シーンを足し、地形を TerrainComponent で置く: 着地(直し 0 回)
-- U9 SceneFileRoundTripTest に TerrainComponent を足し、タスクの verify を全部回す(U8 の切り直し): 着地(直し 0 回)
-- Done (G5-GR37-TERRAIN-COMPONENT、run 20261104-182213 の反復 1): `TerrainHeightField::CreateFromCookedTerrain`（cook 済み NVTRN の全タイルから格子。既存の補間・対角・範囲外の扱いを共有）、`TerrainSystem`（`Engine::Engine` のメンバ。登録・解除・`FindTerrain`・`TSharedPtr<const TerrainHeightField>`）、`TerrainComponent`（値だけの PROPERTY。BeginPlay で NVTRN を読み登録し、区画ごとに子 Entity と `MegaGeometryComponent`〔地形の面・影〕を 1 フレームの予算ずつ作り、EndPlay で返す）、AssetCook の `--generate terrain-tile:nvtrn:<x>,<z>`、草原の 4×4 区画の一覧、開発ビルドだけの `grassland` シーン（視点 near・valley・low）を足した。
-- 試験: `TerrainHeightFieldTest`（MathGeometryTest の束）、`SceneFileRoundTripTest` に TerrainComponent の設定の往復と旧ファイルの既定値の 2 ケース、`AssetCookTerrainSmoke` に区画メッシュの cook（先頭・末尾の区画、spec と生 NVTRN の出力一致、範囲外・破損の拒否）。
-- 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=17 で終了コード 0）。
-- Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` の 3 視点の撮影、区画の LOD の境の亀裂・TLAS・影の確認、TerrainComponent の EndPlay（World の終了・所有者の削除・Component 単体の解除）の実行時の確認を行う。層材質は G5-GR37-TERRAIN-LAYERS。
-- Notes: SceneFileRoundTripTest の地形の 2 ケースは `LoadIntoWorld` が BeginPlay を呼ぶため、JSON の解析とスキーマ照合の後に同じリフレクションの値の適用で復元している（`LoadIntoWorld`・`SpawnPrefab` を通す経路は起動の確かめで見る）。荒野の区画（`WastelandRoutine.cpp` の `PlaceTerrainTile`）は TerrainComponent へ移していない。
-- U10 差し戻しの直し — 地形の読込みを BeginPlay から最初の Tick へ移し、作ってから値を設定しても動くようにする: 着地(直し 0 回)
-- Done (G5-GR37-TERRAIN-COMPONENT、run 20261104-182213 の反復 2): 評価者の差し戻し（`World::CreateComponent` が値の設定より先に BeginPlay を呼ぶため、grassland の地形が読まれず区画が 1 つも置かれない）を直した。`TerrainComponent` の BeginPlay は参照の記録と Tick の登録だけにし、NVTRN の読込み・高さ場の作成・TerrainSystem への登録は最初の Tick（`PlacePendingTiles`）で一度だけ行う。パスが空の間は待ち、読込みに失敗したら警告を 1 回出して Tick を止める。`TerrainComponent(const IUnknown*)` も既定値を入れる。
-- 証拠: `.harness/runs/20261104-182213/verify-G5-GR37-TERRAIN-COMPONENT-iter2.txt`（verify の 6 行: Debug の AssetCook・Game・MathGeometryTest・SceneSerializerTest のビルドが終了コード 0、ctest 5/5 成功、CookAssets の Terrain/Grassland/* が cooked=1 skipped=16 で終了コード 0）。
-- Next: 起動の確かめは後回し（アプリを起動しない決まり）。G5-GR37-TERRAIN-CHECK で `--scene=grassland` を起動し、最初の Tick で `TERRAIN_COMPONENT tiles=16 placed=16` が出て SceneReady に至ることを、3 視点の撮影・亀裂・TLAS・影・EndPlay の確認と合わせて見る。
-- Notes: 残課題（non-blocking）: ランチャーのカードの画像は `Assets/Textures/Launcher/sandbox.png` の使い回し。`Scripts/CookAssets.ps1` の変更は `paths:` の外だが done-when (1) の「CookAssets で焼ける」に要るもの。
+## G8-GR18-INTERACTION: 統合ブランチの取り込み(2026-11-04)
+- Done: feature/scene-launcher を取り込み、GameplayModule::LateTick を 1 つにまとめた(攻撃判定 → 遭遇領域 → 近接の操作の順)。TickStages.md の表に Hitbox・Hurtbox と InteractableComponent の行を両方残した。
+- 確かめ: verify のビルド EXIT=0、ctest 7 本すべて Passed(.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION-*.txt)。TickContractTableTest と Combat 系 5 本も Passed。
+- Notes: アプリを起動する確かめは無い(表示は G8-GR17-SLICE-SMOKE・GR68 で扱う)。
+- U1 Gameplay の文脈に Interact のアクションを足す: 着地(直し 0 回)
+- U2 EncounterService にセンサーが Engaged の領域の中にいるかの照会を足す: 着地(直し 0 回)
+- U6 U3 の差分(保存したパッチ)を当て直して確かめる: 着地(直し 0 回)
+- U4 InteractionPromptTest を足す: 着地(直し 0 回)
+- U5 Game が InputMapper の Interact を InteractionService につなぎ、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-04 G8-GR18-INTERACTION（run 20261104-182213 の反復 1、完了）
+- Done: Gameplay の文脈に `Interact`（仮の割当はキー F・ゲームパッドの x）を足し、`InteractableComponent`（PROPERTY 9 個、ClassRegistry と TickStages.md に登録）と `InteractionService`（GameplayModule が持ち、Module Late で EncounterService の後に評価）を作った。候補は優先度 → 距離 → 視線の角で選び、EnterRadius と ExitRadius の差で点滅を防ぎ、選ばれた候補が変わったときだけ `OnPromptChanged` を出す。無効化・破棄は評価を待たずに消す。戦闘中の照会は `EncounterService::IsSensorEngaged` につなぎ、口の照会は差し替えの口だけ（既定は無効）。Game は `InputMapper` の Interact の押した瞬間を `SetInteractPressedSource` につなぐ。
+- 証拠: `.harness/runs/20261104-182213/verify-G8-GR18-INTERACTION.txt`（Game・PhysicsDynamicsTest・LoggerSinkTest の Debug ビルド終了コード 0、ctest で InteractionPromptTest・EncounterZoneTest・EncounterLifecycleTest・InputActionRuntimeTest・InputActionMapTest・InputBindingJsonTest・GameInputSettingsTest の 7 件 100% Passed）。
+- Next: ランナーの評価者の反証（Object の寿命の危険地帯）。プロンプトの仮の表示は G8-GR17-SLICE-SMOKE、本来の UI は GR68、日本語は GR69。寝床・ファストトラベルの中身は GR55・GR71。
+- Notes: 起動の確かめ（ゲームの中でキー F を押して InteractionTriggered が 1 回出ること）は後回し。入力の更新 → シミュレーション → `GameplayModule::LateTick` の順なので押した瞬間は同じフレームで見えるが、シミュレーションが止まっているフレームの押下は持ち越さない。Game の結線のため paths の外の `Game/GameApplicationHandler.cpp`・`.h` を触った（done-when (2) が求める結線）。距離の比較は厳密な一致で、視線の角が効くのは距離が等しいときだけ。

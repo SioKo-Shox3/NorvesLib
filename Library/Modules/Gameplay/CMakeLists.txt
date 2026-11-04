@@ -17,6 +17,9 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/World/ZoneSensorComponent.h
     Public/Gameplay/World/EncounterZoneComponent.h
     Public/Gameplay/World/EncounterService.h
+    Public/Gameplay/World/InteractionTypes.h
+    Public/Gameplay/World/InteractableComponent.h
+    Public/Gameplay/World/InteractionService.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
@@ -36,6 +39,8 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/World/ZoneSensorComponent.cpp
     Private/Gameplay/World/EncounterZoneComponent.cpp
     Private/Gameplay/World/EncounterService.cpp
+    Private/Gameplay/World/InteractableComponent.cpp
+    Private/Gameplay/World/InteractionService.cpp
     Private/Gameplay/GameplayModule.h
     Private/Gameplay/GameplayModule.cpp
 )
