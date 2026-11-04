@@ -20,6 +20,7 @@
 #include "Input/InputRebindCaptureManager.h"
 #include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
+#include "Vegetation/Vegetation.h"
 #include "Thread/Atomic.h"
 
 namespace NorvesLib::Core::Application
@@ -370,6 +371,16 @@ namespace NorvesLib::Core::Engine
             return m_ParticleSystem;
         }
 
+        Vegetation::Vegetation& GetVegetation()
+        {
+            return m_Vegetation;
+        }
+
+        const Vegetation::Vegetation& GetVegetation() const
+        {
+            return m_Vegetation;
+        }
+
         /**
          * @brief シーン空間検索を取得
          * @return SceneQueryへの参照
@@ -507,6 +518,7 @@ namespace NorvesLib::Core::Engine
         World m_World;
 
         Particle::ParticleSystem m_ParticleSystem;
+        Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
 
         // シーン空間検索（GEngine配下で実体保持）

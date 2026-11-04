@@ -80,6 +80,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraProfile.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/DogMovementSmoke/DogMovementAutopilotScript.cpp
 )
 target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics NorvesModule_Gameplay)
 target_include_directories(PhysicsDynamicsTest PRIVATE
