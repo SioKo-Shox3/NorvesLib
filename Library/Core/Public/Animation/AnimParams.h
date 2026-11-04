@@ -53,6 +53,9 @@ namespace NorvesLib::Core::Animation
         AnimParamType Type = AnimParamType::Float;
         AnimParamValue Default;
         AnimSignalBinding Binding = AnimSignalBinding::None;
+        AnimParamValue Min, Max;
+        bool bHasMin = false;
+        bool bHasMax = false;
     };
     class AnimParamSet
     {

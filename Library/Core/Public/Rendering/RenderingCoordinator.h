@@ -155,6 +155,18 @@ namespace NorvesLib::Core::Rendering
         bool bTruncated = false;
     };
 
+#if NORVES_BUILD_DEVELOPMENT
+    /** @brief 提出されたフレームパケットのレイトレーシングと間接光の状態。 */
+    struct RenderedRayTracingState
+    {
+        uint64_t FrameNumber = 0;
+        uint64_t InstanceCount = 0;
+        bool bRTGIEnabled = false;
+        bool bDDGIEnabled = false;
+        bool bTLASAvailable = false;
+    };
+#endif
+
     class RenderingCoordinatorDiagnostics;
 
     /**
@@ -225,6 +237,9 @@ namespace NorvesLib::Core::Rendering
          * 新しいフレームの描画データ収集を開始します。
          */
         void BeginFrame();
+
+        /** @brief GameThread から次の BeginFrame へ、1 回だけ使う固定刻みの経過時間と累積秒を渡す */
+        void SetFixedFrameTime(float deltaSeconds, double totalSeconds);
 
         /**
          * @brief シーン収集
@@ -358,6 +373,17 @@ namespace NorvesLib::Core::Rendering
         void SetRTGIEnabled(bool bEnabled);
         bool IsRTGIEnabled() const { return m_bRTGIEnabled; }
 
+#if NORVES_BUILD_DEVELOPMENT
+        /**
+         * @brief 描画へ提出された最新のパケットの状態を取得する（GameThread）。
+         * @return まだ提出されていないか更新中なら false。
+         */
+        bool TryGetRenderedRayTracingState(RenderedRayTracingState& outState) const;
+
+        /** @brief 次に確保するフレームパケットの番号を取得する（GameThread）。 */
+        uint64_t GetNextFramePacketNumber() const { return m_PacketManager.GetCurrentFrameNumber(); }
+#endif
+
         /**
          * @brief RTGIの拡散の光線が影を落とさない不透明物体にも当たるかを次のFramePacketへ公開する（既定は切）
          *
@@ -421,6 +447,11 @@ namespace NorvesLib::Core::Rendering
          */
         void SetFoliage(const FoliageScene& foliage);
         const FoliageScene& GetFoliage() const { return m_Foliage; }
+
+        /** @brief 不変の草の場の描画データを設定する（GameThread） */
+        void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
+        /** @brief 設定された草の場の描画データを取得する（GameThread） */
+        const Container::TSharedPtr<const GrassFieldRenderData>& GetGrassField() const { return m_GrassField; }
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
@@ -571,6 +602,7 @@ namespace NorvesLib::Core::Rendering
 
     private:
         friend struct DDGISnapshotContractTestAccess;
+        friend struct GrassFieldSnapshotContractTestAccess;
 
         // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
         void GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities);
@@ -668,10 +700,20 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
+        Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         DistortionScene m_Distortions;
         bool m_bRTGIEnabled = true;
+        // 初期化時に確定し、描画スレッドの開始後は変更しない。
+        bool m_bRayTracingForcedOff = false;
+#if NORVES_BUILD_DEVELOPMENT
+        // 奇数は更新中、0 は未提出。連番で前後を挟んで同じパケットの値を読む。
+        Thread::Atomic<uint64_t> m_RenderedRayTracingSequence{0};
+        Thread::Atomic<uint64_t> m_RenderedRayTracingFrameNumber{0};
+        Thread::Atomic<uint64_t> m_RenderedRayTracingInstanceCount{0};
+        Thread::Atomic<uint8_t> m_RenderedRayTracingFlags{0};
+#endif
         bool m_bRTGINonShadowCasterOcclusion = false;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;
@@ -852,6 +894,10 @@ namespace NorvesLib::Core::Rendering
         // フレームタイミング
         double m_LastFrameTime = 0.0;
         double m_TotalTime = 0.0;
+        // GameThread 専用。次の BeginFrame で消費する固定刻みの時間。
+        float m_FixedFrameDeltaSeconds = 0.0f;
+        double m_FixedFrameTotalSeconds = 0.0;
+        bool m_bFixedFrameTimePending = false;
 
         // 決定的な撮影（GameThread専用）。エポックの 0 番のフレームから数えたフレーム数を FramePacket へ載せる。
         bool m_bDeterministicCapture = false;

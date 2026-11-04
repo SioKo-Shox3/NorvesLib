@@ -11,6 +11,7 @@ set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
+    Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
@@ -32,6 +33,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfMaterialSource.cpp
     Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
+    Private/Asset/CookedTerrainWriter.cpp
+    Private/Asset/CookedTerrainLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -51,6 +54,9 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Vegetation/GrassSpecies.cpp
+    Private/Vegetation/GrassField.cpp
+    Private/Vegetation/Vegetation.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -111,6 +117,7 @@ set(PRIVATE_SOURCES
     Private/Animation/AnimParams.cpp
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
+    Private/Animation/TwoBoneIK.cpp
     Private/Animation/AnimationEvents.cpp
     Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
@@ -199,6 +206,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
     # GameMode
@@ -471,6 +479,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedMaterialFormat.h
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
+    Public/Asset/CookedTerrainFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
@@ -523,6 +532,11 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Vegetation/GrassSpecies.h
+    Public/Vegetation/GrassField.h
+    Public/Vegetation/Vegetation.h
+    Public/Vegetation/GroundHeightSource.h
+    Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h
     Public/Particle/DecalPool.h
     Public/Particle/VfxEffectTypes.h
@@ -554,6 +568,7 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotion.h
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
+    Public/Animation/TwoBoneIK.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
     Public/Component/HoldSlotComponent.h
@@ -562,6 +577,7 @@ set(PUBLIC_HEADERS
     Public/Scene/SceneQuery.h
     Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
+    Public/Scene/PhysicsLayerTable.h
     Public/Scene/SceneSerializer.h
     # Module
     Public/Module/ModuleExport.h
@@ -764,6 +780,7 @@ set(PUBLIC_HEADERS
     Public/Math/VectorUtils.h
     Public/Math/CriticalDamping.h
     Public/Camera/CameraCollisionSolver.h
+    Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h

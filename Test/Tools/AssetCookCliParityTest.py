@@ -1,4 +1,5 @@
 ﻿"""バイト比較器の反証。AssetCook本体やWindows smokeの代替試験ではない。"""
+import argparse
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -31,6 +32,27 @@ class ParityTest(unittest.TestCase):
     def snapshots(self):
         parity.write_snapshot(self.input, self.a, self.meta)
         parity.write_snapshot(self.input, self.b, self.meta)
+
+    def test_capture_rejects_output_in_source(self):
+        source = self.root / "source"
+        source.mkdir()
+        exe = self.root / "AssetCook.exe"
+        unit = self.root / "CookedMeshTest.exe"
+        exe.touch()
+        unit.touch()
+        for output in (source / "out", source):
+            with self.subTest(output=output):
+                existed = output.exists()
+                args = argparse.Namespace(source=source, exe=exe, skeletal_test_exe=unit, output=output)
+                with self.assertRaises(ValueError) as failure:
+                    parity.capture(args)
+                message = str(failure.exception)
+                self.assertIn("--output", message)
+                self.assertIn("source の外", message)
+                self.assertIn(str(output.resolve()), message)
+                self.assertIn(str(source.resolve()), message)
+                self.assertEqual(output.exists(), existed)
+                self.assertEqual(list(source.iterdir()), [])
 
     def test_windows_child_module_path(self):
         parent = {"PSModulePath": "ps7", "PSMODULEPATH": "other", "psmodulepath": "", "PATH": "keep",

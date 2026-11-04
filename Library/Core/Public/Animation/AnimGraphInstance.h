@@ -151,6 +151,8 @@ namespace NorvesLib::Core::Animation
         bool AdvanceRootMotion();
         bool RemoveRootMotion(uint32_t clip, LocalPose&) const;
         Container::VariableArray<RootClipRuntime> m_RootClips;
+        // 公称速度由来の blend1d の位置は全件検証後に作業用配列と交換する。
+        Container::VariableArray<Container::VariableArray<float>> m_BlendAxes, m_BlendAxisScratch;
         Container::VariableArray<NodeMotion> m_NodeMotion;
         PoseScratch m_MotionScratch;
         Container::VariableArray<Math::Matrix4x4> m_MotionModels;

@@ -19,7 +19,7 @@ Math/Curves.hは入力と振動で共有する最小区分線形・イージン�
 
 C++23、g++ -O2、assertを有効にした実ソースへの直接リンクで34件成功、実行失敗0。CoreのWindows依存を隠す代替実装は使用していない。CMake/CTestやWindows実行ではなく、section GCで未使用の依存部分を除いた範囲を含む。
 
-実行時の基準コミットは0c1f4e90d70459ea029682d88bf34910da8860c6。以後の実装変更はWorldの群境界同期であり、当該実World試験は下記のとおり未実行。群/dispatchの純helperはこの変更後も最適化構成とASan/UBSanで再実行成功した。
+実行時の基準コミットは0c1f4e90d70459ea029682d88bf34910da8860c6。以後の実装変更はWorldの群境界同期であり、当時の実World試験は未実行だった。2026-11-03のWindows Debugでの結果は後節に記す。群/dispatchの純helperはこの変更後も最適化構成とASan/UBSanで再実行成功した。
 
 - GR01（2件）：TickGroupConfigurationTest、TickDispatchTest
 - GR03（17件）：InputStateReleaseTest、InputButtonStateTest、InputAxisMathTest、InputArmedStateTest、InputBindingTypesTest、GamepadInputStateTest、InputActionSettingsTest、InputActionRuntimeTest、RawInputStateTest、InputBindingNamesTest、InputRebindCaptureStateTest、AbsoluteMouseTrackingTest、InputDebugOverlayStateTest、GameInputRebindTypesTest、CameraInputResetTest、RawMouseMotionTrackerTest、WindowsKeyRepeatGateTest
@@ -40,14 +40,14 @@ Windowsという名称を含む純state試験も、OSから実入力を受けた
 
 ## 未実行・未確認
 
-FixedStepSchedulerTestはThread/Containers経由のWindows.h欠如でcompileが停止した。実行失敗ではなく未実行。実World試験も同じ依存で停止した。
+以前はThread/Containers経由のWindows.h欠如でcompileが停止していたが、2026-11-03にはWindows・Debug（MSVC、Visual Studio 17 2022）で下表の対象試験をcompile・実行できた。基準はHEADのコミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96。指定した5つの試験bundleのビルドは終了コード0、CTestは更新群・Engine等の13件中13件、入力・振動の36件中36件がpassした。FixedStepSchedulerTestはbundle内でcompileされたが、今回のCTestでは実行していない。
 
-| GR | 登録済みだが統合実行していない範囲 |
+| GR | 今回の統合試験結果と未確認の範囲 |
 |---|---|
-| GR01 | WorldTickGroupTest（追加の全8群・親子孫/疎な群/空Lateを含む）、ApplicationFixedStepPipelineTest、SkeletalAnimationSamplingTest、SpringArmComponentTest |
-| GR03 | 実Mapper/Router、binding所有/JSON/保存、Game設定、focus/frame/capture/overlay統合 |
-| GR04 | 実XInputDevice統合、InputDeviceLifecycle、HapticsService/JSON/frame pipeline、ActiveDeviceKind統合 |
-| GR08 | 実Module/SceneQuery、batch/refresh/solver、Dynamics/Lifecycle/FixedStep、registry無効構成の実UserData経路 |
+| GR01 | TickGroupConfigurationTest、WorldTickGroupTest（追加の全8群・親子孫/疎な群/空Lateを含む）、ApplicationFixedStepPipelineTest、SkeletalAnimationSamplingTest、SpringArmComponentTest、TickContractTableTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。群の契約は`Docs/Architecture/TickStages.md`を正とし、表の漏れはTickContractTableTestが止める。詳細実行でも`TICK_CONTRACT_TABLE result=pass types=20`を確認（1件中1件pass） |
+| GR03 | 実Mapper/Router（InputRouterTest、InputRoutingExtensionTest、InputActionMapTest）、binding所有/JSON/保存（InputBindingSetTest、InputBindingJsonTest、InputBindingPersistenceTest、WorkingDirectoryInputBindingStoreTest）、Game設定（GameInputSettingsTest）、focus/frame（InputFocusPipelineTest、InputFramePipelineTest、RawMouseMotionTrackerTest、WindowsKeyRepeatGateTest）、capture（InputRebindCaptureStateTest、InputRebindCaptureManagerTest、GameInputRebindTypesTest）、overlay統合（InputDebugOverlayStateTest、InputDebugOverlayControllerTest）がWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。Game起動時の設定ロード・OS入力との実接続、実ユーザーの保存先でのfile IO成功や性能の実測は未確認 |
+| GR04 | XInputDevicePollingTest、XInputDeviceIntegrationTest、GamepadStateNormalizeTest、InputDeviceLifecycleTest、HapticsMixerTest、XInputVibrationStateTest、HapticsPlaybackTimeTest、HapticsServiceTest、HapticsJsonTest、HapticsFramePipelineTest、ActiveDeviceKindTest、ActiveDeviceKindIntegrationTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。device/API/providerのfakeを使う統合試験であり、実pad接続/振動は未確認 |
+| GR08 | `Docs/Architecture/PhysicsQueries.md`を正とする。GR08の試験は今回のverifyに含めていない |
 
 以下も未確認として残す。
 

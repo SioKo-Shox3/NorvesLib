@@ -26,11 +26,13 @@ namespace NorvesLib::Modules::Physics
         {
             return m_DriveMode;
         }
-        // 依存が揃うまで要求を保持し、選択したdriveのstepで消費する。移動は積算、Teleportは最後の要求。
-        // mode変更・EndPlay・依存component破棄で保留入力を破棄する。query失敗はStateへ記録する。
+        // 依存が揃うまで要求を保持し、選択した駆動方式のステップで積算した変位と回転を適用する。
+        // Walking では衝突を考慮し、External では衝突を考慮せずに適用する。Teleport は最後の要求を使う。
+        // モード変更・EndPlay・依存コンポーネントの破棄で保留入力を破棄し、問い合わせの失敗を状態に記録する。
         EPhysicsResult MoveDelta(const Math::Vector3& worldDisplacement, float worldYaw = 0);
         // 瞬間移動自体は速度に含めない。同stepの入力移動と重力は通常どおり適用する。
         EPhysicsResult Teleport(const Math::Vector3& worldPosition);
+        // 切り替え時は保留入力を破棄する。External では要求速度・重力・足場の運搬を使わない。
         EPhysicsResult SetMovementMode(CharacterMovementMode mode);
         CharacterMovementMode GetMovementMode() const
         {
@@ -78,6 +80,8 @@ namespace NorvesLib::Modules::Physics
         bool m_bLaunch = false;
         CharacterMovementMode m_Mode = CharacterMovementMode::Walking;
         Math::Vector3 m_DesiredVelocity;
+        // 足場の離脱後は水平速度を空中で保つ。
+        Math::Vector3 m_InheritedVelocity = {};
         Math::Vector3 m_PendingDisplacement;
         Math::Vector3 m_PendingTeleport;
         Math::Vector3 m_AnchorLocal;

@@ -155,25 +155,53 @@ namespace NorvesLib::Core::Animation
                     return Fail(r, AnimGraphError::DuplicateName, "param_name");
                 }
                 auto type = v.FindMember("type"), def = v.FindMember("value");
+                const auto minimum = v.FindMember("min"), maximum = v.FindMember("max");
+                p.bHasMin = minimum.IsValid();
+                p.bHasMax = maximum.IsValid();
                 if (Word(type, "float"))
                 {
                     p.Type = AnimParamType::Float;
+                    if ((p.bHasMin && !Number(minimum, p.Min.Float)) ||
+                        (p.bHasMax && !Number(maximum, p.Max.Float)) ||
+                        (p.bHasMin && p.bHasMax && p.Min.Float > p.Max.Float))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_range");
+                    }
                     if (def.IsValid() && !Number(def, p.Default.Float))
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "float_default");
+                    }
+                    if ((p.bHasMin && p.Default.Float < p.Min.Float) ||
+                        (p.bHasMax && p.Default.Float > p.Max.Float))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_default_range");
                     }
                 }
                 else if (Word(type, "int"))
                 {
                     p.Type = AnimParamType::Int;
+                    if ((p.bHasMin && !Integer(minimum, p.Min.Int)) ||
+                        (p.bHasMax && !Integer(maximum, p.Max.Int)) ||
+                        (p.bHasMin && p.bHasMax && p.Min.Int > p.Max.Int))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_range");
+                    }
                     if (def.IsValid() && !Integer(def, p.Default.Int))
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "int_default");
+                    }
+                    if ((p.bHasMin && p.Default.Int < p.Min.Int) || (p.bHasMax && p.Default.Int > p.Max.Int))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_default_range");
                     }
                 }
                 else if (Word(type, "bool") || Word(type, "trigger"))
                 {
                     p.Type = Word(type, "bool") ? AnimParamType::Bool : AnimParamType::Trigger;
+                    if (p.bHasMin || p.bHasMax)
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "param_range");
+                    }
                     if (def.IsValid() && !def.IsBoolean())
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "bool_default");
@@ -223,19 +251,59 @@ namespace NorvesLib::Core::Animation
             for (size_t i = 0; i < array.GetArraySize(); ++i)
             {
                 auto v = array.GetArrayElement(i);
-                Identity name, root;
-                if (!UniqueObject(v) || !Name(v.FindMember("name"), name) || !Name(v.FindMember("root"), root))
+                Identity name;
+                if (!UniqueObject(v) || !Name(v.FindMember("name"), name))
                 {
                     return Fail(r, AnimGraphError::InvalidSchema, "mask_name");
+                }
+                const auto roots = v.FindMember("roots");
+                if (v.HasMember("root") && v.HasMember("roots"))
+                {
+                    return Fail(r, AnimGraphError::InvalidSchema, "mask_roots");
+                }
+                Container::VariableArray<Identity> rootNames;
+                if (v.HasMember("roots"))
+                {
+                    if (!roots.IsArray() || roots.GetArraySize() == 0 || roots.GetArraySize() > 256)
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "mask_roots");
+                    }
+                    for (size_t j = 0; j < roots.GetArraySize(); ++j)
+                    {
+                        Identity root;
+                        if (!Name(roots.GetArrayElement(j), root))
+                        {
+                            return Fail(r, AnimGraphError::InvalidSchema, "mask_roots");
+                        }
+                        if (Find(rootNames, root, [](auto n) { return n; }) != InvalidAnimNode)
+                        {
+                            return Fail(r, AnimGraphError::DuplicateName, "mask_root");
+                        }
+                        rootNames.push_back(root);
+                    }
+                }
+                else
+                {
+                    Identity root;
+                    if (!Name(v.FindMember("root"), root))
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "mask_name");
+                    }
+                    rootNames.push_back(root);
                 }
                 if (Find(d.MaskNames, name, [](auto n) { return n; }) != InvalidAnimNode)
                 {
                     return Fail(r, AnimGraphError::DuplicateName, "mask_name");
                 }
-                const auto joint = Find(d.JointNames, root, [](auto n) { return n; });
-                if (joint == InvalidAnimNode)
+                Container::VariableArray<uint32_t> joints;
+                for (const auto root : rootNames)
                 {
-                    return Fail(r, AnimGraphError::UnknownJoint, "mask_root");
+                    const auto joint = Find(d.JointNames, root, [](auto n) { return n; });
+                    if (joint == InvalidAnimNode)
+                    {
+                        return Fail(r, AnimGraphError::UnknownJoint, "mask_root");
+                    }
+                    joints.push_back(joint);
                 }
                 int32_t fade = 0;
                 if (v.HasMember("fadeDepth") && (!Integer(v.FindMember("fadeDepth"), fade) || fade < 0))
@@ -243,9 +311,25 @@ namespace NorvesLib::Core::Animation
                     return Fail(r, AnimGraphError::InvalidSchema, "mask_depth");
                 }
                 BoneMask mask;
-                if (!mask.Build(d.Parents, joint, uint32_t(fade)))
+                for (const auto joint : joints)
                 {
-                    return Fail(r, AnimGraphError::SkeletonMismatch, "mask_hierarchy");
+                    BoneMask branch;
+                    if (!branch.Build(d.Parents, joint, uint32_t(fade)))
+                    {
+                        return Fail(r, AnimGraphError::SkeletonMismatch, "mask_hierarchy");
+                    }
+                    if (mask.Weights.empty())
+                    {
+                        mask = std::move(branch);
+                    }
+                    else
+                    {
+                        // 重なる枝は関節ごとの最大値で合成する。
+                        for (size_t j = 0; j < mask.Weights.size(); ++j)
+                        {
+                            mask.Weights[j] = std::max(mask.Weights[j], branch.Weights[j]);
+                        }
+                    }
                 }
                 d.MaskNames.push_back(name);
                 d.Masks.push_back(std::move(mask));
@@ -548,8 +632,9 @@ namespace NorvesLib::Core::Animation
                     auto sample = samples.GetArrayElement(i);
                     float x = 0;
                     uint32_t id;
-                    if (!UniqueObject(sample) || !Number(sample.FindMember("position"), x) ||
-                        (!n.AxisX.empty() && x <= n.AxisX.back()))
+                    const bool bNominalSpeed = Word(sample.FindMember("position"), "nominalSpeed");
+                    if (!UniqueObject(sample) || (!bNominalSpeed && !Number(sample.FindMember("position"), x)) ||
+                        (!bNominalSpeed && !n.AxisX.empty() && !n.AxisFromNominalSpeed.back() && x <= n.AxisX.back()))
                     {
                         return Fail(r, AnimGraphError::InvalidSchema, "sample_axis");
                     }
@@ -558,7 +643,13 @@ namespace NorvesLib::Core::Animation
                         return false;
                     }
                     n.AxisX.push_back(x);
+                    n.AxisFromNominalSpeed.push_back(bNominalSpeed ? 1 : 0);
                     n.Children.push_back(id);
+                }
+                if (std::find(n.AxisFromNominalSpeed.begin(), n.AxisFromNominalSpeed.end(), uint8_t(1)) ==
+                    n.AxisFromNominalSpeed.end())
+                {
+                    n.AxisFromNominalSpeed.clear();
                 }
                 return true;
             }
@@ -880,6 +971,43 @@ namespace NorvesLib::Core::Animation
                 return false;
             }
         }
+        // 子は前方参照できるので、全ノードの読込後に公称速度と既知の位置の順序を検証する。
+        for (auto& n : d->Nodes)
+        {
+            if (n.Kind != AnimNodeKind::BlendSpace1D)
+            {
+                continue;
+            }
+            float previous = 0;
+            bool bHasPrevious = false;
+            for (size_t i = 0; i < n.AxisX.size(); ++i)
+            {
+                if (!n.AxisFromNominalSpeed.empty() && n.AxisFromNominalSpeed[i])
+                {
+                    const auto& child = d->Nodes[n.Children[i]];
+                    if (child.Kind != AnimNodeKind::Clip)
+                    {
+                        return Fail(report, AnimGraphError::InvalidSchema, "sample_nominal_child");
+                    }
+                    const float speed = d->Clips[child.Clip]->GetClipMetadata().Root.NominalSpeed;
+                    if (speed < 0)
+                    {
+                        continue;
+                    }
+                    if (speed <= 0)
+                    {
+                        return Fail(report, AnimGraphError::InvalidNominalSpeed, "sample_nominal_speed");
+                    }
+                    n.AxisX[i] = speed;
+                }
+                if (bHasPrevious && n.AxisX[i] <= previous)
+                {
+                    return Fail(report, AnimGraphError::InvalidSchema, "sample_axis");
+                }
+                previous = n.AxisX[i];
+                bHasPrevious = true;
+            }
+        }
         if (!ReadSyncGroups(root.FindMember("syncGroups"), *d, report))
             return false;
         Identity rootName;
@@ -1002,6 +1130,7 @@ namespace NorvesLib::Core
         {
             bytes += n.Children.capacity() * sizeof(uint32_t) +
                      (n.AxisX.capacity() + n.AxisY.capacity()) * sizeof(float) +
+                     n.AxisFromNominalSpeed.capacity() * sizeof(uint8_t) +
                      n.Layers.capacity() * sizeof(AnimLayer) + n.States.capacity() * sizeof(AnimState) +
                      n.Transitions.capacity() * sizeof(AnimTransition);
             for (const auto& t : n.Transitions)

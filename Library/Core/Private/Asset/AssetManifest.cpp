@@ -255,6 +255,11 @@ namespace NorvesLib::Core::Asset
             outKind = AssetKind::Animation;
             return true;
         }
+        if (text == Container::AnsiStringView("world"))
+        {
+            outKind = AssetKind::World;
+            return true;
+        }
         outKind = AssetKind::Unknown;
         return false;
     }
@@ -267,6 +272,8 @@ namespace NorvesLib::Core::Asset
             return Container::AnsiString("skeleton");
         case AssetKind::Animation:
             return Container::AnsiString("animation");
+        case AssetKind::World:
+            return Container::AnsiString("world");
         case AssetKind::Texture:
             return Container::AnsiString("texture");
         case AssetKind::Model:

@@ -110,6 +110,14 @@ add_library(AssetCookLib STATIC
     AudioCooker.cpp
     AudioCooker.h
     MeshCooker.cpp
+    HeightfieldImport.cpp
+    HeightfieldImport.h
+    TerrainCooker.cpp
+    TerrainCooker.h
+    TerrainMasks.cpp
+    TerrainMasks.h
+    TerrainSpec.cpp
+    TerrainSpec.h
     TerrainCliffDetail.cpp
     TerrainCliffDetail.h
     CookedTerrainQuery.cpp
@@ -168,14 +176,16 @@ add_library(AssetCookLib STATIC
     VfxEffectCookCli.h
 )
 target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
+target_link_libraries(AssetCookLib PRIVATE NorvesThirdParty_TinyEXR)
 if(WIN32)
-    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
+    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32 psapi)
 endif()
 target_include_directories(AssetCookLib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Library/Core/Private
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
 add_executable(AssetCook Main.cpp)
@@ -238,6 +248,15 @@ add_test(NAME AssetCookMeshSmoke
         -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
         -DDAG_SMOKE_EXE=$<TARGET_FILE:AssetCookMeshSimplifySmoke>
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
+)
+
+set(ASSET_COOK_TERRAIN_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Terrain")
+add_test(NAME AssetCookTerrainSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_TERRAIN_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTerrainSmoke.cmake.in"
 )
 
 add_custom_target(AssetCookAudioSmoke DEPENDS AssetCook)

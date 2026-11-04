@@ -1,5 +1,7 @@
 # 入力基盤の契約
 
+2026-11-03の検証記録: Windows・Debug（MSVC、Visual Studio 17 2022）、基準はHEADのコミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96。入力・振動36件とEngine入力6件（InputFocusPipelineTest、InputFramePipelineTest、InputDeviceLifecycleTest、HapticsFramePipelineTest、RawMouseMotionTrackerTest、WindowsKeyRepeatGateTest）はすべてpassした。CTestの要約は前者が36件中36件、後者を含む更新群等の組が13件中13件pass。以下の段階別契約は維持し、今回確認した試験の実行結果だけを更新する。
+
 ## 選定
 
 2026-10-02作者承認: S4=a（Raw Input＋cursor固定/非表示・非active解除）、S5=a（XInputを交換可能なdeviceの背後へ）、S8=a（暫定working directory下のuser bindings、IInputBindingStore抽象、GR76で保存先を統合）。実装が済んだことは意味しない。
@@ -76,7 +78,7 @@
 - Find/Getは借用viewで、次の変更/破棄で失効するものとして扱う。Mapperは長期pointerを保持せず、設定をcompile/copyしてruntimeを所有する。SetBindings/ReplaceActionは内部viewを入力に渡した場合も先にcopyしてから置き換える。
 - 設定全体のcopyは配列をdeep copyする。Identity文字列は既存pool/literalの寿命契約を使う。JSON文字列からはinternしたIdentityを作り、parserのborrowed viewを設定内に保存しない。
 - CursorModeはNormal/Hidden/Confined/Lockedの値型だけを追加した段階で、IWindowやOS状態を変更していない。
-- Settings/cursorの純検証はLinuxで実行。InputBindingSetの所有/copy試験は既存bundleへ追加したが、Identity→StringのWindows.h依存でコンパイル・実行は未検証。純検証の合格を所有/Mapper統合の合格とは扱わない。
+- Settings/cursorの純検証はLinuxで実行。InputBindingSetの所有/copy試験（InputBindingSetTest）は既存bundleでWindows Debugで2026-11-03にpass。純検証の合格を所有/Mapper統合の合格とは扱わず、当該試験の実行結果と区別する。
 
 - 所有APIのboolはvalidation拒否を表し、allocation失敗は例外として伝播する。copy assignmentの強い例外保証は約束しない。JSON等の全体更新は候補を構築・検証し、成功時だけmoveで入れ替える。
 
@@ -113,7 +115,7 @@
 - 到達Key/MouseButton/PadButtonをarmedへ反映し直ちにOR buttonを同期、Raw/Wheelだけを相対laneに足す。全callbackはfalseを返し、既存camera等の下位controllerへイベントを透過する。絶対MouseMoveをRawの代用にしない。
 - InputReset、focus変更、Detachでは全Cancel。未接続/非focus時は正本のanalog値も評価しない。focus復帰で旧key heldを合成しない。cursor modeは接続中focused topの値、それ以外はNormalを返すだけでOSはまだ変更しない。
 - Pad断線ではそのslotのarmedを消す。影響するbutton actionに別bindingのheldが残るなら維持し、残らないならCancelしてTap完了にしない。axisは取消後のUpdateで残sourceを再評価する。
-- InputActionMapTestは実System/Router/Mapperを使うEngine非依存の試験としてbundleへ登録。現在のLinux環境ではIdentity→String→Windows.h依存でcompile/実行未確認。portable runtime試験と独立静的レビューを統合実行PASSに読み替えない。Engine/App/JSON/rebind/OSへの実接続は後続。
+- InputActionMapTestは実System/Router/Mapperを使うEngine非依存の試験としてbundleへ登録し、Windows Debugで2026-11-03にpass。portable runtime試験と独立静的レビューを統合実行PASSに読み替えない。Engine/App/JSON/rebind/OSへの実接続は後続。
 
 ## Engineとframe境界
 
@@ -121,7 +123,7 @@
 - Runはmessage処理前にsteady_clockの絶対nanosecondsをsecondsへ変換し、Mapper.BeginFrame成功後にInputSystem.BeginFrameを呼ぶ。両方ともmessage/device供給より前で、同frameのedge/累積を読む。
 - TickはCalculateRawDeltaTimeNanosecondsの同じclockで、OnUpdateより前にMapper.Updateを呼ぶ。dtはゲーム用100ms上限適用前の実経過秒で、ゲーム時間のclampと入力速度・Hold判定を混同しない。
 - Run開始/終了で操作を取消し、Shutdownはhandler/World/window破棄より先にDetachする。時刻/評価失敗時はApplicationProcessorが警告と全Cancelで安全側に倒す。
-- InputFramePipelineTestは既存Engine試験bundleで、Engineごとの正本/登録、raw dtとclampの分離、同frame短tap、fixed latch、時間拒否のhelperを検証する。Run/Tick内の実呼出位置とShutdown経路は静的レビュー対象。現在はWindows依存でこの統合試験自体のcompile/実行は未確認。
+- InputFramePipelineTestは既存Engine試験bundleで、Engineごとの正本/登録、raw dtとclampの分離、同frame短tap、fixed latch、時間拒否のhelperを検証する。Run/Tick内の実呼出位置とShutdown経路は静的レビュー対象。当該統合試験はWindows Debugで2026-11-03にpass。
 - Mapperが未設定・stack空の間は既存controllerへ透過し、Rendering3DTestの既定操作と画面は切り替えない。OS Raw/XInput/cursor/focusの供給、Game既定JSONのロードとcontext選択は後続。
 
 - Run終了取消はscope-exitで保証し、PumpMessages/OnUpdateがthrowした場合もHeld/固定press/相対結果を消してFixedStepSchedulerをEndRunする。例外そのものは呼出側へ伝播し、アプリ全体のShutdownをここで代行するものではない。試験には偽platformから実Runを通るPump/OnUpdate例外と通常終了を追加する。
@@ -137,7 +139,7 @@
 - WriteDefaultsは自己完結設定、WriteOverridesは変わった設定field/bindingsだけを出す。構造（context/action追加削除）やtype/outputを差分では変えない。書出失敗時はout textを維持する。
 - 読込前にtextを1MiB、入れ子を64段までに制限する。文字列内の括弧は数えない。書出textも1MiBまで。警告数は全件返すがログ出力は最初16件まで。壊れた既知overrideの途中適用はしない。
 - JsonValueへ借用object列挙APIを追加し、未知fieldを検査する。既存strtodのlocale依存/部分変換を避け、JsonDocumentの数値はfrom_charsでtoken全体とdouble範囲を検証する。範囲外のoverflow/underflowはparse失敗とする。
-- 名前/数値変換はportable実コードで全source/codeと境界を試験する。JSON/Identity統合試験は既存bundleへ追加したが、現LinuxではWindows.h依存でcompile/実行未確認。ファイル保存・Gameの設定ロード・rebind捕捉は次段。
+- 名前/数値変換はportable実コードで全source/codeと境界を試験する。JSON/Identity統合試験（InputBindingJsonTest）は既存bundleでWindows Debugで2026-11-03にpass。ファイル保存・Gameの設定ロード・rebind捕捉は次段。
 
 - float fieldはdoubleの意味範囲を検証してから変換し、変換後も範囲を守る。1を僅かに超えるthreshold/expoや極小負感度が丸めで有効化されることを防ぐ。空の未知field名は空C文字列へ置換して安全に警告する。
 
@@ -148,7 +150,7 @@
 - 暫定Windows adapterはfactory生成時にworking directoryのInputBindings.jsonを絶対pathへ一度解決して固定する。Unicode directoryはW API、長い絶対pathはextended形式で扱う。非対応platformはfactoryがnullを返し、GR76ではこのStore実装を置換する。
 - Loadは読取＋delete共有で開き、1MiB上限・全read・終端を確認する。Saveは同directoryのCREATE_NEW tempを確保し、全write→FlushFileBuffers→close後に置換する。targetを先にtruncateせず、自分が作成できたtempだけをRAIIで後始末する。処理はGameThread専用、複数process同時保存では最後に成功した内容を採用する。
 - native APIの根拠: [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[GetFullPathNameW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfullpathnamew)。MOVEFILE_COPY_ALLOWEDは使わず、同directory内の置換に限定する。
-- 個人設定とtempはgitignoreへ追加。PersistenceのFakeStore試験とWindows temp-directory内だけのnative IO試験を既存bundleへ登録する。現在のLinuxではString→Windows.h依存でcompile/実行未確認であり、file IO成功を実測した扱いにはしない。Gameの既定Asset JSON/初期化配線は次段。
+- 個人設定とtempはgitignoreへ追加。PersistenceのFakeStore試験（InputBindingPersistenceTest）とWindows temp-directory内だけのnative IO試験（WorkingDirectoryInputBindingStoreTest）は既存bundleでWindows Debugで2026-11-03にpass。試験専用temp-directory内の範囲に限り、実ユーザーの保存先でのfile IO成功や性能の実測は未確認。Gameの既定Asset JSON/初期化配線は次段。
 
 ## Game起動時の設定ロード
 
@@ -157,7 +159,7 @@
 - 起動contextはDebug/Normalで、Move/Lookの値を公開する。Gameplay/LockedのMove/Look/Sprint/Bite/Swing/Jump/Sniff、Menu/NormalのConfirm/Cancel、Cutscene/Normal空は後続game用の暫定data。実際のゲーム操作体系は確定仕様として固定しない。Rendering3DTestのMaya経路へはイベントを透過する。
 - ConfigureWithContextはcompiled設定と初期stackを候補で確保してから一括反映する。無効/未知contextやvalidation失敗で旧runtime/stackを変更しない。従来Configureは初期stackを空にする契約を維持する。
 - GameInputSettingsは一度の初期化だけを受け付け、Mapper参照を保持しない。GetConfigurationはconst借用、Saveは明示呼出しだけ。GR68のUI/hot reloadをこの段階で自動追加しない。
-- GameInputSettingsTestはFakeStoreを注入し、実ユーザーの設定に触らず実default Asset/差分/fallback/初期context/明示Saveを検証する形で既存bundleへ登録。現LinuxではWindows依存で統合compile/実行未確認。JSON syntax/ID整合と、JSONから取り出した全bindingの実portable型/名前/runtime検証は実施する（実JsonDocumentロードの実行とは区別）。
+- GameInputSettingsTestはFakeStoreを注入し、実ユーザーの設定に触らず実default Asset/差分/fallback/初期context/明示Saveを検証する形で既存bundleへ登録し、Windows Debugで2026-11-03にpass。以前のJSON syntax/ID整合と、JSONから取り出した全bindingの実portable型/名前/runtime検証の記録とは区別する。Game起動時の設定ロードと実ユーザー設定のIOは未確認。
 
 ## 入力取消と既存コントローラー
 InputSystem::ReleaseAllは正本のneutral化後、Routerの全controllerへOnInputResetを通知する。CameraInputCollectorは修飾/drag/累積deltaを解除、MayaCameraControllerはdrag buttonだけ、LightControllerはheld keyだけを解除し姿勢/値/感度を維持する。PickingControllerは未完了click/box/sphereを中止し、確定selectionを残す。ImGuiは未処理event queueと現在のkey/mouse状態を消去し、queued pressの復活を防ぐ。通常のReleased通知を合成しないので、取消をclick/selectとして扱わない。OS focus通知の供給は別途必要。
@@ -210,7 +212,7 @@ Beginは非focus/重複/invalid要求を拒否し、成功時だけ単調request
 
 内部resetのguard以外のOnInputReset、focus喪失、window切断はAbortする。Advanceはイベント配送の後、Mapper.Updateの前に呼び、kernelのFinishedを確認してから残留edge/相対量/legacy状態をresetし、Mapper抑止を解く。その後だけTryGetResultが値結果を返す。設定変更と保存は自動では行わない。
 
-Engineのdestructor bodyとShutdownではmanagerをMapperより先にDetachする。Run終了/例外もDetachし、次Runの開始時に再Attachする。Detachは進行中要求を中止し、同じ配線の正本だけを通知なしで中立化する。Beginでlegacyはreset済み、捕捉中の通常eventは未配送なので、所有終了中に新たなobserver callbackを起動しない。実機のない環境ではkernel回帰と静的接続確認までを検証範囲とし、Windows依存の統合試験は別途実行する。
+Engineのdestructor bodyとShutdownではmanagerをMapperより先にDetachする。Run終了/例外もDetachし、次Runの開始時に再Attachする。Detachは進行中要求を中止し、同じ配線の正本だけを通知なしで中立化する。Beginでlegacyはreset済み、捕捉中の通常eventは未配送なので、所有終了中に新たなobserver callbackを起動しない。InputRebindCaptureManagerTestはWindows Debugで2026-11-03にpass。実OS入力による捕捉・focus喪失の挙動は未確認。
 
 
 ### Game側の捕捉requestと設定適用（GR03）
@@ -266,7 +268,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - XInputDeviceはAPIを独占所有し、poll stateがその参照を借用する。null生成を拒否、copy/moveは禁止。InputSystemはpoll内のsinkだけが借用し保持しない。
 - IInputDeviceには時刻付きbool poll、focus hook、全pad slot供給の識別を追加。旧void poll実装は既定委譲で互換を保つ。時刻付き/旧pollは同じ初期化期間で混用しない。XInputの旧入口はsteady_clockを使う。
 - 全操作はGameThreadで、配送callbackから再入/自己破棄しない。停止は通知しないためowner側で操作取消を行う。API所有は停止後も維持し再初期化できる。WindowsではXinputをリンクする。
-- この境界は入力専用。Engineの登録/寿命/frame呼出しと振動は後続。実System注入を使う統合試験とXInputDevice.cppのsyntax検査は成功。実System/Routerを含むリンク試行はContainers.hのWindows.h依存で停止し、統合実行・native APIのcompile/実機確認は未実施。
+- この境界は入力専用。Engineの登録/寿命/frame呼出しと振動は後続。実System注入を使う統合試験とXInputDevice.cppのsyntax検査は成功。実System/Routerを含むXInputDeviceIntegrationTestはWindows Debugで2026-11-03にpass。fake APIを使う範囲であり、native API自体のcompile検証・実機確認は未実施。
 
 ### Engineによる入力device所有（GR04）
 - AddInputDeviceは未開始時だけ所有権を受け取り、全pad slotを供給するdeviceは1つだけに制限する。拒否時も渡されたpointerは呼出側へ返さず破棄する。Windows標準factoryはApplicationProcessorのhandler初期化後、pad未登録時にだけ追加する。Engine生成単体はnative APIを触らない。
@@ -274,7 +276,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - 全操作はGameThread、busy中の登録/開始/停止/poll/focus変更を拒否。callbackからEngine破棄やinput再配送をしない。poll時刻はfinite非負単調秒で、invalidはdeviceを呼ばず内部時刻も維持する。deviceのfalseでも他deviceをpoll、例外はRun cleanupへ伝播する。
 - frame順はBeginInputFrame→platform message/focus取消→device poll→Mapper更新/handler。focus lossではMapper停止/ReleaseAllがdevice hookより先。Background/Baselineの選択はproviderが担当する。
 - 停止時はcapture中止/Mapper取消/正本neutralを即時実施し、legacy reset通知はInputSystem::DeferReleaseAllで次の安全なBeginFrame/Attachへ保留する。Shutdown callbackから入力を通知しない契約。debug overlayの所有終了も同じ保留口を使う。
-- fake deviceで所有/順序/部分失敗/例外/再試行/単調時刻/再入拒否/Run cleanupを既存Engine bundleへ追加。Windows依存によりEngine統合実行・native実機は未検証。
+- fake deviceで所有/順序/部分失敗/例外/再試行/単調時刻/再入拒否/Run cleanupを検証するInputDeviceLifecycleTestは既存Engine bundleでWindows Debugで2026-11-03にpass。native実機は未検証。
 
 ### 振動の包絡線/混合/出力ACK（GR04）
 - HapticsEffectViewはduration/loop/priorityと左右keyの呼出中借用。durationは有限正、keyは時間0..durationの厳密昇順・値0..1。空channelは0、最初/最後のkey外は端点値、区間は線形補間。非loopはduration到達で0、loopはfmodで先頭へ戻し巨大時間のcatch-upを避ける。invalidは出力非変更。
@@ -288,7 +290,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - XInputVibrationStateは非zero試行をAPI呼出し前に潜在作動として記録。送信失敗は停止義務を保持し、次のnonzeroより先にzeroを送る。focus喪失/終了は所有slotを全て止め、1slot失敗でも他slotを処理する。成功zeroまで義務を捨てず、停止後の再Initializeは残留停止を回収できない限り拒否する。
 - XInputDeviceは有効clockのpoll時に保留zeroを再試行し、停止失敗でも入力pollを継続してhealth=false。不正clock/停止中は入力も出力も呼ばない。非focusのnonzeroは拒否する。差分1/255の間引きはservice側の責務で、backendは有効な送信要求を間引かない。
 - EngineはTryShutdownのboolで終了義務を保持する。既存deviceは既定TryShutdownが旧Shutdownの例外をfalseへ変換。XInputの旧Shutdown入口は停止失敗時に例外で通知、destructorはnoexceptのTryShutdownを最後に試みる。API/デバイス切断でzeroに失敗した場合、実機停止が成功したとは保証できない。
-- 実出力stateの通常/O2/ASan・UBSan/bundleと既存poll回帰、device/統合試験のobject compileを検証。Windows native API/Engine統合/実機振動は未検証。pause、効果voice、JSONとserviceの接続は後続。
+- 実出力stateの通常/O2/ASan・UBSan/bundleと既存poll回帰、device/統合試験のobject compileを検証。XInputVibrationStateTest、XInputDeviceIntegrationTest、InputDeviceLifecycleTest、HapticsFramePipelineTestはWindows Debugで2026-11-03にpass。Windows native API自体の検証・実機振動は未検証。pause、効果voice、JSONとserviceの接続は後続。
 
 ### HapticsServiceの再生所有（GR04）
 - ConfigureはIdentity付き効果/keyをコピー所有し、全検証/確保成功後に交換する。重複ID/無効値/確保例外では旧効果/voiceを保持する。成功した再設定は全voiceを取消し、出力ACKは残して次の送信で停止する。借用GetEffectsは次のConfigure/破棄まで。
@@ -296,7 +298,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - Updateは有限非負の実dtを受け、巨大dtでもoverflowしない残り時間比較/loop剰余で進める。新規voiceの最初のUpdateは時刻0を評価し、Play以前のframe dtを遡って足さない。短い効果もframeごとの標本評価であり、frame間の山の再生までは保証しない。FlushOutputsは時刻を進めない。
 - frame内の評価/混合は固定scratch配列で計算後にvoiceをcommitする。最高priority/max・add-clamp/gain/全体strength（既定0.5）を適用し、成功ACK差分で送信する。同値は省略、最終zeroと失敗は再試行。切断slotのvoiceは取消し、出力義務が残れば切断中もzeroを試みる。
 - focus喪失/pause/無効化はvoiceを取消し、復帰時に旧効果を再開しない。Stopや設定変更だけではAPIを呼ばず、次のUpdate/Flushで反映。ownerがfocus/pause/終了時に直ちにFlushする。sinkは同期借用で保持せず、sink中の公開操作再入はfalse/0で拒否、本体破棄は禁止。
-- 純時間kernelの通常/O2/ASan・UBSan/bundleと既存混合/出力回帰を実行。実serviceの所有/制御/失敗/再入試験は既存bundleへ追加しているが、IdentityPoolのWindows.h依存でcompile/実行未確認。Engine接続とhaptics.v1は後続。
+- 純時間kernelの通常/O2/ASan・UBSan/bundleと既存混合/出力回帰を実行。実serviceの所有/制御/失敗/再入試験（HapticsServiceTest）は既存bundleでWindows Debugで2026-11-03にpass。Engine接続とhaptics.v1は後続。
 - serviceの送信ACKは同じ実backend/slot対応にだけ有効。同期sink wrapperのinstanceは変えてよいが、動的backend交換は範囲外。交換時は旧serviceをStopAll/Flushして旧deviceを停止し、新serviceを使う。外部から任意のmotor値を書き換えず、ownerの強制zeroはserviceの取消/Flushと組にする。
 
 ### Engineの振動frame/即時停止（GR04）
@@ -304,7 +306,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - ApplicationProcessorはsimulation進行gateを決めた後、TickSimulationより先にSetHapticsPausedを適用。pauseならその地点で取消/Flushする。simulation後にclamp前のrawDeltaNanosecondsを秒へ変換しUpdateする。ゲーム用deltaTimeや時間倍率を振動へ流用しない。
 - focus lossではservice取消/Flushをdevice SetFocused(false)より先に試み、service送信が失敗してもbackend自身のzeroを必ず呼ぶ。終了もStopAll/Flushを先行し、最後は全slotを扱うTryShutdownの成否で停止義務を判定する。失敗した場合は再開始を拒否し再Shutdown可能。旧voiceは再Runで復活しない。
 - Engine入力ownerのbusyとserviceのbusyを両方確認して登録/開始/停止/制御/更新の再入を拒否。serviceの非確保Update/Flush/取消操作はnoexceptを明示し、OS focus callbackとcleanupへ接続する。
-- fake providerによる複数slot・倍率・実2秒・pause/focus即時zero・失敗再試行・Run例外cleanup/再Runを既存Engine bundleへ追加。純時間/混合/出力回帰は実行できるが、Engine統合testのcompile/実行はString.hのWindows.h依存で未確認。効果JSONと既定assetのGame起動読込みは後続。
+- fake providerによる複数slot・倍率・実2秒・pause/focus即時zero・失敗再試行・Run例外cleanup/再Runの試験（HapticsFramePipelineTest）は既存Engine bundleでWindows Debugで2026-11-03にpass。純時間/混合/出力回帰も今回の対象でpass。効果JSONと既定assetのGame起動読込みは後続であり、今回もGame起動は未確認。
 - ゲームパッド/device配送や振動sinkの途中でfocus通知が来た場合は、最新要求と喪失の履歴をProcessorで保留する。raw/Mapperは即時取消、reset/Router通知は安全なbatchで行う。同一pollの喪失→復帰でもfalse取消を通し、残りslotの再注入値も再resetする。要求batchをcallback前に取り出し、新通知を上書きせず次batchへ残す。Run開始・message後・poll後・振動更新前後に回収し、window購読serial/Engine一致で古い通知を除外する。
 
 ### haptics.v1と起動時の既定効果（GR04）
@@ -313,7 +315,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - Parse/Writeは全候補成功後だけ出力を更新。HapticsServiceのConfigure overloadは効果と全体設定を一括反映し、失敗/確保例外では旧設定とvoiceを維持、成功で旧voiceを取消する。送信は次Update/Flushで行う。
 - Game起動でAssetFileReaderからConfig/HapticsEffects.jsonを読み、失敗時は警告して旧設定で起動を続ける。Footstep/Hit/BiteHoldは仮の控えめな既定効果で、読込みだけでは再生しない。実際の呼出しはGR05/戦闘/GR20の責務。Rendering3DTestの入力/画面は変えない。
 - 強度/onoffはruntime APIとJSONで扱える。user設定の保存先とUIはGR76/GR68へ接続し、この段で暗黙の保存先や自動保存は追加しない。
-- 既定assetは実Pythonで型/範囲/curve/ID/上限を確認。実JSON codec/roundtrip/拒否/旧値保持/Game適用の試験は既存bundleへ追加したが、Windows.h依存でcompile/実行は未確認。既存pure hapticsの回帰は実行可能。
+- 既定assetは実Pythonで型/範囲/curve/ID/上限を確認。実JSON codec/roundtrip/拒否/旧値保持/Game適用の試験（HapticsJsonTest）は既存bundleでWindows Debugで2026-11-03にpass。既存pure hapticsの回帰も今回の対象でpass。Game起動時の既定asset読込み・実機振動は未確認。
 - 名前のIdentity化後に元のJSON名とのbyte一致を検査し、既存poolの別名hash衝突を黙って採用しない。Parseの診断は読了後に公開するため入力がreport.Error自身でも先に消さない。通常のI/O/validation失敗は起動継続、確保例外は上位へ伝播して起動失敗になり得る。1MiBはJSON解析前の制限で、既存AssetFileReaderによる全file確保より前の制限ではない。
 
 ### 使用中の入力種別を選ぶ値状態（GR04）
@@ -328,7 +330,7 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - BeginFrame(double)は有限非負・非減少の非scaled秒を要求し、不正なら前frame保存/累積解除/保留reset通知を行わない。初回BeginFrame以前の入力は従来通り受理するがkind判定外。旧BeginFrame()はsteady_clock、明示入口と異なる時刻原点を混用しない。ProcessorはSystem clockを先に検証し、MapperのBeginFrame成功後に同じframe時刻をSystemへ渡す。
 - focusはProcessorのOS通知時に即時、Engineのdevice focus適用時にもSystemへ供給する。喪失/復帰/reset自身でkind変更を合成せず、非focus活動を無視する。復帰Baseline後の物理heldも通知を合成しない。
 - kind取得は即時更新、変更Delegateは既存EndFrameで最後の通知値との差だけまとめて通知する。同frameで元へ戻ったときは通知なし。通知値をcallback前に確定し、再入EndFrameは防御的に無視する。callbackはGameThread上、frame再入/本体破棄/例外送出は禁止で、購読変更は既存Delegate規約に従う。
-- 実System/Router統合試験を既存bundleへ追加。Windows.hへの既存依存によりcompile/実行は未確認。公開System headerのsyntaxと純活動判定の回帰を実行し、Core/Engine/Windowsの実受入れとは区別する。
+- 実System/Router統合試験（ActiveDeviceKindIntegrationTest）は既存bundleでWindows Debugで2026-11-03にpass。公開System headerのsyntaxと純活動判定の回帰を実行した記録に加え、当該統合試験の実行結果を確認した。実OS入力・実padによる入力方式切替の受入れは未確認。
 
 ## G1共通曲線と後続入力機能の再利用契約
 

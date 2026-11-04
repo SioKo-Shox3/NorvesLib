@@ -706,6 +706,22 @@ namespace
         return true;
     }
 
+    // --fixed-frame-dt=<秒の小数か分数> を読み、有理数のナノ秒刻みへ変換する。
+    bool TryParseFixedFrameDeltaOption(const String& argument, int64_t& outNumeratorNanoseconds,
+        int64_t& outDenominator, bool& bMatched)
+    {
+        const String prefix = TEXT("--fixed-frame-dt=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        return NorvesLib::Core::Engine::TryParseFixedFrameDelta(
+            value.c_str(), value.size(), outNumeratorNanoseconds, outDenominator);
+    }
+
     // --capture-deterministic: 同じコードを2回撮ると一致する撮影（値を取らない。--capture-png と併せて使う）。
     bool IsCaptureDeterministicOption(const String& argument)
     {
@@ -1189,6 +1205,10 @@ namespace NorvesLib::Core::Engine
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bCaptureDeterministic = false;
+        m_FixedFrameClock.Disable();
+        bool bFixedFrameDelta = false;
+        int64_t fixedFrameNumeratorNanoseconds = 0;
+        int64_t fixedFrameDenominator = 1;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
@@ -1490,6 +1510,21 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor runtime option --capture-png ignored: path must not be empty");
             }
 
+            bool bMatchedFixedFrameDelta = false;
+            if (TryParseFixedFrameDeltaOption(args[i], fixedFrameNumeratorNanoseconds,
+                fixedFrameDenominator, bMatchedFixedFrameDelta))
+            {
+                bFixedFrameDelta = true;
+                LOG_INFO("ApplicationProcessor runtime option fixed_frame_dt_ns=%lld/%lld",
+                         static_cast<long long>(fixedFrameNumeratorNanoseconds),
+                         static_cast<long long>(fixedFrameDenominator));
+            }
+            else if (bMatchedFixedFrameDelta)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --fixed-frame-dt を無視する: "
+                            "0 より大きく 1 秒以下の小数か分数（例 1/24・0.0125）で指定する");
+            }
+
             if (IsCaptureDeterministicOption(args[i]))
             {
                 bCaptureDeterministic = true;
@@ -1539,6 +1574,11 @@ namespace NorvesLib::Core::Engine
             else
             {
                 GEngine->GetDeterministicCapture().Enable();
+                m_FixedFrameClock.SetStepNanoseconds(DeterministicCapture::FixedDeltaNanoseconds);
+                if (bFixedFrameDelta)
+                {
+                    LOG_WARNING("ApplicationProcessor runtime option --fixed-frame-dt は --capture-deterministic の 1/60 秒を優先するため無視する");
+                }
                 if (bEnableMultiThreadedRendering)
                 {
                     bEnableMultiThreadedRendering = false;
@@ -1547,6 +1587,11 @@ namespace NorvesLib::Core::Engine
                          "render_thread=st fixed_delta_s=%.6f",
                          static_cast<double>(DeterministicCapture::FixedDeltaSeconds));
             }
+        }
+
+        if (!bCaptureDeterministic && bFixedFrameDelta)
+        {
+            m_FixedFrameClock.SetStep(fixedFrameNumeratorNanoseconds, fixedFrameDenominator);
         }
 
         // 撮影はアセットの読み込みが落ち着いた後の画面を取る。描画フレーム数の指定が無ければ既定値を使う。
@@ -1863,6 +1908,7 @@ namespace NorvesLib::Core::Engine
 
         m_LastFrameTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
+        m_FixedFrameClock.Reset();
         if (GEngine)
         {
             GEngine->GetInputMapper().CancelAll();
@@ -2140,12 +2186,18 @@ namespace NorvesLib::Core::Engine
         }
 #endif
 
-        // 決定的な撮影では壁時計を使わず、毎フレーム 1/60 秒進める。
+        // 壁時計の時刻を更新しながら、固定刻みが有効ならその時計でフレームを進める。
         DeterministicCapture &deterministicCapture = GEngine->GetDeterministicCapture();
         const bool bDeterministicCapture = deterministicCapture.IsEnabled();
-        const int64_t measuredDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
-        const int64_t rawDeltaNanoseconds =
-            bDeterministicCapture ? DeterministicCapture::FixedDeltaNanoseconds : measuredDeltaNanoseconds;
+        // 起動引数を通らずに決定的な撮影が有効になった場合も 1/60 秒で進める。
+        if (bDeterministicCapture &&
+            (!m_FixedFrameClock.IsEnabled() ||
+             m_FixedFrameClock.GetStepNumeratorNanoseconds() != DeterministicCapture::FixedDeltaNanoseconds ||
+             m_FixedFrameClock.GetStepDenominator() != 1))
+        {
+            m_FixedFrameClock.SetStepNanoseconds(DeterministicCapture::FixedDeltaNanoseconds);
+        }
+        const int64_t rawDeltaNanoseconds = AcquireFrameDeltaNanoseconds();
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
         // 入力はゲーム用100ms clampの前の実dtで評価し、OnUpdateから同frame値を読める。
@@ -2197,15 +2249,15 @@ namespace NorvesLib::Core::Engine
             &GEngine->GetRenderResources().Materials(),
             &GEngine->GetRenderResources().Meshes());
         {
-            // Text のグリフと粒子の板を集める区間
+            // Text のグリフと粒子の板を集め、空間に応じて各ビューへ渡す区間
             NorvesLib::Debug::ScopedStat transientScope("GameThread.TransientBoards", "GameThread");
             Container::VariableArray<Rendering::BoardProxy> frameTransient;
             GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);
             GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);
-            if (auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().GetCanvasView())
-            {
-                canvasView->SetTransientBoardProxies(frameTransient);
-            }
+            auto& coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
+            auto sceneView = coordinator.GetMainSceneView();
+            auto canvasView = coordinator.GetCanvasView();
+            Rendering::DistributeTransientBoardProxies(frameTransient, sceneView.get(), canvasView.get());
         }
         // SceneQuery は、SyncToSceneView が確定した境界の変化だけを反映する(静止なら更新 0 件)。検査 ECS_SCENEQUERY が有効なら全量と照合する
         {
@@ -2264,6 +2316,11 @@ namespace NorvesLib::Core::Engine
                 {
                     // 描画の受け渡し（パケットの確保・待ち・投入）の区間
                     NorvesLib::Debug::ScopedStat beginFrameScope("GameThread.RenderWorld.BeginFrame", "GameThread");
+                    if (m_FixedFrameClock.IsEnabled() && !bDeterministicCapture)
+                    {
+                        renderWorld.SetFixedFrameTime(
+                            m_FixedFrameClock.GetDeltaSeconds(), m_FixedFrameClock.GetTotalSeconds());
+                    }
                     renderWorld.BeginFrame();
                 }
                 // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
@@ -2761,6 +2818,14 @@ namespace NorvesLib::Core::Engine
         GEngine->GetInputDebugOverlay().Advance();
         GEngine->GetInputRebindCapture().Advance();
         return GEngine->GetInputMapper().Update(time, dt);
+    }
+
+    int64_t ApplicationProcessor::AcquireFrameDeltaNanoseconds()
+    {
+        const int64_t measuredDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        return m_FixedFrameClock.IsEnabled()
+            ? m_FixedFrameClock.NextDeltaNanoseconds()
+            : measuredDeltaNanoseconds;
     }
 
     int64_t ApplicationProcessor::CalculateRawDeltaTimeNanoseconds()

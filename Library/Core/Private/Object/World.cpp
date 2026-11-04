@@ -4162,6 +4162,11 @@ namespace NorvesLib::Core
             Entity* entity = ResolveRenderEntity(row);
             if (!entity || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity))
                 continue;
+            const auto* attachment = entity->GetComponent<Component::SocketAttachmentComponent>();
+            if (attachment && attachment->GetRenderTarget())
+            {
+                continue;
+            }
             const Entity* parent = entity->GetParentEntity();
             const uint64_t parentId = parent ? parent->GetObjectId() : 0;
             if (Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row))
@@ -4201,7 +4206,57 @@ namespace NorvesLib::Core
         // 計測: 補間の部分木の行の数（ECS_TRANSFORM_COUNTS で出す）
         m_TransformCounts.RenderRows += m_RenderRows.size();
 #endif
-        // 親が先（深さの順）。補間する行は履歴を評価し、その子孫は「親の描画の変換 × 局所の変換」で求める
+        struct DeferredRow
+        {
+            Ecs::EcsEntity Row;
+            Entity* EntityPtr;
+            Component::SocketAttachmentComponent* Attachment;
+            Entity* Target;
+            bool bDone = false;
+        };
+        Container::VariableArray<DeferredRow> deferred;
+        auto updateRow = [&](Ecs::EcsEntity row, Entity& entity, Component::SocketAttachmentComponent* attachment,
+                             Entity* target, bool bUseAttachment) {
+            Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row);
+            Ecs::EcsTransformHistory* history = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row);
+            const bool bTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;
+            const Entity* parent = entity.GetParentEntity();
+            const uint64_t parentId = parent ? parent->GetObjectId() : 0;
+            const Ecs::EcsRenderTransform* parentRender =
+                parent ? ecs.GetColumnValue<Ecs::EcsRenderTransform>(parent->m_EcsEntity) : nullptr;
+            const bool bInherited = m_bRenderInterpolationAllowed && parentRender != nullptr;
+            if ((render->ParentId != parentId || (render->bInherited != 0) != bInherited) && history && !target)
+            {
+                history->History.Clear();
+            }
+            render->ParentId = parentId;
+            render->bInherited = bInherited ? 1 : 0;
+            const bool bInterpolated = m_bRenderInterpolationAllowed && (bInherited || bTag);
+            const Math::Transform world = entity.GetWorldTransform();
+            Math::Transform value = world;
+            const bool bBuilt = bUseAttachment && attachment && target &&
+                                attachment->TryBuildRenderWorldTransform(target->GetRenderWorldTransform(), value);
+            if (!bBuilt)
+            {
+                if (bInherited)
+                {
+                    value = LoadRenderTransform(*parentRender) * entity.GetLocalTransform();
+                }
+                else if (!target && bInterpolated && history && history->History.Prepare(world))
+                {
+                    (void)history->History.Evaluate(m_RenderInterpolationAlpha, value);
+                }
+            }
+            const bool bChanged = render->bValid == 0 || LoadRenderTransform(*render) != value;
+            StoreRenderTransform(*render, value);
+            render->bValid = 1;
+            if (bChanged)
+            {
+                NoteRenderTransformChanged(entity);
+            }
+        };
+
+        // 付いた行とその子孫を後回しにし、それ以外は従来どおり親から処理する。
         for (const Ecs::EcsEntity row : m_RenderRows)
         {
             Entity* entity = ResolveRenderEntity(row);
@@ -4210,35 +4265,72 @@ namespace NorvesLib::Core
                 bLostRows = true;
                 continue;
             }
-            Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row);
-            if (!render || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity))
-                continue;
-            Ecs::EcsTransformHistory* history = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row);
-            const bool bTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;
-            const Entity* parent = entity->GetParentEntity();
-            const uint64_t parentId = parent ? parent->GetObjectId() : 0;
-            const Ecs::EcsRenderTransform* parentRender =
-                parent ? ecs.GetColumnValue<Ecs::EcsRenderTransform>(parent->m_EcsEntity) : nullptr;
-            const bool bInherited = m_bRenderInterpolationAllowed && parentRender != nullptr;
-            if (render->ParentId != parentId || (render->bInherited != 0) != bInherited)
+            if (!ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) || entity->IsPendingDestroy() ||
+                HasPendingEntityAncestor(*entity))
             {
-                if (history)
-                    history->History.Clear();
+                continue;
             }
-            render->ParentId = parentId;
-            render->bInherited = bInherited ? 1 : 0;
-            const bool bInterpolated = m_bRenderInterpolationAllowed && (bInherited || bTag);
-            const Math::Transform world = entity->GetWorldTransform();
-            Math::Transform value = world;
-            if (bInherited)
-                value = LoadRenderTransform(*parentRender) * entity->GetLocalTransform();
-            else if (bInterpolated && history && history->History.Prepare(world))
-                (void)history->History.Evaluate(m_RenderInterpolationAlpha, value);
-            const bool bChanged = render->bValid == 0 || LoadRenderTransform(*render) != value;
-            StoreRenderTransform(*render, value);
-            render->bValid = 1;
-            if (bChanged)
-                NoteRenderTransformChanged(*entity);
+            auto* attachment = entity->GetComponent<Component::SocketAttachmentComponent>();
+            Entity* target = attachment ? attachment->GetRenderTarget() : nullptr;
+            bool bDefer = target != nullptr;
+            for (const Entity* ancestor = entity->GetParentEntity(); !bDefer && ancestor;
+                 ancestor = ancestor->GetParentEntity())
+            {
+                const auto* ancestorAttachment = ancestor->GetComponent<Component::SocketAttachmentComponent>();
+                bDefer = ancestorAttachment && ancestorAttachment->GetRenderTarget();
+            }
+            if (bDefer)
+            {
+                deferred.push_back(DeferredRow{row, entity, attachment, target});
+            }
+            else
+            {
+                updateRow(row, *entity, attachment, target, true);
+            }
+        }
+
+        // 後回しの行は親と付け先を先に済ませる。付け先がさらに付いていても順に解決する。
+        auto isWaiting = [&](const Entity* dependency) {
+            if (!dependency)
+            {
+                return false;
+            }
+            for (const DeferredRow& item : deferred)
+            {
+                if (!item.bDone && item.EntityPtr == dependency)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        size_t remaining = deferred.size();
+        while (remaining > 0)
+        {
+            bool bProgress = false;
+            for (DeferredRow& item : deferred)
+            {
+                if (item.bDone || isWaiting(item.EntityPtr->GetParentEntity()) || isWaiting(item.Target))
+                {
+                    continue;
+                }
+                updateRow(item.Row, *item.EntityPtr, item.Attachment, item.Target, true);
+                item.bDone = true;
+                --remaining;
+                bProgress = true;
+            }
+            if (!bProgress)
+            {
+                break;
+            }
+        }
+        // 依存を解決できない行は従来の式に戻し、付いた行では履歴を使わない。
+        for (DeferredRow& item : deferred)
+        {
+            if (!item.bDone)
+            {
+                updateRow(item.Row, *item.EntityPtr, item.Attachment, item.Target, false);
+            }
         }
         if (bLostRows)
             CompactRenderRows();
@@ -4267,12 +4359,49 @@ namespace NorvesLib::Core
         const bool bInterpolated = m_bRenderInterpolationAllowed && (bInherited || entity.IsRenderInterpolationEnabled());
         const Math::Transform world = entity.GetWorldTransform();
         const bool bHasRow = !row.IsNull() && ecs.IsAlive(row);
+        const bool bRender = bHasRow && ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr;
+        const auto* attachment = bRender ? entity.GetComponent<Component::SocketAttachmentComponent>() : nullptr;
+        Entity* target = attachment ? attachment->GetRenderTarget() : nullptr;
+        bool bUnresolved = false;
+        if (target)
+        {
+            // 描画更新で依存を解決できなかった行は、検査でも同じ式へ戻す。
+            Container::VariableArray<const Entity*> visiting, resolved;
+            auto hasUnresolvedDependency = [&](auto&& self, const Entity* current) -> bool {
+                if (!current || current->IsPendingDestroy() || HasPendingEntityAncestor(*current) ||
+                    !ecs.GetColumnValue<Ecs::EcsRenderTransform>(current->m_EcsEntity))
+                {
+                    return false;
+                }
+                if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+                {
+                    return true;
+                }
+                if (std::find(resolved.begin(), resolved.end(), current) != resolved.end())
+                {
+                    return false;
+                }
+                visiting.push_back(current);
+                const auto* currentAttachment = current->GetComponent<Component::SocketAttachmentComponent>();
+                const Entity* currentTarget = currentAttachment ? currentAttachment->GetRenderTarget() : nullptr;
+                const bool bBlocked = self(self, current->GetParentEntity()) || self(self, currentTarget);
+                visiting.pop_back();
+                if (!bBlocked)
+                {
+                    resolved.push_back(current);
+                }
+                return bBlocked;
+            };
+            bUnresolved = hasUnresolvedDependency(hasUnresolvedDependency, &entity);
+        }
         Math::Transform expected = world;
-        if (bInherited)
+        const bool bBuilt = target && !bUnresolved &&
+                            attachment->TryBuildRenderWorldTransform(target->GetRenderWorldTransform(), expected);
+        if (!bBuilt && bInherited)
         {
             expected = parentRender * entity.GetLocalTransform();
         }
-        else if (bInterpolated)
+        else if (!bBuilt && !target && bInterpolated)
         {
             const Ecs::EcsTransformHistory* history = bHasRow ? ecs.GetColumnValue<Ecs::EcsTransformHistory>(row) : nullptr;
             if (history)
@@ -4287,7 +4416,6 @@ namespace NorvesLib::Core
         {
             ++count;
             const bool bTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;
-            const bool bRender = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr;
             const bool bHistory = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row) != nullptr;
             if (bTag != entity.IsRenderInterpolationEnabled())
             {

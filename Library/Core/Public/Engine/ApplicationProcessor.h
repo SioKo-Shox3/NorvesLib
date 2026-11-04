@@ -5,6 +5,7 @@
 #include "Container/VariableArray.h"
 #include "RHI/RHITypes.h"
 #include "Delegate/Delegate.h"
+#include "Engine/DeterministicCapture.h"
 
 #include <cstdint>
 
@@ -120,6 +121,8 @@ namespace NorvesLib::Core::Engine
         bool UpdateHapticsFrame(int64_t rawDeltaNanoseconds);
         void TickSimulationAndHaptics(int64_t rawDeltaNanoseconds, float deltaTime,
             Application::IApplicationHandler* handler);
+        /** @brief 壁時計の時刻を更新し、固定刻みが有効なら時計の経過ナノ秒、無効なら実測値を返す */
+        int64_t AcquireFrameDeltaNanoseconds();
         int64_t CalculateRawDeltaTimeNanoseconds();
         float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
         FixedStepAdvanceResult AdvanceFixedSimulation(
@@ -201,6 +204,7 @@ namespace NorvesLib::Core::Engine
         Application::IApplicationHandler* m_FrameStageHandler = nullptr;
         // PreUpdate の handler の更新が失敗して終了を求めたら、このフレームの残りを走らせない
         bool m_bFrameStageAbort = false;
+        FixedFrameClock m_FixedFrameClock;
         int64_t m_LastFrameTimeNanoseconds = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS
         uint64_t m_ExitAfterFrames = 0;         // 0は無効

@@ -3,6 +3,7 @@
 #include "CameraLateUpdate.h"
 #include "Gameplay/CharacterDriveOptions.h"
 #include "Input/GameInputSettings.h"
+#include "Core/Public/Scene/PhysicsLayerTable.h"
 #include <cstdint>
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
@@ -142,6 +143,7 @@ namespace Game
         bool HasPendingAssetConsumers() const override;
         Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
         const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
+        const NorvesLib::Core::Scene::PhysicsLayerTable& GetPhysicsLayers() const { return m_PhysicsLayers; }
 
         /**
          * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
@@ -161,6 +163,7 @@ namespace Game
 
     private:
         Game::Input::GameInputSettings m_InputSettings;
+        NorvesLib::Core::Scene::PhysicsLayerTable m_PhysicsLayers;
         NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =
             NorvesLib::Core::Container::MakeShared<CameraLateUpdateSlot>();
         /**
@@ -209,6 +212,10 @@ namespace Game
         // --capture-views で、1回の起動の中でシーンの複数の名前付き視点を順に撮る。
         Game::Debug::MultiViewCapture m_MultiViewCapture;
 #if NORVES_BUILD_DEVELOPMENT
+        // SceneReady の遷移ごとに、描画済みパケットの状態を一度だけ記録する。
+        bool m_bPreviousSceneReady = true;
+        bool m_bRTGIStateLogPending = false;
+        uint64_t m_RTGIStateMinimumFrameNumber = 0;
         // --geom-settle-trace で、ジオメトリのページの読み込みが落ち着いた後の推移をログへ書く（開発ビルドだけ）
         Game::Debug::GeometrySettleTrace m_GeometrySettleTrace;
 #endif
@@ -246,6 +253,9 @@ namespace Game
 
         bool m_bAnimationDebugRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bDogMovementAutopilot = false;
+        NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
+        NorvesLib::Core::Container::String m_DogMovementCaptureDir;
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
         /// ランチャーから始めるか（--scene を省いた起動、--scene=launcher、--scene-cycle-smoke）。ResolveStartupScene が決める

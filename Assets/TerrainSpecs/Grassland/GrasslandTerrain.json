@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "height_source": { "path": "GrasslandHeight.png", "format": "png16", "flip_z": false },
+  "height_mapping": { "min_m": 0.0, "max_m": 64.0 },
+  "cell_size_m": 1.0,
+  "tile_cells": 128,
+  "fit": "error",
+  "require_bit_depth": 16,
+  "seed": 89021,
+  "recipe": {
+    "wetness": { "flow_weight": 0.5, "flow_ref_cells": 3000, "low_weight": 0.25, "low_full_m": 22, "low_zero_m": 36, "concave_weight": 0.25, "concave_full_per_m": 0.04 },
+    "dry_grass": { "base": 0.25, "noise": { "amplitude": 0.2, "scale_m": 40 } },
+    "rock": { "slope_start_deg": 35, "slope_full_deg": 55 },
+    "splat": {
+      "layers": [
+        { "name": "soil", "weight": 0.5, "noise": { "amplitude": 0.5, "scale_m": 20 } },
+        { "name": "moss", "weight": 0.8, "wetness": { "min": 0.35, "max": 0.7, "soft": 0.15 }, "slope_deg": { "min": 0, "max": 25, "soft": 10 }, "noise": { "amplitude": 0.4, "scale_m": 12 } },
+        { "name": "wet_mud", "weight": 1.0, "wetness": { "min": 0.7, "max": 1.0, "soft": 0.15 }, "slope_deg": { "min": 0, "max": 15, "soft": 5 } },
+        { "name": "rock_face", "weight": 1.5, "slope_deg": { "min": 38, "max": 90, "soft": 10 } },
+        { "name": "meadow", "weight": 0.8, "slope_deg": { "min": 0, "max": 28, "soft": 8 }, "wetness": { "min": 0, "max": 0.55, "soft": 0.15 }, "noise": { "amplitude": 0.3, "scale_m": 30 } }
+      ]
+    },
+    "grass_density": { "base": 1.0, "slope_start_deg": 25, "slope_zero_deg": 40, "wet_start": 0.35, "wet_zero": 0.75, "road_suppress": 1.0, "rock_suppress": 1.0 }
+  }
+}

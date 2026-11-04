@@ -215,6 +215,41 @@ namespace NorvesLib::Core::Animation
                 for (uint32_t child : n.Children)
                     m_Durations[index] = std::max(m_Durations[index], m_Durations[child]);
         }
+        // 全ノードを作業用配列へ解き、不正な metadata では直前の有効な位置を保つ。
+        for (size_t index = 0; index < m_Graph->Nodes.size(); ++index)
+        {
+            const auto& n = m_Graph->Nodes[index];
+            if (n.Kind != AnimNodeKind::BlendSpace1D || n.AxisFromNominalSpeed.empty())
+            {
+                continue;
+            }
+            auto& axis = m_BlendAxisScratch[index];
+            axis = n.AxisX;
+            for (size_t i = 0; i < axis.size(); ++i)
+            {
+                if (n.AxisFromNominalSpeed[i])
+                {
+                    axis[i] = GetNominalSpeed(m_Graph->Nodes[n.Children[i]].Clip);
+                    if (!std::isfinite(axis[i]) || axis[i] <= 0)
+                    {
+                        return false;
+                    }
+                }
+                if (i && axis[i] <= axis[i - 1])
+                {
+                    return false;
+                }
+            }
+        }
+        m_BlendAxes.swap(m_BlendAxisScratch);
+        // Evaluate だけを呼ぶ場合も、確定した位置を直ちに重みへ反映する。
+        for (uint32_t index = 0; index < m_Graph->Nodes.size(); ++index)
+        {
+            if (!m_Graph->Nodes[index].AxisFromNominalSpeed.empty())
+            {
+                Edges(index);
+            }
+        }
         return true;
     }
     float AnimGraphInstance::GetNominalSpeed(uint32_t clip) const

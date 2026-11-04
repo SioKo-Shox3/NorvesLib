@@ -55,6 +55,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalRotationRetargetNativeTest SkeletalRotationRetargetNativeTest.cpp
     MEMBER SkeletalBvhClipTimeTest SkeletalBvhClipTimeTest.cpp
     MEMBER SkeletalBvhClipImportTest SkeletalBvhClipImportTest.cpp
+    MEMBER MotionProcessingTest MotionProcessingTest.cpp
     MEMBER SkeletalBvhCookBridgeTest SkeletalBvhCookBridgeTest.cpp
     MEMBER SkeletalAssetLoaderTest SkeletalAssetLoaderTest.cpp
     MEMBER SkeletalAssetPublicationTest SkeletalAssetPublicationTest.cpp
@@ -70,6 +71,8 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER RigStaticRootFrameImportTest RigStaticRootFrameImportTest.cpp
     MEMBER RigStaticRootFrameWireTest RigStaticRootFrameWireTest.cpp
     MEMBER RigStaticRootFrameRuntimeTest RigStaticRootFrameRuntimeTest.cpp
+    MEMBER RigMotionCleanupTest RigMotionCleanupTest.cpp
+    MEMBER MotionSampleRegressionTest RigMotionCleanupTest.cpp NORVES_MOTION_SAMPLE_REGRESSION_TEST
     MEMBER SkeletalClipBankBindingTest SkeletalClipBankBindingTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
@@ -123,13 +126,15 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER GltfBufferUriTest GltfBufferUriTest.cpp
     MEMBER Base64DecodeTest Base64DecodeTest.cpp
     MEMBER CookedTextureTest CookedTextureTest.cpp
+    MEMBER CookedTerrainTest CookedTerrainTest.cpp
     MEMBER AudioCookedAssetTest AudioCookedAssetTest.cpp
     MEMBER CookedSkeletalAssetTest CookedSkeletalAssetTest.cpp
 )
-target_link_libraries(CookedMeshTest PRIVATE Core AssetCookLib)
+target_link_libraries(CookedMeshTest PRIVATE Core AssetCookLib NorvesThirdParty_TinyEXR)
 target_include_directories(CookedMeshTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 add_dependencies(CookedMeshTest AssetCook)
 
@@ -141,6 +146,8 @@ add_test(NAME PackageFormatTest COMMAND AssetSystemTest --test=PackageFormatTest
 add_test(NAME AssetManifestTest COMMAND AssetSystemTest --test=AssetManifestTest)
 add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
 add_test(NAME CookedTextureTest COMMAND CookedMeshTest --test=CookedTextureTest)
+add_test(NAME CookedTerrainTest COMMAND CookedMeshTest --test=CookedTerrainTest)
+set_tests_properties(CookedTerrainTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
 add_test(NAME SkeletalSubmeshLayoutTest COMMAND CookedMeshTest --test=SkeletalSubmeshLayoutTest)
 add_test(NAME SkeletalMaterialBindingsTest COMMAND CookedMeshTest --test=SkeletalMaterialBindingsTest)
@@ -313,6 +320,7 @@ add_test(NAME SkeletalRotationRetargetTest COMMAND CookedMeshTest --test=Skeleta
 add_test(NAME SkeletalRotationRetargetNativeTest COMMAND CookedMeshTest --test=SkeletalRotationRetargetNativeTest)
 add_test(NAME SkeletalBvhClipTimeTest COMMAND CookedMeshTest --test=SkeletalBvhClipTimeTest)
 add_test(NAME SkeletalBvhClipImportTest COMMAND CookedMeshTest --test=SkeletalBvhClipImportTest)
+add_test(NAME MotionProcessingTest COMMAND CookedMeshTest --test=MotionProcessingTest)
 add_test(NAME SkeletalBvhCookBridgeTest COMMAND CookedMeshTest --test=SkeletalBvhCookBridgeTest)
 add_test(NAME SkeletalAssetLoaderTest COMMAND CookedMeshTest --test=SkeletalAssetLoaderTest)
 add_test(NAME SkeletalAssetPublicationTest COMMAND CookedMeshTest --test=SkeletalAssetPublicationTest)
@@ -343,3 +351,31 @@ add_test(NAME RigStaticRootFrameImportTest COMMAND CookedMeshTest --test=RigStat
 add_test(NAME RigStaticRootFrameWireTest COMMAND CookedMeshTest --test=RigStaticRootFrameWireTest)
 
 add_test(NAME RigStaticRootFrameRuntimeTest COMMAND CookedMeshTest --test=RigStaticRootFrameRuntimeTest)
+add_test(NAME RigMotionCleanupTest COMMAND CookedMeshTest --test=RigMotionCleanupTest)
+add_test(NAME MotionSampleRegressionTest COMMAND CookedMeshTest --test=MotionSampleRegressionTest)
+set_tests_properties(MotionSampleRegressionTest PROPERTIES SKIP_RETURN_CODE 125)
+
+# 並列の枠の cook と宛先 volume のロックを取り合っても落ちないよう、
+# 試験の環境だけで上限付きで待つ。Busy を期待する試験には付けない。
+foreach(cook_lock_wait_test IN ITEMS
+    RigSplitCookTest
+    TextureManagedCliTest
+    CookManagedStoreObservationTest
+    CookManagedStoreInitializationTest
+)
+    set_property(TEST ${cook_lock_wait_test} APPEND PROPERTY ENVIRONMENT "NORVES_COOK_LOCK_WAIT_MS=120000")
+endforeach()
+
+# 宛先 volume ごとに機械全体で 1 つの mutex の名前を独り占めする検査
+# （同名 event・abandoned の観測）があるため、1 回の ctest の中ではこれらの試験を順に流す。
+foreach(cook_destination_lock_test IN ITEMS
+    CookDestinationLockTest
+    CookManagedBootstrapTest
+    CookManagedUpdateTest
+    RigSplitCookTest
+    TextureManagedCliTest
+    CookManagedStoreObservationTest
+    CookManagedStoreInitializationTest
+)
+    set_property(TEST ${cook_destination_lock_test} APPEND PROPERTY RESOURCE_LOCK cook_destination_volume)
+endforeach()

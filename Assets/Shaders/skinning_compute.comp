@@ -55,13 +55,16 @@ layout(std430, set = 0, binding = 5) writeonly buffer PreviousVertices
 
 const float DegenerateWeight = 0.000001;
 
-// 特異と見なす行列式の絶対値の閾値。MatrixUtils::CreateNormalMatrix の Constants::EPSILON（1.192092896e-7）と同じ値。
-const float SingularDeterminant = 1.192092896e-7;
+// MatrixUtils::CreateNormalMatrix の Constants::EPSILON と同じ値。
+const float EPSILON = 1.192092896e-7;
 
-// 法線行列（上 3x3 の逆転置）。|det| が SingularDeterminant 未満のときは単位行列（MatrixUtils::CreateNormalMatrix と同じ）。
+// 法線行列（上 3x3 の逆転置）。CPU と同じ尺度不変の規則で特異性を判定する。
+// CPU の行優先の行列をそのまま載せているので、GLSL の列 m[i] が CPU の行 i（軸）にあたる。
 mat3 NormalMatrixOf(mat3 m)
 {
-    if (abs(determinant(m)) < SingularDeterminant)
+    float scale = length(m[0]) * length(m[1]) * length(m[2]);
+    bool bFinite = !(isinf(scale) || isnan(scale));
+    if (scale == 0.0 || !bFinite || abs(determinant(m)) < EPSILON * scale)
     {
         return mat3(1.0);
     }

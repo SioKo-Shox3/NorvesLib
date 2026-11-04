@@ -1,4 +1,5 @@
 ﻿// 実texture cookとnative公開・source非依存復旧を、実process終了を含めて反証する。
+#include "CookLockWaitTestScope.h"
 #include "Tools/AssetCook/CookManagedBootstrap.h"
 #include "Tools/AssetCook/CookManagedBootstrapTestAccess.h"
 #include "Tools/AssetCook/CookManagedStoreInitialization.h"
@@ -21,7 +22,8 @@
         if (!(x))                                                                                                      \
         {                                                                                                              \
             std::fprintf(stderr, "line %d: %s\n", __LINE__, #x);                                                       \
-            std::abort();                                                                                              \
+            std::fflush(stderr);                                                                                        \
+            std::_Exit(EXIT_FAILURE);                                                                                  \
         }                                                                                                              \
     } while (false)
 namespace BootstrapTest
@@ -70,6 +72,27 @@ namespace BootstrapTest
         Write(path, {reinterpret_cast<const uint8_t*>(text), std::strlen(text)});
     }
 #if defined(_WIN32)
+    // 全呼び出しで待ち時間を共有し、別プロセスとの競合だけを期限つきで待ち直す。
+    ULONGLONG VolumeBusyWaitedMs = 0;
+    template <class Call> auto RetryVolumeBusy(Call&& call)
+    {
+        constexpr ULONGLONG MaximumWaitMs = 90000;
+        auto result = call();
+        while (result == decltype(result)::Busy && VolumeBusyWaitedMs < MaximumWaitMs)
+        {
+            const auto remaining = MaximumWaitMs - VolumeBusyWaitedMs;
+            const auto before = GetTickCount64();
+            Sleep(static_cast<DWORD>((std::min)(ULONGLONG{100}, remaining)));
+            VolumeBusyWaitedMs += GetTickCount64() - before;
+            std::fprintf(stderr, "VOLUME_BUSY_RETRY waited_ms=%llu\n", VolumeBusyWaitedMs);
+            if (VolumeBusyWaitedMs >= MaximumWaitMs)
+            {
+                return result;
+            }
+            result = call();
+        }
+        return result;
+    }
     struct NativeId
     {
         uint64_t Volume = 0;
@@ -178,19 +201,29 @@ namespace BootstrapTest
             {
                 CookManagedStoreObservation out;
                 TestText error;
-                CHECK(InitializeNewCookManagedStore(Owner, out, error) ==
-                      CookManagedStoreInitializationResult::Created);
+                const auto result = RetryVolumeBusy([&] { return InitializeNewCookManagedStore(Owner, out, error); });
+                if (result != CookManagedStoreInitializationResult::Created)
+                {
+                    std::fprintf(stderr, "STORE_INITIALIZATION result=%u error=%s fixture=%ls\n",
+                                 static_cast<unsigned>(result), error.c_str(), Base.c_str());
+                }
+                CHECK(result == CookManagedStoreInitializationResult::Created);
             }
         }
         CookManagedBootstrapRequest Request() const
         {
             return {Owner, Assets, BytesOf(SpecText), 7};
         }
-        Boot Run(CookManagedBootstrapOutcome& out, TestText& error, const Probe* probe = nullptr) const
+        Boot Run(CookManagedBootstrapOutcome& out, TestText& error, const Probe* probe = nullptr,
+                 bool bRetryBusy = true) const
         {
             auto request = Request();
-            const auto result = probe ? Access::BootstrapCookManagedAssetSetForTest(request, *probe, out, error)
-                                      : BootstrapCookManagedAssetSet(request, out, error);
+            const auto run = [&]
+            {
+                return probe ? Access::BootstrapCookManagedAssetSetForTest(request, *probe, out, error)
+                             : BootstrapCookManagedAssetSet(request, out, error);
+            };
+            const auto result = bRetryBusy ? RetryVolumeBusy(run) : run();
             if (result != Boot::Created)
             {
                 std::fprintf(stderr, "BOOTSTRAP_RESULT result=%u error=%s\n", static_cast<unsigned>(result), error.c_str());
@@ -332,11 +365,11 @@ namespace BootstrapTest
         CookManagedBootstrapOutcome out;
         out.ClaimId = "held";
         TestText error;
-        const auto result = RecoverCookManagedPending(f.Runtime, out, error);
+        const auto result = RetryVolumeBusy([&] { return RecoverCookManagedPending(f.Runtime, out, error); });
         if (result != expected)
         {
-            std::fprintf(stderr, "recover expected=%u got=%u: %s\n", static_cast<unsigned>(expected),
-                         static_cast<unsigned>(result), error.c_str());
+            std::fprintf(stderr, "recover fixture=%ls expected=%u got=%u: %s\n", f.Base.c_str(),
+                         static_cast<unsigned>(expected), static_cast<unsigned>(result), error.c_str());
         }
         CHECK(result == expected);
         if (expected == Recovery::NoPending || expected == Recovery::Conflict || expected == Recovery::Error)
@@ -378,9 +411,21 @@ namespace BootstrapTest
         command.push_back(0);
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
+        // 強制終了する子の理由を親の標準エラーへ渡す。
+        HANDLE childError = nullptr;
+        const HANDLE parentError = GetStdHandle(STD_ERROR_HANDLE);
+        CHECK(parentError && parentError != INVALID_HANDLE_VALUE);
+        CHECK(DuplicateHandle(GetCurrentProcess(), parentError, GetCurrentProcess(), &childError, 0, TRUE,
+                              DUPLICATE_SAME_ACCESS));
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = childError;
+        startup.hStdOutput = childError;
+        startup.hStdError = childError;
         PROCESS_INFORMATION process{};
-        CHECK(CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
-                             &process));
+        const BOOL bStarted = CreateProcessW(exe, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                             nullptr, &startup, &process);
+        CHECK(CloseHandle(childError));
+        CHECK(bStarted);
         CHECK(CloseHandle(process.hThread));
         const DWORD wait = WaitForSingleObject(process.hProcess, 60000);
         if (wait != WAIT_OBJECT_0)
@@ -404,6 +449,8 @@ namespace BootstrapTest
         {
             return -1;
         }
+        const CookLockWaitTest::ScopedChildCookLockTestNamespace lockNamespace;
+        CHECK(lockNamespace.Valid());
         Fixture f(std::filesystem::path(argv[2]), false);
         Stop stop;
         stop.At = static_cast<Point>(std::strtoul(argv[3], nullptr, 10));
@@ -417,7 +464,7 @@ namespace BootstrapTest
         }
         else
         {
-            (void)Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error);
+            (void)RetryVolumeBusy([&] { return Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error); });
         }
         std::fprintf(stderr, "child did not exit: %s\n", error.c_str());
         return 91;
@@ -458,7 +505,8 @@ namespace BootstrapTest
         auto& data = *static_cast<BusyData*>(context);
         CookManagedBootstrapOutcome out;
         TestText error;
-        data.Result = data.Case->Run(out, error);
+        // 主スレッドがロックを保持してこのスレッドを待つため、ここでは待ち直さない。
+        data.Result = data.Case->Run(out, error, nullptr, false);
         return 0;
     }
     bool ProbeBusy(Point point, const std::filesystem::path&, const std::filesystem::path&, void* context)
@@ -468,10 +516,15 @@ namespace BootstrapTest
             return true;
         }
         auto& data = *static_cast<BusyData*>(context);
-        HANDLE thread = CreateThread(nullptr, 0, TryBusy, &data, 0, nullptr);
-        CHECK(thread);
-        CHECK(WaitForSingleObject(thread, 60000) == WAIT_OBJECT_0);
-        CHECK(CloseHandle(thread));
+        {
+            // 主スレッドのロックに対する Busy を、待ちなしで確認する。
+            const auto noWait = CookLockWaitTest::DoNotWaitForCookLock();
+            CHECK(noWait.Valid());
+            HANDLE thread = CreateThread(nullptr, 0, TryBusy, &data, 0, nullptr);
+            CHECK(thread);
+            CHECK(WaitForSingleObject(thread, 60000) == WAIT_OBJECT_0);
+            CHECK(CloseHandle(thread));
+        }
         CHECK(data.Result == Boot::Busy);
         return true;
     }
@@ -552,7 +605,8 @@ namespace BootstrapTest
         CHECK(!out.bCleanupIncomplete && out.RetiredDirectory.empty());
         VerifyCommitted(fresh, binding);
         CookManagedStoreObservation observed;
-        CHECK(ObserveCookManagedStore(fresh.Owner, observed, error) == CookManagedStoreResult::Observed &&
+        CHECK(RetryVolumeBusy([&] { return ObserveCookManagedStore(fresh.Owner, observed, error); }) ==
+                  CookManagedStoreResult::Observed &&
               observed.bRuntimeRootClaimed);
         const auto packageId = Identity(fresh.Runtime / "Cooked/a.nvpkg");
         const auto packageBytes = Read(fresh.Runtime / "Cooked/a.nvpkg");
@@ -796,7 +850,8 @@ namespace BootstrapTest
             bool bAbandoned = false;
             Probe probe;
             probe.bAbandonedObserved = &bAbandoned;
-            CHECK(Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error) == Recovery::RolledBack &&
+            CHECK(RetryVolumeBusy([&] { return Access::RecoverCookManagedPendingForTest(f.Runtime, probe, out, error); }) ==
+                      Recovery::RolledBack &&
                   bAbandoned);
             CHECK(CloseHandle(keep));
             ++crashes;
@@ -885,12 +940,15 @@ int main(int argc, char** argv)
     {
         return child;
     }
-    wchar_t temp[32768]{};
-    const auto length = GetTempPathW(32768, temp);
-    CHECK(length && length < 32768);
+    const CookLockWaitTest::ScopedCookLockTestNamespace lockNamespace;
+    CHECK(lockNamespace.Valid());
+    // 前提のロック取得は、ほかの試験の終了を最大 120000 ミリ秒待つ。
+    const auto lockWait = CookLockWaitTest::WaitForCookLock();
+    CHECK(lockWait.Valid());
     wchar_t name[128]{};
     std::swprintf(name, 128, L"NorvesManagedBootstrap-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
-    const auto root = std::filesystem::path(temp) / name;
+    // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。
+    const auto root = std::filesystem::current_path() / name;
     CHECK(std::filesystem::create_directory(root));
     BootstrapTest::Run(root);
     CHECK(std::filesystem::remove_all(root) > 0);

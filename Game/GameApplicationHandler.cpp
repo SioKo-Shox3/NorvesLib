@@ -25,6 +25,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "Gameplay/Camera/FollowCameraComponent.h"
 #include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
+#include "Gameplay/Physics/GamePhysicsLayers.h"
 #include "Input/GameHapticsSettings.h"
 #include "Input/GameInputActions.h"
 #include <cmath>
@@ -61,6 +62,7 @@
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
+#include "Gameplay/IGameplayModule.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
@@ -318,6 +320,8 @@ namespace Game
         // 外れた光線の空の光は残す（RTGI を切ると IBL・DDGI へ替わるので、照り返しの量は入・切の差で測る。
         // Scripts/Terrain/ReferenceCheck.py --bounce）。環境変数 NORVES_RTGI_BOUNCE で描画側（LightingPass）へ渡す
         constexpr const TCHAR *kRTGIBounceOption = TEXT("--rtgi-bounce=");
+        // --rt-gi=on|off: 開発ビルドでレイトレーシングと DDGI をまとめて切り替える。
+        constexpr const TCHAR *kRTGIOption = TEXT("--rt-gi=");
         // --rtgi-specular=on|off: off は鏡面の環境光を RTGI の光線で遮らない変更前の経路（空の前計算 × 反射率 × 画面空間の鏡面 AO）で
         // 描く（開発ビルドだけ。同じ Game.exe・同じ焼いた地形で鏡面の遮りの前後を撮り比べる。InteriorLightReference.md）。
         // 環境変数 NORVES_RTGI_SPECULAR で描画側（LightingPass）へ渡す
@@ -783,11 +787,21 @@ namespace Game
             return false;
         }
 
+        if (NorvesLib::Modules::Gameplay::RegisterGameplayModule(
+                NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
+        {
+            LOG_ERROR("Gameplay module registration failed");
+            return false;
+        }
+
         m_M6ScriptSmokeController.Configure(args);
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
         m_bDogMovementSmoke = false;
+        m_bDogMovementAutopilot = false;
+        m_DogMovementAutopilotPath = {};
+        m_DogMovementCaptureDir = {};
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
@@ -1202,6 +1216,45 @@ namespace Game
                     return false;
                 }
                 m_bDogMovementSmoke = true;
+                continue;
+            }
+            String dogAutopilotValue;
+            const bool bDefaultDogAutopilot = args[i] == TEXT("--dog-movement-autopilot");
+            if (bDefaultDogAutopilot ||
+                TryStripPrefix(args[i], TEXT("--dog-movement-autopilot="), dogAutopilotValue))
+            {
+                if (m_bDogMovementAutopilot)
+                {
+                    LOG_ERROR("--dog-movement-autopilot が重複しています");
+                    return false;
+                }
+                if (bDefaultDogAutopilot)
+                {
+                    dogAutopilotValue = TEXT("Assets/Gameplay/DogMovementAutopilot.json");
+                }
+                if (dogAutopilotValue.empty())
+                {
+                    LOG_ERROR("--dog-movement-autopilot には台本のパスを指定してください");
+                    return false;
+                }
+                m_bDogMovementAutopilot = true;
+                m_DogMovementAutopilotPath = dogAutopilotValue;
+                continue;
+            }
+            String dogCaptureDir;
+            if (TryStripPrefix(args[i], TEXT("--dog-movement-capture-dir="), dogCaptureDir))
+            {
+                if (!m_DogMovementCaptureDir.empty())
+                {
+                    LOG_ERROR("--dog-movement-capture-dir が重複しています");
+                    return false;
+                }
+                if (dogCaptureDir.empty())
+                {
+                    LOG_ERROR("--dog-movement-capture-dir には保存先を指定してください");
+                    return false;
+                }
+                m_DogMovementCaptureDir = dogCaptureDir;
                 continue;
             }
             String sceneValue;
@@ -1735,6 +1788,20 @@ namespace Game
                 _putenv_s("NORVES_TERRAIN_MAX_ANISOTROPY", anisotropyText);
 #else
                 LOG_WARNING("--terrain-anisotropy は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (TryStripPrefix(args[i], kRTGIOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--rt-gi は on か off で指定してください");
+                    return false;
+                }
+                _putenv_s("NORVES_RT_GI", sceneValue == TEXT("off") ? "0" : "1");
+#else
+                LOG_WARNING("--rt-gi は開発ビルドだけで使えます。無視します");
 #endif
                 continue;
             }
@@ -2852,6 +2919,16 @@ namespace Game
             LOG_WARNING("--geom-settle-trace は開発ビルドだけで使えます。無視します");
         }
 #endif
+        if (m_bDogMovementAutopilot && !m_bDogMovementSmoke)
+        {
+            LOG_ERROR("--dog-movement-autopilot には --dog-movement-smoke が必要です");
+            return false;
+        }
+        if (!m_DogMovementCaptureDir.empty() && !m_bDogMovementAutopilot)
+        {
+            LOG_ERROR("--dog-movement-capture-dir には --dog-movement-autopilot が必要です");
+            return false;
+        }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
         {
             LOG_ERROR("犬比較用引数は --dog-movement-smoke と組み合わせ、--animation-debug と併用しないでください");
@@ -2971,6 +3048,12 @@ namespace Game
             {
                 LOG_WARNING_F("振動効果を適用できません。既存設定で続行します: %s",
                     hapticsError.empty() ? "" : hapticsError.c_str());
+            }
+            NorvesLib::Core::Container::String physicsLayersError;
+            if (!Game::Gameplay::InitializeGamePhysicsLayers(m_PhysicsLayers, physicsLayersError))
+            {
+                LOG_WARNING_F("コリジョンレイヤーの表を読めません。Default だけの表で続行します: %s",
+                    physicsLayersError.empty() ? "" : physicsLayersError.c_str());
             }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
@@ -3500,6 +3583,41 @@ namespace Game
         UpdatePauseMenu();
 
 #if NORVES_BUILD_DEVELOPMENT
+        if (NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            auto& engine = *NorvesLib::Core::Engine::GEngine;
+            auto& coordinator = engine.GetRenderWorld().GetRenderingCoordinator();
+            const bool bSceneReady = engine.GetDeterministicCapture().IsSceneReady();
+            if (!bSceneReady)
+            {
+                m_bRTGIStateLogPending = false;
+            }
+            else if (!m_bPreviousSceneReady)
+            {
+                // 準備前に送った別のシーンのパケットを、準備後の記録に使わない。
+                m_RTGIStateMinimumFrameNumber = coordinator.GetNextFramePacketNumber();
+                m_bRTGIStateLogPending = true;
+            }
+            m_bPreviousSceneReady = bSceneReady;
+            if (m_bRTGIStateLogPending)
+            {
+                NorvesLib::Core::Rendering::RenderedRayTracingState state;
+                if (coordinator.TryGetRenderedRayTracingState(state) &&
+                    state.FrameNumber >= m_RTGIStateMinimumFrameNumber)
+                {
+                    const bool bEnabled = state.bRTGIEnabled || state.bDDGIEnabled || state.bTLASAvailable;
+                    LOG_INFO("RT_GI_STATE %s rtgi=%d ddgi=%d tlas=%d instances=%llu frame=%llu",
+                             bEnabled ? "on" : "off",
+                             state.bRTGIEnabled ? 1 : 0,
+                             state.bDDGIEnabled ? 1 : 0,
+                             state.bTLASAvailable ? 1 : 0,
+                             static_cast<unsigned long long>(state.InstanceCount),
+                             static_cast<unsigned long long>(state.FrameNumber));
+                    m_bRTGIStateLogPending = false;
+                }
+            }
+        }
+
         // 検査の窓口の配線の確認: ENGINE_CHECK_SELFTEST が有効なら、起動の後の最初の更新で結果を 1 回出す。
         if (!s_bEngineChecksSelfTestReported && NorvesLib::Core::Engine::GEngine != nullptr)
         {
@@ -4059,11 +4177,18 @@ namespace Game
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
+        const bool bDogAutopilot = m_bDogMovementAutopilot;
+        const auto dogAutopilotPath = m_DogMovementAutopilotPath;
+        const auto dogCaptureDir = m_DogMovementCaptureDir;
         stateMachine->Registry().Register(
-            DogMovementSmoke, [lateCameraSlot, dogDrive](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
+            DogMovementSmoke, [lateCameraSlot, dogDrive, bDogAutopilot, dogAutopilotPath, dogCaptureDir](
+                                  const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
                 auto mode = MakeUnique<DogMovementSmokeMode>();
                 mode->GetData().LateSlot = lateCameraSlot;
                 mode->GetData().Drive = dogDrive;
+                mode->GetData().bAutopilot = bDogAutopilot;
+                mode->GetData().AutopilotPath = dogAutopilotPath;
+                mode->GetData().CaptureDir = dogCaptureDir;
                 return mode;
             });
         stateMachine->Registry().Register(

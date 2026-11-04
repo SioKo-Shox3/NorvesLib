@@ -1,6 +1,8 @@
 ﻿#include "Particle/ParticleSystem.h"
+#include "Particle/VfxSchema.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/SceneView.h"
 
 #if NORVES_ENABLE_CORE_TEXT
 #include "Asset/AssetFileReader.h"
@@ -98,6 +100,108 @@ namespace
         plan.Camera.CullingMask = RenderLayer::UI;
         return plan;
     }
+
+    void TestTransientBoardDistribution(ParticleSystem& system, CanvasView& canvas, uint64_t screenObjectId)
+    {
+        Container::String error;
+        VfxEmitterAsset emitter = MakeVfxDefaultEmitter("WorldParticle");
+        assert(SetVfxEmitterProperty(emitter, "Space",
+            VfxValue::MakeEnum(static_cast<uint32_t>(VfxSimulationSpace::World)), &error));
+        VfxModule spawn = MakeVfxDefaultModule(VfxModuleType::SpawnOnEvent);
+        assert(SetVfxModuleParameter(spawn, "EventName", VfxValue::MakeName(HitEffectEmitter::HitEventName), &error));
+        assert(SetVfxModuleParameter(spawn, "Count", VfxValue::MakeUInt(1u), &error));
+        VfxModule size = MakeVfxDefaultModule(VfxModuleType::InitSize);
+        assert(SetVfxModuleParameter(size, "Size", VfxValue::MakeVector2(Math::Vector2(1.0f, 1.0f)), &error));
+        emitter.Modules.push_back(spawn);
+        emitter.Modules.push_back(size);
+        emitter.Modules.push_back(MakeVfxDefaultModule(VfxModuleType::SpriteRenderer));
+        VfxEffectAsset effect;
+        effect.Name = "WorldParticle";
+        effect.Emitters.push_back(emitter);
+        VfxEffectSystem& effects = system.GetVfxEffects();
+        const VfxEffectHandle effectHandle = effects.CreateInstance(effect, VfxInstanceDesc{}, &error);
+        assert(effectHandle.IsValid());
+        assert(effects.RaiseEvent(effectHandle, HitEffectEmitter::HitEventName, Math::Vector3(0.0f, 0.0f, -2.0f), 0.0));
+        system.Tick(0.1f);
+
+        VariableArray<BoardProxy> frameProxies;
+        system.AppendBoardProxies(frameProxies);
+        assert(frameProxies.size() == 2u);
+        const BoardProxy* worldBoard = nullptr;
+        const BoardProxy* screenBoard = nullptr;
+        for (const BoardProxy& proxy : frameProxies)
+        {
+            if (proxy.Space == BoardSpace::WorldSpace)
+            {
+                assert(worldBoard == nullptr);
+                worldBoard = &proxy;
+            }
+            else if (proxy.Space == BoardSpace::ScreenSpace)
+            {
+                assert(screenBoard == nullptr);
+                screenBoard = &proxy;
+            }
+        }
+        assert(worldBoard != nullptr && screenBoard != nullptr);
+        assert(worldBoard->WorldBounds.Radius == 0.0f);
+        assert(screenBoard->ObjectId == screenObjectId);
+        const uint64_t worldObjectId = worldBoard->ObjectId;
+        assert(worldObjectId != screenObjectId && worldObjectId != 100u && screenObjectId != 100u);
+
+        SceneView sceneView;
+        SceneViewSettings sceneSettings;
+        sceneSettings.bEnableFrustumCulling = true;
+        sceneSettings.bEnableInstancing = false;
+        assert(sceneView.Initialize(sceneSettings));
+        ViewportSnapshot viewport = MakePlan(640u);
+        viewport.Camera.CullingMask = RenderLayer::All;
+        viewport.Camera.AspectRatio = 640.0f / 480.0f;
+        viewport.Camera.Viewport.Width = 640.0f;
+        viewport.Camera.Viewport.Height = 480.0f;
+
+        const auto countObject = [](const auto& commands, uint64_t objectId)
+        {
+            uint32_t count = 0u;
+            for (const DrawCommand& command : commands)
+            {
+                if (command.Draw.ObjectId == objectId)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        };
+
+        DistributeTransientBoardProxies(frameProxies, &sceneView, &canvas);
+        assert(sceneView.GetTransientBoardProxies().size() == 1u);
+        assert(sceneView.GetTransientBoardProxies()[0].ObjectId == worldObjectId);
+        assert(canvas.GetTransientBoardProxies().size() == 1u);
+        assert(canvas.GetTransientBoardProxies()[0].ObjectId == screenObjectId);
+        sceneView.PrepareDrawCommandsForViewport(viewport);
+        canvas.PrepareBoardDrawCommands(viewport, 0u);
+        assert(sceneView.GetTransparentCommands().size() == 1u);
+        assert(countObject(sceneView.GetTransparentCommands(), worldObjectId) == 1u);
+        assert(countObject(sceneView.GetTransparentCommands(), screenObjectId) == 0u);
+        assert(canvas.GetBoardDrawCommands().size() == 2u);
+        assert(countObject(canvas.GetBoardDrawCommands(), worldObjectId) == 0u);
+        assert(countObject(canvas.GetBoardDrawCommands(), screenObjectId) == 1u);
+        assert(countObject(canvas.GetBoardDrawCommands(), 100u) == 1u);
+
+        frameProxies.clear();
+        DistributeTransientBoardProxies(frameProxies, &sceneView, &canvas);
+        sceneView.PrepareDrawCommandsForViewport(viewport);
+        canvas.PrepareBoardDrawCommands(viewport, 0u);
+        assert(sceneView.GetTransientBoardProxies().empty());
+        assert(canvas.GetTransientBoardProxies().empty());
+        assert(countObject(sceneView.GetTransparentCommands(), worldObjectId) == 0u);
+        assert(countObject(sceneView.GetTransparentCommands(), screenObjectId) == 0u);
+        assert(canvas.GetBoardDrawCommands().size() == 1u);
+        assert(countObject(canvas.GetBoardDrawCommands(), worldObjectId) == 0u);
+        assert(countObject(canvas.GetBoardDrawCommands(), screenObjectId) == 0u);
+        assert(countObject(canvas.GetBoardDrawCommands(), 100u) == 1u);
+        sceneView.Shutdown();
+        std::cout << "一時の粒子の板の振り分けと置き換えを確認\n";
+    }
 }
 
 int main()
@@ -173,6 +277,7 @@ int main()
     assert(packet.DrawCommands[1].Draw.ObjectId == textObjectId);
     assert(packet.InstanceData.size() == 3u);
     assert(packet.InstanceData[0].CustomData[0] == 640.0f);
+    TestTransientBoardDistribution(system, canvas, pausedFrame[0].ObjectId);
 #if NORVES_ENABLE_CORE_TEXT
     world.Finalize();
     atlas.Shutdown(resources.Textures());

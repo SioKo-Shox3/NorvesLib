@@ -97,38 +97,26 @@ namespace NorvesLib::Core::Rendering::Terrain
             }
             const uint64_t magic = reader.UInt(4);
             const uint64_t version = reader.UInt(4);
-            const float blockMeters = reader.Float();
-            const float spacing = reader.Float();
-            const uint64_t side = reader.UInt(4);
             if (magic == kMagic && version == 1u)
             {
                 return reject("接地用の高さ格子の版 1 は升目の信頼の印を持たないため読めません");
             }
-            if (magic != kMagic || version != kVersion || blockMeters != kBlockMeters || spacing != kSpacing ||
-                side != kSide)
+            if (magic == kMagic && version == 2u)
+            {
+                return reject("接地用の高さ格子の版 2 は遠景の層を持たないため読めません。Scripts/CookAssets.ps1 で書き直してください");
+            }
+            const uint64_t side = reader.UInt(4);
+            const uint64_t layerCount = reader.UInt(4);
+            const uint64_t sourceCount = reader.UInt(4);
+            if (magic != kMagic || version != kVersion || side != kSide)
             {
                 return reject("接地用の高さ格子の形式・版・間隔が対応していません");
             }
-            Container::TSharedPtr<TerrainPlacementGround> ground(new TerrainPlacementGround);
-            ground->m_FirstX = reader.Double();
-            ground->m_FirstZ = reader.Double();
-            ground->m_MaxX = reader.Double();
-            ground->m_MaxZ = reader.Double();
-            const uint64_t blockCount = reader.UInt(4);
-            const uint64_t sourceCount = reader.UInt(4);
-            const double spanX = ground->m_MaxX - ground->m_FirstX;
-            const double spanZ = ground->m_MaxZ - ground->m_FirstZ;
-            if (!std::isfinite(ground->m_FirstX) || !std::isfinite(ground->m_FirstZ) ||
-                !std::isfinite(ground->m_MaxX) || !std::isfinite(ground->m_MaxZ) || !(spanX > 0.0 && spanZ > 0.0) ||
-                !(spanX / kBlockMeters <= INT32_MAX && spanZ / kBlockMeters <= INT32_MAX))
-            {
-                return reject("接地用の高さ格子の範囲が不正です");
-            }
-            if (sourceCount > reader.Remaining() / 18u || blockCount > reader.Remaining() / kBlockBytes ||
-                (blockCount != 0 && sourceCount == 0))
+            if (layerCount == 0u || layerCount > 8u || sourceCount > reader.Remaining() / 18u)
             {
                 return reject("接地用の高さ格子の個数がファイルの大きさと合いません");
             }
+            Container::TSharedPtr<TerrainPlacementGround> ground(new TerrainPlacementGround);
             ground->m_Sources.reserve(static_cast<size_t>(sourceCount));
             for (uint64_t i = 0; i < sourceCount; ++i)
             {
@@ -147,57 +135,101 @@ namespace NorvesLib::Core::Rendering::Terrain
                 }
                 ground->m_Sources.push_back(std::move(source));
             }
-            if (reader.Remaining() != blockCount * kBlockBytes)
-            {
-                return reject("接地用の高さ格子の塊の大きさが合いません");
-            }
-            ground->m_Blocks.resize(static_cast<size_t>(blockCount));
-            for (Block &block : ground->m_Blocks)
-            {
-                block.X = std::bit_cast<int32_t>(static_cast<uint32_t>(reader.UInt(4)));
-                block.Z = std::bit_cast<int32_t>(static_cast<uint32_t>(reader.UInt(4)));
-                if (block.X < 0 || block.Z < 0 || block.X * static_cast<double>(kBlockMeters) >= spanX ||
-                    block.Z * static_cast<double>(kBlockMeters) >= spanZ)
-                {
-                    return reject("接地用の高さ格子の塊が範囲の外です");
-                }
-                for (float &height : block.Heights)
-                {
-                    height = reader.Float();
-                    if (std::isinf(height))
-                    {
-                        return reject("接地用の高さ格子の高さに無限大があります");
-                    }
-                }
-                for (uint8_t &bits : block.ReliableCells)
-                {
-                    bits = static_cast<uint8_t>(reader.UInt(1));
-                }
-                for (uint32_t cell = 0; cell < kCells; ++cell)
-                {
-                    if ((block.ReliableCells[cell / 8u] & (1u << (cell % 8u))) == 0u)
-                    {
-                        continue;
-                    }
-                    const uint32_t i = (cell / kCellSide) * kSide + cell % kCellSide;
-                    if (!std::isfinite(block.Heights[i]) || !std::isfinite(block.Heights[i + 1u]) ||
-                        !std::isfinite(block.Heights[i + kSide]) || !std::isfinite(block.Heights[i + kSide + 1u]))
-                    {
-                        return reject("接地用の高さ格子の信頼の印が NaN の標本を指しています");
-                    }
-                }
-            }
             const auto before = [](const Block &a, const Block &b)
             {
                 return a.Z < b.Z || (a.Z == b.Z && a.X < b.X);
             };
-            std::sort(ground->m_Blocks.begin(), ground->m_Blocks.end(), before);
-            for (size_t i = 1; i < ground->m_Blocks.size(); ++i)
+            ground->m_Layers.reserve(static_cast<size_t>(layerCount));
+            for (uint64_t i = 0; i < layerCount; ++i)
             {
-                if (!before(ground->m_Blocks[i - 1], ground->m_Blocks[i]))
+                if (reader.Remaining() < kLayerHeaderBytes)
                 {
-                    return reject("接地用の高さ格子の塊が重複しています");
+                    return reject("接地用の高さ格子の層の見出しが途中で切れています");
                 }
+                Layer layer;
+                layer.Flags = static_cast<uint32_t>(reader.UInt(4));
+                layer.BlockMeters = reader.Float();
+                layer.Spacing = reader.Float();
+                layer.FirstX = reader.Double();
+                layer.FirstZ = reader.Double();
+                layer.MaxX = reader.Double();
+                layer.MaxZ = reader.Double();
+                const uint64_t blockCount = reader.UInt(4);
+                if (!std::isfinite(layer.BlockMeters) || !std::isfinite(layer.Spacing) || !(layer.Spacing > 0.0f) ||
+                    layer.BlockMeters != layer.Spacing * static_cast<float>(kSide - 1u))
+                {
+                    return reject("接地用の高さ格子の塊幅・間隔が不正です");
+                }
+                const double spanX = layer.MaxX - layer.FirstX;
+                const double spanZ = layer.MaxZ - layer.FirstZ;
+                if (!std::isfinite(layer.FirstX) || !std::isfinite(layer.FirstZ) ||
+                    !std::isfinite(layer.MaxX) || !std::isfinite(layer.MaxZ) || !(spanX > 0.0 && spanZ > 0.0) ||
+                    !(spanX / layer.BlockMeters <= INT32_MAX && spanZ / layer.BlockMeters <= INT32_MAX))
+                {
+                    return reject("接地用の高さ格子の範囲が不正です");
+                }
+                for (const Layer &previous : ground->m_Layers)
+                {
+                    if (layer.FirstX <= previous.MaxX && layer.MaxX >= previous.FirstX &&
+                        layer.FirstZ <= previous.MaxZ && layer.MaxZ >= previous.FirstZ)
+                    {
+                        return reject("接地用の高さ格子の層の範囲が重複しています");
+                    }
+                }
+                if (blockCount > reader.Remaining() / kBlockBytes || (blockCount != 0u && sourceCount == 0u))
+                {
+                    return reject("接地用の高さ格子の個数がファイルの大きさと合いません");
+                }
+                layer.Blocks.resize(static_cast<size_t>(blockCount));
+                for (Block &block : layer.Blocks)
+                {
+                    block.X = std::bit_cast<int32_t>(static_cast<uint32_t>(reader.UInt(4)));
+                    block.Z = std::bit_cast<int32_t>(static_cast<uint32_t>(reader.UInt(4)));
+                    if (block.X < 0 || block.Z < 0 || block.X * static_cast<double>(layer.BlockMeters) >= spanX ||
+                        block.Z * static_cast<double>(layer.BlockMeters) >= spanZ)
+                    {
+                        return reject("接地用の高さ格子の塊が範囲の外です");
+                    }
+                    for (float &height : block.Heights)
+                    {
+                        height = reader.Float();
+                        if (std::isinf(height))
+                        {
+                            return reject("接地用の高さ格子の高さに無限大があります");
+                        }
+                    }
+                    for (uint8_t &bits : block.ReliableCells)
+                    {
+                        bits = static_cast<uint8_t>(reader.UInt(1));
+                    }
+                    for (uint32_t cell = 0; cell < kCells; ++cell)
+                    {
+                        if ((block.ReliableCells[cell / 8u] & (1u << (cell % 8u))) == 0u)
+                        {
+                            continue;
+                        }
+                        const uint32_t index = (cell / kCellSide) * kSide + cell % kCellSide;
+                        if (!std::isfinite(block.Heights[index]) || !std::isfinite(block.Heights[index + 1u]) ||
+                            !std::isfinite(block.Heights[index + kSide]) ||
+                            !std::isfinite(block.Heights[index + kSide + 1u]))
+                        {
+                            return reject("接地用の高さ格子の信頼の印が NaN の標本を指しています");
+                        }
+                    }
+                }
+                std::sort(layer.Blocks.begin(), layer.Blocks.end(), before);
+                for (size_t blockIndex = 1; blockIndex < layer.Blocks.size(); ++blockIndex)
+                {
+                    if (!before(layer.Blocks[blockIndex - 1], layer.Blocks[blockIndex]))
+                    {
+                        return reject("接地用の高さ格子の塊が重複しています");
+                    }
+                }
+                ground->m_Layers.push_back(std::move(layer));
+            }
+            if (reader.Remaining() != 0u)
+            {
+                return reject("接地用の高さ格子の塊の大きさが合いません");
             }
             return ground;
         }
@@ -208,15 +240,32 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
     }
 
+    const TerrainPlacementGround::Layer *TerrainPlacementGround::FindLayer(float x, float z) const
+    {
+        if (!std::isfinite(x) || !std::isfinite(z))
+        {
+            return nullptr;
+        }
+        for (const Layer &layer : m_Layers)
+        {
+            if (x >= layer.FirstX && x <= layer.MaxX && z >= layer.FirstZ && z <= layer.MaxZ)
+            {
+                return &layer;
+            }
+        }
+        return nullptr;
+    }
+
     PlacementGroundSample TerrainPlacementGround::Sample(float x, float z, float &outY) const
     {
         using namespace PlacementGroundFormat;
-        if (!std::isfinite(x) || !std::isfinite(z) || x < m_FirstX || x > m_MaxX || z < m_FirstZ || z > m_MaxZ)
+        const Layer *layer = FindLayer(x, z);
+        if (layer == nullptr)
         {
             return PlacementGroundSample::NoBlock;
         }
-        const double u = (static_cast<double>(x) - m_FirstX) / kBlockMeters;
-        const double v = (static_cast<double>(z) - m_FirstZ) / kBlockMeters;
+        const double u = (static_cast<double>(x) - layer->FirstX) / layer->BlockMeters;
+        const double v = (static_cast<double>(z) - layer->FirstZ) / layer->BlockMeters;
         const int32_t bx = static_cast<int32_t>(std::floor(u));
         const int32_t bz = static_cast<int32_t>(std::floor(v));
         // 境の上では西・北の塊もその点を含む。片側が疎な格子から落ちていても、もう片側を引ける。
@@ -227,12 +276,12 @@ namespace NorvesLib::Core::Rendering::Terrain
                 const int32_t targetX = bx - dx;
                 const int32_t targetZ = bz - dz;
                 const auto found =
-                    std::lower_bound(m_Blocks.begin(), m_Blocks.end(), 0,
+                    std::lower_bound(layer->Blocks.begin(), layer->Blocks.end(), 0,
                                      [&](const Block &block, int)
                                      {
                                          return block.Z < targetZ || (block.Z == targetZ && block.X < targetX);
                                      });
-                if (found == m_Blocks.end() || found->X != targetX || found->Z != targetZ)
+                if (found == layer->Blocks.end() || found->X != targetX || found->Z != targetZ)
                 {
                     continue;
                 }
@@ -259,7 +308,14 @@ namespace NorvesLib::Core::Rendering::Terrain
                 return PlacementGroundSample::Baked;
             }
         }
-        return PlacementGroundSample::NoBlock;
+        return (layer->Flags & kLayerFallbackToHeightField) != 0u ? PlacementGroundSample::NoBlock
+                                                                  : PlacementGroundSample::Unreliable;
+    }
+
+    float TerrainPlacementGround::GetSpacing(float x, float z) const
+    {
+        const Layer *layer = FindLayer(x, z);
+        return layer != nullptr ? layer->Spacing : PlacementGroundFormat::kSpacing;
     }
 
     bool TerrainPlacementGround::SampleGround(const TerrainHeightField &field, float x, float z, float &outY) const

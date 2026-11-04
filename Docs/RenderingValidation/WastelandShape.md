@@ -761,21 +761,147 @@ SCN-WL-SHAPE-BASELINE の撮り直しの置き場（`scene-capture/SCN-WL-SHAPE-
 
 ## 壁の足元の崩れた塊（SCN-WL-CLIFF-GEN-TALUS）
 
-- 合否の仕様: `Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json`（地形を変える前に書いた）。棚・角・外形の行と範囲ごとの行は `shape-cliff-caprock.json` と同じ。内部の折れ線は写真の担当の範囲ごとの 5 組で、一致は前の基準（SCN-WL-SHAPE-BASELINE）以上・局所の欠けは + 2 画素まで・余分な折れは前の基準以下、塊が折れを足したことは組 `fold_gain`（版 15 の一致 + 0.03 以上が 5 組のうち 3 組以上）で求める。版 15 の撮影（`scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape`）では `fold_gain` だけが落ちる（`.harness/runs/20261026-002702/aux-SCN-WL-CLIFF-GEN-TALUS-spec-on-v15.txt`）
-- 生成（`TerrainCliffDetail.cpp` の `TalusBlockRise`）: 担当の 7 範囲の細分した升目の 42 度より急な面で、面の外側（下り）へ 20 m まで格子の間隔ごとにたどって 1 歩の下りが 38 度の正接を下回る所を壁の足とし、水平面の Voronoi（間隔 9 m）で区切った塊ごとの高さ（半分の塊は 0）まで、足から上の面を水平な踏み面へ埋める（前面の段・踏み面・側面。高さについて単調で面は折り返さない）。崖錐の岩の散布（42 度まで）を埋めないよう 42 度より急な面だけに掛け、帽岩の帯とは重ねない
+- 当初の合否の仕様: `Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json`（地形を変える前に書いた）。棚・角・外形の行と範囲ごとの行は `shape-cliff-caprock.json` と同じ。内部の折れ線は写真の担当の範囲ごとの 5 組で、一致は前の基準（SCN-WL-SHAPE-BASELINE）以上・局所の欠けは + 2 画素まで・余分な折れは前の基準以下、塊が折れを足したことは組 `fold_gain`（版 15 の一致 + 0.03 以上が 5 組のうち 3 組以上）で求める。版 15 の撮影（`scene-capture/SCN-WL-CLIFF-GEN-CAPROCK/shape`）では `fold_gain` だけが落ちる（`.harness/runs/20261026-002702/aux-SCN-WL-CLIFF-GEN-TALUS-spec-on-v15.txt`）
+- 生成（`TerrainCliffDetail.cpp` の `TalusBlockRise`、版 18）: 崖錐の側の 38 度より緩い升目で、内側 20 m 以内に壁の足があり、
+  外側 10 m も緩いまま続く所に、間隔 9 m の Voronoi の塊ごと 0〜4 m の高さで面を持ち上げる。
+  足から 10 m までは高さが満ち、18 m で 0 になる。塊の升目とその周り 1 升目を細分する
 - 版 16（塊の高さ 0〜6 m）: 棚の踏み面でも下りが緩むので、どの段の踏み面も壁の足と取り、Rooster Butte の長い水平の棚が細かな段に刻まれた（版 15 と並べた `scene-capture/SCN-WL-CLIFF-GEN-TALUS/shape-v16/ref_ground_02.png`）。内部の折れ線の一致は 5 組のうち 4 組で版 15 から下がり、3 組は前の基準も下回った
-- 版 17（塊の高さ 0〜4 m）: 足の判定に、緩んだ先 10 m も緩いまま続くこと（崖錐の始まり）を足した。214 項目の並列のクック 1116 秒（版 15 1243 秒・版 16 1059 秒）、地形の三角形 3.2609 億（版 15）→ 3.2648 億（版 16）→ 3.2640 億（版 17）。見た目は版 15 に近く、足元に小さな塊が出る。継ぎ目・穴・区画の境の段は見えない（`scene-capture/SCN-WL-CLIFF-GEN-TALUS/shape/ref_ground_02.png`）
+- 版 17（塊の高さ 0〜4 m）: 足の判定に、緩んだ先 10 m も緩いまま続くこと（崖錐の始まり）を足した。214 項目の並列のクック 1116 秒（版 15 1243 秒・版 16 1059 秒）、地形の三角形 3.2609 億（版 15）→ 3.2648 億（版 16）→ 3.2640 億（版 17）。見た目は版 15 に近く、足元に小さな塊が出る。継ぎ目・穴・区画の境の段は見えない（`scene-capture/SCN-WL-CLIFF-GEN-TALUS/shape-v17/ref_ground_02.png`）
+- 版 18: 214 項目の並列クック 979 秒、地形の三角形 339,740,245 個（3.3974 億、版 17 の約 1.041 倍）。接地用の格子の書き出しは 536.82 秒。
+  Rooster Butte と Setting Hen Butte の崖錐に角張った塊が立ち、細い縦状の突出と陰影も増えた。
+  比較した遠景では明らかな穴・区画境界の段・連続した継ぎ目は見えない（`scene-capture/SCN-WL-CLIFF-GEN-TALUS/compare-v18/`）
 
-| 写真・範囲 | 前の基準 | 版 15 | 版 16 | 版 17 |
-|---|---|---|---|---|
-| far_01 `cliff_castle_1_far_cliffs` の一致 | 0.243 | 0.353 | 0.186 | 0.252 |
-| far_01 `cliff_castle_0_main_butte` の一致 | 0.000 | 0.133 | 0.112 | 0.163 |
-| far_02 `cliff_near_3_setting_hen_butte` の一致 | 0.268 | 0.282 | 0.297 | 0.275 |
-| far_02 `cliff_near_2_rooster_butte` の一致 | 0.127 | 0.199 | 0.119 | 0.131 |
-| ground_02 `cliff_near_2_rooster_butte` の一致 | 0.620 | 0.624 | 0.529 | 0.595 |
+| 写真・範囲 | 前の基準 | 版 15 | 版 16 | 版 17 | 版 18 |
+|---|---|---|---|---|---|
+| far_01 `cliff_castle_1_far_cliffs` の一致 | 0.243 | 0.353 | 0.186 | 0.252 | 0.258 |
+| far_01 `cliff_castle_0_main_butte` の一致 | 0.000 | 0.133 | 0.112 | 0.163 | 0.286 |
+| far_02 `cliff_near_3_setting_hen_butte` の一致 | 0.268 | 0.282 | 0.297 | 0.275 | 0.273 |
+| far_02 `cliff_near_2_rooster_butte` の一致 | 0.127 | 0.199 | 0.119 | 0.131 | 0.153 |
+| ground_02 `cliff_near_2_rooster_butte` の一致 | 0.620 | 0.624 | 0.529 | 0.595 | 0.431 |
 
 - 版 17 の判定（`.harness/runs/20261026-002702/verify-SCN-WL-CLIFF-GEN-TALUS-6.txt`）は 6 行が不合格: ground_02 の Rooster Butte の内部の折れ線の一致 0.595（下限 0.62）、組 `fold_gain` 1 / 5、棚の行 4 つ（Castle Butte の局所の欠け 103 画素〔上限 77.1、版 15 69〕・Cedar Mesa の縁の棚の一致 0.377〔下限 0.39〕と局所の欠け 260 画素〔上限 171.2〕・far_02 の Rooster Butte の棚の一致 0.345〔下限 0.369〕）。余分な折れと内部の折れ線の局所の欠けは全部の組で前の基準の内。範囲ごとの量（`--shape-cause --baseline`）は合格で、担当の局所の退行は最大 4.2 %（castle の段の範囲 3）
-- 読み: 写真の壁の足の線は傾きが 38 度を切る所にあり、塊を 42 度より急な壁の下の部分に埋める形では、折れが注釈の線より上（踏み面の縁）へ移って一致が上がらず、壁の下の段の棚の線も崩す。塊は崖錐の側（38 度より緩い升目）に立てる必要があるが、今の細分は急な升目の周り 1 升目だけで、置いた物（崖錐の岩・小石・草）は DEM の高さで置かれて焼いた面を見ないので、崖錐の側に塊を立てると置いた物を埋める
+- 版 17 の読み: 写真の壁の足の線は傾きが 38 度を切る所にあり、塊を 42 度より急な壁の下の部分に埋める形では、折れが注釈の線より上（踏み面の縁）へ移って一致が上がらず、壁の下の段の棚の線も崩す。版 17 の細分は急な升目の周り 1 升目だけで、
+  置いた物が DEM の高さだけを見て置かれると、崖錐の側の塊に埋まる
+
+- 版 18 の形の判定は 7 件が不合格（`shape/shape_metrics.json`）:
+  - far_01 Castle Butte の棚の局所の欠け 92.0872 画素（上限 77.1）
+  - far_01 Cedar Mesa の縁の棚の一致 0.2858（下限 0.39）
+  - far_02 Rooster Butte の棚の一致 0.2656（下限 0.369）
+  - ground_02 Rooster Butte の棚の一致 0.6604（下限 0.701）
+  - ground_02 Rooster Butte の棚の局所の欠け 28.0265 画素（上限 28.0）
+  - ground_02 Rooster Butte の内部の折れ線の一致 0.4315（下限 0.62）
+  - 組 `fold_gain` は 1 / 5（版 15 の一致 + 0.03 以上が 3 組以上必要）
+- 版 17 で落ちた棚の 4 行のうち、Cedar Mesa の縁の局所の欠けは 164.2360 画素（上限 171.2）で合格。他の 3 行は上記のとおり不合格
+- 範囲ごとの量は合格。担当の局所の退行は最大 2.4 %（far_01 の `cliff_castle_1_far_cliffs`）。
+  担当の外の折れ目密度の差の最大は +0.00187（ground_02 の Franklin Butte）
+- 崖の細部は版 18、担当の 27 区画の印は一致し、地形 214 項目に古い印は無い。
+  ページの要求は 3 視点とも溢れ・未処理・失敗 0、要求の最大 14831 / 容量 32768。
+  VRAM はログ上の最大で使用 10161 / 予算 15280 MB（66.5 %、上限 90 %）
+- 読み: 5 組の内部の折れ線の一致は、版 15 を 0.03 以上超えたのが 1 組で、他の 4 組は版 15 を 0.009〜0.192 下回った。
+  棚の一致も版 15 より Cedar Mesa で 0.125、far_02 の Rooster Butte で 0.130、
+  ground_02 の Rooster Butte で 0.156 下がった。Castle Butte の局所の欠けは版 15 より
+  23.0 画素増え、ground_02 の Rooster Butte は 1.001 画素増えて上限を 0.0265 画素超えた。
+  置いた物の接地は未検証
+
+- 版 19: 版 18 の崖錐の塊の持ち上げを外し、版の番号は 19 に上げ（番号は戻さない）、出力を版 15 と同じ形に戻した。
+  214 項目の並列クックは 2065 秒、地形の三角形は 326,092,012 個（版 15 と同じ、版 18 より 13,648,233 個少ない）。
+  接地用の格子の書き出しは 875.25 秒。崖の細部は版 19、担当の 27 区画の印はすべて一致し、
+  地形 214 項目に古い印は無い
+  検証用の AssetCook（作業ツリーごとに exe のハッシュが変わり、クックの印に入る）で 214 項目を焼き直した。
+  計測記録の合計は 3192.68 秒、三角形は 326,092,012 個。
+  AssetCook のリグ・VFX のクックの追加で exe のハッシュが変わり、214 項目を焼き直した。
+  1851.37 秒、三角形は 326,092,012 個、焼いた中身の変化は 0 項目。
+- 閉じた形（未達）: 1 m 間隔の高さの場を持ち上げて作る塊は、壁の側（版 16・17）でも崖錐の側（版 18）でも
+  棚の線を崩すだけで写真の崩れた塊の折れ線に寄らず、3 回とも形の判定は版 15 を下回った。
+  数 m〜十数 m の崩れた塊は、スキャンの岩・Blender の大きな岩の物として置く形で別に扱う。
+  合否の仕様は塊を求める組 `fold_gain` を外し、版 15 の値に戻ることを確かめる形にした
+- 版 19 の形・範囲ごとの量・置いた物の接地・ページの要求と VRAM・写真との比べは撮影で確かめる（未撮影）
+- 遮蔽の比べの Cycles の正解は、SCN-RENDER-ROUGH-STEEP-ENERGY-P2 で崖の細部の版 18 の地形から描き直した
+  （`.harness/runs/scene-capture/SCN-RENDER-ROUGH-STEEP-ENERGY-P2/cycles`、地形の manifest `fdbbcc2a…`）。
+  共有の置き場は版 19 に焼き直したので、この正解は今の地形と合わない。
+  SCN-RENDER-ROUGH-STEEP-ENERGY と SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK の撮影は版 19 の地形になり、
+  エンジンの撮影と正解の地形の一覧のハッシュの照合で落ちる。版 19 の地形の書き出しと Cycles の描き直しが要る
+
+## 崖の壁の足の崩れた塊（物の岩）
+
+崖錐のスキャンの岩 boulder_01（節理で割れた角張った砂岩の岩塊）と rock_09（板）を高さ 3〜14 m に拡大して使う。角張った崩れた砂岩の塊の形に合い、既存の岩の読み込み経路を共用できる。
+
+`WastelandTalus.cpp` の `BuildCliffBlocks` は崖の生成の 7 範囲を 12 m の升目で調べる。範囲は near の `cliff_near_2_rooster_butte`・`cliff_near_3_setting_hen_butte` と、castle の `cliff_castle_0_main_butte`・`cliff_castle_1_far_cliffs`・`cliff_castle_2_left_7_9km`・`cliff_castle_3_left_5_7km`・`cliff_castle_4_left_edge_9km`。castle の根元の高さは接地用の格子の castle の層から取り、不可の升目は見送る。傾き 38° 以下の斜面から上に 4〜20 m、かつ 3 m 以上高い所に傾き 55° 以上の壁がある帯を候補にする。斑で重みを付けた確率で候補を選び、高さ 3〜14 m の岩を置く。名前付き視点と建物の除外円を避け、塊同士の中心の間隔は高さの和の 0.6 倍以上にする。据え方は崖錐の岩と同じ接地判定を使う。高さ場と崖の細部の版 19 は変えない。
+
+### 接地用の格子（版 3）
+
+`WastelandPlacementGround.bin` は 2 層を持ち、`Sample` と `SampleGround` の同じ口から読む。不可の升目は接地に使わない。
+
+- 近景の層: 8 m の塊・0.25 m 間隔。DEM の範囲（X −2600〜2099・Z −2499〜2100）を覆い、塊の無い所は高さ場へ戻す。
+- castle の層: 32 m の塊・1 m 間隔（castle の段の 2 m 格子の半分）。castle の 5 範囲をそれぞれ 48 m 広げた矩形に掛かる塊をすべて持ち、塊の無い所は不可にする。
+
+8 m の塊・0.25 m 間隔のまま 5 範囲を覆うと約 550 MB になるため、castle の層の間隔は castle の段の格子に合わせる。
+
+格子の書き出しの実測: 近景は 10,650 塊、`source_count` は近景の層の参照 56。castle は 9,079 塊、`tile_count` は 21 区画、不可の升目は 2,163,438 個（割合 0.2327054105）。ファイルは 88,633,179 バイト、書き出し時間は全体 1270.70625 秒・castle の層 396.10475 秒。地形のクックは `cooked=0`・`skipped=214`。
+
+| castle の範囲 | 覆われた塊 / 必要な塊 | 焼いた面として使える標本の割合 |
+|---|---:|---:|
+| `cliff_castle_0_main_butte` | 748 / 748 | 0.78613694 |
+| `cliff_castle_1_far_cliffs` | 3,024 / 3,024 | 0.7754299038 |
+| `cliff_castle_2_left_7_9km` | 2,205 / 2,205 | 0.699803292 |
+| `cliff_castle_3_left_5_7km` | 1,645 / 1,645 | 0.7943936941 |
+| `cliff_castle_4_left_edge_9km` | 576 / 576 | 0.7661035773 |
+
+標本の割合（`baked_sample_ratio`）は範囲内を 4 m 間隔で調べた値。塊が範囲を覆うことと、足元の問い合わせに使えることは別に測る。
+
+形の合否は `Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json` の far_01・`fold_kinds.wall_foot.fold_match` ≥ 0.356 の 1 行で判定する。下限は `shape-cliff-blocks.json` の `moved_rows` と同じで、`annotations_sha256` は `9db8b9b5afac738e970f4fb0ea925ac9d48ea8f94c4afd2e6e09c4359f5c72a2`、`fold_annotations_sha256` は `36a0a53890a6f32558289aec25368e7657fee0aee2f25043d0643db58d26914c`。物の縁を含めるため `--terrain-only` は付けない。ほかの写真の 4 行は `shape-cliff-blocks.json` にある。版 15 の同じ焼きの 4 回の実測と下限は次のとおり。
+
+| 写真 | 種類 | 版 15 の 4 回の実測の範囲 | 下限 |
+|---|---|---:|---:|
+| far_01 | `wall_foot` | 0.33359325458359534〜0.34430619524053974 | 0.356（castle） |
+| far_02 | `wall_foot` | 0.1683510513058516〜0.1683510513058516 | 0.179 |
+| far_02 | `block_ridge` | 0.2924323768979043〜0.2924323768979043 | 0.303 |
+| ground_02 | `wall_foot` | 0.2691561786036778〜0.2691561786036778 | 0.280 |
+| ground_02 | `block_ridge` | 0.8032786885245902〜0.8032786885245902 | 0.814 |
+
+far_01 の `wall_foot` の注釈 3 本は castle_0・castle_1 にある。地形だけの形は `shape-cliff-talus.json` で測る。
+
+置き方の書き出しでは、実際に散布した塊を物の組 `cliff_block` として記録し、見送った接地候補も書き出す。`CheckPlacement.py` は DEM の範囲外の castle の足元を、遠景の castle の段の焼いた面（AssetCook の `--sample-cooked-terrain --horizon-level castle`）で測る。接地は崖錐の岩と同じ規則で測り、前の記録にこの組が無い場合は範囲ごとの違反を物の数の 0.5 % 以下で判定する。`WASTELAND_CLIFF_BLOCKS` の `regions=` は範囲ごとの塊の数、`no_ground_regions=` は範囲ごとの `no_ground` の数を示す。
+
+### castle の撮影と検査（未測定）
+
+- (A) 物を含む `shape-cliff-blocks-castle.json` の行が通る。結果: 未測定。
+- (B) 接地は `cliff_block` の違反が物の数の 0.5 % 以下で、castle の範囲も含めて測り切れない物が 0。ほかの種類の違反は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を物の数の 0.5 % を超えて上回らない。結果: 未測定。
+- (C) ジオメトリのページの要求の溢れ・失敗が 0、VRAM が予算の 90 % 以下。結果: 未測定。
+- (D) look の `ref_far_01` を写真と並べ、奥の崖の足に崩れた塊が読め、点が並んだような不自然な模様が無いことを確かめる。結果: 未測定。
+- (E) `WASTELAND_CLIFF_BLOCKS` で castle_0・castle_1 のそれぞれに塊が 1 個以上あり、`no_ground` が 0。結果: 未測定。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/shape --photos far_01 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks-castle.json --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement
+python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look
+python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --verify
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-BLOCKS-CASTLE/look --photos far_01 --verify
+```
+
+### near などの撮影と検査（未測定）
+
+- (A) 物を含む `shape-cliff-blocks.json` の残る 4 行（`--terrain-only` なし）がすべて通る。結果: 未測定。
+- (B) 地形だけを測る `shape-cliff-talus.json` の行（`--terrain-only`）が通る。結果: 未測定。
+- (C) 接地は、物の組 `cliff_block` の違反が物の数の 0.5 % 以下で、測り切れない物が 0。ほかの組の違反は SCN-WL-CLIFF-PLACEMENT-CHECK の記録を、物の数の 0.5 % を超えて上回らない。結果: 未測定。
+- (D) ジオメトリのページの要求の溢れ・失敗が 0、VRAM が予算の 90 % 以下。結果: 未測定。
+- (E) look の 3 視点を写真と並べて開き、壁の足に崩れた塊が見えることを確かめる。結果: 未測定。
+- (F) ログの `WASTELAND_CLIFF_BLOCKS` で near_2・near_3 のそれぞれに塊が 1 個以上ある。結果: 未測定。
+
+遮蔽の視点 `contact_near`・`ref_cliff_01` から塊を置く near の 2 範囲までの最短の水平距離はそれぞれ 3380.6 m・3862.3 m で、near の塊は遮蔽の小物を書き出す 300 m の範囲に入らない。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Hdr -Aov -Views ref_far_01,ref_far_02,ref_ground_02 -GameArgs wasteland-common-light,wasteland-hide=clouds+foliage+gravel+buildings+aerial+fog,wasteland-gray-material,wasteland-aa=fxaa,wasteland-talus-limit=off -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --expect Scripts/Terrain/ExpectSpecs/shape-cliff-blocks.json --verify
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/shape --photos far_01,far_02,ground_02 --shape --terrain-only --expect Scripts/Terrain/ExpectSpecs/shape-cliff-talus.json --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_cliff_01 -GameArgs wasteland-export-placement=.harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement
+python Scripts/Terrain/CheckPlacement.py --placement .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/placement/placement.json --asset-cook build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe --regions Scripts/Terrain/ShapeRegions.json --range-group cliff-gen --baseline .harness/runs/scene-capture/SCN-WL-CLIFF-PLACEMENT-CHECK/placement_check.record.json --verify
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -Configuration RelWithDebInfo -RequireAssets -Width 1920 -Height 1080 -Views ref_far_01,ref_far_02,ref_ground_02 -OutDir .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look
+python Scripts/Terrain/ReferenceCheck.py --geom-requests --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --verify
+python Scripts/Terrain/CompareReference.py --capture .harness/runs/scene-capture/SCN-WL-CLIFF-GEN-TALUS-CHECK-P1/look --photos far_01,far_02,ground_02 --verify
+```
 
 ## 既知の限界
 

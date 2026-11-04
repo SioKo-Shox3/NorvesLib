@@ -51,6 +51,7 @@ norves_add_test_bundle(SceneQueryRaycastTest
     MEMBER SceneQueryPhysicsFacadeTest SceneQueryPhysicsFacadeTest.cpp
     MEMBER SceneCameraProbeTest ${CMAKE_SOURCE_DIR}/Test/Core/Camera/SceneCameraProbeTest.cpp
     MEMBER PhysicsQueryTypesTest PhysicsQueryTypesTest.cpp
+    MEMBER PhysicsLayerTableTest PhysicsLayerTableTest.cpp
 )
 target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
 target_include_directories(SceneQueryRaycastTest PRIVATE
@@ -127,10 +128,20 @@ add_test(NAME SkeletalAssetResourceTest COMMAND ResourceRegistryTest --test=Skel
 add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)
 
 add_test(NAME PhysicsQueryTypesTest COMMAND SceneQueryRaycastTest --test=PhysicsQueryTypesTest)
+add_test(NAME PhysicsLayerTableTest COMMAND SceneQueryRaycastTest --test=PhysicsLayerTableTest)
 
 add_test(NAME TickGroupConfigurationTest COMMAND EntityTreeTest --test=TickGroupConfigurationTest)
 
 add_test(NAME WorldTickGroupTest COMMAND EntityTreeTest --test=WorldTickGroupTest)
+
+# RegisterComponentTick で登録した型が TickStages.md の割り当て表に全部載っているかを照らす(アプリは起動しない)
+add_test(
+    NAME TickContractTableTest
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/Scripts/CheckTickContractTable.ps1"
+        -RepositoryRoot "${CMAKE_SOURCE_DIR}"
+)
+set_tests_properties(TickContractTableTest PROPERTIES TIMEOUT 120)
 
 add_test(NAME SceneCameraProbeTest COMMAND SceneQueryRaycastTest --test=SceneCameraProbeTest)
 add_test(NAME WorldRenderInterpolationTest COMMAND EntityTreeTest --test=WorldRenderInterpolationTest)

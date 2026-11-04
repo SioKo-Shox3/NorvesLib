@@ -1,13 +1,15 @@
 ﻿// 計算シェーダーでのスキニング（skinning_compute.comp / SkinningCompute）の GPU テスト。
-// 実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットを使い、3 つのインスタンス（頂点数・骨の数・変換が違う）を
+// 実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットを使い、4 つのインスタンス（頂点数・骨の数・変換が違う）を
 // 1 本の出力バッファの別の範囲へ書き、読み戻した今・前のフレームの頂点（位置・法線・UV）が CPU で計算した値と
 // 許容 1e-4 で一致することを確かめる。
 //   - インスタンス A: 150 頂点・骨 3 本（ワークグループ 64 を跨ぐ）。骨 1 本・2 本・4 本の影響、重みの合計が 1 でない頂点、
 //     重みが 0 の頂点（束縛の姿勢のまま）、範囲外の骨の番号、乱数の頂点を含む。法線行列が単位行列でない非一様スケールの骨を使う。
 //     dispatch の 1 次元目のグループ数を 2 に抑え、(2, 2) へ広げる。
 //   - インスタンス B: 9 頂点・骨 2 本（骨の番号 2 は範囲外）。出力の範囲は A の直後から始まる。
-//   - インスタンス C: 70 頂点・骨 2 本。|det| が 1.19e-7 以上 1e-6 未満（一様スケール 0.009 など）の骨と変換だけを使い、
-//     法線行列の特異の閾値が CPU（Constants::EPSILON）とシェーダーでそろっていることを確かめる。(1, 2) の dispatch。
+//   - インスタンス C: 70 頂点・骨 2 本。小さな非一様スケールと一様スケールの骨・変換を使い、
+//     法線行列の尺度不変の退化判定が CPU とシェーダーでそろっていることを確かめる。(1, 2) の dispatch。
+//   - インスタンス D: 3 頂点・骨 2 本。一様スケール 0.001〜0.005 と回転を使い、小さな行列式でも法線が回転することと、
+//     今・前の骨の空間の法線が SkeletalAnimationSampler::SkinVertex と一致することを確かめる。
 //   - 出力の範囲の外（前後の番号）は初期値のまま（範囲外へ書かない）。
 //   - 範囲が出力バッファに収まらない dispatch は記録されず false を返す。
 //   - Vulkan の validation error が 0 件であること。
@@ -18,7 +20,9 @@
 #include "Rendering/SkinnedMeshTypes.h"
 #include "Rendering/SkinningComputePass.h"
 
+#include "Animation/SkeletalAnimationSampler.h"
 #include "Math/Matrix4x4.h"
+#include "Resource/SkeletalGltfData.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -192,8 +196,8 @@ namespace
                 p.x * m.v[2] + p.y * m.v[6] + p.z * m.v[10] + m.v[14]};
     }
 
-    // 法線の変換（行ベクトル × 上 3x3 の逆転置）。|det| が MatrixUtils::CreateNormalMatrix と同じ閾値
-    // （Constants::EPSILON）未満の行列は単位行列として扱う。シェーダーの SingularDeterminant も同じ値
+    // 法線の変換（行ベクトル × 上 3x3 の逆転置）。CPU とシェーダーと同じ尺度不変の規則を使う。
+    // 行の長さの積が 0 または非有限、あるいは |det| < Constants::EPSILON × 積なら単位行列として扱う。
     Vec3 TransformNormal(const Mat4& m, const Vec3& n)
     {
         const float a00 = m.v[0], a01 = m.v[1], a02 = m.v[2];
@@ -201,7 +205,10 @@ namespace
         const float a20 = m.v[8], a21 = m.v[9], a22 = m.v[10];
         const float determinant = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20) +
                                   a02 * (a10 * a21 - a11 * a20);
-        if (std::abs(determinant) < Math::Constants::EPSILON)
+        const float scale = std::sqrt(a00 * a00 + a01 * a01 + a02 * a02) *
+                            std::sqrt(a10 * a10 + a11 * a11 + a12 * a12) *
+                            std::sqrt(a20 * a20 + a21 * a21 + a22 * a22);
+        if (scale == 0.0f || !std::isfinite(scale) || std::abs(determinant) < Math::Constants::EPSILON * scale)
         {
             return n;
         }
@@ -228,10 +235,15 @@ namespace
         return {v.x / length, v.y / length, v.z / length};
     }
 
-    // skinned_gbuffer.vert の SkinVertex と同じ手順で骨のパレットから変形し、変換 world でワールド空間へ送る
-    SkinnedOutputVertex SkinReference(const SkinnedMeshVertex& vertex,
-                                      const Container::VariableArray<Mat4>& palette,
-                                      const Mat4& world)
+    struct BoneSpaceVertex
+    {
+        Vec3 Position;
+        Vec3 Normal;
+    };
+
+    // skinned_gbuffer.vert の SkinVertex と同じ手順で骨のパレットから変形する（world は掛けない）。
+    BoneSpaceVertex SkinBoneReference(const SkinnedMeshVertex& vertex,
+                                      const Container::VariableArray<Mat4>& palette)
     {
         const Vec3 inPosition{vertex.Position[0], vertex.Position[1], vertex.Position[2]};
         const Vec3 inNormal{vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]};
@@ -267,8 +279,17 @@ namespace
             }
         }
 
-        const Vec3 worldPosition = TransformPoint(world, position);
-        Vec3 worldNormal = TransformNormal(world, normal);
+        return {position, normal};
+    }
+
+    // 骨の空間の結果に world を掛けてワールド空間へ送る。
+    SkinnedOutputVertex SkinReference(const SkinnedMeshVertex& vertex,
+                                      const Container::VariableArray<Mat4>& palette,
+                                      const Mat4& world)
+    {
+        const BoneSpaceVertex boneVertex = SkinBoneReference(vertex, palette);
+        const Vec3 worldPosition = TransformPoint(world, boneVertex.Position);
+        Vec3 worldNormal = TransformNormal(world, boneVertex.Normal);
         worldNormal = Dot(worldNormal, worldNormal) > 0.000001f ? Normalize(worldNormal) : Vec3{};
 
         SkinnedOutputVertex out;
@@ -418,9 +439,8 @@ namespace
         instance.Handle = SkinnedMeshHandle{2, 1};
     }
 
-    // インスタンス C: 法線行列の特異の閾値（Constants::EPSILON = 1.19e-7）と、以前のシェーダーの閾値（1e-6）の間に
-    // |det| が入る骨・変換だけを使う。閾値が食い違うと、法線が単位行列のまま（食い違った側）か逆転置（そろえた側）かで
-    // 方向が変わり、CPU の参照と一致しなくなる。
+    // インスタンス C: 小さなスケールでも、行の長さの積に対する |det| が EPSILON 以上なら逆転置を使う。
+    // 非一様スケールの骨も含め、CPU の参照とシェーダーの法線の方向・混ぜ合わせが一致することを確かめる。
     //   骨 0: 非一様スケール (0.01, 0.009, 0.008)         |det| = 7.2e-7
     //   骨 1: 一様スケール 0.009                            |det| = 7.29e-7
     //   変換: 非一様スケール (0.01, 0.009, 0.0095)         |det| = 8.55e-7
@@ -454,6 +474,31 @@ namespace
         instance.GroupCountXLimit = 1u;
     }
 
+    // インスタンス D: 固定の行列式の閾値では単位行列になる一様スケールで、回転する法線を調べる。
+    Container::VariableArray<SkinnedMeshVertex> MakeVerticesD()
+    {
+        Container::VariableArray<SkinnedMeshVertex> vertices;
+        // 骨 0 だけ（Y 回転で向きが変わる）
+        vertices.push_back(MakeVertex({0.5f, 1.0f, -0.25f}, {1.0f, 0.3f, 0.4f}, 0.1f, 0.2f, {0, 0, 0, 0}, {1.0f, 0.0f, 0.0f, 0.0f}));
+        // 骨 1 だけ（X 回転で向きが変わる）
+        vertices.push_back(MakeVertex({-1.0f, 0.5f, 0.75f}, {0.2f, 0.7f, 1.0f}, 0.3f, 0.4f, {1, 0, 0, 0}, {1.0f, 0.0f, 0.0f, 0.0f}));
+        // 骨 0 と骨 1 を半分ずつ
+        vertices.push_back(MakeVertex({0.2f, -0.8f, 1.2f}, {0.3f, 1.0f, 0.2f}, 0.5f, 0.6f, {0, 1, 0, 0}, {0.5f, 0.5f, 0.0f, 0.0f}));
+        return vertices;
+    }
+
+    void BuildInstanceD(InstanceCase& instance)
+    {
+        instance.Vertices = MakeVerticesD();
+        instance.Palette.push_back(Mul(Scale(0.001f, 0.001f, 0.001f), RotateY(0.6f)));
+        instance.Palette.push_back(Mul(Scale(0.003f, 0.003f, 0.003f), RotateX(-0.8f)));
+        instance.PreviousPalette.push_back(Mul(Scale(0.002f, 0.002f, 0.002f), RotateY(-0.4f)));
+        instance.PreviousPalette.push_back(Mul(Scale(0.004f, 0.004f, 0.004f), RotateX(0.5f)));
+        instance.World = Mul(Scale(0.005f, 0.005f, 0.005f), RotateZ(0.5f));
+        instance.PreviousWorld = Mul(Scale(0.0045f, 0.0045f, 0.0045f), RotateZ(-0.3f));
+        instance.Handle = SkinnedMeshHandle{4, 1};
+    }
+
     // 使う骨の行列を、エンジンの行列の配列へ（SkinnedMeshGpuStore::PrepareDraw の引数）
     Container::VariableArray<Math::Matrix4x4> ToEngineArray(const Container::VariableArray<Mat4>& source)
     {
@@ -463,6 +508,40 @@ namespace
             result.push_back(ToEngine(matrix));
         }
         return result;
+    }
+
+    // GPU に依存せず、D の今・前の骨の空間の法線をエンジンの CPU スキニングと比較する。
+    void VerifyInstanceDNormals(const InstanceCase& instance)
+    {
+        const Container::VariableArray<Mat4>* palettes[] = {&instance.Palette, &instance.PreviousPalette};
+        for (const auto* palette : palettes)
+        {
+            const Container::VariableArray<Math::Matrix4x4> enginePalette = ToEngineArray(*palette);
+            for (size_t vertexIndex = 0; vertexIndex < instance.Vertices.size(); ++vertexIndex)
+            {
+                const SkinnedMeshVertex& vertex = instance.Vertices[vertexIndex];
+                Skeletal::SkeletalVertex source;
+                source.Position = {vertex.Position[0], vertex.Position[1], vertex.Position[2]};
+                source.Normal = {vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]};
+                for (int influence = 0; influence < 4; ++influence)
+                {
+                    source.JointIndices[influence] = vertex.BoneIndices[influence];
+                    source.JointWeights[influence] = vertex.BoneWeights[influence];
+                }
+                const auto sample = Animation::SkeletalAnimationSampler::SkinVertex(source, enginePalette);
+                const Vec3 normal = SkinBoneReference(vertex, *palette).Normal;
+                Expect(std::abs(sample.Normal.x - normal.x) <= Tolerance &&
+                           std::abs(sample.Normal.y - normal.y) <= Tolerance &&
+                           std::abs(sample.Normal.z - normal.z) <= Tolerance,
+                       "D の骨の空間の法線が今・前とも CPU スキニングと一致しなければならない");
+                if (vertexIndex < 2u)
+                {
+                    const Vec3 input = Normalize({vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]});
+                    Expect(Dot(normal, input) < 0.99f,
+                           "D の単独の骨は今・前とも法線を回転し、入力の方向を保ってはならない");
+                }
+            }
+        }
     }
 
     bool PrepareInstance(SkinnedMeshGpuStore& store, InstanceCase& instance)
@@ -582,10 +661,12 @@ namespace
 
             SkinnedMeshGpuStore store(device);
             store.BeginFrame(0);
-            InstanceCase instances[3];
+            InstanceCase instances[4];
             BuildInstanceA(instances[0]);
             BuildInstanceB(instances[1]);
             BuildInstanceC(instances[2]);
+            BuildInstanceD(instances[3]);
+            VerifyInstanceDNormals(instances[3]);
             uint32_t totalVertices = 0;
             for (InstanceCase& instance : instances)
             {
@@ -598,7 +679,7 @@ namespace
                 totalVertices += static_cast<uint32_t>(instance.Vertices.size());
             }
 
-            // 出力の範囲の前後に見張りの頂点を置く。先頭の見張りの後ろから A、B の順に詰める。
+            // 出力の範囲の前後に見張りの頂点を置く。先頭の見張りの後ろから A、B、C、D の順に詰める。
             const uint32_t bufferVertices = GuardVertices + totalVertices + GuardVertices;
             const uint64_t bufferBytes = static_cast<uint64_t>(bufferVertices) * sizeof(SkinnedOutputVertex);
             const ResourceUsage outputUsage =

@@ -149,6 +149,9 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame();
 
+        /** @brief GameThread から次の BeginFrame へ、1 回だけ使う固定刻みの経過時間と累積秒を渡す */
+        void SetFixedFrameTime(float deltaSeconds, double totalSeconds);
+
         /**
          * @brief 描画実行
          *
@@ -242,6 +245,12 @@ namespace NorvesLib::Core::Rendering
          * RenderThread の FoliagePass が、束ごとに 1 回のインスタンス描画で GBuffer へ描く。空の一覧で描かなくなる。
          */
         void SetFoliage(const FoliageScene& foliage);
+
+        /**
+         * @brief 不変の草の場の描画データを設定する（GameThread 専用）
+         * @param grassField 次の FramePacket へ共有する。設定後は内容を書き換えない
+         */
+        void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
