@@ -76,17 +76,35 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
                Fail(error, "directory_changed");
     }
     bool Find(const Identity& parent, const std::filesystem::path& leaf, const N::Entry*& found, N::Entries& entries,
-              Text& error)
+              Text& error, bool bKeepMatching)
     {
         N::Budget budget;
-        return RecheckDirectory(parent, error) && N::Enumerate(parent, entries, budget, error) &&
+        return RecheckDirectory(parent, error) &&
+               (bKeepMatching ? N::EnumerateKept(parent, entries, budget, error,
+                                                 [&](const WIN32_FIND_DATAW& data)
+                                                 {
+                                                     return N::Fold(data.cFileName, leaf) ||
+                                                            (data.cAlternateFileName[0] &&
+                                                             N::Fold(data.cAlternateFileName, leaf));
+                                                 })
+                              : N::Enumerate(parent, entries, budget, error)) &&
                N::Fixed(entries, leaf.c_str(), false, found, error);
     }
-    bool Absent(const Identity& parent, const std::filesystem::path& leaf, Text& error)
+    bool Find(const Identity& parent, const std::filesystem::path& leaf, const N::Entry*& found, N::Entries& entries,
+              Text& error)
+    {
+        return Find(parent, leaf, found, entries, error, false);
+    }
+    bool Absent(const Identity& parent, const std::filesystem::path& leaf, Text& error, bool bKeepMatching)
     {
         N::Entries entries;
         const N::Entry* found = nullptr;
-        return Find(parent, leaf, found, entries, error) && (!found || Fail(error, "destination_exists"));
+        return Find(parent, leaf, found, entries, error, bKeepMatching) &&
+               (!found || Fail(error, "destination_exists"));
+    }
+    bool Absent(const Identity& parent, const std::filesystem::path& leaf, Text& error)
+    {
+        return Absent(parent, leaf, error, false);
     }
     bool ReadHandle(HANDLE handle, const Identity& parent, const std::filesystem::path& leaf, size_t limit,
                     bool bExactName, bool bSingleLink, File& out, Text& error)
@@ -207,20 +225,21 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
     }
     bool Rename(const Identity& from, const std::filesystem::path& oldLeaf, const CookManagedObjectId& object,
                 const Identity& to, const std::filesystem::path& newLeaf, bool bDirectory,
-                const CookManagedFileImage* file, Text& error, bool* bMoved)
+                const CookManagedFileImage* file, Text& error, bool* bMoved,
+                bool bKeepMatchingFrom, bool bKeepMatchingTo)
     {
         if (bMoved)
         {
             *bMoved = false;
         }
         if (!RecheckDirectory(from, error) || !RecheckDirectory(to, error) || from.Volume != to.Volume ||
-            !Absent(to, newLeaf, error))
+            !Absent(to, newLeaf, error, bKeepMatchingTo))
         {
             return false;
         }
         N::Entries entries;
         const N::Entry* source = nullptr;
-        if (!Find(from, oldLeaf, source, entries, error) || !source)
+        if (!Find(from, oldLeaf, source, entries, error, bKeepMatchingFrom) || !source)
         {
             return Fail(error, "rename_source_missing");
         }
@@ -276,6 +295,12 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
         }
         return h.Close() || Fail(error, "rename_published_close");
     }
+    bool Rename(const Identity& from, const std::filesystem::path& oldLeaf, const CookManagedObjectId& object,
+                const Identity& to, const std::filesystem::path& newLeaf, bool bDirectory,
+                const CookManagedFileImage* file, Text& error, bool* bMoved)
+    {
+        return Rename(from, oldLeaf, object, to, newLeaf, bDirectory, file, error, bMoved, false, false);
+    }
     bool Token(Text& out, Text& error)
     {
         uint8_t bytes[16]{};
@@ -328,9 +353,44 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
     bool VerifyClaims(const Identity& workspace, const Identity& store, const CookManagedStoreIndex& index,
                       const Array<Identity>& chain, Text& error)
     {
+        Array<std::filesystem::path> claimLeaves;
+        claimLeaves.reserve(index.Roots.size());
+        for (const auto& claim : index.Roots)
+        {
+            claimLeaves.push_back(Leaf(claim.RootLeaf));
+        }
+        const auto compareLeaf = [](const std::filesystem::path& leaf, const wchar_t* wanted, int wantedLength = -1)
+        {
+            const int value = CompareStringOrdinal(leaf.c_str(), static_cast<int>(leaf.native().size()), wanted,
+                                                   wantedLength, TRUE);
+            if (!value)
+            {
+                throw std::runtime_error("claim_name_comparison_failed");
+            }
+            return value - CSTR_EQUAL;
+        };
+        std::sort(claimLeaves.begin(), claimLeaves.end(),
+                  [&](const std::filesystem::path& a, const std::filesystem::path& b)
+                  {
+                      return compareLeaf(a, b.c_str()) < 0;
+                  });
+        const auto matchesClaim = [&](const wchar_t* name)
+        {
+            const auto found = std::lower_bound(claimLeaves.begin(), claimLeaves.end(), name,
+                                                [&](const std::filesystem::path& leaf, const wchar_t* wanted)
+                                                {
+                                                    return compareLeaf(leaf, wanted) < 0;
+                                                });
+            return found != claimLeaves.end() && compareLeaf(*found, name) == 0;
+        };
         N::Entries entries;
         N::Budget budget;
-        if (!N::Enumerate(workspace, entries, budget, error))
+        if (!N::EnumerateKept(workspace, entries, budget, error,
+                              [&](const WIN32_FIND_DATAW& data)
+                              {
+                                  return matchesClaim(data.cFileName) ||
+                                         (data.cAlternateFileName[0] && matchesClaim(data.cAlternateFileName));
+                              }))
         {
             return false;
         }
@@ -348,20 +408,10 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
                 names.push_back({&entry.ShortName, &entry});
             }
         }
-        const auto compare = [](const std::filesystem::path& a, const std::filesystem::path& b)
-        {
-            const int value = CompareStringOrdinal(a.c_str(), static_cast<int>(a.native().size()), b.c_str(),
-                                                   static_cast<int>(b.native().size()), TRUE);
-            if (!value)
-            {
-                throw std::runtime_error("claim_name_comparison_failed");
-            }
-            return value - CSTR_EQUAL;
-        };
         std::sort(names.begin(), names.end(),
                   [&](const Name& a, const Name& b)
                   {
-                      return compare(*a.Value, *b.Value) < 0;
+                      return compareLeaf(*a.Value, b.Value->c_str(), static_cast<int>(b.Value->native().size())) < 0;
                   });
         for (const auto& claim : index.Roots)
         {
@@ -369,11 +419,14 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
             const auto found = std::lower_bound(names.begin(), names.end(), leaf,
                                                 [&](const Name& row, const std::filesystem::path& wanted)
                                                 {
-                                                    return compare(*row.Value, wanted) < 0;
+                                                    return compareLeaf(*row.Value, wanted.c_str(),
+                                                                       static_cast<int>(wanted.native().size())) < 0;
                                                 });
-            if (found == names.end() || compare(*found->Value, leaf) != 0 ||
+            if (found == names.end() ||
+                compareLeaf(*found->Value, leaf.c_str(), static_cast<int>(leaf.native().size())) != 0 ||
                 found->Entry->Name.native() != leaf.native() ||
-                (found + 1 != names.end() && compare(*(found + 1)->Value, leaf) == 0))
+                (found + 1 != names.end() &&
+                 compareLeaf(*(found + 1)->Value, leaf.c_str(), static_cast<int>(leaf.native().size())) == 0))
             {
                 return Fail(error, "active_claim_name_or_alias");
             }
@@ -430,7 +483,13 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
             N::Entries entries;
             N::Budget budget;
             const N::Entry* entry = nullptr;
-            if (!N::Enumerate(workspace, entries, budget, error) ||
+            if (!N::EnumerateKept(workspace, entries, budget, error,
+                                  [](const WIN32_FIND_DATAW& data)
+                                  {
+                                      return N::Fold(data.cFileName, N::StoreLeaf) ||
+                                             (data.cAlternateFileName[0] &&
+                                              N::Fold(data.cAlternateFileName, N::StoreLeaf));
+                                  }) ||
                 !N::Fixed(entries, N::StoreLeaf, false, entry, error))
             {
                 return false;
@@ -731,11 +790,11 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
         return ReadChild(parent, leaf, limit, out.Value, error);
     }
     bool KnownDirectory(const Identity& parent, const std::filesystem::path& leaf, const CookManagedObjectId& expected,
-                        bool& bPresent, Identity& out, Text& error)
+                        bool& bPresent, Identity& out, Text& error, bool bKeepMatching)
     {
         N::Entries entries;
         const N::Entry* entry = nullptr;
-        if (!Find(parent, leaf, entry, entries, error))
+        if (!Find(parent, leaf, entry, entries, error, bKeepMatching))
         {
             return false;
         }
@@ -747,6 +806,11 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
         return (N::Directory(parent.Canonical / leaf, out, error) && N::Direct(parent, out) && Same(out, expected) &&
                 out.Canonical.filename().native() == leaf.native()) ||
                Fail(error, "root_candidate_changed");
+    }
+    bool KnownDirectory(const Identity& parent, const std::filesystem::path& leaf, const CookManagedObjectId& expected,
+                        bool& bPresent, Identity& out, Text& error)
+    {
+        return KnownDirectory(parent, leaf, expected, bPresent, out, error, false);
     }
     std::filesystem::path StateLeaf(View claim)
     {
@@ -1099,7 +1163,7 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
         {
             bool bPresent = false;
             if (!KnownDirectory(scope.Workspace, Leaf(readScope.RootLeaf), readScope.Root, bPresent, value.Root,
-                                error) ||
+                                error, true) ||
                 !bPresent ||
                 !ClassifyFile(scope.Pending, value.Root, Leaf(readScope.ManifestName), L"manifest.before",
                               L"manifest.after", readScope.ManifestBefore, readScope.ManifestAfter,
@@ -1115,7 +1179,7 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
             bool bStage = false, bFinal = false;
             Identity staged, final;
             if (!KnownDirectory(scope.Pending, L"root.stage", readScope.Root, bStage, staged, error) ||
-                !KnownDirectory(scope.Workspace, Leaf(readScope.RootLeaf), readScope.Root, bFinal, final, error) ||
+                !KnownDirectory(scope.Workspace, Leaf(readScope.RootLeaf), readScope.Root, bFinal, final, error, true) ||
                 bStage == bFinal)
             {
                 return Fail(error, "root_slot_ambiguous");
@@ -1534,7 +1598,7 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
         if (tx.bRootFinal)
         {
             if (!Rename(op.Scope.Workspace, Leaf(tx.Intent.Value().Anchor.RootLeaf), tx.Intent.Value().Root,
-                        op.Scope.Pending, L"root.stage", true, nullptr, op.Error) ||
+                        op.Scope.Pending, L"root.stage", true, nullptr, op.Error, nullptr, true, false) ||
                 !Checkpoint(op, Point::RollbackRootRestored))
             {
                 return false;
@@ -1551,7 +1615,7 @@ namespace NorvesLib::Tools::AssetCook::Detail::ManagedTransaction
             return Fail(op.Error, "bootstrap_start_state");
         }
         if (!Rename(op.Scope.Pending, L"root.stage", tx.Intent.Value().Root, op.Scope.Workspace,
-                    Leaf(tx.Intent.Value().Anchor.RootLeaf), true, nullptr, op.Error) ||
+                    Leaf(tx.Intent.Value().Anchor.RootLeaf), true, nullptr, op.Error, nullptr, false, true) ||
             !Checkpoint(op, Point::RootPublished) || !LoadActive(op.Scope, tx, op.Error))
         {
             return false;
