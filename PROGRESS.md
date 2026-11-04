@@ -9630,3 +9630,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 受入れの閾値と論理サウンド層の決まりを Docs/AudioValidation/GR72Acceptance.md に固定する: 着地(直し 0 回)
 - U2 IAudioService に奪取用の即時破棄 AbortVoice を追加だけで足す: 着地(直し 0 回)
 - U3 論理サウンド層の骨格(ISoundSystem・SoundSystem・フェード・自動破棄・所有スレッド・音量の区分)とモジュールの結線: 着地(直し 0 回)
+- U6 SoundBank の JSON の解釈と AudioClipLoader、バンクの cook スモーク: 着地(直し 0 回)

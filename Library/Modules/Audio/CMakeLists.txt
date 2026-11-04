@@ -4,6 +4,7 @@
     Public/Audio/IAudioModule.h
     Public/Audio/IAudioService.h
     Public/Audio/ISoundSystem.h
+    Public/Audio/SoundBankTypes.h
 )
 
 add_library(NorvesAudioDomain STATIC
@@ -13,6 +14,10 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
     Private/Audio/AudioServiceModule.cpp
+    Private/Audio/SoundBank.h
+    Private/Audio/SoundBank.cpp
+    Private/Audio/AudioClipLoader.h
+    Private/Audio/AudioClipLoader.cpp
     Private/Audio/SoundSystem.h
     Private/Audio/SoundSystem.cpp
 )
@@ -55,6 +60,10 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioDomain.h
     Private/Audio/AudioModule.cpp
     Private/Audio/AudioServiceModule.cpp
+    Private/Audio/SoundBank.h
+    Private/Audio/SoundBank.cpp
+    Private/Audio/AudioClipLoader.h
+    Private/Audio/AudioClipLoader.cpp
     Private/Audio/SoundSystem.h
     Private/Audio/SoundSystem.cpp
     Private/Audio/XAudio2Backend.cpp
