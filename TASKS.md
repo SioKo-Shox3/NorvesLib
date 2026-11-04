@@ -10414,3 +10414,12 @@
 - verify: `ctest --test-dir build -C Debug -R "^(DelegateCopyTest|DelegateIdentityTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Public/Delegate/MulticastDelegate.h, Test/Core/Delegate/DelegateCopyTest.cpp, TASKS.md, PROGRESS.md
 - from: G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1
+
+## G8-GR76-RESET-LIFETIME-P1: GameModeStateMachine に保留中の遷移を問う口を足し、Game の毎フレームで SaveService::Update を呼ぶ
+- status: todo
+- after: G8-GR76-STATE-AUTOSAVE
+- done-when: (1) `GameModeStateMachine` に、保留の遷移がキューに残っているかを返す const の公開関数(例 `HasPendingTransitions()`。`!m_PendingQueue.empty()` と同じ意味)を足す。(2) `GameApplicationHandler::OnLateUpdate` で毎フレーム `GEngine.GetSaveService().Update(...)` を呼び、引数には `m_pGameModeStateMachine` の (1) の値を渡す。ステートマシンが無いときは false を渡す。ステートマシンの Update は `PreSimulation` の段で走り、`OnLateUpdate` は `PostLateTick` の段で走るので、Tick の中で出た要求はここで「保留あり」として見える。これで自動保存と `Save` の要求が、終了時の `FlushAndWait` を待たずにプレイ中に書かれる。(3) `GameModeStateMachineTest` に、Tick の中で出した遷移の要求のあとは true を返し、次の Update の先頭でキューを空にしたあとは false を返すケースを足して通す。(4) Game・GameModeStateMachineTest が Debug でビルドできる。この項目ではアプリを起動しない。
+- verify: `cmake --build build --config Debug --target Game GameModeStateMachineTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(GameModeStateMachineTest|SaveServiceTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/GameMode/GameModeStateMachine.h, Library/Core/Private/GameMode/GameModeStateMachine.cpp, Game/GameApplicationHandler.cpp, Test/Core/GameMode/GameModeStateMachineTest.cpp
+- from: G8-GR76-RESET-LIFETIME
