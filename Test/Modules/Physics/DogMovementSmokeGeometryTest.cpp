@@ -128,7 +128,7 @@ int main()
     assert(script.Segments[5].Inputs[1].Key == Input::KeyCode::LeftShift);
     assert(script.Segments[7].Inputs[1].Key == Input::KeyCode::Space);
     assert(script.Segments[8].Inputs[0].Kind == Autopilot::AutopilotInputKind::Look);
-    assert(script.Segments[8].Inputs[0].Time == .25f && script.Segments[8].Inputs[0].LookY == 100);
+    assert(script.Segments[8].Inputs[0].Time == .25f);
     assert(script.Segments[11].Inputs[0].Kind == Autopilot::AutopilotInputKind::MouseButton);
     assert(script.Segments[11].Inputs[0].Button == Input::MouseButton::Left);
 

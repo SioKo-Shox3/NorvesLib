@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "CameraLateUpdate.h"
 #include "DogMovementAutopilotScript.h"
+#include "DogMovementAutopilotRunner.h"
 #include "Engine/TimeSystem.h"
 #include "GameMode/TGameMode.h"
 #include "Physics/CharacterBodyTypes.h"
@@ -11,6 +12,7 @@ namespace Game::GameModes
     {
         uint64_t CharacterId = 0, PreviousBodyStep = 0, PreviousCameraTick = 0;
         bool HasPrevious = false, ObservedStop = false;
+        bool TrackingAutopilotHitstop = false, AutopilotStop = false, AutopilotResumed = false;
     };
     struct DogMovementSmokeData
     {
@@ -22,6 +24,7 @@ namespace Game::GameModes
         bool bAutopilot = false;
         NorvesLib::Core::Container::String AutopilotPath, CaptureDir;
         DogMovementAutopilot::AutopilotScript Script;
+        NorvesLib::Core::Container::TUniquePtr<DogMovementAutopilotRunner> Runner;
         uint64_t PlatformId = 0;
         double PlatformTime = 0;
         NorvesLib::Core::Engine::TimeScaleHandle HitStop;

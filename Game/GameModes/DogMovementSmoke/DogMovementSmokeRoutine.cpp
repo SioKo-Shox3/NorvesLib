@@ -52,6 +52,11 @@ namespace Game::GameModes
     } // namespace
     void DogMovementSmokeRoutine::Stop(GameModeContext& ctx, DogMovementSmokeData& data)
     {
+        if (data.Runner)
+        {
+            data.Runner->Stop(ctx);
+            data.Runner.reset();
+        }
         data.LateState.reset();
         if (data.HitStop.IsValid())
             (void)ctx.EngineRef.GetTimeSystem().RemoveScale(data.HitStop);
@@ -94,7 +99,14 @@ namespace Game::GameModes
             ~Guard()
             {
                 if (!Succeeded)
+                {
+                    if (Data.bAutopilot && !Context.EngineRef.IsExitRequested())
+                    {
+                        NORVES_LOG_INFO("DogMovementSmoke", "DOG_MOVEMENT_SMOKE stage=failed reason=setup");
+                        Context.EngineRef.RequestExit(1);
+                    }
                     DogMovementSmokeRoutine::Stop(Context, Data);
+                }
             }
         } guard{ctx, data, succeeded};
         if (data.bAutopilot)
@@ -150,6 +162,7 @@ namespace Game::GameModes
                                 error.c_str());
                 LOG_ERROR("犬の自動走行の台本を読めないか解析できません: path=%s detail=%s",
                           data.AutopilotPath.c_str(), error.c_str());
+                ctx.EngineRef.RequestExit(1);
                 return GameModeEnterResult::Failed;
             }
             data.PlatformTime = 0;
@@ -371,6 +384,8 @@ namespace Game::GameModes
                                 int(step == state->PreviousBodyStep), int(cameraAdvanced),
                                 static_cast<unsigned>(follow->GetLastCollisionResult()));
                 state->ObservedStop = true;
+                if (state->TrackingAutopilotHitstop)
+                    state->AutopilotStop = true;
             }
             else if (!stopped && state->ObservedStop && step > state->PreviousBodyStep)
             {
@@ -379,6 +394,8 @@ namespace Game::GameModes
                                 "physics_ns=%lld",
                                 int(cameraAdvanced), static_cast<long long>(times.PhysicsDeltaNanoseconds));
                 state->ObservedStop = false;
+                if (state->TrackingAutopilotHitstop)
+                    state->AutopilotResumed = true;
             }
             state->PreviousBodyStep = step;
             state->PreviousCameraTick = cameraTick;
@@ -389,11 +406,19 @@ namespace Game::GameModes
         if (!camera->BuildCameraProxy(initial))
             return GameModeEnterResult::Failed;
         ctx.EngineRef.GetRenderWorld().SetMainCamera(initial);
+        if (data.bAutopilot)
+        {
+            data.Runner = Container::MakeUnique<DogMovementAutopilotRunner>();
+            if (!data.Runner->Initialize(ctx, data))
+                return GameModeEnterResult::Failed;
+        }
         succeeded = true;
         return GameModeEnterResult::Succeeded;
     }
     void DogMovementSmokeRoutine::Tick(GameModeContext& ctx, DogMovementSmokeData& data, float)
     {
+        if (data.Runner)
+            data.Runner->Tick(ctx, data);
         if (data.bAutopilot)
         {
             namespace Course = DogMovementAutopilot;
