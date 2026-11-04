@@ -9601,3 +9601,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
 - Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
 - Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
+
+## 2026-11-04 G4-GR05-COMPONENT-CASES（run 20261104-134159）
+- 試験の 3 点（Docs/Testing.md。ケースを足す前に書く）:
+  - 反証する契約: QuadrupedLocomotionComponent を固定ステップの経路で回したとき、(1) 一時フォルダの locomotion.v1 の設定を書き換えると 0.25 秒の間隔の後の最初のフレームから新しい値で動き、壊れた JSON では前の値のまま動き続けて警告が 1 回だけ出る、(2) 見た目の子の Animator の駆動の信号（Speed・TurnRate・bGrounded）と名前のパラメータ（GaitId・GaitWeight0〜3・PitchAngle・BankAngle）がそのフレームのモデルの出力と一致し、名前のパラメータが無いグラフでも落ちない、(3) Animation を移動の源にすると、固定ステップの回数が 0・1・2 と揺れても Animator のルートの差分の合計と本体の移動量の合計が 1e-4 m 以内で一致し、Procedural へ戻すと残りを捨てて次のフレームから手続きの移動に戻る、(4) 同じフレームの Camera 群の FollowCameraComponent が移動の結果を 1 フレームの遅れなく読む
+  - ほかの手段で気づけるか: 気づきにくい。再読込は手で JSON を書き換えないと起きず、パラメータの名前の食い違いは PublishVisual が設定の失敗を捨てるのでログに出ない。ルート移動の二重・欠けは数 mm 単位で絵に出ず、1 フレームのカメラの遅れは静止画の撮影に出ない
+  - 失敗が黙って起きるか: 起きる。どれも外れても犬は何かしら動き、エラーもログも出ない（壊れた JSON の警告の回数を除く）
+- 計画: 4 つのケースは同じ試験ファイルと Component を触るので、単位は直列に回す（U1 設定の再読込 → U2 Animator への値 → U3 ルート移動 → U4 同じフレームのカメラとタスクの verify）
+- U1 設定の再読込のケースを足し、一時フォルダを読ませる口を Component に足す: 着地(直し 0 回)
+- U2 Animator への値のケースを足す: 着地(直し 0 回)
+- U3 ルート移動のケースを足す: 着地(直し 0 回)
+- U4 同じフレームのカメラの読みのケースを足し、タスクの verify を回す: 着地(直し 0 回)
+- Done: PhysicsFixedStepPipelineTest にケース 28〜31 を足し、全部通る（設定の再読込・Animator への値・ルート移動・同じフレームのカメラ）。Component の直し: Animator へ渡す Speed と接地を本体の状態ではなくそのフレームのモデルの出力から作る（直す前は最初のフレームの Speed が 0.0325、期待 0）。試験のために設定の置き場（資産の根と相対パス）を差し替える SetProfileSource を足した
+- 確かめ（タスクの verify）: `cmake --build build --config Debug --target PhysicsDynamicsTest LoggerSinkTest Game -- /m:1` は終了コード 0。ctest の 5 本（QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・RootMotionTimeQueueTest・PhysicsFixedStepPipelineTest 1.98 秒・PhysicsCharacterMoveTest）は 5/5 Passed。既存のケース 0〜27 の中身は変えていない
+- 測った量: ルート移動は 72 フレーム（固定の段 0・1・2 が 24 フレームずつ）で Animator の差分 1.200000018 m・本体 1.199999809 m・差 2.1e-7 m。Procedural へ戻した後は半段の残りを捨てて入力の向きへ 8 フレームで 0.043 m 進み、Animation へ戻した最初のフレームの差は 2e-9 m。同じフレームのカメラは 72 フレーム（α 0 が 24・中間が 48）で注視点と描画の位置 + オフセットの最大差 2.4e-7 m、描画が動いた 26 フレームで前のフレームの描画の位置との差は最小 0.002 m（遅れがあれば合わない形で比べた）
+- Notes: ルート移動のケースは衝突の無い直進のルートだけを見る（壁に当たったときのルートの差分の扱いは試験していない）。同じフレームのカメラは平滑 0・壁なしの組だけで、平滑ありと衝突で腕が縮む組は既存の TestFollowCameraRenderBinding に任せる。アプリを起動する確かめは無い
+- Next: G4-GR05-COMPONENT-CASES を after に持つ項目（G4-GR07 の犬の受け入れなど）
