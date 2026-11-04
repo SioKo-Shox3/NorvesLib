@@ -9,6 +9,9 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Progression/DefeatGate.h
     Public/Gameplay/World/EncounterZoneTypes.h
     Public/Gameplay/World/ZoneProfileStack.h
+    Public/Gameplay/World/ZoneSensorComponent.h
+    Public/Gameplay/World/EncounterZoneComponent.h
+    Public/Gameplay/World/EncounterService.h
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
@@ -21,6 +24,9 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/World/EncounterZoneMath.h
     Private/Gameplay/World/EncounterZoneMath.cpp
     Private/Gameplay/World/ZoneProfileStack.cpp
+    Private/Gameplay/World/ZoneSensorComponent.cpp
+    Private/Gameplay/World/EncounterZoneComponent.cpp
+    Private/Gameplay/World/EncounterService.cpp
     Private/Gameplay/GameplayModule.h
     Private/Gameplay/GameplayModule.cpp
 )

@@ -4,6 +4,8 @@
 #include "Container/Containers.h"
 #include "Engine/Engine.h"
 #include "Gameplay/Combat/HealthComponent.h"
+#include "Gameplay/World/EncounterZoneComponent.h"
+#include "Gameplay/World/ZoneSensorComponent.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Modules::Gameplay
@@ -15,6 +17,7 @@ namespace NorvesLib::Modules::Gameplay
 
     GameplayModule::GameplayModule()
         : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId()),
+          m_EncounterService(m_ProgressionState),
           m_IsDefeatHoldOwnerAlive(this, &GameplayModule::IsDefeatHoldOwnerAlive)
     {
         m_DefeatGate.OnDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
@@ -50,6 +53,8 @@ namespace NorvesLib::Modules::Gameplay
     void GameplayModule::RegisterReflectedTypes()
     {
         Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(World::ZoneSensorComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(World::EncounterZoneComponent::StaticClass());
     }
 
     bool GameplayModule::Initialize()
@@ -88,6 +93,15 @@ namespace NorvesLib::Modules::Gameplay
         }
     }
 
+    void GameplayModule::LateTick(float)
+    {
+        if (m_bInitialized && m_Engine != nullptr)
+        {
+            const auto& times = m_Engine->GetTimeSystem().GetFrameTimes();
+            m_EncounterService.Evaluate(m_Engine->GetWorld(), times.GetDelta(Core::Engine::TimeChannel::World));
+        }
+    }
+
     bool GameplayModule::IsDefeatHoldOwnerAlive(Core::EntityHandle owner) const
     {
         return m_Engine != nullptr && m_Engine->GetWorld().ResolveEntityHandle(owner) != nullptr;
@@ -96,6 +110,7 @@ namespace NorvesLib::Modules::Gameplay
     void GameplayModule::Shutdown()
     {
         m_bInitialized = false;
+        m_EncounterService.Reset();
     }
 
     void GameplayModule::Uninstall(Core::Engine::Engine&)
