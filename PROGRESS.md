@@ -9380,3 +9380,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: External は衝突を見ずに変位を適用する（拘束側が位置の権限を持つ形。GR20 のしがみつき側で壁の中へ入れない責任を持つ）。小物を押すのは速度の法線成分を上げるだけで、質量・摩擦は扱わない。めり込みの解消の変位は、重なるステップだけ移動 0 の CharacterMover::Move をもう 1 回呼んで求めるので、足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる。足場の離脱速度の引き継ぎは縁からの自然落下・可変駆動の足場からの離脱を個別には試していない
 - Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
 - U7 足場の運搬をめり込みの解消と取り違えて速度から引く退行を直し、昇降足場の速度の一致を試験で確かめる: 着地(直し 1 回)
+- Done: 反復 2 で差し戻し（昇降足場が上がるステップで速度が位置差分/dt と約 3 m/s ずれる退行）を直した。めり込みの事前判定と解消だけの要求を、足場の運搬（PlatformDisplacement）だけ平行移動した形で行い、運んでいる足場（PlatformCollider）は判定と解消の対象から外す（足場との重なりは本番の Move の運搬と解消が扱い、速度からは引かない）。ケース 22 に更新ありのキャラクターの毎ステップの速度 y と位置差分/dt の一致（0.005 m/s 以内）を足した。直す前は velocity_error=3.12 で落ち、直した後は 0
+- 確かめ（タスクの verify）: ビルド exit 0。ctest の 5 本（PhysicsDynamicsTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest 0.99 秒・PhysicsCharacterMoveTest・CharacterPlatformMotionTest）は 5/5 Passed（合計 1.20 秒）。`ELEVATOR_JITTER refresh=0 norefresh=0 velocity_error=0`。運搬後の形だけで判定した途中の版では、回る足場（ケース 8）で足場との 1e-6 m の重なりが解消として速度から引かれ 0.12 m/s ずれたため、足場を対象から外す形にした
+- Notes: 前の Notes の「足場で運ばれてから重なる場合は運搬の分だけ解消の量が違いうる」は、運搬後の形で解消を求める形にしたので解消した。残る限界: 足場の運搬が壁に遮られる場合は、運搬後の形が壁に重なった量を解消として引くので、速度が遮られた分だけ小さく出うる（試験していない）。空中で壁に当たっても引き継いだ足場の水平速度は消えない
+- Next: G4-GR05-COMPONENT-CASES（同じ試験ファイルを触るのでこのタスクの後）
