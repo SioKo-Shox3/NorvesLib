@@ -9170,3 +9170,12 @@
 - verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|RigMotionCleanupTest|MotionSampleRegressionTest|RigSplitCookTest|RigStaticRootFrameWireTest|SkeletalBvhCookBridgeTest|SkeletalBvhClipImportTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Private/Animation/SkeletalClipProcessing.cpp, Test/Core/Asset/MotionProcessingTest.cpp
 - from: G4-GR128-CLEANUP-CASES
+
+## G4-GR05-COMPONENT-CASES-P1: 空中で壁に当たったとき、足場から引き継いだ水平速度の壁へ向かう成分を消す
+- status: todo
+- done-when: `Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp`（`PhysicsDynamicsTest` の束）にケース 28 を足し（`kCaseCount` を 29 にする）、全部のケースが通る。ケースを足す前に、`Docs/Testing.md` の 3 点を PROGRESS.md に書く。ケース 28 の場面: 回らない Kinematic の足場が +x へ 2 m/s で動き、キャラクターはその上から跳んで離れる。行く手に、跳んだ頂点より低い静的な壁を置く。合否: (a) 壁に当たった後は、壁の上端を越えても、着地するまで +x へ進まない（当たった後の各ステップの x の差分が 0.001 m 未満）。(b) 壁に斜めに当たる組（足場の速度が壁の法線から 45°）では、壁に沿う成分が残る（当たった後の接線方向の速度が、足場の速度の接線成分 ±0.05 m/s）。(c) 毎ステップの速度と位置差分/dt の差が 0.005 m/s 以内。直す前の版でケース 28 が落ちることを確かめ、その出力を PROGRESS.md に書く。直し方: 空中の移動の後、当たった壁の法線（`CharacterMoveResult` に足してよい）へ向かう `m_InheritedVelocity` の成分を消す。既存のケース 0〜27 と `PhysicsCharacterMoveTest` は、試験を変えずに通る。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|PhysicsDynamicsTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Physics/Private/Physics/PhysicsModuleCharacter.cpp, Library/Modules/Physics/Private/Physics/CharacterMover.h, Library/Modules/Physics/Private/Physics/CharacterMover.cpp, Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp, TASKS.md, PROGRESS.md
+- from: G4-GR05-COMPONENT-CASES
+- notes: 原因は `PhysicsModuleCharacter.cpp` の 271〜274 行。空中では毎ステップ、変位に `m_InheritedVelocity * dt` を足すが、この値を 0 に戻すのは着地とテレポートのときだけ（376 行・153 行）。そのため壁に当たっても壁へ向かう成分が残り、壁の縁を越えると急にまた足場の速さで進む。今の `CharacterMoveResult`（`CharacterMover.h` の 22〜34 行）は壁の法線を返していない。G4-GR07-BODY-CASES の Notes（PROGRESS.md 9518 行）に「空中で壁に当たっても引き継いだ足場の水平速度は消えない」と記録がある。足場の離脱のケースは `TestCharacterPlatformDepartureVelocity`（1561 行）、壁に押し付ける足場のケースは `TestCharacterPlatformPushedAgainstWall`（1956 行）なので、組み方はこれに倣う。G4-GR05-COMPONENT-CASES と同じ試験ファイルを触るので、同時には走らない。やらないこと: 空中の操作の制御、壁での摩擦、小物を押す処理の変更。
