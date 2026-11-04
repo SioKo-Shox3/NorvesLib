@@ -81,6 +81,18 @@ GPUを使うテストは、Vulkanを使えない環境ではskip（終了コー�
 - ほかの手段で気づけるか: 気づけない。フレームレートで足音や攻撃の窓が 1 回増減しても絵にもログにも出ない。溢れの警告だけはログに出るが、どの窓が落ちたかは分からない。
 - 失敗が黙って起きるか: 起きる。
 
+`AnimGraphRuntimeTest` の `TestMarkerEvents`（`SkeletalAnimationSamplingTest` の中）を置く理由:
+
+- 反証する契約: markerからのイベント配送はclipノードの `markerEvents` によるopt-inであり、既定では配送しない。有効時は同名の点イベントを `(prev, cur]` で1回だけ出し、既定minWeight 0.3・周回・同期グループ内の同名の重複除去に従う。EventIndexはeventsの件数 + markerの添字、Value・IntValueは0。真偽値以外のmarkerEventsは拒否する。
+- ほかの手段で気づけるか: 気づけない。配送の欠落や重複、名前や時刻の食い違いは足音や同期が鳴らない・ずれるだけで、撮影やログには出ない。
+- 失敗が黙って起きるか: 起きる。イベントの配送が変わっても落ちない。
+
+`RigSplitCookTest` の `FootContactMetadataAndWindows`（`CookedMeshTest` の中）を置く理由:
+
+- 反証する契約: 接地の判定は1つで、同じ標本間隔・しきい値ならLibraryとcookが全脚について同じ数と開始・終了時刻の窓を出す。接地名は `Foot.<脚>.Down/Up`（LF・RF・LH・RH）で、ループではmarkerだけ、非ループでは窓ごとの点イベントだけを生成し、同じ接地をmarkerとeventで二重に生成しない。接地の無い脚はfeet_without_contactsとneeds_reviewに反映する。
+- ほかの手段で気づけるか: 気づけない。窓のずれや名前の食い違い、二重の印は足音や同期が鳴らない・ずれるだけで、撮影やログではLibraryとcookの窓の一致まで確かめられない。
+- 失敗が黙って起きるか: 起きる。cookも再生も成功したまま、接地の利用側だけが誤った時刻や名前を受け取り、落ちない。
+
 `TwoBoneIKTest`（`SkeletalAnimationSamplingTest` の中）を足す理由:
 - 反証する契約: 二関節 IK の到達位置・区間長の保存・届かない目標の完全伸展・ポール側の曲げ・退化入力の有限性・ねじれのない回転差分とその作用方向。
 - ほかの手段で気づけるか: 気づけない。微小な長さの変化やねじれ、軸や回転の規約の取り違えは撮影やログだけでは区別できない。

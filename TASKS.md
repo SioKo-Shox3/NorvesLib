@@ -5651,7 +5651,7 @@
 - notes: 選定課題 G9-S5（段 2 を G9 に含める時期）は推奨の A に決めた: 段 1 の後、G9 の中で段 2 まで続けて作り、着手は最後にする。理由: 作者は必要な機能を今後のことも考えて全部やる方針で、段 2 は GR82 の v1 の形式に載るので、G2 が形式を固めた後に足すのが安全なため。段 1 の実 BVH の記録で効果が小さいと分かったら、作者へ戻して B（G9 の外へ送る）に切り替える。今のコードの事実: CHAN には `encoding u32=0` の欄があり、SAMP は 32 bytes の無圧縮だけ（`Docs/Architecture/ClipBankV1Wire.md:49-50`）。未知の任意の節は全ての検査の後でだけ読み飛ばす（同 17 行）。比べる相手は、「段階をまたぐ注意」の「G9 / GR87 段2・GR85」のとおり、旧 `SampleChannelValue` の線形走査ではなく GR12 の `ClipChannelSampler` の二分探索（`Library/Core/Public/Animation/ClipChannelSampler.h:10-31`）。旧形式（NVSKEL 0.x）は変えない。UNCERTAIN: 一様な時刻の印をどこに持つか（`SkeletalAnimationChannel`（`Library/Core/Public/Resource/SkeletalGltfData.h:70-76`）に欄を足すと Public API と既存の比較・ハッシュに波及する）は未確認。解消するには、チャンネルの比較・ハッシュを使う箇所（`CookedClipBankV1.cpp` の payload の hash、`RigBoundClipProof`）を読み、欄を足さずに読み込み時の派生のキャッシュ（GR12 の resource 派生の cache）に置けるならそちらを選ぶ。`Test/Tools/ClipBankV1Oracle.py` が minor 0 しか受けないなら、minor 1 を受けるよう直す。圧縮の形のまま評価する案は採らない（要件の設計案 (6)）。アセットロードと Public API の危険地帯なので評価者を通す。出典: 要件 `#### GR87` の設計案 (5)、受け入れ確認の【量子化】【互換】、ロードマップの選定課題一覧の G9-S5。
 
 ## G3-GR11-FOOT-CONTACT-SOURCE: 足の接地の検出を Library の 1 か所にまとめて cook からも呼び、接地の marker から同じ名前の接地イベントを出せるようにする
-- status: todo
+- status: done
 - after: G3-GR11-EVENT-PROPERTIES, G4-GR128-PROCESSING-CASES, G4-GR128-CLEANUP-CASES
 - gr: GR11
 - needs-gr: GR128
