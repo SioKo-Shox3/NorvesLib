@@ -74,6 +74,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER CombatMultiHitTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatMultiHitTest.cpp
     MEMBER CombatLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLifecycleTest.cpp
     MEMBER HealthComponentTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/HealthComponentTest.cpp
+    MEMBER EnemyDefinitionLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp
     MEMBER ProgressionStateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/ProgressionStateTest.cpp
     MEMBER DefeatGateTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/DefeatGateTest.cpp
     MEMBER EncounterZoneTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterZoneTest.cpp
@@ -126,6 +127,7 @@ add_test(NAME CombatFrameRateInvarianceTest COMMAND PhysicsDynamicsTest --test=C
 add_test(NAME CombatMultiHitTest COMMAND PhysicsDynamicsTest --test=CombatMultiHitTest)
 add_test(NAME CombatLifecycleTest COMMAND PhysicsDynamicsTest --test=CombatLifecycleTest)
 add_test(NAME HealthComponentTest COMMAND PhysicsDynamicsTest --test=HealthComponentTest)
+add_test(NAME EnemyDefinitionLoadTest COMMAND PhysicsDynamicsTest --test=EnemyDefinitionLoadTest)
 add_test(NAME ProgressionStateTest COMMAND PhysicsDynamicsTest --test=ProgressionStateTest)
 add_test(NAME DefeatGateTest COMMAND PhysicsDynamicsTest --test=DefeatGateTest)
 add_test(NAME EncounterZoneTest COMMAND PhysicsDynamicsTest --test=EncounterZoneTest)
