@@ -47,9 +47,11 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
     MEMBER AtomicFileWriteTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/AtomicFileWriteTest.cpp
+    MEMBER GameStateStoreTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/GameStateStoreTest.cpp
     MEMBER SaveContainerTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/SaveContainerTest.cpp
     MEMBER SaveSlotFallbackTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/SaveSlotFallbackTest.cpp
     MEMBER SaveMigrationTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/SaveMigrationTest.cpp NORVES_SAVE_FIXTURE_DIR=\"${CMAKE_SOURCE_DIR}/Test/Core/Save/Fixtures\"
+    MEMBER SaveServiceTest ${CMAKE_SOURCE_DIR}/Test/Core/Save/SaveServiceTest.cpp NORVES_SAVE_FIXTURE_DIR=\"${CMAKE_SOURCE_DIR}/Test/Core/Save/Fixtures\"
     MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
     MEMBER CriticalDampingTest ${CMAKE_SOURCE_DIR}/Test/Core/Math/CriticalDampingTest.cpp
     MEMBER RenderTransformHistoryTest ${CMAKE_SOURCE_DIR}/Test/Core/Object/RenderTransformHistoryTest.cpp
@@ -62,6 +64,7 @@ norves_add_test_bundle(LoggerSinkTest
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/GameInputSettings.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/GameHapticsSettings.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Save/ProgressSaveData.cpp
 )
 target_link_libraries(LoggerSinkTest PRIVATE Core Threads::Threads)
 target_include_directories(LoggerSinkTest PRIVATE
@@ -79,6 +82,8 @@ add_test(NAME CameraCollisionSolverTest COMMAND LoggerSinkTest --test=CameraColl
 add_test(NAME RenderTransformHistoryTest COMMAND LoggerSinkTest --test=RenderTransformHistoryTest)
 add_test(NAME RootMotionTimeQueueTest COMMAND LoggerSinkTest --test=RootMotionTimeQueueTest)
 add_test(NAME AtomicFileWriteTest COMMAND LoggerSinkTest --test=AtomicFileWriteTest)
+add_test(NAME GameStateStoreTest COMMAND LoggerSinkTest --test=GameStateStoreTest)
 add_test(NAME SaveContainerTest COMMAND LoggerSinkTest --test=SaveContainerTest)
 add_test(NAME SaveMigrationTest COMMAND LoggerSinkTest --test=SaveMigrationTest)
 add_test(NAME SaveSlotFallbackTest COMMAND LoggerSinkTest --test=SaveSlotFallbackTest)
+add_test(NAME SaveServiceTest COMMAND LoggerSinkTest --test=SaveServiceTest)
