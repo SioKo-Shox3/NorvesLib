@@ -531,6 +531,40 @@ GeometrySweepHit SweepSphere(const Sphere& a, const OBB& b, const Vector3& direc
 GeometrySweepHit SweepSphere(const Sphere& a, const Capsule& b, const Vector3& direction,
     float maxDistance, const GeometrySweepSettings& settings = {});
 
+/**
+ * @brief 両面の三角形上の最近点と領域を返す。入力座標は有限であること。
+ * 面積0では3辺への最近点を比較し、辺または頂点を返す。
+ */
+Vector3 ClosestPointOnTriangle(const Vector3& point, const Triangle& triangle, TriangleFeature* outFeature = nullptr);
+
+/**
+ * @brief 線分と両面の三角形の最近点を返す。貫通時は両点が交点となる。
+ * 入力座標は有限であること。長さ0の線分・面積0の三角形も許容する。
+ */
+void ClosestPointsSegmentTriangle(const Vector3& segmentA, const Vector3& segmentB, const Triangle& triangle,
+    Vector3& outOnSegment, Vector3& outOnTriangle);
+
+/**
+ * @brief 両面の三角形から球へ向く単位法線、非負の深さ、両証人点の中点を返す。
+ * 中心が三角形上なら巻き順の面法線を使う。面積0なら最長辺に垂直な法線（点なら+X）を使う。
+ * 既存の接触関数と同様、入力は有限、半径は非負であること。不正値の検証は行わない。
+ */
+bool ComputeContact(const Triangle& a, const Sphere& b, GeometryContact& outContact);
+
+/**
+ * @brief 両面の三角形からカプセルへ向く単位法線、非負の深さ、両証人点の中点を返す。
+ * 中心線が三角形上なら面法線を線分中点の側へ向け、最も深い端点と半径から深さを求める。
+ * 面積0の法線は球の場合と同じ。入力は有限、半径は非負で、長さ0の中心線も許容する。
+ */
+bool ComputeContact(const Triangle& a, const Capsule& b, GeometryContact& outContact);
+
+/**
+ * @brief 両面の三角形とOBBを分離軸で判定し、最小侵入軸を三角形重心から箱中心へ向ける。
+ * 接触点は箱の証人点を法線へ深さの半分動かした点。面積0でも残る軸で判定する。
+ * 入力は有限、半径長は非負、箱の軸は正規直交であること。ほぼ長さ0の判定軸は飛ばす。
+ */
+bool ComputeContact(const Triangle& a, const OBB& b, GeometryContact& outContact);
+
 bool ComputeContact(const Sphere& a, const Sphere& b, GeometryContact& outContact);
 bool ComputeContact(const Sphere& a, const OBB& b, GeometryContact& outContact);
 bool ComputeContact(const OBB& a, const OBB& b, GeometryContact& outContact);

@@ -839,6 +839,288 @@ namespace
     }
 }
 
+namespace
+{
+    double TriangleTripleProduct(const Vector3& a, const Vector3& b, const Vector3& c)
+    {
+        return static_cast<double>(a.x) * (static_cast<double>(b.y) * c.z - static_cast<double>(b.z) * c.y)
+            + static_cast<double>(a.y) * (static_cast<double>(b.z) * c.x - static_cast<double>(b.x) * c.z)
+            + static_cast<double>(a.z) * (static_cast<double>(b.x) * c.y - static_cast<double>(b.y) * c.x);
+    }
+
+    Vector3 GetTriangleNormal(const Triangle& triangle)
+    {
+        const Vector3 edge01 = triangle.V1 - triangle.V0;
+        const Vector3 edge02 = triangle.V2 - triangle.V0;
+        const Vector3 cross = VectorUtils::Cross(edge01, edge02);
+        if (SeparationDot(cross, cross) > 0.0)
+        {
+            return SeparationUnit(cross);
+        }
+
+        // 面積0では最長辺に垂直な向きを使い、全頂点が同じなら+Xになる。
+        Vector3 longest = edge01;
+        if (SeparationDot(edge02, edge02) > SeparationDot(longest, longest))
+        {
+            longest = edge02;
+        }
+        const Vector3 edge12 = triangle.V2 - triangle.V1;
+        if (SeparationDot(edge12, edge12) > SeparationDot(longest, longest))
+        {
+            longest = edge12;
+        }
+        return SeparationPerpendicular(longest);
+    }
+
+    bool TestTriangleOBBAxis(const Triangle& triangle, const OBB& box, const Vector3& axis,
+        float& inOutDepth, Vector3& inOutNormal)
+    {
+        const float length = VectorUtils::Length(axis);
+        if (length <= ContactEpsilon)
+        {
+            return true;
+        }
+        const Vector3 normal = axis / length;
+        const float p0 = VectorUtils::Dot(triangle.V0 - box.Center, normal);
+        const float p1 = VectorUtils::Dot(triangle.V1 - box.Center, normal);
+        const float p2 = VectorUtils::Dot(triangle.V2 - box.Center, normal);
+        const float minProjection = std::fminf(p0, std::fminf(p1, p2));
+        const float maxProjection = std::fmaxf(p0, std::fmaxf(p1, p2));
+        const float radius = ProjectRadius(box, normal);
+        if (minProjection > radius || maxProjection < -radius)
+        {
+            return false;
+        }
+
+        // 区間の包含でも、分離するまでの移動量を使う。厚み0の面でも深さが得られる。
+        const float depth = std::fminf(radius - minProjection, maxProjection + radius);
+        if (depth < inOutDepth)
+        {
+            const Vector3 centroid = (triangle.V0 + triangle.V1 + triangle.V2) / 3.0f;
+            inOutDepth = depth;
+            inOutNormal = VectorUtils::Dot(normal, box.Center - centroid) < 0.0f ? -1.0f * normal : normal;
+        }
+        return true;
+    }
+}
+
+Vector3 ClosestPointOnTriangle(const Vector3& point, const Triangle& triangle, TriangleFeature* outFeature)
+{
+    const Vector3 ab = triangle.V1 - triangle.V0;
+    const Vector3 ac = triangle.V2 - triangle.V0;
+    const Vector3 cross = VectorUtils::Cross(ab, ac);
+    const auto result = [&](const Vector3& closest, TriangleFeature feature)
+    {
+        if (outFeature != nullptr)
+        {
+            *outFeature = feature;
+        }
+        return closest;
+    };
+
+    if (SeparationDot(cross, cross) == 0.0)
+    {
+        const Vector3 vertices[3] = {triangle.V0, triangle.V1, triangle.V2};
+        const TriangleFeature edges[3] = {TriangleFeature::Edge01, TriangleFeature::Edge12, TriangleFeature::Edge20};
+        const TriangleFeature vertexFeatures[3] = {TriangleFeature::Vertex0, TriangleFeature::Vertex1, TriangleFeature::Vertex2};
+        double bestDistance = DBL_MAX;
+        Vector3 closest = triangle.V0;
+        TriangleFeature feature = TriangleFeature::Vertex0;
+        for (int index = 0; index < 3; ++index)
+        {
+            const int next = (index + 1) % 3;
+            const Vector3 edge = vertices[next] - vertices[index];
+            const double lengthSquared = SeparationDot(edge, edge);
+            const double t = lengthSquared > 0.0
+                ? ClampSeparationParameter(SeparationDot(point - vertices[index], edge) / lengthSquared) : 0.0;
+            const Vector3 candidate = vertices[index] + edge * static_cast<float>(t);
+            const double distance = SeparationDot(point - candidate, point - candidate);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                closest = candidate;
+                feature = t <= 0.0 ? vertexFeatures[index] : t >= 1.0 ? vertexFeatures[next] : edges[index];
+            }
+        }
+        return result(closest, feature);
+    }
+
+    // Ericson 5.1.5 のボロノイ領域判定。内積は倍精度で評価する。
+    const Vector3 ap = point - triangle.V0;
+    const double d1 = SeparationDot(ab, ap);
+    const double d2 = SeparationDot(ac, ap);
+    if (d1 <= 0.0 && d2 <= 0.0)
+    {
+        return result(triangle.V0, TriangleFeature::Vertex0);
+    }
+
+    const Vector3 bp = point - triangle.V1;
+    const double d3 = SeparationDot(ab, bp);
+    const double d4 = SeparationDot(ac, bp);
+    if (d3 >= 0.0 && d4 <= d3)
+    {
+        return result(triangle.V1, TriangleFeature::Vertex1);
+    }
+
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0)
+    {
+        return result(triangle.V0 + ab * static_cast<float>(d1 / (d1 - d3)), TriangleFeature::Edge01);
+    }
+
+    const Vector3 cp = point - triangle.V2;
+    const double d5 = SeparationDot(ab, cp);
+    const double d6 = SeparationDot(ac, cp);
+    if (d6 >= 0.0 && d5 <= d6)
+    {
+        return result(triangle.V2, TriangleFeature::Vertex2);
+    }
+
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0)
+    {
+        return result(triangle.V0 + ac * static_cast<float>(d2 / (d2 - d6)), TriangleFeature::Edge20);
+    }
+
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0)
+    {
+        const float t = static_cast<float>((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+        return result(triangle.V1 + (triangle.V2 - triangle.V1) * t, TriangleFeature::Edge12);
+    }
+
+    const double inverse = 1.0 / (va + vb + vc);
+    return result(triangle.V0 + ab * static_cast<float>(vb * inverse) + ac * static_cast<float>(vc * inverse),
+        TriangleFeature::Face);
+}
+
+void ClosestPointsSegmentTriangle(const Vector3& segmentA, const Vector3& segmentB, const Triangle& triangle,
+    Vector3& outOnSegment, Vector3& outOnTriangle)
+{
+    const Vector3 direction = segmentB - segmentA;
+    const Vector3 edge01 = triangle.V1 - triangle.V0;
+    const Vector3 edge02 = triangle.V2 - triangle.V0;
+    const double determinant = TriangleTripleProduct(edge01, direction, edge02);
+    if (determinant != 0.0)
+    {
+        // 両面の交差を線分パラメータで調べ、交差時の距離を厳密に0にする。
+        const Vector3 offset = segmentA - triangle.V0;
+        const double u = TriangleTripleProduct(offset, direction, edge02) / determinant;
+        const double v = TriangleTripleProduct(direction, offset, edge01) / determinant;
+        const double t = TriangleTripleProduct(edge02, offset, edge01) / determinant;
+        if (u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t >= 0.0 && t <= 1.0)
+        {
+            outOnSegment = segmentA + direction * static_cast<float>(t);
+            outOnTriangle = outOnSegment;
+            return;
+        }
+    }
+
+    outOnSegment = segmentA;
+    outOnTriangle = ClosestPointOnTriangle(segmentA, triangle);
+    double bestDistance = SeparationDot(outOnSegment - outOnTriangle, outOnSegment - outOnTriangle);
+    const auto evaluate = [&](const Vector3& onSegment, const Vector3& onTriangle)
+    {
+        const Vector3 offset = onSegment - onTriangle;
+        const double distance = SeparationDot(offset, offset);
+        if (distance < bestDistance)
+        {
+            bestDistance = distance;
+            outOnSegment = onSegment;
+            outOnTriangle = onTriangle;
+        }
+    };
+    evaluate(segmentB, ClosestPointOnTriangle(segmentB, triangle));
+    const Vector3 vertices[3] = {triangle.V0, triangle.V1, triangle.V2};
+    for (int index = 0; index < 3; ++index)
+    {
+        Vector3 onSegment;
+        Vector3 onTriangle;
+        SeparationSegmentPoints(Capsule(segmentA, segmentB, 0.0f),
+            Capsule(vertices[index], vertices[(index + 1) % 3], 0.0f), onSegment, onTriangle);
+        evaluate(onSegment, onTriangle);
+    }
+}
+
+bool ComputeContact(const Triangle& a, const Sphere& b, GeometryContact& outContact)
+{
+    const Vector3 closest = ClosestPointOnTriangle(b.Center, a);
+    const Vector3 offset = b.Center - closest;
+    const float distance = VectorUtils::Length(offset);
+    if (distance > b.Radius)
+    {
+        return false;
+    }
+    const Vector3 normal = distance > ContactEpsilon ? offset / distance : GetTriangleNormal(a);
+    SetContact(normal, b.Radius - distance, closest, b.Center - normal * b.Radius, outContact);
+    return true;
+}
+
+bool ComputeContact(const Triangle& a, const Capsule& b, GeometryContact& outContact)
+{
+    Vector3 onSegment;
+    Vector3 onTriangle;
+    ClosestPointsSegmentTriangle(b.PointA, b.PointB, a, onSegment, onTriangle);
+    const Vector3 offset = onSegment - onTriangle;
+    const float distance = VectorUtils::Length(offset);
+    if (distance > b.Radius)
+    {
+        return false;
+    }
+    if (distance > ContactEpsilon)
+    {
+        const Vector3 normal = offset / distance;
+        SetContact(normal, b.Radius - distance, onTriangle, onSegment - normal * b.Radius, outContact);
+        return true;
+    }
+
+    Vector3 normal = GetTriangleNormal(a);
+    if (VectorUtils::Dot(normal, (b.PointA + b.PointB) * 0.5f - a.V0) < 0.0f)
+    {
+        normal = -1.0f * normal;
+    }
+    const float distanceA = VectorUtils::Dot(normal, b.PointA - a.V0);
+    const float distanceB = VectorUtils::Dot(normal, b.PointB - a.V0);
+    const Vector3 endpoint = distanceB < distanceA ? b.PointB : b.PointA;
+    const float planeDistance = std::fminf(distanceA, distanceB);
+    // 深い貫通では最深端点の表面と、三角形上の最近点を証人点にする。
+    SetContact(normal, b.Radius - planeDistance, ClosestPointOnTriangle(endpoint, a),
+        endpoint - normal * b.Radius, outContact);
+    return true;
+}
+
+bool ComputeContact(const Triangle& a, const OBB& b, GeometryContact& outContact)
+{
+    const Vector3 edges[3] = {a.V1 - a.V0, a.V2 - a.V1, a.V0 - a.V2};
+    float depth = FLT_MAX;
+    Vector3 normal(1.0f, 0.0f, 0.0f);
+    if (!TestTriangleOBBAxis(a, b, VectorUtils::Cross(edges[0], a.V2 - a.V0), depth, normal))
+    {
+        return false;
+    }
+    for (int boxAxis = 0; boxAxis < 3; ++boxAxis)
+    {
+        if (!TestTriangleOBBAxis(a, b, b.Axes[boxAxis], depth, normal))
+        {
+            return false;
+        }
+    }
+    for (int edge = 0; edge < 3; ++edge)
+    {
+        for (int boxAxis = 0; boxAxis < 3; ++boxAxis)
+        {
+            if (!TestTriangleOBBAxis(a, b, VectorUtils::Cross(edges[edge], b.Axes[boxAxis]), depth, normal))
+            {
+                return false;
+            }
+        }
+    }
+    outContact.Normal = normal;
+    outContact.Depth = std::fmaxf(0.0f, depth);
+    outContact.Point = GetSupportPoint(b, -1.0f * normal) + normal * (outContact.Depth * 0.5f);
+    return true;
+}
+
 GeometrySeparation ComputeSeparation(const Capsule& a, const Sphere& b)
 {
     Vector3 pointA;
