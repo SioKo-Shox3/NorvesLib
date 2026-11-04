@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/Procedural/Spring.h"
 
 namespace NorvesLib::Core::Animation::Procedural
 {
@@ -8,12 +9,12 @@ namespace NorvesLib::Core::Animation::Procedural
     {
         Identity Name;
         Container::VariableArray<int32_t> Joints; // 根側→先端側の関節の添字。Joints[0] は固定の根(アニメに従う)。
-        float Stiffness = 0; // アニメ姿勢の位置へ引く強さ [1/s^2]。
-        float Damping = 0; // 速度に比例する減衰 [1/s]。
+        float Stiffness = 80; // アニメ姿勢の位置へ引く強さ [1/s^2]。
+        float Damping = 8; // 速度に比例する減衰 [1/s]。
         Math::Vector3 Gravity; // ワールド空間の重力加速度 [m/s^2]。
         float Drag = 0; // 空気の抗力(速度に比例) [1/s]。
         float Radius = 0; // 当たりの半径 [m]。v1 では使わない(球コライダーは非ゴール)。
-        float RotationLimitDeg = 180; // 関節ごとに重ねる回転の上限 [度]。
+        float RotationLimitDeg = 60; // 関節ごとに重ねる回転の上限 [度]。
     };
 
     struct SpringBoneSettings
@@ -36,7 +37,31 @@ namespace NorvesLib::Core::Animation::Procedural
         bool TryGetParticleWorldPosition(size_t chain, size_t joint, Math::Vector3& out) const;
 
       private:
+        struct ParticleState
+        {
+            Math::Vector3 Position;
+            Math::Vector3 Velocity;
+            Math::Vector3 PreviousPosition;
+            Math::Vector3 AnimationWorld;
+            Math::Vector3 AnimationAngleSpace;
+            Math::Vector3 SimulationAngleSpace;
+            Math::Quaternion AnimationGlobal;
+            Math::Quaternion OriginalLocal;
+        };
+
+        struct ChainState
+        {
+            Container::VariableArray<ParticleState> Particles;
+        };
+
         SpringBoneSettings m_Settings;
+        Container::VariableArray<ChainState> m_Chains;
+        SpringStepAccumulator m_Accumulator;
+        Math::Vector3 m_PreviousOwnerPosition;
+        Math::Vector3 m_WindAcceleration;
+        float m_LastDroppedSeconds = 0;
+        bool m_bInitialized = false;
+        bool m_bResetRequested = false;
     };
 
     // 組み込みの型の表の作り手(type "SpringBone")。
