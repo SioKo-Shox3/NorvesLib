@@ -9602,3 +9602,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
 - Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
 - U1 保存先のパス・原子的な書き込み・読み込みの Platform API と AtomicFileWriteTest: 着地(直し 0 回)
+- U4 NVSV の入れ物と移行の関数の列(U2 の差分を当て、移行を解析木の上の素直な形に簡素化): 着地(直し 1 回)

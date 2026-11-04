@@ -9,6 +9,8 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Save/SaveContainer.cpp
+    Private/Save/SaveMigration.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
@@ -474,6 +476,8 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Save/SaveContainer.h
+    Public/Save/SaveMigration.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
