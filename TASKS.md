@@ -4811,7 +4811,7 @@
   - アプリは起動しない（クックとスクリプトだけで確かめられる）。
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128-P1-P1: トランザクションの祖先と workspace の列挙も読み流しにし、利用者の TEMP のままで管理ストアの試験を通す
-- status: doing
+- status: blocked
 - done-when: `CookManagedTransactionController.cpp` の 2 か所の列挙を、項目をためずに読み流す形に変え、TEMP を差し替えずに `CookManagedUpdateTest` と `TextureManagedCliTest` が通るようにする。祖先や workspace に 16384 を超える項目があっても、`entry_limit` では落ちない。
   - `OpenStore` の祖先の列挙(`N::Enumerate` → `N::Fixed(entries, N::StoreLeaf, ...)`)は、元のタスクが `ObserveLocked` に入れた読み流しの関数を使う。固定名 `StoreLeaf` と、長名か short alias で fold 一致する項目だけを残す。store の制御領域の列挙(`header.json`・`pending` など)は、今の上限のまま変えない。
   - `VerifyClaims` の workspace の列挙は、`index.Roots` の各 `RootLeaf` と、長名か short alias で fold 一致する項目だけを残す。上限は、残した項目にだけ掛ける。
