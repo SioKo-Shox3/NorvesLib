@@ -9543,3 +9543,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 最後の単位の確かめ（Debug の Game・PhysicsDynamicsTest のビルド終了コード 0、ctest 3 本 Passed、`DOG_MOVEMENT_ACCEPTANCE_SELFTEST result=pass cases=5`）。
 - Next: 起動の確かめは後回しで `G4-GR07-DOG-SMOKE-CHECK` が受け持つ（Debug・Release の台本の pass と 3 枚の PNG の所見）。
 - Notes: この差分はまだ評価を通っていない（前の走行の評価者が枠切れ）。
+
+- U1 公開の型と Component の器・モジュールへの登録・窓の開閉: 着地(直し 0 回)
+- U2 GameplayModule::LateTick での 1 フレーム 1 回の評価と配送: 着地(直し 0 回)
+- U3 試験の土台・CMake の登録・CombatLayerTest: 着地(直し 0 回)
+- U5 CombatMultiHitTest: 着地(直し 0 回)
+- U4 CombatFrameRateInvarianceTest: 着地(直し 1 回)
+- U6 CombatLifecycleTest: 着地(直し 1 回)
+
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 2、途中）
+- Done: CombatMultiHitTest・CombatFrameRateInvarianceTest（直接の窓と合成のクリップの窓の両方）・CombatLifecycleTest を入れた。残りは TickStages.md の割当表とタスクの verify（U7）。
+- 決定: 「配送中に足した購読は次の配送から」の「配送」は 1 件の当たりの 1 回の Broadcast と読む（候補ごとに OnHit・OnHurt・OnAnyHit を複製してから Broadcast。AnimatorComponent::ForwardEvent と同じ約束）。フレーム全体で複製を固定すると、配送中に外して破棄した受け手が同じフレームの後の候補で呼ばれるため採らない。同じフレームの後の候補では足した受け手が呼ばれる。
+- Next: U7（TickStages.md と verify の 2 行）。
+- U7 TickStages.md の割当表とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-04 G8-GR16-COMBAT-RUNTIME（run 20261104-132216 の反復 3、完了）
+- Done: `HitboxComponent`・`HurtboxSetComponent`・`AttackProfile`・`CombatHitEvent`（POD）を Gameplay モジュールに足し、`GameplayModule::LateTick` で 1 フレーム 1 回評価する（先頭で `World::UpdateWorldTransforms`、シミュレーションの Transform、`TimeSystem::GetFrameTimes().World` の時間）。窓は `BeginAttack` / `EndAttack` と同じ Entity の `AnimatorComponent::OnEvent`（Name と WindowToken）で開閉し、開くたびに AttackInstanceId を採番、無効化・破棄・最大持続時間で閉じる。再ヒットの方針（OncePerVictim / OncePerPart / Interval）と PerVictimPolicy で間引き、hitbox の登録順 → HurtboxSet の登録順 → 部位の番号で並べ、配る直前に世代付きハンドルで再検証して OnHit → OnHurt → OnAnyHit。faction は 32bit のマスク、自分自身（ActorId）を外す。GameThread 以外を拒否し、Shutdown → Initialize で状態を消す。`Docs/Architecture/TickStages.md` の割当表に 2 型を「群なし（Module Late で評価）」で載せ、フレームの順序の節に評価の時点・時間・配送の順を書いた。試験は CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest を PhysicsDynamicsTest の束に入れた。
+- 証拠: `.harness/runs/20261104-132216/verify-G8-GR16-COMBAT-RUNTIME-U7.txt`（Game・PhysicsDynamicsTest の Debug ビルド ExitCode 0、ctest で PhysicsDynamicsTest・PhysicsLifecycleEventTest・CombatSweepTest・CombatLayerTest・CombatFrameRateInvarianceTest・CombatMultiHitTest・CombatLifecycleTest の 7 件 100% Passed、TickContractTableTest Passed）。
+- Next: ランナーの評価者の反証（Object の寿命・配送中の破棄に触れる危険地帯）。
+- Notes: 起動の要る確かめは無い。関節の束縛・JSON のデータ・DebugDraw・当たりの反応は G8-GR16-JOINT-DATA-RESPONSE、AngelScript への OnHit は GR98。
