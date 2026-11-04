@@ -9703,3 +9703,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API の危険地帯）。個別のモディファイア（傾き・背骨・視線・足 IK・SpringBone・FollowThrough）は後続のタスクで型の表に足す
 - Notes: アプリの起動を要する確かめは無い。型ごとの節は項目の `settings` キーに置く形にした（作り手が `CheckPoseModifierKeys`・`ResolvePoseModifierJoint` で読む）。重みの param は適用のたびに名前で引く（グラフの付け替えでハンドルが変わるため）。配分の空間は、根の親が split の骨格なら RootFrame の回転・それ以外は単位で、`GetJointModelMatrices` が掛けるメッシュの逆変換の前。メッシュに回転があるときは呼び出し側が変換する。ばねの減衰比は (0, 1] で、過減衰は受けない
 - U9 MeshToWorld を所有者のワールド変換にし、メッシュノードの変換を別の欄で渡す（差し戻しの直し）: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR15-POSE-MODIFIER-BASE（run 20261104-190953 の反復 2、差し戻しの直し・完了）
+- Done: `PoseModifierContext::MeshToWorld` を所有者 Entity のワールド変換（`CreateWorldRowVector(position, rotation, scale)`、`SkinnedMeshComponent::TryGetJointWorldMatrix` と同じ式。所有者が無ければ単位）にし、メッシュノードのグローバル変換は新しい欄 `MeshNodeTransform` で渡す。`TestModifierContextDelivery` は所有者に回転・並進・非一様スケールを与え、各関節のモデル行列 × MeshToWorld が `TryGetJointWorldMatrix` と一致することを確かめる形に直した（最大差 0。前の式に戻すと差 1.206 で落ちる）。`AnimationRuntime.md`・`Testing.md` の該当の記述も直した
+- 証拠: `.harness/runs/20261104-190953/verify-G9-GR15-POSE-MODIFIER-BASE-U9.txt`（verify のビルド EXIT=0、ctest 3/3 Passed、直接実行で `PoseModifierBaseTest PASS`・`AnimGraphRuntimeTest PASS`、numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（Public API の危険地帯）
+- Notes: 角度の配分の空間はメッシュノードの逆変換を掛ける前のまま残し、modifier は `MeshNodeTransform` でモデル空間と行き来する（ヘッダと文書に記載）
+- Notes: 要起票: `SetGraph` で別の骨格に付け替えても、設定ファイルから作った modifier（解決済みの関節の添字を持つ）が残る
+- Notes: 要起票: グラフの付け替えで重みの param が無くなると、Apply が毎フレーム false になり、ログも出ないまま姿勢が出なくなる
