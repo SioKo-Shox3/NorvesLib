@@ -9448,3 +9448,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 ZoneSensorComponent・EncounterZoneComponent・EncounterService と GameplayModule への結線: 着地(直し 0 回)
 - U3 EncounterZoneTest: 着地(直し 0 回)
 - U4 TickStages.md の割当表と Testing.md の記載: 着地(直し 0 回)
+- U5 EncounterLifecycleTest・EncounterSerializationTest と最終の確かめ: 着地(直し 1 回)
