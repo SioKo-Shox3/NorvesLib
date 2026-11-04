@@ -280,4 +280,520 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
         return bHit;
     }
+    namespace
+    {
+        struct QueryBounds
+        {
+            double MinX;
+            double MaxX;
+            double MinY;
+            double MinZ;
+            double MaxZ;
+        };
+
+        bool IsFinite(const Math::Vector3& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        bool IsValid(const Math::Sphere& sphere)
+        {
+            return IsFinite(sphere.Center) && std::isfinite(sphere.Radius) && sphere.Radius >= 0.0f;
+        }
+
+        bool IsValid(const Math::Capsule& capsule)
+        {
+            return IsFinite(capsule.PointA) && IsFinite(capsule.PointB)
+                && std::isfinite(capsule.Radius) && capsule.Radius >= 0.0f;
+        }
+
+        bool IsValid(const Math::OBB& box)
+        {
+            return IsFinite(box.Center) && IsFinite(box.HalfExtents)
+                && box.HalfExtents.x >= 0.0f && box.HalfExtents.y >= 0.0f && box.HalfExtents.z >= 0.0f
+                && IsFinite(box.Axes[0]) && IsFinite(box.Axes[1]) && IsFinite(box.Axes[2]);
+        }
+
+        QueryBounds GetBounds(const Math::Sphere& sphere)
+        {
+            return {static_cast<double>(sphere.Center.x) - sphere.Radius,
+                static_cast<double>(sphere.Center.x) + sphere.Radius,
+                static_cast<double>(sphere.Center.y) - sphere.Radius,
+                static_cast<double>(sphere.Center.z) - sphere.Radius,
+                static_cast<double>(sphere.Center.z) + sphere.Radius};
+        }
+
+        QueryBounds GetBounds(const Math::Capsule& capsule)
+        {
+            return {static_cast<double>(std::min(capsule.PointA.x, capsule.PointB.x)) - capsule.Radius,
+                static_cast<double>(std::max(capsule.PointA.x, capsule.PointB.x)) + capsule.Radius,
+                static_cast<double>(std::min(capsule.PointA.y, capsule.PointB.y)) - capsule.Radius,
+                static_cast<double>(std::min(capsule.PointA.z, capsule.PointB.z)) - capsule.Radius,
+                static_cast<double>(std::max(capsule.PointA.z, capsule.PointB.z)) + capsule.Radius};
+        }
+
+        QueryBounds GetBounds(const Math::OBB& box)
+        {
+            const double half[3] = {box.HalfExtents.x, box.HalfExtents.y, box.HalfExtents.z};
+            double x = 0.0;
+            double y = 0.0;
+            double z = 0.0;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                x += std::abs(static_cast<double>(box.Axes[axis].x)) * half[axis];
+                y += std::abs(static_cast<double>(box.Axes[axis].y)) * half[axis];
+                z += std::abs(static_cast<double>(box.Axes[axis].z)) * half[axis];
+            }
+            return {box.Center.x - x, box.Center.x + x, box.Center.y - y, box.Center.z - z, box.Center.z + z};
+        }
+
+        Math::Vector3 QueryOrigin(const Math::Sphere& sphere)
+        {
+            return sphere.Center;
+        }
+
+        Math::Vector3 QueryOrigin(const Math::Capsule& capsule)
+        {
+            return capsule.PointA;
+        }
+
+        Math::Vector3 QueryOrigin(const Math::OBB& box)
+        {
+            return box.Center;
+        }
+
+        Math::Sphere LocalShape(const Math::Sphere& sphere, const Math::Vector3& origin)
+        {
+            return Math::Sphere(sphere.Center - origin, sphere.Radius);
+        }
+
+        Math::Capsule LocalShape(const Math::Capsule& capsule, const Math::Vector3& origin)
+        {
+            return Math::Capsule(capsule.PointA - origin, capsule.PointB - origin, capsule.Radius);
+        }
+
+        Math::OBB LocalShape(const Math::OBB& box, const Math::Vector3& origin)
+        {
+            Math::OBB local = box;
+            local.Center -= origin;
+            return local;
+        }
+
+        Math::Vector3 FaceNormal(const Math::Triangle& triangle)
+        {
+            const Math::Vector3 a = triangle.V1 - triangle.V0;
+            const Math::Vector3 b = triangle.V2 - triangle.V0;
+            double x = static_cast<double>(a.y) * b.z - static_cast<double>(a.z) * b.y;
+            double y = static_cast<double>(a.z) * b.x - static_cast<double>(a.x) * b.z;
+            double z = static_cast<double>(a.x) * b.y - static_cast<double>(a.y) * b.x;
+            const double length = std::hypot(x, y, z);
+            if (!(length > 0.0))
+            {
+                return Math::Vector3(0.0f, 1.0f, 0.0f);
+            }
+            const double sign = y < 0.0 ? -1.0 : 1.0;
+            return Math::Vector3(static_cast<float>(sign * x / length),
+                std::max(static_cast<float>(sign * y / length), std::numeric_limits<float>::denorm_min()),
+                static_cast<float>(sign * z / length));
+        }
+
+        double SignedDistance(const Math::Vector3& point, const Math::Triangle& triangle, const Math::Vector3& normal)
+        {
+            return (static_cast<double>(point.x) - triangle.V0.x) * normal.x
+                + (static_cast<double>(point.y) - triangle.V0.y) * normal.y
+                + (static_cast<double>(point.z) - triangle.V0.z) * normal.z;
+        }
+
+        double CrossXZ(const Math::Vector3& a, const Math::Vector3& b, const Math::Vector3& point)
+        {
+            return (static_cast<double>(b.x) - a.x) * (static_cast<double>(point.z) - a.z)
+                - (static_cast<double>(b.z) - a.z) * (static_cast<double>(point.x) - a.x);
+        }
+
+        bool ContainsXZ(const Math::Triangle& triangle, const Math::Vector3& point)
+        {
+            const double a = CrossXZ(triangle.V0, triangle.V1, point);
+            const double b = CrossXZ(triangle.V1, triangle.V2, point);
+            const double c = CrossXZ(triangle.V2, triangle.V0, point);
+            return (a >= 0.0 && b >= 0.0 && c >= 0.0) || (a <= 0.0 && b <= 0.0 && c <= 0.0);
+        }
+
+        Math::Vector3 GroundReference(const Math::Sphere& sphere, const Math::Triangle&, const Math::Vector3&,
+            float& outExtent)
+        {
+            outExtent = sphere.Radius;
+            return sphere.Center;
+        }
+
+        Math::Vector3 GroundReference(const Math::Capsule& capsule, const Math::Triangle& triangle,
+            const Math::Vector3& normal, float& outExtent)
+        {
+            outExtent = capsule.Radius;
+            return SignedDistance(capsule.PointB, triangle, normal) < SignedDistance(capsule.PointA, triangle, normal)
+                ? capsule.PointB : capsule.PointA;
+        }
+
+        Math::Vector3 GroundReference(const Math::OBB& box, const Math::Triangle&, const Math::Vector3& normal,
+            float& outExtent)
+        {
+            outExtent = std::abs(Math::Vector3::Dot(normal, box.Axes[0])) * box.HalfExtents.x
+                + std::abs(Math::Vector3::Dot(normal, box.Axes[1])) * box.HalfExtents.y
+                + std::abs(Math::Vector3::Dot(normal, box.Axes[2])) * box.HalfExtents.z;
+            return box.Center;
+        }
+
+        template<typename Grid, typename Visitor>
+        void VisitTriangles(const Grid& grid, const QueryBounds& bounds, const Math::Vector3& origin, Visitor&& visitor)
+        {
+            const double minX = (bounds.MinX - grid.FirstX) / grid.Spacing;
+            const double maxX = (bounds.MaxX - grid.FirstX) / grid.Spacing;
+            const double minZ = (bounds.MinZ - grid.FirstZ) / grid.Spacing;
+            const double maxZ = (bounds.MaxZ - grid.FirstZ) / grid.Spacing;
+            if (maxX < 0.0 || maxZ < 0.0 || minX > grid.Columns - 1u || minZ > grid.Rows - 1u)
+            {
+                return;
+            }
+            // 境界に接する升目を両側とも含め、外周では最後の升目へ収める。
+            const uint32_t firstColumn = static_cast<uint32_t>(std::max(0.0, std::ceil(minX) - 1.0));
+            const uint32_t lastColumn = static_cast<uint32_t>(std::min(static_cast<double>(grid.Columns - 2u), std::floor(maxX)));
+            const uint32_t firstRow = static_cast<uint32_t>(std::max(0.0, std::ceil(minZ) - 1.0));
+            const uint32_t lastRow = static_cast<uint32_t>(std::min(static_cast<double>(grid.Rows - 2u), std::floor(maxZ)));
+
+            for (uint32_t bz = firstRow / Grid::kBlockCells; bz <= lastRow / Grid::kBlockCells; ++bz)
+            {
+                for (uint32_t bx = firstColumn / Grid::kBlockCells; bx <= lastColumn / Grid::kBlockCells; ++bx)
+                {
+                    const size_t block = static_cast<size_t>(bz) * grid.BlockColumns + bx;
+                    // 地中を除外しないよう、地表より完全に上にあるブロックだけを捨てる。
+                    if (bounds.MinY > grid.BlockMaxHeight[block])
+                    {
+                        continue;
+                    }
+                    const uint32_t beginRow = std::max(firstRow, bz * Grid::kBlockCells);
+                    const uint32_t endRow = std::min(lastRow, bz * Grid::kBlockCells + Grid::kBlockCells - 1u);
+                    const uint32_t beginColumn = std::max(firstColumn, bx * Grid::kBlockCells);
+                    const uint32_t endColumn = std::min(lastColumn, bx * Grid::kBlockCells + Grid::kBlockCells - 1u);
+                    for (uint32_t row = beginRow; row <= endRow; ++row)
+                    {
+                        for (uint32_t column = beginColumn; column <= endColumn; ++column)
+                        {
+                            // 共有頂点は相対座標を倍精度で作ってから float にし、隣の升目との隙間を避ける。
+                            const float x0 = static_cast<float>((grid.FirstX - origin.x) + column * grid.Spacing);
+                            const float x1 = static_cast<float>((grid.FirstX - origin.x) + (column + 1u) * grid.Spacing);
+                            const float z0 = static_cast<float>((grid.FirstZ - origin.z) + row * grid.Spacing);
+                            const float z1 = static_cast<float>((grid.FirstZ - origin.z) + (row + 1u) * grid.Spacing);
+                            const Math::Vector3 v00(x0, static_cast<float>(static_cast<double>(grid.At(column, row)) - origin.y), z0);
+                            const Math::Vector3 v10(x1, static_cast<float>(static_cast<double>(grid.At(column + 1u, row)) - origin.y), z0);
+                            const Math::Vector3 v01(x0, static_cast<float>(static_cast<double>(grid.At(column, row + 1u)) - origin.y), z1);
+                            const Math::Vector3 v11(x1, static_cast<float>(static_cast<double>(grid.At(column + 1u, row + 1u)) - origin.y), z1);
+                            // 巻き順も上向きにし、最近点が一致した場合の Math の面法線を揃える。
+                            if (UsesMainDiagonal(column, row))
+                            {
+                                visitor(Math::Triangle(v00, v11, v10));
+                                visitor(Math::Triangle(v00, v01, v11));
+                            }
+                            else
+                            {
+                                visitor(Math::Triangle(v00, v01, v10));
+                                visitor(Math::Triangle(v10, v01, v11));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        void StabilizeNormal(const TerrainHeightField&, const Math::Sphere&, const Math::Vector3&,
+            Math::GeometryContact&)
+        {
+        }
+
+        void StabilizeNormal(const TerrainHeightField&, const Math::Capsule&, const Math::Vector3&,
+            Math::GeometryContact&)
+        {
+        }
+
+        void StabilizeNormal(const TerrainHeightField& field, const Math::OBB&, const Math::Vector3& faceNormal,
+            Math::GeometryContact& contact)
+        {
+            if (Math::Vector3::Dot(contact.Normal, faceNormal) < 0.9999f)
+            {
+                const TerrainNormal smooth = field.SampleNormal(contact.Point.x, contact.Point.z, TerrainNormalKind::Smooth);
+                contact.Normal = std::isfinite(smooth.X) && std::isfinite(smooth.Y) && std::isfinite(smooth.Z)
+                    && smooth.Y > 0.0f ? Math::Vector3(smooth.X, smooth.Y, smooth.Z) : faceNormal;
+            }
+        }
+
+        template<typename Grid, typename Shape>
+        uint32_t OverlapGrid(const Grid& grid, const TerrainHeightField& field, const Shape& shape,
+            Container::VariableArray<Math::GeometryContact>& outContacts)
+        {
+            if (!IsValid(shape))
+            {
+                return 0;
+            }
+            const Math::Vector3 origin = QueryOrigin(shape);
+            const Shape local = LocalShape(shape, origin);
+            VisitTriangles(grid, GetBounds(shape), origin, [&](const Math::Triangle& triangle)
+            {
+                const Math::Vector3 faceNormal = FaceNormal(triangle);
+                float extent = 0.0f;
+                const Math::Vector3 reference = GroundReference(local, triangle, faceNormal, extent);
+                const double distance = SignedDistance(reference, triangle, faceNormal);
+                Math::GeometryContact contact;
+                if (distance < 0.0 && ContainsXZ(triangle, reference))
+                {
+                    contact.Normal = faceNormal;
+                    contact.Depth = static_cast<float>(-distance + extent);
+                    contact.Point = reference - faceNormal * static_cast<float>(distance) + origin;
+                }
+                else
+                {
+                    if (!Math::ComputeContact(triangle, local, contact))
+                    {
+                        return;
+                    }
+                    contact.Point += origin;
+                    StabilizeNormal(field, local, faceNormal, contact);
+                    if (!(contact.Normal.y > 0.0f))
+                    {
+                        contact.Normal = faceNormal;
+                    }
+                }
+                outContacts.push_back(contact);
+            });
+            return static_cast<uint32_t>(outContacts.size());
+        }
+
+        Math::GeometrySweepHit SweepTriangle(const Math::Sphere& shape, const Math::Triangle& triangle,
+            const Math::Vector3& direction, float maxDistance, const Math::GeometrySweepSettings& settings)
+        {
+            return Math::SweepSphere(shape, triangle, direction, maxDistance, settings);
+        }
+
+        Math::GeometrySweepHit SweepTriangle(const Math::Capsule& shape, const Math::Triangle& triangle,
+            const Math::Vector3& direction, float maxDistance, const Math::GeometrySweepSettings& settings)
+        {
+            return Math::SweepCapsule(shape, triangle, direction, maxDistance, settings);
+        }
+
+        template<typename Shape>
+        bool SweepSolid(const Shape& shape, const Math::Triangle& triangle, const Math::Vector3& normal,
+            const Math::Vector3& direction, float maxDistance, Math::GeometrySweepHit& outHit)
+        {
+            float extent = 0.0f;
+            const Math::Vector3 reference = GroundReference(shape, triangle, normal, extent);
+            const Math::Vector3 vertices[3] = {triangle.V0, triangle.V1, triangle.V2};
+            const double area = CrossXZ(vertices[0], vertices[1], vertices[2]);
+            if (area == 0.0)
+            {
+                return false;
+            }
+            const double sign = area > 0.0 ? 1.0 : -1.0;
+            double begin = 0.0;
+            double end = maxDistance;
+            // 地中で格子の外から入る場合も、射影が三角形に入る最初の距離で接触する。
+            for (int index = 0; index < 3; ++index)
+            {
+                const Math::Vector3& a = vertices[index];
+                const Math::Vector3& b = vertices[(index + 1) % 3];
+                const double value = sign * CrossXZ(a, b, reference);
+                const double rate = sign * ((static_cast<double>(b.x) - a.x) * direction.z
+                    - (static_cast<double>(b.z) - a.z) * direction.x);
+                if (rate == 0.0)
+                {
+                    if (value < 0.0)
+                    {
+                        return false;
+                    }
+                }
+                else if (rate > 0.0)
+                {
+                    begin = std::max(begin, -value / rate);
+                }
+                else
+                {
+                    end = std::min(end, -value / rate);
+                }
+            }
+            if (begin > end)
+            {
+                return false;
+            }
+            const double distance = SignedDistance(reference, triangle, normal);
+            const double rate = static_cast<double>(normal.x) * direction.x
+                + static_cast<double>(normal.y) * direction.y + static_cast<double>(normal.z) * direction.z;
+            if (distance + rate * begin >= 0.0)
+            {
+                if (rate >= 0.0)
+                {
+                    return false;
+                }
+                begin = std::max(begin, -distance / rate);
+                if (begin > end)
+                {
+                    return false;
+                }
+            }
+            const float hitDistance = static_cast<float>(begin);
+            const Math::Vector3 hitReference = reference + direction * hitDistance;
+            const double hitPlaneDistance = distance + rate * begin;
+            outHit.Result = Math::EGeometrySweepResult::Hit;
+            outHit.Distance = hitDistance;
+            outHit.Normal = normal;
+            outHit.Depth = static_cast<float>(std::max(0.0, -hitPlaneDistance + extent));
+            outHit.Point = hitReference - normal * static_cast<float>(hitPlaneDistance);
+            return true;
+        }
+
+        template<typename Grid, typename Shape>
+        bool SweepGrid(const Grid& grid, const TerrainHeightField& field, const Shape& shape,
+            const Math::Vector3& direction, float maxDistance, Math::GeometrySweepHit& outHit)
+        {
+            if (!IsValid(shape) || !IsFinite(direction) || !std::isfinite(maxDistance) || maxDistance < 0.0f)
+            {
+                return false;
+            }
+            const double length = std::sqrt(static_cast<double>(direction.x) * direction.x
+                + static_cast<double>(direction.y) * direction.y + static_cast<double>(direction.z) * direction.z);
+            if (maxDistance > 0.0f && !(length > 0.0))
+            {
+                return false;
+            }
+            Container::VariableArray<Math::GeometryContact> contacts;
+            if (OverlapGrid(grid, field, shape, contacts) > 0)
+            {
+                const Math::GeometryContact* deepest = &contacts[0];
+                for (const Math::GeometryContact& contact : contacts)
+                {
+                    if (contact.Depth > deepest->Depth)
+                    {
+                        deepest = &contact;
+                    }
+                }
+                Math::GeometrySweepHit hit;
+                hit.Result = Math::EGeometrySweepResult::Hit;
+                hit.Point = deepest->Point;
+                hit.Normal = deepest->Normal;
+                hit.Depth = deepest->Depth;
+                hit.bStartPenetrating = true;
+                outHit = hit;
+                return true;
+            }
+            if (maxDistance == 0.0f)
+            {
+                return false;
+            }
+            const Math::Vector3 unit(static_cast<float>(direction.x / length), static_cast<float>(direction.y / length),
+                static_cast<float>(direction.z / length));
+            QueryBounds bounds = GetBounds(shape);
+            const double dx = static_cast<double>(unit.x) * maxDistance;
+            const double dy = static_cast<double>(unit.y) * maxDistance;
+            const double dz = static_cast<double>(unit.z) * maxDistance;
+            bounds.MinX += std::min(0.0, dx);
+            bounds.MaxX += std::max(0.0, dx);
+            bounds.MinY += std::min(0.0, dy);
+            bounds.MinZ += std::min(0.0, dz);
+            bounds.MaxZ += std::max(0.0, dz);
+
+            const Math::Vector3 origin = QueryOrigin(shape);
+            const Shape local = LocalShape(shape, origin);
+            Math::GeometrySweepSettings settings;
+            settings.MaxIterations = 64;
+            Math::GeometrySweepHit closest;
+            Math::GeometrySweepHit uncertain;
+            bool bHit = false;
+            bool bUncertain = false;
+            bool bInvalid = false;
+            VisitTriangles(grid, bounds, origin, [&](const Math::Triangle& triangle)
+            {
+                const Math::Vector3 faceNormal = FaceNormal(triangle);
+                Math::GeometrySweepHit candidate = SweepTriangle(local, triangle, direction, maxDistance, settings);
+                if (candidate.Result == Math::EGeometrySweepResult::InvalidArgument)
+                {
+                    bInvalid = true;
+                }
+                else if (candidate.Result == Math::EGeometrySweepResult::Hit
+                    || candidate.Result == Math::EGeometrySweepResult::IterationLimit)
+                {
+                    candidate.Point += origin;
+                    if (!(candidate.Normal.y > 0.0f))
+                    {
+                        candidate.Normal = faceNormal;
+                    }
+                    if (candidate.Result == Math::EGeometrySweepResult::Hit)
+                    {
+                        if (!bHit || candidate.Distance < closest.Distance)
+                        {
+                            closest = candidate;
+                            bHit = true;
+                        }
+                    }
+                    else if (!bUncertain || candidate.Distance < uncertain.Distance)
+                    {
+                        uncertain = candidate;
+                        bUncertain = true;
+                    }
+                }
+
+                Math::GeometrySweepHit solid;
+                if (SweepSolid(local, triangle, faceNormal, unit, maxDistance, solid)
+                    && (!bHit || solid.Distance < closest.Distance))
+                {
+                    solid.Point += origin;
+                    closest = solid;
+                    bHit = true;
+                }
+            });
+            if (bInvalid)
+            {
+                outHit = Math::GeometrySweepHit{};
+                outHit.Result = Math::EGeometrySweepResult::InvalidArgument;
+                return false;
+            }
+            if (bUncertain && (!bHit || uncertain.Distance < closest.Distance))
+            {
+                outHit = uncertain;
+                return false;
+            }
+            if (bHit)
+            {
+                outHit = closest;
+            }
+            return bHit;
+        }
+    } // namespace
+
+    uint32_t TerrainHeightField::OverlapSphere(const Math::Sphere& sphere,
+        Container::VariableArray<Math::GeometryContact>& outContacts) const
+    {
+        outContacts.clear();
+        return m_Grid ? OverlapGrid(*m_Grid, *this, sphere, outContacts) : 0u;
+    }
+
+    uint32_t TerrainHeightField::OverlapCapsule(const Math::Capsule& capsule,
+        Container::VariableArray<Math::GeometryContact>& outContacts) const
+    {
+        outContacts.clear();
+        return m_Grid ? OverlapGrid(*m_Grid, *this, capsule, outContacts) : 0u;
+    }
+
+    uint32_t TerrainHeightField::OverlapBox(const Math::OBB& box,
+        Container::VariableArray<Math::GeometryContact>& outContacts) const
+    {
+        outContacts.clear();
+        return m_Grid ? OverlapGrid(*m_Grid, *this, box, outContacts) : 0u;
+    }
+
+    bool TerrainHeightField::SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction,
+        float maxDistance, Math::GeometrySweepHit& outHit) const
+    {
+        return m_Grid && SweepGrid(*m_Grid, *this, sphere, direction, maxDistance, outHit);
+    }
+
+    bool TerrainHeightField::SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction,
+        float maxDistance, Math::GeometrySweepHit& outHit) const
+    {
+        return m_Grid && SweepGrid(*m_Grid, *this, capsule, direction, maxDistance, outHit);
+    }
 } // namespace NorvesLib::Core::Rendering::Terrain

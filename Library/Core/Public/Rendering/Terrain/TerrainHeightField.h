@@ -230,6 +230,23 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 原点がフットプリント内で地表より下なら距離 0・零法線。手続きの作り方・零方向・不正な距離は false
         bool Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit) const;
 
+        /// 格子の各三角形との接触を outContacts に入れ、件数を返す。呼ぶたびに配列を空にする。
+        /// 地表の下は固体とし、法線は地形から形へ向く上向きの単位ベクトル。球とカプセルは辺・頂点でも最近点の法線を使う。
+        /// 箱の面法線と揃わない接触は滑らかな地形法線にする。接触点が格子外なら面法線を使う。
+        /// 手続きの作り方では 0。形の値は有限、半径・半長は非負、箱の軸は正規直交であること
+        uint32_t OverlapSphere(const Math::Sphere& sphere, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        uint32_t OverlapCapsule(const Math::Capsule& capsule, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        uint32_t OverlapBox(const Math::OBB& box, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+
+        /// 格子の地形に向けて形を並進掃引する。向きは正規化し、距離は m、法線は地形から形へ上向き。
+        /// 始点で接触・地中への侵入があれば最も深い接触を距離 0・bStartPenetrating で返す。
+        /// 最小距離を確定できない IterationLimit は false を返し、outHit に未確定の安全側の位置を残す。
+        /// 手続きの作り方・不正な入力・接触なしは false。距離 0 では零方向も許す
+        bool SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit) const;
+        bool SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit) const;
+
         /// 格子から作ったか
         bool IsGrid() const
         {
