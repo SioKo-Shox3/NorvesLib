@@ -1,0 +1,13 @@
+{
+  "freeLoadG": 1.5,
+  "panicLoadG": 4.0,
+  "baseDrainPerSecond": 0.02,
+  "loadDrainPerSecond": 0.25,
+  "recoveryPerSecond": 0.1,
+  "smoothingSeconds": 0.1,
+  "tensionWeight": 1.0,
+  "accelerationWeight": 0.0,
+  "maxSubsteps": 8,
+  "maxLoadG": 10.0,
+  "swingDampingPerSecond": 0.5
+}
