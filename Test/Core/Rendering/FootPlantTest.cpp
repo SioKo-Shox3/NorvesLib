@@ -143,7 +143,7 @@ namespace
         double Time = 0.0;
         float Offset = 0.0f;
 
-        explicit Fixture(bool bPlant = true, bool bEvents = true)
+        explicit Fixture(bool bPlant = true, bool bEvents = true, bool bSplitWindow = false)
         {
             Require(Registry.Initialize(), "Registry の初期化");
             Skeleton = Registry.CreateTransient<SkeletonResource>("FootPlantSkeleton");
@@ -228,8 +228,10 @@ namespace
             if (bEvents)
             {
                 Animation::ClipMetadataReport report;
-                Require(Clip->ApplyMetadataJson(Container::String(
-                    R"({"events":[{"name":"Foot.Left.Down","t":0.0,"end":0.5}]})"), report),
+                const char* metadata = bSplitWindow
+                    ? R"({"events":[{"name":"Foot.Left.Down","t":0.0,"end":0.25},{"name":"Foot.Left.Down","t":0.25,"end":0.5}]})"
+                    : R"({"events":[{"name":"Foot.Left.Down","t":0.0,"end":0.5}]})";
+                Require(Clip->ApplyMetadataJson(Container::String(metadata), report),
                     "接地の窓イベントの読み込み");
             }
             Asset->SetClipResources(Mesh, Skeleton, {Clip});
@@ -327,9 +329,13 @@ namespace
         Fixture planted;
         Fixture disabled(false);
         Fixture threshold(true, false);
+        Fixture splitWindow(true, true, true);
         Settle(planted);
         Settle(disabled);
         Settle(threshold);
+        Settle(splitWindow);
+        Math::Vector3 previousSplit = splitWindow.Position();
+        double maximumSplit = 0.0;
         Math::Vector3 previous[3] = {planted.Position(), disabled.Position(), threshold.Position()};
         double maximum[3] = {};
         double maximumLift = 0.0;
@@ -340,6 +346,8 @@ namespace
             planted.Tick();
             disabled.Tick();
             threshold.Tick();
+            splitWindow.Tick();
+            const Math::Vector3 currentSplit = splitWindow.Position();
             const Math::Vector3 current[3] = {planted.Position(), disabled.Position(), threshold.Position()};
             const int phaseFrame = frame % 60;
             // 入ったフレームと離地のフレームを除く、窓の内部を全て調べる。
@@ -349,8 +357,13 @@ namespace
                       planted.IsPlanted() ? 1.0 : 0.0, 1.0);
                 Check(threshold.IsPlanted(), "A: イベントなしでもしきい値駆動で固定する", frame,
                       threshold.IsPlanted() ? 1.0 : 0.0, 1.0);
+                Check(splitWindow.IsPlanted(), "G: 分割した窓の間は固定を保つ", frame,
+                      splitWindow.IsPlanted() ? 1.0 : 0.0, 1.0);
                 if (phaseFrame >= 2)
                 {
+                    const double splitMovement = Horizontal(currentSplit, previousSplit);
+                    maximumSplit = std::max(maximumSplit, splitMovement);
+                    CheckWithin(splitMovement, 0.002, "G: 分割した窓の足滑り", frame);
                     ++samples;
                     for (int i = 0; i < 3; ++i)
                     {
@@ -371,6 +384,7 @@ namespace
             }
             if (phaseFrame == 31)
             {
+                Check(!splitWindow.IsPlanted(), "G: 分割した窓の終端で Swing へ戻る", frame, splitWindow.IsPlanted() ? 1.0 : 0.0, 0.0);
                 Check(!planted.IsPlanted(), "C: 窓の End が離地を伝える", frame,
                       planted.IsPlanted() ? 1.0 : 0.0, 0.0);
             }
@@ -383,6 +397,7 @@ namespace
                 maximumLift = std::max(maximumLift, lift);
                 ++swingSamples;
             }
+            previousSplit = currentSplit;
             for (int i = 0; i < 3; ++i)
             {
                 previous[i] = current[i];
@@ -394,6 +409,7 @@ namespace
         std::printf("FootPlantTest A: 最大水平移動[m/フレーム] イベント=%.9g 固定なし=%.9g しきい値=%.9g 標本=%d\n",
                     maximum[0], maximum[1], maximum[2], samples);
         std::printf("FootPlantTest C: 最大持ち上がり[m]=%.9g\n", maximumLift);
+        std::printf("FootPlantTest G: 分割した窓の最大水平移動[m/フレーム]=%.9g\n", maximumSplit);
     }
 
     void CheckStretchRelease()

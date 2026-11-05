@@ -783,14 +783,33 @@ namespace NorvesLib::Core::Animation
                 state.PlantInput.DeltaSeconds = dt;
                 if (m_Settings.bPlantEnabled)
                 {
+                    // 脚に関係する最後の一件だけを採り、連続する窓の境界でも固定位置を保つ。
+                    const AnimEventInfo* latestEvent = nullptr;
+                    bool bLatestDown = false;
                     for (const auto& event : context.PendingEvents)
                     {
                         const bool bStart = event.Kind == AnimEventKind::Point || event.Kind == AnimEventKind::Begin;
-                        state.PlantInput.bDownEvent = state.PlantInput.bDownEvent ||
-                                                      (event.Name == leg.DownEvent && bStart);
-                        state.PlantInput.bUpEvent = state.PlantInput.bUpEvent ||
-                            (event.Name == leg.UpEvent && bStart) ||
-                            (event.Name == leg.DownEvent && event.Kind == AnimEventKind::End);
+                        const bool bDown = event.Name == leg.DownEvent && bStart;
+                        const bool bUp = (event.Name == leg.UpEvent && bStart) ||
+                                        (event.Name == leg.DownEvent && event.Kind == AnimEventKind::End);
+                        if (!bDown && !bUp)
+                        {
+                            continue;
+                        }
+                        if (!latestEvent || event.Batch > latestEvent->Batch ||
+                            (event.Batch == latestEvent->Batch &&
+                             (event.OffsetSeconds > latestEvent->OffsetSeconds ||
+                              (event.OffsetSeconds == latestEvent->OffsetSeconds &&
+                               event.Sequence > latestEvent->Sequence))))
+                        {
+                            latestEvent = &event;
+                            bLatestDown = bDown;
+                        }
+                    }
+                    if (latestEvent)
+                    {
+                        state.PlantInput.bDownEvent = bLatestDown;
+                        state.PlantInput.bUpEvent = !bLatestDown;
                     }
                 }
                 FootPlantOutput plantOutput;

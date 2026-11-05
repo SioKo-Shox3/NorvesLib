@@ -9910,3 +9910,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API の `PoseModifier.h`・`AnimationEvents.h`・`FootIKModifier.h` に触れた）。
 - Notes: `plant` を書かない設定でも着地の重みは掛かる。駆動信号が無ければ接地中とみなすので既存の振る舞いは変わらないが、`SetDriveSignals` で `bGrounded=false` を渡すと足 IK の重みは 0 になる。
 - Notes: しきい値駆動は、一度でもその脚のイベントを受けるとテレポートか Reset までイベント駆動のまま。接地の PhaseMarker から `Foot.<脚>.Down` を出す処理は GR11 の範囲で、ここでは名前を設定で受けるだけ。
+- U6 同じフレームに窓の End と次の窓の Begin が来ても固定を保つ（差し戻しの直し）: 着地(直し 0 回)
