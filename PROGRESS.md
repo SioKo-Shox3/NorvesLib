@@ -10250,3 +10250,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 Gameplay にマーカーの Component・一括登録・検証・Catmull-Rom を足す: 着地(直し 0 回)
 - U1 Core に LevelSnap（地面への吸着・全対象の吸着し直し・離れの検査）を足す: 着地(直し 0 回)
 - U5 LevelSnap の離れの検査の不正な入力の扱いと冪等の前提を直す: 着地(直し 0 回)
+- U3 GameplayMarkerSchemaTest を足す: 着地(直し 0 回)
