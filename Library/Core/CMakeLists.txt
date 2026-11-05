@@ -242,6 +242,8 @@ set(PRIVATE_SOURCES
     Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
+    Private/Scene/MapTransform.cpp
+    Private/Scene/MapCapturePlan.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
@@ -661,6 +663,8 @@ set(PUBLIC_HEADERS
     Public/Scene/PhysicsQueryTypes.h
     Public/Scene/PhysicsLayerTable.h
     Public/Scene/SceneSerializer.h
+    Public/Scene/MapTransform.h
+    Public/Scene/MapCapturePlan.h
     # Module
     Public/Module/ModuleExport.h
     Public/Module/IModule.h

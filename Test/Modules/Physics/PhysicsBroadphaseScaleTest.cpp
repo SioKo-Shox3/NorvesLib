@@ -195,7 +195,7 @@ namespace
         return false;
     }
 
-    size_t TestPairs(const Proxies& proxies)
+    size_t TestPairs(const Proxies& proxies, uint64_t firstRebuildCount = 0)
     {
         size_t layerRejected = 0;
         const auto expected = ReferencePairs(proxies, layerRejected);
@@ -215,7 +215,11 @@ namespace
             broadphase.SetProxies(reordered);
             ComparePairs(broadphase.GetCandidatePairs(), expected);
             assert(broadphase.GetStats().CandidatePairCount == expected.size());
-            assert(broadphase.GetStats().TreeRebuildCount == 0);
+            const auto& stats = broadphase.GetStats();
+            std::cout << "組の入力順=" << order << "、再構築=" << stats.TreeRebuildCount
+                << "、狭域判定=" << stats.NarrowPhaseTestCount << "、探索=" << stats.ProxyLookupCount
+                << "、候補=" << stats.CandidatePairCount << std::endl;
+            assert(stats.TreeRebuildCount == (order == 0 ? firstRebuildCount : 0));
         }
         std::cout << "候補の組=" << expected.size() << "、層で除外=" << layerRejected << "、入力順3通りで一致\n";
         return expected.size();
@@ -331,6 +335,246 @@ namespace
         std::cout << "光線200本と同距離1本、各形状の重なり100回が総当たりと一致\n";
     }
 
+    void CompareQueryHits(const Container::VariableArray<PhysicsQueryHit>& actual,
+        const Container::VariableArray<PhysicsQueryHit>& expected)
+    {
+        assert(actual.size() == expected.size());
+        for (size_t index = 0; index < actual.size(); ++index)
+        {
+            const auto& a = actual[index];
+            const auto& e = expected[index];
+            assert(a.Collider == e.Collider && a.Distance == e.Distance);
+            assert(a.Point == e.Point && a.Normal == e.Normal);
+        }
+    }
+
+    void TestSweeps(const Proxies& proxies)
+    {
+        PhysicsBroadphase broadphase;
+        broadphase.SetProxies(proxies);
+        RandomSource random{0x7513cdf2u};
+        size_t hitCounts[2]{};
+        for (uint32_t index = 0; index < 100; ++index)
+        {
+            // 重なり問い合わせと同じく、既存形状の中心と乱数の起点を交互に使う。
+            const auto origin = index % 2 == 0 ? proxies[index].Sphere.Center : random.Position(25);
+            PhysicsQueryDesc query;
+            query.Direction = random.Position(1);
+            query.MaxDistance = 30;
+            query.MaxHits = static_cast<uint32_t>(proxies.size());
+            query.Sphere = Math::Sphere(origin, random.Range(.5f, 3));
+            query.Capsule = random.Capsule(origin);
+            for (uint32_t shape = 0; shape < 2; ++shape)
+            {
+                query.Kind = shape == 0 ? EPhysicsQueryKind::SweepSphere : EPhysicsQueryKind::SweepCapsule;
+                Container::VariableArray<PhysicsQueryHit> expected;
+                for (const auto& proxy : proxies)
+                {
+                    PhysicsQueryHit hit;
+                    const auto result = PhysicsBroadphase::QueryProxy(proxy, query, hit);
+                    assert(result == Result::Success || result == Result::NoHit);
+                    if (result == Result::Success)
+                    {
+                        expected.push_back(hit);
+                    }
+                }
+                std::sort(expected.begin(), expected.end(), [](const auto& a, const auto& b)
+                {
+                    return a.Distance < b.Distance || (a.Distance == b.Distance && a.Collider < b.Collider);
+                });
+                Container::VariableArray<PhysicsQueryHit> actual;
+                const auto result = broadphase.ExecuteQuery(query, actual);
+                assert(result == (expected.empty() ? Result::NoHit : Result::Success));
+                CompareQueryHits(actual, expected);
+                hitCounts[shape] += actual.size();
+            }
+        }
+        assert(hitCounts[0] > 0 && hitCounts[1] > 0);
+        std::cout << "球・カプセルの掃引各100回が総当たりと完全一致、当たり="
+            << hitCounts[0] << "/" << hitCounts[1] << std::endl;
+    }
+
+    void CompareTreeNodes(const StaticAabbTree& actual, const StaticAabbTree& expected)
+    {
+        const auto& actualNodes = actual.GetNodes();
+        const auto& expectedNodes = expected.GetNodes();
+        assert(!actualNodes.empty() && actualNodes.size() == expectedNodes.size());
+        for (size_t index = 0; index < actualNodes.size(); ++index)
+        {
+            const auto& a = actualNodes[index];
+            const auto& e = expectedNodes[index];
+            assert(a.Bounds.Min == e.Bounds.Min && a.Bounds.Max == e.Bounds.Max);
+            assert(a.First == e.First && a.Count == e.Count);
+            assert(a.Count <= 4);
+            if (a.Count != 0)
+            {
+                assert(a.First + a.Count <= actual.GetItems().size());
+            }
+        }
+    }
+
+    void TestStaticTreeDeterminism(const Proxies& proxies)
+    {
+        Proxies staticProxies;
+        for (const auto& proxy : proxies)
+        {
+            if (proxy.bStatic)
+            {
+                staticProxies.push_back(proxy);
+            }
+        }
+        assert(staticProxies.size() >= 1000);
+        Container::VariableArray<Math::AABB> bounds;
+        Container::VariableArray<ColliderHandle> handles;
+        for (const auto& proxy : staticProxies)
+        {
+            bounds.push_back(PhysicsBroadphase::CalculateBounds(proxy));
+            handles.push_back(proxy.Collider);
+        }
+        StaticAabbTree original;
+        original.Build({bounds.data(), bounds.size()}, {handles.data(), handles.size()});
+        StaticAabbTree rebuilt;
+        rebuilt.Build({bounds.data(), bounds.size()}, {handles.data(), handles.size()});
+        CompareTreeNodes(rebuilt, original);
+        assert(rebuilt.GetItems().size() == original.GetItems().size());
+        for (size_t index = 0; index < original.GetItems().size(); ++index)
+        {
+            assert(handles[rebuilt.GetItems()[index]] == handles[original.GetItems()[index]]);
+        }
+        Shuffle(staticProxies, 0x8642ace1u);
+        bounds.clear();
+        Container::VariableArray<ColliderHandle> shuffledHandles;
+        for (const auto& proxy : staticProxies)
+        {
+            bounds.push_back(PhysicsBroadphase::CalculateBounds(proxy));
+            shuffledHandles.push_back(proxy.Collider);
+        }
+        rebuilt.Build({bounds.data(), bounds.size()}, {shuffledHandles.data(), shuffledHandles.size()});
+        CompareTreeNodes(rebuilt, original);
+        assert(rebuilt.GetItems().size() == original.GetItems().size());
+        for (size_t index = 0; index < original.GetItems().size(); ++index)
+        {
+            assert(shuffledHandles[rebuilt.GetItems()[index]] == handles[original.GetItems()[index]]);
+        }
+
+        PhysicsBroadphase first;
+        PhysicsBroadphase second;
+        first.SetProxies(proxies);
+        Proxies reordered = proxies;
+        Shuffle(reordered, 0x8642ace1u);
+        second.SetProxies(reordered);
+        assert(first.GetStaticTree() != nullptr && second.GetStaticTree() != nullptr);
+        assert(first.GetStaticTree()->GetItems().size() >= 1000);
+        CompareTreeNodes(*second.GetStaticTree(), *first.GetStaticTree());
+        assert(first.GetStaticTree()->GetItems().size() == second.GetStaticTree()->GetItems().size());
+        for (size_t index = 0; index < first.GetStaticTree()->GetItems().size(); ++index)
+        {
+            assert(first.GetStaticTree()->GetItems()[index] == second.GetStaticTree()->GetItems()[index]);
+        }
+        RandomSource random{0x7513cdf2u};
+        size_t rayHits = 0, overlapHits = 0;
+        for (uint32_t index = 0; index < 100; ++index)
+        {
+            const auto origin = random.Position(30);
+            PhysicsQueryDesc query;
+            query.Kind = EPhysicsQueryKind::RaycastAll;
+            query.Ray = Math::Ray(origin, index % 2 == 0
+                ? proxies[index].Sphere.Center - origin : random.Position(1));
+            query.MaxDistance = 150;
+            query.MaxHits = static_cast<uint32_t>(proxies.size());
+            Container::VariableArray<PhysicsQueryHit> firstHits, secondHits;
+            const auto rayResult = first.ExecuteQuery(query, firstHits);
+            assert(rayResult == Result::Success || rayResult == Result::NoHit);
+            assert(second.ExecuteQuery(query, secondHits) == rayResult);
+            CompareQueryHits(secondHits, firstHits);
+            rayHits += firstHits.size();
+            query.Kind = EPhysicsQueryKind::OverlapSphere;
+            const auto center = index % 2 == 0 ? proxies[index].Sphere.Center : random.Position(25);
+            query.Sphere = Math::Sphere(center, random.Range(.5f, 3));
+            const auto overlapResult = first.ExecuteQuery(query, firstHits);
+            assert(overlapResult == Result::Success || overlapResult == Result::NoHit);
+            assert(second.ExecuteQuery(query, secondHits) == overlapResult);
+            CompareQueryHits(secondHits, firstHits);
+            overlapHits += firstHits.size();
+        }
+        assert(rayHits > 0 && overlapHits > 0);
+        std::cout << "静的木の同一入力・Shuffle・SetProxiesの決定性が一致、葉は4項目以下、項目="
+            << original.GetItems().size() << "、節=" << original.GetNodes().size()
+            << "、光線の当たり=" << rayHits << "、重なり=" << overlapHits << std::endl;
+    }
+
+    void TestModuleStaticScale(IPhysicsModule* physics, Engine::Engine& engine)
+    {
+        World world;
+        world.Initialize();
+        Entity* movedEntity = nullptr;
+        ColliderHandle movedHandle;
+        for (uint32_t index = 0; index < 5000; ++index)
+        {
+            auto* entity = world.SpawnEntity<Entity>();
+            assert(entity != nullptr);
+            const Math::Vector3 position(4.0f * (index % 100), 4.0f * (index / 100), 0);
+            assert(position.LengthSquared() < 4000.0f * 4000.0f);
+            entity->SetWorldTransform(Math::Transform(position));
+            auto* collider = world.CreateComponent<ColliderComponent>(entity);
+            assert(collider != nullptr && collider->SetSphere(1) == EPhysicsResult::Success);
+            movedEntity = entity;
+            movedHandle = collider->GetColliderHandle();
+        }
+        for (uint32_t index = 0; index < 50; ++index)
+        {
+            auto* entity = world.SpawnEntity<Entity>();
+            assert(entity != nullptr);
+            // AABB は近傍の静的と重なるが、球同士は接触せず解決による移動がない。
+            entity->SetWorldTransform(Math::Transform(Math::Vector3(8.0f * index + 2, 1.9f, 0)));
+            auto* collider = world.CreateComponent<ColliderComponent>(entity);
+            auto* body = world.CreateComponent<RigidBodyComponent>(entity);
+            assert(collider != nullptr && body != nullptr);
+            assert(collider->SetSphere(1.1f) == EPhysicsResult::Success);
+            assert(body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
+            assert(body->SetGravityScale(0) == EPhysicsResult::Success);
+            assert(body->SetLinearVelocity(Math::Vector3()) == EPhysicsResult::Success);
+        }
+        for (uint32_t step = 0; step < 5; ++step)
+        {
+            if (step == 3)
+            {
+                movedEntity->SetWorldTransform(Math::Transform(Math::Vector3(-100, -100, 0)));
+            }
+            physics->StepPreFixed(1.0f / 60.0f);
+            physics->StepFixed(1.0f / 60.0f);
+            const auto& working = PhysicsModuleTestAccess::GetWorkingBroadphaseStats(*physics);
+            const auto& published = PhysicsModuleTestAccess::GetPublishedBroadphaseStats(*physics);
+            std::cout << "静的5000・動的50、ステップ=" << step << "、再構築=" << working.TreeRebuildCount
+                << "、公開再構築=" << published.TreeRebuildCount << "、狭域判定=" << working.NarrowPhaseTestCount
+                << "、探索=" << working.ProxyLookupCount << "、候補=" << working.CandidatePairCount << std::endl;
+            assert(working.TreeRebuildCount == (step == 0 || step == 3 ? 1u : 0u));
+            assert(published.TreeRebuildCount == 0);
+            const auto* tree = PhysicsModuleTestAccess::GetWorkingStaticTree(*physics);
+            assert(tree != nullptr && tree->GetItems().size() == 5000);
+            assert(PhysicsModuleTestAccess::GetPublishedStaticTree(*physics) == tree);
+            const auto& workingProxies = PhysicsModuleTestAccess::GetWorkingProxies(*physics);
+            assert(workingProxies.size() == 5050);
+            assert(working.CandidatePairCount > 0);
+            assert(working.NarrowPhaseTestCount <= 50 * 16);
+            assert(working.ProxyLookupCount <= working.CandidatePairCount * std::log2(static_cast<double>(workingProxies.size())));
+            if (step >= 3)
+            {
+                PhysicsShapeProxy movedProxy;
+                assert(PhysicsModuleTestAccess::CopyPublishedProxy(*physics, movedHandle, movedProxy));
+                assert(movedProxy.bStatic && movedProxy.Sphere.Center == Math::Vector3(-100, -100, 0));
+                PhysicsQueryDesc query;
+                query.Kind = EPhysicsQueryKind::RaycastClosest;
+                query.Ray = Math::Ray(Math::Vector3(-105, -100, 0), Math::Vector3::UnitX);
+                query.MaxDistance = 10;
+                Container::VariableArray<PhysicsQueryHit> hits;
+                assert(engine.GetSceneQuery().ExecuteQuery(query, hits) == Result::Success);
+                assert(hits.size() == 1 && hits[0].Collider == movedHandle && hits[0].Distance == 4);
+            }
+        }
+        world.Finalize();
+    }
+
     void CheckModuleCase(IPhysicsModule& physics, EPhysicsBodyType bodyType, bool bTrigger, Mobility expectedMobility)
     {
         World world;
@@ -380,6 +624,7 @@ namespace
         CheckModuleCase(*physics, EPhysicsBodyType::Kinematic, false, Mobility::Kinematic);
         CheckModuleCase(*physics, EPhysicsBodyType::Dynamic, false, Mobility::Dynamic);
         CheckModuleCase(*physics, EPhysicsBodyType::Kinematic, true, Mobility::Trigger);
+        TestModuleStaticScale(physics, *engine);
         registry.ShutdownAll(*engine);
         std::cout << "モジュール経由のKinematic・Static・Dynamic・Triggerと組の方針が一致\n";
     }
@@ -441,6 +686,16 @@ int main(int argumentCount, char** arguments)
     assert(TestPairs(mixed) < unspecifiedPairs);
     TestQueries(proxies);
     TestQueries(mixed);
+    Proxies staticMixed = mixed;
+    for (auto& proxy : staticMixed)
+    {
+        proxy.bStatic = proxy.Mobility == Mobility::Static || proxy.Mobility == Mobility::Trigger;
+    }
+    TestPairs(staticMixed, 1);
+    TestStaticTreeDeterminism(staticMixed);
+    TestQueries(staticMixed);
+    TestSweeps(staticMixed);
+    TestSweeps(proxies);
     TestUnspecifiedCompatibility();
     TestModulePolicy();
     std::cout << "大規模な物理探索の照合に成功しました\n";
