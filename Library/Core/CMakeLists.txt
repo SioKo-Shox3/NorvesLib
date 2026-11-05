@@ -14,6 +14,7 @@ set(PRIVATE_SOURCES
     Private/Save/SaveMigration.cpp
     Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
+    Private/Save/SettingsStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
@@ -130,9 +131,14 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
+    Private/Animation/BodyBalance.cpp
+    Private/Animation/FootIKModifier.cpp
     Private/Animation/Procedural/AngleDistribution.cpp
     Private/Animation/Procedural/Spring.cpp
     Private/Animation/Procedural/PoseModifierConfig.cpp
+    Private/Animation/Procedural/BodyLeanModifier.cpp
+    Private/Animation/Procedural/SpineWaveModifier.cpp
+    Private/Animation/Procedural/LookAtModifier.cpp
     Private/Animation/Procedural/SpringBoneModifier.cpp
     Private/Animation/Procedural/FollowThroughModifier.cpp
     Private/Animation/AnimationEvents.cpp
@@ -469,6 +475,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputBindingJson.cpp
     Private/Input/InputBindingPersistence.cpp
     Private/Input/WorkingDirectoryInputBindingStore.cpp
+    Private/Input/SettingsInputBindingStore.cpp
     Private/Input/InputMapper.cpp
     Private/Input/InputRebindCaptureManager.cpp
     Private/Input/InputDebugOverlayController.cpp
@@ -502,6 +509,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveMigration.h
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
+    Public/Save/SettingsStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -605,9 +613,14 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
+    Public/Animation/BodyBalance.h
+    Public/Animation/FootIKModifier.h
     Public/Animation/Procedural/AngleDistribution.h
     Public/Animation/Procedural/Spring.h
     Public/Animation/Procedural/PoseModifierConfig.h
+    Public/Animation/Procedural/BodyLeanModifier.h
+    Public/Animation/Procedural/SpineWaveModifier.h
+    Public/Animation/Procedural/LookAtModifier.h
     Public/Animation/Procedural/SpringBoneModifier.h
     Public/Animation/Procedural/FollowThroughModifier.h
     Public/Animation/PoseModifier.h

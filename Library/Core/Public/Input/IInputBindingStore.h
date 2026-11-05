@@ -3,6 +3,8 @@
 #include "Container/String.h"
 #include <cstdint>
 
+namespace NorvesLib::Core::Save { class SettingsStore; }
+
 namespace NorvesLib::Core::Input
 {
     enum class EInputBindingStoreLoadStatus : uint8_t { Loaded, Missing, Error };
@@ -28,7 +30,19 @@ namespace NorvesLib::Core::Input
         virtual InputBindingStoreLoadResult Load() = 0;
         virtual InputBindingStoreSaveResult Save(const Container::String& text) = 0;
     };
-    // Windows暫定adapter。生成時のworking directoryへInputBindings.jsonを固定する。
-    // 非対応platformはnullptr。GR76のuser-data保存先へはこの境界だけ差し替える。
+    // 作業ディレクトリの古い保存先。古い場所からの写しを読み取るために使う。
+    // 生成時の作業ディレクトリに固定し、非対応プラットフォームでは nullptr を返す。
     Container::TUniquePtr<IInputBindingStore> CreateWorkingDirectoryInputBindingStore();
+
+    // settings.json の keyBindings を読み書きする。settings は戻り値より長く生存させる。GameThread 専用。
+    Container::TUniquePtr<IInputBindingStore> CreateSettingsInputBindingStore(Save::SettingsStore& settings);
+
+    enum class ELegacyInputBindingMigration : uint8_t { NotNeeded, NoLegacy, Migrated, Failed };
+    struct LegacyInputBindingMigrationResult
+    {
+        ELegacyInputBindingMigration Status = ELegacyInputBindingMigration::Failed;
+        Container::String Error;
+    };
+    // settings に keyBindings がなく、legacy が読めたときだけ写して保存する。古いファイルは消さない。
+    LegacyInputBindingMigrationResult MigrateLegacyInputBindings(Save::SettingsStore& settings, IInputBindingStore& legacy);
 }

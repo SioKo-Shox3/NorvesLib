@@ -9885,16 +9885,61 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
 - G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
 - Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
-- U1 NVSCT v0 の形式・書き手・読み手・形式の文書と CookedScatterTest(読みの拒否): 着地(直し 0 回)
-- U2 配置の純関数(セルの hash・受理・局所最大・地形の標本化): 着地(直し 0 回)
-- U3 ScatterBaker(NVSCT を焼く)と ScatterBakeTest: 着地(直し 0 回)
-- U4 scatter spec の読み込み・地形の参照と cooked_hash の照合・AssetCook の入口・スモーク: 着地(直し 0 回)
-- U5 grassland の散布の spec・資産の一覧・CookAssets と最終の verify: 着地(直し 0 回)
 
-## 2026-11-05 G5-GR90-SCATTER-BAKE（run 20261105-102917 の反復 1、完了）
-- Done: 散布の cook 済み形式 NVSCT v0（`Asset/CookedScatterFormat.h`・`CookedScatterLoader.cpp`（`ParseCookedScatter`・`DecodeScatterInstance`）・`CookedScatterWriter.cpp`、`Docs/Architecture/NVSCTv0.md`）。AssetCook の `--kind world --format nvsct.v0.inst16 --entry-type Sct0`（`ScatterSpec`・`ScatterBaker`・`ScatterPlacement`）: 一辺 r/√2 のセルの splitmix64 の hash・Matérn II の逆変換の受理・5×5 の局所最大で (seed, 種, セル) の純関数として配置し、高さは LOD0 の三角形（UsesMainDiagonal）で引き、チャンク内は Rank の昇順。spec に記録した地形の cooked_hash が食い違うと失敗する。grassland の散布 `Assets/Scatter/grassland.scatter.json`（岩・倒木 = mega、低木・株 = foliage、32 m チャンク）を `GrasslandTerrain.json` の worlds に載せ、CookAssets で焼ける（256 チャンク・36,599 本・615,056 B）。試験 `ScatterBakeTest`（(d) は r=0.15 m で seed 10 個の平均 8,283.3 本、+1.11%）・`CookedScatterTest`（拒否と cook の経路）・`AssetCookTerrainSmoke` の散布。
-- 証拠: `.harness/runs/20261105-102917/G5-GR90-SCATTER-BAKE-U5-verify.txt`（AssetCook・CookedMeshTest の Debug ビルド、ctest 4 件 100% Passed、CookAssets `-OnlyLogicalPath "Terrain/Grassland/*"` で `SCATTER_COOKED chunks=256 species=4 instances=36599`・`COOK_ASSETS cooked=1 skipped=17`）。
-- Next: ランナーの評価者の反証（アセットのクック・Public API の危険地帯）。実行時（ScatterSystem・描画）は別の項目。
-- Notes: 種の表の既定値（密度・半径・帯）は企画で未定の仮の値。岩は既存の `Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`、倒木・低木・株のメッシュの論理パスはまだ cook されない仮のパス（一覧は NVSCTv0.md の grassland の節）。岩は傾斜 25° 以上・MSK0 の a の帯で 9 本しか置かれない。
-- Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
-- Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
+- U1 BodyBalance(骨盤・肩の目標オフセットと平滑とピッチの純関数)を足す: 着地(直し 0 回)
+- U2 FootIKModifier の設定(footIK 節)の読み込みと組み込みの型の表への登録: 着地(直し 0 回)
+- U3 FootIKModifier::Apply(地面の問い合わせ・体の補正・二関節 IK・足首の法線合わせ・重みの減衰)を実装する: 着地(直し 0 回)
+- U4 LegIKModifierTest(合成の 4 本脚と段差・斜面のモック)を足す: 着地(直し 0 回)
+- U5 PhysicsGroundQueryIntegrationTest に実 World の斜面・階段で FootIK を使うケースを足す: 着地(直し 1 回)
+- U6 文書(AnimationRuntime.md・Testing.md)を書き、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G9-GR14-LEG-IK-BALANCE（run 20261105-093024 の反復 1、完了）
+- Done: `BodyBalance`（後脚の差の最小 → 骨盤、前脚の最小 → 胸、maxDrop/maxRaise でクランプ、`TryCriticalDamp` で平滑、2 点の差からピッチ）と、組み込みの型 `FootIK`（order 500）の `FootIKModifier` を足した。`*.posemod.json` の FootIK の settings（legs/body/ground）を検証して読み、auto のポールは bind 姿勢の膝の向きを根の親の関節ローカルで持つ。Apply は地面の一括の問い合わせ → 状態の分類（maxSlopeDeg を超えると TooSteep）→ 脚の重みの平滑 → 骨盤の上下と骨盤〜胸の関節へのピッチの配分 → 足首の目標（足先の目標 − 法線に合わせた 足首→足先）で二関節 IK と足首の法線合わせ。失敗の状態の脚は最後の当たりで解きながら重みを smoothTime で 0 へ下げ、非一様スケールの脚は警告して掛けない。`FindFootIKModifier` で設定の包みから取り出し、`SetGroundQuery` で地面を渡す。`LegIKModifierTest`（段差・斜面・最大伸長・軸を回した骨格・失敗の減衰・パレットのハッシュの一致・設定の読み込み）と `PhysicsGroundQueryIntegrationTest` の FootIK のケース（実 World の斜面・階段、NotReady・WrongThread・NoHit）を足し、AnimationRuntime.md と Testing.md に書いた。
+- 証拠: `.harness/runs/20261105-093024/verify-G9-GR14-LEG-IK-BALANCE.txt`（タスクの verify 2 行。Debug ビルド成功、ctest で GLTFSkeletalAnalyzerTest・SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 3/3 合格）。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（新しい Public API）。足の固定と着地は G9-GR14-FOOT-PLANT。
+- Notes: 要起票: `AnimatorComponent` には `ApplyPoseModifiersJson`/`File` で読み込んだ modifier を取り出す口が無く、ゲーム側で FootIK に `SetGroundQuery` を渡す経路がまだ無い（試験は `ParsePoseModifierConfig` の出力か `AddModifier` で渡している）。
+- Notes: 体の補正の高さの差はワールドの長さで求め、骨盤へはモデル空間の上向きの単位ベクトルに掛けて足す。所有者のワールド変換に 1 以外のスケールがあると下がる量がスケール分ずれる（今の試験はスケール 1）。
+
+- U1 NullAudioBackend と通常起動用の切り替え(フォールバック)・バックエンドの診断の印: 着地(直し 0 回)
+- U2 仮の合成音の生成台本・WAV・既定のバンク: 着地(直し 0 回)
+- U8 U3 の切り直し(保存した差分を当て、新規ファイルを CRLF にする): 着地(直し 0 回)
+- U9 cook されていないばらの WAV をクリップとして読む(通常の起動用): 着地(直し 0 回)
+- U4 AudioComponentTest と文書(TickStages・Testing): 着地(直し 1 回)
+- U5 GameMode の持ち主の包み・通常の起動で音のモジュールと既定のバンクを使う: 着地(直し 1 回)
+- U6 --audio-smoke と Test-AudioSmoke.ps1: 着地(直し 0 回)
+- U7 AudioFlow.md(層の構成と更新の順): 着地(直し 0 回)
+## 2026-11-05 G8-GR72-AUDIO-COMPONENT-BOOT(run 20261105-093023 の反復 1、完了)
+- Done: `AudioComponent`(PROPERTY は SoundName・bAutoPlay・Volume・PitchSemitones。Play / Stop / StopAll、Finalize で `ReleaseOwner` を呼びループは fade-out・ワンショットは鳴り切る。音のモジュールの `RegisterReflectedTypes` で ClassRegistry へ登録)と `ISoundSystem::ReleaseOwner` を足した。GameMode は `AudioGameModeOwner` で包み、Leave の後に `StopOwner(GetGameModeOwnerKey(id))` を呼ぶ(Component のキーは最上位ビット 0 の連番、モードのキーは最上位ビット 1)。通常の起動で音のモジュールをフォールバックありで登録し(XAudio2 が初期化できなければ `NullAudioBackend` へ切り替え `AUDIO_BACKEND fallback=null reason=...` と `GetBackendStatus()` の印)、`OnPostInitialize` で既定のバンク `Audio/Banks/default.soundbank.json` を読む(`AUDIO_BANK ...`)。`--m9-world-smoke` と `--audio-smoke` はフォールバックなし。仮の合成音は `Scripts/GenerateProvisionalAudio.py` と `Assets/Audio/Provisional/*.wav`。`--audio-smoke` と `Scripts/Test-AudioSmoke.ps1`(一時ディレクトリで WAV とバンクを cook、所有プロセスの時間切れ管理、`AUDIO_SMOKE stage=...` の検査)、`Docs/Architecture/AudioFlow.md`、TickStages の表・Testing.md の理由を足した。
+- 決定: 通常の起動の `build/CookedAssets` は `CookAssets.ps1` が作り音を焼かないので、`AudioClipLoader` は cook 済みが無いときばらの PCM16 WAV(RIFF/WAVE、44.1/48 kHz、モノ/ステレオ)を読み `AUDIO_COOKED_MISSING` の警告を出す(テクスチャのばら読みと同じ扱い)。スナップショットが無い起動経路では、バンクの読み込みだけその場のばらの AssetSystem(root は `m_TextureLooseAssetRoot`、無ければ `NORVES_SOURCE_ASSET_DIR`)を使う。
+- 試験: `AudioComponentTest`(Play / Stop と他の Component の handle の拒否、破棄でループの voice の音量が単調に下がって止まりワンショットは Drained まで鳴る、StopAll は自分の音だけ、モジュールが無くても落ちない、PROPERTY の保存と読み込みの一致)、`AudioPlaybackTest` に NullAudioBackend のケースと、ばらの WAV がクリップになり WAV でないものは NotCooked のケース。
+- 証拠: `.harness/runs/20261105-093023/verify-G8-GR72-AUDIO-COMPONENT-BOOT-final.txt`(Debug の Game・AudioBackendLifetimeTest のビルド BUILD_EXIT=0、ctest 5 本 100% Pass、`Test-M9World.ps1 -ContractOnly` で `M9_REVIEW_CONTRACT result=pass contract=All`、`Test-AudioSmoke.ps1` の構文検査 PARSE_OK)。
+- Next: 起動の確かめは後回し(G8-GR72-AUDIO-CHECK): 通常の起動のログで `AUDIO_MODULE register=ok`・`AUDIO_BANK load=ok sounds=2`(ばらの WAV なら `AUDIO_COOKED_MISSING` 4 行)が出ること、音の装置が無い環境で `AUDIO_BACKEND fallback=null` を出して起動が続くこと、`Scripts/Test-AudioSmoke.ps1` が `AUDIO_SMOKE result=pass` になること、ランチャーとシーンの行き来で音が残らないこと。ランナーの評価者の反証(Public API・アセットの読み込み)。
+- Notes: `--no-cooked-textures` だけを付けた起動ではスナップショットが無く、バンクはばらの root(`NORVES_SOURCE_ASSET_DIR`)から読む。`Test-AudioSmoke.ps1` は Game を `--render-thread=st --window-background` で起動し、作業ディレクトリの `Game.log` からマーカーを読む。
+
+- G9-GR15-LEAN-SPINE-LOOK: 統合ブランチを取り込み、組み込みの型の表（PoseModifierConfig.cpp）・試験の登録・AnimationRuntime.md で FootIK と Lean・Spine・Look を併記した。Debug の verify ビルド（EXIT=0）と ctest 4 本の Passed を確かめた。
+- U1 移動の見た目の傾きに倍率を掛ける SetVisualTiltScale を足す: 着地(直し 0 回)
+- U2 AnimatorComponent に視線の目標の口と同期グループの名前引きを足す: 着地(直し 0 回)
+- U3 BodyLeanModifier（type Lean）と試験のファイルを足す: 着地(直し 0 回)
+- U4 SpineWaveModifier（type Spine）を足す: 着地(直し 0 回)
+- U5 LookAtModifier（type Look）を足す: 着地(直し 0 回)
+- U6 文書を足し、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G9-GR15-LEAN-SPINE-LOOK（run 20261105-100456 の反復 1、完了）
+- Done: 組み込みの型の表に `Lean`（BodyLeanModifier）・`Spine`（SpineWaveModifier）・`Look`（LookAtModifier）を登録した。Lean は `source: params`（既定。`BankAngle`・`PitchAngle` をそのまま配る）と `source: signals`（atan(vω/g) と前後の加速度×係数を上限でクランプして臨界減衰）を持ち、`Q(前方, bank) * Q(右, -pitch)` を背骨チェーンへ配り、空中で重みを 0 へ平滑に下げる。Spine は名前で指す同期グループの位相（`AnimatorComponent::FindSyncGroup`）か `fallbackHz` の内部位相で θ_i = A_i(speed)·sin(2π(f·p+φ_i)) を足す。Look は `AnimatorComponent::SetLookTarget(priority, target)` / `ClearLookTarget` の最高優先度の目標を毎フレーム引き、楕円の円錐・臨界減衰・角加速度の上限で首〜頭へ配り、保持スロットが埋まっている間は `holdWeightScale` を掛ける。`QuadrupedLocomotionComponent::SetVisualTiltScale`（既定 1、VisualPose の剛体の傾きだけに掛ける）を足した。文書は AnimationRuntime.md の「胴の傾き・背骨の波・視線」と Testing.md の `ProceduralChainModifierTest`
+- 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify.txt`（verify のビルド 4 ターゲット exit_code=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest`・`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest` 4/4 Passed）。Look の実測: 円錐内の収束後の注視誤差 0.047°、ヨー制限の端との差 3.4e-5°、目標切り替えの角速度の差 0.3490659 rad/s（上限 0.3490659 + 1e-6）、目標なしの後の角 2e-17 rad
+- Next: ランナーの評価者の反証（Public API `AnimatorComponent.h` の危険地帯）。実際のキャラクターでの見た目の確かめ（Lean を使う場面で `SetVisualTiltScale(0)` にした傾きの見え方、視線の追従）は起動の確かめとして後回し。既定の倍率 1 のときの VisualPose の傾きは `x * 1.0f` でビット一致のため見た目は変わらない
+- Notes: 消えた Entity・「なし」の目標は低い優先度へ落ちず目標なしにした（高い優先度の「なし」で低い優先度を抑えられる）。Look の円錐の制限はアニメの頭の向きからの差で測る。Spine の重み 0 は設定の `weight`・`strength` で与える（設定の包みが文脈の `Weight` を設定の重みで詰め直すため）。各 modifier の設定の誤りと Look の保持スロットの倍率は試験していない（done-when の外）
+- U7 視線の視差を目標角の側へ入れて角速度の跳びを無くし、既定の注視軸をメッシュ空間で求める: 着地(直し 0 回)
+## 2026-11-05 G9-GR15-LEAN-SPINE-LOOK（run 20261105-100456 の反復 2、差し戻しの対応、完了）
+- Done: 視線の視差の補正を、1° の門つきの後段の一括補正から、前フレームの頭の位置のずれを足した推定位置で目標方向を測る形に変え、視差も臨界減衰と角加速度の上限を通すようにした（角速度の跳びを解消）。角度は制限後の角速度 × dt で進める。既定の lookAxis はメッシュノードの回転を含むメッシュ空間の bind の頭の回転から求め、MeshNodeTransform が変わったときだけ求め直す。TestLookAt はメッシュノードを回した fixture で、case=3 を出力の姿勢から測った頭の注視方向の角速度で判定する形にした
+- 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify-2.txt`（verify のビルド 4 ターゲット exit_code=0、ctest 4/4 Passed）。Look の実測: 注視誤差 1.2e-5°、ヨー制限の端との差 2.1e-5°、姿勢で測った角速度の差 0.34911 rad/s（上限 0.34907 + 許容 1e-3）、目標なしの後の角 1.9e-14 rad
+- Next: ランナーの評価者の反証（Public API の危険地帯）。実キャラクターでの視線の追従の見た目は起動の確かめとして後回し
+- Notes: 保持スロットの占有が変わったときの holdWeightScale は即座に掛かり、頭の向きが段になる（done-when の外、評価者の non-blocking）。split の骨格と実行中の MeshNodeTransform の変更でのキャッシュの求め直しは試験していない。角度を「前の角 + 角速度 × dt」で進めるため、半減期の数倍を超える長い dt の 1 フレームでは追従が遅れる
+
+- U1 SettingsStore(settings.json の保存・読み込み・変更の通知)と SettingsStoreTest: 着地(直し 0 回)
+- U2 SettingsStore を裏にした IInputBindingStore と古い場所からの写し: 着地(直し 0 回)
+- U3 Game の起動で SettingsStore を作り、入力の割当と音量をつなぐ(タスクの verify): 着地(直し 0 回)
+
+## 2026-11-05 G8-GR76-SETTINGS(run 20261105-105218 の反復 2、完了)
+- Done: `Save::SettingsStore`(ユーザーデータの領域の `settings.json`、formatVersion=1、`WriteFileAtomic` と `.bak`、音量 3 種・解像度・フルスクリーン・言語・キー割当、値が変わったときだけ 1 回通知)と `SettingsStoreTest`。入力の割当の保存先を `settings.json` の `keyBindings` へ移す `CreateSettingsInputBindingStore` と、作業ディレクトリの古い `InputBindings.json` を最初の起動で写す `MigrateLegacyInputBindings`(古いファイルは消さない。`WorkingDirectoryInputBindingStoreTest` に写しのケース)。Game は `GameInputSettings` が `SettingsStore` を持ち、`GameApplicationHandler.cpp` で既定のバンクを読んだ後に音量を SoundSystem の全体・Effect(SE)・Ambience(環境)へ当て、変更の通知を購読する(`OnPreShutdown` で外す)。
+- 証拠: `.harness/runs/20261105-105218/verify-G8-GR76-SETTINGS-final.txt`(Debug の Game・LoggerSinkTest のビルド EXIT CODE 0、ctest 6 本 100% Pass、numstat 2 通り一致)。
+- Next: 起動の確かめは後回し(G8-GR76-SETTINGS-CHECK): 通常の起動で `%LOCALAPPDATA%\NorvesLib\Game\settings.json` を読み(ログに `SETTINGS load=` の警告が出ないこと)、作業ディレクトリに `InputBindings.json` があれば `SETTINGS migration=migrated` が 1 回出て次の起動では出ないこと、`settings.json` の音量を変えて起動すると音量が反映されること。ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。
+- Notes: 解像度・フルスクリーン・言語は保存と通知までで、適用は GR107・GR69・BootConfig の配線(G15 の DisplaySettings の項目が `SettingsStore` の値を読む)。ユーザーデータの領域を作れないときは作業ディレクトリの古い保存先へ戻り、ログに `SETTINGS storage=unavailable` を出す。

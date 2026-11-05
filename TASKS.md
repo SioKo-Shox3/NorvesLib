@@ -5506,7 +5506,7 @@
 - notes: 設計はロードマップ 1695〜1713 行(P3)、完了の条件は 1829〜1839 行と 1841 行。`AudioClipLoader` は `Game/GameApplicationHandler.cpp` の M9 の読み込み(3385〜3417 行付近の ResolveAsset → ParseCookedAudio → AudioClipResource)と同じ処理を Audio のドメインに作るが、M9 の側はこの項目では触らない(二重の実装は M9 の受入れを安定させた後に統合。1883 行)。バンクの cook は kind=raw を流用し AssetKind を増やさない(1699 行)。ResolveAsset はファイル全体を読むので、バンクの読み込みは GameMode の Enter かロードの画面で同期に行う。virtual voice(ループの休眠と復帰)は GR75 まで入れない(1719 行)。voice のプールは作らない(GR109 で測ってから。1880 行)。危険地帯: アセットの読み込み・Public API なので評価者を通す。やらないこと: AudioComponent と通常の起動への組み込み(G8-GR72-AUDIO-COMPONENT-BOOT)、3D 定位(GR73)。
 
 ## G8-GR72-AUDIO-COMPONENT-BOOT: Entity と GameMode から音を鳴らす AudioComponent を作り、通常の起動で音のモジュールと既定のバンクを使えるようにする
-- status: todo
+- status: done
 - after: G8-GR72-SOUND-SYSTEM
 - gr: GR72
 - done-when: (1) `Library/Modules/Audio/Public/Audio/AudioComponent.h`(`ColliderComponent` と同じ形: Initialize でモジュールを引いて登録、Finalize で解除): `Play(id, params)` / `Stop(handle, fade)` / `StopAll`、PROPERTY(String SoundName・bool bAutoPlay・float Volume・float PitchSemitones)。`RegisterReflectedTypes` で ClassRegistry へ登録し、シーンの JSON に置ける。オーナーの破棄では、ループは fade-out、ワンショットは鳴り切る。Entity に付かない音は OwnerKey(GameMode の ID)で持ち、モードの Leave で `StopOwner` を呼ぶ。2D の再生だけ(Entity の位置への追従は GR73)。`Docs/Architecture/TickStages.md` の表に登録する。(2) 通常の起動で Audio モジュールを登録し(今は `--m9-world-smoke` のときだけ。`GameApplicationHandler.cpp:2627`)、既定のバンク `Assets/Audio/Banks/default.soundbank.json`(雨のループと足音 3 種。仮の合成音)を読む。音の出力の装置が無く XAudio2 の初期化に失敗したときは `NullAudioBackend` へ切り替え、`AUDIO_BACKEND fallback=null reason=...` の警告の行と診断の印を出して起動を続ける。`--m9-world-smoke` は今のとおり装置が無ければ失敗する。 (3) 仮の音: `Scripts/GenerateProvisionalAudio.py`(雨 = 帯域を絞った雑音の継ぎ目の無いループ、足音 = 短い減衰の打音 3 種、44.1kHz・16bit・モノ)で作った小さな WAV を `Assets/Audio/Provisional/` に置き、バンクの source_ref に「仮・合成」と書く。(4) `Scripts/Test-AudioSmoke.ps1`(`Scripts/Test-M9World.ps1` の流儀: 所有するプロセスの時間切れの管理、マーカー `AUDIO_SMOKE stage=...` の検査)と Game の `--audio-smoke`(雨のループを fade-in 3 秒で始め、足音を 100 回鳴らし、終了時に `voices=0 callbacks=0 shutdown_complete=1`)。この項目では起動しない。`Docs/Architecture/AudioFlow.md`(新規)に層の構成(ドメイン・アダプタ・既定の合成)と更新の順を書く。(5) 試験(`AudioBackendLifetimeTest` の束): `AudioComponentTest`(fake で、Play / Stop、オーナーの破棄でループが fade-out しワンショットは鳴り切る、StopOwner、シーンの保存と読み込みで PROPERTY が一致)、`AudioPlaybackTest` に「NullAudioBackend でも SoundSystem が動き Play が成功を返し、診断の印が立つ」のケース。既存の Audio の試験と M9 の契約が通り、Game が Debug でビルドできる。
@@ -5583,7 +5583,7 @@
 - notes: 今のコードの事実: 問い合わせの新しい口 `ExecuteQuery` / `ExecuteBatch` と `PhysicsQueryFilter`（レイヤーの mask・無視する Body など）は GR08 で入っている（`Library/Core/Public/Scene/SceneQuery.h:33-49`、`Library/Core/Public/Scene/PhysicsQueryTypes.h:92-135, 149-205`）。G1 は確かめ直し中なので needs-gr に GR08 を入れた。姿勢は PoseFinalize の群で確定し、固定ステップはその後に回る（`Docs/Architecture/TickStages.md:5`）ので、足 IK が読むのは前の固定ステップで公開されたスナップショット（最大 1 ステップ古い）になる。これを `Docs/Architecture/PhysicsQueries.md` に書く。地形（G5 の GR38）は同じ `IGroundQuery` の別の実装として後で差す（G9 の非ゴール）。レイヤーの名前は企画で未定なので mask の値は設定で受ける。試験は `Test/Modules/Physics/CMakeLists.txt:53-69` の束へ足し、`add_test(NAME PhysicsGroundQueryIntegrationTest COMMAND PhysicsDynamicsTest --test=PhysicsGroundQueryIntegrationTest)` を同じファイルに足す。新しい Public API なので評価者を通す。出典: 要件 `#### GR14` の設計案【接地問い合わせ】、受け入れ確認の PhysicsGroundQueryIntegrationTest のうち問い合わせの部分（IK の重みが下がる部分は `G9-GR14-LEG-IK-BALANCE`）。
 
 ## G9-GR14-LEG-IK-BALANCE: 脚を地面へ合わせる IK モディファイアと、骨盤・肩の高さと体のピッチの補正を足す
-- status: todo
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G9-GR14-TWO-BONE-IK, G9-GR14-GROUND-QUERY, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS
 - gr: GR14
 - needs-gr: GR10, GR12
@@ -5735,7 +5735,7 @@
 - notes: GR16・GR17・GR18 の受け入れ確認のうち起動でしか確かめられないもの(ロードマップ 1811〜1812・1819・1827 行)と、GR131(4282 行)・GR132(4359 行)の決定で後回しにされた見た目の確かめを、この 1 つの項目で行う(既存の TASKS に GAME-GR131-VFX-CHECK・GAME-GR132-VFX-CHECK は無いので重ならない)。計測は CPU だけで GPU を占有しない(`gpu: exclusive` を付けない)。性能は RelWithDebInfo で測る(作業合意の絶対規則 8。ロードマップ 1812 行の「Release で記録」はこれに合わせて直す)。撮影の PNG は開いて見る(撮れたことを確かめの代わりにしない)。
 
 ## G8-GR76-SETTINGS: 設定のファイル(音量・解像度・言語・キー割当)を作り、入力の割当の保存先をユーザーデータの領域へ移す
-- status: todo
+- status: done
 - after: G8-GR76-SAVE-STORAGE, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR76
 - needs-gr: GR03
@@ -5746,7 +5746,7 @@
 - notes: 設計はロードマップ 1784〜1786 行。G1 の選定課題 G1-S8 の推奨 (a)(4505 行。暫定で作業ディレクトリに置き、GR76 でユーザーデータの領域を決めるときに `IInputBindingStore` で差し替える)をこの項目で果たす。GR03 は統合ブランチにあるが確かめ直し中なので needs-gr に書いた。BootConfig の TargetFrameRate・bVSync・bFullscreen が反映されない件(1890 行)は GR76 の範囲外で、解像度の値は保存と通知までにする。やらないこと: 解像度・品質・言語の適用、設定の画面(GR68・GR119)。
 
 ## G9-GR15-LEAN-SPINE-LOOK: 胴の傾き・背骨の波・視線を、背骨と首のチェーンへ配るモディファイアとして足す
-- status: todo
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G4-GR05-MODEL-CASES, G4-GR05-COMPONENT-CASES, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES, G3-GR11-FOOT-CONTACT-SOURCE, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15
 - needs-gr: GR05, GR10, GR11, GR12, GR13
@@ -10437,3 +10437,30 @@
 ---
 
 補足（書式の外）: この場はプランモードでしたが、使える道具に ExitPlanMode と AskUserQuestion がありませんでした。洗い出し役の契約どおり、ファイルは書き換えず、上の判断の文章だけを返しています。
+
+## G5-GR42-GRASS-FIELD-ASSET-P1: GrassFieldComponent に草原の登録と解除の成功を示すログを足す
+- status: todo
+- done-when: `GrassFieldComponent::BeginPlay` は今、失敗した場合だけ `GRASS_FIELD_COMPONENT_SKIPPED` を出し、`RegisterGrassField` が成功しても何も出さない。`EndPlay` も何も出さない。そこで 2 つのログを足す。1 つ目は、`RegisterGrassField` が成功して `PublishRenderData` した直後に出す `LOG_INFO("GRASS_FIELD_COMPONENT_REGISTERED path=%s chunks=%u species=%u ground=terrain|flat ...")`。2 つ目は、`EndPlay` で実際に解除したとき(`m_RegisteredEngine && m_Field` の分岐)だけ出す `LOG_INFO("GRASS_FIELD_COMPONENT_UNREGISTERED path=%s ...")`。どちらも機械が照合するキーは英語、説明文は日本語にする。新しい試験は足さない。ログは `Logging/LogMacros.h` の既存のマクロを使い、Release では出ない今の扱いのままにする。Game の Debug ビルドが通ること。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `git grep -n -e "GRASS_FIELD_COMPONENT_REGISTERED" -e "GRASS_FIELD_COMPONENT_UNREGISTERED" -- Library/Core/Private/Component/GrassFieldComponent.cpp`
+- paths: Library/Core/Private/Component/GrassFieldComponent.cpp, PROGRESS.md
+- from: G5-GR42-GRASS-FIELD-ASSET
+
+## G5-GR42-GRASS-FIELD-ASSET-P2: AssetManifestTest と GrassFieldQueryTest を、草の場を入れた後のソースからビルドし直した実行ファイルで通す
+- status: todo
+- done-when: 元のタスクの verify は `AssetManifestTest` と `GrassFieldQueryTest` を走らせるが、これらの実行ファイル(`AssetSystemTest` と `MathGeometryTest`)をビルドしていない。そのため、新しい build では Not Run になり、古い build では元のタスクの変更(`Public/Vegetation/GroundHeightSource.h` の変更や Asset の追加)を含まない古い実行ファイルで通っていた恐れがある。このタスクでは、`AssetSystemTest` と `MathGeometryTest` を今の統合ブランチのソースからビルドし直し、2 本の試験を走らせて通す。落ちたときは、元のタスクの変更が原因ならその側を直し、試験の期待値は書き直さない。実行の結果(通った試験の名前と件数)を PROGRESS.md に記録する。
+- verify: `cmake --build build --config Debug --target AssetSystemTest -- /m:1`
+- verify: `cmake --build build --config Debug --target MathGeometryTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(AssetManifestTest|GrassFieldQueryTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Private/Asset, Library/Core/Private/Vegetation, Library/Core/Public/Vegetation, Test/Core/Asset/AssetManifestTest.cpp, Test/Core/Vegetation/GrassFieldQueryTest.cpp, PROGRESS.md
+- from: G5-GR42-GRASS-FIELD-ASSET
+
+## G9-GR14-FOOT-PLANT-P1: 設定ファイルから作った足 IK に、Animator 経由で接地の問い合わせを渡す口を足す
+- status: todo
+- after: G9-GR14-LEG-IK-BALANCE
+- done-when: (1) `AnimatorComponent` に、今持っている modifier を読み取り専用で数えて取り出す口(件数と添字から `IPoseModifier*` を返す)を足す。所有権は渡さない。(2) `AnimatorComponent::SetGroundQuery(const Animation::IGroundQuery*)` を足す。呼ぶと、今持っている `FootIKModifier` の全部へ渡す。そのあと `ApplyPoseModifiersJson` / `ApplyPoseModifiersFile` で全件を置き換えたときも、`AddModifier` で足したときも、新しく入った `FootIKModifier` へ同じ問い合わせを渡す。`nullptr` を渡すと全部から外す。適用中(`m_bApplyingModifiers`)に呼ばれたら拒否する。定常のフレームでは確保しない。(3) `PoseModifierBaseTest.cpp`(`SkeletalAnimationSamplingTest` の束)に次のケースを足す。FootIK を含む JSON を `ApplyPoseModifiersJson` で読み込み、`SetGroundQuery` で地面のモックを渡して数フレーム回すと、脚の状態が NotReady 以外になり、足先が地面のモックの高さへ寄る。同じ JSON をもう一度適用しても問い合わせは残る。`SetGroundQuery(nullptr)` の後は NotReady に戻る。(4) `Docs/Architecture/AnimationRuntime.md` に、設定ファイルで作った足 IK へ地面の問い合わせを渡す手順を書く。Public API に触れるので評価者を通す。(5) 下の verify が通る(アプリは起動しない)。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|PhysicsGroundQueryIntegrationTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Component/AnimatorComponent.h, Library/Core/Private/Component/AnimatorComponent.cpp, Test/Core/Rendering/PoseModifierBaseTest.cpp, Docs/Architecture/AnimationRuntime.md, TASKS.md, PROGRESS.md
+- from: G9-GR14-FOOT-PLANT
+- notes: コードで確かめたこと: `AnimatorComponent.h` には `ApplyPoseModifiersJson`/`File`(81〜91 行)と、`AddModifier`・`ClearModifiers` しかない。`m_Modifiers`(148 行)を取り出す口は無い。`FootIKModifier::SetGroundQuery` は `FootIKModifier.h:72` にあり、今これを呼んでいるのは試験だけ(`LegIKModifierTest.cpp:308`、`PhysicsGroundQueryIntegrationTest.cpp:447`)。`G9-GR15-ORDER-DEBUG-VIEW` は、animation-debug の場面で `*.posemod.json` から FootIK を読み、Box の斜面と階段の上で動かす。ところがその paths には `AnimatorComponent` が入っていないので、この口が無いと場面の足 IK に地面を渡せない。ここで先に足しておく。置き換えの後も問い合わせを残すのは、設定の読み直しやグラフの付け替え(`G9-GR15-POSE-MODIFIER-BASE-P1`)で問い合わせが黙って外れるのを防ぐため。`FootIKModifier` かどうかの判定は、型の表の名前か dynamic でない方法で行う(RTTI に頼らない)。`G9-GR14-FOOT-PLANT` とは `AnimatorComponent.cpp` が重なるので、同時には走らない。
