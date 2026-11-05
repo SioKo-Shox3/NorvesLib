@@ -9988,3 +9988,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 物理の解き方に摩擦が無いので、斜面に置いた動的な物体は止まらず滑る。静止の試験は平らな台地の上で測った。高速の物体は CCD が無いので地表で小さく跳ねることがある。性能（200 コライダー＋地形の FixedTick の増分）は測っていない（記録だけの項目）。`ResolveContacts` の組ごとのプロキシの線形探索は従来のまま。高さ場の重なりの照会は呼ぶたびに接触の配列を確保する。地形のコライダーは層・マスクが既定のまま（Terrain の層への割り当ては呼び出し側）。動的な剛体が付いた Entity に高さ場を付けても、その体は動かさない（地形は常に静的）。
 - Notes: 要起票: 物理の接触に摩擦が無く、斜面の上の動的な物体（岩・破片）が止まらずに滑り続ける。
 - Notes: 要起票: Engine が SceneQuery に TerrainSystem を結ぶのは PhysicsModule の Install だけなので、物理モジュールの無い構成では QueryGround が地形を引けない。
+
+- U1 modifier の文脈から、そのフレームに積まれてまだ配っていないイベントを読む口を足す: 着地(直し 0 回)
+- U2 脚ごとの Swing / Planted の状態機械と着地の重みを持つ FootPlantState を足す: 着地(直し 0 回)
+- U3 FootIK に足の固定と着地を組み込み、設定と文書を足す: 着地(直し 1 回)
+- U4 FootPlantTest と決定性のケースを足し、Testing.md に書いてタスクの verify を回す: 着地(直し 0 回)
+- U5 解除後の戻しを刻みに依存しない差の減衰にし、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR14-FOOT-PLANT（run 20261105-104357 の反復 1、完了）
+- Done: `AnimationEventQueue::PendingEvents()` と `PoseModifierContext::PendingEvents` を足し、modifier がそのフレームに積まれてまだ配っていないイベントを読めるようにした（購読の 1 フレーム遅れなし）。脚ごとの状態機械 `FootPlantState`（Swing / Planted、`Foot.<脚>.Down` / `.Up` のイベント駆動と、イベントの無いクリップの高さ・速度のしきい値駆動、地面へ投影した記録位置の固定、解除時の差を releaseBlendSeconds で直線に減らす戻し、Swing の地面の高さの差を持ち上がりの割合で今の地面と離地時の地面に配る、着地の重みの直線の上昇と snapDistance）を足し、`FootIKModifier` に組み込んだ。設定は `plant`（書けば有効）・`legs[].plant.downEvent/upEvent`・`land`（blendSeconds 0.1・snapDistance 0.05・teleportDistance 1.0、仮）。所有者の移動が teleportDistance を超えるか `NotifyTeleport()` で固定の状態を戻し、Planted の足首の目標が maxStretch を超えたら解除する。`FootPlantTest`（`SkeletalAnimationSamplingTest` の中）を足し、AnimationRuntime.md と Testing.md に書いた。
+- 証拠: `.harness/runs/20261105-104357/verify-G9-GR14-FOOT-PLANT.txt`（タスクの verify 2 行。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格。FootPlantTest の実測: Planted の水平の動き 最大 0.00024 mm/フレーム（固定なしは 4.0 mm）、着地の重みの誤差 1.9e-8、60/120 Hz の足先の高さの差 6e-8 m、同じ dt の列のパレット一致）。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（Public API の `PoseModifier.h`・`AnimationEvents.h`・`FootIKModifier.h` に触れた）。
+- Notes: `plant` を書かない設定でも着地の重みは掛かる。駆動信号が無ければ接地中とみなすので既存の振る舞いは変わらないが、`SetDriveSignals` で `bGrounded=false` を渡すと足 IK の重みは 0 になる。
+- Notes: しきい値駆動は、一度でもその脚のイベントを受けるとテレポートか Reset までイベント駆動のまま。接地の PhaseMarker から `Foot.<脚>.Down` を出す処理は GR11 の範囲で、ここでは名前を設定で受けるだけ。
+- U6 同じフレームに窓の End と次の窓の Begin が来ても固定を保つ（差し戻しの直し）: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR14-FOOT-PLANT（run 20261105-104357 の反復 2、差し戻しの直し・完了）
+- Done: 続けて書いた接地の窓（`[0, 0.25]` と `[0.25, 0.5]`、輪の継ぎ目をまたぐ接地を 2 つに分けた窓）の境目で、前の窓の End と次の窓の Begin が同じフレームに積まれると離地として扱って固定が外れていたのを直した。`FootIKModifier::Apply` は脚ごとに、関係するイベントのうち `(Batch, OffsetSeconds, Sequence)` で最も遅い 1 件だけで接地か離地の片方を決める。AnimationRuntime.md の手順 3 を書き直し、FootPlantTest に窓を分けたケース G を足した（直す前は境目のフレームで Swing に移り 14 mm/フレーム滑って 58 件落ち、直した後は 0.00024 mm/フレーム）。
+- 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
+- Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
