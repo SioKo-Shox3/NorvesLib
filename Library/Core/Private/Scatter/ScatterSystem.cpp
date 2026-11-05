@@ -1,9 +1,10 @@
-﻿// NVSCT の mega 入力を種ごとにまとめ、距離と予算に従ってチャンクの範囲を切り替える。
+﻿// NVSCT の mega と foliage を種ごとにまとめ、距離と共通の予算に従って常駐を切り替える。
 #include "Scatter/ScatterSystem.h"
 
 #include "Component/MegaGeometryScatterComponent.h"
 #include "Logging/LogMacros.h"
 #include "Object/World.h"
+#include "Rendering/RenderWorld.h"
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +18,21 @@ namespace NorvesLib::Core::Scatter
     {
         constexpr uint32_t kRangeRows = Component::MegaGeometryScatterComponent::kRangeRows;
         constexpr size_t kMaxLogEvents = 1u << 20;
+
+        float FoliageWindPhase(uint32_t seed, uint32_t chunk, uint32_t index)
+        {
+            // 各成分を順に混ぜ、上位 24 ビットを float で正確な 0〜1 に写す。
+            const auto mix = [](uint32_t value)
+            {
+                value ^= value >> 16;
+                value *= 0x7feb352du;
+                value ^= value >> 15;
+                value *= 0x846ca68bu;
+                return value ^ (value >> 16);
+            };
+            const uint32_t hash = mix(mix(mix(seed) ^ chunk) ^ index);
+            return static_cast<float>(hash >> 8) / 16777216.0f;
+        }
 
         float DistanceToChunk(const Math::Vector3& position, const Asset::CookedScatterChunk& chunk)
         {
@@ -124,8 +140,12 @@ namespace NorvesLib::Core::Scatter
             switch (source.RenderPath)
             {
             case Asset::ScatterRenderPath::Foliage:
-                // foliage の常駐と描画の束は、対応する経路を追加してから扱う。
-                continue;
+                if (!binding->FoliageTemplate.Mesh)
+                {
+                    LOG_WARNING_F("散布の種の foliage メッシュが無効です species=%s", source.Name.c_str());
+                    continue;
+                }
+                break;
             case Asset::ScatterRenderPath::Mega:
                 if (!binding->MegaMesh.IsValid())
                 {
@@ -139,6 +159,26 @@ namespace NorvesLib::Core::Scatter
             species.ResidencyDistance = binding->ResidencyDistance;
             species.Priority = binding->Priority;
             species.Chunks.resize(scatter.Data->Chunks.size());
+            if (source.RenderPath == Asset::ScatterRenderPath::Foliage)
+            {
+                species.FoliageTemplate = binding->FoliageTemplate;
+                species.FoliageTemplate.Instances.reset();
+                species.FoliageTemplate.Cells.reset();
+                species.bCastShadow = binding->bCastShadow;
+                uint64_t speciesInstances = 0;
+                for (uint32_t chunkIndex = 0; chunkIndex < species.Chunks.size(); ++chunkIndex)
+                {
+                    const auto bytes = scatter.Data->GetInstances(chunkIndex, speciesIndex);
+                    species.Chunks[chunkIndex].Bytes = bytes.size();
+                    speciesInstances += bytes.size() / sizeof(Asset::InstanceRecord16);
+                    // セルの先頭と個数は uint32_t で表す。
+                    if (speciesInstances > std::numeric_limits<uint32_t>::max())
+                    {
+                        return fail();
+                    }
+                }
+                continue;
+            }
             Container::VariableArray<Component::MegaScatterInstance> instances;
             for (uint32_t chunkIndex = 0; chunkIndex < species.Chunks.size(); ++chunkIndex)
             {
@@ -277,6 +317,7 @@ namespace NorvesLib::Core::Scatter
             {
                 ReleaseEntities(*it);
                 m_Scatters.erase(it);
+                RebuildFoliageScene();
                 RecountStats();
                 return;
             }
@@ -295,6 +336,7 @@ namespace NorvesLib::Core::Scatter
     {
         ++m_Frame;
         m_Stats = {};
+        bool bFoliageChanged = false;
         struct Candidate
         {
             size_t ScatterIndex;
@@ -329,6 +371,11 @@ namespace NorvesLib::Core::Scatter
                             {
                                 component->SetRangeActive(unit.FirstRange + range, false);
                             }
+                        }
+                        if (species.RenderPath == Asset::ScatterRenderPath::Foliage)
+                        {
+                            Container::VariableArray<Rendering::FoliageInstance>().swap(unit.FoliageInstances);
+                            bFoliageChanged = true;
                         }
                         unit.bResident = false;
                         ++m_Stats.ReleasedThisFrame;
@@ -369,8 +416,9 @@ namespace NorvesLib::Core::Scatter
             auto& species = scatter.Species[candidate.Species];
             auto& unit = species.Chunks[candidate.Chunk];
             auto* component = ResolveMega(scatter, species);
-            if (component == nullptr || unit.FirstRange > component->GetRangeCount() ||
-                unit.RangeCount > component->GetRangeCount() - unit.FirstRange)
+            if (species.RenderPath == Asset::ScatterRenderPath::Mega &&
+                (component == nullptr || unit.FirstRange > component->GetRangeCount() ||
+                 unit.RangeCount > component->GetRangeCount() - unit.FirstRange))
             {
                 // この候補の行が未準備でも、別の種や散布は進める。予算には数えない。
                 continue;
@@ -386,9 +434,20 @@ namespace NorvesLib::Core::Scatter
                     break;
                 }
             }
-            for (uint32_t range = 0; range < unit.RangeCount; ++range)
+            if (species.RenderPath == Asset::ScatterRenderPath::Foliage)
             {
-                component->SetRangeActive(unit.FirstRange + range, true);
+                if (!MakeFoliageResident(scatter, candidate.Chunk, candidate.Species))
+                {
+                    continue;
+                }
+                bFoliageChanged = true;
+            }
+            else
+            {
+                for (uint32_t range = 0; range < unit.RangeCount; ++range)
+                {
+                    component->SetRangeActive(unit.FirstRange + range, true);
+                }
             }
             unit.bResident = true;
             ++m_Stats.ResidentThisFrame;
@@ -396,6 +455,128 @@ namespace NorvesLib::Core::Scatter
             RecordEvent(scatter, candidate.Chunk, candidate.Species, true);
         }
         RecountStats();
+        if (bFoliageChanged)
+        {
+            RebuildFoliageScene();
+        }
+    }
+
+    bool ScatterSystem::MakeFoliageResident(ScatterState& scatter, uint32_t chunkIndex, uint32_t speciesIndex)
+    {
+        auto& species = scatter.Species[speciesIndex];
+        auto& unit = species.Chunks[chunkIndex];
+        const auto& source = scatter.Data->Species[speciesIndex];
+        const auto& chunk = scatter.Data->Chunks[chunkIndex];
+        const auto bytes = scatter.Data->GetInstances(chunkIndex, speciesIndex);
+        const size_t count = bytes.size() / sizeof(Asset::InstanceRecord16);
+        Container::VariableArray<Rendering::FoliageInstance> instances;
+        instances.reserve(count);
+        bool bSorted = true;
+        uint8_t previousRank = 0;
+        for (size_t index = 0; index < count; ++index)
+        {
+            Asset::InstanceRecord16 record;
+            Asset::ScatterInstanceValue value;
+            if (!Asset::ReadScatterInstance(bytes.subspan(index * sizeof(record), sizeof(record)), record) ||
+                !Asset::DecodeScatterInstance(record, chunk, source, scatter.Data->ChunkSizeMeters,
+                                              scatter.Data->OriginX, scatter.Data->OriginZ, value))
+            {
+                return false;
+            }
+            Rendering::FoliageInstance instance;
+            instance.Position[0] = static_cast<float>(value.PositionX);
+            instance.Position[1] = static_cast<float>(value.PositionY);
+            instance.Position[2] = static_cast<float>(value.PositionZ);
+            instance.Yaw = value.YawRadians;
+            instance.WidthScale = value.Scale;
+            instance.HeightScale = value.Scale;
+            instance.ColorVariation = value.Dry;
+            instance.WindPhase = FoliageWindPhase(source.WindPhaseSeed, chunkIndex, static_cast<uint32_t>(index));
+            instance.FadeThreshold = (static_cast<float>(value.Rank) + 0.5f) / 256.0f;
+            instances.push_back(instance);
+            bSorted = bSorted && value.Rank >= previousRank;
+            previousRank = value.Rank;
+        }
+        if (!bSorted)
+        {
+            if (!unit.bWarnedUnsortedRank)
+            {
+                LOG_WARNING_F("散布の Rank が昇順ではないため foliage を安定に並べ替えます handle=%u chunk=%u species=%u",
+                              scatter.Handle, chunkIndex, speciesIndex);
+                unit.bWarnedUnsortedRank = true;
+            }
+            std::stable_sort(instances.begin(), instances.end(),
+                             [](const Rendering::FoliageInstance& a, const Rendering::FoliageInstance& b)
+            {
+                return a.FadeThreshold < b.FadeThreshold;
+            });
+        }
+        const float radius = source.MeshRadiusMeters * source.ScaleMax;
+        const float height = species.FoliageTemplate.Mesh->Height * source.ScaleMax;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            unit.FoliageBounds.BoundsMin[axis] = chunk.AabbMin[axis] - (axis == 1 ? 0.0f : radius);
+            unit.FoliageBounds.BoundsMax[axis] = chunk.AabbMax[axis] + (axis == 1 ? height : radius);
+        }
+        unit.FoliageInstances = std::move(instances);
+        return true;
+    }
+
+    void ScatterSystem::RebuildFoliageScene()
+    {
+        Rendering::FoliageScene scene;
+        // ハンドルは単調増加で追加され、削除しても順序を保つ。種とチャンクも番号順に連結する。
+        for (const auto& scatter : m_Scatters)
+        {
+            for (const auto& species : scatter.Species)
+            {
+                if (species.RenderPath != Asset::ScatterRenderPath::Foliage || !species.FoliageTemplate.Mesh)
+                {
+                    continue;
+                }
+                size_t instanceCount = 0;
+                size_t cellCount = 0;
+                for (const auto& unit : species.Chunks)
+                {
+                    if (unit.bResident)
+                    {
+                        instanceCount += unit.FoliageInstances.size();
+                        ++cellCount;
+                    }
+                }
+                if (cellCount == 0)
+                {
+                    continue;
+                }
+                auto instances = Container::MakeShared<Container::VariableArray<Rendering::FoliageInstance>>();
+                auto cells = Container::MakeShared<Container::VariableArray<Rendering::FoliageCell>>();
+                instances->reserve(instanceCount);
+                cells->reserve(cellCount);
+                for (const auto& unit : species.Chunks)
+                {
+                    if (!unit.bResident)
+                    {
+                        continue;
+                    }
+                    auto cell = unit.FoliageBounds;
+                    cell.FirstInstance = static_cast<uint32_t>(instances->size());
+                    cell.InstanceCount = static_cast<uint32_t>(unit.FoliageInstances.size());
+                    cells->push_back(cell);
+                    instances->insert(instances->end(), unit.FoliageInstances.begin(), unit.FoliageInstances.end());
+                }
+                auto batch = species.FoliageTemplate;
+                batch.Instances = std::move(instances);
+                batch.Cells = std::move(cells);
+                batch.ShadowDistance = species.bCastShadow ? batch.ShadowDistance : 0.0f;
+                scene.Batches.push_back(std::move(batch));
+            }
+        }
+        m_FoliageScene = std::move(scene);
+        ++m_FoliageVersion;
+        if (m_RenderWorld != nullptr && m_RenderWorld->IsInitialized())
+        {
+            m_RenderWorld->SetFoliageSource(Rendering::FoliageSourceSlot::Scatter, m_FoliageScene);
+        }
     }
 
     void ScatterSystem::RecountStats()
@@ -432,14 +613,17 @@ namespace NorvesLib::Core::Scatter
         }
         for (const auto& species : scatter->Species)
         {
-            if (species.ComponentId == 0)
+            if (species.RenderPath == Asset::ScatterRenderPath::Mega)
             {
-                continue;
-            }
-            const auto* component = ResolveMega(*scatter, species);
-            if (component == nullptr || component->HasPendingWork())
-            {
-                return false;
+                if (species.ComponentId == 0)
+                {
+                    continue;
+                }
+                const auto* component = ResolveMega(*scatter, species);
+                if (component == nullptr || component->HasPendingWork())
+                {
+                    return false;
+                }
             }
             for (const auto& unit : species.Chunks)
             {
@@ -455,6 +639,16 @@ namespace NorvesLib::Core::Scatter
     const ScatterResidencyStats& ScatterSystem::GetStats() const
     {
         return m_Stats;
+    }
+
+    const Rendering::FoliageScene& ScatterSystem::GetFoliageScene() const
+    {
+        return m_FoliageScene;
+    }
+
+    uint64_t ScatterSystem::GetFoliageVersion() const
+    {
+        return m_FoliageVersion;
     }
 
     Container::Span<const ScatterResidencyEvent> ScatterSystem::GetResidencyLog(ScatterHandle handle) const
@@ -500,5 +694,6 @@ namespace NorvesLib::Core::Scatter
         }
         m_Scatters.clear();
         m_Stats = {};
+        RebuildFoliageScene();
     }
 } // namespace NorvesLib::Core::Scatter

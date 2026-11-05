@@ -2,6 +2,8 @@
 // ScatterSystem は Engine::Engine が所有し、Entity は Load に渡した World の木が所有する。
 // Unload で Entity を World に返し、CookedScatterData は共有参照で保持する。
 // World が先に Finalize された場合、Clear は Entity に触らず状態だけ捨てる。
+// foliage はチャンクを FoliageCell とし、常駐の組が変わったときだけ種ごとの束を作り直す。
+// foliage の影は結び付けの bCastShadow に従い、無効なら束の ShadowDistance を 0 にする。
 #pragma once
 
 #include "Asset/CookedScatterFormat.h"
@@ -94,6 +96,10 @@ namespace NorvesLib::Core::Scatter
         /// この散布の距離内の要求と、mega の行の作成がすべて済んだか。
         bool IsSettled(ScatterHandle handle) const;
         const ScatterResidencyStats& GetStats() const;
+        /// 最後に作り直した foliage の一覧。
+        const Rendering::FoliageScene& GetFoliageScene() const;
+        /// foliage の一覧を作り直すたびに増える番号。
+        uint64_t GetFoliageVersion() const;
         /// ビューは次の Update・Unload・Clear まで有効。
         Container::Span<const ScatterResidencyEvent> GetResidencyLog(ScatterHandle handle) const;
         Component::MegaGeometryScatterComponent* GetMegaComponent(ScatterHandle handle, uint32_t speciesIndex) const;
@@ -111,6 +117,10 @@ namespace NorvesLib::Core::Scatter
             uint64_t Bytes = 0;
             bool bResident = false;
             bool bRequested = false;
+            bool bWarnedUnsortedRank = false;
+            /// このチャンク・種だけが持つ常駐配列。解放時は容量ごと返す。
+            Container::VariableArray<Rendering::FoliageInstance> FoliageInstances;
+            Rendering::FoliageCell FoliageBounds;
         };
 
         struct SpeciesState
@@ -121,6 +131,8 @@ namespace NorvesLib::Core::Scatter
             uint64_t ComponentId = 0;
             float ResidencyDistance = 0.0f;
             uint32_t Priority = 0;
+            Rendering::FoliageBatch FoliageTemplate;
+            bool bCastShadow = true;
             Container::VariableArray<ChunkUnit> Chunks;
         };
 
@@ -139,11 +151,15 @@ namespace NorvesLib::Core::Scatter
         void ReleaseEntities(ScatterState& scatter);
         void RecountStats();
         void RecordEvent(ScatterState& scatter, uint32_t chunk, uint32_t species, bool bResident);
+        bool MakeFoliageResident(ScatterState& scatter, uint32_t chunk, uint32_t species);
+        void RebuildFoliageScene();
 
         Container::VariableArray<ScatterState> m_Scatters;
         ScatterBudget m_Budget;
         ScatterResidencyStats m_Stats;
-        /// foliage の描画先の借用参照。現在は保持のみで、常駐処理から参照しない。
+        Rendering::FoliageScene m_FoliageScene;
+        uint64_t m_FoliageVersion = 0;
+        /// foliage の描画先の借用参照。初期化済みの間だけ一覧を渡す。
         Rendering::RenderWorld* m_RenderWorld = nullptr;
         ScatterHandle m_NextHandle = 1;
         uint32_t m_Frame = 0;
