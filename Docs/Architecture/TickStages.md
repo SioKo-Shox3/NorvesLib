@@ -97,10 +97,13 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 `ApplicationProcessor` のフレーム段は次の順に走る。各段内に記したシステムは登録順で実行される。World の段は Application の段の間に呼ばれる。
 
 1. gate 外で入力を評価し、`PreUpdate` の `PreUpdate.HandlerUpdate`（骨格資産の反映と Handler の `OnUpdate`）→ `PreUpdate.ScriptBegin` を実行する。
-2. 進行 gate 内で `PreSimulation` の `PreSimulation.GameModeStateMachine` → World の `Tick`（Input〜PoseFinalize）→ `PostTick` の `PostTick.Particles` を実行する。
+2. 進行 gate 内で `PreSimulation` の `PreSimulation.GameModeStateMachine` → World の `Tick`（Input〜PoseFinalize）→ `PostTick` の `PostTick.Particles` → `PostTick.Streaming` を実行する。
 3. 進行 gate 内で固定ステップを 0 回以上実行する。各回は World の `FixedBegin`（Transform 確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → World の `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → World の `FixedEnd`（Transform 確定・補間履歴の記録・cleanup）の順。固定ステップが 0 回でも次の後段は 1 回実行する。
 4. 進行 gate 内で World の `LateTick`（PostPhysics → Camera → PreRender）→ `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。Module の呼び出しは Running の registry で登録順。
 5. gate 外で振動更新、World の描画同期、SceneQuery の通常 world-AABB 更新を行い、`PostUpdate.ScriptEnd` → `PostUpdate.ModuleTick`（通常の `TickAll`）→ Handler の `OnPreRender` → 描画へ進む。Handler はフレーム内で共有所有し、callback による差し替えでもそのフレームの対象を生存させる。
+
+`PostTick.Streaming` は焦点を受けたセルの状態遷移、Prepare の仕事の投入と完了の回収、予算つきのコミットとアンロードを GameThread で進める。
+マニフェストが無ければ何もしない。
 
 `PostLateTick.ModuleLateTick` の `GameplayModule::LateTick` は攻撃判定を 1 フレームに 1 回評価する。`CombatRuntime::Evaluate` の先頭で `World::UpdateWorldTransforms` を行い、姿勢評価・固定ステップ・PostPhysics のソケット追従後のシミュレーションの Transform（`GetWorldTransform`）を読む。
 時間は `TimeSystem::GetFrameTimes().World` を使い、ヒットストップに追従する。Module `LateTick` の引数の delta は Unscaled のため攻撃判定には使わない。

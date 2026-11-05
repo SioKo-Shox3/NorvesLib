@@ -65,11 +65,17 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Streaming/CellManifest.cpp
+    Private/Streaming/StreamingCell.cpp
+    Private/Streaming/StreamingEnvironment.cpp
+    Private/Streaming/StreamingPriority.cpp
+    Private/Streaming/StreamingSystem.cpp
     Private/Vegetation/GrassSpecies.cpp
     Private/Vegetation/GrassField.cpp
     Private/Vegetation/GrassFieldAsset.cpp
     Private/Vegetation/TerrainGroundHeightSource.cpp
     Private/Vegetation/Vegetation.cpp
+    Private/Vegetation/DrynessMap.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -439,6 +445,7 @@ set(PRIVATE_SOURCES
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/TerrainComponent.cpp
     Private/Component/GrassFieldComponent.cpp
+    Private/Component/WitherSourceComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -584,11 +591,20 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Streaming/StreamingTypes.h
+    Public/Streaming/StreamingBudget.h
+    Public/Streaming/IStreamingPayloadHandler.h
+    Public/Streaming/IStreamingEnvironment.h
+    Public/Streaming/CellManifest.h
+    Public/Streaming/StreamingCell.h
+    Public/Streaming/StreamingPriority.h
+    Public/Streaming/StreamingSystem.h
     Public/Vegetation/GrassSpecies.h
     Public/Vegetation/GrassField.h
     Public/Vegetation/GrassFieldAsset.h
     Public/Vegetation/TerrainGroundHeightSource.h
     Public/Vegetation/Vegetation.h
+    Public/Vegetation/DrynessMap.h
     Public/Vegetation/GroundHeightSource.h
     Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h
@@ -835,6 +851,7 @@ set(PUBLIC_HEADERS
     Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/GrassFieldComponent.h
+    Public/Component/WitherSourceComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

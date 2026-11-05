@@ -22,6 +22,7 @@
 #include "Input/InputRebindCaptureManager.h"
 #include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
+#include "Streaming/StreamingSystem.h"
 #include "Vegetation/Vegetation.h"
 #include "Thread/Atomic.h"
 
@@ -393,6 +394,18 @@ namespace NorvesLib::Core::Engine
             return m_ParticleSystem;
         }
 
+        /// セルのストリーミングを管理する。GameThread で使用する。
+        Streaming::StreamingSystem& GetStreamingSystem()
+        {
+            return m_StreamingSystem;
+        }
+
+        /// セルのストリーミングを参照する。GameThread で使用する。
+        const Streaming::StreamingSystem& GetStreamingSystem() const
+        {
+            return m_StreamingSystem;
+        }
+
         Vegetation::Vegetation& GetVegetation()
         {
             return m_Vegetation;
@@ -545,6 +558,7 @@ namespace NorvesLib::Core::Engine
         World m_World;
 
         Particle::ParticleSystem m_ParticleSystem;
+        Streaming::StreamingSystem m_StreamingSystem;
         Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
 

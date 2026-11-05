@@ -6387,7 +6387,7 @@
 - notes: ロードマップ 2577 行は Release の計測だが、計測は RelWithDebInfo で行う（AGENTS.md の絶対規則 8）。アプリは起動しないが、時間を測るので利用者がほかのアプリを使っていない時に回す（CPU だけで GPU は使わない）。「S0 前」の値は、改修前のコードを戻して測る代わりに、試験の中の素朴な参照実装（全組の総当たり＋線形走査。G12-GR09-BROADPHASE-S0S1）で測る（重複確認の二乗の分は参照に入れて、改修前の費用に寄せる）。計測の口は合否を持たない記録用で、Docs/Testing.md の「契約を反証しない試験」を増やさないよう、通常の ctest の実行（`--bench` なし）では何も測らない。
 
 ## G12-GR41-PARENT-DORMANCY: 親の Entity を休眠させると、子のコライダー・剛体も物理から外れ、戻すと載り直すようにする
-- status: todo
+- status: done
 - after: G12-GR09-BROADPHASE-S0S1
 - gr: GR41
 - done-when: `Entity` に公開の `IsActiveInHierarchy()` を足す（自分と祖先が Active で破棄予約でない。階層のシステムが求めた `EcsPropagatedTransform::bEffectiveActive` が新しければそれを読み、作成予約・付け替え待ち・未伝播の変更があるときは祖先をたどる。今 `World::CanDispatchEntity`（World.cpp:1770〜1800）にある規則をこの関数へ寄せ、`CanDispatchEntity` もそれを使う）。`PhysicsModule::IsColliderLifecycleActive`・`IsBodyLifecycleActive`（PhysicsModule.cpp:915〜938。今は `Owner->IsActive()` だけ）が `IsActiveInHierarchy()` を使う。`ReconcileActiveStates`（951〜994）の、ボディごとに全コライダーのスロットを回す二重ループ（981〜988）を Owner→コライダーのスロットの索引にする。親を `SetActive(false)` にすると、次の固定ステップで子のコライダー・RigidBody が公開のブロードフェーズに入らず、trigger に重なっていた子は OverlapEnd がちょうど 1 回出て、親を戻すと載り直して OverlapBegin が 1 回出る。新設の `EntityActiveInHierarchyTest`（`EntityTreeTest` の束へ MEMBER。3 段の親子、途中の段だけの休眠、付け替え、作成予約中の行で祖先をたどる経路、破棄予約）と `PhysicsParentDormancyTest`（`PhysicsDynamicsTest` の束へ MEMBER。上の物理の契約に加え、休眠中の子が Tick・描画の同期（`WorldSyncDifferentialTest` と同じ数の口）・SceneQuery の Raycast から外れ、戻すと再び公開されること）が通る。`EntityTreeTest`・`TransformHierarchyTest`・`WorldTickGroupTest`・`PhysicsLifecycleEventTest`・`PhysicsFixedStepPipelineTest`・`SceneQueryPhysicsFacadeTest` が通る。
@@ -6463,7 +6463,7 @@
 - notes: ロードマップ 2588・2591〜2594 行の受け入れの撮影の部分（地平線の地図の on/off の比較は G12A-S5 で VSM を採ったので、太陽の高さの比較に置き換えた）。シーン grassland と視点 near・valley・low は G5-GR37-TERRAIN-COMPONENT が足す。UNCERTAIN: `--camera-script` の台本が grassland の自由飛行カメラで 4 km を一定の速さで動けるか（台本の形式は `Scripts/CameraScripts/*.txt`、引数は GameApplicationHandler.cpp:172〜175）。動けなければシーンのカメラパス（`SceneCatalog.h` の `ScenePathDescriptor` と `--camera-path-play`）を足して撮る。直す必要が出たら、この項目では直さずに `G12-GR39-FIX-<名前>` を足す。
 
 ## G12-GR40-CELL-CORE: ワールドを格子のセルに分け、セルの状態の遷移・優先度の輪・予算つきのコミットを行う StreamingSystem の骨格を足す
-- status: todo
+- status: done
 - gr: GR40
 - done-when: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`。`Library/Core/CMakeLists.txt` に明示で足す）に次を置く。`CellManifest`（`Text/JsonDocument.h` で読む JSON。{format, origin, cellSize, cells:[{id, bounds, payloads:[{kind, logicalPath}]}]}。未知の kind・id の重複・NaN の境界・cellSize ≤ 0・論理パスの `..` と絶対パスを種別つきで拒否）。`IStreamingPayloadHandler`（payload の種類ごとの口: ワーカーで動く `Prepare`（ファイルの読み・解析・デコード。CPU だけ）、GameThread で 1 歩ずつ進む `CommitStep(cursor)`、`SetDormant(bool)`、1 歩ずつの `UnloadStep(cursor)`、CPU と GPU のバイトの申告）。`StreamingCell` の状態の遷移（Unloaded → Preparing → ReadyToCommit → Committing → Active ⇄ Dormant → Unloading → Unloaded。Preparing 中の取り消し、Committing 中のアンロードの要求、読み込みの失敗の再試行と諦め）。`StreamingBudget`{PerFrameCommitMs, PerFrameCommitBytes, MaxResidentCells, MaxCpuBytes, MaxGpuBytes}。優先度と輪（優先度 = 距離 − k×進行方向への射影、Active の半径 Ra < Dormant の半径 Rd < Unload の半径 Ru のヒステリシス、先読みの距離 = セル幅 + 速さ×遅れ）。`StreamingSystem`（`Engine::Engine` のメンバ。ParticleSystem と同じ置き方でシングルトンにしない）が、焦点（位置・速度）を受けて毎フレーム状態を進める。進めるのはフレームの段の系 `PostTick.Streaming`（ApplicationProcessor.cpp:2910 付近の `PostTick.Particles` と同じ登録の仕方）。`Prepare` は JobSystem に 1 セル 1 タスクで出し、完了の印を GameThread で見る（`Task::Then` は使わない）。新設の `StreamingCellStateMachineTest` と `StreamingBudgetTest`（`EntityTreeTest` の束へ MEMBER。ソースは `Test/Core/Streaming/`）が、偽の payload（遅れ・失敗・取り消しを注入、時計と JobSystem の代わりを差し替えて決定的に）で通る: 全部の遷移、Preparing 中の取り消し、Committing 中のアンロードの要求、失敗の再試行と諦め、同じ入力でビット一致の遷移の列。予算を超えるコミットが次のフレームへ繰り越され、1 フレームのコミットの時間が予算＋1 歩を超えない、MaxResidentCells を超えると優先度の低いセルから追い出す、輪の境で 1 フレームごとに往復しない。`CellManifest` の拒否の各ケース。
 - verify: `cmake --build build --config Debug --target EntityTreeTest JobSystemShutdownTest Game -- /m:1`
@@ -6503,7 +6503,7 @@
 - notes: 設計はロードマップ 2155〜2157・2165 行（GR40 の 3・4・8）、完了条件は 2599〜2602 行。ファストトラベルの消費者（地図と暗転、GR71）は G15 の範囲で、ここでは口と開発用の引数まで。目的地が寝床かどうかに依らない形にする（寝床は企画で未定）。瞬間移動そのもの（補間・履歴を切る）は G4 の `CharacterBodyComponent::Teleport` と G14 の CutSerial の規約に従い、ここでは作らない。暗転の長さの目安（2 秒以内。ロードマップ 2600 行）は計測で決めるもので、合否にしない。試験を足す理由: 反証する契約は「スナップロードの完了の通知が、目的地の全セルと地形が揃ってから 1 回だけ来る」こと。早すぎると移動先で地面が無く犬が落ち、二重だと暗転が 2 回解けるとして、ファストトラベルのときだけ出て撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード）なので評価者を通す。
 
 ## G12-GR45-DRYNESS-CPU: 枯れ度を解析的な源（円・楕円・減衰）の一覧で持つ DrynessMap と、Entity に付けて置く WitherSourceComponent を足す
-- status: todo
+- status: done
 - after: G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET
 - gr: GR45
 - needs-gr: GR42
