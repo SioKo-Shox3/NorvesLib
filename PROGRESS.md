@@ -9784,3 +9784,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 NullAudioBackend と通常起動用の切り替え(フォールバック)・バックエンドの診断の印: 着地(直し 0 回)
 - U2 仮の合成音の生成台本・WAV・既定のバンク: 着地(直し 0 回)
 - U8 U3 の切り直し(保存した差分を当て、新規ファイルを CRLF にする): 着地(直し 0 回)
+- U9 cook されていないばらの WAV をクリップとして読む(通常の起動用): 着地(直し 0 回)
