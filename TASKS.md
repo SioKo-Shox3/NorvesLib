@@ -5735,7 +5735,7 @@
 - notes: GR16・GR17・GR18 の受け入れ確認のうち起動でしか確かめられないもの(ロードマップ 1811〜1812・1819・1827 行)と、GR131(4282 行)・GR132(4359 行)の決定で後回しにされた見た目の確かめを、この 1 つの項目で行う(既存の TASKS に GAME-GR131-VFX-CHECK・GAME-GR132-VFX-CHECK は無いので重ならない)。計測は CPU だけで GPU を占有しない(`gpu: exclusive` を付けない)。性能は RelWithDebInfo で測る(作業合意の絶対規則 8。ロードマップ 1812 行の「Release で記録」はこれに合わせて直す)。撮影の PNG は開いて見る(撮れたことを確かめの代わりにしない)。
 
 ## G8-GR76-SETTINGS: 設定のファイル(音量・解像度・言語・キー割当)を作り、入力の割当の保存先をユーザーデータの領域へ移す
-- status: todo
+- status: done
 - after: G8-GR76-SAVE-STORAGE, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR76
 - needs-gr: GR03

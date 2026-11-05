@@ -9917,3 +9917,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 SettingsStore(settings.json の保存・読み込み・変更の通知)と SettingsStoreTest: 着地(直し 0 回)
 - U2 SettingsStore を裏にした IInputBindingStore と古い場所からの写し: 着地(直し 0 回)
 - U3 Game の起動で SettingsStore を作り、入力の割当と音量をつなぐ(タスクの verify): 着地(直し 0 回)
+
+## 2026-11-05 G8-GR76-SETTINGS(run 20261105-105218 の反復 2、完了)
+- Done: `Save::SettingsStore`(ユーザーデータの領域の `settings.json`、formatVersion=1、`WriteFileAtomic` と `.bak`、音量 3 種・解像度・フルスクリーン・言語・キー割当、値が変わったときだけ 1 回通知)と `SettingsStoreTest`。入力の割当の保存先を `settings.json` の `keyBindings` へ移す `CreateSettingsInputBindingStore` と、作業ディレクトリの古い `InputBindings.json` を最初の起動で写す `MigrateLegacyInputBindings`(古いファイルは消さない。`WorkingDirectoryInputBindingStoreTest` に写しのケース)。Game は `GameInputSettings` が `SettingsStore` を持ち、`GameApplicationHandler.cpp` で既定のバンクを読んだ後に音量を SoundSystem の全体・Effect(SE)・Ambience(環境)へ当て、変更の通知を購読する(`OnPreShutdown` で外す)。
+- 証拠: `.harness/runs/20261105-105218/verify-G8-GR76-SETTINGS-final.txt`(Debug の Game・LoggerSinkTest のビルド EXIT CODE 0、ctest 6 本 100% Pass、numstat 2 通り一致)。
+- Next: 起動の確かめは後回し(G8-GR76-SETTINGS-CHECK): 通常の起動で `%LOCALAPPDATA%\NorvesLib\Game\settings.json` を読み(ログに `SETTINGS load=` の警告が出ないこと)、作業ディレクトリに `InputBindings.json` があれば `SETTINGS migration=migrated` が 1 回出て次の起動では出ないこと、`settings.json` の音量を変えて起動すると音量が反映されること。ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。
+- Notes: 解像度・フルスクリーン・言語は保存と通知までで、適用は GR107・GR69・BootConfig の配線(G15 の DisplaySettings の項目が `SettingsStore` の値を読む)。ユーザーデータの領域を作れないときは作業ディレクトリの古い保存先へ戻り、ログに `SETTINGS storage=unavailable` を出す。
