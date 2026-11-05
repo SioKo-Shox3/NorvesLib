@@ -6345,7 +6345,7 @@
 - notes: GR59 の P4 の前半（要件 5999 行「GR89 の地形クックで凹み度と手描きマスクを R8 チャンネルとして焼く」）。G5-GR89-TERRAIN-MASKS の層（MSK0 の湿り・枯れ草・道・岩、SPL0・SPL1、GRS0）に凹み度は無いので、ここで足す。段階をまたぐ注意（ロードマップ 4395・4472 行）: GR59 の依存に GR89 が抜けていたので needs-gr に入れた。一般のメッシュ（小屋の床・岩の上面など）の水たまりは G11-GR59-PUDDLES が GR44 の世界空間のフィールドに足す Puddle の層で扱い、ここは地形の層だけ。NVTRN の形式の文書（`Docs/Architecture/NVTRNv0.md`。G5 が作る）を更新する。試験を足す理由: 反証する契約は「cook が決定的で、窪地に水たまりができる」。スレッド数で変わる焼き込みはビルドごとに水たまりの位置が変わる形で黙って起きる。ロードマップ 1990 行。
 
 ## G12-GR09-BROADPHASE-S0S1: 物理のブロードフェーズの二乗の処理を除き、動かない物同士の組を作らない方針を入れる（結果は今と同じ）
-- status: todo
+- status: done
 - after: G1-GR08-BROADPHASE-INTEGRATION, G5-GR38-PHYSICS-HEIGHTFIELD, G1-GR08-LAYER-TABLE, G5-GR38-HEIGHTFIELD-QUERY
 - gr: GR09
 - needs-gr: GR08, GR38

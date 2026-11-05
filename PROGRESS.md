@@ -10088,3 +10088,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 PhysicsModule の Owner→スロットの索引: 着地(直し 0 回)
 - U3 ResolveContacts の二分探索と BuildBroadphase の Mobility・試験の入口: 着地(直し 0 回)
 - U4 PhysicsBroadphaseScaleTest（最後。タスクの verify を回す）: 着地(直し 0 回)
+## 2026-11-05 G12-GR09-BROADPHASE-S0S1（run 20261105-161354 の反復 1）
+- Done: G12-GR09-BROADPHASE-S0S1: `PhysicsBroadphase` の 3 か所の挿入ソート（プロキシ・端点・組）を同じ全順序の `std::sort` にし、組の重複確認のループを除いた。SAP の候補に Y・Z の AABB の重なり（`<=`）を足した。`PhysicsShapeProxy::Mobility`（既定 Unspecified = 今どおり全部の組）を足し、両方が設定された組は一方が Dynamic か一方が Trigger のときだけ作る（地形の組も同じ）。統計 `PhysicsBroadphaseStats`（候補の組・狭域判定・プロキシの探索・木の作り直し（0）・訪れた節）と二分探索の `FindProxy` を足した。`PhysicsModule::ResolveContacts` は `FindProxy` で組のプロキシを引き、`BuildBroadphase` が Trigger / Dynamic / Kinematic / Static を入れる（Dynamic の判定は ResolveContacts と同じ有効なボディの型）。コライダー・ボディの登録の重複確認と `FindBodyHandle` は Owner→スロットの索引にした。試験 `PhysicsBroadphaseScaleTest`（PhysicsDynamicsTest の束）が 2000 個の混ざった形で組（Unspecified 2467 組・Mobility 混在 1679 組）・最近接の Raycast（同距離は大きいハンドル）・OverlapSphere/Box/Capsule を素朴な総当たりと順まで照合し、入力の順 3 通りで候補が同じこと、PhysicsModule 経由で Kinematic 対 Static の非 trigger の組が出ないことを確かめる。
+- 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-final.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
+- Next: ランナーの評価者の反証（物理の寿命・公開の挙動の危険地帯）。アプリを起動する確かめは無い。静的の木は G12-GR09-STATIC-TREE、計測は G12-GR09-SCALE-MEASURE。
+- Notes: 固定ステップはブロードフェーズを今も 2 回作る（作業用と公開用）。公開用の候補の組は使われないが Mobility の絞り込みは同じく掛かる。試験の参照は `CalculateBounds`・`QueryProxy` を本体と共有するので、それら自体の幾何の誤りは照合では見つからない（既存の PhysicsProxyQueryTest などが受け持つ）。
