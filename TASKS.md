@@ -6260,7 +6260,7 @@
 - notes: ロードマップ 1945・1957 行、要件 `#### GR60` の (b) ディゾルブの材質と P1・P2。10-02 の後に既定の描画が可視バッファ（解決は計算シェーダーで材質ごとの断片を走らせられない）になったので、ロードマップの「gbuffer.frag に #include して discard」は fallback だけに当たり、on の経路は G5-GR26-GBUFFER-PROGRAMS の「解決の後に重ねる」経路に乗せる（G5 の項目の決定と同じ理由）。UNCERTAIN: VSM のスキンの記録は `SkinningComputePass` の出力（`SkinnedOutputVertex` は位置・法線・UV だけ。`SkinningComputePass.h:30-35`）を読むので、バインド姿勢の位置と protect が取れない。入力の頂点の BDA を読むか出力に欄を足すかは読んで決め、出力の並びを変えるなら `ComputeSkinningVulkanTest` を通す。ノイズの格子のハッシュは GR134 の `Common/MeshParticleDissolve.glsl` の関数を共有してよいが、そちらは UV の 2D で、こちらはバインド姿勢の 3D（AI のメッシュの UV の継ぎ目で縁が割れないため。要件の式の注釈）。縁の emissive の FP16 の溢れは SS-EMISSIVE-PREEXPOSE（done。`Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md:161`）で露出を掛けて書くようになったが、上限は値で残す。G10 の中で `gbuffer.frag`・GBufferPass・`lighting.frag` を共有する GR65・GR64・GR60 を直列にする（ロードマップ 1977 行）。危険地帯（GBuffer・影・RenderThread）なので評価者を通す。ディゾルブの無い材質の画素は変わらないので起動画面（絶対規則 7）は golden で守る。やらないこと: 表面から粒を出すエミッタ（G10-GR60-SKIN-SURFACE-EMITTER）、灰・光の効果の定義（G10-GR60-VANISH-EFFECT）、メッシュの切断と回転する破片（ロードマップの非ゴール）。
 
 ## G10-GR20-GRIP-SOLVER: しがみつきの拘束（重心 1 点の位置ベースの距離拘束）・荷重・顎のゲージの純関数と、調整値の JSON を Gameplay に足す
-- status: todo
+- status: done
 - after: G8-GR16-GAMEPLAY-MODULE, G8-GR16-COMBAT-RUNTIME, G8-GR16-JOINT-DATA-RESPONSE
 - gr: GR20
 - needs-gr: GR16
