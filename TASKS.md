@@ -6740,7 +6740,7 @@
 - notes: 確かめ直し (b) の起動の部分。`PrepareM9WorldAssets`(`Game/GameApplicationHandler.cpp:3371`)は既に `SkeletalAssetSession` 経由で論理パスとクリップ名から読む形に置き換わっているが、`M9WorldAcceptanceTest` は Game.exe・GPU・音の装置を使う Reference の段(`Test/M9/CMakeLists.txt:10`)で、GR83 の後に Debug/Release で回した記録が無い。既存の `G2-GR32-GPU-ACCEPTANCE-CHECK` は `-LegacyNvskelCompare` の別の形だけを回すので重ならない。要件 `#### GR83` の受け入れ確認「M9WorldAcceptanceTest が新ローダ経由で通る(Debug/Release)」、ロードマップ 187 行。
 
 ## G2-GR96-MODEL-ANALYSIS: 一括 cook の取り込みレポートに、法線・面積 0・UV・UV の重なり・欠けたテクスチャ・ウェイトの異常の数を出す
-- status: todo
+- status: blocked
 - gr: GR96
 - done-when: `Tools/AssetCook/ModelAnalysis.{h,cpp}` に、頂点・index・UV・影響(関節と重み)の配列だけを受ける純関数 `AnalyzeModelGeometry` を置き、次の数を返す: 法線が非有限・単位長から 1e-3 を超えて外れる頂点、面積 0 の三角形、UV が [0,1] の外の頂点、UV の重なり率(1024² の被覆ラスタで 2 回以上塗られた texel ÷ 塗られた texel)、重みの合計が 1 から 1e-3 を超えて外れる頂点、影響 0 の頂点、8bit 量子化の最大誤差。
   `--asset-set` の model・skeletal の行で、cooked の package(engine が実際に使う値)からこの関数を呼び、`CookAssetReportRow` に結果を持たせて `cook_report.json` の各行の `anomalies` と `cook_report.md` に出す。cook のときにしか分からない数(縮約で失った重みの合計と最大。`SkeletalImportReport` の値)は cook した行だけに出し、skipped の行では null にする(0 と書かない)。glTF の材質が参照するテクスチャが spec にも manifest にも無いときは、その行の `missing_textures` に論理パスを並べる。異常は警告で、終了コードは変えない(予算超過の 2 と別)。
