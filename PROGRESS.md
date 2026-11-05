@@ -9943,11 +9943,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-105218/verify-G8-GR76-SETTINGS-final.txt`(Debug の Game・LoggerSinkTest のビルド EXIT CODE 0、ctest 6 本 100% Pass、numstat 2 通り一致)。
 - Next: 起動の確かめは後回し(G8-GR76-SETTINGS-CHECK): 通常の起動で `%LOCALAPPDATA%\NorvesLib\Game\settings.json` を読み(ログに `SETTINGS load=` の警告が出ないこと)、作業ディレクトリに `InputBindings.json` があれば `SETTINGS migration=migrated` が 1 回出て次の起動では出ないこと、`settings.json` の音量を変えて起動すると音量が反映されること。ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。
 - Notes: 解像度・フルスクリーン・言語は保存と通知までで、適用は GR107・GR69・BootConfig の配線(G15 の DisplaySettings の項目が `SettingsStore` の値を読む)。ユーザーデータの領域を作れないときは作業ディレクトリの古い保存先へ戻り、ログに `SETTINGS storage=unavailable` を出す。
-- U1 serializer probe の PS 版の完全一致をやめ、5.1 の検査と版の記録にする: 着地(直し 0 回)
 
-## 2026-11-05 G2-S6-ASSET-SET-P6(run 20261105-113056 の反復 1、完了)
-- Done: `Scripts/VerifyTextureAssetSet.py` の serializer probe の包みで、PowerShell の版の完全一致(`5.1.20348.5622`)の固定をやめ、Windows PowerShell 5.1(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` と同じ規則)であることの検査に替えた。完全な版は包みが標準出力に `powershell_version=` で書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する(取れなければ止まる)。同じ PS5.1 の `ConvertTo-Json` 出力と native の `manifest.json` の byte の照合、`powershell.exe` の binary の hash の照合、凍結基準の JSON は変えていない。`Docs/Architecture/TextureAssetSetCook.md` の「PS5.1との互換」に、版は固定せず記録し、互換は byte の照合と binary の hash で保つことを書いた。
-- 理由: GitHub のランナーのイメージの更新(20261026.347.1 など)で PS5.1 の小さな版が上がり、probe が `PowerShell version changed` で止まったため。
-- 証拠: タスクの verify(文字列の検査と `python -B Test/Tools/TextureAssetSetVerifyTest.py -v`)が終了コード 0、4 tests OK。numstat の 2 通りは一致。
-- Next: CI での再確認(`windows-assetcook.yml` の完走)は G2-S6-ASSET-SET-P3 が受け持つ。CI の起動とプッシュはしていない。
-- Notes: binary の hash は固定のままなので、ランナーのイメージで `powershell.exe` 自体が差し替わると `固定PowerShell binaryと違います` で止まる(このタスクの契約で残す照合)。
+- U1 NVSCT v0 の形式・書き手・読み手・形式の文書と CookedScatterTest(読みの拒否): 着地(直し 0 回)
+- U2 配置の純関数(セルの hash・受理・局所最大・地形の標本化): 着地(直し 0 回)
+- U3 ScatterBaker(NVSCT を焼く)と ScatterBakeTest: 着地(直し 0 回)
+- U4 scatter spec の読み込み・地形の参照と cooked_hash の照合・AssetCook の入口・スモーク: 着地(直し 0 回)
+- U5 grassland の散布の spec・資産の一覧・CookAssets と最終の verify: 着地(直し 0 回)
+
+## 2026-11-05 G5-GR90-SCATTER-BAKE（run 20261105-102917 の反復 1、完了）
+- Done: 散布の cook 済み形式 NVSCT v0（`Asset/CookedScatterFormat.h`・`CookedScatterLoader.cpp`（`ParseCookedScatter`・`DecodeScatterInstance`）・`CookedScatterWriter.cpp`、`Docs/Architecture/NVSCTv0.md`）。AssetCook の `--kind world --format nvsct.v0.inst16 --entry-type Sct0`（`ScatterSpec`・`ScatterBaker`・`ScatterPlacement`）: 一辺 r/√2 のセルの splitmix64 の hash・Matérn II の逆変換の受理・5×5 の局所最大で (seed, 種, セル) の純関数として配置し、高さは LOD0 の三角形（UsesMainDiagonal）で引き、チャンク内は Rank の昇順。spec に記録した地形の cooked_hash が食い違うと失敗する。grassland の散布 `Assets/Scatter/grassland.scatter.json`（岩・倒木 = mega、低木・株 = foliage、32 m チャンク）を `GrasslandTerrain.json` の worlds に載せ、CookAssets で焼ける（256 チャンク・36,599 本・615,056 B）。試験 `ScatterBakeTest`（(d) は r=0.15 m で seed 10 個の平均 8,283.3 本、+1.11%）・`CookedScatterTest`（拒否と cook の経路）・`AssetCookTerrainSmoke` の散布。
+- 証拠: `.harness/runs/20261105-102917/G5-GR90-SCATTER-BAKE-U5-verify.txt`（AssetCook・CookedMeshTest の Debug ビルド、ctest 4 件 100% Passed、CookAssets `-OnlyLogicalPath "Terrain/Grassland/*"` で `SCATTER_COOKED chunks=256 species=4 instances=36599`・`COOK_ASSETS cooked=1 skipped=17`）。
+- Next: ランナーの評価者の反証（アセットのクック・Public API の危険地帯）。実行時（ScatterSystem・描画）は別の項目。
+- Notes: 種の表の既定値（密度・半径・帯）は企画で未定の仮の値。岩は既存の `Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`、倒木・低木・株のメッシュの論理パスはまだ cook されない仮のパス（一覧は NVSCTv0.md の grassland の節）。岩は傾斜 25° 以上・MSK0 の a の帯で 9 本しか置かれない。
+- Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
+- Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
