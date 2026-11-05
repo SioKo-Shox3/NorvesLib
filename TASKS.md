@@ -10556,3 +10556,16 @@
 - verify: `ctest --test-dir build -C Debug -R "^(ProgressionStateTest|EnemyStateMachineTest|DefeatGateTest|EncounterSerializationTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Modules/Gameplay/Public/Gameplay/Progression/ProgressionState.h, Library/Modules/Gameplay/Private/Gameplay/Progression/ProgressionState.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp
 - from: G8-GR76-RESET-LIFETIME
+
+## G2-GR96-MODEL-ANALYSIS-P1: 骨格の分割 cook の profile と関節の上限を 1 つの関数から引き、cook と取り込みレポートが同じ値で読む
+- status: todo
+- done-when: `Tools/AssetCook/CookRigPayload.h` と `CookRigPayload.cpp` に次の 2 つを置く。(1) asset-set の骨格を分割して cook するときの設定(`RigImportProfile::StaticRootFrame256` と、それに合う `RigV1Limits`)を返す関数。(2) profile の値から `RigV1Limits` を求める関数(今の `profileValue == 3 ? 256 : 128` と同じ規則)。cook の側(`RigSingleCook.cpp` の `BuildRigSingleOutputs`、`CookRigPayload.cpp` の `InspectCookedRigPayload`)とレポートの側(`TextureAssetSetCook.cpp` で縮約で失った重みを求めるための decode、`CookOutputPackage.cpp` の `Profile()` で skinmesh を読む `ParseSkinMeshV1`)は、この関数から設定を引く。これら 4 か所に、`limits.MaxJoints = 256`・`Profile == 3 ? 256 : 128`・`constexpr auto profile = ...StaticRootFrame256` の写しと「RigSingleCook.cpp と同じ設定を使う」の注記が残らない(`git grep -n -E "MaxJoints *=|StaticRootFrame256" -- Tools/AssetCook/RigSingleCook.cpp Tools/AssetCook/CookRigPayload.cpp Tools/AssetCook/TextureAssetSetCook.cpp Tools/AssetCook/CookOutputPackage.cpp` で当たるのは関数の呼び出しだけ)。cook の出力・`cook_report.json` の数・manifest の中身は変わらない(既存の試験が期待値を変えずに通る)。新しい試験は足さない(値の写しを持つ試験は、写しをやめた実装の写しになるため)。`RigRetargetCook.cpp`・`RigSplitFileCli.cpp` に残る同じ写しは範囲の外にする。`git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` が一致する。アプリは起動しない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ModelAnalysisTest|RigSplitCookTest|TextureManagedCliTest|CookOutputPackageTest|CookCacheDecisionTest|CookedSkeletalAssetTest|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Tools/AssetCook/CookRigPayload.h, Tools/AssetCook/CookRigPayload.cpp, Tools/AssetCook/RigSingleCook.cpp, Tools/AssetCook/TextureAssetSetCook.cpp, Tools/AssetCook/CookOutputPackage.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR96-MODEL-ANALYSIS
+- after: G2-GR96-MODEL-ANALYSIS
+
+補足(判断の根拠): レポートの側の写しは、元のタスクのブランチ `task/G2-GR96-MODEL-ANALYSIS` にしかありません(`TextureAssetSetCook.cpp` の `limits.MaxJoints = 256` と `StaticRootFrame256`、`CookOutputPackage.cpp` の `actual.Profile == 3 ? 256 : 128`)。統合ブランチにはまだ入っていないので、after に元のタスクを置きました。
+
+写しがずれても試験は落ちません。cook の設定だけが変わると、レポートの decode は失敗して null を出すか、cook と違う decode で求めた「縮約で失った重み」を出します。どちらも黙って起きます。元のタスクは「cook 時の値」「engine が実際に使う値」を出すことを求めているので、その目的に要る直しと判断して TASK にしました。
