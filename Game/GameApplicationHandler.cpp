@@ -94,6 +94,20 @@ namespace Game
 {
     namespace
     {
+#if defined(NORVES_GAME_AUDIO)
+        void ApplyUserVolumes(const NorvesLib::Core::Save::UserSettings& settings)
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                auto& sound = audio->GetSoundSystem();
+                sound.SetMasterVolume(settings.MasterVolume);
+                sound.SetCategoryVolume(NorvesLib::Modules::Audio::SoundCategory::Effect, settings.EffectVolume);
+                sound.SetCategoryVolume(NorvesLib::Modules::Audio::SoundCategory::Ambience, settings.AmbienceVolume);
+            }
+        }
+#endif
+
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
@@ -3141,6 +3155,38 @@ namespace Game
                     LOG_WARNING_F("user入力設定を読めないため既定を使います: %s", error.empty() ? "" : error.c_str());
                 }
             }
+            if (m_InputSettings.GetUserSettings())
+            {
+                const auto& load = m_InputSettings.GetUserSettingsLoadResult();
+                switch (load.Status)
+                {
+                case NorvesLib::Core::Save::SettingsLoadStatus::LoadedFromBackup:
+                    LOG_WARNING_F("SETTINGS load=backup バックアップから設定を読み込みました: %s", load.Message.c_str());
+                    break;
+                case NorvesLib::Core::Save::SettingsLoadStatus::RejectedNewerVersion:
+                    LOG_WARNING_F("SETTINGS load=newer_version 新しい形式の設定を読み込めません: %s", load.Message.c_str());
+                    break;
+                case NorvesLib::Core::Save::SettingsLoadStatus::IoError:
+                    LOG_WARNING_F("SETTINGS load=io_error 設定の読み込みに失敗しました: %s", load.Message.c_str());
+                    break;
+                default:
+                    break;
+                }
+
+                const auto& migration = m_InputSettings.GetLegacyMigrationResult();
+                if (migration.Status == NorvesLib::Core::Input::ELegacyInputBindingMigration::Migrated)
+                {
+                    LOG_INFO_F("SETTINGS migration=%s 旧入力設定を移行しました", "migrated");
+                }
+                else if (migration.Status == NorvesLib::Core::Input::ELegacyInputBindingMigration::Failed)
+                {
+                    LOG_WARNING_F("SETTINGS migration=failed 旧入力設定を移行できません: %s", migration.Error.c_str());
+                }
+            }
+            else
+            {
+                LOG_WARNING_F("SETTINGS storage=%s ユーザーデータの領域を作れないため設定ファイルを使いません", "unavailable");
+            }
         }
 
         // ========================================
@@ -3384,6 +3430,12 @@ namespace Game
                         LOG_WARNING_F("AUDIO_BANK reason=%u detail=%s", static_cast<uint32_t>(diagnostic.Reason),
                                       diagnostic.Detail.c_str());
                     }
+                }
+                if (auto* settings = m_InputSettings.GetUserSettings())
+                {
+                    ApplyUserVolumes(settings->Get());
+                    settings->OnValueChanged().Remove(&ApplyUserVolumes);
+                    settings->OnValueChanged().Add(&ApplyUserVolumes);
                 }
             }
         }
@@ -4113,6 +4165,12 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+#if defined(NORVES_GAME_AUDIO)
+        if (auto* settings = m_InputSettings.GetUserSettings())
+        {
+            settings->OnValueChanged().Remove(&ApplyUserVolumes);
+        }
+#endif
         if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
                 NorvesLib::Core::Module::GetModuleRegistry()))
         {
