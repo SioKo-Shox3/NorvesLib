@@ -10039,3 +10039,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 CPU の正解（2.5D 格子・地平線の積分・L1・曲げた法線・鏡面の円錐）: 着地(直し 1 回)
 - Notes(G11-GR56-SKY-OCC-CPU): 鏡面の交差は要件の案（Jimenez の一様な球冠＋smoothstep）から、R のまわりの輪ごとの閉形式の重なりを GGX の D の逆関数の 13 層（重み G1）で足す形に替えた。一様な球冠では GGX の裾を表せず粗さ 0.6 で 0.13 ずれたため（替えた後の最大誤差 0.026）。壁の閉形式との差は 30° で −0.0625（許容 0.07 の内、L1 の打ち切り）、κ=0.5 の平板の L1 と厳密なコサイン重みの差は 0.050。
 - U4 手置きの SkyOccluderComponent と保存の往復、タスクの確かめ: 着地(直し 0 回)
+
+## 2026-11-05 G11-GR56-SKY-OCC-CPU（run 20261105-151418 の反復 3、完了）
+- Done: `Rendering/SkyOcclusion.h` に `SkyOcclusionParameters`（無効が既定）と 64 B の `SkyOccluderProxy`（形・種別・動くか・雨を遮るかの印）、`MakeDefault*`・`Sanitize*`・`AreEqual*` を置いた。`SceneProxy` に空の遮蔽の値・遮蔽物の配列・`SkyOcclusionRevision` を足し、`RenderWorld::SetSkyOcclusionParameters`／遮蔽物の登録・更新・解除 → `RenderingCoordinator` → `SnapshotSceneParameters` で FramePacket.Scene へ値で写す（遮蔽物の増減は SceneRevision を変えず SkyOcclusionRevision だけを進める）。CPU の正解 `SkyOcclusionReference`（2.5D の格子 G・U・T・κ、12×6 の光線の幾何級数の歩による遮蔽の積分と L1、B(N)・曲げた法線、GGX のローブで重みを付けた鏡面の円錐の交差）を置いた。手置きの `SkyOccluderComponent`（PROPERTY で保存、`InitializeFromOwnerBounds` で持ち主の AABB から寸法を初期化、BeginPlay で RenderWorld へ登録し PreRender の Tick で変わったときだけ更新、EndPlay で解除）を足した。GR59 の雨の遮蔽も同じ型と同じコンポーネントの印を使う。
+- 証拠: `.harness/runs/20261105-151418/verify-G11-GR56-SKY-OCC-CPU-U4.txt`（タスクの verify 2 行。Debug の CameraViewConstantsTest・SceneSerializerTest・Game のビルド EXIT=0、ctest 5/5 Passed、numstat の 2 通りが一致）。
+- Next: ランナーの評価者の反証（Public API・FramePacket のデータ契約の危険地帯）。GPU のクリップマップと照明（G11-GR56 の次の項目）。起動の確かめは後回し（今のシーンに SkyOccluderComponent を付けた所は無く、既定は無効なので見た目は変わらない）。
+- Notes: 遮蔽物の登録・解除・移動の追従は実行の試験が無い（保存の往復だけ）。GPU の項目のデモ（`--sky-occluder-demo`）で確かめる。`CenterOffset` は持ち主の回転の局所で拡大を掛けず、`HalfExtents` には持ち主の拡大の絶対値を掛ける。Yaw のずれはラジアン。
