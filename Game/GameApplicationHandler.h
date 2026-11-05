@@ -6,6 +6,10 @@
 #include "Core/Public/Scene/PhysicsLayerTable.h"
 #include <cstdint>
 
+#if defined(NORVES_GAME_AUDIO)
+#include "Audio/ISoundSystem.h"
+#endif
+
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
 #include "Bridge/BridgeRuntimeState.h"
@@ -166,6 +170,27 @@ namespace Game
         bool ProvideSaveSnapshot(NorvesLib::Core::Container::String& payloadUtf8);
         bool ConsumeSavePayload(NorvesLib::Core::Container::Span<const uint8_t> payloadUtf8);
         bool IsInteractPressed() const;
+        void FailAudioSmoke(const char* reason);
+        void UpdateAudioSmoke();
+
+        enum class AudioSmokeStage : uint8_t
+        {
+            Disabled,
+            Ready,
+            Footsteps,
+            Draining,
+            Complete,
+            Failed,
+        };
+        bool m_bAudioSmoke = false;
+        AudioSmokeStage m_AudioSmokeStage = AudioSmokeStage::Disabled;
+#if defined(NORVES_GAME_AUDIO)
+        NorvesLib::Modules::Audio::SoundInstanceHandle m_AudioSmokeRain;
+#endif
+        int64_t m_AudioSmokeNextFootstepNs = 0;
+        int64_t m_AudioSmokeDrainStartNs = 0;
+        uint32_t m_AudioSmokeFootstepsPlayed = 0;
+        uint32_t m_AudioSmokeFootstepsFailed = 0;
 
         Game::Save::ProgressSaveData m_ProgressSaveData;
         Game::Input::GameInputSettings m_InputSettings;

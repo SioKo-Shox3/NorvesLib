@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "sounds": [
+    {
+      "id": "Ambience.RainLoop",
+      "clips": ["Audio/Provisional/rain_loop.wav"],
+      "loop": true,
+      "priority": 200,
+      "max_instances": 1,
+      "limit_policy": "reject_new",
+      "fade_in_ms": 3000,
+      "fade_out_ms": 1000,
+      "spatial": "2d",
+      "category": "ambience",
+      "source_ref": "仮・合成(Scripts/GenerateProvisionalAudio.py)"
+    },
+    {
+      "id": "Foley.Footstep",
+      "clips": [
+        "Audio/Provisional/footstep_01.wav",
+        "Audio/Provisional/footstep_02.wav",
+        "Audio/Provisional/footstep_03.wav"
+      ],
+      "volume_jitter_db": 1.0,
+      "pitch_jitter_semitones": 0.5,
+      "loop": false,
+      "max_instances": 8,
+      "limit_policy": "stop_oldest",
+      "cooldown_ms": 0,
+      "spatial": "2d",
+      "category": "effect",
+      "source_ref": "仮・合成(Scripts/GenerateProvisionalAudio.py)"
+    }
+  ]
+}

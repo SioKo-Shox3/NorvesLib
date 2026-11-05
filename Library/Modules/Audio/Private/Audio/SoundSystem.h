@@ -37,6 +37,7 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult PlayAt(SoundId id, const Math::Vector3& position, const SoundPlayParams& params, SoundInstanceHandle& outHandle) override;
         AudioResult Stop(SoundInstanceHandle handle, const SoundFade& fade) override;
         AudioResult StopOwner(uint64_t ownerKey, const SoundFade& fade) override;
+        AudioResult ReleaseOwner(uint64_t ownerKey, const SoundFade& fade) override;
         AudioResult SetVolume(SoundInstanceHandle handle, float volume) override;
         AudioResult SetPitch(SoundInstanceHandle handle, float semitones) override;
         [[nodiscard]] bool IsPlaying(SoundInstanceHandle handle) const override;
@@ -54,6 +55,7 @@ namespace NorvesLib::Modules::Audio::Private
             bool bStopRequested = false;
             bool bStopVoiceIssued = false;
             bool bGlobal = true;
+            bool bLoop = false;
             VoiceHandle Voice;
             SoundId DefinitionId;
             SoundPlayParams Params;

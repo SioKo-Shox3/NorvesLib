@@ -1,10 +1,12 @@
 ﻿#include "FakeAudioBackend.h"
 
+#include "Audio/AudioClipLoader.h"
 #include "Audio/AudioClipResource.h"
 #include "Audio/AudioDomain.h"
 #include "Audio/IAudioService.h"
 #include "Audio/SoundSystem.h"
 #include "Asset/AssetBlob.h"
+#include "Asset/AssetSystem.h"
 #include "Container/PointerTypes.h"
 #include "CoreTypes.h"
 
@@ -16,6 +18,7 @@
 #include <cmath>
 #include <iostream>
 #include <utility>
+#include <Windows.h>
 
 namespace
 {
@@ -32,6 +35,66 @@ namespace
             Core::Container::Span<const uint8_t>(pcm.data(), pcm.size()),
             Core::Container::AnsiString("memory/playback"));
         return MakeShared<AudioClipResource>(blob, AudioPcmFormat{48000, 2, 16, 4}, 16);
+    }
+
+    void TestLooseWaveClipLoading()
+    {
+        wchar_t temporary[32768]{};
+        const DWORD length = GetTempPathW(32768, temporary);
+        assert(length > 0 && length < 32768);
+        wchar_t directory[32768]{};
+        assert(GetTempFileNameW(temporary, L"nva", 0, directory) != 0);
+        assert(DeleteFileW(directory));
+        assert(CreateDirectoryW(directory, nullptr));
+        const Core::Container::WideString root(directory);
+        const int utf8Size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, directory, -1,
+                                                nullptr, 0, nullptr, nullptr);
+        assert(utf8Size > 0);
+        VariableArray<char> utf8Root(utf8Size);
+        assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, directory, -1,
+                                  utf8Root.data(), utf8Size, nullptr, nullptr) == utf8Size);
+
+        const auto writeFile = [&root](const wchar_t* name, const Core::Asset::AssetBlob::ByteArray& bytes)
+        {
+            const auto path = root + L"\\" + name;
+            const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                                            CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+            assert(file != INVALID_HANDLE_VALUE);
+            DWORD written = 0;
+            assert(WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr));
+            assert(written == bytes.size());
+            assert(CloseHandle(file));
+        };
+        // 44.1 kHz・モノ・PCM16 の 3 フレーム。奇数長の LIST と詰めを fmt と data の間に置く。
+        const Core::Asset::AssetBlob::ByteArray wave = {
+            'R', 'I', 'F', 'F', 54, 0, 0, 0, 'W', 'A', 'V', 'E',
+            'f', 'm', 't', ' ', 16, 0, 0, 0,
+            1, 0, 1, 0, 0x44, 0xac, 0, 0, 0x88, 0x58, 1, 0, 2, 0, 16, 0,
+            'L', 'I', 'S', 'T', 3, 0, 0, 0, 'a', 'b', 'c', 0,
+            'd', 'a', 't', 'a', 6, 0, 0, 0, 1, 0, 2, 0, 3, 0,
+        };
+        writeFile(L"clip.wav", wave);
+        writeFile(L"other.wav", {'n', 'o', 't', ' ', 'w', 'a', 'v', 'e'});
+
+        Core::Asset::AssetSystem assets;
+        assets.SetLooseAssetRoot(Core::Container::AnsiString(utf8Root.data()));
+        TSharedPtr<AudioClipResource> clip;
+        assert(Private::LoadAudioClip(assets, "clip.wav", clip) == Private::AudioClipLoadResult::Success);
+        assert(clip && clip->IsValid());
+        assert(clip->GetFrameCount() == 3);
+        const auto& format = clip->GetFormat();
+        assert(format.SampleRate == 44100);
+        assert(format.ChannelCount == 1);
+        assert(format.BitsPerSample == 16);
+        assert(format.BlockAlignment == 2);
+        assert(clip->GetPcmBytes().size() == 6);
+        assert(clip->GetPcmBytes()[0] == 1 && clip->GetPcmBytes()[4] == 3);
+        assert(Private::LoadAudioClip(assets, "other.wav", clip) == Private::AudioClipLoadResult::NotCooked);
+        assert(!clip);
+
+        assert(DeleteFileW((root + L"\\clip.wav").c_str()));
+        assert(DeleteFileW((root + L"\\other.wav").c_str()));
+        assert(RemoveDirectoryW(root.c_str()));
     }
 
     void TestLoopRemainsPlayingUntilStopped()
@@ -186,6 +249,39 @@ namespace
         const SoundId id = definition.Id;
         assert(sound.RegisterDefinition(std::move(definition)) == AudioResult::Success);
         return id;
+    }
+
+    void TestNullBackendFallback()
+    {
+        auto failingBackend = MakeUnique<FakeAudioBackend>();
+        failingBackend->bFailInitialize = true;
+        auto strictModule = Private::CreateAudioModuleForBackend(std::move(failingBackend));
+        assert(strictModule != nullptr);
+        assert(!strictModule->Initialize());
+        assert(strictModule->GetBackendStatus().Kind == AudioBackendKind::Platform);
+        assert(!strictModule->GetBackendStatus().bFellBackToNull);
+        strictModule->Shutdown();
+
+        failingBackend = MakeUnique<FakeAudioBackend>();
+        failingBackend->bFailInitialize = true;
+        AudioModuleOptions options;
+        options.bAllowNullBackendFallback = true;
+        auto module = Private::CreateAudioModuleForBackend(std::move(failingBackend), options);
+        assert(module != nullptr);
+        assert(module->Initialize());
+        assert(module->GetBackendStatus().Kind == AudioBackendKind::Null);
+        assert(module->GetBackendStatus().bFellBackToNull);
+        assert(module->GetBackendStatus().Reason == "backend_failure");
+
+        auto& sound = static_cast<Private::SoundSystem&>(module->GetSoundSystem());
+        const SoundId id = RegisterTestSound(sound);
+        SoundInstanceHandle handle;
+        assert(sound.PlayGlobal(id, SoundPlayParams{}, handle) == AudioResult::Success);
+        assert(sound.IsPlaying(handle));
+        module->Tick(1.0f / 60.0f);
+        assert(!sound.IsPlaying(handle));
+        assert(module->GetAudioService().GetDiagnostics().ActiveVoiceCount == 0);
+        module->Shutdown();
     }
 
     void TestFadeOutDurationAndDrainedLifetime()
@@ -870,11 +966,13 @@ namespace
 
 int main()
 {
+    TestLooseWaveClipLoading();
     TestLoopRemainsPlayingUntilStopped();
     TestPausePreservesSubmittedBuffer();
     TestQuarantinedVoiceDoesNotTouchBackend();
     TestDestroyedHandleIsStale();
     TestPanUsesEqualPowerGains();
+    TestNullBackendFallback();
     TestFadeOutDurationAndDrainedLifetime();
     TestLinearFadeIn();
     TestEqualPowerFadeIn();
