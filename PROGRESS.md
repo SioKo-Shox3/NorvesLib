@@ -10008,21 +10008,63 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
 - Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
 - Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
-- U1 ModifierOrderTest（順序の固定の試験）を SkeletalAnimationSamplingTest に足す: 着地(直し 0 回)
-- U3 animation-debug の場面に合成の四足のキャラクターと posemod.json を足す: 着地(直し 0 回)
-- U4 場面に Box コライダーの斜面と階段を足し、四足の経路をそこへ通す: 着地(直し 0 回)
-- U6 Game の引数 --pose-modifiers-off を足して場面へ渡す: 着地(直し 0 回)
-- U5 PoseModifierDebugView（ImGui の調整画面とデバッグ描画）を足して場面へつなぐ: 着地(直し 0 回)
-- U2 AnimationRuntime.md と Testing.md を書き、タスクの verify を回す: 着地(直し 1 回)
 
-## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 1、完了）
-- Done: (1) `ModifierOrderTest`（`SkeletalAnimationSamplingTest` の中）: 23 関節の合成の四足・歩き・12° の斜面のモックで、order を省いた Lean→Spine→Look→FootIK→SpringBone→FollowThrough を同じ dt の列で 2 回走らせ、パレットのハッシュの不一致 0/120。FootIK を order 50 にすると 120/120 フレームでハッシュが変わり、共通の接地標本 144 件の足先と地面の平均誤差が 0.0406 m → 0.0549 m に増える。(2) `Game/Debug/PoseModifierDebugView`（全体を NORVES_ENABLE_IMGUI で囲み、明示の Attach / Detach）: modifier ごとの ON/OFF・重み（Float parameter で即時）・settings の数値（離したら JSON を組み直して全件置き換え）・全部を切る A/B・JSON のコピー、DebugDrawQueue で接地のレイと当たり・法線、固定点、ポール（設定の向きを膝から。実際の解は公開されていない）、視線の目標、ばねの先端。(3) `--animation-debug` の場面に、コードで作る 25 関節の四足・床と 18° の斜面と 3 段の階段の Box コライダー・競技場形の周回の経路・`Assets/Gameplay/AnimationDebugQuadruped.posemod.json`（6 型、order なし、重みは parameter に結ぶ）を足し、FootIK に `PhysicsGroundQuery` を渡す。Game の引数 `--pose-modifiers-off`（`--animation-debug` なしはエラー）。(4) AnimationRuntime.md に順序の表・足 IK を傾きの後に置く理由・合成の四足と調整画面、Testing.md に ModifierOrderTest。
-- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-final-verify.txt`（verify のビルド 4 ターゲット EXIT_CODE 0、ctest 4/4 Passed、numstat の 2 通りが一致）。
-- Next: 起動の確かめは後回し（アプリを起動していない）。`G9-GR15-AB-CAPTURE-CHECK` で、四足が見える位置か、posemod.json が実行時に読めるか（`ANIMATION_DEBUG quadruped=ready pose_modifiers=1`）、物理の接地問い合わせが当たり足が斜面と階段に付くか、ImGui の操作が効くか、on/off の撮影で四足の画素が変わるか、既定の起動画面が変わらないかを確かめる。
-- Notes: Rendering3DTest の World では物理が使えるので、解析の地面ではなく `PhysicsGroundQuery` を使った（実際の当たりは未確認）。`--pose-modifiers-off` を場面へ渡すため、paths の外の `Rendering3DTestData.h`（フラグ 1 行）と `Rendering3DTestRoutine.cpp`（Prepare の引数 1 行）を触った。AnimatorComponent に modifier の一覧の取得口が無いので、場面と調整画面は同じ JSON を `ParsePoseModifierConfig` で読み直して自分で持った modifier を AddModifier する。FootIK の問い合わせの設定（maxSlopeDeg など）は作ったときの値を保つので、画面で 50° を超えて上げても物理側の上限は変わらない。ModifierOrderTest の合成の骨格では前脚が胸の子なので、既定の順でも胸に掛かる FollowThrough が前脚の足先を動かし、平均誤差 4 cm が残る（試験は順序の比較だけで絶対値の上限は無い）。
-- 要起票: 胸・背骨に FollowThrough や SpringBone を掛けた四足では IK の後に前脚の足先が動く。脚の祖先へ掛かる後段の modifier を IK の後に置く現在の順序で接地をどう保つか（FollowThrough の対象から脚の祖先を外す決まりか、IK の再適用か）を決める項目。
+- U5 GameMode ShishaShowcase の本体を写し、場面の表のリンクの誤りを直す(U1 の切り直し): 着地(直し 0 回)
+- U6 台本 Scripts/Test-ShishaShowcase.ps1 を写す(U4 の切り直し): 着地(直し 0 回)
+- U3 GameApplicationHandler に --shisha-showcase 系の引数と GameMode の登録を足す: 着地(直し 0 回)
+## 2026-11-05 G10-SHISHA-SHOWCASE（run 20261105-143216 の反復 1、完了）
+- Done: シ者の表現を確かめる専用の GameMode `ShishaShowcase`（`Game/GameModes/ShishaShowcase/`、ID は `GameModeIds.h`）を足した。ランチャーと `SceneCatalog.h` には載せず、開発ビルドだけ登録する。場面は `ShishaShowcaseScenes.cpp` の一覧 `SHISHA_SHOWCASE_SCENES(X)` に `X("名前", 入口の接尾辞)` を 1 行足し、場面のファイルで `Build/Update/Leave<接尾辞>` を `Game::GameModes` に定義する形。場面 `base` は灰色の地面・昼の空（太陽 高度 40°）・手動露出の共通カメラ・`Assets/Models/M9Skinned/ValidU8Float.gltf` のスキン 1 体（時刻 0 のスキニング済みの実寸から 1.8 m に合わせ、`--shisha-scale` 倍）。カメラは固定の位置と `--shisha-camera-orbit=<度/秒>` の注視点の周りの周回を全場面で共通に持ち、Tick の刻みの積算で進む（`--fixed-frame-dt=` は ApplicationProcessor 側の共通の時計がそのまま効く）。印は `SHISHA_SHOWCASE scene=<場面> stage=<enter|ready|failure|leave> key=value ...`（ready は SceneReady と同じ Tick）。起動の引数 `--shisha-showcase=<場面>`・`--shisha-camera-orbit=`・`--shisha-scale=`（0 より大きく 1000 以下）を解析し、重複・未知の場面（一覧つき）・不正値・従属の引数の単独・`--scene`・`--scene-view`・`--scene-cycle-smoke`・`--dog-movement-smoke` との併用を拒否する。Release では 3 つの引数を拒否する。台本 `Scripts/Test-ShishaShowcase.ps1`（自分で起動したプロセスの時間切れと taskkill、`-Scene`・`-Configuration`・`-GameArgs`・`-ExpectStages`・`-CapturePng`/`-CaptureFrames`・`-OutDir` の `metrics.json`・`-GpuTimingFrames`）を足した。
+- 証拠: `.harness/runs/20261105-143216/verify-G10-SHISHA-SHOWCASE-U3.txt`（タスクの verify 2 行。Debug の Game のビルド EXIT=0、台本の構文の解析 EXIT=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まりのため）。起動したら `Scripts/Test-ShishaShowcase.ps1 -Scene base -CapturePng <path>` で enter→ready の印・PNG・`metrics.json` を見て、引数なしの起動がランチャーから始まること、併用の拒否のログを確かめる。
+- Notes: 代役の `ValidU8Float.gltf` は人型ではなく骨 2 本の三角形の検証資産で、身長に合わせて縦に伸ばしている。人型の代役が要るなら後の場面の項目で差し替える。台本はリポジトリのルートの `Game.log` を写すので、ほかの Game と同時に回すとログが混ざる。Release では連続撮影の照合のログが出ないため、複数フレームの撮影は Debug・RelWithDebInfo で回す。
 
-## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 2、差し戻しの直し）
-- Done: 反復 1 の再検証の失敗（`PhysicsGroundQueryIntegrationTest` が unknown test）は、verify のビルド対象に集約の実行ファイル `PhysicsDynamicsTest` が含まれず、リポジトリ直下の `build/` の exe が試験の追加より前のままだったため。コードの欠陥ではないので、`PhysicsDynamicsTest` をビルドしてから verify の 2 行を回し直した。
-- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-iter2-verify.txt`（BUILD_EXIT=0、ctest 4/4 Passed、CTEST_EXIT=0）。`PhysicsDynamicsTest` のビルドは `aux-physics-build.txt`（EXIT=0）。
-- 要起票: このタスクの verify は ctest で `PhysicsGroundQueryIntegrationTest` を回すのに、ビルドの行に `PhysicsDynamicsTest` が無い。新しい build で verify を回すと同じ失敗になるので、verify のビルド対象に `PhysicsDynamicsTest` を足す。
+- U1 切り抜きのモデル ViewClearanceParameters と CPU の可視度の式、CameraProxy への値の置き場: 着地(直し 0 回)
+- U2 SpringArmComponent に注視点の取得 GetTargetWorldPosition を公開する: 着地(直し 0 回)
+- U3 ViewClearanceComponent(PROPERTY・Mode・Strength の補間・Tick の自己登録)と保存の往復: 着地(直し 0 回)
+- U5 BuildCameraProxy で CameraProxy.ViewClearance を埋め、proxy の試験を足す(U4 の切り直し): 着地(直し 0 回)
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 1、完了）
+- Done: `Rendering/ViewClearance.h` に `ViewClearanceParameters`・`MakeDefaultViewClearanceParameters`・`SanitizeViewClearanceParameters`・CPU の `ComputeViewClearanceVisibility` を置き、`CameraProxy.ViewClearance` を足した。`SpringArmComponent::GetTargetWorldPosition()`（pivot の描画用ワールド位置＋TargetOffset）を公開し、アームの注視の計算も同じ関数へ寄せた。カメラの Entity に付ける `ViewClearanceComponent`（float/bool の PROPERTY 9 個、実行時の Mode と約 0.3 秒で寄せる Strength、`SetMode`、BeginPlay で Camera の群へ Tick を自己登録）を足した。`CameraComponent::BuildCameraProxy` は毎回 ViewClearance を既定（bEnabled=false）へ戻し、同じ Entity の ViewClearanceComponent と SpringArm（派生を含む）があれば A=カメラの位置・B=注視点で埋める。NearPlane は変えていない
+- 証拠: `.harness/runs/20261105-143215/G5-GR113-CLEARANCE-CPU-final-verify.txt`（verify のビルド 4 ターゲット＋EntityTreeTest が EXIT_CODE=0、ctest `SceneFileRoundTripTest`・`SpringArmComponentTest`・`CameraViewConstantsTest`・`ViewClearanceModelTest`・`CameraComponentProxyTest` 5/5 Passed、numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（Public API・RenderThread のデータ契約の危険地帯）。描画側で proxy の ViewClearance を使う段（草・遮蔽物・シルエット）は後続の項目。起動の確かめは後回し（今のゲームのカメラに ViewClearanceComponent を付けた所は無いので、見た目は変わらない）
+- Notes: 毎フレームの BuildCameraProxy の呼び出しは、Rendering3DTest は Camera の群の後、`FreeCameraRig::Tick → Publish` と `LauncherRoutine::Tick → PublishCamera` は Camera の群の前（どちらも今は SpringArm＋ViewClearance を使わない。Launcher は proxy の直前にアームを手で更新している）。切り抜きの半径の既定は仮の値で、草で視界が遮られる見せ方との兼ね合いは作者の判断
+- 要起票: `FreeCameraRig`・`LauncherRoutine` のカメラの proxy を Camera の群（スプリングアームの更新）の後に作る段へ移す（ViewClearance を付けたカメラで 1 フレーム遅れないように）
+
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 2、差し戻しの直し、完了）
+- Done: 差し戻しは verify の ctest の `SpringArmComponentTest` が Not Run だったこと。この試験は `EntityTreeTest.exe` の束の MEMBER で、verify の build 行に `EntityTreeTest` が無く、この枠の build に実行ファイルが無かったのが原因（実装の不具合ではない）。この枠で `EntityTreeTest` をビルドし、verify を全部回し直した。コードの変更なし
+- 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
+- Next: ランナーの評価者の反証。起動の確かめは後回し
+- 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
+
+- G8-GR17-SLICE-SMOKE: 統合ブランチ(シ者の確かめのモードの追加)を取り込み、戦闘の確かめのモードとシ者の確かめのモードの登録・起動の分岐を両方残した。CMake の再構成の後、verify のビルド(Game・PhysicsDynamicsTest、Debug)EXIT=0、G8 の CPU の試験 18/18 合格。起動の確かめは後回し(G8-GR17-SLICE-CHECK)。
+- U2 撮影の補助: 着地(直し 0 回)
+- U1 場面の型・配置の定数・環境(床・光・カメラ・領域・寝床・プロンプト)と仮の資産: 着地(直し 0 回)
+- U12 役者(犬の代役と口の剣、人間大のダミーのシ者): 着地(直し 0 回)
+- U4 反応の結線(当たり → ダメージ、撃破 → 血、プロンプトの表示、デカールの更新): 着地(直し 0 回)
+- U6 判定の計測(--combat-smoke --combat-bench): 着地(直し 0 回)
+- U3 スイングの軌道: 着地(直し 0 回)
+- U5 遭遇のスモーク(--encounter-smoke): 着地(直し 0 回)
+- U7 攻撃判定のスモーク(--combat-smoke): 着地(直し 0 回)
+- U8 敵のスモーク(--enemy-smoke): 着地(直し 0 回)
+- U9 モードと Routine(Enter・Tick・Leave、ID): 着地(直し 0 回)
+- U10 起動の引数と登録: 着地(直し 0 回)
+- U11 確かめのスクリプトと仕上げの確かめ: 着地(直し 0 回)
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 1、完了）
+- Done: 確かめの GameMode `CombatSlice`（`Game/GameModes/CombatSlice/`、ID は `GameModeIds.h`。ランチャーの一覧には載せない）と、起動の引数 `--combat-smoke`・`--encounter-smoke`・`--enemy-smoke`・`--combat-bench`・`--combat-slice-capture=<png>`（重複と、3 つの相互・`--dog-movement-smoke`・`--animation-debug`・`--scene`・`--scene-view`・`--scene-cycle-smoke` との併用を拒否）。場面は床・固定カメラ・遭遇領域 1 つ・寝床の代わりの Interactable・プロンプトの TextComponent（ASCII の仮の表示）・犬の代役（合成の骨格の Mouth のソケットに剣を付ける）・人間大のダミーのシ者（`ShishaComponent`・`HurtboxSetComponent`（humanoid.hurtboxes.json）・`HealthComponent`、スライス用の定義 `shisha_combat_slice.enemy.json`）。当たり → ダメージはモードが `GetOnAnyHit` を購読して次の Tick で `ApplyDamage`。撃破の `OnDefeatStarted` から `DefeatBloodPresenter::Trigger`。presenter（モードの Tick）→ VFX（エンジンの粒子系の PostTick）→ デカール（ハンドラの遅い更新の枠）を同じフレームの dt で進め、`RenderWorld::SetDecals` へ渡す。確かめのスクリプト `Scripts/Test-CombatSlice.ps1`（`-Mode combat|encounter|enemy|bench`・`-Configuration`・`-CapturePng`。マーカーの順を Game.log から照合）。
+- 証拠: `.harness/runs/20261105-101856/verify-G8-GR17-SLICE-SMOKE-U11.txt`（ps1 の構文の確かめ parse_errors=0、`cmake --build build --config Debug --target Game PhysicsDynamicsTest` の終了コード 0、ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK）。そこで確かめること: combat の 1/30 と 1/144 の要約（当たりの数と (部位, 攻撃)）の一致、encounter と enemy のマーカーの順、combat の撮影（DebugDraw の判定の形と火花）と enemy の撮影（撃破の約 1 秒後の血の粒と滲み）、bench の値、引数なしの起動画面が変わらないこと。
+- Notes: dt の切り替えは Library に実行中の API が無いので、`--combat-smoke` は起動 1 回で 1 つの固定刻み（`--fixed-frame-dt=1/30` か `1/144`。無ければ起動の検査で拒否）を進め、ps1 が 2 回起動して要約を比べる形にした。
+- Notes: 剣の hitbox は剣の Entity でなく犬の代役の `Head` の関節（Mouth のソケットと同じ位置）に束縛した。刀身がシ者の胴に入るのはヨー +13.95°〜+84.68°、スイングは -40° → +120° を World の 0.45 秒。窓は剣のソケットの付けが Attached になってから開く。
+- Notes: bench は `PostLateTick.ModuleLateTick` の系の Stats の記録（`Ecs.Sys.PostLateTick.ModuleLateTick`）を窓を開いた区間と閉じた区間で比べ、差を `sweep_median_us` とする（モジュールの他の LateTick も含む区間の差分）。計測の間はトレースを `.harness/combat-bench.trace.csv` に書く。Release では計測せず終了コード 0。
+- Notes: combat の撮影は最初の当たりの次のフレームで要求する。当たりが 2 つ以上出ると capture の行が hit の行の間に入り、ps1 の順の検査で落ちる（今の配置では 1 振り 1 当たりの見込み）。
+- Notes: 進行の定義の読み込みは撃破済みの状態を消さないので、同じプロセスで enemy のスモークへ入り直すと `progression_preloaded` で失敗する（起動ごとに 1 回の前提）。
+- 要起票: ソケットに付けた Entity の World の回転（`SocketAttachmentComponent` の行ベクトルの姿勢）と、hitbox が持ち主の姿勢で点を回す四元数の向きが食い違うとの指摘（U12 の調べ）。関節に束縛しない hitbox を回転した Entity に付けると判定と見た目がずれる恐れがある。`CombatRuntime.cpp:470` の `GetWorldTransform` とソケットの姿勢の作り方を照合する
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 2、差し戻しの確かめ）
+- Done: 反復 1 の再確かめでの Game のリンクの失敗（CombatSliceRoutine の未解決の外部参照）は、Game の CMakeLists の CONFIGURE_DEPENDS の GLOB がビルドの途中で Game.vcxproj を作り直し、そのビルドが古いプロジェクトのまま新しい .cpp を含めずにリンクしたためだった。コードの変更は無い。作り直された後のビルドで CombatSlice の .cpp がすべてコンパイルされ、verify の 2 行が通った。
+- 証拠: .harness/runs/20261105-101856/verify-build-it2.txt（cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1 の終了コード 0）、.harness/runs/20261105-101856/verify-ctest-it2.txt（ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK で Scripts/Test-CombatSlice.ps1 の 4 モードと撮影を回す）。
+- Notes: 新しい .cpp を足したブランチの最初のビルドは、Game.vcxproj の作り直しでリンクが 1 回落ちることがある。もう一度ビルドすれば通る（先に cmake -S . -B build を回せば落ちない）。
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-143213 の反復 1、完了に戻す）
+- Done: 作業単位 U1〜U12 はすべて着地済み。53a60fe9 の後にコードの変更は無い（差分は TASKS.md と PROGRESS.md だけ）。前回は評価者が枠切れで評価されずに doing へ戻っていたので、done に戻した。
+- 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
+- Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
+- 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。

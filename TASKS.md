@@ -4609,7 +4609,7 @@
 
 ## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
 - status: todo
-- after: G2-S6-ASSET-SET-P6
+- after: G2-S6-ASSET-SET-P6, G2-S6-ASSET-SET-P7
 - done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
 - verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
 - paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
@@ -5709,7 +5709,7 @@
 - notes: 設計はロードマップ 1592 行(関節のワールドの姿勢)・1596〜1598 行(HitboxComponent と AttackProfile)・1612 行(攻撃の種類はデータの差で表す)・1616 行の実装順 4)5)。GR131 の決定(ロードマップ 4266〜4282 行)で「CombatHitEvent から HitEffectHit への写しは GR16 の側で足す」とされたのをこの項目で行う(GAME-GR131-VFX は done なので after は満たされている)。ロードマップ 1853 行のリスク(BuildSkinnedMeshProxy が IsVisible で失敗する)は、今の `SkinnedMeshComponent` が「非表示でもゲーム用の姿勢は評価する」(`Docs/Architecture/TickStages.md` の「評価済みボーン姿勢」)ので当たらない。AI 由来の骨格の効かない骨(ロードマップ 1857 行)は (1) の警告で拾う。Release にデバッグの機能を入れない(作業合意の絶対規則 8)。危険地帯: アセットの読み込み(JSON のデータ)なので評価者を通す。やらないこと: AngelScript への公開(GR98)、表面の種類の登録(GR115)。
 
 ## G8-GR17-SLICE-SMOKE: 人間大のシ者 1 体と戦って倒す垂直スライスの確かめの場面(攻撃判定・遭遇・敵・当たりの火花・撃破の血)を Game に組む
-- status: todo
+- status: done
 - after: G8-GR17-ENEMY-COMPONENT, G8-GR18-INTERACTION, G8-GR16-JOINT-DATA-RESPONSE, GAME-GR132-VFX, G1-GR01-TICK-CONTRACT-DOC, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR17
 - needs-gr: GR01, GR03, GR13
@@ -6036,7 +6036,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。Entity の数と散布の数のログが無ければ、開発ビルドだけのログ（`SCATTER_RESIDENT chunks=... instances=... entities=...` のような 1 行）をこの項目で足す（Release に入れない。絶対規則 8）。5 万本を超えると MegaGeometry の BVH の列が VRAM を超えた前例（SCN-ECS-MASS-STREAM の notes）があるので、落ちたら本数と落ちた所を記録し、mega の種の本数の上限を種の表で決める。
 
 ## G5-GR113-CLEARANCE-CPU: カメラ〜主人公の切り抜き領域と近接のフェードの値を CPU で決め、カメラの proxy に載せて描画へ渡す
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
@@ -6193,7 +6193,7 @@
 - notes: GR63 の Phase 0-6（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-6) と (e)）。印の受け渡しは GR30 と一緒に決める約束（ロードマップ 1941 行）なので、GR30 の velocity を全経路で組み直す G5-GR30-VERTEX-ANIM-VELOCITY（`VisibilityResolve.glsl` の今と前の位置の組み立てを触る）の後にする。10-02 の後に既定の velocity は解決（`visbuffer_resolve.comp` が `VisComputeVelocity` を呼ぶ。`VisibilityResolve.glsl:797`）が書くので、ロードマップの「gbuffer.frag だけ」では足りず両方に入れる。scenario の登録は既存の `RenderingVelocitySkinnedVulkanTest` と同じ形（`Test/Core/Rendering/CMakeLists.txt` の `--scenario=skinned-motion` の 2 本）。名前は `RenderingVelocitySkinnedFastRotationVulkanTest`・`RenderingVelocitySkinnedBehindNearVulkanTest` と、その `GBufferFallback` 版。G10-GR63-SKIN-CULL とは触るファイルがほぼ交わらないので並列に走れる。TAA と動きぼけの既定の見た目は印の無い画素で変わらないので、起動画面（絶対規則 7）は golden で守る。危険地帯（GBuffer・可視バッファの解決・TAA）なので評価者を通す。やらないこと: 遮蔽解除のちらつき（GR30 のリアクティブ。G5-GR30-REACTIVE）。
 
 ## G10-SHISHA-SHOWCASE: シ者の表現（白の質感・残像・消滅・しがみつき）を確かめる専用の GameMode と、起動して撮る・印を確かめる台本の土台を作る
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC
 - gr: GR19, GR20, GR60, GR64, GR65
 - needs-gr: GR01
@@ -10472,3 +10472,25 @@
 - verify: `ctest --test-dir build -C Debug -R "^(SceneQueryPhysicsFacadeTest|SceneQueryRaycastTest|SceneQueryOverlapTest|PhysicsHeightFieldColliderTest|PhysicsLifecycleEventTest|PhysicsFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Private/Engine/Engine.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR38-PHYSICS-HEIGHTFIELD
+
+## G8-GR17-SLICE-CHECK-P1: 関節に束縛しない hitbox・hurtbox の姿勢を、描画が使う行ベクトルの世界行列と同じ向きにする
+- status: todo
+- done-when: (1) 回転させた Entity に関節に束縛しない hitbox(カプセル)と hurtbox(箱)を付けて評価する。回転は 1 軸でない四元数にする(例: 軸 (1,2,3)・0.7 rad)。評価した体積の点(`pose.Position + pose.Rotation * 形の点`)が、`MatrixUtils::TransformPointRowVector(MatrixUtils::CreateWorldRowVector(その Entity の世界の変換), 形の点)` と 1e-4 以内で一致する。この行列は `MeshComponent.cpp:385` が描画に使うものと同じ。(2) 骨格つきの対象に `SocketAttachmentComponent` で付けた剣の Entity に、関節に束縛しない hitbox を付ける。その形の点が、ソケットの描画の行列(`Animation::BuildSocketWorldTransform` の結果を `CreateWorldRowVector` にした行列)で写した点と一致する。同じ点を同じソケットの親の関節に束縛した hitbox(`ResolveJointPose` の経路)とも一致する。(3) (1) と (2) は `CombatJointFollowTest.cpp` の中にケースとして足し、新しいテストの実行ファイルは作らない。既存の `Combat*` の試験は Debug で全部通る。(4) 食い違いが確かめられたら、`CombatRuntime.cpp` の 470 行・527 行(`binding->GetWorldTransform()` をそのまま使う所)を、関節の経路と同じ「行ベクトルの基底を共役にして四元数にする」変換を通す形に直す。変換は `CombatJointBinding` の補助関数にまとめ、2 つの経路で共有する。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^Combat" --output-on-failure --timeout 180`
+- paths: Library/Modules/Gameplay/Private/Gameplay/Combat/CombatRuntime.cpp, Library/Modules/Gameplay/Private/Gameplay/Combat/CombatJointBinding.cpp, Library/Modules/Gameplay/Private/Gameplay/Combat/CombatJointBinding.h, Test/Modules/Gameplay/CombatJointFollowTest.cpp, Test/Modules/Gameplay/CombatTestSupport.h, Test/Modules/Gameplay/CombatFrameRateInvarianceTest.cpp, TASKS.md, PROGRESS.md
+- from: G8-GR17-SLICE-CHECK
+- notes: 読んで確かめた事実は次のとおり。
+  - `CreateWorldRowVector` は上 3x3 に R(q)(列ベクトルの形)をそのまま置く。それを `TransformPointRowVector`(p*M)で使い、GLSL も `world * vec4(p,1)` を column_major のまま使う(`CopyToShaderData` は memcpy)。このため描画は点を R(q)ᵀ で回す。
+  - `CombatGeometry` は `pose.Rotation * 点` = R(q) で回す。
+  - `ResolveJointPose`(`CombatJointBinding.cpp:105-108`)は、この食い違いを共役で直している。関節に束縛しない経路(`CombatRuntime.cpp:470, 527`)は `Transform.rotation` をそのまま使うので、直していない。
+  - `BuildSocketWorldTransform`(`SocketTypes.cpp:373`)は共役を取らずに q を返し、`SocketAttachmentComponent` はそれを `SetWorldTransform` する。このため、ソケットに付けた剣の Entity では関節の経路と関節でない経路の向きが共役の分ずれ、DebugDraw の形も刀身からずれる見込みが高い。
+
+  `CombatFrameRateInvarianceTest` は回転する攻撃者を関節に束縛せずに使っている。向きを直して当たりの数が変わったら、試験の配置を直す。期待値を実装の写しで書き直さない。`Math::Transform`・`Entity` の合成(`ComposeTransform`)・`SocketAttachmentComponent`・描画の行列は変えない(危険地帯で、範囲の外)。`Transform::TransformPoint`(R(q))と描画(R(q)ᵀ)の食い違いがエンジン全体に及ぶと分かったら、PROGRESS.md の Notes に `要起票:` で残す。`EncounterService.cpp:364`・`InteractionService.cpp:420/448` のセンサーのオフセットも同じ形をしている。起動は要らない(CPU の単体の試験だけ)。
+
+## G2-S6-ASSET-SET-P7: SingleAssetCookServiceTest の --kind の拒否の期待値を、world を足した今の文言に合わせる
+- status: todo
+- done-when: `Test/Core/Asset/SingleAssetCookServiceTest.cpp` 45 行の期待値を `"--kind must be raw, texture, model, audio, or world"` に直す。これは `Tools/AssetCook/SingleAssetCook.cpp` 1792 行の文言と同じ。`request.Kind="unknown"` を拒否する検査は残し、ほかの検査は変えない。Debug でビルドし、ctest の `SingleAssetCookServiceTest`(`CookedMeshTest --test=SingleAssetCookServiceTest` で走る)が通る。`git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` が一致する(行末を守る)。アプリは起動しない。ワーカーはプッシュせず、workflow も起動しない(CI での確かめは G2-S6-ASSET-SET-P3 が受け持つ)。
+- verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3

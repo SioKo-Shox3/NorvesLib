@@ -133,7 +133,7 @@ namespace Game
         /**
          * @brief --scene・--scene-view の指定をシーンの一覧と照合して確定する（OnPreInitialize の最後に呼ぶ）。
          * @return 起動を続けてよいなら true。未知の id・視点はエラーをログに出して既定へ落とし、true を返す。
-         *         --dog-movement-smoke との併用など、解決できない指定だけ false。
+         *         --dog-movement-smoke・--combat-smoke・--encounter-smoke・--enemy-smoke との併用など、解決できない指定だけ false。
          */
         bool ResolveStartupScene();
         /**
@@ -285,9 +285,25 @@ namespace Game
         bool m_bAnimationDebugRequested = false;
         bool m_bPoseModifiersOffRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bCombatSmoke = false;
+        bool m_bEncounterSmoke = false;
+        bool m_bEnemySmoke = false;
+        bool m_bCombatBench = false;
+        NorvesLib::Core::Container::String m_CombatSliceCapturePath;
         bool m_bDogMovementAutopilot = false;
         NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
         NorvesLib::Core::Container::String m_DogMovementCaptureDir;
+#if NORVES_BUILD_DEVELOPMENT
+        /// --shisha-showcase で指定された場面の名前。空なら専用モードを使わない。
+        NorvesLib::Core::Container::String m_ShishaShowcaseScene;
+        /// --shisha-camera-orbit で指定されたカメラの周回速度（度/秒）。
+        float m_ShishaCameraOrbit = 0.0f;
+        /// --shisha-scale で指定された代役の倍率。
+        float m_ShishaScale = 1.0f;
+        /// カメラの周回速度と代役の倍率が指定済みか。
+        bool m_bShishaCameraOrbitSet = false;
+        bool m_bShishaScaleSet = false;
+#endif
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
         /// ランチャーから始めるか（--scene を省いた起動、--scene=launcher、--scene-cycle-smoke）。ResolveStartupScene が決める
