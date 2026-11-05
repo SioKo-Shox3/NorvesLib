@@ -10548,3 +10548,11 @@
 ---
 
 - 起動の要らない試験だけで確かめられるので `check: launch` は付けません。
+
+## G8-GR76-RESET-LIFETIME-P2: 進行の状態を読み込み直したら、最後のシ者の解放を通知済みの旗も読み込んだ状態に合わせ、巻き戻した後にもう一度解放したとき 1 回だけ通知する
+- status: todo
+- done-when: (1) `ProgressionState::LoadStateFromJson` と `LoadDefinitionFromJson` は、読み込みに成功した後、通知済みの旗 `m_bUnlockAnnouncedOrRestored` を読み込み後の `IsFinalUnlocked()` と同じ値にする。未解放の状態を読めば旗は下がり、解放済みの状態を読めば旗は立つ。読み込みでは通知しない。読み込みに失敗したときは旗も状態も変えない。(2) `OnFinalUnlocked` の doc コメントを「`MarkDefeated` で未解放から解放へ移ったときにちょうど 1 回通知する。読み込みでは通知しない」という約束に書き直す。計画の「OnFinalUnlocked は 1 回だけ」は 1 回の解放につき 1 回と読む。進行は GameplayModule が持つのでリセットをまたいで残り、旗だけが巻き戻した後も古いまま残っていた。(3) `ProgressionStateTest` で次を確かめる。解放すると 1 回目の通知が出る。未解放の `partial` を読み込むと通知は出ず、未解放に戻る。もう一度解放すると通知が 1 回だけ増えて合計 2 になる。同じ撃破をもう一度送っても増えない。新しいインスタンスで解放済みの状態を読み込むと通知は 0 のまま。そこから `partial` を読み込んで解放し直すと 1 になる。`FinalEnemyDormantUntilUnlocked` の「空を読み込んでから解放済みを読み込むと通知 0」は変えずに通す。(4) Gameplay の既存の試験(敵の状態機械・撃破の保留・遭遇の保存)が通り、`PhysicsDynamicsTest` が Debug でビルドできる。アプリは起動しない。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ProgressionStateTest|EnemyStateMachineTest|DefeatGateTest|EncounterSerializationTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Gameplay/Public/Gameplay/Progression/ProgressionState.h, Library/Modules/Gameplay/Private/Gameplay/Progression/ProgressionState.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp
+- from: G8-GR76-RESET-LIFETIME
