@@ -222,6 +222,7 @@ namespace NorvesLib::Core::Rendering
         PostProcess = 1 << 3,
         Shadow = 1 << 4,
         Debug = 1 << 5,
+        MapVisible = 1 << 6, // 地図の真上の撮影に載せる地形・建物・道など。
         All = 0xFF
     };
 
