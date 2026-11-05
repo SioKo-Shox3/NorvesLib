@@ -43,6 +43,10 @@ ctest --test-dir build -C Debug -R "^<テスト名>$"
 
 GPUを使うテストは、Vulkanを使えない環境ではskip（終了コード125）になる。
 
+`pwsh -NoProfile -File Scripts/Test-GameReset.ps1 -SoakCount 5 -Configuration Debug` は、最後のセーブからのリセットを繰り返し、資源の数の安定・撃破状態の復元・終了コード 0・Vulkan の VUID 0 件を検査する。
+Game を起動して GPU を使う重い確認なので、PC を使ってよいときに実行する。`-SoakCount` は 2 以上、`-Configuration` は `Debug` または `RelWithDebInfo` を指定する。
+証跡は既定で `.harness/runs/game-reset/` 配下に残し、空の専用セーブ領域を使う。保存先は `-EvidencePath`、制限時間は `-TimeoutSeconds`（既定 300 秒）で指定できる。
+
 ## 技術的負債: コード上の確からしさを見るだけの試験
 
 既存の試験には、契約を反証せず、実装をそのまま写した検査が多い。たとえば次のようなものである。
