@@ -9861,3 +9861,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 BodyLeanModifier（type Lean）と試験のファイルを足す: 着地(直し 0 回)
 - U4 SpineWaveModifier（type Spine）を足す: 着地(直し 0 回)
 - U5 LookAtModifier（type Look）を足す: 着地(直し 0 回)
+- U6 文書を足し、タスクの verify を通す: 着地(直し 0 回)
