@@ -6550,7 +6550,7 @@
 - notes: 設計はロードマップ 2329〜2359 行（GR93 の位置づけ・項目表・保存・吸着）。置き場: ロードマップは `Library/Core/Public/Component/` を推奨するが、G8 の `G8-GR18-ENCOUNTER-ZONES`・`G8-GR18-INTERACTION` が遭遇領域・近接の操作の Component を `Library/Modules/Gameplay` に置き、試験を `PhysicsDynamicsTest` の束（`Test/Modules/Physics/CMakeLists.txt`）に入れるので、それに合わせる（ロードマップ 2370 行「GR18 / GR23 が置く場所に従う」）。持ち場の形（Shape・Extents・Height）と中心は `EncounterZoneComponent` の PROPERTY（形状・寸法・EnemyId）を正本にして、マーカー側には持ち場の持ち主の Key と交戦の半径だけを置く。枯れの半径は G12 前半の GR45 の枯れのソースが持つので重ねない。寝床の近接の操作は `InteractableComponent`（G8-GR18-INTERACTION）が受け持ち、`RestPointComponent` はその配置データだけ。匂いの痕跡はこのマーカーを正本にする（選定課題 G13-S5 の推奨 (A)。G13 の GR23 が読み込み時に ScentTrail へ変換する）。Bridge の enum の穴（GR92 で塞ぐまで `WireJsonToSerialized` が enum を拒否する）を避けるため、種別は String の ID にする。ColliderComponent は PROPERTY を持たない（ロードマップ 2333 行）ので、トリガーの形はマーカーと遭遇領域の形状データから作り、コライダー自体は保存しない。地形が物理に入れば（G5 の `G5-GR38-PHYSICS-HEIGHTFIELD`）同じ Raycast が地形に当たるので、吸着の呼び出し口は変えない。三角形の当たりは `Math::RayIntersectsTriangle`（`Library/Core/Public/Math/GeometryIntersection.h:403`）が使える。Object の寿命の危険地帯なので評価者を通す。やらないこと: 遭遇・近接の振る舞い（GR18）、配置の画面（G12-GR93-EDIT-VIEW）、検証の台本（G12-GR93-VALIDATE）。
 
 ## G12-GR93-VALIDATE: 配置のシーンと地形のソースから、持ち場の欠け・キーの重複・寝床の到達性・見どころの間の所要時間を検査して報告する台本を作る
-- status: todo
+- status: done
 - after: G12-GR93-MARKERS-SNAP, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR93
 - needs-gr: GR89
