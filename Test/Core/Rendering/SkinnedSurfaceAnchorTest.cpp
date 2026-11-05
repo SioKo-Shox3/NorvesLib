@@ -94,6 +94,7 @@ namespace
         Entity* Owner = nullptr;
         Component::SkinnedMeshComponent* MeshComponent = nullptr;
         Container::VariableArray<Math::Matrix4x4> JointModels;
+        Container::VariableArray<uint32_t> ExpectedJoints;
         uint32_t JointCount;
 
         explicit Fixture(FixtureKind kind)
@@ -132,6 +133,7 @@ namespace
             Container::VariableArray<uint32_t> indices;
             const auto addTriangle = [&](Math::Vector3 a, Math::Vector3 b, Math::Vector3 c, uint32_t dominant)
             {
+                ExpectedJoints.push_back(dominant);
                 const Math::Vector3 positions[] = {a, b, c};
                 for (uint32_t corner = 0; corner < 3; ++corner)
                 {
@@ -387,7 +389,8 @@ namespace
         const uint32_t joints[] = {0, 1, 2, 3};
         const uint32_t triangleCount = uint32_t(fixture.Mesh->GetIndices().size() / 3);
         Random random;
-        int hits = 0, misses = 0;
+        int hits = 0, misses = 0, restrictedSearches = 0;
+        uint32_t restrictedTrianglesTested = 0;
         double maxDistanceError = 0, maxBarycentricError = 0;
         Animation::StabQuery query;
         query.MaxDistance = 12.0f;
@@ -431,6 +434,30 @@ namespace
                 CheckWithin(barycentricError, PositionTolerance, "最近交差の重心座標が一致", sample);
                 maxDistanceError = std::fmax(maxDistanceError, distanceError);
                 maxBarycentricError = std::fmax(maxBarycentricError, barycentricError);
+
+                const uint32_t expected = fixture.ExpectedJoints[bestTriangle];
+                uint32_t expectedTriangleCount = 0;
+                for (const uint32_t joint : fixture.ExpectedJoints)
+                {
+                    if (joint == expected)
+                    {
+                        ++expectedTriangleCount;
+                    }
+                }
+                const uint32_t candidate[] = {expected};
+                query.CandidateJoints = {candidate, 1};
+                const auto restricted = Animation::FindSurfacePoint(query, buckets, *fixture.Mesh, pose);
+                query.CandidateJoints = joints;
+                ++restrictedSearches;
+                restrictedTrianglesTested = restricted.TrianglesTested;
+                const double restrictedDistanceError = std::abs(double(restricted.Distance) - bestDistance);
+                const double restrictedBarycentricError = std::fmax(std::abs(double(restricted.U) - bestU), std::abs(double(restricted.V) - bestV));
+                Check(restricted.Kind == Animation::StabResultKind::Hit, "絞った探索と総当たりの Hit が一致", sample, int(restricted.Kind), int(Animation::StabResultKind::Hit));
+                Check(restricted.TriangleIndex == bestTriangle, "絞った探索の最近交差の三角形が一致", sample, restricted.TriangleIndex, bestTriangle);
+                CheckWithin(restrictedDistanceError, PositionTolerance, "絞った探索の最近交差の距離が一致", sample);
+                CheckWithin(restrictedBarycentricError, PositionTolerance, "絞った探索の最近交差の重心座標が一致", sample);
+                Check(restricted.TrianglesTested == expectedTriangleCount, "絞った探索は素材の期待関節の三角形数を試す", sample, restricted.TrianglesTested, expectedTriangleCount);
+                Check(restricted.TrianglesTested < triangleCount, "絞った探索は全三角形より少なく試す", sample, restricted.TrianglesTested, triangleCount);
             }
             else
             {
@@ -440,13 +467,8 @@ namespace
         }
         Check(hits >= 300, "レイ試験の十分な交差数", 0, hits, 300);
         Check(misses > 0, "外れたレイも実行する", 0, misses, 1);
-        query.CandidateJoints = {joints, 1};
-        const auto restricted = Animation::FindSurfacePoint(query, buckets, *fixture.Mesh, pose);
-        const auto bucketSize = buckets.GetTriangles(0).size();
-        Check(restricted.TrianglesTested == bucketSize && bucketSize > 0 && bucketSize < triangleCount,
-            "一関節はそのバケットだけを試す", 0, restricted.TrianglesTested, double(bucketSize));
-        std::printf("SkinnedSurfaceAnchorTest 探索: Hit=%d/1000 Miss=%d 最大距離誤差=%.9g 最大重心誤差=%.9g TrianglesTested=%u/%u bucket=%zu\n",
-                    hits, misses, maxDistanceError, maxBarycentricError, restricted.TrianglesTested, triangleCount, bucketSize);
+        std::printf("SkinnedSurfaceAnchorTest 探索: Hit=%d/1000 Miss=%d 最大距離誤差=%.9g 最大重心誤差=%.9g 絞った探索=%d 回 TrianglesTested=%u/%u\n",
+                    hits, misses, maxDistanceError, maxBarycentricError, restrictedSearches, restrictedTrianglesTested, triangleCount);
 
         query.CandidateJoints = joints;
         double maxSnapReturnError = 0, maxSnapDistanceError = 0;

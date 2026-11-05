@@ -107,7 +107,8 @@ namespace NorvesLib::Core::Animation
     };
 
     // 退化した三角形は交差を試すが、評価時に関節へ戻るため返却候補から除外する。
-    // 有効な候補三角形を一つも試せない場合は NoCandidates を返す。
+    // 候補関節のバケットにスキニングできる三角形が無ければ NoCandidates を返す。
+    // 退化した三角形だけを試した場合は BeyondSnapDistance を返す。
     [[nodiscard]] StabResult FindSurfacePoint(const StabQuery& query, const JointTriangleBuckets& buckets,
                                               const SkinnedMeshResource& mesh,
                                               const SurfaceAnchorPoseView& pose) noexcept;
