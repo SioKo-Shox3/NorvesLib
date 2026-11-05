@@ -10187,3 +10187,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: GR37 の地形の GBuffer のシェーダーが PDL0 を束ねて被覆を評価するのは後続の GR59 の項目（今は NVTEX の層として埋めただけで、描画からはまだ引いていない）。起動の確かめは無い（cook と CPU の試験で閉じる）。
 - Notes: grassland の地形の NVTRN が変わったため、散布の spec `Assets/Scatter/grassland.scatter.json` が固定する地形の `cooked_hash` を `2fbadb9d5677e80d` に更新した（paths の外だが、cook を通すための記録の値だけ。散布は PDL0 を使わない）。
 - Notes: ぼかしの半径は格子の大きさでは拒否せず（小さな地形の既存の recipe を壊さないため）、計算量の上限 4096 セルだけで拒否する。凹み度の既定値は試験の合成の窪地で底が 209/255 になる値で、grassland の見た目の調整は描画が PDL0 を引くようになってから行う。
+
+- U1 GameModeScope に AddCleanup・非同期の補助・数の取得・漏れの検査を足す: 着地(直し 0 回)
+- U4 ProgressionState と ProgressSaveData の写し: 着地(直し 0 回)
+- Notes(G8-GR76-RESET-LIFETIME): 要起票: `ProgressionState::LoadStateFromJson` で撃破状態を空にしても最後のシ者の解放を通知済みの旗が戻らないため、同じインスタンスで条件を満たし直すと `OnFinalUnlocked` が再び通知されない(リセットの後に解放を通知し直すかは仕様の判断)。
+- U2 GameModeScopeLeakTest と試験の文書: 着地(直し 0 回)
+- U3 GameModeScopeResourceLeakVulkanTest(ビルドまで): 着地(直し 0 回)
+- U5 CombatSlice に後始末の登録・撃破の自動保存・最後のセーブからのリセットを足す: 着地(直し 1 回)
+- U7 リセットのソークの driver(--soak-reset の中身): 着地(直し 0 回)
+- U8 GameApplicationHandler の配線(引数・保存先・Update・進行の写し・生成関数): 着地(直し 1 回)
+- U6 Scripts/Test-GameReset.ps1 と仕上げの確かめ(タスクの verify): 着地(直し 0 回)
+## 2026-11-05 G8-GR76-RESET-LIFETIME（run 20261105-152759 の反復 2、完了）
+- Done: GameModeScope に段つきの後始末の登録（BeforeEntities → Entity の除去 → AfterEntities → 追跡した資源。各段は後入れ先出し。二度目の Cleanup は空、Cleanup 中の Cleanup は何もしない、Cleanup 中の登録はその Cleanup の中で呼ぶ）・`TrackAsyncModelLoad`・世代を見る `WrapAsyncTextureCallback`・`CaptureCounts`・`AddLeakCounter`・Debug 系の漏れの警告を足した。CombatSlice は音の停止を AddCleanup に載せ、voice の数を漏れの検査に登録し、撃破の完了で `RequestAutosave`、`RequestResetFromLastSave` からリセットの後の Enter で最後のセーブの進行（ProgressionSaveBridge）から作り直す。Game に `--soak-reset=N`（`--save-dir=<根>` が必須。保存は `<根>/NorvesLib/Game`）、毎フレームの `SaveService::Update`、`Scripts/Test-GameReset.ps1` を足した。試験 `GameModeScopeLeakTest`（Core だけ）と `GameModeScopeResourceLeakVulkanTest`（GPU;RenderingValidation、ビルドまで）を足した。Rendering3DTestRoutine の手作業の後始末は移していない（G8-S14 の決定）。
+- 証拠: .harness/runs/20261105-152759/verify-G8-GR76-RESET-LIFETIME.txt（verify の 2 行: Debug の Game・GameModeStateMachineTest・RenderResourcesDomainContractTest のビルド EXIT_CODE 0、ctest の 4 件 GameModeRegistryTest・GameModeStateMachineTest・SubRoutineTest・GameModeScopeLeakTest が 100% Passed。ps1 の構文検査 PARSE_OK）。
+- Next: 起動の確かめは後回し（G8-GR76-RESET-CHECK）。そこで確かめること: `pwsh -NoProfile -File Scripts/Test-GameReset.ps1 -SoakCount 5 -Configuration Debug` の合格（各回の GAME_RESET の数がベースラインへ戻る・restore が defeated=1・終了コード 0・VUID 0）、`GameModeScopeResourceLeakVulkanTest` の実行、Debug の起動で GAMEMODE_LEAK の警告の有無、引数なしの起動画面とランチャーが変わらないこと。
+- Notes: 後始末の `StopOwner` は 0 秒を渡しても `SoundSystem.cpp:471` で最短 2/60 秒のフェードに補正されるので、Leave の直後（スコープのデストラクタの漏れの検査・ソークの enter の行）には voice が残り得る。ソークは voice を Enter から 8 フレーム後の ready の行だけで比べる。音を鳴らすモードでは Debug の漏れの警告に voices の差が出る見込み（G8-GR76-RESET-CHECK で確かめる）。
+- Notes: ソークのベースラインは 1 回目のリセットの後（キャッシュが温まった後）。最初の Enter は sample=cold で出すだけ。最初の Enter ではセーブを読まない（前の起動の自動保存で既存のスモークの progression_preloaded を起こさないため）。
+- Notes: `SaveService::Update` は `OnUpdate`（PreUpdate）で `false` を渡して呼ぶ。状態機械の遷移は PreSimulation の Update の先頭で同期に適用されるので、その時点で遷移の途中ではない。死亡からのリセットは `FlushAndWait` で保存の完了を待ってから RequestReset する。
