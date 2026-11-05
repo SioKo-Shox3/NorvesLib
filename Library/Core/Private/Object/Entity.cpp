@@ -4,6 +4,9 @@
 #include "Object/ObjectCast.h"
 #include "Component/Component.h"
 #include "Component/MeshComponent.h"
+#include "Ecs/EcsTypes.h"
+#include "Ecs/EcsWorld.h"
+#include "Ecs/EcsTransformSystem.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core
@@ -234,6 +237,39 @@ namespace NorvesLib::Core
         }
 
         Object::Finalize();
+    }
+
+    bool Entity::IsActiveInHierarchy() const
+    {
+        // 自分の今の状態は常に見る。祖先を含めた判定は、階層のシステムが求めた EffectiveActive を読む
+        if (!IsActive() || IsPendingDestroy())
+        {
+            return false;
+        }
+        // 作成予約中の行・付け替え待ちがある間と、Active・PendingDestroy の変更がまだ伝播されていない間は、キャッシュが古いので祖先をたどる
+        const World* world = GetWorld();
+        if (world && world->m_EcsWorld && world->m_PendingEntityRelinks.empty() && world->m_PendingEntityCreates.empty() &&
+            world->m_EcsTransformSystem && !world->m_EcsTransformSystem->HasUnpropagatedFlagChanges())
+        {
+            const Ecs::EcsEntity row = GetEcsEntity();
+            if (!row.IsNull() && world->m_EcsWorld->IsAlive(row))
+            {
+                const Ecs::EcsPropagatedTransform* propagated = world->m_EcsWorld->GetColumnValue<Ecs::EcsPropagatedTransform>(row);
+                if (propagated != nullptr && propagated->bValid != 0)
+                {
+                    return propagated->bEffectiveActive != 0;
+                }
+            }
+        }
+        // 行が無い・まだ求めていないときは、祖先をたどる
+        for (const Entity* current = this; current; current = current->GetParentEntity())
+        {
+            if (!current->IsActive() || current->IsPendingDestroy())
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void Entity::SetActive(bool bNewActive)

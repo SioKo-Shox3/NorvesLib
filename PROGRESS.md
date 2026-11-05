@@ -10219,3 +10219,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 後始末の `StopOwner` は 0 秒を渡しても `SoundSystem.cpp:471` で最短 2/60 秒のフェードに補正されるので、Leave の直後（スコープのデストラクタの漏れの検査・ソークの enter の行）には voice が残り得る。ソークは voice を Enter から 8 フレーム後の ready の行だけで比べる。音を鳴らすモードでは Debug の漏れの警告に voices の差が出る見込み（G8-GR76-RESET-CHECK で確かめる）。
 - Notes: ソークのベースラインは 1 回目のリセットの後（キャッシュが温まった後）。最初の Enter は sample=cold で出すだけ。最初の Enter ではセーブを読まない（前の起動の自動保存で既存のスモークの progression_preloaded を起こさないため）。
 - Notes: `SaveService::Update` は `OnUpdate`（PreUpdate）で `false` を渡して呼ぶ。状態機械の遷移は PreSimulation の Update の先頭で同期に適用されるので、その時点で遷移の途中ではない。死亡からのリセットは `FlushAndWait` で保存の完了を待ってから RequestReset する。
+- U1 Entity::IsActiveInHierarchy を足し CanDispatchEntity をそれに寄せる: 着地(直し 0 回)
