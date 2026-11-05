@@ -5406,7 +5406,7 @@
 - notes: 決定: ロードマップ GR26 の設計1（Normal.w = モデルの ID、Material.a = P0、Emissive.a = P1）を採るが、10-02 の後に Normal.w と Material.a へ場当たりの意味（地形の受け手・草の株・鏡面の無い材質）が入っているので、それらを Normal.w の整数の印へ移して Material.a を P0 に空ける。理由: RGBA16F は 2048 までの整数を厳密に表せ、Material.a（8bit）の閾値の比べ（0.125〜0.375）は意味が増えると衝突する。G7-S6（濡れの符号化）の推奨 (A) が Material.a = P0（DefaultLit では濡れ感度）を前提にしているので、それと合う（ロードマップの選定課題一覧の G7-S6）。割り当て表は「段階をまたぐ注意」の「全体 / 段階をまたぐ割り当て表」（GPU の構造体を最初に触る GR26 で作る）に従う。半透明（forward_transparent.frag）とパストレーサーは ID を読まず DefaultLit 扱いと表に書く。ssr.frag の法線の復号の疑い（ロードマップ GR26 のリスク）は触らない。地形・草の印が保たれたかは golden の 2 シーンに地形と草が無いので、起動しての確かめ G5-GR27-MATERIAL-SCENES-CHECK の wasteland の撮影で見る。危険地帯（GBuffer の契約・ライティング・可視バッファの解決）なので評価者を通す。ロードマップ GR26（393〜461 行）の設計1・2、完了条件の GR26 の行、要件 `#### GR26`。
 
 ## G5-GR38-HEIGHTFIELD-QUERY: 地形の高さ場にレイ・重なり・掃引と表面の種別の照会を足し、ゲーム向けの地面のクエリを TerrainSystem に置く
-- status: todo
+- status: done
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR89-TERRAIN-MASKS
 - gr: GR38
 - done-when: `TerrainHeightField` に、面法線と滑らかな法線の 2 種の `SampleNormal`、最近セルの表面の番号（スプラットの重みが最大の層。層→表面の名前の表は地形の材質の記述に持つ）を返す `SampleSurface`、8×8 セルの最小最大の格子で 2D-DDA してから三角形を `Math::RayIntersectsTriangle` で当てる `Raycast`（原点がフットプリントの内側で地表の下なら distance=0・法線は零。最大距離の外とフットプリントの外は当たり無し）、形の AABB からセルの範囲を決めて最小最大で早期に捨て三角形ごとに接触を作る `OverlapSphere`・`OverlapCapsule`・`OverlapBox`（`GeometryContact` の Normal は地形→物体で上向きの成分を持つ。地表より下は地中まで固体とみなし上向きに押し戻す）、`SweepSphere`・`SweepCapsule`（三角形を半径だけ膨らませた形との最小の到達時刻）を足す。`Math` に三角形の最近点（`ClosestPointOnTriangle`）と、球・カプセル・OBB と三角形の接触の関数を足す（`Library/Core/Public/Math/GeometryIntersection.h` は今 `RayIntersectsTriangle`（403 行）しか三角形を扱わない）。`TerrainSystem` に `GroundSample{bValid, Height, Normal, SlopeRadians, SurfaceId, TileId}`・`SampleGround(x,z)`（O(1)）・`RaycastGround(ray, maxDistance, hit)`・`SampleGroundBatch(span, span)` を置く。 `TerrainHeightFieldQueryTest`（`MathGeometryTest` の束へ MEMBER。ソースは `Test/Core/Terrain/`）が通る: 平面・斜面・正弦波の高さ場で `SampleHeight`・`SampleNormal` が解析値と一致し、区画メッシュの補間高さとの最大差が 1e-4 以内。上から・斜めからの乱数 1 万本の `Raycast` が全三角形の総当たりと同じ最近点を返す。球・カプセル・OBB を斜面に置いた深さが解析値と一致し、三角形の辺・頂点をまたいで 0.1 m ずつ動かしても法線が反転・跳躍しない。`SweepSphere`・`SweepCapsule` の到達時刻が総当たり（小刻みの重なり判定）と 1e-3 以内。`SampleGroundBatch` が個別の呼び出しと一致し、表面の番号がスプラット最大の層になる。`GeometryContactTest` に三角形の接触のケースを足して通る。
@@ -5549,7 +5549,7 @@
 - notes: 設計はロードマップ 1760 行(中身の JSON)・1766〜1768 行(状態のストア。`Docs/agent-guide/architecture.md` の「新しい Manager を作らず NorvesEngine にサブシステムを足す」)・1780〜1782 行(自動保存)・1792〜1798 行(寝床の採否で形式は変わらない)。JobSystem は `Task::Then` が未実装などの癖があるので、1 つのタスクと完了の印に限る(1892 行)。HDD での FlushFileBuffers の重さは推定で未計測(1887 行)。AngelScript の GetFlag / SetFlag は GR98(G18)の後(1790 行)。危険地帯: ジョブ・Public API なので評価者を通す。やらないこと: 設定のファイル(G8-GR76-SETTINGS)、リセットの縦の道(G8-GR76-RESET-LIFETIME)。
 
 ## G9-GR15-POSE-MODIFIER-BASE: 手続き層と足 IK が共有する姿勢の後処理の土台（文脈の拡張・モデル空間の回転の配分・ばね・骨格単位の設定ファイル）を作る
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS
 - gr: GR15, GR14
 - needs-gr: GR01, GR10, GR12
@@ -5560,7 +5560,7 @@
 - notes: 今のコード: G3 の実装には設計案の `PoseModifierStack`（型名で登録）もグラフの modifiers 配列も無く、`AnimatorComponent::AddModifier`（`Library/Core/Private/Component/AnimatorComponent.cpp:151-168`。Order で stable_sort）と、骨格・dt・パラメータ・同期位相・遅延 FK だけを持つ `PoseModifierContext`（`PoseModifier.h:6-44`）しか無い。足 IK と傾きはワールドの変換・駆動の信号・所有者を要るので、ここで文脈を広げる。設定の置き場は、ロードマップ「段階をまたぐ注意」の「G9 / GR14・GR15 の調整値の置き場」のとおり、GR78 の import.json ではなく骨格単位の実行時サイドカー（G3-S8 の A。cook のハッシュに入れずロード時に読む）にする。臨界減衰は G4 で作った共通の部品を使う（同注意の「G4 / GR06・GR05」）。新しい試験は `SkeletalAnimationSamplingTest` の実行ファイルにソースを足して `main` から呼ぶ（実行ファイルを増やさない。`Test/Core/Rendering/CMakeLists.txt:2212-2226`、呼び出しは `SkeletalAnimationSamplingTest.cpp:728-740`）。足す試験ごとに、反証する契約・ほかの手段で気づけるか・黙って失敗するかの 3 点を `Docs/Testing.md` に書く。Public API（`PoseModifier.h`・`AnimatorComponent.h`）に触れる危険地帯なので評価者を通す。新規ソースは UTF-8 + BOM + CRLF、独自型。出典: ロードマップ G9 の節（1895〜1933 行）、要件 `#### GR15` と `#### GR14` の設計案。やらないこと: 個別のモディファイア（後続のタスク）、ImGui。
 
 ## G9-GR15-SPRING-FOLLOW: 尾・耳のばねの二次運動と、剣をくわえて首を振ったときの首と胸の遅れを足す
-- status: todo
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15
 - needs-gr: GR10, GR12, GR13
@@ -5651,7 +5651,7 @@
 - notes: 選定課題 G9-S5（段 2 を G9 に含める時期）は推奨の A に決めた: 段 1 の後、G9 の中で段 2 まで続けて作り、着手は最後にする。理由: 作者は必要な機能を今後のことも考えて全部やる方針で、段 2 は GR82 の v1 の形式に載るので、G2 が形式を固めた後に足すのが安全なため。段 1 の実 BVH の記録で効果が小さいと分かったら、作者へ戻して B（G9 の外へ送る）に切り替える。今のコードの事実: CHAN には `encoding u32=0` の欄があり、SAMP は 32 bytes の無圧縮だけ（`Docs/Architecture/ClipBankV1Wire.md:49-50`）。未知の任意の節は全ての検査の後でだけ読み飛ばす（同 17 行）。比べる相手は、「段階をまたぐ注意」の「G9 / GR87 段2・GR85」のとおり、旧 `SampleChannelValue` の線形走査ではなく GR12 の `ClipChannelSampler` の二分探索（`Library/Core/Public/Animation/ClipChannelSampler.h:10-31`）。旧形式（NVSKEL 0.x）は変えない。UNCERTAIN: 一様な時刻の印をどこに持つか（`SkeletalAnimationChannel`（`Library/Core/Public/Resource/SkeletalGltfData.h:70-76`）に欄を足すと Public API と既存の比較・ハッシュに波及する）は未確認。解消するには、チャンネルの比較・ハッシュを使う箇所（`CookedClipBankV1.cpp` の payload の hash、`RigBoundClipProof`）を読み、欄を足さずに読み込み時の派生のキャッシュ（GR12 の resource 派生の cache）に置けるならそちらを選ぶ。`Test/Tools/ClipBankV1Oracle.py` が minor 0 しか受けないなら、minor 1 を受けるよう直す。圧縮の形のまま評価する案は採らない（要件の設計案 (6)）。アセットロードと Public API の危険地帯なので評価者を通す。出典: 要件 `#### GR87` の設計案 (5)、受け入れ確認の【量子化】【互換】、ロードマップの選定課題一覧の G9-S5。
 
 ## G3-GR11-FOOT-CONTACT-SOURCE: 足の接地の検出を Library の 1 か所にまとめて cook からも呼び、接地の marker から同じ名前の接地イベントを出せるようにする
-- status: todo
+- status: done
 - after: G3-GR11-EVENT-PROPERTIES, G4-GR128-PROCESSING-CASES, G4-GR128-CLEANUP-CASES
 - gr: GR11
 - needs-gr: GR128
@@ -5685,7 +5685,7 @@
 - notes: 設計はロードマップ 729〜741 行（GR38 の 3 と 4）。今の物理の形は球・箱・カプセルだけ（`Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h` 10〜15 行、`Public/Physics/ColliderComponent.h` 47〜53 行）。問い合わせは G1 の GR08 が足した `PhysicsQueryDesc`（`Library/Core/Public/Scene/PhysicsQueryTypes.h` 149〜181 行）で、`CharacterMover`（G4 の GR07）は `PhysicsBroadphase::ExecuteQueryOverProxies` を使う（`CharacterMover.cpp` 42〜54 行）ので、プロキシに地形が入れば移動も地形に当たる。GR07・GR08 は統合ブランチにあるが確かめ直し中なので needs-gr に書く。分岐の直し漏れがあると地形が箱・カプセルとして黙って処理される（ロードマップ 1264 行）ので、全部の分岐を試験で通す。地形の AABB は全部のコライダーと重なり、SAP に入れると候補の組の重複判定が O(P²) で悪化する（ロードマップ 737 行）。コライダーの設定は PROPERTY でなくシーンに保存されないので、地形のコライダーはコードで組む（区画の子 Entity を作るときに Physics 側の口が付ける）。表面の番号の扱いは G5B-S12（G5-GR38-HEIGHTFIELD-QUERY の notes）。CCD は無いので、高速の物体が地表で小さく跳ねることがある（ロードマップ 1265 行）。危険地帯（Public API・物理の寿命）なので評価者を通す。性能（200 コライダー＋地形で FixedTick の増分が N に線形）は記録だけ。
 
 ## G5-GR42-GRASS-FIELD-ASSET: 草の場の cook 済み形式 NVGFLD v0 と cook を足し、GrassFieldComponent がシーンから読んで登録する
-- status: todo
+- status: done
 - after: G5-GR42-GRASS-FIELD-CORE, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-MASKS, G5-GR37-TERRAIN-COMPONENT
 - gr: GR42
 - done-when: `Library/Core/Public/Asset/CookedGrassFieldFormat.h` と `Private/Asset/CookedGrassFieldLoader.cpp` に NVGFLD v0（little-endian・magic 'NVGFLDv0'・ヘッダ長・版・EndianMarker・ファイル長・ペイロードの FNV-1a64・予約は 0 必須。ヘッダの次にチャンク表（cx・cz・flags・LayerA/LayerB の offset/size・最大密度・最大高さ係数）と種別の名前の表、最後にペイロード）と、拒否の理由を `CookedGrassFieldParseStatus` で返す読み込みを足す。AssetKind::World の entry type `Gfd0`・format `nvgfld.v0` で AssetSystem が解決できる。AssetCook に `--kind world --format nvgfld.v0` の `GrassFieldCooker` を足す: 入力は配置の JSON（原点・チャンクの大きさ・解像度・種別の表のパス）と PNG（density・height・moisture・species・tint）か、NVTRN の層（GRS0 を密度、MSK0 の R を湿り）。`GrassFieldComponent`（Entity 1 つ = 草原 1 つ。PROPERTY は cook 済みの論理パスなど値だけで SceneSerializer の JSON v2 に保存）が BeginPlay で読んで `Vegetation` と `RenderWorld::SetGrassField` に登録し、EndPlay で外す。地面の高さの取り出し口を TerrainSystem へ差し替える `IGroundHeightSource` の実装を置く。grassland の草原に、地形の GRS0 から焼いた草の場を置く。試験が通る: `CookedGrassFieldTest`（`CookedMeshTest` の束へ MEMBER）で Success と、BadMagic・UnsupportedVersion・EndianMismatch・HeaderSizeMismatch・FileSizeMismatch・ReservedFieldNonZero・チャンク表の範囲外・重複チャンク・PayloadHashMismatch・TruncatedPayload を 1 件ずつ拒否。`AssetCookGrassFieldSmoke`（`Tools/AssetCook/CMakeLists.txt` に `cmake -P` で登録）で基準の PNG 群から .nvpkg と manifest を作り、読み直したハッシュとチャンクの中身が元の PNG と画素単位で一致。`SceneFileRoundTripTest` に GrassFieldComponent の PROPERTY の往復と、項目の無い旧ファイルが既定値で読めるケース。1 km² 相当の常駐の大きさを `Docs/RenderingValidation/GrassFieldAcceptance.md` に記録する（ゲートにしない）。
@@ -5698,7 +5698,7 @@
 - notes: 設計はロードマップ 821〜827・843 行（GR42 の 2 と 4）。AssetKind は G5B-S3（G5-GR89-NVTRN-FORMAT の notes）で決めた共用の World を使い、新しい kind を足さない。形式の作りは NVTEX・NVAUD と同じ流儀（`CookedTextureFormat.h`・`CookedAudioFormat.h`）。AssetSystem はパッケージ全体を読んでハッシュを確かめる（ロードマップ 825 行）ので、谷 1 つ（数 MB〜数十 MB）を超える場は領域ごとの entry に分ける（GR111 の範囲読みの前の策。この項目では 1 entry でよい）。地形の層から焼けるようにするのは、草の生え方を地形の傾斜・湿り・道と一致させるため（GR89 の GRS0 は草密度の層として作ってある。ロードマップ 780 行）。シーンに保存するのは設定値だけで、場の本体は別ファイルなので、パスが古い・読めないときに警告のログを出す（ロードマップ 1281 行）。試験を足す理由: 壊れた・改ざんされた場を拒否しそこねると、草の密度や種別が化けたまま描かれ、撮影では気づきにくい。PROPERTY の往復が壊れると保存したシーンから草原が消えるかずれるだけで、エラーは出ない。危険地帯（アセットロード・Public API）なので評価者を通す。
 
 ## G8-GR16-JOINT-DATA-RESPONSE: 関節に追従する判定体・攻撃のデータ・表示・当たりの反応(火花・ヒットストップ)をつなぐ
-- status: todo
+- status: done
 - after: G8-GR16-COMBAT-RUNTIME, GAME-GR131-VFX, G3-GR13-SOCKET-ORACLE-TIMING, G4-GR02-FIXED-FRAME-CLOCK
 - gr: GR16
 - needs-gr: GR13, GR02
@@ -10423,3 +10423,34 @@
 - verify: `ctest --test-dir build -C Debug -R "^(GameModeStateMachineTest|SaveServiceTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/GameMode/GameModeStateMachine.h, Library/Core/Private/GameMode/GameModeStateMachine.cpp, Game/GameApplicationHandler.cpp, Test/Core/GameMode/GameModeStateMachineTest.cpp
 - from: G8-GR76-RESET-LIFETIME
+
+## G9-GR15-POSE-MODIFIER-BASE-P1: グラフの付け替えで、設定ファイルから作った姿勢の後処理を新しい骨格とパラメータに解決し直し、解決できないものは警告を出して外す
+- status: todo
+- after: G9-GR15-POSE-MODIFIER-BASE
+- done-when: (1) `AnimatorComponent` は、最後に `ApplyPoseModifiersJson` / `ApplyPoseModifiersFile` で当てた設定の元（JSON の文字列と型の表の写し）を持つ。型の表は呼び出し側の配列の寿命に頼らず、項目を値で写して持つ。`SetGraph` が成功したら（`Detach` の後に付け直す場合も含む）、その元を新しい骨格とパラメータ（`m_BoundSkeleton`・`m_Instance.Parameters()`）でもう一度解析し、modifier 群を差し替える。(2) 骨格 A で設定を当ててから、関節の並びが違う骨格 B へ `SetGraph` すると、試験だけの型が受け取る関節の添字が B の `FindJointIndex` と一致する。B に無い関節名を含む設定なら設定の modifier を外し、最後の解決の報告を読む口（例: `GetPoseModifierConfigReport()`）から `UnknownJoint` とそのパスが読める。そのとき姿勢は modifier なしで出る（`EvaluateAnimation` が true を返し、`SubmitLocalPose` まで届く）。`SetGraph` そのものは失敗にしない。(3) 重みの `param` を定義しないグラフへ付け替えた場合も同じく外れ、`UnknownParam` が読め、姿勢は毎フレーム出続ける。(4) modifier の `Apply` が false を返して姿勢を出さないフレームでは、成功から失敗に変わったときだけ `Logging/LogMacros.h` で警告を 1 回出す（何番目の modifier か、その Order を含める）。続けて失敗する間は出し直さず、Release では出さない。失敗したときの扱い（そのフレームの姿勢を出さない）は今のまま変えない。既存の `AnimGraphRuntimeTest` と `PoseModifierBaseTest` にある modifier の順序と失敗時のケースは書き換えずに通る。(5) 足した試験ごとに、反証する契約・ほかの手段で気づけるか・黙って失敗するかの 3 点を `Docs/Testing.md` に書き、付け替えのときの規則を `Docs/Architecture/AnimationRuntime.md` に書く。(6) 下の verify が通る。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest GLTFSkeletalAnalyzerTest ResourceRegistryTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|GLTFSkeletalAnalyzerTest|SkeletalResourceLifetimeTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Component/AnimatorComponent.h, Library/Core/Private/Component/AnimatorComponent.cpp, Test/Core/Rendering/PoseModifierBaseTest.cpp, Docs/Architecture/AnimationRuntime.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: G9-GR15-POSE-MODIFIER-BASE
+- notes: コードで確かめたこと。`SetGraph`（`AnimatorComponent.cpp:76-118`）は `m_BoundSkeleton` と `m_Instance` を差し替えるが、`m_Modifiers` には触れない。そのため設定から作った modifier は、古い骨格で解決した関節の添字を持ったまま残る（P1）。重みは `ConfiguredPoseModifier::Apply`（`PoseModifierConfig.cpp:128-164`）が毎フレーム名前でパラメータを引く。パラメータが無いと false を返し、`EvaluateAnimation`（`AnimatorComponent.cpp:400-416`）はログを出さずに `SubmitLocalPose` を飛ばす（P2）。2 つの提案は原因が同じ（付け替えのときに設定を解決し直していない）なので、1 つのタスクにまとめた。`AddModifier` で足した modifier の扱いは今のまま変えない（設定を当てると全部を置き換える今の意味も変えない）。Public API（`AnimatorComponent.h`）に触れる危険地帯なので評価者を通す。新しいソースは作らず、既存の試験の実行ファイルにケースを足す。アプリの起動は要らない。
+
+---
+
+補足（書式の外）: この場はプランモードでしたが、使える道具に ExitPlanMode と AskUserQuestion がありませんでした。洗い出し役の契約どおり、ファイルは書き換えず、上の判断の文章だけを返しています。
+
+## G5-GR42-GRASS-FIELD-ASSET-P1: GrassFieldComponent に草原の登録と解除の成功を示すログを足す
+- status: todo
+- done-when: `GrassFieldComponent::BeginPlay` は今、失敗した場合だけ `GRASS_FIELD_COMPONENT_SKIPPED` を出し、`RegisterGrassField` が成功しても何も出さない。`EndPlay` も何も出さない。そこで 2 つのログを足す。1 つ目は、`RegisterGrassField` が成功して `PublishRenderData` した直後に出す `LOG_INFO("GRASS_FIELD_COMPONENT_REGISTERED path=%s chunks=%u species=%u ground=terrain|flat ...")`。2 つ目は、`EndPlay` で実際に解除したとき(`m_RegisteredEngine && m_Field` の分岐)だけ出す `LOG_INFO("GRASS_FIELD_COMPONENT_UNREGISTERED path=%s ...")`。どちらも機械が照合するキーは英語、説明文は日本語にする。新しい試験は足さない。ログは `Logging/LogMacros.h` の既存のマクロを使い、Release では出ない今の扱いのままにする。Game の Debug ビルドが通ること。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `git grep -n -e "GRASS_FIELD_COMPONENT_REGISTERED" -e "GRASS_FIELD_COMPONENT_UNREGISTERED" -- Library/Core/Private/Component/GrassFieldComponent.cpp`
+- paths: Library/Core/Private/Component/GrassFieldComponent.cpp, PROGRESS.md
+- from: G5-GR42-GRASS-FIELD-ASSET
+
+## G5-GR42-GRASS-FIELD-ASSET-P2: AssetManifestTest と GrassFieldQueryTest を、草の場を入れた後のソースからビルドし直した実行ファイルで通す
+- status: todo
+- done-when: 元のタスクの verify は `AssetManifestTest` と `GrassFieldQueryTest` を走らせるが、これらの実行ファイル(`AssetSystemTest` と `MathGeometryTest`)をビルドしていない。そのため、新しい build では Not Run になり、古い build では元のタスクの変更(`Public/Vegetation/GroundHeightSource.h` の変更や Asset の追加)を含まない古い実行ファイルで通っていた恐れがある。このタスクでは、`AssetSystemTest` と `MathGeometryTest` を今の統合ブランチのソースからビルドし直し、2 本の試験を走らせて通す。落ちたときは、元のタスクの変更が原因ならその側を直し、試験の期待値は書き直さない。実行の結果(通った試験の名前と件数)を PROGRESS.md に記録する。
+- verify: `cmake --build build --config Debug --target AssetSystemTest -- /m:1`
+- verify: `cmake --build build --config Debug --target MathGeometryTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(AssetManifestTest|GrassFieldQueryTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Private/Asset, Library/Core/Private/Vegetation, Library/Core/Public/Vegetation, Test/Core/Asset/AssetManifestTest.cpp, Test/Core/Vegetation/GrassFieldQueryTest.cpp, PROGRESS.md
+- from: G5-GR42-GRASS-FIELD-ASSET

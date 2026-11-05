@@ -1,0 +1,12 @@
+{
+  "id": "humanoid",
+  "weakJoint": { "minVertexCount": 1, "minWeightSum": 0.1 },
+  "parts": [
+    { "partId": 0, "joint": "Head", "surface": "Flesh", "faction": "enemy", "damageScale": 1.5, "priority": 10, "flags": ["weak"], "shape": { "type": "sphere", "center": [0, 0, 0], "radius": 0.18 } },
+    { "partId": 1, "joint": "Root", "surface": "Metal", "faction": "enemy", "flags": ["anchorable"], "shape": { "type": "box", "center": [0, 1.0, 0], "halfExtents": [0.3, 0.45, 0.2] } },
+    { "partId": 2, "joint": "hand_l", "surface": "Flesh", "faction": "enemy", "shape": { "type": "capsule", "pointA": [0, 0, 0], "pointB": [0, 0.3, 0], "radius": 0.12 } },
+    { "partId": 3, "joint": "hand_r", "surface": "Flesh", "faction": "enemy", "shape": { "type": "capsule", "pointA": [0, 0, 0], "pointB": [0, 0.3, 0], "radius": 0.12 } },
+    { "partId": 4, "joint": "leg_l", "surface": "Flesh", "faction": "enemy", "shape": { "type": "capsule", "pointA": [0, 0, 0], "pointB": [0, -0.5, 0], "radius": 0.15 } },
+    { "partId": 5, "joint": "leg_r", "surface": "Flesh", "faction": "enemy", "shape": { "type": "capsule", "pointA": [0, 0, 0], "pointB": [0, -0.5, 0], "radius": 0.15 } }
+  ]
+}

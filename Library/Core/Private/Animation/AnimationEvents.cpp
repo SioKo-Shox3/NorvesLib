@@ -220,14 +220,17 @@ namespace NorvesLib::Core::Animation
             auto crossed = [&](double time) {
                 return forward ? time > previous && time <= current : time >= current && time < previous;
             };
-            for (uint32_t index = 0; index < meta.Events.size(); ++index)
+            auto collectEvent = [&](const AnimEvent& event, uint32_t index)
             {
-                const auto& event = meta.Events[index];
                 if (t.Weight < event.MinWeight)
-                    continue;
+                {
+                    return;
+                }
                 if (loop && (event.Time < start || event.Time > end ||
                              (event.EndTime >= 0 && (event.EndTime < start || event.EndTime > end))))
-                    continue;
+                {
+                    return;
+                }
                 AnimEventInfo info;
                 info.Name = event.Name;
                 info.SyncGroup = t.SyncGroup;
@@ -276,6 +279,21 @@ namespace NorvesLib::Core::Animation
                         info.OffsetSeconds = offset(finish);
                         collect(info, clip.GetMetadataRevision());
                     }
+                }
+            };
+            for (uint32_t index = 0; index < meta.Events.size(); ++index)
+            {
+                collectEvent(meta.Events[index], index);
+            }
+            if (t.Node < graph.Nodes.size() && graph.Nodes[t.Node].bMarkerEvents)
+            {
+                for (uint32_t index = 0; index < meta.Markers.size(); ++index)
+                {
+                    const auto& marker = meta.Markers[index];
+                    AnimEvent event;
+                    event.Name = marker.Name;
+                    event.Time = marker.Time;
+                    collectEvent(event, uint32_t(meta.Events.size()) + index);
                 }
             }
         }

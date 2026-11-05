@@ -4,6 +4,7 @@
 #include "Delegate/MulticastDelegate.h"
 #include "Gameplay/Combat/AttackProfile.h"
 #include "Gameplay/Combat/CombatHitEvent.h"
+#include "Gameplay/Combat/CombatJoint.h"
 #include "Gameplay/Combat/CombatShape.h"
 #include "Math/Transform.h"
 #include "Thread/Thread.h"
@@ -21,6 +22,7 @@ namespace NorvesLib::Core::Component
 namespace NorvesLib::Modules::Gameplay::Combat
 {
     class CombatRuntime;
+    struct CombatJointBindingState;
 
     /// 判定窓と武器ローカルの形状を保持する。操作と通知は GameThread 専用。
     /// ActorId の既定は持ち主の ObjectId。0 の場合と武器の子 Entity には SetActorId が必要。
@@ -44,6 +46,10 @@ namespace NorvesLib::Modules::Gameplay::Combat
         /// nullptr は持ち主へ戻す。同じ World に参加済みの Entity だけを明示指定できる。
         bool SetBinding(Core::Entity* entity);
         Core::EntityHandle GetBinding() const;
+        /// 空名で関節への束縛を解除する。解決は判定の評価時に行う。
+        bool SetJointBinding(Core::Identity jointName);
+        Core::Identity GetJointName() const { return m_JointName; }
+        void SetWeakJointThreshold(const CombatJointInfluenceThreshold& threshold);
         void SetProfile(const Core::Container::TSharedPtr<const AttackProfile>& profile);
         const Core::Container::TSharedPtr<const AttackProfile>& GetProfile() const { return m_Profile; }
         void SetActorId(uint64_t actorId) { m_ActorId = actorId; m_bExplicitActorId = true; }
@@ -85,8 +91,11 @@ namespace NorvesLib::Modules::Gameplay::Combat
 
         CombatShape m_Shape;
         Core::EntityHandle m_Binding;
+        Core::Identity m_JointName;
+        Core::Container::TSharedPtr<CombatJointBindingState> m_JointBinding;
         bool m_bOwnerBinding = true;
         Core::Container::TSharedPtr<const AttackProfile> m_Profile;
+        CombatJointInfluenceThreshold m_WeakJointThreshold;
         uint64_t m_ActorId = 0;
         bool m_bExplicitActorId = false;
         CombatRuntime* m_Runtime = nullptr;

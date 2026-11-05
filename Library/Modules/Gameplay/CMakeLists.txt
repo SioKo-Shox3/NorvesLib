@@ -9,6 +9,9 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Combat/CombatHitEvent.h
     Public/Gameplay/Combat/HitboxComponent.h
     Public/Gameplay/Combat/HurtboxSetComponent.h
+    Public/Gameplay/Combat/CombatJoint.h
+    Public/Gameplay/Combat/CombatData.h
+    Public/Gameplay/Combat/CombatResponseSettings.h
     Public/Gameplay/Enemy/EnemyDefinition.h
     Public/Gameplay/Enemy/EnemyPatternSelector.h
     Public/Gameplay/Enemy/IEnemyAnimator.h
@@ -31,6 +34,13 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Combat/HealthComponent.cpp
     Private/Gameplay/Combat/HitboxComponent.cpp
     Private/Gameplay/Combat/HurtboxSetComponent.cpp
+    Private/Gameplay/Combat/CombatJointBinding.h
+    Private/Gameplay/Combat/CombatJointBinding.cpp
+    Private/Gameplay/Combat/CombatDataLoader.cpp
+    Private/Gameplay/Combat/CombatResponse.h
+    Private/Gameplay/Combat/CombatResponse.cpp
+    Private/Gameplay/Combat/CombatDebugDraw.h
+    Private/Gameplay/Combat/CombatDebugDraw.cpp
     Private/Gameplay/Enemy/EnemyDefinition.cpp
     Private/Gameplay/Enemy/EnemyPatternSelector.cpp
     Private/Gameplay/Enemy/AnimatorEnemyAnimator.cpp

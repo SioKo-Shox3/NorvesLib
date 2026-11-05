@@ -1,6 +1,7 @@
 ﻿#include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
 #include "CookedTerrainQuery.h"
+#include "GrassFieldCooker.h"
 #include "MeshCooker.h"
 #include "RigRetargetCook.h"
 #include "RigSplitFileCook.h"
@@ -535,6 +536,9 @@ namespace
             << "       AssetCook --recover --runtime-root <directory>  (recover fixed pending in parent workspace, including siblings)\n"
             << "       AssetCook --sample-terrain-grid <x>,<z> [<x>,<z> ...]\n"
             << "       AssetCook --check-terrain-dem-seam <ax>,<az> <bx>,<bz>\n"
+            << "       AssetCook --check-grass-field --package <pkg> --entry <名前> --source <配置.json>  (草の場を元の入力と照合)\n"
+            << "       AssetCook --input <配置.json> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind world --entry <entry.nvgfld> --entry-type Gfd0 --format nvgfld.v0  (草の場を焼く)\n"
             << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
@@ -654,6 +658,11 @@ namespace
 
 int main(int argc, char **argv)
 {
+    int grassExitCode = 0;
+    if (NorvesLib::Tools::AssetCook::RunGrassFieldCheckCommand(argc, argv, grassExitCode))
+    {
+        return grassExitCode;
+    }
     int vfxExitCode = 0;
     if (NorvesLib::Tools::AssetCook::RunVfxEffectCookCommand(argc, argv, vfxExitCode))
     {

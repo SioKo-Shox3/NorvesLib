@@ -4,7 +4,7 @@ namespace NorvesLib::Core::Vegetation
 {
     /**
      * @brief 地面の高さの取り出し口。このインターフェースに高さの取得を統一する。
-     * TerrainSystem への差し替えは別途行う。実装の const 呼び出しは再入可能であること。
+     * 地形を使う実装は TerrainGroundHeightSource。実装の const 呼び出しは再入可能であること。
      */
     class IGroundHeightSource
     {

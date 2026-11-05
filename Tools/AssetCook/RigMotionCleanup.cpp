@@ -17,6 +17,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         {
             uint32_t Joint;
             const char* Name;
+            Core::Identity Leg;
             C::VariableArray<Math::Vector3> Positions;
         };
         struct Window
@@ -51,11 +52,15 @@ namespace NorvesLib::Tools::AssetCook::Detail
             return false;
         }
         C::VariableArray<Foot> feet;
-        constexpr A::SkeletalRole roles[] = {A::SkeletalRole::FrontLPaw, A::SkeletalRole::FrontRPaw,
-                                             A::SkeletalRole::HindLPaw, A::SkeletalRole::HindRPaw};
-        for (auto role : roles)
+        constexpr struct
         {
-            const auto& targets = profile.Target[size_t(role)];
+            A::SkeletalRole Role;
+            const char* Leg;
+        } roles[] = {{A::SkeletalRole::FrontLPaw, "LF"}, {A::SkeletalRole::FrontRPaw, "RF"},
+                     {A::SkeletalRole::HindLPaw, "LH"}, {A::SkeletalRole::HindRPaw, "RH"}};
+        for (const auto& role : roles)
+        {
+            const auto& targets = profile.Target[size_t(role.Role)];
             if (targets.empty())
                 continue;
             const auto& bytes = targets.back().Name;
@@ -68,13 +73,14 @@ namespace NorvesLib::Tools::AssetCook::Detail
             for (uint32_t i = 0; i < data->Geometry.Joints.size(); ++i)
                 if (data->Geometry.Joints[i].Name == name)
                 {
-                    feet.push_back({i, A::SkeletalRoleName(role), {}});
+                    feet.push_back({i, A::SkeletalRoleName(role.Role), Core::Identity(role.Leg), {}});
                     break;
                 }
         }
         json.WriteUInt64("foot_count", feet.size());
         if (feet.empty())
         {
+            json.WriteUInt64("feet_without_contacts", 0);
             json.WriteBool("needs_review", true);
             return true;
         }
@@ -177,47 +183,38 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 foot.Positions[sample] = {model.m30 - rootModel.m30, model.m31, model.m32 - rootModel.m32};
             }
         }
-        const A::FootContactOptions contactOptions{};
         C::VariableArray<Window> windows;
         C::VariableArray<Math::Vector3> groundVelocities;
+        uint32_t feetWithoutContacts = 0;
         double ground = std::numeric_limits<double>::max();
         for (size_t footIndex = 0; footIndex < feet.size(); ++footIndex)
         {
             const auto& positions = feet[footIndex].Positions;
-            float minimum = std::numeric_limits<float>::max();
-            for (const auto& p : positions)
-                minimum = std::min(minimum, p.y);
-            ground = std::min(ground, double(minimum));
-            size_t begin = SIZE_MAX;
-            const auto close = [&](size_t end) {
-                if (begin == SIZE_MAX)
-                    return;
-                const double length = dt * double(end - begin);
-                // 実行時と同じ許容誤差を加え、float 閾値の double 化で境界の区間を落とさない。
-                const double tolerance =
-                    4 * std::numeric_limits<float>::epsilon() * std::max(length, double(contactOptions.MinimumWindowSeconds));
-                if (length + tolerance >= contactOptions.MinimumWindowSeconds)
-                {
-                    windows.push_back({footIndex, float(begin * dt), float(end * dt)});
-                    for (size_t i = begin; i < end; ++i)
-                        groundVelocities.push_back((positions[i] - positions[i + 1]) / float(dt));
-                }
-                begin = SIZE_MAX;
-            };
-            for (size_t i = 0; i + 1 < samples; ++i)
+            C::VariableArray<float> heights;
+            heights.reserve(positions.size());
+            for (const auto& position : positions)
             {
-                const double hysteresis = begin == SIZE_MAX ? 1 : 1.5;
-                const double vertical = std::abs(double(positions[i + 1].y) - positions[i].y) / dt;
-                if (positions[i].y - minimum <= contactOptions.HeightThreshold * hysteresis &&
-                    vertical <= contactOptions.VerticalSpeedThreshold * hysteresis)
-                {
-                    if (begin == SIZE_MAX)
-                        begin = i;
-                }
-                else
-                    close(i);
+                heights.push_back(position.y);
+                ground = std::min(ground, double(position.y));
             }
-            close(samples - 1);
+            C::VariableArray<A::FootContactSampleWindow> footWindows;
+            if (!A::DetectFootContactWindows(heights, dt, A::FootContactOptions{}, footWindows))
+            {
+                error = "cleanup_contacts";
+                return false;
+            }
+            if (footWindows.empty())
+            {
+                ++feetWithoutContacts;
+            }
+            for (const auto& window : footWindows)
+            {
+                windows.push_back({footIndex, float(window.Begin * dt), float(window.End * dt)});
+                for (size_t i = window.Begin; i < window.End; ++i)
+                {
+                    groundVelocities.push_back((positions[i] - positions[i + 1]) / float(dt));
+                }
+            }
         }
         double x = 0, z = 0;
         for (const auto& velocity : groundVelocities)
@@ -237,67 +234,24 @@ namespace NorvesLib::Tools::AssetCook::Detail
         uint32_t skippedMarkers = 0;
         if (options.bGenerateFootMarkers)
         {
-            const bool generateMarkers = clip.Metadata.Markers.empty();
-            for (const auto& window : windows)
-                clip.Metadata.Events.push_back({Core::Identity(feet[window.FootIndex].Name), window.Start, window.End});
-            if (generateMarkers)
+            C::VariableArray<A::FootContactWindow> contactWindows;
+            C::VariableArray<Core::Identity> legs;
+            for (const auto& foot : feet)
             {
-                for (size_t i = 0; i < feet.size(); ++i)
-                {
-                    const Window* largest = nullptr;
-                    const Window* first = nullptr;
-                    const Window* last = nullptr;
-                    for (const auto& window : windows)
-                    {
-                        if (window.FootIndex != i)
-                        {
-                            continue;
-                        }
-                        if (!largest || window.End - window.Start > largest->End - largest->Start)
-                        {
-                            largest = &window;
-                        }
-                        if (window.Start == 0)
-                        {
-                            first = &window;
-                        }
-                        if (window.End == clip.DurationSeconds)
-                        {
-                            last = &window;
-                        }
-                    }
-                    if (!largest)
-                    {
-                        continue;
-                    }
-                    float down = largest->Start, up = largest->End;
-                    // 自動選択で検出した周期は Metadata に転記されないため、processing のループ指定も使う。
-                    const bool bLoop = clip.Metadata.Loop.bEnabled || options.Loop != A::SkeletalLoopSelection::None;
-                    if (bLoop && first && last && first != last &&
-                        clip.DurationSeconds - last->Start + first->End >= largest->End - largest->Start)
-                    {
-                        down = last->Start;
-                        up = first->End;
-                    }
-                    const C::AnsiString name = feet[i].Name;
-                    clip.Metadata.Markers.push_back({Core::Identity((name + "_down").c_str()), down});
-                    clip.Metadata.Markers.push_back({Core::Identity((name + "_up").c_str()),
-                                                     up >= clip.DurationSeconds ? 0 : up});
-                }
-                std::stable_sort(clip.Metadata.Markers.begin(), clip.Metadata.Markers.end(),
-                                 [](const auto& a, const auto& b) { return a.Time < b.Time; });
-                // 同時刻の複数markerは既存形式に入らない。接地windowはreportへ全件残す。
-                for (size_t i = 1; i < clip.Metadata.Markers.size();)
-                    if (clip.Metadata.Markers[i].Time == clip.Metadata.Markers[i - 1].Time)
-                    {
-                        clip.Metadata.Markers.erase(clip.Metadata.Markers.begin() + i);
-                        ++skippedMarkers;
-                    }
-                    else
-                        ++i;
+                legs.push_back(foot.Leg);
             }
-            std::stable_sort(clip.Metadata.Events.begin(), clip.Metadata.Events.end(),
-                             [](const auto& a, const auto& b) { return a.Time < b.Time; });
+            for (const auto& window : windows)
+            {
+                contactWindows.push_back({feet[window.FootIndex].Leg, window.Start, window.End});
+            }
+            // 自動選択で検出した周期は Metadata に転記されないため、processing のループ指定も使う。
+            const bool bLoop = clip.Metadata.Loop.bEnabled || options.Loop != A::SkeletalLoopSelection::None;
+            if (!A::AppendFootContactMetadata(contactWindows, legs, clip.DurationSeconds, bLoop, clip.Metadata,
+                                              skippedMarkers))
+            {
+                error = "cleanup_foot_markers";
+                return false;
+            }
         }
         bool derived = false;
         double authoredDistance = 0;
@@ -364,7 +318,9 @@ namespace NorvesLib::Tools::AssetCook::Detail
         json.WriteNumber("ground_speed_retime", retime);
         json.WriteBool("derived_root_motion", derived);
         json.WriteUInt64("coincident_markers_omitted", skippedMarkers);
-        json.WriteBool("needs_review", windows.empty() || skippedMarkers > 0 || rms > std::max(.1, speed * .25));
+        json.WriteUInt64("feet_without_contacts", feetWithoutContacts);
+        json.WriteBool("needs_review", windows.empty() || feetWithoutContacts > 0 || skippedMarkers > 0 ||
+                                           rms > std::max(.1, speed * .25));
         json.BeginArray("contacts");
         for (const auto& window : windows)
         {

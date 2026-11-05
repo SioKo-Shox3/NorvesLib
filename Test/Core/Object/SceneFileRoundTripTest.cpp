@@ -1,12 +1,15 @@
 ﻿#include "Component/BillboardComponent.h"
 #include "Component/Component.h"
+#include "Component/GrassFieldComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Component/TerrainComponent.h"
+#include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
 #include "Object/PrefabAsset.h"
 #include "Object/SchemaProjection.h"
 #include "Object/World.h"
 #include "Scene/SceneSerializer.h"
+#include "Text/JsonDocument.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -23,6 +26,13 @@ namespace
     constexpr float Epsilon = 0.0001f;
     constexpr const char* kSceneFilePath = "SceneFileRoundTripTest.scene.json";
     constexpr const char* kBrokenFilePath = "SceneFileRoundTripTest.broken.json";
+
+    constexpr const char* kGrassFilePath = "SceneFileRoundTripTest.grass.scene.json";
+    constexpr const char* kLegacyGrassFilePath = "SceneFileRoundTripTest.grass-legacy.scene.json";
+    constexpr const char* kGrassProperties[] =
+    {
+        "CookedFieldPath", "SpeciesTablePath", "bUseTerrainGround"
+    };
 
     constexpr const char* kTerrainFilePath = "SceneFileRoundTripTest.terrain.scene.json";
     constexpr const char* kLegacyTerrainFilePath = "SceneFileRoundTripTest.terrain-legacy.scene.json";
@@ -373,6 +383,188 @@ namespace
         assert(std::remove(kLegacyTerrainFilePath) == 0);
     }
 
+    void AssertGrassNotBegun(const Component::GrassFieldComponent& grass)
+    {
+        const ClassProperty* property = grass.GetClass()->GetProperty(Identity("bBegunPlay"));
+        assert(property != nullptr);
+        PropertyValue value;
+        assert(property->GetPropertyValue(&grass, value));
+        const bool* bBegun = value.Get<bool>();
+        assert(bBegun != nullptr && !*bBegun);
+    }
+
+    EntitySubtreeSnapshot ReadGrassScene(const char* filePath, bool bLegacy)
+    {
+        auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+            Container::String(filePath), NorvesLib::FileStream::FileMode::Read,
+            NorvesLib::FileStream::FileAccess::Read);
+        assert(stream && stream->IsOpen());
+        const Container::String json = stream->ReadString();
+
+        // v1 は読み込み時に v2 へ移行するため、移行前のファイル形式も確認する。
+        JsonDocument jsonDocument;
+        assert(JsonDocument::TryParse(json, jsonDocument));
+        const JsonValue jsonRoot = jsonDocument.GetRoot();
+        assert(jsonRoot.FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : 2u));
+        const JsonValue jsonRoots = jsonRoot.FindMember("roots");
+        assert(jsonRoots.IsArray() && jsonRoots.GetArraySize() == 1);
+        assert(jsonRoots.GetArrayElement(0).FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : 2u));
+
+        Scene::SceneDocument document;
+        assert(Scene::SceneSerializer::TryParseJson(json, document));
+        assert(document.FormatVersion == 2 && document.Roots.size() == 1);
+        assert(document.Roots[0].FormatVersion == 2);
+        assert(document.Roots[0].Root.Components.size() == 1);
+        const Scene::SceneObjectRecord& grassRecord = document.Roots[0].Root.Components[0].Object;
+        assert(grassRecord.ClassName == "GrassFieldComponent");
+        for (const char* name : kGrassProperties)
+        {
+            assert((FindPropertyRecord(grassRecord, name) != nullptr) == !bLegacy);
+        }
+        if (bLegacy)
+        {
+            assert(grassRecord.Properties.empty());
+        }
+
+        Scene::SceneLoadStats stats;
+        Container::VariableArray<EntitySubtreeSnapshot> roots;
+        assert(Scene::SceneSerializer::ReconcileWithSchema(document, roots, stats));
+        assert(roots.size() == 1 && stats.LoadedRoots == 1);
+        assert(stats.DroppedEntities == 0 && stats.DroppedComponents == 0 && stats.DroppedProperties == 0);
+        assert(roots[0].Root.Components.size() == 1);
+        return roots[0];
+    }
+
+    Component::GrassFieldComponent* RestoreGrassWithoutBeginPlay(
+        Entity& owner, const EntitySubtreeSnapshot& root, bool bLegacy)
+    {
+        assert(root.Root.Components.size() == 1);
+        const ComponentSubtreeSnapshot& component = root.Root.Components[0];
+        assert(component.OwnerAlias == root.Root.Alias);
+        const IClass* cls = Component::GrassFieldComponent::StaticClass();
+        assert(component.Object.Class == MakeStableSchemaId("NorvesLib", "Class", cls->GetClassName().GetView()));
+        auto* grass = CastTo<Component::GrassFieldComponent>(cls->NewInstance(nullptr));
+        assert(grass != nullptr);
+        assert(owner.AddInner(grass));
+        AssertGrassNotBegun(*grass);
+
+        // World への通常の配置は BeginPlay を呼ぶため、リフレクションで値だけ復元する。
+        for (const char* propertyName : kGrassProperties)
+        {
+            const Identity name(propertyName);
+            const ClassProperty* property = cls->GetProperty(name);
+            assert(property != nullptr);
+            const StablePropertyId propertyId = MakeStableSchemaId(
+                "NorvesLib", "Property", cls->GetClassName().GetView(), name.GetView());
+            const ProjectedPropertyValue* projected = nullptr;
+            for (const ProjectedPropertyValue& candidate : component.Object.Properties)
+            {
+                if (candidate.Property == propertyId)
+                {
+                    assert(projected == nullptr);
+                    projected = &candidate;
+                }
+            }
+            if (bLegacy)
+            {
+                assert(projected == nullptr);
+                continue;
+            }
+            assert(projected != nullptr);
+            PropertyValue value;
+            assert(value.DeserializeStable(projected->Type, projected->SerializedValue));
+            assert(property->ApplyValue(grass, value));
+        }
+        AssertGrassNotBegun(*grass);
+        return grass;
+    }
+
+    // 草原の設定を v2 のシーンファイルへ保存し、読み戻した値を確かめる。
+    void TestGrassPropertiesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::GrassFieldComponent::StaticClass();
+
+        Engine::Engine engine;
+        Engine::Engine* previousEngine = Engine::GEngine;
+        Engine::GEngine = &engine;
+        assert(engine.GetVegetation().GetGrassField() == nullptr);
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* sourceRoot = sourceWorld.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+        auto* source = new Component::GrassFieldComponent();
+        assert(sourceRoot->AddInner(source));
+        source->SetCookedFieldPath("Assets/Vegetation/Meadow.grass");
+        source->SetSpeciesTablePath("Assets/Vegetation/MeadowSpecies.json");
+        source->SetUseTerrainGround(false);
+        assert(source->GetCookedFieldPath() == "Assets/Vegetation/Meadow.grass");
+        assert(source->GetSpeciesTablePath() == "Assets/Vegetation/MeadowSpecies.json");
+        assert(!source->GetUseTerrainGround());
+        AssertGrassNotBegun(*source);
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(kGrassFilePath)));
+        AssertGrassNotBegun(*source);
+        assert(engine.GetVegetation().GetGrassField() == nullptr);
+
+        const EntitySubtreeSnapshot savedRoot = ReadGrassScene(kGrassFilePath, false);
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Entity* loadedRoot = loadedWorld.SpawnEntity<Entity>();
+        assert(loadedRoot != nullptr);
+        Component::GrassFieldComponent* loaded = RestoreGrassWithoutBeginPlay(*loadedRoot, savedRoot, false);
+        assert(loaded->GetCookedFieldPath() == source->GetCookedFieldPath());
+        assert(loaded->GetSpeciesTablePath() == source->GetSpeciesTablePath());
+        assert(loaded->GetUseTerrainGround() == source->GetUseTerrainGround());
+        AssertGrassNotBegun(*loaded);
+        assert(engine.GetVegetation().GetGrassField() == nullptr);
+
+        assert(loadedRoot->RemoveInner(loaded));
+        delete loaded;
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(engine.GetVegetation().GetGrassField() == nullptr);
+        Engine::GEngine = previousEngine;
+        assert(std::remove(kGrassFilePath) == 0);
+    }
+
+    // 旧ファイルに草原の設定が無い場合、コンストラクタの既定値が残ることを確かめる。
+    void TestLegacyGrassPropertiesUseDefaults()
+    {
+        RegisterRequiredClasses();
+        (void)Component::GrassFieldComponent::StaticClass();
+
+        // 旧形式のコンポーネントにプロパティを一つも含めない。
+        const char* legacyJson = R"json({
+            "formatVersion": 1, "module": "NorvesLib", "roots": [{
+                "formatVersion": 1, "rootAlias": "1", "rootPath": "", "root": {
+                    "alias": "1", "parentAlias": "0",
+                    "object": {"class": "Entity", "classId": "0", "path": "", "properties": []},
+                    "components": [{"alias": "2", "ownerAlias": "1", "object": {
+                        "class": "GrassFieldComponent", "classId": "0", "path": "", "properties": []
+                    }}], "children": []
+                }
+            }]
+        })json";
+        std::FILE* file = nullptr;
+        fopen_s(&file, kLegacyGrassFilePath, "wb");
+        assert(file != nullptr);
+        assert(std::fwrite(legacyJson, 1, std::strlen(legacyJson), file) == std::strlen(legacyJson));
+        assert(std::fclose(file) == 0);
+
+        const EntitySubtreeSnapshot savedRoot = ReadGrassScene(kLegacyGrassFilePath, true);
+        Entity loadedRoot;
+        Component::GrassFieldComponent* loaded = RestoreGrassWithoutBeginPlay(loadedRoot, savedRoot, true);
+        assert(loaded->GetCookedFieldPath().empty());
+        assert(loaded->GetSpeciesTablePath() == "Assets/Vegetation/GrassSpecies.json");
+        assert(loaded->GetUseTerrainGround());
+        AssertGrassNotBegun(*loaded);
+
+        assert(loadedRoot.RemoveInner(loaded));
+        delete loaded;
+        assert(std::remove(kLegacyGrassFilePath) == 0);
+    }
+
     void TestLoadFailures()
     {
         RegisterRequiredClasses();
@@ -407,6 +599,8 @@ int main()
     TestSaveLoadRoundTrip();
     TestTerrainPropertiesSaveLoadRoundTrip();
     TestLegacyTerrainPropertiesUseDefaults();
+    TestGrassPropertiesSaveLoadRoundTrip();
+    TestLegacyGrassPropertiesUseDefaults();
     TestLoadFailures();
 
     std::cout << "SceneFileRoundTripTest passed\n";

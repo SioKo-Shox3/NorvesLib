@@ -9781,18 +9781,107 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 世代が UINT32_MAX のインスタンスを解放したら、service の voice と同じくそのスロットを退役させて再利用しない(UINT32_MAX の次を 1 にすると、最初の世代 1 の handle が新しいインスタンスと一致する)。受入れの記録の「世代の折り返し」の行もこの挙動の書き方に直した。未登録の SoundId への再生は `InvalidState`(抑制による `Rejected` と分ける)。
 - Next: ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。AudioComponent と通常の起動への組み込みは G8-GR72-AUDIO-COMPONENT-BOOT、3D 定位は GR73。
 - Notes: アプリを起動する確かめは無い(実機の鳴り方・フェードの聴感は G8-GR72-AUDIO-CHECK)。受入れの記録の検証の手段の表に、試験していない条件(音量の積の式の照合・フェードイン中の Stop の切り替え・揺らぎの範囲・時刻と距離の境界・本番の `LoadBank` を通した clip の解決とデコード)を明記した。M9 の側の clip の読み込みは触っていない(二重の実装は M9 の受入れの安定の後に統合)。
-- U1 NullAudioBackend と通常起動用の切り替え(フォールバック)・バックエンドの診断の印: 着地(直し 0 回)
-- U2 仮の合成音の生成台本・WAV・既定のバンク: 着地(直し 0 回)
-- U8 U3 の切り直し(保存した差分を当て、新規ファイルを CRLF にする): 着地(直し 0 回)
-- U9 cook されていないばらの WAV をクリップとして読む(通常の起動用): 着地(直し 0 回)
-- U4 AudioComponentTest と文書(TickStages・Testing): 着地(直し 1 回)
-- U5 GameMode の持ち主の包み・通常の起動で音のモジュールと既定のバンクを使う: 着地(直し 1 回)
-- U6 --audio-smoke と Test-AudioSmoke.ps1: 着地(直し 0 回)
-- U7 AudioFlow.md(層の構成と更新の順): 着地(直し 0 回)
-## 2026-11-05 G8-GR72-AUDIO-COMPONENT-BOOT(run 20261105-093023 の反復 1、完了)
-- Done: `AudioComponent`(PROPERTY は SoundName・bAutoPlay・Volume・PitchSemitones。Play / Stop / StopAll、Finalize で `ReleaseOwner` を呼びループは fade-out・ワンショットは鳴り切る。音のモジュールの `RegisterReflectedTypes` で ClassRegistry へ登録)と `ISoundSystem::ReleaseOwner` を足した。GameMode は `AudioGameModeOwner` で包み、Leave の後に `StopOwner(GetGameModeOwnerKey(id))` を呼ぶ(Component のキーは最上位ビット 0 の連番、モードのキーは最上位ビット 1)。通常の起動で音のモジュールをフォールバックありで登録し(XAudio2 が初期化できなければ `NullAudioBackend` へ切り替え `AUDIO_BACKEND fallback=null reason=...` と `GetBackendStatus()` の印)、`OnPostInitialize` で既定のバンク `Audio/Banks/default.soundbank.json` を読む(`AUDIO_BANK ...`)。`--m9-world-smoke` と `--audio-smoke` はフォールバックなし。仮の合成音は `Scripts/GenerateProvisionalAudio.py` と `Assets/Audio/Provisional/*.wav`。`--audio-smoke` と `Scripts/Test-AudioSmoke.ps1`(一時ディレクトリで WAV とバンクを cook、所有プロセスの時間切れ管理、`AUDIO_SMOKE stage=...` の検査)、`Docs/Architecture/AudioFlow.md`、TickStages の表・Testing.md の理由を足した。
-- 決定: 通常の起動の `build/CookedAssets` は `CookAssets.ps1` が作り音を焼かないので、`AudioClipLoader` は cook 済みが無いときばらの PCM16 WAV(RIFF/WAVE、44.1/48 kHz、モノ/ステレオ)を読み `AUDIO_COOKED_MISSING` の警告を出す(テクスチャのばら読みと同じ扱い)。スナップショットが無い起動経路では、バンクの読み込みだけその場のばらの AssetSystem(root は `m_TextureLooseAssetRoot`、無ければ `NORVES_SOURCE_ASSET_DIR`)を使う。
-- 試験: `AudioComponentTest`(Play / Stop と他の Component の handle の拒否、破棄でループの voice の音量が単調に下がって止まりワンショットは Drained まで鳴る、StopAll は自分の音だけ、モジュールが無くても落ちない、PROPERTY の保存と読み込みの一致)、`AudioPlaybackTest` に NullAudioBackend のケースと、ばらの WAV がクリップになり WAV でないものは NotCooked のケース。
-- 証拠: `.harness/runs/20261105-093023/verify-G8-GR72-AUDIO-COMPONENT-BOOT-final.txt`(Debug の Game・AudioBackendLifetimeTest のビルド BUILD_EXIT=0、ctest 5 本 100% Pass、`Test-M9World.ps1 -ContractOnly` で `M9_REVIEW_CONTRACT result=pass contract=All`、`Test-AudioSmoke.ps1` の構文検査 PARSE_OK)。
-- Next: 起動の確かめは後回し(G8-GR72-AUDIO-CHECK): 通常の起動のログで `AUDIO_MODULE register=ok`・`AUDIO_BANK load=ok sounds=2`(ばらの WAV なら `AUDIO_COOKED_MISSING` 4 行)が出ること、音の装置が無い環境で `AUDIO_BACKEND fallback=null` を出して起動が続くこと、`Scripts/Test-AudioSmoke.ps1` が `AUDIO_SMOKE result=pass` になること、ランチャーとシーンの行き来で音が残らないこと。ランナーの評価者の反証(Public API・アセットの読み込み)。
-- Notes: `--no-cooked-textures` だけを付けた起動ではスナップショットが無く、バンクはばらの root(`NORVES_SOURCE_ASSET_DIR`)から読む。`Test-AudioSmoke.ps1` は Game を `--render-thread=st --window-background` で起動し、作業ディレクトリの `Game.log` からマーカーを読む。
+
+- U1 PoseModifierContext に世界変換・駆動の信号・所有者・関節名の解決・重みの口を足す: 着地(直し 0 回)
+- U2 新しいソースの置き場（空の雛形）と CMake・試験の main の登録: 着地(直し 0 回)
+- U3 モデル空間の回転を関節チェーンへ配る AngleDistribution: 着地(直し 0 回)
+- U4 減衰振動のばねと角度のばね（固定サブステップのアキュムレータ）: 着地(直し 0 回)
+- U5 *.posemod.json のパーサ・型の表・AnimatorComponent の適用口: 着地(直し 0 回)
+- U6 AngleDistribution とばねの試験: 着地(直し 0 回)
+- U7 設定ファイルの試験（拒否と保持・順序・重みのカーブ・文脈の口）: 着地(直し 0 回)
+- U8 文書（Testing.md の 3 点・AnimationRuntime.md）とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR15-POSE-MODIFIER-BASE（run 20261104-190953 の反復 1、完了）
+- Done: `PoseModifierContext` に `MeshToWorld`・最後に受け入れた `AnimDriveSignals`（`GetDriveSignals`/`HasDriveSignals`）・所有者の Entity（Apply の間だけ有効）・`FindJointIndex`（`SkeletonResource::FindJointIndex`）・`Weight`（既定 1）を足した。`AnimatorComponent::SetDriveSignals` は受け入れた信号だけ保存し、`EvaluateAnimation` で文脈に詰める。既存の modifier の順序・失敗時の扱いの試験は書き換えずに通る
+- Done: `Animation/Procedural/AngleDistribution`（関節のグローバル回転の取得・設定と、モデル空間の回転の重み付きの配分。`local = inverse(親のグローバル) * 新しいグローバル`、重みの和 1 ± 1e-4・非有限・並びの誤りは拒否して姿勢不変）、`Animation/Procedural/Spring`（1/120 秒の固定サブステップ・1 回最大 4、超過は捨てた秒数で返す。臨界減衰は `TryCriticalDamp`、減衰振動は閉じた解。スカラー・ベクトル・角度の 3 種）を作った
+- Done: `*.posemod.json`（version 1）のパーサ `ParsePoseModifierConfig`、関数の表 `PoseModifierTypeTable`（組み込みは空）、`AnimatorComponent::ApplyPoseModifiersJson`/`ApplyPoseModifiersFile` を作った。未知の type・未知のキー・重複キー・型違い・範囲外・未知の関節名・未知のパラメータを別のエラーで拒否し、失敗時は前の modifier 群を保つ。成功時は AddModifier 分も含めて丸ごと置き換える。order の既定は Lean 100 / Spine 110 / Look 200 / FootIK 500 / SpringBone 700 / FollowThrough 710
+- Done: `PoseModifierBaseTest`（`SkeletalAnimationSamplingTest` の中、10 試験）と、`Docs/Testing.md` の 3 点・`Docs/Architecture/AnimationRuntime.md` の「姿勢の後処理の土台」
+- 実測: 軸を回した同形の骨格の関節位置の差 9.8e-8 m、拒否時の姿勢の変化 0 バイト、臨界減衰の行き過ぎ 0、dt の分割（1/60×240 と 1/30×120）の位置の差 0・角度の差 1.2e-16 rad、0.1 秒で捨てた秒数の誤差 3.5e-9 s、Reset 後のビット不一致 0
+- 証拠: `.harness/runs/20261104-190953/verify-G9-GR15-POSE-MODIFIER-BASE-U8.txt`（verify のビルド EXIT=0、ctest 3 本 Passed、実行ファイルの直接実行で `PoseModifierBaseTest PASS`）
+- Next: ランナーの評価者の反証（Public API の危険地帯）。個別のモディファイア（傾き・背骨・視線・足 IK・SpringBone・FollowThrough）は後続のタスクで型の表に足す
+- Notes: アプリの起動を要する確かめは無い。型ごとの節は項目の `settings` キーに置く形にした（作り手が `CheckPoseModifierKeys`・`ResolvePoseModifierJoint` で読む）。重みの param は適用のたびに名前で引く（グラフの付け替えでハンドルが変わるため）。配分の空間は、根の親が split の骨格なら RootFrame の回転・それ以外は単位で、`GetJointModelMatrices` が掛けるメッシュの逆変換の前。メッシュに回転があるときは呼び出し側が変換する。ばねの減衰比は (0, 1] で、過減衰は受けない
+- U9 MeshToWorld を所有者のワールド変換にし、メッシュノードの変換を別の欄で渡す（差し戻しの直し）: 着地(直し 0 回)
+
+## 2026-11-04 G9-GR15-POSE-MODIFIER-BASE（run 20261104-190953 の反復 2、差し戻しの直し・完了）
+- Done: `PoseModifierContext::MeshToWorld` を所有者 Entity のワールド変換（`CreateWorldRowVector(position, rotation, scale)`、`SkinnedMeshComponent::TryGetJointWorldMatrix` と同じ式。所有者が無ければ単位）にし、メッシュノードのグローバル変換は新しい欄 `MeshNodeTransform` で渡す。`TestModifierContextDelivery` は所有者に回転・並進・非一様スケールを与え、各関節のモデル行列 × MeshToWorld が `TryGetJointWorldMatrix` と一致することを確かめる形に直した（最大差 0。前の式に戻すと差 1.206 で落ちる）。`AnimationRuntime.md`・`Testing.md` の該当の記述も直した
+- 証拠: `.harness/runs/20261104-190953/verify-G9-GR15-POSE-MODIFIER-BASE-U9.txt`（verify のビルド EXIT=0、ctest 3/3 Passed、直接実行で `PoseModifierBaseTest PASS`・`AnimGraphRuntimeTest PASS`、numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（Public API の危険地帯）
+- Notes: 角度の配分の空間はメッシュノードの逆変換を掛ける前のまま残し、modifier は `MeshNodeTransform` でモデル空間と行き来する（ヘッダと文書に記載）
+- Notes: 要起票: `SetGraph` で別の骨格に付け替えても、設定ファイルから作った modifier（解決済みの関節の添字を持つ）が残る
+- Notes: 要起票: グラフの付け替えで重みの param が無くなると、Apply が毎フレーム false になり、ログも出ないまま姿勢が出なくなる
+
+- U1 Library に接地の判定の純関数と接地の metadata の作り方を置き、AnalyzeFootContacts をそれに載せ替える: 着地(直し 0 回)
+- U2 animgraph の clip ノードに markerEvents を足し、marker から同じ名前の点イベントを出す: 着地(直し 0 回)
+- U3 cook の後処理を Library の判定と名前に載せ替える: 着地(直し 0 回)
+- U4 cook の足の印の名前・二重にならないこと・Library と cook の窓の一致を RigSplitCookTest で確かめる: 着地(直し 0 回)
+- U5 名前の規約・markerEvents・cook の名前と試験を文書に書き、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-04 G3-GR11-FOOT-CONTACT-SOURCE（run 20261104-193901 の反復 1、完了）
+- Done: 足の接地の判定を Library の純関数 `DetectFootContactWindows`（足ごとの最低を基準、高さ .03・鉛直速度 .15・最短 .05 秒、窓の中はしきい値 ×1.5〔`FootContactOptions::Hysteresis`〕）1 つにまとめ、`AnalyzeFootContacts` と cook の `ApplyRigMotionCleanup` の両方がそれを呼ぶ（cook の独自の判定を消した）。接地の名前を `Foot.<脚>.Down/Up`（LF・RF・LH・RH）にそろえ、窓から marker / 点イベントを作る `AppendFootContactMetadata` を Library に置いた（ループは marker だけ・既存 marker があれば書かない、ループしないは点イベントで終わりまで接地の Up は書かない）。cook の report に `feet_without_contacts` を足し、接地の無い脚があれば `needs_review`。animgraph の clip ノードに `markerEvents`（既定 false）を足し、指定したノードでは marker を跨いだときに同じ名前の点イベントを出す。AnimationRuntime.md・SkeletalRotationRetarget.md・Testing.md に書いた。
+- 証拠: `.harness/runs/20261104-193901/verify-G3-GR11-FOOT-CONTACT-SOURCE.txt`（SkeletalAnimationSamplingTest・CookedMeshTest・AssetCook の Debug ビルド成功、ctest で SkeletalAnimationSamplingTest・CookedSkeletalAssetTest・CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の 5 件と RigMotionCleanupTest が Passed）。
+- Next: ランナーの評価者の反証（Public API と cook の出力の変更）。
+- Notes: `Test/Core/Asset/RigMotionCleanupTest.cpp`（paths の外）を、旧い形（`<role>_down` の名前・ループでも窓イベント・ループしないクリップにも marker）を固定していたので新しい形に書き換えた（IoU・継ぎ目の Down/Up・既存 marker の保持・時間の補正の検査は残した）。足ごとの最低を基準にしたので、ずっと同じ高さで止まっている足は高い位置でも接地とみなされる（接地なしと区別できない。上下に動き続ける足は接地なしになる）。ループしないクリップの点イベントは、時刻 0 から接地している窓の Down も時刻 0 に書く。marker から出す点イベントの `EventIndex` は events の件数 + marker の添字。起動の要る確かめは無い。
+
+- U1 Math に三角形の型・最近点・球/カプセル/OBB と三角形の接触を足す: 着地(直し 0 回)
+- U2 高さ場の格子データを内部ヘッダへ移し、8×8 セルの最小最大の格子と面/滑らかの 2 種の法線を足す: 着地(直し 0 回)
+- U4 スプラットの層・SampleSurface・タイル番号・作り方 CreateFromSamples・地形の材質の記述を足す: 着地(直し 0 回)
+- U3 Math に球・カプセルと三角形の掃引を足す: 着地(直し 1 回)
+- U5 高さ場に Raycast(最小最大の格子での 2D-DDA)を足す: 着地(直し 0 回)
+- U7 TerrainSystem に GroundSample・SampleGround・RaycastGround・SampleGroundBatch を足す: 着地(直し 0 回)
+- U6 高さ場に OverlapSphere・OverlapCapsule・OverlapBox・SweepSphere・SweepCapsule を足す: 着地(直し 0 回)
+- U8 TerrainHeightFieldQueryTest を足してタスクの verify を通す: 着地(直し 1 回)
+- U9 OverlapBox の深さを三角形の真下の柱と箱の共通部分の最深点で測る: 着地(直し 0 回)
+- U10 カプセルの掃引が IterationLimit で本当の当たりを隠す原因を突き止めて直す: 着地(直し 0 回)
+- Done (G5-GR38-HEIGHTFIELD-QUERY、run 20261104-191432 の反復 1): `Math` に `Triangle`・`ClosestPointOnTriangle`・`ClosestPointsSegmentTriangle`・`ComputeContact(Triangle, Sphere|Capsule|OBB)`・`SweepSphere|SweepCapsule(…, Triangle, …)` を足した。`TerrainHeightField` は格子の中身を内部ヘッダ `TerrainHeightFieldGrid.h` へ移し、8×8 セルの最小最大の格子、`SampleNormal(x, z, TerrainNormalKind::Face|Smooth)`、NVTRN の SPL0・SPL1 から読むスプラットと `SampleSurface`（最近の頂点の重み最大の層、同点は小さい番号）・`GetTileId`、試験と道具向けの `CreateFromSamples`、`Raycast`（ブロックとセルの 2D-DDA、地表の下の原点は距離 0・零法線）、`OverlapSphere|Capsule|Box`（地中は固体で上向きへ押し戻す。箱は三角形の真下の柱と箱の共通部分の最深点で深さを測り、辺・頂点の当たりは滑らかな法線）、`SweepSphere|SweepCapsule` を持つ。層→表面の名前の表は `TerrainMaterialDesc`（仮の表: Soil・Gravel・Moss・Mud・Rock・Sand・Water）。`TerrainSystem` に `GroundSample`・`GroundHit`・`SampleGround`・`RaycastGround`・`SampleGroundBatch` を足した。
+- 試験: `TerrainHeightFieldQueryTest`（MathGeometryTest の束）、`GeometryContactTest` に三角形の接触、`GeometrySweepTest` に三角形の掃引（浅い角度・裏面の法線・初期重なり・丸めで越えた歩の再現）。
+- 証拠: `.harness/runs/20261104-191432/verify-G5-GR38-HEIGHTFIELD-QUERY.txt`（MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed。Raycast 1 万本が総当たりと一致・最近点の差 4.4e-6 m、斜面の深さの差 4.6e-8 m、辺・頂点をまたぐ法線の角度差の最大 1.08°、掃引は球・カプセルとも 200/200 一致・距離差の最大 8.9e-5 m、SampleGroundBatch が個別の呼び出しとビット一致）。
+- Next: SceneQuery の `QueryGround`・ColliderComponent の表面の種別・物理モジュールへの地形の形の組み込み（ロードマップ GR38 の 2 の後半と 3）は別の項目。表面の名前の一覧は企画の確定を待って `TerrainMaterialDesc` の仮の表を置き換える。
+- Notes: 性能は記録だけ（Debug、10 万回の平均）: SampleGround 0.53 µs/回、100 m の Raycast 0.72 µs/本（目安は RelWithDebInfo で SampleGround 0.2 µs・Raycast 5 µs）。スプラットは cook 済みの mip0（頂点ごと、重みの和 255）を読み、和が 255 でない・未使用のチャンネルが 0 でない NVTRN は `CreateFromCookedTerrain` が拒否する。照会は LOD0 と同じ対角で、LOD1 以上の見た目とは最大 maxVerticalError だけずれる。アプリを起動する確かめは無い。
+- Notes (G5-GR38-HEIGHTFIELD-QUERY、run 20261105-093022 の反復 1): 前回の評価が枠切れ(429)で未実施のため状態が doing に戻っていた。コードは 6d378713 から変わっておらず、その版の verify(MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed)を証拠に done に戻し、評価をランナーに回す。
+
+- U1 2 つのモディファイアの雛形・CMake 登録・型の表への登録・試験ファイルの雛形: 着地(直し 0 回)
+- U2 SpringBoneModifier の実装: 着地(直し 0 回)
+- U3 FollowThroughModifier の実装: 着地(直し 0 回)
+- U4 SpringBone の試験: 着地(直し 0 回)
+- U5 文書(AnimationRuntime.md・Testing.md): 着地(直し 0 回)
+- U6 FollowThrough の試験とタスクの verify: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 1、完了）
+- Done: `SpringBoneModifier`（type `SpringBone`、既定の order 700）と `FollowThroughModifier`（type `FollowThrough`、既定の order 710）を足し、組み込みの型の表に登録した。SpringBone はワールド空間の粒子を 1/120 秒の固定サブステップ（最大 4 回、超えた時間は `GetLastDroppedSeconds` で返す）で半陰的オイラー積分し、骨の長さの拘束と回転の制限つきの `FromToRotation` で姿勢に重ねる。初回・`RequestReset`・`teleportDistance` を超える移動・非有限で状態をアニメ姿勢へ戻す。風は `SetWindAcceleration` の口だけ（既定 0）。FollowThrough は胸・首のモデル空間の回転を `AngularSpring` で遅らせ、`heldSlot` が埋まっている間は質量の倍率に `heldMassScale` を掛ける（既定の重み 0.25、仮）。`head` を指定すると頭の回転はアニメのまま
+- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify.txt`（verify のビルド EXIT=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest` 2/2 Passed。SpringBone: 静止後の先端の残差 0 m・加速中の遅れ −0.187 m・骨の長さの誤差 2.7e-8 m・テレポートと再初期化の後の残差 0・dt=0.5 で有限かつ捨てた秒数の誤差 2e-9。FollowThrough: 段の 0.05 秒後に胸・首が 51.3° 遅れ 3 秒後に差 0°、頭の誤差 1e-5°、重み 0 でビット差 0、保持中は遅れが 53.8°→58.3° に増える。保持の倍率を外す負の対照でケース 3 が落ちる）
+- Next: ランナーの評価者の反証（Public API の危険地帯）。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
+- Notes: `radius`（球コライダー）は受け取るだけで計算に使わない。風の場（GR46）は v1 の外
+- U7 評価の再開を World の通し番号で検知して状態を戻す(差し戻しの直し): 着地(直し 0 回)
+## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 2、差し戻しの直し、完了）
+- Done: SpringBone・FollowThrough の `Apply` が所有者の World の `GetTickSerial()` を覚え、前回の評価から 2 以上進んだ（または戻った）ときは評価の再開とみなしてアニメ姿勢へ戻すようにした。組み込みの型の表から作った modifier（外から `RequestReset` を呼べない）でも、`SetEvaluationEnabled` の停止と再開、重みのカーブが 0 から戻るときに状態が戻る。同じ番号での再評価と、所有者か World が無いときは今までどおり。文書のリセットの条件を直した
+- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify-2.txt`（verify のビルド EXIT=0、ctest 2/2 Passed。SpringBone case=7: 評価を 5 フレーム止めて所有者を 0.9 m 動かした後の再開のフレームで先端の残差 0 m・非有限 0。判定を外した負の対照では残差 0.386 m で落ちる。既存の 9 ケースの値は変わらない）
+- Next: ランナーの評価者の反証。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
+- Notes: 評価者の残課題（non-blocking）として、`FromToRotation` の約 0.26° の不感帯と、根の粒子をサブステップの間で補間していないことが残る
+
+- U0 新しいファイルの足場と試験の登録・文書の項目を足す: 着地(直し 0 回)
+- U1 関節への束縛(遅延解決・判定からの除外・診断・弱い関節の警告)と CombatJointFollowTest: 着地(直し 0 回)
+- U2 攻撃・hurtbox・faction の JSON の読み込みと既定のデータ、CombatProfileLoadTest: 着地(直し 1 回)
+- U5 確認済みの当たりの反応の差分を当て直し、Debug・RelWithDebInfo だけの判定の形の表示を足して、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-05 G8-GR16-JOINT-DATA-RESPONSE（run 20261105-093026 の反復 1、完了）
+- Done: hitbox と hurtbox の部位を同じ Entity の `SkinnedMeshComponent` の関節名へ束縛する（解決は最初の評価まで遅らせ、関節が無い・姿勢が未評価・資産が無効なフレームはその部位だけ判定から外して `CombatRuntimeDiagnostics::JointUnavailableCount` を数える。影響の弱い関節への束縛は閾値（データ）で警告）。`Assets/Combat/*.attack.json`・`*.hurtboxes.json`・`factions.json` を厳格に読み（必須の欠落・未知のキー・0 以下の半径・窓のイベント名の欠落・未知の faction・空の hitFactions をファイルとキーの道筋つきで拒否）、横薙ぎ・回転斬り・跳躍斬り・噛みつきと人型・四足の既定のデータを置いた。`OnAnyHit` を `HitEffectEmitter::SubmitHit`（位置・正規化した法線・部位の SurfaceName）へ写し、同じフレームの当たりのヒットストップのヒントの最大を `MaxHitStopSeconds` で頭打ちにして `TimeSystem::PushScale` を 1 回だけ要求する。どちらも `IGameplayModule::SetCombatResponseSettings` で切れる。`bDebugDraw`（既定は切）で hitbox・hurtbox・掃引の形を `GEngine.GetDebugDraw()` へ線で出す（`NORVES_ENABLE_DEBUG_OUTPUT` が 0 の Release では宣言・実装・呼び出しとも入らない）。試験 `CombatJointFollowTest`・`CombatProfileLoadTest`・`CombatResponseTest` を PhysicsDynamicsTest の束へ。
+- 証拠: `.harness/runs/20261105-093026/verify-G8-GR16-JOINT-DATA-RESPONSE-U5.txt`（Game・PhysicsDynamicsTest・HitEffectEmissionTest・SwordTrailRibbonTest の Debug ビルド終了コード 0、ctest で Combat 系 8 本・HitEffectEmissionTest・SwordTrailRibbonTest の 10 件 100% Passed、numstat 2 通り一致）。
+- 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
+- Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
+- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+
+- U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
+- U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
+- U3 AssetCook に GrassFieldCooker と照合のコマンドを足す: 着地(直し 0 回)
+- U5 GrassFieldComponent と地形の地面の取り出し口を足す: 着地(直し 0 回)
+- U9 AssetCookGrassFieldSmoke と基準の PNG 群を今の枠で入れ直す: 着地(直し 0 回)
+- U10 SceneFileRoundTripTest の草原の往復と旧ファイルを今の枠で入れ直す: 着地(直し 0 回)
+- U11 grassland の草の場を今の枠で入れ直す: 着地(直し 0 回)
+- U8 受入れの記録と全体の確かめ: 着地(直し 1 回)
+
+## 2026-11-05 G5-GR42-GRASS-FIELD-ASSET（run 20261105-093025 の反復 2、完了）
+- Done: NVGFLD v0（`Asset/CookedGrassFieldFormat.h`・`CookedGrassFieldLoader.cpp`・決定的な書き出し、`Docs/Architecture/NVGFLDv0.md`）と拒否の理由を返す読み込み。AssetKind::World の entry type `Gfd0`・format `nvgfld.v0` で解決。AssetCook の `--kind world --format nvgfld.v0`（配置の JSON + PNG 群か NVTRN の GRS0/MSK0 から焼く）と照合のコマンド。`GrassFieldComponent`（BeginPlay で読んで Vegetation と RenderWorld へ登録、EndPlay で外す）と TerrainSystem を引く地面の取り出し口。grassland に GRS0 から焼いた草の場（256 チャンク、NVGFLD 5,255,424 B）。試験 `CookedGrassFieldTest`・`AssetCookGrassFieldSmoke`・`SceneFileRoundTripTest` の草原の往復と旧ファイル。1 km² 相当の大きさを `Docs/RenderingValidation/GrassFieldAcceptance.md` に記録（cook 済み 21,020,928 B、CPU の常駐の計算できる部分 約 40.0 MiB。ゲートにしない）。
+- 証拠: `.harness/runs/20261105-093025/G5-GR42-GRASS-FIELD-ASSET-U8-verify.txt`（AssetCook・CookedMeshTest・SceneSerializerTest・Game の Debug ビルド exit 0、AssetManifestTest と GrassFieldQueryTest の実行ファイルのため AssetSystemTest・MathGeometryTest もビルド、ctest 6 件 100% Passed）。
+- Next: ランナーの評価者の反証（アセットロード・Public API の危険地帯）。起動の確かめは後回し: grassland を `--scene=grassland --window-background` で開き、草の場の登録・EndPlay での解除と再入場・地形との高さの整合・見た目を見る。
+- Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
+- G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
+- Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
