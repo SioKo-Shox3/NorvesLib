@@ -820,6 +820,7 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
+        m_bPoseModifiersOffRequested = false;
         m_bDogMovementSmoke = false;
         m_bDogMovementAutopilot = false;
         m_DogMovementAutopilotPath = {};
@@ -2088,6 +2089,11 @@ namespace Game
                 m_bAnimationDebugRequested = true;
                 continue;
             }
+            if (args[i] == TEXT("--pose-modifiers-off"))
+            {
+                m_bPoseModifiersOffRequested = true;
+                continue;
+            }
             if (args[i] == kStartupSkinnedProbeOption)
             {
                 s_bRendering3DTestSkinnedProbe = true;
@@ -2996,6 +3002,11 @@ namespace Game
         if (!m_DogMovementCaptureDir.empty() && !m_bDogMovementAutopilot)
         {
             LOG_ERROR("--dog-movement-capture-dir には --dog-movement-autopilot が必要です");
+            return false;
+        }
+        if (m_bPoseModifiersOffRequested && !m_bAnimationDebugRequested)
+        {
+            LOG_ERROR("--pose-modifiers-off には --animation-debug が必要です");
             return false;
         }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
@@ -4593,6 +4604,7 @@ namespace Game
                     s_Rendering3DTestSkinnedProbeMaterialCount == 2u;
                 mode->GetData().m_StartupSkinnedProbeMaterialCount = s_Rendering3DTestSkinnedProbeMaterialCount;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
+                mode->GetData().m_bAnimationDebugPoseModifiersOff = m_bPoseModifiersOffRequested;
 #if defined(NORVES_ENABLE_IMGUI)
                 mode->GetData().m_bDebugImGui = m_bImGuiRequested;
 #endif

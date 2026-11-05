@@ -10011,3 +10011,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 ModifierOrderTest（順序の固定の試験）を SkeletalAnimationSamplingTest に足す: 着地(直し 0 回)
 - U3 animation-debug の場面に合成の四足のキャラクターと posemod.json を足す: 着地(直し 0 回)
 - U4 場面に Box コライダーの斜面と階段を足し、四足の経路をそこへ通す: 着地(直し 0 回)
+- U6 Game の引数 --pose-modifiers-off を足して場面へ渡す: 着地(直し 0 回)
