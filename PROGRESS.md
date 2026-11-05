@@ -10017,3 +10017,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-143216/verify-G10-SHISHA-SHOWCASE-U3.txt`（タスクの verify 2 行。Debug の Game のビルド EXIT=0、台本の構文の解析 EXIT=0、numstat の 2 通りが一致）。
 - Next: 起動の確かめは後回し（アプリを起動しない決まりのため）。起動したら `Scripts/Test-ShishaShowcase.ps1 -Scene base -CapturePng <path>` で enter→ready の印・PNG・`metrics.json` を見て、引数なしの起動がランチャーから始まること、併用の拒否のログを確かめる。
 - Notes: 代役の `ValidU8Float.gltf` は人型ではなく骨 2 本の三角形の検証資産で、身長に合わせて縦に伸ばしている。人型の代役が要るなら後の場面の項目で差し替える。台本はリポジトリのルートの `Game.log` を写すので、ほかの Game と同時に回すとログが混ざる。Release では連続撮影の照合のログが出ないため、複数フレームの撮影は Debug・RelWithDebInfo で回す。
+- G8-GR17-SLICE-SMOKE: 統合ブランチ(シ者の確かめのモードの追加)を取り込み、戦闘の確かめのモードとシ者の確かめのモードの登録・起動の分岐を両方残した。CMake の再構成の後、verify のビルド(Game・PhysicsDynamicsTest、Debug)EXIT=0、G8 の CPU の試験 18/18 合格。起動の確かめは後回し(G8-GR17-SLICE-CHECK)。
