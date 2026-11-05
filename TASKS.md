@@ -10494,3 +10494,20 @@
 - verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
 - from: G2-S6-ASSET-SET-P3
+
+## G5-GR90-SCATTER-RUNTIME-P1: grassland の倒木の種に CC0 のスキャンの倒木を選んで cook し、散布の種の表のメッシュの論理パスをそれに向ける
+- status: todo
+- after: G5-GR90-SCATTER-RUNTIME
+- done-when: 今の `Assets/Scatter/grassland.scatter.json` の `fallen_log` は `lods` が実在しない `Assets/Models/Grassland/FallenLog/FallenLog.gltf` を指している。そのため `GrasslandScatter.cpp` の `LoadMegaMesh` が cooked で解決できず、倒木の種は未結合のまま飛ばされて描かれない。G5-GR90-SCATTER-CHECK が撮影で確かめる「岩・倒木・低木」の倒木も、このままでは出ない。これを次の 4 つで直す。
+  (1) `Scripts/FetchPolyHavenModels.ps1` に `-Set grassland` を足す。落とすのは草原の散布が使う Poly Haven の CC0 のモデルで、岩の `boulder_01` と、新しく選ぶ倒木 1 種。倒木は、地面に横たわった丸太か倒れた幹の形で、温帯の乾いた草地に合う色のものを Poly Haven の API から選ぶ。選んだ id と理由はスクリプト冒頭の説明に書く。
+  (2) 倒木のモデル(glTF・.bin・色・法線・ARM のテクスチャ)を、新しい `Assets/AssetSets/GrasslandModels.json`(package は `Grassland/`)に載せる。項目の形は `WastelandModels.json` の `boulder_01` と同じにする。ほかの一覧に既にある論理パスは重ねない。
+  (3) `grassland.scatter.json` の `fallen_log` の `lods` を、その glTF の論理パスにする。`mesh_radius_m` と `min_spacing_m` は、選んだメッシュの水平の外接の半径から決め直し、根拠を PROGRESS に書く。ほかの種・seed・地形の参照は変えない。
+  (4) CookAssets で倒木と grassland の散布を焼き直したあと、`build/CookedAssets/manifest.json` に `fallen_log` の `lods[0]`(`Assets/` を除いた形)が載っている。
+  範囲の外: 低木・株(foliage)のメッシュは手続きのままにする。株の経路の頂点(`FoliageVertex`)には UV もテクスチャも無く、cook したメッシュを受ける口が無いため。実物の低木のメッシュは G5-GR46-VERTEX-ANIM・G12-GR47・G12-GR48 の経路で入る。手本と並べた見た目の調整は、起動が要るので G5-GR90-SCATTER-CHECK の撮影で行う。その done-when は倒木・低木の見え方を見ており、paths に `Game/GameModes/Grassland` を含む。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set grassland`
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/PolyHaven/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*"`
+- verify: `powershell -NoProfile -Command "$s = Get-Content -Raw Assets/Scatter/grassland.scatter.json | ConvertFrom-Json; $p = (($s.species | Where-Object name -eq 'fallen_log').lods[0]) -replace '^Assets/', ''; if (-not (Select-String -Path build/CookedAssets/manifest.json -SimpleMatch -Pattern $p -Quiet)) { Write-Output ('FALLEN_LOG_NOT_COOKED ' + $p); exit 1 }; Write-Output ('FALLEN_LOG_COOKED ' + $p)"`
+- paths: Scripts/FetchPolyHavenModels.ps1, Assets/AssetSets/GrasslandModels.json, Assets/Scatter/grassland.scatter.json, TASKS.md, PROGRESS.md
+- from: G5-GR90-SCATTER-RUNTIME
