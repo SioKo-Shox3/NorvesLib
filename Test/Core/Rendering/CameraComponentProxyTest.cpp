@@ -1,4 +1,6 @@
 ﻿#include "Component/CameraComponent.h"
+#include "Component/SpringArmComponent.h"
+#include "Component/ViewClearanceComponent.h"
 #include "Math/QuaternionUtils.h"
 #include "Math/Vector3.h"
 #include "Object/Entity.h"
@@ -20,6 +22,12 @@ using namespace NorvesLib::Core::Rendering;
 
 namespace
 {
+    class DerivedSpringArmComponent final : public SpringArmComponent
+    {
+        REFLECTION_CLASS(DerivedSpringArmComponent, SpringArmComponent)
+    };
+    IMPLEMENT_CLASS(DerivedSpringArmComponent, SpringArmComponent)
+
     bool IsNearlyEqual(float lhs, float rhs, float tolerance = 1.0e-4f)
     {
         return std::fabs(lhs - rhs) <= tolerance;
@@ -265,6 +273,131 @@ namespace
 
         world.Finalize();
     }
+
+    void TestViewClearanceUsesCurrentSpringArmPosition()
+    {
+        for (int derived = 0; derived < 2; ++derived)
+        {
+            World world;
+            world.Initialize();
+
+            Entity* pivotParent = world.SpawnEntity<Entity>();
+            Entity* pivot = world.SpawnEntity<Entity>(pivotParent);
+            Entity* owner = world.SpawnEntity<Entity>();
+            assert(pivotParent && pivot && owner);
+            CameraComponent* camera = world.CreateComponent<CameraComponent>(owner);
+            SpringArmComponent* arm = derived
+                ? world.CreateComponent<DerivedSpringArmComponent>(owner)
+                : world.CreateComponent<SpringArmComponent>(owner);
+            ViewClearanceComponent* clearance = world.CreateComponent<ViewClearanceComponent>(owner);
+            assert(camera && arm && clearance && arm->SetPivot(pivot));
+            assert(owner->GetComponent<SpringArmComponent>() == arm);
+
+            const NorvesLib::Math::Vector3 offset(0.5f, 1.25f, -0.75f);
+            pivotParent->SetLocalPosition(10.0f, -2.0f, 3.0f);
+            pivot->SetLocalPosition(1.0f, 2.0f, 3.0f);
+            pivot->SetRenderInterpolationEnabled(true);
+            arm->SetTargetOffset(offset);
+            arm->SetYaw(0.0f);
+            arm->SetPitch(0.0f);
+            arm->SetArmLength(4.0f);
+            world.UpdateWorldTransforms();
+            world.UpdateRenderTransforms();
+            arm->TickArm(0.016f);
+            world.UpdateWorldTransforms();
+
+            CameraProxy previous;
+            assert(camera->BuildCameraProxy(previous));
+            assert(previous.ViewClearance.bEnabled);
+
+            world.PrepareRenderInterpolationStep();
+            pivot->SetLocalPosition(7.0f, 4.0f, 8.0f);
+            world.UpdateWorldTransforms();
+            world.CaptureRenderInterpolationStep();
+            assert(world.SetRenderInterpolationAlpha(0.5f));
+            world.UpdateRenderTransforms();
+            arm->TickArm(0.016f);
+            world.UpdateWorldTransforms();
+
+            const NorvesLib::Math::Vector3 target = pivot->GetRenderWorldTransform().position + offset;
+            const NorvesLib::Math::Vector3 physicalTarget = pivot->GetWorldTransform().position + offset;
+            assert(!IsNearlyEqual(target.x, physicalTarget.x));
+            assert(!IsNearlyEqual(target.x, previous.ViewClearance.TargetPosition.x));
+            CameraProxy proxy;
+            assert(camera->BuildCameraProxy(proxy));
+            assert(proxy.ViewClearance.bEnabled);
+            ExpectVector(proxy.ViewClearance.TargetPosition.x, proxy.ViewClearance.TargetPosition.y,
+                         proxy.ViewClearance.TargetPosition.z, target);
+            ExpectVector(proxy.ViewClearance.CameraPosition.x, proxy.ViewClearance.CameraPosition.y,
+                         proxy.ViewClearance.CameraPosition.z,
+                         NorvesLib::Math::Vector3(proxy.PositionX, proxy.PositionY, proxy.PositionZ));
+            ExpectVector(proxy.PositionX, proxy.PositionY, proxy.PositionZ,
+                         target + NorvesLib::Math::Vector3(0.0f, 0.0f, 4.0f));
+            world.Finalize();
+        }
+    }
+
+    void TestMissingViewClearanceResetsSnapshot()
+    {
+        World world;
+        world.Initialize();
+        Entity* pivot = world.SpawnEntity<Entity>();
+        Entity* owner = world.SpawnEntity<Entity>();
+        assert(pivot && owner);
+        CameraComponent* camera = world.CreateComponent<CameraComponent>(owner);
+        SpringArmComponent* arm = world.CreateComponent<SpringArmComponent>(owner);
+        assert(camera && arm && arm->SetPivot(pivot));
+
+        CameraProxy proxy;
+        assert(camera->BuildCameraProxy(proxy));
+        assert(!proxy.ViewClearance.bEnabled);
+        proxy.ViewClearance.bEnabled = true;
+        proxy.ViewClearance.Strength = 0.25f;
+        proxy.ViewClearance.TargetPosition = NorvesLib::Math::Vector3(5.0f, 6.0f, 7.0f);
+        assert(camera->BuildCameraProxy(proxy));
+        assert(!proxy.ViewClearance.bEnabled);
+        const ViewClearanceParameters defaults = MakeDefaultViewClearanceParameters();
+        assert(IsNearlyEqual(proxy.ViewClearance.Strength, defaults.Strength));
+        ExpectVector(proxy.ViewClearance.TargetPosition.x, proxy.ViewClearance.TargetPosition.y,
+                     proxy.ViewClearance.TargetPosition.z, defaults.TargetPosition);
+        world.Finalize();
+    }
+
+    void TestCinematicStrengthReachesProxy()
+    {
+        World world;
+        world.Initialize();
+        Entity* pivot = world.SpawnEntity<Entity>();
+        Entity* owner = world.SpawnEntity<Entity>();
+        assert(pivot && owner);
+        CameraComponent* camera = world.CreateComponent<CameraComponent>(owner);
+        SpringArmComponent* arm = world.CreateComponent<SpringArmComponent>(owner);
+        ViewClearanceComponent* clearance = world.CreateComponent<ViewClearanceComponent>(owner);
+        assert(camera && arm && clearance && arm->SetPivot(pivot));
+        arm->TickArm(0.016f);
+        world.UpdateWorldTransforms();
+
+        clearance->SetMode(ViewClearanceMode::Cinematic);
+        for (int step = 0; step < 15; ++step)
+        {
+            clearance->TickStrength(0.01f);
+        }
+        assert(clearance->GetStrength() > 0.0f && clearance->GetStrength() < 1.0f);
+        CameraProxy proxy;
+        assert(camera->BuildCameraProxy(proxy));
+        assert(proxy.ViewClearance.bEnabled);
+        assert(IsNearlyEqual(proxy.ViewClearance.Strength, clearance->GetStrength()));
+
+        for (int step = 0; step < 45; ++step)
+        {
+            clearance->TickStrength(0.01f);
+        }
+        assert(clearance->GetStrength() == 0.0f);
+        assert(camera->BuildCameraProxy(proxy));
+        assert(proxy.ViewClearance.bEnabled);
+        assert(proxy.ViewClearance.Strength == 0.0f);
+        world.Finalize();
+    }
 }
 
 int main()
@@ -274,6 +407,9 @@ int main()
     TestOwnerWorldTransformBecomesValueSnapshot();
     TestLensValuesAndDirtyState();
     TestPhysicalExposureSnapshotContract();
+    TestViewClearanceUsesCurrentSpringArmPosition();
+    TestMissingViewClearanceResetsSnapshot();
+    TestCinematicStrengthReachesProxy();
     std::cout << "CameraComponentProxyTest passed\n";
     return 0;
 }
