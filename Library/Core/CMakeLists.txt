@@ -125,6 +125,7 @@ set(PRIVATE_SOURCES
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
     Private/Animation/BodyBalance.cpp
+    Private/Animation/FootIKModifier.cpp
     Private/Animation/Procedural/AngleDistribution.cpp
     Private/Animation/Procedural/Spring.cpp
     Private/Animation/Procedural/PoseModifierConfig.cpp
@@ -591,6 +592,7 @@ set(PUBLIC_HEADERS
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
     Public/Animation/BodyBalance.h
+    Public/Animation/FootIKModifier.h
     Public/Animation/Procedural/AngleDistribution.h
     Public/Animation/Procedural/Spring.h
     Public/Animation/Procedural/PoseModifierConfig.h

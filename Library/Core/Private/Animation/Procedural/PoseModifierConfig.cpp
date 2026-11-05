@@ -1,4 +1,5 @@
 ﻿#include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/FootIKModifier.h"
 #include "Animation/SkeletonResource.h"
 #include "Math/Curves.h"
 #include <algorithm>
@@ -120,6 +121,10 @@ namespace NorvesLib::Core::Animation::Procedural
                                    WeightConfig weight)
                 : m_Modifier(std::move(modifier)), m_Order(order), m_bEnabled(bEnabled), m_Weight(std::move(weight))
             {
+            }
+            IPoseModifier* GetModifier() const
+            {
+                return m_Modifier.get();
             }
             int32_t Order() const override
             {
@@ -280,7 +285,9 @@ namespace NorvesLib::Core::Animation::Procedural
     }
     PoseModifierTypeTable GetBuiltinPoseModifierTypes()
     {
-        return {};
+        static const PoseModifierTypeEntry entries[] = {
+            {"FootIK", PoseModifierDefaultOrder::FootIK, &CreateFootIKModifier}};
+        return {entries};
     }
     bool ResolvePoseModifierJoint(JsonValue name, const SkeletonResource& skeleton, int32_t& outIndex,
                                   PoseModifierConfigReport& report)
@@ -467,3 +474,15 @@ namespace NorvesLib::Core::Animation::Procedural
         return true;
     }
 } // namespace NorvesLib::Core::Animation::Procedural
+
+namespace NorvesLib::Core::Animation
+{
+    FootIKModifier* FindFootIKModifier(IPoseModifier* modifier)
+    {
+        while (auto* configured = dynamic_cast<Procedural::ConfiguredPoseModifier*>(modifier))
+        {
+            modifier = configured->GetModifier();
+        }
+        return dynamic_cast<FootIKModifier*>(modifier);
+    }
+} // namespace NorvesLib::Core::Animation
