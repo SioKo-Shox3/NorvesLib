@@ -9841,3 +9841,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 高さ場に軸並行の境界の取得を足す: 着地(直し 0 回)
 - U6 SceneQuery に QueryGround と地形の結び付けを足す: 着地(直し 0 回)
 - U3 物理のプロキシに高さ場の形を足し、問い合わせの分岐を全部明示にする: 着地(直し 1 回)
+- U4 接触の分岐を明示にし、地形を SAP の外の別枠で候補の組にする: 着地(直し 0 回)
