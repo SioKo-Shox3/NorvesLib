@@ -360,9 +360,23 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetCloudLayer(parameters);
     }
 
-    void RenderWorld::SetFoliage(const FoliageScene& foliage)
+    void RenderWorld::SetFoliageSource(FoliageSourceSlot slot, const FoliageScene& foliage)
     {
-        m_RenderingCoordinator.SetFoliage(foliage);
+        const uint32_t sourceIndex = static_cast<uint32_t>(slot);
+        if (sourceIndex >= static_cast<uint32_t>(FoliageSourceSlot::Count))
+        {
+            return;
+        }
+
+        m_FoliageSources[sourceIndex] = foliage;
+
+        FoliageScene composed;
+        composed.Wind = m_FoliageSources[static_cast<uint32_t>(FoliageSourceSlot::Scene)].Wind;
+        for (const FoliageScene& source : m_FoliageSources)
+        {
+            composed.Batches.insert(composed.Batches.end(), source.Batches.begin(), source.Batches.end());
+        }
+        m_RenderingCoordinator.SetFoliage(composed);
     }
 
     void RenderWorld::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)

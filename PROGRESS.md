@@ -9958,3 +9958,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
 - Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
 - U1 MegaGeometryScatterComponent に入力の順の行の並べ方と、範囲の初期の Active の指定と、範囲の印の読み出しを足す: 着地(直し 0 回)
+- U2 RenderWorld に草・低木の束の出どころごとの合成の口を足し、荒野をそこへ移す: 着地(直し 0 回)
