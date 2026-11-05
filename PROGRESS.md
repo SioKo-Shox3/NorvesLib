@@ -9880,3 +9880,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 モードと Routine(Enter・Tick・Leave、ID): 着地(直し 0 回)
 - U10 起動の引数と登録: 着地(直し 0 回)
 - U11 確かめのスクリプトと仕上げの確かめ: 着地(直し 0 回)
+
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 1、完了）
+- Done: 確かめの GameMode `CombatSlice`（`Game/GameModes/CombatSlice/`、ID は `GameModeIds.h`。ランチャーの一覧には載せない）と、起動の引数 `--combat-smoke`・`--encounter-smoke`・`--enemy-smoke`・`--combat-bench`・`--combat-slice-capture=<png>`（重複と、3 つの相互・`--dog-movement-smoke`・`--animation-debug`・`--scene`・`--scene-view`・`--scene-cycle-smoke` との併用を拒否）。場面は床・固定カメラ・遭遇領域 1 つ・寝床の代わりの Interactable・プロンプトの TextComponent（ASCII の仮の表示）・犬の代役（合成の骨格の Mouth のソケットに剣を付ける）・人間大のダミーのシ者（`ShishaComponent`・`HurtboxSetComponent`（humanoid.hurtboxes.json）・`HealthComponent`、スライス用の定義 `shisha_combat_slice.enemy.json`）。当たり → ダメージはモードが `GetOnAnyHit` を購読して次の Tick で `ApplyDamage`。撃破の `OnDefeatStarted` から `DefeatBloodPresenter::Trigger`。presenter（モードの Tick）→ VFX（エンジンの粒子系の PostTick）→ デカール（ハンドラの遅い更新の枠）を同じフレームの dt で進め、`RenderWorld::SetDecals` へ渡す。確かめのスクリプト `Scripts/Test-CombatSlice.ps1`（`-Mode combat|encounter|enemy|bench`・`-Configuration`・`-CapturePng`。マーカーの順を Game.log から照合）。
+- 証拠: `.harness/runs/20261105-101856/verify-G8-GR17-SLICE-SMOKE-U11.txt`（ps1 の構文の確かめ parse_errors=0、`cmake --build build --config Debug --target Game PhysicsDynamicsTest` の終了コード 0、ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK）。そこで確かめること: combat の 1/30 と 1/144 の要約（当たりの数と (部位, 攻撃)）の一致、encounter と enemy のマーカーの順、combat の撮影（DebugDraw の判定の形と火花）と enemy の撮影（撃破の約 1 秒後の血の粒と滲み）、bench の値、引数なしの起動画面が変わらないこと。
+- Notes: dt の切り替えは Library に実行中の API が無いので、`--combat-smoke` は起動 1 回で 1 つの固定刻み（`--fixed-frame-dt=1/30` か `1/144`。無ければ起動の検査で拒否）を進め、ps1 が 2 回起動して要約を比べる形にした。
+- Notes: 剣の hitbox は剣の Entity でなく犬の代役の `Head` の関節（Mouth のソケットと同じ位置）に束縛した。刀身がシ者の胴に入るのはヨー +13.95°〜+84.68°、スイングは -40° → +120° を World の 0.45 秒。窓は剣のソケットの付けが Attached になってから開く。
+- Notes: bench は `PostLateTick.ModuleLateTick` の系の Stats の記録（`Ecs.Sys.PostLateTick.ModuleLateTick`）を窓を開いた区間と閉じた区間で比べ、差を `sweep_median_us` とする（モジュールの他の LateTick も含む区間の差分）。計測の間はトレースを `.harness/combat-bench.trace.csv` に書く。Release では計測せず終了コード 0。
+- Notes: combat の撮影は最初の当たりの次のフレームで要求する。当たりが 2 つ以上出ると capture の行が hit の行の間に入り、ps1 の順の検査で落ちる（今の配置では 1 振り 1 当たりの見込み）。
+- Notes: 進行の定義の読み込みは撃破済みの状態を消さないので、同じプロセスで enemy のスモークへ入り直すと `progression_preloaded` で失敗する（起動ごとに 1 回の前提）。
+- 要起票: ソケットに付けた Entity の World の回転（`SocketAttachmentComponent` の行ベクトルの姿勢）と、hitbox が持ち主の姿勢で点を回す四元数の向きが食い違うとの指摘（U12 の調べ）。関節に束縛しない hitbox を回転した Entity に付けると判定と見た目がずれる恐れがある。`CombatRuntime.cpp:470` の `GetWorldTransform` とソケットの姿勢の作り方を照合する
