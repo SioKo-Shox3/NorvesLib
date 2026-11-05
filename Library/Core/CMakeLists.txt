@@ -470,6 +470,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputBindingJson.cpp
     Private/Input/InputBindingPersistence.cpp
     Private/Input/WorkingDirectoryInputBindingStore.cpp
+    Private/Input/SettingsInputBindingStore.cpp
     Private/Input/InputMapper.cpp
     Private/Input/InputRebindCaptureManager.cpp
     Private/Input/InputDebugOverlayController.cpp
