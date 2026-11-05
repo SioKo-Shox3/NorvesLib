@@ -27,6 +27,7 @@
 #include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/VariableArray.h"
+#include "Math/GeometryTypes.h"
 
 #include <cstdint>
 #include <limits>
@@ -46,6 +47,11 @@ namespace NorvesLib::Core::Rendering::Terrain
     {
         return ((column + row) & 1u) == 0u;
     }
+
+    /// 表面の層がない、または範囲外のときの番号
+    inline constexpr uint8_t kInvalidTerrainSurfaceId = 0xFFu;
+    /// タイルがない、または範囲外のときの番号
+    inline constexpr uint32_t kInvalidTerrainTileId = 0xFFFFFFFFu;
 
     /// 格子の高さ場で範囲の外を引いたときの高さ（NaN。std::isnan で判定する）。法線は 3 成分とも NaN になる
     inline constexpr float kOutOfRangeHeight = std::numeric_limits<float>::quiet_NaN();
@@ -86,6 +92,27 @@ namespace NorvesLib::Core::Rendering::Terrain
         float Z = 0.0f;
     };
 
+    /// 法線の種類。面法線と、格子の頂点の法線から補間する滑らかな法線
+    enum class TerrainNormalKind : uint8_t
+    {
+        Face,
+        Smooth
+    };
+
+    /// Raycast の当たり
+    struct TerrainRayHit
+    {
+        /// 正規化した向きでの距離[m]
+        float Distance = 0.0f;
+        /// 当たった点（世界座標）
+        Math::Vector3 Point;
+        /// 当たった三角形の面法線（Y > 0）。原点が地表の下なら零ベクトル
+        Math::Vector3 Normal;
+        /// 当たったセルの番号
+        uint32_t Column = 0;
+        uint32_t Row = 0;
+    };
+
     /// 格子の高さ場の頂点の並び。頂点 (column, row) の位置は (FirstX + column × Spacing, FirstZ + row × Spacing)。
     /// 手続きの作り方では Columns・Rows が 0
     struct TerrainGridLayout
@@ -95,6 +122,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         double FirstX = 0.0;
         double FirstZ = 0.0;
         double Spacing = 0.0;
+    };
+
+    /// CreateFromSamples に渡すスプラット。生成時に高さ場へコピーする
+    struct TerrainSplatSamples
+    {
+        /// 層数（0..8）
+        uint32_t LayerCount = 0;
+        /// 頂点ごとに LayerCount バイト、行優先（Columns × Rows × LayerCount）
+        Container::Span<const uint8_t> Weights;
+        /// 層の名前（LayerCount 個）
+        Container::Span<const Container::AnsiString> LayerNames;
     };
 
     /// 造成の範囲 1 つ（ワールドの X・Z に沿った箱）。箱の内側は造成の平面の高さにし、外側は箱からの距離 Blend[m] の間で
@@ -125,7 +163,7 @@ namespace NorvesLib::Core::Rendering::Terrain
     class TerrainHeightField
     {
     private:
-        /// 格子の高さ場の中身（cpp にある）
+        /// 格子の高さ場の中身（内部ヘッダにある）
         struct GridData;
         /// 格子の作り方を高さ場の生成関数の外から呼ばせないための印
         struct GridTag
@@ -139,7 +177,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 手続きの作り方（seed と関数だけで決まる）
         explicit TerrainHeightField(const TerrainHeightFieldParams &params);
 
-        /// 格子の作り方。LoadGrid と CreateFromCookedTerrain だけが呼ぶ
+        /// 格子の作り方。高さ場の生成関数だけが呼ぶ
         TerrainHeightField(GridTag tag, Container::TSharedPtr<const GridData> grid);
 
         /// 切り出した格子（Scripts/Terrain/CropDem.py が書く height.json と、その中の file が指す float32 の格子）を読んで
@@ -158,12 +196,57 @@ namespace NorvesLib::Core::Rendering::Terrain
         static Container::TSharedPtr<const TerrainHeightField> CreateFromCookedTerrain(const Asset::CookedTerrainData &terrain,
                                                                                        Container::AnsiString &outError);
 
+        /// 行優先の有限な高さの標本から格子を作る。Columns・Rows は 2 以上、Spacing は有限で正。
+        /// splat は省略できる。tileCells が正なら両辺の升目数を割り切る必要がある。
+        /// 不正な値なら空を返して outError に理由を書き、成功時は outError を空にする
+        static Container::TSharedPtr<const TerrainHeightField> CreateFromSamples(const TerrainGridLayout& layout,
+            Container::Span<const float> heights, const TerrainSplatSamples* splat, uint32_t tileCells,
+            Container::AnsiString& outError);
+
+        /// 最近の頂点で重みが最大の層。同点は小さい番号。範囲外・スプラット無しは無効な番号
+        uint8_t SampleSurface(float x, float z) const;
+        /// スプラットの層数。手続きの作り方では 0
+        uint32_t GetSplatLayerCount() const;
+        /// スプラットの層の名前。範囲外は空
+        Container::AnsiStringView GetSplatLayerName(uint32_t layer) const;
+        /// タイルの行優先の番号。外周は最後のタイルに含め、範囲外・タイル無しは無効な番号
+        uint32_t GetTileId(float x, float z) const;
+
         /// (x,z) の高さ[m]。格子の作り方で範囲の外なら kOutOfRangeHeight
         float SampleHeight(float x, float z) const;
 
         /// (x,z) の法線。高さの中心差分（間隔 sampleSpacing[m]）から求める。格子の作り方では、差分の片側が範囲の外なら
         /// その側は (x,z) の高さを使う片側の差分にし、(x,z) が範囲の外なら 3 成分とも NaN
         TerrainNormal SampleNormal(float x, float z, float sampleSpacing = 0.5f) const;
+
+        /// SampleHeight と同じ三角形を選ぶ。升目内の X・Z の比を fu・fv とすると、対角線上では
+        /// 主対角が fu >= fv、副対角が fu + fv <= 1 の側を使う。
+        /// Face は三角形ごとに一定で境界では不連続になり得る。Smooth は頂点ごとの中心差分（外周は片側差分）の
+        /// 法線を重心座標で補間するため、三角形と升目の境界をまたいで連続する。
+        /// 格子の範囲外は 3 成分とも NaN。手続きの作り方では種類によらず間隔 0.5 m の既存の法線を返す
+        TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind) const;
+
+        /// 格子の最細段と同じ三角形へレイを当て、maxDistance[m] 以内の最近点を返す。向きは内部で正規化する。
+        /// 原点がフットプリント内で地表より下なら距離 0・零法線。手続きの作り方・零方向・不正な距離は false
+        bool Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit) const;
+
+        /// 格子の各三角形との接触を outContacts に入れ、件数を返す。呼ぶたびに配列を空にする。
+        /// 地表の下は固体とし、法線は地形から形へ向く上向きの単位ベクトル。球とカプセルは辺・頂点でも最近点の法線を使う。
+        /// 箱の深さは各三角形の下の鉛直の柱と箱の共通部分の最深点から、面法線に沿って測る。
+        /// 接触点は最深点の面への射影。最深点の XZ が三角形の辺・頂点なら滑らかな地形法線を使い、取得できなければ面法線を使う。
+        /// 手続きの作り方では 0。形の値は有限、半径・半長は非負、箱の軸は正規直交であること
+        uint32_t OverlapSphere(const Math::Sphere& sphere, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        uint32_t OverlapCapsule(const Math::Capsule& capsule, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        uint32_t OverlapBox(const Math::OBB& box, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+
+        /// 格子の地形に向けて形を並進掃引する。向きは正規化し、距離は m、法線は地形から形へ上向き。
+        /// 始点で接触・地中への侵入があれば最も深い接触を距離 0・bStartPenetrating で返す。
+        /// 最小距離を確定できない IterationLimit は false を返し、outHit に未確定の安全側の位置を残す。
+        /// 手続きの作り方・不正な入力・接触なしは false。距離 0 では零方向も許す
+        bool SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit) const;
+        bool SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit) const;
 
         /// 格子から作ったか
         bool IsGrid() const

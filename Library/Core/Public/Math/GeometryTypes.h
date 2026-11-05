@@ -137,6 +137,42 @@ private:
     }
 };
 
+/**
+ * @brief 巻き順 V0→V1→V2 で面法線を定める両面の三角形。面積0も許容する。
+ */
+struct Triangle
+{
+    Vector3 V0;
+    Vector3 V1;
+    Vector3 V2;
+
+    Triangle()
+        : V0()
+        , V1()
+        , V2()
+    {
+    }
+
+    Triangle(const Vector3& v0, const Vector3& v1, const Vector3& v2)
+        : V0(v0)
+        , V1(v1)
+        , V2(v2)
+    {
+    }
+};
+
+/** @brief 三角形上の最近点が属する面・辺・頂点。 */
+enum class TriangleFeature : uint8_t
+{
+    Face,
+    Edge01,
+    Edge12,
+    Edge20,
+    Vertex0,
+    Vertex1,
+    Vertex2
+};
+
 struct Sphere
 {
     Vector3 Center;

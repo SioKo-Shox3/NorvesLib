@@ -9820,3 +9820,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261104-193901/verify-G3-GR11-FOOT-CONTACT-SOURCE.txt`（SkeletalAnimationSamplingTest・CookedMeshTest・AssetCook の Debug ビルド成功、ctest で SkeletalAnimationSamplingTest・CookedSkeletalAssetTest・CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の 5 件と RigMotionCleanupTest が Passed）。
 - Next: ランナーの評価者の反証（Public API と cook の出力の変更）。
 - Notes: `Test/Core/Asset/RigMotionCleanupTest.cpp`（paths の外）を、旧い形（`<role>_down` の名前・ループでも窓イベント・ループしないクリップにも marker）を固定していたので新しい形に書き換えた（IoU・継ぎ目の Down/Up・既存 marker の保持・時間の補正の検査は残した）。足ごとの最低を基準にしたので、ずっと同じ高さで止まっている足は高い位置でも接地とみなされる（接地なしと区別できない。上下に動き続ける足は接地なしになる）。ループしないクリップの点イベントは、時刻 0 から接地している窓の Down も時刻 0 に書く。marker から出す点イベントの `EventIndex` は events の件数 + marker の添字。起動の要る確かめは無い。
+
+- U1 Math に三角形の型・最近点・球/カプセル/OBB と三角形の接触を足す: 着地(直し 0 回)
+- U2 高さ場の格子データを内部ヘッダへ移し、8×8 セルの最小最大の格子と面/滑らかの 2 種の法線を足す: 着地(直し 0 回)
+- U4 スプラットの層・SampleSurface・タイル番号・作り方 CreateFromSamples・地形の材質の記述を足す: 着地(直し 0 回)
+- U3 Math に球・カプセルと三角形の掃引を足す: 着地(直し 1 回)
+- U5 高さ場に Raycast(最小最大の格子での 2D-DDA)を足す: 着地(直し 0 回)
+- U7 TerrainSystem に GroundSample・SampleGround・RaycastGround・SampleGroundBatch を足す: 着地(直し 0 回)
+- U6 高さ場に OverlapSphere・OverlapCapsule・OverlapBox・SweepSphere・SweepCapsule を足す: 着地(直し 0 回)
+- U8 TerrainHeightFieldQueryTest を足してタスクの verify を通す: 着地(直し 1 回)
+- U9 OverlapBox の深さを三角形の真下の柱と箱の共通部分の最深点で測る: 着地(直し 0 回)
+- U10 カプセルの掃引が IterationLimit で本当の当たりを隠す原因を突き止めて直す: 着地(直し 0 回)
+- Done (G5-GR38-HEIGHTFIELD-QUERY、run 20261104-191432 の反復 1): `Math` に `Triangle`・`ClosestPointOnTriangle`・`ClosestPointsSegmentTriangle`・`ComputeContact(Triangle, Sphere|Capsule|OBB)`・`SweepSphere|SweepCapsule(…, Triangle, …)` を足した。`TerrainHeightField` は格子の中身を内部ヘッダ `TerrainHeightFieldGrid.h` へ移し、8×8 セルの最小最大の格子、`SampleNormal(x, z, TerrainNormalKind::Face|Smooth)`、NVTRN の SPL0・SPL1 から読むスプラットと `SampleSurface`（最近の頂点の重み最大の層、同点は小さい番号）・`GetTileId`、試験と道具向けの `CreateFromSamples`、`Raycast`（ブロックとセルの 2D-DDA、地表の下の原点は距離 0・零法線）、`OverlapSphere|Capsule|Box`（地中は固体で上向きへ押し戻す。箱は三角形の真下の柱と箱の共通部分の最深点で深さを測り、辺・頂点の当たりは滑らかな法線）、`SweepSphere|SweepCapsule` を持つ。層→表面の名前の表は `TerrainMaterialDesc`（仮の表: Soil・Gravel・Moss・Mud・Rock・Sand・Water）。`TerrainSystem` に `GroundSample`・`GroundHit`・`SampleGround`・`RaycastGround`・`SampleGroundBatch` を足した。
+- 試験: `TerrainHeightFieldQueryTest`（MathGeometryTest の束）、`GeometryContactTest` に三角形の接触、`GeometrySweepTest` に三角形の掃引（浅い角度・裏面の法線・初期重なり・丸めで越えた歩の再現）。
+- 証拠: `.harness/runs/20261104-191432/verify-G5-GR38-HEIGHTFIELD-QUERY.txt`（MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed。Raycast 1 万本が総当たりと一致・最近点の差 4.4e-6 m、斜面の深さの差 4.6e-8 m、辺・頂点をまたぐ法線の角度差の最大 1.08°、掃引は球・カプセルとも 200/200 一致・距離差の最大 8.9e-5 m、SampleGroundBatch が個別の呼び出しとビット一致）。
+- Next: SceneQuery の `QueryGround`・ColliderComponent の表面の種別・物理モジュールへの地形の形の組み込み（ロードマップ GR38 の 2 の後半と 3）は別の項目。表面の名前の一覧は企画の確定を待って `TerrainMaterialDesc` の仮の表を置き換える。
+- Notes: 性能は記録だけ（Debug、10 万回の平均）: SampleGround 0.53 µs/回、100 m の Raycast 0.72 µs/本（目安は RelWithDebInfo で SampleGround 0.2 µs・Raycast 5 µs）。スプラットは cook 済みの mip0（頂点ごと、重みの和 255）を読み、和が 255 でない・未使用のチャンネルが 0 でない NVTRN は `CreateFromCookedTerrain` が拒否する。照会は LOD0 と同じ対角で、LOD1 以上の見た目とは最大 maxVerticalError だけずれる。アプリを起動する確かめは無い。
+- Notes (G5-GR38-HEIGHTFIELD-QUERY、run 20261105-093022 の反復 1): 前回の評価が枠切れ(429)で未実施のため状態が doing に戻っていた。コードは 6d378713 から変わっておらず、その版の verify(MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed)を証拠に done に戻し、評価をランナーに回す。
