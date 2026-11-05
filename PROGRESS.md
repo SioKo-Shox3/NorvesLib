@@ -9914,4 +9914,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-093023/verify-G8-GR72-AUDIO-COMPONENT-BOOT-final.txt`(Debug の Game・AudioBackendLifetimeTest のビルド BUILD_EXIT=0、ctest 5 本 100% Pass、`Test-M9World.ps1 -ContractOnly` で `M9_REVIEW_CONTRACT result=pass contract=All`、`Test-AudioSmoke.ps1` の構文検査 PARSE_OK)。
 - Next: 起動の確かめは後回し(G8-GR72-AUDIO-CHECK): 通常の起動のログで `AUDIO_MODULE register=ok`・`AUDIO_BANK load=ok sounds=2`(ばらの WAV なら `AUDIO_COOKED_MISSING` 4 行)が出ること、音の装置が無い環境で `AUDIO_BACKEND fallback=null` を出して起動が続くこと、`Scripts/Test-AudioSmoke.ps1` が `AUDIO_SMOKE result=pass` になること、ランチャーとシーンの行き来で音が残らないこと。ランナーの評価者の反証(Public API・アセットの読み込み)。
 - Notes: `--no-cooked-textures` だけを付けた起動ではスナップショットが無く、バンクはばらの root(`NORVES_SOURCE_ASSET_DIR`)から読む。`Test-AudioSmoke.ps1` は Game を `--render-thread=st --window-background` で起動し、作業ディレクトリの `Game.log` からマーカーを読む。
+
 - G9-GR15-LEAN-SPINE-LOOK: 統合ブランチを取り込み、組み込みの型の表（PoseModifierConfig.cpp）・試験の登録・AnimationRuntime.md で FootIK と Lean・Spine・Look を併記した。Debug の verify ビルド（EXIT=0）と ctest 4 本の Passed を確かめた。
+- U1 移動の見た目の傾きに倍率を掛ける SetVisualTiltScale を足す: 着地(直し 0 回)
+- U2 AnimatorComponent に視線の目標の口と同期グループの名前引きを足す: 着地(直し 0 回)
+- U3 BodyLeanModifier（type Lean）と試験のファイルを足す: 着地(直し 0 回)
+- U4 SpineWaveModifier（type Spine）を足す: 着地(直し 0 回)
+- U5 LookAtModifier（type Look）を足す: 着地(直し 0 回)
+- U6 文書を足し、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G9-GR15-LEAN-SPINE-LOOK（run 20261105-100456 の反復 1、完了）
+- Done: 組み込みの型の表に `Lean`（BodyLeanModifier）・`Spine`（SpineWaveModifier）・`Look`（LookAtModifier）を登録した。Lean は `source: params`（既定。`BankAngle`・`PitchAngle` をそのまま配る）と `source: signals`（atan(vω/g) と前後の加速度×係数を上限でクランプして臨界減衰）を持ち、`Q(前方, bank) * Q(右, -pitch)` を背骨チェーンへ配り、空中で重みを 0 へ平滑に下げる。Spine は名前で指す同期グループの位相（`AnimatorComponent::FindSyncGroup`）か `fallbackHz` の内部位相で θ_i = A_i(speed)·sin(2π(f·p+φ_i)) を足す。Look は `AnimatorComponent::SetLookTarget(priority, target)` / `ClearLookTarget` の最高優先度の目標を毎フレーム引き、楕円の円錐・臨界減衰・角加速度の上限で首〜頭へ配り、保持スロットが埋まっている間は `holdWeightScale` を掛ける。`QuadrupedLocomotionComponent::SetVisualTiltScale`（既定 1、VisualPose の剛体の傾きだけに掛ける）を足した。文書は AnimationRuntime.md の「胴の傾き・背骨の波・視線」と Testing.md の `ProceduralChainModifierTest`
+- 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify.txt`（verify のビルド 4 ターゲット exit_code=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest`・`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest` 4/4 Passed）。Look の実測: 円錐内の収束後の注視誤差 0.047°、ヨー制限の端との差 3.4e-5°、目標切り替えの角速度の差 0.3490659 rad/s（上限 0.3490659 + 1e-6）、目標なしの後の角 2e-17 rad
+- Next: ランナーの評価者の反証（Public API `AnimatorComponent.h` の危険地帯）。実際のキャラクターでの見た目の確かめ（Lean を使う場面で `SetVisualTiltScale(0)` にした傾きの見え方、視線の追従）は起動の確かめとして後回し。既定の倍率 1 のときの VisualPose の傾きは `x * 1.0f` でビット一致のため見た目は変わらない
+- Notes: 消えた Entity・「なし」の目標は低い優先度へ落ちず目標なしにした（高い優先度の「なし」で低い優先度を抑えられる）。Look の円錐の制限はアニメの頭の向きからの差で測る。Spine の重み 0 は設定の `weight`・`strength` で与える（設定の包みが文脈の `Weight` を設定の重みで詰め直すため）。各 modifier の設定の誤りと Look の保持スロットの倍率は試験していない（done-when の外）
+- U7 視線の視差を目標角の側へ入れて角速度の跳びを無くし、既定の注視軸をメッシュ空間で求める: 着地(直し 0 回)
+## 2026-11-05 G9-GR15-LEAN-SPINE-LOOK（run 20261105-100456 の反復 2、差し戻しの対応、完了）
+- Done: 視線の視差の補正を、1° の門つきの後段の一括補正から、前フレームの頭の位置のずれを足した推定位置で目標方向を測る形に変え、視差も臨界減衰と角加速度の上限を通すようにした（角速度の跳びを解消）。角度は制限後の角速度 × dt で進める。既定の lookAxis はメッシュノードの回転を含むメッシュ空間の bind の頭の回転から求め、MeshNodeTransform が変わったときだけ求め直す。TestLookAt はメッシュノードを回した fixture で、case=3 を出力の姿勢から測った頭の注視方向の角速度で判定する形にした
+- 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify-2.txt`（verify のビルド 4 ターゲット exit_code=0、ctest 4/4 Passed）。Look の実測: 注視誤差 1.2e-5°、ヨー制限の端との差 2.1e-5°、姿勢で測った角速度の差 0.34911 rad/s（上限 0.34907 + 許容 1e-3）、目標なしの後の角 1.9e-14 rad
+- Next: ランナーの評価者の反証（Public API の危険地帯）。実キャラクターでの視線の追従の見た目は起動の確かめとして後回し
+- Notes: 保持スロットの占有が変わったときの holdWeightScale は即座に掛かり、頭の向きが段になる（done-when の外、評価者の non-blocking）。split の骨格と実行中の MeshNodeTransform の変更でのキャッシュの求め直しは試験していない。角度を「前の角 + 角速度 × dt」で進めるため、半減期の数倍を超える長い dt の 1 フレームでは追従が遅れる
