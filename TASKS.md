@@ -10511,3 +10511,26 @@
 - verify: `powershell -NoProfile -Command "$s = Get-Content -Raw Assets/Scatter/grassland.scatter.json | ConvertFrom-Json; $p = (($s.species | Where-Object name -eq 'fallen_log').lods[0]) -replace '^Assets/', ''; if (-not (Select-String -Path build/CookedAssets/manifest.json -SimpleMatch -Pattern $p -Quiet)) { Write-Output ('FALLEN_LOG_NOT_COOKED ' + $p); exit 1 }; Write-Output ('FALLEN_LOG_COOKED ' + $p)"`
 - paths: Scripts/FetchPolyHavenModels.ps1, Assets/AssetSets/GrasslandModels.json, Assets/Scatter/grassland.scatter.json, TASKS.md, PROGRESS.md
 - from: G5-GR90-SCATTER-RUNTIME
+
+## G9-GR15-AB-CAPTURE-CHECK-P1: 足 IK より後の modifier が脚の祖先を回しても接地を保つため、FollowThrough・SpringBone の後で脚の IK を同じフレームの目標へ解き直す
+- status: todo
+- after: G9-GR15-ORDER-DEBUG-VIEW
+- gr: GR14, GR15
+- done-when: 以下の (1)〜(6) をすべて満たす。
+  (1) `SkeletalAnimationSamplingTest` の ModifierOrderTest で使う合成の四足（前脚が胸の子）に、`AnimationDebugQuadruped.posemod.json` と同じ胸・首の FollowThrough を既定の順で掛ける。解き直しを入れると、接地中の前脚の足先と、FootIK がそのフレームに求めた目標（`GetLegToeTargetWorld`）との平均誤差が 5 mm 以下になる。試験は、解き直しなしの値も並べて出す。maxStretch で届かない標本は除外し、除外した数を出す。
+  (2) 同じ実行で胸の遅れは残る。FollowThrough なしの実行と比べた胸のグローバル回転の差の最大が 1° 以上ある。
+  (3) FollowThrough と SpringBone の重みを 0 にした実行では、解き直しあり・なしで足先の位置の差が 1e-5 m 以下。
+  (4) 解き直しは、新しい地面の問い合わせも、接地の固定の状態の更新もしない。問い合わせの回数を試験で数えて確かめる。既存の ModifierOrderTest の検査（2 回の実行のハッシュの一致、FootIK を order 50 にしたときの誤差の増加）は、解き直しを有効にしない設定のまま通る。
+  (5) `AnimationDebugQuadruped.posemod.json` で解き直しを有効にする。`Docs/Architecture/AnimationRuntime.md` の順序の表に、解き直しの段（FollowThrough の後・ソケットの前）を足す。「脚の祖先を回す設定では…接地を保つことが自動的に保証されるわけではない」の段落は、「後段の modifier が脚の祖先を回すときは、解き直しで接地を保つ」という決まりに書き換える。
+  (6) 下の verify が通る（Game は起動しない）。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest GLTFSkeletalAnalyzerTest ResourceRegistryTest PhysicsDynamicsTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|GLTFSkeletalAnalyzerTest|SkeletalResourceLifetimeTest|PhysicsGroundQueryIntegrationTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Animation/FootIKModifier.h, Library/Core/Private/Animation/FootIKModifier.cpp, Library/Core/Public/Animation/Procedural/PoseModifierConfig.h, Library/Core/Private/Animation/Procedural/PoseModifierConfig.cpp, Test/Core/Rendering/ModifierOrderTest.cpp, Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp, Assets/Gameplay/AnimationDebugQuadruped.posemod.json, Game/Debug/PoseModifierDebugView.cpp, Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp, Docs/Architecture/AnimationRuntime.md, TASKS.md, PROGRESS.md
+- from: G9-GR15-AB-CAPTURE-CHECK
+- notes:
+  - 採った方針: FollowThrough の対象から脚の祖先（胸）を外す案は採らない。外すと `G9-GR15-SPRING-FOLLOW` の目的の「首と胸の遅れ」が消えるうえ、実リグでも前脚は胸の子になるため。
+  - 順序の表（グラフ → Lean → Spine → Look → FootIK → SpringBone → FollowThrough → ソケット）は変えない。後段の modifier が済んだ後に、FootIK が同じフレームに求めた足先の目標と足首の向きへ、二関節 IK（`Library/Core/Public/Animation/TwoBoneIK.h` の `SolveTwoBoneIK`）を解き直す。
+  - 仕組みは作り手が選んでよい。例: FootIK の settings に `reapply` を足し、設定の読み込みが、同じ FootIK を指す既定の order 720 の段を作る。`PoseModifierCreateArgs` からはほかの modifier を参照できない。つなぐには、`ParsePoseModifierConfig` で作り終えた後につなぐか、`FindFootIKModifier` で探す。
+  - 解き直しの重みは FootIK の脚の重みに従う。`--pose-modifiers-off` のときと、FootIK を OFF にしたときは掛けない。
+  - 今のコードの事実: 合成の四足の前脚の根は Chest の子（`Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp:202, 205`）。FollowThrough は `TrySetJointGlobalRotation` で胸を回すので、部分木ごと動く（`Library/Core/Private/Animation/Procedural/FollowThroughModifier.cpp:297`）。ModifierOrderTest の既定の順では、足先と地面の平均誤差が 4 cm 残る（PROGRESS の G9-GR15-ORDER-DEBUG-VIEW 反復 1）。
+  - Public API と姿勢の後処理の変更なので、評価者の反証を通す。見た目の確かめは `G9-GR15-AB-CAPTURE-CHECK` で行う。
