@@ -78,9 +78,104 @@ namespace Game::GameModes
             return clip;
         }
         constexpr float kQuadrupedFloorY = -0.98f;
-        constexpr float kQuadrupedRadius = 2.2f;
-        constexpr float kQuadrupedTurnRate = 0.55f;
+        constexpr float kQuadrupedSpeed = 1.21f;
+        constexpr float kQuadrupedTurnRadius = 1.2f;
+        constexpr float kQuadrupedStraightLength = 2.6f;
+        constexpr float kPi = 3.141592654f;
+        constexpr float kRampAngle = 18.0f * kPi / 180.0f;
+        constexpr float kRampRun = 1.1f;
+        constexpr float kRampHalfThickness = .08f;
+        const float kRampHeight = kRampRun * std::tan(kRampAngle);
         const M::Vector3 kQuadrupedCenter(-3.5f, kQuadrupedFloorY, 2.0f);
+
+        struct GroundBox
+        {
+            M::Vector3 Center;
+            M::Vector3 HalfSize;
+            float Pitch = 0;
+        };
+        // 同じ寸法を描画・物理・胴体の高さに使う。斜面の中心は天面の投影位置から求める。
+        const GroundBox kQuadrupedGround[] = {
+            {{-3.5f, kQuadrupedFloorY - .12f, 2.0f}, {3.2f, .12f, 3.2f}},
+            {{-4.7f, kQuadrupedFloorY + kRampHeight * .5f - kRampHalfThickness * std::cos(kRampAngle),
+              1.25f + kRampHalfThickness * std::sin(kRampAngle)},
+             {.5f, kRampHalfThickness, kRampRun / (2 * std::cos(kRampAngle))}, -kRampAngle},
+            {{-4.7f, kQuadrupedFloorY + kRampHeight * .5f, 2.0f}, {.5f, kRampHeight * .5f, .2f}},
+            {{-4.7f, kQuadrupedFloorY + kRampHeight * .5f - kRampHalfThickness * std::cos(kRampAngle),
+              2.75f - kRampHalfThickness * std::sin(kRampAngle)},
+             {.5f, kRampHalfThickness, kRampRun / (2 * std::cos(kRampAngle))}, kRampAngle},
+            // 両端から三段で上り下りする。中央の天面は長く取り、足を置く余地を残す。
+            {{-2.3f, kQuadrupedFloorY + .06f, .85f}, {.5f, .06f, .15f}},
+            {{-2.3f, kQuadrupedFloorY + .12f, 1.15f}, {.5f, .12f, .15f}},
+            {{-2.3f, kQuadrupedFloorY + .18f, 2.0f}, {.5f, .18f, .7f}},
+            {{-2.3f, kQuadrupedFloorY + .12f, 2.85f}, {.5f, .12f, .15f}},
+            {{-2.3f, kQuadrupedFloorY + .06f, 3.15f}, {.5f, .06f, .15f}}};
+
+        float QuadrupedGroundHeight(const M::Vector3& position)
+        {
+            float height = kQuadrupedFloorY;
+            for (const auto& box : kQuadrupedGround)
+            {
+                const float cosine = std::cos(box.Pitch);
+                const float sine = std::sin(box.Pitch);
+                const float offsetZ = position.z - box.Center.z;
+                const float offsetY = box.HalfSize.y / cosine - offsetZ * sine / cosine;
+                const float localZ = offsetZ * cosine - offsetY * sine;
+                // 経路は天面上を通る。斜面の端の側面は床または中央の台に埋まる。
+                if (std::abs(position.x - box.Center.x) <= box.HalfSize.x &&
+                    std::abs(localZ) <= box.HalfSize.z + .0001f)
+                {
+                    height = std::max(height, box.Center.y + offsetY);
+                }
+            }
+            return height;
+        }
+
+        struct QuadrupedPathSample
+        {
+            M::Vector3 Position;
+            float Yaw = 0;
+            float TurnRate = 0;
+        };
+
+        QuadrupedPathSample SampleQuadrupedPath(double time)
+        {
+            const float arcLength = kPi * kQuadrupedTurnRadius;
+            const float length = 2 * (kQuadrupedStraightLength + arcLength);
+            // 床だけの下側半円の中央から始め、斜面、上側半円、階段、床へ戻る。
+            float distance = float(std::fmod(time * kQuadrupedSpeed +
+                2 * kQuadrupedStraightLength + 1.5f * arcLength, length));
+            const float lowZ = kQuadrupedCenter.z - kQuadrupedStraightLength * .5f;
+            const float highZ = kQuadrupedCenter.z + kQuadrupedStraightLength * .5f;
+            QuadrupedPathSample sample;
+            if (distance < kQuadrupedStraightLength)
+            {
+                sample.Position = M::Vector3(kQuadrupedCenter.x - kQuadrupedTurnRadius, 0, lowZ + distance);
+            }
+            else if ((distance -= kQuadrupedStraightLength) < arcLength)
+            {
+                const float angle = distance / kQuadrupedTurnRadius;
+                sample.Position = M::Vector3(kQuadrupedCenter.x - kQuadrupedTurnRadius * std::cos(angle),
+                                            0, highZ + kQuadrupedTurnRadius * std::sin(angle));
+                sample.Yaw = angle;
+                sample.TurnRate = kQuadrupedSpeed / kQuadrupedTurnRadius;
+            }
+            else if ((distance -= arcLength) < kQuadrupedStraightLength)
+            {
+                sample.Position = M::Vector3(kQuadrupedCenter.x + kQuadrupedTurnRadius, 0, highZ - distance);
+                sample.Yaw = kPi;
+            }
+            else
+            {
+                distance -= kQuadrupedStraightLength;
+                const float angle = distance / kQuadrupedTurnRadius;
+                sample.Position = M::Vector3(kQuadrupedCenter.x + kQuadrupedTurnRadius * std::cos(angle),
+                                            0, lowZ - kQuadrupedTurnRadius * std::sin(angle));
+                sample.Yaw = kPi + angle;
+                sample.TurnRate = kQuadrupedSpeed / kQuadrupedTurnRadius;
+            }
+            return sample;
+        }
 
         struct JointSpec
         {
@@ -201,7 +296,7 @@ namespace Game::GameModes
             S::SkeletalAnimationClip clip;
             clip.Name = "walk";
             clip.DurationSeconds = 1.2f;
-            clip.Metadata.Root.NominalSpeed = kQuadrupedRadius * kQuadrupedTurnRate;
+            clip.Metadata.Root.NominalSpeed = kQuadrupedSpeed;
             clip.Metadata.Markers = {{Identity("Left"), 0}, {Identity("Right"), .6f}};
             const char* const down[] = {"Foot.FrontLeft.Down", "Foot.FrontRight.Down",
                                        "Foot.RearLeft.Down", "Foot.RearRight.Down"};
@@ -436,8 +531,7 @@ namespace Game::GameModes
         auto* skinned = ctx.WorldRef.CreateComponent<Component::SkinnedMeshComponent>(quadruped);
         auto* animator = ctx.WorldRef.CreateComponent<Component::AnimatorComponent>(quadruped);
         auto* floorMesh = ctx.WorldRef.CreateComponent<Component::SkinnedMeshComponent>(floor);
-        auto* collider = ctx.WorldRef.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(floor);
-        if (!skinned || !animator || !floorMesh || !collider)
+        if (!skinned || !animator || !floorMesh)
         {
             return false;
         }
@@ -448,11 +542,23 @@ namespace Game::GameModes
             return false;
         }
         m_Quadruped = quadruped->GetObjectId();
-        // 既存の地面 Y=-1 より天面を 2 cm 上げ、重なりを避けて周回と体の幅を収める。
-        floor->SetPosition(kQuadrupedCenter.x, kQuadrupedFloorY - .12f, kQuadrupedCenter.z);
-        if (collider->SetBox(M::Vector3(3.2f, .12f, 3.2f)) != NorvesLib::Modules::Physics::EPhysicsResult::Success)
+        // 床と障害物の描画は一つにまとめ、物理の箱にはそれぞれ同じ位置と回転を与える。
+        const auto floorPosition = kQuadrupedGround[0].Center;
+        floor->SetPosition(floorPosition);
+        for (const auto& box : kQuadrupedGround)
         {
-            return false;
+            auto* ground = ctx.ScopeRef.SpawnObject<Entity>();
+            if (!ground)
+            {
+                return false;
+            }
+            ground->SetPosition(box.Center);
+            ground->SetRotation(M::Quaternion(M::Vector3::UnitX, box.Pitch));
+            auto* collider = ctx.WorldRef.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(ground);
+            if (!collider || collider->SetBox(box.HalfSize) != NorvesLib::Modules::Physics::EPhysicsResult::Success)
+            {
+                return false;
+            }
         }
         auto floorSkeleton = registry.CreateTransient<SkeletonResource>("AnimationDebugFloorSkeleton");
         auto floorGeometry = registry.CreateTransient<SkinnedMeshResource>("AnimationDebugFloorMesh");
@@ -469,7 +575,11 @@ namespace Game::GameModes
         floorSkeleton->SetJoints(std::move(floorJoints));
         C::VariableArray<S::SkeletalVertex> floorVertices;
         C::VariableArray<uint32_t> floorIndices;
-        AppendBox(floorVertices, floorIndices, 0, M::Vector3::Zero, M::Vector3(3.2f, .12f, 3.2f));
+        for (const auto& box : kQuadrupedGround)
+        {
+            AppendBox(floorVertices, floorIndices, 0, box.Center - floorPosition, box.HalfSize,
+                      M::Quaternion(M::Vector3::UnitX, box.Pitch));
+        }
         floorGeometry->SetVertices(std::move(floorVertices));
         floorGeometry->SetIndices(std::move(floorIndices));
         S::SkeletalAnimationClip still;
@@ -563,15 +673,27 @@ namespace Game::GameModes
         {
             m_QuadrupedTime += double(deltaTime);
         }
-        const float phase = float(std::fmod(m_QuadrupedTime * kQuadrupedTurnRate, 6.283185307179586));
-        quadruped->SetPosition(kQuadrupedCenter.x + kQuadrupedRadius * std::cos(phase),
-                              kQuadrupedFloorY, kQuadrupedCenter.z + kQuadrupedRadius * std::sin(phase));
-        quadruped->SetRotation(M::Quaternion(M::Vector3::UnitY, -phase));
+        const auto sample = SampleQuadrupedPath(m_QuadrupedTime);
+        const float groundHeight = QuadrupedGroundHeight(sample.Position);
+        const float bank = std::atan(kQuadrupedSpeed * sample.TurnRate / 9.81f);
+        if (std::isfinite(deltaTime) && deltaTime > 0)
+        {
+            // 胴体だけを滑らかに追従させる。各足の段差と法線への補正は FootIK が担う。
+            m_QuadrupedHeight += (groundHeight - m_QuadrupedHeight) * (1 - std::exp(-deltaTime / .08f));
+            m_QuadrupedBank += (bank - m_QuadrupedBank) * (1 - std::exp(-deltaTime / .12f));
+        }
+        else if (m_QuadrupedTime == 0)
+        {
+            m_QuadrupedHeight = groundHeight;
+            m_QuadrupedBank = bank;
+        }
+        quadruped->SetPosition(sample.Position.x, m_QuadrupedHeight, sample.Position.z);
+        quadruped->SetRotation(M::Quaternion(M::Vector3::UnitY, sample.Yaw));
         if (auto* animator = quadruped->GetComponent<Component::AnimatorComponent>())
         {
-            // 円運動の向きから符号を決め、向心加速度を重力との比で傾きへ変える。
-            const float bank = std::atan(-kQuadrupedRadius * kQuadrupedTurnRate * kQuadrupedTurnRate / 9.81f);
-            (void)animator->SetFloat(animator->FindParam(Identity("BankAngle")), bank);
+            // 向心加速度と重力の比から旋回の傾きを求め、直線との境目を平滑化する。
+            (void)animator->SetFloat(animator->FindParam(Identity("BankAngle")), m_QuadrupedBank);
+            const float phase = float(std::fmod(m_QuadrupedTime * .55, 6.283185307179586));
             (void)animator->SetFloat(animator->FindParam(Identity("PitchAngle")), .08f * std::sin(phase * 2));
             animator->SetLookTarget(0, Component::AnimatorLookTarget::AtWorldPosition(
                 kQuadrupedCenter + M::Vector3(.5f, 1.6f, .5f)));
@@ -632,6 +754,8 @@ namespace Game::GameModes
         m_GroundQuery.reset();
         m_Quadruped = 0;
         m_QuadrupedTime = 0.0;
+        m_QuadrupedHeight = 0;
+        m_QuadrupedBank = 0;
         m_QuadrupedGraph.reset();
         m_QuadrupedAsset.reset();
         m_FloorAsset.reset();

@@ -65,6 +65,7 @@ namespace Game::GameModes
         NorvesLib::Core::Container::String m_PoseModifiersJson, m_PoseModifiersPath;
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String> m_WeightParameterNames;
         double m_QuadrupedTime = 0.0;
+        float m_QuadrupedHeight = 0, m_QuadrupedBank = 0;
         uint64_t m_Character = 0, m_Item = 0;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_CharacterAsset, m_ItemAsset;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::AnimGraphResource> m_Graph;
