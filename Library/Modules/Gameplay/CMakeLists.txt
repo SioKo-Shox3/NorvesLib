@@ -33,6 +33,8 @@ set(GAMEPLAY_PUBLIC_HEADERS
 
 set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Grip/GripTuningLoader.cpp
+    Private/Gameplay/Grip/GripSolver.h
+    Private/Gameplay/Grip/GripSolver.cpp
     Private/Gameplay/Combat/HealthComponent.cpp
     Private/Gameplay/Combat/HitboxComponent.cpp
     Private/Gameplay/Combat/HurtboxSetComponent.cpp
