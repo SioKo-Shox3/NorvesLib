@@ -10237,3 +10237,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
 - Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
 - Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。
+- U1 MapTransform（地図とワールドの変換・JSON の読み書き・不正値の拒否）と MapTransformTest: 着地(直し 0 回)
