@@ -1,5 +1,7 @@
-﻿#include "Component/Component.h"
+﻿#include "Asset/AssetRef.h"
+#include "Component/Component.h"
 #include "Ecs/EcsWorld.h"
+#include "Object/EntityRefId.h"
 #include "Object/ObjectPropertyOps.h"
 #include "Object/Reflection.h"
 #include "Object/SchemaProjection.h"
@@ -28,6 +30,34 @@ namespace
 
     // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
     using ProbeBase = Component::Component;
+
+    struct AssetProbeColumn
+    {
+        TextureAssetRef Texture;
+    };
+
+    class AssetPropertyProbe : public ProbeBase
+    {
+        REFLECTION_CLASS(AssetPropertyProbe, ProbeBase)
+
+    public:
+        EcsRowRef GetEcsRow() const { return m_Row; }
+
+        uint32_t BindRow(EcsWorld& world, EcsEntity entity)
+        {
+            m_Row = EcsRowRef{&world, entity};
+            return MoveEcsPropertyValuesToColumns(this);
+        }
+
+        ECS_PROPERTY(AssetProbeColumn, Texture, TextureAssetRef, ColumnTexture)
+        PROPERTY(TextureAssetRef, MemberTexture)
+        PROPERTY(EntityRefId, TargetEntity)
+
+    private:
+        EcsRowRef m_Row;
+    };
+
+    IMPLEMENT_CLASS(AssetPropertyProbe, ProbeBase)
 
     class EcsPropertyProbe : public ProbeBase
     {
@@ -499,6 +529,96 @@ namespace
         assert(FindProjected(unbound, spinId)->SerializedValue == spinValue->SerializedValue);
         assert(FindProjected(unbound, countId)->SerializedValue == "-3");
     }
+
+    void TestAssetAndEntityReferenceRoundTrip()
+    {
+        TextureAssetRef texture;
+        assert(texture.IsEmpty() && texture.GetKind() == Asset::AssetKind::Texture);
+        assert(texture.TrySet("./Assets\\Textures//stone.png"));
+        assert(texture.GetLogicalPath() == Container::StringView("Textures/stone.png"));
+        const TextureAssetRef original = texture;
+        for (const char* invalid : {"C:/Assets/stone.png", "/Assets/stone.png", "\\\\server\\share\\stone.png",
+                                    "C:stone.png", "../stone.png", "Textures/../stone.png",
+                                    "Textures\\..\\stone.png", ".", "Assets"})
+        {
+            assert(!texture.TrySet(invalid));
+            assert(texture == original);
+        }
+        assert(!texture.DeserializeFromString("Textures/../stone.png") && texture == original);
+        assert(texture.TrySet("") && texture.IsEmpty());
+        Container::String text = "previous";
+        assert(texture.SerializeToString(text) && text.empty());
+        assert(texture.DeserializeFromString("Textures/stone.png") && texture == original);
+
+        // 列と通常のメンバが同じ型登録を使い、列の実体を経由して往復できる。
+        EcsWorld world;
+        const EcsColumnInfo column = EcsColumnInfoOf<AssetProbeColumn>();
+        const EcsArchetypeId archetype = world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(&column, 1));
+        assert(archetype != kInvalidEcsArchetype);
+        const EcsEntity sourceRow = world.CreateEntity(archetype);
+        const EcsEntity restoredRow = world.CreateEntity(archetype);
+        assert(!sourceRow.IsNull() && !restoredRow.IsNull());
+        AssetPropertyProbe source;
+        AssetPropertyProbe restored;
+        assert(source.BindRow(world, sourceRow) == 1);
+        assert(restored.BindRow(world, restoredRow) == 1);
+        source.getColumnTexture() = original;
+        source.getMemberTexture() = original;
+        const ClassProperty* columnProperty = AssetPropertyProbe::StaticClass()->GetProperty(Identity("ColumnTexture"));
+        const ClassProperty* memberProperty = AssetPropertyProbe::StaticClass()->GetProperty(Identity("MemberTexture"));
+        const ClassProperty* entityProperty = AssetPropertyProbe::StaticClass()->GetProperty(Identity("TargetEntity"));
+        assert(columnProperty && memberProperty && entityProperty);
+        assert(columnProperty->GetStorageKind() == StorageKind::EcsColumn);
+        assert(memberProperty->GetStorageKind() == StorageKind::Member);
+        assert(columnProperty->GetRuntimeTypeId() == memberProperty->GetRuntimeTypeId());
+        const TypeInfo* type = TypeRegistry::Get().Find(columnProperty->GetRuntimeTypeId());
+        assert(type && type->Name == "TextureAssetRef" && type->Kind == TypeKind::String);
+        assert(type->StableId == MakeStableSchemaId("NorvesLib", "Type", Container::StringView("TextureAssetRef")));
+        const AssetProbeColumn* sourceColumn = world.GetColumnValue<AssetProbeColumn>(sourceRow);
+        assert(sourceColumn && sourceColumn->Texture == original);
+        const void* sourceValue = columnProperty->GetValuePtr(static_cast<const NorvesLib::Core::IUnknown*>(&source));
+        assert(sourceValue == &sourceColumn->Texture);
+        assert(type->Ops.Serialize(sourceValue, text) && text == "Textures/stone.png");
+        TextureAssetRef deserialized;
+        assert(type->Ops.Deserialize(text, &deserialized) && deserialized == original);
+        assert(columnProperty->ApplyValue(&restored, PropertyValue::Create(deserialized)));
+        const AssetProbeColumn* restoredColumn = world.GetColumnValue<AssetProbeColumn>(restoredRow);
+        assert(restoredColumn && restoredColumn->Texture == original);
+        assert(type->Ops.Serialize(memberProperty->GetValuePtr(static_cast<const NorvesLib::Core::IUnknown*>(&source)), text));
+        assert(text == "Textures/stone.png");
+        assert(memberProperty->ApplyValue(&restored, PropertyValue::Create(deserialized)));
+        assert(*restored.getMemberTexture() == original);
+
+        assert(NorvesLib::Core::Detail::DefaultTypeName<ModelAssetRef>() == "ModelAssetRef");
+        assert(NorvesLib::Core::Detail::DefaultTypeName<SkeletalAssetRef>() == "SkeletalAssetRef");
+        assert(NorvesLib::Core::Detail::DefaultTypeName<AnimationAssetRef>() == "AnimationAssetRef");
+        assert(NorvesLib::Core::Detail::DefaultTypeName<AudioAssetRef>() == "AudioAssetRef");
+        assert(NorvesLib::Core::Detail::DefaultTypeName<RawAssetRef>() == "RawAssetRef");
+        assert(NorvesLib::Core::Detail::DefaultTypeName<TAssetRef<Asset::AssetKind::World>>() == "WorldAssetRef");
+        assert(NorvesLib::Core::Detail::DefaultTypeName<TAssetRef<Asset::AssetKind::Unknown>>() == "UnknownAssetRef");
+
+        EntityRefId entity(42);
+        assert(entity.IsValid() && entity.Get() == 42 && static_cast<uint64_t>(entity) == 42);
+        source.getTargetEntity() = entity;
+        type = TypeRegistry::Get().Find(entityProperty->GetRuntimeTypeId());
+        assert(type && type->Name == "EntityRefId" && type->Kind == TypeKind::Integer);
+        assert(type->StableId == MakeStableSchemaId("NorvesLib", "Type", Container::StringView("EntityRefId")));
+        assert(type->Ops.Serialize(entityProperty->GetValuePtr(static_cast<const NorvesLib::Core::IUnknown*>(&source)), text));
+        assert(text == "42");
+        EntityRefId restoredId;
+        assert(type->Ops.Deserialize(text, &restoredId) && restoredId == entity);
+        assert(entityProperty->ApplyValue(&restored, PropertyValue::Create(restoredId)));
+        assert(*restored.getTargetEntity() == entity);
+        assert(restoredId.DeserializeFromString(" \t18446744073709551615\r\n"));
+        assert(restoredId.SerializeToString(text) && text == "18446744073709551615");
+        const EntityRefId maxId = restoredId;
+        for (const char* invalid : {"", " ", "+1", " -1", "1.0", "1x", "1 2", "18446744073709551616"})
+        {
+            assert(!restoredId.DeserializeFromString(invalid));
+            assert(restoredId == maxId);
+        }
+        assert(restoredId.DeserializeFromString("0") && !restoredId.IsValid());
+    }
 }
 
 int main()
@@ -509,6 +629,7 @@ int main()
     TestMutableValuePtrIsNull();
     TestParallelAccessRejected();
     TestSnapshotAndSerializedRoundTrip();
+    TestAssetAndEntityReferenceRoundTrip();
     std::cout << "EcsPropertyStorageTest 合格\n";
     return 0;
 }

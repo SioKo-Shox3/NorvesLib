@@ -164,7 +164,7 @@ namespace NorvesLib::Modules::Physics
                 Math::Sphere local = query;
                 local.Center -= proxy.HeightFieldOrigin;
                 Core::Container::VariableArray<Math::GeometryContact> contacts;
-                proxy.HeightField->OverlapSphere(local, contacts);
+                proxy.HeightField->OverlapSphere(local, contacts, proxy.TileResidency.get());
                 return StoreHeightFieldContact(proxy, contacts, outContact);
             }
             }
@@ -199,7 +199,7 @@ namespace NorvesLib::Modules::Physics
                 Math::OBB local = query;
                 local.Center -= proxy.HeightFieldOrigin;
                 Core::Container::VariableArray<Math::GeometryContact> contacts;
-                proxy.HeightField->OverlapBox(local, contacts);
+                proxy.HeightField->OverlapBox(local, contacts, proxy.TileResidency.get());
                 return StoreHeightFieldContact(proxy, contacts, outContact);
             }
             }
@@ -225,7 +225,7 @@ namespace NorvesLib::Modules::Physics
                 local.PointA -= proxy.HeightFieldOrigin;
                 local.PointB -= proxy.HeightFieldOrigin;
                 Core::Container::VariableArray<Math::GeometryContact> contacts;
-                proxy.HeightField->OverlapCapsule(local, contacts);
+                proxy.HeightField->OverlapCapsule(local, contacts, proxy.TileResidency.get());
                 return StoreHeightFieldContact(proxy, contacts, outContact);
             }
             }
@@ -441,7 +441,7 @@ namespace NorvesLib::Modules::Physics
             case EPhysicsProxyShape::HeightField:
             {
                 const Math::Ray local(ray.Origin - proxy.HeightFieldOrigin, ray.Direction);
-                if (!proxy.HeightField->Raycast(local, maxDistance, outTerrainHit))
+                if (!proxy.HeightField->Raycast(local, maxDistance, outTerrainHit, 0u, proxy.TileResidency.get()))
                 {
                     return false;
                 }
@@ -983,14 +983,14 @@ namespace NorvesLib::Modules::Physics
                 {
                     Math::Sphere local = query.Sphere;
                     local.Center -= proxy.HeightFieldOrigin;
-                    bHit = proxy.HeightField->SweepSphere(local, query.Direction, query.MaxDistance, hit);
+                    bHit = proxy.HeightField->SweepSphere(local, query.Direction, query.MaxDistance, hit, proxy.TileResidency.get());
                 }
                 else
                 {
                     Math::Capsule local = shape;
                     local.PointA -= proxy.HeightFieldOrigin;
                     local.PointB -= proxy.HeightFieldOrigin;
-                    bHit = proxy.HeightField->SweepCapsule(local, query.Direction, query.MaxDistance, hit);
+                    bHit = proxy.HeightField->SweepCapsule(local, query.Direction, query.MaxDistance, hit, proxy.TileResidency.get());
                 }
                 if (bHit)
                 {
@@ -1823,7 +1823,7 @@ namespace NorvesLib::Modules::Physics
                 Math::Sphere local = second.Sphere;
                 local.Center -= first.HeightFieldOrigin;
                 Core::Container::VariableArray<Math::GeometryContact> contacts;
-                first.HeightField->OverlapSphere(local, contacts);
+                first.HeightField->OverlapSphere(local, contacts, first.TileResidency.get());
                 return StoreHeightFieldContact(first, contacts, outContact, false);
             }
             case EPhysicsProxyShape::Box:
@@ -1831,7 +1831,7 @@ namespace NorvesLib::Modules::Physics
                 Math::OBB local = second.Box;
                 local.Center -= first.HeightFieldOrigin;
                 Core::Container::VariableArray<Math::GeometryContact> contacts;
-                first.HeightField->OverlapBox(local, contacts);
+                first.HeightField->OverlapBox(local, contacts, first.TileResidency.get());
                 return StoreHeightFieldContact(first, contacts, outContact, false);
             }
             case EPhysicsProxyShape::Capsule:
@@ -1840,7 +1840,7 @@ namespace NorvesLib::Modules::Physics
                 local.PointA -= first.HeightFieldOrigin;
                 local.PointB -= first.HeightFieldOrigin;
                 Core::Container::VariableArray<Math::GeometryContact> contacts;
-                first.HeightField->OverlapCapsule(local, contacts);
+                first.HeightField->OverlapCapsule(local, contacts, first.TileResidency.get());
                 return StoreHeightFieldContact(first, contacts, outContact, false);
             }
             case EPhysicsProxyShape::HeightField:

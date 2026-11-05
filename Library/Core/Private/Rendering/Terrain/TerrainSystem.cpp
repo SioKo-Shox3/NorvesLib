@@ -126,6 +126,11 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     bool TerrainSystem::SampleGround(float x, float z, GroundSample& outSample) const
     {
+        return SampleGround(x, z, outSample, 0u);
+    }
+
+    bool TerrainSystem::SampleGround(float x, float z, GroundSample& outSample, uint32_t lod) const
+    {
         outSample = GroundSample{};
         const TerrainHeightField* field = FindTerrainRaw(x, z);
         if (!field)
@@ -133,13 +138,13 @@ namespace NorvesLib::Core::Rendering::Terrain
             return false;
         }
 
-        const float height = field->SampleHeight(x, z);
+        const float height = field->SampleHeight(x, z, lod);
         if (std::isnan(height))
         {
             return false;
         }
 
-        const TerrainNormal normal = field->SampleNormal(x, z, TerrainNormalKind::Face);
+        const TerrainNormal normal = field->SampleNormal(x, z, TerrainNormalKind::Face, lod);
         outSample.Height = height;
         outSample.Normal = Math::Vector3(normal.X, normal.Y, normal.Z);
         outSample.SlopeRadians = std::acos(normal.Y);
@@ -151,12 +156,17 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     bool TerrainSystem::RaycastGround(const Math::Ray& ray, float maxDistance, GroundHit& outHit) const
     {
+        return RaycastGround(ray, maxDistance, outHit, 0u);
+    }
+
+    bool TerrainSystem::RaycastGround(const Math::Ray& ray, float maxDistance, GroundHit& outHit, uint32_t lod) const
+    {
         outHit = GroundHit{};
         for (uint32_t index = m_FirstTerrain; index != TerrainHandle::InvalidIndex; index = m_Slots[index].Next)
         {
             const TerrainSlot& slot = m_Slots[index];
             TerrainRayHit hit;
-            if (!slot.Field->Raycast(ray, maxDistance, hit) ||
+            if (!slot.Field->Raycast(ray, maxDistance, hit, lod) ||
                 (outHit.bValid && hit.Distance >= outHit.Distance))
             {
                 continue;
@@ -187,6 +197,37 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
     }
 
+    void TerrainSystem::SetTileResident(uint32_t tileId, bool bResident)
+    {
+        if (tileId == kInvalidTerrainTileId || IsTileResident(tileId) == bResident)
+        {
+            return;
+        }
+
+        auto residency = m_TileResidency
+            ? Container::MakeShared<TerrainTileResidency>(*m_TileResidency)
+            : Container::MakeShared<TerrainTileResidency>();
+        residency->SetResident(tileId, bResident);
+        if (residency->IsAllResident())
+        {
+            m_TileResidency.reset();
+        }
+        else
+        {
+            m_TileResidency = std::move(residency);
+        }
+    }
+
+    bool TerrainSystem::IsTileResident(uint32_t tileId) const
+    {
+        return !m_TileResidency || m_TileResidency->IsResident(tileId);
+    }
+
+    Container::TSharedPtr<const TerrainTileResidency> TerrainSystem::GetTileResidency() const
+    {
+        return m_TileResidency;
+    }
+
     void TerrainSystem::SetAssetSystem(Container::TSharedPtr<const Asset::AssetSystem> assetSystem)
     {
         m_AssetSystem = std::move(assetSystem);
@@ -203,6 +244,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         {
             ReleaseSlot(m_FirstTerrain);
         }
+        m_TileResidency.reset();
     }
 
     const TerrainHeightField* TerrainSystem::FindTerrainRaw(float x, float z) const

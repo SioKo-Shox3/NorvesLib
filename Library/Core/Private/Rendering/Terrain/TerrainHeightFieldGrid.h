@@ -37,14 +37,22 @@ namespace NorvesLib::Core::Rendering::Terrain
         uint32_t GradedColumns = 0;
         uint32_t GradedRows = 0;
 
-        /// 8 × 8 升目ごとの高さの範囲（行優先。外周のブロックは残りの升目だけを覆う）
-        static constexpr uint32_t kBlockCells = 8u;
+        static constexpr uint32_t kLodCount = TerrainHeightField::kHeightLodCount;
+
+        /// 各セルが覆う全頂点の高さの範囲（行優先。外周のセルは残りの升目を覆う）
+        struct LodLevel
+        {
+            uint32_t Stride = 0;
+            uint32_t CellColumns = 0;
+            uint32_t CellRows = 0;
+            Container::VariableArray<float> MinHeight;
+            Container::VariableArray<float> MaxHeight;
+        };
+
         float MinHeight = 0.0f;
         float MaxHeight = 0.0f;
-        uint32_t BlockColumns = 0;
-        uint32_t BlockRows = 0;
-        Container::VariableArray<float> BlockMinHeight;
-        Container::VariableArray<float> BlockMaxHeight;
+        /// 段 0 は表を持たず、段 1〜3 はそれぞれ stride 2・4・8
+        LodLevel Lods[kLodCount];
 
         /// ファイルの値
         float FileAt(uint32_t column, uint32_t row) const
@@ -71,7 +79,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             return value;
         }
 
-        /// 造成後の頂点から、各ブロックと格子全体の高さの範囲を作る
-        void BuildBlockBounds();
+        /// 造成後の頂点から、各段のセルと格子全体の高さの範囲を作る
+        void BuildLodBounds();
     };
 } // namespace NorvesLib::Core::Rendering::Terrain

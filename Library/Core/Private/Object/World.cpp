@@ -1207,8 +1207,17 @@ namespace NorvesLib::Core
         return true;
     }
 
-    Entity* World::SpawnPrefab(const PrefabAsset& prefab, Entity* parent, const PrefabOverrideSet* overrides)
+    Entity* World::SpawnPrefab(
+        const PrefabAsset& prefab,
+        Entity* parent,
+        const PrefabOverrideSet* overrides,
+        PrefabSpawnAliasMap* pOutAliases)
     {
+        if (pOutAliases)
+        {
+            pOutAliases->clear();
+        }
+
         if (!HasFlag(OF_Initialized))
         {
             return nullptr;
@@ -1245,6 +1254,19 @@ namespace NorvesLib::Core
         if (!bAttached)
         {
             return nullptr;
+        }
+
+        if (pOutAliases)
+        {
+            for (const PrefabBuiltObject& object : buildState.Objects)
+            {
+                if (object.Target.NestedInstances.empty())
+                {
+                    (*pOutAliases)[object.Target.Alias] = {
+                        object.LiveObject.EntityPtr,
+                        object.LiveObject.ComponentPtr};
+                }
+            }
         }
 
         return rootGuard.Release();

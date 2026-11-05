@@ -537,6 +537,7 @@ set(PUBLIC_HEADERS
     Public/Asset/AssetResolveResult.h
     Public/Asset/AssetSystem.h
     Public/Asset/AssetPath.h
+    Public/Asset/AssetRef.h
     Public/Object/Object.h
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
@@ -792,6 +793,7 @@ set(PUBLIC_HEADERS
     Public/Object/PropertyBag.h
     Public/Object/ReferenceCollector.h
     Public/Object/EntityHandle.h
+    Public/Object/EntityRefId.h
     Public/Object/PrefabAsset.h
     Public/Object/Resource.h
     Public/Object/ResourceRef.h

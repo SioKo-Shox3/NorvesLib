@@ -10219,15 +10219,31 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 後始末の `StopOwner` は 0 秒を渡しても `SoundSystem.cpp:471` で最短 2/60 秒のフェードに補正されるので、Leave の直後（スコープのデストラクタの漏れの検査・ソークの enter の行）には voice が残り得る。ソークは voice を Enter から 8 フレーム後の ready の行だけで比べる。音を鳴らすモードでは Debug の漏れの警告に voices の差が出る見込み（G8-GR76-RESET-CHECK で確かめる）。
 - Notes: ソークのベースラインは 1 回目のリセットの後（キャッシュが温まった後）。最初の Enter は sample=cold で出すだけ。最初の Enter ではセーブを読まない（前の起動の自動保存で既存のスモークの progression_preloaded を起こさないため）。
 - Notes: `SaveService::Update` は `OnUpdate`（PreUpdate）で `false` を渡して呼ぶ。状態機械の遷移は PreSimulation の Update の先頭で同期に適用されるので、その時点で遷移の途中ではない。死亡からのリセットは `FlushAndWait` で保存の完了を待ってから RequestReset する。
-- U1 静的な AABB の木（StaticAabbTree）を新設し、CMake に足す: 着地(直し 0 回)
-- U2 ブロードフェーズが静的なプロキシを木に分け、署名で使い回し、動く物と静的の組を木から作る: 着地(直し 0 回)
-- U3 PhysicsModule が bStatic を設定し、公開用へ木を渡し、接触の解決で組の添字を使う: 着地(直し 0 回)
-- U4 インスタンスの問い合わせ（Raycast・Overlap・ExecuteQuery）を木の走査＋木の外の線形走査にする: 着地(直し 0 回)
-- U5 規模の試験に静的の木のケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
-## 2026-11-05 G12-GR09-STATIC-TREE（run 20261105-193213 の反復 2）
-- Done: 静的なコライダーを `StaticAabbTree`（平らな配列の節・葉 4 個以下・最大軸の中央値の分割・重心を座標とハンドルの順に並べる）に入れた。`PhysicsShapeProxy::bStatic` を足し、`PhysicsModule::BuildBroadphase` が有効な Dynamic / Kinematic の Body を持たないコライダーを静的にする。`SetProxies` は静的の署名（ハンドル・形・形の値・境界）が前回と同じなら木を使い回し、違えば 1 回だけ作り直す。組は 動く物どうし = X 軸の SAP、動く物×静的 = 木、静的どうし = trigger など能動側から木、高さ場 = 今の別枠で作り、`IsPairLess` で整列する。作業用と公開用は木を `TSharedPtr` で共有する（`ShareStaticTreeFrom`）。組に `m_Proxies` の添字を持たせ、`ResolveContacts` は `GetPairProxy` で引く。インスタンスの Raycast・Overlap・`ExecuteQuery` は木の走査（最近接のレイは手前から訪れて打ち切る）＋木の外の線形走査にし、静的の `*OverProxies` は線形のまま。木の要約（境界の和・形の最大の大きさ・掃引で無効な箱）で precheck のエラーが出うるときは線形へ戻す。
-- 証拠: `.harness/runs/20261105-193213/verify-G12-GR09-STATIC-TREE-U5.txt` の後半（1090 行〜。verify の 2 行: Debug の PhysicsDynamicsTest・SceneQueryRaycastTest のビルド EXIT_CODE 0、ctest 12 件 100% Passed）。実測: 静的 5000＋動く 50 で作業用の作り直し 1→0→0→1→0（3 ステップ目に静的を 1 個動かした）、公開用は全部 0、狭域判定 200（上限 800）、探索 400（上限 組 200×log2(5050)）、候補 200。混ざった形 2000 個（静的 1266）で組 1679 が総当たりと一致し作り直し 1→0→0、Raycast・Overlap・球とカプセルの掃引各 100 回が完全一致、入力順の入れ替え・2 回の作成で節 995 個の並びと問い合わせの結果が同じ。
-- Next: ランナーの評価者の反証（物理の危険地帯）。アプリを起動する確かめは無い。Entity の無いコライダーとチャンクの部分木は G12-GR09-DETACHED-COLLIDERS、時間の計測は G12-GR09-SCALE-MEASURE。
-- Notes: 毎ステップ動く Body の無いコライダー（スクリプトで動かす trigger など）は毎ステップ木の作り直しになる。「2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す」規則を足す場所は `SetProxies` の木に入れる条件の判定（コメントあり）。
-- Notes: 木の決定性は同じ重心座標の項目のハンドルが重ならない前提（同じハンドルを違う境界で 2 回渡す入力では、入力順を変えたときの節の一致は保証しない）。
-- Notes: 最近接のレイの打ち切りは、見つけた距離に 1e-4×(1＋距離) の余白を足して縮める（同距離で大きいハンドルが勝つ規則を落とさないため）。
+
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 2、完了）
+
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ。衝突は 2 か所で、`TerrainHeightField.cpp` は統合側の PDL0（水たまり）の読み込みを残し、末尾の範囲の構築をこの項目の `BuildLodBounds` へ合わせた。`PhysicsModule.cpp` の地形のプロキシは、この項目のタイルの常駐の印と統合側の `DetermineProxyMobility` の両方を設定する。
+- Done: verify の `cmake --build build --config Debug --target MathGeometryTest PhysicsDynamicsTest -- /m:1` は EXIT=0、ctest の 7 本（TerrainHeightFieldQueryTest・TerrainHeightFieldTest・PhysicsHeightFieldColliderTest・PhysicsBroadphaseQueryTest・PhysicsCharacterMoveTest・PhysicsDynamicsTest・MathGeometryTest）は全部合格。
+- Next: タイルの常駐を決めるのはセル（G12-GR40-WORLD-PAYLOADS）。
+- Notes: アプリを起動する確かめはこの項目に無い。
+- U1 高さ場に段 1〜3 の最小最大の表と段ごとの高さ・面法線の照会を足し、ブロック表を段 3 の表に置き換える: 着地(直し 0 回)
+- U2 粗い段の Raycast と常駐の印の型を足し、高さ場の全照会に常駐の印を渡せるようにする: 着地(直し 0 回)
+- U4 TerrainHeightFieldQueryTest に段の表・段の高さの誤差・表で棄却した Raycast のケースを足す: 着地(直し 0 回)
+- U3 TerrainSystem に段を選ぶ照会と常駐の印の口を足す: 着地(直し 0 回)
+- U5 物理の地形のプロキシに常駐の印を持たせ、常駐でないタイルでは問い合わせ・接触とも当たらないようにする: 着地(直し 0 回)
+- U6 PhysicsHeightFieldColliderTest に常駐の切り替えのケースを足し、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 1、完了）
+- Done: (1) `TerrainHeightField` に段 1〜3（stride 2・4・8）の最小最大の表（覆う最細の全頂点の範囲）と `kHeightLodCount`・`GetLodCellRange`・`SampleHeight(x, z, lod)`・`SampleNormal(..., lod)`・`Raycast(ray, maxDistance, hit, lod, residency)` を足し、最細段の Raycast と VisitTriangles の早期の棄却は 8×8 のブロック表をやめて段 3 の表を使う。(2) `TerrainTileResidency`（非常駐のタイル番号のビット）を足し、重なり・掃引・レイに末尾の `const TerrainTileResidency*` を渡すと常駐でないタイルの升目の三角形を無いものとして扱う。(3) `TerrainSystem` に `SampleGround(x, z, out, lod)`・`RaycastGround(ray, maxDistance, hit, lod)`（既存の形は段 0）と `SetTileResident`・`IsTileResident`・`GetTileResidency`（copy-on-write の写し、既定は全常駐、Clear で戻る）。照会は常駐に依らない。(4) 物理の地形のプロキシが固定ステップごとのプロキシ作りで常駐の写しを持ち、問い合わせ（重なり・レイ・掃引）と動く物体との接触の全呼び出しに渡す。(5) 試験: `TerrainHeightFieldQueryTest` に段の表の保守性（NVTRN と正弦波の場で違反 0）・段の高さの誤差（6534 点で LodMaxErrorM の超過 0、段 0 はビット一致）・段 3 の表で棄却するレイの総当たりとの一致（6144 本）、`PhysicsHeightFieldColliderTest` に `TestTileResidency`（非常駐のタイル A で 90 ステップ Hit 0・沈み 10.16 m・レイと重なりが外れ、常駐のタイル B は当たる。常駐に戻した次の 1 ステップでレイ・重なりが当たり、新しい球は Hit 229・地表との差 0 で止まる。非常駐にする行を外すと 7 件の不一致で落ちることを確かめた）。
+- 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
+- Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。
+
+- U1 AssetRef と EntityRefId の型、RuntimeSchema の文字列化の分岐、ECS の列の往復の試験: 着地(直し 0 回)
+- U4 シーンの保存側(v3 の版・SceneSaveStats・依存の表・壊れない保存)と AssetRef の保存の試験: 着地(直し 0 回)
+- U7 SpawnPrefab の alias の表と PivotObjectId の EntityRefId 化(U2・U3 のレビュー済みの差分の再適用): 着地(直し 0 回)
+- Notes(G12-GR92-ASSETREF-SCENE-V3): U2・U3 はレビュー済みだったが、着地の前に単位の作業ツリーを別のタスクが使い回したので捨て、同じ差分を U7 で入れ直した。シーンの先頭の `assets` の表は、論理パスや種別が不正だと文書の解析ごと失敗する(プロパティの不正な論理パスは落として既定値に戻す寛容な扱いで、扱いがそろっていない)。
+- U5 EntityRefId の保存と張り替え、v2 → v3 の値の移行: 着地(直し 0 回)
+- U6 LoadIntoWorld の生成ルートの返却・論理パスからの読み込みとタスクの確かめ: 着地(直し 0 回)
+- Done(G12-GR92-ASSETREF-SCENE-V3): 論理パスの資産参照 TAssetRef と Entity 参照 EntityRefId を足し、RuntimeSchema が型の側の文字列化を扱う。シーンの形式は v3(v1 → v2 → v3 の移行、先頭の assets の依存の表、SceneSaveStats、一時ファイルからの置換による保存)。EntityRefId はファイルでは「ルートの添字:alias」で保存し、LoadIntoWorld が全ルートの生成の後に新しい ObjectId へ張り替える(v2 の uint64 の値も移行)。LoadIntoWorld は生成したルートを返し、LoadIntoWorldFromAsset で論理パス(AssetSystem::ResolveAsset の Raw)から読める。verify の 2 行(ビルド・ctest 10 本)と Game のビルドが終了コード 0。アプリを起動する確かめは無い。
+- Next(G12-GR92-ASSETREF-SCENE-V3): コンポーネントの非同期の束縛(G12-GR92-ASSET-BIND)、Prefab のファイル(G12-GR92-PREFAB-FILE)、Bridge(G12-GR92-BRIDGE-SCENE)。
+- Notes(G12-GR92-ASSETREF-SCENE-V3): EntityRefId の張り替えは BeginPlay の後に起きるので、BeginPlay の中で参照先を引くコンポーネントは張り替え前の 0 を見る(今の利用は Tick で引く SpringArmComponent だけ)。公開の ReconcileWithSchema の結果には EntityRefId のプロパティが入らない(張り替えの予定は LoadIntoWorld の内部だけが持つ)。保存の集合の外を指す参照は警告して参照なしで保存する。
