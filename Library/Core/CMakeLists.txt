@@ -75,6 +75,7 @@ set(PRIVATE_SOURCES
     Private/Vegetation/GrassFieldAsset.cpp
     Private/Vegetation/TerrainGroundHeightSource.cpp
     Private/Vegetation/Vegetation.cpp
+    Private/Vegetation/DrynessMap.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -444,6 +445,7 @@ set(PRIVATE_SOURCES
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/TerrainComponent.cpp
     Private/Component/GrassFieldComponent.cpp
+    Private/Component/WitherSourceComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -602,6 +604,7 @@ set(PUBLIC_HEADERS
     Public/Vegetation/GrassFieldAsset.h
     Public/Vegetation/TerrainGroundHeightSource.h
     Public/Vegetation/Vegetation.h
+    Public/Vegetation/DrynessMap.h
     Public/Vegetation/GroundHeightSource.h
     Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h
@@ -848,6 +851,7 @@ set(PUBLIC_HEADERS
     Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/GrassFieldComponent.h
+    Public/Component/WitherSourceComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

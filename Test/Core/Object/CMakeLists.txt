@@ -65,6 +65,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER WorldTickGroupTest WorldTickGroupTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
+    MEMBER EntityActiveInHierarchyTest EntityActiveInHierarchyTest.cpp
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
     MEMBER SpringArmComponentTest SpringArmComponentTest.cpp
     MEMBER WorldRenderInterpolationTest WorldRenderInterpolationTest.cpp
@@ -117,6 +118,7 @@ add_test(NAME EcsPropertyStorageTest COMMAND ObjectReflectionTest --test=EcsProp
 add_test(NAME EntitySubtreeSnapshotTest COMMAND SceneSerializerTest --test=EntitySubtreeSnapshotTest)
 add_test(NAME PrefabRoundTripTest COMMAND SceneSerializerTest --test=PrefabRoundTripTest)
 add_test(NAME TransformHierarchyTest COMMAND EntityTreeTest --test=TransformHierarchyTest)
+add_test(NAME EntityActiveInHierarchyTest COMMAND EntityTreeTest --test=EntityActiveInHierarchyTest)
 add_test(NAME EntityWorldAABBTest COMMAND EntityTreeTest --test=EntityWorldAABBTest)
 add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQueryOverlapTest)
