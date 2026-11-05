@@ -9933,3 +9933,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify-2.txt`（verify のビルド 4 ターゲット exit_code=0、ctest 4/4 Passed）。Look の実測: 注視誤差 1.2e-5°、ヨー制限の端との差 2.1e-5°、姿勢で測った角速度の差 0.34911 rad/s（上限 0.34907 + 許容 1e-3）、目標なしの後の角 1.9e-14 rad
 - Next: ランナーの評価者の反証（Public API の危険地帯）。実キャラクターでの視線の追従の見た目は起動の確かめとして後回し
 - Notes: 保持スロットの占有が変わったときの holdWeightScale は即座に掛かり、頭の向きが段になる（done-when の外、評価者の non-blocking）。split の骨格と実行中の MeshNodeTransform の変更でのキャッシュの求め直しは試験していない。角度を「前の角 + 角速度 × dt」で進めるため、半減期の数倍を超える長い dt の 1 フレームでは追従が遅れる
+- U1 切り抜きのモデル ViewClearanceParameters と CPU の可視度の式、CameraProxy への値の置き場: 着地(直し 0 回)
