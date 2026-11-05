@@ -9878,3 +9878,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 攻撃判定のスモーク(--combat-smoke): 着地(直し 0 回)
 - U8 敵のスモーク(--enemy-smoke): 着地(直し 0 回)
 - U9 モードと Routine(Enter・Tick・Leave、ID): 着地(直し 0 回)
+- U10 起動の引数と登録: 着地(直し 0 回)
