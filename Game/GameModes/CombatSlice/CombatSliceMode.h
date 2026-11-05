@@ -2,6 +2,7 @@
 
 #include "CameraLateUpdate.h"
 #include "CombatBenchDriver.h"
+#include "CombatResetSoakDriver.h"
 #include "CombatSliceActors.h"
 #include "CombatSliceReactions.h"
 #include "CombatSliceScene.h"
@@ -34,6 +35,7 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TUniquePtr<CombatSmokeDriver> CombatDriver;
         NorvesLib::Core::Container::TUniquePtr<EncounterSmokeDriver> EncounterDriver;
         NorvesLib::Core::Container::TUniquePtr<EnemySmokeDriver> EnemyDriver;
+        NorvesLib::Core::Container::TUniquePtr<CombatResetSoakDriver> ResetSoakDriver;
         NorvesLib::Core::Container::TSharedPtr<CombatSliceLateState> LateState;
         NorvesLib::Modules::Gameplay::IGameplayModule* GameplayModule = nullptr;
         NorvesLib::Modules::Gameplay::Combat::CombatResponseSettings SavedResponse;

@@ -66,6 +66,11 @@ namespace Game::GameModes
             data.EnemyDriver->End(ctx);
             data.EnemyDriver.reset();
         }
+        if (data.ResetSoakDriver)
+        {
+            data.ResetSoakDriver->End(ctx);
+            data.ResetSoakDriver.reset();
+        }
         if (data.Reactions)
         {
             data.Reactions->Unbind(ctx);
@@ -105,6 +110,12 @@ namespace Game::GameModes
 
     GameModeEnterResult CombatSliceRoutine::Enter(GameModeContext& ctx, CombatSliceData& data)
     {
+        CombatResetSoakCounts enterCounts;
+        if (data.Options.Smoke == CombatSliceSmoke::ResetSoak && data.ResetState)
+        {
+            enterCounts = CombatResetSoakDriver::CaptureCounts(ctx);
+        }
+
         bool bSucceeded = false;
         data.bExitReported = false;
         struct Guard
@@ -246,6 +257,17 @@ namespace Game::GameModes
             data.EnemyDriver = Container::MakeUnique<EnemySmokeDriver>();
             bDriverStarted = data.EnemyDriver->Begin(ctx, data.Ids, data.Options);
             break;
+        case CombatSliceSmoke::ResetSoak:
+            if (!data.ResetState)
+            {
+                NORVES_LOG_INFO("CombatSlice", "GAME_RESET stage=failure reason=reset_state");
+                ctx.EngineRef.RequestExit(1);
+                data.bExitReported = true;
+                return GameModeEnterResult::Failed;
+            }
+            data.ResetSoakDriver = Container::MakeUnique<CombatResetSoakDriver>();
+            bDriverStarted = data.ResetSoakDriver->Begin(ctx, *data.ResetState, enterCounts);
+            break;
         default:
             return GameModeEnterResult::Failed;
         }
@@ -283,6 +305,14 @@ namespace Game::GameModes
         else if (data.EnemyDriver)
         {
             data.EnemyDriver->Tick(ctx, deltaTime);
+        }
+        else if (data.ResetSoakDriver && data.ResetSoakDriver->Tick(ctx))
+        {
+            if (!RequestResetFromLastSave(ctx, data, "soak"))
+            {
+                NORVES_LOG_INFO("CombatSlice", "GAME_RESET stage=failure reason=reset_request");
+                ctx.EngineRef.RequestExit(1);
+            }
         }
         if (data.GameplayModule)
         {

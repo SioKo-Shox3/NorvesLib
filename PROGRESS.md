@@ -10074,3 +10074,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 GameModeScopeLeakTest と試験の文書: 着地(直し 0 回)
 - U3 GameModeScopeResourceLeakVulkanTest(ビルドまで): 着地(直し 0 回)
 - U5 CombatSlice に後始末の登録・撃破の自動保存・最後のセーブからのリセットを足す: 着地(直し 1 回)
+- U7 リセットのソークの driver(--soak-reset の中身): 着地(直し 0 回)
