@@ -9839,3 +9839,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes (G5-GR38-HEIGHTFIELD-QUERY、run 20261105-093022 の反復 1): 前回の評価が枠切れ(429)で未実施のため状態が doing に戻っていた。コードは 6d378713 から変わっておらず、その版の verify(MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed)を証拠に done に戻し、評価をランナーに回す。
 - U1 物理の当たりの型に表面の番号の欄を足す: 着地(直し 0 回)
 - U2 高さ場に軸並行の境界の取得を足す: 着地(直し 0 回)
+- U6 SceneQuery に QueryGround と地形の結び付けを足す: 着地(直し 0 回)
