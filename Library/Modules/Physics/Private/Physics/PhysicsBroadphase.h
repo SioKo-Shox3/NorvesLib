@@ -172,6 +172,8 @@ namespace NorvesLib::Modules::Physics
         Core::Container::TSharedPtr<const PhysicsStaticTreeSnapshot> m_StaticTree;
         // 木の項目から、今回の m_Proxies の添字への対応。
         Core::Container::VariableArray<uint32_t> m_TreeProxyIndices;
+        // 各群の項目が m_TreeProxyIndices のどこから始まるかを表す。
+        Core::Container::VariableArray<uint32_t> m_TreeGroupOffsets;
         // 木に入れなかった全プロキシの添字。ハンドル順を保つ。
         Core::Container::VariableArray<uint32_t> m_NonTreeProxyIndices;
         // 所有者のスレッドだけが検索・接触判定を呼び出すため、通常の整数で保持する。
