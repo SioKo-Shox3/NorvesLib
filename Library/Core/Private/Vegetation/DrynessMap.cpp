@@ -1,13 +1,57 @@
 ﻿#include "Vegetation/DrynessMap.h"
 
+#include "Container/UnorderedSet.h"
+#include "Text/JsonDocument.h"
+#include "Text/JsonWriter.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace NorvesLib::Core::Vegetation
 {
     namespace
     {
+        enum SourceField : size_t
+        {
+            IdField,
+            ShapeField,
+            CenterXField,
+            CenterZField,
+            RadiusAField,
+            RadiusBField,
+            YawField,
+            FalloffField,
+            TargetField,
+            LevelField,
+            SecondsField,
+            RemainingField,
+            SourceFieldCount
+        };
+
+        constexpr const char* SourceFieldNames[SourceFieldCount] =
+        {
+            "id", "shape", "centerX", "centerZ", "radiusA", "radiusB", "yaw",
+            "falloff", "target", "level", "seconds", "remaining"
+        };
+
+        /** @brief ID を保持できる正の整数値かを返す。 */
+        bool IsValidIdNumber(double value)
+        {
+            return std::isfinite(value) && value >= 1.0 &&
+                value <= static_cast<double>(std::numeric_limits<DrynessSourceId>::max()) &&
+                std::trunc(value) == value;
+        }
+
+        /** @brief 浮動小数点へ戻しても半径が正であるかを返す。 */
+        bool IsPositiveRadius(double value)
+        {
+            return value > 0.0 &&
+                (value > static_cast<double>(std::numeric_limits<float>::max()) ||
+                 static_cast<float>(value) > 0.0f);
+        }
+
         /** @brief 枯れ度が有限かつ有効な範囲に収まるかを返す。 */
         bool IsValidLevel(float level)
         {
@@ -22,6 +66,25 @@ namespace NorvesLib::Core::Vegetation
             return dx * dx + dz * dz;
         }
     } // namespace
+
+    const char* GetDrynessRestoreErrorName(DrynessRestoreError error)
+    {
+        switch (error)
+        {
+        case DrynessRestoreError::None: return "None";
+        case DrynessRestoreError::NotObject: return "NotObject";
+        case DrynessRestoreError::UnsupportedVersion: return "UnsupportedVersion";
+        case DrynessRestoreError::MissingField: return "MissingField";
+        case DrynessRestoreError::WrongType: return "WrongType";
+        case DrynessRestoreError::UnknownShape: return "UnknownShape";
+        case DrynessRestoreError::NonFinite: return "NonFinite";
+        case DrynessRestoreError::NonPositiveRadius: return "NonPositiveRadius";
+        case DrynessRestoreError::OutOfRange: return "OutOfRange";
+        case DrynessRestoreError::DuplicateId: return "DuplicateId";
+        case DrynessRestoreError::InvalidId: return "InvalidId";
+        }
+        return "Unknown";
+    }
 
     DrynessSourceId DrynessMap::AddCircle(float centerX, float centerZ, float radius, float falloff, float level)
     {
@@ -197,6 +260,186 @@ namespace NorvesLib::Core::Vegetation
             result = std::max(result, source.CurrentLevel * attenuation);
         }
         return result;
+    }
+
+    void DrynessMap::Serialize(JsonWriter& writer, const char* key) const
+    {
+        if (key == nullptr)
+        {
+            writer.BeginObject();
+        }
+        else
+        {
+            writer.BeginObject(key);
+        }
+
+        writer.WriteNumber("version", 1.0);
+        writer.WriteUInt64("nextId", m_NextId);
+        writer.BeginArray("sources");
+        for (const DrynessSource& source : m_Sources)
+        {
+            writer.BeginObject();
+            writer.WriteUInt64("id", source.Id);
+            writer.WriteString("shape", source.Shape == DrynessShape::Circle ? "circle" : "ellipse");
+            writer.WriteNumber("centerX", static_cast<double>(source.CenterX));
+            writer.WriteNumber("centerZ", static_cast<double>(source.CenterZ));
+            writer.WriteNumber("radiusA", static_cast<double>(source.RadiusA));
+            writer.WriteNumber("radiusB", static_cast<double>(source.RadiusB));
+            writer.WriteNumber("yaw", static_cast<double>(source.Yaw));
+            writer.WriteNumber("falloff", static_cast<double>(source.Falloff));
+            writer.WriteNumber("target", static_cast<double>(source.TargetLevel));
+            writer.WriteNumber("level", static_cast<double>(source.CurrentLevel));
+            writer.WriteNumber("seconds", static_cast<double>(source.TransitionSeconds));
+            writer.WriteNumber("remaining", static_cast<double>(source.RemainingSeconds));
+            writer.EndObject();
+        }
+        writer.EndArray();
+        writer.EndObject();
+    }
+
+    DrynessRestoreResult DrynessMap::Restore(const JsonValue& value)
+    {
+        if (!value.IsObject())
+        {
+            return {DrynessRestoreError::NotObject};
+        }
+
+        const JsonValue version = value.FindMember("version");
+        if (!version.IsValid())
+        {
+            return {DrynessRestoreError::MissingField};
+        }
+        if (!version.IsNumber())
+        {
+            return {DrynessRestoreError::WrongType};
+        }
+        if (version.AsNumber() != 1.0)
+        {
+            return {DrynessRestoreError::UnsupportedVersion};
+        }
+
+        const JsonValue nextIdValue = value.FindMember("nextId");
+        const JsonValue sourceValues = value.FindMember("sources");
+        if (!nextIdValue.IsValid() || !sourceValues.IsValid())
+        {
+            return {DrynessRestoreError::MissingField};
+        }
+        if (!nextIdValue.IsNumber() || !sourceValues.IsArray())
+        {
+            return {DrynessRestoreError::WrongType};
+        }
+
+        const double nextId = nextIdValue.AsNumber();
+        const bool bValidNextId = IsValidIdNumber(nextId);
+        Container::VariableArray<DrynessSource> sources;
+        Container::UnorderedSet<DrynessSourceId> ids;
+        const size_t sourceCount = sourceValues.GetArraySize();
+        sources.reserve(sourceCount);
+        ids.reserve(sourceCount);
+
+        for (size_t sourceIndex = 0; sourceIndex < sourceCount; ++sourceIndex)
+        {
+            const JsonValue sourceValue = sourceValues.GetArrayElement(sourceIndex);
+            JsonValue fields[SourceFieldCount];
+            for (size_t fieldIndex = 0; fieldIndex < SourceFieldCount; ++fieldIndex)
+            {
+                fields[fieldIndex] = sourceValue.FindMember(SourceFieldNames[fieldIndex]);
+                if (!fields[fieldIndex].IsValid())
+                {
+                    return {DrynessRestoreError::MissingField, sourceIndex};
+                }
+            }
+            for (size_t fieldIndex = 0; fieldIndex < SourceFieldCount; ++fieldIndex)
+            {
+                if ((fieldIndex == ShapeField && !fields[fieldIndex].IsString()) ||
+                    (fieldIndex != ShapeField && !fields[fieldIndex].IsNumber()))
+                {
+                    return {DrynessRestoreError::WrongType, sourceIndex};
+                }
+            }
+
+            DrynessShape shape;
+            if (fields[ShapeField].AsString() == "circle")
+            {
+                shape = DrynessShape::Circle;
+            }
+            else if (fields[ShapeField].AsString() == "ellipse")
+            {
+                shape = DrynessShape::Ellipse;
+            }
+            else
+            {
+                return {DrynessRestoreError::UnknownShape, sourceIndex};
+            }
+
+            double numbers[SourceFieldCount] = {};
+            for (size_t fieldIndex = 0; fieldIndex < SourceFieldCount; ++fieldIndex)
+            {
+                if (fieldIndex != ShapeField)
+                {
+                    numbers[fieldIndex] = fields[fieldIndex].AsNumber();
+                    if (!std::isfinite(numbers[fieldIndex]))
+                    {
+                        return {DrynessRestoreError::NonFinite, sourceIndex};
+                    }
+                }
+            }
+            if (!IsPositiveRadius(numbers[RadiusAField]) || !IsPositiveRadius(numbers[RadiusBField]))
+            {
+                return {DrynessRestoreError::NonPositiveRadius, sourceIndex};
+            }
+            if (numbers[FalloffField] < 0.0 ||
+                numbers[LevelField] < 0.0 || numbers[LevelField] > 1.0 ||
+                numbers[TargetField] < 0.0 || numbers[TargetField] > 1.0 ||
+                numbers[SecondsField] < 0.0 || numbers[RemainingField] < 0.0 ||
+                numbers[RemainingField] > numbers[SecondsField] ||
+                (shape == DrynessShape::Circle &&
+                 (numbers[RadiusBField] != numbers[RadiusAField] || numbers[YawField] != 0.0)))
+            {
+                return {DrynessRestoreError::OutOfRange, sourceIndex};
+            }
+            for (size_t fieldIndex = CenterXField; fieldIndex < SourceFieldCount; ++fieldIndex)
+            {
+                if (std::abs(numbers[fieldIndex]) > static_cast<double>(std::numeric_limits<float>::max()))
+                {
+                    return {DrynessRestoreError::OutOfRange, sourceIndex};
+                }
+            }
+
+            const double idNumber = numbers[IdField];
+            if (!IsValidIdNumber(idNumber) || idNumber >= nextId)
+            {
+                return {DrynessRestoreError::InvalidId, sourceIndex};
+            }
+            const DrynessSourceId id = static_cast<DrynessSourceId>(idNumber);
+            if (!ids.insert(id).second)
+            {
+                return {DrynessRestoreError::DuplicateId, sourceIndex};
+            }
+
+            DrynessSource source;
+            source.Id = id;
+            source.Shape = shape;
+            source.CenterX = static_cast<float>(numbers[CenterXField]);
+            source.CenterZ = static_cast<float>(numbers[CenterZField]);
+            source.RadiusA = static_cast<float>(numbers[RadiusAField]);
+            source.RadiusB = static_cast<float>(numbers[RadiusBField]);
+            source.Yaw = static_cast<float>(numbers[YawField]);
+            source.Falloff = static_cast<float>(numbers[FalloffField]);
+            source.TargetLevel = static_cast<float>(numbers[TargetField]);
+            source.CurrentLevel = static_cast<float>(numbers[LevelField]);
+            source.TransitionSeconds = static_cast<float>(numbers[SecondsField]);
+            source.RemainingSeconds = static_cast<float>(numbers[RemainingField]);
+            sources.push_back(source);
+        }
+
+        if (!bValidNextId)
+        {
+            return {DrynessRestoreError::InvalidId};
+        }
+        m_Sources = std::move(sources);
+        m_NextId = static_cast<DrynessSourceId>(nextId);
+        return {};
     }
 
     const DrynessSource* DrynessMap::Find(DrynessSourceId id) const

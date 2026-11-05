@@ -3,7 +3,14 @@
 #include "Container/Span.h"
 #include "Container/VariableArray.h"
 
+#include <cstddef>
 #include <cstdint>
+
+namespace NorvesLib::Core
+{
+    class JsonWriter;
+    class JsonValue;
+} // namespace NorvesLib::Core
 
 namespace NorvesLib::Core::Vegetation
 {
@@ -16,6 +23,33 @@ namespace NorvesLib::Core::Vegetation
 
     using DrynessSourceId = uint32_t;
     inline constexpr DrynessSourceId InvalidDrynessSourceId = 0;
+
+    /** @brief 枯れ度マップの復元に失敗した理由。 */
+    enum class DrynessRestoreError : uint8_t
+    {
+        None,
+        NotObject,
+        UnsupportedVersion,
+        MissingField,
+        WrongType,
+        UnknownShape,
+        NonFinite,
+        NonPositiveRadius,
+        OutOfRange,
+        DuplicateId,
+        InvalidId
+    };
+
+    /** @brief 機械照合用のエラー名を返す。 */
+    const char* GetDrynessRestoreErrorName(DrynessRestoreError error);
+
+    /** @brief 復元の結果と、エラーの原因となった源の添字。 */
+    struct DrynessRestoreResult
+    {
+        DrynessRestoreError Error = DrynessRestoreError::None;
+        size_t SourceIndex = SIZE_MAX; // 源に由来しないエラーでは SIZE_MAX。
+        bool Succeeded() const { return Error == DrynessRestoreError::None; }
+    };
 
     /** @brief ワールド XZ 上の解析的な枯れ度の源。長さは m、角度はラジアン。 */
     struct DrynessSource
@@ -92,6 +126,12 @@ namespace NorvesLib::Core::Vegetation
 
         /** @brief 指定したワールド XZ で各源の寄与の最大値を求める。非有限の点では 0 を返す。 */
         float Sample(float x, float z) const;
+
+        /** @brief key が null なら値のオブジェクトだけを書き、それ以外なら指定したキーで書く。 */
+        void Serialize(JsonWriter& writer, const char* key = nullptr) const;
+
+        /** @brief 全検証の成功時だけ源と次の ID を置き換える。失敗時は何も変えず、GPU 上限は保持する。 */
+        DrynessRestoreResult Restore(const JsonValue& value);
 
         /** @brief ID が一致する源を借用し、不在なら null を返す。配列の変更で参照は無効になり得る。 */
         const DrynessSource* Find(DrynessSourceId id) const;

@@ -10162,3 +10162,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
 - Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
 - U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
