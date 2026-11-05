@@ -9867,7 +9867,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-093026/verify-G8-GR16-JOINT-DATA-RESPONSE-U5.txt`（Game・PhysicsDynamicsTest・HitEffectEmissionTest・SwordTrailRibbonTest の Debug ビルド終了コード 0、ctest で Combat 系 8 本・HitEffectEmissionTest・SwordTrailRibbonTest の 10 件 100% Passed、numstat 2 通り一致）。
 - 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
 - Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
-- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
 
 - U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
 - U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
@@ -10238,13 +10238,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
 - Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。
 
-## 2026-11-05 G12-GR94-MAP-TRANSFORM-PLAN（run 20261105-200440 の反復 1、完了）
-- U1 MapTransform（地図とワールドの変換・JSON の読み書き・不正値の拒否）と MapTransformTest: 着地(直し 0 回)
-- U2 MapCapturePlan（タイルの格子・カメラ・縁切り・manifest）と RenderLayer::MapVisible と MapCapturePlanTest: 着地(直し 0 回)
-- Done: (1) `Scene/MapTransform.h`: `MapTransform`（double のワールドの x,z の矩形・`PixelSizeMeters`・画像の上と右が指す軸 `UpAxis`/`RightAxis`（既定は上 +Z・右 −X）・画像の寸法）、`WorldToMapUV`/`MapUVToWorld`、`ValidateMapTransform`（NaN・inf・画素 0 以下・矩形の潰れ・寸法 0・同じ軸・寸法と矩形の 1e-3 画素を超える不一致を拒否）、`map_transform.json`（format `norves.map_transform`・version 1）の読み書き。(2) `Scene/MapCapturePlan.h`: `BuildMapCapturePlan(spec)` が地図の寸法・内側のタイル（バックバッファ − 2 × 縁）・ceil の格子・各タイルの貼り先と縁を切った画素の矩形（最後の列・行は地図の端で切る）・ワールドの矩形・縁込みのタイルの中心の真上のカメラ位置・正射影の幅と高さ（バックバッファ × 画素）・near/far（高さの範囲 + 余裕）を決定的に返す。`MakeMapCaptureCamera` は forward=−Y・up=+Z・Orthographic・CullingMask=MapVisible・手動露出（`AutoExposurePreExposureFromEV100`）。`WriteMapCaptureManifestJson` が `capture_manifest.json`（settings・map_transform・grid・tiles）を書く。(3) `RenderLayer::MapVisible = 1 << 6`。(4) 試験 `MapTransformTest`・`MapCapturePlanTest` を `CameraViewConstantsTest` の束へ MEMBER で足した。
-- 証拠: `.harness/runs/20261105-200440/G12-GR94-MAP-TRANSFORM-PLAN-final-verify.txt`（verify のビルド exit code 0、ctest の 4 本 MapTransformTest・MapCapturePlanTest・CameraViewConstantsTest・OrthographicViewportMatrixTest が 100% Passed、numstat の 2 通りが一致）。
-- Next: 撮影の実行は G12-GR94-MAP-CAPTURE（この計画と `MakeMapCaptureCamera` を使う）、合成と cook は G12-GR94-MAP-COMPOSE-COOK（manifest の map_pixel・crop で貼る）。撮った画像の向き（上 +Z・右 −X）は、撮影の段で非対称な目印 3 つで確かめる。アプリを起動する確かめはこの項目に無い。
-- Notes: 試験の「4km 四方」は 4096 m 四方（−2048〜2048、8192 画素）で置いた。ロードマップの見積もり（8192²・1152×592 の内側で 8 列 × 14 行 = 112）がこの値で、4000 m だと 7 列 × 14 行になる。
-- Notes: 撮った画像がそのまま地図の向き（上 +Z・右 −X）になる根拠は、`CreateLookAt`（forward=−Y・up=+Z で view の x = −X、y = +Z）と Vulkan の `AdjustProjectionForClipSpace` の Y 反転（`BuildForDevice` の既定 true）。`MapCapturePlanTest` はこの合成（投影 × diag(1,−1,−1) × ビュー）で角と非対称な 3 点を写し、crop と地図の画素に 0.01 画素以内で一致することを確かめている。実機の画像での確かめは撮影の段。
-- Notes: 計画の座標は double、`CameraProxy` の位置は float なので、ワールドの原点から数 km 離れた範囲では位置の丸め（2 km で約 2.4e-4 m ≈ 5e-4 画素）が乗る。
-- Notes: VFX の層の選択肢（`VfxSchema.cpp` の kLayerNames、`VfxEffectSystem.cpp` の layers）は Default・Transparent・UI だけで、MapVisible は入れていない（エフェクトは地図に載せない）。
+- U1 AssetRef と EntityRefId の型、RuntimeSchema の文字列化の分岐、ECS の列の往復の試験: 着地(直し 0 回)
+- U4 シーンの保存側(v3 の版・SceneSaveStats・依存の表・壊れない保存)と AssetRef の保存の試験: 着地(直し 0 回)
+- U7 SpawnPrefab の alias の表と PivotObjectId の EntityRefId 化(U2・U3 のレビュー済みの差分の再適用): 着地(直し 0 回)
+- Notes(G12-GR92-ASSETREF-SCENE-V3): U2・U3 はレビュー済みだったが、着地の前に単位の作業ツリーを別のタスクが使い回したので捨て、同じ差分を U7 で入れ直した。シーンの先頭の `assets` の表は、論理パスや種別が不正だと文書の解析ごと失敗する(プロパティの不正な論理パスは落として既定値に戻す寛容な扱いで、扱いがそろっていない)。
+- U5 EntityRefId の保存と張り替え、v2 → v3 の値の移行: 着地(直し 0 回)
+- U6 LoadIntoWorld の生成ルートの返却・論理パスからの読み込みとタスクの確かめ: 着地(直し 0 回)
+- Done(G12-GR92-ASSETREF-SCENE-V3): 論理パスの資産参照 TAssetRef と Entity 参照 EntityRefId を足し、RuntimeSchema が型の側の文字列化を扱う。シーンの形式は v3(v1 → v2 → v3 の移行、先頭の assets の依存の表、SceneSaveStats、一時ファイルからの置換による保存)。EntityRefId はファイルでは「ルートの添字:alias」で保存し、LoadIntoWorld が全ルートの生成の後に新しい ObjectId へ張り替える(v2 の uint64 の値も移行)。LoadIntoWorld は生成したルートを返し、LoadIntoWorldFromAsset で論理パス(AssetSystem::ResolveAsset の Raw)から読める。verify の 2 行(ビルド・ctest 10 本)と Game のビルドが終了コード 0。アプリを起動する確かめは無い。
+- Next(G12-GR92-ASSETREF-SCENE-V3): コンポーネントの非同期の束縛(G12-GR92-ASSET-BIND)、Prefab のファイル(G12-GR92-PREFAB-FILE)、Bridge(G12-GR92-BRIDGE-SCENE)。
+- Notes(G12-GR92-ASSETREF-SCENE-V3): EntityRefId の張り替えは BeginPlay の後に起きるので、BeginPlay の中で参照先を引くコンポーネントは張り替え前の 0 を見る(今の利用は Tick で引く SpringArmComponent だけ)。公開の ReconcileWithSchema の結果には EntityRefId のプロパティが入らない(張り替えの予定は LoadIntoWorld の内部だけが持つ)。保存の集合の外を指す参照は警告して参照なしで保存する。
+
+- U1 Entity::IsActiveInHierarchy を足し CanDispatchEntity をそれに寄せる: 着地(直し 0 回)
+- U2 PhysicsModule の寿命判定を IsActiveInHierarchy にし、所有者ごとの全走査を索引にする: 着地(直し 0 回)
+- U3 EntityActiveInHierarchyTest: 着地(直し 1 回)
+- U4 PhysicsParentDormancyTest とタスクの verify: 着地(直し 0 回)
+## 2026-11-05 G12-GR41-PARENT-DORMANCY（run 20261105-193213 の反復 1、完了）
+- Done: `Entity::IsActiveInHierarchy()` を足した（自分と祖先が Active で破棄予約でない。ECS の `EcsPropagatedTransform::bEffectiveActive` が新しければそれを読み、作成予約・付け替え待ち・未伝播の Active/PendingDestroy・親子の変更があるときは祖先をたどる）。`World::CanDispatchEntity` は World と TickEnabled の確認のあとこれを呼ぶ。キャッシュの新しさは新設の `EcsTransformSystem::HasUnpropagatedActiveChanges()`（EcsEntityFlags と EcsHierarchy の変更ログ）で見る（Flags だけでは `ReparentEntity` の直後に古い値を読んでいた）。`PhysicsModule::IsColliderLifecycleActive`・`IsBodyLifecycleActive` は所有者の `IsActiveInHierarchy()` を見る。`ReconcileActiveStates` と `IsBodyLifecycleActive` の所有者ごとのコライダーの全走査は `m_ColliderSlotByOwner` で引く。Dynamic のボディが親を持つと捨てる規則は変えていない。`Docs/Architecture/PhysicsQueries.md` に「休眠でも OverlapEnd が来る」を足した。試験 `EntityActiveInHierarchyTest`（EntityTreeTest の束）と `PhysicsParentDormancyTest`（PhysicsDynamicsTest の束）を足した。
+- 証拠: `.harness/runs/20261105-193213/verify-G12-GR41-PARENT-DORMANCY.txt`（`cmake --build build --config Debug --target EntityTreeTest PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の EXIT_CODE 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
+- Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
+- Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
+- Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。

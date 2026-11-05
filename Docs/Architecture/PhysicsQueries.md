@@ -98,3 +98,7 @@
 - 姿勢は PoseFinalize の群で確定し、その後に固定ステップが回る（群の順序は `Docs/Architecture/TickStages.md`）。足 IK が読むのは前の固定ステップで公開されたスナップショットで、最大1固定ステップ古い。同じフレームで動いた物体は次の固定ステップまで反映されない
 - 地形（G5 の GR38）は同じ `IGroundQuery` の別実装として差し込む。物理の実装は地形を知らない
 - `PhysicsGroundQueryIntegrationTest`（`PhysicsDynamicsTest` の束の中）で、実 World に Box の20度の斜面と3段の階段を置き、高さを 1e-3 m・法線を0.5度の許容誤差で解析値と照合する。別レイヤーの Box（草の代わり）を `LayerMask` で除き、トリガー・自分の Body の除外も確かめる。固定ステップ前の `NotReady`・別スレッドの `WrongThread`・地面の外の `NoHit`・急な面の `TooSteep` を区別する
+
+## 親の休眠と物理の寿命（GR41）
+コライダー・RigidBody の有効性は所有者の `Entity::IsActiveInHierarchy()` で決まり、祖先のどれかを `SetActive(false)` にするか破棄予約すると、次の固定ステップで作業用・公開のブロードフェーズ、クエリ、接触から外れる。
+trigger に重なっていた子は、休眠で `OverlapEnd` が1回出て、親を戻すと `OverlapBegin` が1回出る。ゲーム側の受け手は「休眠でも End が来る」と読む。
