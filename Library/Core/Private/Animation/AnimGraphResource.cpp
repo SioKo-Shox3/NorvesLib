@@ -601,6 +601,14 @@ namespace NorvesLib::Core::Animation
                     }
                     n.bLoop = v.FindMember("loop").AsBool();
                 }
+                if (v.HasMember("markerEvents"))
+                {
+                    if (!v.FindMember("markerEvents").IsBoolean())
+                    {
+                        return Fail(r, AnimGraphError::InvalidSchema, "marker_events");
+                    }
+                    n.bMarkerEvents = v.FindMember("markerEvents").AsBool();
+                }
                 if (v.HasMember("rate") && !Number(v.FindMember("rate"), n.PlaybackRate))
                 {
                     return Fail(r, AnimGraphError::InvalidSchema, "rate");

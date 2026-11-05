@@ -32,6 +32,7 @@ namespace
     constexpr double Fps = 200, Speed = 1.25, Stance = .6;
     constexpr double Touchdown[] = {.07, .23, .49, .71};
     constexpr const char* Feet[] = {"front_L_paw", "front_R_paw", "hind_L_paw", "hind_R_paw"};
+    constexpr const char* Legs[] = {"LF", "RF", "LH", "RH"};
 
     C::AnsiString ProfileJson(const C::AnsiString& processing, bool bFeet = true)
     {
@@ -164,7 +165,10 @@ namespace
     {
         const auto contacts = report.GetRoot().FindMember("contacts");
         CHECK(contacts.IsArray());
-        CHECK(contacts.GetArraySize() == clip.Metadata.Events.size());
+        for (const auto& event : clip.Metadata.Events)
+        {
+            CHECK(event.Name.GetView().substr(0, 5) != C::StringView(_T("Foot.")));
+        }
         size_t expectedCount = 0;
         for (size_t foot = 0; foot < 4; ++foot)
         {
@@ -182,16 +186,6 @@ namespace
                 const double end = contact.FindMember("end").AsNumber();
                 CHECK(end > start);
                 actual.push_back({start, end});
-                size_t matches = 0;
-                for (const auto& event : clip.Metadata.Events)
-                {
-                    if (event.Name == Core::Identity(Feet[foot]) && std::abs(event.Time - start) < 1e-6 &&
-                        std::abs(event.EndTime - end) < 1e-6)
-                    {
-                        ++matches;
-                    }
-                }
-                CHECK(matches == 1);
             }
             CHECK(actual.size() == expected.size());
             double intersection = 0, expectedLength = 0, actualLength = 0;
@@ -220,7 +214,7 @@ namespace
         {
             for (bool bDown : {true, false})
             {
-                const auto name = C::AnsiString(Feet[foot]) + (bDown ? "_down" : "_up");
+                const auto name = C::AnsiString("Foot.") + Legs[foot] + (bDown ? ".Down" : ".Up");
                 const double time = bDown ? Touchdown[foot] : std::fmod(Touchdown[foot] + Stance, 1.);
                 size_t matches = 0;
                 for (const auto& marker : clip.Metadata.Markers)
@@ -250,6 +244,9 @@ namespace
         CHECK(std::abs(report.GetRoot().FindMember("natural_ground_speed").AsNumber() - Speed) <= Speed * .02);
         CHECK(report.GetRoot().FindMember("derived_root_motion").AsBool());
         CHECK(!report.GetRoot().FindMember("needs_review").AsBool());
+        auto onceForRetime = Clip(false);
+        Run(rig, profile, onceForRetime);
+        CHECK(!onceForRetime.Metadata.Events.empty());
         for (const char* extra : {",\"desired_ground_speed\":0.625", ",\"desired_ground_speed\":2.5"})
         {
             const auto retimeProfile = Profile(extra);
@@ -266,11 +263,16 @@ namespace
                 CHECK(retimed.Metadata.Markers[i].Name == clip.Metadata.Markers[i].Name);
                 CHECK(std::abs(retimed.Metadata.Markers[i].Time - clip.Metadata.Markers[i].Time * ratio) < 1e-5);
             }
-            for (size_t i = 0; i < clip.Metadata.Events.size(); ++i)
+            auto retimedOnce = Clip(false);
+            Run(rig, retimeProfile, retimedOnce);
+            CHECK(retimedOnce.Metadata.Events.size() == onceForRetime.Metadata.Events.size());
+            for (size_t i = 0; i < onceForRetime.Metadata.Events.size(); ++i)
             {
-                CHECK(retimed.Metadata.Events[i].Name == clip.Metadata.Events[i].Name);
-                CHECK(std::abs(retimed.Metadata.Events[i].Time - clip.Metadata.Events[i].Time * ratio) < 1e-5);
-                CHECK(std::abs(retimed.Metadata.Events[i].EndTime - clip.Metadata.Events[i].EndTime * ratio) < 1e-5);
+                CHECK(retimedOnce.Metadata.Events[i].Name == onceForRetime.Metadata.Events[i].Name);
+                CHECK(std::abs(retimedOnce.Metadata.Events[i].Time - onceForRetime.Metadata.Events[i].Time * ratio) <
+                      1e-5);
+                CHECK(onceForRetime.Metadata.Events[i].EndTime == -1);
+                CHECK(retimedOnce.Metadata.Events[i].EndTime == -1);
             }
         }
         auto existing = Clip();
@@ -306,12 +308,13 @@ namespace
         }
         auto once = Clip(false);
         Run(rig, onceProfile, once);
+        CHECK(once.Metadata.Markers.empty());
         size_t matches = 0;
-        for (const auto& marker : once.Metadata.Markers)
+        for (const auto& event : once.Metadata.Events)
         {
-            if (marker.Name == Core::Identity("hind_R_paw_down"))
+            if (event.Name == Core::Identity("Foot.RH.Down") && event.Time == 0)
             {
-                CHECK(marker.Time == 0);
+                CHECK(event.EndTime == -1);
                 ++matches;
             }
         }

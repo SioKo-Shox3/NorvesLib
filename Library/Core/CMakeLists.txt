@@ -18,6 +18,7 @@ set(PRIVATE_SOURCES
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
+    Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
@@ -127,6 +128,11 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
+    Private/Animation/Procedural/AngleDistribution.cpp
+    Private/Animation/Procedural/Spring.cpp
+    Private/Animation/Procedural/PoseModifierConfig.cpp
+    Private/Animation/Procedural/SpringBoneModifier.cpp
+    Private/Animation/Procedural/FollowThroughModifier.cpp
     Private/Animation/AnimationEvents.cpp
     Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
@@ -316,6 +322,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     # 地形
     Private/Rendering/Terrain/TerrainHeightField.cpp
+    Private/Rendering/Terrain/TerrainHeightFieldQuery.cpp
+    Private/Rendering/Terrain/TerrainMaterialDesc.cpp
+    Private/Rendering/Terrain/TerrainHeightFieldGrid.h
     Private/Rendering/Terrain/TerrainSystem.cpp
     Private/Rendering/Terrain/TerrainPlacementGround.cpp
     Private/Rendering/MegaGeometryPass.cpp
@@ -593,6 +602,11 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
+    Public/Animation/Procedural/AngleDistribution.h
+    Public/Animation/Procedural/Spring.h
+    Public/Animation/Procedural/PoseModifierConfig.h
+    Public/Animation/Procedural/SpringBoneModifier.h
+    Public/Animation/Procedural/FollowThroughModifier.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
     Public/Component/HoldSlotComponent.h
@@ -734,6 +748,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # 地形
     Public/Rendering/Terrain/TerrainHeightField.h
+    Public/Rendering/Terrain/TerrainMaterialDesc.h
     Public/Rendering/Terrain/TerrainSystem.h
     Public/Rendering/Terrain/TerrainPlacementGround.h
     # Object
@@ -808,6 +823,7 @@ set(PUBLIC_HEADERS
     Public/Camera/CameraCollisionSolver.h
     Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
+    Public/Animation/GroundQuery.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
     Public/Locomotion/QuadrupedLocomotionJson.h

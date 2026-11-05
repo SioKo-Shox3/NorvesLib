@@ -124,6 +124,69 @@ namespace NorvesLib::Core::Rendering::Terrain
         return m_TerrainCount;
     }
 
+    bool TerrainSystem::SampleGround(float x, float z, GroundSample& outSample) const
+    {
+        outSample = GroundSample{};
+        const TerrainHeightField* field = FindTerrainRaw(x, z);
+        if (!field)
+        {
+            return false;
+        }
+
+        const float height = field->SampleHeight(x, z);
+        if (std::isnan(height))
+        {
+            return false;
+        }
+
+        const TerrainNormal normal = field->SampleNormal(x, z, TerrainNormalKind::Face);
+        outSample.Height = height;
+        outSample.Normal = Math::Vector3(normal.X, normal.Y, normal.Z);
+        outSample.SlopeRadians = std::acos(normal.Y);
+        outSample.SurfaceId = field->SampleSurface(x, z);
+        outSample.TileId = field->GetTileId(x, z);
+        outSample.bValid = true;
+        return true;
+    }
+
+    bool TerrainSystem::RaycastGround(const Math::Ray& ray, float maxDistance, GroundHit& outHit) const
+    {
+        outHit = GroundHit{};
+        for (uint32_t index = m_FirstTerrain; index != TerrainHandle::InvalidIndex; index = m_Slots[index].Next)
+        {
+            const TerrainSlot& slot = m_Slots[index];
+            TerrainRayHit hit;
+            if (!slot.Field->Raycast(ray, maxDistance, hit) ||
+                (outHit.bValid && hit.Distance >= outHit.Distance))
+            {
+                continue;
+            }
+
+            outHit.Distance = hit.Distance;
+            outHit.Point = hit.Point;
+            outHit.Normal = hit.Normal;
+            outHit.SurfaceId = slot.Field->SampleSurface(hit.Point.x, hit.Point.z);
+            outHit.TileId = slot.Field->GetTileId(hit.Point.x, hit.Point.z);
+            outHit.Terrain = {index, slot.Generation};
+            outHit.bValid = true;
+        }
+        return outHit.bValid;
+    }
+
+    void TerrainSystem::SampleGroundBatch(Container::Span<const Math::Vector2> positions,
+                                          Container::Span<GroundSample> outSamples) const
+    {
+        const auto count = positions.size() < outSamples.size() ? positions.size() : outSamples.size();
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            SampleGround(positions[index].x, positions[index].y, outSamples[index]);
+        }
+        for (std::size_t index = count; index < outSamples.size(); ++index)
+        {
+            outSamples[index] = GroundSample{};
+        }
+    }
+
     void TerrainSystem::SetAssetSystem(Container::TSharedPtr<const Asset::AssetSystem> assetSystem)
     {
         m_AssetSystem = std::move(assetSystem);
@@ -140,6 +203,19 @@ namespace NorvesLib::Core::Rendering::Terrain
         {
             ReleaseSlot(m_FirstTerrain);
         }
+    }
+
+    const TerrainHeightField* TerrainSystem::FindTerrainRaw(float x, float z) const
+    {
+        for (uint32_t index = m_FirstTerrain; index != TerrainHandle::InvalidIndex; index = m_Slots[index].Next)
+        {
+            const TerrainSlot& slot = m_Slots[index];
+            if (slot.Field->Contains(x, z))
+            {
+                return slot.Field.get();
+            }
+        }
+        return nullptr;
     }
 
     bool TerrainSystem::IsLiveHandle(TerrainHandle handle) const
