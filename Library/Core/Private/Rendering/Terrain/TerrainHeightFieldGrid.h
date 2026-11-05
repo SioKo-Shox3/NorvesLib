@@ -25,6 +25,8 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 頂点ごとに SplatLayerCount バイト、行優先
         Container::VariableArray<uint8_t> SplatWeights;
         Container::VariableArray<Container::AnsiString> SplatLayerNames;
+        /// 頂点ごとに 1 バイト、行優先（Columns × Rows）。層が無ければ空
+        Container::VariableArray<uint8_t> PuddlePotential;
         uint32_t TileCells = 0;
         uint32_t TileCountX = 0;
         uint32_t TileCountZ = 0;
