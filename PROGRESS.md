@@ -10034,3 +10034,37 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
 - Next: ランナーの評価者の反証。起動の確かめは後回し
 - 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
+
+- G8-GR17-SLICE-SMOKE: 統合ブランチ(シ者の確かめのモードの追加)を取り込み、戦闘の確かめのモードとシ者の確かめのモードの登録・起動の分岐を両方残した。CMake の再構成の後、verify のビルド(Game・PhysicsDynamicsTest、Debug)EXIT=0、G8 の CPU の試験 18/18 合格。起動の確かめは後回し(G8-GR17-SLICE-CHECK)。
+- U2 撮影の補助: 着地(直し 0 回)
+- U1 場面の型・配置の定数・環境(床・光・カメラ・領域・寝床・プロンプト)と仮の資産: 着地(直し 0 回)
+- U12 役者(犬の代役と口の剣、人間大のダミーのシ者): 着地(直し 0 回)
+- U4 反応の結線(当たり → ダメージ、撃破 → 血、プロンプトの表示、デカールの更新): 着地(直し 0 回)
+- U6 判定の計測(--combat-smoke --combat-bench): 着地(直し 0 回)
+- U3 スイングの軌道: 着地(直し 0 回)
+- U5 遭遇のスモーク(--encounter-smoke): 着地(直し 0 回)
+- U7 攻撃判定のスモーク(--combat-smoke): 着地(直し 0 回)
+- U8 敵のスモーク(--enemy-smoke): 着地(直し 0 回)
+- U9 モードと Routine(Enter・Tick・Leave、ID): 着地(直し 0 回)
+- U10 起動の引数と登録: 着地(直し 0 回)
+- U11 確かめのスクリプトと仕上げの確かめ: 着地(直し 0 回)
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 1、完了）
+- Done: 確かめの GameMode `CombatSlice`（`Game/GameModes/CombatSlice/`、ID は `GameModeIds.h`。ランチャーの一覧には載せない）と、起動の引数 `--combat-smoke`・`--encounter-smoke`・`--enemy-smoke`・`--combat-bench`・`--combat-slice-capture=<png>`（重複と、3 つの相互・`--dog-movement-smoke`・`--animation-debug`・`--scene`・`--scene-view`・`--scene-cycle-smoke` との併用を拒否）。場面は床・固定カメラ・遭遇領域 1 つ・寝床の代わりの Interactable・プロンプトの TextComponent（ASCII の仮の表示）・犬の代役（合成の骨格の Mouth のソケットに剣を付ける）・人間大のダミーのシ者（`ShishaComponent`・`HurtboxSetComponent`（humanoid.hurtboxes.json）・`HealthComponent`、スライス用の定義 `shisha_combat_slice.enemy.json`）。当たり → ダメージはモードが `GetOnAnyHit` を購読して次の Tick で `ApplyDamage`。撃破の `OnDefeatStarted` から `DefeatBloodPresenter::Trigger`。presenter（モードの Tick）→ VFX（エンジンの粒子系の PostTick）→ デカール（ハンドラの遅い更新の枠）を同じフレームの dt で進め、`RenderWorld::SetDecals` へ渡す。確かめのスクリプト `Scripts/Test-CombatSlice.ps1`（`-Mode combat|encounter|enemy|bench`・`-Configuration`・`-CapturePng`。マーカーの順を Game.log から照合）。
+- 証拠: `.harness/runs/20261105-101856/verify-G8-GR17-SLICE-SMOKE-U11.txt`（ps1 の構文の確かめ parse_errors=0、`cmake --build build --config Debug --target Game PhysicsDynamicsTest` の終了コード 0、ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK）。そこで確かめること: combat の 1/30 と 1/144 の要約（当たりの数と (部位, 攻撃)）の一致、encounter と enemy のマーカーの順、combat の撮影（DebugDraw の判定の形と火花）と enemy の撮影（撃破の約 1 秒後の血の粒と滲み）、bench の値、引数なしの起動画面が変わらないこと。
+- Notes: dt の切り替えは Library に実行中の API が無いので、`--combat-smoke` は起動 1 回で 1 つの固定刻み（`--fixed-frame-dt=1/30` か `1/144`。無ければ起動の検査で拒否）を進め、ps1 が 2 回起動して要約を比べる形にした。
+- Notes: 剣の hitbox は剣の Entity でなく犬の代役の `Head` の関節（Mouth のソケットと同じ位置）に束縛した。刀身がシ者の胴に入るのはヨー +13.95°〜+84.68°、スイングは -40° → +120° を World の 0.45 秒。窓は剣のソケットの付けが Attached になってから開く。
+- Notes: bench は `PostLateTick.ModuleLateTick` の系の Stats の記録（`Ecs.Sys.PostLateTick.ModuleLateTick`）を窓を開いた区間と閉じた区間で比べ、差を `sweep_median_us` とする（モジュールの他の LateTick も含む区間の差分）。計測の間はトレースを `.harness/combat-bench.trace.csv` に書く。Release では計測せず終了コード 0。
+- Notes: combat の撮影は最初の当たりの次のフレームで要求する。当たりが 2 つ以上出ると capture の行が hit の行の間に入り、ps1 の順の検査で落ちる（今の配置では 1 振り 1 当たりの見込み）。
+- Notes: 進行の定義の読み込みは撃破済みの状態を消さないので、同じプロセスで enemy のスモークへ入り直すと `progression_preloaded` で失敗する（起動ごとに 1 回の前提）。
+- 要起票: ソケットに付けた Entity の World の回転（`SocketAttachmentComponent` の行ベクトルの姿勢）と、hitbox が持ち主の姿勢で点を回す四元数の向きが食い違うとの指摘（U12 の調べ）。関節に束縛しない hitbox を回転した Entity に付けると判定と見た目がずれる恐れがある。`CombatRuntime.cpp:470` の `GetWorldTransform` とソケットの姿勢の作り方を照合する
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 2、差し戻しの確かめ）
+- Done: 反復 1 の再確かめでの Game のリンクの失敗（CombatSliceRoutine の未解決の外部参照）は、Game の CMakeLists の CONFIGURE_DEPENDS の GLOB がビルドの途中で Game.vcxproj を作り直し、そのビルドが古いプロジェクトのまま新しい .cpp を含めずにリンクしたためだった。コードの変更は無い。作り直された後のビルドで CombatSlice の .cpp がすべてコンパイルされ、verify の 2 行が通った。
+- 証拠: .harness/runs/20261105-101856/verify-build-it2.txt（cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1 の終了コード 0）、.harness/runs/20261105-101856/verify-ctest-it2.txt（ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK で Scripts/Test-CombatSlice.ps1 の 4 モードと撮影を回す）。
+- Notes: 新しい .cpp を足したブランチの最初のビルドは、Game.vcxproj の作り直しでリンクが 1 回落ちることがある。もう一度ビルドすれば通る（先に cmake -S . -B build を回せば落ちない）。
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-143213 の反復 1、完了に戻す）
+- Done: 作業単位 U1〜U12 はすべて着地済み。53a60fe9 の後にコードの変更は無い（差分は TASKS.md と PROGRESS.md だけ）。前回は評価者が枠切れで評価されずに doing へ戻っていたので、done に戻した。
+- 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
+- Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
+- 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。
