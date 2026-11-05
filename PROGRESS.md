@@ -10020,3 +10020,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: `SkinnedMeshResource::SetIndices` は `GetPoseRevision()` を進めないので、インデックスだけを差し替えると古いアンカーと `JointTriangleBuckets` がリビジョンの照合で見つからない。別のメッシュどうしでリビジョンの値が一致しても照合を通る。
 - U4 アンカーの速度と加速度の平滑: 着地(直し 0 回)
 - U6 文書（AnimationRuntime.md と Testing.md）: 着地(直し 1 回)
+- U5 表面のアンカーの試験と最後の確かめ: 着地(直し 1 回)
