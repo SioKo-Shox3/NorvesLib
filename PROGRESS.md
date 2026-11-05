@@ -9885,3 +9885,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
 - G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
 - Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
+
+- U1 BodyBalance(骨盤・肩の目標オフセットと平滑とピッチの純関数)を足す: 着地(直し 0 回)
+- U2 FootIKModifier の設定(footIK 節)の読み込みと組み込みの型の表への登録: 着地(直し 0 回)
+- U3 FootIKModifier::Apply(地面の問い合わせ・体の補正・二関節 IK・足首の法線合わせ・重みの減衰)を実装する: 着地(直し 0 回)
+- U4 LegIKModifierTest(合成の 4 本脚と段差・斜面のモック)を足す: 着地(直し 0 回)
+- U5 PhysicsGroundQueryIntegrationTest に実 World の斜面・階段で FootIK を使うケースを足す: 着地(直し 1 回)
+- U6 文書(AnimationRuntime.md・Testing.md)を書き、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G9-GR14-LEG-IK-BALANCE（run 20261105-093024 の反復 1、完了）
+- Done: `BodyBalance`（後脚の差の最小 → 骨盤、前脚の最小 → 胸、maxDrop/maxRaise でクランプ、`TryCriticalDamp` で平滑、2 点の差からピッチ）と、組み込みの型 `FootIK`（order 500）の `FootIKModifier` を足した。`*.posemod.json` の FootIK の settings（legs/body/ground）を検証して読み、auto のポールは bind 姿勢の膝の向きを根の親の関節ローカルで持つ。Apply は地面の一括の問い合わせ → 状態の分類（maxSlopeDeg を超えると TooSteep）→ 脚の重みの平滑 → 骨盤の上下と骨盤〜胸の関節へのピッチの配分 → 足首の目標（足先の目標 − 法線に合わせた 足首→足先）で二関節 IK と足首の法線合わせ。失敗の状態の脚は最後の当たりで解きながら重みを smoothTime で 0 へ下げ、非一様スケールの脚は警告して掛けない。`FindFootIKModifier` で設定の包みから取り出し、`SetGroundQuery` で地面を渡す。`LegIKModifierTest`（段差・斜面・最大伸長・軸を回した骨格・失敗の減衰・パレットのハッシュの一致・設定の読み込み）と `PhysicsGroundQueryIntegrationTest` の FootIK のケース（実 World の斜面・階段、NotReady・WrongThread・NoHit）を足し、AnimationRuntime.md と Testing.md に書いた。
+- 証拠: `.harness/runs/20261105-093024/verify-G9-GR14-LEG-IK-BALANCE.txt`（タスクの verify 2 行。Debug ビルド成功、ctest で GLTFSkeletalAnalyzerTest・SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 3/3 合格）。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（新しい Public API）。足の固定と着地は G9-GR14-FOOT-PLANT。
+- Notes: 要起票: `AnimatorComponent` には `ApplyPoseModifiersJson`/`File` で読み込んだ modifier を取り出す口が無く、ゲーム側で FootIK に `SetGroundQuery` を渡す経路がまだ無い（試験は `ParsePoseModifierConfig` の出力か `AddModifier` で渡している）。
+- Notes: 体の補正の高さの差はワールドの長さで求め、骨盤へはモデル空間の上向きの単位ベクトルに掛けて足す。所有者のワールド変換に 1 以外のスケールがあると下がる量がスケール分ずれる（今の試験はスケール 1）。
