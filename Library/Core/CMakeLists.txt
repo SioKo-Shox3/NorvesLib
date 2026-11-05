@@ -300,6 +300,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/SkyOcclusion.cpp
+    Private/Rendering/SkyOcclusionReference.h
+    Private/Rendering/SkyOcclusionReference.cpp
     Private/Rendering/DDGIVolume.cpp
     Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp
