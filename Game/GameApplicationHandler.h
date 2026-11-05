@@ -287,6 +287,17 @@ namespace Game
         bool m_bDogMovementAutopilot = false;
         NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
         NorvesLib::Core::Container::String m_DogMovementCaptureDir;
+#if NORVES_BUILD_DEVELOPMENT
+        /// --shisha-showcase で指定された場面の名前。空なら専用モードを使わない。
+        NorvesLib::Core::Container::String m_ShishaShowcaseScene;
+        /// --shisha-camera-orbit で指定されたカメラの周回速度（度/秒）。
+        float m_ShishaCameraOrbit = 0.0f;
+        /// --shisha-scale で指定された代役の倍率。
+        float m_ShishaScale = 1.0f;
+        /// カメラの周回速度と代役の倍率が指定済みか。
+        bool m_bShishaCameraOrbitSet = false;
+        bool m_bShishaScaleSet = false;
+#endif
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
         /// ランチャーから始めるか（--scene を省いた起動、--scene=launcher、--scene-cycle-smoke）。ResolveStartupScene が決める
