@@ -230,6 +230,10 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         /// 最近の頂点で重みが最大の層。同点は小さい番号。範囲外・スプラット無しは無効な番号
         uint8_t SampleSurface(float x, float z) const;
+        /// cook 済みの PDL0 を読み込んだ場合だけ true
+        bool HasPuddlePotential() const;
+        /// 最近の頂点の凹み度（0..1）。層が無い・手続きの作り方・範囲外は 0
+        float SamplePuddlePotential(float x, float z) const;
         /// スプラットの層数。手続きの作り方では 0
         uint32_t GetSplatLayerCount() const;
         /// スプラットの層の名前。範囲外は空

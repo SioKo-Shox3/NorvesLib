@@ -446,6 +446,28 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool ParsePuddle(const JsonValue& value, const std::filesystem::path& path, TerrainPuddleRule& out, AnsiString& error)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const AnsiString field = "recipe.puddle";
+            const char* keys[] = {"blur_sigma_m", "blur_full_m", "blur_weight", "fill_full_m", "fill_weight",
+                                  "flow_weight", "flow_ref_cells", "slope_start_deg", "slope_zero_deg", "noise"};
+            if (!CheckRecipeObject(value, field, keys, sizeof(keys) / sizeof(keys[0]), path, error))
+            {
+                return false;
+            }
+            const RecipeNumber numbers[] = {{"blur_sigma_m", &out.BlurSigmaM}, {"blur_full_m", &out.BlurFullM},
+                                            {"blur_weight", &out.BlurWeight}, {"fill_full_m", &out.FillFullM},
+                                            {"fill_weight", &out.FillWeight}, {"flow_weight", &out.FlowWeight},
+                                            {"flow_ref_cells", &out.FlowRefCells}, {"slope_start_deg", &out.SlopeStartDeg},
+                                            {"slope_zero_deg", &out.SlopeZeroDeg}};
+            return ReadRecipeNumbers(value, field, numbers, sizeof(numbers) / sizeof(numbers[0]), path, error) &&
+                   ParseNoise(value.FindMember("noise"), ChildField(field, "noise"), path, out.Noise, error);
+        }
+
         bool ParseDryGrass(const JsonValue& value, const std::filesystem::path& path, TerrainDryGrassRule& out, AnsiString& error)
         {
             if (!value.IsValid())
@@ -649,6 +671,10 @@ namespace NorvesLib::Tools::AssetCook
                     {
                         rule.Target = TerrainPaintTarget::GrassDensity;
                     }
+                    else if (target == "puddle")
+                    {
+                        rule.Target = TerrainPaintTarget::Puddle;
+                    }
                     else
                     {
                         bool bFound = false;
@@ -671,7 +697,7 @@ namespace NorvesLib::Tools::AssetCook
                         if (!bFound)
                         {
                             return FailField(path, targetField, targetValue,
-                                             "wetness・dry_grass・road・rock・grass_density、または存在する splat.<層名> を指定してください。", error);
+                                             "wetness・dry_grass・road・rock・grass_density・puddle、または存在する splat.<層名> を指定してください。", error);
                         }
                     }
                 }
@@ -708,7 +734,7 @@ namespace NorvesLib::Tools::AssetCook
 
         bool ParseRecipe(const JsonValue& value, const std::filesystem::path& path, TerrainRecipe& out, AnsiString& error)
         {
-            const char* keys[] = {"wetness", "dry_grass", "rock", "splat", "grass_density", "paint"};
+            const char* keys[] = {"wetness", "dry_grass", "rock", "splat", "grass_density", "puddle", "paint"};
             if (!CheckRecipeObject(value, "recipe", keys, sizeof(keys) / sizeof(keys[0]), path, error))
             {
                 return false;
@@ -718,6 +744,7 @@ namespace NorvesLib::Tools::AssetCook
                    ParseRock(value.FindMember("rock"), path, out.Rock, error) &&
                    ParseSplat(value.FindMember("splat"), path, out, error) &&
                    ParseGrassDensity(value.FindMember("grass_density"), path, out.GrassDensity, error) &&
+                   ParsePuddle(value.FindMember("puddle"), path, out.Puddle, error) &&
                    ParsePaints(value.FindMember("paint"), path, out, error);
         }
 

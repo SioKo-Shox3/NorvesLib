@@ -9,6 +9,7 @@
 #include "SkyAtmosphere.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
+#include "SkyOcclusion.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
@@ -575,6 +576,10 @@ namespace NorvesLib::Core::Rendering
         float AmbientIntensity = 1.0f;
         SkyAtmosphereParameters SkyAtmosphere;
         VolumetricFogParameters VolumetricFog;
+        SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
+        Container::VariableArray<SkyOccluderProxy> SkyOccluders;
+        // 遮蔽物と値が変わったときだけ進む版。SceneRevision とは別で、RTGI の履歴を捨てない。
+        uint64_t SkyOcclusionRevision = 0;
         // 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率（1で従来どおり。夜の環境光などに使う）
         float StaticEnvironmentIntensityScale = 1.0f;
         // 静的HDR環境の鏡面（IBLの前計算の値と背景）の放射輝度の上限（倍率を掛ける前のHDRの値。0は上限なし）。
@@ -621,6 +626,9 @@ namespace NorvesLib::Core::Rendering
             DDGIVolume = MakeDefaultDDGIVolumeParameters();
             SkyAtmosphere = SkyAtmosphereParameters{};
             VolumetricFog = MakeDefaultVolumetricFogParameters();
+            SkyOcclusion = MakeDefaultSkyOcclusionParameters();
+            SkyOccluders.clear();
+            SkyOcclusionRevision = 0;
             StaticEnvironmentIntensityScale = 1.0f;
             StaticEnvironmentMaxRadiance = 0.0f;
             bStaticEnvironmentUniform = false;
@@ -642,6 +650,11 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
         {
             VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+        }
+
+        void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
+        {
+            SkyOcclusion = SanitizeSkyOcclusionParameters(parameters);
         }
 
         /**
