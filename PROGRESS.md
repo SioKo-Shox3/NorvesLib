@@ -9858,3 +9858,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 評価者の残課題（non-blocking）として、`FromToRotation` の約 0.26° の不感帯と、根の粒子をサブステップの間で補間していないことが残る
 - U1 移動の見た目の傾きに倍率を掛ける SetVisualTiltScale を足す: 着地(直し 0 回)
 - U2 AnimatorComponent に視線の目標の口と同期グループの名前引きを足す: 着地(直し 0 回)
+- U3 BodyLeanModifier（type Lean）と試験のファイルを足す: 着地(直し 0 回)
