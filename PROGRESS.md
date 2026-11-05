@@ -10068,3 +10068,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
 - Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
 - 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。
+
+## 2026-11-05 G10-GR20-GRIP-SOLVER（run 20261105-150733 の反復 1、着手）
+- 試験を足す前の 3 点（`Docs/Testing.md` の約束）:
+  - `GripSolverTest`: 反証する契約は、静止した握りの点に吊った質点の周期 2π√(L/g) の ±2%・拘束の残差 1e-3×L 未満・等速で荷重 1 g・一定の加速度 a で |g−a|/g の 5% 以内・サブステップの数・不正な入力の拒否。ほかの手段では気づけない（起動の確かめは後回しで、荷重の誤りは見た目にほとんど出ない）。失敗は黙って起きる（数値が変わるだけ）。
+  - `GripFrameRateInvarianceTest`: 反証する契約は、周期 0.5 秒・振幅 2 m の同じ軌道を dt=1/30・1/60・1/144 で刻んだゲージの減りの差が 5% 未満で、上限を超える dt でも発散しないこと。ほかの手段では気づけない（1 つの環境ではフレームレートの差が再現しない）。失敗は黙って起きる（重い場面でだけ振り落とされやすさが変わる）。
+  - `GripGaugeTest`: 反証する契約は、減りの則 base + k × smoothstep(荷重; free, panic)・回復は荷重が低く足が触れている間だけ・枯渇の印が 1 回だけ・不正な入力で状態が変わらないこと。ほかの手段では気づけない（数値の則だけ）。失敗は黙って起きる（印が 2 回・0 回でもエラーにならない）。
+  - `GripSmoothingTest`: 反証する契約は、62.5 ms 間隔のキーで動く握りの点の荷重のピーク/平均が平滑ありで閾値以下・なしで閾値超え（試験が効いていることの確認）。ほかの手段では気づけない（1 フレームの跳ねは見た目にもログにも出ない）。失敗は黙って起きる。
+  - `GripTuningLoadTest`: 反証する契約は、`Assets/Gameplay/grip.tuning.json` の必須の欠落・未知のキー・型違い・範囲外をファイルとキーの分かるエラーで拒否し、失敗時に値を変えず、正しいデータと同梱の既定を読めること。ほかの手段では気づけない（綴りの誤りは既定値のまま黙って使われる）。失敗は黙って起きる。
+- U1 調整値 GripTuning の型・JSON の読み込み・既定の資産を足す: 着地(直し 0 回)
+- U2 しがみつきの拘束のソルバ・荷重の平滑と混ぜ・顎のゲージの純関数を足す: 着地(直し 0 回)
+- U3 GripTuningLoadTest を足す: 着地(直し 0 回)
+- U4 ソルバ・フレームレート・ゲージ・平滑の試験を足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-05 G10-GR20-GRIP-SOLVER（run 20261105-150733 の反復 1、完了）
+- Done: Gameplay の Grip のサブシステムに、しがみつきの純関数を足した。`Private/Gameplay/Grip/GripSolver.{h,cpp}` の `StepGripSolver` は重心 1 点を握りの点（前のフレーム → 今のフレームを補間）からの距離 L の拘束の下で位置ベースで積分する（h = min(dt, 1/30)/N、N は 1/120 秒の切り上げで上限 8、pred = x + v h + g h²、投影、v = (x_new − x)/h、補正量から張力 c/h² と load_g、握りの点に対する接線の速度を減衰）。有限でない入力・長さ 0 は状態を変えずに拒否する。`SmoothGripLoadG`（指数の平滑）・`MixGripShakeLoadG`（張力と GR19 の平滑の加速度の重みの混ぜと上限）・`StepGripGauge`（減り base + k × smoothstep、回復は荷重が free 以下で足が触れている間だけ、枯渇の印は 1 回だけ）・`ResetGripGauge`。調整値 `GripTuning`（Public/Gameplay/Grip/GripTuning.h）を `Assets/Gameplay/grip.tuning.json` から読み、必須の欠落・未知のキー・重複・型違い・範囲外を「ファイル: キー: 説明」で拒否する。試験 5 本（GripSolverTest・GripFrameRateInvarianceTest・GripGaugeTest・GripSmoothingTest・GripTuningLoadTest）を PhysicsDynamicsTest の束に足し、Docs/Testing.md に 3 点を書いた。
+- 証拠: `.harness/runs/20261105-150733/verify-G10-GR20-GRIP-SOLVER-U4.txt`（タスクの verify 2 行。Debug の PhysicsDynamicsTest と Game のビルド EXIT=0、ctest 7/7 合格。測定: 振り子の周期 2.00701 秒（解析 2.00607）、残差の最大 1.2e-7 m、等速の荷重 1.00005 g、加速度 4 m/s² の荷重 1.08016 g（解析 1.07993）、dt 3 通りのゲージの減りの差 0.97 %、平滑のピーク/平均 2.20 → 1.33（閾値 1.65））。
+- Next: ランナーの評価者の反証（JSON の読み込みはアセットの読み込みの危険地帯）。起動の要る確かめは無い。Component・犬のルートの駆動・接触は G10-GR20-GRIP-COMPONENTS。
+- Notes: done-when の調整値の一覧に無い `swingDampingPerSecond`（握りの点に対する接線の速度の減衰。done-when (1) の「摩擦」）を GripTuning の必須のキーに足した。既定値はすべて仮（free 1.5 g・panic 4 g・base 0.02/秒・k 0.25/秒・回復 0.1/秒・平滑 0.1 秒・重み 張力 1/加速度 0・サブステップ 8・荷重の上限 10 g・減衰 0.5/秒）。
+- Notes: 回復のフレームは減りを止めて回復だけを足す。枯渇の後は `ResetGripGauge` まで回復も印もしない（解除後のゲージの扱いは GRIP-COMPONENTS で決める）。GripFrameRateInvarianceTest は周期 0.5 秒・振幅 2 m の軌道で荷重が約 36 g になり既定の panic 4 g では減りが飽和して差が消えるため、試験の中だけ panic 60 g・上限 80 g にしている。
