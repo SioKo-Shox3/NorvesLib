@@ -10223,3 +10223,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 ブロードフェーズが静的なプロキシを木に分け、署名で使い回し、動く物と静的の組を木から作る: 着地(直し 0 回)
 - U3 PhysicsModule が bStatic を設定し、公開用へ木を渡し、接触の解決で組の添字を使う: 着地(直し 0 回)
 - U4 インスタンスの問い合わせ（Raycast・Overlap・ExecuteQuery）を木の走査＋木の外の線形走査にする: 着地(直し 0 回)
+- U5 規模の試験に静的の木のケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
