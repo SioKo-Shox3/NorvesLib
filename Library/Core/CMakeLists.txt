@@ -428,6 +428,7 @@ set(PRIVATE_SOURCES
     Private/Component/BoardComponent.cpp
     Private/Component/SpringArmComponent.cpp
     Private/Component/ViewClearanceComponent.cpp
+    Private/Component/SkyOccluderComponent.cpp
     Private/Component/TextComponent.cpp
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
@@ -797,6 +798,7 @@ set(PUBLIC_HEADERS
     Public/Object/World.h
     Public/Component/SpringArmComponent.h
     Public/Component/ViewClearanceComponent.h
+    Public/Component/SkyOccluderComponent.h
     Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h

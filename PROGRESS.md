@@ -10038,3 +10038,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 FramePacket への経路と SkyOcclusionRevision: 着地(直し 0 回)
 - U2 CPU の正解（2.5D 格子・地平線の積分・L1・曲げた法線・鏡面の円錐）: 着地(直し 1 回)
 - Notes(G11-GR56-SKY-OCC-CPU): 鏡面の交差は要件の案（Jimenez の一様な球冠＋smoothstep）から、R のまわりの輪ごとの閉形式の重なりを GGX の D の逆関数の 13 層（重み G1）で足す形に替えた。一様な球冠では GGX の裾を表せず粗さ 0.6 で 0.13 ずれたため（替えた後の最大誤差 0.026）。壁の閉形式との差は 30° で −0.0625（許容 0.07 の内、L1 の打ち切り）、κ=0.5 の平板の L1 と厳密なコサイン重みの差は 0.050。
+- U4 手置きの SkyOccluderComponent と保存の往復、タスクの確かめ: 着地(直し 0 回)
