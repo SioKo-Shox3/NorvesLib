@@ -9933,3 +9933,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify-2.txt`（verify のビルド 4 ターゲット exit_code=0、ctest 4/4 Passed）。Look の実測: 注視誤差 1.2e-5°、ヨー制限の端との差 2.1e-5°、姿勢で測った角速度の差 0.34911 rad/s（上限 0.34907 + 許容 1e-3）、目標なしの後の角 1.9e-14 rad
 - Next: ランナーの評価者の反証（Public API の危険地帯）。実キャラクターでの視線の追従の見た目は起動の確かめとして後回し
 - Notes: 保持スロットの占有が変わったときの holdWeightScale は即座に掛かり、頭の向きが段になる（done-when の外、評価者の non-blocking）。split の骨格と実行中の MeshNodeTransform の変更でのキャッシュの求め直しは試験していない。角度を「前の角 + 角速度 × dt」で進めるため、半減期の数倍を超える長い dt の 1 フレームでは追従が遅れる
+
+- U1 SettingsStore(settings.json の保存・読み込み・変更の通知)と SettingsStoreTest: 着地(直し 0 回)
+- U2 SettingsStore を裏にした IInputBindingStore と古い場所からの写し: 着地(直し 0 回)
+- U3 Game の起動で SettingsStore を作り、入力の割当と音量をつなぐ(タスクの verify): 着地(直し 0 回)
+
+## 2026-11-05 G8-GR76-SETTINGS(run 20261105-105218 の反復 2、完了)
+- Done: `Save::SettingsStore`(ユーザーデータの領域の `settings.json`、formatVersion=1、`WriteFileAtomic` と `.bak`、音量 3 種・解像度・フルスクリーン・言語・キー割当、値が変わったときだけ 1 回通知)と `SettingsStoreTest`。入力の割当の保存先を `settings.json` の `keyBindings` へ移す `CreateSettingsInputBindingStore` と、作業ディレクトリの古い `InputBindings.json` を最初の起動で写す `MigrateLegacyInputBindings`(古いファイルは消さない。`WorkingDirectoryInputBindingStoreTest` に写しのケース)。Game は `GameInputSettings` が `SettingsStore` を持ち、`GameApplicationHandler.cpp` で既定のバンクを読んだ後に音量を SoundSystem の全体・Effect(SE)・Ambience(環境)へ当て、変更の通知を購読する(`OnPreShutdown` で外す)。
+- 証拠: `.harness/runs/20261105-105218/verify-G8-GR76-SETTINGS-final.txt`(Debug の Game・LoggerSinkTest のビルド EXIT CODE 0、ctest 6 本 100% Pass、numstat 2 通り一致)。
+- Next: 起動の確かめは後回し(G8-GR76-SETTINGS-CHECK): 通常の起動で `%LOCALAPPDATA%\NorvesLib\Game\settings.json` を読み(ログに `SETTINGS load=` の警告が出ないこと)、作業ディレクトリに `InputBindings.json` があれば `SETTINGS migration=migrated` が 1 回出て次の起動では出ないこと、`settings.json` の音量を変えて起動すると音量が反映されること。ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。
+- Notes: 解像度・フルスクリーン・言語は保存と通知までで、適用は GR107・GR69・BootConfig の配線(G15 の DisplaySettings の項目が `SettingsStore` の値を読む)。ユーザーデータの領域を作れないときは作業ディレクトリの古い保存先へ戻り、ログに `SETTINGS storage=unavailable` を出す。
