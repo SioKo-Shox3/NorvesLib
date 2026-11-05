@@ -14,6 +14,7 @@
 #include "Physics/ColliderShapeTransform.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -1441,6 +1442,7 @@ namespace NorvesLib::Modules::Physics
                     continue;
                 }
                 slot.Component->m_bHeightFieldTransformWarning = false;
+                proxy.TileResidency = m_Engine ? m_Engine->GetTerrainSystem().GetTileResidency() : nullptr;
                 proxies.push_back(proxy);
                 continue;
             case ColliderComponent::EColliderShape::None:
