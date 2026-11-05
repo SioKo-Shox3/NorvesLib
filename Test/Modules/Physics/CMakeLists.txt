@@ -95,6 +95,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER EncounterLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterLifecycleTest.cpp
     MEMBER EncounterSerializationTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EncounterSerializationTest.cpp
     MEMBER GameplayMarkerSchemaTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/GameplayMarkerSchemaTest.cpp
+    MEMBER LevelSnapTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/LevelSnapTest.cpp
     MEMBER InteractionPromptTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/InteractionPromptTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
@@ -162,4 +163,5 @@ add_test(NAME EncounterZoneTest COMMAND PhysicsDynamicsTest --test=EncounterZone
 add_test(NAME EncounterLifecycleTest COMMAND PhysicsDynamicsTest --test=EncounterLifecycleTest)
 add_test(NAME EncounterSerializationTest COMMAND PhysicsDynamicsTest --test=EncounterSerializationTest)
 add_test(NAME GameplayMarkerSchemaTest COMMAND PhysicsDynamicsTest --test=GameplayMarkerSchemaTest)
+add_test(NAME LevelSnapTest COMMAND PhysicsDynamicsTest --test=LevelSnapTest)
 add_test(NAME InteractionPromptTest COMMAND PhysicsDynamicsTest --test=InteractionPromptTest)

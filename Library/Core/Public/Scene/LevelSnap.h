@@ -57,12 +57,16 @@ namespace NorvesLib::Core::Scene::LevelSnap
     /// 地面が無い対象、空の Target、無効な距離、非有限の GroundOffset は動かさず Missed に数える。
     /// 吸着の後の位置から同じ呼び出しをしても位置は変わらない。ただし GroundOffset が probeLift 未満で、
     /// 地面から probeLift 以内の上にトリガー以外のほかの面が無いこと（あれば 2 回目はその面に当たる）。
+    /// 対象の位置は GetWorldTransform（親のある Entity では World のキャッシュ）を読む。
+    /// 親を動かした後の子は World::UpdateWorldTransforms の後に渡す。
     LevelSnapStats ReSnapAll(const SceneQuery& query, Container::Span<const LevelSnapTarget> targets,
         float maxDrop, float probeLift = kDefaultProbeLift);
 
     /// 許容範囲を超えた対象と地面の無い対象を出力する。出力は最初に空にする。
     /// maxDrop・probeLift・tolerance が非有限または負なら、出力を空にして false を返す。
     /// 非有限の GroundOffset も離れとして出力する。空の Target は飛ばし、離れた対象が無ければ true を返す。
+    /// 対象の位置は GetWorldTransform（親のある Entity では World のキャッシュ）を読む。
+    /// 親を動かした後の子は World::UpdateWorldTransforms の後に渡す。
     bool FindSnapDeviations(const SceneQuery& query, Container::Span<const LevelSnapTarget> targets,
         float maxDrop, float tolerance, Container::VariableArray<LevelSnapDeviation>& outDeviations,
         float probeLift = kDefaultProbeLift);

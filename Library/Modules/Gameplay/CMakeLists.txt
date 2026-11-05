@@ -9,6 +9,7 @@ set(GAMEPLAY_PUBLIC_HEADERS
     Public/Gameplay/Level/ScentTrailComponent.h
     Public/Gameplay/Level/GameplayComponentClasses.h
     Public/Gameplay/Level/LevelMarkerValidation.h
+    Public/Gameplay/Level/LevelMarkerSnap.h
     Public/Gameplay/Grip/GripTuning.h
     Public/Gameplay/IGameplayModule.h
     Public/Gameplay/Combat/DamageTypes.h
@@ -44,6 +45,7 @@ set(GAMEPLAY_PRIVATE_SOURCES
     Private/Gameplay/Level/ScentTrailComponent.cpp
     Private/Gameplay/Level/GameplayComponentClasses.cpp
     Private/Gameplay/Level/LevelMarkerValidation.cpp
+    Private/Gameplay/Level/LevelMarkerSnap.cpp
     Private/Gameplay/Grip/GripTuningLoader.cpp
     Private/Gameplay/Grip/GripSolver.h
     Private/Gameplay/Grip/GripSolver.cpp

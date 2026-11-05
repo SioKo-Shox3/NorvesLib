@@ -10251,3 +10251,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Core に LevelSnap（地面への吸着・全対象の吸着し直し・離れの検査）を足す: 着地(直し 0 回)
 - U5 LevelSnap の離れの検査の不正な入力の扱いと冪等の前提を直す: 着地(直し 0 回)
 - U3 GameplayMarkerSchemaTest を足す: 着地(直し 0 回)
+- U4 Gameplay の吸着の入口と LevelSnapTest を足し、タスクの verify を通す: 着地(直し 1 回)

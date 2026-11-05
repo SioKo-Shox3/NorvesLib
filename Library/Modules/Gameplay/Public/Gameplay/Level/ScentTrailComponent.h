@@ -17,6 +17,7 @@ namespace NorvesLib::Modules::Gameplay::Level
         ScentTrailComponent();
 
         /// 出力を空にし、直下の子のワールド位置と強度を子 Entity の並び順に集める。
+        /// ワールド位置は World::UpdateWorldTransforms の後の値。
         void GatherPoints(Core::Container::VariableArray<Math::Vector3>& outPositions,
                           Core::Container::VariableArray<float>& outIntensities) const;
 
