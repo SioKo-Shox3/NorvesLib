@@ -4609,7 +4609,7 @@
 
 ## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
 - status: todo
-- after: G2-S6-ASSET-SET-P6
+- after: G2-S6-ASSET-SET-P6, G2-S6-ASSET-SET-P7
 - done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
 - verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
 - paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
@@ -6193,7 +6193,7 @@
 - notes: GR63 の Phase 0-6（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-6) と (e)）。印の受け渡しは GR30 と一緒に決める約束（ロードマップ 1941 行）なので、GR30 の velocity を全経路で組み直す G5-GR30-VERTEX-ANIM-VELOCITY（`VisibilityResolve.glsl` の今と前の位置の組み立てを触る）の後にする。10-02 の後に既定の velocity は解決（`visbuffer_resolve.comp` が `VisComputeVelocity` を呼ぶ。`VisibilityResolve.glsl:797`）が書くので、ロードマップの「gbuffer.frag だけ」では足りず両方に入れる。scenario の登録は既存の `RenderingVelocitySkinnedVulkanTest` と同じ形（`Test/Core/Rendering/CMakeLists.txt` の `--scenario=skinned-motion` の 2 本）。名前は `RenderingVelocitySkinnedFastRotationVulkanTest`・`RenderingVelocitySkinnedBehindNearVulkanTest` と、その `GBufferFallback` 版。G10-GR63-SKIN-CULL とは触るファイルがほぼ交わらないので並列に走れる。TAA と動きぼけの既定の見た目は印の無い画素で変わらないので、起動画面（絶対規則 7）は golden で守る。危険地帯（GBuffer・可視バッファの解決・TAA）なので評価者を通す。やらないこと: 遮蔽解除のちらつき（GR30 のリアクティブ。G5-GR30-REACTIVE）。
 
 ## G10-SHISHA-SHOWCASE: シ者の表現（白の質感・残像・消滅・しがみつき）を確かめる専用の GameMode と、起動して撮る・印を確かめる台本の土台を作る
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC
 - gr: GR19, GR20, GR60, GR64, GR65
 - needs-gr: GR01

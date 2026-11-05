@@ -35,6 +35,9 @@ namespace Game::GameModes
     /// 空と平らな地面だけの確認用シーン（開発ビルドだけランチャーに出る）。自由飛行カメラの確認に使う
     inline constexpr NorvesLib::Core::GameMode::GameModeId Sandbox = "Sandbox"_id;
 
+    /// シ者の表現を確かめる専用モード。--shisha-showcase=<場面> のときだけ起動し、ランチャーには載せない
+    inline constexpr NorvesLib::Core::GameMode::GameModeId ShishaShowcase = "ShishaShowcase"_id;
+
     /// クック済みの草原地形を TerrainComponent で配置する確認用シーン（開発ビルドだけ）
     inline constexpr NorvesLib::Core::GameMode::GameModeId Grassland = "Grassland"_id;
 

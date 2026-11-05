@@ -10009,19 +10009,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
 - Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
 
-- U1 切り抜きのモデル ViewClearanceParameters と CPU の可視度の式、CameraProxy への値の置き場: 着地(直し 0 回)
-- U2 SpringArmComponent に注視点の取得 GetTargetWorldPosition を公開する: 着地(直し 0 回)
-- U3 ViewClearanceComponent(PROPERTY・Mode・Strength の補間・Tick の自己登録)と保存の往復: 着地(直し 0 回)
-- U5 BuildCameraProxy で CameraProxy.ViewClearance を埋め、proxy の試験を足す(U4 の切り直し): 着地(直し 0 回)
-## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 1、完了）
-- Done: `Rendering/ViewClearance.h` に `ViewClearanceParameters`・`MakeDefaultViewClearanceParameters`・`SanitizeViewClearanceParameters`・CPU の `ComputeViewClearanceVisibility` を置き、`CameraProxy.ViewClearance` を足した。`SpringArmComponent::GetTargetWorldPosition()`（pivot の描画用ワールド位置＋TargetOffset）を公開し、アームの注視の計算も同じ関数へ寄せた。カメラの Entity に付ける `ViewClearanceComponent`（float/bool の PROPERTY 9 個、実行時の Mode と約 0.3 秒で寄せる Strength、`SetMode`、BeginPlay で Camera の群へ Tick を自己登録）を足した。`CameraComponent::BuildCameraProxy` は毎回 ViewClearance を既定（bEnabled=false）へ戻し、同じ Entity の ViewClearanceComponent と SpringArm（派生を含む）があれば A=カメラの位置・B=注視点で埋める。NearPlane は変えていない
-- 証拠: `.harness/runs/20261105-143215/G5-GR113-CLEARANCE-CPU-final-verify.txt`（verify のビルド 4 ターゲット＋EntityTreeTest が EXIT_CODE=0、ctest `SceneFileRoundTripTest`・`SpringArmComponentTest`・`CameraViewConstantsTest`・`ViewClearanceModelTest`・`CameraComponentProxyTest` 5/5 Passed、numstat の 2 通りが一致）
-- Next: ランナーの評価者の反証（Public API・RenderThread のデータ契約の危険地帯）。描画側で proxy の ViewClearance を使う段（草・遮蔽物・シルエット）は後続の項目。起動の確かめは後回し（今のゲームのカメラに ViewClearanceComponent を付けた所は無いので、見た目は変わらない）
-- Notes: 毎フレームの BuildCameraProxy の呼び出しは、Rendering3DTest は Camera の群の後、`FreeCameraRig::Tick → Publish` と `LauncherRoutine::Tick → PublishCamera` は Camera の群の前（どちらも今は SpringArm＋ViewClearance を使わない。Launcher は proxy の直前にアームを手で更新している）。切り抜きの半径の既定は仮の値で、草で視界が遮られる見せ方との兼ね合いは作者の判断
-- 要起票: `FreeCameraRig`・`LauncherRoutine` のカメラの proxy を Camera の群（スプリングアームの更新）の後に作る段へ移す（ViewClearance を付けたカメラで 1 フレーム遅れないように）
-
-## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 2、差し戻しの直し、完了）
-- Done: 差し戻しは verify の ctest の `SpringArmComponentTest` が Not Run だったこと。この試験は `EntityTreeTest.exe` の束の MEMBER で、verify の build 行に `EntityTreeTest` が無く、この枠の build に実行ファイルが無かったのが原因（実装の不具合ではない）。この枠で `EntityTreeTest` をビルドし、verify を全部回し直した。コードの変更なし
-- 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
-- Next: ランナーの評価者の反証。起動の確かめは後回し
-- 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
+- U5 GameMode ShishaShowcase の本体を写し、場面の表のリンクの誤りを直す(U1 の切り直し): 着地(直し 0 回)
+- U6 台本 Scripts/Test-ShishaShowcase.ps1 を写す(U4 の切り直し): 着地(直し 0 回)
+- U3 GameApplicationHandler に --shisha-showcase 系の引数と GameMode の登録を足す: 着地(直し 0 回)
+## 2026-11-05 G10-SHISHA-SHOWCASE（run 20261105-143216 の反復 1、完了）
+- Done: シ者の表現を確かめる専用の GameMode `ShishaShowcase`（`Game/GameModes/ShishaShowcase/`、ID は `GameModeIds.h`）を足した。ランチャーと `SceneCatalog.h` には載せず、開発ビルドだけ登録する。場面は `ShishaShowcaseScenes.cpp` の一覧 `SHISHA_SHOWCASE_SCENES(X)` に `X("名前", 入口の接尾辞)` を 1 行足し、場面のファイルで `Build/Update/Leave<接尾辞>` を `Game::GameModes` に定義する形。場面 `base` は灰色の地面・昼の空（太陽 高度 40°）・手動露出の共通カメラ・`Assets/Models/M9Skinned/ValidU8Float.gltf` のスキン 1 体（時刻 0 のスキニング済みの実寸から 1.8 m に合わせ、`--shisha-scale` 倍）。カメラは固定の位置と `--shisha-camera-orbit=<度/秒>` の注視点の周りの周回を全場面で共通に持ち、Tick の刻みの積算で進む（`--fixed-frame-dt=` は ApplicationProcessor 側の共通の時計がそのまま効く）。印は `SHISHA_SHOWCASE scene=<場面> stage=<enter|ready|failure|leave> key=value ...`（ready は SceneReady と同じ Tick）。起動の引数 `--shisha-showcase=<場面>`・`--shisha-camera-orbit=`・`--shisha-scale=`（0 より大きく 1000 以下）を解析し、重複・未知の場面（一覧つき）・不正値・従属の引数の単独・`--scene`・`--scene-view`・`--scene-cycle-smoke`・`--dog-movement-smoke` との併用を拒否する。Release では 3 つの引数を拒否する。台本 `Scripts/Test-ShishaShowcase.ps1`（自分で起動したプロセスの時間切れと taskkill、`-Scene`・`-Configuration`・`-GameArgs`・`-ExpectStages`・`-CapturePng`/`-CaptureFrames`・`-OutDir` の `metrics.json`・`-GpuTimingFrames`）を足した。
+- 証拠: `.harness/runs/20261105-143216/verify-G10-SHISHA-SHOWCASE-U3.txt`（タスクの verify 2 行。Debug の Game のビルド EXIT=0、台本の構文の解析 EXIT=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まりのため）。起動したら `Scripts/Test-ShishaShowcase.ps1 -Scene base -CapturePng <path>` で enter→ready の印・PNG・`metrics.json` を見て、引数なしの起動がランチャーから始まること、併用の拒否のログを確かめる。
+- Notes: 代役の `ValidU8Float.gltf` は人型ではなく骨 2 本の三角形の検証資産で、身長に合わせて縦に伸ばしている。人型の代役が要るなら後の場面の項目で差し替える。台本はリポジトリのルートの `Game.log` を写すので、ほかの Game と同時に回すとログが混ざる。Release では連続撮影の照合のログが出ないため、複数フレームの撮影は Debug・RelWithDebInfo で回す。
