@@ -2023,6 +2023,8 @@ namespace NorvesLib::Core::Engine
                 GEngine->GetRenderWorld().WaitForRender();
                 GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
             }
+            // Prepare を待ち、GameMode・World・描画資源を片付ける前にセルを解放する。
+            GEngine->GetStreamingSystem().Shutdown();
             if (lifecycle.bJobSystem)
             {
                 Thread::JobSystem::Get().StopAcceptingTasks();
@@ -2974,6 +2976,8 @@ namespace NorvesLib::Core::Engine
 
         add(EFrameStage::PostTick, "PostTick.Particles",
             [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+        add(EFrameStage::PostTick, "PostTick.Streaming",
+            [](void*, const Context&) { GEngine->GetStreamingSystem().Update(); });
 
         add(EFrameStage::FixedModulePre, "FixedModulePre.PreFixedTick",
             [](void*, const Context& context) { Module::GetModuleRegistry().DispatchPreFixedTick(context.DeltaTime); });

@@ -56,6 +56,8 @@ namespace NorvesLib::Core::Engine
 
     Engine::~Engine()
     {
+        // セルの解放が参照する World と描画資源が生きている間に停止する。
+        m_StreamingSystem.Shutdown();
         m_ScatterSystem.Clear();
         (void)ShutdownInputDevices();
         m_InputRebindCapture.Detach();
