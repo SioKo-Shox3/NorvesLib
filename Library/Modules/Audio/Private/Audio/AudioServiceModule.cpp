@@ -1,4 +1,5 @@
 ﻿#include "Audio/AudioDomain.h"
+#include "Audio/AudioComponent.h"
 
 #include "Audio/NullAudioBackend.h"
 #include "Audio/SoundSystem.h"
@@ -74,6 +75,11 @@ namespace NorvesLib::Modules::Audio::Private
             bool Install(Core::Engine::Engine&) override
             {
                 return m_Service != nullptr;
+            }
+
+            void RegisterReflectedTypes() override
+            {
+                Core::ClassRegistry::Get().RegisterClass(AudioComponent::StaticClass());
             }
 
             bool Initialize() override
