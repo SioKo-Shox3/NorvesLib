@@ -5,6 +5,7 @@
 #include "Math/Vector2.h"
 #include "Math/Vector4.h"
 #include "Text/IdentityPool.h"
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -214,15 +215,32 @@ namespace NorvesLib::Core
         template <typename T>
         struct TypeKindOf
         {
-            static constexpr TypeKind Value =
-                std::is_same_v<T, void> ? TypeKind::Void :
-                std::is_same_v<T, bool> ? TypeKind::Bool :
-                std::is_integral_v<T> ? TypeKind::Integer :
-                std::is_floating_point_v<T> ? TypeKind::Float :
-                std::is_same_v<T, Container::String> ? TypeKind::String :
-                std::is_enum_v<T> ? TypeKind::Enum :
-                std::is_class_v<T> ? TypeKind::Struct :
-                TypeKind::Custom;
+            static constexpr TypeKind Value = []()
+            {
+                if constexpr (requires { T::SchemaTypeKind; })
+                {
+                    return T::SchemaTypeKind;
+                }
+                else
+                {
+                    return std::is_same_v<T, void> ? TypeKind::Void :
+                        std::is_same_v<T, bool> ? TypeKind::Bool :
+                        std::is_integral_v<T> ? TypeKind::Integer :
+                        std::is_floating_point_v<T> ? TypeKind::Float :
+                        std::is_same_v<T, Container::String> ? TypeKind::String :
+                        std::is_enum_v<T> ? TypeKind::Enum :
+                        std::is_class_v<T> ? TypeKind::Struct :
+                        TypeKind::Custom;
+                }
+            }();
+        };
+
+        template <typename T>
+        concept StringSerializable = requires(const T& input, T& output, Container::String& text,
+                                              const Container::String& source)
+        {
+            { input.SerializeToString(text) } -> std::same_as<bool>;
+            { output.DeserializeFromString(source) } -> std::same_as<bool>;
         };
 
         template <typename T>
@@ -230,7 +248,11 @@ namespace NorvesLib::Core
         {
             using ValueType = std::remove_cv_t<T>;
 
-            if constexpr (std::is_same_v<T, void>)
+            if constexpr (requires { ValueType::SchemaTypeName; })
+            {
+                return ValueType::SchemaTypeName;
+            }
+            else if constexpr (std::is_same_v<T, void>)
             {
                 return "void";
             }
@@ -614,6 +636,10 @@ namespace NorvesLib::Core
                 outValue = Container::String(stream.str());
                 return !stream.fail();
             }
+            else if constexpr (StringSerializable<ValueType>)
+            {
+                return static_cast<const ValueType *>(value)->SerializeToString(outValue);
+            }
             else
             {
                 return false;
@@ -800,6 +826,10 @@ namespace NorvesLib::Core
 
                 *static_cast<ValueType *>(outValue) = value;
                 return true;
+            }
+            else if constexpr (StringSerializable<ValueType>)
+            {
+                return static_cast<ValueType *>(outValue)->DeserializeFromString(inValue);
             }
             else
             {
