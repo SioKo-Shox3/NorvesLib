@@ -112,6 +112,8 @@ add_library(AssetCookLib STATIC
     MeshCooker.cpp
     HeightfieldImport.cpp
     HeightfieldImport.h
+    GrassFieldCooker.cpp
+    GrassFieldCooker.h
     TerrainCooker.cpp
     TerrainCooker.h
     TerrainMasks.cpp
@@ -271,6 +273,15 @@ add_test(NAME AssetCookTerrainSmoke
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DSMOKE_DIR=${ASSET_COOK_TERRAIN_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTerrainSmoke.cmake.in"
+)
+
+set(ASSET_COOK_GRASS_FIELD_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/GrassField")
+add_test(NAME AssetCookGrassFieldSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_GRASS_FIELD_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookGrassFieldSmoke.cmake.in"
 )
 
 add_custom_target(AssetCookAudioSmoke DEPENDS AssetCook)

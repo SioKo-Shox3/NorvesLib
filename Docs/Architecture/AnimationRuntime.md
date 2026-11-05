@@ -116,7 +116,7 @@ Resetは位置・回転と速度を指定値へ戻し、余りを0にする。�
 
 骨格単位の実行時サイドカー。AnimatorComponent.ApplyPoseModifiersJson／ApplyPoseModifiersFileで明示して読み、cookのハッシュには含めない。ファイルのパスは呼出側が渡し、ディスクを自動探索しない。ファイルはUTF-8で、BOMも受け入れる。
 
-最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。GetBuiltinPoseModifierTypesの組み込みの型の表は空なので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
+最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。CustomはGetBuiltinPoseModifierTypesの組み込みの型の表（Lean・Spine・Look・FootIK・SpringBone・FollowThroughを載せる）に無いので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
 
 ```json
 {
@@ -167,6 +167,322 @@ PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weight
 | CreateFailed | factoryがない、または生成に失敗 |
 
 全件の検証と生成に成功した場合だけ、AddModifierで追加した分も含め、Animatorのmodifier群を丸ごと置き換える。空配列は群を空にする。構文・設定・ファイルの読込などで失敗した場合は前の群を保持する。
+
+### 足の IK(FootIK)
+
+組み込みの型 `FootIK` は既定order 500。設定は骨格単位の実行時サイドカー `*.posemod.json` のsettingsに置く。import.jsonのik節には置かない。長さはメートル、時間は秒。足の固定・着地の判定は扱わない。
+
+| キー | 既定値・範囲 |
+|---|---|
+| legs | 必須。1〜8脚の配列 |
+| legs[].name | 必須の文字列。脚の間で一意 |
+| legs[].chain | 必須。根・中間・足首・任意の足先の関節名3〜4個。重複不可、後の関節は直前の関節の子孫 |
+| legs[].pole | `"auto"`。または有限な数値3個の方向、長さ1e-6以上。正規化して使う |
+| legs[].sole / legs[].maxStretch | 0.02 / 1.02。範囲はそれぞれ[0, 0.5] / [1, 1.5] |
+| body | 省略時は体の補正なし。指定するならobject |
+| body.pelvis / body.chest | body指定時は必須の関節名。chestはpelvis自身かその子孫 |
+| body.maxDrop / body.maxRaise | 0.25 / 0.1。それぞれ[0, 2] |
+| body.smoothTime | 0.12。[0, 5]。体と脚の重みの臨界減衰の半減期。0なら即時反映。body省略時も脚の重みに既定値が効く |
+| ground | 省略時は以下の既定値 |
+| ground.rayUp / ground.rayDown | 0.5 / 1.0。範囲はそれぞれ[0, 10] / (0, 20] |
+| ground.maxSlopeDeg | 50。[0, 89]度 |
+| ground.layerMask | 4294967295（全レイヤー）。[0, 4294967295]の整数リテラル |
+
+数値は有限値だけを受け入れる。未知・重複キーはUnknownKey / DuplicateKey、必須キーの欠けはMissingKey、型違いはTypeMismatch、範囲・チェーン・autoポールの不正はOutOfRange、未知の関節名はUnknownJoint。脚名の重複もDuplicateKey。エラーのPathは `modifiers[i].settings` 以下を指し、拒否時は前のmodifier群を保つ。
+
+```json
+{
+  "version": 1,
+  "modifiers": [{"type": "FootIK", "settings": {
+    "legs": [{"name": "RearLeft", "chain": ["Hip", "Knee", "Ankle", "Toe"], "pole": "auto"}],
+    "body": {"pelvis": "Pelvis", "chest": "Chest"},
+    "ground": {"rayUp": 0.5, "rayDown": 1.0}
+  }}]
+}
+```
+
+bodyが有効でchestとpelvisが異なり、脚の根の祖先にchestがあれば前脚、それ以外は後脚。autoはbind姿勢の根〜足首の線から膝へ向かう方向を、根の親の関節ローカルで保持する。骨の軸の規約に依存せず、膝の曲がりを取り出せない姿勢は拒否する。明示のpoleはモデル空間の方向。
+
+Applyは次の順に処理する。
+
+1. 足先のワールド位置からrayUpだけ上を始点にし、ワールドの真下へrayUp + rayDownの距離を一括で問い合わせる。
+2. 当たりの点・法線を検証して状態を分類する。法線の傾斜がmaxSlopeDegを超えればTooSteep。足先の目標Yは `hit.Point.y + max(補正前の足先Y − MeshToWorldの原点Y, sole)`、X/Zは補正前を保つ。
+3. 各脚の重みを、当たりが有効なら1、失敗なら0へsmoothTimeで平滑化する。
+4. 有効な後脚の高さの差の最小を骨盤、前脚の最小を胸の目標にし、[-maxDrop, maxRaise]へクランプして臨界減衰で平滑化する。有効な脚がない群は0、前脚自体がなければ胸は骨盤と同じ目標。骨盤を上下し、平滑化後の2点の差と水平距離からピッチを求め、骨盤を除く胸までの関節へ均等に配る。水平距離1e-4未満ではピッチ0。
+5. 脚ごとに、足首の目標 = 足先の目標 − 法線に合わせた足首→足先のベクトルを求め、二関節IK、足首の法線合わせを行う。chainが3関節なら足首を足先として扱う。脚の重みと文脈のWeightを補正に掛ける。
+
+NoHit / NotReady / WrongThread / TooSteep / Unavailableの脚は最後の当たりで解きながら、重みをsmoothTimeで0へ下げる。まだ当たりがなければ解かない。非一様スケールの脚は警告してIKを掛けない。不正な補正値は書き込まず、姿勢にNaN・Infを出さない。
+
+地面はSetGroundQueryで借用して渡し、問い合わせの使用中は呼出側が生存させる。ParsePoseModifierConfigで作った包みからはFindFootIKModifierで取り出す。物理を使う場合は `MakePhysicsGroundQuerySettings(ground)` を渡してPhysicsGroundQueryを作る。layerMaskとmaxSlopeDegはそこで物理の問い合わせに反映し、FootIKもmaxSlopeDegで法線を検証する。
+
+## 胴の傾き・背骨の波・視線
+
+`GetBuiltinPoseModifierTypes` の組み込みの型の表には Lean・Spine・Look・FootIK・SpringBone・FollowThrough の 6 型が登録されている。次の 3 型は、既定の `order` では足 IK（`FootIK`: 500）より前に掛かる。明示した `order` があればそちらを使う。
+
+| type | 実装 | 既定の order |
+|---|---|---:|
+| Lean | BodyLeanModifier | 100 |
+| Spine | SpineWaveModifier | 110 |
+| Look | LookAtModifier | 200 |
+
+各型の `settings` の数値はすべて有限値でなければならない。下表の「有限 float」は float で表せる有限値を指す。区間の丸括弧は端を含まず、角括弧は端を含む。軸の配列は 3 要素の有限 float で、長さが `Math::Constants::EPSILON` より大きいものを正規化して使う。調整用の仮の既定値は表に示す。
+
+### Lean の設定と傾きの配分
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `source` | `"params"` | `"params"` または `"signals"` |
+| `bankParam` | `"BankAngle"` | 空でないパラメータ名。値の単位は rad |
+| `pitchParam` | `"PitchAngle"` | 空でないパラメータ名。値の単位は rad |
+| `chain` | 必須 | 1 関節以上の配列。根側から先端側へ後の関節が前の関節の子孫になる順で、重複しない。直接の親子でなくてもよい |
+| `chain[].joint` | 必須 | 骨格にある関節名 |
+| `chain[].weight` | 必須 | 非負の有限 float。全関節の和は 1 ± 1e-4 |
+| `forwardAxis` | [0, 0, 1] | メッシュのモデル空間の前方軸 |
+| `rightAxis` | [1, 0, 0] | メッシュのモデル空間の右軸。正規化後の前方軸との内積の絶対値が 0.9999 未満 |
+| `maxBankDeg` | 25（仮） | 非負の有限 float、度。`signals` のバンクの上限 |
+| `maxPitchDeg` | 10（仮） | 非負の有限 float、度。`signals` のピッチの上限 |
+| `pitchPerAccel` | 0.02（仮） | 有限 float、rad / (m/s^2) |
+| `gravity` | 9.81 | 正の有限 float、m/s^2 |
+| `smoothingHalfLife` | 0.1（仮） | 正の有限 float、秒。`signals` の角度の臨界減衰 |
+| `airFadeHalfLife` | 0.1（仮） | 正の有限 float、秒。接地による重みの臨界減衰 |
+| `strength` | 1 | [0, 1]。文脈の重みへ掛ける倍率 |
+
+`source="params"` は Float parameter の角度をそのまま配り、上限のクランプや角度の平滑化を加えない。パラメータが無いか Float でなければ 0 として読む。四足の移動では傾きの計算と平滑化を `QuadrupedLocomotionModel` に一本化し、その出力の `BankAngle`・`PitchAngle` を使う。
+
+`source="signals"` は駆動信号から次の目標角を求め、`smoothingHalfLife` の臨界減衰で追う。`v` は `Speed`（m/s）、`ω` は `TurnRate`（rad/s）、`a_forward` はワールド空間の `Acceleration` をメッシュの前方へ射影した加速度（m/s^2）。駆動信号が無ければ両目標角は 0 になる。
+
+```text
+θ_bank = clamp(atan(v * ω / gravity), -radians(maxBankDeg), radians(maxBankDeg))
+θ_pitch = clamp(a_forward * pitchPerAccel, -radians(maxPitchDeg), radians(maxPitchDeg))
+w = groundWeight * strength * context.Weight
+rotation = Quaternion(forwardAxis, θ_bank * w) * Quaternion(rightAxis, -θ_pitch * w)
+```
+
+回転の合成順と符号は移動の `PublishVisual` と同じで、ピッチの負回転を掛け、その左からバンクの正回転を掛ける。軸は関節のローカル軸ではなくメッシュのモデル空間で指定し、メッシュノードの回転で配分用の空間へ変換する。`TryDistributeModelRotation` でチェーンへ配り、並進とスケールは書き換えない。
+
+両 source とも、駆動信号の `bGrounded=false` で `groundWeight` を 0 へ、接地中は 1 へ `airFadeHalfLife` の臨界減衰で移す。初回はその時点の接地の値から始め、駆動信号が無ければ接地中として扱う。
+
+Lean を使う場面では `QuadrupedLocomotionComponent::SetVisualTiltScale(0)` にして、移動の `VisualPose` の剛体の傾きとの二重適用を避ける。この倍率の既定値は 1 で、既定の見た目を保つ。有限値を [0, 1] に制限し、非有限値は無視する。倍率が掛かるのは `VisualPose` の剛体の傾きだけで、`BankAngle`・`PitchAngle` のパラメータには掛からない。
+
+### Spine の設定と位相
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `joints` | 必須 | 1 関節以上の配列。関節名は重複しない。祖先・子孫の順序の制約はない |
+| `joints[].joint` | 必須 | 骨格にある関節名 |
+| `joints[].phaseOffset` | 0 | 有限 float、周期単位。1 で 1 周 |
+| `joints[].amplitude` | 0 | 有限 float の振幅（rad）、または 1 点以上の `{"speed":数値,"value":数値}` の配列 |
+| `joints[].amplitude[].speed` | 必須 | 有限の非負値、m/s。配列内で厳密増加 |
+| `joints[].amplitude[].value` | 必須 | 有限 float、rad。負の振幅も指定できる |
+| `axis` | `"yaw"` | `"yaw"` または `"pitch"` |
+| `upAxis` | [0, 1, 0] | メッシュのモデル空間のヨー軸 |
+| `rightAxis` | [1, 0, 0] | メッシュのモデル空間のピッチ軸 |
+| `frequency` | 1 | (0, 16]。位相 1 周あたりの波の周期数 |
+| `syncGroup` | 省略時は内部位相 | 指定時は空でない同期グループ名 |
+| `fallbackHz` | 1（仮） | [0, 20] Hz。内部位相の進む速さ |
+| `strength` | 1 | [0, 1]。文脈の重みへ掛ける倍率 |
+
+各関節へ次の角度を加える。`A_i(speed)` は数値の振幅、または速度のカーブの区分線形補間で、カーブの範囲外は端の値を使う。速度は駆動信号の `Speed`、信号が無ければ 0。
+
+```text
+θ_i = A_i(speed) * sin(2π * (frequency * p + phaseOffset_i)) * strength * context.Weight
+```
+
+`p` は名前で指す同期グループの位相。所有者の Animator の `FindSyncGroup(Identity name)` で添字を引き、`PoseModifierContext::SyncPhases` の同じ添字を使う。`FindSyncGroup` はグラフ未設定・名前未検出なら `Animation::InvalidAnimNode`（UINT32_MAX）を返す。所有者・Animator・有効な同期位相が無ければ、0 から始まる内部位相を `fallbackHz * DeltaSeconds` だけ進めて [0, 1) に折り返す。同期位相を使う間は内部位相を進めない。
+
+`yaw` は `upAxis`、`pitch` は `rightAxis` の正回転を関節のグローバル回転へ左から掛ける。軸はメッシュノードの回転で配分用の空間へ変換する。`strength * context.Weight` が 0 なら姿勢に触らずビット一致で保つ。modifier の `Apply` が呼ばれる場合は、その間も内部位相を進めるが、設定ラッパーの `weight=0` は `Apply` 自体を省略する。
+
+### Look の設定と目標
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `chain` | 必須 | 1 関節以上の配列。根側から先端側へ後の関節が前の関節の子孫になる順で、重複しない。直接の親子でなくてもよい |
+| `chain[].joint` | 必須 | 骨格にある関節名 |
+| `chain[].weight` | 必須 | 非負の有限 float。全関節の和は 1 ± 1e-4 |
+| `head` | `chain` の最後の関節 | 最後の関節自身、またはその子孫の関節名 |
+| `forwardAxis` | [0, 0, 1] | メッシュのモデル空間の前方軸 |
+| `upAxis` | [0, 1, 0] | メッシュのモデル空間の上方軸。正規化後の前方軸との内積の絶対値が 0.9999 未満。前方を保って直交化する |
+| `lookAxis` | バインド姿勢から計算 | 頭のローカル空間の注視軸。省略時は、メッシュのモデル空間での bind の頭の回転の逆で `forwardAxis` を変換して求める（メッシュノードの回転を含む） |
+| `maxYawDeg` | 70（仮） | (0, 180] 度 |
+| `maxPitchDeg` | 40（仮） | (0, 90] 度 |
+| `halfLife` | 0.12（仮） | 正の有限 float、秒。角度の臨界減衰 |
+| `maxAngularAccelDeg` | 2000（仮） | 正の有限 float、度/s^2。各軸の角加速度の上限 |
+| `holdSlot` | 省略時は保持を参照しない | 指定時は空でない保持スロット名 |
+| `holdWeightScale` | 0.5（仮） | [0, 1]。指定スロットの占有数が 0 より大きい間の重みの倍率 |
+| `strength` | 1 | [0, 1]。文脈の重みへ掛ける倍率 |
+
+目標は `AnimatorComponent::SetLookTarget(priority, target)` で登録する。`AnimatorLookTarget` は `None()`（目標なし）・`AtWorldPosition(position)`（ワールド位置）・`AtEntity(objectId)`（所有者と同じ World の Entity）の 3 種。大きい優先度が優先され、同じ優先度への登録は置き換える。非有限のワールド位置の登録は無視する。`ClearLookTarget(priority)` は指定した優先度だけを消し、未登録なら何もしない。
+
+Look は毎フレーム、所有者の Animator の `TryResolveLookTarget(outWorldPosition)` で最高優先度の 1 件だけを引く。Entity はそのつど ObjectId から検索し、現在のワールド位置を使う。未登録・`None`・Entity の World 不在・Entity 消失なら false を返して出力を保ち、低い優先度には落ちず目標なしとして扱う。`None` は低い優先度の目標を明示的に抑えるためにも使える。
+
+毎フレームの未加工の姿勢を入力し、頭の現在の注視方向と、頭から目標への方向をメッシュのモデル空間で測る。右は `upAxis × forwardAxis`。正のヨーは右、正のピッチは上を向く。現在の注視方向との差を目標角とし、ヨー差は最短角に折り返す。目標角は次の楕円の円錐に制限し、範囲外なら両角を同じ倍率で縮める。
+
+```text
+(yaw / radians(maxYawDeg))^2 + (pitch / radians(maxPitchDeg))^2 <= 1
+```
+
+角度を `halfLife` の臨界減衰で追い、ヨー・ピッチの各角速度の 1 フレームの差を `radians(maxAngularAccelDeg) * DeltaSeconds` 以下に制限する。角度は制限後の角速度 × `DeltaSeconds` だけ進める。内部の角度は rad、角速度は rad/s。角度へ `strength * context.Weight` と保持中の `holdWeightScale` を掛けた向きに、チェーンの配分で頭を向ける。
+
+前フレームの回転後と回転前の頭の位置のずれをメッシュのモデル空間で保持し、今フレームの未加工姿勢の頭の位置に足した推定位置から目標方向を測る。視差を含む目標角を楕円の円錐で制限し、臨界減衰と角加速度の上限を通す。回転後に頭の位置のずれを更新し、回さなかったフレームではゼロにする。目標なしではヨー・ピッチの目標を 0 にして、アニメーションの姿勢へ平滑に戻る。
+
+3 型とも、必須キーの欠けは `MissingKey`、型違いは `TypeMismatch`、未知の関節名は `UnknownJoint`、不正な数値・軸・配列や関節の条件違いは `OutOfRange` で拒否する。未知キー・重複キーは `UnknownKey`・`DuplicateKey`。設定を受け入れられない場合は前の modifier 群を保ち、`PoseModifierConfigReport.Path` が該当する設定を指す。
+
+### 設定例
+
+次は 3 型を並べた `*.posemod.json` の例。関節名・同期グループ名・保持スロット名は使用する骨格・グラフ・保持スロットの定義に合わせる。Lean の `BankAngle`・`PitchAngle` はグラフの Float parameter として用意し、移動から与える。移動の `VisualPose` の傾きは `SetVisualTiltScale(0)` で無効にする。
+
+```json
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "type": "Lean",
+      "settings": {
+        "source": "params",
+        "chain": [
+          {"joint": "SpineRoot", "weight": 0.4},
+          {"joint": "Chest", "weight": 0.6}
+        ]
+      }
+    },
+    {
+      "type": "Spine",
+      "settings": {
+        "joints": [
+          {"joint": "SpineRoot", "amplitude": [{"speed": 0, "value": 0}, {"speed": 4, "value": 0.03}]},
+          {"joint": "Chest", "amplitude": 0.02, "phaseOffset": 0.25}
+        ],
+        "axis": "yaw",
+        "syncGroup": "gait",
+        "fallbackHz": 1
+      }
+    },
+    {
+      "type": "Look",
+      "settings": {
+        "chain": [
+          {"joint": "Neck", "weight": 0.4},
+          {"joint": "Head", "weight": 0.6}
+        ],
+        "holdSlot": "Mouth",
+        "holdWeightScale": 0.5
+      }
+    }
+  ]
+}
+```
+
+## ばねの二次運動と首・胸の遅れ
+
+組み込みの 6 型のうち、次の 2 型が二次運動と首・胸の遅れを担う。既定の `order` では足 IK（`FootIK`: 500）の後に掛かり、二次運動を加えてから首・胸の遅れを重ねる。明示した `order` があればそちらを使う。
+
+| type | 実装 | 既定の order |
+|---|---|---:|
+| SpringBone | SpringBoneModifier | 700 |
+| FollowThrough | FollowThroughModifier | 710 |
+
+### SpringBone の設定
+
+`settings` のキーは `chains` と `teleportDistance`。各チェーンのキーと合わせ、数値はすべて有限値でなければならない。区間の丸括弧は端を含まず、角括弧は端を含む。
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `chains` | 必須 | 1 本以上のチェーンの配列 |
+| `teleportDistance` | 1.0 | (0, 1000] m。所有者の 1 フレームの移動の閾値 |
+| `chains[].name` | 必須 | 文字列。同じ設定内のチェーン名は一意 |
+| `chains[].joints` | 必須 | 2 関節以上の名前の配列。根側から先端側へ直接の親子で連続し、別チェーンと関節を共有しない。最初の関節はアニメ姿勢に従う固定の根 |
+| `chains[].stiffness` | 80 | (0, 10000] s^-2 |
+| `chains[].damping` | 8 | [0, 100] s^-1 |
+| `chains[].gravity` | [0, 0, 0] | ワールド空間の加速度 [m/s^2]。3 要素の配列で各成分は [-100, 100] |
+| `chains[].drag` | 0 | [0, 100] s^-1 |
+| `chains[].radius` | 0 | [0, 10] m |
+| `chains[].rotationLimitDeg` | 60 | (0, 180] 度 |
+
+必須キーの欠けは `MissingKey`、型違いは `TypeMismatch`、数値・配列の範囲外、親子の不連続、チェーン間の関節共有は `OutOfRange`、未知の関節名は `UnknownJoint`。未知キーは `UnknownKey`、キーの重複とチェーン名の重複は `DuplicateKey` で拒否する。`PoseModifierConfigReport.Path` は、たとえば `modifiers[0].settings.chains[0].stiffness` のように問題の設定を指す。設定の検証に失敗した場合は前の modifier 群を保つ。
+
+### SpringBone の粒子と姿勢への反映
+
+粒子の位置と速度はワールド空間で保持する。各フレームのアニメ姿勢から求めたワールド位置を目標とするため、所有者の加速に対して先端が遅れ、その後目標へ戻る。`SpringStepAccumulator` による固定サブステップは `h = 1/120` 秒、1 回の `Apply` で最大 4 回。1 ステップ未満の余りは持ち越し、上限後にも 1 ステップ分に近い時間が残れば余り全体を捨てる。直前の評価で捨てた秒数は `GetLastDroppedSeconds` で取得できる。
+
+固定の根以外を、ばね・速度に比例する減衰と抗力・重力・風の加速度で半陰的オイラー積分する。`pAnim` はアニメ姿勢のワールド位置、`p` と `v` は粒子の位置と速度である。
+
+```text
+a = stiffness * (pAnim - p) - (damping + drag) * v + gravity + windAcceleration
+v = v + a * h
+p = p + v * h
+```
+
+各サブステップで、根から先端へ順に親粒子からの距離をアニメ姿勢の骨の長さに拘束し、拘束後の位置で `v = (p - pPrevious) / h` と速度を置き直す。粒子の方向が退化した場合はアニメ姿勢の骨の方向を使う。長さが 0 の骨では親粒子の位置へ戻す。
+
+粒子を `MeshToWorld` の逆変換と `MeshNodeTransform` で角度計算の空間へ戻し、現在の骨の方向から粒子の方向への差を `FromToRotation` で求める。差の角度を `rotationLimitDeg` で切り、単位回転から文脈の重み（0〜1 に制限）で補間して親関節のグローバル回転へ左から重ね、ローカル回転へ戻す。先端の位置を向けるために親の回転を変え、ローカルの並進・スケールは変えない。
+
+初回、`RequestReset` 後、所有者の 1 フレームの移動が `teleportDistance` を超えたとき、または粒子の位置・速度が非有限になったときは、粒子をアニメ姿勢へ、速度と刻みの余りを 0 へ戻す。所有者の World の Tick の通し番号が前回の評価から 2 以上進んだ場合（評価停止や重み 0 からの復帰など）、または戻った場合も同様に戻す。同じ番号での再評価では戻さず、所有者か World がない場合は通し番号による判定をしない。目標位置や入力、積分途中などで非有限を検出して安全に処理できない場合は、リセットを要求し、有効な入力での次の評価で戻す。回転の反映途中に失敗した場合は書き換えた姿勢も復元する。不正な `DeltaSeconds`（非有限・負値）は `Apply` が拒否する。
+
+重力・風が 0 なら静止した所有者のアニメ姿勢へ収束する。重力が 0 でない場合は、静止してもばねと重力が釣り合う分だけアニメ姿勢から垂れる。v1 では `radius` を受け取るが計算には使わず、球コライダーとの衝突はない。風は `SetWindAcceleration` の入力口だけで、既定は 0。風の場は GR46 の範囲である。
+
+### FollowThrough の設定と角度の追従
+
+`settings` の数値はすべて有限値でなければならない。
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `joints` | 必須 | 1 関節以上の名前の配列。重複せず、根側から先端側へ後の関節が前の関節の子孫になる順。直接の親子でなくてもよい |
+| `head` | 省略時は補償なし | `joints` の最後の関節の子孫の名前 |
+| `frequencyHz` | 2.0（仮） | (0, 30] Hz |
+| `dampingRatio` | 0.7（仮） | (0, 1] |
+| `massScale` | 1.0 | (0, 100] |
+| `heldSlot` | 省略時は保持を参照しない | 指定時は空でない文字列 |
+| `heldMassScale` | 1.0 | (0, 100] |
+| `strength` | 0.25（仮） | [0, 1] |
+
+必須キーの欠けは `MissingKey`、型違いは `TypeMismatch`、範囲外・関節の重複や順序違い・不正な `head` は `OutOfRange`、未知の関節名は `UnknownJoint`。未知キー・重複キーは `UnknownKey`・`DuplicateKey` で拒否する。
+
+関節ごとに `AngularSpring` を持ち、モデル空間のグローバル回転を追う。ここでの回転は「角度の配分」と同じく、メッシュノードの逆変換を掛ける前の空間の回転である。実効の周波数は `frequencyHz / sqrt(massScaleEffective)`。`massScaleEffective` は通常 `massScale` で、所有者の `HoldSlotComponent` にある `heldSlot` の占有数が 0 より大きい間だけ `heldMassScale` を掛ける。保持物の質量の倍率を `HoldSlotComponent` から読むことはなく、設定値を使う。`heldMassScale > 1` なら周波数が下がり、遅れが大きくなる。所有者の World の Tick の通し番号が前回の評価から 2 以上進んだ場合（評価停止や重み 0 からの復帰など）、または戻った場合は、ばねの状態をアニメ回転へ戻す。
+
+ばねの回転とアニメ回転の残差を、`strength` × 文脈の重み（積を 0〜1 に制限）で単位回転から補間し、アニメのグローバル回転へ左から重ねる。実効の重みが 0 のときは姿勢を書き換えず、ビット一致で保つ。`head` を指定すると、そのグローバル回転を補正前のアニメの値へ戻す。胸・首を `joints`、頭を `head` に指定すれば、頭の向きはアニメのまま胸と首だけが遅れる。
+
+### 設定例
+
+次の関節名・チェーン名・保持スロット名は例であり、使用する骨格と保持スロットの定義に合わせる。尾の `TailRoot` → `TailMid` → `TailTip` は直接の親子、`Chest` → `Neck` → `Head` は祖先から子孫の順を表す。
+
+```json
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "type": "SpringBone",
+      "settings": {
+        "teleportDistance": 1.0,
+        "chains": [
+          {
+            "name": "Tail",
+            "joints": ["TailRoot", "TailMid", "TailTip"],
+            "stiffness": 80,
+            "damping": 8,
+            "gravity": [0, 0, 0],
+            "drag": 0,
+            "radius": 0,
+            "rotationLimitDeg": 60
+          }
+        ]
+      }
+    },
+    {
+      "type": "FollowThrough",
+      "settings": {
+        "joints": ["Chest", "Neck"],
+        "head": "Head",
+        "frequencyHz": 2.0,
+        "dampingRatio": 0.7,
+        "massScale": 1.0,
+        "heldSlot": "Hand",
+        "heldMassScale": 2.0,
+        "strength": 0.25
+      }
+    }
+  ]
+}
+```
 
 ## ソケットと保持
 

@@ -75,6 +75,9 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER CombatFrameRateInvarianceTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatFrameRateInvarianceTest.cpp
     MEMBER CombatMultiHitTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatMultiHitTest.cpp
     MEMBER CombatLifecycleTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatLifecycleTest.cpp
+    MEMBER CombatJointFollowTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatJointFollowTest.cpp
+    MEMBER CombatProfileLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatProfileLoadTest.cpp
+    MEMBER CombatResponseTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatResponseTest.cpp
     MEMBER HealthComponentTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/HealthComponentTest.cpp
     MEMBER EnemyDefinitionLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp
     MEMBER EnemyPatternSelectionTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyPatternSelectionTest.cpp
@@ -133,6 +136,9 @@ add_test(NAME CombatLayerTest COMMAND PhysicsDynamicsTest --test=CombatLayerTest
 add_test(NAME CombatFrameRateInvarianceTest COMMAND PhysicsDynamicsTest --test=CombatFrameRateInvarianceTest)
 add_test(NAME CombatMultiHitTest COMMAND PhysicsDynamicsTest --test=CombatMultiHitTest)
 add_test(NAME CombatLifecycleTest COMMAND PhysicsDynamicsTest --test=CombatLifecycleTest)
+add_test(NAME CombatJointFollowTest COMMAND PhysicsDynamicsTest --test=CombatJointFollowTest)
+add_test(NAME CombatProfileLoadTest COMMAND PhysicsDynamicsTest --test=CombatProfileLoadTest)
+add_test(NAME CombatResponseTest COMMAND PhysicsDynamicsTest --test=CombatResponseTest)
 add_test(NAME HealthComponentTest COMMAND PhysicsDynamicsTest --test=HealthComponentTest)
 add_test(NAME EnemyDefinitionLoadTest COMMAND PhysicsDynamicsTest --test=EnemyDefinitionLoadTest)
 add_test(NAME EnemyPatternSelectionTest COMMAND PhysicsDynamicsTest --test=EnemyPatternSelectionTest)

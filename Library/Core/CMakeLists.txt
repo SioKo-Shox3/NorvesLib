@@ -14,6 +14,7 @@ set(PRIVATE_SOURCES
     Private/Save/SaveMigration.cpp
     Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
+    Private/Save/SettingsStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
@@ -41,6 +42,8 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/CookedTerrainWriter.cpp
     Private/Asset/CookedTerrainLoader.cpp
+    Private/Asset/CookedGrassFieldWriter.cpp
+    Private/Asset/CookedGrassFieldLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -62,6 +65,8 @@ set(PRIVATE_SOURCES
     Private/Particle/ParticleSystem.cpp
     Private/Vegetation/GrassSpecies.cpp
     Private/Vegetation/GrassField.cpp
+    Private/Vegetation/GrassFieldAsset.cpp
+    Private/Vegetation/TerrainGroundHeightSource.cpp
     Private/Vegetation/Vegetation.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
@@ -124,9 +129,16 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
+    Private/Animation/BodyBalance.cpp
+    Private/Animation/FootIKModifier.cpp
     Private/Animation/Procedural/AngleDistribution.cpp
     Private/Animation/Procedural/Spring.cpp
     Private/Animation/Procedural/PoseModifierConfig.cpp
+    Private/Animation/Procedural/BodyLeanModifier.cpp
+    Private/Animation/Procedural/SpineWaveModifier.cpp
+    Private/Animation/Procedural/LookAtModifier.cpp
+    Private/Animation/Procedural/SpringBoneModifier.cpp
+    Private/Animation/Procedural/FollowThroughModifier.cpp
     Private/Animation/AnimationEvents.cpp
     Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
@@ -415,6 +427,7 @@ set(PRIVATE_SOURCES
     Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/TerrainComponent.cpp
+    Private/Component/GrassFieldComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -460,6 +473,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputBindingJson.cpp
     Private/Input/InputBindingPersistence.cpp
     Private/Input/WorkingDirectoryInputBindingStore.cpp
+    Private/Input/SettingsInputBindingStore.cpp
     Private/Input/InputMapper.cpp
     Private/Input/InputRebindCaptureManager.cpp
     Private/Input/InputDebugOverlayController.cpp
@@ -493,6 +507,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveMigration.h
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
+    Public/Save/SettingsStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -501,6 +516,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/CookedTerrainFormat.h
+    Public/Asset/CookedGrassFieldFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
@@ -557,6 +573,8 @@ set(PUBLIC_HEADERS
     Public/Particle/ParticleSystem.h
     Public/Vegetation/GrassSpecies.h
     Public/Vegetation/GrassField.h
+    Public/Vegetation/GrassFieldAsset.h
+    Public/Vegetation/TerrainGroundHeightSource.h
     Public/Vegetation/Vegetation.h
     Public/Vegetation/GroundHeightSource.h
     Public/Rendering/GrassFieldRenderData.h
@@ -592,9 +610,16 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
+    Public/Animation/BodyBalance.h
+    Public/Animation/FootIKModifier.h
     Public/Animation/Procedural/AngleDistribution.h
     Public/Animation/Procedural/Spring.h
     Public/Animation/Procedural/PoseModifierConfig.h
+    Public/Animation/Procedural/BodyLeanModifier.h
+    Public/Animation/Procedural/SpineWaveModifier.h
+    Public/Animation/Procedural/LookAtModifier.h
+    Public/Animation/Procedural/SpringBoneModifier.h
+    Public/Animation/Procedural/FollowThroughModifier.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
     Public/Component/HoldSlotComponent.h
@@ -788,6 +813,7 @@ set(PUBLIC_HEADERS
     Public/Component/MeshComponent.h
     Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
+    Public/Component/GrassFieldComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

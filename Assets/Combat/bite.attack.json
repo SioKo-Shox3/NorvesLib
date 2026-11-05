@@ -1,0 +1,17 @@
+{
+  "id": "bite",
+  "damage": 15,
+  "stagger": 3,
+  "hitStopSeconds": 0.04,
+  "rehit": "oncePerVictim",
+  "perVictim": "firstPart",
+  "hitFactions": ["player"],
+  "hitboxes": [
+    {
+      "joint": "Head",
+      "windowEvent": "Bite",
+      "maxDurationSeconds": 0.2,
+      "shape": { "type": "sphere", "center": [0, 0, 0.25], "radius": 0.3 }
+    }
+  ]
+}

@@ -104,6 +104,12 @@ namespace NorvesLib::Modules::Audio
         virtual AudioResult PlayAt(SoundId id, const Math::Vector3& position, const SoundPlayParams& params, SoundInstanceHandle& outHandle) = 0;
         virtual AudioResult Stop(SoundInstanceHandle handle, const SoundFade& fade) = 0;
         virtual AudioResult StopOwner(uint64_t ownerKey, const SoundFade& fade) = 0;
+        /**
+         * @brief 持ち主を解放し、ループはフェード停止、ワンショットは持ち主を外して最後まで再生する。
+         * @details 全てを停止する StopOwner と異なり、ワンショットは以後そのキーの停止対象にならない。
+         * fade の Seconds が負の場合、ループごとの定義の既定フェードを使う。
+         */
+        virtual AudioResult ReleaseOwner(uint64_t ownerKey, const SoundFade& fade) = 0;
         virtual AudioResult SetVolume(SoundInstanceHandle handle, float volume) = 0;
         virtual AudioResult SetPitch(SoundInstanceHandle handle, float semitones) = 0;
         [[nodiscard]] virtual bool IsPlaying(SoundInstanceHandle handle) const = 0;
