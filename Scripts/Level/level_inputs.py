@@ -307,6 +307,7 @@ class SceneEntity:
     world_position: tuple[float, float, float]
     children: list[str]
     components: dict[str, dict[str, object]]
+    root_index: int = 0
 
 
 @dataclass
@@ -315,6 +316,11 @@ class Scene:
 
     entities: list[SceneEntity]
     path: str
+
+    def child_entities(self, entity) -> list[SceneEntity]:
+        """同じルートの子を、保存された children の順に返す。"""
+        entities = {child.alias: child for child in self.entities if child.root_index == entity.root_index}
+        return [entities[alias] for alias in entity.children if alias in entities]
 
     def by_alias(self, alias) -> SceneEntity | None:
         """一致する最初の Entity を返す。alias は保存時のルートごとに局所的。"""
@@ -456,7 +462,7 @@ def load_scene(path) -> Scene:
             name = properties.get("Name", "")
             if not isinstance(name, str):
                 _fail(path, f"{key}.object.properties.Name", "名前は文字列で指定してください。")
-            scene.entities.append(SceneEntity(alias, parent_alias, name, local_position, world_position, child_aliases, components))
+            scene.entities.append(SceneEntity(alias, parent_alias, name, local_position, world_position, child_aliases, components, index))
             transform = (world_position, world_rotation, world_scale)
             for i in range(len(children) - 1, -1, -1):
                 stack.append((children[i], f"{key}.children[{i}]", transform, alias))

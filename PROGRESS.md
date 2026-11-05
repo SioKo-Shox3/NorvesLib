@@ -10345,3 +10345,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR93-MARKERS-SNAP): 束の試験のソースをビルドの最中に書き換えると、obj がソースより新しい時刻のまま古い中身を持ち、増分ビルドが作り直さないことがある（ソースの更新時刻を今にすると直る）。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに化けて MSB1008 になる。
 - U1 シーン・地形のソース・設定の読み込み: 着地(直し 0 回)
 - U2 斜度・水・通行・連結成分・A* の格子の計算: 着地(直し 0 回)
+- U3 検査 (a)〜(f)・報告の書き出し・CLI・設定の雛形: 着地(直し 0 回)
