@@ -10084,3 +10084,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: grassland の低木・株・倒木のメッシュを cook し（今は手続きの仮の株と cook されない倒木の仮のパス）、散布の見た目を手本と並べて合わせる。
 - 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
 - Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
+
+## 2026-11-05 G10-GR19-ANCHOR-CORE（run 20261105-144354 の反復 1、着手）
+- 試験を足す前の 3 点（Docs/Testing.md の約束。SkinnedSurfaceAnchorTest を SkeletalAnimationSamplingTest へ足す・GeometryIntersectionExtraTest へ 1 ケース足す）:
+  - 反証する契約: アンカーの位置は「三角形の 3 頂点を SkinPosition でスキニングして重心で補間し持ち主のワールドを掛けた値」と一致する／回る関節のアンカーの速度は ω×r に一致する／関節のバケットの探索は候補の関節の中で総当たりと同じ三角形を返し、調べる三角形が少ない／MeshRevision の不一致・潰れた三角形・NaN のパレット・範囲外の三角形で落ちずに無効か落ちる先（関節のフレーム）を返す／62.5 ms のキーの継ぎ目で平滑の加速度の尖りが抑えられる（平滑なしでは閾値を超え、試験が効いていることも確かめる）／重心座標つきの交差の (u, v) が交点を再現し、既存の RayIntersectsTriangle の結果を変えない。
+  - 撮影・検証レイヤー・ログで気づけるか: 気づけない。この部品の呼び出し側（突き立ての結線 G10-GR19-ANCHOR-ATTACH・表面の放出 GR57-P6）はまだ無く、画面に出ない純粋な計算なので、数 mm のずれ・バケットの取りこぼし・平滑の効き不足は撮影でも見えない。
+  - 失敗が黙って起きるか: 起きる。重心の取り違え・巻きの反転・バケットの取りこぼしは例外も警告も出さず、少しずれた点や Miss を返すだけになる。
+- U1 重心座標つきのレイと三角形の交差: 着地(直し 0 回)
+- U2 SkinnedMeshComponent にパレットを読む口: 着地(直し 0 回)
+- U3 表面のアンカーの評価・関節のバケット・突き立ての点の探索: 着地(直し 0 回)
+- Notes: 要起票: `SkinnedMeshResource::SetIndices` は `GetPoseRevision()` を進めないので、インデックスだけを差し替えると古いアンカーと `JointTriangleBuckets` がリビジョンの照合で見つからない。別のメッシュどうしでリビジョンの値が一致しても照合を通る。
+- U4 アンカーの速度と加速度の平滑: 着地(直し 0 回)
+- U6 文書（AnimationRuntime.md と Testing.md）: 着地(直し 1 回)
+- U5 表面のアンカーの試験と最後の確かめ: 着地(直し 1 回)
+- Done: スキンメッシュの表面のアンカーの純粋な部品を Core に足した。`Library/Core/Public/Animation/SkinnedSurfaceAnchor.h`（`SurfaceAnchorDesc`・`SurfaceAnchorFrame`・`SurfaceAnchorPoseView`・`EvaluateSurfaceAnchor`・`JointTriangleBuckets`・`StabQuery`/`StabResult`・`FindSurfacePoint`・`SurfaceAnchorMotion`）、`Math::RayIntersectsTriangleBarycentric`、`SkinnedMeshComponent::TryGetBonePalette`。規約は `Docs/Architecture/AnimationRuntime.md` の「スキンメッシュの表面のアンカー」。試験は `SkeletalAnimationSamplingTest` の中の `SkinnedSurfaceAnchorTest`（位置の最大誤差 2.7e-7、ω×r の相対誤差 4.3e-5、レイ 1000 本で Hit 553 本が総当たりと一致・1 関節の候補で 128/512 三角形、平滑のピーク/平均 2.07（なし 3.84・閾値 2.5））と `GeometryIntersectionExtraTest` の 1 ケース。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final.txt` で確かめた。
+- Next: ランナーの評価者の反証（危険地帯の Public API `SkinnedMeshComponent`）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: アプリを起動する確かめは無い。平滑の時定数（既定 0.08 s）と `MaxSpeed`・`MaxAcceleration`・`MaxDeltaTime` の既定値は仮。`FindSurfacePoint` で退化した三角形だけを試した場合の理由は `BeyondSnapDistance` になり、ヘッダのコメント（「有効な候補三角形を一つも試せない場合は NoCandidates」）と読みが少しずれる（文書は実装に合わせた）。試験の呼び出しを足すため `Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp` に 2 行足した（paths の外だが done-when (5) の `AnimEventPropertyTest` と同じ形に要る）。
+- U7 バケットの探索の試験を候補を絞った探索と総当たりの比較にし、NoCandidates のコメントを実装に合わせる: 着地(直し 0 回)
+- Done（反復 5、差し戻しの直し）: バケットの探索の試験で、総当たりが当たったレイ 553 本ごとに、素材が決めた期待関節（頂点の重みが最大の関節）1 つだけを候補にして `FindSurfacePoint` を呼び、三角形・(u, v)・距離が総当たりと一致し、調べた三角形が期待関節の三角形数（構築時の記録から数えた 128）で全体 512 より少ないことを確かめるようにした。関節の選び方を重みが最小の関節に反転させると「絞った探索と総当たりの Hit が一致」などで落ち、戻すと合格することを確かめた。ヘッダの NoCandidates の説明を実装（スキニングできる三角形が無いときだけ。退化した三角形だけなら BeyondSnapDistance）に合わせた。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final-iter5.txt` で確かめた。
+- Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
