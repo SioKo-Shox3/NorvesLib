@@ -5594,7 +5594,7 @@
 - notes: 犬の脚は 3 節の趾行性で、v1 は「下節の向きを保つ二関節 IK」（要件 `#### GR14` の設計案【ソルバ】(2)）。四足の後脚の膝・飛節は反転しやすいので、ポールは bind 姿勢の曲がりから求めて固定する（ロードマップ G9 のリスク）。ポールや向きの軸はモデル空間で持ち、bind 姿勢から関節ローカルへ変換する（骨の軸の規約に依存しない）。設定は骨格単位の実行時サイドカー（`G9-GR15-POSE-MODIFIER-BASE` の `*.posemod.json`）に置き、GR78 の import.json の ik 節にはしない（「段階をまたぐ注意」の G9 の項）。数値（sole 0.02、maxStretch 1.02、maxDrop 0.25、maxRaise 0.1、smoothTime 0.12 など）は要件の設計案の仮の値を既定にする。非一様スケールの骨がある脚は警告して IK を掛けない（要件のリスク）。足の固定と着地は `G9-GR14-FOOT-PLANT`。地形のコライダー（GR38）は非ゴール。出典: 要件 `#### GR14` の【骨盤・体の高さ補正】【決定性】、受け入れ確認の LegIKModifierTest と PhysicsGroundQueryIntegrationTest の IK の部分。
 
 ## G9-GR14-FOOT-PLANT: 接地中の足の固定（足滑りの除去）と、着地の吸着を足 IK に足す
-- status: done
+- status: doing
 - after: G9-GR14-LEG-IK-BALANCE, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR14
 - needs-gr: GR10, GR11
