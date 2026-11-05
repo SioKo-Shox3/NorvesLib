@@ -125,6 +125,7 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalPoseRuntimeBuild.cpp
     Private/Animation/SkeletalPoseBuilder.cpp
     Private/Animation/SkeletalPoseBounds.cpp
+    Private/Animation/SkinnedSurfaceAnchor.cpp
     Private/Animation/PoseTypes.cpp
     Private/Animation/PoseOps.cpp
     Private/Animation/AnimParams.cpp
@@ -624,6 +625,7 @@ set(PUBLIC_HEADERS
     Public/Animation/BodyBalance.h
     Public/Animation/FootIKModifier.h
     Public/Animation/FootPlantState.h
+    Public/Animation/SkinnedSurfaceAnchor.h
     Public/Animation/Procedural/AngleDistribution.h
     Public/Animation/Procedural/Spring.h
     Public/Animation/Procedural/PoseModifierConfig.h
