@@ -9944,3 +9944,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し(G8-GR76-SETTINGS-CHECK): 通常の起動で `%LOCALAPPDATA%\NorvesLib\Game\settings.json` を読み(ログに `SETTINGS load=` の警告が出ないこと)、作業ディレクトリに `InputBindings.json` があれば `SETTINGS migration=migrated` が 1 回出て次の起動では出ないこと、`settings.json` の音量を変えて起動すると音量が反映されること。ランナーの評価者の反証(Public API・アセットの読み込みの危険地帯)。
 - Notes: 解像度・フルスクリーン・言語は保存と通知までで、適用は GR107・GR69・BootConfig の配線(G15 の DisplaySettings の項目が `SettingsStore` の値を読む)。ユーザーデータの領域を作れないときは作業ディレクトリの古い保存先へ戻り、ログに `SETTINGS storage=unavailable` を出す。
 - U1 serializer probe の PS 版の完全一致をやめ、5.1 の検査と版の記録にする: 着地(直し 0 回)
+
+## 2026-11-05 G2-S6-ASSET-SET-P6(run 20261105-113056 の反復 1、完了)
+- Done: `Scripts/VerifyTextureAssetSet.py` の serializer probe の包みで、PowerShell の版の完全一致(`5.1.20348.5622`)の固定をやめ、Windows PowerShell 5.1(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` と同じ規則)であることの検査に替えた。完全な版は包みが標準出力に `powershell_version=` で書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する(取れなければ止まる)。同じ PS5.1 の `ConvertTo-Json` 出力と native の `manifest.json` の byte の照合、`powershell.exe` の binary の hash の照合、凍結基準の JSON は変えていない。`Docs/Architecture/TextureAssetSetCook.md` の「PS5.1との互換」に、版は固定せず記録し、互換は byte の照合と binary の hash で保つことを書いた。
+- 理由: GitHub のランナーのイメージの更新(20261026.347.1 など)で PS5.1 の小さな版が上がり、probe が `PowerShell version changed` で止まったため。
+- 証拠: タスクの verify(文字列の検査と `python -B Test/Tools/TextureAssetSetVerifyTest.py -v`)が終了コード 0、4 tests OK。numstat の 2 通りは一致。
+- Next: CI での再確認(`windows-assetcook.yml` の完走)は G2-S6-ASSET-SET-P3 が受け持つ。CI の起動とプッシュはしていない。
+- Notes: binary の hash は固定のままなので、ランナーのイメージで `powershell.exe` 自体が差し替わると `固定PowerShell binaryと違います` で止まる(このタスクの契約で残す照合)。

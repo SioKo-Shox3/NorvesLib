@@ -6161,7 +6161,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。視点 clear_06・clear_10・clear_16（スプリングアームのカメラの高さ別。主人公は草の中に立つ犬の代わりの体）と引数 `grassland-view-clearance=off|cinematic`、解析の台本 `Scripts/Grass/ViewClearanceCaptureCheck.py` が無ければこの項目で足す。静止の 2 フレームの比べ方は、CaptureScene に `CaptureStartupScene.ps1` の `-StillRenderedFrames` に当たる仕組みが無ければ同じ視点を 2 回撮って比べる。しきい値は初回の実測で TSV に置き、根拠を PROGRESS に書く（先に数字を決めない）。切り抜きの半径の既定を変えたら、その理由（「草で視界が遮られる」をどこまで残したか）も書く。
 
 ## G2-S6-ASSET-SET-P6: `VerifyTextureAssetSet.py` の serializer probe で、PowerShell の版の完全一致の固定をやめて記録にし、byte の照合は残す
-- status: todo
+- status: done
 - done-when: 次の 4 点をすべて満たす。
   - `Scripts/VerifyTextureAssetSet.py` の serializer probe の包み(192 行の `$PSVersionTable.PSVersion.ToString() -ne "5.1.20348.5622"`)を、Windows PowerShell 5.1 であること(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` の 16 行と同じ規則)の検査に替える。完全な版の文字列は包みの標準出力に書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する。GitHub のランナーのイメージ(20261026.347.1 など)で PS5.1 の小さな版が上がっても、版の違いだけでは止まらない。
   - probe の契約は変えない。同じランナーの PS5.1 の `ConvertTo-Json` の出力と native の `manifest.json` の byte の一致の照合(202〜203 行。不一致なら `PS5.1 ASCII escape/format probe不一致`)は残し、正規化しない。`powershell.exe` の binary の hash の照合(72〜73 行、`receipt["powershell_sha256"]`)と凍結基準の `Docs/AssetCookTextureFrozenBaseline.json` は変えない。
