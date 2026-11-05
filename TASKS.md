@@ -10534,3 +10534,17 @@
   - 解き直しの重みは FootIK の脚の重みに従う。`--pose-modifiers-off` のときと、FootIK を OFF にしたときは掛けない。
   - 今のコードの事実: 合成の四足の前脚の根は Chest の子（`Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp:202, 205`）。FollowThrough は `TrySetJointGlobalRotation` で胸を回すので、部分木ごと動く（`Library/Core/Private/Animation/Procedural/FollowThroughModifier.cpp:297`）。ModifierOrderTest の既定の順では、足先と地面の平均誤差が 4 cm 残る（PROGRESS の G9-GR15-ORDER-DEBUG-VIEW 反復 1）。
   - Public API と姿勢の後処理の変更なので、評価者の反証を通す。見た目の確かめは `G9-GR15-AB-CAPTURE-CHECK` で行う。
+
+## G10-GR19-ANCHOR-ATTACH-P1: スキンメッシュのリビジョンをインデックスの差し替えで進め、別のメッシュどうしで値が重ならないようにして、古いアンカーと三角形のバケットの照合を確実に外す
+- status: todo
+- after: G10-GR19-ANCHOR-CORE
+- done-when: (1) `SkinnedMeshResource::SetIndices` が `GetPoseRevision()` を進める(split の資産で拒否する場合は進めない)。(2) 別々の `SkinnedMeshResource` のインスタンスが、作成・`SetVertices`・`SetIndices`・`SetSplitMesh`・`SetMeshNodeGlobalTransform`・`Unload` をどう重ねても同じリビジョンの値を持たない(例: プロセスで単調に増える番号から採る。シングルトンの `Get()` は作らない)。(3) `SkinnedSurfaceAnchorTest` に次を足して通る: インデックスだけを差し替えると、前の `SurfaceAnchorDesc` の `EvaluateSurfaceAnchor` が無効なフレームを返し、`JointTriangleBuckets::IsBuiltFor` が false になり、`FindSurfacePoint` が `InvalidInput` を返す。同じ内容で作った 2 つのメッシュの一方で作ったアンカーとバケットを、もう一方に使うと同じく外れる。(4) `SkinnedSurfaceAnchor.h` の `JointTriangleBuckets` のコメント(「リビジョンだけを照合するため、構築元と同じメッシュに使い…」)を新しい保証に合わせて直す。(5) リビジョンを照合する既存の姿勢の準備(`SkeletalPoseBuilder::IsPreparedFor`)の試験と、骨格の資源の寿命の試験が通る。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest ResourceRegistryTest SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|SkinnedRenderPathContractTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Resource/SkinnedMeshResource.h, Library/Core/Private/Resource/SkinnedMeshResource.cpp, Library/Core/Public/Animation/SkinnedSurfaceAnchor.h, Test/Core/Rendering/SkinnedSurfaceAnchorTest.cpp, TASKS.md, PROGRESS.md
+- from: G10-GR19-ANCHOR-ATTACH
+- notes: コードで確かめた。`SkinnedMeshResource.cpp` の `SetIndices`(152 行)は `m_PoseRevision` を進めない。リビジョンはインスタンスごとに 0 から数える。`EvaluateSurfaceAnchor`(279 行)と `JointTriangleBuckets::IsBuiltFor`(418 行)はリビジョンの値だけを照合し、メッシュが同じかどうかを見ない。そのため、資産を差し替えたあとも古いアンカーが通って、別のメッシュの三角形の番号を引いてしまう。G10-GR19-ANCHOR-ATTACH の done-when にある「資産の差し替えで外れる」は、この保証を前提にしている。Core の Public API と Resource の寿命に触れる危険地帯なので評価者を通す。起動はしない。
+
+---
+
+- 起動の要らない試験だけで確かめられるので `check: launch` は付けません。
