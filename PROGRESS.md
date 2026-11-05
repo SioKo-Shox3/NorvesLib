@@ -9838,14 +9838,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 性能は記録だけ（Debug、10 万回の平均）: SampleGround 0.53 µs/回、100 m の Raycast 0.72 µs/本（目安は RelWithDebInfo で SampleGround 0.2 µs・Raycast 5 µs）。スプラットは cook 済みの mip0（頂点ごと、重みの和 255）を読み、和が 255 でない・未使用のチャンネルが 0 でない NVTRN は `CreateFromCookedTerrain` が拒否する。照会は LOD0 と同じ対角で、LOD1 以上の見た目とは最大 maxVerticalError だけずれる。アプリを起動する確かめは無い。
 - Notes (G5-GR38-HEIGHTFIELD-QUERY、run 20261105-093022 の反復 1): 前回の評価が枠切れ(429)で未実施のため状態が doing に戻っていた。コードは 6d378713 から変わっておらず、その版の verify(MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed)を証拠に done に戻し、評価をランナーに回す。
 
-- U0 新しいファイルの足場と試験の登録・文書の項目を足す: 着地(直し 0 回)
-- U1 関節への束縛(遅延解決・判定からの除外・診断・弱い関節の警告)と CombatJointFollowTest: 着地(直し 0 回)
-- U2 攻撃・hurtbox・faction の JSON の読み込みと既定のデータ、CombatProfileLoadTest: 着地(直し 1 回)
-- U5 確認済みの当たりの反応の差分を当て直し、Debug・RelWithDebInfo だけの判定の形の表示を足して、タスクの verify を通す: 着地(直し 0 回)
+- U1 2 つのモディファイアの雛形・CMake 登録・型の表への登録・試験ファイルの雛形: 着地(直し 0 回)
+- U2 SpringBoneModifier の実装: 着地(直し 0 回)
+- U3 FollowThroughModifier の実装: 着地(直し 0 回)
+- U4 SpringBone の試験: 着地(直し 0 回)
+- U5 文書(AnimationRuntime.md・Testing.md): 着地(直し 0 回)
+- U6 FollowThrough の試験とタスクの verify: 着地(直し 0 回)
 
-## 2026-11-05 G8-GR16-JOINT-DATA-RESPONSE（run 20261105-093026 の反復 1、完了）
-- Done: hitbox と hurtbox の部位を同じ Entity の `SkinnedMeshComponent` の関節名へ束縛する（解決は最初の評価まで遅らせ、関節が無い・姿勢が未評価・資産が無効なフレームはその部位だけ判定から外して `CombatRuntimeDiagnostics::JointUnavailableCount` を数える。影響の弱い関節への束縛は閾値（データ）で警告）。`Assets/Combat/*.attack.json`・`*.hurtboxes.json`・`factions.json` を厳格に読み（必須の欠落・未知のキー・0 以下の半径・窓のイベント名の欠落・未知の faction・空の hitFactions をファイルとキーの道筋つきで拒否）、横薙ぎ・回転斬り・跳躍斬り・噛みつきと人型・四足の既定のデータを置いた。`OnAnyHit` を `HitEffectEmitter::SubmitHit`（位置・正規化した法線・部位の SurfaceName）へ写し、同じフレームの当たりのヒットストップのヒントの最大を `MaxHitStopSeconds` で頭打ちにして `TimeSystem::PushScale` を 1 回だけ要求する。どちらも `IGameplayModule::SetCombatResponseSettings` で切れる。`bDebugDraw`（既定は切）で hitbox・hurtbox・掃引の形を `GEngine.GetDebugDraw()` へ線で出す（`NORVES_ENABLE_DEBUG_OUTPUT` が 0 の Release では宣言・実装・呼び出しとも入らない）。試験 `CombatJointFollowTest`・`CombatProfileLoadTest`・`CombatResponseTest` を PhysicsDynamicsTest の束へ。
-- 証拠: `.harness/runs/20261105-093026/verify-G8-GR16-JOINT-DATA-RESPONSE-U5.txt`（Game・PhysicsDynamicsTest・HitEffectEmissionTest・SwordTrailRibbonTest の Debug ビルド終了コード 0、ctest で Combat 系 8 本・HitEffectEmissionTest・SwordTrailRibbonTest の 10 件 100% Passed、numstat 2 通り一致）。
-- 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
-- Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
-- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 1、完了）
+- Done: `SpringBoneModifier`（type `SpringBone`、既定の order 700）と `FollowThroughModifier`（type `FollowThrough`、既定の order 710）を足し、組み込みの型の表に登録した。SpringBone はワールド空間の粒子を 1/120 秒の固定サブステップ（最大 4 回、超えた時間は `GetLastDroppedSeconds` で返す）で半陰的オイラー積分し、骨の長さの拘束と回転の制限つきの `FromToRotation` で姿勢に重ねる。初回・`RequestReset`・`teleportDistance` を超える移動・非有限で状態をアニメ姿勢へ戻す。風は `SetWindAcceleration` の口だけ（既定 0）。FollowThrough は胸・首のモデル空間の回転を `AngularSpring` で遅らせ、`heldSlot` が埋まっている間は質量の倍率に `heldMassScale` を掛ける（既定の重み 0.25、仮）。`head` を指定すると頭の回転はアニメのまま
+- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify.txt`（verify のビルド EXIT=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest` 2/2 Passed。SpringBone: 静止後の先端の残差 0 m・加速中の遅れ −0.187 m・骨の長さの誤差 2.7e-8 m・テレポートと再初期化の後の残差 0・dt=0.5 で有限かつ捨てた秒数の誤差 2e-9。FollowThrough: 段の 0.05 秒後に胸・首が 51.3° 遅れ 3 秒後に差 0°、頭の誤差 1e-5°、重み 0 でビット差 0、保持中は遅れが 53.8°→58.3° に増える。保持の倍率を外す負の対照でケース 3 が落ちる）
+- Next: ランナーの評価者の反証（Public API の危険地帯）。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
+- Notes: `radius`（球コライダー）は受け取るだけで計算に使わない。風の場（GR46）は v1 の外
+- U7 評価の再開を World の通し番号で検知して状態を戻す(差し戻しの直し): 着地(直し 0 回)
+## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 2、差し戻しの直し、完了）
+- Done: SpringBone・FollowThrough の `Apply` が所有者の World の `GetTickSerial()` を覚え、前回の評価から 2 以上進んだ（または戻った）ときは評価の再開とみなしてアニメ姿勢へ戻すようにした。組み込みの型の表から作った modifier（外から `RequestReset` を呼べない）でも、`SetEvaluationEnabled` の停止と再開、重みのカーブが 0 から戻るときに状態が戻る。同じ番号での再評価と、所有者か World が無いときは今までどおり。文書のリセットの条件を直した
+- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify-2.txt`（verify のビルド EXIT=0、ctest 2/2 Passed。SpringBone case=7: 評価を 5 フレーム止めて所有者を 0.9 m 動かした後の再開のフレームで先端の残差 0 m・非有限 0。判定を外した負の対照では残差 0.386 m で落ちる。既存の 9 ケースの値は変わらない）
+- Next: ランナーの評価者の反証。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
+- Notes: 評価者の残課題（non-blocking）として、`FromToRotation` の約 0.26° の不感帯と、根の粒子をサブステップの間で補間していないことが残る

@@ -2221,6 +2221,7 @@ add_executable(SkeletalAnimationSamplingTest
     RootMotionMathTest.cpp
     TwoBoneIKTest.cpp
     PoseModifierBaseTest.cpp
+    ProceduralSpringModifierTest.cpp
     AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp
     ClipChannelSearchTest.cpp
