@@ -65,6 +65,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER WorldTickGroupTest WorldTickGroupTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
+    MEMBER EntityActiveInHierarchyTest EntityActiveInHierarchyTest.cpp
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
     MEMBER SpringArmComponentTest SpringArmComponentTest.cpp
     MEMBER WorldRenderInterpolationTest WorldRenderInterpolationTest.cpp
@@ -77,6 +78,8 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER EcsLifetimeTest EcsLifetimeTest.cpp
     MEMBER EcsHierarchyTest EcsHierarchyTest.cpp
     MEMBER ScatterSystemResidencyTest ScatterSystemResidencyTest.cpp
+    MEMBER StreamingCellStateMachineTest ${CMAKE_SOURCE_DIR}/Test/Core/Streaming/StreamingCellStateMachineTest.cpp
+    MEMBER StreamingBudgetTest ${CMAKE_SOURCE_DIR}/Test/Core/Streaming/StreamingBudgetTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -115,12 +118,15 @@ add_test(NAME EcsPropertyStorageTest COMMAND ObjectReflectionTest --test=EcsProp
 add_test(NAME EntitySubtreeSnapshotTest COMMAND SceneSerializerTest --test=EntitySubtreeSnapshotTest)
 add_test(NAME PrefabRoundTripTest COMMAND SceneSerializerTest --test=PrefabRoundTripTest)
 add_test(NAME TransformHierarchyTest COMMAND EntityTreeTest --test=TransformHierarchyTest)
+add_test(NAME EntityActiveInHierarchyTest COMMAND EntityTreeTest --test=EntityActiveInHierarchyTest)
 add_test(NAME EntityWorldAABBTest COMMAND EntityTreeTest --test=EntityWorldAABBTest)
 add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQueryOverlapTest)
 add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryRaycastTest --test=SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME ScatterSystemResidencyTest COMMAND EntityTreeTest --test=ScatterSystemResidencyTest)
+add_test(NAME StreamingCellStateMachineTest COMMAND EntityTreeTest --test=StreamingCellStateMachineTest)
+add_test(NAME StreamingBudgetTest COMMAND EntityTreeTest --test=StreamingBudgetTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 

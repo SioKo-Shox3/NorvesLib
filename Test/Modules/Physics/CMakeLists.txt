@@ -69,6 +69,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsHeightFieldColliderTest PhysicsHeightFieldColliderTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
+    MEMBER PhysicsParentDormancyTest PhysicsParentDormancyTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
     MEMBER PhysicsGroundQueryIntegrationTest PhysicsGroundQueryIntegrationTest.cpp
     MEMBER FollowCameraBehaviorTest FollowCameraBehaviorTest.cpp
@@ -117,6 +118,7 @@ target_compile_definitions(PhysicsDynamicsTest PRIVATE
 add_test(NAME PhysicsDynamicsTest COMMAND PhysicsDynamicsTest)
 
 add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsDynamicsTest --test=PhysicsLifecycleEventTest)
+add_test(NAME PhysicsParentDormancyTest COMMAND PhysicsDynamicsTest --test=PhysicsParentDormancyTest)
 
 add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsDynamicsTest --test=PhysicsFixedStepPipelineTest)
 add_test(NAME PhysicsGroundQueryIntegrationTest COMMAND PhysicsDynamicsTest --test=PhysicsGroundQueryIntegrationTest)

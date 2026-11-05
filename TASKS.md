@@ -6356,7 +6356,7 @@
 - notes: 設計はロードマップ 2028〜2052 行（GR09 の S0・S1）、完了条件は 2572〜2575 行。今のコードで確かめた事実（2026-11-03、`feature/scene-launcher`）: 固定ステップ（`PhysicsModule::StepFixed` PhysicsModule.cpp:215〜246）はブロードフェーズを 2 回作る（241 行と `PublishSnapshot` 1293〜1295 行）、`BuildBroadphase`（1302〜1343）は毎回全部のコライダーのプロキシを作り直し、`BuildCandidatePairs`（PhysicsBroadphase.cpp:1255〜1332）は X 区間の重なりしか見ない。行番号は G5-GR38-PHYSICS-HEIGHTFIELD（地形を SAP の外に置き、形の分岐を書き直す）の後でずれるので、着手時に読み直す。地形のコライダーは G5 のとおり SAP の外の別枠のままにする。ロードマップの GR41 のフェーズ 5（重複検査の撤去）はこの項目で済ませ、GR41 側では扱わない。試験を足す理由（Docs/Testing.md の 3 点）: 反証する契約は「速くした探索が、組・最近接・重なりの結果と順を素朴な総当たりから 1 つも変えない」こと。組の取りこぼしは、まれな配置で物が岩を抜ける・trigger が出ないとして長く遊んだときにだけ出て、撮影・ログでは気づけず、黙って起きる。参照実装は試験の中だけに置き、本体に残さない。危険地帯（物理の寿命・公開の挙動）なので評価者を通す。やらないこと: 静的の木（G12-GR09-STATIC-TREE）、Entity の無いコライダー（G12-GR09-DETACHED-COLLIDERS）、計測（G12-GR09-SCALE-MEASURE）。ReconcileActiveStates の二重ループの解消は親の休眠と一緒に G12-GR41-PARENT-DORMANCY で行う。
 
 ## G12-GR09-STATIC-TREE: 静的なコライダーを AABB の木に入れ、動く物だけを毎ステップ更新し、問い合わせも木でたどる
-- status: todo
+- status: done
 - after: G12-GR09-BROADPHASE-S0S1
 - gr: GR09
 - done-when: (S2) `PhysicsShapeProxy` に `bStatic`（既定 false）を足し、`PhysicsModule::BuildBroadphase` が「有効な Dynamic / Kinematic のボディを持たないコライダー」を静的にする。新設の `Library/Modules/Physics/Private/Physics/StaticAabbTree.{h,cpp}`（平らな配列の節、葉は 4 プロキシ以下、上からの最大軸の中央値の分割。重心を（座標・ハンドル）の順に並べて同じ入力から同じ木を作る）を `Library/Modules/Physics/CMakeLists.txt` の `PHYSICS_PRIVATE_SOURCES` に明示で足す。`PhysicsBroadphase::SetProxies` の署名は変えず、中で静的なプロキシを分け、静的の部分の署名（ハンドル・世代・形・変換後の値）が前回と同じなら木を使い回し、違えば 1 ステップに最大 1 回作り直す。動く物どうしは今の X 軸の SAP、動く物と静的は動く物の AABB で木に問い合わせ、組は（First, Second）の正規形で整列して G12-GR09-BROADPHASE-S0S1 と同じ候補の順を保つ。作業用と公開用の 2 つのブロードフェーズは、変わらない木を `TSharedPtr`（`Container/PointerTypes.h`）で共有する。(S3) `PhysicsBroadphase::VisitProxiesInAabb`・`VisitProxiesAlongRay`（今 PhysicsBroadphase.cpp:704〜728。`VisitProxyCandidates` の全プロキシの走査）の中だけを、木の走査（レイは手前から訪れて打ち切る）＋動く物の線形走査にし、結果はハンドルの順に整える。同距離の最近接は大きいハンドルが勝つ規則（872 行）を保つ。公開の API と PhysicsModule からの呼び方は変えない。`PhysicsBroadphaseScaleTest` にケースを足して通る: 静的 5000＋動く 50 で、静的が変わらない定常のステップは木の作り直しが 0 回、狭域判定の回数が 動く数×16 以下、ResolveContacts のプロキシの探索が 組の数×log2(P) 以下。静的を 1 個動かしたステップは作り直しがちょうど 1 回。入力の順を入れ替えても、同じ入力で 2 回作っても、同じ木（節の並び）と同じ問い合わせの結果。素朴な参照との差分（組・Raycast・Overlap・掃引）が混ざった形 2000 個で完全に一致する。Body の無い Entity を `SetWorldTransform` で動かすと次のステップに反映される既存の契約（`PhysicsBroadphaseQueryTest` の `TestSnapshotScaleAndRayContract`）と、G12-GR09-BROADPHASE-S0S1 の verify の既存の試験が全部通る。
@@ -6387,7 +6387,7 @@
 - notes: ロードマップ 2577 行は Release の計測だが、計測は RelWithDebInfo で行う（AGENTS.md の絶対規則 8）。アプリは起動しないが、時間を測るので利用者がほかのアプリを使っていない時に回す（CPU だけで GPU は使わない）。「S0 前」の値は、改修前のコードを戻して測る代わりに、試験の中の素朴な参照実装（全組の総当たり＋線形走査。G12-GR09-BROADPHASE-S0S1）で測る（重複確認の二乗の分は参照に入れて、改修前の費用に寄せる）。計測の口は合否を持たない記録用で、Docs/Testing.md の「契約を反証しない試験」を増やさないよう、通常の ctest の実行（`--bench` なし）では何も測らない。
 
 ## G12-GR41-PARENT-DORMANCY: 親の Entity を休眠させると、子のコライダー・剛体も物理から外れ、戻すと載り直すようにする
-- status: todo
+- status: done
 - after: G12-GR09-BROADPHASE-S0S1
 - gr: GR41
 - done-when: `Entity` に公開の `IsActiveInHierarchy()` を足す（自分と祖先が Active で破棄予約でない。階層のシステムが求めた `EcsPropagatedTransform::bEffectiveActive` が新しければそれを読み、作成予約・付け替え待ち・未伝播の変更があるときは祖先をたどる。今 `World::CanDispatchEntity`（World.cpp:1770〜1800）にある規則をこの関数へ寄せ、`CanDispatchEntity` もそれを使う）。`PhysicsModule::IsColliderLifecycleActive`・`IsBodyLifecycleActive`（PhysicsModule.cpp:915〜938。今は `Owner->IsActive()` だけ）が `IsActiveInHierarchy()` を使う。`ReconcileActiveStates`（951〜994）の、ボディごとに全コライダーのスロットを回す二重ループ（981〜988）を Owner→コライダーのスロットの索引にする。親を `SetActive(false)` にすると、次の固定ステップで子のコライダー・RigidBody が公開のブロードフェーズに入らず、trigger に重なっていた子は OverlapEnd がちょうど 1 回出て、親を戻すと載り直して OverlapBegin が 1 回出る。新設の `EntityActiveInHierarchyTest`（`EntityTreeTest` の束へ MEMBER。3 段の親子、途中の段だけの休眠、付け替え、作成予約中の行で祖先をたどる経路、破棄予約）と `PhysicsParentDormancyTest`（`PhysicsDynamicsTest` の束へ MEMBER。上の物理の契約に加え、休眠中の子が Tick・描画の同期（`WorldSyncDifferentialTest` と同じ数の口）・SceneQuery の Raycast から外れ、戻すと再び公開されること）が通る。`EntityTreeTest`・`TransformHierarchyTest`・`WorldTickGroupTest`・`PhysicsLifecycleEventTest`・`PhysicsFixedStepPipelineTest`・`SceneQueryPhysicsFacadeTest` が通る。
@@ -6463,7 +6463,7 @@
 - notes: ロードマップ 2588・2591〜2594 行の受け入れの撮影の部分（地平線の地図の on/off の比較は G12A-S5 で VSM を採ったので、太陽の高さの比較に置き換えた）。シーン grassland と視点 near・valley・low は G5-GR37-TERRAIN-COMPONENT が足す。UNCERTAIN: `--camera-script` の台本が grassland の自由飛行カメラで 4 km を一定の速さで動けるか（台本の形式は `Scripts/CameraScripts/*.txt`、引数は GameApplicationHandler.cpp:172〜175）。動けなければシーンのカメラパス（`SceneCatalog.h` の `ScenePathDescriptor` と `--camera-path-play`）を足して撮る。直す必要が出たら、この項目では直さずに `G12-GR39-FIX-<名前>` を足す。
 
 ## G12-GR40-CELL-CORE: ワールドを格子のセルに分け、セルの状態の遷移・優先度の輪・予算つきのコミットを行う StreamingSystem の骨格を足す
-- status: todo
+- status: done
 - gr: GR40
 - done-when: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`。`Library/Core/CMakeLists.txt` に明示で足す）に次を置く。`CellManifest`（`Text/JsonDocument.h` で読む JSON。{format, origin, cellSize, cells:[{id, bounds, payloads:[{kind, logicalPath}]}]}。未知の kind・id の重複・NaN の境界・cellSize ≤ 0・論理パスの `..` と絶対パスを種別つきで拒否）。`IStreamingPayloadHandler`（payload の種類ごとの口: ワーカーで動く `Prepare`（ファイルの読み・解析・デコード。CPU だけ）、GameThread で 1 歩ずつ進む `CommitStep(cursor)`、`SetDormant(bool)`、1 歩ずつの `UnloadStep(cursor)`、CPU と GPU のバイトの申告）。`StreamingCell` の状態の遷移（Unloaded → Preparing → ReadyToCommit → Committing → Active ⇄ Dormant → Unloading → Unloaded。Preparing 中の取り消し、Committing 中のアンロードの要求、読み込みの失敗の再試行と諦め）。`StreamingBudget`{PerFrameCommitMs, PerFrameCommitBytes, MaxResidentCells, MaxCpuBytes, MaxGpuBytes}。優先度と輪（優先度 = 距離 − k×進行方向への射影、Active の半径 Ra < Dormant の半径 Rd < Unload の半径 Ru のヒステリシス、先読みの距離 = セル幅 + 速さ×遅れ）。`StreamingSystem`（`Engine::Engine` のメンバ。ParticleSystem と同じ置き方でシングルトンにしない）が、焦点（位置・速度）を受けて毎フレーム状態を進める。進めるのはフレームの段の系 `PostTick.Streaming`（ApplicationProcessor.cpp:2910 付近の `PostTick.Particles` と同じ登録の仕方）。`Prepare` は JobSystem に 1 セル 1 タスクで出し、完了の印を GameThread で見る（`Task::Then` は使わない）。新設の `StreamingCellStateMachineTest` と `StreamingBudgetTest`（`EntityTreeTest` の束へ MEMBER。ソースは `Test/Core/Streaming/`）が、偽の payload（遅れ・失敗・取り消しを注入、時計と JobSystem の代わりを差し替えて決定的に）で通る: 全部の遷移、Preparing 中の取り消し、Committing 中のアンロードの要求、失敗の再試行と諦め、同じ入力でビット一致の遷移の列。予算を超えるコミットが次のフレームへ繰り越され、1 フレームのコミットの時間が予算＋1 歩を超えない、MaxResidentCells を超えると優先度の低いセルから追い出す、輪の境で 1 フレームごとに往復しない。`CellManifest` の拒否の各ケース。
 - verify: `cmake --build build --config Debug --target EntityTreeTest JobSystemShutdownTest Game -- /m:1`
@@ -6503,7 +6503,7 @@
 - notes: 設計はロードマップ 2155〜2157・2165 行（GR40 の 3・4・8）、完了条件は 2599〜2602 行。ファストトラベルの消費者（地図と暗転、GR71）は G15 の範囲で、ここでは口と開発用の引数まで。目的地が寝床かどうかに依らない形にする（寝床は企画で未定）。瞬間移動そのもの（補間・履歴を切る）は G4 の `CharacterBodyComponent::Teleport` と G14 の CutSerial の規約に従い、ここでは作らない。暗転の長さの目安（2 秒以内。ロードマップ 2600 行）は計測で決めるもので、合否にしない。試験を足す理由: 反証する契約は「スナップロードの完了の通知が、目的地の全セルと地形が揃ってから 1 回だけ来る」こと。早すぎると移動先で地面が無く犬が落ち、二重だと暗転が 2 回解けるとして、ファストトラベルのときだけ出て撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード）なので評価者を通す。
 
 ## G12-GR45-DRYNESS-CPU: 枯れ度を解析的な源（円・楕円・減衰）の一覧で持つ DrynessMap と、Entity に付けて置く WitherSourceComponent を足す
-- status: todo
+- status: done
 - after: G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET
 - gr: GR45
 - needs-gr: GR42
@@ -6560,7 +6560,7 @@
 - notes: 設計はロードマップ 2361 行（GR93 の 4. 配置の検証）と 2758〜2760 行のリスク。巡航の速度と見どころの間隔の帯は、未定の提案『マップの密度』の値（秒速 10m 前後、300〜600m）を既定にしない（作者の方針: 企画が決めていない数値はデータで受け、作業を止めない）。地形のソースの読み方は GR89 の形式（`G5-GR89-TERRAIN-COOKER` が決める `Assets/TerrainSpecs/` のハイトマップと変換の情報）に合わせるので needs-gr に入れた。到達性は格子の近似なので、犬の跳躍・段差の越え方（GR05・GR07 の移動の仕様）と食い違うと誤判定する。通行の判定を差し替えられる形にし、GR21 の経路探索ができたらそちらへ移す。マーカーの Key・持ち場の持ち主の対応は G12-GR93-MARKERS-SNAP の項目表に従う。やらないこと: エンジン内での検証の表示、実の谷のデータでの実行（G12-GR93-EDIT-CHECK）。
 
 ## G12-GR94-MAP-TRANSFORM-PLAN: 地図とワールドの座標の変換と、真上の正射影のタイル撮影の割り付けを、起動せずに試験できる形で作る
-- status: todo
+- status: done
 - gr: GR94
 - done-when: (1) `Library/Core/Public/Scene/MapTransform.h` に `MapTransform`（ワールドの x,z の矩形・1 画素のメートル・向き（北 = +Z など）・画像の寸法）と `WorldToMapUV` / `MapUVToWorld`、JSON の読み書き（`map_transform.json`）がある。scale が 0 以下・NaN・矩形の潰れを拒否する。(2) `Library/Core/Public/Scene/MapCapturePlan.h` の `BuildMapCapturePlan(spec)` が、撮影の spec（範囲・pixel_size_m・tile_margin_px・バックバッファの寸法・高さの範囲・固定の EV100・待ちのフレーム数・出力先）から、タイルの格子と、各タイルのワールドの矩形・縁を含むカメラの正射影の幅と高さ・真上のカメラの姿勢（forward = -Y、up = +Z）・near/far（高さの範囲から）・縁を切った後の画素の矩形を決定的に返し、`capture_manifest.json` の内容（タイルの格子、各タイルのワールドの矩形、ファイル名、固定した設定）を書ける。(3) `RenderLayer` に `MapVisible = 1 << 6` を足す（今は Default〜Debug の 6 ビット。`RenderTypes.h:217-226`）。(4) 試験（`CameraViewConstantsTest` の束へ MEMBER）: `MapTransformTest`（world ↔ UV の往復の誤差が 1e-4 画素未満、JSON の往復、不正な値の拒否、非対称な 3 点で向きが決めたとおり）、`MapCapturePlanTest`（4km 四方・0.5m/px・1280×720・縁 64px で 8 列 × 14 行 = 112 タイル、隣り合うタイルの縁を切った矩形が重ならず隙間も無く範囲を覆う、同じ spec で同じ計画、正射影の行列が `OrthographicViewportMatrixTest` の約束と合う）。既存の `CameraViewConstantsTest` の束の試験が通る。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
@@ -6639,7 +6639,7 @@
 - notes: 要件 `#### GR105` の受け入れ確認の「予算追従」「収束後の一致」「起動」（ロードマップ 2656〜2660 行）を、モデルの材質の経路で確かめ直す。LM Studio 相当の外部の負荷での挙動は開発機で手で確かめて記録する（自動化しない。ロードマップ 2657 行）。撮影を開いて目で確かめる。違ったら G12-GR105-MODEL-TEXTURE-COOK・G12-GR105-MODEL-VT-RUNTIME の paths の範囲で直す。
 
 ## G12-GR108-JOBSYSTEM-WAIT: ジョブの仕組みのワーカーが、走っているタスクがあるだけで空転しないようにし、起床の取りこぼしと取得の全体のロックを無くす
-- status: todo
+- status: done
 - gr: GR108
 - done-when: (1) `JobSystem` のワーカーの待ちの条件を、まだ始まっていないタスクの数（`m_queuedTaskCount` とは別の数）にし、述語付きの待ちとロックの中の通知で起床の取りこぼしを無くす。今は `m_queuedTaskCount == 0` のときだけ待ち（`Library/Core/Private/Thread/JobSystem.cpp:1005-1010`）、この数は実行の完了の後にしか減らない（`MarkQueuedTaskCompleted`）ので、タスクが 1 つ走っているだけで他のワーカーが待たずに取得を回し続ける。(2) `GetNextTaskWorkStealing` の取得の全体のロック（`m_workerThreadMutex`）を、キューごとのロックにする。(3) 既定のワーカーの数（今は `hardware_concurrency - 1`。同 57〜61 行、この機は 31 本）を設定（引数 `--job-workers=<N>` と `JobSystem::Initialize` の引数）で変えられるようにする。既定の値は変えず、G12-GR108-PERF-CHECK の測定で決める。(4) 試験（`JobSystemShutdownTest` の束へ MEMBER）: `JobSystemIdleCpuTest`（500 ms の長いタスク 1 本の実行中のプロセスの CPU 時間が 1000 ms 以下。修理の前に失敗することを先に記録してから直す）、`ParallelForLatencyUnderLoadTest`（`JobSystem` に 64 本の長いタスクを流した状態でも、`ParallelFor` が終わるまでの時間が、同じ仕事を直列に回した時間の 1.5 倍以下、全番号がちょうど 1 回呼ばれる）。既存の `JobSystemShutdownTest`・`JobParallelForTest`・`RingBufferTest`・`ThreadLocalStorageTest`・`EcsSchedulerTest` が通る。
 - verify: `cmake --build build --config Debug --target JobSystemShutdownTest EntityTreeTest -- /m:1`

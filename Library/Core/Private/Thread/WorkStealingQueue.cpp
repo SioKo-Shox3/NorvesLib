@@ -3,136 +3,57 @@
 namespace NorvesLib::Thread
 {
 
-    WorkStealingQueue::WorkStealingQueue()
-        : m_bottom(0), m_top(0)
-    {
-    }
+    WorkStealingQueue::WorkStealingQueue() = default;
 
     WorkStealingQueue::~WorkStealingQueue()
     {
-        // キューの中身をクリア
         ScopedLock lock(m_mutex);
         m_tasks.clear();
     }
 
     void WorkStealingQueue::Push(TaskPtr task)
     {
+        // 提出元は所有ワーカーに限らないため、追加も取得と同じロックで守る。
         ScopedLock lock(m_mutex);
-        const int64_t b = m_bottom.Load(std::memory_order_relaxed);
-
-        if (b >= 0 && static_cast<size_t>(b) < m_tasks.size())
-        {
-            m_tasks[static_cast<size_t>(b)] = task;
-        }
-        else
-        {
-            // キューの拡張が必要
-            m_tasks.push_back(task);
-        }
-
-        // バリア: すべてのプッシュ操作はストアバッファの前に完了する必要がある
-        std::atomic_thread_fence(std::memory_order_release);
-
-        // bottomを更新
-        m_bottom.Store(b + 1, std::memory_order_relaxed);
+        m_tasks.push_back(std::move(task));
     }
 
     TaskPtr WorkStealingQueue::Pop()
     {
-        // キューの所有者（プロデューサー）によるPOP操作
-        const int64_t b = m_bottom.Load(std::memory_order_relaxed) - 1;
-        m_bottom.Store(b, std::memory_order_relaxed);
-
-        // アカイアバリア: ロードがストア操作の後に確実に行われるようにする
-        std::atomic_thread_fence(std::memory_order_seq_cst);
-
-        int64_t t = m_top.Load(std::memory_order_relaxed);
-
-        if (t <= b)
+        ScopedLock lock(m_mutex);
+        if (m_tasks.empty())
         {
-            // キューが空でない
-            TaskPtr task = nullptr;
-
-            // キューからタスクを取り出すが、まだコミットしない
-            {
-                ScopedLock lock(m_mutex);
-                task = m_tasks[b % m_tasks.size()];
-            }
-
-            if (t == b)
-            {
-                // キューに一つしかタスクがない場合、他のスレッドによるstealと競合する可能性がある
-                if (!CompareExchangeTop(t, t + 1))
-                {
-                    // 他のスレッドが盗んだ
-                    task = nullptr;
-                }
-
-                // キューを空にする
-                m_bottom.Store(t + 1, std::memory_order_relaxed);
-            }
-
-            return task;
-        }
-        else
-        {
-            // キューが空
-            m_bottom.Store(t, std::memory_order_relaxed);
             return nullptr;
         }
+
+        TaskPtr task = std::move(m_tasks.back());
+        m_tasks.pop_back();
+        return task;
     }
 
     TaskPtr WorkStealingQueue::Steal()
     {
-        // 他のスレッド（コンシューマー）によるsteal操作
-
-        // topを読み込む
-        int64_t t = m_top.Load(std::memory_order_acquire);
-
-        // アカイアバリア: すべての後続操作がこの前に配置される
-        std::atomic_thread_fence(std::memory_order_seq_cst);
-
-        // bottomを読み込む
-        int64_t b = m_bottom.Load(std::memory_order_acquire);
-
-        if (t < b)
+        ScopedLock lock(m_mutex);
+        if (m_tasks.empty())
         {
-            // キューが空でない
-            TaskPtr task;
-
-            {
-                ScopedLock lock(m_mutex);
-                task = m_tasks[t % m_tasks.size()];
-            }
-
-            // topを更新（CASが失敗した場合、他のスレッドがタスクを取得した）
-            if (CompareExchangeTop(t, t + 1))
-            {
-                return task;
-            }
+            return nullptr;
         }
 
-        // キューが空または競合により失敗
-        return nullptr;
+        TaskPtr task = std::move(m_tasks.front());
+        m_tasks.pop_front();
+        return task;
     }
 
     bool WorkStealingQueue::IsEmpty() const
     {
-        int64_t b = m_bottom.Load(std::memory_order_relaxed);
-        int64_t t = m_top.Load(std::memory_order_relaxed);
-        return t >= b;
+        ScopedLock lock(m_mutex);
+        return m_tasks.empty();
     }
 
     size_t WorkStealingQueue::Size() const
     {
-        int64_t b = m_bottom.Load(std::memory_order_relaxed);
-        int64_t t = m_top.Load(std::memory_order_relaxed);
-        return (t < b) ? static_cast<size_t>(b - t) : 0;
-    }
-
-    bool WorkStealingQueue::CompareExchangeTop(int64_t expected, int64_t desired)
-    {
-        return m_top.CompareExchangeStrong(expected, desired, std::memory_order_seq_cst);
+        ScopedLock lock(m_mutex);
+        return m_tasks.size();
     }
 
 } // namespace NorvesLib::Thread

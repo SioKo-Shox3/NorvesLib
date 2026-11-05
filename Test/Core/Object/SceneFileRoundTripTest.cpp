@@ -6,6 +6,7 @@
 #include "Component/SpringArmComponent.h"
 #include "Component/TerrainComponent.h"
 #include "Component/ViewClearanceComponent.h"
+#include "Component/WitherSourceComponent.h"
 #include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
 #include "GameMode/GameModeScope.h"
@@ -31,6 +32,8 @@ namespace
     constexpr float Epsilon = 0.0001f;
     constexpr const char* kSceneFilePath = "SceneFileRoundTripTest.scene.json";
     constexpr const char* kBrokenFilePath = "SceneFileRoundTripTest.broken.json";
+
+    constexpr const char* kWitherSourceFilePath = "SceneFileRoundTripTest.wither-source.scene.json";
 
     constexpr const char* kGrassFilePath = "SceneFileRoundTripTest.grass.scene.json";
     constexpr const char* kLegacyGrassFilePath = "SceneFileRoundTripTest.grass-legacy.scene.json";
@@ -674,6 +677,134 @@ namespace
         assert(std::remove(kLegacyGrassFilePath) == 0);
     }
 
+    // 枯れ度の源の全設定を往復させ、再生前には実行時の源が作られないことを確かめる。
+    void TestWitherSourcePropertiesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        const IClass* cls = Component::WitherSourceComponent::StaticClass();
+        constexpr const char* properties[] =
+        {
+            "Shape", "RadiusA", "RadiusB", "Yaw", "Falloff", "DefaultLevel", "RecoverySeconds"
+        };
+
+        Engine::Engine engine;
+        Engine::Engine* previousEngine = Engine::GEngine;
+        Engine::GEngine = &engine;
+        auto& drynessMap = engine.GetVegetation().GetDrynessMap();
+        assert(drynessMap.GetSourceCount() == 0);
+
+        const auto assertNotBegun = [](const Component::WitherSourceComponent& component)
+        {
+            const ClassProperty* property = component.GetClass()->GetProperty(Identity("bBegunPlay"));
+            assert(property != nullptr);
+            PropertyValue value;
+            assert(property->GetPropertyValue(&component, value));
+            const bool* bBegun = value.Get<bool>();
+            assert(bBegun != nullptr && !*bBegun);
+            assert(component.GetSourceId() == Vegetation::InvalidDrynessSourceId);
+            assert(!component.IsTickEnabled());
+        };
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* sourceRoot = sourceWorld.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+        auto* source = new Component::WitherSourceComponent();
+        assert(sourceRoot->AddInner(source));
+        source->SetShape(Vegetation::DrynessShape::Ellipse);
+        source->SetRadiusA(2.5f);
+        source->SetRadiusB(1.25f);
+        source->SetYaw(0.75f);
+        source->SetFalloff(0.5f);
+        source->SetDefaultLevel(0.6f);
+        source->SetRecoverySeconds(7.5f);
+        assertNotBegun(*source);
+        assert(drynessMap.GetSourceCount() == 0);
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(kWitherSourceFilePath)));
+        assertNotBegun(*source);
+        assert(drynessMap.GetSourceCount() == 0);
+
+        EntitySubtreeSnapshot savedRoot;
+        {
+            auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                Container::String(kWitherSourceFilePath), NorvesLib::FileStream::FileMode::Read,
+                NorvesLib::FileStream::FileAccess::Read);
+            assert(stream && stream->IsOpen());
+            Scene::SceneDocument document;
+            assert(Scene::SceneSerializer::TryParseJson(stream->ReadString(), document));
+            assert(document.FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion && document.Roots.size() == 1);
+            assert(document.Roots[0].Root.Components.size() == 1);
+            const Scene::SceneObjectRecord& record = document.Roots[0].Root.Components[0].Object;
+            assert(record.ClassName == "WitherSourceComponent");
+            for (const char* name : properties)
+            {
+                assert(FindPropertyRecord(record, name) != nullptr);
+            }
+
+            Scene::SceneLoadStats stats;
+            Container::VariableArray<EntitySubtreeSnapshot> roots;
+            assert(Scene::SceneSerializer::ReconcileWithSchema(document, roots, stats));
+            assert(roots.size() == 1 && stats.LoadedRoots == 1);
+            assert(stats.DroppedEntities == 0 && stats.DroppedComponents == 0 && stats.DroppedProperties == 0);
+            savedRoot = roots[0];
+        }
+        assert(drynessMap.GetSourceCount() == 0);
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Entity* loadedRoot = loadedWorld.SpawnEntity<Entity>();
+        assert(loadedRoot != nullptr);
+        assert(savedRoot.Root.Components.size() == 1);
+        const ComponentSubtreeSnapshot& component = savedRoot.Root.Components[0];
+        assert(component.OwnerAlias == savedRoot.Root.Alias);
+        assert(component.Object.Class == MakeStableSchemaId("NorvesLib", "Class", cls->GetClassName().GetView()));
+        auto* loaded = CastTo<Component::WitherSourceComponent>(cls->NewInstance(nullptr));
+        assert(loaded != nullptr);
+        assert(loadedRoot->AddInner(loaded));
+        assertNotBegun(*loaded);
+
+        // World への配置は BeginPlay を呼ぶため、同じリフレクション経路で値だけ復元する。
+        for (const char* propertyName : properties)
+        {
+            const Identity name(propertyName);
+            const ClassProperty* property = cls->GetProperty(name);
+            assert(property != nullptr);
+            const StablePropertyId propertyId = MakeStableSchemaId(
+                "NorvesLib", "Property", cls->GetClassName().GetView(), name.GetView());
+            const ProjectedPropertyValue* projected = nullptr;
+            for (const ProjectedPropertyValue& candidate : component.Object.Properties)
+            {
+                if (candidate.Property == propertyId)
+                {
+                    assert(projected == nullptr);
+                    projected = &candidate;
+                }
+            }
+            assert(projected != nullptr);
+            PropertyValue value;
+            assert(value.DeserializeStable(projected->Type, projected->SerializedValue));
+            assert(property->ApplyValue(loaded, value));
+        }
+        assert(loaded->GetShape() == source->GetShape());
+        assert(loaded->GetRadiusA() == source->GetRadiusA());
+        assert(loaded->GetRadiusB() == source->GetRadiusB());
+        assert(loaded->GetYaw() == source->GetYaw());
+        assert(loaded->GetFalloff() == source->GetFalloff());
+        assert(loaded->GetDefaultLevel() == source->GetDefaultLevel());
+        assert(loaded->GetRecoverySeconds() == source->GetRecoverySeconds());
+        assertNotBegun(*source);
+        assertNotBegun(*loaded);
+        assert(drynessMap.GetSourceCount() == 0);
+
+        assert(loadedRoot->RemoveInner(loaded));
+        delete loaded;
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(drynessMap.GetSourceCount() == 0);
+        Engine::GEngine = previousEngine;
+        assert(std::remove(kWitherSourceFilePath) == 0);
+    }
+
     // 一部の書き込み後に失敗しても元ファイルの全バイトを保ち、一時ファイルを残さない。
     void TestSaveWriteFailurePreservesOriginal()
     {
@@ -962,6 +1093,7 @@ int main()
     TestLegacyTerrainPropertiesUseDefaults();
     TestGrassPropertiesSaveLoadRoundTrip();
     TestLegacyGrassPropertiesUseDefaults();
+    TestWitherSourcePropertiesSaveLoadRoundTrip();
     TestSaveWriteFailurePreservesOriginal();
     TestEntityReferencesSaveLoadRoundTrip();
     TestV2EntityReferenceMigration();

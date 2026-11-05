@@ -8,6 +8,8 @@ norves_add_test_bundle(JobSystemShutdownTest
     FOLDER "Test/Thread"
     MEMBER JobSystemShutdownTest JobSystemShutdownTest.cpp
     MEMBER JobParallelForTest JobParallelForTest.cpp
+    MEMBER JobSystemIdleCpuTest JobSystemIdleCpuTest.cpp
+    MEMBER ParallelForLatencyUnderLoadTest ParallelForLatencyUnderLoadTest.cpp
     MEMBER RingBufferTest RingBufferTest.cpp
     MEMBER ThreadLocalStorageTest ThreadLocalStorageTest.cpp
 )
@@ -22,3 +24,5 @@ add_test(NAME JobParallelForTest COMMAND JobSystemShutdownTest --test=JobParalle
 add_test(NAME RingBufferTest COMMAND JobSystemShutdownTest --test=RingBufferTest)
 add_test(NAME JobSystemShutdownTest COMMAND JobSystemShutdownTest)
 add_test(NAME ThreadLocalStorageTest COMMAND JobSystemShutdownTest --test=ThreadLocalStorageTest)
+add_test(NAME JobSystemIdleCpuTest COMMAND JobSystemShutdownTest --test=JobSystemIdleCpuTest)
+add_test(NAME ParallelForLatencyUnderLoadTest COMMAND JobSystemShutdownTest --test=ParallelForLatencyUnderLoadTest)
