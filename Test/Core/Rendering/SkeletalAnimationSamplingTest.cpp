@@ -740,6 +740,7 @@ void TestLegIKModifier();
 void TestFootPlant();
 void TestProceduralSpringModifier();
 void TestModifierOrder();
+void TestSkinnedSurfaceAnchor();
 
 int main(int argc, char** argv)
 {
@@ -758,6 +759,7 @@ int main(int argc, char** argv)
     TestFootPlant();
     TestProceduralSpringModifier();
     TestModifierOrder();
+    TestSkinnedSurfaceAnchor();
     if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--capture-pose-snapshot") != 0))
     {
         return 2;
