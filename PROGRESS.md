@@ -10260,3 +10260,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
 - U1 旧 NVSKEL のローダに明示許可の loose を足し、ローダ試験 3 件を足す: 着地(直し 0 回)
 - U2 要約スクリプトに骨格の契約を足し、契約試験に 3 ケースを足す: 着地(直し 0 回)
+- U3 ランタイムとセッションに loose 許可の設定を 1 つ持たせる: 着地(直し 0 回)
