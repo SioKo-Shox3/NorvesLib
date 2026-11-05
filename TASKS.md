@@ -6639,7 +6639,7 @@
 - notes: 要件 `#### GR105` の受け入れ確認の「予算追従」「収束後の一致」「起動」（ロードマップ 2656〜2660 行）を、モデルの材質の経路で確かめ直す。LM Studio 相当の外部の負荷での挙動は開発機で手で確かめて記録する（自動化しない。ロードマップ 2657 行）。撮影を開いて目で確かめる。違ったら G12-GR105-MODEL-TEXTURE-COOK・G12-GR105-MODEL-VT-RUNTIME の paths の範囲で直す。
 
 ## G12-GR108-JOBSYSTEM-WAIT: ジョブの仕組みのワーカーが、走っているタスクがあるだけで空転しないようにし、起床の取りこぼしと取得の全体のロックを無くす
-- status: todo
+- status: done
 - gr: GR108
 - done-when: (1) `JobSystem` のワーカーの待ちの条件を、まだ始まっていないタスクの数（`m_queuedTaskCount` とは別の数）にし、述語付きの待ちとロックの中の通知で起床の取りこぼしを無くす。今は `m_queuedTaskCount == 0` のときだけ待ち（`Library/Core/Private/Thread/JobSystem.cpp:1005-1010`）、この数は実行の完了の後にしか減らない（`MarkQueuedTaskCompleted`）ので、タスクが 1 つ走っているだけで他のワーカーが待たずに取得を回し続ける。(2) `GetNextTaskWorkStealing` の取得の全体のロック（`m_workerThreadMutex`）を、キューごとのロックにする。(3) 既定のワーカーの数（今は `hardware_concurrency - 1`。同 57〜61 行、この機は 31 本）を設定（引数 `--job-workers=<N>` と `JobSystem::Initialize` の引数）で変えられるようにする。既定の値は変えず、G12-GR108-PERF-CHECK の測定で決める。(4) 試験（`JobSystemShutdownTest` の束へ MEMBER）: `JobSystemIdleCpuTest`（500 ms の長いタスク 1 本の実行中のプロセスの CPU 時間が 1000 ms 以下。修理の前に失敗することを先に記録してから直す）、`ParallelForLatencyUnderLoadTest`（`JobSystem` に 64 本の長いタスクを流した状態でも、`ParallelFor` が終わるまでの時間が、同じ仕事を直列に回した時間の 1.5 倍以下、全番号がちょうど 1 回呼ばれる）。既存の `JobSystemShutdownTest`・`JobParallelForTest`・`RingBufferTest`・`ThreadLocalStorageTest`・`EcsSchedulerTest` が通る。
 - verify: `cmake --build build --config Debug --target JobSystemShutdownTest EntityTreeTest -- /m:1`
