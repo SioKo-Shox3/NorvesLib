@@ -133,7 +133,7 @@ namespace Game
         /**
          * @brief --scene・--scene-view の指定をシーンの一覧と照合して確定する（OnPreInitialize の最後に呼ぶ）。
          * @return 起動を続けてよいなら true。未知の id・視点はエラーをログに出して既定へ落とし、true を返す。
-         *         --dog-movement-smoke との併用など、解決できない指定だけ false。
+         *         --dog-movement-smoke・--combat-smoke・--encounter-smoke・--enemy-smoke との併用など、解決できない指定だけ false。
          */
         bool ResolveStartupScene();
         /**
@@ -283,7 +283,13 @@ namespace Game
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
 
         bool m_bAnimationDebugRequested = false;
+        bool m_bPoseModifiersOffRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bCombatSmoke = false;
+        bool m_bEncounterSmoke = false;
+        bool m_bEnemySmoke = false;
+        bool m_bCombatBench = false;
+        NorvesLib::Core::Container::String m_CombatSliceCapturePath;
         bool m_bDogMovementAutopilot = false;
         NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
         NorvesLib::Core::Container::String m_DogMovementCaptureDir;
@@ -313,6 +319,8 @@ namespace Game
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
+        uint32_t m_GrasslandScatterStressCount = 0;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;

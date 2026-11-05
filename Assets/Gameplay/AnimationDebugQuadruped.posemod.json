@@ -1,0 +1,291 @@
+﻿{
+  "version": 1,
+  "modifiers": [
+    {
+      "type": "Lean",
+      "weight": {
+        "param": "LeanWeight",
+        "curve": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ]
+      },
+      "settings": {
+        "source": "params",
+        "bankParam": "BankAngle",
+        "pitchParam": "PitchAngle",
+        "chain": [
+          {
+            "joint": "Pelvis",
+            "weight": 0.4
+          },
+          {
+            "joint": "Spine1",
+            "weight": 0.2
+          },
+          {
+            "joint": "Spine2",
+            "weight": 0.2
+          },
+          {
+            "joint": "Chest",
+            "weight": 0.2
+          }
+        ]
+      }
+    },
+    {
+      "type": "Spine",
+      "weight": {
+        "param": "SpineWeight",
+        "curve": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ]
+      },
+      "settings": {
+        "syncGroup": "Gait",
+        "axis": "yaw",
+        "frequency": 1,
+        "joints": [
+          {
+            "joint": "Spine1",
+            "phaseOffset": 0,
+            "amplitude": 0.12
+          },
+          {
+            "joint": "Spine2",
+            "phaseOffset": 0.2,
+            "amplitude": 0.15
+          },
+          {
+            "joint": "Chest",
+            "phaseOffset": 0.4,
+            "amplitude": 0.1
+          }
+        ]
+      }
+    },
+    {
+      "type": "Look",
+      "weight": {
+        "param": "LookWeight",
+        "curve": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ]
+      },
+      "settings": {
+        "chain": [
+          {
+            "joint": "Neck",
+            "weight": 0.4
+          },
+          {
+            "joint": "Head",
+            "weight": 0.6
+          }
+        ],
+        "head": "Head",
+        "maxYawDeg": 80,
+        "maxPitchDeg": 40,
+        "halfLife": 0.12
+      }
+    },
+    {
+      "type": "FootIK",
+      "weight": {
+        "param": "FootIKWeight",
+        "curve": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ]
+      },
+      "settings": {
+        "legs": [
+          {
+            "name": "FrontLeft",
+            "chain": [
+              "FrontLeftUpper",
+              "FrontLeftLower",
+              "FrontLeftAnkle"
+            ],
+            "pole": "auto",
+            "sole": 0.055,
+            "maxStretch": 1.05
+          },
+          {
+            "name": "FrontRight",
+            "chain": [
+              "FrontRightUpper",
+              "FrontRightLower",
+              "FrontRightAnkle"
+            ],
+            "pole": "auto",
+            "sole": 0.055,
+            "maxStretch": 1.05
+          },
+          {
+            "name": "RearLeft",
+            "chain": [
+              "RearLeftUpper",
+              "RearLeftLower",
+              "RearLeftAnkle"
+            ],
+            "pole": "auto",
+            "sole": 0.055,
+            "maxStretch": 1.05
+          },
+          {
+            "name": "RearRight",
+            "chain": [
+              "RearRightUpper",
+              "RearRightLower",
+              "RearRightAnkle"
+            ],
+            "pole": "auto",
+            "sole": 0.055,
+            "maxStretch": 1.05
+          }
+        ],
+        "plant": {
+          "enabled": true,
+          "heightThreshold": 0.07,
+          "speedThreshold": 0.5,
+          "liftHeight": 0.12,
+          "releaseBlendSeconds": 0.1
+        },
+        "body": {
+          "pelvis": "Pelvis",
+          "chest": "Chest",
+          "maxDrop": 0.15,
+          "maxRaise": 0.1,
+          "smoothTime": 0.12
+        },
+        "ground": {
+          "rayUp": 0.5,
+          "rayDown": 1,
+          "maxSlopeDeg": 50
+        }
+      }
+    },
+    {
+      "type": "SpringBone",
+      "weight": {
+        "param": "SpringBoneWeight",
+        "curve": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ]
+      },
+      "settings": {
+        "chains": [
+          {
+            "name": "LeftEar",
+            "joints": [
+              "EarLeft",
+              "EarLeftTip"
+            ],
+            "stiffness": 45,
+            "damping": 5,
+            "gravity": [
+              0,
+              -2,
+              0
+            ],
+            "rotationLimitDeg": 65
+          },
+          {
+            "name": "RightEar",
+            "joints": [
+              "EarRight",
+              "EarRightTip"
+            ],
+            "stiffness": 45,
+            "damping": 5,
+            "gravity": [
+              0,
+              -2,
+              0
+            ],
+            "rotationLimitDeg": 65
+          },
+          {
+            "name": "Tail",
+            "joints": [
+              "TailRoot",
+              "TailMid",
+              "TailTip"
+            ],
+            "stiffness": 45,
+            "damping": 5,
+            "gravity": [
+              0,
+              -2,
+              0
+            ],
+            "rotationLimitDeg": 65
+          }
+        ],
+        "teleportDistance": 1
+      }
+    },
+    {
+      "type": "FollowThrough",
+      "weight": {
+        "param": "FollowThroughWeight",
+        "curve": [
+          [
+            0,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ]
+      },
+      "settings": {
+        "joints": [
+          "Chest",
+          "Neck"
+        ],
+        "head": "Head",
+        "frequencyHz": 1.5,
+        "dampingRatio": 0.65,
+        "massScale": 1.5,
+        "strength": 0.5
+      }
+    }
+  ]
+}

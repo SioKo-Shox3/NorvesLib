@@ -10034,14 +10034,72 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
 - Next: ランナーの評価者の反証。起動の確かめは後回し
 - 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
-- U1 空の遮蔽の値の型・遮蔽物の柱の評価・モデル試験と試験の登録: 着地(直し 0 回)
-- U3 FramePacket への経路と SkyOcclusionRevision: 着地(直し 0 回)
-- U2 CPU の正解（2.5D 格子・地平線の積分・L1・曲げた法線・鏡面の円錐）: 着地(直し 1 回)
-- Notes(G11-GR56-SKY-OCC-CPU): 鏡面の交差は要件の案（Jimenez の一様な球冠＋smoothstep）から、R のまわりの輪ごとの閉形式の重なりを GGX の D の逆関数の 13 層（重み G1）で足す形に替えた。一様な球冠では GGX の裾を表せず粗さ 0.6 で 0.13 ずれたため（替えた後の最大誤差 0.026）。壁の閉形式との差は 30° で −0.0625（許容 0.07 の内、L1 の打ち切り）、κ=0.5 の平板の L1 と厳密なコサイン重みの差は 0.050。
-- U4 手置きの SkyOccluderComponent と保存の往復、タスクの確かめ: 着地(直し 0 回)
 
-## 2026-11-05 G11-GR56-SKY-OCC-CPU（run 20261105-151418 の反復 3、完了）
-- Done: `Rendering/SkyOcclusion.h` に `SkyOcclusionParameters`（無効が既定）と 64 B の `SkyOccluderProxy`（形・種別・動くか・雨を遮るかの印）、`MakeDefault*`・`Sanitize*`・`AreEqual*` を置いた。`SceneProxy` に空の遮蔽の値・遮蔽物の配列・`SkyOcclusionRevision` を足し、`RenderWorld::SetSkyOcclusionParameters`／遮蔽物の登録・更新・解除 → `RenderingCoordinator` → `SnapshotSceneParameters` で FramePacket.Scene へ値で写す（遮蔽物の増減は SceneRevision を変えず SkyOcclusionRevision だけを進める）。CPU の正解 `SkyOcclusionReference`（2.5D の格子 G・U・T・κ、12×6 の光線の幾何級数の歩による遮蔽の積分と L1、B(N)・曲げた法線、GGX のローブで重みを付けた鏡面の円錐の交差）を置いた。手置きの `SkyOccluderComponent`（PROPERTY で保存、`InitializeFromOwnerBounds` で持ち主の AABB から寸法を初期化、BeginPlay で RenderWorld へ登録し PreRender の Tick で変わったときだけ更新、EndPlay で解除）を足した。GR59 の雨の遮蔽も同じ型と同じコンポーネントの印を使う。
-- 証拠: `.harness/runs/20261105-151418/verify-G11-GR56-SKY-OCC-CPU-U4.txt`（タスクの verify 2 行。Debug の CameraViewConstantsTest・SceneSerializerTest・Game のビルド EXIT=0、ctest 5/5 Passed、numstat の 2 通りが一致）。
-- Next: ランナーの評価者の反証（Public API・FramePacket のデータ契約の危険地帯）。GPU のクリップマップと照明（G11-GR56 の次の項目）。起動の確かめは後回し（今のシーンに SkyOccluderComponent を付けた所は無く、既定は無効なので見た目は変わらない）。
-- Notes: 遮蔽物の登録・解除・移動の追従は実行の試験が無い（保存の往復だけ）。GPU の項目のデモ（`--sky-occluder-demo`）で確かめる。`CenterOffset` は持ち主の回転の局所で拡大を掛けず、`HalfExtents` には持ち主の拡大の絶対値を掛ける。Yaw のずれはラジアン。
+- G8-GR17-SLICE-SMOKE: 統合ブランチ(シ者の確かめのモードの追加)を取り込み、戦闘の確かめのモードとシ者の確かめのモードの登録・起動の分岐を両方残した。CMake の再構成の後、verify のビルド(Game・PhysicsDynamicsTest、Debug)EXIT=0、G8 の CPU の試験 18/18 合格。起動の確かめは後回し(G8-GR17-SLICE-CHECK)。
+- U2 撮影の補助: 着地(直し 0 回)
+- U1 場面の型・配置の定数・環境(床・光・カメラ・領域・寝床・プロンプト)と仮の資産: 着地(直し 0 回)
+- U12 役者(犬の代役と口の剣、人間大のダミーのシ者): 着地(直し 0 回)
+- U4 反応の結線(当たり → ダメージ、撃破 → 血、プロンプトの表示、デカールの更新): 着地(直し 0 回)
+- U6 判定の計測(--combat-smoke --combat-bench): 着地(直し 0 回)
+- U3 スイングの軌道: 着地(直し 0 回)
+- U5 遭遇のスモーク(--encounter-smoke): 着地(直し 0 回)
+- U7 攻撃判定のスモーク(--combat-smoke): 着地(直し 0 回)
+- U8 敵のスモーク(--enemy-smoke): 着地(直し 0 回)
+- U9 モードと Routine(Enter・Tick・Leave、ID): 着地(直し 0 回)
+- U10 起動の引数と登録: 着地(直し 0 回)
+- U11 確かめのスクリプトと仕上げの確かめ: 着地(直し 0 回)
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 1、完了）
+- Done: 確かめの GameMode `CombatSlice`（`Game/GameModes/CombatSlice/`、ID は `GameModeIds.h`。ランチャーの一覧には載せない）と、起動の引数 `--combat-smoke`・`--encounter-smoke`・`--enemy-smoke`・`--combat-bench`・`--combat-slice-capture=<png>`（重複と、3 つの相互・`--dog-movement-smoke`・`--animation-debug`・`--scene`・`--scene-view`・`--scene-cycle-smoke` との併用を拒否）。場面は床・固定カメラ・遭遇領域 1 つ・寝床の代わりの Interactable・プロンプトの TextComponent（ASCII の仮の表示）・犬の代役（合成の骨格の Mouth のソケットに剣を付ける）・人間大のダミーのシ者（`ShishaComponent`・`HurtboxSetComponent`（humanoid.hurtboxes.json）・`HealthComponent`、スライス用の定義 `shisha_combat_slice.enemy.json`）。当たり → ダメージはモードが `GetOnAnyHit` を購読して次の Tick で `ApplyDamage`。撃破の `OnDefeatStarted` から `DefeatBloodPresenter::Trigger`。presenter（モードの Tick）→ VFX（エンジンの粒子系の PostTick）→ デカール（ハンドラの遅い更新の枠）を同じフレームの dt で進め、`RenderWorld::SetDecals` へ渡す。確かめのスクリプト `Scripts/Test-CombatSlice.ps1`（`-Mode combat|encounter|enemy|bench`・`-Configuration`・`-CapturePng`。マーカーの順を Game.log から照合）。
+- 証拠: `.harness/runs/20261105-101856/verify-G8-GR17-SLICE-SMOKE-U11.txt`（ps1 の構文の確かめ parse_errors=0、`cmake --build build --config Debug --target Game PhysicsDynamicsTest` の終了コード 0、ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK）。そこで確かめること: combat の 1/30 と 1/144 の要約（当たりの数と (部位, 攻撃)）の一致、encounter と enemy のマーカーの順、combat の撮影（DebugDraw の判定の形と火花）と enemy の撮影（撃破の約 1 秒後の血の粒と滲み）、bench の値、引数なしの起動画面が変わらないこと。
+- Notes: dt の切り替えは Library に実行中の API が無いので、`--combat-smoke` は起動 1 回で 1 つの固定刻み（`--fixed-frame-dt=1/30` か `1/144`。無ければ起動の検査で拒否）を進め、ps1 が 2 回起動して要約を比べる形にした。
+- Notes: 剣の hitbox は剣の Entity でなく犬の代役の `Head` の関節（Mouth のソケットと同じ位置）に束縛した。刀身がシ者の胴に入るのはヨー +13.95°〜+84.68°、スイングは -40° → +120° を World の 0.45 秒。窓は剣のソケットの付けが Attached になってから開く。
+- Notes: bench は `PostLateTick.ModuleLateTick` の系の Stats の記録（`Ecs.Sys.PostLateTick.ModuleLateTick`）を窓を開いた区間と閉じた区間で比べ、差を `sweep_median_us` とする（モジュールの他の LateTick も含む区間の差分）。計測の間はトレースを `.harness/combat-bench.trace.csv` に書く。Release では計測せず終了コード 0。
+- Notes: combat の撮影は最初の当たりの次のフレームで要求する。当たりが 2 つ以上出ると capture の行が hit の行の間に入り、ps1 の順の検査で落ちる（今の配置では 1 振り 1 当たりの見込み）。
+- Notes: 進行の定義の読み込みは撃破済みの状態を消さないので、同じプロセスで enemy のスモークへ入り直すと `progression_preloaded` で失敗する（起動ごとに 1 回の前提）。
+- 要起票: ソケットに付けた Entity の World の回転（`SocketAttachmentComponent` の行ベクトルの姿勢）と、hitbox が持ち主の姿勢で点を回す四元数の向きが食い違うとの指摘（U12 の調べ）。関節に束縛しない hitbox を回転した Entity に付けると判定と見た目がずれる恐れがある。`CombatRuntime.cpp:470` の `GetWorldTransform` とソケットの姿勢の作り方を照合する
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 2、差し戻しの確かめ）
+- Done: 反復 1 の再確かめでの Game のリンクの失敗（CombatSliceRoutine の未解決の外部参照）は、Game の CMakeLists の CONFIGURE_DEPENDS の GLOB がビルドの途中で Game.vcxproj を作り直し、そのビルドが古いプロジェクトのまま新しい .cpp を含めずにリンクしたためだった。コードの変更は無い。作り直された後のビルドで CombatSlice の .cpp がすべてコンパイルされ、verify の 2 行が通った。
+- 証拠: .harness/runs/20261105-101856/verify-build-it2.txt（cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1 の終了コード 0）、.harness/runs/20261105-101856/verify-ctest-it2.txt（ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK で Scripts/Test-CombatSlice.ps1 の 4 モードと撮影を回す）。
+- Notes: 新しい .cpp を足したブランチの最初のビルドは、Game.vcxproj の作り直しでリンクが 1 回落ちることがある。もう一度ビルドすれば通る（先に cmake -S . -B build を回せば落ちない）。
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-143213 の反復 1、完了に戻す）
+- Done: 作業単位 U1〜U12 はすべて着地済み。53a60fe9 の後にコードの変更は無い（差分は TASKS.md と PROGRESS.md だけ）。前回は評価者が枠切れで評価されずに doing へ戻っていたので、done に戻した。
+- 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
+- Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
+- 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。
+
+- 2026-11-05 G5-GR90-SCATTER-RUNTIME: 統合ブランチを取り込み、grassland の散布の常駐と地形のコライダーの作成を両方残した。EntityTreeTest・Game の Debug ビルドと ScatterSystemResidencyTest・EntityTreeTest・CookedScatterTest が通った。起動の確かめは後回し。
+- U1 MegaGeometryScatterComponent に入力の順の行の並べ方と、範囲の初期の Active の指定と、範囲の印の読み出しを足す: 着地(直し 0 回)
+- U2 RenderWorld に草・低木の束の出どころごとの合成の口を足し、荒野をそこへ移す: 着地(直し 0 回)
+- U7 ScatterSystem（常駐の要求・予算・解放と mega の経路）を足し Engine::Engine のメンバにする（U3 の切り直し）: 着地(直し 0 回)
+- U4 ScatterSystem の foliage の経路（チャンク = FoliageCell、常駐の組が変わったときだけ束を作り直す）: 着地(直し 0 回)
+- U5 ScatterSystemResidencyTest（EntityTreeTest の束へ MEMBER）: 着地(直し 0 回)
+- U6 grassland に散布を置き、開発ビルドの `--grassland-scatter-stress=<本数>` を足す（最後の verify）: 着地(直し 1 回)
+- Done: G5-GR90-SCATTER-RUNTIME: `Scatter::ScatterSystem`（`Engine::Engine` のメンバ、`GetScatterSystem()`）が NVSCT を読み、GameThread でカメラからチャンクの箱までの距離と種の優先度で (チャンク, 種) を要求し、1 フレームの個数・バイト・時間の予算の内で常駐させ、ヒステリシスを足した距離の外で解放する。mega の種は種ごとに Entity 1 つ・`MegaGeometryScatterComponent` 1 つへ全チャンクを入力の順で入れ（チャンクの末尾を 64 行に詰め物）、範囲の Active で出し入れする。foliage の種は常駐のときに `FoliageInstance` へ復号してチャンクを `FoliageCell` にし、常駐の組が変わったフレームだけ種ごとの束を作り直して `RenderWorld::SetFoliageSource(Scatter, …)` へ渡す（荒野の束は Scene の出どころへ移した。中身は同じ）。影は結び付けの `bCastShadow`。grassland は Enter で cook 済みの `GrasslandScatter.nvsct` を Load し、Tick でカメラの位置を渡し、SceneReady は散布の `IsSettled` を待つ。開発ビルドの `--grassland-scatter-stress=<1〜2000000>` で地形の高さに置いた合成の散布に置き換える。試験 `ScatterSystemResidencyTest`（EntityTreeTest の束、10 万本）。
+- 証拠: `.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-final.txt`（EntityTreeTest・Game の Debug ビルド成功、ctest `ScatterSystemResidencyTest|EntityTreeTest|CookedScatterTest` 100% tests passed, 0 tests failed out of 3）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まり）。grassland を `--scene=grassland` で起動し、`SCATTER_LOAD` の行（rock が mega で結び付くか、fallen_log が外れる警告）、岩・低木・株が地形の上に見えること、SceneReady が散布の常駐の後に来ること、`--grassland-scatter-stress=1000000` で歩いたときの常駐・解放と GPU 時間を撮影とログで確かめる。ランナーの評価者の反証（Object の寿命・RenderThread・アセットロードの危険地帯）。
+- Notes: 起動引数の解析は `Game/GameApplicationHandler.{h,cpp}` にしか口が無いため、paths の外だがメンバ 1 つ・解析の分岐・grassland の登録の捕捉だけを足した（新しい行だけ）。
+- Notes: foliage の株のメッシュ・色・FadeStart/End・常駐距離は仮の値（手続きの交差帯）。fallen_log はメッシュが cook されていないので結び付けから外れる。`IsRangePublished` は RenderWorld なしの試験では常に false のため、試験の mega の側は Active と解放後の両方の印で確かめている。
+- Notes: 要起票: grassland の低木・株・倒木のメッシュを cook し（今は手続きの仮の株と cook されない倒木の仮のパス）、散布の見た目を手本と並べて合わせる。
+- 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
+- Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
+
+- U1 ModifierOrderTest（順序の固定の試験）を SkeletalAnimationSamplingTest に足す: 着地(直し 0 回)
+- U3 animation-debug の場面に合成の四足のキャラクターと posemod.json を足す: 着地(直し 0 回)
+- U4 場面に Box コライダーの斜面と階段を足し、四足の経路をそこへ通す: 着地(直し 0 回)
+- U6 Game の引数 --pose-modifiers-off を足して場面へ渡す: 着地(直し 0 回)
+- U5 PoseModifierDebugView（ImGui の調整画面とデバッグ描画）を足して場面へつなぐ: 着地(直し 0 回)
+- U2 AnimationRuntime.md と Testing.md を書き、タスクの verify を回す: 着地(直し 1 回)
+
+## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 1、完了）
+- Done: (1) `ModifierOrderTest`（`SkeletalAnimationSamplingTest` の中）: 23 関節の合成の四足・歩き・12° の斜面のモックで、order を省いた Lean→Spine→Look→FootIK→SpringBone→FollowThrough を同じ dt の列で 2 回走らせ、パレットのハッシュの不一致 0/120。FootIK を order 50 にすると 120/120 フレームでハッシュが変わり、共通の接地標本 144 件の足先と地面の平均誤差が 0.0406 m → 0.0549 m に増える。(2) `Game/Debug/PoseModifierDebugView`（全体を NORVES_ENABLE_IMGUI で囲み、明示の Attach / Detach）: modifier ごとの ON/OFF・重み（Float parameter で即時）・settings の数値（離したら JSON を組み直して全件置き換え）・全部を切る A/B・JSON のコピー、DebugDrawQueue で接地のレイと当たり・法線、固定点、ポール（設定の向きを膝から。実際の解は公開されていない）、視線の目標、ばねの先端。(3) `--animation-debug` の場面に、コードで作る 25 関節の四足・床と 18° の斜面と 3 段の階段の Box コライダー・競技場形の周回の経路・`Assets/Gameplay/AnimationDebugQuadruped.posemod.json`（6 型、order なし、重みは parameter に結ぶ）を足し、FootIK に `PhysicsGroundQuery` を渡す。Game の引数 `--pose-modifiers-off`（`--animation-debug` なしはエラー）。(4) AnimationRuntime.md に順序の表・足 IK を傾きの後に置く理由・合成の四足と調整画面、Testing.md に ModifierOrderTest。
+- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-final-verify.txt`（verify のビルド 4 ターゲット EXIT_CODE 0、ctest 4/4 Passed、numstat の 2 通りが一致）。
+- Next: 起動の確かめは後回し（アプリを起動していない）。`G9-GR15-AB-CAPTURE-CHECK` で、四足が見える位置か、posemod.json が実行時に読めるか（`ANIMATION_DEBUG quadruped=ready pose_modifiers=1`）、物理の接地問い合わせが当たり足が斜面と階段に付くか、ImGui の操作が効くか、on/off の撮影で四足の画素が変わるか、既定の起動画面が変わらないかを確かめる。
+- Notes: Rendering3DTest の World では物理が使えるので、解析の地面ではなく `PhysicsGroundQuery` を使った（実際の当たりは未確認）。`--pose-modifiers-off` を場面へ渡すため、paths の外の `Rendering3DTestData.h`（フラグ 1 行）と `Rendering3DTestRoutine.cpp`（Prepare の引数 1 行）を触った。AnimatorComponent に modifier の一覧の取得口が無いので、場面と調整画面は同じ JSON を `ParsePoseModifierConfig` で読み直して自分で持った modifier を AddModifier する。FootIK の問い合わせの設定（maxSlopeDeg など）は作ったときの値を保つので、画面で 50° を超えて上げても物理側の上限は変わらない。ModifierOrderTest の合成の骨格では前脚が胸の子なので、既定の順でも胸に掛かる FollowThrough が前脚の足先を動かし、平均誤差 4 cm が残る（試験は順序の比較だけで絶対値の上限は無い）。
+- 要起票: 胸・背骨に FollowThrough や SpringBone を掛けた四足では IK の後に前脚の足先が動く。脚の祖先へ掛かる後段の modifier を IK の後に置く現在の順序で接地をどう保つか（FollowThrough の対象から脚の祖先を外す決まりか、IK の再適用か）を決める項目。
+
+## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 2、差し戻しの直し）
+- Done: 反復 1 の再検証の失敗（`PhysicsGroundQueryIntegrationTest` が unknown test）は、verify のビルド対象に集約の実行ファイル `PhysicsDynamicsTest` が含まれず、リポジトリ直下の `build/` の exe が試験の追加より前のままだったため。コードの欠陥ではないので、`PhysicsDynamicsTest` をビルドしてから verify の 2 行を回し直した。
+- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-iter2-verify.txt`（BUILD_EXIT=0、ctest 4/4 Passed、CTEST_EXIT=0）。`PhysicsDynamicsTest` のビルドは `aux-physics-build.txt`（EXIT=0）。
+- 要起票: このタスクの verify は ctest で `PhysicsGroundQueryIntegrationTest` を回すのに、ビルドの行に `PhysicsDynamicsTest` が無い。新しい build で verify を回すと同じ失敗になるので、verify のビルド対象に `PhysicsDynamicsTest` を足す。

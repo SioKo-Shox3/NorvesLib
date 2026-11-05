@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "FrameCaptureTypes.h"
+#include "FoliageTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
@@ -246,11 +247,12 @@ namespace NorvesLib::Core::Rendering
         void SetCloudLayer(const CloudLayerParameters& parameters);
 
         /**
-         * @brief 草・低木の株の束と風を設定する（GameThread）
+         * @brief 草・低木の株の束を出どころごとに設定する（GameThread）
          *
-         * RenderThread の FoliagePass が、束ごとに 1 回のインスタンス描画で GBuffer へ描く。空の一覧で描かなくなる。
+         * Scene の束、Scatter の束の順に合成し、風は Scene の値を使う。
+         * 空の一覧を渡すとその出どころの束が消える。範囲外の slot は無視する。
          */
-        void SetFoliage(const FoliageScene& foliage);
+        void SetFoliageSource(FoliageSourceSlot slot, const FoliageScene& foliage);
 
         /**
          * @brief 不変の草の場の描画データを設定する（GameThread 専用）
@@ -510,6 +512,9 @@ namespace NorvesLib::Core::Rendering
 
         // レンダリングコーディネーター（描画フロー管理）
         RenderingCoordinator m_RenderingCoordinator;
+
+        // 出どころごとの草・低木の束（GameThread 専用）
+        FoliageScene m_FoliageSources[static_cast<uint32_t>(FoliageSourceSlot::Count)];
 
         // サブシステム（GEngine配下で実体保持）
         RenderResources m_RenderResources;
