@@ -129,6 +129,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookedTerrainTest CookedTerrainTest.cpp
     MEMBER CookedGrassFieldTest CookedGrassFieldTest.cpp
     MEMBER CookedScatterTest CookedScatterTest.cpp
+    MEMBER ScatterBakeTest ScatterBakeTest.cpp
     MEMBER AudioCookedAssetTest AudioCookedAssetTest.cpp
     MEMBER CookedSkeletalAssetTest CookedSkeletalAssetTest.cpp
 )
@@ -151,6 +152,7 @@ add_test(NAME CookedTextureTest COMMAND CookedMeshTest --test=CookedTextureTest)
 add_test(NAME CookedTerrainTest COMMAND CookedMeshTest --test=CookedTerrainTest)
 add_test(NAME CookedGrassFieldTest COMMAND CookedMeshTest --test=CookedGrassFieldTest)
 add_test(NAME CookedScatterTest COMMAND CookedMeshTest --test=CookedScatterTest)
+add_test(NAME ScatterBakeTest COMMAND CookedMeshTest --test=ScatterBakeTest)
 set_tests_properties(CookedTerrainTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
 add_test(NAME SkeletalSubmeshLayoutTest COMMAND CookedMeshTest --test=SkeletalSubmeshLayoutTest)

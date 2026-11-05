@@ -225,7 +225,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(error, "散布のチャンク寸法は有限な正値、格子原点は地形の原点である必要があります");
             }
-            if (rule.Name.empty() || (rule.RenderPath != ScatterRenderPath::Mega && rule.RenderPath != ScatterRenderPath::Foliage) ||
+            if (rule.Name.empty() || (rule.RenderPath != Asset::ScatterRenderPath::Mega && rule.RenderPath != Asset::ScatterRenderPath::Foliage) ||
                 !std::isfinite(rule.MeshRadiusM) || rule.MeshRadiusM < 0.0 ||
                 !std::isfinite(rule.MinSpacingM) || rule.MinSpacingM < 0.0 ||
                 !std::isfinite(spacing) || spacing <= 0.0 ||

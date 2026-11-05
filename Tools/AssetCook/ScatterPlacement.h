@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Asset/CookedTerrainFormat.h"
+#include "Asset/CookedScatterFormat.h"
 #include "Asset/CookedTextureFormat.h"
 #include "Container/String.h"
 #include "Container/VariableArray.h"
@@ -10,12 +11,6 @@
 
 namespace NorvesLib::Tools::AssetCook
 {
-    enum class ScatterRenderPath : uint8_t
-    {
-        Mega = 0,
-        Foliage = 1
-    };
-
     struct ScatterDensitySource
     {
         bool bUseLayer = false;
@@ -27,7 +22,7 @@ namespace NorvesLib::Tools::AssetCook
     struct ScatterSpeciesRule
     {
         Core::Container::AnsiString Name;
-        ScatterRenderPath RenderPath = ScatterRenderPath::Mega;
+        Core::Asset::ScatterRenderPath RenderPath = Core::Asset::ScatterRenderPath::Mega;
         Core::Container::VariableArray<Core::Container::AnsiString> LodMeshLogicalPaths;
         double MeshRadiusM = 0.5;
         double MinSpacingM = 0.0;

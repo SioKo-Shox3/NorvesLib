@@ -9887,3 +9887,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
 - U1 NVSCT v0 の形式・書き手・読み手・形式の文書と CookedScatterTest(読みの拒否): 着地(直し 0 回)
 - U2 配置の純関数(セルの hash・受理・局所最大・地形の標本化): 着地(直し 0 回)
+- U3 ScatterBaker(NVSCT を焼く)と ScatterBakeTest: 着地(直し 0 回)
