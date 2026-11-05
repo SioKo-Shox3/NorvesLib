@@ -9875,3 +9875,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 判定の計測(--combat-smoke --combat-bench): 着地(直し 0 回)
 - U3 スイングの軌道: 着地(直し 0 回)
 - U5 遭遇のスモーク(--encounter-smoke): 着地(直し 0 回)
+- U7 攻撃判定のスモーク(--combat-smoke): 着地(直し 0 回)
