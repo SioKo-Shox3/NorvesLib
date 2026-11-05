@@ -5998,7 +5998,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。視点 trample（体が草原を横切る途中を斜め後ろから）と trample_after（同じ構図で数秒後）が grassland に無ければこの項目で足す（体の動きは決まった道と時刻なので、同じ引数なら同じ絵になる）。
 
 ## G5-GR90-SCATTER-BAKE: 地形のタイルの上に種ごとの規則で物の配置を決定的に焼き、チャンク単位の NVSCT v0 に cook する
-- status: todo
+- status: done
 - after: G5-GR89-TERRAIN-MASKS
 - gr: GR90
 - done-when: AssetCook に `--kind world --format nvsct.v0.inst16`（entry type `Sct0`）の `ScatterBaker` を足す。入力は scatter spec JSON（地形の資産の参照と、その cooked_hash の記録（食い違えばエラー）・チャンクの寸法（地形のタイルの寸法の約数）・seed・種の表: 描く経路（mega = MegaGeometry の静的メッシュ、foliage = 株のメッシュ）・メッシュの論理パス（LOD の列）・密度の出どころ（NVTRN の層のチャンネルか定数）と基準の密度[本/m²]・最小の間隔 r（既定はメッシュの半径から）・標高と傾斜の帯・除外（道・湿り）・拡大の範囲（対数）・傾きの追従率（0=鉛直、1=法線）・明度の揺らぎ・枯れ度の参照・衝突の印（予約）・風の硬さと位相の種）。配置は一辺 r/√2 のセルごとに 64bit の splitmix 系の hash(seed, 種, セルX, セルZ) からジッタ・優先度・受理の乱数を作り、密度から決めた確率を通り、かつ近傍 5×5 セルの半径 r 未満に自分より優先度の高い候補が無い（局所最大）ものを残す（チャンクに依らない純関数なので、境をまたいでも間隔が保たれ、チャンクを独立に焼ける）。高さは NVTRN の高さを LOD0 と同じ対角で引いて焼き込み、チャンクの中は Rank の昇順に並べる。形式 NVSCT v0（ヘッダ・種の表・チャンク表（ChunkX/Z・Y の範囲・種ごとの (offset, count)・AABB）・`InstanceRecord16`（PosX/PosZ/PosY の uint16×3・Yaw uint16・Scale uint8（対数）・Rank uint8・NormalOct uint8×2・Tint uint8×3・Dry uint8 の 16B））を `Library/Core/Public/Asset/CookedScatterFormat.h` と `Private/Asset/CookedScatterLoader.cpp`（`ParseCookedScatter`・レコードの復号）に置き、形式を `Docs/Architecture/NVSCTv0.md` に書く。grassland の散布の spec（`Assets/Scatter/grassland.scatter.json`: 岩・倒木を mega、低木・株を foliage）を足し、CookAssets で焼ける。 試験が通る: `ScatterBakeTest`（`CookedMeshTest` の束へ MEMBER）で (a) 同じ seed・同じ入力で出力のバイトが一致し seed を変えると変わる、(b) チャンク (3,5) だけを焼いた結果が全体を焼いたときの同じチャンクのバイト列と一致、(c) 小さなチャンク（16 m・高い密度）で境をまたぐ組を含む全部の組の距離が r 以上（総当たり）、(d) 基準の密度 2 本/m²・64×64 m のチャンクで本数が期待値 8192 の ±5% 以内（独立な seed 10 個の平均）、(e) 傾斜・標高・道のマスクの外に置かれない、(f) 位置の復号の誤差がチャンクの寸法/65535 以下・ヨーの誤差が 0.6° 以下・Rank が昇順。`CookedScatterTest`（同じ束）で、切り詰め・offset/size の改ざん・ハッシュ不一致・チャンクや種の範囲外を種別つきで拒否し、source_hash が spec・地形の cooked_hash・入力の変更で変わり、地形を cook し直して食い違うと焼くのが失敗する。`AssetCookTerrainSmoke` に散布の cook を足して通る。
@@ -6161,7 +6161,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。視点 clear_06・clear_10・clear_16（スプリングアームのカメラの高さ別。主人公は草の中に立つ犬の代わりの体）と引数 `grassland-view-clearance=off|cinematic`、解析の台本 `Scripts/Grass/ViewClearanceCaptureCheck.py` が無ければこの項目で足す。静止の 2 フレームの比べ方は、CaptureScene に `CaptureStartupScene.ps1` の `-StillRenderedFrames` に当たる仕組みが無ければ同じ視点を 2 回撮って比べる。しきい値は初回の実測で TSV に置き、根拠を PROGRESS に書く（先に数字を決めない）。切り抜きの半径の既定を変えたら、その理由（「草で視界が遮られる」をどこまで残したか）も書く。
 
 ## G2-S6-ASSET-SET-P6: `VerifyTextureAssetSet.py` の serializer probe で、PowerShell の版の完全一致の固定をやめて記録にし、byte の照合は残す
-- status: todo
+- status: done
 - done-when: 次の 4 点をすべて満たす。
   - `Scripts/VerifyTextureAssetSet.py` の serializer probe の包み(192 行の `$PSVersionTable.PSVersion.ToString() -ne "5.1.20348.5622"`)を、Windows PowerShell 5.1 であること(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` の 16 行と同じ規則)の検査に替える。完全な版の文字列は包みの標準出力に書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する。GitHub のランナーのイメージ(20261026.347.1 など)で PS5.1 の小さな版が上がっても、版の違いだけでは止まらない。
   - probe の契約は変えない。同じランナーの PS5.1 の `ConvertTo-Json` の出力と native の `manifest.json` の byte の一致の照合(202〜203 行。不一致なら `PS5.1 ASCII escape/format probe不一致`)は残し、正規化しない。`powershell.exe` の binary の hash の照合(72〜73 行、`receipt["powershell_sha256"]`)と凍結基準の `Docs/AssetCookTextureFrozenBaseline.json` は変えない。
