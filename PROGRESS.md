@@ -9903,3 +9903,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 FootIK に足の固定と着地を組み込み、設定と文書を足す: 着地(直し 1 回)
 - U4 FootPlantTest と決定性のケースを足し、Testing.md に書いてタスクの verify を回す: 着地(直し 0 回)
 - U5 解除後の戻しを刻みに依存しない差の減衰にし、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR14-FOOT-PLANT（run 20261105-104357 の反復 1、完了）
+- Done: `AnimationEventQueue::PendingEvents()` と `PoseModifierContext::PendingEvents` を足し、modifier がそのフレームに積まれてまだ配っていないイベントを読めるようにした（購読の 1 フレーム遅れなし）。脚ごとの状態機械 `FootPlantState`（Swing / Planted、`Foot.<脚>.Down` / `.Up` のイベント駆動と、イベントの無いクリップの高さ・速度のしきい値駆動、地面へ投影した記録位置の固定、解除時の差を releaseBlendSeconds で直線に減らす戻し、Swing の地面の高さの差を持ち上がりの割合で今の地面と離地時の地面に配る、着地の重みの直線の上昇と snapDistance）を足し、`FootIKModifier` に組み込んだ。設定は `plant`（書けば有効）・`legs[].plant.downEvent/upEvent`・`land`（blendSeconds 0.1・snapDistance 0.05・teleportDistance 1.0、仮）。所有者の移動が teleportDistance を超えるか `NotifyTeleport()` で固定の状態を戻し、Planted の足首の目標が maxStretch を超えたら解除する。`FootPlantTest`（`SkeletalAnimationSamplingTest` の中）を足し、AnimationRuntime.md と Testing.md に書いた。
+- 証拠: `.harness/runs/20261105-104357/verify-G9-GR14-FOOT-PLANT.txt`（タスクの verify 2 行。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格。FootPlantTest の実測: Planted の水平の動き 最大 0.00024 mm/フレーム（固定なしは 4.0 mm）、着地の重みの誤差 1.9e-8、60/120 Hz の足先の高さの差 6e-8 m、同じ dt の列のパレット一致）。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（Public API の `PoseModifier.h`・`AnimationEvents.h`・`FootIKModifier.h` に触れた）。
+- Notes: `plant` を書かない設定でも着地の重みは掛かる。駆動信号が無ければ接地中とみなすので既存の振る舞いは変わらないが、`SetDriveSignals` で `bGrounded=false` を渡すと足 IK の重みは 0 になる。
+- Notes: しきい値駆動は、一度でもその脚のイベントを受けるとテレポートか Reset までイベント駆動のまま。接地の PhaseMarker から `Foot.<脚>.Down` を出す処理は GR11 の範囲で、ここでは名前を設定で受けるだけ。
