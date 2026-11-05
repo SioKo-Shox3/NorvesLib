@@ -10093,3 +10093,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-final.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
 - Next: ランナーの評価者の反証（物理の寿命・公開の挙動の危険地帯）。アプリを起動する確かめは無い。静的の木は G12-GR09-STATIC-TREE、計測は G12-GR09-SCALE-MEASURE。
 - Notes: 固定ステップはブロードフェーズを今も 2 回作る（作業用と公開用）。公開用の候補の組は使われないが Mobility の絞り込みは同じく掛かる。試験の参照は `CalculateBounds`・`QueryProxy` を本体と共有するので、それら自体の幾何の誤りは照合では見つからない（既存の PhysicsProxyQueryTest などが受け持つ）。
+
+## 2026-11-05 G12-GR09-BROADPHASE-S0S1（run 20261105-161354 の反復 2）
+- Done: 反復 1 の差し戻し（verify の再実行で `build` が無い）を直した。この作業ツリーで freetype のサブモジュールを取得し、`cmake -S . -B build -DNORVES_BUILD_TESTS=ON` で構成してから verify の 2 行を回した。実装の変更は無い。
+- 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-iter2.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10、PhysicsBroadphaseScaleTest 2.46 秒）。
+- Notes: Git Bash から回すと `/m:1` がパスに変換されて MSB1008 で落ちるので、`MSYS_NO_PATHCONV=1` を付けるか PowerShell・cmd で回す。アプリを起動する確かめは無い。
