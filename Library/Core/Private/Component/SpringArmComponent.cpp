@@ -35,7 +35,7 @@ namespace NorvesLib::Core::Component
         : Component()
     {
         SetTickGroup(ETickGroup::Camera);
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
         Pitch = DefaultPitch;
@@ -50,7 +50,7 @@ namespace NorvesLib::Core::Component
         : Component(initializer)
     {
         SetTickGroup(ETickGroup::Camera);
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
         Pitch = DefaultPitch;
@@ -65,7 +65,7 @@ namespace NorvesLib::Core::Component
         : Component(sourceObject)
     {
         SetTickGroup(ETickGroup::Camera);
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
         Pitch = DefaultPitch;
@@ -122,20 +122,20 @@ namespace NorvesLib::Core::Component
             return false;
         }
 
-        PivotObjectId = pivot->GetObjectId();
+        PivotObjectId = EntityRefId{pivot->GetObjectId()};
         MarkRenderStateDirty();
         return true;
     }
 
     void SpringArmComponent::SetPivotObjectId(uint64_t objectId)
     {
-        PivotObjectId = objectId;
+        PivotObjectId = EntityRefId{objectId};
         MarkRenderStateDirty();
     }
 
     void SpringArmComponent::ClearPivot()
     {
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         MarkRenderStateDirty();
     }
 
@@ -147,7 +147,7 @@ namespace NorvesLib::Core::Component
     Entity* SpringArmComponent::ResolvePivot() const
     {
         const Entity* owner = GetOwner();
-        if (!owner || owner->IsPendingDestroy() || PivotObjectId.Get() == 0)
+        if (!owner || owner->IsPendingDestroy() || PivotObjectId.Get().Get() == 0)
         {
             return nullptr;
         }
@@ -158,7 +158,7 @@ namespace NorvesLib::Core::Component
             return nullptr;
         }
 
-        Entity* pivot = world->FindEntityByObjectId(PivotObjectId);
+        Entity* pivot = world->FindEntityByObjectId(PivotObjectId.Get().Get());
         return pivot != owner ? pivot : nullptr;
     }
 
