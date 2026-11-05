@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Container/UnorderedMap.h"
 #include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsBroadphase.h"
@@ -205,6 +206,9 @@ namespace NorvesLib::Modules::Physics
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
+        // 占有中のスロットだけを持つ。Owner ごとに高々 1 つ。
+        Core::Container::UnorderedMap<const Core::Entity*, uint32_t> m_ColliderSlotByOwner;
+        Core::Container::UnorderedMap<const Core::Entity*, uint32_t> m_BodySlotByOwner;
         Core::Container::VariableArray<PhysicsShapeProxy> m_CharacterQueryProxies;
         CharacterMoveScratch m_CharacterScratch;
         Core::Container::VariableArray<uint32_t> m_FreeColliderSlotIndices;

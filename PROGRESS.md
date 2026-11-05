@@ -10085,3 +10085,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
 - Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
 - U1 ブロードフェーズの整列・重複確認・3 軸の重なり・Mobility・統計: 着地(直し 0 回)
+- U2 PhysicsModule の Owner→スロットの索引: 着地(直し 0 回)

@@ -483,14 +483,11 @@ namespace NorvesLib::Modules::Physics
         {
             return EPhysicsResult::InvalidState;
         }
-        for (const ColliderSlot& slot : m_ColliderSlots)
+        if (m_ColliderSlotByOwner.find(owner) != m_ColliderSlotByOwner.end())
         {
-            if (slot.bOccupied && slot.Owner == owner)
-            {
-                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
-                ++m_DuplicateDiagnosticCount;
-                return EPhysicsResult::Duplicate;
-            }
+            m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+            ++m_DuplicateDiagnosticCount;
+            return EPhysicsResult::Duplicate;
         }
 
         uint32_t index = 0;
@@ -510,6 +507,7 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = owner;
         slot.bOccupied = true;
         slot.bActive = false;
+        m_ColliderSlotByOwner.emplace(owner, index);
         component.m_ColliderHandle = Core::Scene::ColliderHandle{index, slot.Generation};
         return EPhysicsResult::Success;
     }
@@ -534,14 +532,11 @@ namespace NorvesLib::Modules::Physics
         {
             return EPhysicsResult::InvalidState;
         }
-        for (const BodySlot& slot : m_BodySlots)
+        if (m_BodySlotByOwner.find(owner) != m_BodySlotByOwner.end())
         {
-            if (slot.bOccupied && slot.Owner == owner)
-            {
-                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
-                ++m_DuplicateDiagnosticCount;
-                return EPhysicsResult::Duplicate;
-            }
+            m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+            ++m_DuplicateDiagnosticCount;
+            return EPhysicsResult::Duplicate;
         }
 
         uint32_t index = 0;
@@ -561,6 +556,7 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = owner;
         slot.bOccupied = true;
         slot.bActive = false;
+        m_BodySlotByOwner.emplace(owner, index);
         component.m_BodyHandle = Core::Scene::BodyHandle{index, slot.Generation};
         UpdateRenderInterpolationDefault(slot);
         return EPhysicsResult::Success;
@@ -1503,20 +1499,20 @@ namespace NorvesLib::Modules::Physics
 
     Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle) const
     {
-        for (const BodySlot& slot : m_BodySlots)
+        const auto it = m_BodySlotByOwner.find(&owner);
+        if (it == m_BodySlotByOwner.end())
         {
-            if (!slot.bOccupied || slot.Owner != &owner)
-            {
-                continue;
-            }
-            // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
-            const bool bActive = bRefreshLifecycle
-                ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
-                : slot.bActive;
-            if (bActive)
-            {
-                return slot.Component->m_BodyHandle;
-            }
+            return Core::Scene::BodyHandle{};
+        }
+
+        const BodySlot& slot = m_BodySlots[it->second];
+        // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
+        const bool bActive = bRefreshLifecycle
+            ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
+            : slot.bActive;
+        if (bActive)
+        {
+            return slot.Component->m_BodyHandle;
         }
         return Core::Scene::BodyHandle{};
     }
@@ -1570,6 +1566,11 @@ namespace NorvesLib::Modules::Physics
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
         }
+        const auto it = m_ColliderSlotByOwner.find(slot.Owner);
+        if (it != m_ColliderSlotByOwner.end() && it->second == index)
+        {
+            m_ColliderSlotByOwner.erase(it);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;
@@ -1591,6 +1592,11 @@ namespace NorvesLib::Modules::Physics
             slot.Owner->SetDefaultRenderInterpolationEnabled(false);
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
+        }
+        const auto it = m_BodySlotByOwner.find(slot.Owner);
+        if (it != m_BodySlotByOwner.end() && it->second == index)
+        {
+            m_BodySlotByOwner.erase(it);
         }
         slot.Component = nullptr;
         slot.Owner = nullptr;
