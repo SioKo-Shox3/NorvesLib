@@ -10087,3 +10087,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 ブロードフェーズの整列・重複確認・3 軸の重なり・Mobility・統計: 着地(直し 0 回)
 - U2 PhysicsModule の Owner→スロットの索引: 着地(直し 0 回)
 - U3 ResolveContacts の二分探索と BuildBroadphase の Mobility・試験の入口: 着地(直し 0 回)
+- U4 PhysicsBroadphaseScaleTest（最後。タスクの verify を回す）: 着地(直し 0 回)
