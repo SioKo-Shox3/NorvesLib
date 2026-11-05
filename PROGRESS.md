@@ -10108,3 +10108,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 TerrainHeightFieldQueryTest に段の表・段の高さの誤差・表で棄却した Raycast のケースを足す: 着地(直し 0 回)
 - U3 TerrainSystem に段を選ぶ照会と常駐の印の口を足す: 着地(直し 0 回)
 - U5 物理の地形のプロキシに常駐の印を持たせ、常駐でないタイルでは問い合わせ・接触とも当たらないようにする: 着地(直し 0 回)
+- U6 PhysicsHeightFieldColliderTest に常駐の切り替えのケースを足し、タスクの verify を通す: 着地(直し 0 回)
