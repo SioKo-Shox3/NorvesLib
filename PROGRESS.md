@@ -10008,3 +10008,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
 - Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
 - Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
+
+- U5 GameMode ShishaShowcase の本体を写し、場面の表のリンクの誤りを直す(U1 の切り直し): 着地(直し 0 回)
+- U6 台本 Scripts/Test-ShishaShowcase.ps1 を写す(U4 の切り直し): 着地(直し 0 回)
+- U3 GameApplicationHandler に --shisha-showcase 系の引数と GameMode の登録を足す: 着地(直し 0 回)
+## 2026-11-05 G10-SHISHA-SHOWCASE（run 20261105-143216 の反復 1、完了）
+- Done: シ者の表現を確かめる専用の GameMode `ShishaShowcase`（`Game/GameModes/ShishaShowcase/`、ID は `GameModeIds.h`）を足した。ランチャーと `SceneCatalog.h` には載せず、開発ビルドだけ登録する。場面は `ShishaShowcaseScenes.cpp` の一覧 `SHISHA_SHOWCASE_SCENES(X)` に `X("名前", 入口の接尾辞)` を 1 行足し、場面のファイルで `Build/Update/Leave<接尾辞>` を `Game::GameModes` に定義する形。場面 `base` は灰色の地面・昼の空（太陽 高度 40°）・手動露出の共通カメラ・`Assets/Models/M9Skinned/ValidU8Float.gltf` のスキン 1 体（時刻 0 のスキニング済みの実寸から 1.8 m に合わせ、`--shisha-scale` 倍）。カメラは固定の位置と `--shisha-camera-orbit=<度/秒>` の注視点の周りの周回を全場面で共通に持ち、Tick の刻みの積算で進む（`--fixed-frame-dt=` は ApplicationProcessor 側の共通の時計がそのまま効く）。印は `SHISHA_SHOWCASE scene=<場面> stage=<enter|ready|failure|leave> key=value ...`（ready は SceneReady と同じ Tick）。起動の引数 `--shisha-showcase=<場面>`・`--shisha-camera-orbit=`・`--shisha-scale=`（0 より大きく 1000 以下）を解析し、重複・未知の場面（一覧つき）・不正値・従属の引数の単独・`--scene`・`--scene-view`・`--scene-cycle-smoke`・`--dog-movement-smoke` との併用を拒否する。Release では 3 つの引数を拒否する。台本 `Scripts/Test-ShishaShowcase.ps1`（自分で起動したプロセスの時間切れと taskkill、`-Scene`・`-Configuration`・`-GameArgs`・`-ExpectStages`・`-CapturePng`/`-CaptureFrames`・`-OutDir` の `metrics.json`・`-GpuTimingFrames`）を足した。
+- 証拠: `.harness/runs/20261105-143216/verify-G10-SHISHA-SHOWCASE-U3.txt`（タスクの verify 2 行。Debug の Game のビルド EXIT=0、台本の構文の解析 EXIT=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まりのため）。起動したら `Scripts/Test-ShishaShowcase.ps1 -Scene base -CapturePng <path>` で enter→ready の印・PNG・`metrics.json` を見て、引数なしの起動がランチャーから始まること、併用の拒否のログを確かめる。
+- Notes: 代役の `ValidU8Float.gltf` は人型ではなく骨 2 本の三角形の検証資産で、身長に合わせて縦に伸ばしている。人型の代役が要るなら後の場面の項目で差し替える。台本はリポジトリのルートの `Game.log` を写すので、ほかの Game と同時に回すとログが混ざる。Release では連続撮影の照合のログが出ないため、複数フレームの撮影は Debug・RelWithDebInfo で回す。

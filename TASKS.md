@@ -6193,7 +6193,7 @@
 - notes: GR63 の Phase 0-6（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-6) と (e)）。印の受け渡しは GR30 と一緒に決める約束（ロードマップ 1941 行）なので、GR30 の velocity を全経路で組み直す G5-GR30-VERTEX-ANIM-VELOCITY（`VisibilityResolve.glsl` の今と前の位置の組み立てを触る）の後にする。10-02 の後に既定の velocity は解決（`visbuffer_resolve.comp` が `VisComputeVelocity` を呼ぶ。`VisibilityResolve.glsl:797`）が書くので、ロードマップの「gbuffer.frag だけ」では足りず両方に入れる。scenario の登録は既存の `RenderingVelocitySkinnedVulkanTest` と同じ形（`Test/Core/Rendering/CMakeLists.txt` の `--scenario=skinned-motion` の 2 本）。名前は `RenderingVelocitySkinnedFastRotationVulkanTest`・`RenderingVelocitySkinnedBehindNearVulkanTest` と、その `GBufferFallback` 版。G10-GR63-SKIN-CULL とは触るファイルがほぼ交わらないので並列に走れる。TAA と動きぼけの既定の見た目は印の無い画素で変わらないので、起動画面（絶対規則 7）は golden で守る。危険地帯（GBuffer・可視バッファの解決・TAA）なので評価者を通す。やらないこと: 遮蔽解除のちらつき（GR30 のリアクティブ。G5-GR30-REACTIVE）。
 
 ## G10-SHISHA-SHOWCASE: シ者の表現（白の質感・残像・消滅・しがみつき）を確かめる専用の GameMode と、起動して撮る・印を確かめる台本の土台を作る
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC
 - gr: GR19, GR20, GR60, GR64, GR65
 - needs-gr: GR01
