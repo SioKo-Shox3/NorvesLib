@@ -6539,7 +6539,7 @@
 - notes: 設計はロードマップ 2285〜2325 行（GR92 の設計 1・4）と要件 `#### GR92` の設計案。今のコードの事実: `SerializeValue` は String・enum・算術・Vector2/3/4・Quaternion・Transform 以外で false（`Library/Core/Public/Object/RuntimeSchema.h:521-580`）、`SceneFileFormatVersion = 2`（`Library/Core/Public/Scene/SceneSerializer.h:92`。v1 の移行は `SceneSerializer.cpp:70`）、`LoadIntoWorld` は bool を返し（`SceneSerializer.h:124`）、`PivotObjectId` は uint64 の PROPERTY（`SpringArmComponent.h:74`）。ロードマップの後に ECS 化が入り、描画の値の多くは `ECS_PROPERTY`（列に置くプロパティ。`MegaGeometryComponent.h:47`・`BoardComponent.h:125`・`SkinnedMeshComponent.h:98`）になったので、AssetRef の分岐が `ECS_PROPERTY` の経路でも同じ TypeOps を通ることを確かめる。`TypeOps` は関数ポインタで文脈を持てず、PROPERTY の型は静的初期化で既定登録される（ロードマップ 2296 行）ので、構築時に TypeOps を上書きする方式は採らず、型の側のメンバ関数を見る分岐にする。ハンドル → パスの逆引きの表は作らない。ファイル（領域）をまたぐ参照は ObjectId / alias でなく文字列の安定キーだけ（GR93 のマーカーの Key）。`SpringArmComponentTest` は `EntityTreeTest` の束にある。Public API（`RuntimeSchema.h` は全 Component が依存する公開ヘッダ）と Object/Resource の寿命の危険地帯なので評価者を通す。やらないこと: コンポーネントの非同期の束縛（G12-GR92-ASSET-BIND）、Prefab のファイル（G12-GR92-PREFAB-FILE）、Bridge（G12-GR92-BRIDGE-SCENE）。
 
 ## G12-GR93-MARKERS-SNAP: 持ち場・寝床とファストトラベル点・見どころ・動物の出現点・匂いの痕跡のマーカーをシーンに保存でき、地面へ吸着できる
-- status: todo
+- status: done
 - after: G12-GR92-ASSETREF-SCENE-V3, G8-GR18-ENCOUNTER-ZONES, G8-GR18-INTERACTION
 - gr: GR93
 - needs-gr: GR18
