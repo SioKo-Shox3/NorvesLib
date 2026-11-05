@@ -5757,7 +5757,7 @@
 - notes: 選定課題 G9-S1（胴の傾きの計算と適用の場所）は推奨の B に決めた: 傾きの計算と平滑は G4 の移動（GR05）に一本化し、GR15 は配分・空中のフェード・個別の ON/OFF だけを持つ。GR05 が値を出さない骨格・場面のために `source: signals` で A の式も使えるようにする。理由: 計算と平滑が 1 か所になり、足 IK との順序を ModifierOrderTest で固定しやすい。今のコードの事実: `AnimDriveSignals` にバンク・ピッチの欄は無い（`Library/Core/Public/Animation/AnimParams.h:35-43`）。G4 の `QuadrupedLocomotionModel` が平滑済みの Pitch・Bank を出し（`Library/Core/Public/Locomotion/QuadrupedLocomotionModel.h:38`）、`QuadrupedLocomotionComponent::PublishVisual`（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:491-517`）がそれを VisualPose へ剛体で掛け（選定課題の C に当たる）、同じ値を `BankAngle` / `PitchAngle` のパラメータで Animator へ渡している。B の modifier を足すと傾きが二重になるので、使う場面では `SetVisualTiltScale(0)` にする。`locomotion.v1` の JSON は節の欄を過不足なく要求する（`Library/Core/Private/Locomotion/QuadrupedLocomotionJson.cpp:20-54`）ので、設定の形は変えず setter にした（可逆で小さい変更なので試験は足さず、Game のビルドで確かめる）。GR05 は G4 の受け入れが構文確認だけ（`TASKS.md` の `G4-MOVEMENT-CAMERA`）なので needs-gr に入れた。GR11 は同期位相、GR13 は保持スロット（`Library/Core/Public/Component/HoldSlotComponent.h:47`）のため。視線のターゲットを決める側（GR22・GR24 の知覚）と眼の関節は作らない。Public API（`AnimatorComponent.h`）に触れるので評価者を通す。出典: 要件 `#### GR15` の (a)(b)(c)、ロードマップの選定課題一覧の G9-S1。
 
 ## G9-GR15-ORDER-DEBUG-VIEW: モディファイアの順序を試験で固定し、調整の画面とデバッグ描画を animation-debug の場面へつなぐ
-- status: todo
+- status: done
 - after: G9-GR15-LEAN-SPINE-LOOK, G9-GR15-SPRING-FOLLOW, G9-GR14-FOOT-PLANT, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15, GR14
 - needs-gr: GR10, GR13
@@ -6010,7 +6010,7 @@
 - notes: 設計はロードマップ 967〜973 行（GR90 の (1)〜(4)）。草は GPU で生成する（G5B-S5）ので、ロードマップ 967 行のとおり GR90 の対象は個別に置く物（岩・倒木・低木・株・標識など）に絞られ、草の配置は GR89 の密度の層と GR42 の草の場が受け持つ。今ある散布は Game 側の実行時の手続き（荒野の `FoliageScatter`、崖錐の岩の `MegaGeometryScatterComponent` への入力。`Game/GameModes/Wasteland/`）で、焼いた形式は無い。この項目は荒野の散布を置き換えない。AssetKind は G5B-S3 の World。浮動小数の決定性は同じバイナリの中だけで、地形を cook し直すと散布が食い違うので cooked_hash で気づけるようにする（ロードマップ 1311 行）。AI 由来の高密度のメッシュ（約 70 万三角形）をそのまま種にしない（GR80 で LOD つきの低ポリにしてから。ロードマップ 1310 行）。種の表の既定値（密度・チャンクの寸法・半径）は企画で未定なので仮の値。試験を足す理由: 決定性・チャンクの独立・最小の間隔・密度の誤りは、撮影では「それらしく散らばっている」ように見えて気づけず、再ベイクの差分やチャンクの境の重なりとして後から黙って出る。危険地帯（アセットのクック・Public API）なので評価者を通す。
 
 ## G5-GR90-SCATTER-RUNTIME: 焼いた散布をチャンクごとに予算つきで常駐・解放し、Entity を増やさずに MegaGeometry と株の経路で描く
-- status: todo
+- status: done
 - after: G5-GR90-SCATTER-BAKE, G5-GR37-TERRAIN-COMPONENT
 - gr: GR90
 - done-when: `Library/Core/{Public,Private}/Scatter/ScatterSystem.{h,cpp}`（`Engine::Engine` のメンバ。シングルトンにしない）が NVSCT を読み、GameThread でカメラからの距離と優先度でチャンクを要求し、1 フレームの個数・バイト・時間の予算の内で常駐させ、要らなくなったチャンクを解放する。描く経路は種の表の指定で 2 つ: mega の種は種ごとに 1 つの `MegaGeometryScatterComponent` の行へ入れ、チャンクを範囲（`kRangeRows`=64 行の塊）に対応させて出し入れを範囲の Active・可視の印で行う（SCN-ECS-MASS-STREAM と同じ予算の分け方）。foliage の種は種ごとの `FoliageBatch` にチャンクを `FoliageCell` として入れ（Rank の昇順 = `FadeThreshold` の小さい順。距離の密度の LOD は先頭からの個数で切る）、常駐の組が変わったときだけ束の一覧を作り直す。`RenderWorld::SetFoliage` へ渡す一覧を、シーンのほかの出どころ（荒野の `FoliageScatter` など）と合成する口を足す（今は 1 つの一覧を丸ごと差し替える作り）。インスタンスは Entity を作らず、Entity の数は種の数に比例する分だけになる。静的なので前の変換 = 今の変換（velocity はカメラの動きだけ）。影を落とす種は種の表の印で絞る。grassland に散布を置き、`grassland-scatter-stress=<本数>`（開発ビルドだけの引数。N 万本を置く）を足す。`ScatterSystemResidencyTest`（`EntityTreeTest` の束へ MEMBER）が通る: 10 万本を読む前後で World の Entity の数が種の数の分しか変わらない、1 フレームの予算を超えて常駐させない、解放したチャンクの範囲が描かれず資源が戻る、カメラの同じ動きで常駐の順がビット一致する。Game がビルドできる。
@@ -10494,3 +10494,20 @@
 - verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
 - from: G2-S6-ASSET-SET-P3
+
+## G5-GR90-SCATTER-RUNTIME-P1: grassland の倒木の種に CC0 のスキャンの倒木を選んで cook し、散布の種の表のメッシュの論理パスをそれに向ける
+- status: todo
+- after: G5-GR90-SCATTER-RUNTIME
+- done-when: 今の `Assets/Scatter/grassland.scatter.json` の `fallen_log` は `lods` が実在しない `Assets/Models/Grassland/FallenLog/FallenLog.gltf` を指している。そのため `GrasslandScatter.cpp` の `LoadMegaMesh` が cooked で解決できず、倒木の種は未結合のまま飛ばされて描かれない。G5-GR90-SCATTER-CHECK が撮影で確かめる「岩・倒木・低木」の倒木も、このままでは出ない。これを次の 4 つで直す。
+  (1) `Scripts/FetchPolyHavenModels.ps1` に `-Set grassland` を足す。落とすのは草原の散布が使う Poly Haven の CC0 のモデルで、岩の `boulder_01` と、新しく選ぶ倒木 1 種。倒木は、地面に横たわった丸太か倒れた幹の形で、温帯の乾いた草地に合う色のものを Poly Haven の API から選ぶ。選んだ id と理由はスクリプト冒頭の説明に書く。
+  (2) 倒木のモデル(glTF・.bin・色・法線・ARM のテクスチャ)を、新しい `Assets/AssetSets/GrasslandModels.json`(package は `Grassland/`)に載せる。項目の形は `WastelandModels.json` の `boulder_01` と同じにする。ほかの一覧に既にある論理パスは重ねない。
+  (3) `grassland.scatter.json` の `fallen_log` の `lods` を、その glTF の論理パスにする。`mesh_radius_m` と `min_spacing_m` は、選んだメッシュの水平の外接の半径から決め直し、根拠を PROGRESS に書く。ほかの種・seed・地形の参照は変えない。
+  (4) CookAssets で倒木と grassland の散布を焼き直したあと、`build/CookedAssets/manifest.json` に `fallen_log` の `lods[0]`(`Assets/` を除いた形)が載っている。
+  範囲の外: 低木・株(foliage)のメッシュは手続きのままにする。株の経路の頂点(`FoliageVertex`)には UV もテクスチャも無く、cook したメッシュを受ける口が無いため。実物の低木のメッシュは G5-GR46-VERTEX-ANIM・G12-GR47・G12-GR48 の経路で入る。手本と並べた見た目の調整は、起動が要るので G5-GR90-SCATTER-CHECK の撮影で行う。その done-when は倒木・低木の見え方を見ており、paths に `Game/GameModes/Grassland` を含む。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set grassland`
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/PolyHaven/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*"`
+- verify: `powershell -NoProfile -Command "$s = Get-Content -Raw Assets/Scatter/grassland.scatter.json | ConvertFrom-Json; $p = (($s.species | Where-Object name -eq 'fallen_log').lods[0]) -replace '^Assets/', ''; if (-not (Select-String -Path build/CookedAssets/manifest.json -SimpleMatch -Pattern $p -Quiet)) { Write-Output ('FALLEN_LOG_NOT_COOKED ' + $p); exit 1 }; Write-Output ('FALLEN_LOG_COOKED ' + $p)"`
+- paths: Scripts/FetchPolyHavenModels.ps1, Assets/AssetSets/GrasslandModels.json, Assets/Scatter/grassland.scatter.json, TASKS.md, PROGRESS.md
+- from: G5-GR90-SCATTER-RUNTIME

@@ -599,7 +599,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentUniformRadiance(false, NorvesLib::Math::Vector3::Zero);
             ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
-            ctx.EngineRef.GetRenderWorld().SetFoliage(FoliageScene{});
+            ctx.EngineRef.GetRenderWorld().SetFoliageSource(FoliageSourceSlot::Scene, FoliageScene{});
             ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGINonShadowCasterOcclusion(false);
         }
 
@@ -730,7 +730,7 @@ namespace Game::GameModes
                            published.Batches.size(), (data.m_HideMask & WastelandHide::Foliage) != 0 ? 1 : 0,
                            (data.m_HideMask & WastelandHide::Gravel) != 0 ? 1 : 0,
                            bReferencePlantOnly && data.m_ReferencePlant.Mesh ? 1 : 0);
-                ctx.EngineRef.GetRenderWorld().SetFoliage(published);
+                ctx.EngineRef.GetRenderWorld().SetFoliageSource(FoliageSourceSlot::Scene, published);
             }
         }
 

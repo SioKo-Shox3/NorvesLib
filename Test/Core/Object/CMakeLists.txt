@@ -76,6 +76,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER EcsSchedulerTest EcsSchedulerTest.cpp
     MEMBER EcsLifetimeTest EcsLifetimeTest.cpp
     MEMBER EcsHierarchyTest EcsHierarchyTest.cpp
+    MEMBER ScatterSystemResidencyTest ScatterSystemResidencyTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -119,6 +120,7 @@ add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQueryOverlapTest)
 add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryRaycastTest --test=SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
+add_test(NAME ScatterSystemResidencyTest COMMAND EntityTreeTest --test=ScatterSystemResidencyTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 
