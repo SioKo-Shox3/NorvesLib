@@ -30,6 +30,7 @@ namespace NorvesLib::Core::Streaming
         bool CanBeginPrepare(double nowMs) const;
         bool BeginPrepare(double nowMs);
         Container::TSharedPtr<StreamingCancelToken> GetCancelToken() const;
+        // Committing も即座に戻し始める。歩を一度も進めていなければ準備済みを捨てる。
         void RequestUnload();
         void SetWantDormant(bool bDormant);
 
@@ -63,7 +64,6 @@ namespace NorvesLib::Core::Streaming
         uint32_t m_FailedAttempts = 0;
         double m_NextPrepareTimeMs = 0.0;
         bool m_bRetryWaiting = false;
-        bool m_bUnloadRequested = false;
         bool m_bCommitFailed = false;
         bool m_bWantDormant = false;
         bool m_bNeedsDiscardPrepared = false;

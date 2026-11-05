@@ -74,8 +74,6 @@ namespace NorvesLib::Core::Streaming
             m_bNeedsDiscardPrepared = true;
             break;
         case EStreamingCellState::Committing:
-            m_bUnloadRequested = true;
-            break;
         case EStreamingCellState::Active:
         case EStreamingCellState::Dormant:
             BeginUnloading();
@@ -155,7 +153,6 @@ namespace NorvesLib::Core::Streaming
         m_Cursors.clear();
         m_Cursors.resize(m_Desc->Payloads.size());
         m_StartedPayloadCount = 0;
-        m_bUnloadRequested = false;
         m_bCommitFailed = false;
         if (m_Cursors.empty())
         {
@@ -185,10 +182,6 @@ namespace NorvesLib::Core::Streaming
         {
             ++m_FailedAttempts;
             m_bCommitFailed = true;
-            BeginUnloading();
-        }
-        else if (m_bUnloadRequested)
-        {
             BeginUnloading();
         }
         else if (result == EStreamingStepResult::Done)
@@ -260,7 +253,6 @@ namespace NorvesLib::Core::Streaming
 
     void StreamingCell::BeginUnloading()
     {
-        m_bUnloadRequested = false;
         if (m_StartedPayloadCount == 0)
         {
             // 一歩もコミットしていないセルには戻す手続きがない。
