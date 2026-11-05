@@ -7,7 +7,8 @@
  * - 散布は 1 つの Component（Object）で、個々の実体は Object を持たない軽い行（EcsMegaInstanceColumns）にする。
  *   Entity の数は本数によらない。エディタと保存に見えるのは、メッシュ・種・本数などの引数だけで、個々の値は保存しない。
  * - 入力の番号 i を安定した識別子とする。入力の番号 → 行の表を持ち、UpdateInstances は入力の番号を指す（格納の順とは独立）。
- * - 行は入力の位置の Morton 順に作り、席は連続した範囲の組（塊）から先頭の順に取る。範囲が空間的にまとまる。
+ * - 行は既定では入力の位置の Morton 順に作り、席は連続した範囲の組（塊）から先頭の順に取る。範囲が空間的にまとまる。
+ *   Input 順を指定すると行は入力の順になり、呼び手が連続した入力と範囲の対応を決められる。
  * - 作成・所有者の変換とメッシュの反映・解放は、EcsWorld の仕事の列（EcsMassWork.h）が 1 フレームの行数と時間の予算で
  *   範囲（またはチャンク）ごとに分けて進める。列は World の LateTick の段の系（LateTick.MassWork）が毎フレーム回す。
  *   - 作成: SetInstances は席の塊とチャンクの組を予約するだけで、行は範囲ごとに作る。範囲の全行を作って書いてから、その範囲を公開する。
@@ -56,6 +57,21 @@ namespace NorvesLib::Core::Component
         uint32_t MeshIndex = 0;
     };
 
+    /// 入力から行を作る順
+    enum class MegaScatterRowOrder : uint8_t
+    {
+        Morton,
+        Input
+    };
+
+    /// SetInstances の行の並べ方と範囲の初期の印
+    struct MegaScatterLayout
+    {
+        MegaScatterRowOrder Order = MegaScatterRowOrder::Morton;
+        /// 席を予約したときの範囲の Active の印（false なら SetRangeActive で立てるまで描かない）
+        bool bRangesStartActive = true;
+    };
+
     class MegaGeometryScatterComponent : public Component
     {
         REFLECTION_CLASS(MegaGeometryScatterComponent, Component)
@@ -95,6 +111,9 @@ namespace NorvesLib::Core::Component
          */
         bool SetInstances(Container::Span<const MegaScatterInstance> instances);
 
+        /// 指定した行順で席の塊を予約し、範囲の Active の印を初期化する。World の木に付く前の指定も保持する
+        bool SetInstances(Container::Span<const MegaScatterInstance> instances, const MegaScatterLayout &layout);
+
         /**
          * @brief 入力の番号 first から values の数だけ値を書き換え、書いた行を含む範囲を範囲ごとに公開し直す
          *        （書き直しを待っている範囲は、範囲の全行を今の版で書き直してから公開する）。まだ作っていない行は作るときに使う
@@ -106,6 +125,12 @@ namespace NorvesLib::Core::Component
         bool SetRangeActive(uint32_t range, bool bActive);
         /// 範囲の可視の印。外した範囲は描かない
         bool SetRangeVisible(uint32_t range, bool bVisible);
+        /// 範囲の Active の印（範囲の外は false）
+        bool IsRangeActive(uint32_t range) const;
+        /// 範囲の可視の印（範囲の外は false）
+        bool IsRangeVisible(uint32_t range) const;
+        /// 範囲を公開しているか（範囲の外は false）
+        bool IsRangePublished(uint32_t range) const;
 
         /// 入力の数
         uint32_t GetInstanceCount() const { return static_cast<uint32_t>(m_Instances.size()); }
@@ -205,10 +230,12 @@ namespace NorvesLib::Core::Component
 
         /// 入力（入力の番号の順）
         Container::VariableArray<MegaScatterInstance> m_Instances;
+        /// 行の並べ方と範囲の初期の印（World の木に付いたときも使う）
+        MegaScatterLayout m_Layout;
         /// メッシュの表の版（末尾が今の表。前の表は、書き直しを待つ範囲が指している間だけ残る）
         Container::VariableArray<MeshTable> m_MeshTables;
         uint32_t m_NextMeshGeneration = 1;
-        /// 行（格納の順 = Morton 順 = 席の順）。作っていない行は null
+        /// 行（格納の順 = 指定した行順 = 席の順）。作っていない行は null
         Container::VariableArray<Ecs::EcsEntity> m_Rows;
         /// 格納の順 → 入力の番号
         Container::VariableArray<uint32_t> m_RowToInput;

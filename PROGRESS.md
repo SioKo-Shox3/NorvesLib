@@ -10068,3 +10068,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
 - Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
 - 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。
+
+- 2026-11-05 G5-GR90-SCATTER-RUNTIME: 統合ブランチを取り込み、grassland の散布の常駐と地形のコライダーの作成を両方残した。EntityTreeTest・Game の Debug ビルドと ScatterSystemResidencyTest・EntityTreeTest・CookedScatterTest が通った。起動の確かめは後回し。
+- U1 MegaGeometryScatterComponent に入力の順の行の並べ方と、範囲の初期の Active の指定と、範囲の印の読み出しを足す: 着地(直し 0 回)
+- U2 RenderWorld に草・低木の束の出どころごとの合成の口を足し、荒野をそこへ移す: 着地(直し 0 回)
+- U7 ScatterSystem（常駐の要求・予算・解放と mega の経路）を足し Engine::Engine のメンバにする（U3 の切り直し）: 着地(直し 0 回)
+- U4 ScatterSystem の foliage の経路（チャンク = FoliageCell、常駐の組が変わったときだけ束を作り直す）: 着地(直し 0 回)
+- U5 ScatterSystemResidencyTest（EntityTreeTest の束へ MEMBER）: 着地(直し 0 回)
+- U6 grassland に散布を置き、開発ビルドの `--grassland-scatter-stress=<本数>` を足す（最後の verify）: 着地(直し 1 回)
+- Done: G5-GR90-SCATTER-RUNTIME: `Scatter::ScatterSystem`（`Engine::Engine` のメンバ、`GetScatterSystem()`）が NVSCT を読み、GameThread でカメラからチャンクの箱までの距離と種の優先度で (チャンク, 種) を要求し、1 フレームの個数・バイト・時間の予算の内で常駐させ、ヒステリシスを足した距離の外で解放する。mega の種は種ごとに Entity 1 つ・`MegaGeometryScatterComponent` 1 つへ全チャンクを入力の順で入れ（チャンクの末尾を 64 行に詰め物）、範囲の Active で出し入れする。foliage の種は常駐のときに `FoliageInstance` へ復号してチャンクを `FoliageCell` にし、常駐の組が変わったフレームだけ種ごとの束を作り直して `RenderWorld::SetFoliageSource(Scatter, …)` へ渡す（荒野の束は Scene の出どころへ移した。中身は同じ）。影は結び付けの `bCastShadow`。grassland は Enter で cook 済みの `GrasslandScatter.nvsct` を Load し、Tick でカメラの位置を渡し、SceneReady は散布の `IsSettled` を待つ。開発ビルドの `--grassland-scatter-stress=<1〜2000000>` で地形の高さに置いた合成の散布に置き換える。試験 `ScatterSystemResidencyTest`（EntityTreeTest の束、10 万本）。
+- 証拠: `.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-final.txt`（EntityTreeTest・Game の Debug ビルド成功、ctest `ScatterSystemResidencyTest|EntityTreeTest|CookedScatterTest` 100% tests passed, 0 tests failed out of 3）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まり）。grassland を `--scene=grassland` で起動し、`SCATTER_LOAD` の行（rock が mega で結び付くか、fallen_log が外れる警告）、岩・低木・株が地形の上に見えること、SceneReady が散布の常駐の後に来ること、`--grassland-scatter-stress=1000000` で歩いたときの常駐・解放と GPU 時間を撮影とログで確かめる。ランナーの評価者の反証（Object の寿命・RenderThread・アセットロードの危険地帯）。
+- Notes: 起動引数の解析は `Game/GameApplicationHandler.{h,cpp}` にしか口が無いため、paths の外だがメンバ 1 つ・解析の分岐・grassland の登録の捕捉だけを足した（新しい行だけ）。
+- Notes: foliage の株のメッシュ・色・FadeStart/End・常駐距離は仮の値（手続きの交差帯）。fallen_log はメッシュが cook されていないので結び付けから外れる。`IsRangePublished` は RenderWorld なしの試験では常に false のため、試験の mega の側は Active と解放後の両方の印で確かめている。
+- Notes: 要起票: grassland の低木・株・倒木のメッシュを cook し（今は手続きの仮の株と cook されない倒木の仮のパス）、散布の見た目を手本と並べて合わせる。
+- 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
+- Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
