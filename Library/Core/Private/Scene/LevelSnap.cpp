@@ -3,6 +3,7 @@
 #include "Object/Entity.h"
 #include "Scene/SceneQuery.h"
 #include <cmath>
+#include <limits>
 
 namespace NorvesLib::Core::Scene::LevelSnap
 {
@@ -51,7 +52,7 @@ namespace NorvesLib::Core::Scene::LevelSnap
         const bool bValidDistances = AreProbeDistancesValid(maxDrop, probeLift);
         for (const LevelSnapTarget& target : targets)
         {
-            if (target.Target == nullptr || !bValidDistances)
+            if (target.Target == nullptr || !bValidDistances || !std::isfinite(target.GroundOffset))
             {
                 ++stats.Missed;
                 continue;
@@ -78,9 +79,9 @@ namespace NorvesLib::Core::Scene::LevelSnap
         float probeLift)
     {
         outDeviations.clear();
-        if (!AreProbeDistancesValid(maxDrop, probeLift))
+        if (!AreProbeDistancesValid(maxDrop, probeLift) || !std::isfinite(tolerance) || tolerance < 0.0f)
         {
-            return true;
+            return false;
         }
 
         for (const LevelSnapTarget& target : targets)
@@ -99,12 +100,22 @@ namespace NorvesLib::Core::Scene::LevelSnap
             if (!SnapToGround(query, position, groundPosition, groundNormal, maxDrop, probeLift))
             {
                 deviation.bNoGround = true;
-                deviation.Distance = std::fabs(deviation.ActualY - deviation.ExpectedY);
+                deviation.Distance = std::isfinite(target.GroundOffset)
+                    ? std::fabs(deviation.ActualY - deviation.ExpectedY)
+                    : std::numeric_limits<float>::infinity();
                 outDeviations.push_back(deviation);
                 continue;
             }
 
-            deviation.ExpectedY = groundPosition.y + target.GroundOffset;
+            deviation.ExpectedY = groundPosition.y;
+            if (!std::isfinite(target.GroundOffset))
+            {
+                deviation.Distance = std::numeric_limits<float>::infinity();
+                outDeviations.push_back(deviation);
+                continue;
+            }
+
+            deviation.ExpectedY += target.GroundOffset;
             deviation.Distance = std::fabs(deviation.ActualY - deviation.ExpectedY);
             if (deviation.Distance > tolerance)
             {
