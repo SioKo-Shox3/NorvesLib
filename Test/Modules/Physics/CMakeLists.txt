@@ -78,6 +78,10 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER CombatJointFollowTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatJointFollowTest.cpp
     MEMBER CombatProfileLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatProfileLoadTest.cpp
     MEMBER GripTuningLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/GripTuningLoadTest.cpp
+    MEMBER GripSolverTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/GripSolverTest.cpp
+    MEMBER GripFrameRateInvarianceTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/GripFrameRateInvarianceTest.cpp
+    MEMBER GripGaugeTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/GripGaugeTest.cpp
+    MEMBER GripSmoothingTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/GripSmoothingTest.cpp
     MEMBER CombatResponseTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/CombatResponseTest.cpp
     MEMBER HealthComponentTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/HealthComponentTest.cpp
     MEMBER EnemyDefinitionLoadTest ${CMAKE_SOURCE_DIR}/Test/Modules/Gameplay/EnemyDefinitionLoadTest.cpp
@@ -140,6 +144,10 @@ add_test(NAME CombatLifecycleTest COMMAND PhysicsDynamicsTest --test=CombatLifec
 add_test(NAME CombatJointFollowTest COMMAND PhysicsDynamicsTest --test=CombatJointFollowTest)
 add_test(NAME CombatProfileLoadTest COMMAND PhysicsDynamicsTest --test=CombatProfileLoadTest)
 add_test(NAME GripTuningLoadTest COMMAND PhysicsDynamicsTest --test=GripTuningLoadTest)
+add_test(NAME GripSolverTest COMMAND PhysicsDynamicsTest --test=GripSolverTest)
+add_test(NAME GripFrameRateInvarianceTest COMMAND PhysicsDynamicsTest --test=GripFrameRateInvarianceTest)
+add_test(NAME GripGaugeTest COMMAND PhysicsDynamicsTest --test=GripGaugeTest)
+add_test(NAME GripSmoothingTest COMMAND PhysicsDynamicsTest --test=GripSmoothingTest)
 add_test(NAME CombatResponseTest COMMAND PhysicsDynamicsTest --test=CombatResponseTest)
 add_test(NAME HealthComponentTest COMMAND PhysicsDynamicsTest --test=HealthComponentTest)
 add_test(NAME EnemyDefinitionLoadTest COMMAND PhysicsDynamicsTest --test=EnemyDefinitionLoadTest)

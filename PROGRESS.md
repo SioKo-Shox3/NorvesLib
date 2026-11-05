@@ -10028,3 +10028,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 調整値 GripTuning の型・JSON の読み込み・既定の資産を足す: 着地(直し 0 回)
 - U2 しがみつきの拘束のソルバ・荷重の平滑と混ぜ・顎のゲージの純関数を足す: 着地(直し 0 回)
 - U3 GripTuningLoadTest を足す: 着地(直し 0 回)
+- U4 ソルバ・フレームレート・ゲージ・平滑の試験を足し、タスクの verify を回す: 着地(直し 0 回)
