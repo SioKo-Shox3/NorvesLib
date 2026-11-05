@@ -10124,3 +10124,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 回復のフレームは減りを止めて回復だけを足す。枯渇の後は `ResetGripGauge` まで回復も印もしない（解除後のゲージの扱いは GRIP-COMPONENTS で決める）。GripFrameRateInvarianceTest は周期 0.5 秒・振幅 2 m の軌道で荷重が約 36 g になり既定の panic 4 g では減りが飽和して差が消えるため、試験の中だけ panic 60 g・上限 80 g にしている。
 - U0 契約のヘッダ・骨格のファイル・CMake の登録: 着地(直し 0 回)
 - U1 CellManifest の読みと拒否: 着地(直し 0 回)
+- U3 優先度と輪の純関数: 着地(直し 0 回)
