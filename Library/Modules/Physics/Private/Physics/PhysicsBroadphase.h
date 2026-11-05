@@ -21,6 +21,16 @@ namespace NorvesLib::Modules::Physics
         HeightField,
     };
 
+    // 組の生成方針。Unspecified は従来どおりすべての組を対象にする。
+    enum class EPhysicsProxyMobility : uint8_t
+    {
+        Unspecified,
+        Static,
+        Kinematic,
+        Dynamic,
+        Trigger,
+    };
+
     struct PhysicsShapeProxy
     {
         Core::Scene::ColliderHandle Collider;
@@ -42,12 +52,28 @@ namespace NorvesLib::Modules::Physics
         bool bTrigger = false;
         // 球・箱・カプセルの表面番号。高さ場は当たり位置で層を照会する。
         uint8_t SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
+        // PhysicsModule だけが設定する。既定値では従来どおりすべての組を対象にする。
+        EPhysicsProxyMobility Mobility = EPhysicsProxyMobility::Unspecified;
     };
 
     struct PhysicsCandidatePair
     {
         Core::Scene::ColliderHandle First;
         Core::Scene::ColliderHandle Second;
+    };
+
+    struct PhysicsBroadphaseStats
+    {
+        // 最後の SetProxies で生成した候補の組数。
+        uint64_t CandidatePairCount = 0;
+        // 所有者が記録したナローフェーズの接触判定回数。
+        uint64_t NarrowPhaseTestCount = 0;
+        // FindProxy の二分探索でハンドルを比較した回数。
+        uint64_t ProxyLookupCount = 0;
+        // 木の再構築回数。木を導入するまでは常に 0。
+        uint64_t TreeRebuildCount = 0;
+        // インスタンスのクエリが走査対象にしたプロキシ数の累計。
+        uint64_t VisitedNodeCount = 0;
     };
 
     class PhysicsBroadphase
@@ -57,6 +83,9 @@ namespace NorvesLib::Modules::Physics
 
         const Core::Container::VariableArray<PhysicsShapeProxy>& GetProxies() const;
         const Core::Container::VariableArray<PhysicsCandidatePair>& GetCandidatePairs() const;
+        const PhysicsBroadphaseStats& GetStats() const;
+        const PhysicsShapeProxy* FindProxy(Core::Scene::ColliderHandle handle) const;
+        void RecordNarrowPhaseTest() const;
 
         bool Raycast(const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit) const;
         void OverlapSphere(
@@ -115,5 +144,7 @@ namespace NorvesLib::Modules::Physics
 
         Core::Container::VariableArray<PhysicsShapeProxy> m_Proxies;
         Core::Container::VariableArray<PhysicsCandidatePair> m_CandidatePairs;
+        // 所有者のスレッドだけが検索・接触判定を呼び出すため、通常の整数で保持する。
+        mutable PhysicsBroadphaseStats m_Stats;
     };
 } // namespace NorvesLib::Modules::Physics
