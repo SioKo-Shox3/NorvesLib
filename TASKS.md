@@ -6036,7 +6036,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。Entity の数と散布の数のログが無ければ、開発ビルドだけのログ（`SCATTER_RESIDENT chunks=... instances=... entities=...` のような 1 行）をこの項目で足す（Release に入れない。絶対規則 8）。5 万本を超えると MegaGeometry の BVH の列が VRAM を超えた前例（SCN-ECS-MASS-STREAM の notes）があるので、落ちたら本数と落ちた所を記録し、mega の種の本数の上限を種の表で決める。
 
 ## G5-GR113-CLEARANCE-CPU: カメラ〜主人公の切り抜き領域と近接のフェードの値を CPU で決め、カメラの proxy に載せて描画へ渡す
-- status: doing
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
