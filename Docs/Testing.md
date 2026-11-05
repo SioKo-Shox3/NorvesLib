@@ -43,6 +43,10 @@ ctest --test-dir build -C Debug -R "^<テスト名>$"
 
 GPUを使うテストは、Vulkanを使えない環境ではskip（終了コード125）になる。
 
+`pwsh -NoProfile -File Scripts/Test-GameReset.ps1 -SoakCount 5 -Configuration Debug` は、最後のセーブからのリセットを繰り返し、資源の数の安定・撃破状態の復元・終了コード 0・Vulkan の VUID 0 件を検査する。
+Game を起動して GPU を使う重い確認なので、PC を使ってよいときに実行する。`-SoakCount` は 2 以上、`-Configuration` は `Debug` または `RelWithDebInfo` を指定する。
+証跡は既定で `.harness/runs/game-reset/` 配下に残し、空の専用セーブ領域を使う。保存先は `-EvidencePath`、制限時間は `-TimeoutSeconds`（既定 300 秒）で指定できる。
+
 ## 技術的負債: コード上の確からしさを見るだけの試験
 
 既存の試験には、契約を反証せず、実装をそのまま写した検査が多い。たとえば次のようなものである。
@@ -357,6 +361,16 @@ Look（`TestLookAt`）:
 - 反証する契約: 初期要求・通常要求・状態の Update 内の要求を次の Update の先頭まで保留し、受理した要求を FIFO で適用する。同じ状態への要求も Exit → Enter をやり直し、Enter 内の要求は同じ安全点で解決する。循環する要求は上限で中断して次回へ持ち越し、未登録・範囲外・満杯の要求を拒否する。Shutdown は Exit を一度だけ呼び、保留中・停止後の要求や Exit 内からの停止で次の状態へ移らない。
 - ほかの手段で気づけるか: 気づきにくい。拒否や連鎖の上限は警告に出るが、遷移が Update をまたぐ位置、FIFO の順序、同じ状態への入り直しや Exit の重複は撮影・ログだけでは確かめられない。
 - 失敗が黙って起きるか: 起きる。遷移や通知の時点がずれても描画は続き、拒否や上限の警告だけでは誤った状態や寿命の処理を検出できない。
+
+`GameModeScopeLeakTest`（`GameModeStateMachineTest` の中）を足す理由:
+- 反証する契約: 後始末の段と後入れ先出しの順序、二度呼びと再入の抑止、Cleanup 中に追加した登録の実行、テクスチャの呼び戻しの世代、繰り返しリセットしたときの Entity と偽の資源数の復帰を確かめる。
+- ほかの手段で気づけるか: 気づきにくい。漏れや後始末の順序は見た目に出ないことがあり、起動してリセットを繰り返す確認は重い。
+- 失敗が黙って起きるか: 起きる。後始末の欠落や遅れがあっても、すぐには落ちずに処理が続きうる。
+
+`GameModeScopeResourceLeakVulkanTest`（`RenderResourcesDomainContractTest` の中）を足す理由:
+- 反証する契約: 実 GPU の RenderResources で確保したテクスチャ・メッシュ・モデルのハンドル数が Cleanup 後に基準へ戻る。
+- ほかの手段で気づけるか: 気づきにくい。ハンドルの漏れは見た目や通常のログに現れないことがある。
+- 失敗が黙って起きるか: 起きる。解放漏れがあっても、資源が不足するまで描画が続きうる。ラベルは `GPU;RenderingValidation` で、既定の ctest の選び方では回さず、起動の確かめの項目で実行する。
 
 `HealthComponentTest`（`PhysicsDynamicsTest` の中）を足す理由:
 - 反証する契約: ゼロ・過剰・連続ダメージの結果と体力の減算が一致し、撃破後は体力・スタッガを変えず通知を増やさない。ダメージ量またはスタッガ量が負・NaN・無限大なら状態と通知を保ち、無敵中も状態と通知を変えず、解除後は適用する。スタッガは閾値到達（float の丸めによる到達を含む）で通知してゼロへ戻り、明示リセットと閾値ゼロも扱う。撃破と崩れが同時なら OnDamaged → OnStaggerBroken → OnDefeated の順で通知する。
