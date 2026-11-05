@@ -9757,3 +9757,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 AssetCook に GrassFieldCooker と照合のコマンドを足す: 着地(直し 0 回)
 - U5 GrassFieldComponent と地形の地面の取り出し口を足す: 着地(直し 0 回)
 - U9 AssetCookGrassFieldSmoke と基準の PNG 群を今の枠で入れ直す: 着地(直し 0 回)
+- U10 SceneFileRoundTripTest の草原の往復と旧ファイルを今の枠で入れ直す: 着地(直し 0 回)
