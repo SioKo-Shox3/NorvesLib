@@ -3,6 +3,11 @@
 #include "Container/Containers.h"
 #include <cstdint>
 
+namespace NorvesLib::Core
+{
+    class JsonWriter;
+}
+
 namespace NorvesLib::Core::Scene
 {
     // 画像の上と右が指すワールドの水平軸。
@@ -50,6 +55,9 @@ namespace NorvesLib::Core::Scene
     // 変換には検証済みの地図を渡す。矩形外の座標も外挿する。
     MapUV WorldToMapUV(const MapTransform& transform, double worldX, double worldZ);
     MapWorldXZ MapUVToWorld(const MapTransform& transform, const MapUV& uv);
+
+    // 検証済みの変換を、開始済みの JSON オブジェクトの中へ書く。
+    void WriteMapTransformJsonFields(JsonWriter& writer, const MapTransform& transform);
 
     // 無効な変換を書き出す場合は空文字列を返す。読み込み失敗時は out を変更しない。
     Container::String WriteMapTransformJson(const MapTransform& transform);

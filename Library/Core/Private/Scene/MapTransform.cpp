@@ -221,14 +221,8 @@ namespace NorvesLib::Core::Scene
         return result;
     }
 
-    Container::String WriteMapTransformJson(const MapTransform& transform)
+    void WriteMapTransformJsonFields(JsonWriter& writer, const MapTransform& transform)
     {
-        if (!ValidateMapTransform(transform))
-        {
-            return {};
-        }
-        JsonWriter writer(true);
-        writer.BeginObject();
         writer.WriteString("format", "norves.map_transform");
         writer.WriteUInt64("version", 1);
         writer.BeginObject("world_rect");
@@ -242,6 +236,17 @@ namespace NorvesLib::Core::Scene
         writer.WriteUInt64("image_height", transform.ImageHeight);
         writer.WriteString("up_axis", AxisToString(transform.UpAxis));
         writer.WriteString("right_axis", AxisToString(transform.RightAxis));
+    }
+
+    Container::String WriteMapTransformJson(const MapTransform& transform)
+    {
+        if (!ValidateMapTransform(transform))
+        {
+            return {};
+        }
+        JsonWriter writer(true);
+        writer.BeginObject();
+        WriteMapTransformJsonFields(writer, transform);
         writer.EndObject();
         return writer.IsComplete() ? writer.ToString() : Container::String{};
     }

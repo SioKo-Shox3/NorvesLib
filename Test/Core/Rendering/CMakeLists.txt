@@ -1382,6 +1382,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER CameraViewConstantsTest CameraViewConstantsTest.cpp
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
     MEMBER MapTransformTest MapTransformTest.cpp
+    MEMBER MapCapturePlanTest MapCapturePlanTest.cpp
     MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
     MEMBER VirtualShadowMapClipmapTest VirtualShadowMapClipmapTest.cpp
     MEMBER VirtualShadowMapPointTest VirtualShadowMapPointTest.cpp
@@ -1427,6 +1428,7 @@ add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanT
 
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
 add_test(NAME MapTransformTest COMMAND CameraViewConstantsTest --test=MapTransformTest)
+add_test(NAME MapCapturePlanTest COMMAND CameraViewConstantsTest --test=MapCapturePlanTest)
 add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
 add_test(NAME VirtualShadowMapClipmapTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapClipmapTest)
 add_test(NAME VirtualShadowMapPointTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapPointTest)
