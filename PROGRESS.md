@@ -10071,3 +10071,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 GameModeScope に AddCleanup・非同期の補助・数の取得・漏れの検査を足す: 着地(直し 0 回)
 - U4 ProgressionState と ProgressSaveData の写し: 着地(直し 0 回)
 - Notes(G8-GR76-RESET-LIFETIME): 要起票: `ProgressionState::LoadStateFromJson` で撃破状態を空にしても最後のシ者の解放を通知済みの旗が戻らないため、同じインスタンスで条件を満たし直すと `OnFinalUnlocked` が再び通知されない(リセットの後に解放を通知し直すかは仕様の判断)。
+- U2 GameModeScopeLeakTest と試験の文書: 着地(直し 0 回)
