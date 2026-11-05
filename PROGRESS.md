@@ -10130,3 +10130,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 Engine への組み込みと段 PostTick.Streaming: 着地(直し 0 回)
 - U6 StreamingCellStateMachineTest: 着地(直し 0 回)
 - U7 StreamingBudgetTest と仕上げの verify: 着地(直し 0 回)
+
+## 2026-11-05 G12-GR40-CELL-CORE（run 20261105-193215 の反復 1、完了）
+- Done: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`）に CellManifest・IStreamingPayloadHandler・StreamingCell の状態の機械・StreamingBudget・優先度と輪（Ra<Rd<Ru のヒステリシス・先読み）・StreamingSystem を置き、`Engine::Engine` のメンバと段 `PostTick.Streaming` で毎フレーム進める。Prepare は JobSystem に 1 セル 1 仕事で出し、完了の印を GameThread で見る。終了時は World・描画資源より先に StreamingSystem を止める。
+- Done: verify の 2 本を通した（ビルド終了コード 0、ctest の StreamingCellStateMachineTest・StreamingBudgetTest・EntityTreeTest・JobSystemShutdownTest・JobParallelForTest がすべて Passed。`.harness/runs/20261105-193215/verify-G12-GR40-CELL-CORE.txt`）。
+- Next: payload の中身（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）、GameMode の後始末（G12-GR40-GAMEMODE-ASYNC）、スナップロード（G12-GR40-SNAP-PREFETCH）。
+- Notes: バイトの上限（MaxCpuBytes・MaxGpuBytes）は、一度でも常駐したセルの最後の申告で入る前に判定する。初めて読むセルは量が分からないので、入れてから上限を超えた分を優先度の悪い方から追い出す（追い出したセルは次のフレームに読み直さない）。
+- Notes: Committing 中のアンロードの要求は印を残さず、すぐ Unloading に入る（コミットの歩は GameThread の同期なのでフレームの間に走っている歩は無い）。
+- Notes: 起動の確かめは後回し。マニフェストを読み込むシーンはまだ無く、`PostTick.Streaming` はセルが空なら何もしないので、どのシーンの見た目も変えない。payload を持つ項目が入ったときに、起動して歩いたときの遷移と予算の統計を確かめる。
