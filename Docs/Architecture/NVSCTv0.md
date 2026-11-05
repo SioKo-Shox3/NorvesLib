@@ -326,3 +326,21 @@ cooked_hash に返す関数・範囲と同じであり、NVTRN 内部の Payload
 続けて種ごとに `SCATTER_SPECIES name=... instances=...` を出す。
 payload_hash は NVSCT 内部ハッシュ。散布 manifest の cooked_hash は NVSCT 全体のパッケージ用ハッシュである。
 飽和した種は標準エラーへ `警告:` で始まる診断を1行ずつ出す。
+
+### grassland の散布 spec
+
+`Assets/Scatter/grassland.scatter.json` は 128 m の地形タイルを一辺 32 m のチャンクに分け、
+固定 seed `89021090` と地形の cooked_hash `1d620f39881e0053` を使う。密度・間隔・帯は企画未定の仮値。
+岩は `MSK0.a`（岩）の密度と急斜面、倒木は緩斜面、低木と草以外の草本の株は湿りの帯を使い、
+いずれも道を除外する。植物は `MSK0.g` を枯れ度に使う。草の密な配置は草の場が受け持つ。
+現在の地形 spec は道の塗りを指定していないため `MSK0.b` は全域 0 で、道の除外は配置に影響しない。
+岩の層がある範囲も小さく、岩はほかの種よりかなり少なく焼かれる。
+
+岩の LOD0 は荒野の崖錐でも使う既存の論理パス
+`Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`（元メッシュは 66,122 三角形）。
+荒野の低木と株は実行時の手続きでメッシュを作るため、参照可能なメッシュ論理パスはない。
+次はまだ cook されない仮のパスで、対応する資産を用意する必要がある。
+
+- 倒木: `Assets/Models/Grassland/FallenLog/FallenLog.gltf`
+- 低木: `Assets/Models/Grassland/Shrub/Shrub.gltf`
+- 草本の株: `Assets/Models/Grassland/ForbClump/ForbClump.gltf`
