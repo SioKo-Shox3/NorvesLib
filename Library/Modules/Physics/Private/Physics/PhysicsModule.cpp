@@ -13,6 +13,7 @@
 #include "Physics/ColliderComponent.h"
 #include "Physics/ColliderShapeTransform.h"
 #include "Physics/RigidBodyComponent.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -44,6 +45,15 @@ namespace NorvesLib::Modules::Physics
                     transform.rotation.y,
                     transform.rotation.z))
                     + transform.rotation.w * transform.rotation.w > Math::Constants::EPSILON;
+        }
+
+        void WarnHeightFieldTransformRejected(const Core::Entity& entity)
+        {
+            static_cast<void>(entity);
+            LOG_WARNING("PHYSICS_HEIGHTFIELD_TRANSFORM_REJECTED Entity world=%u slot=%u generation=%u: "
+                        "回転・拡大または位置が高さ場に使えません",
+                        entity.GetEntityHandle().WorldId, entity.GetEntityHandle().SlotIndex,
+                        entity.GetEntityHandle().Generation);
         }
 
     } // namespace
@@ -82,6 +92,7 @@ namespace NorvesLib::Modules::Physics
 
         m_Engine = &engine;
         m_bBound = true;
+        engine.GetSceneQuery().SetTerrainSystem(&engine.GetTerrainSystem());
         RegisterWorldSystems(engine.GetWorld());
         return true;
     }
@@ -287,6 +298,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         // Unavailable は provider が既に存在しないため dangling binding はない。
+        engine.GetSceneQuery().SetTerrainSystem(nullptr);
         m_Engine = nullptr;
         m_bBound = false;
         ResetTransientState();
@@ -593,6 +605,8 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_Radius = radius;
+        component.m_HeightField.reset();
+        component.m_bHeightFieldTransformWarning = false;
         component.m_Shape = ColliderComponent::EColliderShape::Sphere;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -612,6 +626,8 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_HalfExtents = halfExtents;
+        component.m_HeightField.reset();
+        component.m_bHeightFieldTransformWarning = false;
         component.m_Shape = ColliderComponent::EColliderShape::Box;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -631,8 +647,51 @@ namespace NorvesLib::Modules::Physics
 
         component.m_Radius = radius;
         component.m_CapsuleHalfHeight = halfHeight;
+        component.m_HeightField.reset();
+        component.m_bHeightFieldTransformWarning = false;
         component.m_Shape = ColliderComponent::EColliderShape::Capsule;
         component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderHeightField(ColliderComponent& component,
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+
+        Math::AABB bounds;
+        if (!Core::Container::IsValid(heightField) || !heightField->IsGrid() || !heightField->GetBounds(bounds))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        const ColliderSlot& slot = m_ColliderSlots[component.m_ColliderHandle.Index];
+        PhysicsShapeProxy candidate;
+        if (!BuildHeightFieldWorldShape(heightField, GetFreshWorldTransform(*slot.Owner), component.m_LocalPose, candidate))
+        {
+            WarnHeightFieldTransformRejected(*slot.Owner);
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_HeightField = std::move(heightField);
+        component.m_Shape = ColliderComponent::EColliderShape::HeightField;
+        component.m_bHasShape = true;
+        component.m_bHeightFieldTransformWarning = false;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_SurfaceId = surfaceId;
         return EPhysicsResult::Success;
     }
 
@@ -649,24 +708,38 @@ namespace NorvesLib::Modules::Physics
             return EPhysicsResult::InvalidArgument;
         if (component.m_bHasShape)
         {
-            EPhysicsProxyShape shape;
+            EPhysicsProxyShape shape = EPhysicsProxyShape::Sphere;
+            bool bPrimitiveShape = false;
+            PhysicsShapeProxy candidate;
             switch (component.m_Shape)
             {
             case ColliderComponent::EColliderShape::Sphere:
                 shape = EPhysicsProxyShape::Sphere;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Box:
                 shape = EPhysicsProxyShape::Box;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Capsule:
                 shape = EPhysicsProxyShape::Capsule;
+                bPrimitiveShape = true;
                 break;
-            default:
+            case ColliderComponent::EColliderShape::HeightField:
+                if (!BuildHeightFieldWorldShape(component.m_HeightField, owner, prepared, candidate))
+                {
+                    return EPhysicsResult::InvalidArgument;
+                }
+                break;
+            case ColliderComponent::EColliderShape::None:
                 return EPhysicsResult::InvalidState;
             }
-            PhysicsShapeProxy candidate;
-            if (!BuildColliderWorldShape(shape, component.m_Radius, component.m_CapsuleHalfHeight,
-                                         component.m_HalfExtents, owner, prepared, candidate))
+            if (!bPrimitiveShape && component.m_Shape != ColliderComponent::EColliderShape::HeightField)
+            {
+                return EPhysicsResult::InvalidState;
+            }
+            if (bPrimitiveShape && !BuildColliderWorldShape(shape, component.m_Radius, component.m_CapsuleHalfHeight,
+                                                            component.m_HalfExtents, owner, prepared, candidate))
                 return EPhysicsResult::InvalidArgument;
         }
         component.m_LocalPose = prepared;
@@ -914,13 +987,34 @@ namespace NorvesLib::Modules::Physics
 
     bool PhysicsModule::IsBodyLifecycleActive(const BodySlot& body) const
     {
-        return body.bOccupied
+        if (!(body.bOccupied
             && body.Component != nullptr
             && body.Owner != nullptr
             && body.Component->IsActive()
             && body.Owner->IsActive()
             && !body.Component->HasFlag(Core::OF_PendingDestroy)
-            && !body.Owner->IsPendingDestroy();
+            && !body.Owner->IsPendingDestroy()))
+        {
+            return false;
+        }
+
+        const ColliderComponent* collider = body.Owner->GetComponent<ColliderComponent>();
+        const ColliderSlot* slot = collider ? FindColliderSlot(collider->m_ColliderHandle) : nullptr;
+        if (collider != nullptr && (slot == nullptr || slot->Component != collider || slot->Owner != body.Owner))
+        {
+            collider = nullptr;
+            for (const ColliderSlot& candidate : m_ColliderSlots)
+            {
+                if (candidate.bOccupied && candidate.Owner == body.Owner)
+                {
+                    collider = candidate.Component;
+                    break;
+                }
+            }
+        }
+        // 登録された高さ場を持つ所有者は、剛体の速度や重力では動かさない。
+        return !(collider != nullptr && collider->IsActive() && !collider->HasFlag(Core::OF_PendingDestroy)
+            && collider->m_bHasShape && collider->m_Shape == ColliderComponent::EColliderShape::HeightField);
     }
 
     void PhysicsModule::DiscardBodyStepState(BodySlot& body)
@@ -936,7 +1030,8 @@ namespace NorvesLib::Modules::Physics
             && collider.Component->m_bHasShape
             && collider.Component->IsActive() && collider.Owner->IsActive()
             && !collider.Component->HasFlag(Core::OF_PendingDestroy) && !collider.Owner->IsPendingDestroy()
-            && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
+            && (collider.Component->m_Shape == ColliderComponent::EColliderShape::HeightField
+                || IsFiniteTransform(GetFreshWorldTransform(*collider.Owner)));
     }
 
     void PhysicsModule::UpdateRenderInterpolationDefault(BodySlot& body)
@@ -1312,28 +1407,50 @@ namespace NorvesLib::Modules::Physics
             const Math::Transform transform = GetFreshWorldTransform(*slot.Owner);
             PhysicsShapeProxy proxy;
             proxy.Collider = slot.Component->m_ColliderHandle;
-            proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
             proxy.Entity = slot.Owner->GetEntityHandle();
             proxy.bHasEntity = proxy.Entity.IsValid();
             proxy.Layer = slot.Component->m_CollisionLayer;
             proxy.Mask = slot.Component->m_CollisionMask;
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
-            EPhysicsProxyShape shape;
+            proxy.SurfaceId = slot.Component->m_SurfaceId;
+            EPhysicsProxyShape shape = EPhysicsProxyShape::Sphere;
+            bool bPrimitiveShape = false;
             switch (slot.Component->m_Shape)
             {
             case ColliderComponent::EColliderShape::Sphere:
                 shape = EPhysicsProxyShape::Sphere;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Box:
                 shape = EPhysicsProxyShape::Box;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Capsule:
                 shape = EPhysicsProxyShape::Capsule;
+                bPrimitiveShape = true;
                 break;
-            default:
+            case ColliderComponent::EColliderShape::HeightField:
+                if (!BuildHeightFieldWorldShape(slot.Component->m_HeightField, transform, slot.Component->m_LocalPose, proxy))
+                {
+                    if (!slot.Component->m_bHeightFieldTransformWarning)
+                    {
+                        WarnHeightFieldTransformRejected(*slot.Owner);
+                        slot.Component->m_bHeightFieldTransformWarning = true;
+                    }
+                    continue;
+                }
+                slot.Component->m_bHeightFieldTransformWarning = false;
+                proxies.push_back(proxy);
+                continue;
+            case ColliderComponent::EColliderShape::None:
                 continue;
             }
+            if (!bPrimitiveShape)
+            {
+                continue;
+            }
+            proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
             if (!BuildColliderWorldShape(shape, slot.Component->m_Radius, slot.Component->m_CapsuleHalfHeight,
                                          slot.Component->m_HalfExtents, transform, slot.Component->m_LocalPose, proxy))
                 continue;

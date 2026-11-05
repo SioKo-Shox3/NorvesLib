@@ -37,6 +37,8 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         /// 8 × 8 升目ごとの高さの範囲（行優先。外周のブロックは残りの升目だけを覆う）
         static constexpr uint32_t kBlockCells = 8u;
+        float MinHeight = 0.0f;
+        float MaxHeight = 0.0f;
         uint32_t BlockColumns = 0;
         uint32_t BlockRows = 0;
         Container::VariableArray<float> BlockMinHeight;
@@ -67,7 +69,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             return value;
         }
 
-        /// 造成後の頂点から、各ブロックに含まれる頂点の最小・最大の高さを作る
+        /// 造成後の頂点から、各ブロックと格子全体の高さの範囲を作る
         void BuildBlockBounds();
     };
 } // namespace NorvesLib::Core::Rendering::Terrain

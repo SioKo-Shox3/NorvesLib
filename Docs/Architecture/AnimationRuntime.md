@@ -170,7 +170,7 @@ PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weight
 
 ### 足の IK(FootIK)
 
-組み込みの型 `FootIK` は既定order 500。設定は骨格単位の実行時サイドカー `*.posemod.json` のsettingsに置く。import.jsonのik節には置かない。長さはメートル、時間は秒。足の固定・着地の判定は扱わない。
+組み込みの型 `FootIK` は既定order 500。設定は骨格単位の実行時サイドカー `*.posemod.json` のsettingsに置く。import.jsonのik節には置かない。長さはメートル、時間は秒。
 
 | キー | 既定値・範囲 |
 |---|---|
@@ -179,6 +179,14 @@ PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weight
 | legs[].chain | 必須。根・中間・足首・任意の足先の関節名3〜4個。重複不可、後の関節は直前の関節の子孫 |
 | legs[].pole | `"auto"`。または有限な数値3個の方向、長さ1e-6以上。正規化して使う |
 | legs[].sole / legs[].maxStretch | 0.02 / 1.02。範囲はそれぞれ[0, 0.5] / [1, 1.5] |
+| legs[].plant.downEvent / legs[].plant.upEvent | 空でないイベント名。既定は `Foot.<脚のname>.Down` / `Foot.<脚のname>.Up`。`legs[].plant` は省略可能なobject |
+| plant | 省略時は足の固定が無効。objectを指定すると既定で有効になり、`{}` で仮の既定値を使う |
+| plant.enabled | true。boolで足の固定を有効・無効にする |
+| plant.heightThreshold / plant.speedThreshold | 仮の値0.03 / 0.5。範囲はそれぞれ[-0.5, 0.5] m / [0, 10] m/s |
+| plant.liftHeight / plant.releaseBlendSeconds | 仮の値0.15 / 0.1。範囲はそれぞれ(0, 2] m / [0, 2]秒 |
+| land | 省略可能なobject。足の固定の有効・無効にかかわらず着地の重みに使う |
+| land.blendSeconds / land.snapDistance | 仮の値0.1秒 / 0.05 m。範囲はそれぞれ[0, 5]秒 / [0, 2] m |
+| land.teleportDistance | 仮の値1.0 m。(0, 100] m |
 | body | 省略時は体の補正なし。指定するならobject |
 | body.pelvis / body.chest | body指定時は必須の関節名。chestはpelvis自身かその子孫 |
 | body.maxDrop / body.maxRaise | 0.25 / 0.1。それぞれ[0, 2] |
@@ -196,7 +204,8 @@ PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weight
   "modifiers": [{"type": "FootIK", "settings": {
     "legs": [{"name": "RearLeft", "chain": ["Hip", "Knee", "Ankle", "Toe"], "pole": "auto"}],
     "body": {"pelvis": "Pelvis", "chest": "Chest"},
-    "ground": {"rayUp": 0.5, "rayDown": 1.0}
+    "ground": {"rayUp": 0.5, "rayDown": 1.0},
+    "plant": {}
   }}]
 }
 ```
@@ -205,13 +214,17 @@ bodyが有効でchestとpelvisが異なり、脚の根の祖先にchestがあれ
 
 Applyは次の順に処理する。
 
-1. 足先のワールド位置からrayUpだけ上を始点にし、ワールドの真下へrayUp + rayDownの距離を一括で問い合わせる。
-2. 当たりの点・法線を検証して状態を分類する。法線の傾斜がmaxSlopeDegを超えればTooSteep。足先の目標Yは `hit.Point.y + max(補正前の足先Y − MeshToWorldの原点Y, sole)`、X/Zは補正前を保つ。
-3. 各脚の重みを、当たりが有効なら1、失敗なら0へsmoothTimeで平滑化する。
-4. 有効な後脚の高さの差の最小を骨盤、前脚の最小を胸の目標にし、[-maxDrop, maxRaise]へクランプして臨界減衰で平滑化する。有効な脚がない群は0、前脚自体がなければ胸は骨盤と同じ目標。骨盤を上下し、平滑化後の2点の差と水平距離からピッチを求め、骨盤を除く胸までの関節へ均等に配る。水平距離1e-4未満ではピッチ0。
-5. 脚ごとに、足首の目標 = 足先の目標 − 法線に合わせた足首→足先のベクトルを求め、二関節IK、足首の法線合わせを行う。chainが3関節なら足首を足先として扱う。脚の重みと文脈のWeightを補正に掛ける。
+1. 所有者のワールド位置が前フレームからteleportDistanceを超えて移動した場合、またはNotifyTeleportが呼ばれた場合、全脚の固定と着地の履歴を初期化する。初回は距離を比較しない。問い合わせの最後の当たり、IKの平滑化された重み、体の補正は保つ。Resetはそれらも含めて初期化する。
+2. 足先のワールド位置からrayUpだけ上を始点にし、ワールドの真下へrayUp + rayDownの距離を一括で問い合わせる。当たりの点・法線を検証し、法線の傾斜がmaxSlopeDegを超えればTooSteepとする。
+3. 足の固定が有効なとき、同じフレームの未配送PendingEventsを脚ごとに読むため1フレーム遅れない。downEventのPoint / Beginは接地、upEventのPoint / BeginまたはdownEventのEndは離地を表す。同じフレームに複数あれば、(Batch, OffsetSeconds, Sequence) で最も遅い1件だけを採る。続けて書いた窓のEndと次の窓のBeginが同じフレームに来ても接地のまま保ち、記録位置も変えない。イベント駆動では接地時にSwingからPlantedへ、離地時にSwingへ遷移する。まだイベントを受けていない脚は、持ち上がりがheightThreshold以下かつ足先の水平速度がspeedThreshold以下で接地し、持ち上がりがheightThresholdを超えると離地する。接地時には足先の真下で最後に有効だった地面のワールド位置を記録し、Planted中の足先X/Zをそこに固定する。Yは記録位置の高さにsoleと正の持ち上がりを加える。
+4. Swingでは持ち上がりの割合 `a = clamp((補正前の足先Y − MeshToWorldの原点Y − sole) / liftHeight, 0, 1)` で、現在の地面と離地したときの地面の高さの差をそれぞれ `1 − a` と `a` の割合で足先の高さへ配る。Swing目標は地面とsoleの高さを下限とする。固定を解除したフレームの差（Planted目標 − Swing目標）を、解除したフレームを0秒としてreleaseBlendSecondsの間に直線で0へ減らしてSwing目標に加え、補正後も地面とsoleの高さを下限とする。足の固定が無効なときの足先目標は従来どおり、Yが `hit.Point.y + max(補正前の足先Y − MeshToWorldの原点Y, sole)`、X/Zが補正前の値。
+5. 所有者が非接地なら脚ごとの着地重みを0にし、接地に戻った後は補正前の足先と地面＋soleの高さの差がsnapDistance以内になったフレームから、blendSecondsの間に0から1へ直線で上げる。blendSecondsが0なら即座に1とする。初回は所有者の接地状態に応じて1か0から始まり、駆動信号がなければ接地中とみなす。この着地重みは足の固定が無効でも計算する。
+6. 各脚の問い合わせの重みを、当たりが有効なら1、失敗なら0へsmoothTimeで平滑化する。体の補正の標本は着地重みが0なら無効とし、それ以外は高さの差に着地重みを掛ける。有効な後脚の高さの差の最小を骨盤、前脚の最小を胸の目標にし、[-maxDrop, maxRaise]へクランプして臨界減衰で平滑化する。有効な脚がない群は0、前脚自体がなければ胸は骨盤と同じ目標。骨盤を上下し、平滑化後の2点の差と水平距離からピッチを求め、骨盤を除く胸までの関節へ均等に配る。水平距離1e-4未満ではピッチ0。
+7. 脚ごとに、足首の目標 = 足先の目標 − 法線に合わせた足首→足先のベクトルを求める。Plantedの足首目標が根から `(根〜中間の長さ + 中間〜足首の長さ) × maxStretch` を超えたら固定を解除し、Swingの目標を求め直してから二関節IKと足首の法線合わせを行う。chainが3関節なら足首を足先として扱う。脚の問い合わせの重み・着地重み・文脈のWeightを補正に掛ける。
 
 NoHit / NotReady / WrongThread / TooSteep / Unavailableの脚は最後の当たりで解きながら、重みをsmoothTimeで0へ下げる。まだ当たりがなければ解かない。非一様スケールの脚は警告してIKを掛けない。不正な補正値は書き込まず、姿勢にNaN・Infを出さない。
+
+足の固定は歩幅合わせ（GR10・GR11の公称速度）と接地の検出に依存するため、16 fps由来の素材や浮遊期の長い襲歩では外れる。接地のPhaseMarkerから `Foot.<脚>.Down` を出す処理はGR11の範囲で、ここではイベント名を設定で受ける。一度でもその脚のイベントを受けると、テレポートまたはResetまでしきい値駆動へ戻らない。
 
 地面はSetGroundQueryで借用して渡し、問い合わせの使用中は呼出側が生存させる。ParsePoseModifierConfigで作った包みからはFindFootIKModifierで取り出す。物理を使う場合は `MakePhysicsGroundQuerySettings(ground)` を渡してPhysicsGroundQueryを作る。layerMaskとmaxSlopeDegはそこで物理の問い合わせに反映し、FootIKもmaxSlopeDegで法線を検証する。
 

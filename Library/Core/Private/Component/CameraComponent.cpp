@@ -1,4 +1,6 @@
 ﻿#include "Component/CameraComponent.h"
+#include "Component/SpringArmComponent.h"
+#include "Component/ViewClearanceComponent.h"
 #include "Math/Quaternion.h"
 #include "Math/Transform.h"
 #include "Math/Vector3.h"
@@ -268,6 +270,7 @@ namespace NorvesLib::Core::Component
         const Math::Vector3 right = worldTransform.rotation * Math::Vector3::Right;
 
         Rendering::CameraProxy snapshot = outProxy;
+        snapshot.ViewClearance = Rendering::MakeDefaultViewClearanceParameters();
         snapshot.CameraId = GetComponentId();
         snapshot.PositionX = worldTransform.position.x;
         snapshot.PositionY = worldTransform.position.y;
@@ -294,6 +297,13 @@ namespace NorvesLib::Core::Component
         snapshot.ExposureMode = m_ExposureMode;
         snapshot.AntiAliasing = m_AntiAliasingMode;
         snapshot.GradingContrast = m_GradingContrast;
+        const ViewClearanceComponent* viewClearance = owner->GetComponent<ViewClearanceComponent>();
+        const SpringArmComponent* springArm = owner->GetComponent<SpringArmComponent>();
+        if (viewClearance && springArm && springArm->HasValidPivot())
+        {
+            viewClearance->BuildViewClearance(
+                worldTransform.position, springArm->GetTargetWorldPosition(), snapshot.ViewClearance);
+        }
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),
                 ShutterSpeed.Get(),

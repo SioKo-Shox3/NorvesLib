@@ -260,6 +260,11 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 格子の頂点の並び（手続きの作り方では Columns・Rows が 0）
         TerrainGridLayout GetGridLayout() const;
 
+        /// 格子の頂点を囲む世界座標の軸並行境界を O(1) で返す。
+        /// Y は造成後の最小・最大の高さ。X・Z は float で表せないときは外側へ丸める。
+        /// 手続きの作り方・頂点のない格子では false を返し、outBounds は変えない
+        bool GetBounds(Math::AABB& outBounds) const;
+
         /// 格子の頂点 (column, row) の高さ（ファイルの値、または NVTRN から復元した世界座標の高さ。造成の範囲は造成の後の値）。
         /// 格子の作り方で、番号が並びの内側のときだけ呼ぶ
         float GetGridVertexHeight(uint32_t column, uint32_t row) const;

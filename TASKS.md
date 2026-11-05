@@ -4609,7 +4609,7 @@
 
 ## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
 - status: todo
-- after: G2-S6-ASSET-SET-P6
+- after: G2-S6-ASSET-SET-P6, G2-S6-ASSET-SET-P7
 - done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
 - verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
 - paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
@@ -5594,7 +5594,7 @@
 - notes: 犬の脚は 3 節の趾行性で、v1 は「下節の向きを保つ二関節 IK」（要件 `#### GR14` の設計案【ソルバ】(2)）。四足の後脚の膝・飛節は反転しやすいので、ポールは bind 姿勢の曲がりから求めて固定する（ロードマップ G9 のリスク）。ポールや向きの軸はモデル空間で持ち、bind 姿勢から関節ローカルへ変換する（骨の軸の規約に依存しない）。設定は骨格単位の実行時サイドカー（`G9-GR15-POSE-MODIFIER-BASE` の `*.posemod.json`）に置き、GR78 の import.json の ik 節にはしない（「段階をまたぐ注意」の G9 の項）。数値（sole 0.02、maxStretch 1.02、maxDrop 0.25、maxRaise 0.1、smoothTime 0.12 など）は要件の設計案の仮の値を既定にする。非一様スケールの骨がある脚は警告して IK を掛けない（要件のリスク）。足の固定と着地は `G9-GR14-FOOT-PLANT`。地形のコライダー（GR38）は非ゴール。出典: 要件 `#### GR14` の【骨盤・体の高さ補正】【決定性】、受け入れ確認の LegIKModifierTest と PhysicsGroundQueryIntegrationTest の IK の部分。
 
 ## G9-GR14-FOOT-PLANT: 接地中の足の固定（足滑りの除去）と、着地の吸着を足 IK に足す
-- status: todo
+- status: done
 - after: G9-GR14-LEG-IK-BALANCE, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES
 - gr: GR14
 - needs-gr: GR10, GR11
@@ -5672,7 +5672,7 @@
 - notes: ロードマップ GR26 の設計3・4（393〜461 行）。10-02 の後に可視バッファの経路（既定は on）が入ったので、その材質の表と解決（Common/VisibilityResolve.glsl）も経路に含めた。ロードマップの「未使用の MaterialCreateInfo 系は育てず MaterialCreateData を正本にする」に従う。`CustomData` は impostor.vert（アトラス）と board2d.vert（ビューポートの大きさ）で別の用途なので、汎用の値の置き場にしない。InstanceData のストライドの不一致は警告なしに壊れるので、include の一本化と走査の試験で守る。MegaGeometry の UBO は今 `SectionUniformData`（MegaGeometryPass.cpp:1983 の 768 バイト以下）で、ロードマップの 512 バイトの記述は古い。ShadingModel の CPU の列挙と GBuffer の ID は切り離す（既存の Unlit は当面 DefaultLit へ写す）。取り込んだ glTF の材質（ModelMaterialStaging.cpp:79 は DefaultLit 以外を拒否）はこの項目では変えない。危険地帯（Public API の MaterialCreateData・MeshProxy・GPUSceneInstanceData、GBuffer、MegaGeometry、可視バッファ）なので評価者を通す。完了条件の GR26 の行、要件 `#### GR26`。
 
 ## G5-GR38-PHYSICS-HEIGHTFIELD: 物理モジュールに地形のコライダーを足し、問い合わせ・接触・キャラクターの移動が地形の上で働くようにする
-- status: todo
+- status: done
 - after: G5-GR38-HEIGHTFIELD-QUERY, G4-GR07-MOVER-CASES, G4-GR07-BODY-CASES, G4-GR07-DOG-SMOKE-COURSE, G1-GR08-BROADPHASE-INTEGRATION, G1-GR08-LAYER-TABLE
 - gr: GR38
 - needs-gr: GR07, GR08
@@ -5709,7 +5709,7 @@
 - notes: 設計はロードマップ 1592 行(関節のワールドの姿勢)・1596〜1598 行(HitboxComponent と AttackProfile)・1612 行(攻撃の種類はデータの差で表す)・1616 行の実装順 4)5)。GR131 の決定(ロードマップ 4266〜4282 行)で「CombatHitEvent から HitEffectHit への写しは GR16 の側で足す」とされたのをこの項目で行う(GAME-GR131-VFX は done なので after は満たされている)。ロードマップ 1853 行のリスク(BuildSkinnedMeshProxy が IsVisible で失敗する)は、今の `SkinnedMeshComponent` が「非表示でもゲーム用の姿勢は評価する」(`Docs/Architecture/TickStages.md` の「評価済みボーン姿勢」)ので当たらない。AI 由来の骨格の効かない骨(ロードマップ 1857 行)は (1) の警告で拾う。Release にデバッグの機能を入れない(作業合意の絶対規則 8)。危険地帯: アセットの読み込み(JSON のデータ)なので評価者を通す。やらないこと: AngelScript への公開(GR98)、表面の種類の登録(GR115)。
 
 ## G8-GR17-SLICE-SMOKE: 人間大のシ者 1 体と戦って倒す垂直スライスの確かめの場面(攻撃判定・遭遇・敵・当たりの火花・撃破の血)を Game に組む
-- status: todo
+- status: done
 - after: G8-GR17-ENEMY-COMPONENT, G8-GR18-INTERACTION, G8-GR16-JOINT-DATA-RESPONSE, GAME-GR132-VFX, G1-GR01-TICK-CONTRACT-DOC, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR17
 - needs-gr: GR01, GR03, GR13
@@ -6036,7 +6036,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。Entity の数と散布の数のログが無ければ、開発ビルドだけのログ（`SCATTER_RESIDENT chunks=... instances=... entities=...` のような 1 行）をこの項目で足す（Release に入れない。絶対規則 8）。5 万本を超えると MegaGeometry の BVH の列が VRAM を超えた前例（SCN-ECS-MASS-STREAM の notes）があるので、落ちたら本数と落ちた所を記録し、mega の種の本数の上限を種の表で決める。
 
 ## G5-GR113-CLEARANCE-CPU: カメラ〜主人公の切り抜き領域と近接のフェードの値を CPU で決め、カメラの proxy に載せて描画へ渡す
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
@@ -6161,7 +6161,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。視点 clear_06・clear_10・clear_16（スプリングアームのカメラの高さ別。主人公は草の中に立つ犬の代わりの体）と引数 `grassland-view-clearance=off|cinematic`、解析の台本 `Scripts/Grass/ViewClearanceCaptureCheck.py` が無ければこの項目で足す。静止の 2 フレームの比べ方は、CaptureScene に `CaptureStartupScene.ps1` の `-StillRenderedFrames` に当たる仕組みが無ければ同じ視点を 2 回撮って比べる。しきい値は初回の実測で TSV に置き、根拠を PROGRESS に書く（先に数字を決めない）。切り抜きの半径の既定を変えたら、その理由（「草で視界が遮られる」をどこまで残したか）も書く。
 
 ## G2-S6-ASSET-SET-P6: `VerifyTextureAssetSet.py` の serializer probe で、PowerShell の版の完全一致の固定をやめて記録にし、byte の照合は残す
-- status: todo
+- status: done
 - done-when: 次の 4 点をすべて満たす。
   - `Scripts/VerifyTextureAssetSet.py` の serializer probe の包み(192 行の `$PSVersionTable.PSVersion.ToString() -ne "5.1.20348.5622"`)を、Windows PowerShell 5.1 であること(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` の 16 行と同じ規則)の検査に替える。完全な版の文字列は包みの標準出力に書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する。GitHub のランナーのイメージ(20261026.347.1 など)で PS5.1 の小さな版が上がっても、版の違いだけでは止まらない。
   - probe の契約は変えない。同じランナーの PS5.1 の `ConvertTo-Json` の出力と native の `manifest.json` の byte の一致の照合(202〜203 行。不一致なら `PS5.1 ASCII escape/format probe不一致`)は残し、正規化しない。`powershell.exe` の binary の hash の照合(72〜73 行、`receipt["powershell_sha256"]`)と凍結基準の `Docs/AssetCookTextureFrozenBaseline.json` は変えない。
@@ -6193,7 +6193,7 @@
 - notes: GR63 の Phase 0-6（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-6) と (e)）。印の受け渡しは GR30 と一緒に決める約束（ロードマップ 1941 行）なので、GR30 の velocity を全経路で組み直す G5-GR30-VERTEX-ANIM-VELOCITY（`VisibilityResolve.glsl` の今と前の位置の組み立てを触る）の後にする。10-02 の後に既定の velocity は解決（`visbuffer_resolve.comp` が `VisComputeVelocity` を呼ぶ。`VisibilityResolve.glsl:797`）が書くので、ロードマップの「gbuffer.frag だけ」では足りず両方に入れる。scenario の登録は既存の `RenderingVelocitySkinnedVulkanTest` と同じ形（`Test/Core/Rendering/CMakeLists.txt` の `--scenario=skinned-motion` の 2 本）。名前は `RenderingVelocitySkinnedFastRotationVulkanTest`・`RenderingVelocitySkinnedBehindNearVulkanTest` と、その `GBufferFallback` 版。G10-GR63-SKIN-CULL とは触るファイルがほぼ交わらないので並列に走れる。TAA と動きぼけの既定の見た目は印の無い画素で変わらないので、起動画面（絶対規則 7）は golden で守る。危険地帯（GBuffer・可視バッファの解決・TAA）なので評価者を通す。やらないこと: 遮蔽解除のちらつき（GR30 のリアクティブ。G5-GR30-REACTIVE）。
 
 ## G10-SHISHA-SHOWCASE: シ者の表現（白の質感・残像・消滅・しがみつき）を確かめる専用の GameMode と、起動して撮る・印を確かめる台本の土台を作る
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC
 - gr: GR19, GR20, GR60, GR64, GR65
 - needs-gr: GR01
@@ -10464,3 +10464,33 @@
 - paths: Library/Core/Public/Component/AnimatorComponent.h, Library/Core/Private/Component/AnimatorComponent.cpp, Test/Core/Rendering/PoseModifierBaseTest.cpp, Docs/Architecture/AnimationRuntime.md, TASKS.md, PROGRESS.md
 - from: G9-GR14-FOOT-PLANT
 - notes: コードで確かめたこと: `AnimatorComponent.h` には `ApplyPoseModifiersJson`/`File`(81〜91 行)と、`AddModifier`・`ClearModifiers` しかない。`m_Modifiers`(148 行)を取り出す口は無い。`FootIKModifier::SetGroundQuery` は `FootIKModifier.h:72` にあり、今これを呼んでいるのは試験だけ(`LegIKModifierTest.cpp:308`、`PhysicsGroundQueryIntegrationTest.cpp:447`)。`G9-GR15-ORDER-DEBUG-VIEW` は、animation-debug の場面で `*.posemod.json` から FootIK を読み、Box の斜面と階段の上で動かす。ところがその paths には `AnimatorComponent` が入っていないので、この口が無いと場面の足 IK に地面を渡せない。ここで先に足しておく。置き換えの後も問い合わせを残すのは、設定の読み直しやグラフの付け替え(`G9-GR15-POSE-MODIFIER-BASE-P1`)で問い合わせが黙って外れるのを防ぐため。`FootIKModifier` かどうかの判定は、型の表の名前か dynamic でない方法で行う(RTTI に頼らない)。`G9-GR14-FOOT-PLANT` とは `AnimatorComponent.cpp` が重なるので、同時には走らない。
+
+## G5-GR38-PHYSICS-HEIGHTFIELD-P1: SceneQuery と TerrainSystem を Engine の生成時に結び、物理モジュールが無い構成でも QueryGround が地形を引けるようにする
+- status: todo
+- done-when: `Engine::Engine()`（`Library/Core/Private/Engine/Engine.cpp`）で `m_SceneQuery.SetTerrainSystem(&m_TerrainSystem)` を呼ぶ。メンバの宣言順は `m_TerrainSystem`（`Engine.h:530`）が `m_SceneQuery`（`Engine.h:540`）より先なので、地形の側が SceneQuery より長く生きる。`PhysicsModule::Install` と `Uninstall` からは `SetTerrainSystem` の呼び出し（`PhysicsModule.cpp:95` と 301 行）を外し、物理モジュールを外した後も地形の結びが残るようにする。既存の束 `SceneQueryPhysicsFacadeTest` に 1 ケース足す（新しい試験の exe は作らない）。足すケースは、物理モジュールを入れていない `Engine` に `TerrainHeightField` を登録し、`GetSceneQuery().QueryGround` が `Success`・`bTerrain=true`・高さが `SampleHeight` と一致・`SurfaceId` が `SampleSurface` と一致を返すこと、登録を解除すると `NoHit` か `Unavailable` に戻ることを確かめる。今はこの経路が黙って `Unavailable` を返し、ログにも絵にも出ない。`PhysicsHeightFieldColliderTest` の QueryGround の 5 ケース（岩の上面・地形・届かない距離・同じ高さは物理を優先・登録解除）と、既存の SceneQuery・物理の試験が通る。
+- verify: `cmake --build build --config Debug --target SceneQueryRaycastTest PhysicsDynamicsTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SceneQueryPhysicsFacadeTest|SceneQueryRaycastTest|SceneQueryOverlapTest|PhysicsHeightFieldColliderTest|PhysicsLifecycleEventTest|PhysicsFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Private/Engine/Engine.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR38-PHYSICS-HEIGHTFIELD
+
+## G8-GR17-SLICE-CHECK-P1: 関節に束縛しない hitbox・hurtbox の姿勢を、描画が使う行ベクトルの世界行列と同じ向きにする
+- status: todo
+- done-when: (1) 回転させた Entity に関節に束縛しない hitbox(カプセル)と hurtbox(箱)を付けて評価する。回転は 1 軸でない四元数にする(例: 軸 (1,2,3)・0.7 rad)。評価した体積の点(`pose.Position + pose.Rotation * 形の点`)が、`MatrixUtils::TransformPointRowVector(MatrixUtils::CreateWorldRowVector(その Entity の世界の変換), 形の点)` と 1e-4 以内で一致する。この行列は `MeshComponent.cpp:385` が描画に使うものと同じ。(2) 骨格つきの対象に `SocketAttachmentComponent` で付けた剣の Entity に、関節に束縛しない hitbox を付ける。その形の点が、ソケットの描画の行列(`Animation::BuildSocketWorldTransform` の結果を `CreateWorldRowVector` にした行列)で写した点と一致する。同じ点を同じソケットの親の関節に束縛した hitbox(`ResolveJointPose` の経路)とも一致する。(3) (1) と (2) は `CombatJointFollowTest.cpp` の中にケースとして足し、新しいテストの実行ファイルは作らない。既存の `Combat*` の試験は Debug で全部通る。(4) 食い違いが確かめられたら、`CombatRuntime.cpp` の 470 行・527 行(`binding->GetWorldTransform()` をそのまま使う所)を、関節の経路と同じ「行ベクトルの基底を共役にして四元数にする」変換を通す形に直す。変換は `CombatJointBinding` の補助関数にまとめ、2 つの経路で共有する。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^Combat" --output-on-failure --timeout 180`
+- paths: Library/Modules/Gameplay/Private/Gameplay/Combat/CombatRuntime.cpp, Library/Modules/Gameplay/Private/Gameplay/Combat/CombatJointBinding.cpp, Library/Modules/Gameplay/Private/Gameplay/Combat/CombatJointBinding.h, Test/Modules/Gameplay/CombatJointFollowTest.cpp, Test/Modules/Gameplay/CombatTestSupport.h, Test/Modules/Gameplay/CombatFrameRateInvarianceTest.cpp, TASKS.md, PROGRESS.md
+- from: G8-GR17-SLICE-CHECK
+- notes: 読んで確かめた事実は次のとおり。
+  - `CreateWorldRowVector` は上 3x3 に R(q)(列ベクトルの形)をそのまま置く。それを `TransformPointRowVector`(p*M)で使い、GLSL も `world * vec4(p,1)` を column_major のまま使う(`CopyToShaderData` は memcpy)。このため描画は点を R(q)ᵀ で回す。
+  - `CombatGeometry` は `pose.Rotation * 点` = R(q) で回す。
+  - `ResolveJointPose`(`CombatJointBinding.cpp:105-108`)は、この食い違いを共役で直している。関節に束縛しない経路(`CombatRuntime.cpp:470, 527`)は `Transform.rotation` をそのまま使うので、直していない。
+  - `BuildSocketWorldTransform`(`SocketTypes.cpp:373`)は共役を取らずに q を返し、`SocketAttachmentComponent` はそれを `SetWorldTransform` する。このため、ソケットに付けた剣の Entity では関節の経路と関節でない経路の向きが共役の分ずれ、DebugDraw の形も刀身からずれる見込みが高い。
+
+  `CombatFrameRateInvarianceTest` は回転する攻撃者を関節に束縛せずに使っている。向きを直して当たりの数が変わったら、試験の配置を直す。期待値を実装の写しで書き直さない。`Math::Transform`・`Entity` の合成(`ComposeTransform`)・`SocketAttachmentComponent`・描画の行列は変えない(危険地帯で、範囲の外)。`Transform::TransformPoint`(R(q))と描画(R(q)ᵀ)の食い違いがエンジン全体に及ぶと分かったら、PROGRESS.md の Notes に `要起票:` で残す。`EncounterService.cpp:364`・`InteractionService.cpp:420/448` のセンサーのオフセットも同じ形をしている。起動は要らない(CPU の単体の試験だけ)。
+
+## G2-S6-ASSET-SET-P7: SingleAssetCookServiceTest の --kind の拒否の期待値を、world を足した今の文言に合わせる
+- status: todo
+- done-when: `Test/Core/Asset/SingleAssetCookServiceTest.cpp` 45 行の期待値を `"--kind must be raw, texture, model, audio, or world"` に直す。これは `Tools/AssetCook/SingleAssetCook.cpp` 1792 行の文言と同じ。`request.Kind="unknown"` を拒否する検査は残し、ほかの検査は変えない。Debug でビルドし、ctest の `SingleAssetCookServiceTest`(`CookedMeshTest --test=SingleAssetCookServiceTest` で走る)が通る。`git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` が一致する(行末を守る)。アプリは起動しない。ワーカーはプッシュせず、workflow も起動しない(CI での確かめは G2-S6-ASSET-SET-P3 が受け持つ)。
+- verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3

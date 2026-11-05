@@ -353,12 +353,26 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     void TerrainHeightField::GridData::BuildBlockBounds()
     {
+        MinHeight = Columns > 0u && Rows > 0u ? At(0u, 0u) : 0.0f;
+        MaxHeight = MinHeight;
         if (Columns < 2u || Rows < 2u)
         {
             BlockColumns = 0;
             BlockRows = 0;
             BlockMinHeight.clear();
             BlockMaxHeight.clear();
+            if (Columns > 0u && Rows > 0u)
+            {
+                for (uint32_t row = 0; row < Rows; ++row)
+                {
+                    for (uint32_t column = 0; column < Columns; ++column)
+                    {
+                        const float height = At(column, row);
+                        MinHeight = std::min(MinHeight, height);
+                        MaxHeight = std::max(MaxHeight, height);
+                    }
+                }
+            }
             return;
         }
 
@@ -391,6 +405,8 @@ namespace NorvesLib::Core::Rendering::Terrain
                 const size_t index = static_cast<size_t>(bz) * BlockColumns + bx;
                 BlockMinHeight[index] = minHeight;
                 BlockMaxHeight[index] = maxHeight;
+                MinHeight = std::min(MinHeight, minHeight);
+                MaxHeight = std::max(MaxHeight, maxHeight);
             }
         }
     }
@@ -1355,6 +1371,44 @@ namespace NorvesLib::Core::Rendering::Terrain
             layout.Spacing = m_Grid->Spacing;
         }
         return layout;
+    }
+
+    bool TerrainHeightField::GetBounds(Math::AABB& outBounds) const
+    {
+        if (!m_Grid || m_Grid->Columns == 0u || m_Grid->Rows == 0u)
+        {
+            return false;
+        }
+
+        // float への変換で外周が縮まないよう、必要なときだけ外側に丸める
+        const auto boundCoordinate = [](double coordinate, bool bMinimum)
+        {
+            constexpr float kMaxFloat = std::numeric_limits<float>::max();
+            constexpr float kInfinity = std::numeric_limits<float>::infinity();
+            if (coordinate > static_cast<double>(kMaxFloat))
+            {
+                return bMinimum ? kMaxFloat : kInfinity;
+            }
+            if (coordinate < -static_cast<double>(kMaxFloat))
+            {
+                return bMinimum ? -kInfinity : -kMaxFloat;
+            }
+            const float rounded = static_cast<float>(coordinate);
+            if ((bMinimum && static_cast<double>(rounded) > coordinate) ||
+                (!bMinimum && static_cast<double>(rounded) < coordinate))
+            {
+                return std::nextafter(rounded, bMinimum ? -kInfinity : kInfinity);
+            }
+            return rounded;
+        };
+
+        const GridData& grid = *m_Grid;
+        const double lastX = grid.FirstX + static_cast<double>(grid.Columns - 1u) * grid.Spacing;
+        const double lastZ = grid.FirstZ + static_cast<double>(grid.Rows - 1u) * grid.Spacing;
+        outBounds = Math::AABB(
+            Math::Vector3(boundCoordinate(grid.FirstX, true), grid.MinHeight, boundCoordinate(grid.FirstZ, true)),
+            Math::Vector3(boundCoordinate(lastX, false), grid.MaxHeight, boundCoordinate(lastZ, false)));
+        return true;
     }
 
     float TerrainHeightField::GetGridVertexHeight(uint32_t column, uint32_t row) const

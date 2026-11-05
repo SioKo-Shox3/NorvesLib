@@ -116,6 +116,9 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetColliderSphere(ColliderComponent& component, float radius);
         EPhysicsResult SetColliderBox(ColliderComponent& component, const Math::Vector3& halfExtents);
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);
+        EPhysicsResult SetColliderHeightField(ColliderComponent& component,
+            Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField);
+        EPhysicsResult SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId);
         EPhysicsResult SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose);
         EPhysicsResult SetColliderTrigger(ColliderComponent& component, bool bTrigger);
         EPhysicsResult SetColliderLayer(ColliderComponent& component, Core::Scene::PhysicsCollisionMask layer);

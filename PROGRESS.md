@@ -9957,17 +9957,114 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 種の表の既定値（密度・半径・帯）は企画で未定の仮の値。岩は既存の `Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`、倒木・低木・株のメッシュの論理パスはまだ cook されない仮のパス（一覧は NVSCTv0.md の grassland の節）。岩は傾斜 25° 以上・MSK0 の a の帯で 9 本しか置かれない。
 - Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
 - Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
-- U1 MegaGeometryScatterComponent に入力の順の行の並べ方と、範囲の初期の Active の指定と、範囲の印の読み出しを足す: 着地(直し 0 回)
-- U2 RenderWorld に草・低木の束の出どころごとの合成の口を足し、荒野をそこへ移す: 着地(直し 0 回)
-- U7 ScatterSystem（常駐の要求・予算・解放と mega の経路）を足し Engine::Engine のメンバにする（U3 の切り直し）: 着地(直し 0 回)
-- U4 ScatterSystem の foliage の経路（チャンク = FoliageCell、常駐の組が変わったときだけ束を作り直す）: 着地(直し 0 回)
-- U5 ScatterSystemResidencyTest（EntityTreeTest の束へ MEMBER）: 着地(直し 0 回)
-- U6 grassland に散布を置き、開発ビルドの `--grassland-scatter-stress=<本数>` を足す（最後の verify）: 着地(直し 1 回)
-- Done: G5-GR90-SCATTER-RUNTIME: `Scatter::ScatterSystem`（`Engine::Engine` のメンバ、`GetScatterSystem()`）が NVSCT を読み、GameThread でカメラからチャンクの箱までの距離と種の優先度で (チャンク, 種) を要求し、1 フレームの個数・バイト・時間の予算の内で常駐させ、ヒステリシスを足した距離の外で解放する。mega の種は種ごとに Entity 1 つ・`MegaGeometryScatterComponent` 1 つへ全チャンクを入力の順で入れ（チャンクの末尾を 64 行に詰め物）、範囲の Active で出し入れする。foliage の種は常駐のときに `FoliageInstance` へ復号してチャンクを `FoliageCell` にし、常駐の組が変わったフレームだけ種ごとの束を作り直して `RenderWorld::SetFoliageSource(Scatter, …)` へ渡す（荒野の束は Scene の出どころへ移した。中身は同じ）。影は結び付けの `bCastShadow`。grassland は Enter で cook 済みの `GrasslandScatter.nvsct` を Load し、Tick でカメラの位置を渡し、SceneReady は散布の `IsSettled` を待つ。開発ビルドの `--grassland-scatter-stress=<1〜2000000>` で地形の高さに置いた合成の散布に置き換える。試験 `ScatterSystemResidencyTest`（EntityTreeTest の束、10 万本）。
-- 証拠: `.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-final.txt`（EntityTreeTest・Game の Debug ビルド成功、ctest `ScatterSystemResidencyTest|EntityTreeTest|CookedScatterTest` 100% tests passed, 0 tests failed out of 3）。
-- Next: 起動の確かめは後回し（アプリを起動しない決まり）。grassland を `--scene=grassland` で起動し、`SCATTER_LOAD` の行（rock が mega で結び付くか、fallen_log が外れる警告）、岩・低木・株が地形の上に見えること、SceneReady が散布の常駐の後に来ること、`--grassland-scatter-stress=1000000` で歩いたときの常駐・解放と GPU 時間を撮影とログで確かめる。ランナーの評価者の反証（Object の寿命・RenderThread・アセットロードの危険地帯）。
-- Notes: 起動引数の解析は `Game/GameApplicationHandler.{h,cpp}` にしか口が無いため、paths の外だがメンバ 1 つ・解析の分岐・grassland の登録の捕捉だけを足した（新しい行だけ）。
-- Notes: foliage の株のメッシュ・色・FadeStart/End・常駐距離は仮の値（手続きの交差帯）。fallen_log はメッシュが cook されていないので結び付けから外れる。`IsRangePublished` は RenderWorld なしの試験では常に false のため、試験の mega の側は Active と解放後の両方の印で確かめている。
-- Notes: 要起票: grassland の低木・株・倒木のメッシュを cook し（今は手続きの仮の株と cook されない倒木の仮のパス）、散布の見た目を手本と並べて合わせる。
-- 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
-- Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
+
+- U1 serializer probe の PS 版の完全一致をやめ、5.1 の検査と版の記録にする: 着地(直し 0 回)
+
+## 2026-11-05 G2-S6-ASSET-SET-P6(run 20261105-113056 の反復 1、完了)
+- Done: `Scripts/VerifyTextureAssetSet.py` の serializer probe の包みで、PowerShell の版の完全一致(`5.1.20348.5622`)の固定をやめ、Windows PowerShell 5.1(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` と同じ規則)であることの検査に替えた。完全な版は包みが標準出力に `powershell_version=` で書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する(取れなければ止まる)。同じ PS5.1 の `ConvertTo-Json` 出力と native の `manifest.json` の byte の照合、`powershell.exe` の binary の hash の照合、凍結基準の JSON は変えていない。`Docs/Architecture/TextureAssetSetCook.md` の「PS5.1との互換」に、版は固定せず記録し、互換は byte の照合と binary の hash で保つことを書いた。
+- 理由: GitHub のランナーのイメージの更新(20261026.347.1 など)で PS5.1 の小さな版が上がり、probe が `PowerShell version changed` で止まったため。
+- 証拠: タスクの verify(文字列の検査と `python -B Test/Tools/TextureAssetSetVerifyTest.py -v`)が終了コード 0、4 tests OK。numstat の 2 通りは一致。
+- Next: CI での再確認(`windows-assetcook.yml` の完走)は G2-S6-ASSET-SET-P3 が受け持つ。CI の起動とプッシュはしていない。
+- Notes: binary の hash は固定のままなので、ランナーのイメージで `powershell.exe` 自体が差し替わると `固定PowerShell binaryと違います` で止まる(このタスクの契約で残す照合)。
+
+## G5-GR38-PHYSICS-HEIGHTFIELD（2026-11-05、統合ブランチの取り込み）
+- Done: feature/scene-launcher を取り込み、GrasslandRoutine.cpp の衝突（Leave の後片付け）は地形のコライダーの片付けと統合ブランチ側の注記の両方を残して解いた。verify の Debug ビルド 3 本（PhysicsDynamicsTest・SceneQueryRaycastTest・Game）と ctest 14 本がすべて通った。
+- Next: 草原の起動での地形のコライダーの見た目・動きの確かめは、アプリを起動できるときにまとめて回す（起動の確かめは後回し）。
+- Notes: なし。
+- U1 物理の当たりの型に表面の番号の欄を足す: 着地(直し 0 回)
+- U2 高さ場に軸並行の境界の取得を足す: 着地(直し 0 回)
+- U6 SceneQuery に QueryGround と地形の結び付けを足す: 着地(直し 0 回)
+- U3 物理のプロキシに高さ場の形を足し、問い合わせの分岐を全部明示にする: 着地(直し 1 回)
+- U4 接触の分岐を明示にし、地形を SAP の外の別枠で候補の組にする: 着地(直し 0 回)
+- U5 コライダーに高さ場の形と表面の番号を足す: 着地(直し 0 回)
+- U7 Physics 側に地形のコライダーを付ける口を置き、草原で使う: 着地(直し 0 回)
+- U8 PhysicsHeightFieldColliderTest を足す（問い合わせ・拒否・QueryGround）: 着地(直し 0 回)
+- U9 PhysicsHeightFieldColliderTest に落下・静止・Hit とキャラクターの移動を足し、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G5-GR38-PHYSICS-HEIGHTFIELD（run 20261105-094320 の反復 1、完了）
+- Done: 物理モジュールに地形のコライダーを足した。`EPhysicsProxyShape::HeightField`（`PhysicsShapeProxy` に `TSharedPtr<const TerrainHeightField>`・`HeightFieldOrigin`・`SurfaceId`）、`EColliderShape::HeightField`・`ColliderComponent::SetHeightField`・`SetSurfaceId`、`PhysicsModule::SetColliderHeightField`（`SetColliderBox` と同じ検証＋所有者と局所の変換が平行移動だけか。回転・拡大は InvalidArgument と `PHYSICS_HEIGHTFIELD_TRANSFORM_REJECTED` のログ、後から回転した地形はプロキシから外してログを 1 回）。`PhysicsBroadphase.cpp` の形の分岐（重なり 3 種・レイ・法線・点・境界・検証・掃引・表面の番号・接触）を全部 enum の明示の switch に書き直した。地形は SAP の端点に入れず、SAP の後に「地形の AABB と 3 軸で重なる全プロキシ」の組を重複検査なしで作り、整列済みの SAP の組と線形に併合する（組の順序は従来どおり）。地形の境界は地中を固体として Y の下端を水平の幅だけ下へ広げる。当たりの `PhysicsQueryHit`・`PhysicsRaycastHit`・`PhysicsOverlapHit` に `SurfaceId`（地形は当たりの点の層の番号、ほかはコライダーの番号）。`TerrainHeightField::GetBounds`（O(1)）。`SceneQuery::QueryGround(origin, maxDown, GroundQueryHit&, filter)`（`TerrainSystem::SampleGround` と物理の下向き RaycastClosest の高い方、同じ高さは物理）と `SetTerrainSystem`（PhysicsModule の Install/Uninstall が結ぶ・外す）。Physics 側の口 `AttachTerrainCollider(World&, TerrainComponent&, Entity*&)`（地形の所有者の子に専用の Entity を作り高さ場のコライダーを付ける）を置き、草原は区画の配置が終わった最初の Tick に 1 回呼ぶ。
+- 試験: `PhysicsHeightFieldColliderTest`（PhysicsDynamicsTest の束）。全 7 種類の問い合わせ各 144 件が高さ場の直接の照会と一致（距離・点・深さの差 0 m、法線の内積の最小 0.99999976、当たり・外れの両方を含む）、表面の番号、回転・拡大の拒否と後からの回転での消失・復帰、QueryGround（岩の上面・地形・届かない・同じ高さ）、球 10・カプセル 10 の落下で 240 ステップ後の地表との差 2.4e-7 m・速さ 3.0e-8 m/s・全物体で地形との Hit、キャラクターのカプセルが起伏と斜面を往復して沈み 0 m・浮き最大 0.035 m・要求 9 m に対し 8.33 m／9.00 m 進む。
+- 証拠: `.harness/runs/20261105-094320/verify-G5-GR38-PHYSICS-HEIGHTFIELD-U9.txt`（verify の PhysicsDynamicsTest・SceneQueryRaycastTest・Game の Debug ビルド終了コード 0、ctest 14/14 Passed、直接実行の不一致 0、numstat の 2 通りが一致）。
+- Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。草原で地形のコライダーが付くこと（`AttachTerrainCollider` の成功）の起動の確かめは後回し（アプリを起動しない決まりのため。起動したらログに `grassland: 地形のコライダーを作れませんでした` が出ないことを見る）。
+- Notes: 物理の解き方に摩擦が無いので、斜面に置いた動的な物体は止まらず滑る。静止の試験は平らな台地の上で測った。高速の物体は CCD が無いので地表で小さく跳ねることがある。性能（200 コライダー＋地形の FixedTick の増分）は測っていない（記録だけの項目）。`ResolveContacts` の組ごとのプロキシの線形探索は従来のまま。高さ場の重なりの照会は呼ぶたびに接触の配列を確保する。地形のコライダーは層・マスクが既定のまま（Terrain の層への割り当ては呼び出し側）。動的な剛体が付いた Entity に高さ場を付けても、その体は動かさない（地形は常に静的）。
+- Notes: 要起票: 物理の接触に摩擦が無く、斜面の上の動的な物体（岩・破片）が止まらずに滑り続ける。
+- Notes: 要起票: Engine が SceneQuery に TerrainSystem を結ぶのは PhysicsModule の Install だけなので、物理モジュールの無い構成では QueryGround が地形を引けない。
+
+- U1 modifier の文脈から、そのフレームに積まれてまだ配っていないイベントを読む口を足す: 着地(直し 0 回)
+- U2 脚ごとの Swing / Planted の状態機械と着地の重みを持つ FootPlantState を足す: 着地(直し 0 回)
+- U3 FootIK に足の固定と着地を組み込み、設定と文書を足す: 着地(直し 1 回)
+- U4 FootPlantTest と決定性のケースを足し、Testing.md に書いてタスクの verify を回す: 着地(直し 0 回)
+- U5 解除後の戻しを刻みに依存しない差の減衰にし、タスクの verify を通す: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR14-FOOT-PLANT（run 20261105-104357 の反復 1、完了）
+- Done: `AnimationEventQueue::PendingEvents()` と `PoseModifierContext::PendingEvents` を足し、modifier がそのフレームに積まれてまだ配っていないイベントを読めるようにした（購読の 1 フレーム遅れなし）。脚ごとの状態機械 `FootPlantState`（Swing / Planted、`Foot.<脚>.Down` / `.Up` のイベント駆動と、イベントの無いクリップの高さ・速度のしきい値駆動、地面へ投影した記録位置の固定、解除時の差を releaseBlendSeconds で直線に減らす戻し、Swing の地面の高さの差を持ち上がりの割合で今の地面と離地時の地面に配る、着地の重みの直線の上昇と snapDistance）を足し、`FootIKModifier` に組み込んだ。設定は `plant`（書けば有効）・`legs[].plant.downEvent/upEvent`・`land`（blendSeconds 0.1・snapDistance 0.05・teleportDistance 1.0、仮）。所有者の移動が teleportDistance を超えるか `NotifyTeleport()` で固定の状態を戻し、Planted の足首の目標が maxStretch を超えたら解除する。`FootPlantTest`（`SkeletalAnimationSamplingTest` の中）を足し、AnimationRuntime.md と Testing.md に書いた。
+- 証拠: `.harness/runs/20261105-104357/verify-G9-GR14-FOOT-PLANT.txt`（タスクの verify 2 行。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格。FootPlantTest の実測: Planted の水平の動き 最大 0.00024 mm/フレーム（固定なしは 4.0 mm）、着地の重みの誤差 1.9e-8、60/120 Hz の足先の高さの差 6e-8 m、同じ dt の列のパレット一致）。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（Public API の `PoseModifier.h`・`AnimationEvents.h`・`FootIKModifier.h` に触れた）。
+- Notes: `plant` を書かない設定でも着地の重みは掛かる。駆動信号が無ければ接地中とみなすので既存の振る舞いは変わらないが、`SetDriveSignals` で `bGrounded=false` を渡すと足 IK の重みは 0 になる。
+- Notes: しきい値駆動は、一度でもその脚のイベントを受けるとテレポートか Reset までイベント駆動のまま。接地の PhaseMarker から `Foot.<脚>.Down` を出す処理は GR11 の範囲で、ここでは名前を設定で受けるだけ。
+- U6 同じフレームに窓の End と次の窓の Begin が来ても固定を保つ（差し戻しの直し）: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR14-FOOT-PLANT（run 20261105-104357 の反復 2、差し戻しの直し・完了）
+- Done: 続けて書いた接地の窓（`[0, 0.25]` と `[0.25, 0.5]`、輪の継ぎ目をまたぐ接地を 2 つに分けた窓）の境目で、前の窓の End と次の窓の Begin が同じフレームに積まれると離地として扱って固定が外れていたのを直した。`FootIKModifier::Apply` は脚ごとに、関係するイベントのうち `(Batch, OffsetSeconds, Sequence)` で最も遅い 1 件だけで接地か離地の片方を決める。AnimationRuntime.md の手順 3 を書き直し、FootPlantTest に窓を分けたケース G を足した（直す前は境目のフレームで Swing に移り 14 mm/フレーム滑って 58 件落ち、直した後は 0.00024 mm/フレーム）。
+- 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
+- Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
+
+- U5 GameMode ShishaShowcase の本体を写し、場面の表のリンクの誤りを直す(U1 の切り直し): 着地(直し 0 回)
+- U6 台本 Scripts/Test-ShishaShowcase.ps1 を写す(U4 の切り直し): 着地(直し 0 回)
+- U3 GameApplicationHandler に --shisha-showcase 系の引数と GameMode の登録を足す: 着地(直し 0 回)
+## 2026-11-05 G10-SHISHA-SHOWCASE（run 20261105-143216 の反復 1、完了）
+- Done: シ者の表現を確かめる専用の GameMode `ShishaShowcase`（`Game/GameModes/ShishaShowcase/`、ID は `GameModeIds.h`）を足した。ランチャーと `SceneCatalog.h` には載せず、開発ビルドだけ登録する。場面は `ShishaShowcaseScenes.cpp` の一覧 `SHISHA_SHOWCASE_SCENES(X)` に `X("名前", 入口の接尾辞)` を 1 行足し、場面のファイルで `Build/Update/Leave<接尾辞>` を `Game::GameModes` に定義する形。場面 `base` は灰色の地面・昼の空（太陽 高度 40°）・手動露出の共通カメラ・`Assets/Models/M9Skinned/ValidU8Float.gltf` のスキン 1 体（時刻 0 のスキニング済みの実寸から 1.8 m に合わせ、`--shisha-scale` 倍）。カメラは固定の位置と `--shisha-camera-orbit=<度/秒>` の注視点の周りの周回を全場面で共通に持ち、Tick の刻みの積算で進む（`--fixed-frame-dt=` は ApplicationProcessor 側の共通の時計がそのまま効く）。印は `SHISHA_SHOWCASE scene=<場面> stage=<enter|ready|failure|leave> key=value ...`（ready は SceneReady と同じ Tick）。起動の引数 `--shisha-showcase=<場面>`・`--shisha-camera-orbit=`・`--shisha-scale=`（0 より大きく 1000 以下）を解析し、重複・未知の場面（一覧つき）・不正値・従属の引数の単独・`--scene`・`--scene-view`・`--scene-cycle-smoke`・`--dog-movement-smoke` との併用を拒否する。Release では 3 つの引数を拒否する。台本 `Scripts/Test-ShishaShowcase.ps1`（自分で起動したプロセスの時間切れと taskkill、`-Scene`・`-Configuration`・`-GameArgs`・`-ExpectStages`・`-CapturePng`/`-CaptureFrames`・`-OutDir` の `metrics.json`・`-GpuTimingFrames`）を足した。
+- 証拠: `.harness/runs/20261105-143216/verify-G10-SHISHA-SHOWCASE-U3.txt`（タスクの verify 2 行。Debug の Game のビルド EXIT=0、台本の構文の解析 EXIT=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは後回し（アプリを起動しない決まりのため）。起動したら `Scripts/Test-ShishaShowcase.ps1 -Scene base -CapturePng <path>` で enter→ready の印・PNG・`metrics.json` を見て、引数なしの起動がランチャーから始まること、併用の拒否のログを確かめる。
+- Notes: 代役の `ValidU8Float.gltf` は人型ではなく骨 2 本の三角形の検証資産で、身長に合わせて縦に伸ばしている。人型の代役が要るなら後の場面の項目で差し替える。台本はリポジトリのルートの `Game.log` を写すので、ほかの Game と同時に回すとログが混ざる。Release では連続撮影の照合のログが出ないため、複数フレームの撮影は Debug・RelWithDebInfo で回す。
+
+- U1 切り抜きのモデル ViewClearanceParameters と CPU の可視度の式、CameraProxy への値の置き場: 着地(直し 0 回)
+- U2 SpringArmComponent に注視点の取得 GetTargetWorldPosition を公開する: 着地(直し 0 回)
+- U3 ViewClearanceComponent(PROPERTY・Mode・Strength の補間・Tick の自己登録)と保存の往復: 着地(直し 0 回)
+- U5 BuildCameraProxy で CameraProxy.ViewClearance を埋め、proxy の試験を足す(U4 の切り直し): 着地(直し 0 回)
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 1、完了）
+- Done: `Rendering/ViewClearance.h` に `ViewClearanceParameters`・`MakeDefaultViewClearanceParameters`・`SanitizeViewClearanceParameters`・CPU の `ComputeViewClearanceVisibility` を置き、`CameraProxy.ViewClearance` を足した。`SpringArmComponent::GetTargetWorldPosition()`（pivot の描画用ワールド位置＋TargetOffset）を公開し、アームの注視の計算も同じ関数へ寄せた。カメラの Entity に付ける `ViewClearanceComponent`（float/bool の PROPERTY 9 個、実行時の Mode と約 0.3 秒で寄せる Strength、`SetMode`、BeginPlay で Camera の群へ Tick を自己登録）を足した。`CameraComponent::BuildCameraProxy` は毎回 ViewClearance を既定（bEnabled=false）へ戻し、同じ Entity の ViewClearanceComponent と SpringArm（派生を含む）があれば A=カメラの位置・B=注視点で埋める。NearPlane は変えていない
+- 証拠: `.harness/runs/20261105-143215/G5-GR113-CLEARANCE-CPU-final-verify.txt`（verify のビルド 4 ターゲット＋EntityTreeTest が EXIT_CODE=0、ctest `SceneFileRoundTripTest`・`SpringArmComponentTest`・`CameraViewConstantsTest`・`ViewClearanceModelTest`・`CameraComponentProxyTest` 5/5 Passed、numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（Public API・RenderThread のデータ契約の危険地帯）。描画側で proxy の ViewClearance を使う段（草・遮蔽物・シルエット）は後続の項目。起動の確かめは後回し（今のゲームのカメラに ViewClearanceComponent を付けた所は無いので、見た目は変わらない）
+- Notes: 毎フレームの BuildCameraProxy の呼び出しは、Rendering3DTest は Camera の群の後、`FreeCameraRig::Tick → Publish` と `LauncherRoutine::Tick → PublishCamera` は Camera の群の前（どちらも今は SpringArm＋ViewClearance を使わない。Launcher は proxy の直前にアームを手で更新している）。切り抜きの半径の既定は仮の値で、草で視界が遮られる見せ方との兼ね合いは作者の判断
+- 要起票: `FreeCameraRig`・`LauncherRoutine` のカメラの proxy を Camera の群（スプリングアームの更新）の後に作る段へ移す（ViewClearance を付けたカメラで 1 フレーム遅れないように）
+
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 2、差し戻しの直し、完了）
+- Done: 差し戻しは verify の ctest の `SpringArmComponentTest` が Not Run だったこと。この試験は `EntityTreeTest.exe` の束の MEMBER で、verify の build 行に `EntityTreeTest` が無く、この枠の build に実行ファイルが無かったのが原因（実装の不具合ではない）。この枠で `EntityTreeTest` をビルドし、verify を全部回し直した。コードの変更なし
+- 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
+- Next: ランナーの評価者の反証。起動の確かめは後回し
+- 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
+
+- G8-GR17-SLICE-SMOKE: 統合ブランチ(シ者の確かめのモードの追加)を取り込み、戦闘の確かめのモードとシ者の確かめのモードの登録・起動の分岐を両方残した。CMake の再構成の後、verify のビルド(Game・PhysicsDynamicsTest、Debug)EXIT=0、G8 の CPU の試験 18/18 合格。起動の確かめは後回し(G8-GR17-SLICE-CHECK)。
+- U2 撮影の補助: 着地(直し 0 回)
+- U1 場面の型・配置の定数・環境(床・光・カメラ・領域・寝床・プロンプト)と仮の資産: 着地(直し 0 回)
+- U12 役者(犬の代役と口の剣、人間大のダミーのシ者): 着地(直し 0 回)
+- U4 反応の結線(当たり → ダメージ、撃破 → 血、プロンプトの表示、デカールの更新): 着地(直し 0 回)
+- U6 判定の計測(--combat-smoke --combat-bench): 着地(直し 0 回)
+- U3 スイングの軌道: 着地(直し 0 回)
+- U5 遭遇のスモーク(--encounter-smoke): 着地(直し 0 回)
+- U7 攻撃判定のスモーク(--combat-smoke): 着地(直し 0 回)
+- U8 敵のスモーク(--enemy-smoke): 着地(直し 0 回)
+- U9 モードと Routine(Enter・Tick・Leave、ID): 着地(直し 0 回)
+- U10 起動の引数と登録: 着地(直し 0 回)
+- U11 確かめのスクリプトと仕上げの確かめ: 着地(直し 0 回)
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 1、完了）
+- Done: 確かめの GameMode `CombatSlice`（`Game/GameModes/CombatSlice/`、ID は `GameModeIds.h`。ランチャーの一覧には載せない）と、起動の引数 `--combat-smoke`・`--encounter-smoke`・`--enemy-smoke`・`--combat-bench`・`--combat-slice-capture=<png>`（重複と、3 つの相互・`--dog-movement-smoke`・`--animation-debug`・`--scene`・`--scene-view`・`--scene-cycle-smoke` との併用を拒否）。場面は床・固定カメラ・遭遇領域 1 つ・寝床の代わりの Interactable・プロンプトの TextComponent（ASCII の仮の表示）・犬の代役（合成の骨格の Mouth のソケットに剣を付ける）・人間大のダミーのシ者（`ShishaComponent`・`HurtboxSetComponent`（humanoid.hurtboxes.json）・`HealthComponent`、スライス用の定義 `shisha_combat_slice.enemy.json`）。当たり → ダメージはモードが `GetOnAnyHit` を購読して次の Tick で `ApplyDamage`。撃破の `OnDefeatStarted` から `DefeatBloodPresenter::Trigger`。presenter（モードの Tick）→ VFX（エンジンの粒子系の PostTick）→ デカール（ハンドラの遅い更新の枠）を同じフレームの dt で進め、`RenderWorld::SetDecals` へ渡す。確かめのスクリプト `Scripts/Test-CombatSlice.ps1`（`-Mode combat|encounter|enemy|bench`・`-Configuration`・`-CapturePng`。マーカーの順を Game.log から照合）。
+- 証拠: `.harness/runs/20261105-101856/verify-G8-GR17-SLICE-SMOKE-U11.txt`（ps1 の構文の確かめ parse_errors=0、`cmake --build build --config Debug --target Game PhysicsDynamicsTest` の終了コード 0、ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK）。そこで確かめること: combat の 1/30 と 1/144 の要約（当たりの数と (部位, 攻撃)）の一致、encounter と enemy のマーカーの順、combat の撮影（DebugDraw の判定の形と火花）と enemy の撮影（撃破の約 1 秒後の血の粒と滲み）、bench の値、引数なしの起動画面が変わらないこと。
+- Notes: dt の切り替えは Library に実行中の API が無いので、`--combat-smoke` は起動 1 回で 1 つの固定刻み（`--fixed-frame-dt=1/30` か `1/144`。無ければ起動の検査で拒否）を進め、ps1 が 2 回起動して要約を比べる形にした。
+- Notes: 剣の hitbox は剣の Entity でなく犬の代役の `Head` の関節（Mouth のソケットと同じ位置）に束縛した。刀身がシ者の胴に入るのはヨー +13.95°〜+84.68°、スイングは -40° → +120° を World の 0.45 秒。窓は剣のソケットの付けが Attached になってから開く。
+- Notes: bench は `PostLateTick.ModuleLateTick` の系の Stats の記録（`Ecs.Sys.PostLateTick.ModuleLateTick`）を窓を開いた区間と閉じた区間で比べ、差を `sweep_median_us` とする（モジュールの他の LateTick も含む区間の差分）。計測の間はトレースを `.harness/combat-bench.trace.csv` に書く。Release では計測せず終了コード 0。
+- Notes: combat の撮影は最初の当たりの次のフレームで要求する。当たりが 2 つ以上出ると capture の行が hit の行の間に入り、ps1 の順の検査で落ちる（今の配置では 1 振り 1 当たりの見込み）。
+- Notes: 進行の定義の読み込みは撃破済みの状態を消さないので、同じプロセスで enemy のスモークへ入り直すと `progression_preloaded` で失敗する（起動ごとに 1 回の前提）。
+- 要起票: ソケットに付けた Entity の World の回転（`SocketAttachmentComponent` の行ベクトルの姿勢）と、hitbox が持ち主の姿勢で点を回す四元数の向きが食い違うとの指摘（U12 の調べ）。関節に束縛しない hitbox を回転した Entity に付けると判定と見た目がずれる恐れがある。`CombatRuntime.cpp:470` の `GetWorldTransform` とソケットの姿勢の作り方を照合する
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-101856 の反復 2、差し戻しの確かめ）
+- Done: 反復 1 の再確かめでの Game のリンクの失敗（CombatSliceRoutine の未解決の外部参照）は、Game の CMakeLists の CONFIGURE_DEPENDS の GLOB がビルドの途中で Game.vcxproj を作り直し、そのビルドが古いプロジェクトのまま新しい .cpp を含めずにリンクしたためだった。コードの変更は無い。作り直された後のビルドで CombatSlice の .cpp がすべてコンパイルされ、verify の 2 行が通った。
+- 証拠: .harness/runs/20261105-101856/verify-build-it2.txt（cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1 の終了コード 0）、.harness/runs/20261105-101856/verify-ctest-it2.txt（ctest の 18 件が 100% Passed）。
+- Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK で Scripts/Test-CombatSlice.ps1 の 4 モードと撮影を回す）。
+- Notes: 新しい .cpp を足したブランチの最初のビルドは、Game.vcxproj の作り直しでリンクが 1 回落ちることがある。もう一度ビルドすれば通る（先に cmake -S . -B build を回せば落ちない）。
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-143213 の反復 1、完了に戻す）
+- Done: 作業単位 U1〜U12 はすべて着地済み。53a60fe9 の後にコードの変更は無い（差分は TASKS.md と PROGRESS.md だけ）。前回は評価者が枠切れで評価されずに doing へ戻っていたので、done に戻した。
+- 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
+- Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
+- 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。

@@ -1386,6 +1386,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER VirtualShadowMapPointTest VirtualShadowMapPointTest.cpp
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
+    MEMBER ViewClearanceModelTest ViewClearanceModelTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
@@ -1425,6 +1426,7 @@ add_test(NAME VirtualShadowMapClipmapTest COMMAND CameraViewConstantsTest --test
 add_test(NAME VirtualShadowMapPointTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapPointTest)
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
+add_test(NAME ViewClearanceModelTest COMMAND CameraViewConstantsTest --test=ViewClearanceModelTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
 
 add_executable(ViewRenderContextActiveInputTest
@@ -2223,6 +2225,7 @@ add_executable(SkeletalAnimationSamplingTest
     PoseModifierBaseTest.cpp
     ProceduralChainModifierTest.cpp
     LegIKModifierTest.cpp
+    FootPlantTest.cpp
     ProceduralSpringModifierTest.cpp
     AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp

@@ -13,6 +13,11 @@
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
 
+namespace NorvesLib::Core
+{
+    class Entity;
+}
+
 namespace NorvesLib::Core::Component
 {
     class TerrainComponent;
@@ -43,6 +48,10 @@ namespace Game::GameModes
         NorvesLib::Core::Scatter::ScatterHandle m_Scatter = NorvesLib::Core::Scatter::kInvalidScatterHandle;
         uint32_t m_ScatterStressCount = 0;
         bool m_bScatterPending = false;
+        /// 地形の所有者の子として生成したコライダー用 Entity（非所有）
+        NorvesLib::Core::Entity* m_pTerrainCollider = nullptr;
+        /// 配置完了後のコライダー作成を試したか
+        bool m_bTerrainColliderAttempted = false;
         uint32_t m_TickCount = 0;
     };
 
