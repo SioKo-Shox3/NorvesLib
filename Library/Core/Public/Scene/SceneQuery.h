@@ -17,6 +17,11 @@ namespace NorvesLib::Core
     class World;
 }
 
+namespace NorvesLib::Core::Rendering::Terrain
+{
+    class TerrainSystem;
+}
+
 namespace NorvesLib::Debug
 {
     class EngineChecks;
@@ -81,6 +86,33 @@ namespace NorvesLib::Core::Scene
         Entity* HitEntity = nullptr;
         float Distance = 0.0f;
         bool bHit = false;
+    };
+
+    /// 真下の地形または物理コライダーのうち、高い方の地面。
+    struct GroundQueryHit
+    {
+        /// 地面が見つかったか。
+        bool bHit = false;
+        /// 地形の高さ場から得た地面か。
+        bool bTerrain = false;
+        /// 原点の高さから地面の高さを引いた距離。原点が地中なら負。
+        float Distance = 0.0f;
+        /// 地面上の当たり位置。
+        Math::Vector3 Point;
+        /// 地面の面法線。
+        Math::Vector3 Normal;
+        /// 表面の番号。未指定なら kInvalidPhysicsSurfaceId。
+        uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
+        /// 当たったコライダー。高さ場の場合は無効。
+        ColliderHandle Collider;
+        /// 当たった物理ボディ。高さ場の場合は無効。
+        BodyHandle Body;
+        /// 当たりに対応するエンティティ。
+        EntityHandle Entity;
+        /// エンティティの情報があるか。
+        bool bHasEntity = false;
+        /// コライダーに付けられたゲーム側の識別値。
+        uint64_t UserData = 0;
     };
 
     /**
@@ -156,6 +188,19 @@ namespace NorvesLib::Core::Scene
         void OverlapBox(const Math::AABB& box, Container::VariableArray<Entity*>& outEntities) const;
         void QueryFrustum(const Math::Frustum& frustum, Container::VariableArray<Entity*>& outEntities) const;
         size_t GetEntryCount() const;
+
+        /// GameThread 専用。地形への非所有参照を設定する。nullptr で解除し、別スレッドでは変更しない。
+        void SetTerrainSystem(const Rendering::Terrain::TerrainSystem* terrainSystem);
+
+        /**
+         * @brief 真下の高さ場と下向きの物理 Raycast を比べ、高い地面を返す。同じ高さなら物理を優先する。
+         * 高さ場は原点が地中でも対象とし、距離は負になる。filter は物理側だけに適用する。
+         * 出力は最初に初期化する。非有限の原点・距離、負の距離、無効な filter は InvalidArgument。
+         * GameThread 専用で、別スレッドは WrongThread。物理側の NoHit・Unavailable 以外の失敗はそのまま返す。
+         * 候補があれば Success。候補がなく両方とも未接続なら Unavailable、それ以外は NoHit。
+         */
+        EPhysicsSceneQueryResult QueryGround(const Math::Vector3& origin, float maxDown,
+            GroundQueryHit& outHit, const PhysicsQueryFilter& filter = {}) const;
 
         // GameThread上で同じ公開snapshotを読む。非Successとprovider例外でoutHitsを空にする。
         // 例外は出力をclearして再送出。入力/出力の格納領域は重ならないこと。
@@ -286,6 +331,8 @@ namespace NorvesLib::Core::Scene
         /// BVH に入れていない追加分。照会は BVH の後にこれを線形に見る
         Container::VariableArray<Entry> m_Pending;
         IPhysicsSceneQueryProvider* m_PhysicsProvider = nullptr;
+        /// 地面の高さ場への非所有参照。所有側が解除するまで有効であること。
+        const Rendering::Terrain::TerrainSystem* m_TerrainSystem = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;
 
         // 増分の状態
