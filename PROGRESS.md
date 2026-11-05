@@ -10025,3 +10025,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（危険地帯の Public API `SkinnedMeshComponent`）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
 - Notes: アプリを起動する確かめは無い。平滑の時定数（既定 0.08 s）と `MaxSpeed`・`MaxAcceleration`・`MaxDeltaTime` の既定値は仮。`FindSurfacePoint` で退化した三角形だけを試した場合の理由は `BeyondSnapDistance` になり、ヘッダのコメント（「有効な候補三角形を一つも試せない場合は NoCandidates」）と読みが少しずれる（文書は実装に合わせた）。試験の呼び出しを足すため `Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp` に 2 行足した（paths の外だが done-when (5) の `AnimEventPropertyTest` と同じ形に要る）。
 - U7 バケットの探索の試験を候補を絞った探索と総当たりの比較にし、NoCandidates のコメントを実装に合わせる: 着地(直し 0 回)
+- Done（反復 5、差し戻しの直し）: バケットの探索の試験で、総当たりが当たったレイ 553 本ごとに、素材が決めた期待関節（頂点の重みが最大の関節）1 つだけを候補にして `FindSurfacePoint` を呼び、三角形・(u, v)・距離が総当たりと一致し、調べた三角形が期待関節の三角形数（構築時の記録から数えた 128）で全体 512 より少ないことを確かめるようにした。関節の選び方を重みが最小の関節に反転させると「絞った探索と総当たりの Hit が一致」などで落ち、戻すと合格することを確かめた。ヘッダの NoCandidates の説明を実装（スキニングできる三角形が無いときだけ。退化した三角形だけなら BeyondSnapDistance）に合わせた。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final-iter5.txt` で確かめた。
+- Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
