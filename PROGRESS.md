@@ -9911,3 +9911,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `plant` を書かない設定でも着地の重みは掛かる。駆動信号が無ければ接地中とみなすので既存の振る舞いは変わらないが、`SetDriveSignals` で `bGrounded=false` を渡すと足 IK の重みは 0 になる。
 - Notes: しきい値駆動は、一度でもその脚のイベントを受けるとテレポートか Reset までイベント駆動のまま。接地の PhaseMarker から `Foot.<脚>.Down` を出す処理は GR11 の範囲で、ここでは名前を設定で受けるだけ。
 - U6 同じフレームに窓の End と次の窓の Begin が来ても固定を保つ（差し戻しの直し）: 着地(直し 0 回)
+
+## 2026-11-05 G9-GR14-FOOT-PLANT（run 20261105-104357 の反復 2、差し戻しの直し・完了）
+- Done: 続けて書いた接地の窓（`[0, 0.25]` と `[0.25, 0.5]`、輪の継ぎ目をまたぐ接地を 2 つに分けた窓）の境目で、前の窓の End と次の窓の Begin が同じフレームに積まれると離地として扱って固定が外れていたのを直した。`FootIKModifier::Apply` は脚ごとに、関係するイベントのうち `(Batch, OffsetSeconds, Sequence)` で最も遅い 1 件だけで接地か離地の片方を決める。AnimationRuntime.md の手順 3 を書き直し、FootPlantTest に窓を分けたケース G を足した（直す前は境目のフレームで Swing に移り 14 mm/フレーム滑って 58 件落ち、直した後は 0.00024 mm/フレーム）。
+- 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
+- Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
+- Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
