@@ -1,7 +1,12 @@
-﻿// 足の接地補正設定を検証し、休止姿勢から脚の向きを準備する。
+﻿// 接地設定を検証し、地面に合わせて体と脚の姿勢を補正する。
 #include "Animation/FootIKModifier.h"
 #include "Animation/Procedural/PoseModifierConfig.h"
 #include "Animation/SkeletonResource.h"
+#include "Animation/TwoBoneIK.h"
+#include "Logging/LogMacros.h"
+#include "Math/CriticalDamping.h"
+#include "Math/MatrixUtils.h"
+#include "Math/QuaternionUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -12,6 +17,92 @@ namespace NorvesLib::Core::Animation
     {
         using Error = Procedural::PoseModifierConfigError;
         using Report = Procedural::PoseModifierConfigReport;
+
+        bool IsFinite(const Math::Vector3& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        bool IsFinite(const Math::Matrix4x4& matrix)
+        {
+            for (float value : matrix.values)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool TryNormalize(Math::Quaternion& rotation)
+        {
+            const double length = std::sqrt(double(rotation.x) * rotation.x + double(rotation.y) * rotation.y +
+                                            double(rotation.z) * rotation.z + double(rotation.w) * rotation.w);
+            if (!std::isfinite(length) || length <= Math::Constants::EPSILON)
+            {
+                return false;
+            }
+            rotation = {float(rotation.x / length), float(rotation.y / length), float(rotation.z / length),
+                        float(rotation.w / length)};
+            return true;
+        }
+
+        bool TryNormalize(Math::Vector3& direction)
+        {
+            const double length = std::sqrt(double(direction.x) * direction.x + double(direction.y) * direction.y +
+                                            double(direction.z) * direction.z);
+            if (!std::isfinite(length) || length <= Math::Constants::EPSILON)
+            {
+                return false;
+            }
+            direction = {float(direction.x / length), float(direction.y / length), float(direction.z / length)};
+            return true;
+        }
+
+        bool TryInverse(const Math::Matrix4x4& matrix, Math::Matrix4x4& inverse)
+        {
+            const float determinant = Math::MatrixUtils::Determinant(matrix);
+            if (!IsFinite(matrix) || !std::isfinite(determinant) ||
+                std::abs(determinant) < Math::Constants::EPSILON)
+            {
+                return false;
+            }
+            inverse = Math::MatrixUtils::Inverse(matrix);
+            return IsFinite(inverse);
+        }
+
+        bool TryRotation(const Math::Matrix4x4& matrix, Math::Quaternion& rotation)
+        {
+            const auto scale = Math::MatrixUtils::ExtractScale(matrix);
+            if (!IsFinite(matrix) || !IsFinite(scale) || scale.x <= Math::Constants::EPSILON ||
+                scale.y <= Math::Constants::EPSILON || scale.z <= Math::Constants::EPSILON)
+            {
+                return false;
+            }
+            const auto pureRotation = Math::MatrixUtils::ExtractRotationRowVector(matrix, scale);
+            rotation = FromRowMatrix(pureRotation).Rotation;
+            return TryNormalize(rotation);
+        }
+
+        bool IsValidTransform(const JointTransform& transform)
+        {
+            auto rotation = transform.Rotation;
+            return IsFinite(transform.Translation) && IsFinite(transform.Scale) && TryNormalize(rotation) &&
+                   IsFinite(ToRowMatrix(transform));
+        }
+
+        // 根でも同じ式を使い、RootFrame とメッシュノードの逆変換を親の座標系へ含める。
+        bool TryParentFrame(const JointTransform& local, const Math::Matrix4x4& model, Math::Matrix4x4& frame)
+        {
+            Math::Matrix4x4 inverse;
+            if (!IsValidTransform(local) || !TryInverse(ToRowMatrix(local), inverse))
+            {
+                return false;
+            }
+            frame = inverse * model;
+            return IsFinite(frame);
+        }
 
         Container::String Text(const char* text)
         {
@@ -427,6 +518,9 @@ namespace NorvesLib::Core::Animation
 
     FootIKModifier::FootIKModifier(FootIKSettings settings) : m_Settings(std::move(settings))
     {
+        m_LegStates.resize(m_Settings.Legs.size());
+        m_Probes.resize(m_Settings.Legs.size());
+        m_BodySamples.resize(m_Settings.Legs.size());
     }
 
     int32_t FootIKModifier::Order() const
@@ -434,8 +528,340 @@ namespace NorvesLib::Core::Animation
         return Procedural::PoseModifierDefaultOrder::FootIK;
     }
 
-    bool FootIKModifier::Apply(LocalPose&, PoseModifierContext&)
+    bool FootIKModifier::Apply(LocalPose& pose, PoseModifierContext& context)
     {
+        const float w = context.Weight;
+        const float dt = context.DeltaSeconds;
+        const auto& ground = m_Settings.Ground;
+        const auto& body = m_Settings.Body;
+        if (!std::isfinite(w) || w < 0.0f || w > 1.0f || !std::isfinite(dt) || dt < 0.0f ||
+            !std::isfinite(body.Balance.SmoothTime) || body.Balance.SmoothTime < 0.0f ||
+            !std::isfinite(ground.RayUp) || ground.RayUp < 0.0f || !std::isfinite(ground.RayDown) ||
+            ground.RayDown <= 0.0f || !std::isfinite(ground.RayUp + ground.RayDown) ||
+            !std::isfinite(ground.MaxSlopeDeg) || ground.MaxSlopeDeg < 0.0f || ground.MaxSlopeDeg >= 90.0f ||
+            pose.size() != context.Skeleton.Parents.size())
+        {
+            return false;
+        }
+        auto validJoint = [&](int32_t joint)
+        {
+            return joint >= 0 && static_cast<size_t>(joint) < pose.size();
+        };
+        for (const auto& leg : m_Settings.Legs)
+        {
+            if (leg.JointCount < 3 || leg.JointCount > 4 || !std::isfinite(leg.Sole) || leg.Sole < 0.0f ||
+                !std::isfinite(leg.MaxStretch) || leg.MaxStretch < 1.0f)
+            {
+                return false;
+            }
+            for (uint32_t j = 0; j < leg.JointCount; ++j)
+            {
+                if (!validJoint(leg.Joints[j]))
+                {
+                    return false;
+                }
+            }
+        }
+        if (body.bEnabled && (!validJoint(body.Pelvis) || !validJoint(body.Chest)))
+        {
+            return false;
+        }
+        const auto* models = context.GetJointModelMatrices();
+        Math::Matrix4x4 worldToMesh;
+        if (!models || models->size() != pose.size() || !TryInverse(context.MeshToWorld, worldToMesh))
+        {
+            return false;
+        }
+        auto up = Math::MatrixUtils::TransformVectorRowVector(worldToMesh, Math::Vector3::UnitY);
+        const float originY = context.MeshToWorld.GetTranslationRow().y;
+        if (!TryNormalize(up) || !std::isfinite(originY))
+        {
+            return false;
+        }
+
+        // 全脚の問い合わせを一度に行う。配列は構築時に確保して使い回す。
+        for (size_t i = 0; i < m_Settings.Legs.size(); ++i)
+        {
+            const auto& leg = m_Settings.Legs[i];
+            auto& state = m_LegStates[i];
+            state.bUsable = true;
+            for (uint32_t j = 0; j < leg.JointCount; ++j)
+            {
+                const auto scale = Math::MatrixUtils::ExtractScale((*models)[leg.Joints[j]]);
+                const float minimum = std::min({scale.x, scale.y, scale.z});
+                const float maximum = std::max({scale.x, scale.y, scale.z});
+                if (!IsFinite(scale) || minimum <= Math::Constants::EPSILON)
+                {
+                    state.bUsable = false;
+                }
+                else if (maximum / minimum - 1.0f > 1e-3f)
+                {
+                    state.bUsable = false;
+                    if (!state.bWarnedScale)
+                    {
+                        NORVES_LOG_WARNING("Animation", "脚 %zu は非一様スケールのため接地 IK を省略します。", i);
+                        state.bWarnedScale = true;
+                    }
+                }
+            }
+            state.FootWorld = Math::MatrixUtils::TransformPointRowVector(
+                context.MeshToWorld, (*models)[leg.Joints[leg.JointCount - 1]].GetTranslationRow());
+            auto& probe = m_Probes[i];
+            probe.OriginAbove = state.FootWorld + Math::Vector3(0.0f, ground.RayUp, 0.0f);
+            probe.MaxDown = ground.RayUp + ground.RayDown;
+            probe.Result = {};
+            probe.Result.Status = EGroundQueryStatus::NotReady;
+        }
+        if (m_GroundQuery)
+        {
+            m_GroundQuery->QueryBatch(m_Probes);
+        }
+        const double minimumNormalY = std::cos(double(ground.MaxSlopeDeg) * double(Math::Constants::PI) / 180.0);
+        for (size_t i = 0; i < m_Settings.Legs.size(); ++i)
+        {
+            const auto& leg = m_Settings.Legs[i];
+            auto& state = m_LegStates[i];
+            auto hit = m_Probes[i].Result;
+            if (!IsFinite(state.FootWorld) || !IsFinite(m_Probes[i].OriginAbove))
+            {
+                state.bUsable = false;
+                hit.Status = EGroundQueryStatus::Unavailable;
+            }
+            if (hit.Status == EGroundQueryStatus::Hit)
+            {
+                if (!IsFinite(hit.Point) || !TryNormalize(hit.Normal))
+                {
+                    hit.Status = EGroundQueryStatus::Unavailable;
+                }
+                else if (double(hit.Normal.y) < minimumNormalY)
+                {
+                    hit.Status = EGroundQueryStatus::TooSteep;
+                }
+            }
+            state.Status = hit.Status;
+            bool bSuccess = state.bUsable && hit.Status == EGroundQueryStatus::Hit;
+            if (bSuccess)
+            {
+                state.LastHit = hit;
+                state.bHasHit = true;
+            }
+            state.ToeTargetWorld = state.FootWorld;
+            if (state.bHasHit)
+            {
+                const float animLift = state.FootWorld.y - originY;
+                state.ToeTargetWorld.y = state.LastHit.Point.y + std::max(animLift, leg.Sole);
+                if (!IsFinite(state.ToeTargetWorld) ||
+                    !std::isfinite(state.ToeTargetWorld.y - state.FootWorld.y))
+                {
+                    state.Status = EGroundQueryStatus::Unavailable;
+                    state.bUsable = false;
+                    bSuccess = false;
+                }
+            }
+            const float targetWeight = bSuccess ? 1.0f : 0.0f;
+            if (body.Balance.SmoothTime == 0.0f)
+            {
+                state.Weight = targetWeight;
+                state.Velocity = 0.0f;
+            }
+            else if (!Math::TryCriticalDamp(state.Weight, state.Velocity, targetWeight, body.Balance.SmoothTime, dt))
+            {
+                return false;
+            }
+            state.Weight = std::clamp(state.Weight, 0.0f, 1.0f);
+            m_BodySamples[i] = {bSuccess ? state.ToeTargetWorld.y - state.FootWorld.y : 0.0f,
+                                leg.bFront, bSuccess};
+        }
+
+        // 体を先に動かす。足先の目標は補正前のワールド位置を基準に固定する。
+        if (body.bEnabled)
+        {
+            const auto bodyDirection = (*models)[body.Chest].GetTranslationRow() -
+                                       (*models)[body.Pelvis].GetTranslationRow();
+            const auto horizontal = bodyDirection - up * Math::Vector3::Dot(bodyDirection, up);
+            const float horizontalDistance = horizontal.Length();
+            BodyBalanceOutput output;
+            if (!m_BodyBalance.Update(m_BodySamples, body.Balance, horizontalDistance, dt, output))
+            {
+                return false;
+            }
+            if (w > 0.0f)
+            {
+                auto pelvis = pose[body.Pelvis];
+                Math::Matrix4x4 frame, inverseFrame;
+                if (!TryParentFrame(pelvis, (*models)[body.Pelvis], frame) || !TryInverse(frame, inverseFrame))
+                {
+                    return false;
+                }
+                pelvis.Translation += Math::MatrixUtils::TransformVectorRowVector(
+                    inverseFrame, up * (output.PelvisOffset * w));
+                if (!IsValidTransform(pelvis))
+                {
+                    return false;
+                }
+                const auto originalPelvis = pose[body.Pelvis];
+                auto pitch = Math::Quaternion::Identity;
+                if (!m_PitchJoints.empty() && horizontalDistance >= 1e-4f)
+                {
+                    Math::Quaternion meshRotation;
+                    if (!TryRotation(context.MeshNodeTransform, meshRotation))
+                    {
+                        return false;
+                    }
+                    const auto axis = Math::Vector3::Cross(horizontal / horizontalDistance, up);
+                    const auto modelPitch = Math::QuaternionUtils::FromAxisAngle(axis, output.PitchRadians * w);
+                    pitch = meshRotation * modelPitch * Math::QuaternionUtils::Conjugate(meshRotation);
+                    if (!TryNormalize(pitch))
+                    {
+                        return false;
+                    }
+                }
+                m_PitchShares.resize(m_PitchJoints.size());
+                for (size_t i = 0; i < m_PitchJoints.size(); ++i)
+                {
+                    m_PitchShares[i] = {m_PitchJoints[i], 1.0f / float(m_PitchJoints.size())};
+                }
+                pose[body.Pelvis] = pelvis;
+                if (!m_PitchShares.empty() &&
+                    !Procedural::TryDistributeModelRotation(pose, context.Skeleton, m_PitchShares, pitch))
+                {
+                    pose[body.Pelvis] = originalPelvis;
+                    return false;
+                }
+                context.Invalidate();
+                models = context.GetJointModelMatrices();
+                if (!models)
+                {
+                    return false;
+                }
+            }
+        }
+
+        for (size_t i = 0; i < m_Settings.Legs.size(); ++i)
+        {
+            const auto& leg = m_Settings.Legs[i];
+            auto& state = m_LegStates[i];
+            const float lw = state.Weight * w;
+            if (!state.bUsable || !state.bHasHit || lw <= 0.0f)
+            {
+                continue;
+            }
+            models = context.GetJointModelMatrices();
+            if (!models)
+            {
+                return false;
+            }
+            const auto root = (*models)[leg.Joints[0]].GetTranslationRow();
+            const auto mid = (*models)[leg.Joints[1]].GetTranslationRow();
+            const auto ankle = (*models)[leg.Joints[2]].GetTranslationRow();
+            const auto toe = (*models)[leg.Joints[leg.JointCount - 1]].GetTranslationRow();
+            const auto toeTarget = Math::MatrixUtils::TransformPointRowVector(worldToMesh, state.ToeTargetWorld);
+            auto normal = Math::MatrixUtils::TransformVectorRowVector(worldToMesh, state.LastHit.Normal);
+            if (!IsFinite(toeTarget) || !TryNormalize(normal))
+            {
+                continue;
+            }
+            auto align = Math::QuaternionUtils::Slerp(Math::Quaternion::Identity,
+                Math::QuaternionUtils::FromToRotation(up, normal), lw);
+            if (!TryNormalize(align))
+            {
+                continue;
+            }
+            const auto ankleTarget = leg.JointCount == 4 ? toeTarget - align * (toe - ankle) : toeTarget;
+            TwoBoneIKInput input;
+            input.Root = root;
+            input.Mid = mid;
+            input.End = ankle;
+            input.Target = ankle + (ankleTarget - ankle) * lw;
+            input.Pole = leg.Pole;
+            if (leg.bAutoPole)
+            {
+                const int32_t parent = context.Skeleton.Parents[leg.Joints[0]];
+                Math::Quaternion parentRotation = Math::Quaternion::Identity;
+                if (parent != -1 && (!validJoint(parent) || !TryRotation((*models)[parent], parentRotation)))
+                {
+                    continue;
+                }
+                input.Pole = parentRotation * leg.PoleInParent;
+            }
+            input.FallbackPole = state.bHasPole ? state.PoleUsed : input.Pole;
+            input.MaxStretch = leg.MaxStretch;
+            input.SoftLimitWidth = 0.0f;
+            if (!IsFinite(input.Target) || !IsFinite(input.Pole) || !IsFinite(input.FallbackPole))
+            {
+                continue;
+            }
+            const auto result = SolveTwoBoneIK(input);
+            if (!std::isfinite(result.Stretch) || result.Stretch < 1.0f || result.Stretch > leg.MaxStretch ||
+                !IsFinite(result.PoleUsed))
+            {
+                continue;
+            }
+
+            // 全関節を一時値で解く。途中の親の更新を反映し、検証後に脚全体を書き込む。
+            JointTransform candidates[3];
+            Math::Matrix4x4 oldModels[3], inverseModels[3], frames[3];
+            Math::Quaternion globals[3];
+            bool bValid = true;
+            for (size_t j = 0; j < 3; ++j)
+            {
+                const size_t joint = static_cast<size_t>(leg.Joints[j]);
+                candidates[j] = pose[joint];
+                oldModels[j] = (*models)[joint];
+                if (!TryParentFrame(candidates[j], oldModels[j], frames[j]) ||
+                    !TryRotation(oldModels[j], globals[j]) || !TryInverse(oldModels[j], inverseModels[j]))
+                {
+                    bValid = false;
+                    break;
+                }
+            }
+            if (!bValid)
+            {
+                continue;
+            }
+            globals[0] = result.RootDelta * globals[0];
+            globals[1] = result.MidDelta * globals[1];
+            globals[2] = align * globals[2];
+            Math::Matrix4x4 updatedModel;
+            for (size_t j = 0; j < 3; ++j)
+            {
+                // 間に省略された骨があっても、旧親から更新済み先祖への相対変換を保存する。
+                const auto parentFrame = j == 0 ? frames[j] : frames[j] * inverseModels[j - 1] * updatedModel;
+                Math::Quaternion parentRotation;
+                if (!TryRotation(parentFrame, parentRotation) || !TryNormalize(globals[j]))
+                {
+                    bValid = false;
+                    break;
+                }
+                candidates[j].Rotation = Math::QuaternionUtils::Conjugate(parentRotation) * globals[j];
+                if (j > 0 && result.Stretch > 1.0f)
+                {
+                    candidates[j].Translation *= result.Stretch;
+                }
+                if (!TryNormalize(candidates[j].Rotation) || !IsValidTransform(candidates[j]))
+                {
+                    bValid = false;
+                    break;
+                }
+                updatedModel = ToRowMatrix(candidates[j]) * parentFrame;
+                if (!IsFinite(updatedModel))
+                {
+                    bValid = false;
+                    break;
+                }
+            }
+            if (!bValid)
+            {
+                continue;
+            }
+            for (size_t j = 0; j < 3; ++j)
+            {
+                pose[leg.Joints[j]] = candidates[j];
+            }
+            state.PoleUsed = result.PoleUsed;
+            state.bHasPole = true;
+            context.Invalidate();
+        }
         return true;
     }
 
@@ -456,6 +882,34 @@ namespace NorvesLib::Core::Animation
 
     void FootIKModifier::Reset()
     {
+        for (auto& state : m_LegStates)
+        {
+            state = {};
+        }
+        for (auto& probe : m_Probes)
+        {
+            probe = {};
+        }
+        for (auto& sample : m_BodySamples)
+        {
+            sample = {};
+        }
+        m_BodyBalance.Reset();
+    }
+
+    float FootIKModifier::GetLegWeight(size_t leg) const
+    {
+        return leg < m_LegStates.size() ? m_LegStates[leg].Weight : 0.0f;
+    }
+
+    EGroundQueryStatus FootIKModifier::GetLegStatus(size_t leg) const
+    {
+        return leg < m_LegStates.size() ? m_LegStates[leg].Status : EGroundQueryStatus::Unavailable;
+    }
+
+    const BodyBalanceOutput& FootIKModifier::GetBodyOutput() const
+    {
+        return m_BodyBalance.GetOutput();
     }
 
     bool TryParseFootIKSettings(JsonValue settings, const SkeletonResource& skeleton, FootIKSettings& out,

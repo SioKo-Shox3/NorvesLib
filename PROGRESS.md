@@ -9822,3 +9822,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `Test/Core/Asset/RigMotionCleanupTest.cpp`（paths の外）を、旧い形（`<role>_down` の名前・ループでも窓イベント・ループしないクリップにも marker）を固定していたので新しい形に書き換えた（IoU・継ぎ目の Down/Up・既存 marker の保持・時間の補正の検査は残した）。足ごとの最低を基準にしたので、ずっと同じ高さで止まっている足は高い位置でも接地とみなされる（接地なしと区別できない。上下に動き続ける足は接地なしになる）。ループしないクリップの点イベントは、時刻 0 から接地している窓の Down も時刻 0 に書く。marker から出す点イベントの `EventIndex` は events の件数 + marker の添字。起動の要る確かめは無い。
 - U1 BodyBalance(骨盤・肩の目標オフセットと平滑とピッチの純関数)を足す: 着地(直し 0 回)
 - U2 FootIKModifier の設定(footIK 節)の読み込みと組み込みの型の表への登録: 着地(直し 0 回)
+- U3 FootIKModifier::Apply(地面の問い合わせ・体の補正・二関節 IK・足首の法線合わせ・重みの減衰)を実装する: 着地(直し 0 回)

@@ -4,6 +4,7 @@
 #include "Animation/BodyBalance.h"
 #include "Animation/GroundQuery.h"
 #include "Animation/PoseModifier.h"
+#include "Animation/Procedural/AngleDistribution.h"
 
 namespace NorvesLib::Core
 {
@@ -54,7 +55,13 @@ namespace NorvesLib::Core::Animation
         FootIKGroundSettings Ground;
     };
 
-    /** @brief 足の接地補正に必要な設定と地面問い合わせを保持する。 */
+    /**
+     * @brief 地面の一括問い合わせ、体の高さとピッチ、二関節 IK、足首の法線合わせを順に行う。
+     *
+     * 問い合わせに失敗した脚は最後の当たりを使い、SmoothTime を半減期として重みを 0 へ下げる。
+     * 未接地または非一様スケールの脚には IK を掛けず、不正な補正値を姿勢へ書き込まない。
+     * 非有限・負の時間や重み、FK の失敗では false を返す。姿勢に NaN・Inf を出さない。
+     */
     class FootIKModifier final : public IPoseModifier
     {
     public:
@@ -65,6 +72,13 @@ namespace NorvesLib::Core::Animation
         void SetGroundQuery(const IGroundQuery* query);
         const IGroundQuery* GetGroundQuery() const;
         const FootIKSettings& GetSettings() const;
+        /** @brief 脚の平滑化済み重みを返す。範囲外なら 0 を返す。 */
+        float GetLegWeight(size_t leg) const;
+        /** @brief 法線と点の検証後の問い合わせ状態を返す。範囲外なら Unavailable を返す。 */
+        EGroundQueryStatus GetLegStatus(size_t leg) const;
+        /** @brief 重みを掛ける前の体の補正出力を返す。 */
+        const BodyBalanceOutput& GetBodyOutput() const;
+        /** @brief 接地履歴・重みと速度・ポール・警告済み印・体の補正を初期化する。 */
         void Reset();
 
     private:
@@ -75,6 +89,25 @@ namespace NorvesLib::Core::Animation
         const IGroundQuery* m_GroundQuery = nullptr;
         // 骨盤を含まず、胸を含む順に保持する。
         Container::VariableArray<int32_t> m_PitchJoints;
+        struct LegState
+        {
+            float Weight = 0.0f;
+            float Velocity = 0.0f;
+            GroundHit LastHit;
+            EGroundQueryStatus Status = EGroundQueryStatus::NotReady;
+            Math::Vector3 PoleUsed;
+            Math::Vector3 FootWorld;
+            Math::Vector3 ToeTargetWorld;
+            bool bHasHit = false;
+            bool bHasPole = false;
+            bool bUsable = false;
+            bool bWarnedScale = false;
+        };
+        Container::VariableArray<LegState> m_LegStates;
+        Container::VariableArray<GroundProbe> m_Probes;
+        Container::VariableArray<BodyBalanceLegSample> m_BodySamples;
+        Container::VariableArray<Procedural::JointRotationShare> m_PitchShares;
+        BodyBalance m_BodyBalance;
     };
 
     /** @brief 設定を検証し、全項目が正しいときだけ出力を更新する。 */
