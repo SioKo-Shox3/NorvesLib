@@ -10258,3 +10258,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
 - Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
 - Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
+## 2026-11-05 G12-GR45-DRYNESS-CPU（run 20261105-203950 の反復 1、統合ブランチの取り込み）
+- Done: feature/scene-launcher を取り込み、`Test/Core/Object/SceneFileRoundTripTest.cpp` の衝突を両側の試験を残して解いた。WitherSourceComponent の往復の試験は、シーンの形式が v3 になったのに合わせて版の検査を `SceneSerializer::SceneFileFormatVersion` で見る形にした。
+- 証拠: `.harness/runs/20261105-203950/verify-build.txt`（MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが EXIT=0）、`.harness/runs/20261105-203950/verify-ctest.txt`（6 本 100% tests passed, 0 tests failed out of 6）。アプリを起動する確かめは無い。
