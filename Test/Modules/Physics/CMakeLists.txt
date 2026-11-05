@@ -47,6 +47,7 @@ include(CTest)
 add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsDynamicsTest --test=PhysicsModuleLinkTest)
 
 add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseQueryTest)
+add_test(NAME PhysicsBroadphaseScaleTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseScaleTest)
 add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyQueryTest)
 
 
@@ -60,6 +61,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER CharacterPlatformMotionTest CharacterPlatformMotionTest.cpp
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
+    MEMBER PhysicsBroadphaseScaleTest PhysicsBroadphaseScaleTest.cpp
     MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
     MEMBER PhysicsProxyVisitorTest PhysicsProxyVisitorTest.cpp
     MEMBER PhysicsRayPrecisionTest PhysicsRayPrecisionTest.cpp

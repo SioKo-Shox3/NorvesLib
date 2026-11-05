@@ -10161,10 +10161,79 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done（反復 5、差し戻しの直し）: バケットの探索の試験で、総当たりが当たったレイ 553 本ごとに、素材が決めた期待関節（頂点の重みが最大の関節）1 つだけを候補にして `FindSurfacePoint` を呼び、三角形・(u, v)・距離が総当たりと一致し、調べた三角形が期待関節の三角形数（構築時の記録から数えた 128）で全体 512 より少ないことを確かめるようにした。関節の選び方を重みが最小の関節に反転させると「絞った探索と総当たりの Hit が一致」などで落ち、戻すと合格することを確かめた。ヘッダの NoCandidates の説明を実装（スキニングできる三角形が無いときだけ。退化した三角形だけなら BeyondSnapDistance）に合わせた。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final-iter5.txt` で確かめた。
 - Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
 - Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
-- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
-- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
-- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
-- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
-- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
-- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
-- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。
+
+- U1 空の遮蔽の値の型・遮蔽物の柱の評価・モデル試験と試験の登録: 着地(直し 0 回)
+- U3 FramePacket への経路と SkyOcclusionRevision: 着地(直し 0 回)
+- U2 CPU の正解（2.5D 格子・地平線の積分・L1・曲げた法線・鏡面の円錐）: 着地(直し 1 回)
+- Notes(G11-GR56-SKY-OCC-CPU): 鏡面の交差は要件の案（Jimenez の一様な球冠＋smoothstep）から、R のまわりの輪ごとの閉形式の重なりを GGX の D の逆関数の 13 層（重み G1）で足す形に替えた。一様な球冠では GGX の裾を表せず粗さ 0.6 で 0.13 ずれたため（替えた後の最大誤差 0.026）。壁の閉形式との差は 30° で −0.0625（許容 0.07 の内、L1 の打ち切り）、κ=0.5 の平板の L1 と厳密なコサイン重みの差は 0.050。
+- U4 手置きの SkyOccluderComponent と保存の往復、タスクの確かめ: 着地(直し 0 回)
+
+## 2026-11-05 G11-GR56-SKY-OCC-CPU（run 20261105-151418 の反復 3、完了）
+- Done: `Rendering/SkyOcclusion.h` に `SkyOcclusionParameters`（無効が既定）と 64 B の `SkyOccluderProxy`（形・種別・動くか・雨を遮るかの印）、`MakeDefault*`・`Sanitize*`・`AreEqual*` を置いた。`SceneProxy` に空の遮蔽の値・遮蔽物の配列・`SkyOcclusionRevision` を足し、`RenderWorld::SetSkyOcclusionParameters`／遮蔽物の登録・更新・解除 → `RenderingCoordinator` → `SnapshotSceneParameters` で FramePacket.Scene へ値で写す（遮蔽物の増減は SceneRevision を変えず SkyOcclusionRevision だけを進める）。CPU の正解 `SkyOcclusionReference`（2.5D の格子 G・U・T・κ、12×6 の光線の幾何級数の歩による遮蔽の積分と L1、B(N)・曲げた法線、GGX のローブで重みを付けた鏡面の円錐の交差）を置いた。手置きの `SkyOccluderComponent`（PROPERTY で保存、`InitializeFromOwnerBounds` で持ち主の AABB から寸法を初期化、BeginPlay で RenderWorld へ登録し PreRender の Tick で変わったときだけ更新、EndPlay で解除）を足した。GR59 の雨の遮蔽も同じ型と同じコンポーネントの印を使う。
+- 証拠: `.harness/runs/20261105-151418/verify-G11-GR56-SKY-OCC-CPU-U4.txt`（タスクの verify 2 行。Debug の CameraViewConstantsTest・SceneSerializerTest・Game のビルド EXIT=0、ctest 5/5 Passed、numstat の 2 通りが一致）。
+- Next: ランナーの評価者の反証（Public API・FramePacket のデータ契約の危険地帯）。GPU のクリップマップと照明（G11-GR56 の次の項目）。起動の確かめは後回し（今のシーンに SkyOccluderComponent を付けた所は無く、既定は無効なので見た目は変わらない）。
+- Notes: 遮蔽物の登録・解除・移動の追従は実行の試験が無い（保存の往復だけ）。GPU の項目のデモ（`--sky-occluder-demo`）で確かめる。`CenterOffset` は持ち主の回転の局所で拡大を掛けず、`HalfExtents` には持ち主の拡大の絶対値を掛ける。Yaw のずれはラジアン。
+
+- U1 実行時の NVTRN 読み込みで PDL0（凹み度）を引けるようにし、層が無ければ 0 を返す: 着地(直し 0 回)
+- U2 凹み度の規則と計算（高さのぼかしとの差・窪地を埋めた深さ・流れの集積・ペイント・スレッド数に依らない並列）: 着地(直し 1 回)
+- U3 spec の recipe.puddle とペイントの target "puddle" を読み、NVTRN に PDL0 を書く: 着地(直し 0 回)
+- U4 NVTRN の形式の文書と grassland の spec に凹み度を足す: 着地(直し 0 回)
+- U5 CookedTerrainTest に凹み度の 4 ケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
+
+## G11-GR59-PUDDLE-MASK（2026-11-05）
+
+- Done: 地形の cook に R8 の層 `PDL0`（凹み度 0〜1、意味 `terrain.puddle.potential`）を GRS0 の後ろに足した。規則は spec の `recipe.puddle`（高さの分離ガウスのぼかしとの差・優先度つき浸水で窪地を埋めた深さ・流れの集積を重みで合成し、傾斜で 0 へ下げ、(seed, セル座標) の整数ハッシュの値雑音を掛ける）と、ペイントの target `puddle`（override / multiply）。計算は行の帯でスレッドに分け、結果はスレッド数に依らない。実行時は `TerrainHeightField::HasPuddlePotential`・`SamplePuddlePotential` で引け、層の無い古い NVTRN は 0 として読む。形式の文書（`Docs/Architecture/NVTRNv0.md`）と grassland の spec を更新した。
+- 証拠: `.harness/runs/20261105-160359/verify-G11-GR59-PUDDLE-MASK.txt`（CookedMeshTest・AssetCook の Debug ビルド成功、ctest `CookedTerrainTest|CookedMeshTest` 100% tests passed, 0 tests failed out of 2、凹み度 (a) 窪地の底 209＝全標本の最大・斜面の最大 0、(b)(c)(d) 合格、grassland の cook 成功）。
+- Next: GR37 の地形の GBuffer のシェーダーが PDL0 を束ねて被覆を評価するのは後続の GR59 の項目（今は NVTEX の層として埋めただけで、描画からはまだ引いていない）。起動の確かめは無い（cook と CPU の試験で閉じる）。
+- Notes: grassland の地形の NVTRN が変わったため、散布の spec `Assets/Scatter/grassland.scatter.json` が固定する地形の `cooked_hash` を `2fbadb9d5677e80d` に更新した（paths の外だが、cook を通すための記録の値だけ。散布は PDL0 を使わない）。
+- Notes: ぼかしの半径は格子の大きさでは拒否せず（小さな地形の既存の recipe を壊さないため）、計算量の上限 4096 セルだけで拒否する。凹み度の既定値は試験の合成の窪地で底が 209/255 になる値で、grassland の見た目の調整は描画が PDL0 を引くようになってから行う。
+
+- U1 ブロードフェーズの整列・重複確認・3 軸の重なり・Mobility・統計: 着地(直し 0 回)
+- U2 PhysicsModule の Owner→スロットの索引: 着地(直し 0 回)
+- U3 ResolveContacts の二分探索と BuildBroadphase の Mobility・試験の入口: 着地(直し 0 回)
+- U4 PhysicsBroadphaseScaleTest（最後。タスクの verify を回す）: 着地(直し 0 回)
+## 2026-11-05 G12-GR09-BROADPHASE-S0S1（run 20261105-161354 の反復 1）
+- Done: G12-GR09-BROADPHASE-S0S1: `PhysicsBroadphase` の 3 か所の挿入ソート（プロキシ・端点・組）を同じ全順序の `std::sort` にし、組の重複確認のループを除いた。SAP の候補に Y・Z の AABB の重なり（`<=`）を足した。`PhysicsShapeProxy::Mobility`（既定 Unspecified = 今どおり全部の組）を足し、両方が設定された組は一方が Dynamic か一方が Trigger のときだけ作る（地形の組も同じ）。統計 `PhysicsBroadphaseStats`（候補の組・狭域判定・プロキシの探索・木の作り直し（0）・訪れた節）と二分探索の `FindProxy` を足した。`PhysicsModule::ResolveContacts` は `FindProxy` で組のプロキシを引き、`BuildBroadphase` が Trigger / Dynamic / Kinematic / Static を入れる（Dynamic の判定は ResolveContacts と同じ有効なボディの型）。コライダー・ボディの登録の重複確認と `FindBodyHandle` は Owner→スロットの索引にした。試験 `PhysicsBroadphaseScaleTest`（PhysicsDynamicsTest の束）が 2000 個の混ざった形で組（Unspecified 2467 組・Mobility 混在 1679 組）・最近接の Raycast（同距離は大きいハンドル）・OverlapSphere/Box/Capsule を素朴な総当たりと順まで照合し、入力の順 3 通りで候補が同じこと、PhysicsModule 経由で Kinematic 対 Static の非 trigger の組が出ないことを確かめる。
+- 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-final.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
+- Next: ランナーの評価者の反証（物理の寿命・公開の挙動の危険地帯）。アプリを起動する確かめは無い。静的の木は G12-GR09-STATIC-TREE、計測は G12-GR09-SCALE-MEASURE。
+- Notes: 固定ステップはブロードフェーズを今も 2 回作る（作業用と公開用）。公開用の候補の組は使われないが Mobility の絞り込みは同じく掛かる。試験の参照は `CalculateBounds`・`QueryProxy` を本体と共有するので、それら自体の幾何の誤りは照合では見つからない（既存の PhysicsProxyQueryTest などが受け持つ）。
+
+## 2026-11-05 G12-GR09-BROADPHASE-S0S1（run 20261105-161354 の反復 2）
+- Done: 反復 1 の差し戻し（verify の再実行で `build` が無い）を直した。この作業ツリーで freetype のサブモジュールを取得し、`cmake -S . -B build -DNORVES_BUILD_TESTS=ON` で構成してから verify の 2 行を回した。実装の変更は無い。
+- 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-iter2.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10、PhysicsBroadphaseScaleTest 2.46 秒）。
+- Notes: Git Bash から回すと `/m:1` がパスに変換されて MSB1008 で落ちるので、`MSYS_NO_PATHCONV=1` を付けるか PowerShell・cmd で回す。アプリを起動する確かめは無い。
+
+- U1 GameModeScope に AddCleanup・非同期の補助・数の取得・漏れの検査を足す: 着地(直し 0 回)
+- U4 ProgressionState と ProgressSaveData の写し: 着地(直し 0 回)
+- Notes(G8-GR76-RESET-LIFETIME): 要起票: `ProgressionState::LoadStateFromJson` で撃破状態を空にしても最後のシ者の解放を通知済みの旗が戻らないため、同じインスタンスで条件を満たし直すと `OnFinalUnlocked` が再び通知されない(リセットの後に解放を通知し直すかは仕様の判断)。
+- U2 GameModeScopeLeakTest と試験の文書: 着地(直し 0 回)
+- U3 GameModeScopeResourceLeakVulkanTest(ビルドまで): 着地(直し 0 回)
+- U5 CombatSlice に後始末の登録・撃破の自動保存・最後のセーブからのリセットを足す: 着地(直し 1 回)
+- U7 リセットのソークの driver(--soak-reset の中身): 着地(直し 0 回)
+- U8 GameApplicationHandler の配線(引数・保存先・Update・進行の写し・生成関数): 着地(直し 1 回)
+- U6 Scripts/Test-GameReset.ps1 と仕上げの確かめ(タスクの verify): 着地(直し 0 回)
+## 2026-11-05 G8-GR76-RESET-LIFETIME（run 20261105-152759 の反復 2、完了）
+- Done: GameModeScope に段つきの後始末の登録（BeforeEntities → Entity の除去 → AfterEntities → 追跡した資源。各段は後入れ先出し。二度目の Cleanup は空、Cleanup 中の Cleanup は何もしない、Cleanup 中の登録はその Cleanup の中で呼ぶ）・`TrackAsyncModelLoad`・世代を見る `WrapAsyncTextureCallback`・`CaptureCounts`・`AddLeakCounter`・Debug 系の漏れの警告を足した。CombatSlice は音の停止を AddCleanup に載せ、voice の数を漏れの検査に登録し、撃破の完了で `RequestAutosave`、`RequestResetFromLastSave` からリセットの後の Enter で最後のセーブの進行（ProgressionSaveBridge）から作り直す。Game に `--soak-reset=N`（`--save-dir=<根>` が必須。保存は `<根>/NorvesLib/Game`）、毎フレームの `SaveService::Update`、`Scripts/Test-GameReset.ps1` を足した。試験 `GameModeScopeLeakTest`（Core だけ）と `GameModeScopeResourceLeakVulkanTest`（GPU;RenderingValidation、ビルドまで）を足した。Rendering3DTestRoutine の手作業の後始末は移していない（G8-S14 の決定）。
+- 証拠: .harness/runs/20261105-152759/verify-G8-GR76-RESET-LIFETIME.txt（verify の 2 行: Debug の Game・GameModeStateMachineTest・RenderResourcesDomainContractTest のビルド EXIT_CODE 0、ctest の 4 件 GameModeRegistryTest・GameModeStateMachineTest・SubRoutineTest・GameModeScopeLeakTest が 100% Passed。ps1 の構文検査 PARSE_OK）。
+- Next: 起動の確かめは後回し（G8-GR76-RESET-CHECK）。そこで確かめること: `pwsh -NoProfile -File Scripts/Test-GameReset.ps1 -SoakCount 5 -Configuration Debug` の合格（各回の GAME_RESET の数がベースラインへ戻る・restore が defeated=1・終了コード 0・VUID 0）、`GameModeScopeResourceLeakVulkanTest` の実行、Debug の起動で GAMEMODE_LEAK の警告の有無、引数なしの起動画面とランチャーが変わらないこと。
+- Notes: 後始末の `StopOwner` は 0 秒を渡しても `SoundSystem.cpp:471` で最短 2/60 秒のフェードに補正されるので、Leave の直後（スコープのデストラクタの漏れの検査・ソークの enter の行）には voice が残り得る。ソークは voice を Enter から 8 フレーム後の ready の行だけで比べる。音を鳴らすモードでは Debug の漏れの警告に voices の差が出る見込み（G8-GR76-RESET-CHECK で確かめる）。
+- Notes: ソークのベースラインは 1 回目のリセットの後（キャッシュが温まった後）。最初の Enter は sample=cold で出すだけ。最初の Enter ではセーブを読まない（前の起動の自動保存で既存のスモークの progression_preloaded を起こさないため）。
+- Notes: `SaveService::Update` は `OnUpdate`（PreUpdate）で `false` を渡して呼ぶ。状態機械の遷移は PreSimulation の Update の先頭で同期に適用されるので、その時点で遷移の途中ではない。死亡からのリセットは `FlushAndWait` で保存の完了を待ってから RequestReset する。
+
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 2、完了）
+
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ。衝突は 2 か所で、`TerrainHeightField.cpp` は統合側の PDL0（水たまり）の読み込みを残し、末尾の範囲の構築をこの項目の `BuildLodBounds` へ合わせた。`PhysicsModule.cpp` の地形のプロキシは、この項目のタイルの常駐の印と統合側の `DetermineProxyMobility` の両方を設定する。
+- Done: verify の `cmake --build build --config Debug --target MathGeometryTest PhysicsDynamicsTest -- /m:1` は EXIT=0、ctest の 7 本（TerrainHeightFieldQueryTest・TerrainHeightFieldTest・PhysicsHeightFieldColliderTest・PhysicsBroadphaseQueryTest・PhysicsCharacterMoveTest・PhysicsDynamicsTest・MathGeometryTest）は全部合格。
+- Next: タイルの常駐を決めるのはセル（G12-GR40-WORLD-PAYLOADS）。
+- Notes: アプリを起動する確かめはこの項目に無い。
+- U1 高さ場に段 1〜3 の最小最大の表と段ごとの高さ・面法線の照会を足し、ブロック表を段 3 の表に置き換える: 着地(直し 0 回)
+- U2 粗い段の Raycast と常駐の印の型を足し、高さ場の全照会に常駐の印を渡せるようにする: 着地(直し 0 回)
+- U4 TerrainHeightFieldQueryTest に段の表・段の高さの誤差・表で棄却した Raycast のケースを足す: 着地(直し 0 回)
+- U3 TerrainSystem に段を選ぶ照会と常駐の印の口を足す: 着地(直し 0 回)
+- U5 物理の地形のプロキシに常駐の印を持たせ、常駐でないタイルでは問い合わせ・接触とも当たらないようにする: 着地(直し 0 回)
+- U6 PhysicsHeightFieldColliderTest に常駐の切り替えのケースを足し、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 1、完了）
+- Done: (1) `TerrainHeightField` に段 1〜3（stride 2・4・8）の最小最大の表（覆う最細の全頂点の範囲）と `kHeightLodCount`・`GetLodCellRange`・`SampleHeight(x, z, lod)`・`SampleNormal(..., lod)`・`Raycast(ray, maxDistance, hit, lod, residency)` を足し、最細段の Raycast と VisitTriangles の早期の棄却は 8×8 のブロック表をやめて段 3 の表を使う。(2) `TerrainTileResidency`（非常駐のタイル番号のビット）を足し、重なり・掃引・レイに末尾の `const TerrainTileResidency*` を渡すと常駐でないタイルの升目の三角形を無いものとして扱う。(3) `TerrainSystem` に `SampleGround(x, z, out, lod)`・`RaycastGround(ray, maxDistance, hit, lod)`（既存の形は段 0）と `SetTileResident`・`IsTileResident`・`GetTileResidency`（copy-on-write の写し、既定は全常駐、Clear で戻る）。照会は常駐に依らない。(4) 物理の地形のプロキシが固定ステップごとのプロキシ作りで常駐の写しを持ち、問い合わせ（重なり・レイ・掃引）と動く物体との接触の全呼び出しに渡す。(5) 試験: `TerrainHeightFieldQueryTest` に段の表の保守性（NVTRN と正弦波の場で違反 0）・段の高さの誤差（6534 点で LodMaxErrorM の超過 0、段 0 はビット一致）・段 3 の表で棄却するレイの総当たりとの一致（6144 本）、`PhysicsHeightFieldColliderTest` に `TestTileResidency`（非常駐のタイル A で 90 ステップ Hit 0・沈み 10.16 m・レイと重なりが外れ、常駐のタイル B は当たる。常駐に戻した次の 1 ステップでレイ・重なりが当たり、新しい球は Hit 229・地表との差 0 で止まる。非常駐にする行を外すと 7 件の不一致で落ちることを確かめた）。
+- 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
+- Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。

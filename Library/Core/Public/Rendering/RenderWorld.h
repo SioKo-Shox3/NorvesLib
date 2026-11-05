@@ -193,6 +193,12 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        // 空の遮蔽の値と遮蔽物を次の FramePacket へ値で公開する（GameThread）。
+        void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
+        SkyOccluderHandle RegisterSkyOccluder(const SkyOccluderProxy& proxy);
+        void UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy);
+        void UnregisterSkyOccluder(SkyOccluderHandle handle);
+
         /**
          * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を設定する（GameThread）
          * @param scale 0以上の有限の倍率（1で従来どおり）。次のFramePacketへ値コピーする

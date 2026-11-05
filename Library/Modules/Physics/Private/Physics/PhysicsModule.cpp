@@ -14,6 +14,7 @@
 #include "Physics/ColliderShapeTransform.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -483,14 +484,11 @@ namespace NorvesLib::Modules::Physics
         {
             return EPhysicsResult::InvalidState;
         }
-        for (const ColliderSlot& slot : m_ColliderSlots)
+        if (m_ColliderSlotByOwner.find(owner) != m_ColliderSlotByOwner.end())
         {
-            if (slot.bOccupied && slot.Owner == owner)
-            {
-                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
-                ++m_DuplicateDiagnosticCount;
-                return EPhysicsResult::Duplicate;
-            }
+            m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+            ++m_DuplicateDiagnosticCount;
+            return EPhysicsResult::Duplicate;
         }
 
         uint32_t index = 0;
@@ -510,6 +508,7 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = owner;
         slot.bOccupied = true;
         slot.bActive = false;
+        m_ColliderSlotByOwner.emplace(owner, index);
         component.m_ColliderHandle = Core::Scene::ColliderHandle{index, slot.Generation};
         return EPhysicsResult::Success;
     }
@@ -534,14 +533,11 @@ namespace NorvesLib::Modules::Physics
         {
             return EPhysicsResult::InvalidState;
         }
-        for (const BodySlot& slot : m_BodySlots)
+        if (m_BodySlotByOwner.find(owner) != m_BodySlotByOwner.end())
         {
-            if (slot.bOccupied && slot.Owner == owner)
-            {
-                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
-                ++m_DuplicateDiagnosticCount;
-                return EPhysicsResult::Duplicate;
-            }
+            m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+            ++m_DuplicateDiagnosticCount;
+            return EPhysicsResult::Duplicate;
         }
 
         uint32_t index = 0;
@@ -561,6 +557,7 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = owner;
         slot.bOccupied = true;
         slot.bActive = false;
+        m_BodySlotByOwner.emplace(owner, index);
         component.m_BodyHandle = Core::Scene::BodyHandle{index, slot.Generation};
         UpdateRenderInterpolationDefault(slot);
         return EPhysicsResult::Success;
@@ -1138,22 +1135,10 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ResolveContacts(float /*fixedDeltaTime*/)
     {
         m_CurrentTriggerPairs.clear();
-        const Core::Container::VariableArray<PhysicsShapeProxy>& proxies = m_WorkingBroadphase.GetProxies();
         for (const PhysicsCandidatePair& candidate : m_WorkingBroadphase.GetCandidatePairs())
         {
-            const PhysicsShapeProxy* firstProxy = nullptr;
-            const PhysicsShapeProxy* secondProxy = nullptr;
-            for (const PhysicsShapeProxy& proxy : proxies)
-            {
-                if (proxy.Collider == candidate.First)
-                {
-                    firstProxy = &proxy;
-                }
-                else if (proxy.Collider == candidate.Second)
-                {
-                    secondProxy = &proxy;
-                }
-            }
+            const PhysicsShapeProxy* firstProxy = m_WorkingBroadphase.FindProxy(candidate.First);
+            const PhysicsShapeProxy* secondProxy = m_WorkingBroadphase.FindProxy(candidate.Second);
             if (!firstProxy || !secondProxy)
             {
                 continue;
@@ -1165,6 +1150,7 @@ namespace NorvesLib::Modules::Physics
             }
 
             Math::GeometryContact contact;
+            m_WorkingBroadphase.RecordNarrowPhaseTest();
             if (!PhysicsBroadphase::ComputeContact(*firstProxy, *secondProxy, contact))
             {
                 continue;
@@ -1394,6 +1380,28 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
+    EPhysicsProxyMobility PhysicsModule::DetermineProxyMobility(const PhysicsShapeProxy& proxy) const
+    {
+        // ResolveContacts が接触を解く組（一方が Dynamic）と trigger の組だけを残すための分類。
+        if (proxy.bTrigger)
+        {
+            return EPhysicsProxyMobility::Trigger;
+        }
+        if (proxy.Body.IsValid())
+        {
+            const EPhysicsBodyType bodyType = m_BodySlots[proxy.Body.Index].Component->m_BodyType;
+            if (bodyType == EPhysicsBodyType::Dynamic)
+            {
+                return EPhysicsProxyMobility::Dynamic;
+            }
+            if (bodyType == EPhysicsBodyType::Kinematic)
+            {
+                return EPhysicsProxyMobility::Kinematic;
+            }
+        }
+        return EPhysicsProxyMobility::Static;
+    }
+
     void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle) const
     {
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
@@ -1441,6 +1449,8 @@ namespace NorvesLib::Modules::Physics
                     continue;
                 }
                 slot.Component->m_bHeightFieldTransformWarning = false;
+                proxy.TileResidency = m_Engine ? m_Engine->GetTerrainSystem().GetTileResidency() : nullptr;
+                proxy.Mobility = DetermineProxyMobility(proxy);
                 proxies.push_back(proxy);
                 continue;
             case ColliderComponent::EColliderShape::None:
@@ -1451,6 +1461,7 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
             proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
+            proxy.Mobility = DetermineProxyMobility(proxy);
             if (!BuildColliderWorldShape(shape, slot.Component->m_Radius, slot.Component->m_CapsuleHalfHeight,
                                          slot.Component->m_HalfExtents, transform, slot.Component->m_LocalPose, proxy))
                 continue;
@@ -1503,20 +1514,20 @@ namespace NorvesLib::Modules::Physics
 
     Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle) const
     {
-        for (const BodySlot& slot : m_BodySlots)
+        const auto it = m_BodySlotByOwner.find(&owner);
+        if (it == m_BodySlotByOwner.end())
         {
-            if (!slot.bOccupied || slot.Owner != &owner)
-            {
-                continue;
-            }
-            // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
-            const bool bActive = bRefreshLifecycle
-                ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
-                : slot.bActive;
-            if (bActive)
-            {
-                return slot.Component->m_BodyHandle;
-            }
+            return Core::Scene::BodyHandle{};
+        }
+
+        const BodySlot& slot = m_BodySlots[it->second];
+        // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
+        const bool bActive = bRefreshLifecycle
+            ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
+            : slot.bActive;
+        if (bActive)
+        {
+            return slot.Component->m_BodyHandle;
         }
         return Core::Scene::BodyHandle{};
     }
@@ -1570,6 +1581,11 @@ namespace NorvesLib::Modules::Physics
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
         }
+        const auto it = m_ColliderSlotByOwner.find(slot.Owner);
+        if (it != m_ColliderSlotByOwner.end() && it->second == index)
+        {
+            m_ColliderSlotByOwner.erase(it);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;
@@ -1591,6 +1607,11 @@ namespace NorvesLib::Modules::Physics
             slot.Owner->SetDefaultRenderInterpolationEnabled(false);
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
+        }
+        const auto it = m_BodySlotByOwner.find(slot.Owner);
+        if (it != m_BodySlotByOwner.end() && it->second == index)
+        {
+            m_BodySlotByOwner.erase(it);
         }
         slot.Component = nullptr;
         slot.Owner = nullptr;

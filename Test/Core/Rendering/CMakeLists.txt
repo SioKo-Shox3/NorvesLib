@@ -1387,11 +1387,15 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
     MEMBER ViewClearanceModelTest ViewClearanceModelTest.cpp
+    MEMBER SkyOcclusionModelTest SkyOcclusionModelTest.cpp
+    MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
+    MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
@@ -1427,6 +1431,9 @@ add_test(NAME VirtualShadowMapPointTest COMMAND CameraViewConstantsTest --test=V
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 add_test(NAME ViewClearanceModelTest COMMAND CameraViewConstantsTest --test=ViewClearanceModelTest)
+add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOcclusionModelTest)
+add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
+add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
 
 add_executable(ViewRenderContextActiveInputTest
@@ -1989,6 +1996,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
+    MEMBER GameModeScopeResourceLeakVulkanTest GameModeScopeResourceLeakVulkanTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
@@ -2000,7 +2008,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
     MEMBER VisibilityMaterialTableTest VisibilityMaterialTableTest.cpp
 )
-target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
+target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core RenderingGpuTestSupport)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
@@ -2011,6 +2019,13 @@ target_compile_definitions(RenderResourcesDomainContractTest PRIVATE
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
+add_test(NAME GameModeScopeResourceLeakVulkanTest COMMAND RenderResourcesDomainContractTest --test=GameModeScopeResourceLeakVulkanTest)
+set_tests_properties(GameModeScopeResourceLeakVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)

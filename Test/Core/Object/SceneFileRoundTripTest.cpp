@@ -2,6 +2,7 @@
 #include "Component/Component.h"
 #include "Component/GrassFieldComponent.h"
 #include "Component/PointLightComponent.h"
+#include "Component/SkyOccluderComponent.h"
 #include "Component/TerrainComponent.h"
 #include "Component/ViewClearanceComponent.h"
 #include "Component/WitherSourceComponent.h"
@@ -259,6 +260,59 @@ namespace
         assert(!loaded->getbAffectGrass());
         assert(!loaded->getbAffectOccluders());
         assert(loaded->getbHeroSilhouette());
+
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(std::remove(filePath) == 0);
+    }
+
+    // 空と雨の遮蔽物の全設定を保存し、読み戻した値を確かめる。
+    void TestSkyOccluderPropertiesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::SkyOccluderComponent::StaticClass();
+        constexpr const char* filePath = "SceneFileRoundTripTest.sky-occluder.scene.json";
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* sourceRoot = sourceWorld.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+        auto* source = sourceWorld.CreateComponent<Component::SkyOccluderComponent>(sourceRoot);
+        assert(source != nullptr);
+        source->getShape() = Rendering::SkyOccluderShape::Box;
+        source->getOccluderClass() = Rendering::SkyOccluderClass::Canopy;
+        source->getHalfExtents() = Math::Vector3(2.5f, 3.25f, 4.75f);
+        source->getCenterOffset() = Math::Vector3(-0.5f, 1.25f, 2.75f);
+        source->getYawOffsetRadians() = 0.625f;
+        source->getBaseOffset() = 0.375f;
+        source->getOpacity() = 0.45f;
+        source->getbDynamic() = true;
+        source->getbBlocksRain() = false;
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(filePath)));
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats));
+        assert(stats.LoadedRoots == 1);
+        assert(stats.DroppedEntities == 0);
+        assert(stats.DroppedComponents == 0);
+        assert(stats.DroppedProperties == 0);
+        const Container::VariableArray<Entity*> loadedRoots = loadedWorld.GetRootEntities();
+        assert(loadedRoots.size() == 1);
+        const auto* loaded = loadedRoots[0]->GetComponent<Component::SkyOccluderComponent>();
+        assert(loaded != nullptr);
+        assert(static_cast<Rendering::SkyOccluderShape>(loaded->getShape()) == Rendering::SkyOccluderShape::Box);
+        assert(static_cast<Rendering::SkyOccluderClass>(loaded->getOccluderClass()) == Rendering::SkyOccluderClass::Canopy);
+        const Math::Vector3 extents = loaded->getHalfExtents();
+        const Math::Vector3 offset = loaded->getCenterOffset();
+        assert(Near(extents.x, 2.5f) && Near(extents.y, 3.25f) && Near(extents.z, 4.75f));
+        assert(Near(offset.x, -0.5f) && Near(offset.y, 1.25f) && Near(offset.z, 2.75f));
+        assert(Near(loaded->getYawOffsetRadians(), 0.625f));
+        assert(Near(loaded->getBaseOffset(), 0.375f));
+        assert(Near(loaded->getOpacity(), 0.45f));
+        assert(loaded->getbDynamic());
+        assert(!loaded->getbBlocksRain());
 
         loadedWorld.Finalize();
         sourceWorld.Finalize();
@@ -781,6 +835,7 @@ int main()
 
     TestSaveLoadRoundTrip();
     TestViewClearancePropertiesSaveLoadRoundTrip();
+    TestSkyOccluderPropertiesSaveLoadRoundTrip();
     TestTerrainPropertiesSaveLoadRoundTrip();
     TestLegacyTerrainPropertiesUseDefaults();
     TestGrassPropertiesSaveLoadRoundTrip();
