@@ -60,6 +60,10 @@ namespace NorvesLib::Modules::Physics
 
         Core::Container::VariableArray<ProxySignature> Signatures;
         StaticAabbTree Tree;
+        Math::AABB QueryBounds;
+        float MaxShapeSize = 0.0f;
+        bool bUsableQueryBounds = true;
+        bool bHasInvalidSweepBox = false;
     };
 
     namespace
@@ -671,37 +675,118 @@ namespace NorvesLib::Modules::Physics
             return Math::AABB();
         }
 
+        // インスタンスだけが渡す同期借用。公開の Span 問い合わせは線形のまま使う。
+        struct QueryTreeContext
+        {
+            const PhysicsStaticTreeSnapshot* Snapshot;
+            Core::Container::Span<const uint32_t> TreeProxyIndices;
+            Core::Container::Span<const uint32_t> NonTreeProxyIndices;
+            uint64_t& VisitedNodeCount;
+        };
+
         template<typename Predicate>
         Core::Scene::EPhysicsSceneQueryResult VisitProxyCandidates(
             Core::Container::Span<const PhysicsShapeProxy> proxies, PhysicsBroadphase::ProxyVisitCallback visitor,
-            void* context, PhysicsBroadphase::ProxyVisitCallback precheck, const Predicate& candidate)
+            void* context, PhysicsBroadphase::ProxyVisitCallback precheck, const Predicate& candidate,
+            const QueryTreeContext* tree = nullptr, const Math::AABB* bounds = nullptr,
+            const Math::Ray* ray = nullptr, float maxDistance = 0.0f,
+            float (*closestLimit)(void*) = nullptr)
         {
             using Result = Core::Scene::EPhysicsSceneQueryResult;
             if (visitor == nullptr || (proxies.size() != 0 && proxies.data() == nullptr))
             {
                 return Result::InvalidArgument;
             }
-            for (size_t index = 0; index < proxies.size(); ++index)
+            const auto visit = [&](size_t index)
             {
                 const auto& proxy = proxies[index];
                 if (precheck)
                 {
                     const auto result = precheck(proxy,context);
-                    if (result == Result::NoHit)
-                    {
-                        continue;
-                    }
                     if (result != Result::Success)
                     {
                         return result;
                     }
                 }
-                // 不正proxyを空間除外で隠さず、呼出側の検証へ渡す。
+                // 不正なプロキシを空間除外で隠さず、呼び出し側の検証へ渡す。
                 if (IsValidProxyGeometry(proxy) && !candidate(ConservativeProxyBounds(proxy)))
                 {
-                    continue;
+                    return Result::NoHit;
                 }
-                const auto result = visitor(proxy,context);
+                return visitor(proxy,context);
+            };
+            if (tree == nullptr || (bounds == nullptr && ray == nullptr))
+            {
+                for (size_t index = 0; index < proxies.size(); ++index)
+                {
+                    const auto result = visit(index);
+                    if (result != Result::Success && result != Result::NoHit)
+                    {
+                        return result;
+                    }
+                }
+                return Result::Success;
+            }
+
+            // 実際に木を使うときだけ、既定の全数計上を訪問節数と線形訪問数に置き換える。
+            tree->VisitedNodeCount -= proxies.size();
+            if (ray != nullptr && closestLimit != nullptr)
+            {
+                for (uint32_t index : tree->NonTreeProxyIndices)
+                {
+                    ++tree->VisitedNodeCount;
+                    const auto result = visit(index);
+                    if (result != Result::Success && result != Result::NoHit)
+                    {
+                        return result;
+                    }
+                }
+                float limit = closestLimit(context);
+                Result result = Result::Success;
+                tree->VisitedNodeCount += tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,limit,
+                    [&](uint32_t item)
+                    {
+                        if (result == Result::Success || result == Result::NoHit)
+                        {
+                            result = visit(tree->TreeProxyIndices[item]);
+                            limit = std::fmin(limit,closestLimit(context));
+                        }
+                        return limit;
+                    });
+                return result == Result::NoHit ? Result::Success : result;
+            }
+
+            Core::Container::VariableArray<uint32_t> indices;
+            for (uint32_t index : tree->NonTreeProxyIndices)
+            {
+                indices.push_back(index);
+            }
+            const auto collect = [&](uint32_t item) { indices.push_back(tree->TreeProxyIndices[item]); };
+            if (ray != nullptr)
+            {
+                tree->VisitedNodeCount += tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,maxDistance,
+                    [&](uint32_t item)
+                    {
+                        collect(item);
+                        return maxDistance;
+                    });
+            }
+            else
+            {
+                tree->VisitedNodeCount += tree->Snapshot->Tree.QueryAabb(*bounds,collect);
+            }
+            std::sort(indices.begin(),indices.end());
+            size_t nonTreeIndex = 0;
+            for (uint32_t index : indices)
+            {
+                // 木の候補は節の訪問で計上済み。線形部分だけを加算する。
+                if (nonTreeIndex < tree->NonTreeProxyIndices.size()
+                    && tree->NonTreeProxyIndices[nonTreeIndex] == index)
+                {
+                    ++tree->VisitedNodeCount;
+                    ++nonTreeIndex;
+                }
+                const auto result = visit(index);
                 if (result != Result::Success && result != Result::NoHit)
                 {
                     return result;
@@ -712,7 +797,8 @@ namespace NorvesLib::Modules::Physics
 
         // 接触/分離に残るfloat幾何の保守的な尺度上限を維持する。
         // ray内部のdouble化だけでは全queryの安全域を拡大しない。始点からの相対尺度で判定。
-        bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query)
+        bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query,
+            const PhysicsStaticTreeSnapshot* summary = nullptr)
         {
             using Kind = Core::Scene::EPhysicsQueryKind;
             const Math::Vector3 origin = query.Kind == Kind::RaycastClosest || query.Kind == Kind::RaycastAll ? query.Ray.Origin
@@ -764,6 +850,19 @@ namespace NorvesLib::Modules::Physics
                 const double squared = scale * scale;
                 return bRepresentable && squared * squared * squared <= static_cast<double>(FLT_MAX) / 4096.0;
             };
+            if (summary != nullptr)
+            {
+                // 和の全隅は各形状の中心・端点を包み、最大サイズは半径と半径長を上から押さえる。
+                for (uint32_t corner = 0; corner < 8; ++corner)
+                {
+                    includePoint(Math::Vector3(
+                        (corner & 1) != 0 ? summary->QueryBounds.Max.x : summary->QueryBounds.Min.x,
+                        (corner & 2) != 0 ? summary->QueryBounds.Max.y : summary->QueryBounds.Min.y,
+                        (corner & 4) != 0 ? summary->QueryBounds.Max.z : summary->QueryBounds.Min.z));
+                }
+                scale = std::fmax(scale,summary->MaxShapeSize);
+                return summary->bUsableQueryBounds && isRepresentable();
+            }
             switch (proxy.Shape)
             {
             case EPhysicsProxyShape::Sphere:
@@ -1113,6 +1212,28 @@ namespace NorvesLib::Modules::Physics
             size_t Count = 0;
             bool bApplyFilter = true;
         };
+        float ClosestQueryLimit(void* context)
+        {
+            const auto& collection = *static_cast<QueryCollection*>(context);
+            if (collection.Count == 0)
+            {
+                return collection.Query.MaxDistance;
+            }
+            const double distance = collection.Hits[0].Distance;
+            // 距離の丸めと同距離の節を残し、大きいハンドルが勝つ既存規則を保つ。
+            return static_cast<float>(std::fmin(collection.Query.MaxDistance,distance + 1e-4 * (1.0 + distance)));
+        }
+
+        bool CanUseQueryTree(const QueryTreeContext* tree, const Core::Scene::PhysicsQueryDesc& query)
+        {
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            return tree != nullptr && tree->Snapshot != nullptr && !tree->TreeProxyIndices.empty()
+                && !tree->Snapshot->Tree.IsEmpty()
+                && !((query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule)
+                    && tree->Snapshot->bHasInvalidSweepBox)
+                && HasRepresentableQueryScale(PhysicsShapeProxy(),query,tree->Snapshot);
+        }
+
         Core::Scene::EPhysicsSceneQueryResult CheckQueryCandidate(const PhysicsShapeProxy& proxy, void* context)
         {
             const auto& collection = *static_cast<QueryCollection*>(context);
@@ -1155,8 +1276,13 @@ namespace NorvesLib::Modules::Physics
     {
         Core::Scene::EPhysicsSceneQueryResult ExecuteQueryOverProxiesImpl(
             Core::Container::Span<const PhysicsShapeProxy> proxies, const Core::Scene::PhysicsQueryDesc& query,
-            Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount, bool bApplyFilter)
+            Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount, bool bApplyFilter,
+            const QueryTreeContext* tree = nullptr)
         {
+            if (tree != nullptr)
+            {
+                tree->VisitedNodeCount += proxies.size();
+            }
             using Result = Core::Scene::EPhysicsSceneQueryResult;
             outHitCount = 0;
             if (outHits.size() != 0 && outHits.data() == nullptr)
@@ -1176,18 +1302,47 @@ namespace NorvesLib::Modules::Physics
             {
                 return Result::InvalidArgument;
             }
+            if (!CanUseQueryTree(tree,query))
+            {
+                tree = nullptr;
+            }
             QueryCollection collection{query,outHits,limit,0,bApplyFilter};
             Result result;
             if (query.Kind == Core::Scene::EPhysicsQueryKind::RaycastClosest || query.Kind == Core::Scene::EPhysicsQueryKind::RaycastAll)
             {
-                result = PhysicsBroadphase::VisitProxiesAlongRay(proxies,query.Ray,query.MaxDistance,CollectQueryCandidate,&collection,CheckQueryCandidate);
+                const Math::Ray ray(query.Ray.Origin,QueryUnit(query.Ray.Direction));
+                result = VisitProxyCandidates(proxies,CollectQueryCandidate,&collection,CheckQueryCandidate,
+                    [&](const Math::AABB& candidate) { return BoundsMayMeetRay(candidate,ray.Origin,ray.Direction,query.MaxDistance); },
+                    tree,nullptr,&ray,query.MaxDistance,
+                    query.Kind == Core::Scene::EPhysicsQueryKind::RaycastClosest ? ClosestQueryLimit : nullptr);
             }
             else
             {
                 Math::AABB bounds;
                 if (TryQueryBounds(query,bounds))
                 {
-                    result = PhysicsBroadphase::VisitProxiesInAabb(proxies,bounds,CollectQueryCandidate,&collection,CheckQueryCandidate);
+                    Math::AABB treeBounds = bounds;
+                    if (tree != nullptr)
+                    {
+                        // 木の AABB 判定は厳密なので、既存の候補判定の余白を問い合わせ側に足す。
+                        const double margin = 1e-4 + 1e-5
+                            * std::fmax(BoundCoordinateScale(bounds),BoundCoordinateScale(tree->Snapshot->QueryBounds));
+                        const auto expand = [&](float coordinate, double offset, float toward)
+                        {
+                            return std::nextafter(static_cast<float>(static_cast<double>(coordinate) + offset),toward);
+                        };
+                        const float infinity = std::numeric_limits<float>::infinity();
+                        treeBounds.Min = Math::Vector3(expand(bounds.Min.x,-margin,-infinity),
+                            expand(bounds.Min.y,-margin,-infinity),expand(bounds.Min.z,-margin,-infinity));
+                        treeBounds.Max = Math::Vector3(expand(bounds.Max.x,margin,infinity),
+                            expand(bounds.Max.y,margin,infinity),expand(bounds.Max.z,margin,infinity));
+                        if (!IsUsableQueryBounds(treeBounds))
+                        {
+                            tree = nullptr;
+                        }
+                    }
+                    result = VisitProxyCandidates(proxies,CollectQueryCandidate,&collection,CheckQueryCandidate,
+                        [&](const Math::AABB& candidate) { return BoundsMayOverlap(bounds,candidate); },tree,&treeBounds);
                 }
                 else
                 {
@@ -1221,18 +1376,20 @@ namespace NorvesLib::Modules::Physics
         const Core::Scene::PhysicsQueryDesc& query,
         Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const
     {
-        m_Stats.VisitedNodeCount += m_Proxies.size();
         using Result = Core::Scene::EPhysicsSceneQueryResult;
         outHits.clear();
         if (!IsValidQuery(query))
         {
+            m_Stats.VisitedNodeCount += m_Proxies.size();
             return Result::InvalidArgument;
         }
         outHits.resize(QueryHitLimit(m_Proxies.size(), query));
         size_t count = 0;
-        const Result result = ExecuteQueryOverProxies(
+        const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
+        const Result result = ExecuteQueryOverProxiesImpl(
             Core::Container::Span<const PhysicsShapeProxy>(m_Proxies.data(), m_Proxies.size()), query,
-            Core::Container::Span<Core::Scene::PhysicsQueryHit>(outHits.data(), outHits.size()), count);
+            Core::Container::Span<Core::Scene::PhysicsQueryHit>(outHits.data(), outHits.size()), count,true,&tree);
         outHits.resize(result == Result::Success ? count : 0);
         return result;
     }
@@ -1293,6 +1450,21 @@ namespace NorvesLib::Modules::Physics
                 const PhysicsShapeProxy& proxy = m_Proxies[index];
                 Math::AABB conservativeBounds = ConservativeProxyBounds(proxy);
                 conservativeBounds.Merge(proxy.Bounds);
+                snapshot->bUsableQueryBounds = snapshot->bUsableQueryBounds && IsUsableQueryBounds(conservativeBounds);
+                if (bounds.empty())
+                {
+                    snapshot->QueryBounds = conservativeBounds;
+                }
+                else
+                {
+                    snapshot->QueryBounds.Merge(conservativeBounds);
+                }
+                const float shapeSize = proxy.Shape == EPhysicsProxyShape::Sphere ? proxy.Sphere.Radius
+                    : proxy.Shape == EPhysicsProxyShape::Capsule ? proxy.Capsule.Radius
+                    : std::fmax(proxy.Box.HalfExtents.x,std::fmax(proxy.Box.HalfExtents.y,proxy.Box.HalfExtents.z));
+                snapshot->MaxShapeSize = std::fmax(snapshot->MaxShapeSize,shapeSize);
+                snapshot->bHasInvalidSweepBox = snapshot->bHasInvalidSweepBox
+                    || (proxy.Shape == EPhysicsProxyShape::Box && !Math::IsValidSweepBox(proxy.Box));
                 bounds.push_back(conservativeBounds);
                 handles.push_back(proxy.Collider);
             }
@@ -1377,82 +1549,100 @@ namespace NorvesLib::Modules::Physics
         ++m_Stats.NarrowPhaseTestCount;
     }
 
+    namespace
+    {
+        Core::Scene::EPhysicsSceneQueryResult RaycastOverProxiesImpl(Core::Container::Span<const PhysicsShapeProxy> proxies,
+            const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit, const QueryTreeContext* tree)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            outHit = {};
+            Core::Scene::PhysicsQueryDesc query;
+            query.Ray = ray;
+            query.MaxDistance = maxDistance;
+            query.MaxHits = 1;
+            Core::Scene::PhysicsQueryHit hit[1];
+            size_t count = 0;
+            const auto result = ExecuteQueryOverProxiesImpl(proxies,query,hit,count,false,tree);
+            if (result == Result::Success)
+            {
+                outHit.Collider = hit[0].Collider;
+                outHit.Body = hit[0].Body;
+                outHit.Entity = hit[0].Entity;
+                outHit.bHasEntity = hit[0].bHasEntity;
+                outHit.Point = hit[0].Point;
+                outHit.Normal = hit[0].Normal;
+                outHit.Distance = hit[0].Distance;
+                outHit.UserData = hit[0].UserData;
+                outHit.SurfaceId = hit[0].SurfaceId;
+            }
+            return result;
+        }
+
+        Core::Scene::EPhysicsSceneQueryResult OverlapOverProxiesImpl(Core::Container::Span<const PhysicsShapeProxy> proxies,
+            const Core::Scene::PhysicsQueryDesc& query, Core::Container::Span<Core::Scene::PhysicsQueryHit> scratch,
+            Core::Container::Span<Core::Scene::PhysicsOverlapHit> outHits, size_t& outHitCount, const QueryTreeContext* tree)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            outHitCount = 0;
+            if (outHits.size() != 0 && outHits.data() == nullptr)
+            {
+                return Result::InvalidArgument;
+            }
+            for (auto& hit : outHits)
+            {
+                hit = {};
+            }
+            if ((query.Kind != Kind::OverlapSphere && query.Kind != Kind::OverlapBox && query.Kind != Kind::OverlapCapsule)
+                || outHits.size() < QueryHitLimit(proxies.size(),query))
+            {
+                return Result::InvalidArgument;
+            }
+            size_t count = 0;
+            const auto result = ExecuteQueryOverProxiesImpl(proxies,query,scratch,count,false,tree);
+            if (result != Result::Success)
+            {
+                return result;
+            }
+            for (size_t index = 0; index < count; ++index)
+            {
+                const auto& source = scratch[index];
+                auto& hit = outHits[index];
+                hit.Collider = source.Collider;
+                hit.Body = source.Body;
+                hit.Entity = source.Entity;
+                hit.bHasEntity = source.bHasEntity;
+                hit.UserData = source.UserData;
+                hit.SurfaceId = source.SurfaceId;
+                hit.Contact.Normal = source.Normal * -1.0f;
+                hit.Contact.Depth = source.Depth;
+                hit.Contact.Point = source.Point;
+            }
+            outHitCount = count;
+            return Result::Success;
+        }
+
+    } // namespace
+
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::RaycastOverProxies(Core::Container::Span<const PhysicsShapeProxy> proxies,
         const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit)
     {
-        using Result = Core::Scene::EPhysicsSceneQueryResult;
-        outHit = {};
-        Core::Scene::PhysicsQueryDesc query;
-        query.Ray = ray;
-        query.MaxDistance = maxDistance;
-        query.MaxHits = 1;
-        Core::Scene::PhysicsQueryHit hit[1];
-        size_t count = 0;
-        const auto result = ExecuteQueryOverProxiesImpl(proxies,query,hit,count,false);
-        if (result == Result::Success)
-        {
-            outHit.Collider = hit[0].Collider;
-            outHit.Body = hit[0].Body;
-            outHit.Entity = hit[0].Entity;
-            outHit.bHasEntity = hit[0].bHasEntity;
-            outHit.Point = hit[0].Point;
-            outHit.Normal = hit[0].Normal;
-            outHit.Distance = hit[0].Distance;
-            outHit.UserData = hit[0].UserData;
-            outHit.SurfaceId = hit[0].SurfaceId;
-        }
-        return result;
+        return RaycastOverProxiesImpl(proxies,ray,maxDistance,outHit,nullptr);
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::OverlapOverProxies(Core::Container::Span<const PhysicsShapeProxy> proxies,
         const Core::Scene::PhysicsQueryDesc& query, Core::Container::Span<Core::Scene::PhysicsQueryHit> scratch,
         Core::Container::Span<Core::Scene::PhysicsOverlapHit> outHits, size_t& outHitCount)
     {
-        using Result = Core::Scene::EPhysicsSceneQueryResult;
-        using Kind = Core::Scene::EPhysicsQueryKind;
-        outHitCount = 0;
-        if (outHits.size() != 0 && outHits.data() == nullptr)
-        {
-            return Result::InvalidArgument;
-        }
-        for (auto& hit : outHits)
-        {
-            hit = {};
-        }
-        if ((query.Kind != Kind::OverlapSphere && query.Kind != Kind::OverlapBox && query.Kind != Kind::OverlapCapsule)
-            || outHits.size() < QueryHitLimit(proxies.size(),query))
-        {
-            return Result::InvalidArgument;
-        }
-        size_t count = 0;
-        const auto result = ExecuteQueryOverProxiesImpl(proxies,query,scratch,count,false);
-        if (result != Result::Success)
-        {
-            return result;
-        }
-        for (size_t index = 0; index < count; ++index)
-        {
-            const auto& source = scratch[index];
-            auto& hit = outHits[index];
-            hit.Collider = source.Collider;
-            hit.Body = source.Body;
-            hit.Entity = source.Entity;
-            hit.bHasEntity = source.bHasEntity;
-            hit.UserData = source.UserData;
-            hit.SurfaceId = source.SurfaceId;
-            hit.Contact.Normal = source.Normal * -1.0f;
-            hit.Contact.Depth = source.Depth;
-            hit.Contact.Point = source.Point;
-        }
-        outHitCount = count;
-        return Result::Success;
+        return OverlapOverProxiesImpl(proxies,query,scratch,outHits,outHitCount,nullptr);
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::RaycastQuery(const Math::Ray& ray, float maxDistance,
         Core::Scene::PhysicsRaycastHit& outHit) const
     {
-        m_Stats.VisitedNodeCount += m_Proxies.size();
-        return RaycastOverProxies({m_Proxies.data(),m_Proxies.size()},ray,maxDistance,outHit);
+        const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
+        return RaycastOverProxiesImpl({m_Proxies.data(),m_Proxies.size()},ray,maxDistance,outHit,&tree);
     }
 
     bool PhysicsBroadphase::Raycast(const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit) const
@@ -1463,19 +1653,21 @@ namespace NorvesLib::Modules::Physics
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::AppendOverlapQuery(const Core::Scene::PhysicsQueryDesc& query,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
-        m_Stats.VisitedNodeCount += m_Proxies.size();
         using Result = Core::Scene::EPhysicsSceneQueryResult;
         using Kind = Core::Scene::EPhysicsQueryKind;
         if (!IsValidQuery(query) || (query.Kind != Kind::OverlapSphere && query.Kind != Kind::OverlapBox && query.Kind != Kind::OverlapCapsule))
         {
+            m_Stats.VisitedNodeCount += m_Proxies.size();
             return Result::InvalidArgument;
         }
         const size_t capacity = QueryHitLimit(m_Proxies.size(),query);
         Core::Container::VariableArray<Core::Scene::PhysicsQueryHit> scratch(capacity);
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit> converted(capacity);
         size_t count = 0;
-        const auto result = OverlapOverProxies({m_Proxies.data(),m_Proxies.size()},query,
-            {scratch.data(),scratch.size()},{converted.data(),converted.size()},count);
+        const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
+        const auto result = OverlapOverProxiesImpl({m_Proxies.data(),m_Proxies.size()},query,
+            {scratch.data(),scratch.size()},{converted.data(),converted.size()},count,&tree);
         if (result == Result::Success)
         {
             static_assert(std::is_nothrow_copy_constructible_v<Core::Scene::PhysicsOverlapHit>);
