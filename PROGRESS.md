@@ -9825,3 +9825,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 FootIKModifier::Apply(地面の問い合わせ・体の補正・二関節 IK・足首の法線合わせ・重みの減衰)を実装する: 着地(直し 0 回)
 - U4 LegIKModifierTest(合成の 4 本脚と段差・斜面のモック)を足す: 着地(直し 0 回)
 - U5 PhysicsGroundQueryIntegrationTest に実 World の斜面・階段で FootIK を使うケースを足す: 着地(直し 1 回)
+- U6 文書(AnimationRuntime.md・Testing.md)を書き、タスクの verify を通す: 着地(直し 0 回)
