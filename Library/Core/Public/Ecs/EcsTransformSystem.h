@@ -142,6 +142,17 @@ namespace NorvesLib::Core::Ecs
             return !m_bIncremental || m_World.GetChangeLogLength(m_Flags) != 0;
         }
 
+        /**
+         * @brief 前回の Run より後に Active・PendingDestroy（EcsEntityFlags）か親子（EcsHierarchy）の変更があったか
+         *
+         * true の間、行の EffectiveActive は古いかもしれない。消費者を持てないときは常に true。
+         */
+        [[nodiscard]] bool HasUnpropagatedActiveChanges() const
+        {
+            return !m_bIncremental || m_World.GetChangeLogLength(m_Flags) != 0 ||
+                   m_World.GetChangeLogLength(m_Hierarchy) != 0;
+        }
+
         [[nodiscard]] bool IsParallel() const
         {
             return m_bParallel;
