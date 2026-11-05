@@ -9838,3 +9838,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 性能は記録だけ（Debug、10 万回の平均）: SampleGround 0.53 µs/回、100 m の Raycast 0.72 µs/本（目安は RelWithDebInfo で SampleGround 0.2 µs・Raycast 5 µs）。スプラットは cook 済みの mip0（頂点ごと、重みの和 255）を読み、和が 255 でない・未使用のチャンネルが 0 でない NVTRN は `CreateFromCookedTerrain` が拒否する。照会は LOD0 と同じ対角で、LOD1 以上の見た目とは最大 maxVerticalError だけずれる。アプリを起動する確かめは無い。
 - Notes (G5-GR38-HEIGHTFIELD-QUERY、run 20261105-093022 の反復 1): 前回の評価が枠切れ(429)で未実施のため状態が doing に戻っていた。コードは 6d378713 から変わっておらず、その版の verify(MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed)を証拠に done に戻し、評価をランナーに回す。
 - U1 物理の当たりの型に表面の番号の欄を足す: 着地(直し 0 回)
+- U2 高さ場に軸並行の境界の取得を足す: 着地(直し 0 回)
