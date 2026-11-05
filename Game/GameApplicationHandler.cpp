@@ -36,6 +36,7 @@
 #include "Gameplay/Physics/GamePhysicsLayers.h"
 #include "Input/GameHapticsSettings.h"
 #include "Input/GameInputActions.h"
+#include "Save/ProgressionSaveBridge.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -831,6 +832,8 @@ namespace Game
         m_bEnemySmoke = false;
         m_bCombatBench = false;
         m_CombatSliceCapturePath = {};
+        m_SoakResetCount = 0;
+        m_SaveDirectoryOverride = {};
         m_bDogMovementAutopilot = false;
         m_DogMovementAutopilotPath = {};
         m_DogMovementCaptureDir = {};
@@ -1295,6 +1298,37 @@ namespace Game
                     return false;
                 }
                 m_bCombatBench = true;
+                continue;
+            }
+            String soakResetValue;
+            if (TryStripPrefix(args[i], TEXT("--soak-reset="), soakResetValue))
+            {
+                if (m_SoakResetCount != 0)
+                {
+                    LOG_ERROR("--soak-reset が重複しています");
+                    return false;
+                }
+                if (!TryParseUInt32(soakResetValue, m_SoakResetCount) || m_SoakResetCount < 2)
+                {
+                    LOG_ERROR("--soak-reset には 2 以上の 32 ビット符号なし 10 進整数を指定してください");
+                    return false;
+                }
+                continue;
+            }
+            String saveDirectoryOverride;
+            if (TryStripPrefix(args[i], TEXT("--save-dir="), saveDirectoryOverride))
+            {
+                if (!m_SaveDirectoryOverride.empty())
+                {
+                    LOG_ERROR("--save-dir が重複しています");
+                    return false;
+                }
+                if (saveDirectoryOverride.empty())
+                {
+                    LOG_ERROR("--save-dir にはセーブを置く根のディレクトリを指定してください");
+                    return false;
+                }
+                m_SaveDirectoryOverride = saveDirectoryOverride;
                 continue;
             }
             String combatSliceCapturePath;
@@ -3145,6 +3179,21 @@ namespace Game
         const uint32_t combatSliceSmokeCount = static_cast<uint32_t>(m_bCombatSmoke) +
                                               static_cast<uint32_t>(m_bEncounterSmoke) +
                                               static_cast<uint32_t>(m_bEnemySmoke);
+        if (m_SoakResetCount > 0)
+        {
+            if (m_SaveDirectoryOverride.empty())
+            {
+                LOG_ERROR("ユーザーのセーブを書き換えないため、--soak-reset には --save-dir が必要です");
+                return false;
+            }
+            if (combatSliceSmokeCount != 0 || m_bCombatBench || !m_CombatSliceCapturePath.empty() ||
+                m_bDogMovementSmoke || m_bAnimationDebugRequested)
+            {
+                LOG_ERROR("--soak-reset は --combat-smoke・--encounter-smoke・--enemy-smoke・--combat-bench・"
+                          "--combat-slice-capture・--dog-movement-smoke・--animation-debug と併用できません");
+                return false;
+            }
+        }
         if (combatSliceSmokeCount > 1)
         {
             LOG_ERROR("--combat-smoke・--encounter-smoke・--enemy-smoke はどれか 1 つだけ指定してください");
@@ -3448,7 +3497,28 @@ namespace Game
 
         NorvesLib::Core::GEngine.GetGameStateStore().LoadKeyLedgerFile("Assets/Data/state_keys.json");
         auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
-        const String saveDirectory = Platform::GetUserDataDirectory("Game");
+        String saveDirectory;
+        if (!m_SaveDirectoryOverride.empty())
+        {
+            // 指定した根の下の NorvesLib/Game に保存し、ユーザーのセーブと分ける。
+            saveDirectory = Platform::GetUserDataDirectoryUnder(m_SaveDirectoryOverride, "Game");
+            if (saveDirectory.empty())
+            {
+                LOG_ERROR("セーブの保存先を作成できません: %s", m_SaveDirectoryOverride.c_str());
+                if (m_SoakResetCount > 0)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                LOG_INFO("SAVE_DIR override=%s", saveDirectory.c_str());
+            }
+        }
+        else
+        {
+            saveDirectory = Platform::GetUserDataDirectory("Game");
+        }
         if (!saveDirectory.empty())
         {
             saveService.Configure(saveDirectory);
@@ -3469,6 +3539,13 @@ namespace Game
         snapshot.AppVersion = NorvesLib::Core::GEngine.GetVersion();
         snapshot.SavedAtUnix = static_cast<int64_t>(std::time(nullptr));
         Game::Save::CaptureStateStore(NorvesLib::Core::GEngine.GetGameStateStore(), snapshot);
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(Module::GetModuleRegistry()))
+        {
+            if (!Game::Save::CaptureProgression(gameplay->GetProgressionState(), snapshot))
+            {
+                LOG_WARNING("撃破状態をセーブへ写せませんでした。保持している撃破状態で保存を続けます");
+            }
+        }
         payloadUtf8 = Game::Save::ToJson(snapshot);
         return !payloadUtf8.empty();
     }
@@ -3484,6 +3561,14 @@ namespace Game
         }
         m_ProgressSaveData = std::move(loaded);
         Game::Save::ApplyToStateStore(m_ProgressSaveData, NorvesLib::Core::GEngine.GetGameStateStore());
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(Module::GetModuleRegistry()))
+        {
+            if (!Game::Save::ApplyProgression(m_ProgressSaveData, gameplay->GetProgressionState()))
+            {
+                LOG_WARNING("セーブの撃破状態を進行へ反映できませんでした");
+                return false;
+            }
+        }
         return true;
     }
 
@@ -4182,6 +4267,11 @@ namespace Game
         {
             m_SceneCycle.Update(*NorvesLib::Core::Engine::GEngine, *m_pGameModeStateMachine);
         }
+
+        // ApplicationProcessor は PreUpdate で OnUpdate、その後 PreSimulation で状態機械を更新する。
+        // 遷移は GameModeStateMachine::Update 先頭で同期的に適用されるため、ここでは遷移の途中ではない。
+        // 保留要求があってもまだ適用前であり、状態機械には保留の有無を取得する公開 API はない。
+        NorvesLib::Core::GEngine.GetSaveService().Update(false);
     }
 
     void GameApplicationHandler::OnLateUpdate(float deltaTime)
@@ -4515,16 +4605,16 @@ namespace Game
             }
             return true;
         }
-        if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke)
+        if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
         {
             if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
             {
-                LOG_ERROR("--scene・--scene-view は戦闘の垂直スライスのスモークと併用できません");
+                LOG_ERROR("--scene・--scene-view は戦闘の垂直スライスのスモーク・リセットのソークと併用できません");
                 return false;
             }
             if (m_SceneCycle.IsEnabled())
             {
-                LOG_ERROR("--scene-cycle-smoke は戦闘の垂直スライスのスモークと併用できません");
+                LOG_ERROR("--scene-cycle-smoke は戦闘の垂直スライスのスモーク・リセットのソークと併用できません");
                 return false;
             }
             return true;
@@ -4801,15 +4891,19 @@ namespace Game
                 mode->GetData().CaptureDir = dogCaptureDir;
                 return mode;
             });
-        const auto combatSliceSmoke = m_bEncounterSmoke ? CombatSliceSmoke::Encounter :
+        auto resetState = MakeShared<CombatSliceResetState>();
+        resetState->SoakResetTarget = m_SoakResetCount;
+        const auto combatSliceSmoke = m_SoakResetCount > 0 ? CombatSliceSmoke::ResetSoak :
+                                      m_bEncounterSmoke ? CombatSliceSmoke::Encounter :
                                       m_bEnemySmoke ? CombatSliceSmoke::Enemy : CombatSliceSmoke::Combat;
         registerMode(
             CombatSlice,
-            [lateCameraSlot, combatSliceSmoke, bBench = m_bCombatBench, capturePath = m_CombatSliceCapturePath](
+            [lateCameraSlot, resetState, combatSliceSmoke, bBench = m_bCombatBench, capturePath = m_CombatSliceCapturePath](
                 const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<CombatSliceMode>();
                 mode->GetData().Options = {combatSliceSmoke, bBench, capturePath};
+                mode->GetData().ResetState = resetState;
                 mode->GetData().LateSlot = lateCameraSlot;
                 return mode;
             });
@@ -5110,7 +5204,7 @@ namespace Game
         {
             startMode = DogMovementSmoke;
         }
-        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke)
+        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
         {
             startMode = CombatSlice;
         }
@@ -5141,11 +5235,11 @@ namespace Game
         {
             LOG_INFO("犬の移動比較モードを開始します");
         }
-        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke)
+        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
         {
             LOG_INFO_F("戦闘の垂直スライスの確かめを開始します(%s)",
                        m_bCombatSmoke ? (m_bCombatBench ? "combat-bench" : "combat") :
-                       m_bEncounterSmoke ? "encounter" : "enemy");
+                       m_bEncounterSmoke ? "encounter" : m_bEnemySmoke ? "enemy" : "reset-soak");
         }
 #if NORVES_BUILD_DEVELOPMENT
         else if (!m_ShishaShowcaseScene.empty())

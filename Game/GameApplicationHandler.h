@@ -289,6 +289,8 @@ namespace Game
         bool m_bEnemySmoke = false;
         bool m_bCombatBench = false;
         NorvesLib::Core::Container::String m_CombatSliceCapturePath;
+        uint32_t m_SoakResetCount = 0;
+        NorvesLib::Core::Container::String m_SaveDirectoryOverride;
         bool m_bDogMovementAutopilot = false;
         NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
         NorvesLib::Core::Container::String m_DogMovementCaptureDir;
