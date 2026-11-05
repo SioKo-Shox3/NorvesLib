@@ -12,7 +12,16 @@ namespace Game::GameModes
     {
         Combat,
         Encounter,
-        Enemy
+        Enemy,
+        ResetSoak
+    };
+
+    // GameThread 専用。生成関数がリセットを跨いで保持する状態。
+    struct CombatSliceResetState
+    {
+        bool bRestoreFromLastSave = false;
+        uint32_t ResetCount = 0;
+        uint32_t SoakResetTarget = 0;
     };
 
     struct CombatSliceOptions

@@ -24,6 +24,7 @@ namespace Game::GameModes
     struct CombatSliceData
     {
         CombatSliceOptions Options;
+        NorvesLib::Core::Container::TSharedPtr<CombatSliceResetState> ResetState;
         NorvesLib::Core::Container::TWeakPtr<Game::CameraLateUpdateSlot> LateSlot;
         CombatSliceSceneIds Ids;
         CombatSliceEnvironment Environment;
@@ -40,6 +41,7 @@ namespace Game::GameModes
         bool bResponseSaved = false;
         bool bRunSeedSaved = false;
         bool bExitReported = false;
+        bool bLastDefeated = false;
     };
 
     class CombatSliceRoutine
@@ -50,6 +52,9 @@ namespace Game::GameModes
         void Tick(NorvesLib::Core::GameMode::GameModeContext& ctx, CombatSliceData& data, float deltaTime);
         void Leave(NorvesLib::Core::GameMode::GameModeContext& ctx, CombatSliceData& data,
                    NorvesLib::Core::GameMode::GameModeExitReason reason);
+        // 犬の死亡の代わりの入口。今はソークが呼び、将来の犬の死亡も同じ口を呼ぶ。
+        static bool RequestResetFromLastSave(
+            NorvesLib::Core::GameMode::GameModeContext& ctx, CombatSliceData& data, const char* reason);
         static constexpr const char* DebugName = "CombatSlice";
 
     private:

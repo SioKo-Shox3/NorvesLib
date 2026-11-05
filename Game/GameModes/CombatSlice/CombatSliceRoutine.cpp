@@ -1,18 +1,29 @@
 ﻿#include "CombatSliceMode.h"
 
+#include "GameModes/GameModeIds.h"
+#include "Save/ProgressionSaveBridge.h"
 #include "Asset/AssetFileReader.h"
 #include "Engine/Engine.h"
+#include "Engine/NorvesEngine.h"
 #include "GameMode/GameModeContext.h"
 #include "GameMode/GameModeScope.h"
+#include "GameMode/IGameModeController.h"
 #include "Gameplay/IGameplayModule.h"
 #include "Gameplay/Progression/ProgressionState.h"
 #include "Logging/LogMacros.h"
+#include "Save/SaveService.h"
+
+#if defined(NORVES_GAME_AUDIO)
+#include "Audio/AudioGameModeOwner.h"
+#include "Audio/IAudioModule.h"
+#endif
 
 namespace Game::GameModes
 {
     using namespace NorvesLib::Core;
     using namespace NorvesLib::Core::GameMode;
     namespace Gameplay = NorvesLib::Modules::Gameplay;
+    namespace L = CombatSliceLayout;
 
     namespace
     {
@@ -24,6 +35,8 @@ namespace Game::GameModes
                 return "ENCOUNTER_SMOKE";
             case CombatSliceSmoke::Enemy:
                 return "ENEMY_SMOKE";
+            case CombatSliceSmoke::ResetSoak:
+                return "GAME_RESET";
             default:
                 return "COMBAT_SMOKE";
             }
@@ -115,6 +128,27 @@ namespace Game::GameModes
             }
         } guard{ctx, data, bSucceeded};
 
+#if defined(NORVES_GAME_AUDIO)
+        ctx.ScopeRef.AddCleanup(GameModeCleanupPhase::BeforeEntities, []
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(Module::GetModuleRegistry()))
+            {
+                // 後始末の直後に voice の数を検査するため即時停止を要求する（現実装では最短フェードに補正）。
+                audio->GetSoundSystem().StopOwner(
+                    NorvesLib::Modules::Audio::GetGameModeOwnerKey(CombatSlice),
+                    NorvesLib::Modules::Audio::SoundFade{0.0f});
+            }
+        });
+        ctx.ScopeRef.AddLeakCounter("voices", []() -> uint64_t
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(Module::GetModuleRegistry()))
+            {
+                return audio->GetAudioService().GetDiagnostics().ActiveVoiceCount;
+            }
+            return 0;
+        });
+#endif
+
         auto* module = Gameplay::FindGameplayModule(Module::GetModuleRegistry());
         if (!module)
         {
@@ -138,6 +172,20 @@ namespace Game::GameModes
         if (!module->GetProgressionState().LoadDefinitionFromJson(text))
         {
             return GameModeEnterResult::Failed;
+        }
+
+        // 初回 Enter では、前の起動の自動保存による既存スモークの progression_preloaded を避けるため読まない。
+        if (data.ResetState && data.ResetState->bRestoreFromLastSave)
+        {
+            data.ResetState->bRestoreFromLastSave = false;
+            if (!Game::Save::ClearProgression(module->GetProgressionState()))
+            {
+                return GameModeEnterResult::Failed;
+            }
+            const auto result = NorvesLib::Core::GEngine.GetSaveService().Load(0);
+            NORVES_LOG_INFO("CombatSlice", "GAME_RESET stage=restore load=%u reset=%u defeated=%d",
+                            static_cast<unsigned>(result.Status), data.ResetState->ResetCount,
+                            module->GetProgressionState().IsDefeated(L::EnemyId) ? 1 : 0);
         }
 
         data.SavedRunSeed = module->GetRunSeed();
@@ -208,6 +256,7 @@ namespace Game::GameModes
             return GameModeEnterResult::Failed;
         }
 
+        data.bLastDefeated = module->GetProgressionState().IsDefeated(L::EnemyId);
         bSucceeded = true;
         return GameModeEnterResult::Succeeded;
     }
@@ -235,10 +284,41 @@ namespace Game::GameModes
         {
             data.EnemyDriver->Tick(ctx, deltaTime);
         }
+        if (data.GameplayModule)
+        {
+            const bool bDefeated = data.GameplayModule->GetProgressionState().IsDefeated(L::EnemyId);
+            if (!data.bLastDefeated && bDefeated)
+            {
+                NorvesLib::Core::GEngine.GetSaveService().RequestAutosave("defeat");
+            }
+            data.bLastDefeated = bDefeated;
+        }
         if (auto slot = data.LateSlot.lock())
         {
             slot->Arm(data.LateState);
         }
+    }
+
+    bool CombatSliceRoutine::RequestResetFromLastSave(GameModeContext& ctx, CombatSliceData& data, const char* reason)
+    {
+        if (!data.ResetState)
+        {
+            NORVES_LOG_WARNING("CombatSlice", "共有のリセット状態がないため、最後のセーブからリセットできません。");
+            return false;
+        }
+
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        if (saveService.HasPendingRequests())
+        {
+            // 死亡からのリセットは読み込みの切れ目なので、保存の完了を待ってよい。
+            saveService.FlushAndWait();
+        }
+        data.ResetState->bRestoreFromLastSave = true;
+        ++data.ResetState->ResetCount;
+        NORVES_LOG_INFO("CombatSlice", "GAME_RESET stage=death reason=%s reset=%u",
+                        reason ? reason : "unknown", data.ResetState->ResetCount);
+        ctx.ControllerRef.RequestReset(CombatSlice);
+        return true;
     }
 
     void CombatSliceRoutine::Leave(GameModeContext& ctx, CombatSliceData& data, GameModeExitReason)
