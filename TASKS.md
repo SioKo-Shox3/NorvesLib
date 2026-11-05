@@ -6387,7 +6387,7 @@
 - notes: ロードマップ 2577 行は Release の計測だが、計測は RelWithDebInfo で行う（AGENTS.md の絶対規則 8）。アプリは起動しないが、時間を測るので利用者がほかのアプリを使っていない時に回す（CPU だけで GPU は使わない）。「S0 前」の値は、改修前のコードを戻して測る代わりに、試験の中の素朴な参照実装（全組の総当たり＋線形走査。G12-GR09-BROADPHASE-S0S1）で測る（重複確認の二乗の分は参照に入れて、改修前の費用に寄せる）。計測の口は合否を持たない記録用で、Docs/Testing.md の「契約を反証しない試験」を増やさないよう、通常の ctest の実行（`--bench` なし）では何も測らない。
 
 ## G12-GR41-PARENT-DORMANCY: 親の Entity を休眠させると、子のコライダー・剛体も物理から外れ、戻すと載り直すようにする
-- status: todo
+- status: done
 - after: G12-GR09-BROADPHASE-S0S1
 - gr: GR41
 - done-when: `Entity` に公開の `IsActiveInHierarchy()` を足す（自分と祖先が Active で破棄予約でない。階層のシステムが求めた `EcsPropagatedTransform::bEffectiveActive` が新しければそれを読み、作成予約・付け替え待ち・未伝播の変更があるときは祖先をたどる。今 `World::CanDispatchEntity`（World.cpp:1770〜1800）にある規則をこの関数へ寄せ、`CanDispatchEntity` もそれを使う）。`PhysicsModule::IsColliderLifecycleActive`・`IsBodyLifecycleActive`（PhysicsModule.cpp:915〜938。今は `Owner->IsActive()` だけ）が `IsActiveInHierarchy()` を使う。`ReconcileActiveStates`（951〜994）の、ボディごとに全コライダーのスロットを回す二重ループ（981〜988）を Owner→コライダーのスロットの索引にする。親を `SetActive(false)` にすると、次の固定ステップで子のコライダー・RigidBody が公開のブロードフェーズに入らず、trigger に重なっていた子は OverlapEnd がちょうど 1 回出て、親を戻すと載り直して OverlapBegin が 1 回出る。新設の `EntityActiveInHierarchyTest`（`EntityTreeTest` の束へ MEMBER。3 段の親子、途中の段だけの休眠、付け替え、作成予約中の行で祖先をたどる経路、破棄予約）と `PhysicsParentDormancyTest`（`PhysicsDynamicsTest` の束へ MEMBER。上の物理の契約に加え、休眠中の子が Tick・描画の同期（`WorldSyncDifferentialTest` と同じ数の口）・SceneQuery の Raycast から外れ、戻すと再び公開されること）が通る。`EntityTreeTest`・`TransformHierarchyTest`・`WorldTickGroupTest`・`PhysicsLifecycleEventTest`・`PhysicsFixedStepPipelineTest`・`SceneQueryPhysicsFacadeTest` が通る。
