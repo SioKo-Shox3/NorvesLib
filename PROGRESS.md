@@ -10070,3 +10070,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。
 - U1 GameModeScope に AddCleanup・非同期の補助・数の取得・漏れの検査を足す: 着地(直し 0 回)
 - U4 ProgressionState と ProgressSaveData の写し: 着地(直し 0 回)
+- Notes(G8-GR76-RESET-LIFETIME): 要起票: `ProgressionState::LoadStateFromJson` で撃破状態を空にしても最後のシ者の解放を通知済みの旗が戻らないため、同じインスタンスで条件を満たし直すと `OnFinalUnlocked` が再び通知されない(リセットの後に解放を通知し直すかは仕様の判断)。
