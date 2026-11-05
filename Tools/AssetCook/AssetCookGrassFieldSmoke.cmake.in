@@ -1,0 +1,108 @@
+﻿# 画像の左上を (x,z)=(0,0) とし、密度は左上8×8だけ0、それ以外は1+(x+16*z)%255。
+# 高さ=(17*x+29*z)%256、湿り=(31*x+7*z+128)%256、種別=(x+z)%2。
+# 色味のRGBは順に (13*x+3*z)%256、(5*x+23*z+64)%256、(19*x+11*z+128)%256。
+cmake_minimum_required(VERSION 3.19)
+
+if(NOT DEFINED ASSET_COOK_EXE OR NOT DEFINED SOURCE_ROOT OR NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "草の場のスモークには ASSET_COOK_EXE・SOURCE_ROOT・SMOKE_DIR が必要です")
+endif()
+
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}")
+set(source "${SOURCE_ROOT}/Tools/AssetCook/Fixtures/GrassField/GrassFieldSmoke.json")
+set(entry Assets/Vegetation/Smoke/GrassFieldSmoke.nvgfld)
+set(cook_args
+    --input "${source}"
+    --logical "${entry}"
+    --kind world
+    --entry "${entry}"
+    --entry-type Gfd0
+    --format nvgfld.v0
+    --variant default)
+
+function(cook_field package manifest)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}" ${cook_args} --out "${package}" --manifest "${manifest}"
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr)
+    if(NOT "${result}" STREQUAL "0")
+        message(FATAL_ERROR "草の場の焼き込みに失敗しました (${result}): ${stdout}${stderr}")
+    endif()
+    string(REGEX MATCH "(^|[\r\n])GRASS_FIELD_COOKED chunks=3 species=2 bytes=[0-9]+ payload_hash=([0-9a-fA-F]+)([\r\n]|$)" summary "${stdout}")
+    if(NOT summary)
+        message(FATAL_ERROR "草の場の焼き込み要約が想定と違います。chunks=3・species=2 が必要です: ${stdout}${stderr}")
+    endif()
+    set(cooked_payload_hash "${CMAKE_MATCH_2}" PARENT_SCOPE)
+    message(STATUS "${stdout}")
+endfunction()
+
+set(package "${SMOKE_DIR}/GrassField.nvpkg")
+set(manifest_path "${SMOKE_DIR}/manifest.json")
+cook_field("${package}" "${manifest_path}")
+set(first_payload_hash "${cooked_payload_hash}")
+
+file(READ "${manifest_path}" manifest)
+string(JSON asset_count ERROR_VARIABLE json_error LENGTH "${manifest}" assets)
+if(NOT json_error STREQUAL "NOTFOUND" OR NOT asset_count EQUAL 1)
+    message(FATAL_ERROR "草の場の manifest の assets は1件ではありません: ${json_error}; ${manifest}")
+endif()
+foreach(field IN ITEMS kind entry_type format cooked_hash entry_name)
+    string(JSON field_type ERROR_VARIABLE json_error TYPE "${manifest}" assets 0 "${field}")
+    if(NOT json_error STREQUAL "NOTFOUND" OR NOT field_type STREQUAL "STRING")
+        message(FATAL_ERROR "草の場の manifest に文字列 ${field} がありません: ${json_error}; ${manifest}")
+    endif()
+    string(JSON value GET "${manifest}" assets 0 "${field}")
+    if(field STREQUAL "cooked_hash")
+        string(LENGTH "${value}" hash_length)
+        if(NOT value MATCHES "^[0-9a-fA-F]+$" OR NOT hash_length EQUAL 16)
+            message(FATAL_ERROR "草の場の manifest の cooked_hash は16桁の16進数ではありません: ${value}")
+        endif()
+        set(manifest_hash "${value}")
+    else()
+        if(field STREQUAL "kind")
+            set(expected world)
+        elseif(field STREQUAL "entry_type")
+            set(expected Gfd0)
+        elseif(field STREQUAL "format")
+            set(expected nvgfld.v0)
+        else()
+            set(expected Vegetation/Smoke/GrassFieldSmoke.nvgfld)
+            set(manifest_entry "${value}")
+        endif()
+        if(NOT value STREQUAL expected)
+            message(FATAL_ERROR "草の場の manifest の ${field} が違います。期待=${expected}、実際=${value}")
+        endif()
+    endif()
+endforeach()
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}" --check-grass-field --package "${package}" --entry "${manifest_entry}" --source "${source}"
+    RESULT_VARIABLE check_result
+    OUTPUT_VARIABLE check_output
+    ERROR_VARIABLE check_error)
+if(NOT "${check_result}" STREQUAL "0")
+    message(FATAL_ERROR "草の場の照合に失敗しました (${check_result}): ${check_output}${check_error}")
+endif()
+string(REGEX MATCH "(^|[\r\n])GRASS_FIELD_CHECK result=pass chunks=3 mismatched_pixels=0 payload_hash=([0-9a-fA-F]+) package_hash=([0-9a-fA-F]+)([\r\n]|$)" check_summary "${check_output}")
+if(NOT check_summary)
+    message(FATAL_ERROR "草の場の照合要約が想定と違います。result=pass・chunks=3・mismatched_pixels=0 が必要です: ${check_output}${check_error}")
+endif()
+set(checked_payload_hash "${CMAKE_MATCH_2}")
+set(checked_package_hash "${CMAKE_MATCH_3}")
+if(NOT checked_package_hash STREQUAL manifest_hash)
+    message(FATAL_ERROR "草の場の package_hash が manifest の cooked_hash と違います。照合=${checked_package_hash}、manifest=${manifest_hash}")
+endif()
+if(NOT checked_payload_hash STREQUAL first_payload_hash)
+    message(FATAL_ERROR "草の場の payload_hash が焼き込み時と違います。照合=${checked_payload_hash}、焼き込み=${first_payload_hash}")
+endif()
+message(STATUS "${check_output}")
+
+set(repeated_package "${SMOKE_DIR}/GrassFieldRepeated.nvpkg")
+cook_field("${repeated_package}" "${SMOKE_DIR}/manifest-repeated.json")
+file(SHA256 "${package}" first_sha256)
+file(SHA256 "${repeated_package}" repeated_sha256)
+if(NOT first_sha256 STREQUAL repeated_sha256)
+    message(FATAL_ERROR "同じ入力から焼いた草の場のバイト列が一致しません。初回SHA256=${first_sha256}、再実行SHA256=${repeated_sha256}")
+endif()
+message(STATUS "草の場の3チャンクは元PNGと一致し、再実行のSHA256も一致しました: ${first_sha256}")

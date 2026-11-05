@@ -1,5 +1,7 @@
 ﻿#include "Animation/Procedural/PoseModifierConfig.h"
 #include "Animation/FootIKModifier.h"
+#include "Animation/Procedural/SpringBoneModifier.h"
+#include "Animation/Procedural/FollowThroughModifier.h"
 #include "Animation/SkeletonResource.h"
 #include "Math/Curves.h"
 #include <algorithm>
@@ -286,7 +288,9 @@ namespace NorvesLib::Core::Animation::Procedural
     PoseModifierTypeTable GetBuiltinPoseModifierTypes()
     {
         static const PoseModifierTypeEntry entries[] = {
-            {"FootIK", PoseModifierDefaultOrder::FootIK, &CreateFootIKModifier}};
+            {"FootIK", PoseModifierDefaultOrder::FootIK, &CreateFootIKModifier},
+            {"SpringBone", PoseModifierDefaultOrder::SpringBone, &CreateSpringBoneModifier},
+            {"FollowThrough", PoseModifierDefaultOrder::FollowThrough, &CreateFollowThroughModifier}};
         return {entries};
     }
     bool ResolvePoseModifierJoint(JsonValue name, const SkeletonResource& skeleton, int32_t& outIndex,
