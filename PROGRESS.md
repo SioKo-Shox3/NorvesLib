@@ -10247,3 +10247,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(G12-GR92-ASSETREF-SCENE-V3): 論理パスの資産参照 TAssetRef と Entity 参照 EntityRefId を足し、RuntimeSchema が型の側の文字列化を扱う。シーンの形式は v3(v1 → v2 → v3 の移行、先頭の assets の依存の表、SceneSaveStats、一時ファイルからの置換による保存)。EntityRefId はファイルでは「ルートの添字:alias」で保存し、LoadIntoWorld が全ルートの生成の後に新しい ObjectId へ張り替える(v2 の uint64 の値も移行)。LoadIntoWorld は生成したルートを返し、LoadIntoWorldFromAsset で論理パス(AssetSystem::ResolveAsset の Raw)から読める。verify の 2 行(ビルド・ctest 10 本)と Game のビルドが終了コード 0。アプリを起動する確かめは無い。
 - Next(G12-GR92-ASSETREF-SCENE-V3): コンポーネントの非同期の束縛(G12-GR92-ASSET-BIND)、Prefab のファイル(G12-GR92-PREFAB-FILE)、Bridge(G12-GR92-BRIDGE-SCENE)。
 - Notes(G12-GR92-ASSETREF-SCENE-V3): EntityRefId の張り替えは BeginPlay の後に起きるので、BeginPlay の中で参照先を引くコンポーネントは張り替え前の 0 を見る(今の利用は Tick で引く SpringArmComponent だけ)。公開の ReconcileWithSchema の結果には EntityRefId のプロパティが入らない(張り替えの予定は LoadIntoWorld の内部だけが持つ)。保存の集合の外を指す参照は警告して参照なしで保存する。
+
+- U0 契約のヘッダ・骨格のファイル・CMake の登録: 着地(直し 0 回)
+- U1 CellManifest の読みと拒否: 着地(直し 0 回)
+- U3 優先度と輪の純関数: 着地(直し 0 回)
+- U2 StreamingCell の状態の遷移: 着地(直し 1 回)
+- U8 StreamingSystem の毎フレームの更新（切り直し・バイトの上限の往復を直す）: 着地(直し 0 回)
+- U5 Engine への組み込みと段 PostTick.Streaming: 着地(直し 0 回)
+- U6 StreamingCellStateMachineTest: 着地(直し 0 回)
+- U7 StreamingBudgetTest と仕上げの verify: 着地(直し 0 回)
+
+## 2026-11-05 G12-GR40-CELL-CORE（run 20261105-193215 の反復 1、完了）
+- Done: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`）に CellManifest・IStreamingPayloadHandler・StreamingCell の状態の機械・StreamingBudget・優先度と輪（Ra<Rd<Ru のヒステリシス・先読み）・StreamingSystem を置き、`Engine::Engine` のメンバと段 `PostTick.Streaming` で毎フレーム進める。Prepare は JobSystem に 1 セル 1 仕事で出し、完了の印を GameThread で見る。終了時は World・描画資源より先に StreamingSystem を止める。
+- Done: verify の 2 本を通した（ビルド終了コード 0、ctest の StreamingCellStateMachineTest・StreamingBudgetTest・EntityTreeTest・JobSystemShutdownTest・JobParallelForTest がすべて Passed。`.harness/runs/20261105-193215/verify-G12-GR40-CELL-CORE.txt`）。
+- Next: payload の中身（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）、GameMode の後始末（G12-GR40-GAMEMODE-ASYNC）、スナップロード（G12-GR40-SNAP-PREFETCH）。
+- Notes: バイトの上限（MaxCpuBytes・MaxGpuBytes）は、一度でも常駐したセルの最後の申告で入る前に判定する。初めて読むセルは量が分からないので、入れてから上限を超えた分を優先度の悪い方から追い出す（追い出したセルは次のフレームに読み直さない）。
+- Notes: Committing 中のアンロードの要求は印を残さず、すぐ Unloading に入る（コミットの歩は GameThread の同期なのでフレームの間に走っている歩は無い）。
+- Notes: 起動の確かめは後回し。マニフェストを読み込むシーンはまだ無く、`PostTick.Streaming` はセルが空なら何もしないので、どのシーンの見た目も変えない。payload を持つ項目が入ったときに、起動して歩いたときの遷移と予算の統計を確かめる。
