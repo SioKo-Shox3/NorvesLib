@@ -10308,3 +10308,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 最近接のレイの打ち切りは、見つけた距離に 1e-4×(1＋距離) の余白を足して縮める（同距離で大きいハンドルが勝つ規則を落とさないため）。
 - U0 公開の型とプロキシのチャンクの欄を足す: 着地(直し 0 回)
 - U1 静的の木をチャンクごとの部分木＋上の木の 2 段にする: 着地(直し 0 回)
+- U2 Entity の無いコライダーのチャンクの登録・解除と、slot.Component / slot.Owner を読む所の分岐: 着地(直し 0 回)
