@@ -143,11 +143,37 @@ namespace NorvesLib::Modules::Gameplay::Combat
             }
         }
         ++m_PoseRevision;
+        m_JointBinding.reset();
         m_bOwnerBinding = entity == nullptr;
         m_Binding = entity != nullptr ? entity->GetEntityHandle() : Core::EntityHandle{};
         m_bPreviousValid = false;
         m_bFirstWindowFrame = m_bWindowOpen;
         return true;
+    }
+
+    bool HitboxComponent::SetJointBinding(Core::Identity jointName)
+    {
+        if (!IsOwnerThread())
+        {
+            return false;
+        }
+        if (m_JointName != jointName)
+        {
+            ++m_PoseRevision;
+            m_JointName = jointName;
+            m_JointBinding.reset();
+            m_bPreviousValid = false;
+            m_bFirstWindowFrame = m_bWindowOpen;
+        }
+        return true;
+    }
+
+    void HitboxComponent::SetWeakJointThreshold(const CombatJointInfluenceThreshold& threshold)
+    {
+        if (IsOwnerThread())
+        {
+            m_WeakJointThreshold = threshold;
+        }
     }
 
     Core::EntityHandle HitboxComponent::GetBinding() const
