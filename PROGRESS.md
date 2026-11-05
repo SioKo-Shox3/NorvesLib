@@ -9943,3 +9943,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API・RenderThread のデータ契約の危険地帯）。描画側で proxy の ViewClearance を使う段（草・遮蔽物・シルエット）は後続の項目。起動の確かめは後回し（今のゲームのカメラに ViewClearanceComponent を付けた所は無いので、見た目は変わらない）
 - Notes: 毎フレームの BuildCameraProxy の呼び出しは、Rendering3DTest は Camera の群の後、`FreeCameraRig::Tick → Publish` と `LauncherRoutine::Tick → PublishCamera` は Camera の群の前（どちらも今は SpringArm＋ViewClearance を使わない。Launcher は proxy の直前にアームを手で更新している）。切り抜きの半径の既定は仮の値で、草で視界が遮られる見せ方との兼ね合いは作者の判断
 - 要起票: `FreeCameraRig`・`LauncherRoutine` のカメラの proxy を Camera の群（スプリングアームの更新）の後に作る段へ移す（ViewClearance を付けたカメラで 1 フレーム遅れないように）
+
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 2、差し戻しの直し、完了）
+- Done: 差し戻しは verify の ctest の `SpringArmComponentTest` が Not Run だったこと。この試験は `EntityTreeTest.exe` の束の MEMBER で、verify の build 行に `EntityTreeTest` が無く、この枠の build に実行ファイルが無かったのが原因（実装の不具合ではない）。この枠で `EntityTreeTest` をビルドし、verify を全部回し直した。コードの変更なし
+- 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
+- Next: ランナーの評価者の反証。起動の確かめは後回し
+- 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
