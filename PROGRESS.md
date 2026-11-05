@@ -9897,3 +9897,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: .harness/runs/20261105-101856/verify-build-it2.txt（cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1 の終了コード 0）、.harness/runs/20261105-101856/verify-ctest-it2.txt（ctest の 18 件が 100% Passed）。
 - Next: 起動の確かめは後回し（G8-GR17-SLICE-CHECK で Scripts/Test-CombatSlice.ps1 の 4 モードと撮影を回す）。
 - Notes: 新しい .cpp を足したブランチの最初のビルドは、Game.vcxproj の作り直しでリンクが 1 回落ちることがある。もう一度ビルドすれば通る（先に cmake -S . -B build を回せば落ちない）。
+
+## 2026-11-05 G8-GR17-SLICE-SMOKE（run 20261105-143213 の反復 1、完了に戻す）
+- Done: 作業単位 U1〜U12 はすべて着地済み。53a60fe9 の後にコードの変更は無い（差分は TASKS.md と PROGRESS.md だけ）。前回は評価者が枠切れで評価されずに doing へ戻っていたので、done に戻した。
+- 証拠: ランナーの再検証 `.harness/runs/20261105-101856/recheck-G8-GR17-SLICE-SMOKE-2-1.txt`（Debug の Game と PhysicsDynamicsTest のビルド exit=0）と `recheck-G8-GR17-SLICE-SMOKE-2-2.txt`（ctest の 18 件が 100% Passed）。どちらも NorvesLib-6 の枠の帳簿。
+- Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
