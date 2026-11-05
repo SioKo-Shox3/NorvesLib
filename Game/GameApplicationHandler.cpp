@@ -111,6 +111,7 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
+        constexpr const TCHAR* kAudioSmokeOption = TEXT("--audio-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
@@ -2666,6 +2667,13 @@ namespace Game
             }
         }
 #endif
+        for (const auto& arg : args)
+        {
+            if (arg == kAudioSmokeOption)
+            {
+                m_bAudioSmoke = true;
+            }
+        }
         bool bM9WorldSmoke = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -2674,6 +2682,11 @@ namespace Game
                 bM9WorldSmoke = true;
                 break;
             }
+        }
+        if (m_bAudioSmoke && (bM9WorldSmoke || bM9WorldCompare))
+        {
+            FailAudioSmoke("incompatible_options");
+            return false;
         }
         if (bM9WorldSmoke || bM9WorldCompare)
         {
@@ -2705,8 +2718,26 @@ namespace Game
             }
         }
 
+        if (m_bAudioSmoke)
+        {
 #if defined(NORVES_GAME_AUDIO)
-        if (!bM9WorldSmoke && !bM9WorldCompare)
+            NorvesLib::Modules::Audio::AudioModuleOptions options;
+            options.bAllowNullBackendFallback = false;
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry(), options) == nullptr)
+            {
+                FailAudioSmoke("register");
+                return false;
+            }
+            LOG_INFO("AUDIO_SMOKE stage=registered");
+#else
+            LOG_ERROR("--audio-smoke には音声対応の Game が必要です");
+            FailAudioSmoke("register");
+            return false;
+#endif
+        }
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_bAudioSmoke && !bM9WorldSmoke && !bM9WorldCompare)
         {
             NorvesLib::Modules::Audio::AudioModuleOptions options;
             options.bAllowNullBackendFallback = true;
@@ -3334,6 +3365,11 @@ namespace Game
                 if (result == NorvesLib::Modules::Audio::AudioResult::Success && report.Diagnostics.empty())
                 {
                     LOG_INFO_F("AUDIO_BANK load=ok bank=%s sounds=%u", bankPath, report.LoadedDefinitionCount);
+                    if (m_bAudioSmoke)
+                    {
+                        LOG_INFO("AUDIO_SMOKE stage=bank_loaded sounds=%u", report.LoadedDefinitionCount);
+                        m_AudioSmokeStage = AudioSmokeStage::Ready;
+                    }
                 }
                 else
                 {
@@ -3352,6 +3388,12 @@ namespace Game
             }
         }
 #endif
+
+        if (m_bAudioSmoke && m_AudioSmokeStage != AudioSmokeStage::Ready)
+        {
+            FailAudioSmoke("bank");
+            return;
+        }
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
         {
@@ -3703,9 +3745,116 @@ namespace Game
         }
     }
 
+    void GameApplicationHandler::FailAudioSmoke(const char* reason)
+    {
+        m_AudioSmokeStage = AudioSmokeStage::Failed;
+        LOG_ERROR("AUDIO_SMOKE stage=failure reason=%s", reason);
+        if (NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+        }
+    }
+
+    void GameApplicationHandler::UpdateAudioSmoke()
+    {
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_bAudioSmoke || !NorvesLib::Core::Engine::GEngine || m_AudioSmokeStage == AudioSmokeStage::Disabled ||
+            m_AudioSmokeStage == AudioSmokeStage::Complete || m_AudioSmokeStage == AudioSmokeStage::Failed)
+        {
+            return;
+        }
+        using namespace NorvesLib::Modules::Audio;
+        auto* audio = FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
+        if (!audio)
+        {
+            FailAudioSmoke("module_lost");
+            return;
+        }
+        auto& sounds = audio->GetSoundSystem();
+        // 時間の倍率・固定刻み・フレーム数に依存せず、エンジンの実経過時間で進める。
+        const int64_t now = NorvesLib::Core::Engine::GEngine->GetTimeSystem().GetElapsedNanoseconds();
+        constexpr int64_t footstepIntervalNs = 50'000'000;
+        constexpr int64_t drainTimeoutNs = 15'000'000'000;
+        if (m_AudioSmokeStage == AudioSmokeStage::Ready)
+        {
+            if (sounds.PlayGlobal(Identity("Ambience.RainLoop"), {}, m_AudioSmokeRain) != AudioResult::Success)
+            {
+                FailAudioSmoke("rain_play");
+                return;
+            }
+            LOG_INFO("AUDIO_SMOKE stage=rain_started fade_in_ms=3000");
+            m_AudioSmokeNextFootstepNs = now + footstepIntervalNs;
+            m_AudioSmokeStage = AudioSmokeStage::Footsteps;
+        }
+        if (m_AudioSmokeStage == AudioSmokeStage::Footsteps && now >= m_AudioSmokeNextFootstepNs)
+        {
+            SoundInstanceHandle footstep;
+            if (sounds.PlayGlobal(Identity("Foley.Footstep"), {}, footstep) == AudioResult::Success)
+            {
+                ++m_AudioSmokeFootstepsPlayed;
+            }
+            else
+            {
+                ++m_AudioSmokeFootstepsFailed;
+            }
+            // 遅いフレームでも同時にまとめて鳴らさず、各要求の間隔を保つ。
+            m_AudioSmokeNextFootstepNs = now + footstepIntervalNs;
+            if (m_AudioSmokeFootstepsPlayed + m_AudioSmokeFootstepsFailed == 100)
+            {
+                LOG_INFO("AUDIO_SMOKE stage=footsteps played=%u failed=%u",
+                         m_AudioSmokeFootstepsPlayed, m_AudioSmokeFootstepsFailed);
+                if (m_AudioSmokeFootstepsFailed != 0)
+                {
+                    FailAudioSmoke("footstep_play");
+                    return;
+                }
+                if (sounds.Stop(m_AudioSmokeRain, {}) != AudioResult::Success)
+                {
+                    FailAudioSmoke("rain_stop");
+                    return;
+                }
+                m_AudioSmokeDrainStartNs = now;
+                m_AudioSmokeStage = AudioSmokeStage::Draining;
+            }
+        }
+        if (m_AudioSmokeStage == AudioSmokeStage::Draining)
+        {
+            if (sounds.GetDiagnostics().ActiveInstanceCount != 0)
+            {
+                if (now - m_AudioSmokeDrainStartNs >= drainTimeoutNs)
+                {
+                    FailAudioSmoke("drain_timeout");
+                }
+                return;
+            }
+            auto& service = audio->GetAudioService();
+            const auto result = service.Shutdown();
+            const auto diagnostics = service.GetDiagnostics();
+            if (diagnostics.ActiveVoiceCount != 0 || diagnostics.PendingEventCount != 0 ||
+                diagnostics.InFlightCallbackCount != 0)
+            {
+                m_AudioSmokeStage = AudioSmokeStage::Failed;
+                LOG_ERROR("AUDIO_SMOKE stage=failure reason=shutdown_not_drained voices=%u callbacks=%u pending_events=%zu",
+                          diagnostics.ActiveVoiceCount, diagnostics.InFlightCallbackCount, diagnostics.PendingEventCount);
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                return;
+            }
+            if (result != AudioResult::Success)
+            {
+                FailAudioSmoke("shutdown");
+                return;
+            }
+            m_AudioSmokeStage = AudioSmokeStage::Complete;
+            LOG_INFO("AUDIO_SMOKE stage=shutdown voices=0 callbacks=0 shutdown_complete=1");
+            NorvesLib::Core::Engine::GEngine->RequestExit(0);
+        }
+#endif
+    }
+
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
         m_CameraLateUpdateSlot->Reset();
+        UpdateAudioSmoke();
         // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
         // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
         // レジストリ・初期モード選択/フォーカス）に集中する。

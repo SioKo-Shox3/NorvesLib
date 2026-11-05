@@ -9787,3 +9787,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 cook されていないばらの WAV をクリップとして読む(通常の起動用): 着地(直し 0 回)
 - U4 AudioComponentTest と文書(TickStages・Testing): 着地(直し 1 回)
 - U5 GameMode の持ち主の包み・通常の起動で音のモジュールと既定のバンクを使う: 着地(直し 1 回)
+- U6 --audio-smoke と Test-AudioSmoke.ps1: 着地(直し 0 回)
