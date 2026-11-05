@@ -10219,3 +10219,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 後始末の `StopOwner` は 0 秒を渡しても `SoundSystem.cpp:471` で最短 2/60 秒のフェードに補正されるので、Leave の直後（スコープのデストラクタの漏れの検査・ソークの enter の行）には voice が残り得る。ソークは voice を Enter から 8 フレーム後の ready の行だけで比べる。音を鳴らすモードでは Debug の漏れの警告に voices の差が出る見込み（G8-GR76-RESET-CHECK で確かめる）。
 - Notes: ソークのベースラインは 1 回目のリセットの後（キャッシュが温まった後）。最初の Enter は sample=cold で出すだけ。最初の Enter ではセーブを読まない（前の起動の自動保存で既存のスモークの progression_preloaded を起こさないため）。
 - Notes: `SaveService::Update` は `OnUpdate`（PreUpdate）で `false` を渡して呼ぶ。状態機械の遷移は PreSimulation の Update の先頭で同期に適用されるので、その時点で遷移の途中ではない。死亡からのリセットは `FlushAndWait` で保存の完了を待ってから RequestReset する。
+
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 2、完了）
+
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ。衝突は 2 か所で、`TerrainHeightField.cpp` は統合側の PDL0（水たまり）の読み込みを残し、末尾の範囲の構築をこの項目の `BuildLodBounds` へ合わせた。`PhysicsModule.cpp` の地形のプロキシは、この項目のタイルの常駐の印と統合側の `DetermineProxyMobility` の両方を設定する。
+- Done: verify の `cmake --build build --config Debug --target MathGeometryTest PhysicsDynamicsTest -- /m:1` は EXIT=0、ctest の 7 本（TerrainHeightFieldQueryTest・TerrainHeightFieldTest・PhysicsHeightFieldColliderTest・PhysicsBroadphaseQueryTest・PhysicsCharacterMoveTest・PhysicsDynamicsTest・MathGeometryTest）は全部合格。
+- Next: タイルの常駐を決めるのはセル（G12-GR40-WORLD-PAYLOADS）。
+- Notes: アプリを起動する確かめはこの項目に無い。
+- U1 高さ場に段 1〜3 の最小最大の表と段ごとの高さ・面法線の照会を足し、ブロック表を段 3 の表に置き換える: 着地(直し 0 回)
+- U2 粗い段の Raycast と常駐の印の型を足し、高さ場の全照会に常駐の印を渡せるようにする: 着地(直し 0 回)
+- U4 TerrainHeightFieldQueryTest に段の表・段の高さの誤差・表で棄却した Raycast のケースを足す: 着地(直し 0 回)
+- U3 TerrainSystem に段を選ぶ照会と常駐の印の口を足す: 着地(直し 0 回)
+- U5 物理の地形のプロキシに常駐の印を持たせ、常駐でないタイルでは問い合わせ・接触とも当たらないようにする: 着地(直し 0 回)
+- U6 PhysicsHeightFieldColliderTest に常駐の切り替えのケースを足し、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 1、完了）
+- Done: (1) `TerrainHeightField` に段 1〜3（stride 2・4・8）の最小最大の表（覆う最細の全頂点の範囲）と `kHeightLodCount`・`GetLodCellRange`・`SampleHeight(x, z, lod)`・`SampleNormal(..., lod)`・`Raycast(ray, maxDistance, hit, lod, residency)` を足し、最細段の Raycast と VisitTriangles の早期の棄却は 8×8 のブロック表をやめて段 3 の表を使う。(2) `TerrainTileResidency`（非常駐のタイル番号のビット）を足し、重なり・掃引・レイに末尾の `const TerrainTileResidency*` を渡すと常駐でないタイルの升目の三角形を無いものとして扱う。(3) `TerrainSystem` に `SampleGround(x, z, out, lod)`・`RaycastGround(ray, maxDistance, hit, lod)`（既存の形は段 0）と `SetTileResident`・`IsTileResident`・`GetTileResidency`（copy-on-write の写し、既定は全常駐、Clear で戻る）。照会は常駐に依らない。(4) 物理の地形のプロキシが固定ステップごとのプロキシ作りで常駐の写しを持ち、問い合わせ（重なり・レイ・掃引）と動く物体との接触の全呼び出しに渡す。(5) 試験: `TerrainHeightFieldQueryTest` に段の表の保守性（NVTRN と正弦波の場で違反 0）・段の高さの誤差（6534 点で LodMaxErrorM の超過 0、段 0 はビット一致）・段 3 の表で棄却するレイの総当たりとの一致（6144 本）、`PhysicsHeightFieldColliderTest` に `TestTileResidency`（非常駐のタイル A で 90 ステップ Hit 0・沈み 10.16 m・レイと重なりが外れ、常駐のタイル B は当たる。常駐に戻した次の 1 ステップでレイ・重なりが当たり、新しい球は Hit 229・地表との差 0 で止まる。非常駐にする行を外すと 7 件の不一致で落ちることを確かめた）。
+- 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
+- Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
+- Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。

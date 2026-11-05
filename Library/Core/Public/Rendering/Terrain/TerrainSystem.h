@@ -42,7 +42,7 @@ namespace NorvesLib::Core::Rendering::Terrain
     {
         bool bValid = false;
         float Height = 0.0f;
-        /// 最細段（LOD0）の三角形の面法線。
+        /// 選んだ段の三角形の面法線。既定は最細段（LOD0）。
         Math::Vector3 Normal = Math::Vector3(0.0f, 1.0f, 0.0f);
         /// 面法線と上方向のなす角（acos(Normal.y)）。
         float SlopeRadians = 0.0f;
@@ -65,7 +65,7 @@ namespace NorvesLib::Core::Rendering::Terrain
     };
 
     /// 地形 Component の登録を保持し、Game などに高さ場の共有参照を返す。
-    /// 登録・解除・検索・資産の設定と取得・Clear は GameThread だけで行う。
+    /// 登録・解除・検索・資産と常駐の印の設定と取得・Clear は GameThread だけで行う。
     /// 返された高さ場は、登録を解除した後も共有参照を持つ間は並列に引ける。
     class TerrainSystem
     {
@@ -88,20 +88,38 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 地形がない、または高さが NaN なら outSample を既定値に戻して false を返す。
         bool SampleGround(float x, float z, GroundSample& outSample) const;
 
+        /// GameThread で指定した段の地面を引く。登録順と失敗時の扱いは最細段と同じ。
+        bool SampleGround(float x, float z, GroundSample& outSample, uint32_t lod) const;
+
         /// GameThread で全登録の最近の当たりを引く。同距離なら先に登録された高さ場を選ぶ。
         /// 当たりがなければ outHit を既定値に戻して false を返す。
         bool RaycastGround(const Math::Ray& ray, float maxDistance, GroundHit& outHit) const;
+
+        /// GameThread で指定した段の最近の当たりを引く。登録順と失敗時の扱いは最細段と同じ。
+        bool RaycastGround(const Math::Ray& ray, float maxDistance, GroundHit& outHit, uint32_t lod) const;
 
         /// GameThread で各位置の地面を SampleGround と同じ計算で引く。位置の y 成分を z として使う。
         /// 短い方の長さまで処理し、outSamples の残りは既定値に戻す。
         void SampleGroundBatch(Container::Span<const Math::Vector2> positions,
                                Container::Span<GroundSample> outSamples) const;
 
+        /// GameThread でタイルの常駐の印を設定する。既定は全タイル常駐。
+        /// 番号は高さ場の GetTileId と共通で、世界の地形を 1 枚とみなし、登録したすべての高さ場に同じ印が効く。
+        /// 印は SampleGround・RaycastGround・FindTerrain には影響せず、物理の地形コライダーが使う。
+        void SetTileResident(uint32_t tileId, bool bResident);
+
+        /// GameThread でタイルの常駐の印を調べる。
+        bool IsTileResident(uint32_t tileId) const;
+
+        /// GameThread で現在の常駐の印の写しを得る。全タイル常駐なら空を返す。
+        /// 返した写しは後の設定変更や Clear によって変更されない。
+        Container::TSharedPtr<const TerrainTileResidency> GetTileResidency() const;
+
         /// 地形 Component がクック済みの資産を読むための資産システムを保持する。
         void SetAssetSystem(Container::TSharedPtr<const Asset::AssetSystem> assetSystem);
         Container::TSharedPtr<const Asset::AssetSystem> GetAssetSystem() const;
 
-        /// すべての登録を解除する。資産システムの設定は保持する。
+        /// すべての登録を解除し、タイルの印を全常駐に戻す。資産システムの設定は保持する。
         void Clear();
 
     private:
@@ -124,5 +142,6 @@ namespace NorvesLib::Core::Rendering::Terrain
         uint32_t m_FirstFree = TerrainHandle::InvalidIndex;
         uint32_t m_TerrainCount = 0u;
         Container::TSharedPtr<const Asset::AssetSystem> m_AssetSystem;
+        Container::TSharedPtr<const TerrainTileResidency> m_TileResidency;
     };
 } // namespace NorvesLib::Core::Rendering::Terrain
