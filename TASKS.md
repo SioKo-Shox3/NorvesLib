@@ -10487,3 +10487,10 @@
   - `BuildSocketWorldTransform`(`SocketTypes.cpp:373`)は共役を取らずに q を返し、`SocketAttachmentComponent` はそれを `SetWorldTransform` する。このため、ソケットに付けた剣の Entity では関節の経路と関節でない経路の向きが共役の分ずれ、DebugDraw の形も刀身からずれる見込みが高い。
 
   `CombatFrameRateInvarianceTest` は回転する攻撃者を関節に束縛せずに使っている。向きを直して当たりの数が変わったら、試験の配置を直す。期待値を実装の写しで書き直さない。`Math::Transform`・`Entity` の合成(`ComposeTransform`)・`SocketAttachmentComponent`・描画の行列は変えない(危険地帯で、範囲の外)。`Transform::TransformPoint`(R(q))と描画(R(q)ᵀ)の食い違いがエンジン全体に及ぶと分かったら、PROGRESS.md の Notes に `要起票:` で残す。`EncounterService.cpp:364`・`InteractionService.cpp:420/448` のセンサーのオフセットも同じ形をしている。起動は要らない(CPU の単体の試験だけ)。
+
+## G2-S6-ASSET-SET-P7: SingleAssetCookServiceTest の --kind の拒否の期待値を、world を足した今の文言に合わせる
+- status: todo
+- done-when: `Test/Core/Asset/SingleAssetCookServiceTest.cpp` 45 行の期待値を `"--kind must be raw, texture, model, audio, or world"` に直す。これは `Tools/AssetCook/SingleAssetCook.cpp` 1792 行の文言と同じ。`request.Kind="unknown"` を拒否する検査は残し、ほかの検査は変えない。Debug でビルドし、ctest の `SingleAssetCookServiceTest`(`CookedMeshTest --test=SingleAssetCookServiceTest` で走る)が通る。`git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` が一致する(行末を守る)。アプリは起動しない。ワーカーはプッシュせず、workflow も起動しない(CI での確かめは G2-S6-ASSET-SET-P3 が受け持つ)。
+- verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3
