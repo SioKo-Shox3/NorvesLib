@@ -351,16 +351,21 @@ namespace NorvesLib::Core::Rendering::Terrain
         return normal;
     }
 
-    void TerrainHeightField::GridData::BuildBlockBounds()
+    void TerrainHeightField::GridData::BuildLodBounds()
     {
         MinHeight = Columns > 0u && Rows > 0u ? At(0u, 0u) : 0.0f;
         MaxHeight = MinHeight;
+        for (uint32_t lod = 1u; lod < kLodCount; ++lod)
+        {
+            LodLevel& level = Lods[lod];
+            level.Stride = 1u << lod;
+            level.CellColumns = 0u;
+            level.CellRows = 0u;
+            level.MinHeight.clear();
+            level.MaxHeight.clear();
+        }
         if (Columns < 2u || Rows < 2u)
         {
-            BlockColumns = 0;
-            BlockRows = 0;
-            BlockMinHeight.clear();
-            BlockMaxHeight.clear();
             if (Columns > 0u && Rows > 0u)
             {
                 for (uint32_t row = 0; row < Rows; ++row)
@@ -376,37 +381,45 @@ namespace NorvesLib::Core::Rendering::Terrain
             return;
         }
 
-        // 加算で切り上げると頂点数が上限近くのときにあふれるため、先に 1 を引いて割る
-        BlockColumns = (Columns - 2u) / kBlockCells + 1u;
-        BlockRows = (Rows - 2u) / kBlockCells + 1u;
-        const size_t blockCount = static_cast<size_t>(BlockColumns) * BlockRows;
-        BlockMinHeight.resize(blockCount);
-        BlockMaxHeight.resize(blockCount);
-        for (uint32_t bz = 0; bz < BlockRows; ++bz)
+        for (uint32_t lod = 1u; lod < kLodCount; ++lod)
         {
-            const uint32_t firstRow = bz * kBlockCells;
-            const uint32_t lastRow = firstRow + std::min(kBlockCells, Rows - 1u - firstRow);
-            for (uint32_t bx = 0; bx < BlockColumns; ++bx)
+            LodLevel& level = Lods[lod];
+            const uint32_t stride = level.Stride;
+            // 加算で切り上げると頂点数が上限近くのときにあふれるため、先に 1 を引いて割る
+            level.CellColumns = (Columns - 2u) / stride + 1u;
+            level.CellRows = (Rows - 2u) / stride + 1u;
+            const size_t cellCount = static_cast<size_t>(level.CellColumns) * level.CellRows;
+            level.MinHeight.resize(cellCount);
+            level.MaxHeight.resize(cellCount);
+            for (uint32_t cz = 0; cz < level.CellRows; ++cz)
             {
-                const uint32_t firstColumn = bx * kBlockCells;
-                const uint32_t lastColumn = firstColumn + std::min(kBlockCells, Columns - 1u - firstColumn);
-                float minHeight = At(firstColumn, firstRow);
-                float maxHeight = minHeight;
-                // 升目の両端の頂点を含むため、隣接ブロックは境界の頂点を共有する
-                for (uint32_t row = firstRow; row <= lastRow; ++row)
+                const uint32_t firstRow = cz * stride;
+                const uint32_t lastRow = firstRow + std::min(stride, Rows - 1u - firstRow);
+                for (uint32_t cx = 0; cx < level.CellColumns; ++cx)
                 {
-                    for (uint32_t column = firstColumn; column <= lastColumn; ++column)
+                    const uint32_t firstColumn = cx * stride;
+                    const uint32_t lastColumn = firstColumn + std::min(stride, Columns - 1u - firstColumn);
+                    float minHeight = At(firstColumn, firstRow);
+                    float maxHeight = minHeight;
+                    // セルの両端を含め、段 3 は従来のブロックと同じ頂点順で集計する
+                    for (uint32_t row = firstRow; row <= lastRow; ++row)
                     {
-                        const float height = At(column, row);
-                        minHeight = std::min(minHeight, height);
-                        maxHeight = std::max(maxHeight, height);
+                        for (uint32_t column = firstColumn; column <= lastColumn; ++column)
+                        {
+                            const float height = At(column, row);
+                            minHeight = std::min(minHeight, height);
+                            maxHeight = std::max(maxHeight, height);
+                        }
+                    }
+                    const size_t index = static_cast<size_t>(cz) * level.CellColumns + cx;
+                    level.MinHeight[index] = minHeight;
+                    level.MaxHeight[index] = maxHeight;
+                    if (lod == kLodCount - 1u)
+                    {
+                        MinHeight = std::min(MinHeight, minHeight);
+                        MaxHeight = std::max(MaxHeight, maxHeight);
                     }
                 }
-                const size_t index = static_cast<size_t>(bz) * BlockColumns + bx;
-                BlockMinHeight[index] = minHeight;
-                BlockMaxHeight[index] = maxHeight;
-                MinHeight = std::min(MinHeight, minHeight);
-                MaxHeight = std::max(MaxHeight, maxHeight);
             }
         }
     }
@@ -831,7 +844,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             return {};
         }
 
-        grid->BuildBlockBounds();
+        grid->BuildLodBounds();
         return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
     }
 
@@ -1134,7 +1147,7 @@ namespace NorvesLib::Core::Rendering::Terrain
                     }
                 }
             }
-            grid->BuildBlockBounds();
+            grid->BuildLodBounds();
             return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
         }
         catch (const std::bad_alloc &)
@@ -1225,7 +1238,7 @@ namespace NorvesLib::Core::Rendering::Terrain
                     grid->SplatLayerNames.push_back(splat->LayerNames[layer]);
                 }
             }
-            grid->BuildBlockBounds();
+            grid->BuildLodBounds();
             return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
         }
         catch (const std::bad_alloc&)
@@ -1476,6 +1489,33 @@ namespace NorvesLib::Core::Rendering::Terrain
         return true;
     }
 
+    bool TerrainHeightField::GetLodCellRange(uint32_t lod, uint32_t cellColumn, uint32_t cellRow,
+        TerrainHeightRange& outRange) const
+    {
+        if (!m_Grid || lod == 0u || lod >= kHeightLodCount)
+        {
+            return false;
+        }
+        const GridData::LodLevel& level = m_Grid->Lods[lod];
+        if (cellColumn >= level.CellColumns || cellRow >= level.CellRows)
+        {
+            return false;
+        }
+        const size_t index = static_cast<size_t>(cellRow) * level.CellColumns + cellColumn;
+        outRange = TerrainHeightRange{level.MinHeight[index], level.MaxHeight[index]};
+        return true;
+    }
+
+    uint32_t TerrainHeightField::GetLodCellColumns(uint32_t lod) const
+    {
+        return m_Grid && lod > 0u && lod < kHeightLodCount ? m_Grid->Lods[lod].CellColumns : 0u;
+    }
+
+    uint32_t TerrainHeightField::GetLodCellRows(uint32_t lod) const
+    {
+        return m_Grid && lod > 0u && lod < kHeightLodCount ? m_Grid->Lods[lod].CellRows : 0u;
+    }
+
     float TerrainHeightField::GetGridVertexHeight(uint32_t column, uint32_t row) const
     {
         if (!m_Grid || column >= m_Grid->Columns || row >= m_Grid->Rows)
@@ -1492,6 +1532,110 @@ namespace NorvesLib::Core::Rendering::Terrain
             return {};
         }
         return Container::Span<const uint8_t>(m_Grid->Bytes.GetData(), m_Grid->Bytes.GetSize());
+    }
+
+    namespace
+    {
+        struct LodSampleCoordinates
+        {
+            uint32_t Column;
+            uint32_t Row;
+            uint32_t FirstColumn;
+            uint32_t LastColumn;
+            uint32_t FirstRow;
+            uint32_t LastRow;
+            double Fu;
+            double Fv;
+        };
+
+        template<typename Grid>
+        LodSampleCoordinates LocateLodSample(const Grid& grid, float x, float z, uint32_t lod)
+        {
+            const auto& level = grid.Lods[lod];
+            const uint32_t stride = level.Stride;
+            const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+            const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+            const uint32_t column = std::min(static_cast<uint32_t>(u / stride), level.CellColumns - 1u);
+            const uint32_t row = std::min(static_cast<uint32_t>(v / stride), level.CellRows - 1u);
+            const uint32_t firstColumn = column * stride;
+            const uint32_t firstRow = row * stride;
+            const uint32_t lastColumn = firstColumn + std::min(stride, grid.Columns - 1u - firstColumn);
+            const uint32_t lastRow = firstRow + std::min(stride, grid.Rows - 1u - firstRow);
+            // 外周の端数セルは、残りの升目数で局所座標を割る
+            const double fu = (u - firstColumn) / (lastColumn - firstColumn);
+            const double fv = (v - firstRow) / (lastRow - firstRow);
+            return {column, row, firstColumn, lastColumn, firstRow, lastRow, fu, fv};
+        }
+    } // namespace
+
+    float TerrainHeightField::SampleHeight(float x, float z, uint32_t lod) const
+    {
+        if (lod == 0u || !m_Grid)
+        {
+            return SampleHeight(x, z);
+        }
+        if (!Contains(x, z))
+        {
+            return kOutOfRangeHeight;
+        }
+        lod = std::min(lod, kHeightLodCount - 1u);
+        const GridData& grid = *m_Grid;
+        const LodSampleCoordinates cell = LocateLodSample(grid, x, z, lod);
+        const double h00 = grid.At(cell.FirstColumn, cell.FirstRow);
+        const double h10 = grid.At(cell.LastColumn, cell.FirstRow);
+        const double h01 = grid.At(cell.FirstColumn, cell.LastRow);
+        const double h11 = grid.At(cell.LastColumn, cell.LastRow);
+        const double fu = cell.Fu;
+        const double fv = cell.Fv;
+        double value = 0.0;
+        if (UsesMainDiagonal(cell.Column, cell.Row))
+        {
+            value = fu >= fv ? (1.0 - fu) * h00 + (fu - fv) * h10 + fv * h11
+                             : (1.0 - fv) * h00 + (fv - fu) * h01 + fu * h11;
+        }
+        else
+        {
+            value = fu + fv <= 1.0 ? (1.0 - fu - fv) * h00 + fu * h10 + fv * h01
+                                   : (fu + fv - 1.0) * h11 + (1.0 - fv) * h10 + (1.0 - fu) * h01;
+        }
+        return static_cast<float>(value);
+    }
+
+    TerrainNormal TerrainHeightField::SampleNormal(float x, float z, TerrainNormalKind kind, uint32_t lod) const
+    {
+        if (lod == 0u || !m_Grid)
+        {
+            return SampleNormal(x, z, kind);
+        }
+        if (!Contains(x, z))
+        {
+            return TerrainNormal{kOutOfRangeHeight, kOutOfRangeHeight, kOutOfRangeHeight};
+        }
+        lod = std::min(lod, kHeightLodCount - 1u);
+        const GridData& grid = *m_Grid;
+        const LodSampleCoordinates cell = LocateLodSample(grid, x, z, lod);
+        const double h00 = grid.At(cell.FirstColumn, cell.FirstRow);
+        const double h10 = grid.At(cell.LastColumn, cell.FirstRow);
+        const double h01 = grid.At(cell.FirstColumn, cell.LastRow);
+        const double h11 = grid.At(cell.LastColumn, cell.LastRow);
+        const bool bMainDiagonal = UsesMainDiagonal(cell.Column, cell.Row);
+        const bool bFirstTriangle = bMainDiagonal ? cell.Fu >= cell.Fv : cell.Fu + cell.Fv <= 1.0;
+        const double dx = bFirstTriangle ? h10 - h00 : h11 - h01;
+        const double dz = bMainDiagonal ? (bFirstTriangle ? h11 - h10 : h01 - h00)
+                                        : (bFirstTriangle ? h01 - h00 : h11 - h10);
+        // 幅の異なる端数セルでも勾配を揃え、極端な間隔での積のあふれを避ける
+        const double nx = -dx / (cell.LastColumn - cell.FirstColumn);
+        const double ny = grid.Spacing;
+        const double nz = -dz / (cell.LastRow - cell.FirstRow);
+        const double length = std::hypot(nx, ny, nz);
+        TerrainNormal normal{static_cast<float>(nx / length),
+            static_cast<float>(std::max(ny / length, std::numeric_limits<double>::min())),
+            static_cast<float>(nz / length)};
+        if (normal.Y == 0.0f)
+        {
+            normal.Y = std::numeric_limits<float>::denorm_min();
+        }
+        return normal;
     }
 
     float TerrainHeightField::SampleGridHeight(float x, float z) const

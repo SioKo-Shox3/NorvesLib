@@ -9,6 +9,7 @@
 namespace NorvesLib::Core::Rendering::Terrain
 {
     class TerrainHeightField;
+    class TerrainTileResidency;
 }
 
 namespace NorvesLib::Modules::Physics
@@ -43,6 +44,8 @@ namespace NorvesLib::Modules::Physics
         Math::Capsule Capsule;
         // 読み取り専用の格子高さ場。
         Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> HeightField;
+        // 地形のタイルの常駐の印の写し。空なら全常駐。
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainTileResidency> TileResidency;
         // 高さ場の原点の世界座標。世界座標への変換はこの値を足す平行移動だけ。
         Math::Vector3 HeightFieldOrigin;
         Math::AABB Bounds;
