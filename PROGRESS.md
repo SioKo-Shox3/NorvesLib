@@ -10237,3 +10237,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
 - Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
 - Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。
+
+- U1 AssetRef と EntityRefId の型、RuntimeSchema の文字列化の分岐、ECS の列の往復の試験: 着地(直し 0 回)
+- U4 シーンの保存側(v3 の版・SceneSaveStats・依存の表・壊れない保存)と AssetRef の保存の試験: 着地(直し 0 回)
+- U7 SpawnPrefab の alias の表と PivotObjectId の EntityRefId 化(U2・U3 のレビュー済みの差分の再適用): 着地(直し 0 回)
+- Notes(G12-GR92-ASSETREF-SCENE-V3): U2・U3 はレビュー済みだったが、着地の前に単位の作業ツリーを別のタスクが使い回したので捨て、同じ差分を U7 で入れ直した。シーンの先頭の `assets` の表は、論理パスや種別が不正だと文書の解析ごと失敗する(プロパティの不正な論理パスは落として既定値に戻す寛容な扱いで、扱いがそろっていない)。
+- U5 EntityRefId の保存と張り替え、v2 → v3 の値の移行: 着地(直し 0 回)
+- U6 LoadIntoWorld の生成ルートの返却・論理パスからの読み込みとタスクの確かめ: 着地(直し 0 回)
+- Done(G12-GR92-ASSETREF-SCENE-V3): 論理パスの資産参照 TAssetRef と Entity 参照 EntityRefId を足し、RuntimeSchema が型の側の文字列化を扱う。シーンの形式は v3(v1 → v2 → v3 の移行、先頭の assets の依存の表、SceneSaveStats、一時ファイルからの置換による保存)。EntityRefId はファイルでは「ルートの添字:alias」で保存し、LoadIntoWorld が全ルートの生成の後に新しい ObjectId へ張り替える(v2 の uint64 の値も移行)。LoadIntoWorld は生成したルートを返し、LoadIntoWorldFromAsset で論理パス(AssetSystem::ResolveAsset の Raw)から読める。verify の 2 行(ビルド・ctest 10 本)と Game のビルドが終了コード 0。アプリを起動する確かめは無い。
+- Next(G12-GR92-ASSETREF-SCENE-V3): コンポーネントの非同期の束縛(G12-GR92-ASSET-BIND)、Prefab のファイル(G12-GR92-PREFAB-FILE)、Bridge(G12-GR92-BRIDGE-SCENE)。
+- Notes(G12-GR92-ASSETREF-SCENE-V3): EntityRefId の張り替えは BeginPlay の後に起きるので、BeginPlay の中で参照先を引くコンポーネントは張り替え前の 0 を見る(今の利用は Tick で引く SpringArmComponent だけ)。公開の ReconcileWithSchema の結果には EntityRefId のプロパティが入らない(張り替えの予定は LoadIntoWorld の内部だけが持つ)。保存の集合の外を指す参照は警告して参照なしで保存する。
