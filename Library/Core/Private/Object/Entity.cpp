@@ -246,10 +246,10 @@ namespace NorvesLib::Core
         {
             return false;
         }
-        // 作成予約中の行・付け替え待ちがある間と、Active・PendingDestroy の変更がまだ伝播されていない間は、キャッシュが古いので祖先をたどる
+        // 作成予約中の行・付け替え待ちがある間と、Active・PendingDestroy・親子の変更がまだ伝播されていない間は、キャッシュが古いので祖先をたどる
         const World* world = GetWorld();
         if (world && world->m_EcsWorld && world->m_PendingEntityRelinks.empty() && world->m_PendingEntityCreates.empty() &&
-            world->m_EcsTransformSystem && !world->m_EcsTransformSystem->HasUnpropagatedFlagChanges())
+            world->m_EcsTransformSystem && !world->m_EcsTransformSystem->HasUnpropagatedActiveChanges())
         {
             const Ecs::EcsEntity row = GetEcsEntity();
             if (!row.IsNull() && world->m_EcsWorld->IsAlive(row))
