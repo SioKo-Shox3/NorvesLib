@@ -987,9 +987,8 @@ namespace NorvesLib::Modules::Physics
             && body.Component != nullptr
             && body.Owner != nullptr
             && body.Component->IsActive()
-            && body.Owner->IsActive()
-            && !body.Component->HasFlag(Core::OF_PendingDestroy)
-            && !body.Owner->IsPendingDestroy()))
+            && body.Owner->IsActiveInHierarchy()
+            && !body.Component->HasFlag(Core::OF_PendingDestroy)))
         {
             return false;
         }
@@ -999,12 +998,13 @@ namespace NorvesLib::Modules::Physics
         if (collider != nullptr && (slot == nullptr || slot->Component != collider || slot->Owner != body.Owner))
         {
             collider = nullptr;
-            for (const ColliderSlot& candidate : m_ColliderSlots)
+            const auto it = m_ColliderSlotByOwner.find(body.Owner);
+            if (it != m_ColliderSlotByOwner.end())
             {
+                const ColliderSlot& candidate = m_ColliderSlots[it->second];
                 if (candidate.bOccupied && candidate.Owner == body.Owner)
                 {
                     collider = candidate.Component;
-                    break;
                 }
             }
         }
@@ -1024,8 +1024,8 @@ namespace NorvesLib::Modules::Physics
     {
         return collider.bOccupied && collider.Component != nullptr && collider.Owner != nullptr
             && collider.Component->m_bHasShape
-            && collider.Component->IsActive() && collider.Owner->IsActive()
-            && !collider.Component->HasFlag(Core::OF_PendingDestroy) && !collider.Owner->IsPendingDestroy()
+            && collider.Component->IsActive() && collider.Owner->IsActiveInHierarchy()
+            && !collider.Component->HasFlag(Core::OF_PendingDestroy)
             && (collider.Component->m_Shape == ColliderComponent::EColliderShape::HeightField
                 || IsFiniteTransform(GetFreshWorldTransform(*collider.Owner)));
     }
@@ -1069,12 +1069,13 @@ namespace NorvesLib::Modules::Physics
                 DiscardBodyStepState(body);
                 continue;
             }
-            for (const ColliderSlot& collider : m_ColliderSlots)
+            const auto it = m_ColliderSlotByOwner.find(body.Owner);
+            if (it != m_ColliderSlotByOwner.end())
             {
+                const ColliderSlot& collider = m_ColliderSlots[it->second];
                 if (collider.bOccupied && collider.Owner == body.Owner && collider.bActive)
                 {
                     body.bActive = true;
-                    break;
                 }
             }
             if (!body.bActive)
