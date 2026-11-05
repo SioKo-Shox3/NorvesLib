@@ -48,6 +48,12 @@ namespace NorvesLib::Core::Animation
         {
             return m_Count;
         }
+        // まだ配っていないイベントを積んだ順に返す。
+        // 次の Update・Dispatch・Reset・InterruptAll まで有効。並びは配る順と違うことがある。
+        Container::Span<const AnimEventInfo> PendingEvents() const noexcept
+        {
+            return {m_Queue.data(), m_Count};
+        }
         size_t ActiveWindowCount() const noexcept
         {
             return m_Active;

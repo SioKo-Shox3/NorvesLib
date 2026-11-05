@@ -9898,3 +9898,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（新しい Public API）。足の固定と着地は G9-GR14-FOOT-PLANT。
 - Notes: 要起票: `AnimatorComponent` には `ApplyPoseModifiersJson`/`File` で読み込んだ modifier を取り出す口が無く、ゲーム側で FootIK に `SetGroundQuery` を渡す経路がまだ無い（試験は `ParsePoseModifierConfig` の出力か `AddModifier` で渡している）。
 - Notes: 体の補正の高さの差はワールドの長さで求め、骨盤へはモデル空間の上向きの単位ベクトルに掛けて足す。所有者のワールド変換に 1 以外のスケールがあると下がる量がスケール分ずれる（今の試験はスケール 1）。
+- U1 modifier の文脈から、そのフレームに積まれてまだ配っていないイベントを読む口を足す: 着地(直し 0 回)
