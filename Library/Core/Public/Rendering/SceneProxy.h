@@ -7,6 +7,7 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "ViewClearance.h"
 #include "VolumetricFog.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
@@ -511,6 +512,10 @@ namespace NorvesLib::Core::Rendering
 
         // グレーディング用の見た目の3D LUT（既定は無効）
         CameraLookLut LookLut;
+
+        // カメラ〜主人公の切り抜きと近接のフェード（既定は無効。CameraComponent が同じ Entity の
+        // ViewClearanceComponent から埋める）。
+        ViewClearanceParameters ViewClearance;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

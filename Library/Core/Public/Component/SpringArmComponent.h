@@ -49,6 +49,12 @@ namespace NorvesLib::Core::Component
         bool HasValidPivot() const;
         Entity* ResolvePivot() const;
 
+        /**
+         * @brief カメラの向きと同じ点をワールド座標で返します。
+         * @note pivot が無効なときの値は意味を持たないので、呼び出し側は HasValidPivot() を先に確かめてください。
+         */
+        Math::Vector3 GetTargetWorldPosition() const;
+
         void SetArmLength(float armLength);
         float GetArmLength() const { return ArmLength; }
         void SetYaw(float yaw);
@@ -69,6 +75,7 @@ namespace NorvesLib::Core::Component
 
     protected:
         Math::Vector3 ComputeArmOffset() const;
+        Math::Vector3 ComputeTargetWorldPosition(const Entity& pivot) const;
         virtual void DriveOwnerTransform(const Entity& pivot);
 
         PROPERTY(uint64_t, PivotObjectId)

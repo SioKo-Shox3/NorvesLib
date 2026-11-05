@@ -153,6 +153,8 @@ namespace NorvesLib::Core::Component
          *
          * IsEnabled と IsActiveCamera による選別は呼び出し側の責務です。
          * AspectRatio は描画解像度側の値を維持するため上書きしません。
+         * 同じ Entity の ViewClearanceComponent と SpringArm の注視点から ViewClearance を設定します。
+         * スプリングアームを更新する Camera 群の後に呼び出してください。
          */
         virtual bool BuildCameraProxy(Rendering::CameraProxy& outProxy) const;
 
