@@ -10088,3 +10088,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 凹み度の規則と計算（高さのぼかしとの差・窪地を埋めた深さ・流れの集積・ペイント・スレッド数に依らない並列）: 着地(直し 1 回)
 - U3 spec の recipe.puddle とペイントの target "puddle" を読み、NVTRN に PDL0 を書く: 着地(直し 0 回)
 - U4 NVTRN の形式の文書と grassland の spec に凹み度を足す: 着地(直し 0 回)
+- U5 CookedTerrainTest に凹み度の 4 ケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
