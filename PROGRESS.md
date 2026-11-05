@@ -10122,3 +10122,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（JSON の読み込みはアセットの読み込みの危険地帯）。起動の要る確かめは無い。Component・犬のルートの駆動・接触は G10-GR20-GRIP-COMPONENTS。
 - Notes: done-when の調整値の一覧に無い `swingDampingPerSecond`（握りの点に対する接線の速度の減衰。done-when (1) の「摩擦」）を GripTuning の必須のキーに足した。既定値はすべて仮（free 1.5 g・panic 4 g・base 0.02/秒・k 0.25/秒・回復 0.1/秒・平滑 0.1 秒・重み 張力 1/加速度 0・サブステップ 8・荷重の上限 10 g・減衰 0.5/秒）。
 - Notes: 回復のフレームは減りを止めて回復だけを足す。枯渇の後は `ResetGripGauge` まで回復も印もしない（解除後のゲージの扱いは GRIP-COMPONENTS で決める）。GripFrameRateInvarianceTest は周期 0.5 秒・振幅 2 m の軌道で荷重が約 36 g になり既定の panic 4 g では減りが飽和して差が消えるため、試験の中だけ panic 60 g・上限 80 g にしている。
+- U0 契約のヘッダ・骨格のファイル・CMake の登録: 着地(直し 0 回)

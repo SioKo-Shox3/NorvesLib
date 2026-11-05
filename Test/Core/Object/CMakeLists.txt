@@ -77,6 +77,8 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER EcsLifetimeTest EcsLifetimeTest.cpp
     MEMBER EcsHierarchyTest EcsHierarchyTest.cpp
     MEMBER ScatterSystemResidencyTest ScatterSystemResidencyTest.cpp
+    MEMBER StreamingCellStateMachineTest ${CMAKE_SOURCE_DIR}/Test/Core/Streaming/StreamingCellStateMachineTest.cpp
+    MEMBER StreamingBudgetTest ${CMAKE_SOURCE_DIR}/Test/Core/Streaming/StreamingBudgetTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -121,6 +123,8 @@ add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQu
 add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryRaycastTest --test=SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME ScatterSystemResidencyTest COMMAND EntityTreeTest --test=ScatterSystemResidencyTest)
+add_test(NAME StreamingCellStateMachineTest COMMAND EntityTreeTest --test=StreamingCellStateMachineTest)
+add_test(NAME StreamingBudgetTest COMMAND EntityTreeTest --test=StreamingBudgetTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 
