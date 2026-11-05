@@ -175,3 +175,154 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 書き手は同じ制約を検査し、失敗時は出力を空にする。
 
 ## 配置の規則
+
+
+`ScatterPlacement.cpp` の配置は種ごとに独立しており、異なる種同士の間隔は制約しない。
+最小間隔を `r` とする。`min_spacing_m` が 0 のときだけ
+`r = 2 * mesh_radius_m * scale_range[1]` を使い、一辺 `a = r / √2` の全体セルを地形原点から切る。
+`r` は有限で正である必要がある。地形タイルの一辺 `TileCells * CellSizeM` は
+`chunk_size_m` の整数倍で、散布原点は地形の原点に一致する。
+
+### セルのハッシュと乱数
+
+演算は uint64 の剰余演算。種の鍵は名前の UTF-8 バイト列の FNV-1a64
+（初期値 `0xcbf29ce484222325`、素数 `0x100000001b3`）で、種表の添字は使わない。
+splitmix 系の混合 `Mix(v)` は順に
+`v = (v ^ (v >> 30)) * 0xbf58476d1ce4e5b9`、
+`v = (v ^ (v >> 27)) * 0x94d049bb133111eb`、`v ^ (v >> 31)`。
+セルの初期状態は次の順で畳む。
+
+```text
+state = Mix(seed + 0x9e3779b97f4a7c15)
+state = Mix(state ^ SpeciesKey(name))
+state = Mix(state ^ uint64(CellX))
+state = Mix(state ^ uint64(CellZ))
+```
+
+`Next` は状態に `0x9e3779b97f4a7c15` を足して `Mix(state)` を返す。
+呼ぶ順は X ジッタ、Z ジッタ、優先度、受理、ヨー、拡大、Rank、明度。
+単位乱数は `(Next >> 11) * 2^-53` で `[0,1)`。
+候補位置は `Origin + (Cell + jitter) * a`。
+
+### 密度、除外と局所最大
+
+地形外、標高の帯外、傾斜の帯外、道の値が閾値以上、湿りの帯外の候補を除外する。
+帯の両端は含む。層の標本は地形のセル角を双一次補間した 0..1 の値。
+密度は `ρ = base_density_per_m2 * densityFactor` とし、倍率は定数か指定した層のチャンネル。
+`ρ <= 0` は受理しない。`A = πr²` として Matérn II の逆変換を用い、
+`ρA < 1` なら `λ = -log1p(-ρA) / A`、受理確率 `p = min(1, λa²)`。
+`ρA >= 1` なら逆変換が有限でないため `p = 1` とし、種の飽和フラグを立てる。
+ジッタ格子での補正は近似であり、低占有率ほど指定密度に近づく。
+受理乱数が `p` 未満の候補を近傍競合に進める。
+
+各候補について同じ種のセル差 `[-2,2] × [-2,2]` の 5×5 を同じ関数で評価し、
+XZ 距離が `r` 未満で自分より上位の受理候補があれば落とす。
+優先度、CellX、CellZ の順で値が大きい方を上位にする全順序なので、優先度の衝突でも決まる。
+競合相手が別の相手に落とされる場合も、自分を落とす判定は変わらない。
+近傍はチャンクを越えて評価し、チャンク番号や焼く順は乱数に使わない。
+
+チャンクが所有する位置は X/Z とも `[Origin + coord * size, Origin + (coord+1) * size)`。
+地形の実寸と重なる範囲だけを走査する。`ScatterBaker.cpp` は全チャンクなら Z、X の順に焼き、
+指定チャンクだけなら重複を除いて同じ順に並べる。
+各チャンク・各種の中は Rank、SortKey、CellX、CellZ の昇順。
+Rank は専用乱数の上位8ビット、SortKey は Rank を上位に置いた同じ64ビット乱数である。
+
+### 地形の三角形と属性
+
+高さと法線は LOD0 の三角形から取る。`UsesMainDiagonal` と同じく全体セルの
+`(column + row)` が偶数なら主対角線を使い、セル内 `u >= v` で三角形を選ぶ。
+奇数なら逆対角線を使い、`u + v <= 1` で選ぶ。
+各頂点は `OriginY + DecodeHeightM(sample)` を float に丸めてから三角形の平面を補間し、
+上向きの面法線を正規化する。高さの双一次補間は使わない。
+
+ヨーは `[0,2π)`、拡大は `exp(lerp(ln(min), ln(max), u))`。
+Tint は各成分共通で `round(clamp(128 * (1 + brightness_variation * (2u-1)), 0, 255))`。
+`dry_from_mask` が真なら MSK0.g を 0..255 に丸め、偽なら Dry は 0。
+地形法線は NormalOct に保存し、`slope_follow` は種表に保存する。
+風の硬さ・位相の種、衝突の印も種表の属性として保存する。
+
+## 散布 spec JSON
+
+AssetCook の入口は `--kind world --format nvsct.v0.inst16 --entry-type Sct0`。
+JSON は UTF-8（先頭 BOM 可）。全オブジェクトで未知の鍵・重複した鍵を拒否し、種名の重複も拒否する。
+文字列は空でない有効な Unicode で、NUL を含められない。
+
+```json
+{
+  "version": 0,
+  "terrain": { "path": "terrain.json", "cooked_hash": "0123456789abcdef" },
+  "chunk_size_m": 32,
+  "seed": 12345,
+  "species": [{
+    "name": "rock_small", "render_path": "mega",
+    "lods": ["Meshes/Rock_LOD0.nvmesh"],
+    "mesh_radius_m": 0.6, "min_spacing_m": 0,
+    "density": { "source": "constant", "value": 1.0 },
+    "base_density_per_m2": 0.01,
+    "height_band_m": [0, 200], "slope_band_deg": [0, 35],
+    "exclude": { "road_threshold": 0.5, "wetness": [0.0, 0.8] },
+    "scale_range": [0.7, 1.4], "slope_follow": 0.8,
+    "brightness_variation": 0.1, "dry_from_mask": false, "collision": false,
+    "wind": { "stiffness": 1.0, "phase_seed": 7 }
+  }]
+}
+```
+
+| 鍵 | 必須・既定値 | 値と意味 |
+| --- | --- | --- |
+| `version` | 必須 | 0 |
+| `terrain` | 必須 | 地形への参照オブジェクト |
+| `terrain.path` | 必須 | spec の親を基準とするパス。`.nvtrn` は直接読み、それ以外は地形 spec として同じプロセスで cook |
+| `terrain.cooked_hash` | 必須 | 地形 manifest の cooked_hash。大文字・小文字を問わない16桁の16進文字列 |
+| `chunk_size_m` | 必須 | 正の有限値。地形タイル寸法の約数 |
+| `seed` | 必須 | 0..18446744073709551615 の10進整数。数値 token と10進文字列の双方を正確に読む |
+| `species` | 必須 | 1..64件の種オブジェクト |
+| `species[].name` | 必須 | 種名。乱数の種の鍵にも使う |
+| `render_path` | 必須 | `mega` または `foliage` |
+| `lods` | 必須 | 1..4件のメッシュ論理パス。LOD0 からの順。地形のファイルパスのようには解決しない |
+| `mesh_radius_m` | 必須 | 有限で非負のメッシュ半径 |
+| `min_spacing_m` | 0 | 有限で非負。0 のときだけ最大の拡大を含む直径から求める |
+| `density` | 必須 | 下記の2種の形式 |
+| `density.source` | 必須 | `constant` または `layer` |
+| `density.value` | constant で必須 | 有限の 0..1。constant の鍵は source と value だけ |
+| `density.layer` | layer で必須 | 4文字の層 FourCC（例: GRS0） |
+| `density.channel` | layer で必須 | r/g/b/a。layer の鍵は source・layer・channel だけ。層とチャンネルの存在を焼く前に検査 |
+| `base_density_per_m2` | 必須 | 有限で非負の基準密度 [本/m²] |
+| `height_band_m` | 無効 | `[min,max]`、有限で min <= max。既定の内部値は [0,0] |
+| `slope_band_deg` | 無効 | `[min,max]`、0..90。既定の内部値は [0,90] |
+| `exclude` | 各除外は無効 | 道・湿りの設定オブジェクト。空のオブジェクトも可 |
+| `exclude.road_threshold` | 道の除外は無効 | 0..1。指定時のみ MSK0.b >= 閾値を除外。既定の内部値は 0.5 |
+| `exclude.wetness` | 湿りの帯は無効 | 0..1 の `[min,max]`。指定時のみ MSK0.r の帯外を除外。既定の内部値は [0,1] |
+| `scale_range` | 必須 | `[min,max]`、有限で正、min <= max。float の正規化最小値以上 |
+| `slope_follow` | 必須 | 有限の 0..1。0=鉛直、1=地面法線への追従 |
+| `brightness_variation` | 必須 | 有限の 0..1 |
+| `dry_from_mask` | false | 真なら MSK0.g から枯れ度を読む |
+| `collision` | false | 衝突用に予約された印 |
+| `wind` | 下位項目の既定 | 風の属性オブジェクト。空のオブジェクトも可 |
+| `wind.stiffness` | 1.0 | 有限で非負 |
+| `wind.phase_seed` | 0 | uint32 範囲の10進整数または10進文字列 |
+
+density の layer 形式は `{"source":"layer","layer":"GRS0","channel":"r"}`。
+寸法・半径・間隔・拡大・基準密度・標高・風の硬さは有限の float の最大値以下とする。
+必要な MSK0 や指定密度層が無ければ失敗する。
+
+### 地形ハッシュの照合と source_hash
+
+`ScatterSpec.cpp` は `ComputeAssetPackagePayloadHash(NVTRN全体のバイト列)` を呼ぶ。
+これは `AssetCookOutput.cpp` の `BuildSingleSkeletalEntryPackage` が地形 manifest の
+cooked_hash に返す関数・範囲と同じであり、NVTRN 内部の PayloadHash とは異なる。
+記録と違えば散布を焼く前に失敗し、診断に記録と実際の16桁を両方出す。
+成功時は照合した値を NVSCT ヘッダの TerrainCookedHash に格納する。
+
+散布の source_hash は FNV-1a64 の初期値から、次の順で畳む。
+各入力の前には長さを little endian の uint64 で混ぜ、続けて全バイトを混ぜる。
+
+1. 散布 spec の元のバイト列（空白・BOM も含む）。
+2. 地形の cooked_hash を little endian の8バイトにした列（長さは8）。
+3. `.nvtrn` 参照ならその全バイト。地形 spec なら CookTerrainSpecFile の InputFiles 全件を参照順
+   （先頭は地形 spec）に読み、その全バイト。
+
+成功した CLI は標準出力に `SCATTER_COOKED chunks=... species=... instances=... bytes=... payload_hash=...`、
+続けて種ごとに `SCATTER_SPECIES name=... instances=...` を出す。
+payload_hash は NVSCT 内部ハッシュ。散布 manifest の cooked_hash は NVSCT 全体のパッケージ用ハッシュである。
+飽和した種は標準エラーへ `警告:` で始まる診断を1行ずつ出す。

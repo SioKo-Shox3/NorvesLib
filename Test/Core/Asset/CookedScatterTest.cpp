@@ -1,4 +1,11 @@
 ﻿#include "Asset/CookedScatterFormat.h"
+#include "Asset/AssetManifest.h"
+#include "Tools/AssetCook/ScatterSpec.h"
+#include "Tools/AssetCook/TerrainSpec.h"
+
+#include <filesystem>
+#include <fstream>
+#include <cstdio>
 
 #include <cmath>
 #include <cstdint>
@@ -24,6 +31,80 @@ using ByteArray = VariableArray<uint8_t>;
 
 namespace
 {
+    // spec と参照入力の変更がハッシュと再焼きの必要性に反映されることを確かめる。
+    void CheckSpecCookPath()
+    {
+        using namespace NorvesLib::Tools::AssetCook;
+        using NorvesLib::Core::Container::AnsiString;
+        char directoryName[80];
+        std::snprintf(directoryName, sizeof(directoryName), "nvsct-spec-%lu", static_cast<unsigned long>(GetCurrentProcessId()));
+        const auto directory = std::filesystem::temp_directory_path() / directoryName;
+        std::filesystem::create_directories(directory);
+        struct Cleanup
+        {
+            std::filesystem::path Path;
+            ~Cleanup()
+            {
+                std::error_code error;
+                std::filesystem::remove_all(Path, error);
+            }
+        } cleanup{directory};
+        const auto fixture = std::filesystem::path(__FILE__).parent_path() / "Fixtures/Terrain/height_formula_33x33_16bit.png";
+        std::filesystem::copy_file(fixture, directory / "height.png", std::filesystem::copy_options::overwrite_existing);
+        const auto write = [&](const char* name, const AnsiString& text)
+        {
+            std::ofstream file(directory / name, std::ios::binary | std::ios::trunc);
+            file.write(text.data(), static_cast<std::streamsize>(text.size()));
+            CHECK(file.good());
+        };
+        const auto writeTerrain = [&](bool changed)
+        {
+            AnsiString text = R"({"version":1,"height_source":{"path":"height.png","format":"png16","flip_z":false},
+                "height_mapping":{"min_m":0,"max_m":)";
+            text += changed ? "131.07" : "65.535";
+            text += R"(},"cell_size_m":1,"tile_cells":16,"fit":"error","require_bit_depth":16,"seed":1,"recipe":{}})";
+            write("terrain.json", text);
+        };
+        const auto writeScatter = [&](uint64_t hash, bool changed)
+        {
+            AnsiString text = R"({"version":0,"terrain":{"path":"terrain.json","cooked_hash":")";
+            text += FormatAssetHashHex(hash);
+            text += R"("},"chunk_size_m":16,"seed":)";
+            text += changed ? "18446744073709551614" : "18446744073709551615";
+            text += R"(,"species":[{"name":"rock","render_path":"mega","lods":["Meshes/Rock"],
+                "mesh_radius_m":0.5,"density":{"source":"constant","value":1},"base_density_per_m2":0.01,
+                "scale_range":[0.7,1.4],"slope_follow":0.8,"brightness_variation":0.1}]})";
+            write("scatter.json", text);
+        };
+        writeTerrain(false);
+        AnsiString error;
+        TerrainSpecCookResult terrain;
+        CHECK(CookTerrainSpecFile(directory / "terrain.json", terrain, error));
+        const uint64_t oldHash = ComputeAssetPackagePayloadHash(terrain.Build.NvtrnBytes.data(), terrain.Build.NvtrnBytes.size());
+        writeScatter(oldHash, false);
+        ScatterSpecCookResult first;
+        CHECK(CookScatterSpecFile(directory / "scatter.json", first, error));
+        CHECK(error.empty() && first.ChunkCount == 4 && first.SpeciesNames.size() == 1);
+        const auto parsed = ParseCookedScatter(AssetBlob::CopyBytes({first.Bytes.data(), first.Bytes.size()}));
+        CHECK(parsed.Succeeded() && parsed.Scatter.Seed == UINT64_MAX && parsed.Scatter.TerrainCookedHash == oldHash);
+        writeScatter(oldHash, true);
+        ScatterSpecCookResult changed;
+        CHECK(CookScatterSpecFile(directory / "scatter.json", changed, error));
+        CHECK(changed.SourceHash != first.SourceHash);
+        writeScatter(oldHash, false);
+        writeTerrain(true);
+        CHECK(CookTerrainSpecFile(directory / "terrain.json", terrain, error));
+        const uint64_t newHash = ComputeAssetPackagePayloadHash(terrain.Build.NvtrnBytes.data(), terrain.Build.NvtrnBytes.size());
+        CHECK(newHash != oldHash);
+        CHECK(!CookScatterSpecFile(directory / "scatter.json", changed, error));
+        CHECK(error.find(reinterpret_cast<const char*>(u8"食い違い")) != AnsiString::npos);
+        CHECK(error.find(FormatAssetHashHex(oldHash).c_str()) != AnsiString::npos);
+        CHECK(error.find(FormatAssetHashHex(newHash).c_str()) != AnsiString::npos);
+        writeScatter(newHash, false);
+        CHECK(CookScatterSpecFile(directory / "scatter.json", changed, error));
+        CHECK(error.empty() && changed.SourceHash != first.SourceHash);
+    }
+
     uint64_t ReadLe(const ByteArray& bytes, size_t offset, size_t width)
     {
         uint64_t value = 0;
@@ -240,6 +321,7 @@ int main()
         UpdateHash(damaged);
         CheckRejection(damaged, Status::SpeciesOutOfRange);
     }
+    CheckSpecCookPath();
     std::cout << "CookedScatterTest 成功\n";
     return 0;
 }

@@ -9888,3 +9888,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 NVSCT v0 の形式・書き手・読み手・形式の文書と CookedScatterTest(読みの拒否): 着地(直し 0 回)
 - U2 配置の純関数(セルの hash・受理・局所最大・地形の標本化): 着地(直し 0 回)
 - U3 ScatterBaker(NVSCT を焼く)と ScatterBakeTest: 着地(直し 0 回)
+- U4 scatter spec の読み込み・地形の参照と cooked_hash の照合・AssetCook の入口・スモーク: 着地(直し 0 回)
