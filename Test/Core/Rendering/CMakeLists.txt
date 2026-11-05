@@ -1387,11 +1387,15 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
     MEMBER ViewClearanceModelTest ViewClearanceModelTest.cpp
+    MEMBER SkyOcclusionModelTest SkyOcclusionModelTest.cpp
+    MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
+    MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
@@ -1427,6 +1431,9 @@ add_test(NAME VirtualShadowMapPointTest COMMAND CameraViewConstantsTest --test=V
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 add_test(NAME ViewClearanceModelTest COMMAND CameraViewConstantsTest --test=ViewClearanceModelTest)
+add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOcclusionModelTest)
+add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
+add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
 
 add_executable(ViewRenderContextActiveInputTest

@@ -10034,3 +10034,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
 - Next: ランナーの評価者の反証。起動の確かめは後回し
 - 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
+- U1 空の遮蔽の値の型・遮蔽物の柱の評価・モデル試験と試験の登録: 着地(直し 0 回)

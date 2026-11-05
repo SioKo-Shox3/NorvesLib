@@ -299,6 +299,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/DDGIVolume.cpp
     Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp
@@ -671,6 +672,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/SkyOcclusion.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
