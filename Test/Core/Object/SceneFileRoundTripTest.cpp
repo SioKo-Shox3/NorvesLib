@@ -2,16 +2,20 @@
 #include "Component/Component.h"
 #include "Component/GrassFieldComponent.h"
 #include "Component/PointLightComponent.h"
+#include "Component/SkyOccluderComponent.h"
+#include "Component/SpringArmComponent.h"
 #include "Component/TerrainComponent.h"
 #include "Component/ViewClearanceComponent.h"
 #include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
+#include "GameMode/GameModeScope.h"
 #include "Object/PrefabAsset.h"
 #include "Object/SchemaProjection.h"
 #include "Object/World.h"
 #include "Scene/SceneSerializer.h"
 #include "Text/JsonDocument.h"
 #include <cassert>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -262,6 +266,59 @@ namespace
         assert(std::remove(filePath) == 0);
     }
 
+    // 空と雨の遮蔽物の全設定を保存し、読み戻した値を確かめる。
+    void TestSkyOccluderPropertiesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::SkyOccluderComponent::StaticClass();
+        constexpr const char* filePath = "SceneFileRoundTripTest.sky-occluder.scene.json";
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* sourceRoot = sourceWorld.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+        auto* source = sourceWorld.CreateComponent<Component::SkyOccluderComponent>(sourceRoot);
+        assert(source != nullptr);
+        source->getShape() = Rendering::SkyOccluderShape::Box;
+        source->getOccluderClass() = Rendering::SkyOccluderClass::Canopy;
+        source->getHalfExtents() = Math::Vector3(2.5f, 3.25f, 4.75f);
+        source->getCenterOffset() = Math::Vector3(-0.5f, 1.25f, 2.75f);
+        source->getYawOffsetRadians() = 0.625f;
+        source->getBaseOffset() = 0.375f;
+        source->getOpacity() = 0.45f;
+        source->getbDynamic() = true;
+        source->getbBlocksRain() = false;
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(filePath)));
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats));
+        assert(stats.LoadedRoots == 1);
+        assert(stats.DroppedEntities == 0);
+        assert(stats.DroppedComponents == 0);
+        assert(stats.DroppedProperties == 0);
+        const Container::VariableArray<Entity*> loadedRoots = loadedWorld.GetRootEntities();
+        assert(loadedRoots.size() == 1);
+        const auto* loaded = loadedRoots[0]->GetComponent<Component::SkyOccluderComponent>();
+        assert(loaded != nullptr);
+        assert(static_cast<Rendering::SkyOccluderShape>(loaded->getShape()) == Rendering::SkyOccluderShape::Box);
+        assert(static_cast<Rendering::SkyOccluderClass>(loaded->getOccluderClass()) == Rendering::SkyOccluderClass::Canopy);
+        const Math::Vector3 extents = loaded->getHalfExtents();
+        const Math::Vector3 offset = loaded->getCenterOffset();
+        assert(Near(extents.x, 2.5f) && Near(extents.y, 3.25f) && Near(extents.z, 4.75f));
+        assert(Near(offset.x, -0.5f) && Near(offset.y, 1.25f) && Near(offset.z, 2.75f));
+        assert(Near(loaded->getYawOffsetRadians(), 0.625f));
+        assert(Near(loaded->getBaseOffset(), 0.375f));
+        assert(Near(loaded->getOpacity(), 0.45f));
+        assert(loaded->getbDynamic());
+        assert(!loaded->getbBlocksRain());
+
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(std::remove(filePath) == 0);
+    }
+
     void AssertTerrainNotBegun(const Component::TerrainComponent& terrain)
     {
         const ClassProperty* property = terrain.GetClass()->GetProperty(Identity("bBegunPlay"));
@@ -457,15 +514,15 @@ namespace
         JsonDocument jsonDocument;
         assert(JsonDocument::TryParse(json, jsonDocument));
         const JsonValue jsonRoot = jsonDocument.GetRoot();
-        assert(jsonRoot.FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : 2u));
+        assert(jsonRoot.FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : Scene::SceneSerializer::SceneFileFormatVersion));
         const JsonValue jsonRoots = jsonRoot.FindMember("roots");
         assert(jsonRoots.IsArray() && jsonRoots.GetArraySize() == 1);
-        assert(jsonRoots.GetArrayElement(0).FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : 2u));
+        assert(jsonRoots.GetArrayElement(0).FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : Scene::SceneSerializer::SceneFileFormatVersion));
 
         Scene::SceneDocument document;
         assert(Scene::SceneSerializer::TryParseJson(json, document));
-        assert(document.FormatVersion == 2 && document.Roots.size() == 1);
-        assert(document.Roots[0].FormatVersion == 2);
+        assert(document.FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion && document.Roots.size() == 1);
+        assert(document.Roots[0].FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion);
         assert(document.Roots[0].Root.Components.size() == 1);
         const Scene::SceneObjectRecord& grassRecord = document.Roots[0].Root.Components[0].Object;
         assert(grassRecord.ClassName == "GrassFieldComponent");
@@ -617,6 +674,256 @@ namespace
         assert(std::remove(kLegacyGrassFilePath) == 0);
     }
 
+    // 一部の書き込み後に失敗しても元ファイルの全バイトを保ち、一時ファイルを残さない。
+    void TestSaveWriteFailurePreservesOriginal()
+    {
+        RegisterRequiredClasses();
+        const Container::String filePath("SceneFileRoundTripTest.atomic.scene.json");
+        const Container::String temporaryPath = filePath + ".tmp";
+        World world;
+        world.Initialize();
+        Entity* root = world.SpawnEntity<Entity>();
+        assert(root != nullptr);
+        Scene::SceneSaveStats stats;
+        stats.SavedRoots = 99;
+        stats.DroppedProperties = 99;
+        assert(Scene::SceneSerializer::SaveToFile(world, filePath, &stats));
+        assert(stats.SavedRoots == 1 && stats.DroppedProperties == 0);
+
+        auto readBytes = [&filePath]()
+        {
+            auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                filePath, NorvesLib::FileStream::FileMode::Read, NorvesLib::FileStream::FileAccess::Read);
+            assert(stream && stream->IsOpen());
+            Container::VariableArray<unsigned char> bytes;
+            bytes.resize(static_cast<size_t>(stream->GetSize()));
+            assert(stream->Read(bytes.data(), bytes.size()) == bytes.size());
+            return bytes;
+        };
+        auto assertNoTemporaryFile = [&temporaryPath]()
+        {
+            std::FILE* file = nullptr;
+            const errno_t result = fopen_s(&file, temporaryPath.c_str(), "rb");
+            if (file)
+            {
+                std::fclose(file);
+            }
+            assert(result == ENOENT && file == nullptr);
+        };
+        const auto original = readBytes();
+        assert(!original.empty());
+        assertNoTemporaryFile();
+        root->getName() = Container::String("変更後のシーン");
+        Scene::SceneSaveOptions options;
+        options.bInjectWriteFailureForTesting = true;
+        stats.SavedRoots = 99;
+        stats.DroppedProperties = 99;
+        assert(!Scene::SceneSerializer::SaveToFile(world, filePath, &stats, options));
+        assert(stats.SavedRoots == 1 && stats.DroppedProperties == 0);
+        const auto preserved = readBytes();
+        assert(preserved.size() == original.size());
+        assert(std::memcmp(original.data(), preserved.data(), original.size()) == 0);
+        assertNoTemporaryFile();
+        assert(Scene::SceneSerializer::SaveToFile(world, filePath, &stats));
+        const auto replaced = readBytes();
+        assert(replaced.size() != original.size() ||
+            std::memcmp(replaced.data(), original.data(), original.size()) != 0);
+        assertNoTemporaryFile();
+        world.Finalize();
+        assert(std::remove(filePath.c_str()) == 0);
+    }
+
+    // 同じルート内とルート間の参照が、ObjectIdの再採番後も同じEntityを指すことを確かめる。
+    void TestEntityReferencesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::SpringArmComponent::StaticClass();
+        const Container::String filePath("SceneFileRoundTripTest.entity-ref.scene.json");
+        for (const bool bCrossRoot : {true, false})
+        {
+            World sourceWorld;
+            sourceWorld.Initialize();
+            Entity* owner = sourceWorld.SpawnEntity<Entity>();
+            assert(owner != nullptr);
+            auto* arm = sourceWorld.CreateComponent<Component::SpringArmComponent>(owner);
+            assert(arm != nullptr);
+            Entity* pivot = sourceWorld.SpawnEntity<Entity>(bCrossRoot ? nullptr : owner);
+            assert(pivot != nullptr);
+            assert(arm->SetPivot(pivot));
+            const uint64_t savedPivotId = pivot->GetObjectId();
+            assert(Scene::SceneSerializer::SaveToFile(sourceWorld, filePath));
+
+            {
+                auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                    filePath, NorvesLib::FileStream::FileMode::Read, NorvesLib::FileStream::FileAccess::Read);
+                assert(stream && stream->IsOpen());
+                Scene::SceneDocument document;
+                assert(Scene::SceneSerializer::TryParseJson(stream->ReadString(), document));
+                assert(document.Roots.size() == (bCrossRoot ? 2u : 1u));
+                const auto& ownerRecord = document.Roots[0].Root;
+                assert(ownerRecord.Components.size() == 1);
+                const auto* reference = FindPropertyRecord(ownerRecord.Components[0].Object, "PivotObjectId");
+                assert(reference != nullptr && reference->TypeName == "EntityRefId");
+                const auto& pivotRecord = bCrossRoot ? document.Roots[1].Root : ownerRecord.Children[0];
+                char expected[64] = {};
+                std::snprintf(expected, sizeof(expected), "%u:%llu", bCrossRoot ? 1u : 0u,
+                              static_cast<unsigned long long>(pivotRecord.Alias));
+                assert(reference->Value == expected);
+            }
+
+            World loadedWorld;
+            loadedWorld.Initialize();
+            Entity* existing = loadedWorld.SpawnEntity<Entity>();
+            assert(existing != nullptr);
+            Scene::SceneLoadStats stats;
+            assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, filePath, &stats));
+            assert(stats.LoadedRoots == (bCrossRoot ? 2u : 1u));
+            assert(stats.DroppedEntities == 0 && stats.DroppedComponents == 0 && stats.DroppedProperties == 0);
+            const auto loadedRoots = loadedWorld.GetRootEntities();
+            assert(loadedRoots.size() == (bCrossRoot ? 3u : 2u) && loadedRoots[0] == existing);
+            Entity* loadedOwner = loadedRoots[1];
+            Entity* loadedPivot = bCrossRoot ? loadedRoots[2] : loadedOwner->GetChildEntities()[0];
+            const auto* loadedArm = loadedOwner->GetComponent<Component::SpringArmComponent>();
+            assert(loadedArm != nullptr);
+            assert(loadedPivot->GetObjectId() != savedPivotId);
+            assert(loadedArm->GetPivotObjectId() == loadedPivot->GetObjectId());
+            assert(loadedArm->ResolvePivot() == loadedPivot);
+            loadedWorld.Finalize();
+            sourceWorld.Finalize();
+        }
+        assert(std::remove(filePath.c_str()) == 0);
+    }
+
+    // v2のObjectId参照を移行し、文書と生成後の両方で参照先を保つことを確かめる。
+    void TestV2EntityReferenceMigration()
+    {
+        RegisterRequiredClasses();
+        (void)Component::SpringArmComponent::StaticClass();
+        const char* filePath = "SceneFileRoundTripTest.entity-ref-v2.scene.json";
+        const char* legacyJson = R"json({
+            "formatVersion": 2, "module": "NorvesLib", "roots": [{
+                "formatVersion": 2, "rootAlias": "41", "rootPath": "", "root": {
+                    "alias": "41", "parentAlias": "0",
+                    "object": {"class": "Entity", "classId": "0", "path": "", "properties": [{
+                        "name": "ObjectId", "propertyId": "0", "type": "uint64", "typeId": "0", "value": "123"
+                    }]},
+                    "components": [{"alias": "89", "ownerAlias": "41", "object": {
+                        "class": "SpringArmComponent", "classId": "0", "path": "", "properties": [{
+                            "name": "PivotObjectId", "propertyId": "0", "type": "uint64", "typeId": "0", "value": "456"
+                        }]
+                    }}], "children": []
+                }
+            }, {
+                "formatVersion": 2, "rootAlias": "77", "rootPath": "", "root": {
+                    "alias": "77", "parentAlias": "0",
+                    "object": {"class": "Entity", "classId": "0", "path": "", "properties": [{
+                        "name": "ObjectId", "propertyId": "0", "type": "uint64", "typeId": "0", "value": "456"
+                    }]}, "components": [], "children": []
+                }
+            }]
+        })json";
+        std::FILE* file = nullptr;
+        fopen_s(&file, filePath, "wb");
+        assert(file != nullptr);
+        assert(std::fwrite(legacyJson, 1, std::strlen(legacyJson), file) == std::strlen(legacyJson));
+        assert(std::fclose(file) == 0);
+
+        Scene::SceneDocument document;
+        assert(Scene::SceneSerializer::TryParseJson(Container::String(legacyJson), document));
+        assert(document.FormatVersion == 3 && document.Roots.size() == 2);
+        assert(document.Roots[0].FormatVersion == 3 && document.Roots[1].FormatVersion == 3);
+        const auto* reference = FindPropertyRecord(document.Roots[0].Root.Components[0].Object, "PivotObjectId");
+        const TypeInfo* referenceType = TypeRegistry::Get().Find(TypeRegistry::Get().GetTypeId<EntityRefId>());
+        assert(referenceType != nullptr && reference != nullptr);
+        assert(reference->TypeName == "EntityRefId" && reference->TypeId == referenceType->StableId);
+        assert(reference->Value == "1:77");
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        assert(loadedWorld.SpawnEntity<Entity>() != nullptr);
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats));
+        assert(stats.LoadedRoots == 2 && stats.DroppedProperties == 0);
+        const auto loadedRoots = loadedWorld.GetRootEntities();
+        assert(loadedRoots.size() == 3);
+        const auto* loadedArm = loadedRoots[1]->GetComponent<Component::SpringArmComponent>();
+        assert(loadedArm != nullptr);
+        assert(loadedArm->GetPivotObjectId() == loadedRoots[2]->GetObjectId());
+        assert(loadedArm->ResolvePivot() == loadedRoots[2]);
+        loadedWorld.Finalize();
+        assert(std::remove(filePath) == 0);
+    }
+
+    void TestLoadedRootsCleanup()
+    {
+        RegisterRequiredClasses();
+        constexpr const char* filePath = "SceneFileRoundTripTest.scope.scene.json";
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* first = sourceWorld.SpawnEntity<Entity>();
+        Entity* second = sourceWorld.SpawnEntity<Entity>();
+        assert(first != nullptr && second != nullptr);
+        first->getName() = Container::String("FirstRoot");
+        second->getName() = Container::String("SecondRoot");
+        Entity* child = sourceWorld.SpawnEntity<Entity>(first);
+        assert(child != nullptr);
+        child->getName() = Container::String("Child");
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(filePath)));
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Entity* existing = loadedWorld.SpawnEntity<Entity>();
+        assert(existing != nullptr);
+        const uint64_t existingId = existing->GetObjectId();
+        const size_t originalCount = loadedWorld.GetObjectCount();
+
+        Container::VariableArray<Entity*> roots;
+        roots.push_back(existing);
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats, &roots));
+        assert(stats.LoadedRoots == 2);
+        assert(roots.size() == 2);
+        assert(roots[0] != nullptr && roots[1] != nullptr);
+        assert(roots[0] != existing && roots[1] != existing && roots[0] != roots[1]);
+        const Container::String firstName = roots[0]->getName();
+        const Container::String secondName = roots[1]->getName();
+        assert(firstName == "FirstRoot");
+        assert(secondName == "SecondRoot");
+        assert(roots[0]->GetParentEntity() == nullptr && roots[1]->GetParentEntity() == nullptr);
+        const Container::VariableArray<Entity*> loadedChildren = roots[0]->GetChildEntities();
+        assert(loadedChildren.size() == 1 && loadedChildren[0] != nullptr);
+        const Container::String childName = loadedChildren[0]->getName();
+        assert(childName == "Child");
+        assert(loadedChildren[0]->GetParentEntity() == roots[0]);
+        assert(roots[1]->GetChildEntities().empty());
+
+        const uint64_t firstId = roots[0]->GetObjectId();
+        const uint64_t secondId = roots[1]->GetObjectId();
+        const uint64_t childId = loadedChildren[0]->GetObjectId();
+        assert(loadedWorld.FindEntityByObjectId(firstId) == roots[0]);
+        assert(loadedWorld.FindEntityByObjectId(secondId) == roots[1]);
+        assert(loadedWorld.FindEntityByObjectId(childId) == loadedChildren[0]);
+        assert(loadedWorld.GetObjectCount() == originalCount + 2);
+
+        GameMode::GameModeScope scope(&loadedWorld, nullptr);
+        for (Entity* root : roots)
+        {
+            scope.TrackObject(root);
+        }
+        scope.Cleanup();
+        assert(scope.IsEmpty());
+        assert(loadedWorld.FindEntityByObjectId(firstId) == nullptr);
+        assert(loadedWorld.FindEntityByObjectId(secondId) == nullptr);
+        assert(loadedWorld.FindEntityByObjectId(childId) == nullptr);
+        assert(loadedWorld.FindEntityByObjectId(existingId) == existing);
+        assert(loadedWorld.GetObjectCount() == originalCount);
+
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(std::remove(filePath) == 0);
+    }
+
     void TestLoadFailures()
     {
         RegisterRequiredClasses();
@@ -650,10 +957,15 @@ int main()
 
     TestSaveLoadRoundTrip();
     TestViewClearancePropertiesSaveLoadRoundTrip();
+    TestSkyOccluderPropertiesSaveLoadRoundTrip();
     TestTerrainPropertiesSaveLoadRoundTrip();
     TestLegacyTerrainPropertiesUseDefaults();
     TestGrassPropertiesSaveLoadRoundTrip();
     TestLegacyGrassPropertiesUseDefaults();
+    TestSaveWriteFailurePreservesOriginal();
+    TestEntityReferencesSaveLoadRoundTrip();
+    TestV2EntityReferenceMigration();
+    TestLoadedRootsCleanup();
     TestLoadFailures();
 
     std::cout << "SceneFileRoundTripTest passed\n";

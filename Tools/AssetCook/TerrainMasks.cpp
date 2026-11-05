@@ -1,5 +1,7 @@
-﻿// 全体格子で湿り・地表・草密度を計算し、ペイントを適用する。
+﻿// 全体格子で湿り・地表・草密度・凹み度を計算し、ペイントを適用する。
 #include "TerrainMasks.h"
+
+#include "Thread/Thread.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,8 +22,10 @@ namespace NorvesLib::Tools::AssetCook
         using Core::Container::Span;
         using Core::Container::VariableArray;
 
+        constexpr uint32_t MaxPuddleBlurRadiusCells = 4096;
         constexpr size_t MaxSplatLayers = 8;
-        constexpr size_t SplatPaintGroup = 5;
+        constexpr size_t PuddlePaintGroup = 5;
+        constexpr size_t SplatPaintGroup = 6;
         constexpr size_t PaintGroupCount = SplatPaintGroup + MaxSplatLayers;
 
         template <typename... Args>
@@ -102,9 +106,10 @@ namespace NorvesLib::Tools::AssetCook
             VariableArray<FloodEntry> m_entries;
         };
 
-        void ComputeFlowAccumulation(const TerrainHeightGrid& grid, VariableArray<double>& accumulation)
+        void ComputeFlowAccumulation(const TerrainHeightGrid& grid, VariableArray<double>& accumulation, VariableArray<double>& filled)
         {
             const size_t count = grid.HeightsM.size();
+            filled.resize(count);
             constexpr size_t unvisited = std::numeric_limits<size_t>::max();
             constexpr size_t noReceiver = unvisited - 1;
             VariableArray<size_t> receiver(count, unvisited);
@@ -117,6 +122,7 @@ namespace NorvesLib::Tools::AssetCook
             const auto addBoundary = [&](size_t index)
             {
                 receiver[index] = noReceiver;
+                filled[index] = grid.HeightsM[index];
                 heap.Push({grid.HeightsM[index], sequence++, index});
             };
             for (uint32_t x = 0; x < grid.Width; ++x)
@@ -155,7 +161,8 @@ namespace NorvesLib::Tools::AssetCook
                             continue;
                         }
                         receiver[neighbor] = current.Index;
-                        heap.Push({std::max(grid.HeightsM[neighbor], current.Height), sequence++, neighbor});
+                        filled[neighbor] = std::max(grid.HeightsM[neighbor], current.Height);
+                        heap.Push({filled[neighbor], sequence++, neighbor});
                     }
                 }
             }
@@ -311,6 +318,34 @@ namespace NorvesLib::Tools::AssetCook
 
         bool ValidateRecipe(const TerrainRecipe& recipe, double cellSizeM, uint32_t maxCoordinate, AnsiString& error)
         {
+            const TerrainPuddleRule& puddle = recipe.Puddle;
+            const double blurRadius = std::ceil(3.0 * (puddle.BlurSigmaM / cellSizeM));
+            if (!std::isfinite(puddle.BlurSigmaM) || puddle.BlurSigmaM < 0.0 ||
+                !std::isfinite(blurRadius) || blurRadius > MaxPuddleBlurRadiusCells)
+            {
+                return Fail(error, "recipe.puddle.blur_sigma_m が無効です。有限の 0 以上の値を指定し、ceil(3*blur_sigma_m/CellSizeM) を 4096 以下にしてください。");
+            }
+            if (!std::isfinite(puddle.BlurFullM) || puddle.BlurFullM <= 0.0 ||
+                !std::isfinite(puddle.FillFullM) || puddle.FillFullM <= 0.0 ||
+                !std::isfinite(puddle.FlowRefCells) || puddle.FlowRefCells <= 0.0)
+            {
+                return Fail(error, "recipe.puddle.blur_full_m、recipe.puddle.fill_full_m または recipe.puddle.flow_ref_cells が無効です。有限で正の値を指定してください。");
+            }
+            if (!std::isfinite(puddle.BlurWeight) || puddle.BlurWeight < 0.0 ||
+                !std::isfinite(puddle.FillWeight) || puddle.FillWeight < 0.0 ||
+                !std::isfinite(puddle.FlowWeight) || puddle.FlowWeight < 0.0)
+            {
+                return Fail(error, "recipe.puddle.blur_weight、recipe.puddle.fill_weight または recipe.puddle.flow_weight が無効です。有限で 0 以上の重みを指定してください。");
+            }
+            if (!std::isfinite(puddle.SlopeStartDeg) || !std::isfinite(puddle.SlopeZeroDeg) ||
+                puddle.SlopeStartDeg > puddle.SlopeZeroDeg)
+            {
+                return Fail(error, "recipe.puddle.slope_start_deg または recipe.puddle.slope_zero_deg が無効です。有限の値を指定し、slope_start_deg を slope_zero_deg 以下にしてください。");
+            }
+            if (!ValidNoise(puddle.Noise) || !ValidNoiseCoordinates(puddle.Noise, cellSizeM, maxCoordinate))
+            {
+                return Fail(error, "recipe.puddle.noise.amplitude または recipe.puddle.noise.scale_m が無効です。有限の値、0 以上の amplitude、正の scale_m と計算可能な格子間隔を指定してください。");
+            }
             const TerrainWetnessRule& wet = recipe.Wetness;
             if (!std::isfinite(wet.FlowWeight) ||
                 !std::isfinite(wet.FlowRefCells) || wet.FlowRefCells <= 0.0 ||
@@ -350,6 +385,208 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
             return true;
+        }
+
+        // 呼び出しごとに全帯の終了を待つため、次の段は前段の完成した配列だけを読む。
+        template <typename BandFunction>
+        void RunRowBands(uint32_t height, uint32_t threadCount, VariableArray<NorvesLib::Thread::Thread>& workers,
+                         const BandFunction& function)
+        {
+            if (threadCount <= 1)
+            {
+                function(0, height);
+                return;
+            }
+            workers.clear();
+            try
+            {
+                for (uint32_t i = 0; i < threadCount; ++i)
+                {
+                    const uint32_t firstRow = static_cast<uint32_t>(static_cast<uint64_t>(height) * i / threadCount);
+                    const uint32_t endRow = static_cast<uint32_t>(static_cast<uint64_t>(height) * (i + 1) / threadCount);
+                    workers.emplace_back([firstRow, endRow, &function]()
+                    {
+                        function(firstRow, endRow);
+                    });
+                }
+            }
+            catch (...)
+            {
+                // 起動途中の失敗でも、参照した関数や作業配列の寿命内に全ワーカーを終える。
+                for (NorvesLib::Thread::Thread& worker : workers)
+                {
+                    worker.Join();
+                }
+                throw;
+            }
+            for (NorvesLib::Thread::Thread& worker : workers)
+            {
+                worker.Join();
+            }
+        }
+
+        // 点対称に折り返し、折り返し先も範囲外なら端の標本を参照する。
+        double ExtendedHeight(const VariableArray<double>& heights, size_t origin, size_t stride, uint32_t length, int64_t coordinate)
+        {
+            const int64_t last = static_cast<int64_t>(length) - 1;
+            if (coordinate < 0)
+            {
+                const size_t reflected = static_cast<size_t>(std::min(-coordinate, last));
+                return 2.0 * heights[origin] - heights[origin + reflected * stride];
+            }
+            if (coordinate > last)
+            {
+                const size_t reflected = static_cast<size_t>(std::max(2 * last - coordinate, int64_t{0}));
+                return 2.0 * heights[origin + static_cast<size_t>(last) * stride] - heights[origin + reflected * stride];
+            }
+            return heights[origin + static_cast<size_t>(coordinate) * stride];
+        }
+
+        bool CheckPuddleRows(const VariableArray<size_t>& failures, uint32_t width, AnsiString& error)
+        {
+            // 各行は最初の失敗だけを記録する。行の昇順で走査すると最小の標本添字になる。
+            for (size_t index : failures)
+            {
+                if (index != std::numeric_limits<size_t>::max())
+                {
+                    return Fail(error, "標本 (x=%zu, z=%zu) の凹み度の計算結果が非有限です。高さ・標本間隔・recipe.puddle の値を見直してください。",
+                                index % width, index / width);
+                }
+            }
+            return true;
+        }
+
+        bool ComputePuddle(const TerrainHeightGrid& grid, double cellSizeM, uint64_t seedHash, const TerrainRecipe& recipe,
+                           Span<const TerrainPaintImage> paints, const VariableArray<size_t>& paintGroup,
+                           const VariableArray<double>& accumulation, const VariableArray<double>& filled, uint32_t threadCount,
+                           VariableArray<uint8_t>& bytes, AnsiString& error)
+        {
+            const TerrainPuddleRule& rule = recipe.Puddle;
+            const double sigma = rule.BlurSigmaM / cellSizeM;
+            const int64_t radius = static_cast<int64_t>(std::ceil(3.0 * sigma));
+            const size_t count = grid.HeightsM.size();
+            // 配列とスレッド格納域はすべてワーカーを始める前に確保する。
+            VariableArray<double> kernel(static_cast<size_t>(2 * radius + 1));
+            VariableArray<double> blurX(count);
+            VariableArray<double> blurred(count);
+            VariableArray<size_t> failures(grid.Height, std::numeric_limits<size_t>::max());
+            if (threadCount == 0)
+            {
+                threadCount = std::max(1u, NorvesLib::Thread::Thread::GetHardwareConcurrency());
+            }
+            threadCount = std::min(threadCount, grid.Height);
+            VariableArray<NorvesLib::Thread::Thread> workers;
+            workers.reserve(threadCount);
+            if (radius > 0)
+            {
+                double sum = 0.0;
+                for (int64_t k = -radius; k <= radius; ++k)
+                {
+                    // σ が極小でも中心の重みは 1 とし、0/0 を避ける。
+                    const double distance = static_cast<double>(k) / sigma;
+                    const double weight = k == 0 ? 1.0 : std::exp(-0.5 * distance * distance);
+                    kernel[static_cast<size_t>(k + radius)] = weight;
+                    sum += weight;
+                }
+                for (double& weight : kernel)
+                {
+                    weight /= sum;
+                }
+                const auto blurBand = [&](bool bAlongX, uint32_t firstRow, uint32_t endRow)
+                {
+                    const VariableArray<double>& source = bAlongX ? grid.HeightsM : blurX;
+                    VariableArray<double>& target = bAlongX ? blurX : blurred;
+                    const uint32_t length = bAlongX ? grid.Width : grid.Height;
+                    const size_t stride = bAlongX ? 1 : grid.Width;
+                    for (uint32_t z = firstRow; z < endRow; ++z)
+                    {
+                        for (uint32_t x = 0; x < grid.Width; ++x)
+                        {
+                            const size_t index = static_cast<size_t>(z) * grid.Width + x;
+                            const size_t origin = bAlongX ? static_cast<size_t>(z) * grid.Width : x;
+                            const int64_t coordinate = bAlongX ? x : z;
+                            double value = 0.0;
+                            // 標本ごとの加算順は帯の分割に依らず、常に -r から +r。
+                            for (int64_t k = -radius; k <= radius; ++k)
+                            {
+                                value += kernel[static_cast<size_t>(k + radius)] *
+                                    ExtendedHeight(source, origin, stride, length, coordinate + k);
+                            }
+                            target[index] = value;
+                            if (!std::isfinite(value))
+                            {
+                                failures[z] = index;
+                                break;
+                            }
+                        }
+                    }
+                };
+                RunRowBands(grid.Height, threadCount, workers, [&](uint32_t first, uint32_t end)
+                {
+                    blurBand(true, first, end);
+                });
+                if (!CheckPuddleRows(failures, grid.Width, error))
+                {
+                    return false;
+                }
+                RunRowBands(grid.Height, threadCount, workers, [&](uint32_t first, uint32_t end)
+                {
+                    blurBand(false, first, end);
+                });
+                if (!CheckPuddleRows(failures, grid.Width, error))
+                {
+                    return false;
+                }
+            }
+            const VariableArray<double>& smooth = radius == 0 ? grid.HeightsM : blurred;
+            const double flowDenominator = std::log1p(rule.FlowRefCells);
+            const double noiseSpacing = rule.Noise.ScaleM / cellSizeM;
+            const uint64_t puddlePrefix = SplitMix64(seedHash ^ 2u);
+            constexpr double radiansToDegrees = 57.2957795130823208768;
+            RunRowBands(grid.Height, threadCount, workers, [&](uint32_t firstRow, uint32_t endRow)
+            {
+                for (uint32_t z = firstRow; z < endRow; ++z)
+                {
+                    const uint32_t prevZ = z == 0 ? z : z - 1;
+                    const uint32_t nextZ = z == grid.Height - 1 ? z : z + 1;
+                    for (uint32_t x = 0; x < grid.Width; ++x)
+                    {
+                        const size_t index = static_cast<size_t>(z) * grid.Width + x;
+                        const uint32_t prevX = x == 0 ? x : x - 1;
+                        const uint32_t nextX = x == grid.Width - 1 ? x : x + 1;
+                        const double h = grid.HeightsM[index];
+                        const double blurDepth = (smooth[index] - h) / rule.BlurFullM;
+                        const double fillDepth = (filled[index] - h) / rule.FillFullM;
+                        const double b = std::clamp(blurDepth, 0.0, 1.0);
+                        const double d = std::clamp(fillDepth, 0.0, 1.0);
+                        const double q = std::clamp(std::log1p(accumulation[index]) / flowDenominator, 0.0, 1.0);
+                        const double dhdx = HeightGradient(grid.HeightsM[static_cast<size_t>(z) * grid.Width + prevX],
+                            grid.HeightsM[static_cast<size_t>(z) * grid.Width + nextX], nextX - prevX, cellSizeM);
+                        const double dhdz = HeightGradient(grid.HeightsM[static_cast<size_t>(prevZ) * grid.Width + x],
+                            grid.HeightsM[static_cast<size_t>(nextZ) * grid.Width + x], nextZ - prevZ, cellSizeM);
+                        const double slope = std::atan(std::sqrt(dhdx * dhdx + dhdz * dhdz)) * radiansToDegrees;
+                        const double gate = 1.0 - Ramp(slope, rule.SlopeStartDeg, rule.SlopeZeroDeg);
+                        double noiseFactor = 1.0;
+                        if (rule.Noise.Amplitude != 0.0)
+                        {
+                            noiseFactor = 1.0 + rule.Noise.Amplitude *
+                                (2.0 * ValueNoise(puddlePrefix, x, z, noiseSpacing) - 1.0);
+                        }
+                        const double combined = (rule.BlurWeight * b + rule.FillWeight * d + rule.FlowWeight * q) *
+                            gate * std::max(0.0, noiseFactor);
+                        double p = std::clamp(combined, 0.0, 1.0);
+                        p = ApplyPaints(p, index, paintGroup, recipe, paints);
+                        if (!std::isfinite(blurDepth) || !std::isfinite(fillDepth) || !std::isfinite(q) ||
+                            !std::isfinite(slope) || !std::isfinite(noiseFactor) || !std::isfinite(combined) || !std::isfinite(p))
+                        {
+                            failures[z] = index;
+                            break;
+                        }
+                        bytes[index] = Quantize(p);
+                    }
+                }
+            });
+            return CheckPuddleRows(failures, grid.Width, error);
         }
 
         void QuantizeSplat(const double* raw, size_t layerCount, uint8_t* bytes)
@@ -479,7 +716,7 @@ namespace NorvesLib::Tools::AssetCook
     }
 
     bool ComputeTerrainMasks(const TerrainHeightGrid& grid, double cellSizeM, uint32_t seed, const TerrainRecipe& recipe,
-                             Span<const TerrainPaintImage> paints, TerrainMaskFields& outFields, AnsiString& outError)
+                             Span<const TerrainPaintImage> paints, TerrainMaskFields& outFields, AnsiString& outError, uint32_t threadCount)
     {
         outError.clear();
         try
@@ -540,6 +777,7 @@ namespace NorvesLib::Tools::AssetCook
                 case TerrainPaintTarget::Road: group = 2; break;
                 case TerrainPaintTarget::Rock: group = 3; break;
                 case TerrainPaintTarget::GrassDensity: group = 4; break;
+                case TerrainPaintTarget::Puddle: group = PuddlePaintGroup; break;
                 case TerrainPaintTarget::Splat:
                     if (rule.SplatLayerIndex >= recipe.SplatLayers.size())
                     {
@@ -555,12 +793,14 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             VariableArray<double> accumulation;
-            ComputeFlowAccumulation(grid, accumulation);
+            VariableArray<double> filled;
+            ComputeFlowAccumulation(grid, accumulation, filled);
             TerrainMaskFields result;
             result.Width = grid.Width;
             result.Height = grid.Height;
             result.MaskRgba.resize(count * 4);
             result.GrassR8.resize(count);
+            result.PuddleR8.resize(count);
             const size_t layerCount = recipe.SplatLayers.size();
             if (layerCount > 0)
             {
@@ -676,6 +916,11 @@ namespace NorvesLib::Tools::AssetCook
                     }
                     result.GrassR8[index] = Quantize(grass);
                 }
+            }
+            if (!ComputePuddle(grid, cellSizeM, seedHash, recipe, paints, paintGroups[PuddlePaintGroup],
+                               accumulation, filled, threadCount, result.PuddleR8, outError))
+            {
+                return false;
             }
             outFields = std::move(result);
             return true;

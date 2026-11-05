@@ -441,6 +441,56 @@ inline bool RayIntersectsTriangle(
     return true;
 }
 
+/**
+ * @brief レイと三角形の交差を両面から判定する。
+ * outU は v1、outV は v2 の重みで、交点は v0 + outU * (v1 - v0) + outV * (v2 - v0)。
+ * 交差しない場合、outT、outU、outV は変更しない。
+ */
+inline bool RayIntersectsTriangleBarycentric(
+    const Ray& ray,
+    const Vector3& v0,
+    const Vector3& v1,
+    const Vector3& v2,
+    float& outT,
+    float& outU,
+    float& outV)
+{
+    const Vector3 edge1 = v1 - v0;
+    const Vector3 edge2 = v2 - v0;
+    const Vector3 pvec = VectorUtils::Cross(ray.Direction, edge2);
+    const float det = VectorUtils::Dot(edge1, pvec);
+    if (std::fabs(det) <= Constants::EPSILON)
+    {
+        return false;
+    }
+
+    const float invDet = 1.0f / det;
+    const Vector3 tvec = ray.Origin - v0;
+    const float u = VectorUtils::Dot(tvec, pvec) * invDet;
+    if (u < 0.0f || u > 1.0f)
+    {
+        return false;
+    }
+
+    const Vector3 qvec = VectorUtils::Cross(tvec, edge1);
+    const float v = VectorUtils::Dot(ray.Direction, qvec) * invDet;
+    if (v < 0.0f || u + v > 1.0f)
+    {
+        return false;
+    }
+
+    const float t = VectorUtils::Dot(edge2, qvec) * invDet;
+    if (t < 0.0f)
+    {
+        return false;
+    }
+
+    outT = t;
+    outU = u;
+    outV = v;
+    return true;
+}
+
 inline bool OBBIntersectsAABB(const OBB& obb, const AABB& aabb)
 {
     const Vector3 aabbCenter = aabb.Center();

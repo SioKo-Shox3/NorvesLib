@@ -1,4 +1,7 @@
-﻿#include "Component/Component.h"
+﻿#include "Asset/AssetRef.h"
+#include "Component/Component.h"
+#include "Object/Reflection.h"
+#include "Text/JsonDocument.h"
 #include "Component/PointLightComponent.h"
 #include "Object/PrefabAsset.h"
 #include "Component/DirectionalLightComponent.h"
@@ -24,6 +27,25 @@ namespace Scene = NorvesLib::Core::Scene;
 
 namespace
 {
+    Container::String SceneVersionString(uint32_t version)
+    {
+        char buffer[16] = {};
+        std::snprintf(buffer, sizeof(buffer), "%u", version);
+        return Container::String(buffer);
+    }
+
+    using AssetComponentBase = Component::Component;
+
+    class SceneAssetRefComponent : public AssetComponentBase
+    {
+        REFLECTION_CLASS(SceneAssetRefComponent, AssetComponentBase)
+
+        PROPERTY(ModelAssetRef, Model)
+        PROPERTY(TextureAssetRef, Texture)
+    };
+
+    IMPLEMENT_CLASS(SceneAssetRefComponent, AssetComponentBase)
+
     constexpr float Epsilon = 0.0001f;
 
     bool Near(float lhs, float rhs)
@@ -325,6 +347,119 @@ namespace
         return json;
     }
 
+    // 参照の文字列保存、依存表、復元、不正パスの除外を同じ反射経路で確かめる。
+    void TestAssetRefSceneRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)SceneAssetRefComponent::StaticClass();
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        World world;
+        world.Initialize();
+        Entity* root = world.SpawnEntity<Entity>();
+        auto* component = world.CreateComponent<SceneAssetRefComponent>(root);
+        assert(component != nullptr);
+        ModelAssetRef model;
+        TextureAssetRef texture;
+        assert(model.TrySet("Models/x.glb"));
+        assert(texture.TrySet("Textures/x.png"));
+        component->getModel() = model;
+        component->getTexture() = texture;
+
+        Entity* child = world.SpawnEntity<Entity>(root);
+        auto* duplicate = world.CreateComponent<SceneAssetRefComponent>(child);
+        assert(duplicate != nullptr);
+        duplicate->getModel() = model;
+        assert(texture.TrySet("Models/x.glb"));
+        duplicate->getTexture() = texture;
+        assert(world.CreateComponent<SceneAssetRefComponent>(world.SpawnEntity<Entity>(child)) != nullptr);
+
+        Scene::SceneSaveStats saveStats;
+        saveStats.SavedRoots = 99;
+        saveStats.DroppedProperties = 99;
+        Container::VariableArray<EntitySubtreeSnapshot> captured;
+        assert(Scene::SceneSerializer::CaptureWorld(world, captured, &saveStats) == 1);
+        assert(saveStats.SavedRoots == 1 && saveStats.DroppedProperties == 0);
+        Scene::SceneDocument document = Scene::SceneSerializer::BuildDocument(captured);
+        const Container::String json = Scene::SceneSerializer::ToJson(document);
+        JsonDocument rawJson;
+        assert(JsonDocument::TryParse(json, rawJson));
+        const JsonValue rawRoot = rawJson.GetRoot();
+        const JsonValue properties = rawRoot.FindMember("roots").GetArrayElement(0).FindMember("root")
+            .FindMember("components").GetArrayElement(0).FindMember("object").FindMember("properties");
+        size_t found = 0;
+        for (size_t index = 0; index < properties.GetArraySize(); ++index)
+        {
+            const JsonValue property = properties.GetArrayElement(index);
+            if (property.FindMember("name").AsString() == "Model" ||
+                property.FindMember("name").AsString() == "Texture")
+            {
+                const bool bModel = property.FindMember("name").AsString() == "Model";
+                assert(property.FindMember("value").IsString());
+                assert(property.FindMember("value").AsString() == (bModel ? "Models/x.glb" : "Textures/x.png"));
+                assert(property.FindMember("type").AsString() ==
+                    (bModel ? ModelAssetRef::SchemaTypeName : TextureAssetRef::SchemaTypeName));
+                ++found;
+            }
+        }
+        assert(found == 2);
+        const JsonValue assets = rawRoot.FindMember("assets");
+        assert(assets.IsArray() && assets.GetArraySize() == 3);
+        const char* expectedPaths[] = {"Models/x.glb", "Models/x.glb", "Textures/x.png"};
+        const char* expectedKinds[] = {"Texture", "Model", "Texture"};
+        for (size_t index = 0; index < 3; ++index)
+        {
+            const JsonValue asset = assets.GetArrayElement(index);
+            assert(asset.FindMember("path").AsString() == expectedPaths[index]);
+            assert(asset.FindMember("kind").AsString() == expectedKinds[index]);
+            assert(asset.FindMember("variant").IsString() && asset.FindMember("variant").AsString().empty());
+        }
+        assert(Scene::SceneSerializer::TryParseJson(json, document));
+        assert(document.Assets.size() == 3);
+        for (size_t index = 0; index < 3; ++index)
+        {
+            assert(document.Assets[index].Path == expectedPaths[index]);
+            assert(document.Assets[index].Kind == (index == 1 ? Asset::AssetKind::Model : Asset::AssetKind::Texture));
+            assert(document.Assets[index].Variant.empty());
+        }
+
+        const char* invalidPaths[] = {nullptr, "C:/Assets/Models/x.glb", "../Models/x.glb"};
+        for (const char* invalidPath : invalidPaths)
+        {
+            Scene::SceneDocument candidate = document;
+            if (invalidPath)
+            {
+                auto& object = candidate.Roots[0].Root.Components[0].Object;
+                FindPropertyRecordByName(object, "Model")->Value = invalidPath;
+                FindPropertyRecordByName(object, "Texture")->Value = invalidPath;
+            }
+            Scene::SceneDocument parsed;
+            assert(Scene::SceneSerializer::TryParseJson(Scene::SceneSerializer::ToJson(candidate), parsed));
+            Container::VariableArray<EntitySubtreeSnapshot> reconciled;
+            Scene::SceneLoadStats loadStats;
+            assert(Scene::SceneSerializer::ReconcileWithSchema(parsed, reconciled, loadStats));
+            assert(loadStats.DroppedProperties == (invalidPath ? 2 : 0));
+            assert(reconciled.size() == 1);
+            auto prefab = registry.CreateTransient<PrefabAsset>("SceneAssetRefRoundTrip");
+            assert(prefab != nullptr);
+            prefab->SetTree(reconciled[0]);
+            World loadedWorld;
+            loadedWorld.Initialize();
+            Entity* restored = loadedWorld.SpawnPrefab(*prefab);
+            assert(restored != nullptr);
+            auto* restoredComponent = restored->GetComponent<SceneAssetRefComponent>();
+            assert(restoredComponent != nullptr);
+            const ModelAssetRef restoredModel = restoredComponent->getModel();
+            const TextureAssetRef restoredTexture = restoredComponent->getTexture();
+            assert(restoredModel.GetLogicalPath() == Container::StringView(invalidPath ? "" : "Models/x.glb"));
+            assert(restoredTexture.GetLogicalPath() == Container::StringView(invalidPath ? "" : "Textures/x.png"));
+            loadedWorld.Finalize();
+            prefab.reset();
+        }
+        world.Finalize();
+        registry.Shutdown();
+    }
+
     void TestJsonRoundTripAndSpawn()
     {
         RegisterRequiredClasses();
@@ -517,7 +652,7 @@ namespace
         // (f) root単位のformatVersion不一致 → 警告付きでルート部分木ごとdrop（トップレベルと同方針の寛容版）
         {
             Scene::SceneDocument versioned = document;
-            versioned.Roots[0].FormatVersion = 3;
+            versioned.Roots[0].FormatVersion = Scene::SceneSerializer::SceneFileFormatVersion + 1;
             Scene::SceneLoadStats stats;
             Container::VariableArray<EntitySubtreeSnapshot> reconciled;
             assert(Scene::SceneSerializer::ReconcileWithSchema(versioned, reconciled, stats));
@@ -541,7 +676,7 @@ namespace
 
         error = Container::String();
         assert(!Scene::SceneSerializer::TryParseJson(
-            Container::String("{\"formatVersion\":3,\"roots\":[]}"), document, &error));
+            Container::String("{\"formatVersion\":") + SceneVersionString(Scene::SceneSerializer::SceneFileFormatVersion + 1) + ",\"roots\":[]}", document, &error));
         assert(!error.empty());
 
         error = Container::String();
@@ -1187,8 +1322,8 @@ namespace
         sourceRoots.push_back(BuildSourceSnapshot(world));
 
         const Scene::SceneDocument v2 = Scene::SceneSerializer::BuildDocument(sourceRoots);
-        assert(v2.FormatVersion == 2);
-        assert(v2.Roots[0].FormatVersion == 2);
+        assert(v2.FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion);
+        assert(v2.Roots[0].FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion);
         assert(FindPropertyRecordByName(
                    const_cast<Scene::SceneObjectRecord&>(v2.Roots[0].Root.Components[0].Object),
                    "IntensityUnit") != nullptr);
@@ -1205,8 +1340,8 @@ namespace
         Scene::SceneDocument migrated;
         Container::String error;
         assert(Scene::SceneSerializer::TryParseJson(v1Json, migrated, &error));
-        assert(migrated.FormatVersion == 2);
-        assert(migrated.Roots[0].FormatVersion == 2);
+        assert(migrated.FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion);
+        assert(migrated.Roots[0].FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion);
         Scene::SceneObjectRecord& migratedLight = migrated.Roots[0].Root.Components[0].Object;
         Scene::ScenePropertyRecord* unit = FindPropertyRecordByName(migratedLight, "IntensityUnit");
         Scene::ScenePropertyRecord* color = FindPropertyRecordByName(migratedLight, "LightColor");
@@ -1257,6 +1392,7 @@ int main()
 {
     std::cout << "SceneSerializerTest start\n";
 
+    TestAssetRefSceneRoundTrip();
     TestJsonRoundTripAndSpawn();
     TestReconcileResilience();
     TestParseFailures();

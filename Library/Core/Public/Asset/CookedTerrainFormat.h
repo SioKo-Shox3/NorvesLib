@@ -22,6 +22,9 @@ namespace NorvesLib::Core::Asset
         inline constexpr uint32_t MaxLayerCount = 16;
         inline constexpr uint32_t MaxSemanticBytes = 255;
         inline constexpr AssetPackageFourCC HeightLayerFourCC = MakeAssetPackageFourCC('H', 'G', 'T', '0');
+        // R8UNorm・線形の埋め込み NVTEX。R は凹み度（0..255 → 0..1）、層が無い古いデータは 0 として読む。
+        inline constexpr AssetPackageFourCC PuddleLayerFourCC = MakeAssetPackageFourCC('P', 'D', 'L', '0');
+        inline constexpr const char* PuddleSemantic = "terrain.puddle.potential";
         inline constexpr AssetPackageFourCC PackageEntryType = MakeAssetPackageFourCC('T', 'r', 'n', '0');
         inline constexpr const char* ManifestFormat = "nvtrn.v0.height16";
         // 高さは z 行ごとに x 昇順の uint16 リトルエンディアン標本。
