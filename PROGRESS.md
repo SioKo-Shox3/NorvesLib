@@ -10237,3 +10237,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
 - Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
 - Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。
+
+- U1 Entity::IsActiveInHierarchy を足し CanDispatchEntity をそれに寄せる: 着地(直し 0 回)
+- U2 PhysicsModule の寿命判定を IsActiveInHierarchy にし、所有者ごとの全走査を索引にする: 着地(直し 0 回)
+- U3 EntityActiveInHierarchyTest: 着地(直し 1 回)
+- U4 PhysicsParentDormancyTest とタスクの verify: 着地(直し 0 回)
+## 2026-11-05 G12-GR41-PARENT-DORMANCY（run 20261105-193213 の反復 1、完了）
+- Done: `Entity::IsActiveInHierarchy()` を足した（自分と祖先が Active で破棄予約でない。ECS の `EcsPropagatedTransform::bEffectiveActive` が新しければそれを読み、作成予約・付け替え待ち・未伝播の Active/PendingDestroy・親子の変更があるときは祖先をたどる）。`World::CanDispatchEntity` は World と TickEnabled の確認のあとこれを呼ぶ。キャッシュの新しさは新設の `EcsTransformSystem::HasUnpropagatedActiveChanges()`（EcsEntityFlags と EcsHierarchy の変更ログ）で見る（Flags だけでは `ReparentEntity` の直後に古い値を読んでいた）。`PhysicsModule::IsColliderLifecycleActive`・`IsBodyLifecycleActive` は所有者の `IsActiveInHierarchy()` を見る。`ReconcileActiveStates` と `IsBodyLifecycleActive` の所有者ごとのコライダーの全走査は `m_ColliderSlotByOwner` で引く。Dynamic のボディが親を持つと捨てる規則は変えていない。`Docs/Architecture/PhysicsQueries.md` に「休眠でも OverlapEnd が来る」を足した。試験 `EntityActiveInHierarchyTest`（EntityTreeTest の束）と `PhysicsParentDormancyTest`（PhysicsDynamicsTest の束）を足した。
+- 証拠: `.harness/runs/20261105-193213/verify-G12-GR41-PARENT-DORMANCY.txt`（`cmake --build build --config Debug --target EntityTreeTest PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の EXIT_CODE 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
+- Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
+- Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
+- Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
