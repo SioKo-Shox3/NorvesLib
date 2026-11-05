@@ -10319,3 +10319,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 撮った画像がそのまま地図の向き（上 +Z・右 −X）になる根拠は、`CreateLookAt`（forward=−Y・up=+Z で view の x = −X、y = +Z）と Vulkan の `AdjustProjectionForClipSpace` の Y 反転（`BuildForDevice` の既定 true）。`MapCapturePlanTest` はこの合成（投影 × diag(1,−1,−1) × ビュー）で角と非対称な 3 点を写し、crop と地図の画素に 0.01 画素以内で一致することを確かめている。実機の画像での確かめは撮影の段。
 - Notes: 計画の座標は double、`CameraProxy` の位置は float なので、ワールドの原点から数 km 離れた範囲では位置の丸め（2 km で約 2.4e-4 m ≈ 5e-4 画素）が乗る。
 - Notes: VFX の層の選択肢（`VfxSchema.cpp` の kLayerNames、`VfxEffectSystem.cpp` の layers）は Default・Transparent・UI だけで、MapVisible は入れていない（エフェクトは地図に載せない）。
+
+- U3 起動引数 --job-workers=<N> でワーカーの数を変えられるようにする: 着地(直し 0 回)
+- U1 空転と負荷下の ParallelFor の試験を足し、修理前の結果を記録する: 着地(直し 2 回)
+- U2 ワーカーの待ちを未着手のタスクの数にし、取得をキューごとのロックにする: 着地(直し 0 回)
+
+## G12-GR108-JOBSYSTEM-WAIT（2026-11-05）
+
+- Done: JobSystem のワーカーは「まだ取られていないタスクの数」（`m_pendingTaskCount`。積む前に増やし、どこかのキューから取り出したときに減らす）で述語付きの待ちをし、述語に効く変更（提出・停止・縮小）は起床専用のミューテックスを取ってから通知する。取得は全体のロック（`m_workerThreadMutex`）を外し、ローカルキューの配列は読み書きロック、各キューは自分のミューテックスで守る（`WorkStealingQueue` は任意のスレッドが Push し `WaitForAll` が 0 番を Pop するので、全操作をロックする両端キューにした）。盗みは全キューを一周する。取得が提出の門を通らなくなったため、`m_queuedTaskCount` の加算も積む前へ移した（取得と完了が加算を追い越して数が残り続けるのを防ぐ）。起動引数 `--job-workers=<N>`（1〜256）でワーカーの数を変えられる（既定は今のまま hardware_concurrency - 1）。
+- 試験: `JobSystemIdleCpuTest`（500 ms の忙しいタスク 1 本と、ワーカー数 × 4 本の空のタスクでワーカーを起こした状態で、プロセスの CPU 時間 <= 1000 ms かつ プロセスのサイクル数 / 長いタスク自身のサイクル数 <= 2.0）、`ParallelForLatencyUnderLoadTest`（64 本の長いタスクで塞いだ状態の ParallelFor が直列の 1.5 倍以下、全番号ちょうど 1 回）。修理の前は IdleCpu が 5 回とも比 6.38〜6.65 で失敗（`.harness/runs/20261105-203938/aux-GR108-idlecpu-before-fix.txt`）、修理の後は 5 回とも比 1.009〜1.010 で合格。Latency は比 1.0009。
+- 証拠: `.harness/runs/20261105-203938/verify-G12-GR108-JOBSYSTEM-WAIT.txt`（`cmake --build build --config Debug --target JobSystemShutdownTest EntityTreeTest -- /m:1` の build_exit=0、ctest の 7 本 100% tests passed, 0 tests failed out of 7、JobSystemShutdownTest・JobParallelForTest・JobSystemIdleCpuTest の各 5 回の繰り返しも全部 Passed、numstat の 2 通りが一致）。
+- Next: ランナーの評価者の反証（ジョブ・スレッドの危険地帯）。既定のワーカーの数は G12-GR108-PERF-CHECK の測定で決める。`--job-workers` の起動時の解釈は Game を起動していないので未確認（ビルドだけ確かめた）。
+- Notes: IdleCpu の判定に、done-when の 1000 ms に加えてサイクル数の比 2.0（同じ「走るタスク 1 本ぶんの 2 倍」の根拠）を足した。`GetProcessTimes` は時刻割り込みの標本化で、同じ PC でほかのアプリが動いていると修理前でも 171〜390 ms しか計上されず合格してしまう回があったため。
+- Notes: 提出の 1 本ごとの起床は今も NotifyOne。ParallelFor の補助は HIGH 優先度だがローカルキューは優先度を見ない（前からの振る舞い）。
