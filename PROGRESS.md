@@ -9860,3 +9860,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 AnimatorComponent に視線の目標の口と同期グループの名前引きを足す: 着地(直し 0 回)
 - U3 BodyLeanModifier（type Lean）と試験のファイルを足す: 着地(直し 0 回)
 - U4 SpineWaveModifier（type Spine）を足す: 着地(直し 0 回)
+- U5 LookAtModifier（type Look）を足す: 着地(直し 0 回)

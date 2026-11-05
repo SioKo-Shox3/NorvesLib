@@ -1,5 +1,6 @@
 ﻿// 手続きチェーンの姿勢変更を、角度とモデル空間の位置で検証する。
 #include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/Procedural/LookAtModifier.h"
 #include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletonResource.h"
 #include "Component/AnimatorComponent.h"
@@ -463,10 +464,171 @@ namespace
         Require(byteDifference == 0, "重みゼロで姿勢がビット一致");
         world.Finalize();
     }
+
+    void TestLookAt()
+    {
+        ChainFixture fixture(ParamConfig, true);
+        fixture.SetWorldRotation(Math::Quaternion(Math::Vector3::UnitY, -0.61f));
+        NorvesLib::Core::World world;
+        world.Initialize();
+        auto* owner = world.SpawnEntity<NorvesLib::Core::Entity>();
+        Require(owner != nullptr, "Look の所有者を作成");
+        auto* animator = world.CreateComponent<NorvesLib::Core::Component::AnimatorComponent>(owner);
+        Require(animator != nullptr, "Look の Animator を作成");
+        constexpr char config[] =
+            R"({"version":1,"modifiers":[{"type":"Look","settings":{"chain":[{"joint":"Spine0","weight":0.2},{"joint":"Spine1","weight":0.3},{"joint":"Spine2","weight":0.5}]}}]})";
+
+        // 設定ラッパーが包む前の組み込みインスタンスから、診断値を借りて読む。
+        struct Probe
+        {
+            static Procedural::LookAtModifier*& Last()
+            {
+                static Procedural::LookAtModifier* value = nullptr;
+                return value;
+            }
+            static Procedural::PoseModifierFactory& Factory()
+            {
+                static Procedural::PoseModifierFactory value = nullptr;
+                return value;
+            }
+            static bool Create(const Procedural::PoseModifierCreateArgs& args,
+                               Container::TSharedPtr<Animation::IPoseModifier>& out,
+                               Procedural::PoseModifierConfigReport& report)
+            {
+                if (!Factory()(args, out, report))
+                {
+                    return false;
+                }
+                Last() = static_cast<Procedural::LookAtModifier*>(out.operator->());
+                return true;
+            }
+        };
+        Container::VariableArray<Procedural::PoseModifierTypeEntry> entries;
+        for (auto entry : Procedural::GetBuiltinPoseModifierTypes().Entries)
+        {
+            if (std::strcmp(entry.Name, "Look") == 0)
+            {
+                Probe::Factory() = entry.Create;
+                entry.Create = &Probe::Create;
+            }
+            entries.push_back(entry);
+        }
+        Require(Probe::Factory() != nullptr, "Look の組み込み登録");
+        struct Created
+        {
+            Container::TSharedPtr<Animation::IPoseModifier> Modifier;
+            Procedural::LookAtModifier* State;
+        };
+        const auto create = [&]() {
+            Procedural::PoseModifierConfigReport report;
+            Container::VariableArray<Container::TSharedPtr<Animation::IPoseModifier>> modifiers;
+            Require(Procedural::ParsePoseModifierConfig(Container::String(config), *fixture.Skeleton,
+                                                       &fixture.Parameters, {entries}, modifiers, report) &&
+                        modifiers.size() == 1 && modifiers[0]->Order() == Procedural::PoseModifierDefaultOrder::Look,
+                    "組み込み Look の設定読み込み");
+            return Created{modifiers[0], Probe::Last()};
+        };
+        const auto& rest = fixture.Skeleton->GetPoseRuntime().AuthorRestLocal;
+        const auto lookAxis = Math::QuaternionUtils::Conjugate(ModelRotation(rest, 3)) * Math::Vector3::UnitZ;
+        Math::Vector3 restPositions[JointCount];
+        fixture.ModelPositions(rest, restPositions);
+        const auto setTarget = [&](const Math::Vector3& target) {
+            animator->SetLookTarget(10, NorvesLib::Core::Component::AnimatorLookTarget::AtWorldPosition(
+                                           Math::MatrixUtils::TransformPointRowVector(fixture.MeshToWorld, target)));
+        };
+        const auto apply = [&](Created& modifier) {
+            auto pose = rest;
+            Animation::PoseModifierContext context(fixture.Skeleton->GetPoseRuntime(), Step, fixture.Parameters,
+                                                   fixture.Instance, pose, fixture.Scratch, fixture.Model);
+            context.MeshToWorld = fixture.MeshToWorld;
+            context.MeshNodeTransform = fixture.MeshNode;
+            context.SetOwner(owner);
+            Require(modifier.Modifier->Apply(pose, context), "Look の適用");
+            return pose;
+        };
+        constexpr double degreesPerRadian = 180.0 / double(Math::Constants::PI);
+
+        auto inside = create();
+        const auto target = restPositions[3] + Math::Vector3(2.0f, 1.0f, 4.0f);
+        setTarget(target);
+        auto pose = rest;
+        for (int i = 0; i < SettlingFrames; ++i)
+        {
+            pose = apply(inside);
+        }
+        Math::Vector3 positions[JointCount];
+        fixture.ModelPositions(pose, positions);
+        const auto forward = Math::VectorUtils::Normalize(ModelRotation(pose, 3) * lookAxis);
+        const auto direction = Math::VectorUtils::Normalize(target - positions[3]);
+        const auto cross = Math::Vector3::Cross(forward, direction);
+        const double aimErrorDeg = std::atan2(double(Math::VectorUtils::Length(cross)),
+                                              double(Math::Vector3::Dot(forward, direction))) * degreesPerRadian;
+        std::printf("LookAt case=1 aim_error_deg=%.12g limit_deg=1\n", aimErrorDeg);
+        Require(std::isfinite(aimErrorDeg) && aimErrorDeg <= 1.0,
+                "回転後の頭から見た円錐内目標との誤差が1度以内");
+
+        auto outside = create();
+        setTarget(restPositions[3] + Math::Vector3(10.0f, 0.0f, 0.0f));
+        for (int i = 0; i < SettlingFrames; ++i)
+        {
+            pose = apply(outside);
+        }
+        const auto limitedForward = ModelRotation(pose, 3) * lookAxis;
+        const double limitedYawDeg = std::atan2(double(limitedForward.x), double(limitedForward.z)) * degreesPerRadian;
+        const double yawErrorDeg = std::fabs(limitedYawDeg - 70.0);
+        std::printf("LookAt case=2 yaw_deg=%.12g yaw_error_deg=%.12g limit_deg=0.1\n", limitedYawDeg, yawErrorDeg);
+        Require(std::isfinite(yawErrorDeg) && yawErrorDeg <= 0.1, "円錐外の目標はヨー制限端に収束");
+
+        auto switching = create();
+        setTarget(target);
+        double maxYawVelocityChange = 0.0;
+        double maxPitchVelocityChange = 0.0;
+        for (int i = 0; i < 2 * SettlingFrames + 15; ++i)
+        {
+            if (i == 15)
+            {
+                setTarget(restPositions[3] + Math::Vector3(-3.0f, -1.2f, 4.0f));
+            }
+            if (i == SettlingFrames + 15)
+            {
+                setTarget(restPositions[3] + Math::Vector3(2.5f, 1.5f, 4.0f));
+            }
+            const float previousYawVelocity = switching.State->GetYawVelocity();
+            const float previousPitchVelocity = switching.State->GetPitchVelocity();
+            pose = apply(switching);
+            maxYawVelocityChange = std::max(maxYawVelocityChange,
+                                            std::fabs(double(switching.State->GetYawVelocity()) - previousYawVelocity));
+            maxPitchVelocityChange = std::max(maxPitchVelocityChange,
+                                              std::fabs(double(switching.State->GetPitchVelocity()) - previousPitchVelocity));
+        }
+        const double velocityChangeLimit = 2000.0 * double(Math::Constants::PI) / 180.0 * Step;
+        std::printf("LookAt case=3 yaw_velocity_change_rad_s=%.12g pitch_velocity_change_rad_s=%.12g "
+                    "limit_rad_s=%.12g tolerance_rad_s=0.000001\n",
+                    maxYawVelocityChange, maxPitchVelocityChange, velocityChangeLimit);
+        Require(std::isfinite(maxYawVelocityChange) && std::isfinite(maxPitchVelocityChange) &&
+                    maxYawVelocityChange <= velocityChangeLimit + 1e-6 &&
+                    maxPitchVelocityChange <= velocityChangeLimit + 1e-6,
+                "収束中と収束後の目標切替で角速度差が加速度上限以下");
+
+        animator->ClearLookTarget(10);
+        for (int i = 0; i < SettlingFrames; ++i)
+        {
+            pose = apply(switching);
+        }
+        const double remainingYaw = std::fabs(double(switching.State->GetYaw()));
+        const double remainingPitch = std::fabs(double(switching.State->GetPitch()));
+        std::printf("LookAt case=4 remaining_yaw_rad=%.12g remaining_pitch_rad=%.12g limit_rad=0.001\n",
+                    remainingYaw, remainingPitch);
+        Require(std::isfinite(remainingYaw) && std::isfinite(remainingPitch) &&
+                    remainingYaw < 1e-3 && remainingPitch < 1e-3,
+                "目標解除でアニメーションの姿勢へ戻る");
+        world.Finalize();
+    }
 } // 無名名前空間
 
 void TestProceduralChainModifier()
 {
     TestBodyLean();
     TestSpineWave();
+    TestLookAt();
 }
