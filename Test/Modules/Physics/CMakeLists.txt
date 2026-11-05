@@ -65,6 +65,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsRayPrecisionTest PhysicsRayPrecisionTest.cpp
     MEMBER PhysicsQueryPruningTest PhysicsQueryPruningTest.cpp
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
+    MEMBER PhysicsHeightFieldColliderTest PhysicsHeightFieldColliderTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
     MEMBER PhysicsGroundQueryIntegrationTest PhysicsGroundQueryIntegrationTest.cpp
@@ -117,6 +118,7 @@ add_test(NAME PhysicsRayPrecisionTest COMMAND PhysicsDynamicsTest --test=Physics
 add_test(NAME PhysicsQueryPruningTest COMMAND PhysicsDynamicsTest --test=PhysicsQueryPruningTest)
 
 add_test(NAME PhysicsLegacyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsLegacyQueryTest)
+add_test(NAME PhysicsHeightFieldColliderTest COMMAND PhysicsDynamicsTest --test=PhysicsHeightFieldColliderTest)
 
 add_test(NAME PhysicsCharacterMoveTest COMMAND PhysicsDynamicsTest --test=PhysicsCharacterMoveTest)
 add_test(NAME ColliderLocalPoseTest COMMAND PhysicsDynamicsTest --test=ColliderLocalPoseTest)

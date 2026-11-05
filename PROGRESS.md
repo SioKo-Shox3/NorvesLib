@@ -9844,3 +9844,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 接触の分岐を明示にし、地形を SAP の外の別枠で候補の組にする: 着地(直し 0 回)
 - U5 コライダーに高さ場の形と表面の番号を足す: 着地(直し 0 回)
 - U7 Physics 側に地形のコライダーを付ける口を置き、草原で使う: 着地(直し 0 回)
+- U8 PhysicsHeightFieldColliderTest を足す（問い合わせ・拒否・QueryGround）: 着地(直し 0 回)
