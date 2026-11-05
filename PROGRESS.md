@@ -10247,3 +10247,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(G12-GR92-ASSETREF-SCENE-V3): 論理パスの資産参照 TAssetRef と Entity 参照 EntityRefId を足し、RuntimeSchema が型の側の文字列化を扱う。シーンの形式は v3(v1 → v2 → v3 の移行、先頭の assets の依存の表、SceneSaveStats、一時ファイルからの置換による保存)。EntityRefId はファイルでは「ルートの添字:alias」で保存し、LoadIntoWorld が全ルートの生成の後に新しい ObjectId へ張り替える(v2 の uint64 の値も移行)。LoadIntoWorld は生成したルートを返し、LoadIntoWorldFromAsset で論理パス(AssetSystem::ResolveAsset の Raw)から読める。verify の 2 行(ビルド・ctest 10 本)と Game のビルドが終了コード 0。アプリを起動する確かめは無い。
 - Next(G12-GR92-ASSETREF-SCENE-V3): コンポーネントの非同期の束縛(G12-GR92-ASSET-BIND)、Prefab のファイル(G12-GR92-PREFAB-FILE)、Bridge(G12-GR92-BRIDGE-SCENE)。
 - Notes(G12-GR92-ASSETREF-SCENE-V3): EntityRefId の張り替えは BeginPlay の後に起きるので、BeginPlay の中で参照先を引くコンポーネントは張り替え前の 0 を見る(今の利用は Tick で引く SpringArmComponent だけ)。公開の ReconcileWithSchema の結果には EntityRefId のプロパティが入らない(張り替えの予定は LoadIntoWorld の内部だけが持つ)。保存の集合の外を指す参照は警告して参照なしで保存する。
+
+- U1 Entity::IsActiveInHierarchy を足し CanDispatchEntity をそれに寄せる: 着地(直し 0 回)
+- U2 PhysicsModule の寿命判定を IsActiveInHierarchy にし、所有者ごとの全走査を索引にする: 着地(直し 0 回)
+- U3 EntityActiveInHierarchyTest: 着地(直し 1 回)
+- U4 PhysicsParentDormancyTest とタスクの verify: 着地(直し 0 回)
+## 2026-11-05 G12-GR41-PARENT-DORMANCY（run 20261105-193213 の反復 1、完了）
+- Done: `Entity::IsActiveInHierarchy()` を足した（自分と祖先が Active で破棄予約でない。ECS の `EcsPropagatedTransform::bEffectiveActive` が新しければそれを読み、作成予約・付け替え待ち・未伝播の Active/PendingDestroy・親子の変更があるときは祖先をたどる）。`World::CanDispatchEntity` は World と TickEnabled の確認のあとこれを呼ぶ。キャッシュの新しさは新設の `EcsTransformSystem::HasUnpropagatedActiveChanges()`（EcsEntityFlags と EcsHierarchy の変更ログ）で見る（Flags だけでは `ReparentEntity` の直後に古い値を読んでいた）。`PhysicsModule::IsColliderLifecycleActive`・`IsBodyLifecycleActive` は所有者の `IsActiveInHierarchy()` を見る。`ReconcileActiveStates` と `IsBodyLifecycleActive` の所有者ごとのコライダーの全走査は `m_ColliderSlotByOwner` で引く。Dynamic のボディが親を持つと捨てる規則は変えていない。`Docs/Architecture/PhysicsQueries.md` に「休眠でも OverlapEnd が来る」を足した。試験 `EntityActiveInHierarchyTest`（EntityTreeTest の束）と `PhysicsParentDormancyTest`（PhysicsDynamicsTest の束）を足した。
+- 証拠: `.harness/runs/20261105-193213/verify-G12-GR41-PARENT-DORMANCY.txt`（`cmake --build build --config Debug --target EntityTreeTest PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の EXIT_CODE 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
+- Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
+- Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
+- Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
