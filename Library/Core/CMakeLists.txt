@@ -44,6 +44,8 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedTerrainLoader.cpp
     Private/Asset/CookedGrassFieldWriter.cpp
     Private/Asset/CookedGrassFieldLoader.cpp
+    Private/Asset/CookedScatterWriter.cpp
+    Private/Asset/CookedScatterLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -517,6 +519,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedTextureFormat.h
     Public/Asset/CookedTerrainFormat.h
     Public/Asset/CookedGrassFieldFormat.h
+    Public/Asset/CookedScatterFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h

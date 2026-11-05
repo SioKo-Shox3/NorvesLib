@@ -1,0 +1,83 @@
+﻿{
+  "version": 0,
+  "terrain": {
+    "path": "../TerrainSpecs/Grassland/GrasslandTerrain.json",
+    "cooked_hash": "1d620f39881e0053"
+  },
+  "chunk_size_m": 32,
+  "seed": 89021090,
+  "species": [
+    {
+      "name": "rock",
+      "render_path": "mega",
+      "lods": ["Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf"],
+      "mesh_radius_m": 1.25,
+      "min_spacing_m": 2.8,
+      "density": { "source": "layer", "layer": "MSK0", "channel": "a" },
+      "base_density_per_m2": 0.03,
+      "height_band_m": [20, 45],
+      "slope_band_deg": [25, 90],
+      "exclude": { "road_threshold": 0.25 },
+      "scale_range": [0.6, 1.1],
+      "slope_follow": 0.6,
+      "brightness_variation": 0.1,
+      "dry_from_mask": false,
+      "collision": false,
+      "wind": { "stiffness": 1.0, "phase_seed": 1 }
+    },
+    {
+      "name": "fallen_log",
+      "render_path": "mega",
+      "lods": ["Assets/Models/Grassland/FallenLog/FallenLog.gltf"],
+      "mesh_radius_m": 1.4,
+      "min_spacing_m": 3.0,
+      "density": { "source": "constant", "value": 1.0 },
+      "base_density_per_m2": 0.008,
+      "height_band_m": [20, 45],
+      "slope_band_deg": [0, 12],
+      "exclude": { "road_threshold": 0.25, "wetness": [0.0, 0.8] },
+      "scale_range": [0.7, 1.3],
+      "slope_follow": 0.35,
+      "brightness_variation": 0.12,
+      "dry_from_mask": true,
+      "collision": false,
+      "wind": { "stiffness": 1.0, "phase_seed": 2 }
+    },
+    {
+      "name": "shrub",
+      "render_path": "foliage",
+      "lods": ["Assets/Models/Grassland/Shrub/Shrub.gltf"],
+      "mesh_radius_m": 0.5,
+      "min_spacing_m": 1.4,
+      "density": { "source": "layer", "layer": "MSK0", "channel": "r" },
+      "base_density_per_m2": 0.09,
+      "height_band_m": [20, 45],
+      "slope_band_deg": [0, 25],
+      "exclude": { "road_threshold": 0.25, "wetness": [0.15, 0.8] },
+      "scale_range": [0.7, 1.3],
+      "slope_follow": 0.2,
+      "brightness_variation": 0.15,
+      "dry_from_mask": true,
+      "collision": false,
+      "wind": { "stiffness": 0.65, "phase_seed": 3 }
+    },
+    {
+      "name": "forb_clump",
+      "render_path": "foliage",
+      "lods": ["Assets/Models/Grassland/ForbClump/ForbClump.gltf"],
+      "mesh_radius_m": 0.35,
+      "min_spacing_m": 1.0,
+      "density": { "source": "constant", "value": 1.0 },
+      "base_density_per_m2": 0.1,
+      "height_band_m": [20, 45],
+      "slope_band_deg": [0, 25],
+      "exclude": { "road_threshold": 0.25, "wetness": [0.1, 0.85] },
+      "scale_range": [0.7, 1.3],
+      "slope_follow": 0.25,
+      "brightness_variation": 0.18,
+      "dry_from_mask": true,
+      "collision": false,
+      "wind": { "stiffness": 0.4, "phase_seed": 4 }
+    }
+  ]
+}
