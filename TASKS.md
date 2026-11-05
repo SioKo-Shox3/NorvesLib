@@ -4609,7 +4609,7 @@
 
 ## G2-S6-ASSET-SET-P3: `windows-assetcook.yml` を手動で起動し、直した `VerifyTextureAssetSet.py` の全体が CI で完走することを確かめる
 - status: todo
-- after: G2-S6-ASSET-SET-P6
+- after: G2-S6-ASSET-SET-P6, G2-S6-ASSET-SET-P7
 - done-when: 盤面が既にプッシュした統合ブランチ `feature/scene-launcher` を対象に、`gh workflow run windows-assetcook.yml --ref feature/scene-launcher` で 1 回だけ起動する。起動する前に、そのブランチの head に `66499489`(照合の直し)が含まれることを確かめる。ワーカーはプッシュしない。run が終わったら、結論が success であることを確かめる。あわせて、`VerifyTextureAssetSet.py` の段(失敗のときの検査を含む)と `texture_parity` が最後まで走ったことを、ジョブのログで確かめる。run の ID・URL・head の SHA・各段の結果を、PROGRESS.md と `ManagedTextureAssetSetCli.md` の受入れの節に書く。失敗したときは、原因とログの該当行を書き、直しは `要起票:` で残す(このタスクの中で再プッシュはしない)。
 - verify: `python -c "import json,subprocess,sys; r=json.loads(subprocess.check_output(['gh','run','list','--workflow','windows-assetcook.yml','--branch','feature/scene-launcher','--event','workflow_dispatch','--limit','1','--json','conclusion,headSha,url'])); print(r); sys.exit(0 if r and r[0]['conclusion']=='success' and subprocess.call(['git','merge-base','--is-ancestor','66499489',r[0]['headSha']])==0 else 1)"`
 - paths: Docs/Architecture/ManagedTextureAssetSetCli.md, TASKS.md, PROGRESS.md
@@ -5709,7 +5709,7 @@
 - notes: 設計はロードマップ 1592 行(関節のワールドの姿勢)・1596〜1598 行(HitboxComponent と AttackProfile)・1612 行(攻撃の種類はデータの差で表す)・1616 行の実装順 4)5)。GR131 の決定(ロードマップ 4266〜4282 行)で「CombatHitEvent から HitEffectHit への写しは GR16 の側で足す」とされたのをこの項目で行う(GAME-GR131-VFX は done なので after は満たされている)。ロードマップ 1853 行のリスク(BuildSkinnedMeshProxy が IsVisible で失敗する)は、今の `SkinnedMeshComponent` が「非表示でもゲーム用の姿勢は評価する」(`Docs/Architecture/TickStages.md` の「評価済みボーン姿勢」)ので当たらない。AI 由来の骨格の効かない骨(ロードマップ 1857 行)は (1) の警告で拾う。Release にデバッグの機能を入れない(作業合意の絶対規則 8)。危険地帯: アセットの読み込み(JSON のデータ)なので評価者を通す。やらないこと: AngelScript への公開(GR98)、表面の種類の登録(GR115)。
 
 ## G8-GR17-SLICE-SMOKE: 人間大のシ者 1 体と戦って倒す垂直スライスの確かめの場面(攻撃判定・遭遇・敵・当たりの火花・撃破の血)を Game に組む
-- status: todo
+- status: done
 - after: G8-GR17-ENEMY-COMPONENT, G8-GR18-INTERACTION, G8-GR16-JOINT-DATA-RESPONSE, GAME-GR132-VFX, G1-GR01-TICK-CONTRACT-DOC, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR17
 - needs-gr: GR01, GR03, GR13
@@ -6010,7 +6010,7 @@
 - notes: 設計はロードマップ 967〜973 行（GR90 の (1)〜(4)）。草は GPU で生成する（G5B-S5）ので、ロードマップ 967 行のとおり GR90 の対象は個別に置く物（岩・倒木・低木・株・標識など）に絞られ、草の配置は GR89 の密度の層と GR42 の草の場が受け持つ。今ある散布は Game 側の実行時の手続き（荒野の `FoliageScatter`、崖錐の岩の `MegaGeometryScatterComponent` への入力。`Game/GameModes/Wasteland/`）で、焼いた形式は無い。この項目は荒野の散布を置き換えない。AssetKind は G5B-S3 の World。浮動小数の決定性は同じバイナリの中だけで、地形を cook し直すと散布が食い違うので cooked_hash で気づけるようにする（ロードマップ 1311 行）。AI 由来の高密度のメッシュ（約 70 万三角形）をそのまま種にしない（GR80 で LOD つきの低ポリにしてから。ロードマップ 1310 行）。種の表の既定値（密度・チャンクの寸法・半径）は企画で未定なので仮の値。試験を足す理由: 決定性・チャンクの独立・最小の間隔・密度の誤りは、撮影では「それらしく散らばっている」ように見えて気づけず、再ベイクの差分やチャンクの境の重なりとして後から黙って出る。危険地帯（アセットのクック・Public API）なので評価者を通す。
 
 ## G5-GR90-SCATTER-RUNTIME: 焼いた散布をチャンクごとに予算つきで常駐・解放し、Entity を増やさずに MegaGeometry と株の経路で描く
-- status: todo
+- status: done
 - after: G5-GR90-SCATTER-BAKE, G5-GR37-TERRAIN-COMPONENT
 - gr: GR90
 - done-when: `Library/Core/{Public,Private}/Scatter/ScatterSystem.{h,cpp}`（`Engine::Engine` のメンバ。シングルトンにしない）が NVSCT を読み、GameThread でカメラからの距離と優先度でチャンクを要求し、1 フレームの個数・バイト・時間の予算の内で常駐させ、要らなくなったチャンクを解放する。描く経路は種の表の指定で 2 つ: mega の種は種ごとに 1 つの `MegaGeometryScatterComponent` の行へ入れ、チャンクを範囲（`kRangeRows`=64 行の塊）に対応させて出し入れを範囲の Active・可視の印で行う（SCN-ECS-MASS-STREAM と同じ予算の分け方）。foliage の種は種ごとの `FoliageBatch` にチャンクを `FoliageCell` として入れ（Rank の昇順 = `FadeThreshold` の小さい順。距離の密度の LOD は先頭からの個数で切る）、常駐の組が変わったときだけ束の一覧を作り直す。`RenderWorld::SetFoliage` へ渡す一覧を、シーンのほかの出どころ（荒野の `FoliageScatter` など）と合成する口を足す（今は 1 つの一覧を丸ごと差し替える作り）。インスタンスは Entity を作らず、Entity の数は種の数に比例する分だけになる。静的なので前の変換 = 今の変換（velocity はカメラの動きだけ）。影を落とす種は種の表の印で絞る。grassland に散布を置き、`grassland-scatter-stress=<本数>`（開発ビルドだけの引数。N 万本を置く）を足す。`ScatterSystemResidencyTest`（`EntityTreeTest` の束へ MEMBER）が通る: 10 万本を読む前後で World の Entity の数が種の数の分しか変わらない、1 フレームの予算を超えて常駐させない、解放したチャンクの範囲が描かれず資源が戻る、カメラの同じ動きで常駐の順がビット一致する。Game がビルドできる。
@@ -6036,7 +6036,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。Entity の数と散布の数のログが無ければ、開発ビルドだけのログ（`SCATTER_RESIDENT chunks=... instances=... entities=...` のような 1 行）をこの項目で足す（Release に入れない。絶対規則 8）。5 万本を超えると MegaGeometry の BVH の列が VRAM を超えた前例（SCN-ECS-MASS-STREAM の notes）があるので、落ちたら本数と落ちた所を記録し、mega の種の本数の上限を種の表で決める。
 
 ## G5-GR113-CLEARANCE-CPU: カメラ〜主人公の切り抜き領域と近接のフェードの値を CPU で決め、カメラの proxy に載せて描画へ渡す
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
@@ -6193,7 +6193,7 @@
 - notes: GR63 の Phase 0-6（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-6) と (e)）。印の受け渡しは GR30 と一緒に決める約束（ロードマップ 1941 行）なので、GR30 の velocity を全経路で組み直す G5-GR30-VERTEX-ANIM-VELOCITY（`VisibilityResolve.glsl` の今と前の位置の組み立てを触る）の後にする。10-02 の後に既定の velocity は解決（`visbuffer_resolve.comp` が `VisComputeVelocity` を呼ぶ。`VisibilityResolve.glsl:797`）が書くので、ロードマップの「gbuffer.frag だけ」では足りず両方に入れる。scenario の登録は既存の `RenderingVelocitySkinnedVulkanTest` と同じ形（`Test/Core/Rendering/CMakeLists.txt` の `--scenario=skinned-motion` の 2 本）。名前は `RenderingVelocitySkinnedFastRotationVulkanTest`・`RenderingVelocitySkinnedBehindNearVulkanTest` と、その `GBufferFallback` 版。G10-GR63-SKIN-CULL とは触るファイルがほぼ交わらないので並列に走れる。TAA と動きぼけの既定の見た目は印の無い画素で変わらないので、起動画面（絶対規則 7）は golden で守る。危険地帯（GBuffer・可視バッファの解決・TAA）なので評価者を通す。やらないこと: 遮蔽解除のちらつき（GR30 のリアクティブ。G5-GR30-REACTIVE）。
 
 ## G10-SHISHA-SHOWCASE: シ者の表現（白の質感・残像・消滅・しがみつき）を確かめる専用の GameMode と、起動して撮る・印を確かめる台本の土台を作る
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC
 - gr: GR19, GR20, GR60, GR64, GR65
 - needs-gr: GR01
@@ -10487,3 +10487,27 @@
   - `BuildSocketWorldTransform`(`SocketTypes.cpp:373`)は共役を取らずに q を返し、`SocketAttachmentComponent` はそれを `SetWorldTransform` する。このため、ソケットに付けた剣の Entity では関節の経路と関節でない経路の向きが共役の分ずれ、DebugDraw の形も刀身からずれる見込みが高い。
 
   `CombatFrameRateInvarianceTest` は回転する攻撃者を関節に束縛せずに使っている。向きを直して当たりの数が変わったら、試験の配置を直す。期待値を実装の写しで書き直さない。`Math::Transform`・`Entity` の合成(`ComposeTransform`)・`SocketAttachmentComponent`・描画の行列は変えない(危険地帯で、範囲の外)。`Transform::TransformPoint`(R(q))と描画(R(q)ᵀ)の食い違いがエンジン全体に及ぶと分かったら、PROGRESS.md の Notes に `要起票:` で残す。`EncounterService.cpp:364`・`InteractionService.cpp:420/448` のセンサーのオフセットも同じ形をしている。起動は要らない(CPU の単体の試験だけ)。
+
+## G2-S6-ASSET-SET-P7: SingleAssetCookServiceTest の --kind の拒否の期待値を、world を足した今の文言に合わせる
+- status: todo
+- done-when: `Test/Core/Asset/SingleAssetCookServiceTest.cpp` 45 行の期待値を `"--kind must be raw, texture, model, audio, or world"` に直す。これは `Tools/AssetCook/SingleAssetCook.cpp` 1792 行の文言と同じ。`request.Kind="unknown"` を拒否する検査は残し、ほかの検査は変えない。Debug でビルドし、ctest の `SingleAssetCookServiceTest`(`CookedMeshTest --test=SingleAssetCookServiceTest` で走る)が通る。`git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` が一致する(行末を守る)。アプリは起動しない。ワーカーはプッシュせず、workflow も起動しない(CI での確かめは G2-S6-ASSET-SET-P3 が受け持つ)。
+- verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
+- from: G2-S6-ASSET-SET-P3
+
+## G5-GR90-SCATTER-RUNTIME-P1: grassland の倒木の種に CC0 のスキャンの倒木を選んで cook し、散布の種の表のメッシュの論理パスをそれに向ける
+- status: todo
+- after: G5-GR90-SCATTER-RUNTIME
+- done-when: 今の `Assets/Scatter/grassland.scatter.json` の `fallen_log` は `lods` が実在しない `Assets/Models/Grassland/FallenLog/FallenLog.gltf` を指している。そのため `GrasslandScatter.cpp` の `LoadMegaMesh` が cooked で解決できず、倒木の種は未結合のまま飛ばされて描かれない。G5-GR90-SCATTER-CHECK が撮影で確かめる「岩・倒木・低木」の倒木も、このままでは出ない。これを次の 4 つで直す。
+  (1) `Scripts/FetchPolyHavenModels.ps1` に `-Set grassland` を足す。落とすのは草原の散布が使う Poly Haven の CC0 のモデルで、岩の `boulder_01` と、新しく選ぶ倒木 1 種。倒木は、地面に横たわった丸太か倒れた幹の形で、温帯の乾いた草地に合う色のものを Poly Haven の API から選ぶ。選んだ id と理由はスクリプト冒頭の説明に書く。
+  (2) 倒木のモデル(glTF・.bin・色・法線・ARM のテクスチャ)を、新しい `Assets/AssetSets/GrasslandModels.json`(package は `Grassland/`)に載せる。項目の形は `WastelandModels.json` の `boulder_01` と同じにする。ほかの一覧に既にある論理パスは重ねない。
+  (3) `grassland.scatter.json` の `fallen_log` の `lods` を、その glTF の論理パスにする。`mesh_radius_m` と `min_spacing_m` は、選んだメッシュの水平の外接の半径から決め直し、根拠を PROGRESS に書く。ほかの種・seed・地形の参照は変えない。
+  (4) CookAssets で倒木と grassland の散布を焼き直したあと、`build/CookedAssets/manifest.json` に `fallen_log` の `lods[0]`(`Assets/` を除いた形)が載っている。
+  範囲の外: 低木・株(foliage)のメッシュは手続きのままにする。株の経路の頂点(`FoliageVertex`)には UV もテクスチャも無く、cook したメッシュを受ける口が無いため。実物の低木のメッシュは G5-GR46-VERTEX-ANIM・G12-GR47・G12-GR48 の経路で入る。手本と並べた見た目の調整は、起動が要るので G5-GR90-SCATTER-CHECK の撮影で行う。その done-when は倒木・低木の見え方を見ており、paths に `Game/GameModes/Grassland` を含む。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set grassland`
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/PolyHaven/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*"`
+- verify: `powershell -NoProfile -Command "$s = Get-Content -Raw Assets/Scatter/grassland.scatter.json | ConvertFrom-Json; $p = (($s.species | Where-Object name -eq 'fallen_log').lods[0]) -replace '^Assets/', ''; if (-not (Select-String -Path build/CookedAssets/manifest.json -SimpleMatch -Pattern $p -Quiet)) { Write-Output ('FALLEN_LOG_NOT_COOKED ' + $p); exit 1 }; Write-Output ('FALLEN_LOG_COOKED ' + $p)"`
+- paths: Scripts/FetchPolyHavenModels.ps1, Assets/AssetSets/GrasslandModels.json, Assets/Scatter/grassland.scatter.json, TASKS.md, PROGRESS.md
+- from: G5-GR90-SCATTER-RUNTIME

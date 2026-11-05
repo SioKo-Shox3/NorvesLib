@@ -415,9 +415,16 @@ namespace NorvesLib::Core::Component
 
     bool MegaGeometryScatterComponent::SetInstances(Container::Span<const MegaScatterInstance> instances)
     {
+        return SetInstances(instances, MegaScatterLayout{});
+    }
+
+    bool MegaGeometryScatterComponent::SetInstances(Container::Span<const MegaScatterInstance> instances,
+                                                     const MegaScatterLayout &layout)
+    {
         assert(!Ecs::Detail::EcsIsParallelActive());
         ReleaseRows();
         m_Instances.assign(instances.begin(), instances.end());
+        m_Layout = layout;
         InstanceCount = static_cast<uint32_t>(m_Instances.size());
         World *world = ResolveWorld();
         if (world == nullptr || GetEcsEntity().IsNull())
@@ -499,6 +506,21 @@ namespace NorvesLib::Core::Component
         m_Ranges[range].bVisible = bVisible;
         ReflectRange(range, false);
         return true;
+    }
+
+    bool MegaGeometryScatterComponent::IsRangeActive(uint32_t range) const
+    {
+        return range < m_Ranges.size() && m_Ranges[range].bActive;
+    }
+
+    bool MegaGeometryScatterComponent::IsRangeVisible(uint32_t range) const
+    {
+        return range < m_Ranges.size() && m_Ranges[range].bVisible;
+    }
+
+    bool MegaGeometryScatterComponent::IsRangePublished(uint32_t range) const
+    {
+        return range < m_Ranges.size() && m_Ranges[range].bPublished;
     }
 
     uint32_t MegaGeometryScatterComponent::GetPublishedRangeCount() const
@@ -586,7 +608,7 @@ namespace NorvesLib::Core::Component
             return false;
         }
 
-        // 席は連続した範囲の組から先頭の順に取る。行は Morton 順に作るので、範囲が空間的にまとまる
+        // 席は連続した範囲の組から先頭の順に取る。行は指定した順で作る
         uint32_t firstRange = 0;
         uint32_t rangeCount = 0;
         const uint32_t block = table.ReserveBlock(count, kRangeRows, firstRange, rangeCount);
@@ -597,7 +619,18 @@ namespace NorvesLib::Core::Component
             return false;
         }
         Container::VariableArray<uint32_t> order;
-        SortByMorton(m_Instances, order);
+        if (m_Layout.Order == MegaScatterRowOrder::Input)
+        {
+            order.resize(count);
+            for (uint32_t row = 0; row < count; ++row)
+            {
+                order[row] = row;
+            }
+        }
+        else
+        {
+            SortByMorton(m_Instances, order);
+        }
 
         m_pRowWorld = &world;
         m_Block = block;
@@ -620,6 +653,7 @@ namespace NorvesLib::Core::Component
             target.TableRange = firstRange + range;
             target.FirstRow = range * kRangeRows;
             target.RowCount = std::min(kRangeRows, count - target.FirstRow);
+            target.bActive = m_Layout.bRangesStartActive;
         }
         m_CreatedRanges = 0;
         m_CreatedRows = 0;
