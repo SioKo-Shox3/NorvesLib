@@ -10021,3 +10021,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動の確かめは後回し（アプリを起動していない）。`G9-GR15-AB-CAPTURE-CHECK` で、四足が見える位置か、posemod.json が実行時に読めるか（`ANIMATION_DEBUG quadruped=ready pose_modifiers=1`）、物理の接地問い合わせが当たり足が斜面と階段に付くか、ImGui の操作が効くか、on/off の撮影で四足の画素が変わるか、既定の起動画面が変わらないかを確かめる。
 - Notes: Rendering3DTest の World では物理が使えるので、解析の地面ではなく `PhysicsGroundQuery` を使った（実際の当たりは未確認）。`--pose-modifiers-off` を場面へ渡すため、paths の外の `Rendering3DTestData.h`（フラグ 1 行）と `Rendering3DTestRoutine.cpp`（Prepare の引数 1 行）を触った。AnimatorComponent に modifier の一覧の取得口が無いので、場面と調整画面は同じ JSON を `ParsePoseModifierConfig` で読み直して自分で持った modifier を AddModifier する。FootIK の問い合わせの設定（maxSlopeDeg など）は作ったときの値を保つので、画面で 50° を超えて上げても物理側の上限は変わらない。ModifierOrderTest の合成の骨格では前脚が胸の子なので、既定の順でも胸に掛かる FollowThrough が前脚の足先を動かし、平均誤差 4 cm が残る（試験は順序の比較だけで絶対値の上限は無い）。
 - 要起票: 胸・背骨に FollowThrough や SpringBone を掛けた四足では IK の後に前脚の足先が動く。脚の祖先へ掛かる後段の modifier を IK の後に置く現在の順序で接地をどう保つか（FollowThrough の対象から脚の祖先を外す決まりか、IK の再適用か）を決める項目。
+
+## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 2、差し戻しの直し）
+- Done: 反復 1 の再検証の失敗（`PhysicsGroundQueryIntegrationTest` が unknown test）は、verify のビルド対象に集約の実行ファイル `PhysicsDynamicsTest` が含まれず、リポジトリ直下の `build/` の exe が試験の追加より前のままだったため。コードの欠陥ではないので、`PhysicsDynamicsTest` をビルドしてから verify の 2 行を回し直した。
+- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-iter2-verify.txt`（BUILD_EXIT=0、ctest 4/4 Passed、CTEST_EXIT=0）。`PhysicsDynamicsTest` のビルドは `aux-physics-build.txt`（EXIT=0）。
+- 要起票: このタスクの verify は ctest で `PhysicsGroundQueryIntegrationTest` を回すのに、ビルドの行に `PhysicsDynamicsTest` が無い。新しい build で verify を回すと同じ失敗になるので、verify のビルド対象に `PhysicsDynamicsTest` を足す。
