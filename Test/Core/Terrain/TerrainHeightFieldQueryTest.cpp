@@ -505,6 +505,226 @@ namespace
         return triangles;
     }
 
+    void TestLodCellRanges(const Terrain::TerrainHeightField& field, const char* label)
+    {
+        const auto layout = field.GetGridLayout();
+        uint32_t perturbedViolations = 0;
+        for (uint32_t lod = 1; lod < Terrain::TerrainHeightField::kHeightLodCount; ++lod)
+        {
+            const uint32_t stride = 1u << lod;
+            const uint32_t columns = (layout.Columns - 2u) / stride + 1u;
+            const uint32_t rows = (layout.Rows - 2u) / stride + 1u;
+            Expect(field.GetLodCellColumns(lod) == columns && field.GetLodCellRows(lod) == rows,
+                "段のセル数は最細の升数を stride で切り上げた数と一致");
+            uint32_t missing = 0;
+            uint32_t violations = 0;
+            uint32_t vertices = 0;
+            for (uint32_t row = 0; row < rows; ++row)
+            {
+                for (uint32_t column = 0; column < columns; ++column)
+                {
+                    Terrain::TerrainHeightRange range;
+                    if (!field.GetLodCellRange(lod, column, row, range))
+                    {
+                        ++missing;
+                        continue;
+                    }
+                    const uint32_t lastColumn = (column + 1u) * stride < layout.Columns
+                        ? (column + 1u) * stride : layout.Columns - 1u;
+                    const uint32_t lastRow = (row + 1u) * stride < layout.Rows
+                        ? (row + 1u) * stride : layout.Rows - 1u;
+                    // 境界の頂点も隣接する各セルで調べる。NaN も包含の違反として数える。
+                    const auto contains = [](const Terrain::TerrainHeightRange& bounds, float height)
+                    {
+                        return bounds.Min <= height && height <= bounds.Max;
+                    };
+                    auto perturbed = range;
+                    perturbed.Min += 0.01f;
+                    for (uint32_t z = row * stride; z <= lastRow; ++z)
+                    {
+                        for (uint32_t x = column * stride; x <= lastColumn; ++x)
+                        {
+                            const float height = field.GetGridVertexHeight(x, z);
+                            ++vertices;
+                            if (!contains(range, height))
+                            {
+                                ++violations;
+                            }
+                            // 実際の表を変えず、同じ検査が狭めた範囲を検出することを確かめる。
+                            if (!contains(perturbed, height))
+                            {
+                                ++perturbedViolations;
+                            }
+                        }
+                    }
+                }
+            }
+            std::cout << "段の表: 場=" << label << " 段=" << lod << " セル=" << columns << "x" << rows
+                      << " 頂点比較=" << vertices << " 欠落=" << missing << " 違反=" << violations << "\n";
+            Expect(missing == 0 && violations == 0, "段の表は境界を含む全頂点を保守的に覆う");
+        }
+        std::cout << "段の表の反証確認: 場=" << label << " 仮の Min+0.01 m の違反=" << perturbedViolations << "\n";
+        Expect(perturbedViolations > 0, "同じ包含検査は Min を 0.01 m 狭めた表の違反を検出する");
+    }
+
+    void TestLodHeightErrors(const Terrain::TerrainHeightField& field, const Asset::CookedTerrainData& terrain)
+    {
+        const auto layout = field.GetGridLayout();
+        uint32_t bitDifferences = 0;
+        uint32_t points = 0;
+        uint32_t violations = 0;
+        constexpr double tolerance = 1e-4;
+        for (const auto& tile : terrain.Tiles)
+        {
+            const uint32_t tileId = tile.TileZ * terrain.TileCountX + tile.TileX;
+            MaximumError errors[Terrain::TerrainHeightField::kHeightLodCount];
+            // 1/4 升刻みには格子点・細かい対角線・粗い対角線とタイルの境界が含まれる。
+            for (uint32_t row = 0; row <= terrain.TileCells * 4u; ++row)
+            {
+                for (uint32_t column = 0; column <= terrain.TileCells * 4u; ++column)
+                {
+                    const float x = static_cast<float>(layout.FirstX
+                        + (tile.TileX * terrain.TileCells + column * 0.25) * layout.Spacing);
+                    const float z = static_cast<float>(layout.FirstZ
+                        + (tile.TileZ * terrain.TileCells + row * 0.25) * layout.Spacing);
+                    const float fine = field.SampleHeight(x, z);
+                    ++points;
+                    if (std::bit_cast<uint32_t>(fine) != std::bit_cast<uint32_t>(field.SampleHeight(x, z, 0)))
+                    {
+                        ++bitDifferences;
+                    }
+                    for (uint32_t lod = 1; lod < Terrain::TerrainHeightField::kHeightLodCount; ++lod)
+                    {
+                        errors[lod].Observe(std::fabs(static_cast<double>(field.SampleHeight(x, z, lod)) - fine), x, z);
+                    }
+                }
+            }
+            for (uint32_t lod = 1; lod < Terrain::TerrainHeightField::kHeightLodCount; ++lod)
+            {
+                const float bound = tile.LodMaxErrorM[lod];
+                std::cout << "段の高さ誤差[m]: タイル=" << tileId << " 段=" << lod
+                          << " 実測最大=" << errors[lod].Value << " 表=" << bound
+                          << " 許容=" << tolerance << " (x=" << errors[lod].X << ", z=" << errors[lod].Z << ")\n";
+                if (!std::isfinite(bound) || bound < 0.0f || !(errors[lod].Value <= bound + tolerance))
+                {
+                    ++violations;
+                }
+            }
+        }
+        std::cout << "段の高さ誤差: 標本=" << points << " 表の超過=" << violations
+                  << " 段0のビット不一致=" << bitDifferences << "\n";
+        Expect(violations == 0, "タイル内の段の高さの誤差は NVTRN の表と丸めの許容以内");
+        Expect(points > 0 && bitDifferences == 0, "段0の高さは同じ全標本で既定の高さとビット一致");
+    }
+
+    void TestLodRangeRaycast(const Terrain::TerrainHeightField& field)
+    {
+        const auto triangles = MakeGridTriangles(field);
+        constexpr uint32_t lod = 3;
+        constexpr uint32_t samplesPerCell = 16;
+        constexpr uint32_t kindCount = 6;
+        const char* labels[kindCount] = {"Max直上X", "Max直上Z", "Min直下から上向きX", "Min直下から上向きZ",
+            "境界の鉛直", "境界の微小斜行"};
+        uint32_t counts[kindCount] = {};
+        uint32_t mismatches[kindCount] = {};
+        uint32_t hits[kindCount] = {};
+        MaximumError errors[kindCount];
+        const auto compare = [&](const Math::Vector3& origin, const Math::Vector3& direction, float limit, uint32_t kind)
+        {
+            const Math::Ray ray(origin, Unit(direction));
+            float closest = limit;
+            bool bExpected = false;
+            for (const auto& triangle : triangles)
+            {
+                float t = 0.0f;
+                if (Math::RayIntersectsTriangle(ray, triangle.V0, triangle.V1, triangle.V2, t) && t <= closest)
+                {
+                    closest = t;
+                    bExpected = true;
+                }
+            }
+            Terrain::TerrainRayHit hit;
+            const bool bActual = field.Raycast(ray, limit, hit);
+            bool bEqual = bActual == bExpected;
+            if (bExpected)
+            {
+                ++hits[kind];
+            }
+            if (bExpected && bActual)
+            {
+                const double error = Distance(hit.Point, ray.PointAt(closest));
+                errors[kind].Observe(error, origin.x, origin.z);
+                bEqual = bEqual && std::isfinite(error) && error <= 1e-3;
+            }
+            if (!bEqual)
+            {
+                if (mismatches[kind] == 0)
+                {
+                    std::cout << "段3レイの最初の不一致: 種類=" << labels[kind] << " 番号=" << counts[kind]
+                              << " 原点=(" << origin.x << "," << origin.y << "," << origin.z << ")"
+                              << " 期待=" << bExpected << " 実際=" << bActual << "\n";
+                }
+                ++mismatches[kind];
+            }
+            ++counts[kind];
+        };
+        for (uint32_t row = 0; row < field.GetLodCellRows(lod); ++row)
+        {
+            for (uint32_t column = 0; column < field.GetLodCellColumns(lod); ++column)
+            {
+                Terrain::TerrainHeightRange range;
+                const bool bRange = field.GetLodCellRange(lod, column, row, range);
+                Expect(bRange, "レイを通す段3セルの表を取得できる");
+                if (!bRange)
+                {
+                    continue;
+                }
+                const float x0 = FirstX + column * 8u * Spacing;
+                const float z0 = FirstZ + row * 8u * Spacing;
+                constexpr float span = 8.0f * Spacing;
+                for (uint32_t sample = 0; sample < samplesPerCell; ++sample)
+                {
+                    const float fraction = static_cast<float>(sample) / (samplesPerCell - 1u);
+                    const float x = x0 + span * fraction;
+                    const float z = z0 + span * fraction;
+                    const float epsilon = 1e-4f * (1u + sample % 4u);
+                    // セルの先も通す。最初のセルを棄却した後で別のセルに当たる場合も総当たりと比べる。
+                    compare(Math::Vector3(x0, range.Max + epsilon, z), Math::Vector3(1.0f, -1e-5f, 0.0f),
+                        34.0f, 0);
+                    compare(Math::Vector3(x, range.Max + epsilon, z0), Math::Vector3(0.0f, -1e-5f, 1.0f),
+                        34.0f, 1);
+                    // 地中始点の距離0という別契約を避け、地形の外から Min のすぐ下を上向きに横切る。
+                    const float outsideX = FirstX - Spacing;
+                    const float outsideZ = FirstZ - Spacing;
+                    compare(Math::Vector3(outsideX, range.Min - epsilon - 0.01f * (x0 - outsideX), z),
+                        Math::Vector3(1.0f, 0.01f, 0.0f), 34.0f, 2);
+                    compare(Math::Vector3(x, range.Min - epsilon - 0.01f * (z0 - outsideZ), outsideZ),
+                        Math::Vector3(0.0f, 0.01f, 1.0f), 34.0f, 3);
+                    const float boundaryX = sample % 2u == 0u ? x0 : x0 + span;
+                    compare(Math::Vector3(boundaryX, range.Max + 2.0f, z), Math::Vector3(0.0f, -1.0f, 0.0f),
+                        5.0f, 4);
+                    // 鉛直の単一セル経路だけでなく、表をたどる経路でも境界と隅をかすめる。
+                    compare(Math::Vector3(x, range.Max + 2.0f, z0),
+                        Math::Vector3(sample % 2u == 0u ? 0.001f : -0.001f, -1.0f, 0.001f), 5.0f, 5);
+                }
+            }
+        }
+        uint32_t total = 0;
+        uint32_t totalMismatches = 0;
+        uint32_t totalHits = 0;
+        for (uint32_t kind = 0; kind < kindCount; ++kind)
+        {
+            std::cout << "段3レイ: 種類=" << labels[kind] << " 一致=" << counts[kind] - mismatches[kind]
+                      << "/" << counts[kind] << " 当たり=" << hits[kind] << " 最近点最大差[m]=" << errors[kind].Value << "\n";
+            total += counts[kind];
+            totalMismatches += mismatches[kind];
+            totalHits += hits[kind];
+        }
+        std::cout << "段3レイ合計: 一致=" << total - totalMismatches << "/" << total << " 当たり=" << totalHits << "\n";
+        Expect(total >= 3000 && totalHits > 0 && totalHits < total, "段3セルをかすめる数千本に当たりと外れを含む");
+        Expect(totalMismatches == 0, "段3の表で棄却するレイの当たり・外れと最近点は総当たりと 1e-3 m 以内で一致");
+    }
+
     void TestRaycast(const Terrain::TerrainHeightField& field)
     {
         const auto triangles = MakeGridTriangles(field);
@@ -1105,6 +1325,10 @@ int main()
     Container::VariableArray<Triangle> triangles;
     if (!CollectTriangles(cooked, triangles)) return 1;
     TestMeshHeight(*cookedField, triangles, MakePoints());
+    TestLodCellRanges(*cookedField, "NVTRN");
+    TestLodCellRanges(*wave, "正弦波");
+    TestLodHeightErrors(*cookedField, parsed.Terrain);
+    TestLodRangeRaycast(*wave);
     TestRaycast(*wave);
     TestSlopeOverlap(*slope);
     TestOverlapContinuity(*wave);

@@ -10105,3 +10105,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 要起票: このタスクの verify は ctest で `PhysicsGroundQueryIntegrationTest` を回すのに、ビルドの行に `PhysicsDynamicsTest` が無い。新しい build で verify を回すと同じ失敗になるので、verify のビルド対象に `PhysicsDynamicsTest` を足す。
 - U1 高さ場に段 1〜3 の最小最大の表と段ごとの高さ・面法線の照会を足し、ブロック表を段 3 の表に置き換える: 着地(直し 0 回)
 - U2 粗い段の Raycast と常駐の印の型を足し、高さ場の全照会に常駐の印を渡せるようにする: 着地(直し 0 回)
+- U4 TerrainHeightFieldQueryTest に段の表・段の高さの誤差・表で棄却した Raycast のケースを足す: 着地(直し 0 回)
