@@ -6560,7 +6560,7 @@
 - notes: 設計はロードマップ 2361 行（GR93 の 4. 配置の検証）と 2758〜2760 行のリスク。巡航の速度と見どころの間隔の帯は、未定の提案『マップの密度』の値（秒速 10m 前後、300〜600m）を既定にしない（作者の方針: 企画が決めていない数値はデータで受け、作業を止めない）。地形のソースの読み方は GR89 の形式（`G5-GR89-TERRAIN-COOKER` が決める `Assets/TerrainSpecs/` のハイトマップと変換の情報）に合わせるので needs-gr に入れた。到達性は格子の近似なので、犬の跳躍・段差の越え方（GR05・GR07 の移動の仕様）と食い違うと誤判定する。通行の判定を差し替えられる形にし、GR21 の経路探索ができたらそちらへ移す。マーカーの Key・持ち場の持ち主の対応は G12-GR93-MARKERS-SNAP の項目表に従う。やらないこと: エンジン内での検証の表示、実の谷のデータでの実行（G12-GR93-EDIT-CHECK）。
 
 ## G12-GR94-MAP-TRANSFORM-PLAN: 地図とワールドの座標の変換と、真上の正射影のタイル撮影の割り付けを、起動せずに試験できる形で作る
-- status: todo
+- status: done
 - gr: GR94
 - done-when: (1) `Library/Core/Public/Scene/MapTransform.h` に `MapTransform`（ワールドの x,z の矩形・1 画素のメートル・向き（北 = +Z など）・画像の寸法）と `WorldToMapUV` / `MapUVToWorld`、JSON の読み書き（`map_transform.json`）がある。scale が 0 以下・NaN・矩形の潰れを拒否する。(2) `Library/Core/Public/Scene/MapCapturePlan.h` の `BuildMapCapturePlan(spec)` が、撮影の spec（範囲・pixel_size_m・tile_margin_px・バックバッファの寸法・高さの範囲・固定の EV100・待ちのフレーム数・出力先）から、タイルの格子と、各タイルのワールドの矩形・縁を含むカメラの正射影の幅と高さ・真上のカメラの姿勢（forward = -Y、up = +Z）・near/far（高さの範囲から）・縁を切った後の画素の矩形を決定的に返し、`capture_manifest.json` の内容（タイルの格子、各タイルのワールドの矩形、ファイル名、固定した設定）を書ける。(3) `RenderLayer` に `MapVisible = 1 << 6` を足す（今は Default〜Debug の 6 ビット。`RenderTypes.h:217-226`）。(4) 試験（`CameraViewConstantsTest` の束へ MEMBER）: `MapTransformTest`（world ↔ UV の往復の誤差が 1e-4 画素未満、JSON の往復、不正な値の拒否、非対称な 3 点で向きが決めたとおり）、`MapCapturePlanTest`（4km 四方・0.5m/px・1280×720・縁 64px で 8 列 × 14 行 = 112 タイル、隣り合うタイルの縁を切った矩形が重ならず隙間も無く範囲を覆う、同じ spec で同じ計画、正射影の行列が `OrthographicViewportMatrixTest` の約束と合う）。既存の `CameraViewConstantsTest` の束の試験が通る。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`

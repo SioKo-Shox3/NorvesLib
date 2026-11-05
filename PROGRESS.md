@@ -9867,7 +9867,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-093026/verify-G8-GR16-JOINT-DATA-RESPONSE-U5.txt`（Game・PhysicsDynamicsTest・HitEffectEmissionTest・SwordTrailRibbonTest の Debug ビルド終了コード 0、ctest で Combat 系 8 本・HitEffectEmissionTest・SwordTrailRibbonTest の 10 件 100% Passed、numstat 2 通り一致）。
 - 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
 - Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
-- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
 
 - U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
 - U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
@@ -10237,5 +10237,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-193214/G12-GR39-HEIGHTFIELD-LOD-final-verify.txt`（verify のビルド exit_code=0、ctest 7/7 Passed・exit_code=0、numstat の 2 通りが一致）。
 - Next: 起動の確かめは無い（アプリを起動する確かめはこの項目に無い）。タイルの常駐を実際に決めるのは G12-GR40-WORLD-PAYLOADS の `terrain-tile`。
 - Notes: 粗い段のセルの三角形の対角は最細段と同じ規則（`UsesMainDiagonal`）で、NVTRN の LodMaxErrorM は両対角の誤差の最大なのでどちらでも誤差以内。常駐の印はタイルの無い高さ場（tileCells == 0）では効かない。物理は常駐の写しを固定ステップのプロキシ作りで取るので、`SetTileResident` の効果は次の固定ステップから。高さ場どうしの接触は元から扱わない。
+
+## 2026-11-05 G12-GR94-MAP-TRANSFORM-PLAN（run 20261105-200440 の反復 1、完了）
 - U1 MapTransform（地図とワールドの変換・JSON の読み書き・不正値の拒否）と MapTransformTest: 着地(直し 0 回)
 - U2 MapCapturePlan（タイルの格子・カメラ・縁切り・manifest）と RenderLayer::MapVisible と MapCapturePlanTest: 着地(直し 0 回)
+- Done: (1) `Scene/MapTransform.h`: `MapTransform`（double のワールドの x,z の矩形・`PixelSizeMeters`・画像の上と右が指す軸 `UpAxis`/`RightAxis`（既定は上 +Z・右 −X）・画像の寸法）、`WorldToMapUV`/`MapUVToWorld`、`ValidateMapTransform`（NaN・inf・画素 0 以下・矩形の潰れ・寸法 0・同じ軸・寸法と矩形の 1e-3 画素を超える不一致を拒否）、`map_transform.json`（format `norves.map_transform`・version 1）の読み書き。(2) `Scene/MapCapturePlan.h`: `BuildMapCapturePlan(spec)` が地図の寸法・内側のタイル（バックバッファ − 2 × 縁）・ceil の格子・各タイルの貼り先と縁を切った画素の矩形（最後の列・行は地図の端で切る）・ワールドの矩形・縁込みのタイルの中心の真上のカメラ位置・正射影の幅と高さ（バックバッファ × 画素）・near/far（高さの範囲 + 余裕）を決定的に返す。`MakeMapCaptureCamera` は forward=−Y・up=+Z・Orthographic・CullingMask=MapVisible・手動露出（`AutoExposurePreExposureFromEV100`）。`WriteMapCaptureManifestJson` が `capture_manifest.json`（settings・map_transform・grid・tiles）を書く。(3) `RenderLayer::MapVisible = 1 << 6`。(4) 試験 `MapTransformTest`・`MapCapturePlanTest` を `CameraViewConstantsTest` の束へ MEMBER で足した。
+- 証拠: `.harness/runs/20261105-200440/G12-GR94-MAP-TRANSFORM-PLAN-final-verify.txt`（verify のビルド exit code 0、ctest の 4 本 MapTransformTest・MapCapturePlanTest・CameraViewConstantsTest・OrthographicViewportMatrixTest が 100% Passed、numstat の 2 通りが一致）。
+- Next: 撮影の実行は G12-GR94-MAP-CAPTURE（この計画と `MakeMapCaptureCamera` を使う）、合成と cook は G12-GR94-MAP-COMPOSE-COOK（manifest の map_pixel・crop で貼る）。撮った画像の向き（上 +Z・右 −X）は、撮影の段で非対称な目印 3 つで確かめる。アプリを起動する確かめはこの項目に無い。
+- Notes: 試験の「4km 四方」は 4096 m 四方（−2048〜2048、8192 画素）で置いた。ロードマップの見積もり（8192²・1152×592 の内側で 8 列 × 14 行 = 112）がこの値で、4000 m だと 7 列 × 14 行になる。
+- Notes: 撮った画像がそのまま地図の向き（上 +Z・右 −X）になる根拠は、`CreateLookAt`（forward=−Y・up=+Z で view の x = −X、y = +Z）と Vulkan の `AdjustProjectionForClipSpace` の Y 反転（`BuildForDevice` の既定 true）。`MapCapturePlanTest` はこの合成（投影 × diag(1,−1,−1) × ビュー）で角と非対称な 3 点を写し、crop と地図の画素に 0.01 画素以内で一致することを確かめている。実機の画像での確かめは撮影の段。
+- Notes: 計画の座標は double、`CameraProxy` の位置は float なので、ワールドの原点から数 km 離れた範囲では位置の丸め（2 km で約 2.4e-4 m ≈ 5e-4 画素）が乗る。
+- Notes: VFX の層の選択肢（`VfxSchema.cpp` の kLayerNames、`VfxEffectSystem.cpp` の layers）は Default・Transparent・UI だけで、MapVisible は入れていない（エフェクトは地図に載せない）。
