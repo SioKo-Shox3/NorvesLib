@@ -640,6 +640,16 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    bool SkinnedMeshComponent::TryGetBonePalette(Container::Span<const Math::Matrix4x4>& outPalette) const
+    {
+        if (!HasCurrentPose() || m_Pose.BonePalette.empty())
+        {
+            return false;
+        }
+        outPalette = Container::Span<const Math::Matrix4x4>(m_Pose.BonePalette.data(), m_Pose.BonePalette.size());
+        return true;
+    }
+
     bool SkinnedMeshComponent::TryGetJointWorldMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const
     {
         Math::Matrix4x4 model;

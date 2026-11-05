@@ -283,6 +283,7 @@ namespace Game
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
 
         bool m_bAnimationDebugRequested = false;
+        bool m_bPoseModifiersOffRequested = false;
         bool m_bDogMovementSmoke = false;
         bool m_bCombatSmoke = false;
         bool m_bEncounterSmoke = false;

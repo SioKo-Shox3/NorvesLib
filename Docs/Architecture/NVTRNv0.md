@@ -324,7 +324,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -Asse
 | `require_bit_depth` | 整数 8 または 16。16 は 8bit 入力を拒否する。8 または省略は制限なしで、16/32bit も受け付ける |
 | `smooth` | ガウス平滑化の σ [m]。有限で 0 以上。既定 0（平滑化なし） |
 | `seed` | 0..4294967295 の整数。既定 0。マスクの値雑音に使い、スペックのバイトとしても `source_hash` に影響する。高さ処理には使わない |
-| `recipe` | 省略可能なマスク生成オブジェクト。指定すると MSK0・GRS0、splat が 1 層以上なら SPL0、5 層以上なら SPL1 も生成する。省略時は HGT0・NRM0 だけ |
+| `recipe` | 省略可能なマスク生成オブジェクト。指定すると MSK0・GRS0・PDL0、splat が 1 層以上なら SPL0、5 層以上なら SPL1 も生成する。省略時は HGT0・NRM0 だけ |
 
 整数入力の `min_m/max_m` は `max_m >= min_m` を求め、
 `heightM = min_m + v * (max_m - min_m) / D`（PNG8 は `D=255`、ほかは `65535`）で写像する。
@@ -353,13 +353,14 @@ PNG8 は `terrain_height_bit_depth=8` を含む警告を出し、1 段の高さ�
 寒冷地の森の中の、なだらかな谷・小さな尾根・崖を持つ開けた草原で、513×513 標本の PNG16 を
 0..64 m に写像し、標本間隔 1 m・128 セル/タイル・`fit=error`・16bit 必須で取り込む。
 土・苔・湿った泥・岩肌・草地の 5 層を湿り・傾斜・雑音で混ぜ、流れ・低標高・凹地の湿りと
-傾斜による岩、湿りと傾斜による草密度を生成する。道の画像はまだないため `paint` は指定しない。
+傾斜による岩、湿りと傾斜による草密度を生成する。凹み度は既定の規則で焼き、雑音の振幅を 0.2 にして
+水たまりの縁を少し不揃いにする。道の画像はまだないため `paint` は指定しない。
 
 ### マスク recipe のキーと既定値
 
 `recipe` 内のオブジェクトは未知のキーを拒否する。数値はすべて有限でなければならない。
 各キーは省略できるが、指定した splat 層の `name` とペイントの `path` は必須。
-`recipe` 自体を省略するとマスクは生成せず、空の `recipe: {}` では既定値で MSK0・GRS0 を生成する。
+`recipe` 自体を省略するとマスクは生成せず、空の `recipe: {}` では既定値で MSK0・GRS0・PDL0 を生成する。
 
 | キー | 省略時の値と条件 |
 | --- | --- |
@@ -368,6 +369,7 @@ PNG8 は `terrain_height_bit_depth=8` を含む警告を出し、1 段の高さ�
 | `rock` | `slope_start_deg=35`、`slope_full_deg=55` |
 | `splat.layers` | 既定は空の配列。0..8 層。各層の `name` は `[a-z0-9_]` の 1..24 文字で重複不可。`weight=1`、`slope_deg`・`height_m`・`wetness` の帯と `noise` は省略可能 |
 | `grass_density` | `base=1`、`slope_start_deg=25`、`slope_zero_deg=40`、`wet_start=0.8`、`wet_zero=1`、`road_suppress=1`、`rock_suppress=1` |
+| `puddle` | `blur_sigma_m=4`、`blur_full_m=0.25`、`blur_weight=0.4`、`fill_full_m=0.15`、`fill_weight=0.4`、`flow_weight=0.2`、`flow_ref_cells=2000`、`slope_start_deg=2`、`slope_zero_deg=6`、`noise.amplitude=0`、`noise.scale_m=8` |
 | `paint` | 既定は空の配列。各要素は必須の `path`、省略時 `road` の `target`、省略時 `override` の `mode` を持つ。詳細は後述 |
 
 湿りの `flow_ref_cells`・`concave_full_per_m` は正、`low_zero_m > low_full_m`。
@@ -436,11 +438,27 @@ grass = clamp(base * (1-ramp(slope_deg,slope_start_deg,slope_zero_deg))
               * (1-road_suppress*road) * (1-rock_suppress*rock), 0, 1)
 ```
 
+凹み度は `recipe.puddle` の値を使う。高さ `h` を σ=`blur_sigma_m` の分離ガウスで x、z の順にぼかす。
+半径は `ceil(3*blur_sigma_m/cell_size_m)`、格子外は点対称に折り返して一次の面を保つ。
+ぼかした高さを `h_blur`、priority-flood で埋めた高さを `h_fill`、流れ集積を `A` とすると、次の式で求める。
+
+```text
+B      = clamp((h_blur - h) / blur_full_m, 0, 1)
+D      = clamp((h_fill - h) / fill_full_m, 0, 1)
+Q      = clamp(log1p(A) / log1p(flow_ref_cells), 0, 1)
+gate   = 1 - ramp(slope_deg, slope_start_deg, slope_zero_deg)
+puddle = clamp((blur_weight*B + fill_weight*D + flow_weight*Q) * gate * noise_factor, 0, 1)
+```
+
+`noise_factor` は seed とセル座標の整数ハッシュによる値雑音の倍率で、`noise.amplitude=0` なら雑音を掛けない。
+ペイント前は傾斜が `slope_zero_deg` 以上の斜面で 0 となり、窪地の底で最大になる。
+計算は行の帯ごとにスレッドへ分けるが、結果はスレッド数に依らない。最後に target が `puddle` のペイントを適用する。
+
 splat 以外は、ペイント適用後に `round(clamp(v,0,1)*255)` で 8bit へ量子化する。
 
 ### ペイント
 
-`paint` の `target` は `wetness`・`dry_grass`・`road`・`rock`・`grass_density`、または
+`paint` の `target` は `wetness`・`dry_grass`・`road`・`rock`・`grass_density`・`puddle`、または
 存在する層の `splat.<name>`。`path` はスペックの親ディレクトリ基準の相対パスか絶対パス。
 `mode` は `override` または `multiply`。
 
@@ -452,7 +470,7 @@ splat 以外は、ペイント適用後に `round(clamp(v,0,1)*255)` で 8bit �
 各画素の `p=値/255`、`a=アルファ/255`、適用前の値を `v` とすると、
 `override` は `v*(1-a)+p*a`、`multiply` は `v*((1-a)+p*a)`。
 同じ target には配列の順に重ねる。湿り・枯れ草・道・岩は各値の生成後、splat は正規化前の raw、
-草密度はその生成後に適用する。
+草密度・凹み度はそれぞれの生成後に適用する。
 
 ### 処理の順序と生成値
 
@@ -461,7 +479,7 @@ splat 以外は、ペイント適用後に `round(clamp(v,0,1)*255)` で 8bit �
 3. `flip_z` を適用する。
 4. `fit` で格子の寸法を合わせる。
 5. `smooth` を適用する。
-6. `recipe` があればペイントを読み、量子化前の全体高さ格子で湿り・地表・草密度を計算する。
+6. `recipe` があればペイントを読み、量子化前の全体高さ格子で湿り・地表・草密度・凹み度を計算する。
 7. 全体の min/max（ヘッダには float で格納）を使い、
    `round((heightM-min)/(max-min)*65535)` を 0..65535 へ制限して `uint16` 量子化する。
    全標本が同じ高さなら 0 とする。同じ全体走査で中心差分（外周のみ片側差分）から法線を計算する。
@@ -484,6 +502,11 @@ R に x、G に z を `round((n*0.5+0.5)*255)`（0..255 に制限）で符号化
 | `SPL0` | `nvtex.v0.rgba8.linear` / RGBA8UNorm | `terrain.splat:` + 層 0..3 の名前をカンマで連結 | RGBA=層 0..3。1 層以上のとき生成 |
 | `SPL1` | `nvtex.v0.rgba8.linear` / RGBA8UNorm | `terrain.splat:` + 層 4..7 の名前をカンマで連結 | RGBA=層 4..7。5 層以上のとき生成 |
 | `GRS0` | `nvtex.v0.r8.linear` / R8UNorm | `terrain.grass.density` | R=草密度 |
+| `PDL0` | `nvtex.v0.r8.linear` / R8UNorm | `terrain.puddle.potential` | R=凹み度（水たまりのできやすさ、0..1） |
+
+`PDL0` は GR37 の地形 GBuffer シェーダーが凹み度を引くための層である。
+実行時は `TerrainHeightField::HasPuddlePotential` で層の有無を確認でき、
+`TerrainHeightField::SamplePuddlePotential` は最も近い頂点の値を返す。層のない古い NVTRN と範囲外では 0 として読む。
 
 指定のない splat 層のチャンネルは 0。各タイルの NVTEX は全ミップを持ち、各チャンネルを領域平均して
 丸めるため、splat の総和 255 を保証するのは mip0 だけである。
@@ -545,7 +568,7 @@ JSON の空白や seed だけの変更もハッシュを変える。
 測定日: 2026-11-04。Windows、CPU: 13th Gen Intel(R) Core(TM) i9-13900KF。
 Visual Studio 2022（MSVC 14.44）、x64、**RelWithDebInfo** の AssetCook を使用した。
 これはマスク実装前の測定で、当時は下記の `recipe={}` に生成処理がなかった。
-現在は同じ指定でも MSK0・GRS0 が生成されるため、再実行時のレイヤ・バイト数・ハッシュ・性能はこの結果と異なる。
+現在は同じ指定でも MSK0・GRS0・PDL0 が生成されるため、再実行時のレイヤ・バイト数・ハッシュ・性能はこの結果と異なる。
 
 ```powershell
 cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1
