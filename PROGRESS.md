@@ -9885,3 +9885,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
 - G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
 - Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
+
+- U1 NullAudioBackend と通常起動用の切り替え(フォールバック)・バックエンドの診断の印: 着地(直し 0 回)
+- U2 仮の合成音の生成台本・WAV・既定のバンク: 着地(直し 0 回)
+- U8 U3 の切り直し(保存した差分を当て、新規ファイルを CRLF にする): 着地(直し 0 回)
+- U9 cook されていないばらの WAV をクリップとして読む(通常の起動用): 着地(直し 0 回)
+- U4 AudioComponentTest と文書(TickStages・Testing): 着地(直し 1 回)
+- U5 GameMode の持ち主の包み・通常の起動で音のモジュールと既定のバンクを使う: 着地(直し 1 回)
+- U6 --audio-smoke と Test-AudioSmoke.ps1: 着地(直し 0 回)
+- U7 AudioFlow.md(層の構成と更新の順): 着地(直し 0 回)
+## 2026-11-05 G8-GR72-AUDIO-COMPONENT-BOOT(run 20261105-093023 の反復 1、完了)
+- Done: `AudioComponent`(PROPERTY は SoundName・bAutoPlay・Volume・PitchSemitones。Play / Stop / StopAll、Finalize で `ReleaseOwner` を呼びループは fade-out・ワンショットは鳴り切る。音のモジュールの `RegisterReflectedTypes` で ClassRegistry へ登録)と `ISoundSystem::ReleaseOwner` を足した。GameMode は `AudioGameModeOwner` で包み、Leave の後に `StopOwner(GetGameModeOwnerKey(id))` を呼ぶ(Component のキーは最上位ビット 0 の連番、モードのキーは最上位ビット 1)。通常の起動で音のモジュールをフォールバックありで登録し(XAudio2 が初期化できなければ `NullAudioBackend` へ切り替え `AUDIO_BACKEND fallback=null reason=...` と `GetBackendStatus()` の印)、`OnPostInitialize` で既定のバンク `Audio/Banks/default.soundbank.json` を読む(`AUDIO_BANK ...`)。`--m9-world-smoke` と `--audio-smoke` はフォールバックなし。仮の合成音は `Scripts/GenerateProvisionalAudio.py` と `Assets/Audio/Provisional/*.wav`。`--audio-smoke` と `Scripts/Test-AudioSmoke.ps1`(一時ディレクトリで WAV とバンクを cook、所有プロセスの時間切れ管理、`AUDIO_SMOKE stage=...` の検査)、`Docs/Architecture/AudioFlow.md`、TickStages の表・Testing.md の理由を足した。
+- 決定: 通常の起動の `build/CookedAssets` は `CookAssets.ps1` が作り音を焼かないので、`AudioClipLoader` は cook 済みが無いときばらの PCM16 WAV(RIFF/WAVE、44.1/48 kHz、モノ/ステレオ)を読み `AUDIO_COOKED_MISSING` の警告を出す(テクスチャのばら読みと同じ扱い)。スナップショットが無い起動経路では、バンクの読み込みだけその場のばらの AssetSystem(root は `m_TextureLooseAssetRoot`、無ければ `NORVES_SOURCE_ASSET_DIR`)を使う。
+- 試験: `AudioComponentTest`(Play / Stop と他の Component の handle の拒否、破棄でループの voice の音量が単調に下がって止まりワンショットは Drained まで鳴る、StopAll は自分の音だけ、モジュールが無くても落ちない、PROPERTY の保存と読み込みの一致)、`AudioPlaybackTest` に NullAudioBackend のケースと、ばらの WAV がクリップになり WAV でないものは NotCooked のケース。
+- 証拠: `.harness/runs/20261105-093023/verify-G8-GR72-AUDIO-COMPONENT-BOOT-final.txt`(Debug の Game・AudioBackendLifetimeTest のビルド BUILD_EXIT=0、ctest 5 本 100% Pass、`Test-M9World.ps1 -ContractOnly` で `M9_REVIEW_CONTRACT result=pass contract=All`、`Test-AudioSmoke.ps1` の構文検査 PARSE_OK)。
+- Next: 起動の確かめは後回し(G8-GR72-AUDIO-CHECK): 通常の起動のログで `AUDIO_MODULE register=ok`・`AUDIO_BANK load=ok sounds=2`(ばらの WAV なら `AUDIO_COOKED_MISSING` 4 行)が出ること、音の装置が無い環境で `AUDIO_BACKEND fallback=null` を出して起動が続くこと、`Scripts/Test-AudioSmoke.ps1` が `AUDIO_SMOKE result=pass` になること、ランチャーとシーンの行き来で音が残らないこと。ランナーの評価者の反証(Public API・アセットの読み込み)。
+- Notes: `--no-cooked-textures` だけを付けた起動ではスナップショットが無く、バンクはばらの root(`NORVES_SOURCE_ASSET_DIR`)から読む。`Test-AudioSmoke.ps1` は Game を `--render-thread=st --window-background` で起動し、作業ディレクトリの `Game.log` からマーカーを読む。
