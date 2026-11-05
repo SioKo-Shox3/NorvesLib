@@ -9957,3 +9957,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 種の表の既定値（密度・半径・帯）は企画で未定の仮の値。岩は既存の `Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`、倒木・低木・株のメッシュの論理パスはまだ cook されない仮のパス（一覧は NVSCTv0.md の grassland の節）。岩は傾斜 25° 以上・MSK0 の a の帯で 9 本しか置かれない。
 - Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
 - Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
+
+- U1 serializer probe の PS 版の完全一致をやめ、5.1 の検査と版の記録にする: 着地(直し 0 回)
+
+## 2026-11-05 G2-S6-ASSET-SET-P6(run 20261105-113056 の反復 1、完了)
+- Done: `Scripts/VerifyTextureAssetSet.py` の serializer probe の包みで、PowerShell の版の完全一致(`5.1.20348.5622`)の固定をやめ、Windows PowerShell 5.1(`PSVersion.Major -eq 5` かつ `PSVersion.Minor -eq 1`。`CaptureTextureAssetSetBaseline.py` と同じ規則)であることの検査に替えた。完全な版は包みが標準出力に `powershell_version=` で書き、`ps-probe.stdout.log` と `verification.json` の `powershell_version` に記録する(取れなければ止まる)。同じ PS5.1 の `ConvertTo-Json` 出力と native の `manifest.json` の byte の照合、`powershell.exe` の binary の hash の照合、凍結基準の JSON は変えていない。`Docs/Architecture/TextureAssetSetCook.md` の「PS5.1との互換」に、版は固定せず記録し、互換は byte の照合と binary の hash で保つことを書いた。
+- 理由: GitHub のランナーのイメージの更新(20261026.347.1 など)で PS5.1 の小さな版が上がり、probe が `PowerShell version changed` で止まったため。
+- 証拠: タスクの verify(文字列の検査と `python -B Test/Tools/TextureAssetSetVerifyTest.py -v`)が終了コード 0、4 tests OK。numstat の 2 通りは一致。
+- Next: CI での再確認(`windows-assetcook.yml` の完走)は G2-S6-ASSET-SET-P3 が受け持つ。CI の起動とプッシュはしていない。
+- Notes: binary の hash は固定のままなので、ランナーのイメージで `powershell.exe` 自体が差し替わると `固定PowerShell binaryと違います` で止まる(このタスクの契約で残す照合)。
