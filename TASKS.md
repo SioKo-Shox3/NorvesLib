@@ -5672,7 +5672,7 @@
 - notes: ロードマップ GR26 の設計3・4（393〜461 行）。10-02 の後に可視バッファの経路（既定は on）が入ったので、その材質の表と解決（Common/VisibilityResolve.glsl）も経路に含めた。ロードマップの「未使用の MaterialCreateInfo 系は育てず MaterialCreateData を正本にする」に従う。`CustomData` は impostor.vert（アトラス）と board2d.vert（ビューポートの大きさ）で別の用途なので、汎用の値の置き場にしない。InstanceData のストライドの不一致は警告なしに壊れるので、include の一本化と走査の試験で守る。MegaGeometry の UBO は今 `SectionUniformData`（MegaGeometryPass.cpp:1983 の 768 バイト以下）で、ロードマップの 512 バイトの記述は古い。ShadingModel の CPU の列挙と GBuffer の ID は切り離す（既存の Unlit は当面 DefaultLit へ写す）。取り込んだ glTF の材質（ModelMaterialStaging.cpp:79 は DefaultLit 以外を拒否）はこの項目では変えない。危険地帯（Public API の MaterialCreateData・MeshProxy・GPUSceneInstanceData、GBuffer、MegaGeometry、可視バッファ）なので評価者を通す。完了条件の GR26 の行、要件 `#### GR26`。
 
 ## G5-GR38-PHYSICS-HEIGHTFIELD: 物理モジュールに地形のコライダーを足し、問い合わせ・接触・キャラクターの移動が地形の上で働くようにする
-- status: todo
+- status: done
 - after: G5-GR38-HEIGHTFIELD-QUERY, G4-GR07-MOVER-CASES, G4-GR07-BODY-CASES, G4-GR07-DOG-SMOKE-COURSE, G1-GR08-BROADPHASE-INTEGRATION, G1-GR08-LAYER-TABLE
 - gr: GR38
 - needs-gr: GR07, GR08
