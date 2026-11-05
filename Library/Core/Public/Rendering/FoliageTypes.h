@@ -5,7 +5,7 @@
  * @brief 草・低木の株（葉や枝の束）をインスタンスの配列から描くためのデータ
  *
  * 1 つの束（FoliageBatch）は、1 つの株のメッシュと、その株を置くインスタンスの配列と、色と風の値を持つ。
- * GameThread が RenderWorld::SetFoliageBatches で束の一覧を与え、毎フレームの FramePacket に写して RenderThread へ渡す。
+ * GameThread が RenderWorld::SetFoliageSource で出どころごとに束の一覧を与え、RenderWorld が合成して毎フレームの FramePacket に写す。
  * メッシュとインスタンスの配列は作った後に書き換えない共有の値（TSharedPtr<const ...>）で、写しは参照を数えるだけで済む。
  * 描くのは FoliagePass（ビジビリティの解決の後に GBuffer へ直接ラスタする）で、束ごとに 1 回のインスタンス描画にする。
  * 太陽の影は、カメラに近い株だけを VirtualShadowMapPass が同じ置き方で仮想シャドウマップへ描く（VirtualShadowMapFoliageCasters.h）。
@@ -21,6 +21,16 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    /// 草・低木の束の出どころ（RenderWorld が出どころの順に束をつないで描く）
+    enum class FoliageSourceSlot : uint32_t
+    {
+        /// シーン自身が置く束（荒野の草・低木・礫など）。風はこの出どころの値を使う
+        Scene = 0,
+        /// 焼いた散布（ScatterSystem）がチャンクの常駐に合わせて置く束
+        Scatter = 1,
+        Count = 2,
+    };
+
     /**
      * @brief 株のメッシュの頂点（52 バイト。foliage.vert の頂点の入力と同じ並び）
      *
