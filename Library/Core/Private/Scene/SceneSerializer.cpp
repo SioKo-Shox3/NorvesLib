@@ -1,6 +1,7 @@
 ﻿#include "Scene/SceneSerializer.h"
 
 #include "Asset/AssetRef.h"
+#include "Asset/AssetSystem.h"
 #include "Component/Component.h"
 #include "Component/CameraComponent.h"
 #include "Component/LightComponent.h"
@@ -19,6 +20,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -2137,8 +2139,121 @@ namespace NorvesLib::Core::Scene
         return true;
     }
 
-    bool SceneSerializer::LoadIntoWorld(World& world, const Container::String& filePath, SceneLoadStats* pOutStats)
+    namespace
     {
+        void ResetSceneLoadOutputs(SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
+        {
+            if (pOutStats)
+            {
+                *pOutStats = SceneLoadStats();
+            }
+            if (pOutRoots)
+            {
+                pOutRoots->clear();
+            }
+        }
+
+        bool LoadSceneJson(World& world, const Container::String& jsonText, const Container::String& sourceName,
+                           SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
+        {
+            SceneDocument document;
+            Container::String parseError;
+            if (!SceneSerializer::TryParseJson(jsonText, document, &parseError))
+            {
+                NORVES_LOG_ERROR("Scene", "シーン '%s' のJSON解析に失敗しました: %s",
+                                 sourceName.c_str(), parseError.c_str());
+                if (pOutStats)
+                {
+                    *pOutStats = SceneLoadStats();
+                }
+                return false;
+            }
+
+            SceneLoadStats stats;
+            Container::VariableArray<EntitySubtreeSnapshot> roots;
+            SceneReferencePlan references;
+            if (!ReconcileWithSchemaInternal(document, roots, stats, references))
+            {
+                if (pOutStats)
+                {
+                    *pOutStats = stats;
+                }
+                return false;
+            }
+
+            // ReconcileWithSchemaはreconcile成功ルート数をLoadedRootsに計上するが、
+            // LoadIntoWorldは実際にSpawnPrefabできたルート数を報告するため一旦ゼロ化する。
+            stats.LoadedRoots = 0;
+
+            // Bridge sceneDuplicateObjectと同経路: 関数ローカルRegistry＋一時PrefabAsset。
+            // SpawnPrefabは同期消費するため関数ローカル寿命で十分。
+            ResourceRegistry registry;
+            if (!registry.Initialize())
+            {
+                NORVES_LOG_ERROR("Scene", "一時ResourceRegistryの初期化に失敗しました");
+                if (pOutStats)
+                {
+                    *pOutStats = stats;
+                }
+                return false;
+            }
+
+            bool bAllSpawned = true;
+            {
+                Container::VariableArray<PrefabSpawnAliasMap> spawnedRoots;
+                spawnedRoots.resize(document.Roots.size());
+                Container::VariableArray<Container::TSharedPtr<PrefabAsset>> prefabs;
+                prefabs.reserve(roots.size());
+                for (size_t index = 0; index < roots.size(); ++index)
+                {
+                    EntitySubtreeSnapshot& root = roots[index];
+                    Container::TSharedPtr<PrefabAsset> prefab = registry.CreateTransient<PrefabAsset>("SceneLoad");
+                    if (prefab == nullptr)
+                    {
+                        bAllSpawned = false;
+                        continue;
+                    }
+                    prefabs.push_back(prefab);
+                    prefab->SetTree(std::move(root));
+
+                    Entity* spawned = world.SpawnPrefab(*prefab, nullptr, nullptr,
+                                                         &spawnedRoots[references.RootIndices[index]]);
+                    if (spawned == nullptr)
+                    {
+                        NORVES_LOG_ERROR("Scene", "シーン '%s' のルートの生成に失敗しました", sourceName.c_str());
+                        bAllSpawned = false;
+                        continue;
+                    }
+                    ++stats.LoadedRoots;
+                    if (pOutRoots)
+                    {
+                        pOutRoots->push_back(spawned);
+                    }
+                }
+                ApplyEntityReferencePlan(references, spawnedRoots);
+                prefabs.clear();
+            }
+            registry.Shutdown();
+
+            if (pOutStats)
+            {
+                *pOutStats = stats;
+            }
+            NORVES_LOG_INFO("Scene", "シーンから%llu個のルートを生成しました: '%s'（除外: Entity %llu、Component %llu、プロパティ %llu）",
+                            static_cast<unsigned long long>(stats.LoadedRoots),
+                            sourceName.c_str(),
+                            static_cast<unsigned long long>(stats.DroppedEntities),
+                            static_cast<unsigned long long>(stats.DroppedComponents),
+                            static_cast<unsigned long long>(stats.DroppedProperties));
+            return bAllSpawned;
+        }
+    } // namespace
+
+    bool SceneSerializer::LoadIntoWorld(World& world, const Container::String& filePath,
+                                        SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
+    {
+        ResetSceneLoadOutputs(pOutStats, pOutRoots);
+
         Container::String jsonText;
         {
             NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
@@ -2147,102 +2262,37 @@ namespace NorvesLib::Core::Scene
                 NorvesLib::FileStream::FileAccess::Read);
             if (!stream || !stream->IsOpen())
             {
-                NORVES_LOG_ERROR("Scene", "LoadIntoWorld: failed to open '%s' for reading", filePath.c_str());
-                if (pOutStats)
-                {
-                    *pOutStats = SceneLoadStats();
-                }
+                NORVES_LOG_ERROR("Scene", "シーンファイル '%s' を開けません", filePath.c_str());
                 return false;
             }
             jsonText = stream->ReadString();
         }
 
-        SceneDocument document;
-        Container::String parseError;
-        if (!TryParseJson(jsonText, document, &parseError))
+        return LoadSceneJson(world, jsonText, filePath, pOutStats, pOutRoots);
+    }
+
+    bool SceneSerializer::LoadIntoWorldFromAsset(World& world, const Asset::AssetSystem& assetSystem,
+                                                 Container::AnsiStringView logicalPath, SceneLoadStats* pOutStats,
+                                                 Container::VariableArray<Entity*>* pOutRoots)
+    {
+        ResetSceneLoadOutputs(pOutStats, pOutRoots);
+
+        const Container::String sourceName(logicalPath);
+        const Asset::AssetResolveResult resolved = assetSystem.ResolveAsset(logicalPath, Asset::AssetKind::Raw);
+        if (!resolved.Succeeded())
         {
-            NORVES_LOG_ERROR("Scene", "LoadIntoWorld: parse failed for '%s': %s",
-                             filePath.c_str(), parseError.c_str());
-            if (pOutStats)
-            {
-                *pOutStats = SceneLoadStats();
-            }
+            NORVES_LOG_ERROR("Scene", "シーン資産 '%s' の解決に失敗しました: %s",
+                             sourceName.c_str(), resolved.Reason.c_str());
             return false;
         }
 
-        SceneLoadStats stats;
-        Container::VariableArray<EntitySubtreeSnapshot> roots;
-        SceneReferencePlan references;
-        if (!ReconcileWithSchemaInternal(document, roots, stats, references))
+        const size_t byteCount = resolved.Blob.GetSize();
+        Container::String jsonText(byteCount, '\0');
+        if (byteCount > 0)
         {
-            if (pOutStats)
-            {
-                *pOutStats = stats;
-            }
-            return false;
+            std::memcpy(&jsonText[0], resolved.Blob.GetData(), byteCount);
         }
-
-        // ReconcileWithSchemaはreconcile成功ルート数をLoadedRootsに計上するが、
-        // LoadIntoWorldは実際にSpawnPrefabできたルート数を報告するため一旦ゼロ化する。
-        stats.LoadedRoots = 0;
-
-        // Bridge sceneDuplicateObjectと同経路: 関数ローカルRegistry＋一時PrefabAsset。
-        // SpawnPrefabは同期消費するため関数ローカル寿命で十分。
-        ResourceRegistry registry;
-        if (!registry.Initialize())
-        {
-            NORVES_LOG_ERROR("Scene", "LoadIntoWorld: transient ResourceRegistry initialization failed");
-            if (pOutStats)
-            {
-                *pOutStats = stats;
-            }
-            return false;
-        }
-
-        bool bAllSpawned = true;
-        {
-            Container::VariableArray<PrefabSpawnAliasMap> spawnedRoots;
-            spawnedRoots.resize(document.Roots.size());
-            Container::VariableArray<Container::TSharedPtr<PrefabAsset>> prefabs;
-            prefabs.reserve(roots.size());
-            for (size_t index = 0; index < roots.size(); ++index)
-            {
-                EntitySubtreeSnapshot& root = roots[index];
-                Container::TSharedPtr<PrefabAsset> prefab = registry.CreateTransient<PrefabAsset>("SceneLoad");
-                if (prefab == nullptr)
-                {
-                    bAllSpawned = false;
-                    continue;
-                }
-                prefabs.push_back(prefab);
-                prefab->SetTree(std::move(root));
-
-                Entity* spawned = world.SpawnPrefab(*prefab, nullptr, nullptr,
-                                                     &spawnedRoots[references.RootIndices[index]]);
-                if (spawned == nullptr)
-                {
-                    NORVES_LOG_ERROR("Scene", "LoadIntoWorld: SpawnPrefab failed for a scene root in '%s'", filePath.c_str());
-                    bAllSpawned = false;
-                    continue;
-                }
-                ++stats.LoadedRoots;
-            }
-            ApplyEntityReferencePlan(references, spawnedRoots);
-            prefabs.clear();
-        }
-        registry.Shutdown();
-
-        if (pOutStats)
-        {
-            *pOutStats = stats;
-        }
-        NORVES_LOG_INFO("Scene", "LoadIntoWorld: spawned %llu roots from '%s' (dropped: %llu entities, %llu components, %llu properties)",
-                        static_cast<unsigned long long>(stats.LoadedRoots),
-                        filePath.c_str(),
-                        static_cast<unsigned long long>(stats.DroppedEntities),
-                        static_cast<unsigned long long>(stats.DroppedComponents),
-                        static_cast<unsigned long long>(stats.DroppedProperties));
-        return bAllSpawned;
+        return LoadSceneJson(world, jsonText, sourceName, pOutStats, pOutRoots);
     }
 
 } // namespace NorvesLib::Core::Scene

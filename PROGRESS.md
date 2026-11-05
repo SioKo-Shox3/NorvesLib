@@ -10178,3 +10178,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 SpawnPrefab の alias の表と PivotObjectId の EntityRefId 化(U2・U3 のレビュー済みの差分の再適用): 着地(直し 0 回)
 - Notes(G12-GR92-ASSETREF-SCENE-V3): U2・U3 はレビュー済みだったが、着地の前に単位の作業ツリーを別のタスクが使い回したので捨て、同じ差分を U7 で入れ直した。シーンの先頭の `assets` の表は、論理パスや種別が不正だと文書の解析ごと失敗する(プロパティの不正な論理パスは落として既定値に戻す寛容な扱いで、扱いがそろっていない)。
 - U5 EntityRefId の保存と張り替え、v2 → v3 の値の移行: 着地(直し 0 回)
+- U6 LoadIntoWorld の生成ルートの返却・論理パスからの読み込みとタスクの確かめ: 着地(直し 0 回)

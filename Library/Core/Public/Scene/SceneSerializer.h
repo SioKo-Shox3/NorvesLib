@@ -7,7 +7,13 @@
 
 namespace NorvesLib::Core
 {
+    class Entity;
     class World;
+
+    namespace Asset
+    {
+        class AssetSystem;
+    }
 }
 
 namespace NorvesLib::Core::Scene
@@ -149,8 +155,21 @@ namespace NorvesLib::Core::Scene
          * 復元Entity/ComponentのIDはAssignFreshObjectIdsRecursiveで再採番される（仕様）。
          * EntityRefIdは全ルートのSpawnPrefab完了後、BeginPlayより後に新しいObjectIdへ張り替える。
          * 事前フィルタ済みルートのSpawnPrefabが1つでも失敗した場合false（成功分は残る）。
+         * pOutRootsは呼び出し時に空にされ、生成に成功したルートが文書の順に入る。
+         * 返したルートはWorldが所有する。GameModeScope::TrackObjectに渡すとモードの終わりに消える。
          */
-        static bool LoadIntoWorld(World& world, const Container::String& filePath, SceneLoadStats* pOutStats = nullptr);
+        static bool LoadIntoWorld(World& world, const Container::String& filePath,
+                                  SceneLoadStats* pOutStats = nullptr,
+                                  Container::VariableArray<Entity*>* pOutRoots = nullptr);
+
+        /**
+         * @brief 論理パスからシーンを解決し、Worldへ加算ロードする。
+         * 出力と所有権はLoadIntoWorldと同じ。失敗時も生成に成功したルートは残る。
+         */
+        static bool LoadIntoWorldFromAsset(World& world, const Asset::AssetSystem& assetSystem,
+                                           Container::AnsiStringView logicalPath,
+                                           SceneLoadStats* pOutStats = nullptr,
+                                           Container::VariableArray<Entity*>* pOutRoots = nullptr);
     };
 
 } // namespace NorvesLib::Core::Scene

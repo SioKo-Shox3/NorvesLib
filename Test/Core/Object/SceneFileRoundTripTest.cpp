@@ -8,6 +8,7 @@
 #include "Component/ViewClearanceComponent.h"
 #include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
+#include "GameMode/GameModeScope.h"
 #include "Object/PrefabAsset.h"
 #include "Object/SchemaProjection.h"
 #include "Object/World.h"
@@ -853,6 +854,76 @@ namespace
         assert(std::remove(filePath) == 0);
     }
 
+    void TestLoadedRootsCleanup()
+    {
+        RegisterRequiredClasses();
+        constexpr const char* filePath = "SceneFileRoundTripTest.scope.scene.json";
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* first = sourceWorld.SpawnEntity<Entity>();
+        Entity* second = sourceWorld.SpawnEntity<Entity>();
+        assert(first != nullptr && second != nullptr);
+        first->getName() = Container::String("FirstRoot");
+        second->getName() = Container::String("SecondRoot");
+        Entity* child = sourceWorld.SpawnEntity<Entity>(first);
+        assert(child != nullptr);
+        child->getName() = Container::String("Child");
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(filePath)));
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Entity* existing = loadedWorld.SpawnEntity<Entity>();
+        assert(existing != nullptr);
+        const uint64_t existingId = existing->GetObjectId();
+        const size_t originalCount = loadedWorld.GetObjectCount();
+
+        Container::VariableArray<Entity*> roots;
+        roots.push_back(existing);
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats, &roots));
+        assert(stats.LoadedRoots == 2);
+        assert(roots.size() == 2);
+        assert(roots[0] != nullptr && roots[1] != nullptr);
+        assert(roots[0] != existing && roots[1] != existing && roots[0] != roots[1]);
+        const Container::String firstName = roots[0]->getName();
+        const Container::String secondName = roots[1]->getName();
+        assert(firstName == "FirstRoot");
+        assert(secondName == "SecondRoot");
+        assert(roots[0]->GetParentEntity() == nullptr && roots[1]->GetParentEntity() == nullptr);
+        const Container::VariableArray<Entity*> loadedChildren = roots[0]->GetChildEntities();
+        assert(loadedChildren.size() == 1 && loadedChildren[0] != nullptr);
+        const Container::String childName = loadedChildren[0]->getName();
+        assert(childName == "Child");
+        assert(loadedChildren[0]->GetParentEntity() == roots[0]);
+        assert(roots[1]->GetChildEntities().empty());
+
+        const uint64_t firstId = roots[0]->GetObjectId();
+        const uint64_t secondId = roots[1]->GetObjectId();
+        const uint64_t childId = loadedChildren[0]->GetObjectId();
+        assert(loadedWorld.FindEntityByObjectId(firstId) == roots[0]);
+        assert(loadedWorld.FindEntityByObjectId(secondId) == roots[1]);
+        assert(loadedWorld.FindEntityByObjectId(childId) == loadedChildren[0]);
+        assert(loadedWorld.GetObjectCount() == originalCount + 2);
+
+        GameMode::GameModeScope scope(&loadedWorld, nullptr);
+        for (Entity* root : roots)
+        {
+            scope.TrackObject(root);
+        }
+        scope.Cleanup();
+        assert(scope.IsEmpty());
+        assert(loadedWorld.FindEntityByObjectId(firstId) == nullptr);
+        assert(loadedWorld.FindEntityByObjectId(secondId) == nullptr);
+        assert(loadedWorld.FindEntityByObjectId(childId) == nullptr);
+        assert(loadedWorld.FindEntityByObjectId(existingId) == existing);
+        assert(loadedWorld.GetObjectCount() == originalCount);
+
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(std::remove(filePath) == 0);
+    }
+
     void TestLoadFailures()
     {
         RegisterRequiredClasses();
@@ -894,6 +965,7 @@ int main()
     TestSaveWriteFailurePreservesOriginal();
     TestEntityReferencesSaveLoadRoundTrip();
     TestV2EntityReferenceMigration();
+    TestLoadedRootsCleanup();
     TestLoadFailures();
 
     std::cout << "SceneFileRoundTripTest passed\n";
