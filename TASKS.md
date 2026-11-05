@@ -5698,7 +5698,7 @@
 - notes: 設計はロードマップ 821〜827・843 行（GR42 の 2 と 4）。AssetKind は G5B-S3（G5-GR89-NVTRN-FORMAT の notes）で決めた共用の World を使い、新しい kind を足さない。形式の作りは NVTEX・NVAUD と同じ流儀（`CookedTextureFormat.h`・`CookedAudioFormat.h`）。AssetSystem はパッケージ全体を読んでハッシュを確かめる（ロードマップ 825 行）ので、谷 1 つ（数 MB〜数十 MB）を超える場は領域ごとの entry に分ける（GR111 の範囲読みの前の策。この項目では 1 entry でよい）。地形の層から焼けるようにするのは、草の生え方を地形の傾斜・湿り・道と一致させるため（GR89 の GRS0 は草密度の層として作ってある。ロードマップ 780 行）。シーンに保存するのは設定値だけで、場の本体は別ファイルなので、パスが古い・読めないときに警告のログを出す（ロードマップ 1281 行）。試験を足す理由: 壊れた・改ざんされた場を拒否しそこねると、草の密度や種別が化けたまま描かれ、撮影では気づきにくい。PROPERTY の往復が壊れると保存したシーンから草原が消えるかずれるだけで、エラーは出ない。危険地帯（アセットロード・Public API）なので評価者を通す。
 
 ## G8-GR16-JOINT-DATA-RESPONSE: 関節に追従する判定体・攻撃のデータ・表示・当たりの反応(火花・ヒットストップ)をつなぐ
-- status: todo
+- status: done
 - after: G8-GR16-COMBAT-RUNTIME, GAME-GR131-VFX, G3-GR13-SOCKET-ORACLE-TIMING, G4-GR02-FIXED-FRAME-CLOCK
 - gr: GR16
 - needs-gr: GR13, GR02
