@@ -10027,3 +10027,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
   - `GripTuningLoadTest`: 反証する契約は、`Assets/Gameplay/grip.tuning.json` の必須の欠落・未知のキー・型違い・範囲外をファイルとキーの分かるエラーで拒否し、失敗時に値を変えず、正しいデータと同梱の既定を読めること。ほかの手段では気づけない（綴りの誤りは既定値のまま黙って使われる）。失敗は黙って起きる。
 - U1 調整値 GripTuning の型・JSON の読み込み・既定の資産を足す: 着地(直し 0 回)
 - U2 しがみつきの拘束のソルバ・荷重の平滑と混ぜ・顎のゲージの純関数を足す: 着地(直し 0 回)
+- U3 GripTuningLoadTest を足す: 着地(直し 0 回)
