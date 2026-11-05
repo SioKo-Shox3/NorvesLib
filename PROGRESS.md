@@ -10017,3 +10017,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 重心座標つきのレイと三角形の交差: 着地(直し 0 回)
 - U2 SkinnedMeshComponent にパレットを読む口: 着地(直し 0 回)
 - U3 表面のアンカーの評価・関節のバケット・突き立ての点の探索: 着地(直し 0 回)
+- Notes: 要起票: `SkinnedMeshResource::SetIndices` は `GetPoseRevision()` を進めないので、インデックスだけを差し替えると古いアンカーと `JointTriangleBuckets` がリビジョンの照合で見つからない。別のメッシュどうしでリビジョンの値が一致しても照合を通る。
