@@ -116,7 +116,7 @@ Resetは位置・回転と速度を指定値へ戻し、余りを0にする。�
 
 骨格単位の実行時サイドカー。AnimatorComponent.ApplyPoseModifiersJson／ApplyPoseModifiersFileで明示して読み、cookのハッシュには含めない。ファイルのパスは呼出側が渡し、ディスクを自動探索しない。ファイルはUTF-8で、BOMも受け入れる。
 
-最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。CustomはGetBuiltinPoseModifierTypesの組み込みの型の表（Lean・Spine・Look・SpringBone・FollowThroughを載せる）に無いので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
+最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。CustomはGetBuiltinPoseModifierTypesの組み込みの型の表（Lean・Spine・Look・FootIK・SpringBone・FollowThroughを載せる）に無いので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
 
 ```json
 {
@@ -168,9 +168,56 @@ PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weight
 
 全件の検証と生成に成功した場合だけ、AddModifierで追加した分も含め、Animatorのmodifier群を丸ごと置き換える。空配列は群を空にする。構文・設定・ファイルの読込などで失敗した場合は前の群を保持する。
 
+### 足の IK(FootIK)
+
+組み込みの型 `FootIK` は既定order 500。設定は骨格単位の実行時サイドカー `*.posemod.json` のsettingsに置く。import.jsonのik節には置かない。長さはメートル、時間は秒。足の固定・着地の判定は扱わない。
+
+| キー | 既定値・範囲 |
+|---|---|
+| legs | 必須。1〜8脚の配列 |
+| legs[].name | 必須の文字列。脚の間で一意 |
+| legs[].chain | 必須。根・中間・足首・任意の足先の関節名3〜4個。重複不可、後の関節は直前の関節の子孫 |
+| legs[].pole | `"auto"`。または有限な数値3個の方向、長さ1e-6以上。正規化して使う |
+| legs[].sole / legs[].maxStretch | 0.02 / 1.02。範囲はそれぞれ[0, 0.5] / [1, 1.5] |
+| body | 省略時は体の補正なし。指定するならobject |
+| body.pelvis / body.chest | body指定時は必須の関節名。chestはpelvis自身かその子孫 |
+| body.maxDrop / body.maxRaise | 0.25 / 0.1。それぞれ[0, 2] |
+| body.smoothTime | 0.12。[0, 5]。体と脚の重みの臨界減衰の半減期。0なら即時反映。body省略時も脚の重みに既定値が効く |
+| ground | 省略時は以下の既定値 |
+| ground.rayUp / ground.rayDown | 0.5 / 1.0。範囲はそれぞれ[0, 10] / (0, 20] |
+| ground.maxSlopeDeg | 50。[0, 89]度 |
+| ground.layerMask | 4294967295（全レイヤー）。[0, 4294967295]の整数リテラル |
+
+数値は有限値だけを受け入れる。未知・重複キーはUnknownKey / DuplicateKey、必須キーの欠けはMissingKey、型違いはTypeMismatch、範囲・チェーン・autoポールの不正はOutOfRange、未知の関節名はUnknownJoint。脚名の重複もDuplicateKey。エラーのPathは `modifiers[i].settings` 以下を指し、拒否時は前のmodifier群を保つ。
+
+```json
+{
+  "version": 1,
+  "modifiers": [{"type": "FootIK", "settings": {
+    "legs": [{"name": "RearLeft", "chain": ["Hip", "Knee", "Ankle", "Toe"], "pole": "auto"}],
+    "body": {"pelvis": "Pelvis", "chest": "Chest"},
+    "ground": {"rayUp": 0.5, "rayDown": 1.0}
+  }}]
+}
+```
+
+bodyが有効でchestとpelvisが異なり、脚の根の祖先にchestがあれば前脚、それ以外は後脚。autoはbind姿勢の根〜足首の線から膝へ向かう方向を、根の親の関節ローカルで保持する。骨の軸の規約に依存せず、膝の曲がりを取り出せない姿勢は拒否する。明示のpoleはモデル空間の方向。
+
+Applyは次の順に処理する。
+
+1. 足先のワールド位置からrayUpだけ上を始点にし、ワールドの真下へrayUp + rayDownの距離を一括で問い合わせる。
+2. 当たりの点・法線を検証して状態を分類する。法線の傾斜がmaxSlopeDegを超えればTooSteep。足先の目標Yは `hit.Point.y + max(補正前の足先Y − MeshToWorldの原点Y, sole)`、X/Zは補正前を保つ。
+3. 各脚の重みを、当たりが有効なら1、失敗なら0へsmoothTimeで平滑化する。
+4. 有効な後脚の高さの差の最小を骨盤、前脚の最小を胸の目標にし、[-maxDrop, maxRaise]へクランプして臨界減衰で平滑化する。有効な脚がない群は0、前脚自体がなければ胸は骨盤と同じ目標。骨盤を上下し、平滑化後の2点の差と水平距離からピッチを求め、骨盤を除く胸までの関節へ均等に配る。水平距離1e-4未満ではピッチ0。
+5. 脚ごとに、足首の目標 = 足先の目標 − 法線に合わせた足首→足先のベクトルを求め、二関節IK、足首の法線合わせを行う。chainが3関節なら足首を足先として扱う。脚の重みと文脈のWeightを補正に掛ける。
+
+NoHit / NotReady / WrongThread / TooSteep / Unavailableの脚は最後の当たりで解きながら、重みをsmoothTimeで0へ下げる。まだ当たりがなければ解かない。非一様スケールの脚は警告してIKを掛けない。不正な補正値は書き込まず、姿勢にNaN・Infを出さない。
+
+地面はSetGroundQueryで借用して渡し、問い合わせの使用中は呼出側が生存させる。ParsePoseModifierConfigで作った包みからはFindFootIKModifierで取り出す。物理を使う場合は `MakePhysicsGroundQuerySettings(ground)` を渡してPhysicsGroundQueryを作る。layerMaskとmaxSlopeDegはそこで物理の問い合わせに反映し、FootIKもmaxSlopeDegで法線を検証する。
+
 ## 胴の傾き・背骨の波・視線
 
-`GetBuiltinPoseModifierTypes` の組み込みの型の表には Lean・Spine・Look・SpringBone・FollowThrough の 5 型が登録されている。次の 3 型は、既定の `order` では足 IK（`FootIK`: 500）より前に掛かる。明示した `order` があればそちらを使う。
+`GetBuiltinPoseModifierTypes` の組み込みの型の表には Lean・Spine・Look・FootIK・SpringBone・FollowThrough の 6 型が登録されている。次の 3 型は、既定の `order` では足 IK（`FootIK`: 500）より前に掛かる。明示した `order` があればそちらを使う。
 
 | type | 実装 | 既定の order |
 |---|---|---:|
@@ -327,7 +374,7 @@ Look は毎フレーム、所有者の Animator の `TryResolveLookTarget(outWor
 
 ## ばねの二次運動と首・胸の遅れ
 
-組み込みの 5 型のうち、次の 2 型が二次運動と首・胸の遅れを担う。既定の `order` では足 IK（`FootIK`: 500）の後に掛かり、二次運動を加えてから首・胸の遅れを重ねる。明示した `order` があればそちらを使う。
+組み込みの 6 型のうち、次の 2 型が二次運動と首・胸の遅れを担う。既定の `order` では足 IK（`FootIK`: 500）の後に掛かり、二次運動を加えてから首・胸の遅れを重ねる。明示した `order` があればそちらを使う。
 
 | type | 実装 | 既定の order |
 |---|---|---:|

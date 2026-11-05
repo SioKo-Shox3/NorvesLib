@@ -18,5 +18,5 @@ namespace NorvesLib::Modules::Audio::Private
     [[nodiscard]] Core::Container::TUniquePtr<IAudioService> CreateAudioServiceForBackend(
         Core::Container::TUniquePtr<IAudioBackend> backend);
     [[nodiscard]] Core::Container::TUniquePtr<IAudioModule> CreateAudioModuleForBackend(
-        Core::Container::TUniquePtr<IAudioBackend> backend);
+        Core::Container::TUniquePtr<IAudioBackend> backend, const AudioModuleOptions& options = {});
 } // namespace NorvesLib::Modules::Audio::Private

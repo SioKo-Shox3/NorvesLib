@@ -4,6 +4,7 @@
 #include "GameModes/Grassland/GrasslandMode.h"
 
 #include "Core/Public/Component/CameraComponent.h"
+#include "Core/Public/Component/GrassFieldComponent.h"
 #include "Core/Public/Component/TerrainComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
@@ -57,6 +58,40 @@ namespace Game::GameModes
             return true;
         }
 
+        bool CreateGrassField(GameModeContext& ctx)
+        {
+            Entity* field = ctx.ScopeRef.SpawnObject<Entity>();
+            if (field == nullptr)
+            {
+                LOG_ERROR("grassland: 草の場の Entity を作れませんでした");
+                return false;
+            }
+            Component::GrassFieldComponent* component = nullptr;
+            try
+            {
+                component = new Component::GrassFieldComponent();
+            }
+            catch (...)
+            {
+                LOG_ERROR("grassland: 草の場の Component を作れませんでした");
+                return false;
+            }
+            if (component == nullptr)
+            {
+                LOG_ERROR("grassland: 草の場の Component を作れませんでした");
+                return false;
+            }
+            // AddComponent が BeginPlay を呼ぶ前に、読み込む草の場のパスを設定する。
+            component->SetCookedFieldPath("Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld");
+            if (!field->AddComponent(component))
+            {
+                delete component;
+                LOG_ERROR("grassland: 草の場の Component を追加できませんでした");
+                return false;
+            }
+            return true;
+        }
+
         void ApplyEnvironment(GameModeContext& ctx)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
@@ -96,7 +131,7 @@ namespace Game::GameModes
         }
 
         ApplyEnvironment(ctx);
-        if (!CreateTerrain(ctx, data))
+        if (!CreateTerrain(ctx, data) || !CreateGrassField(ctx))
         {
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
@@ -147,7 +182,7 @@ namespace Game::GameModes
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
         data.m_Rig.Leave(ctx);
         data.m_pTerrain = nullptr;
-        // 地形とカメラの Entity は GameModeScope::Cleanup が返す。TerrainComponent::EndPlay で区画を返す。
+        // 地形・草の場・カメラの Entity は GameModeScope::Cleanup が返す。各 Component の EndPlay で登録を返す。
         // 空は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);
         LOG_INFO("grassland を終了します");

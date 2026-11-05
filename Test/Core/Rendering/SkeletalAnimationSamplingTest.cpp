@@ -736,6 +736,7 @@ void TestAnimatorIntegration();
 void TestSocketOracle();
 void TestPoseModifierBase();
 void TestProceduralChainModifier();
+void TestLegIKModifier();
 void TestProceduralSpringModifier();
 
 int main(int argc, char** argv)
@@ -751,6 +752,7 @@ int main(int argc, char** argv)
     TestSocketOracle();
     TestPoseModifierBase();
     TestProceduralChainModifier();
+    TestLegIKModifier();
     TestProceduralSpringModifier();
     if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--capture-pose-snapshot") != 0))
     {
