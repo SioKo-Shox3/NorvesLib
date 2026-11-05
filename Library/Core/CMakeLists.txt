@@ -335,6 +335,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/Terrain/TerrainHeightFieldGrid.h
     Private/Rendering/Terrain/TerrainSystem.cpp
     Private/Rendering/Terrain/TerrainPlacementGround.cpp
+    Private/Scatter/ScatterSystem.cpp
     Private/Rendering/MegaGeometryPass.cpp
     Private/Rendering/HiZPyramidPass.cpp
     Private/Rendering/SkinningComputePass.cpp
@@ -767,6 +768,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/Terrain/TerrainMaterialDesc.h
     Public/Rendering/Terrain/TerrainSystem.h
     Public/Rendering/Terrain/TerrainPlacementGround.h
+    Public/Scatter/ScatterSystem.h
     # Object
     Public/Object/Invocation.h
     Public/Object/ObjectCast.h
