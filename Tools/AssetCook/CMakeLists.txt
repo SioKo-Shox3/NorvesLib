@@ -114,6 +114,8 @@ add_library(AssetCookLib STATIC
     HeightfieldImport.h
     GrassFieldCooker.cpp
     GrassFieldCooker.h
+    ScatterPlacement.cpp
+    ScatterPlacement.h
     TerrainCooker.cpp
     TerrainCooker.h
     TerrainMasks.cpp
