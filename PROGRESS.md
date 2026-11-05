@@ -10332,3 +10332,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（ジョブ・スレッドの危険地帯）。既定のワーカーの数は G12-GR108-PERF-CHECK の測定で決める。`--job-workers` の起動時の解釈は Game を起動していないので未確認（ビルドだけ確かめた）。
 - Notes: IdleCpu の判定に、done-when の 1000 ms に加えてサイクル数の比 2.0（同じ「走るタスク 1 本ぶんの 2 倍」の根拠）を足した。`GetProcessTimes` は時刻割り込みの標本化で、同じ PC でほかのアプリが動いていると修理前でも 171〜390 ms しか計上されず合格してしまう回があったため。
 - Notes: 提出の 1 本ごとの起床は今も NotifyOne。ParallelFor の補助は HIGH 優先度だがローカルキューは優先度を見ない（前からの振る舞い）。
+
+- U2 Gameplay にマーカーの Component・一括登録・検証・Catmull-Rom を足す: 着地(直し 0 回)
+- U1 Core に LevelSnap（地面への吸着・全対象の吸着し直し・離れの検査）を足す: 着地(直し 0 回)
+- U5 LevelSnap の離れの検査の不正な入力の扱いと冪等の前提を直す: 着地(直し 0 回)
+- U3 GameplayMarkerSchemaTest を足す: 着地(直し 0 回)
+- U4 Gameplay の吸着の入口と LevelSnapTest を足し、タスクの verify を通す: 着地(直し 1 回)
+- Done(G12-GR93-MARKERS-SNAP): `Library/Modules/Gameplay` の `Gameplay/Level/` に、全マーカー共通の `LevelMarkerComponent`（Key・Tag・bSnapToGround・GroundOffset）と、同じ Entity に並べる `TerritoryMarkerComponent`（OwnerKey・EngageRadius。形と中心は同じ Entity の `EncounterZoneComponent`）・`RestPointComponent`・`PoiMarkerComponent`・`AnimalSpawnPointComponent`・`ScentTrailComponent`（子 Entity の `ScentTrailPointComponent` の点、一様 Catmull-Rom の補間）を足した。PROPERTY は bool・uint32・float・String・Vector3 だけ。`RegisterGameplayComponentClasses`（モジュールの型登録もこれを呼ぶ）と `ValidateLevelMarkers`（空の Key・重複・LevelMarker の欠け・遭遇領域の無い持ち場・親の無い痕跡の点）。Core の `Scene/LevelSnap.h` に `SnapToGround`（SceneQuery の RaycastClosest、トリガーを除く）・`ReSnapAll`・`FindSnapDeviations`、Gameplay に World から吸着の対象を集める `ReSnapAllLevelMarkers`・`FindLevelMarkerSnapDeviations`。試験は `GameplayMarkerSchemaTest`・`LevelSnapTest`（PhysicsDynamicsTest の束）。
+- 証拠(G12-GR93-MARKERS-SNAP): `.harness/runs/20261105-202538/G12-GR93-MARKERS-SNAP-final-verify.txt`（verify のビルドの終了コード 0、ctest 8/8 合格・終了コード 0。痕跡の点を集めないようにすると LevelSnapTest が落ちることを確かめてから戻した）。アプリを起動する確かめはこの項目に無い。
+- Next(G12-GR93-MARKERS-SNAP): 配置の画面（G12-GR93-EDIT-VIEW）と検証の台本（G12-GR93-VALIDATE）。
+- Notes(G12-GR93-MARKERS-SNAP): Core は Gameplay の型を知らないので、Core の `ReSnapAll` は `LevelSnapTarget`（Entity と GroundOffset）の列を受け、World からの収集は Gameplay の入口が受け持つ。World は SceneQuery を持たない（Engine が持つ）ので `SnapToGround` の第 1 引数は `SceneQuery`。光線は位置の上 probeLift（既定 2 m）から撃つので、冪等は地面の上 probeLift 以内にほかの面が無いときに限る。親のある Entity のワールド位置は `World::UpdateWorldTransforms` までキャッシュが古いので、入口は親を吸着した後に更新してから痕跡の点を吸着する。
+- Notes(G12-GR93-MARKERS-SNAP): 束の試験のソースをビルドの最中に書き換えると、obj がソースより新しい時刻のまま古い中身を持ち、増分ビルドが作り直さないことがある（ソースの更新時刻を今にすると直る）。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに化けて MSB1008 になる。

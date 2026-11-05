@@ -239,6 +239,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
@@ -659,6 +660,7 @@ set(PUBLIC_HEADERS
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
     Public/Scene/PhysicsLayerTable.h
