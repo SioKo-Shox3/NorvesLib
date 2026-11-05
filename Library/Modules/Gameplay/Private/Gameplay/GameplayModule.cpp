@@ -6,6 +6,7 @@
 #include "Gameplay/Combat/HealthComponent.h"
 #include "Gameplay/Combat/HitboxComponent.h"
 #include "Gameplay/Combat/HurtboxSetComponent.h"
+#include "Gameplay/Enemy/EnemyComponent.h"
 #include "Gameplay/World/EncounterZoneComponent.h"
 #include "Gameplay/World/InteractableComponent.h"
 #include "Gameplay/World/ZoneSensorComponent.h"
@@ -61,6 +62,16 @@ namespace NorvesLib::Modules::Gameplay
         return kGameplayModuleName;
     }
 
+    uint64_t GameplayModule::GetRunSeed() const
+    {
+        return m_RunSeed;
+    }
+
+    void GameplayModule::SetRunSeed(uint64_t seed)
+    {
+        m_RunSeed = seed;
+    }
+
     bool GameplayModule::Install(Core::Engine::Engine& engine)
     {
         if (m_OwnerThreadId != Thread::Thread::GetCurrentThreadId() || m_Engine != nullptr)
@@ -73,9 +84,9 @@ namespace NorvesLib::Modules::Gameplay
         return true;
     }
 
-    void GameplayModule::RegisterWorldSystems(Core::World&)
+    void GameplayModule::RegisterWorldSystems(Core::World& world)
     {
-        // Component を追加したら、ここでシステムを登録する。
+        Enemy::EnemyComponent::RegisterTick(world);
     }
 
     void GameplayModule::RegisterReflectedTypes()
@@ -83,6 +94,7 @@ namespace NorvesLib::Modules::Gameplay
         Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(Combat::HitboxComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(Combat::HurtboxSetComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(Enemy::EnemyComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::ZoneSensorComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::EncounterZoneComponent::StaticClass());
         Core::ClassRegistry::Get().RegisterClass(World::InteractableComponent::StaticClass());

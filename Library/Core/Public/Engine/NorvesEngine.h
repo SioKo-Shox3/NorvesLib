@@ -8,6 +8,8 @@
 #include "Object/ResourceRegistry.h"
 #include "Engine/AssetRegistry.h"
 #include "Scripting/ScriptRuntime.h"
+#include "Save/GameStateStore.h"
+#include "Save/SaveService.h"
 #include "Rendering/Screen.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RenderThread.h"
@@ -24,6 +26,8 @@ namespace NorvesLib::Core
      *
      * サブシステム:
      * - ResourceRegistry: リソース管理（参照カウント方式）
+     * - GameStateStore: ゲーム状態の台帳
+     * - SaveService: セーブ要求と読み書きの管理
      * - Screen: 最終描画出力先
      * - RenderingCoordinator: 描画フロー管理
      * - RenderThread: レンダースレッド管理
@@ -179,6 +183,11 @@ namespace NorvesLib::Core
             return m_SkeletalAssetSession;
         }
 
+        Save::GameStateStore& GetGameStateStore();
+        const Save::GameStateStore& GetGameStateStore() const;
+        Save::SaveService& GetSaveService();
+        const Save::SaveService& GetSaveService() const;
+
         ScriptRuntime& GetScriptRuntime();
         const ScriptRuntime& GetScriptRuntime() const;
 
@@ -191,6 +200,8 @@ namespace NorvesLib::Core
         ResourceRegistry m_ResourceRegistry;                    ///< リソース管理
         SkeletalAssetSession m_SkeletalAssetSession;            ///< application ownerの骨格session
         AssetRegistry m_AssetRegistry;                          ///< アセット（ファイル）管理
+        Save::GameStateStore m_GameStateStore;                  ///< ゲーム状態の台帳
+        Save::SaveService m_SaveService;                        ///< セーブ要求の管理
         ScriptRuntime m_ScriptRuntime;                            ///< AngelScript runtime
         Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
         Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド

@@ -54,6 +54,8 @@
 | `SkinnedMeshComponent` | Animation（主群）・PoseFinalize | 自前の Animation 時刻更新と PoseFinalize での姿勢評価 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1992` |
 | `ScriptComponent` | Default（主群） | Script の更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/ScriptComponent.cpp:56` |
 | `CharacterBodyComponent` | Movement（主群）・PoseFinalize | 設定に応じ一方の群で可変更新の移動を要求 | World | 非ポーズ時のsimulation | `Library/Modules/Physics/Private/Physics/PhysicsModule.cpp:103` |
+| `EnemyComponent` | Default（主群） | 状態の遷移、攻撃の窓の開閉、アニメの要求。同じフレームの Animation 群に効く | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/Enemy/EnemyComponent.cpp` |
+| `ShishaComponent` | Default（主群） | EnemyComponent と同じ本体を、型の完全一致のため自身の型で登録 | World | 非ポーズ時のsimulation | `Game/Gameplay/Shisha/ShishaComponent.cpp` の `Initialize` |
 | `HitboxComponent` | 群なし（Module Late で評価） | 攻撃判定の窓と命中を評価し、OnHit を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
 | `HurtboxSetComponent` | 群なし（Module Late で評価） | 部位ごとの被弾を評価し、OnHurt を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
 | `ZoneSensorComponent` | なし（群に登録しない） | 毎フレームの処理なし。位置は EncounterService と InteractionService が Module Late で読む | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:86` |
@@ -66,6 +68,7 @@
 - `ColliderComponent` と `RigidBodyComponent` は毎フレーム処理の登録がない。物理は `PhysicsModule` が登録した World の固定ステップの段で動き、`FixedBegin` の `Physics.FixedPre` が `StepPreFixed`、`FixedTick` の `Physics.FixedStep` が `StepFixed` を呼ぶ。Module の `PreFixedTick` と `FixedTick` は、それぞれ `FixedModulePre` と `FixedModulePost` で別に呼ばれる。
 - PostAnimation という群はない。アニメの姿勢を読んで付ける処理は `SocketAttachmentComponent`・`HoldSlotComponent` と同じ PostPhysics に置く。
 - 新しく `RegisterComponentTick` で登録する型は、同じ変更でこの表に足す。漏れは ctest `TickContractTableTest`(`Scripts/CheckTickContractTable.ps1`)が止める。台本は `Library` と `Game` の `.cpp` から `RegisterComponentTick(<型>::StaticClass()` と `RegisterComponentTick(StaticClass()`(後者はファイル名の型)を集め、この表の 1 列目(バッククォートで囲んだ型名)に無い型、または文書に消えた API の名前があれば失敗する。表の 1 列目は型名をバッククォートで囲んだもの 1 つだけにする。
+- 敵の Tick は Default 群で Animation 群より前に動き、アニメの要求を同じフレームに渡す。時計は World channel を使い、ヒットストップに追従する。
 - HealthComponentは可変Tickを持たず、ApplyDamageを呼んだ側のTickの中でOnDamaged・OnStaggerBroken・OnDefeatedを通知する。
 - `HitboxComponent`・`HurtboxSetComponent` は `RegisterComponentTick` で群に登録せず、Module Late と同じ進行 gate に従う。判定窓は `BeginAttack` / `EndAttack` の直接呼び出し、または同じ Entity の `AnimatorComponent::OnEvent` の Begin（Name が窓のイベント名と一致）と対応する WindowToken の End で開閉する。
 - GameplayModule::Tick（通常のModule Tick）はDefeatGate::Updateの安全点で、持ち主の破棄を検出して保留を外し、保留のない撃破をOnDefeatCompleted → ProgressionState::MarkDefeatedへ渡す。

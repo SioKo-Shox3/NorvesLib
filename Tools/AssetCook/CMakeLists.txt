@@ -231,6 +231,20 @@ add_test(NAME AssetCookRawSmoke
         --variant default
 )
 
+set(ASSET_COOK_SOUNDBANK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/SoundBank")
+add_test(NAME AssetCookSoundBankSmoke
+    COMMAND $<TARGET_FILE:AssetCook>
+        --input "${CMAKE_SOURCE_DIR}/Test/Core/Asset/Fixtures/AssetCook/sample.soundbank.json"
+        --out "${ASSET_COOK_SOUNDBANK_SMOKE_DIR}/Cooked/sample.soundbank.nvpkg"
+        --manifest "${ASSET_COOK_SOUNDBANK_SMOKE_DIR}/manifest.json"
+        --logical "Audio/Banks/sample.soundbank.json"
+        --kind raw
+        --entry "__raw__"
+        --entry-type Raw
+        --format raw.v0
+        --variant default
+)
+
 set(ASSET_COOK_TEXTURE_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Texture")
 add_test(NAME AssetCookTextureSmoke
     COMMAND ${CMAKE_COMMAND}

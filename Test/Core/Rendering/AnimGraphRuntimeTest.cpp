@@ -766,6 +766,95 @@ namespace
         GRAPH_CHECK(events.size() == 2 && events[1].bInterrupted && events[0].WindowToken == events[1].WindowToken);
     }
 
+    void TestMarkerEvents()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        const char* markerOnly = R"({"markers":[{"name":"Foot.LF.Down","t":0.25}]})";
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(markerOnly), report));
+        GRAPH_CHECK(f.AClip->GetClipMetadata().Events.empty());
+        C::VariableArray<A::AnimEventInfo> events;
+        {
+            auto graph = f.Graph(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            instance.Events().OnEvent.Add([&](const A::AnimEventInfo& event) { events.push_back(event); });
+            GRAPH_CHECK(instance.Update(.25f));
+            instance.Events().Dispatch();
+            GRAPH_CHECK(events.empty());
+        }
+        {
+            auto graph = f.Graph(
+                R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","markerEvents":true}],"root":"a"})");
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            instance.Events().OnEvent.Add([&](const A::AnimEventInfo& event) { events.push_back(event); });
+            GRAPH_CHECK(instance.Update(.25f));
+            instance.Events().Dispatch();
+            GRAPH_CHECK(events.size() == 1 && events[0].Name == Identity("Foot.LF.Down") &&
+                        events[0].Kind == A::AnimEventKind::Point &&
+                        events[0].EventIndex == f.AClip->GetClipMetadata().Events.size() &&
+                        events[0].Value == 0 && events[0].IntValue == 0);
+            events.clear();
+            GRAPH_CHECK(instance.Update(.125f));
+            instance.Events().Dispatch();
+            GRAPH_CHECK(events.empty());
+        }
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(
+            C::String(R"({"events":[{"name":"unused","t":0.75,"minWeight":1}],"markers":[{"name":"Foot.LF.Down","t":0.25}]})"),
+            report));
+        {
+            auto graph = f.Graph(
+                R"({"version":1,"params":[{"name":"blend","type":"float","value":0.8}],"nodes":[{"id":"a","type":"clip","clip":"a","markerEvents":true},{"id":"b","type":"clip","clip":"b"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"blend"}],"root":"mix"})");
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            instance.Events().OnEvent.Add([&](const A::AnimEventInfo& event) { events.push_back(event); });
+            GRAPH_CHECK(instance.Update(.25f));
+            GRAPH_CHECK(instance.GetNodeWeights()[0] < A::AnimEvent{}.MinWeight);
+            instance.Events().Dispatch();
+            GRAPH_CHECK(events.empty());
+            GRAPH_CHECK(instance.Parameters().SetFloat(0, .7f) && instance.Update(1.f));
+            GRAPH_CHECK(instance.GetNodeWeights()[0] >= A::AnimEvent{}.MinWeight);
+            instance.Events().Dispatch();
+            GRAPH_CHECK(events.size() == 1 && events[0].Name == Identity("Foot.LF.Down") &&
+                        events[0].EventIndex == f.AClip->GetClipMetadata().Events.size() &&
+                        events[0].EventIndex == 1 && events[0].Occurrence == 1);
+            events.clear();
+        }
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(markerOnly), report));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(
+            C::String(R"({"markers":[{"name":"Foot.LF.Down","t":0.5}]})"), report));
+        {
+            auto graph = f.Graph(
+                R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","markerEvents":true,"syncGroup":"gait"},{"id":"b","type":"clip","clip":"b","markerEvents":true,"syncGroup":"gait"},{"id":"mix","type":"blend2","children":["a","b"],"weight":0.5}],"root":"mix"})");
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            instance.Events().OnEvent.Add([&](const A::AnimEventInfo& event) { events.push_back(event); });
+            GRAPH_CHECK(instance.Update(.5f));
+            const auto& traversals = instance.GetTraversals();
+            GRAPH_CHECK(traversals.size() == 2);
+            for (const auto& traversal : traversals)
+            {
+                GRAPH_CHECK(traversal.Node < 2 && traversal.Weight >= A::AnimEvent{}.MinWeight &&
+                            traversal.Timing.Clip);
+                const double markerTime = traversal.Node == 0 ? .25 : .5;
+                GRAPH_CHECK(traversal.Previous < markerTime && traversal.Current >= markerTime);
+            }
+            instance.Events().Dispatch();
+            GRAPH_CHECK(events.size() == 1 && events[0].Name == Identity("Foot.LF.Down") &&
+                        events[0].Kind == A::AnimEventKind::Point && events[0].SyncGroup == Identity("gait") &&
+                        events[0].Occurrence == 0 && std::fabs(events[0].OffsetSeconds - .25) < 1e-6);
+            events.clear();
+        }
+        C::TSharedPtr<const A::AnimGraphData> data;
+        A::AnimGraphReport graphReport;
+        GRAPH_CHECK(!A::CompileAnimGraph(
+            C::String(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","markerEvents":1}],"root":"a"})"),
+            *f.Skeleton, f, data, graphReport));
+        GRAPH_CHECK(!data && graphReport.Error == A::AnimGraphError::InvalidSchema &&
+                    graphReport.Detail == C::String("marker_events"));
+    }
+
     void TestRootMotionRegressions()
     {
         GraphFixture f;
@@ -1508,6 +1597,7 @@ void TestAnimGraphRuntime()
     TestGraphNominalSpeedPositions();
     TestClipMetadataRuntime();
     TestAnimationEventRuntime();
+    TestMarkerEvents();
     TestRootMotionRuntime();
     TestAnimationSyncRuntime();
     TestSyncHitStopKeepsPointEventsStopped();
