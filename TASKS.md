@@ -5583,7 +5583,7 @@
 - notes: 今のコードの事実: 問い合わせの新しい口 `ExecuteQuery` / `ExecuteBatch` と `PhysicsQueryFilter`（レイヤーの mask・無視する Body など）は GR08 で入っている（`Library/Core/Public/Scene/SceneQuery.h:33-49`、`Library/Core/Public/Scene/PhysicsQueryTypes.h:92-135, 149-205`）。G1 は確かめ直し中なので needs-gr に GR08 を入れた。姿勢は PoseFinalize の群で確定し、固定ステップはその後に回る（`Docs/Architecture/TickStages.md:5`）ので、足 IK が読むのは前の固定ステップで公開されたスナップショット（最大 1 ステップ古い）になる。これを `Docs/Architecture/PhysicsQueries.md` に書く。地形（G5 の GR38）は同じ `IGroundQuery` の別の実装として後で差す（G9 の非ゴール）。レイヤーの名前は企画で未定なので mask の値は設定で受ける。試験は `Test/Modules/Physics/CMakeLists.txt:53-69` の束へ足し、`add_test(NAME PhysicsGroundQueryIntegrationTest COMMAND PhysicsDynamicsTest --test=PhysicsGroundQueryIntegrationTest)` を同じファイルに足す。新しい Public API なので評価者を通す。出典: 要件 `#### GR14` の設計案【接地問い合わせ】、受け入れ確認の PhysicsGroundQueryIntegrationTest のうち問い合わせの部分（IK の重みが下がる部分は `G9-GR14-LEG-IK-BALANCE`）。
 
 ## G9-GR14-LEG-IK-BALANCE: 脚を地面へ合わせる IK モディファイアと、骨盤・肩の高さと体のピッチの補正を足す
-- status: todo
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G9-GR14-TWO-BONE-IK, G9-GR14-GROUND-QUERY, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS
 - gr: GR14
 - needs-gr: GR10, GR12
@@ -10454,3 +10454,13 @@
 - verify: `ctest --test-dir build -C Debug -R "^(AssetManifestTest|GrassFieldQueryTest)$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Private/Asset, Library/Core/Private/Vegetation, Library/Core/Public/Vegetation, Test/Core/Asset/AssetManifestTest.cpp, Test/Core/Vegetation/GrassFieldQueryTest.cpp, PROGRESS.md
 - from: G5-GR42-GRASS-FIELD-ASSET
+
+## G9-GR14-FOOT-PLANT-P1: 設定ファイルから作った足 IK に、Animator 経由で接地の問い合わせを渡す口を足す
+- status: todo
+- after: G9-GR14-LEG-IK-BALANCE
+- done-when: (1) `AnimatorComponent` に、今持っている modifier を読み取り専用で数えて取り出す口(件数と添字から `IPoseModifier*` を返す)を足す。所有権は渡さない。(2) `AnimatorComponent::SetGroundQuery(const Animation::IGroundQuery*)` を足す。呼ぶと、今持っている `FootIKModifier` の全部へ渡す。そのあと `ApplyPoseModifiersJson` / `ApplyPoseModifiersFile` で全件を置き換えたときも、`AddModifier` で足したときも、新しく入った `FootIKModifier` へ同じ問い合わせを渡す。`nullptr` を渡すと全部から外す。適用中(`m_bApplyingModifiers`)に呼ばれたら拒否する。定常のフレームでは確保しない。(3) `PoseModifierBaseTest.cpp`(`SkeletalAnimationSamplingTest` の束)に次のケースを足す。FootIK を含む JSON を `ApplyPoseModifiersJson` で読み込み、`SetGroundQuery` で地面のモックを渡して数フレーム回すと、脚の状態が NotReady 以外になり、足先が地面のモックの高さへ寄る。同じ JSON をもう一度適用しても問い合わせは残る。`SetGroundQuery(nullptr)` の後は NotReady に戻る。(4) `Docs/Architecture/AnimationRuntime.md` に、設定ファイルで作った足 IK へ地面の問い合わせを渡す手順を書く。Public API に触れるので評価者を通す。(5) 下の verify が通る(アプリは起動しない)。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|PhysicsGroundQueryIntegrationTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Component/AnimatorComponent.h, Library/Core/Private/Component/AnimatorComponent.cpp, Test/Core/Rendering/PoseModifierBaseTest.cpp, Docs/Architecture/AnimationRuntime.md, TASKS.md, PROGRESS.md
+- from: G9-GR14-FOOT-PLANT
+- notes: コードで確かめたこと: `AnimatorComponent.h` には `ApplyPoseModifiersJson`/`File`(81〜91 行)と、`AddModifier`・`ClearModifiers` しかない。`m_Modifiers`(148 行)を取り出す口は無い。`FootIKModifier::SetGroundQuery` は `FootIKModifier.h:72` にあり、今これを呼んでいるのは試験だけ(`LegIKModifierTest.cpp:308`、`PhysicsGroundQueryIntegrationTest.cpp:447`)。`G9-GR15-ORDER-DEBUG-VIEW` は、animation-debug の場面で `*.posemod.json` から FootIK を読み、Box の斜面と階段の上で動かす。ところがその paths には `AnimatorComponent` が入っていないので、この口が無いと場面の足 IK に地面を渡せない。ここで先に足しておく。置き換えの後も問い合わせを残すのは、設定の読み直しやグラフの付け替え(`G9-GR15-POSE-MODIFIER-BASE-P1`)で問い合わせが黙って外れるのを防ぐため。`FootIKModifier` かどうかの判定は、型の表の名前か dynamic でない方法で行う(RTTI に頼らない)。`G9-GR14-FOOT-PLANT` とは `AnimatorComponent.cpp` が重なるので、同時には走らない。
