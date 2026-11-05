@@ -9822,3 +9822,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API の危険地帯）。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
 - Notes: `radius`（球コライダー）は受け取るだけで計算に使わない。風の場（GR46）は v1 の外
 - U7 評価の再開を World の通し番号で検知して状態を戻す(差し戻しの直し): 着地(直し 0 回)
+## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 2、差し戻しの直し、完了）
+- Done: SpringBone・FollowThrough の `Apply` が所有者の World の `GetTickSerial()` を覚え、前回の評価から 2 以上進んだ（または戻った）ときは評価の再開とみなしてアニメ姿勢へ戻すようにした。組み込みの型の表から作った modifier（外から `RequestReset` を呼べない）でも、`SetEvaluationEnabled` の停止と再開、重みのカーブが 0 から戻るときに状態が戻る。同じ番号での再評価と、所有者か World が無いときは今までどおり。文書のリセットの条件を直した
+- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify-2.txt`（verify のビルド EXIT=0、ctest 2/2 Passed。SpringBone case=7: 評価を 5 フレーム止めて所有者を 0.9 m 動かした後の再開のフレームで先端の残差 0 m・非有限 0。判定を外した負の対照では残差 0.386 m で落ちる。既存の 9 ケースの値は変わらない）
+- Next: ランナーの評価者の反証。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
+- Notes: 評価者の残課題（non-blocking）として、`FromToRotation` の約 0.26° の不感帯と、根の粒子をサブステップの間で補間していないことが残る
