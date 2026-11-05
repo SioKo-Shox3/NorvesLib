@@ -20,6 +20,8 @@ RuntimeRootは存在してはならない。空directory、file、junctionも拒
 
 ASCII quote/backslashとapostrophe/山括弧/ampersandをPS5.1に合わせてescapeする。実Windows PowerShell5.1をhash固定し、全printable ASCIIをvariantに持つ実cook結果を同じConvertTo-Jsonで再生成して全byte比較する。基準: [PS5.1 ConvertTo-Json](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/convertto-json?view=powershell-5.1)、[Microsoft HttpEncoder](https://github.com/microsoft/referencesource/blob/main/System.Web/Util/HttpEncoder.cs)。
 
+probeはPowerShellの版を固定せず、Windows PowerShell 5.1（Major 5・Minor 1）であることだけを検査する。完全な版は`ps-probe.stdout.log`と`verification.json`の`powershell_version`に記録し、互換性は同じPS5.1の`ConvertTo-Json`出力とのbyte照合と`powershell.exe`のbinary hashで保つ。
+
 ## 検証と次の境界
 
 Windows CIで13CPU、既存7CLI/79出力一致、新規2spec各2回/10出力一致、ASCII probe、default/explicit SourceRoot、custom manifest、late画像不正、予約名、prefix衝突、既存root、junction、公開時競合を検証する。実CI前の純試験は実cook成功の代わりにしない。

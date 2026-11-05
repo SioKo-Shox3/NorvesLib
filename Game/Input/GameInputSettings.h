@@ -3,6 +3,7 @@
 #include "Core/Public/Input/InputBindingPersistence.h"
 #include "Core/Public/Input/InputMapper.h"
 #include "Core/Public/Input/InputRebindCaptureManager.h"
+#include "Core/Public/Save/SettingsStore.h"
 #include "GameInputRebindTypes.h"
 
 namespace Game::Input
@@ -59,6 +60,11 @@ namespace Game::Input
         }
         NorvesLib::Core::Input::InputBindingStoreSaveResult Save() const;
         bool IsReady() const { return m_Ready; }
+        // 設定ストアはこの持ち主と同じ寿命を持ち、GameThread 専用。
+        NorvesLib::Core::Save::SettingsStore* GetUserSettings() { return m_UserSettings.get(); }
+        const NorvesLib::Core::Save::SettingsStore* GetUserSettings() const { return m_UserSettings.get(); }
+        const NorvesLib::Core::Save::SettingsLoadResult& GetUserSettingsLoadResult() const { return m_UserSettingsLoad; }
+        const NorvesLib::Core::Input::LegacyInputBindingMigrationResult& GetLegacyMigrationResult() const { return m_LegacyMigration; }
         // 内部設定への借用viewは更新成功/破棄で失効する。
         const NorvesLib::Core::Input::InputBindingConfiguration& GetConfiguration() const { return m_Configuration; }
         const NorvesLib::Core::Container::String& GetLastError() const { return m_LastError; }
@@ -66,6 +72,10 @@ namespace Game::Input
         bool ApplyCandidate(NorvesLib::Core::Input::InputMapper& mapper,
             NorvesLib::Core::Input::InputBindingSet candidate);
         NorvesLib::Core::Input::InputBindingConfiguration m_Configuration;
+        NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::Save::SettingsStore> m_UserSettings;
+        NorvesLib::Core::Save::SettingsLoadResult m_UserSettingsLoad;
+        NorvesLib::Core::Input::LegacyInputBindingMigrationResult m_LegacyMigration{
+            NorvesLib::Core::Input::ELegacyInputBindingMigration::NoLegacy, {}};
         NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::Input::IInputBindingStore> m_Store;
         NorvesLib::Core::Container::String m_LastError;
         bool m_Ready=false;

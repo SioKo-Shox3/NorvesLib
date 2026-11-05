@@ -1,5 +1,6 @@
 ﻿#include "GameInputSettings.h"
 #include "GameInputActions.h"
+#include "Core/Public/Platform/PlatformPaths.h"
 #include "Core/Public/Thread/Atomic.h"
 #include <utility>
 #include <type_traits>
@@ -32,8 +33,32 @@ namespace Game::Input
     }
     bool GameInputSettings::Initialize(CoreInput::InputMapper& mapper)
     {
+        if (m_Ready)
+        {
+            m_LastError = "入力設定は初期化済みです";
+            return false;
+        }
+
         Asset::AssetFileReader reader;
-        return Initialize(mapper,reader,CoreInput::CreateWorkingDirectoryInputBindingStore());
+        if (m_UserSettings)
+        {
+            return Initialize(mapper, reader, CoreInput::CreateSettingsInputBindingStore(*m_UserSettings));
+        }
+
+        const auto directory = NorvesLib::Core::Platform::GetUserDataDirectory("Game");
+        if (directory.empty())
+        {
+            return Initialize(mapper, reader, CoreInput::CreateWorkingDirectoryInputBindingStore());
+        }
+
+        m_UserSettings = Container::MakeUnique<NorvesLib::Core::Save::SettingsStore>(directory + "settings.json");
+        m_UserSettingsLoad = m_UserSettings->Load();
+        auto legacy = CoreInput::CreateWorkingDirectoryInputBindingStore();
+        if (legacy)
+        {
+            m_LegacyMigration = CoreInput::MigrateLegacyInputBindings(*m_UserSettings, *legacy);
+        }
+        return Initialize(mapper, reader, CoreInput::CreateSettingsInputBindingStore(*m_UserSettings));
     }
     bool GameInputSettings::Initialize(CoreInput::InputMapper& mapper,const Asset::AssetFileReader& reader,
         Container::TUniquePtr<CoreInput::IInputBindingStore> store)

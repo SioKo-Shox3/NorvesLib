@@ -189,7 +189,8 @@ def run(source: Path, exe: Path, reference: Path, output: Path) -> None:
     wrapper = output / "serializer-probe.ps1"
     wrapper.write_text('''param([string]$InputFile,[string]$OutputFile)
 $ErrorActionPreference="Stop"
-if ($PSVersionTable.PSVersion.ToString() -ne "5.1.20348.5622") { throw "PowerShell version changed" }
+if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw "Windows PowerShell 5.1 required" }
+[Console]::Out.WriteLine("powershell_version=" + $PSVersionTable.PSVersion.ToString())
 $value=Get-Content -LiteralPath $InputFile -Raw | ConvertFrom-Json
 $json=$value | ConvertTo-Json -Depth 16
 [System.IO.File]::WriteAllText($OutputFile,$json,[System.Text.UTF8Encoding]::new($false))
@@ -201,6 +202,16 @@ $json=$value | ConvertTo-Json -Depth 16
     (logs / "ps-probe.stderr.log").write_bytes(result.stderr)
     if result.returncode != 0 or ps_output.read_bytes() != (probe / "manifest.json").read_bytes():
         raise ValueError("PS5.1 ASCII escape/format probe不一致")
+    try:
+        powershell_version = next(
+            (line.partition("=")[2].strip() for line in result.stdout.decode("ascii").splitlines()
+             if line.startswith("powershell_version=")),
+            "",
+        )
+    except UnicodeDecodeError:
+        powershell_version = ""
+    if not powershell_version:
+        raise ValueError("PS5.1 probeの版を記録できません")
     if any(digest((source / name).read_bytes()) != value for name, value in input_hashes.items()) or digest(exe.read_bytes()) != exe_hash:
         raise ValueError("検証中に入力または実行fileが変わりました")
     if any(digest((fixture / name).read_bytes()) != value for name, value in image_hashes.items()):
@@ -211,7 +222,7 @@ $json=$value | ConvertTo-Json -Depth 16
         "workspaces": {key: {"files": value["files"], "root_names": sorted(value["roots"])}
                        for key, value in metadata_receipts.items()}}, indent=2) + "\n", encoding="utf-8")
     result = {"schema": "norves.texture-native-acceptance.v1", "asset_cook_sha256": exe_hash, "driver_sha256": digest(Path(__file__).read_bytes()), "feature_sha": os.environ.get("GITHUB_SHA"), "reference_snapshot_sha256": receipt["snapshot_sha256"],
-              "reference_files": 10, "repeat_byte_equal": True, "ascii_ps51_equal": True, "runs": runs}
+              "reference_files": 10, "repeat_byte_equal": True, "ascii_ps51_equal": True, "powershell_version": powershell_version, "runs": runs}
     (output / "verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print("Native texture v1: 2spec x 2repeat / 10file byte parity / rejection contracts / PS5.1 ASCII probe PASS")
 

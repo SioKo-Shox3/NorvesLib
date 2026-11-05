@@ -8,9 +8,11 @@
 #include "Ecs/EcsWorld.h"
 #include "Logging/LogMacros.h"
 #include "Math/GeometryIntersection.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include <algorithm>
 #include <cfloat>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -239,6 +241,82 @@ namespace NorvesLib::Core::Scene
     size_t SceneQuery::GetEntryCount() const
     {
         return m_Entries.size() - m_TombstoneCount + m_Pending.size();
+    }
+
+    void SceneQuery::SetTerrainSystem(const Rendering::Terrain::TerrainSystem* terrainSystem)
+    {
+        if (!IsOwnerThread())
+        {
+            return;
+        }
+
+        m_TerrainSystem = terrainSystem;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::QueryGround(const Math::Vector3& origin, float maxDown,
+        GroundQueryHit& outHit, const PhysicsQueryFilter& filter) const
+    {
+        outHit = GroundQueryHit{};
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+        if (!std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z)
+            || !std::isfinite(maxDown) || maxDown < 0.0f || !filter.IsValid())
+        {
+            return EPhysicsSceneQueryResult::InvalidArgument;
+        }
+
+        GroundQueryHit candidate;
+        Rendering::Terrain::GroundSample sample;
+        if (m_TerrainSystem != nullptr && m_TerrainSystem->SampleGround(origin.x, origin.z, sample)
+            && sample.bValid && origin.y - sample.Height <= maxDown)
+        {
+            candidate.bHit = true;
+            candidate.bTerrain = true;
+            candidate.Distance = origin.y - sample.Height;
+            candidate.Point = Math::Vector3(origin.x, sample.Height, origin.z);
+            candidate.Normal = sample.Normal;
+            candidate.SurfaceId = sample.SurfaceId;
+        }
+
+        PhysicsQueryDesc query;
+        query.Kind = EPhysicsQueryKind::RaycastClosest;
+        query.Ray = Math::Ray(origin, Math::Vector3(0.0f, -1.0f, 0.0f));
+        query.MaxDistance = maxDown;
+        query.Filter = filter;
+        Container::VariableArray<PhysicsQueryHit> hits;
+        const EPhysicsSceneQueryResult result = ExecuteQuery(query, hits);
+        if (result == EPhysicsSceneQueryResult::Success)
+        {
+            if (!hits.empty() && (!candidate.bHit || hits[0].Point.y >= candidate.Point.y))
+            {
+                const PhysicsQueryHit& hit = hits[0];
+                candidate.bHit = true;
+                candidate.bTerrain = false;
+                candidate.Distance = hit.Distance;
+                candidate.Point = hit.Point;
+                candidate.Normal = hit.Normal;
+                candidate.SurfaceId = hit.SurfaceId;
+                candidate.Collider = hit.Collider;
+                candidate.Body = hit.Body;
+                candidate.Entity = hit.Entity;
+                candidate.bHasEntity = hit.bHasEntity;
+                candidate.UserData = hit.UserData;
+            }
+        }
+        else if (result != EPhysicsSceneQueryResult::NoHit && result != EPhysicsSceneQueryResult::Unavailable)
+        {
+            return result;
+        }
+
+        if (candidate.bHit)
+        {
+            outHit = candidate;
+            return EPhysicsSceneQueryResult::Success;
+        }
+        return m_TerrainSystem == nullptr && m_PhysicsProvider == nullptr
+            ? EPhysicsSceneQueryResult::Unavailable : EPhysicsSceneQueryResult::NoHit;
     }
 
     EPhysicsSceneQueryResult SceneQuery::BindPhysicsProvider(IPhysicsSceneQueryProvider& provider)

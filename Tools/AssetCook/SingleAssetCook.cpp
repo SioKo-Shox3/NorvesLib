@@ -12,6 +12,7 @@
 #include "SkeletalRoleFileInput.h"
 #include "TerrainSpec.h"
 #include "GrassFieldCooker.h"
+#include "ScatterSpec.h"
 #include "Asset/CookedGrassFieldFormat.h"
 #include <chrono>
 #if defined(_WIN32)
@@ -1318,6 +1319,78 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool CookScatterAsset(const CookOptions& options, std::string& error)
+        {
+            std::filesystem::path inputPath, packagePath, manifestPath;
+            if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+                !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
+                !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
+            {
+                return false;
+            }
+            using NorvesLib::Core::Container::AnsiString;
+            using NorvesLib::Core::Container::VariableArray;
+            AnsiString logicalPath, entryName, cookedPackagePath;
+            const AnsiString variant(options.Variant.empty() ? "default" : options.Variant.c_str());
+            if (!NormalizeSkeletalManifestPath(AnsiString(options.LogicalPath.c_str()), logicalPath, error) ||
+                !NormalizeSkeletalManifestPath(AnsiString(options.EntryName.c_str()), entryName, error) ||
+                !ValidateSkeletalAsciiField(variant, error) ||
+                !MakeSkeletalCookedPackageManifestPath(packagePath, manifestPath.parent_path(), cookedPackagePath, error))
+            {
+                return false;
+            }
+            ScatterSpecCookResult result;
+            AnsiString cookError;
+            if (!CookScatterSpecFile(inputPath, result, cookError))
+            {
+                error.assign(cookError.data(), cookError.size());
+                return false;
+            }
+            uint64_t cookedHash = 0;
+            VariableArray<uint8_t> packageBytes;
+            constexpr auto EntryType = Core::Asset::CookedScatterFormatV0::PackageEntryType;
+            if (!BuildSingleSkeletalEntryPackage(entryName, EntryType, result.Bytes, packageBytes, cookedHash, error))
+            {
+                return false;
+            }
+            Core::Asset::AssetCookedReference reference;
+            reference.LogicalPath = logicalPath;
+            reference.Kind = AssetKind::World;
+            reference.SourceHash = result.SourceHash;
+            reference.SourceHashHex = FormatAssetHashHex(reference.SourceHash);
+            reference.Variant = variant;
+            reference.Format = Core::Asset::CookedScatterFormatV0::ManifestFormat;
+            reference.CookedPackage = cookedPackagePath;
+            reference.EntryName = entryName;
+            reference.EntryType = EntryType;
+            reference.EntryTypeText = "Sct0";
+            reference.CookedHash = cookedHash;
+            reference.CookedHashHex = FormatAssetHashHex(cookedHash);
+            reference.CookedVersion = 0;
+            AnsiString manifestJson;
+            if (!BuildMergedManifestJson(manifestPath, {&reference, 1}, manifestJson, error) ||
+                !WriteSkeletalBinaryFile(packagePath, packageBytes, error) ||
+                !WriteSkeletalTextFile(manifestPath, manifestJson, error) ||
+                !ValidateSkeletalManifestOutput(manifestPath, manifestJson, error) ||
+                !ValidatePackageOutput(packagePath, ToStdString(entryName), EntryType,
+                    std::vector<uint8_t>(result.Bytes.begin(), result.Bytes.end()), error))
+            {
+                return false;
+            }
+            std::cout << "SCATTER_COOKED chunks=" << result.ChunkCount << " species=" << result.SpeciesNames.size()
+                      << " instances=" << result.InstanceCount << " bytes=" << result.Bytes.size() << " payload_hash=" << FormatAssetHashHex(result.PayloadHash).c_str() << "\n";
+            for (size_t i = 0; i < result.SpeciesNames.size(); ++i)
+            {
+                std::cout << "SCATTER_SPECIES name=" << result.SpeciesNames[i].c_str()
+                          << " instances=" << result.Stats.Species[i].InstanceCount << "\n";
+                if (result.Stats.Species[i].bDensitySaturated)
+                {
+                    std::cerr << reinterpret_cast<const char*>(u8"警告: 散布の密度が飽和しました: ") << result.SpeciesNames[i].c_str() << "\n";
+                }
+            }
+            return true;
+        }
+
         bool CookWorldAsset(const CookOptions& options, std::string& error)
         {
             std::filesystem::path inputPath;
@@ -1685,6 +1758,15 @@ namespace NorvesLib::Tools::AssetCook
             }
             else if (outOptions.Kind == "world")
             {
+                if (outOptions.Format == Core::Asset::CookedScatterFormatV0::ManifestFormat)
+                {
+                    if (outOptions.EntryTypeText != "Sct0")
+                    {
+                        error = "--format nvsct.v0.inst16 には --entry-type Sct0 を指定してください";
+                        return false;
+                    }
+                    return true;
+                }
                 if (outOptions.Format == Core::Asset::CookedGrassFieldFormatV0::ManifestFormat)
                 {
                     if (outOptions.EntryTypeText != "Gfd0")
@@ -1807,7 +1889,9 @@ namespace NorvesLib::Tools::AssetCook
         else if (options.Kind == "world")
         {
             bSucceeded = options.Format == Core::Asset::CookedGrassFieldFormatV0::ManifestFormat
-                ? CookGrassFieldAsset(options, error) : CookWorldAsset(options, error);
+                ? CookGrassFieldAsset(options, error)
+                : options.Format == Core::Asset::CookedScatterFormatV0::ManifestFormat
+                    ? CookScatterAsset(options, error) : CookWorldAsset(options, error);
         }
         outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
         return bSucceeded;

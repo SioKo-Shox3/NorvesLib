@@ -735,6 +735,7 @@ void TestTwoBoneIK();
 void TestAnimatorIntegration();
 void TestSocketOracle();
 void TestPoseModifierBase();
+void TestProceduralChainModifier();
 void TestLegIKModifier();
 void TestFootPlant();
 void TestProceduralSpringModifier();
@@ -751,6 +752,7 @@ int main(int argc, char** argv)
     TestAnimatorIntegration();
     TestSocketOracle();
     TestPoseModifierBase();
+    TestProceduralChainModifier();
     TestLegIKModifier();
     TestFootPlant();
     TestProceduralSpringModifier();

@@ -2,11 +2,20 @@
 
 #include "Math/GeometryIntersection.h"
 #include "Math/VectorUtils.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
 
 #include <cmath>
 #include <cfloat>
 #include <limits>
 #include <type_traits>
+
+// 高さ場の依存ヘッダーから入る Windows の旧マクロと、既存の距離変数との衝突を避ける。
+#ifdef near
+#undef near
+#endif
+#ifdef far
+#undef far
+#endif
 
 namespace NorvesLib::Modules::Physics
 {
@@ -50,27 +59,61 @@ namespace NorvesLib::Modules::Physics
             contact.Normal *= -1.0f;
         }
 
+        bool StoreHeightFieldContact(const PhysicsShapeProxy& proxy,
+            const Core::Container::VariableArray<Math::GeometryContact>& contacts, Math::GeometryContact& outContact,
+            bool bReverseNormal = true)
+        {
+            if (contacts.empty())
+            {
+                return false;
+            }
+            const Math::GeometryContact* deepest = &contacts[0];
+            for (const auto& contact : contacts)
+            {
+                if (contact.Depth > deepest->Depth)
+                {
+                    deepest = &contact;
+                }
+            }
+            outContact = *deepest;
+            outContact.Point += proxy.HeightFieldOrigin;
+            if (bReverseNormal)
+            {
+                // 問い合わせ側では、地形から形へ向く法線を反転する。
+                ReverseContact(outContact);
+            }
+            return true;
+        }
+
         bool ComputeOverlap(
             const Math::Sphere& query,
             const PhysicsShapeProxy& proxy,
             Math::GeometryContact& outContact)
         {
-            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            switch (proxy.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
                 return Math::ComputeContact(query, proxy.Sphere, outContact);
-            }
-            if (proxy.Shape == EPhysicsProxyShape::Box)
-            {
+            case EPhysicsProxyShape::Box:
                 return Math::ComputeContact(query, proxy.Box, outContact);
-            }
-
-            ReverseContact(outContact);
-            if (!Math::ComputeContact(proxy.Capsule, query, outContact))
+            case EPhysicsProxyShape::Capsule:
+                ReverseContact(outContact);
+                if (!Math::ComputeContact(proxy.Capsule, query, outContact))
+                {
+                    return false;
+                }
+                ReverseContact(outContact);
+                return true;
+            case EPhysicsProxyShape::HeightField:
             {
-                return false;
+                Math::Sphere local = query;
+                local.Center -= proxy.HeightFieldOrigin;
+                Core::Container::VariableArray<Math::GeometryContact> contacts;
+                proxy.HeightField->OverlapSphere(local, contacts);
+                return StoreHeightFieldContact(proxy, contacts, outContact);
             }
-            ReverseContact(outContact);
-            return true;
+            }
+            return false;
         }
 
         bool ComputeOverlap(
@@ -78,26 +121,34 @@ namespace NorvesLib::Modules::Physics
             const PhysicsShapeProxy& proxy,
             Math::GeometryContact& outContact)
         {
-            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            switch (proxy.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
                 if (!Math::ComputeContact(proxy.Sphere, query, outContact))
                 {
                     return false;
                 }
                 ReverseContact(outContact);
                 return true;
-            }
-            if (proxy.Shape == EPhysicsProxyShape::Box)
-            {
+            case EPhysicsProxyShape::Box:
                 return Math::ComputeContact(query, proxy.Box, outContact);
-            }
-
-            if (!Math::ComputeContact(proxy.Capsule, query, outContact))
+            case EPhysicsProxyShape::Capsule:
+                if (!Math::ComputeContact(proxy.Capsule, query, outContact))
+                {
+                    return false;
+                }
+                ReverseContact(outContact);
+                return true;
+            case EPhysicsProxyShape::HeightField:
             {
-                return false;
+                Math::OBB local = query;
+                local.Center -= proxy.HeightFieldOrigin;
+                Core::Container::VariableArray<Math::GeometryContact> contacts;
+                proxy.HeightField->OverlapBox(local, contacts);
+                return StoreHeightFieldContact(proxy, contacts, outContact);
             }
-            ReverseContact(outContact);
-            return true;
+            }
+            return false;
         }
 
         bool ComputeOverlap(
@@ -105,15 +156,25 @@ namespace NorvesLib::Modules::Physics
             const PhysicsShapeProxy& proxy,
             Math::GeometryContact& outContact)
         {
-            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            switch (proxy.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
                 return Math::ComputeContact(query, proxy.Sphere, outContact);
-            }
-            if (proxy.Shape == EPhysicsProxyShape::Box)
-            {
+            case EPhysicsProxyShape::Box:
                 return Math::ComputeContact(query, proxy.Box, outContact);
+            case EPhysicsProxyShape::Capsule:
+                return Math::ComputeContact(query, proxy.Capsule, outContact);
+            case EPhysicsProxyShape::HeightField:
+            {
+                Math::Capsule local = query;
+                local.PointA -= proxy.HeightFieldOrigin;
+                local.PointB -= proxy.HeightFieldOrigin;
+                Core::Container::VariableArray<Math::GeometryContact> contacts;
+                proxy.HeightField->OverlapCapsule(local, contacts);
+                return StoreHeightFieldContact(proxy, contacts, outContact);
             }
-            return Math::ComputeContact(query, proxy.Capsule, outContact);
+            }
+            return false;
         }
 
         struct RayVectorD
@@ -311,30 +372,59 @@ namespace NorvesLib::Modules::Physics
             return std::isfinite(near);
         }
 
-        bool RaycastProxy(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double& outDistance)
+        bool RaycastProxy(const Math::Ray& ray, float maxDistance, const PhysicsShapeProxy& proxy,
+            double& outDistance, Core::Rendering::Terrain::TerrainRayHit& outTerrainHit)
         {
-            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            switch (proxy.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
                 return RaycastSphere(ray, proxy.Sphere, outDistance);
-            }
-            if (proxy.Shape == EPhysicsProxyShape::Box)
-            {
+            case EPhysicsProxyShape::Box:
                 return RaycastBox(ray,proxy.Box,outDistance);
+            case EPhysicsProxyShape::Capsule:
+                return RaycastCapsule(ray, proxy.Capsule, outDistance);
+            case EPhysicsProxyShape::HeightField:
+            {
+                const Math::Ray local(ray.Origin - proxy.HeightFieldOrigin, ray.Direction);
+                if (!proxy.HeightField->Raycast(local, maxDistance, outTerrainHit))
+                {
+                    return false;
+                }
+                outDistance = outTerrainHit.Distance;
+                return true;
             }
-            return RaycastCapsule(ray, proxy.Capsule, outDistance);
+            }
+            return false;
         }
 
-        Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance)
+        bool CalculateRayPoint(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance,
+            const Math::Vector3& terrainPoint, Math::Vector3& outPoint)
+        {
+            switch (proxy.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
+            case EPhysicsProxyShape::Box:
+            case EPhysicsProxyShape::Capsule:
+                return RayPoint(ray, distance, outPoint);
+            case EPhysicsProxyShape::HeightField:
+                outPoint = terrainPoint + proxy.HeightFieldOrigin;
+                return true;
+            }
+            return false;
+        }
+
+        Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance,
+            const Math::Vector3& terrainNormal)
         {
             if (distance == 0.0f)
             {
                 return Math::Vector3();
             }
-            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            switch (proxy.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
                 return RayNormal((RayDouble(ray.Origin) - RayDouble(proxy.Sphere.Center)) + RayDouble(ray.Direction)*distance);
-            }
-            if (proxy.Shape == EPhysicsProxyShape::Capsule)
+            case EPhysicsProxyShape::Capsule:
             {
                 const auto segment = RayDouble(proxy.Capsule.PointB) - RayDouble(proxy.Capsule.PointA);
                 const auto offset = (RayDouble(ray.Origin) - RayDouble(proxy.Capsule.PointA)) + RayDouble(ray.Direction)*distance;
@@ -343,22 +433,28 @@ namespace NorvesLib::Modules::Physics
                 const auto normal = offset - segment*parameter;
                 return RayNormal(normal);
             }
-
-            const auto offset = (RayDouble(ray.Origin)-RayDouble(proxy.Box.Center))+RayDouble(ray.Direction)*distance;
-            const double local[3]{RayDot(offset,RayDouble(proxy.Box.Axes[0])),
-                RayDot(offset,RayDouble(proxy.Box.Axes[1])),RayDot(offset,RayDouble(proxy.Box.Axes[2]))};
-            const double distances[3]{std::fabs(std::fabs(local[0])-proxy.Box.HalfExtents.x),
-                std::fabs(std::fabs(local[1])-proxy.Box.HalfExtents.y),std::fabs(std::fabs(local[2])-proxy.Box.HalfExtents.z)};
-            int normalAxis = 0;
-            if (distances[1] < distances[normalAxis])
+            case EPhysicsProxyShape::Box:
             {
-                normalAxis = 1;
+                const auto offset = (RayDouble(ray.Origin)-RayDouble(proxy.Box.Center))+RayDouble(ray.Direction)*distance;
+                const double local[3]{RayDot(offset,RayDouble(proxy.Box.Axes[0])),
+                    RayDot(offset,RayDouble(proxy.Box.Axes[1])),RayDot(offset,RayDouble(proxy.Box.Axes[2]))};
+                const double distances[3]{std::fabs(std::fabs(local[0])-proxy.Box.HalfExtents.x),
+                    std::fabs(std::fabs(local[1])-proxy.Box.HalfExtents.y),std::fabs(std::fabs(local[2])-proxy.Box.HalfExtents.z)};
+                int normalAxis = 0;
+                if (distances[1] < distances[normalAxis])
+                {
+                    normalAxis = 1;
+                }
+                if (distances[2] < distances[normalAxis])
+                {
+                    normalAxis = 2;
+                }
+                return RayNormal(RayDouble(proxy.Box.Axes[normalAxis])*(local[normalAxis] < 0 ? -1.0 : 1.0));
             }
-            if (distances[2] < distances[normalAxis])
-            {
-                normalAxis = 2;
+            case EPhysicsProxyShape::HeightField:
+                return terrainNormal;
             }
-            return RayNormal(RayDouble(proxy.Box.Axes[normalAxis])*(local[normalAxis] < 0 ? -1.0 : 1.0));
+            return Math::Vector3();
         }
 
     } // namespace
@@ -415,9 +511,22 @@ namespace NorvesLib::Modules::Physics
 
         bool IsValidProxyGeometry(const PhysicsShapeProxy& proxy)
         {
-            return proxy.Shape == EPhysicsProxyShape::Sphere ? IsValidQueryShape(proxy.Sphere)
-                : proxy.Shape == EPhysicsProxyShape::Box ? IsValidQueryShape(proxy.Box)
-                : proxy.Shape == EPhysicsProxyShape::Capsule && IsValidQueryShape(proxy.Capsule);
+            switch (proxy.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
+                return IsValidQueryShape(proxy.Sphere);
+            case EPhysicsProxyShape::Box:
+                return IsValidQueryShape(proxy.Box);
+            case EPhysicsProxyShape::Capsule:
+                return IsValidQueryShape(proxy.Capsule);
+            case EPhysicsProxyShape::HeightField:
+            {
+                Math::AABB bounds;
+                return proxy.HeightField && proxy.HeightField->IsGrid()
+                    && IsFiniteQueryVector(proxy.HeightFieldOrigin) && proxy.HeightField->GetBounds(bounds);
+            }
+            }
+            return false;
         }
 
         bool IsUsableQueryBounds(const Math::AABB& bounds)
@@ -490,7 +599,13 @@ namespace NorvesLib::Modules::Physics
         Math::AABB ConservativeProxyBounds(const PhysicsShapeProxy& proxy)
         {
             auto bounds = PhysicsBroadphase::CalculateBounds(proxy);
-            if (proxy.Shape == EPhysicsProxyShape::Box)
+            switch (proxy.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
+            case EPhysicsProxyShape::Capsule:
+            case EPhysicsProxyShape::HeightField:
+                return bounds;
+            case EPhysicsProxyShape::Box:
             {
                 // 許容Gram誤差1e-4の軸ではdotの逆写像と前向きboundsが一致しない。
                 // 3軸の誤差を見込み、最大半径長の1e-3を加えて両領域を包む。
@@ -499,8 +614,10 @@ namespace NorvesLib::Modules::Physics
                 const Math::Vector3 expansion(padding,padding,padding);
                 bounds.Min -= expansion;
                 bounds.Max += expansion;
+                return bounds;
             }
-            return bounds;
+            }
+            return Math::AABB();
         }
 
         template<typename Predicate>
@@ -591,20 +708,28 @@ namespace NorvesLib::Modules::Physics
             {
                 includeCapsule(query.Capsule);
             }
-            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            const auto isRepresentable = [&]()
             {
+                const double squared = scale * scale;
+                return bRepresentable && squared * squared * squared <= static_cast<double>(FLT_MAX) / 4096.0;
+            };
+            switch (proxy.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
                 includeSphere(proxy.Sphere);
-            }
-            else if (proxy.Shape == EPhysicsProxyShape::Box)
-            {
+                return isRepresentable();
+            case EPhysicsProxyShape::Box:
                 includeBox(proxy.Box);
-            }
-            else
-            {
+                return isRepresentable();
+            case EPhysicsProxyShape::Capsule:
                 includeCapsule(proxy.Capsule);
+                return isRepresentable();
+            case EPhysicsProxyShape::HeightField:
+                // 境界の大きさは高さ場自身の照会が扱うため、平行移動の原点だけを含める。
+                includePoint(proxy.HeightFieldOrigin);
+                return isRepresentable();
             }
-            const double squared = scale * scale;
-            return bRepresentable && squared * squared * squared <= static_cast<double>(FLT_MAX) / 4096.0;
+            return false;
         }
 
         Core::Scene::EPhysicsSceneQueryResult ValidateProxyForQuery(const PhysicsShapeProxy& proxy,
@@ -625,11 +750,16 @@ namespace NorvesLib::Modules::Physics
             }
             const bool bSweep = query.Kind == Core::Scene::EPhysicsQueryKind::SweepSphere ||
                 query.Kind == Core::Scene::EPhysicsQueryKind::SweepCapsule;
-            if (bSweep && proxy.Shape == EPhysicsProxyShape::Box && !Math::IsValidSweepBox(proxy.Box))
+            switch (proxy.Shape)
             {
-                return Result::InvalidArgument;
+            case EPhysicsProxyShape::Sphere:
+            case EPhysicsProxyShape::Capsule:
+            case EPhysicsProxyShape::HeightField:
+                return Result::Success;
+            case EPhysicsProxyShape::Box:
+                return bSweep && !Math::IsValidSweepBox(proxy.Box) ? Result::InvalidArgument : Result::Success;
             }
-            return Result::Success;
+            return Result::InvalidArgument;
         }
 
         bool TryQueryBounds(const Core::Scene::PhysicsQueryDesc& query, Math::AABB& outBounds)
@@ -694,6 +824,40 @@ namespace NorvesLib::Modules::Physics
                 return Math::SweepCapsule(shape, proxy.Box, query.Direction, query.MaxDistance, settings);
             case EPhysicsProxyShape::Capsule:
                 return Math::SweepCapsule(shape, proxy.Capsule, query.Direction, query.MaxDistance, settings);
+            case EPhysicsProxyShape::HeightField:
+            {
+                // 高さ場は内部で反復回数を管理するため、MaxSweepIterations は使わない。
+                Math::GeometrySweepHit hit;
+                bool bHit;
+                if (query.Kind == Core::Scene::EPhysicsQueryKind::SweepSphere)
+                {
+                    Math::Sphere local = query.Sphere;
+                    local.Center -= proxy.HeightFieldOrigin;
+                    bHit = proxy.HeightField->SweepSphere(local, query.Direction, query.MaxDistance, hit);
+                }
+                else
+                {
+                    Math::Capsule local = shape;
+                    local.PointA -= proxy.HeightFieldOrigin;
+                    local.PointB -= proxy.HeightFieldOrigin;
+                    bHit = proxy.HeightField->SweepCapsule(local, query.Direction, query.MaxDistance, hit);
+                }
+                if (bHit)
+                {
+                    if (!query.bReportStartOverlap && hit.bStartPenetrating)
+                    {
+                        return Math::GeometrySweepHit();
+                    }
+                    hit.Result = Math::EGeometrySweepResult::Hit;
+                }
+                else if (hit.Result != Math::EGeometrySweepResult::IterationLimit)
+                {
+                    // false でも未確定の安全側位置は残るため、Result で反復上限を区別する。
+                    return Math::GeometrySweepHit();
+                }
+                hit.Point += proxy.HeightFieldOrigin;
+                return hit;
+            }
             }
             Math::GeometrySweepHit result;
             result.Result = Math::EGeometrySweepResult::InvalidArgument;
@@ -758,6 +922,21 @@ namespace NorvesLib::Modules::Physics
 
     namespace
     {
+        uint8_t CalculateSurfaceId(const PhysicsShapeProxy& proxy, const Math::Vector3& point)
+        {
+            switch (proxy.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
+            case EPhysicsProxyShape::Box:
+            case EPhysicsProxyShape::Capsule:
+                return proxy.SurfaceId;
+            case EPhysicsProxyShape::HeightField:
+                return proxy.HeightField->SampleSurface(point.x - proxy.HeightFieldOrigin.x,
+                    point.z - proxy.HeightFieldOrigin.z);
+            }
+            return Core::Scene::kInvalidPhysicsSurfaceId;
+        }
+
         Core::Scene::EPhysicsSceneQueryResult QueryProxyImpl(const PhysicsShapeProxy& proxy,
             const Core::Scene::PhysicsQueryDesc& query, Core::Scene::PhysicsQueryHit& outHit, bool bApplyFilter)
         {
@@ -783,16 +962,18 @@ namespace NorvesLib::Modules::Physics
             {
                 const Math::Ray ray(query.Ray.Origin, QueryUnit(query.Ray.Direction));
                 double preciseDistance = 0;
-                if (!RaycastProxy(ray, proxy, preciseDistance) || !StoreRayDistance(preciseDistance,hit.Distance)
+                Core::Rendering::Terrain::TerrainRayHit terrainHit;
+                if (!RaycastProxy(ray, query.MaxDistance, proxy, preciseDistance, terrainHit)
+                    || !StoreRayDistance(preciseDistance,hit.Distance)
                     || hit.Distance > query.MaxDistance)
                 {
                     return Result::NoHit;
                 }
-                if (!RayPoint(ray,preciseDistance,hit.Point))
+                if (!CalculateRayPoint(ray, proxy, preciseDistance, terrainHit.Point, hit.Point))
                 {
                     return Result::InvalidArgument;
                 }
-                hit.Normal = CalculateRayNormal(ray,proxy,preciseDistance);
+                hit.Normal = CalculateRayNormal(ray,proxy,preciseDistance,terrainHit.Normal);
             }
             else if (query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule)
             {
@@ -836,6 +1017,7 @@ namespace NorvesLib::Modules::Physics
             {
                 return Result::InvalidArgument;
             }
+            hit.SurfaceId = CalculateSurfaceId(proxy, hit.Point);
             outHit = hit;
             return Result::Success;
         }
@@ -1058,6 +1240,7 @@ namespace NorvesLib::Modules::Physics
             outHit.Normal = hit[0].Normal;
             outHit.Distance = hit[0].Distance;
             outHit.UserData = hit[0].UserData;
+            outHit.SurfaceId = hit[0].SurfaceId;
         }
         return result;
     }
@@ -1097,6 +1280,7 @@ namespace NorvesLib::Modules::Physics
             hit.Entity = source.Entity;
             hit.bHasEntity = source.bHasEntity;
             hit.UserData = source.UserData;
+            hit.SurfaceId = source.SurfaceId;
             hit.Contact.Normal = source.Normal * -1.0f;
             hit.Contact.Depth = source.Depth;
             hit.Contact.Point = source.Point;
@@ -1169,11 +1353,11 @@ namespace NorvesLib::Modules::Physics
 
     Math::AABB PhysicsBroadphase::CalculateBounds(const PhysicsShapeProxy& proxy)
     {
-        if (proxy.Shape == EPhysicsProxyShape::Sphere)
+        switch (proxy.Shape)
         {
+        case EPhysicsProxyShape::Sphere:
             return Math::AABB::FromCenterExtents(proxy.Sphere.Center, Math::Vector3(proxy.Sphere.Radius));
-        }
-        if (proxy.Shape == EPhysicsProxyShape::Capsule)
+        case EPhysicsProxyShape::Capsule:
         {
             Math::AABB bounds = Math::AABB::FromCenterExtents(
                 proxy.Capsule.PointA,
@@ -1183,18 +1367,38 @@ namespace NorvesLib::Modules::Physics
                 Math::Vector3(proxy.Capsule.Radius)));
             return bounds;
         }
-
-        const Math::Vector3 extents(
-            std::fabs(proxy.Box.Axes[0].x) * proxy.Box.HalfExtents.x
-                + std::fabs(proxy.Box.Axes[1].x) * proxy.Box.HalfExtents.y
-                + std::fabs(proxy.Box.Axes[2].x) * proxy.Box.HalfExtents.z,
-            std::fabs(proxy.Box.Axes[0].y) * proxy.Box.HalfExtents.x
-                + std::fabs(proxy.Box.Axes[1].y) * proxy.Box.HalfExtents.y
-                + std::fabs(proxy.Box.Axes[2].y) * proxy.Box.HalfExtents.z,
-            std::fabs(proxy.Box.Axes[0].z) * proxy.Box.HalfExtents.x
-                + std::fabs(proxy.Box.Axes[1].z) * proxy.Box.HalfExtents.y
-                + std::fabs(proxy.Box.Axes[2].z) * proxy.Box.HalfExtents.z);
-        return Math::AABB::FromCenterExtents(proxy.Box.Center, extents);
+        case EPhysicsProxyShape::Box:
+        {
+            const Math::Vector3 extents(
+                std::fabs(proxy.Box.Axes[0].x) * proxy.Box.HalfExtents.x
+                    + std::fabs(proxy.Box.Axes[1].x) * proxy.Box.HalfExtents.y
+                    + std::fabs(proxy.Box.Axes[2].x) * proxy.Box.HalfExtents.z,
+                std::fabs(proxy.Box.Axes[0].y) * proxy.Box.HalfExtents.x
+                    + std::fabs(proxy.Box.Axes[1].y) * proxy.Box.HalfExtents.y
+                    + std::fabs(proxy.Box.Axes[2].y) * proxy.Box.HalfExtents.z,
+                std::fabs(proxy.Box.Axes[0].z) * proxy.Box.HalfExtents.x
+                    + std::fabs(proxy.Box.Axes[1].z) * proxy.Box.HalfExtents.y
+                    + std::fabs(proxy.Box.Axes[2].z) * proxy.Box.HalfExtents.z);
+            return Math::AABB::FromCenterExtents(proxy.Box.Center, extents);
+        }
+        case EPhysicsProxyShape::HeightField:
+        {
+            Math::AABB bounds;
+            if (!proxy.HeightField || !proxy.HeightField->GetBounds(bounds))
+            {
+                return Math::AABB();
+            }
+            // 地表下は固体なので、最大水平幅（最低 1 m）だけ下へ広げる。
+            // この下端より深い物体はブロードフェーズの問い合わせでは扱わない。
+            const float depth = std::fmax(1.0f,
+                std::fmax(bounds.Max.x - bounds.Min.x, bounds.Max.z - bounds.Min.z));
+            bounds.Min.y -= depth;
+            bounds.Min += proxy.HeightFieldOrigin;
+            bounds.Max += proxy.HeightFieldOrigin;
+            return bounds;
+        }
+        }
+        return Math::AABB();
     }
 
     bool PhysicsBroadphase::ComputeContact(
@@ -1202,62 +1406,114 @@ namespace NorvesLib::Modules::Physics
         const PhysicsShapeProxy& second,
         Math::GeometryContact& outContact)
     {
-        if (first.Shape == EPhysicsProxyShape::Sphere)
+        switch (first.Shape)
         {
-            if (second.Shape == EPhysicsProxyShape::Sphere)
+        case EPhysicsProxyShape::Sphere:
+            switch (second.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
                 return Math::ComputeContact(first.Sphere, second.Sphere, outContact);
-            }
-            if (second.Shape == EPhysicsProxyShape::Box)
-            {
+            case EPhysicsProxyShape::Box:
                 return Math::ComputeContact(first.Sphere, second.Box, outContact);
+            case EPhysicsProxyShape::Capsule:
+                if (!Math::ComputeContact(second.Capsule, first.Sphere, outContact))
+                {
+                    return false;
+                }
+                ReverseContact(outContact);
+                return true;
+            case EPhysicsProxyShape::HeightField:
+                return ComputeOverlap(first.Sphere, second, outContact);
             }
-            if (!Math::ComputeContact(second.Capsule, first.Sphere, outContact))
+            return false;
+        case EPhysicsProxyShape::Box:
+            switch (second.Shape)
             {
-                return false;
-            }
-            ReverseContact(outContact);
-            return true;
-        }
-        if (first.Shape == EPhysicsProxyShape::Box)
-        {
-            if (second.Shape == EPhysicsProxyShape::Sphere)
-            {
+            case EPhysicsProxyShape::Sphere:
                 if (!Math::ComputeContact(second.Sphere, first.Box, outContact))
                 {
                     return false;
                 }
                 ReverseContact(outContact);
                 return true;
-            }
-            if (second.Shape == EPhysicsProxyShape::Box)
-            {
+            case EPhysicsProxyShape::Box:
                 return Math::ComputeContact(first.Box, second.Box, outContact);
+            case EPhysicsProxyShape::Capsule:
+                if (!Math::ComputeContact(second.Capsule, first.Box, outContact))
+                {
+                    return false;
+                }
+                ReverseContact(outContact);
+                return true;
+            case EPhysicsProxyShape::HeightField:
+                return ComputeOverlap(first.Box, second, outContact);
             }
-            if (!Math::ComputeContact(second.Capsule, first.Box, outContact))
+            return false;
+        case EPhysicsProxyShape::Capsule:
+            switch (second.Shape)
             {
+            case EPhysicsProxyShape::Sphere:
+                return Math::ComputeContact(first.Capsule, second.Sphere, outContact);
+            case EPhysicsProxyShape::Box:
+                return Math::ComputeContact(first.Capsule, second.Box, outContact);
+            case EPhysicsProxyShape::Capsule:
+                return Math::ComputeContact(first.Capsule, second.Capsule, outContact);
+            case EPhysicsProxyShape::HeightField:
+                return ComputeOverlap(first.Capsule, second, outContact);
+            }
+            return false;
+        case EPhysicsProxyShape::HeightField:
+            switch (second.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
+            {
+                Math::Sphere local = second.Sphere;
+                local.Center -= first.HeightFieldOrigin;
+                Core::Container::VariableArray<Math::GeometryContact> contacts;
+                first.HeightField->OverlapSphere(local, contacts);
+                return StoreHeightFieldContact(first, contacts, outContact, false);
+            }
+            case EPhysicsProxyShape::Box:
+            {
+                Math::OBB local = second.Box;
+                local.Center -= first.HeightFieldOrigin;
+                Core::Container::VariableArray<Math::GeometryContact> contacts;
+                first.HeightField->OverlapBox(local, contacts);
+                return StoreHeightFieldContact(first, contacts, outContact, false);
+            }
+            case EPhysicsProxyShape::Capsule:
+            {
+                Math::Capsule local = second.Capsule;
+                local.PointA -= first.HeightFieldOrigin;
+                local.PointB -= first.HeightFieldOrigin;
+                Core::Container::VariableArray<Math::GeometryContact> contacts;
+                first.HeightField->OverlapCapsule(local, contacts);
+                return StoreHeightFieldContact(first, contacts, outContact, false);
+            }
+            case EPhysicsProxyShape::HeightField:
                 return false;
             }
-            ReverseContact(outContact);
-            return true;
+            return false;
         }
-        if (second.Shape == EPhysicsProxyShape::Sphere)
-        {
-            return Math::ComputeContact(first.Capsule, second.Sphere, outContact);
-        }
-        if (second.Shape == EPhysicsProxyShape::Box)
-        {
-            return Math::ComputeContact(first.Capsule, second.Box, outContact);
-        }
-        return Math::ComputeContact(first.Capsule, second.Capsule, outContact);
+        return false;
     }
 
     void PhysicsBroadphase::BuildCandidatePairs()
     {
         Core::Container::VariableArray<SweepEndpoint> endpoints;
+        Core::Container::VariableArray<size_t> heightFieldIndices;
+        Core::Container::VariableArray<size_t> shapeIndices;
         endpoints.reserve(m_Proxies.size() * 2);
-        for (const PhysicsShapeProxy& proxy : m_Proxies)
+        for (size_t index = 0; index < m_Proxies.size(); ++index)
         {
+            const PhysicsShapeProxy& proxy = m_Proxies[index];
+            // 地形の AABB は全コライダーと重なるため、SAP の重複検査を膨らませないよう別枠にする。
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                heightFieldIndices.push_back(index);
+                continue;
+            }
+            shapeIndices.push_back(index);
             endpoints.push_back(SweepEndpoint{proxy.Bounds.Min.x, proxy.Collider, true, proxy.Layer, proxy.Mask});
             endpoints.push_back(SweepEndpoint{proxy.Bounds.Max.x, proxy.Collider, false, proxy.Layer, proxy.Mask});
         }
@@ -1329,5 +1585,56 @@ namespace NorvesLib::Modules::Physics
             }
             m_CandidatePairs[insertIndex] = value;
         }
+
+        if (heightFieldIndices.empty())
+        {
+            return;
+        }
+
+        Core::Container::VariableArray<PhysicsCandidatePair> mergedPairs;
+        mergedPairs.reserve(m_CandidatePairs.size());
+        size_t sapIndex = 0;
+        size_t heightFieldStart = 0;
+        size_t shapeStart = 0;
+        // Collider 順の先頭を外側にし、後続の異種だけを走査して地形の組も IsPairLess 順に作る。
+        for (size_t firstIndex = 0; firstIndex < m_Proxies.size(); ++firstIndex)
+        {
+            const PhysicsShapeProxy& first = m_Proxies[firstIndex];
+            const bool bHeightField = first.Shape == EPhysicsProxyShape::HeightField;
+            if (bHeightField)
+            {
+                ++heightFieldStart;
+            }
+            else
+            {
+                ++shapeStart;
+            }
+            const auto& secondIndices = bHeightField ? shapeIndices : heightFieldIndices;
+            const size_t secondStart = bHeightField ? shapeStart : heightFieldStart;
+            for (size_t index = secondStart; index < secondIndices.size(); ++index)
+            {
+                const PhysicsShapeProxy& second = m_Proxies[secondIndices[index]];
+                if (!(first.Bounds.Min.x <= second.Bounds.Max.x && first.Bounds.Max.x >= second.Bounds.Min.x
+                    && first.Bounds.Min.y <= second.Bounds.Max.y && first.Bounds.Max.y >= second.Bounds.Min.y
+                    && first.Bounds.Min.z <= second.Bounds.Max.z && first.Bounds.Max.z >= second.Bounds.Min.z)
+                    || !Core::Scene::CanPhysicsLayersInteract(first.Layer, first.Mask, second.Layer, second.Mask))
+                {
+                    continue;
+                }
+
+                const PhysicsCandidatePair pair{first.Collider, second.Collider};
+                // SAP には地形の組が無いので、重複検査せず整列済みの組と線形に併合する。
+                while (sapIndex < m_CandidatePairs.size() && IsPairLess(m_CandidatePairs[sapIndex], pair))
+                {
+                    mergedPairs.push_back(m_CandidatePairs[sapIndex++]);
+                }
+                mergedPairs.push_back(pair);
+            }
+        }
+        while (sapIndex < m_CandidatePairs.size())
+        {
+            mergedPairs.push_back(m_CandidatePairs[sapIndex++]);
+        }
+        m_CandidatePairs = std::move(mergedPairs);
     }
 } // namespace NorvesLib::Modules::Physics

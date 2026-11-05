@@ -1,4 +1,7 @@
 ﻿#include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/Procedural/BodyLeanModifier.h"
+#include "Animation/Procedural/SpineWaveModifier.h"
+#include "Animation/Procedural/LookAtModifier.h"
 #include "Animation/FootIKModifier.h"
 #include "Animation/Procedural/SpringBoneModifier.h"
 #include "Animation/Procedural/FollowThroughModifier.h"
@@ -288,6 +291,9 @@ namespace NorvesLib::Core::Animation::Procedural
     PoseModifierTypeTable GetBuiltinPoseModifierTypes()
     {
         static const PoseModifierTypeEntry entries[] = {
+            {"Lean", PoseModifierDefaultOrder::Lean, &CreateBodyLeanModifier},
+            {"Spine", PoseModifierDefaultOrder::Spine, &CreateSpineWaveModifier},
+            {"Look", PoseModifierDefaultOrder::Look, &CreateLookAtModifier},
             {"FootIK", PoseModifierDefaultOrder::FootIK, &CreateFootIKModifier},
             {"SpringBone", PoseModifierDefaultOrder::SpringBone, &CreateSpringBoneModifier},
             {"FollowThrough", PoseModifierDefaultOrder::FollowThrough, &CreateFollowThroughModifier}};

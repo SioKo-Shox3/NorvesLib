@@ -14,6 +14,7 @@ set(PRIVATE_SOURCES
     Private/Save/SaveMigration.cpp
     Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
+    Private/Save/SettingsStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
@@ -43,6 +44,8 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedTerrainLoader.cpp
     Private/Asset/CookedGrassFieldWriter.cpp
     Private/Asset/CookedGrassFieldLoader.cpp
+    Private/Asset/CookedScatterWriter.cpp
+    Private/Asset/CookedScatterLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -134,6 +137,9 @@ set(PRIVATE_SOURCES
     Private/Animation/Procedural/AngleDistribution.cpp
     Private/Animation/Procedural/Spring.cpp
     Private/Animation/Procedural/PoseModifierConfig.cpp
+    Private/Animation/Procedural/BodyLeanModifier.cpp
+    Private/Animation/Procedural/SpineWaveModifier.cpp
+    Private/Animation/Procedural/LookAtModifier.cpp
     Private/Animation/Procedural/SpringBoneModifier.cpp
     Private/Animation/Procedural/FollowThroughModifier.cpp
     Private/Animation/AnimationEvents.cpp
@@ -470,6 +476,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputBindingJson.cpp
     Private/Input/InputBindingPersistence.cpp
     Private/Input/WorkingDirectoryInputBindingStore.cpp
+    Private/Input/SettingsInputBindingStore.cpp
     Private/Input/InputMapper.cpp
     Private/Input/InputRebindCaptureManager.cpp
     Private/Input/InputDebugOverlayController.cpp
@@ -503,6 +510,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveMigration.h
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
+    Public/Save/SettingsStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -512,6 +520,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedTextureFormat.h
     Public/Asset/CookedTerrainFormat.h
     Public/Asset/CookedGrassFieldFormat.h
+    Public/Asset/CookedScatterFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
@@ -611,6 +620,9 @@ set(PUBLIC_HEADERS
     Public/Animation/Procedural/AngleDistribution.h
     Public/Animation/Procedural/Spring.h
     Public/Animation/Procedural/PoseModifierConfig.h
+    Public/Animation/Procedural/BodyLeanModifier.h
+    Public/Animation/Procedural/SpineWaveModifier.h
+    Public/Animation/Procedural/LookAtModifier.h
     Public/Animation/Procedural/SpringBoneModifier.h
     Public/Animation/Procedural/FollowThroughModifier.h
     Public/Animation/PoseModifier.h

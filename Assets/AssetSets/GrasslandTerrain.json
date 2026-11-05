@@ -196,6 +196,13 @@
       "format": "nvgfld.v0",
       "package_name": "Grassland/GrasslandGrassField.nvpkg",
       "entry_name": "Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/GrasslandScatter.nvsct",
+      "source_path": "Assets/Scatter/grassland.scatter.json",
+      "format": "nvsct.v0.inst16",
+      "package_name": "Grassland/GrasslandScatter.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/GrasslandScatter.nvsct"
     }
   ]
 }
