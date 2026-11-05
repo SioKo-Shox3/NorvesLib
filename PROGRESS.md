@@ -9868,3 +9868,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
 - Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
 - Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+
+- U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
+- U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
+- U3 AssetCook に GrassFieldCooker と照合のコマンドを足す: 着地(直し 0 回)
+- U5 GrassFieldComponent と地形の地面の取り出し口を足す: 着地(直し 0 回)
+- U9 AssetCookGrassFieldSmoke と基準の PNG 群を今の枠で入れ直す: 着地(直し 0 回)
+- U10 SceneFileRoundTripTest の草原の往復と旧ファイルを今の枠で入れ直す: 着地(直し 0 回)
+- U11 grassland の草の場を今の枠で入れ直す: 着地(直し 0 回)
+- U8 受入れの記録と全体の確かめ: 着地(直し 1 回)
+
+## 2026-11-05 G5-GR42-GRASS-FIELD-ASSET（run 20261105-093025 の反復 2、完了）
+- Done: NVGFLD v0（`Asset/CookedGrassFieldFormat.h`・`CookedGrassFieldLoader.cpp`・決定的な書き出し、`Docs/Architecture/NVGFLDv0.md`）と拒否の理由を返す読み込み。AssetKind::World の entry type `Gfd0`・format `nvgfld.v0` で解決。AssetCook の `--kind world --format nvgfld.v0`（配置の JSON + PNG 群か NVTRN の GRS0/MSK0 から焼く）と照合のコマンド。`GrassFieldComponent`（BeginPlay で読んで Vegetation と RenderWorld へ登録、EndPlay で外す）と TerrainSystem を引く地面の取り出し口。grassland に GRS0 から焼いた草の場（256 チャンク、NVGFLD 5,255,424 B）。試験 `CookedGrassFieldTest`・`AssetCookGrassFieldSmoke`・`SceneFileRoundTripTest` の草原の往復と旧ファイル。1 km² 相当の大きさを `Docs/RenderingValidation/GrassFieldAcceptance.md` に記録（cook 済み 21,020,928 B、CPU の常駐の計算できる部分 約 40.0 MiB。ゲートにしない）。
+- 証拠: `.harness/runs/20261105-093025/G5-GR42-GRASS-FIELD-ASSET-U8-verify.txt`（AssetCook・CookedMeshTest・SceneSerializerTest・Game の Debug ビルド exit 0、AssetManifestTest と GrassFieldQueryTest の実行ファイルのため AssetSystemTest・MathGeometryTest もビルド、ctest 6 件 100% Passed）。
+- Next: ランナーの評価者の反証（アセットロード・Public API の危険地帯）。起動の確かめは後回し: grassland を `--scene=grassland --window-background` で開き、草の場の登録・EndPlay での解除と再入場・地形との高さの整合・見た目を見る。
+- Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
+- G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
+- Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。

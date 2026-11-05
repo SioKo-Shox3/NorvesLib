@@ -41,6 +41,8 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/CookedTerrainWriter.cpp
     Private/Asset/CookedTerrainLoader.cpp
+    Private/Asset/CookedGrassFieldWriter.cpp
+    Private/Asset/CookedGrassFieldLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -62,6 +64,8 @@ set(PRIVATE_SOURCES
     Private/Particle/ParticleSystem.cpp
     Private/Vegetation/GrassSpecies.cpp
     Private/Vegetation/GrassField.cpp
+    Private/Vegetation/GrassFieldAsset.cpp
+    Private/Vegetation/TerrainGroundHeightSource.cpp
     Private/Vegetation/Vegetation.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
@@ -417,6 +421,7 @@ set(PRIVATE_SOURCES
     Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/TerrainComponent.cpp
+    Private/Component/GrassFieldComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -503,6 +508,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/CookedTerrainFormat.h
+    Public/Asset/CookedGrassFieldFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
@@ -559,6 +565,8 @@ set(PUBLIC_HEADERS
     Public/Particle/ParticleSystem.h
     Public/Vegetation/GrassSpecies.h
     Public/Vegetation/GrassField.h
+    Public/Vegetation/GrassFieldAsset.h
+    Public/Vegetation/TerrainGroundHeightSource.h
     Public/Vegetation/Vegetation.h
     Public/Vegetation/GroundHeightSource.h
     Public/Rendering/GrassFieldRenderData.h
@@ -792,6 +800,7 @@ set(PUBLIC_HEADERS
     Public/Component/MeshComponent.h
     Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
+    Public/Component/GrassFieldComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h
