@@ -10472,3 +10472,18 @@
 - verify: `ctest --test-dir build -C Debug -R "^(SceneQueryPhysicsFacadeTest|SceneQueryRaycastTest|SceneQueryOverlapTest|PhysicsHeightFieldColliderTest|PhysicsLifecycleEventTest|PhysicsFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Library/Core/Private/Engine/Engine.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR38-PHYSICS-HEIGHTFIELD
+
+## G8-GR17-SLICE-CHECK-P1: 関節に束縛しない hitbox・hurtbox の姿勢を、描画が使う行ベクトルの世界行列と同じ向きにする
+- status: todo
+- done-when: (1) 回転させた Entity に関節に束縛しない hitbox(カプセル)と hurtbox(箱)を付けて評価する。回転は 1 軸でない四元数にする(例: 軸 (1,2,3)・0.7 rad)。評価した体積の点(`pose.Position + pose.Rotation * 形の点`)が、`MatrixUtils::TransformPointRowVector(MatrixUtils::CreateWorldRowVector(その Entity の世界の変換), 形の点)` と 1e-4 以内で一致する。この行列は `MeshComponent.cpp:385` が描画に使うものと同じ。(2) 骨格つきの対象に `SocketAttachmentComponent` で付けた剣の Entity に、関節に束縛しない hitbox を付ける。その形の点が、ソケットの描画の行列(`Animation::BuildSocketWorldTransform` の結果を `CreateWorldRowVector` にした行列)で写した点と一致する。同じ点を同じソケットの親の関節に束縛した hitbox(`ResolveJointPose` の経路)とも一致する。(3) (1) と (2) は `CombatJointFollowTest.cpp` の中にケースとして足し、新しいテストの実行ファイルは作らない。既存の `Combat*` の試験は Debug で全部通る。(4) 食い違いが確かめられたら、`CombatRuntime.cpp` の 470 行・527 行(`binding->GetWorldTransform()` をそのまま使う所)を、関節の経路と同じ「行ベクトルの基底を共役にして四元数にする」変換を通す形に直す。変換は `CombatJointBinding` の補助関数にまとめ、2 つの経路で共有する。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^Combat" --output-on-failure --timeout 180`
+- paths: Library/Modules/Gameplay/Private/Gameplay/Combat/CombatRuntime.cpp, Library/Modules/Gameplay/Private/Gameplay/Combat/CombatJointBinding.cpp, Library/Modules/Gameplay/Private/Gameplay/Combat/CombatJointBinding.h, Test/Modules/Gameplay/CombatJointFollowTest.cpp, Test/Modules/Gameplay/CombatTestSupport.h, Test/Modules/Gameplay/CombatFrameRateInvarianceTest.cpp, TASKS.md, PROGRESS.md
+- from: G8-GR17-SLICE-CHECK
+- notes: 読んで確かめた事実は次のとおり。
+  - `CreateWorldRowVector` は上 3x3 に R(q)(列ベクトルの形)をそのまま置く。それを `TransformPointRowVector`(p*M)で使い、GLSL も `world * vec4(p,1)` を column_major のまま使う(`CopyToShaderData` は memcpy)。このため描画は点を R(q)ᵀ で回す。
+  - `CombatGeometry` は `pose.Rotation * 点` = R(q) で回す。
+  - `ResolveJointPose`(`CombatJointBinding.cpp:105-108`)は、この食い違いを共役で直している。関節に束縛しない経路(`CombatRuntime.cpp:470, 527`)は `Transform.rotation` をそのまま使うので、直していない。
+  - `BuildSocketWorldTransform`(`SocketTypes.cpp:373`)は共役を取らずに q を返し、`SocketAttachmentComponent` はそれを `SetWorldTransform` する。このため、ソケットに付けた剣の Entity では関節の経路と関節でない経路の向きが共役の分ずれ、DebugDraw の形も刀身からずれる見込みが高い。
+
+  `CombatFrameRateInvarianceTest` は回転する攻撃者を関節に束縛せずに使っている。向きを直して当たりの数が変わったら、試験の配置を直す。期待値を実装の写しで書き直さない。`Math::Transform`・`Entity` の合成(`ComposeTransform`)・`SocketAttachmentComponent`・描画の行列は変えない(危険地帯で、範囲の外)。`Transform::TransformPoint`(R(q))と描画(R(q)ᵀ)の食い違いがエンジン全体に及ぶと分かったら、PROGRESS.md の Notes に `要起票:` で残す。`EncounterService.cpp:364`・`InteractionService.cpp:420/448` のセンサーのオフセットも同じ形をしている。起動は要らない(CPU の単体の試験だけ)。
