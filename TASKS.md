@@ -5583,7 +5583,7 @@
 - notes: 今のコードの事実: 問い合わせの新しい口 `ExecuteQuery` / `ExecuteBatch` と `PhysicsQueryFilter`（レイヤーの mask・無視する Body など）は GR08 で入っている（`Library/Core/Public/Scene/SceneQuery.h:33-49`、`Library/Core/Public/Scene/PhysicsQueryTypes.h:92-135, 149-205`）。G1 は確かめ直し中なので needs-gr に GR08 を入れた。姿勢は PoseFinalize の群で確定し、固定ステップはその後に回る（`Docs/Architecture/TickStages.md:5`）ので、足 IK が読むのは前の固定ステップで公開されたスナップショット（最大 1 ステップ古い）になる。これを `Docs/Architecture/PhysicsQueries.md` に書く。地形（G5 の GR38）は同じ `IGroundQuery` の別の実装として後で差す（G9 の非ゴール）。レイヤーの名前は企画で未定なので mask の値は設定で受ける。試験は `Test/Modules/Physics/CMakeLists.txt:53-69` の束へ足し、`add_test(NAME PhysicsGroundQueryIntegrationTest COMMAND PhysicsDynamicsTest --test=PhysicsGroundQueryIntegrationTest)` を同じファイルに足す。新しい Public API なので評価者を通す。出典: 要件 `#### GR14` の設計案【接地問い合わせ】、受け入れ確認の PhysicsGroundQueryIntegrationTest のうち問い合わせの部分（IK の重みが下がる部分は `G9-GR14-LEG-IK-BALANCE`）。
 
 ## G9-GR14-LEG-IK-BALANCE: 脚を地面へ合わせる IK モディファイアと、骨盤・肩の高さと体のピッチの補正を足す
-- status: doing
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G9-GR14-TWO-BONE-IK, G9-GR14-GROUND-QUERY, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS
 - gr: GR14
 - needs-gr: GR10, GR12
