@@ -10162,16 +10162,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
 - Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
 
-- U1 実行時の NVTRN 読み込みで PDL0（凹み度）を引けるようにし、層が無ければ 0 を返す: 着地(直し 0 回)
-- U2 凹み度の規則と計算（高さのぼかしとの差・窪地を埋めた深さ・流れの集積・ペイント・スレッド数に依らない並列）: 着地(直し 1 回)
-- U3 spec の recipe.puddle とペイントの target "puddle" を読み、NVTRN に PDL0 を書く: 着地(直し 0 回)
-- U4 NVTRN の形式の文書と grassland の spec に凹み度を足す: 着地(直し 0 回)
-- U5 CookedTerrainTest に凹み度の 4 ケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
+- U1 空の遮蔽の値の型・遮蔽物の柱の評価・モデル試験と試験の登録: 着地(直し 0 回)
+- U3 FramePacket への経路と SkyOcclusionRevision: 着地(直し 0 回)
+- U2 CPU の正解（2.5D 格子・地平線の積分・L1・曲げた法線・鏡面の円錐）: 着地(直し 1 回)
+- Notes(G11-GR56-SKY-OCC-CPU): 鏡面の交差は要件の案（Jimenez の一様な球冠＋smoothstep）から、R のまわりの輪ごとの閉形式の重なりを GGX の D の逆関数の 13 層（重み G1）で足す形に替えた。一様な球冠では GGX の裾を表せず粗さ 0.6 で 0.13 ずれたため（替えた後の最大誤差 0.026）。壁の閉形式との差は 30° で −0.0625（許容 0.07 の内、L1 の打ち切り）、κ=0.5 の平板の L1 と厳密なコサイン重みの差は 0.050。
+- U4 手置きの SkyOccluderComponent と保存の往復、タスクの確かめ: 着地(直し 0 回)
 
-## G11-GR59-PUDDLE-MASK（2026-11-05）
-
-- Done: 地形の cook に R8 の層 `PDL0`（凹み度 0〜1、意味 `terrain.puddle.potential`）を GRS0 の後ろに足した。規則は spec の `recipe.puddle`（高さの分離ガウスのぼかしとの差・優先度つき浸水で窪地を埋めた深さ・流れの集積を重みで合成し、傾斜で 0 へ下げ、(seed, セル座標) の整数ハッシュの値雑音を掛ける）と、ペイントの target `puddle`（override / multiply）。計算は行の帯でスレッドに分け、結果はスレッド数に依らない。実行時は `TerrainHeightField::HasPuddlePotential`・`SamplePuddlePotential` で引け、層の無い古い NVTRN は 0 として読む。形式の文書（`Docs/Architecture/NVTRNv0.md`）と grassland の spec を更新した。
-- 証拠: `.harness/runs/20261105-160359/verify-G11-GR59-PUDDLE-MASK.txt`（CookedMeshTest・AssetCook の Debug ビルド成功、ctest `CookedTerrainTest|CookedMeshTest` 100% tests passed, 0 tests failed out of 2、凹み度 (a) 窪地の底 209＝全標本の最大・斜面の最大 0、(b)(c)(d) 合格、grassland の cook 成功）。
-- Next: GR37 の地形の GBuffer のシェーダーが PDL0 を束ねて被覆を評価するのは後続の GR59 の項目（今は NVTEX の層として埋めただけで、描画からはまだ引いていない）。起動の確かめは無い（cook と CPU の試験で閉じる）。
-- Notes: grassland の地形の NVTRN が変わったため、散布の spec `Assets/Scatter/grassland.scatter.json` が固定する地形の `cooked_hash` を `2fbadb9d5677e80d` に更新した（paths の外だが、cook を通すための記録の値だけ。散布は PDL0 を使わない）。
-- Notes: ぼかしの半径は格子の大きさでは拒否せず（小さな地形の既存の recipe を壊さないため）、計算量の上限 4096 セルだけで拒否する。凹み度の既定値は試験の合成の窪地で底が 209/255 になる値で、grassland の見た目の調整は描画が PDL0 を引くようになってから行う。
+## 2026-11-05 G11-GR56-SKY-OCC-CPU（run 20261105-151418 の反復 3、完了）
+- Done: `Rendering/SkyOcclusion.h` に `SkyOcclusionParameters`（無効が既定）と 64 B の `SkyOccluderProxy`（形・種別・動くか・雨を遮るかの印）、`MakeDefault*`・`Sanitize*`・`AreEqual*` を置いた。`SceneProxy` に空の遮蔽の値・遮蔽物の配列・`SkyOcclusionRevision` を足し、`RenderWorld::SetSkyOcclusionParameters`／遮蔽物の登録・更新・解除 → `RenderingCoordinator` → `SnapshotSceneParameters` で FramePacket.Scene へ値で写す（遮蔽物の増減は SceneRevision を変えず SkyOcclusionRevision だけを進める）。CPU の正解 `SkyOcclusionReference`（2.5D の格子 G・U・T・κ、12×6 の光線の幾何級数の歩による遮蔽の積分と L1、B(N)・曲げた法線、GGX のローブで重みを付けた鏡面の円錐の交差）を置いた。手置きの `SkyOccluderComponent`（PROPERTY で保存、`InitializeFromOwnerBounds` で持ち主の AABB から寸法を初期化、BeginPlay で RenderWorld へ登録し PreRender の Tick で変わったときだけ更新、EndPlay で解除）を足した。GR59 の雨の遮蔽も同じ型と同じコンポーネントの印を使う。
+- 証拠: `.harness/runs/20261105-151418/verify-G11-GR56-SKY-OCC-CPU-U4.txt`（タスクの verify 2 行。Debug の CameraViewConstantsTest・SceneSerializerTest・Game のビルド EXIT=0、ctest 5/5 Passed、numstat の 2 通りが一致）。
+- Next: ランナーの評価者の反証（Public API・FramePacket のデータ契約の危険地帯）。GPU のクリップマップと照明（G11-GR56 の次の項目）。起動の確かめは後回し（今のシーンに SkyOccluderComponent を付けた所は無く、既定は無効なので見た目は変わらない）。
+- Notes: 遮蔽物の登録・解除・移動の追従は実行の試験が無い（保存の往復だけ）。GPU の項目のデモ（`--sky-occluder-demo`）で確かめる。`CenterOffset` は持ち主の回転の局所で拡大を掛けず、`HalfExtents` には持ち主の拡大の絶対値を掛ける。Yaw のずれはラジアン。
