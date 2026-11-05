@@ -1,6 +1,7 @@
 ﻿set(MODULE_NAME NorvesModule_Gameplay)
 
 set(GAMEPLAY_PUBLIC_HEADERS
+    Public/Gameplay/Grip/GripTuning.h
     Public/Gameplay/IGameplayModule.h
     Public/Gameplay/Combat/DamageTypes.h
     Public/Gameplay/Combat/HealthComponent.h
@@ -31,6 +32,9 @@ set(GAMEPLAY_PUBLIC_HEADERS
 )
 
 set(GAMEPLAY_PRIVATE_SOURCES
+    Private/Gameplay/Grip/GripTuningLoader.cpp
+    Private/Gameplay/Grip/GripSolver.h
+    Private/Gameplay/Grip/GripSolver.cpp
     Private/Gameplay/Combat/HealthComponent.cpp
     Private/Gameplay/Combat/HitboxComponent.cpp
     Private/Gameplay/Combat/HurtboxSetComponent.cpp

@@ -2227,6 +2227,7 @@ add_executable(SkeletalAnimationSamplingTest
     LegIKModifierTest.cpp
     FootPlantTest.cpp
     ProceduralSpringModifierTest.cpp
+    ModifierOrderTest.cpp
     SkinnedSurfaceAnchorTest.cpp
     AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp
