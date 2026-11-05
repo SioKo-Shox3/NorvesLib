@@ -9961,3 +9961,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 RenderWorld に草・低木の束の出どころごとの合成の口を足し、荒野をそこへ移す: 着地(直し 0 回)
 - U7 ScatterSystem（常駐の要求・予算・解放と mega の経路）を足し Engine::Engine のメンバにする（U3 の切り直し）: 着地(直し 0 回)
 - U4 ScatterSystem の foliage の経路（チャンク = FoliageCell、常駐の組が変わったときだけ束を作り直す）: 着地(直し 0 回)
+- U5 ScatterSystemResidencyTest（EntityTreeTest の束へ MEMBER）: 着地(直し 0 回)
