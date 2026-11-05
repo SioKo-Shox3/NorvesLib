@@ -23,6 +23,11 @@ namespace NorvesLib::Core::Animation
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
         }
 
+        double Distance(const Math::Vector3& a, const Math::Vector3& b)
+        {
+            return std::hypot(double(a.x) - b.x, double(a.y) - b.y, double(a.z) - b.z);
+        }
+
         bool IsFinite(const Math::Matrix4x4& matrix)
         {
             for (float value : matrix.values)
@@ -112,6 +117,14 @@ namespace NorvesLib::Core::Animation
                 result.push_back(TCHAR(*p));
             }
             return result;
+        }
+
+        Identity DefaultFootEvent(Identity name, const char* suffix)
+        {
+            auto eventName = Text("Foot.");
+            eventName += name.ToString();
+            eventName += Text(suffix);
+            return Identity(eventName);
         }
 
         Container::String MemberPath(const Container::String& base, const Container::String& member)
@@ -370,10 +383,43 @@ namespace NorvesLib::Core::Animation
             return true;
         }
 
+        bool ReadLegPlant(JsonValue value, FootIKLegSettings& leg, const Container::String& path, Report& report)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const auto plantPath = MemberPath(path, Text("plant"));
+            const char* const keys[] = {"downEvent", "upEvent"};
+            if (!Keys(value, keys, plantPath, report))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < 2; ++i)
+            {
+                const auto event = value.FindMember(keys[i]);
+                if (!event.IsValid())
+                {
+                    continue;
+                }
+                const auto eventPath = MemberPath(plantPath, Text(keys[i]));
+                if (!event.IsString())
+                {
+                    return Fail(report, Error::TypeMismatch, eventPath);
+                }
+                if (event.AsString().empty())
+                {
+                    return Fail(report, Error::OutOfRange, eventPath);
+                }
+                (i == 0 ? leg.DownEvent : leg.UpEvent) = Identity(event.AsString());
+            }
+            return true;
+        }
+
         bool ReadLeg(JsonValue value, const SkeletonResource& skeleton, FootIKSettings& settings,
                      const Container::String& path, Report& report)
         {
-            const char* const keys[] = {"name", "chain", "pole", "sole", "maxStretch"};
+            const char* const keys[] = {"name", "chain", "pole", "sole", "maxStretch", "plant"};
             if (!Keys(value, keys, path, report))
             {
                 return false;
@@ -390,6 +436,8 @@ namespace NorvesLib::Core::Animation
             }
             FootIKLegSettings leg;
             leg.Name = Identity(name.AsString());
+            leg.DownEvent = DefaultFootEvent(leg.Name, ".Down");
+            leg.UpEvent = DefaultFootEvent(leg.Name, ".Up");
             for (const auto& previous : settings.Legs)
             {
                 if (previous.Name == leg.Name)
@@ -438,6 +486,7 @@ namespace NorvesLib::Core::Animation
             }
             const auto polePath = MemberPath(path, Text("pole"));
             if (!ReadPole(value.FindMember("pole"), leg, polePath, report) ||
+                !ReadLegPlant(value.FindMember("plant"), leg, path, report) ||
                 !ReadNumber(value, "sole", 0, 0.5, false, leg.Sole, path, report) ||
                 !ReadNumber(value, "maxStretch", 1, 1.5, false, leg.MaxStretch, path, report))
             {
@@ -514,10 +563,64 @@ namespace NorvesLib::Core::Animation
             }
             return true;
         }
+
+        bool ReadPlant(JsonValue value, FootIKSettings& settings, Report& report)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const auto path = Text("plant");
+            const char* const keys[] = {"enabled", "heightThreshold", "speedThreshold", "liftHeight",
+                                        "releaseBlendSeconds"};
+            if (!Keys(value, keys, path, report))
+            {
+                return false;
+            }
+            settings.bPlantEnabled = true;
+            const auto enabled = value.FindMember("enabled");
+            if (enabled.IsValid())
+            {
+                if (!enabled.IsBoolean())
+                {
+                    return Fail(report, Error::TypeMismatch, MemberPath(path, Text("enabled")));
+                }
+                settings.bPlantEnabled = enabled.AsBool();
+            }
+            return ReadNumber(value, "heightThreshold", -0.5, 0.5, false, settings.Plant.HeightThreshold, path, report) &&
+                   ReadNumber(value, "speedThreshold", 0, 10, false, settings.Plant.SpeedThreshold, path, report) &&
+                   ReadNumber(value, "liftHeight", 0, 2, true, settings.Plant.LiftHeight, path, report) &&
+                   ReadNumber(value, "releaseBlendSeconds", 0, 2, false, settings.Plant.ReleaseBlendSeconds, path, report);
+        }
+
+        bool ReadLand(JsonValue value, FootLandSettings& land, Report& report)
+        {
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            const auto path = Text("land");
+            const char* const keys[] = {"blendSeconds", "snapDistance", "teleportDistance"};
+            return Keys(value, keys, path, report) &&
+                   ReadNumber(value, "blendSeconds", 0, 5, false, land.BlendSeconds, path, report) &&
+                   ReadNumber(value, "snapDistance", 0, 2, false, land.SnapDistance, path, report) &&
+                   ReadNumber(value, "teleportDistance", 0, 100, true, land.TeleportDistance, path, report);
+        }
     } // namespace
 
     FootIKModifier::FootIKModifier(FootIKSettings settings) : m_Settings(std::move(settings))
     {
+        for (auto& leg : m_Settings.Legs)
+        {
+            if (!leg.DownEvent.IsValid())
+            {
+                leg.DownEvent = DefaultFootEvent(leg.Name, ".Down");
+            }
+            if (!leg.UpEvent.IsValid())
+            {
+                leg.UpEvent = DefaultFootEvent(leg.Name, ".Up");
+            }
+        }
         m_LegStates.resize(m_Settings.Legs.size());
         m_Probes.resize(m_Settings.Legs.size());
         m_BodySamples.resize(m_Settings.Legs.size());
@@ -534,11 +637,19 @@ namespace NorvesLib::Core::Animation
         const float dt = context.DeltaSeconds;
         const auto& ground = m_Settings.Ground;
         const auto& body = m_Settings.Body;
+        const auto& plant = m_Settings.Plant;
+        const auto& land = m_Settings.Land;
         if (!std::isfinite(w) || w < 0.0f || w > 1.0f || !std::isfinite(dt) || dt < 0.0f ||
             !std::isfinite(body.Balance.SmoothTime) || body.Balance.SmoothTime < 0.0f ||
             !std::isfinite(ground.RayUp) || ground.RayUp < 0.0f || !std::isfinite(ground.RayDown) ||
             ground.RayDown <= 0.0f || !std::isfinite(ground.RayUp + ground.RayDown) ||
             !std::isfinite(ground.MaxSlopeDeg) || ground.MaxSlopeDeg < 0.0f || ground.MaxSlopeDeg >= 90.0f ||
+            !std::isfinite(plant.HeightThreshold) || !std::isfinite(plant.SpeedThreshold) ||
+            plant.SpeedThreshold < 0.0f || !std::isfinite(plant.LiftHeight) || plant.LiftHeight <= 0.0f ||
+            !std::isfinite(plant.ReleaseBlendSeconds) || plant.ReleaseBlendSeconds < 0.0f ||
+            !std::isfinite(land.BlendSeconds) || land.BlendSeconds < 0.0f ||
+            !std::isfinite(land.SnapDistance) || land.SnapDistance < 0.0f ||
+            !std::isfinite(land.TeleportDistance) || land.TeleportDistance <= 0.0f ||
             pose.size() != context.Skeleton.Parents.size())
         {
             return false;
@@ -573,11 +684,24 @@ namespace NorvesLib::Core::Animation
             return false;
         }
         auto up = Math::MatrixUtils::TransformVectorRowVector(worldToMesh, Math::Vector3::UnitY);
-        const float originY = context.MeshToWorld.GetTranslationRow().y;
-        if (!TryNormalize(up) || !std::isfinite(originY))
+        const auto ownerPosition = context.MeshToWorld.GetTranslationRow();
+        const float originY = ownerPosition.y;
+        if (!TryNormalize(up) || !IsFinite(ownerPosition))
         {
             return false;
         }
+        if (m_bTeleportRequested ||
+            (m_bHasOwnerPosition && Distance(ownerPosition, m_PreviousOwnerPosition) > m_Settings.Land.TeleportDistance))
+        {
+            for (auto& state : m_LegStates)
+            {
+                state.Plant.Reset();
+            }
+        }
+        m_PreviousOwnerPosition = ownerPosition;
+        m_bHasOwnerPosition = true;
+        m_bTeleportRequested = false;
+        const bool bGrounded = context.HasDriveSignals() ? context.GetDriveSignals().bGrounded : true;
 
         // 全脚の問い合わせを一度に行う。配列は構築時に確保して使い回す。
         for (size_t i = 0; i < m_Settings.Legs.size(); ++i)
@@ -622,7 +746,8 @@ namespace NorvesLib::Core::Animation
             const auto& leg = m_Settings.Legs[i];
             auto& state = m_LegStates[i];
             auto hit = m_Probes[i].Result;
-            if (!IsFinite(state.FootWorld) || !IsFinite(m_Probes[i].OriginAbove))
+            const bool bFiniteFoot = IsFinite(state.FootWorld) && IsFinite(m_Probes[i].OriginAbove);
+            if (!bFiniteFoot)
             {
                 state.bUsable = false;
                 hit.Status = EGroundQueryStatus::Unavailable;
@@ -646,17 +771,75 @@ namespace NorvesLib::Core::Animation
                 state.bHasHit = true;
             }
             state.ToeTargetWorld = state.FootWorld;
-            if (state.bHasHit)
+            if (bFiniteFoot)
             {
-                const float animLift = state.FootWorld.y - originY;
-                state.ToeTargetWorld.y = state.LastHit.Point.y + std::max(animLift, leg.Sole);
-                if (!IsFinite(state.ToeTargetWorld) ||
-                    !std::isfinite(state.ToeTargetWorld.y - state.FootWorld.y))
+                state.PlantInput = {};
+                state.PlantInput.AnimToeWorld = state.FootWorld;
+                state.PlantInput.OriginY = originY;
+                state.PlantInput.Sole = leg.Sole;
+                state.PlantInput.bHasGround = state.bHasHit;
+                state.PlantInput.GroundPoint = state.bHasHit ? state.LastHit.Point : state.FootWorld;
+                state.PlantInput.bGrounded = bGrounded;
+                state.PlantInput.DeltaSeconds = dt;
+                if (m_Settings.bPlantEnabled)
                 {
+                    // 脚に関係する最後の一件だけを採り、連続する窓の境界でも固定位置を保つ。
+                    const AnimEventInfo* latestEvent = nullptr;
+                    bool bLatestDown = false;
+                    for (const auto& event : context.PendingEvents)
+                    {
+                        const bool bStart = event.Kind == AnimEventKind::Point || event.Kind == AnimEventKind::Begin;
+                        const bool bDown = event.Name == leg.DownEvent && bStart;
+                        const bool bUp = (event.Name == leg.UpEvent && bStart) ||
+                                        (event.Name == leg.DownEvent && event.Kind == AnimEventKind::End);
+                        if (!bDown && !bUp)
+                        {
+                            continue;
+                        }
+                        if (!latestEvent || event.Batch > latestEvent->Batch ||
+                            (event.Batch == latestEvent->Batch &&
+                             (event.OffsetSeconds > latestEvent->OffsetSeconds ||
+                              (event.OffsetSeconds == latestEvent->OffsetSeconds &&
+                               event.Sequence > latestEvent->Sequence))))
+                        {
+                            latestEvent = &event;
+                            bLatestDown = bDown;
+                        }
+                    }
+                    if (latestEvent)
+                    {
+                        state.PlantInput.bDownEvent = bLatestDown;
+                        state.PlantInput.bUpEvent = !bLatestDown;
+                    }
+                }
+                FootPlantOutput plantOutput;
+                if (state.Plant.Update(state.PlantInput, plant, land, plantOutput))
+                {
+                    state.LandWeight = plantOutput.LandWeight;
+                    if (m_Settings.bPlantEnabled && plantOutput.bHasTarget)
+                    {
+                        state.ToeTargetWorld = plantOutput.ToeTargetWorld;
+                    }
+                    else if (state.bHasHit)
+                    {
+                        const float animLift = state.FootWorld.y - originY;
+                        state.ToeTargetWorld.y = state.LastHit.Point.y + std::max(animLift, leg.Sole);
+                    }
+                }
+                else
+                {
+                    // 有限な入力でも目標位置が表現範囲を超えた脚は、その履歴を保って飛ばす。
                     state.Status = EGroundQueryStatus::Unavailable;
                     state.bUsable = false;
                     bSuccess = false;
                 }
+            }
+            if (!IsFinite(state.ToeTargetWorld) ||
+                !std::isfinite(state.ToeTargetWorld.y - state.FootWorld.y))
+            {
+                state.Status = EGroundQueryStatus::Unavailable;
+                state.bUsable = false;
+                bSuccess = false;
             }
             const float targetWeight = bSuccess ? 1.0f : 0.0f;
             if (body.Balance.SmoothTime == 0.0f)
@@ -669,8 +852,13 @@ namespace NorvesLib::Core::Animation
                 return false;
             }
             state.Weight = std::clamp(state.Weight, 0.0f, 1.0f);
-            m_BodySamples[i] = {bSuccess ? state.ToeTargetWorld.y - state.FootWorld.y : 0.0f,
-                                leg.bFront, bSuccess};
+            const bool bBodySuccess = bSuccess && state.LandWeight > 0.0f;
+            float bodyDelta = bBodySuccess ? state.ToeTargetWorld.y - state.FootWorld.y : 0.0f;
+            if (bBodySuccess && state.LandWeight != 1.0f)
+            {
+                bodyDelta *= state.LandWeight;
+            }
+            m_BodySamples[i] = {bodyDelta, leg.bFront, bBodySuccess};
         }
 
         // 体を先に動かす。足先の目標は補正前のワールド位置を基準に固定する。
@@ -741,7 +929,8 @@ namespace NorvesLib::Core::Animation
         {
             const auto& leg = m_Settings.Legs[i];
             auto& state = m_LegStates[i];
-            const float lw = state.Weight * w;
+            // 着地重みが 1 なら従来と同じ演算順にする。
+            const float lw = state.LandWeight == 1.0f ? state.Weight * w : state.Weight * state.LandWeight * w;
             if (!state.bUsable || !state.bHasHit || lw <= 0.0f)
             {
                 continue;
@@ -755,7 +944,7 @@ namespace NorvesLib::Core::Animation
             const auto mid = (*models)[leg.Joints[1]].GetTranslationRow();
             const auto ankle = (*models)[leg.Joints[2]].GetTranslationRow();
             const auto toe = (*models)[leg.Joints[leg.JointCount - 1]].GetTranslationRow();
-            const auto toeTarget = Math::MatrixUtils::TransformPointRowVector(worldToMesh, state.ToeTargetWorld);
+            auto toeTarget = Math::MatrixUtils::TransformPointRowVector(worldToMesh, state.ToeTargetWorld);
             auto normal = Math::MatrixUtils::TransformVectorRowVector(worldToMesh, state.LastHit.Normal);
             if (!IsFinite(toeTarget) || !TryNormalize(normal))
             {
@@ -767,7 +956,30 @@ namespace NorvesLib::Core::Animation
             {
                 continue;
             }
-            const auto ankleTarget = leg.JointCount == 4 ? toeTarget - align * (toe - ankle) : toeTarget;
+            auto ankleTarget = leg.JointCount == 4 ? toeTarget - align * (toe - ankle) : toeTarget;
+            if (m_Settings.bPlantEnabled && state.Plant.GetPhase() == EFootPlantPhase::Planted)
+            {
+                if (!IsFinite(root) || !IsFinite(mid) || !IsFinite(ankle) || !IsFinite(ankleTarget))
+                {
+                    continue;
+                }
+                const double maximumDistance = (Distance(mid, root) + Distance(ankle, mid)) * leg.MaxStretch;
+                if (Distance(ankleTarget, root) > maximumDistance)
+                {
+                    FootPlantOutput released;
+                    if (!state.Plant.Release(state.PlantInput, plant, land, released))
+                    {
+                        continue;
+                    }
+                    state.ToeTargetWorld = released.ToeTargetWorld;
+                    toeTarget = Math::MatrixUtils::TransformPointRowVector(worldToMesh, state.ToeTargetWorld);
+                    ankleTarget = leg.JointCount == 4 ? toeTarget - align * (toe - ankle) : toeTarget;
+                    if (!IsFinite(toeTarget) || !IsFinite(ankleTarget))
+                    {
+                        continue;
+                    }
+                }
+            }
             TwoBoneIKInput input;
             input.Root = root;
             input.Mid = mid;
@@ -895,6 +1107,30 @@ namespace NorvesLib::Core::Animation
             sample = {};
         }
         m_BodyBalance.Reset();
+        m_PreviousOwnerPosition = Math::Vector3();
+        m_bHasOwnerPosition = false;
+        m_bTeleportRequested = false;
+    }
+
+    EFootPlantPhase FootIKModifier::GetLegPlantPhase(size_t leg) const
+    {
+        return m_Settings.bPlantEnabled && leg < m_LegStates.size()
+                   ? m_LegStates[leg].Plant.GetPhase() : EFootPlantPhase::Swing;
+    }
+
+    float FootIKModifier::GetLegLandWeight(size_t leg) const
+    {
+        return leg < m_LegStates.size() ? m_LegStates[leg].LandWeight : 0.0f;
+    }
+
+    Math::Vector3 FootIKModifier::GetLegToeTargetWorld(size_t leg) const
+    {
+        return leg < m_LegStates.size() ? m_LegStates[leg].ToeTargetWorld : Math::Vector3();
+    }
+
+    void FootIKModifier::NotifyTeleport()
+    {
+        m_bTeleportRequested = true;
     }
 
     float FootIKModifier::GetLegWeight(size_t leg) const
@@ -923,7 +1159,7 @@ namespace NorvesLib::Core::Animation
         {
             return Fail(report, Error::MissingKey, Text("legs"));
         }
-        const char* const keys[] = {"legs", "body", "ground"};
+        const char* const keys[] = {"legs", "body", "ground", "plant", "land"};
         if (!Keys(settings, keys, {}, report))
         {
             return false;
@@ -952,7 +1188,9 @@ namespace NorvesLib::Core::Animation
             }
         }
         if (!ReadBody(settings.FindMember("body"), skeleton, candidate.Body, report) ||
-            !ReadGround(settings.FindMember("ground"), candidate.Ground, report))
+            !ReadGround(settings.FindMember("ground"), candidate.Ground, report) ||
+            !ReadPlant(settings.FindMember("plant"), candidate, report) ||
+            !ReadLand(settings.FindMember("land"), candidate.Land, report))
         {
             return false;
         }

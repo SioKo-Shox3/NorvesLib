@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Animation/BodyBalance.h"
+#include "Animation/FootPlantState.h"
 #include "Animation/GroundQuery.h"
 #include "Animation/PoseModifier.h"
 #include "Animation/Procedural/AngleDistribution.h"
@@ -22,6 +23,8 @@ namespace NorvesLib::Core::Animation
     struct FootIKLegSettings
     {
         Identity Name;
+        Identity DownEvent;
+        Identity UpEvent;
         int32_t Joints[4] = {-1, -1, -1, -1}; // 根、中間、足首、省略可能な足先
         uint32_t JointCount = 0;
         bool bAutoPole = true;
@@ -53,6 +56,9 @@ namespace NorvesLib::Core::Animation
         Container::VariableArray<FootIKLegSettings> Legs;
         FootIKBodySettings Body;
         FootIKGroundSettings Ground;
+        bool bPlantEnabled = false;
+        FootPlantSettings Plant;
+        FootLandSettings Land;
     };
 
     /**
@@ -74,6 +80,14 @@ namespace NorvesLib::Core::Animation
         const FootIKSettings& GetSettings() const;
         /** @brief 脚の平滑化済み重みを返す。範囲外なら 0 を返す。 */
         float GetLegWeight(size_t leg) const;
+        /** @brief 足の固定が無効または範囲外なら Swing を返す。 */
+        EFootPlantPhase GetLegPlantPhase(size_t leg) const;
+        /** @brief 脚の着地の重みを返す。範囲外なら 0 を返す。 */
+        float GetLegLandWeight(size_t leg) const;
+        /** @brief 足先のワールド目標を返す。範囲外ならゼロベクトルを返す。 */
+        Math::Vector3 GetLegToeTargetWorld(size_t leg) const;
+        /** @brief 次の Apply で脚の固定と着地の履歴を初期化する。 */
+        void NotifyTeleport();
         /** @brief 法線と点の検証後の問い合わせ状態を返す。範囲外なら Unavailable を返す。 */
         EGroundQueryStatus GetLegStatus(size_t leg) const;
         /** @brief 重みを掛ける前の体の補正出力を返す。 */
@@ -93,6 +107,9 @@ namespace NorvesLib::Core::Animation
         {
             float Weight = 0.0f;
             float Velocity = 0.0f;
+            float LandWeight = 1.0f;
+            FootPlantState Plant;
+            FootPlantInput PlantInput;
             GroundHit LastHit;
             EGroundQueryStatus Status = EGroundQueryStatus::NotReady;
             Math::Vector3 PoleUsed;
@@ -108,6 +125,9 @@ namespace NorvesLib::Core::Animation
         Container::VariableArray<BodyBalanceLegSample> m_BodySamples;
         Container::VariableArray<Procedural::JointRotationShare> m_PitchShares;
         BodyBalance m_BodyBalance;
+        Math::Vector3 m_PreviousOwnerPosition;
+        bool m_bHasOwnerPosition = false;
+        bool m_bTeleportRequested = false;
     };
 
     /** @brief 設定を検証し、全項目が正しいときだけ出力を更新する。 */

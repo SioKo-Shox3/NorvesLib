@@ -9,4 +9,8 @@ namespace NorvesLib::Modules::Physics
     bool BuildColliderWorldShape(EPhysicsProxyShape shape, float radius, float halfHeight,
                                  const Math::Vector3& halfExtents, const Math::Transform& owner,
                                  const Math::Transform& local, PhysicsShapeProxy& out);
+    // 高さ場の平行移動だけを合成する。失敗時はoutを変更しない。
+    bool BuildHeightFieldWorldShape(
+        const Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField>& heightField,
+        const Math::Transform& owner, const Math::Transform& local, PhysicsShapeProxy& out);
 } // namespace NorvesLib::Modules::Physics

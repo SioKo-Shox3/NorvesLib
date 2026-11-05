@@ -16,7 +16,8 @@
 # format（省略時は nvtrn.v0.height16）・variant（省略時は一覧の default_variant）を持つ。
 # nvtrn.v0.height16 は地形を NVTRN へ焼き、地形のスペックと height_source.path の高さ入力を変更の検出に含める。
 # nvgfld.v0 は草の配置を NVGFLD へ焼き、配置・種別表と、地形スペック・高さ入力か配置用の PNG 群を変更の検出に含める。
-# 地形スペックから草の場を焼くときはクッカー内で NVTRN を作るため、worlds の項目の並び順に依存しない。
+# nvsct.v0.inst16 は散布を NVSCT へ焼き、散布・地形のスペックと高さ入力を変更の検出に含める。
+# 地形スペックから草の場・散布を焼くときはクッカー内で NVTRN を作るため、worlds の項目の並び順に依存しない。
 #
 # 差分クック: 元のファイル・一覧の項目・共通設定・品質の内容から印を求め、変わらないものは前回の結果を使う。
 # 地形（モデルの generate が terrain-tile: で始まる項目）の印は exe を含まず、崖の細部の版と地形の経路のソースの内容を含む。
@@ -831,7 +832,7 @@ foreach ($specFile in $specFiles) {
         }
     }
 
-    # worlds の形式に応じて地形か草の場を焼く。参照する入力を印と欠落の検査に含める。
+    # worlds の形式に応じて地形・草の場・散布を焼く。参照する入力を印と欠落の検査に含める。
     $worlds = @()
     if (Test-PropertyExists -Object $spec -Name "worlds") {
         if ($spec.worlds -isnot [System.Array]) {
@@ -953,8 +954,48 @@ foreach ($specFile in $specFiles) {
                 throw "$context の草の配置の source.type は terrain または png にしてください: $sourceType"
             }
         }
+        elseif ($format -eq "nvsct.v0.inst16") {
+            $entryType = "Sct0"
+            try {
+                $scatterSpec = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            }
+            catch {
+                throw "$context の散布のスペックを読めません: $sourceText（$($_.Exception.Message)）"
+            }
+            if (-not (Test-PropertyExists -Object $scatterSpec -Name "terrain")) {
+                throw "$context の散布のスペックに terrain.path がありません: $sourceText"
+            }
+            # 参照元のスペックを基準に、欠落時もリポジトリ相対パスへ直す。
+            $repoUri = [System.Uri]::new($RepoRoot + [System.IO.Path]::DirectorySeparatorChar)
+            $resolveScatterSource = {
+                param([string]$BasePath, [string]$PathText)
+                if (-not [System.IO.Path]::IsPathRooted($PathText)) {
+                    $PathText = Join-Path (Split-Path -Parent $BasePath) $PathText
+                }
+                $absolutePath = [System.IO.Path]::GetFullPath($PathText)
+                [System.Uri]::UnescapeDataString($repoUri.MakeRelativeUri([System.Uri]::new($absolutePath)).ToString())
+            }
+            $terrainText = Get-StringField -Object $scatterSpec.terrain -Name "path" -Context "$context の散布の terrain"
+            $terrainText = & $resolveScatterSource $sourcePath $terrainText
+            $sourceTexts += $terrainText
+            $terrainPath = Resolve-RepoPath $terrainText
+            if ([System.IO.Path]::GetExtension($terrainPath) -ne ".nvtrn") {
+                try {
+                    $terrainSpec = Get-Content -LiteralPath $terrainPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                }
+                catch {
+                    throw "$context の地形のスペックを読めません: $terrainText（$($_.Exception.Message)）"
+                }
+                if (-not (Test-PropertyExists -Object $terrainSpec -Name "height_source")) {
+                    throw "$context の地形のスペックに height_source.path がありません: $terrainText"
+                }
+                $heightText = Get-StringField -Object $terrainSpec.height_source -Name "path" `
+                    -Context "$context の地形のスペックの height_source"
+                $sourceTexts += & $resolveScatterSource $terrainPath $heightText
+            }
+        }
         else {
-            throw "$context の worlds の format は nvtrn.v0.height16 または nvgfld.v0 にしてください: $format"
+            throw "$context の worlds の format は nvtrn.v0.height16、nvgfld.v0 または nvsct.v0.inst16 にしてください: $format"
         }
         $cookArguments = @(
             "--input", $sourcePath,

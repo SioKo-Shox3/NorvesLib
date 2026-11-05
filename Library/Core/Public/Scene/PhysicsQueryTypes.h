@@ -7,6 +7,9 @@
 
 namespace NorvesLib::Core::Scene
 {
+    // 表面の番号が無いことを表す。地形の Rendering::Terrain::kInvalidTerrainSurfaceId と同じ値。
+    inline constexpr uint8_t kInvalidPhysicsSurfaceId = 0xFFu;
+
     enum class EPhysicsSceneQueryResult : uint8_t
     {
         Success,
@@ -76,6 +79,8 @@ namespace NorvesLib::Core::Scene
         Math::Vector3 Normal;
         float Distance = 0.0f;
         uint64_t UserData = 0;
+        // 当たった表面の番号。地形は層の番号、ほかはコライダーに付けた番号。無ければ kInvalidPhysicsSurfaceId。
+        uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
     };
 
     struct PhysicsOverlapHit
@@ -86,6 +91,8 @@ namespace NorvesLib::Core::Scene
         bool bHasEntity = false;
         Math::GeometryContact Contact;
         uint64_t UserData = 0;
+        // 当たった表面の番号。地形は層の番号、ほかはコライダーに付けた番号。無ければ kInvalidPhysicsSurfaceId。
+        uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
     };
 
     // レイヤーの名前と割当はゲーム側で管理する。エンジンは32ビットの集合だけを扱う。
@@ -194,6 +201,8 @@ namespace NorvesLib::Core::Scene
         Math::Vector3 Normal;
         float Depth = 0.0f;
         bool bStartPenetrating = false;
+        // 当たった表面の番号。地形は層の番号、ほかはコライダーに付けた番号。無ければ kInvalidPhysicsSurfaceId。
+        uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
     };
 
     struct PhysicsQueryBatchResult

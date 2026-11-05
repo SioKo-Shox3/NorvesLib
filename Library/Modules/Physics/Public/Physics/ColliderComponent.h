@@ -1,9 +1,15 @@
 ﻿#pragma once
 
 #include "Component/Component.h"
+#include "Container/PointerTypes.h"
 #include "Delegate/Delegate.h"
 #include "Math/Transform.h"
 #include "Physics/PhysicsTypes.h"
+
+namespace NorvesLib::Core::Rendering::Terrain
+{
+    class TerrainHeightField;
+}
 
 namespace NorvesLib::Modules::Physics
 {
@@ -17,6 +23,12 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetSphere(float radius);
         EPhysicsResult SetBox(const Math::Vector3& halfExtents);
         EPhysicsResult SetCapsule(float radius, float halfHeight);
+        /// 高さ場は静的なコライダーとして働く。所有者の変換は平行移動だけで、回転・拡大は拒否してログに出す。
+        /// 表面の番号は高さ場では使わず、当たりの点の層の番号を返す。
+        EPhysicsResult SetHeightField(Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField);
+        /// 球・箱・カプセルの表面の番号を設定する。高さ場では当たりの点の層の番号を返す。
+        EPhysicsResult SetSurfaceId(uint8_t surfaceId);
+        uint8_t GetSurfaceId() const { return m_SurfaceId; }
         // 局所scaleは1。回転なしは既存形状の平行移動、回転ありは非一様scaleを保守的に包む。
         // 値の変更は次のpublish/明示refreshで反映し、Entityやbody速度は変更しない。
         EPhysicsResult SetLocalPose(const Math::Transform& localPose);
@@ -50,6 +62,7 @@ namespace NorvesLib::Modules::Physics
             Sphere,
             Box,
             Capsule,
+            HeightField,
         };
 
         struct CallbackSlot
@@ -67,9 +80,12 @@ namespace NorvesLib::Modules::Physics
         float m_Radius = 0.0f;
         Math::Vector3 m_HalfExtents;
         float m_CapsuleHalfHeight = 0.0f;
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> m_HeightField;
         EColliderShape m_Shape = EColliderShape::None;
+        uint8_t m_SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
         bool m_bHasShape = false;
         bool m_bTrigger = false;
+        bool m_bHeightFieldTransformWarning = false;
         Core::Scene::PhysicsCollisionMask m_CollisionLayer = Core::Scene::DefaultPhysicsLayer;
         Core::Scene::PhysicsCollisionMask m_CollisionMask = Core::Scene::AllPhysicsLayers;
         uint64_t m_UserData = 0;
