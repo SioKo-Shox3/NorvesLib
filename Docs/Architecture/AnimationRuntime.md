@@ -108,7 +108,7 @@ Resetは位置・回転と速度を指定値へ戻し、余りを0にする。�
 
 骨格単位の実行時サイドカー。AnimatorComponent.ApplyPoseModifiersJson／ApplyPoseModifiersFileで明示して読み、cookのハッシュには含めない。ファイルのパスは呼出側が渡し、ディスクを自動探索しない。ファイルはUTF-8で、BOMも受け入れる。
 
-最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。GetBuiltinPoseModifierTypesの組み込みの型の表は空なので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
+最上位はversion（整数1）とmodifiers配列。次は呼出側のPoseModifierTypeTableにCustomを登録し、そのsettingsでjointを受ける場合の例である。CustomはGetBuiltinPoseModifierTypesの組み込みの型の表（SpringBone・FollowThroughを載せる）に無いので、型の登録なしでこの例を読み込むとUnknownTypeになる。空の群は `{"version":1,"modifiers":[]}` で指定できる。
 
 ```json
 {

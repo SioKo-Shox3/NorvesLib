@@ -1,10 +1,13 @@
-﻿// SpringBone の追従、拘束、再初期化、設定の契約を検証する。
+﻿// SpringBone と FollowThrough の追従、拘束、姿勢保存、設定の契約を検証する。
+#include "Animation/Procedural/FollowThroughModifier.h"
 #include "Animation/Procedural/SpringBoneModifier.h"
 #include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletonResource.h"
 #include "Component/AnimatorComponent.h"
+#include "Component/HoldSlotComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Math/MatrixUtils.h"
+#include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/World.h"
@@ -12,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 
 namespace
@@ -25,6 +29,7 @@ namespace
     using NorvesLib::Core::AnimationClipResource;
     using NorvesLib::Core::AnimGraphResource;
     using NorvesLib::Core::Entity;
+    using NorvesLib::Core::Identity;
     using NorvesLib::Core::JsonDocument;
     using NorvesLib::Core::ResourceRegistry;
     using NorvesLib::Core::SkeletalAssetResource;
@@ -46,7 +51,7 @@ namespace
     {
         if (!bOk)
         {
-            std::fprintf(stderr, "SpringBone 検査失敗: %s sample=%d actual=%.17g limit=%.17g\n",
+            std::fprintf(stderr, "手続き modifier 検査失敗: %s sample=%d actual=%.17g limit=%.17g\n",
                          contract, sample, actual, limit);
             ++g_Failures;
         }
@@ -97,7 +102,7 @@ namespace
         Container::TSharedPtr<Animation::IPoseModifier> Modifier;
         Procedural::SpringBoneModifier* Spring = nullptr;
 
-        ModifierFixture()
+        ModifierFixture(const char* const* jointNames = nullptr)
         {
             CheckConfig(Registry.Initialize(), "試験用 Registry の初期化");
             Skeleton = Registry.CreateTransient<SkeletonResource>("SpringSkeleton");
@@ -111,7 +116,7 @@ namespace
             Container::VariableArray<Skeletal::SkeletalRestTransform> rest(JointCount);
             for (int i = 0; i < JointCount; ++i)
             {
-                joints[i].Name = names[i];
+                joints[i].Name = jointNames ? jointNames[i] : names[i];
                 joints[i].ParentIndex = i - 1;
                 const auto inverseBind = Math::MatrixUtils::CreateTranslation(0.0f, 0.0f, 0.1f * float(i));
                 Math::MatrixUtils::CopyToShaderData(inverseBind, joints[i].InverseBindMatrix.data());
@@ -206,6 +211,213 @@ namespace
             return position;
         }
     };
+
+    constexpr char FollowSettingsJson[] =
+        R"({"joints":["Chest","Neck"],"head":"Head","strength":1})";
+    constexpr const char* FollowJointNames[] = {"Root", "Chest", "Neck", "Head"};
+    constexpr double DegreesPerRadian = 180.0 / Math::Constants::PI;
+    constexpr double AngleLimitDegrees = 0.01;
+    constexpr int YawStepFrame = 50;
+    constexpr int EarlyFrame = YawStepFrame + 4; // 段の入力から 5 回、計 0.05 秒進めた標本。
+    constexpr int FinalFrame = YawStepFrame + 299; // 段の入力から計 3 秒進めた標本。
+
+    struct FollowFixture : ModifierFixture
+    {
+        Animation::AnimGraphInstance Instance;
+        Animation::PoseScratch Scratch;
+        Container::VariableArray<Math::Matrix4x4> Model;
+        Procedural::FollowThroughModifier* Follow = nullptr;
+
+        explicit FollowFixture(const char* settings = FollowSettingsJson) : ModifierFixture(FollowJointNames)
+        {
+            CheckConfig(Instance.Initialize(*Graph, *Skeleton, *Mesh, Math::Matrix4x4::Identity),
+                        "追従試験用の文脈を準備する");
+            JsonDocument document;
+            Procedural::PoseModifierConfigReport report;
+            CheckConfig(JsonDocument::TryParse(Container::String(settings), document), "追従設定の解析");
+            CheckConfig(Procedural::CreateFollowThroughModifier({*Skeleton, document.GetRoot()}, Modifier, report) &&
+                            Modifier,
+                        "追従 modifier の作成");
+            Follow = static_cast<Procedural::FollowThroughModifier*>(Modifier.get());
+        }
+
+        Animation::LocalPose Input(int frame) const
+        {
+            auto pose = Skeleton->GetPoseRuntime().AuthorRestLocal;
+            // 根の段入力で胸・首・頭すべてのモデル空間のヨーを同時に変える。
+            pose[0].Rotation = Math::QuaternionUtils::FromAxisAngle(
+                Math::Vector3::UnitY, frame < YawStepFrame ? 0.0f : Math::Constants::PI / 3.0f);
+            return pose;
+        }
+
+        void Apply(Animation::LocalPose& pose, int frame, int sample, float weight = 1.0f)
+        {
+            Animation::PoseModifierContext context(Skeleton->GetPoseRuntime(), frame == 0 ? 0.0f : Step,
+                                                   Instance.Parameters(), Instance, pose, Scratch, Model);
+            context.SetOwner(Owner);
+            context.SetSkeletonAsset(Skeleton.get());
+            context.Weight = weight;
+            const bool bApplied = Follow->Apply(pose, context);
+            Check(bApplied, "追従の段入力を適用できる", sample, bApplied ? 1 : 0, 1);
+        }
+    };
+
+    Math::Quaternion FollowModelRotation(const Animation::LocalPose& pose, int joint)
+    {
+        // 単位の RootFrame を持つ直列骨格なので、親からの合成を独立の測定基準にする。
+        auto rotation = Math::Quaternion::Identity;
+        for (int i = 0; i <= joint; ++i)
+        {
+            rotation = Math::QuaternionUtils::Normalize(rotation * pose[i].Rotation);
+        }
+        return rotation;
+    }
+
+    double FollowYawDegrees(const Animation::LocalPose& pose, int joint)
+    {
+        const auto forward = FollowModelRotation(pose, joint) * Math::Vector3::UnitZ;
+        return std::atan2(double(forward.x), double(forward.z)) * DegreesPerRadian;
+    }
+
+    double FollowRotationErrorDegrees(const Math::Quaternion& actual, const Math::Quaternion& expected)
+    {
+        const auto residual = Math::QuaternionUtils::Conjugate(expected) * actual;
+        const double sine = std::sqrt(double(residual.x) * residual.x + double(residual.y) * residual.y +
+                                      double(residual.z) * residual.z);
+        // acos の単精度の内積で小さな回転差を丸め落とさず、符号反転も同じ回転として測る。
+        return 2.0 * std::atan2(sine, std::fabs(double(residual.w))) * DegreesPerRadian;
+    }
+
+    void TestFollowConvergence()
+    {
+        FollowFixture fixture;
+        double chestLag = 0, neckLag = 0, chestFinalError = 0, neckFinalError = 0, maxHeadError = 0;
+        int nonFiniteCount = 0;
+        for (int frame = 0; frame <= FinalFrame; ++frame)
+        {
+            const auto animation = fixture.Input(frame);
+            auto pose = animation;
+            fixture.Apply(pose, frame, 1);
+            for (int joint = 0; joint < JointCount; ++joint)
+            {
+                const auto& local = pose[joint];
+                const auto global = FollowModelRotation(pose, joint);
+                if (!IsFinite(local.Translation) || !IsFinite(local.Scale) ||
+                    !std::isfinite(local.Rotation.x) || !std::isfinite(local.Rotation.y) ||
+                    !std::isfinite(local.Rotation.z) || !std::isfinite(local.Rotation.w) ||
+                    !std::isfinite(global.x) || !std::isfinite(global.y) ||
+                    !std::isfinite(global.z) || !std::isfinite(global.w))
+                {
+                    ++nonFiniteCount;
+                }
+            }
+            RecordMax(maxHeadError, FollowRotationErrorDegrees(FollowModelRotation(pose, 3),
+                                                              FollowModelRotation(animation, 3)));
+            if (frame == EarlyFrame)
+            {
+                chestLag = FollowYawDegrees(animation, 1) - FollowYawDegrees(pose, 1);
+                neckLag = FollowYawDegrees(animation, 2) - FollowYawDegrees(pose, 2);
+            }
+            if (frame == FinalFrame)
+            {
+                chestFinalError = std::fabs(FollowYawDegrees(animation, 1) - FollowYawDegrees(pose, 1));
+                neckFinalError = std::fabs(FollowYawDegrees(animation, 2) - FollowYawDegrees(pose, 2));
+            }
+        }
+        std::printf("FollowThrough case=1 chest_lag_deg=%.9g neck_lag_deg=%.9g lag_min_deg=1 "
+                    "chest_final_error_deg=%.9g neck_final_error_deg=%.9g max_head_error_deg=%.9g "
+                    "angle_limit_deg=%.9g nonfinite=%d frames=%d\n",
+                    chestLag, neckLag, chestFinalError, neckFinalError, maxHeadError, AngleLimitDegrees,
+                    nonFiniteCount, FinalFrame + 1);
+        Check(std::isfinite(chestLag) && chestLag >= 1, "追従の胸は段の直後に 1 度以上遅れる", 1, chestLag, 1);
+        Check(std::isfinite(neckLag) && neckLag >= 1, "追従の首は段の直後に 1 度以上遅れる", 1, neckLag, 1);
+        Check(std::isfinite(chestFinalError) && chestFinalError <= AngleLimitDegrees,
+              "追従の胸は 3 秒後に 0.01 度以内へ収束する", 1, chestFinalError, AngleLimitDegrees);
+        Check(std::isfinite(neckFinalError) && neckFinalError <= AngleLimitDegrees,
+              "追従の首は 3 秒後に 0.01 度以内へ収束する", 1, neckFinalError, AngleLimitDegrees);
+        Check(std::isfinite(maxHeadError) && maxHeadError <= AngleLimitDegrees,
+              "追従中も頭のモデル回転は全フレームでアニメと一致する", 1, maxHeadError, AngleLimitDegrees);
+        Check(nonFiniteCount == 0, "追従の全フレームの姿勢は有限である", 1, nonFiniteCount, 0);
+    }
+
+    void TestFollowZeroWeight()
+    {
+        FollowFixture fixture;
+        int differentComponents = 0;
+        for (int frame = 0; frame <= FinalFrame; ++frame)
+        {
+            const auto animation = fixture.Input(frame);
+            auto pose = animation;
+            fixture.Apply(pose, frame, 2, 0.0f);
+            for (int joint = 0; joint < JointCount; ++joint)
+            {
+                const auto& actual = pose[joint];
+                const auto& expected = animation[joint];
+                // 型のパディングを除き、並進・回転・スケールの各成分のビットを比べる。
+                const float actualValues[] = {actual.Translation.x, actual.Translation.y, actual.Translation.z,
+                                              actual.Rotation.x, actual.Rotation.y, actual.Rotation.z, actual.Rotation.w,
+                                              actual.Scale.x, actual.Scale.y, actual.Scale.z};
+                const float expectedValues[] = {expected.Translation.x, expected.Translation.y, expected.Translation.z,
+                                                expected.Rotation.x, expected.Rotation.y, expected.Rotation.z,
+                                                expected.Rotation.w, expected.Scale.x, expected.Scale.y, expected.Scale.z};
+                for (size_t component = 0; component < sizeof(actualValues) / sizeof(float); ++component)
+                {
+                    if (std::memcmp(&actualValues[component], &expectedValues[component], sizeof(float)) != 0)
+                    {
+                        ++differentComponents;
+                    }
+                }
+            }
+        }
+        std::printf("FollowThrough case=2 different_components=%d limit=0 frames=%d joints=%d components_per_joint=10\n",
+                    differentComponents, FinalFrame + 1, JointCount);
+        Check(differentComponents == 0, "追従の重み 0 は段の前後を含む全関節のローカル姿勢をビット一致で保つ",
+              2, differentComponents, 0);
+    }
+
+    void TestFollowHeldMass()
+    {
+        constexpr char settings[] =
+            R"({"joints":["Chest","Neck"],"head":"Head","strength":1,"massScale":1.5,"heldSlot":"Carry","heldMassScale":4})";
+        FollowFixture empty(settings), held(settings);
+        auto* emptySlots = empty.TestWorld.CreateComponent<Component::HoldSlotComponent>(empty.Owner);
+        auto* slots = held.TestWorld.CreateComponent<Component::HoldSlotComponent>(held.Owner);
+        CheckConfig(emptySlots && slots, "追従試験用の保持スロットを作成する");
+        const Container::VariableArray<Component::HoldSlotDefinition> definitions{{Identity("Carry"), 1, {}}};
+        CheckConfig(emptySlots->SetSlots(definitions) && slots->SetSlots(definitions),
+                    "追従試験用の保持スロットを設定する");
+        auto* item = held.TestWorld.SpawnEntity<Entity>();
+        CheckConfig(item != nullptr, "追従試験用の保持対象を作成する");
+        CheckConfig(slots->TryAcquire(Identity("Carry"), item->GetObjectId(), {}) == Component::HoldAcquireResult::Granted,
+                    "追従試験用の保持スロットを埋める");
+        double emptyLag = 0, heldLag = 0, maxEmptyMassError = 0, maxHeldMassError = 0;
+        for (int frame = 0; frame <= EarlyFrame; ++frame)
+        {
+            const auto animation = empty.Input(frame);
+            auto emptyPose = animation;
+            auto heldPose = animation;
+            empty.Apply(emptyPose, frame, 3);
+            held.Apply(heldPose, frame, 3);
+            RecordMax(maxEmptyMassError, std::fabs(double(empty.Follow->GetLastMassScale()) - 1.5));
+            RecordMax(maxHeldMassError, std::fabs(double(held.Follow->GetLastMassScale()) - 6.0));
+            if (frame == EarlyFrame)
+            {
+                emptyLag = FollowYawDegrees(animation, 1) - FollowYawDegrees(emptyPose, 1);
+                heldLag = FollowYawDegrees(animation, 1) - FollowYawDegrees(heldPose, 1);
+            }
+        }
+        std::printf("FollowThrough case=3 empty_chest_lag_deg=%.9g held_chest_lag_deg=%.9g lag_increase_deg=%.9g "
+                    "lag_increase_min_deg=0 empty_mass=%.9g empty_mass_expected=1.5 held_mass=%.9g held_mass_expected=6 "
+                    "max_empty_mass_error=%.9g max_held_mass_error=%.9g mass_error_limit=0\n",
+                    emptyLag, heldLag, heldLag - emptyLag, empty.Follow->GetLastMassScale(),
+                    held.Follow->GetLastMassScale(), maxEmptyMassError, maxHeldMassError);
+        Check(std::isfinite(emptyLag) && std::isfinite(heldLag) && heldLag > emptyLag,
+              "追従の胸は保持スロットが埋まると段の直後の遅れが増える", 3, heldLag - emptyLag, 0);
+        Check(std::isfinite(maxEmptyMassError) && maxEmptyMassError == 0,
+              "追従の空スロットでは全フレームの質量倍率が massScale と一致する", 3, maxEmptyMassError, 0);
+        Check(std::isfinite(maxHeldMassError) && maxHeldMassError == 0,
+              "追従の保持中は全フレームの質量倍率が massScale の 4 倍と一致する", 3, maxHeldMassError, 0);
+    }
 
     struct Measurements
     {
@@ -446,6 +658,9 @@ void TestProceduralSpringModifier()
     TestReset();
     TestLargeDelta();
     TestRejectedConfiguration();
+    TestFollowConvergence();
+    TestFollowZeroWeight();
+    TestFollowHeldMass();
     std::fflush(stdout);
     if (g_Failures != 0)
     {

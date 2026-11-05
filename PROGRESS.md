@@ -9814,3 +9814,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 FollowThroughModifier の実装: 着地(直し 0 回)
 - U4 SpringBone の試験: 着地(直し 0 回)
 - U5 文書(AnimationRuntime.md・Testing.md): 着地(直し 0 回)
+- U6 FollowThrough の試験とタスクの verify: 着地(直し 0 回)
