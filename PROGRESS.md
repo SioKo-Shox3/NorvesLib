@@ -10259,15 +10259,50 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
 - Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
 
-- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+## 2026-11-05 G12-GR45-DRYNESS-CPU（run 20261105-203950 の反復 1、統合ブランチの取り込み）
+- Done: feature/scene-launcher を取り込み、`Test/Core/Object/SceneFileRoundTripTest.cpp` の衝突を両側の試験を残して解いた。WitherSourceComponent の往復の試験は、シーンの形式が v3 になったのに合わせて版の検査を `SceneSerializer::SceneFileFormatVersion` で見る形にした。
+- 証拠: `.harness/runs/20261105-203950/verify-build.txt`（MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが EXIT=0）、`.harness/runs/20261105-203950/verify-ctest.txt`（6 本 100% tests passed, 0 tests failed out of 6）。アプリを起動する確かめは無い。
+- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
+- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
+- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
+- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
+- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。
+- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
+- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
+- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
+- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
+- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。
 
-## 2026-11-05 G12-GR94-MAP-TRANSFORM-PLAN（run 20261105-200440 の反復 1、完了）
-- U1 MapTransform（地図とワールドの変換・JSON の読み書き・不正値の拒否）と MapTransformTest: 着地(直し 0 回)
-- U2 MapCapturePlan（タイルの格子・カメラ・縁切り・manifest）と RenderLayer::MapVisible と MapCapturePlanTest: 着地(直し 0 回)
-- Done: (1) `Scene/MapTransform.h`: `MapTransform`（double のワールドの x,z の矩形・`PixelSizeMeters`・画像の上と右が指す軸 `UpAxis`/`RightAxis`（既定は上 +Z・右 −X）・画像の寸法）、`WorldToMapUV`/`MapUVToWorld`、`ValidateMapTransform`（NaN・inf・画素 0 以下・矩形の潰れ・寸法 0・同じ軸・寸法と矩形の 1e-3 画素を超える不一致を拒否）、`map_transform.json`（format `norves.map_transform`・version 1）の読み書き。(2) `Scene/MapCapturePlan.h`: `BuildMapCapturePlan(spec)` が地図の寸法・内側のタイル（バックバッファ − 2 × 縁）・ceil の格子・各タイルの貼り先と縁を切った画素の矩形（最後の列・行は地図の端で切る）・ワールドの矩形・縁込みのタイルの中心の真上のカメラ位置・正射影の幅と高さ（バックバッファ × 画素）・near/far（高さの範囲 + 余裕）を決定的に返す。`MakeMapCaptureCamera` は forward=−Y・up=+Z・Orthographic・CullingMask=MapVisible・手動露出（`AutoExposurePreExposureFromEV100`）。`WriteMapCaptureManifestJson` が `capture_manifest.json`（settings・map_transform・grid・tiles）を書く。(3) `RenderLayer::MapVisible = 1 << 6`。(4) 試験 `MapTransformTest`・`MapCapturePlanTest` を `CameraViewConstantsTest` の束へ MEMBER で足した。
-- 証拠: `.harness/runs/20261105-200440/G12-GR94-MAP-TRANSFORM-PLAN-final-verify.txt`（verify のビルド exit code 0、ctest の 4 本 MapTransformTest・MapCapturePlanTest・CameraViewConstantsTest・OrthographicViewportMatrixTest が 100% Passed、numstat の 2 通りが一致）。
-- Next: 撮影の実行は G12-GR94-MAP-CAPTURE（この計画と `MakeMapCaptureCamera` を使う）、合成と cook は G12-GR94-MAP-COMPOSE-COOK（manifest の map_pixel・crop で貼る）。撮った画像の向き（上 +Z・右 −X）は、撮影の段で非対称な目印 3 つで確かめる。アプリを起動する確かめはこの項目に無い。
-- Notes: 試験の「4km 四方」は 4096 m 四方（−2048〜2048、8192 画素）で置いた。ロードマップの見積もり（8192²・1152×592 の内側で 8 列 × 14 行 = 112）がこの値で、4000 m だと 7 列 × 14 行になる。
-- Notes: 撮った画像がそのまま地図の向き（上 +Z・右 −X）になる根拠は、`CreateLookAt`（forward=−Y・up=+Z で view の x = −X、y = +Z）と Vulkan の `AdjustProjectionForClipSpace` の Y 反転（`BuildForDevice` の既定 true）。`MapCapturePlanTest` はこの合成（投影 × diag(1,−1,−1) × ビュー）で角と非対称な 3 点を写し、crop と地図の画素に 0.01 画素以内で一致することを確かめている。実機の画像での確かめは撮影の段。
-- Notes: 計画の座標は double、`CameraProxy` の位置は float なので、ワールドの原点から数 km 離れた範囲では位置の丸め（2 km で約 2.4e-4 m ≈ 5e-4 画素）が乗る。
-- Notes: VFX の層の選択肢（`VfxSchema.cpp` の kLayerNames、`VfxEffectSystem.cpp` の layers）は Default・Transparent・UI だけで、MapVisible は入れていない（エフェクトは地図に載せない）。
+- U0 契約のヘッダ・骨格のファイル・CMake の登録: 着地(直し 0 回)
+- U1 CellManifest の読みと拒否: 着地(直し 0 回)
+- U3 優先度と輪の純関数: 着地(直し 0 回)
+- U2 StreamingCell の状態の遷移: 着地(直し 1 回)
+- U8 StreamingSystem の毎フレームの更新（切り直し・バイトの上限の往復を直す）: 着地(直し 0 回)
+- U5 Engine への組み込みと段 PostTick.Streaming: 着地(直し 0 回)
+- U6 StreamingCellStateMachineTest: 着地(直し 0 回)
+- U7 StreamingBudgetTest と仕上げの verify: 着地(直し 0 回)
+
+## 2026-11-05 G12-GR40-CELL-CORE（run 20261105-193215 の反復 1、完了）
+- Done: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`）に CellManifest・IStreamingPayloadHandler・StreamingCell の状態の機械・StreamingBudget・優先度と輪（Ra<Rd<Ru のヒステリシス・先読み）・StreamingSystem を置き、`Engine::Engine` のメンバと段 `PostTick.Streaming` で毎フレーム進める。Prepare は JobSystem に 1 セル 1 仕事で出し、完了の印を GameThread で見る。終了時は World・描画資源より先に StreamingSystem を止める。
+- Done: verify の 2 本を通した（ビルド終了コード 0、ctest の StreamingCellStateMachineTest・StreamingBudgetTest・EntityTreeTest・JobSystemShutdownTest・JobParallelForTest がすべて Passed。`.harness/runs/20261105-193215/verify-G12-GR40-CELL-CORE.txt`）。
+- Next: payload の中身（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）、GameMode の後始末（G12-GR40-GAMEMODE-ASYNC）、スナップロード（G12-GR40-SNAP-PREFETCH）。
+- Notes: バイトの上限（MaxCpuBytes・MaxGpuBytes）は、一度でも常駐したセルの最後の申告で入る前に判定する。初めて読むセルは量が分からないので、入れてから上限を超えた分を優先度の悪い方から追い出す（追い出したセルは次のフレームに読み直さない）。
+- Notes: Committing 中のアンロードの要求は印を残さず、すぐ Unloading に入る（コミットの歩は GameThread の同期なのでフレームの間に走っている歩は無い）。
+- Notes: 起動の確かめは後回し。マニフェストを読み込むシーンはまだ無く、`PostTick.Streaming` はセルが空なら何もしないので、どのシーンの見た目も変えない。payload を持つ項目が入ったときに、起動して歩いたときの遷移と予算の統計を確かめる。
+
+- U1 静的な AABB の木（StaticAabbTree）を新設し、CMake に足す: 着地(直し 0 回)
+- U2 ブロードフェーズが静的なプロキシを木に分け、署名で使い回し、動く物と静的の組を木から作る: 着地(直し 0 回)
+- U3 PhysicsModule が bStatic を設定し、公開用へ木を渡し、接触の解決で組の添字を使う: 着地(直し 0 回)
+- U4 インスタンスの問い合わせ（Raycast・Overlap・ExecuteQuery）を木の走査＋木の外の線形走査にする: 着地(直し 0 回)
+- U5 規模の試験に静的の木のケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-05 G12-GR09-STATIC-TREE（run 20261105-193213 の反復 2）
+- Done: 静的なコライダーを `StaticAabbTree`（平らな配列の節・葉 4 個以下・最大軸の中央値の分割・重心を座標とハンドルの順に並べる）に入れた。`PhysicsShapeProxy::bStatic` を足し、`PhysicsModule::BuildBroadphase` が有効な Dynamic / Kinematic の Body を持たないコライダーを静的にする。`SetProxies` は静的の署名（ハンドル・形・形の値・境界）が前回と同じなら木を使い回し、違えば 1 回だけ作り直す。組は 動く物どうし = X 軸の SAP、動く物×静的 = 木、静的どうし = trigger など能動側から木、高さ場 = 今の別枠で作り、`IsPairLess` で整列する。作業用と公開用は木を `TSharedPtr` で共有する（`ShareStaticTreeFrom`）。組に `m_Proxies` の添字を持たせ、`ResolveContacts` は `GetPairProxy` で引く。インスタンスの Raycast・Overlap・`ExecuteQuery` は木の走査（最近接のレイは手前から訪れて打ち切る）＋木の外の線形走査にし、静的の `*OverProxies` は線形のまま。木の要約（境界の和・形の最大の大きさ・掃引で無効な箱）で precheck のエラーが出うるときは線形へ戻す。
+- 証拠: `.harness/runs/20261105-193213/verify-G12-GR09-STATIC-TREE-U5.txt` の後半（1090 行〜。verify の 2 行: Debug の PhysicsDynamicsTest・SceneQueryRaycastTest のビルド EXIT_CODE 0、ctest 12 件 100% Passed）。実測: 静的 5000＋動く 50 で作業用の作り直し 1→0→0→1→0（3 ステップ目に静的を 1 個動かした）、公開用は全部 0、狭域判定 200（上限 800）、探索 400（上限 組 200×log2(5050)）、候補 200。混ざった形 2000 個（静的 1266）で組 1679 が総当たりと一致し作り直し 1→0→0、Raycast・Overlap・球とカプセルの掃引各 100 回が完全一致、入力順の入れ替え・2 回の作成で節 995 個の並びと問い合わせの結果が同じ。
+- Next: ランナーの評価者の反証（物理の危険地帯）。アプリを起動する確かめは無い。Entity の無いコライダーとチャンクの部分木は G12-GR09-DETACHED-COLLIDERS、時間の計測は G12-GR09-SCALE-MEASURE。
+- Notes: 毎ステップ動く Body の無いコライダー（スクリプトで動かす trigger など）は毎ステップ木の作り直しになる。「2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す」規則を足す場所は `SetProxies` の木に入れる条件の判定（コメントあり）。
+- Notes: 木の決定性は同じ重心座標の項目のハンドルが重ならない前提（同じハンドルを違う境界で 2 回渡す入力では、入力順を変えたときの節の一致は保証しない）。
+- Notes: 最近接のレイの打ち切りは、見つけた距離に 1e-4×(1＋距離) の余白を足して縮める（同距離で大きいハンドルが勝つ規則を落とさないため）。

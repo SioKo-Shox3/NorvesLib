@@ -21,6 +21,8 @@ set(PHYSICS_PRIVATE_SOURCES
     Private/Physics/ColliderShapeTransform.h
     Private/Physics/ColliderShapeTransform.cpp
     Private/Physics/ColliderComponent.cpp
+    Private/Physics/StaticAabbTree.h
+    Private/Physics/StaticAabbTree.cpp
     Private/Physics/PhysicsBroadphase.cpp
     Private/Physics/PhysicsModule.cpp
     Private/Physics/RigidBodyComponent.cpp

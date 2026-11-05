@@ -42,6 +42,21 @@ namespace NorvesLib::Modules::Physics
             return GetConcrete(module).m_WorkingBroadphase.GetStats();
         }
 
+        static const PhysicsBroadphaseStats& GetPublishedBroadphaseStats(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_PublishedBroadphase.GetStats();
+        }
+
+        static const StaticAabbTree* GetWorkingStaticTree(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_WorkingBroadphase.GetStaticTree();
+        }
+
+        static const StaticAabbTree* GetPublishedStaticTree(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_PublishedBroadphase.GetStaticTree();
+        }
+
         static const Core::Container::VariableArray<PhysicsCandidatePair>& GetWorkingCandidatePairs(const IPhysicsModule& module)
         {
             return GetConcrete(module).m_WorkingBroadphase.GetCandidatePairs();
