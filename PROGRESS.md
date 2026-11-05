@@ -10263,3 +10263,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ランタイムとセッションに loose 許可の設定を 1 つ持たせる: 着地(直し 0 回)
 - U4 Game の起動引数 --allow-loose-skeletal で許可を立てる: 着地(直し 0 回)
 - U5 文書に決まりを書き、タスクの verify を回す: 着地(直し 0 回)
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-05、分割の 3 資産だけ判断待ち）
+- Done: 旧 NVSKEL の骨格ローダに明示の許可があるときだけの loose を足した（manifest 欠落・variant 欠落のときだけ glTF/GLB を worker で decode、壊れた cooked は代えない、3 段の AssetLoadProfile は source=loose）。許可は `SkeletalAssetSession::SetAllowLooseSkeletal` → `SkeletalRuntimeLimits::bAllowLoose` → `CookedSkeletalLoadPlan::bAllowLoose` で、Game の `--allow-loose-skeletal`（開発ビルドだけ）からだけ立つ。`SummarizeAssetLoadProfile.ps1 -RequireCompleteCookedSkeletal` と契約の 3 ケース、`SkeletalAssetLoaderTest` の 3 件、文書（SkeletalAssetLoader.md・AssetFallbackPolicy.md の kind の一覧を 7 種に）を足した。
+- 証拠: `.harness/runs/20261105-205801/verify-G2-GR83-LOOSE-SKELETAL.txt`（build EXIT_CODE 0、ctest 9 本 100% tests passed, 0 tests failed out of 9）。
+- Next: 分割の 3 資産（RigSplitAssetLoader）の loose は判断待ち（論理パスがソースの名前と一致せず、切り出しの処理が Tools/AssetCook にある）。起動の確かめ（`--allow-loose-skeletal` で loose の読み込みとログの source=loose）は後回し。
+- Notes: タスクの verify の build の対象に `TextureResourcesAssetLoadProfileContractTest`（ModelResourcesAssetLoadProfileContractTest の収容先）が入っておらず、新しい作業ツリーでは ctest が Not Run になる。補助でビルドして回した。
