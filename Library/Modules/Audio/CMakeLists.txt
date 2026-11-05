@@ -1,6 +1,7 @@
 ﻿set(AUDIO_PUBLIC_HEADERS
     Public/Audio/AudioClipResource.h
     Public/Audio/AudioComponent.h
+    Public/Audio/AudioGameModeOwner.h
     Public/Audio/AudioTypes.h
     Public/Audio/IAudioModule.h
     Public/Audio/IAudioService.h
@@ -15,6 +16,7 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/NullAudioBackend.cpp
     Private/Audio/AudioClipResource.cpp
     Private/Audio/AudioComponent.cpp
+    Private/Audio/AudioGameModeOwner.cpp
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
     Private/Audio/AudioServiceModule.cpp
@@ -63,6 +65,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioBackendFactory.h
     Private/Audio/AudioClipResource.cpp
     Private/Audio/AudioComponent.cpp
+    Private/Audio/AudioGameModeOwner.cpp
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
     Private/Audio/AudioModule.cpp

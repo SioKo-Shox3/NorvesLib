@@ -72,6 +72,7 @@
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioGameModeOwner.h"
 #include "Audio/IAudioModule.h"
 #endif
 
@@ -2704,6 +2705,23 @@ namespace Game
             }
         }
 
+#if defined(NORVES_GAME_AUDIO)
+        if (!bM9WorldSmoke && !bM9WorldCompare)
+        {
+            NorvesLib::Modules::Audio::AudioModuleOptions options;
+            options.bAllowNullBackendFallback = true;
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry(), options) == nullptr)
+            {
+                LOG_WARNING("AUDIO_MODULE register=failed");
+            }
+            else
+            {
+                LOG_INFO("AUDIO_MODULE register=ok fallback_allowed=1");
+            }
+        }
+#endif
+
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
@@ -3285,6 +3303,55 @@ namespace Game
         {
             InstallCookedManifestUnavailableAssetSystem();
         }
+
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_M9WorldAcceptance)
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                constexpr const char* bankPath = "Audio/Banks/default.soundbank.json";
+                auto bankAssets = m_AssetSystemSnapshot;
+                if (!bankAssets)
+                {
+                    String looseRoot = m_TextureLooseAssetRoot;
+#if defined(NORVES_SOURCE_ASSET_DIR)
+                    if (looseRoot.empty())
+                    {
+                        looseRoot = String(NORVES_SOURCE_ASSET_DIR);
+                    }
+#endif
+                    if (!looseRoot.empty())
+                    {
+                        bankAssets = MakeShared<Asset::AssetSystem>(AnsiString(looseRoot.c_str()));
+                        LOG_INFO("AUDIO_BANK source=loose root=%s", looseRoot.c_str());
+                    }
+                }
+                NorvesLib::Modules::Audio::SoundBankLoadReport report;
+                const auto result = bankAssets
+                    ? audio->GetSoundSystem().LoadBank(*bankAssets, bankPath, report)
+                    : NorvesLib::Modules::Audio::AudioResult::InvalidState;
+                if (result == NorvesLib::Modules::Audio::AudioResult::Success && report.Diagnostics.empty())
+                {
+                    LOG_INFO_F("AUDIO_BANK load=ok bank=%s sounds=%u", bankPath, report.LoadedDefinitionCount);
+                }
+                else
+                {
+                    LOG_WARNING_F("AUDIO_BANK load=failed bank=%s result=%d diagnostics=%u", bankPath,
+                                  static_cast<int>(result), static_cast<uint32_t>(report.Diagnostics.size()));
+                    if (!bankAssets)
+                    {
+                        LOG_WARNING("AUDIO_BANK reason=asset_snapshot_unavailable アセットのスナップショットがありません");
+                    }
+                    for (const auto& diagnostic : report.Diagnostics)
+                    {
+                        LOG_WARNING_F("AUDIO_BANK reason=%u detail=%s", static_cast<uint32_t>(diagnostic.Reason),
+                                      diagnostic.Detail.c_str());
+                    }
+                }
+            }
+        }
+#endif
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
         {
@@ -4254,6 +4321,13 @@ namespace Game
         using namespace Game::GameModes;
 
         auto stateMachine = MakeUnique<GameModeStateMachine>();
+        const auto registerMode = [&stateMachine](GameModeId id, GameModeRegistry::Creator creator)
+        {
+#if defined(NORVES_GAME_AUDIO)
+            creator = NorvesLib::Modules::Audio::WrapGameModeCreatorWithAudioOwner(id, std::move(creator));
+#endif
+            stateMachine->Registry().Register(id, std::move(creator));
+        };
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
@@ -4262,7 +4336,7 @@ namespace Game
         const bool bDogAutopilot = m_bDogMovementAutopilot;
         const auto dogAutopilotPath = m_DogMovementAutopilotPath;
         const auto dogCaptureDir = m_DogMovementCaptureDir;
-        stateMachine->Registry().Register(
+        registerMode(
             DogMovementSmoke, [lateCameraSlot, dogDrive, bDogAutopilot, dogAutopilotPath, dogCaptureDir](
                                   const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
                 auto mode = MakeUnique<DogMovementSmokeMode>();
@@ -4273,7 +4347,7 @@ namespace Game
                 mode->GetData().CaptureDir = dogCaptureDir;
                 return mode;
             });
-        stateMachine->Registry().Register(
+        registerMode(
             Rendering3DTest,
             [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
              lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
@@ -4347,7 +4421,7 @@ namespace Game
         params.ModelPath = m_Rendering3DTestModelPath.empty()
                                ? String(kDefaultRendering3DTestModelPath)
                                : m_Rendering3DTestModelPath;
-        stateMachine->Registry().Register(
+        registerMode(
             Launcher,
             [params, pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
@@ -4356,14 +4430,14 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 return mode;
             });
-        stateMachine->Registry().Register(
+        registerMode(
             MemoryAgingTest,
             [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 return MakeUnique<MemoryAgingTestMode>();
             });
         // バナナのシーン。本数・視点・台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
 #if NORVES_BUILD_DEVELOPMENT
@@ -4391,7 +4465,7 @@ namespace Game
                 return mode;
             });
         // 荒野のシーン。視点・台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Wasteland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4427,7 +4501,7 @@ namespace Game
                 return mode;
             });
         // 夜の集落のシーン。荒野のモードの型で、夜の集落として組む。視点・台本は起動引数から渡す（荒野の比較用の引数は渡さない）
-        stateMachine->Registry().Register(
+        registerMode(
             NightVillage,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4448,7 +4522,7 @@ namespace Game
                 return mode;
             });
         // 材質ギャラリー。視点・台本は起動引数から渡す。テクスチャが焼いてあるかは AssetSystem で確かめる
-        stateMachine->Registry().Register(
+        registerMode(
             MaterialGallery,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4466,7 +4540,7 @@ namespace Game
                 return mode;
             });
         // 室内の光。視点・台本は起動引数から渡す。テクスチャと家具のメッシュが焼いてあるかは AssetSystem で確かめる
-        stateMachine->Registry().Register(
+        registerMode(
             InteriorLight,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4485,7 +4559,7 @@ namespace Game
             });
 #if NORVES_BUILD_DEVELOPMENT
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Sandbox,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
@@ -4501,7 +4575,7 @@ namespace Game
                 return mode;
             });
         // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Grassland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
@@ -4518,7 +4592,7 @@ namespace Game
             });
         // 負荷シーン mega-stress も開発ビルドだけ。Entity の数・視点・台本は起動引数から渡す。
         // バナナは --banana-count を指定したときだけ同時に置く（混在の負荷）。
-        stateMachine->Registry().Register(
+        registerMode(
             MegaStress,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, bananaCount = m_bBananaCountSet ? m_BananaCount : 0u,
