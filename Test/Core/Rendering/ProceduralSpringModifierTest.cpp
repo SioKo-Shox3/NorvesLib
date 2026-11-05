@@ -565,6 +565,48 @@ namespace
               measured.NonFiniteCount, 0);
     }
 
+    void TestResumeAfterDisabledEvaluation()
+    {
+        ModifierFixture fixture;
+        fixture.AddSpring();
+        Measurements measured;
+        Math::Vector3 positions[JointCount];
+        fixture.Tick(0);
+        measured.Observe(fixture, 0, positions, false);
+        for (int i = 1; i <= 50; ++i)
+        {
+            const float time = float(i) * Step;
+            fixture.Tick(2.0f * time * time);
+            measured.Observe(fixture, i, positions, false);
+        }
+        const double before = TailResidual(positions[3], 0.5f);
+
+        fixture.Animator->SetEvaluationEnabled(false);
+        for (int i = 1; i <= 5; ++i)
+        {
+            fixture.Tick(0.5f + 0.9f * float(i) / 5.0f);
+            measured.Observe(fixture, 50 + i, positions, false);
+        }
+        fixture.Animator->SetEvaluationEnabled(true);
+        fixture.Tick(1.4f);
+        measured.Observe(fixture, 56, positions, false);
+        const double residual = TailResidual(positions[3], 1.4f);
+        for (int i = 0; i < JointCount; ++i)
+        {
+            if (!IsFinite(fixture.Particle(i, 56)))
+            {
+                ++measured.NonFiniteCount;
+            }
+        }
+        std::printf("SpringBone case=7 before=%.9g resume_residual=%.9g nonfinite=%d limit=%.9g\n",
+                    before, residual, measured.NonFiniteCount, PositionLimit);
+        Check(std::isfinite(before) && before >= 0.001, "評価の停止前に揺れている", 7, before, 0.001);
+        Check(std::isfinite(residual) && residual <= PositionLimit,
+              "評価の再開したフレームでアニメの姿勢へ戻る", 7, residual, PositionLimit);
+        Check(measured.NonFiniteCount == 0, "評価の停止と再開で関節と粒子の位置が有限である", 7,
+              measured.NonFiniteCount, 0);
+    }
+
     void TestLargeDelta()
     {
         ModifierFixture fixture;
@@ -658,6 +700,7 @@ void TestProceduralSpringModifier()
     TestReset();
     TestLargeDelta();
     TestRejectedConfiguration();
+    TestResumeAfterDisabledEvaluation();
     TestFollowConvergence();
     TestFollowZeroWeight();
     TestFollowHeldMass();

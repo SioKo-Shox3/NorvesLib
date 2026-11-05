@@ -9821,3 +9821,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify.txt`（verify のビルド EXIT=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest` 2/2 Passed。SpringBone: 静止後の先端の残差 0 m・加速中の遅れ −0.187 m・骨の長さの誤差 2.7e-8 m・テレポートと再初期化の後の残差 0・dt=0.5 で有限かつ捨てた秒数の誤差 2e-9。FollowThrough: 段の 0.05 秒後に胸・首が 51.3° 遅れ 3 秒後に差 0°、頭の誤差 1e-5°、重み 0 でビット差 0、保持中は遅れが 53.8°→58.3° に増える。保持の倍率を外す負の対照でケース 3 が落ちる）
 - Next: ランナーの評価者の反証（Public API の危険地帯）。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
 - Notes: `radius`（球コライダー）は受け取るだけで計算に使わない。風の場（GR46）は v1 の外
+- U7 評価の再開を World の通し番号で検知して状態を戻す(差し戻しの直し): 着地(直し 0 回)

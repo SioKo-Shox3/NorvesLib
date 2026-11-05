@@ -4,6 +4,8 @@
 #include "Animation/SkeletonResource.h"
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
+#include "Object/Entity.h"
+#include "Object/World.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -178,6 +180,25 @@ namespace NorvesLib::Core::Animation::Procedural
 
     bool SpringBoneModifier::Apply(LocalPose& pose, PoseModifierContext& context)
     {
+        // 早期 return でも評価の時点を記録し、飛びがあれば次の有効な評価までリセットを保持する。
+        const auto* owner = context.GetOwner();
+        const auto* world = owner ? owner->GetWorld() : nullptr;
+        if (world)
+        {
+            const uint64_t tickSerial = world->GetTickSerial();
+            if (m_bInitialized && m_bPreviousTickSerialValid && tickSerial != m_PreviousTickSerial &&
+                tickSerial != m_PreviousTickSerial + 1)
+            {
+                m_bResetRequested = true;
+            }
+            m_PreviousTickSerial = tickSerial;
+            m_bPreviousTickSerialValid = true;
+        }
+        else
+        {
+            m_bPreviousTickSerialValid = false;
+        }
+
         if (!std::isfinite(context.DeltaSeconds) || context.DeltaSeconds < 0.0f ||
             pose.size() != context.Skeleton.Parents.size())
         {

@@ -2,6 +2,7 @@
 
 #include "Animation/Procedural/PoseModifierConfig.h"
 #include "Animation/Procedural/Spring.h"
+#include <cstdint>
 
 namespace NorvesLib::Core::Animation::Procedural
 {
@@ -34,6 +35,8 @@ namespace NorvesLib::Core::Animation::Procedural
         Container::VariableArray<AngularSpring> m_Springs;
         Container::VariableArray<Math::Quaternion> m_AnimationRotations;
         Container::VariableArray<Math::Quaternion> m_OriginalRotations;
+        uint64_t m_PreviousTickSerial = 0;
+        bool m_bPreviousTickSerialValid = false;
         bool m_bNeedsReset = true;
         float m_LastDroppedSeconds = 0.0f;
         float m_LastMassScale = 1.0f;

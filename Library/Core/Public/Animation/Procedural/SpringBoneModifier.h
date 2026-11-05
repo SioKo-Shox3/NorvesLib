@@ -2,6 +2,7 @@
 
 #include "Animation/Procedural/PoseModifierConfig.h"
 #include "Animation/Procedural/Spring.h"
+#include <cstdint>
 
 namespace NorvesLib::Core::Animation::Procedural
 {
@@ -29,7 +30,7 @@ namespace NorvesLib::Core::Animation::Procedural
         explicit SpringBoneModifier(SpringBoneSettings settings);
         int32_t Order() const override; // PoseModifierDefaultOrder::SpringBone。
         bool Apply(LocalPose& pose, PoseModifierContext& context) override;
-        void RequestReset(); // 次の Apply で状態をアニメ姿勢へ戻す(評価の再開時に呼ぶ)。
+        void RequestReset(); // 任意で次の Apply に状態をアニメ姿勢へ戻す。評価の飛びは自動で検知する。
         void SetWindAcceleration(const Math::Vector3& acceleration); // 風の加速度の入力口。v1 は 0 のまま。
         float GetLastDroppedSeconds() const; // 直前の Apply で捨てた秒数。
         const SpringBoneSettings& GetSettings() const;
@@ -59,7 +60,9 @@ namespace NorvesLib::Core::Animation::Procedural
         SpringStepAccumulator m_Accumulator;
         Math::Vector3 m_PreviousOwnerPosition;
         Math::Vector3 m_WindAcceleration;
+        uint64_t m_PreviousTickSerial = 0;
         float m_LastDroppedSeconds = 0;
+        bool m_bPreviousTickSerialValid = false;
         bool m_bInitialized = false;
         bool m_bResetRequested = false;
     };
