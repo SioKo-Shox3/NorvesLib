@@ -9969,3 +9969,5 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 起動引数の解析は `Game/GameApplicationHandler.{h,cpp}` にしか口が無いため、paths の外だがメンバ 1 つ・解析の分岐・grassland の登録の捕捉だけを足した（新しい行だけ）。
 - Notes: foliage の株のメッシュ・色・FadeStart/End・常駐距離は仮の値（手続きの交差帯）。fallen_log はメッシュが cook されていないので結び付けから外れる。`IsRangePublished` は RenderWorld なしの試験では常に false のため、試験の mega の側は Active と解放後の両方の印で確かめている。
 - Notes: 要起票: grassland の低木・株・倒木のメッシュを cook し（今は手続きの仮の株と cook されない倒木の仮のパス）、散布の見た目を手本と並べて合わせる。
+- 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
+- Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
