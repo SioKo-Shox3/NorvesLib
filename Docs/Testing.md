@@ -95,6 +95,11 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - ほかの手段で気づけるか: 気づけない。loose が代わりに読まれると画面上は正常に見える。
 - 失敗が黙って起きるか: 起きる。壊れた cooked を隠して実行が続く可能性がある。
 
+`AssetLoadProfileSummaryContract.cmake.in`（`AssetLoadProfileSummaryContractTest`）の骨格 cooked 要約の 3 ケースを足す理由:
+- 反証する契約: `-RequireCompleteCookedSkeletal` は解決・解析・資源生成の 3 段がすべて `source=cooked`・`success=1` なら合格し、1 段だけ `source=loose` の場合と 1 段が欠ける場合は不合格にする。
+- ほかの手段で気づけるか: ログを直接照合すれば気づけるが、撮影や読み込みの成否だけでは要約の誤判定は分からない。要約自体が不完全な記録を拒否することを確かめる必要がある。
+- 失敗が黙って起きるか: 起きる。loose が混じった記録や資源生成の段が欠けた記録を cooked 完了として扱っても、画面や読み込み結果は正常に見える可能性がある。
+
 `AnimEventPropertyTest`（`SkeletalAnimationSamplingTest` の中）を足す理由:
 - 反証する契約: アニメーションのイベントの集合・順序が dt の刻みに依らない・(prev, cur] の境界・minWeight の閾値と配送領域の溢れの扱い・metadata の拒否・ルートモーションのブレンドの重み。
 - ほかの手段で気づけるか: 気づけない。フレームレートで足音や攻撃の窓が 1 回増減しても絵にもログにも出ない。溢れの警告だけはログに出るが、どの窓が落ちたかは分からない。

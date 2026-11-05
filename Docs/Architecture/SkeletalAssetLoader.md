@@ -4,7 +4,7 @@
 
 ## 二つの境界
 
-LoadCookedSkeletalForWorkerはimmutable AssetSystem snapshotと所有論理パスを受け、default variantのModelを解決する。FailOnCookedFailureだけではmanifest欠落のloose読みが残るので、UsedCooked・Skl0・既存format・CookedVersionを明示検査する。外側entry hashを通った内側blobを既存parserへ渡し、metadataがある数量だけを実解析と比較する。loose/static mesh/未知formatを成功扱いしない。
+LoadCookedSkeletalForWorkerはimmutable AssetSystem snapshotと所有論理パスを受け、default variantのModelを解決する。FailOnCookedFailureだけではmanifest欠落のloose読みが残るので、UsedCooked・Skl0・既存format・CookedVersionを明示検査する。外側entry hashを通った内側blobを既存parserへ渡し、metadataがある数量だけを実解析と比較する。既定では loose を成功扱いせず、明示の許可があるときだけ glTF/GLB の骨格資産を読み込む。static mesh/未知formatを成功扱いしない。
 
 CookedSkeletalCpuAssetの所有stateはloaderだけが生成する。解析表の可変参照は公開せず、default/moved-fromは空。SourceBlobと全配列を保持し、snapshotや一時入力が消えてもCPU結果は有効。loader失敗では以前のCPU結果を保持する。
 
@@ -13,6 +13,17 @@ AssembleCookedSkeletalAssetは初期化済みRegistryと事前設定owner Thread
 const CPU結果を保持して再試行できるよう、組立候補へ解析配列をcopyする。CreateResourceがID発行とInitializeを行い、候補のmesh/skeleton/全clip/aggregateがLoad成功したときだけoutを置換する。CreateTransient/Registerは使わず、途中失敗時に無関係なRegistry GCを走らせない。候補の強参照破棄で配列・leaseを解放する。Registry pool/path/count/既存handleは保持するが、失敗で消費したIDの欠番やIdentityPoolのintern文字列まで巻き戻すとは称さない。Registryを再初期化してIDを再利用する間、生きたbundleを持ち越さない。
 
 同じpathの再呼出でも新しいbundleを作る。cacheや共有骨格の完成を意味しない。全clip順・値・submesh/slot・mesh transformを保持し、GetClip(name)の空/不在/重複拒否を維持する。clip0 fallbackや自動renameを行わない。旧単数APIも変更しない。
+
+## loose の読み込み(明示の許可)
+
+骨格資産は既定で cooked だけを読み込む。許可は `SkeletalAssetSession::SetAllowLooseSkeletal(bool)` で設定し、`IsLooseSkeletalAllowed()` で参照する。`BindSnapshot` 成功後の変更は `AlreadyBound` で拒否する。
+許可はセッションから `SkeletalRuntimeLimits::bAllowLoose` を経て、`LoadAsync` が `CookedSkeletalLoadPlan::bAllowLoose`（既定 false）へ写す。
+Game の入口は開発ビルド（`NORVES_BUILD_DEVELOPMENT`）だけの `--allow-loose-skeletal`。Release では受け付けず、有効時は `SKELETAL_ASSETS allow_loose=1` を記録する。
+許可があっても、manifest 欠落・variant 欠落で resolve が `Source=Loose` を返したときだけ、worker で glTF/GLB を `Skeletal::DecodeSkeletalGltf` に渡し、cooked と同じ CPU 結果を組む。
+resolve は `FailOnCookedFailure` を維持し、cooked の読み・parse・entry・hash の失敗を loose に代えない。許可なしの loose は `source=none` の解決失敗になる。
+`AssetLoadProfile` の `skeletal_asset_resolve`・`skeletal_cooked_parse`・`skeletal_resource_create` は loose 読み込み時に `source=loose` を記録し、組立の段は CPU 結果の source を引き継ぐ。Resource 生成は GameThread（owner）の組立だけで行う。
+分割の 3 資産（`LoadRigSplitAsync`）は許可があっても cooked だけ（loose の対応は未決）。
+`Scripts/SummarizeAssetLoadProfile.ps1 -RequireCompleteCookedSkeletal` は上の 3 段すべてに `source=cooked`・`success=1` を求める。`-ExpectedCookedSkeletalLogicalPath` は任意で指定でき、モデル版のスイッチとは併用できない。
 
 ## 検証と制限
 
