@@ -10008,3 +10008,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
 - Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
 - Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
+
+## 2026-11-05 G10-GR19-ANCHOR-CORE（run 20261105-144354 の反復 1、着手）
+- 試験を足す前の 3 点（Docs/Testing.md の約束。SkinnedSurfaceAnchorTest を SkeletalAnimationSamplingTest へ足す・GeometryIntersectionExtraTest へ 1 ケース足す）:
+  - 反証する契約: アンカーの位置は「三角形の 3 頂点を SkinPosition でスキニングして重心で補間し持ち主のワールドを掛けた値」と一致する／回る関節のアンカーの速度は ω×r に一致する／関節のバケットの探索は候補の関節の中で総当たりと同じ三角形を返し、調べる三角形が少ない／MeshRevision の不一致・潰れた三角形・NaN のパレット・範囲外の三角形で落ちずに無効か落ちる先（関節のフレーム）を返す／62.5 ms のキーの継ぎ目で平滑の加速度の尖りが抑えられる（平滑なしでは閾値を超え、試験が効いていることも確かめる）／重心座標つきの交差の (u, v) が交点を再現し、既存の RayIntersectsTriangle の結果を変えない。
+  - 撮影・検証レイヤー・ログで気づけるか: 気づけない。この部品の呼び出し側（突き立ての結線 G10-GR19-ANCHOR-ATTACH・表面の放出 GR57-P6）はまだ無く、画面に出ない純粋な計算なので、数 mm のずれ・バケットの取りこぼし・平滑の効き不足は撮影でも見えない。
+  - 失敗が黙って起きるか: 起きる。重心の取り違え・巻きの反転・バケットの取りこぼしは例外も警告も出さず、少しずれた点や Miss を返すだけになる。
