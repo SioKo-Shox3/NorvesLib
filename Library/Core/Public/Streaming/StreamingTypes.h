@@ -9,6 +9,10 @@
 
 namespace NorvesLib::Core::Streaming
 {
+    // セルをまとめて停止するためのスコープ。
+    using StreamingScopeId = uint64_t;
+    inline constexpr StreamingScopeId kDefaultStreamingScopeId = 0;
+
     using StreamingCellId = uint32_t;
     inline constexpr StreamingCellId kInvalidStreamingCellId = 0xFFFFFFFFu;
 

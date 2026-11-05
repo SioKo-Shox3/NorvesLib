@@ -10343,3 +10343,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G12-GR93-MARKERS-SNAP): 配置の画面（G12-GR93-EDIT-VIEW）と検証の台本（G12-GR93-VALIDATE）。
 - Notes(G12-GR93-MARKERS-SNAP): Core は Gameplay の型を知らないので、Core の `ReSnapAll` は `LevelSnapTarget`（Entity と GroundOffset）の列を受け、World からの収集は Gameplay の入口が受け持つ。World は SceneQuery を持たない（Engine が持つ）ので `SnapToGround` の第 1 引数は `SceneQuery`。光線は位置の上 probeLift（既定 2 m）から撃つので、冪等は地面の上 probeLift 以内にほかの面が無いときに限る。親のある Entity のワールド位置は `World::UpdateWorldTransforms` までキャッシュが古いので、入口は親を吸着した後に更新してから痕跡の点を吸着する。
 - Notes(G12-GR93-MARKERS-SNAP): 束の試験のソースをビルドの最中に書き換えると、obj がソースより新しい時刻のまま古い中身を持ち、増分ビルドが作り直さないことがある（ソースの更新時刻を今にすると直る）。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに化けて MSB1008 になる。
+- U1 StreamingSystem にスコープの単位でセルを止めて結合し返す口 StopAndJoin(scopeId) を足す: 着地(直し 0 回)
