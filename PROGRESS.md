@@ -10069,3 +10069,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 評価者の評価を回す。起動の確かめは G8-GR17-SLICE-CHECK（Scripts/Test-CombatSlice.ps1 の combat・encounter・enemy・bench と撮影、引数なしの起動画面が変わらないこと）。
 - 2026-11-05 G8-GR17-SLICE-SMOKE: 統合ブランチ feature/scene-launcher を取り込み、Game/GameApplicationHandler.cpp の衝突を解いた(CombatSlice の登録を統合側の registerMode に揃え、音声の持ち主の包みを通す)。verify のビルド EXIT=0・CPU の試験 18 本合格。起動の確かめは G8-GR17-SLICE-CHECK へ後回し。
 - U1 GameModeScope に AddCleanup・非同期の補助・数の取得・漏れの検査を足す: 着地(直し 0 回)
+- U4 ProgressionState と ProgressSaveData の写し: 着地(直し 0 回)
