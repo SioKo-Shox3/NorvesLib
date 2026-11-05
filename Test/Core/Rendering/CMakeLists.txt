@@ -1989,6 +1989,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
+    MEMBER GameModeScopeResourceLeakVulkanTest GameModeScopeResourceLeakVulkanTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
@@ -2000,7 +2001,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
     MEMBER VisibilityMaterialTableTest VisibilityMaterialTableTest.cpp
 )
-target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
+target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core RenderingGpuTestSupport)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
@@ -2011,6 +2012,13 @@ target_compile_definitions(RenderResourcesDomainContractTest PRIVATE
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
+add_test(NAME GameModeScopeResourceLeakVulkanTest COMMAND RenderResourcesDomainContractTest --test=GameModeScopeResourceLeakVulkanTest)
+set_tests_properties(GameModeScopeResourceLeakVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
