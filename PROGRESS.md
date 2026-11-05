@@ -10086,3 +10086,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
 - U1 ブロードフェーズの整列・重複確認・3 軸の重なり・Mobility・統計: 着地(直し 0 回)
 - U2 PhysicsModule の Owner→スロットの索引: 着地(直し 0 回)
+- U3 ResolveContacts の二分探索と BuildBroadphase の Mobility・試験の入口: 着地(直し 0 回)

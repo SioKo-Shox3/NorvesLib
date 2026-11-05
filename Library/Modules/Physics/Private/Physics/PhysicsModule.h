@@ -148,6 +148,7 @@ namespace NorvesLib::Modules::Physics
         void BuildEventQueue();
         void DispatchEvents();
         void PublishSnapshot();
+        EPhysicsProxyMobility DetermineProxyMobility(const PhysicsShapeProxy& proxy) const;
         void BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle = false) const;
         void ResetTransientState();
         Math::Transform GetFreshWorldTransform(const Core::Entity& entity) const;
