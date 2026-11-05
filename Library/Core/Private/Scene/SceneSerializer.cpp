@@ -1,9 +1,12 @@
 ﻿#include "Scene/SceneSerializer.h"
 
+#include "Asset/AssetRef.h"
+#include "Asset/AssetSystem.h"
 #include "Component/Component.h"
 #include "Component/CameraComponent.h"
 #include "Component/LightComponent.h"
 #include "Object/Entity.h"
+#include "Object/EntityRefId.h"
 #include "Object/IClass.h"
 #include "Object/PrefabAsset.h"
 #include "Object/ResourceRegistry.h"
@@ -12,11 +15,21 @@
 #include "Text/JsonDocument.h"
 #include "Text/JsonWriter.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
 #include <cmath>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 
 namespace NorvesLib::Core::Scene
 {
@@ -737,10 +750,218 @@ namespace NorvesLib::Core::Scene
                 {
                     return false;
                 }
+                root.FormatVersion = 2;
+            }
+            document.FormatVersion = 2;
+            return true;
+        }
+
+        const IClass* ResolveRecordClass(const SceneObjectRecord& record);
+        const ClassProperty* ResolveRecordProperty(const IClass& cls, const ScenePropertyRecord& record);
+
+        struct SceneEntityLocation
+        {
+            size_t RootIndex = 0;
+            SubtreeSnapshotAliasId Alias = InvalidSubtreeSnapshotAliasId;
+        };
+
+        using SceneEntityLocations = Container::UnorderedMap<uint64_t, SceneEntityLocation>;
+
+        Container::String SerializeEntityLocation(const SceneEntityLocation& location)
+        {
+            return ToDecimalString(location.RootIndex) + ":" + ToDecimalString(location.Alias);
+        }
+
+        bool TryParseEntityLocation(const Container::String& text, SceneEntityLocation& outLocation)
+        {
+            outLocation = {};
+            if (text == "0")
+            {
+                return true;
+            }
+            const size_t separator = text.find(':');
+            uint64_t rootIndex = 0;
+            uint64_t alias = 0;
+            if (separator == Container::String::npos ||
+                !TryParseUInt64(text.substr(0, separator), rootIndex) ||
+                !TryParseUInt64(text.substr(separator + 1), alias) ||
+                rootIndex > (std::numeric_limits<size_t>::max)() || alias == InvalidSubtreeSnapshotAliasId)
+            {
+                return false;
+            }
+            outLocation.RootIndex = static_cast<size_t>(rootIndex);
+            outLocation.Alias = alias;
+            return true;
+        }
+
+        void CollectEntityLocations(const SceneEntityRecord& entity, size_t rootIndex, SceneEntityLocations& locations)
+        {
+            for (const ScenePropertyRecord& property : entity.Object.Properties)
+            {
+                uint64_t objectId = 0;
+                if (property.Name == "ObjectId" && TryParseUInt64(property.Value, objectId) && objectId != 0)
+                {
+                    locations[objectId] = {rootIndex, entity.Alias};
+                    break;
+                }
+            }
+            for (const SceneEntityRecord& child : entity.Children)
+            {
+                CollectEntityLocations(child, rootIndex, locations);
+            }
+        }
+
+        void RewriteObjectEntityReferences(SceneObjectRecord& object, const SceneEntityLocations& locations, bool bMigrate)
+        {
+            const TypeInfo* referenceType = GetSceneTypeInfo<EntityRefId>();
+            const IClass* cls = bMigrate ? ResolveRecordClass(object) : nullptr;
+            for (ScenePropertyRecord& record : object.Properties)
+            {
+                if (bMigrate)
+                {
+                    const ClassProperty* property = cls ? ResolveRecordProperty(*cls, record) : nullptr;
+                    if (!property || property->GetRuntimeTypeId() != TypeRegistry::Get().GetTypeId<EntityRefId>() ||
+                        IsScenePropertyType(record, *referenceType))
+                    {
+                        continue;
+                    }
+                }
+                else if (!IsScenePropertyType(record, *referenceType))
+                {
+                    continue;
+                }
+
+                uint64_t objectId = 0;
+                const bool bParsed = TryParseUInt64(record.Value, objectId);
+                const auto target = locations.find(objectId);
+                if (bParsed && objectId != 0 && target != locations.end())
+                {
+                    record.Value = SerializeEntityLocation(target->second);
+                }
+                else
+                {
+                    if (!bMigrate && (!bParsed || objectId != 0))
+                    {
+                        NORVES_LOG_WARNING("Scene", "参照プロパティ '%s' の値 '%s' は保存対象のEntityを指していないため、参照なしで保存します",
+                                           record.Name.c_str(), record.Value.c_str());
+                    }
+                    record.Value = "0";
+                }
+                record.TypeName = referenceType->Name;
+                record.TypeId = referenceType->StableId;
+            }
+        }
+
+        void RewriteEntityReferences(SceneEntityRecord& entity, const SceneEntityLocations& locations, bool bMigrate)
+        {
+            RewriteObjectEntityReferences(entity.Object, locations, bMigrate);
+            for (SceneComponentRecord& component : entity.Components)
+            {
+                RewriteObjectEntityReferences(component.Object, locations, bMigrate);
+            }
+            for (SceneEntityRecord& child : entity.Children)
+            {
+                RewriteEntityReferences(child, locations, bMigrate);
+            }
+        }
+
+        void RewriteDocumentEntityReferences(SceneDocument& document, bool bMigrate)
+        {
+            SceneEntityLocations locations;
+            for (size_t index = 0; index < document.Roots.size(); ++index)
+            {
+                CollectEntityLocations(document.Roots[index].Root, index, locations);
+            }
+            for (SceneRootRecord& root : document.Roots)
+            {
+                RewriteEntityReferences(root.Root, locations, bMigrate);
+            }
+        }
+
+        void MigrateV2Document(SceneDocument& document)
+        {
+            RewriteDocumentEntityReferences(document, true);
+            for (SceneRootRecord& root : document.Roots)
+            {
                 root.FormatVersion = SceneSerializer::SceneFileFormatVersion;
             }
             document.FormatVersion = SceneSerializer::SceneFileFormatVersion;
-            return true;
+        }
+
+        constexpr Asset::AssetKind kSceneAssetKinds[] = {
+            Asset::AssetKind::Unknown, Asset::AssetKind::Texture, Asset::AssetKind::Model,
+            Asset::AssetKind::Raw, Asset::AssetKind::Audio, Asset::AssetKind::Skeleton,
+            Asset::AssetKind::Animation, Asset::AssetKind::World};
+        constexpr const char* kSceneAssetKindNames[] = {
+            "Unknown", "Texture", "Model", "Raw", "Audio", "Skeleton", "Animation", "World"};
+
+        template <Asset::AssetKind K>
+        bool IsAssetRefType(StableTypeId typeId)
+        {
+            const TypeInfo* info = GetSceneTypeInfo<TAssetRef<K>>();
+            return info && info->StableId == typeId;
+        }
+
+        bool TryGetAssetRefKind(StableTypeId typeId, Asset::AssetKind& outKind)
+        {
+            // 型名の一致ではなく、登録された各参照型の安定IDで判定する。
+            const bool bMatches[] = {
+                IsAssetRefType<Asset::AssetKind::Unknown>(typeId),
+                IsAssetRefType<Asset::AssetKind::Texture>(typeId),
+                IsAssetRefType<Asset::AssetKind::Model>(typeId),
+                IsAssetRefType<Asset::AssetKind::Raw>(typeId),
+                IsAssetRefType<Asset::AssetKind::Audio>(typeId),
+                IsAssetRefType<Asset::AssetKind::Skeleton>(typeId),
+                IsAssetRefType<Asset::AssetKind::Animation>(typeId),
+                IsAssetRefType<Asset::AssetKind::World>(typeId)};
+            for (size_t index = 0; index < 8; ++index)
+            {
+                if (bMatches[index])
+                {
+                    outKind = kSceneAssetKinds[index];
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void CollectObjectAssets(const SceneObjectRecord& object, Container::VariableArray<SceneAssetDependency>& assets)
+        {
+            for (const ScenePropertyRecord& property : object.Properties)
+            {
+                Asset::AssetKind kind;
+                if (property.Value.empty() || !TryGetAssetRefKind(property.TypeId, kind))
+                {
+                    continue;
+                }
+                bool bDuplicate = false;
+                for (const SceneAssetDependency& asset : assets)
+                {
+                    if (asset.Path == property.Value && asset.Kind == kind)
+                    {
+                        bDuplicate = true;
+                        break;
+                    }
+                }
+                if (!bDuplicate)
+                {
+                    // TAssetRef は variant を保持しないため、未指定の空文字を保存する。
+                    assets.push_back(SceneAssetDependency{property.Value, kind, {}});
+                }
+            }
+        }
+
+        void CollectEntityAssets(const SceneEntityRecord& entity, Container::VariableArray<SceneAssetDependency>& assets)
+        {
+            CollectObjectAssets(entity.Object, assets);
+            for (const SceneComponentRecord& component : entity.Components)
+            {
+                CollectObjectAssets(component.Object, assets);
+            }
+            for (const SceneEntityRecord& child : entity.Children)
+            {
+                CollectEntityAssets(child, assets);
+            }
         }
 
         bool TryParseFiniteFloat(const Container::String& text, float& outValue)
@@ -1186,17 +1407,30 @@ namespace NorvesLib::Core::Scene
             return nullptr;
         }
 
+        struct SceneReferenceFixup
+        {
+            size_t OwnerRootIndex = 0;
+            SubtreeSnapshotAliasId OwnerAlias = InvalidSubtreeSnapshotAliasId;
+            const ClassProperty* Property = nullptr;
+            SceneEntityLocation Target;
+        };
+
+        struct SceneReferencePlan
+        {
+            Container::VariableArray<SceneReferenceFixup> Fixups;
+            Container::VariableArray<size_t> RootIndices;
+            Container::VariableArray<Container::UnorderedMap<SubtreeSnapshotAliasId, SubtreeSnapshotAliasId>> EntityAliases;
+        };
+
         enum class PropertyReconcileResult : uint8_t
         {
             Accepted,
+            DeferredReference,
             SkippedRuntimeOnly,
             Dropped
         };
 
-        PropertyReconcileResult ReconcileProperty(
-            const IClass& cls,
-            const ScenePropertyRecord& record,
-            ProjectedPropertyValue& outValue)
+        const ClassProperty* ResolveRecordProperty(const IClass& cls, const ScenePropertyRecord& record)
         {
             const ClassProperty* property = nullptr;
             if (!record.Name.empty())
@@ -1216,9 +1450,19 @@ namespace NorvesLib::Core::Scene
                     }
                 }
             }
+            return property;
+        }
+
+        PropertyReconcileResult ReconcileProperty(
+            const IClass& cls,
+            const ScenePropertyRecord& record,
+            ProjectedPropertyValue& outValue,
+            SceneReferenceFixup& outReference)
+        {
+            const ClassProperty* property = ResolveRecordProperty(cls, record);
             if (!property)
             {
-                NORVES_LOG_WARNING("Scene", "Unknown property '%s' (id=%llu) on class '%s'; dropped",
+                NORVES_LOG_WARNING("Scene", "不明なプロパティ '%s' (id=%llu、クラス '%s') を除外します",
                                    record.Name.c_str(),
                                    static_cast<unsigned long long>(record.PropertyId),
                                    cls.GetClassName().ToString().c_str());
@@ -1235,7 +1479,7 @@ namespace NorvesLib::Core::Scene
             const TypeInfo* typeInfo = TypeRegistry::Get().Find(runtimeType);
             if (!typeInfo)
             {
-                NORVES_LOG_WARNING("Scene", "Property '%s' on class '%s' has no runtime type info; dropped",
+                NORVES_LOG_WARNING("Scene", "プロパティ '%s' (クラス '%s') に実行時の型情報がないため除外します",
                                    property->GetName().ToString().c_str(),
                                    cls.GetClassName().ToString().c_str());
                 return PropertyReconcileResult::Dropped;
@@ -1246,7 +1490,7 @@ namespace NorvesLib::Core::Scene
                 record.TypeId == typeInfo->StableId;
             if (!bTypeMatches)
             {
-                NORVES_LOG_WARNING("Scene", "Property '%s' on class '%s': stored type '%s' (id=%llu) does not match current type '%s'; dropped",
+                NORVES_LOG_WARNING("Scene", "プロパティ '%s' (クラス '%s') の保存型 '%s' (id=%llu) が現在の型 '%s' と異なるため除外します",
                                    property->GetName().ToString().c_str(),
                                    cls.GetClassName().ToString().c_str(),
                                    record.TypeName.c_str(),
@@ -1255,11 +1499,23 @@ namespace NorvesLib::Core::Scene
                 return PropertyReconcileResult::Dropped;
             }
 
-            // 値がdeserialize可能かプローブしてからSpawnPrefabへ渡す（全か無かロールバック回避の要）
+            if (runtimeType == TypeRegistry::Get().GetTypeId<EntityRefId>())
+            {
+                if (!TryParseEntityLocation(record.Value, outReference.Target))
+                {
+                    NORVES_LOG_WARNING("Scene", "参照プロパティ '%s' の値 '%s' が壊れているため除外します",
+                                       record.Name.c_str(), record.Value.c_str());
+                    return PropertyReconcileResult::Dropped;
+                }
+                outReference.Property = property;
+                return PropertyReconcileResult::DeferredReference;
+            }
+
+            // 値が復元可能か確認してからSpawnPrefabへ渡し、全体の巻き戻しを避ける。
             PropertyValue probe;
             if (!probe.DeserializeStable(typeInfo->StableId, record.Value))
             {
-                NORVES_LOG_WARNING("Scene", "Property '%s' on class '%s': value '%s' failed to deserialize; dropped",
+                NORVES_LOG_WARNING("Scene", "プロパティ '%s' (クラス '%s') の値 '%s' を復元できないため除外します",
                                    property->GetName().ToString().c_str(),
                                    cls.GetClassName().ToString().c_str(),
                                    record.Value.c_str());
@@ -1272,7 +1528,9 @@ namespace NorvesLib::Core::Scene
             return PropertyReconcileResult::Accepted;
         }
 
-        void ReconcileObjectInto(const IClass& cls, const SceneObjectRecord& record, ObjectSnapshot& outSnapshot, SceneLoadStats& stats)
+        void ReconcileObjectInto(const IClass& cls, const SceneObjectRecord& record, ObjectSnapshot& outSnapshot,
+                                 SceneLoadStats& stats, size_t rootIndex, SubtreeSnapshotAliasId ownerAlias,
+                                 SceneReferencePlan& references)
         {
             outSnapshot.Class = MakeSceneStableClassId(cls.GetClassName().GetView());
             outSnapshot.Path = record.Path;
@@ -1281,10 +1539,17 @@ namespace NorvesLib::Core::Scene
             for (const ScenePropertyRecord& propertyRecord : record.Properties)
             {
                 ProjectedPropertyValue value;
-                const PropertyReconcileResult result = ReconcileProperty(cls, propertyRecord, value);
+                SceneReferenceFixup reference;
+                const PropertyReconcileResult result = ReconcileProperty(cls, propertyRecord, value, reference);
                 if (result == PropertyReconcileResult::Accepted)
                 {
                     outSnapshot.Properties.push_back(std::move(value));
+                }
+                else if (result == PropertyReconcileResult::DeferredReference)
+                {
+                    reference.OwnerRootIndex = rootIndex;
+                    reference.OwnerAlias = ownerAlias;
+                    references.Fixups.push_back(reference);
                 }
                 else if (result == PropertyReconcileResult::Dropped)
                 {
@@ -1298,12 +1563,14 @@ namespace NorvesLib::Core::Scene
             SubtreeSnapshotAliasId parentAlias,
             SubtreeSnapshotAliasId& nextAlias,
             EntitySubtreeSnapshotNode& outNode,
-            SceneLoadStats& stats)
+            SceneLoadStats& stats,
+            size_t rootIndex,
+            SceneReferencePlan& references)
         {
             const IClass* cls = ResolveRecordClass(record.Object);
             if (!cls || !cls->IsChildOf(Entity::StaticClass()))
             {
-                NORVES_LOG_WARNING("Scene", "Unknown entity class '%s' (id=%llu); subtree dropped",
+                NORVES_LOG_WARNING("Scene", "不明なEntityクラス '%s' (id=%llu) の部分木を除外します",
                                    record.Object.ClassName.c_str(),
                                    static_cast<unsigned long long>(record.Object.ClassId));
                 stats.DroppedEntities += CountRecordEntities(record);
@@ -1313,7 +1580,8 @@ namespace NorvesLib::Core::Scene
 
             outNode.Alias = nextAlias++;
             outNode.ParentAlias = parentAlias;
-            ReconcileObjectInto(*cls, record.Object, outNode.Object, stats);
+            references.EntityAliases[rootIndex][record.Alias] = outNode.Alias;
+            ReconcileObjectInto(*cls, record.Object, outNode.Object, stats, rootIndex, outNode.Alias, references);
 
             outNode.Components.reserve(record.Components.size());
             for (const SceneComponentRecord& componentRecord : record.Components)
@@ -1321,7 +1589,7 @@ namespace NorvesLib::Core::Scene
                 const IClass* componentClass = ResolveRecordClass(componentRecord.Object);
                 if (!componentClass || !componentClass->IsChildOf(Component::Component::StaticClass()))
                 {
-                    NORVES_LOG_WARNING("Scene", "Unknown component class '%s' (id=%llu); component dropped",
+                    NORVES_LOG_WARNING("Scene", "不明なComponentクラス '%s' (id=%llu) を除外します",
                                        componentRecord.Object.ClassName.c_str(),
                                        static_cast<unsigned long long>(componentRecord.Object.ClassId));
                     ++stats.DroppedComponents;
@@ -1331,7 +1599,8 @@ namespace NorvesLib::Core::Scene
                 ComponentSubtreeSnapshot componentSnapshot;
                 componentSnapshot.Alias = nextAlias++;
                 componentSnapshot.OwnerAlias = outNode.Alias;
-                ReconcileObjectInto(*componentClass, componentRecord.Object, componentSnapshot.Object, stats);
+                ReconcileObjectInto(*componentClass, componentRecord.Object, componentSnapshot.Object, stats,
+                                    rootIndex, componentSnapshot.Alias, references);
                 outNode.Components.push_back(std::move(componentSnapshot));
             }
 
@@ -1339,7 +1608,7 @@ namespace NorvesLib::Core::Scene
             for (const SceneEntityRecord& childRecord : record.Children)
             {
                 EntitySubtreeSnapshotNode childNode;
-                if (ReconcileEntityRecord(childRecord, outNode.Alias, nextAlias, childNode, stats))
+                if (ReconcileEntityRecord(childRecord, outNode.Alias, nextAlias, childNode, stats, rootIndex, references))
                 {
                     outNode.Children.push_back(std::move(childNode));
                 }
@@ -1473,8 +1742,15 @@ namespace NorvesLib::Core::Scene
             record.RootAlias = snapshot.RootAlias;
             record.RootPath = snapshot.RootPath;
             record.Root = BuildEntityRecord(snapshot.Root, resolver);
+            CollectEntityAssets(record.Root, document.Assets);
             document.Roots.push_back(std::move(record));
         }
+        RewriteDocumentEntityReferences(document, false);
+        std::sort(document.Assets.begin(), document.Assets.end(),
+            [](const SceneAssetDependency& lhs, const SceneAssetDependency& rhs)
+            {
+                return lhs.Path == rhs.Path ? lhs.Kind < rhs.Kind : lhs.Path < rhs.Path;
+            });
         return document;
     }
 
@@ -1484,6 +1760,17 @@ namespace NorvesLib::Core::Scene
         writer.BeginObject();
         writer.WriteUInt64("formatVersion", document.FormatVersion);
         writer.WriteString("module", kModuleName);
+        writer.BeginArray("assets");
+        for (const SceneAssetDependency& asset : document.Assets)
+        {
+            writer.BeginObject();
+            writer.WriteString("path", asset.Path);
+            const size_t kindIndex = static_cast<size_t>(asset.Kind);
+            writer.WriteString("kind", kindIndex < 8 ? kSceneAssetKindNames[kindIndex] : "Unknown");
+            writer.WriteString("variant", asset.Variant);
+            writer.EndObject();
+        }
+        writer.EndArray();
         writer.BeginArray("roots");
         for (const SceneRootRecord& record : document.Roots)
         {
@@ -1538,13 +1825,53 @@ namespace NorvesLib::Core::Scene
         {
             return SetParseError(pOutError, "scene: formatVersion is required");
         }
-        if (version != SceneFileFormatVersion && version != kPreviousSceneFileFormatVersion)
+        if (version != SceneFileFormatVersion && version != 2 && version != kPreviousSceneFileFormatVersion)
         {
             return SetParseError(pOutError, "scene: unsupported formatVersion");
         }
         outDocument.FormatVersion = version;
 
         // "module"フィールドは診断専用。ロード時は読み取り・検証せずSceneDocumentにも保持しない。
+
+        if (version == SceneFileFormatVersion && root.HasMember("assets"))
+        {
+            const JsonValue assets = root.FindMember("assets");
+            if (!assets.IsArray())
+            {
+                return SetParseError(pOutError, "scene: assets は配列である必要があります");
+            }
+            for (size_t index = 0; index < assets.GetArraySize(); ++index)
+            {
+                const JsonValue entry = assets.GetArrayElement(index);
+                const JsonValue path = entry.FindMember("path");
+                const JsonValue kind = entry.FindMember("kind");
+                const JsonValue variant = entry.FindMember("variant");
+                if (!entry.IsObject() || !path.IsString() || !kind.IsString() || !variant.IsString())
+                {
+                    return SetParseError(pOutError, "scene: assets の各項目には文字列の path・kind・variant が必要です");
+                }
+                TAssetRef<Asset::AssetKind::Unknown> validatedPath;
+                if (path.AsString().empty() || !validatedPath.DeserializeFromString(path.AsString()))
+                {
+                    return SetParseError(pOutError, "scene: assets の論理パスが不正です");
+                }
+                bool bKnownKind = false;
+                for (size_t kindIndex = 0; kindIndex < 8; ++kindIndex)
+                {
+                    if (kind.AsString() == kSceneAssetKindNames[kindIndex])
+                    {
+                        outDocument.Assets.push_back(SceneAssetDependency{
+                            path.AsString(), kSceneAssetKinds[kindIndex], variant.AsString()});
+                        bKnownKind = true;
+                        break;
+                    }
+                }
+                if (!bKnownKind)
+                {
+                    return SetParseError(pOutError, "scene: assets の種別が不明です");
+                }
+            }
+        }
 
         const JsonValue roots = root.FindMember("roots");
         if (!roots.IsArray())
@@ -1588,6 +1915,11 @@ namespace NorvesLib::Core::Scene
             return false;
         }
 
+        if (outDocument.FormatVersion == 2)
+        {
+            MigrateV2Document(outDocument);
+        }
+
         Container::String physicalValidationError;
         if (!ValidatePhysicalLightDocument(outDocument, &physicalValidationError))
         {
@@ -1596,59 +1928,131 @@ namespace NorvesLib::Core::Scene
         return true;
     }
 
+    namespace
+    {
+        bool ReconcileWithSchemaInternal(
+            const SceneDocument& document,
+            Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
+            SceneLoadStats& outStats,
+            SceneReferencePlan& references)
+        {
+            outRoots.clear();
+            outStats = SceneLoadStats(); // outRootsのclear()と対称にゼロ化する（累積させない）
+            references = {};
+            references.EntityAliases.resize(document.Roots.size());
+            if (document.FormatVersion != SceneSerializer::SceneFileFormatVersion)
+            {
+                NORVES_LOG_WARNING("Scene", "文書のformatVersion %u は未対応です", document.FormatVersion);
+                return false;
+            }
+
+            Container::String physicalValidationError;
+            if (!ValidatePhysicalLightDocument(document, &physicalValidationError))
+            {
+                NORVES_LOG_WARNING("Scene", "シーンの物理量の検証に失敗しました: %s", physicalValidationError.c_str());
+                return false;
+            }
+
+            outRoots.reserve(document.Roots.size());
+            for (size_t rootIndex = 0; rootIndex < document.Roots.size(); ++rootIndex)
+            {
+                const SceneRootRecord& rootRecord = document.Roots[rootIndex];
+                // root単位のformatVersionはトップレベルと同方針で検証するが、
+                // ファイル全体は殺さず該当ルートのみ警告付きdrop（寛容ロード）。
+                if (rootRecord.FormatVersion != SceneSerializer::SceneFileFormatVersion)
+                {
+                    NORVES_LOG_WARNING("Scene", "ルートのformatVersion %u は未対応のため部分木を除外します",
+                                       rootRecord.FormatVersion);
+                    outStats.DroppedEntities += CountRecordEntities(rootRecord.Root);
+                    outStats.DroppedComponents += CountRecordComponents(rootRecord.Root);
+                    continue;
+                }
+
+                EntitySubtreeSnapshot snapshot;
+                snapshot.FormatVersion = rootRecord.FormatVersion;
+                snapshot.RootAlias = 1;
+                snapshot.RootPath = rootRecord.RootPath;
+
+                SubtreeSnapshotAliasId nextAlias = 1;
+                if (!ReconcileEntityRecord(rootRecord.Root, InvalidSubtreeSnapshotAliasId, nextAlias, snapshot.Root,
+                                           outStats, rootIndex, references))
+                {
+                    continue; // ルートごとdrop（警告出力済み）
+                }
+                outRoots.push_back(std::move(snapshot));
+                references.RootIndices.push_back(rootIndex);
+                ++outStats.LoadedRoots;
+            }
+            return true;
+        }
+
+        void ApplyEntityReferencePlan(const SceneReferencePlan& references,
+                                      const Container::VariableArray<PrefabSpawnAliasMap>& spawnedRoots)
+        {
+            for (const SceneReferenceFixup& fixup : references.Fixups)
+            {
+                const PrefabSpawnAliasMap& owners = spawnedRoots[fixup.OwnerRootIndex];
+                const auto owner = owners.find(fixup.OwnerAlias);
+                if (owner == owners.end())
+                {
+                    NORVES_LOG_WARNING("Scene", "参照プロパティの持ち主を生成できなかったため張り替えを省略します");
+                    continue;
+                }
+
+                Entity* target = nullptr;
+                if (fixup.Target.Alias != InvalidSubtreeSnapshotAliasId)
+                {
+                    if (fixup.Target.RootIndex < spawnedRoots.size())
+                    {
+                        const auto& entityAliases = references.EntityAliases[fixup.Target.RootIndex];
+                        const auto alias = entityAliases.find(fixup.Target.Alias);
+                        const auto& targets = spawnedRoots[fixup.Target.RootIndex];
+                        if (alias != entityAliases.end())
+                        {
+                            const auto spawned = targets.find(alias->second);
+                            if (spawned != targets.end())
+                            {
+                                target = spawned->second.EntityPtr;
+                            }
+                        }
+                    }
+                    if (!target)
+                    {
+                        NORVES_LOG_WARNING("Scene", "参照先のEntity (%llu:%llu) が読み込まれていないため参照なしにします",
+                                           static_cast<unsigned long long>(fixup.Target.RootIndex),
+                                           static_cast<unsigned long long>(fixup.Target.Alias));
+                    }
+                }
+
+                Object* object = owner->second.ComponentPtr
+                    ? static_cast<Object*>(owner->second.ComponentPtr) : static_cast<Object*>(owner->second.EntityPtr);
+                PropertyValue value = PropertyValue::Create(EntityRefId(target ? target->GetObjectId() : 0));
+                if (!fixup.Property->ApplyValue(object, value))
+                {
+                    NORVES_LOG_WARNING("Scene", "参照プロパティ '%s' の張り替えに失敗しました",
+                                       fixup.Property->GetName().ToString().c_str());
+                }
+            }
+        }
+    } // namespace
+
     bool SceneSerializer::ReconcileWithSchema(
         const SceneDocument& document,
         Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
         SceneLoadStats& outStats)
     {
-        outRoots.clear();
-        outStats = SceneLoadStats(); // outRootsのclear()と対称にゼロ化する（累積させない）
-        if (document.FormatVersion != SceneFileFormatVersion)
-        {
-            NORVES_LOG_WARNING("Scene", "Unsupported document formatVersion %u", document.FormatVersion);
-            return false;
-        }
-
-        Container::String physicalValidationError;
-        if (!ValidatePhysicalLightDocument(document, &physicalValidationError))
-        {
-            NORVES_LOG_WARNING("Scene", "Physical scene validation failed: %s", physicalValidationError.c_str());
-            return false;
-        }
-
-        outRoots.reserve(document.Roots.size());
-        for (const SceneRootRecord& rootRecord : document.Roots)
-        {
-            // root単位のformatVersionはトップレベルと同方針で検証するが、
-            // ファイル全体は殺さず該当ルートのみ警告付きdrop（寛容ロード）。
-            if (rootRecord.FormatVersion != SceneFileFormatVersion)
-            {
-                NORVES_LOG_WARNING("Scene", "Unsupported root formatVersion %u; root subtree dropped",
-                                   rootRecord.FormatVersion);
-                outStats.DroppedEntities += CountRecordEntities(rootRecord.Root);
-                outStats.DroppedComponents += CountRecordComponents(rootRecord.Root);
-                continue;
-            }
-
-            EntitySubtreeSnapshot snapshot;
-            snapshot.FormatVersion = rootRecord.FormatVersion;
-            snapshot.RootAlias = 1;
-            snapshot.RootPath = rootRecord.RootPath;
-
-            SubtreeSnapshotAliasId nextAlias = 1;
-            if (!ReconcileEntityRecord(rootRecord.Root, InvalidSubtreeSnapshotAliasId, nextAlias, snapshot.Root, outStats))
-            {
-                continue; // ルートごとdrop（警告出力済み）
-            }
-            outRoots.push_back(std::move(snapshot));
-            ++outStats.LoadedRoots;
-        }
-        return true;
+        SceneReferencePlan references;
+        return ReconcileWithSchemaInternal(document, outRoots, outStats, references);
     }
 
-    size_t SceneSerializer::CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots)
+    size_t SceneSerializer::CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
+                                         SceneSaveStats* pOutStats)
     {
         outRoots.clear();
+        if (pOutStats)
+        {
+            *pOutStats = SceneSaveStats();
+        }
 
         SceneCaptureStats stats;
         Container::VariableArray<Entity*> roots = world.GetRootEntities();
@@ -1672,64 +2076,184 @@ namespace NorvesLib::Core::Scene
 
         if (stats.PrunedEntities > 0 || stats.PrunedComponents > 0)
         {
-            NORVES_LOG_INFO("Scene", "CaptureWorld: pruned %llu pending-destroy entities and %llu components",
+            NORVES_LOG_INFO("Scene", "CaptureWorld: 破棄待ちの Entity %llu 個と Component %llu 個を除外しました",
                             static_cast<unsigned long long>(stats.PrunedEntities),
                             static_cast<unsigned long long>(stats.PrunedComponents));
         }
         if (stats.UnserializedProperties > 0)
         {
-            NORVES_LOG_WARNING("Scene", "CaptureWorld: %llu properties could not be serialized and were omitted",
+            NORVES_LOG_WARNING("Scene", "CaptureWorld: 直列化できないプロパティ %llu 個を除外しました",
                                static_cast<unsigned long long>(stats.UnserializedProperties));
         }
 
+        if (pOutStats)
+        {
+            pOutStats->SavedRoots = outRoots.size();
+            pOutStats->DroppedProperties = stats.UnserializedProperties;
+        }
         return outRoots.size();
     }
 
-    bool SceneSerializer::SaveToFile(const World& world, const Container::String& filePath)
+    bool SceneSerializer::SaveToFile(const World& world, const Container::String& filePath,
+                                     SceneSaveStats* pOutStats, const SceneSaveOptions& options)
     {
         Container::VariableArray<EntitySubtreeSnapshot> roots;
-        CaptureWorld(world, roots);
+        CaptureWorld(world, roots, pOutStats);
 
         const SceneDocument document = BuildDocument(roots);
         const Container::String json = ToJson(document);
-        // ToJsonはwriterのIsComplete()/HasError()検査で失敗時に空文字を返す（防御チェック）
         if (json.empty())
         {
-            NORVES_LOG_ERROR("Scene", "SaveToFile: JSON serialization failed (writer incomplete or error)");
+            NORVES_LOG_ERROR("Scene", "SaveToFile: JSON の直列化に失敗しました");
             return false;
         }
 
-        NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
-            filePath,
-            NorvesLib::FileStream::FileMode::Write,
-            NorvesLib::FileStream::FileAccess::Write);
-        // TUniquePtrはstd::unique_ptrの素のエイリアスで、IsNull/IsValidはフリー関数
-        // （Container/PointerTypes.h L24-25, L113-129）。メンバ呼び出しは不可なので!streamで判定する。
-        if (!stream || !stream->IsOpen())
+        const Container::String temporaryPath = filePath + ".tmp";
+        std::FILE* file = nullptr;
+        if (fopen_s(&file, temporaryPath.c_str(), "wb") != 0 || !file)
         {
-            NORVES_LOG_ERROR("Scene", "SaveToFile: failed to open '%s' for writing", filePath.c_str());
+            NORVES_LOG_ERROR("Scene", "SaveToFile: 一時ファイル '%s' を開けません", temporaryPath.c_str());
             return false;
         }
 
-        const size_t written = stream->WriteString(json);
-        stream->Flush();
-        if (written != json.size())
+        // FileStream の Flush/Close は成否を返さないため、ここでは各段階の結果を直接確認する。
+        const size_t bytesToWrite = options.bInjectWriteFailureForTesting ? json.size() / 2 : json.size();
+        const size_t written = std::fwrite(json.c_str(), 1, bytesToWrite, file);
+        const bool bFlushed = std::fflush(file) == 0;
+        const bool bClosed = std::fclose(file) == 0;
+        if (options.bInjectWriteFailureForTesting || written != json.size() || !bFlushed || !bClosed)
         {
-            NORVES_LOG_ERROR("Scene", "SaveToFile: short write to '%s' (%llu of %llu bytes)",
-                             filePath.c_str(),
-                             static_cast<unsigned long long>(written),
-                             static_cast<unsigned long long>(json.size()));
+            std::remove(temporaryPath.c_str());
+            NORVES_LOG_ERROR("Scene", "SaveToFile: 一時ファイル '%s' の書き込みに失敗しました", temporaryPath.c_str());
+            return false;
+        }
+        if (!MoveFileExA(temporaryPath.c_str(), filePath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            std::remove(temporaryPath.c_str());
+            NORVES_LOG_ERROR("Scene", "SaveToFile: '%s' の置換に失敗しました", filePath.c_str());
             return false;
         }
 
-        NORVES_LOG_INFO("Scene", "SaveToFile: wrote %llu roots to '%s'",
-                        static_cast<unsigned long long>(document.Roots.size()),
-                        filePath.c_str());
+        NORVES_LOG_INFO("Scene", "SaveToFile: %llu 個のルートを '%s' に保存しました",
+                        static_cast<unsigned long long>(document.Roots.size()), filePath.c_str());
         return true;
     }
 
-    bool SceneSerializer::LoadIntoWorld(World& world, const Container::String& filePath, SceneLoadStats* pOutStats)
+    namespace
     {
+        void ResetSceneLoadOutputs(SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
+        {
+            if (pOutStats)
+            {
+                *pOutStats = SceneLoadStats();
+            }
+            if (pOutRoots)
+            {
+                pOutRoots->clear();
+            }
+        }
+
+        bool LoadSceneJson(World& world, const Container::String& jsonText, const Container::String& sourceName,
+                           SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
+        {
+            SceneDocument document;
+            Container::String parseError;
+            if (!SceneSerializer::TryParseJson(jsonText, document, &parseError))
+            {
+                NORVES_LOG_ERROR("Scene", "シーン '%s' のJSON解析に失敗しました: %s",
+                                 sourceName.c_str(), parseError.c_str());
+                if (pOutStats)
+                {
+                    *pOutStats = SceneLoadStats();
+                }
+                return false;
+            }
+
+            SceneLoadStats stats;
+            Container::VariableArray<EntitySubtreeSnapshot> roots;
+            SceneReferencePlan references;
+            if (!ReconcileWithSchemaInternal(document, roots, stats, references))
+            {
+                if (pOutStats)
+                {
+                    *pOutStats = stats;
+                }
+                return false;
+            }
+
+            // ReconcileWithSchemaはreconcile成功ルート数をLoadedRootsに計上するが、
+            // LoadIntoWorldは実際にSpawnPrefabできたルート数を報告するため一旦ゼロ化する。
+            stats.LoadedRoots = 0;
+
+            // Bridge sceneDuplicateObjectと同経路: 関数ローカルRegistry＋一時PrefabAsset。
+            // SpawnPrefabは同期消費するため関数ローカル寿命で十分。
+            ResourceRegistry registry;
+            if (!registry.Initialize())
+            {
+                NORVES_LOG_ERROR("Scene", "一時ResourceRegistryの初期化に失敗しました");
+                if (pOutStats)
+                {
+                    *pOutStats = stats;
+                }
+                return false;
+            }
+
+            bool bAllSpawned = true;
+            {
+                Container::VariableArray<PrefabSpawnAliasMap> spawnedRoots;
+                spawnedRoots.resize(document.Roots.size());
+                Container::VariableArray<Container::TSharedPtr<PrefabAsset>> prefabs;
+                prefabs.reserve(roots.size());
+                for (size_t index = 0; index < roots.size(); ++index)
+                {
+                    EntitySubtreeSnapshot& root = roots[index];
+                    Container::TSharedPtr<PrefabAsset> prefab = registry.CreateTransient<PrefabAsset>("SceneLoad");
+                    if (prefab == nullptr)
+                    {
+                        bAllSpawned = false;
+                        continue;
+                    }
+                    prefabs.push_back(prefab);
+                    prefab->SetTree(std::move(root));
+
+                    Entity* spawned = world.SpawnPrefab(*prefab, nullptr, nullptr,
+                                                         &spawnedRoots[references.RootIndices[index]]);
+                    if (spawned == nullptr)
+                    {
+                        NORVES_LOG_ERROR("Scene", "シーン '%s' のルートの生成に失敗しました", sourceName.c_str());
+                        bAllSpawned = false;
+                        continue;
+                    }
+                    ++stats.LoadedRoots;
+                    if (pOutRoots)
+                    {
+                        pOutRoots->push_back(spawned);
+                    }
+                }
+                ApplyEntityReferencePlan(references, spawnedRoots);
+                prefabs.clear();
+            }
+            registry.Shutdown();
+
+            if (pOutStats)
+            {
+                *pOutStats = stats;
+            }
+            NORVES_LOG_INFO("Scene", "シーンから%llu個のルートを生成しました: '%s'（除外: Entity %llu、Component %llu、プロパティ %llu）",
+                            static_cast<unsigned long long>(stats.LoadedRoots),
+                            sourceName.c_str(),
+                            static_cast<unsigned long long>(stats.DroppedEntities),
+                            static_cast<unsigned long long>(stats.DroppedComponents),
+                            static_cast<unsigned long long>(stats.DroppedProperties));
+            return bAllSpawned;
+        }
+    } // namespace
+
+    bool SceneSerializer::LoadIntoWorld(World& world, const Container::String& filePath,
+                                        SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
+    {
+        ResetSceneLoadOutputs(pOutStats, pOutRoots);
+
         Container::String jsonText;
         {
             NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
@@ -1738,96 +2262,37 @@ namespace NorvesLib::Core::Scene
                 NorvesLib::FileStream::FileAccess::Read);
             if (!stream || !stream->IsOpen())
             {
-                NORVES_LOG_ERROR("Scene", "LoadIntoWorld: failed to open '%s' for reading", filePath.c_str());
-                if (pOutStats)
-                {
-                    *pOutStats = SceneLoadStats();
-                }
+                NORVES_LOG_ERROR("Scene", "シーンファイル '%s' を開けません", filePath.c_str());
                 return false;
             }
             jsonText = stream->ReadString();
         }
 
-        SceneDocument document;
-        Container::String parseError;
-        if (!TryParseJson(jsonText, document, &parseError))
+        return LoadSceneJson(world, jsonText, filePath, pOutStats, pOutRoots);
+    }
+
+    bool SceneSerializer::LoadIntoWorldFromAsset(World& world, const Asset::AssetSystem& assetSystem,
+                                                 Container::AnsiStringView logicalPath, SceneLoadStats* pOutStats,
+                                                 Container::VariableArray<Entity*>* pOutRoots)
+    {
+        ResetSceneLoadOutputs(pOutStats, pOutRoots);
+
+        const Container::String sourceName(logicalPath);
+        const Asset::AssetResolveResult resolved = assetSystem.ResolveAsset(logicalPath, Asset::AssetKind::Raw);
+        if (!resolved.Succeeded())
         {
-            NORVES_LOG_ERROR("Scene", "LoadIntoWorld: parse failed for '%s': %s",
-                             filePath.c_str(), parseError.c_str());
-            if (pOutStats)
-            {
-                *pOutStats = SceneLoadStats();
-            }
+            NORVES_LOG_ERROR("Scene", "シーン資産 '%s' の解決に失敗しました: %s",
+                             sourceName.c_str(), resolved.Reason.c_str());
             return false;
         }
 
-        SceneLoadStats stats;
-        Container::VariableArray<EntitySubtreeSnapshot> roots;
-        if (!ReconcileWithSchema(document, roots, stats))
+        const size_t byteCount = resolved.Blob.GetSize();
+        Container::String jsonText(byteCount, '\0');
+        if (byteCount > 0)
         {
-            if (pOutStats)
-            {
-                *pOutStats = stats;
-            }
-            return false;
+            std::memcpy(&jsonText[0], resolved.Blob.GetData(), byteCount);
         }
-
-        // ReconcileWithSchemaはreconcile成功ルート数をLoadedRootsに計上するが、
-        // LoadIntoWorldは実際にSpawnPrefabできたルート数を報告するため一旦ゼロ化する。
-        stats.LoadedRoots = 0;
-
-        // Bridge sceneDuplicateObjectと同経路: 関数ローカルRegistry＋一時PrefabAsset。
-        // SpawnPrefabは同期消費するため関数ローカル寿命で十分。
-        ResourceRegistry registry;
-        if (!registry.Initialize())
-        {
-            NORVES_LOG_ERROR("Scene", "LoadIntoWorld: transient ResourceRegistry initialization failed");
-            if (pOutStats)
-            {
-                *pOutStats = stats;
-            }
-            return false;
-        }
-
-        bool bAllSpawned = true;
-        {
-            Container::VariableArray<Container::TSharedPtr<PrefabAsset>> prefabs;
-            prefabs.reserve(roots.size());
-            for (EntitySubtreeSnapshot& root : roots)
-            {
-                Container::TSharedPtr<PrefabAsset> prefab = registry.CreateTransient<PrefabAsset>("SceneLoad");
-                if (prefab == nullptr)
-                {
-                    bAllSpawned = false;
-                    continue;
-                }
-                prefabs.push_back(prefab);
-                prefab->SetTree(std::move(root));
-
-                Entity* spawned = world.SpawnPrefab(*prefab);
-                if (spawned == nullptr)
-                {
-                    NORVES_LOG_ERROR("Scene", "LoadIntoWorld: SpawnPrefab failed for a scene root in '%s'", filePath.c_str());
-                    bAllSpawned = false;
-                    continue;
-                }
-                ++stats.LoadedRoots;
-            }
-            prefabs.clear();
-        }
-        registry.Shutdown();
-
-        if (pOutStats)
-        {
-            *pOutStats = stats;
-        }
-        NORVES_LOG_INFO("Scene", "LoadIntoWorld: spawned %llu roots from '%s' (dropped: %llu entities, %llu components, %llu properties)",
-                        static_cast<unsigned long long>(stats.LoadedRoots),
-                        filePath.c_str(),
-                        static_cast<unsigned long long>(stats.DroppedEntities),
-                        static_cast<unsigned long long>(stats.DroppedComponents),
-                        static_cast<unsigned long long>(stats.DroppedProperties));
-        return bAllSpawned;
+        return LoadSceneJson(world, jsonText, sourceName, pOutStats, pOutRoots);
     }
 
 } // namespace NorvesLib::Core::Scene
