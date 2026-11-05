@@ -9840,3 +9840,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 物理の当たりの型に表面の番号の欄を足す: 着地(直し 0 回)
 - U2 高さ場に軸並行の境界の取得を足す: 着地(直し 0 回)
 - U6 SceneQuery に QueryGround と地形の結び付けを足す: 着地(直し 0 回)
+- U3 物理のプロキシに高さ場の形を足し、問い合わせの分岐を全部明示にする: 着地(直し 1 回)

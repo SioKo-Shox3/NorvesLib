@@ -2,8 +2,14 @@
 
 #include "Container/VariableArray.h"
 #include "Container/Span.h"
+#include "Container/PointerTypes.h"
 #include "Math/GeometryTypes.h"
 #include "Scene/PhysicsQueryTypes.h"
+
+namespace NorvesLib::Core::Rendering::Terrain
+{
+    class TerrainHeightField;
+}
 
 namespace NorvesLib::Modules::Physics
 {
@@ -12,6 +18,7 @@ namespace NorvesLib::Modules::Physics
         Sphere,
         Box,
         Capsule,
+        HeightField,
     };
 
     struct PhysicsShapeProxy
@@ -24,11 +31,17 @@ namespace NorvesLib::Modules::Physics
         Math::Sphere Sphere;
         Math::OBB Box;
         Math::Capsule Capsule;
+        // 読み取り専用の格子高さ場。
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> HeightField;
+        // 高さ場の原点の世界座標。世界座標への変換はこの値を足す平行移動だけ。
+        Math::Vector3 HeightFieldOrigin;
         Math::AABB Bounds;
         Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
         Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
         uint64_t UserData = 0;
         bool bTrigger = false;
+        // 球・箱・カプセルの表面番号。高さ場は当たり位置で層を照会する。
+        uint8_t SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
     };
 
     struct PhysicsCandidatePair
