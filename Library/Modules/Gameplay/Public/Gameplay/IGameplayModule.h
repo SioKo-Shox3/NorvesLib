@@ -2,6 +2,7 @@
 
 #include "Delegate/MulticastDelegate.h"
 #include "Gameplay/Combat/CombatHitEvent.h"
+#include "Gameplay/Combat/CombatResponseSettings.h"
 #include "Module/IModule.h"
 #include "Module/ModuleRegistry.h"
 
@@ -31,6 +32,10 @@ namespace NorvesLib::Modules::Gameplay
         virtual uint64_t GetRunSeed() const = 0;
         /// 敵のパターン選択などの再現用の値を、run の開始時に呼び手が設定する。
         virtual void SetRunSeed(uint64_t seed) = 0;
+
+        /// 所有スレッド以外の設定を無視し、不正な数値は各項目の既定値へ戻す。
+        virtual void SetCombatResponseSettings(const Combat::CombatResponseSettings& settings) = 0;
+        virtual const Combat::CombatResponseSettings& GetCombatResponseSettings() const = 0;
 
         virtual ProgressionState& GetProgressionState() = 0;
         virtual DefeatGate& GetDefeatGate() = 0;

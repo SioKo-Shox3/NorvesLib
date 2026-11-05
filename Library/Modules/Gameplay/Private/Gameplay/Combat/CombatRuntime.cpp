@@ -312,6 +312,30 @@ namespace NorvesLib::Modules::Gameplay::Combat
         component.m_RegistrationIndex = 0;
     }
 
+    const HitboxComponent* CombatRuntime::FindHitbox(uint64_t registrationIndex) const
+    {
+        for (const auto& entry : m_Hitboxes)
+        {
+            if (entry.Component != nullptr && entry.RegistrationIndex == registrationIndex)
+            {
+                return entry.Component;
+            }
+        }
+        return nullptr;
+    }
+
+    const HurtboxSetComponent* CombatRuntime::FindHurtboxSet(uint64_t registrationIndex) const
+    {
+        for (const auto& entry : m_HurtboxSets)
+        {
+            if (entry.Component != nullptr && entry.RegistrationIndex == registrationIndex)
+            {
+                return entry.Component;
+            }
+        }
+        return nullptr;
+    }
+
     void CombatRuntime::RetryPendingRegistrations()
     {
         for (size_t index = 0; index < m_PendingHitboxes.size();)

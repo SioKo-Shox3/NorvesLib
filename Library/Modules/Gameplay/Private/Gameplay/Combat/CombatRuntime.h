@@ -53,6 +53,8 @@ namespace NorvesLib::Modules::Gameplay::Combat
         bool Register(HurtboxSetComponent& component);
         void Unregister(HitboxComponent& component);
         void Unregister(HurtboxSetComponent& component);
+        const HitboxComponent* FindHitbox(uint64_t registrationIndex) const;
+        const HurtboxSetComponent* FindHurtboxSet(uint64_t registrationIndex) const;
         uint64_t AllocateAttackInstanceId();
         double GetWorldTime() const { return m_WorldTime; }
         uint64_t GetFrameNumber() const { return m_FrameNumber; }
