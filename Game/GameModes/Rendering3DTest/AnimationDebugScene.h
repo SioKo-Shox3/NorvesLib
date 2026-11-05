@@ -7,6 +7,7 @@
 #include "Core/Public/Rendering/MaterialTypes.h"
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/AnimatorDebugView.h"
+#include "Debug/PoseModifierDebugView.h"
 #include "Debug/SocketDebugView.h"
 #endif
 namespace NorvesLib::Core
@@ -73,9 +74,11 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::RibbonTrailScene m_TrailScene;
         double m_TrailTime = 0.0;
         bool m_bFirstTrailSample = true;
+        bool m_bPoseModifiersEnabled = true;
 #if defined(NORVES_ENABLE_IMGUI)
         Game::Debug::AnimatorDebugView m_AnimatorView;
         Game::Debug::SocketDebugView m_SocketView;
+        Game::Debug::PoseModifierDebugView m_PoseModifierView;
 #endif
     };
 } // namespace Game::GameModes

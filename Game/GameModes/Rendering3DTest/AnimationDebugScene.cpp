@@ -496,6 +496,7 @@ namespace Game::GameModes
     bool AnimationDebugScene::PrepareQuadruped(GameMode::GameModeContext& ctx, Rendering::MaterialHandle material,
                                                 bool bPoseModifiersEnabled)
     {
+        m_bPoseModifiersEnabled = bPoseModifiersEnabled;
         auto& registry = GEngine.GetResourceRegistry();
         auto skeleton = registry.CreateTransient<SkeletonResource>("AnimationDebugQuadrupedSkeleton");
         auto mesh = registry.CreateTransient<SkinnedMeshResource>("AnimationDebugQuadrupedMesh");
@@ -708,6 +709,11 @@ namespace Game::GameModes
             m_AnimatorView.Attach(world, m_Character);
             m_SocketView.Attach(world, m_Character, m_Item);
         }
+        if (m_Quadruped)
+        {
+            m_PoseModifierView.Attach(world, m_Quadruped, m_PoseModifiersJson, m_GroundQuery.get(),
+                                      m_bPoseModifiersEnabled);
+        }
 #else
         (void)world;
 #endif
@@ -715,6 +721,9 @@ namespace Game::GameModes
     void AnimationDebugScene::TickTrail(World& world, float deltaTime)
     {
         TickQuadruped(world, deltaTime);
+#if defined(NORVES_ENABLE_IMGUI)
+        m_PoseModifierView.SubmitDebugDraw();
+#endif
         if (!m_Item || !Engine::GEngine)
             return;
 
@@ -742,6 +751,10 @@ namespace Game::GameModes
     }
     void AnimationDebugScene::Stop()
     {
+#if defined(NORVES_ENABLE_IMGUI)
+        // 問い合わせを持つ view の借用を、場面の問い合わせより先に解く。
+        m_PoseModifierView.Detach();
+#endif
         // World は保持しない。場面が先に終了しても、Entity が先に消えても借用を残さない。
         for (const auto& modifier : m_QuadrupedModifiers)
         {
