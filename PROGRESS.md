@@ -9936,3 +9936,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 切り抜きのモデル ViewClearanceParameters と CPU の可視度の式、CameraProxy への値の置き場: 着地(直し 0 回)
 - U2 SpringArmComponent に注視点の取得 GetTargetWorldPosition を公開する: 着地(直し 0 回)
 - U3 ViewClearanceComponent(PROPERTY・Mode・Strength の補間・Tick の自己登録)と保存の往復: 着地(直し 0 回)
+- U5 BuildCameraProxy で CameraProxy.ViewClearance を埋め、proxy の試験を足す(U4 の切り直し): 着地(直し 0 回)
