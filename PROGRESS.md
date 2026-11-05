@@ -10016,3 +10016,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
   - 失敗が黙って起きるか: 起きる。重心の取り違え・巻きの反転・バケットの取りこぼしは例外も警告も出さず、少しずれた点や Miss を返すだけになる。
 - U1 重心座標つきのレイと三角形の交差: 着地(直し 0 回)
 - U2 SkinnedMeshComponent にパレットを読む口: 着地(直し 0 回)
+- U3 表面のアンカーの評価・関節のバケット・突き立ての点の探索: 着地(直し 0 回)
