@@ -2777,6 +2777,7 @@ namespace NorvesLib::Core::Engine
             // 段 PreSimulation: GameMode の状態機械 → World の段 Tick → 段 PostTick: 粒子
             RunFrameStage(EFrameStage::PreSimulation, times.Unscaled, handler);
             GEngine->GetWorld().Tick(times);
+            GEngine->GetVegetation().Tick(times.World);
             RunFrameStage(EFrameStage::PostTick, times.Particle, handler);
         }
         const FixedStepAdvanceResult result =

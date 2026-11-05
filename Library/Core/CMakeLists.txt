@@ -70,6 +70,7 @@ set(PRIVATE_SOURCES
     Private/Vegetation/GrassFieldAsset.cpp
     Private/Vegetation/TerrainGroundHeightSource.cpp
     Private/Vegetation/Vegetation.cpp
+    Private/Vegetation/DrynessMap.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -584,6 +585,7 @@ set(PUBLIC_HEADERS
     Public/Vegetation/GrassFieldAsset.h
     Public/Vegetation/TerrainGroundHeightSource.h
     Public/Vegetation/Vegetation.h
+    Public/Vegetation/DrynessMap.h
     Public/Vegetation/GroundHeightSource.h
     Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h

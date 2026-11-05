@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Vegetation/DrynessMap.h"
+
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -21,10 +23,17 @@ namespace NorvesLib::Core::Vegetation
         bool UnregisterGrassField(GrassField* pField);
         GrassField* GetGrassField();
         const GrassField* GetGrassField() const;
+        /** @brief 枯れ度マップを取得する。 */
+        DrynessMap& GetDrynessMap();
+        /** @brief 読み取り専用の枯れ度マップを取得する。 */
+        const DrynessMap& GetDrynessMap() const;
+        /** @brief World のチャンネルの dt（ポーズとヒットストップに従う）で進める。 */
+        void Tick(float worldDeltaSeconds);
         /** @brief GameThread で変更時だけ描画データを公開する。初回と解除後は未登録なら null を送る。 */
         void PublishRenderData(Rendering::RenderWorld& renderWorld);
 
     private:
+        DrynessMap m_DrynessMap;
         GrassField* m_pGrassField = nullptr;
         uint64_t m_PublishedRevision = 0; // 公開した場の Revision。
         const GrassField* m_pPublishedField = nullptr;
