@@ -10247,3 +10247,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(G12-GR92-ASSETREF-SCENE-V3): 論理パスの資産参照 TAssetRef と Entity 参照 EntityRefId を足し、RuntimeSchema が型の側の文字列化を扱う。シーンの形式は v3(v1 → v2 → v3 の移行、先頭の assets の依存の表、SceneSaveStats、一時ファイルからの置換による保存)。EntityRefId はファイルでは「ルートの添字:alias」で保存し、LoadIntoWorld が全ルートの生成の後に新しい ObjectId へ張り替える(v2 の uint64 の値も移行)。LoadIntoWorld は生成したルートを返し、LoadIntoWorldFromAsset で論理パス(AssetSystem::ResolveAsset の Raw)から読める。verify の 2 行(ビルド・ctest 10 本)と Game のビルドが終了コード 0。アプリを起動する確かめは無い。
 - Next(G12-GR92-ASSETREF-SCENE-V3): コンポーネントの非同期の束縛(G12-GR92-ASSET-BIND)、Prefab のファイル(G12-GR92-PREFAB-FILE)、Bridge(G12-GR92-BRIDGE-SCENE)。
 - Notes(G12-GR92-ASSETREF-SCENE-V3): EntityRefId の張り替えは BeginPlay の後に起きるので、BeginPlay の中で参照先を引くコンポーネントは張り替え前の 0 を見る(今の利用は Tick で引く SpringArmComponent だけ)。公開の ReconcileWithSchema の結果には EntityRefId のプロパティが入らない(張り替えの予定は LoadIntoWorld の内部だけが持つ)。保存の集合の外を指す参照は警告して参照なしで保存する。
+
+- U1 静的な AABB の木（StaticAabbTree）を新設し、CMake に足す: 着地(直し 0 回)
+- U2 ブロードフェーズが静的なプロキシを木に分け、署名で使い回し、動く物と静的の組を木から作る: 着地(直し 0 回)
+- U3 PhysicsModule が bStatic を設定し、公開用へ木を渡し、接触の解決で組の添字を使う: 着地(直し 0 回)
+- U4 インスタンスの問い合わせ（Raycast・Overlap・ExecuteQuery）を木の走査＋木の外の線形走査にする: 着地(直し 0 回)
+- U5 規模の試験に静的の木のケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-05 G12-GR09-STATIC-TREE（run 20261105-193213 の反復 2）
+- Done: 静的なコライダーを `StaticAabbTree`（平らな配列の節・葉 4 個以下・最大軸の中央値の分割・重心を座標とハンドルの順に並べる）に入れた。`PhysicsShapeProxy::bStatic` を足し、`PhysicsModule::BuildBroadphase` が有効な Dynamic / Kinematic の Body を持たないコライダーを静的にする。`SetProxies` は静的の署名（ハンドル・形・形の値・境界）が前回と同じなら木を使い回し、違えば 1 回だけ作り直す。組は 動く物どうし = X 軸の SAP、動く物×静的 = 木、静的どうし = trigger など能動側から木、高さ場 = 今の別枠で作り、`IsPairLess` で整列する。作業用と公開用は木を `TSharedPtr` で共有する（`ShareStaticTreeFrom`）。組に `m_Proxies` の添字を持たせ、`ResolveContacts` は `GetPairProxy` で引く。インスタンスの Raycast・Overlap・`ExecuteQuery` は木の走査（最近接のレイは手前から訪れて打ち切る）＋木の外の線形走査にし、静的の `*OverProxies` は線形のまま。木の要約（境界の和・形の最大の大きさ・掃引で無効な箱）で precheck のエラーが出うるときは線形へ戻す。
+- 証拠: `.harness/runs/20261105-193213/verify-G12-GR09-STATIC-TREE-U5.txt` の後半（1090 行〜。verify の 2 行: Debug の PhysicsDynamicsTest・SceneQueryRaycastTest のビルド EXIT_CODE 0、ctest 12 件 100% Passed）。実測: 静的 5000＋動く 50 で作業用の作り直し 1→0→0→1→0（3 ステップ目に静的を 1 個動かした）、公開用は全部 0、狭域判定 200（上限 800）、探索 400（上限 組 200×log2(5050)）、候補 200。混ざった形 2000 個（静的 1266）で組 1679 が総当たりと一致し作り直し 1→0→0、Raycast・Overlap・球とカプセルの掃引各 100 回が完全一致、入力順の入れ替え・2 回の作成で節 995 個の並びと問い合わせの結果が同じ。
+- Next: ランナーの評価者の反証（物理の危険地帯）。アプリを起動する確かめは無い。Entity の無いコライダーとチャンクの部分木は G12-GR09-DETACHED-COLLIDERS、時間の計測は G12-GR09-SCALE-MEASURE。
+- Notes: 毎ステップ動く Body の無いコライダー（スクリプトで動かす trigger など）は毎ステップ木の作り直しになる。「2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す」規則を足す場所は `SetProxies` の木に入れる条件の判定（コメントあり）。
+- Notes: 木の決定性は同じ重心座標の項目のハンドルが重ならない前提（同じハンドルを違う境界で 2 回渡す入力では、入力順を変えたときの節の一致は保証しない）。
+- Notes: 最近接のレイの打ち切りは、見つけた距離に 1e-4×(1＋距離) の余白を足して縮める（同距離で大きいハンドルが勝つ規則を落とさないため）。
