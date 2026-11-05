@@ -10258,15 +10258,38 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
 - Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
 - Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
-- U3 起動引数 --job-workers=<N> でワーカーの数を変えられるようにする: 着地(直し 0 回)
-- U1 空転と負荷下の ParallelFor の試験を足し、修理前の結果を記録する: 着地(直し 2 回)
-- U2 ワーカーの待ちを未着手のタスクの数にし、取得をキューごとのロックにする: 着地(直し 0 回)
 
-## G12-GR108-JOBSYSTEM-WAIT（2026-11-05）
+## 2026-11-05 G12-GR45-DRYNESS-CPU（run 20261105-203950 の反復 1、統合ブランチの取り込み）
+- Done: feature/scene-launcher を取り込み、`Test/Core/Object/SceneFileRoundTripTest.cpp` の衝突を両側の試験を残して解いた。WitherSourceComponent の往復の試験は、シーンの形式が v3 になったのに合わせて版の検査を `SceneSerializer::SceneFileFormatVersion` で見る形にした。
+- 証拠: `.harness/runs/20261105-203950/verify-build.txt`（MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが EXIT=0）、`.harness/runs/20261105-203950/verify-ctest.txt`（6 本 100% tests passed, 0 tests failed out of 6）。アプリを起動する確かめは無い。
+- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
+- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
+- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
+- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
+- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。
+- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
+- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
+- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
+- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
+- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。
 
-- Done: JobSystem のワーカーは「まだ取られていないタスクの数」（`m_pendingTaskCount`。積む前に増やし、どこかのキューから取り出したときに減らす）で述語付きの待ちをし、述語に効く変更（提出・停止・縮小）は起床専用のミューテックスを取ってから通知する。取得は全体のロック（`m_workerThreadMutex`）を外し、ローカルキューの配列は読み書きロック、各キューは自分のミューテックスで守る（`WorkStealingQueue` は任意のスレッドが Push し `WaitForAll` が 0 番を Pop するので、全操作をロックする両端キューにした）。盗みは全キューを一周する。取得が提出の門を通らなくなったため、`m_queuedTaskCount` の加算も積む前へ移した（取得と完了が加算を追い越して数が残り続けるのを防ぐ）。起動引数 `--job-workers=<N>`（1〜256）でワーカーの数を変えられる（既定は今のまま hardware_concurrency - 1）。
-- 試験: `JobSystemIdleCpuTest`（500 ms の忙しいタスク 1 本と、ワーカー数 × 4 本の空のタスクでワーカーを起こした状態で、プロセスの CPU 時間 <= 1000 ms かつ プロセスのサイクル数 / 長いタスク自身のサイクル数 <= 2.0）、`ParallelForLatencyUnderLoadTest`（64 本の長いタスクで塞いだ状態の ParallelFor が直列の 1.5 倍以下、全番号ちょうど 1 回）。修理の前は IdleCpu が 5 回とも比 6.38〜6.65 で失敗（`.harness/runs/20261105-203938/aux-GR108-idlecpu-before-fix.txt`）、修理の後は 5 回とも比 1.009〜1.010 で合格。Latency は比 1.0009。
-- 証拠: `.harness/runs/20261105-203938/verify-G12-GR108-JOBSYSTEM-WAIT.txt`（`cmake --build build --config Debug --target JobSystemShutdownTest EntityTreeTest -- /m:1` の build_exit=0、ctest の 7 本 100% tests passed, 0 tests failed out of 7、JobSystemShutdownTest・JobParallelForTest・JobSystemIdleCpuTest の各 5 回の繰り返しも全部 Passed、numstat の 2 通りが一致）。
-- Next: ランナーの評価者の反証（ジョブ・スレッドの危険地帯）。既定のワーカーの数は G12-GR108-PERF-CHECK の測定で決める。`--job-workers` の起動時の解釈は Game を起動していないので未確認（ビルドだけ確かめた）。
-- Notes: IdleCpu の判定に、done-when の 1000 ms に加えてサイクル数の比 2.0（同じ「走るタスク 1 本ぶんの 2 倍」の根拠）を足した。`GetProcessTimes` は時刻割り込みの標本化で、同じ PC でほかのアプリが動いていると修理前でも 171〜390 ms しか計上されず合格してしまう回があったため。
-- Notes: 提出の 1 本ごとの起床は今も NotifyOne。ParallelFor の補助は HIGH 優先度だがローカルキューは優先度を見ない（前からの振る舞い）。
+- U0 契約のヘッダ・骨格のファイル・CMake の登録: 着地(直し 0 回)
+- U1 CellManifest の読みと拒否: 着地(直し 0 回)
+- U3 優先度と輪の純関数: 着地(直し 0 回)
+- U2 StreamingCell の状態の遷移: 着地(直し 1 回)
+- U8 StreamingSystem の毎フレームの更新（切り直し・バイトの上限の往復を直す）: 着地(直し 0 回)
+- U5 Engine への組み込みと段 PostTick.Streaming: 着地(直し 0 回)
+- U6 StreamingCellStateMachineTest: 着地(直し 0 回)
+- U7 StreamingBudgetTest と仕上げの verify: 着地(直し 0 回)
+
+## 2026-11-05 G12-GR40-CELL-CORE（run 20261105-193215 の反復 1、完了）
+- Done: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`）に CellManifest・IStreamingPayloadHandler・StreamingCell の状態の機械・StreamingBudget・優先度と輪（Ra<Rd<Ru のヒステリシス・先読み）・StreamingSystem を置き、`Engine::Engine` のメンバと段 `PostTick.Streaming` で毎フレーム進める。Prepare は JobSystem に 1 セル 1 仕事で出し、完了の印を GameThread で見る。終了時は World・描画資源より先に StreamingSystem を止める。
+- Done: verify の 2 本を通した（ビルド終了コード 0、ctest の StreamingCellStateMachineTest・StreamingBudgetTest・EntityTreeTest・JobSystemShutdownTest・JobParallelForTest がすべて Passed。`.harness/runs/20261105-193215/verify-G12-GR40-CELL-CORE.txt`）。
+- Next: payload の中身（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）、GameMode の後始末（G12-GR40-GAMEMODE-ASYNC）、スナップロード（G12-GR40-SNAP-PREFETCH）。
+- Notes: バイトの上限（MaxCpuBytes・MaxGpuBytes）は、一度でも常駐したセルの最後の申告で入る前に判定する。初めて読むセルは量が分からないので、入れてから上限を超えた分を優先度の悪い方から追い出す（追い出したセルは次のフレームに読み直さない）。
+- Notes: Committing 中のアンロードの要求は印を残さず、すぐ Unloading に入る（コミットの歩は GameThread の同期なのでフレームの間に走っている歩は無い）。
+- Notes: 起動の確かめは後回し。マニフェストを読み込むシーンはまだ無く、`PostTick.Streaming` はセルが空なら何もしないので、どのシーンの見た目も変えない。payload を持つ項目が入ったときに、起動して歩いたときの遷移と予算の統計を確かめる。

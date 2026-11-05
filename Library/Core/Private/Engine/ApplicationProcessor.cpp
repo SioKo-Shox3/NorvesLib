@@ -2066,6 +2066,8 @@ namespace NorvesLib::Core::Engine
                 GEngine->GetRenderWorld().WaitForRender();
                 GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
             }
+            // Prepare を待ち、GameMode・World・描画資源を片付ける前にセルを解放する。
+            GEngine->GetStreamingSystem().Shutdown();
             if (lifecycle.bJobSystem)
             {
                 Thread::JobSystem::Get().StopAcceptingTasks();
@@ -2820,6 +2822,7 @@ namespace NorvesLib::Core::Engine
             // 段 PreSimulation: GameMode の状態機械 → World の段 Tick → 段 PostTick: 粒子
             RunFrameStage(EFrameStage::PreSimulation, times.Unscaled, handler);
             GEngine->GetWorld().Tick(times);
+            GEngine->GetVegetation().Tick(times.World);
             RunFrameStage(EFrameStage::PostTick, times.Particle, handler);
         }
         const FixedStepAdvanceResult result =
@@ -3017,6 +3020,8 @@ namespace NorvesLib::Core::Engine
 
         add(EFrameStage::PostTick, "PostTick.Particles",
             [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+        add(EFrameStage::PostTick, "PostTick.Streaming",
+            [](void*, const Context&) { GEngine->GetStreamingSystem().Update(); });
 
         add(EFrameStage::FixedModulePre, "FixedModulePre.PreFixedTick",
             [](void*, const Context& context) { Module::GetModuleRegistry().DispatchPreFixedTick(context.DeltaTime); });
