@@ -9809,21 +9809,31 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 角度の配分の空間はメッシュノードの逆変換を掛ける前のまま残し、modifier は `MeshNodeTransform` でモデル空間と行き来する（ヘッダと文書に記載）
 - Notes: 要起票: `SetGraph` で別の骨格に付け替えても、設定ファイルから作った modifier（解決済みの関節の添字を持つ）が残る
 - Notes: 要起票: グラフの付け替えで重みの param が無くなると、Apply が毎フレーム false になり、ログも出ないまま姿勢が出なくなる
-- U1 2 つのモディファイアの雛形・CMake 登録・型の表への登録・試験ファイルの雛形: 着地(直し 0 回)
-- U2 SpringBoneModifier の実装: 着地(直し 0 回)
-- U3 FollowThroughModifier の実装: 着地(直し 0 回)
-- U4 SpringBone の試験: 着地(直し 0 回)
-- U5 文書(AnimationRuntime.md・Testing.md): 着地(直し 0 回)
-- U6 FollowThrough の試験とタスクの verify: 着地(直し 0 回)
 
-## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 1、完了）
-- Done: `SpringBoneModifier`（type `SpringBone`、既定の order 700）と `FollowThroughModifier`（type `FollowThrough`、既定の order 710）を足し、組み込みの型の表に登録した。SpringBone はワールド空間の粒子を 1/120 秒の固定サブステップ（最大 4 回、超えた時間は `GetLastDroppedSeconds` で返す）で半陰的オイラー積分し、骨の長さの拘束と回転の制限つきの `FromToRotation` で姿勢に重ねる。初回・`RequestReset`・`teleportDistance` を超える移動・非有限で状態をアニメ姿勢へ戻す。風は `SetWindAcceleration` の口だけ（既定 0）。FollowThrough は胸・首のモデル空間の回転を `AngularSpring` で遅らせ、`heldSlot` が埋まっている間は質量の倍率に `heldMassScale` を掛ける（既定の重み 0.25、仮）。`head` を指定すると頭の回転はアニメのまま
-- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify.txt`（verify のビルド EXIT=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest` 2/2 Passed。SpringBone: 静止後の先端の残差 0 m・加速中の遅れ −0.187 m・骨の長さの誤差 2.7e-8 m・テレポートと再初期化の後の残差 0・dt=0.5 で有限かつ捨てた秒数の誤差 2e-9。FollowThrough: 段の 0.05 秒後に胸・首が 51.3° 遅れ 3 秒後に差 0°、頭の誤差 1e-5°、重み 0 でビット差 0、保持中は遅れが 53.8°→58.3° に増える。保持の倍率を外す負の対照でケース 3 が落ちる）
-- Next: ランナーの評価者の反証（Public API の危険地帯）。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
-- Notes: `radius`（球コライダー）は受け取るだけで計算に使わない。風の場（GR46）は v1 の外
-- U7 評価の再開を World の通し番号で検知して状態を戻す(差し戻しの直し): 着地(直し 0 回)
-## 2026-11-05 G9-GR15-SPRING-FOLLOW（run 20261105-093023 の反復 2、差し戻しの直し、完了）
-- Done: SpringBone・FollowThrough の `Apply` が所有者の World の `GetTickSerial()` を覚え、前回の評価から 2 以上進んだ（または戻った）ときは評価の再開とみなしてアニメ姿勢へ戻すようにした。組み込みの型の表から作った modifier（外から `RequestReset` を呼べない）でも、`SetEvaluationEnabled` の停止と再開、重みのカーブが 0 から戻るときに状態が戻る。同じ番号での再評価と、所有者か World が無いときは今までどおり。文書のリセットの条件を直した
-- 証拠: `.harness/runs/20261105-093023/G9-GR15-SPRING-FOLLOW-final-verify-2.txt`（verify のビルド EXIT=0、ctest 2/2 Passed。SpringBone case=7: 評価を 5 フレーム止めて所有者を 0.9 m 動かした後の再開のフレームで先端の残差 0 m・非有限 0。判定を外した負の対照では残差 0.386 m で落ちる。既存の 9 ケースの値は変わらない）
-- Next: ランナーの評価者の反証。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
-- Notes: 評価者の残課題（non-blocking）として、`FromToRotation` の約 0.26° の不感帯と、根の粒子をサブステップの間で補間していないことが残る
+- U1 Library に接地の判定の純関数と接地の metadata の作り方を置き、AnalyzeFootContacts をそれに載せ替える: 着地(直し 0 回)
+- U2 animgraph の clip ノードに markerEvents を足し、marker から同じ名前の点イベントを出す: 着地(直し 0 回)
+- U3 cook の後処理を Library の判定と名前に載せ替える: 着地(直し 0 回)
+- U4 cook の足の印の名前・二重にならないこと・Library と cook の窓の一致を RigSplitCookTest で確かめる: 着地(直し 0 回)
+- U5 名前の規約・markerEvents・cook の名前と試験を文書に書き、タスクの verify を回す: 着地(直し 0 回)
+## 2026-11-04 G3-GR11-FOOT-CONTACT-SOURCE（run 20261104-193901 の反復 1、完了）
+- Done: 足の接地の判定を Library の純関数 `DetectFootContactWindows`（足ごとの最低を基準、高さ .03・鉛直速度 .15・最短 .05 秒、窓の中はしきい値 ×1.5〔`FootContactOptions::Hysteresis`〕）1 つにまとめ、`AnalyzeFootContacts` と cook の `ApplyRigMotionCleanup` の両方がそれを呼ぶ（cook の独自の判定を消した）。接地の名前を `Foot.<脚>.Down/Up`（LF・RF・LH・RH）にそろえ、窓から marker / 点イベントを作る `AppendFootContactMetadata` を Library に置いた（ループは marker だけ・既存 marker があれば書かない、ループしないは点イベントで終わりまで接地の Up は書かない）。cook の report に `feet_without_contacts` を足し、接地の無い脚があれば `needs_review`。animgraph の clip ノードに `markerEvents`（既定 false）を足し、指定したノードでは marker を跨いだときに同じ名前の点イベントを出す。AnimationRuntime.md・SkeletalRotationRetarget.md・Testing.md に書いた。
+- 証拠: `.harness/runs/20261104-193901/verify-G3-GR11-FOOT-CONTACT-SOURCE.txt`（SkeletalAnimationSamplingTest・CookedMeshTest・AssetCook の Debug ビルド成功、ctest で SkeletalAnimationSamplingTest・CookedSkeletalAssetTest・CookedClipBankV1Test・SkeletalClipBankBindingTest・RigSplitCookTest の 5 件と RigMotionCleanupTest が Passed）。
+- Next: ランナーの評価者の反証（Public API と cook の出力の変更）。
+- Notes: `Test/Core/Asset/RigMotionCleanupTest.cpp`（paths の外）を、旧い形（`<role>_down` の名前・ループでも窓イベント・ループしないクリップにも marker）を固定していたので新しい形に書き換えた（IoU・継ぎ目の Down/Up・既存 marker の保持・時間の補正の検査は残した）。足ごとの最低を基準にしたので、ずっと同じ高さで止まっている足は高い位置でも接地とみなされる（接地なしと区別できない。上下に動き続ける足は接地なしになる）。ループしないクリップの点イベントは、時刻 0 から接地している窓の Down も時刻 0 に書く。marker から出す点イベントの `EventIndex` は events の件数 + marker の添字。起動の要る確かめは無い。
+
+- U1 Math に三角形の型・最近点・球/カプセル/OBB と三角形の接触を足す: 着地(直し 0 回)
+- U2 高さ場の格子データを内部ヘッダへ移し、8×8 セルの最小最大の格子と面/滑らかの 2 種の法線を足す: 着地(直し 0 回)
+- U4 スプラットの層・SampleSurface・タイル番号・作り方 CreateFromSamples・地形の材質の記述を足す: 着地(直し 0 回)
+- U3 Math に球・カプセルと三角形の掃引を足す: 着地(直し 1 回)
+- U5 高さ場に Raycast(最小最大の格子での 2D-DDA)を足す: 着地(直し 0 回)
+- U7 TerrainSystem に GroundSample・SampleGround・RaycastGround・SampleGroundBatch を足す: 着地(直し 0 回)
+- U6 高さ場に OverlapSphere・OverlapCapsule・OverlapBox・SweepSphere・SweepCapsule を足す: 着地(直し 0 回)
+- U8 TerrainHeightFieldQueryTest を足してタスクの verify を通す: 着地(直し 1 回)
+- U9 OverlapBox の深さを三角形の真下の柱と箱の共通部分の最深点で測る: 着地(直し 0 回)
+- U10 カプセルの掃引が IterationLimit で本当の当たりを隠す原因を突き止めて直す: 着地(直し 0 回)
+- Done (G5-GR38-HEIGHTFIELD-QUERY、run 20261104-191432 の反復 1): `Math` に `Triangle`・`ClosestPointOnTriangle`・`ClosestPointsSegmentTriangle`・`ComputeContact(Triangle, Sphere|Capsule|OBB)`・`SweepSphere|SweepCapsule(…, Triangle, …)` を足した。`TerrainHeightField` は格子の中身を内部ヘッダ `TerrainHeightFieldGrid.h` へ移し、8×8 セルの最小最大の格子、`SampleNormal(x, z, TerrainNormalKind::Face|Smooth)`、NVTRN の SPL0・SPL1 から読むスプラットと `SampleSurface`（最近の頂点の重み最大の層、同点は小さい番号）・`GetTileId`、試験と道具向けの `CreateFromSamples`、`Raycast`（ブロックとセルの 2D-DDA、地表の下の原点は距離 0・零法線）、`OverlapSphere|Capsule|Box`（地中は固体で上向きへ押し戻す。箱は三角形の真下の柱と箱の共通部分の最深点で深さを測り、辺・頂点の当たりは滑らかな法線）、`SweepSphere|SweepCapsule` を持つ。層→表面の名前の表は `TerrainMaterialDesc`（仮の表: Soil・Gravel・Moss・Mud・Rock・Sand・Water）。`TerrainSystem` に `GroundSample`・`GroundHit`・`SampleGround`・`RaycastGround`・`SampleGroundBatch` を足した。
+- 試験: `TerrainHeightFieldQueryTest`（MathGeometryTest の束）、`GeometryContactTest` に三角形の接触、`GeometrySweepTest` に三角形の掃引（浅い角度・裏面の法線・初期重なり・丸めで越えた歩の再現）。
+- 証拠: `.harness/runs/20261104-191432/verify-G5-GR38-HEIGHTFIELD-QUERY.txt`（MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed。Raycast 1 万本が総当たりと一致・最近点の差 4.4e-6 m、斜面の深さの差 4.6e-8 m、辺・頂点をまたぐ法線の角度差の最大 1.08°、掃引は球・カプセルとも 200/200 一致・距離差の最大 8.9e-5 m、SampleGroundBatch が個別の呼び出しとビット一致）。
+- Next: SceneQuery の `QueryGround`・ColliderComponent の表面の種別・物理モジュールへの地形の形の組み込み（ロードマップ GR38 の 2 の後半と 3）は別の項目。表面の名前の一覧は企画の確定を待って `TerrainMaterialDesc` の仮の表を置き換える。
+- Notes: 性能は記録だけ（Debug、10 万回の平均）: SampleGround 0.53 µs/回、100 m の Raycast 0.72 µs/本（目安は RelWithDebInfo で SampleGround 0.2 µs・Raycast 5 µs）。スプラットは cook 済みの mip0（頂点ごと、重みの和 255）を読み、和が 255 でない・未使用のチャンネルが 0 でない NVTRN は `CreateFromCookedTerrain` が拒否する。照会は LOD0 と同じ対角で、LOD1 以上の見た目とは最大 maxVerticalError だけずれる。アプリを起動する確かめは無い。
+- Notes (G5-GR38-HEIGHTFIELD-QUERY、run 20261105-093022 の反復 1): 前回の評価が枠切れ(429)で未実施のため状態が doing に戻っていた。コードは 6d378713 から変わっておらず、その版の verify(MathGeometryTest の Debug ビルド終了コード 0、ctest 6/6 Passed)を証拠に done に戻し、評価をランナーに回す。

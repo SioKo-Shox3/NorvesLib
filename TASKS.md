@@ -5406,7 +5406,7 @@
 - notes: 決定: ロードマップ GR26 の設計1（Normal.w = モデルの ID、Material.a = P0、Emissive.a = P1）を採るが、10-02 の後に Normal.w と Material.a へ場当たりの意味（地形の受け手・草の株・鏡面の無い材質）が入っているので、それらを Normal.w の整数の印へ移して Material.a を P0 に空ける。理由: RGBA16F は 2048 までの整数を厳密に表せ、Material.a（8bit）の閾値の比べ（0.125〜0.375）は意味が増えると衝突する。G7-S6（濡れの符号化）の推奨 (A) が Material.a = P0（DefaultLit では濡れ感度）を前提にしているので、それと合う（ロードマップの選定課題一覧の G7-S6）。割り当て表は「段階をまたぐ注意」の「全体 / 段階をまたぐ割り当て表」（GPU の構造体を最初に触る GR26 で作る）に従う。半透明（forward_transparent.frag）とパストレーサーは ID を読まず DefaultLit 扱いと表に書く。ssr.frag の法線の復号の疑い（ロードマップ GR26 のリスク）は触らない。地形・草の印が保たれたかは golden の 2 シーンに地形と草が無いので、起動しての確かめ G5-GR27-MATERIAL-SCENES-CHECK の wasteland の撮影で見る。危険地帯（GBuffer の契約・ライティング・可視バッファの解決）なので評価者を通す。ロードマップ GR26（393〜461 行）の設計1・2、完了条件の GR26 の行、要件 `#### GR26`。
 
 ## G5-GR38-HEIGHTFIELD-QUERY: 地形の高さ場にレイ・重なり・掃引と表面の種別の照会を足し、ゲーム向けの地面のクエリを TerrainSystem に置く
-- status: todo
+- status: done
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR89-TERRAIN-MASKS
 - gr: GR38
 - done-when: `TerrainHeightField` に、面法線と滑らかな法線の 2 種の `SampleNormal`、最近セルの表面の番号（スプラットの重みが最大の層。層→表面の名前の表は地形の材質の記述に持つ）を返す `SampleSurface`、8×8 セルの最小最大の格子で 2D-DDA してから三角形を `Math::RayIntersectsTriangle` で当てる `Raycast`（原点がフットプリントの内側で地表の下なら distance=0・法線は零。最大距離の外とフットプリントの外は当たり無し）、形の AABB からセルの範囲を決めて最小最大で早期に捨て三角形ごとに接触を作る `OverlapSphere`・`OverlapCapsule`・`OverlapBox`（`GeometryContact` の Normal は地形→物体で上向きの成分を持つ。地表より下は地中まで固体とみなし上向きに押し戻す）、`SweepSphere`・`SweepCapsule`（三角形を半径だけ膨らませた形との最小の到達時刻）を足す。`Math` に三角形の最近点（`ClosestPointOnTriangle`）と、球・カプセル・OBB と三角形の接触の関数を足す（`Library/Core/Public/Math/GeometryIntersection.h` は今 `RayIntersectsTriangle`（403 行）しか三角形を扱わない）。`TerrainSystem` に `GroundSample{bValid, Height, Normal, SlopeRadians, SurfaceId, TileId}`・`SampleGround(x,z)`（O(1)）・`RaycastGround(ray, maxDistance, hit)`・`SampleGroundBatch(span, span)` を置く。 `TerrainHeightFieldQueryTest`（`MathGeometryTest` の束へ MEMBER。ソースは `Test/Core/Terrain/`）が通る: 平面・斜面・正弦波の高さ場で `SampleHeight`・`SampleNormal` が解析値と一致し、区画メッシュの補間高さとの最大差が 1e-4 以内。上から・斜めからの乱数 1 万本の `Raycast` が全三角形の総当たりと同じ最近点を返す。球・カプセル・OBB を斜面に置いた深さが解析値と一致し、三角形の辺・頂点をまたいで 0.1 m ずつ動かしても法線が反転・跳躍しない。`SweepSphere`・`SweepCapsule` の到達時刻が総当たり（小刻みの重なり判定）と 1e-3 以内。`SampleGroundBatch` が個別の呼び出しと一致し、表面の番号がスプラット最大の層になる。`GeometryContactTest` に三角形の接触のケースを足して通る。
@@ -5651,7 +5651,7 @@
 - notes: 選定課題 G9-S5（段 2 を G9 に含める時期）は推奨の A に決めた: 段 1 の後、G9 の中で段 2 まで続けて作り、着手は最後にする。理由: 作者は必要な機能を今後のことも考えて全部やる方針で、段 2 は GR82 の v1 の形式に載るので、G2 が形式を固めた後に足すのが安全なため。段 1 の実 BVH の記録で効果が小さいと分かったら、作者へ戻して B（G9 の外へ送る）に切り替える。今のコードの事実: CHAN には `encoding u32=0` の欄があり、SAMP は 32 bytes の無圧縮だけ（`Docs/Architecture/ClipBankV1Wire.md:49-50`）。未知の任意の節は全ての検査の後でだけ読み飛ばす（同 17 行）。比べる相手は、「段階をまたぐ注意」の「G9 / GR87 段2・GR85」のとおり、旧 `SampleChannelValue` の線形走査ではなく GR12 の `ClipChannelSampler` の二分探索（`Library/Core/Public/Animation/ClipChannelSampler.h:10-31`）。旧形式（NVSKEL 0.x）は変えない。UNCERTAIN: 一様な時刻の印をどこに持つか（`SkeletalAnimationChannel`（`Library/Core/Public/Resource/SkeletalGltfData.h:70-76`）に欄を足すと Public API と既存の比較・ハッシュに波及する）は未確認。解消するには、チャンネルの比較・ハッシュを使う箇所（`CookedClipBankV1.cpp` の payload の hash、`RigBoundClipProof`）を読み、欄を足さずに読み込み時の派生のキャッシュ（GR12 の resource 派生の cache）に置けるならそちらを選ぶ。`Test/Tools/ClipBankV1Oracle.py` が minor 0 しか受けないなら、minor 1 を受けるよう直す。圧縮の形のまま評価する案は採らない（要件の設計案 (6)）。アセットロードと Public API の危険地帯なので評価者を通す。出典: 要件 `#### GR87` の設計案 (5)、受け入れ確認の【量子化】【互換】、ロードマップの選定課題一覧の G9-S5。
 
 ## G3-GR11-FOOT-CONTACT-SOURCE: 足の接地の検出を Library の 1 か所にまとめて cook からも呼び、接地の marker から同じ名前の接地イベントを出せるようにする
-- status: todo
+- status: done
 - after: G3-GR11-EVENT-PROPERTIES, G4-GR128-PROCESSING-CASES, G4-GR128-CLEANUP-CASES
 - gr: GR11
 - needs-gr: GR128
@@ -10423,3 +10423,17 @@
 - verify: `ctest --test-dir build -C Debug -R "^(GameModeStateMachineTest|SaveServiceTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/GameMode/GameModeStateMachine.h, Library/Core/Private/GameMode/GameModeStateMachine.cpp, Game/GameApplicationHandler.cpp, Test/Core/GameMode/GameModeStateMachineTest.cpp
 - from: G8-GR76-RESET-LIFETIME
+
+## G9-GR15-POSE-MODIFIER-BASE-P1: グラフの付け替えで、設定ファイルから作った姿勢の後処理を新しい骨格とパラメータに解決し直し、解決できないものは警告を出して外す
+- status: todo
+- after: G9-GR15-POSE-MODIFIER-BASE
+- done-when: (1) `AnimatorComponent` は、最後に `ApplyPoseModifiersJson` / `ApplyPoseModifiersFile` で当てた設定の元（JSON の文字列と型の表の写し）を持つ。型の表は呼び出し側の配列の寿命に頼らず、項目を値で写して持つ。`SetGraph` が成功したら（`Detach` の後に付け直す場合も含む）、その元を新しい骨格とパラメータ（`m_BoundSkeleton`・`m_Instance.Parameters()`）でもう一度解析し、modifier 群を差し替える。(2) 骨格 A で設定を当ててから、関節の並びが違う骨格 B へ `SetGraph` すると、試験だけの型が受け取る関節の添字が B の `FindJointIndex` と一致する。B に無い関節名を含む設定なら設定の modifier を外し、最後の解決の報告を読む口（例: `GetPoseModifierConfigReport()`）から `UnknownJoint` とそのパスが読める。そのとき姿勢は modifier なしで出る（`EvaluateAnimation` が true を返し、`SubmitLocalPose` まで届く）。`SetGraph` そのものは失敗にしない。(3) 重みの `param` を定義しないグラフへ付け替えた場合も同じく外れ、`UnknownParam` が読め、姿勢は毎フレーム出続ける。(4) modifier の `Apply` が false を返して姿勢を出さないフレームでは、成功から失敗に変わったときだけ `Logging/LogMacros.h` で警告を 1 回出す（何番目の modifier か、その Order を含める）。続けて失敗する間は出し直さず、Release では出さない。失敗したときの扱い（そのフレームの姿勢を出さない）は今のまま変えない。既存の `AnimGraphRuntimeTest` と `PoseModifierBaseTest` にある modifier の順序と失敗時のケースは書き換えずに通る。(5) 足した試験ごとに、反証する契約・ほかの手段で気づけるか・黙って失敗するかの 3 点を `Docs/Testing.md` に書き、付け替えのときの規則を `Docs/Architecture/AnimationRuntime.md` に書く。(6) 下の verify が通る。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest GLTFSkeletalAnalyzerTest ResourceRegistryTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|GLTFSkeletalAnalyzerTest|SkeletalResourceLifetimeTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Component/AnimatorComponent.h, Library/Core/Private/Component/AnimatorComponent.cpp, Test/Core/Rendering/PoseModifierBaseTest.cpp, Docs/Architecture/AnimationRuntime.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- from: G9-GR15-POSE-MODIFIER-BASE
+- notes: コードで確かめたこと。`SetGraph`（`AnimatorComponent.cpp:76-118`）は `m_BoundSkeleton` と `m_Instance` を差し替えるが、`m_Modifiers` には触れない。そのため設定から作った modifier は、古い骨格で解決した関節の添字を持ったまま残る（P1）。重みは `ConfiguredPoseModifier::Apply`（`PoseModifierConfig.cpp:128-164`）が毎フレーム名前でパラメータを引く。パラメータが無いと false を返し、`EvaluateAnimation`（`AnimatorComponent.cpp:400-416`）はログを出さずに `SubmitLocalPose` を飛ばす（P2）。2 つの提案は原因が同じ（付け替えのときに設定を解決し直していない）なので、1 つのタスクにまとめた。`AddModifier` で足した modifier の扱いは今のまま変えない（設定を当てると全部を置き換える今の意味も変えない）。Public API（`AnimatorComponent.h`）に触れる危険地帯なので評価者を通す。新しいソースは作らず、既存の試験の実行ファイルにケースを足す。アプリの起動は要らない。
+
+---
+
+補足（書式の外）: この場はプランモードでしたが、使える道具に ExitPlanMode と AskUserQuestion がありませんでした。洗い出し役の契約どおり、ファイルは書き換えず、上の判断の文章だけを返しています。

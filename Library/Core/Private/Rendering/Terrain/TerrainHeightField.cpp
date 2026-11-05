@@ -1,7 +1,9 @@
 ﻿#include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/Terrain/TerrainHeightFieldGrid.h"
 
 #include "Asset/AssetFileReader.h"
 #include "Asset/CookedTerrainFormat.h"
+#include "Asset/CookedTextureFormat.h"
 #include "Text/JsonDocument.h"
 
 #include "stb_image.h"
@@ -349,49 +351,166 @@ namespace NorvesLib::Core::Rendering::Terrain
         return normal;
     }
 
-    /// 格子の高さ場の中身。頂点 (column, row) はエンジンの (FirstX + column × Spacing, FirstZ + row × Spacing)。
-    /// 行 0 が北端（-Z の端）で、列 0 が西端（-X の端）
-    struct TerrainHeightField::GridData
+    void TerrainHeightField::GridData::BuildBlockBounds()
     {
-        /// float32 の little-endian、行優先、見出しなし（Columns × Rows × 4 バイト）
-        Asset::AssetBlob Bytes;
-        uint32_t Columns = 0;
-        uint32_t Rows = 0;
-        double FirstX = 0.0;
-        double FirstZ = 0.0;
-        double Spacing = 1.0;
-        /// 造成の後の頂点の高さ（造成の範囲を囲む頂点の矩形だけ。行優先）。造成が無ければ空
-        Container::VariableArray<float> GradedHeights;
-        uint32_t GradedFirstColumn = 0;
-        uint32_t GradedFirstRow = 0;
-        uint32_t GradedColumns = 0;
-        uint32_t GradedRows = 0;
-
-        /// ファイルの値
-        float FileAt(uint32_t column, uint32_t row) const
+        if (Columns < 2u || Rows < 2u)
         {
-            float value = 0.0f;
-            std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
-                        sizeof(float));
-            return value;
+            BlockColumns = 0;
+            BlockRows = 0;
+            BlockMinHeight.clear();
+            BlockMaxHeight.clear();
+            return;
         }
 
-        /// 頂点の高さ（造成の範囲は造成の後の値）
-        float At(uint32_t column, uint32_t row) const
+        // 加算で切り上げると頂点数が上限近くのときにあふれるため、先に 1 を引いて割る
+        BlockColumns = (Columns - 2u) / kBlockCells + 1u;
+        BlockRows = (Rows - 2u) / kBlockCells + 1u;
+        const size_t blockCount = static_cast<size_t>(BlockColumns) * BlockRows;
+        BlockMinHeight.resize(blockCount);
+        BlockMaxHeight.resize(blockCount);
+        for (uint32_t bz = 0; bz < BlockRows; ++bz)
         {
-            // 符号なしの引き算なので、矩形の左・上の外は大きな値になって外と判定される
-            const uint32_t localColumn = column - GradedFirstColumn;
-            const uint32_t localRow = row - GradedFirstRow;
-            if (localColumn < GradedColumns && localRow < GradedRows)
+            const uint32_t firstRow = bz * kBlockCells;
+            const uint32_t lastRow = firstRow + std::min(kBlockCells, Rows - 1u - firstRow);
+            for (uint32_t bx = 0; bx < BlockColumns; ++bx)
             {
-                return GradedHeights[static_cast<size_t>(localRow) * GradedColumns + localColumn];
+                const uint32_t firstColumn = bx * kBlockCells;
+                const uint32_t lastColumn = firstColumn + std::min(kBlockCells, Columns - 1u - firstColumn);
+                float minHeight = At(firstColumn, firstRow);
+                float maxHeight = minHeight;
+                // 升目の両端の頂点を含むため、隣接ブロックは境界の頂点を共有する
+                for (uint32_t row = firstRow; row <= lastRow; ++row)
+                {
+                    for (uint32_t column = firstColumn; column <= lastColumn; ++column)
+                    {
+                        const float height = At(column, row);
+                        minHeight = std::min(minHeight, height);
+                        maxHeight = std::max(maxHeight, height);
+                    }
+                }
+                const size_t index = static_cast<size_t>(bz) * BlockColumns + bx;
+                BlockMinHeight[index] = minHeight;
+                BlockMaxHeight[index] = maxHeight;
             }
-            float value = 0.0f;
-            std::memcpy(&value, Bytes.GetData() + (static_cast<size_t>(row) * Columns + column) * sizeof(float),
-                        sizeof(float));
-            return value;
         }
-    };
+    }
+
+    TerrainNormal TerrainHeightField::SampleNormal(float x, float z, TerrainNormalKind kind) const
+    {
+        if (!m_Grid)
+        {
+            return SampleNormal(x, z, 0.5f);
+        }
+        if (!Contains(x, z))
+        {
+            return TerrainNormal{kOutOfRangeHeight, kOutOfRangeHeight, kOutOfRangeHeight};
+        }
+
+        const GridData &grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t column = std::min(static_cast<uint32_t>(u), grid.Columns - 2u);
+        const uint32_t row = std::min(static_cast<uint32_t>(v), grid.Rows - 2u);
+        const double fu = u - static_cast<double>(column);
+        const double fv = v - static_cast<double>(row);
+        const bool mainDiagonal = UsesMainDiagonal(column, row);
+        const bool firstTriangle = mainDiagonal ? fu >= fv : fu + fv <= 1.0;
+
+        struct NormalComponents
+        {
+            double X;
+            double Y;
+            double Z;
+        };
+        // 高さ差と間隔を先に割らずに正規化し、非常に大きな勾配での中間値のあふれを避ける
+        const auto normalize = [](double nx, double ny, double nz) -> NormalComponents
+        {
+            const double length = std::hypot(nx, ny, nz);
+            return {nx / length, std::max(ny / length, std::numeric_limits<double>::min()), nz / length};
+        };
+
+        NormalComponents normal{};
+        if (kind == TerrainNormalKind::Face)
+        {
+            const double h00 = grid.At(column, row);
+            const double h10 = grid.At(column + 1u, row);
+            const double h01 = grid.At(column, row + 1u);
+            const double h11 = grid.At(column + 1u, row + 1u);
+            double dx = 0.0;
+            double dz = 0.0;
+            if (mainDiagonal)
+            {
+                dx = firstTriangle ? h10 - h00 : h11 - h01;
+                dz = firstTriangle ? h11 - h10 : h01 - h00;
+            }
+            else
+            {
+                dx = firstTriangle ? h10 - h00 : h11 - h01;
+                dz = firstTriangle ? h01 - h00 : h11 - h10;
+            }
+            normal = normalize(-dx, grid.Spacing, -dz);
+        }
+        else
+        {
+            // 重みの並びは 00, 10, 01, 11。高さの補間と同じ比較・同じ重心座標を使う
+            double weights[4] = {};
+            if (mainDiagonal && firstTriangle)
+            {
+                weights[0] = 1.0 - fu;
+                weights[1] = fu - fv;
+                weights[3] = fv;
+            }
+            else if (mainDiagonal)
+            {
+                weights[0] = 1.0 - fv;
+                weights[2] = fv - fu;
+                weights[3] = fu;
+            }
+            else if (firstTriangle)
+            {
+                weights[0] = 1.0 - fu - fv;
+                weights[1] = fu;
+                weights[2] = fv;
+            }
+            else
+            {
+                weights[1] = 1.0 - fv;
+                weights[2] = 1.0 - fu;
+                weights[3] = fu + fv - 1.0;
+            }
+
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                if (weights[index] == 0.0)
+                {
+                    continue;
+                }
+                const uint32_t vertexColumn = column + (index & 1u);
+                const uint32_t vertexRow = row + (index >> 1u);
+                const uint32_t left = vertexColumn > 0u ? vertexColumn - 1u : vertexColumn;
+                const uint32_t right = vertexColumn < grid.Columns - 1u ? vertexColumn + 1u : vertexColumn;
+                const uint32_t north = vertexRow > 0u ? vertexRow - 1u : vertexRow;
+                const uint32_t south = vertexRow < grid.Rows - 1u ? vertexRow + 1u : vertexRow;
+                const double xFactor = left != vertexColumn && right != vertexColumn ? 0.5 : 1.0;
+                const double zFactor = north != vertexRow && south != vertexRow ? 0.5 : 1.0;
+                const double dx = (static_cast<double>(grid.At(right, vertexRow)) - grid.At(left, vertexRow)) * xFactor;
+                const double dz = (static_cast<double>(grid.At(vertexColumn, south)) - grid.At(vertexColumn, north)) * zFactor;
+                const NormalComponents vertexNormal = normalize(-dx, grid.Spacing, -dz);
+                normal.X += weights[index] * vertexNormal.X;
+                normal.Y += weights[index] * vertexNormal.Y;
+                normal.Z += weights[index] * vertexNormal.Z;
+            }
+            normal = normalize(normal.X, normal.Y, normal.Z);
+        }
+
+        TerrainNormal result{static_cast<float>(normal.X), static_cast<float>(normal.Y), static_cast<float>(normal.Z)};
+        // float に丸めたときも上向き成分を保つ
+        if (result.Y == 0.0f)
+        {
+            result.Y = std::numeric_limits<float>::denorm_min();
+        }
+        return result;
+    }
 
     namespace
     {
@@ -696,6 +815,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             return {};
         }
 
+        grid->BuildBlockBounds();
         return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
     }
 
@@ -822,6 +942,137 @@ namespace NorvesLib::Core::Rendering::Terrain
                 }
             }
             grid->Bytes = Asset::AssetBlob::FromOwnedBytes(bytes);
+            grid->TileCells = terrain.TileCells;
+            grid->TileCountX = terrain.TileCountX;
+            grid->TileCountZ = terrain.TileCountZ;
+
+            constexpr Asset::AssetPackageFourCC kSplatFourCCs[] = {
+                Asset::MakeAssetPackageFourCC('S', 'P', 'L', '0'),
+                Asset::MakeAssetPackageFourCC('S', 'P', 'L', '1')};
+            const int32_t splatLayers[] = {terrain.FindLayer(kSplatFourCCs[0]), terrain.FindLayer(kSplatFourCCs[1])};
+            if (splatLayers[0] >= 0)
+            {
+                constexpr char kSemanticPrefix[] = "terrain.splat:";
+                constexpr size_t kPrefixLength = sizeof(kSemanticPrefix) - 1;
+                uint32_t groupCounts[2] = {};
+                for (uint32_t group = 0; group < 2; ++group)
+                {
+                    if (splatLayers[group] < 0)
+                    {
+                        continue;
+                    }
+                    const auto& layer = terrain.Layers[splatLayers[group]];
+                    const auto& semantic = layer.Semantic;
+                    if (layer.Encoding != Asset::CookedTerrainFormatV0::LayerEncodingEmbeddedNvtex ||
+                        layer.PixelFormat != Asset::CookedTexturePixelFormat::RGBA8UNorm ||
+                        layer.ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+                        semantic.size() <= kPrefixLength ||
+                        std::memcmp(semantic.data(), kSemanticPrefix, kPrefixLength) != 0)
+                    {
+                        outError = "NVTRN のスプラットの形式・色空間・意味の文字列が約束と違います";
+                        return {};
+                    }
+                    size_t first = kPrefixLength;
+                    for (size_t end = first; end <= semantic.size(); ++end)
+                    {
+                        if (end == semantic.size() || semantic[end] == ',')
+                        {
+                            if (end == first || groupCounts[group] == 4)
+                            {
+                                outError = "NVTRN のスプラットの層の名前が空か、1 レイヤあたり 4 層を超えています";
+                                return {};
+                            }
+                            Container::AnsiString name;
+                            name.append(semantic.data() + first, end - first);
+                            grid->SplatLayerNames.push_back(std::move(name));
+                            ++groupCounts[group];
+                            first = end + 1;
+                        }
+                    }
+                }
+                if (splatLayers[1] >= 0 && groupCounts[0] != 4)
+                {
+                    outError = "NVTRN の SPL1 があるのに SPL0 の層の名前が 4 個ありません";
+                    return {};
+                }
+                grid->SplatLayerCount = groupCounts[0] + groupCounts[1];
+                if (columns * rows > std::numeric_limits<size_t>::max() / grid->SplatLayerCount ||
+                    side * side > std::numeric_limits<size_t>::max() / 4u)
+                {
+                    outError = "NVTRN のスプラットの大きさが格納上限を超えています";
+                    return {};
+                }
+                grid->SplatWeights.resize(static_cast<size_t>(columns * rows) * grid->SplatLayerCount);
+                for (size_t index = 0; index < terrain.Tiles.size(); ++index)
+                {
+                    const auto& tile = terrain.Tiles[index];
+                    // 解析結果の所有するバイト列を生かしたまま、mip0 だけを全体格子へコピーする。
+                    Asset::CookedTextureParseResult textures[2];
+                    Container::Span<const uint8_t> mipBytes[2];
+                    for (uint32_t group = 0; group < 2; ++group)
+                    {
+                        if (splatLayers[group] < 0)
+                        {
+                            continue;
+                        }
+                        textures[group] = Asset::ParseCookedTexture(
+                            terrain.GetLayerBlob(static_cast<uint32_t>(index), static_cast<uint32_t>(splatLayers[group])), true);
+                        const auto& texture = textures[group].Texture;
+                        if (!textures[group].Succeeded() || texture.Width != side || texture.Height != side ||
+                            texture.LayerCount != 1 || texture.PixelFormat != Asset::CookedTexturePixelFormat::RGBA8UNorm ||
+                            texture.ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+                            texture.MipCount != Asset::ComputeCookedTextureFullMipCount(static_cast<uint32_t>(side), static_cast<uint32_t>(side)))
+                        {
+                            outError = "NVTRN のスプラットの NVTEX の形式・大きさ・ミップ数が約束と違います";
+                            return {};
+                        }
+                        mipBytes[group] = texture.GetMipBytes(0);
+                        if (mipBytes[group].size() != static_cast<size_t>(side * side) * 4u)
+                        {
+                            outError = "NVTRN のスプラットの mip0 のバイト数が約束と違います";
+                            return {};
+                        }
+                    }
+                    for (uint32_t z = 0; z <= terrain.TileCells; ++z)
+                    {
+                        for (uint32_t x = 0; x <= terrain.TileCells; ++x)
+                        {
+                            const size_t source = (static_cast<size_t>(z) * static_cast<size_t>(side) + x) * 4u;
+                            const size_t column = static_cast<size_t>(tile.TileX) * terrain.TileCells + x;
+                            const size_t row = static_cast<size_t>(tile.TileZ) * terrain.TileCells + z;
+                            const size_t target = (row * grid->Columns + column) * grid->SplatLayerCount;
+                            uint32_t sum = 0;
+                            for (uint32_t group = 0; group < 2; ++group)
+                            {
+                                if (splatLayers[group] < 0)
+                                {
+                                    continue;
+                                }
+                                for (uint32_t channel = 0; channel < 4; ++channel)
+                                {
+                                    const uint8_t weight = mipBytes[group][source + channel];
+                                    if (channel < groupCounts[group])
+                                    {
+                                        grid->SplatWeights[target + group * 4u + channel] = weight;
+                                        sum += weight;
+                                    }
+                                    else if (weight != 0)
+                                    {
+                                        outError = "NVTRN のスプラットの未使用チャンネルが 0 ではありません";
+                                        return {};
+                                    }
+                                }
+                            }
+                            if (sum != 255)
+                            {
+                                outError = "NVTRN のスプラットの mip0 の重みの和が 255 ではありません";
+                                return {};
+                            }
+                        }
+                    }
+                }
+            }
+            grid->BuildBlockBounds();
             return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
         }
         catch (const std::bad_alloc &)
@@ -834,6 +1085,149 @@ namespace NorvesLib::Core::Rendering::Terrain
             outError = "NVTRN から作る格子の配列が格納上限を超えています";
             return {};
         }
+    }
+
+    Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::CreateFromSamples(
+        const TerrainGridLayout& layout, Container::Span<const float> heights, const TerrainSplatSamples* splat,
+        uint32_t tileCells, Container::AnsiString& outError)
+    {
+        outError.clear();
+        if (layout.Columns < 2 || layout.Rows < 2 || !std::isfinite(layout.Spacing) || layout.Spacing <= 0.0 ||
+            !std::isfinite(layout.FirstX) || !std::isfinite(layout.FirstZ) ||
+            !std::isfinite(layout.FirstX + (layout.Columns - 1) * layout.Spacing) ||
+            !std::isfinite(layout.FirstZ + (layout.Rows - 1) * layout.Spacing))
+        {
+            outError = "標本から作る格子の寸法・原点・間隔が不正です";
+            return {};
+        }
+        const uint64_t count = static_cast<uint64_t>(layout.Columns) * layout.Rows;
+        if (count > std::numeric_limits<size_t>::max() / sizeof(float) || heights.size() != count || heights.data() == nullptr)
+        {
+            outError = "高さの標本数が格子の寸法と合わないか、格納上限を超えています";
+            return {};
+        }
+        if (tileCells != 0 && ((layout.Columns - 1) % tileCells != 0 || (layout.Rows - 1) % tileCells != 0 ||
+            static_cast<uint64_t>((layout.Columns - 1) / tileCells) * ((layout.Rows - 1) / tileCells) > UINT32_MAX))
+        {
+            outError = "タイルの升目数が格子の両辺を割り切らないか、タイル数が格納上限を超えています";
+            return {};
+        }
+        if (splat != nullptr && (splat->LayerCount > 8 || splat->LayerNames.size() != splat->LayerCount ||
+            (splat->LayerCount != 0 && (count > std::numeric_limits<size_t>::max() / splat->LayerCount ||
+                splat->Weights.data() == nullptr || splat->LayerNames.data() == nullptr)) ||
+            splat->Weights.size() != count * splat->LayerCount))
+        {
+            outError = "スプラットの層数・名前の数・重みの標本数が格子の寸法と合いません";
+            return {};
+        }
+        for (size_t index = 0; index < heights.size(); ++index)
+        {
+            if (!std::isfinite(heights[index]))
+            {
+                outError = "高さの標本に有限でない値があります";
+                return {};
+            }
+        }
+        try
+        {
+            auto grid = Container::MakeShared<GridData>();
+            grid->Columns = layout.Columns;
+            grid->Rows = layout.Rows;
+            grid->FirstX = layout.FirstX;
+            grid->FirstZ = layout.FirstZ;
+            grid->Spacing = layout.Spacing;
+            if (tileCells != 0)
+            {
+                grid->TileCells = tileCells;
+                grid->TileCountX = (layout.Columns - 1) / tileCells;
+                grid->TileCountZ = (layout.Rows - 1) / tileCells;
+            }
+            auto bytes = Container::MakeShared<Asset::AssetBlob::ByteArray>(static_cast<size_t>(count) * sizeof(float));
+            for (size_t index = 0; index < heights.size(); ++index)
+            {
+                uint32_t bits = 0;
+                std::memcpy(&bits, &heights[index], sizeof(float));
+                for (size_t byte = 0; byte < sizeof(float); ++byte)
+                {
+                    (*bytes)[index * sizeof(float) + byte] = static_cast<uint8_t>(bits >> (byte * 8));
+                }
+            }
+            grid->Bytes = Asset::AssetBlob::FromOwnedBytes(bytes);
+            if (splat != nullptr && splat->LayerCount != 0)
+            {
+                grid->SplatLayerCount = splat->LayerCount;
+                grid->SplatWeights.resize(splat->Weights.size());
+                std::memcpy(grid->SplatWeights.data(), splat->Weights.data(), splat->Weights.size());
+                for (uint32_t layer = 0; layer < splat->LayerCount; ++layer)
+                {
+                    grid->SplatLayerNames.push_back(splat->LayerNames[layer]);
+                }
+            }
+            grid->BuildBlockBounds();
+            return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
+        }
+        catch (const std::bad_alloc&)
+        {
+            outError = "標本から格子を作るメモリを確保できません";
+            return {};
+        }
+        catch (const std::length_error&)
+        {
+            outError = "標本から作る格子の配列が格納上限を超えています";
+            return {};
+        }
+    }
+
+    uint8_t TerrainHeightField::SampleSurface(float x, float z) const
+    {
+        if (!m_Grid || m_Grid->SplatLayerCount == 0 || !Contains(x, z))
+        {
+            return kInvalidTerrainSurfaceId;
+        }
+        const GridData& grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t column = std::min(static_cast<uint32_t>(std::round(u)), grid.Columns - 1);
+        const uint32_t row = std::min(static_cast<uint32_t>(std::round(v)), grid.Rows - 1);
+        const size_t offset = (static_cast<size_t>(row) * grid.Columns + column) * grid.SplatLayerCount;
+        uint8_t surfaceId = 0;
+        for (uint32_t layer = 1; layer < grid.SplatLayerCount; ++layer)
+        {
+            if (grid.SplatWeights[offset + layer] > grid.SplatWeights[offset + surfaceId])
+            {
+                surfaceId = static_cast<uint8_t>(layer);
+            }
+        }
+        return surfaceId;
+    }
+
+    uint32_t TerrainHeightField::GetSplatLayerCount() const
+    {
+        return m_Grid ? m_Grid->SplatLayerCount : 0;
+    }
+
+    Container::AnsiStringView TerrainHeightField::GetSplatLayerName(uint32_t layer) const
+    {
+        if (!m_Grid || layer >= m_Grid->SplatLayerCount)
+        {
+            return {};
+        }
+        const auto& name = m_Grid->SplatLayerNames[layer];
+        return Container::AnsiStringView(name.data(), name.size());
+    }
+
+    uint32_t TerrainHeightField::GetTileId(float x, float z) const
+    {
+        if (!m_Grid || m_Grid->TileCells == 0 || !Contains(x, z))
+        {
+            return kInvalidTerrainTileId;
+        }
+        const GridData& grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t tx = std::min(static_cast<uint32_t>(std::floor(u / grid.TileCells)), grid.TileCountX - 1);
+        const uint32_t tz = std::min(static_cast<uint32_t>(std::floor(v / grid.TileCells)), grid.TileCountZ - 1);
+        return tz * grid.TileCountX + tx;
     }
 
     bool LoadTerrainHorizonMeshes(Container::AnsiStringView descriptorPath,
