@@ -330,6 +330,26 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
+    {
+        m_RenderingCoordinator.SetSkyOcclusionParameters(parameters);
+    }
+
+    SkyOccluderHandle RenderWorld::RegisterSkyOccluder(const SkyOccluderProxy& proxy)
+    {
+        return m_RenderingCoordinator.RegisterSkyOccluder(proxy);
+    }
+
+    void RenderWorld::UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy)
+    {
+        m_RenderingCoordinator.UpdateSkyOccluder(handle, proxy);
+    }
+
+    void RenderWorld::UnregisterSkyOccluder(SkyOccluderHandle handle)
+    {
+        m_RenderingCoordinator.UnregisterSkyOccluder(handle);
+    }
+
     void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
