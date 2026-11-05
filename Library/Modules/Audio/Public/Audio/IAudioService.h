@@ -46,5 +46,16 @@ namespace NorvesLib::Modules::Audio
         virtual AudioResult PauseVoice(VoiceHandle handle) = 0;
         /** @brief 一時停止中のボイスの再生を再開する。 */
         virtual AudioResult ResumeVoice(VoiceHandle handle) = 0;
+
+        /**
+         * @brief 奪取のために、ボイスを止めてすぐ破棄する。
+         * @details Created、Submitted、Playing、Stopping、Drained のボイスに使える。
+         * Playing ではバッファを捨てて停止した後、バックエンドのボイスを同期的に破棄する。
+         * 成功するとハンドルは無効になり、計上済みのボイスは ActiveVoiceCount から減る。
+         * 無効なハンドルには StaleHandle、Quarantined には InvalidState を返す。
+         * 停止または破棄に失敗すると BackendFailure を返す。停止済みの停止失敗、
+         * 不完全な停止結果、破棄失敗ではボイスを隔離する。
+         */
+        virtual AudioResult AbortVoice(VoiceHandle handle) = 0;
     };
 } // namespace NorvesLib::Modules::Audio
