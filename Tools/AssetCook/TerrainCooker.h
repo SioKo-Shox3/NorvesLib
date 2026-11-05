@@ -8,6 +8,8 @@ namespace NorvesLib::Tools::AssetCook
 {
     // NRM0: 世界座標（y が上）の単位法線の x・z を RG8 に入れ、y は sqrt(max(0, 1 - x² - z²)) で復元する。
     inline constexpr Core::Asset::AssetPackageFourCC TerrainNormalLayerFourCC = Core::Asset::MakeAssetPackageFourCC('N', 'R', 'M', '0');
+    // R=凹み度、空なら書かない。
+    inline constexpr Core::Asset::AssetPackageFourCC TerrainPuddleLayerFourCC = Core::Asset::CookedTerrainFormatV0::PuddleLayerFourCC;
     inline constexpr const char* TerrainHeightSemantic = "height";
     inline constexpr const char* TerrainNormalSemantic = "normal.world.xz";
 
