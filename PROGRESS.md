@@ -9759,3 +9759,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 AssetCookGrassFieldSmoke と基準の PNG 群を今の枠で入れ直す: 着地(直し 0 回)
 - U10 SceneFileRoundTripTest の草原の往復と旧ファイルを今の枠で入れ直す: 着地(直し 0 回)
 - U11 grassland の草の場を今の枠で入れ直す: 着地(直し 0 回)
+- U8 受入れの記録と全体の確かめ: 着地(直し 1 回)
