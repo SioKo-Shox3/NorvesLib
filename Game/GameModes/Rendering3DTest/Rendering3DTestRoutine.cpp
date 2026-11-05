@@ -3370,7 +3370,7 @@ namespace Game::GameModes
         if (data.m_bAnimationDebug)
         {
             data.m_AnimationDebug = NorvesLib::Core::Container::MakeShared<AnimationDebugScene>();
-            if (!data.m_AnimationDebug->Prepare(ctx, data.m_CobbleStoneMaterial))
+            if (!data.m_AnimationDebug->Prepare(ctx, data.m_CobbleStoneMaterial, !data.m_bAnimationDebugPoseModifiersOff))
             {
                 LOG_ERROR("ANIMATION_DEBUG 合成sceneの準備に失敗しました");
                 return GameModeEnterResult::Failed;

@@ -5757,7 +5757,7 @@
 - notes: 選定課題 G9-S1（胴の傾きの計算と適用の場所）は推奨の B に決めた: 傾きの計算と平滑は G4 の移動（GR05）に一本化し、GR15 は配分・空中のフェード・個別の ON/OFF だけを持つ。GR05 が値を出さない骨格・場面のために `source: signals` で A の式も使えるようにする。理由: 計算と平滑が 1 か所になり、足 IK との順序を ModifierOrderTest で固定しやすい。今のコードの事実: `AnimDriveSignals` にバンク・ピッチの欄は無い（`Library/Core/Public/Animation/AnimParams.h:35-43`）。G4 の `QuadrupedLocomotionModel` が平滑済みの Pitch・Bank を出し（`Library/Core/Public/Locomotion/QuadrupedLocomotionModel.h:38`）、`QuadrupedLocomotionComponent::PublishVisual`（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:491-517`）がそれを VisualPose へ剛体で掛け（選定課題の C に当たる）、同じ値を `BankAngle` / `PitchAngle` のパラメータで Animator へ渡している。B の modifier を足すと傾きが二重になるので、使う場面では `SetVisualTiltScale(0)` にする。`locomotion.v1` の JSON は節の欄を過不足なく要求する（`Library/Core/Private/Locomotion/QuadrupedLocomotionJson.cpp:20-54`）ので、設定の形は変えず setter にした（可逆で小さい変更なので試験は足さず、Game のビルドで確かめる）。GR05 は G4 の受け入れが構文確認だけ（`TASKS.md` の `G4-MOVEMENT-CAMERA`）なので needs-gr に入れた。GR11 は同期位相、GR13 は保持スロット（`Library/Core/Public/Component/HoldSlotComponent.h:47`）のため。視線のターゲットを決める側（GR22・GR24 の知覚）と眼の関節は作らない。Public API（`AnimatorComponent.h`）に触れるので評価者を通す。出典: 要件 `#### GR15` の (a)(b)(c)、ロードマップの選定課題一覧の G9-S1。
 
 ## G9-GR15-ORDER-DEBUG-VIEW: モディファイアの順序を試験で固定し、調整の画面とデバッグ描画を animation-debug の場面へつなぐ
-- status: todo
+- status: done
 - after: G9-GR15-LEAN-SPINE-LOOK, G9-GR15-SPRING-FOLLOW, G9-GR14-FOOT-PLANT, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15, GR14
 - needs-gr: GR10, GR13
