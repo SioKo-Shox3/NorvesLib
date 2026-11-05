@@ -9890,3 +9890,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ScatterBaker(NVSCT を焼く)と ScatterBakeTest: 着地(直し 0 回)
 - U4 scatter spec の読み込み・地形の参照と cooked_hash の照合・AssetCook の入口・スモーク: 着地(直し 0 回)
 - U5 grassland の散布の spec・資産の一覧・CookAssets と最終の verify: 着地(直し 0 回)
+
+## 2026-11-05 G5-GR90-SCATTER-BAKE（run 20261105-102917 の反復 1、完了）
+- Done: 散布の cook 済み形式 NVSCT v0（`Asset/CookedScatterFormat.h`・`CookedScatterLoader.cpp`（`ParseCookedScatter`・`DecodeScatterInstance`）・`CookedScatterWriter.cpp`、`Docs/Architecture/NVSCTv0.md`）。AssetCook の `--kind world --format nvsct.v0.inst16 --entry-type Sct0`（`ScatterSpec`・`ScatterBaker`・`ScatterPlacement`）: 一辺 r/√2 のセルの splitmix64 の hash・Matérn II の逆変換の受理・5×5 の局所最大で (seed, 種, セル) の純関数として配置し、高さは LOD0 の三角形（UsesMainDiagonal）で引き、チャンク内は Rank の昇順。spec に記録した地形の cooked_hash が食い違うと失敗する。grassland の散布 `Assets/Scatter/grassland.scatter.json`（岩・倒木 = mega、低木・株 = foliage、32 m チャンク）を `GrasslandTerrain.json` の worlds に載せ、CookAssets で焼ける（256 チャンク・36,599 本・615,056 B）。試験 `ScatterBakeTest`（(d) は r=0.15 m で seed 10 個の平均 8,283.3 本、+1.11%）・`CookedScatterTest`（拒否と cook の経路）・`AssetCookTerrainSmoke` の散布。
+- 証拠: `.harness/runs/20261105-102917/G5-GR90-SCATTER-BAKE-U5-verify.txt`（AssetCook・CookedMeshTest の Debug ビルド、ctest 4 件 100% Passed、CookAssets `-OnlyLogicalPath "Terrain/Grassland/*"` で `SCATTER_COOKED chunks=256 species=4 instances=36599`・`COOK_ASSETS cooked=1 skipped=17`）。
+- Next: ランナーの評価者の反証（アセットのクック・Public API の危険地帯）。実行時（ScatterSystem・描画）は別の項目。
+- Notes: 種の表の既定値（密度・半径・帯）は企画で未定の仮の値。岩は既存の `Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`、倒木・低木・株のメッシュの論理パスはまだ cook されない仮のパス（一覧は NVSCTv0.md の grassland の節）。岩は傾斜 25° 以上・MSK0 の a の帯で 9 本しか置かれない。
+- Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
+- Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
