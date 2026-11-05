@@ -317,6 +317,7 @@ namespace NorvesLib::Modules::Physics
             return Core::Scene::EPhysicsSceneQueryResult::NotReady;
         }
         PhysicsBroadphase candidate;
+        candidate.ShareStaticTreeFrom(m_PublishedBroadphase);
         BuildBroadphase(candidate, true);
         // 確保/構築完了後だけquery公開値を交換し、simulationの作業値には触れない。
         static_assert(noexcept(m_PublishedBroadphase = std::move(candidate)));
@@ -1136,8 +1137,8 @@ namespace NorvesLib::Modules::Physics
         m_CurrentTriggerPairs.clear();
         for (const PhysicsCandidatePair& candidate : m_WorkingBroadphase.GetCandidatePairs())
         {
-            const PhysicsShapeProxy* firstProxy = m_WorkingBroadphase.FindProxy(candidate.First);
-            const PhysicsShapeProxy* secondProxy = m_WorkingBroadphase.FindProxy(candidate.Second);
+            const PhysicsShapeProxy* firstProxy = m_WorkingBroadphase.GetPairProxy(candidate.FirstProxyIndex, candidate.First);
+            const PhysicsShapeProxy* secondProxy = m_WorkingBroadphase.GetPairProxy(candidate.SecondProxyIndex, candidate.Second);
             if (!firstProxy || !secondProxy)
             {
                 continue;
@@ -1372,6 +1373,7 @@ namespace NorvesLib::Modules::Physics
 
     void PhysicsModule::PublishSnapshot()
     {
+        m_PublishedBroadphase.ShareStaticTreeFrom(m_WorkingBroadphase);
         BuildBroadphase(m_PublishedBroadphase);
         if (m_PublishedSnapshotSequence != UINT64_MAX)
         {
@@ -1403,6 +1405,16 @@ namespace NorvesLib::Modules::Physics
 
     void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle) const
     {
+        const auto isProxyStatic = [this](const PhysicsShapeProxy& proxy)
+        {
+            if (!proxy.Body.IsValid())
+            {
+                return true;
+            }
+            const EPhysicsBodyType bodyType = m_BodySlots[proxy.Body.Index].Component->m_BodyType;
+            return bodyType != EPhysicsBodyType::Dynamic && bodyType != EPhysicsBodyType::Kinematic;
+        };
+
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
         for (const ColliderSlot& slot : m_ColliderSlots)
         {
@@ -1449,6 +1461,7 @@ namespace NorvesLib::Modules::Physics
                 }
                 slot.Component->m_bHeightFieldTransformWarning = false;
                 proxy.Mobility = DetermineProxyMobility(proxy);
+                proxy.bStatic = isProxyStatic(proxy);
                 proxies.push_back(proxy);
                 continue;
             case ColliderComponent::EColliderShape::None:
@@ -1460,6 +1473,7 @@ namespace NorvesLib::Modules::Physics
             }
             proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
             proxy.Mobility = DetermineProxyMobility(proxy);
+            proxy.bStatic = isProxyStatic(proxy);
             if (!BuildColliderWorldShape(shape, slot.Component->m_Radius, slot.Component->m_CapsuleHalfHeight,
                                          slot.Component->m_HalfExtents, transform, slot.Component->m_LocalPose, proxy))
                 continue;
