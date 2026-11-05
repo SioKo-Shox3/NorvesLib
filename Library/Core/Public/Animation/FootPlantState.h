@@ -17,7 +17,7 @@ namespace NorvesLib::Core::Animation
         float HeightThreshold = 0.03f;     // しきい値駆動で接地とみなす持ち上がりの上限 [m]
         float SpeedThreshold = 0.5f;       // 接地開始に許す補正前の足先の水平速度 [m/s]
         float LiftHeight = 0.15f;          // Swing の持ち上がりの割合が 1 になる高さ [m]
-        float ReleaseBlendSeconds = 0.1f; // 解除位置から Swing の目標へ戻る時間 [s]
+        float ReleaseBlendSeconds = 0.1f; // 解除時の差を 0 に戻す時間 [s]
     };
 
     struct FootLandSettings
@@ -81,7 +81,9 @@ namespace NorvesLib::Core::Animation
         EFootPlantPhase m_Phase = EFootPlantPhase::Swing;
         Math::Vector3 m_Anchor;
         Math::Vector3 m_PreviousToe;
-        Math::Vector3 m_ReleaseFrom;
+        double m_ReleaseOffsetX = 0.0;
+        double m_ReleaseOffsetY = 0.0;
+        double m_ReleaseOffsetZ = 0.0;
         double m_ReleaseDelta = 0.0;
         double m_ReleaseElapsed = 0.0;
         double m_LandWeight = 1.0;

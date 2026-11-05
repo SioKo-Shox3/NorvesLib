@@ -19,6 +19,21 @@ namespace NorvesLib::Core::Animation
             return std::isfinite(value) && std::abs(value) <= double(std::numeric_limits<float>::max());
         }
 
+        double CalculateSwingHeight(const FootPlantInput& input, const FootPlantSettings& plant, double lift,
+                                    double releaseDelta, bool bHasReleaseDelta)
+        {
+            const double a = std::clamp(lift / double(plant.LiftHeight), 0.0, 1.0);
+            const double current = input.bHasGround ? double(input.GroundPoint.y) - double(input.OriginY)
+                                                    : releaseDelta;
+            const double release = bHasReleaseDelta ? releaseDelta : current;
+            double height = double(input.AnimToeWorld.y) + current * (1.0 - a) + release * a;
+            if (input.bHasGround)
+            {
+                height = std::max(height, double(input.GroundPoint.y) + double(input.Sole));
+            }
+            return height;
+        }
+
         bool IsValid(const FootPlantInput& input, const FootPlantSettings& plant, const FootLandSettings& land)
         {
             return IsFinite(input.AnimToeWorld) && IsFinite(input.GroundPoint) && std::isfinite(input.OriginY) &&
@@ -57,7 +72,9 @@ namespace NorvesLib::Core::Animation
             next.m_Phase = EFootPlantPhase::Swing;
             next.m_Anchor = Math::Vector3();
             next.m_bHasAnchor = false;
-            next.m_ReleaseFrom = Math::Vector3();
+            next.m_ReleaseOffsetX = 0.0;
+            next.m_ReleaseOffsetY = 0.0;
+            next.m_ReleaseOffsetZ = 0.0;
             next.m_ReleaseDelta = 0.0;
             next.m_ReleaseElapsed = 0.0f;
             next.m_bHasReleaseDelta = false;
@@ -139,7 +156,7 @@ namespace NorvesLib::Core::Animation
             {
                 next.m_bReleaseBlending = false;
             }
-            else
+            else if (!bReleased)
             {
                 next.m_ReleaseElapsed = std::min(double(plant.ReleaseBlendSeconds),
                                                  next.m_ReleaseElapsed + double(input.DeltaSeconds));
@@ -197,9 +214,11 @@ namespace NorvesLib::Core::Animation
         {
             return false;
         }
-        m_ReleaseFrom = Math::Vector3(m_Anchor.x, float(height), m_Anchor.z);
         m_ReleaseDelta = double(m_Anchor.y) - double(input.OriginY);
         m_bHasReleaseDelta = true;
+        m_ReleaseOffsetX = double(m_Anchor.x) - double(input.AnimToeWorld.x);
+        m_ReleaseOffsetY = height - CalculateSwingHeight(input, plant, lift, m_ReleaseDelta, m_bHasReleaseDelta);
+        m_ReleaseOffsetZ = double(m_Anchor.z) - double(input.AnimToeWorld.z);
         m_ReleaseElapsed = 0.0f;
         m_bReleaseBlending = plant.ReleaseBlendSeconds > 0.0f;
         m_Phase = EFootPlantPhase::Swing;
@@ -225,23 +244,19 @@ namespace NorvesLib::Core::Animation
         }
         else if (input.bHasGround || m_bHasAnchor)
         {
-            const double a = std::clamp(lift / double(plant.LiftHeight), 0.0, 1.0);
-            const double current = input.bHasGround ? double(input.GroundPoint.y) - double(input.OriginY)
-                                                    : m_ReleaseDelta;
-            const double release = m_bHasReleaseDelta ? m_ReleaseDelta : current;
             double x = double(input.AnimToeWorld.x);
-            double y = double(input.AnimToeWorld.y) + current * (1.0 - a) + release * a;
+            double y = CalculateSwingHeight(input, plant, lift, m_ReleaseDelta, m_bHasReleaseDelta);
             double z = double(input.AnimToeWorld.z);
+            if (m_bReleaseBlending && plant.ReleaseBlendSeconds > 0.0f)
+            {
+                const double t = std::clamp(m_ReleaseElapsed / double(plant.ReleaseBlendSeconds), 0.0, 1.0);
+                x += m_ReleaseOffsetX * (1.0 - t);
+                y += m_ReleaseOffsetY * (1.0 - t);
+                z += m_ReleaseOffsetZ * (1.0 - t);
+            }
             if (input.bHasGround)
             {
                 y = std::max(y, double(input.GroundPoint.y) + double(input.Sole));
-            }
-            if (m_bReleaseBlending && plant.ReleaseBlendSeconds > 0.0f)
-            {
-                const double t = std::clamp(double(m_ReleaseElapsed) / double(plant.ReleaseBlendSeconds), 0.0, 1.0);
-                x = double(m_ReleaseFrom.x) * (1.0 - t) + x * t;
-                y = double(m_ReleaseFrom.y) * (1.0 - t) + y * t;
-                z = double(m_ReleaseFrom.z) * (1.0 - t) + z * t;
             }
             if (!CanStore(x) || !CanStore(y) || !CanStore(z))
             {

@@ -9902,3 +9902,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 脚ごとの Swing / Planted の状態機械と着地の重みを持つ FootPlantState を足す: 着地(直し 0 回)
 - U3 FootIK に足の固定と着地を組み込み、設定と文書を足す: 着地(直し 1 回)
 - U4 FootPlantTest と決定性のケースを足し、Testing.md に書いてタスクの verify を回す: 着地(直し 0 回)
+- U5 解除後の戻しを刻みに依存しない差の減衰にし、タスクの verify を通す: 着地(直し 0 回)
