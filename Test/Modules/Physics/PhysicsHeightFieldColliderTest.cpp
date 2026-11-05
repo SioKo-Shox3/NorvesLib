@@ -1,4 +1,5 @@
 ﻿// 地形の全問い合わせが高さ場の直接照会と一致し、変換の拒否と地面の選択が守られることを反証する。
+// 台地へ落とした球・カプセルの静止・Hit と、斜面を往復するキャラクターの接地・移動量を反証する。
 // 地形が箱やカプセルとして誤処理されても、撮影やログでは分からず接地が数 cm ずれるだけの場合がある。
 
 #ifdef NDEBUG
@@ -14,6 +15,8 @@
 
 #include "Physics/IPhysicsModule.h"
 #include "Physics/ColliderComponent.h"
+#include "Physics/RigidBodyComponent.h"
+#include "Physics/CharacterMover.h"
 #include "PhysicsModuleTestAccess.h"
 #include "Engine/Engine.h"
 #include "Module/ModuleRegistry.h"
@@ -539,6 +542,221 @@ namespace
         system.UnregisterTerrain(handle);
         Check(!system.GetTerrain(handle), "QueryGround", 4, "地形の登録解除");
     }
+
+    Container::TSharedPtr<const Terrain::TerrainHeightField> MakeMotionField(bool bTerraces)
+    {
+        Terrain::TerrainGridLayout layout;
+        layout.Columns = GridSize;
+        layout.Rows = GridSize;
+        layout.FirstX = -32.0;
+        layout.FirstZ = -32.0;
+        layout.Spacing = 1.0;
+        Container::VariableArray<float> heights(GridSize * GridSize);
+        const float levels[] = {0.0f, 1.0f, 2.0f, 0.5f, 1.5f};
+        for (uint32_t row = 0; row < GridSize; ++row)
+        {
+            for (uint32_t column = 0; column < GridSize; ++column)
+            {
+                const float x = static_cast<float>(column) - 32.0f;
+                float height = levels[0];
+                if (bTerraces)
+                {
+                    // 幅 8 m の台地を幅 4 m の斜面でつなぐ。落下位置は台地の中央。
+                    for (uint32_t band = 0; band < 4; ++band)
+                    {
+                        const float blend = std::fmin(1.0f, std::fmax(0.0f, (x - (-20.0f + 12.0f * band)) / 4.0f));
+                        height += (levels[band + 1] - levels[band]) * blend;
+                    }
+                }
+                else
+                {
+                    // 導関数は 0.272～0.488（約 15～26 度）。既定の歩ける上限 50 度より緩い。
+                    height = 0.38f * x + 0.18f * std::sin(0.6f * x);
+                }
+                heights[row * GridSize + column] = height;
+            }
+        }
+        Container::AnsiString error;
+        auto field = Terrain::TerrainHeightField::CreateFromSamples(
+            layout, Container::Span<const float>(heights), nullptr, 8, error);
+        if (!field)
+        {
+            std::cerr << "動的試験の高さ場の作成に失敗: " << error.c_str() << std::endl;
+        }
+        assert(field);
+        return field;
+    }
+
+    void TestFallingBodies(PhysicsFixture& fixture)
+    {
+        constexpr uint32_t BodyCount = 20;
+        constexpr uint32_t Steps = 240;
+        constexpr float DeltaTime = 1.0f / 60.0f;
+        const Math::Vector3 origin(120.0f, 3.0f, 0.0f);
+        const auto field = MakeMotionField(true);
+        Entity* terrain = nullptr;
+        auto* ground = fixture.CreateCollider(Math::Transform(origin), terrain);
+        assert(ground->SetHeightField(field) == EPhysicsResult::Success);
+        struct FallingBody
+        {
+            Entity* Owner = nullptr;
+            ColliderComponent* Collider = nullptr;
+            RigidBodyComponent* Body = nullptr;
+            PhysicsCallbackHandle Callback;
+            float FootDistance = 0.0f;
+            uint32_t Hits = 0;
+            float MaxSink = 0.0f;
+        };
+        FallingBody bodies[BodyCount];
+        for (uint32_t index = 0; index < BodyCount; ++index)
+        {
+            auto& falling = bodies[index];
+            const float radius = 0.2f + 0.1f * (index % 3);
+            const float halfHeight = index < 10 ? 0.0f : 0.25f + 0.15f * (index % 3);
+            falling.FootDistance = radius + halfHeight;
+            const float x = -24.0f + 12.0f * (index / 4);
+            const float z = -9.0f + 6.0f * (index % 4);
+            const float dropHeight = 1.0f + 0.5f * (index % 5);
+            falling.Collider = fixture.CreateCollider(Math::Transform(origin + Math::Vector3(
+                x, field->SampleHeight(x, z) + falling.FootDistance + dropHeight, z)), falling.Owner);
+            assert((index < 10 ? falling.Collider->SetSphere(radius)
+                : falling.Collider->SetCapsule(radius, halfHeight)) == EPhysicsResult::Success);
+            falling.Body = fixture.World.CreateComponent<RigidBodyComponent>(falling.Owner);
+            assert(falling.Body);
+            assert(falling.Body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
+            assert(falling.Collider->AddOnHit(Core::Delegate<void, const PhysicsContactEvent&>(
+                [&falling, ground, index](const PhysicsContactEvent& event)
+                {
+                    Check(event.Self == falling.Collider->GetColliderHandle(), "落下 Hit", index, "受信者");
+                    Check(event.Other == ground->GetColliderHandle(), "落下 Hit", index, "相手が地形");
+                    Check(std::isfinite(event.NormalImpulse) && event.NormalImpulse > 0.0f,
+                        "落下 Hit", index, "正の法線撃力");
+                    if (event.Other == ground->GetColliderHandle())
+                    {
+                        ++falling.Hits;
+                    }
+                }), falling.Callback) == EPhysicsResult::Success);
+        }
+        for (uint32_t step = 0; step < Steps; ++step)
+        {
+            fixture.Physics->StepPreFixed(DeltaTime);
+            fixture.Physics->StepFixed(DeltaTime);
+            for (uint32_t index = 0; index < BodyCount; ++index)
+            {
+                auto& falling = bodies[index];
+                const auto position = falling.Owner->GetWorldTransform().position;
+                const float height = origin.y + field->SampleHeight(position.x - origin.x, position.z - origin.z);
+                const float gap = position.y - falling.FootDistance - height;
+                falling.MaxSink = std::fmax(falling.MaxSink, -gap);
+                Check(std::isfinite(gap) && gap >= -0.05f, "落下の沈み", step * BodyCount + index, "下端が地表より 0.05 m 以内");
+            }
+        }
+        for (uint32_t family = 0; family < 2; ++family)
+        {
+            float maxError = 0.0f;
+            float maxSpeed = 0.0f;
+            float maxSink = 0.0f;
+            uint32_t hitBodies = 0;
+            uint32_t hits = 0;
+            for (uint32_t index = family * 10; index < (family + 1) * 10; ++index)
+            {
+                const auto& falling = bodies[index];
+                const auto position = falling.Owner->GetWorldTransform().position;
+                const float height = origin.y + field->SampleHeight(position.x - origin.x, position.z - origin.z);
+                const float error = std::fabs(position.y - falling.FootDistance - height);
+                const float speed = falling.Body->GetLinearVelocity().Length();
+                maxError = std::fmax(maxError, error);
+                maxSpeed = std::fmax(maxSpeed, speed);
+                maxSink = std::fmax(maxSink, falling.MaxSink);
+                hits += falling.Hits;
+                hitBodies += falling.Hits > 0 ? 1u : 0u;
+                Check(std::isfinite(error) && error <= 0.02f, "落下の静止", index, "地表との差");
+                Check(std::isfinite(speed) && speed <= 0.05f, "落下の静止", index, "速さ");
+                Check(falling.Hits > 0, "落下 Hit", index, "地形との Hit がない");
+            }
+            std::cout << (family == 0 ? "FallingSphere" : "FallingCapsule") << " samples=10 steps=" << Steps
+                << " max_height_error=" << maxError << " max_speed=" << maxSpeed << " hits=" << hits
+                << " hit_bodies=" << hitBodies << " max_sink=" << maxSink << std::endl;
+        }
+        // コールバックが参照する測定値はこの関数の寿命なので、復帰前に解除する。
+        for (auto& falling : bodies)
+        {
+            assert(falling.Collider->RemoveOnHit(falling.Callback) == EPhysicsResult::Success);
+        }
+    }
+
+    void TestCharacterTerrainMove(PhysicsFixture& fixture)
+    {
+        constexpr uint32_t StepsPerLeg = 180;
+        constexpr float DeltaTime = 1.0f / 60.0f;
+        constexpr float Speed = 3.0f;
+        constexpr float Radius = 0.3f;
+        constexpr float HalfHeight = 0.5f;
+        const Math::Vector3 origin(240.0f, 4.0f, 0.0f);
+        const auto field = MakeMotionField(false);
+        Entity* terrain = nullptr;
+        auto* collider = fixture.CreateCollider(Math::Transform(origin), terrain);
+        assert(collider->SetHeightField(field) == EPhysicsResult::Success);
+        fixture.Publish();
+        PhysicsShapeProxy proxy;
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, collider->GetColliderHandle(), proxy));
+        CharacterMoveSettings settings;
+        // 斜面では球面の接点と真下の地表がずれる。その幾何差は 0.05 m に収まり、
+        // スイープで手前に止める skin の鉛直成分の上限だけ別途加える。
+        const float gapLimit = 0.05f + settings.SkinWidth / std::cos(settings.MaximumSlopeDegrees * 0.01745329252f);
+        const float startX = -5.0f;
+        const float startHeight = field->SampleHeight(startX, 0.0f);
+        const Math::Vector3 center = origin + Math::Vector3(startX, startHeight + HalfHeight + Radius + settings.SkinWidth, 0.0f);
+        CharacterMoveRequest request;
+        request.Shape = Math::Capsule(center - Math::Vector3::UnitY * HalfHeight,
+            center + Math::Vector3::UnitY * HalfHeight, Radius);
+        request.bWasGrounded = true;
+        CharacterMoveScratch scratch;
+        for (uint32_t leg = 0; leg < 2; ++leg)
+        {
+            const float direction = leg == 0 ? 1.0f : -1.0f;
+            const float legStart = request.Shape.PointA.x;
+            float maxSink = 0.0f;
+            float maxFloat = 0.0f;
+            uint32_t groundedSteps = 0;
+            for (uint32_t step = 0; step < StepsPerLeg; ++step)
+            {
+                request.Displacement = Math::Vector3(direction * Speed * DeltaTime, -0.01f, 0.0f);
+                CharacterMoveResult result;
+                const Result status = CharacterMover::Move(Container::Span<const PhysicsShapeProxy>(&proxy, 1),
+                    settings, request, scratch, result);
+                Check(status == Result::Success, "キャラクター移動", leg * StepsPerLeg + step, "問い合わせの成功");
+                if (status != Result::Success)
+                {
+                    break;
+                }
+                Check(!result.bStuck, "キャラクター移動", leg * StepsPerLeg + step, "押し戻しで停止");
+                Check(result.bGrounded && result.GroundCollider == collider->GetColliderHandle(),
+                    "キャラクター移動", leg * StepsPerLeg + step, "地形との接地の継続");
+                const auto movedCenter = (result.Shape.PointA + result.Shape.PointB) * 0.5f;
+                const float height = origin.y + field->SampleHeight(movedCenter.x - origin.x, movedCenter.z - origin.z);
+                const float gap = movedCenter.y - HalfHeight - Radius - height;
+                Check(std::isfinite(gap), "キャラクター移動", leg * StepsPerLeg + step, "有限の地表差");
+                if (result.bGrounded)
+                {
+                    ++groundedSteps;
+                    maxSink = std::fmax(maxSink, -gap);
+                    maxFloat = std::fmax(maxFloat, gap);
+                    Check(gap >= -gapLimit && gap <= gapLimit, "キャラクター接地", leg * StepsPerLeg + step, "沈み・浮きの上限");
+                }
+                request.Shape = result.Shape;
+                request.bWasGrounded = result.bGrounded;
+            }
+            const float distance = direction * (request.Shape.PointA.x - legStart);
+            const float requested = Speed * DeltaTime * StepsPerLeg;
+            Check(groundedSteps == StepsPerLeg, "キャラクター移動", leg, "全ステップの接地");
+            Check(std::isfinite(distance) && distance >= 0.8f * requested, "キャラクター移動", leg, "要求の 8 割以上進む");
+            std::cout << (leg == 0 ? "CharacterUphill" : "CharacterDownhill") << " steps=" << StepsPerLeg
+                << " grounded_steps=" << groundedSteps << " max_sink=" << maxSink << " max_float=" << maxFloat
+                << " gap_limit=" << gapLimit << " distance=" << distance << " requested_distance=" << requested << std::endl;
+        }
+    }
+
 }
 
 int main()
@@ -569,6 +787,8 @@ int main()
     Check(!PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, terrainCollider, proxy),
         "QueryGround", 0, "物理の地形を除去");
     TestGround(fixture, field);
+    TestFallingBodies(fixture);
+    TestCharacterTerrainMove(fixture);
     std::cout << "PhysicsHeightFieldColliderTest 不一致=" << FailureCount << std::endl;
     assert(FailureCount == 0);
     return FailureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
