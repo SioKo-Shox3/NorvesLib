@@ -26,6 +26,7 @@
 #include "Core/Public/Rendering/ToneMappingPass.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
+#include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
@@ -825,6 +826,11 @@ namespace Game
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
         m_bDogMovementSmoke = false;
+        m_bCombatSmoke = false;
+        m_bEncounterSmoke = false;
+        m_bEnemySmoke = false;
+        m_bCombatBench = false;
+        m_CombatSliceCapturePath = {};
         m_bDogMovementAutopilot = false;
         m_DogMovementAutopilotPath = {};
         m_DogMovementCaptureDir = {};
@@ -1249,6 +1255,62 @@ namespace Game
                     return false;
                 }
                 m_bDogMovementSmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--combat-smoke"))
+            {
+                if (m_bCombatSmoke)
+                {
+                    LOG_ERROR("--combat-smoke が重複しています");
+                    return false;
+                }
+                m_bCombatSmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--encounter-smoke"))
+            {
+                if (m_bEncounterSmoke)
+                {
+                    LOG_ERROR("--encounter-smoke が重複しています");
+                    return false;
+                }
+                m_bEncounterSmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--enemy-smoke"))
+            {
+                if (m_bEnemySmoke)
+                {
+                    LOG_ERROR("--enemy-smoke が重複しています");
+                    return false;
+                }
+                m_bEnemySmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--combat-bench"))
+            {
+                if (m_bCombatBench)
+                {
+                    LOG_ERROR("--combat-bench が重複しています");
+                    return false;
+                }
+                m_bCombatBench = true;
+                continue;
+            }
+            String combatSliceCapturePath;
+            if (TryStripPrefix(args[i], TEXT("--combat-slice-capture="), combatSliceCapturePath))
+            {
+                if (!m_CombatSliceCapturePath.empty())
+                {
+                    LOG_ERROR("--combat-slice-capture が重複しています");
+                    return false;
+                }
+                if (combatSliceCapturePath.empty())
+                {
+                    LOG_ERROR("--combat-slice-capture には PNG の保存先を指定してください");
+                    return false;
+                }
+                m_CombatSliceCapturePath = combatSliceCapturePath;
                 continue;
             }
             String dogAutopilotValue;
@@ -3080,6 +3142,52 @@ namespace Game
             LOG_WARNING("--geom-settle-trace は開発ビルドだけで使えます。無視します");
         }
 #endif
+        const uint32_t combatSliceSmokeCount = static_cast<uint32_t>(m_bCombatSmoke) +
+                                              static_cast<uint32_t>(m_bEncounterSmoke) +
+                                              static_cast<uint32_t>(m_bEnemySmoke);
+        if (combatSliceSmokeCount > 1)
+        {
+            LOG_ERROR("--combat-smoke・--encounter-smoke・--enemy-smoke はどれか 1 つだけ指定してください");
+            return false;
+        }
+        if (combatSliceSmokeCount != 0 && (m_bDogMovementSmoke || m_bAnimationDebugRequested))
+        {
+            LOG_ERROR("戦闘の垂直スライスのスモークは --dog-movement-smoke・--animation-debug と併用できません");
+            return false;
+        }
+        if (m_bCombatBench && !m_bCombatSmoke)
+        {
+            LOG_ERROR("--combat-bench には --combat-smoke が必要です");
+            return false;
+        }
+        if (!m_CombatSliceCapturePath.empty() && combatSliceSmokeCount == 0)
+        {
+            LOG_ERROR("--combat-slice-capture には --combat-smoke・--encounter-smoke・--enemy-smoke のどれかが必要です");
+            return false;
+        }
+        if (!m_CombatSliceCapturePath.empty() && m_bCombatBench)
+        {
+            LOG_ERROR("--combat-slice-capture は --combat-bench と併用できません");
+            return false;
+        }
+        if (m_bCombatSmoke && !m_bCombatBench)
+        {
+            bool bHasFixedFrameDt = false;
+            for (size_t i = 0; i < args.size(); ++i)
+            {
+                String ignoredValue;
+                if (TryStripPrefix(args[i], TEXT("--fixed-frame-dt="), ignoredValue))
+                {
+                    bHasFixedFrameDt = true;
+                    break;
+                }
+            }
+            if (!bHasFixedFrameDt)
+            {
+                LOG_ERROR("--combat-smoke には --fixed-frame-dt=1/30 などの固定刻みが必要です");
+                return false;
+            }
+        }
 #if NORVES_BUILD_DEVELOPMENT
         if (m_bShishaCameraOrbitSet && m_ShishaShowcaseScene.empty())
         {
@@ -4407,6 +4515,20 @@ namespace Game
             }
             return true;
         }
+        if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke)
+        {
+            if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
+            {
+                LOG_ERROR("--scene・--scene-view は戦闘の垂直スライスのスモークと併用できません");
+                return false;
+            }
+            if (m_SceneCycle.IsEnabled())
+            {
+                LOG_ERROR("--scene-cycle-smoke は戦闘の垂直スライスのスモークと併用できません");
+                return false;
+            }
+            return true;
+        }
         if (m_SceneCycle.IsEnabled() && (!m_StartupSceneId.empty() || !m_StartupSceneView.empty()))
         {
             LOG_ERROR("--scene・--scene-view は --scene-cycle-smoke と併用できません");
@@ -4677,6 +4799,18 @@ namespace Game
                 mode->GetData().bAutopilot = bDogAutopilot;
                 mode->GetData().AutopilotPath = dogAutopilotPath;
                 mode->GetData().CaptureDir = dogCaptureDir;
+                return mode;
+            });
+        const auto combatSliceSmoke = m_bEncounterSmoke ? CombatSliceSmoke::Encounter :
+                                      m_bEnemySmoke ? CombatSliceSmoke::Enemy : CombatSliceSmoke::Combat;
+        registerMode(
+            CombatSlice,
+            [lateCameraSlot, combatSliceSmoke, bBench = m_bCombatBench, capturePath = m_CombatSliceCapturePath](
+                const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<CombatSliceMode>();
+                mode->GetData().Options = {combatSliceSmoke, bBench, capturePath};
+                mode->GetData().LateSlot = lateCameraSlot;
                 return mode;
             });
 #if NORVES_BUILD_DEVELOPMENT
@@ -4969,12 +5103,16 @@ namespace Game
             });
 #endif
 
-        // 起動するモード: 犬の比較は専用の引数、ランチャーから始めるときはランチャー、それ以外は --scene のシーンの GameMode。
+        // 起動するモード: 犬の比較と戦闘スモークは専用の引数、ランチャーから始めるときはランチャー、それ以外は --scene のシーンの GameMode。
         const Scenes::SceneDescriptor *startupScene = Scenes::FindScene(m_StartupSceneId.c_str());
         NorvesLib::Core::GameMode::GameModeId startMode = Rendering3DTest;
         if (m_bDogMovementSmoke)
         {
             startMode = DogMovementSmoke;
+        }
+        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke)
+        {
+            startMode = CombatSlice;
         }
 #if NORVES_BUILD_DEVELOPMENT
         else if (!m_ShishaShowcaseScene.empty())
@@ -5002,6 +5140,12 @@ namespace Game
         if (m_bDogMovementSmoke)
         {
             LOG_INFO("犬の移動比較モードを開始します");
+        }
+        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke)
+        {
+            LOG_INFO_F("戦闘の垂直スライスの確かめを開始します(%s)",
+                       m_bCombatSmoke ? (m_bCombatBench ? "combat-bench" : "combat") :
+                       m_bEncounterSmoke ? "encounter" : "enemy");
         }
 #if NORVES_BUILD_DEVELOPMENT
         else if (!m_ShishaShowcaseScene.empty())

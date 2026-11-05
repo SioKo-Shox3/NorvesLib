@@ -296,6 +296,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
     Private/Rendering/SkyAtmosphere.cpp
+    Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/DDGIVolume.cpp
@@ -423,6 +424,7 @@ set(PRIVATE_SOURCES
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp
     Private/Component/SpringArmComponent.cpp
+    Private/Component/ViewClearanceComponent.cpp
     Private/Component/TextComponent.cpp
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
@@ -666,6 +668,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
+    Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
     Public/Rendering/VolumetricsPass.h
@@ -789,6 +792,7 @@ set(PUBLIC_HEADERS
     Public/Object/ResourceRegistry.h
     Public/Object/World.h
     Public/Component/SpringArmComponent.h
+    Public/Component/ViewClearanceComponent.h
     Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h

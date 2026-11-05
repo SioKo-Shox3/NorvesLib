@@ -133,7 +133,7 @@ namespace Game
         /**
          * @brief --scene・--scene-view の指定をシーンの一覧と照合して確定する（OnPreInitialize の最後に呼ぶ）。
          * @return 起動を続けてよいなら true。未知の id・視点はエラーをログに出して既定へ落とし、true を返す。
-         *         --dog-movement-smoke との併用など、解決できない指定だけ false。
+         *         --dog-movement-smoke・--combat-smoke・--encounter-smoke・--enemy-smoke との併用など、解決できない指定だけ false。
          */
         bool ResolveStartupScene();
         /**
@@ -284,6 +284,11 @@ namespace Game
 
         bool m_bAnimationDebugRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bCombatSmoke = false;
+        bool m_bEncounterSmoke = false;
+        bool m_bEnemySmoke = false;
+        bool m_bCombatBench = false;
+        NorvesLib::Core::Container::String m_CombatSliceCapturePath;
         bool m_bDogMovementAutopilot = false;
         NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
         NorvesLib::Core::Container::String m_DogMovementCaptureDir;

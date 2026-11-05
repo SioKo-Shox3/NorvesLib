@@ -5709,7 +5709,7 @@
 - notes: 設計はロードマップ 1592 行(関節のワールドの姿勢)・1596〜1598 行(HitboxComponent と AttackProfile)・1612 行(攻撃の種類はデータの差で表す)・1616 行の実装順 4)5)。GR131 の決定(ロードマップ 4266〜4282 行)で「CombatHitEvent から HitEffectHit への写しは GR16 の側で足す」とされたのをこの項目で行う(GAME-GR131-VFX は done なので after は満たされている)。ロードマップ 1853 行のリスク(BuildSkinnedMeshProxy が IsVisible で失敗する)は、今の `SkinnedMeshComponent` が「非表示でもゲーム用の姿勢は評価する」(`Docs/Architecture/TickStages.md` の「評価済みボーン姿勢」)ので当たらない。AI 由来の骨格の効かない骨(ロードマップ 1857 行)は (1) の警告で拾う。Release にデバッグの機能を入れない(作業合意の絶対規則 8)。危険地帯: アセットの読み込み(JSON のデータ)なので評価者を通す。やらないこと: AngelScript への公開(GR98)、表面の種類の登録(GR115)。
 
 ## G8-GR17-SLICE-SMOKE: 人間大のシ者 1 体と戦って倒す垂直スライスの確かめの場面(攻撃判定・遭遇・敵・当たりの火花・撃破の血)を Game に組む
-- status: todo
+- status: done
 - after: G8-GR17-ENEMY-COMPONENT, G8-GR18-INTERACTION, G8-GR16-JOINT-DATA-RESPONSE, GAME-GR132-VFX, G1-GR01-TICK-CONTRACT-DOC, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR17
 - needs-gr: GR01, GR03, GR13
@@ -6036,7 +6036,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。Entity の数と散布の数のログが無ければ、開発ビルドだけのログ（`SCATTER_RESIDENT chunks=... instances=... entities=...` のような 1 行）をこの項目で足す（Release に入れない。絶対規則 8）。5 万本を超えると MegaGeometry の BVH の列が VRAM を超えた前例（SCN-ECS-MASS-STREAM の notes）があるので、落ちたら本数と落ちた所を記録し、mega の種の本数の上限を種の表で決める。
 
 ## G5-GR113-CLEARANCE-CPU: カメラ〜主人公の切り抜き領域と近接のフェードの値を CPU で決め、カメラの proxy に載せて描画へ渡す
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
