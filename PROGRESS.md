@@ -9962,3 +9962,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 ScatterSystem（常駐の要求・予算・解放と mega の経路）を足し Engine::Engine のメンバにする（U3 の切り直し）: 着地(直し 0 回)
 - U4 ScatterSystem の foliage の経路（チャンク = FoliageCell、常駐の組が変わったときだけ束を作り直す）: 着地(直し 0 回)
 - U5 ScatterSystemResidencyTest（EntityTreeTest の束へ MEMBER）: 着地(直し 0 回)
+- U6 grassland に散布を置き、開発ビルドの `--grassland-scatter-stress=<本数>` を足す（最後の verify）: 着地(直し 1 回)

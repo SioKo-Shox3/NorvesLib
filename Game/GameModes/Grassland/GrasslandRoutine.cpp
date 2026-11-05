@@ -2,6 +2,7 @@
 // 地形の出どころは GrasslandTerrain.json と GenerateGrasslandHeight.py。クック済みの高さ場と 4×4 の区画を使う。
 // near は地表から 0.6 m、valley は谷底から尾根、low は谷沿いを低い角度で見る固定視点。
 #include "GameModes/Grassland/GrasslandMode.h"
+#include "GameModes/Grassland/GrasslandScatter.h"
 
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/GrassFieldComponent.h"
@@ -119,6 +120,8 @@ namespace Game::GameModes
         LOG_INFO("grassland を開始します");
         data.m_TickCount = 0;
         data.m_pTerrain = nullptr;
+        data.m_Scatter = Scatter::kInvalidScatterHandle;
+        data.m_bScatterPending = data.m_ScatterStressCount > 0;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
 
         const Game::Scenes::SceneDescriptor* scene = Game::Scenes::FindScene(Game::Scenes::kGrasslandSceneId);
@@ -133,14 +136,21 @@ namespace Game::GameModes
         ApplyEnvironment(ctx);
         if (!CreateTerrain(ctx, data) || !CreateGrassField(ctx))
         {
+            ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
+        }
+        if (!data.m_bScatterPending)
+        {
+            data.m_Scatter = LoadGrasslandScatter(ctx, 0);
         }
         data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay);
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))
         {
             LOG_ERROR("grassland: カメラを作れませんでした");
+            ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
+            data.m_Scatter = Scatter::kInvalidScatterHandle;
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
@@ -169,7 +179,21 @@ namespace Game::GameModes
         // すべての区画が揃ってから撮影を許可する。欠損区画を含む地形を準備完了として扱わない。
         const bool bTerrainReady = data.m_pTerrain != nullptr && data.m_pTerrain->IsFullyPlaced() &&
                                    data.m_pTerrain->GetPlacedTileCount() == data.m_pTerrain->GetTileCount();
-        const bool bReady = bTerrainReady && data.m_TickCount >= kReadyTickCount && !data.m_Rig.IsScriptRunning();
+        if (data.m_bScatterPending && bTerrainReady)
+        {
+            data.m_Scatter = LoadGrasslandScatter(ctx, data.m_ScatterStressCount);
+            data.m_bScatterPending = false;
+        }
+        if (Component::CameraComponent* camera = data.m_Rig.GetCamera())
+        {
+            if (const Entity* owner = camera->GetOwner())
+            {
+                ctx.EngineRef.GetScatterSystem().Update(owner->GetPosition());
+            }
+        }
+        const bool bScatterReady = !data.m_bScatterPending &&
+            (data.m_Scatter == Scatter::kInvalidScatterHandle || ctx.EngineRef.GetScatterSystem().IsSettled(data.m_Scatter));
+        const bool bReady = bTerrainReady && bScatterReady && data.m_TickCount >= kReadyTickCount && !data.m_Rig.IsScriptRunning();
         if (bReady)
         {
             data.m_Rig.NotifySceneReady();
@@ -180,6 +204,9 @@ namespace Game::GameModes
     void GrasslandRoutine::Leave(GameModeContext& ctx, GrasslandData& data, GameModeExitReason)
     {
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
+        ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
+        data.m_Scatter = Scatter::kInvalidScatterHandle;
+        data.m_bScatterPending = false;
         data.m_Rig.Leave(ctx);
         data.m_pTerrain = nullptr;
         // 地形・草の場・カメラの Entity は GameModeScope::Cleanup が返す。各 Component の EndPlay で登録を返す。

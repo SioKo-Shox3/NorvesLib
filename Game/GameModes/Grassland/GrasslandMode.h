@@ -8,6 +8,7 @@
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
+#include "Core/Public/Scatter/ScatterSystem.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -38,6 +39,10 @@ namespace Game::GameModes
         Game::Scenes::FreeCameraRig m_Rig;
         /// 地形の配置完了を確かめる非所有の参照。実体はスコープで追跡した Entity が所有する
         NorvesLib::Core::Component::TerrainComponent* m_pTerrain = nullptr;
+        /// 散布と、地形の配置を待つ開発用の合成本数。
+        NorvesLib::Core::Scatter::ScatterHandle m_Scatter = NorvesLib::Core::Scatter::kInvalidScatterHandle;
+        uint32_t m_ScatterStressCount = 0;
+        bool m_bScatterPending = false;
         uint32_t m_TickCount = 0;
     };
 
