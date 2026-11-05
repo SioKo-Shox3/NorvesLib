@@ -10125,3 +10125,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U0 契約のヘッダ・骨格のファイル・CMake の登録: 着地(直し 0 回)
 - U1 CellManifest の読みと拒否: 着地(直し 0 回)
 - U3 優先度と輪の純関数: 着地(直し 0 回)
+- U2 StreamingCell の状態の遷移: 着地(直し 1 回)
