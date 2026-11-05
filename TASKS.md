@@ -5757,7 +5757,7 @@
 - notes: 選定課題 G9-S1（胴の傾きの計算と適用の場所）は推奨の B に決めた: 傾きの計算と平滑は G4 の移動（GR05）に一本化し、GR15 は配分・空中のフェード・個別の ON/OFF だけを持つ。GR05 が値を出さない骨格・場面のために `source: signals` で A の式も使えるようにする。理由: 計算と平滑が 1 か所になり、足 IK との順序を ModifierOrderTest で固定しやすい。今のコードの事実: `AnimDriveSignals` にバンク・ピッチの欄は無い（`Library/Core/Public/Animation/AnimParams.h:35-43`）。G4 の `QuadrupedLocomotionModel` が平滑済みの Pitch・Bank を出し（`Library/Core/Public/Locomotion/QuadrupedLocomotionModel.h:38`）、`QuadrupedLocomotionComponent::PublishVisual`（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:491-517`）がそれを VisualPose へ剛体で掛け（選定課題の C に当たる）、同じ値を `BankAngle` / `PitchAngle` のパラメータで Animator へ渡している。B の modifier を足すと傾きが二重になるので、使う場面では `SetVisualTiltScale(0)` にする。`locomotion.v1` の JSON は節の欄を過不足なく要求する（`Library/Core/Private/Locomotion/QuadrupedLocomotionJson.cpp:20-54`）ので、設定の形は変えず setter にした（可逆で小さい変更なので試験は足さず、Game のビルドで確かめる）。GR05 は G4 の受け入れが構文確認だけ（`TASKS.md` の `G4-MOVEMENT-CAMERA`）なので needs-gr に入れた。GR11 は同期位相、GR13 は保持スロット（`Library/Core/Public/Component/HoldSlotComponent.h:47`）のため。視線のターゲットを決める側（GR22・GR24 の知覚）と眼の関節は作らない。Public API（`AnimatorComponent.h`）に触れるので評価者を通す。出典: 要件 `#### GR15` の (a)(b)(c)、ロードマップの選定課題一覧の G9-S1。
 
 ## G9-GR15-ORDER-DEBUG-VIEW: モディファイアの順序を試験で固定し、調整の画面とデバッグ描画を animation-debug の場面へつなぐ
-- status: todo
+- status: done
 - after: G9-GR15-LEAN-SPINE-LOOK, G9-GR15-SPRING-FOLLOW, G9-GR14-FOOT-PLANT, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15, GR14
 - needs-gr: GR10, GR13
@@ -6010,7 +6010,7 @@
 - notes: 設計はロードマップ 967〜973 行（GR90 の (1)〜(4)）。草は GPU で生成する（G5B-S5）ので、ロードマップ 967 行のとおり GR90 の対象は個別に置く物（岩・倒木・低木・株・標識など）に絞られ、草の配置は GR89 の密度の層と GR42 の草の場が受け持つ。今ある散布は Game 側の実行時の手続き（荒野の `FoliageScatter`、崖錐の岩の `MegaGeometryScatterComponent` への入力。`Game/GameModes/Wasteland/`）で、焼いた形式は無い。この項目は荒野の散布を置き換えない。AssetKind は G5B-S3 の World。浮動小数の決定性は同じバイナリの中だけで、地形を cook し直すと散布が食い違うので cooked_hash で気づけるようにする（ロードマップ 1311 行）。AI 由来の高密度のメッシュ（約 70 万三角形）をそのまま種にしない（GR80 で LOD つきの低ポリにしてから。ロードマップ 1310 行）。種の表の既定値（密度・チャンクの寸法・半径）は企画で未定なので仮の値。試験を足す理由: 決定性・チャンクの独立・最小の間隔・密度の誤りは、撮影では「それらしく散らばっている」ように見えて気づけず、再ベイクの差分やチャンクの境の重なりとして後から黙って出る。危険地帯（アセットのクック・Public API）なので評価者を通す。
 
 ## G5-GR90-SCATTER-RUNTIME: 焼いた散布をチャンクごとに予算つきで常駐・解放し、Entity を増やさずに MegaGeometry と株の経路で描く
-- status: todo
+- status: done
 - after: G5-GR90-SCATTER-BAKE, G5-GR37-TERRAIN-COMPONENT
 - gr: GR90
 - done-when: `Library/Core/{Public,Private}/Scatter/ScatterSystem.{h,cpp}`（`Engine::Engine` のメンバ。シングルトンにしない）が NVSCT を読み、GameThread でカメラからの距離と優先度でチャンクを要求し、1 フレームの個数・バイト・時間の予算の内で常駐させ、要らなくなったチャンクを解放する。描く経路は種の表の指定で 2 つ: mega の種は種ごとに 1 つの `MegaGeometryScatterComponent` の行へ入れ、チャンクを範囲（`kRangeRows`=64 行の塊）に対応させて出し入れを範囲の Active・可視の印で行う（SCN-ECS-MASS-STREAM と同じ予算の分け方）。foliage の種は種ごとの `FoliageBatch` にチャンクを `FoliageCell` として入れ（Rank の昇順 = `FadeThreshold` の小さい順。距離の密度の LOD は先頭からの個数で切る）、常駐の組が変わったときだけ束の一覧を作り直す。`RenderWorld::SetFoliage` へ渡す一覧を、シーンのほかの出どころ（荒野の `FoliageScatter` など）と合成する口を足す（今は 1 つの一覧を丸ごと差し替える作り）。インスタンスは Entity を作らず、Entity の数は種の数に比例する分だけになる。静的なので前の変換 = 今の変換（velocity はカメラの動きだけ）。影を落とす種は種の表の印で絞る。grassland に散布を置き、`grassland-scatter-stress=<本数>`（開発ビルドだけの引数。N 万本を置く）を足す。`ScatterSystemResidencyTest`（`EntityTreeTest` の束へ MEMBER）が通る: 10 万本を読む前後で World の Entity の数が種の数の分しか変わらない、1 フレームの予算を超えて常駐させない、解放したチャンクの範囲が描かれず資源が戻る、カメラの同じ動きで常駐の順がビット一致する。Game がビルドできる。
@@ -6240,7 +6240,7 @@
 - notes: ロードマップ 1947・1959 行、要件 `#### GR64` の設計案の案 A と受け入れ確認。選定課題 G10-S5（残像の方式）は推奨どおり (A) アルファハッシュ＋TAA と決めた。理由: ソートが要らず霧・照明に GBuffer 経由で従い、G5-GR27 の Hash と G5-GR26 のインスタンスの被覆率をそのまま使える。(B) の Forward のスキンの経路は記述子の衝突・ソート・霧・velocity の作業が要る（ロードマップの選定課題一覧の G10-S5）。最初に (5) の 16 フレームの試験を spike として回し、平均と標準偏差が満たせないときだけ (B) を新しいタスクとして TASKS.md に足すと PROGRESS.md に書く（この項目では作らない）。要件の `CustomData[0] = 1 - Opacity` と UBO の `velocityParams.y/z` の案は採らない。理由: G5-GR26-MATERIAL-PARAMS が「CustomData を汎用の値の置き場にしない」と決め、インスタンスの被覆率の乗数（`.w`）を GR27・GR64 の口として用意したため。TAA のジッタの番号の受け渡しは G5-GR27 の Hash の位相と同じものを使う（新しい経路は作らない）。TAA が無効のビューでは G5-GR27 の決まりどおり Hash は Test に落ちるので、残像は TAA を有効にしたカメラで見る（TAA は既定でなくカメラが選んだビューだけ。ロードマップ 1968 行）。G10 の中で `gbuffer.frag`・GBufferPass・`lighting.frag` を共有する GR65・GR64・GR60 を直列にする（ロードマップ 1977 行）。危険地帯（RenderThread・GBuffer・TAA）なので評価者を通す。不透明度 1 の描画は今と同じなので起動画面（絶対規則 7）は golden で守る。やらないこと: 複数時刻の姿勢を並べる部品（G10-GR64-GHOST-POSE）、カメラの周回の撮影（G10-GR64-GHOST-CHECK）。
 
 ## G10-GR19-ANCHOR-CORE: スキンメッシュの表面の点（三角形と重心座標）を姿勢から復元し、突き立ての点を探し、速度と加速度を平滑して求める純粋な部品を Core に足す
-- status: todo
+- status: done
 - gr: GR19
 - done-when: (1) `Library/Core/Public/Animation/SkinnedSurfaceAnchor.h`（実装は `Library/Core/Private/Animation/SkinnedSurfaceAnchor.cpp`。`Library/Core/CMakeLists.txt` の一覧へ明示で足す）に、`SurfaceAnchorDesc`（TriangleIndex・U・V・MeshRevision・FallbackJoint・FallbackLocalOffset。実行時の POD で保存しない）、`SurfaceAnchorFrame`（Position・Normal・Tangent・bValid）、`EvaluateSurfaceAnchor`（三角形の 3 頂点だけを G3 の GR12 が公開した `Animation::SkinPosition`（`SkeletalPoseBounds.h:43`）でスキニングし、重心で補間して持ち主のワールドを掛ける。法線は巻きを固定した面の法線、接線は第 1 辺を法線に直交させる。面積がほぼ 0 なら FallbackJoint の関節のフレームへ落ち、MeshRevision の不一致・パレットの NaN・範囲外の三角形は無効を返して落ちない）、`JointTriangleBuckets`（読み込み時に O(T) で、三角形を頂点の重みが最大の関節で分ける）、`FindSurfacePoint`（候補の関節の三角形の頂点だけをスキニングしてレイと交差させ、最も近い (三角形, u, v) を返す。外れたら最大のスナップ距離の中の最近点へ吸着、超えたら Miss。結果は `StabResult`（Hit・Snapped・Miss と理由））を置く。MeshRevision は `SkinnedMeshResource::GetPoseRevision()`（`SkinnedMeshResource.h:55`）を使う。(2) `Math::RayIntersectsTriangleBarycentric`（重心座標つき）を `Library/Core/Public/Math/GeometryIntersection.h` の既存の `RayIntersectsTriangle`（`:403`）の隣に足す。既存の関数は変えない。(3) `SurfaceAnchorMotion`（純粋な値の型）: フレームの差分の速度 (P_now − P_prev)/dt_frame、接線速度 v − (v·n)n、指数平滑（時定数は引数。既定は仮で 50〜120 ms の間）した速度の差分の加速度、クリップの切り替え・ループの折り返し・瞬間移動の不連続をしきい値で見つけて履歴を消す。(4) `SkinnedMeshComponent` に評価済みのパレットを読む `TryGetBonePalette`（自動で評価しない。未評価・dirty・無効な資産は false。`TryGetJointModelMatrix`（`SkinnedMeshComponent.h:83`）と同じ約束）を足す。 (5) 試験（`SkeletalAnimationSamplingTest` の実行ファイルへソースとして足す。`AnimEventPropertyTest` と同じ形で、ctest の名前は `SkeletalAnimationSamplingTest`。足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: 合成の骨格とクリップ（`SkeletalAnimationSamplingTest` の流儀）で、三角形 t・重心 (0.2, 0.3) のアンカーのワールドの位置が時刻 0・0.5・1.0 で「3 頂点をスキニングして重心で補間した値」と 1e-5 以内、回る関節に付けたアンカーの速度が解析値 ω×r と許容内、ランダムなレイ 1000 本でバケットの探索が総当たりと同じ三角形を返し調べた三角形が少ない、MeshRevision の不一致・潰れた三角形・NaN のパレットの扱い、62.5 ms の間隔のキーで動かしたアンカーの平滑の加速度のピーク/平均が、平滑ありで閾値以下・なしで閾値超え（試験が効いていることの確認）。`GeometryIntersectionExtraTest` にケースを足す: 返る (u, v) が P0+u(P1−P0)+v(P2−P0) = レイの上の交点を 1e-5 以内で満たし、既存の `RayIntersectsTriangle` の結果が変わらない。
 - verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest MathGeometryTest Game -- /m:1`
@@ -6260,7 +6260,7 @@
 - notes: ロードマップ 1945・1957 行、要件 `#### GR60` の (b) ディゾルブの材質と P1・P2。10-02 の後に既定の描画が可視バッファ（解決は計算シェーダーで材質ごとの断片を走らせられない）になったので、ロードマップの「gbuffer.frag に #include して discard」は fallback だけに当たり、on の経路は G5-GR26-GBUFFER-PROGRAMS の「解決の後に重ねる」経路に乗せる（G5 の項目の決定と同じ理由）。UNCERTAIN: VSM のスキンの記録は `SkinningComputePass` の出力（`SkinnedOutputVertex` は位置・法線・UV だけ。`SkinningComputePass.h:30-35`）を読むので、バインド姿勢の位置と protect が取れない。入力の頂点の BDA を読むか出力に欄を足すかは読んで決め、出力の並びを変えるなら `ComputeSkinningVulkanTest` を通す。ノイズの格子のハッシュは GR134 の `Common/MeshParticleDissolve.glsl` の関数を共有してよいが、そちらは UV の 2D で、こちらはバインド姿勢の 3D（AI のメッシュの UV の継ぎ目で縁が割れないため。要件の式の注釈）。縁の emissive の FP16 の溢れは SS-EMISSIVE-PREEXPOSE（done。`Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md:161`）で露出を掛けて書くようになったが、上限は値で残す。G10 の中で `gbuffer.frag`・GBufferPass・`lighting.frag` を共有する GR65・GR64・GR60 を直列にする（ロードマップ 1977 行）。危険地帯（GBuffer・影・RenderThread）なので評価者を通す。ディゾルブの無い材質の画素は変わらないので起動画面（絶対規則 7）は golden で守る。やらないこと: 表面から粒を出すエミッタ（G10-GR60-SKIN-SURFACE-EMITTER）、灰・光の効果の定義（G10-GR60-VANISH-EFFECT）、メッシュの切断と回転する破片（ロードマップの非ゴール）。
 
 ## G10-GR20-GRIP-SOLVER: しがみつきの拘束（重心 1 点の位置ベースの距離拘束）・荷重・顎のゲージの純関数と、調整値の JSON を Gameplay に足す
-- status: todo
+- status: done
 - after: G8-GR16-GAMEPLAY-MODULE, G8-GR16-COMBAT-RUNTIME, G8-GR16-JOINT-DATA-RESPONSE
 - gr: GR20
 - needs-gr: GR16
@@ -6282,7 +6282,7 @@
 - notes: 確かめ直しの結果、GR114 の大半は済んでいる: MegaGeometry の CSM への描画とカスケードごとの絞り込み・影の段の選択（SS-CSM-MEGA-CASTERS、`ShadowMapPass.cpp:1373-1420`、`ResolveMegaShadowRange`）、FIX-CSM-MEGA-CASTER-BOUNDS（`Docs/History/2026-10-07-G2Integration/CompletedTasks-09.md:248` で done）、太陽の影の既定は VSM で MegaGeometry も描く（`Game/Boot/GameBoot.cpp:35`、SCN-MEGA-VSM-BVH-SUN）、地形は MegaGeometry なので CSM・VSM・TLAS に入っている、影の距離はシーンごとに `SunShadowMaxDistance`（SCN-SHADOW-DISTANCE、`ShadowMapPass.cpp:1497`）。要件の「CSM へ MegaGeometry を描く」「ShadowPerObjectUBO に world を足す」「shadow.vert の worldSource 分岐」は既にあり（`ShadowMapPass.cpp:45-56`）、作らない。段階をまたぐ注意（ロードマップ 4387・4412・4471 行）のとおり、影の値の型とスキン・通常のメッシュのカスケードごとの絞り込みは G10 が共通の部品として作り（G10-GR63-SKIN-CULL。名前は `SunShadowParameters` に 1 つにした）、この項目はそれを広げる（要件の `DirectionalShadowParameters` は作らない）。G11 は G10 を段階として待たないが、この項目だけは G10-GR63-SKIN-CULL の後にする（同じ ShadowMapPass.cpp と値の型を触るため）。選定課題 G11-S8（影専用の粗いメッシュの形式。ロードマップ 4555 行）は推奨の (C) を採る: G11 では上限の守り（`MaxShadowCasterTriangles`。既定 150k は根拠なしの仮の値で、データで変えられる）までにし、(A)(B) の焼き込みの形式は GR80（G17）で決める。理由: NVMESH v0 は LOD0 以外を拒否し、読み込むモデルは `ModelStaging.cpp:969` で `bBuildLODHierarchy = false`、影だけの段は backlog の FIX-MEGA-SHADOW-LOD-LOADED が別の設計を要すると書いている。VSM はページの持ち越しで毎フレームの費用にならないので上限で外さず数を出すだけにする。選定課題 G11-S4 は G5 で決めた (A)（草は影を落とさず受けるだけ。G5-GR43-GRASS-DRAW の notes）に従い、今の FoliagePass の株（低木）の VSM の影は変えない。ファーのシェルが影を落とさない方針（GR34）は G6 の範囲で、確かめは G11-GR114-SHADOW-CHECK。新しい欄は SceneRevision に入れない（RTGI の履歴を毎回捨てないため。今の `SunShadowMaxDistance` は `HashSceneEnvironmentRevision` に入っている〔RenderingCoordinator.cpp:222〕が、それは変えない）。危険地帯（影・RenderThread の契約）。評価者の反証を省かない。共有のファイル（ShadowMapPass.cpp・RenderingCoordinator.cpp・SceneProxy.h・GameApplicationHandler.cpp）は差分を小さくする。試験を足す理由: 反証する契約は「上限で描く物が黙って欠けない・増えない」「GameThread の値が FramePacket だけを通って影に届く」。1 体だけの欠けは撮影では気づきにくく、警告が無ければ黙って起きる。ロードマップ 1991・2002 行、要件 `#### GR114`。
 
 ## G11-GR56-SKY-OCC-CPU: 屋外の空の遮蔽の値の型・手置きの遮蔽物・FramePacket への経路と、地平線の積分・L1 球面調和・鏡面の円錐の CPU の正解を作る
-- status: todo
+- status: done
 - gr: GR56
 - done-when: (1) `Library/Core/Public/Rendering/SkyOcclusion.h`（と `Private/Rendering/SkyOcclusion.cpp`）に、`SkyOcclusionParameters`（無効が既定。強さ・拡散の指数・鏡面の強さ・遮った向きから届く光の色と強さ・受け手の高さ 0.25 m・地面の高さ・段の数 3・最細のテクセル 0.5 m・解像度 256・最大の地平距離 96 m など。DDGIVolume.h・VolumetricFog.h と同じ置き方）と、遮蔽物の値の型 `SkyOccluderProxy`（目安 64 B。中心・Yaw・半寸法・底のずれ・不透明度 κ・印〔形=楕円体/箱、種別=Solid/Canopy、動くか、雨を遮るか〕）、`MakeDefault*`・`Sanitize*`・`AreEqual*` を置く。(2) 手置きの `SkyOccluderComponent`（`Library/Core/Public/Component/`。Entity の AABB から寸法を初期化でき、PROPERTY で保存される）が World の同期で `SceneProxy` の遮蔽物の配列へ入り、`RenderWorld::SetSkyOcclusionParameters` → `RenderingCoordinator` → `SnapshotSceneParameters` で FramePacket へ値で渡る。遮蔽物の増減は SceneRevision を変えず、別の版（`SkyOcclusionRevision`）を進める。(3) CPU の正解 `SkyOcclusionReference`（Private/Rendering）: 遮蔽物を 2.5D の格子（地面高 G・樹冠の底 U・頂 T・κ）へ写す、受け手から方位 12 × 仰角 6 の光線を幾何級数の歩で進めて遮蔽を積分し遮蔽率の L1 係数を求める、B(N) と曲げた法線、鏡面のローブと見える円錐の交差（要件の (d) の式）。試験が通る: `SkyOcclusionModelTest`・`SkyOcclusionSnapshotContractTest`・`SkyOcclusionHorizonReferenceTest`（どれも `CameraViewConstantsTest` の束へ MEMBER）で、既定は無効・Sanitize（NaN・負・0・巨大値）・trivially copyable と standard layout、楕円体と箱の頂・底が解析値と一致、値が FramePacket.Scene へそのまま届き遮蔽物の増減で SceneRevision が変わらないこと、遮蔽物なしで全法線 V=1、高さ 10 m の無限平板の樹冠 κ=1 で V(+Y)≤0.02・V(水平)=0.5±0.03、κ=0.5 が光学的深さの式と ±0.03、高さ H・距離 d の壁が閉形式 V(+Y)=1−sin²θ_w/2 と ±0.07、鏡面の円錐の交差が鏡面ローブのモンテカルロ積分と 0.05 以内（粗さ 0.1・0.3・0.6、複数の角）。`SceneFileRoundTripTest` に `SkyOccluderComponent` の保存 → 読込の一致を足す。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest SceneSerializerTest Game -- /m:1`
@@ -6333,7 +6333,7 @@
 - notes: GR59 の P1（要件 5973-5985・6007 行）。選定課題 G11-S2 は (B)（G11-GR56-SKY-OCC-CPU の notes）: 遮蔽物の値の型とコンポーネントは GR56 と共通、マップは別。要件の `RainOccluderComponent` は作らず `SkyOccluderComponent` の「雨を遮る」印を使う。要件の「精密モード（実メッシュを真上から描く。P6）」は作らない: AI 生成の高密度メッシュ（約 70 万三角形）をそのまま描かないために遮蔽物の形の方式にした（要件 6011 行）ので、形で足りないと撮影で分かったときだけ別の項目にする。遮蔽物の形の取り込み時の自動推定（木＝楕円体、岩・小屋＝箱）は GR81（G17）の取り込み設定の範囲で、当面は境界からの既定と手置き。動く遮蔽物は対象外（要件）。消費する側（GR57 の粒子の衝突・GR53 の濡れ・水たまり）は G11-GR59-RAIN-HIT と G11-GR59-PUDDLES。新しい全画面のパスは足さない。危険地帯（RenderThread のパスの順と公開）。評価者の反証を省かない。SceneView.cpp は共有のファイルなので差分を小さくする。試験を足す理由: 反証する契約は「屋根の高さが 1 テクセルの内で正しく、スキンと地形を屋根と取り違えない」。犬や地面を屋根と取り違えると「その下だけ乾く・雨が止まる」が局所に出て、撮影 1 枚では見落とし、黙って起きる。ロードマップ 1990・2001 行、要件 `#### GR59`。
 
 ## G11-GR59-PUDDLE-MASK: 地形の cook に、水たまりのできやすさ（凹み度）の層を規則とペイント入力から決定的に焼いて足す
-- status: todo
+- status: done
 - after: G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR59
 - needs-gr: GR89
@@ -10494,3 +10494,57 @@
 - verify: `ctest --test-dir build -C Debug -R "^SingleAssetCookServiceTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Test/Core/Asset/SingleAssetCookServiceTest.cpp, TASKS.md, PROGRESS.md
 - from: G2-S6-ASSET-SET-P3
+
+## G5-GR90-SCATTER-RUNTIME-P1: grassland の倒木の種に CC0 のスキャンの倒木を選んで cook し、散布の種の表のメッシュの論理パスをそれに向ける
+- status: todo
+- after: G5-GR90-SCATTER-RUNTIME
+- done-when: 今の `Assets/Scatter/grassland.scatter.json` の `fallen_log` は `lods` が実在しない `Assets/Models/Grassland/FallenLog/FallenLog.gltf` を指している。そのため `GrasslandScatter.cpp` の `LoadMegaMesh` が cooked で解決できず、倒木の種は未結合のまま飛ばされて描かれない。G5-GR90-SCATTER-CHECK が撮影で確かめる「岩・倒木・低木」の倒木も、このままでは出ない。これを次の 4 つで直す。
+  (1) `Scripts/FetchPolyHavenModels.ps1` に `-Set grassland` を足す。落とすのは草原の散布が使う Poly Haven の CC0 のモデルで、岩の `boulder_01` と、新しく選ぶ倒木 1 種。倒木は、地面に横たわった丸太か倒れた幹の形で、温帯の乾いた草地に合う色のものを Poly Haven の API から選ぶ。選んだ id と理由はスクリプト冒頭の説明に書く。
+  (2) 倒木のモデル(glTF・.bin・色・法線・ARM のテクスチャ)を、新しい `Assets/AssetSets/GrasslandModels.json`(package は `Grassland/`)に載せる。項目の形は `WastelandModels.json` の `boulder_01` と同じにする。ほかの一覧に既にある論理パスは重ねない。
+  (3) `grassland.scatter.json` の `fallen_log` の `lods` を、その glTF の論理パスにする。`mesh_radius_m` と `min_spacing_m` は、選んだメッシュの水平の外接の半径から決め直し、根拠を PROGRESS に書く。ほかの種・seed・地形の参照は変えない。
+  (4) CookAssets で倒木と grassland の散布を焼き直したあと、`build/CookedAssets/manifest.json` に `fallen_log` の `lods[0]`(`Assets/` を除いた形)が載っている。
+  範囲の外: 低木・株(foliage)のメッシュは手続きのままにする。株の経路の頂点(`FoliageVertex`)には UV もテクスチャも無く、cook したメッシュを受ける口が無いため。実物の低木のメッシュは G5-GR46-VERTEX-ANIM・G12-GR47・G12-GR48 の経路で入る。手本と並べた見た目の調整は、起動が要るので G5-GR90-SCATTER-CHECK の撮影で行う。その done-when は倒木・低木の見え方を見ており、paths に `Game/GameModes/Grassland` を含む。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set grassland`
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Models/PolyHaven/*"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*"`
+- verify: `powershell -NoProfile -Command "$s = Get-Content -Raw Assets/Scatter/grassland.scatter.json | ConvertFrom-Json; $p = (($s.species | Where-Object name -eq 'fallen_log').lods[0]) -replace '^Assets/', ''; if (-not (Select-String -Path build/CookedAssets/manifest.json -SimpleMatch -Pattern $p -Quiet)) { Write-Output ('FALLEN_LOG_NOT_COOKED ' + $p); exit 1 }; Write-Output ('FALLEN_LOG_COOKED ' + $p)"`
+- paths: Scripts/FetchPolyHavenModels.ps1, Assets/AssetSets/GrasslandModels.json, Assets/Scatter/grassland.scatter.json, TASKS.md, PROGRESS.md
+- from: G5-GR90-SCATTER-RUNTIME
+
+## G9-GR15-AB-CAPTURE-CHECK-P1: 足 IK より後の modifier が脚の祖先を回しても接地を保つため、FollowThrough・SpringBone の後で脚の IK を同じフレームの目標へ解き直す
+- status: todo
+- after: G9-GR15-ORDER-DEBUG-VIEW
+- gr: GR14, GR15
+- done-when: 以下の (1)〜(6) をすべて満たす。
+  (1) `SkeletalAnimationSamplingTest` の ModifierOrderTest で使う合成の四足（前脚が胸の子）に、`AnimationDebugQuadruped.posemod.json` と同じ胸・首の FollowThrough を既定の順で掛ける。解き直しを入れると、接地中の前脚の足先と、FootIK がそのフレームに求めた目標（`GetLegToeTargetWorld`）との平均誤差が 5 mm 以下になる。試験は、解き直しなしの値も並べて出す。maxStretch で届かない標本は除外し、除外した数を出す。
+  (2) 同じ実行で胸の遅れは残る。FollowThrough なしの実行と比べた胸のグローバル回転の差の最大が 1° 以上ある。
+  (3) FollowThrough と SpringBone の重みを 0 にした実行では、解き直しあり・なしで足先の位置の差が 1e-5 m 以下。
+  (4) 解き直しは、新しい地面の問い合わせも、接地の固定の状態の更新もしない。問い合わせの回数を試験で数えて確かめる。既存の ModifierOrderTest の検査（2 回の実行のハッシュの一致、FootIK を order 50 にしたときの誤差の増加）は、解き直しを有効にしない設定のまま通る。
+  (5) `AnimationDebugQuadruped.posemod.json` で解き直しを有効にする。`Docs/Architecture/AnimationRuntime.md` の順序の表に、解き直しの段（FollowThrough の後・ソケットの前）を足す。「脚の祖先を回す設定では…接地を保つことが自動的に保証されるわけではない」の段落は、「後段の modifier が脚の祖先を回すときは、解き直しで接地を保つ」という決まりに書き換える。
+  (6) 下の verify が通る（Game は起動しない）。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest GLTFSkeletalAnalyzerTest ResourceRegistryTest PhysicsDynamicsTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|GLTFSkeletalAnalyzerTest|SkeletalResourceLifetimeTest|PhysicsGroundQueryIntegrationTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Animation/FootIKModifier.h, Library/Core/Private/Animation/FootIKModifier.cpp, Library/Core/Public/Animation/Procedural/PoseModifierConfig.h, Library/Core/Private/Animation/Procedural/PoseModifierConfig.cpp, Test/Core/Rendering/ModifierOrderTest.cpp, Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp, Assets/Gameplay/AnimationDebugQuadruped.posemod.json, Game/Debug/PoseModifierDebugView.cpp, Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp, Docs/Architecture/AnimationRuntime.md, TASKS.md, PROGRESS.md
+- from: G9-GR15-AB-CAPTURE-CHECK
+- notes:
+  - 採った方針: FollowThrough の対象から脚の祖先（胸）を外す案は採らない。外すと `G9-GR15-SPRING-FOLLOW` の目的の「首と胸の遅れ」が消えるうえ、実リグでも前脚は胸の子になるため。
+  - 順序の表（グラフ → Lean → Spine → Look → FootIK → SpringBone → FollowThrough → ソケット）は変えない。後段の modifier が済んだ後に、FootIK が同じフレームに求めた足先の目標と足首の向きへ、二関節 IK（`Library/Core/Public/Animation/TwoBoneIK.h` の `SolveTwoBoneIK`）を解き直す。
+  - 仕組みは作り手が選んでよい。例: FootIK の settings に `reapply` を足し、設定の読み込みが、同じ FootIK を指す既定の order 720 の段を作る。`PoseModifierCreateArgs` からはほかの modifier を参照できない。つなぐには、`ParsePoseModifierConfig` で作り終えた後につなぐか、`FindFootIKModifier` で探す。
+  - 解き直しの重みは FootIK の脚の重みに従う。`--pose-modifiers-off` のときと、FootIK を OFF にしたときは掛けない。
+  - 今のコードの事実: 合成の四足の前脚の根は Chest の子（`Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp:202, 205`）。FollowThrough は `TrySetJointGlobalRotation` で胸を回すので、部分木ごと動く（`Library/Core/Private/Animation/Procedural/FollowThroughModifier.cpp:297`）。ModifierOrderTest の既定の順では、足先と地面の平均誤差が 4 cm 残る（PROGRESS の G9-GR15-ORDER-DEBUG-VIEW 反復 1）。
+  - Public API と姿勢の後処理の変更なので、評価者の反証を通す。見た目の確かめは `G9-GR15-AB-CAPTURE-CHECK` で行う。
+
+## G10-GR19-ANCHOR-ATTACH-P1: スキンメッシュのリビジョンをインデックスの差し替えで進め、別のメッシュどうしで値が重ならないようにして、古いアンカーと三角形のバケットの照合を確実に外す
+- status: todo
+- after: G10-GR19-ANCHOR-CORE
+- done-when: (1) `SkinnedMeshResource::SetIndices` が `GetPoseRevision()` を進める(split の資産で拒否する場合は進めない)。(2) 別々の `SkinnedMeshResource` のインスタンスが、作成・`SetVertices`・`SetIndices`・`SetSplitMesh`・`SetMeshNodeGlobalTransform`・`Unload` をどう重ねても同じリビジョンの値を持たない(例: プロセスで単調に増える番号から採る。シングルトンの `Get()` は作らない)。(3) `SkinnedSurfaceAnchorTest` に次を足して通る: インデックスだけを差し替えると、前の `SurfaceAnchorDesc` の `EvaluateSurfaceAnchor` が無効なフレームを返し、`JointTriangleBuckets::IsBuiltFor` が false になり、`FindSurfacePoint` が `InvalidInput` を返す。同じ内容で作った 2 つのメッシュの一方で作ったアンカーとバケットを、もう一方に使うと同じく外れる。(4) `SkinnedSurfaceAnchor.h` の `JointTriangleBuckets` のコメント(「リビジョンだけを照合するため、構築元と同じメッシュに使い…」)を新しい保証に合わせて直す。(5) リビジョンを照合する既存の姿勢の準備(`SkeletalPoseBuilder::IsPreparedFor`)の試験と、骨格の資源の寿命の試験が通る。
+- verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest ResourceRegistryTest SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|SkinnedRenderPathContractTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Resource/SkinnedMeshResource.h, Library/Core/Private/Resource/SkinnedMeshResource.cpp, Library/Core/Public/Animation/SkinnedSurfaceAnchor.h, Test/Core/Rendering/SkinnedSurfaceAnchorTest.cpp, TASKS.md, PROGRESS.md
+- from: G10-GR19-ANCHOR-ATTACH
+- notes: コードで確かめた。`SkinnedMeshResource.cpp` の `SetIndices`(152 行)は `m_PoseRevision` を進めない。リビジョンはインスタンスごとに 0 から数える。`EvaluateSurfaceAnchor`(279 行)と `JointTriangleBuckets::IsBuiltFor`(418 行)はリビジョンの値だけを照合し、メッシュが同じかどうかを見ない。そのため、資産を差し替えたあとも古いアンカーが通って、別のメッシュの三角形の番号を引いてしまう。G10-GR19-ANCHOR-ATTACH の done-when にある「資産の差し替えで外れる」は、この保証を前提にしている。Core の Public API と Resource の寿命に触れる危険地帯なので評価者を通す。起動はしない。
+
+---
+
+- 起動の要らない試験だけで確かめられるので `check: launch` は付けません。

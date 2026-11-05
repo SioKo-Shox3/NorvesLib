@@ -10,6 +10,7 @@
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Scatter/ScatterSystem.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
@@ -372,6 +373,16 @@ namespace NorvesLib::Core::Engine
             return m_TerrainSystem;
         }
 
+        Scatter::ScatterSystem& GetScatterSystem()
+        {
+            return m_ScatterSystem;
+        }
+
+        const Scatter::ScatterSystem& GetScatterSystem() const
+        {
+            return m_ScatterSystem;
+        }
+
         Particle::ParticleSystem& GetParticleSystem()
         {
             return m_ParticleSystem;
@@ -528,6 +539,7 @@ namespace NorvesLib::Core::Engine
         // m_World より前に宣言し、World の破棄で Component が登録を解除するまで生かす。
         // 破棄順を保つため、この順序を変えない。
         Rendering::Terrain::TerrainSystem m_TerrainSystem;
+        Scatter::ScatterSystem m_ScatterSystem;
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;

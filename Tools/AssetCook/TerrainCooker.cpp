@@ -65,6 +65,7 @@ namespace NorvesLib::Tools::AssetCook
             VariableArray<uint8_t> Splat0Bytes;
             VariableArray<uint8_t> Splat1Bytes;
             VariableArray<uint8_t> GrassBytes;
+            VariableArray<uint8_t> PuddleBytes;
         };
 
         uint8_t EncodeNormalComponent(double value)
@@ -157,6 +158,10 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(outError, "マスク配列の標本数が高さ格子と一致しません。MaskRgba・Splat は標本数の4倍、GrassR8 は標本数のバイト数にしてください。");
             }
+            if (!masks->PuddleR8.empty() && masks->PuddleR8.size() != sampleCount64)
+            {
+                return Fail(outError, "凹み度配列の標本数が高さ格子と一致しません。PuddleR8 は空にするか、標本数と同じバイト数にしてください。");
+            }
             const size_t layerCount = masks->SplatLayerNames.size();
             if (layerCount > 8 || (layerCount > 0) != !masks->Splat0Rgba.empty() ||
                 (layerCount > 4) != !masks->Splat1Rgba.empty())
@@ -236,6 +241,7 @@ namespace NorvesLib::Tools::AssetCook
             VariableArray<uint8_t> splat0Rgba(masks != nullptr && !masks->Splat0Rgba.empty() ? tileSamples * 4 : 0);
             VariableArray<uint8_t> splat1Rgba(masks != nullptr && !masks->Splat1Rgba.empty() ? tileSamples * 4 : 0);
             VariableArray<uint8_t> grassRgba(masks != nullptr ? tileSamples * 4 : 0);
+            VariableArray<uint8_t> puddleRgba(masks != nullptr && !masks->PuddleR8.empty() ? tileSamples * 4 : 0);
             CookedTerrainWriteDesc desc;
             desc.CellCountX = grid.Width - 1;
             desc.CellCountZ = grid.Height - 1;
@@ -298,6 +304,10 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
                 appendLayer(TerrainGrassLayerFourCC, CookedTexturePixelFormat::R8UNorm, TerrainGrassSemantic);
+                if (!masks->PuddleR8.empty())
+                {
+                    appendLayer(TerrainPuddleLayerFourCC, CookedTexturePixelFormat::R8UNorm, Core::Asset::CookedTerrainFormatV0::PuddleSemantic);
+                }
             }
             desc.Tiles.resize(tileCount);
             for (uint32_t tz = 0; tz < tileCountZ; ++tz)
@@ -349,6 +359,13 @@ namespace NorvesLib::Tools::AssetCook
                                 grassRgba[localIndex * 4 + 1] = 0;
                                 grassRgba[localIndex * 4 + 2] = 0;
                                 grassRgba[localIndex * 4 + 3] = 255;
+                                if (!puddleRgba.empty())
+                                {
+                                    puddleRgba[localIndex * 4] = masks->PuddleR8[globalIndex];
+                                    puddleRgba[localIndex * 4 + 1] = 0;
+                                    puddleRgba[localIndex * 4 + 2] = 0;
+                                    puddleRgba[localIndex * 4 + 3] = 255;
+                                }
                             }
                         }
                     }
@@ -394,7 +411,8 @@ namespace NorvesLib::Tools::AssetCook
                         if (!cookLayer(maskRgba, "nvtex.v0.rgba8.linear", "MSK0", data.MaskBytes) ||
                             (!splat0Rgba.empty() && !cookLayer(splat0Rgba, "nvtex.v0.rgba8.linear", "SPL0", data.Splat0Bytes)) ||
                             (!splat1Rgba.empty() && !cookLayer(splat1Rgba, "nvtex.v0.rgba8.linear", "SPL1", data.Splat1Bytes)) ||
-                            !cookLayer(grassRgba, "nvtex.v0.r8.linear", "GRS0", data.GrassBytes))
+                            !cookLayer(grassRgba, "nvtex.v0.r8.linear", "GRS0", data.GrassBytes) ||
+                            (!puddleRgba.empty() && !cookLayer(puddleRgba, "nvtex.v0.r8.linear", "PDL0", data.PuddleBytes)))
                         {
                             return false;
                         }

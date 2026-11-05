@@ -826,6 +826,7 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
+        m_bPoseModifiersOffRequested = false;
         m_bDogMovementSmoke = false;
         m_bCombatSmoke = false;
         m_bEncounterSmoke = false;
@@ -851,6 +852,7 @@ namespace Game
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        m_GrasslandScatterStressCount = 0;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1614,6 +1616,24 @@ namespace Game
                 m_StressStreamPeriod = streamPeriod;
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
+            {
+                uint32_t count = 0;
+                if (m_GrasslandScatterStressCount != 0)
+                {
+                    LOG_ERROR("--grassland-scatter-stress が重複しています");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, count) || count == 0 || count > 2000000u)
+                {
+                    LOG_ERROR("--grassland-scatter-stress は 1〜2000000 の整数で指定してください");
+                    return false;
+                }
+                m_GrasslandScatterStressCount = count;
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kStressEntitiesOption, sceneValue))
             {
                 uint32_t stressEntityCount = 0;
@@ -2274,6 +2294,11 @@ namespace Game
             if (args[i] == TEXT("--animation-debug"))
             {
                 m_bAnimationDebugRequested = true;
+                continue;
+            }
+            if (args[i] == TEXT("--pose-modifiers-off"))
+            {
+                m_bPoseModifiersOffRequested = true;
                 continue;
             }
             if (args[i] == kStartupSkinnedProbeOption)
@@ -3257,6 +3282,11 @@ namespace Game
         if (!m_DogMovementCaptureDir.empty() && !m_bDogMovementAutopilot)
         {
             LOG_ERROR("--dog-movement-capture-dir には --dog-movement-autopilot が必要です");
+            return false;
+        }
+        if (m_bPoseModifiersOffRequested && !m_bAnimationDebugRequested)
+        {
+            LOG_ERROR("--pose-modifiers-off には --animation-debug が必要です");
             return false;
         }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
@@ -4959,6 +4989,7 @@ namespace Game
                     s_Rendering3DTestSkinnedProbeMaterialCount == 2u;
                 mode->GetData().m_StartupSkinnedProbeMaterialCount = s_Rendering3DTestSkinnedProbeMaterialCount;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
+                mode->GetData().m_bAnimationDebugPoseModifiersOff = m_bPoseModifiersOffRequested;
 #if defined(NORVES_ENABLE_IMGUI)
                 mode->GetData().m_bDebugImGui = m_bImGuiRequested;
 #endif
@@ -5152,9 +5183,11 @@ namespace Game
             Grassland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             scatterStressCount = m_GrasslandScatterStressCount,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
+                mode->GetData().m_ScatterStressCount = scatterStressCount;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

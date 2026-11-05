@@ -1088,6 +1088,52 @@ namespace NorvesLib::Core::Rendering::Terrain
                     }
                 }
             }
+            const int32_t puddleLayer = terrain.FindLayer(Asset::CookedTerrainFormatV0::PuddleLayerFourCC);
+            if (puddleLayer >= 0)
+            {
+                const auto& layer = terrain.Layers[puddleLayer];
+                if (layer.Encoding != Asset::CookedTerrainFormatV0::LayerEncodingEmbeddedNvtex ||
+                    layer.PixelFormat != Asset::CookedTexturePixelFormat::R8UNorm ||
+                    layer.ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+                    layer.Semantic != Asset::CookedTerrainFormatV0::PuddleSemantic)
+                {
+                    outError = "NVTRN の PDL0 の形式・色空間・意味の文字列が約束と違います";
+                    return {};
+                }
+                grid->PuddlePotential.resize(static_cast<size_t>(columns * rows));
+                for (size_t index = 0; index < terrain.Tiles.size(); ++index)
+                {
+                    const auto& tile = terrain.Tiles[index];
+                    const auto parsed = Asset::ParseCookedTexture(
+                        terrain.GetLayerBlob(static_cast<uint32_t>(index), static_cast<uint32_t>(puddleLayer)), true);
+                    const auto& texture = parsed.Texture;
+                    if (!parsed.Succeeded() || texture.Width != side || texture.Height != side ||
+                        texture.LayerCount != 1 || texture.PixelFormat != Asset::CookedTexturePixelFormat::R8UNorm ||
+                        texture.ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+                        texture.MipCount != Asset::ComputeCookedTextureFullMipCount(static_cast<uint32_t>(side), static_cast<uint32_t>(side)))
+                    {
+                        outError = "NVTRN の PDL0 の NVTEX の形式・大きさ・ミップ数が約束と違います";
+                        return {};
+                    }
+                    const auto mipBytes = texture.GetMipBytes(0);
+                    if (mipBytes.size() != static_cast<size_t>(side * side))
+                    {
+                        outError = "NVTRN の PDL0 の mip0 のバイト数が約束と違います";
+                        return {};
+                    }
+                    // 共有辺は後に読むタイルの値で上書きする。
+                    for (uint32_t z = 0; z <= terrain.TileCells; ++z)
+                    {
+                        for (uint32_t x = 0; x <= terrain.TileCells; ++x)
+                        {
+                            const size_t source = static_cast<size_t>(z) * static_cast<size_t>(side) + x;
+                            const size_t column = static_cast<size_t>(tile.TileX) * terrain.TileCells + x;
+                            const size_t row = static_cast<size_t>(tile.TileZ) * terrain.TileCells + z;
+                            grid->PuddlePotential[row * grid->Columns + column] = mipBytes[source];
+                        }
+                    }
+                }
+            }
             grid->BuildBlockBounds();
             return Container::MakeShared<const TerrainHeightField>(GridTag{}, Container::TSharedPtr<const GridData>(std::move(grid)));
         }
@@ -1215,6 +1261,25 @@ namespace NorvesLib::Core::Rendering::Terrain
             }
         }
         return surfaceId;
+    }
+
+    bool TerrainHeightField::HasPuddlePotential() const
+    {
+        return m_Grid && !m_Grid->PuddlePotential.empty();
+    }
+
+    float TerrainHeightField::SamplePuddlePotential(float x, float z) const
+    {
+        if (!HasPuddlePotential() || !Contains(x, z))
+        {
+            return 0.0f;
+        }
+        const GridData& grid = *m_Grid;
+        const double u = (static_cast<double>(x) - grid.FirstX) / grid.Spacing;
+        const double v = (static_cast<double>(z) - grid.FirstZ) / grid.Spacing;
+        const uint32_t column = std::min(static_cast<uint32_t>(std::round(u)), grid.Columns - 1);
+        const uint32_t row = std::min(static_cast<uint32_t>(std::round(v)), grid.Rows - 1);
+        return static_cast<float>(grid.PuddlePotential[static_cast<size_t>(row) * grid.Columns + column]) / 255.0f;
     }
 
     uint32_t TerrainHeightField::GetSplatLayerCount() const

@@ -283,6 +283,7 @@ namespace Game
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
 
         bool m_bAnimationDebugRequested = false;
+        bool m_bPoseModifiersOffRequested = false;
         bool m_bDogMovementSmoke = false;
         bool m_bCombatSmoke = false;
         bool m_bEncounterSmoke = false;
@@ -320,6 +321,8 @@ namespace Game
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
+        uint32_t m_GrasslandScatterStressCount = 0;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;
