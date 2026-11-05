@@ -92,6 +92,7 @@ namespace NorvesLib::Modules::Physics
 
         m_Engine = &engine;
         m_bBound = true;
+        engine.GetSceneQuery().SetTerrainSystem(&engine.GetTerrainSystem());
         RegisterWorldSystems(engine.GetWorld());
         return true;
     }
@@ -297,6 +298,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         // Unavailable は provider が既に存在しないため dangling binding はない。
+        engine.GetSceneQuery().SetTerrainSystem(nullptr);
         m_Engine = nullptr;
         m_bBound = false;
         ResetTransientState();

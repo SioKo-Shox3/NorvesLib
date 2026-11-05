@@ -14,6 +14,7 @@
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
+#include "Physics/TerrainColliderBinding.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
@@ -22,6 +23,8 @@
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::GameMode;
 using namespace NorvesLib::Core::Rendering;
+
+namespace P = NorvesLib::Modules::Physics;
 
 namespace Game::GameModes
 {
@@ -84,6 +87,8 @@ namespace Game::GameModes
         LOG_INFO("grassland を開始します");
         data.m_TickCount = 0;
         data.m_pTerrain = nullptr;
+        data.m_pTerrainCollider = nullptr;
+        data.m_bTerrainColliderAttempted = false;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
 
         const Game::Scenes::SceneDescriptor* scene = Game::Scenes::FindScene(Game::Scenes::kGrasslandSceneId);
@@ -134,6 +139,15 @@ namespace Game::GameModes
         // すべての区画が揃ってから撮影を許可する。欠損区画を含む地形を準備完了として扱わない。
         const bool bTerrainReady = data.m_pTerrain != nullptr && data.m_pTerrain->IsFullyPlaced() &&
                                    data.m_pTerrain->GetPlacedTileCount() == data.m_pTerrain->GetTileCount();
+        if (bTerrainReady && !data.m_bTerrainColliderAttempted)
+        {
+            data.m_bTerrainColliderAttempted = true;
+            const P::EPhysicsResult result = P::AttachTerrainCollider(ctx.WorldRef, *data.m_pTerrain, data.m_pTerrainCollider);
+            if (result != P::EPhysicsResult::Success)
+            {
+                LOG_WARNING("grassland: 地形のコライダーを作れませんでした (result=%u)", static_cast<unsigned>(result));
+            }
+        }
         const bool bReady = bTerrainReady && data.m_TickCount >= kReadyTickCount && !data.m_Rig.IsScriptRunning();
         if (bReady)
         {
@@ -147,6 +161,8 @@ namespace Game::GameModes
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
         data.m_Rig.Leave(ctx);
         data.m_pTerrain = nullptr;
+        data.m_pTerrainCollider = nullptr;
+        data.m_bTerrainColliderAttempted = false;
         // 地形とカメラの Entity は GameModeScope::Cleanup が返す。TerrainComponent::EndPlay で区画を返す。
         // 空は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);
