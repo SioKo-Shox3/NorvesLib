@@ -10258,3 +10258,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
 - Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
 - Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
+
+## 2026-11-05 G12-GR45-DRYNESS-CPU（run 20261105-203950 の反復 1、統合ブランチの取り込み）
+- Done: feature/scene-launcher を取り込み、`Test/Core/Object/SceneFileRoundTripTest.cpp` の衝突を両側の試験を残して解いた。WitherSourceComponent の往復の試験は、シーンの形式が v3 になったのに合わせて版の検査を `SceneSerializer::SceneFileFormatVersion` で見る形にした。
+- 証拠: `.harness/runs/20261105-203950/verify-build.txt`（MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが EXIT=0）、`.harness/runs/20261105-203950/verify-ctest.txt`（6 本 100% tests passed, 0 tests failed out of 6）。アプリを起動する確かめは無い。
+- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
+- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
+- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
+- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
+- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。
+- U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
+- U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
+- U4 DrynessMapQueryTest と DrynessMapSerializeTest、タスクの verify: 着地(直し 1 回)
+- Done(G12-GR45-DRYNESS-CPU): 解析的な源（円・楕円・減衰）の一覧を正本とする DrynessMap（AddCircle・AddEllipse・SetTarget・Remove・Tick・Sample・Serialize・Restore・GPU への選別 既定 64）を足し、Vegetation が持って World の dt で進める。WitherSourceComponent（BeginPlay で源を足し、持ち主の位置に追従し、EndPlay で外す）を足した。DrynessMapQueryTest・DrynessMapSerializeTest を MathGeometryTest の束へ足し、SceneFileRoundTripTest に WitherSourceComponent の PROPERTY の往復を足した。verify: MathGeometryTest・SceneSerializerTest・Game の Debug ビルドが終了コード 0、ctest 6 本（DrynessMapQueryTest・DrynessMapSerializeTest・GrassFieldQueryTest・SceneFileRoundTripTest・SceneSerializerTest・MathGeometryTest）がすべて Passed。
+- Next(G12-GR45-DRYNESS-CPU): 草の色への反映は G12-GR45-GRASS-DRYNESS、セーブへの結線は G12-GR45-WITHER-GAMEPLAY。起動の確かめ（再生中に WitherSourceComponent の源が持ち主に追従し、終了で消えること）は後回し。
+- Notes(G12-GR45-DRYNESS-CPU): NaN と 1e999 は JsonDocument::TryParse が数値として受け付けないため、Restore の NonFinite の拒否は試験で直接は通していない（拒否の分岐は実装にある）。

@@ -40,6 +40,21 @@ namespace NorvesLib::Core::Vegetation
         return m_pGrassField;
     }
 
+    DrynessMap& Vegetation::GetDrynessMap()
+    {
+        return m_DrynessMap;
+    }
+
+    const DrynessMap& Vegetation::GetDrynessMap() const
+    {
+        return m_DrynessMap;
+    }
+
+    void Vegetation::Tick(float worldDeltaSeconds)
+    {
+        m_DrynessMap.Tick(worldDeltaSeconds);
+    }
+
     void Vegetation::PublishRenderData(Rendering::RenderWorld& renderWorld)
     {
         const uint64_t revision = m_pGrassField != nullptr ? m_pGrassField->GetRevision() : 0;
