@@ -476,6 +476,7 @@ namespace NorvesLib::Core::Component
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
         context.SyncPhases = m_Instance.GetSyncPhases();
+        context.PendingEvents = m_Instance.Events().PendingEvents();
         if (const auto* owner = mesh->GetOwner())
         {
             const auto& world = owner->GetWorldTransform();
