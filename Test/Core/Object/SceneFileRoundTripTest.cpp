@@ -13,6 +13,7 @@
 #include "Scene/SceneSerializer.h"
 #include "Text/JsonDocument.h"
 #include <cassert>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -511,15 +512,15 @@ namespace
         JsonDocument jsonDocument;
         assert(JsonDocument::TryParse(json, jsonDocument));
         const JsonValue jsonRoot = jsonDocument.GetRoot();
-        assert(jsonRoot.FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : 2u));
+        assert(jsonRoot.FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : Scene::SceneSerializer::SceneFileFormatVersion));
         const JsonValue jsonRoots = jsonRoot.FindMember("roots");
         assert(jsonRoots.IsArray() && jsonRoots.GetArraySize() == 1);
-        assert(jsonRoots.GetArrayElement(0).FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : 2u));
+        assert(jsonRoots.GetArrayElement(0).FindMember("formatVersion").AsUInt32() == (bLegacy ? 1u : Scene::SceneSerializer::SceneFileFormatVersion));
 
         Scene::SceneDocument document;
         assert(Scene::SceneSerializer::TryParseJson(json, document));
-        assert(document.FormatVersion == 2 && document.Roots.size() == 1);
-        assert(document.Roots[0].FormatVersion == 2);
+        assert(document.FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion && document.Roots.size() == 1);
+        assert(document.Roots[0].FormatVersion == Scene::SceneSerializer::SceneFileFormatVersion);
         assert(document.Roots[0].Root.Components.size() == 1);
         const Scene::SceneObjectRecord& grassRecord = document.Roots[0].Root.Components[0].Object;
         assert(grassRecord.ClassName == "GrassFieldComponent");
@@ -671,6 +672,65 @@ namespace
         assert(std::remove(kLegacyGrassFilePath) == 0);
     }
 
+    // 一部の書き込み後に失敗しても元ファイルの全バイトを保ち、一時ファイルを残さない。
+    void TestSaveWriteFailurePreservesOriginal()
+    {
+        RegisterRequiredClasses();
+        const Container::String filePath("SceneFileRoundTripTest.atomic.scene.json");
+        const Container::String temporaryPath = filePath + ".tmp";
+        World world;
+        world.Initialize();
+        Entity* root = world.SpawnEntity<Entity>();
+        assert(root != nullptr);
+        Scene::SceneSaveStats stats;
+        stats.SavedRoots = 99;
+        stats.DroppedProperties = 99;
+        assert(Scene::SceneSerializer::SaveToFile(world, filePath, &stats));
+        assert(stats.SavedRoots == 1 && stats.DroppedProperties == 0);
+
+        auto readBytes = [&filePath]()
+        {
+            auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                filePath, NorvesLib::FileStream::FileMode::Read, NorvesLib::FileStream::FileAccess::Read);
+            assert(stream && stream->IsOpen());
+            Container::VariableArray<unsigned char> bytes;
+            bytes.resize(static_cast<size_t>(stream->GetSize()));
+            assert(stream->Read(bytes.data(), bytes.size()) == bytes.size());
+            return bytes;
+        };
+        auto assertNoTemporaryFile = [&temporaryPath]()
+        {
+            std::FILE* file = nullptr;
+            const errno_t result = fopen_s(&file, temporaryPath.c_str(), "rb");
+            if (file)
+            {
+                std::fclose(file);
+            }
+            assert(result == ENOENT && file == nullptr);
+        };
+        const auto original = readBytes();
+        assert(!original.empty());
+        assertNoTemporaryFile();
+        root->getName() = Container::String("変更後のシーン");
+        Scene::SceneSaveOptions options;
+        options.bInjectWriteFailureForTesting = true;
+        stats.SavedRoots = 99;
+        stats.DroppedProperties = 99;
+        assert(!Scene::SceneSerializer::SaveToFile(world, filePath, &stats, options));
+        assert(stats.SavedRoots == 1 && stats.DroppedProperties == 0);
+        const auto preserved = readBytes();
+        assert(preserved.size() == original.size());
+        assert(std::memcmp(original.data(), preserved.data(), original.size()) == 0);
+        assertNoTemporaryFile();
+        assert(Scene::SceneSerializer::SaveToFile(world, filePath, &stats));
+        const auto replaced = readBytes();
+        assert(replaced.size() != original.size() ||
+            std::memcmp(replaced.data(), original.data(), original.size()) != 0);
+        assertNoTemporaryFile();
+        world.Finalize();
+        assert(std::remove(filePath.c_str()) == 0);
+    }
+
     void TestLoadFailures()
     {
         RegisterRequiredClasses();
@@ -709,6 +769,7 @@ int main()
     TestLegacyTerrainPropertiesUseDefaults();
     TestGrassPropertiesSaveLoadRoundTrip();
     TestLegacyGrassPropertiesUseDefaults();
+    TestSaveWriteFailurePreservesOriginal();
     TestLoadFailures();
 
     std::cout << "SceneFileRoundTripTest passed\n";

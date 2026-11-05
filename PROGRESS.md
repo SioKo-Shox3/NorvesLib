@@ -10174,3 +10174,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API・FramePacket のデータ契約の危険地帯）。GPU のクリップマップと照明（G11-GR56 の次の項目）。起動の確かめは後回し（今のシーンに SkyOccluderComponent を付けた所は無く、既定は無効なので見た目は変わらない）。
 - Notes: 遮蔽物の登録・解除・移動の追従は実行の試験が無い（保存の往復だけ）。GPU の項目のデモ（`--sky-occluder-demo`）で確かめる。`CenterOffset` は持ち主の回転の局所で拡大を掛けず、`HalfExtents` には持ち主の拡大の絶対値を掛ける。Yaw のずれはラジアン。
 - U1 AssetRef と EntityRefId の型、RuntimeSchema の文字列化の分岐、ECS の列の往復の試験: 着地(直し 0 回)
+- U4 シーンの保存側(v3 の版・SceneSaveStats・依存の表・壊れない保存)と AssetRef の保存の試験: 着地(直し 0 回)

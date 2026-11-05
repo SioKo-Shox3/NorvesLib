@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Object/SchemaProjection.h"
+#include "Asset/AssetManifest.h"
 #include "Container/Containers.h"
 #include <cstdint>
 
@@ -49,10 +50,30 @@ namespace NorvesLib::Core::Scene
 
     struct SceneRootRecord
     {
-        uint32_t FormatVersion = 2;
+        uint32_t FormatVersion = 3;
         SubtreeSnapshotAliasId RootAlias = InvalidSubtreeSnapshotAliasId;
         Container::String RootPath;
         SceneEntityRecord Root;
+    };
+
+    /// シーンから参照する資産。Variant の空文字は参照側で指定しない既定の形式を表す。
+    struct SceneAssetDependency
+    {
+        Container::String Path;
+        Asset::AssetKind Kind = Asset::AssetKind::Unknown;
+        Container::String Variant;
+    };
+
+    struct SceneSaveStats
+    {
+        size_t SavedRoots = 0;
+        size_t DroppedProperties = 0;
+    };
+
+    struct SceneSaveOptions
+    {
+        /// 一時ファイルに一部を書いた後で保存を失敗させる試験用の指定。
+        bool bInjectWriteFailureForTesting = false;
     };
 
     /**
@@ -60,7 +81,8 @@ namespace NorvesLib::Core::Scene
      */
     struct SceneDocument
     {
-        uint32_t FormatVersion = 2;
+        uint32_t FormatVersion = 3;
+        Container::VariableArray<SceneAssetDependency> Assets;
         Container::VariableArray<SceneRootRecord> Roots;
     };
 
@@ -89,7 +111,7 @@ namespace NorvesLib::Core::Scene
     class SceneSerializer
     {
     public:
-        static constexpr uint32_t SceneFileFormatVersion = 2;
+        static constexpr uint32_t SceneFileFormatVersion = 3;
 
         static SceneDocument BuildDocument(const Container::VariableArray<EntitySubtreeSnapshot>& roots);
         static Container::String ToJson(const SceneDocument& document);
@@ -109,12 +131,14 @@ namespace NorvesLib::Core::Scene
          * シリアライズ不能で落ちたプロパティ数をNORVES_LOGに計上する。
          * @return outRootsへ書き出したルート数
          */
-        static size_t CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots);
+        static size_t CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
+                                   SceneSaveStats* pOutStats = nullptr);
 
         /**
          * @brief WorldをシーンJSONファイルへ保存する。
          */
-        static bool SaveToFile(const World& world, const Container::String& filePath);
+        static bool SaveToFile(const World& world, const Container::String& filePath,
+                               SceneSaveStats* pOutStats = nullptr, const SceneSaveOptions& options = {});
 
         /**
          * @brief シーンJSONファイルをWorldへ加算ロードする（既存Entityはクリアしない）。

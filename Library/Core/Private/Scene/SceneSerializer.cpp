@@ -1,5 +1,6 @@
 ﻿#include "Scene/SceneSerializer.h"
 
+#include "Asset/AssetRef.h"
 #include "Component/Component.h"
 #include "Component/CameraComponent.h"
 #include "Component/LightComponent.h"
@@ -12,11 +13,20 @@
 #include "Text/JsonDocument.h"
 #include "Text/JsonWriter.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
 #include <cmath>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 
 namespace NorvesLib::Core::Scene
 {
@@ -737,10 +747,95 @@ namespace NorvesLib::Core::Scene
                 {
                     return false;
                 }
+                root.FormatVersion = 2;
+            }
+            document.FormatVersion = 2;
+            return true;
+        }
+
+        void MigrateV2Document(SceneDocument& document)
+        {
+            for (SceneRootRecord& root : document.Roots)
+            {
                 root.FormatVersion = SceneSerializer::SceneFileFormatVersion;
             }
             document.FormatVersion = SceneSerializer::SceneFileFormatVersion;
-            return true;
+        }
+
+        constexpr Asset::AssetKind kSceneAssetKinds[] = {
+            Asset::AssetKind::Unknown, Asset::AssetKind::Texture, Asset::AssetKind::Model,
+            Asset::AssetKind::Raw, Asset::AssetKind::Audio, Asset::AssetKind::Skeleton,
+            Asset::AssetKind::Animation, Asset::AssetKind::World};
+        constexpr const char* kSceneAssetKindNames[] = {
+            "Unknown", "Texture", "Model", "Raw", "Audio", "Skeleton", "Animation", "World"};
+
+        template <Asset::AssetKind K>
+        bool IsAssetRefType(StableTypeId typeId)
+        {
+            const TypeInfo* info = GetSceneTypeInfo<TAssetRef<K>>();
+            return info && info->StableId == typeId;
+        }
+
+        bool TryGetAssetRefKind(StableTypeId typeId, Asset::AssetKind& outKind)
+        {
+            // 型名の一致ではなく、登録された各参照型の安定IDで判定する。
+            const bool bMatches[] = {
+                IsAssetRefType<Asset::AssetKind::Unknown>(typeId),
+                IsAssetRefType<Asset::AssetKind::Texture>(typeId),
+                IsAssetRefType<Asset::AssetKind::Model>(typeId),
+                IsAssetRefType<Asset::AssetKind::Raw>(typeId),
+                IsAssetRefType<Asset::AssetKind::Audio>(typeId),
+                IsAssetRefType<Asset::AssetKind::Skeleton>(typeId),
+                IsAssetRefType<Asset::AssetKind::Animation>(typeId),
+                IsAssetRefType<Asset::AssetKind::World>(typeId)};
+            for (size_t index = 0; index < 8; ++index)
+            {
+                if (bMatches[index])
+                {
+                    outKind = kSceneAssetKinds[index];
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void CollectObjectAssets(const SceneObjectRecord& object, Container::VariableArray<SceneAssetDependency>& assets)
+        {
+            for (const ScenePropertyRecord& property : object.Properties)
+            {
+                Asset::AssetKind kind;
+                if (property.Value.empty() || !TryGetAssetRefKind(property.TypeId, kind))
+                {
+                    continue;
+                }
+                bool bDuplicate = false;
+                for (const SceneAssetDependency& asset : assets)
+                {
+                    if (asset.Path == property.Value && asset.Kind == kind)
+                    {
+                        bDuplicate = true;
+                        break;
+                    }
+                }
+                if (!bDuplicate)
+                {
+                    // TAssetRef は variant を保持しないため、未指定の空文字を保存する。
+                    assets.push_back(SceneAssetDependency{property.Value, kind, {}});
+                }
+            }
+        }
+
+        void CollectEntityAssets(const SceneEntityRecord& entity, Container::VariableArray<SceneAssetDependency>& assets)
+        {
+            CollectObjectAssets(entity.Object, assets);
+            for (const SceneComponentRecord& component : entity.Components)
+            {
+                CollectObjectAssets(component.Object, assets);
+            }
+            for (const SceneEntityRecord& child : entity.Children)
+            {
+                CollectEntityAssets(child, assets);
+            }
         }
 
         bool TryParseFiniteFloat(const Container::String& text, float& outValue)
@@ -1473,8 +1568,14 @@ namespace NorvesLib::Core::Scene
             record.RootAlias = snapshot.RootAlias;
             record.RootPath = snapshot.RootPath;
             record.Root = BuildEntityRecord(snapshot.Root, resolver);
+            CollectEntityAssets(record.Root, document.Assets);
             document.Roots.push_back(std::move(record));
         }
+        std::sort(document.Assets.begin(), document.Assets.end(),
+            [](const SceneAssetDependency& lhs, const SceneAssetDependency& rhs)
+            {
+                return lhs.Path == rhs.Path ? lhs.Kind < rhs.Kind : lhs.Path < rhs.Path;
+            });
         return document;
     }
 
@@ -1484,6 +1585,17 @@ namespace NorvesLib::Core::Scene
         writer.BeginObject();
         writer.WriteUInt64("formatVersion", document.FormatVersion);
         writer.WriteString("module", kModuleName);
+        writer.BeginArray("assets");
+        for (const SceneAssetDependency& asset : document.Assets)
+        {
+            writer.BeginObject();
+            writer.WriteString("path", asset.Path);
+            const size_t kindIndex = static_cast<size_t>(asset.Kind);
+            writer.WriteString("kind", kindIndex < 8 ? kSceneAssetKindNames[kindIndex] : "Unknown");
+            writer.WriteString("variant", asset.Variant);
+            writer.EndObject();
+        }
+        writer.EndArray();
         writer.BeginArray("roots");
         for (const SceneRootRecord& record : document.Roots)
         {
@@ -1538,13 +1650,53 @@ namespace NorvesLib::Core::Scene
         {
             return SetParseError(pOutError, "scene: formatVersion is required");
         }
-        if (version != SceneFileFormatVersion && version != kPreviousSceneFileFormatVersion)
+        if (version != SceneFileFormatVersion && version != 2 && version != kPreviousSceneFileFormatVersion)
         {
             return SetParseError(pOutError, "scene: unsupported formatVersion");
         }
         outDocument.FormatVersion = version;
 
         // "module"フィールドは診断専用。ロード時は読み取り・検証せずSceneDocumentにも保持しない。
+
+        if (version == SceneFileFormatVersion && root.HasMember("assets"))
+        {
+            const JsonValue assets = root.FindMember("assets");
+            if (!assets.IsArray())
+            {
+                return SetParseError(pOutError, "scene: assets は配列である必要があります");
+            }
+            for (size_t index = 0; index < assets.GetArraySize(); ++index)
+            {
+                const JsonValue entry = assets.GetArrayElement(index);
+                const JsonValue path = entry.FindMember("path");
+                const JsonValue kind = entry.FindMember("kind");
+                const JsonValue variant = entry.FindMember("variant");
+                if (!entry.IsObject() || !path.IsString() || !kind.IsString() || !variant.IsString())
+                {
+                    return SetParseError(pOutError, "scene: assets の各項目には文字列の path・kind・variant が必要です");
+                }
+                TAssetRef<Asset::AssetKind::Unknown> validatedPath;
+                if (path.AsString().empty() || !validatedPath.DeserializeFromString(path.AsString()))
+                {
+                    return SetParseError(pOutError, "scene: assets の論理パスが不正です");
+                }
+                bool bKnownKind = false;
+                for (size_t kindIndex = 0; kindIndex < 8; ++kindIndex)
+                {
+                    if (kind.AsString() == kSceneAssetKindNames[kindIndex])
+                    {
+                        outDocument.Assets.push_back(SceneAssetDependency{
+                            path.AsString(), kSceneAssetKinds[kindIndex], variant.AsString()});
+                        bKnownKind = true;
+                        break;
+                    }
+                }
+                if (!bKnownKind)
+                {
+                    return SetParseError(pOutError, "scene: assets の種別が不明です");
+                }
+            }
+        }
 
         const JsonValue roots = root.FindMember("roots");
         if (!roots.IsArray())
@@ -1586,6 +1738,11 @@ namespace NorvesLib::Core::Scene
         if (version == kPreviousSceneFileFormatVersion && !MigrateV1Document(outDocument, pOutError))
         {
             return false;
+        }
+
+        if (outDocument.FormatVersion == 2)
+        {
+            MigrateV2Document(outDocument);
         }
 
         Container::String physicalValidationError;
@@ -1646,9 +1803,14 @@ namespace NorvesLib::Core::Scene
         return true;
     }
 
-    size_t SceneSerializer::CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots)
+    size_t SceneSerializer::CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
+                                         SceneSaveStats* pOutStats)
     {
         outRoots.clear();
+        if (pOutStats)
+        {
+            *pOutStats = SceneSaveStats();
+        }
 
         SceneCaptureStats stats;
         Container::VariableArray<Entity*> roots = world.GetRootEntities();
@@ -1672,59 +1834,66 @@ namespace NorvesLib::Core::Scene
 
         if (stats.PrunedEntities > 0 || stats.PrunedComponents > 0)
         {
-            NORVES_LOG_INFO("Scene", "CaptureWorld: pruned %llu pending-destroy entities and %llu components",
+            NORVES_LOG_INFO("Scene", "CaptureWorld: 破棄待ちの Entity %llu 個と Component %llu 個を除外しました",
                             static_cast<unsigned long long>(stats.PrunedEntities),
                             static_cast<unsigned long long>(stats.PrunedComponents));
         }
         if (stats.UnserializedProperties > 0)
         {
-            NORVES_LOG_WARNING("Scene", "CaptureWorld: %llu properties could not be serialized and were omitted",
+            NORVES_LOG_WARNING("Scene", "CaptureWorld: 直列化できないプロパティ %llu 個を除外しました",
                                static_cast<unsigned long long>(stats.UnserializedProperties));
         }
 
+        if (pOutStats)
+        {
+            pOutStats->SavedRoots = outRoots.size();
+            pOutStats->DroppedProperties = stats.UnserializedProperties;
+        }
         return outRoots.size();
     }
 
-    bool SceneSerializer::SaveToFile(const World& world, const Container::String& filePath)
+    bool SceneSerializer::SaveToFile(const World& world, const Container::String& filePath,
+                                     SceneSaveStats* pOutStats, const SceneSaveOptions& options)
     {
         Container::VariableArray<EntitySubtreeSnapshot> roots;
-        CaptureWorld(world, roots);
+        CaptureWorld(world, roots, pOutStats);
 
         const SceneDocument document = BuildDocument(roots);
         const Container::String json = ToJson(document);
-        // ToJsonはwriterのIsComplete()/HasError()検査で失敗時に空文字を返す（防御チェック）
         if (json.empty())
         {
-            NORVES_LOG_ERROR("Scene", "SaveToFile: JSON serialization failed (writer incomplete or error)");
+            NORVES_LOG_ERROR("Scene", "SaveToFile: JSON の直列化に失敗しました");
             return false;
         }
 
-        NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
-            filePath,
-            NorvesLib::FileStream::FileMode::Write,
-            NorvesLib::FileStream::FileAccess::Write);
-        // TUniquePtrはstd::unique_ptrの素のエイリアスで、IsNull/IsValidはフリー関数
-        // （Container/PointerTypes.h L24-25, L113-129）。メンバ呼び出しは不可なので!streamで判定する。
-        if (!stream || !stream->IsOpen())
+        const Container::String temporaryPath = filePath + ".tmp";
+        std::FILE* file = nullptr;
+        if (fopen_s(&file, temporaryPath.c_str(), "wb") != 0 || !file)
         {
-            NORVES_LOG_ERROR("Scene", "SaveToFile: failed to open '%s' for writing", filePath.c_str());
+            NORVES_LOG_ERROR("Scene", "SaveToFile: 一時ファイル '%s' を開けません", temporaryPath.c_str());
             return false;
         }
 
-        const size_t written = stream->WriteString(json);
-        stream->Flush();
-        if (written != json.size())
+        // FileStream の Flush/Close は成否を返さないため、ここでは各段階の結果を直接確認する。
+        const size_t bytesToWrite = options.bInjectWriteFailureForTesting ? json.size() / 2 : json.size();
+        const size_t written = std::fwrite(json.c_str(), 1, bytesToWrite, file);
+        const bool bFlushed = std::fflush(file) == 0;
+        const bool bClosed = std::fclose(file) == 0;
+        if (options.bInjectWriteFailureForTesting || written != json.size() || !bFlushed || !bClosed)
         {
-            NORVES_LOG_ERROR("Scene", "SaveToFile: short write to '%s' (%llu of %llu bytes)",
-                             filePath.c_str(),
-                             static_cast<unsigned long long>(written),
-                             static_cast<unsigned long long>(json.size()));
+            std::remove(temporaryPath.c_str());
+            NORVES_LOG_ERROR("Scene", "SaveToFile: 一時ファイル '%s' の書き込みに失敗しました", temporaryPath.c_str());
+            return false;
+        }
+        if (!MoveFileExA(temporaryPath.c_str(), filePath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            std::remove(temporaryPath.c_str());
+            NORVES_LOG_ERROR("Scene", "SaveToFile: '%s' の置換に失敗しました", filePath.c_str());
             return false;
         }
 
-        NORVES_LOG_INFO("Scene", "SaveToFile: wrote %llu roots to '%s'",
-                        static_cast<unsigned long long>(document.Roots.size()),
-                        filePath.c_str());
+        NORVES_LOG_INFO("Scene", "SaveToFile: %llu 個のルートを '%s' に保存しました",
+                        static_cast<unsigned long long>(document.Roots.size()), filePath.c_str());
         return true;
     }
 
