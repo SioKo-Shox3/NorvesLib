@@ -3,6 +3,7 @@
 #include "Component/GrassFieldComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Component/TerrainComponent.h"
+#include "Component/ViewClearanceComponent.h"
 #include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
 #include "Object/PrefabAsset.h"
@@ -208,6 +209,57 @@ namespace
         loadedWorld.Finalize();
         sourceWorld.Finalize();
         std::remove(kSceneFilePath);
+    }
+
+    // 切り抜きと近接フェードの全設定を保存し、読み戻した値を確かめる。
+    void TestViewClearancePropertiesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::ViewClearanceComponent::StaticClass();
+        constexpr const char* filePath = "SceneFileRoundTripTest.view-clearance.scene.json";
+
+        World sourceWorld;
+        sourceWorld.Initialize();
+        Entity* sourceRoot = sourceWorld.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+        auto* source = sourceWorld.CreateComponent<Component::ViewClearanceComponent>(sourceRoot);
+        assert(source != nullptr);
+        source->getTargetRadius() = 1.25f;
+        source->getCameraRadius() = 0.45f;
+        source->getFeatherRatio() = 0.75f;
+        source->getNearFadeStart() = 0.25f;
+        source->getNearFadeEnd() = 0.95f;
+        source->getMinHeightScale() = 0.35f;
+        source->getbAffectGrass() = false;
+        source->getbAffectOccluders() = false;
+        source->getbHeroSilhouette() = true;
+        assert(Scene::SceneSerializer::SaveToFile(sourceWorld, Container::String(filePath)));
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats));
+        assert(stats.LoadedRoots == 1);
+        assert(stats.DroppedEntities == 0);
+        assert(stats.DroppedComponents == 0);
+        assert(stats.DroppedProperties == 0);
+        const Container::VariableArray<Entity*> loadedRoots = loadedWorld.GetRootEntities();
+        assert(loadedRoots.size() == 1);
+        const auto* loaded = loadedRoots[0]->GetComponent<Component::ViewClearanceComponent>();
+        assert(loaded != nullptr);
+        assert(Near(loaded->getTargetRadius(), 1.25f));
+        assert(Near(loaded->getCameraRadius(), 0.45f));
+        assert(Near(loaded->getFeatherRatio(), 0.75f));
+        assert(Near(loaded->getNearFadeStart(), 0.25f));
+        assert(Near(loaded->getNearFadeEnd(), 0.95f));
+        assert(Near(loaded->getMinHeightScale(), 0.35f));
+        assert(!loaded->getbAffectGrass());
+        assert(!loaded->getbAffectOccluders());
+        assert(loaded->getbHeroSilhouette());
+
+        loadedWorld.Finalize();
+        sourceWorld.Finalize();
+        assert(std::remove(filePath) == 0);
     }
 
     void AssertTerrainNotBegun(const Component::TerrainComponent& terrain)
@@ -597,6 +649,7 @@ int main()
     std::cout << "SceneFileRoundTripTest start\n";
 
     TestSaveLoadRoundTrip();
+    TestViewClearancePropertiesSaveLoadRoundTrip();
     TestTerrainPropertiesSaveLoadRoundTrip();
     TestLegacyTerrainPropertiesUseDefaults();
     TestGrassPropertiesSaveLoadRoundTrip();
