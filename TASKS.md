@@ -5746,7 +5746,7 @@
 - notes: 設計はロードマップ 1784〜1786 行。G1 の選定課題 G1-S8 の推奨 (a)(4505 行。暫定で作業ディレクトリに置き、GR76 でユーザーデータの領域を決めるときに `IInputBindingStore` で差し替える)をこの項目で果たす。GR03 は統合ブランチにあるが確かめ直し中なので needs-gr に書いた。BootConfig の TargetFrameRate・bVSync・bFullscreen が反映されない件(1890 行)は GR76 の範囲外で、解像度の値は保存と通知までにする。やらないこと: 解像度・品質・言語の適用、設定の画面(GR68・GR119)。
 
 ## G9-GR15-LEAN-SPINE-LOOK: 胴の傾き・背骨の波・視線を、背骨と首のチェーンへ配るモディファイアとして足す
-- status: todo
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G4-GR05-MODEL-CASES, G4-GR05-COMPONENT-CASES, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR11-EVENT-PROPERTIES, G3-GR11-FOOT-CONTACT-SOURCE, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15
 - needs-gr: GR05, GR10, GR11, GR12, GR13

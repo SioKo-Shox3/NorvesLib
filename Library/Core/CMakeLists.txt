@@ -134,6 +134,9 @@ set(PRIVATE_SOURCES
     Private/Animation/Procedural/AngleDistribution.cpp
     Private/Animation/Procedural/Spring.cpp
     Private/Animation/Procedural/PoseModifierConfig.cpp
+    Private/Animation/Procedural/BodyLeanModifier.cpp
+    Private/Animation/Procedural/SpineWaveModifier.cpp
+    Private/Animation/Procedural/LookAtModifier.cpp
     Private/Animation/Procedural/SpringBoneModifier.cpp
     Private/Animation/Procedural/FollowThroughModifier.cpp
     Private/Animation/AnimationEvents.cpp
@@ -612,6 +615,9 @@ set(PUBLIC_HEADERS
     Public/Animation/Procedural/AngleDistribution.h
     Public/Animation/Procedural/Spring.h
     Public/Animation/Procedural/PoseModifierConfig.h
+    Public/Animation/Procedural/BodyLeanModifier.h
+    Public/Animation/Procedural/SpineWaveModifier.h
+    Public/Animation/Procedural/LookAtModifier.h
     Public/Animation/Procedural/SpringBoneModifier.h
     Public/Animation/Procedural/FollowThroughModifier.h
     Public/Animation/PoseModifier.h

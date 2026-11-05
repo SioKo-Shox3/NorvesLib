@@ -7,6 +7,7 @@
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 namespace Game::Gameplay
@@ -120,6 +121,13 @@ namespace Game::Gameplay
         m_VisualPoseId = pose->GetObjectId();
         root->SetRenderInterpolationEnabled(!Body() || Body()->GetDriveMode() == Physics::CharacterDriveMode::Fixed);
         return true;
+    }
+    void QuadrupedLocomotionComponent::SetVisualTiltScale(float scale)
+    {
+        if (std::isfinite(scale))
+        {
+            m_VisualTiltScale = std::clamp(scale, 0.0f, 1.0f);
+        }
     }
     bool QuadrupedLocomotionComponent::SetViewSource(Core::Entity* view)
     {
@@ -508,8 +516,9 @@ namespace Game::Gameplay
         if (!pose || !body)
             return;
         // 傾きだけを見た目の子へ適用。VisualRootの固定履歴と直立capsuleは変更しない。
-        pose->SetLocalRotation(Math::Quaternion(Math::Vector3::UnitZ, m_Output.Bank) *
-                               Math::Quaternion(Math::Vector3::UnitX, -m_Output.Pitch) * m_VisualBaseRotation);
+        pose->SetLocalRotation(Math::Quaternion(Math::Vector3::UnitZ, m_Output.Bank * m_VisualTiltScale) *
+                               Math::Quaternion(Math::Vector3::UnitX, -m_Output.Pitch * m_VisualTiltScale) *
+                               m_VisualBaseRotation);
         if (auto* animator = pose->GetComponent<Core::Component::AnimatorComponent>())
         {
             const auto& state = body->GetState();
