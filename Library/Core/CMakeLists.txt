@@ -14,6 +14,7 @@ set(PRIVATE_SOURCES
     Private/Save/SaveMigration.cpp
     Private/Save/SaveService.cpp
     Private/Save/SaveSlotStore.cpp
+    Private/Save/SettingsStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
     Private/Camera/LockOnTarget.cpp
@@ -502,6 +503,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveMigration.h
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
+    Public/Save/SettingsStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
