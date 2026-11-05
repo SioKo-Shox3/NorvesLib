@@ -10008,3 +10008,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 単位の確かめの出力（タスクの verify 2 行）。Debug ビルド終了コード 0、ctest で SkeletalAnimationSamplingTest・PhysicsGroundQueryIntegrationTest の 2/2 合格、FootPlantTest の A〜F の数値は反復 1 と同じ。アプリを起動する確かめは無い。
 - Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
 - Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
+
+- U1 切り抜きのモデル ViewClearanceParameters と CPU の可視度の式、CameraProxy への値の置き場: 着地(直し 0 回)
+- U2 SpringArmComponent に注視点の取得 GetTargetWorldPosition を公開する: 着地(直し 0 回)
+- U3 ViewClearanceComponent(PROPERTY・Mode・Strength の補間・Tick の自己登録)と保存の往復: 着地(直し 0 回)
+- U5 BuildCameraProxy で CameraProxy.ViewClearance を埋め、proxy の試験を足す(U4 の切り直し): 着地(直し 0 回)
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 1、完了）
+- Done: `Rendering/ViewClearance.h` に `ViewClearanceParameters`・`MakeDefaultViewClearanceParameters`・`SanitizeViewClearanceParameters`・CPU の `ComputeViewClearanceVisibility` を置き、`CameraProxy.ViewClearance` を足した。`SpringArmComponent::GetTargetWorldPosition()`（pivot の描画用ワールド位置＋TargetOffset）を公開し、アームの注視の計算も同じ関数へ寄せた。カメラの Entity に付ける `ViewClearanceComponent`（float/bool の PROPERTY 9 個、実行時の Mode と約 0.3 秒で寄せる Strength、`SetMode`、BeginPlay で Camera の群へ Tick を自己登録）を足した。`CameraComponent::BuildCameraProxy` は毎回 ViewClearance を既定（bEnabled=false）へ戻し、同じ Entity の ViewClearanceComponent と SpringArm（派生を含む）があれば A=カメラの位置・B=注視点で埋める。NearPlane は変えていない
+- 証拠: `.harness/runs/20261105-143215/G5-GR113-CLEARANCE-CPU-final-verify.txt`（verify のビルド 4 ターゲット＋EntityTreeTest が EXIT_CODE=0、ctest `SceneFileRoundTripTest`・`SpringArmComponentTest`・`CameraViewConstantsTest`・`ViewClearanceModelTest`・`CameraComponentProxyTest` 5/5 Passed、numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（Public API・RenderThread のデータ契約の危険地帯）。描画側で proxy の ViewClearance を使う段（草・遮蔽物・シルエット）は後続の項目。起動の確かめは後回し（今のゲームのカメラに ViewClearanceComponent を付けた所は無いので、見た目は変わらない）
+- Notes: 毎フレームの BuildCameraProxy の呼び出しは、Rendering3DTest は Camera の群の後、`FreeCameraRig::Tick → Publish` と `LauncherRoutine::Tick → PublishCamera` は Camera の群の前（どちらも今は SpringArm＋ViewClearance を使わない。Launcher は proxy の直前にアームを手で更新している）。切り抜きの半径の既定は仮の値で、草で視界が遮られる見せ方との兼ね合いは作者の判断
+- 要起票: `FreeCameraRig`・`LauncherRoutine` のカメラの proxy を Camera の群（スプリングアームの更新）の後に作る段へ移す（ViewClearance を付けたカメラで 1 フレーム遅れないように）
+
+## 2026-11-05 G5-GR113-CLEARANCE-CPU（run 20261105-143215 の反復 2、差し戻しの直し、完了）
+- Done: 差し戻しは verify の ctest の `SpringArmComponentTest` が Not Run だったこと。この試験は `EntityTreeTest.exe` の束の MEMBER で、verify の build 行に `EntityTreeTest` が無く、この枠の build に実行ファイルが無かったのが原因（実装の不具合ではない）。この枠で `EntityTreeTest` をビルドし、verify を全部回し直した。コードの変更なし
+- 証拠: `.harness/runs/20261105-143215/verify-G5-GR113-CLEARANCE-CPU-2.txt`（build EntityTreeTest・CameraViewConstantsTest・CameraComponentProxyTest・SceneSerializerTest・Game がすべて EXIT=0、ctest 5/5 Passed・EXIT=0）
+- Next: ランナーの評価者の反証。起動の確かめは後回し
+- 要起票: G5-GR113-CLEARANCE-CPU の verify に `cmake --build build --config Debug --target EntityTreeTest -- /m:1` が無い（ctest の `SpringArmComponentTest` はその実行ファイルで動くので、新しい枠では Not Run になる）。束の MEMBER を ctest で名指しする項目は、束のターゲットの build 行も verify に入れる
