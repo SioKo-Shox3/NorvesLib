@@ -10103,3 +10103,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 反復 1 の再検証の失敗（`PhysicsGroundQueryIntegrationTest` が unknown test）は、verify のビルド対象に集約の実行ファイル `PhysicsDynamicsTest` が含まれず、リポジトリ直下の `build/` の exe が試験の追加より前のままだったため。コードの欠陥ではないので、`PhysicsDynamicsTest` をビルドしてから verify の 2 行を回し直した。
 - 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-iter2-verify.txt`（BUILD_EXIT=0、ctest 4/4 Passed、CTEST_EXIT=0）。`PhysicsDynamicsTest` のビルドは `aux-physics-build.txt`（EXIT=0）。
 - 要起票: このタスクの verify は ctest で `PhysicsGroundQueryIntegrationTest` を回すのに、ビルドの行に `PhysicsDynamicsTest` が無い。新しい build で verify を回すと同じ失敗になるので、verify のビルド対象に `PhysicsDynamicsTest` を足す。
+- U1 高さ場に段 1〜3 の最小最大の表と段ごとの高さ・面法線の照会を足し、ブロック表を段 3 の表に置き換える: 着地(直し 0 回)

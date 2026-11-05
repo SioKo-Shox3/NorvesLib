@@ -250,30 +250,31 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
         else
         {
+            const GridData::LodLevel& level = grid.Lods[GridData::kLodCount - 1u];
             const auto testBlock = [&](uint32_t column, uint32_t row, double intervalBegin, double intervalEnd)
             {
-                const size_t index = static_cast<size_t>(row) * grid.BlockColumns + column;
+                const size_t index = static_cast<size_t>(row) * level.CellColumns + column;
                 const double y0 = ray.Origin.y + static_cast<double>(direction.y) * intervalBegin;
                 const double y1 = ray.Origin.y + static_cast<double>(direction.y) * intervalEnd;
                 // 交差判定の float の丸めでブロックの端の接触を捨てないよう、除外側だけを広げる。
                 const double tolerance = 8.0 * std::numeric_limits<float>::epsilon()
                     * std::max({1.0, std::abs(static_cast<double>(ray.Origin.y)), std::abs(y0), std::abs(y1),
-                        std::abs(static_cast<double>(grid.BlockMinHeight[index])),
-                        std::abs(static_cast<double>(grid.BlockMaxHeight[index]))});
-                if (std::max(y0, y1) + tolerance < grid.BlockMinHeight[index]
-                    || std::min(y0, y1) - tolerance > grid.BlockMaxHeight[index])
+                        std::abs(static_cast<double>(level.MinHeight[index])),
+                        std::abs(static_cast<double>(level.MaxHeight[index]))});
+                if (std::max(y0, y1) + tolerance < level.MinHeight[index]
+                    || std::min(y0, y1) - tolerance > level.MaxHeight[index])
                 {
                     return bHit && closest.Distance <= intervalEnd;
                 }
-                const uint32_t firstColumn = column * GridData::kBlockCells;
-                const uint32_t firstRow = row * GridData::kBlockCells;
+                const uint32_t firstColumn = column * level.Stride;
+                const uint32_t firstRow = row * level.Stride;
                 return WalkDda(originX, originZ, directionX, directionZ, 1.0,
-                    firstColumn, std::min(firstColumn + GridData::kBlockCells - 1u, grid.Columns - 2u),
-                    firstRow, std::min(firstRow + GridData::kBlockCells - 1u, grid.Rows - 2u),
+                    firstColumn, std::min(firstColumn + level.Stride - 1u, grid.Columns - 2u),
+                    firstRow, std::min(firstRow + level.Stride - 1u, grid.Rows - 2u),
                     intervalBegin, intervalEnd, testCell);
             };
-            WalkDda(originX, originZ, directionX, directionZ, GridData::kBlockCells,
-                0u, grid.BlockColumns - 1u, 0u, grid.BlockRows - 1u, begin, end, testBlock);
+            WalkDda(originX, originZ, directionX, directionZ, level.Stride,
+                0u, level.CellColumns - 1u, 0u, level.CellRows - 1u, begin, end, testBlock);
         }
         if (bHit)
         {
@@ -451,20 +452,21 @@ namespace NorvesLib::Core::Rendering::Terrain
             const uint32_t firstRow = static_cast<uint32_t>(std::max(0.0, std::ceil(minZ) - 1.0));
             const uint32_t lastRow = static_cast<uint32_t>(std::min(static_cast<double>(grid.Rows - 2u), std::floor(maxZ)));
 
-            for (uint32_t bz = firstRow / Grid::kBlockCells; bz <= lastRow / Grid::kBlockCells; ++bz)
+            const auto& level = grid.Lods[Grid::kLodCount - 1u];
+            for (uint32_t bz = firstRow / level.Stride; bz <= lastRow / level.Stride; ++bz)
             {
-                for (uint32_t bx = firstColumn / Grid::kBlockCells; bx <= lastColumn / Grid::kBlockCells; ++bx)
+                for (uint32_t bx = firstColumn / level.Stride; bx <= lastColumn / level.Stride; ++bx)
                 {
-                    const size_t block = static_cast<size_t>(bz) * grid.BlockColumns + bx;
+                    const size_t block = static_cast<size_t>(bz) * level.CellColumns + bx;
                     // 地中を除外しないよう、地表より完全に上にあるブロックだけを捨てる。
-                    if (bounds.MinY > grid.BlockMaxHeight[block])
+                    if (bounds.MinY > level.MaxHeight[block])
                     {
                         continue;
                     }
-                    const uint32_t beginRow = std::max(firstRow, bz * Grid::kBlockCells);
-                    const uint32_t endRow = std::min(lastRow, bz * Grid::kBlockCells + Grid::kBlockCells - 1u);
-                    const uint32_t beginColumn = std::max(firstColumn, bx * Grid::kBlockCells);
-                    const uint32_t endColumn = std::min(lastColumn, bx * Grid::kBlockCells + Grid::kBlockCells - 1u);
+                    const uint32_t beginRow = std::max(firstRow, bz * level.Stride);
+                    const uint32_t endRow = std::min(lastRow, bz * level.Stride + level.Stride - 1u);
+                    const uint32_t beginColumn = std::max(firstColumn, bx * level.Stride);
+                    const uint32_t endColumn = std::min(lastColumn, bx * level.Stride + level.Stride - 1u);
                     for (uint32_t row = beginRow; row <= endRow; ++row)
                     {
                         for (uint32_t column = beginColumn; column <= endColumn; ++column)

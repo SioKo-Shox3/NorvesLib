@@ -84,6 +84,13 @@ namespace NorvesLib::Core::Rendering::Terrain
         float RidgeRoughness = 70.0f;
     };
 
+    /// 段のセルが覆う頂点の高さの範囲
+    struct TerrainHeightRange
+    {
+        float Min = 0.0f;
+        float Max = 0.0f;
+    };
+
     /// 高さ場の法線（単位ベクトル、+Y が上）
     struct TerrainNormal
     {
@@ -173,6 +180,8 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     public:
         static constexpr uint32_t kMaxMesas = 16u;
+        /// 高さの段数。段 0〜3 の stride はそれぞれ 1 << lod
+        static constexpr uint32_t kHeightLodCount = 4u;
 
         /// 手続きの作り方（seed と関数だけで決まる）
         explicit TerrainHeightField(const TerrainHeightFieldParams &params);
@@ -212,8 +221,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// タイルの行優先の番号。外周は最後のタイルに含め、範囲外・タイル無しは無効な番号
         uint32_t GetTileId(float x, float z) const;
 
+        /// 段 1〜3 のセルが覆う全頂点の高さの範囲。不正な段・セルや格子でない場合は false
+        bool GetLodCellRange(uint32_t lod, uint32_t cellColumn, uint32_t cellRow, TerrainHeightRange& outRange) const;
+        /// 段 1〜3 のセル数。不正な段や格子でない場合は 0
+        uint32_t GetLodCellColumns(uint32_t lod) const;
+        uint32_t GetLodCellRows(uint32_t lod) const;
+
         /// (x,z) の高さ[m]。格子の作り方で範囲の外なら kOutOfRangeHeight
         float SampleHeight(float x, float z) const;
+        /// 指定した段の三角形で補間した高さ。段 0 と手続きの作り方は既存の高さと同じ。
+        /// 段が範囲外なら段 3、格子の範囲外なら kOutOfRangeHeight
+        float SampleHeight(float x, float z, uint32_t lod) const;
 
         /// (x,z) の法線。高さの中心差分（間隔 sampleSpacing[m]）から求める。格子の作り方では、差分の片側が範囲の外なら
         /// その側は (x,z) の高さを使う片側の差分にし、(x,z) が範囲の外なら 3 成分とも NaN
@@ -225,6 +243,11 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 法線を重心座標で補間するため、三角形と升目の境界をまたいで連続する。
         /// 格子の範囲外は 3 成分とも NaN。手続きの作り方では種類によらず間隔 0.5 m の既存の法線を返す
         TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind) const;
+
+        /// 指定した段の法線。段 0 と手続きの作り方は既存の法線と同じ。
+        /// 段 1〜3 は kind が Smooth でも三角形の面法線、段が範囲外なら段 3 を使う。
+        /// 格子の範囲外は 3 成分とも NaN
+        TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind, uint32_t lod) const;
 
         /// 格子の最細段と同じ三角形へレイを当て、maxDistance[m] 以内の最近点を返す。向きは内部で正規化する。
         /// 原点がフットプリント内で地表より下なら距離 0・零法線。手続きの作り方・零方向・不正な距離は false
