@@ -5560,7 +5560,7 @@
 - notes: 今のコード: G3 の実装には設計案の `PoseModifierStack`（型名で登録）もグラフの modifiers 配列も無く、`AnimatorComponent::AddModifier`（`Library/Core/Private/Component/AnimatorComponent.cpp:151-168`。Order で stable_sort）と、骨格・dt・パラメータ・同期位相・遅延 FK だけを持つ `PoseModifierContext`（`PoseModifier.h:6-44`）しか無い。足 IK と傾きはワールドの変換・駆動の信号・所有者を要るので、ここで文脈を広げる。設定の置き場は、ロードマップ「段階をまたぐ注意」の「G9 / GR14・GR15 の調整値の置き場」のとおり、GR78 の import.json ではなく骨格単位の実行時サイドカー（G3-S8 の A。cook のハッシュに入れずロード時に読む）にする。臨界減衰は G4 で作った共通の部品を使う（同注意の「G4 / GR06・GR05」）。新しい試験は `SkeletalAnimationSamplingTest` の実行ファイルにソースを足して `main` から呼ぶ（実行ファイルを増やさない。`Test/Core/Rendering/CMakeLists.txt:2212-2226`、呼び出しは `SkeletalAnimationSamplingTest.cpp:728-740`）。足す試験ごとに、反証する契約・ほかの手段で気づけるか・黙って失敗するかの 3 点を `Docs/Testing.md` に書く。Public API（`PoseModifier.h`・`AnimatorComponent.h`）に触れる危険地帯なので評価者を通す。新規ソースは UTF-8 + BOM + CRLF、独自型。出典: ロードマップ G9 の節（1895〜1933 行）、要件 `#### GR15` と `#### GR14` の設計案。やらないこと: 個別のモディファイア（後続のタスク）、ImGui。
 
 ## G9-GR15-SPRING-FOLLOW: 尾・耳のばねの二次運動と、剣をくわえて首を振ったときの首と胸の遅れを足す
-- status: todo
+- status: done
 - after: G9-GR15-POSE-MODIFIER-BASE, G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR15
 - needs-gr: GR10, GR12, GR13
