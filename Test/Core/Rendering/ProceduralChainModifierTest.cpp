@@ -1,13 +1,19 @@
 ﻿// 手続きチェーンの姿勢変更を、角度とモデル空間の位置で検証する。
 #include "Animation/Procedural/PoseModifierConfig.h"
+#include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletonResource.h"
+#include "Component/AnimatorComponent.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
+#include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
+#include "Object/World.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 
 namespace
@@ -309,9 +315,158 @@ namespace
                     std::isfinite(positionError) && positionError <= 1e-5 && displacement > 0.01,
                 "関節軸の違いによらずモデル空間の位置が一致");
     }
+
+    void TestSpineWave()
+    {
+        ChainFixture fixture(ParamConfig, true);
+        fixture.SetMeshRotation(Math::Quaternion(Math::Vector3::UnitZ, 0.47f) *
+                                Math::Quaternion(Math::Vector3::UnitY, 0.34f));
+        auto mesh = fixture.Registry.CreateTransient<NorvesLib::Core::SkinnedMeshResource>("SpineWaveMesh");
+        auto clip = fixture.Registry.CreateTransient<NorvesLib::Core::AnimationClipResource>("SpineWaveClip");
+        auto asset = fixture.Registry.CreateTransient<NorvesLib::Core::SkeletalAssetResource>("SpineWaveAsset");
+        auto graph = fixture.Registry.CreateTransient<NorvesLib::Core::AnimGraphResource>("SpineWaveGraph");
+        Require(mesh && clip && asset && graph, "Spine の試験用資源を作成");
+
+        Container::VariableArray<Skeletal::SkeletalVertex> vertices(1);
+        vertices[0].Normal = {0, 1, 0};
+        vertices[0].JointIndices[0] = 1;
+        vertices[0].JointWeights[0] = 1;
+        mesh->SetVertices(std::move(vertices));
+        mesh->SetIndices(Container::VariableArray<uint32_t>{0, 0, 0});
+        Require(mesh->Load(), "Spine の試験用メッシュを読み込む");
+        Skeletal::SkeletalAnimationClip clipData;
+        clipData.Name = "a";
+        clipData.DurationSeconds = 1;
+        Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0;
+        channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+        channel.Samples.push_back({0, {0, 0, 0, 0}});
+        channel.Samples.push_back({1, {0, 0, 0, 0}});
+        clipData.Channels.push_back(std::move(channel));
+        clip->SetClip(std::move(clipData));
+        Require(clip->Load(), "Spine の試験用クリップを読み込む");
+        asset->SetClipResources(mesh, fixture.Skeleton, {clip});
+        Require(asset->Load(), "Spine の試験用アセットを読み込む");
+        struct Resolver : Animation::IClipResolver
+        {
+            Container::TSharedPtr<NorvesLib::Core::AnimationClipResource> Clip;
+            Container::TSharedPtr<NorvesLib::Core::AnimationClipResource> ResolveClip(
+                Container::StringView name) const override
+            {
+                return name == Container::StringView("a") ? Clip
+                                                          : Container::TSharedPtr<NorvesLib::Core::AnimationClipResource>{};
+            }
+        } resolver;
+        resolver.Clip = clip;
+        constexpr char graphJson[] =
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"gait"}],"root":"a"})";
+        Animation::AnimGraphReport graphReport;
+        Require(graph->Compile(Container::String(graphJson), *fixture.Skeleton, resolver, graphReport) && graph->Load(),
+                "Spine の同期グループを持つグラフを読み込む");
+        NorvesLib::Core::World world;
+        world.Initialize();
+        auto* owner = world.SpawnEntity<NorvesLib::Core::Entity>();
+        Require(owner != nullptr, "Spine の所有者を作成");
+        auto* meshComponent = world.CreateComponent<NorvesLib::Core::Component::SkinnedMeshComponent>(owner);
+        auto* animator = world.CreateComponent<NorvesLib::Core::Component::AnimatorComponent>(owner);
+        Require(meshComponent && animator, "Spine のコンポーネントを作成");
+        meshComponent->SetSkeletalAsset(asset);
+        Require(animator->SetGraph(graph) && animator->FindSyncGroup(Identity("gait")) == 0,
+                "Spine の同期グループを接続");
+
+        const auto create = [&](const char* config) {
+            Procedural::PoseModifierConfigReport report;
+            Container::VariableArray<Container::TSharedPtr<Animation::IPoseModifier>> modifiers;
+            Require(Procedural::ParsePoseModifierConfig(Container::String(config), *fixture.Skeleton,
+                                                       &fixture.Parameters, Procedural::GetBuiltinPoseModifierTypes(),
+                                                       modifiers, report) && modifiers.size() == 1 &&
+                        modifiers[0]->Order() == Procedural::PoseModifierDefaultOrder::Spine,
+                    "組み込み Spine の設定読み込み");
+            return modifiers[0];
+        };
+        float phases[] = {0.125f};
+        const auto apply = [&](Animation::IPoseModifier& modifier, Animation::LocalPose& pose,
+                               const Animation::AnimDriveSignals* signals) {
+            Animation::PoseModifierContext context(fixture.Skeleton->GetPoseRuntime(), Step, fixture.Parameters,
+                                                   fixture.Instance, pose, fixture.Scratch, fixture.Model);
+            context.MeshNodeTransform = fixture.MeshNode;
+            context.SyncPhases = Container::Span<const float>(phases, 1);
+            context.SetOwner(owner);
+            context.SetDriveSignals(signals);
+            Require(modifier.Apply(pose, context), "Spine の適用");
+        };
+        const auto& rest = fixture.Skeleton->GetPoseRuntime().AuthorRestLocal;
+        const auto checkRotation = [&](const Animation::LocalPose& pose, size_t joint, const Math::Vector3& modelAxis,
+                                       double expected, double& angleError, double& rotationError) {
+            const auto parent = ModelRotation(pose, joint - 1);
+            const auto axis = Math::QuaternionUtils::Conjugate(parent) * (fixture.MeshRotation * modelAxis);
+            const auto delta = pose[joint].Rotation * Math::QuaternionUtils::Conjugate(rest[joint].Rotation);
+            const double projection = double(delta.x) * axis.x + double(delta.y) * axis.y + double(delta.z) * axis.z;
+            const double actual = 2.0 * std::atan2(projection, double(delta.w));
+            angleError = std::fabs(actual - expected);
+            rotationError = RotationError(delta, Math::Quaternion(axis, float(expected)));
+        };
+
+        constexpr char yawConfig[] =
+            R"({"version":1,"modifiers":[{"type":"Spine","settings":{"joints":[{"joint":"Spine0","amplitude":0.2},{"joint":"Spine1","amplitude":0.3,"phaseOffset":0.2},{"joint":"Spine2","amplitude":0.4,"phaseOffset":0.45}],"upAxis":[0,2,0],"frequency":1.5,"syncGroup":"gait","strength":0.8}}]})";
+        constexpr char pitchConfig[] =
+            R"({"version":1,"modifiers":[{"type":"Spine","settings":{"joints":[{"joint":"Spine0","amplitude":0.2},{"joint":"Spine1","amplitude":0.3,"phaseOffset":0.2},{"joint":"Spine2","amplitude":0.4,"phaseOffset":0.45}],"axis":"pitch","rightAxis":[2,0,0],"frequency":1.5,"syncGroup":"gait","strength":0.8}}]})";
+        const char* configs[] = {yawConfig, pitchConfig};
+        const Math::Vector3 axes[] = {Math::Vector3::UnitY, Math::Vector3::UnitX};
+        const float amplitudes[] = {0.2f, 0.3f, 0.4f};
+        const float offsets[] = {0.0f, 0.2f, 0.45f};
+        constexpr double twoPi = 6.283185307179586476925286766559;
+        for (size_t direction = 0; direction < 2; ++direction)
+        {
+            auto modifier = create(configs[direction]);
+            auto pose = rest;
+            apply(*modifier, pose, nullptr);
+            for (size_t i = 0; i < 3; ++i)
+            {
+                const double expected = double(amplitudes[i]) *
+                                        std::sin(twoPi * (1.5 * double(phases[0]) + double(offsets[i]))) *
+                                        double(0.8f);
+                double angleError, rotationError;
+                checkRotation(pose, i + 1, axes[direction], expected, angleError, rotationError);
+                std::printf("SpineWave case=1 axis=%s joint=%zu angle_error_rad=%.12g rotation_error_rad=%.12g "
+                            "limit_rad=0.00001\n", direction == 0 ? "yaw" : "pitch", i, angleError, rotationError);
+                Require(std::isfinite(angleError) && angleError <= 1e-5 &&
+                            std::isfinite(rotationError) && rotationError <= 1e-5,
+                        "同期位相による関節の角度、符号と軸");
+            }
+        }
+
+        constexpr char curveConfig[] =
+            R"({"version":1,"modifiers":[{"type":"Spine","settings":{"joints":[{"joint":"Spine1","amplitude":[{"speed":0,"value":0.1},{"speed":4,"value":0.5}]}],"syncGroup":"gait"}}]})";
+        auto curve = create(curveConfig);
+        auto curvePose = rest;
+        Animation::AnimDriveSignals signals;
+        signals.Speed = 2.0f;
+        phases[0] = 0.25f;
+        apply(*curve, curvePose, &signals);
+        double curveAngleError, curveRotationError;
+        checkRotation(curvePose, 2, Math::Vector3::UnitY, 0.3, curveAngleError, curveRotationError);
+        std::printf("SpineWave case=2 angle_error_rad=%.12g rotation_error_rad=%.12g limit_rad=0.00001\n",
+                    curveAngleError, curveRotationError);
+        Require(std::isfinite(curveAngleError) && curveAngleError <= 1e-5 &&
+                    std::isfinite(curveRotationError) && curveRotationError <= 1e-5,
+                "速度の中間で振幅を補間");
+
+        constexpr char zeroConfig[] =
+            R"({"version":1,"modifiers":[{"type":"Spine","settings":{"joints":[{"joint":"Spine0","amplitude":0.4},{"joint":"Spine1","amplitude":0.2}],"syncGroup":"gait","strength":0}}]})";
+        auto zero = create(zeroConfig);
+        auto zeroPose = rest;
+        const auto before = zeroPose;
+        apply(*zero, zeroPose, nullptr);
+        const int byteDifference = std::memcmp(zeroPose.data(), before.data(), zeroPose.size() * sizeof(zeroPose[0]));
+        std::printf("SpineWave case=3 memcmp=%d expected=0\n", byteDifference);
+        Require(byteDifference == 0, "重みゼロで姿勢がビット一致");
+        world.Finalize();
+    }
 } // 無名名前空間
 
 void TestProceduralChainModifier()
 {
     TestBodyLean();
+    TestSpineWave();
 }

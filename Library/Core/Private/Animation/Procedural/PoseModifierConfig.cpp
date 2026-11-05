@@ -1,5 +1,6 @@
 ﻿#include "Animation/Procedural/PoseModifierConfig.h"
 #include "Animation/Procedural/BodyLeanModifier.h"
+#include "Animation/Procedural/SpineWaveModifier.h"
 #include "Animation/Procedural/SpringBoneModifier.h"
 #include "Animation/Procedural/FollowThroughModifier.h"
 #include "Animation/SkeletonResource.h"
@@ -285,6 +286,7 @@ namespace NorvesLib::Core::Animation::Procedural
     {
         static const PoseModifierTypeEntry entries[] = {
             {"Lean", PoseModifierDefaultOrder::Lean, &CreateBodyLeanModifier},
+            {"Spine", PoseModifierDefaultOrder::Spine, &CreateSpineWaveModifier},
             {"SpringBone", PoseModifierDefaultOrder::SpringBone, &CreateSpringBoneModifier},
             {"FollowThrough", PoseModifierDefaultOrder::FollowThrough, &CreateFollowThroughModifier}};
         return {entries};
