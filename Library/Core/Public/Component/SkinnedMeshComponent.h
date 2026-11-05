@@ -83,6 +83,9 @@ namespace NorvesLib::Core::Component
         int32_t FindJointIndex(Identity name) const;
         // 自動評価しない。未評価/dirty/無効資産/範囲外はfalseで出力を変更しない。
         [[nodiscard]] bool TryGetJointModelMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const;
+        // 自動評価しない。未評価・dirty・無効資産・空パレットはfalseで出力を変更しない。
+        // Spanは次の評価や資産の差し替えまで有効。パレットはEntity空間の行ベクトル用行列で、持ち主のワールドを含まない。
+        [[nodiscard]] bool TryGetBonePalette(Container::Span<const Math::Matrix4x4>& outPalette) const;
         // Ownerのworldは既存のWorld変換確定境界の値を使い、読み取り時に合成する。
         [[nodiscard]] bool TryGetJointWorldMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const;
         // CreateWorldRowVectorで再構成できる正のscaleのTRSだけを返す。

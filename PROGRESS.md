@@ -10084,16 +10084,80 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: grassland の低木・株・倒木のメッシュを cook し（今は手続きの仮の株と cook されない倒木の仮のパス）、散布の見た目を手本と並べて合わせる。
 - 差し戻しの直し（反復 3）: 再実行で `CookedScatterTest` が `unknown test` で落ちたのは、この作業ツリーの `CookedMeshTest.exe` が `CookedScatterTest` のメンバを足す前のビルドのまま残っていたため（verify は EntityTreeTest と Game しかビルドしない）。`CookedMeshTest` を Debug でビルドし直し、verify の 3 本を回し直して合格（`.harness/runs/20261105-143214/verify-G5-GR90-SCATTER-RUNTIME-iter3.txt`。ctest 100% tests passed, 0 tests failed out of 3）。コードの変更は無し。
 - Notes: 要起票: この項目の verify は `CookedScatterTest` を回すのに束の `CookedMeshTest` をビルドしないため、作業ツリーの束が古いと `unknown test` で落ちる。verify に `cmake --build build --config Debug --target CookedMeshTest -- /m:1` を足すか、確かめのタスクで束をビルドする。
-- U1 実行時の NVTRN 読み込みで PDL0（凹み度）を引けるようにし、層が無ければ 0 を返す: 着地(直し 0 回)
-- U2 凹み度の規則と計算（高さのぼかしとの差・窪地を埋めた深さ・流れの集積・ペイント・スレッド数に依らない並列）: 着地(直し 1 回)
-- U3 spec の recipe.puddle とペイントの target "puddle" を読み、NVTRN に PDL0 を書く: 着地(直し 0 回)
-- U4 NVTRN の形式の文書と grassland の spec に凹み度を足す: 着地(直し 0 回)
-- U5 CookedTerrainTest に凹み度の 4 ケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
 
-## G11-GR59-PUDDLE-MASK（2026-11-05）
+- U1 ModifierOrderTest（順序の固定の試験）を SkeletalAnimationSamplingTest に足す: 着地(直し 0 回)
+- U3 animation-debug の場面に合成の四足のキャラクターと posemod.json を足す: 着地(直し 0 回)
+- U4 場面に Box コライダーの斜面と階段を足し、四足の経路をそこへ通す: 着地(直し 0 回)
+- U6 Game の引数 --pose-modifiers-off を足して場面へ渡す: 着地(直し 0 回)
+- U5 PoseModifierDebugView（ImGui の調整画面とデバッグ描画）を足して場面へつなぐ: 着地(直し 0 回)
+- U2 AnimationRuntime.md と Testing.md を書き、タスクの verify を回す: 着地(直し 1 回)
 
-- Done: 地形の cook に R8 の層 `PDL0`（凹み度 0〜1、意味 `terrain.puddle.potential`）を GRS0 の後ろに足した。規則は spec の `recipe.puddle`（高さの分離ガウスのぼかしとの差・優先度つき浸水で窪地を埋めた深さ・流れの集積を重みで合成し、傾斜で 0 へ下げ、(seed, セル座標) の整数ハッシュの値雑音を掛ける）と、ペイントの target `puddle`（override / multiply）。計算は行の帯でスレッドに分け、結果はスレッド数に依らない。実行時は `TerrainHeightField::HasPuddlePotential`・`SamplePuddlePotential` で引け、層の無い古い NVTRN は 0 として読む。形式の文書（`Docs/Architecture/NVTRNv0.md`）と grassland の spec を更新した。
-- 証拠: `.harness/runs/20261105-160359/verify-G11-GR59-PUDDLE-MASK.txt`（CookedMeshTest・AssetCook の Debug ビルド成功、ctest `CookedTerrainTest|CookedMeshTest` 100% tests passed, 0 tests failed out of 2、凹み度 (a) 窪地の底 209＝全標本の最大・斜面の最大 0、(b)(c)(d) 合格、grassland の cook 成功）。
-- Next: GR37 の地形の GBuffer のシェーダーが PDL0 を束ねて被覆を評価するのは後続の GR59 の項目（今は NVTEX の層として埋めただけで、描画からはまだ引いていない）。起動の確かめは無い（cook と CPU の試験で閉じる）。
-- Notes: grassland の地形の NVTRN が変わったため、散布の spec `Assets/Scatter/grassland.scatter.json` が固定する地形の `cooked_hash` を `2fbadb9d5677e80d` に更新した（paths の外だが、cook を通すための記録の値だけ。散布は PDL0 を使わない）。
-- Notes: ぼかしの半径は格子の大きさでは拒否せず（小さな地形の既存の recipe を壊さないため）、計算量の上限 4096 セルだけで拒否する。凹み度の既定値は試験の合成の窪地で底が 209/255 になる値で、grassland の見た目の調整は描画が PDL0 を引くようになってから行う。
+## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 1、完了）
+- Done: (1) `ModifierOrderTest`（`SkeletalAnimationSamplingTest` の中）: 23 関節の合成の四足・歩き・12° の斜面のモックで、order を省いた Lean→Spine→Look→FootIK→SpringBone→FollowThrough を同じ dt の列で 2 回走らせ、パレットのハッシュの不一致 0/120。FootIK を order 50 にすると 120/120 フレームでハッシュが変わり、共通の接地標本 144 件の足先と地面の平均誤差が 0.0406 m → 0.0549 m に増える。(2) `Game/Debug/PoseModifierDebugView`（全体を NORVES_ENABLE_IMGUI で囲み、明示の Attach / Detach）: modifier ごとの ON/OFF・重み（Float parameter で即時）・settings の数値（離したら JSON を組み直して全件置き換え）・全部を切る A/B・JSON のコピー、DebugDrawQueue で接地のレイと当たり・法線、固定点、ポール（設定の向きを膝から。実際の解は公開されていない）、視線の目標、ばねの先端。(3) `--animation-debug` の場面に、コードで作る 25 関節の四足・床と 18° の斜面と 3 段の階段の Box コライダー・競技場形の周回の経路・`Assets/Gameplay/AnimationDebugQuadruped.posemod.json`（6 型、order なし、重みは parameter に結ぶ）を足し、FootIK に `PhysicsGroundQuery` を渡す。Game の引数 `--pose-modifiers-off`（`--animation-debug` なしはエラー）。(4) AnimationRuntime.md に順序の表・足 IK を傾きの後に置く理由・合成の四足と調整画面、Testing.md に ModifierOrderTest。
+- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-final-verify.txt`（verify のビルド 4 ターゲット EXIT_CODE 0、ctest 4/4 Passed、numstat の 2 通りが一致）。
+- Next: 起動の確かめは後回し（アプリを起動していない）。`G9-GR15-AB-CAPTURE-CHECK` で、四足が見える位置か、posemod.json が実行時に読めるか（`ANIMATION_DEBUG quadruped=ready pose_modifiers=1`）、物理の接地問い合わせが当たり足が斜面と階段に付くか、ImGui の操作が効くか、on/off の撮影で四足の画素が変わるか、既定の起動画面が変わらないかを確かめる。
+- Notes: Rendering3DTest の World では物理が使えるので、解析の地面ではなく `PhysicsGroundQuery` を使った（実際の当たりは未確認）。`--pose-modifiers-off` を場面へ渡すため、paths の外の `Rendering3DTestData.h`（フラグ 1 行）と `Rendering3DTestRoutine.cpp`（Prepare の引数 1 行）を触った。AnimatorComponent に modifier の一覧の取得口が無いので、場面と調整画面は同じ JSON を `ParsePoseModifierConfig` で読み直して自分で持った modifier を AddModifier する。FootIK の問い合わせの設定（maxSlopeDeg など）は作ったときの値を保つので、画面で 50° を超えて上げても物理側の上限は変わらない。ModifierOrderTest の合成の骨格では前脚が胸の子なので、既定の順でも胸に掛かる FollowThrough が前脚の足先を動かし、平均誤差 4 cm が残る（試験は順序の比較だけで絶対値の上限は無い）。
+- 要起票: 胸・背骨に FollowThrough や SpringBone を掛けた四足では IK の後に前脚の足先が動く。脚の祖先へ掛かる後段の modifier を IK の後に置く現在の順序で接地をどう保つか（FollowThrough の対象から脚の祖先を外す決まりか、IK の再適用か）を決める項目。
+
+## 2026-11-05 G9-GR15-ORDER-DEBUG-VIEW（run 20261105-143214 の反復 2、差し戻しの直し）
+- Done: 反復 1 の再検証の失敗（`PhysicsGroundQueryIntegrationTest` が unknown test）は、verify のビルド対象に集約の実行ファイル `PhysicsDynamicsTest` が含まれず、リポジトリ直下の `build/` の exe が試験の追加より前のままだったため。コードの欠陥ではないので、`PhysicsDynamicsTest` をビルドしてから verify の 2 行を回し直した。
+- 証拠: `.harness/runs/20261105-143214/G9-GR15-ORDER-DEBUG-VIEW-iter2-verify.txt`（BUILD_EXIT=0、ctest 4/4 Passed、CTEST_EXIT=0）。`PhysicsDynamicsTest` のビルドは `aux-physics-build.txt`（EXIT=0）。
+- 要起票: このタスクの verify は ctest で `PhysicsGroundQueryIntegrationTest` を回すのに、ビルドの行に `PhysicsDynamicsTest` が無い。新しい build で verify を回すと同じ失敗になるので、verify のビルド対象に `PhysicsDynamicsTest` を足す。
+
+## 2026-11-05 G10-GR20-GRIP-SOLVER（run 20261105-150733 の反復 1、着手）
+- 試験を足す前の 3 点（`Docs/Testing.md` の約束）:
+  - `GripSolverTest`: 反証する契約は、静止した握りの点に吊った質点の周期 2π√(L/g) の ±2%・拘束の残差 1e-3×L 未満・等速で荷重 1 g・一定の加速度 a で |g−a|/g の 5% 以内・サブステップの数・不正な入力の拒否。ほかの手段では気づけない（起動の確かめは後回しで、荷重の誤りは見た目にほとんど出ない）。失敗は黙って起きる（数値が変わるだけ）。
+  - `GripFrameRateInvarianceTest`: 反証する契約は、周期 0.5 秒・振幅 2 m の同じ軌道を dt=1/30・1/60・1/144 で刻んだゲージの減りの差が 5% 未満で、上限を超える dt でも発散しないこと。ほかの手段では気づけない（1 つの環境ではフレームレートの差が再現しない）。失敗は黙って起きる（重い場面でだけ振り落とされやすさが変わる）。
+  - `GripGaugeTest`: 反証する契約は、減りの則 base + k × smoothstep(荷重; free, panic)・回復は荷重が低く足が触れている間だけ・枯渇の印が 1 回だけ・不正な入力で状態が変わらないこと。ほかの手段では気づけない（数値の則だけ）。失敗は黙って起きる（印が 2 回・0 回でもエラーにならない）。
+  - `GripSmoothingTest`: 反証する契約は、62.5 ms 間隔のキーで動く握りの点の荷重のピーク/平均が平滑ありで閾値以下・なしで閾値超え（試験が効いていることの確認）。ほかの手段では気づけない（1 フレームの跳ねは見た目にもログにも出ない）。失敗は黙って起きる。
+  - `GripTuningLoadTest`: 反証する契約は、`Assets/Gameplay/grip.tuning.json` の必須の欠落・未知のキー・型違い・範囲外をファイルとキーの分かるエラーで拒否し、失敗時に値を変えず、正しいデータと同梱の既定を読めること。ほかの手段では気づけない（綴りの誤りは既定値のまま黙って使われる）。失敗は黙って起きる。
+- U1 調整値 GripTuning の型・JSON の読み込み・既定の資産を足す: 着地(直し 0 回)
+- U2 しがみつきの拘束のソルバ・荷重の平滑と混ぜ・顎のゲージの純関数を足す: 着地(直し 0 回)
+- U3 GripTuningLoadTest を足す: 着地(直し 0 回)
+- U4 ソルバ・フレームレート・ゲージ・平滑の試験を足し、タスクの verify を回す: 着地(直し 0 回)
+
+## 2026-11-05 G10-GR20-GRIP-SOLVER（run 20261105-150733 の反復 1、完了）
+- Done: Gameplay の Grip のサブシステムに、しがみつきの純関数を足した。`Private/Gameplay/Grip/GripSolver.{h,cpp}` の `StepGripSolver` は重心 1 点を握りの点（前のフレーム → 今のフレームを補間）からの距離 L の拘束の下で位置ベースで積分する（h = min(dt, 1/30)/N、N は 1/120 秒の切り上げで上限 8、pred = x + v h + g h²、投影、v = (x_new − x)/h、補正量から張力 c/h² と load_g、握りの点に対する接線の速度を減衰）。有限でない入力・長さ 0 は状態を変えずに拒否する。`SmoothGripLoadG`（指数の平滑）・`MixGripShakeLoadG`（張力と GR19 の平滑の加速度の重みの混ぜと上限）・`StepGripGauge`（減り base + k × smoothstep、回復は荷重が free 以下で足が触れている間だけ、枯渇の印は 1 回だけ）・`ResetGripGauge`。調整値 `GripTuning`（Public/Gameplay/Grip/GripTuning.h）を `Assets/Gameplay/grip.tuning.json` から読み、必須の欠落・未知のキー・重複・型違い・範囲外を「ファイル: キー: 説明」で拒否する。試験 5 本（GripSolverTest・GripFrameRateInvarianceTest・GripGaugeTest・GripSmoothingTest・GripTuningLoadTest）を PhysicsDynamicsTest の束に足し、Docs/Testing.md に 3 点を書いた。
+- 証拠: `.harness/runs/20261105-150733/verify-G10-GR20-GRIP-SOLVER-U4.txt`（タスクの verify 2 行。Debug の PhysicsDynamicsTest と Game のビルド EXIT=0、ctest 7/7 合格。測定: 振り子の周期 2.00701 秒（解析 2.00607）、残差の最大 1.2e-7 m、等速の荷重 1.00005 g、加速度 4 m/s² の荷重 1.08016 g（解析 1.07993）、dt 3 通りのゲージの減りの差 0.97 %、平滑のピーク/平均 2.20 → 1.33（閾値 1.65））。
+- Next: ランナーの評価者の反証（JSON の読み込みはアセットの読み込みの危険地帯）。起動の要る確かめは無い。Component・犬のルートの駆動・接触は G10-GR20-GRIP-COMPONENTS。
+- Notes: done-when の調整値の一覧に無い `swingDampingPerSecond`（握りの点に対する接線の速度の減衰。done-when (1) の「摩擦」）を GripTuning の必須のキーに足した。既定値はすべて仮（free 1.5 g・panic 4 g・base 0.02/秒・k 0.25/秒・回復 0.1/秒・平滑 0.1 秒・重み 張力 1/加速度 0・サブステップ 8・荷重の上限 10 g・減衰 0.5/秒）。
+- Notes: 回復のフレームは減りを止めて回復だけを足す。枯渇の後は `ResetGripGauge` まで回復も印もしない（解除後のゲージの扱いは GRIP-COMPONENTS で決める）。GripFrameRateInvarianceTest は周期 0.5 秒・振幅 2 m の軌道で荷重が約 36 g になり既定の panic 4 g では減りが飽和して差が消えるため、試験の中だけ panic 60 g・上限 80 g にしている。
+
+## 2026-11-05 G10-GR19-ANCHOR-CORE（run 20261105-144354 の反復 1、着手）
+- 試験を足す前の 3 点（Docs/Testing.md の約束。SkinnedSurfaceAnchorTest を SkeletalAnimationSamplingTest へ足す・GeometryIntersectionExtraTest へ 1 ケース足す）:
+  - 反証する契約: アンカーの位置は「三角形の 3 頂点を SkinPosition でスキニングして重心で補間し持ち主のワールドを掛けた値」と一致する／回る関節のアンカーの速度は ω×r に一致する／関節のバケットの探索は候補の関節の中で総当たりと同じ三角形を返し、調べる三角形が少ない／MeshRevision の不一致・潰れた三角形・NaN のパレット・範囲外の三角形で落ちずに無効か落ちる先（関節のフレーム）を返す／62.5 ms のキーの継ぎ目で平滑の加速度の尖りが抑えられる（平滑なしでは閾値を超え、試験が効いていることも確かめる）／重心座標つきの交差の (u, v) が交点を再現し、既存の RayIntersectsTriangle の結果を変えない。
+  - 撮影・検証レイヤー・ログで気づけるか: 気づけない。この部品の呼び出し側（突き立ての結線 G10-GR19-ANCHOR-ATTACH・表面の放出 GR57-P6）はまだ無く、画面に出ない純粋な計算なので、数 mm のずれ・バケットの取りこぼし・平滑の効き不足は撮影でも見えない。
+  - 失敗が黙って起きるか: 起きる。重心の取り違え・巻きの反転・バケットの取りこぼしは例外も警告も出さず、少しずれた点や Miss を返すだけになる。
+- U1 重心座標つきのレイと三角形の交差: 着地(直し 0 回)
+- U2 SkinnedMeshComponent にパレットを読む口: 着地(直し 0 回)
+- U3 表面のアンカーの評価・関節のバケット・突き立ての点の探索: 着地(直し 0 回)
+- Notes: 要起票: `SkinnedMeshResource::SetIndices` は `GetPoseRevision()` を進めないので、インデックスだけを差し替えると古いアンカーと `JointTriangleBuckets` がリビジョンの照合で見つからない。別のメッシュどうしでリビジョンの値が一致しても照合を通る。
+- U4 アンカーの速度と加速度の平滑: 着地(直し 0 回)
+- U6 文書（AnimationRuntime.md と Testing.md）: 着地(直し 1 回)
+- U5 表面のアンカーの試験と最後の確かめ: 着地(直し 1 回)
+- Done: スキンメッシュの表面のアンカーの純粋な部品を Core に足した。`Library/Core/Public/Animation/SkinnedSurfaceAnchor.h`（`SurfaceAnchorDesc`・`SurfaceAnchorFrame`・`SurfaceAnchorPoseView`・`EvaluateSurfaceAnchor`・`JointTriangleBuckets`・`StabQuery`/`StabResult`・`FindSurfacePoint`・`SurfaceAnchorMotion`）、`Math::RayIntersectsTriangleBarycentric`、`SkinnedMeshComponent::TryGetBonePalette`。規約は `Docs/Architecture/AnimationRuntime.md` の「スキンメッシュの表面のアンカー」。試験は `SkeletalAnimationSamplingTest` の中の `SkinnedSurfaceAnchorTest`（位置の最大誤差 2.7e-7、ω×r の相対誤差 4.3e-5、レイ 1000 本で Hit 553 本が総当たりと一致・1 関節の候補で 128/512 三角形、平滑のピーク/平均 2.07（なし 3.84・閾値 2.5））と `GeometryIntersectionExtraTest` の 1 ケース。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final.txt` で確かめた。
+- Next: ランナーの評価者の反証（危険地帯の Public API `SkinnedMeshComponent`）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: アプリを起動する確かめは無い。平滑の時定数（既定 0.08 s）と `MaxSpeed`・`MaxAcceleration`・`MaxDeltaTime` の既定値は仮。`FindSurfacePoint` で退化した三角形だけを試した場合の理由は `BeyondSnapDistance` になり、ヘッダのコメント（「有効な候補三角形を一つも試せない場合は NoCandidates」）と読みが少しずれる（文書は実装に合わせた）。試験の呼び出しを足すため `Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp` に 2 行足した（paths の外だが done-when (5) の `AnimEventPropertyTest` と同じ形に要る）。
+- U7 バケットの探索の試験を候補を絞った探索と総当たりの比較にし、NoCandidates のコメントを実装に合わせる: 着地(直し 0 回)
+- Done（反復 5、差し戻しの直し）: バケットの探索の試験で、総当たりが当たったレイ 553 本ごとに、素材が決めた期待関節（頂点の重みが最大の関節）1 つだけを候補にして `FindSurfacePoint` を呼び、三角形・(u, v)・距離が総当たりと一致し、調べた三角形が期待関節の三角形数（構築時の記録から数えた 128）で全体 512 より少ないことを確かめるようにした。関節の選び方を重みが最小の関節に反転させると「絞った探索と総当たりの Hit が一致」などで落ち、戻すと合格することを確かめた。ヘッダの NoCandidates の説明を実装（スキニングできる三角形が無いときだけ。退化した三角形だけなら BeyondSnapDistance）に合わせた。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final-iter5.txt` で確かめた。
+- Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
+## 2026-11-05 G10-GR19-ANCHOR-CORE（run 20261105-144354 の反復 1、着手）
+- 試験を足す前の 3 点（Docs/Testing.md の約束。SkinnedSurfaceAnchorTest を SkeletalAnimationSamplingTest へ足す・GeometryIntersectionExtraTest へ 1 ケース足す）:
+  - 反証する契約: アンカーの位置は「三角形の 3 頂点を SkinPosition でスキニングして重心で補間し持ち主のワールドを掛けた値」と一致する／回る関節のアンカーの速度は ω×r に一致する／関節のバケットの探索は候補の関節の中で総当たりと同じ三角形を返し、調べる三角形が少ない／MeshRevision の不一致・潰れた三角形・NaN のパレット・範囲外の三角形で落ちずに無効か落ちる先（関節のフレーム）を返す／62.5 ms のキーの継ぎ目で平滑の加速度の尖りが抑えられる（平滑なしでは閾値を超え、試験が効いていることも確かめる）／重心座標つきの交差の (u, v) が交点を再現し、既存の RayIntersectsTriangle の結果を変えない。
+  - 撮影・検証レイヤー・ログで気づけるか: 気づけない。この部品の呼び出し側（突き立ての結線 G10-GR19-ANCHOR-ATTACH・表面の放出 GR57-P6）はまだ無く、画面に出ない純粋な計算なので、数 mm のずれ・バケットの取りこぼし・平滑の効き不足は撮影でも見えない。
+  - 失敗が黙って起きるか: 起きる。重心の取り違え・巻きの反転・バケットの取りこぼしは例外も警告も出さず、少しずれた点や Miss を返すだけになる。
+- U1 重心座標つきのレイと三角形の交差: 着地(直し 0 回)
+- U2 SkinnedMeshComponent にパレットを読む口: 着地(直し 0 回)
+- U3 表面のアンカーの評価・関節のバケット・突き立ての点の探索: 着地(直し 0 回)
+- Notes: 要起票: `SkinnedMeshResource::SetIndices` は `GetPoseRevision()` を進めないので、インデックスだけを差し替えると古いアンカーと `JointTriangleBuckets` がリビジョンの照合で見つからない。別のメッシュどうしでリビジョンの値が一致しても照合を通る。
+- U4 アンカーの速度と加速度の平滑: 着地(直し 0 回)
+- U6 文書（AnimationRuntime.md と Testing.md）: 着地(直し 1 回)
+- U5 表面のアンカーの試験と最後の確かめ: 着地(直し 1 回)
+- Done: スキンメッシュの表面のアンカーの純粋な部品を Core に足した。`Library/Core/Public/Animation/SkinnedSurfaceAnchor.h`（`SurfaceAnchorDesc`・`SurfaceAnchorFrame`・`SurfaceAnchorPoseView`・`EvaluateSurfaceAnchor`・`JointTriangleBuckets`・`StabQuery`/`StabResult`・`FindSurfacePoint`・`SurfaceAnchorMotion`）、`Math::RayIntersectsTriangleBarycentric`、`SkinnedMeshComponent::TryGetBonePalette`。規約は `Docs/Architecture/AnimationRuntime.md` の「スキンメッシュの表面のアンカー」。試験は `SkeletalAnimationSamplingTest` の中の `SkinnedSurfaceAnchorTest`（位置の最大誤差 2.7e-7、ω×r の相対誤差 4.3e-5、レイ 1000 本で Hit 553 本が総当たりと一致・1 関節の候補で 128/512 三角形、平滑のピーク/平均 2.07（なし 3.84・閾値 2.5））と `GeometryIntersectionExtraTest` の 1 ケース。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final.txt` で確かめた。
+- Next: ランナーの評価者の反証（危険地帯の Public API `SkinnedMeshComponent`）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: アプリを起動する確かめは無い。平滑の時定数（既定 0.08 s）と `MaxSpeed`・`MaxAcceleration`・`MaxDeltaTime` の既定値は仮。`FindSurfacePoint` で退化した三角形だけを試した場合の理由は `BeyondSnapDistance` になり、ヘッダのコメント（「有効な候補三角形を一つも試せない場合は NoCandidates」）と読みが少しずれる（文書は実装に合わせた）。試験の呼び出しを足すため `Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp` に 2 行足した（paths の外だが done-when (5) の `AnimEventPropertyTest` と同じ形に要る）。
+- U7 バケットの探索の試験を候補を絞った探索と総当たりの比較にし、NoCandidates のコメントを実装に合わせる: 着地(直し 0 回)
+- Done（反復 5、差し戻しの直し）: バケットの探索の試験で、総当たりが当たったレイ 553 本ごとに、素材が決めた期待関節（頂点の重みが最大の関節）1 つだけを候補にして `FindSurfacePoint` を呼び、三角形・(u, v)・距離が総当たりと一致し、調べた三角形が期待関節の三角形数（構築時の記録から数えた 128）で全体 512 より少ないことを確かめるようにした。関節の選び方を重みが最小の関節に反転させると「絞った探索と総当たりの Hit が一致」などで落ち、戻すと合格することを確かめた。ヘッダの NoCandidates の説明を実装（スキニングできる三角形が無いときだけ。退化した三角形だけなら BeyondSnapDistance）に合わせた。verify の 2 行（Debug のビルド 3 ターゲットの終了コード 0、ctest 4 本 Passed）を `.harness/runs/20261105-144354/verify-G10-GR19-ANCHOR-CORE-final-iter5.txt` で確かめた。
+- Next: ランナーの評価者の反証（差し戻しへの対応差分）。突き立ての結線は G10-GR19-ANCHOR-ATTACH。
+- Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
