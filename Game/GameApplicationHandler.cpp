@@ -27,6 +27,10 @@
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
+#if NORVES_BUILD_DEVELOPMENT
+#include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
+#include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
+#endif
 #include "Gameplay/Camera/FollowCameraComponent.h"
 #include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Gameplay/Physics/GamePhysicsLayers.h"
@@ -830,6 +834,13 @@ namespace Game
         m_bDogMovementAutopilot = false;
         m_DogMovementAutopilotPath = {};
         m_DogMovementCaptureDir = {};
+#if NORVES_BUILD_DEVELOPMENT
+        m_ShishaShowcaseScene = {};
+        m_ShishaCameraOrbit = 0.0f;
+        m_ShishaScale = 1.0f;
+        m_bShishaCameraOrbitSet = false;
+        m_bShishaScaleSet = false;
+#endif
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
@@ -1339,6 +1350,87 @@ namespace Game
                     return false;
                 }
                 m_DogMovementCaptureDir = dogCaptureDir;
+                continue;
+            }
+            // --shisha-showcase=<場面> と周回速度・倍率は開発ビルドの専用モードに渡す。
+            String shishaValue;
+            if (args[i] == TEXT("--shisha-showcase") ||
+                TryStripPrefix(args[i], TEXT("--shisha-showcase="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (!m_ShishaShowcaseScene.empty())
+                {
+                    LOG_ERROR("--shisha-showcase が重複しています");
+                    return false;
+                }
+                if (shishaValue.empty())
+                {
+                    LOG_ERROR("--shisha-showcase には場面の名前を指定してください");
+                    return false;
+                }
+                if (Game::GameModes::FindShishaShowcaseScene(shishaValue.c_str()) == nullptr)
+                {
+                    String sceneNames;
+                    for (size_t index = 0; index < Game::GameModes::GetShishaShowcaseSceneCount(); ++index)
+                    {
+                        if (index > 0)
+                        {
+                            sceneNames += ", ";
+                        }
+                        sceneNames += Game::GameModes::GetShishaShowcaseScene(index)->Name;
+                    }
+                    LOG_ERROR("--shisha-showcase の場面 %s は存在しません。指定できる場面: %s",
+                                shishaValue.c_str(), sceneNames.c_str());
+                    return false;
+                }
+                m_ShishaShowcaseScene = shishaValue;
+#else
+                LOG_ERROR("--shisha-showcase は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            if (args[i] == TEXT("--shisha-camera-orbit") ||
+                TryStripPrefix(args[i], TEXT("--shisha-camera-orbit="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaCameraOrbitSet)
+                {
+                    LOG_ERROR("--shisha-camera-orbit が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(shishaValue, -std::numeric_limits<float>::max(),
+                                          std::numeric_limits<float>::max(), m_ShishaCameraOrbit))
+                {
+                    LOG_ERROR("--shisha-camera-orbit は有限の数（度/秒）で指定してください");
+                    return false;
+                }
+                m_bShishaCameraOrbitSet = true;
+#else
+                LOG_ERROR("--shisha-camera-orbit は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            if (args[i] == TEXT("--shisha-scale") ||
+                TryStripPrefix(args[i], TEXT("--shisha-scale="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaScaleSet)
+                {
+                    LOG_ERROR("--shisha-scale が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(shishaValue, 0.0f, 1000.0f, m_ShishaScale) || m_ShishaScale <= 0.0f)
+                {
+                    LOG_ERROR("--shisha-scale は 0 より大きく 1000 以下の有限の数で指定してください");
+                    return false;
+                }
+                m_bShishaScaleSet = true;
+#else
+                LOG_ERROR("--shisha-scale は開発ビルドだけで使えます");
+                return false;
+#endif
                 continue;
             }
             String sceneValue;
@@ -3096,6 +3188,18 @@ namespace Game
                 return false;
             }
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_bShishaCameraOrbitSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-camera-orbit には --shisha-showcase が必要です");
+            return false;
+        }
+        if (m_bShishaScaleSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-scale には --shisha-showcase が必要です");
+            return false;
+        }
+#endif
         if (m_bDogMovementAutopilot && !m_bDogMovementSmoke)
         {
             LOG_ERROR("--dog-movement-autopilot には --dog-movement-smoke が必要です");
@@ -4376,6 +4480,27 @@ namespace Game
 
     bool GameApplicationHandler::ResolveStartupScene()
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (!m_ShishaShowcaseScene.empty())
+        {
+            if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
+            {
+                LOG_ERROR("--scene・--scene-view は --shisha-showcase と併用できません");
+                return false;
+            }
+            if (m_SceneCycle.IsEnabled())
+            {
+                LOG_ERROR("--scene-cycle-smoke は --shisha-showcase と併用できません");
+                return false;
+            }
+            if (m_bDogMovementSmoke)
+            {
+                LOG_ERROR("--dog-movement-smoke は --shisha-showcase と併用できません");
+                return false;
+            }
+            return true;
+        }
+#endif
         if (m_bDogMovementSmoke)
         {
             if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
@@ -4688,6 +4813,19 @@ namespace Game
                 mode->GetData().LateSlot = lateCameraSlot;
                 return mode;
             });
+#if NORVES_BUILD_DEVELOPMENT
+        registerMode(
+            ShishaShowcase,
+            [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale](
+                const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<ShishaShowcaseMode>();
+                mode->GetData().m_SceneName = sceneName;
+                mode->GetData().m_OrbitDegreesPerSecond = orbit;
+                mode->GetData().m_StandinScale = scale;
+                return mode;
+            });
+#endif
         registerMode(
             Rendering3DTest,
             [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
@@ -4976,6 +5114,12 @@ namespace Game
         {
             startMode = CombatSlice;
         }
+#if NORVES_BUILD_DEVELOPMENT
+        else if (!m_ShishaShowcaseScene.empty())
+        {
+            startMode = ShishaShowcase;
+        }
+#endif
         else if (m_SceneCycle.IsEnabled())
         {
             // 周回の検査は、ランチャーから始める（シーンへは検査が RequestChange で入る）
@@ -5003,6 +5147,12 @@ namespace Game
                        m_bCombatSmoke ? (m_bCombatBench ? "combat-bench" : "combat") :
                        m_bEncounterSmoke ? "encounter" : "enemy");
         }
+#if NORVES_BUILD_DEVELOPMENT
+        else if (!m_ShishaShowcaseScene.empty())
+        {
+            LOG_INFO_F("シ者の確かめのモードを場面 %s で開始します", m_ShishaShowcaseScene.c_str());
+        }
+#endif
         else if (m_SceneCycle.IsEnabled())
         {
             LOG_INFO_F("シーンの周回の検査を開始します（周回数 %u）", m_SceneCycle.GetCycleCount());
