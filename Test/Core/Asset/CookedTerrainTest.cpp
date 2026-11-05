@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedTerrainFormat.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
 #include "Tools/AssetCook/TerrainSpec.h"
 #include "Tools/AssetCook/TextureCooker.h"
 
@@ -1019,12 +1020,170 @@ namespace
         std::cout << Utf8(u8"マスク (g) ペイント入力の登録と 1 画素変更による source_hash の変化を確認\n");
     }
 
+    void WritePuddlePaint(const char* name, const ByteArray& pixels)
+    {
+        CHECK(pixels.size() == MaskSide * MaskSide);
+        ByteArray png;
+        CHECK(stbi_write_png_to_func(AppendPngBytes, &png, MaskSide, MaskSide, 1, pixels.data(), MaskSide) != 0);
+        WriteTerrainFile(TerrainTempRoot / name, Span<const uint8_t>(png));
+    }
+
+    void CheckTerrainPuddle()
+    {
+        constexpr double cellSize = 1.0;
+        constexpr uint32_t seed = 17;
+        constexpr const char* mapping = "\"scale_m\":0.01,\"offset_m\":0";
+        constexpr const char* basinSource = "\"path\":\"puddle-basin.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"little\"";
+        constexpr const char* slopeSource = "\"path\":\"puddle-slope.raw\",\"format\":\"raw16\",\"width\":33,\"height\":33,\"endian\":\"little\"";
+        ByteArray basin(MaskSide * MaskSide * 2);
+        ByteArray slope(basin.size());
+        ByteArray overridePaint(MaskSide * MaskSide);
+        ByteArray multiplyPaint(overridePaint.size());
+        TerrainHeightGrid grid;
+        grid.Width = MaskSide;
+        grid.Height = MaskSide;
+        grid.HeightsM.resize(MaskSide * MaskSide);
+        for (uint32_t z = 0; z < MaskSide; ++z)
+        {
+            for (uint32_t x = 0; x < MaskSide; ++x)
+            {
+                const size_t index = static_cast<size_t>(z) * MaskSide + x;
+                const double dx = static_cast<double>(x) - 16.0;
+                const double dz = static_cast<double>(z) - 16.0;
+                const double distanceSquared = dx * dx + dz * dz;
+                const double height = distanceSquared < 36.0 ? 1.0 - 0.6 * (1.0 - distanceSquared / 36.0) : 1.0;
+                const auto rawHeight = static_cast<uint16_t>(std::round(height / 0.01));
+                WriteLe16(basin, index * 2, rawHeight);
+                WriteLe16(slope, index * 2, static_cast<uint16_t>(20 * x));
+                grid.HeightsM[index] = rawHeight * 0.01;
+                overridePaint[index] = x >= 10 && x <= 22 && z >= 10 && z <= 22 ? 128 : 0;
+                multiplyPaint[index] = x >= 12 && x <= 20 && z >= 12 && z <= 20 ? 0 : 255;
+            }
+        }
+        WriteTerrainFile(TerrainTempRoot / "puddle-basin.raw", Span<const uint8_t>(basin));
+        WriteTerrainFile(TerrainTempRoot / "puddle-slope.raw", Span<const uint8_t>(slope));
+        const auto basinCooked = CookTerrainChecked(WriteTerrainSpec("puddle-basin.json", basinSource,
+            mapping, cellSize, seed, ",\"recipe\":{}"));
+        const auto slopeCooked = CookTerrainChecked(WriteTerrainSpec("puddle-slope.json", slopeSource,
+            mapping, cellSize, seed, ",\"recipe\":{}"));
+        const auto basinTerrain = ParseMaskTerrain(basinCooked);
+        const auto slopeTerrain = ParseMaskTerrain(slopeCooked);
+        const auto basinPuddle = ReadMaskLayer(basinTerrain, PuddleLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+        const auto slopePuddle = ReadMaskLayer(slopeTerrain, PuddleLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+        const uint8_t bottom = MaskSample(basinTerrain, basinPuddle, 16, 16, 1, 0);
+        uint8_t basinMaximum = 0;
+        uint8_t slopeMaximum = 0;
+        for (uint32_t z = 0; z < MaskSide; ++z)
+        {
+            for (uint32_t x = 0; x < MaskSide; ++x)
+            {
+                basinMaximum = std::max(basinMaximum, MaskSample(basinTerrain, basinPuddle, x, z, 1, 0));
+                const uint8_t value = MaskSample(slopeTerrain, slopePuddle, x, z, 1, 0);
+                slopeMaximum = std::max(slopeMaximum, value);
+                CHECK(value == 0);
+            }
+        }
+        std::cout << Utf8(u8"凹み度 (a) 窪地の底=") << unsigned(bottom) << Utf8(u8"、全標本の最大=")
+                  << unsigned(basinMaximum) << Utf8(u8"、斜面の最大=") << unsigned(slopeMaximum) << "\n";
+        CHECK(bottom == basinMaximum && bottom >= 200);
+
+        WritePuddlePaint("puddle-override.png", overridePaint);
+        WritePuddlePaint("puddle-multiply.png", multiplyPaint);
+        const auto overrideCooked = CookTerrainChecked(WriteTerrainSpec("puddle-override.json", slopeSource,
+            mapping, cellSize, seed,
+            ",\"recipe\":{\"paint\":[{\"target\":\"puddle\",\"mode\":\"override\",\"path\":\"puddle-override.png\"}]}"));
+        const auto multiplyCooked = CookTerrainChecked(WriteTerrainSpec("puddle-multiply.json", basinSource,
+            mapping, cellSize, seed,
+            ",\"recipe\":{\"paint\":[{\"target\":\"puddle\",\"mode\":\"multiply\",\"path\":\"puddle-multiply.png\"}]}"));
+        const auto overrideTerrain = ParseMaskTerrain(overrideCooked);
+        const auto multiplyTerrain = ParseMaskTerrain(multiplyCooked);
+        const auto overridden = ReadMaskLayer(overrideTerrain, PuddleLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+        const auto multiplied = ReadMaskLayer(multiplyTerrain, PuddleLayerFourCC, CookedTexturePixelFormat::R8UNorm, 1);
+        for (uint32_t z = 0; z < MaskSide; ++z)
+        {
+            for (uint32_t x = 0; x < MaskSide; ++x)
+            {
+                const size_t index = static_cast<size_t>(z) * MaskSide + x;
+                CHECK(MaskSample(overrideTerrain, overridden, x, z, 1, 0) == overridePaint[index]);
+                const uint8_t expected = multiplyPaint[index] == 0 ? 0 : MaskSample(basinTerrain, basinPuddle, x, z, 1, 0);
+                CHECK(MaskSample(multiplyTerrain, multiplied, x, z, 1, 0) == expected);
+            }
+        }
+        std::cout << Utf8(u8"凹み度 (b) override の内側 128・外側 0、multiply の内側 0・外側は未塗装と一致\n");
+
+        TerrainRecipe recipe;
+        recipe.Puddle.Noise.Amplitude = 0.3;
+        recipe.Puddle.Noise.ScaleM = 5.0;
+        TerrainMaskFields referenceMasks;
+        TerrainBuildResult referenceBuild;
+        AnsiString error;
+        for (const uint32_t threadCount : {1u, 3u, 7u})
+        {
+            TerrainMaskFields masks;
+            CHECK(ComputeTerrainMasks(grid, cellSize, seed, recipe, {}, masks, error, threadCount));
+            CHECK(masks.PuddleR8.size() == MaskSide * MaskSide);
+            TerrainBuildSettings settings;
+            settings.CellSizeM = cellSize;
+            settings.TileCells = CookTileCells;
+            settings.Masks = &masks;
+            TerrainBuildResult build;
+            CHECK(BuildCookedTerrain(grid, settings, build, error));
+            if (threadCount == 1)
+            {
+                referenceMasks = std::move(masks);
+                referenceBuild = std::move(build);
+            }
+            else
+            {
+                CHECK(masks.PuddleR8 == referenceMasks.PuddleR8);
+                CHECK(build.NvtrnBytes == referenceBuild.NvtrnBytes);
+            }
+        }
+        std::cout << Utf8(u8"凹み度 (c) 雑音あり・スレッド数 1・3・7 で PuddleR8 と NVTRN の全バイトが一致\n");
+
+        using NorvesLib::Core::Rendering::Terrain::TerrainHeightField;
+        const auto current = ParseCookedTerrain(AssetBlob::CopyBytes(Span<const uint8_t>(referenceBuild.NvtrnBytes)));
+        CHECK(current.Succeeded());
+        CHECK(current.Terrain.FindLayer(PuddleLayerFourCC) >= 0);
+        const auto currentField = TerrainHeightField::CreateFromCookedTerrain(current.Terrain, error);
+        CHECK(currentField != nullptr);
+        CHECK(currentField->HasPuddlePotential());
+        const auto layout = currentField->GetGridLayout();
+        const float bottomX = static_cast<float>(layout.FirstX + 16.0 * layout.Spacing);
+        const float bottomZ = static_cast<float>(layout.FirstZ + 16.0 * layout.Spacing);
+        const float currentBottom = currentField->SamplePuddlePotential(bottomX, bottomZ);
+        CHECK(currentBottom > 0.0f);
+        referenceMasks.PuddleR8.clear();
+        TerrainBuildSettings legacySettings;
+        legacySettings.CellSizeM = cellSize;
+        legacySettings.TileCells = CookTileCells;
+        legacySettings.Masks = &referenceMasks;
+        TerrainBuildResult legacyBuild;
+        CHECK(BuildCookedTerrain(grid, legacySettings, legacyBuild, error));
+        const auto legacy = ParseCookedTerrain(AssetBlob::CopyBytes(Span<const uint8_t>(legacyBuild.NvtrnBytes)));
+        CHECK(legacy.Succeeded());
+        CHECK(legacy.Terrain.FindLayer(PuddleLayerFourCC) < 0);
+        const auto legacyField = TerrainHeightField::CreateFromCookedTerrain(legacy.Terrain, error);
+        CHECK(legacyField != nullptr);
+        CHECK(!legacyField->HasPuddlePotential());
+        const auto legacyLayout = legacyField->GetGridLayout();
+        constexpr uint32_t samples[][2] = {{0, 0}, {8, 24}, {16, 16}, {32, 32}};
+        for (const auto& sample : samples)
+        {
+            const float x = static_cast<float>(legacyLayout.FirstX + sample[0] * legacyLayout.Spacing);
+            const float z = static_cast<float>(legacyLayout.FirstZ + sample[1] * legacyLayout.Spacing);
+            CHECK(legacyField->SamplePuddlePotential(x, z) == 0.0f);
+        }
+        std::cout << Utf8(u8"凹み度 (d) PDL0 なしの旧形式は層なし・標本値 0、PDL0 ありの底=") << currentBottom << "\n";
+    }
+
     void CheckTerrainCookPath()
     {
         CreateTerrainTemp();
         CheckAnalyticTerrain();
         CheckTerrainFormatsAndRejection();
         CheckTerrainMasks();
+        CheckTerrainPuddle();
         std::error_code error;
         std::filesystem::remove_all(TerrainTempRoot, error);
         CHECK(!error && !std::filesystem::exists(TerrainTempRoot));

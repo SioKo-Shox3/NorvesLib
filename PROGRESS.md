@@ -10173,3 +10173,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-151418/verify-G11-GR56-SKY-OCC-CPU-U4.txt`（タスクの verify 2 行。Debug の CameraViewConstantsTest・SceneSerializerTest・Game のビルド EXIT=0、ctest 5/5 Passed、numstat の 2 通りが一致）。
 - Next: ランナーの評価者の反証（Public API・FramePacket のデータ契約の危険地帯）。GPU のクリップマップと照明（G11-GR56 の次の項目）。起動の確かめは後回し（今のシーンに SkyOccluderComponent を付けた所は無く、既定は無効なので見た目は変わらない）。
 - Notes: 遮蔽物の登録・解除・移動の追従は実行の試験が無い（保存の往復だけ）。GPU の項目のデモ（`--sky-occluder-demo`）で確かめる。`CenterOffset` は持ち主の回転の局所で拡大を掛けず、`HalfExtents` には持ち主の拡大の絶対値を掛ける。Yaw のずれはラジアン。
+
+- U1 実行時の NVTRN 読み込みで PDL0（凹み度）を引けるようにし、層が無ければ 0 を返す: 着地(直し 0 回)
+- U2 凹み度の規則と計算（高さのぼかしとの差・窪地を埋めた深さ・流れの集積・ペイント・スレッド数に依らない並列）: 着地(直し 1 回)
+- U3 spec の recipe.puddle とペイントの target "puddle" を読み、NVTRN に PDL0 を書く: 着地(直し 0 回)
+- U4 NVTRN の形式の文書と grassland の spec に凹み度を足す: 着地(直し 0 回)
+- U5 CookedTerrainTest に凹み度の 4 ケースを足し、タスクの verify を全部回す: 着地(直し 0 回)
+
+## G11-GR59-PUDDLE-MASK（2026-11-05）
+
+- Done: 地形の cook に R8 の層 `PDL0`（凹み度 0〜1、意味 `terrain.puddle.potential`）を GRS0 の後ろに足した。規則は spec の `recipe.puddle`（高さの分離ガウスのぼかしとの差・優先度つき浸水で窪地を埋めた深さ・流れの集積を重みで合成し、傾斜で 0 へ下げ、(seed, セル座標) の整数ハッシュの値雑音を掛ける）と、ペイントの target `puddle`（override / multiply）。計算は行の帯でスレッドに分け、結果はスレッド数に依らない。実行時は `TerrainHeightField::HasPuddlePotential`・`SamplePuddlePotential` で引け、層の無い古い NVTRN は 0 として読む。形式の文書（`Docs/Architecture/NVTRNv0.md`）と grassland の spec を更新した。
+- 証拠: `.harness/runs/20261105-160359/verify-G11-GR59-PUDDLE-MASK.txt`（CookedMeshTest・AssetCook の Debug ビルド成功、ctest `CookedTerrainTest|CookedMeshTest` 100% tests passed, 0 tests failed out of 2、凹み度 (a) 窪地の底 209＝全標本の最大・斜面の最大 0、(b)(c)(d) 合格、grassland の cook 成功）。
+- Next: GR37 の地形の GBuffer のシェーダーが PDL0 を束ねて被覆を評価するのは後続の GR59 の項目（今は NVTEX の層として埋めただけで、描画からはまだ引いていない）。起動の確かめは無い（cook と CPU の試験で閉じる）。
+- Notes: grassland の地形の NVTRN が変わったため、散布の spec `Assets/Scatter/grassland.scatter.json` が固定する地形の `cooked_hash` を `2fbadb9d5677e80d` に更新した（paths の外だが、cook を通すための記録の値だけ。散布は PDL0 を使わない）。
+- Notes: ぼかしの半径は格子の大きさでは拒否せず（小さな地形の既存の recipe を壊さないため）、計算量の上限 4096 セルだけで拒否する。凹み度の既定値は試験の合成の窪地で底が 209/255 になる値で、grassland の見た目の調整は描画が PDL0 を引くようになってから行う。

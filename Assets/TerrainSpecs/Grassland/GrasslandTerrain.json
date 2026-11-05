@@ -20,6 +20,7 @@
         { "name": "meadow", "weight": 0.8, "slope_deg": { "min": 0, "max": 28, "soft": 8 }, "wetness": { "min": 0, "max": 0.55, "soft": 0.15 }, "noise": { "amplitude": 0.3, "scale_m": 30 } }
       ]
     },
-    "grass_density": { "base": 1.0, "slope_start_deg": 25, "slope_zero_deg": 40, "wet_start": 0.35, "wet_zero": 0.75, "road_suppress": 1.0, "rock_suppress": 1.0 }
+    "grass_density": { "base": 1.0, "slope_start_deg": 25, "slope_zero_deg": 40, "wet_start": 0.35, "wet_zero": 0.75, "road_suppress": 1.0, "rock_suppress": 1.0 },
+    "puddle": { "blur_sigma_m": 4, "blur_full_m": 0.25, "blur_weight": 0.4, "fill_full_m": 0.15, "fill_weight": 0.4, "flow_weight": 0.2, "flow_ref_cells": 2000, "slope_start_deg": 2, "slope_zero_deg": 6, "noise": { "amplitude": 0.2, "scale_m": 8 } }
   }
 }
