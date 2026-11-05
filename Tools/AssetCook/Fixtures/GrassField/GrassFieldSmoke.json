@@ -1,0 +1,23 @@
+﻿{
+  "version": 0,
+  "chunk_size_m": 4,
+  "layer_a_resolution": 8,
+  "layer_b_resolution": 4,
+  "species_table": "species.json",
+  "source": {
+    "type": "png",
+    "origin_m": [
+      -4,
+      0
+    ],
+    "chunks": [
+      2,
+      2
+    ],
+    "density": "density.png",
+    "height": "height.png",
+    "moisture": "moisture.png",
+    "species": "species.png",
+    "tint": "tint.png"
+  }
+}

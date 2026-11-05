@@ -1,0 +1,11 @@
+﻿{
+  "version": 0,
+  "species": [
+    {
+      "name": "wet_grass"
+    },
+    {
+      "name": "dry_grass"
+    }
+  ]
+}
