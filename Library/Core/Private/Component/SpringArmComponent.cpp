@@ -162,6 +162,18 @@ namespace NorvesLib::Core::Component
         return pivot != owner ? pivot : nullptr;
     }
 
+    Math::Vector3 SpringArmComponent::GetTargetWorldPosition() const
+    {
+        const Entity* pivot = ResolvePivot();
+        if (pivot)
+        {
+            return ComputeTargetWorldPosition(*pivot);
+        }
+
+        const Entity* owner = GetOwner();
+        return owner ? owner->GetWorldTransform().position : Math::Vector3::Zero;
+    }
+
     void SpringArmComponent::SetArmLength(float armLength)
     {
         ArmLength = std::clamp(armLength, MinArmLength.Get(), MaxArmLength.Get());
@@ -263,6 +275,11 @@ namespace NorvesLib::Core::Component
             distance * cosPitch * std::cos(yawRadians));
     }
 
+    Math::Vector3 SpringArmComponent::ComputeTargetWorldPosition(const Entity& pivot) const
+    {
+        return pivot.GetRenderWorldTransform().position + TargetOffset.Get();
+    }
+
     void SpringArmComponent::DriveOwnerTransform(const Entity& pivot)
     {
         Entity* owner = GetOwner();
@@ -271,7 +288,7 @@ namespace NorvesLib::Core::Component
             return;
         }
 
-        const Math::Vector3 target = pivot.GetRenderWorldTransform().position + TargetOffset.Get();
+        const Math::Vector3 target = ComputeTargetWorldPosition(pivot);
         const Math::Vector3 cameraPosition = target + ComputeArmOffset();
         const Math::Vector3 forward = (target - cameraPosition).Normalized();
         const Math::Quaternion rotation =
