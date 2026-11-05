@@ -9900,3 +9900,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 体の補正の高さの差はワールドの長さで求め、骨盤へはモデル空間の上向きの単位ベクトルに掛けて足す。所有者のワールド変換に 1 以外のスケールがあると下がる量がスケール分ずれる（今の試験はスケール 1）。
 - U1 modifier の文脈から、そのフレームに積まれてまだ配っていないイベントを読む口を足す: 着地(直し 0 回)
 - U2 脚ごとの Swing / Planted の状態機械と着地の重みを持つ FootPlantState を足す: 着地(直し 0 回)
+- U3 FootIK に足の固定と着地を組み込み、設定と文書を足す: 着地(直し 1 回)
