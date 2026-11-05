@@ -1,0 +1,7 @@
+{
+  "factions": {
+    "player": 0,
+    "enemy": 1,
+    "neutral": 2
+  }
+}

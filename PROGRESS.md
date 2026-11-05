@@ -9857,19 +9857,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証。実際のキャラクターでの見た目の確かめは起動の確かめとして後回し
 - Notes: 評価者の残課題（non-blocking）として、`FromToRotation` の約 0.26° の不感帯と、根の粒子をサブステップの間で補間していないことが残る
 
-- U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
-- U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
-- U3 AssetCook に GrassFieldCooker と照合のコマンドを足す: 着地(直し 0 回)
-- U5 GrassFieldComponent と地形の地面の取り出し口を足す: 着地(直し 0 回)
-- U9 AssetCookGrassFieldSmoke と基準の PNG 群を今の枠で入れ直す: 着地(直し 0 回)
-- U10 SceneFileRoundTripTest の草原の往復と旧ファイルを今の枠で入れ直す: 着地(直し 0 回)
-- U11 grassland の草の場を今の枠で入れ直す: 着地(直し 0 回)
-- U8 受入れの記録と全体の確かめ: 着地(直し 1 回)
+- U0 新しいファイルの足場と試験の登録・文書の項目を足す: 着地(直し 0 回)
+- U1 関節への束縛(遅延解決・判定からの除外・診断・弱い関節の警告)と CombatJointFollowTest: 着地(直し 0 回)
+- U2 攻撃・hurtbox・faction の JSON の読み込みと既定のデータ、CombatProfileLoadTest: 着地(直し 1 回)
+- U5 確認済みの当たりの反応の差分を当て直し、Debug・RelWithDebInfo だけの判定の形の表示を足して、タスクの verify を通す: 着地(直し 0 回)
 
-## 2026-11-05 G5-GR42-GRASS-FIELD-ASSET（run 20261105-093025 の反復 2、完了）
-- Done: NVGFLD v0（`Asset/CookedGrassFieldFormat.h`・`CookedGrassFieldLoader.cpp`・決定的な書き出し、`Docs/Architecture/NVGFLDv0.md`）と拒否の理由を返す読み込み。AssetKind::World の entry type `Gfd0`・format `nvgfld.v0` で解決。AssetCook の `--kind world --format nvgfld.v0`（配置の JSON + PNG 群か NVTRN の GRS0/MSK0 から焼く）と照合のコマンド。`GrassFieldComponent`（BeginPlay で読んで Vegetation と RenderWorld へ登録、EndPlay で外す）と TerrainSystem を引く地面の取り出し口。grassland に GRS0 から焼いた草の場（256 チャンク、NVGFLD 5,255,424 B）。試験 `CookedGrassFieldTest`・`AssetCookGrassFieldSmoke`・`SceneFileRoundTripTest` の草原の往復と旧ファイル。1 km² 相当の大きさを `Docs/RenderingValidation/GrassFieldAcceptance.md` に記録（cook 済み 21,020,928 B、CPU の常駐の計算できる部分 約 40.0 MiB。ゲートにしない）。
-- 証拠: `.harness/runs/20261105-093025/G5-GR42-GRASS-FIELD-ASSET-U8-verify.txt`（AssetCook・CookedMeshTest・SceneSerializerTest・Game の Debug ビルド exit 0、AssetManifestTest と GrassFieldQueryTest の実行ファイルのため AssetSystemTest・MathGeometryTest もビルド、ctest 6 件 100% Passed）。
-- Next: ランナーの評価者の反証（アセットロード・Public API の危険地帯）。起動の確かめは後回し: grassland を `--scene=grassland --window-background` で開き、草の場の登録・EndPlay での解除と再入場・地形との高さの整合・見た目を見る。
-- Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
-- G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
-- Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
+## 2026-11-05 G8-GR16-JOINT-DATA-RESPONSE（run 20261105-093026 の反復 1、完了）
+- Done: hitbox と hurtbox の部位を同じ Entity の `SkinnedMeshComponent` の関節名へ束縛する（解決は最初の評価まで遅らせ、関節が無い・姿勢が未評価・資産が無効なフレームはその部位だけ判定から外して `CombatRuntimeDiagnostics::JointUnavailableCount` を数える。影響の弱い関節への束縛は閾値（データ）で警告）。`Assets/Combat/*.attack.json`・`*.hurtboxes.json`・`factions.json` を厳格に読み（必須の欠落・未知のキー・0 以下の半径・窓のイベント名の欠落・未知の faction・空の hitFactions をファイルとキーの道筋つきで拒否）、横薙ぎ・回転斬り・跳躍斬り・噛みつきと人型・四足の既定のデータを置いた。`OnAnyHit` を `HitEffectEmitter::SubmitHit`（位置・正規化した法線・部位の SurfaceName）へ写し、同じフレームの当たりのヒットストップのヒントの最大を `MaxHitStopSeconds` で頭打ちにして `TimeSystem::PushScale` を 1 回だけ要求する。どちらも `IGameplayModule::SetCombatResponseSettings` で切れる。`bDebugDraw`（既定は切）で hitbox・hurtbox・掃引の形を `GEngine.GetDebugDraw()` へ線で出す（`NORVES_ENABLE_DEBUG_OUTPUT` が 0 の Release では宣言・実装・呼び出しとも入らない）。試験 `CombatJointFollowTest`・`CombatProfileLoadTest`・`CombatResponseTest` を PhysicsDynamicsTest の束へ。
+- 証拠: `.harness/runs/20261105-093026/verify-G8-GR16-JOINT-DATA-RESPONSE-U5.txt`（Game・PhysicsDynamicsTest・HitEffectEmissionTest・SwordTrailRibbonTest の Debug ビルド終了コード 0、ctest で Combat 系 8 本・HitEffectEmissionTest・SwordTrailRibbonTest の 10 件 100% Passed、numstat 2 通り一致）。
+- 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
+- Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
+- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
