@@ -5,6 +5,7 @@
 #include "Rendering/Terrain/TerrainHeightField.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cfloat>
 #include <limits>
@@ -20,6 +21,47 @@
 
 namespace NorvesLib::Modules::Physics
 {
+    // 木の形と形状値を共有する。組のフィルターは毎回のプロキシから読む。
+    struct PhysicsStaticTreeSnapshot
+    {
+        struct ProxySignature
+        {
+            Core::Scene::ColliderHandle Collider;
+            EPhysicsProxyShape Shape;
+            Math::Sphere Sphere;
+            Math::OBB Box;
+            Math::Capsule Capsule;
+            Math::AABB Bounds;
+
+            bool operator==(const ProxySignature& other) const
+            {
+                if (Collider != other.Collider || Shape != other.Shape
+                    || Bounds.Min != other.Bounds.Min || Bounds.Max != other.Bounds.Max)
+                {
+                    return false;
+                }
+                switch (Shape)
+                {
+                case EPhysicsProxyShape::Sphere:
+                    return Sphere.Center == other.Sphere.Center && Sphere.Radius == other.Sphere.Radius;
+                case EPhysicsProxyShape::Box:
+                    return Box.Center == other.Box.Center && Box.HalfExtents == other.Box.HalfExtents
+                        && Box.Axes[0] == other.Box.Axes[0] && Box.Axes[1] == other.Box.Axes[1]
+                        && Box.Axes[2] == other.Box.Axes[2];
+                case EPhysicsProxyShape::Capsule:
+                    return Capsule.PointA == other.Capsule.PointA && Capsule.PointB == other.Capsule.PointB
+                        && Capsule.Radius == other.Capsule.Radius;
+                case EPhysicsProxyShape::HeightField:
+                    return false;
+                }
+                return false;
+            }
+        };
+
+        Core::Container::VariableArray<ProxySignature> Signatures;
+        StaticAabbTree Tree;
+    };
+
     namespace
     {
         struct SweepEndpoint
@@ -1212,8 +1254,67 @@ namespace NorvesLib::Modules::Physics
         }
 
         m_Proxies = std::move(proxies);
+        assert(m_Proxies.size() <= UINT32_MAX);
+        m_TreeProxyIndices.clear();
+        m_NonTreeProxyIndices.clear();
+        Core::Container::VariableArray<PhysicsStaticTreeSnapshot::ProxySignature> signatures;
+        for (size_t index = 0; index < m_Proxies.size(); ++index)
+        {
+            const PhysicsShapeProxy& proxy = m_Proxies[index];
+            // 2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す規則を追加する場所。
+            const bool bUseTree = proxy.bStatic && proxy.Shape != EPhysicsProxyShape::HeightField
+                && IsValidProxyGeometry(proxy);
+            if (bUseTree)
+            {
+                m_TreeProxyIndices.push_back(static_cast<uint32_t>(index));
+                signatures.push_back({proxy.Collider, proxy.Shape, proxy.Sphere, proxy.Box, proxy.Capsule, proxy.Bounds});
+            }
+            else
+            {
+                m_NonTreeProxyIndices.push_back(static_cast<uint32_t>(index));
+            }
+        }
+
+        if (signatures.empty())
+        {
+            m_StaticTree.reset();
+        }
+        else if (!m_StaticTree || m_StaticTree->Signatures.size() != signatures.size()
+            || !std::equal(signatures.begin(), signatures.end(), m_StaticTree->Signatures.begin()))
+        {
+            auto snapshot = Core::Container::MakeShared<PhysicsStaticTreeSnapshot>();
+            snapshot->Signatures = std::move(signatures);
+            Core::Container::VariableArray<Math::AABB> bounds;
+            Core::Container::VariableArray<Core::Scene::ColliderHandle> handles;
+            bounds.reserve(m_TreeProxyIndices.size());
+            handles.reserve(m_TreeProxyIndices.size());
+            for (uint32_t index : m_TreeProxyIndices)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[index];
+                Math::AABB conservativeBounds = ConservativeProxyBounds(proxy);
+                conservativeBounds.Merge(proxy.Bounds);
+                bounds.push_back(conservativeBounds);
+                handles.push_back(proxy.Collider);
+            }
+            snapshot->Tree.Build(
+                Core::Container::Span<const Math::AABB>(bounds.data(), bounds.size()),
+                Core::Container::Span<const Core::Scene::ColliderHandle>(handles.data(), handles.size()));
+            m_StaticTree = std::move(snapshot);
+            m_Stats.TreeRebuildCount = 1;
+        }
+
         BuildCandidatePairs();
         m_Stats.CandidatePairCount = m_CandidatePairs.size();
+    }
+
+    void PhysicsBroadphase::ShareStaticTreeFrom(const PhysicsBroadphase& source)
+    {
+        m_StaticTree = source.m_StaticTree;
+    }
+
+    const StaticAabbTree* PhysicsBroadphase::GetStaticTree() const
+    {
+        return m_StaticTree ? &m_StaticTree->Tree : nullptr;
     }
 
     const Core::Container::VariableArray<PhysicsShapeProxy>& PhysicsBroadphase::GetProxies() const
@@ -1259,6 +1360,16 @@ namespace NorvesLib::Modules::Physics
             }
         }
         return nullptr;
+    }
+
+    const PhysicsShapeProxy* PhysicsBroadphase::GetPairProxy(uint32_t proxyIndex, Core::Scene::ColliderHandle expected) const
+    {
+        ++m_Stats.ProxyLookupCount;
+        if (proxyIndex < m_Proxies.size() && m_Proxies[proxyIndex].Collider == expected)
+        {
+            return &m_Proxies[proxyIndex];
+        }
+        return FindProxy(expected);
     }
 
     void PhysicsBroadphase::RecordNarrowPhaseTest() const
@@ -1553,7 +1664,7 @@ namespace NorvesLib::Modules::Physics
         Core::Container::VariableArray<SweepEndpoint> endpoints;
         Core::Container::VariableArray<size_t> heightFieldIndices;
         Core::Container::VariableArray<size_t> shapeIndices;
-        endpoints.reserve(m_Proxies.size() * 2);
+        endpoints.reserve(m_NonTreeProxyIndices.size() * 2);
         for (size_t index = 0; index < m_Proxies.size(); ++index)
         {
             const PhysicsShapeProxy& proxy = m_Proxies[index];
@@ -1564,6 +1675,14 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
             shapeIndices.push_back(index);
+        }
+        for (uint32_t index : m_NonTreeProxyIndices)
+        {
+            const PhysicsShapeProxy& proxy = m_Proxies[index];
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                continue;
+            }
             endpoints.push_back(SweepEndpoint{proxy.Bounds.Min.x, index, proxy.Collider, true, proxy.Layer, proxy.Mask});
             endpoints.push_back(SweepEndpoint{proxy.Bounds.Max.x, index, proxy.Collider, false, proxy.Layer, proxy.Mask});
         }
@@ -1574,6 +1693,23 @@ namespace NorvesLib::Modules::Physics
         }
 
         m_CandidatePairs.clear();
+        const auto appendPair = [&](uint32_t firstIndex, uint32_t secondIndex)
+        {
+            if (IsHandleLess(m_Proxies[secondIndex].Collider, m_Proxies[firstIndex].Collider))
+            {
+                std::swap(firstIndex, secondIndex);
+            }
+            m_CandidatePairs.push_back({m_Proxies[firstIndex].Collider, m_Proxies[secondIndex].Collider,
+                firstIndex, secondIndex});
+        };
+        const auto canPair = [](const PhysicsShapeProxy& first, const PhysicsShapeProxy& second)
+        {
+            return first.Bounds.Min.x <= second.Bounds.Max.x && first.Bounds.Max.x >= second.Bounds.Min.x
+                && first.Bounds.Min.y <= second.Bounds.Max.y && first.Bounds.Max.y >= second.Bounds.Min.y
+                && first.Bounds.Min.z <= second.Bounds.Max.z && first.Bounds.Max.z >= second.Bounds.Min.z
+                && Core::Scene::CanPhysicsLayersInteract(first.Layer, first.Mask, second.Layer, second.Mask)
+                && CanProxyMobilitiesInteract(first.Mobility, second.Mobility);
+        };
         Core::Container::VariableArray<SweepEndpoint> active;
         for (const SweepEndpoint& endpoint : endpoints)
         {
@@ -1590,10 +1726,7 @@ namespace NorvesLib::Modules::Physics
                     {
                         continue;
                     }
-                    PhysicsCandidatePair pair;
-                    pair.First = IsHandleLess(endpoint.Collider, other.Collider) ? endpoint.Collider : other.Collider;
-                    pair.Second = IsHandleLess(endpoint.Collider, other.Collider) ? other.Collider : endpoint.Collider;
-                    m_CandidatePairs.push_back(pair);
+                    appendPair(static_cast<uint32_t>(endpoint.ProxyIndex), static_cast<uint32_t>(other.ProxyIndex));
                 }
                 active.push_back(endpoint);
                 continue;
@@ -1610,9 +1743,61 @@ namespace NorvesLib::Modules::Physics
             }
         }
 
+        if (m_StaticTree)
+        {
+            // SAP と木の所属は排他的なので、この経路では各組を動く側から 1 回だけ作る。
+            for (uint32_t index : m_NonTreeProxyIndices)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[index];
+                if (proxy.Shape == EPhysicsProxyShape::HeightField)
+                {
+                    continue;
+                }
+                m_StaticTree->Tree.QueryAabb(proxy.Bounds, [&](uint32_t item)
+                {
+                    const uint32_t staticIndex = m_TreeProxyIndices[item];
+                    if (canPair(proxy, m_Proxies[staticIndex]))
+                    {
+                        appendPair(index, staticIndex);
+                    }
+                });
+            }
+
+            for (uint32_t index : m_TreeProxyIndices)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[index];
+                if (!CanProxyMobilitiesInteract(proxy.Mobility, EPhysicsProxyMobility::Static))
+                {
+                    continue;
+                }
+                m_StaticTree->Tree.QueryAabb(proxy.Bounds, [&](uint32_t item)
+                {
+                    const uint32_t otherIndex = m_TreeProxyIndices[item];
+                    const PhysicsShapeProxy& other = m_Proxies[otherIndex];
+                    // 両方が能動側なら、ハンドルが小さい側からだけ作る。
+                    if (index == otherIndex
+                        || (CanProxyMobilitiesInteract(other.Mobility, EPhysicsProxyMobility::Static)
+                            && !IsHandleLess(proxy.Collider, other.Collider)))
+                    {
+                        return;
+                    }
+                    if (canPair(proxy, other))
+                    {
+                        appendPair(index, otherIndex);
+                    }
+                });
+            }
+        }
+
         if (m_CandidatePairs.size() > 1)
         {
             std::sort(m_CandidatePairs.begin(), m_CandidatePairs.end(), IsPairLess);
+#ifndef NDEBUG
+            for (size_t index = 1; index < m_CandidatePairs.size(); ++index)
+            {
+                assert(IsPairLess(m_CandidatePairs[index - 1], m_CandidatePairs[index]));
+            }
+#endif
         }
 
         if (heightFieldIndices.empty())
@@ -1652,8 +1837,9 @@ namespace NorvesLib::Modules::Physics
                     continue;
                 }
 
-                const PhysicsCandidatePair pair{first.Collider, second.Collider};
-                // SAP には地形の組が無いので、重複検査せず整列済みの組と線形に併合する。
+                const PhysicsCandidatePair pair{first.Collider, second.Collider,
+                    static_cast<uint32_t>(firstIndex), static_cast<uint32_t>(secondIndices[index])};
+                // 整列済みの列には地形の組が無いので、重複検査せず線形に併合する。
                 while (sapIndex < m_CandidatePairs.size() && IsPairLess(m_CandidatePairs[sapIndex], pair))
                 {
                     mergedPairs.push_back(m_CandidatePairs[sapIndex++]);
