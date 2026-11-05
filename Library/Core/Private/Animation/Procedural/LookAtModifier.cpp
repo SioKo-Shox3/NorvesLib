@@ -230,13 +230,14 @@ namespace NorvesLib::Core::Animation::Procedural
             if (std::abs(change) > limit)
             {
                 velocity = float(double(previousVelocity) + std::clamp(change, -limit, limit));
-                position = float(double(previousPosition) + double(velocity) * dt);
             }
+            // 出力角の差分から測る角速度にも、同じ加速度上限を適用する。
+            position = float(double(previousPosition) + double(velocity) * dt);
             return std::isfinite(position) && std::isfinite(velocity);
         }
         bool RotateToward(LocalPose& pose, PoseModifierContext& context, const LookAtSettings& settings,
                           const Math::Quaternion& meshRotation, const Math::Vector3& forward,
-                          const Math::Vector3& desired)
+                          const Math::Vector3& desired, bool& bRotated)
         {
             auto axis = Math::Vector3::Cross(forward, desired);
             const double sine = std::sqrt(double(axis.x) * axis.x + double(axis.y) * axis.y + double(axis.z) * axis.z);
@@ -262,6 +263,7 @@ namespace NorvesLib::Core::Animation::Procedural
                     return false;
                 }
                 context.Invalidate();
+                bRotated = true;
             }
             return true;
         }
@@ -295,7 +297,42 @@ namespace NorvesLib::Core::Animation::Procedural
         {
             return false;
         }
-        auto forward = headRotation * m_Settings.LookAxis;
+        auto lookAxis = m_Settings.LookAxis;
+        if (m_Settings.bDefaultLookAxis)
+        {
+            if (!m_bLookAxisCached ||
+                !Math::MatrixUtils::ApproxEqual(context.MeshNodeTransform, m_CachedMeshNodeTransform, 0.0f))
+            {
+                const auto& runtime = context.Skeleton;
+                Math::Quaternion bindRotation;
+                Math::Vector3 bindPosition;
+                if (runtime.bSplit)
+                {
+                    if (!TryHeadFrame(runtime.AuthorRestLocal, runtime, m_Settings.Head,
+                                      inverseMesh, bindPosition, bindRotation))
+                    {
+                        return false;
+                    }
+                }
+                // LegacyBindModel は FK の合成結果と同じ、inverseMesh を掛ける前の空間。
+                else if (static_cast<size_t>(m_Settings.Head) >= runtime.LegacyBindModel.size() ||
+                         !TryRotation(runtime.LegacyBindModel[static_cast<size_t>(m_Settings.Head)] * inverseMesh,
+                                      bindRotation))
+                {
+                    return false;
+                }
+                lookAxis = Math::QuaternionUtils::Conjugate(bindRotation) * m_Settings.ForwardAxis;
+                if (!NormalizeAxis(lookAxis))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                lookAxis = m_CachedLookAxis;
+            }
+        }
+        auto forward = headRotation * lookAxis;
         if (!NormalizeAxis(forward))
         {
             return false;
@@ -304,9 +341,7 @@ namespace NorvesLib::Core::Animation::Procedural
         Measure(forward, m_Settings, forwardYaw, forwardPitch);
         float targetYaw = 0.0f;
         float targetPitch = 0.0f;
-        bool bTargetInCone = false;
         Math::Vector3 targetPosition;
-        Math::Vector3 originalTargetDirection;
         float weight = m_Settings.Strength * context.Weight;
         if (const auto* owner = context.GetOwner())
         {
@@ -322,16 +357,14 @@ namespace NorvesLib::Core::Animation::Procedural
                     }
                     targetPosition = Math::MatrixUtils::TransformPointRowVector(
                         Math::MatrixUtils::Inverse(context.MeshToWorld), worldTarget);
-                    auto direction = targetPosition - headPosition;
+                    auto direction = targetPosition - (headPosition + m_PreviousHeadOffset);
                     if (NormalizeAxis(direction))
                     {
-                        originalTargetDirection = direction;
                         Measure(direction, m_Settings, targetYaw, targetPitch);
                         targetYaw = std::remainder(targetYaw - forwardYaw, 2.0f * Math::Constants::PI);
                         targetPitch -= forwardPitch;
                         const double radius = std::hypot(double(targetYaw) / (m_Settings.MaxYawDeg * RadiansPerDegree),
                                                          double(targetPitch) / (m_Settings.MaxPitchDeg * RadiansPerDegree));
-                        bTargetInCone = radius <= 1.0;
                         if (radius > 1.0)
                         {
                             targetYaw = float(targetYaw / radius);
@@ -359,13 +392,15 @@ namespace NorvesLib::Core::Animation::Procedural
             return false;
         }
         const auto desired = Direction(forwardYaw + yaw * weight, forwardPitch + pitch * weight, m_Settings);
+        Math::Vector3 headOffset = Math::Vector3::Zero;
         if (weight != 0.0f)
         {
-            if (!RotateToward(pose, context, m_Settings, meshRotation, forward, desired))
+            bool bRotated = false;
+            if (!RotateToward(pose, context, m_Settings, meshRotation, forward, desired, bRotated))
             {
                 return false;
             }
-            if (bTargetInCone)
+            if (bRotated)
             {
                 Math::Vector3 movedPosition;
                 Math::Quaternion movedRotation;
@@ -373,35 +408,15 @@ namespace NorvesLib::Core::Animation::Procedural
                 {
                     return false;
                 }
-                auto movedDirection = targetPosition - movedPosition;
-                if (NormalizeAxis(movedDirection))
-                {
-                    // 平滑化の遅れには触れず、頭の位置移動による視差だけを一度補正する。
-                    const float parallaxCosine = Math::Vector3::Dot(originalTargetDirection, movedDirection);
-                    if (parallaxCosine < std::cos(RadiansPerDegree))
-                    {
-                        float movedYaw, movedPitch;
-                        Measure(movedDirection, m_Settings, movedYaw, movedPitch);
-                        float correctedYaw = yaw + std::remainder(movedYaw - forwardYaw - targetYaw,
-                                                                  2.0f * Math::Constants::PI);
-                        float correctedPitch = pitch + movedPitch - forwardPitch - targetPitch;
-                        const double radius = std::hypot(double(correctedYaw) / (m_Settings.MaxYawDeg * RadiansPerDegree),
-                                                         double(correctedPitch) / (m_Settings.MaxPitchDeg * RadiansPerDegree));
-                        if (radius > 1.0)
-                        {
-                            correctedYaw = float(correctedYaw / radius);
-                            correctedPitch = float(correctedPitch / radius);
-                        }
-                        const auto corrected = Direction(forwardYaw + correctedYaw * weight,
-                                                          forwardPitch + correctedPitch * weight, m_Settings);
-                        const auto movedForward = movedRotation * m_Settings.LookAxis;
-                        if (!RotateToward(pose, context, m_Settings, meshRotation, movedForward, corrected))
-                        {
-                            return false;
-                        }
-                    }
-                }
+                headOffset = movedPosition - headPosition;
             }
+        }
+        m_PreviousHeadOffset = headOffset;
+        if (m_Settings.bDefaultLookAxis)
+        {
+            m_CachedLookAxis = lookAxis;
+            m_CachedMeshNodeTransform = context.MeshNodeTransform;
+            m_bLookAxisCached = true;
         }
         m_Yaw = yaw;
         m_Pitch = pitch;
@@ -545,11 +560,7 @@ namespace NorvesLib::Core::Animation::Procedural
             {
                 return Fail(report, Error::OutOfRange, Text("head"));
             }
-            settings.LookAxis = Math::QuaternionUtils::Conjugate(bindRotation) * settings.ForwardAxis;
-            if (!NormalizeAxis(settings.LookAxis))
-            {
-                return Fail(report, Error::OutOfRange, Text("lookAxis"));
-            }
+            settings.bDefaultLookAxis = true;
         }
         constexpr float maximum = std::numeric_limits<float>::max();
         if (!ReadNumber(args.Settings.FindMember("maxYawDeg"), 0.0f, 180.0f, true, settings.MaxYawDeg,

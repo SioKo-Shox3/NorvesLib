@@ -9867,3 +9867,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-100456/G9-GR15-LEAN-SPINE-LOOK-final-verify.txt`（verify のビルド 4 ターゲット exit_code=0、ctest `SkeletalAnimationSamplingTest`・`GLTFSkeletalAnalyzerTest`・`QuadrupedLocomotionModelTest`・`LocomotionProfileReloadTest` 4/4 Passed）。Look の実測: 円錐内の収束後の注視誤差 0.047°、ヨー制限の端との差 3.4e-5°、目標切り替えの角速度の差 0.3490659 rad/s（上限 0.3490659 + 1e-6）、目標なしの後の角 2e-17 rad
 - Next: ランナーの評価者の反証（Public API `AnimatorComponent.h` の危険地帯）。実際のキャラクターでの見た目の確かめ（Lean を使う場面で `SetVisualTiltScale(0)` にした傾きの見え方、視線の追従）は起動の確かめとして後回し。既定の倍率 1 のときの VisualPose の傾きは `x * 1.0f` でビット一致のため見た目は変わらない
 - Notes: 消えた Entity・「なし」の目標は低い優先度へ落ちず目標なしにした（高い優先度の「なし」で低い優先度を抑えられる）。Look の円錐の制限はアニメの頭の向きからの差で測る。Spine の重み 0 は設定の `weight`・`strength` で与える（設定の包みが文脈の `Weight` を設定の重みで詰め直すため）。各 modifier の設定の誤りと Look の保持スロットの倍率は試験していない（done-when の外）
+- U7 視線の視差を目標角の側へ入れて角速度の跳びを無くし、既定の注視軸をメッシュ空間で求める: 着地(直し 0 回)

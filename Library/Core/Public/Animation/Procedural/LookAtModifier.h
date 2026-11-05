@@ -13,6 +13,7 @@ namespace NorvesLib::Core::Animation::Procedural
         Math::Vector3 ForwardAxis = Math::Vector3::UnitZ;
         Math::Vector3 UpAxis = Math::Vector3::UnitY;
         Math::Vector3 LookAxis = Math::Vector3::UnitZ;
+        bool bDefaultLookAxis = false;
         float MaxYawDeg = 70.0f;
         float MaxPitchDeg = 40.0f;
         float HalfLife = 0.12f;
@@ -49,6 +50,10 @@ namespace NorvesLib::Core::Animation::Procedural
 
       private:
         LookAtSettings m_Settings;
+        Math::Vector3 m_PreviousHeadOffset = Math::Vector3::Zero;
+        Math::Vector3 m_CachedLookAxis = Math::Vector3::UnitZ;
+        Math::Matrix4x4 m_CachedMeshNodeTransform = Math::Matrix4x4::Identity;
+        bool m_bLookAxisCached = false;
         float m_Yaw = 0.0f;
         float m_Pitch = 0.0f;
         float m_YawVelocity = 0.0f;

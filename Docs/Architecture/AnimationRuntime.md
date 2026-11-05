@@ -255,7 +255,7 @@ Lean を使う場面では `QuadrupedLocomotionComponent::SetVisualTiltScale(0)`
 | `head` | `chain` の最後の関節 | 最後の関節自身、またはその子孫の関節名 |
 | `forwardAxis` | [0, 0, 1] | メッシュのモデル空間の前方軸 |
 | `upAxis` | [0, 1, 0] | メッシュのモデル空間の上方軸。正規化後の前方軸との内積の絶対値が 0.9999 未満。前方を保って直交化する |
-| `lookAxis` | バインド姿勢から計算 | 頭のローカル空間の注視軸。省略時はバインド時の頭のグローバル回転の逆で `forwardAxis` を変換して求める |
+| `lookAxis` | バインド姿勢から計算 | 頭のローカル空間の注視軸。省略時は、メッシュのモデル空間での bind の頭の回転の逆で `forwardAxis` を変換して求める（メッシュノードの回転を含む） |
 | `maxYawDeg` | 70（仮） | (0, 180] 度 |
 | `maxPitchDeg` | 40（仮） | (0, 90] 度 |
 | `halfLife` | 0.12（仮） | 正の有限 float、秒。角度の臨界減衰 |
@@ -274,9 +274,9 @@ Look は毎フレーム、所有者の Animator の `TryResolveLookTarget(outWor
 (yaw / radians(maxYawDeg))^2 + (pitch / radians(maxPitchDeg))^2 <= 1
 ```
 
-角度を `halfLife` の臨界減衰で追い、ヨー・ピッチの各角速度の 1 フレームの差を `radians(maxAngularAccelDeg) * DeltaSeconds` 以下に制限する。内部の角度は rad、角速度は rad/s。角度へ `strength * context.Weight` と保持中の `holdWeightScale` を掛けた向きに、チェーンの配分で頭を向ける。
+角度を `halfLife` の臨界減衰で追い、ヨー・ピッチの各角速度の 1 フレームの差を `radians(maxAngularAccelDeg) * DeltaSeconds` 以下に制限する。角度は制限後の角速度 × `DeltaSeconds` だけ進める。内部の角度は rad、角速度は rad/s。角度へ `strength * context.Weight` と保持中の `holdWeightScale` を掛けた向きに、チェーンの配分で頭を向ける。
 
-制限前から円錐内にある目標では、回転で頭の位置が動いた後に視差を測り、方向差が 1° を超えた場合だけ 1 回補正する。補正も楕円の範囲へ制限し、平滑化の遅れそのものは打ち消さない。目標なしではヨー・ピッチの目標を 0 にして、アニメーションの姿勢へ平滑に戻る。
+前フレームの回転後と回転前の頭の位置のずれをメッシュのモデル空間で保持し、今フレームの未加工姿勢の頭の位置に足した推定位置から目標方向を測る。視差を含む目標角を楕円の円錐で制限し、臨界減衰と角加速度の上限を通す。回転後に頭の位置のずれを更新し、回さなかったフレームではゼロにする。目標なしではヨー・ピッチの目標を 0 にして、アニメーションの姿勢へ平滑に戻る。
 
 3 型とも、必須キーの欠けは `MissingKey`、型違いは `TypeMismatch`、未知の関節名は `UnknownJoint`、不正な数値・軸・配列や関節の条件違いは `OutOfRange` で拒否する。未知キー・重複キーは `UnknownKey`・`DuplicateKey`。設定を受け入れられない場合は前の modifier 群を保ち、`PoseModifierConfigReport.Path` が該当する設定を指す。
 

@@ -468,6 +468,11 @@ namespace
     void TestLookAt()
     {
         ChainFixture fixture(ParamConfig, true);
+        fixture.MeshRotation = Math::Quaternion(Math::Vector3::UnitX, 0.37f) *
+                               Math::Quaternion(Math::Vector3::UnitY, -0.52f);
+        Animation::JointTransform meshTransform;
+        meshTransform.Rotation = fixture.MeshRotation;
+        fixture.MeshNode = Animation::ToRowMatrix(meshTransform);
         fixture.SetWorldRotation(Math::Quaternion(Math::Vector3::UnitY, -0.61f));
         NorvesLib::Core::World world;
         world.Initialize();
@@ -529,7 +534,19 @@ namespace
             return Created{modifiers[0], Probe::Last()};
         };
         const auto& rest = fixture.Skeleton->GetPoseRuntime().AuthorRestLocal;
-        const auto lookAxis = Math::QuaternionUtils::Conjugate(ModelRotation(rest, 3)) * Math::Vector3::UnitZ;
+        const auto headMatrix = [&](const Animation::LocalPose& pose) {
+            auto global = Math::Matrix4x4::Identity;
+            for (size_t i = 0; i <= 3; ++i)
+            {
+                global = Animation::ToRowMatrix(pose[i]) * global;
+            }
+            return global * Math::MatrixUtils::Inverse(fixture.MeshNode);
+        };
+        const auto lookAxis = Math::VectorUtils::Normalize(Math::MatrixUtils::TransformVectorRowVector(
+            Math::MatrixUtils::Inverse(headMatrix(rest)), Math::Vector3::UnitZ));
+        const auto headDirection = [&](const Animation::LocalPose& pose) {
+            return Math::VectorUtils::Normalize(Math::MatrixUtils::TransformVectorRowVector(headMatrix(pose), lookAxis));
+        };
         Math::Vector3 restPositions[JointCount];
         fixture.ModelPositions(rest, restPositions);
         const auto setTarget = [&](const Math::Vector3& target) {
@@ -558,7 +575,7 @@ namespace
         }
         Math::Vector3 positions[JointCount];
         fixture.ModelPositions(pose, positions);
-        const auto forward = Math::VectorUtils::Normalize(ModelRotation(pose, 3) * lookAxis);
+        const auto forward = headDirection(pose);
         const auto direction = Math::VectorUtils::Normalize(target - positions[3]);
         const auto cross = Math::Vector3::Cross(forward, direction);
         const double aimErrorDeg = std::atan2(double(Math::VectorUtils::Length(cross)),
@@ -573,7 +590,7 @@ namespace
         {
             pose = apply(outside);
         }
-        const auto limitedForward = ModelRotation(pose, 3) * lookAxis;
+        const auto limitedForward = headDirection(pose);
         const double limitedYawDeg = std::atan2(double(limitedForward.x), double(limitedForward.z)) * degreesPerRadian;
         const double yawErrorDeg = std::fabs(limitedYawDeg - 70.0);
         std::printf("LookAt case=2 yaw_deg=%.12g yaw_error_deg=%.12g limit_deg=0.1\n", limitedYawDeg, yawErrorDeg);
@@ -583,6 +600,8 @@ namespace
         setTarget(target);
         double maxYawVelocityChange = 0.0;
         double maxPitchVelocityChange = 0.0;
+        double previousYaw = 0.0, previousPitch = 0.0;
+        double previousYawVelocity = 0.0, previousPitchVelocity = 0.0;
         for (int i = 0; i < 2 * SettlingFrames + 15; ++i)
         {
             if (i == 15)
@@ -593,21 +612,33 @@ namespace
             {
                 setTarget(restPositions[3] + Math::Vector3(2.5f, 1.5f, 4.0f));
             }
-            const float previousYawVelocity = switching.State->GetYawVelocity();
-            const float previousPitchVelocity = switching.State->GetPitchVelocity();
             pose = apply(switching);
-            maxYawVelocityChange = std::max(maxYawVelocityChange,
-                                            std::fabs(double(switching.State->GetYawVelocity()) - previousYawVelocity));
-            maxPitchVelocityChange = std::max(maxPitchVelocityChange,
-                                              std::fabs(double(switching.State->GetPitchVelocity()) - previousPitchVelocity));
+            const auto currentForward = headDirection(pose);
+            const double yaw = std::atan2(double(currentForward.x), double(currentForward.z));
+            const double pitch = std::atan2(double(currentForward.y),
+                                            std::hypot(double(currentForward.x), double(currentForward.z)));
+            if (i > 0)
+            {
+                const double yawVelocity = std::remainder(yaw - previousYaw, 2.0 * double(Math::Constants::PI)) / Step;
+                const double pitchVelocity = (pitch - previousPitch) / Step;
+                if (i > 1)
+                {
+                    maxYawVelocityChange = std::max(maxYawVelocityChange, std::fabs(yawVelocity - previousYawVelocity));
+                    maxPitchVelocityChange = std::max(maxPitchVelocityChange, std::fabs(pitchVelocity - previousPitchVelocity));
+                }
+                previousYawVelocity = yawVelocity;
+                previousPitchVelocity = pitchVelocity;
+            }
+            previousYaw = yaw;
+            previousPitch = pitch;
         }
         const double velocityChangeLimit = 2000.0 * double(Math::Constants::PI) / 180.0 * Step;
         std::printf("LookAt case=3 yaw_velocity_change_rad_s=%.12g pitch_velocity_change_rad_s=%.12g "
-                    "limit_rad_s=%.12g tolerance_rad_s=0.000001\n",
+                    "limit_rad_s=%.12g tolerance_rad_s=0.001\n",
                     maxYawVelocityChange, maxPitchVelocityChange, velocityChangeLimit);
         Require(std::isfinite(maxYawVelocityChange) && std::isfinite(maxPitchVelocityChange) &&
-                    maxYawVelocityChange <= velocityChangeLimit + 1e-6 &&
-                    maxPitchVelocityChange <= velocityChangeLimit + 1e-6,
+                    maxYawVelocityChange <= velocityChangeLimit + 1e-3 &&
+                    maxPitchVelocityChange <= velocityChangeLimit + 1e-3,
                 "収束中と収束後の目標切替で角速度差が加速度上限以下");
 
         animator->ClearLookTarget(10);
