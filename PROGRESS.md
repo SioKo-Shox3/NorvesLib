@@ -10346,3 +10346,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 シーン・地形のソース・設定の読み込み: 着地(直し 0 回)
 - U2 斜度・水・通行・連結成分・A* の格子の計算: 着地(直し 0 回)
 - U3 検査 (a)〜(f)・報告の書き出し・CLI・設定の雛形: 着地(直し 0 回)
+- U4 合成の 256×256 の地形と 6 つのマーカーでの単体試験: 着地(直し 0 回)
