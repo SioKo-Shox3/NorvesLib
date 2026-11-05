@@ -37,6 +37,21 @@ namespace NorvesLib::Modules::Physics
             return false;
         }
 
+        static const PhysicsBroadphaseStats& GetWorkingBroadphaseStats(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_WorkingBroadphase.GetStats();
+        }
+
+        static const Core::Container::VariableArray<PhysicsCandidatePair>& GetWorkingCandidatePairs(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_WorkingBroadphase.GetCandidatePairs();
+        }
+
+        static const Core::Container::VariableArray<PhysicsShapeProxy>& GetWorkingProxies(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_WorkingBroadphase.GetProxies();
+        }
+
         static uint32_t GetColliderSlotCount(const IPhysicsModule& module)
         {
             return static_cast<uint32_t>(GetConcrete(module).m_ColliderSlots.size());

@@ -12,7 +12,30 @@ namespace Game::GameModes
     {
         Combat,
         Encounter,
-        Enemy
+        Enemy,
+        ResetSoak
+    };
+
+    struct CombatResetSoakCounts
+    {
+        uint64_t RootEntities = 0;
+        uint64_t Textures = 0;
+        uint64_t Meshes = 0;
+        uint64_t Models = 0;
+        uint64_t PendingAsyncLoads = 0;
+        uint64_t Voices = 0;
+    };
+
+    // GameThread 専用。生成関数がリセットを跨いで保持する状態。
+    struct CombatSliceResetState
+    {
+        bool bRestoreFromLastSave = false;
+        uint32_t ResetCount = 0;
+        uint32_t SoakResetTarget = 0;
+        CombatResetSoakCounts SoakBaselineEnter;
+        CombatResetSoakCounts SoakBaselineReady;
+        bool bHasSoakBaselineEnter = false;
+        bool bHasSoakBaselineReady = false;
     };
 
     struct CombatSliceOptions

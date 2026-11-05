@@ -5831,7 +5831,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る。`validation-layer` は開発ビルドだけで効く起動引数（`Scripts/Terrain/CaptureRegression.ps1` の冒頭の説明。Core の Boot/AppLauncher.cpp）。近接の撮影は near（地面すれすれ 0.6 m）とは別に 0.3 m の視点が要るので、無ければ grassland に `near_low` を足して `--near` の入力に加える。しきい値は初期値の案で、初回の実測で TSV を確定し、その根拠（測った値）を PROGRESS に書く。GPU の予算は性能ゲートを保留している方針（ロードマップ 1139 行）どおり合否にしない。
 
 ## G8-GR76-RESET-LIFETIME: リスタートで漏れない寿命の管理(GameModeScope の後始末の登録・漏れの検査)と、死亡からリセットして最後のセーブで作り直す縦の道を通す
-- status: todo
+- status: done
 - after: G8-GR76-STATE-AUTOSAVE, G8-GR17-SLICE-SMOKE, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR76
 - done-when: (1) `Library/Core/Public/GameMode/GameModeScope.h` に `AddCleanup(Phase, Delegate<void()>)` を足す(BeforeEntities = 非同期のキャンセル・音の停止、AfterEntities = テクスチャ・材質・スケルタルの解放。各段の中は後に入れたものから先に呼ぶ。Cleanup を二度呼んでも安全。Cleanup の最中に足された登録の扱いを決めて文書にする)。薄い補助: `TrackAsyncModelLoad(requestId)` → `CancelModelLoad`(`RenderResources.h:373`)。テクスチャの非同期の読み込み(`LoadTextureAsync`、同 108 行)には取り消しの口が無いので、完了の呼び戻しで世代を見て、スコープが既に終わっていれば解放する補助にする。音は GR72 の `StopOwner` を AddCleanup に載せる。(2) 漏れの検査(Debug だけ): Enter の時の数(World のルートの Entity の数・テクスチャ / メッシュ / モデルのハンドルの数・保留中の非同期の数・`IAudioService::GetDiagnostics` の voice の数)を覚え、Leave の後に差があれば警告のログを出す。(3) 縦の道: CombatSlice のモードで「犬の死亡の代わりの合図 → `RequestReset` → 最後のセーブの進行から作り直し」を通す。`ProgressSaveData` と GR17 の `ProgressionState` の写しをここで書き、撃破の完了で `SaveService::RequestAutosave` を呼ぶ。起動の引数 `--soak-reset=N`(N 回リセットして、各回のカウントを `GAME_RESET stage=...` の行に出す)と `Scripts/Test-GameReset.ps1`(`Scripts/Test-M9World.ps1` の形。引数 `-SoakCount N`・`-Configuration`。数がベースラインへ戻ること・終了コード 0・Vulkan の検証層の VUID が 0 を検査する)を足す。この項目では起動しない。(4) `Rendering3DTestRoutine` の手作業の後始末はこの項目では移さない(G8-S14)。 (5) 試験: `GameModeScopeLeakTest`(`GameModeStateMachineTest` の束。Core だけ。偽のモードが World の Entity・偽の非同期・偽の voice を作り、`RequestReset` を 50 回して各回の後で数がベースラインと一致、AddCleanup の段と後入れ先出しの順、二度目の Cleanup で何も起きない)。既存の `GameModeStateMachineTest` の ResetStack のケースが通る。テクスチャ・メッシュ・モデルのハンドルの数の検査 `GameModeScopeResourceLeakVulkanTest` を `Test/Core/Rendering/CMakeLists.txt` の `RenderResourcesDomainContractTest` の束へ MEMBER で足し、`LABELS "GPU;RenderingValidation"` を付けてビルドまで行う(実行は G8-GR76-RESET-CHECK)。Game が Debug でビルドできる。
@@ -6333,7 +6333,7 @@
 - notes: GR59 の P1（要件 5973-5985・6007 行）。選定課題 G11-S2 は (B)（G11-GR56-SKY-OCC-CPU の notes）: 遮蔽物の値の型とコンポーネントは GR56 と共通、マップは別。要件の `RainOccluderComponent` は作らず `SkyOccluderComponent` の「雨を遮る」印を使う。要件の「精密モード（実メッシュを真上から描く。P6）」は作らない: AI 生成の高密度メッシュ（約 70 万三角形）をそのまま描かないために遮蔽物の形の方式にした（要件 6011 行）ので、形で足りないと撮影で分かったときだけ別の項目にする。遮蔽物の形の取り込み時の自動推定（木＝楕円体、岩・小屋＝箱）は GR81（G17）の取り込み設定の範囲で、当面は境界からの既定と手置き。動く遮蔽物は対象外（要件）。消費する側（GR57 の粒子の衝突・GR53 の濡れ・水たまり）は G11-GR59-RAIN-HIT と G11-GR59-PUDDLES。新しい全画面のパスは足さない。危険地帯（RenderThread のパスの順と公開）。評価者の反証を省かない。SceneView.cpp は共有のファイルなので差分を小さくする。試験を足す理由: 反証する契約は「屋根の高さが 1 テクセルの内で正しく、スキンと地形を屋根と取り違えない」。犬や地面を屋根と取り違えると「その下だけ乾く・雨が止まる」が局所に出て、撮影 1 枚では見落とし、黙って起きる。ロードマップ 1990・2001 行、要件 `#### GR59`。
 
 ## G11-GR59-PUDDLE-MASK: 地形の cook に、水たまりのできやすさ（凹み度）の層を規則とペイント入力から決定的に焼いて足す
-- status: todo
+- status: done
 - after: G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR59
 - needs-gr: GR89
@@ -6345,7 +6345,7 @@
 - notes: GR59 の P4 の前半（要件 5999 行「GR89 の地形クックで凹み度と手描きマスクを R8 チャンネルとして焼く」）。G5-GR89-TERRAIN-MASKS の層（MSK0 の湿り・枯れ草・道・岩、SPL0・SPL1、GRS0）に凹み度は無いので、ここで足す。段階をまたぐ注意（ロードマップ 4395・4472 行）: GR59 の依存に GR89 が抜けていたので needs-gr に入れた。一般のメッシュ（小屋の床・岩の上面など）の水たまりは G11-GR59-PUDDLES が GR44 の世界空間のフィールドに足す Puddle の層で扱い、ここは地形の層だけ。NVTRN の形式の文書（`Docs/Architecture/NVTRNv0.md`。G5 が作る）を更新する。試験を足す理由: 反証する契約は「cook が決定的で、窪地に水たまりができる」。スレッド数で変わる焼き込みはビルドごとに水たまりの位置が変わる形で黙って起きる。ロードマップ 1990 行。
 
 ## G12-GR09-BROADPHASE-S0S1: 物理のブロードフェーズの二乗の処理を除き、動かない物同士の組を作らない方針を入れる（結果は今と同じ）
-- status: todo
+- status: done
 - after: G1-GR08-BROADPHASE-INTEGRATION, G5-GR38-PHYSICS-HEIGHTFIELD, G1-GR08-LAYER-TABLE, G5-GR38-HEIGHTFIELD-QUERY
 - gr: GR09
 - needs-gr: GR08, GR38
@@ -6440,7 +6440,7 @@
 - notes: 設計はロードマップ 2124〜2128 行（GR39 の 1. 分割と LOD、2. 遠景）、完了条件は 2587〜2588・2592 行。選定課題 G12A-S4（地形の LOD・多タイル・ノードの置き場）: (A) ロードマップの案（GR37 の四分木のノードをワーカーで焼いて LRU の `TerrainNodeCache` に置き、未焼きは親で代用し、亀裂はスカート）、(B) G5B-S1 で採った MegaGeometry の区画（クラスタの LOD の階層・外周の頂点を全段で固定・ジオメトリのページの読み込みと LRU）をそのまま多タイルと外周へ広げる、のうち (B) を採る。理由: 荒野が既に約 10 km 四方の近景の区画と 8〜16 m の遠景（SCN-WL-DEM-COOK・SCN-WL-HORIZON・SCN-WL-GEOM-BUDGET・SCN-WL-GEOM-POOL-PLACEMENT が done）を MegaGeometry で描き、LOD・亀裂・ページの常駐・TLAS・VSM が動いている。四分木・スカート・ノードの LRU を別に作ると同じものを二重に持つ。よってロードマップの TerrainNodeCacheTest（2587 行）は作らず、穴・継ぎ目の契約は cook の共有辺の試験と G12-GR39-TERRAIN-CHECK の撮影で確かめる。荒野の遠景は `WastelandTerrain` の定数と `Scripts/Terrain/HorizonDem.py` の記述（`kTerrainHorizonFormat`。TerrainHeightField.h:248、MeshCooker.cpp:3194〜3511）に縛られた経路なので、この項目では荒野を移さない（見た目と読み込みを変えない。絶対規則 7）。汎用の経路は NVTRN の spec から作る。選定課題 G12A-S5（CSM の外の遠距離の影）: (A) ロードマップの案（太陽の向きの地平線の地図を compute で作り `CalculateShadow` に掛ける。2134 行）、(B) 太陽の VSM のクリップマップの到達距離を地形の広さまで伸ばす（SCN-SHADOW-DISTANCE の `SetSunShadowMaxDistance`、荒野は 10 km で運用中。WastelandRoutine.cpp:274〜277）、のうち (B) を採る。理由: (A) の前提（影は CSM の 80 m まで）は VSM（VTG9 の系列）で崩れていて、谷ひとつ（数 km）は荒野の 10 km の範囲に収まる。地平線の地図は、VSM の到達距離を超える世界（『マップの範囲』を採らない場合）になったときに足す。外周のセルの大きさ 16 m・帯の幅は仮の値で、spec のデータで替えられる。浮動小数の座標は数 km なら足りる（ロードマップ 2140 行）ので原点の移動は作らない。試験を足す理由: 外周と近景の境の高さの食い違いは、遠くでは霞に紛れる細い隙間・段として出て、撮影 1 枚では気づきにくく、cook も成功して黙って起きる。危険地帯（アセットのクック・Public API）なので評価者を通す。
 
 ## G12-GR39-HEIGHTFIELD-LOD: 地形の高さ場に粗い段を持たせて遠くの照会を軽くし、物理の地形コライダーを常駐のタイルだけにする
-- status: todo
+- status: done
 - after: G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD
 - gr: GR39
 - needs-gr: GR38
@@ -10548,3 +10548,11 @@
 ---
 
 - 起動の要らない試験だけで確かめられるので `check: launch` は付けません。
+
+## G8-GR76-RESET-LIFETIME-P2: 進行の状態を読み込み直したら、最後のシ者の解放を通知済みの旗も読み込んだ状態に合わせ、巻き戻した後にもう一度解放したとき 1 回だけ通知する
+- status: todo
+- done-when: (1) `ProgressionState::LoadStateFromJson` と `LoadDefinitionFromJson` は、読み込みに成功した後、通知済みの旗 `m_bUnlockAnnouncedOrRestored` を読み込み後の `IsFinalUnlocked()` と同じ値にする。未解放の状態を読めば旗は下がり、解放済みの状態を読めば旗は立つ。読み込みでは通知しない。読み込みに失敗したときは旗も状態も変えない。(2) `OnFinalUnlocked` の doc コメントを「`MarkDefeated` で未解放から解放へ移ったときにちょうど 1 回通知する。読み込みでは通知しない」という約束に書き直す。計画の「OnFinalUnlocked は 1 回だけ」は 1 回の解放につき 1 回と読む。進行は GameplayModule が持つのでリセットをまたいで残り、旗だけが巻き戻した後も古いまま残っていた。(3) `ProgressionStateTest` で次を確かめる。解放すると 1 回目の通知が出る。未解放の `partial` を読み込むと通知は出ず、未解放に戻る。もう一度解放すると通知が 1 回だけ増えて合計 2 になる。同じ撃破をもう一度送っても増えない。新しいインスタンスで解放済みの状態を読み込むと通知は 0 のまま。そこから `partial` を読み込んで解放し直すと 1 になる。`FinalEnemyDormantUntilUnlocked` の「空を読み込んでから解放済みを読み込むと通知 0」は変えずに通す。(4) Gameplay の既存の試験(敵の状態機械・撃破の保留・遭遇の保存)が通り、`PhysicsDynamicsTest` が Debug でビルドできる。アプリは起動しない。
+- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ProgressionStateTest|EnemyStateMachineTest|DefeatGateTest|EncounterSerializationTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Modules/Gameplay/Public/Gameplay/Progression/ProgressionState.h, Library/Modules/Gameplay/Private/Gameplay/Progression/ProgressionState.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp
+- from: G8-GR76-RESET-LIFETIME

@@ -685,6 +685,148 @@ namespace
         }
     }
 
+    void TestTileResidency(PhysicsFixture& fixture)
+    {
+        constexpr uint32_t Columns = 17;
+        constexpr uint32_t Rows = 17;
+        constexpr uint32_t AbsentSteps = 90;
+        constexpr uint32_t ResidentSteps = 240;
+        constexpr float DeltaTime = 1.0f / 60.0f;
+        constexpr float Radius = 0.3f;
+        const Math::Vector3 origin(360.0f, 3.0f, 0.0f);
+        Terrain::TerrainGridLayout layout;
+        layout.Columns = Columns;
+        layout.Rows = Rows;
+        layout.FirstX = 0.0;
+        layout.FirstZ = 0.0;
+        layout.Spacing = 1.0;
+        Container::VariableArray<float> heights(Columns * Rows);
+        for (auto& height : heights)
+        {
+            height = 0.0f;
+        }
+        Container::AnsiString error;
+        const auto field = Terrain::TerrainHeightField::CreateFromSamples(
+            layout, Container::Span<const float>(heights), nullptr, 8, error);
+        if (!field)
+        {
+            std::cerr << "常駐切り替え試験の高さ場の作成に失敗: " << error.c_str() << std::endl;
+        }
+        assert(field);
+        Entity* terrain = nullptr;
+        auto* ground = fixture.CreateCollider(Math::Transform(origin), terrain);
+        assert(ground->SetHeightField(field) == EPhysicsResult::Success);
+        fixture.Publish();
+        const Math::Vector3 pointA = origin + Math::Vector3(4.0f, field->SampleHeight(4.0f, 4.0f), 4.0f);
+        const Math::Vector3 pointB = origin + Math::Vector3(12.0f, field->SampleHeight(12.0f, 4.0f), 4.0f);
+        const uint32_t tileA = field->GetTileId(4.0f, 4.0f);
+        auto& system = fixture.Engine.GetTerrainSystem();
+        Check(tileA != field->GetTileId(12.0f, 4.0f), "タイル常駐", 0, "別のタイルを比較");
+        system.SetTileResident(tileA, false);
+
+        struct FallingBody
+        {
+            Entity* Owner = nullptr;
+            ColliderComponent* Collider = nullptr;
+            RigidBodyComponent* Body = nullptr;
+            PhysicsCallbackHandle Callback;
+            uint32_t Hits = 0;
+        };
+        FallingBody bodies[2];
+        auto createBody = [&](FallingBody& falling, float dropHeight)
+        {
+            falling.Collider = fixture.CreateCollider(Math::Transform(
+                pointA + Math::Vector3(0.0f, Radius + dropHeight, 0.0f)), falling.Owner);
+            assert(falling.Collider->SetSphere(Radius) == EPhysicsResult::Success);
+            falling.Body = fixture.World.CreateComponent<RigidBodyComponent>(falling.Owner);
+            assert(falling.Body);
+            assert(falling.Body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
+            assert(falling.Collider->AddOnHit(Core::Delegate<void, const PhysicsContactEvent&>(
+                [&falling, ground](const PhysicsContactEvent& event)
+                {
+                    if (event.Other == ground->GetColliderHandle())
+                    {
+                        Check(event.Self == falling.Collider->GetColliderHandle(), "タイル常駐 Hit", 0, "受信者");
+                        ++falling.Hits;
+                    }
+                }), falling.Callback) == EPhysicsResult::Success);
+        };
+        createBody(bodies[0], 1.0f);
+        float maxSink = 0.0f;
+        for (uint32_t step = 0; step < AbsentSteps; ++step)
+        {
+            fixture.Physics->StepPreFixed(DeltaTime);
+            fixture.Physics->StepFixed(DeltaTime);
+            const float gap = bodies[0].Owner->GetWorldTransform().position.y - Radius - pointA.y;
+            Check(std::isfinite(gap), "非常駐の落下", step, "有限の地表差");
+            maxSink = std::fmax(maxSink, -gap);
+        }
+        Check(bodies[0].Hits == 0, "非常駐の落下", 0, "地形との Hit がない");
+        Check(maxSink >= 1.0f, "非常駐の落下", 0, "下端が地表より 1 m 以上下まで落下");
+        auto& scene = fixture.Engine.GetSceneQuery();
+        assert(scene.RefreshDynamicSnapshot() == Result::Success);
+        // 問い合わせは地表の近傍だけを調べ、既に下へ抜けた球を含めない。
+        auto queryTile = [&](const Math::Vector3& point, bool bExpectedHit, uint32_t index)
+        {
+            uint32_t hitMask = 0;
+            for (uint32_t kind = 0; kind < 2; ++kind)
+            {
+                PhysicsQueryDesc query;
+                query.Kind = kind == 0 ? Kind::RaycastClosest : Kind::OverlapSphere;
+                query.Ray = Math::Ray(point + Math::Vector3(0.0f, 2.0f, 0.0f), Math::Vector3(0.0f, -1.0f, 0.0f));
+                query.MaxDistance = 4.0f;
+                query.Sphere = Math::Sphere(point + Math::Vector3(0.0f, 0.1f, 0.0f), Radius);
+                Container::VariableArray<PhysicsQueryHit> hits;
+                const Result result = scene.ExecuteQuery(query, hits);
+                Check(result == (bExpectedHit ? Result::Success : Result::NoHit),
+                    "タイル常駐の問い合わせ", index * 2 + kind, "当たりの状態");
+                Check(hits.size() == (bExpectedHit ? 1u : 0u),
+                    "タイル常駐の問い合わせ", index * 2 + kind, "当たりの件数");
+                if (result == Result::Success && hits.size() == 1)
+                {
+                    Check(hits[0].Collider == ground->GetColliderHandle(),
+                        "タイル常駐の問い合わせ", index * 2 + kind, "相手が地形");
+                    if (hits[0].Collider == ground->GetColliderHandle())
+                    {
+                        hitMask |= 1u << kind;
+                    }
+                }
+            }
+            return hitMask;
+        };
+        const uint32_t absentQueries = queryTile(pointA, false, 0);
+        const uint32_t residentBQueries = queryTile(pointB, true, 1);
+        // 地表下の球を除去し、常駐復帰後の問い合わせと新しい球に干渉させない。
+        assert(bodies[0].Collider->RemoveOnHit(bodies[0].Callback) == EPhysicsResult::Success);
+        assert(fixture.World.RemoveEntity(bodies[0].Owner));
+        system.SetTileResident(tileA, true);
+        // 常駐へ戻した次の固定ステップだけで、公開された問い合わせにも反映される。
+        fixture.Publish();
+        const uint32_t restoredQueries = queryTile(pointA, true, 2);
+        createBody(bodies[1], 0.2f);
+        for (uint32_t step = 0; step < ResidentSteps; ++step)
+        {
+            fixture.Physics->StepPreFixed(DeltaTime);
+            fixture.Physics->StepFixed(DeltaTime);
+            const float gap = bodies[1].Owner->GetWorldTransform().position.y - Radius - pointA.y;
+            Check(std::isfinite(gap) && gap >= -0.05f, "常駐復帰の落下", step, "下端が地表より 0.05 m 以内");
+        }
+        const float heightError = std::fabs(bodies[1].Owner->GetWorldTransform().position.y - Radius - pointA.y);
+        const float speed = bodies[1].Body->GetLinearVelocity().Length();
+        Check(bodies[1].Hits > 0, "常駐復帰の落下", 0, "地形との Hit がある");
+        Check(std::isfinite(heightError) && heightError <= 0.02f, "常駐復帰の静止", 0, "地表との差");
+        Check(std::isfinite(speed) && speed <= 0.05f, "常駐復帰の静止", 0, "速さ");
+        std::cout << "TileResidency absent_steps=" << AbsentSteps << " absent_hits=" << bodies[0].Hits
+            << " max_sink=" << maxSink << " absent_ray=" << (absentQueries & 1u)
+            << " absent_overlap=" << ((absentQueries >> 1) & 1u) << " resident_b_ray=" << (residentBQueries & 1u)
+            << " resident_b_overlap=" << ((residentBQueries >> 1) & 1u) << std::endl;
+        std::cout << "TileResidency restored_ray=" << (restoredQueries & 1u)
+            << " restored_overlap=" << ((restoredQueries >> 1) & 1u) << " restored_steps=" << ResidentSteps
+            << " restored_hits=" << bodies[1].Hits << " height_error=" << heightError << " speed=" << speed << std::endl;
+        system.SetTileResident(tileA, true);
+        assert(bodies[1].Collider->RemoveOnHit(bodies[1].Callback) == EPhysicsResult::Success);
+    }
+
     void TestCharacterTerrainMove(PhysicsFixture& fixture)
     {
         constexpr uint32_t StepsPerLeg = 180;
@@ -789,6 +931,7 @@ int main()
     TestGround(fixture, field);
     TestFallingBodies(fixture);
     TestCharacterTerrainMove(fixture);
+    TestTileResidency(fixture);
     std::cout << "PhysicsHeightFieldColliderTest 不一致=" << FailureCount << std::endl;
     assert(FailureCount == 0);
     return FailureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

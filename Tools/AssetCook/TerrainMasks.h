@@ -42,6 +42,20 @@ namespace NorvesLib::Tools::AssetCook
         double ConcaveFullPerM = 0.05;
     };
 
+    struct TerrainPuddleRule
+    {
+        double BlurSigmaM = 4.0;      // 高さの分離ガウスぼかしの σ [m]。0 ならぼかしとの差は 0。
+        double BlurFullM = 0.25;      // ぼかした高さと元の高さの差がこの深さ [m] で項が 1。
+        double BlurWeight = 0.4;      // 局所の凹みの重み [無次元]。
+        double FillFullM = 0.15;      // 窪地を埋めた高さと元の高さの差がこの深さ [m] で項が 1。
+        double FillWeight = 0.4;      // 窪地の深さの重み [無次元]。
+        double FlowWeight = 0.2;      // 流れの集積の重み [無次元]。
+        double FlowRefCells = 2000.0; // log1p(集積)/log1p(この標本数) で項が 1。
+        double SlopeStartDeg = 2.0;   // 凹み度を下げ始める傾斜 [度]。
+        double SlopeZeroDeg = 6.0;    // 凹み度が 0 になる傾斜 [度]。
+        TerrainNoiseRule Noise{0.0, 8.0}; // 乗算雑音の振幅 [無次元] と格子間隔 [m]。
+    };
+
     struct TerrainDryGrassRule
     {
         double Base = 0.3;
@@ -75,7 +89,7 @@ namespace NorvesLib::Tools::AssetCook
         double RockSuppress = 1.0;
     };
 
-    enum class TerrainPaintTarget : uint8_t { Wetness, DryGrass, Road, Rock, GrassDensity, Splat };
+    enum class TerrainPaintTarget : uint8_t { Wetness, DryGrass, Road, Rock, GrassDensity, Splat, Puddle };
     enum class TerrainPaintMode : uint8_t { Override, Multiply };
 
     struct TerrainPaintRule
@@ -94,6 +108,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<TerrainSplatLayerRule> SplatLayers;
         TerrainGrassDensityRule GrassDensity;
         Core::Container::VariableArray<TerrainPaintRule> Paints;
+        TerrainPuddleRule Puddle;
     };
 
     // index = z * Width + x。flip_z 適用済み。
@@ -119,10 +134,12 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<uint8_t> Splat1Rgba; // 空なら SPL1 を書かない。
         Core::Container::VariableArray<uint8_t> GrassR8;    // 1 バイト/標本。
         Core::Container::VariableArray<Core::Container::AnsiString> SplatLayerNames;
+        Core::Container::VariableArray<uint8_t> PuddleR8; // 1 バイト/標本。空なら PDL0 を書かない（層の無い古い形）。
     };
 
-    // paints は recipe.Paints と同じ数・順。
+    // paints は recipe.Paints と同じ数・順。結果はスレッド数に依らない。
+    // threadCount が 0 ならハードウェアの並列数を使う。
     [[nodiscard]] bool ComputeTerrainMasks(const TerrainHeightGrid& grid, double cellSizeM, uint32_t seed,
                                            const TerrainRecipe& recipe, Core::Container::Span<const TerrainPaintImage> paints,
-                                           TerrainMaskFields& outFields, Core::Container::AnsiString& outError);
+                                           TerrainMaskFields& outFields, Core::Container::AnsiString& outError, uint32_t threadCount = 0);
 } // namespace NorvesLib::Tools::AssetCook
