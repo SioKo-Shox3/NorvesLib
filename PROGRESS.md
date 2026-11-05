@@ -9957,3 +9957,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 種の表の既定値（密度・半径・帯）は企画で未定の仮の値。岩は既存の `Assets/Models/PolyHaven/boulder_01/boulder_01_4k.gltf`、倒木・低木・株のメッシュの論理パスはまだ cook されない仮のパス（一覧は NVSCTv0.md の grassland の節）。岩は傾斜 25° 以上・MSK0 の a の帯で 9 本しか置かれない。
 - Notes: 浮動小数の決定性は同じバイナリの中だけ。grassland の spec の cooked_hash（1d620f39881e0053）は Debug の AssetCook で焼いた地形の値で、RelWithDebInfo の AssetCook で地形の値が変わると散布の cook は食い違いのエラーで止まる（その場合は spec の値を直す）。
 - Notes: 新しい build で `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` を最初に回すと、対象外の草の場がマニフェストに無いという既存の検査で止まる（先に grassland の全体を焼けば通る。今回の変更の前からの振る舞い）。
+- U1 MegaGeometryScatterComponent に入力の順の行の並べ方と、範囲の初期の Active の指定と、範囲の印の読み出しを足す: 着地(直し 0 回)
