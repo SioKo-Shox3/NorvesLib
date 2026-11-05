@@ -9766,3 +9766,5 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-093025/G5-GR42-GRASS-FIELD-ASSET-U8-verify.txt`（AssetCook・CookedMeshTest・SceneSerializerTest・Game の Debug ビルド exit 0、AssetManifestTest と GrassFieldQueryTest の実行ファイルのため AssetSystemTest・MathGeometryTest もビルド、ctest 6 件 100% Passed）。
 - Next: ランナーの評価者の反証（アセットロード・Public API の危険地帯）。起動の確かめは後回し: grassland を `--scene=grassland --window-background` で開き、草の場の登録・EndPlay での解除と再入場・地形との高さの整合・見た目を見る。
 - Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
+- G5-GR42-GRASS-FIELD-ASSET の再実行の失敗（AssetManifestTest・GrassFieldQueryTest が Not Run）は、ctest の実行ファイル AssetSystemTest・MathGeometryTest がこの枠の build に無かったため。2 つをビルドして verify の全 5 行を回し直し、ビルド 4 本 exit 0・ctest 6 件 100% Passed（`.harness/runs/20261105-093025/verify-G5-GR42-GRASS-FIELD-ASSET-iter3.txt`）。コードの変更なし。
+- Notes: 要起票: G5-GR42-GRASS-FIELD-ASSET の verify の ctest は AssetSystemTest・MathGeometryTest の実行ファイルを使うが、verify のビルドの行にその 2 つが無く、新しい build では Not Run になる。
