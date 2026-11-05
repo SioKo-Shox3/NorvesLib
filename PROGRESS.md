@@ -10009,3 +10009,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（2 周目。前回の指摘への対応差分）。
 - Notes: 評価者の残課題（non-blocking）は直していない: しきい値駆動で maxStretch の解除の直後に条件を満たすと戻しの途中から固定し直して足先が跳ぶことがある、遷移などで中断された窓の End（`bInterrupted`）も離地として扱う。
 - U1 ModifierOrderTest（順序の固定の試験）を SkeletalAnimationSamplingTest に足す: 着地(直し 0 回)
+- U3 animation-debug の場面に合成の四足のキャラクターと posemod.json を足す: 着地(直し 0 回)
