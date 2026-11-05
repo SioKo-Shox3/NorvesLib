@@ -10343,3 +10343,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G12-GR93-MARKERS-SNAP): 配置の画面（G12-GR93-EDIT-VIEW）と検証の台本（G12-GR93-VALIDATE）。
 - Notes(G12-GR93-MARKERS-SNAP): Core は Gameplay の型を知らないので、Core の `ReSnapAll` は `LevelSnapTarget`（Entity と GroundOffset）の列を受け、World からの収集は Gameplay の入口が受け持つ。World は SceneQuery を持たない（Engine が持つ）ので `SnapToGround` の第 1 引数は `SceneQuery`。光線は位置の上 probeLift（既定 2 m）から撃つので、冪等は地面の上 probeLift 以内にほかの面が無いときに限る。親のある Entity のワールド位置は `World::UpdateWorldTransforms` までキャッシュが古いので、入口は親を吸着した後に更新してから痕跡の点を吸着する。
 - Notes(G12-GR93-MARKERS-SNAP): 束の試験のソースをビルドの最中に書き換えると、obj がソースより新しい時刻のまま古い中身を持ち、増分ビルドが作り直さないことがある（ソースの更新時刻を今にすると直る）。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに化けて MSB1008 になる。
+
+- U1 シーン・地形のソース・設定の読み込み: 着地(直し 0 回)
+- U2 斜度・水・通行・連結成分・A* の格子の計算: 着地(直し 0 回)
+- U3 検査 (a)〜(f)・報告の書き出し・CLI・設定の雛形: 着地(直し 0 回)
+- U4 合成の 256×256 の地形と 6 つのマーカーでの単体試験: 着地(直し 0 回)
+- Done(G12-GR93-VALIDATE): `Scripts/Level/validate_level.py`（読み込み `level_inputs.py`・格子の計算 `level_grid.py`）が、シーン JSON・GR89 の地形の仕様とハイトマップ・必須キーの設定から (a) シ者と持ち場の対応・孤児 (b) Key の空と重複 (c) 持ち場の中心の地面・足元の斜度と水 (d) 開始からの寝床の到達性（通行の判定は `traversable_fn` で差し替え）(e) 見どころの全組の A* の所要時間と帯の外の警告 (f) 匂いの痕跡の Catmull-Rom の標本の通行と終点の持ち場、を検査し、`level_report.json`（決定的）と `level_report.md` を書く。雛形 `Scripts/Level/level_config.json` は全部の値を `provisional` に挙げ、報告に「未採用の仮置き」と出す。
+- 証拠(G12-GR93-VALIDATE): `python -m unittest discover -s Scripts/Level/tests -v` で 9 件 OK（`.harness/runs/20261105-221335/verify-G12-GR93-VALIDATE-U4.txt`）。実の草地の地形（`Assets/TerrainSpecs/Grassland/GrasslandTerrain.json`）と雛形の設定で、使い捨てのシーンの見どころ 2 点の間は経路長 352.1 m・所要 38.2 秒、2 回の JSON はバイト一致。
+- Next(G12-GR93-VALIDATE): 実の谷のデータでの実行（G12-GR93-EDIT-CHECK）。巡航の速度・見どころの間隔の帯・斜度の上限は企画が決めたら設定の値を差し替えて `provisional` から外す。
+- Notes(G12-GR93-VALIDATE): GR89 の形式は標本数を各辺 `tile_cells × N + 1` と決めているので、done-when の「256×256 のハイトマップ」は 256×256 の格子（標本 257×257）として試験を作った。到達性・所要時間は 1 格子の 8 近傍の近似で、犬の跳躍・段差の越え方（GR05・GR07）は入っていない。GR21 の経路探索ができたら `validate(..., traversable_fn=...)` を差し替える。`smooth` の指定がある地形は平滑化を未適用で読み、報告の地形の注意に出す。
