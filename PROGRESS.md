@@ -10187,3 +10187,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: GR37 の地形の GBuffer のシェーダーが PDL0 を束ねて被覆を評価するのは後続の GR59 の項目（今は NVTEX の層として埋めただけで、描画からはまだ引いていない）。起動の確かめは無い（cook と CPU の試験で閉じる）。
 - Notes: grassland の地形の NVTRN が変わったため、散布の spec `Assets/Scatter/grassland.scatter.json` が固定する地形の `cooked_hash` を `2fbadb9d5677e80d` に更新した（paths の外だが、cook を通すための記録の値だけ。散布は PDL0 を使わない）。
 - Notes: ぼかしの半径は格子の大きさでは拒否せず（小さな地形の既存の recipe を壊さないため）、計算量の上限 4096 セルだけで拒否する。凹み度の既定値は試験の合成の窪地で底が 209/255 になる値で、grassland の見た目の調整は描画が PDL0 を引くようになってから行う。
+
+- U1 ブロードフェーズの整列・重複確認・3 軸の重なり・Mobility・統計: 着地(直し 0 回)
+- U2 PhysicsModule の Owner→スロットの索引: 着地(直し 0 回)
+- U3 ResolveContacts の二分探索と BuildBroadphase の Mobility・試験の入口: 着地(直し 0 回)
+- U4 PhysicsBroadphaseScaleTest（最後。タスクの verify を回す）: 着地(直し 0 回)
+## 2026-11-05 G12-GR09-BROADPHASE-S0S1（run 20261105-161354 の反復 1）
+- Done: G12-GR09-BROADPHASE-S0S1: `PhysicsBroadphase` の 3 か所の挿入ソート（プロキシ・端点・組）を同じ全順序の `std::sort` にし、組の重複確認のループを除いた。SAP の候補に Y・Z の AABB の重なり（`<=`）を足した。`PhysicsShapeProxy::Mobility`（既定 Unspecified = 今どおり全部の組）を足し、両方が設定された組は一方が Dynamic か一方が Trigger のときだけ作る（地形の組も同じ）。統計 `PhysicsBroadphaseStats`（候補の組・狭域判定・プロキシの探索・木の作り直し（0）・訪れた節）と二分探索の `FindProxy` を足した。`PhysicsModule::ResolveContacts` は `FindProxy` で組のプロキシを引き、`BuildBroadphase` が Trigger / Dynamic / Kinematic / Static を入れる（Dynamic の判定は ResolveContacts と同じ有効なボディの型）。コライダー・ボディの登録の重複確認と `FindBodyHandle` は Owner→スロットの索引にした。試験 `PhysicsBroadphaseScaleTest`（PhysicsDynamicsTest の束）が 2000 個の混ざった形で組（Unspecified 2467 組・Mobility 混在 1679 組）・最近接の Raycast（同距離は大きいハンドル）・OverlapSphere/Box/Capsule を素朴な総当たりと順まで照合し、入力の順 3 通りで候補が同じこと、PhysicsModule 経由で Kinematic 対 Static の非 trigger の組が出ないことを確かめる。
+- 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-final.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10）。
+- Next: ランナーの評価者の反証（物理の寿命・公開の挙動の危険地帯）。アプリを起動する確かめは無い。静的の木は G12-GR09-STATIC-TREE、計測は G12-GR09-SCALE-MEASURE。
+- Notes: 固定ステップはブロードフェーズを今も 2 回作る（作業用と公開用）。公開用の候補の組は使われないが Mobility の絞り込みは同じく掛かる。試験の参照は `CalculateBounds`・`QueryProxy` を本体と共有するので、それら自体の幾何の誤りは照合では見つからない（既存の PhysicsProxyQueryTest などが受け持つ）。
+
+## 2026-11-05 G12-GR09-BROADPHASE-S0S1（run 20261105-161354 の反復 2）
+- Done: 反復 1 の差し戻し（verify の再実行で `build` が無い）を直した。この作業ツリーで freetype のサブモジュールを取得し、`cmake -S . -B build -DNORVES_BUILD_TESTS=ON` で構成してから verify の 2 行を回した。実装の変更は無い。
+- 証拠: `.harness/runs/20261105-161354/verify-G12-GR09-BROADPHASE-S0S1-iter2.txt`（`cmake --build build --config Debug --target PhysicsDynamicsTest SceneQueryRaycastTest -- /m:1` の終了コード 0、ctest の 10 本 100% tests passed, 0 tests failed out of 10、PhysicsBroadphaseScaleTest 2.46 秒）。
+- Notes: Git Bash から回すと `/m:1` がパスに変換されて MSB1008 で落ちるので、`MSYS_NO_PATHCONV=1` を付けるか PowerShell・cmd で回す。アプリを起動する確かめは無い。
