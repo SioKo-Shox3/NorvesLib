@@ -8,6 +8,7 @@ set(PHYSICS_PUBLIC_HEADERS
     Public/Physics/IPhysicsModule.h
     Public/Physics/PhysicsTypes.h
     Public/Physics/RigidBodyComponent.h
+    Public/Physics/TerrainColliderBinding.h
 )
 
 set(PHYSICS_PRIVATE_SOURCES
@@ -23,6 +24,7 @@ set(PHYSICS_PRIVATE_SOURCES
     Private/Physics/PhysicsBroadphase.cpp
     Private/Physics/PhysicsModule.cpp
     Private/Physics/RigidBodyComponent.cpp
+    Private/Physics/TerrainColliderBinding.cpp
 )
 
 add_library(${MODULE_NAME} STATIC ${PHYSICS_PUBLIC_HEADERS} ${PHYSICS_PRIVATE_SOURCES})

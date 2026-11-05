@@ -73,6 +73,7 @@
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioGameModeOwner.h"
 #include "Audio/IAudioModule.h"
 #endif
 
@@ -94,6 +95,20 @@ namespace Game
 {
     namespace
     {
+#if defined(NORVES_GAME_AUDIO)
+        void ApplyUserVolumes(const NorvesLib::Core::Save::UserSettings& settings)
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                auto& sound = audio->GetSoundSystem();
+                sound.SetMasterVolume(settings.MasterVolume);
+                sound.SetCategoryVolume(NorvesLib::Modules::Audio::SoundCategory::Effect, settings.EffectVolume);
+                sound.SetCategoryVolume(NorvesLib::Modules::Audio::SoundCategory::Ambience, settings.AmbienceVolume);
+            }
+        }
+#endif
+
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
@@ -111,6 +126,7 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
+        constexpr const TCHAR* kAudioSmokeOption = TEXT("--audio-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
@@ -2727,6 +2743,13 @@ namespace Game
             }
         }
 #endif
+        for (const auto& arg : args)
+        {
+            if (arg == kAudioSmokeOption)
+            {
+                m_bAudioSmoke = true;
+            }
+        }
         bool bM9WorldSmoke = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -2735,6 +2758,11 @@ namespace Game
                 bM9WorldSmoke = true;
                 break;
             }
+        }
+        if (m_bAudioSmoke && (bM9WorldSmoke || bM9WorldCompare))
+        {
+            FailAudioSmoke("incompatible_options");
+            return false;
         }
         if (bM9WorldSmoke || bM9WorldCompare)
         {
@@ -2765,6 +2793,41 @@ namespace Game
 #endif
             }
         }
+
+        if (m_bAudioSmoke)
+        {
+#if defined(NORVES_GAME_AUDIO)
+            NorvesLib::Modules::Audio::AudioModuleOptions options;
+            options.bAllowNullBackendFallback = false;
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry(), options) == nullptr)
+            {
+                FailAudioSmoke("register");
+                return false;
+            }
+            LOG_INFO("AUDIO_SMOKE stage=registered");
+#else
+            LOG_ERROR("--audio-smoke には音声対応の Game が必要です");
+            FailAudioSmoke("register");
+            return false;
+#endif
+        }
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_bAudioSmoke && !bM9WorldSmoke && !bM9WorldCompare)
+        {
+            NorvesLib::Modules::Audio::AudioModuleOptions options;
+            options.bAllowNullBackendFallback = true;
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry(), options) == nullptr)
+            {
+                LOG_WARNING("AUDIO_MODULE register=failed");
+            }
+            else
+            {
+                LOG_INFO("AUDIO_MODULE register=ok fallback_allowed=1");
+            }
+        }
+#endif
 
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
@@ -3200,6 +3263,38 @@ namespace Game
                     LOG_WARNING_F("user入力設定を読めないため既定を使います: %s", error.empty() ? "" : error.c_str());
                 }
             }
+            if (m_InputSettings.GetUserSettings())
+            {
+                const auto& load = m_InputSettings.GetUserSettingsLoadResult();
+                switch (load.Status)
+                {
+                case NorvesLib::Core::Save::SettingsLoadStatus::LoadedFromBackup:
+                    LOG_WARNING_F("SETTINGS load=backup バックアップから設定を読み込みました: %s", load.Message.c_str());
+                    break;
+                case NorvesLib::Core::Save::SettingsLoadStatus::RejectedNewerVersion:
+                    LOG_WARNING_F("SETTINGS load=newer_version 新しい形式の設定を読み込めません: %s", load.Message.c_str());
+                    break;
+                case NorvesLib::Core::Save::SettingsLoadStatus::IoError:
+                    LOG_WARNING_F("SETTINGS load=io_error 設定の読み込みに失敗しました: %s", load.Message.c_str());
+                    break;
+                default:
+                    break;
+                }
+
+                const auto& migration = m_InputSettings.GetLegacyMigrationResult();
+                if (migration.Status == NorvesLib::Core::Input::ELegacyInputBindingMigration::Migrated)
+                {
+                    LOG_INFO_F("SETTINGS migration=%s 旧入力設定を移行しました", "migrated");
+                }
+                else if (migration.Status == NorvesLib::Core::Input::ELegacyInputBindingMigration::Failed)
+                {
+                    LOG_WARNING_F("SETTINGS migration=failed 旧入力設定を移行できません: %s", migration.Error.c_str());
+                }
+            }
+            else
+            {
+                LOG_WARNING_F("SETTINGS storage=%s ユーザーデータの領域を作れないため設定ファイルを使いません", "unavailable");
+            }
         }
 
         // ========================================
@@ -3392,6 +3487,72 @@ namespace Game
         if (m_bCookedManifestUnavailable)
         {
             InstallCookedManifestUnavailableAssetSystem();
+        }
+
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_M9WorldAcceptance)
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                constexpr const char* bankPath = "Audio/Banks/default.soundbank.json";
+                auto bankAssets = m_AssetSystemSnapshot;
+                if (!bankAssets)
+                {
+                    String looseRoot = m_TextureLooseAssetRoot;
+#if defined(NORVES_SOURCE_ASSET_DIR)
+                    if (looseRoot.empty())
+                    {
+                        looseRoot = String(NORVES_SOURCE_ASSET_DIR);
+                    }
+#endif
+                    if (!looseRoot.empty())
+                    {
+                        bankAssets = MakeShared<Asset::AssetSystem>(AnsiString(looseRoot.c_str()));
+                        LOG_INFO("AUDIO_BANK source=loose root=%s", looseRoot.c_str());
+                    }
+                }
+                NorvesLib::Modules::Audio::SoundBankLoadReport report;
+                const auto result = bankAssets
+                    ? audio->GetSoundSystem().LoadBank(*bankAssets, bankPath, report)
+                    : NorvesLib::Modules::Audio::AudioResult::InvalidState;
+                if (result == NorvesLib::Modules::Audio::AudioResult::Success && report.Diagnostics.empty())
+                {
+                    LOG_INFO_F("AUDIO_BANK load=ok bank=%s sounds=%u", bankPath, report.LoadedDefinitionCount);
+                    if (m_bAudioSmoke)
+                    {
+                        LOG_INFO("AUDIO_SMOKE stage=bank_loaded sounds=%u", report.LoadedDefinitionCount);
+                        m_AudioSmokeStage = AudioSmokeStage::Ready;
+                    }
+                }
+                else
+                {
+                    LOG_WARNING_F("AUDIO_BANK load=failed bank=%s result=%d diagnostics=%u", bankPath,
+                                  static_cast<int>(result), static_cast<uint32_t>(report.Diagnostics.size()));
+                    if (!bankAssets)
+                    {
+                        LOG_WARNING("AUDIO_BANK reason=asset_snapshot_unavailable アセットのスナップショットがありません");
+                    }
+                    for (const auto& diagnostic : report.Diagnostics)
+                    {
+                        LOG_WARNING_F("AUDIO_BANK reason=%u detail=%s", static_cast<uint32_t>(diagnostic.Reason),
+                                      diagnostic.Detail.c_str());
+                    }
+                }
+                if (auto* settings = m_InputSettings.GetUserSettings())
+                {
+                    ApplyUserVolumes(settings->Get());
+                    settings->OnValueChanged().Remove(&ApplyUserVolumes);
+                    settings->OnValueChanged().Add(&ApplyUserVolumes);
+                }
+            }
+        }
+#endif
+
+        if (m_bAudioSmoke && m_AudioSmokeStage != AudioSmokeStage::Ready)
+        {
+            FailAudioSmoke("bank");
+            return;
         }
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
@@ -3744,9 +3905,116 @@ namespace Game
         }
     }
 
+    void GameApplicationHandler::FailAudioSmoke(const char* reason)
+    {
+        m_AudioSmokeStage = AudioSmokeStage::Failed;
+        LOG_ERROR("AUDIO_SMOKE stage=failure reason=%s", reason);
+        if (NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+        }
+    }
+
+    void GameApplicationHandler::UpdateAudioSmoke()
+    {
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_bAudioSmoke || !NorvesLib::Core::Engine::GEngine || m_AudioSmokeStage == AudioSmokeStage::Disabled ||
+            m_AudioSmokeStage == AudioSmokeStage::Complete || m_AudioSmokeStage == AudioSmokeStage::Failed)
+        {
+            return;
+        }
+        using namespace NorvesLib::Modules::Audio;
+        auto* audio = FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
+        if (!audio)
+        {
+            FailAudioSmoke("module_lost");
+            return;
+        }
+        auto& sounds = audio->GetSoundSystem();
+        // 時間の倍率・固定刻み・フレーム数に依存せず、エンジンの実経過時間で進める。
+        const int64_t now = NorvesLib::Core::Engine::GEngine->GetTimeSystem().GetElapsedNanoseconds();
+        constexpr int64_t footstepIntervalNs = 50'000'000;
+        constexpr int64_t drainTimeoutNs = 15'000'000'000;
+        if (m_AudioSmokeStage == AudioSmokeStage::Ready)
+        {
+            if (sounds.PlayGlobal(Identity("Ambience.RainLoop"), {}, m_AudioSmokeRain) != AudioResult::Success)
+            {
+                FailAudioSmoke("rain_play");
+                return;
+            }
+            LOG_INFO("AUDIO_SMOKE stage=rain_started fade_in_ms=3000");
+            m_AudioSmokeNextFootstepNs = now + footstepIntervalNs;
+            m_AudioSmokeStage = AudioSmokeStage::Footsteps;
+        }
+        if (m_AudioSmokeStage == AudioSmokeStage::Footsteps && now >= m_AudioSmokeNextFootstepNs)
+        {
+            SoundInstanceHandle footstep;
+            if (sounds.PlayGlobal(Identity("Foley.Footstep"), {}, footstep) == AudioResult::Success)
+            {
+                ++m_AudioSmokeFootstepsPlayed;
+            }
+            else
+            {
+                ++m_AudioSmokeFootstepsFailed;
+            }
+            // 遅いフレームでも同時にまとめて鳴らさず、各要求の間隔を保つ。
+            m_AudioSmokeNextFootstepNs = now + footstepIntervalNs;
+            if (m_AudioSmokeFootstepsPlayed + m_AudioSmokeFootstepsFailed == 100)
+            {
+                LOG_INFO("AUDIO_SMOKE stage=footsteps played=%u failed=%u",
+                         m_AudioSmokeFootstepsPlayed, m_AudioSmokeFootstepsFailed);
+                if (m_AudioSmokeFootstepsFailed != 0)
+                {
+                    FailAudioSmoke("footstep_play");
+                    return;
+                }
+                if (sounds.Stop(m_AudioSmokeRain, {}) != AudioResult::Success)
+                {
+                    FailAudioSmoke("rain_stop");
+                    return;
+                }
+                m_AudioSmokeDrainStartNs = now;
+                m_AudioSmokeStage = AudioSmokeStage::Draining;
+            }
+        }
+        if (m_AudioSmokeStage == AudioSmokeStage::Draining)
+        {
+            if (sounds.GetDiagnostics().ActiveInstanceCount != 0)
+            {
+                if (now - m_AudioSmokeDrainStartNs >= drainTimeoutNs)
+                {
+                    FailAudioSmoke("drain_timeout");
+                }
+                return;
+            }
+            auto& service = audio->GetAudioService();
+            const auto result = service.Shutdown();
+            const auto diagnostics = service.GetDiagnostics();
+            if (diagnostics.ActiveVoiceCount != 0 || diagnostics.PendingEventCount != 0 ||
+                diagnostics.InFlightCallbackCount != 0)
+            {
+                m_AudioSmokeStage = AudioSmokeStage::Failed;
+                LOG_ERROR("AUDIO_SMOKE stage=failure reason=shutdown_not_drained voices=%u callbacks=%u pending_events=%zu",
+                          diagnostics.ActiveVoiceCount, diagnostics.InFlightCallbackCount, diagnostics.PendingEventCount);
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                return;
+            }
+            if (result != AudioResult::Success)
+            {
+                FailAudioSmoke("shutdown");
+                return;
+            }
+            m_AudioSmokeStage = AudioSmokeStage::Complete;
+            LOG_INFO("AUDIO_SMOKE stage=shutdown voices=0 callbacks=0 shutdown_complete=1");
+            NorvesLib::Core::Engine::GEngine->RequestExit(0);
+        }
+#endif
+    }
+
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
         m_CameraLateUpdateSlot->Reset();
+        UpdateAudioSmoke();
         // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
         // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
         // レジストリ・初期モード選択/フォーカス）に集中する。
@@ -4005,6 +4273,12 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+#if defined(NORVES_GAME_AUDIO)
+        if (auto* settings = m_InputSettings.GetUserSettings())
+        {
+            settings->OnValueChanged().Remove(&ApplyUserVolumes);
+        }
+#endif
         if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
                 NorvesLib::Core::Module::GetModuleRegistry()))
         {
@@ -4376,6 +4650,13 @@ namespace Game
         using namespace Game::GameModes;
 
         auto stateMachine = MakeUnique<GameModeStateMachine>();
+        const auto registerMode = [&stateMachine](GameModeId id, GameModeRegistry::Creator creator)
+        {
+#if defined(NORVES_GAME_AUDIO)
+            creator = NorvesLib::Modules::Audio::WrapGameModeCreatorWithAudioOwner(id, std::move(creator));
+#endif
+            stateMachine->Registry().Register(id, std::move(creator));
+        };
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
@@ -4384,7 +4665,7 @@ namespace Game
         const bool bDogAutopilot = m_bDogMovementAutopilot;
         const auto dogAutopilotPath = m_DogMovementAutopilotPath;
         const auto dogCaptureDir = m_DogMovementCaptureDir;
-        stateMachine->Registry().Register(
+        registerMode(
             DogMovementSmoke, [lateCameraSlot, dogDrive, bDogAutopilot, dogAutopilotPath, dogCaptureDir](
                                   const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
                 auto mode = MakeUnique<DogMovementSmokeMode>();
@@ -4397,7 +4678,7 @@ namespace Game
             });
         const auto combatSliceSmoke = m_bEncounterSmoke ? CombatSliceSmoke::Encounter :
                                       m_bEnemySmoke ? CombatSliceSmoke::Enemy : CombatSliceSmoke::Combat;
-        stateMachine->Registry().Register(
+        registerMode(
             CombatSlice,
             [lateCameraSlot, combatSliceSmoke, bBench = m_bCombatBench, capturePath = m_CombatSliceCapturePath](
                 const GameModeParams&) -> Container::TUniquePtr<IGameMode>
@@ -4407,7 +4688,7 @@ namespace Game
                 mode->GetData().LateSlot = lateCameraSlot;
                 return mode;
             });
-        stateMachine->Registry().Register(
+        registerMode(
             Rendering3DTest,
             [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
              lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
@@ -4481,7 +4762,7 @@ namespace Game
         params.ModelPath = m_Rendering3DTestModelPath.empty()
                                ? String(kDefaultRendering3DTestModelPath)
                                : m_Rendering3DTestModelPath;
-        stateMachine->Registry().Register(
+        registerMode(
             Launcher,
             [params, pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
@@ -4490,14 +4771,14 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 return mode;
             });
-        stateMachine->Registry().Register(
+        registerMode(
             MemoryAgingTest,
             [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 return MakeUnique<MemoryAgingTestMode>();
             });
         // バナナのシーン。本数・視点・台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
 #if NORVES_BUILD_DEVELOPMENT
@@ -4525,7 +4806,7 @@ namespace Game
                 return mode;
             });
         // 荒野のシーン。視点・台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Wasteland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4561,7 +4842,7 @@ namespace Game
                 return mode;
             });
         // 夜の集落のシーン。荒野のモードの型で、夜の集落として組む。視点・台本は起動引数から渡す（荒野の比較用の引数は渡さない）
-        stateMachine->Registry().Register(
+        registerMode(
             NightVillage,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4582,7 +4863,7 @@ namespace Game
                 return mode;
             });
         // 材質ギャラリー。視点・台本は起動引数から渡す。テクスチャが焼いてあるかは AssetSystem で確かめる
-        stateMachine->Registry().Register(
+        registerMode(
             MaterialGallery,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4600,7 +4881,7 @@ namespace Game
                 return mode;
             });
         // 室内の光。視点・台本は起動引数から渡す。テクスチャと家具のメッシュが焼いてあるかは AssetSystem で確かめる
-        stateMachine->Registry().Register(
+        registerMode(
             InteriorLight,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4619,7 +4900,7 @@ namespace Game
             });
 #if NORVES_BUILD_DEVELOPMENT
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Sandbox,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
@@ -4635,7 +4916,7 @@ namespace Game
                 return mode;
             });
         // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Grassland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
@@ -4652,7 +4933,7 @@ namespace Game
             });
         // 負荷シーン mega-stress も開発ビルドだけ。Entity の数・視点・台本は起動引数から渡す。
         // バナナは --banana-count を指定したときだけ同時に置く（混在の負荷）。
-        stateMachine->Registry().Register(
+        registerMode(
             MegaStress,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, bananaCount = m_bBananaCountSet ? m_BananaCount : 0u,

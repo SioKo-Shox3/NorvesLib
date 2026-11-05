@@ -1,0 +1,18 @@
+﻿{
+  "version": 0,
+  "chunk_size_m": 32,
+  "layer_a_resolution": 64,
+  "layer_b_resolution": 32,
+  "species_table": "GrassSpecies.json",
+  "source": {
+    "type": "terrain",
+    "terrain": "../TerrainSpecs/Grassland/GrasslandTerrain.json",
+    "species": "wet_grass",
+    "height_factor": 160,
+    "tint": [
+      128,
+      128,
+      128
+    ]
+  }
+}

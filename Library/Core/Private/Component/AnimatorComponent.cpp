@@ -1,6 +1,7 @@
 ﻿#include "Component/AnimatorComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Object/Entity.h"
+#include "Object/World.h"
 #include "Math/MatrixUtils.h"
 #include "Animation/SkeletonResource.h"
 #include "Platform/PlatformFile.h"
@@ -17,6 +18,24 @@ namespace NorvesLib::Core::Animation
 namespace NorvesLib::Core::Component
 {
     IMPLEMENT_CLASS(AnimatorComponent, Component)
+    AnimatorLookTarget AnimatorLookTarget::None()
+    {
+        return {};
+    }
+    AnimatorLookTarget AnimatorLookTarget::AtWorldPosition(const Math::Vector3& position)
+    {
+        AnimatorLookTarget target;
+        target.Kind = AnimatorLookTargetKind::WorldPosition;
+        target.WorldPosition = position;
+        return target;
+    }
+    AnimatorLookTarget AnimatorLookTarget::AtEntity(uint64_t objectId)
+    {
+        AnimatorLookTarget target;
+        target.Kind = AnimatorLookTargetKind::Entity;
+        target.EntityObjectId = objectId;
+        return target;
+    }
     AnimatorComponent::AnimatorComponent()
     {
         SetTickGroup(ETickGroup::Animation);
@@ -115,6 +134,79 @@ namespace NorvesLib::Core::Component
         m_LastDelta = 0;
         InvalidateRootMotionFrame(true);
         return true;
+    }
+    void AnimatorComponent::SetLookTarget(int32_t priority, const AnimatorLookTarget& target)
+    {
+        if (target.Kind == AnimatorLookTargetKind::WorldPosition &&
+            (!std::isfinite(target.WorldPosition.x) || !std::isfinite(target.WorldPosition.y) ||
+             !std::isfinite(target.WorldPosition.z)))
+        {
+            return;
+        }
+        auto entry = m_LookTargets.begin();
+        while (entry != m_LookTargets.end() && entry->Priority > priority)
+        {
+            ++entry;
+        }
+        if (entry != m_LookTargets.end() && entry->Priority == priority)
+        {
+            entry->Target = target;
+        }
+        else
+        {
+            m_LookTargets.insert(entry, LookTargetEntry{priority, target});
+        }
+    }
+    void AnimatorComponent::ClearLookTarget(int32_t priority)
+    {
+        for (auto entry = m_LookTargets.begin(); entry != m_LookTargets.end(); ++entry)
+        {
+            if (entry->Priority == priority)
+            {
+                m_LookTargets.erase(entry);
+                return;
+            }
+        }
+    }
+    bool AnimatorComponent::TryResolveLookTarget(Math::Vector3& outWorldPosition) const
+    {
+        if (m_LookTargets.empty())
+        {
+            return false;
+        }
+        const auto& target = m_LookTargets.front().Target;
+        if (target.Kind == AnimatorLookTargetKind::WorldPosition)
+        {
+            outWorldPosition = target.WorldPosition;
+            return true;
+        }
+        if (target.Kind == AnimatorLookTargetKind::Entity)
+        {
+            const auto* owner = GetOwner();
+            const auto* world = owner ? owner->GetWorld() : nullptr;
+            const auto* entity = world ? world->FindEntityByObjectId(target.EntityObjectId) : nullptr;
+            if (entity)
+            {
+                outWorldPosition = entity->GetWorldTransform().position;
+                return true;
+            }
+        }
+        return false;
+    }
+    bool AnimatorComponent::HasLookTarget(int32_t priority) const
+    {
+        for (const auto& entry : m_LookTargets)
+        {
+            if (entry.Priority == priority)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    uint32_t AnimatorComponent::FindSyncGroup(Identity name) const
+    {
+        return m_Instance.FindSyncGroup(name);
     }
     Animation::AnimParamHandle AnimatorComponent::FindParam(Identity name) const
     {
@@ -384,6 +476,7 @@ namespace NorvesLib::Core::Component
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
         context.SyncPhases = m_Instance.GetSyncPhases();
+        context.PendingEvents = m_Instance.Events().PendingEvents();
         if (const auto* owner = mesh->GetOwner())
         {
             const auto& world = owner->GetWorldTransform();

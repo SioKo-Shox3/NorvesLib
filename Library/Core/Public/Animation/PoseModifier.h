@@ -22,6 +22,8 @@ namespace NorvesLib::Core::Animation
         float DeltaSeconds;
         const AnimParamSet& Parameters;
         Container::Span<const float> SyncPhases;
+        // このフレームに積まれ、まだ配っていないイベント。読み取り専用で Apply の間だけ有効。
+        Container::Span<const AnimEventInfo> PendingEvents;
         // メッシュのモデル空間（GetJointModelMatrices の空間）からワールドへの変換。
         // 所有者 Entity のワールド変換で、SkinnedMeshComponent::TryGetJointWorldMatrix と同じ。
         // 行ベクトル規約で model * MeshToWorld として使う。

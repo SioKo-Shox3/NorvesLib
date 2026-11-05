@@ -3,37 +3,19 @@
 #include "Audio/AudioBackendFactory.h"
 #include "Audio/AudioDomain.h"
 
-#include <utility>
-
 namespace NorvesLib::Modules::Audio
 {
-    namespace
+    Core::Container::TUniquePtr<IAudioModule> CreateAudioModule(const AudioModuleOptions& options)
     {
-        constexpr const char* kAudioModuleName = "NorvesAudioModule";
+        return Private::CreateAudioModuleForBackend(Private::CreatePlatformAudioBackend(), options);
     }
 
-    Core::Container::TUniquePtr<IAudioModule> CreateAudioModule()
-    {
-        auto backend = Private::CreatePlatformAudioBackend();
-        if (!backend)
-        {
-            return {};
-        }
-        return Private::CreateAudioModuleForBackend(std::move(backend));
-    }
-
-    IAudioModule* RegisterAudioModule(Core::Module::ModuleRegistry& registry)
+    IAudioModule* RegisterAudioModule(Core::Module::ModuleRegistry& registry, const AudioModuleOptions& options)
     {
         if (IAudioModule* existing = FindAudioModule(registry))
         {
             return existing;
         }
-        return dynamic_cast<IAudioModule*>(registry.Register(CreateAudioModule()));
-    }
-
-    IAudioModule* FindAudioModule(Core::Module::ModuleRegistry& registry)
-    {
-        return dynamic_cast<IAudioModule*>(
-            registry.FindModule(Core::Identity(kAudioModuleName)));
+        return dynamic_cast<IAudioModule*>(registry.Register(CreateAudioModule(options)));
     }
 } // namespace NorvesLib::Modules::Audio

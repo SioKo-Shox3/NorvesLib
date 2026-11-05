@@ -412,6 +412,7 @@ namespace NorvesLib::Modules::Audio::Private
         instance.OwnerKey = params.OwnerKey;
         instance.Position = position;
         instance.bGlobal = bGlobal;
+        instance.bLoop = definition.bLoop;
         instance.Category = definition.Category;
         instance.FadeOutMs = definition.FadeOutMs;
         instance.Priority = definition.Priority;
@@ -523,6 +524,34 @@ namespace NorvesLib::Modules::Audio::Private
             if (instance.bActive && instance.OwnerKey == ownerKey && !instance.bStopRequested)
             {
                 BeginStop(instance, fade);
+            }
+        }
+        return AudioResult::Success;
+    }
+
+    AudioResult SoundSystem::ReleaseOwner(uint64_t ownerKey, const SoundFade& fade)
+    {
+        if (!IsOwnerThread() || m_bShutdown || ownerKey == 0 || !IsValidFade(fade))
+        {
+            return AudioResult::InvalidState;
+        }
+        for (Instance& instance : m_Instances)
+        {
+            if (!instance.bActive || instance.OwnerKey != ownerKey)
+            {
+                continue;
+            }
+            if (instance.bLoop)
+            {
+                if (!instance.bStopRequested)
+                {
+                    BeginStop(instance, fade);
+                }
+            }
+            else
+            {
+                instance.OwnerKey = 0;
+                instance.Params.OwnerKey = 0;
             }
         }
         return AudioResult::Success;

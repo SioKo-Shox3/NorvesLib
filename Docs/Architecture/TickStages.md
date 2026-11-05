@@ -61,6 +61,7 @@
 | `ZoneSensorComponent` | なし（群に登録しない） | 毎フレームの処理なし。位置は EncounterService と InteractionService が Module Late で読む | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:86` |
 | `EncounterZoneComponent` | なし（群に登録しない） | 毎フレームの処理なし。EncounterService が Module Late で状態機械を進める | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:87` |
 | `InteractableComponent` | なし（群に登録しない） | 毎フレームの処理なし。InteractionService が Module Late で候補を読む | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:88` |
+| `AudioComponent` | Tick なし（登録しない） | 毎フレームの処理なし。Initialize で持ち主のキーを採り、Finalize で ReleaseOwner（ループは fade-out、ワンショットは鳴り切る） | —（論理サウンド層の Update が実時間で進める） | Bridge の停止中も進む（通常 Module Tick は gate 外） | `Library/Modules/Audio/Private/Audio/AudioServiceModule.cpp:80`（RegisterReflectedTypes） |
 | `FollowCameraComponent` | Input（主群）・Camera | Input で視線入力、Camera で追従・衝突処理 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Camera/FollowCameraComponent.cpp:109` |
 | `QuadrupedLocomotionComponent` | Input（主群）・PoseFinalize・PostPhysics | 入力収集、ルート移動の取得、物理後の移動終了と見た目の更新 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:212` |
 

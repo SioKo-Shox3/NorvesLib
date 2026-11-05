@@ -9,6 +9,8 @@ endif()
 file(GLOB_RECURSE audio_backend_neutral_sources
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Public/*"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioBackend.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/NullAudioBackend.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/NullAudioBackend.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioClipResource.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.h"
@@ -33,6 +35,7 @@ norves_add_test_bundle(AudioBackendLifetimeTest
     MEMBER AudioModuleLifecycleTest AudioModuleLifecycleTest.cpp
     MEMBER AudioModuleRegistryTest AudioModuleRegistryTest.cpp
     MEMBER AudioPlaybackTest AudioPlaybackTest.cpp
+    MEMBER AudioComponentTest AudioComponentTest.cpp
 )
 target_link_libraries(AudioBackendLifetimeTest PRIVATE Core NorvesAudioDomain)
 target_include_directories(AudioBackendLifetimeTest PRIVATE
@@ -48,4 +51,5 @@ endif()
 
 add_test(NAME AudioModuleRegistryTest COMMAND AudioBackendLifetimeTest --test=AudioModuleRegistryTest)
 add_test(NAME AudioPlaybackTest COMMAND AudioBackendLifetimeTest --test=AudioPlaybackTest)
+add_test(NAME AudioComponentTest COMMAND AudioBackendLifetimeTest --test=AudioComponentTest)
 
