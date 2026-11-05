@@ -106,7 +106,11 @@ namespace NorvesLib::Core::Scene
      * 警告ログし、既知の残存経路（IClass::NewInstance失敗・World未初期化）を除き
      * World::SpawnPrefabが失敗しないスナップショットを出力する（World.cpp非改変）。
      * outStatsは呼び出し時にゼロ化される（累積しない）。
-     * aliasはロード時に再採番されるため、JSON中のalias値は診断用途のみ。
+     * EntityRefIdは文書中のルートの0始まりの添字とEntityのaliasを「添字:alias」で保存し、
+     * 参照なしは「0」で保存する。保存対象外への参照は警告して参照なしにする。
+     * aliasはロード時に再採番されるため、文書中のaliasと生成用aliasの対応を保持する。
+     * ReconcileWithSchemaはEntityRefIdをスナップショットから外す。参照の張り替えは
+     * LoadIntoWorld内で全ルートの生成後（各ComponentのBeginPlayより後）に行う。
      */
     class SceneSerializer
     {
@@ -143,6 +147,7 @@ namespace NorvesLib::Core::Scene
         /**
          * @brief シーンJSONファイルをWorldへ加算ロードする（既存Entityはクリアしない）。
          * 復元Entity/ComponentのIDはAssignFreshObjectIdsRecursiveで再採番される（仕様）。
+         * EntityRefIdは全ルートのSpawnPrefab完了後、BeginPlayより後に新しいObjectIdへ張り替える。
          * 事前フィルタ済みルートのSpawnPrefabが1つでも失敗した場合false（成功分は残る）。
          */
         static bool LoadIntoWorld(World& world, const Container::String& filePath, SceneLoadStats* pOutStats = nullptr);

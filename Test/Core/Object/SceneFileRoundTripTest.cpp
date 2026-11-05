@@ -3,6 +3,7 @@
 #include "Component/GrassFieldComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Component/SkyOccluderComponent.h"
+#include "Component/SpringArmComponent.h"
 #include "Component/TerrainComponent.h"
 #include "Component/ViewClearanceComponent.h"
 #include "Engine/Engine.h"
@@ -731,6 +732,127 @@ namespace
         assert(std::remove(filePath.c_str()) == 0);
     }
 
+    // 同じルート内とルート間の参照が、ObjectIdの再採番後も同じEntityを指すことを確かめる。
+    void TestEntityReferencesSaveLoadRoundTrip()
+    {
+        RegisterRequiredClasses();
+        (void)Component::SpringArmComponent::StaticClass();
+        const Container::String filePath("SceneFileRoundTripTest.entity-ref.scene.json");
+        for (const bool bCrossRoot : {true, false})
+        {
+            World sourceWorld;
+            sourceWorld.Initialize();
+            Entity* owner = sourceWorld.SpawnEntity<Entity>();
+            assert(owner != nullptr);
+            auto* arm = sourceWorld.CreateComponent<Component::SpringArmComponent>(owner);
+            assert(arm != nullptr);
+            Entity* pivot = sourceWorld.SpawnEntity<Entity>(bCrossRoot ? nullptr : owner);
+            assert(pivot != nullptr);
+            assert(arm->SetPivot(pivot));
+            const uint64_t savedPivotId = pivot->GetObjectId();
+            assert(Scene::SceneSerializer::SaveToFile(sourceWorld, filePath));
+
+            {
+                auto stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                    filePath, NorvesLib::FileStream::FileMode::Read, NorvesLib::FileStream::FileAccess::Read);
+                assert(stream && stream->IsOpen());
+                Scene::SceneDocument document;
+                assert(Scene::SceneSerializer::TryParseJson(stream->ReadString(), document));
+                assert(document.Roots.size() == (bCrossRoot ? 2u : 1u));
+                const auto& ownerRecord = document.Roots[0].Root;
+                assert(ownerRecord.Components.size() == 1);
+                const auto* reference = FindPropertyRecord(ownerRecord.Components[0].Object, "PivotObjectId");
+                assert(reference != nullptr && reference->TypeName == "EntityRefId");
+                const auto& pivotRecord = bCrossRoot ? document.Roots[1].Root : ownerRecord.Children[0];
+                char expected[64] = {};
+                std::snprintf(expected, sizeof(expected), "%u:%llu", bCrossRoot ? 1u : 0u,
+                              static_cast<unsigned long long>(pivotRecord.Alias));
+                assert(reference->Value == expected);
+            }
+
+            World loadedWorld;
+            loadedWorld.Initialize();
+            Entity* existing = loadedWorld.SpawnEntity<Entity>();
+            assert(existing != nullptr);
+            Scene::SceneLoadStats stats;
+            assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, filePath, &stats));
+            assert(stats.LoadedRoots == (bCrossRoot ? 2u : 1u));
+            assert(stats.DroppedEntities == 0 && stats.DroppedComponents == 0 && stats.DroppedProperties == 0);
+            const auto loadedRoots = loadedWorld.GetRootEntities();
+            assert(loadedRoots.size() == (bCrossRoot ? 3u : 2u) && loadedRoots[0] == existing);
+            Entity* loadedOwner = loadedRoots[1];
+            Entity* loadedPivot = bCrossRoot ? loadedRoots[2] : loadedOwner->GetChildEntities()[0];
+            const auto* loadedArm = loadedOwner->GetComponent<Component::SpringArmComponent>();
+            assert(loadedArm != nullptr);
+            assert(loadedPivot->GetObjectId() != savedPivotId);
+            assert(loadedArm->GetPivotObjectId() == loadedPivot->GetObjectId());
+            assert(loadedArm->ResolvePivot() == loadedPivot);
+            loadedWorld.Finalize();
+            sourceWorld.Finalize();
+        }
+        assert(std::remove(filePath.c_str()) == 0);
+    }
+
+    // v2のObjectId参照を移行し、文書と生成後の両方で参照先を保つことを確かめる。
+    void TestV2EntityReferenceMigration()
+    {
+        RegisterRequiredClasses();
+        (void)Component::SpringArmComponent::StaticClass();
+        const char* filePath = "SceneFileRoundTripTest.entity-ref-v2.scene.json";
+        const char* legacyJson = R"json({
+            "formatVersion": 2, "module": "NorvesLib", "roots": [{
+                "formatVersion": 2, "rootAlias": "41", "rootPath": "", "root": {
+                    "alias": "41", "parentAlias": "0",
+                    "object": {"class": "Entity", "classId": "0", "path": "", "properties": [{
+                        "name": "ObjectId", "propertyId": "0", "type": "uint64", "typeId": "0", "value": "123"
+                    }]},
+                    "components": [{"alias": "89", "ownerAlias": "41", "object": {
+                        "class": "SpringArmComponent", "classId": "0", "path": "", "properties": [{
+                            "name": "PivotObjectId", "propertyId": "0", "type": "uint64", "typeId": "0", "value": "456"
+                        }]
+                    }}], "children": []
+                }
+            }, {
+                "formatVersion": 2, "rootAlias": "77", "rootPath": "", "root": {
+                    "alias": "77", "parentAlias": "0",
+                    "object": {"class": "Entity", "classId": "0", "path": "", "properties": [{
+                        "name": "ObjectId", "propertyId": "0", "type": "uint64", "typeId": "0", "value": "456"
+                    }]}, "components": [], "children": []
+                }
+            }]
+        })json";
+        std::FILE* file = nullptr;
+        fopen_s(&file, filePath, "wb");
+        assert(file != nullptr);
+        assert(std::fwrite(legacyJson, 1, std::strlen(legacyJson), file) == std::strlen(legacyJson));
+        assert(std::fclose(file) == 0);
+
+        Scene::SceneDocument document;
+        assert(Scene::SceneSerializer::TryParseJson(Container::String(legacyJson), document));
+        assert(document.FormatVersion == 3 && document.Roots.size() == 2);
+        assert(document.Roots[0].FormatVersion == 3 && document.Roots[1].FormatVersion == 3);
+        const auto* reference = FindPropertyRecord(document.Roots[0].Root.Components[0].Object, "PivotObjectId");
+        const TypeInfo* referenceType = TypeRegistry::Get().Find(TypeRegistry::Get().GetTypeId<EntityRefId>());
+        assert(referenceType != nullptr && reference != nullptr);
+        assert(reference->TypeName == "EntityRefId" && reference->TypeId == referenceType->StableId);
+        assert(reference->Value == "1:77");
+
+        World loadedWorld;
+        loadedWorld.Initialize();
+        assert(loadedWorld.SpawnEntity<Entity>() != nullptr);
+        Scene::SceneLoadStats stats;
+        assert(Scene::SceneSerializer::LoadIntoWorld(loadedWorld, Container::String(filePath), &stats));
+        assert(stats.LoadedRoots == 2 && stats.DroppedProperties == 0);
+        const auto loadedRoots = loadedWorld.GetRootEntities();
+        assert(loadedRoots.size() == 3);
+        const auto* loadedArm = loadedRoots[1]->GetComponent<Component::SpringArmComponent>();
+        assert(loadedArm != nullptr);
+        assert(loadedArm->GetPivotObjectId() == loadedRoots[2]->GetObjectId());
+        assert(loadedArm->ResolvePivot() == loadedRoots[2]);
+        loadedWorld.Finalize();
+        assert(std::remove(filePath) == 0);
+    }
+
     void TestLoadFailures()
     {
         RegisterRequiredClasses();
@@ -770,6 +892,8 @@ int main()
     TestGrassPropertiesSaveLoadRoundTrip();
     TestLegacyGrassPropertiesUseDefaults();
     TestSaveWriteFailurePreservesOriginal();
+    TestEntityReferencesSaveLoadRoundTrip();
+    TestV2EntityReferenceMigration();
     TestLoadFailures();
 
     std::cout << "SceneFileRoundTripTest passed\n";
