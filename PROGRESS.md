@@ -10219,3 +10219,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 後始末の `StopOwner` は 0 秒を渡しても `SoundSystem.cpp:471` で最短 2/60 秒のフェードに補正されるので、Leave の直後（スコープのデストラクタの漏れの検査・ソークの enter の行）には voice が残り得る。ソークは voice を Enter から 8 フレーム後の ready の行だけで比べる。音を鳴らすモードでは Debug の漏れの警告に voices の差が出る見込み（G8-GR76-RESET-CHECK で確かめる）。
 - Notes: ソークのベースラインは 1 回目のリセットの後（キャッシュが温まった後）。最初の Enter は sample=cold で出すだけ。最初の Enter ではセーブを読まない（前の起動の自動保存で既存のスモークの progression_preloaded を起こさないため）。
 - Notes: `SaveService::Update` は `OnUpdate`（PreUpdate）で `false` を渡して呼ぶ。状態機械の遷移は PreSimulation の Update の先頭で同期に適用されるので、その時点で遷移の途中ではない。死亡からのリセットは `FlushAndWait` で保存の完了を待ってから RequestReset する。
+
+## 2026-11-05 G12-GR39-HEIGHTFIELD-LOD（run 20261105-193214 の反復 2、完了）
+
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ。衝突は 2 か所で、`TerrainHeightField.cpp` は統合側の PDL0（水たまり）の読み込みを残し、末尾の範囲の構築をこの項目の `BuildLodBounds` へ合わせた。`PhysicsModule.cpp` の地形のプロキシは、この項目のタイルの常駐の印と統合側の `DetermineProxyMobility` の両方を設定する。
+- Done: verify の `cmake --build build --config Debug --target MathGeometryTest PhysicsDynamicsTest -- /m:1` は EXIT=0、ctest の 7 本（TerrainHeightFieldQueryTest・TerrainHeightFieldTest・PhysicsHeightFieldColliderTest・PhysicsBroadphaseQueryTest・PhysicsCharacterMoveTest・PhysicsDynamicsTest・MathGeometryTest）は全部合格。
+- Next: タイルの常駐を決めるのはセル（G12-GR40-WORLD-PAYLOADS）。
+- Notes: アプリを起動する確かめはこの項目に無い。

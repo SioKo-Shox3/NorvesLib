@@ -6440,7 +6440,7 @@
 - notes: 設計はロードマップ 2124〜2128 行（GR39 の 1. 分割と LOD、2. 遠景）、完了条件は 2587〜2588・2592 行。選定課題 G12A-S4（地形の LOD・多タイル・ノードの置き場）: (A) ロードマップの案（GR37 の四分木のノードをワーカーで焼いて LRU の `TerrainNodeCache` に置き、未焼きは親で代用し、亀裂はスカート）、(B) G5B-S1 で採った MegaGeometry の区画（クラスタの LOD の階層・外周の頂点を全段で固定・ジオメトリのページの読み込みと LRU）をそのまま多タイルと外周へ広げる、のうち (B) を採る。理由: 荒野が既に約 10 km 四方の近景の区画と 8〜16 m の遠景（SCN-WL-DEM-COOK・SCN-WL-HORIZON・SCN-WL-GEOM-BUDGET・SCN-WL-GEOM-POOL-PLACEMENT が done）を MegaGeometry で描き、LOD・亀裂・ページの常駐・TLAS・VSM が動いている。四分木・スカート・ノードの LRU を別に作ると同じものを二重に持つ。よってロードマップの TerrainNodeCacheTest（2587 行）は作らず、穴・継ぎ目の契約は cook の共有辺の試験と G12-GR39-TERRAIN-CHECK の撮影で確かめる。荒野の遠景は `WastelandTerrain` の定数と `Scripts/Terrain/HorizonDem.py` の記述（`kTerrainHorizonFormat`。TerrainHeightField.h:248、MeshCooker.cpp:3194〜3511）に縛られた経路なので、この項目では荒野を移さない（見た目と読み込みを変えない。絶対規則 7）。汎用の経路は NVTRN の spec から作る。選定課題 G12A-S5（CSM の外の遠距離の影）: (A) ロードマップの案（太陽の向きの地平線の地図を compute で作り `CalculateShadow` に掛ける。2134 行）、(B) 太陽の VSM のクリップマップの到達距離を地形の広さまで伸ばす（SCN-SHADOW-DISTANCE の `SetSunShadowMaxDistance`、荒野は 10 km で運用中。WastelandRoutine.cpp:274〜277）、のうち (B) を採る。理由: (A) の前提（影は CSM の 80 m まで）は VSM（VTG9 の系列）で崩れていて、谷ひとつ（数 km）は荒野の 10 km の範囲に収まる。地平線の地図は、VSM の到達距離を超える世界（『マップの範囲』を採らない場合）になったときに足す。外周のセルの大きさ 16 m・帯の幅は仮の値で、spec のデータで替えられる。浮動小数の座標は数 km なら足りる（ロードマップ 2140 行）ので原点の移動は作らない。試験を足す理由: 外周と近景の境の高さの食い違いは、遠くでは霞に紛れる細い隙間・段として出て、撮影 1 枚では気づきにくく、cook も成功して黙って起きる。危険地帯（アセットのクック・Public API）なので評価者を通す。
 
 ## G12-GR39-HEIGHTFIELD-LOD: 地形の高さ場に粗い段を持たせて遠くの照会を軽くし、物理の地形コライダーを常駐のタイルだけにする
-- status: doing
+- status: done
 - after: G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD
 - gr: GR39
 - needs-gr: GR38
