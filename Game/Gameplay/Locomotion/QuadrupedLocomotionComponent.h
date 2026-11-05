@@ -46,6 +46,13 @@ namespace Game::Gameplay
         bool SetMotionSource(LocomotionMotionSource source);
         // VisualRootはownerの子、VisualPoseはその子孫。可変の傾きはPose側へ置き補間履歴を切らない。
         bool SetVisualRoots(NorvesLib::Core::Entity* visualRoot, NorvesLib::Core::Entity* visualPose);
+        // VisualPoseの剛体の傾きだけを調整する。背骨へ傾きを任せるときは0にする。
+        // BankAngle・PitchAngleには掛けない。有限値は[0, 1]に制限し、非有限値は無視する。
+        void SetVisualTiltScale(float scale);
+        float GetVisualTiltScale() const
+        {
+            return m_VisualTiltScale;
+        }
         bool SetViewSource(NorvesLib::Core::Entity* view);
         const NorvesLib::Core::Locomotion::LocomotionOutput& GetOutput() const
         {
@@ -88,6 +95,7 @@ namespace Game::Gameplay
         NorvesLib::Modules::Physics::CharacterDriveMode m_LastDrive =
             NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         NorvesLib::Math::Quaternion m_VisualBaseRotation;
+        float m_VisualTiltScale = 1.0f;
         LocomotionMotionSource m_MotionSource = LocomotionMotionSource::Procedural;
         NorvesLib::Core::Animation::RootMotionTimeQueue m_RootMotion;
         uint64_t m_AnimationSerialAtInput = 0, m_RootAnimatorId = 0, m_RootSourceGeneration = 0;
