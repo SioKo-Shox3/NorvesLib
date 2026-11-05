@@ -10163,3 +10163,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `TangentialVelocity` には試験が無い（done-when は求めていない）。
 - U1 DrynessMap の本体（源の追加・目標・Tick・Sample・GPU への選別）と Vegetation の保持・Tick の結線: 着地(直し 0 回)
 - U5 レビュー済みの Serialize / Restore の写しを置く（U2 の切り直し）: 着地(直し 0 回)
+- U6 レビュー済みの WitherSourceComponent と往復のケースの写しを置く（U3 の切り直し）: 着地(直し 0 回)
