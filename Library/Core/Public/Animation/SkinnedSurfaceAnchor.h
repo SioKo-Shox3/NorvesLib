@@ -111,4 +111,49 @@ namespace NorvesLib::Core::Animation
     [[nodiscard]] StabResult FindSurfacePoint(const StabQuery& query, const JointTriangleBuckets& buckets,
                                               const SkinnedMeshResource& mesh,
                                               const SurfaceAnchorPoseView& pose) noexcept;
+
+    // 以下の既定値は仮の値であり、用途に合わせて調整する。
+    struct SurfaceAnchorMotionSettings
+    {
+        float SmoothingTimeConstantSeconds = 0.08f;
+        float MaxSpeed = 50.0f;          // m/s
+        float MaxAcceleration = 2000.0f; // m/s²
+        float MaxDeltaTime = 0.25f;      // 秒
+    };
+
+    struct SurfaceAnchorMotionSample
+    {
+        Math::Vector3 Velocity;
+        Math::Vector3 TangentialVelocity;
+        Math::Vector3 SmoothedVelocity;
+        Math::Vector3 Acceleration;
+        bool bHasVelocity = false;
+        bool bHasAcceleration = false;
+        bool bDiscontinuity = false;
+    };
+
+    // 位置 P の速度は v = (P_now - P_prev) / dt、接線速度は v - (v・n)n。
+    // n は現在のフレームの単位法線。平滑は s = s_prev + α(v - s_prev)、
+    // α = 1 - exp(-dt / τ)、τ <= 0 では α = 1。最初の速度は s の初期値にする。
+    // 加速度は平滑速度の差分 a = (s - s_prev) / dt。速度は 2 フレーム目、
+    // 加速度は 3 フレーム目から得られる。
+    // 無効なフレーム、非有限の位置・法線、非有限・0 以下・MaxDeltaTime 超過の dt、
+    // MaxSpeed 超過の速度、MaxAcceleration 超過の生速度の変化率、
+    // 強制リセット、計算結果が float で表せない場合は不連続とし履歴を消す。
+    // 無効なフレームと非有限の位置・法線は起点にせず、それ以外は現在の位置を新しい起点にする。
+    struct SurfaceAnchorMotion
+    {
+        [[nodiscard]] SurfaceAnchorMotionSample Update(const SurfaceAnchorFrame& frame, float deltaSeconds,
+                                                       const SurfaceAnchorMotionSettings& settings = {},
+                                                       bool bForceReset = false) noexcept;
+        void Reset() noexcept;
+
+    private:
+        Math::Vector3 m_PreviousPosition;
+        Math::Vector3 m_PreviousVelocity;
+        Math::Vector3 m_SmoothedVelocity;
+        bool m_bHasPosition = false;
+        bool m_bHasVelocity = false;
+    };
+
 } // namespace NorvesLib::Core::Animation

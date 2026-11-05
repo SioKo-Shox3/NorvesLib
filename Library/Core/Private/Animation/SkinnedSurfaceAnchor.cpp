@@ -538,4 +538,114 @@ namespace NorvesLib::Core::Animation
         }
         return result;
     }
+
+    SurfaceAnchorMotionSample SurfaceAnchorMotion::Update(const SurfaceAnchorFrame& frame, float deltaSeconds,
+                                                         const SurfaceAnchorMotionSettings& settings,
+                                                         bool bForceReset) noexcept
+    {
+        SurfaceAnchorMotionSample sample;
+        if (!frame.bValid || !IsFinite(frame.Position) || !IsFinite(frame.Normal))
+        {
+            Reset();
+            sample.bDiscontinuity = true;
+            return sample;
+        }
+
+        const auto restartAtFrame = [this, &frame]() noexcept
+        {
+            Reset();
+            m_PreviousPosition = frame.Position;
+            m_bHasPosition = true;
+            SurfaceAnchorMotionSample restarted;
+            restarted.bDiscontinuity = true;
+            return restarted;
+        };
+
+        if (bForceReset || !std::isfinite(deltaSeconds) || deltaSeconds <= 0.0f ||
+            deltaSeconds > settings.MaxDeltaTime)
+        {
+            return restartAtFrame();
+        }
+
+        if (!m_bHasPosition)
+        {
+            m_PreviousPosition = frame.Position;
+            m_bHasPosition = true;
+            return sample;
+        }
+
+        const double dt = double(deltaSeconds);
+        const DoubleVector3 displacement = Difference(frame.Position, m_PreviousPosition);
+        const DoubleVector3 rawVelocity = {displacement.X / dt, displacement.Y / dt, displacement.Z / dt};
+        Math::Vector3 velocity;
+        if (std::sqrt(Dot(rawVelocity, rawVelocity)) > double(settings.MaxSpeed) ||
+            !ToFloat(rawVelocity, velocity))
+        {
+            return restartAtFrame();
+        }
+
+        if (m_bHasVelocity)
+        {
+            const DoubleVector3 velocityChange = Difference(velocity, m_PreviousVelocity);
+            if (std::sqrt(Dot(velocityChange, velocityChange)) / dt > double(settings.MaxAcceleration))
+            {
+                return restartAtFrame();
+            }
+        }
+
+        const DoubleVector3 velocityDouble = ToDouble(velocity);
+        const DoubleVector3 normal = ToDouble(frame.Normal);
+        const double projection = Dot(velocityDouble, normal);
+        Math::Vector3 tangentialVelocity;
+        if (!ToFloat({velocityDouble.X - projection * normal.X,
+                      velocityDouble.Y - projection * normal.Y,
+                      velocityDouble.Z - projection * normal.Z}, tangentialVelocity))
+        {
+            return restartAtFrame();
+        }
+
+        Math::Vector3 smoothedVelocity = velocity;
+        Math::Vector3 acceleration;
+        if (m_bHasVelocity)
+        {
+            if (settings.SmoothingTimeConstantSeconds > 0.0f)
+            {
+                const double alpha = -std::expm1(-dt / double(settings.SmoothingTimeConstantSeconds));
+                const DoubleVector3 previous = ToDouble(m_SmoothedVelocity);
+                if (!ToFloat({previous.X * (1.0 - alpha) + velocityDouble.X * alpha,
+                              previous.Y * (1.0 - alpha) + velocityDouble.Y * alpha,
+                              previous.Z * (1.0 - alpha) + velocityDouble.Z * alpha}, smoothedVelocity))
+                {
+                    return restartAtFrame();
+                }
+            }
+            const DoubleVector3 smoothedChange = Difference(smoothedVelocity, m_SmoothedVelocity);
+            if (!ToFloat({smoothedChange.X / dt, smoothedChange.Y / dt, smoothedChange.Z / dt}, acceleration))
+            {
+                return restartAtFrame();
+            }
+            sample.bHasAcceleration = true;
+        }
+
+        m_PreviousPosition = frame.Position;
+        m_PreviousVelocity = velocity;
+        m_SmoothedVelocity = smoothedVelocity;
+        m_bHasVelocity = true;
+        sample.Velocity = velocity;
+        sample.TangentialVelocity = tangentialVelocity;
+        sample.SmoothedVelocity = smoothedVelocity;
+        sample.Acceleration = acceleration;
+        sample.bHasVelocity = true;
+        return sample;
+    }
+
+    void SurfaceAnchorMotion::Reset() noexcept
+    {
+        m_PreviousPosition = {};
+        m_PreviousVelocity = {};
+        m_SmoothedVelocity = {};
+        m_bHasPosition = false;
+        m_bHasVelocity = false;
+    }
+
 } // namespace NorvesLib::Core::Animation
