@@ -10,8 +10,69 @@
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
+    bool TerrainTileResidency::IsResident(uint32_t tileId) const
+    {
+        const size_t word = tileId / 64u;
+        return tileId == kInvalidTerrainTileId || word >= m_NonResidentBits.size()
+            || (m_NonResidentBits[word] & (uint64_t{1} << (tileId % 64u))) == 0;
+    }
+
+    void TerrainTileResidency::SetResident(uint32_t tileId, bool bResident)
+    {
+        if (tileId == kInvalidTerrainTileId)
+        {
+            return;
+        }
+        const size_t word = tileId / 64u;
+        if (word >= m_NonResidentBits.size())
+        {
+            if (bResident)
+            {
+                return;
+            }
+            m_NonResidentBits.resize(word + 1u, 0);
+        }
+        const uint64_t mask = uint64_t{1} << (tileId % 64u);
+        const bool bWasResident = (m_NonResidentBits[word] & mask) == 0;
+        if (bWasResident == bResident)
+        {
+            return;
+        }
+        if (bResident)
+        {
+            m_NonResidentBits[word] &= ~mask;
+            --m_NonResidentCount;
+        }
+        else
+        {
+            m_NonResidentBits[word] |= mask;
+            ++m_NonResidentCount;
+        }
+    }
+
+    bool TerrainTileResidency::IsAllResident() const
+    {
+        return m_NonResidentCount == 0u;
+    }
+
     namespace
     {
+        /// 常駐判定が不要ならセルごとのタイル番号の計算を省く
+        template<typename Grid>
+        const TerrainTileResidency* ActiveResidency(const Grid& grid, const TerrainTileResidency* residency)
+        {
+            return residency && grid.TileCells != 0u && !residency->IsAllResident() ? residency : nullptr;
+        }
+
+        /// 指定された最細の升目が属するタイルの常駐状態を返す
+        template<typename Grid>
+        bool IsCellResident(const Grid& grid, const TerrainTileResidency* residency, uint32_t column, uint32_t row)
+        {
+            const uint32_t tx = std::min(column / grid.TileCells, grid.TileCountX - 1u);
+            const uint32_t tz = std::min(row / grid.TileCells, grid.TileCountZ - 1u);
+            return residency->IsResident(tz * grid.TileCountX + tx);
+        }
+
         /// 片軸の閉区間でレイを切る。平行な場合も外周を含める
         bool ClipAxis(double origin, double direction, double minimum, double maximum, double& begin, double& end)
         {
@@ -141,6 +202,12 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     bool TerrainHeightField::Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit) const
     {
+        return Raycast(ray, maxDistance, outHit, 0u, nullptr);
+    }
+
+    bool TerrainHeightField::Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit, uint32_t lod,
+        const TerrainTileResidency* residency) const
+    {
         if (!m_Grid || !(maxDistance >= 0.0f)
             || !std::isfinite(ray.Origin.x) || !std::isfinite(ray.Origin.y) || !std::isfinite(ray.Origin.z))
         {
@@ -156,16 +223,23 @@ namespace NorvesLib::Core::Rendering::Terrain
             static_cast<float>(ray.Direction.y / length), static_cast<float>(ray.Direction.z / length));
         const Math::Ray localRay(Math::Vector3(), direction);
         const GridData& grid = *m_Grid;
+        lod = std::min(lod, kHeightLodCount - 1u);
+        const uint32_t stride = 1u << lod;
+        residency = ActiveResidency(grid, residency);
         const double originX = (static_cast<double>(ray.Origin.x) - grid.FirstX) / grid.Spacing;
         const double originZ = (static_cast<double>(ray.Origin.z) - grid.FirstZ) / grid.Spacing;
         const double directionX = direction.x / grid.Spacing;
         const double directionZ = direction.z / grid.Spacing;
-        if (Contains(ray.Origin.x, ray.Origin.z) && ray.Origin.y < SampleHeight(ray.Origin.x, ray.Origin.z))
+        if (Contains(ray.Origin.x, ray.Origin.z)
+            && (!residency || IsCellResident(grid, residency,
+                std::min(static_cast<uint32_t>(originX) / stride, (grid.Columns - 2u) / stride) * stride,
+                std::min(static_cast<uint32_t>(originZ) / stride, (grid.Rows - 2u) / stride) * stride))
+            && ray.Origin.y < SampleHeight(ray.Origin.x, ray.Origin.z, lod))
         {
             TerrainRayHit hit;
             hit.Point = ray.Origin;
-            hit.Column = std::min(static_cast<uint32_t>(originX), grid.Columns - 2u);
-            hit.Row = std::min(static_cast<uint32_t>(originZ), grid.Rows - 2u);
+            hit.Column = std::min(static_cast<uint32_t>(originX) / stride, (grid.Columns - 2u) / stride) * stride;
+            hit.Row = std::min(static_cast<uint32_t>(originZ) / stride, (grid.Rows - 2u) / stride) * stride;
             outHit = hit;
             return true;
         }
@@ -189,20 +263,28 @@ namespace NorvesLib::Core::Rendering::Terrain
         bool bHit = false;
         const auto testCell = [&](uint32_t column, uint32_t row, double, double intervalEnd)
         {
+            const uint32_t firstColumn = column * stride;
+            const uint32_t firstRow = row * stride;
+            if (residency && !IsCellResident(grid, residency, firstColumn, firstRow))
+            {
+                return bHit && closest.Distance <= intervalEnd;
+            }
+            const uint32_t lastColumn = firstColumn + std::min(stride, grid.Columns - 1u - firstColumn);
+            const uint32_t lastRow = firstRow + std::min(stride, grid.Rows - 1u - firstRow);
             // ワールド座標を float に丸めてから引かず、原点との差を double で作ってから渡す。
             const double relativeFirstX = grid.FirstX - ray.Origin.x;
             const double relativeFirstZ = grid.FirstZ - ray.Origin.z;
             // 共有頂点は隣のセルからも同じ式で作り、足し算の順による隙間を作らない。
-            const double x0 = relativeFirstX + static_cast<double>(column) * grid.Spacing;
-            const double x1 = relativeFirstX + static_cast<double>(column + 1u) * grid.Spacing;
-            const double z0 = relativeFirstZ + static_cast<double>(row) * grid.Spacing;
-            const double z1 = relativeFirstZ + static_cast<double>(row + 1u) * grid.Spacing;
-            const Math::Vector3 v00(static_cast<float>(x0), grid.At(column, row) - ray.Origin.y, static_cast<float>(z0));
-            const Math::Vector3 v10(static_cast<float>(x1), grid.At(column + 1u, row) - ray.Origin.y,
+            const double x0 = relativeFirstX + static_cast<double>(firstColumn) * grid.Spacing;
+            const double x1 = relativeFirstX + static_cast<double>(lastColumn) * grid.Spacing;
+            const double z0 = relativeFirstZ + static_cast<double>(firstRow) * grid.Spacing;
+            const double z1 = relativeFirstZ + static_cast<double>(lastRow) * grid.Spacing;
+            const Math::Vector3 v00(static_cast<float>(x0), grid.At(firstColumn, firstRow) - ray.Origin.y, static_cast<float>(z0));
+            const Math::Vector3 v10(static_cast<float>(x1), grid.At(lastColumn, firstRow) - ray.Origin.y,
                 static_cast<float>(z0));
-            const Math::Vector3 v01(static_cast<float>(x0), grid.At(column, row + 1u) - ray.Origin.y,
+            const Math::Vector3 v01(static_cast<float>(x0), grid.At(firstColumn, lastRow) - ray.Origin.y,
                 static_cast<float>(z1));
-            const Math::Vector3 v11(static_cast<float>(x1), grid.At(column + 1u, row + 1u) - ray.Origin.y,
+            const Math::Vector3 v11(static_cast<float>(x1), grid.At(lastColumn, lastRow) - ray.Origin.y,
                 static_cast<float>(z1));
             const auto testTriangle = [&](const Math::Vector3& a, const Math::Vector3& b, const Math::Vector3& c)
             {
@@ -225,8 +307,8 @@ namespace NorvesLib::Core::Rendering::Terrain
                 closest.Distance = distance;
                 closest.Point = ray.Origin + direction * distance;
                 closest.Normal = Math::Vector3(static_cast<float>(nx), static_cast<float>(ny), static_cast<float>(nz));
-                closest.Column = column;
-                closest.Row = row;
+                closest.Column = firstColumn;
+                closest.Row = firstRow;
                 bHit = true;
             };
             if (UsesMainDiagonal(column, row))
@@ -245,8 +327,16 @@ namespace NorvesLib::Core::Rendering::Terrain
         // 微小方向でも横移動が無視できない長さなら、通常の DDA で境をたどる。
         if (bSingleCell)
         {
-            testCell(std::min(static_cast<uint32_t>(originX), grid.Columns - 2u),
-                std::min(static_cast<uint32_t>(originZ), grid.Rows - 2u), begin, end);
+            testCell(std::min(static_cast<uint32_t>(originX) / stride, (grid.Columns - 2u) / stride),
+                std::min(static_cast<uint32_t>(originZ) / stride, (grid.Rows - 2u) / stride), begin, end);
+            if (residency && !bHit)
+            {
+                // 境界の片側が非常駐でも、共有辺にある隣の常駐セルの三角形を試す。
+                // 無限距離の鉛直レイでは始点と同じ XZ だけを調べる。
+                WalkDda(originX, originZ, directionX, directionZ, stride,
+                    0u, (grid.Columns - 2u) / stride, 0u, (grid.Rows - 2u) / stride,
+                    begin, std::isfinite(end) ? end : begin, testCell);
+            }
         }
         else
         {
@@ -268,9 +358,9 @@ namespace NorvesLib::Core::Rendering::Terrain
                 }
                 const uint32_t firstColumn = column * level.Stride;
                 const uint32_t firstRow = row * level.Stride;
-                return WalkDda(originX, originZ, directionX, directionZ, 1.0,
-                    firstColumn, std::min(firstColumn + level.Stride - 1u, grid.Columns - 2u),
-                    firstRow, std::min(firstRow + level.Stride - 1u, grid.Rows - 2u),
+                return WalkDda(originX, originZ, directionX, directionZ, stride,
+                    firstColumn / stride, std::min(firstColumn + level.Stride - 1u, grid.Columns - 2u) / stride,
+                    firstRow / stride, std::min(firstRow + level.Stride - 1u, grid.Rows - 2u) / stride,
                     intervalBegin, intervalEnd, testCell);
             };
             WalkDda(originX, originZ, directionX, directionZ, level.Stride,
@@ -436,7 +526,8 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
 
         template<typename Grid, typename Visitor>
-        void VisitTriangles(const Grid& grid, const QueryBounds& bounds, const Math::Vector3& origin, Visitor&& visitor)
+        void VisitTriangles(const Grid& grid, const QueryBounds& bounds, const Math::Vector3& origin,
+            const TerrainTileResidency* residency, Visitor&& visitor)
         {
             const double minX = (bounds.MinX - grid.FirstX) / grid.Spacing;
             const double maxX = (bounds.MaxX - grid.FirstX) / grid.Spacing;
@@ -471,6 +562,10 @@ namespace NorvesLib::Core::Rendering::Terrain
                     {
                         for (uint32_t column = beginColumn; column <= endColumn; ++column)
                         {
+                            if (residency && !IsCellResident(grid, residency, column, row))
+                            {
+                                continue;
+                            }
                             // 共有頂点は相対座標を倍精度で作ってから float にし、隣の升目との隙間を避ける。
                             const float x0 = static_cast<float>((grid.FirstX - origin.x) + column * grid.Spacing);
                             const float x1 = static_cast<float>((grid.FirstX - origin.x) + (column + 1u) * grid.Spacing);
@@ -691,7 +786,7 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         template<typename Grid, typename Shape>
         uint32_t OverlapGrid(const Grid& grid, const TerrainHeightField& field, const Shape& shape,
-            Container::VariableArray<Math::GeometryContact>& outContacts)
+            Container::VariableArray<Math::GeometryContact>& outContacts, const TerrainTileResidency* residency)
         {
             if (!IsValid(shape))
             {
@@ -699,7 +794,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             }
             const Math::Vector3 origin = QueryOrigin(shape);
             const Shape local = LocalShape(shape, origin);
-            VisitTriangles(grid, GetBounds(shape), origin, [&](const Math::Triangle& triangle)
+            VisitTriangles(grid, GetBounds(shape), origin, residency, [&](const Math::Triangle& triangle)
             {
                 Math::GeometryContact contact;
                 if constexpr (std::is_same_v<Shape, Math::OBB>)
@@ -823,7 +918,8 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         template<typename Grid, typename Shape>
         bool SweepGrid(const Grid& grid, const TerrainHeightField& field, const Shape& shape,
-            const Math::Vector3& direction, float maxDistance, Math::GeometrySweepHit& outHit)
+            const Math::Vector3& direction, float maxDistance, Math::GeometrySweepHit& outHit,
+            const TerrainTileResidency* residency)
         {
             if (!IsValid(shape) || !IsFinite(direction) || !std::isfinite(maxDistance) || maxDistance < 0.0f)
             {
@@ -836,7 +932,7 @@ namespace NorvesLib::Core::Rendering::Terrain
                 return false;
             }
             Container::VariableArray<Math::GeometryContact> contacts;
-            if (OverlapGrid(grid, field, shape, contacts) > 0)
+            if (OverlapGrid(grid, field, shape, contacts, residency) > 0)
             {
                 const Math::GeometryContact* deepest = &contacts[0];
                 for (const Math::GeometryContact& contact : contacts)
@@ -880,7 +976,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             bool bHit = false;
             bool bUncertain = false;
             bool bInvalid = false;
-            VisitTriangles(grid, bounds, origin, [&](const Math::Triangle& triangle)
+            VisitTriangles(grid, bounds, origin, residency, [&](const Math::Triangle& triangle)
             {
                 const Math::Vector3 faceNormal = FaceNormal(triangle);
                 Math::GeometrySweepHit candidate = SweepTriangle(local, triangle, direction, maxDistance, settings);
@@ -942,33 +1038,65 @@ namespace NorvesLib::Core::Rendering::Terrain
     uint32_t TerrainHeightField::OverlapSphere(const Math::Sphere& sphere,
         Container::VariableArray<Math::GeometryContact>& outContacts) const
     {
-        outContacts.clear();
-        return m_Grid ? OverlapGrid(*m_Grid, *this, sphere, outContacts) : 0u;
+        return OverlapSphere(sphere, outContacts, nullptr);
     }
 
     uint32_t TerrainHeightField::OverlapCapsule(const Math::Capsule& capsule,
         Container::VariableArray<Math::GeometryContact>& outContacts) const
     {
-        outContacts.clear();
-        return m_Grid ? OverlapGrid(*m_Grid, *this, capsule, outContacts) : 0u;
+        return OverlapCapsule(capsule, outContacts, nullptr);
     }
 
     uint32_t TerrainHeightField::OverlapBox(const Math::OBB& box,
         Container::VariableArray<Math::GeometryContact>& outContacts) const
     {
+        return OverlapBox(box, outContacts, nullptr);
+    }
+
+    uint32_t TerrainHeightField::OverlapSphere(const Math::Sphere& sphere,
+        Container::VariableArray<Math::GeometryContact>& outContacts, const TerrainTileResidency* residency) const
+    {
         outContacts.clear();
-        return m_Grid ? OverlapGrid(*m_Grid, *this, box, outContacts) : 0u;
+        return m_Grid ? OverlapGrid(*m_Grid, *this, sphere, outContacts, ActiveResidency(*m_Grid, residency)) : 0u;
+    }
+
+    uint32_t TerrainHeightField::OverlapCapsule(const Math::Capsule& capsule,
+        Container::VariableArray<Math::GeometryContact>& outContacts, const TerrainTileResidency* residency) const
+    {
+        outContacts.clear();
+        return m_Grid ? OverlapGrid(*m_Grid, *this, capsule, outContacts, ActiveResidency(*m_Grid, residency)) : 0u;
+    }
+
+    uint32_t TerrainHeightField::OverlapBox(const Math::OBB& box,
+        Container::VariableArray<Math::GeometryContact>& outContacts, const TerrainTileResidency* residency) const
+    {
+        outContacts.clear();
+        return m_Grid ? OverlapGrid(*m_Grid, *this, box, outContacts, ActiveResidency(*m_Grid, residency)) : 0u;
     }
 
     bool TerrainHeightField::SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction,
         float maxDistance, Math::GeometrySweepHit& outHit) const
     {
-        return m_Grid && SweepGrid(*m_Grid, *this, sphere, direction, maxDistance, outHit);
+        return SweepSphere(sphere, direction, maxDistance, outHit, nullptr);
     }
 
     bool TerrainHeightField::SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction,
         float maxDistance, Math::GeometrySweepHit& outHit) const
     {
-        return m_Grid && SweepGrid(*m_Grid, *this, capsule, direction, maxDistance, outHit);
+        return SweepCapsule(capsule, direction, maxDistance, outHit, nullptr);
+    }
+
+    bool TerrainHeightField::SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction,
+        float maxDistance, Math::GeometrySweepHit& outHit, const TerrainTileResidency* residency) const
+    {
+        return m_Grid && SweepGrid(*m_Grid, *this, sphere, direction, maxDistance, outHit,
+            ActiveResidency(*m_Grid, residency));
+    }
+
+    bool TerrainHeightField::SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction,
+        float maxDistance, Math::GeometrySweepHit& outHit, const TerrainTileResidency* residency) const
+    {
+        return m_Grid && SweepGrid(*m_Grid, *this, capsule, direction, maxDistance, outHit,
+            ActiveResidency(*m_Grid, residency));
     }
 } // namespace NorvesLib::Core::Rendering::Terrain
