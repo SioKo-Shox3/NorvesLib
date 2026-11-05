@@ -10129,3 +10129,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 StreamingSystem の毎フレームの更新（切り直し・バイトの上限の往復を直す）: 着地(直し 0 回)
 - U5 Engine への組み込みと段 PostTick.Streaming: 着地(直し 0 回)
 - U6 StreamingCellStateMachineTest: 着地(直し 0 回)
+- U7 StreamingBudgetTest と仕上げの verify: 着地(直し 0 回)
