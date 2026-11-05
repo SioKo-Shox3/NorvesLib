@@ -160,6 +160,118 @@ PoseModifierConfigReportはErrorとPathを返す。最上位・modifier・weight
 
 全件の検証と生成に成功した場合だけ、AddModifierで追加した分も含め、Animatorのmodifier群を丸ごと置き換える。空配列は群を空にする。構文・設定・ファイルの読込などで失敗した場合は前の群を保持する。
 
+## ばねの二次運動と首・胸の遅れ
+
+`GetBuiltinPoseModifierTypes` の組み込みの型の表には次の 2 型が登録されている。既定の `order` では足 IK（`FootIK`: 500）の後に掛かり、二次運動を加えてから首・胸の遅れを重ねる。明示した `order` があればそちらを使う。
+
+| type | 実装 | 既定の order |
+|---|---|---:|
+| SpringBone | SpringBoneModifier | 700 |
+| FollowThrough | FollowThroughModifier | 710 |
+
+### SpringBone の設定
+
+`settings` のキーは `chains` と `teleportDistance`。各チェーンのキーと合わせ、数値はすべて有限値でなければならない。区間の丸括弧は端を含まず、角括弧は端を含む。
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `chains` | 必須 | 1 本以上のチェーンの配列 |
+| `teleportDistance` | 1.0 | (0, 1000] m。所有者の 1 フレームの移動の閾値 |
+| `chains[].name` | 必須 | 文字列。同じ設定内のチェーン名は一意 |
+| `chains[].joints` | 必須 | 2 関節以上の名前の配列。根側から先端側へ直接の親子で連続し、別チェーンと関節を共有しない。最初の関節はアニメ姿勢に従う固定の根 |
+| `chains[].stiffness` | 80 | (0, 10000] s^-2 |
+| `chains[].damping` | 8 | [0, 100] s^-1 |
+| `chains[].gravity` | [0, 0, 0] | ワールド空間の加速度 [m/s^2]。3 要素の配列で各成分は [-100, 100] |
+| `chains[].drag` | 0 | [0, 100] s^-1 |
+| `chains[].radius` | 0 | [0, 10] m |
+| `chains[].rotationLimitDeg` | 60 | (0, 180] 度 |
+
+必須キーの欠けは `MissingKey`、型違いは `TypeMismatch`、数値・配列の範囲外、親子の不連続、チェーン間の関節共有は `OutOfRange`、未知の関節名は `UnknownJoint`。未知キーは `UnknownKey`、キーの重複とチェーン名の重複は `DuplicateKey` で拒否する。`PoseModifierConfigReport.Path` は、たとえば `modifiers[0].settings.chains[0].stiffness` のように問題の設定を指す。設定の検証に失敗した場合は前の modifier 群を保つ。
+
+### SpringBone の粒子と姿勢への反映
+
+粒子の位置と速度はワールド空間で保持する。各フレームのアニメ姿勢から求めたワールド位置を目標とするため、所有者の加速に対して先端が遅れ、その後目標へ戻る。`SpringStepAccumulator` による固定サブステップは `h = 1/120` 秒、1 回の `Apply` で最大 4 回。1 ステップ未満の余りは持ち越し、上限後にも 1 ステップ分に近い時間が残れば余り全体を捨てる。直前の評価で捨てた秒数は `GetLastDroppedSeconds` で取得できる。
+
+固定の根以外を、ばね・速度に比例する減衰と抗力・重力・風の加速度で半陰的オイラー積分する。`pAnim` はアニメ姿勢のワールド位置、`p` と `v` は粒子の位置と速度である。
+
+```text
+a = stiffness * (pAnim - p) - (damping + drag) * v + gravity + windAcceleration
+v = v + a * h
+p = p + v * h
+```
+
+各サブステップで、根から先端へ順に親粒子からの距離をアニメ姿勢の骨の長さに拘束し、拘束後の位置で `v = (p - pPrevious) / h` と速度を置き直す。粒子の方向が退化した場合はアニメ姿勢の骨の方向を使う。長さが 0 の骨では親粒子の位置へ戻す。
+
+粒子を `MeshToWorld` の逆変換と `MeshNodeTransform` で角度計算の空間へ戻し、現在の骨の方向から粒子の方向への差を `FromToRotation` で求める。差の角度を `rotationLimitDeg` で切り、単位回転から文脈の重み（0〜1 に制限）で補間して親関節のグローバル回転へ左から重ね、ローカル回転へ戻す。先端の位置を向けるために親の回転を変え、ローカルの並進・スケールは変えない。
+
+初回、`RequestReset` 後、所有者の 1 フレームの移動が `teleportDistance` を超えたとき、または粒子の位置・速度が非有限になったときは、粒子をアニメ姿勢へ、速度と刻みの余りを 0 へ戻す。評価を停止して再開する場合は、呼出側が `RequestReset` を呼ぶ。目標位置や入力、積分途中などで非有限を検出して安全に処理できない場合は、リセットを要求し、有効な入力での次の評価で戻す。回転の反映途中に失敗した場合は書き換えた姿勢も復元する。不正な `DeltaSeconds`（非有限・負値）は `Apply` が拒否する。
+
+重力・風が 0 なら静止した所有者のアニメ姿勢へ収束する。重力が 0 でない場合は、静止してもばねと重力が釣り合う分だけアニメ姿勢から垂れる。v1 では `radius` を受け取るが計算には使わず、球コライダーとの衝突はない。風は `SetWindAcceleration` の入力口だけで、既定は 0。風の場は GR46 の範囲である。
+
+### FollowThrough の設定と角度の追従
+
+`settings` の数値はすべて有限値でなければならない。
+
+| キー | 既定値 | 範囲・条件 |
+|---|---|---|
+| `joints` | 必須 | 1 関節以上の名前の配列。重複せず、根側から先端側へ後の関節が前の関節の子孫になる順。直接の親子でなくてもよい |
+| `head` | 省略時は補償なし | `joints` の最後の関節の子孫の名前 |
+| `frequencyHz` | 2.0（仮） | (0, 30] Hz |
+| `dampingRatio` | 0.7（仮） | (0, 1] |
+| `massScale` | 1.0 | (0, 100] |
+| `heldSlot` | 省略時は保持を参照しない | 指定時は空でない文字列 |
+| `heldMassScale` | 1.0 | (0, 100] |
+| `strength` | 0.25（仮） | [0, 1] |
+
+必須キーの欠けは `MissingKey`、型違いは `TypeMismatch`、範囲外・関節の重複や順序違い・不正な `head` は `OutOfRange`、未知の関節名は `UnknownJoint`。未知キー・重複キーは `UnknownKey`・`DuplicateKey` で拒否する。
+
+関節ごとに `AngularSpring` を持ち、モデル空間のグローバル回転を追う。ここでの回転は「角度の配分」と同じく、メッシュノードの逆変換を掛ける前の空間の回転である。実効の周波数は `frequencyHz / sqrt(massScaleEffective)`。`massScaleEffective` は通常 `massScale` で、所有者の `HoldSlotComponent` にある `heldSlot` の占有数が 0 より大きい間だけ `heldMassScale` を掛ける。保持物の質量の倍率を `HoldSlotComponent` から読むことはなく、設定値を使う。`heldMassScale > 1` なら周波数が下がり、遅れが大きくなる。
+
+ばねの回転とアニメ回転の残差を、`strength` × 文脈の重み（積を 0〜1 に制限）で単位回転から補間し、アニメのグローバル回転へ左から重ねる。実効の重みが 0 のときは姿勢を書き換えず、ビット一致で保つ。`head` を指定すると、そのグローバル回転を補正前のアニメの値へ戻す。胸・首を `joints`、頭を `head` に指定すれば、頭の向きはアニメのまま胸と首だけが遅れる。
+
+### 設定例
+
+次の関節名・チェーン名・保持スロット名は例であり、使用する骨格と保持スロットの定義に合わせる。尾の `TailRoot` → `TailMid` → `TailTip` は直接の親子、`Chest` → `Neck` → `Head` は祖先から子孫の順を表す。
+
+```json
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "type": "SpringBone",
+      "settings": {
+        "teleportDistance": 1.0,
+        "chains": [
+          {
+            "name": "Tail",
+            "joints": ["TailRoot", "TailMid", "TailTip"],
+            "stiffness": 80,
+            "damping": 8,
+            "gravity": [0, 0, 0],
+            "drag": 0,
+            "radius": 0,
+            "rotationLimitDeg": 60
+          }
+        ]
+      }
+    },
+    {
+      "type": "FollowThrough",
+      "settings": {
+        "joints": ["Chest", "Neck"],
+        "head": "Head",
+        "frequencyHz": 2.0,
+        "dampingRatio": 0.7,
+        "massScale": 1.0,
+        "heldSlot": "Hand",
+        "heldMassScale": 2.0,
+        "strength": 0.25
+      }
+    }
+  ]
+}
+```
+
 ## ソケットと保持
 
 SkeletonResourceはSetSockets／ApplySocketsJson／ApplySocketsFileで実行時のソケット定義を置換する。失敗時は旧定義を保持する。名前は一意、親は既存joint、offsetは有限な剛体変換（scale=1、単位Quaternion）。JSONの親は関節名、C++のParentJointは現在のresourceの添字。runtime置換はpose revisionとimmutable cooked hashを変更せず、SetJoints／SetSplitSkeleton／Unloadで定義を更新・破棄する。FindSocket/GetSocketsの借用は置換まで有効。
