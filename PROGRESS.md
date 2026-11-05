@@ -10258,3 +10258,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・物理の危険地帯）。アプリを起動する確かめは無い。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。
 - Notes: 休眠で外れたコライダー自身のコールバックへは End を配送しない（今の配送の規則）。End は有効な側（trigger）にだけ届き、戻したときの Begin は両側に届く。`PhysicsParentDormancyTest` がこの数を固定している。
 - Notes: `HasUnpropagatedActiveChanges` を足すため `Library/Core/Public/Ecs/EcsTransformSystem.h` を paths の外で変えた（照会の関数を 1 つ足しただけ）。`HasUnpropagatedFlagChanges` は呼び手が無くなったが残している。
+- U3 起動引数 --job-workers=<N> でワーカーの数を変えられるようにする: 着地(直し 0 回)
