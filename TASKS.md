@@ -10437,3 +10437,20 @@
 ---
 
 補足（書式の外）: この場はプランモードでしたが、使える道具に ExitPlanMode と AskUserQuestion がありませんでした。洗い出し役の契約どおり、ファイルは書き換えず、上の判断の文章だけを返しています。
+
+## G5-GR42-GRASS-FIELD-ASSET-P1: GrassFieldComponent に草原の登録と解除の成功を示すログを足す
+- status: todo
+- done-when: `GrassFieldComponent::BeginPlay` は今、失敗した場合だけ `GRASS_FIELD_COMPONENT_SKIPPED` を出し、`RegisterGrassField` が成功しても何も出さない。`EndPlay` も何も出さない。そこで 2 つのログを足す。1 つ目は、`RegisterGrassField` が成功して `PublishRenderData` した直後に出す `LOG_INFO("GRASS_FIELD_COMPONENT_REGISTERED path=%s chunks=%u species=%u ground=terrain|flat ...")`。2 つ目は、`EndPlay` で実際に解除したとき(`m_RegisteredEngine && m_Field` の分岐)だけ出す `LOG_INFO("GRASS_FIELD_COMPONENT_UNREGISTERED path=%s ...")`。どちらも機械が照合するキーは英語、説明文は日本語にする。新しい試験は足さない。ログは `Logging/LogMacros.h` の既存のマクロを使い、Release では出ない今の扱いのままにする。Game の Debug ビルドが通ること。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `git grep -n -e "GRASS_FIELD_COMPONENT_REGISTERED" -e "GRASS_FIELD_COMPONENT_UNREGISTERED" -- Library/Core/Private/Component/GrassFieldComponent.cpp`
+- paths: Library/Core/Private/Component/GrassFieldComponent.cpp, PROGRESS.md
+- from: G5-GR42-GRASS-FIELD-ASSET
+
+## G5-GR42-GRASS-FIELD-ASSET-P2: AssetManifestTest と GrassFieldQueryTest を、草の場を入れた後のソースからビルドし直した実行ファイルで通す
+- status: todo
+- done-when: 元のタスクの verify は `AssetManifestTest` と `GrassFieldQueryTest` を走らせるが、これらの実行ファイル(`AssetSystemTest` と `MathGeometryTest`)をビルドしていない。そのため、新しい build では Not Run になり、古い build では元のタスクの変更(`Public/Vegetation/GroundHeightSource.h` の変更や Asset の追加)を含まない古い実行ファイルで通っていた恐れがある。このタスクでは、`AssetSystemTest` と `MathGeometryTest` を今の統合ブランチのソースからビルドし直し、2 本の試験を走らせて通す。落ちたときは、元のタスクの変更が原因ならその側を直し、試験の期待値は書き直さない。実行の結果(通った試験の名前と件数)を PROGRESS.md に記録する。
+- verify: `cmake --build build --config Debug --target AssetSystemTest -- /m:1`
+- verify: `cmake --build build --config Debug --target MathGeometryTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(AssetManifestTest|GrassFieldQueryTest)$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Library/Core/Private/Asset, Library/Core/Private/Vegetation, Library/Core/Public/Vegetation, Test/Core/Asset/AssetManifestTest.cpp, Test/Core/Vegetation/GrassFieldQueryTest.cpp, PROGRESS.md
+- from: G5-GR42-GRASS-FIELD-ASSET
