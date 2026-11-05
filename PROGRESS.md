@@ -9760,3 +9760,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U10 SceneFileRoundTripTest の草原の往復と旧ファイルを今の枠で入れ直す: 着地(直し 0 回)
 - U11 grassland の草の場を今の枠で入れ直す: 着地(直し 0 回)
 - U8 受入れの記録と全体の確かめ: 着地(直し 1 回)
+
+## 2026-11-05 G5-GR42-GRASS-FIELD-ASSET（run 20261105-093025 の反復 2、完了）
+- Done: NVGFLD v0（`Asset/CookedGrassFieldFormat.h`・`CookedGrassFieldLoader.cpp`・決定的な書き出し、`Docs/Architecture/NVGFLDv0.md`）と拒否の理由を返す読み込み。AssetKind::World の entry type `Gfd0`・format `nvgfld.v0` で解決。AssetCook の `--kind world --format nvgfld.v0`（配置の JSON + PNG 群か NVTRN の GRS0/MSK0 から焼く）と照合のコマンド。`GrassFieldComponent`（BeginPlay で読んで Vegetation と RenderWorld へ登録、EndPlay で外す）と TerrainSystem を引く地面の取り出し口。grassland に GRS0 から焼いた草の場（256 チャンク、NVGFLD 5,255,424 B）。試験 `CookedGrassFieldTest`・`AssetCookGrassFieldSmoke`・`SceneFileRoundTripTest` の草原の往復と旧ファイル。1 km² 相当の大きさを `Docs/RenderingValidation/GrassFieldAcceptance.md` に記録（cook 済み 21,020,928 B、CPU の常駐の計算できる部分 約 40.0 MiB。ゲートにしない）。
+- 証拠: `.harness/runs/20261105-093025/G5-GR42-GRASS-FIELD-ASSET-U8-verify.txt`（AssetCook・CookedMeshTest・SceneSerializerTest・Game の Debug ビルド exit 0、AssetManifestTest と GrassFieldQueryTest の実行ファイルのため AssetSystemTest・MathGeometryTest もビルド、ctest 6 件 100% Passed）。
+- Next: ランナーの評価者の反証（アセットロード・Public API の危険地帯）。起動の確かめは後回し: grassland を `--scene=grassland --window-background` で開き、草の場の登録・EndPlay での解除と再入場・地形との高さの整合・見た目を見る。
+- Notes: 要起票: GrassFieldComponent・Vegetation に草の場の登録・解除の成功を示すログが無く、起動の確かめで成功を観測できない（失敗のログが無いことしか見えない）。
