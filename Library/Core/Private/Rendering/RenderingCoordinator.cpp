@@ -4591,6 +4591,15 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
+        // 容量を保ったまま、登録順に値を写す。
+        packet.Scene.SkyOccluders.clear();
+        packet.Scene.SkyOccluders.reserve(m_SkyOccluders.size());
+        for (const SkyOccluderEntry& entry : m_SkyOccluders)
+        {
+            packet.Scene.SkyOccluders.push_back(entry.Proxy);
+        }
+        packet.Scene.SkyOcclusionRevision = m_SkyOcclusionRevision;
         packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.bStaticEnvironmentUniform = m_bStaticEnvironmentUniform;
@@ -6605,6 +6614,65 @@ namespace NorvesLib::Core::Rendering
         const VolumetricFogParameters& parameters)
     {
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
+    {
+        const SkyOcclusionParameters sanitized = SanitizeSkyOcclusionParameters(parameters);
+        if (!AreEqualSkyOcclusionParameters(m_SkyOcclusion, sanitized))
+        {
+            m_SkyOcclusion = sanitized;
+            m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+        }
+    }
+
+    SkyOccluderHandle RenderingCoordinator::RegisterSkyOccluder(const SkyOccluderProxy& proxy)
+    {
+        const SkyOccluderProxy sanitized = SanitizeSkyOccluderProxy(proxy);
+        if (!IsValidSkyOccluderProxy(sanitized) || m_NextSkyOccluderHandle == 0u)
+        {
+            return 0u;
+        }
+        const SkyOccluderHandle handle = m_NextSkyOccluderHandle;
+        m_SkyOccluders.push_back(SkyOccluderEntry{handle, sanitized});
+        ++m_NextSkyOccluderHandle;
+        m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+        return handle;
+    }
+
+    void RenderingCoordinator::UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy)
+    {
+        const SkyOccluderProxy sanitized = SanitizeSkyOccluderProxy(proxy);
+        if (!IsValidSkyOccluderProxy(sanitized))
+        {
+            UnregisterSkyOccluder(handle);
+            return;
+        }
+        for (SkyOccluderEntry& entry : m_SkyOccluders)
+        {
+            if (entry.Handle == handle)
+            {
+                if (!AreEqualSkyOccluderProxy(entry.Proxy, sanitized))
+                {
+                    entry.Proxy = sanitized;
+                    m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+                }
+                return;
+            }
+        }
+    }
+
+    void RenderingCoordinator::UnregisterSkyOccluder(SkyOccluderHandle handle)
+    {
+        for (auto it = m_SkyOccluders.begin(); it != m_SkyOccluders.end(); ++it)
+        {
+            if (it->Handle == handle)
+            {
+                m_SkyOccluders.erase(it);
+                m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+                return;
+            }
+        }
     }
 
     void RenderingCoordinator::SetStaticEnvironmentIntensityScale(float scale)
