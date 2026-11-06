@@ -10345,3 +10345,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR93-MARKERS-SNAP): 束の試験のソースをビルドの最中に書き換えると、obj がソースより新しい時刻のまま古い中身を持ち、増分ビルドが作り直さないことがある（ソースの更新時刻を今にすると直る）。Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` がパスに化けて MSB1008 になる。
 - U1 StreamingSystem にスコープの単位でセルを止めて結合し返す口 StopAndJoin(scopeId) を足す: 着地(直し 0 回)
 - U2 GameModeScope に TrackAsync(IGameModeAsyncWork&) と TrackStreaming を足し、Cleanup の先頭で止めて結合し、末尾で返しそびれを返す: 着地(直し 0 回)
+- U3 GameModeScopeAsyncTest を足し、タスクの verify を回す: 着地(直し 0 回)
