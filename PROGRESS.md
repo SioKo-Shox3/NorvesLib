@@ -10316,3 +10316,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。散布・地形からの登録の結線は G12-GR47-SCATTER-COLLIDERS・G12-GR40-WORLD-PAYLOADS。
 - Notes: 静的の木のレイは上の木→部分木を手前から訪れて最近接の距離を群の間で引き継いで打ち切るが、葉の中の項目を厳密な入口順には並べないため、群を厳密な入口順に訪れる保証はない（結果は打ち切りの余白と同距離の規則で決まる）。群が非常に多いときの時間は未計測（G12-GR09-SCALE-MEASURE で測る）。
 - Notes: ステップの外で同じ鍵へ続けて操作したときは保留分を置き換えて即時に当てる。試験は B の部分木の写しの同一性を直接は比べず、作り直しの回数（統計）と B への Raycast の当たりで確かめている（部分木の型が .cpp の中にあり窓口から見えないため）。
+
+## 2026-11-06 G12-GR09-DETACHED-COLLIDERS（run 20261106-092851 の反復 1）
+- Done: 前回の反復で実装・試験は着地済み。評価者が枠切れ（429）で未実施だったため status が doing に戻っていた。コードは変えず、着地した HEAD で ctest 10 件を回し直して 100% Passed（`.harness/runs/20261106-092851/ctest-G12-GR09-DETACHED-COLLIDERS.txt`）を確かめ、done に戻した。
+- Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。
