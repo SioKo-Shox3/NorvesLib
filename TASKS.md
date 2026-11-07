@@ -10569,3 +10569,12 @@
 補足(判断の根拠): レポートの側の写しは、元のタスクのブランチ `task/G2-GR96-MODEL-ANALYSIS` にしかありません(`TextureAssetSetCook.cpp` の `limits.MaxJoints = 256` と `StaticRootFrame256`、`CookOutputPackage.cpp` の `actual.Profile == 3 ? 256 : 128`)。統合ブランチにはまだ入っていないので、after に元のタスクを置きました。
 
 写しがずれても試験は落ちません。cook の設定だけが変わると、レポートの decode は失敗して null を出すか、cook と違う decode で求めた「縮約で失った重み」を出します。どちらも黙って起きます。元のタスクは「cook 時の値」「engine が実際に使う値」を出すことを求めているので、その目的に要る直しと判断して TASK にしました。
+
+## SCN-GOLDEN-INDOOR-DIFF-1107: 統合ブランチで RenderingGoldenIndoorVulkanTest が 10 画素・raw 最大 1 の差で落ちる原因のコミットを突き止め、再承認か直しで通す
+- status: todo
+- done-when: 統合ブランチ feature/scene-launcher の HEAD で、基準画像の検査 4 本(Indoor・Outdoor・IndoorGBufferFallback・OutdoorGBufferFallback)がすべて Passed。手順は次のとおり。(1) HEAD で Indoor を回し、10 画素の差(mean_flip 0.000013729・raw 最大 1・max_flip の座標 (41,118))が出るかを確かめる。(2) 出るなら、Indoor が最後に Passed だった再承認 816957d8 から HEAD までのうち、`Assets/Shaders`・`Library/Core/Source/Rendering` を触ったコミット(22 件)を二分探索し、差を入れたコミットを見つける。各段の判定は、Debug の `RenderingGoldenImageTest` のビルドと Indoor の ctest だけで行う。(3) 差がそのコミットの意図した変更だけで生じ、物理的な期待値に近い向きなら、`Docs/RenderingValidation/GoldenBaselines.md` の手順で Indoor と IndoorGBufferFallback を再承認する(差が出ていれば Outdoor 系も同じく)。新しい SHA-256 を GoldenBaselines.md に書き、差を入れたコミット・差の分類(再承認か直しか)・根拠を `R1Acceptance.md` に節として書き、根拠をコミット本文にも書く。(4) 意図しない差で、直しが paths の外のコードに要るなら、原因のコミットと箇所を R1Acceptance.md に書き、PROGRESS.md の Notes に `要起票:` で直しを残す(基準画像は動かさない)。
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- paths: Test/Core/Rendering/Baselines/RenderingValidation/Indoor.png, Test/Core/Rendering/Baselines/RenderingValidation/IndoorGBufferFallback.png, Test/Core/Rendering/Baselines/RenderingValidation/Outdoor.png, Test/Core/Rendering/Baselines/RenderingValidation/OutdoorGBufferFallback.png, Docs/RenderingValidation/GoldenBaselines.md, Docs/RenderingValidation/R1Acceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD-P4
