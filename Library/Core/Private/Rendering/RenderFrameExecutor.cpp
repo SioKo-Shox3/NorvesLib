@@ -126,6 +126,45 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            if (request.Packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::GBufferNormal)
+            {
+                auto* gbufferPass = dynamic_cast<GBufferPass*>(
+                    primarySceneView->FindPass("GBufferPass"));
+                if (gbufferPass)
+                {
+                    SetFrameCaptureSource(
+                        result.CaptureSources.GBufferNormal,
+                        gbufferPass->GetNormalTexturePtr(),
+                        request.Packet->FrameNumber);
+                }
+            }
+
+            if (request.Packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::GBufferMaterial)
+            {
+                auto* gbufferPass = dynamic_cast<GBufferPass*>(
+                    primarySceneView->FindPass("GBufferPass"));
+                if (gbufferPass)
+                {
+                    SetFrameCaptureSource(
+                        result.CaptureSources.GBufferMaterial,
+                        gbufferPass->GetMaterialTexturePtr(),
+                        request.Packet->FrameNumber);
+                }
+            }
+
+            if (request.Packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::GBufferEmissive)
+            {
+                auto* gbufferPass = dynamic_cast<GBufferPass*>(
+                    primarySceneView->FindPass("GBufferPass"));
+                if (gbufferPass)
+                {
+                    SetFrameCaptureSource(
+                        result.CaptureSources.GBufferEmissive,
+                        gbufferPass->GetEmissiveTexturePtr(),
+                        request.Packet->FrameNumber);
+                }
+            }
+
             const FrameCaptureSourceKind captureKind = request.Packet->CaptureRequest.SourceKind;
             if (captureKind == FrameCaptureSourceKind::RTGIDiffuseIndirect ||
                 captureKind == FrameCaptureSourceKind::RTGIHistoryAge)

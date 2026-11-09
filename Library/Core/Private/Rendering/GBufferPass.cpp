@@ -402,7 +402,7 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureDesc materialDesc =
             RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
-        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage;
+        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage | RHI::ResourceUsage::TransferSrc;
         m_MaterialHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferMaterial,
             materialDesc,
@@ -413,7 +413,7 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::ShaderResource);
 
         RGTextureDesc emissiveDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
-        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage;
+        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage | RHI::ResourceUsage::TransferSrc;
         m_EmissiveHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferEmissive,
             emissiveDesc,
@@ -1036,10 +1036,14 @@ namespace NorvesLib::Core::Rendering
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
         normalDesc.Usage = normalDesc.Usage | RHI::ResourceUsage::TransferSrc;
         m_NormalTexture = m_Device->CreateTexture(normalDesc);
-        m_MaterialTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
-        m_EmissiveTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"));
+        RHI::TextureDesc materialDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
+        materialDesc.Usage = materialDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_MaterialTexture = m_Device->CreateTexture(materialDesc);
+        RHI::TextureDesc emissiveDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
+        emissiveDesc.Usage = emissiveDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_EmissiveTexture = m_Device->CreateTexture(emissiveDesc);
         RHI::TextureDesc velocityDesc =
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.VelocityFormat, "GBuffer_Velocity");
         velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;
