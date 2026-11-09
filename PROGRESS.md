@@ -10470,3 +10470,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 再接地の本体 RetargetFootPlanting(検出・固定位置・骨盤の補正・二関節 IK・測定)を足す: 着地(直し 1 回)
 - U4 リターゲットと cook に再接地を結線し、Retarget.md を書き直す: 着地(直し 0 回)
 - U5 RetargetCookTest に再接地の (b)(c) を足し、しきい値を確かめる: 着地(直し 0 回)
+- U6 Retarget.md の後脚の解き方と骨盤の補正の限界を今の実装に合わせる: 着地(直し 0 回)
