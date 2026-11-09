@@ -10563,3 +10563,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 照明の定数にシェーディングモデルの係数を足し、P0・P1 の意味を表に書く: 着地(直し 0 回)
 - U2 PaleFlat の GBuffer 書き込みで粗さ 1・金属度 0 にする: 着地(直し 0 回)
 - U3 ShadingModels.glsl の 3 つの口と lighting.frag の ID の分岐: 着地(直し 1 回)
+- U4 GPU 試験 RenderingShadingModelLightingVulkanTest を足す: 着地(直し 0 回)

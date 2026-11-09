@@ -10,6 +10,7 @@
 #include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
+#include "Math/VectorUtils.h"
 #include "Module/ModuleRegistry.h"
 #include "ImGuiModule/IImGuiView.h"
 #include "ImGuiModule/ImGuiModule.h"
@@ -1779,6 +1780,18 @@ namespace
             {
                 return false;
             }
+            if (m_bShadingModelLightingScenario)
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::BackBuffer ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario || m_ExtensionStageScenario.IsEnabled())
+                {
+                    LOG_ERROR("シェーディングモデル照明検証には indoor と BackBuffer を単独で指定してください");
+                    return false;
+                }
+            }
             if (m_bShadingModelScenario)
             {
                 const auto source = GetRunConfig().CaptureSource;
@@ -2005,6 +2018,10 @@ namespace
             {
                 LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
                 return GetFixture().ApplyShadingModelGBufferFixture();
+            }
+            if (m_bShadingModelLightingScenario)
+            {
+                return GetFixture().ApplyShadingModelLightingFixture();
             }
             if (m_ExtensionStageScenario.IsEnabled())
             {
@@ -2275,9 +2292,19 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument == TEXT("--shading-model-scenario=lighting"))
+            {
+                if (m_bShadingModelScenario || m_bShadingModelLightingScenario)
+                {
+                    outFailureReason = TEXT("シェーディングモデルのシナリオが重複しています");
+                    return false;
+                }
+                m_bShadingModelLightingScenario = true;
+                return true;
+            }
             if (argument == TEXT("--shading-model-scenario=gbuffer-paths"))
             {
-                if (m_bShadingModelScenario)
+                if (m_bShadingModelScenario || m_bShadingModelLightingScenario)
                 {
                     outFailureReason = TEXT("シェーディングモデルのシナリオが重複しています");
                     return false;
@@ -2486,6 +2513,10 @@ namespace
             {
                 return EvaluateShadingModelGBufferFrame(frame, reason);
             }
+            if (m_bShadingModelLightingScenario)
+            {
+                return EvaluateShadingModelLightingFrame(frame, reason);
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 return m_ExtensionStageScenario.Evaluate(frame, reason);
@@ -2602,6 +2633,18 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bShadingModelLightingScenario)
+            {
+                renderWorld.SetMainCamera(GetFixture().GetShadingModelLightingCamera());
+                auto sky = MakeDefaultSkyAtmosphereParameters();
+                sky.bEnabled = false;
+                renderWorld.SetSkyAtmosphere(sky);
+                auto fog = MakeDefaultVolumetricFogParameters();
+                fog.bEnabled = false;
+                renderWorld.SetVolumetricFogParameters(fog);
+                renderWorld.SetStaticEnvironmentIntensityScale(0.0f);
+                return;
+            }
             if (m_bShadingModelScenario)
             {
                 renderWorld.SetMainCamera(GetFixture().GetShadingModelGBufferCamera());
@@ -7499,6 +7542,153 @@ namespace
                    EncodeSrgbReference(0.0031309f) == 10u;
         }
 
+        bool EvaluateShadingModelLightingFrame(const CapturedFrame& frame, Core::Container::String& reason)
+        {
+            const bool bBgra = frame.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               frame.Format == RHI::Format::B8G8R8A8_SRGB;
+            const bool bRgba = frame.Format == RHI::Format::R8G8B8A8_UNORM ||
+                               frame.Format == RHI::Format::R8G8B8A8_SRGB;
+            const bool bHardwareFormat = RHI::IsPresentationSrgbFormat(frame.Format);
+            if (!frame.IsSuccess() || frame.RequestId != GetLastAcceptedRequestId() ||
+                frame.Width != ValidationWidth || frame.Height != ValidationHeight ||
+                frame.BytesPerPixel != 4u || (!bBgra && !bRgba) ||
+                frame.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+                frame.Transfer != RHI::PresentationTransfer::SRGB ||
+                frame.bHardwareSrgbEncode != bHardwareFormat ||
+                frame.bShaderSrgbEncode == bHardwareFormat ||
+                frame.RowPitchBytes < frame.Width * 4u ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("シェーディングモデル照明検証の BackBuffer の形式・符号化・保存領域が不正です");
+                return false;
+            }
+            struct RoiSample
+            {
+                double Luma = 0.0;
+                int32_t X = 0;
+                int32_t Y = 0;
+                float NdotL = 0.0f;
+            };
+            const auto camera = GetFixture().GetShadingModelLightingCamera();
+            const Math::Vector3 cameraPosition(camera.PositionX, camera.PositionY, camera.PositionZ);
+            const Math::Vector3 toLight(ShadingModelLightingToLight[0], ShadingModelLightingToLight[1],
+                                       ShadingModelLightingToLight[2]);
+            const float focalPixels = static_cast<float>(frame.Height) * 0.5f /
+                std::tan(camera.FieldOfView * 3.14159265358979323846f / 360.0f);
+            auto sample = [&](uint32_t objectIndex, const Math::Vector3& normal, RoiSample& out) -> bool
+            {
+                const Math::Vector3 center(ShadingModelLightingSpherePositions[objectIndex][0],
+                                           ShadingModelLightingSpherePositions[objectIndex][1], 0.0f);
+                const auto surface = center + normal * ShadingModelLightingSphereRadius;
+                const auto toCamera = cameraPosition - surface;
+                if (Math::VectorUtils::Dot(normal, toCamera) <= 0.0f || toCamera.z <= 0.0f)
+                {
+                    reason = TEXT("シェーディングモデル照明検証の ROI が球の可視面にありません");
+                    return false;
+                }
+                out.X = static_cast<int32_t>(std::lround(static_cast<float>(frame.Width) * 0.5f +
+                    focalPixels * surface.x / toCamera.z));
+                out.Y = static_cast<int32_t>(std::lround(static_cast<float>(frame.Height) * 0.5f -
+                    focalPixels * surface.y / toCamera.z));
+                out.NdotL = Math::VectorUtils::Dot(normal, toLight);
+                if (out.X < 2 || out.Y < 2 || out.X + 2 >= static_cast<int32_t>(frame.Width) ||
+                    out.Y + 2 >= static_cast<int32_t>(frame.Height))
+                {
+                    reason = TEXT("シェーディングモデル照明検証の ROI が BackBuffer の範囲外です");
+                    return false;
+                }
+                for (int32_t y = out.Y - 2; y <= out.Y + 2; ++y)
+                {
+                    for (int32_t x = out.X - 2; x <= out.X + 2; ++x)
+                    {
+                        const size_t offset = static_cast<size_t>(y) * frame.RowPitchBytes +
+                                              static_cast<size_t>(x) * 4u;
+                        // sRGB の符号値を線形化せず、0〜255 のまま Rec.709 の重みで平均する。
+                        out.Luma += 0.2126 * frame.Pixels[offset + (bBgra ? 2u : 0u)] +
+                                    0.7152 * frame.Pixels[offset + 1u] +
+                                    0.0722 * frame.Pixels[offset + (bBgra ? 0u : 2u)];
+                    }
+                }
+                out.Luma /= 25.0;
+                return true;
+            };
+            auto halfNormal = [&](uint32_t index)
+            {
+                const Math::Vector3 center(ShadingModelLightingSpherePositions[index][0],
+                                           ShadingModelLightingSpherePositions[index][1], 0.0f);
+                auto normal = Math::VectorUtils::Normalize(toLight +
+                    Math::VectorUtils::Normalize(cameraPosition - center));
+                // 球の中心ではなく、鏡面の表面点での視線から半ベクトルを求める。
+                for (uint32_t iteration = 0u; iteration < 12u; ++iteration)
+                {
+                    normal = Math::VectorUtils::Normalize(toLight + Math::VectorUtils::Normalize(
+                        cameraPosition - center - normal * ShadingModelLightingSphereRadius));
+                }
+                return normal;
+            };
+            const Math::Vector3 shadowNormal(-0.8f, 0.0f, 0.6f);
+            const Math::Vector3 perpendicular(-toLight.z, 0.0f, toLight.x);
+            const auto boundaryNormal = perpendicular * std::sqrt(0.99f) - toLight * 0.1f;
+            RoiSample bright[2], shadow[2], boundary[2], eye[3];
+            for (uint32_t index = 0u; index < 2u; ++index)
+            {
+                if (!sample(index, halfNormal(index), bright[index]) ||
+                    !sample(index, shadowNormal, shadow[index]) ||
+                    !sample(index * 2u, boundaryNormal, boundary[index]))
+                {
+                    return false;
+                }
+            }
+            for (uint32_t index = 0u; index < 3u; ++index)
+            {
+                if (!sample(index + 3u, halfNormal(index + 3u), eye[index]))
+                {
+                    return false;
+                }
+            }
+            constexpr double paleMaximumDelta = 2.0;
+            constexpr double defaultMinimumDelta = 20.0;
+            const double paleDelta = std::abs(bright[1].Luma - shadow[1].Luma);
+            const double defaultDelta = bright[0].Luma - shadow[0].Luma;
+            const bool bPalePassed = paleDelta <= paleMaximumDelta &&
+                bright[1].Luma > paleMaximumDelta && bright[1].Luma < 253.0 &&
+                shadow[1].Luma > paleMaximumDelta && shadow[1].Luma < 253.0;
+            const bool bDefaultPassed = defaultDelta >= defaultMinimumDelta;
+            const bool bFurPassed = boundary[1].Luma > boundary[0].Luma;
+            const bool bEyePassed = eye[0].Luma < eye[1].Luma && eye[1].Luma < eye[2].Luma;
+            auto printRoi = [](const char* object, const char* roi, const RoiSample& value, bool bPassed)
+            {
+                std::cout << "シェーディングモデル照明検証 object=" << object << " roi=" << roi
+                          << " luma=" << value.Luma << " encoding=sRGB-0..255 weights=Rec.709"
+                          << " roi_center=" << value.X << "," << value.Y << " pixels=25 n_dot_l=" << value.NdotL
+                          << " result=" << (bPassed ? "PASS" : "FAIL") << "\n";
+            };
+            printRoi("DefaultLit", "bright", bright[0], bDefaultPassed);
+            printRoi("DefaultLit", "shadow", shadow[0], bDefaultPassed);
+            printRoi("PaleFlat", "bright", bright[1], bPalePassed);
+            printRoi("PaleFlat", "shadow", shadow[1], bPalePassed);
+            printRoi("DefaultLit", "boundary", boundary[0], bFurPassed);
+            printRoi("Fur", "boundary", boundary[1], bFurPassed);
+            printRoi("Eye-P0=0", "specular", eye[0], bEyePassed);
+            printRoi("Eye-P0=0.5", "specular", eye[1], bEyePassed);
+            printRoi("Eye-P0=1", "specular", eye[2], bEyePassed);
+            std::cout << "シェーディングモデル照明判定 object=PaleFlat delta=" << paleDelta
+                      << " maximum=" << paleMaximumDelta << " range=(2,253) result=" << (bPalePassed ? "PASS" : "FAIL") << "\n";
+            std::cout << "シェーディングモデル照明判定 object=DefaultLit delta=" << defaultDelta
+                      << " minimum=" << defaultMinimumDelta << " result=" << (bDefaultPassed ? "PASS" : "FAIL") << "\n";
+            std::cout << "シェーディングモデル照明判定 object=Fur boundary_gain=" << boundary[1].Luma - boundary[0].Luma
+                      << " minimum_exclusive=0 result=" << (bFurPassed ? "PASS" : "FAIL") << "\n";
+            std::cout << "シェーディングモデル照明判定 object=Eye gains=" << eye[1].Luma - eye[0].Luma
+                      << "," << eye[2].Luma - eye[1].Luma
+                      << " minimum_exclusive=0 result=" << (bEyePassed ? "PASS" : "FAIL") << "\n";
+            if (!(bPalePassed && bDefaultPassed && bFurPassed && bEyePassed))
+            {
+                reason = TEXT("シェーディングモデル照明の明暗差・境目の拡散・鏡面の狭義単調増加の契約を満たしません");
+                return false;
+            }
+            return true;
+        }
+
         FrameCaptureSourceKind GetShadingModelCaptureSource() const
         {
             constexpr FrameCaptureSourceKind sources[] = {
@@ -7623,6 +7813,7 @@ namespace
             return m_ShadingModelCaptureIndex < 2u || m_bShadingModelCapturesPassed;
         }
 
+        bool m_bShadingModelLightingScenario = false;
         uint32_t m_ShadingModelCaptureIndex = 0u;
         bool m_bShadingModelCapturesPassed = true;
         bool m_bShadingModelFirstFrameLogged = false;

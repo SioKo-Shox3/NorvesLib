@@ -3215,6 +3215,90 @@ namespace NorvesLib::Test::RenderingValidation
     }
 
 
+    bool RenderingValidationSceneFixture::ApplyShadingModelLightingFixture() const
+    {
+        using namespace Core::Rendering;
+        if (m_pWorld == nullptr || m_pResources == nullptr)
+        {
+            return false;
+        }
+        // 固定ステップの見張り役以外を止め、既存の光源も除く。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+        }
+        auto* lightEntity = m_pWorld->SpawnEntity();
+        if (lightEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(lightEntity);
+        auto* light = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(lightEntity);
+        if (light == nullptr || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+        {
+            return false;
+        }
+        light->SetLightDirection(-ShadingModelLightingToLight[0], -ShadingModelLightingToLight[1],
+                                 -ShadingModelLightingToLight[2]);
+        light->SetLightColor(1.0f, 1.0f, 1.0f);
+        light->SetIntensity(1000.0f);
+        light->SetCastShadows(false);
+
+        constexpr ShadingModel models[] = {ShadingModel::DefaultLit, ShadingModel::PaleFlat,
+            ShadingModel::Fur, ShadingModel::Eye, ShadingModel::Eye, ShadingModel::Eye};
+        for (uint32_t index = 0u; index < 6u; ++index)
+        {
+            MaterialCreateData data;
+            data.Shading = models[index];
+            data.ShadingParams[0] = index >= 3u ? static_cast<float>(index - 3u) * 0.5f : 0.0f;
+            data.Metallic = 0.0f;
+            data.Roughness = index >= 3u ? 0.3f : (index == 1u ? 1.0f : 0.5f);
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                data.BaseColor[channel] = 0.5f;
+            }
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(ShadingModelLightingSpherePositions[index][0],
+                                ShadingModelLightingSpherePositions[index][1], 0.0f);
+            entity->SetScale(ShadingModelLightingSphereRadius, ShadingModelLightingSphereRadius,
+                             ShadingModelLightingSphereRadius);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(SphereHandle);
+            mesh->SetMaterial(0u, material);
+            // ラスタのベースカラーはインスタンスの色から渡す。
+            mesh->SetCustomData(0u, 0.5f);
+            mesh->SetCustomData(1u, 0.5f);
+            mesh->SetCustomData(2u, 0.5f);
+            mesh->SetCustomData(3u, 1.0f);
+            mesh->SetCastShadow(false);
+        }
+        return true;
+    }
+
+    Core::Rendering::CameraProxy RenderingValidationSceneFixture::GetShadingModelLightingCamera() const
+    {
+        // 望遠寄りにして左右の球の視線差を抑え、影側の ROI も輪郭から離す。
+        auto camera = BuildLookAtCamera(Math::Vector3(0.0f, 0.0f, 30.0f), Math::Vector3::Zero,
+                                        ValidationWidth, ValidationHeight);
+        camera.FieldOfView = 22.0f;
+        return camera;
+    }
+
     bool RenderingValidationSceneFixture::ApplyShadingModelGBufferFixture() const
     {
         using namespace Core::Rendering;

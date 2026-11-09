@@ -931,6 +931,9 @@ set_tests_properties(RenderingShadingModelGBufferVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
+register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 register_rendering_gpu_test(
