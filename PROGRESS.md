@@ -10516,3 +10516,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）。16fps の動画由来の素材を通すときは報告の `foot_contacts` で検出の外れを見る
 - Notes: 骨盤は全脚に共通で下げるので、下げたコマの遊脚の足先は地面より下がることがある（比 2.0 の試験の入力で `foot_penetration_m` 0.54 m）。量は報告に出て `report.max_foot_penetration_m` で cook を止められる
 - Notes: 再接地の測定は cook のモーション整理（`ApplyRigMotionCleanup`）とクリップ最適化の前の値。後脚の中足は「元の相対回転」を局所でなくワールドの向きで保つ（局所で保つ反復は届かないコマが残ったため）
+- U1 profile にロールの語彙の表を足し、humanoid_v1 を読めるようにする: 着地(直し 0 回)
