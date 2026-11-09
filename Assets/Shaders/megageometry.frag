@@ -224,8 +224,8 @@ void main()
     uint id = uint(mvp.vtFeedbackParams.w + 0.5);
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
-    // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = GBufferEncodeMaterial(textureSamples.Material, params.x);
+    // 視差補正済みの UV で標本した材質値をシェーディングモデルに応じて P0 と書く。
+    outMaterial = GBufferEncodeMaterialForShadingModel(textureSamples.Material, params.x, id);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveColor.rgb,
