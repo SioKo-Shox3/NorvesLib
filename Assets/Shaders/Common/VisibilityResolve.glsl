@@ -66,6 +66,7 @@
 
 #define VIS_RECORD_TABLE_SET 0
 #define VIS_RECORD_TABLE_BINDING 1
+#include "Common/GBufferEncoding.glsl"
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
@@ -173,7 +174,7 @@ const uint VIS_TILE_FLAG_ORM = 1u;     // ORM の 1 枚が metallicTexture の�
 const uint VIS_TILE_FLAG_SPARSE = 2u;  // 張ったテクスチャに sparse（VT）が 1 枚でもある
 const uint VIS_TILE_FLAG_TERRAIN = 4u; // 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと tileParams.terrain を使う）
 const uint VIS_TILE_FLAG_TERRAIN_SURFACE = 8u; // 地形の面（混ぜ合わせの無い灰色の地形を含む。法線の A に地形の受け手を書く）
-const uint VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u; // 太陽の影を起伏に詰める地形の面（荒野。法線の A に 2 を書く）
+const uint VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u; // 太陽の影を起伏に詰める地形の面（荒野。地形と影の両方の受け手の印を立てる）
 
 // MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
 layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
@@ -240,7 +241,7 @@ const uint VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL = 1u;
 const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
 // MegaGeometry の区間の材質。ラスタの MegaGeometryPass は等方の Linear のサンプラーで標本し、粗さが無いときは白（1）を張る
 const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
-// 鏡面の無い純ランバートの材質。GBuffer の材質の A に 1 を書く（gbuffer.frag と同じ印）
+// 鏡面の無い純ランバートの材質。GBuffer の法線の A に受け手の印を書く（gbuffer.frag と同じ印）
 const uint VIS_MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
 // 地形の面の材質（MegaTerrainBlend::IsTerrainSurface。混ぜ合わせの無い灰色の地形も含む）。撮影の AOV の地形の印に使う
 const uint VIS_MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
@@ -557,7 +558,7 @@ struct VisMaterialSurface
     vec4 albedo;     // rgb = インスタンスの色 × アルベド、a = アルベドのテクスチャの α
     vec3 normal;     // 法線マップを適用したワールド法線
     vec3 material;   // 金属度・粗さ・AO
-    float terrain;   // 地形の受け手なら 1、影を起伏に詰める地形の受け手なら 2（法線の A に書く。lighting.frag の影の余裕・ずらしを変える）
+    uint receiverFlags; // 地形などの受け手の印（材質 ID と合わせて法線の A に書く）
 };
 
 // 8bit の 1x1 テクスチャの値（ラスタは材質のスカラー値を 1x1 の UNORM テクスチャにして張る）
@@ -573,7 +574,7 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
     VisMaterialSurface surface;
     surface.albedo = vec4(objectColor, 1.0);
     surface.normal = resolved.normal;
-    surface.terrain = 0.0;
+    surface.receiverFlags = 0u;
     const float metallic = (bHasMaterial && entry.scalars.x >= 0.0) ? VisQuantize8(entry.scalars.x) : 0.0;
     // 粗さの既定は、手続き・スキニング（GBufferPass）が中間灰、MegaGeometry（MegaGeometryPass）が白
     const bool bMegaGeometry = bHasMaterial && (entry.header.x & VIS_MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
@@ -738,9 +739,13 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
     surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
-    surface.terrain = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW) != 0u                    ? 2.0
-                      : bTerrain || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u ? 1.0
-                                                                                             : 0.0;
+    surface.receiverFlags = bTerrain || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u
+                                ? GBUFFER_RECEIVER_FLAG_TERRAIN
+                                : 0u;
+    if ((tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW) != 0u)
+    {
+        surface.receiverFlags |= GBUFFER_RECEIVER_FLAG_TERRAIN | GBUFFER_RECEIVER_FLAG_TIGHT_TERRAIN_SHADOW;
+    }
     return surface;
 }
 #endif
@@ -812,7 +817,7 @@ void main()
         surface.albedo = vec4(debugView == RESOLVE_DEBUG_CLUSTERS ? ClusterDebugColor(payload) : LODLevelDebugColor(payload), 1.0);
         surface.normal = resolved.normal;
         surface.material = vec3(0.0, 1.0, 1.0);
-        surface.terrain = 0.0;
+        surface.receiverFlags = 0u;
     }
 #ifdef NORVES_VISRESOLVE_TILES
     // 表から引ける材質の dispatch だけがテクスチャを束ねている（引けない材質の番号は定数の面）
@@ -827,15 +832,16 @@ void main()
     }
 
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
-    imageStore(normalImage, ivec2(pixel), vec4(surface.normal, surface.terrain));
     const bool bDiffuseOnly = bHasMaterial && !bDebugView && (materialEntry.header.x & VIS_MATERIAL_FLAG_DIFFUSE_ONLY) != 0u;
-    imageStore(materialImage, ivec2(pixel), vec4(surface.material, bDiffuseOnly ? 1.0 : 0.0));
+    const uint receiverFlags = surface.receiverFlags | (bDiffuseOnly ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u);
+    imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, receiverFlags));
+    imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterial(surface.material, 0.0));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
     const vec3 emissive = (bHasMaterial && !bDebugView)
                               ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a, params.frame.x)
                               : vec3(0.0);
-    imageStore(emissiveImage, ivec2(pixel), vec4(emissive, 1.0));
+    imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, 0.0));
     if ((params.screen.z & RESOLVE_FLAG_GEOMETRIC_NORMAL) != 0u)
     {
         // 面の法線は 3 頂点の辺の外積（補間の法線や法線マップを含まない形そのもの）。巻きの向きに依らず頂点の法線の側へ向け、

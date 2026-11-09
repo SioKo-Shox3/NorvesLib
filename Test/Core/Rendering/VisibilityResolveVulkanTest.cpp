@@ -1427,8 +1427,8 @@ namespace
                 const ReferenceTriangle& triangle = scene.References[ref.ReferenceIndex];
                 ++counters.PerRecordPixels[triangle.RecordNumber];
                 const VisibilityBuffer::MaterialEntry& material = scene.Materials[triangle.Material];
-                // 発光は 色度 × 輝度 × プリエクスポージャ を 65504 で頭打ちにした値（α = 1）。fp16 の丸めぶんの相対誤差を許す
-                bool bEmissiveOk = HalfToFloat(emissive[3]) == 1.0f;
+                // 発光は 色度 × 輝度 × プリエクスポージャ を 65504 で頭打ちにした値（P1 = 0）。fp16 の丸めぶんの相対誤差を許す
+                bool bEmissiveOk = HalfToFloat(emissive[3]) == 0.0f;
                 for (int channel = 0; channel < 3; ++channel)
                 {
                     const double expected = std::min(static_cast<double>(material.Emissive[channel]) * material.Emissive[3] *
@@ -1487,7 +1487,7 @@ namespace
         Expect(badMaterial == 0, "Material は材質の定数（金属度 0・粗さ 128/255・AO 1）でなければならない");
         Expect(badNormal == 0, "Normal は補間して正規化したワールド法線でなければならない");
         Expect(badVelocity == 0, "Velocity は前のフレームの頂点から求めた (現在の NDC - 前の NDC) * 0.5 でなければならない");
-        Expect(badEmissive == 0, "Emissive は 色度 × 輝度 × プリエクスポージャ（65504 で頭打ち、α = 1）でなければならない");
+        Expect(badEmissive == 0, "Emissive は 色度 × 輝度 × プリエクスポージャ（65504 で頭打ち、P1 = 0）でなければならない");
         Expect(emissiveClampedPixels > 0, "頭打ちになる発光の画素を含まなければならない（検査が頭打ちを確かめられる場面）");
         Expect(badGuard == 0, "空の画素・引けない ID の画素は何も書かれてはならない");
     }
@@ -2406,7 +2406,7 @@ namespace
                             badColor += bColorOk ? 0u : 1u;
                             megaSameAsBaseline += std::memcmp(albedo, baseline.Albedo.data() + pixel * 4, 4) == 0 ? 1u : 0u;
 
-                            // 法線は幾何の法線（法線マップなし）、材質は (0, 1, 1)、発光は 0（α = 1）
+                            // 法線は幾何の法線（法線マップなし）、材質は (0, 1, 1)、発光と P1 は 0
                             const uint16_t* normal = debug.Normal.data() + pixel * 4;
                             const uint8_t* materialPixel = debug.Material.data() + pixel * 4;
                             const uint16_t* emissive = debug.Emissive.data() + pixel * 4;
@@ -2416,7 +2416,7 @@ namespace
                             const bool bSurfaceOk = normalError <= 2.0e-3 && materialPixel[0] == 0 && materialPixel[1] == 255 &&
                                                     materialPixel[2] == 255 && HalfToFloat(emissive[0]) == 0.0f &&
                                                     HalfToFloat(emissive[1]) == 0.0f && HalfToFloat(emissive[2]) == 0.0f &&
-                                                    HalfToFloat(emissive[3]) == 1.0f;
+                                                    HalfToFloat(emissive[3]) == 0.0f;
                             badSurface += bSurfaceOk ? 0u : 1u;
                         }
                         else
@@ -2451,6 +2451,10 @@ namespace
         const Container::VariableArray<PixelReference> references = ComputeUvScaledReferences(scene, cameras, baseReferences);
         scene.Materials[0].Header[0] |= VisibilityBuffer::MATERIAL_FLAG_MEGA_GEOMETRY;
         scene.Materials[2].Header[0] |= VisibilityBuffer::MATERIAL_FLAG_MEGA_GEOMETRY;
+        // MegaGeometry の定数 AO は材質の表に float のビット列で持つ。未遮蔽の既定値を設定する。
+        const float unoccluded = 1.0f;
+        std::memcpy(&scene.Materials[0].TexturesD[2], &unoccluded, sizeof(unoccluded));
+        std::memcpy(&scene.Materials[2].TexturesD[2], &unoccluded, sizeof(unoccluded));
         GpuScene gpu;
         if (!BuildGpuScene(device, scene, idImage, gpu))
         {
