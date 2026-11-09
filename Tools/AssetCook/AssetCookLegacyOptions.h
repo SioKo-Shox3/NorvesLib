@@ -23,6 +23,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         NorvesLib::Core::AssetImport::ImportSettingsFileOptions ImportSettings;
         bool bSkipIfUnchanged = false;
         NorvesLib::Tools::AssetCook::SkeletalCliOptions SkeletalImport;
+        ClipOptimizeCookOptions ClipOptimize;
         SkeletalRoleFileRequest RoleProfile;
         std::string LogicalPath;
         std::string Kind;

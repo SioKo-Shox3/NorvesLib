@@ -78,6 +78,17 @@ namespace NorvesLib::Tools::AssetCook::Detail
                                    C::AnsiString& error)
     {
         const bool bMesh = request.Format == "nvskel.v1.skinmesh.pnujiw.u32";
+        std::string clipError;
+        if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError))
+        {
+            return Fail(error, clipError.c_str());
+        }
+        if ((request.ClipOptimize.bEnabled || request.ClipOptimize.bAnyLimitGiven ||
+             request.ClipOptimize.bReportGiven || !request.ClipOptimize.ReportPath.empty()) &&
+            !HasRigRetarget(request))
+        {
+            return Fail(error, "リターゲット以外の v1 cook ではクリップ最適化を指定できません");
+        }
         if (!IsRigSingleFormat(request.Format) || request.Kind != (bMesh ? "model" : "animation") ||
             request.EntryTypeText != (bMesh ? "Skm1" : "Anm1") || HasSkeletalRoleFileRequest(request.RoleProfile) ||
             (bMesh && !request.ClipJointNodes.empty()) || request.ClipJointNodes.size() > 256 ||
@@ -100,6 +111,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         legacy.RetargetProfilePath.clear();
         legacy.RetargetSourceClip.clear();
         legacy.RetargetClipName.clear();
+        legacy.ClipOptimize = {};
         SingleAssetCookRequest normalized;
         if (!NormalizeCacheCookRequest(legacy, normalized, error))
         {
@@ -110,6 +122,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         normalized.EntryTypeText = request.EntryTypeText;
         normalized.AssetSetEmission = request.AssetSetEmission;
         normalized.ClipJointNodes = request.ClipJointNodes;
+        normalized.ClipOptimize = request.ClipOptimize;
         if (HasRigRetarget(request))
         {
             std::error_code ec;
