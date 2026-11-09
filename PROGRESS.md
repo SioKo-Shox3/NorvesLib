@@ -10534,3 +10534,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 grass.vert・grass.frag と、頂点の式の CPU の写しを書き、シェーダーのコンパイル試験に足す: 着地(直し 1 回)
 - U4 GrassPass が GBuffer の描き先を宣言し、LOD ごとに DrawIndexedIndirect を 3 回出す: 着地(直し 1 回)
 - U5 GPU の試験 GrassGBufferVulkanTest を足す: 着地(直し 0 回)
+## 2026-11-10 G5-GR43-GRASS-DRAW（run 20261110-060226、完了）
+- Done: `GBufferOverlayTargets`（GBuffer 5 枚＋深度へ Load/Store で重ねる render pass・framebuffer・パイプラインの共通の補助）。FoliagePass はそれを使う純粋な移し替え（深度 LessOrEqual・両面・blend off のまま）。
+- Done: `GrassBladeMesh`（std140 の `GrassDrawConstants` 464 バイト、LOD0=7・LOD1=3・LOD2=1 分割の帯を連結した共有インデックス。値は `(lod << 16) | (row << 1) | side`、頂点の位置の CPU の写し `EvaluateGrassBladeVertex`）と `Assets/Shaders/Grass/{GrassDraw.glsl,grass.vert,grass.frag}`。2 次ベジエ（傾き＋風＋踏み倒しの口 0＋濡れの垂れ）、先端で 0.1 倍に先細り、視線に横向きのとき幅と法線を視線へ寄せる、最小画素幅の広げ（FoliageBatch の既定）、近接 1.2 m から草丈を 0.25 倍まで縮め 0.35 m 未満は 4×4 Bayer で discard、向き・位相・色・傾きはセルのハッシュ（塩 4〜7）から再導出。frag は Albedo.a=1、法線はカメラの側へ向けて上へ 0.35 寄せる、粗さは濡れで WetRoughness へ、AO は根元 0.35→先端 1、velocity は gbuffer.frag と同じ式で前の時刻・前のカメラで再評価。
+- Done: `GrassDrawGpu`（GrassPass.h）と GrassPass の描画。草があるときは GBuffer 5 枚と深度を宣言し、生成の後に LOD ごとの記述子（ブレードの SSBO を LodBase×16 の offset で束ねる）で `DrawIndexedIndirect(args, lod*20, 1, 20)` を 3 回（頂点入力なし・cullMode None・depth Less/Write）。記録バッファは描画の前後で ShaderResource↔GenericRead（頂点シェーダーの段を含めるため）。全体の濡れ度は定数 0（GR49 までの受け口）。影は落とさない。
+- Done: GPU の試験 `GrassGBufferVulkanTest`（RHITextureUpdateVulkanTest の束）。風なし・風ありの静止カメラで画素 397/377、Albedo.a の誤差 0、法線の長さの誤差 5.4e-4、AO 根元 0.43／先端 0.91、風なしの velocity 0、風ありは CPU の写しとの差 9.7e-5（許容 0.002）。`GrassShaderCompileTest` に grass.vert・grass.frag。
+- Done: `Scripts/Grass/GrassCaptureCheck.py`（`--sweep` 被覆率・平均輝度の隣接差、`--near` 緑の最大連結成分の割合）、`Scripts/CameraScripts/grassland-sweep.txt`（near 視点から 10→120 m を 1 m 刻み、111 枚）、`Test/Core/Rendering/Thresholds/RenderingValidation/GrassLodSweep.tsv`（仮の値。G5-GR43-GRASS-CHECK の最初の撮影で校正）。走らせていない。
+- 証拠: `.harness/runs/20261110-060226/verify-G5-GR43-GRASS-DRAW-final.txt`（verify のビルド 3 行と CameraViewConstantsTest のビルドが EXIT_CODE=0、GrassShaderCompileTest・WindShaderCompileTest・GrassTileSelectionTest 3/3 Passed、GrassGenerateVulkanTest・GrassGBufferVulkanTest 2/2 Passed）
+- Next: G5-GR43-GRASS-CHECK（撮影・計測の確かめは回さない決まりなので、起動する確かめは人が見る）。
+- Notes: grassland では草はまだ地面の上に見えない見込み。`GrassTileSelector` がタイルの地面の高さに既定の 0 m を入れ、生成がそれを根元に使う一方、grassland の near 付近の地表は約 21 m。地形の高さを渡すのは既存の G5-GR43-GRASS-GENERATE-P1（todo）。G5-GR43-GRASS-CHECK の撮影はその後でないと草が写らない。
+- Notes: grassland は `CameraScriptCapture` を `FreeCameraRig` につないでいないので、`grassland-sweep.txt` の撮影の合図はまだ動かない（G5-GR43-GRASS-CHECK の paths の Game/GameModes/Grassland でつなぐ）。
+- Notes: 草の頂点シェーダーは LayerA（濡れの moisture）を全体の濡れ度が 0 より大きいときだけ読む。LayerA の ShaderResource の遷移の段は fragment と compute だけで、頂点の段の可視性は形式上保証されない。GR49 で全体の濡れ度を入れるときに LayerA の遷移も見直す。
+- Notes: 人が見るときの見どころ: GENERATE-P1 の後に grassland の near・low 視点で、手前の草が曲がった帯で揺れ、遠くへ LOD が切り替わっても密度と明るさが跳ばないこと、カメラを草へ寄せると 1.2 m から背が縮み 0.35 m で点描に抜けること。荒野の株（FoliagePass）は見た目が変わらないこと。
