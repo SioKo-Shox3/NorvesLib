@@ -1893,6 +1893,17 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             GApplicationLifecycleState.bModules = true;
+
+            if (auto* registry = GEngine->GetRenderWorld().GetRenderExtensionRegistry())
+            {
+                for (Module::IRenderModule* renderModule : Module::GetModuleRegistry().GetRenderModules())
+                {
+                    if (renderModule)
+                    {
+                        renderModule->RegisterRenderExtensions(*registry);
+                    }
+                }
+            }
         }
 
         // OnPostInitialize呼び出し
