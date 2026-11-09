@@ -10562,3 +10562,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 要起票: MegaGeometry を出す検証シーン（`RenderingShadingModelGBufferVulkanTest`）で `RenderGraph.cpp:2440` の `Pass 'MegaGeometryPass' declares all layout changes but enqueued a layout-changing frame command` が 1 回の起動で数十件出る（試験は合格。予備の経路の起動でも 12 件）。
 - U2 GBuffer プログラムの登録簿・パイプラインの鍵・鍵ごとの表と材質の Program 欄（CPU）: 着地(直し 0 回)
 - U1 gbuffer.frag の本体と skinned_gbuffer.vert の頂点の読み方を Common へ切り出す: 着地(直し 1 回)
+- U3 登録簿を SceneView に持たせ、RenderWorld の窓口と RenderThread での反映を配線する: 着地(直し 0 回)

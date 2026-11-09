@@ -648,6 +648,28 @@ namespace NorvesLib::Core::Rendering
         return &sceneView->GetRenderExtensionRegistry();
     }
 
+    bool RenderWorld::RegisterGBufferProgram(const GBufferProgramDesc& desc)
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            NORVES_LOG_WARNING("Rendering", "主の SceneView が無いため GBuffer プログラムを登録できません");
+            return false;
+        }
+        return sceneView->GetGBufferProgramRegistry().Register(desc);
+    }
+
+    bool RenderWorld::UnregisterGBufferProgram(const char* name)
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            NORVES_LOG_WARNING("Rendering", "主の SceneView が無いため GBuffer プログラムの登録を解除できません");
+            return false;
+        }
+        return sceneView->GetGBufferProgramRegistry().Unregister(name);
+    }
+
     void RenderWorld::SetRenderScale(float renderScale)
     {
         m_RenderScale = renderScale;

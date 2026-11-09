@@ -893,6 +893,7 @@ namespace NorvesLib::Core::Rendering
     void SceneView::Render(ViewRenderContext &context)
     {
         m_RenderExtensions.ApplyPending();
+        m_GBufferPrograms.ApplyPending();
 
         const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
         const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
