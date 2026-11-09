@@ -320,6 +320,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/GBufferProgramRegistry.cpp
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
