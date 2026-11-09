@@ -10352,14 +10352,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(G12-GR93-VALIDATE): `python -m unittest discover -s Scripts/Level/tests -v` で 9 件 OK（`.harness/runs/20261105-221335/verify-G12-GR93-VALIDATE-U4.txt`）。実の草地の地形（`Assets/TerrainSpecs/Grassland/GrasslandTerrain.json`）と雛形の設定で、使い捨てのシーンの見どころ 2 点の間は経路長 352.1 m・所要 38.2 秒、2 回の JSON はバイト一致。
 - Next(G12-GR93-VALIDATE): 実の谷のデータでの実行（G12-GR93-EDIT-CHECK）。巡航の速度・見どころの間隔の帯・斜度の上限は企画が決めたら設定の値を差し替えて `provisional` から外す。
 - Notes(G12-GR93-VALIDATE): GR89 の形式は標本数を各辺 `tile_cells × N + 1` と決めているので、done-when の「256×256 のハイトマップ」は 256×256 の格子（標本 257×257）として試験を作った。到達性・所要時間は 1 格子の 8 近傍の近似で、犬の跳躍・段差の越え方（GR05・GR07）は入っていない。GR21 の経路探索ができたら `validate(..., traversable_fn=...)` を差し替える。`smooth` の指定がある地形は平滑化を未適用で読み、報告の地形の注意に出す。
-- U1 形式の表 FormatInfo.h と新しい 6 形式を足し、形式の性質の関数を表から引く: 着地(直し 0 回)
-- U2 Vulkan の形式の対応を 1 つの表にし、IDevice::IsFormatSupported を足す: 着地(直し 0 回)
-- U3 TextureCreateInfo::Format に 6 形式を足し、GpuResourceStore と ImpostorBake の switch を表へ寄せる: 着地(直し 0 回)
-- U5 BC3・BC6H の手組みブロックを GPU の BC 試験に足す: 着地(直し 0 回)
-- U4 線形ブリットのミップ生成に対応しない形式で GenerateMipmaps を呼ばない: 着地(直し 1 回)
-- U6 RHIFormatReadbackVulkanTest を足し、全体の verify を通す: 着地(直し 0 回)
-- Done(G5-GR29-RHI-FORMATS): `RHI::Format` の末尾に R16G16_UNORM・R10G10B10A2_UNORM・R11G11B10_FLOAT・BC3_UNORM・BC3_SRGB・BC6H_UFLOAT を足し（既存の値は不変）、形式の性質を `Library/Core/Public/RHI/FormatInfo.h` の 1 つの表に置いて `GetFormatBlockInfo`・`GetFormatBytesPerPixel`（表に無い形式は assert と 0）・`IsBlockCompressedFormat`・`IsUnsignedIntegerFormat` をそこから引く。Vulkan の対応は `VulkanFormatTable.h` の 1 つの表から `InitFormatMaps`・`ConvertToVkFormat` が引く。`IDevice::IsFormatSupported(Format, FormatUsage)`（標本・描画先・storage・線形ブリットのミップ生成）を足し、`GpuResourceStore` は線形ブリットのミップ生成に対応しない形式ではミップを生成せず、作成時は 1 段にして警告を出す（sparse と全ミップを渡すテクスチャは対象外）。`TextureCreateInfo::Format` に同じ 6 形式を足し、`GetTextureBytesPerPixel`・ImpostorBake の形式の判定を表へ寄せた。試験は `RHIBlockCompressedFormatTest` を広げ、`RHIBlockCompressedTextureVulkanTest` に BC3（UNORM・SRGB）・BC6H の手組みブロックを足し、`RHIFormatReadbackVulkanTest`（全単射・16bit 勾配・10bit 厳密一致・R11G11B10F の描画と読み戻し）を新設。
-- 証拠(G5-GR29-RHI-FORMATS): `.harness/runs/20261109-201051/G5-GR29-RHI-FORMATS-final-verify.txt`（verify のビルド行の終了コード 0、ctest 7/7 合格・終了コード 0）。本機では R11G11B10_FLOAT が描画先に使え skip は無し、Vulkan 検証エラー 0。基準画像の 2 本（RenderingGoldenIndoor/OutdoorVulkanTest）は回さない決まりなので ctest から外した（RenderingGoldenImageTest・Game はビルドだけ）。
-- Next(G5-GR29-RHI-FORMATS): BC3・BC6H のクッカーへの接続は G5-GR88-BC6H-QUALITY。SceneColor を R11G11B10F にする軽量 HDR の切り替えはしていない（見た目が変わるため別の判断）。
-- Notes(G5-GR29-RHI-FORMATS): `GenerateMipmaps` の戻り値は void のまま、呼ぶ前に `IsFormatSupported(..., LinearMipGeneration)` で弾く契約にした。見た目の変わる変更は無い（既存の形式の値・既定の描画経路は不変）。
-- Notes(G5-GR29-RHI-FORMATS): 要起票: `TextureAssetRuntime.cpp`（:234 付近）は `bUploadSucceeded` を見ずにハンドルを返すため、全ミップのアップロードに失敗しても有効なハンドルが返りうる。
+
+- U1 RHI にインデックス無しの間接描画（単発・件数つき）と bMultiDrawIndirect を足す: 着地(直し 0 回)
+- U2 Count が無いときの多重の間接描画を bMultiDrawIndirect で分ける: 着地(直し 0 回)
+- U3 CPU の契約試験 RHIIndirectApiContractTest を足す: 着地(直し 0 回)
+- U4 GPU の試験 IndirectDrawVulkanTest を足し、タスクの確かめを回す: 着地(直し 0 回)
+- Done(G5-GR28-DRAW-INDIRECT): `ICommandList` に既定実装つき（何も記録せず false）の `DrawIndirect`・`DrawIndirectCount` を足し、`VulkanCommandList` が引数（オフセット・stride が 4 の倍数、stride は 16 以上、`ResourceUsage::IndirectBuffer`、範囲、`maxDrawIndirectCount`）と能力（drawCount>1 は `bMultiDrawIndirect`、Count 版は `bDrawIndirectCount`）を検査して記録する。`DeviceCapabilities::bMultiDrawIndirect` を足し、論理デバイスで物理デバイスが対応するときだけ `multiDrawIndirect` を有効にした。`RHI/IndirectCommands.h` に `DrawIndirectCommand`（16 B）・`DispatchIndirectCommand`（12 B）。MegaGeometryPass・VisibilityRasterPass の Count が無い分岐は、`bMultiDrawIndirect` が無ければ drawCount=1 の繰り返しにした。試験は CPU の `RHIIndirectApiContractTest` と GPU の `IndirectDrawVulkanTest`（被覆画素 P=15 で A 45・B 0/30・C 30・能力を偽ると false・不正な引数で false、validation 0 件）。
+- 確かめ(G5-GR28-DRAW-INDIRECT): `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1` は終了コード 0。ctest は RHIIndirectApiContractTest・RHIRayTracingApiContractTest・IndirectDispatchVulkanTest・IndirectDrawVulkanTest の 4/4 Passed。golden 4 本（RenderingGolden*VulkanTest）は基準画像の比較を回さない決まりなので回していない。
+- Next(G5-GR28-DRAW-INDIRECT): 新しい 2 つを使う描画の経路は無い（使う側の項目で使う）。`VulkanDevice::SetCapabilitiesForTesting` は試験専用（偽るのは false へだけ）。
+- Notes(G5-GR28-DRAW-INDIRECT): 要起票: 既存の `DrawIndexedIndirect`・`DrawIndexedIndirectCount` は drawCount を `maxDrawIndirectCount` と照らさず、MegaGeometryPass の区間の容量（`MegaGeometryPass.cpp` 3922 行付近）も上限を見ていない。`multiDrawIndirect` と `drawIndirectCount` の両方が無い装置では区間の容量の回数だけ描画を発行する（実機の対象の GPU は両方を持つ）。

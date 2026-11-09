@@ -1420,6 +1420,9 @@ namespace NorvesLib::RHI::Vulkan
         features2.features.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
         features2.features.drawIndirectFirstInstance =
             physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // 多重の間接描画は、物理デバイスが対応している場合だけ有効にする。
+        features2.features.multiDrawIndirect =
+            physicalFeatures.multiDrawIndirect == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.features.shaderInt64 =
             physicalFeatures.shaderInt64 == VK_TRUE ? VK_TRUE : VK_FALSE;
         // BC圧縮テクスチャは、対応しているデバイスだけで有効にする。
@@ -4111,6 +4114,8 @@ namespace NorvesLib::RHI::Vulkan
                 m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
+            m_Capabilities.bMultiDrawIndirect =
+                (m_enabledDeviceFeatures.multiDrawIndirect == VK_TRUE);
             m_Capabilities.bTextureCompressionBC =
                 (m_enabledDeviceFeatures.textureCompressionBC == VK_TRUE);
             m_Capabilities.bGeometryShader =

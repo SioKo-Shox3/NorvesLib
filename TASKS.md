@@ -44,7 +44,7 @@
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure`
-- paths: Engine/**, Game/**, Test/**, Tools/**, Shaders/**, CMakeLists.txt
+- paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
@@ -5127,7 +5127,7 @@
 - notes: 確かめ直しの (b)。今あるのは、臨界減衰の半減期と 1/30・1/60・1/144 の一致（CriticalDampingTest.cpp）、衝突の解の d-margin・即時の縮め・伸ばしの速さの上限（CameraCollisionSolverTest。要件の受け入れ確認を満たす）、球の掃引の probe のフィルタ（SceneCameraProbeTest）、物理の実体で壁にアームが縮み Trigger を除外し補間した描画の位置を読む 1 例（PhysicsFixedStepPipelineTest.cpp 1183-1261 行）。要件 `#### GR06` の受け入れ確認のうち、オーバーシュート、不規則な dt、目標が動くときの速度の連続、ヨーの最短角、速度演出の単調と飽和、Trauma の減衰、FollowCameraLateTickTest、自身を除外しないときの再現は無い。ロックオン・焦点・フェード・設定の解析（FollowCameraProfile.cpp）は試験が 1 本も無い。FollowCameraLateTickTest はロードマップ 275 行が ApplicationFixedStepPipelineTest の束に置くと書くが、`FollowCameraComponent` は Game のソースで `PhysicsDynamicsTest` にだけ組み込まれている（Test/Modules/Physics/CMakeLists.txt 69-73 行）ので、この束の新しい MEMBER の中で World を手で進めて測る（固定ステップの手順は PhysicsFixedStepPipelineTest.cpp 1223-1229 行の PrepareRenderInterpolationStep、移動、CaptureRenderInterpolationStep、SetRenderInterpolationAlpha に倣う）。偽の provider の結び方は `Test/Core/Camera/SceneCameraProbeTest.cpp` に倣う。CMakeLists.txt の MEMBER の行は `MEMBER PhysicsFixedStepPipelineTest` の次、add_test は末尾に置く（他のタスクの行と hunk を分ける）。臨界減衰のばねは共通の部品として `Math/CriticalDamping.h` に既にある（ロードマップ 4458 行の直す点は満たしている）。5 本のレイの対比の試験は作らない（ロードマップ 264 行で球の掃引に決まっている）。やらないこと: しがみつき中の補正と `ILockOnTarget`（`G4-GR06-CLING-LOCKON`）、低い視点の数値の決定（`FollowCameraProfile.json` の仮の値のまま）。
 
 ## G5-GR28-DRAW-INDIRECT: RHI にインデックス無しの間接描画（単発・件数つき）を足し、多重の間接描画の能力を正しく扱う
-- status: todo
+- status: done
 - gr: GR28
 - done-when: `ICommandList` に既定実装つき（何も記録せず false を返す）の `DrawIndirect(indirectBuffer, offset, drawCount, stride)` と `DrawIndirectCount(indirectBuffer, indirectOffset, countBuffer, countOffset, maxDrawCount, stride)` を足し、`VulkanCommandList` が引数を検査して（オフセットが 4 の倍数・`ResourceUsage::IndirectBuffer` を持つ・範囲内・`drawCount>1` は `bMultiDrawIndirect` があるときだけ・Count 版は `bDrawIndirectCount` があるときだけ。満たさなければ false で何も記録しない）記録する。`DeviceCapabilities::bMultiDrawIndirect` を足し、論理デバイスの作成で物理デバイスが対応するときだけ `multiDrawIndirect` を有効にする（`drawIndirectFirstInstance` と同じ書き方。VulkanDevice.cpp:1420）。`Library/Core/Public/RHI/IndirectCommands.h` に `DrawIndirectCommand`（16 バイト）と、既存の `DispatchIndirect` が読む `DispatchIndirectCommand`（12 バイト）を置く。`MegaGeometryPass.cpp:5020` と `VisibilityRasterPass.cpp:1571` の「Count が無いときに drawCount=区間の容量で `DrawIndexedIndirect` を呼ぶ」分岐を、`bMultiDrawIndirect` が無ければ drawCount=1 の繰り返しにする。CPU の `RHIIndirectApiContractTest`（`RHIRayTracingApiContractTest` の束の MEMBER）が、新しい 2 つを実装しない最小の偽のコマンドリストがコンパイルでき既定で false を返すことを確かめる。GPU の `IndirectDrawVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。`IndirectDispatchVulkanTest` と同じ作り）が、計算シェーダーが書いた `DrawIndirectCommand{3k,1,0,0}` で小さな描画先に描いた被覆画素が三角形 k 個分に一致する・カウントが 0 で何も描かれず 2 で 2 件分描かれる・drawCount>1 は `bMultiDrawIndirect` が無ければ false・能力を偽ると Count 版が false、をどれも validation のメッセージ 0 件で確かめる。既存の `IndirectDispatchVulkanTest` と golden 4 本が変わらず通る。
 - verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
@@ -5471,6 +5471,7 @@
 
 ## G5-GR46-WIND-FIELD: 世界で共通の風の場（CPU と GLSL で同じ式）を FramePacket で渡し、草・低木の揺れがそれを使えるようにする
 - status: todo
+- after: G5-GR25-EXTENSION-DATA
 - gr: GR46
 - done-when: `Library/Core/{Public,Private}/Rendering/Wind.{h,cpp}` に `WindParameters`（bEnabled・風向 DirectionYawDegrees・平均風速 BaseSpeed[m/s]・GustStrength・GustFrequencyHz・GustScaleMeters・Turbulence）・`MakeDefaultWindParameters`・`SanitizeWindParameters`・CPU の `EvaluateWind(params, position, time)`（風速ベクトル = 風向×速さ×(1＋突風×(雑音×2−1))＋乱流。突風の雑音は「位置を風向へ射影/スケール − 時間×周波数」を引数にした整数ハッシュの値ノイズ（5 次の補間））を置き、`Assets/Shaders/Common/Wind.glsl` に同じ整数ハッシュと同じ演算の順の `WindVelocity` を置く。時刻は `fmod(TotalTime, 4096)` の float（GR30 の約束。周波数は 1/4096 Hz の整数倍へ量子化）。`RenderWorld::SetWindParameters` → RenderingCoordinator が保持 → FramePacket へ値で写す経路を `SetVolumetricFogParameters` と同じ型で足し、`ComputeSceneRevisionHash` には入れない。FoliagePass（`foliage.vert`）と VSM の株の影（`vsm_draw.vert`）は、パケットの風が有効なら風向と突風の値を `Common/Wind.glsl` から取り、無効なら今の `FoliageWindParameters` の式のまま（荒野は風を設定しないので見た目が変わらない）。grassland のシーンが風を設定する。 試験が通る: `WindParametersTest`（`CameraViewConstantsTest` の束へ MEMBER）で、Sanitize が NaN・負の速さ・範囲外の値を既定へ戻し、風向が単位ベクトルで、長い時間の平均の風速が BaseSpeed と一致し、突風が設定の振れ幅に収まり、同じ（位置・時刻）でビット一致する。`FramePacketWindSnapshotContractTest`（同じ束。Private の include が要れば束に足す）で、風だけが違う 2 つのパケットの `ComputeSceneRevisionHash` が等しく、写した後に GameThread の値を変えてもパケットが変わらない。`WindShaderCompileTest`（`RHIRayTracingApiContractTest` の束へ MEMBER）で `Common/Wind.glsl` を含むシェーダーと、風を有効にした `foliage.vert`・`vsm_draw.vert` が CPU でコンパイルできる。GPU の試験 `WindGlslParityVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。compute で 1024 点の風速を求めて読み戻し、`EvaluateWind` と最大絶対差 1e-4 以内）をビルドできる（実行は G5-GR46-WIND-CHECK）。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
@@ -10722,3 +10723,11 @@
 - paths: Test/Core/Rendering/Baselines/RenderingValidation/Indoor.png, Test/Core/Rendering/Baselines/RenderingValidation/IndoorGBufferFallback.png, Test/Core/Rendering/Baselines/RenderingValidation/Outdoor.png, Test/Core/Rendering/Baselines/RenderingValidation/OutdoorGBufferFallback.png, Docs/RenderingValidation/GoldenBaselines.md, Docs/RenderingValidation/R1Acceptance.md, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - from: SCN-MEGA-FIX-TLAS-REBUILD-P4
+
+## G5-GR28-DRAW-INDIRECT-P1: 既存のインデックス付きの間接描画と MegaGeometry の区間の容量を、装置の maxDrawIndirectCount 以下に抑える
+- status: todo
+- done-when: `DeviceCapabilities` に `MaxDrawIndirectCount` を足す。値は論理デバイスを作るときに `limits.maxDrawIndirectCount` から入れる。`VulkanCommandList::DrawIndirect` の上限の検査は、`m_device->GetMaxDrawIndirectCount()` ではなくこの能力の値を見る。`VulkanCommandList::DrawIndexedIndirect` は、drawCount が `MaxDrawIndirectCount` を超えるときと、drawCount>1 で `bMultiDrawIndirect` が無いときは何も記録しない。そのうえで既存の流儀どおり例外を投げる。`MegaGeometryPass.cpp` の区間の容量（`assignSectionCapacities` の `sectionLimit`。3922 行付近）は `MaxDrawIndirectCount` 以下に抑える。これで件数つき（`DrawIndexedIndirectCount` の maxDrawCount と GPU が書く件数）の分岐も、多重（`DrawIndexedIndirect` の drawCount）の分岐も、上限を超える件数を出さない。両方の能力が無い装置で 1 件ずつ描く分岐は変えない（対応の段は G19-GR124 で決める）。`IndirectDrawVulkanTest` に試験を足す。能力を偽って `MaxDrawIndirectCount=1` にしたとき、`DrawIndirect` の drawCount=2 が false を返し、`DrawIndexedIndirect` の drawCount=2 が例外を投げ、どちらも何も記録せず validation のメッセージが 0 件であることを確かめる。既存の `IndirectDispatchVulkanTest`・`RHIIndirectApiContractTest`・golden 4 本が変わらず通る。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIIndirectApiContractTest|IndirectDispatchVulkanTest|IndirectDrawVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/RHI/DeviceCapabilities.h, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Test/Core/Rendering/IndirectDrawVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR28-DRAW-INDIRECT
