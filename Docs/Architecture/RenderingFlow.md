@@ -126,6 +126,33 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 - Shutdown は RenderThread を先に停止し、その後 RenderResources、RenderingCoordinator、RHI 参照を解放する。
 - SwapChain 依存リソースは Resize/dirty presentation のタイミングで再作成する。
 
+## 描画の拡張の段（GR25）
+
+ゲーム側は `RenderExtensionDesc` の `Name`・`Stage`・`Order` と `RenderExtensionFactory` を指定してパスを登録する。`Stage` が決める差し込み位置と書き込み先の例は次のとおり。パスは `Declare` で RenderGraph 資源の読み書きを宣言し、後続が参照する名前へ接続する。
+
+| `RenderExtensionStage` | 差し込む位置 | 書き込む対象の例 |
+|---|---|---|
+| `GBuffer` | `FoliagePass` の後、`SSAOPass` の前 | `GBuffer` の色・法線・深度 |
+| `AfterLighting` | `LightingPass` の直後、`ShadowProbePass`・`SSRPass` の前 | 照明後の HDR シーンカラー `Scene.Color` |
+| `Transparent` | 半透明の `ForwardPass` の後、`DistortionPass` の前 | 半透明合成後の HDR シーンカラー `SSR.SceneColor` または `Scene.Color` |
+| `PostTemporalAA` | 後段スタックの `TemporalAAPass` の後 | TAA が有効なら TAA 適用後の HDR シーンカラー |
+| `PostTonemap` | 後段スタックの `VignettePass` の後 | トーンマップ・Vignette 適用後の `ToneMappedColor` |
+| `ShadowCaster` | 予約。現在は登録を拒否する | 影を落とす段は別の項目で追加する |
+
+`GBuffer` は、GBuffer を書く最後のパスの後に当たり、`--visibility-buffer` の on / off で位置は変わらない。同じ段の拡張は `Order` の小さい順に並び、同じ `Order` なら登録順に並ぶ。
+
+パス名の規約は `Ext.<Game>.<Name>` とする。`Ext.` で始まらない名前と、登録済みまたは保留中の同名パスは拒否される。`IViewPass` と `IRenderGraphPass` の両方を実装したパスだけを登録でき、レガシー経路のパスは拒否される。ファクトリは生成関数ポインタと `context` の組であり、登録時に一度呼んで返された実体の型を検査し、初期化せず破棄する。実際の差し込みや再構築でも呼ばれるため、`context` は登録解除の反映まで有効に保ち、ファクトリから登録表へ再入しない。
+
+登録・解除・有効状態の変更は GameThread から `Register`・`Unregister`・`SetEnabled` で行い、mutex で守られた保留の列に積む。初期化の窓では即時に反映され、モジュールの登録と `OnPostInitialize` の後、ゲームスレッドが走り出す前に `CloseInitializationWindow` で窓を閉じる。呼ばれない場合は最初の `ApplyPending` で閉じる。以後、通常の登録操作による `m_Passes` と後段スタックの変更は RenderThread の `SceneView::Render(ViewRenderContext&)` 冒頭の `ApplyPending` で行う。`SetupDeferredPipeline` で組み直す場合は末尾の `ReinsertAll` が登録済みの拡張を入れ直し、既にある実体は重複して挿入しない。
+
+拡張パスは守りの包みを通して呼ばれる。`Initialize` の失敗や `Setup`・`Declare`・`Execute` などで発生した例外はそのパスの実体だけを無効にし、失敗のログをその実体につき一度だけ出す。失敗を `View::Render` に伝播させず、ほかのパスの描画を続ける。後段スタックの初期化後に拡張が追加された場合も、`View::Render` が未初期化のネイティブパスを初期化してから RenderGraph に追加する。
+
+ゲーム側の窓口には `RenderWorld::RegisterRenderExtension(desc, factory)` などがある。描画モジュールは `IRenderModule::RegisterRenderExtensions(RenderExtensionRegistry&)` でも登録でき、この関数はモジュールのインストール後に一度呼ばれる。
+
+`SetupPathTracingPipeline` の経路には拡張を挿入しない。セットアップ時に登録があればその時点で、なければ後から初めて登録された時点で、登録表につき一度だけ警告を出す。
+
+被写界深度の `DepthOfFieldPass` と動きぼけの `MotionBlurPass` は `SetupDeferredPipeline` で、検証用パスの後・後段スタックの前に、この順で追加される。パイプラインの組み直し時にも追加される。
+
 ## 今後の拡張方針
 
 - pass 間の texture state と lifetime は RenderGraph を正とし、`SharedResourceRegistry` へ戻さない。

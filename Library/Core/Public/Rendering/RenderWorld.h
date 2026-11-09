@@ -9,6 +9,7 @@
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
+#include "RenderExtension/RenderExtension.h"
 #include "RHI/RHITypes.h"
 #include "Platform/NativeWindowHandle.h"
 #include "Container/Containers.h"
@@ -393,6 +394,30 @@ namespace NorvesLib::Core::Rendering
         {
             return m_RenderingCoordinator;
         }
+
+        /**
+         * @brief 主の SceneView に描画拡張を登録する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        bool RegisterRenderExtension(const RenderExtensionDesc& desc, const RenderExtensionFactory& factory);
+
+        /**
+         * @brief 主の SceneView から描画拡張の登録を解除する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        bool UnregisterRenderExtension(const char* name);
+
+        /**
+         * @brief 主の SceneView の描画拡張の有効状態を設定する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        bool SetRenderExtensionEnabled(const char* name, bool bEnabled);
+
+        /**
+         * @brief 主の SceneView の描画拡張の登録表を借用する。SceneView が無ければ nullptr。
+         * @details GameThread から呼ぶ。登録表の操作の反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        RenderExtensionRegistry* GetRenderExtensionRegistry();
 
         // ========================================
         // 解像度変更
