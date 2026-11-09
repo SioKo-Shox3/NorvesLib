@@ -1,8 +1,8 @@
 ﻿#version 460
 
-// プッシュ定数の std430 配置: Shift は 0、Resolution は 8、OriginXZ は 16、
+// binding 3 の uniform バッファ、std140。オフセット: Shift は 0、Resolution は 8、OriginXZ は 16、
 // TexelSize は 24、Decay は 28、InteractorCount は 32、bResetHistory は 36 バイト目。
-// 全体は 40 バイト。計算は XZ 平面だけで行い、Y（高さ）は使わない。
+// 全体は 48 バイト（末尾 8 バイトは詰め物）。計算は XZ 平面だけで行い、Y（高さ）は使わない。
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0, rgba16f) uniform readonly image2D uPreviousField;
@@ -21,7 +21,7 @@ layout(std430, set = 0, binding = 2) readonly buffer WorldFieldInteractorBuffer
     WorldFieldInteractorGpu Interactors[];
 };
 
-layout(push_constant) uniform WorldFieldUpdatePush
+layout(std140, set = 0, binding = 3) uniform WorldFieldUpdateParams
 {
     ivec2 Shift;
     uvec2 Resolution;
@@ -30,7 +30,8 @@ layout(push_constant) uniform WorldFieldUpdatePush
     float Decay;
     uint InteractorCount;
     uint bResetHistory;
-} uPush;
+    uvec2 Padding;
+} uParams;
 
 struct SegmentSample
 {
@@ -81,23 +82,23 @@ vec2 NormalizeOrZero(vec2 value)
 void main()
 {
     uvec2 globalPixel = gl_GlobalInvocationID.xy;
-    if (any(greaterThanEqual(globalPixel, uPush.Resolution)))
+    if (any(greaterThanEqual(globalPixel, uParams.Resolution)))
     {
         return;
     }
 
     ivec2 pixel = ivec2(globalPixel);
-    ivec2 previousPixel = pixel + uPush.Shift;
+    ivec2 previousPixel = pixel + uParams.Shift;
     vec4 result = vec4(0.0);
-    if (uPush.bResetHistory == 0u &&
+    if (uParams.bResetHistory == 0u &&
         all(greaterThanEqual(previousPixel, ivec2(0))) &&
-        all(lessThan(previousPixel, ivec2(uPush.Resolution))))
+        all(lessThan(previousPixel, ivec2(uParams.Resolution))))
     {
-        result = imageLoad(uPreviousField, previousPixel) * uPush.Decay;
+        result = imageLoad(uPreviousField, previousPixel) * uParams.Decay;
     }
 
-    vec2 worldPosition = uPush.OriginXZ + (vec2(pixel) + vec2(0.5)) * uPush.TexelSize;
-    for (uint index = 0u; index < uPush.InteractorCount; ++index)
+    vec2 worldPosition = uParams.OriginXZ + (vec2(pixel) + vec2(0.5)) * uParams.TexelSize;
+    for (uint index = 0u; index < uParams.InteractorCount; ++index)
     {
         WorldFieldInteractorGpu interactor = Interactors[index];
         uint channelMask = floatBitsToUint(interactor.PrevP1ChannelMask.w);

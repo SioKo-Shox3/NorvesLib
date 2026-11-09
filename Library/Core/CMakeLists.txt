@@ -269,6 +269,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/WorldFieldPass.cpp
     Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
     Private/Rendering/GrassFieldGpuWindow.cpp
@@ -744,6 +745,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/GrassPass.h
+    Public/Rendering/WorldFieldPass.h
     Public/Rendering/WorldFieldTypes.h
     Public/Rendering/GrassGenerateReference.h
     Public/Rendering/GrassFieldGpuWindow.h
