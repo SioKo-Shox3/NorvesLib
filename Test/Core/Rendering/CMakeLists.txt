@@ -1604,6 +1604,7 @@ add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebu
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
 add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
+add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
 
 norves_add_test_bundle(SceneViewProxyLookupTest
@@ -1611,6 +1612,7 @@ norves_add_test_bundle(SceneViewProxyLookupTest
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
     MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
+    MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
 target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
