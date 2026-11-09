@@ -131,6 +131,7 @@ namespace NorvesLib::RHI::Vulkan
         // 同一デバイスのコマンド送信・コマンドプール操作と呼出側で直列化する。
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
+        bool IsFormatSupported(Format format, FormatUsage usage) const override;
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
         /** @brief 試験専用。論理デバイスで有効でない機能を true にしてはいけない（偽るのは false へだけ）。 */
         void SetCapabilitiesForTesting(const DeviceCapabilities& capabilities) { m_Capabilities = capabilities; }

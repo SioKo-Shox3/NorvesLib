@@ -471,6 +471,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanCommandList.cpp
     Private/RHI/Vulkan/VulkanDescriptorSet.cpp
     Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFormatTable.h
     Private/RHI/Vulkan/VulkanFramebuffer.cpp
     Private/RHI/Vulkan/VulkanGPUResourceAllocator.cpp
     Private/RHI/Vulkan/VulkanPipeline.cpp
@@ -903,6 +904,7 @@ set(PUBLIC_HEADERS
     Public/RHI/RHIDeviceDesc.h
     Public/RHI/RHIDeviceFactory.h
     Public/RHI/RHITypes.h
+    Public/RHI/FormatInfo.h
     Public/RHI/IBuffer.h
     Public/RHI/ITexture.h
     Public/RHI/ISampler.h
