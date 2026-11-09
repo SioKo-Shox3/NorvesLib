@@ -10426,3 +10426,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 パケット・RenderWorld・ViewRenderContext・履歴への配線: 着地(直し 0 回)
 - U3 GBufferTargetBinder と ResolveHdrChainHead: 着地(直し 0 回)
 - U4 RenderExtensionDataTest（CPU）: 着地(直し 0 回)
+- U6 RenderingFlow.md に拡張データ枠と FrameInfo の約束を書く: 着地(直し 0 回)
