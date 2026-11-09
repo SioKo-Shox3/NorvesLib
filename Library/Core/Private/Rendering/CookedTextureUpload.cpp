@@ -61,6 +61,24 @@ namespace NorvesLib::Core::Rendering
                 outRHIFormat = RHI::Format::R16_UNORM;
                 return true;
 
+            case CookedTexturePixelFormat::RGBA16F:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::RGBA16_FLOAT;
+                outRHIFormat = RHI::Format::R16G16B16A16_FLOAT;
+                return true;
+
+            case CookedTexturePixelFormat::RG16UNorm:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::R16G16_UNORM;
+                outRHIFormat = RHI::Format::R16G16_UNORM;
+                return true;
+
             case CookedTexturePixelFormat::BC1:
                 if (colorSpace == CookedTextureColorSpace::SRGB)
                 {

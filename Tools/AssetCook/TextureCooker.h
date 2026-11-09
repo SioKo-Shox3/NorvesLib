@@ -33,6 +33,8 @@ namespace NorvesLib::Tools::AssetCook
         Orm,      // BC7 linear。AO・粗さ・メタリックを R・G・B に詰める（詰め済みの画像を source に渡してもよい）
         Single,   // BC4 linear。R の 1 チャンネル
         Height16, // R16 linear(非圧縮)。16bit の入力の精度を保つ
+        Hdr,      // RGBA16F linear。浮動小数の入力だけを受け取り、ミップは線形の平均
+        Rg16,     // R16G16 linear。R・G を 16bit で保つ
     };
 
     [[nodiscard]] bool ParseTextureUsage(Core::Container::AnsiStringView text, TextureUsage &outUsage) noexcept;
@@ -69,6 +71,12 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t ThreadCount = 0;
         // Normal のとき、入力の法線の Y（緑）を反転する（OpenGL の向きの入力を DirectX の向きへ直す）。
         bool bFlipNormalY = false;
+        // Height16 の浮動小数の入力を 0..65535 へ正規化する範囲。
+        bool bHasHeightRange = false;
+        float HeightRangeMin = 0.0f;
+        float HeightRangeMax = 0.0f;
+        // Height16・Rg16 で 8bit の入力を拒む。
+        bool bRequire16Bit = false;
     };
 
     // 用途に応じて元画像を焼く。Orm は source があればそれを詰め済みの ORM として、無ければ orm の 3 枠を読む。それ以外は source を読む。NVTEX v0.2(タイル配置)を書く。
