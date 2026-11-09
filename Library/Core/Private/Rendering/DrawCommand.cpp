@@ -41,6 +41,7 @@ namespace NorvesLib::Core::Rendering
                                       const Math::Matrix4x4 &previousWorld,
                                       const Math::Matrix4x4 &normalMatrix,
                                       const float *customData,
+                                      const float *shadingParams,
                                       GPUSceneInstanceData &outData)
         {
             Math::MatrixUtils::CopyToShaderData(world, outData.World);
@@ -66,6 +67,17 @@ namespace NorvesLib::Core::Rendering
                 outData.CustomData[1] = 0.0f;
                 outData.CustomData[2] = 0.0f;
                 outData.CustomData[3] = 0.0f;
+            }
+            if (shadingParams)
+            {
+                std::memcpy(outData.ShadingParams, shadingParams, sizeof(outData.ShadingParams));
+            }
+            else
+            {
+                for (float &value : outData.ShadingParams)
+                {
+                    value = -1.0f;
+                }
             }
         }
     } // namespace
@@ -169,7 +181,8 @@ namespace NorvesLib::Core::Rendering
                                   proxy.CustomData,
                                   proxy.bCastShadow,
                                   proxy.SortDepth,
-                                  &proxy.PreviousWorldTransform);
+                                  &proxy.PreviousWorldTransform,
+                                  proxy.ShadingParams);
             }
             return;
         }
@@ -214,7 +227,8 @@ namespace NorvesLib::Core::Rendering
                               proxy.CustomData,
                               proxy.bCastShadow,
                               proxy.SortDepth,
-                              &proxy.PreviousWorldTransform);
+                              &proxy.PreviousWorldTransform,
+                              proxy.ShadingParams);
         }
     }
 
@@ -264,14 +278,17 @@ namespace NorvesLib::Core::Rendering
                 {
                     const auto &extra = batch.InstanceExtraData[0];
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
+                    std::memcpy(cmd.Draw.ShadingParams, extra.ShadingParams, sizeof(cmd.Draw.ShadingParams));
                 }
 
                 for (uint32_t instanceIndex = 0; instanceIndex < batch.GetInstanceCount(); ++instanceIndex)
                 {
                     const float *customData = nullptr;
+                    const float *shadingParams = nullptr;
                     if (instanceIndex < batch.InstanceExtraData.size())
                     {
                         customData = batch.InstanceExtraData[instanceIndex].CustomData;
+                        shadingParams = batch.InstanceExtraData[instanceIndex].ShadingParams;
                     }
 
                     const Math::Matrix4x4 normalMatrix =
@@ -285,6 +302,7 @@ namespace NorvesLib::Core::Rendering
                                              previousWorld,
                                              normalMatrix,
                                              customData,
+                                             shadingParams,
                                              instanceData);
                     outInstanceData.push_back(instanceData);
 
@@ -325,6 +343,7 @@ namespace NorvesLib::Core::Rendering
                 {
                     const auto &extra = batch.InstanceExtraData[instanceIndex];
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
+                    std::memcpy(cmd.Draw.ShadingParams, extra.ShadingParams, sizeof(cmd.Draw.ShadingParams));
                     cmd.Draw.SortDepth = extra.SortDepth;
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
@@ -340,6 +359,7 @@ namespace NorvesLib::Core::Rendering
                                          previousWorld,
                                          cmd.Draw.NormalMatrix,
                                          cmd.Draw.CustomData,
+                                         cmd.Draw.ShadingParams,
                                          instanceData);
                 outInstanceData.push_back(instanceData);
 

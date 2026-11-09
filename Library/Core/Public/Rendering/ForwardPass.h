@@ -4,6 +4,8 @@
 #include "DynamicUniformAllocator.h"
 #include "Rendering/RibbonTrailRenderer.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/RenderExtension/RenderExtensionHelpers.h"
+#include "RHI/IDevice.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -13,6 +15,7 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    struct DrawCommand;
     class SceneView;
     class SceneRenderer;
     class GBufferPass;
@@ -126,7 +129,10 @@ namespace NorvesLib::Core::Rendering
                                          const RHI::TexturePtr& sceneColorTexture,
                                          const RHI::TexturePtr& gbufferDepthTexture,
                                          bool bUseRenderGraphInitialStates);
-        void ExecuteTransparentCommands(ViewRenderContext& context, bool bUseRenderGraphManagedStates);
+        void ExecuteTransparentCommands(
+            ViewRenderContext& context,
+            bool bUseRenderGraphManagedStates,
+            const Container::TSharedPtr<Container::VariableArray<DrawCommand>>& reactiveCommands = {});
         void EnqueueEmptyTransparentPass(ViewRenderContext& context) const;
         void RegisterTransparentBridge(ViewRenderContext& context,
                                        const RHI::TexturePtr& sceneColorTexture,
@@ -155,6 +161,10 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_RibbonTrailRenderPass;
         RHI::FramebufferPtr m_ForwardFramebuffer;
         RHI::PipelinePtr m_TransparentPipeline;
+        ReactiveTargetBinder m_ReactiveTargetBinder;
+        RHI::PipelinePtr m_ReactivePipeline;
+        RHI::GraphicsPipelineDesc m_ReactivePipelineDesc;
+        bool m_bReactiveDeclared = false;
         RHI::PipelinePtr m_WorldBoardPipeline;
         RibbonTrailRenderer m_RibbonTrailRenderer;
         RHI::PipelinePtr m_ImpostorPipeline;

@@ -603,7 +603,8 @@ namespace NorvesLib::Core::Rendering
                     std::memcmp(proxy.WorldTransform.values, data.World, sizeof(data.World)) != 0 ||
                     std::memcmp(proxy.PreviousWorldTransform.values, data.PreviousWorld,
                                 sizeof(data.PreviousWorld)) != 0 ||
-                    std::memcmp(proxy.CustomData, data.CustomData, sizeof(data.CustomData)) != 0)
+                    std::memcmp(proxy.CustomData, data.CustomData, sizeof(data.CustomData)) != 0 ||
+                    std::memcmp(proxy.ShadingParams, data.ShadingParams, sizeof(data.ShadingParams)) != 0)
                 {
                     continue;
                 }
