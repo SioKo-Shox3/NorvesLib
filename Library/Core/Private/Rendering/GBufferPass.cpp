@@ -380,7 +380,7 @@ namespace NorvesLib::Core::Rendering
         RGTextureDesc albedoDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo");
         albedoDesc.Usage = albedoDesc.Usage | resolveWriteUsage;
         RGTextureDesc normalDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
-        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage;
+        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage | RHI::ResourceUsage::TransferSrc;
 
         m_AlbedoHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferAlbedo,
@@ -1032,8 +1032,10 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         m_AlbedoTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"));
-        m_NormalTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"));
+        RHI::TextureDesc normalDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
+        normalDesc.Usage = normalDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_NormalTexture = m_Device->CreateTexture(normalDesc);
         m_MaterialTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
         m_EmissiveTexture = m_Device->CreateTexture(

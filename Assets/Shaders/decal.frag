@@ -1,12 +1,16 @@
 ﻿#version 450
 
+#include "Common/GBufferEncoding.glsl"
+
+// Normal は同じパスの色添付なので直接標本せず、描画前のコピーから受け手の印を読む。
+
 layout(set = 0, binding = 0, std140) uniform DecalData
 {
     mat4 viewProjection;
     mat4 inverseViewProjection;
     vec4 targetSize;
 } decal;
-layout(set = 0, binding = 1) uniform sampler2D gbufferMaterial;
+layout(set = 0, binding = 1) uniform sampler2D gbufferNormalCopy;
 layout(set = 0, binding = 2) uniform sampler2D gbufferDepth;
 
 layout(location = 0) flat in vec3 decalPosition;
@@ -39,8 +43,8 @@ void main()
     {
         discard;
     }
-    float material = texelFetch(gbufferMaterial, pixel, 0).a;
-    if ((decalFlags & 1u) == 0u && material > 0.125 && material < 0.375)
+    if ((decalFlags & 1u) == 0u &&
+        GBufferHasReceiverFlag(texelFetch(gbufferNormalCopy, pixel, 0), GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP))
     {
         discard;
     }
@@ -51,5 +55,5 @@ void main()
         fade = axisFade.x * axisFade.y * axisFade.z;
     }
     outAlbedo = vec4(decalColor.rgb, decalColor.a * fade);
-    outNormal = vec4(normalize(rotateQuaternion(decalRotation, decalLocalNormal)), decalNormalOpacity * fade);
+    outNormal = GBufferEncodeDecalNormalBlend(normalize(rotateQuaternion(decalRotation, decalLocalNormal)), decalNormalOpacity * fade);
 }
