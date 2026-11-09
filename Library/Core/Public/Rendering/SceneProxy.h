@@ -13,6 +13,7 @@
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "DistortionTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
@@ -602,6 +603,9 @@ namespace NorvesLib::Core::Rendering
         RibbonTrailScene RibbonTrails;
         // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
         DecalScene Decals;
+
+        /** @brief 拡張データの表。共有ポインタを写すだけで、変わらないフレームはデータの写しが 0。 */
+        RenderExtensionDataSet Extensions;
         // 半透明の後のシーンの色をずらす歪みの源の一覧
         DistortionScene Distortions;
 
@@ -639,6 +643,7 @@ namespace NorvesLib::Core::Rendering
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};
+            Extensions.clear();
             Distortions = DistortionScene{};
         }
 

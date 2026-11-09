@@ -10465,3 +10465,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）。比率 0.1° と 1e-3 は合成例の仮の許容
 - Notes: 試験の (a) はルートの動きの抽出を切って cook する（抽出すると根のヨーが RootMotion へ移り、ClipBank だけの FK の骨方向が根のヨーの分ずれるため）。報告の誤差は抽出のヨーを戻して測る
 - Notes: CLI の要求の写し直し（`Tools/AssetCook/RigSingleCook.cpp` の `NormalizeRigSingleRequest`）が報告のパスを落としていたので、paths の外だがこの 1 行の配管だけ足した
+
+- U1 拡張データの型（キー・不変のブロブ・GameThread の保持・引き当て）と FrameInfo: 着地(直し 0 回)
+- U2 パケット・RenderWorld・ViewRenderContext・履歴への配線: 着地(直し 0 回)
+- U3 GBufferTargetBinder と ResolveHdrChainHead: 着地(直し 0 回)
+- U4 RenderExtensionDataTest（CPU）: 着地(直し 0 回)
+- U6 RenderingFlow.md に拡張データ枠と FrameInfo の約束を書く: 着地(直し 0 回)
+- U8 U5 のレビュー済みの差分（保存したパッチ）を当てて確かめ直す: 着地(直し 0 回)
+- U7 GBuffer・照明の後・半透明の段の確かめとタスクの verify: 着地(直し 0 回)
+- Done(G5-GR25-EXTENSION-DATA): `Rendering/RenderExtension/RenderExtensionData.h` に `RenderExtensionDataKey<T>`（trivially copyable を static_assert）・不変の `RenderExtensionBlob{Identity, LayoutHash, Count, Revision, バイト列}`・GameThread 専用の保持（バイト一致の Set は同じ共有ポインタと Revision を使い回す）・`RenderExtensionFrameInfo{FrameNumber, GameTotalTime, GameDeltaTime, PreviousRenderedTotalTime}` を置いた。`RenderWorld::SetExtensionData<T>`・`SetExtensionArray<T>` で積み、`SnapshotSceneParameters` が `SceneProxy::Extensions` へ共有ポインタを写すだけ（変わらないフレームはデータの写し 0）。`ViewRenderContext::FindExtension`・`FindExtensionArray` は LayoutHash が合わなければ空とログ 1 回。拡張データは `ComputeSceneRevisionHash` に含めない。PreviousRenderedTotalTime は `RenderedObjectHistory` が最後に描いたパケットの TotalTime を返す。`RenderExtensionHelpers.h` に `GBufferTargetBinder`（GBuffer 5 枚と深度を Load/Store で開き、描画先が替われば作り直す）と `ResolveHdrChainHead` を置いた。試験は CPU の `RenderExtensionDataTest` と GPU の `RenderExtensionStageVulkanTest`（5 段の目印: GBuffer に書いたアルベドが照明を受けてアルベドに比例、AfterLighting の加算が霧で約 0.44 倍に減る、Transparent は床の手前で隠れ空では出る、PostTemporalAA は TAA 有効でもフレームごとに同じ値、PostTonemap はトーンマップを受けない、色は拡張データで渡す）。
+- 証拠(G5-GR25-EXTENSION-DATA): `.harness/runs/20261110-011013/G5-GR25-EXTENSION-DATA-U7-verify.txt`（verify のビルドの行 SceneViewProxyLookupTest・RenderingHdrSceneCaptureTest・RenderingGoldenImageTest・Game の Debug ビルドが終了コード 0。ctest は RenderExtensionDataTest・RenderExtensionRegistryTest・RenderExtensionStageVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 4/4 合格。Transparent の深度テストを外すと落ち、戻すと通ることも確かめた）。golden 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない。拡張 0 件では組み込みのパスと描画は変わらない。
+- Next(G5-GR25-EXTENSION-DATA): 影を落とす段（G5-GR25-SHADOW-CASTER-STAGE）、起動しての確かめ（G5-GR25-SCENES-CHECK）、FrameInfo を使う頂点アニメの前の時刻（G5-GR30-VERTEX-ANIM-VELOCITY。FoliagePass の風の前の時刻もそこで替える）。
+- Notes(G5-GR25-EXTENSION-DATA): 人が見るときの見どころ: 拡張 0 件なので全シーンの見た目は変わらない見込み。撮影・計測の確かめは回さない決まり。ブロブの保存は 16 バイト整列なので、それを超える整列の型は型付きの引き当てで空になる。GPU 試験の GBuffer 以降の段は TAA を切って FXAA で取る（同じ画素を目印あり・なしで引き比べるため）。

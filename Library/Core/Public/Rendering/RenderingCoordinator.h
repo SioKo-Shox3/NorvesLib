@@ -9,6 +9,7 @@
 #include "SceneRenderer.h"
 #include "DrawCommand.h"
 #include "FramePacket.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "ViewRenderContext.h"
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
@@ -475,6 +476,9 @@ namespace NorvesLib::Core::Rendering
         void SetDecals(const DecalScene& decals);
         const DecalScene& GetDecals() const { return m_Decals; }
 
+        /** @brief 拡張データの保持を取得する（GameThread 専用、ロック無し）。 */
+        RenderExtensionDataStore& GetExtensionDataStore() { return m_ExtensionData; }
+
         /** @brief 歪みの源の一覧を設定する（GameThread） */
         void SetDistortions(const DistortionScene& distortions);
         const DistortionScene& GetDistortions() const { return m_Distortions; }
@@ -727,6 +731,7 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
+        RenderExtensionDataStore m_ExtensionData;
         DistortionScene m_Distortions;
         bool m_bRTGIEnabled = true;
         // 初期化時に確定し、描画スレッドの開始後は変更しない。
