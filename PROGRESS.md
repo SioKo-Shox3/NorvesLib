@@ -10493,3 +10493,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 TAA がリアクティブを読む(資源名・定数・binding 5・履歴の A への持ち越し): 着地(直し 2 回)
 - U2 拡張のパスが Scene.Reactive へ書く手助けと文書: 着地(直し 0 回)
 - U3 ForwardPass の半透明の材質に「リアクティブを書く」の印: 着地(直し 0 回)
+- U5 GPU の試験 RenderingTemporalAAReactiveVulkanTest を作り直す(U4 の作業ツリーが別タスクに使い回されて変更が消えたため。タスクの verify を含む): 着地(直し 0 回)

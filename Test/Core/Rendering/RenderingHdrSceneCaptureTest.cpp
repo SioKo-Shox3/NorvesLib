@@ -2,6 +2,7 @@
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
 #include "RenderExtensionStageScenario.h"
+#include "TemporalAAReactiveScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -1703,6 +1704,7 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
         RenderExtensionStageScenario m_ExtensionStageScenario;
+        TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
 
     public:
         enum class TransparentPhysicalStage : uint8_t
@@ -1777,6 +1779,14 @@ namespace
 
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
+                return false;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled() &&
+                (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                 m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                 m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario))
+            {
+                LOG_ERROR("TAA リアクティブのシナリオは他のシナリオと併用できません");
                 return false;
             }
             if (m_ExtensionStageScenario.IsEnabled() &&
@@ -1980,6 +1990,11 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
             }
             if (m_ExtensionStageScenario.IsEnabled())
             {
@@ -2235,6 +2250,10 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument.find(TEXT("--temporal-aa-reactive-scenario=")) == 0)
+            {
+                return m_TemporalAAReactiveScenario.ParseArgument(argument, outFailureReason);
+            }
             if (argument.find(TEXT("--extension-stage-scenario=")) == 0)
             {
                 return m_ExtensionStageScenario.ParseArgument(argument, outFailureReason);
@@ -2432,6 +2451,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Evaluate(frame, reason);
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 return m_ExtensionStageScenario.Evaluate(frame, reason);
@@ -2548,6 +2571,11 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.ApplyState(renderWorld, GetFixture().GetCamera());
+                return;
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 m_ExtensionStageScenario.ApplyState(renderWorld, GetFixture().GetCamera());
@@ -2872,6 +2900,11 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.Advance();
+                return;
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 m_ExtensionStageScenario.Advance();
@@ -2980,6 +3013,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.RequestFollowup(outRequest);
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 return m_ExtensionStageScenario.RequestFollowup(outRequest);

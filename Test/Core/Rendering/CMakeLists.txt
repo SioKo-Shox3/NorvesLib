@@ -853,6 +853,7 @@ register_rendering_gpu_test(
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
+    TemporalAAReactiveScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
@@ -867,6 +868,14 @@ target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
 set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+# 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
+# 書き手なしとゼロの書き手で TAA 後の RGB がビット一致することも確かめる。
+register_rendering_gpu_test(
+    RenderingTemporalAAReactiveVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color
+    --temporal-aa-reactive-scenario=ab)
 register_rendering_gpu_test(
     RenderExtensionStageVulkanTest
     RenderingHdrSceneCaptureTest
