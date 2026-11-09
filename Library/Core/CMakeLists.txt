@@ -276,6 +276,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassBladeMesh.cpp
     Private/Rendering/WorldFieldPass.cpp
     Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
