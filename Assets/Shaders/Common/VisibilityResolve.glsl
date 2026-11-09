@@ -126,18 +126,11 @@ layout(std430, set = 0, binding = 3) readonly buffer MaterialTable
 #include "Common/MegaInstanceTable.glsl"
 
 // 描画のインスタンスの表（gbuffer.vert の InstanceData と一致）
-struct VisDrawInstance
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
 
 layout(std430, set = 0, binding = 5) readonly buffer DrawInstanceBuffer
 {
-    VisDrawInstance drawInstances[];
+    InstanceData drawInstances[];
 };
 
 layout(set = 0, binding = 6, rgba8) writeonly uniform image2D albedoImage;
@@ -325,7 +318,7 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
         else if (kind == VIS_KIND_PROCEDURAL_CHUNK)
         {
             // gbuffer.vert と同じ式: 法線は法線行列の行から作る
-            const VisDrawInstance instance = drawInstances[instanceIndex];
+            const InstanceData instance = drawInstances[instanceIndex];
             triangle.position[k] = (instance.world * vec4(local, 1.0)).xyz;
             triangle.normal[k] = VisNormalizeVertexNormal(instance.normalRows[0].xyz * localNormal.x +
                                                           instance.normalRows[1].xyz * localNormal.y +
