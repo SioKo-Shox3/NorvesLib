@@ -58,7 +58,7 @@ layout(std140, set = 0, binding = 0) uniform GrassDrawConstants
     mat4 PreviousView;               // 前のビュー行列。
     mat4 PreviousProjection;         // 前の射影行列。
     vec4 CameraPosition;             // xyz: 世界位置、w: 距離 1 m あたりの 1 画素の大きさ（m）。
-    vec4 PreviousCameraPosition;     // xyz: 前の世界位置、w: 予約。
+    vec4 PreviousCameraPosition;     // xyz: 前の世界位置、w: 前の 1 m あたりの画素寸法（0 なら現在値）。
     vec4 Wind;                       // xy: 風向 x/z、z: 時刻（s）、w: 前の時刻（s）。
     vec4 WindParams;                 // BaseSpeed、GustStrength、GustFrequencyHz、GustScaleMeters。
     vec4 WindExtra;                  // x: Turbulence、yzw: 予約。

@@ -1,11 +1,16 @@
 ﻿#pragma once
 
 #include "Container/VariableArray.h"
+#include "Math/Vector3.h"
+#include "Math/Vector4.h"
 #include <cstddef>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
+    struct GrassSpeciesGpuData;
+    struct GrassBladeRecord;
+
     /// 生成で使う塩 0〜4 に続く、位相・色・傾きの塩。
     inline constexpr uint32_t kGrassHashSaltPhase = 5;
     inline constexpr uint32_t kGrassHashSaltColor = 6;
@@ -33,7 +38,7 @@ namespace NorvesLib::Core::Rendering
         float PreviousView[4][4] = {};                // 前のビュー行列。
         float PreviousProjection[4][4] = {};          // 前の射影行列。
         float CameraPosition[4] = {};                 // xyz: 世界位置、w: 距離 1 m あたりの 1 画素の大きさ（m）。
-        float PreviousCameraPosition[4] = {};         // xyz: 前の世界位置、w: 予約。
+        float PreviousCameraPosition[4] = {};         // xyz: 前の世界位置、w: 前の 1 m あたりの画素寸法（0 なら現在値）。
         float Wind[4] = {};                           // xy: 水平単位方向 x/z、z: 時刻（s）、w: 前の時刻（s）。
         float WindParams[4] = {};                     // BaseSpeed、GustStrength、GustFrequencyHz、GustScaleMeters。
         float WindExtra[4] = {};                      // x: Turbulence、yzw: 予約。
@@ -65,6 +70,23 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GrassDrawConstants, LayerWindow) == 416);
     static_assert(offsetof(GrassDrawConstants, Flags) == 432);
     static_assert(offsetof(GrassDrawConstants, Trample) == 448);
+
+    /**
+     * @brief grass.vert と同じ式で、乾いたブレードの世界位置を求める。
+     * lod は頂点インデックスの上位ビットと一致する 0..2、行は LodSegments[lod] 以下。
+     * 生成の根元はセル内のジッター位置なので、セルは floor(PositionX/Z / BandSpacingMeters[lod])。
+     * bPrevious では前の時刻・カメラを使い、前のカメラが無効なら現在値へ戻す。
+     * 定数は生成と一致する有限の値（間隔・分割数・量子化最大は正）を渡す。
+     * Surface.x は 0 が前提。濡れた形状には LayerA の標本が別途必要。
+     */
+    Math::Vector3 EvaluateGrassBladeVertex(const GrassDrawConstants& constants,
+        const GrassSpeciesGpuData& species, const GrassBladeRecord& blade, uint32_t lod,
+        uint32_t vertexIndexValue, bool bPrevious);
+
+    /// 同じ頂点を現在または前のビュー・射影で clip 座標へ写す。
+    Math::Vector4 EvaluateGrassBladeVertexClip(const GrassDrawConstants& constants,
+        const GrassSpeciesGpuData& species, const GrassBladeRecord& blade, uint32_t lod,
+        uint32_t vertexIndexValue, bool bPrevious);
 
     /**
      * @brief LOD 0→1→2 の帯を結ぶ共有インデックスを作り、出力配列を置き換える。

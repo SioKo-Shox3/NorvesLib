@@ -10531,3 +10531,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 GBuffer へ重ねる描き先の作り方を共通の補助へ移し、FoliagePass がそれを使う: 着地(直し 0 回)
 - U6 撮影の解析の台本・カメラの台本・しきい値の表を書く: 着地(直し 0 回)
 - U2 草の描画の定数・共有インデックスのバッファの中身・GLSL の定数の配置を足す: 着地(直し 0 回)
+- U3 grass.vert・grass.frag と、頂点の式の CPU の写しを書き、シェーダーのコンパイル試験に足す: 着地(直し 1 回)
