@@ -10545,3 +10545,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: スモークの台本は `string(JSON ...)` を使うので CMake 3.19 以上が要る。二足の足先の向きの補正は四足の前脚と同じ方式で、実在の人型リグのつま先の動きは未確認
 - U2 一様な時刻のチャンネルを添字の直接計算で引く: 着地(直し 0 回)
 - U1 クリップの値の量子化の符号器（smallest-three 32/48・TransQuant16・Const の判定）: 着地(直し 0 回)
+- U3 ClipBank v1 の CMPR の書き手と読み手（minor 1）: 着地(直し 0 回)
