@@ -10620,3 +10620,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 フィールドの今・前の原点を消費側へ公開し、曲げの共通の式を GLSL と C++ に置く: 着地(直し 0 回)
 - U4 WorldFieldInteractorComponent と集め役（Engine のメンバ）と集めの試験: 着地(直し 0 回)
 - U2 grass.vert がフィールドを引いて曲げ・押し倒し・前の位置を出す: 着地(直し 0 回)
+- U5 grassland に決まった道を走る体（胴 2・四肢 4）を置く: 着地(直し 0 回)
