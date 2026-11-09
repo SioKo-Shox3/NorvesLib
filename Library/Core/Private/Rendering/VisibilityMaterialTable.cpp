@@ -88,6 +88,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     MaterialEntry MakeMaterialEntry(const MaterialResourceData* data)
     {
         MaterialEntry entry;
+        entry.Header[1] = GBufferContract::ShadingModelDefaultLit;
         if (!data)
         {
             return entry;
@@ -96,6 +97,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         for (uint32_t channel = 0; channel < 4; ++channel)
         {
             entry.BaseColor[channel] = data->BaseColor[channel];
+            entry.ShadingParams[channel] = data->ShadingParams[channel];
         }
         for (uint32_t channel = 0; channel < 3; ++channel)
         {
@@ -109,7 +111,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         entry.Header[0] = (data->bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
                           (data->HeightTexture.IsValid() ? MATERIAL_FLAG_HAS_HEIGHT : 0u) |
                           (data->bDiffuseOnly ? MATERIAL_FLAG_DIFFUSE_ONLY : 0u);
-        entry.Header[1] = static_cast<uint32_t>(data->Shading);
+        entry.Header[1] = ToGBufferShadingModelId(data->Shading);
         entry.Header[2] = static_cast<uint32_t>(data->Blend);
         StoreHandle(&entry.TexturesA[0], data->AlbedoTexture.Id);
         StoreHandle(&entry.TexturesA[2], data->NormalTexture.Id);
@@ -121,12 +123,29 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         return entry;
     }
 
+    MaterialEntry MakeMaterialEntry(const MaterialResourceData* data, const float* instanceShadingParams)
+    {
+        MaterialEntry entry = MakeMaterialEntry(data);
+        if (instanceShadingParams)
+        {
+            for (uint32_t channel = 0; channel < ShadingParamCount; ++channel)
+            {
+                if (instanceShadingParams[channel] >= 0.0f)
+                {
+                    entry.ShadingParams[channel] = instanceShadingParams[channel];
+                }
+            }
+        }
+        return entry;
+    }
+
     MaterialEntry MakeMaterialEntry(const MegaGeometry::MegaMeshMaterial& material)
     {
         MaterialEntry entry;
         for (uint32_t channel = 0; channel < 4; ++channel)
         {
             entry.BaseColor[channel] = material.BaseColor[channel];
+            entry.ShadingParams[channel] = material.ShadingParams[channel];
         }
         for (uint32_t channel = 0; channel < 3; ++channel)
         {
@@ -142,7 +161,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         std::memcpy(&entry.TexturesD[2], &material.OcclusionStrength, sizeof(float));
         entry.Header[0] = (material.bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
                           (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
-        entry.Header[1] = static_cast<uint32_t>(ShadingModel::DefaultLit);
+        entry.Header[1] = ToGBufferShadingModelId(material.Shading);
         entry.Header[2] = static_cast<uint32_t>(BlendMode::Opaque);
         if (material.TerrainBlend.IsTerrainSurface())
         {

@@ -27,8 +27,9 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
     vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
-    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
     vec4 terrainParams[10]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
+    vec4 shadingParams; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -219,15 +220,17 @@ void main()
     }
     vec3 normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
     const uint receiverFlags = bTerrain ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
-    outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, receiverFlags);
+    vec4 params = ResolveShadingParams(vec4(-1.0), mvp.shadingParams);
+    uint id = uint(mvp.vtFeedbackParams.w + 0.5);
+    outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = GBufferEncodeMaterial(textureSamples.Material, 0.0);
+    outMaterial = GBufferEncodeMaterial(textureSamples.Material, params.x);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveColor.rgb,
                                                                 fragEmissiveColor.a,
                                                                 mvp.frameParams.y),
-                                       0.0);
+                                       params.y);
     outVelocity = ComputeVelocity();
 }

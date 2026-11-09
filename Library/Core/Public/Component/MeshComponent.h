@@ -203,6 +203,19 @@ namespace NorvesLib::Core::Component
          */
         float GetCustomData(uint32_t index) const;
 
+        /**
+         * @brief インスタンスごとの材質値を設定
+         * @param index 0 = P0、1 = P1、2 = 予約、3 = 被覆率の乗数（1 で不変）
+         * @param value 0 以上ならインスタンスの値、負なら材質の値を使う
+         */
+        void SetShadingParams(uint32_t index, float value);
+
+        /**
+         * @brief インスタンスごとの材質値を取得。範囲外なら -1 を返す
+         * @param index 0 = P0、1 = P1、2 = 予約、3 = 被覆率の乗数
+         */
+        float GetShadingParams(uint32_t index) const;
+
         // ========================================
         // バウンディング
         // ========================================
@@ -294,6 +307,7 @@ namespace NorvesLib::Core::Component
 
         // カスタムシェーダーデータ
         float m_CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float m_ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
 
         // テクスチャ
         // キャッシュされたトランスフォーム

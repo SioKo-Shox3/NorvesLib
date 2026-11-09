@@ -96,4 +96,12 @@ float GBufferDecodeP1(vec4 emissiveSample)
     return emissiveSample.a;
 }
 
+// MaterialTypes.h の ResolveShadingParam と同じ規約で、各成分を解決する。
+vec4 ResolveShadingParams(vec4 instanceParams, vec4 materialParams)
+{
+    vec4 defaults = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 resolved = mix(defaults, materialParams, greaterThanEqual(materialParams, vec4(0.0)));
+    return mix(resolved, instanceParams, greaterThanEqual(instanceParams, vec4(0.0)));
+}
+
 #endif
