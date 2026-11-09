@@ -9263,3 +9263,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 CLI の引数と旧形式の cook への差し込み: 着地(直し 2 回)
 - U5 --rig-split の v1 ClipBank の cook への差し込み: 着地(直し 0 回)
 - U7 --retarget-clip と --bvh の cook への差し込み: 着地(直し 1 回)
+- U6 最適化を切った経路のバイト一致の試験・文書・タスクの verify: 着地(直し 0 回)

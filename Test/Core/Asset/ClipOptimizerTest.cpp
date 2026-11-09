@@ -1,5 +1,8 @@
 ﻿// 合成クリップの削減誤差、定数の扱い、再適用と実行時スキニングの契約を検査する。
+#include "ClipBankV1Fixture.h"
 #include "Animation/ClipOptimizer.h"
+#include "Tools/AssetCook/MeshCooker.h"
+#include "Tools/AssetCook/RigSplitCook.h"
 #include "Animation/AnimationClipResource.h"
 #include "Animation/ClipChannelSampler.h"
 #include "Animation/SkeletalAnimationSampler.h"
@@ -308,6 +311,65 @@ namespace
         optimized.Finalize();
         skeleton.Finalize();
     }
+    void CheckDisabledCookBytes()
+    {
+        namespace F = NorvesLib::Tests::RigV1Fixture;
+        namespace Cook = NorvesLib::Tools::AssetCook;
+        F::Fixture fixture;
+        const auto source = F::View(fixture.Json);
+        const std::filesystem::path sourcePath = "RigV1Fixture/rig.gltf";
+        Core::AssetImport::ImportSettingsFileOptions importOptions;
+        importOptions.bDisabled = true;
+        Cook::ClipOptimizeCookOptions disabled;
+        disabled.bEnabled = false;
+        disabled.Settings.MaxVertexErrorMeters = 0.02;
+        disabled.Settings.MaxJointErrorMeters = 0.01;
+        disabled.Settings.MaxRotationErrorDegrees = 1.0;
+        C::AnsiString error;
+        Cook::SkeletalCookResult legacyBase, legacyDisabled;
+        constexpr C::AnsiStringView format = "nvskel.v0.skinned.pnujiw.u32";
+        const bool baseOk = Cook::CookGltfToNvskelNativePath(source.data(), source.size(), format, sourcePath,
+                                                             legacyBase, error, &importOptions, nullptr, nullptr, nullptr);
+        if (!baseOk) std::fprintf(stderr, "旧形式の基準 cook に失敗: %s\n", error.c_str());
+        CHECK(baseOk);
+        const bool disabledOk = Cook::CookGltfToNvskelNativePath(source.data(), source.size(), format, sourcePath,
+                                                                 legacyDisabled, error, &importOptions, nullptr, nullptr,
+                                                                 &disabled);
+        if (!disabledOk) std::fprintf(stderr, "旧形式の無効化 cook に失敗: %s\n", error.c_str());
+        CHECK(disabledOk);
+        CHECK(legacyBase.ClipCount > 0 && !legacyBase.NvskelBytes.empty());
+        CHECK(legacyBase.NvskelBytes == legacyDisabled.NvskelBytes && legacyBase.SourceHash == legacyDisabled.SourceHash);
+
+        Cook::RigSplitCookRequest request;
+        request.SourcePath = sourcePath;
+        request.SkeletonPath = "Models/Rig.nvskel";
+        request.MeshPath = "Models/Mesh.nvskel";
+        request.BankPath = "Animations/Wave.nvclip";
+        request.ImportOptions = importOptions;
+        Cook::RigSplitCookResult splitBase, splitDisabled, splitEnabled;
+        S::RigV1Report report;
+        const bool splitBaseOk = Cook::CookRigSplitV1NativePath(source, request, splitBase, report, error);
+        if (!splitBaseOk) std::fprintf(stderr, "v1 の基準 cook に失敗: %s\n", error.c_str());
+        CHECK(splitBaseOk);
+        request.ClipOptimize = disabled;
+        const bool splitDisabledOk = Cook::CookRigSplitV1NativePath(source, request, splitDisabled, report, error);
+        if (!splitDisabledOk) std::fprintf(stderr, "v1 の無効化 cook に失敗: %s\n", error.c_str());
+        CHECK(splitDisabledOk);
+        CHECK(splitBase.SourceHash == splitDisabled.SourceHash);
+        const Cook::RigSplitCookEntry* baseline[] = {&splitBase.Skeleton, &splitBase.Mesh, &splitBase.Bank};
+        const Cook::RigSplitCookEntry* unchanged[] = {&splitDisabled.Skeleton, &splitDisabled.Mesh, &splitDisabled.Bank};
+        for (size_t i = 0; i < 3; ++i)
+        {
+            CHECK(!baseline[i]->Payload.empty() && !baseline[i]->Package.empty());
+            CHECK(baseline[i]->Payload == unchanged[i]->Payload && baseline[i]->Package == unchanged[i]->Package);
+        }
+        request.ClipOptimize = {};
+        request.ClipOptimize.bEnabled = true;
+        const bool splitEnabledOk = Cook::CookRigSplitV1NativePath(source, request, splitEnabled, report, error);
+        if (!splitEnabledOk) std::fprintf(stderr, "v1 の有効化 cook に失敗: %s\n", error.c_str());
+        CHECK(splitEnabledOk);
+        CHECK(splitEnabled.Bank.Payload != splitBase.Bank.Payload || splitEnabled.SourceHash != splitBase.SourceHash);
+    }
 } // namespace
 
 int main()
@@ -343,6 +405,7 @@ int main()
     C::VariableArray<Clip> rejected;
     A::ClipCompressionReport rejectedReport;
     CHECK(!A::OptimizeSkeletalClips(invalidRig, {&channels, 1}, rejected, settings, rejectedReport));
+    CheckDisabledCookBytes();
     std::puts("ClipOptimizerTest: 定数・削減誤差・冪等性・決定性・実行時スキニング・入力検査に合格");
     return 0;
 }
