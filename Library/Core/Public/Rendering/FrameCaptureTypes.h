@@ -15,7 +15,10 @@ namespace NorvesLib::Core::Rendering
         BackBuffer,
         GBufferVelocity,
         RTGIDiffuseIndirect, ///< R6 RTGIのデノイズ後の間接光（検証用）
-        RTGIHistoryAge       ///< R6 RTGIの書き込み済み履歴age（検証用）
+        RTGIHistoryAge,      ///< R6 RTGIの書き込み済み履歴age（検証用）
+        GBufferNormal,       ///< RGBA16F。w にシェーディングモデルの ID と受け手の印（検証用）
+        GBufferMaterial,     ///< RGBA8。a に P0（検証用）
+        GBufferEmissive      ///< RGBA16F。a に P1（検証用）
     };
 
     struct FrameCaptureRequest
@@ -371,6 +374,9 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource GBufferVelocity;
         FrameCaptureSource RTGIDiffuseIndirect;
         FrameCaptureSource RTGIHistoryAge;
+        FrameCaptureSource GBufferNormal;
+        FrameCaptureSource GBufferMaterial;
+        FrameCaptureSource GBufferEmissive;
         /**
          * @brief GBufferAovPass の出力（RGBA32F）。表面 = アルベド（線形 RGB）+ 粗さ、幾何 = ワールドの法線 + 視線方向の深度 m
          *
@@ -426,6 +432,12 @@ namespace NorvesLib::Core::Rendering
                 return &RTGIDiffuseIndirect;
             case FrameCaptureSourceKind::RTGIHistoryAge:
                 return &RTGIHistoryAge;
+            case FrameCaptureSourceKind::GBufferNormal:
+                return &GBufferNormal;
+            case FrameCaptureSourceKind::GBufferMaterial:
+                return &GBufferMaterial;
+            case FrameCaptureSourceKind::GBufferEmissive:
+                return &GBufferEmissive;
             default:
                 return nullptr;
             }
@@ -439,6 +451,9 @@ namespace NorvesLib::Core::Rendering
             GBufferVelocity = FrameCaptureSource{};
             RTGIDiffuseIndirect = FrameCaptureSource{};
             RTGIHistoryAge = FrameCaptureSource{};
+            GBufferNormal = FrameCaptureSource{};
+            GBufferMaterial = FrameCaptureSource{};
+            GBufferEmissive = FrameCaptureSource{};
             AovSurface = FrameCaptureSource{};
             AovGeometry = FrameCaptureSource{};
             AovLighting = FrameCaptureSource{};

@@ -14,7 +14,9 @@
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/Wind.h"
 #include "Rendering/SkyOcclusion.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/MegaGeometryMirror.h"
@@ -404,6 +406,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
+        void SetWindParameters(const WindParameters& parameters);
+
         // 空の遮蔽の値と遮蔽物を GameThread で保持し、次のパケットへ値で渡す。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
         SkyOcclusionParameters GetSkyOcclusionParameters() const { return m_SkyOcclusion; }
@@ -466,6 +471,9 @@ namespace NorvesLib::Core::Rendering
         void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
         /** @brief 設定された草の場の描画データを取得する（GameThread） */
         const Container::TSharedPtr<const GrassFieldRenderData>& GetGrassField() const { return m_GrassField; }
+
+        /** @brief このフレームの世界フィールド入力を無害化し、直前の入力を置き換える（GameThread） */
+        void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
@@ -620,6 +628,7 @@ namespace NorvesLib::Core::Rendering
     private:
         friend struct DDGISnapshotContractTestAccess;
         friend struct GrassFieldSnapshotContractTestAccess;
+        friend struct FramePacketWorldFieldSnapshotContractTestAccess;
         friend struct SkyOcclusionSnapshotContractTestAccess;
 
         // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
@@ -710,6 +719,7 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        WindParameters m_Wind = MakeDefaultWindParameters();
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         struct SkyOccluderEntry
         {
@@ -729,6 +739,7 @@ namespace NorvesLib::Core::Rendering
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
+        Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         RenderExtensionDataStore m_ExtensionData;

@@ -60,6 +60,10 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity VsmDirtyList = Identity::Literal("VSM.DirtyList", sizeof("VSM.DirtyList") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);
+    inline constexpr Identity WorldFieldCurrent =
+        Identity::Literal("WorldField.Current", sizeof("WorldField.Current") - 1);
+    inline constexpr Identity WorldFieldPrevious =
+        Identity::Literal("WorldField.Previous", sizeof("WorldField.Previous") - 1);
     inline constexpr Identity SkyAtmosphereTransmittance =
         Identity::Literal("SkyAtmosphere.Transmittance", sizeof("SkyAtmosphere.Transmittance") - 1);
     inline constexpr Identity SkyAtmosphereRadiance =

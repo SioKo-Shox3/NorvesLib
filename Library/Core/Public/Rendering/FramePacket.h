@@ -8,6 +8,7 @@
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RTGIContract.h"
 #include "Rendering/GrassFieldRenderData.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/PointShadowSnapshot.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
@@ -381,6 +382,9 @@ namespace NorvesLib::Core::Rendering
          */
         Container::TSharedPtr<const GrassFieldRenderData> GrassField;
 
+        /** @brief 最大32件の値の配列。SceneRevision に入れない（毎フレーム変わり RTGI の履歴を捨てるため）。 */
+        Container::VariableArray<WorldFieldInteractor> WorldFieldInteractors;
+
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
@@ -455,6 +459,7 @@ namespace NorvesLib::Core::Rendering
             OpaqueCommandRange = CommandRange{};
             SkinnedMeshFrameLeases.clear();
             GrassField.reset();
+            WorldFieldInteractors.clear();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();
@@ -598,7 +603,8 @@ namespace NorvesLib::Core::Rendering
                     std::memcmp(proxy.WorldTransform.values, data.World, sizeof(data.World)) != 0 ||
                     std::memcmp(proxy.PreviousWorldTransform.values, data.PreviousWorld,
                                 sizeof(data.PreviousWorld)) != 0 ||
-                    std::memcmp(proxy.CustomData, data.CustomData, sizeof(data.CustomData)) != 0)
+                    std::memcmp(proxy.CustomData, data.CustomData, sizeof(data.CustomData)) != 0 ||
+                    std::memcmp(proxy.ShadingParams, data.ShadingParams, sizeof(data.ShadingParams)) != 0)
                 {
                     continue;
                 }

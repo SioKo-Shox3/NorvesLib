@@ -58,6 +58,10 @@ namespace NorvesLib::Core::Rendering
                 command.Draw.ObjectId = proxy.ObjectId;
                 command.Draw.SourceMeshComponentId = proxy.ComponentId;
                 command.Draw.WorldMatrix = proxy.WorldTransform;
+                for (uint32_t i = 0; i < ShadingParamCount; ++i)
+                {
+                    command.Draw.ShadingParams[i] = proxy.ShadingParams[i];
+                }
                 command.Draw.InstanceCount = 1;
                 command.Draw.FirstInstance = 0;
                 command.Draw.bInstanced = false;

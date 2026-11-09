@@ -5,6 +5,7 @@
 #include "RHI/RHITypes.h"
 #include "Rendering/MegaGeometry/GeometryPageSource.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/MaterialTypes.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
@@ -449,6 +450,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float EmissiveLuminanceNits = 0.0f;            // 輝度(nits)
         // 負のmetal/roughは従来の黒/白。textureがあればscalarを再乗算しない。
         float Metallic = -1.0f, Roughness = -1.0f, OcclusionStrength = 1.0f;
+
+        /** @brief GBuffer に書くシェーディングモデル。 */
+        ShadingModel Shading = ShadingModel::DefaultLit;
+        /**
+         * @brief x=P0、y=P1、z=予約、w=被覆率の乗数（1=不変）。負は未指定。
+         * MegaGeometryResourceStore の材質コピー時に SanitizeShadingParam で正規化する。
+         */
+        float ShadingParams[ShadingParamCount] = {-1.0f, -1.0f, -1.0f, -1.0f};
 
         // PBRテクスチャ（無効なハンドルの場合はデフォルトテクスチャを使用）
         TextureHandle AlbedoTexture;

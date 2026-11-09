@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -16,14 +17,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams;     // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
 } mvp;
 
-struct InstanceData
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {
@@ -38,6 +32,7 @@ layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ方向
 layout(location = 6) out vec4 fragCurrentClip;
 layout(location = 7) out vec4 fragPreviousClip;
+layout(location = 8) flat out vec4 fragInstanceShadingParams;
 
 void main()
 {
@@ -50,6 +45,7 @@ void main()
     fragNormal = normalize(normal);
 
     fragObjectColor = instances[gl_InstanceIndex].objectColor.rgb;
+    fragInstanceShadingParams = instances[gl_InstanceIndex].shadingParams;
     fragEmissiveChromaticityAndLuminanceNits = mvp.emissiveChromaticityAndLuminanceNits;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);

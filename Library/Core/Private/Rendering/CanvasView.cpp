@@ -223,6 +223,10 @@ namespace NorvesLib::Core::Rendering
                                         : static_cast<float>(viewportPlan.RenderHeight);
             outData.CustomData[2] = 0.0f;
             outData.CustomData[3] = 0.0f;
+            for (float &value : outData.ShadingParams)
+            {
+                value = -1.0f;
+            }
         }
 
         BoardBatchKey MakeBoardBatchKey(const BoardProxy &proxy)

@@ -184,7 +184,7 @@ namespace NorvesLib::Tools::AssetCook
                 j.Raw(",");
             }
             j.Raw("{\"role\":");
-            j.Quote(A::SkeletalRoleName(result.ExpandedRoles[i].Role));
+            j.Quote(A::SkeletalRoleName(result.Profile.Vocabulary, result.ExpandedRoles[i].Role));
             j.Raw(",\"ordinal\":");
             j.Unsigned(result.ExpandedRoles[i].Ordinal);
             j.Raw(",\"source_joint\":");
@@ -200,7 +200,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 j.Raw(",");
             }
-            j.Quote(A::SkeletalRoleName(result.SourceOnlyRoles[i]));
+            j.Quote(A::SkeletalRoleName(result.Profile.Vocabulary, result.SourceOnlyRoles[i]));
         }
         j.Raw("],\"source_frames\":");
         j.Unsigned(r.SourceFrames);

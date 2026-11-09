@@ -7,12 +7,14 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPointLights.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
+#include "Wind.h"
 #include "RenderExtension/RenderExtensionData.h"
 #include "Container/Containers.h"
 #include <cmath>
@@ -625,6 +627,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 草の場のスナップショット（FramePacket::GrassField を指す。草の場が無いフレームは nullptr） */
         const GrassFieldRenderData *SnapshotGrassField = nullptr;
 
+        /** @brief パケット所有の世界フィールド干渉子の配列を借用する読み取り専用ポインタ。 */
+        const Container::VariableArray<WorldFieldInteractor>* SnapshotWorldFieldInteractors = nullptr;
+
         /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
         const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
         /** @brief 箱で投影するデカールの一覧（FramePacket::Scene.Decals を指す） */
@@ -1119,6 +1124,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief ゲームの時間。DeltaTime は RenderThread のフレーム時間なので、拡張のパスはこちらを使う。 */
         RenderExtensionFrameInfo ExtensionFrame;
+
+        /** @brief フレームパケットから値で写した世界共通の風。 */
+        WindParameters Wind = MakeDefaultWindParameters();
 
         /**
          * @brief 決定的な撮影（--capture-deterministic）のフレームか

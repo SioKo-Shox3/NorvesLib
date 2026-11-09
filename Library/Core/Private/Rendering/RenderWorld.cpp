@@ -330,6 +330,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetWindParameters(const WindParameters& parameters)
+    {
+        m_RenderingCoordinator.SetWindParameters(parameters);
+    }
+
     void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         m_RenderingCoordinator.SetSkyOcclusionParameters(parameters);
@@ -402,6 +407,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
     {
         m_RenderingCoordinator.SetGrassField(std::move(grassField));
+    }
+
+    void RenderWorld::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        m_RenderingCoordinator.SetWorldFieldInteractors(interactors);
     }
 
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)

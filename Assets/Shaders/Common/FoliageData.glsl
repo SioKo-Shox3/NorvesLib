@@ -12,7 +12,7 @@ layout(set = 0, binding = 0) uniform FoliageData
     vec4 cameraPosition;
     // xy = 風の吹いていく向き（XZ。長さ 1）, z = 今の風の時刻[s], w = 前のフレームの風の時刻[s]
     vec4 wind;
-    // x = 突風の塊の流れる速さ[m/s], y = 塊の大きさ[m], z = 強さ, w = 株の揺れの周波数[Hz]
+    // x = 風速[m/s]（従来の風では突風の塊の流れる速さ）, y = 突風の塊の大きさ[m], z = 強さ, w = 株の揺れの周波数[Hz]
     vec4 windParams;
     // rgb = 茎・根元の色（線形のアルベド）, a = 粗さ
     vec4 stemColor;
@@ -23,6 +23,8 @@ layout(set = 0, binding = 0) uniform FoliageData
     // x = 前のフレームのカメラが有効か（1/0）, y = 株の高さ[m]（インスタンスの高さの倍率が 1 のとき）,
     // z・w = 距離で間引く範囲の始まりと終わり[m]（w <= z なら間引かない）
     vec4 frameParams;
+    // x = 共通の風が有効か（1/0）, y = 突風の強さ, z = 突風の周波数[Hz], w = 乱流の強さ
+    vec4 windField;
 } foliage;
 
 #endif

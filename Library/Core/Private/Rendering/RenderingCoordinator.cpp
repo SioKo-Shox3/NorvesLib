@@ -184,12 +184,14 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
             hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
             hash = HashRevisionValue(hash, static_cast<uint32_t>(proxy.LayerMask));
-            return HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            hash = HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            return HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
         }
 
         uint64_t HashSkinnedMeshProxyRevision(const SkinnedMeshProxy& proxy)
         {
             uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
+            hash = HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);
@@ -4585,6 +4587,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetWindParameters(m_Wind);
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -4603,6 +4606,11 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
         packet.GrassField = m_GrassField;
+        packet.WorldFieldInteractors.clear();
+        packet.WorldFieldInteractors.insert(packet.WorldFieldInteractors.end(),
+                                            m_WorldFieldInteractors.begin(), m_WorldFieldInteractors.end());
+        // このフレームの入力を写し終えたら、容量を保ったまま空にする。
+        m_WorldFieldInteractors.clear();
         packet.Scene.RibbonTrails = m_RibbonTrails;
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
@@ -5154,8 +5162,9 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        // パケットを確保できなかったフレームの帯も翌フレームへ持ち越さない。
+        // パケットを確保できなかったフレームの入力も翌フレームへ持ち越さない。
         m_RibbonTrails.Clear();
+        m_WorldFieldInteractors.clear();
 
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
@@ -5841,6 +5850,7 @@ namespace NorvesLib::Core::Rendering
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
@@ -5855,6 +5865,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
         viewContext.SnapshotGrassField = packet->GrassField.get();
+        viewContext.SnapshotWorldFieldInteractors = &packet->WorldFieldInteractors;
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;
@@ -6613,6 +6624,11 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
+    {
+        m_Wind = SanitizeWindParameters(parameters);
+    }
+
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         const SkyOcclusionParameters sanitized = SanitizeSkyOcclusionParameters(parameters);
@@ -6716,6 +6732,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
     {
         m_GrassField = std::move(grassField);
+    }
+
+    void RenderingCoordinator::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        SanitizeWorldFieldInteractors(interactors, m_WorldFieldInteractors);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)

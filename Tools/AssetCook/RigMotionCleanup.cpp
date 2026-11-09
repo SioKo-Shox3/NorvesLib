@@ -52,15 +52,15 @@ namespace NorvesLib::Tools::AssetCook::Detail
             return false;
         }
         C::VariableArray<Foot> feet;
-        constexpr struct
+        constexpr const char* quadrupedLegNames[] = {"LF", "RF", "LH", "RH"};
+        constexpr const char* humanoidLegNames[] = {"L", "R"};
+        const auto legs = A::GetSkeletalRoleVocabularyInfo(profile.Vocabulary).Legs;
+        const auto* legNames = profile.Vocabulary == A::SkeletalRoleVocabulary::Humanoid
+                                   ? humanoidLegNames : quadrupedLegNames;
+        for (size_t legIndex = 0; legIndex < legs.size(); ++legIndex)
         {
-            A::SkeletalRole Role;
-            const char* Leg;
-        } roles[] = {{A::SkeletalRole::FrontLPaw, "LF"}, {A::SkeletalRole::FrontRPaw, "RF"},
-                     {A::SkeletalRole::HindLPaw, "LH"}, {A::SkeletalRole::HindRPaw, "RH"}};
-        for (const auto& role : roles)
-        {
-            const auto& targets = profile.Target[size_t(role.Role)];
+            const auto& leg = legs[legIndex];
+            const auto& targets = profile.Target[size_t(leg.Foot)];
             if (targets.empty())
                 continue;
             const auto& bytes = targets.back().Name;
@@ -73,7 +73,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             for (uint32_t i = 0; i < data->Geometry.Joints.size(); ++i)
                 if (data->Geometry.Joints[i].Name == name)
                 {
-                    feet.push_back({i, A::SkeletalRoleName(role.Role), Core::Identity(role.Leg), {}});
+                    feet.push_back({i, A::SkeletalRoleName(profile.Vocabulary, leg.Foot), Core::Identity(legNames[legIndex]), {}});
                     break;
                 }
         }
