@@ -734,6 +734,10 @@ namespace NorvesLib::Core::Animation
         for (const auto& leg : input.Legs)
         {
             marked[leg.Upper] = marked[leg.Lower] = marked[leg.Paw] = 1;
+            if (leg.Hock != UINT32_MAX)
+            {
+                marked[leg.Hock] = 1;
+            }
         }
         C::VariableArray<uint32_t> changed;
         for (size_t i = 0; i < joints; ++i)
@@ -778,7 +782,9 @@ namespace NorvesLib::Core::Animation
                     pole = {};
                 const V fallback = hasPreviousPole[l] ? previousPoles[l] : Rotate(parentRotations[f], {0, 0, 1});
                 const V hockToPaw = Sub(pose.Positions[leg.Paw], end);
-                V target = leg.Hock == UINT32_MAX ? goal.Position : Sub(goal.Position, hockToPaw);
+                // 中足のワールド方向を保ち、足先から引いた hock の目標を二関節で解く。
+                const Q hockWorld = pose.Rotations[endJoint];
+                const V target = leg.Hock == UINT32_MAX ? goal.Position : Sub(goal.Position, hockToPaw);
                 TwoBoneIKInput ikInput;
                 ikInput.Root = {0.0f, 0.0f, 0.0f};
                 ikInput.MaxStretch = 1.0f;
@@ -787,27 +793,17 @@ namespace NorvesLib::Core::Animation
                     !StoreVector(pole, ikInput.Pole) || !StoreVector(fallback, ikInput.FallbackPole))
                     return Fail(error, "foot_planting_nonfinite");
                 IkResult result;
-                const uint32_t iterations = leg.Hock == UINT32_MAX ? 1 : 4;
-                for (uint32_t iteration = 0; iteration < iterations; ++iteration)
+                if (!StoreVector(Sub(target, root), ikInput.Target))
                 {
-                    if (!StoreVector(Sub(target, root), ikInput.Target))
-                        return Fail(error, "foot_planting_nonfinite");
-                    const auto solved = SolveTwoBoneIK(ikInput);
-                    result.RootDelta = {solved.RootDelta.x, solved.RootDelta.y, solved.RootDelta.z, solved.RootDelta.w};
-                    result.MidDelta = {solved.MidDelta.x, solved.MidDelta.y, solved.MidDelta.z, solved.MidDelta.w};
-                    result.PoleUsed = {solved.PoleUsed.x, solved.PoleUsed.y, solved.PoleUsed.z};
-                    if (!Normalize(result.RootDelta) || !Normalize(result.MidDelta) || !Finite(result.PoleUsed))
-                        return Fail(error, "foot_planting_nonfinite");
-                    if (leg.Hock != UINT32_MAX)
-                    {
-                        const V updated = Sub(goal.Position, Rotate(result.MidDelta, hockToPaw));
-                        const double change = Length(Sub(updated, target));
-                        if (!Finite(updated) || !std::isfinite(change))
-                            return Fail(error, "foot_planting_nonfinite");
-                        if (change < 1e-9)
-                            break;
-                        target = updated;
-                    }
+                    return Fail(error, "foot_planting_nonfinite");
+                }
+                const auto solved = SolveTwoBoneIK(ikInput);
+                result.RootDelta = {solved.RootDelta.x, solved.RootDelta.y, solved.RootDelta.z, solved.RootDelta.w};
+                result.MidDelta = {solved.MidDelta.x, solved.MidDelta.y, solved.MidDelta.z, solved.MidDelta.w};
+                result.PoleUsed = {solved.PoleUsed.x, solved.PoleUsed.y, solved.PoleUsed.z};
+                if (!Normalize(result.RootDelta) || !Normalize(result.MidDelta) || !Finite(result.PoleUsed))
+                {
+                    return Fail(error, "foot_planting_nonfinite");
                 }
                 previousPoles[l] = result.PoleUsed;
                 hasPreviousPole[l] = 1;
@@ -832,6 +828,17 @@ namespace NorvesLib::Core::Animation
                 if (!Normalize(pose.Locals[leg.Lower].Rotation) ||
                     !Forward(input, order, parentRotations[f], input.RootParents[f].Translation, pose))
                     return Fail(error, "foot_planting_nonfinite");
+
+                if (leg.Hock != UINT32_MAX)
+                {
+                    const int32_t hockParent = input.Parents[leg.Hock];
+                    pose.Locals[leg.Hock].Rotation = Multiply(Inverse(pose.Rotations[size_t(hockParent)]), hockWorld);
+                    if (!Normalize(pose.Locals[leg.Hock].Rotation) ||
+                        !Forward(input, order, parentRotations[f], input.RootParents[f].Translation, pose))
+                    {
+                        return Fail(error, "foot_planting_nonfinite");
+                    }
+                }
 
                 const V worldUp = Rotate(pose.Rotations[leg.Paw], legRest[l].PawUp);
                 const Q align = ShortestRotation(worldUp, {0, 1, 0});
