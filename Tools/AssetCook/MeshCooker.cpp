@@ -4434,7 +4434,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
         const SkeletalBvhCookRequest& request, SkeletalBvhCookResult& outResult,
         Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+        const ClipOptimizeCookOptions* clipOptimize)
     {
         if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
         {
@@ -4443,13 +4444,23 @@ namespace NorvesLib::Tools::AssetCook
         SkeletalBvhCookResult candidate;
         SkeletalCookDiagnostics diagnostics;
         if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, candidate.Cook, error,
-                importOptions, decodeOptions, diagnostics, &request, &candidate))
+                importOptions, decodeOptions, diagnostics, &request, &candidate, clipOptimize))
         {
             return false;
         }
         static_assert(std::is_nothrow_move_assignable_v<SkeletalBvhCookResult>);
         outResult = std::move(candidate);
         return true;
+    }
+
+    bool CookGltfWithBvhToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+        const SkeletalBvhCookRequest& request, SkeletalBvhCookResult& outResult,
+        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return CookGltfWithBvhToNvskelNativePath(sourceBytes, sourceSize, format, sourcePath, request, outResult,
+                                                 error, importOptions, decodeOptions, nullptr);
     }
 
     // 既存narrow呼出元のASCII互換境界。native APIと同名overloadを増やさず、literal/{}を曖昧にしない。

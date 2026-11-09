@@ -19,6 +19,8 @@ namespace NorvesLib::Core::AssetImport
 namespace NorvesLib::Tools::AssetCook
 {
     struct ClipOptimizeCookOptions;
+    struct SkeletalBvhCookRequest;
+    struct SkeletalBvhCookResult;
 
     enum class MeshImageRole : uint8_t
     {
@@ -244,4 +246,13 @@ namespace NorvesLib::Tools::AssetCook
         const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
         SkeletalCookDiagnostics* outDiagnostics = nullptr,
         const ClipOptimizeCookOptions* clipOptimize = nullptr);
+
+    // BVH 適用後にクリップを最適化する呼び出し。既存の引数数の呼び出しも保持する。
+    [[nodiscard]] bool CookGltfWithBvhToNvskelNativePath(
+        const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
+        const std::filesystem::path& sourcePath, const SkeletalBvhCookRequest& request,
+        SkeletalBvhCookResult& outResult, Core::Container::AnsiString& error,
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+        const ClipOptimizeCookOptions* clipOptimize);
 } // namespace NorvesLib::Tools::AssetCook

@@ -1362,10 +1362,21 @@ namespace NorvesLib::Tools::AssetCook
         bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
                                        Core::Container::AnsiString& outError)
         {
-            if (request.ClipOptimize.bEnabled || request.ClipOptimize.bAnyLimitGiven ||
-                !request.ClipOptimize.ReportPath.empty())
+            std::string clipError;
+            if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError))
             {
-                outError = Utf8Text(u8"管理付きキャッシュではクリップ最適化に対応していません");
+                outError = Core::Container::AnsiString(Core::Container::AnsiStringView(clipError.data(), clipError.size()));
+                return false;
+            }
+            const bool bRetargetClip = HasRigRetarget(request) && request.Kind == "animation" &&
+                                       request.Format == "nvskel.v1.clips";
+            const bool bRoleClip = HasSkeletalRoleFileRequest(request.RoleProfile) && request.Kind == "model" &&
+                                   IsSupportedSkeletalCookFormat(request.Format);
+            if ((request.ClipOptimize.bEnabled || request.ClipOptimize.bAnyLimitGiven ||
+                 request.ClipOptimize.bReportGiven || !request.ClipOptimize.ReportPath.empty()) &&
+                !bRetargetClip && !bRoleClip)
+            {
+                outError = Utf8Text(u8"この管理付き cook ではクリップ最適化に対応していません");
                 return false;
             }
             if (!request.Usage.empty() || !request.Generate.empty() || request.FallbackMinTriangles != 0 ||
@@ -1611,14 +1622,45 @@ namespace NorvesLib::Tools::AssetCook
         }
 
     }
+    bool Detail::GuardClipReportRequest(const SingleAssetCookRequest& request,
+                                        const CookDependencySnapshot& dependencies,
+                                        Core::Container::AnsiString& outError)
+    {
+        if (!request.ClipOptimize.bEnabled || request.ClipOptimize.ReportPath.empty()) return true;
+        const auto options = MakeLegacyCookOptions(request);
+        std::string error;
+        const auto safe = [&](const std::filesystem::path& path)
+        {
+            return GuardClipReport(options, path, request.PackagePath, request.ManifestPath, error);
+        };
+        const auto fail = [&]()
+        {
+            outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
+            return false;
+        };
+        if (!safe(request.InputPath)) return fail();
+        for (const auto& file : dependencies.Files)
+        {
+            if (!file.Path.empty() && !safe(file.Path)) return fail();
+        }
+        if (HasRigRetarget(request))
+        {
+            auto motionReport = request.PackagePath;
+            motionReport.replace_extension(".motion_report.json");
+            if (!safe(motionReport)) return fail();
+        }
+        return true;
+    }
     bool CookSingleAsset(const SingleAssetCookRequest& request, Core::Container::AnsiString& outError)
     {
         std::string clipError;
+        const bool bRetargetClip = Detail::HasRigRetarget(request) && request.Kind == "animation" &&
+                                   request.Format == "nvskel.v1.clips";
+        const bool bSkeletalModel = request.Kind == "model" && IsSupportedSkeletalCookFormat(request.Format);
         if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError) ||
-            (request.ClipOptimize.bEnabled && (request.Kind != "model" || !IsSupportedSkeletalCookFormat(request.Format) ||
-                Detail::HasRigRetarget(request) || HasSkeletalRoleFileRequest(request.RoleProfile))))
+            (request.ClipOptimize.bEnabled && !bSkeletalModel && !bRetargetClip))
         {
-            if (clipError.empty()) clipError = Utf8Text(u8"クリップ最適化は旧形式の骨格モデル cook にのみ指定できます");
+            if (clipError.empty()) clipError = Utf8Text(u8"クリップ最適化は骨格モデルまたはリターゲットしたクリップの cook で指定してください");
             outError = Core::Container::AnsiString(Core::Container::AnsiStringView(clipError.data(), clipError.size()));
             return false;
         }

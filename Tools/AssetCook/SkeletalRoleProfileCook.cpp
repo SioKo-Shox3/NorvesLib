@@ -175,7 +175,8 @@ namespace NorvesLib::Tools::AssetCook
                                                    SkeletalRoleProfileCookResult& outResult,
                                                    Core::Container::AnsiString& error,
                                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                                                   const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                                                   const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                                   const ClipOptimizeCookOptions* clipOptimize)
     {
         SkeletalRoleProfileCookResult candidate;
         C::VariableArray<A::SkeletalJointMappingNameView> pairs;
@@ -186,7 +187,7 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
         if (!CookGltfWithBvhToNvskelNativePath(sourceBytes, sourceSize, format, sourcePath, typed, candidate.Cooked,
-                                               error, importOptions, decodeOptions))
+                                               error, importOptions, decodeOptions, clipOptimize))
         {
             return false;
         }
@@ -201,7 +202,8 @@ namespace NorvesLib::Tools::AssetCook
                                                   const SkeletalRoleProfileCookRequest& request,
                                                   ModelCookFingerprint& outResult, C::AnsiString& error,
                                                   const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                                                  const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                                                  const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                                  const ClipOptimizeCookOptions* clipOptimize)
     {
         if (!IsSupportedSkeletalCookFormat(format) || request.ClipName.empty() ||
             (request.Operation != SkeletalBvhClipOperation::Add &&
@@ -217,7 +219,7 @@ namespace NorvesLib::Tools::AssetCook
         ModelCookFingerprint candidate;
         if (!PrepareRole(request, prepared, pairs, corrections, typed, error) ||
             !FingerprintModelCookSourceNativePath(sourceBytes, sourceSize, format, sourcePath, logicalPath, candidate,
-                                                  error, importOptions, decodeOptions) ||
+                                                  error, importOptions, decodeOptions, clipOptimize) ||
             !Detail::AppendBvhCookHash(candidate.SourceHash, typed, prepared.Cooked.Cook.SourceHash))
         {
             return false;

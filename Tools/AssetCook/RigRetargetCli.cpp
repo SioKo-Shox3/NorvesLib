@@ -49,6 +49,9 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 std::puts(
                     "AssetCook --retarget-clip --input <BVH/glTF/GLB> --skeleton <target glTF/GLB> --role-profile <JSON> --out <new-directory> --logical <animation-path> [--clip <source clip>] [--clip-name <output name>] [--variant <name>]");
                 std::puts(
+                    "クリップ最適化: [--clip-optimize] [--clip-max-vertex-error-m <m>] "
+                    "[--clip-max-joint-error-m <m>] [--clip-max-rotation-error-deg <deg>] [--clip-report <path>]");
+                std::puts(
                     "共有rootへの増分cookはasset-set v2のskeleton_path / role_profile / source_clipを使ってください。");
                 std::puts(
                     "動画由来の補正はrole-profileのprocessingで指定: spike_threshold_degrees / smoothing_radius / "
@@ -78,6 +81,34 @@ namespace NorvesLib::Tools::AssetCook::Detail
                     }
                 }
                 seen.push_back(C::AnsiString(key));
+                const bool clipFlag = key == C::AnsiStringView("--clip-optimize");
+                const bool clipReport = key == C::AnsiStringView("--clip-report");
+                const bool clipValue = clipReport || key == C::AnsiStringView("--clip-max-vertex-error-m") ||
+                    key == C::AnsiStringView("--clip-max-joint-error-m") ||
+                    key == C::AnsiStringView("--clip-max-rotation-error-deg");
+                if (clipFlag || clipValue)
+                {
+                    const char* raw = equals != C::AnsiStringView::npos ? args[i].c_str() + equals + 1 : nullptr;
+                    if (!raw && clipValue && i + 1 < args.size())
+                    {
+                        raw = args[++i].c_str();
+                    }
+                    // 共通解析に指定状態を反映し、パスは UTF-8 から構築する。
+                    const bool nativeReport = clipReport && raw && *raw && std::strncmp(raw, "--", 2) != 0;
+                    const char* parsedValue = nativeReport ? "." : raw;
+                    bool consumed = false;
+                    std::string clipError;
+                    if (!TryParseClipOptimizeArgument({key.data(), key.size()}, parsedValue, request.ClipOptimize,
+                                                      consumed, clipError))
+                    {
+                        return reject(clipError.c_str());
+                    }
+                    if (nativeReport)
+                    {
+                        request.ClipOptimize.ReportPath = std::filesystem::u8path(raw);
+                    }
+                    continue;
+                }
                 C::AnsiStringView value;
                 if (equals != C::AnsiStringView::npos)
                 {
@@ -132,6 +163,11 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 {
                     return reject("unknown_argument");
                 }
+            }
+            std::string clipError;
+            if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError))
+            {
+                return reject(clipError.c_str());
             }
             if (request.InputPath.empty() || request.RetargetSkeletonPath.empty() ||
                 request.RetargetProfilePath.empty() || request.LogicalPath.empty() || destination.empty())
