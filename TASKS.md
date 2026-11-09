@@ -5968,7 +5968,7 @@
 - notes: ロードマップ GR30 の A（995〜1045 行）。GR30 は SS-TAA-P2 の後（ロードマップ）で、SS-TAA-P2 は done（Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md）。風の式の中身は GR46（G5 の後半）が持ち、この項目は契約と時刻の基準と velocity まで。4096 秒で巻くのは float の精度のため（1 時間を超えると刻みが粗くなる）で、風の周波数は 1/4096 Hz の整数倍に量子化する制約を GR46 へ渡す（Common/VertexAnimation.glsl の注釈と割り当て表に書く）。GBuffer の UBO の `frameParams` という名前は既に別の意味で使われている（GBufferPass.cpp:669。前のカメラの履歴・プリエクスポージャ・VT）ので、新しい欄は別の名前にする。10-02 の後に可視バッファ（既定は on）が入り、velocity は解決が三角形から作る（Common/VisibilityResolve.glsl:504 の `VisComputeVelocity`）ので、解決とソフトのラスタ（visbuffer_sw_raster.comp）も同じ式を通す必要がある（ロードマップの節には無い）。UNCERTAIN: 解決が三角形の頂点を読み直す所（VisibilityTriangleFetch.glsl）でインスタンスの値と時刻を引けるかは、読んで確かめる。危険地帯（GBuffer・可視バッファ・TAA の入力・RenderThread）なので評価者を通す。完了条件の GR30 の velocity とフレームの欠落の行、要件 `#### GR30`。
 
 ## G5-GR30-REACTIVE: TAA にリアクティブの入力（Scene.Reactive）を足し、velocity を持たない半透明・粒子の残像を消せるようにする
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA
 - gr: GR30
 - done-when: 名前付きの資源 `Scene.Reactive`（R8_UNORM）を `RenderGraphResourceNames.h` に足し、`TemporalAAPass` の Declare（TemporalAAPass.inl:358 付近）が有れば読み、無ければ 1x1 のゼロを結ぶ。`temporal_aa.frag` に binding 5 を足し、今の重み（temporal_aa.frag:198 の currentWeight）をリアクティブで 1 へ寄せ、分散のクリップの箱の半幅をリアクティブで広げる（係数は TAA の定数にして既定は仮）。書き手の口: ForwardPass の半透明の材質に「リアクティブを書く」の印（既定は書かない）を足し、印のある材質だけが色と同じブレンドの係数で被覆率を `Scene.Reactive` へ積む。拡張のパス（G5-GR25-STAGE-REGISTRY の Transparent 段）が同じ資源へ書ける手助け（RenderExtensionHelpers）を足す。GPU の `RenderingTemporalAAReactiveVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の SceneColor を撮る形で登録）が、画面を横切る半透明の板の A/B で、板が去った後にピークの 5% を超える画素が残るフレームの数が、リアクティブ有りで 2 以内・無しで 8 以上を確かめ、書き手が無いときの TAA の出力が導入前とビット一致であることも確かめる。golden 4 本が変わらない。
