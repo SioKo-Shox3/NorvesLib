@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "sounds": [
+    {
+      "id": "rain_loop",
+      "clips": ["Audio/Rain/rain_loop.wav"],
+      "volume_db": -6.0,
+      "volume_jitter_db": 0.0,
+      "pitch_jitter_semitones": 0.0,
+      "loop": true,
+      "loop_begin_frame": 0,
+      "loop_length_frames": 0,
+      "priority": 200,
+      "max_instances": 1,
+      "limit_policy": "stop_oldest",
+      "cooldown_ms": 0,
+      "dedupe_window_ms": 0,
+      "dedupe_radius": 0.0,
+      "fade_in_ms": 3000,
+      "fade_out_ms": 2000,
+      "spatial": "2d",
+      "category": "ambience",
+      "noise_radius": 0.0,
+      "source_ref": "サンプルの雨の環境音"
+    },
+    {
+      "id": "impact",
+      "clips": ["Audio/Effects/impact_01.wav", "Audio/Effects/impact_02.wav"],
+      "volume_jitter_db": 1.0,
+      "pitch_jitter_semitones": 0.5,
+      "max_instances": 4,
+      "limit_policy": "reject_new",
+      "spatial": "3d",
+      "category": "effect"
+    }
+  ]
+}

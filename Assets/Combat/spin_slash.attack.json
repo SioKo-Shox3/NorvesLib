@@ -1,0 +1,18 @@
+{
+  "id": "spin_slash",
+  "damage": 12,
+  "stagger": 2,
+  "hitStopSeconds": 0.03,
+  "rehit": "interval",
+  "rehitIntervalSeconds": 0.35,
+  "perVictim": "firstPart",
+  "hitFactions": ["enemy"],
+  "hitboxes": [
+    {
+      "joint": "hand_r",
+      "windowEvent": "SpinSlash",
+      "maxDurationSeconds": 1.5,
+      "shape": { "type": "capsule", "pointA": [0, 0, 0.1], "pointB": [0, 0, 0.9], "radius": 0.1 }
+    }
+  ]
+}

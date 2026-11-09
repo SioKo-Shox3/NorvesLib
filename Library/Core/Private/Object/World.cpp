@@ -1207,8 +1207,17 @@ namespace NorvesLib::Core
         return true;
     }
 
-    Entity* World::SpawnPrefab(const PrefabAsset& prefab, Entity* parent, const PrefabOverrideSet* overrides)
+    Entity* World::SpawnPrefab(
+        const PrefabAsset& prefab,
+        Entity* parent,
+        const PrefabOverrideSet* overrides,
+        PrefabSpawnAliasMap* pOutAliases)
     {
+        if (pOutAliases)
+        {
+            pOutAliases->clear();
+        }
+
         if (!HasFlag(OF_Initialized))
         {
             return nullptr;
@@ -1245,6 +1254,19 @@ namespace NorvesLib::Core
         if (!bAttached)
         {
             return nullptr;
+        }
+
+        if (pOutAliases)
+        {
+            for (const PrefabBuiltObject& object : buildState.Objects)
+            {
+                if (object.Target.NestedInstances.empty())
+                {
+                    (*pOutAliases)[object.Target.Alias] = {
+                        object.LiveObject.EntityPtr,
+                        object.LiveObject.ComponentPtr};
+                }
+            }
         }
 
         return rootGuard.Release();
@@ -1773,34 +1795,7 @@ namespace NorvesLib::Core
         {
             return false;
         }
-        // 自分の今の状態は常に見る。祖先を含めた判定は、階層のシステムが求めた EffectiveActive を読む
-        if (!entity.IsActive() || entity.IsPendingDestroy())
-        {
-            return false;
-        }
-        // 作成予約中の行・付け替え待ちがある間と、Active・PendingDestroy の変更がまだ伝播されていない間は、キャッシュが古いので祖先をたどる
-        if (m_EcsWorld && m_PendingEntityRelinks.empty() && m_PendingEntityCreates.empty() &&
-            m_EcsTransformSystem && !m_EcsTransformSystem->HasUnpropagatedFlagChanges())
-        {
-            const Ecs::EcsEntity row = entity.GetEcsEntity();
-            if (!row.IsNull() && m_EcsWorld->IsAlive(row))
-            {
-                const Ecs::EcsPropagatedTransform* propagated = m_EcsWorld->GetColumnValue<Ecs::EcsPropagatedTransform>(row);
-                if (propagated != nullptr && propagated->bValid != 0)
-                {
-                    return propagated->bEffectiveActive != 0;
-                }
-            }
-        }
-        // 行が無い・まだ求めていないときは、祖先をたどる
-        for (const Entity* current = &entity; current; current = current->GetParentEntity())
-        {
-            if (!current->IsActive() || current->IsPendingDestroy())
-            {
-                return false;
-            }
-        }
-        return true;
+        return entity.IsActiveInHierarchy();
     }
 
     bool World::TryResolveChannelDelta(const Entity& owner, Engine::TimeChannel channel, float& out) const

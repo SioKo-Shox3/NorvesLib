@@ -17,6 +17,9 @@
 // クッカーは --generate terrain-tile:dem:<x>,<z> で、この格子を kDemTileCells 升目ごとの区画に分けて焼く。
 // 格子には造成（TerrainGrading。建物の足元と道だけを緩い平面へ寄せる）を掛けられる。造成は頂点の高さを置き換える規則なので、
 // 焼いたメッシュと Game が引く高さは造成の後も一致する（荒野は WastelandTerrain::LoadDemGrid で前哨地の造成を掛けて読む）。
+// cook 済みの NVTRN からも、全タイルの HGT0 をつないで同じ格子の高さ場を作れる。
+// 高さはヘッダの写像と OriginY から復元し、共有辺の標本が一致することを確かめる。
+// この格子も既存の対角線・補間・範囲外の規則をそのまま使う。
 // ---------------------------------------------------------------------------
 
 #include "Container/PointerTypes.h"
@@ -24,9 +27,15 @@
 #include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/VariableArray.h"
+#include "Math/GeometryTypes.h"
 
 #include <cstdint>
 #include <limits>
+
+namespace NorvesLib::Core::Asset
+{
+    struct CookedTerrainData;
+}
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -38,6 +47,27 @@ namespace NorvesLib::Core::Rendering::Terrain
     {
         return ((column + row) & 1u) == 0u;
     }
+
+    /// 表面の層がない、または範囲外のときの番号
+    inline constexpr uint8_t kInvalidTerrainSurfaceId = 0xFFu;
+    /// タイルがない、または範囲外のときの番号
+    inline constexpr uint32_t kInvalidTerrainTileId = 0xFFFFFFFFu;
+
+    /// タイルの常駐の印。印の無いタイル番号（範囲外・無効な番号を含む）は常駐とみなす。
+    class TerrainTileResidency
+    {
+    public:
+        /// タイルが常駐しているかを返す
+        bool IsResident(uint32_t tileId) const;
+        /// タイルの常駐状態を設定する。無効な番号は無視する
+        void SetResident(uint32_t tileId, bool bResident);
+        /// 非常駐のタイルが 1 つも無いとき true
+        bool IsAllResident() const;
+
+    private:
+        Container::VariableArray<uint64_t> m_NonResidentBits; // ビットが立っている番号が非常駐
+        uint32_t m_NonResidentCount = 0;
+    };
 
     /// 格子の高さ場で範囲の外を引いたときの高さ（NaN。std::isnan で判定する）。法線は 3 成分とも NaN になる
     inline constexpr float kOutOfRangeHeight = std::numeric_limits<float>::quiet_NaN();
@@ -70,12 +100,40 @@ namespace NorvesLib::Core::Rendering::Terrain
         float RidgeRoughness = 70.0f;
     };
 
+    /// 段のセルが覆う頂点の高さの範囲
+    struct TerrainHeightRange
+    {
+        float Min = 0.0f;
+        float Max = 0.0f;
+    };
+
     /// 高さ場の法線（単位ベクトル、+Y が上）
     struct TerrainNormal
     {
         float X = 0.0f;
         float Y = 1.0f;
         float Z = 0.0f;
+    };
+
+    /// 法線の種類。面法線と、格子の頂点の法線から補間する滑らかな法線
+    enum class TerrainNormalKind : uint8_t
+    {
+        Face,
+        Smooth
+    };
+
+    /// Raycast の当たり
+    struct TerrainRayHit
+    {
+        /// 正規化した向きでの距離[m]
+        float Distance = 0.0f;
+        /// 当たった点（世界座標）
+        Math::Vector3 Point;
+        /// 当たった三角形の面法線（Y > 0）。原点が地表の下なら零ベクトル
+        Math::Vector3 Normal;
+        /// 当たったセルの最初の最細の升目の番号
+        uint32_t Column = 0;
+        uint32_t Row = 0;
     };
 
     /// 格子の高さ場の頂点の並び。頂点 (column, row) の位置は (FirstX + column × Spacing, FirstZ + row × Spacing)。
@@ -87,6 +145,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         double FirstX = 0.0;
         double FirstZ = 0.0;
         double Spacing = 0.0;
+    };
+
+    /// CreateFromSamples に渡すスプラット。生成時に高さ場へコピーする
+    struct TerrainSplatSamples
+    {
+        /// 層数（0..8）
+        uint32_t LayerCount = 0;
+        /// 頂点ごとに LayerCount バイト、行優先（Columns × Rows × LayerCount）
+        Container::Span<const uint8_t> Weights;
+        /// 層の名前（LayerCount 個）
+        Container::Span<const Container::AnsiString> LayerNames;
     };
 
     /// 造成の範囲 1 つ（ワールドの X・Z に沿った箱）。箱の内側は造成の平面の高さにし、外側は箱からの距離 Blend[m] の間で
@@ -117,9 +186,9 @@ namespace NorvesLib::Core::Rendering::Terrain
     class TerrainHeightField
     {
     private:
-        /// 格子の高さ場の中身（cpp にある）
+        /// 格子の高さ場の中身（内部ヘッダにある）
         struct GridData;
-        /// 格子の作り方を LoadGrid の外から呼ばせないための印
+        /// 格子の作り方を高さ場の生成関数の外から呼ばせないための印
         struct GridTag
         {
             explicit GridTag() = default;
@@ -127,11 +196,13 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     public:
         static constexpr uint32_t kMaxMesas = 16u;
+        /// 高さの段数。段 0〜3 の stride はそれぞれ 1 << lod
+        static constexpr uint32_t kHeightLodCount = 4u;
 
         /// 手続きの作り方（seed と関数だけで決まる）
         explicit TerrainHeightField(const TerrainHeightFieldParams &params);
 
-        /// 格子の作り方。LoadGrid だけが呼ぶ
+        /// 格子の作り方。高さ場の生成関数だけが呼ぶ
         TerrainHeightField(GridTag tag, Container::TSharedPtr<const GridData> grid);
 
         /// 切り出した格子（Scripts/Terrain/CropDem.py が書く height.json と、その中の file が指す float32 の格子）を読んで
@@ -144,12 +215,97 @@ namespace NorvesLib::Core::Rendering::Terrain
                                                                         Container::AnsiString &outError,
                                                                         const TerrainGrading *grading = nullptr);
 
+        /// cook 済みの NVTRN の全タイルの HGT0 をつなぎ、OriginY を加えた世界座標の高さを持つ格子を作る。
+        /// 既存の対角線・補間・範囲外の規則を使う。タイルの欠落・大きさの不一致・共有辺の標本の不一致などは
+        /// 空を返して outError に理由を書き、成功時は outError を空にする。
+        static Container::TSharedPtr<const TerrainHeightField> CreateFromCookedTerrain(const Asset::CookedTerrainData &terrain,
+                                                                                       Container::AnsiString &outError);
+
+        /// 行優先の有限な高さの標本から格子を作る。Columns・Rows は 2 以上、Spacing は有限で正。
+        /// splat は省略できる。tileCells が正なら両辺の升目数を割り切る必要がある。
+        /// 不正な値なら空を返して outError に理由を書き、成功時は outError を空にする
+        static Container::TSharedPtr<const TerrainHeightField> CreateFromSamples(const TerrainGridLayout& layout,
+            Container::Span<const float> heights, const TerrainSplatSamples* splat, uint32_t tileCells,
+            Container::AnsiString& outError);
+
+        /// 最近の頂点で重みが最大の層。同点は小さい番号。範囲外・スプラット無しは無効な番号
+        uint8_t SampleSurface(float x, float z) const;
+        /// cook 済みの PDL0 を読み込んだ場合だけ true
+        bool HasPuddlePotential() const;
+        /// 最近の頂点の凹み度（0..1）。層が無い・手続きの作り方・範囲外は 0
+        float SamplePuddlePotential(float x, float z) const;
+        /// スプラットの層数。手続きの作り方では 0
+        uint32_t GetSplatLayerCount() const;
+        /// スプラットの層の名前。範囲外は空
+        Container::AnsiStringView GetSplatLayerName(uint32_t layer) const;
+        /// タイルの行優先の番号。外周は最後のタイルに含め、範囲外・タイル無しは無効な番号
+        uint32_t GetTileId(float x, float z) const;
+
+        /// 段 1〜3 のセルが覆う全頂点の高さの範囲。不正な段・セルや格子でない場合は false
+        bool GetLodCellRange(uint32_t lod, uint32_t cellColumn, uint32_t cellRow, TerrainHeightRange& outRange) const;
+        /// 段 1〜3 のセル数。不正な段や格子でない場合は 0
+        uint32_t GetLodCellColumns(uint32_t lod) const;
+        uint32_t GetLodCellRows(uint32_t lod) const;
+
         /// (x,z) の高さ[m]。格子の作り方で範囲の外なら kOutOfRangeHeight
         float SampleHeight(float x, float z) const;
+        /// 指定した段の三角形で補間した高さ。段 0 と手続きの作り方は既存の高さと同じ。
+        /// 段が範囲外なら段 3、格子の範囲外なら kOutOfRangeHeight
+        float SampleHeight(float x, float z, uint32_t lod) const;
 
         /// (x,z) の法線。高さの中心差分（間隔 sampleSpacing[m]）から求める。格子の作り方では、差分の片側が範囲の外なら
         /// その側は (x,z) の高さを使う片側の差分にし、(x,z) が範囲の外なら 3 成分とも NaN
         TerrainNormal SampleNormal(float x, float z, float sampleSpacing = 0.5f) const;
+
+        /// SampleHeight と同じ三角形を選ぶ。升目内の X・Z の比を fu・fv とすると、対角線上では
+        /// 主対角が fu >= fv、副対角が fu + fv <= 1 の側を使う。
+        /// Face は三角形ごとに一定で境界では不連続になり得る。Smooth は頂点ごとの中心差分（外周は片側差分）の
+        /// 法線を重心座標で補間するため、三角形と升目の境界をまたいで連続する。
+        /// 格子の範囲外は 3 成分とも NaN。手続きの作り方では種類によらず間隔 0.5 m の既存の法線を返す
+        TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind) const;
+
+        /// 指定した段の法線。段 0 と手続きの作り方は既存の法線と同じ。
+        /// 段 1〜3 は kind が Smooth でも三角形の面法線、段が範囲外なら段 3 を使う。
+        /// 格子の範囲外は 3 成分とも NaN
+        TerrainNormal SampleNormal(float x, float z, TerrainNormalKind kind, uint32_t lod) const;
+
+        /// 格子の最細段と同じ三角形へレイを当て、maxDistance[m] 以内の最近点を返す。向きは内部で正規化する。
+        /// 原点がフットプリント内で地表より下なら距離 0・零法線。手続きの作り方・零方向・不正な距離は false
+        bool Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit) const;
+        /// 指定した段の三角形へレイを当てる。範囲外の段は段 3、非常駐のセルは地表がないものとして扱う。
+        /// 粗いセルの常駐はその最初の最細の升目が属するタイルで決める。タイルの無い格子では常駐の印を無視する
+        bool Raycast(const Math::Ray& ray, float maxDistance, TerrainRayHit& outHit, uint32_t lod,
+            const TerrainTileResidency* residency = nullptr) const;
+
+        /// 格子の各三角形との接触を outContacts に入れ、件数を返す。呼ぶたびに配列を空にする。
+        /// 地表の下は固体とし、法線は地形から形へ向く上向きの単位ベクトル。球とカプセルは辺・頂点でも最近点の法線を使う。
+        /// 箱の深さは各三角形の下の鉛直の柱と箱の共通部分の最深点から、面法線に沿って測る。
+        /// 接触点は最深点の面への射影。最深点の XZ が三角形の辺・頂点なら滑らかな地形法線を使い、取得できなければ面法線を使う。
+        /// 手続きの作り方では 0。形の値は有限、半径・半長は非負、箱の軸は正規直交であること
+        uint32_t OverlapSphere(const Math::Sphere& sphere, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        uint32_t OverlapCapsule(const Math::Capsule& capsule, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        uint32_t OverlapBox(const Math::OBB& box, Container::VariableArray<Math::GeometryContact>& outContacts) const;
+        /// 非常駐タイルの升目を除いて、最細段の三角形との接触を返す
+        uint32_t OverlapSphere(const Math::Sphere& sphere, Container::VariableArray<Math::GeometryContact>& outContacts,
+            const TerrainTileResidency* residency) const;
+        uint32_t OverlapCapsule(const Math::Capsule& capsule, Container::VariableArray<Math::GeometryContact>& outContacts,
+            const TerrainTileResidency* residency) const;
+        uint32_t OverlapBox(const Math::OBB& box, Container::VariableArray<Math::GeometryContact>& outContacts,
+            const TerrainTileResidency* residency) const;
+
+        /// 格子の地形に向けて形を並進掃引する。向きは正規化し、距離は m、法線は地形から形へ上向き。
+        /// 始点で接触・地中への侵入があれば最も深い接触を距離 0・bStartPenetrating で返す。
+        /// 最小距離を確定できない IterationLimit は false を返し、outHit に未確定の安全側の位置を残す。
+        /// 手続きの作り方・不正な入力・接触なしは false。距離 0 では零方向も許す
+        bool SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit) const;
+        bool SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit) const;
+        /// 非常駐タイルの升目を除いて、最細段の三角形へ掃引する
+        bool SweepSphere(const Math::Sphere& sphere, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit, const TerrainTileResidency* residency) const;
+        bool SweepCapsule(const Math::Capsule& capsule, const Math::Vector3& direction, float maxDistance,
+            Math::GeometrySweepHit& outHit, const TerrainTileResidency* residency) const;
 
         /// 格子から作ったか
         bool IsGrid() const
@@ -163,11 +319,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// 格子の頂点の並び（手続きの作り方では Columns・Rows が 0）
         TerrainGridLayout GetGridLayout() const;
 
-        /// 格子の頂点 (column, row) の高さ（ファイルの値。造成を渡して読んだときは、造成の範囲だけ造成の後の値）。
+        /// 格子の頂点を囲む世界座標の軸並行境界を O(1) で返す。
+        /// Y は造成後の最小・最大の高さ。X・Z は float で表せないときは外側へ丸める。
+        /// 手続きの作り方・頂点のない格子では false を返し、outBounds は変えない
+        bool GetBounds(Math::AABB& outBounds) const;
+
+        /// 格子の頂点 (column, row) の高さ（ファイルの値、または NVTRN から復元した世界座標の高さ。造成の範囲は造成の後の値）。
         /// 格子の作り方で、番号が並びの内側のときだけ呼ぶ
         float GetGridVertexHeight(uint32_t column, uint32_t row) const;
 
-        /// 格子のファイルの中身（float32 の little-endian、行優先）。手続きの作り方では空
+        /// 格子の中身（float32 の little-endian、行優先）。LoadGrid では元のファイルの中身、
+        /// CreateFromCookedTerrain では OriginY を加えて組み立てた高さ。手続きの作り方では空
         Container::Span<const uint8_t> GetGridBytes() const;
 
         /// 手続きの作り方の値（格子の作り方では既定の値のままで、意味を持たない）

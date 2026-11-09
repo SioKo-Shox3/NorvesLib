@@ -319,6 +319,14 @@ namespace NorvesLib::Core
         bool IsActive() const { return getbActive().Get(); }
 
         /**
+         * @brief 自分と祖先がすべて Active かつ破棄予約でないか
+         *
+         * 階層のシステムが求めた EffectiveActive が新しければそれを読み、
+         * 作成予約・付け替え待ち・未伝播の変更があるときは祖先をたどる。
+         */
+        bool IsActiveInHierarchy() const;
+
+        /**
          * @brief アクティブ状態を設定
          * @param bActive アクティブにする場合true
          */

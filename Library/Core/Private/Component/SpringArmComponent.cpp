@@ -35,7 +35,7 @@ namespace NorvesLib::Core::Component
         : Component()
     {
         SetTickGroup(ETickGroup::Camera);
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
         Pitch = DefaultPitch;
@@ -50,7 +50,7 @@ namespace NorvesLib::Core::Component
         : Component(initializer)
     {
         SetTickGroup(ETickGroup::Camera);
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
         Pitch = DefaultPitch;
@@ -65,7 +65,7 @@ namespace NorvesLib::Core::Component
         : Component(sourceObject)
     {
         SetTickGroup(ETickGroup::Camera);
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
         Pitch = DefaultPitch;
@@ -122,20 +122,20 @@ namespace NorvesLib::Core::Component
             return false;
         }
 
-        PivotObjectId = pivot->GetObjectId();
+        PivotObjectId = EntityRefId{pivot->GetObjectId()};
         MarkRenderStateDirty();
         return true;
     }
 
     void SpringArmComponent::SetPivotObjectId(uint64_t objectId)
     {
-        PivotObjectId = objectId;
+        PivotObjectId = EntityRefId{objectId};
         MarkRenderStateDirty();
     }
 
     void SpringArmComponent::ClearPivot()
     {
-        PivotObjectId = 0;
+        PivotObjectId = EntityRefId{};
         MarkRenderStateDirty();
     }
 
@@ -147,7 +147,7 @@ namespace NorvesLib::Core::Component
     Entity* SpringArmComponent::ResolvePivot() const
     {
         const Entity* owner = GetOwner();
-        if (!owner || owner->IsPendingDestroy() || PivotObjectId.Get() == 0)
+        if (!owner || owner->IsPendingDestroy() || PivotObjectId.Get().Get() == 0)
         {
             return nullptr;
         }
@@ -158,8 +158,20 @@ namespace NorvesLib::Core::Component
             return nullptr;
         }
 
-        Entity* pivot = world->FindEntityByObjectId(PivotObjectId);
+        Entity* pivot = world->FindEntityByObjectId(PivotObjectId.Get().Get());
         return pivot != owner ? pivot : nullptr;
+    }
+
+    Math::Vector3 SpringArmComponent::GetTargetWorldPosition() const
+    {
+        const Entity* pivot = ResolvePivot();
+        if (pivot)
+        {
+            return ComputeTargetWorldPosition(*pivot);
+        }
+
+        const Entity* owner = GetOwner();
+        return owner ? owner->GetWorldTransform().position : Math::Vector3::Zero;
     }
 
     void SpringArmComponent::SetArmLength(float armLength)
@@ -263,6 +275,11 @@ namespace NorvesLib::Core::Component
             distance * cosPitch * std::cos(yawRadians));
     }
 
+    Math::Vector3 SpringArmComponent::ComputeTargetWorldPosition(const Entity& pivot) const
+    {
+        return pivot.GetRenderWorldTransform().position + TargetOffset.Get();
+    }
+
     void SpringArmComponent::DriveOwnerTransform(const Entity& pivot)
     {
         Entity* owner = GetOwner();
@@ -271,7 +288,7 @@ namespace NorvesLib::Core::Component
             return;
         }
 
-        const Math::Vector3 target = pivot.GetRenderWorldTransform().position + TargetOffset.Get();
+        const Math::Vector3 target = ComputeTargetWorldPosition(pivot);
         const Math::Vector3 cameraPosition = target + ComputeArmOffset();
         const Math::Vector3 forward = (target - cameraPosition).Normalized();
         const Math::Quaternion rotation =

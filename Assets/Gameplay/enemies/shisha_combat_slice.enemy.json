@@ -1,0 +1,43 @@
+{
+  "id": "shisha.combat_slice",
+  "archetype": "humanoid_medium",
+  "isFinal": false,
+  "maxHealth": 60,
+  "staggerThreshold": 25,
+  "animMachine": "Main",
+  "animStates": {
+    "idle": "Idle",
+    "alerted": "Alert",
+    "collapsed": "Collapse",
+    "recover": "Recover",
+    "defeated": "Defeat"
+  },
+  "attackProfiles": [
+    {
+      "id": "shisha.combat_slice.slash",
+      "damage": 20,
+      "stagger": 15,
+      "maxDurationSeconds": 0.2,
+      "hitStopSeconds": 0.05
+    }
+  ],
+  "patterns": [
+    {
+      "id": "slash",
+      "animState": "AttackSlash",
+      "attackProfileId": "shisha.combat_slice.slash",
+      "minDistance": 0,
+      "maxDistance": 2.5,
+      "weight": 2,
+      "cooldownSeconds": 1.5,
+      "phases": [
+        { "id": "windup", "seconds": 0.3, "hitWindow": false },
+        { "id": "active", "seconds": 0.2, "hitWindow": true },
+        { "id": "recovery", "seconds": 0.3, "hitWindow": false }
+      ]
+    }
+  ],
+  "collapse": { "condition": "stagger", "recoverSeconds": 1.0 },
+  "defeat": { "holdSeconds": 1.5 },
+  "defeatResponses": []
+}

@@ -13,6 +13,7 @@
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/SkyOcclusion.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/MegaGeometryMirror.h"
@@ -53,6 +54,9 @@ namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
     class FrameCaptureReadbackHelper;
+
+    // 0 は無効。解除済みのハンドルは再利用しない。
+    using SkyOccluderHandle = uint32_t;
 
     /**
      * @brief カリングと描画順に依存しないシーン構成ハッシュを計算する
@@ -238,6 +242,9 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame();
 
+        /** @brief GameThread から次の BeginFrame へ、1 回だけ使う固定刻みの経過時間と累積秒を渡す */
+        void SetFixedFrameTime(float deltaSeconds, double totalSeconds);
+
         /**
          * @brief シーン収集
          *
@@ -396,6 +403,15 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        // 空の遮蔽の値と遮蔽物を GameThread で保持し、次のパケットへ値で渡す。
+        void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
+        SkyOcclusionParameters GetSkyOcclusionParameters() const { return m_SkyOcclusion; }
+        SkyOccluderHandle RegisterSkyOccluder(const SkyOccluderProxy& proxy);
+        // 無効な値への更新は解除として扱う。存在しないハンドルは何もしない。
+        void UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy);
+        void UnregisterSkyOccluder(SkyOccluderHandle handle);
+        uint32_t GetSkyOccluderCount() const { return static_cast<uint32_t>(m_SkyOccluders.size()); }
+
         /**
          * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を次のFramePacketへ公開する
          * @param scale 0以上の有限の倍率（1で従来どおり）。範囲外は1へ戻す
@@ -444,6 +460,11 @@ namespace NorvesLib::Core::Rendering
          */
         void SetFoliage(const FoliageScene& foliage);
         const FoliageScene& GetFoliage() const { return m_Foliage; }
+
+        /** @brief 不変の草の場の描画データを設定する（GameThread） */
+        void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
+        /** @brief 設定された草の場の描画データを取得する（GameThread） */
+        const Container::TSharedPtr<const GrassFieldRenderData>& GetGrassField() const { return m_GrassField; }
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
@@ -594,6 +615,8 @@ namespace NorvesLib::Core::Rendering
 
     private:
         friend struct DDGISnapshotContractTestAccess;
+        friend struct GrassFieldSnapshotContractTestAccess;
+        friend struct SkyOcclusionSnapshotContractTestAccess;
 
         // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
         void GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities);
@@ -683,6 +706,16 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();
+        struct SkyOccluderEntry
+        {
+            SkyOccluderHandle Handle;
+            SkyOccluderProxy Proxy;
+        };
+        Container::VariableArray<SkyOccluderEntry> m_SkyOccluders;
+        // 連番が一周したら登録を拒否し、古いハンドルとの衝突を防ぐ。
+        SkyOccluderHandle m_NextSkyOccluderHandle = 1u;
+        uint64_t m_SkyOcclusionRevision = 0;
         float m_StaticEnvironmentIntensityScale = 1.0f;
         float m_StaticEnvironmentMaxRadiance = 0.0f;
         bool m_bStaticEnvironmentUniform = false;
@@ -691,6 +724,7 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
+        Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         DistortionScene m_Distortions;
@@ -884,6 +918,10 @@ namespace NorvesLib::Core::Rendering
         // フレームタイミング
         double m_LastFrameTime = 0.0;
         double m_TotalTime = 0.0;
+        // GameThread 専用。次の BeginFrame で消費する固定刻みの時間。
+        float m_FixedFrameDeltaSeconds = 0.0f;
+        double m_FixedFrameTotalSeconds = 0.0;
+        bool m_bFixedFrameTimePending = false;
 
         // 決定的な撮影（GameThread専用）。エポックの 0 番のフレームから数えたフレーム数を FramePacket へ載せる。
         bool m_bDeterministicCapture = false;

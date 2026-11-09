@@ -13,6 +13,8 @@
 #include "Physics/ColliderComponent.h"
 #include "Physics/ColliderShapeTransform.h"
 #include "Physics/RigidBodyComponent.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -44,6 +46,15 @@ namespace NorvesLib::Modules::Physics
                     transform.rotation.y,
                     transform.rotation.z))
                     + transform.rotation.w * transform.rotation.w > Math::Constants::EPSILON;
+        }
+
+        void WarnHeightFieldTransformRejected(const Core::Entity& entity)
+        {
+            static_cast<void>(entity);
+            LOG_WARNING("PHYSICS_HEIGHTFIELD_TRANSFORM_REJECTED Entity world=%u slot=%u generation=%u: "
+                        "回転・拡大または位置が高さ場に使えません",
+                        entity.GetEntityHandle().WorldId, entity.GetEntityHandle().SlotIndex,
+                        entity.GetEntityHandle().Generation);
         }
 
     } // namespace
@@ -82,6 +93,7 @@ namespace NorvesLib::Modules::Physics
 
         m_Engine = &engine;
         m_bBound = true;
+        engine.GetSceneQuery().SetTerrainSystem(&engine.GetTerrainSystem());
         RegisterWorldSystems(engine.GetWorld());
         return true;
     }
@@ -287,6 +299,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         // Unavailable は provider が既に存在しないため dangling binding はない。
+        engine.GetSceneQuery().SetTerrainSystem(nullptr);
         m_Engine = nullptr;
         m_bBound = false;
         ResetTransientState();
@@ -305,6 +318,7 @@ namespace NorvesLib::Modules::Physics
             return Core::Scene::EPhysicsSceneQueryResult::NotReady;
         }
         PhysicsBroadphase candidate;
+        candidate.ShareStaticTreeFrom(m_PublishedBroadphase);
         BuildBroadphase(candidate, true);
         // 確保/構築完了後だけquery公開値を交換し、simulationの作業値には触れない。
         static_assert(noexcept(m_PublishedBroadphase = std::move(candidate)));
@@ -471,14 +485,11 @@ namespace NorvesLib::Modules::Physics
         {
             return EPhysicsResult::InvalidState;
         }
-        for (const ColliderSlot& slot : m_ColliderSlots)
+        if (m_ColliderSlotByOwner.find(owner) != m_ColliderSlotByOwner.end())
         {
-            if (slot.bOccupied && slot.Owner == owner)
-            {
-                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
-                ++m_DuplicateDiagnosticCount;
-                return EPhysicsResult::Duplicate;
-            }
+            m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+            ++m_DuplicateDiagnosticCount;
+            return EPhysicsResult::Duplicate;
         }
 
         uint32_t index = 0;
@@ -498,6 +509,7 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = owner;
         slot.bOccupied = true;
         slot.bActive = false;
+        m_ColliderSlotByOwner.emplace(owner, index);
         component.m_ColliderHandle = Core::Scene::ColliderHandle{index, slot.Generation};
         return EPhysicsResult::Success;
     }
@@ -522,14 +534,11 @@ namespace NorvesLib::Modules::Physics
         {
             return EPhysicsResult::InvalidState;
         }
-        for (const BodySlot& slot : m_BodySlots)
+        if (m_BodySlotByOwner.find(owner) != m_BodySlotByOwner.end())
         {
-            if (slot.bOccupied && slot.Owner == owner)
-            {
-                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
-                ++m_DuplicateDiagnosticCount;
-                return EPhysicsResult::Duplicate;
-            }
+            m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+            ++m_DuplicateDiagnosticCount;
+            return EPhysicsResult::Duplicate;
         }
 
         uint32_t index = 0;
@@ -549,6 +558,7 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = owner;
         slot.bOccupied = true;
         slot.bActive = false;
+        m_BodySlotByOwner.emplace(owner, index);
         component.m_BodyHandle = Core::Scene::BodyHandle{index, slot.Generation};
         UpdateRenderInterpolationDefault(slot);
         return EPhysicsResult::Success;
@@ -593,6 +603,8 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_Radius = radius;
+        component.m_HeightField.reset();
+        component.m_bHeightFieldTransformWarning = false;
         component.m_Shape = ColliderComponent::EColliderShape::Sphere;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -612,6 +624,8 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_HalfExtents = halfExtents;
+        component.m_HeightField.reset();
+        component.m_bHeightFieldTransformWarning = false;
         component.m_Shape = ColliderComponent::EColliderShape::Box;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -631,8 +645,51 @@ namespace NorvesLib::Modules::Physics
 
         component.m_Radius = radius;
         component.m_CapsuleHalfHeight = halfHeight;
+        component.m_HeightField.reset();
+        component.m_bHeightFieldTransformWarning = false;
         component.m_Shape = ColliderComponent::EColliderShape::Capsule;
         component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderHeightField(ColliderComponent& component,
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+
+        Math::AABB bounds;
+        if (!Core::Container::IsValid(heightField) || !heightField->IsGrid() || !heightField->GetBounds(bounds))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        const ColliderSlot& slot = m_ColliderSlots[component.m_ColliderHandle.Index];
+        PhysicsShapeProxy candidate;
+        if (!BuildHeightFieldWorldShape(heightField, GetFreshWorldTransform(*slot.Owner), component.m_LocalPose, candidate))
+        {
+            WarnHeightFieldTransformRejected(*slot.Owner);
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_HeightField = std::move(heightField);
+        component.m_Shape = ColliderComponent::EColliderShape::HeightField;
+        component.m_bHasShape = true;
+        component.m_bHeightFieldTransformWarning = false;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_SurfaceId = surfaceId;
         return EPhysicsResult::Success;
     }
 
@@ -649,24 +706,38 @@ namespace NorvesLib::Modules::Physics
             return EPhysicsResult::InvalidArgument;
         if (component.m_bHasShape)
         {
-            EPhysicsProxyShape shape;
+            EPhysicsProxyShape shape = EPhysicsProxyShape::Sphere;
+            bool bPrimitiveShape = false;
+            PhysicsShapeProxy candidate;
             switch (component.m_Shape)
             {
             case ColliderComponent::EColliderShape::Sphere:
                 shape = EPhysicsProxyShape::Sphere;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Box:
                 shape = EPhysicsProxyShape::Box;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Capsule:
                 shape = EPhysicsProxyShape::Capsule;
+                bPrimitiveShape = true;
                 break;
-            default:
+            case ColliderComponent::EColliderShape::HeightField:
+                if (!BuildHeightFieldWorldShape(component.m_HeightField, owner, prepared, candidate))
+                {
+                    return EPhysicsResult::InvalidArgument;
+                }
+                break;
+            case ColliderComponent::EColliderShape::None:
                 return EPhysicsResult::InvalidState;
             }
-            PhysicsShapeProxy candidate;
-            if (!BuildColliderWorldShape(shape, component.m_Radius, component.m_CapsuleHalfHeight,
-                                         component.m_HalfExtents, owner, prepared, candidate))
+            if (!bPrimitiveShape && component.m_Shape != ColliderComponent::EColliderShape::HeightField)
+            {
+                return EPhysicsResult::InvalidState;
+            }
+            if (bPrimitiveShape && !BuildColliderWorldShape(shape, component.m_Radius, component.m_CapsuleHalfHeight,
+                                                            component.m_HalfExtents, owner, prepared, candidate))
                 return EPhysicsResult::InvalidArgument;
         }
         component.m_LocalPose = prepared;
@@ -914,13 +985,34 @@ namespace NorvesLib::Modules::Physics
 
     bool PhysicsModule::IsBodyLifecycleActive(const BodySlot& body) const
     {
-        return body.bOccupied
+        if (!(body.bOccupied
             && body.Component != nullptr
             && body.Owner != nullptr
             && body.Component->IsActive()
-            && body.Owner->IsActive()
-            && !body.Component->HasFlag(Core::OF_PendingDestroy)
-            && !body.Owner->IsPendingDestroy();
+            && body.Owner->IsActiveInHierarchy()
+            && !body.Component->HasFlag(Core::OF_PendingDestroy)))
+        {
+            return false;
+        }
+
+        const ColliderComponent* collider = body.Owner->GetComponent<ColliderComponent>();
+        const ColliderSlot* slot = collider ? FindColliderSlot(collider->m_ColliderHandle) : nullptr;
+        if (collider != nullptr && (slot == nullptr || slot->Component != collider || slot->Owner != body.Owner))
+        {
+            collider = nullptr;
+            const auto it = m_ColliderSlotByOwner.find(body.Owner);
+            if (it != m_ColliderSlotByOwner.end())
+            {
+                const ColliderSlot& candidate = m_ColliderSlots[it->second];
+                if (candidate.bOccupied && candidate.Owner == body.Owner)
+                {
+                    collider = candidate.Component;
+                }
+            }
+        }
+        // 登録された高さ場を持つ所有者は、剛体の速度や重力では動かさない。
+        return !(collider != nullptr && collider->IsActive() && !collider->HasFlag(Core::OF_PendingDestroy)
+            && collider->m_bHasShape && collider->m_Shape == ColliderComponent::EColliderShape::HeightField);
     }
 
     void PhysicsModule::DiscardBodyStepState(BodySlot& body)
@@ -934,9 +1026,10 @@ namespace NorvesLib::Modules::Physics
     {
         return collider.bOccupied && collider.Component != nullptr && collider.Owner != nullptr
             && collider.Component->m_bHasShape
-            && collider.Component->IsActive() && collider.Owner->IsActive()
-            && !collider.Component->HasFlag(Core::OF_PendingDestroy) && !collider.Owner->IsPendingDestroy()
-            && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
+            && collider.Component->IsActive() && collider.Owner->IsActiveInHierarchy()
+            && !collider.Component->HasFlag(Core::OF_PendingDestroy)
+            && (collider.Component->m_Shape == ColliderComponent::EColliderShape::HeightField
+                || IsFiniteTransform(GetFreshWorldTransform(*collider.Owner)));
     }
 
     void PhysicsModule::UpdateRenderInterpolationDefault(BodySlot& body)
@@ -978,12 +1071,13 @@ namespace NorvesLib::Modules::Physics
                 DiscardBodyStepState(body);
                 continue;
             }
-            for (const ColliderSlot& collider : m_ColliderSlots)
+            const auto it = m_ColliderSlotByOwner.find(body.Owner);
+            if (it != m_ColliderSlotByOwner.end())
             {
+                const ColliderSlot& collider = m_ColliderSlots[it->second];
                 if (collider.bOccupied && collider.Owner == body.Owner && collider.bActive)
                 {
                     body.bActive = true;
-                    break;
                 }
             }
             if (!body.bActive)
@@ -1043,22 +1137,10 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ResolveContacts(float /*fixedDeltaTime*/)
     {
         m_CurrentTriggerPairs.clear();
-        const Core::Container::VariableArray<PhysicsShapeProxy>& proxies = m_WorkingBroadphase.GetProxies();
         for (const PhysicsCandidatePair& candidate : m_WorkingBroadphase.GetCandidatePairs())
         {
-            const PhysicsShapeProxy* firstProxy = nullptr;
-            const PhysicsShapeProxy* secondProxy = nullptr;
-            for (const PhysicsShapeProxy& proxy : proxies)
-            {
-                if (proxy.Collider == candidate.First)
-                {
-                    firstProxy = &proxy;
-                }
-                else if (proxy.Collider == candidate.Second)
-                {
-                    secondProxy = &proxy;
-                }
-            }
+            const PhysicsShapeProxy* firstProxy = m_WorkingBroadphase.GetPairProxy(candidate.FirstProxyIndex, candidate.First);
+            const PhysicsShapeProxy* secondProxy = m_WorkingBroadphase.GetPairProxy(candidate.SecondProxyIndex, candidate.Second);
             if (!firstProxy || !secondProxy)
             {
                 continue;
@@ -1070,6 +1152,7 @@ namespace NorvesLib::Modules::Physics
             }
 
             Math::GeometryContact contact;
+            m_WorkingBroadphase.RecordNarrowPhaseTest();
             if (!PhysicsBroadphase::ComputeContact(*firstProxy, *secondProxy, contact))
             {
                 continue;
@@ -1292,6 +1375,7 @@ namespace NorvesLib::Modules::Physics
 
     void PhysicsModule::PublishSnapshot()
     {
+        m_PublishedBroadphase.ShareStaticTreeFrom(m_WorkingBroadphase);
         BuildBroadphase(m_PublishedBroadphase);
         if (m_PublishedSnapshotSequence != UINT64_MAX)
         {
@@ -1299,8 +1383,40 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
+    EPhysicsProxyMobility PhysicsModule::DetermineProxyMobility(const PhysicsShapeProxy& proxy) const
+    {
+        // ResolveContacts が接触を解く組（一方が Dynamic）と trigger の組だけを残すための分類。
+        if (proxy.bTrigger)
+        {
+            return EPhysicsProxyMobility::Trigger;
+        }
+        if (proxy.Body.IsValid())
+        {
+            const EPhysicsBodyType bodyType = m_BodySlots[proxy.Body.Index].Component->m_BodyType;
+            if (bodyType == EPhysicsBodyType::Dynamic)
+            {
+                return EPhysicsProxyMobility::Dynamic;
+            }
+            if (bodyType == EPhysicsBodyType::Kinematic)
+            {
+                return EPhysicsProxyMobility::Kinematic;
+            }
+        }
+        return EPhysicsProxyMobility::Static;
+    }
+
     void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle) const
     {
+        const auto isProxyStatic = [this](const PhysicsShapeProxy& proxy)
+        {
+            if (!proxy.Body.IsValid())
+            {
+                return true;
+            }
+            const EPhysicsBodyType bodyType = m_BodySlots[proxy.Body.Index].Component->m_BodyType;
+            return bodyType != EPhysicsBodyType::Dynamic && bodyType != EPhysicsBodyType::Kinematic;
+        };
+
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
         for (const ColliderSlot& slot : m_ColliderSlots)
         {
@@ -1312,28 +1428,55 @@ namespace NorvesLib::Modules::Physics
             const Math::Transform transform = GetFreshWorldTransform(*slot.Owner);
             PhysicsShapeProxy proxy;
             proxy.Collider = slot.Component->m_ColliderHandle;
-            proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
             proxy.Entity = slot.Owner->GetEntityHandle();
             proxy.bHasEntity = proxy.Entity.IsValid();
             proxy.Layer = slot.Component->m_CollisionLayer;
             proxy.Mask = slot.Component->m_CollisionMask;
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
-            EPhysicsProxyShape shape;
+            proxy.SurfaceId = slot.Component->m_SurfaceId;
+            EPhysicsProxyShape shape = EPhysicsProxyShape::Sphere;
+            bool bPrimitiveShape = false;
             switch (slot.Component->m_Shape)
             {
             case ColliderComponent::EColliderShape::Sphere:
                 shape = EPhysicsProxyShape::Sphere;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Box:
                 shape = EPhysicsProxyShape::Box;
+                bPrimitiveShape = true;
                 break;
             case ColliderComponent::EColliderShape::Capsule:
                 shape = EPhysicsProxyShape::Capsule;
+                bPrimitiveShape = true;
                 break;
-            default:
+            case ColliderComponent::EColliderShape::HeightField:
+                if (!BuildHeightFieldWorldShape(slot.Component->m_HeightField, transform, slot.Component->m_LocalPose, proxy))
+                {
+                    if (!slot.Component->m_bHeightFieldTransformWarning)
+                    {
+                        WarnHeightFieldTransformRejected(*slot.Owner);
+                        slot.Component->m_bHeightFieldTransformWarning = true;
+                    }
+                    continue;
+                }
+                slot.Component->m_bHeightFieldTransformWarning = false;
+                proxy.TileResidency = m_Engine ? m_Engine->GetTerrainSystem().GetTileResidency() : nullptr;
+                proxy.Mobility = DetermineProxyMobility(proxy);
+                proxy.bStatic = isProxyStatic(proxy);
+                proxies.push_back(proxy);
+                continue;
+            case ColliderComponent::EColliderShape::None:
                 continue;
             }
+            if (!bPrimitiveShape)
+            {
+                continue;
+            }
+            proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
+            proxy.Mobility = DetermineProxyMobility(proxy);
+            proxy.bStatic = isProxyStatic(proxy);
             if (!BuildColliderWorldShape(shape, slot.Component->m_Radius, slot.Component->m_CapsuleHalfHeight,
                                          slot.Component->m_HalfExtents, transform, slot.Component->m_LocalPose, proxy))
                 continue;
@@ -1386,20 +1529,20 @@ namespace NorvesLib::Modules::Physics
 
     Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle) const
     {
-        for (const BodySlot& slot : m_BodySlots)
+        const auto it = m_BodySlotByOwner.find(&owner);
+        if (it == m_BodySlotByOwner.end())
         {
-            if (!slot.bOccupied || slot.Owner != &owner)
-            {
-                continue;
-            }
-            // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
-            const bool bActive = bRefreshLifecycle
-                ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
-                : slot.bActive;
-            if (bActive)
-            {
-                return slot.Component->m_BodyHandle;
-            }
+            return Core::Scene::BodyHandle{};
+        }
+
+        const BodySlot& slot = m_BodySlots[it->second];
+        // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
+        const bool bActive = bRefreshLifecycle
+            ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
+            : slot.bActive;
+        if (bActive)
+        {
+            return slot.Component->m_BodyHandle;
         }
         return Core::Scene::BodyHandle{};
     }
@@ -1453,6 +1596,11 @@ namespace NorvesLib::Modules::Physics
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
         }
+        const auto it = m_ColliderSlotByOwner.find(slot.Owner);
+        if (it != m_ColliderSlotByOwner.end() && it->second == index)
+        {
+            m_ColliderSlotByOwner.erase(it);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;
@@ -1474,6 +1622,11 @@ namespace NorvesLib::Modules::Physics
             slot.Owner->SetDefaultRenderInterpolationEnabled(false);
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
+        }
+        const auto it = m_BodySlotByOwner.find(slot.Owner);
+        if (it != m_BodySlotByOwner.end() && it->second == index)
+        {
+            m_BodySlotByOwner.erase(it);
         }
         slot.Component = nullptr;
         slot.Owner = nullptr;

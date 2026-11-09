@@ -3,6 +3,7 @@
 #include "Component.h"
 #include "SpringArmTypes.h"
 #include "Math/Vector3.h"
+#include "Object/EntityRefId.h"
 #include <cstdint>
 
 namespace NorvesLib::Core
@@ -44,10 +45,16 @@ namespace NorvesLib::Core::Component
          */
         bool SetPivot(const Entity* pivot);
         void SetPivotObjectId(uint64_t objectId);
-        uint64_t GetPivotObjectId() const { return PivotObjectId; }
+        uint64_t GetPivotObjectId() const { return PivotObjectId.Get().Get(); }
         void ClearPivot();
         bool HasValidPivot() const;
         Entity* ResolvePivot() const;
+
+        /**
+         * @brief カメラの向きと同じ点をワールド座標で返します。
+         * @note pivot が無効なときの値は意味を持たないので、呼び出し側は HasValidPivot() を先に確かめてください。
+         */
+        Math::Vector3 GetTargetWorldPosition() const;
 
         void SetArmLength(float armLength);
         float GetArmLength() const { return ArmLength; }
@@ -69,9 +76,12 @@ namespace NorvesLib::Core::Component
 
     protected:
         Math::Vector3 ComputeArmOffset() const;
+        Math::Vector3 ComputeTargetWorldPosition(const Entity& pivot) const;
         virtual void DriveOwnerTransform(const Entity& pivot);
 
-        PROPERTY(uint64_t, PivotObjectId)
+        // シーン保存時は SceneSerializer が alias 参照へ書き換え、
+        // 読み込み後に同じ Entity の新しい ObjectId へ張り替える。
+        PROPERTY(EntityRefId, PivotObjectId)
         PROPERTY(float, ArmLength)
         PROPERTY(float, Yaw)
         PROPERTY(float, Pitch)

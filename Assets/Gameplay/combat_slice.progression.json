@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "finalShishaId": "",
+  "requiredShishaIds": ["shisha.combat_slice"]
+}

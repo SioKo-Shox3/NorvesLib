@@ -3,6 +3,7 @@
 
 #include "Object.h"
 #include "Reflection.h"
+#include "SchemaProjection.h"
 #include "Entity.h"
 #include "Component/Component.h"
 #include "Container/Containers.h"
@@ -36,6 +37,21 @@ namespace NorvesLib::Core
     }
     class PrefabAsset;
     struct PrefabOverrideSet;
+
+    /**
+     * @brief プレハブから生成されたEntityまたはComponentへの参照
+     */
+    struct PrefabSpawnedObject
+    {
+        Entity* EntityPtr = nullptr;
+        Component::Component* ComponentPtr = nullptr;
+    };
+
+    /**
+     * @brief 外側のプレハブのaliasだけを載せる対応表。入れ子の生成物は載せません。
+     * SpawnPrefabから戻った時点で、生成物のObjectIdは再採番済みです。
+     */
+    using PrefabSpawnAliasMap = Container::UnorderedMap<SubtreeSnapshotAliasId, PrefabSpawnedObject>;
 
     /**
      * @brief ゲームワールド
@@ -124,7 +140,8 @@ namespace NorvesLib::Core
         Entity* SpawnPrefab(
             const PrefabAsset& prefab,
             Entity* parent = nullptr,
-            const PrefabOverrideSet* overrides = nullptr);
+            const PrefabOverrideSet* overrides = nullptr,
+            PrefabSpawnAliasMap* pOutAliases = nullptr);
 
         /**
          * @brief Entityに紐づくComponentを新規生成します

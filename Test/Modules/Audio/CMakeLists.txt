@@ -9,9 +9,17 @@ endif()
 file(GLOB_RECURSE audio_backend_neutral_sources
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Public/*"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioBackend.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/NullAudioBackend.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/NullAudioBackend.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioClipResource.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.cpp"
     "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/SoundBank.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/SoundBank.cpp"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioClipLoader.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioClipLoader.cpp"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/SoundSystem.h"
+    "${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/SoundSystem.cpp"
 )
 foreach(audio_source IN LISTS audio_backend_neutral_sources)
     file(READ "${audio_source}" audio_source_text)
@@ -26,6 +34,8 @@ norves_add_test_bundle(AudioBackendLifetimeTest
     MEMBER AudioBackendLifetimeTest AudioBackendLifetimeTest.cpp
     MEMBER AudioModuleLifecycleTest AudioModuleLifecycleTest.cpp
     MEMBER AudioModuleRegistryTest AudioModuleRegistryTest.cpp
+    MEMBER AudioPlaybackTest AudioPlaybackTest.cpp
+    MEMBER AudioComponentTest AudioComponentTest.cpp
 )
 target_link_libraries(AudioBackendLifetimeTest PRIVATE Core NorvesAudioDomain)
 target_include_directories(AudioBackendLifetimeTest PRIVATE
@@ -40,4 +50,6 @@ if(audio_lifetime_link_text MATCHES "XAudio|xaudio|NorvesAudioBackend_XAudio2|No
 endif()
 
 add_test(NAME AudioModuleRegistryTest COMMAND AudioBackendLifetimeTest --test=AudioModuleRegistryTest)
+add_test(NAME AudioPlaybackTest COMMAND AudioBackendLifetimeTest --test=AudioPlaybackTest)
+add_test(NAME AudioComponentTest COMMAND AudioBackendLifetimeTest --test=AudioComponentTest)
 

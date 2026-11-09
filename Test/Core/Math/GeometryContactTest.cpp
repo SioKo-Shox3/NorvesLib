@@ -286,6 +286,91 @@ int main()
         std::cout << "Capsule/OBB SAT support passed\n";
     }
 
+    {
+        const Triangle triangle(Vector3(0.0f, 0.0f, 0.0f), Vector3(4.0f, 0.0f, 0.0f), Vector3(0.0f, 4.0f, 0.0f));
+        const Vector3 points[7] = {
+            Vector3(1.0f, 1.0f, 1.0f),
+            Vector3(2.0f, -1.0f, 1.0f),
+            Vector3(3.0f, 3.0f, 1.0f),
+            Vector3(-1.0f, 2.0f, 1.0f),
+            Vector3(-1.0f, -1.0f, 1.0f),
+            Vector3(5.0f, -1.0f, 1.0f),
+            Vector3(-1.0f, 5.0f, 1.0f)};
+        const Vector3 expected[7] = {
+            Vector3(1.0f, 1.0f, 0.0f),
+            Vector3(2.0f, 0.0f, 0.0f),
+            Vector3(2.0f, 2.0f, 0.0f),
+            Vector3(0.0f, 2.0f, 0.0f),
+            triangle.V0, triangle.V1, triangle.V2};
+        const TriangleFeature features[7] = {
+            TriangleFeature::Face,
+            TriangleFeature::Edge01,
+            TriangleFeature::Edge12,
+            TriangleFeature::Edge20,
+            TriangleFeature::Vertex0,
+            TriangleFeature::Vertex1,
+            TriangleFeature::Vertex2};
+        for (int index = 0; index < 7; ++index)
+        {
+            TriangleFeature feature;
+            AssertVector(ClosestPointOnTriangle(points[index], triangle, &feature), expected[index]);
+            assert(feature == features[index]);
+        }
+        std::cout << "三角形の最近点7領域を確認\n";
+    }
+
+    {
+        const Triangle triangle(Vector3(0.0f, 0.0f, 0.0f), Vector3(4.0f, 0.0f, 0.0f), Vector3(0.0f, 4.0f, 0.0f));
+        GeometryContact contact;
+        assert(ComputeContact(triangle, Sphere(Vector3(1.0f, 1.0f, 0.3f), 0.5f), contact));
+        AssertContact(contact, Vector3(0.0f, 0.0f, 1.0f), 0.2f, Vector3(1.0f, 1.0f, -0.1f));
+        assert(ComputeContact(triangle, Sphere(Vector3(2.0f, -0.3f, 0.4f), 1.0f), contact));
+        AssertContact(contact, Vector3(0.0f, -0.6f, 0.8f), 0.5f, Vector3(2.0f, 0.15f, -0.2f));
+        assert(ComputeContact(triangle, Sphere(Vector3(-0.3f, -0.4f, 0.0f), 1.0f), contact));
+        AssertContact(contact, Vector3(-0.6f, -0.8f, 0.0f), 0.5f, Vector3(0.15f, 0.2f, 0.0f));
+        assert(!ComputeContact(triangle, Sphere(Vector3(1.0f, 1.0f, 2.0f), 0.5f), contact));
+        assert(ComputeContact(triangle, Sphere(Vector3(1.0f, 1.0f, 0.0f), 0.5f), contact));
+        AssertContact(contact, Vector3(0.0f, 0.0f, 1.0f), 0.5f, Vector3(1.0f, 1.0f, -0.25f));
+        std::cout << "三角形と球の接触を確認\n";
+    }
+
+    {
+        const Triangle triangle(Vector3(0.0f, 0.0f, 0.0f), Vector3(4.0f, 0.0f, 0.0f), Vector3(0.0f, 4.0f, 0.0f));
+        GeometryContact contact;
+        assert(ComputeContact(triangle,
+            Capsule(Vector3(0.5f, 1.0f, 0.3f), Vector3(1.5f, 1.0f, 0.3f), 0.5f), contact));
+        AssertContact(contact, Vector3(0.0f, 0.0f, 1.0f), 0.2f, Vector3(0.5f, 1.0f, -0.1f));
+
+        const Capsule crossing(Vector3(0.75f, 0.75f, -0.5f), Vector3(0.75f, 0.75f, 1.5f), 0.25f);
+        Vector3 onSegment;
+        Vector3 onTriangle;
+        ClosestPointsSegmentTriangle(crossing.PointA, crossing.PointB, triangle, onSegment, onTriangle);
+        AssertVector(onSegment, Vector3(0.75f, 0.75f, 0.0f));
+        AssertVector(onTriangle, onSegment);
+        assert(ComputeContact(triangle, crossing, contact));
+        AssertContact(contact, Vector3(0.0f, 0.0f, 1.0f), 0.75f, Vector3(0.75f, 0.75f, -0.375f));
+        assert(!ComputeContact(triangle,
+            Capsule(Vector3(0.5f, 1.0f, 2.0f), Vector3(1.5f, 1.0f, 2.0f), 0.5f), contact));
+        std::cout << "三角形とカプセルの接触を確認\n";
+    }
+
+    {
+        const Triangle triangle(Vector3(0.0f, 0.0f, 0.0f), Vector3(4.0f, 0.0f, 0.0f), Vector3(0.0f, 4.0f, 0.0f));
+        GeometryContact contact;
+        assert(ComputeContact(triangle, MakeBox(Vector3(1.0f, 1.0f, 0.3f), Vector3(0.25f, 0.25f, 0.5f)), contact));
+        AssertContact(contact, Vector3(0.0f, 0.0f, 1.0f), 0.2f, Vector3(1.0f, 1.0f, -0.1f));
+
+        const float axisComponent = 0.70710678f;
+        const OBB tilted(Vector3(2.0f, -0.2f, 0.2f), Vector3(0.25f, 0.5f, 0.5f),
+            Vector3(1.0f, 0.0f, 0.0f), Vector3(0.0f, axisComponent, axisComponent), Vector3(0.0f, -axisComponent, axisComponent));
+        assert(ComputeContact(triangle, tilted, contact));
+        const float midpointOffset = 0.25f * axisComponent - 0.1f;
+        AssertContact(contact, Vector3(0.0f, -axisComponent, axisComponent), 0.5f - 0.4f * axisComponent,
+            Vector3(2.0f, midpointOffset, -midpointOffset));
+        assert(!ComputeContact(triangle, MakeBox(Vector3(1.0f, 1.0f, 2.0f), Vector3(0.25f, 0.25f, 0.5f)), contact));
+        std::cout << "三角形とOBBの接触を確認\n";
+    }
+
     std::cout << "GeometryContactTest passed\n";
     return 0;
 }

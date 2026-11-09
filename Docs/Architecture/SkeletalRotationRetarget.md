@@ -72,6 +72,8 @@ Windows/実GPU/実Blender の未実行結果を host テストで代用しない
   "loop_mode": "auto",
   "minimum_period": 0.2,
   "maximum_period": 2.0,
+  "loop_rms_threshold_degrees": 8.5,
+  "loop_recurrence_ratio": 0.5,
   "extract_root_motion": true,
   "spike_threshold_degrees": 35,
   "spike_window": 2,
@@ -85,11 +87,16 @@ Windows/実GPU/実Blender の未実行結果を host テストで代用しない
 }
 ```
 
+- `loop_rms_threshold_degrees` は周期候補を受け入れる再帰誤差の許容値です（0度超、45度以下）。既定は0.05 rad（約2.86度）です。
+- `loop_recurrence_ratio` は周期内の動きに対する再帰誤差の比の上限です（0超、1以下）。既定は0.2です。動画由来の動きは周期ごとのばらつきが大きいため、必要な場合にそのprofileでだけ両方を明示して緩めます。
 - 外れ値除去は周辺の回転との差と中央値/MADを使います。`spike_threshold_degrees: 0` で無効です。
 - `smoothing_radius` は前後のサンプル数です。ループ時は周期の境界をまたいで平滑化し、末尾キーを先頭と揃えます。`average_cycles` は検出した複数周期の関節回転を平均します。根の軌跡は平均しません。
 - `time_scale` は再生時間の倍率です。2なら長さが2倍になります。`desired_ground_speed` が正なら、接地中の足の動きから測った自然速度を目標速度へ合わせて再生時間を調整します。0ならこの補正をしません。
-- 接地解析はtarget roleの4脚のPawを使います。最低の足位置と鉛直速度による平地の推定なので、段差や特殊動作は実際の動きを見て調整してください。足を固定するIKは行いません。
-- `generate_foot_markers` は接地windowをeventへ入れ、既存markerが無い場合だけ `role_down` / `role_up` を生成します。同時刻markerは既存形式で重ねられないため、重なった分を省いた数と全接地windowをreportへ残します。手作業のmarkerは保持します。
+- 接地解析はtarget roleの4脚のPawを使い、Libraryと共通の `DetectFootContactWindows` で足ごとの最低の高さと鉛直速度から窓を求めます。平地の推定なので、段差や特殊動作は実際の動きを見て調整してください。足を固定するIKは行いません。
+- `generate_foot_markers` は `Foot.<脚>.Down` / `Foot.<脚>.Up` を生成します。役割と脚の対応は `front_L_paw` → `LF`、`front_R_paw` → `RF`、`hind_L_paw` → `LH`、`hind_R_paw` → `RH` です。
+- metadataのloopが有効、またはprocessingの `loop_mode` が `none` 以外のクリップには、既存markerが無いときだけmarkerを生成します。脚ごとの最長接地窓を使い、継ぎ目で先頭と末尾に分かれた窓は合計の長さが最長窓以上なら1つとして扱います。Upが末尾時刻なら0へ折り返します。窓イベントは書かず、手作業のmarkerを保持します。
+- ループしないクリップには、接地窓ごとに同名の点イベントをDownは開始、Upは終了に書きます。クリップの終わりまで接地したままの窓のUpは書きません。markerと窓イベントは生成しません。
+- 接地窓はmarkerの選択にかかわらずreportの `contacts` に全件残し、`foot` は役割名で記録します。接地の無い脚の数は `feet_without_contacts` に記録し、1本でもあれば `needs_review` をtrueにします。同時刻markerは2件目以降を省き、その数を `coincident_markers_omitted` に記録します。
 - `derive_root_motion` は前進軌跡がほぼ無い素材にだけ、自然速度から軌跡を導出します。実際の前進軌跡がある素材は保持します。根の抽出も有効にして使ってください。
 
 調整を指定したcookでは、packageと同じ場所に `.motion_report.json` を出力します。スパイク置換数、平滑化、周期平均、接地window、自然速度、足滑りのばらつき、導出軌跡の有無を記録します。`needs_review` は調整の目安で、見た目の合否を自動判定するものではありません。自然速度・接地は素材によって変わるので、上の数値は調整の開始点です。

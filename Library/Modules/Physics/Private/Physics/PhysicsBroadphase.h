@@ -2,16 +2,37 @@
 
 #include "Container/VariableArray.h"
 #include "Container/Span.h"
+#include "Container/PointerTypes.h"
 #include "Math/GeometryTypes.h"
 #include "Scene/PhysicsQueryTypes.h"
+#include "Physics/StaticAabbTree.h"
+
+namespace NorvesLib::Core::Rendering::Terrain
+{
+    class TerrainHeightField;
+    class TerrainTileResidency;
+}
 
 namespace NorvesLib::Modules::Physics
 {
+    struct PhysicsStaticTreeSnapshot;
+
     enum class EPhysicsProxyShape : uint8_t
     {
         Sphere,
         Box,
         Capsule,
+        HeightField,
+    };
+
+    // 組の生成方針。Unspecified は従来どおりすべての組を対象にする。
+    enum class EPhysicsProxyMobility : uint8_t
+    {
+        Unspecified,
+        Static,
+        Kinematic,
+        Dynamic,
+        Trigger,
     };
 
     struct PhysicsShapeProxy
@@ -24,26 +45,63 @@ namespace NorvesLib::Modules::Physics
         Math::Sphere Sphere;
         Math::OBB Box;
         Math::Capsule Capsule;
+        // 読み取り専用の格子高さ場。
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> HeightField;
+        // 地形のタイルの常駐の印の写し。空なら全常駐。
+        Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainTileResidency> TileResidency;
+        // 高さ場の原点の世界座標。世界座標への変換はこの値を足す平行移動だけ。
+        Math::Vector3 HeightFieldOrigin;
         Math::AABB Bounds;
         Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
         Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
         uint64_t UserData = 0;
         bool bTrigger = false;
+        // 球・箱・カプセルの表面番号。高さ場は当たり位置で層を照会する。
+        uint8_t SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
+        // PhysicsModule だけが設定する。既定値では従来どおりすべての組を対象にする。
+        EPhysicsProxyMobility Mobility = EPhysicsProxyMobility::Unspecified;
+        // PhysicsModule だけが設定する。有効な Dynamic / Kinematic の Body を持たないコライダー。
+        // 既定では木に入れない。
+        bool bStatic = false;
     };
 
     struct PhysicsCandidatePair
     {
         Core::Scene::ColliderHandle First;
         Core::Scene::ColliderHandle Second;
+        // GetProxies() の添字。ハンドルと併せて検証して使う。
+        uint32_t FirstProxyIndex = UINT32_MAX;
+        uint32_t SecondProxyIndex = UINT32_MAX;
+    };
+
+    struct PhysicsBroadphaseStats
+    {
+        // 最後の SetProxies で生成した候補の組数。
+        uint64_t CandidatePairCount = 0;
+        // 所有者が記録したナローフェーズの接触判定回数。
+        uint64_t NarrowPhaseTestCount = 0;
+        // 添字による検索回数と FindProxy の二分探索でハンドルを比較した回数。
+        uint64_t ProxyLookupCount = 0;
+        // 最後の SetProxies で静的木を再構築した回数。最大 1。
+        uint64_t TreeRebuildCount = 0;
+        // インスタンスのクエリが走査対象にしたプロキシ数の累計。
+        uint64_t VisitedNodeCount = 0;
     };
 
     class PhysicsBroadphase
     {
     public:
         void SetProxies(Core::Container::VariableArray<PhysicsShapeProxy> proxies);
+        // 次の SetProxies で署名が同じなら、共有した木を作り直さずに使う。
+        void ShareStaticTreeFrom(const PhysicsBroadphase& source);
+        const StaticAabbTree* GetStaticTree() const;
 
         const Core::Container::VariableArray<PhysicsShapeProxy>& GetProxies() const;
         const Core::Container::VariableArray<PhysicsCandidatePair>& GetCandidatePairs() const;
+        const PhysicsBroadphaseStats& GetStats() const;
+        const PhysicsShapeProxy* FindProxy(Core::Scene::ColliderHandle handle) const;
+        const PhysicsShapeProxy* GetPairProxy(uint32_t proxyIndex, Core::Scene::ColliderHandle expected) const;
+        void RecordNarrowPhaseTest() const;
 
         bool Raycast(const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit) const;
         void OverlapSphere(
@@ -102,5 +160,12 @@ namespace NorvesLib::Modules::Physics
 
         Core::Container::VariableArray<PhysicsShapeProxy> m_Proxies;
         Core::Container::VariableArray<PhysicsCandidatePair> m_CandidatePairs;
+        Core::Container::TSharedPtr<const PhysicsStaticTreeSnapshot> m_StaticTree;
+        // 木の項目から、今回の m_Proxies の添字への対応。
+        Core::Container::VariableArray<uint32_t> m_TreeProxyIndices;
+        // 木に入れなかった全プロキシの添字。ハンドル順を保つ。
+        Core::Container::VariableArray<uint32_t> m_NonTreeProxyIndices;
+        // 所有者のスレッドだけが検索・接触判定を呼び出すため、通常の整数で保持する。
+        mutable PhysicsBroadphaseStats m_Stats;
     };
 } // namespace NorvesLib::Modules::Physics

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Container/UnorderedMap.h"
 #include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsBroadphase.h"
@@ -116,6 +117,9 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetColliderSphere(ColliderComponent& component, float radius);
         EPhysicsResult SetColliderBox(ColliderComponent& component, const Math::Vector3& halfExtents);
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);
+        EPhysicsResult SetColliderHeightField(ColliderComponent& component,
+            Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField);
+        EPhysicsResult SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId);
         EPhysicsResult SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose);
         EPhysicsResult SetColliderTrigger(ColliderComponent& component, bool bTrigger);
         EPhysicsResult SetColliderLayer(ColliderComponent& component, Core::Scene::PhysicsCollisionMask layer);
@@ -144,6 +148,7 @@ namespace NorvesLib::Modules::Physics
         void BuildEventQueue();
         void DispatchEvents();
         void PublishSnapshot();
+        EPhysicsProxyMobility DetermineProxyMobility(const PhysicsShapeProxy& proxy) const;
         void BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle = false) const;
         void ResetTransientState();
         Math::Transform GetFreshWorldTransform(const Core::Entity& entity) const;
@@ -202,6 +207,9 @@ namespace NorvesLib::Modules::Physics
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
+        // 占有中のスロットだけを持つ。Owner ごとに高々 1 つ。
+        Core::Container::UnorderedMap<const Core::Entity*, uint32_t> m_ColliderSlotByOwner;
+        Core::Container::UnorderedMap<const Core::Entity*, uint32_t> m_BodySlotByOwner;
         Core::Container::VariableArray<PhysicsShapeProxy> m_CharacterQueryProxies;
         CharacterMoveScratch m_CharacterScratch;
         Core::Container::VariableArray<uint32_t> m_FreeColliderSlotIndices;

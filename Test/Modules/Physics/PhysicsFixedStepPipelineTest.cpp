@@ -1,8 +1,12 @@
 ﻿// PhysicsFixedStepPipelineTest — M7 fixed-step dispatch と Physics post-step の契約を検証する。
 
+#include "Asset/AssetFileReader.h"
+#include "Animation/SkeletalAssetResource.h"
+#include "Component/AnimatorComponent.h"
 #include "Component/Component.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Ecs/EcsScheduler.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
@@ -11,9 +15,12 @@
 #include "Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Input/InputRouter.h"
 #include "Input/InputSystem.h"
+#include "Locomotion/QuadrupedLocomotionJson.h"
+#include "Logging/Logger.h"
 #include "Module/ModuleRegistry.h"
 #include "Object/ObjectHeap.h"
 #include "Object/Resource.h"
+#include "Object/ResourceRegistry.h"
 #include "Object/World.h"
 #include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
@@ -28,11 +35,15 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <type_traits>
@@ -181,7 +192,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 20;
+    constexpr uint32_t kCaseCount = 32;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1397,6 +1408,1591 @@ namespace
         return unsmoothedZeroFrames >= (rate == 60 ? 65u : 15u);
     }
 
+    bool TestCharacterGravityScale(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacter(value, Math::Vector3(0, 100, 0)))
+            return false;
+        // 初回の準備を無重力で行い、計測開始時の鉛直速度をゼロにする。
+        CharacterBodySettings settings;
+        settings.GravityScale = 0;
+        if (value.Character->SetSettings(settings) != EPhysicsResult::Success)
+            return false;
+        for (unsigned step = 0; step < 120 && !value.Character->GetState().bReady; ++step)
+            if (!StepCharacter(processor))
+                return false;
+        if (!value.Character->GetState().bReady)
+            return false;
+        const float initialHeight = value.Owner->GetPosition().y;
+        settings.GravityScale = .5f;
+        if (value.Character->SetSettings(settings) != EPhysicsResult::Success)
+            return false;
+        for (unsigned step = 0; step < 60; ++step)
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+        constexpr float expected = 9.81f * .5f * .5f;
+        const float descent = initialHeight - value.Owner->GetPosition().y;
+        if (!std::isfinite(descent) || std::fabs(descent - expected) > expected * .02f)
+        {
+            std::cout << "GRAVITY_SCALE descent=" << descent << " expected=" << expected << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool TestCharacterSteepSlopeSlide(ApplicationProcessor& processor)
+    {
+        Entity* slope = CreateCharacterFloor(20);
+        if (!slope)
+            return false;
+        const float angle = 60.0f * Math::Constants::PI / 180.0f;
+        const Math::Quaternion rotation(Math::Vector3::UnitZ, angle);
+        const Math::Vector3 normal = rotation * Math::Vector3::UnitY;
+        slope->SetPosition(normal * -.5f);
+        slope->SetRotation(rotation);
+        CharacterFixture value;
+        // 半径 .3 の球端が斜面にほぼ接する位置から始める。
+        if (!CreateCharacter(value, Math::Vector3(0, .301f, 0)) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+            return false;
+        const auto initial = value.Owner->GetPosition();
+        for (unsigned step = 0; step < 60; ++step)
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+        const auto final = value.Owner->GetPosition();
+        if (!std::isfinite(final.x) || !std::isfinite(final.y) || final.x > initial.x - .05f ||
+            final.y >= initial.y || value.Character->GetState().bGrounded)
+        {
+            std::cout << "STEEP_SLOPE dx=" << final.x - initial.x << " dy=" << final.y - initial.y
+                      << " grounded=" << value.Character->GetState().bGrounded << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    class CharacterElevatorTick final : public Component::Component, public IFixedProbe
+    {
+      public:
+        bool bMoving = false;
+        bool bRefresh = false;
+        bool bRefreshSucceeded = true;
+        unsigned Step = 0;
+        void OnFixed(float fixedDeltaTime) override
+        {
+            if (!bMoving)
+                return;
+            auto target = GetOwner()->GetWorldTransform();
+            const float direction = (Step / 10) % 2 == 0 ? 1.0f : -1.0f;
+            target.position.y += direction * 3.0f * fixedDeltaTime;
+            GetOwner()->SetWorldTransform(target);
+            ++Step;
+            if (bRefresh && GEngine->GetSceneQuery().RefreshDynamicSnapshot() != EPhysicsSceneQueryResult::Success)
+                bRefreshSucceeded = false;
+        }
+    };
+
+    bool TestCharacterElevatorJitter(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floors[2] = {CreateCharacterFloor(4), CreateCharacterFloor(4)};
+        CharacterElevatorTick* movers[2] = {};
+        CharacterFixture characters[2];
+        if (!floors[0] || !floors[1])
+            return false;
+        floors[1]->SetPosition(Math::Vector3(20, -.5f, 0));
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            auto* body = world.CreateComponent<RigidBodyComponent>(floors[i]);
+            movers[i] = world.CreateComponent<CharacterElevatorTick>(floors[i]);
+            if (!body || !movers[i] || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+                !CreateCharacter(characters[i], Math::Vector3(static_cast<float>(i) * 20, 0, 0)))
+                return false;
+        }
+        // 更新ありの足場を先に処理し、更新なしの足場はその後に動かす。
+        movers[0]->bRefresh = true;
+        for (unsigned step = 0; step < 10; ++step)
+            if (!StepCharacter(processor))
+                return false;
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            if (!characters[i].Character->GetState().bReady || !characters[i].Character->GetState().bGrounded)
+                return false;
+            movers[i]->bMoving = true;
+        }
+        float minimum[2] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        float maximum[2] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+        float floorMinimum[2] = {floors[0]->GetPosition().y, floors[1]->GetPosition().y};
+        float floorMaximum[2] = {floorMinimum[0], floorMinimum[1]};
+        float previousHeight = characters[0].Owner->GetPosition().y;
+        float maximumVelocityError = 0.0f;
+        for (unsigned step = 0; step < 120; ++step)
+        {
+            if (!StepCharacter(processor))
+                return false;
+            for (unsigned i = 0; i < 2; ++i)
+            {
+                if (i == 0 && !characters[i].Character->GetState().bReady)
+                    return false;
+                if (i == 0)
+                {
+                    const float height = characters[0].Owner->GetPosition().y;
+                    const float displacementVelocity = (height - previousHeight) / kFixedDeltaTime;
+                    const float velocityError = std::fabs(characters[0].Body->GetLinearVelocity().y - displacementVelocity);
+                    maximumVelocityError = std::max(velocityError, maximumVelocityError);
+                    previousHeight = height;
+                }
+                const float floorHeight = floors[i]->GetPosition().y;
+                const float gap = characters[i].Owner->GetPosition().y - (floorHeight + .5f);
+                if (!std::isfinite(gap))
+                {
+                    if (i == 0)
+                        return false;
+                    minimum[i] = maximum[i] = std::numeric_limits<float>::quiet_NaN();
+                }
+                else
+                {
+                    minimum[i] = std::min(minimum[i], gap);
+                    maximum[i] = std::max(maximum[i], gap);
+                }
+                floorMinimum[i] = std::min(floorMinimum[i], floorHeight);
+                floorMaximum[i] = std::max(floorMaximum[i], floorHeight);
+            }
+        }
+        const float refresh = maximum[0] - minimum[0];
+        const float noRefresh = maximum[1] - minimum[1];
+        std::cout << "ELEVATOR_JITTER refresh=" << refresh << " norefresh=" << noRefresh
+                  << " velocity_error=" << maximumVelocityError << '\n';
+        const bool platformsMoved = std::fabs(floorMaximum[0] - floorMinimum[0] - .5f) < .001f &&
+                                    std::fabs(floorMaximum[1] - floorMinimum[1] - .5f) < .001f;
+        return movers[0]->bRefreshSucceeded && movers[0]->Step == 120 && movers[1]->Step == 120 &&
+               platformsMoved && refresh < .01f && maximumVelocityError <= .005f;
+    }
+
+    bool TestCharacterPlatformDepartureVelocity(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floor = CreateCharacterFloor(4);
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        CharacterFixture value;
+        if (!body || !mover || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            !CreateCharacter(value, Math::Vector3(1, 0, 0)) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+
+        const auto platformTransform = [](unsigned frame)
+        {
+            const unsigned phase = frame % 120;
+            const float distance = static_cast<float>(phase <= 60 ? phase : 120 - phase) * 2.0f * kFixedDeltaTime;
+            const float angle = static_cast<float>(frame) * kFixedDeltaTime * Math::Constants::PI / 6.0f;
+            return Math::Transform(Math::Vector3(distance, -.5f, 0), Math::Quaternion(Math::Vector3::UnitY, angle));
+        };
+        const auto horizontalError = [](const Math::Vector3& a, const Math::Vector3& b)
+        {
+            const float dx = a.x - b.x;
+            const float dz = a.z - b.z;
+            return std::sqrt(dx * dx + dz * dz);
+        };
+
+        mover->Target = platformTransform(0);
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const auto initialLocal = value.Owner->GetPosition() - floor->GetPosition();
+
+        // 120 ステップの追従後、折り返しから 15 ステップ離れた位置で離脱する。
+        constexpr unsigned departureFrame = 135;
+        for (unsigned frame = 1; frame <= departureFrame; ++frame)
+        {
+            mover->Target = platformTransform(frame);
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+                !value.Character->GetState().bGrounded)
+            {
+                std::cout << "PLATFORM_GROUNDED frame=" << frame << '\n';
+                return false;
+            }
+            const float angle = static_cast<float>(frame) * kFixedDeltaTime * Math::Constants::PI / 6.0f;
+            const auto local = Math::Quaternion(Math::Vector3::UnitY, -angle) *
+                               (value.Owner->GetPosition() - floor->GetPosition());
+            const float drift = (local - initialLocal).Length();
+            if (!std::isfinite(drift) || drift >= .02f)
+            {
+                std::cout << "PLATFORM_LOCAL_DRIFT frame=" << frame << " distance=" << drift << '\n';
+                return false;
+            }
+        }
+
+        const auto expected = value.Character->GetState().PlatformVelocity;
+        const auto analytical = (platformTransform(departureFrame).TransformPoint(initialLocal) -
+                                 platformTransform(departureFrame - 1).TransformPoint(initialLocal)) /
+                                kFixedDeltaTime;
+        const float analyticalError = horizontalError(expected, analytical);
+        if (!std::isfinite(analyticalError) || analyticalError > .05f ||
+            horizontalError(analytical, Math::Vector3(2, 0, 0)) < .45f)
+        {
+            std::cout << "PLATFORM_VELOCITY expected_x=" << expected.x << " expected_z=" << expected.z
+                      << " analytical_x=" << analytical.x << " analytical_z=" << analytical.z << '\n';
+            return false;
+        }
+        if (value.Character->Jump(5) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned frame = departureFrame + 1; frame <= departureFrame + 2; ++frame)
+        {
+            const auto before = value.Owner->GetPosition();
+            mover->Target = platformTransform(frame);
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+                value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+            const auto observed = value.Body->GetLinearVelocity();
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const float bodyError = horizontalError(observed, expected);
+            const float displacementError = horizontalError(displacementVelocity, expected);
+            if (!std::isfinite(bodyError) || !std::isfinite(displacementError) ||
+                bodyError > .05f || displacementError > .05f)
+            {
+                std::cout << "PLATFORM_DEPARTURE frame=" << frame << " body_error=" << bodyError
+                          << " displacement_error=" << displacementError << " expected_x=" << expected.x
+                          << " expected_z=" << expected.z << " observed_x=" << observed.x
+                          << " observed_z=" << observed.z << '\n';
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool TestCharacterExternalMovement(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero) ||
+            !StepCharacter(processor) || !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        // モード切り替えは保留中の Teleport を破棄するため、先に固定ステップで反映する。
+        if (value.Character->Teleport(Math::Vector3(0, 2, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor))
+        {
+            return false;
+        }
+        const auto start = value.Owner->GetPosition();
+        const auto isNear = [](float actual, float expected, float tolerance)
+        {
+            return std::isfinite(actual) && std::fabs(actual - expected) <= tolerance;
+        };
+        const auto nearVector = [&](const Math::Vector3& actual, const Math::Vector3& expected, float tolerance)
+        {
+            return isNear(actual.x, expected.x, tolerance) && isNear(actual.y, expected.y, tolerance) &&
+                   isNear(actual.z, expected.z, tolerance);
+        };
+        if (!nearVector(start, Math::Vector3(0, 2, 0), .005f) ||
+            value.Character->SetMovementMode(CharacterMovementMode::External) != EPhysicsResult::Success ||
+            value.Character->SetDesiredVelocity(Math::Vector3(5, 0, 0)) != EPhysicsResult::Success ||
+            value.Character->Jump(5) != EPhysicsResult::InvalidState ||
+            value.Character->LaunchVertical(5) != EPhysicsResult::InvalidState)
+        {
+            return false;
+        }
+        const auto serial = value.Character->GetState().StepSerial;
+        const auto generation = value.Character->GetMotionGeneration();
+        for (unsigned step = 0; step < 30; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+            const auto& state = value.Character->GetState();
+            if (!nearVector(value.Owner->GetPosition(), start, 1e-4f) || !state.bReady || state.bGrounded ||
+                state.Result != EPhysicsResult::Success || state.StepSerial != serial + step + 1 ||
+                value.Character->GetMotionGeneration() != generation)
+            {
+                std::cout << "EXTERNAL_REST step=" << step << '\n';
+                return false;
+            }
+        }
+        if (value.Character->MoveDelta(Math::Vector3::Zero, .1f) != EPhysicsResult::Success ||
+            value.Character->MoveDelta(Math::Vector3(1, 0, 0), .15f) != EPhysicsResult::Success ||
+            !StepCharacter(processor))
+        {
+            return false;
+        }
+        const auto moved = start + Math::Vector3(1, 0, 0);
+        const auto expectedForward = Math::Quaternion(Math::Vector3::UnitY, .25f) * Math::Vector3::UnitZ;
+        const auto actualForward = value.Owner->GetWorldTransform().rotation * Math::Vector3::UnitZ;
+        const auto& state = value.Character->GetState();
+        if (!nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3(60, 0, 0), .01f) ||
+            !nearVector(state.Velocity, Math::Vector3(60, 0, 0), .01f) ||
+            !nearVector(actualForward, expectedForward, 1e-4f) || !state.bReady || state.bGrounded ||
+            state.Result != EPhysicsResult::Success || state.StepSerial != serial + 31)
+        {
+            std::cout << "EXTERNAL_MOVE x=" << value.Owner->GetPosition().x
+                      << " velocity_x=" << value.Body->GetLinearVelocity().x << '\n';
+            return false;
+        }
+        // 移動と回転は一度だけ消費し、床を横切る要求も衝突で制限しない。
+        if (!StepCharacter(processor) || !nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Owner->GetWorldTransform().rotation * Math::Vector3::UnitZ, expectedForward, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3::Zero, .01f) ||
+            value.Character->MoveDelta(Math::Vector3(0, -3, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor) ||
+            !nearVector(value.Owner->GetPosition(), moved + Math::Vector3(0, -3, 0), 1e-4f))
+        {
+            return false;
+        }
+        // External 中の Teleport は瞬間移動分を速度に含めず、切り替え時には保留入力を破棄する。
+        if (value.Character->Teleport(moved) != EPhysicsResult::Success || !StepCharacter(processor) ||
+            !nearVector(value.Owner->GetPosition(), moved, 1e-4f) ||
+            !nearVector(value.Body->GetLinearVelocity(), Math::Vector3::Zero, .01f) ||
+            value.Character->MoveDelta(Math::Vector3(2, 0, 0)) != EPhysicsResult::Success ||
+            value.Character->SetMovementMode(CharacterMovementMode::Walking) != EPhysicsResult::Success ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned step = 0; step < 3; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+        }
+        const auto falling = value.Owner->GetPosition();
+        return isNear(falling.x, moved.x, 1e-4f) && isNear(falling.z, moved.z, 1e-4f) &&
+               std::isfinite(falling.y) && falling.y < moved.y - 1e-4f;
+    }
+
+    bool TestCharacterPushDynamicSphere(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        Entity* sphere = world.SpawnEntity<Entity>();
+        auto* collider = sphere ? world.CreateComponent<ColliderComponent>(sphere) : nullptr;
+        auto* body = sphere ? world.CreateComponent<RigidBodyComponent>(sphere) : nullptr;
+        if (!collider || !body || collider->SetSphere(.25f) != EPhysicsResult::Success ||
+            body->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        sphere->SetPosition(Math::Vector3(1.5f, .3f, 0));
+        for (unsigned step = 0; step < 12; ++step)
+        {
+            if (!StepCharacter(processor))
+            {
+                return false;
+            }
+        }
+        const float sphereStart = sphere->GetPosition().x;
+        const float characterStart = value.Owner->GetPosition().x;
+        if (!value.Character->GetState().bReady || !value.Character->GetState().bGrounded ||
+            value.Character->SetDesiredVelocity(Math::Vector3(2, 0, 0)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        Container::VariableArray<PhysicsOverlapHit> hits;
+        for (unsigned step = 0; step < 90; ++step)
+        {
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            {
+                return false;
+            }
+            PhysicsShapeProxy proxy;
+            if (!PhysicsModuleTestAccess::CopyPublishedProxy(*GFixture->Physics,
+                    value.Collider->GetColliderHandle(), proxy) || proxy.Shape != EPhysicsProxyShape::Capsule ||
+                GEngine->GetSceneQuery().OverlapCapsule(proxy.Capsule, hits) != EPhysicsSceneQueryResult::Success)
+            {
+                return false;
+            }
+            for (const auto& hit : hits)
+            {
+                if (hit.Collider == collider->GetColliderHandle() &&
+                    (!std::isfinite(hit.Contact.Depth) || hit.Contact.Depth > 1e-3f))
+                {
+                    std::cout << "DYNAMIC_PUSH_CONTACT step=" << step << " depth=" << hit.Contact.Depth << '\n';
+                    return false;
+                }
+            }
+        }
+        const float sphereDistance = sphere->GetPosition().x - sphereStart;
+        const float characterDistance = value.Owner->GetPosition().x - characterStart;
+        std::cout << "DYNAMIC_PUSH sphere_distance=" << sphereDistance
+                  << " character_distance=" << characterDistance << '\n';
+        return std::isfinite(sphereDistance) && std::isfinite(characterDistance) &&
+               sphereDistance >= 1.0f && characterDistance >= 1.0f;
+    }
+
+    bool TestCharacterVelocityAndDepenetration(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+
+        unsigned step = 0;
+        const auto checkStep = [&]()
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            {
+                return false;
+            }
+            ++step;
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const auto bodyVelocity = value.Body->GetLinearVelocity();
+            const float error = (bodyVelocity - displacementVelocity).Length();
+            if (!std::isfinite(error) || error > .005f)
+            {
+                std::cout << "CHARACTER_VELOCITY step=" << step << " error=" << error << '\n';
+                return false;
+            }
+            return true;
+        };
+
+        if (!checkStep() || !value.Character->GetState().bGrounded ||
+            value.Character->SetDesiredVelocity(Math::Vector3(3, 0, 0)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        const auto straightStart = value.Owner->GetPosition();
+        for (unsigned i = 0; i < 30; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        const auto straightEnd = value.Owner->GetPosition();
+        if (std::fabs(straightEnd.x - straightStart.x - 1.5f) > .02f ||
+            value.Character->SetDesiredVelocity(Math::Vector3(-1.5f, 0, 2)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 30; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        const auto diagonalEnd = value.Owner->GetPosition();
+        if (std::fabs(diagonalEnd.x - straightEnd.x + .75f) > .02f ||
+            std::fabs(diagonalEnd.z - straightEnd.z - 1.0f) > .02f ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 10; ++i)
+        {
+            if (!checkStep() || !value.Character->GetState().bGrounded)
+            {
+                return false;
+            }
+        }
+        if (value.Character->Jump(5) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        bool bAirborne = false;
+        bool bLanded = false;
+        for (unsigned i = 0; i < 120; ++i)
+        {
+            if (!checkStep())
+            {
+                return false;
+            }
+            if (!value.Character->GetState().bGrounded)
+            {
+                bAirborne = true;
+            }
+            else if (bAirborne)
+            {
+                bLanded = true;
+                break;
+            }
+        }
+        if (!bAirborne || !bLanded ||
+            value.Character->Teleport(Math::Vector3(10, 0, 0)) != EPhysicsResult::Success ||
+            !StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const float teleportError = (value.Owner->GetPosition() - Math::Vector3(10, 0, 0)).Length();
+        const float teleportSpeed = value.Body->GetLinearVelocity().Length();
+        if (!std::isfinite(teleportError) || !std::isfinite(teleportSpeed) ||
+            teleportError > .001f || teleportSpeed > .001f)
+        {
+            std::cout << "CHARACTER_TELEPORT error=" << teleportError << " speed=" << teleportSpeed << '\n';
+            return false;
+        }
+
+        // 左側の面をカプセルへ 0.05 m 食い込ませる。
+        Entity* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        if (!wallCollider || wallCollider->SetBox(Math::Vector3(.5f, 1, 1)) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        wall->SetPosition(Math::Vector3(10.75f, 1, 0));
+        const auto beforePush = value.Owner->GetPosition();
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady ||
+            !value.Character->GetState().bGrounded)
+        {
+            return false;
+        }
+        const auto displacement = value.Owner->GetPosition() - beforePush;
+        const float speed = value.Body->GetLinearVelocity().Length();
+        if (!std::isfinite(displacement.Length()) || !std::isfinite(speed) || displacement.x > -.05f || speed > .001f)
+        {
+            std::cout << "CHARACTER_DEPENETRATION displacement_x=" << displacement.x << " speed=" << speed << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool TestCharacterPlatformPushedAgainstWall(ApplicationProcessor& processor)
+    {
+        auto& world = GEngine->GetWorld();
+        Entity* floor = CreateCharacterFloor(4);
+        auto* floorCollider = floor ? floor->GetComponent<ColliderComponent>() : nullptr;
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        Entity* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        CharacterFixture value;
+        if (!floorCollider || !body || !mover || !wallCollider ||
+            body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            wallCollider->SetBox(Math::Vector3(.5f, 1, 1)) != EPhysicsResult::Success ||
+            !CreateCharacter(value, Math::Vector3::Zero) ||
+            value.Character->SetDesiredVelocity(Math::Vector3::Zero) != EPhysicsResult::Success)
+        {
+            return false;
+        }
+        // 壁の下端を足場の上面より高くし、足場が壁の下を通れるようにする。
+        wall->SetPosition(Math::Vector3(1, 1.01f, 0));
+        mover->Target = Math::Transform(Math::Vector3(0, -.5f, 0));
+
+        unsigned step = 0;
+        bool bVelocityValid = true;
+        const auto checkStep = [&]()
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+                return false;
+            const auto displacementVelocity = (value.Owner->GetPosition() - before) / kFixedDeltaTime;
+            const float error = (value.Body->GetLinearVelocity() - displacementVelocity).Length();
+            if (!std::isfinite(error) || error > .005f)
+            {
+                if (bVelocityValid)
+                    std::cout << "CHARACTER_WALL_VELOCITY step=" << step << " error=" << error << '\n';
+                bVelocityValid = false;
+            }
+            return true;
+        };
+
+        if (!checkStep() || !value.Character->GetState().bGrounded ||
+            !(value.Character->GetState().GroundCollider == floorCollider->GetColliderHandle()))
+        {
+            return false;
+        }
+        unsigned pinnedSteps = 0;
+        for (step = 1; step <= 90; ++step)
+        {
+            const auto beforeCharacter = value.Owner->GetPosition();
+            const float beforeFloor = floor->GetPosition().x;
+            const float distance = static_cast<float>(step) * 2.0f * kFixedDeltaTime;
+            mover->Target = Math::Transform(Math::Vector3(distance, -.5f, 0));
+            if (!checkStep() || !value.Character->GetState().bGrounded ||
+                !(value.Character->GetState().GroundCollider == floorCollider->GetColliderHandle()))
+            {
+                std::cout << "CHARACTER_WALL_GROUND step=" << step << '\n';
+                return false;
+            }
+            const float floorDelta = floor->GetPosition().x - beforeFloor;
+            if (!std::isfinite(floorDelta) || std::fabs(floorDelta - 2.0f * kFixedDeltaTime) > .0001f)
+            {
+                std::cout << "CHARACTER_WALL_PLATFORM step=" << step << " delta=" << floorDelta << '\n';
+                return false;
+            }
+            if (std::fabs(value.Owner->GetPosition().x - beforeCharacter.x) < .001f)
+                ++pinnedSteps;
+        }
+        std::cout << "CHARACTER_WALL_PINNED steps=" << pinnedSteps << '\n';
+        return bVelocityValid && pinnedSteps >= 10;
+    }
+
+    bool TestGameLocomotionProfileReload(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace Logging;
+        using namespace Locomotion;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool bPassed, const char* contract) {
+            if (!bPassed)
+            {
+                std::cout << "設定の再読込: " << contract << '\n';
+            }
+            return bPassed;
+        };
+        const auto source = Asset::AssetFileReader().Read("Gameplay/DogLocomotion.json");
+        if (!check(source.Succeeded(), "元の設定を読める"))
+        {
+            return false;
+        }
+        Container::AnsiString reloaded;
+        reloaded.append(reinterpret_cast<const char*>(source.Blob.GetData()), source.Blob.GetSize());
+        // Wだけでは走行指定にならず、歩様1の最高速が目標になる。6→4なら隣の歩様との整合も保つ。
+        const Container::AnsiString speedKey = "\"speedMax\": 4";
+        const auto position = reloaded.find(speedKey);
+        if (!check(position != Container::AnsiString::npos, "歩行の最高速を特定できる"))
+        {
+            return false;
+        }
+        Container::AnsiString initial;
+        initial.append(reloaded.data(), position);
+        initial.append("\"speedMax\": 6");
+        initial.append(reloaded.data() + position + speedKey.size(), reloaded.size() - position - speedKey.size());
+        QuadrupedLocomotionParams initialParams, reloadedParams;
+        Container::String error;
+        const auto parse = [&](const Container::AnsiString& text, QuadrupedLocomotionParams& params) {
+            return ParseQuadrupedLocomotionJson({reinterpret_cast<const uint8_t*>(text.data()), text.size()}, params,
+                                                error);
+        };
+        if (!check(parse(initial, initialParams) && parse(reloaded, reloadedParams) &&
+                       initialParams.Gaits[1].SpeedMax == 6 && reloadedParams.Gaits[1].SpeedMax == 4,
+                   "両方の設定が有効である"))
+        {
+            return false;
+        }
+        struct ProfileFixture
+        {
+            std::filesystem::path Root;
+            ~ProfileFixture()
+            {
+                std::error_code ignored;
+                std::filesystem::remove_all(Root, ignored);
+            }
+            bool Write(const Container::AnsiString& text) const
+            {
+                std::ofstream file(Root / "profile.json", std::ios::binary | std::ios::trunc);
+                file.write(text.data(), static_cast<std::streamsize>(text.size()));
+                file.close();
+                return !file.fail();
+            }
+        } profile;
+        char name[96];
+        std::snprintf(name, sizeof(name), "NorvesComponentProfile_%lu_%lld", GetCurrentProcessId(),
+                      static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        profile.Root = std::filesystem::temp_directory_path() / name;
+        if (!check(std::filesystem::create_directory(profile.Root) && profile.Write(initial), "一時設定を書ける"))
+        {
+            return false;
+        }
+        struct WarningSink final : ILogSink
+        {
+            unsigned Count = 0;
+            void OnLog(const LogEntry& entry) override
+            {
+                if (entry.level == LogLevel::Warning && entry.category == "Locomotion")
+                {
+                    ++Count;
+                }
+            }
+            ~WarningSink() override
+            {
+                Logger::GetInstance().RemoveSink(this);
+                Logger::GetInstance().Shutdown();
+            }
+        } warnings;
+        auto& logger = Logger::GetInstance();
+        logger.Shutdown();
+        LogConfig logConfig;
+        logConfig.minLevel = LogLevel::Trace;
+        logConfig.outputType = LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        if (!check(logger.Initialize(logConfig), "同期ログを初期化できる"))
+        {
+            return false;
+        }
+        logger.AddSink(&warnings);
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        // Componentの最初のInput群から出力を観測できるよう、物理本体だけ先に準備する。
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+        {
+            return false;
+        }
+        world.LateTick(kFixedDeltaTime);
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings = {key};
+        if (!bindings.AddContext("Gameplay"_id, ECursorMode::Normal) || !bindings.AddAction("Gameplay"_id, move) ||
+            !mapper.ConfigureWithContext(bindings, "Gameplay"_id))
+        {
+            return false;
+        }
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        if (!driver)
+        {
+            return false;
+        }
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+            }
+        } unbind{driver};
+        if (!driver->SetProfileSource(profile.Root.generic_string().c_str(), "profile.json"))
+        {
+            return false;
+        }
+        driver->BindInput(&mapper);
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        double inputTime = 0;
+        const auto frame = [&](float dt) {
+            inputTime += dt;
+            if (!mapper.BeginFrame(inputTime) || !mapper.Update(inputTime, dt))
+            {
+                return false;
+            }
+            FrameTimes times;
+            times.Unscaled = dt;
+            times.World = times.Animation = dt * .5f;
+            world.Tick(times);
+            const bool bStepped = StepCharacter(processor);
+            world.LateTick(times);
+            return bStepped && value.Character->GetState().bReady;
+        };
+        const auto speed = [&] {
+            const auto velocity = driver->GetOutput().PlanarVelocity;
+            return std::hypot(velocity.x, velocity.z);
+        };
+        const auto nearSpeed = [&](float expected) {
+            return std::isfinite(speed()) && std::fabs(speed() - expected) < .01f;
+        };
+        // 公開モデルを基準に、既定値4と異なる設定6がdt=0の最初のフレームで使われることを確かめる。
+        const auto observed = value.Character->GetState();
+        LocomotionGroundInfo ground;
+        ground.bReady = observed.bReady;
+        ground.bGrounded = observed.bGrounded;
+        ground.Normal = observed.GroundNormal;
+        ground.Velocity = observed.Velocity;
+        ground.PlatformVelocity = observed.PlatformVelocity;
+        ground.Gravity = 9.81f * value.Character->GetSettings().GravityScale;
+        LocomotionIntent intent;
+        intent.Move = Math::Vector3::UnitZ;
+        LocomotionState initialState, defaultState;
+        LocomotionOutput expected, defaultOutput;
+        if (!check(QuadrupedLocomotionModel::Step(initialState, initialParams, intent, ground, kFixedDeltaTime,
+                                                 expected) == LocomotionStepStatus::Success &&
+                       QuadrupedLocomotionModel::Step(defaultState, reloadedParams, intent, ground, kFixedDeltaTime,
+                                                     defaultOutput) == LocomotionStepStatus::Success &&
+                       (expected.PlanarVelocity - defaultOutput.PlanarVelocity).Length() > .001f && frame(0) &&
+                       (driver->GetOutput().PlanarVelocity - expected.PlanarVelocity).Length() < .0001f,
+                   "最初のフレームは待たずに設定を適用する"))
+        {
+            return false;
+        }
+        // 1/64秒は二進で厳密。16フレームで0.25秒になり、World時間とは別にInputのUnscaled時間を数える。
+        constexpr float inputDelta = 1.0f / 64;
+        for (unsigned i = 0; i < 192; ++i)
+        {
+            if (!frame(inputDelta))
+            {
+                return false;
+            }
+        }
+        if (!check(nearSpeed(6) && driver->GetProfileError().empty() && warnings.Count == 0,
+                   "初期設定の最高速に落ち着く") || !profile.Write(reloaded))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 15; ++i)
+        {
+            if (!check(frame(inputDelta) && nearSpeed(6), "0.25秒に満たない間は以前の最高速を保つ"))
+            {
+                return false;
+            }
+        }
+        const float beforeReload = speed();
+        if (!check(frame(inputDelta) && std::isfinite(speed()) && speed() < beforeReload - .001f && speed() > 4 &&
+                       driver->GetProfileError().empty() && warnings.Count == 0,
+                   "0.25秒を満たす最初のフレームから新しい最高速へ減速する"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 192; ++i)
+        {
+            if (!frame(inputDelta))
+            {
+                return false;
+            }
+        }
+        if (!check(nearSpeed(4), "再読込した最高速に落ち着く") || !profile.Write("{"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 15; ++i)
+        {
+            if (!check(frame(inputDelta) && nearSpeed(4) && driver->GetProfileError().empty() && warnings.Count == 0,
+                       "壊れた設定も次の読込間隔までは観測しない"))
+            {
+                return false;
+            }
+        }
+        if (!check(frame(inputDelta) && nearSpeed(4) && !driver->GetProfileError().empty() && warnings.Count == 1,
+                   "壊れたJSONでは最後の有効値を保ち、警告を1回出す"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 64; ++i)
+        {
+            if (!check(frame(inputDelta) && nearSpeed(4) && !driver->GetProfileError().empty() && warnings.Count == 1,
+                       "同じ壊れたJSONを再観測しても値と警告回数を保つ"))
+            {
+                return false;
+            }
+        }
+        std::cout << "設定の再読込: 初回即時、0.25秒で6→4、壊れたJSONの警告1回を確認\n";
+        return true;
+    }
+
+    bool TestGameLocomotionAnimatorValues(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace Animation;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool bPassed, const char* contract) {
+            if (!bPassed)
+            {
+                std::cout << "Animatorへの値: " << contract << '\n';
+            }
+            return bPassed;
+        };
+        ResourceRegistry registry;
+        if (!check(registry.Initialize(), "資産の管理を初期化できる"))
+        {
+            return false;
+        }
+        auto skeleton = registry.CreateTransient<SkeletonResource>("LocomotionSkeleton");
+        auto meshResource = registry.CreateTransient<SkinnedMeshResource>("LocomotionMesh");
+        auto clip = registry.CreateTransient<AnimationClipResource>("LocomotionClip");
+        auto asset = registry.CreateTransient<SkeletalAssetResource>("LocomotionAsset");
+        auto graph = registry.CreateTransient<AnimGraphResource>("LocomotionGraph");
+        auto emptyGraph = registry.CreateTransient<AnimGraphResource>("LocomotionEmptyGraph");
+        if (!check(skeleton && meshResource && clip && asset && graph && emptyGraph, "試験用の資産を作れる"))
+        {
+            return false;
+        }
+        Container::VariableArray<Skeletal::SkeletalJoint> joints(1);
+        joints[0].Name = "Root";
+        for (size_t i = 0; i < 16; ++i)
+        {
+            joints[0].InverseBindMatrix[i] = Math::Matrix4x4::Identity.values[i];
+        }
+        skeleton->SetJoints(std::move(joints));
+        Container::VariableArray<Skeletal::SkeletalVertex> vertices(3);
+        for (unsigned i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i].Position = {float(i == 1), float(i == 2), 0};
+            vertices[i].Normal = {0, 0, 1};
+            vertices[i].JointWeights[0] = 1;
+        }
+        meshResource->SetVertices(std::move(vertices));
+        meshResource->SetIndices(Container::VariableArray<uint32_t>{0, 1, 2});
+        Skeletal::SkeletalAnimationClip animation;
+        animation.Name = "idle";
+        animation.DurationSeconds = 1;
+        Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0;
+        channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+        channel.Samples = {{0, {0, 0, 0, 0}}, {1, {0, 0, 0, 0}}};
+        animation.Channels.push_back(std::move(channel));
+        clip->SetClip(std::move(animation));
+        if (!check(skeleton->Load() && meshResource->Load() && clip->Load(), "骨格・メッシュ・クリップが有効である"))
+        {
+            return false;
+        }
+        asset->SetResources(meshResource, skeleton, clip);
+        struct ClipResolver final : IClipResolver
+        {
+            Container::TSharedPtr<AnimationClipResource> Clip;
+            Container::TSharedPtr<AnimationClipResource> ResolveClip(Container::StringView name) const override
+            {
+                return name == Container::StringView("idle") ? Clip : Container::TSharedPtr<AnimationClipResource>{};
+            }
+        } resolver;
+        resolver.Clip = clip;
+        AnimGraphReport report;
+        const Container::String graphJson = R"({"version":1,"params":[
+            {"name":"GaitId","type":"int","value":-1},
+            {"name":"GaitWeight0","type":"float","value":-1},
+            {"name":"GaitWeight1","type":"float","value":-1},
+            {"name":"GaitWeight2","type":"float","value":-1},
+            {"name":"GaitWeight3","type":"float","value":-1},
+            {"name":"PitchAngle","type":"float","value":-1},
+            {"name":"BankAngle","type":"float","value":-1},
+            {"name":"ObservedSpeed","type":"float","bind":"speed"},
+            {"name":"ObservedTurn","type":"float","bind":"turnRate"},
+            {"name":"ObservedGrounded","type":"bool","bind":"grounded"}
+            ],"nodes":[{"id":"idle","type":"clip","clip":"idle"}],"root":"idle"})";
+        const Container::String emptyJson =
+            R"({"version":1,"nodes":[{"id":"idle","type":"clip","clip":"idle"}],"root":"idle"})";
+        if (!check(asset->Load() && graph->Compile(graphJson, *skeleton, resolver, report) && graph->Load() &&
+                       emptyGraph->Compile(emptyJson, *skeleton, resolver, report) && emptyGraph->Load(),
+                   "名前付きのグラフとパラメータのないグラフを組める"))
+        {
+            return false;
+        }
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+        {
+            return false;
+        }
+        world.Tick(kFixedDeltaTime);
+        const bool bReady = StepCharacter(processor) && value.Character->GetState().bReady;
+        world.LateTick(kFixedDeltaTime);
+        if (!check(bReady, "入力を与える前に物理本体を準備できる"))
+        {
+            return false;
+        }
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move, jump;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings.push_back(key);
+        key.Source.Code = static_cast<uint16_t>(KeyCode::D);
+        key.Component = EInputAxisComponent::X;
+        move.Bindings.push_back(key);
+        jump.Id = "Jump"_id;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::Space);
+        key.Component = EInputAxisComponent::X;
+        jump.Bindings.push_back(key);
+        if (!bindings.AddContext("Gameplay"_id, ECursorMode::Normal) || !bindings.AddAction("Gameplay"_id, move) ||
+            !bindings.AddAction("Gameplay"_id, jump) || !mapper.ConfigureWithContext(bindings, "Gameplay"_id))
+        {
+            return false;
+        }
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        if (!driver || !pose)
+        {
+            return false;
+        }
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+            }
+        } unbind{driver};
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(pose);
+        if (!mesh)
+        {
+            return false;
+        }
+        mesh->SetSkeletalAsset(asset);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(pose);
+        if (!check(animator && animator->SetGraph(graph) && driver->SetVisualRoots(visual, pose),
+                   "見た目の子へAnimatorとグラフを接続できる"))
+        {
+            return false;
+        }
+        driver->BindInput(&mapper);
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        double inputTime = 0;
+        const auto frame = [&] {
+            inputTime += kFixedDeltaTime;
+            if (!mapper.BeginFrame(inputTime) || !mapper.Update(inputTime, kFixedDeltaTime))
+            {
+                return false;
+            }
+            world.Tick(kFixedDeltaTime);
+            const bool bStepped = StepCharacter(processor);
+            world.LateTick(kFixedDeltaTime);
+            return bStepped && value.Character->GetState().bReady;
+        };
+        Component::AnimatorDebugSnapshot snapshot;
+        const auto find = [&](Identity name, AnimParamType type) -> const AnimParamValue* {
+            for (const auto& param : snapshot.Parameters)
+            {
+                if (param.Name == name && param.Type == type)
+                {
+                    return &param.Value;
+                }
+            }
+            return nullptr;
+        };
+        unsigned frameIndex = 0, mismatches = 0;
+        const auto compareFloat = [&](const char* name, float expected) {
+            const auto* actual = find(Identity(name), AnimParamType::Float);
+            const bool bMatches = actual && std::isfinite(actual->Float) &&
+                                  std::fabs(actual->Float - expected) <= 1e-4f;
+            if (!bMatches && mismatches++ < 4)
+            {
+                std::cout << "Animatorへの値: フレーム=" << frameIndex << " 名前=" << name
+                          << " 実際=" << (actual ? actual->Float : -999) << " 期待=" << expected << '\n';
+            }
+            return bMatches;
+        };
+        bool bMatches = true, bBlended = false, bTurned = false, bGrounded = false, bAirborne = false;
+        for (; frameIndex < 96; ++frameIndex)
+        {
+            if (frameIndex == 20)
+            {
+                input.InjectKeyEvent(KeyCode::D, InputAction::Pressed);
+            }
+            if (frameIndex == 48)
+            {
+                input.InjectKeyEvent(KeyCode::Space, InputAction::Pressed);
+            }
+            if (frameIndex == 49)
+            {
+                input.InjectKeyEvent(KeyCode::Space, InputAction::Released);
+            }
+            if (!frame())
+            {
+                return false;
+            }
+            animator->BuildDebugSnapshot(snapshot);
+            if (!check(snapshot.bReady && snapshot.Parameters.size() == 10, "全パラメータを型付きで観測できる"))
+            {
+                return false;
+            }
+            const auto& output = driver->GetOutput();
+            bMatches &= compareFloat("ObservedSpeed", output.Speed);
+            bMatches &= compareFloat("ObservedTurn", output.TurnRate);
+            bMatches &= compareFloat("PitchAngle", output.Pitch);
+            bMatches &= compareFloat("BankAngle", output.Bank);
+            const auto* gait = find("GaitId"_id, AnimParamType::Int);
+            const auto* grounded = find("ObservedGrounded"_id, AnimParamType::Bool);
+            bMatches &= check(gait && gait->Int == output.Gait, "歩様の識別子がモデルと一致する");
+            bMatches &= check(grounded && grounded->Bool == output.bGrounded, "接地の信号がモデルと一致する");
+            float sum = 0;
+            unsigned activeWeights = 0;
+            const char* names[] = {"GaitWeight0", "GaitWeight1", "GaitWeight2", "GaitWeight3"};
+            for (unsigned i = 0; i < 4; ++i)
+            {
+                bMatches &= compareFloat(names[i], output.GaitWeights[i]);
+                const auto* weight = find(Identity(names[i]), AnimParamType::Float);
+                if (weight)
+                {
+                    sum += weight->Float;
+                    activeWeights += weight->Float > 1e-4f && weight->Float < 1 - 1e-4f;
+                }
+            }
+            bMatches &= check(std::isfinite(sum) && std::fabs(sum - 1) <= 1e-4f, "歩様の重みの合計が1である");
+            bBlended |= activeWeights >= 2;
+            bTurned |= std::fabs(output.TurnRate) > 1e-4f;
+            bGrounded |= output.bGrounded;
+            bAirborne |= !output.bGrounded;
+        }
+        if (!check(bBlended && bTurned && bGrounded && bAirborne, "歩様の遷移・旋回・接地と空中の両方を含む") ||
+            !check(animator->SetGraph(emptyGraph), "名前のパラメータのないグラフへ差し替えられる"))
+        {
+            return false;
+        }
+        for (unsigned i = 0; i < 8; ++i)
+        {
+            const auto before = value.Owner->GetPosition();
+            if (!frame())
+            {
+                return false;
+            }
+            animator->BuildDebugSnapshot(snapshot);
+            const auto delta = value.Owner->GetPosition() - before;
+            if (!check(snapshot.bReady && snapshot.Parameters.empty() && std::hypot(delta.x, delta.z) > 1e-4f,
+                       "名前のパラメータがなくても毎フレーム本体が移動し続ける"))
+            {
+                return false;
+            }
+        }
+        if (bMatches)
+        {
+            std::cout << "Animatorへの値: 96フレームでモデルとの一致、遷移と旋回、空グラフでの移動継続を確認\n";
+        }
+        return bMatches;
+    }
+
+    bool TestGameLocomotionRootMotion(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace Animation;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool passed, const char* contract) {
+            if (!passed)
+                std::cout << "ルート移動: " << contract << '\n';
+            return passed;
+        };
+        ResourceRegistry registry;
+        if (!check(registry.Initialize(), "資産の管理を初期化できる"))
+            return false;
+        auto skeleton = registry.CreateTransient<SkeletonResource>("RootMotionSkeleton");
+        auto meshResource = registry.CreateTransient<SkinnedMeshResource>("RootMotionMesh");
+        auto clip = registry.CreateTransient<AnimationClipResource>("RootMotionClip");
+        auto asset = registry.CreateTransient<SkeletalAssetResource>("RootMotionAsset");
+        auto graph = registry.CreateTransient<AnimGraphResource>("RootMotionGraph");
+        if (!check(skeleton && meshResource && clip && asset && graph, "試験用の資産を作れる"))
+            return false;
+        Container::VariableArray<Skeletal::SkeletalJoint> joints(1);
+        joints[0].Name = "Root";
+        for (size_t i = 0; i < 16; ++i)
+            joints[0].InverseBindMatrix[i] = Math::Matrix4x4::Identity.values[i];
+        skeleton->SetJoints(std::move(joints));
+        Container::VariableArray<Skeletal::SkeletalVertex> vertices(3);
+        for (unsigned i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i].Position = {float(i == 1), float(i == 2), 0};
+            vertices[i].Normal = {0, 0, 1};
+            vertices[i].JointWeights[0] = 1;
+        }
+        meshResource->SetVertices(std::move(vertices));
+        meshResource->SetIndices(Container::VariableArray<uint32_t>{0, 1, 2});
+        Skeletal::SkeletalAnimationClip animation;
+        animation.Name = "forward";
+        animation.DurationSeconds = 1;
+        animation.Metadata.Root.Mode = RootMotionMode::Extract;
+        Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0;
+        channel.Path = Skeletal::SkeletalAnimationPath::Translation;
+        channel.Samples = {{0, {0, 0, 0, 0}}, {1, {1, 0, 0, 0}}};
+        animation.Channels.push_back(std::move(channel));
+        clip->SetClip(std::move(animation));
+        if (!check(skeleton->Load() && meshResource->Load() && clip->Load(),
+                   "骨格・メッシュ・クリップが有効である"))
+            return false;
+        asset->SetResources(meshResource, skeleton, clip);
+        struct ClipResolver final : IClipResolver
+        {
+            Container::TSharedPtr<AnimationClipResource> Clip;
+            Container::TSharedPtr<AnimationClipResource> ResolveClip(Container::StringView name) const override
+            {
+                return name == Container::StringView("forward") ? Clip : Container::TSharedPtr<AnimationClipResource>{};
+            }
+        } resolver;
+        resolver.Clip = clip;
+        AnimGraphReport report;
+        const Container::String graphJson =
+            R"({"version":1,"nodes":[{"id":"forward","type":"clip","clip":"forward","loop":true}],"root":"forward"})";
+        if (!check(asset->Load() && graph->Compile(graphJson, *skeleton, resolver, report) && graph->Load(),
+                   "直進するループのグラフを組める"))
+            return false;
+
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!check(CreateCharacterFloor() && CreateCharacter(value, Math::Vector3::Zero), "床と本体を作れる"))
+            return false;
+        world.Tick(kFixedDeltaTime);
+        const bool ready = StepCharacter(processor) && value.Character->GetState().bReady;
+        world.LateTick(kFixedDeltaTime);
+        if (!check(ready, "移動の前に物理本体を準備できる"))
+            return false;
+        ApplicationFixedStepTestAccess::ResetRun(processor);
+
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move, jump;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings.push_back(key);
+        jump.Id = "Jump"_id;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::Space);
+        key.Component = EInputAxisComponent::X;
+        jump.Bindings.push_back(key);
+        if (!check(bindings.AddContext("Gameplay"_id, ECursorMode::Normal) &&
+                       bindings.AddAction("Gameplay"_id, move) && bindings.AddAction("Gameplay"_id, jump) &&
+                       mapper.ConfigureWithContext(bindings, "Gameplay"_id), "入力を設定できる"))
+            return false;
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        if (!check(driver && pose, "移動と見た目の子を作れる"))
+            return false;
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind() { Driver->BindInput(nullptr); }
+        } unbind{driver};
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(pose);
+        if (!check(mesh != nullptr, "見た目にメッシュを付けられる"))
+            return false;
+        mesh->SetSkeletalAsset(asset);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(pose);
+        if (!check(animator && animator->SetGraph(graph) && driver->SetVisualRoots(visual, pose) &&
+                       driver->SetMotionSource(Game::Gameplay::LocomotionMotionSource::Animation),
+                   "見た目のAnimatorを移動元にできる"))
+            return false;
+        driver->BindInput(&mapper);
+        double inputTime = 0;
+        const auto frame = [&](int64_t raw, FixedStepAdvanceResult& result) {
+            const double seconds = double(raw) / 1'000'000'000.0;
+            inputTime += seconds;
+            if (!mapper.BeginFrame(inputTime) || !mapper.Update(inputTime, float(seconds)))
+                return false;
+            result = ApplicationFixedStepTestAccess::Simulate(processor, raw);
+            return result.Status == EFixedStepAdvanceStatus::Advanced && result.DroppedSteps == 0 &&
+                   value.Character->GetState().bReady;
+        };
+        const int64_t durations[] = {8'333'333, 16'666'667, 25'000'000};
+        uint32_t stepCounts[3]{};
+        uint64_t lastSerial = animator->GetRootMotionFrame().UpdateSerial;
+        const auto start = value.Owner->GetPosition();
+        double rootX = 0, rootZ = 0, maxError = 0;
+        bool matches = true;
+        for (unsigned i = 0; i < 72; ++i)
+        {
+            const int64_t raw = durations[i % 3];
+            FixedStepAdvanceResult result;
+            if (!check(frame(raw, result) && result.ExecutedSteps <= 2, "固定ステップを実行できる"))
+                return false;
+            ++stepCounts[result.ExecutedSteps];
+            const auto observed = animator->GetRootMotionFrame();
+            if (!check(observed.bValid && observed.bConsumed && observed.UpdateSerial != lastSerial &&
+                           observed.Delta.IsFinite() && observed.Delta.X > 0 &&
+                           std::fabs(observed.Delta.X - double(raw) / 1'000'000'000.0) < 1e-5 &&
+                           std::fabs(observed.Delta.Z) < 1e-6 && std::fabs(observed.Delta.Yaw) < 1e-6,
+                       "毎フレーム直進の差分が生成され消費される"))
+                return false;
+            lastSerial = observed.UpdateSerial;
+            rootX += observed.Delta.X;
+            rootZ += observed.Delta.Z;
+            // この列では端数が常に当フレームの長さ以下。一定速度の差分から未消費分を引く。
+            const uint64_t duration = uint64_t(raw) * 60;
+            if (!check(result.RemainderScaledUnits <= duration, "端数は当フレームに収まる"))
+                return false;
+            const double fraction = double(result.RemainderScaledUnits) / double(duration);
+            const auto position = value.Owner->GetPosition();
+            const double expectedX = rootX - observed.Delta.X * fraction;
+            const double expectedZ = rootZ - observed.Delta.Z * fraction;
+            const double error = std::hypot(double(position.x - start.x) - expectedX,
+                                            double(position.z - start.z) - expectedZ);
+            maxError = std::max(maxError, error);
+            if (!std::isfinite(error) || error > 1e-4)
+            {
+                if (matches)
+                    std::printf("ルート移動: フレーム=%u 段=%llu 期待=(%.9f, %.9f) 本体=(%.9f, %.9f) 差=%.9f\n",
+                                i, static_cast<unsigned long long>(result.ExecutedSteps), expectedX, expectedZ,
+                                double(position.x - start.x), double(position.z - start.z), error);
+                matches = false;
+            }
+            if (i % 3 == 2 && !check(result.RemainderScaledUnits == 0, "周期の終わりで端数がゼロになる"))
+                return false;
+        }
+        const auto end = value.Owner->GetPosition();
+        const double finalError = std::hypot(double(end.x - start.x) - rootX, double(end.z - start.z) - rootZ);
+        std::printf("ルート移動: 段数 0=%u 1=%u 2=%u、差分=(%.9f, %.9f) m、本体=(%.9f, %.9f) m、差=%.9f m、最大差=%.9f m\n",
+                    stepCounts[0], stepCounts[1], stepCounts[2], rootX, rootZ,
+                    double(end.x - start.x), double(end.z - start.z), finalError, maxError);
+        if (!check(stepCounts[0] && stepCounts[1] && stepCounts[2] && rootX > 1 &&
+                       std::hypot(double(end.x - start.x), double(end.z - start.z)) > 1 && matches && finalError <= 1e-4,
+                   "0・1・2段と周回を含む全フレームで消費すべき差分と本体が一致する"))
+            return false;
+
+        // 半段ぶんを未消費のまま残し、直交するW入力へ切り替える。
+        FixedStepAdvanceResult pending;
+        if (!check(frame(8'333'333, pending) && pending.ExecutedSteps == 0 &&
+                       pending.RemainderScaledUnits > 0 && animator->GetRootMotionFrame().bValid &&
+                       animator->GetRootMotionFrame().bConsumed && animator->GetRootMotionFrame().UpdateSerial != lastSerial &&
+                       animator->GetRootMotionFrame().Delta.X > .008 &&
+                       std::hypot(double(value.Owner->GetPosition().x - end.x),
+                                  double(value.Owner->GetPosition().z - end.z)) < 1e-6,
+                   "切り替え前に未消費の差分を残せる"))
+            return false;
+        lastSerial = animator->GetRootMotionFrame().UpdateSerial;
+        if (!check(driver->SetMotionSource(Game::Gameplay::LocomotionMotionSource::Procedural),
+                   "手続きの移動へ戻せる"))
+            return false;
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        const auto switchPosition = value.Owner->GetPosition();
+        for (unsigned i = 0; i < 8; ++i)
+        {
+            FixedStepAdvanceResult result;
+            if (!check(frame(16'666'667, result) && result.ExecutedSteps == 1, "切り替え後の固定ステップを実行できる"))
+                return false;
+            const auto observed = animator->GetRootMotionFrame();
+            const auto position = value.Owner->GetPosition();
+            if (!check(observed.bValid && observed.bConsumed && observed.UpdateSerial != lastSerial &&
+                           observed.Delta.X > .01 && std::fabs(double(position.x - switchPosition.x)) < 1e-5 &&
+                           position.z - switchPosition.z > 1e-6f,
+                       "残りと新しいルート差分を捨て、次のフレームから入力方向へ進む"))
+                return false;
+            lastSerial = observed.UpdateSerial;
+        }
+        const auto procedural = value.Owner->GetPosition() - switchPosition;
+        std::printf("ルート移動: 切り替え後の本体移動=(%.9f, %.9f) m\n", double(procedural.x), double(procedural.z));
+
+        // 再びAnimationにしても、切り替え前の半段は再利用されない。
+        if (!check(driver->SetMotionSource(Game::Gameplay::LocomotionMotionSource::Animation),
+                   "再びAnimatorを移動元にできる"))
+            return false;
+        const auto resumePosition = value.Owner->GetPosition();
+        constexpr int64_t resumeDuration = 16'666'667;
+        FixedStepAdvanceResult resumed;
+        if (!check(frame(resumeDuration, resumed) && resumed.ExecutedSteps == 1 &&
+                       resumed.RemainderScaledUnits <= uint64_t(resumeDuration) * 60,
+                   "再開したフレームで固定ステップを実行できる"))
+            return false;
+        const auto observed = animator->GetRootMotionFrame();
+        const auto resumedPosition = value.Owner->GetPosition() - resumePosition;
+        const double expected = observed.Delta.X *
+                                (1 - double(resumed.RemainderScaledUnits) / double(uint64_t(resumeDuration) * 60));
+        const double resumeError = std::hypot(double(resumedPosition.x) - expected, double(resumedPosition.z));
+        std::printf("ルート移動: 再開後の期待=%.9f m、本体=(%.9f, %.9f) m、差=%.9f m\n",
+                    expected, double(resumedPosition.x), double(resumedPosition.z), resumeError);
+        return check(observed.bValid && observed.bConsumed && observed.UpdateSerial != lastSerial &&
+                         observed.Delta.X > .01 && resumeError <= 1e-4,
+                     "再開後は新しい差分だけを消費する");
+    }
+
+    bool TestGameLocomotionCameraSameFrame(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace NorvesLib::Core::literals;
+        const auto check = [](bool passed, const char* contract) {
+            if (!passed)
+                std::cout << "同じフレームの追従: " << contract << '\n';
+            return passed;
+        };
+        auto& engine = *NorvesLib::Core::Engine::GEngine;
+        auto& world = engine.GetWorld();
+        CharacterFixture value;
+        if (!check(CreateCharacterFloor() && CreateCharacter(value, Math::Vector3::Zero), "床と本体を作れる"))
+            return false;
+        world.Tick(kFixedDeltaTime);
+        const bool ready = StepCharacter(processor) && value.Character->GetState().bReady;
+        world.LateTick(kFixedDeltaTime);
+        if (!check(ready, "移動前に物理本体を準備できる"))
+            return false;
+        ApplicationFixedStepTestAccess::ResetRun(processor);
+
+        InputSystem input;
+        InputRouter routes;
+        input.SetRouter(&routes);
+        InputMapper mapper(input.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition move, jump;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::W), 0};
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings.push_back(key);
+        jump.Id = "Jump"_id;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::Space);
+        key.Component = EInputAxisComponent::X;
+        jump.Bindings.push_back(key);
+        if (!check(bindings.AddContext("Gameplay"_id, ECursorMode::Normal) &&
+                       bindings.AddAction("Gameplay"_id, move) && bindings.AddAction("Gameplay"_id, jump) &&
+                       mapper.ConfigureWithContext(bindings, "Gameplay"_id), "入力を設定できる"))
+            return false;
+        mapper.Attach(routes);
+
+        // 各固定段の物理処理前を記録し、複数段のフレームでも最後の区間を照合する。
+        struct FixedPositionProbe final : Component::Component, IFixedProbe
+        {
+            Math::Vector3 LastPosition;
+            uint64_t Count = 0;
+            void OnFixed(float) override
+            {
+                LastPosition = GetOwner()->GetPosition();
+                ++Count;
+            }
+        };
+        auto* probe = world.CreateComponent<FixedPositionProbe>(value.Owner);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        auto* cameraOwner = world.SpawnEntity<Entity>();
+        auto* viewSource = world.SpawnEntity<Entity>();
+        auto* follow = cameraOwner ? world.CreateComponent<Game::Gameplay::FollowCameraComponent>(cameraOwner) : nullptr;
+        if (!check(probe && driver && visual && pose && cameraOwner && viewSource && follow,
+                   "移動、見た目、独立したカメラと視線を作れる"))
+            return false;
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            Game::Gameplay::FollowCameraComponent* Follow;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+                Follow->BindInput(nullptr);
+                Follow->BindSceneQuery(nullptr);
+            }
+        } unbind{driver, follow};
+        if (!check(driver->SetVisualRoots(visual, pose) && driver->SetViewSource(viewSource) &&
+                       follow->SetSubject(visual, value.Owner) && follow->SetViewSource(viewSource) &&
+                       visual->IsRenderInterpolationEnabled(), "移動とカメラを同じ見た目と視線に接続できる"))
+            return false;
+        driver->BindInput(&mapper);
+        follow->BindInput(&mapper);
+        follow->BindSceneQuery(&engine.GetSceneQuery());
+        follow->SetPitch(0);
+        follow->SetYaw(0);
+        follow->SetArmLength(5);
+        const Math::Vector3 offset(0, .4f, 0);
+        follow->SetTargetOffset(offset);
+        // 最初のInput群で設定ファイルを読み終えてから、試験用の平滑0を指定する。
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (!check(follow->GetLastCollisionResult() == Camera::CameraCollisionResult::Success &&
+                       follow->SetFollowSmoothing(0, 0), "カメラを初期化して平滑を無効にできる"))
+            return false;
+
+        input.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        const int64_t durations[] = {8'333'333, 16'666'667, 25'000'000};
+        uint32_t stepCounts[3]{}, alphaCounts[3]{};
+        uint32_t movingFrames = 0, interpolatedFrames = 0, zeroStepMovingFrames = 0, motionChecks = 0;
+        float maxCameraError = 0, maxInterpolationError = 0, maxMotionError = 0, maxRenderChange = 0;
+        float minPreviousError = std::numeric_limits<float>::infinity();
+        float minMiddleAlpha = 1, maxMiddleAlpha = 0;
+        auto previousRender = visual->GetRenderWorldTransform().position;
+        auto previousBody = value.Owner->GetPosition();
+        const auto startBody = previousBody;
+        probe->LastPosition = previousBody;
+        double inputTime = 0;
+        bool matches = true;
+        unsigned failures = 0;
+        for (unsigned frameIndex = 0; frameIndex < 72; ++frameIndex)
+        {
+            const int64_t raw = durations[frameIndex % 3];
+            const double seconds = double(raw) / 1'000'000'000.0;
+            inputTime += seconds;
+            if (!check(mapper.BeginFrame(inputTime) && mapper.Update(inputTime, float(seconds)), "入力を更新できる"))
+                return false;
+            const auto previousProbeCount = probe->Count;
+            const auto previousCameraTicks = follow->GetCameraTickCount();
+            const auto result = ApplicationFixedStepTestAccess::Simulate(processor, raw);
+            if (!check(result.Status == EFixedStepAdvanceStatus::Advanced && result.DroppedSteps == 0 &&
+                           result.ExecutedSteps <= 2 && value.Character->GetState().bReady &&
+                           probe->Count - previousProbeCount == result.ExecutedSteps &&
+                           follow->GetCameraTickCount() == previousCameraTicks + 1,
+                       "固定段とカメラ群を本番の順に実行できる"))
+                return false;
+            ++stepCounts[result.ExecutedSteps];
+            const float alpha = float(result.RemainderScaledUnits) / 1'000'000'000.0f;
+            if (alpha <= 1e-6f)
+                ++alphaCounts[0];
+            else if (alpha >= 1 - 1e-6f)
+                ++alphaCounts[2];
+            else
+            {
+                ++alphaCounts[1];
+                minMiddleAlpha = std::min(minMiddleAlpha, alpha);
+                maxMiddleAlpha = std::max(maxMiddleAlpha, alpha);
+            }
+            const auto body = value.Owner->GetPosition();
+            const auto render = visual->GetRenderWorldTransform().position;
+            const auto expectedRender = probe->LastPosition + (body - probe->LastPosition) * alpha;
+            const float interpolationError = (render - expectedRender).Length();
+            const auto& collision = follow->GetCollisionOutput();
+            const auto camera = cameraOwner->GetWorldTransform();
+            const auto aim = camera.position + (camera.rotation * Math::Vector3::UnitZ) * collision.EffectiveLength;
+            const float cameraError = (aim - (render + offset)).Length();
+            const float renderChange = (render - previousRender).Length();
+            const float previousError = (aim - (previousRender + offset)).Length();
+            maxCameraError = std::max(maxCameraError, cameraError);
+            maxInterpolationError = std::max(maxInterpolationError, interpolationError);
+            maxRenderChange = std::max(maxRenderChange, renderChange);
+            bool frameMatches = std::isfinite(cameraError) && cameraError <= 1e-4f &&
+                                std::isfinite(interpolationError) && interpolationError <= 1e-4f &&
+                                follow->GetLastCollisionResult() == Camera::CameraCollisionResult::Success &&
+                                !collision.bObstructed && collision.EffectiveLength > 0 &&
+                                (camera.position - collision.Position).Length() <= 1e-4f;
+            if (result.ExecutedSteps > 0)
+            {
+                const auto actual = body - probe->LastPosition;
+                const auto commanded = driver->GetOutput().PlanarDisplacement;
+                const float motionError = std::hypot(actual.x - commanded.x, actual.z - commanded.z);
+                maxMotionError = std::max(maxMotionError, motionError);
+                frameMatches &= std::isfinite(motionError) && motionError <= 1e-4f;
+                ++motionChecks;
+            }
+            else
+                frameMatches &= (body - previousBody).Length() <= 1e-4f;
+            if (alpha > 1e-6f && alpha < 1 - 1e-6f && (body - probe->LastPosition).Length() > .001f &&
+                (render - probe->LastPosition).Length() > 1e-4f && (body - render).Length() > 1e-4f)
+                ++interpolatedFrames;
+            if (renderChange > .001f)
+            {
+                ++movingFrames;
+                if (result.ExecutedSteps == 0)
+                    ++zeroStepMovingFrames;
+                minPreviousError = std::min(minPreviousError, previousError);
+                frameMatches &= std::isfinite(previousError) && previousError > 1e-4f;
+            }
+            if (!frameMatches && failures++ < 4)
+                std::printf("同じフレームの追従: フレーム=%u 段=%llu α=%.9f カメラ差=%.9f 補間差=%.9f 本体=(%.9f, %.9f, %.9f) 描画=(%.9f, %.9f, %.9f) 注視点=(%.9f, %.9f, %.9f)\n",
+                            frameIndex, static_cast<unsigned long long>(result.ExecutedSteps), double(alpha),
+                            double(cameraError), double(interpolationError), double(body.x), double(body.y),
+                            double(body.z), double(render.x), double(render.y), double(render.z),
+                            double(aim.x), double(aim.y), double(aim.z));
+            matches &= frameMatches;
+            previousRender = render;
+            previousBody = body;
+        }
+        const float bodyDistance = (previousBody - startBody).Length();
+        std::printf("同じフレームの追従: 固定段 0=%u 1=%u 2=%u、α 0=%u 中間=%u 1=%u、中間の範囲=[%.9f, %.9f]\n",
+                    stepCounts[0], stepCounts[1], stepCounts[2], alphaCounts[0], alphaCounts[1], alphaCounts[2],
+                    double(minMiddleAlpha), double(maxMiddleAlpha));
+        std::printf("同じフレームの追従: カメラ最大差=%.9f m、補間最大差=%.9f m、本体移動最大差=%.9f m、本体移動距離=%.9f m\n",
+                    double(maxCameraError), double(maxInterpolationError), double(maxMotionError), double(bodyDistance));
+        std::printf("同じフレームの追従: 描画の最大移動=%.9f m、前フレームとの差の最小=%.9f m、移動=%u 中間補間=%u 0段で描画移動=%u 本体照合=%u\n",
+                    double(maxRenderChange), double(minPreviousError), movingFrames, interpolatedFrames,
+                    zeroStepMovingFrames, motionChecks);
+        return check(matches && stepCounts[0] && stepCounts[1] && stepCounts[2] && alphaCounts[1] &&
+                         movingFrames >= 10 && interpolatedFrames >= 10 && zeroStepMovingFrames >= 1 &&
+                         motionChecks >= 10 && bodyDistance > .1f && maxRenderChange > .001f,
+                     "移動と補間を伴う全フレームで、カメラは同じフレームの見た目を追う");
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1441,6 +3037,30 @@ namespace
             return TestDynamicInterpolationAt144Hz(processor, 120);
         case 19:
             return TestCharacterAddedAfterTickJoinsNextCollection(processor);
+        case 20:
+            return TestCharacterGravityScale(processor);
+        case 21:
+            return TestCharacterSteepSlopeSlide(processor);
+        case 22:
+            return TestCharacterElevatorJitter(processor);
+        case 23:
+            return TestCharacterPlatformDepartureVelocity(processor);
+        case 24:
+            return TestCharacterExternalMovement(processor);
+        case 25:
+            return TestCharacterPushDynamicSphere(processor);
+        case 26:
+            return TestCharacterVelocityAndDepenetration(processor);
+        case 27:
+            return TestCharacterPlatformPushedAgainstWall(processor);
+        case 28:
+            return TestGameLocomotionProfileReload(processor);
+        case 29:
+            return TestGameLocomotionAnimatorValues(processor);
+        case 30:
+            return TestGameLocomotionRootMotion(processor);
+        case 31:
+            return TestGameLocomotionCameraSameFrame(processor);
         default:
             return false;
         }

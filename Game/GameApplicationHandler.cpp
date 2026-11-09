@@ -15,6 +15,9 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Platform/PlatformPaths.h"
+#include "Core/Public/Save/GameStateStore.h"
+#include "Core/Public/Save/SaveService.h"
 #include "Core/Public/Rendering/PostProcessStack.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
@@ -23,14 +26,22 @@
 #include "Core/Public/Rendering/ToneMappingPass.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
+#include "GameModes/CombatSlice/CombatSliceMode.h"
+#if NORVES_BUILD_DEVELOPMENT
+#include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
+#include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
+#endif
 #include "Gameplay/Camera/FollowCameraComponent.h"
 #include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
+#include "Gameplay/Physics/GamePhysicsLayers.h"
 #include "Input/GameHapticsSettings.h"
 #include "Input/GameInputActions.h"
+#include "Save/ProgressionSaveBridge.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -50,6 +61,7 @@
 #include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
+#include "GameModes/Grassland/GrasslandMode.h"
 #include "GameModes/InteriorLight/InteriorLightMode.h"
 #include "GameModes/MaterialGallery/MaterialGalleryMode.h"
 #include "GameModes/Wasteland/WastelandMode.h"
@@ -62,9 +74,11 @@
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
 #include "Gameplay/IGameplayModule.h"
+#include "Gameplay/World/InteractionService.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioGameModeOwner.h"
 #include "Audio/IAudioModule.h"
 #endif
 
@@ -86,6 +100,20 @@ namespace Game
 {
     namespace
     {
+#if defined(NORVES_GAME_AUDIO)
+        void ApplyUserVolumes(const NorvesLib::Core::Save::UserSettings& settings)
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                auto& sound = audio->GetSoundSystem();
+                sound.SetMasterVolume(settings.MasterVolume);
+                sound.SetCategoryVolume(NorvesLib::Modules::Audio::SoundCategory::Effect, settings.EffectVolume);
+                sound.SetCategoryVolume(NorvesLib::Modules::Audio::SoundCategory::Ambience, settings.AmbienceVolume);
+            }
+        }
+#endif
+
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
@@ -103,6 +131,7 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
+        constexpr const TCHAR* kAudioSmokeOption = TEXT("--audio-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
@@ -797,7 +826,25 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
+        m_bPoseModifiersOffRequested = false;
         m_bDogMovementSmoke = false;
+        m_bCombatSmoke = false;
+        m_bEncounterSmoke = false;
+        m_bEnemySmoke = false;
+        m_bCombatBench = false;
+        m_CombatSliceCapturePath = {};
+        m_SoakResetCount = 0;
+        m_SaveDirectoryOverride = {};
+        m_bDogMovementAutopilot = false;
+        m_DogMovementAutopilotPath = {};
+        m_DogMovementCaptureDir = {};
+#if NORVES_BUILD_DEVELOPMENT
+        m_ShishaShowcaseScene = {};
+        m_ShishaCameraOrbit = 0.0f;
+        m_ShishaScale = 1.0f;
+        m_bShishaCameraOrbitSet = false;
+        m_bShishaScaleSet = false;
+#endif
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
@@ -805,6 +852,7 @@ namespace Game
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        m_GrasslandScatterStressCount = 0;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1214,6 +1262,213 @@ namespace Game
                 m_bDogMovementSmoke = true;
                 continue;
             }
+            if (args[i] == TEXT("--combat-smoke"))
+            {
+                if (m_bCombatSmoke)
+                {
+                    LOG_ERROR("--combat-smoke が重複しています");
+                    return false;
+                }
+                m_bCombatSmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--encounter-smoke"))
+            {
+                if (m_bEncounterSmoke)
+                {
+                    LOG_ERROR("--encounter-smoke が重複しています");
+                    return false;
+                }
+                m_bEncounterSmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--enemy-smoke"))
+            {
+                if (m_bEnemySmoke)
+                {
+                    LOG_ERROR("--enemy-smoke が重複しています");
+                    return false;
+                }
+                m_bEnemySmoke = true;
+                continue;
+            }
+            if (args[i] == TEXT("--combat-bench"))
+            {
+                if (m_bCombatBench)
+                {
+                    LOG_ERROR("--combat-bench が重複しています");
+                    return false;
+                }
+                m_bCombatBench = true;
+                continue;
+            }
+            String soakResetValue;
+            if (TryStripPrefix(args[i], TEXT("--soak-reset="), soakResetValue))
+            {
+                if (m_SoakResetCount != 0)
+                {
+                    LOG_ERROR("--soak-reset が重複しています");
+                    return false;
+                }
+                if (!TryParseUInt32(soakResetValue, m_SoakResetCount) || m_SoakResetCount < 2)
+                {
+                    LOG_ERROR("--soak-reset には 2 以上の 32 ビット符号なし 10 進整数を指定してください");
+                    return false;
+                }
+                continue;
+            }
+            String saveDirectoryOverride;
+            if (TryStripPrefix(args[i], TEXT("--save-dir="), saveDirectoryOverride))
+            {
+                if (!m_SaveDirectoryOverride.empty())
+                {
+                    LOG_ERROR("--save-dir が重複しています");
+                    return false;
+                }
+                if (saveDirectoryOverride.empty())
+                {
+                    LOG_ERROR("--save-dir にはセーブを置く根のディレクトリを指定してください");
+                    return false;
+                }
+                m_SaveDirectoryOverride = saveDirectoryOverride;
+                continue;
+            }
+            String combatSliceCapturePath;
+            if (TryStripPrefix(args[i], TEXT("--combat-slice-capture="), combatSliceCapturePath))
+            {
+                if (!m_CombatSliceCapturePath.empty())
+                {
+                    LOG_ERROR("--combat-slice-capture が重複しています");
+                    return false;
+                }
+                if (combatSliceCapturePath.empty())
+                {
+                    LOG_ERROR("--combat-slice-capture には PNG の保存先を指定してください");
+                    return false;
+                }
+                m_CombatSliceCapturePath = combatSliceCapturePath;
+                continue;
+            }
+            String dogAutopilotValue;
+            const bool bDefaultDogAutopilot = args[i] == TEXT("--dog-movement-autopilot");
+            if (bDefaultDogAutopilot ||
+                TryStripPrefix(args[i], TEXT("--dog-movement-autopilot="), dogAutopilotValue))
+            {
+                if (m_bDogMovementAutopilot)
+                {
+                    LOG_ERROR("--dog-movement-autopilot が重複しています");
+                    return false;
+                }
+                if (bDefaultDogAutopilot)
+                {
+                    dogAutopilotValue = TEXT("Assets/Gameplay/DogMovementAutopilot.json");
+                }
+                if (dogAutopilotValue.empty())
+                {
+                    LOG_ERROR("--dog-movement-autopilot には台本のパスを指定してください");
+                    return false;
+                }
+                m_bDogMovementAutopilot = true;
+                m_DogMovementAutopilotPath = dogAutopilotValue;
+                continue;
+            }
+            String dogCaptureDir;
+            if (TryStripPrefix(args[i], TEXT("--dog-movement-capture-dir="), dogCaptureDir))
+            {
+                if (!m_DogMovementCaptureDir.empty())
+                {
+                    LOG_ERROR("--dog-movement-capture-dir が重複しています");
+                    return false;
+                }
+                if (dogCaptureDir.empty())
+                {
+                    LOG_ERROR("--dog-movement-capture-dir には保存先を指定してください");
+                    return false;
+                }
+                m_DogMovementCaptureDir = dogCaptureDir;
+                continue;
+            }
+            // --shisha-showcase=<場面> と周回速度・倍率は開発ビルドの専用モードに渡す。
+            String shishaValue;
+            if (args[i] == TEXT("--shisha-showcase") ||
+                TryStripPrefix(args[i], TEXT("--shisha-showcase="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (!m_ShishaShowcaseScene.empty())
+                {
+                    LOG_ERROR("--shisha-showcase が重複しています");
+                    return false;
+                }
+                if (shishaValue.empty())
+                {
+                    LOG_ERROR("--shisha-showcase には場面の名前を指定してください");
+                    return false;
+                }
+                if (Game::GameModes::FindShishaShowcaseScene(shishaValue.c_str()) == nullptr)
+                {
+                    String sceneNames;
+                    for (size_t index = 0; index < Game::GameModes::GetShishaShowcaseSceneCount(); ++index)
+                    {
+                        if (index > 0)
+                        {
+                            sceneNames += ", ";
+                        }
+                        sceneNames += Game::GameModes::GetShishaShowcaseScene(index)->Name;
+                    }
+                    LOG_ERROR("--shisha-showcase の場面 %s は存在しません。指定できる場面: %s",
+                                shishaValue.c_str(), sceneNames.c_str());
+                    return false;
+                }
+                m_ShishaShowcaseScene = shishaValue;
+#else
+                LOG_ERROR("--shisha-showcase は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            if (args[i] == TEXT("--shisha-camera-orbit") ||
+                TryStripPrefix(args[i], TEXT("--shisha-camera-orbit="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaCameraOrbitSet)
+                {
+                    LOG_ERROR("--shisha-camera-orbit が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(shishaValue, -std::numeric_limits<float>::max(),
+                                          std::numeric_limits<float>::max(), m_ShishaCameraOrbit))
+                {
+                    LOG_ERROR("--shisha-camera-orbit は有限の数（度/秒）で指定してください");
+                    return false;
+                }
+                m_bShishaCameraOrbitSet = true;
+#else
+                LOG_ERROR("--shisha-camera-orbit は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            if (args[i] == TEXT("--shisha-scale") ||
+                TryStripPrefix(args[i], TEXT("--shisha-scale="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaScaleSet)
+                {
+                    LOG_ERROR("--shisha-scale が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(shishaValue, 0.0f, 1000.0f, m_ShishaScale) || m_ShishaScale <= 0.0f)
+                {
+                    LOG_ERROR("--shisha-scale は 0 より大きく 1000 以下の有限の数で指定してください");
+                    return false;
+                }
+                m_bShishaScaleSet = true;
+#else
+                LOG_ERROR("--shisha-scale は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
             String sceneValue;
             if (TryStripPrefix(args[i], kSceneOption, sceneValue))
             {
@@ -1361,6 +1616,24 @@ namespace Game
                 m_StressStreamPeriod = streamPeriod;
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
+            {
+                uint32_t count = 0;
+                if (m_GrasslandScatterStressCount != 0)
+                {
+                    LOG_ERROR("--grassland-scatter-stress が重複しています");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, count) || count == 0 || count > 2000000u)
+                {
+                    LOG_ERROR("--grassland-scatter-stress は 1〜2000000 の整数で指定してください");
+                    return false;
+                }
+                m_GrasslandScatterStressCount = count;
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kStressEntitiesOption, sceneValue))
             {
                 uint32_t stressEntityCount = 0;
@@ -2023,6 +2296,11 @@ namespace Game
                 m_bAnimationDebugRequested = true;
                 continue;
             }
+            if (args[i] == TEXT("--pose-modifiers-off"))
+            {
+                m_bPoseModifiersOffRequested = true;
+                continue;
+            }
             if (args[i] == kStartupSkinnedProbeOption)
             {
                 s_bRendering3DTestSkinnedProbe = true;
@@ -2616,6 +2894,13 @@ namespace Game
             }
         }
 #endif
+        for (const auto& arg : args)
+        {
+            if (arg == kAudioSmokeOption)
+            {
+                m_bAudioSmoke = true;
+            }
+        }
         bool bM9WorldSmoke = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -2624,6 +2909,11 @@ namespace Game
                 bM9WorldSmoke = true;
                 break;
             }
+        }
+        if (m_bAudioSmoke && (bM9WorldSmoke || bM9WorldCompare))
+        {
+            FailAudioSmoke("incompatible_options");
+            return false;
         }
         if (bM9WorldSmoke || bM9WorldCompare)
         {
@@ -2654,6 +2944,41 @@ namespace Game
 #endif
             }
         }
+
+        if (m_bAudioSmoke)
+        {
+#if defined(NORVES_GAME_AUDIO)
+            NorvesLib::Modules::Audio::AudioModuleOptions options;
+            options.bAllowNullBackendFallback = false;
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry(), options) == nullptr)
+            {
+                FailAudioSmoke("register");
+                return false;
+            }
+            LOG_INFO("AUDIO_SMOKE stage=registered");
+#else
+            LOG_ERROR("--audio-smoke には音声対応の Game が必要です");
+            FailAudioSmoke("register");
+            return false;
+#endif
+        }
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_bAudioSmoke && !bM9WorldSmoke && !bM9WorldCompare)
+        {
+            NorvesLib::Modules::Audio::AudioModuleOptions options;
+            options.bAllowNullBackendFallback = true;
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry(), options) == nullptr)
+            {
+                LOG_WARNING("AUDIO_MODULE register=failed");
+            }
+            else
+            {
+                LOG_INFO("AUDIO_MODULE register=ok fallback_allowed=1");
+            }
+        }
+#endif
 
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
@@ -2876,6 +3201,94 @@ namespace Game
             LOG_WARNING("--geom-settle-trace は開発ビルドだけで使えます。無視します");
         }
 #endif
+        const uint32_t combatSliceSmokeCount = static_cast<uint32_t>(m_bCombatSmoke) +
+                                              static_cast<uint32_t>(m_bEncounterSmoke) +
+                                              static_cast<uint32_t>(m_bEnemySmoke);
+        if (m_SoakResetCount > 0)
+        {
+            if (m_SaveDirectoryOverride.empty())
+            {
+                LOG_ERROR("ユーザーのセーブを書き換えないため、--soak-reset には --save-dir が必要です");
+                return false;
+            }
+            if (combatSliceSmokeCount != 0 || m_bCombatBench || !m_CombatSliceCapturePath.empty() ||
+                m_bDogMovementSmoke || m_bAnimationDebugRequested)
+            {
+                LOG_ERROR("--soak-reset は --combat-smoke・--encounter-smoke・--enemy-smoke・--combat-bench・"
+                          "--combat-slice-capture・--dog-movement-smoke・--animation-debug と併用できません");
+                return false;
+            }
+        }
+        if (combatSliceSmokeCount > 1)
+        {
+            LOG_ERROR("--combat-smoke・--encounter-smoke・--enemy-smoke はどれか 1 つだけ指定してください");
+            return false;
+        }
+        if (combatSliceSmokeCount != 0 && (m_bDogMovementSmoke || m_bAnimationDebugRequested))
+        {
+            LOG_ERROR("戦闘の垂直スライスのスモークは --dog-movement-smoke・--animation-debug と併用できません");
+            return false;
+        }
+        if (m_bCombatBench && !m_bCombatSmoke)
+        {
+            LOG_ERROR("--combat-bench には --combat-smoke が必要です");
+            return false;
+        }
+        if (!m_CombatSliceCapturePath.empty() && combatSliceSmokeCount == 0)
+        {
+            LOG_ERROR("--combat-slice-capture には --combat-smoke・--encounter-smoke・--enemy-smoke のどれかが必要です");
+            return false;
+        }
+        if (!m_CombatSliceCapturePath.empty() && m_bCombatBench)
+        {
+            LOG_ERROR("--combat-slice-capture は --combat-bench と併用できません");
+            return false;
+        }
+        if (m_bCombatSmoke && !m_bCombatBench)
+        {
+            bool bHasFixedFrameDt = false;
+            for (size_t i = 0; i < args.size(); ++i)
+            {
+                String ignoredValue;
+                if (TryStripPrefix(args[i], TEXT("--fixed-frame-dt="), ignoredValue))
+                {
+                    bHasFixedFrameDt = true;
+                    break;
+                }
+            }
+            if (!bHasFixedFrameDt)
+            {
+                LOG_ERROR("--combat-smoke には --fixed-frame-dt=1/30 などの固定刻みが必要です");
+                return false;
+            }
+        }
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_bShishaCameraOrbitSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-camera-orbit には --shisha-showcase が必要です");
+            return false;
+        }
+        if (m_bShishaScaleSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-scale には --shisha-showcase が必要です");
+            return false;
+        }
+#endif
+        if (m_bDogMovementAutopilot && !m_bDogMovementSmoke)
+        {
+            LOG_ERROR("--dog-movement-autopilot には --dog-movement-smoke が必要です");
+            return false;
+        }
+        if (!m_DogMovementCaptureDir.empty() && !m_bDogMovementAutopilot)
+        {
+            LOG_ERROR("--dog-movement-capture-dir には --dog-movement-autopilot が必要です");
+            return false;
+        }
+        if (m_bPoseModifiersOffRequested && !m_bAnimationDebugRequested)
+        {
+            LOG_ERROR("--pose-modifiers-off には --animation-debug が必要です");
+            return false;
+        }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
         {
             LOG_ERROR("犬比較用引数は --dog-movement-smoke と組み合わせ、--animation-debug と併用しないでください");
@@ -2980,6 +3393,18 @@ namespace Game
         return true;
     }
 
+    bool GameApplicationHandler::IsInteractPressed() const
+    {
+        const auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return false;
+        }
+        const auto interact = engine->GetInputMapper().GetAction(
+            Game::InputActions::GameplayContext, Game::InputActions::Interact);
+        return interact.Active && interact.Button.Pressed;
+    }
+
     bool GameApplicationHandler::OnInitialize()
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
@@ -2995,6 +3420,12 @@ namespace Game
             {
                 LOG_WARNING_F("振動効果を適用できません。既存設定で続行します: %s",
                     hapticsError.empty() ? "" : hapticsError.c_str());
+            }
+            NorvesLib::Core::Container::String physicsLayersError;
+            if (!Game::Gameplay::InitializeGamePhysicsLayers(m_PhysicsLayers, physicsLayersError))
+            {
+                LOG_WARNING_F("コリジョンレイヤーの表を読めません。Default だけの表で続行します: %s",
+                    physicsLayersError.empty() ? "" : physicsLayersError.c_str());
             }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
@@ -3014,6 +3445,38 @@ namespace Game
                     const auto& error = configuration.StoreError;
                     LOG_WARNING_F("user入力設定を読めないため既定を使います: %s", error.empty() ? "" : error.c_str());
                 }
+            }
+            if (m_InputSettings.GetUserSettings())
+            {
+                const auto& load = m_InputSettings.GetUserSettingsLoadResult();
+                switch (load.Status)
+                {
+                case NorvesLib::Core::Save::SettingsLoadStatus::LoadedFromBackup:
+                    LOG_WARNING_F("SETTINGS load=backup バックアップから設定を読み込みました: %s", load.Message.c_str());
+                    break;
+                case NorvesLib::Core::Save::SettingsLoadStatus::RejectedNewerVersion:
+                    LOG_WARNING_F("SETTINGS load=newer_version 新しい形式の設定を読み込めません: %s", load.Message.c_str());
+                    break;
+                case NorvesLib::Core::Save::SettingsLoadStatus::IoError:
+                    LOG_WARNING_F("SETTINGS load=io_error 設定の読み込みに失敗しました: %s", load.Message.c_str());
+                    break;
+                default:
+                    break;
+                }
+
+                const auto& migration = m_InputSettings.GetLegacyMigrationResult();
+                if (migration.Status == NorvesLib::Core::Input::ELegacyInputBindingMigration::Migrated)
+                {
+                    LOG_INFO_F("SETTINGS migration=%s 旧入力設定を移行しました", "migrated");
+                }
+                else if (migration.Status == NorvesLib::Core::Input::ELegacyInputBindingMigration::Failed)
+                {
+                    LOG_WARNING_F("SETTINGS migration=failed 旧入力設定を移行できません: %s", migration.Error.c_str());
+                }
+            }
+            else
+            {
+                LOG_WARNING_F("SETTINGS storage=%s ユーザーデータの領域を作れないため設定ファイルを使いません", "unavailable");
             }
         }
 
@@ -3052,6 +3515,90 @@ namespace Game
         }
 
         m_M6ScriptSmokeController.Initialize();
+        if (NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                gameplay->GetInteractionService().SetInteractPressedSource(
+                    NorvesLib::Core::MakeDelegate(this, &GameApplicationHandler::IsInteractPressed));
+            }
+        }
+
+        NorvesLib::Core::GEngine.GetGameStateStore().LoadKeyLedgerFile("Assets/Data/state_keys.json");
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        String saveDirectory;
+        if (!m_SaveDirectoryOverride.empty())
+        {
+            // 指定した根の下の NorvesLib/Game に保存し、ユーザーのセーブと分ける。
+            saveDirectory = Platform::GetUserDataDirectoryUnder(m_SaveDirectoryOverride, "Game");
+            if (saveDirectory.empty())
+            {
+                LOG_ERROR("セーブの保存先を作成できません: %s", m_SaveDirectoryOverride.c_str());
+                if (m_SoakResetCount > 0)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                LOG_INFO("SAVE_DIR override=%s", saveDirectory.c_str());
+            }
+        }
+        else
+        {
+            saveDirectory = Platform::GetUserDataDirectory("Game");
+        }
+        if (!saveDirectory.empty())
+        {
+            saveService.Configure(saveDirectory);
+        }
+        else
+        {
+            LOG_WARNING("ユーザーデータの保存先を作成できないため、セーブの保存先を設定しません。");
+        }
+        saveService.SetSnapshotProvider(Delegate<bool, String&>(this, &GameApplicationHandler::ProvideSaveSnapshot));
+        saveService.SetLoadConsumer(
+            Delegate<bool, Span<const uint8_t>>(this, &GameApplicationHandler::ConsumeSavePayload));
+        return true;
+    }
+
+    bool GameApplicationHandler::ProvideSaveSnapshot(String& payloadUtf8)
+    {
+        Game::Save::ProgressSaveData snapshot = m_ProgressSaveData;
+        snapshot.AppVersion = NorvesLib::Core::GEngine.GetVersion();
+        snapshot.SavedAtUnix = static_cast<int64_t>(std::time(nullptr));
+        Game::Save::CaptureStateStore(NorvesLib::Core::GEngine.GetGameStateStore(), snapshot);
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(Module::GetModuleRegistry()))
+        {
+            if (!Game::Save::CaptureProgression(gameplay->GetProgressionState(), snapshot))
+            {
+                LOG_WARNING("撃破状態をセーブへ写せませんでした。保持している撃破状態で保存を続けます");
+            }
+        }
+        payloadUtf8 = Game::Save::ToJson(snapshot);
+        return !payloadUtf8.empty();
+    }
+
+    bool GameApplicationHandler::ConsumeSavePayload(Span<const uint8_t> payloadUtf8)
+    {
+        Game::Save::ProgressSaveData loaded;
+        String error;
+        if (!Game::Save::FromJson(payloadUtf8, loaded, &error))
+        {
+            LOG_ERROR("進行データの読み込みに失敗しました: %s", error.c_str());
+            return false;
+        }
+        m_ProgressSaveData = std::move(loaded);
+        Game::Save::ApplyToStateStore(m_ProgressSaveData, NorvesLib::Core::GEngine.GetGameStateStore());
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(Module::GetModuleRegistry()))
+        {
+            if (!Game::Save::ApplyProgression(m_ProgressSaveData, gameplay->GetProgressionState()))
+            {
+                LOG_WARNING("セーブの撃破状態を進行へ反映できませんでした");
+                return false;
+            }
+        }
         return true;
     }
 
@@ -3159,6 +3706,72 @@ namespace Game
         if (m_bCookedManifestUnavailable)
         {
             InstallCookedManifestUnavailableAssetSystem();
+        }
+
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_M9WorldAcceptance)
+        {
+            if (auto* audio = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()))
+            {
+                constexpr const char* bankPath = "Audio/Banks/default.soundbank.json";
+                auto bankAssets = m_AssetSystemSnapshot;
+                if (!bankAssets)
+                {
+                    String looseRoot = m_TextureLooseAssetRoot;
+#if defined(NORVES_SOURCE_ASSET_DIR)
+                    if (looseRoot.empty())
+                    {
+                        looseRoot = String(NORVES_SOURCE_ASSET_DIR);
+                    }
+#endif
+                    if (!looseRoot.empty())
+                    {
+                        bankAssets = MakeShared<Asset::AssetSystem>(AnsiString(looseRoot.c_str()));
+                        LOG_INFO("AUDIO_BANK source=loose root=%s", looseRoot.c_str());
+                    }
+                }
+                NorvesLib::Modules::Audio::SoundBankLoadReport report;
+                const auto result = bankAssets
+                    ? audio->GetSoundSystem().LoadBank(*bankAssets, bankPath, report)
+                    : NorvesLib::Modules::Audio::AudioResult::InvalidState;
+                if (result == NorvesLib::Modules::Audio::AudioResult::Success && report.Diagnostics.empty())
+                {
+                    LOG_INFO_F("AUDIO_BANK load=ok bank=%s sounds=%u", bankPath, report.LoadedDefinitionCount);
+                    if (m_bAudioSmoke)
+                    {
+                        LOG_INFO("AUDIO_SMOKE stage=bank_loaded sounds=%u", report.LoadedDefinitionCount);
+                        m_AudioSmokeStage = AudioSmokeStage::Ready;
+                    }
+                }
+                else
+                {
+                    LOG_WARNING_F("AUDIO_BANK load=failed bank=%s result=%d diagnostics=%u", bankPath,
+                                  static_cast<int>(result), static_cast<uint32_t>(report.Diagnostics.size()));
+                    if (!bankAssets)
+                    {
+                        LOG_WARNING("AUDIO_BANK reason=asset_snapshot_unavailable アセットのスナップショットがありません");
+                    }
+                    for (const auto& diagnostic : report.Diagnostics)
+                    {
+                        LOG_WARNING_F("AUDIO_BANK reason=%u detail=%s", static_cast<uint32_t>(diagnostic.Reason),
+                                      diagnostic.Detail.c_str());
+                    }
+                }
+                if (auto* settings = m_InputSettings.GetUserSettings())
+                {
+                    ApplyUserVolumes(settings->Get());
+                    settings->OnValueChanged().Remove(&ApplyUserVolumes);
+                    settings->OnValueChanged().Add(&ApplyUserVolumes);
+                }
+            }
+        }
+#endif
+
+        if (m_bAudioSmoke && m_AudioSmokeStage != AudioSmokeStage::Ready)
+        {
+            FailAudioSmoke("bank");
+            return;
         }
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
@@ -3333,6 +3946,7 @@ namespace Game
         }
 
         m_AssetSystemSnapshot = immutableCandidate;
+        NorvesLib::Core::Engine::GEngine->GetTerrainSystem().SetAssetSystem(immutableCandidate);
         LOG_INFO("Asset runtime snapshot reload completed root=\"%s\" manifest=\"%s\"",
                  m_TextureAssetRoot.c_str(),
                  m_TextureAssetManifestPath.c_str());
@@ -3357,6 +3971,10 @@ namespace Game
         {
             LOG_WARNING("COOKED_MISSING_WARN_NOT_SET "
                         "マニフェストが無いときの警告の設定を反映できませんでした");
+        }
+        else
+        {
+            NorvesLib::Core::Engine::GEngine->GetTerrainSystem().SetAssetSystem(immutableCandidate);
         }
     }
 
@@ -3506,9 +4124,116 @@ namespace Game
         }
     }
 
+    void GameApplicationHandler::FailAudioSmoke(const char* reason)
+    {
+        m_AudioSmokeStage = AudioSmokeStage::Failed;
+        LOG_ERROR("AUDIO_SMOKE stage=failure reason=%s", reason);
+        if (NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Engine::GEngine->RequestExit(1);
+        }
+    }
+
+    void GameApplicationHandler::UpdateAudioSmoke()
+    {
+#if defined(NORVES_GAME_AUDIO)
+        if (!m_bAudioSmoke || !NorvesLib::Core::Engine::GEngine || m_AudioSmokeStage == AudioSmokeStage::Disabled ||
+            m_AudioSmokeStage == AudioSmokeStage::Complete || m_AudioSmokeStage == AudioSmokeStage::Failed)
+        {
+            return;
+        }
+        using namespace NorvesLib::Modules::Audio;
+        auto* audio = FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
+        if (!audio)
+        {
+            FailAudioSmoke("module_lost");
+            return;
+        }
+        auto& sounds = audio->GetSoundSystem();
+        // 時間の倍率・固定刻み・フレーム数に依存せず、エンジンの実経過時間で進める。
+        const int64_t now = NorvesLib::Core::Engine::GEngine->GetTimeSystem().GetElapsedNanoseconds();
+        constexpr int64_t footstepIntervalNs = 50'000'000;
+        constexpr int64_t drainTimeoutNs = 15'000'000'000;
+        if (m_AudioSmokeStage == AudioSmokeStage::Ready)
+        {
+            if (sounds.PlayGlobal(Identity("Ambience.RainLoop"), {}, m_AudioSmokeRain) != AudioResult::Success)
+            {
+                FailAudioSmoke("rain_play");
+                return;
+            }
+            LOG_INFO("AUDIO_SMOKE stage=rain_started fade_in_ms=3000");
+            m_AudioSmokeNextFootstepNs = now + footstepIntervalNs;
+            m_AudioSmokeStage = AudioSmokeStage::Footsteps;
+        }
+        if (m_AudioSmokeStage == AudioSmokeStage::Footsteps && now >= m_AudioSmokeNextFootstepNs)
+        {
+            SoundInstanceHandle footstep;
+            if (sounds.PlayGlobal(Identity("Foley.Footstep"), {}, footstep) == AudioResult::Success)
+            {
+                ++m_AudioSmokeFootstepsPlayed;
+            }
+            else
+            {
+                ++m_AudioSmokeFootstepsFailed;
+            }
+            // 遅いフレームでも同時にまとめて鳴らさず、各要求の間隔を保つ。
+            m_AudioSmokeNextFootstepNs = now + footstepIntervalNs;
+            if (m_AudioSmokeFootstepsPlayed + m_AudioSmokeFootstepsFailed == 100)
+            {
+                LOG_INFO("AUDIO_SMOKE stage=footsteps played=%u failed=%u",
+                         m_AudioSmokeFootstepsPlayed, m_AudioSmokeFootstepsFailed);
+                if (m_AudioSmokeFootstepsFailed != 0)
+                {
+                    FailAudioSmoke("footstep_play");
+                    return;
+                }
+                if (sounds.Stop(m_AudioSmokeRain, {}) != AudioResult::Success)
+                {
+                    FailAudioSmoke("rain_stop");
+                    return;
+                }
+                m_AudioSmokeDrainStartNs = now;
+                m_AudioSmokeStage = AudioSmokeStage::Draining;
+            }
+        }
+        if (m_AudioSmokeStage == AudioSmokeStage::Draining)
+        {
+            if (sounds.GetDiagnostics().ActiveInstanceCount != 0)
+            {
+                if (now - m_AudioSmokeDrainStartNs >= drainTimeoutNs)
+                {
+                    FailAudioSmoke("drain_timeout");
+                }
+                return;
+            }
+            auto& service = audio->GetAudioService();
+            const auto result = service.Shutdown();
+            const auto diagnostics = service.GetDiagnostics();
+            if (diagnostics.ActiveVoiceCount != 0 || diagnostics.PendingEventCount != 0 ||
+                diagnostics.InFlightCallbackCount != 0)
+            {
+                m_AudioSmokeStage = AudioSmokeStage::Failed;
+                LOG_ERROR("AUDIO_SMOKE stage=failure reason=shutdown_not_drained voices=%u callbacks=%u pending_events=%zu",
+                          diagnostics.ActiveVoiceCount, diagnostics.InFlightCallbackCount, diagnostics.PendingEventCount);
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                return;
+            }
+            if (result != AudioResult::Success)
+            {
+                FailAudioSmoke("shutdown");
+                return;
+            }
+            m_AudioSmokeStage = AudioSmokeStage::Complete;
+            LOG_INFO("AUDIO_SMOKE stage=shutdown voices=0 callbacks=0 shutdown_complete=1");
+            NorvesLib::Core::Engine::GEngine->RequestExit(0);
+        }
+#endif
+    }
+
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
         m_CameraLateUpdateSlot->Reset();
+        UpdateAudioSmoke();
         // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
         // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
         // レジストリ・初期モード選択/フォーカス）に集中する。
@@ -3572,6 +4297,11 @@ namespace Game
         {
             m_SceneCycle.Update(*NorvesLib::Core::Engine::GEngine, *m_pGameModeStateMachine);
         }
+
+        // ApplicationProcessor は PreUpdate で OnUpdate、その後 PreSimulation で状態機械を更新する。
+        // 遷移は GameModeStateMachine::Update 先頭で同期的に適用されるため、ここでは遷移の途中ではない。
+        // 保留要求があってもまだ適用前であり、状態機械には保留の有無を取得する公開 API はない。
+        NorvesLib::Core::GEngine.GetSaveService().Update(false);
     }
 
     void GameApplicationHandler::OnLateUpdate(float deltaTime)
@@ -3767,6 +4497,18 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+#if defined(NORVES_GAME_AUDIO)
+        if (auto* settings = m_InputSettings.GetUserSettings())
+        {
+            settings->OnValueChanged().Remove(&ApplyUserVolumes);
+        }
+#endif
+        if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(
+                NorvesLib::Core::Module::GetModuleRegistry()))
+        {
+            gameplay->GetInteractionService().SetInteractPressedSource(NorvesLib::Core::Delegate<bool>{});
+        }
+
         m_pGameModeStateMachine = nullptr;
         m_M6ScriptSmokeController.Shutdown();
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
@@ -3796,7 +4538,11 @@ namespace Game
         m_BridgeHost.Stop();
 
         // 終了前の保存処理など
-        // - セーブデータの保存
+        // セーブデータの保存を完了し、ハンドラを参照する呼び出し先を解除する。
+        auto& saveService = NorvesLib::Core::GEngine.GetSaveService();
+        saveService.FlushAndWait();
+        saveService.SetSnapshotProvider(Delegate<bool, String&>());
+        saveService.SetLoadConsumer(Delegate<bool, Span<const uint8_t>>());
         // - 設定の保存
     }
 
@@ -3854,6 +4600,27 @@ namespace Game
 
     bool GameApplicationHandler::ResolveStartupScene()
     {
+#if NORVES_BUILD_DEVELOPMENT
+        if (!m_ShishaShowcaseScene.empty())
+        {
+            if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
+            {
+                LOG_ERROR("--scene・--scene-view は --shisha-showcase と併用できません");
+                return false;
+            }
+            if (m_SceneCycle.IsEnabled())
+            {
+                LOG_ERROR("--scene-cycle-smoke は --shisha-showcase と併用できません");
+                return false;
+            }
+            if (m_bDogMovementSmoke)
+            {
+                LOG_ERROR("--dog-movement-smoke は --shisha-showcase と併用できません");
+                return false;
+            }
+            return true;
+        }
+#endif
         if (m_bDogMovementSmoke)
         {
             if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
@@ -3864,6 +4631,20 @@ namespace Game
             if (m_SceneCycle.IsEnabled())
             {
                 LOG_ERROR("--scene-cycle-smoke は --dog-movement-smoke と併用できません");
+                return false;
+            }
+            return true;
+        }
+        if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
+        {
+            if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
+            {
+                LOG_ERROR("--scene・--scene-view は戦闘の垂直スライスのスモーク・リセットのソークと併用できません");
+                return false;
+            }
+            if (m_SceneCycle.IsEnabled())
+            {
+                LOG_ERROR("--scene-cycle-smoke は戦闘の垂直スライスのスモーク・リセットのソークと併用できません");
                 return false;
             }
             return true;
@@ -4078,6 +4859,7 @@ namespace Game
         const NorvesLib::Core::GameMode::GameModeId mode = pScene != nullptr ? pScene->Mode : Game::GameModes::Launcher;
         const bool bSwitchable = mode == Game::GameModes::Wasteland || mode == Game::GameModes::NightVillage ||
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
+                                 mode == Game::GameModes::Grassland ||
                                  mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
                                  mode == Game::GameModes::InteriorLight;
         if (viewNames.size() > 1 && !bSwitchable)
@@ -4113,19 +4895,62 @@ namespace Game
         using namespace Game::GameModes;
 
         auto stateMachine = MakeUnique<GameModeStateMachine>();
+        const auto registerMode = [&stateMachine](GameModeId id, GameModeRegistry::Creator creator)
+        {
+#if defined(NORVES_GAME_AUDIO)
+            creator = NorvesLib::Modules::Audio::WrapGameModeCreatorWithAudioOwner(id, std::move(creator));
+#endif
+            stateMachine->Registry().Register(id, std::move(creator));
+        };
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
-        stateMachine->Registry().Register(
-            DogMovementSmoke, [lateCameraSlot, dogDrive](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
+        const bool bDogAutopilot = m_bDogMovementAutopilot;
+        const auto dogAutopilotPath = m_DogMovementAutopilotPath;
+        const auto dogCaptureDir = m_DogMovementCaptureDir;
+        registerMode(
+            DogMovementSmoke, [lateCameraSlot, dogDrive, bDogAutopilot, dogAutopilotPath, dogCaptureDir](
+                                  const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
                 auto mode = MakeUnique<DogMovementSmokeMode>();
                 mode->GetData().LateSlot = lateCameraSlot;
                 mode->GetData().Drive = dogDrive;
+                mode->GetData().bAutopilot = bDogAutopilot;
+                mode->GetData().AutopilotPath = dogAutopilotPath;
+                mode->GetData().CaptureDir = dogCaptureDir;
                 return mode;
             });
-        stateMachine->Registry().Register(
+        auto resetState = MakeShared<CombatSliceResetState>();
+        resetState->SoakResetTarget = m_SoakResetCount;
+        const auto combatSliceSmoke = m_SoakResetCount > 0 ? CombatSliceSmoke::ResetSoak :
+                                      m_bEncounterSmoke ? CombatSliceSmoke::Encounter :
+                                      m_bEnemySmoke ? CombatSliceSmoke::Enemy : CombatSliceSmoke::Combat;
+        registerMode(
+            CombatSlice,
+            [lateCameraSlot, resetState, combatSliceSmoke, bBench = m_bCombatBench, capturePath = m_CombatSliceCapturePath](
+                const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<CombatSliceMode>();
+                mode->GetData().Options = {combatSliceSmoke, bBench, capturePath};
+                mode->GetData().ResetState = resetState;
+                mode->GetData().LateSlot = lateCameraSlot;
+                return mode;
+            });
+#if NORVES_BUILD_DEVELOPMENT
+        registerMode(
+            ShishaShowcase,
+            [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale](
+                const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<ShishaShowcaseMode>();
+                mode->GetData().m_SceneName = sceneName;
+                mode->GetData().m_OrbitDegreesPerSecond = orbit;
+                mode->GetData().m_StandinScale = scale;
+                return mode;
+            });
+#endif
+        registerMode(
             Rendering3DTest,
             [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
              lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
@@ -4164,6 +4989,7 @@ namespace Game
                     s_Rendering3DTestSkinnedProbeMaterialCount == 2u;
                 mode->GetData().m_StartupSkinnedProbeMaterialCount = s_Rendering3DTestSkinnedProbeMaterialCount;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
+                mode->GetData().m_bAnimationDebugPoseModifiersOff = m_bPoseModifiersOffRequested;
 #if defined(NORVES_ENABLE_IMGUI)
                 mode->GetData().m_bDebugImGui = m_bImGuiRequested;
 #endif
@@ -4199,7 +5025,7 @@ namespace Game
         params.ModelPath = m_Rendering3DTestModelPath.empty()
                                ? String(kDefaultRendering3DTestModelPath)
                                : m_Rendering3DTestModelPath;
-        stateMachine->Registry().Register(
+        registerMode(
             Launcher,
             [params, pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
@@ -4208,14 +5034,14 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 return mode;
             });
-        stateMachine->Registry().Register(
+        registerMode(
             MemoryAgingTest,
             [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 return MakeUnique<MemoryAgingTestMode>();
             });
         // バナナのシーン。本数・視点・台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
 #if NORVES_BUILD_DEVELOPMENT
@@ -4243,7 +5069,7 @@ namespace Game
                 return mode;
             });
         // 荒野のシーン。視点・台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Wasteland,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4279,7 +5105,7 @@ namespace Game
                 return mode;
             });
         // 夜の集落のシーン。荒野のモードの型で、夜の集落として組む。視点・台本は起動引数から渡す（荒野の比較用の引数は渡さない）
-        stateMachine->Registry().Register(
+        registerMode(
             NightVillage,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4300,7 +5126,7 @@ namespace Game
                 return mode;
             });
         // 材質ギャラリー。視点・台本は起動引数から渡す。テクスチャが焼いてあるかは AssetSystem で確かめる
-        stateMachine->Registry().Register(
+        registerMode(
             MaterialGallery,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4318,7 +5144,7 @@ namespace Game
                 return mode;
             });
         // 室内の光。視点・台本は起動引数から渡す。テクスチャと家具のメッシュが焼いてあるかは AssetSystem で確かめる
-        stateMachine->Registry().Register(
+        registerMode(
             InteriorLight,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
@@ -4337,7 +5163,7 @@ namespace Game
             });
 #if NORVES_BUILD_DEVELOPMENT
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
-        stateMachine->Registry().Register(
+        registerMode(
             Sandbox,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
@@ -4352,9 +5178,27 @@ namespace Game
                 mode->GetData().m_pViewSwitch = viewSwitch;
                 return mode;
             });
+        // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
+        registerMode(
+            Grassland,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             scatterStressCount = m_GrasslandScatterStressCount,
+             viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<GrasslandMode>();
+                mode->GetData().m_ScatterStressCount = scatterStressCount;
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                return mode;
+            });
         // 負荷シーン mega-stress も開発ビルドだけ。Entity の数・視点・台本は起動引数から渡す。
         // バナナは --banana-count を指定したときだけ同時に置く（混在の負荷）。
-        stateMachine->Registry().Register(
+        registerMode(
             MegaStress,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, bananaCount = m_bBananaCountSet ? m_BananaCount : 0u,
@@ -4386,13 +5230,23 @@ namespace Game
             });
 #endif
 
-        // 起動するモード: 犬の比較は専用の引数、ランチャーから始めるときはランチャー、それ以外は --scene のシーンの GameMode。
+        // 起動するモード: 犬の比較と戦闘スモークは専用の引数、ランチャーから始めるときはランチャー、それ以外は --scene のシーンの GameMode。
         const Scenes::SceneDescriptor *startupScene = Scenes::FindScene(m_StartupSceneId.c_str());
         NorvesLib::Core::GameMode::GameModeId startMode = Rendering3DTest;
         if (m_bDogMovementSmoke)
         {
             startMode = DogMovementSmoke;
         }
+        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
+        {
+            startMode = CombatSlice;
+        }
+#if NORVES_BUILD_DEVELOPMENT
+        else if (!m_ShishaShowcaseScene.empty())
+        {
+            startMode = ShishaShowcase;
+        }
+#endif
         else if (m_SceneCycle.IsEnabled())
         {
             // 周回の検査は、ランチャーから始める（シーンへは検査が RequestChange で入る）
@@ -4414,6 +5268,18 @@ namespace Game
         {
             LOG_INFO("犬の移動比較モードを開始します");
         }
+        else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
+        {
+            LOG_INFO_F("戦闘の垂直スライスの確かめを開始します(%s)",
+                       m_bCombatSmoke ? (m_bCombatBench ? "combat-bench" : "combat") :
+                       m_bEncounterSmoke ? "encounter" : m_bEnemySmoke ? "enemy" : "reset-soak");
+        }
+#if NORVES_BUILD_DEVELOPMENT
+        else if (!m_ShishaShowcaseScene.empty())
+        {
+            LOG_INFO_F("シ者の確かめのモードを場面 %s で開始します", m_ShishaShowcaseScene.c_str());
+        }
+#endif
         else if (m_SceneCycle.IsEnabled())
         {
             LOG_INFO_F("シーンの周回の検査を開始します（周回数 %u）", m_SceneCycle.GetCycleCount());

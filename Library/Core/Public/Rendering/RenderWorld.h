@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "FrameCaptureTypes.h"
+#include "FoliageTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
@@ -149,6 +150,9 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame();
 
+        /** @brief GameThread から次の BeginFrame へ、1 回だけ使う固定刻みの経過時間と累積秒を渡す */
+        void SetFixedFrameTime(float deltaSeconds, double totalSeconds);
+
         /**
          * @brief 描画実行
          *
@@ -188,6 +192,12 @@ namespace NorvesLib::Core::Rendering
          * @param parameters GameThread側で保持し、FramePacketへ値コピーする設定
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
+
+        // 空の遮蔽の値と遮蔽物を次の FramePacket へ値で公開する（GameThread）。
+        void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
+        SkyOccluderHandle RegisterSkyOccluder(const SkyOccluderProxy& proxy);
+        void UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy);
+        void UnregisterSkyOccluder(SkyOccluderHandle handle);
 
         /**
          * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を設定する（GameThread）
@@ -237,11 +247,18 @@ namespace NorvesLib::Core::Rendering
         void SetCloudLayer(const CloudLayerParameters& parameters);
 
         /**
-         * @brief 草・低木の株の束と風を設定する（GameThread）
+         * @brief 草・低木の株の束を出どころごとに設定する（GameThread）
          *
-         * RenderThread の FoliagePass が、束ごとに 1 回のインスタンス描画で GBuffer へ描く。空の一覧で描かなくなる。
+         * Scene の束、Scatter の束の順に合成し、風は Scene の値を使う。
+         * 空の一覧を渡すとその出どころの束が消える。範囲外の slot は無視する。
          */
-        void SetFoliage(const FoliageScene& foliage);
+        void SetFoliageSource(FoliageSourceSlot slot, const FoliageScene& foliage);
+
+        /**
+         * @brief 不変の草の場の描画データを設定する（GameThread 専用）
+         * @param grassField 次の FramePacket へ共有する。設定後は内容を書き換えない
+         */
+        void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
@@ -495,6 +512,9 @@ namespace NorvesLib::Core::Rendering
 
         // レンダリングコーディネーター（描画フロー管理）
         RenderingCoordinator m_RenderingCoordinator;
+
+        // 出どころごとの草・低木の束（GameThread 専用）
+        FoliageScene m_FoliageSources[static_cast<uint32_t>(FoliageSourceSlot::Count)];
 
         // サブシステム（GEngine配下で実体保持）
         RenderResources m_RenderResources;

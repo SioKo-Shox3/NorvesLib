@@ -8,6 +8,7 @@
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
+#include <utility>
 
 using namespace NorvesLib::Core::Container;
 
@@ -185,6 +186,11 @@ namespace NorvesLib::Core::Rendering
         m_bAsyncAssetProducersQuiesced = true;
     }
 
+    void RenderWorld::SetFixedFrameTime(float deltaSeconds, double totalSeconds)
+    {
+        m_RenderingCoordinator.SetFixedFrameTime(deltaSeconds, totalSeconds);
+    }
+
     void RenderWorld::BeginFrame()
     {
         if (!m_bInitialized)
@@ -324,6 +330,26 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
+    {
+        m_RenderingCoordinator.SetSkyOcclusionParameters(parameters);
+    }
+
+    SkyOccluderHandle RenderWorld::RegisterSkyOccluder(const SkyOccluderProxy& proxy)
+    {
+        return m_RenderingCoordinator.RegisterSkyOccluder(proxy);
+    }
+
+    void RenderWorld::UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy)
+    {
+        m_RenderingCoordinator.UpdateSkyOccluder(handle, proxy);
+    }
+
+    void RenderWorld::UnregisterSkyOccluder(SkyOccluderHandle handle)
+    {
+        m_RenderingCoordinator.UnregisterSkyOccluder(handle);
+    }
+
     void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
@@ -354,9 +380,28 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetCloudLayer(parameters);
     }
 
-    void RenderWorld::SetFoliage(const FoliageScene& foliage)
+    void RenderWorld::SetFoliageSource(FoliageSourceSlot slot, const FoliageScene& foliage)
     {
-        m_RenderingCoordinator.SetFoliage(foliage);
+        const uint32_t sourceIndex = static_cast<uint32_t>(slot);
+        if (sourceIndex >= static_cast<uint32_t>(FoliageSourceSlot::Count))
+        {
+            return;
+        }
+
+        m_FoliageSources[sourceIndex] = foliage;
+
+        FoliageScene composed;
+        composed.Wind = m_FoliageSources[static_cast<uint32_t>(FoliageSourceSlot::Scene)].Wind;
+        for (const FoliageScene& source : m_FoliageSources)
+        {
+            composed.Batches.insert(composed.Batches.end(), source.Batches.begin(), source.Batches.end());
+        }
+        m_RenderingCoordinator.SetFoliage(composed);
+    }
+
+    void RenderWorld::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
+    {
+        m_RenderingCoordinator.SetGrassField(std::move(grassField));
     }
 
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)

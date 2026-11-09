@@ -2,14 +2,26 @@
 
 #include "Audio/AudioClipResource.h"
 #include "Container/VariableArray.h"
+#include "Math/MathTypes.h"
 #include "Thread/Atomic.h"
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace NorvesLib::Modules::Audio::Private
 {
     namespace
     {
+        constexpr float kDefaultMaxFrequencyRatio = 2.0f;
+        constexpr float kMinFrequencyRatio = 1.0f / 1024.0f;
+
+        [[nodiscard]] constexpr bool CanSetVoiceParameters(AudioVoiceState state) noexcept
+        {
+            return state == AudioVoiceState::Created || state == AudioVoiceState::Submitted ||
+                   state == AudioVoiceState::Playing;
+        }
+
         struct BackendEvent
         {
             VoiceHandle Handle;
@@ -24,6 +36,8 @@ namespace NorvesLib::Modules::Audio::Private
             Core::Container::TSharedPtr<AudioClipResource> Clip;
             Core::Asset::AssetBlob PcmPayload;
             Core::Container::TUniquePtr<AudioBackendEventMailbox> Mailbox;
+            float MaxFrequencyRatio = 2.0f;
+            bool bPaused = false;
             bool bBackendVoiceCreated = false;
             bool bCountedActive = false;
             bool bRetired = false;
@@ -75,8 +89,37 @@ namespace NorvesLib::Modules::Audio::Private
             AudioResult CreateVoice(const Core::Container::TSharedPtr<AudioClipResource>& clip,
                                     VoiceHandle& outHandle) override
             {
+                return CreateVoice(clip, AudioVoiceDesc{}, outHandle);
+            }
+
+            AudioResult CreateVoice(const Core::Container::TSharedPtr<AudioClipResource>& clip,
+                                    const AudioVoiceDesc& desc,
+                                    VoiceHandle& outHandle) override
+            {
                 outHandle = {};
                 if (!m_bInitialized || m_bShutdown || !clip || !clip->IsValid())
+                {
+                    return AudioResult::InvalidState;
+                }
+
+                const uint64_t frameCount = clip->GetFrameCount();
+                if (!std::isfinite(desc.MaxPitchSemitones) || desc.MaxPitchSemitones < 0.0f ||
+                    desc.MaxPitchSemitones > 120.0f || desc.StartFrame >= frameCount)
+                {
+                    return AudioResult::InvalidState;
+                }
+                if (desc.bLoop)
+                {
+                    const uint64_t loopEndFrame = desc.LoopLengthFrames == 0
+                        ? frameCount
+                        : static_cast<uint64_t>(desc.LoopBeginFrame) + desc.LoopLengthFrames;
+                    if (desc.LoopBeginFrame >= frameCount || loopEndFrame > frameCount ||
+                        loopEndFrame <= desc.StartFrame)
+                    {
+                        return AudioResult::InvalidState;
+                    }
+                }
+                else if (desc.LoopBeginFrame != 0 || desc.LoopLengthFrames != 0)
                 {
                     return AudioResult::InvalidState;
                 }
@@ -86,16 +129,18 @@ namespace NorvesLib::Modules::Audio::Private
                 record.Clip = clip;
                 record.PcmPayload = clip->GetPcmBlob();
                 record.State = AudioVoiceState::Created;
+                record.MaxFrequencyRatio = std::exp2(desc.MaxPitchSemitones / 12.0f);
                 const VoiceHandle handle{index, record.Generation};
 
-                if (m_Backend->CreateVoice(handle, clip->GetFormat(), *record.Mailbox) != AudioResult::Success)
+                if (m_Backend->CreateVoice(handle, clip->GetFormat(), record.MaxFrequencyRatio, *record.Mailbox) != AudioResult::Success)
                 {
                     ReleaseSlot(index);
                     return AudioResult::BackendFailure;
                 }
                 record.bBackendVoiceCreated = true;
 
-                if (m_Backend->SubmitVoice(handle, record.PcmPayload.GetSpan()) != AudioResult::Success)
+                const AudioBufferDesc bufferDesc{desc.bLoop, desc.LoopBeginFrame, desc.LoopLengthFrames, desc.StartFrame};
+                if (m_Backend->SubmitVoice(handle, record.PcmPayload.GetSpan(), bufferDesc) != AudioResult::Success)
                 {
                     if (m_Backend->DestroyVoice(handle) == AudioResult::Success)
                     {
@@ -112,6 +157,106 @@ namespace NorvesLib::Modules::Audio::Private
                 record.bCountedActive = true;
                 ++m_ActiveVoiceCount;
                 outHandle = handle;
+                return AudioResult::Success;
+            }
+
+            AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(volume) || volume < 0.0f || !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                return m_Backend->SetVoiceVolume(handle, volume) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoicePitch(VoiceHandle handle, float semitones) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(semitones) || !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                const float boundedSemitones = std::clamp(semitones, -120.0f, 120.0f);
+                const float ratio = std::clamp(std::exp2(boundedSemitones / 12.0f),
+                                               kMinFrequencyRatio,
+                                               record->MaxFrequencyRatio);
+                return m_Backend->SetVoiceFrequencyRatio(handle, ratio) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoicePan(VoiceHandle handle, float pan) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(pan) || !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                const float boundedPan = std::clamp(pan, -1.0f, 1.0f);
+                const float angle = (boundedPan + 1.0f) * Math::Constants::PI / 4.0f;
+                return m_Backend->SetVoiceOutputGains(handle, std::cos(angle), std::sin(angle)) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult PauseVoice(VoiceHandle handle) override
+            {
+                ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (record->State != AudioVoiceState::Playing)
+                {
+                    return AudioResult::InvalidState;
+                }
+                if (record->bPaused)
+                {
+                    return AudioResult::AlreadyInState;
+                }
+                if (m_Backend->PauseVoice(handle) != AudioResult::Success)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record->bPaused = true;
+                return AudioResult::Success;
+            }
+
+            AudioResult ResumeVoice(VoiceHandle handle) override
+            {
+                ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (record->State != AudioVoiceState::Playing)
+                {
+                    return AudioResult::InvalidState;
+                }
+                if (!record->bPaused)
+                {
+                    return AudioResult::AlreadyInState;
+                }
+                if (m_Backend->ResumeVoice(handle) != AudioResult::Success)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record->bPaused = false;
                 return AudioResult::Success;
             }
 
@@ -176,6 +321,7 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::BackendFailure;
                 }
                 record->State = AudioVoiceState::Stopping;
+                record->bPaused = false;
                 return AudioResult::Success;
             }
 
@@ -194,6 +340,47 @@ namespace NorvesLib::Modules::Audio::Private
                 {
                     return AudioResult::BackendFailure;
                 }
+                ReleaseSlot(handle.Index);
+                return AudioResult::Success;
+            }
+
+            AudioResult AbortVoice(VoiceHandle handle) override
+            {
+                ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (record->State == AudioVoiceState::Quarantined)
+                {
+                    return AudioResult::InvalidState;
+                }
+                if (record->State == AudioVoiceState::Playing)
+                {
+                    const AudioBackendStopResult stopResult = m_Backend->StopVoice(handle);
+                    if (stopResult.Result != AudioResult::Success)
+                    {
+                        if (stopResult.bVoiceStopped)
+                        {
+                            QuarantineSlot(handle.Index);
+                        }
+                        return AudioResult::BackendFailure;
+                    }
+                    if (!stopResult.bVoiceStopped || !stopResult.bBuffersFlushed)
+                    {
+                        QuarantineSlot(handle.Index);
+                        return AudioResult::BackendFailure;
+                    }
+                }
+                if (record->bBackendVoiceCreated && m_Backend->DestroyVoice(handle) != AudioResult::Success)
+                {
+                    QuarantineSlot(handle.Index);
+                    return AudioResult::BackendFailure;
+                }
+
+                // XAudio2 の DestroyVoice は音声処理スレッドが空くまで同期的に待つため、
+                // 復帰後にそのボイスのコールバックは来ない。復帰前に届いた通知も、
+                // メールボックスの Close と世代の更新により新しいボイスには混ざらない。
                 ReleaseSlot(handle.Index);
                 return AudioResult::Success;
             }
@@ -241,6 +428,7 @@ namespace NorvesLib::Modules::Audio::Private
                     if (event.Kind == AudioBackendEventKind::VoiceError)
                     {
                         record->State = AudioVoiceState::Stopping;
+                        record->bPaused = false;
                     }
                     if (event.Kind == AudioBackendEventKind::Drained &&
                         record->State == AudioVoiceState::Drained)
@@ -250,10 +438,12 @@ namespace NorvesLib::Modules::Audio::Private
                     if (record->State == AudioVoiceState::Playing)
                     {
                         record->State = AudioVoiceState::Stopping;
+                        record->bPaused = false;
                     }
                     if (record->State == AudioVoiceState::Stopping)
                     {
                         record->State = AudioVoiceState::Drained;
+                        record->bPaused = false;
                     }
                     else
                     {
@@ -403,6 +593,8 @@ namespace NorvesLib::Modules::Audio::Private
                 record.State = AudioVoiceState::Destroyed;
                 record.Clip.reset();
                 record.PcmPayload = Core::Asset::AssetBlob::Invalid();
+                record.MaxFrequencyRatio = kDefaultMaxFrequencyRatio;
+                record.bPaused = false;
                 record.bBackendVoiceCreated = false;
                 if (record.bCountedActive && m_ActiveVoiceCount > 0)
                 {

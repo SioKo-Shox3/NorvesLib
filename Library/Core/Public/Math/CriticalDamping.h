@@ -61,4 +61,79 @@ namespace NorvesLib::Math
         velocity = v;
         return true;
     }
+
+    // 区間の間に等速で動く目標への厳密解。目標が止まっていればTryCriticalDampと同じで、区間の分け方に依らない。
+    inline bool TryCriticalDampMovingTarget(float& position, float& velocity, float targetStart, float targetEnd,
+                                            float halfLife, float dt)
+    {
+        if (&position == &velocity || !std::isfinite(position) || !std::isfinite(velocity) ||
+            !std::isfinite(targetStart) || !std::isfinite(targetEnd) || !std::isfinite(halfLife) ||
+            !std::isfinite(dt) || halfLife < 0 || dt < 0)
+        {
+            return false;
+        }
+        if (dt == 0)
+        {
+            return true;
+        }
+        if (halfLife == 0)
+        {
+            position = targetEnd;
+            velocity = 0;
+            return true;
+        }
+        if (targetStart == targetEnd)
+        {
+            return TryCriticalDamp(position, velocity, targetEnd, halfLife, dt);
+        }
+
+        constexpr double halfErrorRoot = 1.6783469900166605;
+        constexpr double maximum = std::numeric_limits<float>::max();
+        const double omega = halfErrorRoot / static_cast<double>(halfLife);
+        const double targetVelocity = (static_cast<double>(targetEnd) - targetStart) / dt;
+        const double offset = 2 * targetVelocity / omega;
+        const double initialPosition = static_cast<double>(position) - targetStart + offset;
+        const double initialVelocity = static_cast<double>(velocity) - targetVelocity;
+        if (!std::isfinite(initialPosition) || !std::isfinite(initialVelocity) ||
+            std::fabs(initialPosition) > maximum || std::fabs(initialVelocity) > maximum)
+        {
+            return false;
+        }
+        float dampedPosition = static_cast<float>(initialPosition);
+        float dampedVelocity = static_cast<float>(initialVelocity);
+        if (!TryCriticalDamp(dampedPosition, dampedVelocity, 0, halfLife, dt))
+        {
+            return false;
+        }
+        const double nextPosition = static_cast<double>(targetEnd) + dampedPosition - offset;
+        const double nextVelocity = static_cast<double>(dampedVelocity) + targetVelocity;
+        if (!std::isfinite(nextPosition) || !std::isfinite(nextVelocity) || std::fabs(nextPosition) > maximum ||
+            std::fabs(nextVelocity) > maximum)
+        {
+            return false;
+        }
+        position = static_cast<float>(nextPosition);
+        velocity = static_cast<float>(nextVelocity);
+        return true;
+    }
+
+    // 軸ごとの半減期を持ち、いずれかの軸が不正なら全軸の状態を保持する。
+    inline bool TryCriticalDampMovingTarget(Vector3& position, Vector3& velocity, const Vector3& targetStart,
+                                            const Vector3& targetEnd, const Vector3& halfLife, float dt)
+    {
+        if (&position == &velocity)
+        {
+            return false;
+        }
+        Vector3 p = position, v = velocity;
+        if (!TryCriticalDampMovingTarget(p.x, v.x, targetStart.x, targetEnd.x, halfLife.x, dt) ||
+            !TryCriticalDampMovingTarget(p.y, v.y, targetStart.y, targetEnd.y, halfLife.y, dt) ||
+            !TryCriticalDampMovingTarget(p.z, v.z, targetStart.z, targetEnd.z, halfLife.z, dt))
+        {
+            return false;
+        }
+        position = p;
+        velocity = v;
+        return true;
+    }
 } // namespace NorvesLib::Math

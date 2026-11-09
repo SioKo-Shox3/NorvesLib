@@ -4,11 +4,19 @@
 #include "Tools/AssetCook/TextureAssetSetCook.h"
 #include "Tools/AssetCook/RigSingleCook.h"
 #include "Tools/AssetCook/RigRetargetCook.h"
+#include "Tools/AssetCook/RigMotionCleanup.h"
+#include "Animation/AnimationClipResource.h"
+#include "Animation/MotionAnalysis.h"
+#include "Animation/SkeletonResource.h"
+#include "Object/ResourceRegistry.h"
+#include "Resource/SkinnedMeshResource.h"
+#include "Text/JsonDocument.h"
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 #include "Resource/MaterialImportSettings.h"
 #include <chrono>
+#include <cmath>
 #include <thread>
 #if defined(_WIN32)
 #include <Windows.h>
@@ -109,6 +117,273 @@ namespace
         }
     };
 #endif
+
+    void FootContactMetadataAndWindows(F::Fixture& fixture)
+    {
+        namespace A = Core::Animation;
+        constexpr double fps = 200, speed = 1.25, stance = .6;
+        constexpr double touchdown[] = {.07, .23, .49, .71};
+        constexpr const char* feet[] = {"front_L_paw", "front_R_paw", "hind_L_paw", "hind_R_paw"};
+        constexpr const char* legs[] = {"LF", "RF", "LH", "RH"};
+
+        C::AnsiString profileJson =
+            R"({"version":1,"vocabulary":"quadruped_v1","axes":{"up":"+Y","forward":"+Z","handedness":"right"},"units":{"position_scale":1},"position_convention":"additive","time":{"mode":"header_frame_time"},"source_roles":{"root":["Root"])";
+        for (const char* foot : feet)
+        {
+                profileJson += C::AnsiString(",\"") + foot + "\":[\"" + foot + "\"]";
+        }
+        profileJson += R"(},"target_roles":{"root":[{"joint":"Root","C":[1,0,0,0,1,0,0,0,1]}])";
+        for (const char* foot : feet)
+        {
+                profileJson += C::AnsiString(",\"") + foot + "\":[{\"joint\":\"" + foot + "\",\"C\":[1,0,0,0,1,0,0,0,1]}]";
+        }
+        profileJson += R"(},"processing":{"output_fps":200,"loop_mode":"none","analyze_contacts":true,"generate_foot_markers":true}})";
+        A::SkeletalRoleProfile profile;
+        const auto profileResult = A::ParseSkeletalRoleProfile(F::View(profileJson), {}, profile);
+        if (!profileResult.Succeeded())
+        {
+            std::fprintf(stderr, "合成の役割設定が拒否された: %s\n", profileResult.Field.c_str());
+        }
+        RIG_CHECK(profileResult.Succeeded());
+        RIG_CHECK(profile.Processing.OutputFps == fps && !profile.Processing.bDeriveRootMotion &&
+                  profile.Processing.DesiredGroundSpeed == 0);
+
+        fixture.SetBuffer(fixture.Binary);
+        auto rig = fixture.Import(fixture.Json);
+        auto& data = *const_cast<S::RigAuthoringData*>(rig.GetData());
+        data.Geometry.Joints.clear();
+        data.LocalRest.clear();
+        data.RootFrame = S::IdentityRigRootFrame();
+        for (size_t i = 0; i < 5; ++i)
+        {
+            S::SkeletalJoint joint;
+            joint.Name = C::String(i ? feet[i - 1] : "Root");
+            joint.ParentIndex = i ? 0 : -1;
+            for (size_t axis = 0; axis < 4; ++axis)
+            {
+                joint.InverseBindMatrix[axis * 5] = 1;
+            }
+            data.Geometry.Joints.push_back(joint);
+            data.LocalRest.push_back({});
+        }
+
+        const auto makeClip = [&](bool bLoop)
+        {
+            S::SkeletalAnimationClip clip;
+            clip.Name = "SyntheticQuadruped";
+            clip.DurationSeconds = 1;
+            clip.Metadata.Loop = {bLoop, 0, bLoop ? 1.f : 0.f};
+            for (size_t foot = 0; foot < 4; ++foot)
+            {
+                S::SkeletalAnimationChannel channel;
+                channel.JointIndex = uint32_t(foot + 1);
+                channel.Path = S::SkeletalAnimationPath::Translation;
+                for (size_t i = 0; i <= size_t(fps); ++i)
+                {
+                    const double time = i / fps;
+                    const double phase = time - touchdown[foot] - std::floor(time - touchdown[foot]);
+                    double height = 0, z = -speed * phase;
+                    if (phase > stance)
+                    {
+                        const double swing = (phase - stance) / (1 - stance);
+                        height = .3 * std::sin(3.14159265358979323846 * swing);
+                        z = -speed * stance * (1 - swing);
+                    }
+                    channel.Samples.push_back({float(time), {0, float(height), float(z), 0}});
+                }
+                clip.Channels.push_back(std::move(channel));
+            }
+            return clip;
+        };
+        const auto cleanup = [&](S::SkeletalAnimationClip& clip)
+        {
+            Core::JsonWriter writer;
+            C::AnsiString error;
+            writer.BeginObject();
+            const bool bSuccess = Cook::Detail::ApplyRigMotionCleanup(rig, profile, clip, writer, error);
+            writer.EndObject();
+            if (!bSuccess)
+            {
+                std::fprintf(stderr, "後処理が拒否された: %s\n", error.c_str());
+            }
+            RIG_CHECK(bSuccess && writer.IsComplete());
+            Core::JsonDocument report;
+            RIG_CHECK(Core::JsonDocument::TryParse(writer.ToString(), report));
+            return report;
+        };
+        const auto legacyName = [](Core::Identity name)
+        {
+            const auto view = name.GetView();
+            return (view.size() >= 5 && view.substr(view.size() - 5) == C::StringView(_T("_down"))) ||
+                   (view.size() >= 3 && view.substr(view.size() - 3) == C::StringView(_T("_up")));
+        };
+
+        const auto source = makeClip(true);
+        auto loop = source;
+        const auto loopReport = cleanup(loop);
+        const auto loopContacts = loopReport.GetRoot().FindMember("contacts");
+        RIG_CHECK(loopContacts.IsArray() && loopContacts.GetArraySize() > 0);
+        RIG_CHECK(loopReport.GetRoot().FindMember("feet_without_contacts").AsUInt32(UINT32_MAX) == 0);
+        RIG_CHECK(loop.Metadata.Markers.size() == 8);
+        for (const auto& marker : loop.Metadata.Markers)
+        {
+            RIG_CHECK(!legacyName(marker.Name));
+        }
+        for (size_t foot = 0; foot < 4; ++foot)
+        {
+            for (bool bDown : {true, false})
+            {
+                const auto name = C::AnsiString("Foot.") + legs[foot] + (bDown ? ".Down" : ".Up");
+                size_t matches = 0;
+                for (const auto& marker : loop.Metadata.Markers)
+                {
+                    matches += marker.Name == Core::Identity(name.c_str()) ? 1 : 0;
+                }
+                RIG_CHECK(matches == 1);
+            }
+        }
+        for (const auto& event : loop.Metadata.Events)
+        {
+            RIG_CHECK(!legacyName(event.Name));
+            RIG_CHECK(event.Name.GetView().substr(0, 5) != C::StringView(_T("Foot.")));
+        }
+
+        auto once = makeClip(false);
+        const auto onceReport = cleanup(once);
+        const auto onceContacts = onceReport.GetRoot().FindMember("contacts");
+        RIG_CHECK(onceContacts.IsArray() && onceContacts.GetArraySize() > 0);
+        RIG_CHECK(once.Metadata.Markers.empty() && !once.Metadata.Events.empty());
+        size_t downCounts[4]{}, upCounts[4]{}, windowCounts[4]{};
+        for (const auto& event : once.Metadata.Events)
+        {
+            RIG_CHECK(!legacyName(event.Name) && event.EndTime < 0);
+            bool bRecognized = false;
+            for (size_t foot = 0; foot < 4; ++foot)
+            {
+                const auto base = C::AnsiString("Foot.") + legs[foot];
+                if (event.Name == Core::Identity((base + ".Down").c_str()))
+                {
+                    ++downCounts[foot];
+                    bRecognized = true;
+                }
+                if (event.Name == Core::Identity((base + ".Up").c_str()))
+                {
+                    ++upCounts[foot];
+                    bRecognized = true;
+                }
+            }
+            RIG_CHECK(bRecognized);
+        }
+        for (size_t i = 0; i < onceContacts.GetArraySize(); ++i)
+        {
+            const auto contact = onceContacts.GetArrayElement(i);
+            bool bRecognized = false;
+            for (size_t foot = 0; foot < 4; ++foot)
+            {
+                if (contact.FindMember("foot").AsString() == C::String(feet[foot]))
+                {
+                    ++windowCounts[foot];
+                    bRecognized = true;
+                }
+            }
+            RIG_CHECK(bRecognized);
+        }
+        for (size_t foot = 0; foot < 4; ++foot)
+        {
+            RIG_CHECK(windowCounts[foot] > 0 && downCounts[foot] == windowCounts[foot] && upCounts[foot] > 0);
+        }
+
+        Core::ResourceRegistry registry;
+        RIG_CHECK(registry.Initialize());
+        auto skeleton = registry.CreateTransient<Core::SkeletonResource>("ContactSkeleton");
+        auto mesh = registry.CreateTransient<Core::SkinnedMeshResource>("ContactMesh");
+        auto clipResource = registry.CreateTransient<Core::AnimationClipResource>("ContactClip");
+        RIG_CHECK(skeleton && mesh && clipResource);
+        skeleton->SetJoints(C::VariableArray<S::SkeletalJoint>(data.Geometry.Joints));
+        RIG_CHECK(skeleton->SetAuthorRestPose(data.LocalRest) && skeleton->Load());
+        C::VariableArray<S::SkeletalVertex> vertices(1);
+        vertices[0].Normal = {0, 1, 0};
+        vertices[0].JointIndices[0] = 1;
+        vertices[0].JointWeights[0] = 1;
+        mesh->SetVertices(std::move(vertices));
+        mesh->SetIndices(C::VariableArray<uint32_t>{0, 0, 0});
+        RIG_CHECK(mesh->Load());
+        clipResource->SetClip(S::SkeletalAnimationClip(source));
+        RIG_CHECK(clipResource->Load());
+        A::SkeletalPoseContext context;
+        RIG_CHECK(A::SkeletalPoseBuilder::Prepare(*skeleton, *clipResource, *mesh,
+                                                   NorvesLib::Math::Matrix4x4::Identity, context));
+        const A::FootContactSpec specs[] = {{1, Core::Identity("LF")}, {2, Core::Identity("RF")},
+                                           {3, Core::Identity("LH")}, {4, Core::Identity("RH")}};
+        A::FootContactOptions options;
+        options.SampleRate = profile.Processing.OutputFps;
+        A::FootContactReport libraryReport;
+        RIG_CHECK(A::AnalyzeFootContacts(context, *clipResource, {specs, 4}, options, libraryReport));
+
+        size_t compared = 0;
+        for (size_t foot = 0; foot < 4; ++foot)
+        {
+            C::VariableArray<A::FootContactWindow> libraryWindows;
+            for (const auto& window : libraryReport.Windows)
+            {
+                if (window.Name == Core::Identity(legs[foot]))
+                {
+                    libraryWindows.push_back(window);
+                }
+            }
+            size_t actual = 0;
+            for (size_t i = 0; i < loopContacts.GetArraySize(); ++i)
+            {
+                const auto contact = loopContacts.GetArrayElement(i);
+                if (contact.FindMember("foot").AsString() != C::String(feet[foot]))
+                {
+                    continue;
+                }
+                RIG_CHECK(actual < libraryWindows.size());
+                const auto start = contact.FindMember("start"), end = contact.FindMember("end");
+                RIG_CHECK(start.IsNumber() && end.IsNumber());
+                const auto& window = libraryWindows[actual];
+                if (std::abs(start.AsNumber() - window.Start) > 1e-6 ||
+                    std::abs(end.AsNumber() - window.End) > 1e-6)
+                {
+                    std::fprintf(stderr, "接地窓の不一致 foot=%s cook=[%.9g, %.9g] library=[%.9g, %.9g]\n",
+                                 feet[foot], start.AsNumber(), end.AsNumber(), double(window.Start), double(window.End));
+                }
+                RIG_CHECK(std::abs(start.AsNumber() - window.Start) <= 1e-6 &&
+                          std::abs(end.AsNumber() - window.End) <= 1e-6);
+                ++actual;
+            }
+            RIG_CHECK(actual > 0 && actual == libraryWindows.size());
+            compared += actual;
+        }
+        RIG_CHECK(compared == loopContacts.GetArraySize() && compared == libraryReport.Windows.size());
+        std::fprintf(stderr, "ループ・非ループの足の印と接地窓の一致を確認: 窓=%zu\n", compared);
+
+        auto raised = makeClip(true);
+        // 足は常に高く保ち、鉛直方向に動かして接地窓を作らない。
+        for (auto& sample : raised.Channels[3].Samples)
+        {
+            sample.Value.Y = float(.4 + .3 * std::abs(std::fmod(double(sample.TimeSeconds), .5) - .25));
+        }
+        const auto raisedReport = cleanup(raised);
+        const auto review = raisedReport.GetRoot().FindMember("needs_review");
+        const auto missing = raisedReport.GetRoot().FindMember("feet_without_contacts");
+        const auto raisedContacts = raisedReport.GetRoot().FindMember("contacts");
+        RIG_CHECK(review.IsBoolean() && missing.IsNumber() && raisedContacts.IsArray());
+        std::fprintf(stderr, "浮かせた足の診断 needs_review=%d feet_without_contacts=%u\n",
+                     int(review.AsBool()), missing.AsUInt32(UINT32_MAX));
+        for (size_t i = 0; i < raisedContacts.GetArraySize(); ++i)
+        {
+            const auto contact = raisedContacts.GetArrayElement(i);
+            if (contact.FindMember("foot").AsString() == C::String(feet[3]))
+            {
+                std::fprintf(stderr, "浮かせた足の接地窓 start=%.9g end=%.9g\n",
+                             contact.FindMember("start").AsNumber(), contact.FindMember("end").AsNumber());
+            }
+        }
+        RIG_CHECK(review.AsBool() && missing.AsUInt32(UINT32_MAX) == 1);
+    }
+
     void RetargetTargetMaterialPreflight(F::Fixture& f)
     {
         const auto sourceRoot = f.Root / "RigV1Fixture";
@@ -878,6 +1153,7 @@ int main()
     ManagedMixedRig(fixture);
     RetargetBatch(fixture);
     FilePublication(fixture);
+    FootContactMetadataAndWindows(fixture);
     std::printf(
         "RIG_SPLIT_COOK result=pass same_read_settings_buffers_source_slot_mapping_full_mats_three_packages_no_cli_publish\n");
     return 0;

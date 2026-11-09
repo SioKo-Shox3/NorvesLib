@@ -3,7 +3,12 @@
 #include "CameraLateUpdate.h"
 #include "Gameplay/CharacterDriveOptions.h"
 #include "Input/GameInputSettings.h"
+#include "Core/Public/Scene/PhysicsLayerTable.h"
 #include <cstdint>
+
+#if defined(NORVES_GAME_AUDIO)
+#include "Audio/ISoundSystem.h"
+#endif
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
@@ -16,6 +21,7 @@
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Pause/PauseMenu.h"
+#include "Save/ProgressSaveData.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneCycleSmoke.h"
@@ -127,7 +133,7 @@ namespace Game
         /**
          * @brief --scene・--scene-view の指定をシーンの一覧と照合して確定する（OnPreInitialize の最後に呼ぶ）。
          * @return 起動を続けてよいなら true。未知の id・視点はエラーをログに出して既定へ落とし、true を返す。
-         *         --dog-movement-smoke との併用など、解決できない指定だけ false。
+         *         --dog-movement-smoke・--combat-smoke・--encounter-smoke・--enemy-smoke との併用など、解決できない指定だけ false。
          */
         bool ResolveStartupScene();
         /**
@@ -142,6 +148,7 @@ namespace Game
         bool HasPendingAssetConsumers() const override;
         Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
         const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
+        const NorvesLib::Core::Scene::PhysicsLayerTable& GetPhysicsLayers() const { return m_PhysicsLayers; }
 
         /**
          * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
@@ -160,7 +167,34 @@ namespace Game
         bool IsTextureCooked(const NorvesLib::Core::Container::String &logicalPath) const;
 
     private:
+        bool ProvideSaveSnapshot(NorvesLib::Core::Container::String& payloadUtf8);
+        bool ConsumeSavePayload(NorvesLib::Core::Container::Span<const uint8_t> payloadUtf8);
+        bool IsInteractPressed() const;
+        void FailAudioSmoke(const char* reason);
+        void UpdateAudioSmoke();
+
+        enum class AudioSmokeStage : uint8_t
+        {
+            Disabled,
+            Ready,
+            Footsteps,
+            Draining,
+            Complete,
+            Failed,
+        };
+        bool m_bAudioSmoke = false;
+        AudioSmokeStage m_AudioSmokeStage = AudioSmokeStage::Disabled;
+#if defined(NORVES_GAME_AUDIO)
+        NorvesLib::Modules::Audio::SoundInstanceHandle m_AudioSmokeRain;
+#endif
+        int64_t m_AudioSmokeNextFootstepNs = 0;
+        int64_t m_AudioSmokeDrainStartNs = 0;
+        uint32_t m_AudioSmokeFootstepsPlayed = 0;
+        uint32_t m_AudioSmokeFootstepsFailed = 0;
+
+        Game::Save::ProgressSaveData m_ProgressSaveData;
         Game::Input::GameInputSettings m_InputSettings;
+        NorvesLib::Core::Scene::PhysicsLayerTable m_PhysicsLayers;
         NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =
             NorvesLib::Core::Container::MakeShared<CameraLateUpdateSlot>();
         /**
@@ -249,7 +283,29 @@ namespace Game
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
 
         bool m_bAnimationDebugRequested = false;
+        bool m_bPoseModifiersOffRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bCombatSmoke = false;
+        bool m_bEncounterSmoke = false;
+        bool m_bEnemySmoke = false;
+        bool m_bCombatBench = false;
+        NorvesLib::Core::Container::String m_CombatSliceCapturePath;
+        uint32_t m_SoakResetCount = 0;
+        NorvesLib::Core::Container::String m_SaveDirectoryOverride;
+        bool m_bDogMovementAutopilot = false;
+        NorvesLib::Core::Container::String m_DogMovementAutopilotPath;
+        NorvesLib::Core::Container::String m_DogMovementCaptureDir;
+#if NORVES_BUILD_DEVELOPMENT
+        /// --shisha-showcase で指定された場面の名前。空なら専用モードを使わない。
+        NorvesLib::Core::Container::String m_ShishaShowcaseScene;
+        /// --shisha-camera-orbit で指定されたカメラの周回速度（度/秒）。
+        float m_ShishaCameraOrbit = 0.0f;
+        /// --shisha-scale で指定された代役の倍率。
+        float m_ShishaScale = 1.0f;
+        /// カメラの周回速度と代役の倍率が指定済みか。
+        bool m_bShishaCameraOrbitSet = false;
+        bool m_bShishaScaleSet = false;
+#endif
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
         /// ランチャーから始めるか（--scene を省いた起動、--scene=launcher、--scene-cycle-smoke）。ResolveStartupScene が決める
@@ -265,6 +321,8 @@ namespace Game
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
+        uint32_t m_GrasslandScatterStressCount = 0;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;

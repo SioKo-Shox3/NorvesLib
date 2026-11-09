@@ -1,0 +1,18 @@
+{
+  "formatVersion": 2,
+  "appVersion": "",
+  "savedAtUnix": 1712345678,
+  "playSeconds": 12345.5,
+  "player": {
+    "pos": [1.25, 3.5, -7],
+    "yaw": 45,
+    "waypoint": "草原の拠点"
+  },
+  "world": {"timeOfDay": 0.75, "day": 24, "weather": "rain"},
+  "progress": {
+    "defeated": ["guardian", "wolf"],
+    "flags": {"gateOpen": true, "introSeen": false},
+    "ints": {"score": 9007199254740991}
+  },
+  "unknown": {"nested": [null, true, -9007199254740991], "label": "予備"}
+}

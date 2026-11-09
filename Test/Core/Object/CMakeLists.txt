@@ -51,6 +51,7 @@ norves_add_test_bundle(SceneQueryRaycastTest
     MEMBER SceneQueryPhysicsFacadeTest SceneQueryPhysicsFacadeTest.cpp
     MEMBER SceneCameraProbeTest ${CMAKE_SOURCE_DIR}/Test/Core/Camera/SceneCameraProbeTest.cpp
     MEMBER PhysicsQueryTypesTest PhysicsQueryTypesTest.cpp
+    MEMBER PhysicsLayerTableTest PhysicsLayerTableTest.cpp
 )
 target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
 target_include_directories(SceneQueryRaycastTest PRIVATE
@@ -64,6 +65,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER WorldTickGroupTest WorldTickGroupTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
+    MEMBER EntityActiveInHierarchyTest EntityActiveInHierarchyTest.cpp
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
     MEMBER SpringArmComponentTest SpringArmComponentTest.cpp
     MEMBER WorldRenderInterpolationTest WorldRenderInterpolationTest.cpp
@@ -75,6 +77,9 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER EcsSchedulerTest EcsSchedulerTest.cpp
     MEMBER EcsLifetimeTest EcsLifetimeTest.cpp
     MEMBER EcsHierarchyTest EcsHierarchyTest.cpp
+    MEMBER ScatterSystemResidencyTest ScatterSystemResidencyTest.cpp
+    MEMBER StreamingCellStateMachineTest ${CMAKE_SOURCE_DIR}/Test/Core/Streaming/StreamingCellStateMachineTest.cpp
+    MEMBER StreamingBudgetTest ${CMAKE_SOURCE_DIR}/Test/Core/Streaming/StreamingBudgetTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -113,11 +118,15 @@ add_test(NAME EcsPropertyStorageTest COMMAND ObjectReflectionTest --test=EcsProp
 add_test(NAME EntitySubtreeSnapshotTest COMMAND SceneSerializerTest --test=EntitySubtreeSnapshotTest)
 add_test(NAME PrefabRoundTripTest COMMAND SceneSerializerTest --test=PrefabRoundTripTest)
 add_test(NAME TransformHierarchyTest COMMAND EntityTreeTest --test=TransformHierarchyTest)
+add_test(NAME EntityActiveInHierarchyTest COMMAND EntityTreeTest --test=EntityActiveInHierarchyTest)
 add_test(NAME EntityWorldAABBTest COMMAND EntityTreeTest --test=EntityWorldAABBTest)
 add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQueryOverlapTest)
 add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryRaycastTest --test=SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
+add_test(NAME ScatterSystemResidencyTest COMMAND EntityTreeTest --test=ScatterSystemResidencyTest)
+add_test(NAME StreamingCellStateMachineTest COMMAND EntityTreeTest --test=StreamingCellStateMachineTest)
+add_test(NAME StreamingBudgetTest COMMAND EntityTreeTest --test=StreamingBudgetTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 
@@ -127,10 +136,20 @@ add_test(NAME SkeletalAssetResourceTest COMMAND ResourceRegistryTest --test=Skel
 add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)
 
 add_test(NAME PhysicsQueryTypesTest COMMAND SceneQueryRaycastTest --test=PhysicsQueryTypesTest)
+add_test(NAME PhysicsLayerTableTest COMMAND SceneQueryRaycastTest --test=PhysicsLayerTableTest)
 
 add_test(NAME TickGroupConfigurationTest COMMAND EntityTreeTest --test=TickGroupConfigurationTest)
 
 add_test(NAME WorldTickGroupTest COMMAND EntityTreeTest --test=WorldTickGroupTest)
+
+# RegisterComponentTick で登録した型が TickStages.md の割り当て表に全部載っているかを照らす(アプリは起動しない)
+add_test(
+    NAME TickContractTableTest
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/Scripts/CheckTickContractTable.ps1"
+        -RepositoryRoot "${CMAKE_SOURCE_DIR}"
+)
+set_tests_properties(TickContractTableTest PROPERTIES TIMEOUT 120)
 
 add_test(NAME SceneCameraProbeTest COMMAND SceneQueryRaycastTest --test=SceneCameraProbeTest)
 add_test(NAME WorldRenderInterpolationTest COMMAND EntityTreeTest --test=WorldRenderInterpolationTest)

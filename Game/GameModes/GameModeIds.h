@@ -26,6 +26,9 @@ namespace Game::GameModes
     /// 固定/可変駆動と描画補間の比較用モード。明示フラグ時のみ起動する。
     inline constexpr NorvesLib::Core::GameMode::GameModeId DogMovementSmoke = "DogMovementSmoke"_id;
 
+    /// 戦闘の垂直スライスの確かめ。--combat-smoke・--encounter-smoke・--enemy-smoke のときだけ入る(ランチャーに載せない)
+    inline constexpr NorvesLib::Core::GameMode::GameModeId CombatSlice = "CombatSlice"_id;
+
     /// メモリ寿命テストモードの GameModeId
     inline constexpr NorvesLib::Core::GameMode::GameModeId MemoryAgingTest = "MemoryAgingTest"_id;
 
@@ -34,6 +37,12 @@ namespace Game::GameModes
 
     /// 空と平らな地面だけの確認用シーン（開発ビルドだけランチャーに出る）。自由飛行カメラの確認に使う
     inline constexpr NorvesLib::Core::GameMode::GameModeId Sandbox = "Sandbox"_id;
+
+    /// シ者の表現を確かめる専用モード。--shisha-showcase=<場面> のときだけ起動し、ランチャーには載せない
+    inline constexpr NorvesLib::Core::GameMode::GameModeId ShishaShowcase = "ShishaShowcase"_id;
+
+    /// クック済みの草原地形を TerrainComponent で配置する確認用シーン（開発ビルドだけ）
+    inline constexpr NorvesLib::Core::GameMode::GameModeId Grassland = "Grassland"_id;
 
     /// 仮想化ジオメトリ（MegaGeometry）で生成したバナナを床いっぱいに敷き詰めるシーン
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaBananas = "MegaBananas"_id;

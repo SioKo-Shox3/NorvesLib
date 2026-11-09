@@ -7,6 +7,7 @@
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 namespace Game::Gameplay
@@ -70,6 +71,19 @@ namespace Game::Gameplay
         m_bProfileReadFailed = false;
         return true;
     }
+    bool QuadrupedLocomotionComponent::SetProfileSource(const Core::Container::AnsiString& assetRoot,
+                                                         Core::Container::AnsiStringView path)
+    {
+        Core::Asset::TextAssetReloadTracker profile(assetRoot);
+        if (!profile.SetPath(path))
+        {
+            return false;
+        }
+        m_Profile = std::move(profile);
+        m_ProfileError.clear();
+        m_bProfileReadFailed = false;
+        return true;
+    }
     bool QuadrupedLocomotionComponent::SetDriveMode(Physics::CharacterDriveMode mode)
     {
         auto* body = Body();
@@ -107,6 +121,13 @@ namespace Game::Gameplay
         m_VisualPoseId = pose->GetObjectId();
         root->SetRenderInterpolationEnabled(!Body() || Body()->GetDriveMode() == Physics::CharacterDriveMode::Fixed);
         return true;
+    }
+    void QuadrupedLocomotionComponent::SetVisualTiltScale(float scale)
+    {
+        if (std::isfinite(scale))
+        {
+            m_VisualTiltScale = std::clamp(scale, 0.0f, 1.0f);
+        }
     }
     bool QuadrupedLocomotionComponent::SetViewSource(Core::Entity* view)
     {
@@ -495,17 +516,18 @@ namespace Game::Gameplay
         if (!pose || !body)
             return;
         // 傾きだけを見た目の子へ適用。VisualRootの固定履歴と直立capsuleは変更しない。
-        pose->SetLocalRotation(Math::Quaternion(Math::Vector3::UnitZ, m_Output.Bank) *
-                               Math::Quaternion(Math::Vector3::UnitX, -m_Output.Pitch) * m_VisualBaseRotation);
+        pose->SetLocalRotation(Math::Quaternion(Math::Vector3::UnitZ, m_Output.Bank * m_VisualTiltScale) *
+                               Math::Quaternion(Math::Vector3::UnitX, -m_Output.Pitch * m_VisualTiltScale) *
+                               m_VisualBaseRotation);
         if (auto* animator = pose->GetComponent<Core::Component::AnimatorComponent>())
         {
             const auto& state = body->GetState();
             Core::Animation::AnimDriveSignals signals;
-            const auto relative = state.Velocity - state.PlatformVelocity;
-            signals.Speed = std::hypot(relative.x, relative.z);
+            // モデルが同じ区間で観測した足場に対する速度と接地を、歩様・傾きと揃えて渡す。
+            signals.Speed = m_Output.Speed;
             signals.Velocity = state.Velocity;
             signals.TurnRate = m_Output.TurnRate;
-            signals.bGrounded = state.bGrounded;
+            signals.bGrounded = m_Output.bGrounded;
             signals.GroundNormal = state.GroundNormal;
             (void)animator->SetDriveSignals(signals);
             (void)animator->SetInt(animator->FindParam("GaitId"_id), m_Output.Gait);

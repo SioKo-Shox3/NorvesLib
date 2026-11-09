@@ -1,12 +1,41 @@
 ﻿#include "Component/AnimatorComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Object/Entity.h"
+#include "Object/World.h"
+#include "Math/MatrixUtils.h"
 #include "Animation/SkeletonResource.h"
+#include "Platform/PlatformFile.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
+namespace NorvesLib::Core::Animation
+{
+    int32_t PoseModifierContext::FindJointIndex(Identity name) const
+    {
+        return m_SkeletonAsset ? m_SkeletonAsset->FindJointIndex(name) : -1;
+    }
+} // namespace NorvesLib::Core::Animation
 namespace NorvesLib::Core::Component
 {
     IMPLEMENT_CLASS(AnimatorComponent, Component)
+    AnimatorLookTarget AnimatorLookTarget::None()
+    {
+        return {};
+    }
+    AnimatorLookTarget AnimatorLookTarget::AtWorldPosition(const Math::Vector3& position)
+    {
+        AnimatorLookTarget target;
+        target.Kind = AnimatorLookTargetKind::WorldPosition;
+        target.WorldPosition = position;
+        return target;
+    }
+    AnimatorLookTarget AnimatorLookTarget::AtEntity(uint64_t objectId)
+    {
+        AnimatorLookTarget target;
+        target.Kind = AnimatorLookTargetKind::Entity;
+        target.EntityObjectId = objectId;
+        return target;
+    }
     AnimatorComponent::AnimatorComponent()
     {
         SetTickGroup(ETickGroup::Animation);
@@ -106,6 +135,79 @@ namespace NorvesLib::Core::Component
         InvalidateRootMotionFrame(true);
         return true;
     }
+    void AnimatorComponent::SetLookTarget(int32_t priority, const AnimatorLookTarget& target)
+    {
+        if (target.Kind == AnimatorLookTargetKind::WorldPosition &&
+            (!std::isfinite(target.WorldPosition.x) || !std::isfinite(target.WorldPosition.y) ||
+             !std::isfinite(target.WorldPosition.z)))
+        {
+            return;
+        }
+        auto entry = m_LookTargets.begin();
+        while (entry != m_LookTargets.end() && entry->Priority > priority)
+        {
+            ++entry;
+        }
+        if (entry != m_LookTargets.end() && entry->Priority == priority)
+        {
+            entry->Target = target;
+        }
+        else
+        {
+            m_LookTargets.insert(entry, LookTargetEntry{priority, target});
+        }
+    }
+    void AnimatorComponent::ClearLookTarget(int32_t priority)
+    {
+        for (auto entry = m_LookTargets.begin(); entry != m_LookTargets.end(); ++entry)
+        {
+            if (entry->Priority == priority)
+            {
+                m_LookTargets.erase(entry);
+                return;
+            }
+        }
+    }
+    bool AnimatorComponent::TryResolveLookTarget(Math::Vector3& outWorldPosition) const
+    {
+        if (m_LookTargets.empty())
+        {
+            return false;
+        }
+        const auto& target = m_LookTargets.front().Target;
+        if (target.Kind == AnimatorLookTargetKind::WorldPosition)
+        {
+            outWorldPosition = target.WorldPosition;
+            return true;
+        }
+        if (target.Kind == AnimatorLookTargetKind::Entity)
+        {
+            const auto* owner = GetOwner();
+            const auto* world = owner ? owner->GetWorld() : nullptr;
+            const auto* entity = world ? world->FindEntityByObjectId(target.EntityObjectId) : nullptr;
+            if (entity)
+            {
+                outWorldPosition = entity->GetWorldTransform().position;
+                return true;
+            }
+        }
+        return false;
+    }
+    bool AnimatorComponent::HasLookTarget(int32_t priority) const
+    {
+        for (const auto& entry : m_LookTargets)
+        {
+            if (entry.Priority == priority)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    uint32_t AnimatorComponent::FindSyncGroup(Identity name) const
+    {
+        return m_Instance.FindSyncGroup(name);
+    }
     Animation::AnimParamHandle AnimatorComponent::FindParam(Identity name) const
     {
         return m_Instance.Parameters().Find(name);
@@ -138,7 +240,22 @@ namespace NorvesLib::Core::Component
     }
     bool AnimatorComponent::SetDriveSignals(const Animation::AnimDriveSignals& value)
     {
-        return m_Instance.Parameters().ApplyDriveSignals(value);
+        if (!m_Instance.Parameters().ApplyDriveSignals(value))
+        {
+            return false;
+        }
+        m_LastDriveSignals = value;
+        m_bHasDriveSignals = true;
+        return true;
+    }
+    bool AnimatorComponent::TryGetLastDriveSignals(Animation::AnimDriveSignals& out) const
+    {
+        if (!m_bHasDriveSignals)
+        {
+            return false;
+        }
+        out = m_LastDriveSignals;
+        return true;
     }
     bool AnimatorComponent::RequestState(Identity machine, Identity state, float seconds)
     {
@@ -172,6 +289,109 @@ namespace NorvesLib::Core::Component
         {
             m_Modifiers.clear();
         }
+    }
+    bool AnimatorComponent::ApplyPoseModifiersJson(
+        const Container::String& json, const Animation::Procedural::PoseModifierTypeTable& types,
+        Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        using namespace Animation::Procedural;
+        PoseModifierConfigReport localReport;
+        auto& result = report ? *report : localReport;
+        result = {};
+        if (m_bApplyingModifiers)
+        {
+            result.Error = PoseModifierConfigError::Busy;
+            return false;
+        }
+        if (!m_BoundSkeleton)
+        {
+            result.Error = PoseModifierConfigError::NoSkeleton;
+            return false;
+        }
+        Container::VariableArray<Container::TSharedPtr<Animation::IPoseModifier>> candidate;
+        if (!ParsePoseModifierConfig(json, *m_BoundSkeleton, m_Graph ? &m_Instance.Parameters() : nullptr,
+                                     types, candidate, result))
+        {
+            return false;
+        }
+        std::stable_sort(candidate.begin(), candidate.end(),
+                         [](const auto& a, const auto& b) { return a->Order() < b->Order(); });
+        m_Modifiers = std::move(candidate);
+        return true;
+    }
+    bool AnimatorComponent::ApplyPoseModifiersJson(
+        const Container::String& json, Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        return ApplyPoseModifiersJson(json, Animation::Procedural::GetBuiltinPoseModifierTypes(), report);
+    }
+    bool AnimatorComponent::ApplyPoseModifiersFile(
+        const Container::String& path, const Animation::Procedural::PoseModifierTypeTable& types,
+        Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        using namespace Animation::Procedural;
+        PoseModifierConfigReport localReport;
+        auto& result = report ? *report : localReport;
+        result = {};
+        if (m_bApplyingModifiers)
+        {
+            result.Error = PoseModifierConfigError::Busy;
+            return false;
+        }
+        if (!m_BoundSkeleton)
+        {
+            result.Error = PoseModifierConfigError::NoSkeleton;
+            return false;
+        }
+        Container::VariableArray<uint8_t> bytes;
+        if (!Platform::ReadFileBytes(path, bytes).bSuccess)
+        {
+            result.Error = PoseModifierConfigError::FileReadFailed;
+            result.Path = path;
+            return false;
+        }
+        const size_t skip = bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
+        Container::String json;
+        if constexpr (sizeof(TCHAR) == 1)
+        {
+            // 厳密な UTF-8 の検証は JsonDocument::TryParse が行う。
+            for (size_t i = skip; i < bytes.size(); ++i)
+            {
+                json.push_back(TCHAR(bytes[i]));
+            }
+        }
+        else if (bytes.size() > skip)
+        {
+            const auto length = bytes.size() - skip;
+            if (length > size_t(std::numeric_limits<int>::max()))
+            {
+                result.Error = PoseModifierConfigError::InvalidJson;
+                return false;
+            }
+            const char* data = reinterpret_cast<const char*>(bytes.data() + skip);
+            const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, int(length), nullptr, 0);
+            Container::VariableArray<wchar_t> wide;
+            if (count <= 0)
+            {
+                result.Error = PoseModifierConfigError::InvalidJson;
+                return false;
+            }
+            wide.resize(size_t(count));
+            if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, int(length), wide.data(), count) != count)
+            {
+                result.Error = PoseModifierConfigError::InvalidJson;
+                return false;
+            }
+            for (const auto unit : wide)
+            {
+                json.push_back(TCHAR(unit));
+            }
+        }
+        return ApplyPoseModifiersJson(json, types, &result);
+    }
+    bool AnimatorComponent::ApplyPoseModifiersFile(
+        const Container::String& path, Animation::Procedural::PoseModifierConfigReport* report)
+    {
+        return ApplyPoseModifiersFile(path, Animation::Procedural::GetBuiltinPoseModifierTypes(), report);
     }
     bool AnimatorComponent::Step(float seconds)
     {
@@ -256,6 +476,20 @@ namespace NorvesLib::Core::Component
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
         context.SyncPhases = m_Instance.GetSyncPhases();
+        context.PendingEvents = m_Instance.Events().PendingEvents();
+        if (const auto* owner = mesh->GetOwner())
+        {
+            const auto& world = owner->GetWorldTransform();
+            context.MeshToWorld = Math::MatrixUtils::CreateWorldRowVector(world.position, world.rotation, world.scale);
+        }
+        else
+        {
+            context.MeshToWorld = Math::Matrix4x4::Identity;
+        }
+        context.MeshNodeTransform = mesh->GetMeshNodeGlobalTransform();
+        context.SetDriveSignals(m_bHasDriveSignals ? &m_LastDriveSignals : nullptr);
+        context.SetOwner(GetOwner());
+        context.SetSkeletonAsset(m_BoundSkeleton.get());
         m_bApplyingModifiers = true;
         bool applied = true;
         for (const auto& modifier : m_Modifiers)

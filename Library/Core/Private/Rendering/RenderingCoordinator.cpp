@@ -59,6 +59,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -4460,6 +4461,13 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void RenderingCoordinator::SetFixedFrameTime(float deltaSeconds, double totalSeconds)
+    {
+        m_FixedFrameDeltaSeconds = deltaSeconds;
+        m_FixedFrameTotalSeconds = totalSeconds;
+        m_bFixedFrameTimePending = true;
+    }
+
     void RenderingCoordinator::BeginFrame()
     {
         if (!m_bInitialized)
@@ -4496,7 +4504,16 @@ namespace NorvesLib::Core::Rendering
                 ++m_DeterministicEpochFrames;
             }
         }
-        m_TotalTime += deltaTime;
+        if (!m_bDeterministicCapture && m_bFixedFrameTimePending)
+        {
+            deltaTime = m_FixedFrameDeltaSeconds;
+            m_TotalTime = m_FixedFrameTotalSeconds;
+        }
+        else
+        {
+            m_TotalTime += deltaTime;
+        }
+        m_bFixedFrameTimePending = false;
 
         // ST経路ではReadyパケットがRTに消費されないため、フレーム開始時に再利用する。
         // MT経路ではReady→QueuedのハンドオフをRT側が行うため、ここでは触らない。
@@ -4574,6 +4591,15 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
+        // 容量を保ったまま、登録順に値を写す。
+        packet.Scene.SkyOccluders.clear();
+        packet.Scene.SkyOccluders.reserve(m_SkyOccluders.size());
+        for (const SkyOccluderEntry& entry : m_SkyOccluders)
+        {
+            packet.Scene.SkyOccluders.push_back(entry.Proxy);
+        }
+        packet.Scene.SkyOcclusionRevision = m_SkyOcclusionRevision;
         packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.bStaticEnvironmentUniform = m_bStaticEnvironmentUniform;
@@ -4582,6 +4608,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
+        packet.GrassField = m_GrassField;
         packet.Scene.RibbonTrails = m_RibbonTrails;
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
@@ -6589,6 +6616,65 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
+    {
+        const SkyOcclusionParameters sanitized = SanitizeSkyOcclusionParameters(parameters);
+        if (!AreEqualSkyOcclusionParameters(m_SkyOcclusion, sanitized))
+        {
+            m_SkyOcclusion = sanitized;
+            m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+        }
+    }
+
+    SkyOccluderHandle RenderingCoordinator::RegisterSkyOccluder(const SkyOccluderProxy& proxy)
+    {
+        const SkyOccluderProxy sanitized = SanitizeSkyOccluderProxy(proxy);
+        if (!IsValidSkyOccluderProxy(sanitized) || m_NextSkyOccluderHandle == 0u)
+        {
+            return 0u;
+        }
+        const SkyOccluderHandle handle = m_NextSkyOccluderHandle;
+        m_SkyOccluders.push_back(SkyOccluderEntry{handle, sanitized});
+        ++m_NextSkyOccluderHandle;
+        m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+        return handle;
+    }
+
+    void RenderingCoordinator::UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy)
+    {
+        const SkyOccluderProxy sanitized = SanitizeSkyOccluderProxy(proxy);
+        if (!IsValidSkyOccluderProxy(sanitized))
+        {
+            UnregisterSkyOccluder(handle);
+            return;
+        }
+        for (SkyOccluderEntry& entry : m_SkyOccluders)
+        {
+            if (entry.Handle == handle)
+            {
+                if (!AreEqualSkyOccluderProxy(entry.Proxy, sanitized))
+                {
+                    entry.Proxy = sanitized;
+                    m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+                }
+                return;
+            }
+        }
+    }
+
+    void RenderingCoordinator::UnregisterSkyOccluder(SkyOccluderHandle handle)
+    {
+        for (auto it = m_SkyOccluders.begin(); it != m_SkyOccluders.end(); ++it)
+        {
+            if (it->Handle == handle)
+            {
+                m_SkyOccluders.erase(it);
+                m_SkyOcclusionRevision = AdvanceRevision(m_SkyOcclusionRevision);
+                return;
+            }
+        }
+    }
+
     void RenderingCoordinator::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_StaticEnvironmentIntensityScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
@@ -6628,6 +6714,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)
     {
         m_Foliage = foliage;
+    }
+
+    void RenderingCoordinator::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
+    {
+        m_GrassField = std::move(grassField);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)

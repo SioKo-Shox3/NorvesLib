@@ -1,6 +1,7 @@
 ﻿#include "Input/IInputBindingStore.h"
 #include "Input/InputBindingJson.h"
 #include "Container/VariableArray.h"
+#include "Save/SettingsStore.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -93,6 +94,37 @@ int main()
     assert(empty!=INVALID_HANDLE_VALUE && CloseHandle(empty));
     loaded=store->Load();assert(loaded.Status==EInputBindingStoreLoadStatus::Loaded && loaded.Text.empty());
     assert(store->Save(first).Success);
+    // 古い入力設定をユーザー設定へ写し、以降は新しい保存先だけを更新する。
+    {
+        Save::SettingsStore settings("other/settings.json");
+        assert(settings.Load().Status == Save::SettingsLoadStatus::Defaults);
+        auto settingsStore = CreateSettingsInputBindingStore(settings);
+        assert(settingsStore && settingsStore->Load().Status == EInputBindingStoreLoadStatus::Missing);
+        auto value = settings.Get();
+        value.Language = "ja";
+        settings.Set(value);
+
+        assert(MigrateLegacyInputBindings(settings, *store).Status == ELegacyInputBindingMigration::Migrated);
+        const auto migrated = settingsStore->Load();
+        assert(migrated.Status == EInputBindingStoreLoadStatus::Loaded && migrated.Text == first);
+        loaded = store->Load();
+        assert(loaded.Status == EInputBindingStoreLoadStatus::Loaded && loaded.Text == first);
+
+        Save::SettingsStore reloaded("other/settings.json");
+        assert(reloaded.Load().Status == Save::SettingsLoadStatus::Loaded);
+        assert(reloaded.Get().KeyBindingsJson == first && reloaded.Get().Language == "ja");
+        assert(MigrateLegacyInputBindings(reloaded, *store).Status == ELegacyInputBindingMigration::NotNeeded);
+
+        auto reloadedStore = CreateSettingsInputBindingStore(reloaded);
+        assert(reloadedStore && reloadedStore->Save(second).Success);
+        Save::SettingsStore savedAgain("other/settings.json");
+        assert(savedAgain.Load().Status == Save::SettingsLoadStatus::Loaded);
+        assert(savedAgain.Get().KeyBindingsJson == second && savedAgain.Get().Language == "ja");
+        loaded = store->Load();
+        assert(loaded.Status == EInputBindingStoreLoadStatus::Loaded && loaded.Text == first);
+    }
+    assert(DeleteFileW(Child(other, L"settings.json").c_str()));
+    assert(DeleteFileW(Child(other, L"settings.json.bak").c_str()));
     assert(SetCurrentDirectoryW(unicode.c_str()));
     auto unicodeStore=CreateWorkingDirectoryInputBindingStore();assert(unicodeStore && unicodeStore->Save(second).Success);
     assert(unicodeStore->Load().Text==second);NoTemporaryFiles();

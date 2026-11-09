@@ -581,6 +581,38 @@ namespace
         return false;
     }
 
+    // --job-workers=<n>: JobSystem のワーカー数（1 以上 256 以下の整数）
+    bool TryParseJobWorkersOption(const String& argument, uint32_t& outWorkers, bool& bMatched)
+    {
+        const String prefix = TEXT("--job-workers=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 3u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed == 0u || parsed > 256u)
+        {
+            return false;
+        }
+        outWorkers = parsed;
+        return true;
+    }
+
     // --vsm-pool-pages=<n>: VSM の物理ページのプールのページの数（1 以上の整数。装置の上限へは VirtualShadowMapPass が締める）
     bool TryParseVsmPoolPagesOption(const String& argument, uint32_t& outPages, bool& bMatched)
     {
@@ -704,6 +736,22 @@ namespace
         outWidth = numbers[0];
         outHeight = numbers[1];
         return true;
+    }
+
+    // --fixed-frame-dt=<秒の小数か分数> を読み、有理数のナノ秒刻みへ変換する。
+    bool TryParseFixedFrameDeltaOption(const String& argument, int64_t& outNumeratorNanoseconds,
+        int64_t& outDenominator, bool& bMatched)
+    {
+        const String prefix = TEXT("--fixed-frame-dt=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        return NorvesLib::Core::Engine::TryParseFixedFrameDelta(
+            value.c_str(), value.size(), outNumeratorNanoseconds, outDenominator);
     }
 
     // --capture-deterministic: 同じコードを2回撮ると一致する撮影（値を取らない。--capture-png と併せて使う）。
@@ -1120,6 +1168,16 @@ namespace NorvesLib::Core::Engine
             if (ParseFixedUpdateRateArgument(argument.c_str(),fixedRate)==FixedUpdateArgumentResult::Invalid)
             { LOG_ERROR("固定更新の起動引数には60または120を指定してください");return false; }
         }
+        uint32_t jobWorkerCount = 0u;
+        for (const auto& argument : config.Arguments)
+        {
+            bool bMatchedJobWorkers = false;
+            if (!TryParseJobWorkersOption(argument, jobWorkerCount, bMatchedJobWorkers) && bMatchedJobWorkers)
+            {
+                LOG_ERROR("ApplicationProcessor の起動引数 --job-workers の値が不正です: 1 以上 256 以下の整数にしてください");
+                return false;
+            }
+        }
         if (!m_FixedStepScheduler->SetRate(fixedRate))
         { LOG_ERROR("固定更新の設定が不正か、既に実行中です");return false; }
         GApplicationLifecycleState = {};
@@ -1128,8 +1186,9 @@ namespace NorvesLib::Core::Engine
 
         // JobSystemを初期化（ワーカースレッドの起動）
         GApplicationLifecycleState.bJobSystem = true;
-        Thread::JobSystem::Get().Initialize();
-        LOG_INFO("JobSystem initialized");
+        Thread::JobSystem::Get().Initialize(jobWorkerCount);
+        LOG_INFO("JobSystem を初期化しました: ワーカー %zu 本",
+                 Thread::JobSystem::Get().GetWorkerThreadCount());
 
         // GEngineを作成
         if (!CreateEngine())
@@ -1189,6 +1248,10 @@ namespace NorvesLib::Core::Engine
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bCaptureDeterministic = false;
+        m_FixedFrameClock.Disable();
+        bool bFixedFrameDelta = false;
+        int64_t fixedFrameNumeratorNanoseconds = 0;
+        int64_t fixedFrameDenominator = 1;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
@@ -1490,6 +1553,21 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor runtime option --capture-png ignored: path must not be empty");
             }
 
+            bool bMatchedFixedFrameDelta = false;
+            if (TryParseFixedFrameDeltaOption(args[i], fixedFrameNumeratorNanoseconds,
+                fixedFrameDenominator, bMatchedFixedFrameDelta))
+            {
+                bFixedFrameDelta = true;
+                LOG_INFO("ApplicationProcessor runtime option fixed_frame_dt_ns=%lld/%lld",
+                         static_cast<long long>(fixedFrameNumeratorNanoseconds),
+                         static_cast<long long>(fixedFrameDenominator));
+            }
+            else if (bMatchedFixedFrameDelta)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --fixed-frame-dt を無視する: "
+                            "0 より大きく 1 秒以下の小数か分数（例 1/24・0.0125）で指定する");
+            }
+
             if (IsCaptureDeterministicOption(args[i]))
             {
                 bCaptureDeterministic = true;
@@ -1539,6 +1617,11 @@ namespace NorvesLib::Core::Engine
             else
             {
                 GEngine->GetDeterministicCapture().Enable();
+                m_FixedFrameClock.SetStepNanoseconds(DeterministicCapture::FixedDeltaNanoseconds);
+                if (bFixedFrameDelta)
+                {
+                    LOG_WARNING("ApplicationProcessor runtime option --fixed-frame-dt は --capture-deterministic の 1/60 秒を優先するため無視する");
+                }
                 if (bEnableMultiThreadedRendering)
                 {
                     bEnableMultiThreadedRendering = false;
@@ -1547,6 +1630,11 @@ namespace NorvesLib::Core::Engine
                          "render_thread=st fixed_delta_s=%.6f",
                          static_cast<double>(DeterministicCapture::FixedDeltaSeconds));
             }
+        }
+
+        if (!bCaptureDeterministic && bFixedFrameDelta)
+        {
+            m_FixedFrameClock.SetStep(fixedFrameNumeratorNanoseconds, fixedFrameDenominator);
         }
 
         // 撮影はアセットの読み込みが落ち着いた後の画面を取る。描画フレーム数の指定が無ければ既定値を使う。
@@ -1863,6 +1951,7 @@ namespace NorvesLib::Core::Engine
 
         m_LastFrameTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
+        m_FixedFrameClock.Reset();
         if (GEngine)
         {
             GEngine->GetInputMapper().CancelAll();
@@ -1977,6 +2066,8 @@ namespace NorvesLib::Core::Engine
                 GEngine->GetRenderWorld().WaitForRender();
                 GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
             }
+            // Prepare を待ち、GameMode・World・描画資源を片付ける前にセルを解放する。
+            GEngine->GetStreamingSystem().Shutdown();
             if (lifecycle.bJobSystem)
             {
                 Thread::JobSystem::Get().StopAcceptingTasks();
@@ -2140,12 +2231,18 @@ namespace NorvesLib::Core::Engine
         }
 #endif
 
-        // 決定的な撮影では壁時計を使わず、毎フレーム 1/60 秒進める。
+        // 壁時計の時刻を更新しながら、固定刻みが有効ならその時計でフレームを進める。
         DeterministicCapture &deterministicCapture = GEngine->GetDeterministicCapture();
         const bool bDeterministicCapture = deterministicCapture.IsEnabled();
-        const int64_t measuredDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
-        const int64_t rawDeltaNanoseconds =
-            bDeterministicCapture ? DeterministicCapture::FixedDeltaNanoseconds : measuredDeltaNanoseconds;
+        // 起動引数を通らずに決定的な撮影が有効になった場合も 1/60 秒で進める。
+        if (bDeterministicCapture &&
+            (!m_FixedFrameClock.IsEnabled() ||
+             m_FixedFrameClock.GetStepNumeratorNanoseconds() != DeterministicCapture::FixedDeltaNanoseconds ||
+             m_FixedFrameClock.GetStepDenominator() != 1))
+        {
+            m_FixedFrameClock.SetStepNanoseconds(DeterministicCapture::FixedDeltaNanoseconds);
+        }
+        const int64_t rawDeltaNanoseconds = AcquireFrameDeltaNanoseconds();
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
         // 入力はゲーム用100ms clampの前の実dtで評価し、OnUpdateから同frame値を読める。
@@ -2264,6 +2361,11 @@ namespace NorvesLib::Core::Engine
                 {
                     // 描画の受け渡し（パケットの確保・待ち・投入）の区間
                     NorvesLib::Debug::ScopedStat beginFrameScope("GameThread.RenderWorld.BeginFrame", "GameThread");
+                    if (m_FixedFrameClock.IsEnabled() && !bDeterministicCapture)
+                    {
+                        renderWorld.SetFixedFrameTime(
+                            m_FixedFrameClock.GetDeltaSeconds(), m_FixedFrameClock.GetTotalSeconds());
+                    }
                     renderWorld.BeginFrame();
                 }
                 // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
@@ -2720,6 +2822,7 @@ namespace NorvesLib::Core::Engine
             // 段 PreSimulation: GameMode の状態機械 → World の段 Tick → 段 PostTick: 粒子
             RunFrameStage(EFrameStage::PreSimulation, times.Unscaled, handler);
             GEngine->GetWorld().Tick(times);
+            GEngine->GetVegetation().Tick(times.World);
             RunFrameStage(EFrameStage::PostTick, times.Particle, handler);
         }
         const FixedStepAdvanceResult result =
@@ -2761,6 +2864,14 @@ namespace NorvesLib::Core::Engine
         GEngine->GetInputDebugOverlay().Advance();
         GEngine->GetInputRebindCapture().Advance();
         return GEngine->GetInputMapper().Update(time, dt);
+    }
+
+    int64_t ApplicationProcessor::AcquireFrameDeltaNanoseconds()
+    {
+        const int64_t measuredDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        return m_FixedFrameClock.IsEnabled()
+            ? m_FixedFrameClock.NextDeltaNanoseconds()
+            : measuredDeltaNanoseconds;
     }
 
     int64_t ApplicationProcessor::CalculateRawDeltaTimeNanoseconds()
@@ -2909,6 +3020,8 @@ namespace NorvesLib::Core::Engine
 
         add(EFrameStage::PostTick, "PostTick.Particles",
             [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+        add(EFrameStage::PostTick, "PostTick.Streaming",
+            [](void*, const Context&) { GEngine->GetStreamingSystem().Update(); });
 
         add(EFrameStage::FixedModulePre, "FixedModulePre.PreFixedTick",
             [](void*, const Context& context) { Module::GetModuleRegistry().DispatchPreFixedTick(context.DeltaTime); });

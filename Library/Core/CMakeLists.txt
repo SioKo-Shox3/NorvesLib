@@ -9,9 +9,17 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Save/GameStateStore.cpp
+    Private/Save/SaveContainer.cpp
+    Private/Save/SaveMigration.cpp
+    Private/Save/SaveService.cpp
+    Private/Save/SaveSlotStore.cpp
+    Private/Save/SettingsStore.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Camera/CameraCollisionSolver.cpp
+    Private/Camera/LockOnTarget.cpp
     Private/Camera/SceneCameraProbe.cpp
+    Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
@@ -32,6 +40,12 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfMaterialSource.cpp
     Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
+    Private/Asset/CookedTerrainWriter.cpp
+    Private/Asset/CookedTerrainLoader.cpp
+    Private/Asset/CookedGrassFieldWriter.cpp
+    Private/Asset/CookedGrassFieldLoader.cpp
+    Private/Asset/CookedScatterWriter.cpp
+    Private/Asset/CookedScatterLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
@@ -51,6 +65,17 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    Private/Streaming/CellManifest.cpp
+    Private/Streaming/StreamingCell.cpp
+    Private/Streaming/StreamingEnvironment.cpp
+    Private/Streaming/StreamingPriority.cpp
+    Private/Streaming/StreamingSystem.cpp
+    Private/Vegetation/GrassSpecies.cpp
+    Private/Vegetation/GrassField.cpp
+    Private/Vegetation/GrassFieldAsset.cpp
+    Private/Vegetation/TerrainGroundHeightSource.cpp
+    Private/Vegetation/Vegetation.cpp
+    Private/Vegetation/DrynessMap.cpp
     Private/Particle/SwordTrailRibbon.cpp
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
@@ -108,12 +133,24 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalPoseRuntimeBuild.cpp
     Private/Animation/SkeletalPoseBuilder.cpp
     Private/Animation/SkeletalPoseBounds.cpp
+    Private/Animation/SkinnedSurfaceAnchor.cpp
     Private/Animation/PoseTypes.cpp
     Private/Animation/PoseOps.cpp
     Private/Animation/AnimParams.cpp
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/TwoBoneIK.cpp
+    Private/Animation/BodyBalance.cpp
+    Private/Animation/FootIKModifier.cpp
+    Private/Animation/FootPlantState.cpp
+    Private/Animation/Procedural/AngleDistribution.cpp
+    Private/Animation/Procedural/Spring.cpp
+    Private/Animation/Procedural/PoseModifierConfig.cpp
+    Private/Animation/Procedural/BodyLeanModifier.cpp
+    Private/Animation/Procedural/SpineWaveModifier.cpp
+    Private/Animation/Procedural/LookAtModifier.cpp
+    Private/Animation/Procedural/SpringBoneModifier.cpp
+    Private/Animation/Procedural/FollowThroughModifier.cpp
     Private/Animation/AnimationEvents.cpp
     Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
@@ -179,6 +216,8 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Platform/Windows/WindowsPlatformProcess.cpp
+    Private/Platform/Windows/WindowsPlatformPaths.cpp
+    Private/Platform/Windows/WindowsPlatformFile.cpp
     Private/Platform/Windows/WindowsPlatformConsole.cpp
     Private/Platform/Windows/WindowsPlatformGraphics.cpp
     Private/Boot/AppLauncher.cpp
@@ -202,8 +241,12 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/LevelSnap.cpp
+    Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
+    Private/Scene/MapTransform.cpp
+    Private/Scene/MapCapturePlan.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
@@ -265,8 +308,12 @@ set(PRIVATE_SOURCES
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
     Private/Rendering/SkyAtmosphere.cpp
+    Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/SkyOcclusion.cpp
+    Private/Rendering/SkyOcclusionReference.h
+    Private/Rendering/SkyOcclusionReference.cpp
     Private/Rendering/DDGIVolume.cpp
     Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp
@@ -300,7 +347,12 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     # 地形
     Private/Rendering/Terrain/TerrainHeightField.cpp
+    Private/Rendering/Terrain/TerrainHeightFieldQuery.cpp
+    Private/Rendering/Terrain/TerrainMaterialDesc.cpp
+    Private/Rendering/Terrain/TerrainHeightFieldGrid.h
+    Private/Rendering/Terrain/TerrainSystem.cpp
     Private/Rendering/Terrain/TerrainPlacementGround.cpp
+    Private/Scatter/ScatterSystem.cpp
     Private/Rendering/MegaGeometryPass.cpp
     Private/Rendering/HiZPyramidPass.cpp
     Private/Rendering/SkinningComputePass.cpp
@@ -388,12 +440,17 @@ set(PRIVATE_SOURCES
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp
     Private/Component/SpringArmComponent.cpp
+    Private/Component/ViewClearanceComponent.cpp
+    Private/Component/SkyOccluderComponent.cpp
     Private/Component/TextComponent.cpp
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
     Private/Component/MeshComponent.cpp
     Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
+    Private/Component/TerrainComponent.cpp
+    Private/Component/GrassFieldComponent.cpp
+    Private/Component/WitherSourceComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -439,6 +496,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputBindingJson.cpp
     Private/Input/InputBindingPersistence.cpp
     Private/Input/WorkingDirectoryInputBindingStore.cpp
+    Private/Input/SettingsInputBindingStore.cpp
     Private/Input/InputMapper.cpp
     Private/Input/InputRebindCaptureManager.cpp
     Private/Input/InputDebugOverlayController.cpp
@@ -467,6 +525,12 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Save/GameStateStore.h
+    Public/Save/SaveContainer.h
+    Public/Save/SaveMigration.h
+    Public/Save/SaveService.h
+    Public/Save/SaveSlotStore.h
+    Public/Save/SettingsStore.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -474,6 +538,9 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedMaterialFormat.h
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
+    Public/Asset/CookedTerrainFormat.h
+    Public/Asset/CookedGrassFieldFormat.h
+    Public/Asset/CookedScatterFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
@@ -482,6 +549,7 @@ set(PUBLIC_HEADERS
     Public/Asset/AssetResolveResult.h
     Public/Asset/AssetSystem.h
     Public/Asset/AssetPath.h
+    Public/Asset/AssetRef.h
     Public/Object/Object.h
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
@@ -517,6 +585,8 @@ set(PUBLIC_HEADERS
     Public/Platform/PlatformApplicationFactory.h
     Public/Platform/PlatformInputDevices.h
     Public/Platform/PlatformProcess.h
+    Public/Platform/PlatformPaths.h
+    Public/Platform/PlatformFile.h
     Public/Platform/PlatformConsole.h
     Public/Boot/AppLauncher.h
     Public/Boot/BootConfig.h
@@ -526,6 +596,22 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
+    Public/Streaming/StreamingTypes.h
+    Public/Streaming/StreamingBudget.h
+    Public/Streaming/IStreamingPayloadHandler.h
+    Public/Streaming/IStreamingEnvironment.h
+    Public/Streaming/CellManifest.h
+    Public/Streaming/StreamingCell.h
+    Public/Streaming/StreamingPriority.h
+    Public/Streaming/StreamingSystem.h
+    Public/Vegetation/GrassSpecies.h
+    Public/Vegetation/GrassField.h
+    Public/Vegetation/GrassFieldAsset.h
+    Public/Vegetation/TerrainGroundHeightSource.h
+    Public/Vegetation/Vegetation.h
+    Public/Vegetation/DrynessMap.h
+    Public/Vegetation/GroundHeightSource.h
+    Public/Rendering/GrassFieldRenderData.h
     Public/Particle/SwordTrailRibbon.h
     Public/Particle/DecalPool.h
     Public/Particle/VfxEffectTypes.h
@@ -558,15 +644,31 @@ set(PUBLIC_HEADERS
     Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/TwoBoneIK.h
+    Public/Animation/BodyBalance.h
+    Public/Animation/FootIKModifier.h
+    Public/Animation/FootPlantState.h
+    Public/Animation/SkinnedSurfaceAnchor.h
+    Public/Animation/Procedural/AngleDistribution.h
+    Public/Animation/Procedural/Spring.h
+    Public/Animation/Procedural/PoseModifierConfig.h
+    Public/Animation/Procedural/BodyLeanModifier.h
+    Public/Animation/Procedural/SpineWaveModifier.h
+    Public/Animation/Procedural/LookAtModifier.h
+    Public/Animation/Procedural/SpringBoneModifier.h
+    Public/Animation/Procedural/FollowThroughModifier.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
     Public/Component/HoldSlotComponent.h
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
+    Public/Scene/PhysicsLayerTable.h
     Public/Scene/SceneSerializer.h
+    Public/Scene/MapTransform.h
+    Public/Scene/MapCapturePlan.h
     # Module
     Public/Module/ModuleExport.h
     Public/Module/IModule.h
@@ -598,8 +700,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
+    Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/SkyOcclusion.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
@@ -698,7 +802,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # 地形
     Public/Rendering/Terrain/TerrainHeightField.h
+    Public/Rendering/Terrain/TerrainMaterialDesc.h
+    Public/Rendering/Terrain/TerrainSystem.h
     Public/Rendering/Terrain/TerrainPlacementGround.h
+    Public/Scatter/ScatterSystem.h
     # Object
     Public/Object/Invocation.h
     Public/Object/ObjectCast.h
@@ -710,6 +817,7 @@ set(PUBLIC_HEADERS
     Public/Object/PropertyBag.h
     Public/Object/ReferenceCollector.h
     Public/Object/EntityHandle.h
+    Public/Object/EntityRefId.h
     Public/Object/PrefabAsset.h
     Public/Object/Resource.h
     Public/Object/ResourceRef.h
@@ -719,6 +827,8 @@ set(PUBLIC_HEADERS
     Public/Object/ResourceRegistry.h
     Public/Object/World.h
     Public/Component/SpringArmComponent.h
+    Public/Component/ViewClearanceComponent.h
+    Public/Component/SkyOccluderComponent.h
     Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h
@@ -748,6 +858,8 @@ set(PUBLIC_HEADERS
     Public/Component/MeshComponent.h
     Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
+    Public/Component/GrassFieldComponent.h
+    Public/Component/WitherSourceComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h
@@ -768,7 +880,9 @@ set(PUBLIC_HEADERS
     Public/Math/VectorUtils.h
     Public/Math/CriticalDamping.h
     Public/Camera/CameraCollisionSolver.h
+    Public/Camera/LockOnTarget.h
     Public/Camera/SceneCameraProbe.h
+    Public/Animation/GroundQuery.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
     Public/Locomotion/QuadrupedLocomotionJson.h
@@ -796,6 +910,7 @@ set(PUBLIC_HEADERS
     Public/RHI/ISampler.h
     Public/RHI/IShader.h
     Public/RHI/ICommandList.h
+    Public/RHI/IndirectCommands.h
     Public/RHI/ISwapChain.h
     Public/RHI/IRenderPass.h
     Public/RHI/IFramebuffer.h
@@ -969,7 +1084,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_23)
 
 # Windows固有の設定
 if(WIN32)
-    target_link_libraries(${MODULE_NAME} PRIVATE Xinput)
+    target_link_libraries(${MODULE_NAME} PRIVATE Xinput shell32 ole32)
     target_compile_definitions(${MODULE_NAME} PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN

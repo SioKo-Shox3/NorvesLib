@@ -76,3 +76,29 @@
 - 垂直Capsule対Boxの面への0.25侵入、接触0、対称な内部配置1.5、および対Sphere/Capsuleの0.25侵入で深さと法線符号を固定する。対称配置は複数の押出し方向が成立し、既存規則で-Xを選ぶ
 - 特に線分がBox内部を横切る深い重なりのDepthは既存接触計算の近似を引き継ぐ。任意の姿勢/複合接触に対しNormal*Depthの一度の適用で完全分離する最小並進ベクトルは保証しない。後続GR07の移動処理は複数接触と反復補正を扱い、未収束を確定hitへ変えない
 - 純Mathと実Physics query kernelのCPU試験でこの契約を確認する。実World/Module/Windows統合の受入れとは区別する
+
+## レイヤーの名前の表（GR08-LAYER-TABLE）
+- 名前とbit割当はAssets/Config/CollisionLayers.jsonに置く。JSONのschemaはcollision-layers.v1、layersはname（文字列）とbit（整数のビット位置）を持つ要素の配列。現在の仮の12名はDefault=0、Terrain=1、Platform=2、Player=3、Hurtbox=4、Hitbox=5、Prop=6、Animal=7、GrassInteract=8、CameraBlock=9、Trigger=10、Perception=11（数値はbit位置）
+- CoreのPhysicsLayerTableは表の型とJSON読み込み、Defaultだけを持ち、ゲーム固有名はデータで決める。取り込み設定などToolsからも同じ表を読めるよう、読み込みをCoreに置く
+- Defaultはbit 0で必須。名前・bitの重複、0〜31の範囲外や整数以外のbit、空の名前は不正。未知のフィールドは無視する。LoadFromJsonは全体の検査に成功した場合だけ表を置換し、失敗時はfalseを返して前の表を保ち、例外を呼び出し元へ出さない
+- TryGetLayerMaskは名前から1ビット（1u << bit）を取得し、TryBuildMaskは名前の列を論理和する。未知の名前があればfalseを返して出力を変えず、0や全bitへ黙って置き換えない。空の列は有効なマスク0として成功する
+- GameApplicationHandlerはOnInitializeでGamePhysicsLayers経由で表を読み、m_PhysicsLayersに保持する。読み込みに失敗した場合は警告を出し、Defaultだけの表で起動を続ける
+- 既存コライダーの既定Layer=1・Mask=全bitとクエリの結果は変えない。使う側のカメラの遮蔽・攻撃判定・知覚・取り込み設定の書き換えは各段階で行う
+- 2026-11-03にWindowsのDebugでPhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTestをctestで実行し、4本すべてが通った（終了コード0）
+
+## 足の接地の問い合わせ（GR14）
+- 公開ヘッダは `Library/Core/Public/Animation/GroundQuery.h`、名前空間は `NorvesLib::Core::Animation`。`EGroundQueryStatus` は `Hit`・`NoHit`・`NotReady`・`WrongThread`・`Unavailable`・`TooSteep` を持つ。`GroundHit` は `Point`・`Normal`・`Distance`・`Status`、`GroundProbe` は `OriginAbove`・`MaxDown`・`Result` を持つ
+- `IGroundQuery::Query(originAbove, maxDown, out)` は `originAbove` から真下（-Y）へ `maxDown` まで問い合わせる。`IGroundQuery::QueryBatch(Span<GroundProbe>)` は脚の数だけの問い合わせをまとめて1回で行い、各 `GroundProbe::Result` に結果を返す
+- `PhysicsGroundQuerySettings` は `LayerMask`・`MaxSlopeDeg`（既定50度）・`IgnoreBodies[4]`・`IgnoreColliders[4]` を持つ。レイヤーの名前は企画で未定のため、地面とみなすマスクの値は `PhysicsGroundQuerySettings::LayerMask` で受ける
+- `PhysicsGroundQuery` は Core に置き、Physics モジュールには依存しない。`SceneQuery::ExecuteQuery` / `ExecuteBatch` で `RaycastClosest`（`MaxHits=1`）を使い、`PhysicsQueryFilter` に `LayerMask` と除外対象の Body・Collider を渡す。自分の Body は `IgnoreBodies` に指定し、トリガーは常に `Exclude` とする
+- 物理問い合わせの結果は `Success` → `Hit`、`NoHit` → `NoHit`、`NotReady` → `NotReady`、`WrongThread` → `WrongThread` と写す。それ以外（`Unavailable`・`InvalidArgument`・`IterationLimit` など）は `Unavailable` に写す。有限でない入力や `maxDown <= 0` は物理問い合わせを出さず `Unavailable` とする。バッチ全体が非 `Success` なら、問うた全件をその結果の写しにする
+- 当たりの法線と +Y のなす角が `MaxSlopeDeg` を超える場合は `TooSteep` とし、`Point`・`Normal`・`Distance` は当たりの値で埋める
+- `Hit`・`TooSteep` の `Normal` は単位長に正規化して返す。始点が形状の内側などで、物理側の法線が長さ0か有限でない当たり、または点・距離が有限でない当たりは `Unavailable` とし、`Point`・`Normal`・`Distance` を0にする
+- `PhysicsGroundQuery` は参照する `SceneQuery` の寿命を所有しない。`SceneQuery` と、それを所有する Engine / World より長く生かさない。利用は GameThread 専用とする
+- 姿勢は PoseFinalize の群で確定し、その後に固定ステップが回る（群の順序は `Docs/Architecture/TickStages.md`）。足 IK が読むのは前の固定ステップで公開されたスナップショットで、最大1固定ステップ古い。同じフレームで動いた物体は次の固定ステップまで反映されない
+- 地形（G5 の GR38）は同じ `IGroundQuery` の別実装として差し込む。物理の実装は地形を知らない
+- `PhysicsGroundQueryIntegrationTest`（`PhysicsDynamicsTest` の束の中）で、実 World に Box の20度の斜面と3段の階段を置き、高さを 1e-3 m・法線を0.5度の許容誤差で解析値と照合する。別レイヤーの Box（草の代わり）を `LayerMask` で除き、トリガー・自分の Body の除外も確かめる。固定ステップ前の `NotReady`・別スレッドの `WrongThread`・地面の外の `NoHit`・急な面の `TooSteep` を区別する
+
+## 親の休眠と物理の寿命（GR41）
+コライダー・RigidBody の有効性は所有者の `Entity::IsActiveInHierarchy()` で決まり、祖先のどれかを `SetActive(false)` にするか破棄予約すると、次の固定ステップで作業用・公開のブロードフェーズ、クエリ、接触から外れる。
+trigger に重なっていた子は、休眠で `OverlapEnd` が1回出て、親を戻すと `OverlapBegin` が1回出る。ゲーム側の受け手は「休眠でも End が来る」と読む。

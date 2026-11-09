@@ -364,6 +364,7 @@ register_rendering_gpu_test(
 norves_add_test_bundle(RHIRayTracingApiContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
+    MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
@@ -376,6 +377,9 @@ target_compile_definitions(RHIRayTracingApiContractTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
+
+# 間接描画 API の既定の戻り値と、間接コマンドのサイズ・フィールド配置を CPU で確かめる。
+add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --test=RHIIndirectApiContractTest)
 
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
@@ -579,6 +583,16 @@ set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 間接描画の引数・件数・能力による拒否と不正な引数を、GPU の描画と読み戻しで確かめる。
+# 計算シェーダーが生成した引数のバリアと Vulkan の検証エラー 0 件も確認する。
+add_test(NAME IndirectDrawVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDrawVulkanTest)
+set_tests_properties(IndirectDrawVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
 # 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
 # プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
@@ -624,6 +638,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
+    MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
@@ -1381,15 +1396,23 @@ norves_add_test_bundle(CameraViewConstantsTest
     FOLDER "Test/Core/Rendering"
     MEMBER CameraViewConstantsTest CameraViewConstantsTest.cpp
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
+    MEMBER MapTransformTest MapTransformTest.cpp
+    MEMBER MapCapturePlanTest MapCapturePlanTest.cpp
     MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
     MEMBER VirtualShadowMapClipmapTest VirtualShadowMapClipmapTest.cpp
     MEMBER VirtualShadowMapPointTest VirtualShadowMapPointTest.cpp
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
+    MEMBER ViewClearanceModelTest ViewClearanceModelTest.cpp
+    MEMBER SkyOcclusionModelTest SkyOcclusionModelTest.cpp
+    MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
+    MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
+    MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
@@ -1419,11 +1442,18 @@ target_include_directories(ViewportCameraIdRenderPlanTest PRIVATE
 add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanTest)
 
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
+add_test(NAME MapTransformTest COMMAND CameraViewConstantsTest --test=MapTransformTest)
+add_test(NAME MapCapturePlanTest COMMAND CameraViewConstantsTest --test=MapCapturePlanTest)
 add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
 add_test(NAME VirtualShadowMapClipmapTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapClipmapTest)
 add_test(NAME VirtualShadowMapPointTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapPointTest)
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
+add_test(NAME ViewClearanceModelTest COMMAND CameraViewConstantsTest --test=ViewClearanceModelTest)
+add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOcclusionModelTest)
+add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
+add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
+add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
@@ -1985,6 +2015,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
+    MEMBER GameModeScopeResourceLeakVulkanTest GameModeScopeResourceLeakVulkanTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
@@ -1996,7 +2027,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
     MEMBER VisibilityMaterialTableTest VisibilityMaterialTableTest.cpp
 )
-target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
+target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core RenderingGpuTestSupport)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
@@ -2007,6 +2038,13 @@ target_compile_definitions(RenderResourcesDomainContractTest PRIVATE
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
+add_test(NAME GameModeScopeResourceLeakVulkanTest COMMAND RenderResourcesDomainContractTest --test=GameModeScopeResourceLeakVulkanTest)
+set_tests_properties(GameModeScopeResourceLeakVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
@@ -2218,6 +2256,13 @@ add_executable(SkeletalAnimationSamplingTest
     AnimEventPropertyTest.cpp
     RootMotionMathTest.cpp
     TwoBoneIKTest.cpp
+    PoseModifierBaseTest.cpp
+    ProceduralChainModifierTest.cpp
+    LegIKModifierTest.cpp
+    FootPlantTest.cpp
+    ProceduralSpringModifierTest.cpp
+    ModifierOrderTest.cpp
+    SkinnedSurfaceAnchorTest.cpp
     AnimatorIntegrationTest.cpp
     PoseEvaluationTest.cpp
     ClipChannelSearchTest.cpp

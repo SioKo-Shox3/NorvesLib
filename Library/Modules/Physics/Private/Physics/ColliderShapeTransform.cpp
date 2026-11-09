@@ -11,6 +11,12 @@ namespace NorvesLib::Modules::Physics
         {
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
         }
+        bool IsIdentityRotation(const Math::Quaternion& rotation)
+        {
+            constexpr float tolerance = 1e-6f;
+            return std::fabs(rotation.x) <= tolerance && std::fabs(rotation.y) <= tolerance &&
+                   std::fabs(rotation.z) <= tolerance && std::isfinite(rotation.w) && rotation.w > 0.0f;
+        }
         double NormSquared(const Math::Quaternion& q)
         {
             return double(q.x) * q.x + double(q.y) * q.y + double(q.z) * q.z + double(q.w) * q.w;
@@ -144,6 +150,30 @@ namespace NorvesLib::Modules::Physics
         if (!valid)
             return false;
         out = result;
+        return true;
+    }
+    bool BuildHeightFieldWorldShape(
+        const Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField>& heightField,
+        const Math::Transform& owner, const Math::Transform& local, PhysicsShapeProxy& out)
+    {
+        constexpr float tolerance = 1e-6f;
+        if (!Core::Container::IsValid(heightField) || !IsIdentityRotation(owner.rotation) ||
+            !IsIdentityRotation(local.rotation) || std::fabs(owner.scale.x - 1.0f) > tolerance ||
+            std::fabs(owner.scale.y - 1.0f) > tolerance || std::fabs(owner.scale.z - 1.0f) > tolerance ||
+            !Finite(owner.scale))
+        {
+            return false;
+        }
+
+        const Vector3 origin = owner.position + local.position;
+        if (!Finite(origin))
+        {
+            return false;
+        }
+
+        out.Shape = EPhysicsProxyShape::HeightField;
+        out.HeightField = heightField;
+        out.HeightFieldOrigin = origin;
         return true;
     }
 } // namespace NorvesLib::Modules::Physics

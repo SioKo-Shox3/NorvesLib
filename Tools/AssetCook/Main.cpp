@@ -1,6 +1,7 @@
 ﻿#include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
 #include "CookedTerrainQuery.h"
+#include "GrassFieldCooker.h"
 #include "MeshCooker.h"
 #include "RigRetargetCook.h"
 #include "RigSplitFileCook.h"
@@ -324,7 +325,8 @@ namespace
                 // 区画の番号の形と範囲は SingleAssetCook の検査が確かめる
                 if (value != "displaced-sphere" && value.rfind("terrain-tile:", 0) != 0)
                 {
-                    error = "--generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z> だけを指定できます";
+                    error = "--generate は displaced-sphere・terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・"
+                            "terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z> を指定できます";
                     return false;
                 }
                 outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
@@ -548,6 +550,9 @@ namespace
             << "       AssetCook --recover --runtime-root <directory>  (recover fixed pending in parent workspace, including siblings)\n"
             << "       AssetCook --sample-terrain-grid <x>,<z> [<x>,<z> ...]\n"
             << "       AssetCook --check-terrain-dem-seam <ax>,<az> <bx>,<bz>\n"
+            << "       AssetCook --check-grass-field --package <pkg> --entry <名前> --source <配置.json>  (草の場を元の入力と照合)\n"
+            << "       AssetCook --input <配置.json> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind world --entry <entry.nvgfld> --entry-type Gfd0 --format nvgfld.v0  (草の場を焼く)\n"
             << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
@@ -566,6 +571,12 @@ namespace
             << "       AssetCook --input <audio.wav> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind audio --entry <entry.nvaud> --entry-type Aud0 "
             << "--format nvaud.v0.pcm16 --variant default\n"
+            << "       AssetCook --input <terrain_spec.json> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind world --entry <entry.nvtrn> --entry-type Trn0 "
+            << "--format nvtrn.v0.height16\n"
+            << "       AssetCook --input <terrain_spec.json|terrain.nvtrn> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
+            << "--format nvmesh.v1.mesh3d.pnt.u32.lodgraph --variant default --generate terrain-tile:nvtrn:<x>,<z>\n"
             << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n"
             << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n"
             << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"
@@ -663,6 +674,11 @@ namespace
 
 int main(int argc, char **argv)
 {
+    int grassExitCode = 0;
+    if (NorvesLib::Tools::AssetCook::RunGrassFieldCheckCommand(argc, argv, grassExitCode))
+    {
+        return grassExitCode;
+    }
     int vfxExitCode = 0;
     if (NorvesLib::Tools::AssetCook::RunVfxEffectCookCommand(argc, argv, vfxExitCode))
     {

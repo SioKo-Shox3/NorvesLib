@@ -734,6 +734,13 @@ void TestRootMotionMath();
 void TestTwoBoneIK();
 void TestAnimatorIntegration();
 void TestSocketOracle();
+void TestPoseModifierBase();
+void TestProceduralChainModifier();
+void TestLegIKModifier();
+void TestFootPlant();
+void TestProceduralSpringModifier();
+void TestModifierOrder();
+void TestSkinnedSurfaceAnchor();
 
 int main(int argc, char** argv)
 {
@@ -746,6 +753,13 @@ int main(int argc, char** argv)
     TestTwoBoneIK();
     TestAnimatorIntegration();
     TestSocketOracle();
+    TestPoseModifierBase();
+    TestProceduralChainModifier();
+    TestLegIKModifier();
+    TestFootPlant();
+    TestProceduralSpringModifier();
+    TestModifierOrder();
+    TestSkinnedSurfaceAnchor();
     if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--capture-pose-snapshot") != 0))
     {
         return 2;

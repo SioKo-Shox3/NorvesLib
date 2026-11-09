@@ -31,7 +31,9 @@
 #include "Resource/SkeletalSubmeshLayout.h"
 #include "Text/JsonDocument.h"
 #include "Sha256Digest.h"
+#include "Asset/CookedTerrainFormat.h"
 #include "TerrainCliffDetail.h"
+#include "TerrainSpec.h"
 
 #include <algorithm>
 #include <bit>
@@ -87,6 +89,8 @@ namespace NorvesLib::Tools::AssetCook
         // の形式名を指定した従来のクックは変わらない。
         constexpr AnsiStringView SupportedMeshFormatLodGraph = "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
         constexpr AnsiStringView SupportedSkeletalFormat = "nvskel.v0.skinned.pnujiw.u32";
+        constexpr float kTerrainNvtrnTextureTileMeters = 4.0f;
+        constexpr uint32_t kTerrainNvtrnTileVersion = 1;
 
         using MeshByteArray = NorvesLib::Core::Container::VariableArray<uint8_t>;
 
@@ -3679,6 +3683,170 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        // NVTRN の全タイルを高さ場に戻し、指定区画の世界座標のメッシュを焼く。
+        bool CookTerrainNvtrnTileInternal(const uint8_t* inputBytes, size_t inputSize,
+                                          const std::filesystem::path& inputPath, uint32_t tileX, uint32_t tileZ,
+                                          AnsiStringView format, AnsiStringView logicalPath, MeshCookResult& outResult,
+                                          AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+        {
+            namespace Asset = NorvesLib::Core::Asset;
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            namespace TerrainFormat = NorvesLib::Core::Asset::CookedTerrainFormatV0;
+
+            if (format != SupportedMeshFormatLodGraph)
+            {
+                error = "terrain-tile:nvtrn は nvmesh.v1.mesh3d.pnt.u32.lodgraph だけを焼けます";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath, "model logical path", error))
+            {
+                return false;
+            }
+            if (inputBytes == nullptr && inputSize != 0)
+            {
+                error = "terrain-tile:nvtrn の入力バイト列が不正です";
+                return false;
+            }
+
+            TerrainSpecCookResult specResult;
+            const uint8_t* nvtrnBytes = inputBytes;
+            size_t nvtrnSize = inputSize;
+            if (inputSize < TerrainFormat::MagicSize ||
+                std::memcmp(inputBytes, TerrainFormat::Magic, TerrainFormat::MagicSize) != 0)
+            {
+                if (!CookTerrainSpecFile(inputPath, specResult, error))
+                {
+                    return false;
+                }
+                nvtrnBytes = specResult.Build.NvtrnBytes.data();
+                nvtrnSize = specResult.Build.NvtrnBytes.size();
+            }
+
+            const auto parsed = Asset::ParseCookedTerrain(AssetBlob::CopyBytes({nvtrnBytes, nvtrnSize}));
+            if (!parsed.Succeeded())
+            {
+                error = AnsiString("NVTRN の解析に失敗しました: status=") + FormatInteger(static_cast<int>(parsed.Status));
+                return false;
+            }
+            const Asset::CookedTerrainData& terrain = parsed.Terrain;
+            if (tileX >= terrain.TileCountX || tileZ >= terrain.TileCountZ)
+            {
+                error = AnsiString("terrain-tile:nvtrn の区画番号が範囲外です: tiles=") +
+                        FormatInteger(terrain.TileCountX) + "x" + FormatInteger(terrain.TileCountZ);
+                return false;
+            }
+            AnsiString fieldError;
+            const auto field = Terrain::TerrainHeightField::CreateFromCookedTerrain(terrain, fieldError);
+            if (!field)
+            {
+                error = AnsiString("NVTRN から高さ場を作れません: ") + fieldError;
+                return false;
+            }
+
+            const Terrain::TerrainGridLayout layout = field->GetGridLayout();
+            const uint32_t cells = terrain.TileCells;
+            const uint32_t side = cells + 1;
+            const uint32_t firstColumn = tileX * cells;
+            const uint32_t firstRow = tileZ * cells;
+            const float normalSpacing = static_cast<float>(layout.Spacing * 0.5);
+            const double lastX = layout.FirstX + static_cast<double>(layout.Columns - 1) * layout.Spacing;
+            const double lastZ = layout.FirstZ + static_cast<double>(layout.Rows - 1) * layout.Spacing;
+            // float に丸めた端が格子の外へ出たときだけ、法線の採取点を最も近い内側の float に寄せる。
+            const auto sampleCoordinate = [](float value, double first, double last)
+            {
+                if (static_cast<double>(value) < first)
+                {
+                    return std::nextafter(value, std::numeric_limits<float>::infinity());
+                }
+                if (static_cast<double>(value) > last)
+                {
+                    return std::nextafter(value, -std::numeric_limits<float>::infinity());
+                }
+                return value;
+            };
+            VariableArray<MeshVertexPnt> vertices(static_cast<size_t>(side) * side);
+            for (uint32_t row = 0; row < side; ++row)
+            {
+                for (uint32_t column = 0; column < side; ++column)
+                {
+                    const uint32_t globalColumn = firstColumn + column;
+                    const uint32_t globalRow = firstRow + row;
+                    const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
+                    const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
+                    const float y = field->GetGridVertexHeight(globalColumn, globalRow);
+                    Terrain::TerrainNormal normal = field->SampleNormal(x, z, normalSpacing);
+                    if (!field->Contains(x, z))
+                    {
+                        normal = field->SampleNormal(sampleCoordinate(x, layout.FirstX, lastX),
+                                                     sampleCoordinate(z, layout.FirstZ, lastZ), normalSpacing);
+                    }
+                    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+                        !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
+                    {
+                        error = "NVTRN の区画の頂点の位置・法線が有限でありません";
+                        return false;
+                    }
+                    MeshVertexPnt& vertex = vertices[static_cast<size_t>(row) * side + column];
+                    vertex.Position[0] = x;
+                    vertex.Position[1] = y;
+                    vertex.Position[2] = z;
+                    vertex.Normal[0] = normal.X;
+                    vertex.Normal[1] = normal.Y;
+                    vertex.Normal[2] = normal.Z;
+                    vertex.TexCoord[0] = x / kTerrainNvtrnTextureTileMeters;
+                    vertex.TexCoord[1] = z / kTerrainNvtrnTextureTileMeters;
+                }
+            }
+
+            VariableArray<uint32_t> indices;
+            indices.reserve(static_cast<size_t>(cells) * cells * 6);
+            for (uint32_t row = 0; row < cells; ++row)
+            {
+                for (uint32_t column = 0; column < cells; ++column)
+                {
+                    const uint32_t i00 = row * side + column;
+                    const uint32_t i10 = i00 + 1;
+                    const uint32_t i01 = i00 + side;
+                    const uint32_t i11 = i01 + 1;
+                    if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
+                    {
+                        indices.push_back(i00);
+                        indices.push_back(i10);
+                        indices.push_back(i11);
+                        indices.push_back(i00);
+                        indices.push_back(i11);
+                        indices.push_back(i01);
+                    }
+                    else
+                    {
+                        indices.push_back(i00);
+                        indices.push_back(i10);
+                        indices.push_back(i01);
+                        indices.push_back(i10);
+                        indices.push_back(i11);
+                        indices.push_back(i01);
+                    }
+                }
+            }
+
+            MeshCookResult result;
+            if (!CookLodGraphMesh(vertices, indices, {}, result, error, fallbackMinTriangles, dagRootMaxClusters, 0, true))
+            {
+                return false;
+            }
+            uint64_t hash = Fnv1a64Update(Format::Fnv1a64OffsetBasis, nvtrnBytes, nvtrnSize);
+            hash = Fnv1a64UpdateLe64(hash, tileX);
+            hash = Fnv1a64UpdateLe64(hash, tileZ);
+            hash = Fnv1a64UpdateLe64(hash, cells);
+            hash = Fnv1a64UpdateLe64(hash, std::bit_cast<uint32_t>(kTerrainNvtrnTextureTileMeters));
+            hash = Fnv1a64UpdateLe64(hash, kTerrainNvtrnTileVersion);
+            result.SourceHash = hash;
+            std::printf("TERRAIN_NVTRN_TILE tile=%u,%u tiles=%ux%u vertices=%zu triangles=%zu\n",
+                        tileX, tileZ, terrain.TileCountX, terrain.TileCountZ, vertices.size(), indices.size() / 3);
+            outResult = std::move(result);
+            return true;
+        }
+
         struct SkeletalStringReference
         {
             uint64_t Offset = 0;
@@ -4499,7 +4667,7 @@ namespace NorvesLib::Tools::AssetCook
     }
 
     bool TryParseTerrainTileGenerate(NorvesLib::Core::Container::AnsiStringView generate, uint32_t& outTileX,
-                                     uint32_t& outTileZ, bool& outDem)
+                                     uint32_t& outTileZ, TerrainTileSource& outSource)
     {
         namespace Spec = NorvesLib::Core::Rendering::Terrain::WastelandTerrain;
         if (IsTerrainTileCliffDetailOffGenerate(generate))
@@ -4508,7 +4676,7 @@ namespace NorvesLib::Tools::AssetCook
             const AnsiStringView plainPrefix("terrain-tile:dem-plain:");
             const AnsiString demGenerate =
                 AnsiString("terrain-tile:dem:") + AnsiString(generate.substr(plainPrefix.size()));
-            return TryParseTerrainTileGenerate(AnsiStringView(demGenerate), outTileX, outTileZ, outDem);
+            return TryParseTerrainTileGenerate(AnsiStringView(demGenerate), outTileX, outTileZ, outSource);
         }
         const AnsiStringView prefix("terrain-tile:");
         if (generate.size() <= prefix.size() || generate.substr(0, prefix.size()) != prefix)
@@ -4516,12 +4684,19 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
         AnsiStringView rest = generate.substr(prefix.size());
-        // "dem:" が付けば DEM の格子の区画（番号の範囲は格子の記述で決まるので、ここでは上限だけを見る）
+        // DEM と NVTRN の区画数はそれぞれの入力から決まる。
         const AnsiStringView demPrefix("dem:");
-        const bool bDem = rest.size() > demPrefix.size() && rest.substr(0, demPrefix.size()) == demPrefix;
-        if (bDem)
+        const AnsiStringView nvtrnPrefix("nvtrn:");
+        TerrainTileSource source = TerrainTileSource::Procedural;
+        if (rest.size() > demPrefix.size() && rest.substr(0, demPrefix.size()) == demPrefix)
         {
+            source = TerrainTileSource::Dem;
             rest = rest.substr(demPrefix.size());
+        }
+        else if (rest.size() > nvtrnPrefix.size() && rest.substr(0, nvtrnPrefix.size()) == nvtrnPrefix)
+        {
+            source = TerrainTileSource::Nvtrn;
+            rest = rest.substr(nvtrnPrefix.size());
         }
         const size_t comma = rest.find(',');
         if (comma == AnsiStringView::npos || comma == 0)
@@ -4533,15 +4708,15 @@ namespace NorvesLib::Tools::AssetCook
         const char* const end = rest.data() + rest.size();
         const auto parsedX = std::from_chars(rest.data(), rest.data() + comma, x);
         const auto parsedZ = std::from_chars(rest.data() + comma + 1, end, z);
-        const uint32_t limit = bDem ? 65536u : Spec::kTilesPerSide;
+        const uint32_t limit = source == TerrainTileSource::Dem ? 65536u : Spec::kTilesPerSide;
         if (parsedX.ec != std::errc{} || parsedX.ptr != rest.data() + comma || parsedZ.ec != std::errc{} ||
-            parsedZ.ptr != end || x >= limit || z >= limit)
+            parsedZ.ptr != end || (source != TerrainTileSource::Nvtrn && (x >= limit || z >= limit)))
         {
             return false;
         }
         outTileX = x;
         outTileZ = z;
-        outDem = bDem;
+        outSource = source;
         return true;
     }
 
@@ -4580,6 +4755,17 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
         return true;
+    }
+
+    bool CookTerrainNvtrnTileToNvmesh(const uint8_t* inputBytes, size_t inputSize,
+                                      const std::filesystem::path& inputPath, uint32_t tileX, uint32_t tileZ,
+                                      NorvesLib::Core::Container::AnsiStringView format,
+                                      NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
+                                      NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles,
+                                      uint32_t dagRootMaxClusters)
+    {
+        return CookTerrainNvtrnTileInternal(inputBytes, inputSize, inputPath, tileX, tileZ, format, logicalPath,
+                                            outResult, error, fallbackMinTriangles, dagRootMaxClusters);
     }
 
     bool CheckTerrainDemTileSeam(uint32_t tileAX, uint32_t tileAZ, uint32_t tileBX, uint32_t tileBZ, bool& outPass,

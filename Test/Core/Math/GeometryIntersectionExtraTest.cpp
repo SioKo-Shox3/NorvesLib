@@ -230,6 +230,93 @@ int main()
         std::cout << "CapsuleIntersectsSphere passed\n";
     }
 
+    {
+        uint32_t randomState = 0x7d39a5c1u;
+        const auto nextRandom = [&randomState]()
+        {
+            randomState = randomState * 1664525u + 1013904223u;
+            return static_cast<float>(randomState >> 8) / 16777215.0f;
+        };
+
+        for (int i = 0; i < 70; ++i)
+        {
+            const Vector3 v0(
+                nextRandom() * 6.0f - 3.0f,
+                nextRandom() * 6.0f - 3.0f,
+                nextRandom() * 6.0f - 3.0f);
+            const Vector3 v1 = v0 + Vector3(1.0f + nextRandom() * 2.0f, 0.0f, nextRandom() * 2.0f - 1.0f);
+            const Vector3 v2 = v0 + Vector3(0.0f, 1.0f + nextRandom() * 2.0f, nextRandom() * 2.0f - 1.0f);
+            const Vector3 edge1 = v1 - v0;
+            const Vector3 edge2 = v2 - v0;
+            const Vector3 normal = VectorUtils::Cross(edge1, edge2).Normalized();
+            Vector3 direction = normal * (i % 2 == 0 ? 1.0f : -1.0f);
+            float expectedU = 0.1f + nextRandom() * 0.3f;
+            float expectedV = 0.1f + nextRandom() * 0.3f;
+            float expectedT = 0.5f + nextRandom() * 1.5f;
+            const int variant = i % 10;
+
+            if (variant == 3)
+            {
+                expectedU = 0.0f;
+                expectedV = 0.0f;
+                expectedT = 0.0f;
+            }
+            else if (variant == 4)
+            {
+                direction = Vector3(0.0f, 0.0f, 0.0f);
+            }
+            else if (variant == 5)
+            {
+                expectedU = -0.2f;
+            }
+            else if (variant == 6)
+            {
+                expectedU = 1.2f;
+            }
+            else if (variant == 7)
+            {
+                expectedV = -0.2f;
+            }
+            else if (variant == 8)
+            {
+                expectedU = 0.7f;
+                expectedV = 0.6f;
+            }
+            else if (variant == 9)
+            {
+                expectedT = -expectedT;
+            }
+
+            const Vector3 point = v0 + edge1 * expectedU + edge2 * expectedV;
+            const Ray ray(point - direction * expectedT, direction);
+            float referenceT = -1.0f;
+            float t = -1.0f;
+            float u = -2.0f;
+            float v = -3.0f;
+            const bool bReferenceHit = RayIntersectsTriangle(ray, v0, v1, v2, referenceT);
+            const bool bHit = RayIntersectsTriangleBarycentric(ray, v0, v1, v2, t, u, v);
+            assert(bHit == bReferenceHit);
+            assert(bHit == (variant < 4));
+            assert(t == referenceT);
+            if (bHit)
+            {
+                assert(NearlyEqual(t, expectedT, 1e-5f));
+                assert(NearlyEqual(u, expectedU, 1e-5f));
+                assert(NearlyEqual(v, expectedV, 1e-5f));
+                const Vector3 trianglePoint = v0 + edge1 * u + edge2 * v;
+                const Vector3 rayPoint = ray.Origin + ray.Direction * t;
+                assert((trianglePoint - rayPoint).Length() <= 1e-5f);
+            }
+            else
+            {
+                assert(t == -1.0f);
+                assert(u == -2.0f);
+                assert(v == -3.0f);
+            }
+        }
+        std::cout << "RayIntersectsTriangleBarycentric passed\n";
+    }
+
     std::cout << "GeometryIntersectionExtraTest passed\n";
     return 0;
 }

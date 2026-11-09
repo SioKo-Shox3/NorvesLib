@@ -110,6 +110,22 @@ add_library(AssetCookLib STATIC
     AudioCooker.cpp
     AudioCooker.h
     MeshCooker.cpp
+    HeightfieldImport.cpp
+    HeightfieldImport.h
+    GrassFieldCooker.cpp
+    GrassFieldCooker.h
+    ScatterPlacement.cpp
+    ScatterPlacement.h
+    ScatterBaker.cpp
+    ScatterBaker.h
+    ScatterSpec.cpp
+    ScatterSpec.h
+    TerrainCooker.cpp
+    TerrainCooker.h
+    TerrainMasks.cpp
+    TerrainMasks.h
+    TerrainSpec.cpp
+    TerrainSpec.h
     TerrainCliffDetail.cpp
     TerrainCliffDetail.h
     CookedTerrainQuery.cpp
@@ -168,14 +184,16 @@ add_library(AssetCookLib STATIC
     VfxEffectCookCli.h
 )
 target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
+target_link_libraries(AssetCookLib PRIVATE NorvesThirdParty_TinyEXR)
 if(WIN32)
-    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
+    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32 psapi)
 endif()
 target_include_directories(AssetCookLib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Library/Core/Private
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
 add_executable(AssetCook Main.cpp)
@@ -221,6 +239,20 @@ add_test(NAME AssetCookRawSmoke
         --variant default
 )
 
+set(ASSET_COOK_SOUNDBANK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/SoundBank")
+add_test(NAME AssetCookSoundBankSmoke
+    COMMAND $<TARGET_FILE:AssetCook>
+        --input "${CMAKE_SOURCE_DIR}/Test/Core/Asset/Fixtures/AssetCook/sample.soundbank.json"
+        --out "${ASSET_COOK_SOUNDBANK_SMOKE_DIR}/Cooked/sample.soundbank.nvpkg"
+        --manifest "${ASSET_COOK_SOUNDBANK_SMOKE_DIR}/manifest.json"
+        --logical "Audio/Banks/sample.soundbank.json"
+        --kind raw
+        --entry "__raw__"
+        --entry-type Raw
+        --format raw.v0
+        --variant default
+)
+
 set(ASSET_COOK_TEXTURE_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Texture")
 add_test(NAME AssetCookTextureSmoke
     COMMAND ${CMAKE_COMMAND}
@@ -238,6 +270,24 @@ add_test(NAME AssetCookMeshSmoke
         -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
         -DDAG_SMOKE_EXE=$<TARGET_FILE:AssetCookMeshSimplifySmoke>
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
+)
+
+set(ASSET_COOK_TERRAIN_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Terrain")
+add_test(NAME AssetCookTerrainSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_TERRAIN_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTerrainSmoke.cmake.in"
+)
+
+set(ASSET_COOK_GRASS_FIELD_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/GrassField")
+add_test(NAME AssetCookGrassFieldSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_GRASS_FIELD_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookGrassFieldSmoke.cmake.in"
 )
 
 add_custom_target(AssetCookAudioSmoke DEPENDS AssetCook)

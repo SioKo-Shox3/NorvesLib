@@ -15,7 +15,7 @@ namespace NorvesLib::Core::Animation
         SkeletalLoopSelection Loop = SkeletalLoopSelection::Auto;
         double RangeStart = 0, RangeEnd = 0;
         double MinimumPeriod = 0.15, MaximumPeriod = 3;
-        double LoopRmsThresholdRadians = 0.05, MinimumMotionRadians = 0.05;
+        double LoopRmsThresholdRadians = 0.05, LoopRecurrenceRatio = 0.2, MinimumMotionRadians = 0.05;
         bool bExtractRootMotion = true;
         // 動画由来の動きにだけ明示して使う。0の閾値/radiusは従来経路を維持する。
         double SpikeThresholdRadians = 0, TimeScale = 1;

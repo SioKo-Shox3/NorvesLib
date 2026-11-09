@@ -9,6 +9,8 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/Terrain/TerrainSystem.h"
+#include "Scatter/ScatterSystem.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
@@ -20,6 +22,8 @@
 #include "Input/InputRebindCaptureManager.h"
 #include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
+#include "Streaming/StreamingSystem.h"
+#include "Vegetation/Vegetation.h"
 #include "Thread/Atomic.h"
 
 namespace NorvesLib::Core::Application
@@ -360,6 +364,26 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        Rendering::Terrain::TerrainSystem& GetTerrainSystem()
+        {
+            return m_TerrainSystem;
+        }
+
+        const Rendering::Terrain::TerrainSystem& GetTerrainSystem() const
+        {
+            return m_TerrainSystem;
+        }
+
+        Scatter::ScatterSystem& GetScatterSystem()
+        {
+            return m_ScatterSystem;
+        }
+
+        const Scatter::ScatterSystem& GetScatterSystem() const
+        {
+            return m_ScatterSystem;
+        }
+
         Particle::ParticleSystem& GetParticleSystem()
         {
             return m_ParticleSystem;
@@ -368,6 +392,28 @@ namespace NorvesLib::Core::Engine
         const Particle::ParticleSystem& GetParticleSystem() const
         {
             return m_ParticleSystem;
+        }
+
+        /// セルのストリーミングを管理する。GameThread で使用する。
+        Streaming::StreamingSystem& GetStreamingSystem()
+        {
+            return m_StreamingSystem;
+        }
+
+        /// セルのストリーミングを参照する。GameThread で使用する。
+        const Streaming::StreamingSystem& GetStreamingSystem() const
+        {
+            return m_StreamingSystem;
+        }
+
+        Vegetation::Vegetation& GetVegetation()
+        {
+            return m_Vegetation;
+        }
+
+        const Vegetation::Vegetation& GetVegetation() const
+        {
+            return m_Vegetation;
         }
 
         /**
@@ -503,10 +549,17 @@ namespace NorvesLib::Core::Engine
         Rendering::RenderWorld m_RenderWorld;
         Container::TSharedPtr<FontAtlas> m_DefaultFontAtlas;
 
+        // m_World より前に宣言し、World の破棄で Component が登録を解除するまで生かす。
+        // 破棄順を保つため、この順序を変えない。
+        Rendering::Terrain::TerrainSystem m_TerrainSystem;
+        Scatter::ScatterSystem m_ScatterSystem;
+
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;
 
         Particle::ParticleSystem m_ParticleSystem;
+        Streaming::StreamingSystem m_StreamingSystem;
+        Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
 
         // シーン空間検索（GEngine配下で実体保持）
