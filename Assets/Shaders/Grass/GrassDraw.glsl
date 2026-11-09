@@ -2,6 +2,8 @@
 #ifndef NORVES_GRASS_DRAW_GLSL
 #define NORVES_GRASS_DRAW_GLSL
 
+#include "WorldField/WorldFieldSample.glsl"
+
 const uint kGrassLodCount = 3u;
 const uint kGrassHashSaltFacing = 4u;
 const uint kGrassHashSaltPhase = 5u;
@@ -13,10 +15,12 @@ const float kGrassDefaultGlobalWetness = 0.0;
 const float kGrassDefaultTrample = 0.0;
 const uint kGrassDrawFlagPreviousCamera = 1u;
 const uint kGrassDrawFlagWind = 2u;
+const uint kGrassDrawFlagWorldField = 4u;
 
 // set 0 の binding: 0 = 描画定数、1 = ブレード SSBO（GrassBladeRecord Blades[]）。
 // 1 は LOD ごとの範囲をバイトオフセット付きで束ね、Blades[0] がその LOD の先頭。
 // 2 = 種別 SSBO（GrassSpeciesGpuData Species[]）、3 = LayerA の RGBA8 2D 配列。
+// 4 = 今の世界フィールド、5 = 前の世界フィールド（線形補間・Clamp）。
 // LayerA は texelFetch で読む。正規化後の B（バイト値 / 255）が moistureBias、層は (cz mod N) * N + (cx mod N)。
 // 負座標の mod は正の剰余に直す。有効な濡れ度は clamp(global * (0.6 + 0.8 * B), 0, 1)。
 // 生成側の定数も binding 0 を使うため、構造体とハッシュだけをここで定義する。
@@ -50,7 +54,8 @@ struct GrassSpeciesGpuData
     vec4 LodKeepFraction;
 };
 
-// CPU の GrassDrawConstants と同じ 464 バイトの std140 配置。
+// CPU の GrassDrawWorldFieldConstants と同じ 512 バイトの std140 配置。
+// 先頭 464 バイトは GrassDrawConstants。bit2 が無ければ追加領域を読まない。
 layout(std140, set = 0, binding = 0) uniform GrassDrawConstants
 {
     mat4 View;                       // 現在のビュー行列。
@@ -68,8 +73,9 @@ layout(std140, set = 0, binding = 0) uniform GrassDrawConstants
     uvec4 LodSegments;               // xyz: LOD 0/1/2 の区切り数、w: 予約。
     vec4 Quant;                      // 高さの量子化最大（m）、幅の量子化最大（m）、予約、予約。
     vec4 LayerWindow;                // ChunkSizeMeters、窓の N、LayerA 解像度、予約。
-    uvec4 Flags;                     // x の bit0: 前のカメラあり、bit1: 風が有効、yzw: 予約。
+    uvec4 Flags;                     // x の bit0: 前のカメラあり、bit1: 風が有効、bit2: 世界フィールドの追加定数あり、yzw: 予約。
     vec4 Trample;                    // 全成分予約の 0。
+    WorldFieldSampleConstants WorldField;
 } draw;
 
 // gl_VertexIndex を uint に写した値から、帯の LOD・行・左右を復元する。
