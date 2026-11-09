@@ -9261,3 +9261,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 同じ評価の経路での大域検証と許容のやり直し: 着地(直し 1 回)
 - U3 ClipOptimizerTest の (a)〜(e): 着地(直し 0 回)
 - U4 CLI の引数と旧形式の cook への差し込み: 着地(直し 2 回)
+- U5 --rig-split の v1 ClipBank の cook への差し込み: 着地(直し 0 回)
