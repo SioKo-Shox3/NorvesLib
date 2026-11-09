@@ -6,10 +6,12 @@
 #include "BlockCompressor.h"
 #include "TextureCooker.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace
 {
@@ -578,6 +580,333 @@ namespace
         }
     }
 
+
+    // 16 ビット RGB の PNG。8x8 の検査用なので zlib の無圧縮ブロック 1 個に収まる。
+    ByteArray MakeRgb16Png(const NorvesLib::Core::Container::VariableArray<uint16_t>& values)
+    {
+        ByteArray raw;
+        for (size_t y = 0; y < 8; ++y)
+        {
+            raw.push_back(0); // フィルタなし
+            for (size_t i = y * 8 * 3; i < (y + 1) * 8 * 3; ++i)
+            {
+                raw.push_back(static_cast<uint8_t>(values[i] >> 8));
+                raw.push_back(static_cast<uint8_t>(values[i]));
+            }
+        }
+        ByteArray zlib;
+        zlib.push_back(0x78);
+        zlib.push_back(0x01);
+        zlib.push_back(0x01); // 最終の無圧縮ブロック
+        const uint16_t length = static_cast<uint16_t>(raw.size());
+        zlib.push_back(static_cast<uint8_t>(length));
+        zlib.push_back(static_cast<uint8_t>(length >> 8));
+        zlib.push_back(static_cast<uint8_t>(~length));
+        zlib.push_back(static_cast<uint8_t>((~length >> 8) & 0xff));
+        uint32_t adlerA = 1;
+        uint32_t adlerB = 0;
+        for (const uint8_t value : raw)
+        {
+            zlib.push_back(value);
+            adlerA = (adlerA + value) % 65521u;
+            adlerB = (adlerB + adlerA) % 65521u;
+        }
+        AppendBe32(zlib, (adlerB << 16) | adlerA);
+
+        ByteArray header;
+        AppendBe32(header, 8);
+        AppendBe32(header, 8);
+        header.push_back(16); // ビット深度
+        header.push_back(2);  // RGB
+        header.push_back(0);
+        header.push_back(0);
+        header.push_back(0);
+        ByteArray png;
+        const uint8_t signature[] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+        for (const uint8_t value : signature)
+        {
+            png.push_back(value);
+        }
+        AppendPngChunk(png, "IHDR", header);
+        AppendPngChunk(png, "IDAT", zlib);
+        AppendPngChunk(png, "IEND", ByteArray());
+        return png;
+    }
+
+    ByteArray ReadFixture(const char* path)
+    {
+        std::FILE* file = nullptr;
+        if (fopen_s(&file, path, "rb") != 0 || file == nullptr)
+        {
+            Check(false, "EXR の fixture を開けない");
+            return {};
+        }
+        const bool bSeekEnd = std::fseek(file, 0, SEEK_END) == 0;
+        const long fileSize = std::ftell(file);
+        const bool bSeekStart = std::fseek(file, 0, SEEK_SET) == 0;
+        ByteArray bytes(fileSize > 0 ? static_cast<size_t>(fileSize) : 0, 0);
+        const size_t readSize = bytes.empty() ? 0 : std::fread(bytes.data(), 1, bytes.size(), file);
+        std::fclose(file);
+        if (!bSeekEnd || !bSeekStart || bytes.empty() || readSize != bytes.size())
+        {
+            Check(false, "EXR の fixture を読み切れない");
+            return {};
+        }
+        return bytes;
+    }
+
+    bool CookWithParams(const TextureSourceImage& source, const TextureUsageCookParams& params,
+                        TextureCookResult& result, CookedTextureParseResult& parsed)
+    {
+        ErrorString error;
+        if (!CookTextureForUsage(source, OrmSourceImages{}, params, result, error))
+        {
+            std::printf("TEXTURE_USAGE_SMOKE_FAIL クックに失敗: usage=%s error=%s\n",
+                        GetTextureUsageName(params.Usage), error.c_str());
+            ++g_failures;
+            return false;
+        }
+        parsed = NorvesLib::Core::Asset::ParseCookedTexture(AssetBlob::CopyBytes(
+            Span<const uint8_t>(result.NvtexBytes.data(), result.NvtexBytes.size()), "float usage smoke"));
+        Check(parsed.Succeeded(), "クック済みの浮動小数・16bit テクスチャを解釈できない");
+        return parsed.Succeeded();
+    }
+
+    // 非圧縮の全ミップの寸法とバイト数を、入力の寸法から確かめる。
+    void CheckRawMipLayout(const CookedTextureParseResult& parsed, uint32_t width, uint32_t height,
+                           uint32_t pixelBytes, const char* label)
+    {
+        Check(parsed.Texture.Width == width && parsed.Texture.Height == height, label);
+        uint32_t mipCount = 0;
+        for (;;)
+        {
+            if (mipCount < parsed.Texture.Mips.size())
+            {
+                const auto& mip = parsed.Texture.Mips[mipCount];
+                Check(mip.Width == width && mip.Height == height &&
+                      mip.DataSize == static_cast<uint64_t>(width) * height * pixelBytes, label);
+                Check(parsed.Texture.GetMipBytes(mipCount).size() == mip.DataSize, label);
+            }
+            ++mipCount;
+            if (width == 1 && height == 1)
+            {
+                break;
+            }
+            width = width > 1 ? width / 2 : 1;
+            height = height > 1 ? height / 2 : 1;
+        }
+        Check(parsed.Texture.MipCount == mipCount && parsed.Texture.Mips.size() == mipCount, label);
+    }
+
+    uint16_t ReadLe16(Span<const uint8_t> bytes, size_t offset)
+    {
+        return static_cast<uint16_t>(bytes[offset] | (static_cast<uint16_t>(bytes[offset + 1]) << 8));
+    }
+
+    // binary16 を算術で復号する。書き出し側の float→half の変換には依存しない。
+    float HalfToFloat(uint16_t bits)
+    {
+        const int exponent = (bits >> 10) & 31;
+        const int fraction = bits & 1023;
+        const float magnitude = exponent == 0 ? std::ldexp(static_cast<float>(fraction), -24) :
+            exponent == 31 ? (fraction == 0 ? std::numeric_limits<float>::infinity() :
+                                               std::numeric_limits<float>::quiet_NaN()) :
+                             std::ldexp(1.0f + static_cast<float>(fraction) / 1024.0f, exponent - 15);
+        return (bits & 0x8000u) != 0 ? -magnitude : magnitude;
+    }
+
+    bool NearHalf(float actual, float expected)
+    {
+        const float relative = std::abs(expected) * 0x1p-11f;
+        const float tolerance = relative > 0x1p-24f ? relative : 0x1p-24f;
+        return std::isfinite(actual) && std::abs(actual - expected) <= tolerance;
+    }
+
+    // hdr_gradient.exr は 16x8、RGBA 各 32bit float、無圧縮。
+    // 座標は左上が (0,0): R=x*0.5、G=y*0.25、B=0.125+x*y/128、A=1。
+    float GradientValue(uint32_t x, uint32_t y, size_t channel)
+    {
+        const float values[] = {x * 0.5f, y * 0.25f, 0.125f + x * y / 128.0f, 1.0f};
+        return values[channel];
+    }
+
+    void RunHdrExr(const TextureSourceImage& source)
+    {
+        TextureCookResult result;
+        CookedTextureParseResult parsed;
+        if (!Cook(TextureUsage::Hdr, source, OrmSourceImages{}, result, parsed))
+        {
+            return;
+        }
+        Check(parsed.Texture.PixelFormat == CookedTexturePixelFormat::RGBA16F, "EXR の HDR が RGBA16F ではない");
+        Check(parsed.Texture.ColorSpace == CookedTextureColorSpace::Linear, "EXR の HDR が線形ではない");
+        CheckRawMipLayout(parsed, 16, 8, 8, "EXR の HDR の全ミップの配置が合わない");
+        const auto mip0 = parsed.Texture.GetMipBytes(0);
+        const auto mip1 = parsed.Texture.GetMipBytes(1);
+        if (mip0.size() != 16 * 8 * 8 || mip1.size() != 8 * 4 * 8)
+        {
+            return;
+        }
+        for (uint32_t y = 0; y < 8; ++y)
+        {
+            for (uint32_t x = 0; x < 16; ++x)
+            {
+                for (size_t c = 0; c < 4; ++c)
+                {
+                    Check(NearHalf(HalfToFloat(ReadLe16(mip0, (y * 16 + x) * 8 + c * 2)), GradientValue(x, y, c)),
+                          "EXR の HDR の mip0 が勾配の式と half の丸めの範囲で一致しない");
+                }
+            }
+        }
+        // mip1 の (3,2) は元画像の (6,4) から (7,5) の 2x2 の線形平均。
+        for (size_t c = 0; c < 4; ++c)
+        {
+            float sum = 0.0f;
+            for (uint32_t y = 4; y < 6; ++y)
+            {
+                for (uint32_t x = 6; x < 8; ++x)
+                {
+                    sum += GradientValue(x, y, c);
+                }
+            }
+            Check(NearHalf(HalfToFloat(ReadLe16(mip1, (2 * 8 + 3) * 8 + c * 2)), sum / 4.0f),
+                  "EXR の HDR の mip1 が 2x2 の線形平均と一致しない");
+        }
+    }
+
+    void RunRadianceHdr()
+    {
+        // 幅 3 は RLE を使わない。RGBE=(16,64,128,131) は RGB=(0.5,2,4) を正確に表す。
+        const char header[] = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 3\n";
+        ByteArray image;
+        for (size_t i = 0; i < sizeof(header) - 1; ++i)
+        {
+            image.push_back(static_cast<uint8_t>(header[i]));
+        }
+        for (size_t i = 0; i < 3 * 2; ++i)
+        {
+            const uint8_t rgbe[] = {16, 64, 128, 131};
+            for (const uint8_t value : rgbe)
+            {
+                image.push_back(value);
+            }
+        }
+        TextureCookResult result;
+        CookedTextureParseResult parsed;
+        if (!Cook(TextureUsage::Hdr, Source(image, "radiance.hdr"), OrmSourceImages{}, result, parsed))
+        {
+            return;
+        }
+        Check(parsed.Texture.PixelFormat == CookedTexturePixelFormat::RGBA16F, "Radiance HDR が RGBA16F ではない");
+        const auto mip0 = parsed.Texture.GetMipBytes(0);
+        Check(mip0.size() == 3 * 2 * 8, "Radiance HDR の mip0 のバイト数が合わない");
+        if (mip0.size() == 3 * 2 * 8)
+        {
+            const float expected[] = {0.5f, 2.0f, 4.0f, 1.0f};
+            for (size_t i = 0; i < 3 * 2 * 4; ++i)
+            {
+                Check(HalfToFloat(ReadLe16(mip0, i * 2)) == expected[i % 4], "Radiance HDR の RGBE の値が保たれない");
+            }
+        }
+    }
+
+    void RunHeight16Exr(const TextureSourceImage& source)
+    {
+        TextureUsageCookParams params;
+        params.Usage = TextureUsage::Height16;
+        params.ThreadCount = 1;
+        params.bHasHeightRange = true;
+        params.HeightRangeMin = 0.0f;
+        params.HeightRangeMax = 7.5f;
+        TextureCookResult result;
+        CookedTextureParseResult parsed;
+        if (CookWithParams(source, params, result, parsed))
+        {
+            Check(parsed.Texture.PixelFormat == CookedTexturePixelFormat::R16UNorm, "EXR の高さが R16 ではない");
+            const auto mip0 = parsed.Texture.GetMipBytes(0);
+            Check(mip0.size() == 16 * 8 * 2, "EXR の高さの mip0 のバイト数が合わない");
+            if (mip0.size() == 16 * 8 * 2)
+            {
+                for (uint32_t y = 0; y < 8; ++y)
+                {
+                    for (uint32_t x = 0; x < 16; ++x)
+                    {
+                        const uint16_t expected = static_cast<uint16_t>(std::round((x * 0.5 - 0.0) / 7.5 * 65535.0));
+                        Check(ReadLe16(mip0, (y * 16 + x) * 2) == expected, "EXR の高さの範囲の正規化が整数の期待値と一致しない");
+                    }
+                }
+            }
+        }
+        ErrorString error;
+        params.HeightRangeMax = 4.0f;
+        Check(!CookTextureForUsage(source, OrmSourceImages{}, params, result, error), "高さの範囲外の EXR を受け付けた");
+        Check(std::strstr(error.c_str(), source.Name.c_str()) != nullptr, "高さの範囲外のエラーに入力の名前が無い");
+        params.bHasHeightRange = false;
+        Check(!CookTextureForUsage(source, OrmSourceImages{}, params, result, error), "高さの範囲なしの EXR を受け付けた");
+    }
+
+    void RunRequire16Bit()
+    {
+        const ByteArray gray = MakeGray8(8, 8, 100);
+        const ByteArray rgb = MakePnm('6', 8, 8, 255, ByteArray(8 * 8 * 3, 100));
+        const TextureSourceImage sources[] = {Source(gray, "require16_gray.pgm"), Source(rgb, "require16_rgb.ppm")};
+        const TextureUsage usages[] = {TextureUsage::Height16, TextureUsage::Rg16};
+        for (size_t i = 0; i < 2; ++i)
+        {
+            TextureUsageCookParams params;
+            params.Usage = usages[i];
+            params.ThreadCount = 1;
+            params.bRequire16Bit = true;
+            TextureCookResult result;
+            ErrorString error;
+            Check(!CookTextureForUsage(sources[i], OrmSourceImages{}, params, result, error), "16bit 必須の用途が 8bit の入力を受け付けた");
+            params.bRequire16Bit = false;
+            CookedTextureParseResult parsed;
+            if (CookWithParams(sources[i], params, result, parsed))
+            {
+                const auto mip0 = parsed.Texture.GetMipBytes(0);
+                const size_t channels = i == 0 ? 1 : 2;
+                Check(mip0.size() == 8 * 8 * channels * 2, "8bit から拡大した mip0 のバイト数が合わない");
+                if (mip0.size() == 8 * 8 * channels * 2)
+                {
+                    for (size_t offset = 0; offset < mip0.size(); offset += 2)
+                    {
+                        Check(ReadLe16(mip0, offset) == 100 * 257, "8bit の値が 16bit へ拡大されない");
+                    }
+                }
+            }
+        }
+    }
+
+    void RunRg16Precision()
+    {
+        NorvesLib::Core::Container::VariableArray<uint16_t> values;
+        for (uint32_t i = 0; i < 8 * 8; ++i)
+        {
+            values.push_back(static_cast<uint16_t>(0x1234 + i * 17));
+            values.push_back(static_cast<uint16_t>(0xabcd - i * 29));
+            values.push_back(0x3456);
+        }
+        const ByteArray image = MakeRgb16Png(values);
+        TextureCookResult result;
+        CookedTextureParseResult parsed;
+        if (!Cook(TextureUsage::Rg16, Source(image, "rg16_precision.png"), OrmSourceImages{}, result, parsed))
+        {
+            return;
+        }
+        Check(parsed.Texture.PixelFormat == CookedTexturePixelFormat::RG16UNorm, "RG16 が RG16UNorm ではない");
+        CheckRawMipLayout(parsed, 8, 8, 4, "RG16 の全ミップの配置が合わない");
+        const auto mip0 = parsed.Texture.GetMipBytes(0);
+        if (mip0.size() == 8 * 8 * 4)
+        {
+            for (size_t i = 0; i < 8 * 8; ++i)
+            {
+                Check(ReadLe16(mip0, i * 4) == values[i * 3], "RG16 の R の 16bit の精度が保たれない");
+                Check(ReadLe16(mip0, i * 4 + 2) == values[i * 3 + 1], "RG16 の G の 16bit の精度が保たれない");
+            }
+        }
+    }
+
     void RunInvalidUsage()
     {
         TextureUsage usage = TextureUsage::Albedo;
@@ -595,8 +924,24 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc < 2)
+    {
+        Check(false, "EXR の fixture のパスが無い");
+        return 1;
+    }
+    const ByteArray fixture = ReadFixture(argv[1]);
+    if (fixture.empty())
+    {
+        return 1;
+    }
+    const TextureSourceImage exr = Source(fixture, argv[1]);
+    RunHdrExr(exr);
+    RunRadianceHdr();
+    RunHeight16Exr(exr);
+    RunRequire16Bit();
+    RunRg16Precision();
     RunOrmPacking();
     RunNormalMips();
     RunHeight16Precision();
