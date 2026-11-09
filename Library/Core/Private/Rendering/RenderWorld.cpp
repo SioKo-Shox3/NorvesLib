@@ -330,6 +330,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetWindParameters(const WindParameters& parameters)
+    {
+        m_RenderingCoordinator.SetWindParameters(parameters);
+    }
+
     void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         m_RenderingCoordinator.SetSkyOcclusionParameters(parameters);
