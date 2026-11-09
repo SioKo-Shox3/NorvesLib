@@ -10600,3 +10600,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: verify の ctest で GrassTileSelectionTest が「unknown test」で落ちた差し戻しを直した。原因はこの枠の build の `CameraViewConstantsTest.exe` が 11 月 4 日のままで、GrassTileSelectionTest を MEMBER に足した後に作り直されていなかったこと（前の反復の最後の確かめは単位の作業ツリーの build で回っていた）。コードの変更は無く、`CameraViewConstantsTest` を Debug でビルドし直した。
 - 証拠: `.harness/runs/20261110-060226/aux-G5-GR43-verify-iter2.txt`（RHIRayTracingApiContractTest・RHITextureUpdateVulkanTest・Game の Debug ビルドが EXIT=0、ctest の GrassShaderCompileTest・WindShaderCompileTest・GrassTileSelectionTest が 3/3 Passed）と `aux-G5-GR43-build-CameraViewConstantsTest.txt`（EXIT=0）。
 - Notes: verify の ctest が呼ぶ GrassTileSelectionTest は CameraViewConstantsTest の束の中にあるが、verify のビルド行にはこのターゲットが無い。束の MEMBER を足す・変える項目は、その束のターゲットを枠の build でもビルドしてから終える。
+
+- U2 一様な時刻のチャンネルを添字の直接計算で引く: 着地(直し 0 回)
+- U1 クリップの値の量子化の符号器（smallest-three 32/48・TransQuant16・Const の判定）: 着地(直し 0 回)
+- U3 ClipBank v1 の CMPR の書き手と読み手（minor 1）: 着地(直し 0 回)
+- U4 CMPR の往復・互換・拒否の試験: 着地(直し 0 回)
+- U5 ClipBankV1Wire.md に CMPR と minor 1 の規則を書く: 着地(直し 0 回)
+- U6 AssetCook の --clip-quantize を v1 の cook へつなぎ、タスクの verify を回す: 着地(直し 2 回)
+
+## 2026-11-10 G9-GR87-CLIP-QUANTIZE（run 20261110-062828、完了）
+- Done: `Asset/ClipQuantization` に回転の smallest-three（32 bit = 添字 2 bit＋10 bit×3、48 bit = 添字 2 bit＋15 bit×3）、平行移動のチャンネルごとの範囲と uint16×3、全キー同値の Const の判定を置いた。書き手は 32 bit の往復で回転角が 0.1° を超えるキーがあるチャンネルだけ 48 bit にし、scale は Const 以外 F32
+- Done: ClipBank v1 に必須の節 `CMPR`（flags=1）を足した。`WriteClipBankV1` の `ClipBankV1WriteOptions::bQuantize` のときだけ出し minor を 1 にする。付けない書き出しは minor 0 で今とバイト一致。`ParseClipBankV1` は minor 0/1 を受け、CMPR の version・channelCount・dataHash・エントリ・ブロックの境界と詰め物・論理キー数の上限を確保の前に検査してからキー列へ展開する。minor 0 なのに CMPR か encoding≠0、minor 1 なのに CMPR 無し、minor 2 以上を拒否する
+- Done: 一様な時刻のチャンネルは `SkeletalAnimationChannel` の `UniformStartSeconds`・`UniformStepSeconds`（間隔 0 は印なし）で印を付け、`ClipChannelSampler` が添字を直接求め、前後のキー時刻と比べて直す（決まらなければ二分探索へ戻る）
+- Done: AssetCook の `--rig-split` とリターゲット（`--retarget-clip`）に値を取らない `--clip-quantize` を足した。付けたときだけ出力の同一性の hash に `norves.clip-quantize.v1` を足す。単独の `nvskel.v1.clips` の cook と旧 NVSKEL 0.x の経路では誤りで止める
+- Done: 試験は `CookedClipBankV1Test`（10 万個の 32 bit 往復で 4 次元の角度の最大 0.0736°、境界のケース、TransQuant16 の誤差、量子化した bank の往復、量子化しない書き出しのバイト一致、壊れた CMPR など 12 通りの拒否）と `ClipChannelSearchTest`（ランダムな 1 万の時刻で直接引きが二分探索と同じキー）。`Docs/Architecture/ClipBankV1Wire.md` に CMPR と minor 1 の規則
+- 証拠: `.harness/runs/20261110-062828/verify-G9-GR87-CLIP-QUANTIZE-U6.txt`（verify のビルド exit 0、ctest 7/7 Passed、rig-split の実 cook で ClipBank の minor が既定 0・`--clip-quantize` で 1）
+- Next: なし（アプリを起動する確かめは無い）
+- Notes: CI の `Test/Tools/ClipBankV1Oracle.py` は量子化しない cook の出力（minor 0）だけを読むので直していない。`--clip-quantize` の出力を oracle で読むには CMPR の復号が要る。`SkeletalRoleFileCli.cpp` の `--bvh` の CLI は `--clip-quantize` を今の未知の引数の誤りで拒否する
