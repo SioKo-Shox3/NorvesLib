@@ -10618,3 +10618,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: CI の `Test/Tools/ClipBankV1Oracle.py` は量子化しない cook の出力（minor 0）だけを読むので直していない。`--clip-quantize` の出力を oracle で読むには CMPR の復号が要る。`SkeletalRoleFileCli.cpp` の `--bvh` の CLI は `--clip-quantize` を今の未知の引数の誤りで拒否する
 - U1 フィールドの今・前の原点を消費側へ公開し、曲げの共通の式を GLSL と C++ に置く: 着地(直し 0 回)
+- U4 WorldFieldInteractorComponent と集め役（Engine のメンバ）と集めの試験: 着地(直し 0 回)
