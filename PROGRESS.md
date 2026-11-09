@@ -10352,3 +10352,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(G12-GR93-VALIDATE): `python -m unittest discover -s Scripts/Level/tests -v` で 9 件 OK（`.harness/runs/20261105-221335/verify-G12-GR93-VALIDATE-U4.txt`）。実の草地の地形（`Assets/TerrainSpecs/Grassland/GrasslandTerrain.json`）と雛形の設定で、使い捨てのシーンの見どころ 2 点の間は経路長 352.1 m・所要 38.2 秒、2 回の JSON はバイト一致。
 - Next(G12-GR93-VALIDATE): 実の谷のデータでの実行（G12-GR93-EDIT-CHECK）。巡航の速度・見どころの間隔の帯・斜度の上限は企画が決めたら設定の値を差し替えて `provisional` から外す。
 - Notes(G12-GR93-VALIDATE): GR89 の形式は標本数を各辺 `tile_cells × N + 1` と決めているので、done-when の「256×256 のハイトマップ」は 256×256 の格子（標本 257×257）として試験を作った。到達性・所要時間は 1 格子の 8 近傍の近似で、犬の跳躍・段差の越え方（GR05・GR07）は入っていない。GR21 の経路探索ができたら `validate(..., traversable_fn=...)` を差し替える。`smooth` の指定がある地形は平滑化を未適用で読み、報告の地形の注意に出す。
+
+- U1 RHI にインデックス無しの間接描画（単発・件数つき）と bMultiDrawIndirect を足す: 着地(直し 0 回)
+- U2 Count が無いときの多重の間接描画を bMultiDrawIndirect で分ける: 着地(直し 0 回)
+- U3 CPU の契約試験 RHIIndirectApiContractTest を足す: 着地(直し 0 回)
+- U4 GPU の試験 IndirectDrawVulkanTest を足し、タスクの確かめを回す: 着地(直し 0 回)
+- Done(G5-GR28-DRAW-INDIRECT): `ICommandList` に既定実装つき（何も記録せず false）の `DrawIndirect`・`DrawIndirectCount` を足し、`VulkanCommandList` が引数（オフセット・stride が 4 の倍数、stride は 16 以上、`ResourceUsage::IndirectBuffer`、範囲、`maxDrawIndirectCount`）と能力（drawCount>1 は `bMultiDrawIndirect`、Count 版は `bDrawIndirectCount`）を検査して記録する。`DeviceCapabilities::bMultiDrawIndirect` を足し、論理デバイスで物理デバイスが対応するときだけ `multiDrawIndirect` を有効にした。`RHI/IndirectCommands.h` に `DrawIndirectCommand`（16 B）・`DispatchIndirectCommand`（12 B）。MegaGeometryPass・VisibilityRasterPass の Count が無い分岐は、`bMultiDrawIndirect` が無ければ drawCount=1 の繰り返しにした。試験は CPU の `RHIIndirectApiContractTest` と GPU の `IndirectDrawVulkanTest`（被覆画素 P=15 で A 45・B 0/30・C 30・能力を偽ると false・不正な引数で false、validation 0 件）。
+- 確かめ(G5-GR28-DRAW-INDIRECT): `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1` は終了コード 0。ctest は RHIIndirectApiContractTest・RHIRayTracingApiContractTest・IndirectDispatchVulkanTest・IndirectDrawVulkanTest の 4/4 Passed。golden 4 本（RenderingGolden*VulkanTest）は基準画像の比較を回さない決まりなので回していない。
+- Next(G5-GR28-DRAW-INDIRECT): 新しい 2 つを使う描画の経路は無い（使う側の項目で使う）。`VulkanDevice::SetCapabilitiesForTesting` は試験専用（偽るのは false へだけ）。
+- Notes(G5-GR28-DRAW-INDIRECT): 要起票: 既存の `DrawIndexedIndirect`・`DrawIndexedIndirectCount` は drawCount を `maxDrawIndirectCount` と照らさず、MegaGeometryPass の区間の容量（`MegaGeometryPass.cpp` 3922 行付近）も上限を見ていない。`multiDrawIndirect` と `drawIndirectCount` の両方が無い装置では区間の容量の回数だけ描画を発行する（実機の対象の GPU は両方を持つ）。

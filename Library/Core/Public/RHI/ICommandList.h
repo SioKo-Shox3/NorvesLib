@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "GPUTimestamp.h"
+#include "IndirectCommands.h"
 #include "RHITypes.h"
 #include "IAccelerationStructure.h"
 #include "Container/VariableArray.h"
@@ -501,6 +502,65 @@ namespace NorvesLib::RHI
          * @param threadGroupCountZ Zスレッドグループ数
          */
         virtual void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) = 0;
+
+        /**
+         * @brief インデックスを使わない間接描画を記録する
+         *
+         * 引数は DrawIndirectCommand の配列で、バッファは ResourceUsage::IndirectBuffer を付けて作る。
+         * 計算シェーダーで引数を書いた後、BufferBarrier で UnorderedAccess から IndirectArgument に遷移し、
+         * render pass の中で描画する。次に書く前には IndirectArgument から UnorderedAccess に戻す。
+         * drawCount が 1 より大きい場合は bMultiDrawIndirect が必要。
+         * FirstInstance を非 0 にする場合は bDrawIndirectFirstInstance が必要。GPU が詰めた中身は CPU から検査できない。
+         * 呼び側は戻り値を必ず見ること。false の場合、この呼び出しでは何も描かれない。
+         *
+         * @param indirectBuffer 間接引数の配列を格納したバッファ
+         * @param offset 最初の引数のバイト位置（4 の倍数）
+         * @param drawCount 描画コマンド数（0 なら引数を読まない）
+         * @param stride コマンド間のバイト数（drawCount が 2 以上なら 4 の倍数かつ引数の大きさ以上）
+         * @return 記録したら true。未対応、バッファが無効か用途が不正、オフセットかストライドが不正、
+         *         必要な多重描画機能が無効、描画数がデバイスの上限超過、または引数の範囲外なら false。
+         */
+        virtual bool DrawIndirect(BufferPtr indirectBuffer, uint64_t offset, uint32_t drawCount, uint32_t stride)
+        {
+            (void)indirectBuffer;
+            (void)offset;
+            (void)drawCount;
+            (void)stride;
+            return false;
+        }
+
+        /**
+         * @brief インデックスを使わず、GPU 側の件数を参照する間接描画を記録する
+         *
+         * 引数は DrawIndirectCommand の配列で、引数と件数のバッファは共に ResourceUsage::IndirectBuffer を付けて作る。
+         * 計算シェーダーで引数と件数を書いた後、BufferBarrier で UnorderedAccess から IndirectArgument に遷移し、
+         * render pass の中で描画する。次に書く前には IndirectArgument から UnorderedAccess に戻す。
+         * bDrawIndirectCount が必要。maxDrawCount が 1 より大きい場合も bMultiDrawIndirect は不要。
+         * FirstInstance を非 0 にする場合は bDrawIndirectFirstInstance が必要。
+         * GPU が書く件数はデバイスの maxDrawIndirectCount 以下にすること。CPU から引数や件数の中身は検査できない。
+         * 呼び側は戻り値を必ず見ること。false の場合、この呼び出しでは何も描かれない。
+         *
+         * @param indirectBuffer 間接引数の配列を格納したバッファ
+         * @param indirectOffset 最初の引数のバイト位置（4 の倍数）
+         * @param countBuffer 実際の描画件数を uint32_t で格納したバッファ
+         * @param countOffset 件数のバイト位置（4 の倍数）
+         * @param maxDrawCount 描画するコマンドの最大数（0 なら引数を読まない）
+         * @param stride コマンド間のバイト数（4 の倍数かつ引数の大きさ以上）
+         * @return 記録したら true。未対応、機能が無効、バッファが無効か用途が不正、オフセットかストライドが不正、
+         *         または引数か件数の範囲外なら false。
+         */
+        virtual bool DrawIndirectCount(BufferPtr indirectBuffer, uint64_t indirectOffset,
+                                       BufferPtr countBuffer, uint64_t countOffset,
+                                       uint32_t maxDrawCount, uint32_t stride)
+        {
+            (void)indirectBuffer;
+            (void)indirectOffset;
+            (void)countBuffer;
+            (void)countOffset;
+            (void)maxDrawCount;
+            (void)stride;
+            return false;
+        }
 
         /**
          * @brief コンピュートシェーダーの間接ディスパッチ

@@ -1541,6 +1541,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ICommandList* commandList = m_Work.CommandList;
         commandList->SetPipeline(m_Work.MegaPipeline);
         commandList->SetDescriptorSet(m_Work.Slot->MegaSet, 0);
+        const bool bMultiDrawIndirect = m_Device && m_Device->GetCapabilities().bMultiDrawIndirect;
         for (uint32_t passIndex = firstPass; passIndex < endPass; ++passIndex)
         {
             // 区間の名前は MegaGeometryPass の予備の描画と同じ（off と比べられる）
@@ -1566,10 +1567,19 @@ namespace NorvesLib::Core::Rendering
                         section.Capacity,
                         IndirectCommandBytes);
                 }
-                else
+                else if (bMultiDrawIndirect)
                 {
                     commandList->DrawIndexedIndirect(plan.IndirectBuffer, commandOffsetBytes, section.Capacity,
                                                      IndirectCommandBytes);
+                }
+                else
+                {
+                    for (uint32_t i = 0; i < section.Capacity; ++i)
+                    {
+                        commandList->DrawIndexedIndirect(plan.IndirectBuffer,
+                                                         commandOffsetBytes + static_cast<uint64_t>(i) * IndirectCommandBytes,
+                                                         1, IndirectCommandBytes);
+                    }
                 }
             }
         }
