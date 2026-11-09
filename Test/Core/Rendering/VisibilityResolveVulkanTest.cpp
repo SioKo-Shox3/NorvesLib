@@ -40,6 +40,7 @@
 #include "Rendering/VirtualTextureRequestSet.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
+#include "Rendering/MeshTypes.h"
 #include "Rendering/VisibilityMerge.h"
 #include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "Rendering/VisibilityResolvePass.h"
@@ -282,15 +283,8 @@ namespace
     };
     static_assert(sizeof(Vertex) == 32, "シェーダーの VisVertex と同じ 32 バイト");
 
-    struct DrawInstanceData
-    {
-        float World[16];
-        float PreviousWorld[16];
-        float NormalRows[12];
-        float ObjectColor[4];
-        float CustomData[4];
-    };
-    static_assert(sizeof(DrawInstanceData) == 208, "シェーダーの VisDrawInstance と同じ 208 バイト");
+    using DrawInstanceData = GPUSceneInstanceData;
+    static_assert(sizeof(DrawInstanceData) == 224, "Common/SceneInstanceData.glsl の InstanceData と同じ 224 バイト");
 
     // シェーダーが LoadMegaInstance で受け取る MegaInstance と同じ値（GPU へはインスタンスの表とメッシュの表に分けて書く）
     struct MegaInstanceData
@@ -475,6 +469,11 @@ namespace
     {
         ToFloats(world, data.World);
         ToFloats(previousWorld, data.PreviousWorld);
+        // 集成体をゼロ初期化した後も、材質の値を使う未指定の状態にする
+        for (uint32_t channel = 0; channel < ShadingParamCount; ++channel)
+        {
+            data.ShadingParams[channel] = -1.0f;
+        }
     }
 
     Scene BuildScene()
@@ -514,7 +513,7 @@ namespace
             DrawInstanceData data = {};
             FillWorldMatrices(data, world, previousWorld);
             const float rows[12] = {0.95f, 0.05f, 0.0f, 0.0f, 0.0f, 1.1f, 0.1f, 0.0f, -0.1f, 0.0f, 0.9f, 0.0f};
-            std::memcpy(data.NormalRows, rows, sizeof(rows));
+            std::memcpy(data.NormalMatrix, rows, sizeof(rows));
             // インスタンスの色は材質の基本色と違う値にする（Albedo はインスタンスの色を使い、材質の基本色は使わない）
             const float instanceColor[4] = {0.30f, 0.60f, 0.90f, 1.0f};
             std::memcpy(data.ObjectColor, instanceColor, sizeof(instanceColor));
@@ -566,13 +565,13 @@ namespace
             const float decoyColor[4] = {0.05f, 0.05f, 0.05f, 1.0f};
             std::memcpy(decoy.ObjectColor, decoyColor, sizeof(decoyColor));
             const float identityRows[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-            std::memcpy(decoy.NormalRows, identityRows, sizeof(identityRows));
+            std::memcpy(decoy.NormalMatrix, identityRows, sizeof(identityRows));
             scene.DrawInstances.push_back(decoy); // 1
 
             DrawInstanceData data = {};
             FillWorldMatrices(data, world, Multiply(Translate(-30, 0, 0), Scale(1, 1, 1)));
             const float rows[12] = {1.0f, 0.1f, 0.0f, 0.0f, 0.0f, 0.9f, 0.05f, 0.0f, 0.0f, -0.1f, 1.05f, 0.0f};
-            std::memcpy(data.NormalRows, rows, sizeof(rows));
+            std::memcpy(data.NormalMatrix, rows, sizeof(rows));
             const float instanceColor[4] = {0.85f, 0.40f, 0.20f, 1.0f};
             std::memcpy(data.ObjectColor, instanceColor, sizeof(instanceColor));
             scene.DrawInstances.push_back(data); // 2

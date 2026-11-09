@@ -240,6 +240,13 @@ namespace NorvesLib::Tools::AssetCook::Detail
         settings.LegLengthRatioOverride = profile.LegLengthRatioOverride;
         settings.Processing = profile.Processing;
         settings.LoopExcludedRoles = profile.LoopExcludedRoles;
+        settings.FootPlanting.bEnabled = profile.bFootPlanting;
+        settings.FootPlanting.HeightThresholdMeters = profile.FootHeightThresholdMeters;
+        settings.FootPlanting.SpeedThresholdMetersPerSecond = profile.FootSpeedThresholdMetersPerSecond;
+        settings.FootPlanting.MinStanceFrames = profile.FootMinStanceFrames;
+        settings.FootPlanting.BlendFrames = profile.FootBlendFrames;
+        settings.FootPlanting.GroundHeightMeters = profile.GroundHeightMeters;
+        settings.FootPlantingLegRoleMask = profile.FootPlantingLegRoleMask;
         C::VariableArray<S::SkeletalAnimationClip> clips;
         A::RetargetReportDocument retargetReport;
         double sourceFps = 0;
@@ -314,6 +321,36 @@ namespace NorvesLib::Tools::AssetCook::Detail
             entry.TargetLegLengthMeters = report.TargetLegLengthMeters;
             entry.UnmappedSourceJoints = std::move(report.UnmappedSourceNames);
             entry.UnmappedTargetJoints = std::move(report.UnmappedTargetNames);
+            const auto& foot = report.FootPlanting;
+            entry.bFootMetricsMeasured = foot.bMeasured;
+            entry.FootSlideBeforeMeters = foot.FootSlideBeforeMeters;
+            entry.FootSlideAfterMeters = foot.FootSlideAfterMeters;
+            entry.FootPenetrationMeters = foot.FootPenetrationMeters;
+            entry.FootFloatMeters = foot.FootFloatMeters;
+            entry.IkAdjustmentDegrees = foot.IkAdjustmentDegrees;
+            entry.IkFailedFrames = foot.IkFailedFrames;
+            entry.PelvisDropMeters = foot.PelvisDropMeters;
+            size_t contactCount = 0;
+            for (const auto& leg : foot.Legs)
+            {
+                A::RetargetFootContactEntry contact;
+                contact.Leg = A::SkeletalRoleName(profile.Vocabulary, leg.PawRole);
+                for (const auto& range : leg.Contacts)
+                {
+                    contact.Ranges.push_back(range.Begin);
+                    contact.Ranges.push_back(range.End);
+                    ++contactCount;
+                }
+                entry.FootContacts.push_back(std::move(contact));
+            }
+            if (settings.FootPlanting.bEnabled)
+            {
+                std::fprintf(stderr,
+                             "retarget_foot_planting measured=%u slide_before_m=%.9g slide_after_m=%.9g penetration_m=%.9g float_m=%.9g ik_adjustment_deg=%.9g ik_failed_frames=%u pelvis_drop_m=%.9g contacts=%zu\n",
+                             unsigned(foot.bMeasured), foot.FootSlideBeforeMeters, foot.FootSlideAfterMeters,
+                             foot.FootPenetrationMeters, foot.FootFloatMeters, foot.IkAdjustmentDegrees,
+                             foot.IkFailedFrames, foot.PelvisDropMeters, contactCount);
+            }
             retargetReport.Clips.push_back(std::move(entry));
             clips.push_back(std::move(clip));
             return true;
@@ -444,6 +481,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         retargetReport.Limits.MaxJointErrorDegrees = profile.ReportMaxJointErrorDegrees;
         retargetReport.Limits.MaxFootSlideMeters = profile.ReportMaxFootSlideMeters;
         retargetReport.Limits.MaxFootPenetrationMeters = profile.ReportMaxFootPenetrationMeters;
+        retargetReport.Limits.MaxIkFailedFrames = profile.ReportMaxIkFailedFrames;
         const auto check = A::CheckRetargetReportLimits(retargetReport);
         if (!request.RetargetReportPath.empty())
         {

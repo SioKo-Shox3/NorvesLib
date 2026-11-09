@@ -1,0 +1,4 @@
+﻿key	value	description
+max_coverage_step	0.050000	隣り合う距離の緑の被覆率の差の上限。仮値。G5-GR43-GRASS-CHECK の最初の撮影で校正する
+max_relative_luminance_step	0.100000	隣り合う距離の平均輝度の差を前の輝度で割った値の上限。仮値。G5-GR43-GRASS-CHECK の最初の撮影で校正する
+max_near_component_fraction	0.350000	近接画像の最大の緑の連結成分が画面全体に占める割合の上限。仮値。G5-GR43-GRASS-CHECK の最初の撮影で校正する

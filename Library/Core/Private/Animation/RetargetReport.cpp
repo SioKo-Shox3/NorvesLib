@@ -54,18 +54,56 @@ namespace NorvesLib::Core::Animation
             writer.EndArray();
             return true;
         }
+
+        template <typename TMetric>
+        RetargetLimitCheck CheckFootLimit(const RetargetReportDocument& document, double limit,
+                                           TMetric RetargetClipReportEntry::*metric,
+                                           RetargetLimitStatus exceededStatus) noexcept
+        {
+            if (!(limit >= 0))
+            {
+                return {};
+            }
+            for (size_t index = 0; index < document.Clips.size(); ++index)
+            {
+                const auto& clip = document.Clips[index];
+                if (!clip.bFootMetricsMeasured)
+                {
+                    return {RetargetLimitStatus::FootMetricsUnmeasured, index, 0, limit};
+                }
+                const double value = static_cast<double>(clip.*metric);
+                if (value > limit)
+                {
+                    return {exceededStatus, index, value, limit};
+                }
+            }
+            return {};
+        }
     }
 
     RetargetLimitCheck CheckRetargetReportLimits(const RetargetReportDocument& document) noexcept
     {
         const auto& limits = document.Limits;
-        if (limits.MaxFootSlideMeters >= 0)
+        auto footCheck = CheckFootLimit(document, limits.MaxFootSlideMeters,
+                                        &RetargetClipReportEntry::FootSlideAfterMeters,
+                                        RetargetLimitStatus::FootSlideExceeded);
+        if (footCheck.Status != RetargetLimitStatus::Within)
         {
-            return {RetargetLimitStatus::FootMetricsUnmeasured, SIZE_MAX, 0, limits.MaxFootSlideMeters};
+            return footCheck;
         }
-        if (limits.MaxFootPenetrationMeters >= 0)
+        footCheck = CheckFootLimit(document, limits.MaxFootPenetrationMeters,
+                                   &RetargetClipReportEntry::FootPenetrationMeters,
+                                   RetargetLimitStatus::FootPenetrationExceeded);
+        if (footCheck.Status != RetargetLimitStatus::Within)
         {
-            return {RetargetLimitStatus::FootMetricsUnmeasured, SIZE_MAX, 0, limits.MaxFootPenetrationMeters};
+            return footCheck;
+        }
+        footCheck = CheckFootLimit(document, static_cast<double>(limits.MaxIkFailedFrames),
+                                   &RetargetClipReportEntry::IkFailedFrames,
+                                   RetargetLimitStatus::IkFailedFramesExceeded);
+        if (footCheck.Status != RetargetLimitStatus::Within)
+        {
+            return footCheck;
         }
         if (limits.MaxJointErrorDegrees >= 0)
         {
@@ -98,6 +136,12 @@ namespace NorvesLib::Core::Animation
             return "joint_error_unmeasured";
         case RetargetLimitStatus::FootMetricsUnmeasured:
             return "foot_metrics_unmeasured";
+        case RetargetLimitStatus::FootSlideExceeded:
+            return "foot_slide_exceeded";
+        case RetargetLimitStatus::FootPenetrationExceeded:
+            return "foot_penetration_exceeded";
+        case RetargetLimitStatus::IkFailedFramesExceeded:
+            return "ik_failed_frames_exceeded";
         }
         return "unknown";
     }
@@ -121,6 +165,14 @@ namespace NorvesLib::Core::Animation
         WriteLimit(writer, "max_joint_error_deg", document.Limits.MaxJointErrorDegrees);
         WriteLimit(writer, "max_foot_slide_m", document.Limits.MaxFootSlideMeters);
         WriteLimit(writer, "max_foot_penetration_m", document.Limits.MaxFootPenetrationMeters);
+        if (document.Limits.MaxIkFailedFrames < 0)
+        {
+            writer.WriteNull("max_ik_failed_frames");
+        }
+        else
+        {
+            writer.WriteInt64("max_ik_failed_frames", document.Limits.MaxIkFailedFrames);
+        }
         writer.EndObject();
 
         writer.BeginObject("result");
@@ -178,6 +230,50 @@ namespace NorvesLib::Core::Animation
                 writer.WriteNumber("source", clip.SourceLegLengthMeters);
                 writer.WriteNumber("target", clip.TargetLegLengthMeters);
                 writer.EndObject();
+            }
+            if (clip.bFootMetricsMeasured)
+            {
+                writer.BeginObject("foot_slide_m");
+                writer.WriteNumber("before", clip.FootSlideBeforeMeters);
+                writer.WriteNumber("after", clip.FootSlideAfterMeters);
+                writer.EndObject();
+                writer.WriteNumber("foot_penetration_m", clip.FootPenetrationMeters);
+                writer.WriteNumber("foot_float_m", clip.FootFloatMeters);
+                writer.WriteNumber("ik_adjustment_deg", clip.IkAdjustmentDegrees);
+                writer.WriteUInt64("ik_failed_frames", clip.IkFailedFrames);
+                writer.WriteNumber("pelvis_drop_m", clip.PelvisDropMeters);
+                writer.BeginArray("foot_contacts");
+                for (const auto& contact : clip.FootContacts)
+                {
+                    C::String leg;
+                    if (contact.Ranges.size() % 2 != 0 || !DecodeName(contact.Leg, leg))
+                    {
+                        return false;
+                    }
+                    writer.BeginObject();
+                    writer.WriteString("leg", leg);
+                    writer.BeginArray("frames");
+                    for (size_t index = 0; index < contact.Ranges.size(); index += 2)
+                    {
+                        writer.BeginArray();
+                        writer.WriteNumberElement(static_cast<double>(contact.Ranges[index]));
+                        writer.WriteNumberElement(static_cast<double>(contact.Ranges[index + 1]));
+                        writer.EndArray();
+                    }
+                    writer.EndArray();
+                    writer.EndObject();
+                }
+                writer.EndArray();
+            }
+            else
+            {
+                writer.WriteNull("foot_slide_m");
+                writer.WriteNull("foot_penetration_m");
+                writer.WriteNull("foot_float_m");
+                writer.WriteNull("ik_adjustment_deg");
+                writer.WriteNull("ik_failed_frames");
+                writer.WriteNull("pelvis_drop_m");
+                writer.WriteNull("foot_contacts");
             }
             writer.BeginObject("unmapped_joints");
             if (!WriteNames(writer, "source", clip.UnmappedSourceJoints) ||

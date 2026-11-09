@@ -122,6 +122,7 @@ namespace NorvesLib::Core::Rendering
 
         // カスタムデータ
         float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
+        float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
     };
 
     // ========================================
@@ -407,6 +408,7 @@ namespace NorvesLib::Core::Rendering
         struct PerInstanceExtraData
         {
             float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
             float SortDepth = 0.0f;
             bool bCastShadow = true;
         };
@@ -424,7 +426,8 @@ namespace NorvesLib::Core::Rendering
         void AddInstance(const Math::Matrix4x4 &worldTransform, uint64_t objectId = 0,
                          const float *customData = nullptr, bool bCastShadow = true,
                          float sortDepth = 0.0f,
-                         const Math::Matrix4x4 *previousWorldTransform = nullptr)
+                         const Math::Matrix4x4 *previousWorldTransform = nullptr,
+                         const float *shadingParams = nullptr)
         {
             InstanceTransforms.push_back(worldTransform);
             InstancePreviousTransforms.push_back(previousWorldTransform ? *previousWorldTransform : worldTransform);
@@ -436,6 +439,13 @@ namespace NorvesLib::Core::Rendering
                 extra.CustomData[1] = customData[1];
                 extra.CustomData[2] = customData[2];
                 extra.CustomData[3] = customData[3];
+            }
+            if (shadingParams)
+            {
+                for (uint32_t i = 0; i < ShadingParamCount; ++i)
+                {
+                    extra.ShadingParams[i] = shadingParams[i];
+                }
             }
             extra.SortDepth = sortDepth;
             extra.bCastShadow = bCastShadow;

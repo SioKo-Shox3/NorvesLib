@@ -14,6 +14,7 @@
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
+#include "Wind.h"
 #include "RenderExtension/RenderExtensionData.h"
 #include "Container/Containers.h"
 #include <cmath>
@@ -1123,6 +1124,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief ゲームの時間。DeltaTime は RenderThread のフレーム時間なので、拡張のパスはこちらを使う。 */
         RenderExtensionFrameInfo ExtensionFrame;
+
+        /** @brief フレームパケットから値で写した世界共通の風。 */
+        WindParameters Wind = MakeDefaultWindParameters();
 
         /**
          * @brief 決定的な撮影（--capture-deterministic）のフレームか

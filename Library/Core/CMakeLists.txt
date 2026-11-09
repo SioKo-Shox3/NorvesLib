@@ -94,6 +94,8 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipOptimizer.h
     Private/Animation/RetargetReport.cpp
     Private/Animation/RetargetReport.h
+    Private/Animation/RetargetFootPlanting.cpp
+    Private/Animation/RetargetFootPlanting.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
@@ -272,7 +274,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassBladeMesh.cpp
     Private/Rendering/WorldFieldPass.cpp
     Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
@@ -326,6 +330,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/Wind.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
@@ -719,6 +724,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/Wind.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h

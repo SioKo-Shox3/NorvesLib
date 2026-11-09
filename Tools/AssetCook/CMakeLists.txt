@@ -286,6 +286,14 @@ add_test(NAME AssetCookTerrainSmoke
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTerrainSmoke.cmake.in"
 )
 
+add_test(NAME AssetCookRetargetSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Retarget
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookRetargetSmoke.cmake.in"
+)
+
 set(ASSET_COOK_GRASS_FIELD_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/GrassField")
 add_test(NAME AssetCookGrassFieldSmoke
     COMMAND ${CMAKE_COMMAND}

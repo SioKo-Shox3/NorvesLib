@@ -229,8 +229,8 @@ void TestDifferentMaterialsGetDifferentIndices()
     variant.bNormalTwoChannel = true;
     expectDistinct(variant, "法線の形式が違えば別の材質");
     variant = baseline;
-    variant.Shading = ShadingModel::ClearCoat;
-    expectDistinct(variant, "材質の種類が違えば別の材質");
+    variant.Shading = ShadingModel::Fur;
+    expectDistinct(variant, "GBuffer のシェーディングモデルの ID が違えば別の材質");
     variant = baseline;
     variant.AlbedoTexture.Id = baseline.AlbedoTexture.Id + 1;
     expectDistinct(variant, "アルベドのテクスチャが違えば別の材質");
@@ -246,6 +246,54 @@ void TestDifferentMaterialsGetDifferentIndices()
     const uint32_t unresolved0 = table.Add(VB::MakeMaterialEntry(static_cast<const MaterialResourceData*>(nullptr)));
     const uint32_t unresolved1 = table.Add(VB::MakeMaterialEntry(static_cast<const MaterialResourceData*>(nullptr)));
     Expect(unresolved0 == unresolved1 && unresolved0 != baselineIndex, "解決できない材質は既定の 1 件にまとまる");
+}
+
+void TestShadingModelAndParams()
+{
+    MaterialResourceData data;
+    data.Shading = ShadingModel::Fur;
+    data.ShadingParams[0] = 0.25f;
+    data.ShadingParams[1] = 0.75f;
+    const VB::MaterialEntry fur = VB::MakeMaterialEntry(&data);
+    Expect(fur.Header[1] == GBufferContract::ShadingModelFur, "Fur を GBuffer の ID に変換する");
+    Expect(fur.ShadingParams[0] == 0.25f && fur.ShadingParams[1] == 0.75f &&
+               fur.ShadingParams[2] == -1.0f && fur.ShadingParams[3] == -1.0f,
+           "材質のシェーディングの 4 成分を保存する");
+    data.Shading = ShadingModel::Unlit;
+    Expect(VB::MakeMaterialEntry(&data).Header[1] == GBufferContract::ShadingModelDefaultLit,
+           "Unlit は GBuffer の DefaultLit に写す");
+    const VB::MaterialEntry fallback = VB::MakeMaterialEntry(static_cast<const MaterialResourceData*>(nullptr));
+    Expect(fallback.Header[1] == GBufferContract::ShadingModelDefaultLit &&
+               fallback.ShadingParams[0] == -1.0f && fallback.ShadingParams[1] == -1.0f &&
+               fallback.ShadingParams[2] == -1.0f && fallback.ShadingParams[3] == -1.0f,
+           "null の材質は DefaultLit と未指定の 4 成分になる");
+
+    MegaGeometry::MegaMeshMaterial mega;
+    mega.Shading = ShadingModel::Eye;
+    mega.ShadingParams[0] = 0.25f;
+    mega.ShadingParams[1] = 0.75f;
+    const VB::MaterialEntry eye = VB::MakeMaterialEntry(mega);
+    Expect(eye.Header[1] == GBufferContract::ShadingModelEye &&
+               eye.ShadingParams[0] == 0.25f && eye.ShadingParams[1] == 0.75f &&
+               eye.ShadingParams[2] == -1.0f && eye.ShadingParams[3] == -1.0f,
+           "MegaGeometry の Eye の ID と 4 成分を保存する");
+
+    VB::MaterialTable table;
+    const uint32_t first = table.Add(VB::MakeMaterialEntry(&data));
+    data.ShadingParams[0] = 0.5f;
+    Expect(first != table.Add(VB::MakeMaterialEntry(&data)), "シェーディングの値だけが違う材質を別の番号にする");
+}
+
+void TestInstanceShadingParamsOverride()
+{
+    MaterialResourceData data;
+    data.ShadingParams[0] = 0.2f;
+    data.ShadingParams[1] = 0.4f;
+    const float instanceParams[4] = {0.9f, -1.0f, -1.0f, -1.0f};
+    const VB::MaterialEntry entry = VB::MakeMaterialEntry(&data, instanceParams);
+    Expect(entry.ShadingParams[0] == 0.9f && entry.ShadingParams[1] == 0.4f &&
+               entry.ShadingParams[2] == -1.0f && entry.ShadingParams[3] == -1.0f,
+           "指定されたインスタンスの成分だけを材質へ重ねる");
 }
 
 void TestIndicesAreDenseInFirstSeenOrder()
@@ -467,7 +515,7 @@ void TestRecordShaderWritesTableIndex()
 
 int RunTest()
 {
-    static_assert(sizeof(VB::MaterialEntry) == 128, "材質の表の 1 件は 128 バイト");
+    static_assert(sizeof(VB::MaterialEntry) == 144, "材質の表の 1 件は 144 バイト");
     static_assert(VB::MATERIAL_LIMIT <= MaterialTiles::DEFAULT_MAX_MATERIALS, "上限は材質のタイルの分類の材質の数以下");
 
     TestSameMaterialSharesIndexAcrossDrawKinds();
@@ -475,6 +523,8 @@ int RunTest()
     TestMegaGeometryMaterialIsSeparateEntry();
     TestTextureSlotsRoundTrip();
     TestDifferentMaterialsGetDifferentIndices();
+    TestShadingModelAndParams();
+    TestInstanceShadingParamsOverride();
     TestIndicesAreDenseInFirstSeenOrder();
     TestOverflowFoldsIntoReservedIndex();
     TestLargeTableKeepsIndicesAcrossIndexGrowth();

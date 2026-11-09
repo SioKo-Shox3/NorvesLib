@@ -185,12 +185,14 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
             hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
             hash = HashRevisionValue(hash, static_cast<uint32_t>(proxy.LayerMask));
-            return HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            hash = HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            return HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
         }
 
         uint64_t HashSkinnedMeshProxyRevision(const SkinnedMeshProxy& proxy)
         {
             uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
+            hash = HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);
@@ -4587,6 +4589,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetWindParameters(m_Wind);
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -5851,6 +5854,7 @@ namespace NorvesLib::Core::Rendering
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
@@ -6636,6 +6640,11 @@ namespace NorvesLib::Core::Rendering
         const VolumetricFogParameters& parameters)
     {
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
+    {
+        m_Wind = SanitizeWindParameters(parameters);
     }
 
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)

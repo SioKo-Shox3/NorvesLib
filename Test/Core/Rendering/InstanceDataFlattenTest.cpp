@@ -74,6 +74,39 @@ namespace
         }
     }
 
+    void TestShadingParamsReachInstances()
+    {
+        for (uint32_t run = 0; run < 2; ++run)
+        {
+            MeshBatcher batcher;
+            NorvesLib::Core::Container::VariableArray<DrawCommand> commands;
+            NorvesLib::Core::Container::VariableArray<GPUSceneInstanceData> instanceData;
+            NorvesLib::Math::Matrix4x4 world;
+            MeshProxy overridden = MakeProxy(1, 100, 200, world);
+            overridden.ShadingParams[0] = 0.5f;
+            overridden.ShadingParams[3] = 0.25f;
+            const MeshProxy defaults = MakeProxy(2, 100, 200, world);
+
+            batcher.BeginBatching();
+            batcher.AddMeshProxy(overridden);
+            batcher.AddMeshProxy(defaults);
+            batcher.EndBatching();
+            batcher.GenerateDrawCommands(commands, instanceData, run != 0, 2);
+
+            assert(instanceData.size() == 2);
+            assert(commands.size() == (run != 0 ? 1u : 2u));
+            const float expectedOverride[4] = {0.5f, -1.0f, -1.0f, 0.25f};
+            const float expectedDefault[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+            AssertFloatArrayNear(instanceData[0].ShadingParams, expectedOverride, 4);
+            AssertFloatArrayNear(instanceData[1].ShadingParams, expectedDefault, 4);
+            AssertFloatArrayNear(commands[0].Draw.ShadingParams, expectedOverride, 4);
+            if (run == 0)
+            {
+                AssertFloatArrayNear(commands[1].Draw.ShadingParams, expectedDefault, 4);
+            }
+        }
+    }
+
     void TestNormalMatrixForNonUniformScale()
     {
         MeshBatcher batcher;
@@ -156,6 +189,7 @@ int main()
     std::cout << "InstanceDataFlattenTest start\n";
 
     TestBatcherFlattensInstanceData();
+    TestShadingParamsReachInstances();
     TestNormalMatrixForNonUniformScale();
     TestRebaseDrawCommandInstanceRange();
 

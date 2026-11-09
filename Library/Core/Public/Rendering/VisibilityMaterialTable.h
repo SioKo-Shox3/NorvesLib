@@ -60,7 +60,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW = 64u;
 
     /**
-     * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）
+     * @brief 材質の表の 1 件（storage buffer の 1 要素。144 バイト）
      *
      * 材質の解決が引く定数（基本色・発光・金属度と粗さのスカラー・高さの係数・種類の印）と、
      * テクスチャを引き直すための識別（テクスチャのハンドルの 64bit を下位・上位の 2
@@ -77,7 +77,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         /** @brief x = 金属度のスカラー（負は未指定）、y =
          * 粗さのスカラー（負は未指定）、z = 高さの係数、w = 変位した頂点の間隔 */
         float Scalars[4] = {-1.0f, -1.0f, 0.05f, 0.0f};
-        /** @brief x = MATERIAL_FLAG_*、y = ShadingModel、z = BlendMode、w = 地形の混ぜ合わせの値の要約（無ければ 0） */
+        /** @brief x = MATERIAL_FLAG_*、y = GBuffer のシェーディングモデルの ID（ToGBufferShadingModelId）、z = BlendMode、w = 地形の混ぜ合わせの値の要約（無ければ 0） */
         uint32_t Header[4] = {0u, 0u, 0u, 0u};
         /** @brief アルベド・法線（xy が下位・上位、zw が法線） */
         uint32_t TexturesA[4] = {0u, 0u, 0u, 0u};
@@ -88,17 +88,22 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         /** @brief 高さ（xy）、残りは予約 */
         // [2] は MegaGeometry の定数 AO の float ビット列、[3] は予約
         uint32_t TexturesD[4] = {0u, 0u, 0u, 0u};
+        /** @brief x = P0、y = P1、z = 予約、w = 被覆率の乗数。負は未指定 */
+        float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
     };
 
-    static_assert(sizeof(MaterialEntry) == 128, "visbuffer_records.comp などの MaterialEntry と一致しなければならない");
+    static_assert(sizeof(MaterialEntry) == 144, "visbuffer_records.comp などの MaterialEntry と一致しなければならない");
     static_assert(alignof(MaterialEntry) == 16, "storage buffer の要素の配置は 16 バイト");
     static_assert(offsetof(MaterialEntry, Header) == 48 && offsetof(MaterialEntry, TexturesA) == 64 &&
-                      offsetof(MaterialEntry, TexturesD) == 112,
+                      offsetof(MaterialEntry, TexturesD) == 112 && offsetof(MaterialEntry, ShadingParams) == 128,
                   "uvec4 の並びと一致しなければならない");
 
     /** @brief 手続き・スキニングの描画が持つ材質（MaterialResourceData。null
      * なら材質の解決と同じ既定の値）から表の 1 件を作る */
     MaterialEntry MakeMaterialEntry(const MaterialResourceData *data);
+
+    /** @brief インスタンスの値が 0 以上の成分を材質の値へ重ねる（null なら材質の値だけ） */
+    MaterialEntry MakeMaterialEntry(const MaterialResourceData* data, const float* instanceShadingParams);
 
     /** @brief MegaGeometry の区間の材質（値で持つ）から表の 1
      * 件を作る（MATERIAL_FLAG_MEGA_GEOMETRY の印が立つ） */

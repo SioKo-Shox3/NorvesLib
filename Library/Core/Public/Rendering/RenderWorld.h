@@ -8,6 +8,7 @@
 #include "SkyAtmosphere.h"
 #include "SunShadowParameters.h"
 #include "VolumetricFog.h"
+#include "Wind.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -196,6 +197,9 @@ namespace NorvesLib::Core::Rendering
          * @param parameters GameThread側で保持し、FramePacketへ値コピーする設定
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
+
+        /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
+        void SetWindParameters(const WindParameters& parameters);
 
         // 空の遮蔽の値と遮蔽物を次の FramePacket へ値で公開する（GameThread）。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);

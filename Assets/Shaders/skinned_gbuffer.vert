@@ -43,6 +43,7 @@ layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;
 layout(location = 6) out vec4 fragCurrentClip;
 layout(location = 7) out vec4 fragPreviousClip;
+layout(location = 8) flat out vec4 fragInstanceShadingParams;
 
 struct SkinnedVertex
 {
@@ -134,6 +135,7 @@ void main()
     vec3 worldNormal = mat3(skinning.worldNormal) * skinned.normal;
     fragNormal = dot(worldNormal, worldNormal) > 0.000001 ? normalize(worldNormal) : vec3(0.0);
     fragObjectColor = vec3(1.0);
+    fragInstanceShadingParams = vec4(-1.0);
     fragEmissiveChromaticityAndLuminanceNits = mvp.emissiveChromaticityAndLuminanceNits;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
