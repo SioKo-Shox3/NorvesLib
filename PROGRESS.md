@@ -10490,3 +10490,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G5-GR88-BC6H-QUALITY): BC6H・BC3 を使う資産・材質の経路はまだ無い（`Scripts/CookAssets.ps1` は hdr・`--format bc3` を渡さない）。GPU での BC6H・BC3 の標本は `RHIBlockCompressedTextureVulkanTest`（G5-GR29-RHI-FORMATS の手組みのブロック）で確かめる。見た目の変わる変更は無い。
 - Notes(G5-GR88-BC6H-QUALITY): `Assets/Textures/Silver` は albedo・法線・AO・メタリックが画像全体で単色（粗さだけ 28 色）で画質の判断に使えないので、done-when の Silver の測定は残したうえで、追跡済みの実物 `Assets/Textures/CobbleStoneFloor`（4K の diff・nor_gl・arm）を同じ測り方で足した。切り出しは中央ではなく 256 画素おきの格子で RGB の分散が最大の 512 四方。CobbleStoneFloor はロードマップの暫定値のうち法線の最大（21.7 度 > 6 度）と ORM の R・G の最大差（10・13 > 8）を満たさない。スモークのしきい値は実測から置いた回帰検出用で、暫定値の合格ではない。BC6H の合成の誤差は跳ねる区画にかかる 4x4 ブロック（edge）とそれ以外（smooth）に分けて測る。
 - Notes(G5-GR88-BC6H-QUALITY): 既存の `CookedTextureTest` の v0.1 の未知の形式の例の値 11 は BC3 になったので 13 に替え、11・12 が v0.1 では未知になることを足した。
+- U1 TAA がリアクティブを読む(資源名・定数・binding 5・履歴の A への持ち越し): 着地(直し 2 回)

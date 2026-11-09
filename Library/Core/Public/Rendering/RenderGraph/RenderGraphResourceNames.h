@@ -70,6 +70,8 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);
     inline constexpr Identity SceneDepth = Identity::Literal("Scene.Depth", sizeof("Scene.Depth") - 1);
+    // TAA の前に描く半透明・粒子の被覆率(R8_UNORM)。書き手が積み、TemporalAAPass が現在の色の割合を 1 へ寄せる
+    inline constexpr Identity SceneReactive = Identity::Literal("Scene.Reactive", sizeof("Scene.Reactive") - 1);
     inline constexpr Identity LightingIndirectSpecular =
         Identity::Literal("Lighting.IndirectSpecular", sizeof("Lighting.IndirectSpecular") - 1);
     inline constexpr Identity LightingSpecularReflectance =
