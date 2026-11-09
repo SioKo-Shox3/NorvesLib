@@ -17,6 +17,12 @@ namespace NorvesLib::Tools::AssetCook
         // ORM の A に詰める遮蔽(省略可。無ければ A=255)。
         std::filesystem::path OrmOcclusionPath;
         bool bFlipNormalY = false;
+        // Height16 の浮動小数の入力を 0..65535 へ正規化する範囲。
+        bool bHasHeightRange = false;
+        float HeightRangeMin = 0.0f;
+        float HeightRangeMax = 0.0f;
+        // Height16・Rg16 で 8bit の入力を拒む。
+        bool bRequire16Bit = false;
         uint32_t FallbackMinTriangles = 0;
         uint32_t DagRootMaxClusters = 0;
         std::filesystem::path InputPath, PackagePath, ManifestPath;
@@ -31,6 +37,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::AssetImport::EmissiveScale AssetSetEmission;
         Core::Container::VariableArray<uint32_t> ClipJointNodes;
         std::filesystem::path RetargetSkeletonPath, RetargetProfilePath;
+        // リターゲットの測定値と上限判定を保存する任意の JSON 出力先。
+        std::filesystem::path RetargetReportPath;
         Core::Container::AnsiString RetargetSourceClip, RetargetClipName;
     };
     // 従来の単体cook・manifest・出力検証を再利用する。batch集約や新しい増分判定は追加しない。
