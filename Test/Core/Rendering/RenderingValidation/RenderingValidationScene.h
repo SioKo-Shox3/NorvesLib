@@ -284,6 +284,9 @@ namespace NorvesLib::Test::RenderingValidation
         // 置く。骨の平行移動のアニメーションは時刻 t 秒で (t, 0, 0) m（0〜1秒）。R5 の場面の準備の後に呼ぶ。
         bool AddR5SkinnedQuad() const;
         bool SetR5SkinnedQuadAnimationTime(float timeSeconds) const;
+        // 視錐台の絞り込み検証用に縮小した管状スキンを置く。
+        bool AddSkinnedCullGiant() const;
+        bool SetSkinnedCullGiantFront(bool bFront) const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
         bool SetR4CornellObjectOffsetX(float offsetX) const;
         bool SetR4CornellPointLightState(float offsetX, float intensity) const;
@@ -390,6 +393,8 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Entity* m_pR4CornellDynamicObjectEntity = nullptr;
         mutable Core::Entity* m_pR8OutdoorMovingSphereEntity = nullptr;
         mutable Core::Entity* m_pR5SkinnedQuadEntity = nullptr;
+        mutable Core::Entity* m_pSkinnedCullGiantEntity = nullptr;
+        mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_SkinnedCullGiantAsset;
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_R5SkinnedQuadAsset;
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_ShadingModelSkinAsset;

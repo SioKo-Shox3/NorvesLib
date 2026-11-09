@@ -2,6 +2,7 @@
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
 #include "RenderExtensionStageScenario.h"
+#include "SkinnedCullScenario.h"
 #include "TemporalAAReactiveScenario.h"
 
 #include "Application/IApplicationHandler.h"
@@ -1704,6 +1705,7 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
         RenderExtensionStageScenario m_ExtensionStageScenario;
+        SkinnedCullScenario m_SkinnedCullScenario;
         TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
 
     public:
@@ -1780,6 +1782,20 @@ namespace
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
                 return false;
+            }
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                if (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                    m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                    m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario ||
+                    m_TemporalAAReactiveScenario.IsEnabled() || m_bShadingModelScenario ||
+                    GetRunConfig().Scene != SceneKind::Outdoor ||
+                    GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
+                {
+                    LOG_ERROR("スキンの絞り込み検証には outdoor と back-buffer を単独で指定してください");
+                    return false;
+                }
+                RequireVisibilityBufferPath();
             }
             if (m_TemporalAAReactiveScenario.IsEnabled() &&
                 (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
@@ -2010,6 +2026,11 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                return m_SkinnedCullScenario.Initialize(GetFixture(), Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene, GetRunConfig().CaptureSource);
             }
             if (m_TemporalAAReactiveScenario.IsEnabled())
             {
@@ -2290,6 +2311,10 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument.find(TEXT("--skinned-cull-scenario=")) == 0)
+            {
+                return m_SkinnedCullScenario.ParseArgument(argument, outFailureReason);
+            }
             if (argument.find(TEXT("--temporal-aa-reactive-scenario=")) == 0)
             {
                 return m_TemporalAAReactiveScenario.ParseArgument(argument, outFailureReason);
@@ -2501,6 +2526,11 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                return m_SkinnedCullScenario.Evaluate(frame, Core::Engine::GEngine->GetRenderWorld(),
+                    GetLastAcceptedRequestId(), reason);
+            }
             if (m_TemporalAAReactiveScenario.IsEnabled())
             {
                 return m_TemporalAAReactiveScenario.Evaluate(frame, reason);
@@ -2625,6 +2655,11 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                m_SkinnedCullScenario.ApplyState(GetFixture(), renderWorld);
+                return;
+            }
             if (m_TemporalAAReactiveScenario.IsEnabled())
             {
                 m_TemporalAAReactiveScenario.ApplyState(renderWorld, GetFixture().GetCamera());
@@ -2965,6 +3000,11 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                m_SkinnedCullScenario.Advance();
+                return;
+            }
             if (m_TemporalAAReactiveScenario.IsEnabled())
             {
                 m_TemporalAAReactiveScenario.Advance();
@@ -3083,6 +3123,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                return m_SkinnedCullScenario.RequestFollowup(outRequest);
+            }
             if (m_TemporalAAReactiveScenario.IsEnabled())
             {
                 return m_TemporalAAReactiveScenario.RequestFollowup(outRequest);

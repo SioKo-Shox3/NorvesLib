@@ -2,6 +2,7 @@
 
 #include "RenderingValidation/CornellBoxData.h"
 #include "RenderingValidation/GpuTestEnvironment.h"
+#include "RenderingValidation/SkinnedGiantFixture.h"
 #include "Component/CameraComponent.h"
 #include "Component/DirectionalLightComponent.h"
 #include "Component/MeshComponent.h"
@@ -1089,6 +1090,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
         m_pR5SkinnedQuadEntity = nullptr;
+        m_pSkinnedCullGiantEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
 
         state.pWorld = nullptr;
@@ -1172,6 +1174,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
         m_pR5SkinnedQuadEntity = nullptr;
+        m_pSkinnedCullGiantEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
 
@@ -1184,6 +1187,7 @@ namespace NorvesLib::Test::RenderingValidation
         }
         m_Objects.clear();
         m_R5SkinnedQuadAsset.reset();
+        m_SkinnedCullGiantAsset.reset();
         m_ShadingModelSkinAsset.reset();
         if (resources != nullptr && m_ShadingModelMegaMesh.IsValid())
         {
@@ -3504,6 +3508,90 @@ namespace NorvesLib::Test::RenderingValidation
         skinned->SetVisible(true);
         m_R5SkinnedQuadAsset = asset;
         m_pR5SkinnedQuadEntity = entity;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::AddSkinnedCullGiant() const
+    {
+        if (m_pSkinnedCullGiantEntity != nullptr)
+        {
+            return true;
+        }
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pWorld == nullptr || !m_R5ShadowMaterial.IsValid())
+        {
+            return false;
+        }
+
+        SkinnedGiantFixtureDesc desc;
+        desc.TargetTriangleCount = 4096u;
+        desc.Length = 2.0f;
+        desc.Radius = 0.65f;
+        SkinnedGiantFixtureData data;
+        if (!BuildSkinnedGiantFixture(desc, data))
+        {
+            return false;
+        }
+
+        auto& registry = Core::GEngine.GetResourceRegistry();
+        auto mesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("RenderingValidationCullMesh"));
+        auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("RenderingValidationCullSkeleton"));
+        auto animation = registry.CreateTransient<Core::AnimationClipResource>(TEXT("RenderingValidationCullClip"));
+        auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("RenderingValidationCullAsset"));
+        if (!mesh || !skeleton || !animation || !asset)
+        {
+            return false;
+        }
+        mesh->SetVertices(std::move(data.Vertices));
+        mesh->SetIndices(std::move(data.Indices));
+        skeleton->SetJoints(std::move(data.Joints));
+        Core::Skeletal::SkeletalAnimationClip clip;
+        clip.Name = TEXT("Rest");
+        clip.DurationSeconds = 1.0f;
+        animation->SetClip(std::move(clip));
+        if (!mesh->Load() || !skeleton->Load() || !animation->Load())
+        {
+            return false;
+        }
+        asset->SetResources(mesh, skeleton, animation);
+        if (!asset->IsLoaded())
+        {
+            return false;
+        }
+
+        Core::Entity* entity = m_pWorld->SpawnEntity();
+        if (entity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(entity);
+        entity->SetPosition(0.0f, -1.0f, -6.0f);
+        auto* skinned = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(entity);
+        auto* light = m_pP4LightEntity != nullptr
+            ? m_pP4LightEntity->GetComponent<Core::Component::DirectionalLightComponent>() : nullptr;
+        if (skinned == nullptr || light == nullptr)
+        {
+            return false;
+        }
+        skinned->SetSkeletalAsset(asset);
+        skinned->SetMaterial(m_R5ShadowMaterial);
+        skinned->SetPlaying(false);
+        skinned->SetLooping(false);
+        skinned->SetAnimationTimeSeconds(0.0f);
+        skinned->SetCastShadow(false);
+        skinned->SetVisible(true);
+        light->SetCastShadows(false);
+        m_SkinnedCullGiantAsset = asset;
+        m_pSkinnedCullGiantEntity = entity;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetSkinnedCullGiantFront(bool bFront) const
+    {
+        if (m_pSkinnedCullGiantEntity == nullptr)
+        {
+            return false;
+        }
+        m_pSkinnedCullGiantEntity->SetPosition(0.0f, -1.0f, bFront ? 6.0f : -6.0f);
         return true;
     }
 
