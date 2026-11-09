@@ -10739,3 +10739,14 @@
 - verify: `ctest --test-dir build -C Debug -R "^(RHIBlockCompressedTextureVulkanTest|RenderResourcesDomainContractTest|TextureAssetReloadAdmissionTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Private/Rendering/TextureAssetRuntime.cpp, Test/Core/Rendering/RHIBlockCompressedTextureVulkanTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR29-RHI-FORMATS
+
+## G5-GR43-GRASS-GENERATE-P1: 草の生成に地形の高さ場を渡し、ブレードの根元を地面に置き、タイルの選別も地形の高さで行う
+- status: todo
+- done-when: grassland の地形の高さ場(`TerrainComponent::GetHeightField()` の `TSharedPtr<const Rendering::Terrain::TerrainHeightField>`)を、草の場の描画データに値で載せる(例: `GrassFieldComponent` が同じ World の地形を見つけ、`GrassFieldRenderData` に持たせて公開する)。RenderThread へは FramePacket 越しに渡し、RenderThread から GameThread の Component は引かない。GrassPass へ届いたら、GPU へは高さのテクスチャかタイルごとの高さの格子で送る。送り方は `GrassFieldGpuWindow` と同じくステージングと `CopyBufferToTexture` / コピーで行い、同期の `ITexture::Update` は使わない。生成では `GrassGenerate.comp` と `GrassGenerateReference` の両方が、ブレードの根元の Y を、その XZ での高さ場の値(`TerrainHeightField::SampleHeight` の LOD 0 と同じ三角形の補間)にする。`GrassTileSelector` は、タイルの視錐台の判定と距離の帯を、そのタイルの地形の高さの範囲(最小〜最大に草丈を足した範囲)で行う。高さ場が無いときは今の `GroundHeightMeters` の動きのまま。試験が通る: `GrassTileSelectionTest` に、起伏のある合成の高さ場(斜面と丘)のケースを足す。中身は、(a) 地面 0 の前提なら視錐台の外になる高い丘の上のタイルが選ばれること、(b) `GrassGenerateReference` が出すブレードの Y がその XZ の `SampleHeight` と 1 mm 以内で一致すること、(c) 高さ場が無いときは全ブレードの Y が `GroundHeightMeters` になること。`GrassGenerateVulkanTest` にも同じ起伏の高さ場のケースを足し、GPU が書いたブレードの記録を読み戻して、各ブレードの Y と CPU の写しの Y との差が 1 cm 以内で、LOD のカウンタが CPU の写しの数と完全に一致することを確かめる。
+- verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest -- /m:1`
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(GrassTileSelectionTest|GrassShaderCompileTest|GrassFieldSnapshotContractTest|GrassGenerateVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Rendering/GrassFieldRenderData.h, Library/Core/Public/Component/GrassFieldComponent.h, Library/Core/Private/Component/GrassFieldComponent.cpp, Library/Core/Public/Vegetation/Vegetation.h, Library/Core/Private/Vegetation/Vegetation.cpp, Library/Core/Public/Rendering/GrassPass.h, Library/Core/Private/Rendering/GrassPass.cpp, Library/Core/Public/Rendering/GrassFieldGpuWindow.h, Library/Core/Private/Rendering/GrassFieldGpuWindow.cpp, Library/Core/Public/Rendering/GrassTileSelector.h, Library/Core/Private/Rendering/GrassTileSelector.cpp, Library/Core/Public/Rendering/GrassGenerateReference.h, Library/Core/Private/Rendering/GrassGenerateReference.cpp, Assets/Shaders/Grass, Test/Core/Rendering/GrassTileSelectionTest.cpp, Test/Core/Rendering/GrassGenerateVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR43-GRASS-GENERATE
