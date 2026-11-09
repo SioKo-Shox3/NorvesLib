@@ -10546,3 +10546,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: grassland は `CameraScriptCapture` を `FreeCameraRig` につないでいないので、`grassland-sweep.txt` の撮影の合図はまだ動かない（G5-GR43-GRASS-CHECK の paths の Game/GameModes/Grassland でつなぐ）。
 - Notes: 草の頂点シェーダーは LayerA（濡れの moisture）を全体の濡れ度が 0 より大きいときだけ読む。LayerA の ShaderResource の遷移の段は fragment と compute だけで、頂点の段の可視性は形式上保証されない。GR49 で全体の濡れ度を入れるときに LayerA の遷移も見直す。
 - Notes: 人が見るときの見どころ: GENERATE-P1 の後に grassland の near・low 視点で、手前の草が曲がった帯で揺れ、遠くへ LOD が切り替わっても密度と明るさが跳ばないこと、カメラを草へ寄せると 1.2 m から背が縮み 0.35 m で点描に抜けること。荒野の株（FoliagePass）は見た目が変わらないこと。
+
+## 2026-11-10 G5-GR43-GRASS-DRAW（run 20261110-060226 の反復 2、差し戻しの直し）
+
+- Done: verify の ctest で GrassTileSelectionTest が「unknown test」で落ちた差し戻しを直した。原因はこの枠の build の `CameraViewConstantsTest.exe` が 11 月 4 日のままで、GrassTileSelectionTest を MEMBER に足した後に作り直されていなかったこと（前の反復の最後の確かめは単位の作業ツリーの build で回っていた）。コードの変更は無く、`CameraViewConstantsTest` を Debug でビルドし直した。
+- 証拠: `.harness/runs/20261110-060226/aux-G5-GR43-verify-iter2.txt`（RHIRayTracingApiContractTest・RHITextureUpdateVulkanTest・Game の Debug ビルドが EXIT=0、ctest の GrassShaderCompileTest・WindShaderCompileTest・GrassTileSelectionTest が 3/3 Passed）と `aux-G5-GR43-build-CameraViewConstantsTest.txt`（EXIT=0）。
+- Notes: verify の ctest が呼ぶ GrassTileSelectionTest は CameraViewConstantsTest の束の中にあるが、verify のビルド行にはこのターゲットが無い。束の MEMBER を足す・変える項目は、その束のターゲットを枠の build でもビルドしてから終える。
