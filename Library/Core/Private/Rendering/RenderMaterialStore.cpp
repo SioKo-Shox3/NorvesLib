@@ -47,6 +47,10 @@ namespace NorvesLib::Core::Rendering
             }
             data.Blend = createInfo.Blend;
             data.Shading = createInfo.Shading;
+            for (uint32_t index = 0; index < ShadingParamCount; ++index)
+            {
+                data.ShadingParams[index] = SanitizeShadingParam(createInfo.ShadingParams[index]);
+            }
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;
             data.bDiffuseOnly = createInfo.bDiffuseOnly;

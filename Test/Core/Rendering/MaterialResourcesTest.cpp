@@ -420,6 +420,75 @@ namespace
         assert(data->EmissiveLuminanceNits == 2.0f);
     }
 
+    void TestMaterialShadingParamsAreCopied()
+    {
+        MaterialCreateData createInfo;
+        const MaterialResourceData defaultData;
+        for (uint32_t index = 0; index < ShadingParamCount; ++index)
+        {
+            assert(createInfo.ShadingParams[index] == -1.0f);
+            assert(defaultData.ShadingParams[index] == -1.0f);
+        }
+
+        createInfo.ShadingParams[0] = 0.25f;
+        createInfo.ShadingParams[1] = 0.75f;
+        createInfo.ShadingParams[2] = -1.0f;
+        createInfo.ShadingParams[3] = 1.0f;
+
+        RenderResources manager;
+        const MaterialHandle handle = manager.Materials().Create(createInfo);
+        assert(handle.IsValid());
+        const MaterialResourceData* data = manager.Materials().GetData(handle);
+        assert(data != nullptr);
+        for (uint32_t index = 0; index < ShadingParamCount; ++index)
+        {
+            assert(data->ShadingParams[index] == createInfo.ShadingParams[index]);
+        }
+
+        createInfo.ShadingParams[0] = 1.0f;
+        createInfo.ShadingParams[1] = 0.0f;
+        createInfo.ShadingParams[2] = 0.5f;
+        createInfo.ShadingParams[3] = 0.25f;
+        assert(manager.Materials().Update(handle, createInfo));
+        data = manager.Materials().GetData(handle);
+        assert(data != nullptr);
+        for (uint32_t index = 0; index < ShadingParamCount; ++index)
+        {
+            assert(data->ShadingParams[index] == createInfo.ShadingParams[index]);
+        }
+    }
+
+    void TestMaterialShadingParamsAreSanitized()
+    {
+        MaterialCreateData createInfo;
+        createInfo.ShadingParams[0] = -0.5f;
+        createInfo.ShadingParams[1] = std::numeric_limits<float>::quiet_NaN();
+        createInfo.ShadingParams[2] = 3.0f;
+        createInfo.ShadingParams[3] = std::numeric_limits<float>::infinity();
+
+        RenderResources manager;
+        const MaterialHandle handle = manager.Materials().Create(createInfo);
+        assert(handle.IsValid());
+        const MaterialResourceData* data = manager.Materials().GetData(handle);
+        assert(data != nullptr);
+        assert(data->ShadingParams[0] == -1.0f);
+        assert(data->ShadingParams[1] == -1.0f);
+        assert(data->ShadingParams[2] == 1.0f);
+        assert(data->ShadingParams[3] == 1.0f);
+
+        createInfo.ShadingParams[0] = std::numeric_limits<float>::infinity();
+        createInfo.ShadingParams[1] = 3.0f;
+        createInfo.ShadingParams[2] = std::numeric_limits<float>::quiet_NaN();
+        createInfo.ShadingParams[3] = -0.5f;
+        assert(manager.Materials().Update(handle, createInfo));
+        data = manager.Materials().GetData(handle);
+        assert(data != nullptr);
+        assert(data->ShadingParams[0] == 1.0f);
+        assert(data->ShadingParams[1] == 1.0f);
+        assert(data->ShadingParams[2] == -1.0f);
+        assert(data->ShadingParams[3] == -1.0f);
+    }
+
     void TestMaterialResourceLoadRejectsInvalidEmissiveWithoutSideEffects()
     {
         for (const InvalidEmissiveRow &row : InvalidEmissiveRows)
@@ -515,6 +584,8 @@ int main()
     TestMaterialCreateRejectsInvalidEmissiveWithoutSideEffects();
     TestMaterialUpdateRejectsInvalidEmissiveWithoutSideEffects();
     TestMaterialCreateCanonicalizesPositiveEmissive();
+    TestMaterialShadingParamsAreCopied();
+    TestMaterialShadingParamsAreSanitized();
     TestMaterialResourceLoadRejectsInvalidEmissiveWithoutSideEffects();
     TestMaterialResourceLoadCanonicalizesPositiveEmissive();
 
