@@ -76,6 +76,7 @@ set_target_properties(RenderingGpuTestSupport PROPERTIES FOLDER "Test/Core/Rende
 
 add_library(RenderingValidationFixtureSupport STATIC
     RenderingValidation/RenderingValidationScene.cpp
+    RenderingValidation/SkinnedGiantFixture.cpp
     RenderingValidation/RenderingValidationApplication.cpp
 )
 target_link_libraries(RenderingValidationFixtureSupport PUBLIC Core)
