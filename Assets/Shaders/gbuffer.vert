@@ -32,6 +32,7 @@ layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ方向
 layout(location = 6) out vec4 fragCurrentClip;
 layout(location = 7) out vec4 fragPreviousClip;
+layout(location = 8) flat out vec4 fragInstanceShadingParams;
 
 void main()
 {
@@ -44,6 +45,7 @@ void main()
     fragNormal = normalize(normal);
 
     fragObjectColor = instances[gl_InstanceIndex].objectColor.rgb;
+    fragInstanceShadingParams = instances[gl_InstanceIndex].shadingParams;
     fragEmissiveChromaticityAndLuminanceNits = mvp.emissiveChromaticityAndLuminanceNits;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
