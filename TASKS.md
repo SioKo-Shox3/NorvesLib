@@ -5673,7 +5673,7 @@
 - notes: 今のコードの事実（GR84・GR128 で入っているもの）: 正準ロール表 quadruped_v1 は `SkeletalRole`（`Library/Core/Private/Animation/SkeletalRoleProfile.h:8-34`）、全体の `RestUpHint` と明示の `RootScale`（同 56-58 行）、`--retarget-clip --skeleton --role-profile --clip --clip-name`（`Tools/AssetCook/RigRetargetCli.cpp:29-127`）、純粋な回転の写し `RetargetSkeletalClip`（`SkeletalClipRetarget.h:50-54`）。profile は version 1・vocabulary quadruped_v1 しか受けない（`SkeletalRoleProfile.cpp:604-620`）。足りないのは比率の自動化、ロールごとのねじれ、報告と上限、再接地（`G9-GR85-FOOT-REPLANT`）、人型（`G9-GR85-HUMANOID-SMOKE`）。要件の `SkeletonCompat`（TopologyId・BindPoseId）は新しく作らない: GR82 の v1 で、名前順の正準トポロジーのハッシュ `SkeletonId`（`Library/Core/Private/Animation/RigV1Types.h:13-19`、リテラルの固定は `Test/Core/Asset/CookedClipBankV1Test.cpp:102`）と rest のハッシュ・`RestMismatch` の拒否（`Library/Core/Public/Animation/RigBindingTypes.h:47, 69-93`、`Test/Core/Asset/SkeletalClipBankBindingTest.cpp:97-102`）が既にある。名前は「段階をまたぐ注意」の「G9 / GR87 段2・GR85」のとおり SkeletonId に合わせ、BindPoseId の役は rest のハッシュが担う。BoneMap とロール表を別の形式にしない（同注意の「G2 / GR84」）ので、ロールの profile を拡張する。GR82・GR84 は G2 で仕上げ中なので needs-gr に入れた。数値は仮。アセットロードの危険地帯なので評価者を通す。出典: 要件 `#### GR85` の設計案 (2)(3)(4)(7)、受け入れ確認の RetargetCookTest (a) と【回帰】。
 
 ## G9-GR85-FOOT-REPLANT: 別の骨格へ写したクリップの足を、cook 時に平らな地面へ再接地させる
-- status: todo
+- status: done
 - after: G9-GR85-RETARGET-PROPORTION, G9-GR14-TWO-BONE-IK, G3-GR11-EVENT-PROPERTIES
 - gr: GR85
 - needs-gr: GR84, GR11
