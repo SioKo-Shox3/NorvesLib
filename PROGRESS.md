@@ -10547,3 +10547,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 クリップの値の量子化の符号器（smallest-three 32/48・TransQuant16・Const の判定）: 着地(直し 0 回)
 - U3 ClipBank v1 の CMPR の書き手と読み手（minor 1）: 着地(直し 0 回)
 - U4 CMPR の往復・互換・拒否の試験: 着地(直し 0 回)
+- U5 ClipBankV1Wire.md に CMPR と minor 1 の規則を書く: 着地(直し 0 回)
