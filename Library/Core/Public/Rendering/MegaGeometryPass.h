@@ -552,6 +552,23 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 記録したフレームの数（フレームの通し番号が変わるたびに 1 進む。通し番号が無い記録は記録ごとに 1 進む） */
         uint64_t GetRenderFrameCount() const { return m_RenderFrameCount; }
+
+        /** @brief 最後に生成できた HZB と、その深度の契約を読み取り用に返す。 */
+        bool GetLatestHiZForRead(RHI::TexturePtr& outTexture, MegaHiZContract& outContract,
+                                 uint32_t& outMipCount) const
+        {
+            outTexture.reset();
+            outContract = MegaHiZContract{};
+            outMipCount = 0;
+            if (!m_bHiZReady || !m_HiZContracts[m_HiZIndex].bValid || !m_HiZ[m_HiZIndex].IsReady())
+            {
+                return false;
+            }
+            outTexture = m_HiZ[m_HiZIndex].GetTexture();
+            outContract = m_HiZContracts[m_HiZIndex];
+            outMipCount = m_HiZ[m_HiZIndex].GetMipCount();
+            return true;
+        }
         /** @brief 最後に記録した 2 パスのフレームで、前のフレームの HZB が使えたか（Ready）と使えない理由 */
         MegaPrevHiZStatus GetPreviousHiZStatus() const { return m_PrevHiZStatus; }
         /** @brief フレームごとの資源の組の数（選んだ飛行中のフレームの番号の枠。検査用） */
