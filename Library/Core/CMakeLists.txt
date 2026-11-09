@@ -115,6 +115,8 @@ set(PRIVATE_SOURCES
     Private/Animation/RigSplitBindingTestAccess.h
     Private/Animation/RigSplitBinding.cpp
     Private/Animation/ClipBankBindingTestAccess.h
+    Private/Asset/ClipQuantization.h
+    Private/Asset/ClipQuantization.cpp
     Private/Asset/CookedClipBankV1.cpp
     Private/Asset/CookedClipBankV1.h
     Private/Asset/RigSplitWire.h

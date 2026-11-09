@@ -34,6 +34,7 @@ namespace NorvesLib::Tools::AssetCook
                              "  --authored-fps <fps> --source-fps <fps> --time-scale <factor>\n"
                              "  --import-settings <file> --no-sidecar --require-sidecar\n"
                              "  --clip-optimize: クリップのキーを誤差の上限つきで削減\n"
+                             "  --clip-quantize: クリップのキーを量子化して CMPR で書く（minor 1）\n"
                              "  --clip-max-vertex-error-m <m> --clip-max-joint-error-m <m>\n"
                              "  --clip-max-rotation-error-deg <deg> --clip-report <path>\n"
                              "  --skin-influences / --cubicspline / --morph: existing skeletal import options\n";
@@ -88,7 +89,8 @@ namespace NorvesLib::Tools::AssetCook
                     }
                 }
                 seen.push_back(C::AnsiString(key));
-                if (key == C::AnsiStringView("--clip-optimize"))
+                if (key == C::AnsiStringView("--clip-optimize") ||
+                    key == C::AnsiStringView("--clip-quantize"))
                 {
                     parseClipOptimize(key, equals == C::AnsiStringView::npos ? nullptr : token.data() + equals + 1);
                     continue;
