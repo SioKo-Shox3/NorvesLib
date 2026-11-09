@@ -5661,7 +5661,7 @@
 - notes: 今のコードの事実: イベントは Animation の群の Update で積まれ、PoseFinalize の群で姿勢の評価と modifier の後に配られる（`Library/Core/Private/Component/AnimatorComponent.cpp:281-286`）。購読で受けると 1 フレーム遅れるので、modifier の文脈から、そのフレームに積まれてまだ配っていないイベントを読み取り専用で読む口を足す。UNCERTAIN: `AnimationEventQueue` は件数（`PendingCount`、`Library/Core/Public/Animation/AnimationEvents.h:47`）しか出しておらず、中身を写さずに読み取り専用の範囲を返せるかは未確認。解消するには `AnimationEvents.h/.cpp` の積み方を読む。写す必要があるなら、確保を初期化時に済ませて定常で確保しない形にする。接地の PhaseMarker から `Foot.<脚>.Down` のイベントを出す処理は GR11 の範囲（「段階をまたぐ注意」の「G3 / GR11」）なので、ここでは名前を設定で受けるだけにする。足の固定は歩幅合わせ（GR10・GR11 の公称速度）と接地の検出に依るので、16fps 由来の素材や浮遊期の長い襲歩で外れることを `Docs/Architecture/AnimationRuntime.md` に書く。Public API（`PoseModifier.h`・`AnimationEvents.h`）に触れるので評価者を通す。出典: 要件 `#### GR14` の【足の固定】【決定性】、受け入れ確認の FootPlantTest と FootIKDeterminismTest。
 
 ## G9-GR85-RETARGET-PROPORTION: 比率の違う骨格へのリターゲットに、脚の長さの比によるルートの拡縮・ロールごとのねじれの固定・誤差の報告と上限を足す
-- status: todo
+- status: done
 - after: G9-GR87-CLIP-OPTIMIZER
 - gr: GR85
 - needs-gr: GR82, GR84

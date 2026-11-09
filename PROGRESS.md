@@ -10401,3 +10401,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 文書（profile v2・Retarget.md・Testing.md）: 着地(直し 0 回)
 - U6 --retarget-report と上限の適用（AssetCook）: 着地(直し 1 回)
 - U7 RetargetCookTest の (a) とタスクの verify: 着地(直し 0 回)
+## 2026-11-10 G9-GR85-RETARGET-PROPORTION（run 20261110-011014、完了）
+- Done: ロールの profile に `version: 2` を足した（`rest_pose.roles.<role>.up_hint`・`proportions{root_scale: 数値|"auto"|"auto_height", leg_length_ratio}`・`report{max_joint_error_deg, max_foot_slide_m, max_foot_penetration_m}`）。v1 は今と同じ結果で読める（RetargetCookTest が v1 の BVH・glTF の出力のハッシュを固定）
+- Done: `RetargetSkeletalClip` に、ロールごとの up_hint によるねじれの固定と、auto のときの脚の鎖（前脚 upper→lower→paw・後脚 thigh→shin→hock→paw、L/R と前後の平均）の長さの比によるルートの並進の拡縮を足した。出力を対象の骨格で FK して回転の写しの誤差（理想値との差の最大・平均）・ルートの移動距離（元・対象）・写せなかった関節を測る
+- Done: `RetargetReport`（Core）と AssetCook の `--retarget-report <path>`。上限を超えたら報告を書いた後に `retarget_report_limit: <status> clip=<名前> value=<値> limit=<上限>` で失敗し CLI は終了コード 1。報告の SkeletonId は ClipBank と同じ値。足の上限は測定が無いので、指定すると失敗する（再接地の G9-GR85-FOOT-REPLANT で測る）
+- Done: `RetargetCookTest`（CookedMeshTest の束）の (a): 脚 1.3 倍・骨ごとの rest のねじれが違う対象へ 61 コマの合成の歩き。報告の誤差の最大 4.1e-6°、ClipBank を FK した独立の骨方向の誤差の最大 5.4e-6°、root_scale 1.29999995、移動距離 2 → 2.59999990 m（比 1.29999995）、SkeletonId 一致、平滑化半径 5 で誤差 9.75° になり上限 0.1° で失敗
+- 証拠: `.harness/runs/20261110-011014/verify-G9-GR85-RETARGET-PROPORTION-U7.txt`（verify のビルド exit 0、RetargetCookTest 単独 1/1、関連 6 本 6/6 Passed・exit 0）
+- Next: なし（アプリを起動する確かめは無い）。比率 0.1° と 1e-3 は合成例の仮の許容
+- Notes: 試験の (a) はルートの動きの抽出を切って cook する（抽出すると根のヨーが RootMotion へ移り、ClipBank だけの FK の骨方向が根のヨーの分ずれるため）。報告の誤差は抽出のヨーを戻して測る
+- Notes: CLI の要求の写し直し（`Tools/AssetCook/RigSingleCook.cpp` の `NormalizeRigSingleRequest`）が報告のパスを落としていたので、paths の外だがこの 1 行の配管だけ足した
