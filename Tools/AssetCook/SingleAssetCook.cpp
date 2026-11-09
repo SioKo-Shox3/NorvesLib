@@ -33,6 +33,26 @@ namespace NorvesLib::Tools::AssetCook
         {
             return reinterpret_cast<const char*>(text);
         }
+
+        bool ResolveTextureUsageFormat(TextureUsage usage, Core::Container::AnsiStringView manifestFormat,
+                                       TextureFormatOverride& outFormat) noexcept
+        {
+            constexpr TextureFormatOverride formats[] = {
+                TextureFormatOverride::Default,
+                TextureFormatOverride::Rgba16F,
+                TextureFormatOverride::BC3,
+            };
+            for (const TextureFormatOverride format : formats)
+            {
+                const char* name = GetTextureUsageManifestFormat(usage, format);
+                if (name[0] != '\0' && manifestFormat == Core::Container::AnsiStringView(name))
+                {
+                    outFormat = format;
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     namespace
@@ -248,6 +268,12 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     error = "--usage は albedo・normal・orm・single・height16・hdr・rg16 "
                             "のどれかです";
+                    return false;
+                }
+                if (!ResolveTextureUsageFormat(cookParams.Usage, {options.Format.data(), options.Format.size()},
+                                               cookParams.FormatOverride))
+                {
+                    error = "テクスチャ用途と形式の指定が一致しません";
                     return false;
                 }
                 if (options.Quality == "fast")
@@ -1792,8 +1818,9 @@ namespace NorvesLib::Tools::AssetCook
                     error = "--require-16bit は --usage height16 か --usage rg16 と一緒に指定してください";
                     return false;
                 }
+                TextureFormatOverride formatOverride;
                 if (outOptions.Kind != "texture" ||
-                    outOptions.Format != GetTextureUsageManifestFormat(usage) ||
+                    !ResolveTextureUsageFormat(usage, {outOptions.Format.data(), outOptions.Format.size()}, formatOverride) ||
                     (!outOptions.Quality.empty() && outOptions.Quality != "fast" && outOptions.Quality != "normal" &&
                      outOptions.Quality != "best") ||
                     (outOptions.bFlipNormalY && usage != TextureUsage::Normal) ||

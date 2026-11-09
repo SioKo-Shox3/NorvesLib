@@ -10450,3 +10450,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 退避済みの DirectXTex の BC 符号化・復号の取り込みを当て直す: 着地(直し 0 回)
 - U8 退避済みの NVTEX の BC3・BC6H の差分を当て直し、未知の形式の例を直す: 着地(直し 0 回)
 - U3 BlockCompressor に BC3(rgbcx)と BC6H(DirectXTex)の符号化・復号を足す: 着地(直し 0 回)
+- U4 クッカーの hdr の既定を BC6H にし、--format rgba16f・bc3 の明示を受ける: 着地(直し 1 回)
