@@ -10418,3 +10418,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 GBuffer のラスタの経路（静的・インスタンス・スキン）で ID・P0・P1 を書く: 着地(直し 0 回)
 - U7 可視バッファの材質の表と解決で ID・P0・P1 を書く: 着地(直し 1 回)
 - U8 GpuLayoutRegistry.md の表を更新する: 着地(直し 0 回)
+- U11 RenderingShadingModelGBufferVulkanTest を足し、タスクの verify を通す: 着地(直し 1 回)

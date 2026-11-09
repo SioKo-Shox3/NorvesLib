@@ -845,12 +845,54 @@ target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingGpuTestSupport
     RenderingFloatImageSupport
     NorvesModule_ImGui
+    NorvesThirdParty_ImGui
 )
 target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+    ${CMAKE_SOURCE_DIR}/Library/Modules/ImGui/Public
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui
 )
 set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
+# GBuffer のソースと経路の組み合わせを走らせるスクリプトを生成する。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake" CONTENT [=[
+# GBuffer の三つのソースを追加読み戻しで集め、二つの描画経路を同じ GPU ロックの下で検証する。
+set(failures "")
+foreach(visibility IN ITEMS on off)
+    set(arguments --scene=indoor --shading-model-scenario=gbuffer-paths --capture-source=gbuffer-normal)
+    if(visibility STREQUAL "off")
+        list(APPEND arguments --visibility-buffer=off)
+    endif()
+    string(TIMESTAMP started_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
+    execute_process(COMMAND "${TEST_EXECUTABLE}" ${arguments}
+        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    string(TIMESTAMP finished_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
+    set(timing_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/ShadingModelTiming")
+    file(MAKE_DIRECTORY "${timing_directory}")
+    file(COPY_FILE "${TEST_WORKING_DIRECTORY}/RenderingHdrSceneCapture.log"
+        "${timing_directory}/${visibility}.log")
+    message("visibility=${visibility}\n${output}${error}")
+    message("SHADING_MODEL_RUN visibility=${visibility} started_utc=${started_utc} finished_utc=${finished_utc} exit=${result}")
+    if(NOT result STREQUAL "0")
+        list(APPEND failures "visibility=${visibility} exit=${result}")
+    endif()
+endforeach()
+if(failures)
+    message(FATAL_ERROR "GBuffer の検証が失敗しました: ${failures}")
+endif()
+]=])
+# 全ソース・全経路の検査を単一の試験と GPU ロックに束ねる。
+add_test(NAME RenderingShadingModelGBufferVulkanTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
+        "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake")
+# 二つの起動を束ねる。観測済みの最大300秒に、シェーダー初期化の変動を見込んで3倍を確保する。
+set_tests_properties(RenderingShadingModelGBufferVulkanTest PROPERTIES
+    TIMEOUT 900
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 register_rendering_gpu_test(
     RenderingHdrIndoorSceneVulkanTest
     RenderingHdrSceneCaptureTest
