@@ -265,6 +265,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GrassGenerateReference.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
@@ -733,6 +734,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/GrassGenerateReference.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RibbonTrailRenderer.h
