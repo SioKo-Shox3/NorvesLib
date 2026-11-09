@@ -1441,6 +1441,8 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
+    MEMBER WindParametersTest WindParametersTest.cpp
+    MEMBER FramePacketWindSnapshotContractTest FramePacketWindSnapshotContractTest.cpp
     MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
@@ -1488,6 +1490,8 @@ add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOc
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
+add_test(NAME WindParametersTest COMMAND CameraViewConstantsTest --test=WindParametersTest)
+add_test(NAME FramePacketWindSnapshotContractTest COMMAND CameraViewConstantsTest --test=FramePacketWindSnapshotContractTest)
 # 草のタイル選別をCPUで検証する。
 add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
 
