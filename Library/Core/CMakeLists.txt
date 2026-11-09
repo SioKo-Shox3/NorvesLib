@@ -260,6 +260,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
+    Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
@@ -269,6 +270,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassGenerateReference.cpp
+    Private/Rendering/GrassFieldGpuWindow.cpp
+    Private/Rendering/GrassTileSelector.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
@@ -729,6 +734,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
+    Public/Rendering/RenderExtension/RenderExtension.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
@@ -738,6 +744,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/GrassPass.h
+    Public/Rendering/GrassGenerateReference.h
+    Public/Rendering/GrassFieldGpuWindow.h
+    Public/Rendering/GrassTileSelector.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RibbonTrailRenderer.h

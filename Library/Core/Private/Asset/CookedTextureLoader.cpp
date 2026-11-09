@@ -99,7 +99,7 @@ namespace NorvesLib::Core::Asset
                    std::memcmp(bytes.data(), CookedTextureFormatV0::Magic, CookedTextureFormatV0::MagicSize) == 0;
         }
 
-        // 版ごとに使える形式が違う。v0.0 は非圧縮の 3 形式だけで、v0.1 はそれに BC と R16 が加わる。
+        // 版ごとに使える形式が違う。v0.0 は非圧縮の 3 形式だけで、v0.1 以降はそれに BC・R16・RGBA16F・RG16UNorm が加わる。
         bool IsKnownPixelFormat(uint16_t versionMinor, uint32_t rawPixelFormat)
         {
             if (rawPixelFormat == CookedTextureFormatV0::PixelFormatR8UNorm ||
@@ -118,7 +118,9 @@ namespace NorvesLib::Core::Asset
                    rawPixelFormat == CookedTextureFormatV0::PixelFormatBC4 ||
                    rawPixelFormat == CookedTextureFormatV0::PixelFormatBC5 ||
                    rawPixelFormat == CookedTextureFormatV0::PixelFormatBC7 ||
-                   rawPixelFormat == CookedTextureFormatV0::PixelFormatR16UNorm;
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatR16UNorm ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatRGBA16F ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatRG16UNorm;
         }
 
         bool IsKnownColorSpace(uint32_t rawColorSpace)

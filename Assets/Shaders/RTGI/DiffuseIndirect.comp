@@ -120,6 +120,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
     uint values[];
 };
 
+#include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
@@ -1578,11 +1579,11 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
 
     vec2 uv = (vec2(pixel) + vec2(0.5)) / vec2(imageSize);
     float sampledDepth = texture(gbufferDepth, uv).r;
-    PbrGBufferMaterialSamples surfaceSamples =
-        SamplePbrMaterialTextures(gbufferAlbedo, gbufferNormal, gbufferMaterial, uv);
-    vec4 sampledMaterial = surfaceSamples.Material;
-    vec3 surfaceAlbedo = surfaceSamples.Albedo.rgb;
-    vec3 normal = surfaceSamples.WorldNormal.xyz;
+    GBufferNormalData normalData = GBufferDecodeNormal(texture(gbufferNormal, uv));
+    vec4 sampledMaterial = vec4(texture(gbufferMaterial, uv).rgb,
+                                GBufferDecodeP0(texture(gbufferMaterial, uv)));
+    vec3 surfaceAlbedo = texture(gbufferAlbedo, uv).rgb;
+    vec3 normal = normalData.normal;
     float normalLengthSquared = dot(normal, normal);
     bool bSurfaceValid = IsFiniteScalar(sampledDepth) &&
         sampledDepth < 0.999999 && IsFiniteVector(surfaceAlbedo) &&
@@ -1625,8 +1626,8 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
             vec3 rayDirection = CosineWeightedDirection(worldNormal, pixel,
                                                           parameters.sampleState.x);
             vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
-            // 草・低木の株（GBuffer の材質の A が 0.25。foliage.frag）の画素は冠で遮らない
-            gFoliageCrownOcclusion = !(material.a > 0.125 && material.a < 0.375);
+            // 草・低木の株（FOLIAGE_CLUMP の印）の画素は冠で遮らない
+            gFoliageCrownOcclusion = !GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
 
             // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
             // 当たっても発光を加えない。
@@ -1657,8 +1658,8 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
                                                       parameters.environmentParameters.y);
             }
 
-            // 鏡面の光線（鏡面の無い材質は引かない。GBuffer の材質の a が 0.5 より大きい）
-            if (material.a <= 0.5)
+            // 鏡面の光線（DIFFUSE_ONLY の印がある材質は引かない）
+            if (!GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY))
             {
                 bool bSpecularSky;
                 vec3 specularHit = TraceSpecularRay(worldPosition, worldNormal, material.g, viewDistance, pixel,

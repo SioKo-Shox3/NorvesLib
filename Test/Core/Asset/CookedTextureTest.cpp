@@ -160,7 +160,10 @@ namespace
         case CookedTexturePixelFormat::R16UNorm:
             return {1, 1, 2};
         case CookedTexturePixelFormat::RGBA8UNorm:
+        case CookedTexturePixelFormat::RG16UNorm:
             return {1, 1, 4};
+        case CookedTexturePixelFormat::RGBA16F:
+            return {1, 1, 8};
         case CookedTexturePixelFormat::BC1:
         case CookedTexturePixelFormat::BC4:
             return {4, 4, 8};
@@ -332,7 +335,10 @@ namespace
         case CookedTexturePixelFormat::R16UNorm:
             return {256, 128};
         case CookedTexturePixelFormat::RGBA8UNorm:
+        case CookedTexturePixelFormat::RG16UNorm:
             return {128, 128};
+        case CookedTexturePixelFormat::RGBA16F:
+            return {128, 64};
         case CookedTexturePixelFormat::BC1:
         case CookedTexturePixelFormat::BC4:
             return {512, 256};
@@ -891,6 +897,46 @@ int main()
         assert(result.Texture.Mips[1].DataSize == 4);   // 1x1 画素 x 2 バイト x 2 レイヤー
     }
 
+    // v0.1: RGBA16F の全ミップは 1 画素 8 バイトとして読み込む。
+    {
+        const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(
+            BuildTexture(5, 3, 1, CookedTexturePixelFormat::RGBA16F, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(result.Succeeded());
+        assert(result.Texture.PixelFormat == CookedTexturePixelFormat::RGBA16F);
+        assert(result.Texture.ColorSpace == CookedTextureColorSpace::Linear);
+        assert(result.Texture.MipCount == 3);
+        assert(result.Texture.Mips[0].DataSize == 120);
+        assert(result.Texture.Mips[1].DataSize == 16);
+        assert(result.Texture.Mips[2].DataSize == 8);
+    }
+
+    // v0.1: RG16UNorm の全ミップは 1 画素 4 バイトとして読み込む。
+    {
+        const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(
+            BuildTexture(5, 3, 1, CookedTexturePixelFormat::RG16UNorm, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(result.Succeeded());
+        assert(result.Texture.PixelFormat == CookedTexturePixelFormat::RG16UNorm);
+        assert(result.Texture.ColorSpace == CookedTextureColorSpace::Linear);
+        assert(result.Texture.MipCount == 3);
+        assert(result.Texture.Mips[0].DataSize == 60);
+        assert(result.Texture.Mips[1].DataSize == 8);
+        assert(result.Texture.Mips[2].DataSize == 4);
+    }
+
+    // 追加した 2 形式は sRGB と v0.0 では受け付けない。
+    {
+        const CookedTexturePixelFormat formats[] = {
+            CookedTexturePixelFormat::RGBA16F,
+            CookedTexturePixelFormat::RG16UNorm};
+        for (const CookedTexturePixelFormat format : formats)
+        {
+            ExpectStatus(BuildTexture(5, 3, 1, format, CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed),
+                         CookedTextureParseStatus::InvalidColorSpaceForFormat);
+            ExpectStatus(BuildTexture(5, 3, 1, format, CookedTextureColorSpace::Linear, VersionMinor),
+                         CookedTextureParseStatus::UnknownPixelFormat);
+        }
+    }
+
     // v0.1 は v0.0 の形式も読める。BC の配列はブロック単位でレイヤーを数える。
     {
         const CookedTextureParseResult rgba = ParseCookedTexture(MakeBlob(
@@ -916,7 +962,8 @@ int main()
 
         std::vector<uint8_t> bytes = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
                                                   VersionMinorBlockCompressed);
-        WriteLe32(bytes, HeaderOffset::PixelFormat, 9);
+        // 9・10 は RGBA16F・RG16UNorm なので、未使用の 11 を未知の例にする
+        WriteLe32(bytes, HeaderOffset::PixelFormat, 11);
         ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
         WriteLe32(bytes, HeaderOffset::PixelFormat, 0);
         ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);

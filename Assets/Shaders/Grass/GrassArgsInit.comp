@@ -1,0 +1,22 @@
+﻿#version 460
+
+// set 0: 0 = 生成定数、6 = 間接描画の引数とカウンタ。
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+#include "Grass/GrassCommon.glsl"
+
+void main()
+{
+    for (uint lod = 0u; lod < kGrassLodCount; ++lod)
+    {
+        uint base = lod * 5u;
+        args.Args[base] = constants.LodIndexCount[lod];
+        args.Args[base + 1u] = 0u;
+        args.Args[base + 2u] = constants.LodFirstIndex[lod];
+        args.Args[base + 3u] = 0u;
+        args.Args[base + 4u] = 0u;
+        args.Counter[lod] = 0u;
+    }
+    args.Reserved0 = 0u;
+    args.Reserved1 = 0u;
+}

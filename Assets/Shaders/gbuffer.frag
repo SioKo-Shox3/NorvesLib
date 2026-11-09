@@ -34,6 +34,7 @@ layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
+#include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 11
@@ -43,11 +44,11 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 #include "Common/PreExposedEmissive.glsl"
 
 // GBuffer MRT出力
-layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
-layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
-layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / 鏡面の無い材質の印(A。1 で純ランバート)
-layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
-layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV
+layout(location = 0) out vec4 outAlbedo;    // RT0: アルベド（RGB）とアルファ（A）
+layout(location = 1) out vec4 outNormal;    // RT1: ワールド法線（RGB）と材質 ID・受け手の印（A）
+layout(location = 2) out vec4 outMaterial;  // RT2: 金属度（R）・粗さ（G）・AO（B）・材質値 P0（A）
+layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB）・材質値 P1（A）
+layout(location = 4) out vec2 outVelocity;  // RT4: 現在の UV - 前の UV
 
 void main()
 {
@@ -100,16 +101,17 @@ void main()
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
-    outNormal = vec4(normal, 0.0);
+    const uint receiverFlags = mvp.vtFeedbackParams.w > 0.5 ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u;
+    outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, receiverFlags);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = vec4(textureSamples.Material, mvp.vtFeedbackParams.w);
+    outMaterial = GBufferEncodeMaterial(textureSamples.Material, 0.0);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（Lighting は露出を掛けずに足す）
-    outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
-                                                 fragEmissiveChromaticityAndLuminanceNits.a,
-                                                 mvp.frameParams.y),
-                       1.0);
+    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
+                                                                fragEmissiveChromaticityAndLuminanceNits.a,
+                                                                mvp.frameParams.y),
+                                       0.0);
 
     outVelocity = vec2(0.0);
     if (mvp.frameParams.x > 0.5 &&
