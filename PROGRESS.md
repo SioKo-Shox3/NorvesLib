@@ -10412,3 +10412,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 要起票: `megageometry.vert` の `emissiveColor` のコメントが色・強度と書いているが、C++ と megageometry.frag は色度・輝度（nits）（GpuLayoutRegistry.md の 6. に記載）。
 - U1 材質の ShadingModel・ShadingParams の CPU の型と正規化・ID の変換・GLSL の解決関数: 着地(直し 0 回)
 - U3 GLSL の InstanceData の 9 本の写しを Common/SceneInstanceData.glsl の include へ一本化し、走査の試験を足す: 着地(直し 0 回)
+- U6 MegaGeometry の材質から GBuffer へ ID・P0・P1 を届ける（ラスタの経路）: 着地(直し 0 回)

@@ -222,6 +222,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         MegaGeometry::MegaMeshMaterial canonicalMaterial = createInfo.Material;
+        for (uint32_t index = 0; index < ShadingParamCount; ++index)
+        {
+            canonicalMaterial.ShadingParams[index] = SanitizeShadingParam(createInfo.Material.ShadingParams[index]);
+        }
         canonicalMaterial.EmissiveColor[0] = canonicalEmissiveColor[0];
         canonicalMaterial.EmissiveColor[1] = canonicalEmissiveColor[1];
         canonicalMaterial.EmissiveColor[2] = canonicalEmissiveColor[2];
