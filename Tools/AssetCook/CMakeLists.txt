@@ -30,9 +30,12 @@ add_library(AssetCookTextureCooker STATIC
     TextureCooker.h
 )
 target_link_libraries(AssetCookTextureCooker PUBLIC AssetCookBlockCompressor Core)
+target_link_libraries(AssetCookTextureCooker PRIVATE NorvesThirdParty_TinyEXR)
 target_include_directories(AssetCookTextureCooker
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 set_target_properties(AssetCookTextureCooker PROPERTIES FOLDER "Tools")
 

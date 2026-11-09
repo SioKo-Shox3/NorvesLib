@@ -5,6 +5,7 @@
 #include "Container/PointerTypes.h"
 #include "Container/StringView.h"
 
+#include "exr.h"
 #include "stb_image.h"
 
 #include <algorithm>
@@ -631,6 +632,275 @@ namespace NorvesLib::Tools::AssetCook
             outHeight = sourceHeight > 1 ? sourceHeight / 2 : 1;
         }
 
+        // RGBA の値を保持する。half への丸めは書き出す各段でだけ行う。
+        struct MipImageFloat
+        {
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            VariableArray<float> Values;
+        };
+
+        bool IsExrSourceImage(const TextureSourceImage &source)
+        {
+            constexpr uint8_t magic[] = {0x76, 0x2f, 0x31, 0x01};
+            return source.Bytes != nullptr && source.Size >= sizeof(magic) &&
+                std::memcmp(source.Bytes, magic, sizeof(magic)) == 0;
+        }
+
+        bool IsFloatSourceImage(const TextureSourceImage &source)
+        {
+            return source.IsPresent() &&
+                (IsExrSourceImage(source) ||
+                 (source.Size <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+                  stbi_is_hdr_from_memory(source.Bytes, static_cast<int>(source.Size)) != 0));
+        }
+
+        bool AllocateFloatMip(int width, int height, const ErrorString &sourceName,
+                              MipImageFloat &outMip, ErrorString &error)
+        {
+            size_t pixelCount = 0;
+            size_t valueCount = 0;
+            size_t byteSize = 0;
+            if (width <= 0 || height <= 0 ||
+                !CheckedMultiply(static_cast<size_t>(width), static_cast<size_t>(height), pixelCount) ||
+                !CheckedMultiply(pixelCount, size_t{4}, valueCount) ||
+                !CheckedMultiply(valueCount, sizeof(float), byteSize))
+            {
+                error = MakeSourceError("浮動小数テクスチャの大きさが不正か、桁あふれしました", sourceName);
+                return false;
+            }
+            outMip.Width = static_cast<uint32_t>(width);
+            outMip.Height = static_cast<uint32_t>(height);
+            outMip.Values.resize(valueCount);
+            return true;
+        }
+
+        bool DecodeSourceImageFloat(const TextureSourceImage &source, MipImageFloat &outBase, ErrorString &error)
+        {
+            if (!IsFloatSourceImage(source))
+            {
+                error = MakeSourceError("浮動小数の入力ではありません", source.Name);
+                return false;
+            }
+            if (source.Size > static_cast<size_t>(std::numeric_limits<int>::max()))
+            {
+                error = MakeSourceError("テクスチャの入力が扱える大きさを超えています", source.Name);
+                return false;
+            }
+
+            MipImageFloat decodedMip;
+            if (IsExrSourceImage(source))
+            {
+                struct ExrImageOwner
+                {
+                    exr_image Image = {};
+                    ~ExrImageOwner() { exr_image_free(&Image); }
+                } owner;
+                if (exr_load_from_memory(source.Bytes, source.Size, nullptr, &owner.Image) != EXR_SUCCESS)
+                {
+                    error = MakeSourceError("EXR の入力を復号できません", source.Name);
+                    return false;
+                }
+                if (owner.Image.num_parts != 1 || owner.Image.parts == nullptr)
+                {
+                    error = MakeSourceError("EXR は単一パートの画像が必要です", source.Name);
+                    return false;
+                }
+                const exr_part &part = owner.Image.parts[0];
+                if (part.is_deep || part.images == nullptr || part.header.channels == nullptr)
+                {
+                    error = MakeSourceError("EXR の通常の画素チャンネルを取得できません", source.Name);
+                    return false;
+                }
+                if (!AllocateFloatMip(part.width, part.height, source.Name, decodedMip, error))
+                {
+                    return false;
+                }
+
+                int channels[4] = {-1, -1, -1, -1};
+                int luminance = -1;
+                for (int c = 0; c < part.header.num_channels; ++c)
+                {
+                    const char *name = part.header.channels[c].name;
+                    if (std::strcmp(name, "R") == 0) channels[0] = c;
+                    else if (std::strcmp(name, "G") == 0) channels[1] = c;
+                    else if (std::strcmp(name, "B") == 0) channels[2] = c;
+                    else if (std::strcmp(name, "A") == 0) channels[3] = c;
+                    else if (std::strcmp(name, "Y") == 0) luminance = c;
+                }
+                if (channels[0] < 0 && channels[1] < 0 && channels[2] < 0 && luminance >= 0)
+                {
+                    channels[0] = channels[1] = channels[2] = luminance;
+                }
+                if (channels[0] < 0 || channels[1] < 0 || channels[2] < 0)
+                {
+                    error = MakeSourceError("EXR の R・G・B または Y チャンネルを取得できません", source.Name);
+                    return false;
+                }
+
+                const size_t pixelCount = decodedMip.Values.size() / 4;
+                VariableArray<float> plane(pixelCount);
+                for (size_t c = 0; c < 4; ++c)
+                {
+                    if (channels[c] < 0)
+                    {
+                        for (size_t i = 0; i < pixelCount; ++i) decodedMip.Values[i * 4 + c] = 1.0f;
+                        continue;
+                    }
+                    const exr_channel &channel = part.header.channels[channels[c]];
+                    if (channel.x_sampling != 1 || channel.y_sampling != 1 ||
+                        part.images[channels[c]] == nullptr ||
+                        (channel.pixel_type != EXR_PIXEL_HALF && channel.pixel_type != EXR_PIXEL_FLOAT &&
+                         channel.pixel_type != EXR_PIXEL_UINT) ||
+                        exr_convert_pixels(plane.data(), EXR_PIXEL_FLOAT, part.images[channels[c]],
+                                           channel.pixel_type, pixelCount, EXR_CONVERT_RAW) != EXR_SUCCESS)
+                    {
+                        error = MakeSourceError("EXR の画素チャンネルを浮動小数へ変換できません", source.Name);
+                        return false;
+                    }
+                    for (size_t i = 0; i < pixelCount; ++i) decodedMip.Values[i * 4 + c] = plane[i];
+                }
+            }
+            else
+            {
+                int width = 0;
+                int height = 0;
+                int sourceChannels = 0;
+                float *decoded = stbi_loadf_from_memory(source.Bytes, static_cast<int>(source.Size),
+                                                        &width, &height, &sourceChannels, 4);
+                TUniquePtr<float, decltype(&stbi_image_free)> decodedOwner(decoded, stbi_image_free);
+                if (decoded == nullptr)
+                {
+                    error = MakeSourceError("HDR の入力を復号できません", source.Name);
+                    return false;
+                }
+                if (!AllocateFloatMip(width, height, source.Name, decodedMip, error))
+                {
+                    return false;
+                }
+                decodedMip.Values.assign(decoded, decoded + decodedMip.Values.size());
+            }
+            outBase = std::move(decodedMip);
+            return true;
+        }
+
+        // 有限で絶対値が 65504 以下の float を binary16 へ最近接偶数丸めする。
+        uint16_t FloatToHalf(float value)
+        {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            const uint16_t sign = static_cast<uint16_t>((bits >> 16) & 0x8000u);
+            const int exponent = static_cast<int>((bits >> 23) & 0xffu) - 112;
+            const uint32_t mantissa = bits & 0x7fffffu;
+            if (exponent < -10)
+            {
+                return sign;
+            }
+            // 非正規化数は暗黙の先頭ビットも含めて丸める。最小値の半分は偶数のゼロへ落ちる。
+            const uint32_t significand = exponent <= 0 ? mantissa | 0x800000u : mantissa;
+            const uint32_t shift = exponent <= 0 ? static_cast<uint32_t>(14 - exponent) : 13u;
+            uint32_t rounded = significand >> shift;
+            const uint32_t remainder = significand & ((1u << shift) - 1u);
+            const uint32_t halfway = 1u << (shift - 1u);
+            if (remainder > halfway || (remainder == halfway && (rounded & 1u) != 0))
+            {
+                ++rounded;
+            }
+            // 仮数の桁上がりは指数へ引き継ぐ。非正規化数から正規化数への境界も同じ。
+            const uint32_t encoded = exponent <= 0 ? rounded : (static_cast<uint32_t>(exponent) << 10) + rounded;
+            return static_cast<uint16_t>(sign | encoded);
+        }
+
+        void BuildNextMipFloat(const MipImageFloat &source, MipImageFloat &outMip)
+        {
+            ComputeMipSize(source.Width, source.Height, outMip.Width, outMip.Height);
+            outMip.Values.resize(static_cast<size_t>(outMip.Width) * outMip.Height * 4);
+            for (uint32_t y = 0; y < outMip.Height; ++y)
+            {
+                for (uint32_t x = 0; x < outMip.Width; ++x)
+                {
+                    const uint32_t xBegin = ComputeCoverageStart(source.Width, outMip.Width, x);
+                    const uint32_t xEnd = ComputeCoverageEnd(source.Width, outMip.Width, x);
+                    const uint32_t yBegin = ComputeCoverageStart(source.Height, outMip.Height, y);
+                    const uint32_t yEnd = ComputeCoverageEnd(source.Height, outMip.Height, y);
+                    const uint64_t sampleCount = static_cast<uint64_t>(xEnd - xBegin) * (yEnd - yBegin);
+                    double sums[4] = {};
+                    for (uint32_t sy = yBegin; sy < yEnd; ++sy)
+                    {
+                        for (uint32_t sx = xBegin; sx < xEnd; ++sx)
+                        {
+                            const size_t offset = (static_cast<size_t>(sy) * source.Width + sx) * 4;
+                            for (size_t c = 0; c < 4; ++c) sums[c] += source.Values[offset + c];
+                        }
+                    }
+                    const size_t offset = (static_cast<size_t>(y) * outMip.Width + x) * 4;
+                    for (size_t c = 0; c < 4; ++c)
+                    {
+                        outMip.Values[offset + c] = static_cast<float>(sums[c] / static_cast<double>(sampleCount));
+                    }
+                }
+            }
+        }
+
+        bool CookHdrUsage(const TextureSourceImage &source, TextureCookResult &outResult, ErrorString &error)
+        {
+            if (!IsFloatSourceImage(source))
+            {
+                error = MakeSourceError("hdr には EXR か HDR の入力が要ります", source.Name);
+                return false;
+            }
+            MipImageFloat level;
+            if (!DecodeSourceImageFloat(source, level, error))
+            {
+                return false;
+            }
+            for (float value : level.Values)
+            {
+                if (!std::isfinite(value) || std::fabs(value) > 65504.0f)
+                {
+                    error = MakeSourceError("hdr の画素に非有限値か half の範囲を超える値があります", source.Name);
+                    return false;
+                }
+            }
+
+            VariableArray<MipImage> mips;
+            for (;;)
+            {
+                MipImage mip;
+                mip.Width = level.Width;
+                mip.Height = level.Height;
+                mip.Bytes.resize(level.Values.size() * 2);
+                for (size_t i = 0; i < level.Values.size(); ++i)
+                {
+                    WriteLe16(mip.Bytes, i * 2, FloatToHalf(level.Values[i]));
+                }
+                mips.push_back(std::move(mip));
+                if (level.Width == 1 && level.Height == 1) break;
+                MipImageFloat next;
+                BuildNextMipFloat(level, next);
+                level = std::move(next);
+            }
+            if (mips.size() != ComputeCookedTextureFullMipCount(mips.front().Width, mips.front().Height))
+            {
+                error = MakeSourceError("テクスチャのミップが最後まで作れませんでした", source.Name);
+                return false;
+            }
+
+            TextureCookResult result;
+            result.Width = mips.front().Width;
+            result.Height = mips.front().Height;
+            result.MipCount = static_cast<uint32_t>(mips.size());
+            result.BytesPerPixel = 8;
+            result.PixelFormatName = "RGBA16F";
+            if (!BuildNvtexBytes(mips, CookedTexturePixelFormat::RGBA16F, CookedTextureColorSpace::Linear,
+                                 Format::VersionMinorTiled, result.NvtexBytes, error))
+            {
+                return false;
+            }
+            outResult = std::move(result);
+            return true;
+        }
+
         // RGBA8 の 1 ミップをブロック圧縮し、NVTEX に詰められるバイト列にする。
         bool CompressMipImage(const MipImage &rgbaMip,
                               const BlockCompressParams &params,
@@ -1103,6 +1373,12 @@ namespace NorvesLib::Tools::AssetCook
             case TextureUsage::Height16:
                 error = "height16 はブロック圧縮の用途ではありません";
                 return false;
+            case TextureUsage::Hdr:
+                error = "hdr はブロック圧縮の用途ではありません";
+                return false;
+            case TextureUsage::Rg16:
+                error = "rg16 はブロック圧縮の用途ではありません";
+                return false;
             }
 
             VariableArray<MipImage> compressedMips;
@@ -1229,6 +1505,16 @@ namespace NorvesLib::Tools::AssetCook
             outUsage = TextureUsage::Height16;
             return true;
         }
+        if (text == Core::Container::AnsiStringView("hdr"))
+        {
+            outUsage = TextureUsage::Hdr;
+            return true;
+        }
+        if (text == Core::Container::AnsiStringView("rg16"))
+        {
+            outUsage = TextureUsage::Rg16;
+            return true;
+        }
         return false;
     }
 
@@ -1241,6 +1527,8 @@ namespace NorvesLib::Tools::AssetCook
         case TextureUsage::Orm: return "orm";
         case TextureUsage::Single: return "single";
         case TextureUsage::Height16: return "height16";
+        case TextureUsage::Hdr: return "hdr";
+        case TextureUsage::Rg16: return "rg16";
         }
         return "unknown";
     }
@@ -1254,6 +1542,8 @@ namespace NorvesLib::Tools::AssetCook
         case TextureUsage::Orm: return "nvtex.v0.2.bc7.linear";
         case TextureUsage::Single: return "nvtex.v0.2.bc4.linear";
         case TextureUsage::Height16: return "nvtex.v0.2.r16.linear";
+        case TextureUsage::Hdr: return "nvtex.v0.2.rgba16f.linear";
+        case TextureUsage::Rg16: return "nvtex.v0.2.rg16.linear";
         }
         return "";
     }
@@ -1267,6 +1557,16 @@ namespace NorvesLib::Tools::AssetCook
         if (params.Usage == TextureUsage::Height16)
         {
             return CookHeight16Usage(source, outResult, error);
+        }
+
+        if (params.Usage == TextureUsage::Hdr)
+        {
+            return CookHdrUsage(source, outResult, error);
+        }
+        if (params.Usage == TextureUsage::Rg16)
+        {
+            error = "rg16 はまだ実装されていません";
+            return false;
         }
 
         return CookBlockCompressedUsage(source, orm, params, outResult, error);

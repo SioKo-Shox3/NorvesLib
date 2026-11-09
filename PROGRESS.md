@@ -10375,3 +10375,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR29-RHI-FORMATS): 要起票: `TextureAssetRuntime.cpp`（:234 付近）は `bUploadSucceeded` を見ずにハンドルを返すため、全ミップのアップロードに失敗しても有効なハンドルが返りうる。
 - U1 既存の用途の焼き出しのバイト列を煙試験で固定する: 着地(直し 0 回)
 - U2 NVTEX に RGBA16F・RG16UNorm を足し、ローダと GPU の写しを通す: 着地(直し 1 回)
+- U3 クッカーが EXR・HDR を浮動小数で読み、--usage hdr で RGBA16F を焼く: 着地(直し 0 回)
