@@ -10367,3 +10367,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 草の場のチャンクの GPU 常駐 GrassFieldGpuWindow を足す: 着地(直し 0 回)
 - U5 GrassTileSelectionTest を足す: 着地(直し 0 回)
 - U6 GrassPass(生成の記録の補助 GrassGenerateGpu を含む)を足し、SceneView へ登録し、MegaGeometryPass に HZB の読み取りの口を足す: 着地(直し 1 回)
+- U7 GrassGenerateVulkanTest を足し、タスクの verify を回す: 着地(直し 0 回)
