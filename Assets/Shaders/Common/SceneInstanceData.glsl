@@ -11,6 +11,8 @@ struct InstanceData
     vec4 objectColor;
     // impostor.vert ではアトラス、board2d.vert ではビューポートの大きさなどを格納する。
     vec4 customData;
+    // x = P0、y = P1、z = 予約、w = 被覆率の乗数。負は未指定で材質の値を使う。
+    vec4 shadingParams;
 };
 
 #endif // NORVES_SCENE_INSTANCE_DATA_GLSL

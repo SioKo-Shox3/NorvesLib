@@ -186,12 +186,14 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
             hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
             hash = HashRevisionValue(hash, static_cast<uint32_t>(proxy.LayerMask));
-            return HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            hash = HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            return HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
         }
 
         uint64_t HashSkinnedMeshProxyRevision(const SkinnedMeshProxy& proxy)
         {
             uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
+            hash = HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);

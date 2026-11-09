@@ -348,6 +348,25 @@ namespace NorvesLib::Core::Component
         return material;
     }
 
+    void SkinnedMeshComponent::SetShadingParams(uint32_t index, float value)
+    {
+        if (index >= Rendering::ShadingParamCount)
+        {
+            return;
+        }
+        const float sanitized = Rendering::SanitizeShadingParam(value);
+        if (m_ShadingParams[index] != sanitized)
+        {
+            m_ShadingParams[index] = sanitized;
+            MarkRenderStateDirty();
+        }
+    }
+
+    float SkinnedMeshComponent::GetShadingParams(uint32_t index) const
+    {
+        return index < Rendering::ShadingParamCount ? m_ShadingParams[index] : -1.0f;
+    }
+
     Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> SkinnedMeshComponent::GetMaterialBindingLease() const
     {
         if (!m_SkeletalAsset || !m_SkeletalAsset->GetMesh() || !m_SkeletalAsset->GetMesh()->IsLoaded())
@@ -483,6 +502,10 @@ namespace NorvesLib::Core::Component
             return false;
         }
         outProxy = {};
+        for (uint32_t i = 0; i < Rendering::ShadingParamCount; ++i)
+        {
+            outProxy.ShadingParams[i] = m_ShadingParams[i];
+        }
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = GetComponentId();
         const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
