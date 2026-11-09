@@ -1432,6 +1432,8 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
+    MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
+    MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
     MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
@@ -1479,6 +1481,10 @@ add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOc
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
+# 世界フィールドの入力の無害化をCPUで検証する。
+add_test(NAME WorldFieldInputSanitizeTest COMMAND CameraViewConstantsTest --test=WorldFieldInputSanitizeTest)
+# 世界フィールドの原点とスクロール差分をCPUで検証する。
+add_test(NAME WorldFieldScrollMathTest COMMAND CameraViewConstantsTest --test=WorldFieldScrollMathTest)
 # 草のタイル選別をCPUで検証する。
 add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
 

@@ -10447,3 +10447,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR43-GRASS-GENERATE): 生成の判定（残す・視錐台・向き・草丈 > 0・距離の打ち切り）は加減乗算・比較・floor・整数演算だけで書き、割り算・平方根は CPU が定数に入れる（Vulkan で正しく丸められるのは加減乗算だけで、除算・sqrt・三角関数を使うと写しとの完全一致が数十万本で崩れるため）。そのため K は距離の二乗に対して線形、視錐台の球の半径は幅の量子化の上限（0.25 m）で膨らませる。
 - Notes(G5-GR43-GRASS-GENERATE): 草の場をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotGrassField` を 1 つ、`RenderingCoordinator.cpp` に代入 1 行。`SnapshotFoliage` と同じ形）は paths の外だが、done-when の「草の場が無いフレームは何も宣言しない」に要るので足した。
 - Notes(G5-GR43-GRASS-GENERATE): 地面の高さの GPU の資源が無いので、ブレードの Y は設定の `GroundHeightMeters`（既定 0）で全タイル同じ。要起票: 草の場の地面の高さ（地形のハイトマップ）を GrassPass の生成へ渡す（TileInfo.GroundY をタイルごとにするか、高さのテクスチャを引く）。草の場の ContentRevision が変わると全チャンクを送り直すまで（1 フレーム 8 枚）そのチャンクの草が出ない。場の双線形はチャンクの中で端へ clamp するので、チャンクの境目で密度の段がわずかに出うる。
+- U1 WorldField の型・Sanitize・スクロールの計算とパケットの欄を足す: 着地(直し 0 回)
