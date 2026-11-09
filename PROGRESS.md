@@ -10399,3 +10399,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ロールごとの up_hint と脚の長さの比によるルートの拡縮: 着地(直し 0 回)
 - U4 回転の写しの誤差・ルートの移動距離・写せなかった関節の測定: 着地(直し 1 回)
 - U8 文書（profile v2・Retarget.md・Testing.md）: 着地(直し 0 回)
+- U6 --retarget-report と上限の適用（AssetCook）: 着地(直し 1 回)

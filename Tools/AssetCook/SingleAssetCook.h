@@ -31,6 +31,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::AssetImport::EmissiveScale AssetSetEmission;
         Core::Container::VariableArray<uint32_t> ClipJointNodes;
         std::filesystem::path RetargetSkeletonPath, RetargetProfilePath;
+        // リターゲットの測定値と上限判定を保存する任意の JSON 出力先。
+        std::filesystem::path RetargetReportPath;
         Core::Container::AnsiString RetargetSourceClip, RetargetClipName;
     };
     // 従来の単体cook・manifest・出力検証を再利用する。batch集約や新しい増分判定は追加しない。

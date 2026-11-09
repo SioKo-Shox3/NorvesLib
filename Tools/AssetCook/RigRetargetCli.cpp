@@ -47,7 +47,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             if (args.size() == 3 && args[2] == "--help")
             {
                 std::puts(
-                    "AssetCook --retarget-clip --input <BVH/glTF/GLB> --skeleton <target glTF/GLB> --role-profile <JSON> --out <new-directory> --logical <animation-path> [--clip <source clip>] [--clip-name <output name>] [--variant <name>]");
+                    "AssetCook --retarget-clip --input <BVH/glTF/GLB> --skeleton <target glTF/GLB> --role-profile <JSON> --out <new-directory> --logical <animation-path> [--clip <source clip>] [--clip-name <output name>] [--variant <name>] [--retarget-report <path>]");
                 std::puts(
                     "クリップ最適化: [--clip-optimize] [--clip-max-vertex-error-m <m>] "
                     "[--clip-max-joint-error-m <m>] [--clip-max-rotation-error-deg <deg>] [--clip-report <path>]");
@@ -139,6 +139,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 {
                     request.RetargetProfilePath = path();
                 }
+                else if (key == C::AnsiStringView("--retarget-report"))
+                {
+                    request.RetargetReportPath = path();
+                }
                 else if (key == C::AnsiStringView("--out"))
                 {
                     destination = path();
@@ -206,6 +210,14 @@ namespace NorvesLib::Tools::AssetCook::Detail
             stage.Path = proposed;
             request.ManifestPath = stage.Path / "manifest.json";
             request.PackagePath = stage.Path / "Cooked/Animations/clip.nvpk";
+            // ステージだけでなく、公開後の出力先との衝突も先に調べる。
+            auto publishedRequest = request;
+            publishedRequest.ManifestPath = target / "manifest.json";
+            publishedRequest.PackagePath = target / "Cooked/Animations/clip.nvpk";
+            if (!GuardRetargetReportRequest(publishedRequest, {}, error))
+            {
+                return reject(error.c_str());
+            }
             CookPreparedPlan prepared;
             if (!PrepareCookOutputPlan(request, 1, nullptr, prepared, error) || !CookSingleAsset(request, error))
             {
