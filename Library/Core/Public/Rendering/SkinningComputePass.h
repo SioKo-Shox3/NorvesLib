@@ -65,6 +65,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t SourceFirstIndex = 0;
         uint32_t SourceIndexCount = 0;
         bool bCastShadow = true;
+        bool bMainViewVisible = true;
     };
 
     /** @brief コンポーネントの出力範囲を割り当てた 1 描画 */
@@ -78,6 +79,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t SourceFirstIndex = 0;
         uint32_t SourceIndexCount = 0;
         bool bCastShadow = true;
+        bool bMainViewVisible = true;
     };
 
     /** @brief 1 回の変形と、それを共有する描画の範囲 */
@@ -218,6 +220,8 @@ namespace NorvesLib::Core::Rendering
         MaterialHandle Material;
         /** @brief 元の描画が不透明の一覧にあったか。ビジビリティバッファのラスタは不透明の描画だけを描く（半透明の一覧のものは影のためだけ） */
         bool bOpaque = true;
+        /** @brief 主カメラの視錐台に入るか（判定できないときは true） */
+        bool bMainViewVisible = true;
         /** @brief 元の描画が影を落とすか */
         bool bCastShadow = true;
         /** @brief 出力バッファの先頭の頂点番号と頂点数。今・前で同じで、同じコンポーネントの描画は範囲を共有する */
@@ -237,7 +241,7 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief スキニングのコンポーネントごとに、今と前のフレームの頂点を計算シェーダーで作る RenderGraph のパス
      *
-     * そのフレームの不透明描画のうちスキニングのものを集め、全コンポーネントの頂点を詰めた 2 本の
+     * 主カメラに見えるスキニング描画と、影の出力を読むときは影を落とす描画を集め、頂点を詰めた 2 本の
      * フレームごとのバッファ（今・前。storage・BDA）を RenderGraph の資源として宣言して書く。後のビジビリティバッファの
      * ラスタと材質の解決は、名前付きの資源（SkinningCurrentVertices・SkinningPreviousVertices）を Read して
      * GetInstances() の範囲を読む。今の GBuffer の経路は頂点シェーダーのスキニングのままで、このパスには依存しない。

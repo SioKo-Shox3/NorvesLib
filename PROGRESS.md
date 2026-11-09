@@ -10510,3 +10510,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 予備の GBufferPass のスキンの主カメラの絞り込み: 着地(直し 0 回)
 - U6 CSM のカスケードごとにスキンと通常のメッシュの描画を絞る: 着地(直し 1 回)
 - U8 CPU の SkinnedLodSelectionTest: 着地(直し 0 回)
+- U4 可視バッファの経路の主カメラの絞り込みと、変形の対象の絞り込み・統計: 着地(直し 1 回)

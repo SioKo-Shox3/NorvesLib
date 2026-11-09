@@ -48,6 +48,7 @@
 #include "Rendering/SkySunLight.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/Viewport.h"
 #include <algorithm>
 #include <cassert>
@@ -6188,6 +6189,20 @@ namespace NorvesLib::Core::Rendering
         // 統計更新
         const auto &rendererStats = m_SceneRenderer.GetStats();
         packet->Stats.SkinnedGBufferRecordedDraws = rendererStats.SkinnedGBufferDrawCallCount;
+        // 同じフレームに各ビューの ID ラスタが記録したスキニング描画を足す。
+        for (const auto &view : m_Views)
+        {
+            if (!view)
+            {
+                continue;
+            }
+            const auto *rasterPass = dynamic_cast<const VisibilityRasterPass *>(view->FindPass("VisibilityRasterPass"));
+            if (rasterPass)
+            {
+                packet->Stats.SkinnedGBufferRecordedDraws +=
+                    rasterPass->GetRecordedSkinnedDrawCountForFrame(viewContext.ResolveRenderFrameSerial());
+            }
+        }
         packet->Stats.SkinnedShadowRecordedDraws = rendererStats.SkinnedShadowDrawCallCount;
         renderStats.DrawCalls = rendererStats.DrawCallCount;
         renderStats.TrianglesRendered = rendererStats.TriangleCount;
