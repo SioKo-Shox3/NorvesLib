@@ -2,6 +2,7 @@
 // 正準roleを経由する所有Profile。実joint名は明示し、補正Cは明示または作者restから求める。
 #include "SkeletalBvhClipImport.h"
 #include "SkeletalClipProcessing.h"
+#include "Container/Span.h"
 
 namespace NorvesLib::Core::Animation
 {
@@ -33,7 +34,75 @@ namespace NorvesLib::Core::Animation
         Count
     };
     inline constexpr size_t SkeletalRoleCount = static_cast<size_t>(SkeletalRole::Count);
+
+    /// profile のロール名と欄の意味を決める語彙。
+    enum class SkeletalRoleVocabulary : uint8_t
+    {
+        Quadruped,
+        Humanoid
+    };
+
+    /// 人型のロール。各値は source、target、上向き方向と各ビット集合の共通の欄番号。
+    enum class SkeletalHumanoidRole : uint8_t
+    {
+        Hips,
+        Spine1,
+        Spine2,
+        Spine3,
+        Neck,
+        Head,
+        LShoulder,
+        LArm,
+        LForearm,
+        LHand,
+        RShoulder,
+        RArm,
+        RForearm,
+        RHand,
+        LUpLeg,
+        LLeg,
+        LFoot,
+        LToe,
+        RUpLeg,
+        RLeg,
+        RFoot,
+        RToe,
+        Count
+    };
+
+    /// 人型の欄番号を共通のロール欄の型へ変換する。
+    [[nodiscard]] constexpr SkeletalRole ToSkeletalRoleSlot(SkeletalHumanoidRole role) noexcept
+    {
+        return static_cast<SkeletalRole>(static_cast<uint8_t>(role));
+    }
+
+    /// 脚の足先と各関節、および脚長の平均を取る群。Hock が Count のときは2ボーン。
+    struct SkeletalRoleLeg
+    {
+        SkeletalRole Foot, Upper, Lower, Hock;
+        uint8_t Group;
+    };
+
+    /// 語彙ごとのロール名、鎖、腰と脚の定義。
+    struct SkeletalRoleVocabularyInfo
+    {
+        const char* Name;
+        uint32_t RoleCount;
+        const char* const* RoleNames;
+        uint32_t ChainRoleMask;
+        SkeletalRole Pelvis;
+        Container::Span<const SkeletalRoleLeg> Legs;
+    };
+
+    /// 指定した語彙の定義を返す。
+    [[nodiscard]] const SkeletalRoleVocabularyInfo& GetSkeletalRoleVocabularyInfo(SkeletalRoleVocabulary vocabulary) noexcept;
+    /// 語彙の欄番号に対応する名前を返す。範囲外は空文字列。
+    [[nodiscard]] const char* SkeletalRoleName(SkeletalRoleVocabulary vocabulary, SkeletalRole role) noexcept;
+    /// 語彙の欄が複数関節の鎖を受け入れるかを返す。
+    [[nodiscard]] bool IsSkeletalChainRole(SkeletalRoleVocabulary vocabulary, SkeletalRole role) noexcept;
+    /// 四足の欄番号に対応する名前を返す。範囲外は空文字列。
     [[nodiscard]] const char* SkeletalRoleName(SkeletalRole role) noexcept;
+    /// 四足の欄が複数関節の鎖を受け入れるかを返す。
     [[nodiscard]] bool IsSkeletalChainRole(SkeletalRole role) noexcept;
     struct SkeletalRoleTarget
     {
@@ -48,6 +117,8 @@ namespace NorvesLib::Core::Animation
     };
     struct SkeletalRoleProfile
     {
+        /// 欄の意味を決める語彙。既定は四足。
+        SkeletalRoleVocabulary Vocabulary = SkeletalRoleVocabulary::Quadruped;
         Container::FixedArray<Container::VariableArray<Container::VariableArray<uint8_t>>, SkeletalRoleCount> Source;
         Container::FixedArray<Container::VariableArray<SkeletalRoleTarget>, SkeletalRoleCount> Target;
         SkeletalBvhClipSettings Settings;
@@ -87,7 +158,7 @@ namespace NorvesLib::Core::Animation
         uint32_t FootMinStanceFrames = 3;
         /// v2 の接地区間の前後で補間するフレーム数。
         uint32_t FootBlendFrames = 3;
-        /// v2 の再接地対象の paw ロールのビット集合。既定は 0。
+        /// v2 の再接地対象の足先ロールのビット集合。既定は 0。
         uint32_t FootPlantingLegRoleMask = 0;
         /// v2 の平らな地面のワールド高さ（Y、メートル）。既定は 0。
         double GroundHeightMeters = 0;

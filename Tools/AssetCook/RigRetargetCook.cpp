@@ -334,7 +334,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             for (const auto& leg : foot.Legs)
             {
                 A::RetargetFootContactEntry contact;
-                contact.Leg = A::SkeletalRoleName(leg.PawRole);
+                contact.Leg = A::SkeletalRoleName(profile.Vocabulary, leg.PawRole);
                 for (const auto& range : leg.Contacts)
                 {
                     contact.Ranges.push_back(range.Begin);
