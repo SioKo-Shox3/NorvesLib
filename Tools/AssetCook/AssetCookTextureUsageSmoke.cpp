@@ -173,10 +173,12 @@ namespace
               const TextureSourceImage &source,
               const OrmSourceImages &orm,
               TextureCookResult &outResult,
-              CookedTextureParseResult &outParsed)
+              CookedTextureParseResult &outParsed,
+              TextureFormatOverride formatOverride = TextureFormatOverride::Default)
     {
         TextureUsageCookParams params;
         params.Usage = usage;
+        params.FormatOverride = formatOverride;
         params.ThreadCount = 1;
         ErrorString error;
         if (!CookTextureForUsage(source, orm, params, outResult, error))
@@ -730,11 +732,27 @@ namespace
         return values[channel];
     }
 
-    void RunHdrExr(const TextureSourceImage& source)
+    void RunHdrBc6H(const TextureSourceImage& source)
     {
         TextureCookResult result;
         CookedTextureParseResult parsed;
         if (!Cook(TextureUsage::Hdr, source, OrmSourceImages{}, result, parsed))
+        {
+            return;
+        }
+        Check(parsed.Texture.PixelFormat == CookedTexturePixelFormat::BC6H, "既定の HDR が BC6H ではない");
+        Check(parsed.Texture.ColorSpace == CookedTextureColorSpace::Linear, "既定の HDR が線形ではない");
+        Check(parsed.Texture.Width == 16 && parsed.Texture.Height == 8 && parsed.Texture.MipCount == 5,
+              "既定の HDR の大きさかミップ数が合わない");
+        Check(result.BytesPerPixel == 0, "既定の HDR がブロック圧縮ではない");
+        CheckMipLayout(parsed, 16, "hdr_bc6h_16x8");
+    }
+
+    void RunHdrExr(const TextureSourceImage& source)
+    {
+        TextureCookResult result;
+        CookedTextureParseResult parsed;
+        if (!Cook(TextureUsage::Hdr, source, OrmSourceImages{}, result, parsed, TextureFormatOverride::Rgba16F))
         {
             return;
         }
@@ -793,7 +811,8 @@ namespace
         }
         TextureCookResult result;
         CookedTextureParseResult parsed;
-        if (!Cook(TextureUsage::Hdr, Source(image, "radiance.hdr"), OrmSourceImages{}, result, parsed))
+        if (!Cook(TextureUsage::Hdr, Source(image, "radiance.hdr"), OrmSourceImages{}, result, parsed,
+                  TextureFormatOverride::Rgba16F))
         {
             return;
         }
@@ -937,6 +956,7 @@ int main(int argc, char** argv)
         return 1;
     }
     const TextureSourceImage exr = Source(fixture, argv[1]);
+    RunHdrBc6H(exr);
     RunHdrExr(exr);
     RunRadianceHdr();
     RunHeight16Exr(exr);
