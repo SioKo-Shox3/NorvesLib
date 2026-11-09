@@ -77,6 +77,22 @@ namespace NorvesLib::Core::Animation
         double ReportMaxFootSlideMeters = -1;
         /// v2 の足のめり込みの上限（メートル）。負は未指定で、既定は -1。
         double ReportMaxFootPenetrationMeters = -1;
+        /// v2 の再接地を有効にするか。既定は false。
+        bool bFootPlanting = false;
+        /// v2 の足先の最低位置からの接地高さのしきい値（メートル）。
+        double FootHeightThresholdMeters = 0.03;
+        /// v2 の接地とみなす速さのしきい値（メートル毎秒）。
+        double FootSpeedThresholdMetersPerSecond = 0.15;
+        /// v2 の接地区間の最短フレーム数。
+        uint32_t FootMinStanceFrames = 3;
+        /// v2 の接地区間の前後で補間するフレーム数。
+        uint32_t FootBlendFrames = 3;
+        /// v2 の再接地対象の paw ロールのビット集合。既定は 0。
+        uint32_t FootPlantingLegRoleMask = 0;
+        /// v2 の平らな地面のワールド高さ（Y、メートル）。既定は 0。
+        double GroundHeightMeters = 0;
+        /// v2 の IK 失敗フレーム数の上限。負は未指定で、既定は -1。
+        int64_t ReportMaxIkFailedFrames = -1;
     };
     struct SkeletalRoleProfileLimits
     {

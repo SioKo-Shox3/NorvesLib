@@ -44,15 +44,21 @@ clip名とAdd/Replaceは別の型付き呼出要求。Profileで暗黙のclip選
 
 ## version 2
 
-version 1 の profile は従来どおり読める。version 1 では `rest_pose.roles`・`proportions`・`report` は未知の鍵として拒否される。version 2 では `proportions` と、その中の `root_scale` が必須である。version 1 の `version` だけを 2 にしても受理されない。最上位の `root_scale` は version 1 だけで受け付け、version 2 では拒否する。ほかの語彙・必須項目も引き続き指定する。
+version 1 の profile は従来どおり読める。version 1 では `rest_pose.roles`・`proportions`・`report`・`ground`・`foot_planting` は未知の鍵として拒否される。version 2 では `proportions` と、その中の `root_scale` が必須である。version 1 の `version` だけを 2 にしても受理されない。最上位の `root_scale` は version 1 だけで受け付け、version 2 では拒否する。ほかの語彙・必須項目も引き続き指定する。
 
 - `rest_pose.roles.<role>.up_hint`: `align_bones` 用のロール別上向き方向。3 個の有限数で表す長さ 1e-10 以上のベクトルを正規化して使い、未指定のロールには共通の `rest_pose.up_hint`（既定 `[0, 1, 0]`）を使う。ロール名は上記の語彙に限り、各要素は `up_hint` を持つオブジェクトとする。`rest_pose.roles` は `mode` が `align_bones` 以外なら、空でも拒否する。
 - `proportions.root_scale`: 正の有限数、`"auto"` または `"auto_height"`。数値はルート並進の倍率、`"auto"` は対応する脚の長さから求める倍率、`"auto_height"` は pelvis と足の rest 高さから求める倍率を使う。`"auto_height"` は従来の version 1 の最上位 `root_scale` でも使える。
 - `proportions.leg_length_ratio`: 正の有限数による脚長比の上書き。`root_scale` が `"auto"` の場合だけ指定でき、数値または `"auto_height"` と組み合わせると拒否する。上書き時にも両骨格の脚長は測定する。
+- `ground`: 平らな地面の設定オブジェクト。許す鍵は必須の `height` だけで、有限数によるワールド高さ（Y、メートル）を指定する。`ground` を省略したときの高さは 0。
+- `foot_planting`: 再接地の設定オブジェクト。`enabled` は必須の真偽値で、`foot_planting` を省略したときは false。任意の `height_threshold_m` は足ごとの最低位置からの接地高さのしきい値（既定 0.03 メートル）、`speed_threshold_m_s` は元の時間で測る足の鉛直・水平速度のしきい値（既定 0.15 メートル毎秒）で、両方とも正の有限数。任意の `min_stance_frames` は接地区間の最短フレーム数（整数 1〜65535、既定 3）、`blend_frames` は接地区間の前後で補間するフレーム数（整数 0〜65535、既定 3）。
+- `foot_planting.ik`: `enabled` が true なら必須のオブジェクト。許す鍵は必須の `leg_roles` だけで、`front_L_paw`・`front_R_paw`・`hind_L_paw`・`hind_R_paw` から選ぶ空でない、重複しない配列とする。別のロール名は拒否する。true のときは、選択した前脚の `front_<L/R>_upper`・`_lower`・`_paw`、後脚の `hind_<L/R>_thigh`・`_shin`・`_hock`・`_paw` がすべて `target_roles` にあり、選択した `_paw` が `source_roles` にあることが必要。不足時は `InvalidSettings`、フィールド `foot_planting.ik.leg_roles` で拒否する。false のときに `ik` を指定しても、その構造とロール名の検証は行う。
 - `report.max_joint_error_deg`: 関節回転誤差の上限。有限数で 0 度より大きく 180 度以下。
-- `report.max_foot_slide_m`、`report.max_foot_penetration_m`: 足滑りとめり込みの上限。いずれも 0 以上の有限数。いまは未計測なので、指定すると上限判定は失敗する。
+- `report.max_foot_slide_m`、`report.max_foot_penetration_m`: 足滑りとめり込みの上限。いずれも 0 以上の有限数。`foot_planting.enabled` が true なら再接地の結果を測定して上限と比較し、false なら未計測のため上限判定は失敗する。
+- `report.max_ik_failed_frames`: IK 失敗フレーム数の上限。整数 0〜2147483647。省略時は上限を設定しない。
 
-`report` とその各鍵は任意である。比率・誤差・上限の意味は [Retarget.md](Retarget.md) を参照する。次の 1.3 と 0.1 度は説明用の仮の数値である。
+`ground`・`foot_planting`・`ik`・`report` の未知の鍵、重複鍵、型違い、および各値の範囲外は拒否する。整数の設定には小数表記や指数表記を受け付けない。
+
+`report` とその各鍵は任意である。再接地の処理と比率・誤差・上限の意味は [Retarget.md](Retarget.md) を参照する。次の 1.3 と 0.1 度は説明用の仮の数値である。
 
 ```json
 {
