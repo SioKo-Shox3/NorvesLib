@@ -10505,3 +10505,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G10-GR63-SKIN-CULL): 足す前の 3 点（SkinnedLodSelectionTest、CameraViewConstantsTest の束の MEMBER）。反証する契約: スキンの描画の主カメラの視錐台の判定は保守的で、視錐台の外のプロキシだけが描画 0 になり、中と境界にまたがるものは残る。CSM のカスケードの XY の範囲の外のキャスターだけがそのカスケードで省かれる。SunShadowParameters の Sanitize は NaN・負・λ の範囲外を「設定のまま（0）」か範囲の端へ寄せる。ほかの手段で気づけるか: 気づけない。省きすぎは端の消えとして撮影でしか見えず（撮影は回さない決まり）、省き足りないのは見た目が変わらず黙って速度だけ失う。失敗が黙って起きるか: 起きる。判定の符号や行列の規約の取り違えでも試験とログは何も言わない。
 - U2 純関数（スキンの視錐台の判定）・描画の局所境界・SunShadowParameters の型: 着地(直し 0 回)
 - U7 合成の高密度スキン SkinnedGiantFixture: 着地(直し 0 回)
+- U3 シーンの値（SunShadowParameters と絞り込みの切り替え）を FramePacket へ届け、CSM の分割と VSM の範囲へ効かせる: 着地(直し 0 回)

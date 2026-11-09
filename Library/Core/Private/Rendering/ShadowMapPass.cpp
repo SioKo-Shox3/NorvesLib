@@ -754,6 +754,8 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapFramePlan
     {
         CascadedShadowMatrixResult Cascades;
+        // 最後に記録した分割の λ。フレームをまたいで保持し、変わったときだけ記録する。
+        float LoggedSplitLambda = -1.0f;
         float LightView[PhysicalLightingShadowCascadeCount][16] = {};
         float LightProjection[PhysicalLightingShadowCascadeCount][16] = {};
         uint32_t MegaCasterCount = 0u;
@@ -1494,19 +1496,25 @@ namespace NorvesLib::Core::Rendering
         context.ActiveShadowMapSettings = &m_Settings;
         // シーンが FramePacket で影の到達距離を指定していればそれを、無ければパスの設定を使う（CSM と VSM で同じ値）
         const float maxShadowDistance =
-            context.SnapshotScene != nullptr && context.SnapshotScene->SunShadowMaxDistance > 0.0f
-                ? context.SnapshotScene->SunShadowMaxDistance
+            context.SnapshotScene != nullptr && context.SnapshotScene->SunShadow.MaxDistance > 0.0f
+                ? context.SnapshotScene->SunShadow.MaxDistance
                 : m_Settings.MaxShadowDistance;
-        if (maxShadowDistance != m_LoggedMaxShadowDistance)
-        {
-            m_LoggedMaxShadowDistance = maxShadowDistance;
-            NORVES_LOG_INFO("ShadowMapPass", "太陽の影の到達距離: sun_shadow_max_distance=%.1f m", maxShadowDistance);
-        }
         CascadedShadowMatrixSettings cascadedSettings =
             MakeDefaultCascadedShadowMatrixSettings();
         cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
         cascadedSettings.MaxShadowDistance = maxShadowDistance;
         cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
+        if (context.SnapshotScene != nullptr && context.SnapshotScene->SunShadow.SplitLambda > 0.0f)
+        {
+            cascadedSettings.SplitLambda = context.SnapshotScene->SunShadow.SplitLambda;
+        }
+        if (maxShadowDistance != m_LoggedMaxShadowDistance || cascadedSettings.SplitLambda != plan.LoggedSplitLambda)
+        {
+            m_LoggedMaxShadowDistance = maxShadowDistance;
+            plan.LoggedSplitLambda = cascadedSettings.SplitLambda;
+            NORVES_LOG_INFO("ShadowMapPass", "太陽の影の到達距離: sun_shadow_max_distance=%.1f m split_lambda=%.2f",
+                            maxShadowDistance, cascadedSettings.SplitLambda);
+        }
 
         const uint64_t instanceDataSize64 = context.InstanceDataBuffer
                                                 ? context.InstanceDataBuffer->GetSize()
@@ -1571,7 +1579,7 @@ namespace NorvesLib::Core::Rendering
                 splitDistances[splitIndex] = cascadedShadowMatrices.SplitDistances[splitIndex];
             }
 
-            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離だけで決まるため、
+            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離・分割の λ で決まるため、
             // 分割の奥が変わったときだけ記録する。
             const float splitFar = cascadedShadowMatrices.SplitDistances[CSM_CASCADE_COUNT];
             if (splitFar != m_LoggedCascadeSplitFar)

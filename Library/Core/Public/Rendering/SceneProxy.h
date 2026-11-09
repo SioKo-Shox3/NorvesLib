@@ -7,6 +7,7 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "SunShadowParameters.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
 #include "SkyOcclusion.h"
@@ -590,9 +591,11 @@ namespace NorvesLib::Core::Rendering
         // 背景・IBL・RTGI と DDGI の不交差がこの値になる。倍率と上限はそのまま掛かる）
         bool bStaticEnvironmentUniform = false;
         Math::Vector3 StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
-        // 太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲の両方に効く。
-        // 0 は ShadowMapPass の設定（ShadowMapPassSettings::MaxShadowDistance、既定 80 m）のまま
-        float SunShadowMaxDistance = 0.0f;
+        // MaxDistance は太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲に効く。
+        // SplitLambda は CSM の分割に効く。各値の 0 は ShadowMapPass の設定（既定 80 m・λ 0.5）のまま。
+        SunShadowParameters SunShadow;
+        // 検証用。false ならスキンの描画を主カメラの視錐台で省かない（既定 true）。
+        bool bSkinnedViewCulling = true;
         // 不透明物に掛ける空気遠近（遠景の霞）。空が有効なときだけ VolumetricsPass が掛ける
         AerialPerspectiveParameters AerialPerspective;
         // 空に描く雲の層。空が有効なときだけ CloudLayerPass が描く
@@ -637,7 +640,8 @@ namespace NorvesLib::Core::Rendering
             StaticEnvironmentMaxRadiance = 0.0f;
             bStaticEnvironmentUniform = false;
             StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
-            SunShadowMaxDistance = 0.0f;
+            SunShadow = SunShadowParameters{};
+            bSkinnedViewCulling = true;
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
             Foliage = FoliageScene{};

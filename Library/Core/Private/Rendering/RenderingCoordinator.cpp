@@ -218,7 +218,8 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.x);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.y);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.z);
-            hash = HashRevisionValue(hash, packet.Scene.SunShadowMaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.SunShadow.MaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.SunShadow.SplitLambda);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.bEnabled);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.StartDistanceMeters);
@@ -4598,7 +4599,8 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.bStaticEnvironmentUniform = m_bStaticEnvironmentUniform;
         packet.Scene.StaticEnvironmentUniformRadiance = m_StaticEnvironmentUniformRadiance;
-        packet.Scene.SunShadowMaxDistance = m_SunShadowMaxDistance;
+        packet.Scene.SunShadow = m_SunShadowParameters;
+        packet.Scene.bSkinnedViewCulling = m_bSkinnedViewCulling;
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
@@ -6700,9 +6702,21 @@ namespace NorvesLib::Core::Rendering
                                 : Math::Vector3::Zero;
     }
 
+    void RenderingCoordinator::SetSunShadowParameters(const SunShadowParameters& parameters)
+    {
+        m_SunShadowParameters = SanitizeSunShadowParameters(parameters);
+    }
+
     void RenderingCoordinator::SetSunShadowMaxDistance(float distance)
     {
-        m_SunShadowMaxDistance = std::isfinite(distance) && distance > 0.0f ? distance : 0.0f;
+        SunShadowParameters parameters = m_SunShadowParameters;
+        parameters.MaxDistance = distance;
+        SetSunShadowParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetSkinnedViewCullingEnabled(bool bEnabled)
+    {
+        m_bSkinnedViewCulling = bEnabled;
     }
 
     void RenderingCoordinator::SetAerialPerspective(const AerialPerspectiveParameters& parameters)

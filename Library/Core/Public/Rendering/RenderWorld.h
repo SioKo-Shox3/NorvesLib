@@ -6,6 +6,7 @@
 #include "FoliageTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "SunShadowParameters.h"
 #include "VolumetricFog.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
@@ -223,13 +224,28 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentUniformRadiance(bool bEnabled, const Math::Vector3& radiance);
 
         /**
+         * @brief シーンの太陽の影のパラメータを設定する（GameThread）
+         *
+         * MaxDistance は CSM の分割の奥と VSM のクリップマップの範囲、SplitLambda は CSM の分割の λ に効く。
+         * 各値の 0 は ShadowMapPass の設定（既定 80 m・λ 0.5）のまま。次の FramePacket へ値コピーする。
+         */
+        void SetSunShadowParameters(const SunShadowParameters& parameters);
+
+        /**
          * @brief シーンの太陽の影を受ける最大のカメラからの距離（m）を設定する（GameThread）
          *
+         * SetSunShadowParameters の MaxDistance だけを替える。
          * CSM の分割の奥と、VSM のクリップマップの印付けの範囲（どの段まで使うか）の両方に効く。
          * 次の FramePacket へ値コピーし、RenderThread の ShadowMapPass がそのフレームで読む。
          * @param distance 0より大きい有限の値。0（既定）・範囲外は ShadowMapPass の設定（既定 80 m）のまま
          */
         void SetSunShadowMaxDistance(float distance);
+
+        /**
+         * @brief 検証用にスキンの主カメラの視錐台による絞り込みを切り替える（GameThread。既定 true）
+         * @param bEnabled false なら視錐台でスキンの描画を省かない。次の FramePacket へ値コピーする
+         */
+        void SetSkinnedViewCullingEnabled(bool bEnabled);
 
         /**
          * @brief 不透明物に掛ける空気遠近（遠景の霞）を設定する（GameThread）
