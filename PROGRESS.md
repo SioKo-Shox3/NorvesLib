@@ -10520,3 +10520,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 AssetCookRetargetSmoke(CTest の cmake 台本)とフィクスチャを足す: 着地(直し 0 回)
 - U2 リターゲットと再接地と cook を語彙の表で動かす: 着地(直し 0 回)
 - U5 Retarget.md・SkeletalRoleProfile.md・Testing.md を書く: 着地(直し 0 回)
+- U6 保存した人型の (d) の差分を今の先頭に当て、タスクの verify を通す: 着地(直し 0 回)

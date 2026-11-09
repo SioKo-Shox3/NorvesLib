@@ -434,7 +434,29 @@ namespace NorvesLib::Core::Animation
                         else
                             close(f);
                     }
-                    close(window.End);
+                    size_t end = window.End;
+                    if (begin != SIZE_MAX && end == frames - 1)
+                    {
+                        // 共有の接地検出は次コマとの差を使うため、最後のコマを区間に含めない。
+                        // 接地が継続している場合は、最後の位置と前コマとの差でも同じ条件を確かめる。
+                        const V delta = Sub(input.SourceFeet[(frames - 1) * legs + l],
+                                            input.SourceFeet[(frames - 2) * legs + l]);
+                        const double horizontalSpeed = Horizontal(delta) / input.SourceFrameIntervalSeconds;
+                        const double verticalSpeed = std::abs(double(heights[frames - 1]) - heights[frames - 2]) /
+                                                     input.SourceFrameIntervalSeconds;
+                        const double speedLimit = settings.SpeedThresholdMetersPerSecond * options.Hysteresis;
+                        if (!std::isfinite(horizontalSpeed) || !std::isfinite(verticalSpeed) || !std::isfinite(speedLimit))
+                        {
+                            return Fail(error, "foot_planting_nonfinite");
+                        }
+                        if (heights[frames - 1] <= options.HeightThreshold * options.Hysteresis &&
+                            verticalSpeed <= options.VerticalSpeedThreshold * options.Hysteresis &&
+                            horizontalSpeed < speedLimit)
+                        {
+                            end = frames;
+                        }
+                    }
+                    close(end);
                 }
             }
             return true;
