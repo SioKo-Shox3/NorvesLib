@@ -266,6 +266,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/GrassGenerateReference.cpp
+    Private/Rendering/GrassFieldGpuWindow.cpp
     Private/Rendering/GrassTileSelector.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
@@ -736,6 +737,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/GrassGenerateReference.h
+    Public/Rendering/GrassFieldGpuWindow.h
     Public/Rendering/GrassTileSelector.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h

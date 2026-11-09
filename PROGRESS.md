@@ -10364,3 +10364,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 生成の型・ハッシュ・設定と CPU の写し GrassGenerateReference を足す: 着地(直し 1 回)
 - U2 CPU のタイルの選別 GrassTileSelector を足す: 着地(直し 0 回)
 - U3 GrassArgsInit.comp・GrassGenerate.comp と GrassShaderCompileTest を足す: 着地(直し 1 回)
+- U4 草の場のチャンクの GPU 常駐 GrassFieldGpuWindow を足す: 着地(直し 0 回)
