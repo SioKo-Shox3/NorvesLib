@@ -5550,6 +5550,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
                 swapChain->GetCompletedSubmissionSerial());
+            m_RenderResources->SkinnedMeshes().PreloadFrameLeases(packet->SkinnedMeshFrameLeases);
             m_RenderResources->BeginRetireFrame(swapChain->GetCompletedSubmissionSerial());
             m_SceneRenderer.SetSkinnedMeshResources(&m_RenderResources->SkinnedMeshes());
         }

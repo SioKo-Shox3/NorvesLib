@@ -37,6 +37,27 @@ namespace NorvesLib::Core::Rendering
         CollectReleased();
     }
 
+    void SkinnedMeshGpuStore::PreloadFrameLeases(
+        const Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>>& frameLeases)
+    {
+        if (!m_Device || !m_bFrameOpen)
+        {
+            return;
+        }
+        for (const auto& frameLease : frameLeases)
+        {
+            if (!frameLease || !frameLease->IsValid())
+            {
+                continue;
+            }
+            if (Entry* entry = FindOrUpload(frameLease))
+            {
+                // 描画しないメッシュも、パケットが保持する間は回収しない。
+                TrackFrameLease(*entry, frameLease);
+            }
+        }
+    }
+
     bool SkinnedMeshGpuStore::PrepareDraw(
         const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
         const Container::VariableArray<Math::Matrix4x4>& bonePalette,
@@ -396,7 +417,7 @@ namespace NorvesLib::Core::Rendering
                            RHI::ResourceUsage::StorageBuffer |
                            RHI::ResourceUsage::ShaderRead |
                            RHI::ResourceUsage::BufferDeviceAddress;
-        vertexDesc.CPUAccessible = true;
+        vertexDesc.CPUAccessible = false;
         vertexDesc.DebugName = "SkinnedMeshVB";
         RHI::BufferPtr vertexBuffer = m_Device->CreateBuffer(vertexDesc);
         if (!vertexBuffer)
@@ -413,7 +434,7 @@ namespace NorvesLib::Core::Rendering
                           RHI::ResourceUsage::StorageBuffer |
                           RHI::ResourceUsage::ShaderRead |
                           RHI::ResourceUsage::BufferDeviceAddress;
-        indexDesc.CPUAccessible = true;
+        indexDesc.CPUAccessible = false;
         indexDesc.DebugName = "SkinnedMeshIB";
         RHI::BufferPtr indexBuffer = m_Device->CreateBuffer(indexDesc);
         if (!indexBuffer)
@@ -421,6 +442,13 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
         indexBuffer->Update(indices.data(), indexDesc.Size, 0);
+        if (!m_bLoggedMeshMemory)
+        {
+            m_bLoggedMeshMemory = true;
+            NORVES_LOG_INFO("SkinnedMeshGpuStore", "SKINNED_MESH_MEMORY vb=%s ib=%s",
+                            vertexDesc.CPUAccessible ? "HostVisible" : "DeviceLocal",
+                            indexDesc.CPUAccessible ? "HostVisible" : "DeviceLocal");
+        }
 
         Entry entry;
         entry.Handle = handle;
