@@ -5696,7 +5696,7 @@
 - notes: 選定課題 G9-S3（人型のシ者の骨格の出所）は推奨どおり、実在の骨格（Mixamo・Rigify・Kimodo）の選定を G10 の着手前まで保留すると決めた。理由: エンジンの側は正準ロール表をデータにして骨格に依存しないので、G9 の完了条件は合成の人型で閉じられ、Kimodo の実出力の骨格は未確認で、頒布のライセンス（Mixamo の規約本文は未取得、Kimodo の重みは NVIDIA Open Model License）も公式で確かめていないため。よってここでは `Assets/Retarget/` に特定の骨格のプリセットを置かない。今のコードの事実: vocabulary は quadruped_v1 しか受けない（`Library/Core/Private/Animation/SkeletalRoleProfile.cpp:617-620`）。`SkeletalRole` は四足の列挙だけ（`SkeletalRoleProfile.h:8-34`）なので、人型は列挙を足すか vocabulary ごとの表にする（作り方は実装に任せるが、quadruped_v1 の既存の値と出力を変えない）。manifest には分離 v1 の `SkeletonId` が入る（`Library/Core/Public/Asset/AssetManifest.h:83-91`）。既存の `Test/Tools/AssetCookRigSplitSmoke.py` は CI（`windows-assetcook.yml`）だけで回るので、この機で回せるよう CTest の cmake の台本にした（他の AssetCook の smoke と同じ形。`Tools/AssetCook/CMakeLists.txt:252-275`）。生成AIの実物（GLB・BVH）はリポジトリに入れず、小さい合成のフィクスチャだけを置く。出典: 要件 `#### GR85` の設計案 (6)(7)、受け入れ確認の RetargetCookTest (d) と AssetCookRetargetSmoke、ロードマップの選定課題一覧の G9-S3。
 
 ## G9-GR87-CLIP-QUANTIZE: ClipBank v1 にクリップの量子化と一様な時刻の記録を足し、読み込み時に展開する
-- status: todo
+- status: done
 - after: G9-GR87-CLIP-OPTIMIZER, G9-GR85-HUMANOID-SMOKE
 - gr: GR87
 - needs-gr: GR82, GR12
