@@ -14,6 +14,7 @@
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/Wind.h"
 #include "Rendering/SkyOcclusion.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
@@ -404,6 +405,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
+        void SetWindParameters(const WindParameters& parameters);
+
         // 空の遮蔽の値と遮蔽物を GameThread で保持し、次のパケットへ値で渡す。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
         SkyOcclusionParameters GetSkyOcclusionParameters() const { return m_SkyOcclusion; }
@@ -710,6 +714,7 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        WindParameters m_Wind = MakeDefaultWindParameters();
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         struct SkyOccluderEntry
         {

@@ -4585,6 +4585,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetWindParameters(m_Wind);
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -5841,6 +5842,7 @@ namespace NorvesLib::Core::Rendering
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
@@ -6611,6 +6613,11 @@ namespace NorvesLib::Core::Rendering
         const VolumetricFogParameters& parameters)
     {
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
+    {
+        m_Wind = SanitizeWindParameters(parameters);
     }
 
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
