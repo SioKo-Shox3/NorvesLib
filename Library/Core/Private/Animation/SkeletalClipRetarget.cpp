@@ -382,7 +382,7 @@ namespace NorvesLib::Core::Animation
         bool MeasureRetarget(Context& c, C::Span<const SkeletalRetargetJoint> target,
                              C::Span<const uint32_t> targetOrder, const S::SkeletalAnimationClip& clip,
                              const SkeletalClipPoseSource& input, const SkeletalClipProcessingSettings& settings,
-                             SkeletalClipRetargetReport& report)
+                             SkeletalClipRetargetReport& report, double& initialYaw, M& initialYawRotation)
         {
             C::VariableArray<float> times;
             C::VariableArray<const S::SkeletalAnimationChannel*> rotations(target.size(), nullptr);
@@ -428,8 +428,8 @@ namespace NorvesLib::Core::Animation
                 previousTime = motion.TimeSeconds;
             }
             C::VariableArray<S::SkeletalValue> discarded(c.Mapping.Pairs.size());
-            double initialYaw = 0;
-            M initialYawRotation{};
+            initialYaw = 0;
+            initialYawRotation = {};
             if (!clip.RootMotion.empty())
             {
                 S::SkeletalValue initialRoot;
@@ -640,6 +640,171 @@ namespace NorvesLib::Core::Animation
             report.bRotationErrorMeasured = true;
             return std::isfinite(report.RotationErrorMeanDegrees);
         }
+        bool ResolveFootPlantingLegs(const SkeletalRoleProfile& profile, uint32_t mask,
+                                      const SkeletalJointIndex& sourceIndex, const SkeletalJointIndex& targetIndex,
+                                      C::VariableArray<RetargetFootPlantingLeg>& legs,
+                                      C::VariableArray<uint32_t>& sourcePaws, C::AnsiString& error)
+        {
+            struct Roles
+            {
+                SkeletalRole Paw, Upper, Lower, Hock;
+            };
+            constexpr Roles roles[] = {
+                {SkeletalRole::FrontLPaw, SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::Count},
+                {SkeletalRole::FrontRPaw, SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::Count},
+                {SkeletalRole::HindLPaw, SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock},
+                {SkeletalRole::HindRPaw, SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock}};
+            uint32_t remaining = mask;
+            const auto targetJoint = [&](SkeletalRole role, uint32_t& joint)
+            {
+                const auto& entries = profile.Target[size_t(role)];
+                return entries.size() == 1 && FindSkeletalJointIndex(targetIndex, entries[0].Name, joint).Succeeded();
+            };
+            for (const auto& role : roles)
+            {
+                const uint32_t bit = uint32_t{1} << uint32_t(role.Paw);
+                if ((mask & bit) == 0)
+                {
+                    continue;
+                }
+                remaining &= ~bit;
+                const auto& names = profile.Source[size_t(role.Paw)];
+                uint32_t sourcePaw = UINT32_MAX;
+                RetargetFootPlantingLeg leg;
+                leg.PawRole = role.Paw;
+                if (names.size() != 1 || !FindSkeletalJointIndex(sourceIndex, names[0], sourcePaw).Succeeded() ||
+                    !targetJoint(role.Upper, leg.Upper) || !targetJoint(role.Lower, leg.Lower) ||
+                    !targetJoint(role.Paw, leg.Paw) ||
+                    (role.Hock != SkeletalRole::Count && !targetJoint(role.Hock, leg.Hock)))
+                {
+                    return Fail(error, "foot_planting_leg_roles");
+                }
+                legs.push_back(leg);
+                sourcePaws.push_back(sourcePaw);
+            }
+            if (remaining || legs.empty())
+            {
+                return Fail(error, "foot_planting_leg_roles");
+            }
+            return true;
+        }
+
+        bool PlantRetargetFeet(Context& c, C::Span<const SkeletalRetargetJoint> target,
+                               C::Span<const S::SkeletalRestTransform> localRest,
+                               C::Span<const RetargetFootPlantingLeg> legs, C::Span<const uint32_t> sourcePaws,
+                               const SkeletalClipRetargetSettings& settings, double initialYaw,
+                               const M& initialYawRotation, S::SkeletalAnimationClip& clip,
+                               SkeletalClipRetargetReport& report, C::AnsiString& error)
+        {
+            C::VariableArray<float> times;
+            if (!CollectRetargetFootPlantingTimes(clip, times))
+            {
+                return Fail(error, "foot_planting_nonfinite");
+            }
+            if (times.size() < 2 || legs.empty() || sourcePaws.size() != legs.size() ||
+                legs.size() > SIZE_MAX / times.size())
+            {
+                return Fail(error, "foot_planting_input");
+            }
+            C::VariableArray<int32_t> parents;
+            parents.reserve(target.size());
+            for (const auto& joint : target)
+            {
+                parents.push_back(joint.ParentIndex);
+            }
+            const S::SkeletalAnimationChannel* rootTranslation = nullptr;
+            for (const auto& channel : clip.Channels)
+            {
+                if (channel.JointIndex == c.TargetRoot && channel.Path == S::SkeletalAnimationPath::Translation)
+                {
+                    rootTranslation = &channel;
+                    break;
+                }
+            }
+            C::VariableArray<RetargetFootPlantingRootParent> rootParents;
+            C::VariableArray<V> feet, positions(c.Source.Joints.size());
+            C::VariableArray<S::SkeletalValue> discarded(c.Mapping.Pairs.size());
+            rootParents.reserve(times.size());
+            feet.reserve(times.size() * legs.size());
+            for (float time : times)
+            {
+                const double sourceTime = std::clamp(report.Processing.StartSeconds + double(time) /
+                                                     settings.Processing.TimeScale,
+                                                     report.Processing.StartSeconds, report.Processing.EndSeconds);
+                S::SkeletalPosition discardedTranslation;
+                if (!std::isfinite(sourceTime) || !Context::At(sourceTime, discarded, discardedTranslation, &c))
+                {
+                    return Fail(error, "foot_planting_input");
+                }
+                for (uint32_t joint : c.Order)
+                {
+                    const auto& j = c.Source.Joints[joint];
+                    const auto& rest = j.Rest.Translation;
+                    if (j.ParentIndex < 0)
+                    {
+                        const auto p = c.Translation ? Sample(*c.Translation, sourceTime)
+                                                     : S::SkeletalValue{rest.X, rest.Y, rest.Z, 0};
+                        positions[joint] = Transform(c.SourceFrame, Mul({p.X, p.Y, p.Z}, c.SourceFrameScale));
+                    }
+                    else
+                    {
+                        const auto parent = size_t(j.ParentIndex);
+                        positions[joint] = Add(positions[parent], Transform(c.World[parent],
+                            Mul({rest.X, rest.Y, rest.Z}, c.SourceFrameScale)));
+                    }
+                }
+                for (uint32_t paw : sourcePaws)
+                {
+                    V foot;
+                    if (ConvertSkeletalTranslation(c.Conversion, positions[paw], foot) !=
+                        SkeletalCoordinateStatus::Success)
+                    {
+                        return Fail(error, "foot_planting_nonfinite");
+                    }
+                    feet.push_back(foot);
+                }
+                RetargetFootPlantingRootParent rootParent{c.TargetFrame, c.TargetFramePosition};
+                if (!clip.RootMotion.empty())
+                {
+                    const auto next = std::lower_bound(
+                        clip.RootMotion.begin(), clip.RootMotion.end(), time,
+                        [](const auto& key, float t) { return key.TimeSeconds < t; });
+                    const auto& right = next == clip.RootMotion.end() ? clip.RootMotion.back() : *next;
+                    const auto& left = next == clip.RootMotion.begin() ? right : *(next - 1);
+                    const double alpha = &left == &right ? 0 :
+                        std::clamp((double(time) - left.TimeSeconds) / (double(right.TimeSeconds) - left.TimeSeconds),
+                                   0.0, 1.0);
+                    const V motion{left.TranslationX + (right.TranslationX - left.TranslationX) * alpha, 0,
+                                   left.TranslationZ + (right.TranslationZ - left.TranslationZ) * alpha};
+                    const double yaw = initialYaw + left.YawRadians + (right.YawRadians - left.YawRadians) * alpha;
+                    if (!std::isfinite(yaw))
+                    {
+                        return Fail(error, "foot_planting_nonfinite");
+                    }
+                    const auto yawRotation = MatrixComponents(0, std::sin(yaw * 0.5), 0, std::cos(yaw * 0.5));
+                    rootParent.Rotation = D::RetargetMultiply(yawRotation, c.TargetFrame);
+                    rootParent.Translation = Add(rootParent.Translation, Transform(initialYawRotation, motion));
+                    const auto& rest = target[c.TargetRoot].Rest.Translation;
+                    const auto local = rootTranslation ? Sample(*rootTranslation, time)
+                                                       : S::SkeletalValue{rest.X, rest.Y, rest.Z, 0};
+                    const auto scaled = Mul({local.X, local.Y, local.Z}, c.TargetFrameScale);
+                    // ルートの位置は TargetFrame で変換し、抽出されたヨーは回転だけへ戻す。
+                    rootParent.Translation = Add(rootParent.Translation,
+                        Sub(Transform(c.TargetFrame, scaled), Transform(rootParent.Rotation, scaled)));
+                }
+                rootParents.push_back(rootParent);
+            }
+            RetargetFootPlantingInput input;
+            input.Parents = parents;
+            input.LocalRest = localRest;
+            input.RootJoint = c.TargetRoot;
+            input.FrameScale = c.TargetFrameScale;
+            input.RootParents = rootParents;
+            input.Legs = legs;
+            input.SourceFeet = feet;
+            input.SourceFrameIntervalSeconds = (double(times[1]) - times[0]) / settings.Processing.TimeScale;
+            return ApplyRetargetFootPlanting(input, settings.FootPlanting, clip, report.FootPlanting, error);
+        }
     } // namespace
     bool MakeBvhRetargetClipSource(const Bvh::BvhDocument& source, const SkeletalBvhClipSettings& settings,
                                    const C::String& name, SkeletalRetargetClipSource& out, C::AnsiString& error)
@@ -839,6 +1004,13 @@ namespace NorvesLib::Core::Animation
             !BuildSkeletalJointIndex(targetNames, {}, ti).Succeeded())
         {
             return Fail(error, "joint_index");
+        }
+        C::VariableArray<RetargetFootPlantingLeg> plantingLegs;
+        C::VariableArray<uint32_t> sourcePaws;
+        if (settings.FootPlanting.bEnabled &&
+            !ResolveFootPlantingLegs(profile, settings.FootPlantingLegRoleMask, si, ti, plantingLegs, sourcePaws, error))
+        {
+            return false;
         }
         C::VariableArray<SkeletalJointMappingNameView> names;
         C::VariableArray<M> explicitCorrections;
@@ -1207,9 +1379,18 @@ namespace NorvesLib::Core::Animation
         {
             report.UnmappedTargetNames.push_back(target[index].Name);
         }
-        if (!MeasureRetarget(c, target, targetOrder, clip, input, settings.Processing, report))
+        double initialYaw = 0;
+        M initialYawRotation{};
+        if (!MeasureRetarget(c, target, targetOrder, clip, input, settings.Processing, report,
+                             initialYaw, initialYawRotation))
         {
             return Fail(error, "retarget_error_measure");
+        }
+        if (settings.FootPlanting.bEnabled &&
+            !PlantRetargetFeet(c, target, author->LocalRest, plantingLegs, sourcePaws, settings,
+                               initialYaw, initialYawRotation, clip, report, error))
+        {
+            return false;
         }
         out = std::move(clip);
         outReport = std::move(report);

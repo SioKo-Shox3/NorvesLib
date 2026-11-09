@@ -10468,3 +10468,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 報告に足の測定値・検出結果と上限の判定を足す: 着地(直し 0 回)
 - U2 profile v2 に foot_planting・ground.height・report.max_ik_failed_frames を足す: 着地(直し 0 回)
 - U1 再接地の本体 RetargetFootPlanting(検出・固定位置・骨盤の補正・二関節 IK・測定)を足す: 着地(直し 1 回)
+- U4 リターゲットと cook に再接地を結線し、Retarget.md を書き直す: 着地(直し 0 回)
