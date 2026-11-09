@@ -10354,3 +10354,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR93-VALIDATE): GR89 の形式は標本数を各辺 `tile_cells × N + 1` と決めているので、done-when の「256×256 のハイトマップ」は 256×256 の格子（標本 257×257）として試験を作った。到達性・所要時間は 1 格子の 8 近傍の近似で、犬の跳躍・段差の越え方（GR05・GR07）は入っていない。GR21 の経路探索ができたら `validate(..., traversable_fn=...)` を差し替える。`smooth` の指定がある地形は平滑化を未適用で読み、報告の地形の注意に出す。
 - U1 RHI にインデックス無しの間接描画（単発・件数つき）と bMultiDrawIndirect を足す: 着地(直し 0 回)
 - U2 Count が無いときの多重の間接描画を bMultiDrawIndirect で分ける: 着地(直し 0 回)
+- U3 CPU の契約試験 RHIIndirectApiContractTest を足す: 着地(直し 0 回)

@@ -364,6 +364,7 @@ register_rendering_gpu_test(
 norves_add_test_bundle(RHIRayTracingApiContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
+    MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
@@ -376,6 +377,9 @@ target_compile_definitions(RHIRayTracingApiContractTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
+
+# 間接描画 API の既定の戻り値と、間接コマンドのサイズ・フィールド配置を CPU で確かめる。
+add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --test=RHIIndirectApiContractTest)
 
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
