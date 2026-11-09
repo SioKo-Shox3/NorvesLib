@@ -1,0 +1,190 @@
+{
+  "version": 2,
+  "vocabulary": "quadruped_v1",
+  "axes": {
+    "up": "+Y",
+    "forward": "+Z",
+    "handedness": "right"
+  },
+  "units": {
+    "position_scale": 1
+  },
+  "position_convention": "additive",
+  "time": {
+    "mode": "header_frame_time"
+  },
+  "source_roles": {
+    "root": [
+      "root"
+    ],
+    "pelvis": [
+      "pelvis"
+    ],
+    "spine": [
+      "spine"
+    ],
+    "front_L_upper": [
+      "front_L_upper"
+    ],
+    "front_L_lower": [
+      "front_L_lower"
+    ],
+    "front_L_paw": [
+      "front_L_paw"
+    ],
+    "front_R_upper": [
+      "front_R_upper"
+    ],
+    "front_R_lower": [
+      "front_R_lower"
+    ],
+    "front_R_paw": [
+      "front_R_paw"
+    ],
+    "hind_L_thigh": [
+      "hind_L_thigh"
+    ],
+    "hind_L_shin": [
+      "hind_L_shin"
+    ],
+    "hind_L_hock": [
+      "hind_L_hock"
+    ],
+    "hind_L_paw": [
+      "hind_L_paw"
+    ],
+    "hind_R_thigh": [
+      "hind_R_thigh"
+    ],
+    "hind_R_shin": [
+      "hind_R_shin"
+    ],
+    "hind_R_hock": [
+      "hind_R_hock"
+    ],
+    "hind_R_paw": [
+      "hind_R_paw"
+    ]
+  },
+  "target_roles": {
+    "root": [
+      {
+        "joint": "root"
+      }
+    ],
+    "pelvis": [
+      {
+        "joint": "pelvis"
+      }
+    ],
+    "spine": [
+      {
+        "joint": "spine"
+      }
+    ],
+    "front_L_upper": [
+      {
+        "joint": "front_L_upper"
+      }
+    ],
+    "front_L_lower": [
+      {
+        "joint": "front_L_lower"
+      }
+    ],
+    "front_L_paw": [
+      {
+        "joint": "front_L_paw"
+      }
+    ],
+    "front_R_upper": [
+      {
+        "joint": "front_R_upper"
+      }
+    ],
+    "front_R_lower": [
+      {
+        "joint": "front_R_lower"
+      }
+    ],
+    "front_R_paw": [
+      {
+        "joint": "front_R_paw"
+      }
+    ],
+    "hind_L_thigh": [
+      {
+        "joint": "hind_L_thigh"
+      }
+    ],
+    "hind_L_shin": [
+      {
+        "joint": "hind_L_shin"
+      }
+    ],
+    "hind_L_hock": [
+      {
+        "joint": "hind_L_hock"
+      }
+    ],
+    "hind_L_paw": [
+      {
+        "joint": "hind_L_paw"
+      }
+    ],
+    "hind_R_thigh": [
+      {
+        "joint": "hind_R_thigh"
+      }
+    ],
+    "hind_R_shin": [
+      {
+        "joint": "hind_R_shin"
+      }
+    ],
+    "hind_R_hock": [
+      {
+        "joint": "hind_R_hock"
+      }
+    ],
+    "hind_R_paw": [
+      {
+        "joint": "hind_R_paw"
+      }
+    ]
+  },
+  "rest_pose": {
+    "mode": "align_bones",
+    "up_hint": [
+      0,
+      0,
+      1
+    ]
+  },
+  "proportions": {
+    "root_scale": "auto"
+  },
+  "ground": {
+    "height": 0
+  },
+  "foot_planting": {
+    "enabled": true,
+    "ik": {
+      "leg_roles": [
+        "front_L_paw",
+        "front_R_paw",
+        "hind_L_paw",
+        "hind_R_paw"
+      ]
+    }
+  },
+  "report": {
+    "max_joint_error_deg": 0.5,
+    "max_foot_slide_m": 0.005
+  },
+  "processing": {
+    "loop_mode": "none",
+    "extract_root_motion": false,
+    "output_fps": 30
+  }
+}

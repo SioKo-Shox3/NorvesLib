@@ -10,14 +10,20 @@
 //    再投影が画素の間に落ちる（動きの端数がある）ほど、補間で落ちる細部が積もるので現在の色の割合を上げる。
 // 履歴が無いときと、再投影が画面の外に出たときは現在の色をそのまま使う。
 // ジッタは前のカメラにも同じ量を掛けてあるので、velocity と再投影にはジッタが入らない。
+// 現在のリアクティブでクリップの箱を広げ、減衰させた履歴のリアクティブとともに現在の色の割合を上げる。
+// R8 の専用の履歴にリアクティブを持ち越し、半透明・粒子が去った後の残像も抑える。
+// リアクティブが 0 のときは追加の RGB 演算を飛ばし、従来の計算順を保つ。
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outReactive;
 
 layout(set = 0, binding = 0) uniform sampler2D sceneColorTexture;
 layout(set = 0, binding = 1) uniform sampler2D historyTexture;
 layout(set = 0, binding = 2) uniform sampler2D velocityTexture;
 layout(set = 0, binding = 3) uniform sampler2D sceneDepthTexture;
+layout(set = 0, binding = 5) uniform sampler2D reactiveTexture;
+layout(set = 0, binding = 6) uniform sampler2D reactiveHistoryTexture;
 
 layout(std140, set = 0, binding = 4) uniform TemporalAAParams
 {
@@ -30,6 +36,7 @@ layout(std140, set = 0, binding = 4) uniform TemporalAAParams
     vec4 jitter;                     // xy: ジッタ（画素）
     vec4 reprojection;               // x: 履歴の補間の 3 次の鋭さ（Keys の −a。0.5 が Catmull-Rom、既定 1）、
                                      // y: 補間で最もぼける画素（端数 0.5）の現在の色の割合
+    vec4 reactive;                   // x: 箱を広げる係数、y: 持ち越しの減衰
 } params;
 
 // RGBA16F の上限。非有限値や溢れた値が履歴へ残り続けないように切る。
@@ -166,9 +173,11 @@ void main()
 
     // 不透明度は現在の画素のものを保つ。
     float currentAlpha = texelFetch(sceneColorTexture, center, 0).a;
+    float rCur = texelFetch(reactiveTexture, min(center, textureSize(reactiveTexture, 0) - 1), 0).r;
     if (params.cameraPositionAndHistory.w < 0.5)
     {
         outColor = vec4(current, currentAlpha);
+        outReactive = vec4(rCur, 0.0, 0.0, 0.0);
         return;
     }
 
@@ -177,15 +186,30 @@ void main()
     if (any(lessThan(previousUV, vec2(0.0))) || any(greaterThan(previousUV, vec2(1.0))))
     {
         outColor = vec4(current, currentAlpha);
+        outReactive = vec4(rCur, 0.0, 0.0, 0.0);
         return;
     }
+
+    float storedReactive = texture(reactiveHistoryTexture, previousUV).r;
+    // R8 へ書き戻すと丸めで小さい値が減らなくなるので、減衰に加えて 1 フレームに少なくとも 1/255 は減らす
+    float rPrev = max(min(storedReactive * params.reactive.y, storedReactive - 1.0 / 255.0), 0.0);
+    float r = clamp(max(rCur, rPrev), 0.0, 1.0);
 
     vec2 fraction;
     vec3 history = SanitizeColor(SampleHistoryCubic(previousUV, fraction) * params.blend.y);
 
     vec3 mean = moment1 / 9.0;
     vec3 sigma = sqrt(max(moment2 / 9.0 - mean * mean, vec3(0.0)));
-    vec3 clipped = YCoCgToRgb(ClipToBox(RgbToYCoCg(history), mean, params.blend.z * sigma));
+    vec3 clipped;
+    if (rCur > 0.0)
+    {
+        clipped = YCoCgToRgb(ClipToBox(RgbToYCoCg(history), mean,
+                                      (params.blend.z * sigma) * (1.0 + params.reactive.x * rCur)));
+    }
+    else
+    {
+        clipped = YCoCgToRgb(ClipToBox(RgbToYCoCg(history), mean, params.blend.z * sigma));
+    }
     history = max(clipped, vec3(0.0));
 
     float currentLuma = dot(current, vec3(0.2126, 0.7152, 0.0722));
@@ -195,8 +219,13 @@ void main()
     vec2 spread = 4.0 * fraction * (1.0 - fraction);
     float resampleBlur = clamp(spread.x + spread.y, 0.0, 1.0);
     float currentFraction = mix(params.blend.x, max(params.reprojection.y, params.blend.x), resampleBlur);
+    if (r > 0.0)
+    {
+        currentFraction = mix(currentFraction, 1.0, r);
+    }
     float currentWeight = currentFraction / (1.0 + currentLuma);
     float historyWeight = (1.0 - currentFraction) / (1.0 + historyLuma);
     vec3 resolved = (current * currentWeight + history * historyWeight) / max(currentWeight + historyWeight, 1.0e-6);
     outColor = vec4(SanitizeColor(resolved), currentAlpha);
+    outReactive = vec4(r, 0.0, 0.0, 0.0);
 }

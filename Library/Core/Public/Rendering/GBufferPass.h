@@ -164,6 +164,9 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture* GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
         RHI::ITexture* GetVelocityTexture() const { return m_VelocityTexture.get(); }
         const RHI::TexturePtr& GetVelocityTexturePtr() const { return m_VelocityTexture; }
+        const RHI::TexturePtr& GetNormalTexturePtr() const { return m_NormalTexture; }
+        const RHI::TexturePtr& GetMaterialTexturePtr() const { return m_MaterialTexture; }
+        const RHI::TexturePtr& GetEmissiveTexturePtr() const { return m_EmissiveTexture; }
         RHI::ITexture* GetDepthTexture() const { return m_DepthTexture.get(); }
 
         RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle.ToResourceHandle(); }

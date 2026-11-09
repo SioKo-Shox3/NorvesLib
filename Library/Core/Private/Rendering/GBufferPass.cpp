@@ -96,9 +96,9 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64)
-            // + VT のフィードバックのパラメータ（法線・ORM・高さ。16） = 336 bytes（描画側の PerObjectUBO の大きさと同じ）
-            constexpr uint32_t UBO_SIZE = 336;
+            // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
+            // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）= 368 バイト
+            constexpr uint32_t UBO_SIZE = 368;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -402,7 +402,7 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureDesc materialDesc =
             RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
-        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage;
+        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage | RHI::ResourceUsage::TransferSrc;
         m_MaterialHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferMaterial,
             materialDesc,
@@ -413,7 +413,7 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::ShaderResource);
 
         RGTextureDesc emissiveDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
-        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage;
+        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage | RHI::ResourceUsage::TransferSrc;
         m_EmissiveHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferEmissive,
             emissiveDesc,
@@ -668,8 +668,10 @@ namespace NorvesLib::Core::Rendering
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
             float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
             float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0。gbuffer.frag が > 0.5 を判定し、Normal.w の DIFFUSE_ONLY の受け手の印へ変換）
+            float shadingParams[4]; // 材質の値。スキンではインスタンスの値を重ねる。負は未指定。
+            float shadingModel[4]; // x=GBuffer の ID、yzw=0
         };
-        static_assert(sizeof(PerObjectUBO) == 336u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(sizeof(PerObjectUBO) == 368u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -723,6 +725,11 @@ namespace NorvesLib::Core::Rendering
             }
 
             PerObjectUBO uboData = frameTemplate;
+            for (uint32_t i = 0; i < ShadingParamCount; ++i)
+            {
+                uboData.shadingParams[i] = -1.0f;
+            }
+            uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(ShadingModel::DefaultLit));
 
             TextureHandle matAlbedo;
             TextureHandle matNormal;
@@ -764,6 +771,23 @@ namespace NorvesLib::Core::Rendering
                     matEmissiveChromaticityB = matData->EmissiveColor[2];
                     matEmissiveLuminanceNits = matData->EmissiveLuminanceNits;
                     bMatDiffuseOnly = matData->bDiffuseOnly;
+                    for (uint32_t i = 0; i < ShadingParamCount; ++i)
+                    {
+                        uboData.shadingParams[i] = matData->ShadingParams[i];
+                    }
+                    uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(matData->Shading));
+                }
+            }
+
+            // スキンの記述子は描画ごとに作るため、インスタンス指定だけをここで重ねる。
+            if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
+            {
+                for (uint32_t i = 0; i < ShadingParamCount; ++i)
+                {
+                    if (command.Draw.ShadingParams[i] >= 0.0f)
+                    {
+                        uboData.shadingParams[i] = command.Draw.ShadingParams[i];
+                    }
                 }
             }
 
@@ -1036,10 +1060,14 @@ namespace NorvesLib::Core::Rendering
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
         normalDesc.Usage = normalDesc.Usage | RHI::ResourceUsage::TransferSrc;
         m_NormalTexture = m_Device->CreateTexture(normalDesc);
-        m_MaterialTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
-        m_EmissiveTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"));
+        RHI::TextureDesc materialDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
+        materialDesc.Usage = materialDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_MaterialTexture = m_Device->CreateTexture(materialDesc);
+        RHI::TextureDesc emissiveDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
+        emissiveDesc.Usage = emissiveDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_EmissiveTexture = m_Device->CreateTexture(emissiveDesc);
         RHI::TextureDesc velocityDesc =
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.VelocityFormat, "GBuffer_Velocity");
         velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;

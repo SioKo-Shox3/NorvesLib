@@ -40,10 +40,21 @@
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
 - status: todo
-- done-when: 統合ブランチで Debug の構成(テスト有効)のビルドが通り、`Golden`・`PathTracingReference` を外した ctest が全部通る(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 12 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracingLighting" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(Hdr|RayTracing)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
@@ -5684,7 +5695,7 @@
 - notes: G4 の `G4-GR128` は「足の IK 固定や別骨格への再接地は後続項目」として残している（`TASKS.md` の `G4-GR128` の notes）。「段階をまたぐ注意」の「G4 / GR128」も Slice 1 の足先の残差の固定を GR85・GR14 に任せると書くので、このタスクがその残りを引き受ける。接地の検出は、GR11 の `AnalyzeFootContacts`（`Library/Core/Public/Animation/MotionAnalysis.h:44-47`）が鉛直の高さと速さだけを見て水平の足滑りを判定しない（同ファイルの注記）ので、水平の速さの条件をここで足す。共通にできる部分は GR11・GR128 の関数を呼び、周期・接地の検出を二重に作らない（同注意の「G2 / GR84」）。接地面は平らな `ground.height` だけで、地形への適応は実行時の GR14（G9 の非ゴール）。16fps の動画由来の素材は接地の検出が外れやすいので、検出の結果を報告に出す。しきい値は仮で、初回の実測で決める。GR84 は G2 で、GR11 は G3 で確かめ直し中なので needs-gr に入れた。アセットロードの危険地帯なので評価者を通す。出典: 要件 `#### GR85` の設計案 (5)、受け入れ確認の RetargetCookTest (b)(c)。
 
 ## G9-GR85-HUMANOID-SMOKE: 人型のロール表と二足の再接地を足し、1 つの BVH から 2 つの骨格へ cook する流れを試験で押さえる
-- status: todo
+- status: done
 - after: G9-GR85-FOOT-REPLANT
 - gr: GR85
 - needs-gr: GR82, GR84
@@ -5718,7 +5729,7 @@
 - notes: 確かめ直しの (c)。選定課題 G3-S9 は A を採る（足接地・周期の解析器は Library の `Animation` に 1 つ置き、GR128 の cook は再実装せずにそれを呼ぶ。ロードマップ 4523 行）。理由: 今は同じ判定が 2 か所にあり（Library の `AnalyzeFootContacts` は全足共通の最低の高さ・ヒステリシスなし〔MotionAnalysis.cpp:96-140〕、G4 の GR128 で入った `RigMotionCleanup.cpp:88-200` は自前の FK・足ごとの最低の高さ・ヒステリシス 1.5）、同じクリップでも窓がずれうる。ロードマップ 4384 行（接地の検出を 3 段階が作る）の指摘どおり。ヒステリシスと足ごとの基準は cook の形を共通の既定にする（前足と後足で静止の高さが違う四足でも窓が取れるため）。`GroundOffset` は今どおり全足の最低。名前の規約はロードマップ 4453 行（接地の PhaseMarker から接地イベント `Foot.<脚>.Down` を自動で出す処理を GR11 に入れる・ドット区切りにそろえる）と 4418 行（G11 の shake_begin/shake_end は窓イベント 1 つにすべき）に従う。脚の記号は G16 の GR75 の書き方（`Foot.LH.Down`）に合わせた。marker から出すイベントを opt-in にした理由: 今の試験とグラフには marker と同名の点イベントを両方持つクリップがあり（AnimGraphRuntimeTest.cpp:788-793）、常に出すと配送が二重になる。marker の名前はクリップ内で一意（AnimationRuntime.md:42）なので、ループの 1 周には足ごとに Down/Up が 1 つずつで足り、複数回の接地があるループしないクリップは点イベントで持つ。同期グループの参加クリップで接地を検出できなかった脚があると marker の集合がそろわず `MarkerMismatch` になる（今の `<role>_down` でも同じ）ので、report の `needs_review` に出ることを確かめる。`Assets`・`Test`・`Game` に `<role>_down` の名前を使うデータは無い（`git grep "paw_down\|generate_foot_markers"` は Docs と AssetCook だけ）。G4 の GR128（`G4-GR128` は構文確認だけで done。`RigMotionCleanup` を通す試験は今ない）の確かめ直しが同じファイルを触るので `needs-gr: GR128` で後に回す。`Docs/Testing.md` の 3 点: 反証する契約は「接地の判定が 1 つで、Library と cook が同じ窓を出す・名前の規約・marker のイベントの opt-in」。撮影・ログでは気づけない（窓のずれや名前の食い違いは、足音や同期が鳴らない・ずれるだけで落ちない）。失敗は黙って起きる。危険地帯（Public API・cook の出力）なので評価者を通す。やらないこと: 周期の検出（`DetectCycle` は G2 の共通処理を既に使っている。AnimationRuntime.md:57）、地形との実際の接触、足音の再生（G16）、実素材の接地の目視。
 
 ## G5-GR26-MATERIAL-PARAMS: 材質ごとのシェーディングモデルと値 P0・P1 を、静的・インスタンス・スキン・MegaGeometry・可視バッファの全経路で GBuffer へ届け、インスタンス単位の上書きを足す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-CONTRACT
 - gr: GR26
 - done-when: `ShadingModel`（MaterialTypes.h）に Fur・PaleFlat を足し（Eye は既存）、`MaterialCreateData`・`MaterialResourceData` に `ShadingParams[4]`（負は未指定。`RenderMaterialStore.cpp` の任意の単位スカラーの正規化と同じ規約。NaN・範囲外は正規化）を足し、CPU の ShadingModel から GBuffer の ID への変換を 1 か所に置く。値は GBuffer の per-object UBO（GBufferPass.cpp:662〜672。今 336 バイトで空きの欄が無いので vec4 を足して表 `Docs/Architecture/GpuLayoutRegistry.md` を更新）、MegaGeometry の材質（`MegaMeshMaterial` MegaGeometryTypes.h:443）、可視バッファの材質の表（`MaterialEntry` VisibilityMaterialTable.h:72。`Header[1]` が ShadingModel の欄で、今は常に DefaultLit。128 バイトで余白が無いので広げ、GLSL 側の写し `VisMaterialEntry`（Common/VisibilityResolve.glsl:105）も揃える）へ通し、各書き手が G5-GR26-GBUFFER-CONTRACT の関数で ID・P0・P1 を書く。インスタンス単位の上書き: `MeshComponent::SetShadingParams(index, value)`（`SetCustomData` MeshComponent.h:197 と同じ形）から `MeshProxy`・`FillGPUSceneInstanceData`（DrawCommand.cpp:40）・`GPUSceneInstanceData`（MeshTypes.h:269 の 52 float を 56 float へ。static_assert を更新）へ通し、GLSL の `struct InstanceData` の 8 本の写し（board2d.vert・forward_transparent.vert・gbuffer.vert・impostor.vert・point_shadow.vert・shadow.vert・visbuffer_mesh.vert・world_board.vert）を `Common/SceneInstanceData.glsl` の 1 本の include に置き換える。スキンは `SkinnedMeshComponent`・`SkinnedMeshProxy`（SkinnedMeshTypes.h:175）に同じ 4 値を持たせる。インスタンスの値が 0 以上ならそれを、負なら材質の値を使い、`.w` は被覆率の乗数（1 = 不変。G5-GR27-MASKED-GBUFFER が使う）と定める。CPU: `MaterialResourcesTest` に ShadingParams のコピーと不正値の正規化、`InstanceDataFlattenTest`・`InstanceBufferRingTest` に新しい欄の位置と既定 -1 と大きさ、`VisibilityMaterialTableTest` に ID と P0・P1 の格納、`ShadingModelContractTest` に「InstanceData を使う頂点シェーダーが全部 `Common/SceneInstanceData.glsl` を include し、struct の写しを持たない」の走査を足す。GPU の `RenderingShadingModelGBufferVulkanTest`（既存の実行ファイル `RenderingHdrSceneCaptureTest` に scenario と GBuffer の Normal・Material・Emissive の capture source を足して登録。capture source は `FrameCaptureTypes.h` の `GBufferVelocity` の前例）が、4 経路（静的・インスタンスの上書き・スキン（M9Skinned の fixture）・MegaGeometry）と可視バッファの on と fallback で、球の中心の ROI の ID が設定と厳密に一致・P0 が 8bit の量子化値（±1/255）・P1 が半精度の許容内・インスタンスの値が負なら材質の値へ落ちる、を確かめる。golden 4 本が変わらない（DefaultLit で P0・P1 が 0 の書き込みは導入前と同じ）。
@@ -5957,7 +5968,7 @@
 - notes: ロードマップ GR30 の A（995〜1045 行）。GR30 は SS-TAA-P2 の後（ロードマップ）で、SS-TAA-P2 は done（Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md）。風の式の中身は GR46（G5 の後半）が持ち、この項目は契約と時刻の基準と velocity まで。4096 秒で巻くのは float の精度のため（1 時間を超えると刻みが粗くなる）で、風の周波数は 1/4096 Hz の整数倍に量子化する制約を GR46 へ渡す（Common/VertexAnimation.glsl の注釈と割り当て表に書く）。GBuffer の UBO の `frameParams` という名前は既に別の意味で使われている（GBufferPass.cpp:669。前のカメラの履歴・プリエクスポージャ・VT）ので、新しい欄は別の名前にする。10-02 の後に可視バッファ（既定は on）が入り、velocity は解決が三角形から作る（Common/VisibilityResolve.glsl:504 の `VisComputeVelocity`）ので、解決とソフトのラスタ（visbuffer_sw_raster.comp）も同じ式を通す必要がある（ロードマップの節には無い）。UNCERTAIN: 解決が三角形の頂点を読み直す所（VisibilityTriangleFetch.glsl）でインスタンスの値と時刻を引けるかは、読んで確かめる。危険地帯（GBuffer・可視バッファ・TAA の入力・RenderThread）なので評価者を通す。完了条件の GR30 の velocity とフレームの欠落の行、要件 `#### GR30`。
 
 ## G5-GR30-REACTIVE: TAA にリアクティブの入力（Scene.Reactive）を足し、velocity を持たない半透明・粒子の残像を消せるようにする
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA
 - gr: GR30
 - done-when: 名前付きの資源 `Scene.Reactive`（R8_UNORM）を `RenderGraphResourceNames.h` に足し、`TemporalAAPass` の Declare（TemporalAAPass.inl:358 付近）が有れば読み、無ければ 1x1 のゼロを結ぶ。`temporal_aa.frag` に binding 5 を足し、今の重み（temporal_aa.frag:198 の currentWeight）をリアクティブで 1 へ寄せ、分散のクリップの箱の半幅をリアクティブで広げる（係数は TAA の定数にして既定は仮）。書き手の口: ForwardPass の半透明の材質に「リアクティブを書く」の印（既定は書かない）を足し、印のある材質だけが色と同じブレンドの係数で被覆率を `Scene.Reactive` へ積む。拡張のパス（G5-GR25-STAGE-REGISTRY の Transparent 段）が同じ資源へ書ける手助け（RenderExtensionHelpers）を足す。GPU の `RenderingTemporalAAReactiveVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の SceneColor を撮る形で登録）が、画面を横切る半透明の板の A/B で、板が去った後にピークの 5% を超える画素が残るフレームの数が、リアクティブ有りで 2 以内・無しで 8 以上を確かめ、書き手が無いときの TAA の出力が導入前とビット一致であることも確かめる。golden 4 本が変わらない。

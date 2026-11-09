@@ -625,9 +625,93 @@ namespace
                   << "（" << reason << "）\n";
     }
 
+    // 共通定義以外の写しと、共通定義を直接取り込まない利用を検出する。
+    bool CheckSceneInstanceData(const Fs::path& path, const Fs::path& commonPath, const String& text, bool& bUsesInstanceData)
+    {
+        const LexedSource source = Lex(text);
+        const bool bCommon = path == commonPath;
+        bool bIncludesCommon = false;
+        bool bOk = true;
+        size_t firstUse = InvalidIndex;
+        const auto report = [&](size_t begin, size_t end, const char* reason)
+        {
+            std::cerr << Utf8Path(path) << ':' << source.Tokens[begin].Line << ": " << reason << '\n'
+                      << text.substr(source.Tokens[begin].Begin,
+                                     source.Tokens[end].End - source.Tokens[begin].Begin) << '\n';
+        };
+        for (size_t i = 0; i < source.Tokens.size(); ++i)
+        {
+            if (TokenIs(source, i, "InstanceData") && firstUse == InvalidIndex)
+            {
+                firstUse = i;
+            }
+            // 字句解析で残った指令だけを調べ、コメント内の include を認めない。
+            if (TokenIs(source, i, "#") && TokenIs(source, i + 1, "include") &&
+                source.Tokens[i].Line == source.Tokens[i + 1].Line)
+            {
+                size_t lineBegin = source.Tokens[i].Begin;
+                while (lineBegin > 0 && source.Clean[lineBegin - 1] != '\n' && IsSpace(source.Clean[lineBegin - 1]))
+                {
+                    --lineBegin;
+                }
+                const bool bDirective = lineBegin == 0 || source.Clean[lineBegin - 1] == '\n';
+                size_t quote = source.Tokens[i + 1].End;
+                while (quote < text.size() && text[quote] != '\n' && text[quote] != '\r' && IsSpace(text[quote]))
+                {
+                    ++quote;
+                }
+                constexpr char includePath[] = "\"Common/SceneInstanceData.glsl\"";
+                if (bDirective && quote + sizeof(includePath) - 1 <= text.size() &&
+                    std::memcmp(text.c_str() + quote, includePath, sizeof(includePath) - 1) == 0)
+                {
+                    bIncludesCommon = true;
+                }
+            }
+            if (!bCommon && TokenIs(source, i, "struct") && i + 2 < source.Tokens.size() &&
+                IsIdentifierStart(source.Clean[source.Tokens[i + 1].Begin]) && TokenIs(source, i + 2, "{"))
+            {
+                size_t depth = 1;
+                size_t close = i + 3;
+                bool bCopiedLayout = false;
+                for (; close < source.Tokens.size(); ++close)
+                {
+                    if (TokenIs(source, close, "{"))
+                    {
+                        ++depth;
+                    }
+                    else if (TokenIs(source, close, "}") && --depth == 0)
+                    {
+                        break;
+                    }
+                    if (TokenIs(source, close, "vec4") && TokenIs(source, close + 1, "normalRows") &&
+                        TokenIs(source, close + 2, "[") && TokenIs(source, close + 3, "3") &&
+                        TokenIs(source, close + 4, "]") && TokenIs(source, close + 5, ";"))
+                    {
+                        bCopiedLayout = true;
+                    }
+                }
+                if (TokenIs(source, i + 1, "InstanceData") || bCopiedLayout)
+                {
+                    const size_t last = close < source.Tokens.size() ? close : source.Tokens.size() - 1;
+                    report(i, last, "インスタンスの struct の写しがあります。Common/SceneInstanceData.glsl を取り込んでください。");
+                    bOk = false;
+                }
+            }
+        }
+        bUsesInstanceData = firstUse != InvalidIndex;
+        if (!bCommon && bUsesInstanceData && !bIncludesCommon)
+        {
+            report(firstUse, firstUse, "InstanceData の利用元に Common/SceneInstanceData.glsl の直接の include がありません。");
+            bOk = false;
+        }
+        return bOk;
+    }
+
     bool CheckShaders(const Fs::path& root)
     {
         size_t files = 0;
+        size_t instanceFiles = 0;
+        size_t instanceUsers = 0;
         size_t outputs = 0;
         size_t stores = 0;
         size_t samples = 0;
@@ -650,9 +734,9 @@ namespace
                 bOk = false;
                 break;
             }
-            if (bRegular && IsShader(path) && path != root / L"Common" / L"GBufferEncoding.glsl")
+            if (bRegular && IsShader(path))
             {
-                ++files;
+                ++instanceFiles;
                 String text;
                 if (!ReadText(path, text))
                 {
@@ -660,14 +744,24 @@ namespace
                 }
                 else
                 {
-                    const ScanResult result = ScanShader(text);
-                    outputs += result.Outputs;
-                    stores += result.ImageStores;
-                    samples += result.Samples;
-                    for (const Violation& violation : result.Violations)
+                    bool bUsesInstanceData = false;
+                    if (!CheckSceneInstanceData(path, root / L"Common" / L"SceneInstanceData.glsl", text, bUsesInstanceData))
                     {
-                        ReportViolation(path, text, violation);
                         bOk = false;
+                    }
+                    instanceUsers += bUsesInstanceData ? 1 : 0;
+                    if (path != root / L"Common" / L"GBufferEncoding.glsl")
+                    {
+                        ++files;
+                        const ScanResult result = ScanShader(text);
+                        outputs += result.Outputs;
+                        stores += result.ImageStores;
+                        samples += result.Samples;
+                        for (const Violation& violation : result.Violations)
+                        {
+                            ReportViolation(path, text, violation);
+                            bOk = false;
+                        }
                     }
                 }
             }
@@ -679,6 +773,8 @@ namespace
                 break;
             }
         }
+        std::cout << "インスタンス定義を走査したファイル数: " << instanceFiles << '\n'
+                  << "InstanceData を使うファイル数（共通定義を含む）: " << instanceUsers << '\n';
         std::cout << "走査したファイル数: " << files << '\n'
                   << "出力への代入: " << outputs << '\n'
                   << "画像への書き込み: " << stores << '\n'

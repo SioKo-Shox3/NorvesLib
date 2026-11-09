@@ -11,13 +11,41 @@ namespace NorvesLib::Core::Animation
     {
         using Status = SkeletalRoleProfileStatus;
         using Result = SkeletalRoleProfileResult;
-        constexpr const char* RoleNames[] = {
+        constexpr const char* QuadrupedRoleNames[] = {
             "root",          "pelvis",           "spine",         "neck",          "head",        "jaw",
             "tail",          "front_L_clavicle", "front_L_upper", "front_L_lower", "front_L_paw", "front_R_clavicle",
             "front_R_upper", "front_R_lower",    "front_R_paw",   "hind_L_thigh",  "hind_L_shin", "hind_L_hock",
             "hind_L_paw",    "hind_R_thigh",     "hind_R_shin",   "hind_R_hock",   "hind_R_paw"};
-        static_assert(sizeof(RoleNames) / sizeof(RoleNames[0]) == SkeletalRoleCount);
+        constexpr const char* HumanoidRoleNames[] = {
+            "hips",       "spine1",     "spine2",    "spine3",   "neck",    "head",
+            "L_shoulder", "L_arm",      "L_forearm", "L_hand",   "R_shoulder", "R_arm",
+            "R_forearm",  "R_hand",     "L_upleg",   "L_leg",    "L_foot",  "L_toe",
+            "R_upleg",    "R_leg",      "R_foot",    "R_toe"};
+        static_assert(sizeof(QuadrupedRoleNames) / sizeof(QuadrupedRoleNames[0]) == SkeletalRoleCount);
+        static_assert(sizeof(HumanoidRoleNames) / sizeof(HumanoidRoleNames[0]) ==
+                      static_cast<size_t>(SkeletalHumanoidRole::Count));
+        static_assert(static_cast<size_t>(SkeletalHumanoidRole::Count) <= SkeletalRoleCount);
         static_assert(SkeletalRoleCount <= 32);
+
+        constexpr SkeletalRoleLeg QuadrupedLegs[] = {
+            {SkeletalRole::FrontLPaw, SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::Count, 0},
+            {SkeletalRole::FrontRPaw, SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::Count, 0},
+            {SkeletalRole::HindLPaw, SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock, 1},
+            {SkeletalRole::HindRPaw, SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock, 1}};
+        constexpr SkeletalRoleLeg HumanoidLegs[] = {
+            {ToSkeletalRoleSlot(SkeletalHumanoidRole::LFoot), ToSkeletalRoleSlot(SkeletalHumanoidRole::LUpLeg),
+             ToSkeletalRoleSlot(SkeletalHumanoidRole::LLeg), SkeletalRole::Count, 1},
+            {ToSkeletalRoleSlot(SkeletalHumanoidRole::RFoot), ToSkeletalRoleSlot(SkeletalHumanoidRole::RUpLeg),
+             ToSkeletalRoleSlot(SkeletalHumanoidRole::RLeg), SkeletalRole::Count, 1}};
+        constexpr SkeletalRoleVocabularyInfo QuadrupedVocabulary{
+            "quadruped_v1", static_cast<uint32_t>(SkeletalRoleCount), QuadrupedRoleNames,
+            (uint32_t{1} << static_cast<uint32_t>(SkeletalRole::Spine)) |
+                (uint32_t{1} << static_cast<uint32_t>(SkeletalRole::Neck)) |
+                (uint32_t{1} << static_cast<uint32_t>(SkeletalRole::Tail)),
+            SkeletalRole::Pelvis, {QuadrupedLegs}};
+        constexpr SkeletalRoleVocabularyInfo HumanoidVocabulary{
+            "humanoid_v1", static_cast<uint32_t>(SkeletalHumanoidRole::Count), HumanoidRoleNames, 0,
+            ToSkeletalRoleSlot(SkeletalHumanoidRole::Hips), {HumanoidLegs}};
         Result Fail(Status status, const char* field, uint32_t role = UINT32_MAX, size_t element = SIZE_MAX)
         {
             return {status, field, role, element};
@@ -42,11 +70,12 @@ namespace NorvesLib::Core::Animation
         {
             return value.IsString() && Equal(value.AsString(), expected);
         }
-        uint32_t FindRole(const Container::String& name)
+        uint32_t FindRole(SkeletalRoleVocabulary vocabulary, const Container::String& name)
         {
-            for (uint32_t i = 0; i < SkeletalRoleCount; ++i)
+            const auto& info = GetSkeletalRoleVocabularyInfo(vocabulary);
+            for (uint32_t i = 0; i < info.RoleCount; ++i)
             {
-                if (Equal(name, RoleNames[i]))
+                if (Equal(name, info.RoleNames[i]))
                 {
                     return i;
                 }
@@ -288,7 +317,7 @@ namespace NorvesLib::Core::Animation
             }
             for (size_t i = 0; i < roles.GetObjectSize(); ++i)
             {
-                const uint32_t role = FindRole(roles.GetMemberName(i));
+                const uint32_t role = FindRole(out.Vocabulary, roles.GetMemberName(i));
                 if (role == UINT32_MAX)
                 {
                     return Fail(Status::UnknownRole, field);
@@ -502,14 +531,21 @@ namespace NorvesLib::Core::Animation
                 {
                     return Fail(Status::InvalidType, field, UINT32_MAX, i);
                 }
-                const auto role = FindRole(value.AsString());
+                const auto role = FindRole(out.Vocabulary, value.AsString());
                 if (role == UINT32_MAX)
                 {
                     return Fail(Status::UnknownRole, field, UINT32_MAX, i);
                 }
-                const auto paw = static_cast<SkeletalRole>(role);
-                if (paw != SkeletalRole::FrontLPaw && paw != SkeletalRole::FrontRPaw &&
-                    paw != SkeletalRole::HindLPaw && paw != SkeletalRole::HindRPaw)
+                bool bFoot = false;
+                for (const auto& leg : GetSkeletalRoleVocabularyInfo(out.Vocabulary).Legs)
+                {
+                    if (leg.Foot == static_cast<SkeletalRole>(role))
+                    {
+                        bFoot = true;
+                        break;
+                    }
+                }
+                if (!bFoot)
                 {
                     return Fail(Status::InvalidSettings, field, role, i);
                 }
@@ -524,38 +560,24 @@ namespace NorvesLib::Core::Animation
         }
         Result ValidateFootPlantingRoles(const SkeletalRoleProfile& profile)
         {
-            struct LegRoles
-            {
-                SkeletalRole Paw;
-                SkeletalRole Chain[4];
-                size_t Count;
-            };
-            constexpr LegRoles legs[] = {
-                {SkeletalRole::FrontLPaw,
-                 {SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::FrontLPaw}, 3},
-                {SkeletalRole::FrontRPaw,
-                 {SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::FrontRPaw}, 3},
-                {SkeletalRole::HindLPaw,
-                 {SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock, SkeletalRole::HindLPaw}, 4},
-                {SkeletalRole::HindRPaw,
-                 {SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock, SkeletalRole::HindRPaw}, 4}};
             constexpr const char* field = "foot_planting.ik.leg_roles";
-            for (const auto& leg : legs)
+            for (const auto& leg : GetSkeletalRoleVocabularyInfo(profile.Vocabulary).Legs)
             {
-                const auto paw = static_cast<uint32_t>(leg.Paw);
-                if ((profile.FootPlantingLegRoleMask & (uint32_t{1} << paw)) == 0)
+                const auto foot = static_cast<uint32_t>(leg.Foot);
+                if ((profile.FootPlantingLegRoleMask & (uint32_t{1} << foot)) == 0)
                 {
                     continue;
                 }
-                if (profile.Source[paw].empty())
+                if (profile.Source[foot].empty())
                 {
-                    return Fail(Status::InvalidSettings, field, paw);
+                    return Fail(Status::InvalidSettings, field, foot);
                 }
-                for (size_t i = 0; i < leg.Count; ++i)
+                const SkeletalRole chain[] = {leg.Upper, leg.Lower, leg.Hock, leg.Foot};
+                for (const auto role : chain)
                 {
-                    if (profile.Target[static_cast<uint32_t>(leg.Chain[i])].empty())
+                    if (role != SkeletalRole::Count && profile.Target[static_cast<uint32_t>(role)].empty())
                     {
-                        return Fail(Status::InvalidSettings, field, paw);
+                        return Fail(Status::InvalidSettings, field, foot);
                     }
                 }
             }
@@ -814,7 +836,11 @@ namespace NorvesLib::Core::Animation
                         {
                             return Fail(Status::InvalidSettings, "processing.exclude_roles");
                         }
-                        const auto role = FindRole(value.AsString());
+                        const auto role = FindRole(out.Vocabulary, value.AsString());
+                        if (role == UINT32_MAX && out.Vocabulary == SkeletalRoleVocabulary::Humanoid)
+                        {
+                            return Fail(Status::UnknownRole, "processing.exclude_roles", UINT32_MAX, i);
+                        }
                         if (role == UINT32_MAX || (out.LoopExcludedRoles & (uint32_t{1} << role)))
                         {
                             return Fail(Status::InvalidSettings, "processing.exclude_roles");
@@ -848,7 +874,7 @@ namespace NorvesLib::Core::Animation
             uint64_t totalElements = 0;
             for (size_t i = 0; i < object.GetObjectSize(); ++i)
             {
-                const auto role = FindRole(object.GetMemberName(i));
+                const auto role = FindRole(profile.Vocabulary, object.GetMemberName(i));
                 if (role == UINT32_MAX)
                 {
                     return Fail(Status::UnknownRole, field);
@@ -865,7 +891,7 @@ namespace NorvesLib::Core::Animation
                     return Fail(Status::InvalidType, field, role);
                 }
                 const auto count = array.GetArraySize();
-                if (count == 0 || (!IsSkeletalChainRole(static_cast<SkeletalRole>(role)) && count != 1))
+                if (count == 0 || (!IsSkeletalChainRole(profile.Vocabulary, static_cast<SkeletalRole>(role)) && count != 1))
                 {
                     return Fail(Status::InvalidChain, field, role);
                 }
@@ -945,14 +971,29 @@ namespace NorvesLib::Core::Animation
             return {Status::Success};
         }
     } // namespace
+    const SkeletalRoleVocabularyInfo& GetSkeletalRoleVocabularyInfo(SkeletalRoleVocabulary vocabulary) noexcept
+    {
+        return vocabulary == SkeletalRoleVocabulary::Humanoid ? HumanoidVocabulary : QuadrupedVocabulary;
+    }
+    const char* SkeletalRoleName(SkeletalRoleVocabulary vocabulary, SkeletalRole role) noexcept
+    {
+        const auto& info = GetSkeletalRoleVocabularyInfo(vocabulary);
+        const auto index = static_cast<uint32_t>(role);
+        return index < info.RoleCount ? info.RoleNames[index] : "";
+    }
+    bool IsSkeletalChainRole(SkeletalRoleVocabulary vocabulary, SkeletalRole role) noexcept
+    {
+        const auto& info = GetSkeletalRoleVocabularyInfo(vocabulary);
+        const auto index = static_cast<uint32_t>(role);
+        return index < info.RoleCount && (info.ChainRoleMask & (uint32_t{1} << index)) != 0;
+    }
     const char* SkeletalRoleName(SkeletalRole role) noexcept
     {
-        const auto index = static_cast<size_t>(role);
-        return index < SkeletalRoleCount ? RoleNames[index] : "";
+        return SkeletalRoleName(SkeletalRoleVocabulary::Quadruped, role);
     }
     bool IsSkeletalChainRole(SkeletalRole role) noexcept
     {
-        return role == SkeletalRole::Spine || role == SkeletalRole::Neck || role == SkeletalRole::Tail;
+        return IsSkeletalChainRole(SkeletalRoleVocabulary::Quadruped, role);
     }
     SkeletalRoleProfileResult ParseSkeletalRoleProfile(Container::Span<const uint8_t> bytes,
                                                        const SkeletalRoleProfileLimits& limits,
@@ -989,11 +1030,20 @@ namespace NorvesLib::Core::Animation
         {
             return Fail(Status::UnsupportedVersion, "version");
         }
-        if (!StringIs(root.FindMember("vocabulary"), "quadruped_v1"))
+        SkeletalRoleProfile candidate;
+        const auto vocabulary = root.FindMember("vocabulary");
+        if (StringIs(vocabulary, QuadrupedVocabulary.Name))
+        {
+            candidate.Vocabulary = SkeletalRoleVocabulary::Quadruped;
+        }
+        else if (StringIs(vocabulary, HumanoidVocabulary.Name))
+        {
+            candidate.Vocabulary = SkeletalRoleVocabulary::Humanoid;
+        }
+        else
         {
             return Fail(Status::UnknownVocabulary, "vocabulary");
         }
-        SkeletalRoleProfile candidate;
         candidate.Version = bVersion2 ? 2 : 1;
         result = Settings(root, candidate.Settings);
         if (!result.Succeeded())
@@ -1044,7 +1094,7 @@ namespace NorvesLib::Core::Animation
                 {
                     return Fail(Status::InvalidType, "required_roles", UINT32_MAX, i);
                 }
-                const auto role = FindRole(value.AsString());
+                const auto role = FindRole(candidate.Vocabulary, value.AsString());
                 if (role == UINT32_MAX)
                 {
                     return Fail(Status::UnknownRole, "required_roles", UINT32_MAX, i);

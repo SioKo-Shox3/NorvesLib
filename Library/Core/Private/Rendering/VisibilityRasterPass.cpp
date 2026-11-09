@@ -1165,7 +1165,7 @@ namespace NorvesLib::Core::Rendering
                 (instance.Material.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
-            const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData));
+            const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData, instance.ShadingParams));
             for (const MeshIndexChunk& chunk : chunks)
             {
                 const uint32_t recordNumber = recordBase + static_cast<uint32_t>(records.size());

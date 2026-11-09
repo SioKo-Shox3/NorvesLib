@@ -2,6 +2,7 @@
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
 #include "RenderExtensionStageScenario.h"
+#include "TemporalAAReactiveScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -1703,6 +1704,7 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
         RenderExtensionStageScenario m_ExtensionStageScenario;
+        TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
 
     public:
         enum class TransparentPhysicalStage : uint8_t
@@ -1778,6 +1780,30 @@ namespace
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
                 return false;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled() &&
+                (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                 m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                 m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario || m_bShadingModelScenario))
+            {
+                LOG_ERROR("TAA リアクティブのシナリオは他のシナリオと併用できません");
+                return false;
+            }
+            if (m_bShadingModelScenario)
+            {
+                const auto source = GetRunConfig().CaptureSource;
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    (source != FrameCaptureSourceKind::GBufferNormal &&
+                     source != FrameCaptureSourceKind::GBufferMaterial &&
+                     source != FrameCaptureSourceKind::GBufferEmissive) ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario || m_ExtensionStageScenario.IsEnabled())
+                {
+                    LOG_ERROR("シェーディングモデルの検証には indoor と GBuffer のソースを単独で指定してください");
+                    return false;
+                }
+                RequireVisibilityBufferPath();
             }
             if (m_ExtensionStageScenario.IsEnabled() &&
                 (m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bAllNumericalScenario ||
@@ -1977,9 +2003,23 @@ namespace
 
         bool OnInitialize() override
         {
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=base_fixture_begin");
+            }
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
+            }
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
+                return GetFixture().ApplyShadingModelGBufferFixture();
             }
             if (m_ExtensionStageScenario.IsEnabled())
             {
@@ -2200,6 +2240,13 @@ namespace
 
         void OnPreRender() override
         {
+            if (m_bShadingModelScenario && !m_bShadingModelFirstFrameLogged && Core::Engine::GEngine != nullptr)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=first_prerender rendered_frame=%llu fixed_steps=%llu",
+                         static_cast<unsigned long long>(Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount()),
+                         static_cast<unsigned long long>(GetFixture().GetObservedFixedStepCount()));
+                m_bShadingModelFirstFrameLogged = true;
+            }
             RenderingValidationApplicationHandler::OnPreRender();
             if (m_bAllNumericalScenario && Core::Engine::GEngine != nullptr)
             {
@@ -2227,7 +2274,15 @@ namespace
                 Modules::Gui::UnregisterImGuiView(&m_MarkerView);
                 m_bMarkerRegistered = false;
             }
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=fixture_shutdown_begin");
+            }
             RenderingValidationApplicationHandler::OnPreShutdown();
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=fixture_shutdown_end");
+            }
         }
 
     protected:
@@ -2235,6 +2290,20 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument.find(TEXT("--temporal-aa-reactive-scenario=")) == 0)
+            {
+                return m_TemporalAAReactiveScenario.ParseArgument(argument, outFailureReason);
+            }
+            if (argument == TEXT("--shading-model-scenario=gbuffer-paths"))
+            {
+                if (m_bShadingModelScenario)
+                {
+                    outFailureReason = TEXT("シェーディングモデルのシナリオが重複しています");
+                    return false;
+                }
+                m_bShadingModelScenario = true;
+                return true;
+            }
             if (argument.find(TEXT("--extension-stage-scenario=")) == 0)
             {
                 return m_ExtensionStageScenario.ParseArgument(argument, outFailureReason);
@@ -2432,6 +2501,14 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Evaluate(frame, reason);
+            }
+            if (m_bShadingModelScenario)
+            {
+                return EvaluateShadingModelGBufferFrame(frame, reason);
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 return m_ExtensionStageScenario.Evaluate(frame, reason);
@@ -2548,6 +2625,22 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.ApplyState(renderWorld, GetFixture().GetCamera());
+                return;
+            }
+            if (m_bShadingModelScenario)
+            {
+                renderWorld.SetMainCamera(GetFixture().GetShadingModelGBufferCamera());
+                auto sky = MakeDefaultSkyAtmosphereParameters();
+                sky.bEnabled = false;
+                renderWorld.SetSkyAtmosphere(sky);
+                auto fog = MakeDefaultVolumetricFogParameters();
+                fog.bEnabled = false;
+                renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 m_ExtensionStageScenario.ApplyState(renderWorld, GetFixture().GetCamera());
@@ -2872,6 +2965,16 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.Advance();
+                return;
+            }
+            if (m_bShadingModelScenario)
+            {
+                ++m_ShadingModelCaptureIndex;
+                return;
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 m_ExtensionStageScenario.Advance();
@@ -2980,6 +3083,19 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.RequestFollowup(outRequest);
+            }
+            if (m_bShadingModelScenario)
+            {
+                if (m_ShadingModelCaptureIndex >= 3u)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = GetShadingModelCaptureSource();
+                return true;
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 return m_ExtensionStageScenario.RequestFollowup(outRequest);
@@ -7420,6 +7536,134 @@ namespace
                    EncodeSrgbReference(0.0031309f) == 10u;
         }
 
+        FrameCaptureSourceKind GetShadingModelCaptureSource() const
+        {
+            constexpr FrameCaptureSourceKind sources[] = {
+                FrameCaptureSourceKind::GBufferNormal,
+                FrameCaptureSourceKind::GBufferMaterial,
+                FrameCaptureSourceKind::GBufferEmissive};
+            const auto initial = GetRunConfig().CaptureSource;
+            const uint32_t firstIndex = initial == FrameCaptureSourceKind::GBufferMaterial ? 1u :
+                (initial == FrameCaptureSourceKind::GBufferEmissive ? 2u : 0u);
+            return sources[(firstIndex + m_ShadingModelCaptureIndex) % 3u];
+        }
+
+        bool EvaluateShadingModelGBufferFrame(const CapturedFrame& frame, Core::Container::String& reason)
+        {
+            LOG_INFO("シェーディングモデル時刻 stage=capture_evaluated source_index=%u request_id=%llu capture_frame=%llu consumed_frame=%llu fixed_steps=%llu",
+                     m_ShadingModelCaptureIndex,
+                     static_cast<unsigned long long>(frame.RequestId),
+                     static_cast<unsigned long long>(frame.FrameNumber),
+                     static_cast<unsigned long long>(Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount()),
+                     static_cast<unsigned long long>(GetFixture().GetObservedFixedStepCount()));
+            const auto source = GetShadingModelCaptureSource();
+            const bool bNormal = source == FrameCaptureSourceKind::GBufferNormal;
+            const bool bMaterial = source == FrameCaptureSourceKind::GBufferMaterial;
+            const uint32_t bytesPerPixel = bMaterial ? 4u : 8u;
+            if (!frame.IsSuccess() || frame.Width != ValidationWidth || frame.Height != ValidationHeight ||
+                frame.BytesPerPixel != bytesPerPixel ||
+                frame.Format != (bMaterial ? RHI::Format::R8G8B8A8_UNORM : RHI::Format::R16G16B16A16_FLOAT) ||
+                frame.RowPitchBytes < frame.Width * bytesPerPixel ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("シェーディングモデルの GBuffer の形式・寸法・保存領域が不正です");
+                return false;
+            }
+            struct ExpectedObject
+            {
+                const char* Name;
+                float X;
+                float Y;
+                uint32_t Id;
+                float P0;
+                float P1;
+            };
+            // ID の数値は契約そのものを期待値とし、実装の変換関数から求めない。
+            constexpr ExpectedObject objects[] = {
+                {"static-fur", -2.0f, 1.5f, 1u, 0.25f, 0.75f},
+                {"instance-override", 0.0f, 1.5f, 3u, 0.6f, 0.9f},
+                {"instance-material-fallback", 2.0f, 1.5f, 3u, 0.2f, 0.4f},
+                {"skinned-m9-override-p0", -1.0f, -1.5f, 2u, 0.8f, 0.55f},
+                {"mega-pale-flat", 1.0f, -1.5f, 3u, 0.45f, 0.65f}};
+            const auto camera = GetFixture().GetShadingModelGBufferCamera();
+            const float focalPixels = static_cast<float>(frame.Height) * 0.5f /
+                std::tan(camera.FieldOfView * 3.14159265358979323846f / 360.0f);
+            const char* field = bNormal ? "ID" : (bMaterial ? "P0" : "P1");
+            bool bPassed = true;
+            for (const auto& object : objects)
+            {
+                const int32_t centerX = static_cast<int32_t>(std::lround(
+                    static_cast<float>(frame.Width) * 0.5f + focalPixels * object.X / camera.PositionZ));
+                const int32_t centerY = static_cast<int32_t>(std::lround(
+                    static_cast<float>(frame.Height) * 0.5f - focalPixels * object.Y / camera.PositionZ));
+                const float expected = bNormal ? static_cast<float>(object.Id) : (bMaterial ? object.P0 : object.P1);
+                float minimum = std::numeric_limits<float>::infinity();
+                float maximum = -std::numeric_limits<float>::infinity();
+                bool bObjectPassed = true;
+                for (int32_t y = centerY - 2; y <= centerY + 2; ++y)
+                {
+                    for (int32_t x = centerX - 2; x <= centerX + 2; ++x)
+                    {
+                        if (x < 0 || y < 0 || x >= static_cast<int32_t>(frame.Width) ||
+                            y >= static_cast<int32_t>(frame.Height))
+                        {
+                            reason = TEXT("シェーディングモデルの ROI が GBuffer の範囲外です");
+                            return false;
+                        }
+                        const size_t offset = static_cast<size_t>(y) * frame.RowPitchBytes +
+                                              static_cast<size_t>(x) * bytesPerPixel;
+                        float actual;
+                        if (bMaterial)
+                        {
+                            actual = frame.Pixels[offset + 3] / 255.0f;
+                        }
+                        else
+                        {
+                            uint16_t half;
+                            std::memcpy(&half, frame.Pixels.data() + offset + 6u, sizeof(half));
+                            actual = DecodeIeee754Binary16(half);
+                        }
+                        bool bPixelPassed = std::isfinite(actual);
+                        if (bNormal)
+                        {
+                            bPixelPassed = bPixelPassed && actual >= 0.0f && actual <= 65504.0f;
+                            if (bPixelPassed)
+                            {
+                                actual = static_cast<float>(static_cast<uint32_t>(std::lround(actual)) & 15u);
+                                bPixelPassed = actual == expected;
+                            }
+                        }
+                        else
+                        {
+                            const float tolerance = bMaterial ? 1.0f / 255.0f : std::max(1e-3f, expected * 1e-3f);
+                            bPixelPassed = bPixelPassed && std::abs(actual - expected) <= tolerance;
+                        }
+                        minimum = std::min(minimum, actual);
+                        maximum = std::max(maximum, actual);
+                        bObjectPassed = bObjectPassed && bPixelPassed;
+                    }
+                }
+                std::cout << "シェーディングモデル検証 object=" << object.Name
+                          << " visibility=" << (GetRunConfig().bVisibilityBufferOff ? "off" : "on")
+                          << " field=" << field << " expected=" << expected
+                          << " actual_min=" << minimum << " actual_max=" << maximum
+                          << " roi_center=" << centerX << "," << centerY
+                          << " pixels=25 result=" << (bObjectPassed ? "PASS" : "FAIL") << "\n";
+                bPassed = bPassed && bObjectPassed;
+            }
+            m_bShadingModelCapturesPassed = m_bShadingModelCapturesPassed && bPassed;
+            if (!m_bShadingModelCapturesPassed)
+            {
+                reason = TEXT("GBuffer の ID・P0・P1 が材質またはインスタンスの期待値と一致しません");
+            }
+            // 三つのソースの不一致を集め、最後の取得で全体を判定する。
+            return m_ShadingModelCaptureIndex < 2u || m_bShadingModelCapturesPassed;
+        }
+
+        uint32_t m_ShadingModelCaptureIndex = 0u;
+        bool m_bShadingModelCapturesPassed = true;
+        bool m_bShadingModelFirstFrameLogged = false;
+        bool m_bShadingModelScenario = false;
         bool m_bEmissiveDaylightScenario = false;
         bool m_bEmissiveAboveHalfScenario = false;
         bool m_bEmissiveDaylightCameraApplied = false;

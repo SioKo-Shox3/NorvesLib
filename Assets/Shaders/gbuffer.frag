@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 #extension GL_ARB_sparse_texture2 : require
 #endif
@@ -11,6 +12,7 @@ layout(location = 4) in vec2 fragTexCoord;
 layout(location = 5) in vec3 fragViewDir;
 layout(location = 6) in vec4 fragCurrentClip;
 layout(location = 7) in vec4 fragPreviousClip;
+layout(location = 8) flat in vec4 fragInstanceShadingParams;
 
 // UBOからPOMパラメータを参照
 layout(set = 0, binding = 0) uniform MVPData
@@ -24,6 +26,8 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
     vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0）
+    vec4 shadingParams; // 材質の値。スキンだけインスタンスの値を重ねた値。負は未指定。
+    vec4 shadingModel; // x=GBuffer の ID
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -99,19 +103,24 @@ void main()
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
 
+    // インスタンスの指定を材質より優先し、未指定の成分には既定値を使う。
+    vec4 params = ResolveShadingParams(fragInstanceShadingParams, mvp.shadingParams);
+    uint id = uint(mvp.shadingModel.x + 0.5) & GBUFFER_SHADING_MODEL_ID_MASK;
+
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
     const uint receiverFlags = mvp.vtFeedbackParams.w > 0.5 ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u;
-    outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, receiverFlags);
+    outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
-    // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = GBufferEncodeMaterial(textureSamples.Material, 0.0);
+    // PBR マテリアルパラメータとシェーディングパラメータ P0 を書く。
+    outMaterial = GBufferEncodeMaterial(textureSamples.Material, params.x);
 
-    // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（Lighting は露出を掛けずに足す）
+    // 発光のプリエクスポージャ後の値とシェーディングパラメータ P1 を書く。
+    // 発光は Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛ける（Lighting は露出を掛けずに足す）。
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
                                                                 fragEmissiveChromaticityAndLuminanceNits.a,
                                                                 mvp.frameParams.y),
-                                       0.0);
+                                       params.y);
 
     outVelocity = vec2(0.0);
     if (mvp.frameParams.x > 0.5 &&

@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 
 // 点光源のキューブシャドウの1面へ描く頂点シェーダー。ワールド位置をフラグメントへ渡し、
 // フラグメント側で光源からの線形距離を深度として書く。
@@ -17,14 +18,7 @@ layout(set = 0, binding = 0) uniform PointShadowFace
     vec4 worldSource;
 } pointShadowFace;
 
-struct InstanceData
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {

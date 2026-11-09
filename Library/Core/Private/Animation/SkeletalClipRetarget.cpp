@@ -645,15 +645,7 @@ namespace NorvesLib::Core::Animation
                                       C::VariableArray<RetargetFootPlantingLeg>& legs,
                                       C::VariableArray<uint32_t>& sourcePaws, C::AnsiString& error)
         {
-            struct Roles
-            {
-                SkeletalRole Paw, Upper, Lower, Hock;
-            };
-            constexpr Roles roles[] = {
-                {SkeletalRole::FrontLPaw, SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::Count},
-                {SkeletalRole::FrontRPaw, SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::Count},
-                {SkeletalRole::HindLPaw, SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock},
-                {SkeletalRole::HindRPaw, SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock}};
+            const auto roles = GetSkeletalRoleVocabularyInfo(profile.Vocabulary).Legs;
             uint32_t remaining = mask;
             const auto targetJoint = [&](SkeletalRole role, uint32_t& joint)
             {
@@ -662,19 +654,19 @@ namespace NorvesLib::Core::Animation
             };
             for (const auto& role : roles)
             {
-                const uint32_t bit = uint32_t{1} << uint32_t(role.Paw);
+                const uint32_t bit = uint32_t{1} << uint32_t(role.Foot);
                 if ((mask & bit) == 0)
                 {
                     continue;
                 }
                 remaining &= ~bit;
-                const auto& names = profile.Source[size_t(role.Paw)];
+                const auto& names = profile.Source[size_t(role.Foot)];
                 uint32_t sourcePaw = UINT32_MAX;
                 RetargetFootPlantingLeg leg;
-                leg.PawRole = role.Paw;
+                leg.PawRole = role.Foot;
                 if (names.size() != 1 || !FindSkeletalJointIndex(sourceIndex, names[0], sourcePaw).Succeeded() ||
                     !targetJoint(role.Upper, leg.Upper) || !targetJoint(role.Lower, leg.Lower) ||
-                    !targetJoint(role.Paw, leg.Paw) ||
+                    !targetJoint(role.Foot, leg.Paw) ||
                     (role.Hock != SkeletalRole::Count && !targetJoint(role.Hock, leg.Hock)))
                 {
                     return Fail(error, "foot_planting_leg_roles");
@@ -1115,7 +1107,7 @@ namespace NorvesLib::Core::Animation
         if (settings.bAutoRootHeight)
         {
             uint32_t sourcePelvis = c.SourceRoot, targetPelvis = c.TargetRoot;
-            const auto pelvis = size_t(SkeletalRole::Pelvis);
+            const auto pelvis = size_t(GetSkeletalRoleVocabularyInfo(profile.Vocabulary).Pelvis);
             if (profile.Source[pelvis].size() == 1 &&
                 !FindSkeletalJointIndex(si, profile.Source[pelvis][0], sourcePelvis).Succeeded())
             {
@@ -1128,10 +1120,9 @@ namespace NorvesLib::Core::Animation
             }
             double sourceGround = 0, targetGround = 0;
             bool sourceFoot = false, targetFoot = false;
-            for (auto role :
-                 {SkeletalRole::FrontLPaw, SkeletalRole::FrontRPaw, SkeletalRole::HindLPaw, SkeletalRole::HindRPaw})
+            for (const auto& leg : GetSkeletalRoleVocabularyInfo(profile.Vocabulary).Legs)
             {
-                for (const auto& name : profile.Source[size_t(role)])
+                for (const auto& name : profile.Source[size_t(leg.Foot)])
                 {
                     uint32_t index;
                     if (!FindSkeletalJointIndex(si, name, index).Succeeded())
@@ -1142,7 +1133,7 @@ namespace NorvesLib::Core::Animation
                         sourceFoot ? std::min(sourceGround, sourcePositions[index].Y) : sourcePositions[index].Y;
                     sourceFoot = true;
                 }
-                for (const auto& joint : profile.Target[size_t(role)])
+                for (const auto& joint : profile.Target[size_t(leg.Foot)])
                 {
                     uint32_t index;
                     if (!FindSkeletalJointIndex(ti, joint.Name, index).Succeeded())
@@ -1204,37 +1195,48 @@ namespace NorvesLib::Core::Animation
                 }
                 return true;
             };
-            const C::FixedArray<SkeletalRole, 3> frontLeft{
-                SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::FrontLPaw};
-            const C::FixedArray<SkeletalRole, 3> frontRight{
-                SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::FrontRPaw};
-            const C::FixedArray<SkeletalRole, 4> hindLeft{
-                SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock, SkeletalRole::HindLPaw};
-            const C::FixedArray<SkeletalRole, 4> hindRight{
-                SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock, SkeletalRole::HindRPaw};
-            double sourceFront = 0, targetFront = 0, sourceHind = 0, targetHind = 0;
-            uint32_t frontCount = 0, hindCount = 0;
-            if (!measureLeg(frontLeft, sourceFront, targetFront, frontCount) ||
-                !measureLeg(frontRight, sourceFront, targetFront, frontCount) ||
-                !measureLeg(hindLeft, sourceHind, targetHind, hindCount) ||
-                !measureLeg(hindRight, sourceHind, targetHind, hindCount) || (!frontCount && !hindCount))
+            C::FixedArray<double, 256> sourceGroups{}, targetGroups{};
+            C::FixedArray<uint32_t, 256> groupCounts{};
+            for (const auto& leg : GetSkeletalRoleVocabularyInfo(profile.Vocabulary).Legs)
+            {
+                const bool bHasHock = leg.Hock != SkeletalRole::Count;
+                const C::FixedArray<SkeletalRole, 4> roles{
+                    leg.Upper, leg.Lower, bHasHock ? leg.Hock : leg.Foot, leg.Foot};
+                const C::Span<const SkeletalRole> chain{roles.data(), bHasHock ? size_t{4} : size_t{3}};
+                if (!measureLeg(chain, sourceGroups[leg.Group], targetGroups[leg.Group], groupCounts[leg.Group]))
+                {
+                    return Fail(error, "leg_length_missing");
+                }
+            }
+            uint32_t populatedGroups = 0;
+            for (size_t group = 0; group < groupCounts.size(); ++group)
+            {
+                if (!groupCounts[group])
+                {
+                    continue;
+                }
+                const double sourceMean = sourceGroups[group] / groupCounts[group];
+                const double targetMean = targetGroups[group] / groupCounts[group];
+                if (populatedGroups == 0)
+                {
+                    report.SourceLegLengthMeters = sourceMean;
+                    report.TargetLegLengthMeters = targetMean;
+                }
+                else
+                {
+                    report.SourceLegLengthMeters += sourceMean;
+                    report.TargetLegLengthMeters += targetMean;
+                }
+                ++populatedGroups;
+            }
+            if (!populatedGroups)
             {
                 return Fail(error, "leg_length_missing");
             }
-            if (frontCount)
+            if (populatedGroups > 1)
             {
-                report.SourceLegLengthMeters = sourceFront / frontCount;
-                report.TargetLegLengthMeters = targetFront / frontCount;
-            }
-            if (hindCount)
-            {
-                report.SourceLegLengthMeters += sourceHind / hindCount;
-                report.TargetLegLengthMeters += targetHind / hindCount;
-            }
-            if (frontCount && hindCount)
-            {
-                report.SourceLegLengthMeters *= 0.5;
-                report.TargetLegLengthMeters *= 0.5;
+                report.SourceLegLengthMeters *= 1.0 / populatedGroups;
+                report.TargetLegLengthMeters *= 1.0 / populatedGroups;
             }
             if (!std::isfinite(report.SourceLegLengthMeters) || !std::isfinite(report.TargetLegLengthMeters) ||
                 report.SourceLegLengthMeters < 1e-8)
