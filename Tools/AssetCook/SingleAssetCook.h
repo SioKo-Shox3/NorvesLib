@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "Container/String.h"
 #include "SkeletalRoleFileRequest.h"
+#include "ClipOptimizeCliOptions.h"
 #include "Resource/SkeletalImportOptions.h"
 #include "Resource/MaterialImportPolicy.h"
 #include "Container/VariableArray.h"
@@ -25,6 +26,7 @@ namespace NorvesLib::Tools::AssetCook
         bool bRequireSidecar = false;
         bool bSkipIfUnchanged = false;
         Core::Skeletal::SkeletalGltfDecodeOptions SkeletalDecode;
+        ClipOptimizeCookOptions ClipOptimize;
         SkeletalRoleFileRequest RoleProfile;
         Core::AssetImport::EmissiveScale AssetSetEmission;
         Core::Container::VariableArray<uint32_t> ClipJointNodes;

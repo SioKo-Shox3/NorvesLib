@@ -10374,19 +10374,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR29-RHI-FORMATS): `GenerateMipmaps` の戻り値は void のまま、呼ぶ前に `IsFormatSupported(..., LinearMipGeneration)` で弾く契約にした。見た目の変わる変更は無い（既存の形式の値・既定の描画経路は不変）。
 - Notes(G5-GR29-RHI-FORMATS): 要起票: `TextureAssetRuntime.cpp`（:234 付近）は `bUploadSucceeded` を見ずにハンドルを返すため、全ミップのアップロードに失敗しても有効なハンドルが返りうる。
 
-- U1 契約のヘッダと GLSL の符号化ファイルを足す: 着地(直し 0 回)
-- U3 GBuffer の読み手（lighting.frag・ssr.frag ほか）を復号の関数へ通す: 着地(直し 0 回)
-- U4 デカールが草の印を法線のコピーから読む: 着地(直し 0 回)
-- U2 GBuffer の書き手（ラスタの 3 本と可視バッファの解決）を符号化の関数へ通す: 着地(直し 1 回)
-- U5 GPU の割り当て表の文書を書く: 着地(直し 1 回)
-- U6 ShadingModelContractTest を足し、タスクの verify を通す: 着地(直し 0 回)
-
-## G5-GR26-GBUFFER-CONTRACT（2026-11-09）
-
-- Done: GBuffer の空きチャネルの契約を `Library/Core/Public/Rendering/ShadingModelIds.h`（`GBufferContract`）と `Assets/Shaders/Common/GBufferEncoding.glsl` に置いた。Normal.w = `float((受け手の印 << 4) | シェーディングモデルの ID)`（ID: DefaultLit=0・Fur=1・Eye=2・PaleFlat=3・4〜15 は予約。印: 地形の受け手 1・影を起伏に詰める地形 2（地形の印と一緒に立てる）・草の株 4・鏡面の無い材質 8）、Material.a = P0、Emissive.a = P1（書き手は今 0）。書き手（gbuffer.frag・megageometry.frag・foliage.frag・Common/VisibilityResolve.glsl）と読み手（lighting.frag・RTGI/DiffuseIndirect.comp・ssr.frag・decal.frag）を全部その関数に通し、Normal.w の 1・2 と Material.a の 1・0.25 の場当たりの意味を印へ移した。デカールは Normal を色の添付として書くので、描く前に Normal をパスの持つテクスチャへ写して印を読む（デカールが 1 個以上のフレームだけ。1920×1080 で 16.6 MB の写し。GBuffer の Normal にコピー元の使い道を足した）。`Docs/Architecture/GpuLayoutRegistry.md` に GBuffer の各チャネル・GBuffer と MegaGeometry の UBO・`GPUSceneInstanceData`・lighting.frag の binding の表と、以後は表に登録してから使う約束を書いた。試験 `ShadingModelContractTest`（MaterialResourcesTest の束）がヘッダと GLSL の定数表の一致と、Assets/Shaders の中の GBuffer の Normal.w・Material.a・Emissive.a の直の読み書きが無いことを走査で確かめる（167 ファイル、代入 13・imageStore 3・標本 23 を検査。foliage.frag にわざと入れた違反を検出して落ちることを確かめた）。
-- 証拠: `.harness/runs/20261109-201100/verify-G5-GR26-GBUFFER-CONTRACT.txt`（verify のビルド `MaterialResourcesTest DecalGBufferVulkanTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game` の終了コード 0、ctest の ShadingModelContractTest・MaterialResourcesTest・GBufferMaterialDescriptorCacheTest・DecalGBufferVulkanTest・VisibilityResolveVulkanTest の 5/5 合格）。基準画像の試験 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない（DefaultLit・P0=P1=0 の書き込みと印の判定は導入前と同じ結果になる作り）。
-- Next: 値の入口は G5-GR26-MATERIAL-PARAMS。地形の受け手・影を詰めた地形・草の株の接触影の除外・デカールが草に描かないことは、人がゲームを動かして荒野（wasteland）の地形と草の株の近く（G5-GR27-MATERIAL-SCENES-CHECK の視点）で見る。
-- Notes: VisibilityResolveVulkanTest の「直接 dispatch の MegaGeometry の材質の粗さ・AO」の検査は変更前のシェーダーでも落ちていた（試験の準備が MegaGeometry の材質の定数 AO（`TexturesD[2]`）を 0 のままにしていた。4da8031d の統合から）。実際の材質表（VisibilityMaterialTable.cpp）と同じ形で AO=1 を入れて直した。検査の期待値は変えていない。
-- Notes: このリポジトリのシェーダーは BOM 付きで、glslc で直に確かめるときは BOM を除いた写しをコンパイルする（実行時は ShaderManager が BOM を除き include を展開する）。
-- 要起票: `Common/PbrMaterialEvaluation.glsl` の GBuffer 用の `SamplePbrMaterialTextures(albedo, normal, material, uv)`（vec4 のまま GBuffer を読む）は使い手が無くなったので消す。
-- 要起票: `megageometry.vert` の `emissiveColor` のコメントが色・強度と書いているが、C++ と megageometry.frag は色度・輝度（nits）（GpuLayoutRegistry.md の 6. に記載）。
+- Done(G9-GR87-CLIP-OPTIMIZER): 統合ブランチ feature/scene-launcher を取り込み、Tools/AssetCook/SingleAssetCook.cpp のインクルードの衝突を両側の和で解いた。
+- 確かめ(G9-GR87-CLIP-OPTIMIZER): 取り込み後に `cmake --build build --config Debug --target CookedMeshTest AssetCook SkeletalAnimationSamplingTest -- /m:1` は終了コード 0。ctest は ClipOptimizerTest・CookedSkeletalAssetTest・CookedClipBankV1Test・RigSplitCookTest・SkeletalBvhCookBridgeTest・SkeletalAnimationSamplingTest の 6/6 Passed。
+- U1 ClipOptimizer の型とチャンネル単位の削減・報告の JSON: 着地(直し 0 回)
+- U2 同じ評価の経路での大域検証と許容のやり直し: 着地(直し 1 回)
+- U3 ClipOptimizerTest の (a)〜(e): 着地(直し 0 回)
+- U4 CLI の引数と旧形式の cook への差し込み: 着地(直し 2 回)
+- U5 --rig-split の v1 ClipBank の cook への差し込み: 着地(直し 0 回)
+- U7 --retarget-clip と --bvh の cook への差し込み: 着地(直し 1 回)
+- U6 最適化を切った経路のバイト一致の試験・文書・タスクの verify: 着地(直し 0 回)
+## 2026-11-09 G9-GR87-CLIP-OPTIMIZER（run 20261109-201054 の反復 1、完了）
+- Done: `ClipOptimizer`（`Library/Core/Private/Animation/ClipOptimizer.h/.cpp`）で、四元数の半球の連続化・定数チャンネルの 1 キー化・作者 rest と等しいチャンネルの削除・関節基準の回転の許容つきの RDP 型の削減・元のキー時刻と 1/3・1/2・2/3 の時刻での関節位置と頂点位置の大域検証（超えたら許容を 0.7 倍して最大 4 回やり直し）・報告の JSON を作った。平滑化はしない
+- Done: AssetCook に `--clip-optimize`・`--clip-max-vertex-error-m`（0.002）・`--clip-max-joint-error-m`（0.001）・`--clip-max-rotation-error-deg`（0.1）・`--clip-report` を足し、旧形式の glTF→NVSKEL の cook（decode と BVH の適用の後）、`--rig-split`・`--retarget-clip` の `BuildClipBankV1` の前（`replacementClips`）、`--bvh` の役割ファイルの cook に差した。上限を超えたら 0 でない終了コードと理由で失敗する。有効なときだけ設定を SourceHash・キャッシュの指紋に混ぜる
+- Done: `ClipOptimizerTest`（`CookedMeshTest` の束）で (a)〜(f) を確かめる。(f) は最適化を切った旧形式と v1 の cook のバイト列と SourceHash が段を通さない cook と一致すること。手の確かめで `--rig-split`・`--retarget-clip`・`--bvh` の最適化なしの出力が変更前の HEAD と SHA-256 で一致した
+- 証拠: `.harness/runs/20261109-201054/verify-G9-GR87-CLIP-OPTIMIZER-U6.txt`（Debug の CookedMeshTest・AssetCook・SkeletalAnimationSamplingTest のビルド exit 0、ClipOptimizerTest 単独 1/1、関連 6 本 6/6 Passed）
+- Next: なし（アプリを起動する確かめは無い）。許容の既定値は仮で、実 BVH（V01full）の前後を見て作者が決める
+- Notes: v1 の評価（`SkeletalPoseBuilder`）は姿勢を `AuthorRestLocal`（無ければ bind から求めた既定ローカル）から始めるので、作者 rest と等しいチャンネルは消してよいと確かめた（notes の UNCERTAIN の解消）
+- Notes: キャッシュの指紋に設定を通すため、paths の外の `Tools/AssetCook/CookDependencySnapshot.cpp`・`SkeletalRoleFileInput.cpp`・`RigSingleCook.cpp`・`SkeletalRoleProfileCook.h/.cpp`・`RigSplitFileCook.cpp` も配管だけ変えた
+- Notes: 要起票: 単体の `--format nvskel.v1.clips` の rig cook（`RigClipBankCook.cpp`）と、管理付きキャッシュの旧形式の通常の model cook はクリップ最適化を受け付けない（拒否する）。使う場面が出たら差す
+- Notes: 今回の小さい入力ではどれも上限超えの失敗が起きず、cook の失敗の経路（0 でない終了コード）は ClipOptimizer の単体の検査でしか確かめていない

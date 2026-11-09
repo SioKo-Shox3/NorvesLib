@@ -90,6 +90,8 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndex.cpp
     Private/Animation/RigClipAnalysis.cpp
     Private/Animation/SkeletalClipProcessing.cpp
+    Private/Animation/ClipOptimizer.cpp
+    Private/Animation/ClipOptimizer.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h

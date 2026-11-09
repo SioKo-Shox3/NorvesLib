@@ -25,6 +25,53 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
         };
+        bool SameClipReportPath(const std::filesystem::path& left, const std::filesystem::path& right)
+        {
+#if defined(_WIN32)
+            return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
+#else
+            return left == right;
+#endif
+        }
+        bool GuardClipReport(const RigSplitCookRequest& request, const std::filesystem::path& destination,
+                             C::AnsiString& error)
+        {
+            if (!request.ClipOptimize.bEnabled || request.ClipOptimize.ReportPath.empty())
+            {
+                return true;
+            }
+            std::error_code reportError, sourceError, targetError, equivalentError;
+            const auto report = std::filesystem::weakly_canonical(request.ClipOptimize.ReportPath, reportError);
+            const auto source = std::filesystem::weakly_canonical(request.SourcePath, sourceError);
+            const auto target = std::filesystem::weakly_canonical(destination, targetError);
+            if (reportError || sourceError || targetError)
+            {
+                error = "クリップ最適化レポートのパスを確認できません";
+                return false;
+            }
+            const bool bEquivalent = std::filesystem::equivalent(report, source, equivalentError);
+            if (SameClipReportPath(report, source) || (!equivalentError && bEquivalent))
+            {
+                error = "クリップ最適化レポートは cook の入力と同じファイルにできません";
+                return false;
+            }
+            // 出力先の内側へ報告を書くと、新規ディレクトリの公開を妨げる。
+            for (auto parent = report; !parent.empty();)
+            {
+                if (SameClipReportPath(parent, target))
+                {
+                    error = "クリップ最適化レポートは cook の出力先やその内側に指定できません";
+                    return false;
+                }
+                const auto next = parent.parent_path();
+                if (next == parent)
+                {
+                    break;
+                }
+                parent = next;
+            }
+            return true;
+        }
         bool ReadSource(const std::filesystem::path& path, uint64_t maximum, C::VariableArray<uint8_t>& out)
         {
             std::ifstream input(path, std::ios::binary | std::ios::ate);
@@ -77,6 +124,10 @@ namespace NorvesLib::Tools::AssetCook
             if (ec)
             {
                 return fail("rig_split: invalid source path");
+            }
+            if (!GuardClipReport(selected, target, error))
+            {
+                return false;
             }
             C::VariableArray<uint8_t> source;
             if (!ReadSource(selected.SourcePath, selected.Limits.MaxSourceBytes, source))
