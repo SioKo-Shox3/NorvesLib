@@ -1125,6 +1125,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief ゲームの時間。DeltaTime は RenderThread のフレーム時間なので、拡張のパスはこちらを使う。 */
         RenderExtensionFrameInfo ExtensionFrame;
 
+        /** @brief フレームパケットから値で写した、試験だけで使う頂点アニメの正弦の揺れの許可。 */
+        bool bVertexAnimationTestDisplacement = false;
+
         /** @brief フレームパケットから値で写した世界共通の風。 */
         WindParameters Wind = MakeDefaultWindParameters();
 
