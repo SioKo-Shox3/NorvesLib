@@ -324,14 +324,12 @@ namespace NorvesLib::Core::Animation
             }
             for (const auto& leg : input.Legs)
             {
-                const bool front = leg.PawRole == SkeletalRole::FrontLPaw || leg.PawRole == SkeletalRole::FrontRPaw;
-                const bool hind = leg.PawRole == SkeletalRole::HindLPaw || leg.PawRole == SkeletalRole::HindRPaw;
-                if ((!front && !hind) || (front && leg.Hock != UINT32_MAX) ||
-                    (hind && leg.Hock == UINT32_MAX) || leg.Upper >= joints || leg.Lower >= joints ||
-                    leg.Paw >= joints || (hind && leg.Hock >= joints) ||
+                const bool bHasHock = leg.Hock != UINT32_MAX;
+                if (leg.Upper >= joints || leg.Lower >= joints || leg.Paw >= joints ||
+                    (bHasHock && leg.Hock >= joints) ||
                     !HasAncestor(input.Parents, leg.Upper, leg.Lower) ||
-                    !HasAncestor(input.Parents, leg.Lower, hind ? leg.Hock : leg.Paw) ||
-                    (hind && !HasAncestor(input.Parents, leg.Hock, leg.Paw)))
+                    !HasAncestor(input.Parents, leg.Lower, bHasHock ? leg.Hock : leg.Paw) ||
+                    (bHasHock && !HasAncestor(input.Parents, leg.Hock, leg.Paw)))
                     return Fail(error, "foot_planting_input");
             }
             parentRotations.resize(frames);

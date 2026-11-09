@@ -16,9 +16,11 @@ namespace NorvesLib::Core::Animation
 
     struct RetargetFootPlantingLeg
     {
+        // 語彙の足先の欄を脚の識別と報告に使う。
         SkeletalRole PawRole = SkeletalRole::Count;
         uint32_t Upper = UINT32_MAX;
         uint32_t Lower = UINT32_MAX;
+        // UINT32_MAX は 2 ボーン、それ以外は 3 ボーンの脚。
         uint32_t Hock = UINT32_MAX;
         uint32_t Paw = UINT32_MAX;
     };
@@ -50,6 +52,7 @@ namespace NorvesLib::Core::Animation
 
     struct RetargetFootPlantingLegReport
     {
+        // 語彙の足先の欄。
         SkeletalRole PawRole = SkeletalRole::Count;
         Container::VariableArray<RetargetFootContactRange> Contacts;
     };
