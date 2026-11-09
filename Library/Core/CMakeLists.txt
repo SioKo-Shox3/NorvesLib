@@ -903,6 +903,7 @@ set(PUBLIC_HEADERS
     Public/RHI/RHIDeviceDesc.h
     Public/RHI/RHIDeviceFactory.h
     Public/RHI/RHITypes.h
+    Public/RHI/FormatInfo.h
     Public/RHI/IBuffer.h
     Public/RHI/ITexture.h
     Public/RHI/ISampler.h
