@@ -116,6 +116,268 @@ namespace
         std::printf("CLIP_QUANTIZATION_TRANSLATION result=pass quant16_error_bound_constant_component\n");
     }
 
+    size_t CompressionDirectory(const F::Bytes& bytes)
+    {
+        for (uint32_t i = 0; i < F::U32(bytes, 28); ++i)
+        {
+            const size_t entry = 256 + size_t(i) * 32;
+            if (F::U32(bytes, entry) == 0x52504d43)
+            {
+                return entry;
+            }
+        }
+        return 0;
+    }
+
+    S::ClipBankV1 CompressionBank(F::Fixture& f)
+    {
+        const auto source = f.Import(f.Json);
+        S::SkeletalAnimationClip clip;
+        clip.Name = _T("Compression");
+        clip.DurationSeconds = 1.0f;
+        clip.Channels.resize(6);
+        constexpr float irregular[] = {0.0f, 0.021f, 0.057f, 0.101f, 0.19f};
+        for (uint32_t c = 0; c < 6; ++c)
+        {
+            auto& channel = clip.Channels[c];
+            channel.JointIndex = c / 3;
+            channel.Path = static_cast<S::SkeletalAnimationPath>(c % 3);
+            channel.Interpolation = c >= 3 ? S::SkeletalAnimationInterpolation::Step :
+                                            S::SkeletalAnimationInterpolation::Linear;
+            for (uint32_t i = 0; i < 5; ++i)
+            {
+                const float t = float(i) / 30.0f;
+                S::SkeletalValue value;
+                switch (c)
+                {
+                case 0:
+                    value = {-2.0f + float(i) * 0.71f, 1.25f, 3.0f - float(i) * 0.43f, 0.0f};
+                    break;
+                case 1:
+                    value = {0.0f, std::sin(float(i) * 0.17f), 0.0f, std::cos(float(i) * 0.17f)};
+                    break;
+                case 2:
+                case 5:
+                    value = {1.0f + t, 2.0f - t, 0.5f + t, -0.0f};
+                    break;
+                case 3:
+                    value = {1.25f, -2.5f, 0.0f, -0.0f};
+                    break;
+                case 4:
+                    value = {0.0f, -0.0f, 0.0f, -1.0f};
+                    break;
+                }
+                channel.Samples.push_back({c < 4 ? t : irregular[i], value});
+            }
+        }
+        S::ClipBankV1 bank;
+        S::RigV1Report report;
+        RIG_CHECK(S::BuildClipBankV1({&source, 1}, bank, report, {}, S::RigImportProfile::DirectTrs128,
+                                     nullptr, {&clip, 1}));
+        return bank;
+    }
+
+    void CompressionRoundtrip(F::Fixture& f)
+    {
+        const auto original = CompressionBank(f);
+        S::RigV1Report report;
+        F::Bytes bytes;
+        RIG_CHECK(S::WriteClipBankV1(original, bytes, report, {}, S::RigImportProfile::DirectTrs128,
+                                     S::ClipBankV1WriteOptions{.bQuantize = true}));
+        RIG_CHECK(bytes[14] == 1 && bytes[15] == 0);
+        const size_t directory = CompressionDirectory(bytes);
+        RIG_CHECK(directory && F::U32(bytes, directory + 4) == 1 && F::U32(bytes, directory + 24) == 4);
+        const size_t compression = size_t(F::U64(bytes, directory + 8));
+        RIG_CHECK(F::U32(bytes, compression) == 1 && F::U32(bytes, compression + 4) == 6);
+        const size_t dataStart = compression + 16 + 6 * 32;
+        const size_t dataEnd = compression + size_t(F::U64(bytes, directory + 16));
+        RIG_CHECK(F::U64(bytes, compression + 8) == F::Hash({bytes.data() + dataStart, dataEnd - dataStart}));
+        const auto channels = F::SectionOffset(bytes, 5);
+        constexpr uint32_t encodings[] = {3, 1, 0, 4, 4, 0};
+        S::ClipBankV1 restored;
+        RIG_CHECK(S::ParseClipBankV1(F::View(bytes), restored, report));
+        RIG_CHECK(restored.GetData()->Clips.size() == original.GetData()->Clips.size());
+        const auto& expectedClip = original.GetData()->Clips[0];
+        const auto& actualClip = restored.GetData()->Clips[0];
+        RIG_CHECK(actualClip.Name == expectedClip.Name && actualClip.DurationSeconds == expectedClip.DurationSeconds &&
+                  actualClip.Channels.size() == expectedClip.Channels.size());
+        for (size_t c = 0; c < expectedClip.Channels.size(); ++c)
+        {
+            const auto& expected = expectedClip.Channels[c];
+            const auto& actual = actualClip.Channels[c];
+            const uint32_t encoding = F::U32(bytes, channels + c * 48 + 28);
+            RIG_CHECK(c == 1 ? (encoding == 1 || encoding == 2) : encoding == encodings[c]);
+            RIG_CHECK(F::U32(bytes, compression + 16 + c * 32) == (c < 4 ? 1u : 0u));
+            RIG_CHECK(actual.JointIndex == expected.JointIndex && actual.Path == expected.Path &&
+                      actual.Interpolation == expected.Interpolation && actual.Samples.size() == expected.Samples.size());
+            RIG_CHECK(c < 4 ? actual.UniformStepSeconds > 0 : actual.UniformStepSeconds == 0);
+            const auto range = S::ComputeTranslationQuantRange({expected.Samples.data(), expected.Samples.size()});
+            for (size_t k = 0; k < expected.Samples.size(); ++k)
+            {
+                const auto& a = expected.Samples[k];
+                const auto& b = actual.Samples[k];
+                if (c < 4)
+                {
+                    RIG_CHECK(std::fabs(double(a.TimeSeconds) - b.TimeSeconds) <= 1.0 / 30.0 * 1e-3);
+                }
+                else
+                {
+                    RIG_CHECK(std::bit_cast<uint32_t>(a.TimeSeconds) == std::bit_cast<uint32_t>(b.TimeSeconds));
+                }
+                if (c == 1)
+                {
+                    RIG_CHECK(S::RotationAngleDifferenceDegrees(a.Value, b.Value) <= 0.2);
+                }
+                else if (c == 0)
+                {
+                    const float first[] = {a.Value.X, a.Value.Y, a.Value.Z};
+                    const float second[] = {b.Value.X, b.Value.Y, b.Value.Z};
+                    for (size_t axis = 0; axis < 3; ++axis)
+                    {
+                        RIG_CHECK(std::fabs(double(first[axis]) - second[axis]) <= double(range.Extent[axis]) / 65535.0);
+                    }
+                    RIG_CHECK(std::bit_cast<uint32_t>(a.Value.W) == std::bit_cast<uint32_t>(b.Value.W));
+                }
+                else
+                {
+                    // 定数と scale は符号付きゼロを含む全成分をそのまま保つ。
+                    RIG_CHECK(std::bit_cast<uint32_t>(a.Value.X) == std::bit_cast<uint32_t>(b.Value.X) &&
+                              std::bit_cast<uint32_t>(a.Value.Y) == std::bit_cast<uint32_t>(b.Value.Y) &&
+                              std::bit_cast<uint32_t>(a.Value.Z) == std::bit_cast<uint32_t>(b.Value.Z) &&
+                              std::bit_cast<uint32_t>(a.Value.W) == std::bit_cast<uint32_t>(b.Value.W));
+                }
+            }
+        }
+        F::Bytes plain;
+        RIG_CHECK(S::WriteClipBankV1(restored, plain, report));
+        RIG_CHECK(plain[14] == 0 && plain[15] == 0 && !CompressionDirectory(plain));
+        std::printf("CLIPBANK_V1_CASE result=pass compressed_roundtrip_error_bounds_uniform_times_plain_rewrite\n");
+    }
+
+    void CompressionLegacyBytes(F::Fixture& f)
+    {
+        F::Bytes cooked;
+        const auto bank = f.Bank(f.Json, &cooked);
+        S::RigV1Report report;
+        F::Bytes defaults, explicitOptions;
+        RIG_CHECK(S::WriteClipBankV1(bank, defaults, report));
+        RIG_CHECK(S::WriteClipBankV1(bank, explicitOptions, report, {}, S::RigImportProfile::DirectTrs128,
+                                     S::ClipBankV1WriteOptions{}));
+        RIG_CHECK(defaults == explicitOptions && defaults == cooked);
+        RIG_CHECK(defaults[14] == 0 && defaults[15] == 0 && !CompressionDirectory(defaults));
+        RIG_CHECK(F::U32(defaults, 28) == 7);
+        RIG_CHECK(F::U64(defaults, 48) == F::Hash({defaults.data() + 256, defaults.size() - 256}));
+        std::printf("CLIPBANK_V1_CASE result=pass unquantized_default_explicit_options_legacy_bytes\n");
+    }
+
+    void CompressionReject(F::Fixture& f)
+    {
+        auto bank = CompressionBank(f);
+        S::RigV1Report report;
+        F::Bytes bytes;
+        RIG_CHECK(S::WriteClipBankV1(bank, bytes, report, {}, S::RigImportProfile::DirectTrs128,
+                                     S::ClipBankV1WriteOptions{.bQuantize = true}));
+        const auto* goodData = bank.GetData();
+        const size_t directory = CompressionDirectory(bytes);
+        RIG_CHECK(directory);
+        const size_t compression = size_t(F::U64(bytes, directory + 8));
+        const size_t channels = F::SectionOffset(bytes, 5);
+        const size_t count = bank.GetData()->Clips[0].Channels.size();
+        const auto reseal = [&](F::Bytes& broken, bool bDataHash = true)
+        {
+            if (bDataHash)
+            {
+                // 表を壊した場合も、データ域の境界は元のチャンネル数を使う。
+                const size_t start = compression + 16 + count * 32;
+                const size_t end = compression + size_t(F::U64(broken, directory + 16));
+                F::Put64(broken, compression + 8, F::Hash({broken.data() + start, end - start}));
+            }
+            F::Reseal(broken);
+        };
+        const auto reject = [&](F::Bytes broken, S::RigV1Status status = S::RigV1Status::BadWire,
+                                bool bDataHash = true)
+        {
+            reseal(broken, bDataHash);
+            RIG_CHECK(F::U64(broken, 48) == F::Hash({broken.data() + 256, broken.size() - 256}));
+            RIG_CHECK(!S::ParseClipBankV1(F::View(broken), bank, report) && bank.GetData() == goodData);
+            RIG_CHECK(report.Status == status);
+        };
+        auto broken = bytes;
+        broken[compression + 8] ^= 1;
+        reject(broken, S::RigV1Status::HashMismatch, false);
+        const auto modify = [&](size_t at, uint32_t value)
+        {
+            auto broken = bytes;
+            F::Put32(broken, at, value);
+            reject(broken);
+        };
+        modify(compression, 2);                          // 未対応の CMPR version。
+        modify(compression + 4, uint32_t(count + 1));     // CHAN と異なる channelCount。
+        modify(compression + 16 + 16, F::U32(bytes, compression + 16 + 16) + 4);
+        modify(compression + 16 + 4, 4);                 // CHAN と異なる sampleCount。
+        modify(compression + 16 + 24, 1);                // エントリ予約領域。
+        modify(compression + 16, 2);                     // 未対応の timeForm。
+        modify(channels + 28, 1);                       // Translation に回転 encoding。
+        broken = bytes;
+        broken[14] = 0;
+        broken[15] = 0;
+        reject(broken);
+        broken = bytes;
+        broken[14] = 2;
+        broken[15] = 0;
+        reject(broken, S::RigV1Status::UnsupportedVersion);
+
+        // 有効な 48bit 回転ブロックを作り、予約 bit 以外の理由で拒否されないことを先に確認する。
+        constexpr size_t rotation = 1;
+        const size_t entry = compression + 16 + rotation * 32;
+        const size_t block = size_t(F::U32(bytes, entry + 16));
+        const size_t oldSize = size_t(F::U32(bytes, entry + 20));
+        const auto& samples = bank.GetData()->Clips[0].Channels[rotation].Samples;
+        const size_t newSize = samples.size() * 6;
+        const size_t oldAligned = (oldSize + 3) & ~size_t{3};
+        const size_t newAligned = (newSize + 3) & ~size_t{3};
+        RIG_CHECK(F::U32(bytes, entry) == 1 && (F::U32(bytes, channels + rotation * 48 + 28) == 1 ||
+                   F::U32(bytes, channels + rotation * 48 + 28) == 2) &&
+                  compression + F::U64(bytes, directory + 16) == bytes.size() && newAligned >= oldAligned);
+        const size_t growth = newAligned - oldAligned;
+        const size_t tail = compression + block + oldAligned;
+        F::Bytes wide(bytes.size() + growth, 0);
+        std::memcpy(wide.data(), bytes.data(), tail);
+        std::memcpy(wide.data() + tail + growth, bytes.data() + tail, bytes.size() - tail);
+        F::Put64(wide, 40, wide.size());
+        const uint64_t sectionSize = F::U64(bytes, directory + 16) + growth;
+        F::Put64(wide, directory + 16, sectionSize);
+        F::Put32(wide, directory + 28, uint32_t(sectionSize / 4));
+        F::Put32(wide, channels + rotation * 48 + 28, 2);
+        F::Put32(wide, entry + 20, uint32_t(newSize));
+        for (size_t c = rotation + 1; c < count; ++c)
+        {
+            const size_t offset = compression + 16 + c * 32 + 16;
+            F::Put32(wide, offset, F::U32(bytes, offset) + uint32_t(growth));
+        }
+        for (size_t k = 0; k < samples.size(); ++k)
+        {
+            const uint64_t bits = S::EncodeRotationSmallest3_48(samples[k].Value);
+            for (size_t byte = 0; byte < 6; ++byte)
+            {
+                wide[compression + block + k * 6 + byte] = uint8_t(bits >> (byte * 8));
+            }
+        }
+        reseal(wide);
+        S::ClipBankV1 valid48;
+        RIG_CHECK(S::ParseClipBankV1(F::View(wide), valid48, report));
+        wide[compression + block + 5] |= 0x20;
+        reject(wide);
+
+        F::Bytes plain;
+        RIG_CHECK(S::WriteClipBankV1(bank, plain, report) && !CompressionDirectory(plain));
+        F::Put32(plain, F::SectionOffset(plain, 5) + 28, 1);
+        F::Reseal(plain);
+        RIG_CHECK(!S::ParseClipBankV1(F::View(plain), bank, report) && bank.GetData() == goodData &&
+                  report.Status == S::RigV1Status::BadWire);
+        std::printf("CLIPBANK_V1_CASE result=pass compressed_reject_12_corruptions_preserve_output\n");
+    }
+
     void MetadataCodec(F::Fixture& f)
     {
         namespace A = NorvesLib::Core::Animation;
@@ -698,6 +960,9 @@ int main()
     TranslationQuantization();
     Topology();
     F::Fixture fixture;
+    CompressionRoundtrip(fixture);
+    CompressionLegacyBytes(fixture);
+    CompressionReject(fixture);
     Codec(fixture);
     MetadataCodec(fixture);
     AuthorRest(fixture);
