@@ -10477,3 +10477,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(G5-GR25-EXTENSION-DATA): `.harness/runs/20261110-011013/G5-GR25-EXTENSION-DATA-U7-verify.txt`（verify のビルドの行 SceneViewProxyLookupTest・RenderingHdrSceneCaptureTest・RenderingGoldenImageTest・Game の Debug ビルドが終了コード 0。ctest は RenderExtensionDataTest・RenderExtensionRegistryTest・RenderExtensionStageVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 4/4 合格。Transparent の深度テストを外すと落ち、戻すと通ることも確かめた）。golden 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない。拡張 0 件では組み込みのパスと描画は変わらない。
 - Next(G5-GR25-EXTENSION-DATA): 影を落とす段（G5-GR25-SHADOW-CASTER-STAGE）、起動しての確かめ（G5-GR25-SCENES-CHECK）、FrameInfo を使う頂点アニメの前の時刻（G5-GR30-VERTEX-ANIM-VELOCITY。FoliagePass の風の前の時刻もそこで替える）。
 - Notes(G5-GR25-EXTENSION-DATA): 人が見るときの見どころ: 拡張 0 件なので全シーンの見た目は変わらない見込み。撮影・計測の確かめは回さない決まり。ブロブの保存は 16 バイト整列なので、それを超える整列の型は型付きの引き当てで空になる。GPU 試験の GBuffer 以降の段は TAA を切って FXAA で取る（同じ画素を目印あり・なしで引き比べるため）。
+
+- U7 退避済みの DirectXTex の BC 符号化・復号の取り込みを当て直す: 着地(直し 0 回)
+- U8 退避済みの NVTEX の BC3・BC6H の差分を当て直し、未知の形式の例を直す: 着地(直し 0 回)
+- U3 BlockCompressor に BC3(rgbcx)と BC6H(DirectXTex)の符号化・復号を足す: 着地(直し 0 回)
+- U4 クッカーの hdr の既定を BC6H にし、--format rgba16f・bc3 の明示を受ける: 着地(直し 1 回)
+- U5 AssetCookBlockCompressSmoke に BC6H・BC3 と Silver の実物の画質のケースを足す: 着地(直し 2 回)
+- U6 画質の実測を受入れ文書に記録し、タスクの verify を通す: 着地(直し 0 回)
+
+- Done(G5-GR88-BC6H-QUALITY): DirectXTex の BC の符号化・復号（may2026・commit 4feb3e11、BC.h・BC.cpp・BC6HBC7.cpp・LICENSE と最小の差し替えヘッダ `shim/DirectXTexP.h`、`UPSTREAM.json` に sha256・SPDX MIT）を `Library/ThirdParty/DirectXTex/` に取り込み、`NorvesThirdParty_DirectXTexBC` として `AssetCookBlockCompressor` にだけリンクした。`BlockCompressor` に BC3（rgbcx の `encode_bc3`。復号は端点の順によらず 4 色で戻す）と符号なし BC6H（`CompressRGBAFloat`・`DecompressToRGBAFloat`、帯ごとのスレッド並列、非有限・65504 超は座標つきで拒否）を足した。`--usage hdr` の既定は BC6H（`nvtex.v0.2.bc6h.linear`、負の入力は拒否）、`--format rgba16f` で従来の RGBA16F、albedo・orm は `--format bc3` で BC3（`nvtex.v0.2.bc3.srgb`・`.linear`）。NVTEX に画素形式 11=BC3（Linear・sRGB）・12=BC6H（Linear だけ、v0.2 以降）を足し、`MapCookedTextureFormat` が `BC3_UNORM`・`BC3_SRGB`・`BC6H_UFLOAT` へ写す。画質の実測としきい値は `Docs/RenderingValidation/TextureCompressionAcceptance.md`。
+- 証拠(G5-GR88-BC6H-QUALITY): `.harness/runs/20261110-011012/G5-GR88-BC6H-QUALITY-final-verify.txt`（verify のビルド行の終了コード 0、ctest 4/4 合格: AssetCookBlockCompressSmoke・AssetCookTextureSmoke・CookedTextureTest・CookedTextureUploadTest）。既存 6 用途と `--usage hdr --format rgba16f` の NVTEX の sha256 は変更前のクッカーの出力と一致（cooked_hash 不変）。
+- Next(G5-GR88-BC6H-QUALITY): BC6H・BC3 を使う資産・材質の経路はまだ無い（`Scripts/CookAssets.ps1` は hdr・`--format bc3` を渡さない）。GPU での BC6H・BC3 の標本は `RHIBlockCompressedTextureVulkanTest`（G5-GR29-RHI-FORMATS の手組みのブロック）で確かめる。見た目の変わる変更は無い。
+- Notes(G5-GR88-BC6H-QUALITY): `Assets/Textures/Silver` は albedo・法線・AO・メタリックが画像全体で単色（粗さだけ 28 色）で画質の判断に使えないので、done-when の Silver の測定は残したうえで、追跡済みの実物 `Assets/Textures/CobbleStoneFloor`（4K の diff・nor_gl・arm）を同じ測り方で足した。切り出しは中央ではなく 256 画素おきの格子で RGB の分散が最大の 512 四方。CobbleStoneFloor はロードマップの暫定値のうち法線の最大（21.7 度 > 6 度）と ORM の R・G の最大差（10・13 > 8）を満たさない。スモークのしきい値は実測から置いた回帰検出用で、暫定値の合格ではない。BC6H の合成の誤差は跳ねる区画にかかる 4x4 ブロック（edge）とそれ以外（smooth）に分けて測る。
+- Notes(G5-GR88-BC6H-QUALITY): 既存の `CookedTextureTest` の v0.1 の未知の形式の例の値 11 は BC3 になったので 13 に替え、11・12 が v0.1 では未知になることを足した。
