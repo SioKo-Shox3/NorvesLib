@@ -10355,3 +10355,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 契約のヘッダと GLSL の符号化ファイルを足す: 着地(直し 0 回)
 - U3 GBuffer の読み手（lighting.frag・ssr.frag ほか）を復号の関数へ通す: 着地(直し 0 回)
 - U4 デカールが草の印を法線のコピーから読む: 着地(直し 0 回)
+- U2 GBuffer の書き手（ラスタの 3 本と可視バッファの解決）を符号化の関数へ通す: 着地(直し 1 回)

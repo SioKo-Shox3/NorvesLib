@@ -50,6 +50,7 @@ layout(set = 0, binding = 16) uniform sampler2D terrainSurfaceMaskTexture;
 // 地形の遠景の地図（地図の無い材質はアルベドが張られ、読まない）
 layout(set = 0, binding = 17) uniform sampler2D terrainFarMapTexture;
 
+#include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 7
@@ -61,11 +62,11 @@ layout(set = 0, binding = 17) uniform sampler2D terrainFarMapTexture;
 #include "Common/MegaGeometryDebugColor.glsl"
 
 // GBuffer MRT出力
-layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
-layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + 地形の受け手なら 1（A。lighting.frag の影の余裕を変える）
-layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
-layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
-layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV（gbuffer.frag と同じ）
+layout(location = 0) out vec4 outAlbedo;    // RT0: アルベド（RGB）とアルファ（A）
+layout(location = 1) out vec4 outNormal;    // RT1: ワールド法線（RGB）と材質 ID・受け手の印（A）
+layout(location = 2) out vec4 outMaterial;  // RT2: 金属度（R）・粗さ（G）・AO（B）・材質値 P0（A）
+layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB）・材質値 P1（A）
+layout(location = 4) out vec2 outVelocity;  // RT4: 現在の UV - 前の UV（gbuffer.frag と同じ）
 
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
 const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
@@ -109,9 +110,9 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
 void WriteDebugGBuffer(vec3 albedo)
 {
     outAlbedo = vec4(albedo, 1.0);
-    outNormal = vec4(normalize(fragNormal), 0.0);
-    outMaterial = vec4(0.0, 1.0, 1.0, 0.0);
-    outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
+    outNormal = GBufferEncodeNormal(normalize(fragNormal), GBUFFER_SHADING_MODEL_DEFAULT_LIT, 0u);
+    outMaterial = GBufferEncodeMaterial(vec3(0.0, 1.0, 1.0), 0.0);
+    outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
     outVelocity = ComputeVelocity();
 }
 
@@ -217,15 +218,16 @@ void main()
         tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
     }
     vec3 normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
-    outNormal = vec4(normal, bTerrain ? 1.0 : 0.0);
+    const uint receiverFlags = bTerrain ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
+    outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, receiverFlags);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = vec4(textureSamples.Material, 0.0);
+    outMaterial = GBufferEncodeMaterial(textureSamples.Material, 0.0);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
-    outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveColor.rgb,
-                                                 fragEmissiveColor.a,
-                                                 mvp.frameParams.y),
-                       1.0);
+    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveColor.rgb,
+                                                                fragEmissiveColor.a,
+                                                                mvp.frameParams.y),
+                                       0.0);
     outVelocity = ComputeVelocity();
 }
