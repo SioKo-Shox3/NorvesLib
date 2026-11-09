@@ -10543,3 +10543,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-060223/verify-G9-GR85-HUMANOID-SMOKE-U6.txt`（verify のビルド exit 0、AssetCookRetargetSmoke 1/1、関連 5 本 5/5 Passed、RetargetCookTest の -V で 5 ケース pass）
 - Next: なし（アプリを起動する確かめは無い）。実在の人型の骨格（Mixamo・Rigify・Kimodo）の選定は G10 の着手前まで保留（G9-S3）
 - Notes: スモークの台本は `string(JSON ...)` を使うので CMake 3.19 以上が要る。二足の足先の向きの補正は四足の前脚と同じ方式で、実在の人型リグのつま先の動きは未確認
+
+- U1 材質の ShadingModel・ShadingParams の CPU の型と正規化・ID の変換・GLSL の解決関数: 着地(直し 0 回)
+- U3 GLSL の InstanceData の 9 本の写しを Common/SceneInstanceData.glsl の include へ一本化し、走査の試験を足す: 着地(直し 0 回)
+- U6 MegaGeometry の材質から GBuffer へ ID・P0・P1 を届ける（ラスタの経路）: 着地(直し 0 回)
+- U12 退避した U2 の差分を当て、スキンの値（旧 U4）を同じ単位で足す: 着地(直し 0 回)
+- U13 退避した U10 の差分を当て、GBuffer の Material・Emissive に TransferSrc を足す: 着地(直し 0 回)
+- U5 GBuffer のラスタの経路（静的・インスタンス・スキン）で ID・P0・P1 を書く: 着地(直し 0 回)
+- U7 可視バッファの材質の表と解決で ID・P0・P1 を書く: 着地(直し 1 回)
+- U8 GpuLayoutRegistry.md の表を更新する: 着地(直し 0 回)
+- U11 RenderingShadingModelGBufferVulkanTest を足し、タスクの verify を通す: 着地(直し 1 回)
+## G5-GR26-MATERIAL-PARAMS（2026-11-10）
+- Done: 材質のシェーディングモデル（`ShadingModel` に Fur・PaleFlat を追加）と値 `ShadingParams[4]`（x = P0、y = P1、z = 予約、w = 被覆率の乗数。負は未指定）を `MaterialCreateData`・`MaterialResourceData`・`MegaMeshMaterial` に持たせ、GBuffer の ID への変換を `ToGBufferShadingModelId`（MaterialTypes.h）の 1 か所に置いた。インスタンス単位の上書き `MeshComponent::SetShadingParams`・`SkinnedMeshComponent::SetShadingParams` を `DrawCommand`・`GPUSceneInstanceData`（56 float / 224 バイト）・`Common/SceneInstanceData.glsl`（InstanceData の写しを 1 本の include にまとめた）まで通し、GBuffer の per-object UBO（368 バイト）・MegaGeometry の `SectionUniformData`（544 バイト）・可視バッファの `MaterialEntry`（144 バイト）を経て、ラスタ・MegaGeometry・可視バッファの解決の全部の書き手が ID・P0・P1 を書く。インスタンスの値が 0 以上ならそれ、負なら材質の値（両方負なら P0 = P1 = 0）。`GpuLayoutRegistry.md` に新しい大きさ・欄と可視バッファの材質の表（7 節）を載せた。GPU の試験 `RenderingShadingModelGBufferVulkanTest`（`RenderingHdrSceneCaptureTest` の `--shading-model-scenario=gbuffer-paths` を可視バッファ on・off で 2 回起動し、GBuffer の Normal・Material・Emissive を読み戻す）が、静的（Fur）・インスタンスの上書きと材質への戻り（PaleFlat）・M9Skinned のスキン（Eye、P0 だけ上書き）・MegaGeometry（PaleFlat）の球の中心 5×5 画素で ID の一致・P0 ±1/255・P1 の半精度の許容を確かめる。
+- 証拠: `.harness/runs/20261110-011015/verify-G5-GR26-MATERIAL-PARAMS.txt`（HEAD 848b87a4。verify のビルドの行 exit 0、ctest の 7 本 7/7 合格。GPU の試験は 323 秒）と `verify-G5-GR26-MATERIAL-PARAMS-U11.txt`（各経路 × on/off の実測値）。基準画像の試験 4 本（RenderingGolden*）は回さない決まりで回していない（DefaultLit・値が未指定のときの書き込みは導入前と同じ ID 0・P0 0・P1 0）。
+- Next: 被覆率の乗数（`.w`）は G5-GR27-MASKED-GBUFFER が使う。人が見るときは、どのシーンも既定の材質が DefaultLit で値が未指定なので見た目が変わらないこと（Rendering3DTest の天球・地面・球・岩、荒野）を確かめる。
+- Notes: `RenderingShadingModelGBufferVulkanTest` は 2 回の起動を束ね、Debug のシェーダーのコンパイルで 1 回 100〜150 秒かかるため、試験に `TIMEOUT 900` を付けた（verify の `--timeout 300` より優先される）。
+- Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換わって MSBuild が MSB1008 で落ちる。`MSYS_NO_PATHCONV=1` を付けるか PowerShell で回す。
+- 要起票: MegaGeometry を出す検証シーン（`RenderingShadingModelGBufferVulkanTest`）で `RenderGraph.cpp:2440` の `Pass 'MegaGeometryPass' declares all layout changes but enqueued a layout-changing frame command` が 1 回の起動で数十件出る（試験は合格。予備の経路の起動でも 12 件）。
