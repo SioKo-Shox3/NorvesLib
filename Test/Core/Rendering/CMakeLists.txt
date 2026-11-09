@@ -367,6 +367,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
 target_link_libraries(RHIRayTracingApiContractTest PRIVATE Core)
@@ -385,6 +386,8 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+# 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
+add_test(NAME WorldFieldShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WorldFieldShaderCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
 
 # 形式の対応と 16・10・浮動小数の更新・描画の読み戻しを確かめる。
@@ -614,6 +617,15 @@ set_tests_properties(GrassGenerateVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
+add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
+set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
 # 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
 # プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
@@ -662,6 +674,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
+    MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp

@@ -10452,3 +10452,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR44-WORLD-FIELD): interactor の配列をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotWorldFieldInteractors` を 1 つ。`SnapshotGrassField` と同じ形）は paths の外だが、パスがパケットの値を読む唯一の口なので足した。
 - U3 RenderWorld から RenderingCoordinator を経てパケットへ interactor を写す: 着地(直し 0 回)
 - U4 WorldFieldPass を足して GBufferPass より前に登録する: 着地(直し 1 回)
+- U5 シェーダーのコンパイル試験と GPU の更新試験を足し、タスクの verify を通す: 着地(直し 0 回)
