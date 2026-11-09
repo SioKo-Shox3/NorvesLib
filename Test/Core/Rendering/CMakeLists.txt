@@ -1388,6 +1388,7 @@ set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Renderi
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
+add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -1602,12 +1603,14 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 
 
 norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
 )
 target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
@@ -2100,6 +2103,7 @@ norves_add_test_bundle(MaterialResourcesTest
     FOLDER "Test/Core/Rendering"
     MEMBER MaterialResourcesTest MaterialResourcesTest.cpp
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
+    MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE

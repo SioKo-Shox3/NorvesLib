@@ -1,6 +1,7 @@
 ﻿#pragma once
 // 明示library入口。候補bytes/manifestを所有し、file公開や増分skipは行わない。
 #include "RigSplitImageInputs.h"
+#include "ClipOptimizeCliOptions.h"
 #include "Asset/CookedSkinMeshV1.h"
 #include "Asset/AssetManifest.h"
 #include "Resource/ImportSettingsFile.h"
@@ -12,6 +13,7 @@ namespace NorvesLib::Tools::AssetCook
         bool bInventoryOnly = false;
         bool bAnalyzeClips = false;
         Core::Skeletal::RigClipAnalysisOptions ClipAnalysis;
+        ClipOptimizeCookOptions ClipOptimize;
         Core::Container::AnsiString ClipRootJoint;
         std::filesystem::path SourcePath;
         Core::Container::AnsiString SkeletonPath, MeshPath, BankPath;

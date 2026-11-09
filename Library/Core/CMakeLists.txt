@@ -90,6 +90,8 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndex.cpp
     Private/Animation/RigClipAnalysis.cpp
     Private/Animation/SkeletalClipProcessing.cpp
+    Private/Animation/ClipOptimizer.cpp
+    Private/Animation/ClipOptimizer.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
@@ -256,6 +258,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
+    Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
@@ -725,6 +728,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
+    Public/Rendering/RenderExtension/RenderExtension.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h

@@ -2,6 +2,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DecalTypes.h"
 #include "Rendering/FrameResourceOwner.h"
+#include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -97,6 +98,8 @@ namespace NorvesLib::Core::Rendering
 
     void DecalPass::Shutdown()
     {
+        m_NormalCopy.reset();
+        m_NormalCopyState = RHI::ResourceState::Undefined;
         m_Framebuffer.reset();
         m_Pipeline.reset();
         m_RenderPass.reset();
@@ -108,7 +111,6 @@ namespace NorvesLib::Core::Rendering
         {
             handle = {};
         }
-        m_MaterialHandle = {};
         m_DepthHandle = {};
         for (const RHI::ITexture *&target : m_FramebufferTargets)
         {
@@ -135,7 +137,6 @@ namespace NorvesLib::Core::Rendering
         {
             handle = {};
         }
-        m_MaterialHandle = {};
         m_DepthHandle = {};
         builder.PreserveInsertionOrder();
 
@@ -152,7 +153,7 @@ namespace NorvesLib::Core::Rendering
 
         // 全部そろう構成だけで宣言し、深度は添付せず読み取る
         const Identity names[] = {RenderGraphResourceNames::GBufferAlbedo, RenderGraphResourceNames::GBufferNormal,
-                                  RenderGraphResourceNames::GBufferMaterial, RenderGraphResourceNames::GBufferDepth};
+                                  RenderGraphResourceNames::GBufferDepth};
         RGTextureHandle available;
         for (const Identity &name : names)
         {
@@ -171,13 +172,8 @@ namespace NorvesLib::Core::Rendering
                 m_ColorHandles[index] = handle.ToResourceHandle();
             }
         }
-        RGTextureHandle material;
         RGTextureHandle depth;
-        if (builder.TryReadTexture(names[2], material, RHI::ResourceState::ShaderResource))
-        {
-            m_MaterialHandle = material.ToResourceHandle();
-        }
-        if (builder.TryReadTexture(names[3], depth, RHI::ResourceState::ShaderResource))
+        if (builder.TryReadTexture(names[2], depth, RHI::ResourceState::ShaderResource))
         {
             m_DepthHandle = depth.ToResourceHandle();
         }
@@ -188,7 +184,7 @@ namespace NorvesLib::Core::Rendering
         const DecalScene *scene = context.SnapshotDecals;
         const CameraProxy *camera = context.GetActiveCamera();
         if (!scene || scene->IsEmpty() || !camera || !context.CommandList || !context.FrameResources ||
-            !m_ColorHandles[0].IsValid() || !m_ColorHandles[1].IsValid() || !m_MaterialHandle.IsValid() ||
+            !m_ColorHandles[0].IsValid() || !m_ColorHandles[1].IsValid() ||
             !m_DepthHandle.IsValid())
         {
             return;
@@ -200,12 +196,12 @@ namespace NorvesLib::Core::Rendering
         const CameraViewConstants cameraConstants =
             CameraViewConstants::BuildForDevice(*camera, context.GetActiveAspectRatio(), context.Device);
         RecordDecals(resources.GetTexture(m_ColorHandles[0]), resources.GetTexture(m_ColorHandles[1]),
-                     resources.GetTexture(m_MaterialHandle), resources.GetTexture(m_DepthHandle), *context.CommandList,
+                     resources.GetTexture(m_DepthHandle), *context.CommandList,
                      *context.FrameResources, *scene, cameraConstants);
     }
 
     bool DecalPass::RecordDecals(const RHI::TexturePtr &albedoTarget, const RHI::TexturePtr &normalTarget,
-                                 const RHI::TexturePtr &materialTexture, const RHI::TexturePtr &depthTexture,
+                                 const RHI::TexturePtr &depthTexture,
                                  RHI::ICommandList &commandList, FrameResourceLane &frameResources,
                                  const DecalScene &scene, const CameraViewConstants &cameraConstants)
     {
@@ -222,20 +218,20 @@ namespace NorvesLib::Core::Rendering
             }
             return true;
         }
-        if (!albedoTarget || !normalTarget || !materialTexture || !depthTexture ||
+        if (!albedoTarget || !normalTarget || !depthTexture ||
             scene.Decals->size() > (std::numeric_limits<uint32_t>::max)())
         {
             return false;
         }
         const uint32_t width = albedoTarget->GetWidth();
         const uint32_t height = albedoTarget->GetHeight();
-        const RHI::TexturePtr textures[] = {albedoTarget, normalTarget, materialTexture, depthTexture};
+        const RHI::TexturePtr textures[] = {albedoTarget, normalTarget, depthTexture};
         if (width == 0 || height == 0 || width > static_cast<uint32_t>((std::numeric_limits<int32_t>::max)()) ||
             height > static_cast<uint32_t>((std::numeric_limits<int32_t>::max)()))
         {
             return false;
         }
-        for (uint32_t i = 0; i < 4; ++i)
+        for (uint32_t i = 0; i < 3; ++i)
         {
             if (textures[i]->GetWidth() != width || textures[i]->GetHeight() != height)
             {
@@ -268,8 +264,15 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        commandList.TextureBarrier(normalTarget, RHI::ResourceState::RenderTarget, RHI::ResourceState::CopySource);
+        TransitionPassOwnedTexture(commandList, m_NormalCopy, m_NormalCopyState, RHI::ResourceState::CopyDest);
+        commandList.CopyTexture(normalTarget, m_NormalCopy, width, height);
+        commandList.TextureBarrier(normalTarget, RHI::ResourceState::CopySource, RHI::ResourceState::RenderTarget);
+        TransitionPassOwnedTexture(commandList, m_NormalCopy, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+        m_NormalCopyState = RHI::ResourceState::ShaderResource;
+
         descriptor.Set->BindConstantBuffer(0, constants.Buffer, constants.GetOffset32(), constants.GetSize32());
-        descriptor.Set->BindTexture(1, materialTexture);
+        descriptor.Set->BindTexture(1, m_NormalCopy);
         descriptor.Set->BindSampler(1, m_PointSampler);
         descriptor.Set->BindTexture(2, depthTexture);
         descriptor.Set->BindSampler(2, m_PointSampler);
@@ -300,6 +303,24 @@ namespace NorvesLib::Core::Rendering
 
     bool DecalPass::EnsureTargets(const RHI::TexturePtr (&colorTargets)[kColorTargetCount])
     {
+        const RHI::TexturePtr& normalTarget = colorTargets[1];
+        if (!m_NormalCopy || m_NormalCopy->GetWidth() != normalTarget->GetWidth() ||
+            m_NormalCopy->GetHeight() != normalTarget->GetHeight() || m_NormalCopy->GetFormat() != normalTarget->GetFormat())
+        {
+            RHI::TextureDesc copyDesc;
+            copyDesc.Width = normalTarget->GetWidth();
+            copyDesc.Height = normalTarget->GetHeight();
+            copyDesc.TextureFormat = normalTarget->GetFormat();
+            copyDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            copyDesc.DebugName = "Decal.NormalCopy";
+            m_NormalCopy = m_Device->CreateTexture(copyDesc);
+            m_NormalCopyState = RHI::ResourceState::Undefined;
+        }
+        if (!m_NormalCopy)
+        {
+            NORVES_LOG_ERROR("DecalPass", "DECAL_INIT_FAILED 法線のコピー先を作れません");
+            return false;
+        }
         bool sameTargets = m_RenderPass && m_Pipeline && m_Framebuffer;
         for (uint32_t index = 0; index < kColorTargetCount && sameTargets; ++index)
         {

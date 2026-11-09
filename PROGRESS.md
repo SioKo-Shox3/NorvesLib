@@ -10373,13 +10373,52 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G5-GR29-RHI-FORMATS): BC3・BC6H のクッカーへの接続は G5-GR88-BC6H-QUALITY。SceneColor を R11G11B10F にする軽量 HDR の切り替えはしていない（見た目が変わるため別の判断）。
 - Notes(G5-GR29-RHI-FORMATS): `GenerateMipmaps` の戻り値は void のまま、呼ぶ前に `IsFormatSupported(..., LinearMipGeneration)` で弾く契約にした。見た目の変わる変更は無い（既存の形式の値・既定の描画経路は不変）。
 - Notes(G5-GR29-RHI-FORMATS): 要起票: `TextureAssetRuntime.cpp`（:234 付近）は `bUploadSucceeded` を見ずにハンドルを返すため、全ミップのアップロードに失敗しても有効なハンドルが返りうる。
-- U1 既存の用途の焼き出しのバイト列を煙試験で固定する: 着地(直し 0 回)
-- U2 NVTEX に RGBA16F・RG16UNorm を足し、ローダと GPU の写しを通す: 着地(直し 1 回)
-- U3 クッカーが EXR・HDR を浮動小数で読み、--usage hdr で RGBA16F を焼く: 着地(直し 0 回)
-- U4 height16 の浮動小数の正規化・--require-16bit・rg16 を実装する: 着地(直し 1 回)
-- U5 CLI に --height-range・--require-16bit と新しい用途を通し、文書を直す: 着地(直し 1 回)
-- U6 合成の EXR の fixture と煙試験を足し、タスクの verify を通す: 着地(直し 0 回)
-- Done(G5-GR88-HDR-INPUT): `Tools/AssetCook/TextureCooker` が `.exr`（`NorvesThirdParty_TinyEXR` を `AssetCookTextureCooker` にリンク。単一パート・非 deep・等倍標本、R・G・B・A か Y を half/float/uint から float へ）と Radiance `.hdr`（`stbi_loadf_from_memory`）を浮動小数のまま読む。`--usage hdr` は RGBA16F（無圧縮・全ミップ・ミップは float の線形の平均、half へは最近接偶数丸め。NaN・Inf・絶対値 65504 超は失敗）を `nvtex.v0.2.rgba16f.linear` で書く。`--usage height16` は浮動小数の入力を `--height-range <min>,<max>` で `round((x-min)/(max-min)*65535)` に正規化し、範囲外・非有限の画素は座標と値つきで失敗（範囲なしの浮動小数・範囲つきの整数の入力も失敗）。`--require-16bit` は height16・rg16 の 8bit の入力を失敗にする（判定は `stbi_is_16_bit_from_memory`）。`--usage rg16` は R・G を 16bit で保つ R16G16（`nvtex.v0.2.rg16.linear`、整数の平均の全ミップ。色の入力の R・G、8bit は x*257、浮動小数は 0..1 の外で失敗）。NVTEX に画素形式 9=RGBA16F・10=RG16UNorm（v0.1 以降・Linear だけ）を足し、`MapCookedTextureFormat` が `R16G16B16A16_FLOAT`・`R16G16_UNORM` へ写す。CLI は要求・旧オプション・検査の両方に新しい欄を通し、`Docs/Architecture/AssetCookWorkflow.md` に用途・形式・オプションを書いた。
-- 証拠(G5-GR88-HDR-INPUT): `.harness/runs/20261109-214152/G5-GR88-HDR-INPUT-final-verify.txt`（verify のビルド行の終了コード 0、ctest 5/5 合格: AssetCookTextureSmoke・AssetCookBlockCompressSmoke・CookedTextureTest・CookedTextureUploadTest・TextureResourcesTextureAssetTest）。煙試験は合成の `Tools/AssetCook/Fixtures/Texture/hdr_gradient.exr`（16x8 RGBA32F、R=x*0.5・G=y*0.25・B=0.125+x*y/128・A=1）で hdr の mip0 と mip1 の平均・.hdr の RGBE の値・height16 の整数の完全一致・範囲外と範囲なしの失敗・8bit と require-16bit の失敗・rg16 の 16bit の完全一致を確かめ、height16 の期待式を壊すと落ちることも確かめた。既存の 5 用途（と 8bit の height16）の NVTEX 全体の FNV-1a64 を変更前のクッカーの値で固定し（`RunExistingUsageHashes`）、全単位の後も一致した（cooked_hash 不変）。
-- Next(G5-GR88-HDR-INPUT): BC6H への圧縮は G5-GR88-BC6H-QUALITY。新しい用途を使う資産・材質の経路は無い（`Scripts/CookAssets.ps1` の asset-set は hdr・rg16・新しいオプションを渡さない）。見た目の変わる変更は無い。
-- Notes(G5-GR88-HDR-INPUT): 既存の `CookedTextureTest` は v0.1 の未知の形式の例に値 9 を使っていたので、未使用の 11 に替えた。CLI の `--height-range` は float で保持する（正規化は double で行う）。EXR のサブサンプリングされたチャンネル・複数パート・deep は失敗にした。BC7 の決定性は ThreadCount=1 でだけ確かめた。
+
+- Done(G9-GR87-CLIP-OPTIMIZER): 統合ブランチ feature/scene-launcher を取り込み、Tools/AssetCook/SingleAssetCook.cpp のインクルードの衝突を両側の和で解いた。
+- 確かめ(G9-GR87-CLIP-OPTIMIZER): 取り込み後に `cmake --build build --config Debug --target CookedMeshTest AssetCook SkeletalAnimationSamplingTest -- /m:1` は終了コード 0。ctest は ClipOptimizerTest・CookedSkeletalAssetTest・CookedClipBankV1Test・RigSplitCookTest・SkeletalBvhCookBridgeTest・SkeletalAnimationSamplingTest の 6/6 Passed。
+- U1 ClipOptimizer の型とチャンネル単位の削減・報告の JSON: 着地(直し 0 回)
+- U2 同じ評価の経路での大域検証と許容のやり直し: 着地(直し 1 回)
+- U3 ClipOptimizerTest の (a)〜(e): 着地(直し 0 回)
+- U4 CLI の引数と旧形式の cook への差し込み: 着地(直し 2 回)
+- U5 --rig-split の v1 ClipBank の cook への差し込み: 着地(直し 0 回)
+- U7 --retarget-clip と --bvh の cook への差し込み: 着地(直し 1 回)
+- U6 最適化を切った経路のバイト一致の試験・文書・タスクの verify: 着地(直し 0 回)
+## 2026-11-09 G9-GR87-CLIP-OPTIMIZER（run 20261109-201054 の反復 1、完了）
+- Done: `ClipOptimizer`（`Library/Core/Private/Animation/ClipOptimizer.h/.cpp`）で、四元数の半球の連続化・定数チャンネルの 1 キー化・作者 rest と等しいチャンネルの削除・関節基準の回転の許容つきの RDP 型の削減・元のキー時刻と 1/3・1/2・2/3 の時刻での関節位置と頂点位置の大域検証（超えたら許容を 0.7 倍して最大 4 回やり直し）・報告の JSON を作った。平滑化はしない
+- Done: AssetCook に `--clip-optimize`・`--clip-max-vertex-error-m`（0.002）・`--clip-max-joint-error-m`（0.001）・`--clip-max-rotation-error-deg`（0.1）・`--clip-report` を足し、旧形式の glTF→NVSKEL の cook（decode と BVH の適用の後）、`--rig-split`・`--retarget-clip` の `BuildClipBankV1` の前（`replacementClips`）、`--bvh` の役割ファイルの cook に差した。上限を超えたら 0 でない終了コードと理由で失敗する。有効なときだけ設定を SourceHash・キャッシュの指紋に混ぜる
+- Done: `ClipOptimizerTest`（`CookedMeshTest` の束）で (a)〜(f) を確かめる。(f) は最適化を切った旧形式と v1 の cook のバイト列と SourceHash が段を通さない cook と一致すること。手の確かめで `--rig-split`・`--retarget-clip`・`--bvh` の最適化なしの出力が変更前の HEAD と SHA-256 で一致した
+- 証拠: `.harness/runs/20261109-201054/verify-G9-GR87-CLIP-OPTIMIZER-U6.txt`（Debug の CookedMeshTest・AssetCook・SkeletalAnimationSamplingTest のビルド exit 0、ClipOptimizerTest 単独 1/1、関連 6 本 6/6 Passed）
+- Next: なし（アプリを起動する確かめは無い）。許容の既定値は仮で、実 BVH（V01full）の前後を見て作者が決める
+- Notes: v1 の評価（`SkeletalPoseBuilder`）は姿勢を `AuthorRestLocal`（無ければ bind から求めた既定ローカル）から始めるので、作者 rest と等しいチャンネルは消してよいと確かめた（notes の UNCERTAIN の解消）
+- Notes: キャッシュの指紋に設定を通すため、paths の外の `Tools/AssetCook/CookDependencySnapshot.cpp`・`SkeletalRoleFileInput.cpp`・`RigSingleCook.cpp`・`SkeletalRoleProfileCook.h/.cpp`・`RigSplitFileCook.cpp` も配管だけ変えた
+- Notes: 要起票: 単体の `--format nvskel.v1.clips` の rig cook（`RigClipBankCook.cpp`）と、管理付きキャッシュの旧形式の通常の model cook はクリップ最適化を受け付けない（拒否する）。使う場面が出たら差す
+- Notes: 今回の小さい入力ではどれも上限超えの失敗が起きず、cook の失敗の経路（0 でない終了コード）は ClipOptimizer の単体の検査でしか確かめていない
+
+- U1 契約のヘッダと GLSL の符号化ファイルを足す: 着地(直し 0 回)
+- U3 GBuffer の読み手（lighting.frag・ssr.frag ほか）を復号の関数へ通す: 着地(直し 0 回)
+- U4 デカールが草の印を法線のコピーから読む: 着地(直し 0 回)
+- U2 GBuffer の書き手（ラスタの 3 本と可視バッファの解決）を符号化の関数へ通す: 着地(直し 1 回)
+- U5 GPU の割り当て表の文書を書く: 着地(直し 1 回)
+- U6 ShadingModelContractTest を足し、タスクの verify を通す: 着地(直し 0 回)
+
+## G5-GR26-GBUFFER-CONTRACT（2026-11-09）
+
+- Done: GBuffer の空きチャネルの契約を `Library/Core/Public/Rendering/ShadingModelIds.h`（`GBufferContract`）と `Assets/Shaders/Common/GBufferEncoding.glsl` に置いた。Normal.w = `float((受け手の印 << 4) | シェーディングモデルの ID)`（ID: DefaultLit=0・Fur=1・Eye=2・PaleFlat=3・4〜15 は予約。印: 地形の受け手 1・影を起伏に詰める地形 2（地形の印と一緒に立てる）・草の株 4・鏡面の無い材質 8）、Material.a = P0、Emissive.a = P1（書き手は今 0）。書き手（gbuffer.frag・megageometry.frag・foliage.frag・Common/VisibilityResolve.glsl）と読み手（lighting.frag・RTGI/DiffuseIndirect.comp・ssr.frag・decal.frag）を全部その関数に通し、Normal.w の 1・2 と Material.a の 1・0.25 の場当たりの意味を印へ移した。デカールは Normal を色の添付として書くので、描く前に Normal をパスの持つテクスチャへ写して印を読む（デカールが 1 個以上のフレームだけ。1920×1080 で 16.6 MB の写し。GBuffer の Normal にコピー元の使い道を足した）。`Docs/Architecture/GpuLayoutRegistry.md` に GBuffer の各チャネル・GBuffer と MegaGeometry の UBO・`GPUSceneInstanceData`・lighting.frag の binding の表と、以後は表に登録してから使う約束を書いた。試験 `ShadingModelContractTest`（MaterialResourcesTest の束）がヘッダと GLSL の定数表の一致と、Assets/Shaders の中の GBuffer の Normal.w・Material.a・Emissive.a の直の読み書きが無いことを走査で確かめる（167 ファイル、代入 13・imageStore 3・標本 23 を検査。foliage.frag にわざと入れた違反を検出して落ちることを確かめた）。
+- 証拠: `.harness/runs/20261109-201100/verify-G5-GR26-GBUFFER-CONTRACT.txt`（verify のビルド `MaterialResourcesTest DecalGBufferVulkanTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game` の終了コード 0、ctest の ShadingModelContractTest・MaterialResourcesTest・GBufferMaterialDescriptorCacheTest・DecalGBufferVulkanTest・VisibilityResolveVulkanTest の 5/5 合格）。基準画像の試験 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない（DefaultLit・P0=P1=0 の書き込みと印の判定は導入前と同じ結果になる作り）。
+- Next: 値の入口は G5-GR26-MATERIAL-PARAMS。地形の受け手・影を詰めた地形・草の株の接触影の除外・デカールが草に描かないことは、人がゲームを動かして荒野（wasteland）の地形と草の株の近く（G5-GR27-MATERIAL-SCENES-CHECK の視点）で見る。
+- Notes: VisibilityResolveVulkanTest の「直接 dispatch の MegaGeometry の材質の粗さ・AO」の検査は変更前のシェーダーでも落ちていた（試験の準備が MegaGeometry の材質の定数 AO（`TexturesD[2]`）を 0 のままにしていた。4da8031d の統合から）。実際の材質表（VisibilityMaterialTable.cpp）と同じ形で AO=1 を入れて直した。検査の期待値は変えていない。
+- Notes: このリポジトリのシェーダーは BOM 付きで、glslc で直に確かめるときは BOM を除いた写しをコンパイルする（実行時は ShaderManager が BOM を除き include を展開する）。
+- 要起票: `Common/PbrMaterialEvaluation.glsl` の GBuffer 用の `SamplePbrMaterialTextures(albedo, normal, material, uv)`（vec4 のまま GBuffer を読む）は使い手が無くなったので消す。
+- 要起票: `megageometry.vert` の `emissiveColor` のコメントが色・強度と書いているが、C++ と megageometry.frag は色度・輝度（nits）（GpuLayoutRegistry.md の 6. に記載）。
+
+- U1 拡張の段・登録の表・守りの包み（RenderExtension）と View の後段パスの遅延初期化: 着地(直し 0 回)
+- U2 SceneView が登録の表を持ち、組み直しで入れ直す。DoF・動きぼけを SetupDeferredPipeline へ移す: 着地(直し 0 回)
+- U3 RenderWorld と IRenderModule の窓口: 着地(直し 0 回)
+- U5 RenderingFlow.md に段と錨・スレッドの約束・名前の規約を書く: 着地(直し 0 回)
+- U4 RenderExtensionRegistryTest を足し、タスクの verify を通す: 着地(直し 0 回)
+- Done(G5-GR25-STAGE-REGISTRY): `Rendering/RenderExtension/RenderExtension.h` に `RenderExtensionStage`（GBuffer・AfterLighting・Transparent・PostTemporalAA・PostTonemap・ShadowCaster）・`RenderExtensionDesc{Name, Stage, Order}`・関数ポインタ + context のファクトリ・`RenderExtensionRegistry` を置き、SceneView が所有する。段は錨のパス名で解決する（GBuffer = FoliagePass の後、AfterLighting = LightingPass の直後、Transparent = ForwardPass の後・DistortionPass の前、PostTemporalAA = TemporalAAPass の後、PostTonemap = VignettePass の後）。登録・解除・有効の切り替えは GameThread から mutex で守った保留の列に積み、RenderThread が `SceneView::Render` の先頭の `ApplyPending` で反映する（最初のフレームの前は即時）。`SetupDeferredPipeline` の末尾で `ReinsertAll` が入れ直し、DepthOfFieldPass・MotionBlurPass は RenderingCoordinator から `SetupDeferredPipeline` の中（検証用のパスの後・後段スタックの前。移す前と同じ並び）へ移した。拡張は守りの包みで包み、Initialize の失敗・各段の例外はそのパスだけを無効にしてログを 1 回出す。`View::Render` は後段スタックに後から入ったネイティブのパスも初期化する。窓口は `RenderWorld::RegisterRenderExtension`・`UnregisterRenderExtension`・`SetRenderExtensionEnabled` と `IRenderModule::RegisterRenderExtensions`（モジュールのインストールの直後に 1 回）。パストレーサーの経路では入れずにログを 1 回。文書は `Docs/Architecture/RenderingFlow.md` の「描画の拡張の段（GR25）」。
+- 証拠(G5-GR25-STAGE-REGISTRY): `.harness/runs/20261109-201057/G5-GR25-STAGE-REGISTRY-final-verify.txt`（verify のビルドの行 SceneViewProxyLookupTest・RenderingGoldenImageTest・Game の Debug ビルドが成功、ctest は RenderExtensionRegistryTest・SceneViewProxyLookupTest・SceneViewProxyReconcileTest の 3/3 合格）。golden 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない。拡張は 0 件なので組み込みのパスの並びは変わらない。
+- Next(G5-GR25-STAGE-REGISTRY): 拡張のデータ枠と時間（G5-GR25-EXTENSION-DATA）、影を落とす段（G5-GR25-SHADOW-CASTER-STAGE。今は ShadowCaster の登録を拒否する）、起動しての確かめ（G5-GR25-SCENES-CHECK）。
+- Notes(G5-GR25-STAGE-REGISTRY): 人が見るときの見どころ: 拡張 0 件なので全シーンの見た目は変わらない見込み。被写界深度・動きぼけを組み立ての中へ移したので、ピント距離かシャッター時間を与えたシーン（rendering3dtest など）でそれらが今までどおり効くこと。名前が `Ext.` で始まらない登録は拒否する（組み込みのパスと名前で取り違えないため）。型の確かめは登録の時にファクトリを 1 回呼び、その実体は初期化せず捨てるので、ファクトリは何度呼ばれてもよい作りにする。パストレーサーの経路では、組んだ時点で登録があればそこで、無ければ後から最初に登録された時点で、入らないことの警告を 1 回出す。初期化の窓（即時の反映）は `OnPostInitialize` の後・走り出す前に `CloseInitializationWindow` で閉じる。
+- U6 パストレーサーの経路を組んだ後の登録でも警告を 1 回出し、初期化の窓を走り出す前に閉じる: 着地(直し 0 回)
+- Done(G5-GR25-STAGE-REGISTRY 差し戻しの直し): パストレーサーの経路を組んだ後に初めて登録された拡張でも警告を 1 回出すようにし、初期化の窓を `ApplicationProcessor` の `SetRunning(true)` の前に閉じる口（`RenderExtensionRegistry::CloseInitializationWindow`）を足した。Debug のビルド（SceneViewProxyLookupTest・RenderingGoldenImageTest・Game）と RenderExtensionRegistryTest・SceneViewProxyLookupTest・SceneViewProxyReconcileTest の 3/3 合格を確かめた。golden 4 本は回さない決まり。

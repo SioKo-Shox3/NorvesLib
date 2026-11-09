@@ -3,6 +3,7 @@
 // 草・低木の株を GBuffer へ書く（FoliagePass）。帯は両面を描くので、裏を見ている画素は法線を帯の面で鏡に映す
 
 #include "Common/FoliageData.glsl"
+#include "Common/GBufferEncoding.glsl"
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -41,11 +42,11 @@ void main()
     }
 
     outAlbedo = vec4(fragAlbedo, 1.0);
-    // a は地形の印（草・低木は 0）
-    outNormal = vec4(normal, 0.0);
-    // 金属度 0・粗さ・株の中の遮蔽・草・低木の株の印（a = 0.25。照明は株の受け手に接触影を掛けない。lighting.frag）
-    outMaterial = vec4(0.0, foliage.stemColor.a, fragOcclusion, 0.25);
-    outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
+    // 草・低木の株の受け手には接触影を掛けない。
+    outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
+    // 金属度 0・粗さ・株の中の遮蔽と材質値 P0 を書く。
+    outMaterial = GBufferEncodeMaterial(vec3(0.0, foliage.stemColor.a, fragOcclusion), 0.0);
+    outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
 
     outVelocity = vec2(0.0);
     if (foliage.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6 && abs(fragPreviousClip.w) > 1e-6)

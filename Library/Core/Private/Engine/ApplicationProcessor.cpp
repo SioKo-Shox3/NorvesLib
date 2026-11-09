@@ -1893,6 +1893,17 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             GApplicationLifecycleState.bModules = true;
+
+            if (auto* registry = GEngine->GetRenderWorld().GetRenderExtensionRegistry())
+            {
+                for (Module::IRenderModule* renderModule : Module::GetModuleRegistry().GetRenderModules())
+                {
+                    if (renderModule)
+                    {
+                        renderModule->RegisterRenderExtensions(*registry);
+                    }
+                }
+            }
         }
 
         // OnPostInitialize呼び出し
@@ -1910,6 +1921,11 @@ namespace NorvesLib::Core::Engine
         }
         // Handler/モジュールの初期化後に購読し、通知はmessage処理外へ遅延する。
         ConnectInputWindow(GEngine->GetMainWindowShared());
+        // ゲームスレッドが走り出す前に初期化時の即時反映を終了する。
+        if (auto* registry = GEngine->GetRenderWorld().GetRenderExtensionRegistry())
+        {
+            registry->CloseInitializationWindow();
+        }
         GEngine->SetRunning(true);
         GApplicationLifecycleState.bRunning = true;
         transaction.Commit();

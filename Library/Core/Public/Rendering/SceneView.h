@@ -11,6 +11,7 @@
 #include "SwRasterMode.h"
 #include "ShadowMethod.h"
 #include "Rendering/AutoExposure.h"
+#include "Rendering/RenderExtension/RenderExtension.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
@@ -59,12 +60,27 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief デフォルトコンストラクタ
          */
-        SceneView() = default;
+        SceneView()
+            : m_RenderExtensions(this)
+        {
+        }
 
         /**
          * @brief デストラクタ
          */
         virtual ~SceneView() = default;
+
+        /** @brief 拡張の登録表。Register/Unregister/SetEnabled は GameThread から、反映は RenderThread の Render の先頭。 */
+        RenderExtensionRegistry& GetRenderExtensionRegistry()
+        {
+            return m_RenderExtensions;
+        }
+
+        /** @brief 拡張の登録表の読み取り。Register/Unregister/SetEnabled は GameThread から、反映は RenderThread の Render の先頭。 */
+        const RenderExtensionRegistry& GetRenderExtensionRegistry() const
+        {
+            return m_RenderExtensions;
+        }
 
         // ========================================
         // ライフサイクル
@@ -565,6 +581,8 @@ namespace NorvesLib::Core::Rendering
         void SetTemporalAAApplied(bool bApplied, uint32_t viewportId);
 
     private:
+        RenderExtensionRegistry m_RenderExtensions;
+
         // MeshProxy（WorldからSceneViewに直接渡される）
         // MeshProxyの索引はComponentIdで管理し、ObjectIdはソートや所有元の文脈に使います。
         Container::VariableArray<MeshProxy> m_MeshProxies;
