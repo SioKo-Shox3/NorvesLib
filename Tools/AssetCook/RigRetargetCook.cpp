@@ -1,4 +1,5 @@
 ﻿#include "RigRetargetCook.h"
+#include "SkeletalRoleFileCook.h"
 #include "RigSingleCook.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
@@ -93,9 +94,11 @@ namespace NorvesLib::Tools::AssetCook::Detail
             selection.bAllowEmptyAnimations = bTarget;
             S::RigGltfImportCapture capture;
             S::RigV1Report report;
+            // 最適化では頂点誤差を測るため、先のリグは逆バインド行列と頂点も読み込む。
             const auto* chosen =
-                geometry.Settings.Fit == I::FitAxis::None && (geometry.Settings.Origin == I::OriginMode::Keep ||
-                                                              geometry.Settings.Origin == I::OriginMode::Custom)
+                (!bTarget || !request.ClipOptimize.bEnabled) && geometry.Settings.Fit == I::FitAxis::None &&
+                        (geometry.Settings.Origin == I::OriginMode::Keep ||
+                         geometry.Settings.Origin == I::OriginMode::Custom)
                     ? &selection
                     : nullptr;
             if (!S::DecodeRigAuthoringWithProfileNativePath(bytes, path, S::RigImportProfile::StaticRootFrame256, rig,
@@ -121,6 +124,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                              const CookDependencySnapshot& dependencies, C::VariableArray<uint8_t>& payload,
                              C::AnsiString& error)
     {
+        if (!GuardClipReportRequest(request, dependencies, error))
+        {
+            return false;
+        }
         C::VariableArray<uint8_t> targetBytes, profileBytes;
         if (!Matches(dependencies, request.InputPath, CookDependencyRole::Source, source) ||
             !Read(request.RetargetSkeletonPath, S::RigV1Limits{}.MaxSourceBytes, targetBytes) ||
@@ -302,6 +309,20 @@ namespace NorvesLib::Tools::AssetCook::Detail
         {
             analysis.SourceFps = sourceFps;
             analysis.AuthoredFps = sourceFps;
+        }
+        if (request.ClipOptimize.bEnabled)
+        {
+            const auto* data = target.GetData();
+            if (!data)
+            {
+                return Fail(error, "リターゲット先のリグを取得できません");
+            }
+            const A::ClipOptimizeRig rig{data->Geometry.Joints, data->LocalRest, data->Geometry.Vertices};
+            std::string optimizeError;
+            if (!RunClipOptimizeStage(request.ClipOptimize, rig, clips, optimizeError))
+            {
+                return Fail(error, optimizeError.c_str());
+            }
         }
         if (!S::BuildClipBankV1({&target, 1}, bank, report, limits, S::RigImportProfile::StaticRootFrame256, &analysis,
                                 clips) ||

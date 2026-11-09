@@ -275,6 +275,9 @@ namespace NorvesLib::RHI
         /** @brief DrawIndirectFirstInstance（Vulkanコア機能）が論理デバイスで有効か */
         bool bDrawIndirectFirstInstance = false;
 
+        /** @brief multiDrawIndirect（Vulkan コア機能。drawCount > 1 の間接描画）が論理デバイスで有効か */
+        bool bMultiDrawIndirect = false;
+
         /** @brief バッファのdevice address機能が論理デバイスで有効か */
         bool bBufferDeviceAddress = false;
 

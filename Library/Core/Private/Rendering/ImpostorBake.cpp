@@ -1,7 +1,9 @@
 ﻿#include "Rendering/ImpostorBake.h"
 
+#include "Rendering/GpuResourceStore.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
+#include "RHI/FormatInfo.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
@@ -19,28 +21,20 @@ namespace NorvesLib::Core::Rendering
 
         bool IsSupportedImpostorAtlasColorFormat(TextureCreateInfo::Format format)
         {
-            switch (format)
+            const RHI::FormatInfo& info = RHI::GetFormatInfo(ToRHITextureFormat(format));
+            if (info.bDepth || info.bCompressed || info.bUnsignedInteger)
             {
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-            case TextureCreateInfo::Format::R8_UNORM:
-            case TextureCreateInfo::Format::RG8_UNORM:
-                return true;
-            case TextureCreateInfo::Format::D24_S8:
-            case TextureCreateInfo::Format::D32_FLOAT:
-            case TextureCreateInfo::Format::R16_UNORM:
-            case TextureCreateInfo::Format::BC1_UNORM:
-            case TextureCreateInfo::Format::BC1_SRGB:
-            case TextureCreateInfo::Format::BC4_UNORM:
-            case TextureCreateInfo::Format::BC5_UNORM:
-            case TextureCreateInfo::Format::BC7_UNORM:
-            case TextureCreateInfo::Format::BC7_SRGB:
                 return false;
             }
 
-            return false;
+            // R16_UNORM・R16G16_UNORM・R10G10B10A2_UNORM・R11G11B10_FLOAT は、
+            // 描画先としての可否が装置で未確認のため許可しない。
+            return format == TextureCreateInfo::Format::RGBA8_UNORM ||
+                   format == TextureCreateInfo::Format::RGBA8_SRGB ||
+                   format == TextureCreateInfo::Format::RGBA16_FLOAT ||
+                   format == TextureCreateInfo::Format::RGBA32_FLOAT ||
+                   format == TextureCreateInfo::Format::R8_UNORM ||
+                   format == TextureCreateInfo::Format::RG8_UNORM;
         }
     } // namespace
 

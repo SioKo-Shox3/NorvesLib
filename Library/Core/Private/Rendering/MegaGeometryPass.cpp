@@ -4964,7 +4964,7 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
-        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
+        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに間接描画を発行する）
         auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
                                const RHI::FramebufferPtr &framebuffer,
                                uint32_t passIndex) -> void
@@ -5005,21 +5005,31 @@ namespace NorvesLib::Core::Rendering
                 // IndirectDraw発行
                 // DrawIndirectCount対応の場合はGPU側カウントを参照し、
                 // 実際に可視なクラスタ数だけドローコールを発行する。
-                // 非対応の場合は区間のコマンドの最大数をそのまま使用（積まれなかった分は instanceCount=0 で空振り）。
+                // 非対応の場合は区間の容量まで、多重描画に対応していればまとめて、非対応なら1件ずつ発行する。
+                // 積まれなかったコマンドは instanceCount=0 で空振りする。
                 const uint64_t commandOffsetBytes =
                     (static_cast<uint64_t>(passIndex) * commandsPerPass + section.CommandBase) * IndirectCommandBytes;
-            if (caps.bDrawIndirectCount)
-            {
+                if (caps.bDrawIndirectCount)
+                {
                     cmdList->DrawIndexedIndirectCount(m_IndirectDrawBuffer, commandOffsetBytes, m_DrawCountBuffer,
                                                       static_cast<uint64_t>(passIndex * sectionCount + sectionIndex) *
                                                           sizeof(uint32_t),
                                                       section.Capacity, IndirectCommandBytes);
-            }
-            else
-            {
+                }
+                else if (caps.bMultiDrawIndirect)
+                {
                     cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer, commandOffsetBytes, section.Capacity,
-                        IndirectCommandBytes);
-            }
+                                                 IndirectCommandBytes);
+                }
+                else
+                {
+                    for (uint32_t i = 0; i < section.Capacity; ++i)
+                    {
+                        cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer,
+                                                     commandOffsetBytes + static_cast<uint64_t>(i) * IndirectCommandBytes,
+                                                     1, IndirectCommandBytes);
+                    }
+                }
         }
 
             cmdList->EndRenderPass();

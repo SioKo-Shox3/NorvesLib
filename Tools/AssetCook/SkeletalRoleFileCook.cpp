@@ -161,6 +161,10 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             const auto& r = plan.Context.Request;
+            if (!Detail::GuardClipReportRequest(r, plan.Context.Dependencies, error))
+            {
+                return false;
+            }
             C::VariableArray<uint8_t> source;
             std::string legacyError;
             if (!ReadSkeletalBinaryFile(r.InputPath, source, legacyError))
@@ -187,7 +191,8 @@ namespace NorvesLib::Tools::AssetCook
             settings.bRequired = r.bRequireSidecar;
             SkeletalRoleFileCookResult candidate;
             if (!CookGltfWithRoleProfileToNvskelNativePath(source.data(), source.size(), r.Format, r.InputPath, typed,
-                                                           candidate.Value, error, &settings, &r.SkeletalDecode))
+                                                           candidate.Value, error, &settings, &r.SkeletalDecode,
+                                                           &r.ClipOptimize))
             {
                 return false;
             }
