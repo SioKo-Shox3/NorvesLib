@@ -10373,3 +10373,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G5-GR29-RHI-FORMATS): BC3・BC6H のクッカーへの接続は G5-GR88-BC6H-QUALITY。SceneColor を R11G11B10F にする軽量 HDR の切り替えはしていない（見た目が変わるため別の判断）。
 - Notes(G5-GR29-RHI-FORMATS): `GenerateMipmaps` の戻り値は void のまま、呼ぶ前に `IsFormatSupported(..., LinearMipGeneration)` で弾く契約にした。見た目の変わる変更は無い（既存の形式の値・既定の描画経路は不変）。
 - Notes(G5-GR29-RHI-FORMATS): 要起票: `TextureAssetRuntime.cpp`（:234 付近）は `bUploadSucceeded` を見ずにハンドルを返すため、全ミップのアップロードに失敗しても有効なハンドルが返りうる。
+- U1 既存の用途の焼き出しのバイト列を煙試験で固定する: 着地(直し 0 回)

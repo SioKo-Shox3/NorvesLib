@@ -501,6 +501,83 @@ namespace
         }
     }
 
+    void RunExistingUsageHashes()
+    {
+        constexpr uint32_t width = 23;
+        constexpr uint32_t height = 19;
+        ByteArray colorSamples;
+        ByteArray gray8Samples;
+        NorvesLib::Core::Container::VariableArray<uint16_t> gray16Samples;
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                colorSamples.push_back(static_cast<uint8_t>((x * 37u + y * 11u + 3u) & 255u));
+                colorSamples.push_back(static_cast<uint8_t>((x * 7u + y * 53u + 19u) & 255u));
+                colorSamples.push_back(static_cast<uint8_t>((x * 29u + y * 31u + 101u) & 255u));
+                gray8Samples.push_back(static_cast<uint8_t>((x * 23u + y * 47u + x * y * 3u) & 255u));
+                gray16Samples.push_back(static_cast<uint16_t>((x * 3329u + y * 577u + (x ^ y) * 191u + 1234u) & 0xffffu));
+            }
+        }
+        const ByteArray color = MakePnm('6', width, height, 255, colorSamples);
+        const ByteArray gray8 = MakePnm('5', width, height, 255, gray8Samples);
+        const ByteArray gray16 = MakeGray16Png(width, height, gray16Samples);
+
+        struct UsageHashCase
+        {
+            TextureUsage Usage;
+            const ByteArray *Image;
+            const char *Name;
+            uint64_t ExpectedHash;
+        };
+        // この値は GR88 の前のクッカーの出力。既存の用途の出力を変える変更は意図して値を更新する。
+        const UsageHashCase cases[] = {
+            {TextureUsage::Albedo, &color, "albedo", 0x6798b7c35c5224bbull},
+            {TextureUsage::Normal, &color, "normal", 0xa6e067ba65739381ull},
+            {TextureUsage::Orm, &color, "orm", 0x3497f3dfe32eb49bull},
+            {TextureUsage::Single, &gray8, "single", 0x7252efccc0abcfceull},
+            {TextureUsage::Height16, &gray16, "height16", 0x391507ca5b3f8e13ull},
+            {TextureUsage::Height16, &gray8, "height16_8bit", 0xeb0494cf08c28bcaull},
+        };
+
+        for (const UsageHashCase &test : cases)
+        {
+            TextureCookResult result;
+            CookedTextureParseResult parsed;
+            if (!Cook(test.Usage, Source(*test.Image, test.Name), OrmSourceImages{}, result, parsed))
+            {
+                continue;
+            }
+
+            if (test.Usage == TextureUsage::Albedo)
+            {
+                TextureCookResult repeated;
+                CookedTextureParseResult repeatedParsed;
+                if (!Cook(test.Usage, Source(*test.Image, test.Name), OrmSourceImages{}, repeated, repeatedParsed))
+                {
+                    continue;
+                }
+                if (result.NvtexBytes.size() != repeated.NvtexBytes.size() ||
+                    std::memcmp(result.NvtexBytes.data(), repeated.NvtexBytes.data(), result.NvtexBytes.size()) != 0)
+                {
+                    Check(false, "BC7 の再クック結果が一致しない: usage=albedo");
+                    return;
+                }
+                std::printf("TEXTURE_USAGE_SMOKE BC7 の再クック結果が一致: usage=albedo bytes=%zu\n",
+                            result.NvtexBytes.size());
+            }
+
+            const uint64_t actual = NorvesLib::Core::Asset::ComputeCookedTexturePayloadHash(
+                result.NvtexBytes.data(), result.NvtexBytes.size());
+            if (actual != test.ExpectedHash)
+            {
+                std::printf("TEXTURE_USAGE_SMOKE_FAIL 既存の用途の出力が変わった: usage=%s actual=0x%016llx\n",
+                            test.Name, static_cast<unsigned long long>(actual));
+                ++g_failures;
+            }
+        }
+    }
+
     void RunInvalidUsage()
     {
         TextureUsage usage = TextureUsage::Albedo;
@@ -526,6 +603,7 @@ int main()
     RunHeight16Tiles();
     RunSingleAndAlbedo();
     RunInvalidUsage();
+    RunExistingUsageHashes();
 
     if (g_failures != 0)
     {
