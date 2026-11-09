@@ -10566,3 +10566,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: TAA のリアクティブの入力 `Scene.Reactive`（R8_UNORM）、半透明の材質の「リアクティブを書く」の印、拡張のパスの書き手の手助け、`RenderingTemporalAAReactiveVulkanTest`。統合ブランチを取り込み、`RenderingHdrSceneCaptureTest.cpp` のシナリオの分岐をシェーディングモデルのシナリオと並べて解いた（リアクティブのシナリオはシェーディングモデルのシナリオとも併用不可）。
 - 検証: 取り込み後の verify のビルド EXIT=0、ctest（Golden を外す決まりで 3 本）全通過。
 - Notes: 撮影・計測の確かめは回さない決まり。人が見るときの見どころは、TAA を有効にしたシーンで TAA の前に描く半透明（リアクティブの印を付けた材質）が動いた後の残像。
+- U1 TAA がリアクティブを読む(資源名・定数・binding 5・履歴の A への持ち越し): 着地(直し 2 回)
+- U2 拡張のパスが Scene.Reactive へ書く手助けと文書: 着地(直し 0 回)
+- U3 ForwardPass の半透明の材質に「リアクティブを書く」の印: 着地(直し 0 回)
+- U5 GPU の試験 RenderingTemporalAAReactiveVulkanTest を作り直す(U4 の作業ツリーが別タスクに使い回されて変更が消えたため。タスクの verify を含む): 着地(直し 0 回)
+- Done(G5-GR30-REACTIVE): TAA にリアクティブの入力 `Scene.Reactive`(R8_UNORM)を足した。TemporalAAPass は有れば読み、無ければ 1x1 のゼロを結ぶ。temporal_aa.frag(binding 5)はリアクティブ(今と、R8 の履歴で減衰させて持ち越した前の大きい方)で現在の色の割合を 1 へ寄せ、今のリアクティブで分散の箱の半幅を広げる(係数 `TemporalAAReactiveClipWiden = 1.0`・`TemporalAAReactiveHistoryDecay = 0.9`、仮)。書き手は 2 つ: 半透明の材質の印 `bWritesReactive`(既定 false。印のある描画だけを ForwardPass が同じブレンドで Scene.Reactive へ描き直す)と、拡張のパス向けの `ReactiveTargetBinder`(RenderExtensionHelpers)。使いどころ(TAA の前に描く半透明だけ。雨・粒子は PostTemporalAA 段で合成)は RenderingFlow.md に書いた。
+- 証拠(G5-GR30-REACTIVE): `.harness/runs/20261110-060227/G5-GR30-REACTIVE-final-verify.txt`(verify のビルドの行 RenderingHdrSceneCaptureTest・RenderingVelocityVulkanTest・CameraViewConstantsTest・RenderingGoldenImageTest・Game の Debug ビルドが終了コード 0。ctest は RenderingTemporalAAReactiveVulkanTest・TemporalAAJitterTest・RenderingVelocityMoveThenStopVulkanTest の 3/3 合格)。新しい試験の値: 板が去った後にピークの 5% を超えるフレームは、リアクティブ無し 23(ピーク 0.866)・有り 2(ピーク 0.874)。書き手無しとゼロの書き手の TAA の出力は 68 フレームの全画素で RGB がビット一致(違う画素 0)。golden 4 本は基準画像の比較を回さない決まりで verify の ctest から外した。
+- 人が見るときの見どころ(G5-GR30-REACTIVE): 今のシーンに `bWritesReactive` を立てた材質は無いので、既定の見た目は変わらない。印を立てた半透明が TAA を有効にしたシーンで動くとき、通り過ぎた後の尾が残らないかを見る。
+- Next(G5-GR30-REACTIVE): なし(リアクティブの係数は仮。使う材質が出たときに見て決める)。
+- 要起票: 屋内の基準画像の試験 `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenIndoorGBufferFallbackVulkanTest` が task/G5-GR30-REACTIVE の 55a940ff の上で落ちた(mean_flip 0.0000137 > 上限 0.000001、差のある画素 10・raw 最大 1、最大の座標 (41,118)。屋外の 2 本は差 0)。golden はこの数タスク回していないため、どのコミットからかは未確認。
