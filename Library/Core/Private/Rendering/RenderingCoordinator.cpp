@@ -5858,6 +5858,7 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotGrassField = packet->GrassField.get();
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;
