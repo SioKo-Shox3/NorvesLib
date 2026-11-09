@@ -1,0 +1,156 @@
+﻿#version 460
+
+// プッシュ定数の std430 配置: Shift は 0、Resolution は 8、OriginXZ は 16、
+// TexelSize は 24、Decay は 28、InteractorCount は 32、bResetHistory は 36 バイト目。
+// 全体は 40 バイト。計算は XZ 平面だけで行い、Y（高さ）は使わない。
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D uPreviousField;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D uCurrentField;
+
+struct WorldFieldInteractorGpu
+{
+    vec4 P0Radius;
+    vec4 P1Strength;
+    vec4 PrevP0PrevRadius;
+    vec4 PrevP1ChannelMask;
+};
+
+layout(std430, set = 0, binding = 2) readonly buffer WorldFieldInteractorBuffer
+{
+    WorldFieldInteractorGpu Interactors[];
+};
+
+layout(push_constant) uniform WorldFieldUpdatePush
+{
+    ivec2 Shift;
+    uvec2 Resolution;
+    vec2 OriginXZ;
+    float TexelSize;
+    float Decay;
+    uint InteractorCount;
+    uint bResetHistory;
+} uPush;
+
+struct SegmentSample
+{
+    float DistanceSquared;
+    float Radius;
+    vec2 ClosestPoint;
+};
+
+SegmentSample SampleSegment(vec2 point, vec2 start, vec2 end, float startRadius, float endRadius)
+{
+    vec2 segment = end - start;
+    float segmentLengthSquared = dot(segment, segment);
+    float t = 0.0;
+    if (segmentLengthSquared > 0.0)
+    {
+        t = clamp(dot(point - start, segment) / segmentLengthSquared, 0.0, 1.0);
+    }
+
+    SegmentSample segmentSample;
+    segmentSample.ClosestPoint = start + segment * t;
+    vec2 offset = point - segmentSample.ClosestPoint;
+    segmentSample.DistanceSquared = dot(offset, offset);
+    segmentSample.Radius = mix(startRadius, endRadius, t);
+    return segmentSample;
+}
+
+SegmentSample SelectClosest(SegmentSample current, SegmentSample candidate)
+{
+    // 距離が同じなら大きい半径を選び、半径が変化した軌跡も残す。
+    if (candidate.DistanceSquared < current.DistanceSquared ||
+        (candidate.DistanceSquared == current.DistanceSquared && candidate.Radius > current.Radius))
+    {
+        return candidate;
+    }
+    return current;
+}
+
+vec2 NormalizeOrZero(vec2 value)
+{
+    float lengthSquared = dot(value, value);
+    if (lengthSquared == 0.0)
+    {
+        return vec2(0.0);
+    }
+    return value * inversesqrt(lengthSquared);
+}
+
+void main()
+{
+    uvec2 globalPixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(globalPixel, uPush.Resolution)))
+    {
+        return;
+    }
+
+    ivec2 pixel = ivec2(globalPixel);
+    ivec2 previousPixel = pixel + uPush.Shift;
+    vec4 result = vec4(0.0);
+    if (uPush.bResetHistory == 0u &&
+        all(greaterThanEqual(previousPixel, ivec2(0))) &&
+        all(lessThan(previousPixel, ivec2(uPush.Resolution))))
+    {
+        result = imageLoad(uPreviousField, previousPixel) * uPush.Decay;
+    }
+
+    vec2 worldPosition = uPush.OriginXZ + (vec2(pixel) + vec2(0.5)) * uPush.TexelSize;
+    for (uint index = 0u; index < uPush.InteractorCount; ++index)
+    {
+        WorldFieldInteractorGpu interactor = Interactors[index];
+        uint channelMask = floatBitsToUint(interactor.PrevP1ChannelMask.w);
+        if ((channelMask & 7u) == 0u)
+        {
+            continue;
+        }
+
+        vec2 p0 = interactor.P0Radius.xz;
+        vec2 p1 = interactor.P1Strength.xz;
+        vec2 previousP0 = interactor.PrevP0PrevRadius.xz;
+        vec2 previousP1 = interactor.PrevP1ChannelMask.xz;
+        float radius = interactor.P0Radius.w;
+        float previousRadius = interactor.PrevP0PrevRadius.w;
+
+        // 現在の軸と両端の軌跡を比べ、最近点とその位置での半径を使う。
+        SegmentSample closest = SampleSegment(worldPosition, p0, p1, radius, radius);
+        closest = SelectClosest(closest, SampleSegment(worldPosition, previousP0, p0, previousRadius, radius));
+        closest = SelectClosest(closest, SampleSegment(worldPosition, previousP1, p1, previousRadius, radius));
+        if (closest.Radius <= 0.0)
+        {
+            continue;
+        }
+
+        float normalizedDistance = sqrt(closest.DistanceSquared) / closest.Radius;
+        float weight = interactor.P1Strength.w * clamp(1.0 - normalizedDistance * normalizedDistance, 0.0, 1.0);
+        if (weight == 0.0)
+        {
+            continue;
+        }
+
+        if ((channelMask & 1u) != 0u)
+        {
+            vec2 velocity = ((p0 - previousP0) + (p1 - previousP1)) * 0.5;
+            // 中点の移動が 1 マイクロメートル以下なら静止とみなす。
+            vec2 velocityDirection = dot(velocity, velocity) <= 1.0e-12 ? vec2(0.0) : NormalizeOrZero(velocity);
+            vec2 radialDirection = NormalizeOrZero(worldPosition - closest.ClosestPoint);
+            vec2 direction = NormalizeOrZero(velocityDirection + radialDirection * 0.5);
+            vec2 bend = direction * weight;
+            if (dot(bend, bend) > dot(result.rg, result.rg))
+            {
+                result.rg = bend;
+            }
+        }
+        if ((channelMask & 2u) != 0u)
+        {
+            result.b = max(result.b, weight);
+        }
+        if ((channelMask & 4u) != 0u)
+        {
+            result.a = max(result.a, weight);
+        }
+    }
+
+    imageStore(uCurrentField, pixel, result);
+}
