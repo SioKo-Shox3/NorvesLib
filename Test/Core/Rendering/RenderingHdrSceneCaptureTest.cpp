@@ -1,6 +1,7 @@
 ﻿#include "RenderingValidation/GpuTestEnvironment.h"
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
+#include "RenderExtensionStageScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -1701,6 +1702,8 @@ namespace
 
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
+        RenderExtensionStageScenario m_ExtensionStageScenario;
+
     public:
         enum class TransparentPhysicalStage : uint8_t
         {
@@ -1774,6 +1777,14 @@ namespace
 
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
+                return false;
+            }
+            if (m_ExtensionStageScenario.IsEnabled() &&
+                (m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bAllNumericalScenario ||
+                 m_bKnownCdScenario || m_bP4Scenario || m_bTransparentPhysicalLightingScenario ||
+                 m_bEmissiveDaylightScenario))
+            {
+                LOG_ERROR("拡張の段のシナリオは他のシナリオと併用できません");
                 return false;
             }
             if (m_bAllNumericalScenario &&
@@ -1969,6 +1980,11 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
             }
             if (m_bEmissiveDaylightScenario)
             {
@@ -2219,6 +2235,10 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument.find(TEXT("--extension-stage-scenario=")) == 0)
+            {
+                return m_ExtensionStageScenario.ParseArgument(argument, outFailureReason);
+            }
             const bool bEmissiveDaylight1mNits = argument == TEXT("--emissive-scenario=daylight-1m-nits");
             const bool bEmissiveDaylightAboveHalf = argument == TEXT("--emissive-scenario=daylight-above-32768");
             if (bEmissiveDaylight1mNits || bEmissiveDaylightAboveHalf)
@@ -2412,6 +2432,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.Evaluate(frame, reason);
+            }
             if (m_bEmissiveDaylightScenario)
             {
                 return EvaluateEmissiveDaylightFrame(frame, reason);
@@ -2524,6 +2548,11 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                m_ExtensionStageScenario.ApplyState(renderWorld, GetFixture().GetCamera());
+                return;
+            }
             if (m_bEmissiveDaylightScenario)
             {
                 ApplyEmissiveDaylightCamera(renderWorld);
@@ -2843,6 +2872,11 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                m_ExtensionStageScenario.Advance();
+                return;
+            }
             if (m_bR3Scenario)
             {
                 switch (m_R3ScenarioKind)
@@ -2946,6 +2980,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.RequestFollowup(outRequest);
+            }
             if (m_bR3Scenario)
             {
                 bool bComplete = false;

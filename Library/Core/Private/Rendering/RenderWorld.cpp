@@ -404,6 +404,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetGrassField(std::move(grassField));
     }
 
+    void RenderWorld::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        m_RenderingCoordinator.SetWorldFieldInteractors(interactors);
+    }
+
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)
     {
         m_RenderingCoordinator.SetRibbonTrails(trails);
@@ -412,6 +417,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetDecals(const DecalScene& decals)
     {
         m_RenderingCoordinator.SetDecals(decals);
+    }
+
+    void RenderWorld::SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data)
+    {
+        m_RenderingCoordinator.GetExtensionDataStore().SetBytes(name, layoutHash, elementSize, count, data);
     }
 
     void RenderWorld::SetDistortions(const DistortionScene& distortions)

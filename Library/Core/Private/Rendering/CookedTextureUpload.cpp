@@ -94,6 +94,21 @@ namespace NorvesLib::Core::Rendering
                 }
                 return false;
 
+            case CookedTexturePixelFormat::BC3:
+                if (colorSpace == CookedTextureColorSpace::SRGB)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC3_SRGB;
+                    outRHIFormat = RHI::Format::BC3_SRGB;
+                    return true;
+                }
+                if (colorSpace == CookedTextureColorSpace::Linear)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC3_UNORM;
+                    outRHIFormat = RHI::Format::BC3_UNORM;
+                    return true;
+                }
+                return false;
+
             case CookedTexturePixelFormat::BC4:
                 if (colorSpace != CookedTextureColorSpace::Linear)
                 {
@@ -110,6 +125,15 @@ namespace NorvesLib::Core::Rendering
                 }
                 outTextureFormat = TextureCreateInfo::Format::BC5_UNORM;
                 outRHIFormat = RHI::Format::BC5_UNORM;
+                return true;
+
+            case CookedTexturePixelFormat::BC6H:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::BC6H_UFLOAT;
+                outRHIFormat = RHI::Format::BC6H_UFLOAT;
                 return true;
 
             case CookedTexturePixelFormat::BC7:

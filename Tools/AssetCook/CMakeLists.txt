@@ -1,12 +1,14 @@
-# BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
+# BC エンコーダ(bc7enc_rdo・DirectXTex)は AssetCook だけがリンクする。Core・Game には入れない。
 add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/bc7enc_rdo
     ${CMAKE_BINARY_DIR}/ThirdParty/bc7enc_rdo)
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/DirectXTex
+    ${CMAKE_BINARY_DIR}/ThirdParty/DirectXTex)
 
 add_library(AssetCookBlockCompressor STATIC
     BlockCompressor.cpp
     BlockCompressor.h
 )
-target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Core)
+target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc NorvesThirdParty_DirectXTexBC Core)
 target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
 
@@ -210,10 +212,10 @@ set_target_properties(AssetCook AssetCookLib PROPERTIES FOLDER "Tools")
 
 # ブロック圧縮のスモーク。AssetCook をビルドするときに一緒にビルドされるよう依存を張る。
 add_executable(AssetCookBlockCompressSmoke AssetCookBlockCompressSmoke.cpp)
-target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompressor)
+target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompressor AssetCookTextureCooker)
 set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
 add_dependencies(AssetCook AssetCookBlockCompressSmoke)
-add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
+add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke> --source-root "${CMAKE_SOURCE_DIR}")
 
 # メッシュ簡略化の境界と、LOD の階層の焼き込み(閉じた球から階層を作り、切り口に穴が無いことなど)のスモーク。
 add_executable(AssetCookMeshSimplifySmoke AssetCookMeshSimplifySmoke.cpp)

@@ -263,6 +263,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
+    Private/Rendering/RenderExtension/RenderExtensionData.cpp
+    Private/Rendering/RenderExtension/RenderExtensionHelpers.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
@@ -273,6 +275,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/WorldFieldPass.cpp
+    Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
     Private/Rendering/GrassFieldGpuWindow.cpp
     Private/Rendering/GrassTileSelector.cpp
@@ -737,6 +741,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/RenderExtension/RenderExtension.h
+    Public/Rendering/RenderExtension/RenderExtensionData.h
+    Public/Rendering/RenderExtension/RenderExtensionHelpers.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
@@ -747,6 +753,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/GrassPass.h
+    Public/Rendering/WorldFieldPass.h
+    Public/Rendering/WorldFieldTypes.h
     Public/Rendering/GrassGenerateReference.h
     Public/Rendering/GrassFieldGpuWindow.h
     Public/Rendering/GrassTileSelector.h
