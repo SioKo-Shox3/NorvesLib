@@ -84,6 +84,13 @@ namespace NorvesLib::Core::Rendering
             return pipeline;
         }
 
+        /** @brief 作成済みの値を取得する。存在しない鍵や作成に失敗した鍵は null を返す。 */
+        Pipeline Find(const GBufferPipelineKey& key) const
+        {
+            const auto found = m_Pipelines.find(key);
+            return found == m_Pipelines.end() ? Pipeline{} : found->second;
+        }
+
         /** @brief Clear 以降に作成に成功した数。 */
         uint32_t GetCreatedCount() const { return m_CreatedCount; }
 

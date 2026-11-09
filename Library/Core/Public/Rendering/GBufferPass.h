@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "SceneRenderer.h"
 #include "DynamicUniformAllocator.h"
+#include "Rendering/GBufferProgramRegistry.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
@@ -206,14 +207,16 @@ namespace NorvesLib::Core::Rendering
                                       const RHI::TexturePtr& emissive,
                                       const RHI::TexturePtr& velocity,
                                       const RHI::TexturePtr& depth);
-        bool CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
-        bool EnsureGBufferPipeline();
-        RHI::PipelinePtr SelectSkinnedGBufferPipeline(DebugViewMode mode) const;
+        bool AreGBufferResourcesReady() const;
+        void RefreshGBufferPrograms();
+        bool PrepareProgramShaders(ViewRenderContext& context, const MaterialResourceData& material);
+        RHI::PipelinePtr GetGBufferPipeline(ViewRenderContext& context,
+                                            const MaterialResourceData* material,
+                                            bool bSkinned);
+        RHI::PipelinePtr CreateGBufferPipeline(const GBufferPipelineKey& key);
         bool TryPrepareSkinnedCommand(ViewRenderContext& context,
                                       const DrawCommand& source,
-                                      DrawCommand& outCommand) const;
-        bool CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
-        RHI::PipelinePtr SelectGBufferPipeline(DebugViewMode mode) const;
+                                      DrawCommand& outCommand);
         bool IsMaterialDescriptorCacheEnabled();
         RHI::TexturePtr GetOrCreateConstantGrayTexture(float value);
         // 描く不透明の材質が使う 1x1 の灰色テクスチャ（作成と転送を伴う）を、並列の記録の前に作る
@@ -298,14 +301,25 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_GBufferRenderPass;
         RHI::FramebufferPtr m_GBufferFramebuffer;
 
-        // GBuffer用パイプライン
-        RHI::PipelinePtr m_SkinnedGBufferPipeline;
-        RHI::PipelinePtr m_SkinnedGBufferWireframePipeline;
-        RHI::PipelinePtr m_GBufferPipeline;
+        // パイプラインと材質プログラムのシェーダーは描画スレッドで準備する。
+        struct ProgramShaders
+        {
+            Container::String Name;
+            RHI::ShaderPtr Vertex;
+            RHI::ShaderPtr Fragment;
+            RHI::ShaderPtr SkinnedVertex;
+            bool bValid = false;
+        };
+        GBufferPipelineTable m_Pipelines;
+        Container::UnorderedMap<GBufferProgramId, ProgramShaders> m_ProgramShaders;
+        Container::UnorderedMap<GBufferProgramId, bool> m_WarnedPrograms;
+        const GBufferProgramRegistry* m_ProgramRegistry = nullptr;
+        uint64_t m_ProgramRegistryRevision = 0;
         RHI::ShaderPtr m_SkinnedGBufferVertexShader;
-        RHI::PipelinePtr m_GBufferWireframePipeline;
         RHI::ShaderPtr m_GBufferVertexShader;
         RHI::ShaderPtr m_GBufferFragmentShader;
+        bool m_bPipelinesPrepared = false;
+        bool m_bParallelAttachmentsReady = false;
 
         // デバイス参照
         RHI::IDevice* m_Device = nullptr;
