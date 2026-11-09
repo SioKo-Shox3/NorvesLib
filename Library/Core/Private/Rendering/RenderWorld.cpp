@@ -414,6 +414,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetDecals(decals);
     }
 
+    void RenderWorld::SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data)
+    {
+        m_RenderingCoordinator.GetExtensionDataStore().SetBytes(name, layoutHash, elementSize, count, data);
+    }
+
     void RenderWorld::SetDistortions(const DistortionScene& distortions)
     {
         m_RenderingCoordinator.SetDistortions(distortions);
