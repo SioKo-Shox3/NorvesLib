@@ -46,6 +46,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             data.Blend = createInfo.Blend;
+            data.bWritesReactive = createInfo.bWritesReactive;
             data.Shading = createInfo.Shading;
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;

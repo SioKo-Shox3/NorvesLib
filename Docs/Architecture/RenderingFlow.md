@@ -185,7 +185,7 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 
 ### TAA と半透明
 
-`Scene.Reactive` は TAA 前の半透明による被覆率を R8_UNORM で表す。ForwardPass では印を付けた半透明の材質からの書き込みを予定し、Transparent 段の拡張パスは `ReactiveTargetBinder` で書ける。
+`Scene.Reactive` は TAA 前の半透明による被覆率を R8_UNORM で表す。ForwardPass は材質の `bWritesReactive` の印のある半透明の描画だけを、主の描画の後に Scene.Reactive へ同じブレンドで描き直し、Transparent 段の拡張パスは `ReactiveTargetBinder` で書ける。
 TAA はリアクティブに応じて現在の色の割合を 1 へ寄せ、前フレームのリアクティブを専用の R8 履歴で減衰させながら持ち越す。色の履歴を収める箱の半幅は現在のリアクティブで広げる。
 雨や粒子は `PostTemporalAA` 段で TAA の後に合成することを推奨する。この経路ではリアクティブも velocity も要らない。
 リアクティブは湯気など TAA の前に描く半透明に使う。

@@ -10492,3 +10492,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR88-BC6H-QUALITY): 既存の `CookedTextureTest` の v0.1 の未知の形式の例の値 11 は BC3 になったので 13 に替え、11・12 が v0.1 では未知になることを足した。
 - U1 TAA がリアクティブを読む(資源名・定数・binding 5・履歴の A への持ち越し): 着地(直し 2 回)
 - U2 拡張のパスが Scene.Reactive へ書く手助けと文書: 着地(直し 0 回)
+- U3 ForwardPass の半透明の材質に「リアクティブを書く」の印: 着地(直し 0 回)
