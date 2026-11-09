@@ -908,6 +908,7 @@ set(PUBLIC_HEADERS
     Public/RHI/ISampler.h
     Public/RHI/IShader.h
     Public/RHI/ICommandList.h
+    Public/RHI/IndirectCommands.h
     Public/RHI/ISwapChain.h
     Public/RHI/IRenderPass.h
     Public/RHI/IFramebuffer.h
