@@ -10395,3 +10395,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 今回の小さい入力ではどれも上限超えの失敗が起きず、cook の失敗の経路（0 でない終了コード）は ClipOptimizer の単体の検査でしか確かめていない
 - U1 RetargetCookTest の骨組みと v1 の profile の出力の固定（変更前のコードで）: 着地(直し 0 回)
 - U5 リターゲットの報告の JSON と上限の判定（Core の独立した部品）: 着地(直し 0 回)
+- U2 ロールの profile の version 2 の解析: 着地(直し 1 回)
