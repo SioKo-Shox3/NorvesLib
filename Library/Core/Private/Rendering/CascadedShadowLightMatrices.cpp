@@ -614,6 +614,28 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    void SelectCascadedShadowCasterDraws(
+        const CascadedShadowCascade& cascade,
+        const CascadedShadowDrawBounds* drawBounds,
+        uint32_t drawCount,
+        Container::VariableArray<uint32_t>& outDrawIndices)
+    {
+        outDrawIndices.clear();
+        if (!cascade.bEnabled || drawBounds == nullptr)
+        {
+            return;
+        }
+
+        for (uint32_t drawIndex = 0; drawIndex < drawCount; ++drawIndex)
+        {
+            const CascadedShadowDrawBounds& draw = drawBounds[drawIndex];
+            if (!draw.bHasBounds || CascadedShadowCascadeMayContainCaster(cascade, draw.Bounds))
+            {
+                outDrawIndices.push_back(drawIndex);
+            }
+        }
+    }
+
     CascadedShadowMatrixSettings MakeDefaultCascadedShadowMatrixSettings()
     {
         CascadedShadowMatrixSettings result;
