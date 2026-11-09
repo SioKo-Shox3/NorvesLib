@@ -10560,3 +10560,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `RenderingShadingModelGBufferVulkanTest` は 2 回の起動を束ね、Debug のシェーダーのコンパイルで 1 回 100〜150 秒かかるため、試験に `TIMEOUT 900` を付けた（verify の `--timeout 300` より優先される）。
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換わって MSBuild が MSB1008 で落ちる。`MSYS_NO_PATHCONV=1` を付けるか PowerShell で回す。
 - 要起票: MegaGeometry を出す検証シーン（`RenderingShadingModelGBufferVulkanTest`）で `RenderGraph.cpp:2440` の `Pass 'MegaGeometryPass' declares all layout changes but enqueued a layout-changing frame command` が 1 回の起動で数十件出る（試験は合格。予備の経路の起動でも 12 件）。
+- U1 照明の定数にシェーディングモデルの係数を足し、P0・P1 の意味を表に書く: 着地(直し 0 回)

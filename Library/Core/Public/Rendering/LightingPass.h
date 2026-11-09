@@ -24,6 +24,32 @@ namespace NorvesLib::Core::Rendering
     struct RTGIInstanceData;
 
     /**
+     * @brief シェーディングモデルごとの照明係数
+     *
+     * 既定値はすべて仮の値。
+     */
+    struct ShadingModelLightingConstants
+    {
+        /** @brief Fur の wrap の量（0 で通常の Lambert） */
+        float FurWrap = 0.5f;
+
+        /** @brief Fur の鏡面に使う粗さの下限 */
+        float FurMinSpecularRoughness = 0.6f;
+
+        /** @brief Eye の鏡面の強さの P0 あたりの増分 */
+        float EyeSpecularBoostPerP0 = 3.0f;
+
+        /** @brief PaleFlat の直接光と環境光の明暗差を落とす割合 */
+        float PaleFlatFlatten = 1.0f;
+
+        /** @brief PaleFlat の平らな直接光で n·l と影の代わりに使う値 */
+        float PaleFlatDirectTerm = 0.5f;
+
+        /** @brief PaleFlat のアルベドを輝度へ寄せる割合 */
+        float PaleFlatDesaturate = 0.5f;
+    };
+
+    /**
      * @brief ライティングパス設定
      */
     struct LightingPassSettings
@@ -65,6 +91,9 @@ namespace NorvesLib::Core::Rendering
          * 薄くすると、見えない側の面から物体へ入るレイ（逆光の接地部など）を見落とします。
          */
         float ContactShadowThickness = 0.3f;
+
+        /** @brief シェーディングモデルごとの照明係数 */
+        ShadingModelLightingConstants ShadingModelConstants{};
     };
 
     /**
@@ -159,8 +188,23 @@ namespace NorvesLib::Core::Rendering
 
         const char* GetName() const override { return "LightingPass"; }
 
-        /** @brief 構築時の設定（ニューラルBRDFの重みの経路など） */
+        /** @brief パスの設定（ニューラルBRDFの重みの経路など） */
         const LightingPassSettings& GetSettings() const { return m_Settings; }
+
+        /**
+         * @brief シェーディングモデルごとの照明係数を設定する
+         * @param constants 設定する係数。GPU への転送時に非有限値と範囲を補正する
+         */
+        void SetShadingModelLightingConstants(const ShadingModelLightingConstants& constants)
+        {
+            m_Settings.ShadingModelConstants = constants;
+        }
+
+        /** @brief 設定された補正前の照明係数を取得する */
+        const ShadingModelLightingConstants& GetShadingModelLightingConstants() const
+        {
+            return m_Settings.ShadingModelConstants;
+        }
 
         bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;

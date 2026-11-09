@@ -39,6 +39,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
+    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] x=PaleFlatの直接光・環境光の明暗差を落とす割合（0で通常、1で全部）, y=平らな直接光のn·lと影の代替値, z=アルベドを輝度へ寄せる割合, w=予約0
 } params;
 
 // ライトデータ構造
