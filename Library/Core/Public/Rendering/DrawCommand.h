@@ -68,6 +68,9 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshPassKind PassKind = SkinnedMeshPassKind::None;
         Container::TSharedPtr<const SkinnedMeshFrameLease> FrameLease;
         Container::VariableArray<Math::Matrix4x4> BonePalette;
+        // 姿勢から求めた AnimatedBounds。WorldMatrix を掛けると世界の境界になる。
+        Math::AABB LocalBounds;
+        bool bHasLocalBounds = false;
         // 直前のゲームのフレームの変換とパレット（velocity 用）。bHasPrevious が false なら現在と同じとみなす。
         Math::Matrix4x4 PreviousWorldMatrix;
         Container::VariableArray<Math::Matrix4x4> PreviousBonePalette;

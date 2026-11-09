@@ -304,6 +304,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkinnedMeshGpuStore.cpp
     Private/Rendering/SkinnedMeshTypes.cpp
     Private/Rendering/SkinnedDrawCommands.cpp
+    Private/Rendering/SkinnedLodSelection.cpp
+    Private/Rendering/SunShadowParameters.cpp
+    Public/Rendering/SkinnedLodSelection.h
+    Public/Rendering/SunShadowParameters.h
     Private/Rendering/SkinnedDrawCommands.h
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
