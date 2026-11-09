@@ -54,6 +54,11 @@ namespace NorvesLib::Core::Animation
         double SourceLegLengthMeters = 0;
         /// 脚長による自動拡縮で測った対象の脚の長さ（メートル）。無効時は 0。
         double TargetLegLengthMeters = 0;
+        /// 出力姿勢と写像の理想回転との差、および各ルート軌跡の長さ。
+        bool bRotationErrorMeasured = false;
+        double RotationErrorMaxDegrees = 0, RotationErrorMeanDegrees = 0;
+        double SourceRootDistanceMeters = 0, TargetRootDistanceMeters = 0;
+        Container::VariableArray<Container::AnsiString> UnmappedSourceNames, UnmappedTargetNames;
     };
     [[nodiscard]] bool MakeBvhRetargetClipSource(const Bvh::BvhDocument&, const SkeletalBvhClipSettings&,
                                                  const Container::String& name, SkeletalRetargetClipSource&,
