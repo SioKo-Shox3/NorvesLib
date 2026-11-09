@@ -404,6 +404,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetGrassField(std::move(grassField));
     }
 
+    void RenderWorld::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        m_RenderingCoordinator.SetWorldFieldInteractors(interactors);
+    }
+
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)
     {
         m_RenderingCoordinator.SetRibbonTrails(trails);

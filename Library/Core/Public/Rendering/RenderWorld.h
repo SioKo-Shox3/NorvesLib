@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "WorldFieldTypes.h"
 #include "FrameCaptureTypes.h"
 #include "FoliageTypes.h"
 #include "DDGIVolume.h"
@@ -260,6 +261,14 @@ namespace NorvesLib::Core::Rendering
          * @param grassField 次の FramePacket へ共有する。設定後は内容を書き換えない
          */
         void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
+
+        /**
+         * @brief このフレームで世界フィールドへ作用する入力を設定する（GameThread）
+         *
+         * 描画コマンド生成前に毎フレーム呼ぶ。呼ばれなければ次のパケットで空になり、
+         * フィールドへの書き込みは止まる。
+         */
+        void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）

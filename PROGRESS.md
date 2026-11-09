@@ -10450,3 +10450,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 WorldField の型・Sanitize・スクロールの計算とパケットの欄を足す: 着地(直し 0 回)
 - U2 WorldFieldUpdate.comp を書く: 着地(直し 0 回)
 - Notes(G5-GR44-WORLD-FIELD): interactor の配列をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotWorldFieldInteractors` を 1 つ。`SnapshotGrassField` と同じ形）は paths の外だが、パスがパケットの値を読む唯一の口なので足した。
+- U3 RenderWorld から RenderingCoordinator を経てパケットへ interactor を写す: 着地(直し 0 回)

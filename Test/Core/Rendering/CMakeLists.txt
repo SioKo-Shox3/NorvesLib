@@ -1432,6 +1432,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
+    MEMBER FramePacketWorldFieldSnapshotContractTest FramePacketWorldFieldSnapshotContractTest.cpp
     MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
     MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
     MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
@@ -1481,6 +1482,8 @@ add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOc
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
+# 世界フィールド入力のパケットへの値コピーと寿命を検証する。
+add_test(NAME FramePacketWorldFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=FramePacketWorldFieldSnapshotContractTest)
 # 世界フィールドの入力の無害化をCPUで検証する。
 add_test(NAME WorldFieldInputSanitizeTest COMMAND CameraViewConstantsTest --test=WorldFieldInputSanitizeTest)
 # 世界フィールドの原点とスクロール差分をCPUで検証する。
