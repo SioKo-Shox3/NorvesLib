@@ -55,7 +55,7 @@ TJNTは名前順の正準表。RSETのrest範囲は全jointを正準順に持つ
 
 ## 量子化（CMPR、minor 1）
 
-`WriteClipBankV1` は `ClipBankV1WriteOptions::bQuantize=true` のときだけCMPRを出し、minorを1にする。既定のfalseではCMPRを出さず、同じ入力に対して従来どおりminor 0のbytesを書く。AssetCookのrig-splitとリターゲットのcookには、現在 `--clip-quantize` がなく、この選択肢は接続されていない。minorを上げるのは、encoding≠0のCHANをminor 0の読み手が黙って読まないため。読み手はminor 0/1を受け、minor 0でCMPRまたはencoding≠0がある場合、minor 1でCMPRがない場合、minor 2以上を拒否する。
+`WriteClipBankV1` は `ClipBankV1WriteOptions::bQuantize=true` のときだけCMPRを出し、minorを1にする。既定のfalseではCMPRを出さず、同じ入力に対して従来どおりminor 0のbytesを書く。AssetCookの`--rig-split`とリターゲット（`--retarget-clip`）のcookは、値を取らない`--clip-quantize`を付けたときだけ`bQuantize=true`で書く。付けないcookの出力と同一性のhashは従来と同じで、単独の`nvskel.v1.clips`のcookと旧NVSKEL 0.xの経路では`--clip-quantize`を誤りとして拒否する。minorを上げるのは、encoding≠0のCHANをminor 0の読み手が黙って読まないため。読み手はminor 0/1を受け、minor 0でCMPRまたはencoding≠0がある場合、minor 1でCMPRがない場合、minor 2以上を拒否する。
 
 CMPR directoryはflags=1（required）、recordSize=4、count=byteSize/4。section先頭はversion u32=1、channelCount u32、dataHash u64の16 bytesで、続くCHAN順の32-byte entryを各チャンネルに1個持つ。channelCountはCHANのcountと一致する。dataHashは `[16 + 32*channelCount, byteSize)` のデータ域全体（末尾を含む詰め物も含む）のFNV-1a64で、16-byte headerとentry列は含まない。fileのpayloadHashはdirectoryと全sectionを含む。
 

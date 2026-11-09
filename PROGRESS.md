@@ -10548,3 +10548,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ClipBank v1 の CMPR の書き手と読み手（minor 1）: 着地(直し 0 回)
 - U4 CMPR の往復・互換・拒否の試験: 着地(直し 0 回)
 - U5 ClipBankV1Wire.md に CMPR と minor 1 の規則を書く: 着地(直し 0 回)
+- U6 AssetCook の --clip-quantize を v1 の cook へつなぎ、タスクの verify を回す: 着地(直し 2 回)
