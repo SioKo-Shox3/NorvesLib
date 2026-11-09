@@ -10471,3 +10471,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 リターゲットと cook に再接地を結線し、Retarget.md を書き直す: 着地(直し 0 回)
 - U5 RetargetCookTest に再接地の (b)(c) を足し、しきい値を確かめる: 着地(直し 0 回)
 - U6 Retarget.md の後脚の解き方と骨盤の補正の限界を今の実装に合わせる: 着地(直し 0 回)
+## 2026-11-10 G9-GR85-FOOT-REPLANT（run 20261110-013947、完了）
+- Done: `RetargetFootPlanting`（Core・Private/Animation）。出力クリップのキー時刻ごとに、元の paw のワールド位置から足ごとの接地区間を検出し（GR11 の `DetectFootContactWindows` の高さ・鉛直の速さに、水平の速さのヒステリシス 1.5 倍と最短 `min_stance_frames` を重ねる）、区間の先頭の水平位置と `ground.height` へ固定し、前後 `blend_frames` コマを smoothstep で補間する。脚は `SolveTwoBoneIK`（根の相対座標で float へ渡す）で解き、ポールは元の曲がりの向き。後脚は写した回転のままの中足のワールドの向きを保って thigh・shin を解き、paw は接地の重みで地面に平行へ寄せる。届かない分は骨盤（ルート）を鉛直に下げる（必要量に最大値フィルタ → 同じ半径の移動平均）
+- Done: profile v2 に `ground{height}`・`foot_planting{enabled, height_threshold_m, speed_threshold_m_s, min_stance_frames, blend_frames, ik:{leg_roles}}`・`report.max_ik_failed_frames`。報告の各クリップに `foot_slide_m{before,after}`・`foot_penetration_m`・`foot_float_m`・`ik_adjustment_deg`・`ik_failed_frames`・`pelvis_drop_m`・`foot_contacts`（脚ごとの検出区間）。上限は足滑り → めり込み → IK の失敗コマ → 関節誤差の順で判定し、再接地が無効なら足の上限は foot_metrics_unmeasured。ルートモーションの抽出ありでも、開始の向き・累積ヨー・X/Z を戻したワールドで解く
+- Done: `RetargetCookTest` に接地する合成の四足歩行（前脚 1.3 倍・後脚 1.1 倍の対象）。再接地ありで接地中の水平変位 1.0e-7 m・高さの誤差 9.3e-8 m・IK 失敗 0・遊脚の角速度の比 1.18（上限 1.5）、再接地なしの対照の滑り 0.081 m（下限 0.05）。`leg_length_ratio: 2.0` で骨盤の下げ量 0.524 m・IK 失敗 0・接地中の誤差 1.4e-7 m。しきい値は仮の値
+- 証拠: `.harness/runs/20261110-013947/verify-G9-GR85-FOOT-REPLANT-U5.txt`（verify のビルド exit 0、関連 4 本 4/4 Passed、RetargetCookTest の -V で grounded_walk_replanting・grounded_walk_ratio_two が pass）
+- Next: なし（アプリを起動する確かめは無い）。16fps の動画由来の素材を通すときは報告の `foot_contacts` で検出の外れを見る
+- Notes: 骨盤は全脚に共通で下げるので、下げたコマの遊脚の足先は地面より下がることがある（比 2.0 の試験の入力で `foot_penetration_m` 0.54 m）。量は報告に出て `report.max_foot_penetration_m` で cook を止められる
+- Notes: 再接地の測定は cook のモーション整理（`ApplyRigMotionCleanup`）とクリップ最適化の前の値。後脚の中足は「元の相対回転」を局所でなくワールドの向きで保つ（局所で保つ反復は届かないコマが残ったため）
