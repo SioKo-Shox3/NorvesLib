@@ -10512,3 +10512,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 CPU の SkinnedLodSelectionTest: 着地(直し 0 回)
 - U4 可視バッファの経路の主カメラの絞り込みと、変形の対象の絞り込み・統計: 着地(直し 1 回)
 - U9 文書（RenderingFlow.md・Testing.md）: 着地(直し 0 回)
+- U10 GPU の RenderingSkinnedCullVulkanTest 2 本とタスクの verify: 着地(直し 0 回)

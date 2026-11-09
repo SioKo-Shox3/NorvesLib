@@ -867,6 +867,7 @@ register_rendering_gpu_test(
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
+    SkinnedCullScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
@@ -887,6 +888,19 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=scene-color
     --extension-stage-scenario=post)
+register_rendering_gpu_test(
+    RenderingSkinnedCullVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front)
+register_rendering_gpu_test(
+    RenderingSkinnedCullGBufferFallbackVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front
+    --visibility-buffer=off)
 register_rendering_gpu_test(
     RenderingHdrIndoorSceneVulkanTest
     RenderingHdrSceneCaptureTest

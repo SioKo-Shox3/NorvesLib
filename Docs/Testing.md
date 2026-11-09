@@ -502,7 +502,7 @@ Look（`TestLookAt`）:
 ## スキンの絞り込みと太陽の影の設定の試験
 
 - `SkinnedLodSelectionTest` は `CameraViewConstantsTest` の束の MEMBER として、CPU で選別と設定値を確かめる。主カメラの視錐台外のスキンは描画数 0 になり、面をまたぐものは残る。CSM のカスケードの影の地図の XY の外にある描画は省き、内側・縁・境界不明の描画は残す。`SunShadowParameters` の `SanitizeSunShadowParameters` も確かめる。
-- `RenderingSkinnedCullVulkanTest` と `RenderingSkinnedCullGBufferFallbackVulkanTest`（登録予定）は `RenderingHdrSceneCaptureTest` のシナリオとして、縮小した `SkinnedGiantFixture` をカメラの後ろに置くと記録されたスキンの描画数が 0 になり、前に置くと絞り込みを切った場合とバックバッファの画素の差が 0 になることを確かめる。前者は可視バッファ on、後者は `--visibility-buffer=off` の予備 GBuffer 経路を使う。
+- `RenderingSkinnedCullVulkanTest` と `RenderingSkinnedCullGBufferFallbackVulkanTest` は `RenderingHdrSceneCaptureTest` のシナリオとして、縮小した `SkinnedGiantFixture` をカメラの後ろに置くと記録されたスキンの描画数が 0 になり、前に置くと絞り込みを切った場合とバックバッファの画素の差が 0 になることを確かめる。前者は可視バッファ on、後者は `--visibility-buffer=off` の予備 GBuffer 経路を使う。
 
 `Test/Core/Rendering/RenderingValidation/` の `SkinnedGiantFixture` は、バイナリを置かずに管状のスキンを生成する。既定は 128 関節、LOD0 で約 100 万三角形で、生成時の `TargetTriangleCount` で三角形数を減らせる。
 
@@ -513,7 +513,7 @@ cmake --build build --config Debug --target CameraViewConstantsTest
 ctest --test-dir build -C Debug -R "^SkinnedLodSelectionTest$" --output-on-failure
 ```
 
-Vulkan の 2 シナリオは登録予定。登録後は次のように回す。
+Vulkan の 2 シナリオは次のように回す。
 
 ```powershell
 cmake --build build --config Debug --target RenderingHdrSceneCaptureTest
