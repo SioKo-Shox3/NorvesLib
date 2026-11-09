@@ -92,6 +92,8 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalClipProcessing.cpp
     Private/Animation/ClipOptimizer.cpp
     Private/Animation/ClipOptimizer.h
+    Private/Animation/RetargetReport.cpp
+    Private/Animation/RetargetReport.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
