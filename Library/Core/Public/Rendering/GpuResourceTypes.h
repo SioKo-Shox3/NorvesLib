@@ -70,7 +70,13 @@ namespace NorvesLib::Core::Rendering
             BC4_UNORM,
             BC5_UNORM,
             BC7_UNORM,
-            BC7_SRGB
+            BC7_SRGB,
+            R16G16_UNORM,
+            R10G10B10A2_UNORM,
+            R11G11B10_FLOAT,
+            BC3_UNORM,
+            BC3_SRGB,
+            BC6H_UFLOAT
         } PixelFormat = Format::RGBA8_UNORM;
 
         /// 初期データが全ミップを含むか。BC 形式は常に全ミップを含む（実行時に縮小できない）。

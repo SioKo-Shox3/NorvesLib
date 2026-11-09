@@ -14,13 +14,81 @@
 #include "GrassFieldCooker.h"
 #include "ScatterSpec.h"
 #include "Asset/CookedGrassFieldFormat.h"
+#include <charconv>
 #include <chrono>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <limits>
+#include <utility>
 #if defined(_WIN32)
 #include <psapi.h>
 #endif
 
 namespace NorvesLib::Tools::AssetCook
 {
+    namespace
+    {
+        const char* Utf8Text(const char8_t* text) noexcept
+        {
+            return reinterpret_cast<const char*>(text);
+        }
+    }
+
+    namespace
+    {
+        bool EncodeClipReportText(const Core::Container::String& text, std::string& out)
+        {
+            using Char = Core::Container::String::value_type;
+            const Core::Container::Span<const Char> units{text.data(), text.size()};
+            const auto measured = Core::Asset::MeasureSkeletalNameEncoding(2, units);
+            if (!measured.Succeeded()) return false;
+            Core::Container::VariableArray<uint8_t> bytes(measured.ByteCount);
+            if (!Core::Asset::EncodeSkeletalWireName(2, units, {bytes.data(), bytes.size()}).Succeeded()) return false;
+            out.assign(bytes.begin(), bytes.end());
+            return true;
+        }
+
+    }
+
+    bool RunClipOptimizeStage(const ClipOptimizeCookOptions& options, const Core::Animation::ClipOptimizeRig& rig,
+                              Core::Container::VariableArray<Core::Skeletal::SkeletalAnimationClip>& clips,
+                              std::string& error)
+    {
+        Core::Animation::ClipCompressionReport report;
+        Core::Container::VariableArray<Core::Skeletal::SkeletalAnimationClip> optimized;
+        const bool succeeded = Core::Animation::OptimizeSkeletalClips(rig, clips, optimized, options.Settings, report);
+        if (!succeeded && (!EncodeClipReportText(report.FailureReason, error) || error.empty()))
+        {
+            error = Utf8Text(u8"クリップの最適化に失敗しました");
+            report.FailureReason = error.c_str();
+        }
+        if (!options.ReportPath.empty())
+        {
+            Core::Container::String json;
+            std::string utf8;
+            if (!Core::Animation::WriteClipCompressionReportJson(report, json) || !EncodeClipReportText(json, utf8))
+            {
+                error = Utf8Text(u8"クリップ最適化レポートを JSON に変換できません");
+                return false;
+            }
+            std::ofstream stream(options.ReportPath, std::ios::binary | std::ios::trunc);
+            if (stream)
+            {
+                stream.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+                stream.close();
+            }
+            if (!stream)
+            {
+                error = Utf8Text(u8"クリップ最適化レポートを書き込めません");
+                return false;
+            }
+        }
+        if (!succeeded) return false;
+        clips = std::move(optimized);
+        return true;
+    }
+
     namespace
     {
         using namespace Detail;
@@ -178,7 +246,7 @@ namespace NorvesLib::Tools::AssetCook
                 TextureUsageCookParams cookParams;
                 if (!ParseTextureUsage(options.Usage, cookParams.Usage))
                 {
-                    error = "--usage は albedo・normal・orm・single・height16 "
+                    error = "--usage は albedo・normal・orm・single・height16・hdr・rg16 "
                             "のどれかです";
                     return false;
                 }
@@ -196,6 +264,10 @@ namespace NorvesLib::Tools::AssetCook
                 std::vector<uint8_t> ormBytes[4];
                 ErrorString ormNames[4];
                 cookParams.bFlipNormalY = options.bFlipNormalY;
+                cookParams.bHasHeightRange = options.bHasHeightRange;
+                cookParams.HeightRangeMin = options.HeightRangeMin;
+                cookParams.HeightRangeMax = options.HeightRangeMax;
+                cookParams.bRequire16Bit = options.bRequire16Bit;
                 if (cookParams.Usage == TextureUsage::Orm && options.InputPath.empty())
                 {
                     const std::filesystem::path *ormPaths[4] = {&options.OrmAoPath, &options.OrmRoughnessPath,
@@ -615,7 +687,8 @@ namespace NorvesLib::Tools::AssetCook
             NorvesLib::Core::Container::AnsiStringView entryName, bool& bSkipped, std::string& error)
         {
             bSkipped=false;
-            if (!options.bSkipIfUnchanged)
+            // レポートは省略された測定値を復元できないため、指定時は必ず再調理する。
+            if (!options.bSkipIfUnchanged || (options.ClipOptimize.bEnabled && !options.ClipOptimize.ReportPath.empty()))
             {
                 return true;
             }
@@ -623,7 +696,8 @@ namespace NorvesLib::Tools::AssetCook
             NorvesLib::Core::Container::AnsiString fingerprintError;
             if (!NorvesLib::Tools::AssetCook::FingerprintModelCookSourceNativePath(source.data(),source.size(),
                 options.Format.c_str(),inputPath,logicalPath,fingerprint,fingerprintError,&options.ImportSettings,
-                NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format) ? &options.SkeletalImport.Decode : nullptr))
+                NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format) ? &options.SkeletalImport.Decode : nullptr,
+                &options.ClipOptimize))
             {
                 error.assign(fingerprintError.data(),fingerprintError.size());
                 return false;
@@ -897,6 +971,36 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool GuardClipReport(const CookOptions& options, const std::filesystem::path& inputPath,
+                             const std::filesystem::path& packagePath, const std::filesystem::path& manifestPath,
+                             std::string& error)
+        {
+            if (!options.ClipOptimize.bEnabled || options.ClipOptimize.ReportPath.empty()) return true;
+            std::error_code reportError;
+            const auto report = std::filesystem::weakly_canonical(options.ClipOptimize.ReportPath, reportError);
+            if (reportError)
+            {
+                error = Utf8Text(u8"クリップ最適化レポートのパスを確認できません");
+                return false;
+            }
+            const auto safe = [&](const std::filesystem::path& path)
+            {
+                std::error_code pathError, equivalentError;
+                const auto canonical = std::filesystem::weakly_canonical(path, pathError);
+                if (pathError) return false;
+                const bool equivalent = std::filesystem::equivalent(report, canonical, equivalentError);
+                return !SameCookOutputPath(report, canonical) && (equivalentError || !equivalent);
+            };
+            const auto reject = [&]()
+            {
+                error = Utf8Text(u8"クリップ最適化レポートは cook の入力や出力と同じファイルにできません");
+                return false;
+            };
+            if (!safe(inputPath) || !safe(packagePath) || !safe(manifestPath)) return reject();
+
+            return true;
+        }
+
         bool CookSkeletalModelAsset(const CookOptions& options, std::string& error)
         {
             std::filesystem::path inputPath;
@@ -908,12 +1012,12 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
-
             NorvesLib::Core::Container::VariableArray<uint8_t> inputBytes;
             if (!ReadSkeletalBinaryFile(inputPath, inputBytes, error))
             {
                 return false;
             }
+            if (!GuardClipReport(options, inputPath, packagePath, manifestPath, error)) return false;
 
             const NorvesLib::Core::Container::AnsiString sourceLogicalPath(options.LogicalPath.c_str());
             const NorvesLib::Core::Container::AnsiString sourceEntryName(options.EntryName.c_str());
@@ -957,7 +1061,8 @@ namespace NorvesLib::Tools::AssetCook
                                                                skeletalResult,
                                                                skeletalError,
                                                                &options.ImportSettings,
-                                                               &options.SkeletalImport.Decode, &diagnostics);
+                                                               &options.SkeletalImport.Decode, &diagnostics,
+                                                               &options.ClipOptimize);
             NorvesLib::Tools::AssetCook::SkeletalImportReportInput report;
             report.Outcome = cooked ? NorvesLib::Tools::AssetCook::SkeletalImportOutcome::PayloadReady :
                 NorvesLib::Tools::AssetCook::SkeletalImportOutcome::Failed;
@@ -1544,6 +1649,10 @@ namespace NorvesLib::Tools::AssetCook
             options.OrmMetallicPath = request.OrmMetallicPath;
             options.OrmOcclusionPath = request.OrmOcclusionPath;
             options.bFlipNormalY = request.bFlipNormalY;
+            options.bHasHeightRange = request.bHasHeightRange;
+            options.HeightRangeMin = request.HeightRangeMin;
+            options.HeightRangeMax = request.HeightRangeMax;
+            options.bRequire16Bit = request.bRequire16Bit;
             options.FallbackMinTriangles = request.FallbackMinTriangles;
             options.DagRootMaxClusters = request.DagRootMaxClusters;
             options.InputPath = request.InputPath;
@@ -1561,12 +1670,30 @@ namespace NorvesLib::Tools::AssetCook
             options.ImportSettings.bRequired = request.bRequireSidecar;
             options.bSkipIfUnchanged = request.bSkipIfUnchanged;
             options.SkeletalImport.Decode = request.SkeletalDecode;
+            options.ClipOptimize = request.ClipOptimize;
             options.RoleProfile = request.RoleProfile;
             return options;
         }
         bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
                                        Core::Container::AnsiString& outError)
         {
+            std::string clipError;
+            if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError))
+            {
+                outError = Core::Container::AnsiString(Core::Container::AnsiStringView(clipError.data(), clipError.size()));
+                return false;
+            }
+            const bool bRetargetClip = HasRigRetarget(request) && request.Kind == "animation" &&
+                                       request.Format == "nvskel.v1.clips";
+            const bool bRoleClip = HasSkeletalRoleFileRequest(request.RoleProfile) && request.Kind == "model" &&
+                                   IsSupportedSkeletalCookFormat(request.Format);
+            if ((request.ClipOptimize.bEnabled || request.ClipOptimize.bAnyLimitGiven ||
+                 request.ClipOptimize.bReportGiven || !request.ClipOptimize.ReportPath.empty()) &&
+                !bRetargetClip && !bRoleClip)
+            {
+                outError = Utf8Text(u8"この管理付き cook ではクリップ最適化に対応していません");
+                return false;
+            }
             if (!request.Usage.empty() || !request.Generate.empty() || request.FallbackMinTriangles != 0 ||
                 request.DagRootMaxClusters != 0 ||
                 request.Format == "nvmesh.v1.mesh3d.pnt.u32.lodgraph")
@@ -1638,7 +1765,8 @@ namespace NorvesLib::Tools::AssetCook
             const bool separateOrm = outOptions.Usage == "orm" && hasOrm && outOptions.InputPath.empty();
             if (outOptions.Usage.empty())
             {
-                if (hasOrm || !outOptions.Quality.empty() || outOptions.bFlipNormalY)
+                if (hasOrm || !outOptions.Quality.empty() || outOptions.bFlipNormalY ||
+                    outOptions.bHasHeightRange || outOptions.bRequire16Bit)
                 {
                     error = "テクスチャ用途を --usage で指定してください";
                     return false;
@@ -1647,7 +1775,24 @@ namespace NorvesLib::Tools::AssetCook
             else
             {
                 TextureUsage usage;
-                if (outOptions.Kind != "texture" || !ParseTextureUsage(outOptions.Usage, usage) ||
+                if (!ParseTextureUsage(outOptions.Usage, usage))
+                {
+                    error = "--usage は albedo・normal・orm・single・height16・hdr・rg16 のどれかです";
+                    return false;
+                }
+                if (outOptions.bHasHeightRange &&
+                    (usage != TextureUsage::Height16 || !std::isfinite(outOptions.HeightRangeMin) ||
+                     !std::isfinite(outOptions.HeightRangeMax) || outOptions.HeightRangeMin >= outOptions.HeightRangeMax))
+                {
+                    error = "--height-range は --usage height16 で有限の min < max を指定してください";
+                    return false;
+                }
+                if (outOptions.bRequire16Bit && usage != TextureUsage::Height16 && usage != TextureUsage::Rg16)
+                {
+                    error = "--require-16bit は --usage height16 か --usage rg16 と一緒に指定してください";
+                    return false;
+                }
+                if (outOptions.Kind != "texture" ||
                     outOptions.Format != GetTextureUsageManifestFormat(usage) ||
                     (!outOptions.Quality.empty() && outOptions.Quality != "fast" && outOptions.Quality != "normal" &&
                      outOptions.Quality != "best") ||
@@ -1681,6 +1826,14 @@ namespace NorvesLib::Tools::AssetCook
                 (outOptions.Variant.empty() && outOptions.Kind != "world"))
             {
                 error = "missing required arguments";
+                return false;
+            }
+
+            if (!ValidateClipOptimizeOptions(outOptions.ClipOptimize, error)) return false;
+            if (outOptions.ClipOptimize.bEnabled &&
+                (outOptions.Kind != "model" || !IsSupportedSkeletalCookFormat(outOptions.Format)))
+            {
+                error = Utf8Text(u8"クリップ最適化は旧形式の骨格モデル cook にのみ指定できます");
                 return false;
             }
 
@@ -1806,6 +1959,10 @@ namespace NorvesLib::Tools::AssetCook
             request.OrmMetallicPath = options.OrmMetallicPath;
             request.OrmOcclusionPath = options.OrmOcclusionPath;
             request.bFlipNormalY = options.bFlipNormalY;
+            request.bHasHeightRange = options.bHasHeightRange;
+            request.HeightRangeMin = options.HeightRangeMin;
+            request.HeightRangeMax = options.HeightRangeMax;
+            request.bRequire16Bit = options.bRequire16Bit;
             request.FallbackMinTriangles = options.FallbackMinTriangles;
             request.DagRootMaxClusters = options.DagRootMaxClusters;
             request.InputPath = options.InputPath;
@@ -1827,13 +1984,54 @@ namespace NorvesLib::Tools::AssetCook
             request.bRequireSidecar = options.ImportSettings.bRequired;
             request.bSkipIfUnchanged = options.bSkipIfUnchanged;
             request.SkeletalDecode = options.SkeletalImport.Decode;
+            request.ClipOptimize = options.ClipOptimize;
             request.RoleProfile = options.RoleProfile;
             return request;
         }
 
     }
+    bool Detail::GuardClipReportRequest(const SingleAssetCookRequest& request,
+                                        const CookDependencySnapshot& dependencies,
+                                        Core::Container::AnsiString& outError)
+    {
+        if (!request.ClipOptimize.bEnabled || request.ClipOptimize.ReportPath.empty()) return true;
+        const auto options = MakeLegacyCookOptions(request);
+        std::string error;
+        const auto safe = [&](const std::filesystem::path& path)
+        {
+            return GuardClipReport(options, path, request.PackagePath, request.ManifestPath, error);
+        };
+        const auto fail = [&]()
+        {
+            outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
+            return false;
+        };
+        if (!safe(request.InputPath)) return fail();
+        for (const auto& file : dependencies.Files)
+        {
+            if (!file.Path.empty() && !safe(file.Path)) return fail();
+        }
+        if (HasRigRetarget(request))
+        {
+            auto motionReport = request.PackagePath;
+            motionReport.replace_extension(".motion_report.json");
+            if (!safe(motionReport)) return fail();
+        }
+        return true;
+    }
     bool CookSingleAsset(const SingleAssetCookRequest& request, Core::Container::AnsiString& outError)
     {
+        std::string clipError;
+        const bool bRetargetClip = Detail::HasRigRetarget(request) && request.Kind == "animation" &&
+                                   request.Format == "nvskel.v1.clips";
+        const bool bSkeletalModel = request.Kind == "model" && IsSupportedSkeletalCookFormat(request.Format);
+        if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError) ||
+            (request.ClipOptimize.bEnabled && !bSkeletalModel && !bRetargetClip))
+        {
+            if (clipError.empty()) clipError = Utf8Text(u8"クリップ最適化は骨格モデルまたはリターゲットしたクリップの cook で指定してください");
+            outError = Core::Container::AnsiString(Core::Container::AnsiStringView(clipError.data(), clipError.size()));
+            return false;
+        }
         if (Detail::IsRigSingleFormat(request.Format))
         {
             return Detail::CookRigSingleAsset(request, outError);

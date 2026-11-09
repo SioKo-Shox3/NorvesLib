@@ -17,6 +17,7 @@ namespace NorvesLib::Core::Animation
             "front_R_upper", "front_R_lower",    "front_R_paw",   "hind_L_thigh",  "hind_L_shin", "hind_L_hock",
             "hind_L_paw",    "hind_R_thigh",     "hind_R_shin",   "hind_R_hock",   "hind_R_paw"};
         static_assert(sizeof(RoleNames) / sizeof(RoleNames[0]) == SkeletalRoleCount);
+        static_assert(SkeletalRoleCount <= 32);
         Result Fail(Status status, const char* field, uint32_t role = UINT32_MAX, size_t element = SIZE_MAX)
         {
             return {status, field, role, element};
@@ -253,18 +254,161 @@ namespace NorvesLib::Core::Animation
             out.Rotation = SkeletalRetargetRotationPolicy::PreserveHeadingHoldTranslations;
             return {Status::Success};
         }
+        Result UpHint(const JsonValue& hint, Bvh::Vector3d& out, const char* field)
+        {
+            if (!hint.IsArray() || hint.GetArraySize() != 3)
+            {
+                return Fail(Status::InvalidSettings, field);
+            }
+            double values[3];
+            for (size_t i = 0; i < 3; ++i)
+            {
+                const auto value = hint.GetArrayElement(i);
+                if (!value.IsNumber() || !std::isfinite(value.AsNumber()))
+                {
+                    return Fail(Status::InvalidSettings, field);
+                }
+                values[i] = value.AsNumber();
+            }
+            const double length = std::hypot(values[0], values[1], values[2]);
+            if (!std::isfinite(length) || length < 1e-10)
+            {
+                return Fail(Status::InvalidSettings, field);
+            }
+            out = {values[0] / length, values[1] / length, values[2] / length};
+            return {Status::Success};
+        }
+        Result RoleUpHints(const JsonValue& roles, SkeletalRoleProfile& out)
+        {
+            constexpr const char* field = "rest_pose.roles";
+            constexpr const char* keys[] = {"up_hint"};
+            if (!roles.IsObject())
+            {
+                return Fail(Status::InvalidType, field);
+            }
+            for (size_t i = 0; i < roles.GetObjectSize(); ++i)
+            {
+                const uint32_t role = FindRole(roles.GetMemberName(i));
+                if (role == UINT32_MAX)
+                {
+                    return Fail(Status::UnknownRole, field);
+                }
+                const uint32_t bit = uint32_t{1} << role;
+                if ((out.RoleUpHintMask & bit) != 0)
+                {
+                    return Fail(Status::DuplicateField, field, role);
+                }
+                const auto entry = roles.GetMemberValue(i);
+                auto result = Object(entry, keys, field);
+                if (!result.Succeeded())
+                {
+                    result.RoleIndex = role;
+                    return result;
+                }
+                result = UpHint(entry.FindMember("up_hint"), out.RoleUpHints[role], "rest_pose.roles.up_hint");
+                if (!result.Succeeded())
+                {
+                    result.RoleIndex = role;
+                    return result;
+                }
+                out.RoleUpHintMask |= bit;
+            }
+            return {Status::Success};
+        }
+        Result Proportions(const JsonValue& proportions, SkeletalRoleProfile& out)
+        {
+            constexpr const char* keys[] = {"root_scale", "leg_length_ratio"};
+            auto result = Object(proportions, keys, "proportions");
+            if (!result.Succeeded())
+            {
+                return result;
+            }
+            const auto scale = proportions.FindMember("root_scale");
+            if (StringIs(scale, "auto"))
+            {
+                out.bAutoLegRootScale = true;
+            }
+            else if (StringIs(scale, "auto_height"))
+            {
+                out.bAutoRootHeight = true;
+            }
+            else if (scale.IsNumber() && std::isfinite(scale.AsNumber()) && scale.AsNumber() > 0)
+            {
+                out.RootScale = scale.AsNumber();
+            }
+            else
+            {
+                return Fail(Status::InvalidSettings, "proportions.root_scale");
+            }
+            if (proportions.HasMember("leg_length_ratio"))
+            {
+                const auto value = proportions.FindMember("leg_length_ratio");
+                if (!out.bAutoLegRootScale || !value.IsNumber() || !std::isfinite(value.AsNumber()) ||
+                    value.AsNumber() <= 0)
+                {
+                    return Fail(Status::InvalidSettings, "proportions.leg_length_ratio");
+                }
+                out.LegLengthRatioOverride = value.AsNumber();
+            }
+            return {Status::Success};
+        }
+        Result Report(const JsonValue& report, SkeletalRoleProfile& out)
+        {
+            constexpr const char* keys[] = {"max_joint_error_deg", "max_foot_slide_m", "max_foot_penetration_m"};
+            auto result = Object(report, keys, "report");
+            if (!result.Succeeded())
+            {
+                return result;
+            }
+            struct ReportField
+            {
+                const char* Name;
+                const char* Field;
+                double* Value;
+                bool bJointError;
+            };
+            for (const auto field : {ReportField{"max_joint_error_deg", "report.max_joint_error_deg",
+                                                  &out.ReportMaxJointErrorDegrees, true},
+                                     ReportField{"max_foot_slide_m", "report.max_foot_slide_m",
+                                                 &out.ReportMaxFootSlideMeters, false},
+                                     ReportField{"max_foot_penetration_m", "report.max_foot_penetration_m",
+                                                 &out.ReportMaxFootPenetrationMeters, false}})
+            {
+                if (!report.HasMember(field.Name))
+                {
+                    continue;
+                }
+                const auto value = report.FindMember(field.Name);
+                if (!value.IsNumber() || !std::isfinite(value.AsNumber()) || value.AsNumber() < 0 ||
+                    (field.bJointError && (value.AsNumber() == 0 || value.AsNumber() > 180)))
+                {
+                    return Fail(Status::InvalidSettings, field.Field);
+                }
+                *field.Value = value.AsNumber();
+            }
+            return {Status::Success};
+        }
         Result ExtendedSettings(const JsonValue& root, SkeletalRoleProfile& out)
         {
+            if (out.Version == 2 && !root.HasMember("proportions"))
+            {
+                return Fail(Status::InvalidSettings, "proportions");
+            }
             if (root.HasMember("rest_pose"))
             {
                 const auto rest = root.FindMember("rest_pose");
                 constexpr const char* keys[] = {"mode", "up_hint", "maximum_error_degrees"};
-                auto result = Object(rest, keys, "rest_pose");
+                constexpr const char* v2Keys[] = {"mode", "up_hint", "maximum_error_degrees", "roles"};
+                auto result = out.Version == 2 ? Object(rest, v2Keys, "rest_pose") : Object(rest, keys, "rest_pose");
                 if (!result.Succeeded())
                 {
                     return result;
                 }
                 const auto mode = rest.FindMember("mode");
+                if (out.Version == 2 && rest.HasMember("roles") && !StringIs(mode, "align_bones"))
+                {
+                    return Fail(Status::InvalidSettings, "rest_pose.roles");
+                }
                 if (StringIs(mode, "explicit"))
                 {
                     out.RestMode = SkeletalRestCorrectionMode::Explicit;
@@ -283,27 +427,11 @@ namespace NorvesLib::Core::Animation
                 }
                 if (rest.HasMember("up_hint"))
                 {
-                    const auto hint = rest.FindMember("up_hint");
-                    if (!hint.IsArray() || hint.GetArraySize() != 3)
+                    result = UpHint(rest.FindMember("up_hint"), out.RestUpHint, "rest_pose.up_hint");
+                    if (!result.Succeeded())
                     {
-                        return Fail(Status::InvalidSettings, "rest_pose.up_hint");
+                        return result;
                     }
-                    double values[3];
-                    for (size_t i = 0; i < 3; ++i)
-                    {
-                        const auto v = hint.GetArrayElement(i);
-                        if (!v.IsNumber() || !std::isfinite(v.AsNumber()))
-                        {
-                            return Fail(Status::InvalidSettings, "rest_pose.up_hint");
-                        }
-                        values[i] = v.AsNumber();
-                    }
-                    const double length = std::hypot(values[0], values[1], values[2]);
-                    if (!std::isfinite(length) || length < 1e-10)
-                    {
-                        return Fail(Status::InvalidSettings, "rest_pose.up_hint");
-                    }
-                    out.RestUpHint = {values[0] / length, values[1] / length, values[2] / length};
                 }
                 if (rest.HasMember("maximum_error_degrees"))
                 {
@@ -313,6 +441,14 @@ namespace NorvesLib::Core::Animation
                         return Fail(Status::InvalidSettings, "rest_pose.maximum_error_degrees");
                     }
                     out.MaximumRestErrorRadians = v.AsNumber() * 3.14159265358979323846 / 180;
+                }
+                if (out.Version == 2 && rest.HasMember("roles"))
+                {
+                    result = RoleUpHints(rest.FindMember("roles"), out);
+                    if (!result.Succeeded())
+                    {
+                        return result;
+                    }
                 }
             }
             if (root.HasMember("root_scale"))
@@ -329,6 +465,22 @@ namespace NorvesLib::Core::Animation
                 else
                 {
                     return Fail(Status::InvalidSettings, "root_scale");
+                }
+            }
+            if (out.Version == 2 && root.HasMember("proportions"))
+            {
+                auto result = Proportions(root.FindMember("proportions"), out);
+                if (!result.Succeeded())
+                {
+                    return result;
+                }
+            }
+            if (out.Version == 2 && root.HasMember("report"))
+            {
+                auto result = Report(root.FindMember("report"), out);
+                if (!result.Succeeded())
+                {
+                    return result;
                 }
             }
             if (root.HasMember("processing"))
@@ -633,13 +785,18 @@ namespace NorvesLib::Core::Animation
         constexpr const char* rootKeys[] = {
             "version",      "vocabulary",   "axes",           "units",     "position_convention", "time",
             "source_roles", "target_roles", "required_roles", "rest_pose", "root_scale",          "processing"};
-        result = Object(root, rootKeys, "profile");
+        constexpr const char* v2RootKeys[] = {
+            "version",      "vocabulary",   "axes",           "units",     "position_convention", "time",
+            "source_roles", "target_roles", "required_roles", "rest_pose", "processing",          "proportions",
+            "report"};
+        const auto version = root.FindMember("version");
+        const bool bVersion2 = version.IsIntegerLiteral() && version.AsNumber() == 2;
+        result = bVersion2 ? Object(root, v2RootKeys, "profile") : Object(root, rootKeys, "profile");
         if (!result.Succeeded())
         {
             return result;
         }
-        const auto version = root.FindMember("version");
-        if (!version.IsIntegerLiteral() || version.AsNumber() != 1)
+        if (!version.IsIntegerLiteral() || (version.AsNumber() != 1 && version.AsNumber() != 2))
         {
             return Fail(Status::UnsupportedVersion, "version");
         }
@@ -648,6 +805,7 @@ namespace NorvesLib::Core::Animation
             return Fail(Status::UnknownVocabulary, "vocabulary");
         }
         SkeletalRoleProfile candidate;
+        candidate.Version = bVersion2 ? 2 : 1;
         result = Settings(root, candidate.Settings);
         if (!result.Succeeded())
         {

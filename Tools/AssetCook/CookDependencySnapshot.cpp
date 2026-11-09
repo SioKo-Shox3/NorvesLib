@@ -241,6 +241,7 @@ namespace NorvesLib::Tools::AssetCook
                 target.bNoSidecar = false;
                 target.bRequireSidecar = false;
                 target.ClipJointNodes.clear();
+                target.ClipOptimize = {};
                 CookDependencySnapshot targetDependencies;
                 if (!Capture(target, revision, targetDependencies, error))
                 {
@@ -274,6 +275,14 @@ namespace NorvesLib::Tools::AssetCook
                 hash.Integer(static_cast<uint64_t>(file.Role));hash.Integer(file.bPresent);
                 if (!hash.Path(file.Path)) return Fail(error,"dependency path is not Unicode");
                 hash.Integer(file.Size);hash.Integer(file.ContentHash);
+            }
+            if (request.ClipOptimize.bEnabled)
+            {
+                hash.Text("norves.clip-optimize.v1");
+                const auto& settings = request.ClipOptimize.Settings;
+                hash.Integer(std::bit_cast<uint64_t>(settings.MaxVertexErrorMeters));
+                hash.Integer(std::bit_cast<uint64_t>(settings.MaxJointErrorMeters));
+                hash.Integer(std::bit_cast<uint64_t>(settings.MaxRotationErrorDegrees));
             }
             candidate.Fingerprint=hash.Value;out=std::move(candidate);error.clear();return true;
         }

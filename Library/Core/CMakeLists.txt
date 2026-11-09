@@ -90,6 +90,10 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndex.cpp
     Private/Animation/RigClipAnalysis.cpp
     Private/Animation/SkeletalClipProcessing.cpp
+    Private/Animation/ClipOptimizer.cpp
+    Private/Animation/ClipOptimizer.h
+    Private/Animation/RetargetReport.cpp
+    Private/Animation/RetargetReport.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
@@ -256,6 +260,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
+    Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
+    Private/Rendering/RenderExtension/RenderExtensionData.cpp
+    Private/Rendering/RenderExtension/RenderExtensionHelpers.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
@@ -265,6 +272,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassGenerateReference.cpp
+    Private/Rendering/GrassFieldGpuWindow.cpp
+    Private/Rendering/GrassTileSelector.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
@@ -471,6 +482,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanCommandList.cpp
     Private/RHI/Vulkan/VulkanDescriptorSet.cpp
     Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFormatTable.h
     Private/RHI/Vulkan/VulkanFramebuffer.cpp
     Private/RHI/Vulkan/VulkanGPUResourceAllocator.cpp
     Private/RHI/Vulkan/VulkanPipeline.cpp
@@ -724,6 +736,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
+    Public/Rendering/RenderExtension/RenderExtension.h
+    Public/Rendering/RenderExtension/RenderExtensionData.h
+    Public/Rendering/RenderExtension/RenderExtensionHelpers.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
@@ -733,6 +748,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/GrassPass.h
+    Public/Rendering/GrassGenerateReference.h
+    Public/Rendering/GrassFieldGpuWindow.h
+    Public/Rendering/GrassTileSelector.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RibbonTrailRenderer.h
@@ -903,6 +922,7 @@ set(PUBLIC_HEADERS
     Public/RHI/RHIDeviceDesc.h
     Public/RHI/RHIDeviceFactory.h
     Public/RHI/RHITypes.h
+    Public/RHI/FormatInfo.h
     Public/RHI/IBuffer.h
     Public/RHI/ITexture.h
     Public/RHI/ISampler.h

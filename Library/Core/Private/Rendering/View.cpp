@@ -275,6 +275,17 @@ namespace NorvesLib::Core::Rendering
                         IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(postPass.get());
                         if (graphPass)
                         {
+                            // スタックの初期化後に追加したネイティブのパスも初期化する。
+                            if (!postPass->IsInitialized())
+                            {
+                                if (!postPass->Initialize(context))
+                                {
+                                    NORVES_LOG_ERROR("View",
+                                                     "ネイティブの後段パスの初期化に失敗しました: %s",
+                                                     postPass->GetName());
+                                    return;
+                                }
+                            }
                             context.Graph->AddPass(graphPass);
                             continue;
                         }

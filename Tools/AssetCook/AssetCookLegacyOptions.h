@@ -15,6 +15,12 @@ namespace NorvesLib::Tools::AssetCook::Detail
         // ORM の A に詰める遮蔽(省略可。無ければ A=255)。
         std::filesystem::path OrmOcclusionPath;
         bool bFlipNormalY = false;
+        // Height16 の浮動小数の入力を 0..65535 へ正規化する範囲。
+        bool bHasHeightRange = false;
+        float HeightRangeMin = 0.0f;
+        float HeightRangeMax = 0.0f;
+        // Height16・Rg16 で 8bit の入力を拒む。
+        bool bRequire16Bit = false;
         uint32_t FallbackMinTriangles = 0;
         uint32_t DagRootMaxClusters = 0;
         std::filesystem::path InputPath;
@@ -23,6 +29,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         NorvesLib::Core::AssetImport::ImportSettingsFileOptions ImportSettings;
         bool bSkipIfUnchanged = false;
         NorvesLib::Tools::AssetCook::SkeletalCliOptions SkeletalImport;
+        ClipOptimizeCookOptions ClipOptimize;
         SkeletalRoleFileRequest RoleProfile;
         std::string LogicalPath;
         std::string Kind;

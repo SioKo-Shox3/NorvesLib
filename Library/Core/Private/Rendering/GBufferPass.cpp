@@ -380,7 +380,7 @@ namespace NorvesLib::Core::Rendering
         RGTextureDesc albedoDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo");
         albedoDesc.Usage = albedoDesc.Usage | resolveWriteUsage;
         RGTextureDesc normalDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
-        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage;
+        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage | RHI::ResourceUsage::TransferSrc;
 
         m_AlbedoHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferAlbedo,
@@ -667,7 +667,7 @@ namespace NorvesLib::Core::Rendering
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
             float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
-            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0。GBuffer の材質の A へ書く）
+            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0。gbuffer.frag が > 0.5 を判定し、Normal.w の DIFFUSE_ONLY の受け手の印へ変換）
         };
         static_assert(sizeof(PerObjectUBO) == 336u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
@@ -1032,8 +1032,10 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         m_AlbedoTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"));
-        m_NormalTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"));
+        RHI::TextureDesc normalDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
+        normalDesc.Usage = normalDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_NormalTexture = m_Device->CreateTexture(normalDesc);
         m_MaterialTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
         m_EmissiveTexture = m_Device->CreateTexture(

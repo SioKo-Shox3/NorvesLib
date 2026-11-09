@@ -366,6 +366,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
+    MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
 target_link_libraries(RHIRayTracingApiContractTest PRIVATE Core)
@@ -382,7 +383,18 @@ add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
 add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --test=RHIIndirectApiContractTest)
 
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
+# 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
+add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
+
+# 形式の対応と 16・10・浮動小数の更新・描画の読み戻しを確かめる。
+add_test(NAME RHIFormatReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIFormatReadbackVulkanTest)
+set_tests_properties(RHIFormatReadbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
@@ -392,7 +404,7 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# BC1・BC4・BC5・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
+# BC1・BC3・BC4・BC5・BC6H・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
 add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
 set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -593,6 +605,15 @@ set_tests_properties(IndirectDrawVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 草生成の GPU カウンターと間接引数を CPU の写しと比較する。
+add_test(NAME GrassGenerateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassGenerateVulkanTest)
+set_tests_properties(GrassGenerateVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
 # 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
 # プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
@@ -620,6 +641,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
@@ -639,6 +661,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
+    MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
@@ -829,6 +852,7 @@ register_rendering_gpu_test(
 
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
+    RenderExtensionStageScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
@@ -841,6 +865,14 @@ target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui
 )
 set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
+target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+register_rendering_gpu_test(
+    RenderExtensionStageVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color
+    --extension-stage-scenario=post)
 register_rendering_gpu_test(
     RenderingHdrIndoorSceneVulkanTest
     RenderingHdrSceneCaptureTest
@@ -1378,6 +1410,7 @@ set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Renderi
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
+add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -1408,6 +1441,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
+    MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1454,6 +1488,8 @@ add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOc
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
+# 草のタイル選別をCPUで検証する。
+add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
@@ -1592,12 +1628,16 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
+add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
 
 norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
+    MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
 target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
@@ -2090,6 +2130,7 @@ norves_add_test_bundle(MaterialResourcesTest
     FOLDER "Test/Core/Rendering"
     MEMBER MaterialResourcesTest MaterialResourcesTest.cpp
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
+    MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE

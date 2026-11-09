@@ -21,7 +21,6 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
-#include "Rendering/DepthOfFieldPass.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
@@ -29,7 +28,6 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/InstanceBufferRing.h"
-#include "Rendering/MotionBlurPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
@@ -2842,10 +2840,6 @@ namespace NorvesLib::Core::Rendering
             m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
                                                       settings.SwRaster, settings.SwRasterMaxPixels);
-            // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
-            m_MainSceneView->AddPass(Container::MakeUnique<DepthOfFieldPass>());
-            // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
-            m_MainSceneView->AddPass(Container::MakeUnique<MotionBlurPass>());
             NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
         }
 
@@ -4613,6 +4607,7 @@ namespace NorvesLib::Core::Rendering
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
+        m_ExtensionData.SnapshotTo(packet.Scene.Extensions);
         packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
@@ -5845,6 +5840,7 @@ namespace NorvesLib::Core::Rendering
                                              ? &packet->PreviousMainCamera
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
+        viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
@@ -5858,6 +5854,7 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotGrassField = packet->GrassField.get();
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;

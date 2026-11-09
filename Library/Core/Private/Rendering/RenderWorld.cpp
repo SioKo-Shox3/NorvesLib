@@ -414,6 +414,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetDecals(decals);
     }
 
+    void RenderWorld::SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data)
+    {
+        m_RenderingCoordinator.GetExtensionDataStore().SetBytes(name, layoutHash, elementSize, count, data);
+    }
+
     void RenderWorld::SetDistortions(const DistortionScene& distortions)
     {
         m_RenderingCoordinator.SetDistortions(distortions);
@@ -590,6 +595,47 @@ namespace NorvesLib::Core::Rendering
         m_PendingWidth.Store(width, std::memory_order_release);
         m_PendingHeight.Store(height, std::memory_order_release);
         m_bResizePending.Store(true, std::memory_order_release);
+    }
+
+    bool RenderWorld::RegisterRenderExtension(const RenderExtensionDesc& desc, const RenderExtensionFactory& factory)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->Register(desc, factory);
+    }
+
+    bool RenderWorld::UnregisterRenderExtension(const char* name)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->Unregister(name);
+    }
+
+    bool RenderWorld::SetRenderExtensionEnabled(const char* name, bool bEnabled)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->SetEnabled(name, bEnabled);
+    }
+
+    RenderExtensionRegistry* RenderWorld::GetRenderExtensionRegistry()
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            NORVES_LOG_WARNING("Rendering", "主の SceneView が無いため描画拡張の登録表を取得できません");
+            return nullptr;
+        }
+        return &sceneView->GetRenderExtensionRegistry();
     }
 
     void RenderWorld::SetRenderScale(float renderScale)

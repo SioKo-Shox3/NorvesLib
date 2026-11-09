@@ -13,6 +13,7 @@
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "Container/Containers.h"
 #include <cmath>
 #include <cstdint>
@@ -42,6 +43,7 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapPassSettings;
     struct PointShadowSnapshot;
     struct RayTracingSceneSnapshot;
+    struct GrassFieldRenderData;
 
     struct RenderGraphDebugCapture
     {
@@ -548,6 +550,20 @@ namespace NorvesLib::Core::Rendering
         /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
         const SceneProxy *SnapshotScene = nullptr;
 
+        /** @brief スナップショットから拡張の値を借用する。未接続または一致する値が無ければ nullptr。 */
+        template <typename T>
+        const T* FindExtension(const RenderExtensionDataKey<T>& key) const
+        {
+            return SnapshotScene ? FindRenderExtensionValue(SnapshotScene->Extensions, key) : nullptr;
+        }
+
+        /** @brief スナップショットから拡張の配列を借用する。未接続または一致する配列が無ければ空。 */
+        template <typename T>
+        Container::Span<const T> FindExtensionArray(const RenderExtensionDataKey<T>& key) const
+        {
+            return SnapshotScene ? FindRenderExtensionArray(SnapshotScene->Extensions, key) : Container::Span<const T>{};
+        }
+
         /** @brief FramePacketが所有するRT scene snapshot */
         const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
         float SnapshotDeltaTime = 0.0f;
@@ -605,6 +621,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 草・低木の株の束と風のスナップショット（FramePacket::Scene.Foliage を指す） */
         const FoliageScene *SnapshotFoliage = nullptr;
+
+        /** @brief 草の場のスナップショット（FramePacket::GrassField を指す。草の場が無いフレームは nullptr） */
+        const GrassFieldRenderData *SnapshotGrassField = nullptr;
 
         /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
         const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
@@ -1097,6 +1116,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief アプリケーション開始からの経過時間（秒） */
         double TotalTime = 0.0;
+
+        /** @brief ゲームの時間。DeltaTime は RenderThread のフレーム時間なので、拡張のパスはこちらを使う。 */
+        RenderExtensionFrameInfo ExtensionFrame;
 
         /**
          * @brief 決定的な撮影（--capture-deterministic）のフレームか

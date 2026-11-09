@@ -235,6 +235,6 @@ namespace NorvesLib::Tools::AssetCook
         settings.bRequired = request.bRequireSidecar;
         return FingerprintGltfWithRoleProfileNativePath(source, size, request.Format, request.InputPath,
                                                         request.LogicalPath, typed, out, error, &settings,
-                                                        &request.SkeletalDecode);
+                                                        &request.SkeletalDecode, &request.ClipOptimize);
     }
 } // namespace NorvesLib::Tools::AssetCook
