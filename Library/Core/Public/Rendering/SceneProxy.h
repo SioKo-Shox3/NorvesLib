@@ -9,6 +9,7 @@
 #include "SkyAtmosphere.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
+#include "Wind.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
@@ -577,6 +578,8 @@ namespace NorvesLib::Core::Rendering
         float AmbientIntensity = 1.0f;
         SkyAtmosphereParameters SkyAtmosphere;
         VolumetricFogParameters VolumetricFog;
+        // 世界で共通の風。SceneRevision には含めない。
+        WindParameters Wind = MakeDefaultWindParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         Container::VariableArray<SkyOccluderProxy> SkyOccluders;
         // 遮蔽物と値が変わったときだけ進む版。SceneRevision とは別で、RTGI の履歴を捨てない。
@@ -630,6 +633,7 @@ namespace NorvesLib::Core::Rendering
             DDGIVolume = MakeDefaultDDGIVolumeParameters();
             SkyAtmosphere = SkyAtmosphereParameters{};
             VolumetricFog = MakeDefaultVolumetricFogParameters();
+            Wind = MakeDefaultWindParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
             SkyOcclusionRevision = 0;
@@ -655,6 +659,11 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
         {
             VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+        }
+
+        void SetWindParameters(const WindParameters& parameters)
+        {
+            Wind = SanitizeWindParameters(parameters);
         }
 
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)

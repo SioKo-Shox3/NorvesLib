@@ -18,6 +18,7 @@
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapRaster.h"
 #include "Rendering/VirtualShadowMapSample.h"
+#include "Rendering/Wind.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -188,7 +189,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<int32_t> FoliageBatchMesh;
         Container::VariableArray<VirtualShadowMap::FoliageShadowCandidate> FoliageCandidates;
         uint64_t FoliageCollectCount = 0;
-        /** @brief 株を置く風（描画の定数へ渡す）。x, y = 風の吹いていく向き（XZ）、z = 風の時計[s] / x = 突風の速さ、y = 突風の大きさ */
+        /** @brief 株を置く風。FoliageWind は向き・時計・共通の風の突風周波数、FoliageWindParams は速さ・大きさ・突風・乱流の強さ */
         float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float FoliageWindParams[4] = {};
         /** @brief 影に描いた株のうち最も遠い株の根元までの距離[m]（ログ用） */
@@ -258,6 +259,7 @@ namespace NorvesLib::Core::Rendering
         void CollectFoliageCasters(RHI::IDevice* device,
                                    VirtualShadowMapCasterState& state,
                                    const FoliageScene& scene,
+                                   const WindParameters& wind,
                                    const CameraProxy& camera,
                                    double totalTime,
                                    const VirtualShadowMapClipmap& clipmap,
@@ -269,13 +271,26 @@ namespace NorvesLib::Core::Rendering
             state.FoliagePriority0OverBudget = 0;
             std::fill(std::begin(state.FoliageLodPlants), std::end(state.FoliageLodPlants), 0u);
             // GBuffer の描画（FoliagePass）と同じ風の向きと時計
-            FoliageWindDirection(scene.Wind, state.FoliageWind[0], state.FoliageWind[1]);
-            state.FoliageWind[2] = FoliageWindClock(totalTime, scene.Wind);
-            state.FoliageWind[3] = 0.0f;
-            state.FoliageWindParams[0] = scene.Wind.GustSpeed;
-            state.FoliageWindParams[1] = scene.Wind.GustScale;
-            state.FoliageWindParams[2] = 0.0f;
-            state.FoliageWindParams[3] = 0.0f;
+            if (wind.bEnabled)
+            {
+                WindDirectionXZ(wind, state.FoliageWind[0], state.FoliageWind[1]);
+                state.FoliageWind[2] = WindClockSeconds(totalTime);
+                state.FoliageWind[3] = wind.GustFrequencyHz;
+                state.FoliageWindParams[0] = wind.BaseSpeed;
+                state.FoliageWindParams[1] = wind.GustScaleMeters;
+                state.FoliageWindParams[2] = wind.GustStrength;
+                state.FoliageWindParams[3] = wind.Turbulence;
+            }
+            else
+            {
+                FoliageWindDirection(scene.Wind, state.FoliageWind[0], state.FoliageWind[1]);
+                state.FoliageWind[2] = FoliageWindClock(totalTime, scene.Wind);
+                state.FoliageWind[3] = 0.0f;
+                state.FoliageWindParams[0] = scene.Wind.GustSpeed;
+                state.FoliageWindParams[1] = scene.Wind.GustScale;
+                state.FoliageWindParams[2] = 0.0f;
+                state.FoliageWindParams[3] = 0.0f;
+            }
 
             const float cameraPosition[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
             VirtualShadowMap::CollectFoliageShadowCandidates(scene, cameraPosition, state.FoliageCandidates);
@@ -1043,7 +1058,8 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy* camera = context.GetActiveCamera();
         if (context.SnapshotFoliage && !context.SnapshotFoliage->IsEmpty() && camera)
         {
-            CollectFoliageCasters(m_Device, state, *context.SnapshotFoliage, *camera, context.TotalTime, clipmap, slices);
+            CollectFoliageCasters(m_Device, state, *context.SnapshotFoliage, context.Wind, *camera,
+                                   context.ExtensionFrame.GameTotalTime, clipmap, slices);
         }
 
         // MegaGeometry の動きは前フレームと全部を比べず、MegaGeometryPass が変わった席・メッシュの変化から積んだ箱を

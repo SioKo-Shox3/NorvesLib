@@ -46,6 +46,12 @@ float FoliageFadeScale(vec3 root, float threshold)
 // 時刻 t の風のずれ（ワールドの XZ）。式は Common/FoliagePlacement.glsl（影の描画 vsm_draw.vert と同じ）、値はこの束の定数
 vec2 FoliageWindOffset(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t)
 {
+    if (foliage.windField.x > 0.5)
+    {
+        return FoliageWindOffsetShared(root, flex, plantHeight, plantPhase, partPhase, t, foliage.wind.xy,
+                                      foliage.windParams.x, foliage.windField.y, foliage.windField.z,
+                                      foliage.windParams.y, foliage.windParams.z, foliage.windParams.w);
+    }
     return FoliageWindOffsetFor(root, flex, plantHeight, plantPhase, partPhase, t, foliage.wind.xy, foliage.windParams.xy,
                                 foliage.windParams.z, foliage.windParams.w);
 }

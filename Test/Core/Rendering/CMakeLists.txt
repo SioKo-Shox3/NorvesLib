@@ -367,6 +367,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
     MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
@@ -386,6 +387,7 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
 # 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
 add_test(NAME WorldFieldShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WorldFieldShaderCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
@@ -617,6 +619,14 @@ set_tests_properties(GrassGenerateVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+add_test(NAME WindGlslParityVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WindGlslParityVulkanTest)
+set_tests_properties(WindGlslParityVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
 add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
 set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
@@ -674,6 +684,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
+    MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
@@ -1454,6 +1465,8 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
+    MEMBER WindParametersTest WindParametersTest.cpp
+    MEMBER FramePacketWindSnapshotContractTest FramePacketWindSnapshotContractTest.cpp
     MEMBER FramePacketWorldFieldSnapshotContractTest FramePacketWorldFieldSnapshotContractTest.cpp
     MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
     MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
@@ -1504,6 +1517,8 @@ add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOc
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
+add_test(NAME WindParametersTest COMMAND CameraViewConstantsTest --test=WindParametersTest)
+add_test(NAME FramePacketWindSnapshotContractTest COMMAND CameraViewConstantsTest --test=FramePacketWindSnapshotContractTest)
 # 世界フィールド入力のパケットへの値コピーと寿命を検証する。
 add_test(NAME FramePacketWorldFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=FramePacketWorldFieldSnapshotContractTest)
 # 世界フィールドの入力の無害化をCPUで検証する。

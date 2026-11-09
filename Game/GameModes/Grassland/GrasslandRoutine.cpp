@@ -15,6 +15,7 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
+#include "Core/Public/Rendering/Wind.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Physics/TerrainColliderBinding.h"
 #include "Scenes/SceneCatalog.h"
@@ -38,6 +39,15 @@ namespace Game::GameModes
         constexpr float kSunAzimuthDegrees = 30.0f;
         // 晴天の昼の手動露出（絞り f/16・ISO 100 のままシャッター速度で合わせる）。
         constexpr float kExposureEV100 = 15.0f;
+        // 草原では +X 方向に吹く共通の風を有効にする。
+        constexpr bool kWindEnabled = true;
+        constexpr float kWindDirectionYawDegrees = 0.0f;
+        constexpr float kWindBaseSpeed = 3.5f;
+        // 突風の強さ・周期・広がりと、直交方向の乱流の強さ。
+        constexpr float kWindGustStrength = 0.6f;
+        constexpr float kWindGustFrequencyHz = 0.125f;
+        constexpr float kWindGustScaleMeters = 25.0f;
+        constexpr float kWindTurbulence = 0.2f;
         // SceneReady を出すまでの Tick の数。決定的な撮影は「読み込み中」を一度観測してから数え始めるので、
         // 最初のフレームは組み立て中として見せる。
         constexpr uint32_t kReadyTickCount = 3;
@@ -104,15 +114,25 @@ namespace Game::GameModes
             sky.SunAzimuthDegrees = kSunAzimuthDegrees;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
+            WindParameters wind = MakeDefaultWindParameters();
+            wind.bEnabled = kWindEnabled;
+            wind.DirectionYawDegrees = kWindDirectionYawDegrees;
+            wind.BaseSpeed = kWindBaseSpeed;
+            wind.GustStrength = kWindGustStrength;
+            wind.GustFrequencyHz = kWindGustFrequencyHz;
+            wind.GustScaleMeters = kWindGustScaleMeters;
+            wind.Turbulence = kWindTurbulence;
+            ctx.EngineRef.GetRenderWorld().SetWindParameters(wind);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
         }
 
-        /// 空の設定を、ほかのモードへ持ち越さないよう既定へ戻す
+        /// 環境の設定を、ほかのモードへ持ち越さないよう既定へ戻す
         void ResetEnvironment(GameModeContext& ctx)
         {
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(MakeDefaultSkyAtmosphereParameters());
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
+            ctx.EngineRef.GetRenderWorld().SetWindParameters(MakeDefaultWindParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
         }

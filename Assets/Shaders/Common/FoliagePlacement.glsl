@@ -3,6 +3,8 @@
 #ifndef NORVES_FOLIAGE_PLACEMENT_GLSL
 #define NORVES_FOLIAGE_PLACEMENT_GLSL
 
+#include "Common/Wind.glsl"
+
 const float kFoliageTwoPi = 6.2831853;
 
 float FoliageHash(vec2 p)
@@ -26,20 +28,13 @@ float FoliageValueNoise(vec2 p)
 }
 
 // 時刻 t の風のずれ（ワールドの XZ）。root は株の根元、flex はしなりの重み、plantHeight は株の高さ[m]、
-// plantPhase は株ごとの位相、partPhase は葉・枝ごとの位相。突風の塊（低周波の値ノイズ）が風下へ流れ、
-// 株は風下へ傾きながら固有の周波数で揺れ、葉・枝は横へ細かく震える。
-// direction は風の吹いていく向き（XZ。長さ 1）、gust = (突風の塊の流れる速さ[m/s], 塊の大きさ[m])、
-// strength は風の強さ、frequency は株の揺れの周波数[Hz]
-vec2 FoliageWindOffsetFor(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t,
-                          vec2 direction, vec2 gust, float strength, float frequency)
+// plantPhase は株ごとの位相、partPhase は葉・枝ごとの位相。direction は風の向き、gustValue は突風の値（0〜1）、
+// strength は風の強さ、frequency は株の揺れの周波数[Hz]。株の傾き・揺れと葉・枝の震えは風の入力によらず共通
+vec2 FoliageWindOffsetWithGust(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t,
+                               vec2 direction, float speed, float gustValue, float strength, float frequency)
 {
     vec2 across = vec2(-direction.y, direction.x);
-    float speed = max(gust.x, 0.1);
-    float scale = max(gust.y, 0.1);
-
-    vec2 flow = direction * speed * t;
-    float gustValue = 0.65 * FoliageValueNoise((root - flow) / scale) +
-                      0.35 * FoliageValueNoise((root - flow * 1.3) / (scale * 0.37) + vec2(17.31, 5.73));
+    speed = max(speed, 0.1);
     // 揺れは風下へ進む波にする（隣の株と少しずつずれてそろう）
     float sway = sin(kFoliageTwoPi * (frequency * t + plantPhase) - dot(root, direction) * (kFoliageTwoPi * frequency / speed));
     float flutter = sin(kFoliageTwoPi * (frequency * 2.7 * t + partPhase + plantPhase * 0.37));
@@ -48,6 +43,30 @@ vec2 FoliageWindOffsetFor(vec2 root, float flex, float plantHeight, float plantP
     float swing = strength * (0.15 + 0.35 * gustValue) * sway;
     float shiver = strength * 0.25 * (0.3 + 0.7 * gustValue) * flutter;
     return (direction * (lean + swing) + across * shiver) * (plantHeight * flex * flex);
+}
+
+// 従来の風。gust = (突風の塊の流れる速さ[m/s], 塊の大きさ[m])
+vec2 FoliageWindOffsetFor(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t,
+                          vec2 direction, vec2 gust, float strength, float frequency)
+{
+    float speed = max(gust.x, 0.1);
+    float scale = max(gust.y, 0.1);
+    vec2 flow = direction * speed * t;
+    float gustValue = 0.65 * FoliageValueNoise((root - flow) / scale) +
+                      0.35 * FoliageValueNoise((root - flow * 1.3) / (scale * 0.37) + vec2(17.31, 5.73));
+    return FoliageWindOffsetWithGust(root, flex, plantHeight, plantPhase, partPhase, t, direction, speed, gustValue,
+                                     strength, frequency);
+}
+
+// 共通の風の突風を株の応答へ渡す
+vec2 FoliageWindOffsetShared(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t,
+                             vec2 direction, float baseSpeed, float gustStrength, float gustFrequencyHz,
+                             float gustScaleMeters, float strength, float frequency)
+{
+    float gust = WindGustNoise(root, t, direction, gustScaleMeters, gustFrequencyHz);
+    float gustValue = clamp(0.5 + gustStrength * (gust - 0.5), 0.0, 1.0);
+    return FoliageWindOffsetWithGust(root, flex, plantHeight, plantPhase, partPhase, t, direction, baseSpeed, gustValue,
+                                     strength, frequency);
 }
 
 // ずれた分だけ下げて、葉・枝の長さがおおよそ変わらないようにする
