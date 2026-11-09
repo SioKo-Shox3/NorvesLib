@@ -20,7 +20,10 @@ namespace NorvesLib::Core::Animation
         {
             return samples.back().Value;
         }
-        const size_t next = Detail::FindNextClipKey(samples, timeSeconds);
+        const size_t next = channel.UniformStepSeconds > 0.0f
+                                ? Detail::FindNextUniformClipKey(samples, channel.UniformStartSeconds,
+                                                                 channel.UniformStepSeconds, timeSeconds)
+                                : Detail::FindNextClipKey(samples, timeSeconds);
         return Detail::SampleSkeletalChannelInterval(channel, samples[next - 1], samples[next], timeSeconds);
     }
 } // namespace NorvesLib::Core::Animation

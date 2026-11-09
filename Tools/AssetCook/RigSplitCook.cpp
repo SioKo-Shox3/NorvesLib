@@ -498,6 +498,10 @@ namespace NorvesLib::Tools::AssetCook
                 hash.Number(std::bit_cast<uint64_t>(settings.MaxJointErrorMeters));
                 hash.Number(std::bit_cast<uint64_t>(settings.MaxRotationErrorDegrees));
             }
+            if (request.ClipOptimize.bQuantize)
+            {
+                hash.String("norves.clip-quantize.v1");
+            }
             candidate.SourceHash = hash.Value;
             if (request.bInventoryOnly)
             {
@@ -528,7 +532,8 @@ namespace NorvesLib::Tools::AssetCook
                                     request.bAnalyzeClips ? &analysisOptions : nullptr, optimizedClips) ||
                 !S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits, request.Profile) ||
-                !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile))
+                !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile,
+                                    S::ClipBankV1WriteOptions{.bQuantize = request.ClipOptimize.bQuantize}))
             {
                 return fail("split_role_payload");
             }

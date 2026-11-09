@@ -49,7 +49,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 std::puts(
                     "AssetCook --retarget-clip --input <BVH/glTF/GLB> --skeleton <target glTF/GLB> --role-profile <JSON> --out <new-directory> --logical <animation-path> [--clip <source clip>] [--clip-name <output name>] [--variant <name>] [--retarget-report <path>]");
                 std::puts(
-                    "クリップ最適化: [--clip-optimize] [--clip-max-vertex-error-m <m>] "
+                    "クリップ設定: [--clip-optimize] [--clip-quantize] [--clip-max-vertex-error-m <m>] "
                     "[--clip-max-joint-error-m <m>] [--clip-max-rotation-error-deg <deg>] [--clip-report <path>]");
                 std::puts(
                     "共有rootへの増分cookはasset-set v2のskeleton_path / role_profile / source_clipを使ってください。");
@@ -77,11 +77,16 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 {
                     if (C::AnsiStringView(old) == key)
                     {
+                        if (key == C::AnsiStringView("--clip-quantize"))
+                        {
+                            return reject(reinterpret_cast<const char*>(u8"--clip-quantize は値を取らず、重複して指定できません"));
+                        }
                         return reject("duplicate_argument");
                     }
                 }
                 seen.push_back(C::AnsiString(key));
-                const bool clipFlag = key == C::AnsiStringView("--clip-optimize");
+                const bool clipFlag = key == C::AnsiStringView("--clip-optimize") ||
+                                      key == C::AnsiStringView("--clip-quantize");
                 const bool clipReport = key == C::AnsiStringView("--clip-report");
                 const bool clipValue = clipReport || key == C::AnsiStringView("--clip-max-vertex-error-m") ||
                     key == C::AnsiStringView("--clip-max-joint-error-m") ||
