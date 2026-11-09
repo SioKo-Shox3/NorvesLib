@@ -2,6 +2,7 @@
 
 #include "Rendering/GpuRetireQueue.h"
 
+#include "RHI/FormatInfo.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -12,12 +13,65 @@
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <exception>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
+    RHI::Format ToRHITextureFormat(TextureCreateInfo::Format format)
+    {
+        switch (format)
+        {
+        case TextureCreateInfo::Format::RGBA8_UNORM:
+            return RHI::Format::R8G8B8A8_UNORM;
+        case TextureCreateInfo::Format::RGBA8_SRGB:
+            return RHI::Format::R8G8B8A8_SRGB;
+        case TextureCreateInfo::Format::RGBA16_FLOAT:
+            return RHI::Format::R16G16B16A16_FLOAT;
+        case TextureCreateInfo::Format::RGBA32_FLOAT:
+            return RHI::Format::R32G32B32A32_FLOAT;
+        case TextureCreateInfo::Format::R8_UNORM:
+            return RHI::Format::R8_UNORM;
+        case TextureCreateInfo::Format::RG8_UNORM:
+            return RHI::Format::R8G8_UNORM;
+        case TextureCreateInfo::Format::D24_S8:
+            return RHI::Format::D24_UNORM_S8_UINT;
+        case TextureCreateInfo::Format::D32_FLOAT:
+            return RHI::Format::D32_FLOAT;
+        case TextureCreateInfo::Format::R16_UNORM:
+            return RHI::Format::R16_UNORM;
+        case TextureCreateInfo::Format::BC1_UNORM:
+            return RHI::Format::BC1_UNORM;
+        case TextureCreateInfo::Format::BC1_SRGB:
+            return RHI::Format::BC1_SRGB;
+        case TextureCreateInfo::Format::BC4_UNORM:
+            return RHI::Format::BC4_UNORM;
+        case TextureCreateInfo::Format::BC5_UNORM:
+            return RHI::Format::BC5_UNORM;
+        case TextureCreateInfo::Format::BC7_UNORM:
+            return RHI::Format::BC7_UNORM;
+        case TextureCreateInfo::Format::BC7_SRGB:
+            return RHI::Format::BC7_SRGB;
+        case TextureCreateInfo::Format::R16G16_UNORM:
+            return RHI::Format::R16G16_UNORM;
+        case TextureCreateInfo::Format::R10G10B10A2_UNORM:
+            return RHI::Format::R10G10B10A2_UNORM;
+        case TextureCreateInfo::Format::R11G11B10_FLOAT:
+            return RHI::Format::R11G11B10_FLOAT;
+        case TextureCreateInfo::Format::BC3_UNORM:
+            return RHI::Format::BC3_UNORM;
+        case TextureCreateInfo::Format::BC3_SRGB:
+            return RHI::Format::BC3_SRGB;
+        case TextureCreateInfo::Format::BC6H_UFLOAT:
+            return RHI::Format::BC6H_UFLOAT;
+        default:
+            assert(false && "未対応のテクスチャ形式です");
+            return RHI::Format::R8G8B8A8_UNORM;
+        }
+    }
+
     namespace
     {
         using StoreClock = std::chrono::steady_clock;
@@ -48,45 +102,6 @@ namespace NorvesLib::Core::Rendering
                 return RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
             default:
                 return RHI::ResourceUsage::VertexBuffer;
-            }
-        }
-
-        RHI::Format ToRHITextureFormat(TextureCreateInfo::Format format)
-        {
-            switch (format)
-            {
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-                return RHI::Format::R8G8B8A8_UNORM;
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-                return RHI::Format::R8G8B8A8_SRGB;
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-                return RHI::Format::R16G16B16A16_FLOAT;
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-                return RHI::Format::R32G32B32A32_FLOAT;
-            case TextureCreateInfo::Format::R8_UNORM:
-                return RHI::Format::R8_UNORM;
-            case TextureCreateInfo::Format::RG8_UNORM:
-                return RHI::Format::R8G8_UNORM;
-            case TextureCreateInfo::Format::D24_S8:
-                return RHI::Format::D24_UNORM_S8_UINT;
-            case TextureCreateInfo::Format::D32_FLOAT:
-                return RHI::Format::D32_FLOAT;
-            case TextureCreateInfo::Format::R16_UNORM:
-                return RHI::Format::R16_UNORM;
-            case TextureCreateInfo::Format::BC1_UNORM:
-                return RHI::Format::BC1_UNORM;
-            case TextureCreateInfo::Format::BC1_SRGB:
-                return RHI::Format::BC1_SRGB;
-            case TextureCreateInfo::Format::BC4_UNORM:
-                return RHI::Format::BC4_UNORM;
-            case TextureCreateInfo::Format::BC5_UNORM:
-                return RHI::Format::BC5_UNORM;
-            case TextureCreateInfo::Format::BC7_UNORM:
-                return RHI::Format::BC7_UNORM;
-            case TextureCreateInfo::Format::BC7_SRGB:
-                return RHI::Format::BC7_SRGB;
-            default:
-                return RHI::Format::R8G8B8A8_UNORM;
             }
         }
 
@@ -183,23 +198,7 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t GetTextureBytesPerPixel(TextureCreateInfo::Format format)
         {
-            switch (format)
-            {
-            case TextureCreateInfo::Format::R8_UNORM:
-                return 1;
-            case TextureCreateInfo::Format::RG8_UNORM:
-            case TextureCreateInfo::Format::R16_UNORM:
-                return 2;
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-                return 4;
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-                return 8;
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-                return 16;
-            default:
-                return 4;
-            }
+            return static_cast<uint32_t>(RHI::GetFormatBytesPerPixel(ToRHITextureFormat(format)));
         }
     }
 
