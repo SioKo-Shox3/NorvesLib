@@ -7,6 +7,8 @@
 #include "Rendering/GBufferPass.h"
 #include "Rendering/DecalPass.h"
 #include "Rendering/DistortionPass.h"
+#include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/MotionBlurPass.h"
 #include "Rendering/FoliagePass.h"
 #include "Rendering/GrassPass.h"
 #include "Rendering/SkyAtmospherePass.h"
@@ -885,6 +887,8 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::Render(ViewRenderContext &context)
     {
+        m_RenderExtensions.ApplyPending();
+
         const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
         const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
         context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
@@ -1324,6 +1328,11 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
 
+        // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
+        AddPass(Container::MakeUnique<DepthOfFieldPass>());
+        // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
+        AddPass(Container::MakeUnique<MotionBlurPass>());
+
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
@@ -1377,6 +1386,7 @@ namespace NorvesLib::Core::Rendering
         postProcessStack->AddPass(std::move(debugDrawPass));
 
         SetPostProcessStack(std::move(postProcessStack));
+        m_RenderExtensions.ReinsertAll();
 
         NORVES_LOG_INFO("SceneView",
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Volumetrics -> Forward(Transparent) -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
@@ -1421,6 +1431,7 @@ namespace NorvesLib::Core::Rendering
         toneMappingSettings.VignetteIntensity = 0.0f;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
         SetPostProcessStack(std::move(postProcessStack));
+        m_RenderExtensions.NotePathTracingPipeline();
     }
 
     void SceneView::CullBoardProxy(BoardProxy& proxy,

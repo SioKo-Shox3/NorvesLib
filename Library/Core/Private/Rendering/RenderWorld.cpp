@@ -592,6 +592,47 @@ namespace NorvesLib::Core::Rendering
         m_bResizePending.Store(true, std::memory_order_release);
     }
 
+    bool RenderWorld::RegisterRenderExtension(const RenderExtensionDesc& desc, const RenderExtensionFactory& factory)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->Register(desc, factory);
+    }
+
+    bool RenderWorld::UnregisterRenderExtension(const char* name)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->Unregister(name);
+    }
+
+    bool RenderWorld::SetRenderExtensionEnabled(const char* name, bool bEnabled)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->SetEnabled(name, bEnabled);
+    }
+
+    RenderExtensionRegistry* RenderWorld::GetRenderExtensionRegistry()
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            NORVES_LOG_WARNING("Rendering", "主の SceneView が無いため描画拡張の登録表を取得できません");
+            return nullptr;
+        }
+        return &sceneView->GetRenderExtensionRegistry();
+    }
+
     void RenderWorld::SetRenderScale(float renderScale)
     {
         m_RenderScale = renderScale;

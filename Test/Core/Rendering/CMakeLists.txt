@@ -387,6 +387,15 @@ add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContra
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
 
+# 形式の対応と 16・10・浮動小数の更新・描画の読み戻しを確かめる。
+add_test(NAME RHIFormatReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIFormatReadbackVulkanTest)
+set_tests_properties(RHIFormatReadbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -395,7 +404,7 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# BC1・BC4・BC5・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
+# BC1・BC3・BC4・BC5・BC6H・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
 add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
 set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -632,6 +641,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
@@ -1391,6 +1401,7 @@ set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Renderi
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
+add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -1608,12 +1619,14 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 
 
 norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
 )
 target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
@@ -2106,6 +2119,7 @@ norves_add_test_bundle(MaterialResourcesTest
     FOLDER "Test/Core/Rendering"
     MEMBER MaterialResourcesTest MaterialResourcesTest.cpp
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
+    MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE

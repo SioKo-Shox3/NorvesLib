@@ -18,6 +18,10 @@ namespace NorvesLib::Core::AssetImport
 
 namespace NorvesLib::Tools::AssetCook
 {
+    struct ClipOptimizeCookOptions;
+    struct SkeletalBvhCookRequest;
+    struct SkeletalBvhCookResult;
+
     enum class MeshImageRole : uint8_t
     {
         Albedo = 1,
@@ -247,7 +251,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
         Core::Container::AnsiString& error,
         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
-        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
+        const ClipOptimizeCookOptions* clipOptimize = nullptr);
     [[nodiscard]] bool CookGltfToNvmeshNativePath(
         const uint8_t *sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
         const std::filesystem::path &sourcePath, Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
@@ -258,5 +263,15 @@ namespace NorvesLib::Tools::AssetCook
         SkeletalCookResult& outResult, Core::Container::AnsiString& error,
         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
         const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
-        SkeletalCookDiagnostics* outDiagnostics = nullptr);
+        SkeletalCookDiagnostics* outDiagnostics = nullptr,
+        const ClipOptimizeCookOptions* clipOptimize = nullptr);
+
+    // BVH 適用後にクリップを最適化する呼び出し。既存の引数数の呼び出しも保持する。
+    [[nodiscard]] bool CookGltfWithBvhToNvskelNativePath(
+        const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
+        const std::filesystem::path& sourcePath, const SkeletalBvhCookRequest& request,
+        SkeletalBvhCookResult& outResult, Core::Container::AnsiString& error,
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+        const ClipOptimizeCookOptions* clipOptimize);
 } // namespace NorvesLib::Tools::AssetCook
