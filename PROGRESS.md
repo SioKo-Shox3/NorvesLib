@@ -10529,3 +10529,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G5-GR46-WIND-FIELD): `WindGlslParityVulkanTest` の実行（GLSL と CPU の最大絶対差 1e-4 以内）は G5-GR46-WIND-CHECK。
 - Notes(G5-GR46-WIND-FIELD): 人が見るときの見どころ: grassland の草・低木が +X へ吹く共通の風（突風の塊が約 8 秒周期で流れる）で揺れ、地面の株の影も同じ揺れで動くこと。荒野は風を設定しないので見た目は変わらない見込み。撮影・計測の確かめは回さない決まり。風の時計は 4096 秒で折り返すので、その瞬間に突風の値が不連続に跳ぶ（GR30 の約束どおり）。
 - U1 GBuffer へ重ねる描き先の作り方を共通の補助へ移し、FoliagePass がそれを使う: 着地(直し 0 回)
+- U6 撮影の解析の台本・カメラの台本・しきい値の表を書く: 着地(直し 0 回)
