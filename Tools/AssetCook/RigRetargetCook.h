@@ -15,6 +15,9 @@ namespace NorvesLib::Tools::AssetCook::Detail
                (extension[1] == 'b' || extension[1] == 'B') && (extension[2] == 'v' || extension[2] == 'V') &&
                (extension[3] == 'h' || extension[3] == 'H');
     }
+    // 入出力との別名衝突も、報告を書き出す前に拒否する。
+    [[nodiscard]] bool GuardRetargetReportRequest(const SingleAssetCookRequest&, const CookDependencySnapshot&,
+                                                   Core::Container::AnsiString& error);
     [[nodiscard]] bool CookRigRetargetBank(const SingleAssetCookRequest&, Core::Container::Span<const uint8_t> source,
                                            const CookDependencySnapshot&,
                                            Core::Container::VariableArray<uint8_t>& payload,

@@ -13,6 +13,14 @@ namespace NorvesLib::Core::Animation
         bool bAutoRootHeight = false;
         uint32_t LoopExcludedRoles = 0;
         SkeletalClipProcessingSettings Processing;
+        /// ロール別の上向き方向。対応するマスクが未指定なら共通の UpHint を使う。
+        Container::FixedArray<Bvh::Vector3d, SkeletalRoleCount> RoleUpHints{};
+        /// ロール別の上向き方向を使うロールのビット集合。既定は 0。
+        uint32_t RoleUpHintMask = 0;
+        /// 脚の鎖の長さの比をルートの並進倍率に掛けるか。既定は false。
+        bool bAutoLegRootScale = false;
+        /// 自動拡縮で使う脚長比の上書き値。既定の 0 は実測比を使う。
+        double LegLengthRatioOverride = 0;
     };
     struct SkeletalRetargetJoint
     {
@@ -42,6 +50,15 @@ namespace NorvesLib::Core::Animation
         uint32_t UnmappedSource = 0, UnmappedTarget = 0, IgnoredTranslationChannels = 0;
         double RootScale = 1;
         bool bKeyErrorMeasured = false;
+        /// 脚長による自動拡縮で測った元の脚の長さ（メートル）。無効時は 0。
+        double SourceLegLengthMeters = 0;
+        /// 脚長による自動拡縮で測った対象の脚の長さ（メートル）。無効時は 0。
+        double TargetLegLengthMeters = 0;
+        /// 出力姿勢と写像の理想回転との差、および各ルート軌跡の長さ。
+        bool bRotationErrorMeasured = false;
+        double RotationErrorMaxDegrees = 0, RotationErrorMeanDegrees = 0;
+        double SourceRootDistanceMeters = 0, TargetRootDistanceMeters = 0;
+        Container::VariableArray<Container::AnsiString> UnmappedSourceNames, UnmappedTargetNames;
     };
     [[nodiscard]] bool MakeBvhRetargetClipSource(const Bvh::BvhDocument&, const SkeletalBvhClipSettings&,
                                                  const Container::String& name, SkeletalRetargetClipSource&,

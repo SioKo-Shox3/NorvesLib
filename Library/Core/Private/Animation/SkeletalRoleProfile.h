@@ -61,6 +61,22 @@ namespace NorvesLib::Core::Animation
         uint32_t RequiredMask = 0;
         uint32_t ExpandedMappings = 0;
         uint64_t NameBytes = 0;
+        /// プロファイルの版。既定は 1。v2 は proportions.root_scale が必須。
+        uint32_t Version = 1;
+        /// v2 のロール別上向き方向。未指定はゼロ。
+        Container::FixedArray<Bvh::Vector3d, SkeletalRoleCount> RoleUpHints{};
+        /// v2 の上向き方向を指定したロールのビット集合。既定は 0。
+        uint32_t RoleUpHintMask = 0;
+        /// v2 で脚長からルートの倍率を求めるか。既定は false。
+        bool bAutoLegRootScale = false;
+        /// v2 の脚長比の上書き値。既定の 0 は上書きなし。
+        double LegLengthRatioOverride = 0;
+        /// v2 の関節誤差の上限（度）。負は未指定で、既定は -1。
+        double ReportMaxJointErrorDegrees = -1;
+        /// v2 の足滑りの上限（メートル）。負は未指定で、既定は -1。
+        double ReportMaxFootSlideMeters = -1;
+        /// v2 の足のめり込みの上限（メートル）。負は未指定で、既定は -1。
+        double ReportMaxFootPenetrationMeters = -1;
     };
     struct SkeletalRoleProfileLimits
     {
