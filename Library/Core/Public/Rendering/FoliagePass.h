@@ -5,6 +5,7 @@
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Rendering/FoliageTypes.h"
+#include "Rendering/GBufferOverlayTargets.h"
 #include <cstdint>
 
 namespace NorvesLib::RHI
@@ -44,14 +45,6 @@ namespace NorvesLib::Core::Rendering
         void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
 
     private:
-        /// GBuffer の 5 枚（gbuffer.frag の出力の順）と深度
-        static constexpr uint32_t kColorTargetCount = 5;
-
-        /// 描き先が変わったら render pass・framebuffer・パイプラインを作り直す
-        bool EnsureTargets(const RHI::TexturePtr (&colorTargets)[kColorTargetCount], const RHI::TexturePtr &depthTarget);
-        /// 描き先の形式から render pass とパイプラインを作る
-        bool CreatePipeline(const RHI::TexturePtr (&colorTargets)[kColorTargetCount], const RHI::TexturePtr &depthTarget);
-
         /// 書き換えない頂点・インデックス・インスタンスの配列を置いた GPU のバッファ（元の値の参照を持ち、同じ番地の再利用を防ぐ）
         struct StaticBuffer
         {
@@ -77,17 +70,12 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_ExecuteCount = 0;
         RHI::ShaderPtr m_VertexShader;
         RHI::ShaderPtr m_FragmentShader;
-        RHI::RenderPassPtr m_RenderPass;
-        RHI::FramebufferPtr m_Framebuffer;
-        RHI::PipelinePtr m_Pipeline;
+        GBufferOverlayTargets m_OverlayTargets;
+        GBufferOverlayPipelineDesc m_OverlayPipelineDesc;
         // 共有の記述子セットのレイアウト（セットは毎フレーム借りる）
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
-        RGResourceHandle m_ColorHandles[kColorTargetCount];
+        RGResourceHandle m_ColorHandles[GBufferOverlayTargets::kColorTargetCount];
         RGResourceHandle m_DepthHandle;
-        // 今の framebuffer の描き先（作り直しの判定用。所有しない）
-        const RHI::ITexture *m_FramebufferTargets[kColorTargetCount + 1] = {};
-        // 今の render pass・パイプラインの描き先の形式
-        RHI::Format m_TargetFormats[kColorTargetCount + 1] = {};
         // 最後にログへ出した束の数（変わったときだけ 1 行出す）
         uint32_t m_LoggedBatchCount = 0;
         uint64_t m_LoggedInstanceCount = 0;

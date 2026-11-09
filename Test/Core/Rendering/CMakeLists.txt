@@ -619,6 +619,15 @@ set_tests_properties(GrassGenerateVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 草の GBuffer を GPU で読み戻し、法線・AO・速度を確かめる。
+add_test(NAME GrassGBufferVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassGBufferVulkanTest)
+set_tests_properties(GrassGBufferVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME WindGlslParityVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WindGlslParityVulkanTest)
 set_tests_properties(WindGlslParityVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -684,6 +693,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
+    MEMBER GrassGBufferVulkanTest GrassGBufferVulkanTest.cpp
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp

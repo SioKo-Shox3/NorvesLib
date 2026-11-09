@@ -1,4 +1,4 @@
-﻿// 草の生成と引数の初期化を、GPU を使わず実際のシェーダーからコンパイルする。
+﻿// 草の生成・引数の初期化・描画を、GPU を使わず実際のシェーダーからコンパイルする。
 #ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
 #endif
@@ -146,18 +146,28 @@ namespace
 int main()
 {
     const String root = NORVES_SOURCE_ROOT "/Assets/Shaders/";
-    const char* const paths[] = {"Grass/GrassArgsInit.comp", "Grass/GrassGenerate.comp"};
+    const struct ShaderCase
+    {
+        const char* Path;
+        ShaderStage Stage;
+        spv::ExecutionModel Model;
+    } paths[] = {
+        {"Grass/GrassArgsInit.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute},
+        {"Grass/GrassGenerate.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute},
+        {"Grass/grass.vert", ShaderStage::Vertex, spv::ExecutionModelVertex},
+        {"Grass/grass.frag", ShaderStage::Pixel, spv::ExecutionModelFragment}};
     VulkanShaderCompiler compiler;
     bool allPassed = true;
-    for (const char* path : paths)
+    for (const auto& shader : paths)
     {
+        const char* path = shader.Path;
         String source;
         if (!ExpandShader(root, path, source))
         {
             allPassed = false;
             continue;
         }
-        const ShaderCompileResult result = compiler.CompileFromSource(source, ShaderStage::Compute, path);
+        const ShaderCompileResult result = compiler.CompileFromSource(source, shader.Stage, path);
         if (!result.bSuccess || result.ByteCode.empty())
         {
             std::cerr << "[失敗] " << path << " のコンパイルまたは SPIR-V の生成に失敗しました: "
@@ -166,13 +176,13 @@ int main()
             continue;
         }
         std::uint32_t executionModel = 0;
-        if (!TryReadExecutionModel(result, executionModel) || executionModel != spv::ExecutionModelGLCompute)
+        if (!TryReadExecutionModel(result, executionModel) || executionModel != shader.Model)
         {
-            std::cerr << "[失敗] " << path << " の実行モデルが GLCompute ではありません。" << std::endl;
+            std::cerr << "[失敗] " << path << " の実行モデルが指定したステージと一致しません。" << std::endl;
             allPassed = false;
             continue;
         }
-        std::cout << "[成功] " << path << " を GLCompute としてコンパイルしました。" << std::endl;
+        std::cout << "[成功] " << path << " を指定したステージでコンパイルしました。" << std::endl;
     }
     return allPassed ? 0 : 1;
 }
