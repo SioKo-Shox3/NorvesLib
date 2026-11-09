@@ -10731,3 +10731,11 @@
 - verify: `ctest --test-dir build -C Debug -R "^(RHIIndirectApiContractTest|IndirectDispatchVulkanTest|IndirectDrawVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/RHI/DeviceCapabilities.h, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Test/Core/Rendering/IndirectDrawVulkanTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR28-DRAW-INDIRECT
+
+## G5-GR29-RHI-FORMATS-P1: 全ミップを渡すテクスチャの転送に失敗したとき、`TextureAssetRuntime::CreateTexture` が有効なハンドルを返さないようにする
+- status: todo
+- done-when: `TextureAssetRuntime::CreateTexture`(TextureAssetRuntime.cpp:182)は、`UploadTextureData` の結果が `bUploadAttempted && !bUploadSucceeded` のとき、ハンドルを手放して `TextureHandle::Invalid()` を返す。全ミップを渡す形式は `bInitialDataHasAllMips` か BC 形式で、`HasPackedMipChain` が真になる。`GpuResourceStore::CreateTexture(createInfo, data, dataSize)` は GpuResourceStore.cpp:454 で既に同じ扱いにしており、公開の `TextureResources::CreateTexture(createInfo, data, dataSize)`(RenderResources.cpp:388)もこれと同じ結果になる。読み込みの記録 `stage=texture_create_upload` の `success` にも `bUploadSucceeded` を入れる。`RHIBlockCompressedTextureVulkanTest` の `RunShortDataCase` に、同じ store に `Bind` した `TextureAssetRuntime` を通す場合を足す。1 ブロックぶん足りない BC7 の初期データで `Invalid` が返れば合格とする。既存の BC の試験と `RenderResourcesDomainContractTest` はそのまま通る。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIBlockCompressedTextureVulkanTest|RenderResourcesDomainContractTest|TextureAssetReloadAdmissionTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Rendering/TextureAssetRuntime.cpp, Test/Core/Rendering/RHIBlockCompressedTextureVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR29-RHI-FORMATS
