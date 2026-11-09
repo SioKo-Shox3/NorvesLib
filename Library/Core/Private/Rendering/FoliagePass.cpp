@@ -7,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/Wind.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/IDescriptorSet.h"
@@ -35,8 +36,9 @@ namespace NorvesLib::Core::Rendering
             float tipColorA[4];
             float tipColorB[4];
             float frameParams[4];
+            float windField[4];
         };
-        static_assert(sizeof(FoliageUniform) == 368u, "Common/FoliageData.glsl の FoliageData と合わせる");
+        static_assert(sizeof(FoliageUniform) == 384u, "Common/FoliageData.glsl の FoliageData と合わせる");
 
         static_assert(offsetof(FoliageVertex, Normal) == 12);
         static_assert(offsetof(FoliageVertex, Side) == 24);
@@ -352,15 +354,31 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.cameraPosition[3] =
             renderHeight > 0 ? 2.0f * std::tan(halfFovRadians) / static_cast<float>(renderHeight) : 0.0f;
 
-        // 風の向きと時計（決定的な撮影では 1/60 秒の固定刻みで、エポックの始めから数える）
-        // （影の描画 VirtualShadowMapPass も同じ関数で向きと時計を決める）
+        // 共通の風はゲーム時間を使い、無効なときは従来の草・低木の風と時計を使う
+        // 影の描画 VirtualShadowMapPass も同じ風向と現在の時計を使う
         const FoliageWindParameters &wind = scene->Wind;
-        FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
-        const float windTime = FoliageWindClock(context.TotalTime, wind);
-        frameTemplate.wind[2] = windTime;
-        frameTemplate.wind[3] = windTime - context.DeltaTime;
-        frameTemplate.windParams[0] = wind.GustSpeed;
-        frameTemplate.windParams[1] = wind.GustScale;
+        if (context.Wind.bEnabled)
+        {
+            WindDirectionXZ(context.Wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+            const float windTime = WindClockSeconds(context.ExtensionFrame.GameTotalTime);
+            frameTemplate.wind[2] = windTime;
+            frameTemplate.wind[3] = windTime - context.ExtensionFrame.GameDeltaTime;
+            frameTemplate.windParams[0] = context.Wind.BaseSpeed;
+            frameTemplate.windParams[1] = context.Wind.GustScaleMeters;
+            frameTemplate.windField[0] = 1.0f;
+            frameTemplate.windField[1] = context.Wind.GustStrength;
+            frameTemplate.windField[2] = context.Wind.GustFrequencyHz;
+            frameTemplate.windField[3] = context.Wind.Turbulence;
+        }
+        else
+        {
+            FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+            const float windTime = FoliageWindClock(context.TotalTime, wind);
+            frameTemplate.wind[2] = windTime;
+            frameTemplate.wind[3] = windTime - context.DeltaTime;
+            frameTemplate.windParams[0] = wind.GustSpeed;
+            frameTemplate.windParams[1] = wind.GustScale;
+        }
         frameTemplate.frameParams[0] = previousCamera ? 1.0f : 0.0f;
 
         // 区画のカリング: 視錐台の面（GBufferPass と同じビュー・投影）とカメラの位置
