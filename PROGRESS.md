@@ -10449,3 +10449,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR43-GRASS-GENERATE): 地面の高さの GPU の資源が無いので、ブレードの Y は設定の `GroundHeightMeters`（既定 0）で全タイル同じ。要起票: 草の場の地面の高さ（地形のハイトマップ）を GrassPass の生成へ渡す（TileInfo.GroundY をタイルごとにするか、高さのテクスチャを引く）。草の場の ContentRevision が変わると全チャンクを送り直すまで（1 フレーム 8 枚）そのチャンクの草が出ない。場の双線形はチャンクの中で端へ clamp するので、チャンクの境目で密度の段がわずかに出うる。
 - U1 WorldField の型・Sanitize・スクロールの計算とパケットの欄を足す: 着地(直し 0 回)
 - U2 WorldFieldUpdate.comp を書く: 着地(直し 0 回)
+- Notes(G5-GR44-WORLD-FIELD): interactor の配列をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotWorldFieldInteractors` を 1 つ。`SnapshotGrassField` と同じ形）は paths の外だが、パスがパケットの値を読む唯一の口なので足した。
