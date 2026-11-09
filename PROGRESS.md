@@ -9264,3 +9264,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 --rig-split の v1 ClipBank の cook への差し込み: 着地(直し 0 回)
 - U7 --retarget-clip と --bvh の cook への差し込み: 着地(直し 1 回)
 - U6 最適化を切った経路のバイト一致の試験・文書・タスクの verify: 着地(直し 0 回)
+
+## 2026-11-09 G9-GR87-CLIP-OPTIMIZER（run 20261109-201054 の反復 1、完了）
+- Done: `ClipOptimizer`（`Library/Core/Private/Animation/ClipOptimizer.h/.cpp`）で、四元数の半球の連続化・定数チャンネルの 1 キー化・作者 rest と等しいチャンネルの削除・関節基準の回転の許容つきの RDP 型の削減・元のキー時刻と 1/3・1/2・2/3 の時刻での関節位置と頂点位置の大域検証（超えたら許容を 0.7 倍して最大 4 回やり直し）・報告の JSON を作った。平滑化はしない
+- Done: AssetCook に `--clip-optimize`・`--clip-max-vertex-error-m`（0.002）・`--clip-max-joint-error-m`（0.001）・`--clip-max-rotation-error-deg`（0.1）・`--clip-report` を足し、旧形式の glTF→NVSKEL の cook（decode と BVH の適用の後）、`--rig-split`・`--retarget-clip` の `BuildClipBankV1` の前（`replacementClips`）、`--bvh` の役割ファイルの cook に差した。上限を超えたら 0 でない終了コードと理由で失敗する。有効なときだけ設定を SourceHash・キャッシュの指紋に混ぜる
+- Done: `ClipOptimizerTest`（`CookedMeshTest` の束）で (a)〜(f) を確かめる。(f) は最適化を切った旧形式と v1 の cook のバイト列と SourceHash が段を通さない cook と一致すること。手の確かめで `--rig-split`・`--retarget-clip`・`--bvh` の最適化なしの出力が変更前の HEAD と SHA-256 で一致した
+- 証拠: `.harness/runs/20261109-201054/verify-G9-GR87-CLIP-OPTIMIZER-U6.txt`（Debug の CookedMeshTest・AssetCook・SkeletalAnimationSamplingTest のビルド exit 0、ClipOptimizerTest 単独 1/1、関連 6 本 6/6 Passed）
+- Next: なし（アプリを起動する確かめは無い）。許容の既定値は仮で、実 BVH（V01full）の前後を見て作者が決める
+- Notes: v1 の評価（`SkeletalPoseBuilder`）は姿勢を `AuthorRestLocal`（無ければ bind から求めた既定ローカル）から始めるので、作者 rest と等しいチャンネルは消してよいと確かめた（notes の UNCERTAIN の解消）
+- Notes: キャッシュの指紋に設定を通すため、paths の外の `Tools/AssetCook/CookDependencySnapshot.cpp`・`SkeletalRoleFileInput.cpp`・`RigSingleCook.cpp`・`SkeletalRoleProfileCook.h/.cpp`・`RigSplitFileCook.cpp` も配管だけ変えた
+- Notes: 要起票: 単体の `--format nvskel.v1.clips` の rig cook（`RigClipBankCook.cpp`）と、管理付きキャッシュの旧形式の通常の model cook はクリップ最適化を受け付けない（拒否する）。使う場面が出たら差す
+- Notes: 今回の小さい入力ではどれも上限超えの失敗が起きず、cook の失敗の経路（0 でない終了コード）は ClipOptimizer の単体の検査でしか確かめていない
