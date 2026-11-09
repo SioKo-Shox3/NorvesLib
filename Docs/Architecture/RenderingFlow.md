@@ -183,6 +183,13 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 - `ViewRenderContext::DeltaTime` は通常 RenderThread のフレーム時間であり、ゲームの dt ではない。ゲーム時間には `ExtensionFrame` を使う。決定的撮影時は `DeltaTime` もパケットの固定刻みに置き換わる。
 - `PreviousRenderedTotalTime` は `RenderedObjectHistory` が渡す値で、描画がゲームのフレームを飛ばしても、物体の前の位置を最後に描いたフレームへ付け替える処理と同じ基準になる。
 
+### TAA と半透明
+
+`Scene.Reactive` は TAA 前の半透明による被覆率を R8_UNORM で表す。ForwardPass では印を付けた半透明の材質からの書き込みを予定し、Transparent 段の拡張パスは `ReactiveTargetBinder` で書ける。
+TAA はリアクティブに応じて現在の色の割合を 1 へ寄せ、前フレームのリアクティブを専用の R8 履歴で減衰させながら持ち越す。色の履歴を収める箱の半幅は現在のリアクティブで広げる。
+雨や粒子は `PostTemporalAA` 段で TAA の後に合成することを推奨する。この経路ではリアクティブも velocity も要らない。
+リアクティブは湯気など TAA の前に描く半透明に使う。
+
 ### 拡張パスの補助
 
 - `GBuffer` の段では `GBufferTargetBinder` を使える。パスの `Initialize` でデバイスを渡し、`Declare` で 5 枚の色と深度の Load/Store を宣言する。`Execute` で `Prepare` が成功したら `BeginRenderPass(GetRenderPass(), GetFramebuffer())` へ進む。描画先が替わると Framebuffer、形式が替わると RenderPass も作り直す。RenderPass が替わったらパス側のパイプラインも作り直し、`Shutdown` では `Reset` する。
