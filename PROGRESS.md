@@ -10617,3 +10617,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-062828/verify-G9-GR87-CLIP-QUANTIZE-U6.txt`（verify のビルド exit 0、ctest 7/7 Passed、rig-split の実 cook で ClipBank の minor が既定 0・`--clip-quantize` で 1）
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: CI の `Test/Tools/ClipBankV1Oracle.py` は量子化しない cook の出力（minor 0）だけを読むので直していない。`--clip-quantize` の出力を oracle で読むには CMPR の復号が要る。`SkeletalRoleFileCli.cpp` の `--bvh` の CLI は `--clip-quantize` を今の未知の引数の誤りで拒否する
+- G5-GR26-LIGHTING-MODELS: 統合ブランチを取り込み、RenderingHdrSceneCaptureTest.cpp の衝突（TAA リアクティブとシェーディングモデル照明のシナリオ）を両方残して互いに併用不可にした。Debug のビルドと関係の GPU 試験 6 本が通過（Golden は決まりで外す）。
