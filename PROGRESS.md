@@ -10519,3 +10519,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 profile にロールの語彙の表を足し、humanoid_v1 を読めるようにする: 着地(直し 0 回)
 - U4 AssetCookRetargetSmoke(CTest の cmake 台本)とフィクスチャを足す: 着地(直し 0 回)
 - U2 リターゲットと再接地と cook を語彙の表で動かす: 着地(直し 0 回)
+- U5 Retarget.md・SkeletalRoleProfile.md・Testing.md を書く: 着地(直し 0 回)
