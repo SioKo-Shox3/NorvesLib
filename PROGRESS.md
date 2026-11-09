@@ -10355,3 +10355,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 拡張の段・登録の表・守りの包み（RenderExtension）と View の後段パスの遅延初期化: 着地(直し 0 回)
 - U2 SceneView が登録の表を持ち、組み直しで入れ直す。DoF・動きぼけを SetupDeferredPipeline へ移す: 着地(直し 0 回)
 - U3 RenderWorld と IRenderModule の窓口: 着地(直し 0 回)
+- U5 RenderingFlow.md に段と錨・スレッドの約束・名前の規約を書く: 着地(直し 0 回)
