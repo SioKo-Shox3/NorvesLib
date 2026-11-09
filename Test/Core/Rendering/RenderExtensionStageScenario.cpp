@@ -9,6 +9,7 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/ShadingModelIds.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
@@ -44,7 +45,23 @@ namespace NorvesLib::Test::RenderingValidation
         constexpr ExtStageMarkerParams DisplayColor{{0.25f, 0.5f, 0.125f, 1.0f}};
         constexpr uint32_t TemporalCaptureCount = 3;
         constexpr uint32_t DisplayStage = 2 * TemporalCaptureCount;
-        constexpr uint32_t CompleteStage = DisplayStage + 2;
+        constexpr uint32_t GBufferStage = DisplayStage + 2;
+        constexpr uint32_t LightingStage = GBufferStage + 2;
+        constexpr uint32_t TransparentStage = LightingStage + 4;
+        constexpr uint32_t CompleteStage = TransparentStage + 2;
+        constexpr RenderExtensionDataKey<ExtStageMarkerParams> GBufferKey{
+            Core::Identity::Literal("Test.Extension.GBuffer", sizeof("Test.Extension.GBuffer") - 1)};
+        constexpr RenderExtensionDataKey<ExtStageMarkerParams> LightingKey{
+            Core::Identity::Literal("Test.Extension.Lighting", sizeof("Test.Extension.Lighting") - 1)};
+        constexpr RenderExtensionDataKey<ExtStageMarkerParams> TransparentKey{
+            Core::Identity::Literal("Test.Extension.Transparent", sizeof("Test.Extension.Transparent") - 1)};
+        constexpr ExtStageMarkerParams GBufferColors[] = {
+            {{0.2f, 0.2f, 0.2f, 1.0f}}, {{0.4f, 0.4f, 0.4f, 1.0f}}};
+        constexpr ExtStageMarkerParams AdditiveColor{{0.5f, 0.25f, 0.125f, 1.0f}};
+        constexpr ExtStageMarkerParams DisabledColor{{0.0f, 0.0f, 0.0f, 0.0f}};
+        // ext_stage_gbuffer.frag の Normal.w と公開契約の対応を固定する。
+        static_assert(GBufferContract::PackNormalW(GBufferContract::ShadingModelDefaultLit,
+            GBufferContract::ReceiverFlagDiffuseOnly) == 128u);
 
         struct MarkerSpec
         {
@@ -59,7 +76,10 @@ namespace NorvesLib::Test::RenderingValidation
         // 段を足すときは登録表に目印を追加し、Declare の対象資源と取得の段階を追加する。
         MarkerSpec Markers[] = {
             {"Ext.Test.PostTemporalAA", RenderExtensionStage::PostTemporalAA, TemporalKey, 32, 32, 32},
-            {"Ext.Test.PostTonemap", RenderExtensionStage::PostTonemap, DisplayKey, 96, 32, 32}};
+            {"Ext.Test.PostTonemap", RenderExtensionStage::PostTonemap, DisplayKey, 96, 32, 32},
+            {"Ext.Test.GBuffer", RenderExtensionStage::GBuffer, GBufferKey, 112, 208, 32},
+            {"Ext.Test.AfterLighting", RenderExtensionStage::AfterLighting, LightingKey, 112, 208, 32},
+            {"Ext.Test.Transparent", RenderExtensionStage::Transparent, TransparentKey, 120, 200, 32}};
 
         struct TemporalEvidence
         {
@@ -100,8 +120,11 @@ namespace NorvesLib::Test::RenderingValidation
                 {
                     return false;
                 }
-                m_Vertex = m_Shaders.LoadShader("ext_stage_marker.vert", RHI::ShaderStage::Vertex);
-                m_Fragment = m_Shaders.LoadShader("ext_stage_marker.frag", RHI::ShaderStage::Pixel);
+                m_GBuffer.Initialize(m_Device);
+                m_Vertex = m_Shaders.LoadShader(m_Spec.Stage == RenderExtensionStage::Transparent
+                    ? "ext_stage_depth.vert" : "ext_stage_marker.vert", RHI::ShaderStage::Vertex);
+                m_Fragment = m_Shaders.LoadShader(m_Spec.Stage == RenderExtensionStage::GBuffer
+                    ? "ext_stage_gbuffer.frag" : "ext_stage_marker.frag", RHI::ShaderStage::Pixel);
                 RHI::DescriptorBinding binding;
                 binding.binding = 0;
                 binding.type = RHI::ResourceBindType::ConstantBuffer;
@@ -118,6 +141,7 @@ namespace NorvesLib::Test::RenderingValidation
                 m_PendingProbes.clear();
                 m_RequestedProbes[0] = 0;
                 m_RequestedProbes[1] = 0;
+                m_GBuffer.Reset();
                 m_Framebuffer.reset();
                 m_Pipeline.reset();
                 m_RenderPass.reset();
@@ -141,9 +165,27 @@ namespace NorvesLib::Test::RenderingValidation
             void Declare(RenderGraphBuilder& builder) override
             {
                 m_Target = {};
+                m_Depth = {};
                 Core::Identity name;
                 switch (m_Spec.Stage)
                 {
+                case RenderExtensionStage::GBuffer:
+                    if (m_GBuffer.Declare(builder))
+                    {
+                        builder.TryGetTexture(RenderGraphResourceNames::GBufferAlbedo, m_Target);
+                    }
+                    builder.PreserveInsertionOrder();
+                    return;
+                case RenderExtensionStage::AfterLighting:
+                    name = RenderGraphResourceNames::SceneColor;
+                    break;
+                case RenderExtensionStage::Transparent:
+                    builder.TryUseAttachment(RenderGraphResourceNames::SceneDepth, m_Depth,
+                        RGAttachmentKind::DepthStencil, RGAttachmentMutability::ReadOnly,
+                        RHI::AttachmentLoadOp::Load, RHI::AttachmentStoreOp::Store,
+                        RHI::ResourceState::DepthRead, RHI::ResourceState::DepthRead);
+                    name = ResolveHdrChainHead(builder);
+                    break;
                 case RenderExtensionStage::PostTemporalAA:
                     name = ResolveHdrChainHead(builder);
                     break;
@@ -162,13 +204,16 @@ namespace NorvesLib::Test::RenderingValidation
             void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
             {
                 const ExtStageMarkerParams* params = context.FindExtension(m_Spec.Key);
-                if (!params || !m_bInitialized || !context.FrameResources || !context.CommandList || !m_Target.IsValid())
+                if (!params || params->Color[3] == 0.0f || !m_bInitialized || !context.FrameResources || !context.CommandList || !m_Target.IsValid())
                 {
                     // データが来なければ描かない。画像の判定で欠落を検出する。
                     return;
                 }
                 const auto target = resources.GetTexture(m_Target);
-                if (!target || !PrepareTarget(target))
+                const auto depth = m_Depth.IsValid() ? resources.GetTexture(m_Depth) : RHI::TexturePtr{};
+                const bool bGBuffer = m_Spec.Stage == RenderExtensionStage::GBuffer;
+                if (!target || (m_Spec.Stage == RenderExtensionStage::Transparent && !depth) ||
+                    (bGBuffer ? !PrepareGBuffer(resources) : !PrepareTarget(target, depth)))
                 {
                     return;
                 }
@@ -195,6 +240,14 @@ namespace NorvesLib::Test::RenderingValidation
                 commands->SetPipeline(m_Pipeline);
                 commands->SetDescriptorSet(set);
                 commands->Draw(3);
+                if (m_Spec.Stage == RenderExtensionStage::Transparent)
+                {
+                    // 同じ奥の深度で、床のない空の矩形にも描く。片方だけ消えることを判定する。
+                    scissor.top = 4;
+                    scissor.bottom = 36;
+                    commands->SetScissor(scissor);
+                    commands->Draw(3);
+                }
                 commands->EndRenderPass();
                 if (m_Spec.Stage == RenderExtensionStage::PostTemporalAA)
                 {
@@ -304,7 +357,49 @@ namespace NorvesLib::Test::RenderingValidation
                 context.CommandList->TextureBarrier(target, RHI::ResourceState::CopySource, RHI::ResourceState::ShaderResource);
             }
 
-            bool PrepareTarget(const RHI::TexturePtr& target)
+            RHI::PipelinePtr CreatePipeline(uint32_t colorCount, bool bDepth, bool bAdditive)
+            {
+                RHI::GraphicsPipelineDesc pipeline;
+                pipeline.vertexShader = m_Vertex;
+                pipeline.pixelShader = m_Fragment;
+                pipeline.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+                pipeline.rasterState.cullMode = RHI::CullMode::None;
+                pipeline.depthStencilState.depthTestEnable = bDepth;
+                pipeline.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
+                pipeline.depthStencilState.depthWriteEnable = false;
+                for (uint32_t index = 0; index < colorCount; ++index)
+                {
+                    RHI::BlendAttachmentDesc blend;
+                    blend.blendEnable = bAdditive;
+                    blend.srcColorBlendFactor = RHI::BlendFactor::One;
+                    blend.dstColorBlendFactor = RHI::BlendFactor::One;
+                    blend.colorBlendOp = RHI::BlendOp::Add;
+                    blend.srcAlphaBlendFactor = RHI::BlendFactor::Zero;
+                    blend.dstAlphaBlendFactor = RHI::BlendFactor::One;
+                    blend.colorWriteMask = RHI::ColorWriteMask::All;
+                    pipeline.blendState.attachments.push_back(blend);
+                }
+                pipeline.renderPass = m_RenderPass;
+                pipeline.descriptorSetLayouts.push_back(m_DescriptorDesc);
+                return m_RenderPass ? m_Device->CreateGraphicsPipeline(pipeline) : nullptr;
+            }
+
+            bool PrepareGBuffer(RenderGraphResources& resources)
+            {
+                if (!m_GBuffer.Prepare(resources))
+                {
+                    return false;
+                }
+                if (m_RenderPass != m_GBuffer.GetRenderPass())
+                {
+                    m_RenderPass = m_GBuffer.GetRenderPass();
+                    m_Pipeline = CreatePipeline(5, true, false);
+                }
+                m_Framebuffer = m_GBuffer.GetFramebuffer();
+                return m_Pipeline && m_Framebuffer;
+            }
+
+            bool PrepareTarget(const RHI::TexturePtr& target, const RHI::TexturePtr& depth)
             {
                 if (!m_RenderPass || target->GetFormat() != m_Format)
                 {
@@ -318,28 +413,26 @@ namespace NorvesLib::Test::RenderingValidation
                     attachment.initialState = RHI::ResourceState::RenderTarget;
                     attachment.finalState = RHI::ResourceState::ShaderResource;
                     pass.colorAttachments.push_back(attachment);
-                    pass.hasDepthStencil = false;
+                    pass.hasDepthStencil = depth != nullptr;
+                    if (depth)
+                    {
+                        attachment.format = depth->GetFormat();
+                        attachment.isDepthStencil = true;
+                        attachment.initialState = RHI::ResourceState::DepthRead;
+                        attachment.finalState = RHI::ResourceState::DepthRead;
+                        pass.depthStencilAttachment = attachment;
+                    }
                     m_RenderPass = m_Device->CreateRenderPass(pass);
-                    RHI::GraphicsPipelineDesc pipeline;
-                    pipeline.vertexShader = m_Vertex;
-                    pipeline.pixelShader = m_Fragment;
-                    pipeline.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-                    pipeline.rasterState.cullMode = RHI::CullMode::None;
-                    pipeline.depthStencilState.depthTestEnable = false;
-                    pipeline.depthStencilState.depthWriteEnable = false;
-                    RHI::BlendAttachmentDesc blend;
-                    blend.blendEnable = false;
-                    blend.colorWriteMask = RHI::ColorWriteMask::All;
-                    pipeline.blendState.attachments.push_back(blend);
-                    pipeline.renderPass = m_RenderPass;
-                    pipeline.descriptorSetLayouts.push_back(m_DescriptorDesc);
-                    m_Pipeline = m_RenderPass ? m_Device->CreateGraphicsPipeline(pipeline) : nullptr;
+                    m_Pipeline = CreatePipeline(1, depth != nullptr,
+                        m_Spec.Stage == RenderExtensionStage::AfterLighting ||
+                        m_Spec.Stage == RenderExtensionStage::Transparent);
                     m_Framebuffer.reset();
                 }
                 // 今の描画先を保持するフレームバッファを作る。破棄の時期は RHI が持つ。
                 RHI::FramebufferDesc framebuffer;
                 framebuffer.renderPass = m_RenderPass;
                 framebuffer.colorTargets.push_back(target);
+                framebuffer.depthStencilTarget = depth;
                 framebuffer.width = target->GetWidth();
                 framebuffer.height = target->GetHeight();
                 m_Framebuffer = m_RenderPass ? m_Device->CreateFramebuffer(framebuffer) : nullptr;
@@ -362,6 +455,8 @@ namespace NorvesLib::Test::RenderingValidation
             RHI::FramebufferPtr m_Framebuffer;
             RHI::Format m_Format = RHI::Format::UNKNOWN;
             RGTextureHandle m_Target;
+            RGTextureHandle m_Depth;
+            GBufferTargetBinder m_GBuffer;
         };
 
         Container::TUniquePtr<IViewPass> CreateMarker(void* context)
@@ -386,7 +481,9 @@ namespace NorvesLib::Test::RenderingValidation
     struct RenderExtensionStageScenario::State
     {
         Core::Container::TSharedPtr<TemporalEvidence> Evidence = Core::Container::MakeShared<TemporalEvidence>();
-        MarkerRegistration Registrations[2] = {{&Markers[0], Evidence}, {&Markers[1], Evidence}};
+        MarkerRegistration Registrations[5] = {{&Markers[0], Evidence}, {&Markers[1], Evidence},
+            {&Markers[2], Evidence}, {&Markers[3], Evidence}, {&Markers[4], Evidence}};
+        float Samples[8][2][3] = {};
     };
 
     RenderExtensionStageScenario::RenderExtensionStageScenario() : m_State(Core::Container::MakeUnique<State>())
@@ -442,7 +539,8 @@ namespace NorvesLib::Test::RenderingValidation
                                                   const Core::Rendering::CameraProxy& baseCamera)
     {
         CameraProxy camera = baseCamera;
-        camera.AntiAliasing = CameraAntiAliasingMode::TemporalAA;
+        camera.AntiAliasing = m_Stage < GBufferStage ? CameraAntiAliasingMode::TemporalAA
+                                                   : CameraAntiAliasingMode::FXAA;
         camera.ExposureMode = CameraExposureMode::Manual;
         const float exposureScale = m_Stage == DisplayStage + 1 ? 4.0f : 1.0f;
         camera.Exposure *= exposureScale;
@@ -453,6 +551,20 @@ namespace NorvesLib::Test::RenderingValidation
         const uint32_t colorIndex = m_Stage < TemporalCaptureCount ? 0 : 1;
         world.SetExtensionData(TemporalKey, TemporalColors[colorIndex]);
         world.SetExtensionData(DisplayKey, DisplayColor);
+        world.SetExtensionData(GBufferKey, m_Stage >= GBufferStage && m_Stage < LightingStage
+            ? GBufferColors[m_Stage - GBufferStage] : DisabledColor);
+        world.SetExtensionData(LightingKey, m_Stage >= LightingStage && m_Stage < TransparentStage &&
+            (m_Stage - LightingStage) % 2 == 1 ? AdditiveColor : DisabledColor);
+        world.SetExtensionData(TransparentKey, m_Stage == TransparentStage + 1 ? AdditiveColor : DisabledColor);
+        if (m_Stage >= GBufferStage)
+        {
+            VolumetricFogParameters fog;
+            fog.bEnabled = m_Stage >= LightingStage + 2 && m_Stage < TransparentStage;
+            // 床まで約 10 m の視線で exp(-0.1 * 10) 程度になる均質な霧。
+            fog.DensityAtBaseHeight = 0.1f;
+            fog.HeightFalloffPerUnit = 0.0f;
+            world.SetVolumetricFogParameters(fog);
+        }
     }
 
     bool RenderExtensionStageScenario::Evaluate(const Core::Rendering::CapturedFrame& frame,
@@ -465,6 +577,93 @@ namespace NorvesLib::Test::RenderingValidation
         }
         m_LastFrame = frame.FrameNumber;
         m_bHasFrame = true;
+        if (m_Stage >= GBufferStage)
+        {
+            RgbaFloatImage image;
+            if (DecodeCapturedRgbaFloat(frame, image) != FloatImageStatus::Success ||
+                image.Width != 256 || image.Height != 256)
+            {
+                return Fail(reason, "前段の HDR 取得の形式または寸法が不正です（期待=256x256）");
+            }
+            const uint32_t sample = m_Stage - GBufferStage;
+            const bool bTransparent = m_Stage >= TransparentStage;
+            const MarkerSpec& marker = Markers[bTransparent ? 4 : m_Stage >= LightingStage ? 3 : 2];
+            for (uint32_t region = 0; region < (bTransparent ? 2u : 1u); ++region)
+            {
+                const uint32_t left = marker.Left + 8;
+                const uint32_t top = region == 1 ? 12 : marker.Top + 8;
+                float* actual = m_State->Samples[sample][region];
+                for (uint32_t y = top; y < top + 16; ++y)
+                {
+                    for (uint32_t x = left; x < left + 16; ++x)
+                    {
+                        for (uint32_t channel = 0; channel < 3; ++channel)
+                        {
+                            const float value = image.Values[(static_cast<size_t>(y) * image.Width + x) * 4 + channel];
+                            if (!std::isfinite(value))
+                            {
+                                std::cerr << marker.Name << " 段階=" << m_Stage << " 画素=(" << x << ',' << y
+                                          << ") 成分=" << channel << " 期待=有限値 実測=" << value << '\n';
+                                return Fail(reason, "目印の取得が有限値ではありません");
+                            }
+                            actual[channel] += value / 256.0f;
+                        }
+                    }
+                }
+                std::cout << marker.Name << " 段階=" << m_Stage << " 矩形=(" << left << ',' << top
+                          << ",16,16) 取得=(" << actual[0] << ',' << actual[1] << ',' << actual[2] << ")\n";
+            }
+            bool bPassed = true;
+            for (uint32_t channel = 0; channel < 3; ++channel)
+            {
+                if (m_Stage == GBufferStage + 1)
+                {
+                    const float first = m_State->Samples[0][0][channel];
+                    const float second = m_State->Samples[1][0][channel];
+                    const float ratio = second / first;
+                    // 拡散専用・金属度 0・発光 0 はアルベドに線形。UNORM の 51/255→102/255 は厳密に2倍。
+                    // 境界から8画素離し、量子化とジッタの残差に5%を許す。生のアルベドの直書きは
+                    // 倍率だけでは通るため、光が非零で、出力がアルベドから10%以上離れることも必要。
+                    const bool bChannel = first > 0.0001f && std::isfinite(ratio) &&
+                        std::abs(ratio - 2.0f) <= 0.1f && std::abs(first - 0.2f) > 0.02f;
+                    std::cout << marker.Name << " 段階=" << m_Stage << " 矩形=(120,216,16,16) 成分=" << channel
+                              << " 期待=比率2±0.1、初回>0.0001、|初回-0.2|>0.02 実測=比率" << ratio
+                              << " 初回=" << first << " 2倍=" << second << " 結果=" << (bChannel ? "PASS" : "FAIL") << '\n';
+                    bPassed &= bChannel;
+                }
+                if (m_Stage == TransparentStage - 1)
+                {
+                    const float dry = m_State->Samples[3][0][channel] - m_State->Samples[2][0][channel];
+                    const float fog = m_State->Samples[5][0][channel] - m_State->Samples[4][0][channel];
+                    const float expected = AdditiveColor.Color[channel];
+                    // 目印なしとの差で霧自身の散乱光を消す。半精度の引き算に加算値の2%を許し、
+                    // 約10m・密度0.1の透過率が1を明確に下回ることを15%以上の減衰で反証する。
+                    const bool bChannel = std::abs(dry - expected) <= expected * 0.02f &&
+                        fog > dry * 0.05f && fog < dry * 0.85f;
+                    std::cout << marker.Name << " 段階=" << m_Stage << " 矩形=(120,216,16,16) 成分=" << channel
+                              << " 期待=霧なし" << expected << "±2%、霧あり/霧なし(0.05,0.85) 実測=霧なし"
+                              << dry << " 霧あり=" << fog << " 比率=" << fog / dry
+                              << " 結果=" << (bChannel ? "PASS" : "FAIL") << '\n';
+                    bPassed &= bChannel;
+                }
+                if (m_Stage == CompleteStage - 1)
+                {
+                    for (uint32_t region = 0; region < 2; ++region)
+                    {
+                        const float difference = m_State->Samples[7][region][channel] - m_State->Samples[6][region][channel];
+                        const float expected = region == 0 ? 0.0f : AdditiveColor.Color[channel];
+                        // 非TAAで同じ画素を引き、半精度の加算・保存の数ULPに0.002を許す。
+                        // 奥の深度0.9995は床より遠く、クリア深度1の空より近い。
+                        const bool bChannel = std::abs(difference - expected) <= 0.002f;
+                        std::cout << marker.Name << " 段階=" << m_Stage << " 矩形=(128," << (region == 0 ? 208 : 12)
+                                  << ",16,16) 成分=" << channel << " 期待差=" << expected << " 実測差=" << difference
+                                  << " 許容=0.002 結果=" << (bChannel ? "PASS" : "FAIL") << '\n';
+                        bPassed &= bChannel;
+                    }
+                }
+            }
+            return bPassed || Fail(reason, "前段の目印の数値が期待値に一致しません（詳細は上の段階・矩形・成分）");
+        }
         const bool bTemporal = m_Stage < DisplayStage;
         const MarkerSpec& marker = Markers[bTemporal ? 0 : 1];
         RgbaFloatImage image;
@@ -571,7 +770,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
-        request.SourceKind = m_Stage < DisplayStage ? FrameCaptureSourceKind::SceneColor
+        request.SourceKind = m_Stage < DisplayStage || m_Stage >= GBufferStage ? FrameCaptureSourceKind::SceneColor
                                                    : FrameCaptureSourceKind::BackBuffer;
         return true;
     }
