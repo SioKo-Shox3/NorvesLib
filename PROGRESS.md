@@ -10507,3 +10507,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 合成の高密度スキン SkinnedGiantFixture: 着地(直し 0 回)
 - U3 シーンの値（SunShadowParameters と絞り込みの切り替え）を FramePacket へ届け、CSM の分割と VSM の範囲へ効かせる: 着地(直し 0 回)
 - U1 スキンの VB・IB を DeviceLocal にし、描画の記録の前に転送を済ませる: 着地(直し 0 回)
+- U5 予備の GBufferPass のスキンの主カメラの絞り込み: 着地(直し 0 回)
