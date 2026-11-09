@@ -138,6 +138,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             {
                 return Fail(error, "retarget_profile_or_clip");
             }
+            normalized.RetargetReportPath = request.RetargetReportPath;
             normalized.RetargetSourceClip = request.RetargetSourceClip;
             normalized.RetargetClipName = request.RetargetClipName;
         }

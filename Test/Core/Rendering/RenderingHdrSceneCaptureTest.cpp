@@ -1,6 +1,7 @@
 ﻿#include "RenderingValidation/GpuTestEnvironment.h"
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
+#include "RenderExtensionStageScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -1701,6 +1702,8 @@ namespace
 
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
+        RenderExtensionStageScenario m_ExtensionStageScenario;
+
     public:
         enum class TransparentPhysicalStage : uint8_t
         {
@@ -1785,12 +1788,20 @@ namespace
                      source != FrameCaptureSourceKind::GBufferEmissive) ||
                     m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
                     m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
-                    m_bEmissiveDaylightScenario)
+                    m_bEmissiveDaylightScenario || m_ExtensionStageScenario.IsEnabled())
                 {
                     LOG_ERROR("シェーディングモデルの検証には indoor と GBuffer のソースを単独で指定してください");
                     return false;
                 }
                 RequireVisibilityBufferPath();
+            }
+            if (m_ExtensionStageScenario.IsEnabled() &&
+                (m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bAllNumericalScenario ||
+                 m_bKnownCdScenario || m_bP4Scenario || m_bTransparentPhysicalLightingScenario ||
+                 m_bEmissiveDaylightScenario))
+            {
+                LOG_ERROR("拡張の段のシナリオは他のシナリオと併用できません");
+                return false;
             }
             if (m_bAllNumericalScenario &&
                 GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
@@ -1994,6 +2005,11 @@ namespace
             {
                 LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
                 return GetFixture().ApplyShadingModelGBufferFixture();
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
             }
             if (m_bEmissiveDaylightScenario)
             {
@@ -2269,6 +2285,10 @@ namespace
                 m_bShadingModelScenario = true;
                 return true;
             }
+            if (argument.find(TEXT("--extension-stage-scenario=")) == 0)
+            {
+                return m_ExtensionStageScenario.ParseArgument(argument, outFailureReason);
+            }
             const bool bEmissiveDaylight1mNits = argument == TEXT("--emissive-scenario=daylight-1m-nits");
             const bool bEmissiveDaylightAboveHalf = argument == TEXT("--emissive-scenario=daylight-above-32768");
             if (bEmissiveDaylight1mNits || bEmissiveDaylightAboveHalf)
@@ -2466,6 +2486,10 @@ namespace
             {
                 return EvaluateShadingModelGBufferFrame(frame, reason);
             }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.Evaluate(frame, reason);
+            }
             if (m_bEmissiveDaylightScenario)
             {
                 return EvaluateEmissiveDaylightFrame(frame, reason);
@@ -2587,6 +2611,11 @@ namespace
                 auto fog = MakeDefaultVolumetricFogParameters();
                 fog.bEnabled = false;
                 renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                m_ExtensionStageScenario.ApplyState(renderWorld, GetFixture().GetCamera());
                 return;
             }
             if (m_bEmissiveDaylightScenario)
@@ -2913,6 +2942,11 @@ namespace
                 ++m_ShadingModelCaptureIndex;
                 return;
             }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                m_ExtensionStageScenario.Advance();
+                return;
+            }
             if (m_bR3Scenario)
             {
                 switch (m_R3ScenarioKind)
@@ -3024,6 +3058,10 @@ namespace
                 }
                 outRequest.SourceKind = GetShadingModelCaptureSource();
                 return true;
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.RequestFollowup(outRequest);
             }
             if (m_bR3Scenario)
             {

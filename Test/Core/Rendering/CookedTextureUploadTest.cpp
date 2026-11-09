@@ -90,7 +90,10 @@ namespace
         case CookedTexturePixelFormat::R16UNorm:
             return {1, 1, 2};
         case CookedTexturePixelFormat::RGBA8UNorm:
+        case CookedTexturePixelFormat::RG16UNorm:
             return {1, 1, 4};
+        case CookedTexturePixelFormat::RGBA16F:
+            return {1, 1, 8};
         case CookedTexturePixelFormat::BC1:
         case CookedTexturePixelFormat::BC4:
             return {4, 4, 8};
@@ -577,6 +580,32 @@ int main()
         assert(device.LastTexture->Updates.size() == 2);
         assert(device.LastTexture->Updates[0].RowPitch == 6);
         assert(device.LastTexture->Updates[0].SlicePitch == 12);
+    }
+
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(3, 2, 1, CookedTexturePixelFormat::RGBA16F,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "rgba16f");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::RGBA16_FLOAT);
+        assert(device.CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::R16G16B16A16_FLOAT);
+        assert(device.LastTexture->Updates.size() == 2);
+        assert(device.LastTexture->Updates[0].RowPitch == 24);
+        assert(device.LastTexture->Updates[0].SlicePitch == 48);
+    }
+
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(3, 2, 1, CookedTexturePixelFormat::RG16UNorm,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "rg16");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::R16G16_UNORM);
+        assert(device.CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::R16G16_UNORM);
+        assert(device.LastTexture->Updates.size() == 2);
+        assert(device.LastTexture->Updates[0].RowPitch == 12);
+        assert(device.LastTexture->Updates[0].SlicePitch == 24);
     }
 
     // BC・R16 の色空間の組み合わせ違いは写像で拒否する（デバイスは作らない）

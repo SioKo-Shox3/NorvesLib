@@ -21,7 +21,6 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
-#include "Rendering/DepthOfFieldPass.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
@@ -29,7 +28,6 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/InstanceBufferRing.h"
-#include "Rendering/MotionBlurPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
@@ -2844,10 +2842,6 @@ namespace NorvesLib::Core::Rendering
             m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
                                                       settings.SwRaster, settings.SwRasterMaxPixels);
-            // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
-            m_MainSceneView->AddPass(Container::MakeUnique<DepthOfFieldPass>());
-            // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
-            m_MainSceneView->AddPass(Container::MakeUnique<MotionBlurPass>());
             NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
         }
 
@@ -4593,6 +4587,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetWindParameters(m_Wind);
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -4611,10 +4606,16 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
         packet.GrassField = m_GrassField;
+        packet.WorldFieldInteractors.clear();
+        packet.WorldFieldInteractors.insert(packet.WorldFieldInteractors.end(),
+                                            m_WorldFieldInteractors.begin(), m_WorldFieldInteractors.end());
+        // このフレームの入力を写し終えたら、容量を保ったまま空にする。
+        m_WorldFieldInteractors.clear();
         packet.Scene.RibbonTrails = m_RibbonTrails;
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
+        m_ExtensionData.SnapshotTo(packet.Scene.Extensions);
         packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
@@ -5161,8 +5162,9 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        // パケットを確保できなかったフレームの帯も翌フレームへ持ち越さない。
+        // パケットを確保できなかったフレームの入力も翌フレームへ持ち越さない。
         m_RibbonTrails.Clear();
+        m_WorldFieldInteractors.clear();
 
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
@@ -5847,6 +5849,8 @@ namespace NorvesLib::Core::Rendering
                                              ? &packet->PreviousMainCamera
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
+        viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
@@ -5860,6 +5864,8 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotGrassField = packet->GrassField.get();
+        viewContext.SnapshotWorldFieldInteractors = &packet->WorldFieldInteractors;
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;
@@ -6618,6 +6624,11 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
+    {
+        m_Wind = SanitizeWindParameters(parameters);
+    }
+
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         const SkyOcclusionParameters sanitized = SanitizeSkyOcclusionParameters(parameters);
@@ -6721,6 +6732,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
     {
         m_GrassField = std::move(grassField);
+    }
+
+    void RenderingCoordinator::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        SanitizeWorldFieldInteractors(interactors, m_WorldFieldInteractors);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)

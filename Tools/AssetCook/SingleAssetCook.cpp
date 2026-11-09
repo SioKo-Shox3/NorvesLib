@@ -33,6 +33,26 @@ namespace NorvesLib::Tools::AssetCook
         {
             return reinterpret_cast<const char*>(text);
         }
+
+        bool ResolveTextureUsageFormat(TextureUsage usage, Core::Container::AnsiStringView manifestFormat,
+                                       TextureFormatOverride& outFormat) noexcept
+        {
+            constexpr TextureFormatOverride formats[] = {
+                TextureFormatOverride::Default,
+                TextureFormatOverride::Rgba16F,
+                TextureFormatOverride::BC3,
+            };
+            for (const TextureFormatOverride format : formats)
+            {
+                const char* name = GetTextureUsageManifestFormat(usage, format);
+                if (name[0] != '\0' && manifestFormat == Core::Container::AnsiStringView(name))
+                {
+                    outFormat = format;
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     namespace
@@ -246,8 +266,14 @@ namespace NorvesLib::Tools::AssetCook
                 TextureUsageCookParams cookParams;
                 if (!ParseTextureUsage(options.Usage, cookParams.Usage))
                 {
-                    error = "--usage は albedo・normal・orm・single・height16 "
+                    error = "--usage は albedo・normal・orm・single・height16・hdr・rg16 "
                             "のどれかです";
+                    return false;
+                }
+                if (!ResolveTextureUsageFormat(cookParams.Usage, {options.Format.data(), options.Format.size()},
+                                               cookParams.FormatOverride))
+                {
+                    error = "テクスチャ用途と形式の指定が一致しません";
                     return false;
                 }
                 if (options.Quality == "fast")
@@ -264,6 +290,10 @@ namespace NorvesLib::Tools::AssetCook
                 std::vector<uint8_t> ormBytes[4];
                 ErrorString ormNames[4];
                 cookParams.bFlipNormalY = options.bFlipNormalY;
+                cookParams.bHasHeightRange = options.bHasHeightRange;
+                cookParams.HeightRangeMin = options.HeightRangeMin;
+                cookParams.HeightRangeMax = options.HeightRangeMax;
+                cookParams.bRequire16Bit = options.bRequire16Bit;
                 if (cookParams.Usage == TextureUsage::Orm && options.InputPath.empty())
                 {
                     const std::filesystem::path *ormPaths[4] = {&options.OrmAoPath, &options.OrmRoughnessPath,
@@ -1645,6 +1675,10 @@ namespace NorvesLib::Tools::AssetCook
             options.OrmMetallicPath = request.OrmMetallicPath;
             options.OrmOcclusionPath = request.OrmOcclusionPath;
             options.bFlipNormalY = request.bFlipNormalY;
+            options.bHasHeightRange = request.bHasHeightRange;
+            options.HeightRangeMin = request.HeightRangeMin;
+            options.HeightRangeMax = request.HeightRangeMax;
+            options.bRequire16Bit = request.bRequire16Bit;
             options.FallbackMinTriangles = request.FallbackMinTriangles;
             options.DagRootMaxClusters = request.DagRootMaxClusters;
             options.InputPath = request.InputPath;
@@ -1757,7 +1791,8 @@ namespace NorvesLib::Tools::AssetCook
             const bool separateOrm = outOptions.Usage == "orm" && hasOrm && outOptions.InputPath.empty();
             if (outOptions.Usage.empty())
             {
-                if (hasOrm || !outOptions.Quality.empty() || outOptions.bFlipNormalY)
+                if (hasOrm || !outOptions.Quality.empty() || outOptions.bFlipNormalY ||
+                    outOptions.bHasHeightRange || outOptions.bRequire16Bit)
                 {
                     error = "テクスチャ用途を --usage で指定してください";
                     return false;
@@ -1766,8 +1801,26 @@ namespace NorvesLib::Tools::AssetCook
             else
             {
                 TextureUsage usage;
-                if (outOptions.Kind != "texture" || !ParseTextureUsage(outOptions.Usage, usage) ||
-                    outOptions.Format != GetTextureUsageManifestFormat(usage) ||
+                if (!ParseTextureUsage(outOptions.Usage, usage))
+                {
+                    error = "--usage は albedo・normal・orm・single・height16・hdr・rg16 のどれかです";
+                    return false;
+                }
+                if (outOptions.bHasHeightRange &&
+                    (usage != TextureUsage::Height16 || !std::isfinite(outOptions.HeightRangeMin) ||
+                     !std::isfinite(outOptions.HeightRangeMax) || outOptions.HeightRangeMin >= outOptions.HeightRangeMax))
+                {
+                    error = "--height-range は --usage height16 で有限の min < max を指定してください";
+                    return false;
+                }
+                if (outOptions.bRequire16Bit && usage != TextureUsage::Height16 && usage != TextureUsage::Rg16)
+                {
+                    error = "--require-16bit は --usage height16 か --usage rg16 と一緒に指定してください";
+                    return false;
+                }
+                TextureFormatOverride formatOverride;
+                if (outOptions.Kind != "texture" ||
+                    !ResolveTextureUsageFormat(usage, {outOptions.Format.data(), outOptions.Format.size()}, formatOverride) ||
                     (!outOptions.Quality.empty() && outOptions.Quality != "fast" && outOptions.Quality != "normal" &&
                      outOptions.Quality != "best") ||
                     (outOptions.bFlipNormalY && usage != TextureUsage::Normal) ||
@@ -1933,6 +1986,10 @@ namespace NorvesLib::Tools::AssetCook
             request.OrmMetallicPath = options.OrmMetallicPath;
             request.OrmOcclusionPath = options.OrmOcclusionPath;
             request.bFlipNormalY = options.bFlipNormalY;
+            request.bHasHeightRange = options.bHasHeightRange;
+            request.HeightRangeMin = options.HeightRangeMin;
+            request.HeightRangeMax = options.HeightRangeMax;
+            request.bRequire16Bit = options.bRequire16Bit;
             request.FallbackMinTriangles = options.FallbackMinTriangles;
             request.DagRootMaxClusters = options.DagRootMaxClusters;
             request.InputPath = options.InputPath;

@@ -61,6 +61,24 @@ namespace NorvesLib::Core::Rendering
                 outRHIFormat = RHI::Format::R16_UNORM;
                 return true;
 
+            case CookedTexturePixelFormat::RGBA16F:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::RGBA16_FLOAT;
+                outRHIFormat = RHI::Format::R16G16B16A16_FLOAT;
+                return true;
+
+            case CookedTexturePixelFormat::RG16UNorm:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::R16G16_UNORM;
+                outRHIFormat = RHI::Format::R16G16_UNORM;
+                return true;
+
             case CookedTexturePixelFormat::BC1:
                 if (colorSpace == CookedTextureColorSpace::SRGB)
                 {
@@ -72,6 +90,21 @@ namespace NorvesLib::Core::Rendering
                 {
                     outTextureFormat = TextureCreateInfo::Format::BC1_UNORM;
                     outRHIFormat = RHI::Format::BC1_UNORM;
+                    return true;
+                }
+                return false;
+
+            case CookedTexturePixelFormat::BC3:
+                if (colorSpace == CookedTextureColorSpace::SRGB)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC3_SRGB;
+                    outRHIFormat = RHI::Format::BC3_SRGB;
+                    return true;
+                }
+                if (colorSpace == CookedTextureColorSpace::Linear)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC3_UNORM;
+                    outRHIFormat = RHI::Format::BC3_UNORM;
                     return true;
                 }
                 return false;
@@ -92,6 +125,15 @@ namespace NorvesLib::Core::Rendering
                 }
                 outTextureFormat = TextureCreateInfo::Format::BC5_UNORM;
                 outRHIFormat = RHI::Format::BC5_UNORM;
+                return true;
+
+            case CookedTexturePixelFormat::BC6H:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::BC6H_UFLOAT;
+                outRHIFormat = RHI::Format::BC6H_UFLOAT;
                 return true;
 
             case CookedTexturePixelFormat::BC7:

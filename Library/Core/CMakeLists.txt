@@ -92,6 +92,10 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalClipProcessing.cpp
     Private/Animation/ClipOptimizer.cpp
     Private/Animation/ClipOptimizer.h
+    Private/Animation/RetargetReport.cpp
+    Private/Animation/RetargetReport.h
+    Private/Animation/RetargetFootPlanting.cpp
+    Private/Animation/RetargetFootPlanting.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
@@ -258,6 +262,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
+    Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
+    Private/Rendering/RenderExtension/RenderExtensionData.cpp
+    Private/Rendering/RenderExtension/RenderExtensionHelpers.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
@@ -267,6 +274,12 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GrassPass.cpp
+    Private/Rendering/WorldFieldPass.cpp
+    Private/Rendering/WorldFieldTypes.cpp
+    Private/Rendering/GrassGenerateReference.cpp
+    Private/Rendering/GrassFieldGpuWindow.cpp
+    Private/Rendering/GrassTileSelector.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
@@ -311,6 +324,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/Wind.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
@@ -704,6 +718,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/Wind.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
@@ -727,6 +742,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
+    Public/Rendering/RenderExtension/RenderExtension.h
+    Public/Rendering/RenderExtension/RenderExtensionData.h
+    Public/Rendering/RenderExtension/RenderExtensionHelpers.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
@@ -736,6 +754,12 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/GrassPass.h
+    Public/Rendering/WorldFieldPass.h
+    Public/Rendering/WorldFieldTypes.h
+    Public/Rendering/GrassGenerateReference.h
+    Public/Rendering/GrassFieldGpuWindow.h
+    Public/Rendering/GrassTileSelector.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RibbonTrailRenderer.h

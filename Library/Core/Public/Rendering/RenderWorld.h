@@ -1,14 +1,18 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "WorldFieldTypes.h"
 #include "FrameCaptureTypes.h"
 #include "FoliageTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
+#include "Wind.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
+#include "RenderExtension/RenderExtension.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "RHI/RHITypes.h"
 #include "Platform/NativeWindowHandle.h"
 #include "Container/Containers.h"
@@ -193,6 +197,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
+        void SetWindParameters(const WindParameters& parameters);
+
         // 空の遮蔽の値と遮蔽物を次の FramePacket へ値で公開する（GameThread）。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
         SkyOccluderHandle RegisterSkyOccluder(const SkyOccluderProxy& proxy);
@@ -261,6 +268,14 @@ namespace NorvesLib::Core::Rendering
         void SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField);
 
         /**
+         * @brief このフレームで世界フィールドへ作用する入力を設定する（GameThread）
+         *
+         * 描画コマンド生成前に毎フレーム呼ぶ。呼ばれなければ次のパケットで空になり、
+         * フィールドへの書き込みは止まる。
+         */
+        void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
+
+        /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          *
          * 描画コマンド生成前に呼び、FramePacket へコピーした後は保持を空にする。
@@ -274,6 +289,43 @@ namespace NorvesLib::Core::Rendering
          * 空の一覧で描かなくなる。一覧は作った後に書き換えない共有の値で、写しは参照を数えるだけ。
          */
         void SetDecals(const DecalScene& decals);
+
+        /**
+         * @brief 拡張の値を設定する（GameThread 専用、SetFoliageSource と同じ規約でロック無し）。
+         *
+         * 次の FramePacket へ共有ポインタで写す。前回とレイアウト・バイト列が一致する Set は、
+         * 同じブロブと Revision を使い回す。GPU の資源は入れない。
+         */
+        template <typename T>
+        void SetExtensionData(const RenderExtensionDataKey<T>& key, const T& value)
+        {
+            SetExtensionBytes(key.Name, ComputeRenderExtensionLayoutHash<T>(), static_cast<uint32_t>(sizeof(T)), 1u, &value);
+        }
+
+        /**
+         * @brief 拡張の配列を設定する（GameThread 専用、SetFoliageSource と同じ規約でロック無し）。
+         *
+         * 次の FramePacket へ共有ポインタで写す。前回とレイアウト・バイト列が一致すれば同じブロブと
+         * Revision を使い回す。MB 級の配列を毎フレーム Set しない。GPU の資源は入れない。
+         */
+        template <typename T>
+        void SetExtensionArray(const RenderExtensionDataKey<T>& key, Container::Span<const T> values)
+        {
+            SetExtensionBytes(key.Name, ComputeRenderExtensionLayoutHash<T>(), static_cast<uint32_t>(sizeof(T)),
+                              static_cast<uint32_t>(values.size()), values.data());
+        }
+
+        /**
+         * @brief 拡張のバイト列を設定する（GameThread 専用、SetFoliageSource と同じ規約でロック無し）。
+         *
+         * 次の FramePacket へ共有ポインタで写す。前回とレイアウト・バイト列が一致すれば同じブロブと
+         * Revision を使い回す。MB 級の配列を毎フレーム Set しない。GPU の資源は入れない。
+         * @param data バイト数が 0 でない場合は読み取り可能な先頭アドレス。空配列なら nullptr でもよい。
+         */
+        void SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data);
+
+        /** @brief 拡張データを削除する（GameThread 専用、ロック無し。次の FramePacket から反映）。 */
+        void RemoveExtensionData(Identity name) { m_RenderingCoordinator.GetExtensionDataStore().Remove(name); }
 
         /**
          * @brief 歪みの源の一覧を設定する（GameThread）
@@ -393,6 +445,30 @@ namespace NorvesLib::Core::Rendering
         {
             return m_RenderingCoordinator;
         }
+
+        /**
+         * @brief 主の SceneView に描画拡張を登録する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        bool RegisterRenderExtension(const RenderExtensionDesc& desc, const RenderExtensionFactory& factory);
+
+        /**
+         * @brief 主の SceneView から描画拡張の登録を解除する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        bool UnregisterRenderExtension(const char* name);
+
+        /**
+         * @brief 主の SceneView の描画拡張の有効状態を設定する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        bool SetRenderExtensionEnabled(const char* name, bool bEnabled);
+
+        /**
+         * @brief 主の SceneView の描画拡張の登録表を借用する。SceneView が無ければ nullptr。
+         * @details GameThread から呼ぶ。登録表の操作の反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
+         */
+        RenderExtensionRegistry* GetRenderExtensionRegistry();
 
         // ========================================
         // 解像度変更

@@ -1,0 +1,49 @@
+﻿{
+  "name": "DirectXTex",
+  "version": "may2026",
+  "upstream": {
+    "repository": "https://github.com/microsoft/DirectXTex",
+    "tag": "may2026",
+    "commit": "4feb3e11a020f35b796fc769a74216a555d4f5ef",
+    "commitDate": "2026-05-08",
+    "retrievedBy": "git ls-remote refs/tags/may2026 refs/tags/may2026^{}; GitHub API commits; raw.githubusercontent.com at commit (Invoke-WebRequest -OutFile)"
+  },
+  "license": {
+    "spdx": "MIT",
+    "source": "LICENSE (upstream/LICENSE の複製)"
+  },
+  "usage": "Tools/AssetCook の BlockCompressor だけがリンクする(Core・Game には入れない)",
+  "files": [
+    {
+      "path": "upstream/BC.h",
+      "size": 13164,
+      "sha256": "EBFAD6ADA75845D31F3978A47476605FE84060CC671A1A094C6B869551A6A100"
+    },
+    {
+      "path": "upstream/BC.cpp",
+      "size": 35580,
+      "sha256": "DC61D119D031E5FC2A20935E3661999F853ADAC6BE55B60FC60BAB0930AED1EC"
+    },
+    {
+      "path": "upstream/BC6HBC7.cpp",
+      "size": 150971,
+      "sha256": "6205E7AC2C5B8FE0A6438E3428C3F58DCD3897C23ADAE6442655AFDE630DB88B"
+    },
+    {
+      "path": "upstream/LICENSE",
+      "size": 1141,
+      "sha256": "C2CFCCB812FE482101A8F04597DFC5A9991A6B2748266C47AC91B6A5AAE15383"
+    },
+    {
+      "path": "LICENSE",
+      "size": 1141,
+      "sha256": "C2CFCCB812FE482101A8F04597DFC5A9991A6B2748266C47AC91B6A5AAE15383"
+    }
+  ],
+  "localFiles": [
+    {
+      "path": "shim/DirectXTexP.h",
+      "description": "upstream の DirectXTexP.h の代わりの最小ヘッダ。標準ヘッダ・DirectXMath と、BC7 のフラグ値・未使用引数マクロ・Debug の診断用 Windows API 宣言だけを与える。"
+    }
+  ]
+}

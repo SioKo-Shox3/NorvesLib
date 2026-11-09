@@ -9,8 +9,12 @@
 #include "RigClipBankCook.h"
 #include "RigMotionCleanup.h"
 #include "SkeletalRoleFileInput.h"
+#include "Animation/RetargetReport.h"
 #include <cstdio>
 #include <fstream>
+#if defined(_WIN32)
+#include <Windows.h>
+#endif
 namespace NorvesLib::Tools::AssetCook::Detail
 {
     namespace C = Core::Container;
@@ -23,6 +27,23 @@ namespace NorvesLib::Tools::AssetCook::Detail
         {
             error = reason;
             return false;
+        }
+        bool EncodeClipName(const C::String& name, C::AnsiString& out)
+        {
+            using Unit = C::String::value_type;
+            const C::Span<const Unit> units{name.data(), name.size()};
+            const auto size = Core::Asset::MeasureSkeletalNameEncoding(2, units);
+            if (!size.Succeeded())
+            {
+                return false;
+            }
+            C::VariableArray<uint8_t> bytes(size.ByteCount);
+            if (!Core::Asset::EncodeSkeletalWireName(2, units, {bytes.data(), bytes.size()}).Succeeded())
+            {
+                return false;
+            }
+            out = C::AnsiString(C::AnsiStringView(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+            return true;
         }
         bool Matches(const CookDependencySnapshot& snapshot, const std::filesystem::path& path, CookDependencyRole role,
                      C::Span<const uint8_t> bytes, bool bPresent = true)
@@ -120,11 +141,69 @@ namespace NorvesLib::Tools::AssetCook::Detail
             return true;
         }
     } // namespace
+    bool GuardRetargetReportRequest(const SingleAssetCookRequest& request, const CookDependencySnapshot& dependencies,
+                                    C::AnsiString& error)
+    {
+        if (request.RetargetReportPath.empty())
+        {
+            return true;
+        }
+        std::error_code ec;
+        const auto reportPath = std::filesystem::weakly_canonical(request.RetargetReportPath, ec);
+        if (ec)
+        {
+            return Fail(error, "retarget_report_path");
+        }
+        const auto safe = [&](const std::filesystem::path& path)
+        {
+            if (path.empty())
+            {
+                return true;
+            }
+            std::error_code pathError, equivalentError;
+            const auto canonical = std::filesystem::weakly_canonical(path, pathError);
+            if (pathError)
+            {
+                return false;
+            }
+            const bool equivalent = std::filesystem::equivalent(reportPath, canonical, equivalentError);
+#if defined(_WIN32)
+            const bool samePath = CompareStringOrdinal(reportPath.c_str(), -1, canonical.c_str(), -1, TRUE) == CSTR_EQUAL;
+#else
+            const bool samePath = reportPath == canonical;
+#endif
+            return !samePath && (equivalentError || !equivalent);
+        };
+        if (!safe(request.InputPath) || !safe(request.RetargetSkeletonPath) || !safe(request.RetargetProfilePath) ||
+            !safe(request.ImportSettingsOverridePath) || !safe(request.PackagePath) || !safe(request.ManifestPath) ||
+            (request.ClipOptimize.bEnabled && !safe(request.ClipOptimize.ReportPath)))
+        {
+            return Fail(error, "retarget_report_path");
+        }
+        for (const auto& file : dependencies.Files)
+        {
+            if (!safe(file.Path))
+            {
+                return Fail(error, "retarget_report_path");
+            }
+        }
+        if (!request.PackagePath.empty())
+        {
+            auto motionReport = request.PackagePath;
+            motionReport.replace_extension(".motion_report.json");
+            if (!safe(motionReport))
+            {
+                return Fail(error, "retarget_report_path");
+            }
+        }
+        return true;
+    }
     bool CookRigRetargetBank(const SingleAssetCookRequest& request, C::Span<const uint8_t> source,
                              const CookDependencySnapshot& dependencies, C::VariableArray<uint8_t>& payload,
                              C::AnsiString& error)
     {
-        if (!GuardClipReportRequest(request, dependencies, error))
+        if (!GuardRetargetReportRequest(request, dependencies, error) ||
+            !GuardClipReportRequest(request, dependencies, error))
         {
             return false;
         }
@@ -152,12 +231,24 @@ namespace NorvesLib::Tools::AssetCook::Detail
         A::SkeletalClipRetargetSettings settings;
         settings.RestMode = profile.RestMode;
         settings.UpHint = profile.RestUpHint;
+        settings.RoleUpHints = profile.RoleUpHints;
+        settings.RoleUpHintMask = profile.RoleUpHintMask;
         settings.MaximumRestErrorRadians = profile.MaximumRestErrorRadians;
         settings.RootScale = profile.RootScale;
         settings.bAutoRootHeight = profile.bAutoRootHeight;
+        settings.bAutoLegRootScale = profile.bAutoLegRootScale;
+        settings.LegLengthRatioOverride = profile.LegLengthRatioOverride;
         settings.Processing = profile.Processing;
         settings.LoopExcludedRoles = profile.LoopExcludedRoles;
+        settings.FootPlanting.bEnabled = profile.bFootPlanting;
+        settings.FootPlanting.HeightThresholdMeters = profile.FootHeightThresholdMeters;
+        settings.FootPlanting.SpeedThresholdMetersPerSecond = profile.FootSpeedThresholdMetersPerSecond;
+        settings.FootPlanting.MinStanceFrames = profile.FootMinStanceFrames;
+        settings.FootPlanting.BlendFrames = profile.FootBlendFrames;
+        settings.FootPlanting.GroundHeightMeters = profile.GroundHeightMeters;
+        settings.FootPlantingLegRoleMask = profile.FootPlantingLegRoleMask;
         C::VariableArray<S::SkeletalAnimationClip> clips;
+        A::RetargetReportDocument retargetReport;
         double sourceFps = 0;
         const auto& cleanup = settings.Processing;
         const bool reportCleanup = cleanup.SpikeThresholdRadians > 0 || cleanup.SmoothingRadius > 0 ||
@@ -215,6 +306,52 @@ namespace NorvesLib::Tools::AssetCook::Detail
                     correction.SourceJoint, correction.TargetJoint, correction.BeforeRadians, correction.AfterRadians,
                     unsigned(correction.bDirectionMissing));
             }
+            A::RetargetClipReportEntry entry;
+            if (!EncodeClipName(clip.Name, entry.Name))
+            {
+                return Fail(error, "retarget_clip_name");
+            }
+            entry.bRotationErrorMeasured = report.bRotationErrorMeasured;
+            entry.RotationErrorMaxDegrees = report.RotationErrorMaxDegrees;
+            entry.RotationErrorMeanDegrees = report.RotationErrorMeanDegrees;
+            entry.RootScale = report.RootScale;
+            entry.SourceRootDistanceMeters = report.SourceRootDistanceMeters;
+            entry.TargetRootDistanceMeters = report.TargetRootDistanceMeters;
+            entry.SourceLegLengthMeters = report.SourceLegLengthMeters;
+            entry.TargetLegLengthMeters = report.TargetLegLengthMeters;
+            entry.UnmappedSourceJoints = std::move(report.UnmappedSourceNames);
+            entry.UnmappedTargetJoints = std::move(report.UnmappedTargetNames);
+            const auto& foot = report.FootPlanting;
+            entry.bFootMetricsMeasured = foot.bMeasured;
+            entry.FootSlideBeforeMeters = foot.FootSlideBeforeMeters;
+            entry.FootSlideAfterMeters = foot.FootSlideAfterMeters;
+            entry.FootPenetrationMeters = foot.FootPenetrationMeters;
+            entry.FootFloatMeters = foot.FootFloatMeters;
+            entry.IkAdjustmentDegrees = foot.IkAdjustmentDegrees;
+            entry.IkFailedFrames = foot.IkFailedFrames;
+            entry.PelvisDropMeters = foot.PelvisDropMeters;
+            size_t contactCount = 0;
+            for (const auto& leg : foot.Legs)
+            {
+                A::RetargetFootContactEntry contact;
+                contact.Leg = A::SkeletalRoleName(profile.Vocabulary, leg.PawRole);
+                for (const auto& range : leg.Contacts)
+                {
+                    contact.Ranges.push_back(range.Begin);
+                    contact.Ranges.push_back(range.End);
+                    ++contactCount;
+                }
+                entry.FootContacts.push_back(std::move(contact));
+            }
+            if (settings.FootPlanting.bEnabled)
+            {
+                std::fprintf(stderr,
+                             "retarget_foot_planting measured=%u slide_before_m=%.9g slide_after_m=%.9g penetration_m=%.9g float_m=%.9g ik_adjustment_deg=%.9g ik_failed_frames=%u pelvis_drop_m=%.9g contacts=%zu\n",
+                             unsigned(foot.bMeasured), foot.FootSlideBeforeMeters, foot.FootSlideAfterMeters,
+                             foot.FootPenetrationMeters, foot.FootFloatMeters, foot.IkAdjustmentDegrees,
+                             foot.IkFailedFrames, foot.PelvisDropMeters, contactCount);
+            }
+            retargetReport.Clips.push_back(std::move(entry));
             clips.push_back(std::move(clip));
             return true;
         };
@@ -292,6 +429,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 return Fail(error, "retarget_clip_name");
             }
         }
+        if (!request.RetargetClipName.empty())
+        {
+            retargetReport.Clips[0].Name = request.RetargetClipName;
+        }
         S::RigV1Limits limits;
         limits.MaxJoints = 256;
         S::RigV1Report report;
@@ -334,6 +475,52 @@ namespace NorvesLib::Tools::AssetCook::Detail
         if (!CaptureCookDependencySnapshot(request, 1, after, error) || after.Fingerprint != dependencies.Fingerprint)
         {
             return Fail(error, "retarget_dependencies_changed");
+        }
+        // 誤差はクリップ最適化前の測定値。ID は書き出した ClipBank と同じ値を使う。
+        retargetReport.TargetSkeletonId = bank.GetData()->Topology.SkeletonId;
+        retargetReport.Limits.MaxJointErrorDegrees = profile.ReportMaxJointErrorDegrees;
+        retargetReport.Limits.MaxFootSlideMeters = profile.ReportMaxFootSlideMeters;
+        retargetReport.Limits.MaxFootPenetrationMeters = profile.ReportMaxFootPenetrationMeters;
+        retargetReport.Limits.MaxIkFailedFrames = profile.ReportMaxIkFailedFrames;
+        const auto check = A::CheckRetargetReportLimits(retargetReport);
+        if (!request.RetargetReportPath.empty())
+        {
+            if (!GuardRetargetReportRequest(request, dependencies, error))
+            {
+                return false;
+            }
+            C::VariableArray<uint8_t> bytes;
+            if (!A::WriteRetargetReportJson(retargetReport, check, bytes))
+            {
+                return Fail(error, "retarget_report_write");
+            }
+            std::error_code ec;
+            if (!request.RetargetReportPath.parent_path().empty())
+            {
+                std::filesystem::create_directories(request.RetargetReportPath.parent_path(), ec);
+            }
+            if (ec)
+            {
+                return Fail(error, "retarget_report_write");
+            }
+            std::ofstream stream(request.RetargetReportPath, std::ios::binary | std::ios::trunc);
+            stream.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+            stream.close();
+            if (!stream)
+            {
+                return Fail(error, "retarget_report_write");
+            }
+        }
+        if (check.Status != A::RetargetLimitStatus::Within)
+        {
+            const char* name = check.ClipIndex < retargetReport.Clips.size()
+                                   ? retargetReport.Clips[check.ClipIndex].Name.c_str()
+                                   : "";
+            char values[128];
+            std::snprintf(values, sizeof(values), " value=%.17g limit=%.17g", check.Value, check.Limit);
+            error = C::AnsiString("retarget_report_limit: ") + A::RetargetLimitStatusCode(check.Status) +
+                    " clip=" + name + values;
+            return false;
         }
         if (reportCleanup)
         {

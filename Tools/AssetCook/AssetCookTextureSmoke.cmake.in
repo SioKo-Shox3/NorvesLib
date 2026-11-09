@@ -116,8 +116,32 @@ string(REPEAT "A" 64 usage_gray_pixels)
 file(WRITE "${USAGE_PGM}" "P5\n8 8\n127\n${usage_gray_pixels}")
 
 # 引数: 用途 入力の種類(single=--input 1 枚 / orm=--orm-*) 入力 期待する PixelFormat 色空間 ペイロードのバイト数 マニフェストの format
-#       標準ブロック形状のタイルの幅・高さ(texel)
+#       標準ブロック形状のタイルの幅・高さ(texel)、任意で入力の幅・高さ(既定は 8x8)と形式
 function(check_usage_cook usage input_kind input expected_pixel_format expected_color_space expected_payload_bytes expected_manifest_format expected_tile_w expected_tile_h)
+    set(expected_width 8)
+    set(expected_height 8)
+    if(ARGC GREATER 9)
+        set(expected_width "${ARGV9}")
+        set(expected_height "${ARGV10}")
+    endif()
+    set(format_args)
+    if(ARGC GREATER 11)
+        set(format_args --format "${ARGV11}")
+    endif()
+    set(mip_width ${expected_width})
+    set(mip_height ${expected_height})
+    set(expected_mip_count 1)
+    while(mip_width GREATER 1 OR mip_height GREATER 1)
+        math(EXPR mip_width "${mip_width} / 2")
+        math(EXPR mip_height "${mip_height} / 2")
+        if(mip_width LESS 1)
+            set(mip_width 1)
+        endif()
+        if(mip_height LESS 1)
+            set(mip_height 1)
+        endif()
+        math(EXPR expected_mip_count "${expected_mip_count} + 1")
+    endwhile()
     set(package "${SMOKE_DIR}/Cooked/usage_${usage}.nvpkg")
     set(manifest "${SMOKE_DIR}/usage_${usage}_manifest.json")
     if(input_kind STREQUAL "orm")
@@ -136,6 +160,7 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
             --entry "usage_${usage}.nvtex"
             --entry-type Tex0
             --usage ${usage}
+            ${format_args}
             --quality fast
             --variant default
         RESULT_VARIABLE result
@@ -153,7 +178,7 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
     if(log_pos EQUAL -1)
         message(FATAL_ERROR "--usage ${usage}: TEXTURE_COOK の行が標準出力に無い: ${out}")
     endif()
-    string(FIND "${out}" "size=8x8 ms=" size_pos)
+    string(FIND "${out}" "size=${expected_width}x${expected_height} ms=" size_pos)
     if(size_pos EQUAL -1)
         message(FATAL_ERROR "--usage ${usage}: TEXTURE_COOK の size/ms が無い: ${out}")
     endif()
@@ -180,11 +205,11 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
     if(NOT version_minor EQUAL 2)
         message(FATAL_ERROR "--usage ${usage}: NVTEX の minor が 2 ではない(${version_minor})")
     endif()
-    if(NOT width EQUAL 8 OR NOT height EQUAL 8)
-        message(FATAL_ERROR "--usage ${usage}: 大きさが 8x8 ではない(${width}x${height})")
+    if(NOT width EQUAL expected_width OR NOT height EQUAL expected_height)
+        message(FATAL_ERROR "--usage ${usage}: 大きさが ${expected_width}x${expected_height} ではない(${width}x${height})")
     endif()
-    if(NOT mip_count EQUAL 4)
-        message(FATAL_ERROR "--usage ${usage}: ミップ数が 4 ではない(${mip_count})")
+    if(NOT mip_count EQUAL expected_mip_count)
+        message(FATAL_ERROR "--usage ${usage}: ミップ数が ${expected_mip_count} ではない(${mip_count})")
     endif()
     if(NOT pixel_format EQUAL ${expected_pixel_format})
         message(FATAL_ERROR "--usage ${usage}: PixelFormat が ${expected_pixel_format} ではない(${pixel_format})")
@@ -196,7 +221,7 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
         message(FATAL_ERROR "--usage ${usage}: ペイロードが ${expected_payload_bytes} バイトではない(${payload_size})")
     endif()
 
-    # v0.2 のヘッダの続き。8x8 はタイルより小さいので、全段がミップテイル（タイルの表は空）になる。
+    # v0.2 のヘッダの続き。入力はタイルより小さいので、全段がミップテイル（タイルの表は空）になる。
     read_nvtex_le("${package_hex}" 8 4 header_size)
     read_nvtex_le("${package_hex}" 112 4 tile_width)
     read_nvtex_le("${package_hex}" 116 4 tile_height)
@@ -217,11 +242,12 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
         message(FATAL_ERROR "--usage ${usage}: タイルのバイト数が 65536 ではない(${tile_data_bytes})")
     endif()
     if(NOT first_tail_mip EQUAL 0 OR NOT tile_table_size EQUAL 0)
-        message(FATAL_ERROR "--usage ${usage}: 8x8 は全段がミップテイルのはずだが first_tail_mip=${first_tail_mip} tile_table_size=${tile_table_size}")
+        message(FATAL_ERROR "--usage ${usage}: ${expected_width}x${expected_height} は全段がミップテイルのはずだが first_tail_mip=${first_tail_mip} tile_table_size=${tile_table_size}")
     endif()
-    # ヘッダ 160 + ミップ表 4 件 x 32 = 288 バイト目にタイルの表（空）とペイロードが続く。
-    if(NOT tile_table_offset EQUAL 288 OR NOT payload_offset EQUAL 288)
-        message(FATAL_ERROR "--usage ${usage}: タイルの表・ペイロードの位置が 288 ではない(${tile_table_offset}, ${payload_offset})")
+    # ヘッダ 160 + ミップ表の件数 x 32 バイト目にタイルの表（空）とペイロードが続く。
+    math(EXPR expected_payload_offset "160 + ${expected_mip_count} * 32")
+    if(NOT tile_table_offset EQUAL expected_payload_offset OR NOT payload_offset EQUAL expected_payload_offset)
+        message(FATAL_ERROR "--usage ${usage}: タイルの表・ペイロードの位置が ${expected_payload_offset} ではない(${tile_table_offset}, ${payload_offset})")
     endif()
     if(NOT tail_offset EQUAL ${payload_offset} OR NOT tail_size EQUAL ${payload_size})
         message(FATAL_ERROR "--usage ${usage}: ミップテイルがペイロード全体ではない(${tail_offset}, ${tail_size})")
@@ -240,6 +266,15 @@ check_usage_cook(orm      orm    "${USAGE_PGM}"   7 1 112 "nvtex.v0.2.bc7.linear
 check_usage_cook(single   single "${USAGE_PGM}"   5 1 56  "nvtex.v0.2.bc4.linear" 512 256)
 # 8bit の入力は 16bit へ拡大される。16bit の入力の精度は AssetCookTextureUsageSmoke(PNG)で確かめる。
 check_usage_cook(height16 single "${USAGE_PGM}"   8 1 170 "nvtex.v0.2.r16.linear" 256 128)
+
+set(HDR_EXR "${CMAKE_CURRENT_LIST_DIR}/Fixtures/Texture/hdr_gradient.exr")
+# 16x8 の BC6H は 8+2+1+1+1 = 13 ブロック、208 バイト。
+check_usage_cook(hdr single "${HDR_EXR}" 12 1 208 "nvtex.v0.2.bc6h.linear" 256 256 16 8)
+# 16x8 の全ミップは 16x8 + 8x4 + 4x2 + 2x1 + 1x1 = 171 画素。RGBA16F は 171x8 = 1368 バイト。
+check_usage_cook(hdr single "${HDR_EXR}" 9 1 1368 "nvtex.v0.2.rgba16f.linear" 128 64 16 8 rgba16f)
+check_usage_cook(albedo single "${USAGE_PPM}" 11 2 112 "nvtex.v0.2.bc3.srgb" 256 256 8 8 bc3)
+# 8x8 の全ミップは 64+16+4+1 = 85 画素。RG16 は 85x4 = 340 バイト。
+check_usage_cook(rg16 single "${USAGE_PPM}" 10 1 340 "nvtex.v0.2.rg16.linear" 128 128)
 
 # タイルを持つ大きさ: BC4 の 1024x512（タイル 512x256）。段 0 は 2x2、段 1 は 1x1 のタイルで、段 2（256x128）からミップテイル。
 #   ペイロード 349544 バイト = タイル 327680（段 0・1: (32768 + 8192) ブロック x 8）+ ミップテイル 21864（残り 2733 ブロック x 8）
@@ -321,6 +356,7 @@ function(expect_usage_failure label)
     endif()
 endfunction()
 
+expect_usage_failure("16bit 必須の高さに 8bit の入力" --input "${USAGE_PGM}" --usage height16 --require-16bit)
 expect_usage_failure("未知の用途" --input "${USAGE_PPM}" --usage diffuse)
 expect_usage_failure("--usage と --format の併用" --input "${USAGE_PPM}" --usage albedo --format nvtex.v0.rgba8.srgb)
 expect_usage_failure("orm に --input" --input "${USAGE_PPM}" --usage orm --orm-ao "${USAGE_PGM}")
@@ -358,7 +394,7 @@ endforeach()
 # ---- 用途ごとのクックの中身(色・ミップ・精度) ----
 if(DEFINED USAGE_SMOKE_EXE)
     execute_process(
-        COMMAND "${USAGE_SMOKE_EXE}"
+        COMMAND "${USAGE_SMOKE_EXE}" "${HDR_EXR}"
         RESULT_VARIABLE usage_result
         OUTPUT_VARIABLE usage_stdout
         ERROR_VARIABLE usage_stderr

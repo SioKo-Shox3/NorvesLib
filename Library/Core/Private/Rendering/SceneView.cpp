@@ -7,7 +7,11 @@
 #include "Rendering/GBufferPass.h"
 #include "Rendering/DecalPass.h"
 #include "Rendering/DistortionPass.h"
+#include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/MotionBlurPass.h"
 #include "Rendering/FoliagePass.h"
+#include "Rendering/GrassPass.h"
+#include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
@@ -888,6 +892,8 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::Render(ViewRenderContext &context)
     {
+        m_RenderExtensions.ApplyPending();
+
         const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
         const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
         context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
@@ -1112,6 +1118,9 @@ namespace NorvesLib::Core::Rendering
         SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
 
+        // カメラに追従する世界フィールドを、ジオメトリの描画より先に更新する。
+        AddPass(MakeUnique<WorldFieldPass>());
+
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
@@ -1190,6 +1199,11 @@ namespace NorvesLib::Core::Rendering
         // 頂点シェーダーで風に揺らすので解決の経路には載せず、SSAO・影の印付け・照明より前に置いて影を受ける。
         // 束が無いフレームは何も宣言しない（既定の描画は変えない）
         AddPass(MakeUnique<FoliagePass>());
+
+        // GrassPass: 草の場からタイルごとのブレードと間接描画の引数を生成する。
+        auto grassPass = MakeUnique<GrassPass>();
+        grassPass->SetMegaGeometryPass(megaGeometryPassPtr);
+        AddPass(std::move(grassPass));
 
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
         // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
@@ -1322,6 +1336,11 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
 
+        // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
+        AddPass(Container::MakeUnique<DepthOfFieldPass>());
+        // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
+        AddPass(Container::MakeUnique<MotionBlurPass>());
+
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
@@ -1375,6 +1394,7 @@ namespace NorvesLib::Core::Rendering
         postProcessStack->AddPass(std::move(debugDrawPass));
 
         SetPostProcessStack(std::move(postProcessStack));
+        m_RenderExtensions.ReinsertAll();
 
         NORVES_LOG_INFO("SceneView",
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Volumetrics -> Forward(Transparent) -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
@@ -1419,6 +1439,7 @@ namespace NorvesLib::Core::Rendering
         toneMappingSettings.VignetteIntensity = 0.0f;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
         SetPostProcessStack(std::move(postProcessStack));
+        m_RenderExtensions.NotePathTracingPipeline();
     }
 
     void SceneView::CullBoardProxy(BoardProxy& proxy,
