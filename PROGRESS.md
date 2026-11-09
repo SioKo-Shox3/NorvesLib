@@ -10509,3 +10509,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 スキンの VB・IB を DeviceLocal にし、描画の記録の前に転送を済ませる: 着地(直し 0 回)
 - U5 予備の GBufferPass のスキンの主カメラの絞り込み: 着地(直し 0 回)
 - U6 CSM のカスケードごとにスキンと通常のメッシュの描画を絞る: 着地(直し 1 回)
+- U8 CPU の SkinnedLodSelectionTest: 着地(直し 0 回)
