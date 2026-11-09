@@ -44,7 +44,7 @@
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure`
-- paths: Engine/**, Game/**, Test/**, Tools/**, Shaders/**, CMakeLists.txt
+- paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
