@@ -1,4 +1,5 @@
 ﻿#include "VulkanDevice.h"
+#include "VulkanFormatTable.h"
 #include "VulkanBuffer.h"
 #include "VulkanAccelerationStructure.h"
 #include "VulkanTexture.h"
@@ -1812,37 +1813,10 @@ namespace NorvesLib::RHI::Vulkan
     // フォーマット変換マップの初期化
     void VulkanDevice::InitFormatMaps()
     {
-        // RHI Format → vk::Format
-        m_formatMap[Format::R8_UNORM] = vk::Format::eR8Unorm;
-        m_formatMap[Format::R8G8_UNORM] = vk::Format::eR8G8Unorm;
-        m_formatMap[Format::R8G8B8A8_UNORM] = vk::Format::eR8G8B8A8Unorm;
-        m_formatMap[Format::R8G8B8A8_SRGB] = vk::Format::eR8G8B8A8Srgb;
-        m_formatMap[Format::B8G8R8A8_UNORM] = vk::Format::eB8G8R8A8Unorm;
-        m_formatMap[Format::B8G8R8A8_SRGB] = vk::Format::eB8G8R8A8Srgb;
-        m_formatMap[Format::R16_FLOAT] = vk::Format::eR16Sfloat;
-        m_formatMap[Format::R16G16_FLOAT] = vk::Format::eR16G16Sfloat;
-        m_formatMap[Format::R16G16B16A16_FLOAT] = vk::Format::eR16G16B16A16Sfloat;
-        m_formatMap[Format::R32_FLOAT] = vk::Format::eR32Sfloat;
-        m_formatMap[Format::R32G32_FLOAT] = vk::Format::eR32G32Sfloat;
-        m_formatMap[Format::R32G32B32_FLOAT] = vk::Format::eR32G32B32Sfloat;
-        m_formatMap[Format::R32G32B32A32_FLOAT] = vk::Format::eR32G32B32A32Sfloat;
-        m_formatMap[Format::D16_UNORM] = vk::Format::eD16Unorm;
-        m_formatMap[Format::D24_UNORM_S8_UINT] = vk::Format::eD24UnormS8Uint;
-        m_formatMap[Format::D32_FLOAT] = vk::Format::eD32Sfloat;
-        m_formatMap[Format::R16_UNORM] = vk::Format::eR16Unorm;
-        m_formatMap[Format::BC1_UNORM] = vk::Format::eBc1RgbaUnormBlock;
-        m_formatMap[Format::BC1_SRGB] = vk::Format::eBc1RgbaSrgbBlock;
-        m_formatMap[Format::BC4_UNORM] = vk::Format::eBc4UnormBlock;
-        m_formatMap[Format::BC5_UNORM] = vk::Format::eBc5UnormBlock;
-        m_formatMap[Format::BC7_UNORM] = vk::Format::eBc7UnormBlock;
-        m_formatMap[Format::BC7_SRGB] = vk::Format::eBc7SrgbBlock;
-        m_formatMap[Format::R32_UINT] = vk::Format::eR32Uint;
-        m_formatMap[Format::R32G32_UINT] = vk::Format::eR32G32Uint;
-
-        // vk::Format → RHI Format (逆変換マップも作成)
-        for (const auto &[rhiFormat, vkFormat] : m_formatMap)
+        for (const VulkanFormatMapping &mapping : kVulkanFormatTable)
         {
-            m_reverseFormatMap[vkFormat] = rhiFormat;
+            m_formatMap[mapping.RhiFormat] = mapping.VkFormat;
+            m_reverseFormatMap[mapping.VkFormat] = mapping.RhiFormat;
         }
     }
 
@@ -2380,6 +2354,46 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         throw std::runtime_error("サポートされているフォーマットが見つかりません");
+    }
+
+    bool VulkanDevice::IsFormatSupported(Format format, FormatUsage usage) const
+    {
+        const vk::Format vkFormat = ToVkFormat(format);
+        if (vkFormat == vk::Format::eUndefined)
+        {
+            return false;
+        }
+
+        vk::FormatFeatureFlags requiredFeatures;
+        switch (usage)
+        {
+        case FormatUsage::Sampled:
+            requiredFeatures = vk::FormatFeatureFlagBits::eSampledImage;
+            break;
+        case FormatUsage::RenderTarget:
+            requiredFeatures = GetFormatInfo(format).bDepth
+                ? vk::FormatFeatureFlagBits::eDepthStencilAttachment
+                : vk::FormatFeatureFlagBits::eColorAttachment;
+            break;
+        case FormatUsage::Storage:
+            requiredFeatures = vk::FormatFeatureFlagBits::eStorageImage;
+            break;
+        case FormatUsage::LinearMipGeneration:
+            if (IsBlockCompressedFormat(format))
+            {
+                return false;
+            }
+            requiredFeatures = vk::FormatFeatureFlagBits::eBlitSrc |
+                               vk::FormatFeatureFlagBits::eBlitDst |
+                               vk::FormatFeatureFlagBits::eSampledImageFilterLinear;
+            break;
+        default:
+            return false;
+        }
+
+        const vk::FormatFeatureFlags features =
+            GetVkPhysicalDevice().getFormatProperties(vkFormat).optimalTilingFeatures;
+        return (features & requiredFeatures) == requiredFeatures;
     }
 
     // RHI Format → vk::Format変換

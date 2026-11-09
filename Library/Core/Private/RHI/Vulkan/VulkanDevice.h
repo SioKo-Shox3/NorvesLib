@@ -131,6 +131,7 @@ namespace NorvesLib::RHI::Vulkan
         // 同一デバイスのコマンド送信・コマンドプール操作と呼出側で直列化する。
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
+        bool IsFormatSupported(Format format, FormatUsage usage) const override;
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
         // VK_EXT_memory_budget が有効なときだけ DeviceLocal ヒープの予算と使用量を返す。
         VideoMemoryBudget GetVideoMemoryBudget() const override;

@@ -471,6 +471,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanCommandList.cpp
     Private/RHI/Vulkan/VulkanDescriptorSet.cpp
     Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFormatTable.h
     Private/RHI/Vulkan/VulkanFramebuffer.cpp
     Private/RHI/Vulkan/VulkanGPUResourceAllocator.cpp
     Private/RHI/Vulkan/VulkanPipeline.cpp
