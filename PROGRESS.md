@@ -10575,3 +10575,28 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ(G5-GR30-REACTIVE): 今のシーンに `bWritesReactive` を立てた材質は無いので、既定の見た目は変わらない。印を立てた半透明が TAA を有効にしたシーンで動くとき、通り過ぎた後の尾が残らないかを見る。
 - Next(G5-GR30-REACTIVE): なし(リアクティブの係数は仮。使う材質が出たときに見て決める)。
 - 要起票: 屋内の基準画像の試験 `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenIndoorGBufferFallbackVulkanTest` が task/G5-GR30-REACTIVE の 55a940ff の上で落ちた(mean_flip 0.0000137 > 上限 0.000001、差のある画素 10・raw 最大 1、最大の座標 (41,118)。屋外の 2 本は差 0)。golden はこの数タスク回していないため、どのコミットからかは未確認。
+
+- U1 GBuffer へ重ねる描き先の作り方を共通の補助へ移し、FoliagePass がそれを使う: 着地(直し 0 回)
+- U6 撮影の解析の台本・カメラの台本・しきい値の表を書く: 着地(直し 0 回)
+- U2 草の描画の定数・共有インデックスのバッファの中身・GLSL の定数の配置を足す: 着地(直し 0 回)
+- U3 grass.vert・grass.frag と、頂点の式の CPU の写しを書き、シェーダーのコンパイル試験に足す: 着地(直し 1 回)
+- U4 GrassPass が GBuffer の描き先を宣言し、LOD ごとに DrawIndexedIndirect を 3 回出す: 着地(直し 1 回)
+- U5 GPU の試験 GrassGBufferVulkanTest を足す: 着地(直し 0 回)
+## 2026-11-10 G5-GR43-GRASS-DRAW（run 20261110-060226、完了）
+- Done: `GBufferOverlayTargets`（GBuffer 5 枚＋深度へ Load/Store で重ねる render pass・framebuffer・パイプラインの共通の補助）。FoliagePass はそれを使う純粋な移し替え（深度 LessOrEqual・両面・blend off のまま）。
+- Done: `GrassBladeMesh`（std140 の `GrassDrawConstants` 464 バイト、LOD0=7・LOD1=3・LOD2=1 分割の帯を連結した共有インデックス。値は `(lod << 16) | (row << 1) | side`、頂点の位置の CPU の写し `EvaluateGrassBladeVertex`）と `Assets/Shaders/Grass/{GrassDraw.glsl,grass.vert,grass.frag}`。2 次ベジエ（傾き＋風＋踏み倒しの口 0＋濡れの垂れ）、先端で 0.1 倍に先細り、視線に横向きのとき幅と法線を視線へ寄せる、最小画素幅の広げ（FoliageBatch の既定）、近接 1.2 m から草丈を 0.25 倍まで縮め 0.35 m 未満は 4×4 Bayer で discard、向き・位相・色・傾きはセルのハッシュ（塩 4〜7）から再導出。frag は Albedo.a=1、法線はカメラの側へ向けて上へ 0.35 寄せる、粗さは濡れで WetRoughness へ、AO は根元 0.35→先端 1、velocity は gbuffer.frag と同じ式で前の時刻・前のカメラで再評価。
+- Done: `GrassDrawGpu`（GrassPass.h）と GrassPass の描画。草があるときは GBuffer 5 枚と深度を宣言し、生成の後に LOD ごとの記述子（ブレードの SSBO を LodBase×16 の offset で束ねる）で `DrawIndexedIndirect(args, lod*20, 1, 20)` を 3 回（頂点入力なし・cullMode None・depth Less/Write）。記録バッファは描画の前後で ShaderResource↔GenericRead（頂点シェーダーの段を含めるため）。全体の濡れ度は定数 0（GR49 までの受け口）。影は落とさない。
+- Done: GPU の試験 `GrassGBufferVulkanTest`（RHITextureUpdateVulkanTest の束）。風なし・風ありの静止カメラで画素 397/377、Albedo.a の誤差 0、法線の長さの誤差 5.4e-4、AO 根元 0.43／先端 0.91、風なしの velocity 0、風ありは CPU の写しとの差 9.7e-5（許容 0.002）。`GrassShaderCompileTest` に grass.vert・grass.frag。
+- Done: `Scripts/Grass/GrassCaptureCheck.py`（`--sweep` 被覆率・平均輝度の隣接差、`--near` 緑の最大連結成分の割合）、`Scripts/CameraScripts/grassland-sweep.txt`（near 視点から 10→120 m を 1 m 刻み、111 枚）、`Test/Core/Rendering/Thresholds/RenderingValidation/GrassLodSweep.tsv`（仮の値。G5-GR43-GRASS-CHECK の最初の撮影で校正）。走らせていない。
+- 証拠: `.harness/runs/20261110-060226/verify-G5-GR43-GRASS-DRAW-final.txt`（verify のビルド 3 行と CameraViewConstantsTest のビルドが EXIT_CODE=0、GrassShaderCompileTest・WindShaderCompileTest・GrassTileSelectionTest 3/3 Passed、GrassGenerateVulkanTest・GrassGBufferVulkanTest 2/2 Passed）
+- Next: G5-GR43-GRASS-CHECK（撮影・計測の確かめは回さない決まりなので、起動する確かめは人が見る）。
+- Notes: grassland では草はまだ地面の上に見えない見込み。`GrassTileSelector` がタイルの地面の高さに既定の 0 m を入れ、生成がそれを根元に使う一方、grassland の near 付近の地表は約 21 m。地形の高さを渡すのは既存の G5-GR43-GRASS-GENERATE-P1（todo）。G5-GR43-GRASS-CHECK の撮影はその後でないと草が写らない。
+- Notes: grassland は `CameraScriptCapture` を `FreeCameraRig` につないでいないので、`grassland-sweep.txt` の撮影の合図はまだ動かない（G5-GR43-GRASS-CHECK の paths の Game/GameModes/Grassland でつなぐ）。
+- Notes: 草の頂点シェーダーは LayerA（濡れの moisture）を全体の濡れ度が 0 より大きいときだけ読む。LayerA の ShaderResource の遷移の段は fragment と compute だけで、頂点の段の可視性は形式上保証されない。GR49 で全体の濡れ度を入れるときに LayerA の遷移も見直す。
+- Notes: 人が見るときの見どころ: GENERATE-P1 の後に grassland の near・low 視点で、手前の草が曲がった帯で揺れ、遠くへ LOD が切り替わっても密度と明るさが跳ばないこと、カメラを草へ寄せると 1.2 m から背が縮み 0.35 m で点描に抜けること。荒野の株（FoliagePass）は見た目が変わらないこと。
+
+## 2026-11-10 G5-GR43-GRASS-DRAW（run 20261110-060226 の反復 2、差し戻しの直し）
+
+- Done: verify の ctest で GrassTileSelectionTest が「unknown test」で落ちた差し戻しを直した。原因はこの枠の build の `CameraViewConstantsTest.exe` が 11 月 4 日のままで、GrassTileSelectionTest を MEMBER に足した後に作り直されていなかったこと（前の反復の最後の確かめは単位の作業ツリーの build で回っていた）。コードの変更は無く、`CameraViewConstantsTest` を Debug でビルドし直した。
+- 証拠: `.harness/runs/20261110-060226/aux-G5-GR43-verify-iter2.txt`（RHIRayTracingApiContractTest・RHITextureUpdateVulkanTest・Game の Debug ビルドが EXIT=0、ctest の GrassShaderCompileTest・WindShaderCompileTest・GrassTileSelectionTest が 3/3 Passed）と `aux-G5-GR43-build-CameraViewConstantsTest.txt`（EXIT=0）。
+- Notes: verify の ctest が呼ぶ GrassTileSelectionTest は CameraViewConstantsTest の束の中にあるが、verify のビルド行にはこのターゲットが無い。束の MEMBER を足す・変える項目は、その束のターゲットを枠の build でもビルドしてから終える。
