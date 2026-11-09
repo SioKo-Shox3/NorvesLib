@@ -4607,6 +4607,7 @@ namespace NorvesLib::Core::Rendering
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
+        m_ExtensionData.SnapshotTo(packet.Scene.Extensions);
         packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
@@ -5839,6 +5840,7 @@ namespace NorvesLib::Core::Rendering
                                              ? &packet->PreviousMainCamera
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
+        viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;

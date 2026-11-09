@@ -10423,3 +10423,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 パストレーサーの経路を組んだ後の登録でも警告を 1 回出し、初期化の窓を走り出す前に閉じる: 着地(直し 0 回)
 - Done(G5-GR25-STAGE-REGISTRY 差し戻しの直し): パストレーサーの経路を組んだ後に初めて登録された拡張でも警告を 1 回出すようにし、初期化の窓を `ApplicationProcessor` の `SetRunning(true)` の前に閉じる口（`RenderExtensionRegistry::CloseInitializationWindow`）を足した。Debug のビルド（SceneViewProxyLookupTest・RenderingGoldenImageTest・Game）と RenderExtensionRegistryTest・SceneViewProxyLookupTest・SceneViewProxyReconcileTest の 3/3 合格を確かめた。golden 4 本は回さない決まり。
 - U1 拡張データの型（キー・不変のブロブ・GameThread の保持・引き当て）と FrameInfo: 着地(直し 0 回)
+- U2 パケット・RenderWorld・ViewRenderContext・履歴への配線: 着地(直し 0 回)

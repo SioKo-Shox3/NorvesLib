@@ -17,6 +17,8 @@ namespace NorvesLib::Core::Rendering
     {
         // パケットの前の変換が指すゲームのフレーム番号
         uint64_t PreviousFrameNumber = 0u;
+        /** @brief 最後に描いたパケットの時刻。初回は現在のゲーム時刻からゲームのフレーム時間を引いた値。 */
+        double PreviousRenderedTotalTime = 0.0;
         // 描いた物体をすべて PreviousFrameNumber のフレームへ揃えられたか
         bool bComplete = true;
         // 前の変換を付け替えたか
@@ -39,6 +41,7 @@ namespace NorvesLib::Core::Rendering
      * （その物体は履歴に写っていない）。照合できないインスタンスがあれば bComplete を false にする。
      * MegaGeometry の前の変換は、bRewriteOnGap に関わらず飛んだフレームでは最後に描いたフレームの変換にする。
      * 付け替えた後、このパケットの変換を次のフレームのために覚える。
+     * TAA の有無やフレームの連続・飛びに関わらず、最後に描いたパケットのゲーム時刻も覚える。
      */
     class RenderedObjectHistory
     {
@@ -58,6 +61,7 @@ namespace NorvesLib::Core::Rendering
                                           bool bRewriteOnGap)
         {
             RenderedObjectHistoryResult result;
+            result.PreviousRenderedTotalTime = m_bValid ? m_TotalTime : packet.TotalTime - packet.DeltaTime;
             result.PreviousFrameNumber = packet.FrameNumber > 0u ? packet.FrameNumber - 1u : 0u;
             const bool bGap = m_bValid && packet.FrameNumber > m_FrameNumber + 1u;
             if (m_bValid && packet.FrameNumber == m_FrameNumber + 1u)
@@ -85,6 +89,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_bValid = false;
             m_FrameNumber = 0u;
+            m_TotalTime = 0.0;
             m_MeshWorlds.clear();
             m_MegaGeometryWorlds.clear();
             m_SkinnedStates.Reset();
@@ -250,11 +255,13 @@ namespace NorvesLib::Core::Rendering
             }
             m_SkinnedStates.Record(packet);
             m_FrameNumber = packet.FrameNumber;
+            m_TotalTime = packet.TotalTime;
             m_bValid = true;
         }
 
         bool m_bValid = false;
         uint64_t m_FrameNumber = 0u;
+        double m_TotalTime = 0.0;
         // 最後に描いたフレームの変換（MeshProxy は ComponentId、MegaGeometry は ObjectId、スキニングは元の MeshComponent の ID ごと）。
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_MeshWorlds;
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_MegaGeometryWorlds;
