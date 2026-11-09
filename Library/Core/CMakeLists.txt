@@ -274,6 +274,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
     Private/Rendering/WorldFieldPass.cpp
     Private/Rendering/WorldFieldTypes.cpp
