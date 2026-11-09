@@ -64,7 +64,7 @@ GR84 の [回転の写し](SkeletalRotationRetarget.md) はロールで対応づ
 
 関節誤差の上限を指定した場合、どのクリップでも最大値が上限を超えれば失敗し、未計測でも失敗する。等しい値は上限内。足の二つの上限は、この段階では測定値がないため指定するだけで失敗する。判定は足滑り、めり込み、関節誤差の順に行い、最初の失敗を報告する。測定は再接地の段で追加する。
 
-`AssetCook --retarget-report <path>` の接続後は、指定先へ JSON を書き、上限判定が失敗なら報告を書いた後に非 0 の終了コードを返す。報告パスが入力または出力と同じ場合は拒否し、asset-set の経路でも上限を適用する。現在の `--retarget-clip` 入口はこの報告・上限判定および version 2 のロール別 hint と脚長倍率への接続が未完であり、解析済みの設定を適用済みとは扱わない。
+`AssetCook --retarget-report <path>` は指定先へ JSON を書く。`--retarget-clip` と asset-set の経路はいずれも version 2 のロール別 hint・脚長倍率・上限判定を適用する。上限を超えた場合は報告を書いた後、`retarget_report_limit: <status> clip=<名前> value=<値> limit=<上限>` のエラーを返し、CLI は終了コード 1 で終了する。報告パスが入力（元クリップ・対象骨格・profile・依存ファイルなど）または出力と同じ場合は `retarget_report_path` で拒否する。報告 JSON の生成・保存に失敗した場合は `retarget_report_write` を返す。
 
 ## 骨格の同一性
 
