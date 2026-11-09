@@ -10483,3 +10483,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 パケットへの経路と grassland の設定: 着地(直し 0 回)
 - U3 草・低木と VSM の株の影が共通の風を使う: 着地(直し 0 回)
 - U4 CPU の試験（WindParametersTest・FramePacketWindSnapshotContractTest）: 着地(直し 0 回)
+- U5 シェーダーの試験・GPU の一致の試験とタスクの verify: 着地(直し 0 回)
