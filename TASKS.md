@@ -10722,3 +10722,11 @@
 - paths: Test/Core/Rendering/Baselines/RenderingValidation/Indoor.png, Test/Core/Rendering/Baselines/RenderingValidation/IndoorGBufferFallback.png, Test/Core/Rendering/Baselines/RenderingValidation/Outdoor.png, Test/Core/Rendering/Baselines/RenderingValidation/OutdoorGBufferFallback.png, Docs/RenderingValidation/GoldenBaselines.md, Docs/RenderingValidation/R1Acceptance.md, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - from: SCN-MEGA-FIX-TLAS-REBUILD-P4
+
+## G5-GR28-DRAW-INDIRECT-P1: 既存のインデックス付きの間接描画と MegaGeometry の区間の容量を、装置の maxDrawIndirectCount 以下に抑える
+- status: todo
+- done-when: `DeviceCapabilities` に `MaxDrawIndirectCount` を足す。値は論理デバイスを作るときに `limits.maxDrawIndirectCount` から入れる。`VulkanCommandList::DrawIndirect` の上限の検査は、`m_device->GetMaxDrawIndirectCount()` ではなくこの能力の値を見る。`VulkanCommandList::DrawIndexedIndirect` は、drawCount が `MaxDrawIndirectCount` を超えるときと、drawCount>1 で `bMultiDrawIndirect` が無いときは何も記録しない。そのうえで既存の流儀どおり例外を投げる。`MegaGeometryPass.cpp` の区間の容量（`assignSectionCapacities` の `sectionLimit`。3922 行付近）は `MaxDrawIndirectCount` 以下に抑える。これで件数つき（`DrawIndexedIndirectCount` の maxDrawCount と GPU が書く件数）の分岐も、多重（`DrawIndexedIndirect` の drawCount）の分岐も、上限を超える件数を出さない。両方の能力が無い装置で 1 件ずつ描く分岐は変えない（対応の段は G19-GR124 で決める）。`IndirectDrawVulkanTest` に試験を足す。能力を偽って `MaxDrawIndirectCount=1` にしたとき、`DrawIndirect` の drawCount=2 が false を返し、`DrawIndexedIndirect` の drawCount=2 が例外を投げ、どちらも何も記録せず validation のメッセージが 0 件であることを確かめる。既存の `IndirectDispatchVulkanTest`・`RHIIndirectApiContractTest`・golden 4 本が変わらず通る。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIIndirectApiContractTest|IndirectDispatchVulkanTest|IndirectDrawVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/RHI/DeviceCapabilities.h, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Test/Core/Rendering/IndirectDrawVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR28-DRAW-INDIRECT
