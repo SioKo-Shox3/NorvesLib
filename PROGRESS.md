@@ -10544,3 +10544,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）。実在の人型の骨格（Mixamo・Rigify・Kimodo）の選定は G10 の着手前まで保留（G9-S3）
 - Notes: スモークの台本は `string(JSON ...)` を使うので CMake 3.19 以上が要る。二足の足先の向きの補正は四足の前脚と同じ方式で、実在の人型リグのつま先の動きは未確認
 - U2 一様な時刻のチャンネルを添字の直接計算で引く: 着地(直し 0 回)
+- U1 クリップの値の量子化の符号器（smallest-three 32/48・TransQuant16・Const の判定）: 着地(直し 0 回)

@@ -3,14 +3,118 @@
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "Animation/SkeletalSamplingMath.h"
 #include "Resource/GltfBufferFile.h"
+#include "Asset/ClipQuantization.h"
 #include <cmath>
 #include <limits>
+#include <random>
 namespace F = NorvesLib::Tests::RigV1Fixture;
 namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
 namespace Cook = NorvesLib::Tools::AssetCook;
 namespace
 {
+
+
+    void RotationQuantizationRandom()
+    {
+        std::mt19937 random(0x51434c50u);
+        std::normal_distribution<double> normal(0.0, 1.0);
+        double maximumAngle = 0.0;
+        for (uint32_t i = 0; i < 100000; ++i)
+        {
+            double components[4] = {normal(random), normal(random), normal(random), normal(random)};
+            const double inverseLength = 1.0 / std::sqrt(
+                components[0] * components[0] + components[1] * components[1] +
+                components[2] * components[2] + components[3] * components[3]);
+            const S::SkeletalValue original{float(components[0] * inverseLength), float(components[1] * inverseLength),
+                                            float(components[2] * inverseLength), float(components[3] * inverseLength)};
+            const auto decoded = S::DecodeRotationSmallest3_32(S::EncodeRotationSmallest3_32(original));
+            // 返された float の長さの丸めも除き、4 次元の角度を独立に求める。
+            const double a[4] = {original.X, original.Y, original.Z, original.W};
+            const double b[4] = {decoded.X, decoded.Y, decoded.Z, decoded.W};
+            double dot = 0.0, lengthA = 0.0, lengthB = 0.0;
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                dot += a[component] * b[component];
+                lengthA += a[component] * a[component];
+                lengthB += b[component] * b[component];
+            }
+            dot = std::fabs(dot) / std::sqrt(lengthA * lengthB);
+            const double angle = std::acos(std::fmin(1.0, dot)) * 57.295779513082320877;
+            maximumAngle = std::fmax(maximumAngle, angle);
+            RIG_CHECK(angle <= 0.1);
+        }
+        std::printf("CLIP_QUANTIZATION_RANDOM result=pass samples=100000 max_angle_4d_degrees=%.12f\n", maximumAngle);
+    }
+
+    void RotationQuantizationBoundaries()
+    {
+        const float halfRoot = float(1.0 / std::sqrt(2.0));
+        const S::SkeletalValue rotations[] = {
+            {0.5f, 0.5f, 0.5f, 0.5f},
+            {halfRoot, halfRoot, 0.0f, 0.0f},
+            {0.0f, 0.0f, halfRoot, -halfRoot},
+            {0.0f, 0.0f, 0.0f, 1.0f},
+            {0.0f, 0.0f, 0.0f, -1.0f},
+            {-0.8f, 0.2f, -0.3f, 0.4f}};
+        for (const auto& original : rotations)
+        {
+            const uint32_t bits32 = S::EncodeRotationSmallest3_32(original);
+            const uint64_t bits48 = S::EncodeRotationSmallest3_48(original);
+            RIG_CHECK(S::RotationAngleDifferenceDegrees(original, S::DecodeRotationSmallest3_32(bits32)) <= 0.2);
+            RIG_CHECK(S::RotationAngleDifferenceDegrees(original, S::DecodeRotationSmallest3_48(bits48)) <= 0.01);
+            RIG_CHECK(S::IsValidRotationSmallest3_48(bits48));
+            RIG_CHECK(!S::IsValidRotationSmallest3_48(bits48 | (uint64_t{1} << 45)));
+        }
+        std::printf("CLIP_QUANTIZATION_BOUNDARIES result=pass smallest_three_32_48_reserved_bit\n");
+    }
+
+    void TranslationQuantization()
+    {
+        std::mt19937 random(0x54524e53u);
+        std::uniform_real_distribution<float> uniform(-5.0f, 5.0f);
+        S::SkeletalAnimationChannel channel;
+        channel.Samples.resize(4096);
+        for (auto& sample : channel.Samples)
+        {
+            sample.Value = {uniform(random), uniform(random), uniform(random), 0.0f};
+        }
+        for (uint32_t pass = 0; pass < 2; ++pass)
+        {
+            // 2 回目は 1 成分を固定し、ゼロ幅の範囲も同じ経路で確かめる。
+            if (pass == 1)
+            {
+                for (auto& sample : channel.Samples)
+                {
+                    sample.Value.Y = 1.25f;
+                }
+            }
+            const auto range = S::ComputeTranslationQuantRange({channel.Samples.data(), channel.Samples.size()});
+            if (pass == 1)
+            {
+                RIG_CHECK(range.Extent[1] == 0.0f);
+            }
+            for (const auto& sample : channel.Samples)
+            {
+                uint16_t codes[3];
+                S::EncodeTranslation16(sample.Value, range, codes);
+                const auto decoded = S::DecodeTranslation16(codes, range);
+                const float original[3] = {sample.Value.X, sample.Value.Y, sample.Value.Z};
+                const float restored[3] = {decoded.X, decoded.Y, decoded.Z};
+                for (uint32_t component = 0; component < 3; ++component)
+                {
+                    RIG_CHECK(std::fabs(double(original[component]) - restored[component]) <=
+                              double(range.Extent[component]) / 65535.0);
+                    if (range.Extent[component] == 0.0f)
+                    {
+                        RIG_CHECK(codes[component] == 0 && restored[component] == original[component]);
+                    }
+                }
+                RIG_CHECK(decoded.W == 0.0f);
+            }
+        }
+        std::printf("CLIP_QUANTIZATION_TRANSLATION result=pass quant16_error_bound_constant_component\n");
+    }
 
     void MetadataCodec(F::Fixture& f)
     {
@@ -589,6 +693,9 @@ namespace
 } // namespace
 int main()
 {
+    RotationQuantizationRandom();
+    RotationQuantizationBoundaries();
+    TranslationQuantization();
     Topology();
     F::Fixture fixture;
     Codec(fixture);
