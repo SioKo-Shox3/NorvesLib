@@ -10521,3 +10521,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 リターゲットと再接地と cook を語彙の表で動かす: 着地(直し 0 回)
 - U5 Retarget.md・SkeletalRoleProfile.md・Testing.md を書く: 着地(直し 0 回)
 - U6 保存した人型の (d) の差分を今の先頭に当て、タスクの verify を通す: 着地(直し 0 回)
+## 2026-11-10 G9-GR85-HUMANOID-SMOKE（run 20261110-060223、完了）
+- Done: profile の vocabulary に `humanoid_v1`（hips、spine1〜3、neck、head、左右の shoulder・arm・forearm・hand・upleg・leg・foot・toe の 22 ロール）を足し、ロールの欄を語彙ごとの表で解釈する。リターゲット・再接地・auto_height・脚長の測定・cook の報告の脚と足先は語彙の表から引き、再接地は Hock の有無で 2 ボーン（二足）と 3 ボーン（四足の後脚）を分ける。quadruped_v1 の値と出力は変わらない（RetargetCookTest の四足の METRICS は前と同値）
+- Done: 再接地の接地の検出で、接地が最後のコマまで続き、最後のコマも高さ・鉛直と水平の速さの条件を満たすときは区間に最後のコマを含める（今までは次のコマとの差で測るため最後のコマが常に外れ、最後のコマで足が滑っていた）
+- Done: `RetargetCookTest` の (d) `humanoid_proportions_replanting`: 合成の人型を太腿 1.4 倍の人型へ写し、関節の誤差 1.1e-7°・方向の誤差 4.2e-6°・root_scale 1.2・接地中の滑り 1.4e-7 m・高さの誤差 8.6e-8 m・IK 失敗 0・遊脚の角速度の比 1.32（上限 1.5）。再接地なしの対照の滑り 0.057 m
+- Done: `AssetCookRetargetSmoke`（CTest の cmake 台本。実行ファイルは増やさない）と `Test/Tools/Fixtures/Retarget/` の合成のフィクスチャ（BVH 1 本・比率の違う四足の glTF 2 つ・profile、計 28 KB）。2 つの骨格の manifest の SkeletonId が `--rig-split` の値と一致、上限 0 の profile で非 0 終了かつ出力を公開しない、2 回の cook のバイト一致を確かめる
+- Done: `Docs/Architecture/Retarget.md` に式（rest の補正・ねじれの固定・比率・再接地）、ロール表 2 つ、報告の欄と上限の意味。`SkeletalRoleProfile.md` に人型の語彙、`Testing.md` に (d) とスモーク
+- 証拠: `.harness/runs/20261110-060223/verify-G9-GR85-HUMANOID-SMOKE-U6.txt`（verify のビルド exit 0、AssetCookRetargetSmoke 1/1、関連 5 本 5/5 Passed、RetargetCookTest の -V で 5 ケース pass）
+- Next: なし（アプリを起動する確かめは無い）。実在の人型の骨格（Mixamo・Rigify・Kimodo）の選定は G10 の着手前まで保留（G9-S3）
+- Notes: スモークの台本は `string(JSON ...)` を使うので CMake 3.19 以上が要る。二足の足先の向きの補正は四足の前脚と同じ方式で、実在の人型リグのつま先の動きは未確認

@@ -5684,7 +5684,7 @@
 - notes: G4 の `G4-GR128` は「足の IK 固定や別骨格への再接地は後続項目」として残している（`TASKS.md` の `G4-GR128` の notes）。「段階をまたぐ注意」の「G4 / GR128」も Slice 1 の足先の残差の固定を GR85・GR14 に任せると書くので、このタスクがその残りを引き受ける。接地の検出は、GR11 の `AnalyzeFootContacts`（`Library/Core/Public/Animation/MotionAnalysis.h:44-47`）が鉛直の高さと速さだけを見て水平の足滑りを判定しない（同ファイルの注記）ので、水平の速さの条件をここで足す。共通にできる部分は GR11・GR128 の関数を呼び、周期・接地の検出を二重に作らない（同注意の「G2 / GR84」）。接地面は平らな `ground.height` だけで、地形への適応は実行時の GR14（G9 の非ゴール）。16fps の動画由来の素材は接地の検出が外れやすいので、検出の結果を報告に出す。しきい値は仮で、初回の実測で決める。GR84 は G2 で、GR11 は G3 で確かめ直し中なので needs-gr に入れた。アセットロードの危険地帯なので評価者を通す。出典: 要件 `#### GR85` の設計案 (5)、受け入れ確認の RetargetCookTest (b)(c)。
 
 ## G9-GR85-HUMANOID-SMOKE: 人型のロール表と二足の再接地を足し、1 つの BVH から 2 つの骨格へ cook する流れを試験で押さえる
-- status: todo
+- status: done
 - after: G9-GR85-FOOT-REPLANT
 - gr: GR85
 - needs-gr: GR82, GR84
