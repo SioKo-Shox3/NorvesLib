@@ -1,12 +1,14 @@
-# BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
+# BC エンコーダ(bc7enc_rdo・DirectXTex)は AssetCook だけがリンクする。Core・Game には入れない。
 add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/bc7enc_rdo
     ${CMAKE_BINARY_DIR}/ThirdParty/bc7enc_rdo)
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/DirectXTex
+    ${CMAKE_BINARY_DIR}/ThirdParty/DirectXTex)
 
 add_library(AssetCookBlockCompressor STATIC
     BlockCompressor.cpp
     BlockCompressor.h
 )
-target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Core)
+target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc NorvesThirdParty_DirectXTexBC Core)
 target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
 
