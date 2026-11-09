@@ -962,8 +962,13 @@ int main()
 
         std::vector<uint8_t> bytes = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
                                                   VersionMinorBlockCompressed);
-        // 9・10 は RGBA16F・RG16UNorm なので、未使用の 11 を未知の例にする
+        // 11・12 は BC3・BC6H なので、未使用の 13 を未知の例にする。
+        WriteLe32(bytes, HeaderOffset::PixelFormat, 13);
+        ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
+        // BC3 と BC6H は v0.2 以降の形式なので、v0.1 では未知の形式になる。
         WriteLe32(bytes, HeaderOffset::PixelFormat, 11);
+        ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
+        WriteLe32(bytes, HeaderOffset::PixelFormat, 12);
         ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
         WriteLe32(bytes, HeaderOffset::PixelFormat, 0);
         ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
@@ -1024,6 +1029,56 @@ int main()
     }
 
     // ---- v0.2: タイル配置 ----
+
+    // BC3 と BC6H の全ミップは 4x4 画素・16 バイトのブロック単位で読む。
+    {
+        const struct
+        {
+            uint32_t WireFormat;
+            CookedTexturePixelFormat Format;
+            CookedTextureColorSpace ColorSpace;
+        } formats[] = {
+            {11, CookedTexturePixelFormat::BC3, CookedTextureColorSpace::Linear},
+            {11, CookedTexturePixelFormat::BC3, CookedTextureColorSpace::SRGB},
+            {12, CookedTexturePixelFormat::BC6H, CookedTextureColorSpace::Linear}};
+        const uint32_t dimensions[][2] = {{16, 8}, {17, 9}};
+        const uint64_t expectedSizes[][5] = {{128, 32, 16, 16, 16}, {240, 32, 16, 16, 16}};
+        for (const auto &format : formats)
+        {
+            for (size_t sizeIndex = 0; sizeIndex < 2; ++sizeIndex)
+            {
+                // BC7 と同じブロック配置を使い、形式と色空間だけを書き換える。
+                BuiltTiled built = BuildTiledTexture(dimensions[sizeIndex][0], dimensions[sizeIndex][1], 1,
+                                                     CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear);
+                WriteLe32(built.Bytes, HeaderOffset::PixelFormat, format.WireFormat);
+                WriteLe32(built.Bytes, HeaderOffset::ColorSpace, static_cast<uint32_t>(format.ColorSpace));
+
+                const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(built.Bytes));
+                assert(result.Succeeded());
+                assert(result.Texture.PixelFormat == format.Format);
+                assert(result.Texture.ColorSpace == format.ColorSpace);
+                assert(result.Texture.VersionMinor == VersionMinorTiled);
+                assert(result.Texture.MipCount == 5);
+                assert(result.Texture.Tiling.TileWidth == 256 && result.Texture.Tiling.TileHeight == 256);
+                for (uint32_t mipIndex = 0; mipIndex < result.Texture.MipCount; ++mipIndex)
+                {
+                    assert(result.Texture.Mips[mipIndex].DataSize == expectedSizes[sizeIndex][mipIndex]);
+                    assert(result.Texture.GetMipBytes(mipIndex).size() == expectedSizes[sizeIndex][mipIndex]);
+                    assert(SameBytes(result.Texture.GetMipBytes(mipIndex), built.RowMajorMips[mipIndex]));
+                }
+            }
+        }
+    }
+
+    // BC6H と sRGB の組み合わせは受け付けない。
+    {
+        BuiltTiled built = BuildTiledTexture(16, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear);
+        WriteLe32(built.Bytes, HeaderOffset::PixelFormat, 12);
+        WriteLe32(built.Bytes, HeaderOffset::ColorSpace, ColorSpaceSRGB);
+        const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(built.Bytes));
+        assert(result.Status == CookedTextureParseStatus::InvalidColorSpaceForFormat);
+        assert(!result.Succeeded());
+    }
 
     // BC7 1024x512: 段 0 は 256x256 のタイル 4x2、段 1 は 2x1、段 2（256x128）以降はミップテイル。
     {

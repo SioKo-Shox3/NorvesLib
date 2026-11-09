@@ -11,6 +11,7 @@
 #include "Rendering/MotionBlurPass.h"
 #include "Rendering/FoliagePass.h"
 #include "Rendering/GrassPass.h"
+#include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
@@ -1112,6 +1113,9 @@ namespace NorvesLib::Core::Rendering
         skinningComputePass->SetShadowCasterOutput(m_ShadowMethod == ShadowMethod::Vsm);
         SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
+
+        // カメラに追従する世界フィールドを、ジオメトリの描画より先に更新する。
+        AddPass(MakeUnique<WorldFieldPass>());
 
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;

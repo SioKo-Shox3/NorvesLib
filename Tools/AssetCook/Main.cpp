@@ -65,12 +65,23 @@ namespace
             return false;
         }
 
-        if (!options.Format.empty())
+        using NorvesLib::Tools::AssetCook::TextureFormatOverride;
+        TextureFormatOverride formatOverride = TextureFormatOverride::Default;
+        if (!options.Format.empty() &&
+            !NorvesLib::Tools::AssetCook::ParseTextureFormatOverride(
+                {options.Format.data(), options.Format.size()}, formatOverride))
         {
-            error = "--usage が形式を決めるので --format は指定しないでください";
+            error = "--usage と一緒の --format は hdr の rgba16f か、albedo・orm の bc3 だけです";
             return false;
         }
-        options.Format = NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage);
+        const char* manifestFormat =
+            NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage, formatOverride);
+        if (manifestFormat[0] == '\0')
+        {
+            error = "--usage と一緒の --format は hdr の rgba16f か、albedo・orm の bc3 だけです";
+            return false;
+        }
+        options.Format = manifestFormat;
 
         if (!options.Quality.empty() && options.Quality != "fast" && options.Quality != "normal" && options.Quality != "best")
         {
@@ -255,6 +266,11 @@ namespace
             {
                 if (!readValue())
                 {
+                    return false;
+                }
+                if (value.empty())
+                {
+                    error = "--format の値が空です";
                     return false;
                 }
                 outOptions.Format = value;
@@ -625,7 +641,8 @@ namespace
             << "       AssetCook --input <terrain_spec.json|terrain.nvtrn> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
             << "--format nvmesh.v1.mesh3d.pnt.u32.lodgraph --variant default --generate terrain-tile:nvtrn:<x>,<z>\n"
-            << "テクスチャ用途（--format の代わりに指定）: --usage albedo|normal|orm|single|height16|hdr|rg16\n"
+            << "テクスチャ用途: --usage albedo|normal|orm|single|height16|hdr|rg16\n"
+            << "用途の形式: [--format rgba16f（hdr）|bc3（albedo・orm）]（hdr の既定は BC6H）\n"
             << "用途の設定: [--quality fast|normal|best] [--flip-normal-y（normal のみ）]\n"
             << "高さの範囲: [--height-range <min>,<max>]（height16 のみ。有限の min < max）\n"
             << "入力の精度: [--require-16bit]（height16・rg16 の 8bit 入力を拒否）\n"

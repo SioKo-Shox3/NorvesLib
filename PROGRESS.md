@@ -10478,13 +10478,41 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G5-GR25-EXTENSION-DATA): 影を落とす段（G5-GR25-SHADOW-CASTER-STAGE）、起動しての確かめ（G5-GR25-SCENES-CHECK）、FrameInfo を使う頂点アニメの前の時刻（G5-GR30-VERTEX-ANIM-VELOCITY。FoliagePass の風の前の時刻もそこで替える）。
 - Notes(G5-GR25-EXTENSION-DATA): 人が見るときの見どころ: 拡張 0 件なので全シーンの見た目は変わらない見込み。撮影・計測の確かめは回さない決まり。ブロブの保存は 16 バイト整列なので、それを超える整列の型は型付きの引き当てで空になる。GPU 試験の GBuffer 以降の段は TAA を切って FXAA で取る（同じ画素を目印あり・なしで引き比べるため）。
 
-- Notes(G5-GR46-WIND-FIELD): 風の時刻は GR25 の GameTotalTime（ポーズで止まるゲームの時間）から取る約束だが、GameTotalTime はまだ無い（G5-GR25-EXTENSION-DATA が未着手）ので、`after: G5-GR25-EXTENSION-DATA` を足して待つ。paths も SceneProxy.h・FramePacket.h・RenderingCoordinator.cpp・ViewRenderContext.h で重なる。再開の手がかり: 霧の経路（`RenderWorld::SetVolumetricFogParameters` → `RenderingCoordinator::m_VolumetricFog` → 4593 行付近の `packet.Scene.SetVolumetricFogParameters`）と同じ型で足す。草の式は `Common/FoliagePlacement.glsl` の `FoliageWindOffsetFor` を「突風の値を引数で受ける形」と「今の浮動小数ハッシュで求める形」に分けると、無効のときの式を変えずに済む。VSM の株の影の風は `VirtualShadowMapRasterDispatch::FoliageWind`／`FoliageWindParams`（VirtualShadowMapRaster.h 179 行。std140 の vec4 2 つで、`FoliageWind.w` と `FoliageWindParams.zw` が空き）で渡っており、`VirtualShadowMapRaster.cpp` は paths の外なので、空きの成分に風の値を詰めるか、paths に足す。Grassland は入る時に風を設定し、出る時に既定（無効）へ戻す（霧と同じく GrasslandRoutine.cpp 106・115 行）。
-- U1 風の型・CPU の式と GLSL の式: 着地(直し 0 回)
-- U2 パケットへの経路と grassland の設定: 着地(直し 0 回)
-- U3 草・低木と VSM の株の影が共通の風を使う: 着地(直し 0 回)
-- U4 CPU の試験（WindParametersTest・FramePacketWindSnapshotContractTest）: 着地(直し 0 回)
-- U5 シェーダーの試験・GPU の一致の試験とタスクの verify: 着地(直し 0 回)
-- Done(G5-GR46-WIND-FIELD): `Rendering/Wind.{h,cpp}` に `WindParameters`・`MakeDefaultWindParameters`・`SanitizeWindParameters`（非有限・範囲外は項目ごとに既定へ戻す、風向は [0,360) へ折り返し、突風の周波数は 1/4096 Hz の整数倍へ量子化）・`WindClockSeconds`（4096 秒で折り返す）・`WindDirectionXZ`・整数ハッシュの値ノイズ（5 次の補間）・`EvaluateWind` を置き、`Assets/Shaders/Common/Wind.glsl` に同じ演算の順の `WindVelocity`・`WindGustNoise` を置いた。`RenderWorld::SetWindParameters` → `RenderingCoordinator::m_Wind` → `packet.Scene.Wind` → `ViewRenderContext::Wind` を霧と同じ型で足し、`ComputeSceneRevisionHash` には入れていない。草・低木（`foliage.vert`）と VSM の株の影（`vsm_draw.vert`）は、風が有効なら共通の風向・突風（`FoliageWindOffsetShared`）とゲームの時間（`ExtensionFrame.GameTotalTime`）を使い、無効なら従来の `FoliageWindOffsetFor` の式のまま。株の傾き・揺れ・震えの式は `FoliageWindOffsetWithGust` に切り出して両方で共有。grassland は入るときに風（+X、3.5 m/s、突風 0.6・0.125 Hz・25 m、乱流 0.2）を有効にし、出るときに既定へ戻す。試験 `WindParametersTest`・`FramePacketWindSnapshotContractTest`（CameraViewConstantsTest の束）・`WindShaderCompileTest`（RHIRayTracingApiContractTest の束）・`WindGlslParityVulkanTest`（RHITextureUpdateVulkanTest の束。ビルドのみ）を足した。
-- 証拠(G5-GR46-WIND-FIELD): `.harness/runs/20261110-021448/G5-GR46-WIND-FIELD-U5-verify.txt`（verify のビルド 4 行 CameraViewConstantsTest・RHIRayTracingApiContractTest・RHITextureUpdateVulkanTest・Game が終了コード 0、ctest の WindShaderCompileTest・CameraViewConstantsTest・WindParametersTest・FramePacketWindSnapshotContractTest が 4/4 Passed、束の既存 GrassShaderCompileTest・RHIRayTracingApiContractTest も 2/2 Passed）。WindParametersTest の実測: 長い時間の平均の風向の成分の相対誤差 0.36 %（許容 1 %）、直交の成分の平均 0.03 %。Turbulence の範囲の判定を外すと落ちることも確かめた。
-- Next(G5-GR46-WIND-FIELD): `WindGlslParityVulkanTest` の実行（GLSL と CPU の最大絶対差 1e-4 以内）は G5-GR46-WIND-CHECK。
-- Notes(G5-GR46-WIND-FIELD): 人が見るときの見どころ: grassland の草・低木が +X へ吹く共通の風（突風の塊が約 8 秒周期で流れる）で揺れ、地面の株の影も同じ揺れで動くこと。荒野は風を設定しないので見た目は変わらない見込み。撮影・計測の確かめは回さない決まり。風の時計は 4096 秒で折り返すので、その瞬間に突風の値が不連続に跳ぶ（GR30 の約束どおり）。
+- U7 退避済みの DirectXTex の BC 符号化・復号の取り込みを当て直す: 着地(直し 0 回)
+- U8 退避済みの NVTEX の BC3・BC6H の差分を当て直し、未知の形式の例を直す: 着地(直し 0 回)
+- U3 BlockCompressor に BC3(rgbcx)と BC6H(DirectXTex)の符号化・復号を足す: 着地(直し 0 回)
+- U4 クッカーの hdr の既定を BC6H にし、--format rgba16f・bc3 の明示を受ける: 着地(直し 1 回)
+- U5 AssetCookBlockCompressSmoke に BC6H・BC3 と Silver の実物の画質のケースを足す: 着地(直し 2 回)
+- U6 画質の実測を受入れ文書に記録し、タスクの verify を通す: 着地(直し 0 回)
+
+- Done(G5-GR88-BC6H-QUALITY): DirectXTex の BC の符号化・復号（may2026・commit 4feb3e11、BC.h・BC.cpp・BC6HBC7.cpp・LICENSE と最小の差し替えヘッダ `shim/DirectXTexP.h`、`UPSTREAM.json` に sha256・SPDX MIT）を `Library/ThirdParty/DirectXTex/` に取り込み、`NorvesThirdParty_DirectXTexBC` として `AssetCookBlockCompressor` にだけリンクした。`BlockCompressor` に BC3（rgbcx の `encode_bc3`。復号は端点の順によらず 4 色で戻す）と符号なし BC6H（`CompressRGBAFloat`・`DecompressToRGBAFloat`、帯ごとのスレッド並列、非有限・65504 超は座標つきで拒否）を足した。`--usage hdr` の既定は BC6H（`nvtex.v0.2.bc6h.linear`、負の入力は拒否）、`--format rgba16f` で従来の RGBA16F、albedo・orm は `--format bc3` で BC3（`nvtex.v0.2.bc3.srgb`・`.linear`）。NVTEX に画素形式 11=BC3（Linear・sRGB）・12=BC6H（Linear だけ、v0.2 以降）を足し、`MapCookedTextureFormat` が `BC3_UNORM`・`BC3_SRGB`・`BC6H_UFLOAT` へ写す。画質の実測としきい値は `Docs/RenderingValidation/TextureCompressionAcceptance.md`。
+- 証拠(G5-GR88-BC6H-QUALITY): `.harness/runs/20261110-011012/G5-GR88-BC6H-QUALITY-final-verify.txt`（verify のビルド行の終了コード 0、ctest 4/4 合格: AssetCookBlockCompressSmoke・AssetCookTextureSmoke・CookedTextureTest・CookedTextureUploadTest）。既存 6 用途と `--usage hdr --format rgba16f` の NVTEX の sha256 は変更前のクッカーの出力と一致（cooked_hash 不変）。
+- Next(G5-GR88-BC6H-QUALITY): BC6H・BC3 を使う資産・材質の経路はまだ無い（`Scripts/CookAssets.ps1` は hdr・`--format bc3` を渡さない）。GPU での BC6H・BC3 の標本は `RHIBlockCompressedTextureVulkanTest`（G5-GR29-RHI-FORMATS の手組みのブロック）で確かめる。見た目の変わる変更は無い。
+- Notes(G5-GR88-BC6H-QUALITY): `Assets/Textures/Silver` は albedo・法線・AO・メタリックが画像全体で単色（粗さだけ 28 色）で画質の判断に使えないので、done-when の Silver の測定は残したうえで、追跡済みの実物 `Assets/Textures/CobbleStoneFloor`（4K の diff・nor_gl・arm）を同じ測り方で足した。切り出しは中央ではなく 256 画素おきの格子で RGB の分散が最大の 512 四方。CobbleStoneFloor はロードマップの暫定値のうち法線の最大（21.7 度 > 6 度）と ORM の R・G の最大差（10・13 > 8）を満たさない。スモークのしきい値は実測から置いた回帰検出用で、暫定値の合格ではない。BC6H の合成の誤差は跳ねる区画にかかる 4x4 ブロック（edge）とそれ以外（smooth）に分けて測る。
+- Notes(G5-GR88-BC6H-QUALITY): 既存の `CookedTextureTest` の v0.1 の未知の形式の例の値 11 は BC3 になったので 13 に替え、11・12 が v0.1 では未知になることを足した。
+
+- U1 WorldField の型・Sanitize・スクロールの計算とパケットの欄を足す: 着地(直し 0 回)
+- U2 WorldFieldUpdate.comp を書く: 着地(直し 0 回)
+- Notes(G5-GR44-WORLD-FIELD): interactor の配列をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotWorldFieldInteractors` を 1 つ。`SnapshotGrassField` と同じ形）は paths の外だが、パスがパケットの値を読む唯一の口なので足した。
+- U3 RenderWorld から RenderingCoordinator を経てパケットへ interactor を写す: 着地(直し 0 回)
+- U4 WorldFieldPass を足して GBufferPass より前に登録する: 着地(直し 1 回)
+- U5 シェーダーのコンパイル試験と GPU の更新試験を足し、タスクの verify を通す: 着地(直し 0 回)
+- Done(G5-GR44-WORLD-FIELD): `WorldFieldTypes`（`WorldFieldInteractor` 64 B・最大 32 個、`WorldFieldSettings` 64 m/0.25 m 既定・128 m/0.5 m、中心はカメラ／カメラ＋視線 10 m、τ 既定 1.5 秒、Sanitize、中心の画素スナップと整数 shift の計算）を足した。`RenderWorld::SetWorldFieldInteractors(Span)` → `RenderingCoordinator` が丸めて保持 → `SnapshotSceneParameters` で `FramePacket::WorldFieldInteractors` へ値で写して入力を空にする（パケットを確保できなかったフレームも空にする。`ComputeSceneRevisionHash` には入れない）。`WorldFieldPass` を GBufferPass の前に登録し、RGBA16F 256×256 の 2 枚を ping-pong で持つ（更新を記録したときだけ入れ替え、同じ TotalTime の 2 回目と主カメラ以外のビューでは更新しない。初回・時間の逆行・範囲の変更・大きな移動で 0 から始める）。`WorldField.Current`/`WorldField.Previous` を名前付きで公開し、`GetFieldState()` で原点・範囲・画素の大きさを返す（消費側は uv = (worldXZ − origin)/extent）。`WorldFieldUpdate.comp` は前を整数 shift で引いて exp(−dt/τ) を掛け（範囲外は 0）、interactor を前→今の掃引カプセルとして強い方を採って焼く。dt はパケットの TotalTime の差。
+- 確かめ(G5-GR44-WORLD-FIELD): `CameraViewConstantsTest`・`RHIRayTracingApiContractTest`・`RHITextureUpdateVulkanTest`・`Game` の Debug ビルドは終了コード 0。ctest は WorldFieldInputSanitizeTest・FramePacketWorldFieldSnapshotContractTest・WorldFieldScrollMathTest・WorldFieldShaderCompileTest・CameraViewConstantsTest の 5/5 Passed。numstat の 2 通りは一致（`.harness/runs/20261110-011016/verify-G5-GR44-WORLD-FIELD-U5.txt`）。GPU の試験 `WorldFieldUpdateVulkanTest` はビルドだけ（実行は G5-GR44-TRAMPLE-CHECK）。Game は起動していない（撮影・起動の確かめは回さない決まり）。
+- Next(G5-GR44-WORLD-FIELD): G5-GR44-TRAMPLE-CHECK で WorldFieldUpdateVulkanTest を実行し（曲げの向き 10° 以内・減衰 5% 以内・3 画素のスクロール）、頂点のステージから RGBA16F を線形で引けるかを装置で確かめる。WorldFieldPass はまだ消費側が無いので見た目は変わらない。
+- Notes(G5-GR44-WORLD-FIELD): RHI に push constant の送信 API が無いので、更新の定数は push constant でなく set 0 binding 3 の std140 uniform バッファ（`WorldFieldUpdateConstants` 48 B、`WorldFieldPass.h` に公開）でフレームの持ち主から借りて渡す。シェーダーへ渡す原点は float なので、原点から数 km 離れると画素の中心の位置に丸めが乗る。
+
+- U3 報告に足の測定値・検出結果と上限の判定を足す: 着地(直し 0 回)
+- U2 profile v2 に foot_planting・ground.height・report.max_ik_failed_frames を足す: 着地(直し 0 回)
+- U1 再接地の本体 RetargetFootPlanting(検出・固定位置・骨盤の補正・二関節 IK・測定)を足す: 着地(直し 1 回)
+- U4 リターゲットと cook に再接地を結線し、Retarget.md を書き直す: 着地(直し 0 回)
+- U5 RetargetCookTest に再接地の (b)(c) を足し、しきい値を確かめる: 着地(直し 0 回)
+- U6 Retarget.md の後脚の解き方と骨盤の補正の限界を今の実装に合わせる: 着地(直し 0 回)
+## 2026-11-10 G9-GR85-FOOT-REPLANT（run 20261110-013947、完了）
+- Done: `RetargetFootPlanting`（Core・Private/Animation）。出力クリップのキー時刻ごとに、元の paw のワールド位置から足ごとの接地区間を検出し（GR11 の `DetectFootContactWindows` の高さ・鉛直の速さに、水平の速さのヒステリシス 1.5 倍と最短 `min_stance_frames` を重ねる）、区間の先頭の水平位置と `ground.height` へ固定し、前後 `blend_frames` コマを smoothstep で補間する。脚は `SolveTwoBoneIK`（根の相対座標で float へ渡す）で解き、ポールは元の曲がりの向き。後脚は写した回転のままの中足のワールドの向きを保って thigh・shin を解き、paw は接地の重みで地面に平行へ寄せる。届かない分は骨盤（ルート）を鉛直に下げる（必要量に最大値フィルタ → 同じ半径の移動平均）
+- Done: profile v2 に `ground{height}`・`foot_planting{enabled, height_threshold_m, speed_threshold_m_s, min_stance_frames, blend_frames, ik:{leg_roles}}`・`report.max_ik_failed_frames`。報告の各クリップに `foot_slide_m{before,after}`・`foot_penetration_m`・`foot_float_m`・`ik_adjustment_deg`・`ik_failed_frames`・`pelvis_drop_m`・`foot_contacts`（脚ごとの検出区間）。上限は足滑り → めり込み → IK の失敗コマ → 関節誤差の順で判定し、再接地が無効なら足の上限は foot_metrics_unmeasured。ルートモーションの抽出ありでも、開始の向き・累積ヨー・X/Z を戻したワールドで解く
+- Done: `RetargetCookTest` に接地する合成の四足歩行（前脚 1.3 倍・後脚 1.1 倍の対象）。再接地ありで接地中の水平変位 1.0e-7 m・高さの誤差 9.3e-8 m・IK 失敗 0・遊脚の角速度の比 1.18（上限 1.5）、再接地なしの対照の滑り 0.081 m（下限 0.05）。`leg_length_ratio: 2.0` で骨盤の下げ量 0.524 m・IK 失敗 0・接地中の誤差 1.4e-7 m。しきい値は仮の値
+- 証拠: `.harness/runs/20261110-013947/verify-G9-GR85-FOOT-REPLANT-U5.txt`（verify のビルド exit 0、関連 4 本 4/4 Passed、RetargetCookTest の -V で grounded_walk_replanting・grounded_walk_ratio_two が pass）
+- Next: なし（アプリを起動する確かめは無い）。16fps の動画由来の素材を通すときは報告の `foot_contacts` で検出の外れを見る
+- Notes: 骨盤は全脚に共通で下げるので、下げたコマの遊脚の足先は地面より下がることがある（比 2.0 の試験の入力で `foot_penetration_m` 0.54 m）。量は報告に出て `report.max_foot_penetration_m` で cook を止められる
+- Notes: 再接地の測定は cook のモーション整理（`ApplyRigMotionCleanup`）とクリップ最適化の前の値。後脚の中足は「元の相対回転」を局所でなくワールドの向きで保つ（局所で保つ反復は届かないコマが残ったため）

@@ -16,6 +16,7 @@
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/Wind.h"
 #include "Rendering/SkyOcclusion.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/MegaGeometryMirror.h"
@@ -471,6 +472,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 設定された草の場の描画データを取得する（GameThread） */
         const Container::TSharedPtr<const GrassFieldRenderData>& GetGrassField() const { return m_GrassField; }
 
+        /** @brief このフレームの世界フィールド入力を無害化し、直前の入力を置き換える（GameThread） */
+        void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
+
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          * @param trails 描画コマンド生成前に設定し、FramePacket へ値コピーした後は保持を空にする
@@ -624,6 +628,7 @@ namespace NorvesLib::Core::Rendering
     private:
         friend struct DDGISnapshotContractTestAccess;
         friend struct GrassFieldSnapshotContractTestAccess;
+        friend struct FramePacketWorldFieldSnapshotContractTestAccess;
         friend struct SkyOcclusionSnapshotContractTestAccess;
 
         // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
@@ -734,6 +739,7 @@ namespace NorvesLib::Core::Rendering
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
+        Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         RenderExtensionDataStore m_ExtensionData;

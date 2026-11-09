@@ -116,13 +116,17 @@ string(REPEAT "A" 64 usage_gray_pixels)
 file(WRITE "${USAGE_PGM}" "P5\n8 8\n127\n${usage_gray_pixels}")
 
 # 引数: 用途 入力の種類(single=--input 1 枚 / orm=--orm-*) 入力 期待する PixelFormat 色空間 ペイロードのバイト数 マニフェストの format
-#       標準ブロック形状のタイルの幅・高さ(texel)、任意で入力の幅・高さ(既定は 8x8)
+#       標準ブロック形状のタイルの幅・高さ(texel)、任意で入力の幅・高さ(既定は 8x8)と形式
 function(check_usage_cook usage input_kind input expected_pixel_format expected_color_space expected_payload_bytes expected_manifest_format expected_tile_w expected_tile_h)
     set(expected_width 8)
     set(expected_height 8)
     if(ARGC GREATER 9)
         set(expected_width "${ARGV9}")
         set(expected_height "${ARGV10}")
+    endif()
+    set(format_args)
+    if(ARGC GREATER 11)
+        set(format_args --format "${ARGV11}")
     endif()
     set(mip_width ${expected_width})
     set(mip_height ${expected_height})
@@ -156,6 +160,7 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
             --entry "usage_${usage}.nvtex"
             --entry-type Tex0
             --usage ${usage}
+            ${format_args}
             --quality fast
             --variant default
         RESULT_VARIABLE result
@@ -263,8 +268,11 @@ check_usage_cook(single   single "${USAGE_PGM}"   5 1 56  "nvtex.v0.2.bc4.linear
 check_usage_cook(height16 single "${USAGE_PGM}"   8 1 170 "nvtex.v0.2.r16.linear" 256 128)
 
 set(HDR_EXR "${CMAKE_CURRENT_LIST_DIR}/Fixtures/Texture/hdr_gradient.exr")
+# 16x8 の BC6H は 8+2+1+1+1 = 13 ブロック、208 バイト。
+check_usage_cook(hdr single "${HDR_EXR}" 12 1 208 "nvtex.v0.2.bc6h.linear" 256 256 16 8)
 # 16x8 の全ミップは 16x8 + 8x4 + 4x2 + 2x1 + 1x1 = 171 画素。RGBA16F は 171x8 = 1368 バイト。
-check_usage_cook(hdr single "${HDR_EXR}" 9 1 1368 "nvtex.v0.2.rgba16f.linear" 128 64 16 8)
+check_usage_cook(hdr single "${HDR_EXR}" 9 1 1368 "nvtex.v0.2.rgba16f.linear" 128 64 16 8 rgba16f)
+check_usage_cook(albedo single "${USAGE_PPM}" 11 2 112 "nvtex.v0.2.bc3.srgb" 256 256 8 8 bc3)
 # 8x8 の全ミップは 64+16+4+1 = 85 画素。RG16 は 85x4 = 340 バイト。
 check_usage_cook(rg16 single "${USAGE_PPM}" 10 1 340 "nvtex.v0.2.rg16.linear" 128 128)
 

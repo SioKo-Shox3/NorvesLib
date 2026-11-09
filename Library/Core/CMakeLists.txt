@@ -94,6 +94,8 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipOptimizer.h
     Private/Animation/RetargetReport.cpp
     Private/Animation/RetargetReport.h
+    Private/Animation/RetargetFootPlanting.cpp
+    Private/Animation/RetargetFootPlanting.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
@@ -273,6 +275,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/WorldFieldPass.cpp
+    Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
     Private/Rendering/GrassFieldGpuWindow.cpp
     Private/Rendering/GrassTileSelector.cpp
@@ -751,6 +755,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
     Public/Rendering/GrassPass.h
+    Public/Rendering/WorldFieldPass.h
+    Public/Rendering/WorldFieldTypes.h
     Public/Rendering/GrassGenerateReference.h
     Public/Rendering/GrassFieldGpuWindow.h
     Public/Rendering/GrassTileSelector.h

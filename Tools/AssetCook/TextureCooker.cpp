@@ -843,7 +843,8 @@ namespace NorvesLib::Tools::AssetCook
             }
         }
 
-        bool CookHdrUsage(const TextureSourceImage &source, TextureCookResult &outResult, ErrorString &error)
+        bool CookHdrUsage(const TextureSourceImage &source, const TextureUsageCookParams &params,
+                          TextureCookResult &outResult, ErrorString &error)
         {
             if (!IsFloatSourceImage(source))
             {
@@ -855,6 +856,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
+            const bool bCompressBc6h = params.FormatOverride == TextureFormatOverride::Default;
             for (float value : level.Values)
             {
                 if (!std::isfinite(value) || std::fabs(value) > 65504.0f)
@@ -862,18 +864,37 @@ namespace NorvesLib::Tools::AssetCook
                     error = MakeSourceError("hdr の画素に非有限値か half の範囲を超える値があります", source.Name);
                     return false;
                 }
+                if (bCompressBc6h && value < 0.0f)
+                {
+                    error = MakeSourceError("BC6H の入力に負の値は使えません", source.Name);
+                    return false;
+                }
             }
 
+            BlockCompressParams compress;
+            compress.Format = BlockFormat::BC6H;
+            compress.Quality = params.Quality;
+            compress.ThreadCount = params.ThreadCount;
             VariableArray<MipImage> mips;
             for (;;)
             {
                 MipImage mip;
                 mip.Width = level.Width;
                 mip.Height = level.Height;
-                mip.Bytes.resize(level.Values.size() * 2);
-                for (size_t i = 0; i < level.Values.size(); ++i)
+                if (bCompressBc6h)
                 {
-                    WriteLe16(mip.Bytes, i * 2, FloatToHalf(level.Values[i]));
+                    if (!CompressRGBAFloat(level.Values.data(), level.Width, level.Height, compress, mip.Bytes, error))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    mip.Bytes.resize(level.Values.size() * 2);
+                    for (size_t i = 0; i < level.Values.size(); ++i)
+                    {
+                        WriteLe16(mip.Bytes, i * 2, FloatToHalf(level.Values[i]));
+                    }
                 }
                 mips.push_back(std::move(mip));
                 if (level.Width == 1 && level.Height == 1) break;
@@ -891,9 +912,11 @@ namespace NorvesLib::Tools::AssetCook
             result.Width = mips.front().Width;
             result.Height = mips.front().Height;
             result.MipCount = static_cast<uint32_t>(mips.size());
-            result.BytesPerPixel = 8;
-            result.PixelFormatName = "RGBA16F";
-            if (!BuildNvtexBytes(mips, CookedTexturePixelFormat::RGBA16F, CookedTextureColorSpace::Linear,
+            result.BytesPerPixel = bCompressBc6h ? 0 : 8;
+            result.PixelFormatName = bCompressBc6h ? "BC6H" : "RGBA16F";
+            const CookedTexturePixelFormat pixelFormat =
+                bCompressBc6h ? CookedTexturePixelFormat::BC6H : CookedTexturePixelFormat::RGBA16F;
+            if (!BuildNvtexBytes(mips, pixelFormat, CookedTextureColorSpace::Linear,
                                  Format::VersionMinorTiled, result.NvtexBytes, error))
             {
                 return false;
@@ -1388,11 +1411,18 @@ namespace NorvesLib::Tools::AssetCook
                 error = "height16 はブロック圧縮の用途ではありません";
                 return false;
             case TextureUsage::Hdr:
-                error = "hdr はブロック圧縮の用途ではありません";
+                error = "hdr は浮動小数のクック経路を使います";
                 return false;
             case TextureUsage::Rg16:
                 error = "rg16 はブロック圧縮の用途ではありません";
                 return false;
+            }
+
+            if (params.FormatOverride == TextureFormatOverride::BC3)
+            {
+                compress.Format = BlockFormat::BC3;
+                pixelFormat = CookedTexturePixelFormat::BC3;
+                pixelFormatName = "BC3";
             }
 
             VariableArray<MipImage> compressedMips;
@@ -1760,6 +1790,21 @@ namespace NorvesLib::Tools::AssetCook
         return false;
     }
 
+    bool ParseTextureFormatOverride(Core::Container::AnsiStringView text, TextureFormatOverride &outFormat) noexcept
+    {
+        if (text == Core::Container::AnsiStringView("rgba16f"))
+        {
+            outFormat = TextureFormatOverride::Rgba16F;
+            return true;
+        }
+        if (text == Core::Container::AnsiStringView("bc3"))
+        {
+            outFormat = TextureFormatOverride::BC3;
+            return true;
+        }
+        return false;
+    }
+
     const char *GetTextureUsageName(TextureUsage usage) noexcept
     {
         switch (usage)
@@ -1777,6 +1822,31 @@ namespace NorvesLib::Tools::AssetCook
 
     const char *GetTextureUsageManifestFormat(TextureUsage usage) noexcept
     {
+        return GetTextureUsageManifestFormat(usage, TextureFormatOverride::Default);
+    }
+
+    const char *GetTextureUsageManifestFormat(TextureUsage usage, TextureFormatOverride format) noexcept
+    {
+        if (format == TextureFormatOverride::Rgba16F)
+        {
+            return usage == TextureUsage::Hdr ? "nvtex.v0.2.rgba16f.linear" : "";
+        }
+        if (format == TextureFormatOverride::BC3)
+        {
+            if (usage == TextureUsage::Albedo)
+            {
+                return "nvtex.v0.2.bc3.srgb";
+            }
+            if (usage == TextureUsage::Orm)
+            {
+                return "nvtex.v0.2.bc3.linear";
+            }
+            return "";
+        }
+        if (format != TextureFormatOverride::Default)
+        {
+            return "";
+        }
         switch (usage)
         {
         case TextureUsage::Albedo: return "nvtex.v0.2.bc7.srgb";
@@ -1784,7 +1854,7 @@ namespace NorvesLib::Tools::AssetCook
         case TextureUsage::Orm: return "nvtex.v0.2.bc7.linear";
         case TextureUsage::Single: return "nvtex.v0.2.bc4.linear";
         case TextureUsage::Height16: return "nvtex.v0.2.r16.linear";
-        case TextureUsage::Hdr: return "nvtex.v0.2.rgba16f.linear";
+        case TextureUsage::Hdr: return "nvtex.v0.2.bc6h.linear";
         case TextureUsage::Rg16: return "nvtex.v0.2.rg16.linear";
         }
         return "";
@@ -1796,6 +1866,11 @@ namespace NorvesLib::Tools::AssetCook
                              TextureCookResult &outResult,
                              ErrorString &error)
     {
+        if (GetTextureUsageManifestFormat(params.Usage, params.FormatOverride)[0] == '\0')
+        {
+            error = "形式の指定は hdr の rgba16f、または albedo・orm の bc3 に限ります";
+            return false;
+        }
         if (params.bHasHeightRange && params.Usage != TextureUsage::Height16)
         {
             error = MakeSourceError("高さの範囲は height16 だけに使います", source.Name);
@@ -1813,7 +1888,7 @@ namespace NorvesLib::Tools::AssetCook
 
         if (params.Usage == TextureUsage::Hdr)
         {
-            return CookHdrUsage(source, outResult, error);
+            return CookHdrUsage(source, params, outResult, error);
         }
         if (params.Usage == TextureUsage::Rg16)
         {

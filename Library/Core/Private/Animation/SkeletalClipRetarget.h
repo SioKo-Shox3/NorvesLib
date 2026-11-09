@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Animation/RetargetFootPlanting.h"
 #include "Animation/SkeletalRoleProfile.h"
 #include "Animation/SkeletalClipProcessing.h"
 #include "Resource/RigAuthoring.h"
@@ -13,6 +14,8 @@ namespace NorvesLib::Core::Animation
         bool bAutoRootHeight = false;
         uint32_t LoopExcludedRoles = 0;
         SkeletalClipProcessingSettings Processing;
+        RetargetFootPlantingSettings FootPlanting;
+        uint32_t FootPlantingLegRoleMask = 0;
         /// ロール別の上向き方向。対応するマスクが未指定なら共通の UpHint を使う。
         Container::FixedArray<Bvh::Vector3d, SkeletalRoleCount> RoleUpHints{};
         /// ロール別の上向き方向を使うロールのビット集合。既定は 0。
@@ -46,6 +49,7 @@ namespace NorvesLib::Core::Animation
     struct SkeletalClipRetargetReport
     {
         SkeletalClipProcessingReport Processing;
+        RetargetFootPlantingReport FootPlanting;
         Container::VariableArray<SkeletalRestCorrectionReport> Corrections;
         uint32_t UnmappedSource = 0, UnmappedTarget = 0, IgnoredTranslationChannels = 0;
         double RootScale = 1;

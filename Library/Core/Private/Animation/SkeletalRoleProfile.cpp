@@ -354,7 +354,8 @@ namespace NorvesLib::Core::Animation
         }
         Result Report(const JsonValue& report, SkeletalRoleProfile& out)
         {
-            constexpr const char* keys[] = {"max_joint_error_deg", "max_foot_slide_m", "max_foot_penetration_m"};
+            constexpr const char* keys[] = {"max_joint_error_deg", "max_foot_slide_m", "max_foot_penetration_m",
+                                             "max_ik_failed_frames"};
             auto result = Object(report, keys, "report");
             if (!result.Succeeded())
             {
@@ -385,6 +386,178 @@ namespace NorvesLib::Core::Animation
                     return Fail(Status::InvalidSettings, field.Field);
                 }
                 *field.Value = value.AsNumber();
+            }
+            if (report.HasMember("max_ik_failed_frames"))
+            {
+                const auto value = report.FindMember("max_ik_failed_frames");
+                if (!value.IsIntegerLiteral() || value.AsNumber() < 0 || value.AsNumber() > INT32_MAX)
+                {
+                    return Fail(Status::InvalidSettings, "report.max_ik_failed_frames");
+                }
+                out.ReportMaxIkFailedFrames = static_cast<int64_t>(value.AsNumber());
+            }
+            return {Status::Success};
+        }
+        Result Ground(const JsonValue& ground, SkeletalRoleProfile& out)
+        {
+            constexpr const char* keys[] = {"height"};
+            auto result = Object(ground, keys, "ground");
+            if (!result.Succeeded())
+            {
+                return result;
+            }
+            const auto height = ground.FindMember("height");
+            if (!height.IsNumber() || !std::isfinite(height.AsNumber()))
+            {
+                return Fail(Status::InvalidSettings, "ground.height");
+            }
+            out.GroundHeightMeters = height.AsNumber();
+            return {Status::Success};
+        }
+        Result FootPlanting(const JsonValue& planting, SkeletalRoleProfile& out)
+        {
+            constexpr const char* keys[] = {"enabled", "height_threshold_m", "speed_threshold_m_s",
+                                             "min_stance_frames", "blend_frames", "ik"};
+            auto result = Object(planting, keys, "foot_planting");
+            if (!result.Succeeded())
+            {
+                return result;
+            }
+            const auto enabled = planting.FindMember("enabled");
+            if (!enabled.IsBoolean())
+            {
+                return Fail(Status::InvalidSettings, "foot_planting.enabled");
+            }
+            out.bFootPlanting = enabled.AsBool();
+            struct ThresholdField
+            {
+                const char* Name;
+                const char* Field;
+                double* Value;
+            };
+            for (const auto field : {ThresholdField{"height_threshold_m", "foot_planting.height_threshold_m",
+                                                     &out.FootHeightThresholdMeters},
+                                     ThresholdField{"speed_threshold_m_s", "foot_planting.speed_threshold_m_s",
+                                                     &out.FootSpeedThresholdMetersPerSecond}})
+            {
+                if (!planting.HasMember(field.Name))
+                {
+                    continue;
+                }
+                const auto value = planting.FindMember(field.Name);
+                if (!value.IsNumber() || !std::isfinite(value.AsNumber()) || value.AsNumber() <= 0)
+                {
+                    return Fail(Status::InvalidSettings, field.Field);
+                }
+                *field.Value = value.AsNumber();
+            }
+            struct FrameField
+            {
+                const char* Name;
+                const char* Field;
+                uint32_t* Value;
+                uint32_t Minimum;
+            };
+            for (const auto field : {FrameField{"min_stance_frames", "foot_planting.min_stance_frames",
+                                                 &out.FootMinStanceFrames, 1},
+                                     FrameField{"blend_frames", "foot_planting.blend_frames",
+                                                 &out.FootBlendFrames, 0}})
+            {
+                if (!planting.HasMember(field.Name))
+                {
+                    continue;
+                }
+                const auto value = planting.FindMember(field.Name);
+                if (!value.IsIntegerLiteral() || value.AsNumber() < field.Minimum || value.AsNumber() > UINT16_MAX)
+                {
+                    return Fail(Status::InvalidSettings, field.Field);
+                }
+                *field.Value = static_cast<uint32_t>(value.AsNumber());
+            }
+            if (!planting.HasMember("ik"))
+            {
+                return out.bFootPlanting ? Fail(Status::InvalidSettings, "foot_planting.ik") : Result{Status::Success};
+            }
+            const auto ik = planting.FindMember("ik");
+            constexpr const char* ikKeys[] = {"leg_roles"};
+            result = Object(ik, ikKeys, "foot_planting.ik");
+            if (!result.Succeeded())
+            {
+                return result;
+            }
+            constexpr const char* field = "foot_planting.ik.leg_roles";
+            const auto roles = ik.FindMember("leg_roles");
+            if (!roles.IsArray())
+            {
+                return Fail(Status::InvalidType, field);
+            }
+            if (roles.GetArraySize() == 0)
+            {
+                return Fail(Status::InvalidSettings, field);
+            }
+            for (size_t i = 0; i < roles.GetArraySize(); ++i)
+            {
+                const auto value = roles.GetArrayElement(i);
+                if (!value.IsString())
+                {
+                    return Fail(Status::InvalidType, field, UINT32_MAX, i);
+                }
+                const auto role = FindRole(value.AsString());
+                if (role == UINT32_MAX)
+                {
+                    return Fail(Status::UnknownRole, field, UINT32_MAX, i);
+                }
+                const auto paw = static_cast<SkeletalRole>(role);
+                if (paw != SkeletalRole::FrontLPaw && paw != SkeletalRole::FrontRPaw &&
+                    paw != SkeletalRole::HindLPaw && paw != SkeletalRole::HindRPaw)
+                {
+                    return Fail(Status::InvalidSettings, field, role, i);
+                }
+                const uint32_t bit = uint32_t{1} << role;
+                if ((out.FootPlantingLegRoleMask & bit) != 0)
+                {
+                    return Fail(Status::DuplicateField, field, role, i);
+                }
+                out.FootPlantingLegRoleMask |= bit;
+            }
+            return {Status::Success};
+        }
+        Result ValidateFootPlantingRoles(const SkeletalRoleProfile& profile)
+        {
+            struct LegRoles
+            {
+                SkeletalRole Paw;
+                SkeletalRole Chain[4];
+                size_t Count;
+            };
+            constexpr LegRoles legs[] = {
+                {SkeletalRole::FrontLPaw,
+                 {SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::FrontLPaw}, 3},
+                {SkeletalRole::FrontRPaw,
+                 {SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::FrontRPaw}, 3},
+                {SkeletalRole::HindLPaw,
+                 {SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock, SkeletalRole::HindLPaw}, 4},
+                {SkeletalRole::HindRPaw,
+                 {SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock, SkeletalRole::HindRPaw}, 4}};
+            constexpr const char* field = "foot_planting.ik.leg_roles";
+            for (const auto& leg : legs)
+            {
+                const auto paw = static_cast<uint32_t>(leg.Paw);
+                if ((profile.FootPlantingLegRoleMask & (uint32_t{1} << paw)) == 0)
+                {
+                    continue;
+                }
+                if (profile.Source[paw].empty())
+                {
+                    return Fail(Status::InvalidSettings, field, paw);
+                }
+                for (size_t i = 0; i < leg.Count; ++i)
+                {
+                    if (profile.Target[static_cast<uint32_t>(leg.Chain[i])].empty())
+                    {
+                        return Fail(Status::InvalidSettings, field, paw);
+                    }
+                }
             }
             return {Status::Success};
         }
@@ -478,6 +651,22 @@ namespace NorvesLib::Core::Animation
             if (out.Version == 2 && root.HasMember("report"))
             {
                 auto result = Report(root.FindMember("report"), out);
+                if (!result.Succeeded())
+                {
+                    return result;
+                }
+            }
+            if (out.Version == 2 && root.HasMember("ground"))
+            {
+                auto result = Ground(root.FindMember("ground"), out);
+                if (!result.Succeeded())
+                {
+                    return result;
+                }
+            }
+            if (out.Version == 2 && root.HasMember("foot_planting"))
+            {
+                auto result = FootPlanting(root.FindMember("foot_planting"), out);
                 if (!result.Succeeded())
                 {
                     return result;
@@ -788,7 +977,7 @@ namespace NorvesLib::Core::Animation
         constexpr const char* v2RootKeys[] = {
             "version",      "vocabulary",   "axes",           "units",     "position_convention", "time",
             "source_roles", "target_roles", "required_roles", "rest_pose", "processing",          "proportions",
-            "report"};
+            "report",       "ground",       "foot_planting"};
         const auto version = root.FindMember("version");
         const bool bVersion2 = version.IsIntegerLiteral() && version.AsNumber() == 2;
         result = bVersion2 ? Object(root, v2RootKeys, "profile") : Object(root, rootKeys, "profile");
@@ -825,6 +1014,14 @@ namespace NorvesLib::Core::Animation
         if (!result.Succeeded())
         {
             return result;
+        }
+        if (candidate.bFootPlanting)
+        {
+            result = ValidateFootPlantingRoles(candidate);
+            if (!result.Succeeded())
+            {
+                return result;
+            }
         }
         for (uint32_t i = 0; i < SkeletalRoleCount; ++i)
         {
