@@ -14,6 +14,7 @@
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "Container/Containers.h"
 #include <cmath>
 #include <cstdint>
@@ -549,6 +550,20 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
         const SceneProxy *SnapshotScene = nullptr;
+
+        /** @brief スナップショットから拡張の値を借用する。未接続または一致する値が無ければ nullptr。 */
+        template <typename T>
+        const T* FindExtension(const RenderExtensionDataKey<T>& key) const
+        {
+            return SnapshotScene ? FindRenderExtensionValue(SnapshotScene->Extensions, key) : nullptr;
+        }
+
+        /** @brief スナップショットから拡張の配列を借用する。未接続または一致する配列が無ければ空。 */
+        template <typename T>
+        Container::Span<const T> FindExtensionArray(const RenderExtensionDataKey<T>& key) const
+        {
+            return SnapshotScene ? FindRenderExtensionArray(SnapshotScene->Extensions, key) : Container::Span<const T>{};
+        }
 
         /** @brief FramePacketが所有するRT scene snapshot */
         const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
@@ -1105,6 +1120,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief アプリケーション開始からの経過時間（秒） */
         double TotalTime = 0.0;
+
+        /** @brief ゲームの時間。DeltaTime は RenderThread のフレーム時間なので、拡張のパスはこちらを使う。 */
+        RenderExtensionFrameInfo ExtensionFrame;
 
         /**
          * @brief 決定的な撮影（--capture-deterministic）のフレームか

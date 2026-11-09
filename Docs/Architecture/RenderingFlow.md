@@ -153,6 +153,41 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 
 被写界深度の `DepthOfFieldPass` と動きぼけの `MotionBlurPass` は `SetupDeferredPipeline` で、検証用パスの後・後段スタックの前に、この順で追加される。パイプラインの組み直し時にも追加される。
 
+### 拡張データ枠
+
+- キーは `inline constexpr RenderExtensionDataKey<MyParams> kMyKey{Identity::Literal("MyKey", sizeof("MyKey") - 1)};` の形で定義する。値の型 `T` は trivially copyable とする。
+- GameThread から `RenderWorld::SetExtensionData(key, value)` または `SetExtensionArray(key, values)` で設定する。バイト列の入口は `SetExtensionBytes`、削除は `RemoveExtensionData(key.Name)`。いずれもロック無しの GameThread 専用で、次の `FramePacket` から反映される。
+- 値は不変の `RenderExtensionBlob` として保持する。`LayoutHash` は型名・サイズ・アラインメントのハッシュ、`Count` は要素数、`Revision` は更新の識別値。同じ名前への Set でレイアウト・要素サイズ・要素数・全バイトが前回と一致すれば、同じブロブと `Revision` を使い回す。
+- `SnapshotSceneParameters` は `Scene.Extensions` へ共有ポインタだけを写す。変わらないフレームのデータ本体のコピーは 0 で、RenderThread はパケットが共有する不変の値を読む。
+- RenderThread のパスは `context.FindExtension(key)` で値、`context.FindExtensionArray(key)` で配列を借用する。`LayoutHash` が合わなければ値は `nullptr`、配列は空の `Span` を返し、ログ有効時はブロブごとに一度だけ警告する。借用はそのブロブの共有参照が保持されている間だけ有効。
+- パスはブロブの `Revision` を比較し、必要なときだけ GPU へアップロードする。
+
+### 拡張データと履歴の約束
+
+- GPU 資源をブロブに入れない。GameThread は GPU に触れない。
+- MB 級の配列を毎フレーム Set しない。同じバイト列でも比較の費用は掛かる。
+- 1 つの View に複数の Viewport があると、パスは Viewport ごとに `Declare`・`Execute` される。パス内の履歴は Viewport の id で分ける。
+- 拡張データの変化は `ComputeSceneRevisionHash` に含めず、それだけでは RTGI・DDGI の履歴をリセットしない。
+
+### 拡張パスの時間（ExtensionFrame）
+
+`ViewRenderContext::ExtensionFrame`（`RenderExtensionFrameInfo`）は、描画するパケットのゲーム時間と、最後に描いたパケットの時間を渡す。
+
+| メンバ | 意味 |
+|---|---|
+| `FrameNumber` | パケットのゲームのフレーム番号 |
+| `GameTotalTime` | パケットに記録したゲームの累積時間（秒） |
+| `GameDeltaTime` | パケットに記録したゲームのフレーム時間（秒） |
+| `PreviousRenderedTotalTime` | RenderThread が最後に描いたパケットの `GameTotalTime`。初回は `GameTotalTime - GameDeltaTime` |
+
+- `ViewRenderContext::DeltaTime` は通常 RenderThread のフレーム時間であり、ゲームの dt ではない。ゲーム時間には `ExtensionFrame` を使う。決定的撮影時は `DeltaTime` もパケットの固定刻みに置き換わる。
+- `PreviousRenderedTotalTime` は `RenderedObjectHistory` が渡す値で、描画がゲームのフレームを飛ばしても、物体の前の位置を最後に描いたフレームへ付け替える処理と同じ基準になる。
+
+### 拡張パスの補助
+
+- `GBuffer` の段では `GBufferTargetBinder` を使える。パスの `Initialize` でデバイスを渡し、`Declare` で 5 枚の色と深度の Load/Store を宣言する。`Execute` で `Prepare` が成功したら `BeginRenderPass(GetRenderPass(), GetFramebuffer())` へ進む。描画先が替わると Framebuffer、形式が替わると RenderPass も作り直す。RenderPass が替わったらパス側のパイプラインも作り直し、`Shutdown` では `Reset` する。
+- `PostTemporalAA` の段では `ResolveHdrChainHead(builder)` が `SSR.SceneColor`、次に `Scene.Color` の順で存在する資源名を返す。どちらも無ければ空の `Identity` を返す。アクセスは宣言しないので、パス自身が戻り値を使って必要な読み書きを宣言する。
+
 ## 今後の拡張方針
 
 - pass 間の texture state と lifetime は RenderGraph を正とし、`SharedResourceRegistry` へ戻さない。

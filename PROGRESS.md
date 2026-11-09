@@ -10447,13 +10447,33 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR43-GRASS-GENERATE): 生成の判定（残す・視錐台・向き・草丈 > 0・距離の打ち切り）は加減乗算・比較・floor・整数演算だけで書き、割り算・平方根は CPU が定数に入れる（Vulkan で正しく丸められるのは加減乗算だけで、除算・sqrt・三角関数を使うと写しとの完全一致が数十万本で崩れるため）。そのため K は距離の二乗に対して線形、視錐台の球の半径は幅の量子化の上限（0.25 m）で膨らませる。
 - Notes(G5-GR43-GRASS-GENERATE): 草の場をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotGrassField` を 1 つ、`RenderingCoordinator.cpp` に代入 1 行。`SnapshotFoliage` と同じ形）は paths の外だが、done-when の「草の場が無いフレームは何も宣言しない」に要るので足した。
 - Notes(G5-GR43-GRASS-GENERATE): 地面の高さの GPU の資源が無いので、ブレードの Y は設定の `GroundHeightMeters`（既定 0）で全タイル同じ。要起票: 草の場の地面の高さ（地形のハイトマップ）を GrassPass の生成へ渡す（TileInfo.GroundY をタイルごとにするか、高さのテクスチャを引く）。草の場の ContentRevision が変わると全チャンクを送り直すまで（1 フレーム 8 枚）そのチャンクの草が出ない。場の双線形はチャンクの中で端へ clamp するので、チャンクの境目で密度の段がわずかに出うる。
-- U1 WorldField の型・Sanitize・スクロールの計算とパケットの欄を足す: 着地(直し 0 回)
-- U2 WorldFieldUpdate.comp を書く: 着地(直し 0 回)
-- Notes(G5-GR44-WORLD-FIELD): interactor の配列をパスへ渡す配線（`ViewRenderContext.h` に `SnapshotWorldFieldInteractors` を 1 つ。`SnapshotGrassField` と同じ形）は paths の外だが、パスがパケットの値を読む唯一の口なので足した。
-- U3 RenderWorld から RenderingCoordinator を経てパケットへ interactor を写す: 着地(直し 0 回)
-- U4 WorldFieldPass を足して GBufferPass より前に登録する: 着地(直し 1 回)
-- U5 シェーダーのコンパイル試験と GPU の更新試験を足し、タスクの verify を通す: 着地(直し 0 回)
-- Done(G5-GR44-WORLD-FIELD): `WorldFieldTypes`（`WorldFieldInteractor` 64 B・最大 32 個、`WorldFieldSettings` 64 m/0.25 m 既定・128 m/0.5 m、中心はカメラ／カメラ＋視線 10 m、τ 既定 1.5 秒、Sanitize、中心の画素スナップと整数 shift の計算）を足した。`RenderWorld::SetWorldFieldInteractors(Span)` → `RenderingCoordinator` が丸めて保持 → `SnapshotSceneParameters` で `FramePacket::WorldFieldInteractors` へ値で写して入力を空にする（パケットを確保できなかったフレームも空にする。`ComputeSceneRevisionHash` には入れない）。`WorldFieldPass` を GBufferPass の前に登録し、RGBA16F 256×256 の 2 枚を ping-pong で持つ（更新を記録したときだけ入れ替え、同じ TotalTime の 2 回目と主カメラ以外のビューでは更新しない。初回・時間の逆行・範囲の変更・大きな移動で 0 から始める）。`WorldField.Current`/`WorldField.Previous` を名前付きで公開し、`GetFieldState()` で原点・範囲・画素の大きさを返す（消費側は uv = (worldXZ − origin)/extent）。`WorldFieldUpdate.comp` は前を整数 shift で引いて exp(−dt/τ) を掛け（範囲外は 0）、interactor を前→今の掃引カプセルとして強い方を採って焼く。dt はパケットの TotalTime の差。
-- 確かめ(G5-GR44-WORLD-FIELD): `CameraViewConstantsTest`・`RHIRayTracingApiContractTest`・`RHITextureUpdateVulkanTest`・`Game` の Debug ビルドは終了コード 0。ctest は WorldFieldInputSanitizeTest・FramePacketWorldFieldSnapshotContractTest・WorldFieldScrollMathTest・WorldFieldShaderCompileTest・CameraViewConstantsTest の 5/5 Passed。numstat の 2 通りは一致（`.harness/runs/20261110-011016/verify-G5-GR44-WORLD-FIELD-U5.txt`）。GPU の試験 `WorldFieldUpdateVulkanTest` はビルドだけ（実行は G5-GR44-TRAMPLE-CHECK）。Game は起動していない（撮影・起動の確かめは回さない決まり）。
-- Next(G5-GR44-WORLD-FIELD): G5-GR44-TRAMPLE-CHECK で WorldFieldUpdateVulkanTest を実行し（曲げの向き 10° 以内・減衰 5% 以内・3 画素のスクロール）、頂点のステージから RGBA16F を線形で引けるかを装置で確かめる。WorldFieldPass はまだ消費側が無いので見た目は変わらない。
-- Notes(G5-GR44-WORLD-FIELD): RHI に push constant の送信 API が無いので、更新の定数は push constant でなく set 0 binding 3 の std140 uniform バッファ（`WorldFieldUpdateConstants` 48 B、`WorldFieldPass.h` に公開）でフレームの持ち主から借りて渡す。シェーダーへ渡す原点は float なので、原点から数 km 離れると画素の中心の位置に丸めが乗る。
+
+- U1 RetargetCookTest の骨組みと v1 の profile の出力の固定（変更前のコードで）: 着地(直し 0 回)
+- U5 リターゲットの報告の JSON と上限の判定（Core の独立した部品）: 着地(直し 0 回)
+- U2 ロールの profile の version 2 の解析: 着地(直し 1 回)
+- U3 ロールごとの up_hint と脚の長さの比によるルートの拡縮: 着地(直し 0 回)
+- U4 回転の写しの誤差・ルートの移動距離・写せなかった関節の測定: 着地(直し 1 回)
+- U8 文書（profile v2・Retarget.md・Testing.md）: 着地(直し 0 回)
+- U6 --retarget-report と上限の適用（AssetCook）: 着地(直し 1 回)
+- U7 RetargetCookTest の (a) とタスクの verify: 着地(直し 0 回)
+## 2026-11-10 G9-GR85-RETARGET-PROPORTION（run 20261110-011014、完了）
+- Done: ロールの profile に `version: 2` を足した（`rest_pose.roles.<role>.up_hint`・`proportions{root_scale: 数値|"auto"|"auto_height", leg_length_ratio}`・`report{max_joint_error_deg, max_foot_slide_m, max_foot_penetration_m}`）。v1 は今と同じ結果で読める（RetargetCookTest が v1 の BVH・glTF の出力のハッシュを固定）
+- Done: `RetargetSkeletalClip` に、ロールごとの up_hint によるねじれの固定と、auto のときの脚の鎖（前脚 upper→lower→paw・後脚 thigh→shin→hock→paw、L/R と前後の平均）の長さの比によるルートの並進の拡縮を足した。出力を対象の骨格で FK して回転の写しの誤差（理想値との差の最大・平均）・ルートの移動距離（元・対象）・写せなかった関節を測る
+- Done: `RetargetReport`（Core）と AssetCook の `--retarget-report <path>`。上限を超えたら報告を書いた後に `retarget_report_limit: <status> clip=<名前> value=<値> limit=<上限>` で失敗し CLI は終了コード 1。報告の SkeletonId は ClipBank と同じ値。足の上限は測定が無いので、指定すると失敗する（再接地の G9-GR85-FOOT-REPLANT で測る）
+- Done: `RetargetCookTest`（CookedMeshTest の束）の (a): 脚 1.3 倍・骨ごとの rest のねじれが違う対象へ 61 コマの合成の歩き。報告の誤差の最大 4.1e-6°、ClipBank を FK した独立の骨方向の誤差の最大 5.4e-6°、root_scale 1.29999995、移動距離 2 → 2.59999990 m（比 1.29999995）、SkeletonId 一致、平滑化半径 5 で誤差 9.75° になり上限 0.1° で失敗
+- 証拠: `.harness/runs/20261110-011014/verify-G9-GR85-RETARGET-PROPORTION-U7.txt`（verify のビルド exit 0、RetargetCookTest 単独 1/1、関連 6 本 6/6 Passed・exit 0）
+- Next: なし（アプリを起動する確かめは無い）。比率 0.1° と 1e-3 は合成例の仮の許容
+- Notes: 試験の (a) はルートの動きの抽出を切って cook する（抽出すると根のヨーが RootMotion へ移り、ClipBank だけの FK の骨方向が根のヨーの分ずれるため）。報告の誤差は抽出のヨーを戻して測る
+- Notes: CLI の要求の写し直し（`Tools/AssetCook/RigSingleCook.cpp` の `NormalizeRigSingleRequest`）が報告のパスを落としていたので、paths の外だがこの 1 行の配管だけ足した
+
+- U1 拡張データの型（キー・不変のブロブ・GameThread の保持・引き当て）と FrameInfo: 着地(直し 0 回)
+- U2 パケット・RenderWorld・ViewRenderContext・履歴への配線: 着地(直し 0 回)
+- U3 GBufferTargetBinder と ResolveHdrChainHead: 着地(直し 0 回)
+- U4 RenderExtensionDataTest（CPU）: 着地(直し 0 回)
+- U6 RenderingFlow.md に拡張データ枠と FrameInfo の約束を書く: 着地(直し 0 回)
+- U8 U5 のレビュー済みの差分（保存したパッチ）を当てて確かめ直す: 着地(直し 0 回)
+- U7 GBuffer・照明の後・半透明の段の確かめとタスクの verify: 着地(直し 0 回)
+- Done(G5-GR25-EXTENSION-DATA): `Rendering/RenderExtension/RenderExtensionData.h` に `RenderExtensionDataKey<T>`（trivially copyable を static_assert）・不変の `RenderExtensionBlob{Identity, LayoutHash, Count, Revision, バイト列}`・GameThread 専用の保持（バイト一致の Set は同じ共有ポインタと Revision を使い回す）・`RenderExtensionFrameInfo{FrameNumber, GameTotalTime, GameDeltaTime, PreviousRenderedTotalTime}` を置いた。`RenderWorld::SetExtensionData<T>`・`SetExtensionArray<T>` で積み、`SnapshotSceneParameters` が `SceneProxy::Extensions` へ共有ポインタを写すだけ（変わらないフレームはデータの写し 0）。`ViewRenderContext::FindExtension`・`FindExtensionArray` は LayoutHash が合わなければ空とログ 1 回。拡張データは `ComputeSceneRevisionHash` に含めない。PreviousRenderedTotalTime は `RenderedObjectHistory` が最後に描いたパケットの TotalTime を返す。`RenderExtensionHelpers.h` に `GBufferTargetBinder`（GBuffer 5 枚と深度を Load/Store で開き、描画先が替われば作り直す）と `ResolveHdrChainHead` を置いた。試験は CPU の `RenderExtensionDataTest` と GPU の `RenderExtensionStageVulkanTest`（5 段の目印: GBuffer に書いたアルベドが照明を受けてアルベドに比例、AfterLighting の加算が霧で約 0.44 倍に減る、Transparent は床の手前で隠れ空では出る、PostTemporalAA は TAA 有効でもフレームごとに同じ値、PostTonemap はトーンマップを受けない、色は拡張データで渡す）。
+- 証拠(G5-GR25-EXTENSION-DATA): `.harness/runs/20261110-011013/G5-GR25-EXTENSION-DATA-U7-verify.txt`（verify のビルドの行 SceneViewProxyLookupTest・RenderingHdrSceneCaptureTest・RenderingGoldenImageTest・Game の Debug ビルドが終了コード 0。ctest は RenderExtensionDataTest・RenderExtensionRegistryTest・RenderExtensionStageVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 4/4 合格。Transparent の深度テストを外すと落ち、戻すと通ることも確かめた）。golden 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない。拡張 0 件では組み込みのパスと描画は変わらない。
+- Next(G5-GR25-EXTENSION-DATA): 影を落とす段（G5-GR25-SHADOW-CASTER-STAGE）、起動しての確かめ（G5-GR25-SCENES-CHECK）、FrameInfo を使う頂点アニメの前の時刻（G5-GR30-VERTEX-ANIM-VELOCITY。FoliagePass の風の前の時刻もそこで替える）。
+- Notes(G5-GR25-EXTENSION-DATA): 人が見るときの見どころ: 拡張 0 件なので全シーンの見た目は変わらない見込み。撮影・計測の確かめは回さない決まり。ブロブの保存は 16 バイト整列なので、それを超える整列の型は型付きの引き当てで空になる。GPU 試験の GBuffer 以降の段は TAA を切って FXAA で取る（同じ画素を目印あり・なしで引き比べるため）。
