@@ -137,6 +137,7 @@ layout(location = 2) out vec4 outSpecularReflectance;
 
 #include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/ShadingModels.glsl"
 #include "Common/PointShadow.glsl"
 // probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
 // 重みが集まって斑点になるのを防ぐ。
@@ -1118,6 +1119,10 @@ void main()
     bool bValidationLambert = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
                               bValidationHardShadow;
     bool bValidationPBR = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
+    bool bShadingModelActive = normalData.shadingModelId != GBUFFER_SHADING_MODEL_DEFAULT_LIT &&
+                               !bValidationLambert && !bValidationPBR &&
+                               params.debugViewMode != DEBUG_VIEW_MODE_RAW251 &&
+                               params.debugViewMode != DEBUG_VIEW_MODE_RAW252;
 
     // データ展開
     vec3 albedo = albedoSample.rgb;
@@ -1134,6 +1139,26 @@ void main()
     // 草・低木の株（FOLIAGE_CLUMP の印）。株は太陽の VSM に描かれ、株の中の影は VSM が受け持つので、
     // 接触影を掛けない（画面の深度の比べは手前の葉と奥の葉の段で画素ごとに当たり外れになり、点の明暗に崩れる）
     bool bFoliageReceiver = GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
+    ShadingModelSurface shadingSurface;
+    if (bShadingModelActive)
+    {
+        shadingSurface.id = normalData.shadingModelId;
+        shadingSurface.p0 = GBufferDecodeP0(texture(gbufferMaterial, fragUV));
+        shadingSurface.p1 = GBufferDecodeP1(texture(gbufferEmissive, fragUV));
+        shadingSurface.albedo = albedo;
+        shadingSurface.metallic = metallic;
+        shadingSurface.roughness = roughness;
+        shadingSurface.N = N;
+        shadingSurface.ao = ao;
+        ApplyShadingModelSurface(shadingSurface, params.shadingModelParams[0], params.shadingModelParams[1]);
+        albedo = shadingSurface.albedo;
+        metallic = shadingSurface.metallic;
+        roughness = shadingSurface.roughness;
+        N = shadingSurface.N;
+        ao = shadingSurface.ao;
+        // DDGI の材質 AO にも、画面空間 AO を重ねる前の補正値を渡す。
+        materialSample.b = ao;
+    }
     // 拡散の環境光に掛ける遮蔽（多重反射の近似で色ごとに弱める）
     vec3 diffuseAO = vec3(ao);
 
@@ -1294,9 +1319,20 @@ void main()
             sunShadowVisibility = shadow;
         }
 
-        if (bValidationLambert)
+        if (bShadingModelActive)
         {
-            // Validation 253: pure direct Lambert. No shadow, ambient, emissive or specular term.
+            float specularRoughness = ShadingModelSpecularRoughness(shadingSurface, params.shadingModelParams[0]);
+            vec2 dfgCoordinate = clamp(vec2(validationNdotV, specularRoughness),
+                                       vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+            vec2 dfg = texture(brdfLUT, dfgCoordinate).rg;
+            EvaluateShadingModelDirect(shadingSurface, N, V, L, H,
+                                       lightColor * attenuation, dot(N, L), shadow, dfg,
+                                       params.shadingModelParams[0], params.shadingModelParams[1],
+                                       Lo_diffuse, Lo_specular);
+        }
+        else if (bValidationLambert)
+        {
+            // 検証表示 253: 直接光の純 Lambert のみ。影・環境光・発光・鏡面を含めない。
             Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * radiance;
         }
         else if (bDiffuseOnlyMaterial)
@@ -1531,6 +1567,32 @@ void main()
     if (bValidationLambert)
     {
         color = Lo_diffuse;
+    }
+    else if (bShadingModelActive)
+    {
+        vec3 flatAmbientIrradiance = vec3(0.0);
+        if (shadingSurface.id == GBUFFER_SHADING_MODEL_PALE_FLAT)
+        {
+            if (params.bIBLEnabled != 0u)
+            {
+                // 6 軸の平均で、面の向きに依らない環境光の放射照度を求める。
+                flatAmbientIrradiance = (
+                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(1.0, 0.0, 0.0)), 0.0).rgb +
+                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(-1.0, 0.0, 0.0)), 0.0).rgb +
+                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, 1.0, 0.0)), 0.0).rgb +
+                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, -1.0, 0.0)), 0.0).rgb +
+                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, 0.0, 1.0)), 0.0).rgb +
+                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, 0.0, -1.0)), 0.0).rgb
+                ) / 6.0 * params.ambientColor.w;
+            }
+            else
+            {
+                flatAmbientIrradiance = params.ambientColor.rgb * params.ambientColor.w * PI;
+            }
+        }
+        color = ShadingModelFinalize(shadingSurface, ambient, Lo_diffuse, Lo_specular,
+                                     flatAmbientIrradiance, params.shadingModelParams[0], params.shadingModelParams[1],
+                                     indirectSpecular, indirectSpecularReflectance);
     }
     else
     {

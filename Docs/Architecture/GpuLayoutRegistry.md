@@ -45,7 +45,7 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 | 3 | `ShadingModelPaleFlat` | `GBUFFER_SHADING_MODEL_PALE_FLAT` | 淡い平坦な面 | 消滅度 | 未使用 |
 | 4〜15 | 予約 | 予約 | 未割当 | 未割当 | 未割当 |
 
-照明で使う枠は Eye の P0 のみで、他の値はファーのシェル・濡れ・消滅で使う枠である（現在の `lighting.frag` は P0 をまだ使わない）。PaleFlat は GBuffer に書くとき粗さ 1・金属度 0 にする予定であり、SSR は粗さが終了値以上の画素を棄却する（既定の終了値は 0.7）。
+ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0 のみで、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
 
 印の値はシフト前のビットマスク。複数を OR で併用できる。
 
