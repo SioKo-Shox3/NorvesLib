@@ -1,4 +1,5 @@
 ﻿#include "Object/ResourceRegistry.h"
+#include "FileStream/FileStream.h"
 #include "Animation/SkeletalAnimationSampler.h"
 #include "Debug/Stats.h"
 #include "Logging/Logger.h"
@@ -2179,12 +2180,83 @@ namespace
         coordinator.Shutdown();
     }
 
+    // ShaderManager と同じく、各ファイルの BOM を外し、シェーダーディレクトリを基準に include を展開する。
+    bool ExpandTestShaderIncludes(const char* relativePath, Container::String& expanded, uint32_t depth = 0)
+    {
+        if (depth >= 16)
+        {
+            return false;
+        }
+        const Container::String fullPath = Container::String(NORVES_SOURCE_DIR "/Assets/Shaders/") + relativePath;
+        auto file = NorvesLib::FileStream::FileStream::CreateUnique(
+            fullPath,
+            NorvesLib::FileStream::FileMode::Read,
+            NorvesLib::FileStream::FileAccess::Read,
+            NorvesLib::FileStream::FileShare::Read);
+        if (!file || !file->IsOpen())
+        {
+            return false;
+        }
+        Container::String source = file->ReadString();
+        if (source.size() >= 3 &&
+            static_cast<unsigned char>(source[0]) == 0xEF &&
+            static_cast<unsigned char>(source[1]) == 0xBB &&
+            static_cast<unsigned char>(source[2]) == 0xBF)
+        {
+            source = source.substr(3);
+        }
+        size_t cursor = 0;
+        while (cursor < source.size())
+        {
+            const size_t lineEnd = source.find('\n', cursor);
+            size_t contentEnd = lineEnd == Container::String::npos ? source.size() : lineEnd;
+            if (contentEnd > cursor && source[contentEnd - 1] == '\r')
+            {
+                --contentEnd;
+            }
+            const Container::String line = source.substr(cursor, contentEnd - cursor);
+            size_t head = 0;
+            while (head < line.size() && (line[head] == ' ' || line[head] == '\t'))
+            {
+                ++head;
+            }
+            if (line.find("#include", head) == head)
+            {
+                const size_t open = line.find('"', head + 8);
+                const size_t close = open == Container::String::npos ? Container::String::npos : line.find('"', open + 1);
+                if (close == Container::String::npos || close == open + 1)
+                {
+                    return false;
+                }
+                const Container::String includePath = line.substr(open + 1, close - open - 1);
+                if (!ExpandTestShaderIncludes(includePath.c_str(), expanded, depth + 1))
+                {
+                    return false;
+                }
+                if (expanded.empty() || expanded.back() != '\n')
+                {
+                    expanded += "\n";
+                }
+            }
+            else
+            {
+                expanded += line;
+                expanded += "\n";
+            }
+            cursor = lineEnd == Container::String::npos ? source.size() : lineEnd + 1;
+        }
+        return true;
+    }
+
     void TestRuntimeCompilerAcceptsSkinnedShaders()
     {
         RHI::Vulkan::VulkanShaderCompiler compiler;
-        const RHI::ShaderCompileResult gBufferResult = compiler.CompileFromFile(
-            NORVES_SOURCE_DIR "/Assets/Shaders/skinned_gbuffer.vert",
-            RHI::ShaderStage::Vertex);
+        Container::String gBufferSource;
+        assert(ExpandTestShaderIncludes("skinned_gbuffer.vert", gBufferSource));
+        const RHI::ShaderCompileResult gBufferResult = compiler.CompileFromSource(
+            gBufferSource,
+            RHI::ShaderStage::Vertex,
+            "skinned_gbuffer.vert");
         assert(gBufferResult.bSuccess);
         assert(!gBufferResult.ByteCode.empty());
 
