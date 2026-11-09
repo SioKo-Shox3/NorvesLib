@@ -583,6 +583,16 @@ set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 間接描画の引数・件数・能力による拒否と不正な引数を、GPU の描画と読み戻しで確かめる。
+# 計算シェーダーが生成した引数のバリアと Vulkan の検証エラー 0 件も確認する。
+add_test(NAME IndirectDrawVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDrawVulkanTest)
+set_tests_properties(IndirectDrawVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
 # 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
 # プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
@@ -628,6 +638,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
+    MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp

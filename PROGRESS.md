@@ -10355,3 +10355,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 RHI にインデックス無しの間接描画（単発・件数つき）と bMultiDrawIndirect を足す: 着地(直し 0 回)
 - U2 Count が無いときの多重の間接描画を bMultiDrawIndirect で分ける: 着地(直し 0 回)
 - U3 CPU の契約試験 RHIIndirectApiContractTest を足す: 着地(直し 0 回)
+- U4 GPU の試験 IndirectDrawVulkanTest を足し、タスクの確かめを回す: 着地(直し 0 回)
