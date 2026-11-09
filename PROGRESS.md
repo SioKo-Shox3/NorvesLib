@@ -10376,3 +10376,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 既存の用途の焼き出しのバイト列を煙試験で固定する: 着地(直し 0 回)
 - U2 NVTEX に RGBA16F・RG16UNorm を足し、ローダと GPU の写しを通す: 着地(直し 1 回)
 - U3 クッカーが EXR・HDR を浮動小数で読み、--usage hdr で RGBA16F を焼く: 着地(直し 0 回)
+- U4 height16 の浮動小数の正規化・--require-16bit・rg16 を実装する: 着地(直し 1 回)
