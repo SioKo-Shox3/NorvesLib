@@ -10358,3 +10358,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 GBuffer の書き手（ラスタの 3 本と可視バッファの解決）を符号化の関数へ通す: 着地(直し 1 回)
 - U5 GPU の割り当て表の文書を書く: 着地(直し 1 回)
 - U6 ShadingModelContractTest を足し、タスクの verify を通す: 着地(直し 0 回)
+
+## G5-GR26-GBUFFER-CONTRACT（2026-11-09）
+
+- Done: GBuffer の空きチャネルの契約を `Library/Core/Public/Rendering/ShadingModelIds.h`（`GBufferContract`）と `Assets/Shaders/Common/GBufferEncoding.glsl` に置いた。Normal.w = `float((受け手の印 << 4) | シェーディングモデルの ID)`（ID: DefaultLit=0・Fur=1・Eye=2・PaleFlat=3・4〜15 は予約。印: 地形の受け手 1・影を起伏に詰める地形 2（地形の印と一緒に立てる）・草の株 4・鏡面の無い材質 8）、Material.a = P0、Emissive.a = P1（書き手は今 0）。書き手（gbuffer.frag・megageometry.frag・foliage.frag・Common/VisibilityResolve.glsl）と読み手（lighting.frag・RTGI/DiffuseIndirect.comp・ssr.frag・decal.frag）を全部その関数に通し、Normal.w の 1・2 と Material.a の 1・0.25 の場当たりの意味を印へ移した。デカールは Normal を色の添付として書くので、描く前に Normal をパスの持つテクスチャへ写して印を読む（デカールが 1 個以上のフレームだけ。1920×1080 で 16.6 MB の写し。GBuffer の Normal にコピー元の使い道を足した）。`Docs/Architecture/GpuLayoutRegistry.md` に GBuffer の各チャネル・GBuffer と MegaGeometry の UBO・`GPUSceneInstanceData`・lighting.frag の binding の表と、以後は表に登録してから使う約束を書いた。試験 `ShadingModelContractTest`（MaterialResourcesTest の束）がヘッダと GLSL の定数表の一致と、Assets/Shaders の中の GBuffer の Normal.w・Material.a・Emissive.a の直の読み書きが無いことを走査で確かめる（167 ファイル、代入 13・imageStore 3・標本 23 を検査。foliage.frag にわざと入れた違反を検出して落ちることを確かめた）。
+- 証拠: `.harness/runs/20261109-201100/verify-G5-GR26-GBUFFER-CONTRACT.txt`（verify のビルド `MaterialResourcesTest DecalGBufferVulkanTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game` の終了コード 0、ctest の ShadingModelContractTest・MaterialResourcesTest・GBufferMaterialDescriptorCacheTest・DecalGBufferVulkanTest・VisibilityResolveVulkanTest の 5/5 合格）。基準画像の試験 4 本（RenderingGolden*）は撮影・基準画像の比較を回さない決まりで回していない（DefaultLit・P0=P1=0 の書き込みと印の判定は導入前と同じ結果になる作り）。
+- Next: 値の入口は G5-GR26-MATERIAL-PARAMS。地形の受け手・影を詰めた地形・草の株の接触影の除外・デカールが草に描かないことは、人がゲームを動かして荒野（wasteland）の地形と草の株の近く（G5-GR27-MATERIAL-SCENES-CHECK の視点）で見る。
+- Notes: VisibilityResolveVulkanTest の「直接 dispatch の MegaGeometry の材質の粗さ・AO」の検査は変更前のシェーダーでも落ちていた（試験の準備が MegaGeometry の材質の定数 AO（`TexturesD[2]`）を 0 のままにしていた。4da8031d の統合から）。実際の材質表（VisibilityMaterialTable.cpp）と同じ形で AO=1 を入れて直した。検査の期待値は変えていない。
+- Notes: このリポジトリのシェーダーは BOM 付きで、glslc で直に確かめるときは BOM を除いた写しをコンパイルする（実行時は ShaderManager が BOM を除き include を展開する）。
+- 要起票: `Common/PbrMaterialEvaluation.glsl` の GBuffer 用の `SamplePbrMaterialTextures(albedo, normal, material, uv)`（vec4 のまま GBuffer を読む）は使い手が無くなったので消す。
+- 要起票: `megageometry.vert` の `emissiveColor` のコメントが色・強度と書いているが、C++ と megageometry.frag は色度・輝度（nits）（GpuLayoutRegistry.md の 6. に記載）。
