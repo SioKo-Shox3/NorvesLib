@@ -364,6 +364,7 @@ register_rendering_gpu_test(
 norves_add_test_bundle(RHIRayTracingApiContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
+    MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
@@ -377,8 +378,20 @@ target_compile_definitions(RHIRayTracingApiContractTest PRIVATE
 )
 add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
 
+# 間接描画 API の既定の戻り値と、間接コマンドのサイズ・フィールド配置を CPU で確かめる。
+add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --test=RHIIndirectApiContractTest)
+
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
+
+# 形式の対応と 16・10・浮動小数の更新・描画の読み戻しを確かめる。
+add_test(NAME RHIFormatReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIFormatReadbackVulkanTest)
+set_tests_properties(RHIFormatReadbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
@@ -388,7 +401,7 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# BC1・BC4・BC5・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
+# BC1・BC3・BC4・BC5・BC6H・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
 add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
 set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -579,6 +592,16 @@ set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 間接描画の引数・件数・能力による拒否と不正な引数を、GPU の描画と読み戻しで確かめる。
+# 計算シェーダーが生成した引数のバリアと Vulkan の検証エラー 0 件も確認する。
+add_test(NAME IndirectDrawVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDrawVulkanTest)
+set_tests_properties(IndirectDrawVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
 # 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
 # プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
@@ -606,6 +629,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
@@ -624,6 +648,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
+    MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp

@@ -55,37 +55,14 @@ namespace NorvesLib::RHI
         BC7_SRGB,
         // 整数形式（ビジビリティバッファの ID など。クリア値は整数で渡す）。
         R32_UINT,
-        R32G32_UINT
+        R32G32_UINT,
+        R16G16_UNORM,
+        R10G10B10A2_UNORM,
+        R11G11B10_FLOAT,
+        BC3_UNORM,
+        BC3_SRGB,
+        BC6H_UFLOAT
     };
-
-    /**
-     * @brief 符号なし整数の形式か
-     *
-     * 整数のカラー添付はブレンドできず、クリア値も整数（AttachmentDesc::clearColorUint）で渡す。
-     */
-    inline bool IsUnsignedIntegerFormat(Format format)
-    {
-        return format == Format::R32_UINT || format == Format::R32G32_UINT;
-    }
-
-    /**
-     * @brief ブロック圧縮（BC1/BC4/BC5/BC7）の形式か
-     */
-    inline bool IsBlockCompressedFormat(Format format)
-    {
-        switch (format)
-        {
-        case Format::BC1_UNORM:
-        case Format::BC1_SRGB:
-        case Format::BC4_UNORM:
-        case Format::BC5_UNORM:
-        case Format::BC7_UNORM:
-        case Format::BC7_SRGB:
-            return true;
-        default:
-            return false;
-        }
-    }
 
     /**
      * @brief presentation surface の working color space

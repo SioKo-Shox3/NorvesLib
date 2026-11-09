@@ -131,7 +131,10 @@ namespace NorvesLib::RHI::Vulkan
         // 同一デバイスのコマンド送信・コマンドプール操作と呼出側で直列化する。
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
+        bool IsFormatSupported(Format format, FormatUsage usage) const override;
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
+        /** @brief 試験専用。論理デバイスで有効でない機能を true にしてはいけない（偽るのは false へだけ）。 */
+        void SetCapabilitiesForTesting(const DeviceCapabilities& capabilities) { m_Capabilities = capabilities; }
         // VK_EXT_memory_budget が有効なときだけ DeviceLocal ヒープの予算と使用量を返す。
         VideoMemoryBudget GetVideoMemoryBudget() const override;
         Math::Matrix4x4 AdjustProjectionForClipSpace(
@@ -140,6 +143,7 @@ namespace NorvesLib::RHI::Vulkan
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::Device GetVkDevice() const { return m_device; }
         vk::PhysicalDevice GetVkPhysicalDevice() const { return m_physicalDevice; }
+        uint32_t GetMaxDrawIndirectCount() const { return m_deviceProperties.limits.maxDrawIndirectCount; }
         vk::Instance GetVkInstance() const { return m_instance; }
 
         // インスタンス生成時に VkApplicationInfo::apiVersion へ渡した値。

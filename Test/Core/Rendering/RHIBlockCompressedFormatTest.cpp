@@ -38,6 +38,21 @@ void ExpectBlock(RHI::Format format, uint32_t width, uint32_t height, uint32_t b
     Expect(info.BlockWidth == width && info.BlockHeight == height && info.BlockBytes == bytes, message);
 }
 
+void TestFormatInfo()
+{
+    for (uint32_t index = 0; index < RHI::FormatCount; ++index)
+    {
+        const RHI::Format format = static_cast<RHI::Format>(index);
+        const RHI::FormatInfo& info = RHI::GetFormatInfo(format);
+        Expect(info.Value == format, "形式表の行は自分の形式の値と一致する");
+        if (format != RHI::Format::UNKNOWN)
+        {
+            Expect(info.BlockBytes > 0, "既知の形式はブロックのバイト数が正");
+            Expect(info.ChannelCount > 0, "既知の形式はチャンネル数が正");
+        }
+    }
+}
+
 void TestBlockInfo()
 {
     ExpectBlock(RHI::Format::BC1_UNORM, 4, 4, 8, "BC1_UNORM は 4x4 画素で 8 バイト");
@@ -46,6 +61,19 @@ void TestBlockInfo()
     ExpectBlock(RHI::Format::BC5_UNORM, 4, 4, 16, "BC5_UNORM は 4x4 画素で 16 バイト");
     ExpectBlock(RHI::Format::BC7_UNORM, 4, 4, 16, "BC7_UNORM は 4x4 画素で 16 バイト");
     ExpectBlock(RHI::Format::BC7_SRGB, 4, 4, 16, "BC7_SRGB は 4x4 画素で 16 バイト");
+    ExpectBlock(RHI::Format::BC3_UNORM, 4, 4, 16, "BC3_UNORM は 4x4 画素で 16 バイト");
+    ExpectBlock(RHI::Format::BC3_SRGB, 4, 4, 16, "BC3_SRGB は 4x4 画素で 16 バイト");
+    ExpectBlock(RHI::Format::BC6H_UFLOAT, 4, 4, 16, "BC6H_UFLOAT は 4x4 画素で 16 バイト");
+    const RHI::Format compressedFormats[] = {RHI::Format::BC3_UNORM, RHI::Format::BC3_SRGB, RHI::Format::BC6H_UFLOAT};
+    for (const RHI::Format format : compressedFormats)
+    {
+        Expect(RHI::IsBlockCompressedFormat(format), "BC3・BC6H はブロック圧縮");
+        Expect(RHI::GetFormatInfo(format).bSrgb == (format == RHI::Format::BC3_SRGB),
+               "BC3・BC6H のうち BC3_SRGB だけが sRGB");
+    }
+    ExpectBlock(RHI::Format::R16G16_UNORM, 1, 1, 4, "R16G16_UNORM は 1x1 画素で 4 バイト");
+    ExpectBlock(RHI::Format::R10G10B10A2_UNORM, 1, 1, 4, "R10G10B10A2_UNORM は 1x1 画素で 4 バイト");
+    ExpectBlock(RHI::Format::R11G11B10_FLOAT, 1, 1, 4, "R11G11B10_FLOAT は 1x1 画素で 4 バイト");
     // 非圧縮は 1x1 を1ブロックとして扱う。
     ExpectBlock(RHI::Format::R16_UNORM, 1, 1, 2, "R16_UNORM は 1x1 画素で 2 バイト");
     ExpectBlock(RHI::Format::R8G8B8A8_UNORM, 1, 1, 4, "RGBA8 は 1x1 画素で 4 バイト");
@@ -72,6 +100,14 @@ void TestEstimate()
     Expect(RHI::EstimateTextureSize(MakeDesc(1024, 1024, 11, RHI::Format::R16_UNORM)) == 2796202ull,
            "R16 1024x1024 の全ミップは 2,796,202 バイトでなければならない");
 
+    // 8x8・4x4・2x2・1x1 の末尾2段もそれぞれ1ブロックに切り上げる。
+    Expect(RHI::EstimateTextureSize(MakeDesc(8, 8, 4, RHI::Format::BC3_UNORM)) == 112ull,
+           "BC3_UNORM 8x8 の4段は 112 バイト");
+    Expect(RHI::EstimateTextureSize(MakeDesc(8, 8, 4, RHI::Format::BC3_SRGB)) == 112ull,
+           "BC3_SRGB 8x8 の4段は 112 バイト");
+    Expect(RHI::EstimateTextureSize(MakeDesc(8, 8, 4, RHI::Format::BC6H_UFLOAT)) == 112ull,
+           "BC6H_UFLOAT 8x8 の4段は 112 バイト");
+
     // ミップの最小は1ブロック。1x1・2x2 でも BC7 は 16 バイト。
     Expect(RHI::EstimateTextureSize(MakeDesc(1, 1, 1, RHI::Format::BC7_UNORM)) == 16ull,
            "BC7 1x1 は 1 ブロック(16 バイト)として数える");
@@ -92,6 +128,7 @@ void TestEstimate()
 
 int RunTest()
 {
+    TestFormatInfo();
     TestBlockInfo();
     TestEstimate();
 
