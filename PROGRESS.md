@@ -10357,3 +10357,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 デカールが草の印を法線のコピーから読む: 着地(直し 0 回)
 - U2 GBuffer の書き手（ラスタの 3 本と可視バッファの解決）を符号化の関数へ通す: 着地(直し 1 回)
 - U5 GPU の割り当て表の文書を書く: 着地(直し 1 回)
+- U6 ShadingModelContractTest を足し、タスクの verify を通す: 着地(直し 0 回)
