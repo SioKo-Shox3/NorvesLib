@@ -143,13 +143,13 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 
 パス名の規約は `Ext.<Game>.<Name>` とする。`Ext.` で始まらない名前と、登録済みまたは保留中の同名パスは拒否される。`IViewPass` と `IRenderGraphPass` の両方を実装したパスだけを登録でき、レガシー経路のパスは拒否される。ファクトリは生成関数ポインタと `context` の組であり、登録時に一度呼んで返された実体の型を検査し、初期化せず破棄する。実際の差し込みや再構築でも呼ばれるため、`context` は登録解除の反映まで有効に保ち、ファクトリから登録表へ再入しない。
 
-登録・解除・有効状態の変更は GameThread から `Register`・`Unregister`・`SetEnabled` で行い、mutex で守られた保留の列に積む。最初の `ApplyPending` より前の初期化の窓では即時に反映される。以後、通常の登録操作による `m_Passes` と後段スタックの変更は RenderThread の `SceneView::Render(ViewRenderContext&)` 冒頭の `ApplyPending` で行う。`SetupDeferredPipeline` で組み直す場合は末尾の `ReinsertAll` が登録済みの拡張を入れ直し、既にある実体は重複して挿入しない。
+登録・解除・有効状態の変更は GameThread から `Register`・`Unregister`・`SetEnabled` で行い、mutex で守られた保留の列に積む。初期化の窓では即時に反映され、モジュールの登録と `OnPostInitialize` の後、ゲームスレッドが走り出す前に `CloseInitializationWindow` で窓を閉じる。呼ばれない場合は最初の `ApplyPending` で閉じる。以後、通常の登録操作による `m_Passes` と後段スタックの変更は RenderThread の `SceneView::Render(ViewRenderContext&)` 冒頭の `ApplyPending` で行う。`SetupDeferredPipeline` で組み直す場合は末尾の `ReinsertAll` が登録済みの拡張を入れ直し、既にある実体は重複して挿入しない。
 
 拡張パスは守りの包みを通して呼ばれる。`Initialize` の失敗や `Setup`・`Declare`・`Execute` などで発生した例外はそのパスの実体だけを無効にし、失敗のログをその実体につき一度だけ出す。失敗を `View::Render` に伝播させず、ほかのパスの描画を続ける。後段スタックの初期化後に拡張が追加された場合も、`View::Render` が未初期化のネイティブパスを初期化してから RenderGraph に追加する。
 
 ゲーム側の窓口には `RenderWorld::RegisterRenderExtension(desc, factory)` などがある。描画モジュールは `IRenderModule::RegisterRenderExtensions(RenderExtensionRegistry&)` でも登録でき、この関数はモジュールのインストール後に一度呼ばれる。
 
-`SetupPathTracingPipeline` の経路には拡張を挿入しない。`NotePathTracingPipeline` の呼び出し時に登録があれば、その登録表で一度だけ警告を出す。パイプラインのセットアップ後に初めて登録された場合、登録の時点ではこの警告は出ない。
+`SetupPathTracingPipeline` の経路には拡張を挿入しない。セットアップ時に登録があればその時点で、なければ後から初めて登録された時点で、登録表につき一度だけ警告を出す。
 
 被写界深度の `DepthOfFieldPass` と動きぼけの `MotionBlurPass` は `SetupDeferredPipeline` で、検証用パスの後・後段スタックの前に、この順で追加される。パイプラインの組み直し時にも追加される。
 

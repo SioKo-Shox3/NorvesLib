@@ -48,10 +48,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief 初期化時または描画停止中に設定する。旧所有先のパスは先に破棄しておく。 */
         void SetOwner(View* owner);
 
-        /** @brief ゲームスレッドから登録する。最初の ApplyPending より前だけ即時反映する。 */
+        /** @brief ゲームスレッドから登録する。初期化の窓（CloseInitializationWindow か最初の ApplyPending まで）だけ即時反映する。 */
         bool Register(const RenderExtensionDesc& desc, const RenderExtensionFactory& factory);
         bool Unregister(const char* name);
         bool SetEnabled(const char* name, bool bEnabled);
+
+        /** @brief ゲームスレッドが走り出す前に呼び、以後の操作を描画スレッドの ApplyPending へ回す。 */
+        void CloseInitializationWindow();
 
         /** @brief 描画スレッドで保留操作を反映し、初期化時の即時反映を終了する。 */
         void ApplyPending();

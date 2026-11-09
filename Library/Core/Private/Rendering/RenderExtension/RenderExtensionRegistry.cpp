@@ -240,6 +240,15 @@ namespace NorvesLib::Core::Rendering
         bool bPathTracingNoted = false;
         bool bMissingAnchorNoted[5] = {};
 
+        void NotePathTracingOnce()
+        {
+            if (!bPathTracingNoted)
+            {
+                NORVES_LOG_WARNING("RenderExtension", "パストレーシングでは登録された描画拡張を実行しません");
+                bPathTracingNoted = true;
+            }
+        }
+
         Entry* Find(const char* name)
         {
             if (name)
@@ -457,6 +466,10 @@ namespace NorvesLib::Core::Rendering
 
         const uint64_t sequence = m_State->NextSequence++;
         m_State->Entries.push_back({desc, factory, sequence});
+        if (m_State->bPathTracingPipeline)
+        {
+            m_State->NotePathTracingOnce();
+        }
         m_State->PendingOperations.push_back({State::Operation::Register, sequence});
         if (m_State->bInitializationWindow)
         {
@@ -498,6 +511,19 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void RenderExtensionRegistry::CloseInitializationWindow()
+    {
+        Thread::ScopedLock lock(m_State->Mutex);
+        if (m_State->bInitializationWindow)
+        {
+            if (!m_State->PendingOperations.empty())
+            {
+                m_State->Apply();
+            }
+            m_State->bInitializationWindow = false;
+        }
+    }
+
     void RenderExtensionRegistry::ApplyPending()
     {
         Thread::ScopedLock lock(m_State->Mutex);
@@ -520,10 +546,9 @@ namespace NorvesLib::Core::Rendering
     {
         Thread::ScopedLock lock(m_State->Mutex);
         m_State->bPathTracingPipeline = true;
-        if (!m_State->Entries.empty() && !m_State->bPathTracingNoted)
+        if (!m_State->Entries.empty())
         {
-            NORVES_LOG_WARNING("RenderExtension", "パストレーシングでは登録された描画拡張を実行しません");
-            m_State->bPathTracingNoted = true;
+            m_State->NotePathTracingOnce();
         }
     }
 
