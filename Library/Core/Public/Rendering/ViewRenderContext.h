@@ -7,6 +7,7 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPointLights.h"
 #include "FrameCommand.h"
@@ -624,6 +625,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 草の場のスナップショット（FramePacket::GrassField を指す。草の場が無いフレームは nullptr） */
         const GrassFieldRenderData *SnapshotGrassField = nullptr;
+
+        /** @brief パケット所有の世界フィールド干渉子の配列を借用する読み取り専用ポインタ。 */
+        const Container::VariableArray<WorldFieldInteractor>* SnapshotWorldFieldInteractors = nullptr;
 
         /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
         const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
