@@ -131,6 +131,11 @@ namespace NorvesLib::Core::Rendering
                    RHI::IsBlockCompressedFormat(ToRHITextureFormat(createInfo.PixelFormat));
         }
 
+        bool NeedsMipGeneration(const TextureCreateInfo &createInfo, uint32_t mipLevels)
+        {
+            return mipLevels > 1 && !HasPackedMipChain(createInfo) && !createInfo.bSparse;
+        }
+
         // ミップ0から順に詰めた初期データを、ミップごとのコピー領域でテクスチャへ上げる。
         // 1ミップの大きさは形式のブロック単位（端は切り上げ）で数え、各ミップは詰めたまま続く。
         bool UploadPackedMipChain(RHI::ITexture &texture,
@@ -324,9 +329,18 @@ namespace NorvesLib::Core::Rendering
         desc.Width = createInfo.Width;
         desc.Height = createInfo.Height;
         desc.Depth = createInfo.Depth;
-        desc.MipLevels = mipLevels;
         desc.ArraySize = createInfo.ArraySize;
         desc.TextureFormat = ToRHITextureFormat(createInfo.PixelFormat);
+
+        if (NeedsMipGeneration(createInfo, mipLevels) &&
+            !m_Device->IsFormatSupported(desc.TextureFormat, RHI::FormatUsage::LinearMipGeneration))
+        {
+            NORVES_LOG_WARNING("RenderResources",
+                               "線形ブリットによるミップ生成に非対応のため1段で作成します: texture=%s format=%d mipLevels=%u",
+                               createInfo.DebugName.c_str(), static_cast<int>(desc.TextureFormat), mipLevels);
+            mipLevels = 1;
+        }
+        desc.MipLevels = mipLevels;
 
         if (createInfo.bSparse)
         {
@@ -380,7 +394,7 @@ namespace NorvesLib::Core::Rendering
         desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
         // ミップ生成（ブリット）で元のミップを読むときだけ転送元が要る。全ミップを渡すテクスチャは生成しない。
         // sparse は全ミップをタイル単位の書き込みで作るので、ミップ生成もしない。
-        if (mipLevels > 1 && !HasPackedMipChain(createInfo) && !createInfo.bSparse)
+        if (NeedsMipGeneration(createInfo, mipLevels))
         {
             desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
         }
@@ -458,8 +472,6 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        const uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
-
         Thread::ScopedLock lock(m_Mutex);
         auto it = m_Textures.find(handle.Id);
         if (it == m_Textures.end() || !it->second.RHITexture)
@@ -488,21 +500,32 @@ namespace NorvesLib::Core::Rendering
         result.bUploadAttempted = true;
         result.bUploadSucceeded = true;
 
-        if (effectiveMipLevels > 1)
+        if (NeedsMipGeneration(createInfo, it->second.RHITexture->GetMipLevels()))
         {
             auto mipgenStartTime = StoreNow();
-            auto commandList = m_Device ? m_Device->CreateCommandList() : nullptr;
-            if (!commandList)
+            if (m_Device &&
+                !m_Device->IsFormatSupported(it->second.RHITexture->GetFormat(), RHI::FormatUsage::LinearMipGeneration))
             {
                 result.bMipgenSuccess = false;
-                NORVES_LOG_ERROR("RenderResources", "Failed to create command list for mip generation");
+                NORVES_LOG_ERROR("RenderResources",
+                                 "線形ブリットによるミップ生成に対応していません: texture=%s format=%d",
+                                 createInfo.DebugName.c_str(), static_cast<int>(it->second.RHITexture->GetFormat()));
             }
             else
             {
-                commandList->Begin();
-                commandList->GenerateMipmaps(it->second.RHITexture);
-                commandList->End();
-                commandList->Submit(true);
+                auto commandList = m_Device ? m_Device->CreateCommandList() : nullptr;
+                if (!commandList)
+                {
+                    result.bMipgenSuccess = false;
+                    NORVES_LOG_ERROR("RenderResources", "ミップ生成用のコマンドリストを作成できませんでした");
+                }
+                else
+                {
+                    commandList->Begin();
+                    commandList->GenerateMipmaps(it->second.RHITexture);
+                    commandList->End();
+                    commandList->Submit(true);
+                }
             }
             result.MipgenMs = StoreElapsedMs(mipgenStartTime);
         }
