@@ -150,8 +150,7 @@ void main()
 
     // GBufferの法線は符号付きのワールド法線（RGBA16F）をそのまま持つ（Lightingと同じ読み方）
     vec3 normalWS = normalize(texture(gbufferNormal, fragUV).xyz);
-    vec4 materialSample = texture(gbufferMaterial, fragUV);
-    float roughness = materialSample.g;
+    float roughness = texture(gbufferMaterial, fragUV).g;
     // 環境光の鏡面反射の反射率（金属はalbedoの色、誘電体はフレネルの分。鏡面の遮蔽込み）
     vec3 reflectance = texture(specularReflectance, fragUV).rgb;
 
