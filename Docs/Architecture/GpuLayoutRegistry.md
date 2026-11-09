@@ -16,14 +16,20 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 |---|---|---|---|---|---|---|---|
 | Albedo | 0 | `R8G8B8A8_UNORM` | 線形アルベド R | 線形アルベド G | 線形アルベド B | アルファ。空画素の判定にも使う |
 | Normal | 1 | `R16G16B16A16_FLOAT` | ワールド法線 X | ワールド法線 Y | ワールド法線 Z | シェーディングモデル ID と受け手の印を詰めた整数 |
-| Material | 2 | `R8G8B8A8_UNORM` | 金属度 | 粗さ | AO | 材質値 `P0`。現在の書き手は `0` |
-| Emissive | 3 | `R16G16B16A16_FLOAT` | プリエクスポージャ後の発光 R | 同 G | 同 B | 材質値 `P1`。現在の書き手は `0` |
+| Material | 2 | `R8G8B8A8_UNORM` | 金属度 | 粗さ | AO | 材質値 `P0` |
+| Emissive | 3 | `R16G16B16A16_FLOAT` | プリエクスポージャ後の発光 R | 同 G | 同 B | 材質値 `P1` |
 | Velocity | 4 | `R16G16_FLOAT` | 現在の UV − 前の UV の X | 同 Y | 成分なし | 成分なし |
 | Depth | 深度 | `D32_FLOAT` | 深度（標本の `.r`） | 成分なし | 成分なし | 成分なし |
 
-`Material.a` と `Emissive.a` は意味のない余白ではなく、登録済みの `P0` / `P1` の枠である。値の入口は `G5-GR26-MATERIAL-PARAMS` が扱う。`P0` は UNORM 8 bit、`P1` は半精度 float の制約を受ける。
+`Material.a` と `Emissive.a` は意味のない余白ではなく、登録済みの `P0` / `P1` の枠である。`P0` は UNORM 8 bit、`P1` は半精度 float の制約を受ける。
 
-書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使い、現在は `DefaultLit` と `P0 = P1 = 0` を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求め、履歴が使えない場合は `0` とする。
+書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求め、履歴が使えない場合は `0` とする。
+
+### 材質値の優先と ID
+
+`ShadingParams` は x = `P0`、y = `P1`、z = 予約、w = 被覆率の乗数（1 で不変）。各成分は `MeshComponent::SetShadingParams` / `SkinnedMeshComponent::SetShadingParams` のインスタンス値が 0 以上ならそれを使い、負なら `MaterialResourceData::ShadingParams` / `MegaMeshMaterial::ShadingParams` の材質値を使う。両方とも負なら `P0 = P1 = 0`、z = 0、w = 1。未指定の初期値は各成分 `-1` である。GLSL の解決は `Common/GBufferEncoding.glsl::ResolveShadingParams` に従う。スキニングのインスタンス値は CPU で材質値に重ねる。現行の MegaGeometry はインスタンス値を渡さず、材質値を使う。
+
+CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::ToGBufferShadingModelId` だけが担う。`Fur`・`Eye`・`PaleFlat` を対応する ID に、それ以外を `DefaultLit` に写す。
 
 ### Normal.w の符号化
 
@@ -58,13 +64,13 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 ## 2. GBuffer / MegaGeometry の UBO
 
-両者とも `set = 0, binding = 0` の `MVPData` に対応する。ワールド変換は UBO ではなく各経路のインスタンス表から読む。以下の UBO のオフセットは、全メンバが `float` 配列である宣言順から積算した値である。フィールドごとの `offsetof` の `static_assert` は存在せず、大きさの検査と区別する。
+両者とも `set = 0, binding = 0` の `MVPData` に対応する。標準メッシュと MegaGeometry のワールド変換は UBO ではなく各経路のインスタンス表から、スキニングのワールド変換は別のバッファから読む。以下の UBO のオフセットは、全メンバが `float` 配列である宣言順から積算した値である。フィールドごとの `offsetof` の `static_assert` は存在せず、大きさの検査と区別する。
 
 ### GBuffer
 
-C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 336u)` と初期化時の `UBO_SIZE = 336` がある。空きの末尾領域はない。
+C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 368u)` と初期化時の `UBO_SIZE = 368` がある。空きの末尾領域はない。
 
-GLSL は `Assets/Shaders/gbuffer.frag` の `MVPData` が全 336 バイト、`Assets/Shaders/gbuffer.vert` の同名宣言が先頭 320 バイト（`frameParams` まで）を持つ。
+GLSL は `Assets/Shaders/gbuffer.frag` の `MVPData` が全 368 バイト、`Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の同名宣言が先頭 320 バイト（`frameParams` まで）を持つ。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（ベクトルは x / y / z / w 順） |
 |---|---|---|---|
@@ -77,6 +83,8 @@ GLSL は `Assets/Shaders/gbuffer.frag` の `MVPData` が全 336 バイト、`Ass
 | 288 | `pomParams: float[4]` | `pomParams: vec4` | 高さ倍率 / 高さマップあり（1/0）/ ORM を `metallicTexture` 枠に張る（1/0）/ 法線が 2 チャンネル（1/0） |
 | 304 | `frameParams: float[4]` | `frameParams: vec4` | 前のカメラ履歴あり（1/0）/ 発光のプリエクスポージャ / sparse（VT）テクスチャあり（1/0）/ アルベドの VT フィードバックパラメータ |
 | 320 | `vtFeedbackParams: float[4]` | `vtFeedbackParams: vec4`（断片側のみ） | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / 鏡面のない材質（1/0） |
+| 336 | `shadingParams: float[4]` | `shadingParams: vec4`（断片側のみ） | 材質の `P0` / `P1` / 予約 / 被覆率の乗数。スキニングはインスタンス値を重ねた値 |
+| 352 | `shadingModel: float[4]` | `shadingModel: vec4`（断片側のみ） | x = GBuffer のシェーディングモデル ID、yzw = 0 |
 
 `vtFeedbackParams.w`（332 バイト）は `gbuffer.frag` が `> 0.5` を判定し、`Normal.w` の `DIFFUSE_ONLY` の印へ変換する。`Material.a` の意味には使わない。
 
@@ -84,9 +92,9 @@ VT パラメータの `0` は要求を書かない指定。整数を float に�
 
 ### MegaGeometry
 
-C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 132 float = **528 バイト**。検査は `static_assert(sizeof(SectionUniformData) <= 768u)`、確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 528〜767 バイト（240 バイト）は空きで、現在の UBO 宣言には含まれない。
+C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 136 float = **544 バイト**。検査は `static_assert(sizeof(SectionUniformData) <= 768u)`、確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 544〜767 バイト（224 バイト）は空きで、現在の UBO 宣言には含まれない。
 
-GLSL は `Assets/Shaders/megageometry.frag` の `MVPData` が全体、`Assets/Shaders/megageometry.vert` は先頭 336 バイト（`frameParams` まで）。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
+GLSL は `Assets/Shaders/megageometry.frag` の `MVPData` が全 544 バイト、`Assets/Shaders/megageometry.vert` は先頭 336 バイト（`frameParams` まで）。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
 |---|---|---|---|
@@ -100,10 +108,11 @@ GLSL は `Assets/Shaders/megageometry.frag` の `MVPData` が全体、`Assets/Sh
 | 256 | `PreviousProjection: float[16]` | `previousProjection: mat4` | 前の投影行列 |
 | 320 | `FrameParams: float[4]` | `frameParams: vec4` | 前のカメラあり / 発光のプリエクスポージャ / 変位の頂点の UV 間隔（0 は変位なし）/ payload が LOD の段（1/0） |
 | 336 | `MaterialParams: float[4]` | `materialParams: vec4` | ORM を `metallicTexture` 枠に張る / 2 チャンネル法線 / sparse（VT）テクスチャあり / アルベドの VT パラメータ |
-| 352 | `VtFeedbackParams: float[4]` | `vtFeedbackParams: vec4` | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / 空き（ゼロ初期化） |
+| 352 | `VtFeedbackParams: float[4]` | `vtFeedbackParams: vec4` | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / GBuffer のシェーディングモデル ID |
 | 368 | `TerrainParams: float[40]` | `terrainParams: vec4[10]` | 下表の地形 3 層のパラメータ |
+| 528 | `ShadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数 |
 
-MegaGeometry の `vtFeedbackParams.w` は空きであり、GBuffer の同名成分の `DIFFUSE_ONLY` 入力とは異なる。`megageometry.frag` は地形の場合に `TERRAIN` の印を書く。
+MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変換した ID であり、GBuffer の同名成分の `DIFFUSE_ONLY` 入力とは異なる。`ShadingParams` には `MegaMeshMaterial::ShadingParams` を写す。`megageometry.frag` は地形の場合に `TERRAIN` の印を書く。
 
 地形の詳細は `Library/Core/Private/Rendering/TerrainBlendShading.h::PackTerrainBlendParams` と `Assets/Shaders/Common/TerrainLayerBlend.glsl::TerrainBlendParams` が対応する。各行の型は C++ `float[4]`、GLSL `vec4`。
 
@@ -124,9 +133,9 @@ MegaGeometry の `vtFeedbackParams.w` は空きであり、GBuffer の同名成�
 
 ## 3. GPUSceneInstanceData
 
-定義は `Library/Core/Public/Rendering/MeshTypes.h` の `GPUSceneInstanceData`。`alignas(16)`、52 float = **208 バイト**。大きさ・整列・各フィールドのオフセットは同ファイルの `static_assert` で固定されている。GLSL は `std430` の `InstanceData` として読む。
+定義は `Library/Core/Public/Rendering/MeshTypes.h` の `GPUSceneInstanceData`。`alignas(16)`、56 float = **224 バイト**。大きさ・整列・各フィールドのオフセットは同ファイルの `static_assert` で固定されている。GLSL は `std430` の `InstanceData` として読む。
 
-### 標準メッシュの 52 float
+### 標準メッシュの 56 float
 
 `Library/Core/Private/Rendering/DrawCommand.cpp::FillGPUSceneInstanceData` が詰める。行列の配列要素 `4*c+r` は GLSL の `[c][r]` に対応する。
 
@@ -142,6 +151,7 @@ MegaGeometry の `vtFeedbackParams.w` は空きであり、GBuffer の同名成�
 | 43 | 172〜175 | `NormalMatrix[11]` | `normalRows[2].w: float` | 空き（0） |
 | 44〜47 | 176〜191 | `ObjectColor[0..3]` | `objectColor: vec4` | オブジェクトカラー RGBA。入力 `customData[0..3]` の各成分が 0 ならその成分を 1 にする。入力なしは全て 1 |
 | 48〜51 | 192〜207 | `CustomData[0..3]` | `customData: vec4` | 入力 `customData[0..3]` の原値。入力なしは全て 0。標準メッシュの現シェーダーでは未使用だが、CPU のカスタム値の保持先 |
+| 52〜55 | 208〜223 | `ShadingParams[0..3]` | `shadingParams: vec4` | インスタンスの `P0` / `P1` / 予約 / 被覆率の乗数。入力なしは全て -1 |
 
 法線の 3 行は `Math/MatrixUtils.h::CopyUpper3x3ToShaderData` が各行の w を 0 にする。シェーダーは各行 xyz に入力法線の x / y / z を掛けて足し、正規化する。
 
@@ -164,23 +174,25 @@ MegaGeometry の `vtFeedbackParams.w` は空きであり、GBuffer の同名成�
 | 49 | 196〜199 | `customData.y` | 2D 板はビューポート高さ。ワールド側はアトラス幅 |
 | 50 | 200〜203 | `customData.z` | 2D 板では空き（0）。ワールド側はアトラス高さ |
 | 51 | 204〜207 | `customData.w` | 2D 板では空き（0）。ワールド側は `LODSwitchDistance`。インポスターの頂点側が転送するが、現断片側では読まない |
+| 52〜55 | 208〜223 | `shadingParams` | 板・インポスターのシェーダーは読まない。詰める側は全成分を -1 にする |
 
 ### 読むシェーダー
 
-いずれも `Assets/Shaders/` 配下。`InstanceData` の宣言は現在各ファイルにある。
+いずれも `Assets/Shaders/` 配下。`InstanceData` の宣言は `Common/SceneInstanceData.glsl` の 1 か所にあり、下記の読み手が include する。
 
 | ファイル | set / binding | 実際に読む主なフィールド |
 |---|---|---|
-| `gbuffer.vert` | 0 / 7 | `world`, `previousWorld`, `normalRows[].xyz`, `objectColor.rgb` |
+| `gbuffer.vert` | 0 / 7 | `world`, `previousWorld`, `normalRows[].xyz`, `objectColor.rgb`, `shadingParams` |
 | `forward_transparent.vert` | 0 / 7 | `world`, `normalRows[].xyz`, `objectColor` |
 | `shadow.vert` | 0 / 7 | `world`（インスタンス表を使う分岐） |
 | `point_shadow.vert` | 0 / 7 | `world`（インスタンス表を使う分岐） |
 | `visbuffer_mesh.vert` | 0 / 1 | `world` |
+| `Common/VisibilityResolve.glsl` | 0 / 5 | `world`, `previousWorld`, `objectColor.rgb`, `shadingParams` |
 | `board2d.vert` | 0 / 7 | `world`, 板用の `normalRows`, `objectColor`, `customData.xy` |
 | `world_board.vert` | 0 / 7 | `world[3]`, 板用の `normalRows`, `objectColor` |
 | `impostor.vert` | 0 / 7 | `world[3]`, 板・アトラス用の `normalRows`, `objectColor`, `customData` |
 
-MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。この 52 float の表と混同しない。
+MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。この 56 float の表と混同しない。
 
 ## 4. lighting.frag の binding
 
@@ -227,10 +239,30 @@ C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み�
 
 1. 変更する枠・型・オフセット・量子化・既定値を先に本表へ登録する。使用中・予約の枠を空きと見なさない。
 2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` を同時に直し、全書き手・読み手を同じ関数の契約へ揃える。`ShadingModelContractTest` が定数表と直接の読み書きを検査する。デカールの保持は `DecalGBufferVulkanTest`、可視バッファの書き出しは `VisibilityResolveVulkanTest` の対象。
-3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、上記 8 本の宣言と読み方を揃える。`InstanceDataFlattenTest` / `InstanceBufferRingTest` はこの構造体の値の転送・配置・容量を扱う。
+3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。`InstanceDataFlattenTest` / `InstanceBufferRingTest` はこの構造体の値の転送・配置・容量を扱う。
 4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。この一覧全体を専用に照合する試験の存在は未確認。
 
 ## 6. 照合上の未確認事項と注意
 
 - `megageometry.vert` の `emissiveColor` のコメントはカラー・強度と表記しているが、C++ の入力と `megageometry.frag` の演算は色度・輝度（nits）である。
-- `SectionUniformData` の 528 バイトと UBO 各フィールドのオフセットは配列宣言からの積算値。MegaGeometry のサイズ検査は 768 バイト以下という上限だけであり、528 バイトとの等値検査や UBO フィールドの `offsetof` 検査はない。
+- `SectionUniformData` の 544 バイトと UBO 各フィールドのオフセットは配列宣言からの積算値。MegaGeometry のサイズ検査は 768 バイト以下という上限だけであり、544 バイトとの等値検査や UBO フィールドの `offsetof` 検査はない。
+
+## 7. 可視バッファの材質表
+
+C++ は `Library/Core/Public/Rendering/VisibilityMaterialTable.h` の `VisibilityBuffer::MaterialEntry`。`alignas(16)` の 1 件は **144 バイト**で、同ファイルに大きさ・整列と `Header`、`TexturesA`、`TexturesD`、`ShadingParams` のオフセットの `static_assert` がある。GLSL は `Assets/Shaders/Common/VisibilityResolve.glsl` の `VisMaterialEntry` で、`std430`、set 0 / binding 3 の `MaterialTable` から読む。
+
+| オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
+|---|---|---|---|
+| 0 | `BaseColor: float[4]` | `baseColor: vec4` | 基本色 RGBA |
+| 16 | `Emissive: float[4]` | `emissive: vec4` | xyz = Y=1 の発光色度、w = 発光輝度（nits） |
+| 32 | `Scalars: float[4]` | `scalars: vec4` | 金属度 / 粗さ / 高さの係数 / 変位した頂点の UV 間隔。金属度・粗さは負なら未指定 |
+| 48 | `Header: uint32_t[4]` | `header: uvec4` | `MATERIAL_FLAG_*` / GBuffer のシェーディングモデル ID / `BlendMode` / 地形の混ぜ合わせの値の要約（なしなら 0） |
+| 64 | `TexturesA: uint32_t[4]` | `texturesA: uvec4` | アルベドのハンドル下位・上位 / 法線のハンドル下位・上位 |
+| 80 | `TexturesB: uint32_t[4]` | `texturesB: uvec4` | 金属度のハンドル下位・上位 / 粗さのハンドル下位・上位 |
+| 96 | `TexturesC: uint32_t[4]` | `texturesC: uvec4` | AO のハンドル下位・上位 / ORM のハンドル下位・上位 |
+| 112 | `TexturesD: uint32_t[4]` | `texturesD: uvec4` | 高さのハンドル下位・上位 / MegaGeometry の定数 AO の float ビット列 / 予約 |
+| 128 | `ShadingParams: float[4]` | `shadingParams: vec4` | `P0` / `P1` / 予約 / 被覆率の乗数。初期値は全成分 -1 |
+
+材質表の作成は `VisibilityMaterialTable.cpp::MakeMaterialEntry`。`Header[1]` には 1 節の変換後の ID を格納する。手続きメッシュのインスタンス値は解決時にインスタンス表から読み、スキニングのインスタンス値は表を作るときに材質値へ重ねる。
+
+`VisMaterialEntry` の宣言は `Common/VisibilityResolve.glsl` の 1 か所にあり、`visbuffer_resolve.comp`、`visbuffer_resolve_dump.comp`、`visbuffer_resolve_tiles.comp`、`visbuffer_resolve_tiles_dump.comp` が同ファイルを include する。
