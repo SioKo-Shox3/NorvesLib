@@ -46,6 +46,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             data.Blend = createInfo.Blend;
+            data.bWritesReactive = createInfo.bWritesReactive;
             data.Shading = createInfo.Shading;
             for (uint32_t index = 0; index < ShadingParamCount; ++index)
             {

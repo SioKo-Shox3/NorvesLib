@@ -73,6 +73,9 @@ namespace NorvesLib::Core::Skeletal
         SkeletalAnimationPath Path = SkeletalAnimationPath::Translation;
         SkeletalAnimationInterpolation Interpolation = SkeletalAnimationInterpolation::Linear;
         Container::VariableArray<SkeletalAnimationSample> Samples;
+        // 読み込み時に一様な時刻から展開したキー列の印。間隔が 0 なら印なし。キー時刻は Samples が正で、印は探索の近道にだけ使う。
+        float UniformStartSeconds = 0.0f;
+        float UniformStepSeconds = 0.0f;
     };
 
     struct SkeletalRootMotionSample

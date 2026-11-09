@@ -467,7 +467,8 @@ namespace NorvesLib::Tools::AssetCook::Detail
         }
         if (!S::BuildClipBankV1({&target, 1}, bank, report, limits, S::RigImportProfile::StaticRootFrame256, &analysis,
                                 clips) ||
-            !S::WriteClipBankV1(bank, payload, report, limits, S::RigImportProfile::StaticRootFrame256))
+            !S::WriteClipBankV1(bank, payload, report, limits, S::RigImportProfile::StaticRootFrame256,
+                                S::ClipBankV1WriteOptions{.bQuantize = request.ClipOptimize.bQuantize}))
         {
             return Fail(error, "retarget_bank_write");
         }

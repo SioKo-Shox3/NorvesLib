@@ -368,6 +368,9 @@ namespace NorvesLib::Core::Rendering
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
+        /// 半透明のとき、被覆率を Scene.Reactive へ積み TAA の残像を抑える。既定は書かない。
+        /// 雨・粒子は TAA の後の段で合成するのが推奨で、これは TAA の前に描く半透明だけに使う。
+        bool bWritesReactive = false;
         ShadingModel Shading = ShadingModel::DefaultLit;
         // 並びは ShadingParamP0・P1・Reserved・CoverageScale。負は未指定で、RenderMaterialStore のコピー時に正規化する。
         float ShadingParams[ShadingParamCount] = {-1.0f, -1.0f, -1.0f, -1.0f};
@@ -405,6 +408,9 @@ namespace NorvesLib::Core::Rendering
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
+        /// 半透明のとき、被覆率を Scene.Reactive へ積み TAA の残像を抑える。既定は書かない。
+        /// 雨・粒子は TAA の後の段で合成するのが推奨で、これは TAA の前に描く半透明だけに使う。
+        bool bWritesReactive = false;
         ShadingModel Shading = ShadingModel::DefaultLit;
         // 並びは ShadingParamP0・P1・Reserved・CoverageScale。負は未指定で、RenderMaterialStore のコピー時に正規化する。
         float ShadingParams[ShadingParamCount] = {-1.0f, -1.0f, -1.0f, -1.0f};

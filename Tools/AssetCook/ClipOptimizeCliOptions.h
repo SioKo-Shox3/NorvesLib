@@ -15,6 +15,7 @@ namespace NorvesLib::Tools::AssetCook
     struct ClipOptimizeCookOptions
     {
         bool bEnabled = false;
+        bool bQuantize = false;
         Core::Animation::ClipOptimizeSettings Settings;
         std::filesystem::path ReportPath;
         bool bAnyLimitGiven = false;
@@ -38,6 +39,18 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             candidate.bEnabled = true;
+            options = std::move(candidate);
+            return true;
+        }
+
+        if (key == "--clip-quantize")
+        {
+            if (value || candidate.bQuantize)
+            {
+                error = reinterpret_cast<const char*>(u8"--clip-quantize は値を取らず、重複して指定できません");
+                return false;
+            }
+            candidate.bQuantize = true;
             options = std::move(candidate);
             return true;
         }

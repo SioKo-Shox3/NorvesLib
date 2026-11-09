@@ -40,10 +40,21 @@
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
 - status: todo
-- done-when: 統合ブランチで Debug の構成(テスト有効)のビルドが通り、`Golden`・`PathTracingReference` を外した ctest が全部通る(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 12 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracingLighting" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(Hdr|RayTracing)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
@@ -5696,7 +5707,7 @@
 - notes: 選定課題 G9-S3（人型のシ者の骨格の出所）は推奨どおり、実在の骨格（Mixamo・Rigify・Kimodo）の選定を G10 の着手前まで保留すると決めた。理由: エンジンの側は正準ロール表をデータにして骨格に依存しないので、G9 の完了条件は合成の人型で閉じられ、Kimodo の実出力の骨格は未確認で、頒布のライセンス（Mixamo の規約本文は未取得、Kimodo の重みは NVIDIA Open Model License）も公式で確かめていないため。よってここでは `Assets/Retarget/` に特定の骨格のプリセットを置かない。今のコードの事実: vocabulary は quadruped_v1 しか受けない（`Library/Core/Private/Animation/SkeletalRoleProfile.cpp:617-620`）。`SkeletalRole` は四足の列挙だけ（`SkeletalRoleProfile.h:8-34`）なので、人型は列挙を足すか vocabulary ごとの表にする（作り方は実装に任せるが、quadruped_v1 の既存の値と出力を変えない）。manifest には分離 v1 の `SkeletonId` が入る（`Library/Core/Public/Asset/AssetManifest.h:83-91`）。既存の `Test/Tools/AssetCookRigSplitSmoke.py` は CI（`windows-assetcook.yml`）だけで回るので、この機で回せるよう CTest の cmake の台本にした（他の AssetCook の smoke と同じ形。`Tools/AssetCook/CMakeLists.txt:252-275`）。生成AIの実物（GLB・BVH）はリポジトリに入れず、小さい合成のフィクスチャだけを置く。出典: 要件 `#### GR85` の設計案 (6)(7)、受け入れ確認の RetargetCookTest (d) と AssetCookRetargetSmoke、ロードマップの選定課題一覧の G9-S3。
 
 ## G9-GR87-CLIP-QUANTIZE: ClipBank v1 にクリップの量子化と一様な時刻の記録を足し、読み込み時に展開する
-- status: todo
+- status: done
 - after: G9-GR87-CLIP-OPTIMIZER, G9-GR85-HUMANOID-SMOKE
 - gr: GR87
 - needs-gr: GR82, GR12
@@ -5858,7 +5869,7 @@
 - notes: 選定課題 G5B-S5（草の作り方。企画の提案『草の作り方』は未定）: (A) GPU で生成する曲がった帯のブレード（要件の基準線）を新しい GrassPass で描き、今の FoliagePass（株のメッシュの CPU のインスタンス）は低木・株・散布の物に残す、(B) 今の FoliagePass の株を草の場から CPU で撒いて増やす、(C) GPU で生成するカード（板ポリ＋アルファテスト）、のうち (A) を採る。理由: 要件が 1 画面で数十万〜数百万本・コンピュートでの生成とカリングを求め、FoliagePass は束ごとに不変のインスタンスの配列を GPU へ置き区画ごとに CPU で切る作り（`Library/Core/Public/Rendering/FoliageTypes.h` 冒頭、`FoliagePass.h` 18〜30 行）で、カメラの移動に応じた生成には向かない。(C) は GR27 とアルファのちらつきの対策（GR30）が要る。機構（タイル・カリング・間接描画）は (C) に移っても共通。今の描画の並び（`SceneView.cpp` 1058〜1226 行）はロードマップの時点から変わっていて、可視バッファの解決・デカール・FoliagePass が GBuffer の後にある。GrassPass は FoliagePass と同じく解決の後に GBuffer へ重ねる（頂点を動かすので解決に載せない）。GR28 の間接ディスパッチは RHI に既にある（`ICommandList.h` 518 行の `DispatchIndirect`）が、可視タイルの数は CPU が決めて直接 Dispatch でよい（タイルの選別の GPU 化は後でよい）。HZB は MegaGeometryPass が持つ（`MegaGeometryPass.h` 77〜103 行の `MegaHiZContract`・`MegaPrevHiZStatus`）ので、VirtualShadowMapPass と同じく MegaGeometryPass への参照を渡して読み取りだけで使う。バッファは少数の大きなものにまとめる（1 リソース = 1 回の確保。ロードマップ 1296 行）。`RenderGraphCompileTest` は無効にしてある（Docs/Testing.md 62 行）ので使わない。試験を足す理由: 生成の数の誤り（ハッシュ・間引き・カリングの取り違え）は、絵では草が少し疎・密に見えるだけで気づけず、CPU の写しとの完全一致でしか捕まえられない。危険地帯（RenderThread・GPU の資源の寿命）なので評価者を通す。
 
 ## G5-GR43-GRASS-DRAW: 生成したブレードを曲がった帯として GBuffer へ描き、連続の LOD・近接のフェード・風・velocity・濡れの受け口を入れる
-- status: todo
+- status: done
 - after: G5-GR43-GRASS-GENERATE, G5-GR46-WIND-FIELD, G5-GR42-GRASS-FIELD-ASSET
 - gr: GR43
 - done-when: GrassPass が GBuffer 互換の描き先（5 枚と深度へ重ねる。FoliagePass の `EnsureTargets`・`CreatePipeline` と共通の補助へ切り出し、FoliagePass もそれを使う）を開き、LOD ごとに「ブレードの SSBO の LOD の範囲を offset 付きで束ねた記述子のセット」で `DrawIndexedIndirect` を 3 回出す（頂点のバッファ無し。共有のインデックスのバッファは LOD0=7 分割・LOD1=3 分割・LOD2=1 分割の帯を連結。cullMode=None・depth Less/Write・MRT 5 枚は blend off）。`Assets/Shaders/Grass/grass.vert` は `gl_VertexIndex` から（区切り・左右）を決め、根元→先端を 2 次ベジエ（傾き＋曲がり＋`Common/Wind.glsl` の風＋踏み倒しの口（GR44 まで 0））で曲げ、幅を先端へ細め、視線に横向きのときは幅と法線を視線の側へ寄せ、画素より細い帯は最小の画素幅まで広げる。向き・位相・色の個体差は位置のハッシュから再導出する。`grass.frag` は Albedo = 根元色→先端色×個体差×濡れ（G5-GR42 の有効な濡れ度の式。全体の濡れ度は GR49 までの定数の受け口）・Albedo.a=1・法線を上へ寄せ裏面は反転・Material（金属 0・粗さは濡れで下げる・AO は根元ほど暗い）・Emissive=0・Velocity は gbuffer.frag と同じ式。前の位置は前の時刻・前のカメラで再評価する。近接のフェードは、カメラから約 1.2 m 以内は草丈を縮め、約 0.35 m 以内は画面ドア（ディザ）で discard。影は落とさない（受けるだけ）。grassland の草原に草を出す。撮影の解析の台本 `Scripts/Grass/GrassCaptureCheck.py`（距離のスイープの被覆率・平均輝度の連続性、近接での緑の最大連結成分の割合、しきい値は `Test/Core/Rendering/Thresholds/RenderingValidation/GrassLodSweep.tsv`）とカメラの台本 `Scripts/CameraScripts/grassland-sweep.txt`（10 m→120 m を 1 m 刻み）を書く（走らせるのは G5-GR43-GRASS-CHECK）。`GrassShaderCompileTest` に grass.vert・grass.frag を足して通る。GPU の試験 `GrassGBufferVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。GBuffer を読み戻し、Albedo.a=1・法線が単位長・根元の AO が先端より暗い・カメラ静止で風なしなら velocity=0・風ありのカメラ静止で velocity が同じ式の CPU の写しの有限差分と 0.002 以内）をビルドできる。
@@ -5957,7 +5968,7 @@
 - notes: ロードマップ GR30 の A（995〜1045 行）。GR30 は SS-TAA-P2 の後（ロードマップ）で、SS-TAA-P2 は done（Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md）。風の式の中身は GR46（G5 の後半）が持ち、この項目は契約と時刻の基準と velocity まで。4096 秒で巻くのは float の精度のため（1 時間を超えると刻みが粗くなる）で、風の周波数は 1/4096 Hz の整数倍に量子化する制約を GR46 へ渡す（Common/VertexAnimation.glsl の注釈と割り当て表に書く）。GBuffer の UBO の `frameParams` という名前は既に別の意味で使われている（GBufferPass.cpp:669。前のカメラの履歴・プリエクスポージャ・VT）ので、新しい欄は別の名前にする。10-02 の後に可視バッファ（既定は on）が入り、velocity は解決が三角形から作る（Common/VisibilityResolve.glsl:504 の `VisComputeVelocity`）ので、解決とソフトのラスタ（visbuffer_sw_raster.comp）も同じ式を通す必要がある（ロードマップの節には無い）。UNCERTAIN: 解決が三角形の頂点を読み直す所（VisibilityTriangleFetch.glsl）でインスタンスの値と時刻を引けるかは、読んで確かめる。危険地帯（GBuffer・可視バッファ・TAA の入力・RenderThread）なので評価者を通す。完了条件の GR30 の velocity とフレームの欠落の行、要件 `#### GR30`。
 
 ## G5-GR30-REACTIVE: TAA にリアクティブの入力（Scene.Reactive）を足し、velocity を持たない半透明・粒子の残像を消せるようにする
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA
 - gr: GR30
 - done-when: 名前付きの資源 `Scene.Reactive`（R8_UNORM）を `RenderGraphResourceNames.h` に足し、`TemporalAAPass` の Declare（TemporalAAPass.inl:358 付近）が有れば読み、無ければ 1x1 のゼロを結ぶ。`temporal_aa.frag` に binding 5 を足し、今の重み（temporal_aa.frag:198 の currentWeight）をリアクティブで 1 へ寄せ、分散のクリップの箱の半幅をリアクティブで広げる（係数は TAA の定数にして既定は仮）。書き手の口: ForwardPass の半透明の材質に「リアクティブを書く」の印（既定は書かない）を足し、印のある材質だけが色と同じブレンドの係数で被覆率を `Scene.Reactive` へ積む。拡張のパス（G5-GR25-STAGE-REGISTRY の Transparent 段）が同じ資源へ書ける手助け（RenderExtensionHelpers）を足す。GPU の `RenderingTemporalAAReactiveVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の SceneColor を撮る形で登録）が、画面を横切る半透明の板の A/B で、板が去った後にピークの 5% を超える画素が残るフレームの数が、リアクティブ有りで 2 以内・無しで 8 以上を確かめ、書き手が無いときの TAA の出力が導入前とビット一致であることも確かめる。golden 4 本が変わらない。

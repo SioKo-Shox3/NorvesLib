@@ -2,6 +2,7 @@
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
 #include "RenderExtensionStageScenario.h"
+#include "TemporalAAReactiveScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -1704,6 +1705,7 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
         RenderExtensionStageScenario m_ExtensionStageScenario;
+        TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
 
     public:
         enum class TransparentPhysicalStage : uint8_t
@@ -1778,6 +1780,15 @@ namespace
 
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
+                return false;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled() &&
+                (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                 m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                 m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario || m_bShadingModelScenario ||
+                 m_bShadingModelLightingScenario))
+            {
+                LOG_ERROR("TAA リアクティブのシナリオは他のシナリオと併用できません");
                 return false;
             }
             if (m_bShadingModelLightingScenario)
@@ -2013,6 +2024,11 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
             }
             if (m_bShadingModelScenario)
             {
@@ -2292,6 +2308,10 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument.find(TEXT("--temporal-aa-reactive-scenario=")) == 0)
+            {
+                return m_TemporalAAReactiveScenario.ParseArgument(argument, outFailureReason);
+            }
             if (argument == TEXT("--shading-model-scenario=lighting"))
             {
                 if (m_bShadingModelScenario || m_bShadingModelLightingScenario)
@@ -2509,6 +2529,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Evaluate(frame, reason);
+            }
             if (m_bShadingModelScenario)
             {
                 return EvaluateShadingModelGBufferFrame(frame, reason);
@@ -2633,6 +2657,11 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.ApplyState(renderWorld, GetFixture().GetCamera());
+                return;
+            }
             if (m_bShadingModelLightingScenario)
             {
                 renderWorld.SetMainCamera(GetFixture().GetShadingModelLightingCamera());
@@ -2980,6 +3009,11 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.Advance();
+                return;
+            }
             if (m_bShadingModelScenario)
             {
                 ++m_ShadingModelCaptureIndex;
@@ -3093,6 +3127,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.RequestFollowup(outRequest);
+            }
             if (m_bShadingModelScenario)
             {
                 if (m_ShadingModelCaptureIndex >= 3u)

@@ -41,7 +41,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveColor[4];
             float pomParams[4];
-            float sceneColorParams[4];
+            float sceneColorParams[4]; // x=プリエクスポージャ、y=被覆率を出す印（再描画の UBO だけ 1）
             float lightView[4][16];
             float lightProjection[4][16];
             float shadowSplitDistances[8];
@@ -158,6 +158,7 @@ namespace NorvesLib::Core::Rendering
 
         m_Device = context.Device;
         m_ShaderManager = context.ShaderMgr;
+        m_ReactiveTargetBinder.Initialize(m_Device);
 
         if (m_bTransparentOnly)
         {
@@ -417,6 +418,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        m_ReactivePipeline.reset();
+        m_ReactivePipelineDesc = {};
+        m_ReactiveTargetBinder.Reset();
+        m_bReactiveDeclared = false;
         m_ColorTexture = nullptr;
         m_DepthTexture = nullptr;
         m_SceneColorTexture.reset();
@@ -517,6 +522,7 @@ namespace NorvesLib::Core::Rendering
 
     void ForwardPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bReactiveDeclared = false;
         m_RenderGraphSceneColorHandle = {};
         m_RenderGraphDepthHandle = {};
 
@@ -562,6 +568,29 @@ namespace NorvesLib::Core::Rendering
                                               RHI::ResourceState::DepthRead))
             {
                 m_RenderGraphDepthHandle = depthHandle.ToResourceHandle();
+            }
+
+            // このビューの半透明一覧だけを調べ、板・impostor はリアクティブの対象にしない。
+            const ViewRenderContext* context = builder.GetContext();
+            if (context && context->Resources.Materials)
+            {
+                for (const DrawCommand& command : context->GetActiveTransparentCommands())
+                {
+                    if (command.Draw.PayloadKind == DrawPayloadKind::Board ||
+                        !command.Draw.MaterialHandle.IsValid())
+                    {
+                        continue;
+                    }
+                    const MaterialResourceData* materialData =
+                        context->Resources.Materials->GetData(command.Draw.MaterialHandle);
+                    if (materialData && materialData->bWritesReactive)
+                    {
+                        // Execute で初期化する構成でも Declare 済みのハンドルを保つ。
+                        m_ReactiveTargetBinder.Initialize(context->Device);
+                        m_bReactiveDeclared = m_ReactiveTargetBinder.Declare(builder, true);
+                        break;
+                    }
+                }
             }
 
             builder.PreserveInsertionOrder();
@@ -647,8 +676,35 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        Container::TSharedPtr<Container::VariableArray<DrawCommand>> reactiveCommands;
+        if (m_bReactiveDeclared && m_ReactiveTargetBinder.Prepare(resources))
+        {
+            const RHI::RenderPassPtr renderPass = m_ReactiveTargetBinder.GetRenderPass();
+            if (!m_ReactivePipeline || m_ReactivePipelineDesc.renderPass != renderPass)
+            {
+                m_ReactivePipelineDesc.renderPass = renderPass;
+                m_ReactivePipeline = m_Device->CreateGraphicsPipeline(m_ReactivePipelineDesc);
+                if (!m_ReactivePipeline)
+                {
+                    NORVES_LOG_ERROR("ForwardPass", "リアクティブのパイプラインを作れませんでした");
+                }
+            }
+            // 宣言後に描画を見送った場合も、最初の書き手のゼロクリアは実行する。
+            reactiveCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+        }
+
         RegisterTransparentBridge(context, sceneColorTexture, gbufferDepthTexture);
-        ExecuteTransparentCommands(context, true);
+        ExecuteTransparentCommands(context, true, reactiveCommands);
+        if (reactiveCommands)
+        {
+            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(
+                m_ReactiveTargetBinder.GetRenderPass(),
+                m_ReactiveTargetBinder.GetFramebuffer(),
+                reactiveCommands,
+                context.GetActiveLocalViewport(),
+                context.GetActiveLocalScissor(),
+                context.Resources.Meshes));
+        }
     }
 
     void ForwardPass::Execute(ViewRenderContext& context)
@@ -895,6 +951,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 主のパイプラインの頂点・記述子・ブレンド設定を引き継ぎ、書き込みだけ R に絞る。
+        m_ReactivePipeline.reset();
+        m_ReactivePipelineDesc = pipelineDesc;
+        m_ReactivePipelineDesc.renderPass.reset();
+        m_ReactivePipelineDesc.blendState.attachments[0].colorWriteMask = RHI::ColorWriteMask::R;
+
         RHI::GraphicsPipelineDesc boardPipelineDesc;
         boardPipelineDesc.vertexShader = m_WorldBoardVertexShader;
         boardPipelineDesc.pixelShader = m_WorldBoardFragmentShader;
@@ -1067,8 +1129,10 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void ForwardPass::ExecuteTransparentCommands(ViewRenderContext& context,
-                                                 bool bUseRenderGraphManagedStates)
+    void ForwardPass::ExecuteTransparentCommands(
+        ViewRenderContext& context,
+        bool bUseRenderGraphManagedStates,
+        const Container::TSharedPtr<Container::VariableArray<DrawCommand>>& reactiveCommands)
     {
         const DrawCommandView activeTransparentCommands = context.GetActiveTransparentCommands();
         const bool bHasRibbonTrails = context.SnapshotRibbonTrails &&
@@ -1350,6 +1414,7 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matORM;
             TextureHandle matHeight;
             bool bMatNormalTwoChannel = false;
+            bool bWritesReactive = false;
 
             if (cmd.Draw.MaterialHandle.IsValid())
             {
@@ -1364,6 +1429,7 @@ namespace NorvesLib::Core::Rendering
                     matORM = materialData->ORMTexture;
                     matHeight = materialData->HeightTexture;
                     bMatNormalTwoChannel = materialData->bNormalTwoChannel;
+                    bWritesReactive = materialData->bWritesReactive;
                     uboData.emissiveColor[0] = materialData->EmissiveColor[0];
                     uboData.emissiveColor[1] = materialData->EmissiveColor[1];
                     uboData.emissiveColor[2] = materialData->EmissiveColor[2];
@@ -1418,64 +1484,85 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTexture.get(), feedbackTarget);
             allocation.Write(&uboData, sizeof(TransparentForwardUBO));
 
-            allocation.DescriptorSet->BindTexture(1, albedoTexture);
-            allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(2, normalTexture);
-            allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(3, metallicTexture);
-            allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(4, roughnessTexture);
-            allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(5, aoTexture);
-            allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(6, heightTexture);
-            allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindStorageBuffer(7,
-                                                        context.InstanceDataBuffer,
-                                                        0,
-                                                        instanceDataSize);
-            allocation.DescriptorSet->BindStorageBuffer(8,
-                                                        physicalLighting.LightBuffer,
-                                                        physicalLighting.LightBufferOffset,
-                                                        physicalLighting.LightBufferSizeBytes);
-            const bool bShadowTextureIsArray =
-                physicalLighting.ShadowMapTexture &&
-                physicalLighting.ShadowMapTexture->GetArraySize() ==
-                    PhysicalLightingShadowCascadeCount;
-            allocation.DescriptorSet->BindTexture(
-                9,
-                bShadowTextureIsArray ? physicalLighting.ShadowMapTexture :
-                                        m_DefaultShadowMapArrayTexture);
-            allocation.DescriptorSet->BindSampler(
-                9,
-                bShadowTextureIsArray && physicalLighting.ShadowSampler ?
-                    physicalLighting.ShadowSampler : m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(10, physicalLighting.EnvironmentRadianceTexture);
-            allocation.DescriptorSet->BindSampler(10, physicalLighting.EnvironmentRadianceSampler);
-            allocation.DescriptorSet->BindTexture(11, physicalLighting.DiffuseIrradianceTexture);
-            allocation.DescriptorSet->BindSampler(11, physicalLighting.DiffuseIrradianceSampler);
-            allocation.DescriptorSet->BindTexture(12, physicalLighting.PrefilteredSpecularTexture);
-            allocation.DescriptorSet->BindSampler(12, physicalLighting.PrefilteredSpecularSampler);
-            allocation.DescriptorSet->BindTexture(13, physicalLighting.DfgLutTexture);
-            allocation.DescriptorSet->BindSampler(13, physicalLighting.DfgLutSampler);
-            const bool bPointShadowCubesPublished =
-                physicalLighting.PointShadowCubeTexture && physicalLighting.PointShadowCubeSampler;
-            allocation.DescriptorSet->BindTexture(
-                14,
-                bPointShadowCubesPublished ? physicalLighting.PointShadowCubeTexture
-                                           : m_DefaultPointShadowCubeTexture);
-            allocation.DescriptorSet->BindSampler(
-                14,
-                bPointShadowCubesPublished ? physicalLighting.PointShadowCubeSampler
-                                           : m_DefaultLinearSampler);
-            BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
-            allocation.DescriptorSet->Update();
+            auto bindDescriptorSet = [&](const RHI::DescriptorSetPtr& descriptorSet)
+            {
+                descriptorSet->BindTexture(1, albedoTexture);
+                descriptorSet->BindSampler(1, m_DefaultLinearSampler);
+                descriptorSet->BindTexture(2, normalTexture);
+                descriptorSet->BindSampler(2, m_DefaultLinearSampler);
+                descriptorSet->BindTexture(3, metallicTexture);
+                descriptorSet->BindSampler(3, m_DefaultLinearSampler);
+                descriptorSet->BindTexture(4, roughnessTexture);
+                descriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                descriptorSet->BindTexture(5, aoTexture);
+                descriptorSet->BindSampler(5, m_DefaultLinearSampler);
+                descriptorSet->BindTexture(6, heightTexture);
+                descriptorSet->BindSampler(6, m_DefaultLinearSampler);
+                descriptorSet->BindStorageBuffer(7,
+                                                            context.InstanceDataBuffer,
+                                                            0,
+                                                            instanceDataSize);
+                descriptorSet->BindStorageBuffer(8,
+                                                            physicalLighting.LightBuffer,
+                                                            physicalLighting.LightBufferOffset,
+                                                            physicalLighting.LightBufferSizeBytes);
+                const bool bShadowTextureIsArray =
+                    physicalLighting.ShadowMapTexture &&
+                    physicalLighting.ShadowMapTexture->GetArraySize() ==
+                        PhysicalLightingShadowCascadeCount;
+                descriptorSet->BindTexture(
+                    9,
+                    bShadowTextureIsArray ? physicalLighting.ShadowMapTexture :
+                                            m_DefaultShadowMapArrayTexture);
+                descriptorSet->BindSampler(
+                    9,
+                    bShadowTextureIsArray && physicalLighting.ShadowSampler ?
+                        physicalLighting.ShadowSampler : m_DefaultLinearSampler);
+                descriptorSet->BindTexture(10, physicalLighting.EnvironmentRadianceTexture);
+                descriptorSet->BindSampler(10, physicalLighting.EnvironmentRadianceSampler);
+                descriptorSet->BindTexture(11, physicalLighting.DiffuseIrradianceTexture);
+                descriptorSet->BindSampler(11, physicalLighting.DiffuseIrradianceSampler);
+                descriptorSet->BindTexture(12, physicalLighting.PrefilteredSpecularTexture);
+                descriptorSet->BindSampler(12, physicalLighting.PrefilteredSpecularSampler);
+                descriptorSet->BindTexture(13, physicalLighting.DfgLutTexture);
+                descriptorSet->BindSampler(13, physicalLighting.DfgLutSampler);
+                const bool bPointShadowCubesPublished =
+                    physicalLighting.PointShadowCubeTexture && physicalLighting.PointShadowCubeSampler;
+                descriptorSet->BindTexture(
+                    14,
+                    bPointShadowCubesPublished ? physicalLighting.PointShadowCubeTexture
+                                               : m_DefaultPointShadowCubeTexture);
+                descriptorSet->BindSampler(
+                    14,
+                    bPointShadowCubesPublished ? physicalLighting.PointShadowCubeSampler
+                                               : m_DefaultLinearSampler);
+                BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
+                descriptorSet->Update();
+            };
+            bindDescriptorSet(allocation.DescriptorSet);
 
             DrawCommand drawCommand = cmd;
             drawCommand.Pipeline = m_TransparentPipeline;
             drawCommand.DescriptorSet = allocation.DescriptorSet;
             drawCommand.DescriptorSetSlot = 0;
             transparentCommands->push_back(drawCommand);
+
+            if (bWritesReactive && reactiveCommands && m_ReactivePipeline)
+            {
+                auto reactiveAllocation = m_UniformAllocator.Allocate(context.FrameResources);
+                if (!reactiveAllocation.UniformBuffer)
+                {
+                    NORVES_LOG_WARNING("ForwardPass", "リアクティブの UBO を割り当てられませんでした");
+                    continue;
+                }
+                // 主描画の UBO を共有せず、同じ alpha を算出する再描画だけに印を立てる。
+                uboData.sceneColorParams[1] = 1.0f;
+                reactiveAllocation.Write(&uboData, sizeof(TransparentForwardUBO));
+                bindDescriptorSet(reactiveAllocation.DescriptorSet);
+                drawCommand.Pipeline = m_ReactivePipeline;
+                drawCommand.DescriptorSet = reactiveAllocation.DescriptorSet;
+                reactiveCommands->push_back(drawCommand);
+            }
         }
 
         if (transparentCommands->empty() && !bHasRibbonTrails)

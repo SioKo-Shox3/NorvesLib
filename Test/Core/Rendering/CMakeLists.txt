@@ -619,6 +619,15 @@ set_tests_properties(GrassGenerateVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 草の GBuffer を GPU で読み戻し、法線・AO・速度を確かめる。
+add_test(NAME GrassGBufferVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassGBufferVulkanTest)
+set_tests_properties(GrassGBufferVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME WindGlslParityVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WindGlslParityVulkanTest)
 set_tests_properties(WindGlslParityVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -684,6 +693,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
+    MEMBER GrassGBufferVulkanTest GrassGBufferVulkanTest.cpp
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
@@ -877,6 +887,7 @@ register_rendering_gpu_test(
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
+    TemporalAAReactiveScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
@@ -936,6 +947,14 @@ register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdr
     --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+# 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
+# 書き手なしとゼロの書き手で TAA 後の RGB がビット一致することも確かめる。
+register_rendering_gpu_test(
+    RenderingTemporalAAReactiveVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color
+    --temporal-aa-reactive-scenario=ab)
 register_rendering_gpu_test(
     RenderExtensionStageVulkanTest
     RenderingHdrSceneCaptureTest

@@ -115,6 +115,8 @@ set(PRIVATE_SOURCES
     Private/Animation/RigSplitBindingTestAccess.h
     Private/Animation/RigSplitBinding.cpp
     Private/Animation/ClipBankBindingTestAccess.h
+    Private/Asset/ClipQuantization.h
+    Private/Asset/ClipQuantization.cpp
     Private/Asset/CookedClipBankV1.cpp
     Private/Asset/CookedClipBankV1.h
     Private/Asset/RigSplitWire.h
@@ -274,7 +276,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassBladeMesh.cpp
     Private/Rendering/WorldFieldPass.cpp
     Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
