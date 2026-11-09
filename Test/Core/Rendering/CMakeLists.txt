@@ -366,6 +366,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
+    MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
 target_link_libraries(RHIRayTracingApiContractTest PRIVATE Core)
@@ -382,6 +383,8 @@ add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
 add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --test=RHIIndirectApiContractTest)
 
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
+# 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
+add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
 
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)

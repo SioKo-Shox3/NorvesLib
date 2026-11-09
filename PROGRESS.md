@@ -10363,3 +10363,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G5-GR28-DRAW-INDIRECT): 要起票: 既存の `DrawIndexedIndirect`・`DrawIndexedIndirectCount` は drawCount を `maxDrawIndirectCount` と照らさず、MegaGeometryPass の区間の容量（`MegaGeometryPass.cpp` 3922 行付近）も上限を見ていない。`multiDrawIndirect` と `drawIndirectCount` の両方が無い装置では区間の容量の回数だけ描画を発行する（実機の対象の GPU は両方を持つ）。
 - U1 生成の型・ハッシュ・設定と CPU の写し GrassGenerateReference を足す: 着地(直し 1 回)
 - U2 CPU のタイルの選別 GrassTileSelector を足す: 着地(直し 0 回)
+- U3 GrassArgsInit.comp・GrassGenerate.comp と GrassShaderCompileTest を足す: 着地(直し 1 回)
