@@ -502,12 +502,31 @@ namespace NorvesLib::Core::Animation
             settings.MaximumRestErrorRadians < 0 || !std::isfinite(source.Clip.DurationSeconds) ||
             source.Clip.DurationSeconds <= 0 ||
             (settings.LoopExcludedRoles & ~((uint32_t{1} << SkeletalRoleCount) - 1)) ||
+            (settings.RoleUpHintMask & ~((uint32_t{1} << SkeletalRoleCount) - 1)) ||
+            !std::isfinite(settings.LegLengthRatioOverride) || settings.LegLengthRatioOverride < 0 ||
             source.Clip.Channels.size() > 32768 || !source.Clip.RootMotion.empty() ||
             source.DroppedTranslationChannels > source.Joints.size() || !std::isfinite(settings.UpHint.X) ||
             !std::isfinite(settings.UpHint.Y) || !std::isfinite(settings.UpHint.Z) ||
             std::hypot(settings.UpHint.X, settings.UpHint.Y, settings.UpHint.Z) < 1e-10)
         {
             return Fail(error, "retarget_input");
+        }
+        for (size_t role = 0; role < SkeletalRoleCount; ++role)
+        {
+            if ((settings.RoleUpHintMask & (uint32_t{1} << role)) == 0)
+            {
+                continue;
+            }
+            const auto& hint = settings.RoleUpHints[role];
+            if (!std::isfinite(hint.X) || !std::isfinite(hint.Y) || !std::isfinite(hint.Z) ||
+                std::hypot(hint.X, hint.Y, hint.Z) < 1e-10)
+            {
+                return Fail(error, "retarget_input");
+            }
+        }
+        if (settings.bAutoLegRootScale && settings.bAutoRootHeight)
+        {
+            return Fail(error, "root_scale_conflict");
         }
         Context c{source};
         SkeletalClipRetargetReport report;
@@ -620,7 +639,11 @@ namespace NorvesLib::Core::Animation
                 correction = {};
                 if (settings.RestMode == SkeletalRestCorrectionMode::AlignBones)
                 {
-                    if (!AlignDirections(a, b, settings.UpHint, correction))
+                    const auto role = entryRoles[pair.InputEntryIndex];
+                    const auto& hint = (settings.RoleUpHintMask & (uint32_t{1} << role))
+                                           ? settings.RoleUpHints[role]
+                                           : settings.UpHint;
+                    if (!AlignDirections(a, b, hint, correction))
                     {
                         return Fail(error, "rest_up_hint");
                     }
@@ -705,6 +728,94 @@ namespace NorvesLib::Core::Animation
                 return Fail(error, "root_height_requires_pelvis_and_paw");
             }
             c.RootScale *= targetHeight / sourceHeight;
+        }
+        if (settings.bAutoLegRootScale)
+        {
+            const auto measureLeg = [&](C::Span<const SkeletalRole> roles, double& sourceSum, double& targetSum,
+                                        uint32_t& count)
+            {
+                V previousSource{}, previousTarget{};
+                double sourceLength = 0, targetLength = 0;
+                uint32_t joints = 0;
+                for (const auto role : roles)
+                {
+                    const auto index = size_t(role);
+                    if (profile.Source[index].empty() || profile.Target[index].empty())
+                    {
+                        continue;
+                    }
+                    uint32_t sourceJoint, targetJoint;
+                    if (!FindSkeletalJointIndex(si, profile.Source[index][0], sourceJoint).Succeeded() ||
+                        !FindSkeletalJointIndex(ti, profile.Target[index][0].Name, targetJoint).Succeeded())
+                    {
+                        return false;
+                    }
+                    const auto sourcePosition = sourcePositions[sourceJoint];
+                    const auto targetPosition = targetPositions[targetJoint];
+                    if (joints > 0)
+                    {
+                        const auto sourceDelta = Sub(sourcePosition, previousSource);
+                        const auto targetDelta = Sub(targetPosition, previousTarget);
+                        sourceLength += std::hypot(sourceDelta.X, sourceDelta.Y, sourceDelta.Z);
+                        targetLength += std::hypot(targetDelta.X, targetDelta.Y, targetDelta.Z);
+                    }
+                    previousSource = sourcePosition;
+                    previousTarget = targetPosition;
+                    ++joints;
+                }
+                if (joints >= 2)
+                {
+                    sourceSum += sourceLength;
+                    targetSum += targetLength;
+                    ++count;
+                }
+                return true;
+            };
+            const C::FixedArray<SkeletalRole, 3> frontLeft{
+                SkeletalRole::FrontLUpper, SkeletalRole::FrontLLower, SkeletalRole::FrontLPaw};
+            const C::FixedArray<SkeletalRole, 3> frontRight{
+                SkeletalRole::FrontRUpper, SkeletalRole::FrontRLower, SkeletalRole::FrontRPaw};
+            const C::FixedArray<SkeletalRole, 4> hindLeft{
+                SkeletalRole::HindLThigh, SkeletalRole::HindLShin, SkeletalRole::HindLHock, SkeletalRole::HindLPaw};
+            const C::FixedArray<SkeletalRole, 4> hindRight{
+                SkeletalRole::HindRThigh, SkeletalRole::HindRShin, SkeletalRole::HindRHock, SkeletalRole::HindRPaw};
+            double sourceFront = 0, targetFront = 0, sourceHind = 0, targetHind = 0;
+            uint32_t frontCount = 0, hindCount = 0;
+            if (!measureLeg(frontLeft, sourceFront, targetFront, frontCount) ||
+                !measureLeg(frontRight, sourceFront, targetFront, frontCount) ||
+                !measureLeg(hindLeft, sourceHind, targetHind, hindCount) ||
+                !measureLeg(hindRight, sourceHind, targetHind, hindCount) || (!frontCount && !hindCount))
+            {
+                return Fail(error, "leg_length_missing");
+            }
+            if (frontCount)
+            {
+                report.SourceLegLengthMeters = sourceFront / frontCount;
+                report.TargetLegLengthMeters = targetFront / frontCount;
+            }
+            if (hindCount)
+            {
+                report.SourceLegLengthMeters += sourceHind / hindCount;
+                report.TargetLegLengthMeters += targetHind / hindCount;
+            }
+            if (frontCount && hindCount)
+            {
+                report.SourceLegLengthMeters *= 0.5;
+                report.TargetLegLengthMeters *= 0.5;
+            }
+            if (!std::isfinite(report.SourceLegLengthMeters) || !std::isfinite(report.TargetLegLengthMeters) ||
+                report.SourceLegLengthMeters < 1e-8)
+            {
+                return Fail(error, "leg_length_missing");
+            }
+            const double ratio = settings.LegLengthRatioOverride > 0
+                                     ? settings.LegLengthRatioOverride
+                                     : report.TargetLegLengthMeters / report.SourceLegLengthMeters;
+            c.RootScale = settings.RootScale * ratio;
+            if (!std::isfinite(c.RootScale))
+            {
+                return Fail(error, "retarget_input");
+            }
         }
         c.RotationChannels.resize(source.Joints.size(), nullptr);
         C::VariableArray<uint8_t> used(source.Joints.size() * 3, 0);
