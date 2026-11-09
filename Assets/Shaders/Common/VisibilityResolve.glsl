@@ -102,7 +102,7 @@ const uint RESOLVE_DEBUG_LOD_LEVEL = 2u;
 
 layout(set = 0, binding = 2) uniform usampler2D idTexture;
 
-// フレームの材質の表の 1 件（VisibilityMaterialTable.h の MaterialEntry と同じ 128 バイト）
+// フレームの材質の表の 1 件（VisibilityMaterialTable.h の MaterialEntry と同じ 144 バイト）
 struct VisMaterialEntry
 {
     vec4 baseColor;
@@ -113,6 +113,7 @@ struct VisMaterialEntry
     uvec4 texturesB;
     uvec4 texturesC;
     uvec4 texturesD;
+    vec4 shadingParams;
 };
 
 layout(std430, set = 0, binding = 3) readonly buffer MaterialTable
@@ -519,7 +520,7 @@ vec2 VisComputeVelocity(vec2 pixelCenter, vec4 previousClip)
 bool VisLoadMaterial(uint materialIndex, out VisMaterialEntry entry)
 {
     entry = VisMaterialEntry(vec4(1.0), vec4(0.0), vec4(-1.0, -1.0, 0.05, 0.0), uvec4(0u), uvec4(0u), uvec4(0u),
-                             uvec4(0u), uvec4(0u));
+                             uvec4(0u), uvec4(0u), vec4(-1.0));
     if (materialIndex >= uint(materials.length()))
     {
         return false;
@@ -543,6 +544,20 @@ vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bH
         return vec3(1.0);
     }
     return bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
+}
+
+// 手続きの描画だけインスタンスの表を読む。スキニングの値は材質の表へ重ね済み
+vec4 VisShadingParamsForRecord(VisibilityDrawRecord record)
+{
+    if (VisRecordKind(record) == VIS_KIND_PROCEDURAL_CHUNK)
+    {
+        const uint instanceIndex = VisRecordInstanceIndex(record);
+        if (instanceIndex < uint(drawInstances.length()))
+        {
+            return drawInstances[instanceIndex].shadingParams;
+        }
+    }
+    return vec4(-1.0);
 }
 
 // 画素の面の値（GBuffer の 3 枚に書くもの）
@@ -827,14 +842,21 @@ void main()
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
     const bool bDiffuseOnly = bHasMaterial && !bDebugView && (materialEntry.header.x & VIS_MATERIAL_FLAG_DIFFUSE_ONLY) != 0u;
     const uint receiverFlags = surface.receiverFlags | (bDiffuseOnly ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u);
-    imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, receiverFlags));
-    imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterial(surface.material, 0.0));
+    uint shadingModelId = GBUFFER_SHADING_MODEL_DEFAULT_LIT;
+    vec4 shadingParams = vec4(0.0, 0.0, 0.0, 1.0);
+    if (bHasMaterial && !bDebugView)
+    {
+        shadingModelId = materialEntry.header.y & GBUFFER_SHADING_MODEL_ID_MASK;
+        shadingParams = ResolveShadingParams(VisShadingParamsForRecord(record), materialEntry.shadingParams);
+    }
+    imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, shadingModelId, receiverFlags));
+    imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterial(surface.material, shadingParams.x));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
     const vec3 emissive = (bHasMaterial && !bDebugView)
                               ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a, params.frame.x)
                               : vec3(0.0);
-    imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, 0.0));
+    imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, shadingParams.y));
     if ((params.screen.z & RESOLVE_FLAG_GEOMETRIC_NORMAL) != 0u)
     {
         // 面の法線は 3 頂点の辺の外積（補間の法線や法線マップを含まない形そのもの）。巻きの向きに依らず頂点の法線の側へ向け、

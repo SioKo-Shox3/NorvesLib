@@ -10416,3 +10416,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U12 退避した U2 の差分を当て、スキンの値（旧 U4）を同じ単位で足す: 着地(直し 0 回)
 - U13 退避した U10 の差分を当て、GBuffer の Material・Emissive に TransferSrc を足す: 着地(直し 0 回)
 - U5 GBuffer のラスタの経路（静的・インスタンス・スキン）で ID・P0・P1 を書く: 着地(直し 0 回)
+- U7 可視バッファの材質の表と解決で ID・P0・P1 を書く: 着地(直し 1 回)

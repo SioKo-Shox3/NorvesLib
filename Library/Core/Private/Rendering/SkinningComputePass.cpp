@@ -611,6 +611,10 @@ namespace NorvesLib::Core::Rendering
                 instance.SourceMeshComponentId = draw.Draw.SourceMeshComponentId;
                 instance.MaterialIndex = draw.Draw.MaterialIndex;
                 instance.Material = draw.Draw.MaterialHandle;
+                for (uint32_t channel = 0; channel < ShadingParamCount; ++channel)
+                {
+                    instance.ShadingParams[channel] = draw.Draw.ShadingParams[channel];
+                }
                 instance.bOpaque = &draw >= opaqueCommands.Data && &draw < opaqueCommands.Data + opaqueCommands.Count;
                 instance.bCastShadow = draw.Draw.bCastShadow;
                 instance.SourceFirstIndex = draw.Draw.IndexOffset;
