@@ -10357,3 +10357,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 TextureCreateInfo::Format に 6 形式を足し、GpuResourceStore と ImpostorBake の switch を表へ寄せる: 着地(直し 0 回)
 - U5 BC3・BC6H の手組みブロックを GPU の BC 試験に足す: 着地(直し 0 回)
 - U4 線形ブリットのミップ生成に対応しない形式で GenerateMipmaps を呼ばない: 着地(直し 1 回)
+- U6 RHIFormatReadbackVulkanTest を足し、全体の verify を通す: 着地(直し 0 回)

@@ -380,6 +380,15 @@ add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
 
+# 形式の対応と 16・10・浮動小数の更新・描画の読み戻しを確かめる。
+add_test(NAME RHIFormatReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIFormatReadbackVulkanTest)
+set_tests_properties(RHIFormatReadbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -606,6 +615,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
