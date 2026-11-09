@@ -10560,3 +10560,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `RenderingShadingModelGBufferVulkanTest` は 2 回の起動を束ね、Debug のシェーダーのコンパイルで 1 回 100〜150 秒かかるため、試験に `TIMEOUT 900` を付けた（verify の `--timeout 300` より優先される）。
 - Notes: Git Bash から `cmake --build ... -- /m:1` を回すと `/m:1` が `m:1` に書き換わって MSBuild が MSB1008 で落ちる。`MSYS_NO_PATHCONV=1` を付けるか PowerShell で回す。
 - 要起票: MegaGeometry を出す検証シーン（`RenderingShadingModelGBufferVulkanTest`）で `RenderGraph.cpp:2440` の `Pass 'MegaGeometryPass' declares all layout changes but enqueued a layout-changing frame command` が 1 回の起動で数十件出る（試験は合格。予備の経路の起動でも 12 件）。
+
+## G5-GR30-REACTIVE（2026-11-10）
+
+- Done: TAA のリアクティブの入力 `Scene.Reactive`（R8_UNORM）、半透明の材質の「リアクティブを書く」の印、拡張のパスの書き手の手助け、`RenderingTemporalAAReactiveVulkanTest`。統合ブランチを取り込み、`RenderingHdrSceneCaptureTest.cpp` のシナリオの分岐をシェーディングモデルのシナリオと並べて解いた（リアクティブのシナリオはシェーディングモデルのシナリオとも併用不可）。
+- 検証: 取り込み後の verify のビルド EXIT=0、ctest（Golden を外す決まりで 3 本）全通過。
+- Notes: 撮影・計測の確かめは回さない決まり。人が見るときの見どころは、TAA を有効にしたシーンで TAA の前に描く半透明（リアクティブの印を付けた材質）が動いた後の残像。
