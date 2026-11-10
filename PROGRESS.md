@@ -10703,3 +10703,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ## 2026-11-06 G12-GR09-DETACHED-COLLIDERS（run 20261106-092851 の反復 1）
 - Done: 前回の反復で実装・試験は着地済み。評価者が枠切れ（429）で未実施だったため status が doing に戻っていた。コードは変えず、着地した HEAD で ctest 10 件を回し直して 100% Passed（`.harness/runs/20261106-092851/ctest-G12-GR09-DETACHED-COLLIDERS.txt`）を確かめ、done に戻した。
 - Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。
+- U1 カリングの記述子の配置・定数・表の形・遮蔽の定数の詰め方をパスの外から使えるようにする: 着地(直し 0 回)
