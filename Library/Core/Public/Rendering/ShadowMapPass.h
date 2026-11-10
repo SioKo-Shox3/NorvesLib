@@ -47,7 +47,8 @@ namespace NorvesLib::Core::Rendering
          *
          * CSMの4カスケードはカメラのnearからこの距離（カメラのfarの方が近ければfar）までを
          * 分割する。これより遠い面は影を受けず、最後のカスケードの奥の端で影を薄めて消す。
-         * シーンが RenderWorld::SetSunShadowMaxDistance で指定したフレームは、その値が優先する（VSM も同じ値）。
+         * シーンが RenderWorld::SetSunShadowParameters の MaxDistance（または SetSunShadowMaxDistance）で指定した
+         * フレームは、その値が優先する（VSM も同じ値）。0 はこの設定のまま。SplitLambda は CSM の分割へ別途反映する。
          */
         float MaxShadowDistance = 80.0f;
 

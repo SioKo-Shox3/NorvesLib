@@ -58,12 +58,18 @@ namespace NorvesLib::Core::Rendering
                 command.Draw.ObjectId = proxy.ObjectId;
                 command.Draw.SourceMeshComponentId = proxy.ComponentId;
                 command.Draw.WorldMatrix = proxy.WorldTransform;
+                for (uint32_t i = 0; i < ShadingParamCount; ++i)
+                {
+                    command.Draw.ShadingParams[i] = proxy.ShadingParams[i];
+                }
                 command.Draw.InstanceCount = 1;
                 command.Draw.FirstInstance = 0;
                 command.Draw.bInstanced = false;
                 command.Draw.bCastShadow = proxy.bCastShadow && !submesh.bNoShadow;
                 command.Skinned.FrameLeaseIndex = frameIndex;
                 command.Skinned.BonePalette = proxy.BonePalette;
+                command.Skinned.LocalBounds = proxy.AnimatedBounds;
+                command.Skinned.bHasLocalBounds = proxy.bHasAnimatedBounds;
                 packet->DrawCommands.push_back(std::move(command));
                 ++range.Count;
             }

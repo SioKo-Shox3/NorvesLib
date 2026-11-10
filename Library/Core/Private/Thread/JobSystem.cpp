@@ -39,6 +39,7 @@ namespace NorvesLib::Thread
           m_workerThreadLimit(0),
           m_activeThreads(0),
           m_queuedTaskCount(0),
+          m_pendingTaskCount(0),
           m_lastThreadAdjustment(std::chrono::steady_clock::now()),
           m_randomGenerator(std::random_device()())
     {
@@ -72,6 +73,7 @@ namespace NorvesLib::Thread
 
         {
             ScopedLock workerLock(m_workerThreadMutex);
+            ExclusiveLock localQueuesLock(m_localQueuesLock);
             ScopedLock queueLock(m_queueMutex);
 
             if (m_lifecycleState == LifecycleState::ShutdownComplete)
@@ -147,6 +149,8 @@ namespace NorvesLib::Thread
                 m_bAcceptingTasks = false;
                 m_shutdownRequested = true;
                 m_workerThreadLimit = 0;
+                ScopedLock wakeLock(m_workerWakeMutex);
+                m_conditionVar.NotifyAll();
             }
 
             m_monitorActive = false;
@@ -160,9 +164,6 @@ namespace NorvesLib::Thread
             ScopedLock resizeLock(m_resizeMutex);
             m_workerThreadLimit = 0;
 
-            // 全ワーカースレッドに作業終了を通知
-            m_conditionVar.NotifyAll();
-
             // 全てのワーカースレッドが終了するのを待つ。
             // Threadの破棄はjoinを行うため、m_workerThreadMutexを解放してから実行する。
             Core::Container::VariableArray<std::unique_ptr<Thread>> workerThreadsToJoin;
@@ -174,6 +175,7 @@ namespace NorvesLib::Thread
 
             {
                 ScopedLock workerLock(m_workerThreadMutex);
+                ExclusiveLock localQueuesLock(m_localQueuesLock);
                 ScopedLock queueLock(m_queueMutex);
                 while (!m_taskQueue.empty())
                 {
@@ -195,6 +197,7 @@ namespace NorvesLib::Thread
                 }
 
                 m_queuedTaskCount = 0;
+                m_pendingTaskCount = 0;
                 m_localQueues.clear();
             }
         }
@@ -282,6 +285,23 @@ namespace NorvesLib::Thread
         {
             return false;
         }
+        // 取得側は提出の門を取らないため、完了待ちの数も公開前に数える。
+        // 公開失敗時は自分の分だけ戻し、受理済みの他の仕事には触れない。
+        auto enqueue = [this](auto&& push)
+        {
+            m_pendingTaskCount++;
+            m_queuedTaskCount++;
+            try
+            {
+                push();
+            }
+            catch (...)
+            {
+                m_pendingTaskCount--;
+                m_queuedTaskCount--;
+                throw;
+            }
+        };
         bool bAccepted = false;
         const ExecutionMode mode = m_executionMode.Load();
         if (mode == ExecutionMode::EXECUTION_SIMPLE)
@@ -291,14 +311,13 @@ namespace NorvesLib::Thread
             {
                 auto ticket = bFiniteTask ? PrepareFiniteSubmission(task) : FiniteTicketPtr{};
                 ProbeSubmitPreparation(SubmitPreparationPoint::BeforeGlobalPush);
-                m_taskQueue.push(task);
+                enqueue([&]() { m_taskQueue.push(task); });
                 // push成功以後は確保しない。同gate内でarmしてDrainに計上前の穴を見せない。
                 if (m_submitBeforeArmHook)
                 {
                     m_submitBeforeArmHook(m_submitBeforeArmContext);
                 }
                 ArmFiniteSubmission(ticket);
-                m_queuedTaskCount++;
                 bAccepted = true;
             }
         }
@@ -308,11 +327,12 @@ namespace NorvesLib::Thread
             if (!m_shutdownRequested && m_bAcceptingTasks)
             {
                 auto ticket = bFiniteTask ? PrepareFiniteSubmission(task) : FiniteTicketPtr{};
+                SharedLock localQueuesLock(m_localQueuesLock);
                 if (m_localQueues.empty())
                 {
                     ScopedLock queueLock(m_queueMutex);
                     ProbeSubmitPreparation(SubmitPreparationPoint::BeforeGlobalPush);
-                    m_taskQueue.push(task);
+                    enqueue([&]() { m_taskQueue.push(task); });
                 }
                 else
                 {
@@ -321,13 +341,13 @@ namespace NorvesLib::Thread
                     if (queueIndex < m_localQueues.size() && m_localQueues[queueIndex])
                     {
                         ProbeSubmitPreparation(SubmitPreparationPoint::BeforeLocalPush);
-                        m_localQueues[queueIndex]->Push(task);
+                        enqueue([&]() { m_localQueues[queueIndex]->Push(task); });
                     }
                     else
                     {
                         ScopedLock queueLock(m_queueMutex);
                         ProbeSubmitPreparation(SubmitPreparationPoint::BeforeGlobalPush);
-                        m_taskQueue.push(task);
+                        enqueue([&]() { m_taskQueue.push(task); });
                     }
                 }
                 if (m_submitBeforeArmHook)
@@ -335,7 +355,6 @@ namespace NorvesLib::Thread
                     m_submitBeforeArmHook(m_submitBeforeArmContext);
                 }
                 ArmFiniteSubmission(ticket);
-                m_queuedTaskCount++;
                 bAccepted = true;
             }
         }
@@ -345,6 +364,8 @@ namespace NorvesLib::Thread
             task->Cancel();
             return false;
         }
+        // 待機側の述語確認と入眠の間を、同じロックでまたいで通知する。
+        ScopedLock wakeLock(m_workerWakeMutex);
         m_conditionVar.NotifyOne();
         return true;
     }
@@ -437,7 +458,7 @@ namespace NorvesLib::Thread
 
                 if (!anyQueueHasTasks)
                 {
-                    ScopedLock workerLock(m_workerThreadMutex);
+                    SharedLock localQueuesLock(m_localQueuesLock);
                     for (const auto &queue : m_localQueues)
                     {
                         if (queue && !queue->IsEmpty())
@@ -682,6 +703,7 @@ namespace NorvesLib::Thread
         if (m_executionMode.Load() == ExecutionMode::EXECUTION_WORK_STEALING)
         {
             ScopedLock workerLock(m_workerThreadMutex);
+            ExclusiveLock localQueuesLock(m_localQueuesLock);
             if (newIndex >= m_localQueues.size())
             {
                 m_localQueues.resize(newIndex + 1);
@@ -866,6 +888,7 @@ namespace NorvesLib::Thread
             Core::Container::VariableArray<std::unique_ptr<Thread>> workerThreadsToJoin;
             {
                 ScopedLock workerLock(m_workerThreadMutex);
+                ExclusiveLock localQueuesLock(m_localQueuesLock);
                 ScopedLock queueLock(m_queueMutex);
 
                 if (m_queuedTaskCount != 0 || m_activeThreads != 0)
@@ -874,7 +897,10 @@ namespace NorvesLib::Thread
                 }
 
                 m_workerThreadLimit = targetThreadCount;
-                m_conditionVar.NotifyAll();
+                {
+                    ScopedLock wakeLock(m_workerWakeMutex);
+                    m_conditionVar.NotifyAll();
+                }
 
                 while (m_workerThreads.size() > targetThreadCount)
                 {
@@ -912,6 +938,7 @@ namespace NorvesLib::Thread
         {
             task = m_taskQueue.top();
             m_taskQueue.pop();
+            m_pendingTaskCount--;
             return task;
         }
 
@@ -920,57 +947,50 @@ namespace NorvesLib::Thread
 
     TaskPtr JobSystem::GetNextTaskWorkStealing(size_t threadIndex)
     {
-        // まずワーカーミューテックスをロック
-        ScopedLock workerLock(m_workerThreadMutex);
-
-        // 自分のローカルキューを確認
-        if (threadIndex < m_localQueues.size() && m_localQueues[threadIndex])
+        // 配列の寿命だけを共有で守り、取得同士はキューごとのロックで並行に進める。
         {
-            TaskPtr task = m_localQueues[threadIndex]->Pop();
-            if (task)
+            SharedLock localQueuesLock(m_localQueuesLock);
+            if (threadIndex < m_localQueues.size() && m_localQueues[threadIndex])
             {
-                return task;
+                TaskPtr task = m_localQueues[threadIndex]->Pop();
+                if (task)
+                {
+                    m_pendingTaskCount--;
+                    return task;
+                }
             }
         }
 
-        // ローカルキューがなければグローバルキューを確認
+        if (TaskPtr task = GetNextTaskSimple())
         {
-            ScopedLock queueLock(m_queueMutex);
-            if (!m_taskQueue.empty())
-            {
-                TaskPtr task = m_taskQueue.top();
-                m_taskQueue.pop();
-                return task;
-            }
+            return task;
         }
 
-        // 他のキューからタスクを盗む
         return StealTask(threadIndex);
     }
 
     TaskPtr JobSystem::StealTask(size_t currentThreadIndex)
     {
-        if (m_localQueues.size() <= 1)
+        SharedLock localQueuesLock(m_localQueuesLock);
+        const size_t queueCount = m_localQueues.size();
+        if (queueCount <= 1)
         {
-            return nullptr; // 盗めるキューがない
+            return nullptr;
         }
 
-        // ランダムなワーカーを選ぶ
-        std::uniform_int_distribution<size_t> dist(0, m_localQueues.size() - 1);
-        size_t victimIndex = dist(m_randomGenerator);
-
-        // 自分自身からは盗まない
-        if (victimIndex == currentThreadIndex)
+        // 共有乱数を使わず、次のワーカーから一周して盗み損ねによる空転を防ぐ。
+        for (size_t offset = 0; offset < queueCount; ++offset)
         {
-            victimIndex = (victimIndex + 1) % m_localQueues.size();
-        }
+            const size_t victimIndex = (currentThreadIndex + 1 + offset) % queueCount;
+            if (victimIndex == currentThreadIndex || !m_localQueues[victimIndex])
+            {
+                continue;
+            }
 
-        // 選ばれたワーカーからタスクを盗む
-        if (victimIndex < m_localQueues.size() && m_localQueues[victimIndex])
-        {
             TaskPtr stolenTask = m_localQueues[victimIndex]->Steal();
             if (stolenTask)
             {
+                m_pendingTaskCount--;
                 m_totalStolenTasks++;
                 return stolenTask;
             }
@@ -1004,11 +1024,13 @@ namespace NorvesLib::Thread
             // タスクがなければ待機
             if (noTasks)
             {
-                ScopedLock lock(m_queueMutex);
-                if (!m_shutdownRequested && threadIndex < m_workerThreadLimit.Load() && m_queuedTaskCount == 0)
+                // 実行中のタスクは未着手数に含めず、他のワーカーを眠らせる。
+                ScopedLock wakeLock(m_workerWakeMutex);
+                m_conditionVar.Wait(m_workerWakeMutex, [this, threadIndex]()
                 {
-                    m_conditionVar.Wait(m_queueMutex);
-                }
+                    return m_shutdownRequested || threadIndex >= m_workerThreadLimit.Load() ||
+                           m_pendingTaskCount.Load() > 0;
+                });
                 continue;
             }
 
@@ -1159,6 +1181,7 @@ namespace NorvesLib::Thread
         if (m_executionMode.Load() == ExecutionMode::EXECUTION_WORK_STEALING)
         {
             ScopedLock workerLock(m_workerThreadMutex);
+            ExclusiveLock localQueuesLock(m_localQueuesLock);
             if (threadIndex >= m_localQueues.size())
             {
                 m_localQueues.resize(threadIndex + 1);

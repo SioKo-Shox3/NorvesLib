@@ -46,6 +46,12 @@ float FoliageFadeScale(vec3 root, float threshold)
 // 時刻 t の風のずれ（ワールドの XZ）。式は Common/FoliagePlacement.glsl（影の描画 vsm_draw.vert と同じ）、値はこの束の定数
 vec2 FoliageWindOffset(vec2 root, float flex, float plantHeight, float plantPhase, float partPhase, float t)
 {
+    if (foliage.windField.x > 0.5)
+    {
+        return FoliageWindOffsetShared(root, flex, plantHeight, plantPhase, partPhase, t, foliage.wind.xy,
+                                      foliage.windParams.x, foliage.windField.y, foliage.windField.z,
+                                      foliage.windParams.y, foliage.windParams.z, foliage.windParams.w);
+    }
     return FoliageWindOffsetFor(root, flex, plantHeight, plantPhase, partPhase, t, foliage.wind.xy, foliage.windParams.xy,
                                 foliage.windParams.z, foliage.windParams.w);
 }
@@ -58,6 +64,12 @@ void main()
     float fadeScale = FoliageFadeScale(root, inInstanceFadeThreshold);
     float widthScale = inInstanceParams.x * fadeScale;
     float heightScale = inInstanceParams.y * fadeScale;
+    // 主カメラと主人公の間・カメラの直前の株は、根元の可視度で低くする(影の描画は変えない)
+    if (ViewClearanceIsActive(foliage.viewClearance))
+    {
+        float clearance = ViewClearanceVisibility(foliage.viewClearance, root);
+        heightScale *= mix(foliage.viewClearance.Shape.w, 1.0, clearance);
+    }
     float colorVariation = inInstanceParams.z;
     float plantPhase = inInstanceParams.w;
 

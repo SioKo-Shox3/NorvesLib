@@ -7,12 +7,15 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "SunShadowParameters.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
+#include "Wind.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "DistortionTypes.h"
 #include "AutoExposure.h"
 #include "Container/Containers.h"
@@ -106,6 +109,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
+        float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
 
         // ========================================
         // ユーティリティ
@@ -576,6 +580,8 @@ namespace NorvesLib::Core::Rendering
         float AmbientIntensity = 1.0f;
         SkyAtmosphereParameters SkyAtmosphere;
         VolumetricFogParameters VolumetricFog;
+        // 世界で共通の風。SceneRevision には含めない。
+        WindParameters Wind = MakeDefaultWindParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         Container::VariableArray<SkyOccluderProxy> SkyOccluders;
         // 遮蔽物と値が変わったときだけ進む版。SceneRevision とは別で、RTGI の履歴を捨てない。
@@ -589,9 +595,11 @@ namespace NorvesLib::Core::Rendering
         // 背景・IBL・RTGI と DDGI の不交差がこの値になる。倍率と上限はそのまま掛かる）
         bool bStaticEnvironmentUniform = false;
         Math::Vector3 StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
-        // 太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲の両方に効く。
-        // 0 は ShadowMapPass の設定（ShadowMapPassSettings::MaxShadowDistance、既定 80 m）のまま
-        float SunShadowMaxDistance = 0.0f;
+        // MaxDistance は太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲に効く。
+        // SplitLambda は CSM の分割に効く。各値の 0 は ShadowMapPass の設定（既定 80 m・λ 0.5）のまま。
+        SunShadowParameters SunShadow;
+        // 検証用。false ならスキンの描画を主カメラの視錐台で省かない（既定 true）。
+        bool bSkinnedViewCulling = true;
         // 不透明物に掛ける空気遠近（遠景の霞）。空が有効なときだけ VolumetricsPass が掛ける
         AerialPerspectiveParameters AerialPerspective;
         // 空に描く雲の層。空が有効なときだけ CloudLayerPass が描く
@@ -602,6 +610,9 @@ namespace NorvesLib::Core::Rendering
         RibbonTrailScene RibbonTrails;
         // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
         DecalScene Decals;
+
+        /** @brief 拡張データの表。共有ポインタを写すだけで、変わらないフレームはデータの写しが 0。 */
+        RenderExtensionDataSet Extensions;
         // 半透明の後のシーンの色をずらす歪みの源の一覧
         DistortionScene Distortions;
 
@@ -626,6 +637,7 @@ namespace NorvesLib::Core::Rendering
             DDGIVolume = MakeDefaultDDGIVolumeParameters();
             SkyAtmosphere = SkyAtmosphereParameters{};
             VolumetricFog = MakeDefaultVolumetricFogParameters();
+            Wind = MakeDefaultWindParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
             SkyOcclusionRevision = 0;
@@ -633,12 +645,14 @@ namespace NorvesLib::Core::Rendering
             StaticEnvironmentMaxRadiance = 0.0f;
             bStaticEnvironmentUniform = false;
             StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
-            SunShadowMaxDistance = 0.0f;
+            SunShadow = SunShadowParameters{};
+            bSkinnedViewCulling = true;
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};
+            Extensions.clear();
             Distortions = DistortionScene{};
         }
 
@@ -650,6 +664,11 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
         {
             VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+        }
+
+        void SetWindParameters(const WindParameters& parameters)
+        {
+            Wind = SanitizeWindParameters(parameters);
         }
 
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)

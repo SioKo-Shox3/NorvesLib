@@ -42,12 +42,14 @@ namespace NorvesLib::Tools::AssetCook
         const std::filesystem::path& sourcePath, const SkeletalRoleProfileCookRequest& request,
         SkeletalRoleProfileCookResult& outResult, Core::Container::AnsiString& error,
         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
-        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
+        const ClipOptimizeCookOptions* clipOptimize = nullptr);
     // SourceHashの同一算術を共有する。geometry/clipのcookは行わず、cook可能性は保証しない。
     [[nodiscard]] bool FingerprintGltfWithRoleProfileNativePath(const uint8_t* sourceBytes, size_t sourceSize,
         Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
         Core::Container::AnsiStringView logicalPath, const SkeletalRoleProfileCookRequest& request,
         ModelCookFingerprint& outResult, Core::Container::AnsiString& error,
         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
-        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
+        const ClipOptimizeCookOptions* clipOptimize = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

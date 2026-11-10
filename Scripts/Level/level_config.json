@@ -1,0 +1,28 @@
+{
+  "owner_tag": "shisha",
+  "traversal": {"max_slope_deg": 35},
+  "water": {"mode": "none"},
+  "territory": {
+    "ground_tolerance_m": 0.5,
+    "max_slope_deg": 30,
+    "max_water_fraction": 0
+  },
+  "reachability": {"start_xz": [256, 256]},
+  "travel": {"cruise_speed_mps": 10, "slope_cost": 2},
+  "poi_travel_time_band_s": {"min": 30, "max": 60},
+  "trail": {"sample_step_m": 0.5},
+  "provisional": [
+    "owner_tag",
+    "traversal.max_slope_deg",
+    "water.mode",
+    "territory.ground_tolerance_m",
+    "territory.max_slope_deg",
+    "territory.max_water_fraction",
+    "reachability.start_xz",
+    "travel.cruise_speed_mps",
+    "travel.slope_cost",
+    "poi_travel_time_band_s.min",
+    "poi_travel_time_band_s.max",
+    "trail.sample_step_m"
+  ]
+}

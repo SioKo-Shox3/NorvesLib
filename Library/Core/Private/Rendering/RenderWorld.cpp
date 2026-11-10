@@ -330,6 +330,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetWindParameters(const WindParameters& parameters)
+    {
+        m_RenderingCoordinator.SetWindParameters(parameters);
+    }
+
     void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         m_RenderingCoordinator.SetSkyOcclusionParameters(parameters);
@@ -365,9 +370,19 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetStaticEnvironmentUniformRadiance(bEnabled, radiance);
     }
 
+    void RenderWorld::SetSunShadowParameters(const SunShadowParameters& parameters)
+    {
+        m_RenderingCoordinator.SetSunShadowParameters(parameters);
+    }
+
     void RenderWorld::SetSunShadowMaxDistance(float distance)
     {
         m_RenderingCoordinator.SetSunShadowMaxDistance(distance);
+    }
+
+    void RenderWorld::SetSkinnedViewCullingEnabled(bool bEnabled)
+    {
+        m_RenderingCoordinator.SetSkinnedViewCullingEnabled(bEnabled);
     }
 
     void RenderWorld::SetAerialPerspective(const AerialPerspectiveParameters& parameters)
@@ -404,6 +419,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetGrassField(std::move(grassField));
     }
 
+    void RenderWorld::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        m_RenderingCoordinator.SetWorldFieldInteractors(interactors);
+    }
+
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)
     {
         m_RenderingCoordinator.SetRibbonTrails(trails);
@@ -412,6 +432,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetDecals(const DecalScene& decals)
     {
         m_RenderingCoordinator.SetDecals(decals);
+    }
+
+    void RenderWorld::SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data)
+    {
+        m_RenderingCoordinator.GetExtensionDataStore().SetBytes(name, layoutHash, elementSize, count, data);
     }
 
     void RenderWorld::SetDistortions(const DistortionScene& distortions)
@@ -590,6 +615,47 @@ namespace NorvesLib::Core::Rendering
         m_PendingWidth.Store(width, std::memory_order_release);
         m_PendingHeight.Store(height, std::memory_order_release);
         m_bResizePending.Store(true, std::memory_order_release);
+    }
+
+    bool RenderWorld::RegisterRenderExtension(const RenderExtensionDesc& desc, const RenderExtensionFactory& factory)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->Register(desc, factory);
+    }
+
+    bool RenderWorld::UnregisterRenderExtension(const char* name)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->Unregister(name);
+    }
+
+    bool RenderWorld::SetRenderExtensionEnabled(const char* name, bool bEnabled)
+    {
+        auto* registry = GetRenderExtensionRegistry();
+        if (!registry)
+        {
+            return false;
+        }
+        return registry->SetEnabled(name, bEnabled);
+    }
+
+    RenderExtensionRegistry* RenderWorld::GetRenderExtensionRegistry()
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            NORVES_LOG_WARNING("Rendering", "主の SceneView が無いため描画拡張の登録表を取得できません");
+            return nullptr;
+        }
+        return &sceneView->GetRenderExtensionRegistry();
     }
 
     void RenderWorld::SetRenderScale(float renderScale)

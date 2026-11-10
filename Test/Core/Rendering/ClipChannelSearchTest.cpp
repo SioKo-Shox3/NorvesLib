@@ -2,9 +2,64 @@
 #include "Animation/ClipChannelSampler.h"
 #include "Container/Span.h"
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+
+void TestUniformClipChannelSearch()
+{
+    struct Key
+    {
+        float TimeSeconds = 0;
+    };
+    constexpr size_t keyCount = 300;
+    constexpr float step = 1.0f / 30.0f;
+    uint32_t state = 0x91e10da5u;
+    for (int sequence = 0; sequence < 2; ++sequence)
+    {
+        const float start = sequence == 0 ? 0.25f : 0.0f;
+        Key keys[keyCount];
+        for (size_t i = 0; i < keyCount; ++i)
+        {
+            keys[i].TimeSeconds = sequence == 0
+                                      ? NorvesLib::Core::Animation::Detail::UniformClipKeyTime(start, step, i)
+                                      : float(i) / 30.0f;
+        }
+        const NorvesLib::Core::Container::Span<const Key> samples(keys, keyCount);
+        for (size_t i = 0; i < 10000; ++i)
+        {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            const float exact = keys[state % keyCount].TimeSeconds;
+            float time = exact;
+            switch (i % 4)
+            {
+            case 0:
+                break;
+            case 1:
+                time = std::nextafter(exact, -std::numeric_limits<float>::infinity());
+                break;
+            case 2:
+                time = std::nextafter(exact, std::numeric_limits<float>::infinity());
+                break;
+            default:
+                time = start - 1.0f + 12.0f * (float(state >> 8) / float(0x00ffffffu));
+                break;
+            }
+            const size_t expected = NorvesLib::Core::Animation::Detail::FindNextClipKey(samples, time);
+            const size_t actual =
+                NorvesLib::Core::Animation::Detail::FindNextUniformClipKey(samples, start, step, time);
+            if (actual != expected)
+            {
+                std::fprintf(stderr, "一様キー探索の不一致 列=%d 時刻=%f 期待=%zu 結果=%zu\n", sequence, time,
+                             expected, actual);
+                std::abort();
+            }
+        }
+    }
+}
 
 void TestClipChannelSearch()
 {
@@ -42,6 +97,7 @@ void TestClipChannelSearch()
             }
         }
     }
+    TestUniformClipChannelSearch();
 }
 #if defined(NORVES_POSE_SEARCH_STANDALONE)
 int main()

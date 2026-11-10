@@ -135,6 +135,7 @@ namespace NorvesLib::Core::Rendering
         for (int i = 0; i < 4; ++i)
         {
             h.Add(p.CustomData[i]);
+            h.Add(p.ShadingParams[i]);
         }
         return h.Value();
     }
@@ -151,6 +152,10 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t i = 0; i < p.MaterialCount && i < MAX_MATERIAL_SLOTS; ++i)
         {
             h.Add(p.Materials[i]);
+        }
+        for (uint32_t i = 0; i < ShadingParamCount; ++i)
+        {
+            h.Add(p.ShadingParams[i]);
         }
         h.Add(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p.AssetLease.lock().get())));
         h.Add(p.WorldTransform);

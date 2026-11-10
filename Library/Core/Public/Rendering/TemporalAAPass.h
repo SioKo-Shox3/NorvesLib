@@ -109,6 +109,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_CopyShader;
         RHI::SamplerPtr m_PointSampler;
         RHI::SamplerPtr m_LinearSampler;
+        RHI::TexturePtr m_ZeroReactiveTexture;
         // 共有の記述子セットのレイアウト（定数と記述子セットは Execute ごとにフレームの持ち主から借りる）
         RHI::DescriptorSetLayoutPtr m_ResolveDescriptorSetLayout;
         RHI::DescriptorSetLayoutPtr m_CopyDescriptorSetLayout;
@@ -119,6 +120,7 @@ namespace NorvesLib::Core::Rendering
 
         // 履歴の2枚を交互に書く（書いた方が次のフレームの読む方になる）。
         RHI::TexturePtr m_HistoryTextures[2];
+        RHI::TexturePtr m_ReactiveHistoryTextures[2];
         RHI::FramebufferPtr m_HistoryFramebuffers[2];
         RHI::RenderPassPtr m_HistoryRenderPass;
         RHI::PipelinePtr m_ResolvePipeline;
@@ -130,6 +132,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_SceneColorHandle;
         RGResourceHandle m_SceneDepthHandle;
         RGResourceHandle m_VelocityHandle;
+        RGResourceHandle m_ReactiveHandle;
 
         uint32_t m_CurrentWidth = 0u;
         uint32_t m_CurrentHeight = 0u;

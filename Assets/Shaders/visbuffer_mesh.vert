@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 
 // ========================================
 // ビジビリティバッファ: 手続きメッシュの塊を描く頂点シェーダー（位置だけを読む）
@@ -16,14 +17,7 @@ layout(set = 0, binding = 0) uniform VisFrame
     mat4 projection;
 } frame;
 
-struct InstanceData
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
 {

@@ -255,6 +255,7 @@ namespace NorvesLib::Core::Rendering
      * @brief GPUへ送るシーンインスタンスデータ
      *
      * std430のvec4単位で扱えるよう16バイト境界に揃えます。
+     * ShadingParams の並びは P0・P1・予約・被覆率の乗数（w）。負は未指定で材質の値を使います。
      */
     struct alignas(16) GPUSceneInstanceData
     {
@@ -263,15 +264,17 @@ namespace NorvesLib::Core::Rendering
         float NormalMatrix[12];
         float ObjectColor[4];
         float CustomData[4];
+        float ShadingParams[4];
     };
 
     static_assert(alignof(GPUSceneInstanceData) == 16);
-    static_assert(sizeof(GPUSceneInstanceData) == sizeof(float) * 52);
+    static_assert(sizeof(GPUSceneInstanceData) == sizeof(float) * 56);
     static_assert(sizeof(GPUSceneInstanceData) % 16 == 0);
     static_assert(offsetof(GPUSceneInstanceData, World) == 0);
     static_assert(offsetof(GPUSceneInstanceData, PreviousWorld) == 64);
     static_assert(offsetof(GPUSceneInstanceData, NormalMatrix) == 128);
     static_assert(offsetof(GPUSceneInstanceData, ObjectColor) == 176);
     static_assert(offsetof(GPUSceneInstanceData, CustomData) == 192);
+    static_assert(offsetof(GPUSceneInstanceData, ShadingParams) == 208);
 
 } // namespace NorvesLib::Core::Rendering

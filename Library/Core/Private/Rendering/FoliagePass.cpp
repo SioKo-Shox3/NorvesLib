@@ -6,7 +6,9 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/ViewClearance.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/Wind.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/IDescriptorSet.h"
@@ -35,8 +37,11 @@ namespace NorvesLib::Core::Rendering
             float tipColorA[4];
             float tipColorB[4];
             float frameParams[4];
+            float windField[4];
+            ViewClearanceGpuData viewClearance;
         };
-        static_assert(sizeof(FoliageUniform) == 368u, "Common/FoliageData.glsl の FoliageData と合わせる");
+        static_assert(sizeof(FoliageUniform) == 448u, "Common/FoliageData.glsl の FoliageData と合わせる");
+        static_assert(offsetof(FoliageUniform, viewClearance) == 384u);
 
         static_assert(offsetof(FoliageVertex, Normal) == 12);
         static_assert(offsetof(FoliageVertex, Side) == 24);
@@ -147,6 +152,61 @@ namespace NorvesLib::Core::Rendering
             return descriptorSetDesc;
         }
 
+        constexpr uint32_t kColorTargetCount = GBufferOverlayTargets::kColorTargetCount;
+
+        /// 草・低木のシェーダーと頂点入力を、GBuffer へ重ねるパイプラインの記述へまとめる
+        GBufferOverlayPipelineDesc CreateFoliageOverlayPipelineDesc(const RHI::ShaderPtr& vertexShader,
+                                                                  const RHI::ShaderPtr& pixelShader)
+        {
+            GBufferOverlayPipelineDesc desc;
+            desc.vertexShader = vertexShader;
+            desc.pixelShader = pixelShader;
+            RHI::VertexBindingDesc vertexBinding;
+            vertexBinding.binding = 0;
+            vertexBinding.stride = sizeof(FoliageVertex);
+            vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+            desc.vertexBindings.push_back(vertexBinding);
+            RHI::VertexBindingDesc instanceBinding;
+            instanceBinding.binding = 1;
+            instanceBinding.stride = sizeof(FoliageInstance);
+            instanceBinding.inputRate = RHI::VertexInputRate::Instance;
+            desc.vertexBindings.push_back(instanceBinding);
+
+            struct AttributeLayout
+            {
+                uint32_t Location;
+                uint32_t Binding;
+                RHI::Format Format;
+                uint32_t Offset;
+            };
+            const AttributeLayout attributes[] = {
+                {0, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Position))},
+                {1, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Normal))},
+                {2, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Side))},
+                {3, 0, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Flex))},
+                {4, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, Position))},
+                {5, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, WidthScale))},
+                {6, 1, RHI::Format::R32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, FadeThreshold))},
+            };
+            for (const AttributeLayout& layout : attributes)
+            {
+                RHI::VertexAttributeDesc attribute;
+                attribute.location = layout.Location;
+                attribute.binding = layout.Binding;
+                attribute.format = layout.Format;
+                attribute.offset = layout.Offset;
+                desc.vertexAttributes.push_back(attribute);
+            }
+
+            desc.descriptorSetLayouts.push_back(CreateFoliageDescriptorSetDesc());
+            // 葉の帯は両面を描き、ビジビリティバッファと同じ深度の比較を使う
+            desc.depthCompareOp = RHI::CompareOp::LessOrEqual;
+            desc.cullMode = RHI::CullMode::None;
+            desc.debugName = "FoliagePass";
+            desc.failureLogPrefix = "FOLIAGE";
+            return desc;
+        }
+
         /// GBuffer の 5 枚の名前（gbuffer.frag の出力の順）
         const Identity &ColorTargetName(uint32_t index)
         {
@@ -196,6 +256,7 @@ namespace NorvesLib::Core::Rendering
             m_Device = nullptr;
             return false;
         }
+        m_OverlayPipelineDesc = CreateFoliageOverlayPipelineDesc(m_VertexShader, m_FragmentShader);
         m_bInitialized = true;
         return true;
     }
@@ -206,9 +267,8 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        m_RenderPass.reset();
-        m_Framebuffer.reset();
-        m_Pipeline.reset();
+        m_OverlayTargets.Reset();
+        m_OverlayPipelineDesc = {};
         m_StaticBuffers.clear();
         m_ExecuteCount = 0;
         m_VertexShader.reset();
@@ -219,14 +279,6 @@ namespace NorvesLib::Core::Rendering
             handle = {};
         }
         m_DepthHandle = {};
-        for (const RHI::ITexture *&target : m_FramebufferTargets)
-        {
-            target = nullptr;
-        }
-        for (RHI::Format &format : m_TargetFormats)
-        {
-            format = RHI::Format::UNKNOWN;
-        }
         m_Device = nullptr;
         m_bInitialized = false;
     }
@@ -327,7 +379,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
         RHI::TexturePtr depthTarget = resources.GetTexture(m_DepthHandle);
-        if (!depthTarget || !EnsureTargets(colorTargets, depthTarget))
+        if (!depthTarget || !m_OverlayTargets.Ensure(m_Device, colorTargets, depthTarget, m_OverlayPipelineDesc))
         {
             return;
         }
@@ -341,6 +393,8 @@ namespace NorvesLib::Core::Rendering
                            : cameraConstants;
 
         FoliageUniform frameTemplate{};
+        frameTemplate.viewClearance =
+            MakeViewClearanceGpuData(activeCamera->ViewClearance, activeCamera->ViewClearance.bAffectGrass);
         cameraConstants.CopyShaderView(frameTemplate.view);
         cameraConstants.CopyShaderProjection(frameTemplate.projection);
         previousConstants.CopyShaderView(frameTemplate.previousView);
@@ -352,15 +406,31 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.cameraPosition[3] =
             renderHeight > 0 ? 2.0f * std::tan(halfFovRadians) / static_cast<float>(renderHeight) : 0.0f;
 
-        // 風の向きと時計（決定的な撮影では 1/60 秒の固定刻みで、エポックの始めから数える）
-        // （影の描画 VirtualShadowMapPass も同じ関数で向きと時計を決める）
+        // 共通の風はゲーム時間を使い、無効なときは従来の草・低木の風と時計を使う
+        // 影の描画 VirtualShadowMapPass も同じ風向と現在の時計を使う
         const FoliageWindParameters &wind = scene->Wind;
-        FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
-        const float windTime = FoliageWindClock(context.TotalTime, wind);
-        frameTemplate.wind[2] = windTime;
-        frameTemplate.wind[3] = windTime - context.DeltaTime;
-        frameTemplate.windParams[0] = wind.GustSpeed;
-        frameTemplate.windParams[1] = wind.GustScale;
+        if (context.Wind.bEnabled)
+        {
+            WindDirectionXZ(context.Wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+            const float windTime = WindClockSeconds(context.ExtensionFrame.GameTotalTime);
+            frameTemplate.wind[2] = windTime;
+            frameTemplate.wind[3] = windTime - context.ExtensionFrame.GameDeltaTime;
+            frameTemplate.windParams[0] = context.Wind.BaseSpeed;
+            frameTemplate.windParams[1] = context.Wind.GustScaleMeters;
+            frameTemplate.windField[0] = 1.0f;
+            frameTemplate.windField[1] = context.Wind.GustStrength;
+            frameTemplate.windField[2] = context.Wind.GustFrequencyHz;
+            frameTemplate.windField[3] = context.Wind.Turbulence;
+        }
+        else
+        {
+            FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+            const float windTime = FoliageWindClock(context.TotalTime, wind);
+            frameTemplate.wind[2] = windTime;
+            frameTemplate.wind[3] = windTime - context.DeltaTime;
+            frameTemplate.windParams[0] = wind.GustSpeed;
+            frameTemplate.windParams[1] = wind.GustScale;
+        }
         frameTemplate.frameParams[0] = previousCamera ? 1.0f : 0.0f;
 
         // 区画のカリング: 視錐台の面（GBufferPass と同じビュー・投影）とカメラの位置
@@ -478,10 +548,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::ICommandList *commandList = context.CommandList;
-        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->BeginRenderPass(m_OverlayTargets.GetRenderPass(), m_OverlayTargets.GetFramebuffer());
         commandList->SetViewport(context.GetActiveLocalViewport());
         commandList->SetScissor(context.GetActiveLocalScissor());
-        commandList->SetPipeline(m_Pipeline);
+        commandList->SetPipeline(m_OverlayTargets.GetPipeline());
 
         uint32_t drawnBatches = 0;
         uint32_t drawCalls = 0;
@@ -585,171 +655,6 @@ namespace NorvesLib::Core::Rendering
                 ++it;
             }
         }
-    }
-
-    bool FoliagePass::EnsureTargets(const RHI::TexturePtr (&colorTargets)[kColorTargetCount],
-                                    const RHI::TexturePtr &depthTarget)
-    {
-        // render pass とパイプラインは描き先の形式だけで決まる。framebuffer は描き先のテクスチャが替わったら作り直す
-        bool bSameFormats = m_RenderPass && m_Pipeline && m_TargetFormats[kColorTargetCount] == depthTarget->GetFormat();
-        for (uint32_t index = 0; index < kColorTargetCount && bSameFormats; ++index)
-        {
-            bSameFormats = m_TargetFormats[index] == colorTargets[index]->GetFormat();
-        }
-        bool bSameTargets = bSameFormats && m_Framebuffer && m_FramebufferTargets[kColorTargetCount] == depthTarget.get();
-        for (uint32_t index = 0; index < kColorTargetCount && bSameTargets; ++index)
-        {
-            bSameTargets = m_FramebufferTargets[index] == colorTargets[index].get();
-        }
-        if (bSameTargets)
-        {
-            return true;
-        }
-        m_Framebuffer.reset();
-        for (const RHI::ITexture *&target : m_FramebufferTargets)
-        {
-            target = nullptr;
-        }
-        if (!bSameFormats && !CreatePipeline(colorTargets, depthTarget))
-        {
-            return false;
-        }
-
-        RHI::FramebufferDesc framebufferDesc;
-        framebufferDesc.renderPass = m_RenderPass;
-        for (const RHI::TexturePtr &target : colorTargets)
-        {
-            framebufferDesc.colorTargets.push_back(target);
-        }
-        framebufferDesc.depthStencilTarget = depthTarget;
-        framebufferDesc.width = depthTarget->GetWidth();
-        framebufferDesc.height = depthTarget->GetHeight();
-        m_Framebuffer = m_Device->CreateFramebuffer(framebufferDesc);
-        if (!m_Framebuffer)
-        {
-            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED framebuffer を作れません");
-            return false;
-        }
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            m_FramebufferTargets[index] = colorTargets[index].get();
-        }
-        m_FramebufferTargets[kColorTargetCount] = depthTarget.get();
-        return true;
-    }
-
-    bool FoliagePass::CreatePipeline(const RHI::TexturePtr (&colorTargets)[kColorTargetCount],
-                                     const RHI::TexturePtr &depthTarget)
-    {
-        m_RenderPass.reset();
-        m_Pipeline.reset();
-        for (RHI::Format &format : m_TargetFormats)
-        {
-            format = RHI::Format::UNKNOWN;
-        }
-
-        RHI::RenderPassDesc renderPassDesc;
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            RHI::AttachmentDesc colorAttachment;
-            colorAttachment.format = colorTargets[index]->GetFormat();
-            colorAttachment.isDepthStencil = false;
-            colorAttachment.clear = false;
-            colorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
-            colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-            colorAttachment.initialState = RHI::ResourceState::RenderTarget;
-            colorAttachment.finalState = RHI::ResourceState::ShaderResource;
-            renderPassDesc.colorAttachments.push_back(colorAttachment);
-        }
-        renderPassDesc.hasDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.format = depthTarget->GetFormat();
-        renderPassDesc.depthStencilAttachment.isDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.clear = false;
-        renderPassDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
-        renderPassDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        renderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::DepthWrite;
-        renderPassDesc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
-        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
-        if (!m_RenderPass)
-        {
-            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED render pass を作れません");
-            return false;
-        }
-
-        RHI::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.vertexShader = m_VertexShader;
-        pipelineDesc.pixelShader = m_FragmentShader;
-        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-
-        RHI::VertexBindingDesc vertexBinding;
-        vertexBinding.binding = 0;
-        vertexBinding.stride = sizeof(FoliageVertex);
-        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
-        pipelineDesc.vertexBindings.push_back(vertexBinding);
-        RHI::VertexBindingDesc instanceBinding;
-        instanceBinding.binding = 1;
-        instanceBinding.stride = sizeof(FoliageInstance);
-        instanceBinding.inputRate = RHI::VertexInputRate::Instance;
-        pipelineDesc.vertexBindings.push_back(instanceBinding);
-
-        struct AttributeLayout
-        {
-            uint32_t Location;
-            uint32_t Binding;
-            RHI::Format Format;
-            uint32_t Offset;
-        };
-        const AttributeLayout attributes[] = {
-            {0, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Position))},
-            {1, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Normal))},
-            {2, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Side))},
-            {3, 0, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Flex))},
-            {4, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, Position))},
-            {5, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, WidthScale))},
-            {6, 1, RHI::Format::R32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, FadeThreshold))},
-        };
-        for (const AttributeLayout &layout : attributes)
-        {
-            RHI::VertexAttributeDesc attribute;
-            attribute.location = layout.Location;
-            attribute.binding = layout.Binding;
-            attribute.format = layout.Format;
-            attribute.offset = layout.Offset;
-            pipelineDesc.vertexAttributes.push_back(attribute);
-        }
-
-        // 葉の帯は両面を描く（裏の法線はフラグメントが面で鏡に映す）
-        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-        pipelineDesc.rasterState.lineWidth = 1.0f;
-        // ビジビリティバッファのラスタと同じ深度の比較
-        pipelineDesc.depthStencilState.depthTestEnable = true;
-        pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            RHI::BlendAttachmentDesc blendAttachment;
-            blendAttachment.blendEnable = false;
-            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blendAttachment);
-        }
-        pipelineDesc.renderPass = m_RenderPass;
-        pipelineDesc.descriptorSetLayouts.push_back(CreateFoliageDescriptorSetDesc());
-        m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        if (!m_Pipeline)
-        {
-            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED パイプラインを作れません");
-            m_RenderPass.reset();
-            return false;
-        }
-
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            m_TargetFormats[index] = colorTargets[index]->GetFormat();
-        }
-        m_TargetFormats[kColorTargetCount] = depthTarget->GetFormat();
-        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

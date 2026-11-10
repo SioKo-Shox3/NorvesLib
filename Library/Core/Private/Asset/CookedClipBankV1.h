@@ -44,9 +44,14 @@ namespace NorvesLib::Core::Skeletal
                                        RigImportProfile profile = RigImportProfile::DirectTrs128,
                                        const RigClipAnalysisOptions* analysisOptions = nullptr,
                                        Container::Span<const SkeletalAnimationClip> replacementClips = {});
+    struct ClipBankV1WriteOptions
+    {
+        bool bQuantize = false;
+    };
     [[nodiscard]] bool WriteClipBankV1(const ClipBankV1& bank, Container::VariableArray<uint8_t>& out,
                                        RigV1Report& report, const RigV1Limits& limits = {},
-                                       RigImportProfile profile = RigImportProfile::DirectTrs128);
+                                       RigImportProfile profile = RigImportProfile::DirectTrs128,
+                                       const ClipBankV1WriteOptions& options = {});
     [[nodiscard]] bool ParseClipBankV1(Container::Span<const uint8_t> bytes, ClipBankV1& out, RigV1Report& report,
                                        const RigV1Limits& limits = {},
                                        RigImportProfile profile = RigImportProfile::DirectTrs128);

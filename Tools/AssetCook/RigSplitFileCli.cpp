@@ -33,6 +33,10 @@ namespace NorvesLib::Tools::AssetCook
                              "  --variant <name> --root-joint <name> --loop auto|true|false --no-analysis\n"
                              "  --authored-fps <fps> --source-fps <fps> --time-scale <factor>\n"
                              "  --import-settings <file> --no-sidecar --require-sidecar\n"
+                             "  --clip-optimize: クリップのキーを誤差の上限つきで削減\n"
+                             "  --clip-quantize: クリップのキーを量子化して CMPR で書く（minor 1）\n"
+                             "  --clip-max-vertex-error-m <m> --clip-max-joint-error-m <m>\n"
+                             "  --clip-max-rotation-error-deg <deg> --clip-report <path>\n"
                              "  --skin-influences / --cubicspline / --morph: existing skeletal import options\n";
                 exitCode = 0;
                 return true;
@@ -51,6 +55,17 @@ namespace NorvesLib::Tools::AssetCook
             C::AnsiString logical;
             C::VariableArray<C::AnsiString> seen;
             bool bAnalysisOption = false;
+            const auto parseClipOptimize = [&](C::AnsiStringView key, const char* value)
+            {
+                bool consumed = false;
+                std::string parseError;
+                if (!TryParseClipOptimizeArgument(std::string_view(key.data(), key.size()), value,
+                                                  request.ClipOptimize, consumed, parseError))
+                {
+                    throw std::runtime_error(parseError);
+                }
+                return consumed;
+            };
             for (int i = 2; i < int(tokens.size()); ++i)
             {
                 const char* skeletalError = nullptr;
@@ -74,6 +89,12 @@ namespace NorvesLib::Tools::AssetCook
                     }
                 }
                 seen.push_back(C::AnsiString(key));
+                if (key == C::AnsiStringView("--clip-optimize") ||
+                    key == C::AnsiStringView("--clip-quantize"))
+                {
+                    parseClipOptimize(key, equals == C::AnsiStringView::npos ? nullptr : token.data() + equals + 1);
+                    continue;
+                }
                 const bool flag = key == C::AnsiStringView("--no-analysis") ||
                                   key == C::AnsiStringView("--no-sidecar") ||
                                   key == C::AnsiStringView("--require-sidecar");
@@ -113,6 +134,10 @@ namespace NorvesLib::Tools::AssetCook
                 if (value.empty() || value.substr(0, 2) == C::AnsiStringView("--"))
                 {
                     throw std::runtime_error("rig_split: empty argument value");
+                }
+                if (parseClipOptimize(key, value.data()))
+                {
+                    continue;
                 }
                 const auto path = [&]() { return std::filesystem::u8path(value.begin(), value.end()); };
                 const auto number = [&]()
@@ -194,6 +219,11 @@ namespace NorvesLib::Tools::AssetCook
             if (!ValidateSkeletalArguments(skeletal, true, skeletalError))
             {
                 throw std::runtime_error(skeletalError);
+            }
+            std::string clipOptimizeError;
+            if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipOptimizeError))
+            {
+                throw std::runtime_error(clipOptimizeError);
             }
             request.DecodeOptions = skeletal.Decode;
             if (request.SourcePath.empty() || destination.empty() || logical.empty() ||

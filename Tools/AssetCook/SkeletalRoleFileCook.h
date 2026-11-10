@@ -3,6 +3,12 @@
 #include "CookCacheDecision.h"
 namespace NorvesLib::Tools::AssetCook
 {
+    namespace Detail
+    {
+        [[nodiscard]] bool GuardClipReportRequest(const SingleAssetCookRequest& request,
+                                                  const CookDependencySnapshot& dependencies,
+                                                  Core::Container::AnsiString& error);
+    }
     inline constexpr uint64_t SkeletalRoleFileCookerRevision = 1;
     struct SkeletalRoleFileCookResult
     {

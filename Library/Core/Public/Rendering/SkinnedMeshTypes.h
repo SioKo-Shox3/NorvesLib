@@ -176,6 +176,7 @@ namespace NorvesLib::Core::Rendering
     {
         SkinnedMeshHandle MeshHandle;
         MaterialHandle Material;
+        float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
         // componentから値コピーしたslot材質。未設定はslot0を解決済み。
         MaterialHandle Materials[MAX_MATERIAL_SLOTS]{};
         uint32_t MaterialCount = 0;

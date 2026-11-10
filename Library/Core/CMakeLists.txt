@@ -90,6 +90,12 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndex.cpp
     Private/Animation/RigClipAnalysis.cpp
     Private/Animation/SkeletalClipProcessing.cpp
+    Private/Animation/ClipOptimizer.cpp
+    Private/Animation/ClipOptimizer.h
+    Private/Animation/RetargetReport.cpp
+    Private/Animation/RetargetReport.h
+    Private/Animation/RetargetFootPlanting.cpp
+    Private/Animation/RetargetFootPlanting.h
     Private/Animation/SkeletalClipRetarget.cpp
     Private/Animation/SkeletalClipRetarget.h
     Private/Animation/SkeletalClipProcessing.h
@@ -109,6 +115,8 @@ set(PRIVATE_SOURCES
     Private/Animation/RigSplitBindingTestAccess.h
     Private/Animation/RigSplitBinding.cpp
     Private/Animation/ClipBankBindingTestAccess.h
+    Private/Asset/ClipQuantization.h
+    Private/Asset/ClipQuantization.cpp
     Private/Asset/CookedClipBankV1.cpp
     Private/Asset/CookedClipBankV1.h
     Private/Asset/RigSplitWire.h
@@ -239,9 +247,12 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
+    Private/Scene/MapTransform.cpp
+    Private/Scene/MapCapturePlan.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
@@ -253,6 +264,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
+    Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
+    Private/Rendering/RenderExtension/RenderExtensionData.cpp
+    Private/Rendering/RenderExtension/RenderExtensionHelpers.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
@@ -262,6 +276,14 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GBufferOverlayTargets.cpp
+    Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassBladeMesh.cpp
+    Private/Rendering/WorldFieldPass.cpp
+    Private/Rendering/WorldFieldTypes.cpp
+    Private/Rendering/GrassGenerateReference.cpp
+    Private/Rendering/GrassFieldGpuWindow.cpp
+    Private/Rendering/GrassTileSelector.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
@@ -288,6 +310,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkinnedMeshGpuStore.cpp
     Private/Rendering/SkinnedMeshTypes.cpp
     Private/Rendering/SkinnedDrawCommands.cpp
+    Private/Rendering/SkinnedLodSelection.cpp
+    Private/Rendering/SunShadowParameters.cpp
+    Public/Rendering/SkinnedLodSelection.h
+    Public/Rendering/SunShadowParameters.h
     Private/Rendering/SkinnedDrawCommands.h
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
@@ -306,6 +332,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/Wind.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
@@ -468,6 +495,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanCommandList.cpp
     Private/RHI/Vulkan/VulkanDescriptorSet.cpp
     Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFormatTable.h
     Private/RHI/Vulkan/VulkanFramebuffer.cpp
     Private/RHI/Vulkan/VulkanGPUResourceAllocator.cpp
     Private/RHI/Vulkan/VulkanPipeline.cpp
@@ -657,10 +685,13 @@ set(PUBLIC_HEADERS
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
     Public/Scene/PhysicsLayerTable.h
     Public/Scene/SceneSerializer.h
+    Public/Scene/MapTransform.h
+    Public/Scene/MapCapturePlan.h
     # Module
     Public/Module/ModuleExport.h
     Public/Module/IModule.h
@@ -695,6 +726,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/Wind.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
@@ -718,6 +750,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
+    Public/Rendering/RenderExtension/RenderExtension.h
+    Public/Rendering/RenderExtension/RenderExtensionData.h
+    Public/Rendering/RenderExtension/RenderExtensionHelpers.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
@@ -727,6 +762,12 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/GrassPass.h
+    Public/Rendering/WorldFieldPass.h
+    Public/Rendering/WorldFieldTypes.h
+    Public/Rendering/GrassGenerateReference.h
+    Public/Rendering/GrassFieldGpuWindow.h
+    Public/Rendering/GrassTileSelector.h
     Public/Rendering/FoliageTypes.h
     Public/Rendering/RibbonTrailTypes.h
     Public/Rendering/RibbonTrailRenderer.h
@@ -897,11 +938,13 @@ set(PUBLIC_HEADERS
     Public/RHI/RHIDeviceDesc.h
     Public/RHI/RHIDeviceFactory.h
     Public/RHI/RHITypes.h
+    Public/RHI/FormatInfo.h
     Public/RHI/IBuffer.h
     Public/RHI/ITexture.h
     Public/RHI/ISampler.h
     Public/RHI/IShader.h
     Public/RHI/ICommandList.h
+    Public/RHI/IndirectCommands.h
     Public/RHI/ISwapChain.h
     Public/RHI/IRenderPass.h
     Public/RHI/IFramebuffer.h

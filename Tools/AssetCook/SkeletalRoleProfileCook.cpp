@@ -1,4 +1,5 @@
 ﻿#include "SkeletalRoleProfileCook.h"
+#include "Text/JsonDocument.h"
 #include <charconv>
 #include <type_traits>
 
@@ -65,7 +66,7 @@ namespace NorvesLib::Tools::AssetCook
                     if (!lookup.Succeeded())
                     {
                         error = C::AnsiString("Profile source roleの実関節名を解決できません role=") +
-                                A::SkeletalRoleName(static_cast<A::SkeletalRole>(role)) +
+                                A::SkeletalRoleName(candidate.Profile.Vocabulary, static_cast<A::SkeletalRole>(role)) +
                                 " ordinal=" + Number(ordinal) +
                                 " status=" + Number(static_cast<uint64_t>(lookup.Status));
                         return false;
@@ -94,8 +95,22 @@ namespace NorvesLib::Tools::AssetCook
                         " status=" + Number(static_cast<uint64_t>(parsed.Status));
                 if (parsed.RoleIndex < A::SkeletalRoleCount)
                 {
+                    // 失敗時は profile が更新されないため、検証済み JSON から語彙だけを読み直す。
+                    auto vocabulary = candidate.Profile.Vocabulary;
+                    Core::JsonDocument document;
+                    const auto bytes = request.ProfileBytes;
+                    const bool bBom = bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
+                    const C::Span<const uint8_t> json{bytes.data() + (bBom ? 3 : 0), bytes.size() - (bBom ? 3 : 0)};
+                    if (Core::JsonDocument::TryParseUtf8(json, document))
+                    {
+                        const auto value = document.GetRoot().FindMember("vocabulary");
+                        if (value.IsString() && value.AsString() == C::String(_T("humanoid_v1")))
+                        {
+                            vocabulary = A::SkeletalRoleVocabulary::Humanoid;
+                        }
+                    }
                     error += " role=";
-                    error += A::SkeletalRoleName(static_cast<A::SkeletalRole>(parsed.RoleIndex));
+                    error += A::SkeletalRoleName(vocabulary, static_cast<A::SkeletalRole>(parsed.RoleIndex));
                 }
                 if (parsed.ElementIndex != SIZE_MAX)
                 {
@@ -175,7 +190,8 @@ namespace NorvesLib::Tools::AssetCook
                                                    SkeletalRoleProfileCookResult& outResult,
                                                    Core::Container::AnsiString& error,
                                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                                                   const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                                                   const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                                   const ClipOptimizeCookOptions* clipOptimize)
     {
         SkeletalRoleProfileCookResult candidate;
         C::VariableArray<A::SkeletalJointMappingNameView> pairs;
@@ -186,7 +202,7 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
         if (!CookGltfWithBvhToNvskelNativePath(sourceBytes, sourceSize, format, sourcePath, typed, candidate.Cooked,
-                                               error, importOptions, decodeOptions))
+                                               error, importOptions, decodeOptions, clipOptimize))
         {
             return false;
         }
@@ -201,7 +217,8 @@ namespace NorvesLib::Tools::AssetCook
                                                   const SkeletalRoleProfileCookRequest& request,
                                                   ModelCookFingerprint& outResult, C::AnsiString& error,
                                                   const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                                                  const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                                                  const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                                  const ClipOptimizeCookOptions* clipOptimize)
     {
         if (!IsSupportedSkeletalCookFormat(format) || request.ClipName.empty() ||
             (request.Operation != SkeletalBvhClipOperation::Add &&
@@ -217,7 +234,7 @@ namespace NorvesLib::Tools::AssetCook
         ModelCookFingerprint candidate;
         if (!PrepareRole(request, prepared, pairs, corrections, typed, error) ||
             !FingerprintModelCookSourceNativePath(sourceBytes, sourceSize, format, sourcePath, logicalPath, candidate,
-                                                  error, importOptions, decodeOptions) ||
+                                                  error, importOptions, decodeOptions, clipOptimize) ||
             !Detail::AppendBvhCookHash(candidate.SourceHash, typed, prepared.Cooked.Cook.SourceHash))
         {
             return false;

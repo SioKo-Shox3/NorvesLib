@@ -40,12 +40,17 @@ namespace NorvesLib::Core::Rendering
             float Jitter[4];
             // x: 履歴の補間の 3 次の鋭さ（Keys の −a）、y: 補間で最もぼける画素の現在の色の割合
             float Reprojection[4];
+            // x: 箱を広げる係数、y: 持ち越しの減衰、zw: 0
+            float Reactive[4];
         };
-        static_assert(sizeof(GPUTemporalAAParams) == 272u);
+        static_assert(sizeof(GPUTemporalAAParams) == 288u);
 
         constexpr uint32_t ParamsBinding = 4u;
 
-        // 解決: SceneColor・履歴・velocity・深度。書き戻し: 解決の結果。
+        constexpr uint32_t ReactiveBinding = 5u;
+        constexpr uint32_t ReactiveHistoryBinding = 6u;
+
+        // 解決: SceneColor・色の履歴・velocity・深度・リアクティブ・専用の履歴。書き戻し: 解決の色。
         RHI::DescriptorSetDesc CreateDescriptorSetDesc(uint32_t textureCount)
         {
             RHI::DescriptorSetDesc desc;
@@ -65,7 +70,18 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        RHI::DescriptorSetDesc CreateResolveDescriptorSetDesc() { return CreateDescriptorSetDesc(4u); }
+        RHI::DescriptorSetDesc CreateResolveDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc = CreateDescriptorSetDesc(4u);
+            RHI::DescriptorBinding reactiveBinding;
+            reactiveBinding.binding = ReactiveBinding;
+            reactiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            reactiveBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(reactiveBinding);
+            reactiveBinding.binding = ReactiveHistoryBinding;
+            desc.bindings.push_back(reactiveBinding);
+            return desc;
+        }
         RHI::DescriptorSetDesc CreateCopyDescriptorSetDesc() { return CreateDescriptorSetDesc(1u); }
 
         RHI::SamplerPtr CreateSampler(RHI::IDevice& device, RHI::FilterMode filter)
@@ -80,8 +96,9 @@ namespace NorvesLib::Core::Rendering
             return device.CreateSampler(desc);
         }
 
-        // 全画素を上書きするfullscreen passのrender pass（読み込まず、ShaderResourceで終える）。
-        RHI::RenderPassPtr CreateOverwriteRenderPass(RHI::IDevice& device, RHI::Format format)
+        // 全画素を上書きする描画パス（読み込まず、ShaderResource で終える）。解決だけ専用の履歴も書く。
+        RHI::RenderPassPtr CreateOverwriteRenderPass(RHI::IDevice& device, RHI::Format format,
+                                                    bool bReactiveHistory = false)
         {
             RHI::RenderPassDesc desc;
             RHI::AttachmentDesc colorAttachment;
@@ -93,6 +110,11 @@ namespace NorvesLib::Core::Rendering
             colorAttachment.initialState = RHI::ResourceState::RenderTarget;
             colorAttachment.finalState = RHI::ResourceState::ShaderResource;
             desc.colorAttachments.push_back(colorAttachment);
+            if (bReactiveHistory)
+            {
+                colorAttachment.format = RHI::Format::R8_UNORM;
+                desc.colorAttachments.push_back(colorAttachment);
+            }
             desc.hasDepthStencil = false;
             return device.CreateRenderPass(desc);
         }
@@ -101,7 +123,8 @@ namespace NorvesLib::Core::Rendering
                                                   const RHI::ShaderPtr& vertexShader,
                                                   const RHI::ShaderPtr& pixelShader,
                                                   const RHI::RenderPassPtr& renderPass,
-                                                  const RHI::DescriptorSetDesc& layout)
+                                                  const RHI::DescriptorSetDesc& layout,
+                                                  uint32_t colorAttachmentCount = 1u)
         {
             RHI::GraphicsPipelineDesc desc;
             desc.vertexShader = vertexShader;
@@ -117,18 +140,26 @@ namespace NorvesLib::Core::Rendering
             blendAttachment.blendEnable = false;
             blendAttachment.colorWriteMask = RHI::ColorWriteMask::R | RHI::ColorWriteMask::G |
                                              RHI::ColorWriteMask::B | RHI::ColorWriteMask::A;
-            desc.blendState.attachments.push_back(blendAttachment);
+            for (uint32_t index = 0u; index < colorAttachmentCount; ++index)
+            {
+                desc.blendState.attachments.push_back(blendAttachment);
+            }
             desc.renderPass = renderPass;
             desc.descriptorSetLayouts.push_back(layout);
             return device.CreateGraphicsPipeline(desc);
         }
 
         RHI::FramebufferPtr CreateFramebuffer(RHI::IDevice& device, const RHI::RenderPassPtr& renderPass,
-                                              const RHI::TexturePtr& target)
+                                              const RHI::TexturePtr& target,
+                                              const RHI::TexturePtr& reactiveHistory = {})
         {
             RHI::FramebufferDesc desc;
             desc.renderPass = renderPass;
             desc.colorTargets.push_back(target);
+            if (reactiveHistory)
+            {
+                desc.colorTargets.push_back(reactiveHistory);
+            }
             desc.width = target->GetWidth();
             desc.height = target->GetHeight();
             return device.CreateFramebuffer(desc);
@@ -228,13 +259,26 @@ namespace NorvesLib::Core::Rendering
         m_CopyShader = context.ShaderMgr->LoadShader("temporal_aa_copy.frag", RHI::ShaderStage::Pixel);
         m_PointSampler = CreateSampler(*m_Device, RHI::FilterMode::Point);
         m_LinearSampler = CreateSampler(*m_Device, RHI::FilterMode::Linear);
+        // 書き手が無い場合や寸法が合わない場合は、被覆率 0 の 1 画素を読む。
+        RHI::TextureDesc zeroReactiveDesc;
+        zeroReactiveDesc.Width = 1u;
+        zeroReactiveDesc.Height = 1u;
+        zeroReactiveDesc.TextureFormat = RHI::Format::R8_UNORM;
+        zeroReactiveDesc.Usage = RHI::ResourceUsage::ShaderRead;
+        zeroReactiveDesc.DebugName = "TemporalAA.ZeroReactive";
+        m_ZeroReactiveTexture = m_Device->CreateTexture(zeroReactiveDesc);
+        if (m_ZeroReactiveTexture)
+        {
+            const uint8_t pixel = 0u;
+            m_ZeroReactiveTexture->Update(&pixel, 1u, 1u);
+        }
         // セットは Execute ごとに借りる。レイアウトは同じ形のパスと共有する 1 つをデバイスから引く
         m_ResolveDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateResolveDescriptorSetDesc());
         m_CopyDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateCopyDescriptorSetDesc());
         if (!m_VertexShader || !m_ResolveShader || !m_CopyShader || !m_PointSampler || !m_LinearSampler ||
-            !m_ResolveDescriptorSetLayout || !m_CopyDescriptorSetLayout)
+            !m_ResolveDescriptorSetLayout || !m_CopyDescriptorSetLayout || !m_ZeroReactiveTexture)
         {
-            NORVES_LOG_ERROR("TemporalAAPass", "シェーダー・サンプラー・ディスクリプタセットのレイアウトの作成に失敗");
+            NORVES_LOG_ERROR("TemporalAAPass", "シェーダー・サンプラー・ディスクリプタセットのレイアウト・リアクティブの既定テクスチャの作成に失敗");
             Shutdown();
             return false;
         }
@@ -253,6 +297,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_HistoryFramebuffers[index].reset();
             m_HistoryTextures[index].reset();
+            m_ReactiveHistoryTextures[index].reset();
         }
         m_FramebufferSceneColorTexture = nullptr;
         m_CurrentWidth = 0u;
@@ -282,6 +327,7 @@ namespace NorvesLib::Core::Rendering
         m_UnownedBuffers.clear();
         m_CopyDescriptorSetLayout.reset();
         m_ResolveDescriptorSetLayout.reset();
+        m_ZeroReactiveTexture.reset();
         m_LinearSampler.reset();
         m_PointSampler.reset();
         m_CopyShader.reset();
@@ -291,6 +337,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_SceneDepthHandle = {};
         m_VelocityHandle = {};
+        m_ReactiveHandle = {};
         m_bFrameBegun = false;
         m_bInitialized = false;
     }
@@ -346,6 +393,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_SceneDepthHandle = {};
         m_VelocityHandle = {};
+        m_ReactiveHandle = {};
         const ViewRenderContext* context = builder.GetContext();
         if (!context || !IsActiveFor(*context))
         {
@@ -385,6 +433,12 @@ namespace NorvesLib::Core::Rendering
         m_SceneDepthHandle = sceneDepthHandle.ToResourceHandle();
         m_VelocityHandle = velocityHandle.ToResourceHandle();
         m_SceneColorHandle = sceneColorHandle.ToResourceHandle();
+        RGTextureHandle reactiveHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::SceneReactive, reactiveHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_ReactiveHandle = reactiveHandle.ToResourceHandle();
+        }
         builder.PreserveInsertionOrder();
     }
 
@@ -417,6 +471,13 @@ namespace NorvesLib::Core::Rendering
             context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
                                           RHI::ResourceState::ShaderResource);
             return;
+        }
+
+        RHI::TexturePtr reactive = m_ReactiveHandle.IsValid() ? resources.GetTexture(m_ReactiveHandle)
+                                                            : RHI::TexturePtr{};
+        if (!sameSize(reactive))
+        {
+            reactive = m_ZeroReactiveTexture;
         }
 
         // 履歴は、同じ Viewport が前に描いたフレームで書き、同じカメラで、露出が有限で、velocity の基準
@@ -469,6 +530,8 @@ namespace NorvesLib::Core::Rendering
         params.Jitter[1] = m_FrameJitter.PixelY;
         params.Reprojection[0] = blendParams.HistoryCubicSharpness;
         params.Reprojection[1] = blendParams.ResampleCurrentFrameWeight;
+        params.Reactive[0] = TemporalAAReactiveClipWiden;
+        params.Reactive[1] = TemporalAAReactiveHistoryDecay;
 
         // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる（解決と書き戻しで同じ定数を読む）
         const RHI::DescriptorSetPtr resolveDescriptorSet =
@@ -492,6 +555,8 @@ namespace NorvesLib::Core::Rendering
         const uint32_t readIndex = 1u - writeIndex;
         // 履歴が無いときは読む方の履歴が未初期化のことがあるので、代わりに SceneColor を結ぶ（シェーダーは読まない）。
         const RHI::TexturePtr& historyInput = bUseHistory ? m_HistoryTextures[readIndex] : sceneColor;
+        const RHI::TexturePtr& reactiveHistoryInput =
+            bUseHistory ? m_ReactiveHistoryTextures[readIndex] : m_ZeroReactiveTexture;
         resolveDescriptorSet->BindTexture(0u, sceneColor);
         resolveDescriptorSet->BindSampler(0u, m_PointSampler);
         resolveDescriptorSet->BindTexture(1u, historyInput);
@@ -500,6 +565,10 @@ namespace NorvesLib::Core::Rendering
         resolveDescriptorSet->BindSampler(2u, m_PointSampler);
         resolveDescriptorSet->BindTexture(3u, sceneDepth);
         resolveDescriptorSet->BindSampler(3u, m_PointSampler);
+        resolveDescriptorSet->BindTexture(ReactiveBinding, reactive);
+        resolveDescriptorSet->BindSampler(ReactiveBinding, m_PointSampler);
+        resolveDescriptorSet->BindTexture(ReactiveHistoryBinding, reactiveHistoryInput);
+        resolveDescriptorSet->BindSampler(ReactiveHistoryBinding, m_LinearSampler);
         resolveDescriptorSet->Update();
         copyDescriptorSet->BindTexture(0u, m_HistoryTextures[writeIndex]);
         copyDescriptorSet->BindSampler(0u, m_PointSampler);
@@ -511,6 +580,8 @@ namespace NorvesLib::Core::Rendering
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
                                       RHI::ResourceState::ShaderResource);
         context.EnqueueTextureBarrier(m_HistoryTextures[writeIndex], RHI::ResourceState::Undefined,
+                                      RHI::ResourceState::RenderTarget);
+        context.EnqueueTextureBarrier(m_ReactiveHistoryTextures[writeIndex], RHI::ResourceState::Undefined,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_HistoryRenderPass, m_HistoryFramebuffers[writeIndex], viewport, scissor,
                                       m_ResolvePipeline, resolveDescriptorSet);
@@ -534,7 +605,8 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        const bool bSizeChanged = !m_HistoryTextures[0] || m_CurrentWidth != width ||
+        const bool bSizeChanged = !m_HistoryTextures[0] || !m_ReactiveHistoryTextures[0] ||
+                                  !m_ReactiveHistoryTextures[1] || m_CurrentWidth != width ||
                                   m_CurrentHeight != height || m_CurrentFormat != format;
         if (bSizeChanged)
         {
@@ -544,19 +616,25 @@ namespace NorvesLib::Core::Rendering
                 RHI::TextureDesc::RenderTarget(width, height, format, "TemporalAA.History0"));
             m_HistoryTextures[1] = m_Device->CreateTexture(
                 RHI::TextureDesc::RenderTarget(width, height, format, "TemporalAA.History1"));
-            m_HistoryRenderPass = m_HistoryTextures[0] && m_HistoryTextures[1]
-                                      ? CreateOverwriteRenderPass(*m_Device, format)
+            m_ReactiveHistoryTextures[0] = m_Device->CreateTexture(
+                RHI::TextureDesc::RenderTarget(width, height, RHI::Format::R8_UNORM, "TemporalAA.ReactiveHistory0"));
+            m_ReactiveHistoryTextures[1] = m_Device->CreateTexture(
+                RHI::TextureDesc::RenderTarget(width, height, RHI::Format::R8_UNORM, "TemporalAA.ReactiveHistory1"));
+            m_HistoryRenderPass = m_HistoryTextures[0] && m_HistoryTextures[1] &&
+                                  m_ReactiveHistoryTextures[0] && m_ReactiveHistoryTextures[1]
+                                      ? CreateOverwriteRenderPass(*m_Device, format, true)
                                       : RHI::RenderPassPtr{};
             m_CopyRenderPass = CreateOverwriteRenderPass(*m_Device, format);
             for (uint32_t index = 0u; index < 2u && m_HistoryRenderPass; ++index)
             {
                 m_HistoryFramebuffers[index] =
-                    CreateFramebuffer(*m_Device, m_HistoryRenderPass, m_HistoryTextures[index]);
+                    CreateFramebuffer(*m_Device, m_HistoryRenderPass, m_HistoryTextures[index],
+                                      m_ReactiveHistoryTextures[index]);
             }
             m_ResolvePipeline = m_HistoryFramebuffers[0] && m_HistoryFramebuffers[1]
                                     ? CreateFullscreenPipeline(*m_Device, m_VertexShader, m_ResolveShader,
                                                                m_HistoryRenderPass,
-                                                               CreateResolveDescriptorSetDesc())
+                                                               CreateResolveDescriptorSetDesc(), 2u)
                                     : RHI::PipelinePtr{};
             m_CopyPipeline = m_CopyRenderPass
                                  ? CreateFullscreenPipeline(*m_Device, m_VertexShader, m_CopyShader,

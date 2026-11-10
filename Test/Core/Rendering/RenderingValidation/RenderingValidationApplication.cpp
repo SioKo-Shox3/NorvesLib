@@ -124,6 +124,18 @@ namespace NorvesLib::Test::RenderingValidation
                 {
                     m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::GBufferVelocity;
                 }
+                else if (value == TEXT("gbuffer-normal"))
+                {
+                    m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::GBufferNormal;
+                }
+                else if (value == TEXT("gbuffer-material"))
+                {
+                    m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::GBufferMaterial;
+                }
+                else if (value == TEXT("gbuffer-emissive"))
+                {
+                    m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::GBufferEmissive;
+                }
                 else
                 {
                     LOG_ERROR("描画検証の capture-source 値が不正です");

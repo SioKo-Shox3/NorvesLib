@@ -1954,6 +1954,13 @@ namespace NorvesLib::Core::Rendering
                     return false;
                 }
             }
+            for (uint32_t index = 0; index < ShadingParamCount; ++index)
+            {
+                if (a.ShadingParams[index] != b.ShadingParams[index])
+                {
+                    return false;
+                }
+            }
             return a.Metallic == b.Metallic && a.Roughness == b.Roughness &&
                    a.OcclusionStrength == b.OcclusionStrength && a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
@@ -1961,7 +1968,7 @@ namespace NorvesLib::Core::Rendering
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
-                   a.TerrainBlend == b.TerrainBlend;
+                   a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading;
         }
 
         // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
@@ -1977,8 +1984,9 @@ namespace NorvesLib::Core::Rendering
             float PreviousProjection[16];
             float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
             float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
-            float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
+            float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
+            float ShadingParams[4]; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
         };
         static_assert(sizeof(SectionUniformData) <= 768u);
 
@@ -4119,6 +4127,11 @@ namespace NorvesLib::Core::Rendering
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
+            uniform.VtFeedbackParams[3] = static_cast<float>(ToGBufferShadingModelId(mat.Shading));
+            for (uint32_t index = 0; index < ShadingParamCount; ++index)
+            {
+                uniform.ShadingParams[index] = mat.ShadingParams[index];
+            }
             uniform.ObjectColor[0] = mat.BaseColor[0];
             uniform.ObjectColor[1] = mat.BaseColor[1];
             uniform.ObjectColor[2] = mat.BaseColor[2];
@@ -4964,7 +4977,7 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
-        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
+        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに間接描画を発行する）
         auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
                                const RHI::FramebufferPtr &framebuffer,
                                uint32_t passIndex) -> void
@@ -5005,21 +5018,31 @@ namespace NorvesLib::Core::Rendering
                 // IndirectDraw発行
                 // DrawIndirectCount対応の場合はGPU側カウントを参照し、
                 // 実際に可視なクラスタ数だけドローコールを発行する。
-                // 非対応の場合は区間のコマンドの最大数をそのまま使用（積まれなかった分は instanceCount=0 で空振り）。
+                // 非対応の場合は区間の容量まで、多重描画に対応していればまとめて、非対応なら1件ずつ発行する。
+                // 積まれなかったコマンドは instanceCount=0 で空振りする。
                 const uint64_t commandOffsetBytes =
                     (static_cast<uint64_t>(passIndex) * commandsPerPass + section.CommandBase) * IndirectCommandBytes;
-            if (caps.bDrawIndirectCount)
-            {
+                if (caps.bDrawIndirectCount)
+                {
                     cmdList->DrawIndexedIndirectCount(m_IndirectDrawBuffer, commandOffsetBytes, m_DrawCountBuffer,
                                                       static_cast<uint64_t>(passIndex * sectionCount + sectionIndex) *
                                                           sizeof(uint32_t),
                                                       section.Capacity, IndirectCommandBytes);
-            }
-            else
-            {
+                }
+                else if (caps.bMultiDrawIndirect)
+                {
                     cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer, commandOffsetBytes, section.Capacity,
-                        IndirectCommandBytes);
-            }
+                                                 IndirectCommandBytes);
+                }
+                else
+                {
+                    for (uint32_t i = 0; i < section.Capacity; ++i)
+                    {
+                        cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer,
+                                                     commandOffsetBytes + static_cast<uint64_t>(i) * IndirectCommandBytes,
+                                                     1, IndirectCommandBytes);
+                    }
+                }
         }
 
             cmdList->EndRenderPass();
