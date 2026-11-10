@@ -2,6 +2,7 @@
 
 #include "Rendering/MegaGeometryPass.h"
 #include "Math/MatrixUtils.h"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 
@@ -18,6 +19,98 @@ namespace NorvesLib::Core::Rendering
         float Lerp(float a, float b, float fraction)
         {
             return a + (b - a) * fraction;
+        }
+
+        bool ViewClearanceIsActive(const ViewClearanceGpuData& c)
+        {
+            return c.Control[1] != 0.0f && c.Control[0] > 0.0f;
+        }
+
+        float ViewClearanceSmoothStep(float start, float end, float value)
+        {
+            if (end <= start)
+            {
+                return value < start ? 0.0f : 1.0f;
+            }
+            const float x = GrassSaturate((value - start) / (end - start));
+            return (x * x) * (3.0f - 2.0f * x);
+        }
+
+        float ViewClearanceVisibility(const ViewClearanceGpuData& c, const Math::Vector3& p)
+        {
+            if (!ViewClearanceIsActive(c))
+            {
+                return 1.0f;
+            }
+
+            const float dx = p.x - c.CameraRadius[0];
+            const float dy = p.y - c.CameraRadius[1];
+            const float dz = p.z - c.CameraRadius[2];
+            const float ax = c.TargetRadius[0] - c.CameraRadius[0];
+            const float ay = c.TargetRadius[1] - c.CameraRadius[1];
+            const float az = c.TargetRadius[2] - c.CameraRadius[2];
+            const float lengthSquared = (ax * ax + ay * ay) + az * az;
+            float clearance = 1.0f;
+            if (lengthSquared > 1.0e-12f)
+            {
+                const float t = ((dx * ax + dy * ay) + dz * az) / lengthSquared;
+                if (t >= 0.0f && t <= 1.0f)
+                {
+                    const float radius = c.CameraRadius[3] + (c.TargetRadius[3] - c.CameraRadius[3]) * t;
+                    if (radius > 0.0f)
+                    {
+                        const float offsetX = dx - t * ax;
+                        const float offsetY = dy - t * ay;
+                        const float offsetZ = dz - t * az;
+                        const float distance = std::sqrt((offsetX * offsetX + offsetY * offsetY) + offsetZ * offsetZ);
+                        const float featherEnd = radius * (1.0f + c.Shape[0]);
+                        clearance = ViewClearanceSmoothStep(radius, featherEnd, distance);
+                    }
+                }
+            }
+            const float cameraDistance = std::sqrt((dx * dx + dy * dy) + dz * dz);
+            const float nearFade = ViewClearanceSmoothStep(c.Shape[1], c.Shape[2], cameraDistance);
+            const float visibility = std::min(clearance, nearFade);
+            return 1.0f - c.Control[0] * (1.0f - visibility);
+        }
+
+        // シェーダーと同じ中央値を使い、除算と平方根を使わず境界を判定する。
+        bool ViewClearanceKeep(const ViewClearanceGpuData& c, const Math::Vector3& p, float u, float g)
+        {
+            if (!ViewClearanceIsActive(c))
+            {
+                return true;
+            }
+            const float dx = p.x - c.CameraRadius[0];
+            const float dy = p.y - c.CameraRadius[1];
+            const float dz = p.z - c.CameraRadius[2];
+            const float dist2 = (dx * dx + dy * dy) + dz * dz;
+            const float nearT = c.Shape[1] + (c.Shape[2] - c.Shape[1]) * u;
+            const float nearT2 = nearT * nearT;
+            const bool bNearPass = dist2 >= nearT2;
+            const float ax = c.TargetRadius[0] - c.CameraRadius[0];
+            const float ay = c.TargetRadius[1] - c.CameraRadius[1];
+            const float az = c.TargetRadius[2] - c.CameraRadius[2];
+            const float L2 = (ax * ax + ay * ay) + az * az;
+            const float D = (dx * ax + dy * ay) + dz * az;
+            bool bClearPass = true;
+            if (L2 > 1.0e-12f && D >= 0.0f && D <= L2)
+            {
+                const float rL = c.CameraRadius[3] * L2 + (c.TargetRadius[3] - c.CameraRadius[3]) * D;
+                if (rL > 0.0f)
+                {
+                    const float perp = dist2 * L2 - D * D;
+                    const float lhs = perp * L2;
+                    const float k = rL * (1.0f + c.Shape[0] * u);
+                    const float k2 = k * k;
+                    bClearPass = lhs >= k2;
+                }
+            }
+            if (bNearPass && bClearPass)
+            {
+                return true;
+            }
+            return !(g < c.Control[0]);
         }
 
         int32_t ClampPixel(int32_t value, uint32_t resolution)
@@ -208,6 +301,11 @@ namespace NorvesLib::Core::Rendering
         return constants;
     }
 
+    void SetGrassViewClearance(GrassGenerateConstants& constants, const ViewClearanceParameters& parameters)
+    {
+        constants.ViewClearance = MakeViewClearanceGpuData(parameters, parameters.bAffectGrass);
+    }
+
     GrassGenerateCounts RunGrassGenerateReference(const GrassFieldRenderData& field,
         const GrassGenerateConstants& constants, const GrassTileInfo* tiles, uint32_t tileCount,
         Container::VariableArray<GrassBladeRecord>* outRecords)
@@ -310,6 +408,19 @@ namespace NorvesLib::Core::Rendering
                     // 手順 6。シェーダーは precise を付け、dot に置き換えず同じ順で評価する。
                     const float halfHeight = height * 0.5f;
                     const float centerY = y + halfHeight;
+                    const Math::Vector3 clearancePoint(x, centerY, z);
+                    if (ViewClearanceIsActive(constants.ViewClearance))
+                    {
+                        const float c0 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance0));
+                        const float c1 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance1));
+                        const float c2 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance2));
+                        const float u = std::max(std::min(c0, c1), std::min(std::max(c0, c1), c2));
+                        const float g = GrassHashToUnit(GrassHash(gz, gx, saltBase + kGrassHashSaltClearance0));
+                        if (!ViewClearanceKeep(constants.ViewClearance, clearancePoint, u, g))
+                        {
+                            continue;
+                        }
+                    }
                     const float radius = halfHeight + constants.BladeQuantMaxMeters[1];
                     bool bOutside = false;
                     for (uint32_t plane = 0; plane < 6; ++plane)
@@ -361,7 +472,13 @@ namespace NorvesLib::Core::Rendering
                         record.PositionX = x;
                         record.PositionY = y;
                         record.PositionZ = z;
-                        record.Packed = PackGrassBlade(height, width, speciesId, fade,
+                        float recordHeight = height;
+                        if (ViewClearanceIsActive(constants.ViewClearance))
+                        {
+                            const float visibility = ViewClearanceVisibility(constants.ViewClearance, clearancePoint);
+                            recordHeight = height * Lerp(constants.ViewClearance.Shape[3], 1.0f, visibility);
+                        }
+                        record.Packed = PackGrassBlade(recordHeight, width, speciesId, fade,
                             constants.BladeQuantMaxMeters[0], constants.BladeQuantMaxMeters[1]);
                         outRecords->push_back(record);
                     }
