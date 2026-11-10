@@ -27,7 +27,9 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 ### 材質値の優先と ID
 
-`ShadingParams` は x = `P0`、y = `P1`、z = 予約、w = 被覆率の乗数（1 で不変）。各成分は `MeshComponent::SetShadingParams` / `SkinnedMeshComponent::SetShadingParams` のインスタンス値が 0 以上ならそれを使い、負なら `MaterialResourceData::ShadingParams` / `MegaMeshMaterial::ShadingParams` の材質値を使う。両方とも負なら `P0 = P1 = 0`、z = 0、w = 1。未指定の初期値は各成分 `-1` である。GLSL の解決は `Common/GBufferEncoding.glsl::ResolveShadingParams` に従う。スキニングのインスタンス値は CPU で材質値に重ねる。現行の MegaGeometry はインスタンス値を渡さず、材質値を使う。
+`ShadingParams` は x = `P0`、y = `P1`、z = インスタンスの頂点アニメの種類（材質側は予約）、w = 被覆率の乗数（1 で不変）。各成分は `MeshComponent::SetShadingParams` / `SkinnedMeshComponent::SetShadingParams` のインスタンス値が 0 以上ならそれを使い、負なら `MaterialResourceData::ShadingParams` / `MegaMeshMaterial::ShadingParams` の材質値を使う。両方とも負なら `P0 = P1 = 0`、z = 0、w = 1。未指定の初期値は各成分 `-1` である。GLSL の解決は `Common/GBufferEncoding.glsl::ResolveShadingParams` に従う。スキニングのインスタンス値は CPU で材質値に重ねる。現行の MegaGeometry はインスタンス値を渡さず、材質値を使う。
+
+`InstanceData.shadingParams.z` は頂点アニメの種類を表す。生のインスタンス値が `0.5` 以上なら試験の正弦（種類 1）、それ以外（負の未指定値を含む）は恒等（種類 0）。`Common/VertexAnimation.glsl::VertexAnimationKind` が選び、`VertexAnimationParamsForFrame` がフレームの試験許可を適用する。頂点アニメは材質値を重ねる前の 4 成分を使い、材質側の z を種類の既定値にはしない。スキンも生の `ShadingParams` を別に渡し、MegaGeometry は `vec4(-1.0)` を使う。
 
 CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::ToGBufferShadingModelId` だけが担う。`Fur`・`Eye`・`PaleFlat` を対応する ID に、それ以外を `DefaultLit` に写す。
 
@@ -64,13 +66,21 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 
 ## 2. GBuffer / MegaGeometry の UBO
 
-両者とも `set = 0, binding = 0` の `MVPData` に対応する。標準メッシュと MegaGeometry のワールド変換は UBO ではなく各経路のインスタンス表から、スキニングのワールド変換は別のバッファから読む。以下の UBO のオフセットは、全メンバが `float` 配列である宣言順から積算した値である。フィールドごとの `offsetof` の `static_assert` は存在せず、大きさの検査と区別する。
+両者とも `set = 0, binding = 0` の `MVPData` に対応する。標準メッシュと MegaGeometry のワールド変換は UBO ではなく各経路のインスタンス表から、スキニングのワールド変換は別のバッファから読む。以下は `std140` の配置。各オフセットは `float` 配列の宣言順から積算し、頂点アニメの欄については C++ の `offsetof` の `static_assert` とも照合している。
+
+### 頂点アニメの時刻（各 UBO 共通）
+
+`vertexAnimTime`（C++ の一部は `VertexAnimTime`）は **16 バイト**の `float[4]` / `vec4`。x = 今の時刻 `t`（秒）、y = 前の時刻 `tPrev`（秒）、z = 試験の正弦の揺れの許可（1/0）、w = 0。以下の時刻欄と 8・9 節にも同じ契約を適用する。
+
+組み立ては `Library/Core/Public/Rendering/VertexAnimation.h::MakeVertexAnimationTimeConstants`。`t = float(fmod(GameTotalTime, 4096.0))`（負なら 4096 を加える）、`tPrev = t - float(GameTotalTime - PreviousRenderedTotalTime)`。差は double で取ってから float にし、前の基準を最後に描いたフレームへ揃える。`tPrev` は独立に巻かず、巻き境界では負になることがある。
+
+**時刻欄の注記（GR46）:** float の精度を保つため時刻は **4096 秒**で巻く。風・シェルなど周期の式の周波数は **1/4096 Hz の整数倍**へ量子化し、巻いた瞬間の不連続を防ぐ。`Common/VertexAnimation.glsl` もこの制約を記載する。
 
 ### GBuffer
 
-C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 368u)` と初期化時の `UBO_SIZE = 368` がある。空きの末尾領域はない。
+C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 400u)` と初期化時の `UBO_SIZE = 400` がある。頂点アニメの 2 欄は `offsetof` で 368・384 バイトを検査する。空きの末尾領域はない。
 
-GLSL は `Assets/Shaders/gbuffer.frag` の `MVPData` が全 368 バイト、`Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の同名宣言が先頭 320 バイト（`frameParams` まで）を持つ。
+GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` が全 400 バイト。`Assets/Shaders/gbuffer.frag` は先頭 368 バイト（`shadingModel` まで）を宣言し、末尾 32 バイトは読まない。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（ベクトルは x / y / z / w 順） |
 |---|---|---|---|
@@ -82,9 +92,11 @@ GLSL は `Assets/Shaders/gbuffer.frag` の `MVPData` が全 368 バイト、`Ass
 | 272 | `emissiveChromaticityAndLuminanceNits: float[4]` | `emissiveChromaticityAndLuminanceNits: vec4` | xyz = Y=1 の発光色度、w = 発光輝度（nits） |
 | 288 | `pomParams: float[4]` | `pomParams: vec4` | 高さ倍率 / 高さマップあり（1/0）/ ORM を `metallicTexture` 枠に張る（1/0）/ 法線が 2 チャンネル（1/0） |
 | 304 | `frameParams: float[4]` | `frameParams: vec4` | 前のカメラ履歴あり（1/0）/ 発光のプリエクスポージャ / sparse（VT）テクスチャあり（1/0）/ アルベドの VT フィードバックパラメータ |
-| 320 | `vtFeedbackParams: float[4]` | `vtFeedbackParams: vec4`（断片側のみ） | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / 鏡面のない材質（1/0） |
-| 336 | `shadingParams: float[4]` | `shadingParams: vec4`（断片側のみ） | 材質の `P0` / `P1` / 予約 / 被覆率の乗数。スキニングはインスタンス値を重ねた値 |
-| 352 | `shadingModel: float[4]` | `shadingModel: vec4`（断片側のみ） | x = GBuffer のシェーディングモデル ID、yzw = 0 |
+| 320 | `vtFeedbackParams: float[4]` | `vtFeedbackParams: vec4` | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / 鏡面のない材質（1/0） |
+| 336 | `shadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数。スキニングはインスタンス値を重ねた値 |
+| 352 | `shadingModel: float[4]` | `shadingModel: vec4` | x = GBuffer のシェーディングモデル ID、yzw = 0 |
+| 368 | `vertexAnimInstanceParams: float[4]` | `vertexAnimInstanceParams: vec4`（頂点側のみ） | 16 バイト。スキンの描画の生の `ShadingParams`（負は未指定のまま）。静的メッシュでは全成分 -1 で、頂点側はインスタンス表を読む |
+| 384 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
 
 `vtFeedbackParams.w`（332 バイト）は `gbuffer.frag` が `> 0.5` を判定し、`Normal.w` の `DIFFUSE_ONLY` の印へ変換する。`Material.a` の意味には使わない。
 
@@ -92,9 +104,9 @@ VT パラメータの `0` は要求を書かない指定。整数を float に�
 
 ### MegaGeometry
 
-C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 136 float = **544 バイト**。検査は `static_assert(sizeof(SectionUniformData) <= 768u)`、確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 544〜767 バイト（224 バイト）は空きで、現在の UBO 宣言には含まれない。
+C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 140 float = **560 バイト**。`static_assert` は `VertexAnimTime` の位置 544・大きさ 560・上限 768 バイトを検査する。確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 560〜767 バイト（208 バイト）は空きで、現在の UBO 宣言には含まれない。
 
-GLSL は `Assets/Shaders/megageometry.frag` の `MVPData` が全 544 バイト、`Assets/Shaders/megageometry.vert` は先頭 336 バイト（`frameParams` まで）。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
+GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が全 560 バイト、`Assets/Shaders/megageometry.frag` は先頭 544 バイト（`shadingParams` まで）を宣言する。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
 |---|---|---|---|
@@ -111,6 +123,7 @@ GLSL は `Assets/Shaders/megageometry.frag` の `MVPData` が全 544 バイト�
 | 352 | `VtFeedbackParams: float[4]` | `vtFeedbackParams: vec4` | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / GBuffer のシェーディングモデル ID |
 | 368 | `TerrainParams: float[40]` | `terrainParams: vec4[10]` | 下表の地形 3 層のパラメータ |
 | 528 | `ShadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数 |
+| 544 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
 
 MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変換した ID であり、GBuffer の同名成分の `DIFFUSE_ONLY` 入力とは異なる。`ShadingParams` には `MegaMeshMaterial::ShadingParams` を写す。`megageometry.frag` は地形の場合に `TERRAIN` の印を書く。
 
@@ -151,7 +164,7 @@ MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変�
 | 43 | 172〜175 | `NormalMatrix[11]` | `normalRows[2].w: float` | 空き（0） |
 | 44〜47 | 176〜191 | `ObjectColor[0..3]` | `objectColor: vec4` | オブジェクトカラー RGBA。入力 `customData[0..3]` の各成分が 0 ならその成分を 1 にする。入力なしは全て 1 |
 | 48〜51 | 192〜207 | `CustomData[0..3]` | `customData: vec4` | 入力 `customData[0..3]` の原値。入力なしは全て 0。標準メッシュの現シェーダーでは未使用だが、CPU のカスタム値の保持先 |
-| 52〜55 | 208〜223 | `ShadingParams[0..3]` | `shadingParams: vec4` | インスタンスの `P0` / `P1` / 予約 / 被覆率の乗数。入力なしは全て -1 |
+| 52〜55 | 208〜223 | `ShadingParams[0..3]` | `shadingParams: vec4` | インスタンスの `P0` / `P1` / 頂点アニメの種類（0.5 以上で試験の正弦）/ 被覆率の乗数。入力なしは全て -1 |
 
 法線の 3 行は `Math/MatrixUtils.h::CopyUpper3x3ToShaderData` が各行の w を 0 にする。シェーダーは各行 xyz に入力法線の x / y / z を掛けて足し、正規化する。
 
@@ -184,9 +197,9 @@ MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変�
 |---|---|---|
 | `gbuffer.vert` | 0 / 7 | `world`, `previousWorld`, `normalRows[].xyz`, `objectColor.rgb`, `shadingParams` |
 | `forward_transparent.vert` | 0 / 7 | `world`, `normalRows[].xyz`, `objectColor` |
-| `shadow.vert` | 0 / 7 | `world`（インスタンス表を使う分岐） |
+| `shadow.vert` | 0 / 7 | `world`, `shadingParams`（インスタンス表を使う分岐） |
 | `point_shadow.vert` | 0 / 7 | `world`（インスタンス表を使う分岐） |
-| `visbuffer_mesh.vert` | 0 / 1 | `world` |
+| `visbuffer_mesh.vert` | 0 / 1 | `world`, `shadingParams` |
 | `Common/VisibilityResolve.glsl` | 0 / 5 | `world`, `previousWorld`, `objectColor.rgb`, `shadingParams` |
 | `board2d.vert` | 0 / 7 | `world`, 板用の `normalRows`, `objectColor`, `customData.xy` |
 | `world_board.vert` | 0 / 7 | `world[3]`, 板用の `normalRows`, `objectColor` |
@@ -245,7 +258,8 @@ C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み�
 ## 6. 照合上の未確認事項と注意
 
 - `megageometry.vert` の `emissiveColor` のコメントはカラー・強度と表記しているが、C++ の入力と `megageometry.frag` の演算は色度・輝度（nits）である。
-- `SectionUniformData` の 544 バイトと UBO 各フィールドのオフセットは配列宣言からの積算値。MegaGeometry のサイズ検査は 768 バイト以下という上限だけであり、544 バイトとの等値検査や UBO フィールドの `offsetof` 検査はない。
+- UBO の各フィールドのオフセットは配列宣言から積算した。頂点アニメの欄の `offsetof` 検査は `PerObjectUBO` の 368・384、`SectionUniformData` の 544、`GPURasterParams` の 112、`ShadowPerObjectUBO` の 208 にある。`VisFrameConstants` と `ResolveParams` は大きさの検査だけで、フィールドごとの `offsetof` 検査はない。
+- `SceneInstanceData.glsl` の `shadingParams.z` のコメントは予約のままだが、実際の頂点アニメの読み手は 1・3 節の種類として使う。`VisibilityBuffer.h` の `DrawRecord::LodPayload` のコメントも他の種類を 0 としているが、VSM の影の記録では 9 節の float ビット列を格納する。
 
 ## 7. 可視バッファの材質表
 
@@ -266,3 +280,99 @@ C++ は `Library/Core/Public/Rendering/VisibilityMaterialTable.h` の `Visibilit
 材質表の作成は `VisibilityMaterialTable.cpp::MakeMaterialEntry`。`Header[1]` には 1 節の変換後の ID を格納する。手続きメッシュのインスタンス値は解決時にインスタンス表から読み、スキニングのインスタンス値は表を作るときに材質値へ重ねる。
 
 `VisMaterialEntry` の宣言は `Common/VisibilityResolve.glsl` の 1 か所にあり、`visbuffer_resolve.comp`、`visbuffer_resolve_dump.comp`、`visbuffer_resolve_tiles.comp`、`visbuffer_resolve_tiles_dump.comp` が同ファイルを include する。
+
+## 8. 可視バッファのフレーム定数と頂点アニメの生値表
+
+### ラスタの VisFrame
+
+C++ は `VisibilityRasterPass.cpp::VisFrameConstants`（`alignas(16)`）、GLSL は `visbuffer_mesh.vert`・`visbuffer_mega.vert`・`visbuffer_skinned.vert`・`visbuffer_sw_raster.comp` の `VisFrame`。`std140`、set 0 / binding 0、合計 **144 バイト**。C++ の `static_assert` は大きさを検査し、確保サイズは `FrameUniformBytes = sizeof(VisFrameConstants)`。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `View: float[16]` | `view: mat4` | 現在のビュー行列 |
+| 64 | 64 | `Projection: float[16]` | `projection: mat4` | 現在の投影行列 |
+| 128 | 16 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。2 節の時刻欄の注記（4096 秒の巻き・GR46 の周波数量子化）に従う |
+
+### 解決の ResolveParams
+
+C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`alignas(16)`）、GLSL は `Common/VisibilityResolve.glsl::ResolveParams`。`std140`、set 0 / binding 0、合計 **272 バイト**。C++ の `static_assert` は大きさを検査する。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `InvView: float[16]` | `invView: mat4` | ビュー空間からワールドへの変換 |
+| 64 | 64 | `InvProj: float[16]` | `invProj: mat4` | クリップ空間からビュー空間への変換 |
+| 128 | 64 | `PreviousViewProj: float[16]` | `previousViewProj: mat4` | 前のカメラの投影 × ビュー |
+| 192 | 16 | `CameraPosition: float[4]` | `cameraPosition: vec4` | xyz = カメラのワールド位置 |
+| 208 | 16 | `Viewport: float[4]` | `viewport: vec4` | x / y / 幅 / 高さ（画素） |
+| 224 | 16 | `Screen: uint32_t[4]` | `screen: uvec4` | 画面幅 / 画面高さ / フラグ / 材質表の件数 |
+| 240 | 16 | `Frame: float[4]` | `frame: vec4` | プリエクスポージャ / MegaGeometry のデバッグ表示 / 幾何法線の印 / 予約 |
+| 256 | 16 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。2 節の時刻欄の注記に従う |
+
+### スキンの記録と生の ShadingParams の表
+
+可視バッファの記録は `VisibilityBuffer.h::DrawRecord` と `Common/VisibilityBuffer.glsl::VisibilityDrawRecord`。`std430` の 1 件は **64 バイト**（C++ は大きさ・整列と 16・32・48 バイトの境界を `static_assert` で検査）。末尾の割り当ては次のとおりで、記録の大きさは増やさない。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL 成分 | 可視バッファでの意味 |
+|---|---|---|---|---|
+| 48 | 8 | `PreviousVertexAddress: uint64_t` | `previous.xy` | 前のフレームに変形したスキン頂点のアドレス（下位 / 上位 32 bit） |
+| 56 | 4 | `LodPayload: uint32_t` | `previous.z` | MegaGeometry の LOD の段。他の可視バッファの種類では 0 |
+| 60 | 4 | `Reserved: uint32_t` | `previous.w` | スキンでは生の `ShadingParams` の表の添え字 |
+
+表は `VisibilityRasterPass` が作る `VisBuffer_SkinnedVertexAnimParams`。C++ の `SkinnedVertexAnimParams::Values: float[4]`（位置 0、大きさ 16 バイト、`static_assert` あり）と GLSL の `visVertexAnimParams[]: vec4[]` が対応し、`std430` の要素間隔は **16 バイト**。描画ごとに生の `ShadingParams` を 1 件コピーし、同じ描画の塊で添え字を共有する。x / y / z / w は `P0` / `P1` / 頂点アニメの種類 / 被覆率の乗数で、負の未指定値も保持する。7 節の材質値を重ねた表とは別である。
+
+| 読み手 | set / binding | 宣言・束ね |
+|---|---|---|
+| `visbuffer_skinned.vert` | 0 / 3 | `VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING = 3`、`VisibilityRasterPass.cpp` の `SkinnedSet->BindStorageBuffer(3, ...)` |
+| `Common/VisibilityResolve.glsl` | 0 / 32 | `VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING = 32`、`VisibilityResolvePass.cpp` の `VertexAnimParamsTableBindingIndex` |
+
+両者とも `Common/VisibilityBuffer.glsl::VisRecordVertexAnimParams` で読む。スキン以外の種類、または添え字が表の範囲外なら `vec4(-1.0)` を返す。解決では手続きメッシュは `InstanceData.shadingParams`、MegaGeometry は `vec4(-1.0)` を使う。
+
+## 9. 影の頂点アニメ用の定数と記録
+
+### VSM の VsmRasterParams
+
+C++ は `VirtualShadowMapRaster.cpp::GPURasterParams`、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **128 バイト**。`static_assert` が大きさ 128 と `vertexAnimTime` の位置 112 を検査する。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 0 | 16 | `lightRight: float[4]` | `lightRight: vec4` | ライトの右方向 |
+| 16 | 16 | `lightUp: float[4]` | `lightUp: vec4` | ライトの上方向 |
+| 32 | 16 | `lightDirection: float[4]` | `lightDirection: vec4` | ライトの方向 |
+| 48 | 16 | `depth: float[4]` | `depth: vec4` | x = 深度の原点、y = 深度範囲の 2 倍の逆数 |
+| 64 | 16 | `counts: uint32_t[4]` | `counts: uvec4` | 塊の数 / スライスの数 / インスタンス容量 / MegaGeometry のクラスタ記録容量 |
+| 80 | 16 | `foliageWind: float[4]` | `foliageWind: vec4` | xy = 風向（XZ）、z = 風の時計、w = 共通の風の突風の周波数（Hz。0 なら従来の風） |
+| 96 | 16 | `foliageWindParams: float[4]` | `foliageWindParams: vec4` | 風速 / 突風の大きさ / 突風の強さ / 乱流の強さ |
+| 112 | 16 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。影は x のみ使う。2 節の時刻欄の注記に従う |
+
+`vsm_expand.comp` の同名 UBO 宣言は先頭 **112 バイト**（`foliageWindParams` まで）のままで、時刻欄を持たない。
+
+### VSM の塊の記録
+
+`VirtualShadowMapRaster.h::VsmShadowChunk` と `Common/VirtualShadowMapChunk.glsl::VsmShadowChunk` は `std430`、**144 バイト**。先頭 64 バイトが `DrawRecord` / `VisibilityDrawRecord`、64〜95 が境界とスライス集合、96〜143 がワールド変換の 3 行。大きさと境界・変換の位置は C++ の `static_assert` にある。
+
+手続き・スキンの影の塊は前フレーム情報を読まないため、`VirtualShadowMapCasters.h::SetChunkVertexAnimationParams` が `record.previous` の 4 語へ生の値の **float ビット列**を格納する。数値を uint へ変換する意味ではない。
+
+| 塊の先頭からの位置 | 大きさ | C++ の格納先 | GLSL 成分 | 影での意味 |
+|---|---|---|---|---|
+| 48 | 4 | `Record.PreviousVertexAddress` の下位 32 bit | `record.previous.x` | 生の `ShadingParams.x` の float ビット列 |
+| 52 | 4 | `Record.PreviousVertexAddress` の上位 32 bit | `record.previous.y` | 生の `ShadingParams.y` の float ビット列 |
+| 56 | 4 | `Record.LodPayload` | `record.previous.z` | 生の `ShadingParams.z`（頂点アニメの種類）の float ビット列 |
+| 60 | 4 | `Record.Reserved` | `record.previous.w` | 生の `ShadingParams.w` の float ビット列 |
+
+値の指定がない場合は全成分 -1 のビット列。`vsm_draw.vert` が `uintBitsToFloat(record.previous)` で復元する。MegaGeometry の塊の `record.previous` は 0 で、シェーダーはその値を読まず `vec4(-1.0)` を使う。可視バッファのスキン記録で `previous.w` を表の添え字にする 8 節とは、用途が異なる。
+
+### 影の地図の ShadowMVP
+
+C++ は `ShadowMapPass.cpp::ShadowPerObjectUBO`、GLSL は `shadow.vert::ShadowMVP`。`std140`、set 0 / binding 0、合計 **224 バイト**。`static_assert` が大きさ 224 と `vertexAnimTime` の位置 208 を検査し、確保サイズは `sizeof(ShadowPerObjectUBO)`。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `lightView: float[16]` | `lightView: mat4` | ライトのビュー行列 |
+| 64 | 64 | `lightProjection: float[16]` | `lightProjection: mat4` | ライトの投影行列 |
+| 128 | 64 | `world: float[16]` | `world: mat4` | MegaGeometry のワールド変換 |
+| 192 | 16 | `worldSource: float[4]` | `worldSource: vec4` | x = 1 なら UBO の world、それ以外はインスタンス表の world を使う |
+| 208 | 16 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。影は x のみ使う。2 節の時刻欄の注記に従う |
+
+## 10. 草・低木の風の前時刻
+
+`FoliagePass.cpp::FoliageUniform` / `Common/FoliageData.glsl::FoliageData` の UBO は **384 バイト**のまま（`static_assert` あり）。`vertexAnimTime` は追加していない。`std140` の `wind: float[4]` / `vec4` は位置 272、大きさ 16 バイトで、xy = 風向、z = 現在の風の時刻、w = 前の風の時刻。`wind[3]`（284 バイト）は両方の風の経路で `windTime - VertexAnimationPreviousDeltaSeconds(context.ExtensionFrame)` とし、最後に描いたフレームの時刻を基準にする。
