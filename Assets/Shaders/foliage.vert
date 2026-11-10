@@ -64,6 +64,12 @@ void main()
     float fadeScale = FoliageFadeScale(root, inInstanceFadeThreshold);
     float widthScale = inInstanceParams.x * fadeScale;
     float heightScale = inInstanceParams.y * fadeScale;
+    // 主カメラと主人公の間・カメラの直前の株は、根元の可視度で低くする(影の描画は変えない)
+    if (ViewClearanceIsActive(foliage.viewClearance))
+    {
+        float clearance = ViewClearanceVisibility(foliage.viewClearance, root);
+        heightScale *= mix(foliage.viewClearance.Shape.w, 1.0, clearance);
+    }
     float colorVariation = inInstanceParams.z;
     float plantPhase = inInstanceParams.w;
 

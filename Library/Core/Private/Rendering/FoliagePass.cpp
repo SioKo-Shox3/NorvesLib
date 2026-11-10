@@ -6,6 +6,7 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/ViewClearance.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/Wind.h"
 #include "RHI/ICommandList.h"
@@ -37,8 +38,10 @@ namespace NorvesLib::Core::Rendering
             float tipColorB[4];
             float frameParams[4];
             float windField[4];
+            ViewClearanceGpuData viewClearance;
         };
-        static_assert(sizeof(FoliageUniform) == 384u, "Common/FoliageData.glsl の FoliageData と合わせる");
+        static_assert(sizeof(FoliageUniform) == 448u, "Common/FoliageData.glsl の FoliageData と合わせる");
+        static_assert(offsetof(FoliageUniform, viewClearance) == 384u);
 
         static_assert(offsetof(FoliageVertex, Normal) == 12);
         static_assert(offsetof(FoliageVertex, Side) == 24);
@@ -390,6 +393,8 @@ namespace NorvesLib::Core::Rendering
                            : cameraConstants;
 
         FoliageUniform frameTemplate{};
+        frameTemplate.viewClearance =
+            MakeViewClearanceGpuData(activeCamera->ViewClearance, activeCamera->ViewClearance.bAffectGrass);
         cameraConstants.CopyShaderView(frameTemplate.view);
         cameraConstants.CopyShaderProjection(frameTemplate.projection);
         previousConstants.CopyShaderView(frameTemplate.previousView);
