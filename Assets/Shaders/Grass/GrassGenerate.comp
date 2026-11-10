@@ -157,6 +157,19 @@ void main()
         }
         precise float halfHeight = height * 0.5;
         precise float centerY = y + halfHeight;
+        precise vec3 clearancePoint = vec3(x, centerY, z);
+        if (ViewClearanceIsActive(constants.ViewClearance))
+        {
+            precise float c0 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance0));
+            precise float c1 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance1));
+            precise float c2 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance2));
+            precise float u = max(min(c0, c1), min(max(c0, c1), c2));
+            precise float g = GrassHashToUnit(GrassHash(gz, gx, saltBase + kGrassHashSaltClearance0));
+            if (!ViewClearanceKeep(constants.ViewClearance, clearancePoint, u, g))
+            {
+                continue;
+            }
+        }
         precise float radius = halfHeight + constants.BladeQuantMaxMeters[1];
         bool bOutside = false;
         for (uint plane = 0u; plane < 6u; ++plane)
@@ -215,7 +228,13 @@ void main()
             record.PositionX = x;
             record.PositionY = y;
             record.PositionZ = z;
-            record.Packed = PackGrassBlade(height, width, speciesId, fade,
+            precise float recordHeight = height;
+            if (ViewClearanceIsActive(constants.ViewClearance))
+            {
+                precise float visibility = ViewClearanceVisibility(constants.ViewClearance, clearancePoint);
+                recordHeight = height * GrassLerp(constants.ViewClearance.Shape.w, 1.0, visibility);
+            }
+            record.Packed = PackGrassBlade(recordHeight, width, speciesId, fade,
                                            constants.BladeQuantMaxMeters[0], constants.BladeQuantMaxMeters[1]);
             records.Records[constants.LodBase[band] + recordIndex] = record;
             atomicAdd(args.Args[band * 5u + 1u], 1u);

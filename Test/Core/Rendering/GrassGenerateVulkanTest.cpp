@@ -351,6 +351,48 @@ namespace
         }
         bool ok = CheckCounts("通常", expected, actual, settings);
 
+        // 低いカメラと注視点の間を切り抜き、同じ入力の無効時より本数が減ることも確かめる。
+        CameraProxy clearanceCamera = camera;
+        clearanceCamera.PositionY = 0.6f;
+        const Math::Vector3 clearancePosition(0.0f, 0.6f, 0.0f);
+        const auto clearanceView = CameraViewConstants::BuildForDevice(clearanceCamera, 1.0f, nullptr);
+        const auto clearancePlanes = Math::MatrixUtils::ExtractClipSpaceFrustumPlanes(
+            clearanceView.CullingViewProjectionMatrix, Math::ClipSpaceDepthRange::ZeroToOne);
+        GrassTileSelectionInput clearanceSelection;
+        clearanceSelection.CameraPosition = clearancePosition;
+        clearanceSelection.WindowSize = WindowSize;
+        clearancePlanes.CopyToShaderData(clearanceSelection.FrustumPlanes);
+        Container::VariableArray<GrassTileInfo> clearanceTiles;
+        const uint32_t clearanceSelected = selector.Select(field, settings, clearanceSelection, clearanceTiles);
+        ok &= Check(clearanceSelected > 0 && clearanceSelected == clearanceTiles.size(), "切り抜き用のタイルがありません");
+        GrassGenerateConstants clearanceConstants = BuildGrassGenerateConstants(
+            settings, clearancePosition, clearancePlanes.Planes, Resolution, Resolution, field.ChunkSizeMeters);
+        const GrassGenerateCounts beforeClearance = RunGrassGenerateReference(
+            field, clearanceConstants, clearanceTiles.data(), clearanceSelected);
+        ViewClearanceParameters clearanceParameters = MakeDefaultViewClearanceParameters();
+        clearanceParameters.bEnabled = true;
+        clearanceParameters.Strength = 1.0f;
+        clearanceParameters.bAffectGrass = true;
+        clearanceParameters.CameraPosition = clearancePosition;
+        clearanceParameters.TargetPosition = Math::Vector3(0.0f, 0.4f, 2.5f);
+        SetGrassViewClearance(clearanceConstants, clearanceParameters);
+        const GrassGenerateCounts clearanceExpected = RunGrassGenerateReference(
+            field, clearanceConstants, clearanceTiles.data(), clearanceSelected);
+        uint64_t beforeClearanceTotal = 0;
+        uint64_t clearanceTotal = 0;
+        for (uint32_t lod = 0; lod < kGrassLodCount; ++lod)
+        {
+            beforeClearanceTotal += beforeClearance.PerLod[lod];
+            clearanceTotal += clearanceExpected.PerLod[lod];
+        }
+        ok &= Check(clearanceTotal < beforeClearanceTotal, "切り抜きで CPU の写しの本数が減っていません");
+        actual = {};
+        if (!fixture.Run(field, settings, clearanceConstants, clearanceTiles.data(), clearanceSelected, actual))
+        {
+            return false;
+        }
+        ok &= CheckCounts("切り抜き", clearanceExpected, actual, settings);
+
         // 密度 0 のタイルは視錐台の中、後方のタイルは視錐台の外に置く。
         const GrassTileInfo excluded[] = {MakeTile(0, -4, 0, settings), MakeTile(1, 5, 1, settings)};
         const char* names[] = {"後方", "密度ゼロ"};

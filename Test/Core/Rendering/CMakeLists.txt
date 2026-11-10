@@ -368,6 +368,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER ViewClearanceShaderCompileTest ViewClearanceShaderCompileTest.cpp
     MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
     MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
@@ -388,6 +389,7 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+add_test(NAME ViewClearanceShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=ViewClearanceShaderCompileTest)
 add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
 # 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
 add_test(NAME WorldFieldShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WorldFieldShaderCompileTest)
@@ -1550,6 +1552,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
     MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
     MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
+    MEMBER GrassClearanceReferenceTest GrassClearanceReferenceTest.cpp
     MEMBER SkinnedLodSelectionTest SkinnedLodSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
@@ -1607,6 +1610,7 @@ add_test(NAME WorldFieldInputSanitizeTest COMMAND CameraViewConstantsTest --test
 add_test(NAME WorldFieldScrollMathTest COMMAND CameraViewConstantsTest --test=WorldFieldScrollMathTest)
 # 草のタイル選別をCPUで検証する。
 add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
+add_test(NAME GrassClearanceReferenceTest COMMAND CameraViewConstantsTest --test=GrassClearanceReferenceTest)
 # スキンの視錐台・CSM のカスケードの絞り込みと太陽の影の調整口の Sanitize を CPU で検証する。
 add_test(NAME SkinnedLodSelectionTest COMMAND CameraViewConstantsTest --test=SkinnedLodSelectionTest)
 

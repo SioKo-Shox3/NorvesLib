@@ -10639,20 +10639,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ(G10-GR63-SKIN-CULL, 反復 2): verify のビルド（`CameraViewConstantsTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingHdrSceneCaptureTest`・`RenderingVelocityVulkanTest`・`RHITextureUpdateVulkanTest`・`RenderingGoldenImageTest`・`Game`）は終了コード 0。ctest（golden 4 本は人の決まりで `-E "Golden|PathTracingReference"` で外す）は 12/12 Passed（`VirtualShadowMapVulkanTest` を含む、`VUID_COUNT=0`）。
 - Next(G10-GR63-SKIN-CULL, 反復 2): 反復 1 の Next のとおり。人が見るときの見どころも反復 1 の Next のとおり（撮影・計測の確かめは回さない決まり）。
 
-- G5-GR26-LIGHTING-MODELS: 統合ブランチを取り込み、RenderingHdrSceneCaptureTest.cpp の衝突（TAA リアクティブとシェーディングモデル照明のシナリオ）を両方残して互いに併用不可にした。Debug のビルドと関係の GPU 試験 6 本が通過（Golden は決まりで外す）。
-
-## 2026-11-10 G5-GR26-LIGHTING-MODELS（run 20261110-065330 の反復 5、完了）
-
-- Done: 実装は足さず、verify の ctest を GBuffer の試験とそれ以外の 2 行に分けた（試験の名前は 1 本も減らしていない。`--timeout 300` のまま、GBuffer の試験には CMake の TIMEOUT 900 が効く）。Debug の verify のビルドは EXIT=0（`.harness/runs/20261110-065330/G5-GR26-final-build.txt`）。`RenderingShadingModelGBufferVulkanTest` は Passed 249 秒（`G5-GR26-final-ctest-1.txt`）。`RenderingShadingModelLightingVulkanTest`・`ShadingModelContractTest`・`RenderingHdrIndoorSceneVulkanTest`・`RenderingHdrOutdoorSceneVulkanTest` は Passed（`G5-GR26-final-ctest-2.txt`）。
-- Notes: Golden の 4 本は決まりにより合否に使わない。参考までに同じ実行では Outdoor の 2 本が Passed、Indoor の 2 本（通常と GBuffer の予備の経路）が `mean_flip=0.0000137`・raw 最大 1・10 画素で mismatch だった。原因（この項目の変更か、取り込んだ統合ブランチの変更か）は確かめていない。
-- 人が見るときの見どころ: G5-GR27-MATERIAL-SCENES-CHECK で、PaleFlat の球の明暗の差が小さいこと、Fur の明暗の境目が明るいこと、Eye の鏡面が P0 で強くなることを見る。DefaultLit の各シーンの見た目は変わらない想定。
-- Next: G5-GR27-MATERIAL-SCENES-CHECK。
-- U1 照明の定数にシェーディングモデルの係数を足し、P0・P1 の意味を表に書く: 着地(直し 0 回)
-- U2 PaleFlat の GBuffer 書き込みで粗さ 1・金属度 0 にする: 着地(直し 0 回)
-- U3 ShadingModels.glsl の 3 つの口と lighting.frag の ID の分岐: 着地(直し 1 回)
-- U4 GPU 試験 RenderingShadingModelLightingVulkanTest を足す: 着地(直し 0 回)
-## G5-GR26-LIGHTING-MODELS（2026-11-10）
-- Done: `lighting.frag` が GBuffer のシェーディングモデルの ID で描き分ける。ID が 0（DefaultLit）の画素は今の文と同じ順・同じ式のまま通り、0 でない画素（検証表示を除く）だけ `Assets/Shaders/Common/ShadingModels.glsl` の 3 つの口を呼ぶ: 光源のループの前の `ApplyShadingModelSurface`（面の補正）、光源ごとの `EvaluateShadingModelDirect`（`EvaluateAnalyticalDirectEndpointBRDF` の代わり。ニューラル BRDF は通らず解析の式）、最後の `ShadingModelFinalize`。最初の式は Fur = wrap の拡散と粗さの下限を付けた鏡面（異方性は GR33 の後）、Eye = 鏡面 × (1 + P0 × 増分)、PaleFlat = アルベドを輝度へ寄せ、直接光を一定値に・環境光を向きに依らない放射照度に置き換えて明暗の差を落とし、間接鏡面も同じ割合で減らす。PaleFlat は GBuffer に書く時点で粗さ 1・金属度 0（`GBufferEncodeMaterialForShadingModel`。SSR は改造しない）。係数は照明の UBO の `shadingModelParams[2]`（`LightingPassSettings` の係数の構造体、既定は仮）で差し替えられる。`GpuLayoutRegistry.md` に各モデルの P0・P1 の意味と UBO の新しい行を書いた。GPU の試験 `RenderingShadingModelLightingVulkanTest`（`--scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting`、方向光 1 灯の下に灰色の球 6 個）を足した。
-- 証拠: `.harness/runs/20261110-065330/G5-GR26-LIGHTING-MODELS-final-verify.txt`（verify のビルドの行 exit 0、ctest の RenderingShadingModelLightingVulkanTest・RenderingShadingModelGBufferVulkanTest・ShadingModelContractTest・RenderingHdrIndoorSceneVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 5/5 合格）。BackBuffer の sRGB 値の輝度で、PaleFlat の明暗の差 0.60（上限 2）、DefaultLit 126.96（下限 20）、Fur の境目 13.20 > DefaultLit 0.08、Eye の鏡面 148.96 < 177.36 < 191.52（P0 = 0・0.5・1）。基準画像の試験 4 本（RenderingGolden*）は回さない決まりで verify から外した。ID 0 の経路の文面は変えていない。
-- Next: 起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。今はどのシーンも既定の材質が DefaultLit なので、人が見るときは Rendering3DTest（天球・地面・球・岩）と荒野の見た目が変わらないことを見る。
-- Notes: 屋内の基準画像（RenderingGoldenIndoorVulkanTest・同 GBufferFallback）は、この項目の照明の変更を入れる前のシェーダーでも 10 画素・最大 1 階調の差（mean_flip 0.000013729）で落ちる。前の項目のどれかから続いている差で、基準画像は回さない決まりなので追っていない。
+- U1 GPU へ渡す切り抜きの値の型・共通の GLSL・草の生成と CPU の写しの間引き: 着地(直し 0 回)
+- U4 grassland に主人公の代わりの体と、ViewClearanceComponent 付きのスプリングアームのカメラを足す: 着地(直し 0 回)
+- U2 GrassPass が主カメラの ViewClearance を生成の定数へ渡す: 着地(直し 0 回)
+- U3 株の描画(foliage.vert)の根元で切り抜きを評価して縮める: 着地(直し 0 回)
+- U5 草の切り抜きの試験(CPU の写し・GPU の数の一致のケース): 着地(直し 0 回)
+- U6 切り抜きを含むシェーダーの CPU コンパイルの試験と、タスクの verify 全部: 着地(直し 0 回)
+## 2026-11-10 G5-GR113-GRASS-CLEARANCE（run 20261110-083450 の反復 1、完了）
+- Done: `Assets/Shaders/Common/ViewClearance.glsl` に CPU の `ComputeViewClearanceVisibility` と同じ式の `ViewClearanceVisibility` と、sqrt・除算を使わない本数の判定 `ViewClearanceKeep` を置いた。`ViewClearance.h` に 64 バイトの `ViewClearanceGpuData`・`MakeViewClearanceGpuData`（Sanitize し、適用しない・bEnabled=false・Strength=0 なら全成分 0）を足した。`GrassGenerateConstants` は末尾に ViewClearance を足して 480→544 バイト、`SetGrassViewClearance` を公開。`GrassGenerate.comp` と `RunGrassGenerateReference` は縮める前のブレードの中心で判定し、残るものの草丈を lerp(MinHeightScale, 1, v) へ縮める（視錐台・向き・HZB は縮める前の高さのまま）。GrassPass は主カメラの `CameraProxy.ViewClearance` を渡す。FoliagePass の UBO を 384→448 バイトにし、`foliage.vert` は有効なときだけ株の根元で v を求めて高さを縮める（vsm_draw.vert の影は変えない）。grassland に開発ビルドだけの主人公の視点（H キー。犬大の茶色の箱と、SpringArm＋ViewClearanceComponent のカメラ）を足した。試験 `GrassClearanceReferenceTest`（CameraViewConstantsTest の束）・`ViewClearanceShaderCompileTest`（RHIRayTracingApiContractTest の束。GrassGenerate.comp・foliage.vert・foliage.frag）を足し、`GrassGenerateVulkanTest` に「切り抜き」のケースを足した（ビルドだけ）
+- 証拠: `.harness/runs/20261110-083450/G5-GR113-GRASS-CLEARANCE-final-verify.txt`（verify のビルド CameraViewConstantsTest・RHIRayTracingApiContractTest・RHITextureUpdateVulkanTest・Game がすべて exit_code 0、ctest GrassShaderCompileTest・ViewClearanceShaderCompileTest・ViewClearanceModelTest・GrassTileSelectionTest・GrassClearanceReferenceTest 5/5 Passed、WindShaderCompileTest Passed、numstat の 2 通りが一致）。GrassClearanceReferenceTest の数: 内側 129→0、外側 43862→43862、B より奥 43405→43405、近接の内側 4→0、feather の帯 60→27（残りは全部低くなる）
+- Next: ランナーの評価者の反証（RenderThread・UBO の危険地帯）。GPU の数の一致（GrassGenerateVulkanTest の切り抜きのケース）の実行と撮影は G5-GR113-CLEARANCE-CHECK（撮影・GPU の計測は回さない決まり）
+- 人が見るときの見どころ: Debug か RelWithDebInfo で `--scene=grassland` に入り、H キーで主人公の視点へ切り替える。カメラ（アーム 2.5 m・ピッチ −10°）と茶色の箱の間の草が間引かれて低くなり、カプセルの外と箱の向こうの草は変わらない。カメラの直前 0.15 m 以内の草は出ず、0.6 m までは低い。もう一度 H で自由飛行へ戻る
+- Notes: 本数の判定は、smoothstep が Beta(2,2)（三つの一様乱数の中央値）の累積分布であることを使い、「d ≥ r·(1+F·u)」を二乗の比較で決める（v < hash と同じ確率、CPU と GPU で演算順を揃えて sqrt の誤差に左右されない）。Strength は独立なハッシュ g < Strength のときだけ消すので消える確率は Strength·(1−v)。半径・feather・近接の既定は仮の値のまま（G5-GR113-CLEARANCE-CHECK で詰める）。主人公の視点は起動引数を足せない範囲（GameApplicationHandler は paths の外）なのでキーで切り替える形にし、既定の起動・視点・カメラパスは変えていない。手続きメッシュの番号は 960

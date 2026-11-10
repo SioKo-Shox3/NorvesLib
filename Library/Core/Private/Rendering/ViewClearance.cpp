@@ -60,6 +60,32 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
+    ViewClearanceGpuData MakeViewClearanceGpuData(const ViewClearanceParameters& parameters, bool bApply)
+    {
+        const ViewClearanceParameters sanitized = SanitizeViewClearanceParameters(parameters);
+        ViewClearanceGpuData result;
+        if (!bApply || !sanitized.bEnabled || sanitized.Strength == 0.0f)
+        {
+            return result;
+        }
+
+        result.CameraRadius[0] = sanitized.CameraPosition.x;
+        result.CameraRadius[1] = sanitized.CameraPosition.y;
+        result.CameraRadius[2] = sanitized.CameraPosition.z;
+        result.CameraRadius[3] = sanitized.CameraRadius;
+        result.TargetRadius[0] = sanitized.TargetPosition.x;
+        result.TargetRadius[1] = sanitized.TargetPosition.y;
+        result.TargetRadius[2] = sanitized.TargetPosition.z;
+        result.TargetRadius[3] = sanitized.TargetRadius;
+        result.Shape[0] = sanitized.FeatherRatio;
+        result.Shape[1] = sanitized.NearFadeStart;
+        result.Shape[2] = sanitized.NearFadeEnd;
+        result.Shape[3] = sanitized.MinHeightScale;
+        result.Control[0] = sanitized.Strength;
+        result.Control[1] = 1.0f;
+        return result;
+    }
+
     float ComputeViewClearanceVisibility(const ViewClearanceParameters& parameters,
                                          const Math::Vector3& point)
     {

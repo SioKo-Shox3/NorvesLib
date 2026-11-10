@@ -2,6 +2,8 @@
 #ifndef NORVES_FOLIAGE_DATA_GLSL
 #define NORVES_FOLIAGE_DATA_GLSL
 
+#include "Common/ViewClearance.glsl"
+
 layout(set = 0, binding = 0) uniform FoliageData
 {
     mat4 view;
@@ -25,6 +27,8 @@ layout(set = 0, binding = 0) uniform FoliageData
     vec4 frameParams;
     // x = 共通の風が有効か（1/0）, y = 突風の強さ, z = 突風の周波数[Hz], w = 乱流の強さ
     vec4 windField;
+    // 主カメラの切り抜き(Common/ViewClearance.glsl。無効なら全成分 0)
+    ViewClearanceData viewClearance;
 } foliage;
 
 #endif

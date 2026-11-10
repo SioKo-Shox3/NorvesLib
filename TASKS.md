@@ -6123,7 +6123,7 @@
 - notes: 設計はロードマップ 1069〜1079 行（GR113 の CPU 側の契約とカットシーン）。GR01（更新の段階）・GR12（姿勢の評価）・GR06（カメラ）は統合ブランチにあるが確かめ直し中なので needs-gr に書く。ロードマップの時点の読み（`Rendering3DTestRoutine.cpp` が GameMode の Tick の中で `BuildCameraProxy` を呼び、スプリングアームの更新より前で 1 フレーム遅れうる。ロードマップ 1057・1323 行）は、GR01 の段階の名前で今の順を読み直して決める。今の SpringArm の公開は `GetPivotObjectId`・`ResolvePivot`・`GetTargetOffset`（`Library/Core/Public/Component/SpringArmComponent.h` 47〜59 行）で、注視点を直接返す関数は無い。CameraProxy は `Library/Core/Public/Rendering/SceneProxy.h` 439 行。カメラ単位の値なので、カットシーン用の別カメラでも独立に切り替わる。タイムラインの `ViewClearance.Strength` のトラック（GR66）とショットの定義の「草の切り抜き: 既定/無効」（GR62）は G14 の範囲で、この項目は `SetMode` と Strength の口までを作る。切り抜きの半径の既定は主人公の体の幅＋余白程度の仮の値で、提案『低い視点と高い草』の「草で視界が遮られる」を壊さない大きさは作者の判断（ロードマップ 1326 行）。試験を足す理由: 切り抜きの式の端（B より奥・feather・Strength=0）と 1 フレームの遅れは、画面では主人公の縁がわずかに見える・隠れるだけで、撮影 1 枚では気づけない。危険地帯（Public API・RenderThread のデータ契約）なので評価者を通す。
 
 ## G5-GR113-GRASS-CLEARANCE: カメラと主人公の間と、カメラの直前の草・株を、生成の段で決定的に間引いて低くする
-- status: todo
+- status: done
 - after: G5-GR113-CLEARANCE-CPU, G5-GR43-GRASS-DRAW, G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
