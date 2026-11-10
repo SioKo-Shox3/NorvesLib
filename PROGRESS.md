@@ -10706,3 +10706,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 カリングの記述子の配置・定数・表の形・遮蔽の定数の詰め方をパスの外から使えるようにする: 着地(直し 0 回)
 - U2 MegaGeometryInstanceCullVulkanTest の骨組みと (a) 10 万席の視錐台・距離・画素の判定、(b) 全部が外: 着地(直し 1 回)
 - U3 2 パスの遮蔽 (c)・前フレームの HZB の契約が合わない (d)・2 パス目の列の溢れ (e) と最終の確かめ: 着地(直し 0 回)
+
+## 2026-11-10 G12-GR31-CULL-CONTRACT（run 20261110-110226、完了）
+- Done: `cluster_bvh_cull.comp` 用の束縛の番号・カウンタと間接引数の並び・2 パス目の列の頭の語・段の印・席の入力・統計の語数・CullPass の値を `MegaGeometryCullUniforms.h` の `MegaGeometry::BvhCullLayout` へ移し、パスはそれを使う。`BuildCullDescriptorSetDesc`・`GPUMegaInstance`・`GPUMegaMesh` を公開し、遮蔽の欄の詰め方を `MegaGeometryPass::ApplyCullOcclusion`・`CanUsePreviousHiZ` に切り出した。2 パス目の列の語数は `BvhPass2BufferWords` で求める（値・振る舞いは同じ）
+- Done: 新設の GPU の試験 `MegaGeometryInstanceCullVulkanTest`（RHITextureUpdateVulkanTest の束。GPU・RenderingValidation、RESOURCE_LOCK NorvesLibGPU、SKIP 125）が、本番のシェーダーをパスの公開の定義で dispatch して倍精度の参照と比べる: (a) 固定の種の 10 万席（64 席の範囲）の視錐台・距離・画素の判定と、平面にちょうど接する球、(b) 全部が視錐台の外で葉の列 0・間接描画の数 0、(c) 合成の遮る面から本物の `HiZPyramid` で作った前と今の HZB で 16 姿勢の 2 パス（取りこぼし 0・両姿勢で深く隠れる席は描かない・偽の残しの割合を出力）、(d) 前の HZB の契約が合わない 3 通り（寸法・記録の飛び・エポック）で 1 パス目が遮蔽を使わず何も回さない、(e) 回す範囲の列を 2 にして溢れさせ、全部の根の見直しで取りこぼさない。validation error 0 件も試験の中で見る
+- 証拠: `.harness/runs/20261110-110226/G12-GR31-CULL-CONTRACT-verify.txt`（verify のビルド RHITextureUpdateVulkanTest・RenderingGoldenImageTest exit 0、`ctest -N` で MegaGeometryInstanceCullVulkanTest が 1 件）。numstat の 2 通りは一致
+- Next: G12-GR31-CULL-CHECK で `MegaGeometryInstanceCullVulkanTest` を装置で実行する（GPU では未実行）。アプリを起動する確かめは無い（撮影・計測の確かめは回さない決まり）
+- Notes: GPU で回していないので、(c) の「見える」の帯（距離の相対 1e-4）と「深く隠れる」の余裕（投影の矩形を max(幅, 高さ) + 16 画素広げ、深度の差 1e-5）が実機で十分かは CULL-CHECK で分かる。全部の根を見直す間接引数（2 パス目の列の先頭の 3 語）には公開の名前が無く、試験は本番の `DispatchIndirect(pass2, 0)` と同じく先頭を読む
