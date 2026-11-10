@@ -10573,3 +10573,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: G5-GR27-MASKED-GBUFFER が鍵の Cull（両面）と bAlphaClip（切り抜き）を材質から入れ、重ねる経路に乗る。人が見るときは、プログラムを使う材質が無いので全シーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）の見た目が変わらないことを確かめる。
 - Notes: 既知の限界: 重ねる物は可視バッファの ID のラスタの深度に載らないので 2 パスの遮蔽の HZB の遮蔽物にならない。パイプラインの作成は同期でキャッシュが無く、新しい鍵の初回にヒッチが出うる（GR106 の領域）。
 - Notes: 途中で回した基準画像の試験では `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenIndoorGBufferFallbackVulkanTest` が mean_flip 0.0000137・raw 最大 1・10 画素で落ちたが、この項目の変更の前後で値が完全に同じ（各 2 回）なので、この項目の前からの差。Outdoor の 2 本は差 0。基準画像の比較は回さない決まりなので再承認はしていない。
+- U7 GPU の試験 2 本の on と off の起動を同時に走らせ、タスクの verify を 10 分の内に収める: 着地(直し 0 回)

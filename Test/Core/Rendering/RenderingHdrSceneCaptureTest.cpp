@@ -12,6 +12,7 @@
 #include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
 #include "Module/ModuleRegistry.h"
+#include "Platform/PlatformProcess.h"
 #include "ImGuiModule/IImGuiView.h"
 #include "ImGuiModule/ImGuiModule.h"
 #include "Rendering/PathTracingPass.h"
@@ -2295,6 +2296,18 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            const Core::Container::String runDirectoryPrefix(TEXT("--run-directory="));
+            if (argument.find(runDirectoryPrefix) == 0)
+            {
+                const Core::Container::String directory = argument.substr(runDirectoryPrefix.size());
+                if (directory.empty() || !Core::Platform::SetWorkingDirectory(directory))
+                {
+                    outFailureReason = TEXT("描画検証の作業ディレクトリを設定できません");
+                    LOG_ERROR("描画検証の作業ディレクトリを設定できません");
+                    return false;
+                }
+                return true;
+            }
             if (argument == TEXT("--shading-model-scenario=gbuffer-paths"))
             {
                 if (m_bShadingModelScenario)
@@ -8227,9 +8240,23 @@ int main(int argc, char** argv)
     config.Api = RHI::GraphicsAPI::Vulkan;
     config.LogFileName = TEXT("RenderingHdrSceneCapture.log");
     config.CreateHandler = &CreateHandler;
+    const Core::Container::String logFilePrefix(TEXT("--log-file="));
+    bool bLogFileSpecified = false;
     for (int index = 1; index < argc; ++index)
     {
         const Core::Container::String argument(argv[index]);
+        if (argument.find(logFilePrefix) == 0)
+        {
+            const Core::Container::String logFile = argument.substr(logFilePrefix.size());
+            if (bLogFileSpecified || logFile.empty())
+            {
+                std::cerr << "ログファイルの指定が空か重複しています\n";
+                return 1;
+            }
+            config.LogFileName = logFile;
+            bLogFileSpecified = true;
+            continue;
+        }
         config.Arguments.push_back(argument);
     }
     if (bAllNumericalScenario)
