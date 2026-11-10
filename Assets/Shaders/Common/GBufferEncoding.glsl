@@ -37,6 +37,17 @@ vec4 GBufferEncodeMaterial(vec3 metallicRoughnessAo, float p0)
     return vec4(metallicRoughnessAo, p0);
 }
 
+// PaleFlat は金属度を 0、粗さを 1 にし、SSR が粗い画素を棄却する性質で SSR を改造せずに反射を切る。
+vec4 GBufferEncodeMaterialForShadingModel(vec3 metallicRoughnessAo, float p0, uint shadingModelId)
+{
+    if ((shadingModelId & GBUFFER_SHADING_MODEL_ID_MASK) == GBUFFER_SHADING_MODEL_PALE_FLAT)
+    {
+        metallicRoughnessAo.x = 0.0;
+        metallicRoughnessAo.y = 1.0;
+    }
+    return GBufferEncodeMaterial(metallicRoughnessAo, p0);
+}
+
 // プリエクスポージャを掛けた発光と材質値 P1 を格納する。
 vec4 GBufferEncodeEmissive(vec3 preExposedEmissive, float p1)
 {

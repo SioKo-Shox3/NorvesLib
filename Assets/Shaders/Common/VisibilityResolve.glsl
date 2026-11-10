@@ -850,7 +850,8 @@ void main()
         shadingParams = ResolveShadingParams(VisShadingParamsForRecord(record), materialEntry.shadingParams);
     }
     imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, shadingModelId, receiverFlags));
-    imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterial(surface.material, shadingParams.x));
+    // シェーディングモデルに応じた材質値と P0 を書く。
+    imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterialForShadingModel(surface.material, shadingParams.x, shadingModelId));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
     const vec3 emissive = (bHasMaterial && !bDebugView)
