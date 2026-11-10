@@ -70,6 +70,12 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         Identity::Literal("SkyAtmosphere.Radiance", sizeof("SkyAtmosphere.Radiance") - 1);
     inline constexpr Identity SkyAtmosphereSunDisk =
         Identity::Literal("SkyAtmosphere.SunDisk", sizeof("SkyAtmosphere.SunDisk") - 1);
+    inline constexpr Identity SkyOcclusionOccluders =
+        Identity::Literal("SkyOcclusion.Occluders", sizeof("SkyOcclusion.Occluders") - 1);
+    inline constexpr Identity SkyOcclusionVisibility =
+        Identity::Literal("SkyOcclusion.Visibility", sizeof("SkyOcclusion.Visibility") - 1);
+    inline constexpr Identity SkyOcclusionAux =
+        Identity::Literal("SkyOcclusion.Aux", sizeof("SkyOcclusion.Aux") - 1);
     inline constexpr Identity SSAORaw = Identity::Literal("SSAO.Raw", sizeof("SSAO.Raw") - 1);
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);
