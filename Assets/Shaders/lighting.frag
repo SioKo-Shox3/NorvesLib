@@ -39,6 +39,11 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
+    uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 0
+    vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 0
+    vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
+    ivec4 skyOcclusionWindowOrigin[4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
+    vec4 skyOcclusionTexelMeters; // 段ごとのテクセル幅(m)
 } params;
 
 // ライトデータ構造
@@ -79,6 +84,8 @@ layout(set = 0, binding = 19) uniform sampler2D rtgiDiffuseIndirect;
 // rtgiSpecularHit の gba = 当たった面が返す光の平均（露出後、空へ抜けた標本は 0）、rtgiSpecularSky の a = 空へ抜けた割合
 layout(set = 0, binding = 27) uniform sampler2D rtgiSpecularHit;
 layout(set = 0, binding = 28) uniform sampler2D rtgiSpecularSky;
+layout(set = 0, binding = 29) uniform sampler2DArray skyOcclusionVisibility;
+layout(set = 0, binding = 30) uniform sampler2DArray skyOcclusionAux;
 // 点光源のキューブシャドウ（キューブiに光源からの距離/範囲を格納。無いフレームは距離1の既定値）
 layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 
@@ -136,6 +143,15 @@ layout(location = 2) out vec4 outSpecularReflectance;
 
 #include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SkyOcclusion.glsl"
+
+SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N)
+{
+    return EvaluateSkyOcclusion(P, N, skyOcclusionVisibility, skyOcclusionAux,
+        params.skyOcclusionInfo, params.skyOcclusionParams,
+        params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
+}
+
 #include "Common/PointShadow.glsl"
 // probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
 // 重みが集まって斑点になるのを防ぐ。
@@ -156,7 +172,8 @@ const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE = 9u;
 const uint DEBUG_VIEW_MODE_AMBIENT_OCCLUSION = 10u;
-const uint DEBUG_VIEW_MODE_COUNT = 11u;
+const uint DEBUG_VIEW_MODE_SKY_VISIBILITY = 11u;
+const uint DEBUG_VIEW_MODE_COUNT = 12u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
@@ -1157,6 +1174,14 @@ void main()
     // ワールド座標を復元
     vec3 worldPos = ReconstructWorldPosition(fragUV, depthSample);
 
+    if (params.debugViewMode == DEBUG_VIEW_MODE_SKY_VISIBILITY)
+    {
+        SkyOcclusionResult sky = EvaluateSkyOcclusion(worldPos, N);
+        outColor = vec4(fragUV.x < 0.5 ? vec3(sky.zenithVisibility)
+                                     : 0.5 * sky.bentNormal + 0.5, 1.0);
+        return;
+    }
+
     // カメラからの視線ベクトル
     vec3 V = normalize(params.cameraPosition.xyz - worldPos);
 
@@ -1469,6 +1494,29 @@ void main()
                 ambient = bDDGIAvailable ? diffuseOnly : diffuseOnly * iblIntensity;
                 indirectSpecularReflectance = vec3(0.0);
                 indirectSpecular = vec3(0.0);
+            }
+            // 無効時の AO と照明の計算を保ち、有効な IBL の拡散だけを評価し直す。
+            if (params.skyOcclusionInfo.x != 0u && !bRTGIAvailable && !bDDGIAvailable)
+            {
+                SkyOcclusionResult sky = EvaluateSkyOcclusion(worldPos, N);
+                vec3 skyDiffuseAO = iblDiffuseAO * sky.visibility;
+                if (bDiffuseOnlyMaterial)
+                {
+                    vec3 irradiance = textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
+                    vec3 diffuseOnly = irradiance * (albedo / PI) *
+                        EvaluateDiffuseMaterialWeight(metallic) * skyDiffuseAO;
+                    ambient = diffuseOnly * iblIntensity;
+                }
+                else
+                {
+                    ambient = EvaluateIblEndpoint(iblAlbedo, metallic, iblRoughness, N, V,
+                        skyDiffuseAO, specularAO, iblIntensity, brdf, false, vec3(0.0));
+                }
+                vec3 zenithIrradiance = textureLod(diffuseIrradiance,
+                    EquirectangularUV(vec3(0.0, 1.0, 0.0)), 0.0).rgb;
+                ambient += params.skyOcclusionBounce.rgb * (1.0 - sky.visibility) *
+                    zenithIrradiance * (albedo / PI) * EvaluateDiffuseMaterialWeight(metallic) *
+                    iblIntensity * iblDiffuseAO;
             }
         }
         else

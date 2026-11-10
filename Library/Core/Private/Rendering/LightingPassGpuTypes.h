@@ -41,6 +41,11 @@ namespace NorvesLib::Core::Rendering
         float contactShadowParams[4]; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
         float invViewProjectionCameraRelative[16]; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
         float depthLinearization[4]; // x=近方面(m), y=近方面÷遠方面（深度から前方への距離を求める。正射影は0で、invViewProjectionで戻す）
+        uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 0
+        float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 0
+        float skyOcclusionBounce[4]; // rgb=遮蔽物の反射色×強度、w=0
+        int32_t skyOcclusionWindowOrigin[4][4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
+        float skyOcclusionTexelMeters[4]; // 段ごとのテクセル幅(m)
     };
 
     struct GPULightData
@@ -56,7 +61,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
     static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
     static_assert(offsetof(GPUDDGILightingParams, info) == 48);
-    static_assert(sizeof(GPULightingParams) == 944);
+    static_assert(sizeof(GPULightingParams) == 1072);
     static_assert(offsetof(GPULightingParams, invViewProjection) == 0);
     static_assert(offsetof(GPULightingParams, cameraPosition) == 64);
     static_assert(offsetof(GPULightingParams, ambientColor) == 80);
@@ -81,6 +86,11 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, contactShadowParams) == 848);
     static_assert(offsetof(GPULightingParams, invViewProjectionCameraRelative) == 864);
     static_assert(offsetof(GPULightingParams, depthLinearization) == 928);
+    static_assert(offsetof(GPULightingParams, skyOcclusionInfo) == 944);
+    static_assert(offsetof(GPULightingParams, skyOcclusionParams) == 960);
+    static_assert(offsetof(GPULightingParams, skyOcclusionBounce) == 976);
+    static_assert(offsetof(GPULightingParams, skyOcclusionWindowOrigin) == 992);
+    static_assert(offsetof(GPULightingParams, skyOcclusionTexelMeters) == 1056);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);
