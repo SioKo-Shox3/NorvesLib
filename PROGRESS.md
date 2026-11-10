@@ -10618,3 +10618,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: CI の `Test/Tools/ClipBankV1Oracle.py` は量子化しない cook の出力（minor 0）だけを読むので直していない。`--clip-quantize` の出力を oracle で読むには CMPR の復号が要る。`SkeletalRoleFileCli.cpp` の `--bvh` の CLI は `--clip-quantize` を今の未知の引数の誤りで拒否する
 - G5-GR26-LIGHTING-MODELS: 統合ブランチを取り込み、RenderingHdrSceneCaptureTest.cpp の衝突（TAA リアクティブとシェーディングモデル照明のシナリオ）を両方残して互いに併用不可にした。Debug のビルドと関係の GPU 試験 6 本が通過（Golden は決まりで外す）。
+
+## 2026-11-10 G5-GR26-LIGHTING-MODELS（run 20261110-065330 の反復 5、完了）
+
+- Done: 実装は足さず、verify の ctest を GBuffer の試験とそれ以外の 2 行に分けた（試験の名前は 1 本も減らしていない。`--timeout 300` のまま、GBuffer の試験には CMake の TIMEOUT 900 が効く）。Debug の verify のビルドは EXIT=0（`.harness/runs/20261110-065330/G5-GR26-final-build.txt`）。`RenderingShadingModelGBufferVulkanTest` は Passed 249 秒（`G5-GR26-final-ctest-1.txt`）。`RenderingShadingModelLightingVulkanTest`・`ShadingModelContractTest`・`RenderingHdrIndoorSceneVulkanTest`・`RenderingHdrOutdoorSceneVulkanTest` は Passed（`G5-GR26-final-ctest-2.txt`）。
+- Notes: Golden の 4 本は決まりにより合否に使わない。参考までに同じ実行では Outdoor の 2 本が Passed、Indoor の 2 本（通常と GBuffer の予備の経路）が `mean_flip=0.0000137`・raw 最大 1・10 画素で mismatch だった。原因（この項目の変更か、取り込んだ統合ブランチの変更か）は確かめていない。
+- 人が見るときの見どころ: G5-GR27-MATERIAL-SCENES-CHECK で、PaleFlat の球の明暗の差が小さいこと、Fur の明暗の境目が明るいこと、Eye の鏡面が P0 で強くなることを見る。DefaultLit の各シーンの見た目は変わらない想定。
+- Next: G5-GR27-MATERIAL-SCENES-CHECK。
