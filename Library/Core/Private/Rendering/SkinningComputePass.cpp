@@ -1,11 +1,14 @@
 ﻿#include "Rendering/SkinningComputePass.h"
 
 #include "Logging/LogMacros.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkinnedLodSelection.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "RHI/IBuffer.h"
@@ -169,6 +172,7 @@ namespace NorvesLib::Core::Rendering
             planned.SourceFirstIndex = draw.SourceFirstIndex;
             planned.SourceIndexCount = draw.SourceIndexCount;
             planned.bCastShadow = draw.bCastShadow;
+            planned.bMainViewVisible = draw.bMainViewVisible;
         }
     }
 
@@ -410,7 +414,17 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 対象の一覧から有効なスキニングの描画を集め、同じリースの描画には同じ出力範囲を割り当てる。
+        SkinnedViewFrustum skinnedViewFrustum;
+        const CameraProxy* camera = context->GetActiveCamera();
+        if (camera && context->SnapshotScene && context->SnapshotScene->bSkinnedViewCulling)
+        {
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(*camera, context->GetActiveAspectRatio(), context->Device);
+            skinnedViewFrustum = MakeSkinnedViewFrustum(cameraConstants.ViewProjectionMatrix);
+        }
+
+        // 主カメラに見える描画と、影の出力を読むときは視錐台外でも影を落とす描画を変形する。
+        // 同じリースの描画には同じ出力範囲を割り当てる。
         const DrawCommandView commands = SelectCommands(*context, m_bShadowCasterOutput);
         for (uint32_t commandIndex = 0; commandIndex < commands.Count; ++commandIndex)
         {
@@ -418,6 +432,11 @@ namespace NorvesLib::Core::Rendering
             if (command.Draw.PayloadKind != DrawPayloadKind::Skinned || command.Draw.bInstanced ||
                 command.Draw.InstanceCount != 1 ||
                 command.Skinned.FrameLeaseIndex >= context->SnapshotSkinnedMeshFrameLeases->size())
+            {
+                continue;
+            }
+            const bool bMainViewVisible = IsSkinnedDrawInView(command, skinnedViewFrustum);
+            if (!bMainViewVisible && !(m_bShadowCasterOutput && command.Draw.bCastShadow))
             {
                 continue;
             }
@@ -439,6 +458,7 @@ namespace NorvesLib::Core::Rendering
             draw.SourceFirstIndex = command.Draw.IndexOffset;
             draw.SourceIndexCount = command.Draw.IndexCount;
             draw.bCastShadow = command.Draw.bCastShadow;
+            draw.bMainViewVisible = bMainViewVisible;
             m_PlanDraws.push_back(draw);
         }
         BuildSkinningComputePlan(m_PlanDraws.data(), static_cast<uint32_t>(m_PlanDraws.size()),
@@ -611,7 +631,12 @@ namespace NorvesLib::Core::Rendering
                 instance.SourceMeshComponentId = draw.Draw.SourceMeshComponentId;
                 instance.MaterialIndex = draw.Draw.MaterialIndex;
                 instance.Material = draw.Draw.MaterialHandle;
+                for (uint32_t channel = 0; channel < ShadingParamCount; ++channel)
+                {
+                    instance.ShadingParams[channel] = draw.Draw.ShadingParams[channel];
+                }
                 instance.bOpaque = &draw >= opaqueCommands.Data && &draw < opaqueCommands.Data + opaqueCommands.Count;
+                instance.bMainViewVisible = planned.bMainViewVisible;
                 instance.bCastShadow = draw.Draw.bCastShadow;
                 instance.SourceFirstIndex = draw.Draw.IndexOffset;
                 instance.SourceIndexCount = draw.Draw.IndexCount;

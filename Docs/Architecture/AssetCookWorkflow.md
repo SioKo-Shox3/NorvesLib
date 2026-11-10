@@ -49,7 +49,7 @@ The direct Rendering3DTest Silver asset set cooks these five textures from
 
 `CookedTextureFormatV0`（`Library/Core/Public/Asset/CookedTextureFormat.h`）の VersionMinor 1 は、v0.0 の上位互換で PixelFormat を足した版。
 ヘッダ・ミップ表のレイアウトと、ミップを全段（フルチェーン）必須とする規則は v0.0 と同じ。ローダーは v0.0 と v0.1 のどちらも読む。
-`--format` 指定のクック（非圧縮の 3 形式）は v0.0 のまま書く。`--usage` 指定のクック（BC・R16）は v0.2（下記）で書く。
+`--format` 指定のクック（非圧縮の 3 形式）は v0.0 のまま書く。`--usage` 指定のクック（BC・R16・RGBA16F・RG16）は v0.2（下記）で書く。
 
 | PixelFormat | 値 | 1 ブロック | ColorSpace |
 | --- | --- | --- | --- |
@@ -59,12 +59,14 @@ The direct Rendering3DTest Silver asset set cooks these five textures from
 | BC5 | 6 | 4x4 画素・16 バイト | Linear のみ |
 | BC7 | 7 | 4x4 画素・16 バイト | Linear / sRGB |
 | R16UNorm | 8 | 1x1 画素・2 バイト | Linear のみ |
+| RGBA16F | 9 | 1x1 画素・8 バイト | Linear のみ（v0.1 以降） |
+| RG16UNorm | 10 | 1x1 画素・4 バイト | Linear のみ（v0.1 以降） |
 
-- BC1/BC4/BC5/BC7/R16UNorm は VersionMinor 1 でだけ有効。v0.0 のヘッダにこれらの値があれば `UnknownPixelFormat` で拒否する。
-- ミップのデータサイズは、ブロック単位で `ceil(width / 4) * ceil(height / 4) * ブロックのバイト数 * レイヤー数`。
+- BC1/BC4/BC5/BC7/R16UNorm/RGBA16F/RG16UNorm は VersionMinor 1 以降で有効。v0.0 のヘッダにこれらの値があれば `UnknownPixelFormat` で拒否する。
+- BC 形式のミップのデータサイズは、ブロック単位で `ceil(width / 4) * ceil(height / 4) * ブロックのバイト数 * レイヤー数`。
   1x1 や 2x2 のミップも最小 1 ブロック分を持つ。ミップの幅・高さのレコードは画素単位のまま（`max(1, base >> mip)`）。
-- 実行時は `MapCookedTextureFormat`（`CookedTextureUpload.cpp`）が RHI の形式（`BC1_UNORM`/`BC1_SRGB`/`BC4_UNORM`/`BC5_UNORM`/`BC7_UNORM`/`BC7_SRGB`/`R16_UNORM`）へ写し、
-  ミップごとにブロック単位の行ピッチ・スライスピッチでアップロードする。`textureCompressionBC` に対応しないデバイスでは `TextureCreationFailed` になる。
+- 実行時は `MapCookedTextureFormat`（`CookedTextureUpload.cpp`）が RHI の形式（`BC1_UNORM`/`BC1_SRGB`/`BC4_UNORM`/`BC5_UNORM`/`BC7_UNORM`/`BC7_SRGB`/`R16_UNORM`/`R16G16B16A16_FLOAT`（RGBA16F）/`R16G16_UNORM`（RG16UNorm））へ写し、
+  ミップごとにブロック単位の行ピッチ・スライスピッチでアップロードする。BC 形式は `textureCompressionBC` に対応しないデバイスで `TextureCreationFailed` になる。
 - glTF の ARM の分割（`TrySplitPreparedCookedTextureMip0RGBA8UNormLinear`）は RGBA8 のときだけ通す。BC は理由（`unsupported pixel format`）を返して失敗する。
 
 ## NVTEX v0.2（タイル配置）
@@ -72,6 +74,13 @@ The direct Rendering3DTest Silver asset set cooks these five textures from
 VersionMinor 2 は v0.1 の上位互換で、sparse テクスチャの 1 タイル（64 KiB）ずつをファイルの範囲読みで取り出せるように、
 段のデータを標準ブロック形状のタイル単位に並べ、タイルの表を持つ。v0.0・v0.1 も引き続き読む。
 `AssetCook --usage ...`（`CookAssets` の起動画面の材質を含む）は v0.2 で書く。
+用途は `albedo`・`normal`・`orm`・`single`・`height16`・`hdr`・`rg16` を指定できる。
+
+- `--usage hdr`: EXR・HDR の浮動小数の入力を `nvtex.v0.2.rgba16f.linear` へ焼く。無圧縮で全ミップを持ち、ミップは線形の平均で作る。
+- `--usage rg16`: R・G を 16bit で保ち、`nvtex.v0.2.rg16.linear` へ焼く。
+- `--usage height16`: `nvtex.v0.2.r16.linear` へ焼く。浮動小数の入力には `--height-range <min>,<max>` が必須。
+  2 数は有限で `min < max` とし、この範囲を 0..65535 へ正規化する。範囲外の入力は失敗する。
+- `--require-16bit` は `height16`・`rg16` で指定でき、8bit の入力を失敗にする。`--height-range` は `height16` だけで指定できる。
 
 - **ヘッダは 160 バイト**（v0.0・v0.1 は 112 バイト）。112 バイト目から、TileWidth・TileHeight（texel）、FirstTailMip、TileDataBytes（65536）、
   TileTableOffset・TileTableSize、TailOffset・TailSize を持つ（`CookedTextureFormatV0::TiledHeaderOffset`）。
@@ -83,8 +92,9 @@ VersionMinor 2 は v0.1 の上位互換で、sparse テクスチャの 1 タイ�
   | --- | --- | --- | --- |
   | 1 | 256x256 | R8 | 256x256 |
   | 2 | 256x128 | RG8 / R16 | 256x128 |
-  | 4 | 128x128 | RGBA8 | 128x128 |
+  | 4 | 128x128 | RGBA8 / RG16 | 128x128 |
   | 8 | 128x64 | BC1 / BC4 | 512x256 |
+  | 8 | 128x64 | RGBA16F | 128x64 |
   | 16 | 64x64 | BC5 / BC7 | 256x256 |
 
   どれも 64 KiB。デバイスが標準ブロック形状でないタイルを返す形式は、結び付けの側が VT を使わず全常駐で描く

@@ -31,6 +31,7 @@
 // 装置が間接描画の firstInstance・バッファのアドレスを使えないときは作れない（IsReady が false）。
 
 #include "Rendering/FrameUseRing.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapSample.h"
@@ -126,6 +127,28 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t RASTER_VIEWPORT = PAGE_RESOLUTION;
     } // namespace VirtualShadowMap
 
+    /** @brief VSM の展開・描画に渡す std140 定数。フィールドは株の頂点だけが読む。 */
+    struct alignas(16) VirtualShadowMapRasterParams
+    {
+        float lightRight[4];
+        float lightUp[4];
+        float lightDirection[4];
+        float depth[4];
+        uint32_t counts[4];
+        float foliageWind[4];
+        float foliageWindParams[4];
+        WorldFieldSampleConstants worldField;
+    };
+    static_assert(offsetof(VirtualShadowMapRasterParams, lightRight) == 0u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, lightUp) == 16u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, lightDirection) == 32u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, depth) == 48u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, counts) == 64u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, foliageWind) == 80u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, foliageWindParams) == 96u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 112u);
+    static_assert(sizeof(VirtualShadowMapRasterParams) == 160u);
+
     /**
      * @brief 1 回の記録の入力。バッファはすべて UnorderedAccess の状態で渡し、同じ状態で戻る
      */
@@ -178,6 +201,9 @@ namespace NorvesLib::Core::Rendering
          */
         float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float FoliageWindParams[4] = {};
+        /** @brief 株の根元で引く ShaderResource 状態の画像。無ければ中立画像を使い、変形を無効にする。 */
+        RHI::TexturePtr WorldFieldCurrent;
+        WorldFieldSampleConstants WorldField;
     };
 
     /** @brief 展開と描画の 2 つのパイプラインと、128×128 の添付なしのレンダーパスを持つ */
@@ -234,6 +260,8 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr m_Framebuffer;
         /** @brief 0, 1, 2, … の連番（頂点の番号 = 塊の中の三角形 × 3 + 角を作るための、描画の中で使う頂点の列） */
         RHI::BufferPtr m_IdentityIndices;
+        RHI::TexturePtr m_NeutralWorldField;
+        RHI::SamplerPtr m_WorldFieldSampler;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastDrawCount = 0;
         bool m_bLastMegaDraw = false;

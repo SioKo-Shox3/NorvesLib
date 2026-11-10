@@ -99,7 +99,8 @@ namespace NorvesLib::Core::Asset
                    std::memcmp(bytes.data(), CookedTextureFormatV0::Magic, CookedTextureFormatV0::MagicSize) == 0;
         }
 
-        // 版ごとに使える形式が違う。v0.0 は非圧縮の 3 形式だけで、v0.1 はそれに BC と R16 が加わる。
+        // 版ごとに使える形式が違う。v0.0 は非圧縮の 3 形式、v0.1 は BC1/BC4/BC5/BC7 と非圧縮の 3 形式を追加し、
+        // v0.2 以降は BC3 と BC6H も使える。
         bool IsKnownPixelFormat(uint16_t versionMinor, uint32_t rawPixelFormat)
         {
             if (rawPixelFormat == CookedTextureFormatV0::PixelFormatR8UNorm ||
@@ -114,11 +115,19 @@ namespace NorvesLib::Core::Asset
                 return false;
             }
 
+            if (rawPixelFormat == CookedTextureFormatV0::PixelFormatBC3 ||
+                rawPixelFormat == CookedTextureFormatV0::PixelFormatBC6H)
+            {
+                return versionMinor >= CookedTextureFormatV0::VersionMinorTiled;
+            }
+
             return rawPixelFormat == CookedTextureFormatV0::PixelFormatBC1 ||
                    rawPixelFormat == CookedTextureFormatV0::PixelFormatBC4 ||
                    rawPixelFormat == CookedTextureFormatV0::PixelFormatBC5 ||
                    rawPixelFormat == CookedTextureFormatV0::PixelFormatBC7 ||
-                   rawPixelFormat == CookedTextureFormatV0::PixelFormatR16UNorm;
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatR16UNorm ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatRGBA16F ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatRG16UNorm;
         }
 
         bool IsKnownColorSpace(uint32_t rawColorSpace)
@@ -137,6 +146,7 @@ namespace NorvesLib::Core::Asset
             return colorSpace == CookedTextureColorSpace::SRGB &&
                    (pixelFormat == CookedTexturePixelFormat::RGBA8UNorm ||
                     pixelFormat == CookedTexturePixelFormat::BC1 ||
+                    pixelFormat == CookedTexturePixelFormat::BC3 ||
                     pixelFormat == CookedTexturePixelFormat::BC7);
         }
 

@@ -76,6 +76,7 @@ set_target_properties(RenderingGpuTestSupport PROPERTIES FOLDER "Test/Core/Rende
 
 add_library(RenderingValidationFixtureSupport STATIC
     RenderingValidation/RenderingValidationScene.cpp
+    RenderingValidation/SkinnedGiantFixture.cpp
     RenderingValidation/RenderingValidationApplication.cpp
 )
 target_link_libraries(RenderingValidationFixtureSupport PUBLIC Core)
@@ -364,7 +365,12 @@ register_rendering_gpu_test(
 norves_add_test_bundle(RHIRayTracingApiContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHIRayTracingApiContractTest RHIRayTracingApiContractTest.cpp
+    MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
+    MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER ViewClearanceShaderCompileTest ViewClearanceShaderCompileTest.cpp
+    MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
+    MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
 )
 target_link_libraries(RHIRayTracingApiContractTest PRIVATE Core)
@@ -377,8 +383,26 @@ target_compile_definitions(RHIRayTracingApiContractTest PRIVATE
 )
 add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
 
+# 間接描画 API の既定の戻り値と、間接コマンドのサイズ・フィールド配置を CPU で確かめる。
+add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --test=RHIIndirectApiContractTest)
+
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
+# 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
+add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+add_test(NAME ViewClearanceShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=ViewClearanceShaderCompileTest)
+add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
+# 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
+add_test(NAME WorldFieldShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WorldFieldShaderCompileTest)
 add_test(NAME PathTracingNonUniformSamplerSpirvTest COMMAND RHIRayTracingApiContractTest --test=PathTracingNonUniformSamplerSpirvTest)
+
+# 形式の対応と 16・10・浮動小数の更新・描画の読み戻しを確かめる。
+add_test(NAME RHIFormatReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIFormatReadbackVulkanTest)
+set_tests_properties(RHIFormatReadbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
@@ -388,7 +412,7 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# BC1・BC4・BC5・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
+# BC1・BC3・BC4・BC5・BC6H・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
 add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
 set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -579,6 +603,60 @@ set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 間接描画の引数・件数・能力による拒否と不正な引数を、GPU の描画と読み戻しで確かめる。
+# 計算シェーダーが生成した引数のバリアと Vulkan の検証エラー 0 件も確認する。
+add_test(NAME IndirectDrawVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDrawVulkanTest)
+set_tests_properties(IndirectDrawVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 草生成の GPU カウンターと間接引数を CPU の写しと比較する。
+add_test(NAME GrassGenerateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassGenerateVulkanTest)
+set_tests_properties(GrassGenerateVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 草の GBuffer を GPU で読み戻し、法線・AO・速度を確かめる。
+add_test(NAME GrassGBufferVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassGBufferVulkanTest)
+set_tests_properties(GrassGBufferVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 世界フィールドによる通り道の被覆の減少と、前の画像・原点で再評価した速度を確かめる。
+add_test(NAME GrassTrampleVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassTrampleVulkanTest)
+set_tests_properties(GrassTrampleVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(NAME WindGlslParityVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WindGlslParityVulkanTest)
+set_tests_properties(WindGlslParityVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
+add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
+set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
 # 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
 # プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
@@ -606,6 +684,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
@@ -624,6 +703,12 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
+    MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
+    MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
+    MEMBER GrassGBufferVulkanTest GrassGBufferVulkanTest.cpp
+    MEMBER GrassTrampleVulkanTest GrassTrampleVulkanTest.cpp
+    MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
+    MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
@@ -814,18 +899,95 @@ register_rendering_gpu_test(
 
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
+    RenderExtensionStageScenario.cpp
+    SkinnedCullScenario.cpp
+    TemporalAAReactiveScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport
     RenderingFloatImageSupport
     NorvesModule_ImGui
+    NorvesThirdParty_ImGui
 )
 target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+    ${CMAKE_SOURCE_DIR}/Library/Modules/ImGui/Public
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui
 )
 set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
+# GBuffer のソースと経路の組み合わせを走らせるスクリプトを生成する。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake" CONTENT [=[
+# GBuffer の三つのソースを追加読み戻しで集め、二つの描画経路を同じ GPU ロックの下で検証する。
+set(failures "")
+foreach(visibility IN ITEMS on off)
+    set(arguments --scene=indoor --shading-model-scenario=gbuffer-paths --capture-source=gbuffer-normal)
+    if(visibility STREQUAL "off")
+        list(APPEND arguments --visibility-buffer=off)
+    endif()
+    string(TIMESTAMP started_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
+    execute_process(COMMAND "${TEST_EXECUTABLE}" ${arguments}
+        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    string(TIMESTAMP finished_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
+    set(timing_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/ShadingModelTiming")
+    file(MAKE_DIRECTORY "${timing_directory}")
+    file(COPY_FILE "${TEST_WORKING_DIRECTORY}/RenderingHdrSceneCapture.log"
+        "${timing_directory}/${visibility}.log")
+    message("visibility=${visibility}\n${output}${error}")
+    message("SHADING_MODEL_RUN visibility=${visibility} started_utc=${started_utc} finished_utc=${finished_utc} exit=${result}")
+    if(NOT result STREQUAL "0")
+        list(APPEND failures "visibility=${visibility} exit=${result}")
+    endif()
+endforeach()
+if(failures)
+    message(FATAL_ERROR "GBuffer の検証が失敗しました: ${failures}")
+endif()
+]=])
+# 全ソース・全経路の検査を単一の試験と GPU ロックに束ねる。
+add_test(NAME RenderingShadingModelGBufferVulkanTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
+        "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake")
+# 二つの起動を束ねる。観測済みの最大300秒に、シェーダー初期化の変動を見込んで3倍を確保する。
+set_tests_properties(RenderingShadingModelGBufferVulkanTest PROPERTIES
+    TIMEOUT 900
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
+register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
+target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+# 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
+# 書き手なしとゼロの書き手で TAA 後の RGB がビット一致することも確かめる。
+register_rendering_gpu_test(
+    RenderingTemporalAAReactiveVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color
+    --temporal-aa-reactive-scenario=ab)
+register_rendering_gpu_test(
+    RenderExtensionStageVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color
+    --extension-stage-scenario=post)
+register_rendering_gpu_test(
+    RenderingSkinnedCullVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front)
+register_rendering_gpu_test(
+    RenderingSkinnedCullGBufferFallbackVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front
+    --visibility-buffer=off)
 register_rendering_gpu_test(
     RenderingHdrIndoorSceneVulkanTest
     RenderingHdrSceneCaptureTest
@@ -1363,6 +1525,7 @@ set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Renderi
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
+add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -1393,6 +1556,14 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
+    MEMBER WindParametersTest WindParametersTest.cpp
+    MEMBER FramePacketWindSnapshotContractTest FramePacketWindSnapshotContractTest.cpp
+    MEMBER FramePacketWorldFieldSnapshotContractTest FramePacketWorldFieldSnapshotContractTest.cpp
+    MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
+    MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
+    MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
+    MEMBER GrassClearanceReferenceTest GrassClearanceReferenceTest.cpp
+    MEMBER SkinnedLodSelectionTest SkinnedLodSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1439,6 +1610,19 @@ add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOc
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
+add_test(NAME WindParametersTest COMMAND CameraViewConstantsTest --test=WindParametersTest)
+add_test(NAME FramePacketWindSnapshotContractTest COMMAND CameraViewConstantsTest --test=FramePacketWindSnapshotContractTest)
+# 世界フィールド入力のパケットへの値コピーと寿命を検証する。
+add_test(NAME FramePacketWorldFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=FramePacketWorldFieldSnapshotContractTest)
+# 世界フィールドの入力の無害化をCPUで検証する。
+add_test(NAME WorldFieldInputSanitizeTest COMMAND CameraViewConstantsTest --test=WorldFieldInputSanitizeTest)
+# 世界フィールドの原点とスクロール差分をCPUで検証する。
+add_test(NAME WorldFieldScrollMathTest COMMAND CameraViewConstantsTest --test=WorldFieldScrollMathTest)
+# 草のタイル選別をCPUで検証する。
+add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
+add_test(NAME GrassClearanceReferenceTest COMMAND CameraViewConstantsTest --test=GrassClearanceReferenceTest)
+# スキンの視錐台・CSM のカスケードの絞り込みと太陽の影の調整口の Sanitize を CPU で検証する。
+add_test(NAME SkinnedLodSelectionTest COMMAND CameraViewConstantsTest --test=SkinnedLodSelectionTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
@@ -1577,12 +1761,16 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
+add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
 
 norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
+    MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
 target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
@@ -2075,6 +2263,7 @@ norves_add_test_bundle(MaterialResourcesTest
     FOLDER "Test/Core/Rendering"
     MEMBER MaterialResourcesTest MaterialResourcesTest.cpp
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
+    MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE

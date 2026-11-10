@@ -196,6 +196,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 最後の Execute の内訳 */
         const VisibilityRasterFrameStats& GetLastFrameStats() const { return m_Stats; }
 
+        /** @brief 同じフレームの各ビューポートで ID ラスタに記録したスキニング描画の合計 */
+        uint32_t GetRecordedSkinnedDrawCountForFrame(uint64_t frameSerial) const
+        {
+            return m_RecordedSkinnedDrawSerial == frameSerial ? m_RecordedSkinnedDrawCount : 0;
+        }
+
         /**
          * @brief ID を描けるか（初期化を済ませ、render pass と 4
          * つのパイプラインが揃っている）
@@ -384,6 +390,7 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<VisibilityBuffer::DrawRecord> CpuRecords;
             Container::VariableArray<ChunkDraw> MeshDraws;
             Container::VariableArray<ChunkDraw> SkinnedDraws;
+            uint32_t SkinnedRecordedDrawCount = 0;
             Container::VariableArray<uint32_t> SectionAddresses;
             /** @brief MegaGeometry
              * のコマンド・カウンタの今の状態（描画の写しがあるときの戻しに渡す） */
@@ -550,6 +557,8 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_SkinnedVerticesHandle;
 
         VisibilityRasterFrameStats m_Stats;
+        uint64_t m_RecordedSkinnedDrawSerial = 0;
+        uint32_t m_RecordedSkinnedDrawCount = 0;
         // 最後にログへ書いた内訳（変わったときだけ書く）
         VisibilityRasterFrameStats m_LoggedStats;
         bool m_bLoggedStats = false;

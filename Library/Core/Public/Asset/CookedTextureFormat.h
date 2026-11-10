@@ -20,10 +20,11 @@ namespace NorvesLib::Core::Asset
         inline constexpr uint16_t VersionMajor = 0;
         // v0.0: 非圧縮の R8/RG8/RGBA8 のみ。クッカーはこの版で書く。
         inline constexpr uint16_t VersionMinor = 0;
-        // v0.1: v0.0 の上位互換で、ブロック圧縮（BC1/BC4/BC5/BC7）と R16 の形式が加わる。
+        // v0.1: v0.0 の上位互換で、ブロック圧縮（BC1/BC4/BC5/BC7）と R16/RGBA16F/RG16UNorm の形式が加わる。
         inline constexpr uint16_t VersionMinorBlockCompressed = 1;
         // v0.2: v0.1 の上位互換で、標準ブロック形状（64 KiB）のタイル単位に並べたデータ、ミップテイルの塊、
         // タイルの表を持つ。ヘッダは 160 バイト（v0.0・v0.1 は 112 バイト）。
+        // v0.2 以降は BC3（Linear・sRGB）と BC6H（Linear のみ）も使える。
         inline constexpr uint16_t VersionMinorTiled = 2;
         inline constexpr uint32_t EndianMarker = 0x01020304u;
 
@@ -36,6 +37,12 @@ namespace NorvesLib::Core::Asset
         inline constexpr uint32_t PixelFormatBC5 = 6;
         inline constexpr uint32_t PixelFormatBC7 = 7;
         inline constexpr uint32_t PixelFormatR16UNorm = 8;
+        // v0.1 以降。Linear のみ。
+        inline constexpr uint32_t PixelFormatRGBA16F = 9;
+        inline constexpr uint32_t PixelFormatRG16UNorm = 10;
+        // v0.2 以降。BC3 は Linear・sRGB、BC6H は Linear のみ。
+        inline constexpr uint32_t PixelFormatBC3 = 11;
+        inline constexpr uint32_t PixelFormatBC6H = 12;
 
         inline constexpr uint32_t ColorSpaceLinear = 1;
         inline constexpr uint32_t ColorSpaceSRGB = 2;
@@ -116,12 +123,17 @@ namespace NorvesLib::Core::Asset
         R8UNorm = CookedTextureFormatV0::PixelFormatR8UNorm,
         RG8UNorm = CookedTextureFormatV0::PixelFormatRG8UNorm,
         RGBA8UNorm = CookedTextureFormatV0::PixelFormatRGBA8UNorm,
-        // v0.1 以降。BC1/BC7 は ColorSpace で sRGB の有無を表し、BC4/BC5/R16 は Linear のみ。
+        // v0.1 以降。BC1/BC7 は ColorSpace で sRGB の有無を表し、BC4/BC5/R16/RGBA16F/RG16UNorm は Linear のみ。
         BC1 = CookedTextureFormatV0::PixelFormatBC1,
         BC4 = CookedTextureFormatV0::PixelFormatBC4,
         BC5 = CookedTextureFormatV0::PixelFormatBC5,
         BC7 = CookedTextureFormatV0::PixelFormatBC7,
-        R16UNorm = CookedTextureFormatV0::PixelFormatR16UNorm
+        R16UNorm = CookedTextureFormatV0::PixelFormatR16UNorm,
+        RGBA16F = CookedTextureFormatV0::PixelFormatRGBA16F,
+        RG16UNorm = CookedTextureFormatV0::PixelFormatRG16UNorm,
+        // v0.2 以降。BC3 は Linear・sRGB、BC6H は Linear のみ。
+        BC3 = CookedTextureFormatV0::PixelFormatBC3,
+        BC6H = CookedTextureFormatV0::PixelFormatBC6H
     };
 
     enum class CookedTextureColorSpace : uint32_t
@@ -278,10 +290,15 @@ namespace NorvesLib::Core::Asset
         case CookedTexturePixelFormat::R16UNorm:
             return 2;
         case CookedTexturePixelFormat::RGBA8UNorm:
+        case CookedTexturePixelFormat::RG16UNorm:
             return 4;
+        case CookedTexturePixelFormat::RGBA16F:
+            return 8;
         case CookedTexturePixelFormat::BC1:
+        case CookedTexturePixelFormat::BC3:
         case CookedTexturePixelFormat::BC4:
         case CookedTexturePixelFormat::BC5:
+        case CookedTexturePixelFormat::BC6H:
         case CookedTexturePixelFormat::BC7:
             return 0;
         }
@@ -305,13 +322,17 @@ namespace NorvesLib::Core::Asset
         case CookedTexturePixelFormat::BC1:
         case CookedTexturePixelFormat::BC4:
             return {4, 4, 8};
+        case CookedTexturePixelFormat::BC3:
         case CookedTexturePixelFormat::BC5:
+        case CookedTexturePixelFormat::BC6H:
         case CookedTexturePixelFormat::BC7:
             return {4, 4, 16};
         case CookedTexturePixelFormat::R8UNorm:
         case CookedTexturePixelFormat::RG8UNorm:
         case CookedTexturePixelFormat::RGBA8UNorm:
         case CookedTexturePixelFormat::R16UNorm:
+        case CookedTexturePixelFormat::RGBA16F:
+        case CookedTexturePixelFormat::RG16UNorm:
             return {1, 1, static_cast<uint32_t>(GetCookedTextureBytesPerPixel(pixelFormat))};
         }
         return {};
@@ -349,7 +370,7 @@ namespace NorvesLib::Core::Asset
      * @brief 形式の標準ブロック形状（64 KiB のタイル）の大きさ（texel）。Vulkan の標準 sparse イメージブロックと同じ。
      *
      * 1 ブロックのバイト数で決まる: 1B は 256x256、2B は 256x128、4B は 128x128、8B は 128x64、16B は 64x64（いずれも
-     * ブロック数）。BC1/BC4（4x4 画素・8B）は 512x256 texel、BC5/BC7（16B）は 256x256 texel になる。未知の形式は 0。
+     * ブロック数）。BC1/BC4（4x4 画素・8B）は 512x256 texel、BC3/BC5/BC6H/BC7（16B）は 256x256 texel になる。未知の形式は 0。
      */
     struct CookedTextureTileShape
     {

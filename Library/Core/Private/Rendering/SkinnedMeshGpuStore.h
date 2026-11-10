@@ -20,6 +20,9 @@ namespace NorvesLib::Core::Rendering
         explicit SkinnedMeshGpuStore(Container::TSharedPtr<RHI::IDevice> device);
 
         void BeginFrame(uint64_t completedSubmissionSerial);
+        // パスの記録より前に、このフレームが参照するメッシュを転送する。
+        void PreloadFrameLeases(
+            const Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>>& frameLeases);
         /**
          * previousBonePalette・previousWorldTransform を与えると、直前のフレームの変換と骨ごとの位置の行列
          * （velocity 用）を別のバッファ（PreviousPaletteBuffer）に載せる。骨の数は bonePalette と同じでなければ
@@ -101,5 +104,6 @@ namespace NorvesLib::Core::Rendering
         bool m_bFrameOpen = false;
         MeshIndexChunkBuilder m_ChunkBuilder = nullptr;
         bool m_bLoggedChunkFailure = false;
+        bool m_bLoggedMeshMemory = false;
     };
 } // namespace NorvesLib::Core::Rendering

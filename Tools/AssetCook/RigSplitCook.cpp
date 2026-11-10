@@ -260,6 +260,11 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return fail("split_cook_request");
             }
+            std::string clipOptimizeError;
+            if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipOptimizeError))
+            {
+                return fail(clipOptimizeError.c_str());
+            }
             RigSplitCookResult candidate;
             if (I::LoadImportSettingsDocument(request.SourcePath, request.ImportOptions, candidate.Import).Result !=
                 I::SettingsFileResult::Success)
@@ -485,6 +490,18 @@ namespace NorvesLib::Tools::AssetCook
             }
             std::sort(candidate.TexturePlans.begin(), candidate.TexturePlans.end(),
                       [](const auto& a, const auto& b) { return a.ImageIndex < b.ImageIndex; });
+            if (request.ClipOptimize.bEnabled)
+            {
+                hash.String("norves.clip-optimize.v1");
+                const auto& settings = request.ClipOptimize.Settings;
+                hash.Number(std::bit_cast<uint64_t>(settings.MaxVertexErrorMeters));
+                hash.Number(std::bit_cast<uint64_t>(settings.MaxJointErrorMeters));
+                hash.Number(std::bit_cast<uint64_t>(settings.MaxRotationErrorDegrees));
+            }
+            if (request.ClipOptimize.bQuantize)
+            {
+                hash.String("norves.clip-quantize.v1");
+            }
             candidate.SourceHash = hash.Value;
             if (request.bInventoryOnly)
             {
@@ -493,6 +510,18 @@ namespace NorvesLib::Tools::AssetCook
                 bSucceeded = true;
                 return true;
             }
+            C::VariableArray<S::SkeletalAnimationClip> optimizedClips;
+            if (request.ClipOptimize.bEnabled)
+            {
+                const auto* data = rig.GetData();
+                optimizedClips = data->Geometry.Clips;
+                const Core::Animation::ClipOptimizeRig optimizeRig{
+                    data->Geometry.Joints, data->LocalRest, data->Geometry.Vertices};
+                if (!RunClipOptimizeStage(request.ClipOptimize, optimizeRig, optimizedClips, clipOptimizeError))
+                {
+                    return fail(clipOptimizeError.c_str());
+                }
+            }
             S::SkeletonV1 skeleton;
             S::SkinMeshV1 mesh;
             S::ClipBankV1 bank;
@@ -500,10 +529,11 @@ namespace NorvesLib::Tools::AssetCook
                 !S::BuildSkinMeshV1(rig, skeleton, request.SkeletonPath, slots, mesh, report, request.Limits,
                                     request.Profile) ||
                 !S::BuildClipBankV1({&rig, 1}, bank, report, request.Limits, request.Profile,
-                                    request.bAnalyzeClips ? &analysisOptions : nullptr) ||
+                                    request.bAnalyzeClips ? &analysisOptions : nullptr, optimizedClips) ||
                 !S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits, request.Profile) ||
-                !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile))
+                !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile,
+                                    S::ClipBankV1WriteOptions{.bQuantize = request.ClipOptimize.bQuantize}))
             {
                 return fail("split_role_payload");
             }

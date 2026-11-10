@@ -14,6 +14,7 @@
 
 namespace NorvesLib::RHI
 {
+    enum class Format;
     class IBuffer;
     class IDevice;
     class IShader;
@@ -23,6 +24,9 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class GpuRetireQueue;
+
+    /// テクスチャ作成時の形式を RHI の形式へ変換する。
+    RHI::Format ToRHITextureFormat(TextureCreateInfo::Format format);
 
     class GpuResourceStore final
     {

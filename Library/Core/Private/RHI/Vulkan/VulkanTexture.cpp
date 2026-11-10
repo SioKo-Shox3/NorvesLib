@@ -1,5 +1,6 @@
 ﻿#include "VulkanTexture.h"
 #include "VulkanDevice.h"
+#include "VulkanFormatTable.h"
 #include "Thread/Mutex.h"
 #include "Logging/LogMacros.h"
 #include <stdexcept>
@@ -283,61 +284,7 @@ namespace NorvesLib::RHI::Vulkan
      */
     vk::Format ConvertToVkFormat(Format format)
     {
-        switch (format)
-        {
-        case Format::R8_UNORM:
-            return vk::Format::eR8Unorm;
-        case Format::R8G8_UNORM:
-            return vk::Format::eR8G8Unorm;
-        case Format::R8G8B8A8_UNORM:
-            return vk::Format::eR8G8B8A8Unorm;
-        case Format::R8G8B8A8_SRGB:
-            return vk::Format::eR8G8B8A8Srgb;
-        case Format::B8G8R8A8_UNORM:
-            return vk::Format::eB8G8R8A8Unorm;
-        case Format::B8G8R8A8_SRGB:
-            return vk::Format::eB8G8R8A8Srgb;
-        case Format::R16_FLOAT:
-            return vk::Format::eR16Sfloat;
-        case Format::R16G16_FLOAT:
-            return vk::Format::eR16G16Sfloat;
-        case Format::R16G16B16A16_FLOAT:
-            return vk::Format::eR16G16B16A16Sfloat;
-        case Format::R32_FLOAT:
-            return vk::Format::eR32Sfloat;
-        case Format::R32G32_FLOAT:
-            return vk::Format::eR32G32Sfloat;
-        case Format::R32G32B32_FLOAT:
-            return vk::Format::eR32G32B32Sfloat;
-        case Format::R32G32B32A32_FLOAT:
-            return vk::Format::eR32G32B32A32Sfloat;
-        case Format::D16_UNORM:
-            return vk::Format::eD16Unorm;
-        case Format::D24_UNORM_S8_UINT:
-            return vk::Format::eD24UnormS8Uint;
-        case Format::D32_FLOAT:
-            return vk::Format::eD32Sfloat;
-        case Format::R16_UNORM:
-            return vk::Format::eR16Unorm;
-        case Format::BC1_UNORM:
-            return vk::Format::eBc1RgbaUnormBlock;
-        case Format::BC1_SRGB:
-            return vk::Format::eBc1RgbaSrgbBlock;
-        case Format::BC4_UNORM:
-            return vk::Format::eBc4UnormBlock;
-        case Format::BC5_UNORM:
-            return vk::Format::eBc5UnormBlock;
-        case Format::BC7_UNORM:
-            return vk::Format::eBc7UnormBlock;
-        case Format::BC7_SRGB:
-            return vk::Format::eBc7SrgbBlock;
-        case Format::R32_UINT:
-            return vk::Format::eR32Uint;
-        case Format::R32G32_UINT:
-            return vk::Format::eR32G32Uint;
-        default:
-            return vk::Format::eUndefined;
-        }
+        return ToVkFormatFromTable(format);
     }
 
     /**

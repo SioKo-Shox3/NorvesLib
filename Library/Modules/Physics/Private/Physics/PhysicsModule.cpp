@@ -16,6 +16,7 @@
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include "Rendering/Terrain/TerrainSystem.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -208,7 +209,10 @@ namespace NorvesLib::Modules::Physics
         }
 
         if (m_bFixedTickInProgress || m_bVariableCharacterInProgress || m_bCharacterInputInProgress)
+        {
             return;
+        }
+        ApplyPendingStaticColliderChunkOperations();
         for (BodySlot& body : m_BodySlots)
         {
             body.bHadPreStepSnapshot = false;
@@ -234,6 +238,8 @@ namespace NorvesLib::Modules::Physics
         {
             return;
         }
+
+        ApplyPendingStaticColliderChunkOperations();
 
         struct StepGuard
         {
@@ -317,13 +323,18 @@ namespace NorvesLib::Modules::Physics
         {
             return Core::Scene::EPhysicsSceneQueryResult::NotReady;
         }
+        RebuildPublishedSnapshot();
+        return Core::Scene::EPhysicsSceneQueryResult::Success;
+    }
+
+    void PhysicsModule::RebuildPublishedSnapshot()
+    {
         PhysicsBroadphase candidate;
         candidate.ShareStaticTreeFrom(m_PublishedBroadphase);
         BuildBroadphase(candidate, true);
-        // 確保/構築完了後だけquery公開値を交換し、simulationの作業値には触れない。
+        // 確保と構築が完了してから問い合わせの公開値を交換する。
         static_assert(noexcept(m_PublishedBroadphase = std::move(candidate)));
         m_PublishedBroadphase = std::move(candidate);
-        return Core::Scene::EPhysicsSceneQueryResult::Success;
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteBatch(Core::Container::Span<const Core::Scene::PhysicsQueryDesc> queries,
@@ -469,6 +480,211 @@ namespace NorvesLib::Modules::Physics
         return Core::Scene::EPhysicsSceneQueryResult::Success;
     }
 
+    bool PhysicsModule::IsStaticColliderChunkRegistered(uint64_t key) const
+    {
+        bool bRegistered = m_StaticColliderChunks.find(key) != m_StaticColliderChunks.end();
+        for (const PendingStaticColliderChunkOperation& operation : m_PendingStaticColliderChunkOperations)
+        {
+            if (operation.Key == key)
+            {
+                bRegistered = operation.bRegister;
+            }
+        }
+        return bRegistered;
+    }
+
+    EPhysicsResult PhysicsModule::RegisterStaticColliderChunk(StaticColliderChunkKey key,
+        Core::Container::Span<const StaticColliderDesc> colliders)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsResult::WrongThread;
+        }
+        if (!m_bInitialized)
+        {
+            return EPhysicsResult::InvalidState;
+        }
+        if (IsStaticColliderChunkRegistered(key.Value))
+        {
+            return EPhysicsResult::Duplicate;
+        }
+        if (colliders.size() != 0 && colliders.data() == nullptr)
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        PendingStaticColliderChunkOperation operation;
+        operation.Key = key.Value;
+        operation.bRegister = true;
+        operation.Chunk.Proxies.reserve(colliders.size());
+        for (size_t index = 0; index < colliders.size(); ++index)
+        {
+            const StaticColliderDesc& desc = colliders[index];
+            if (desc.bTrigger)
+            {
+                return EPhysicsResult::InvalidArgument;
+            }
+            EPhysicsProxyShape shape;
+            switch (desc.Shape)
+            {
+            case EStaticColliderShape::Sphere:
+                shape = EPhysicsProxyShape::Sphere;
+                break;
+            case EStaticColliderShape::Box:
+                shape = EPhysicsProxyShape::Box;
+                break;
+            case EStaticColliderShape::Capsule:
+                shape = EPhysicsProxyShape::Capsule;
+                if (!std::isfinite(desc.CapsuleHalfHeight) || desc.CapsuleHalfHeight <= 0.0f)
+                {
+                    return EPhysicsResult::InvalidArgument;
+                }
+                break;
+            default:
+                return EPhysicsResult::InvalidArgument;
+            }
+            if ((shape == EPhysicsProxyShape::Sphere || shape == EPhysicsProxyShape::Capsule)
+                && (!std::isfinite(desc.Radius) || desc.Radius <= 0.0f))
+            {
+                return EPhysicsResult::InvalidArgument;
+            }
+            if (shape == EPhysicsProxyShape::Box && (!IsFiniteVector(desc.HalfExtents)
+                || desc.HalfExtents.x <= 0.0f || desc.HalfExtents.y <= 0.0f || desc.HalfExtents.z <= 0.0f))
+            {
+                return EPhysicsResult::InvalidArgument;
+            }
+            PhysicsShapeProxy proxy;
+            if (!BuildColliderWorldShape(shape, desc.Radius, desc.CapsuleHalfHeight, desc.HalfExtents,
+                desc.WorldTransform, Math::Transform(), proxy))
+            {
+                return EPhysicsResult::InvalidArgument;
+            }
+            proxy.Body = Core::Scene::BodyHandle{};
+            proxy.bHasEntity = false;
+            proxy.Layer = desc.Layer;
+            proxy.Mask = desc.Mask;
+            proxy.UserData = desc.UserData;
+            proxy.SurfaceId = desc.SurfaceId;
+            proxy.bTrigger = false;
+            proxy.Mobility = EPhysicsProxyMobility::Static;
+            proxy.bStatic = true;
+            proxy.bHasStaticChunk = true;
+            proxy.StaticChunkKey = key.Value;
+            operation.Chunk.Proxies.push_back(std::move(proxy));
+        }
+        SubmitStaticColliderChunkOperation(operation);
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::UnregisterStaticColliderChunk(StaticColliderChunkKey key)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsResult::WrongThread;
+        }
+        if (!m_bInitialized)
+        {
+            return EPhysicsResult::InvalidState;
+        }
+        if (!IsStaticColliderChunkRegistered(key.Value))
+        {
+            return EPhysicsResult::NotRegistered;
+        }
+        PendingStaticColliderChunkOperation operation;
+        operation.Key = key.Value;
+        SubmitStaticColliderChunkOperation(operation);
+        return EPhysicsResult::Success;
+    }
+
+    void PhysicsModule::SubmitStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation)
+    {
+        if (m_bFixedTickInProgress || m_bVariableCharacterInProgress || m_bCharacterInputInProgress)
+        {
+            m_PendingStaticColliderChunkOperations.push_back(std::move(operation));
+            return;
+        }
+
+        // 同じ鍵の保留分は、後から来た即時操作で最終状態を置き換える。
+        // 別の鍵の保留分は次のステップの入口まで反映しない。
+        auto& pending = m_PendingStaticColliderChunkOperations;
+        pending.erase(std::remove_if(pending.begin(), pending.end(), [&operation](const auto& previous)
+        {
+            return previous.Key == operation.Key;
+        }), pending.end());
+        if (m_StaticColliderChunks.find(operation.Key) != m_StaticColliderChunks.end())
+        {
+            PendingStaticColliderChunkOperation removal;
+            removal.Key = operation.Key;
+            ApplyStaticColliderChunkOperation(removal);
+        }
+        if (operation.bRegister)
+        {
+            ApplyStaticColliderChunkOperation(operation);
+        }
+        if (m_bHasPublishedSnapshot)
+        {
+            RebuildPublishedSnapshot();
+        }
+    }
+
+    void PhysicsModule::ApplyStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation)
+    {
+        if (!operation.bRegister)
+        {
+            const auto it = m_StaticColliderChunks.find(operation.Key);
+            for (uint32_t index : it->second.SlotIndices)
+            {
+                ReleaseColliderSlot(index);
+            }
+            m_StaticColliderChunks.erase(it);
+            return;
+        }
+
+        StaticColliderChunk& chunk = operation.Chunk;
+        chunk.SlotIndices.reserve(chunk.Proxies.size());
+        for (PhysicsShapeProxy& proxy : chunk.Proxies)
+        {
+            uint32_t index;
+            if (!m_FreeColliderSlotIndices.empty())
+            {
+                index = m_FreeColliderSlotIndices.back();
+                m_FreeColliderSlotIndices.pop_back();
+            }
+            else
+            {
+                index = static_cast<uint32_t>(m_ColliderSlots.size());
+                m_ColliderSlots.emplace_back();
+            }
+            ColliderSlot& slot = m_ColliderSlots[index];
+            slot.Component = nullptr;
+            slot.Owner = nullptr;
+            slot.bDetached = true;
+            slot.ChunkKey = operation.Key;
+            slot.bOccupied = true;
+            slot.bActive = true;
+            proxy.Collider = Core::Scene::ColliderHandle{index, slot.Generation};
+            chunk.SlotIndices.push_back(index);
+        }
+        m_StaticColliderChunks.emplace(operation.Key, std::move(chunk));
+    }
+
+    void PhysicsModule::ApplyPendingStaticColliderChunkOperations()
+    {
+        if (m_PendingStaticColliderChunkOperations.empty())
+        {
+            return;
+        }
+        for (PendingStaticColliderChunkOperation& operation : m_PendingStaticColliderChunkOperations)
+        {
+            ApplyStaticColliderChunkOperation(operation);
+        }
+        m_PendingStaticColliderChunkOperations.clear();
+        if (m_bHasPublishedSnapshot)
+        {
+            RebuildPublishedSnapshot();
+        }
+    }
+
     EPhysicsResult PhysicsModule::RegisterCollider(ColliderComponent& component)
     {
         if (!IsOwnerThread())
@@ -505,6 +721,8 @@ namespace NorvesLib::Modules::Physics
         }
 
         ColliderSlot& slot = m_ColliderSlots[index];
+        slot.bDetached = false;
+        slot.ChunkKey = 0;
         slot.Component = &component;
         slot.Owner = owner;
         slot.bOccupied = true;
@@ -909,7 +1127,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         const ColliderSlot& slot = m_ColliderSlots[handle.Index];
-        return slot.bOccupied && slot.Generation == handle.Generation && slot.Component == &component
+        return slot.bOccupied && !slot.bDetached && slot.Generation == handle.Generation && slot.Component == &component
             ? EPhysicsResult::Success
             : EPhysicsResult::NotRegistered;
     }
@@ -1024,6 +1242,10 @@ namespace NorvesLib::Modules::Physics
 
     bool PhysicsModule::IsColliderLifecycleActive(const ColliderSlot& collider) const
     {
+        if (collider.bDetached)
+        {
+            return collider.bOccupied;
+        }
         return collider.bOccupied && collider.Component != nullptr && collider.Owner != nullptr
             && collider.Component->m_bHasShape
             && collider.Component->IsActive() && collider.Owner->IsActiveInHierarchy()
@@ -1164,7 +1386,8 @@ namespace NorvesLib::Modules::Physics
             {
                 continue;
             }
-            if (firstCollider->Component->m_bTrigger || secondCollider->Component->m_bTrigger)
+            if ((!firstCollider->bDetached && firstCollider->Component->m_bTrigger)
+                || (!secondCollider->bDetached && secondCollider->Component->m_bTrigger))
             {
                 m_CurrentTriggerPairs.push_back(TriggerPairState{candidate.First, candidate.Second, contact});
                 continue;
@@ -1303,12 +1526,12 @@ namespace NorvesLib::Modules::Physics
                 const Core::Scene::ColliderHandle otherHandle = receiverIndex == 0 ? pending.Second : pending.First;
                 ColliderSlot* self = FindColliderSlot(selfHandle);
                 ColliderSlot* other = FindColliderSlot(otherHandle);
-                if (!self || !self->bActive || self->Owner->IsPendingDestroy())
+                if (!self || self->bDetached || !self->bActive || self->Owner->IsPendingDestroy())
                 {
                     continue;
                 }
                 if (pending.Type != EPhysicsEventType::OverlapEnd
-                    && (!other || !other->bActive || other->Owner->IsPendingDestroy()))
+                    && (!other || !other->bActive || (!other->bDetached && other->Owner->IsPendingDestroy())))
                 {
                     continue;
                 }
@@ -1355,12 +1578,12 @@ namespace NorvesLib::Modules::Physics
                 {
                     ColliderSlot* self = FindColliderSlot(receiver.SelfHandle);
                     ColliderSlot* other = FindColliderSlot(receiver.OtherHandle);
-                    if (!self || !self->bActive || self->Owner->IsPendingDestroy())
+                    if (!self || self->bDetached || !self->bActive || self->Owner->IsPendingDestroy())
                     {
                         break;
                     }
                     if (pending.Type != EPhysicsEventType::OverlapEnd
-                        && (!other || !other->bActive || other->Owner->IsPendingDestroy()))
+                        && (!other || !other->bActive || (!other->bDetached && other->Owner->IsPendingDestroy())))
                     {
                         break;
                     }
@@ -1420,7 +1643,7 @@ namespace NorvesLib::Modules::Physics
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
         for (const ColliderSlot& slot : m_ColliderSlots)
         {
-            if (!slot.bOccupied || (bRefreshLifecycle ? !IsColliderLifecycleActive(slot) : !slot.bActive))
+            if (slot.bDetached || !slot.bOccupied || (bRefreshLifecycle ? !IsColliderLifecycleActive(slot) : !slot.bActive))
             {
                 continue;
             }
@@ -1482,11 +1705,32 @@ namespace NorvesLib::Modules::Physics
                 continue;
             proxies.push_back(proxy);
         }
+        Core::Container::VariableArray<uint64_t> chunkKeys;
+        chunkKeys.reserve(m_StaticColliderChunks.size());
+        for (const auto& entry : m_StaticColliderChunks)
+        {
+            chunkKeys.push_back(entry.first);
+        }
+        std::sort(chunkKeys.begin(), chunkKeys.end());
+        for (uint64_t key : chunkKeys)
+        {
+            const auto& chunk = m_StaticColliderChunks.at(key);
+            proxies.insert(proxies.end(), chunk.Proxies.begin(), chunk.Proxies.end());
+        }
         outBroadphase.SetProxies(std::move(proxies));
     }
 
     void PhysicsModule::ResetTransientState()
     {
+        m_PendingStaticColliderChunkOperations.clear();
+        for (const auto& entry : m_StaticColliderChunks)
+        {
+            for (uint32_t index : entry.second.SlotIndices)
+            {
+                ReleaseColliderSlot(index);
+            }
+        }
+        m_StaticColliderChunks.clear();
         for (BodySlot& body : m_BodySlots)
         {
             if (body.bOccupied && body.Owner)
@@ -1591,16 +1835,20 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ReleaseColliderSlot(uint32_t index)
     {
         ColliderSlot& slot = m_ColliderSlots[index];
-        if (slot.Owner)
+        if (!slot.bDetached && slot.Owner)
         {
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
+            {
                 character->ResetMotion(true);
+            }
+            const auto it = m_ColliderSlotByOwner.find(slot.Owner);
+            if (it != m_ColliderSlotByOwner.end() && it->second == index)
+            {
+                m_ColliderSlotByOwner.erase(it);
+            }
         }
-        const auto it = m_ColliderSlotByOwner.find(slot.Owner);
-        if (it != m_ColliderSlotByOwner.end() && it->second == index)
-        {
-            m_ColliderSlotByOwner.erase(it);
-        }
+        slot.bDetached = false;
+        slot.ChunkKey = 0;
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;

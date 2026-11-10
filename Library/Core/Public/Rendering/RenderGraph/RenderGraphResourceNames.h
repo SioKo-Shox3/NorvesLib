@@ -60,6 +60,10 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity VsmDirtyList = Identity::Literal("VSM.DirtyList", sizeof("VSM.DirtyList") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);
+    inline constexpr Identity WorldFieldCurrent =
+        Identity::Literal("WorldField.Current", sizeof("WorldField.Current") - 1);
+    inline constexpr Identity WorldFieldPrevious =
+        Identity::Literal("WorldField.Previous", sizeof("WorldField.Previous") - 1);
     inline constexpr Identity SkyAtmosphereTransmittance =
         Identity::Literal("SkyAtmosphere.Transmittance", sizeof("SkyAtmosphere.Transmittance") - 1);
     inline constexpr Identity SkyAtmosphereRadiance =
@@ -70,6 +74,8 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);
     inline constexpr Identity SceneDepth = Identity::Literal("Scene.Depth", sizeof("Scene.Depth") - 1);
+    // TAA の前に描く半透明・粒子の被覆率(R8_UNORM)。書き手が積み、TemporalAAPass が現在の色の割合を 1 へ寄せる
+    inline constexpr Identity SceneReactive = Identity::Literal("Scene.Reactive", sizeof("Scene.Reactive") - 1);
     inline constexpr Identity LightingIndirectSpecular =
         Identity::Literal("Lighting.IndirectSpecular", sizeof("Lighting.IndirectSpecular") - 1);
     inline constexpr Identity LightingSpecularReflectance =

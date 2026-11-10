@@ -57,6 +57,19 @@ namespace NorvesLib::Core::Component
         // 旧APIはslot0の別名。未指定slotはslot0へ落ち、無効handleでoverrideを解除する。
         [[nodiscard]] bool SetMaterial(uint32_t slot, Rendering::MaterialHandle material);
         Rendering::MaterialHandle GetMaterial(uint32_t slot) const;
+        /**
+         * @brief インスタンスごとの材質値を設定
+         * @param index 0 = P0、1 = P1、2 = 予約、3 = 被覆率の乗数（1 で不変）
+         * @param value 0 以上ならインスタンスの値、負なら材質の値を使う
+         */
+        void SetShadingParams(uint32_t index, float value);
+
+        /**
+         * @brief インスタンスごとの材質値を取得。範囲外なら -1 を返す
+         * @param index 0 = P0、1 = P1、2 = 予約、3 = 被覆率の乗数
+         */
+        float GetShadingParams(uint32_t index) const;
+
         uint32_t GetMaterialSlotCount() const;
         int32_t FindMaterialSlot(Container::StringView name) const;
         [[nodiscard]] bool SetSlotMaterial(uint32_t slot, Rendering::MaterialHandle material);
@@ -131,6 +144,7 @@ namespace NorvesLib::Core::Component
         Container::TWeakPtr<SkeletonResource> m_EvaluatedSkeleton;
         Container::TWeakPtr<AnimationClipResource> m_EvaluatedClip;
         Rendering::MaterialHandle m_Material;
+        float m_ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
         Skeletal::SkeletalMaterialBindings m_SlotMaterials;
         float m_AnimationTimeSeconds = 0.0f;
         float m_PlaybackRate = 1.0f;

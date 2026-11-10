@@ -8,6 +8,7 @@
 namespace NorvesLib::Core::Rendering
 {
     class IViewPass;
+    class RenderExtensionRegistry;
 } // namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core::Module
@@ -23,6 +24,18 @@ namespace NorvesLib::Core::Module
     {
     public:
         virtual ~IRenderModule() = default;
+
+        /**
+         * @brief モジュールのインストールの後、最初のフレームの前に 1 回呼ばれ、描画拡張を登録する。
+         *
+         * 名前は Ext.<Game>.<Name> とする。ファクトリの context はモジュールの Shutdown まで
+         * 有効に保つ。Shutdown の前に Unregister し、解除の反映まで context を有効に保つ責務は
+         * モジュールにある。登録表は主の SceneView が所有し、ここでは借用する。
+         */
+        virtual void RegisterRenderExtensions(Rendering::RenderExtensionRegistry& registry)
+        {
+            (void)registry;
+        }
 
         /**
          * @brief overlay として描画するパスを返す(借用ポインタ)

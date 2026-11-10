@@ -44,9 +44,9 @@ namespace
                                    !options.OrmOcclusionPath.empty();
         if (options.Usage.empty())
         {
-            if (bHasOrmSource || !options.Quality.empty())
+            if (bHasOrmSource || !options.Quality.empty() || options.bHasHeightRange || options.bRequire16Bit)
             {
-                error = "--orm-* と --quality は --usage と一緒に指定してください";
+                error = "--orm-*・--quality・--height-range・--require-16bit は --usage と一緒に指定してください";
                 return false;
             }
             return true;
@@ -55,7 +55,7 @@ namespace
         NorvesLib::Tools::AssetCook::TextureUsage usage{};
         if (!NorvesLib::Tools::AssetCook::ParseTextureUsage(options.Usage, usage))
         {
-            error = "--usage は albedo・normal・orm・single・height16 のどれかです";
+            error = "--usage は albedo・normal・orm・single・height16・hdr・rg16 のどれかです";
             return false;
         }
 
@@ -65,16 +65,42 @@ namespace
             return false;
         }
 
-        if (!options.Format.empty())
+        using NorvesLib::Tools::AssetCook::TextureFormatOverride;
+        TextureFormatOverride formatOverride = TextureFormatOverride::Default;
+        if (!options.Format.empty() &&
+            !NorvesLib::Tools::AssetCook::ParseTextureFormatOverride(
+                {options.Format.data(), options.Format.size()}, formatOverride))
         {
-            error = "--usage が形式を決めるので --format は指定しないでください";
+            error = "--usage と一緒の --format は hdr の rgba16f か、albedo・orm の bc3 だけです";
             return false;
         }
-        options.Format = NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage);
+        const char* manifestFormat =
+            NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage, formatOverride);
+        if (manifestFormat[0] == '\0')
+        {
+            error = "--usage と一緒の --format は hdr の rgba16f か、albedo・orm の bc3 だけです";
+            return false;
+        }
+        options.Format = manifestFormat;
 
         if (!options.Quality.empty() && options.Quality != "fast" && options.Quality != "normal" && options.Quality != "best")
         {
             error = "--quality は fast・normal・best のどれかです";
+            return false;
+        }
+
+        if (options.bHasHeightRange &&
+            (usage != NorvesLib::Tools::AssetCook::TextureUsage::Height16 ||
+             !std::isfinite(options.HeightRangeMin) || !std::isfinite(options.HeightRangeMax) ||
+             options.HeightRangeMin >= options.HeightRangeMax))
+        {
+            error = "--height-range は --usage height16 で有限の min < max を指定してください";
+            return false;
+        }
+        if (options.bRequire16Bit && usage != NorvesLib::Tools::AssetCook::TextureUsage::Height16 &&
+            usage != NorvesLib::Tools::AssetCook::TextureUsage::Rg16)
+        {
+            error = "--require-16bit は --usage height16 か --usage rg16 と一緒に指定してください";
             return false;
         }
 
@@ -166,6 +192,24 @@ namespace
                 return ReadNextValue(argc, argv, index, value, error);
             };
 
+            const bool bClipFlag = argument == "--clip-optimize" || argument == "--clip-quantize";
+            bool clipConsumed = false;
+            const char* clipValue = equals != std::string::npos ? value.c_str() :
+                (bClipFlag || index + 1 >= argc ? nullptr : argv[index + 1]);
+            if (!NorvesLib::Tools::AssetCook::TryParseClipOptimizeArgument(
+                    argument, clipValue, outOptions.ClipOptimize, clipConsumed, error))
+            {
+                return false;
+            }
+            if (clipConsumed)
+            {
+                if (!bClipFlag && equals == std::string::npos)
+                {
+                    ++index;
+                }
+                continue;
+            }
+
             if (argument == "--input")
             {
                 if (!readValue())
@@ -226,6 +270,11 @@ namespace
             {
                 if (!readValue())
                 {
+                    return false;
+                }
+                if (value.empty())
+                {
+                    error = "--format の値が空です";
                     return false;
                 }
                 outOptions.Format = value;
@@ -321,6 +370,39 @@ namespace
             {
                 outOptions.bFlipNormalY = true;
             }
+            else if (argument == "--height-range")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                const size_t comma = value.find(',');
+                float minimum = 0.0f;
+                float maximum = 0.0f;
+                if (comma == std::string::npos)
+                {
+                    error = "--height-range は有限の 2 数を min,max（min < max）で指定してください";
+                    return false;
+                }
+                const char* begin = value.data();
+                const char* end = begin + value.size();
+                const auto minResult = std::from_chars(begin, begin + comma, minimum);
+                const auto maxResult = std::from_chars(begin + comma + 1, end, maximum);
+                if (minResult.ec != std::errc{} || minResult.ptr != begin + comma ||
+                    maxResult.ec != std::errc{} || maxResult.ptr != end ||
+                    !std::isfinite(minimum) || !std::isfinite(maximum) || minimum >= maximum)
+                {
+                    error = "--height-range は有限の 2 数を min,max（min < max）で指定してください";
+                    return false;
+                }
+                outOptions.bHasHeightRange = true;
+                outOptions.HeightRangeMin = minimum;
+                outOptions.HeightRangeMax = maximum;
+            }
+            else if (argument == "--require-16bit")
+            {
+                outOptions.bRequire16Bit = true;
+            }
             else if (argument == "--orm-metallic")
             {
                 if (!readValue())
@@ -342,6 +424,12 @@ namespace
                 error = "unknown argument: " + argument;
                 return false;
             }
+        }
+
+        if (outOptions.ClipOptimize.bQuantize)
+        {
+            error = reinterpret_cast<const char*>(u8"この cook では --clip-quantize を指定できません");
+            return false;
         }
 
         NorvesLib::Tools::AssetCook::ErrorString usageError;
@@ -563,11 +651,18 @@ namespace
             << "       AssetCook --input <terrain_spec.json|terrain.nvtrn> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
             << "--format nvmesh.v1.mesh3d.pnt.u32.lodgraph --variant default --generate terrain-tile:nvtrn:<x>,<z>\n"
+            << "テクスチャ用途: --usage albedo|normal|orm|single|height16|hdr|rg16\n"
+            << "用途の形式: [--format rgba16f（hdr）|bc3（albedo・orm）]（hdr の既定は BC6H）\n"
+            << "用途の設定: [--quality fast|normal|best] [--flip-normal-y（normal のみ）]\n"
+            << "高さの範囲: [--height-range <min>,<max>]（height16 のみ。有限の min < max）\n"
+            << "入力の精度: [--require-16bit]（height16・rg16 の 8bit 入力を拒否）\n"
             << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n"
             << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n"
             << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"
             << "Bake budgets: [--cubic-max-depth 0..24] [--cubic-max-channel-samples 2..1048576] [--cubic-max-asset-samples 2..4194304]\n"
-            << "Morph import: [--morph reject|drop]\n";
+            << "Morph import: [--morph reject|drop]\n"
+            << reinterpret_cast<const char*>(u8"クリップ設定: [--clip-optimize] [--clip-quantize] [--clip-max-vertex-error-m <m>] [--clip-max-joint-error-m <m>] ")
+            << "[--clip-max-rotation-error-deg <deg>] [--clip-report <path>]\n";
     }
 
     bool InspectModelFile(const std::filesystem::path& input, auto& error)

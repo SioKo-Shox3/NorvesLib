@@ -2,6 +2,7 @@
 
 #include "Rendering/GpuRetireQueue.h"
 
+#include "RHI/FormatInfo.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -12,12 +13,65 @@
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <exception>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
+    RHI::Format ToRHITextureFormat(TextureCreateInfo::Format format)
+    {
+        switch (format)
+        {
+        case TextureCreateInfo::Format::RGBA8_UNORM:
+            return RHI::Format::R8G8B8A8_UNORM;
+        case TextureCreateInfo::Format::RGBA8_SRGB:
+            return RHI::Format::R8G8B8A8_SRGB;
+        case TextureCreateInfo::Format::RGBA16_FLOAT:
+            return RHI::Format::R16G16B16A16_FLOAT;
+        case TextureCreateInfo::Format::RGBA32_FLOAT:
+            return RHI::Format::R32G32B32A32_FLOAT;
+        case TextureCreateInfo::Format::R8_UNORM:
+            return RHI::Format::R8_UNORM;
+        case TextureCreateInfo::Format::RG8_UNORM:
+            return RHI::Format::R8G8_UNORM;
+        case TextureCreateInfo::Format::D24_S8:
+            return RHI::Format::D24_UNORM_S8_UINT;
+        case TextureCreateInfo::Format::D32_FLOAT:
+            return RHI::Format::D32_FLOAT;
+        case TextureCreateInfo::Format::R16_UNORM:
+            return RHI::Format::R16_UNORM;
+        case TextureCreateInfo::Format::BC1_UNORM:
+            return RHI::Format::BC1_UNORM;
+        case TextureCreateInfo::Format::BC1_SRGB:
+            return RHI::Format::BC1_SRGB;
+        case TextureCreateInfo::Format::BC4_UNORM:
+            return RHI::Format::BC4_UNORM;
+        case TextureCreateInfo::Format::BC5_UNORM:
+            return RHI::Format::BC5_UNORM;
+        case TextureCreateInfo::Format::BC7_UNORM:
+            return RHI::Format::BC7_UNORM;
+        case TextureCreateInfo::Format::BC7_SRGB:
+            return RHI::Format::BC7_SRGB;
+        case TextureCreateInfo::Format::R16G16_UNORM:
+            return RHI::Format::R16G16_UNORM;
+        case TextureCreateInfo::Format::R10G10B10A2_UNORM:
+            return RHI::Format::R10G10B10A2_UNORM;
+        case TextureCreateInfo::Format::R11G11B10_FLOAT:
+            return RHI::Format::R11G11B10_FLOAT;
+        case TextureCreateInfo::Format::BC3_UNORM:
+            return RHI::Format::BC3_UNORM;
+        case TextureCreateInfo::Format::BC3_SRGB:
+            return RHI::Format::BC3_SRGB;
+        case TextureCreateInfo::Format::BC6H_UFLOAT:
+            return RHI::Format::BC6H_UFLOAT;
+        default:
+            assert(false && "未対応のテクスチャ形式です");
+            return RHI::Format::R8G8B8A8_UNORM;
+        }
+    }
+
     namespace
     {
         using StoreClock = std::chrono::steady_clock;
@@ -51,45 +105,6 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        RHI::Format ToRHITextureFormat(TextureCreateInfo::Format format)
-        {
-            switch (format)
-            {
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-                return RHI::Format::R8G8B8A8_UNORM;
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-                return RHI::Format::R8G8B8A8_SRGB;
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-                return RHI::Format::R16G16B16A16_FLOAT;
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-                return RHI::Format::R32G32B32A32_FLOAT;
-            case TextureCreateInfo::Format::R8_UNORM:
-                return RHI::Format::R8_UNORM;
-            case TextureCreateInfo::Format::RG8_UNORM:
-                return RHI::Format::R8G8_UNORM;
-            case TextureCreateInfo::Format::D24_S8:
-                return RHI::Format::D24_UNORM_S8_UINT;
-            case TextureCreateInfo::Format::D32_FLOAT:
-                return RHI::Format::D32_FLOAT;
-            case TextureCreateInfo::Format::R16_UNORM:
-                return RHI::Format::R16_UNORM;
-            case TextureCreateInfo::Format::BC1_UNORM:
-                return RHI::Format::BC1_UNORM;
-            case TextureCreateInfo::Format::BC1_SRGB:
-                return RHI::Format::BC1_SRGB;
-            case TextureCreateInfo::Format::BC4_UNORM:
-                return RHI::Format::BC4_UNORM;
-            case TextureCreateInfo::Format::BC5_UNORM:
-                return RHI::Format::BC5_UNORM;
-            case TextureCreateInfo::Format::BC7_UNORM:
-                return RHI::Format::BC7_UNORM;
-            case TextureCreateInfo::Format::BC7_SRGB:
-                return RHI::Format::BC7_SRGB;
-            default:
-                return RHI::Format::R8G8B8A8_UNORM;
-            }
-        }
-
         // RHI テクスチャの実際の形式・ミップ数・配列数から確保量を数える。
         // sparse のテクスチャは作成時に何も結ばないので 0（結んだ量は GetStats が実行時に読む）。
         size_t EstimateRHITextureBytes(const RHI::ITexture &texture)
@@ -114,6 +129,11 @@ namespace NorvesLib::Core::Rendering
         {
             return createInfo.bInitialDataHasAllMips ||
                    RHI::IsBlockCompressedFormat(ToRHITextureFormat(createInfo.PixelFormat));
+        }
+
+        bool NeedsMipGeneration(const TextureCreateInfo &createInfo, uint32_t mipLevels)
+        {
+            return mipLevels > 1 && !HasPackedMipChain(createInfo) && !createInfo.bSparse;
         }
 
         // ミップ0から順に詰めた初期データを、ミップごとのコピー領域でテクスチャへ上げる。
@@ -183,23 +203,7 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t GetTextureBytesPerPixel(TextureCreateInfo::Format format)
         {
-            switch (format)
-            {
-            case TextureCreateInfo::Format::R8_UNORM:
-                return 1;
-            case TextureCreateInfo::Format::RG8_UNORM:
-            case TextureCreateInfo::Format::R16_UNORM:
-                return 2;
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-                return 4;
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-                return 8;
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-                return 16;
-            default:
-                return 4;
-            }
+            return static_cast<uint32_t>(RHI::GetFormatBytesPerPixel(ToRHITextureFormat(format)));
         }
     }
 
@@ -325,9 +329,18 @@ namespace NorvesLib::Core::Rendering
         desc.Width = createInfo.Width;
         desc.Height = createInfo.Height;
         desc.Depth = createInfo.Depth;
-        desc.MipLevels = mipLevels;
         desc.ArraySize = createInfo.ArraySize;
         desc.TextureFormat = ToRHITextureFormat(createInfo.PixelFormat);
+
+        if (NeedsMipGeneration(createInfo, mipLevels) &&
+            !m_Device->IsFormatSupported(desc.TextureFormat, RHI::FormatUsage::LinearMipGeneration))
+        {
+            NORVES_LOG_WARNING("RenderResources",
+                               "線形ブリットによるミップ生成に非対応のため1段で作成します: texture=%s format=%d mipLevels=%u",
+                               createInfo.DebugName.c_str(), static_cast<int>(desc.TextureFormat), mipLevels);
+            mipLevels = 1;
+        }
+        desc.MipLevels = mipLevels;
 
         if (createInfo.bSparse)
         {
@@ -381,7 +394,7 @@ namespace NorvesLib::Core::Rendering
         desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
         // ミップ生成（ブリット）で元のミップを読むときだけ転送元が要る。全ミップを渡すテクスチャは生成しない。
         // sparse は全ミップをタイル単位の書き込みで作るので、ミップ生成もしない。
-        if (mipLevels > 1 && !HasPackedMipChain(createInfo) && !createInfo.bSparse)
+        if (NeedsMipGeneration(createInfo, mipLevels))
         {
             desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
         }
@@ -459,8 +472,6 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        const uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
-
         Thread::ScopedLock lock(m_Mutex);
         auto it = m_Textures.find(handle.Id);
         if (it == m_Textures.end() || !it->second.RHITexture)
@@ -489,21 +500,32 @@ namespace NorvesLib::Core::Rendering
         result.bUploadAttempted = true;
         result.bUploadSucceeded = true;
 
-        if (effectiveMipLevels > 1)
+        if (NeedsMipGeneration(createInfo, it->second.RHITexture->GetMipLevels()))
         {
             auto mipgenStartTime = StoreNow();
-            auto commandList = m_Device ? m_Device->CreateCommandList() : nullptr;
-            if (!commandList)
+            if (m_Device &&
+                !m_Device->IsFormatSupported(it->second.RHITexture->GetFormat(), RHI::FormatUsage::LinearMipGeneration))
             {
                 result.bMipgenSuccess = false;
-                NORVES_LOG_ERROR("RenderResources", "Failed to create command list for mip generation");
+                NORVES_LOG_ERROR("RenderResources",
+                                 "線形ブリットによるミップ生成に対応していません: texture=%s format=%d",
+                                 createInfo.DebugName.c_str(), static_cast<int>(it->second.RHITexture->GetFormat()));
             }
             else
             {
-                commandList->Begin();
-                commandList->GenerateMipmaps(it->second.RHITexture);
-                commandList->End();
-                commandList->Submit(true);
+                auto commandList = m_Device ? m_Device->CreateCommandList() : nullptr;
+                if (!commandList)
+                {
+                    result.bMipgenSuccess = false;
+                    NORVES_LOG_ERROR("RenderResources", "ミップ生成用のコマンドリストを作成できませんでした");
+                }
+                else
+                {
+                    commandList->Begin();
+                    commandList->GenerateMipmaps(it->second.RHITexture);
+                    commandList->End();
+                    commandList->Submit(true);
+                }
             }
             result.MipgenMs = StoreElapsedMs(mipgenStartTime);
         }

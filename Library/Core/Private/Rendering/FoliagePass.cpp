@@ -6,7 +6,9 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/ViewClearance.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/Wind.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/IDescriptorSet.h"
@@ -21,23 +23,6 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        /// Common/FoliageData.glsl の FoliageData と同じ並び（std140）
-        struct FoliageUniform
-        {
-            float view[16];
-            float projection[16];
-            float previousView[16];
-            float previousProjection[16];
-            float cameraPosition[4];
-            float wind[4];
-            float windParams[4];
-            float stemColor[4];
-            float tipColorA[4];
-            float tipColorB[4];
-            float frameParams[4];
-        };
-        static_assert(sizeof(FoliageUniform) == 368u, "Common/FoliageData.glsl の FoliageData と合わせる");
-
         static_assert(offsetof(FoliageVertex, Normal) == 12);
         static_assert(offsetof(FoliageVertex, Side) == 24);
         static_assert(offsetof(FoliageVertex, Flex) == 36);
@@ -144,7 +129,73 @@ namespace NorvesLib::Core::Rendering
             uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
             uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
             descriptorSetDesc.bindings.push_back(uboBinding);
+            for (uint32_t binding = 1; binding <= 2; ++binding)
+            {
+                RHI::DescriptorBinding fieldBinding;
+                fieldBinding.binding = binding;
+                fieldBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                fieldBinding.stages = RHI::ShaderStage::Vertex;
+                descriptorSetDesc.bindings.push_back(fieldBinding);
+            }
             return descriptorSetDesc;
+        }
+
+        constexpr uint32_t kColorTargetCount = GBufferOverlayTargets::kColorTargetCount;
+
+        // VirtualShadowMapPass の WorldFieldInvalidationSeconds と同じ秒数にする。
+        constexpr double WorldFieldInvalidationSeconds = 8.0;
+
+        /// 草・低木のシェーダーと頂点入力を、GBuffer へ重ねるパイプラインの記述へまとめる
+        GBufferOverlayPipelineDesc CreateFoliageOverlayPipelineDesc(const RHI::ShaderPtr& vertexShader,
+                                                                  const RHI::ShaderPtr& pixelShader)
+        {
+            GBufferOverlayPipelineDesc desc;
+            desc.vertexShader = vertexShader;
+            desc.pixelShader = pixelShader;
+            RHI::VertexBindingDesc vertexBinding;
+            vertexBinding.binding = 0;
+            vertexBinding.stride = sizeof(FoliageVertex);
+            vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+            desc.vertexBindings.push_back(vertexBinding);
+            RHI::VertexBindingDesc instanceBinding;
+            instanceBinding.binding = 1;
+            instanceBinding.stride = sizeof(FoliageInstance);
+            instanceBinding.inputRate = RHI::VertexInputRate::Instance;
+            desc.vertexBindings.push_back(instanceBinding);
+
+            struct AttributeLayout
+            {
+                uint32_t Location;
+                uint32_t Binding;
+                RHI::Format Format;
+                uint32_t Offset;
+            };
+            const AttributeLayout attributes[] = {
+                {0, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Position))},
+                {1, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Normal))},
+                {2, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Side))},
+                {3, 0, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Flex))},
+                {4, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, Position))},
+                {5, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, WidthScale))},
+                {6, 1, RHI::Format::R32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, FadeThreshold))},
+            };
+            for (const AttributeLayout& layout : attributes)
+            {
+                RHI::VertexAttributeDesc attribute;
+                attribute.location = layout.Location;
+                attribute.binding = layout.Binding;
+                attribute.format = layout.Format;
+                attribute.offset = layout.Offset;
+                desc.vertexAttributes.push_back(attribute);
+            }
+
+            desc.descriptorSetLayouts.push_back(CreateFoliageDescriptorSetDesc());
+            // 葉の帯は両面を描き、ビジビリティバッファと同じ深度の比較を使う
+            desc.depthCompareOp = RHI::CompareOp::LessOrEqual;
+            desc.cullMode = RHI::CullMode::None;
+            desc.debugName = "FoliagePass";
+            desc.failureLogPrefix = "FOLIAGE";
+            return desc;
         }
 
         /// GBuffer の 5 枚の名前（gbuffer.frag の出力の順）
@@ -187,46 +238,63 @@ namespace NorvesLib::Core::Rendering
         m_VertexShader = context.ShaderMgr->LoadShader("foliage.vert", RHI::ShaderStage::Vertex);
         m_FragmentShader = context.ShaderMgr->LoadShader("foliage.frag", RHI::ShaderStage::Pixel);
         m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateFoliageDescriptorSetDesc());
-        if (!m_VertexShader || !m_FragmentShader || !m_DescriptorSetLayout)
+        RHI::TextureDesc neutralDesc;
+        neutralDesc.Width = 1;
+        neutralDesc.Height = 1;
+        neutralDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        neutralDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        neutralDesc.DebugName = "Foliage.NeutralWorldField";
+        m_NeutralWorldField = m_Device->CreateTexture(neutralDesc);
+        RHI::SamplerDesc samplerDesc;
+        samplerDesc.filterMin = RHI::FilterMode::Linear;
+        samplerDesc.filterMag = RHI::FilterMode::Linear;
+        samplerDesc.filterMip = RHI::FilterMode::Point;
+        samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_WorldFieldSampler = m_Device->CreateSampler(samplerDesc);
+        if (!m_VertexShader || !m_FragmentShader || !m_DescriptorSetLayout || !m_NeutralWorldField || !m_WorldFieldSampler)
         {
             NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED 草・低木のシェーダーか記述子のレイアウトを作れません");
             m_VertexShader.reset();
             m_FragmentShader.reset();
             m_DescriptorSetLayout.reset();
+            m_NeutralWorldField.reset();
+            m_WorldFieldSampler.reset();
             m_Device = nullptr;
             return false;
         }
+        const uint32_t zero = 0;
+        m_NeutralWorldField->Update(&zero, sizeof(zero), sizeof(zero));
+        m_OverlayPipelineDesc = CreateFoliageOverlayPipelineDesc(m_VertexShader, m_FragmentShader);
         m_bInitialized = true;
         return true;
     }
 
     void FoliagePass::Shutdown()
     {
+        m_LastWorldFieldInteractorTime = 0.0;
+        m_bSawWorldFieldInteractor = false;
         if (!m_bInitialized)
         {
             return;
         }
-        m_RenderPass.reset();
-        m_Framebuffer.reset();
-        m_Pipeline.reset();
+        m_OverlayTargets.Reset();
+        m_OverlayPipelineDesc = {};
         m_StaticBuffers.clear();
         m_ExecuteCount = 0;
         m_VertexShader.reset();
         m_FragmentShader.reset();
         m_DescriptorSetLayout.reset();
+        m_NeutralWorldField.reset();
+        m_WorldFieldSampler.reset();
+        m_WorldFieldCurrentHandle = {};
+        m_WorldFieldPreviousHandle = {};
         for (RGResourceHandle &handle : m_ColorHandles)
         {
             handle = {};
         }
         m_DepthHandle = {};
-        for (const RHI::ITexture *&target : m_FramebufferTargets)
-        {
-            target = nullptr;
-        }
-        for (RHI::Format &format : m_TargetFormats)
-        {
-            format = RHI::Format::UNKNOWN;
-        }
         m_Device = nullptr;
         m_bInitialized = false;
     }
@@ -243,6 +311,8 @@ namespace NorvesLib::Core::Rendering
 
     void FoliagePass::Declare(RenderGraphBuilder &builder)
     {
+        m_WorldFieldCurrentHandle = {};
+        m_WorldFieldPreviousHandle = {};
         for (RGResourceHandle &handle : m_ColorHandles)
         {
             handle = {};
@@ -271,6 +341,19 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 今と前の画像を同じフレームの座標と組にして頂点から読む。
+        RGTextureHandle currentField;
+        RGTextureHandle previousField;
+        const bool bCurrentAvailable = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldCurrent, currentField,
+                                                               RHI::ResourceState::ShaderResource);
+        const bool bPreviousAvailable = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldPrevious, previousField,
+                                                                RHI::ResourceState::ShaderResource);
+        if (bCurrentAvailable && bPreviousAvailable)
+        {
+            m_WorldFieldCurrentHandle = currentField.ToResourceHandle();
+            m_WorldFieldPreviousHandle = previousField.ToResourceHandle();
+        }
+
         // 前のパス（解決・GBuffer の描画）の内容へ重ねる
         for (uint32_t index = 0; index < kColorTargetCount; ++index)
         {
@@ -295,6 +378,20 @@ namespace NorvesLib::Core::Rendering
 
     void FoliagePass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
+        if (std::isfinite(context.TotalTime))
+        {
+            if (m_bSawWorldFieldInteractor && context.TotalTime < m_LastWorldFieldInteractorTime)
+            {
+                m_bSawWorldFieldInteractor = false;
+            }
+            if (context.SnapshotWorldFieldInteractors && !context.SnapshotWorldFieldInteractors->empty())
+            {
+                m_LastWorldFieldInteractorTime = context.TotalTime;
+                m_bSawWorldFieldInteractor = true;
+            }
+        }
+        const bool bFieldRecentlyActive = m_bSawWorldFieldInteractor && std::isfinite(context.TotalTime) &&
+            context.TotalTime - m_LastWorldFieldInteractorTime <= WorldFieldInvalidationSeconds;
         const FoliageScene *scene = context.SnapshotFoliage;
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (!scene || scene->IsEmpty() || !activeCamera || !context.CommandList || !context.FrameResources)
@@ -327,7 +424,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
         RHI::TexturePtr depthTarget = resources.GetTexture(m_DepthHandle);
-        if (!depthTarget || !EnsureTargets(colorTargets, depthTarget))
+        if (!depthTarget || !m_OverlayTargets.Ensure(m_Device, colorTargets, depthTarget, m_OverlayPipelineDesc))
         {
             return;
         }
@@ -341,6 +438,18 @@ namespace NorvesLib::Core::Rendering
                            : cameraConstants;
 
         FoliageUniform frameTemplate{};
+        frameTemplate.viewClearance =
+            MakeViewClearanceGpuData(activeCamera->ViewClearance, activeCamera->ViewClearance.bAffectGrass);
+        frameTemplate.worldField = BuildWorldFieldSampleConstants(context.PhysicalLighting.WorldField);
+        RHI::TexturePtr currentField = m_WorldFieldCurrentHandle.IsValid() ? resources.GetTexture(m_WorldFieldCurrentHandle) : RHI::TexturePtr{};
+        RHI::TexturePtr previousField = m_WorldFieldPreviousHandle.IsValid() ? resources.GetTexture(m_WorldFieldPreviousHandle) : RHI::TexturePtr{};
+        if (!currentField || !previousField || frameTemplate.worldField.bEnabled == 0u)
+        {
+            currentField = m_NeutralWorldField;
+            previousField = m_NeutralWorldField;
+            frameTemplate.worldField = {};
+        }
+        const bool bFieldActiveForCulling = frameTemplate.worldField.bEnabled != 0u && bFieldRecentlyActive;
         cameraConstants.CopyShaderView(frameTemplate.view);
         cameraConstants.CopyShaderProjection(frameTemplate.projection);
         previousConstants.CopyShaderView(frameTemplate.previousView);
@@ -352,15 +461,31 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.cameraPosition[3] =
             renderHeight > 0 ? 2.0f * std::tan(halfFovRadians) / static_cast<float>(renderHeight) : 0.0f;
 
-        // 風の向きと時計（決定的な撮影では 1/60 秒の固定刻みで、エポックの始めから数える）
-        // （影の描画 VirtualShadowMapPass も同じ関数で向きと時計を決める）
+        // 共通の風はゲーム時間を使い、無効なときは従来の草・低木の風と時計を使う
+        // 影の描画 VirtualShadowMapPass も同じ風向と現在の時計を使う
         const FoliageWindParameters &wind = scene->Wind;
-        FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
-        const float windTime = FoliageWindClock(context.TotalTime, wind);
-        frameTemplate.wind[2] = windTime;
-        frameTemplate.wind[3] = windTime - context.DeltaTime;
-        frameTemplate.windParams[0] = wind.GustSpeed;
-        frameTemplate.windParams[1] = wind.GustScale;
+        if (context.Wind.bEnabled)
+        {
+            WindDirectionXZ(context.Wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+            const float windTime = WindClockSeconds(context.ExtensionFrame.GameTotalTime);
+            frameTemplate.wind[2] = windTime;
+            frameTemplate.wind[3] = windTime - context.ExtensionFrame.GameDeltaTime;
+            frameTemplate.windParams[0] = context.Wind.BaseSpeed;
+            frameTemplate.windParams[1] = context.Wind.GustScaleMeters;
+            frameTemplate.windField[0] = 1.0f;
+            frameTemplate.windField[1] = context.Wind.GustStrength;
+            frameTemplate.windField[2] = context.Wind.GustFrequencyHz;
+            frameTemplate.windField[3] = context.Wind.Turbulence;
+        }
+        else
+        {
+            FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
+            const float windTime = FoliageWindClock(context.TotalTime, wind);
+            frameTemplate.wind[2] = windTime;
+            frameTemplate.wind[3] = windTime - context.DeltaTime;
+            frameTemplate.windParams[0] = wind.GustSpeed;
+            frameTemplate.windParams[1] = wind.GustScale;
+        }
         frameTemplate.frameParams[0] = previousCamera ? 1.0f : 0.0f;
 
         // 区画のカリング: 視錐台の面（GBufferPass と同じビュー・投影）とカメラの位置
@@ -404,6 +529,14 @@ namespace NorvesLib::Core::Rendering
             }
             const FoliageMeshData &mesh = *batch.Mesh;
             const auto &instances = *batch.Instances;
+            float fieldBendMargin = 0.0f;
+            float fieldFlattenMargin = 0.0f;
+            if (bFieldActiveForCulling && batch.Cells && !batch.Cells->empty())
+            {
+                const float height = std::max(mesh.Height, 0.0f) * AcquireMaxHeightScale(batch.Instances);
+                fieldBendMargin = height * frameTemplate.worldField.BendScale;
+                fieldFlattenMargin = height * frameTemplate.worldField.FlattenScale;
+            }
 
             // 区画ごとに、視錐台の外を外し、残す割合で切った株の数を描く（区画が無ければ全部を 1 回で描く）
             PreparedBatch entry;
@@ -422,7 +555,19 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     ++totalCells;
-                    if (IsBoxOutsideFrustum(frustumPlanes, cell.BoundsMin, cell.BoundsMax))
+                    bool bOutside = IsBoxOutsideFrustum(frustumPlanes, cell.BoundsMin, cell.BoundsMax);
+                    if (bOutside && bFieldActiveForCulling)
+                    {
+                        // 元の箱が外のときだけ、フィールドが横と下へ動かせる範囲を含めてもう一度判定する。
+                        const float expandedMin[3] = {cell.BoundsMin[0] - fieldBendMargin,
+                                                      cell.BoundsMin[1] - fieldFlattenMargin,
+                                                      cell.BoundsMin[2] - fieldBendMargin};
+                        const float expandedMax[3] = {cell.BoundsMax[0] + fieldBendMargin,
+                                                      cell.BoundsMax[1],
+                                                      cell.BoundsMax[2] + fieldBendMargin};
+                        bOutside = IsBoxOutsideFrustum(frustumPlanes, expandedMin, expandedMax);
+                    }
+                    if (bOutside)
                     {
                         ++frustumCulledCells;
                         continue;
@@ -467,6 +612,10 @@ namespace NorvesLib::Core::Rendering
             entry.DescriptorSet = descriptorAllocation.Set;
             entry.DescriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
                                                     uniformAllocation.GetSize32());
+            entry.DescriptorSet->BindTexture(1, currentField);
+            entry.DescriptorSet->BindSampler(1, m_WorldFieldSampler);
+            entry.DescriptorSet->BindTexture(2, previousField);
+            entry.DescriptorSet->BindSampler(2, m_WorldFieldSampler);
             entry.DescriptorSet->Update();
             entry.IndexCount = static_cast<uint32_t>(mesh.Indices.size());
             prepared.push_back(entry);
@@ -478,10 +627,21 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::ICommandList *commandList = context.CommandList;
-        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        // ShaderResource の同期先に頂点段が無いため、画像の layout を保って頂点の読み取りへ公開する。
+        RHI::ExplicitTextureBarrierDesc fieldBarrier;
+        fieldBarrier.BeforeState = RHI::ResourceState::ShaderResource;
+        fieldBarrier.AfterState = RHI::ResourceState::GenericRead;
+        fieldBarrier.OldLayout = RHI::TextureLayout::ShaderReadOnly;
+        fieldBarrier.NewLayout = RHI::TextureLayout::ShaderReadOnly;
+        commandList->TextureBarrierExplicit(currentField, fieldBarrier);
+        if (previousField != currentField)
+        {
+            commandList->TextureBarrierExplicit(previousField, fieldBarrier);
+        }
+        commandList->BeginRenderPass(m_OverlayTargets.GetRenderPass(), m_OverlayTargets.GetFramebuffer());
         commandList->SetViewport(context.GetActiveLocalViewport());
         commandList->SetScissor(context.GetActiveLocalScissor());
-        commandList->SetPipeline(m_Pipeline);
+        commandList->SetPipeline(m_OverlayTargets.GetPipeline());
 
         uint32_t drawnBatches = 0;
         uint32_t drawCalls = 0;
@@ -546,6 +706,37 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    float FoliagePass::AcquireMaxHeightScale(
+        const Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> &instances)
+    {
+        StaticBuffer *cached = nullptr;
+        for (StaticBuffer &entry : m_StaticBuffers)
+        {
+            if (entry.InstanceSource && entry.InstanceSource.get() == instances.get())
+            {
+                cached = &entry;
+                break;
+            }
+        }
+        if (!cached)
+        {
+            StaticBuffer entry;
+            entry.InstanceSource = instances;
+            m_StaticBuffers.push_back(entry);
+            cached = &m_StaticBuffers.back();
+        }
+        cached->LastUsedExecute = m_ExecuteCount;
+        if (!cached->bHasMaxHeightScale)
+        {
+            for (const FoliageInstance &instance : *instances)
+            {
+                cached->MaxHeightScale = std::max(cached->MaxHeightScale, instance.HeightScale);
+            }
+            cached->bHasMaxHeightScale = true;
+        }
+        return cached->MaxHeightScale;
+    }
+
     RHI::BufferPtr FoliagePass::AcquireInstanceBuffer(
         const Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> &instances)
     {
@@ -554,6 +745,12 @@ namespace NorvesLib::Core::Rendering
             if (entry.InstanceSource && entry.InstanceSource.get() == instances.get())
             {
                 entry.LastUsedExecute = m_ExecuteCount;
+                if (!entry.InstanceBuffer)
+                {
+                    entry.InstanceBuffer = CreateStaticBuffer(m_Device, instances->data(),
+                        static_cast<uint64_t>(instances->size()) * sizeof(FoliageInstance),
+                        RHI::ResourceUsage::VertexBuffer, "FoliageInstances");
+                }
                 return entry.InstanceBuffer;
             }
         }
@@ -585,171 +782,6 @@ namespace NorvesLib::Core::Rendering
                 ++it;
             }
         }
-    }
-
-    bool FoliagePass::EnsureTargets(const RHI::TexturePtr (&colorTargets)[kColorTargetCount],
-                                    const RHI::TexturePtr &depthTarget)
-    {
-        // render pass とパイプラインは描き先の形式だけで決まる。framebuffer は描き先のテクスチャが替わったら作り直す
-        bool bSameFormats = m_RenderPass && m_Pipeline && m_TargetFormats[kColorTargetCount] == depthTarget->GetFormat();
-        for (uint32_t index = 0; index < kColorTargetCount && bSameFormats; ++index)
-        {
-            bSameFormats = m_TargetFormats[index] == colorTargets[index]->GetFormat();
-        }
-        bool bSameTargets = bSameFormats && m_Framebuffer && m_FramebufferTargets[kColorTargetCount] == depthTarget.get();
-        for (uint32_t index = 0; index < kColorTargetCount && bSameTargets; ++index)
-        {
-            bSameTargets = m_FramebufferTargets[index] == colorTargets[index].get();
-        }
-        if (bSameTargets)
-        {
-            return true;
-        }
-        m_Framebuffer.reset();
-        for (const RHI::ITexture *&target : m_FramebufferTargets)
-        {
-            target = nullptr;
-        }
-        if (!bSameFormats && !CreatePipeline(colorTargets, depthTarget))
-        {
-            return false;
-        }
-
-        RHI::FramebufferDesc framebufferDesc;
-        framebufferDesc.renderPass = m_RenderPass;
-        for (const RHI::TexturePtr &target : colorTargets)
-        {
-            framebufferDesc.colorTargets.push_back(target);
-        }
-        framebufferDesc.depthStencilTarget = depthTarget;
-        framebufferDesc.width = depthTarget->GetWidth();
-        framebufferDesc.height = depthTarget->GetHeight();
-        m_Framebuffer = m_Device->CreateFramebuffer(framebufferDesc);
-        if (!m_Framebuffer)
-        {
-            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED framebuffer を作れません");
-            return false;
-        }
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            m_FramebufferTargets[index] = colorTargets[index].get();
-        }
-        m_FramebufferTargets[kColorTargetCount] = depthTarget.get();
-        return true;
-    }
-
-    bool FoliagePass::CreatePipeline(const RHI::TexturePtr (&colorTargets)[kColorTargetCount],
-                                     const RHI::TexturePtr &depthTarget)
-    {
-        m_RenderPass.reset();
-        m_Pipeline.reset();
-        for (RHI::Format &format : m_TargetFormats)
-        {
-            format = RHI::Format::UNKNOWN;
-        }
-
-        RHI::RenderPassDesc renderPassDesc;
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            RHI::AttachmentDesc colorAttachment;
-            colorAttachment.format = colorTargets[index]->GetFormat();
-            colorAttachment.isDepthStencil = false;
-            colorAttachment.clear = false;
-            colorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
-            colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-            colorAttachment.initialState = RHI::ResourceState::RenderTarget;
-            colorAttachment.finalState = RHI::ResourceState::ShaderResource;
-            renderPassDesc.colorAttachments.push_back(colorAttachment);
-        }
-        renderPassDesc.hasDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.format = depthTarget->GetFormat();
-        renderPassDesc.depthStencilAttachment.isDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.clear = false;
-        renderPassDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
-        renderPassDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        renderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::DepthWrite;
-        renderPassDesc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
-        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
-        if (!m_RenderPass)
-        {
-            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED render pass を作れません");
-            return false;
-        }
-
-        RHI::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.vertexShader = m_VertexShader;
-        pipelineDesc.pixelShader = m_FragmentShader;
-        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-
-        RHI::VertexBindingDesc vertexBinding;
-        vertexBinding.binding = 0;
-        vertexBinding.stride = sizeof(FoliageVertex);
-        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
-        pipelineDesc.vertexBindings.push_back(vertexBinding);
-        RHI::VertexBindingDesc instanceBinding;
-        instanceBinding.binding = 1;
-        instanceBinding.stride = sizeof(FoliageInstance);
-        instanceBinding.inputRate = RHI::VertexInputRate::Instance;
-        pipelineDesc.vertexBindings.push_back(instanceBinding);
-
-        struct AttributeLayout
-        {
-            uint32_t Location;
-            uint32_t Binding;
-            RHI::Format Format;
-            uint32_t Offset;
-        };
-        const AttributeLayout attributes[] = {
-            {0, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Position))},
-            {1, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Normal))},
-            {2, 0, RHI::Format::R32G32B32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Side))},
-            {3, 0, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageVertex, Flex))},
-            {4, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, Position))},
-            {5, 1, RHI::Format::R32G32B32A32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, WidthScale))},
-            {6, 1, RHI::Format::R32_FLOAT, static_cast<uint32_t>(offsetof(FoliageInstance, FadeThreshold))},
-        };
-        for (const AttributeLayout &layout : attributes)
-        {
-            RHI::VertexAttributeDesc attribute;
-            attribute.location = layout.Location;
-            attribute.binding = layout.Binding;
-            attribute.format = layout.Format;
-            attribute.offset = layout.Offset;
-            pipelineDesc.vertexAttributes.push_back(attribute);
-        }
-
-        // 葉の帯は両面を描く（裏の法線はフラグメントが面で鏡に映す）
-        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-        pipelineDesc.rasterState.lineWidth = 1.0f;
-        // ビジビリティバッファのラスタと同じ深度の比較
-        pipelineDesc.depthStencilState.depthTestEnable = true;
-        pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            RHI::BlendAttachmentDesc blendAttachment;
-            blendAttachment.blendEnable = false;
-            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blendAttachment);
-        }
-        pipelineDesc.renderPass = m_RenderPass;
-        pipelineDesc.descriptorSetLayouts.push_back(CreateFoliageDescriptorSetDesc());
-        m_Pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        if (!m_Pipeline)
-        {
-            NORVES_LOG_ERROR("FoliagePass", "FOLIAGE_INIT_FAILED パイプラインを作れません");
-            m_RenderPass.reset();
-            return false;
-        }
-
-        for (uint32_t index = 0; index < kColorTargetCount; ++index)
-        {
-            m_TargetFormats[index] = colorTargets[index]->GetFormat();
-        }
-        m_TargetFormats[kColorTargetCount] = depthTarget->GetFormat();
-        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

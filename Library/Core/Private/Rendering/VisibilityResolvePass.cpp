@@ -34,7 +34,7 @@ namespace NorvesLib::Core::Rendering
     namespace
     {
         constexpr uint32_t ParamsBytes = static_cast<uint32_t>(sizeof(VisibilityResolveGeometry::ResolveParams));
-        // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（208 バイト）より大きい
+        // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（224 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
         // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 192 バイト。

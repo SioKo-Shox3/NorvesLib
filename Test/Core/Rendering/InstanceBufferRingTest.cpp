@@ -22,6 +22,9 @@ using NorvesLib::Core::Container::VariableArray;
 
 namespace
 {
+    static_assert(sizeof(GPUSceneInstanceData) == 224);
+    static_assert(offsetof(GPUSceneInstanceData, ShadingParams) == 208);
+
     bool HasUsage(NorvesLib::RHI::ResourceUsage value, NorvesLib::RHI::ResourceUsage flag)
     {
         return (static_cast<uint32_t>(value) & static_cast<uint32_t>(flag)) != 0;
@@ -275,6 +278,10 @@ namespace
         assert(ring.Initialize(&device, 2, 4));
 
         auto data = MakeInstances(3);
+        data[1].ShadingParams[0] = 0.5f;
+        data[1].ShadingParams[1] = -1.0f;
+        data[1].ShadingParams[2] = -1.0f;
+        data[1].ShadingParams[3] = 0.25f;
         NorvesLib::RHI::BufferPtr buffer = ring.Upload(0, data);
         auto fakeBuffer = AsFakeBuffer(buffer);
         assert(fakeBuffer);
@@ -282,6 +289,14 @@ namespace
         assert(fakeBuffer->LastUpdateSize == 3 * sizeof(GPUSceneInstanceData));
         assert(fakeBuffer->LastUpdateOffset == 0);
         assert(std::memcmp(fakeBuffer->Bytes.data(), data.data(), static_cast<size_t>(fakeBuffer->LastUpdateSize)) == 0);
+        float uploadedShadingParams[4];
+        std::memcpy(uploadedShadingParams,
+                    fakeBuffer->Bytes.data() + sizeof(GPUSceneInstanceData) + offsetof(GPUSceneInstanceData, ShadingParams),
+                    sizeof(uploadedShadingParams));
+        assert(uploadedShadingParams[0] == 0.5f);
+        assert(uploadedShadingParams[1] == -1.0f);
+        assert(uploadedShadingParams[2] == -1.0f);
+        assert(uploadedShadingParams[3] == 0.25f);
         assert(device.CreatedBufferDescs.size() == 2);
 
         ring.Shutdown();

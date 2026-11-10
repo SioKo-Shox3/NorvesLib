@@ -1,0 +1,243 @@
+﻿#version 460
+
+// set 0: 0 = 生成定数、1 = タイル、2 = 種別、3 = LayerA、4 = LayerB、
+//        5 = ブレードの記録、6 = 間接描画の引数とカウンタ、7 = HZB。
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Grass/GrassCommon.glsl"
+#include "Common/HiZOcclusion.glsl"
+
+layout(std430, set = 0, binding = 1) readonly buffer GrassTiles
+{
+    GrassTileInfo Tiles[];
+} tiles;
+
+layout(std430, set = 0, binding = 2) readonly buffer GrassSpecies
+{
+    GrassSpeciesGpuData Species[];
+} speciesTable;
+
+// LayerA は RGBA8 UNORM。LayerB は束縛を固定するため宣言する。
+layout(set = 0, binding = 3) uniform sampler2DArray layerA;
+layout(set = 0, binding = 4) uniform sampler2DArray layerB;
+
+layout(std430, set = 0, binding = 5) writeonly buffer GrassRecords
+{
+    GrassBladeRecord Records[];
+} records;
+
+layout(set = 0, binding = 7) uniform sampler2D hiZ;
+
+int ClampPixel(int value, uint resolution)
+{
+    if (value < 0)
+    {
+        return 0;
+    }
+    int last = int(resolution - 1u);
+    return value > last ? last : value;
+}
+
+uvec4 ReadPixel(int x, int z, uint resolution, uint layerIndex)
+{
+    ivec3 coordinate = ivec3(ClampPixel(x, resolution), ClampPixel(z, resolution), int(layerIndex));
+    // 正規化された画素を元の 0..255 の整数へ戻してから CPU と同じ順で補間する。
+    precise vec4 bytes = texelFetch(layerA, coordinate, 0) * 255.0 + 0.5;
+    return uvec4(bytes);
+}
+
+void SampleLayerA(uint resolution, float invPixelWidth, float localX, float localZ, uint layerIndex,
+                  out float red, out float green, out uint speciesId)
+{
+    precise float u = localX * invPixelWidth - 0.5;
+    precise float v = localZ * invPixelWidth - 0.5;
+    int i = int(floor(u));
+    int j = int(floor(v));
+    precise float fractionX = u - float(i);
+    precise float fractionZ = v - float(j);
+    uvec4 p00 = ReadPixel(i, j, resolution, layerIndex);
+    uvec4 p10 = ReadPixel(i + 1, j, resolution, layerIndex);
+    uvec4 p01 = ReadPixel(i, j + 1, resolution, layerIndex);
+    uvec4 p11 = ReadPixel(i + 1, j + 1, resolution, layerIndex);
+    float channels[2];
+    for (uint channel = 0u; channel < 2u; ++channel)
+    {
+        precise float row0 = GrassLerp(float(p00[channel]), float(p10[channel]), fractionX);
+        precise float row1 = GrassLerp(float(p01[channel]), float(p11[channel]), fractionX);
+        precise float value = GrassLerp(row0, row1, fractionZ);
+        channels[channel] = value;
+    }
+    red = channels[0];
+    green = channels[1];
+
+    precise float nearestU = localX * invPixelWidth;
+    precise float nearestV = localZ * invPixelWidth;
+    int nearestX = int(floor(nearestU));
+    int nearestZ = int(floor(nearestV));
+    speciesId = ReadPixel(nearestX, nearestZ, resolution, layerIndex)[3] & 63u;
+}
+
+void main()
+{
+    uint tileIndex = gl_WorkGroupID.x;
+    if (tileIndex >= uint(tiles.Tiles.length()) || constants.LayerResolutions[0] == 0u ||
+        speciesTable.Species.length() == 0)
+    {
+        return;
+    }
+
+    GrassTileInfo tile = tiles.Tiles[tileIndex];
+    uint band = tile.Band;
+    if (band >= kGrassLodCount)
+    {
+        return;
+    }
+    float spacing = constants.BandSpacingMeters[band];
+    uint n = constants.BandCellsPerAxis[band];
+    int cx = GrassFloorDiv(tile.TileX, constants.TilesPerChunk[0]);
+    int cz = GrassFloorDiv(tile.TileZ, constants.TilesPerChunk[0]);
+    precise float chunkOriginX = float(cx) * constants.TileChunkFadeFacing[1];
+    precise float chunkOriginZ = float(cz) * constants.TileChunkFadeFacing[1];
+    uint resolution = constants.LayerResolutions[0];
+    float invPixelWidth = constants.SamplingAndFacing[0];
+    float baseCellArea = constants.SamplingAndFacing[1];
+
+    for (uint cell = gl_LocalInvocationID.x; cell < n * n; cell += 64u)
+    {
+        uint i = cell % n;
+        uint j = cell / n;
+        uint gx = uint(tile.TileX) * n + i;
+        uint gz = uint(tile.TileZ) * n + j;
+        uint saltBase = band * 8u;
+        precise float jx = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltJitterX));
+        precise float jz = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltJitterZ));
+        precise float x = tile.OriginX + (float(i) + jx) * spacing;
+        precise float z = tile.OriginZ + (float(j) + jz) * spacing;
+        float y = tile.GroundY;
+
+        precise float dx = x - constants.CameraPosition[0];
+        precise float dy = y - constants.CameraPosition[1];
+        precise float dz = z - constants.CameraPosition[2];
+        precise float distanceSquared = (dx * dx + dy * dy) + dz * dz;
+        if (distanceSquared > constants.BandMaxDistanceSquared[2])
+        {
+            continue;
+        }
+        precise float keep = ComputeKeepFraction(distanceSquared);
+        precise float scaledKeep = keep * constants.BandKeepScale[band];
+        precise float keepBand = scaledKeep < 1.0 ? scaledKeep : 1.0;
+
+        float red;
+        float green;
+        uint speciesId;
+        precise float localX = x - chunkOriginX;
+        precise float localZ = z - chunkOriginZ;
+        SampleLayerA(resolution, invPixelWidth, localX, localZ, tile.LayerIndex, red, green, speciesId);
+        if (speciesId >= uint(speciesTable.Species.length()))
+        {
+            speciesId = 0u;
+        }
+        GrassSpeciesGpuData species = speciesTable.Species[speciesId];
+        precise float speciesDensity = species.BladesPerSquareMeter * baseCellArea;
+        precise float densityScale = speciesDensity < 1.0 ? speciesDensity : 1.0;
+        precise float density = (red * uintBitsToFloat(0x3b808081u)) * densityScale;
+        precise float heightScale = green * uintBitsToFloat(0x3b808081u);
+        precise float hash2 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltKeep));
+        precise float keepProbability = density * keepBand;
+        if (!(keepProbability > hash2))
+        {
+            continue;
+        }
+
+        precise float heightRandom = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltHeight));
+        precise float height = GrassLerp(species.HeightMinMeters, species.HeightMaxMeters, heightRandom) * heightScale;
+        if (height <= 0.0)
+        {
+            continue;
+        }
+        precise float halfHeight = height * 0.5;
+        precise float centerY = y + halfHeight;
+        precise vec3 clearancePoint = vec3(x, centerY, z);
+        if (ViewClearanceIsActive(constants.ViewClearance))
+        {
+            precise float c0 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance0));
+            precise float c1 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance1));
+            precise float c2 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltClearance2));
+            precise float u = max(min(c0, c1), min(max(c0, c1), c2));
+            precise float g = GrassHashToUnit(GrassHash(gz, gx, saltBase + kGrassHashSaltClearance0));
+            if (!ViewClearanceKeep(constants.ViewClearance, clearancePoint, u, g))
+            {
+                continue;
+            }
+        }
+        precise float radius = halfHeight + constants.BladeQuantMaxMeters[1];
+        bool bOutside = false;
+        for (uint plane = 0u; plane < 6u; ++plane)
+        {
+            vec4 p = constants.FrustumPlanes[plane];
+            precise float planeDistance = ((p[0] * x + p[1] * centerY) + p[2] * z) + p[3];
+            if (planeDistance < -radius)
+            {
+                bOutside = true;
+                break;
+            }
+        }
+        if (bOutside)
+        {
+            continue;
+        }
+
+        precise float tx = -dx;
+        precise float tz = -dz;
+        precise float horizontalDistanceSquared = tx * tx + tz * tz;
+        if (horizontalDistanceSquared >= 1.0e-8)
+        {
+            precise float facingRandom = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltFacing));
+            precise float u = 2.0 * facingRandom - 1.0;
+            precise float uSquared = u * u;
+            precise float normalX = 1.0 - uSquared;
+            precise float normalZ = 2.0 * u;
+            precise float a = normalX * tx + normalZ * tz;
+            precise float normalLength = 1.0 + uSquared;
+            precise float normalLengthSquared = normalLength * normalLength;
+            precise float facingLimit = (constants.SamplingAndFacing[2] * normalLengthSquared) *
+                horizontalDistanceSquared;
+            precise float facingValue = a * a;
+            if (facingValue < facingLimit)
+            {
+                continue;
+            }
+        }
+
+        if ((constants.Flags[0] & kGrassGenerateFlagHiZ) != 0u)
+        {
+            if (HiZIsSphereOccluded(hiZ, ivec2(constants.HiZDimensions.xy), int(constants.HiZDimensions.z),
+                                    constants.HiZViewProjection, vec3(x, centerY, z), radius))
+            {
+                continue;
+            }
+        }
+
+        uint recordIndex = atomicAdd(args.Counter[band], 1u);
+        if (recordIndex < constants.LodCapacity[band])
+        {
+            float safeKeep = keep > 1.0e-6 ? keep : 1.0e-6;
+            precise float width = species.BladeWidthMeters * (1.0 / sqrt(safeKeep));
+            float fade = ComputeFade(sqrt(distanceSquared));
+            GrassBladeRecord record;
+            record.PositionX = x;
+            record.PositionY = y;
+            record.PositionZ = z;
+            precise float recordHeight = height;
+            if (ViewClearanceIsActive(constants.ViewClearance))
+            {
+                precise float visibility = ViewClearanceVisibility(constants.ViewClearance, clearancePoint);
+                recordHeight = height * GrassLerp(constants.ViewClearance.Shape.w, 1.0, visibility);
+            }
+            record.Packed = PackGrassBlade(recordHeight, width, speciesId, fade,
+                                           constants.BladeQuantMaxMeters[0], constants.BladeQuantMaxMeters[1]);
+            records.Records[constants.LodBase[band] + recordIndex] = record;
+            atomicAdd(args.Args[band * 5u + 1u], 1u);
+        }
+    }
+}

@@ -1,13 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-struct InstanceData
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {

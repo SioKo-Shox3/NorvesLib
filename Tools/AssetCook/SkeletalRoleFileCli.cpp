@@ -60,7 +60,11 @@ namespace NorvesLib::Tools::AssetCook
                                    "--cubic-scale-tolerance",
                                    "--cubic-max-depth",
                                    "--cubic-max-channel-samples",
-                                   "--cubic-max-asset-samples"};
+                                   "--cubic-max-asset-samples",
+                                   "--clip-max-vertex-error-m",
+                                   "--clip-max-joint-error-m",
+                                   "--clip-max-rotation-error-deg",
+                                   "--clip-report"};
             for (const auto* name : names)
             {
                 if (Equals(key, name))
@@ -178,8 +182,12 @@ namespace NorvesLib::Tools::AssetCook
                                    "--variant",      "--bvh",
                                    "--role-profile", "--clip-operation",
                                    "--clip-name",    "--import-settings",
-                                   "--no-sidecar",   "--require-sidecar"};
-            bool seen[16] = {};
+                                   "--no-sidecar",   "--require-sidecar",
+                                   "--clip-optimize", "--clip-max-vertex-error-m",
+                                   "--clip-max-joint-error-m", "--clip-max-rotation-error-deg",
+                                   "--clip-report"};
+            constexpr size_t optionCount = sizeof(names) / sizeof(names[0]);
+            bool seen[optionCount] = {};
             for (int i = 1; i < static_cast<int>(argv.size()); ++i)
             {
                 const char* skeletalError = nullptr;
@@ -196,8 +204,8 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 const C::AnsiStringView token(argv[static_cast<size_t>(i)]);
                 const auto key = Key(token);
-                size_t option = 16;
-                for (size_t n = 0; n < 16; ++n)
+                size_t option = optionCount;
+                for (size_t n = 0; n < optionCount; ++n)
                 {
                     if (Equals(key, names[n]))
                     {
@@ -205,7 +213,7 @@ namespace NorvesLib::Tools::AssetCook
                         break;
                     }
                 }
-                if (option == 16)
+                if (option == optionCount)
                 {
                     return Fail(error, "unknown_or_mixed_mode_argument");
                 }
@@ -215,6 +223,30 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 seen[option] = true;
                 const auto equals = token.find('=');
+                if (option >= 16)
+                {
+                    const char* raw = equals != C::AnsiStringView::npos ? token.data() + equals + 1 : nullptr;
+                    if (!raw && option != 16 && i + 1 < static_cast<int>(argv.size()))
+                    {
+                        raw = argv[static_cast<size_t>(++i)];
+                    }
+                    // 共通解析に指定状態を反映し、パスは UTF-8 から構築する。
+                    const bool nativeReport = option == 20 && raw && *raw && std::strncmp(raw, "--", 2) != 0;
+                    const char* parsedValue = nativeReport ? "." : raw;
+                    bool consumed = false;
+                    std::string clipError;
+                    if (!TryParseClipOptimizeArgument({key.data(), key.size()}, parsedValue, candidate.ClipOptimize,
+                                                      consumed, clipError))
+                    {
+                        error = clipError.c_str();
+                        return false;
+                    }
+                    if (nativeReport)
+                    {
+                        candidate.ClipOptimize.ReportPath = std::filesystem::u8path(raw);
+                    }
+                    continue;
+                }
                 if (option >= 14)
                 {
                     if (equals != C::AnsiStringView::npos)
@@ -329,6 +361,12 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             candidate.SkeletalDecode = skeletal.Decode;
+            std::string clipError;
+            if (!ValidateClipOptimizeOptions(candidate.ClipOptimize, clipError))
+            {
+                error = clipError.c_str();
+                return false;
+            }
             if (!ValidateSkeletalRoleFileRequest(candidate, error))
             {
                 return false;
