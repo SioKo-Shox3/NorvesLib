@@ -10642,3 +10642,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 grassland に主人公の代わりの体と、ViewClearanceComponent 付きのスプリングアームのカメラを足す: 着地(直し 0 回)
 - U2 GrassPass が主カメラの ViewClearance を生成の定数へ渡す: 着地(直し 0 回)
 - U3 株の描画(foliage.vert)の根元で切り抜きを評価して縮める: 着地(直し 0 回)
+- U5 草の切り抜きの試験(CPU の写し・GPU の数の一致のケース): 着地(直し 0 回)
