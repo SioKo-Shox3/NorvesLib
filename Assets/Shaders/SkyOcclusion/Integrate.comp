@@ -1,0 +1,92 @@
+﻿#version 460
+
+// 地平線方向の列を標本し、上半球の遮蔽率を L1 係数へ積分する。
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#include "SkyOcclusion/SkyOcclusionMapCommon.glsl"
+
+layout(std430, set = 0, binding = 1) readonly buffer SkyOcclusionIntegrateTiles
+{
+    SkyOcclusionWorkTile tiles[];
+} work;
+
+layout(rgba32f, set = 0, binding = 2) uniform readonly image2DArray occluderMap;
+layout(rgba16f, set = 0, binding = 3) uniform writeonly image2DArray visibilityMap;
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2DArray auxMap;
+
+void main()
+{
+    uint tileIndex = gl_WorkGroupID.x;
+    if (tileIndex >= map.counts.z)
+    {
+        return;
+    }
+    SkyOcclusionWorkTile tile = work.tiles[tileIndex];
+    if (tile.level >= map.counts.x)
+    {
+        return;
+    }
+    ivec2 worldTexel = SkyOcclusionWorldTexel(tile);
+    if (!SkyOcclusionWindowContainsTexel(worldTexel, tile.level))
+    {
+        return;
+    }
+    ivec3 coordinate = SkyOcclusionTextureCoordinate(worldTexel, tile.level);
+    vec4 receiverColumn = imageLoad(occluderMap, coordinate);
+    vec2 worldPosition = SkyOcclusionWorldCenter(worldTexel, tile.level);
+    float y0 = receiverColumn.x + map.heights.y;
+    vec4 sum = vec4(0.0);
+    for (uint azimuth = 0u; azimuth < SKY_OCCLUSION_AZIMUTH_COUNT; ++azimuth)
+    {
+        float phi = (float(azimuth) + 0.5) * (2.0 * kSkyOcclusionPi / float(SKY_OCCLUSION_AZIMUTH_COUNT));
+        vec2 direction = vec2(cos(phi), sin(phi));
+        for (uint elevation = 0u; elevation < SKY_OCCLUSION_ELEVATION_COUNT; ++elevation)
+        {
+            // 仰角の正弦を等分し、各標本に等しい立体角を割り当てる。
+            float sine = (float(elevation) + 0.5) / float(SKY_OCCLUSION_ELEVATION_COUNT);
+            float cosine = sqrt(1.0 - sine * sine);
+            float tangent = sine / cosine;
+            float start = 0.0;
+            float nextEnd = SKY_OCCLUSION_HORIZON_FIRST_STEP_METERS;
+            float opticalDepth = 0.0;
+            bool bOpaque = false;
+            for (uint step = 0u;
+                step < SKY_OCCLUSION_HORIZON_MAX_STEP_COUNT && start < map.heights.z; ++step)
+            {
+                float end = min(nextEnd, map.heights.z);
+                float midpoint = (start + end) * 0.5;
+                vec2 samplePosition = worldPosition + midpoint * direction;
+                vec4 column = imageLoad(occluderMap,
+                    SkyOcclusionSampleCoordinate(tile.level, midpoint, samplePosition));
+                if (y0 + midpoint * tangent < column.x)
+                {
+                    bOpaque = true;
+                    break;
+                }
+                if (column.w > 0.0 && column.z > column.y)
+                {
+                    float overlap = max(0.0, min(y0 + end * tangent, column.z) -
+                        max(y0 + start * tangent, column.y));
+                    if (overlap > 0.0)
+                    {
+                        if (column.w >= 0.9999)
+                        {
+                            bOpaque = true;
+                            break;
+                        }
+                        float sigma = -log(1.0 - column.w) / max(column.z - column.y, 0.5);
+                        opticalDepth += sigma * (overlap / tangent) / cosine;
+                    }
+                }
+                start = end;
+                nextEnd *= SKY_OCCLUSION_HORIZON_STEP_RATIO;
+            }
+            float b = bOpaque ? 1.0 : 1.0 - exp(-opticalDepth);
+            sum += b * vec4(1.0, cosine * direction.x, sine, cosine * direction.y);
+        }
+    }
+    float weight = 1.0 / (2.0 * float(SKY_OCCLUSION_AZIMUTH_COUNT) * float(SKY_OCCLUSION_ELEVATION_COUNT));
+    imageStore(visibilityMap, coordinate, weight * sum * vec4(1.0, 3.0, 3.0, 3.0));
+    imageStore(auxMap, coordinate, vec4(receiverColumn.x - map.heights.x,
+        receiverColumn.y - receiverColumn.x, receiverColumn.z - receiverColumn.x, receiverColumn.w));
+}
