@@ -67,6 +67,41 @@ namespace NorvesLib::Modules::Physics
             return GetConcrete(module).m_WorkingBroadphase.GetProxies();
         }
 
+        static Core::Container::VariableArray<Core::Scene::ColliderHandle> GetDetachedColliderHandles(
+            const IPhysicsModule& module, StaticColliderChunkKey key)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            Core::Container::VariableArray<Core::Scene::ColliderHandle> handles;
+            const auto it = concrete.m_StaticColliderChunks.find(key.Value);
+            if (it == concrete.m_StaticColliderChunks.end())
+            {
+                return handles;
+            }
+            handles.reserve(it->second.SlotIndices.size());
+            for (uint32_t index : it->second.SlotIndices)
+            {
+                const PhysicsModule::ColliderSlot& slot = concrete.m_ColliderSlots[index];
+                assert(slot.bOccupied && slot.bDetached && slot.ChunkKey == key.Value);
+                handles.push_back({index, slot.Generation});
+            }
+            return handles;
+        }
+
+        static uint32_t GetDetachedColliderCount(const IPhysicsModule& module)
+        {
+            uint32_t count = 0;
+            for (const PhysicsModule::ColliderSlot& slot : GetConcrete(module).m_ColliderSlots)
+            {
+                count += slot.bOccupied && slot.bDetached ? 1u : 0u;
+            }
+            return count;
+        }
+
+        static size_t GetPublishedProxyCount(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_PublishedBroadphase.GetProxies().size();
+        }
+
         static uint32_t GetColliderSlotCount(const IPhysicsModule& module)
         {
             return static_cast<uint32_t>(GetConcrete(module).m_ColliderSlots.size());

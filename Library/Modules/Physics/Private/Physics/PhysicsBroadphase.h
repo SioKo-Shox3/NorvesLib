@@ -63,6 +63,9 @@ namespace NorvesLib::Modules::Physics
         // PhysicsModule だけが設定する。有効な Dynamic / Kinematic の Body を持たないコライダー。
         // 既定では木に入れない。
         bool bStatic = false;
+        // PhysicsModule だけが設定する。detached のコライダーが属するチャンク。静的の木はチャンクごとに部分木を持つ。
+        bool bHasStaticChunk = false;
+        uint64_t StaticChunkKey = 0;
     };
 
     struct PhysicsCandidatePair
@@ -86,6 +89,12 @@ namespace NorvesLib::Modules::Physics
         uint64_t TreeRebuildCount = 0;
         // インスタンスのクエリが走査対象にしたプロキシ数の累計。
         uint64_t VisitedNodeCount = 0;
+        // 最後の SetProxies で作り直した部分木（チャンク無しの群・チャンクごとの群）の数。
+        uint64_t SubtreeRebuildCount = 0;
+        // 最後の SetProxies で前の写しから使い回した部分木の数。
+        uint64_t SubtreeReuseCount = 0;
+        // 最後の SetProxies で静的の木（全部の部分木）に入った項目の数。
+        uint64_t StaticTreeItemCount = 0;
     };
 
     class PhysicsBroadphase
@@ -163,6 +172,8 @@ namespace NorvesLib::Modules::Physics
         Core::Container::TSharedPtr<const PhysicsStaticTreeSnapshot> m_StaticTree;
         // 木の項目から、今回の m_Proxies の添字への対応。
         Core::Container::VariableArray<uint32_t> m_TreeProxyIndices;
+        // 各群の項目が m_TreeProxyIndices のどこから始まるかを表す。
+        Core::Container::VariableArray<uint32_t> m_TreeGroupOffsets;
         // 木に入れなかった全プロキシの添字。ハンドル順を保つ。
         Core::Container::VariableArray<uint32_t> m_NonTreeProxyIndices;
         // 所有者のスレッドだけが検索・接触判定を呼び出すため、通常の整数で保持する。
