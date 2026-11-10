@@ -527,22 +527,18 @@ namespace NorvesLib::Core::Rendering
 
     bool SkyOcclusionMapPass::EnsureTextures(const SkyOcclusionParameters& parameters)
     {
+        const uint32_t arraySize = std::max(parameters.LevelCount, 2u);
         if (m_OccludersTexture && m_VisibilityTexture && m_AuxTexture &&
             m_OccludersTexture->GetWidth() == parameters.Resolution &&
-            m_OccludersTexture->GetArraySize() == parameters.LevelCount)
+            m_OccludersTexture->GetArraySize() == arraySize)
         {
             return true;
         }
-        // 現在の RHI は単層の配列ビューを作れないため、誤ったビューをシェーダーへ渡さない。
-        if (parameters.LevelCount == 1u)
-        {
-            NORVES_LOG_WARNING("SkyOcclusionMapPass", "単層の 2D 配列テクスチャは現在の RHI では作成できません");
-            return false;
-        }
+        // RHI の 2D 配列ビューには最低 2 層が必要で、未使用の層には書き込まない。
         RHI::TextureDesc desc;
         desc.Width = parameters.Resolution;
         desc.Height = parameters.Resolution;
-        desc.ArraySize = parameters.LevelCount;
+        desc.ArraySize = arraySize;
         desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite |
                      RHI::ResourceUsage::TransferSrc;
         desc.TextureFormat = RHI::Format::R32G32B32A32_FLOAT;

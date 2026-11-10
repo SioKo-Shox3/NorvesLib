@@ -10656,3 +10656,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 照明への適用と SkyVisibility の表示: 着地(直し 0 回)
 - U3 SkyOcclusionMapPass.cpp（ホスト側）: 着地(直し 0 回)
 - U6 SceneView への組み込みと Game の引数・デモの遮蔽物: 着地(直し 0 回)
+- U5 SkyOcclusionMapVulkanTest と直し（単層の段の対応を含む）: 着地(直し 1 回)

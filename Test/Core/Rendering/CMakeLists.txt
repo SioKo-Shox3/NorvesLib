@@ -639,6 +639,15 @@ set_tests_properties(WindGlslParityVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 空の遮蔽の積分と増分更新を GPU の読み戻しで確かめる。
+add_test(NAME SkyOcclusionMapVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SkyOcclusionMapVulkanTest)
+set_tests_properties(SkyOcclusionMapVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
 add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
 set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
@@ -699,6 +708,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER GrassGBufferVulkanTest GrassGBufferVulkanTest.cpp
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
+    MEMBER SkyOcclusionMapVulkanTest SkyOcclusionMapVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp

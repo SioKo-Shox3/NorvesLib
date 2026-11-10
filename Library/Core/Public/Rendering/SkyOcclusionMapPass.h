@@ -102,6 +102,8 @@ namespace NorvesLib::Core::Rendering
         void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
 
     private:
+        friend struct SkyOcclusionMapVulkanTestAccess;
+
         struct PreparedDispatch
         {
             RHI::DescriptorSetPtr DescriptorSet;
