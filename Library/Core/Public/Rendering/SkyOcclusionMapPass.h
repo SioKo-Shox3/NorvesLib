@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Container/VariableArray.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/SkyOcclusion.h"
@@ -101,6 +102,16 @@ namespace NorvesLib::Core::Rendering
         void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
 
     private:
+        struct PreparedDispatch
+        {
+            RHI::DescriptorSetPtr DescriptorSet;
+            uint32_t TileCount = 0u;
+        };
+
+        bool EnsureTextures(const SkyOcclusionParameters& parameters);
+        bool PrepareUpdate(const ViewRenderContext& context);
+        void PublishContextResources(RenderGraphResources& resources, ViewRenderContext& context) const;
+
         SkyOcclusionMapPassSettings m_Settings;
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_SplatShader;
@@ -120,9 +131,20 @@ namespace NorvesLib::Core::Rendering
         float m_AnchorZ = 0.0f;
         int32_t m_WindowOrigin[SkyOcclusionMaxLevelCount][2] = {};
         Container::VariableArray<SkyOccluderProxy> m_LastOccluders;
+        Container::VariableArray<SkyOccluderProxy> m_PreparedOccluders;
+        Container::VariableArray<PreparedDispatch> m_SplatDispatches;
+        Container::VariableArray<PreparedDispatch> m_IntegrateDispatches;
+        SkyOcclusionParameters m_PreparedParameters;
+        int32_t m_PreparedWindowOrigin[SkyOcclusionMaxLevelCount][2] = {};
+        float m_PreparedTexelMeters[SkyOcclusionMaxLevelCount] = {};
+        float m_PreparedAnchorX = 0.0f;
+        float m_PreparedAnchorZ = 0.0f;
+        uint64_t m_PreparedRevision = 0u;
+        FrameResourceGeneration m_LastUpdateSubmission;
         uint64_t m_LastSkyOcclusionRevision = 0u;
         SkyOcclusionParameters m_LastParameters;
         bool m_bHasAnchor = false;
         bool m_bHasValidData = false;
+        bool m_bPrepared = false;
     };
 } // namespace NorvesLib::Core::Rendering

@@ -10654,3 +10654,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 公開の型（パスの見出し・資源名・ViewRenderContext の資源）: 着地(直し 0 回)
 - U2 Splat.comp と Integrate.comp: 着地(直し 0 回)
 - U4 照明への適用と SkyVisibility の表示: 着地(直し 0 回)
+- U3 SkyOcclusionMapPass.cpp（ホスト側）: 着地(直し 0 回)
