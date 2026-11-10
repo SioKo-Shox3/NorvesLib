@@ -222,6 +222,11 @@ namespace NorvesLib::Core::Rendering
         /** @brief 記録の表の、使っている範囲のバイト数 */
         uint64_t GetRecordTableBytes() const { return m_LastRecordTableBytes; }
 
+        /** @brief スキンの生の ShadingParams の表。スキンの記録が無いフレームは null */
+        const RHI::BufferPtr& GetSkinnedVertexAnimParamsTable() const { return m_LastSkinnedVertexAnimParamsTable; }
+        /** @brief スキンの頂点アニメの表の、使っている範囲のバイト数 */
+        uint64_t GetSkinnedVertexAnimParamsTableBytes() const { return m_LastSkinnedVertexAnimParamsTableBytes; }
+
         /**
          * @brief 最後の Execute
          * が書いた、フレームの材質の表（VisibilityBuffer::MaterialEntry
@@ -302,6 +307,13 @@ namespace NorvesLib::Core::Rendering
         const VisibilityBuffer::MaterialTable& GetMaterialTableBuilder() const { return m_MaterialTable; }
 
     private:
+        /** @brief スキンの描画の生のシェーディング値（GLSL の vec4 と一致） */
+        struct SkinnedVertexAnimParams
+        {
+            float Values[4];
+        };
+        static_assert(sizeof(SkinnedVertexAnimParams) == 16, "頂点アニメの値は vec4 と一致しなければならない");
+
         /** @brief 1回の描画（塊 1 つ） */
         struct ChunkDraw
         {
@@ -322,7 +334,9 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr RecordUpload; // ホストが書く記録（手続き・スキニング）の置き場。host-visible で、コピーの元になる
             uint32_t RecordUploadCapacity = 0; // 要素数
-            RHI::BufferPtr FrameUniform;                 // view・projection
+            RHI::BufferPtr SkinnedVertexAnimParamsTable; // スキンの生の値（描画ごとに vec4）
+            uint32_t SkinnedVertexAnimParamsCapacity = 0; // 要素数
+            RHI::BufferPtr FrameUniform;                 // view・projection・頂点アニメの時刻
             RHI::DescriptorSetPtr MegaSet;               // 描画: UBO・インスタンスの表・描画情報
             RHI::DescriptorSetPtr MeshSet;               // 描画: UBO・描画のインスタンスの表・記録の表
             RHI::DescriptorSetPtr SkinnedSet;            // 描画: UBO・変形した頂点・記録の表
@@ -483,7 +497,8 @@ namespace NorvesLib::Core::Rendering
                              uint32_t sectionCount,
                              uint32_t sectionSlotCount,
                              uint32_t cpuRecordCount,
-                             uint32_t materialCount);
+                             uint32_t materialCount,
+                             uint32_t skinnedVertexAnimParamsCount);
 
         /** @brief 塊に分けられなかった通知を、パスの寿命の中で一度だけ出す */
         void LogChunkFailureOnce();
@@ -541,6 +556,8 @@ namespace NorvesLib::Core::Rendering
         // 手続き・スキニングの塊の作業配列（Collect*Chunks の間だけ使い、容量を毎フレーム使い回す）
         Container::VariableArray<MeshIndexChunk> m_ProceduralChunkScratch;
         Container::VariableArray<MeshIndexChunk> m_SkinnedChunkScratch;
+        // 描画ごとのスキンの生の値（同じ描画の塊で 1 要素を共有する）
+        Container::VariableArray<SkinnedVertexAnimParams> m_SkinnedVertexAnimParamsScratch;
         // 材質の表を GPU へ上げる並びと、区間ごとの表の番号の作業配列（Execute の間だけ使い、容量を毎フレーム使い回す）
         Container::VariableArray<VisibilityBuffer::MaterialEntry> m_MaterialEntryScratch;
         Container::VariableArray<uint32_t> m_SectionMaterialScratch;
@@ -566,6 +583,8 @@ namespace NorvesLib::Core::Rendering
         RHI::ResourceState m_RecordState = RHI::ResourceState::Common;
         RHI::BufferPtr m_LastRecordTable;
         uint64_t m_LastRecordTableBytes = 0;
+        RHI::BufferPtr m_LastSkinnedVertexAnimParamsTable;
+        uint64_t m_LastSkinnedVertexAnimParamsTableBytes = 0;
         RHI::BufferPtr m_LastMaterialTable;
         uint32_t m_LastMaterialTableCount = 0;
         Container::VariableArray<VisibilityBuffer::MaterialEntry> m_LastMaterialEntries;
