@@ -10617,9 +10617,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-062828/verify-G9-GR87-CLIP-QUANTIZE-U6.txt`（verify のビルド exit 0、ctest 7/7 Passed、rig-split の実 cook で ClipBank の minor が既定 0・`--clip-quantize` で 1）
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: CI の `Test/Tools/ClipBankV1Oracle.py` は量子化しない cook の出力（minor 0）だけを読むので直していない。`--clip-quantize` の出力を oracle で読むには CMPR の復号が要る。`SkeletalRoleFileCli.cpp` の `--bvh` の CLI は `--clip-quantize` を今の未知の引数の誤りで拒否する
+## 2026-11-10 G5-GR44-TRAMPLE（run 20261110-080408、完了）
 - U1 フィールドの今・前の原点を消費側へ公開し、曲げの共通の式を GLSL と C++ に置く: 着地(直し 0 回)
 - U4 WorldFieldInteractorComponent と集め役（Engine のメンバ）と集めの試験: 着地(直し 0 回)
 - U2 grass.vert がフィールドを引いて曲げ・押し倒し・前の位置を出す: 着地(直し 0 回)
 - U5 grassland に決まった道を走る体（胴 2・四肢 4）を置く: 着地(直し 0 回)
 - U3 株（foliage.vert）と VSM の株の影（vsm_draw.vert）をフィールドで曲げる: 着地(直し 2 回)
 - U6 GPU 試験 GrassTrampleVulkanTest を足し、タスクの verify を全部回す: 着地(直し 0 回)
+- Done: `WorldFieldPass` が 2 枚の画像それぞれの原点を記録し、今と前の画像と組にした座標（`WorldFieldFrameState`）を Declare で描画の文脈へ公開する（前の原点が分からないときは前＝今）。消費側の UBO の末尾に埋める `WorldFieldSampleConstants`（48 B）と、曲げ・押し倒しの共通の式（水平 = RG × 丈 × 0.7 × t²、高さ = −丈 × t × 0.7 × B）を `WorldField/WorldFieldSample.glsl` と `WorldFieldTypes` の C++ に同じ形で置いた
+- Done: `grass.vert` はブレードの根元で今の画像を今の原点で引き、風のベジエ変形の後へずれを足し接線も追従させる。前の位置は前の画像を前の原点で引いて同じ式で再評価する。`foliage.vert` と VSM の株の影（`vsm_draw.vert`）は `FoliagePlacement.glsl` の `ApplyFoliageWorldField` で同じ式を使う。フィールドが無い・値が 0 なら位置は今の式のまま。頂点のステージの読み取りは layout を保つ明示のバリア（ShaderResource → GenericRead）で同期する
+- Done: interactor を最後に受け取ってから 8 秒（τ 1.5 秒の約 5 倍）の間だけ、VSM の株の塊の境界を横へ BendScale × 丈・下へ FlattenScale × 丈だけ広げ、フィールドの範囲の中の株の影を毎フレーム描き直す。FoliagePass のセルのカリングも同じ条件で広げる。interactor を一度も渡さない荒野では境界・無効化・描画が今と同じ
+- Done: `WorldFieldInteractorComponent`（PROPERTY `Shapes` = 球・カプセル、局所の位置かソケットの名前、半径、強さ、チャンネル。配列は JSON 文字列で反射の保存・復元）と集め役 `WorldFieldInteractorGatherer`（Engine のメンバ）を足した。World の LateTick の後に `Engine::UpdateWorldFieldInteractors` が形ごとの前の位置を持たせ、カメラに近い順に最大 32 個を `RenderWorld::SetWorldFieldInteractors` へ渡す。ソケットは `SkinnedMeshComponent::GetSocketWorldTransform` を毎フレーム読み、引けなければ Entity の位置で代用する
+- Done: grassland に、入場時の視点の前方 18 m を中心とする半径 10 m の円を 5 m/s で走る見えない体（胴 2 個 r 0.28 m・四肢 4 個 r 0.13 m、四肢は骨格が決まるまで局所の位置の暫定）を置いた。退場で形を空にして消す
+- 試験: `WorldFieldInteractorGatherTest`（EntityTreeTest の束。前と今の位置が 1 フレームずれない・ソケットと代用・33 個目以降は遠い順に落ちる・消した Entity と Component の形が残らない）、`GrassShaderCompileTest`・`WindShaderCompileTest` にフィールドの sampler の束縛と UBO の大きさの確かめ、GPU の試験 `GrassTrampleVulkanTest`（RHITextureUpdateVulkanTest の束。ビルドだけ）
+- 証拠: `.harness/runs/20261110-080408/G5-GR44-TRAMPLE-verify.txt`（verify のビルド 4 本 exit 0、ctest 5/5 Passed）。numstat の 2 通りは各単位で一致
+- Next: G5-GR44-TRAMPLE-CHECK で `GrassTrampleVulkanTest`・`WorldFieldUpdateVulkanTest` を装置で実行する。人が見るときの見どころ: ランチャーから grassland に入り、最初の視点の前方 8〜28 m の円の道で、見えない体の通り道の草と株が押し分けられて後ろで約 1.5 秒かけて戻り、株の影も同じく曲がること。荒野（wasteland）の草・株・影が前と変わらないこと
+- Notes: paths の外を最小限触った: `WorldFieldPass.h/.cpp`・`ViewRenderContext.h`（座標の公開の口）、`ApplicationProcessor.cpp`（LateTick の後の呼び出し 1 か所）、`GrassPass.h`・`FoliagePass.h`・`VirtualShadowMapPass.h`、`VirtualShadowMapRaster.h/.cpp`（VSM の株の描画の記述子と UBO 160 B）、`VirtualShadowMapFoliageCasters.h`（境界の余白の引数）。RHI/Vulkan の `ShaderResource` の同期先に頂点のステージが無いので、各パスで明示のバリアを張って補った
+- Notes: 草のブレードの生成側（GrassGenerate.comp）のカリングは曲げの余白を見ていないので、画面の端で押されたブレードが欠けることがありうる。体がいない間はフィールドの更新・描画の結果は変わらない
