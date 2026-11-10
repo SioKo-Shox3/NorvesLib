@@ -37,6 +37,65 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(WorldFieldInteractor, PrevP1) == 48);
     static_assert(offsetof(WorldFieldInteractor, ChannelMask) == 60);
 
+    /** @brief 画像を記録した世界座標。uv = (worldXZ - OriginXZ) / ExtentMeters。 */
+    struct WorldFieldState
+    {
+        double OriginXZ[2] = {};
+        float ExtentMeters = 0.0f;
+        float TexelSizeMeters = 0.0f;
+        bool bValid = false;
+    };
+
+    /** @brief このフレームで公開する今と前の画像に、それぞれ対応する座標。 */
+    struct WorldFieldFrameState
+    {
+        WorldFieldState Current;
+        WorldFieldState Previous;
+    };
+
+    inline constexpr float WorldFieldDefaultBendScale = 0.7f;
+    inline constexpr float WorldFieldDefaultFlattenScale = 0.7f;
+
+    /** @brief 消費側の std140 UBO の末尾へ埋める定数（GLSL の同名構造体と同じ並び）。
+     * 今・前とも有効で、WorldFieldCurrent / WorldFieldPrevious の両方を TryReadTexture できたときだけ使う。
+     * 前の位置は、前の画像を PreviousOriginXZ と PreviousInvExtent で引き、同じ変形式で再評価する。
+     */
+    struct alignas(16) WorldFieldSampleConstants
+    {
+        float CurrentOriginXZ[2] = {};
+        float CurrentInvExtent = 0.0f;
+        uint32_t bEnabled = 0u;
+        float PreviousOriginXZ[2] = {};
+        float PreviousInvExtent = 0.0f;
+        float Padding0 = 0.0f;
+        float BendScale = 0.0f;
+        float FlattenScale = 0.0f;
+        float Padding[2] = {};
+    };
+    static_assert(alignof(WorldFieldSampleConstants) == 16);
+    static_assert(sizeof(WorldFieldSampleConstants) == 48);
+    static_assert(offsetof(WorldFieldSampleConstants, CurrentOriginXZ) == 0);
+    static_assert(offsetof(WorldFieldSampleConstants, CurrentInvExtent) == 8);
+    static_assert(offsetof(WorldFieldSampleConstants, bEnabled) == 12);
+    static_assert(offsetof(WorldFieldSampleConstants, PreviousOriginXZ) == 16);
+    static_assert(offsetof(WorldFieldSampleConstants, PreviousInvExtent) == 24);
+    static_assert(offsetof(WorldFieldSampleConstants, Padding0) == 28);
+    static_assert(offsetof(WorldFieldSampleConstants, BendScale) == 32);
+    static_assert(offsetof(WorldFieldSampleConstants, FlattenScale) == 36);
+    static_assert(offsetof(WorldFieldSampleConstants, Padding) == 40);
+
+    /** @brief 両方の座標が有効なら係数を設定し、無効なら詰め物も含めてすべて 0 を返す。 */
+    WorldFieldSampleConstants BuildWorldFieldSampleConstants(const WorldFieldFrameState& state);
+
+    /** @brief 根元で引いた RGBA から世界空間のずれを返す。GLSL の WorldFieldDisplacement と同じ式。
+     * h=max(height,0)、s=clamp(t,0,1)、水平のずれ=RG*h*bendScale*s*s、
+     * 高さのずれ=-h*s*flattenScale*clamp(B,0,1)。A は変形に使わない。
+     * 既定値では最大曲げで先端が丈の 0.7 倍横へ動き、最大押し倒しで高さが元の 0.3 倍になる。
+     * 根元の位置はサンプル座標にだけ使い、返したずれを変形前の頂点位置へ加える。
+     */
+    void WorldFieldDisplacement(const float field[4], float height, float t, float displacement[3],
+        float bendScale = WorldFieldDefaultBendScale, float flattenScale = WorldFieldDefaultFlattenScale);
+
     enum class WorldFieldRange : uint8_t
     {
         Range64m,

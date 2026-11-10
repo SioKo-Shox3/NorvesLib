@@ -10,6 +10,7 @@
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Component/WorldFieldInteractorComponent.h"
 #include "Scatter/ScatterSystem.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
@@ -364,6 +365,13 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        Component::WorldFieldInteractorGatherer& GetWorldFieldInteractorGatherer()
+        {
+            return m_WorldFieldInteractorGatherer;
+        }
+
+        void UpdateWorldFieldInteractors();
+
         Rendering::Terrain::TerrainSystem& GetTerrainSystem()
         {
             return m_TerrainSystem;
@@ -553,6 +561,7 @@ namespace NorvesLib::Core::Engine
         // 破棄順を保つため、この順序を変えない。
         Rendering::Terrain::TerrainSystem m_TerrainSystem;
         Scatter::ScatterSystem m_ScatterSystem;
+        Component::WorldFieldInteractorGatherer m_WorldFieldInteractorGatherer;
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;

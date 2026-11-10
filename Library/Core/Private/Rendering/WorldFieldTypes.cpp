@@ -54,6 +54,47 @@ namespace NorvesLib::Core::Rendering
         }
     } // 無名名前空間
 
+    WorldFieldSampleConstants BuildWorldFieldSampleConstants(const WorldFieldFrameState& state)
+    {
+        WorldFieldSampleConstants constants;
+        const auto isUsable = [](const WorldFieldState& image)
+        {
+            return image.bValid && std::isfinite(image.OriginXZ[0]) && std::isfinite(image.OriginXZ[1]) &&
+                std::isfinite(image.ExtentMeters) && image.ExtentMeters > 0.0f;
+        };
+        if (!isUsable(state.Current) || !isUsable(state.Previous))
+        {
+            return constants;
+        }
+        constants.CurrentOriginXZ[0] = static_cast<float>(state.Current.OriginXZ[0]);
+        constants.CurrentOriginXZ[1] = static_cast<float>(state.Current.OriginXZ[1]);
+        constants.CurrentInvExtent = 1.0f / state.Current.ExtentMeters;
+        constants.PreviousOriginXZ[0] = static_cast<float>(state.Previous.OriginXZ[0]);
+        constants.PreviousOriginXZ[1] = static_cast<float>(state.Previous.OriginXZ[1]);
+        constants.PreviousInvExtent = 1.0f / state.Previous.ExtentMeters;
+        if (!std::isfinite(constants.CurrentOriginXZ[0]) || !std::isfinite(constants.CurrentOriginXZ[1]) ||
+            !std::isfinite(constants.PreviousOriginXZ[0]) || !std::isfinite(constants.PreviousOriginXZ[1]) ||
+            !std::isfinite(constants.CurrentInvExtent) || !std::isfinite(constants.PreviousInvExtent))
+        {
+            return {};
+        }
+        constants.bEnabled = 1u;
+        constants.BendScale = WorldFieldDefaultBendScale;
+        constants.FlattenScale = WorldFieldDefaultFlattenScale;
+        return constants;
+    }
+
+    void WorldFieldDisplacement(const float field[4], float height, float t, float displacement[3],
+        float bendScale, float flattenScale)
+    {
+        const float h = std::max(height, 0.0f);
+        const float s = std::clamp(t, 0.0f, 1.0f);
+        const float bend = h * bendScale * s * s;
+        displacement[0] = field[0] * bend;
+        displacement[1] = -h * s * flattenScale * std::clamp(field[2], 0.0f, 1.0f);
+        displacement[2] = field[1] * bend;
+    }
+
     float GetWorldFieldExtentMeters(WorldFieldRange range)
     {
         return range == WorldFieldRange::Range128m ? 128.0f : 64.0f;

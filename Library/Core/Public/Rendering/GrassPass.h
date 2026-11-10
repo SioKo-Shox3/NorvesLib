@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "Rendering/GrassGenerateReference.h"
+#include "Rendering/GrassBladeMesh.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/GBufferOverlayTargets.h"
 #include "Rendering/GrassFieldGpuWindow.h"
 #include "Rendering/GrassTileSelector.h"
@@ -85,6 +87,18 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_LodCapacity[kGrassLodCount] = {};
     };
 
+    // bit2 があるときだけ UBO の末尾を読む。464 バイトの既存入力ではこのビットを立てない。
+    inline constexpr uint32_t kGrassDrawFlagWorldField = 4u;
+
+    /** @brief 既存の描画定数に、世界フィールドの標本定数を末尾へ追加した std140 配置。 */
+    struct alignas(16) GrassDrawWorldFieldConstants
+    {
+        GrassDrawConstants Draw;
+        WorldFieldSampleConstants WorldField;
+    };
+    static_assert(offsetof(GrassDrawWorldFieldConstants, WorldField) == sizeof(GrassDrawConstants));
+    static_assert(sizeof(GrassDrawWorldFieldConstants) == 512);
+
     /** @brief 草の描画の 1 回の記録に使う、呼び出し側が用意した資源。 */
     struct GrassDrawRecordInputs
     {
@@ -102,6 +116,9 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr ArgsBuffer;
         RHI::TexturePtr LayerA;
         RHI::SamplerPtr Sampler;
+        // 両方を指定するときは拡張定数を渡す。未指定なら中立画像を使い、既存の定数も受け付ける。
+        RHI::TexturePtr WorldFieldCurrent;
+        RHI::TexturePtr WorldFieldPrevious;
     };
 
     /** @brief 生成済みのブレードを、LOD ごとに GBuffer へ重ねて描く GPU の補助。 */
@@ -117,7 +134,7 @@ namespace NorvesLib::Core::Rendering
          * @brief 3 つの LOD の間接描画を記録する。記述子セットは互いに異なるものを渡す。
          * 各 LodCapacity は正数、LodBase * 16 はデバイスのストレージの整列を満たすこと。
          * 記録バッファは ShaderResource で渡し、戻ったときも ShaderResource である。
-         * 引数は IndirectArgument、LayerA は ShaderResource とする。
+         * 引数は IndirectArgument、LayerA と世界フィールドの画像は ShaderResource とする。
          * 描き先は RenderTarget / DepthWrite で渡し、終了時に ShaderResource へ移る。
          * 分割数は Initialize の settings と生成定数で一致させる。
          */
@@ -129,6 +146,8 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice* m_Device = nullptr;
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
         RHI::BufferPtr m_IndexBuffer;
+        RHI::TexturePtr m_NeutralWorldField;
+        RHI::SamplerPtr m_WorldFieldSampler;
         GBufferOverlayTargets m_OverlayTargets;
         GBufferOverlayPipelineDesc m_OverlayPipelineDesc;
     };
@@ -167,6 +186,9 @@ namespace NorvesLib::Core::Rendering
         const MegaGeometryPass* m_MegaGeometryPass = nullptr;
         RGResourceHandle m_ColorHandles[GBufferOverlayTargets::kColorTargetCount];
         RGResourceHandle m_DepthHandle;
+        RGResourceHandle m_WorldFieldCurrentHandle;
+        RGResourceHandle m_WorldFieldPreviousHandle;
+        WorldFieldSampleConstants m_WorldFieldConstants;
         bool m_bHasGrass = false;
 #if NORVES_BUILD_DEVELOPMENT
         uint32_t m_LastLoggedTileCount = UINT32_MAX;

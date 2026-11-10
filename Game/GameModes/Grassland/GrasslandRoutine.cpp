@@ -10,6 +10,7 @@
 #include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Component/TerrainComponent.h"
 #include "Core/Public/Component/ViewClearanceComponent.h"
+#include "Core/Public/Component/WorldFieldInteractorComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Input/InputRouter.h"
@@ -85,6 +86,86 @@ namespace Game::GameModes
         // SceneReady を出すまでの Tick の数。決定的な撮影は「読み込み中」を一度観測してから数え始めるので、
         // 最初のフレームは組み立て中として見せる。
         constexpr uint32_t kReadyTickCount = 3;
+
+        constexpr float kRunRadius = 10.0f;
+        constexpr float kRunSpeed = 5.0f;
+        constexpr float kRunCenterDistance = 18.0f;
+        constexpr float kTwoPi = 6.28318530717958647692f;
+
+        void UpdateRunningBody(GrasslandData& data, float deltaTime)
+        {
+            if (data.m_pRunningBody == nullptr)
+            {
+                return;
+            }
+            const auto heightField = data.m_pTerrain != nullptr ? data.m_pTerrain->GetHeightField() : nullptr;
+            if (heightField == nullptr)
+            {
+                data.m_pRunningBody->SetActive(false);
+                return;
+            }
+            if (std::isfinite(deltaTime) && deltaTime > 0.0f)
+            {
+                data.m_RunAngle = std::fmod(data.m_RunAngle + deltaTime * (kRunSpeed / kRunRadius), kTwoPi);
+            }
+            const float cosine = std::cos(data.m_RunAngle);
+            const float sine = std::sin(data.m_RunAngle);
+            const float x = data.m_RunCenter.x + kRunRadius * cosine;
+            const float z = data.m_RunCenter.z + kRunRadius * sine;
+            const float height = heightField->SampleHeight(x, z);
+            if (!std::isfinite(height))
+            {
+                data.m_pRunningBody->SetActive(false);
+                return;
+            }
+            data.m_pRunningBody->SetPosition(x, height, z);
+            // 局所の +Z を円の接線へ向ける。高さだけを地形に合わせ、胴は水平に保つ。
+            data.m_pRunningBody->SetRotation(NorvesLib::Math::QuaternionUtils::LookRotation(NorvesLib::Math::Vector3(-sine, 0.0f, cosine)));
+            data.m_pRunningBody->SetActive(true);
+        }
+
+        bool CreateRunningBody(GameModeContext& ctx, GrasslandData& data, const Game::Scenes::FreeCameraPose& pose)
+        {
+            Entity* body = ctx.ScopeRef.SpawnObject<Entity>();
+            if (body == nullptr)
+            {
+                LOG_ERROR("grassland: 走行体の Entity を作れませんでした");
+                return false;
+            }
+            data.m_pRunningBody = body;
+            // 地形を読めるまでは、原点で草を押さない。
+            body->SetActive(false);
+            auto* component = ctx.WorldRef.CreateComponent<Component::WorldFieldInteractorComponent>(body);
+            if (component == nullptr)
+            {
+                LOG_ERROR("grassland: 走行体の Component を作れませんでした");
+                return false;
+            }
+            // +Z が前。前胴・後胴を半径 0.28 m、高さ 0.45 m の球で仮置きする。
+            // 四肢は骨格が決まるまでソケットを使わず、局所位置の球で仮置きする。
+            const NorvesLib::Math::Vector3 centers[] = {
+                {0.0f, 0.45f, 0.30f}, {0.0f, 0.45f, -0.30f},
+                {-0.22f, 0.13f, 0.40f}, {0.22f, 0.13f, 0.40f},
+                {-0.22f, 0.13f, -0.40f}, {0.22f, 0.13f, -0.40f}
+            };
+            for (uint32_t i = 0; i < 6; ++i)
+            {
+                Component::WorldFieldInteractorShape shape;
+                shape.P0 = centers[i];
+                shape.Radius = i < 2 ? 0.28f : 0.13f;
+                if (!component->AddShape(shape))
+                {
+                    LOG_ERROR("grassland: 走行体の形を追加できませんでした");
+                    return false;
+                }
+            }
+            const NorvesLib::Math::Vector3 forward = NorvesLib::Core::Input::FreeFlyCameraController::ForwardFromAngles(pose.Yaw, 0.0f);
+            data.m_RunCenter = NorvesLib::Math::Vector3(pose.Position[0], 0.0f, pose.Position[2]) + forward * kRunCenterDistance;
+            // 最初はカメラに近い円周上（前方 8 m）に置く。
+            data.m_RunAngle = std::atan2(-forward.z, -forward.x);
+            UpdateRunningBody(data, 0.0f);
+            return true;
+        }
 
 #if NORVES_BUILD_DEVELOPMENT
         /// 代役の箱は幅 0.35 m・高さ 0.55 m・前後の長さ 0.9 m。原点は体の中心に置く。
@@ -346,6 +427,8 @@ namespace Game::GameModes
     {
         LOG_INFO("grassland を開始します");
         data.m_TickCount = 0;
+        data.m_pRunningBody = nullptr;
+        data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
         data.m_Scatter = Scatter::kInvalidScatterHandle;
         data.m_bScatterPending = data.m_ScatterStressCount > 0;
@@ -363,7 +446,7 @@ namespace Game::GameModes
         }
 
         ApplyEnvironment(ctx);
-        if (!CreateTerrain(ctx, data) || !CreateGrassField(ctx))
+        if (!CreateTerrain(ctx, data) || !CreateGrassField(ctx) || !CreateRunningBody(ctx, data, pose))
         {
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
             ResetEnvironment(ctx);
@@ -438,6 +521,7 @@ namespace Game::GameModes
 #else
         data.m_Rig.Tick(ctx, deltaTime, bSuspended);
 #endif
+        UpdateRunningBody(data, bSuspended ? 0.0f : deltaTime);
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
         // すべての区画が揃ってから撮影を許可する。欠損区画を含む地形を準備完了として扱わない。
         const bool bTerrainReady = data.m_pTerrain != nullptr && data.m_pTerrain->IsFullyPlaced() &&
@@ -501,6 +585,18 @@ namespace Game::GameModes
         data.m_bHeroCreationAttempted = false;
 #endif
         data.m_Rig.Leave(ctx);
+        if (data.m_pRunningBody != nullptr)
+        {
+            // 除去が予約になる場合も、その場で形を空にして次のシーンへ持ち越さない。
+            if (auto* component = data.m_pRunningBody->GetComponent<Component::WorldFieldInteractorComponent>())
+            {
+                component->ClearShapes();
+            }
+            ctx.ScopeRef.Untrack(data.m_pRunningBody);
+            ctx.WorldRef.RemoveObject(data.m_pRunningBody);
+            data.m_pRunningBody = nullptr;
+        }
+        data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
         data.m_pTerrainCollider = nullptr;
         data.m_bTerrainColliderAttempted = false;

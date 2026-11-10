@@ -33,15 +33,6 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(WorldFieldUpdateConstants, bResetHistory) == 36);
     static_assert(offsetof(WorldFieldUpdateConstants, Padding) == 40);
 
-    /** @brief 最後に記録したフィールドの座標。uv = (worldXZ - OriginXZ) / ExtentMeters。 */
-    struct WorldFieldState
-    {
-        double OriginXZ[2] = {};
-        float ExtentMeters = 0.0f;
-        float TexelSizeMeters = 0.0f;
-        bool bValid = false;
-    };
-
     /** @brief 主カメラに追従する世界空間のフィールドを更新し、今と前の画像を公開する。 */
     class WorldFieldPass final : public IViewPass, public IRenderGraphPass
     {
@@ -63,6 +54,7 @@ namespace NorvesLib::Core::Rendering
         bool EnsureTextures();
         bool PrepareUpdate(const ViewRenderContext& context);
         void RecordUpdate(ViewRenderContext& context);
+        WorldFieldFrameState GetFrameState(uint32_t& currentIndex, uint32_t& previousIndex) const;
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_UpdateShader;
@@ -74,7 +66,8 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetPtr m_UpdateSet;
         RHI::DescriptorSetPtr m_ResetSet;
         WorldFieldSettings m_Settings;
-        WorldFieldState m_FieldState;
+        // 各画像に実際に記録した座標。宣言だけでは更新しない。
+        WorldFieldState m_HistoryStates[2];
         WorldFieldOrigin m_Origin;
         WorldFieldScrollResult m_PreparedScroll;
         WorldFieldUpdateConstants m_PreparedConstants;

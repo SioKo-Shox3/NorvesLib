@@ -80,6 +80,11 @@ namespace Game::GameModes
         NorvesLib::Core::Entity* m_pTerrainCollider = nullptr;
         /// 配置完了後のコライダー作成を試したか
         bool m_bTerrainColliderAttempted = false;
+        /// 草を押す見えない走行体（非所有）。スコープが寿命を管理する
+        NorvesLib::Core::Entity* m_pRunningBody = nullptr;
+        /// 入場時の視点から決め、カメラを動かしても変わらない周回路
+        NorvesLib::Math::Vector3 m_RunCenter;
+        float m_RunAngle = 0.0f;
         uint32_t m_TickCount = 0;
 #if NORVES_BUILD_DEVELOPMENT
         /// H キーの押下を集約する、主人公視点専用の入力の受け手

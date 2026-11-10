@@ -10669,3 +10669,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-065330/G5-GR26-LIGHTING-MODELS-final-verify.txt`（verify のビルドの行 exit 0、ctest の RenderingShadingModelLightingVulkanTest・RenderingShadingModelGBufferVulkanTest・ShadingModelContractTest・RenderingHdrIndoorSceneVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 5/5 合格）。BackBuffer の sRGB 値の輝度で、PaleFlat の明暗の差 0.60（上限 2）、DefaultLit 126.96（下限 20）、Fur の境目 13.20 > DefaultLit 0.08、Eye の鏡面 148.96 < 177.36 < 191.52（P0 = 0・0.5・1）。基準画像の試験 4 本（RenderingGolden*）は回さない決まりで verify から外した。ID 0 の経路の文面は変えていない。
 - Next: 起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。今はどのシーンも既定の材質が DefaultLit なので、人が見るときは Rendering3DTest（天球・地面・球・岩）と荒野の見た目が変わらないことを見る。
 - Notes: 屋内の基準画像（RenderingGoldenIndoorVulkanTest・同 GBufferFallback）は、この項目の照明の変更を入れる前のシェーダーでも 10 画素・最大 1 階調の差（mean_flip 0.000013729）で落ちる。前の項目のどれかから続いている差で、基準画像は回さない決まりなので追っていない。
+
+- G5-GR44-TRAMPLE: feature/scene-launcher を取り込んだ。株の定数は切り抜き（384 バイト目）の後ろへ世界フィールドの定数を置き 496 バイトに、草原は主人公視点と走行体の両方を残した。verify のビルド 4 本と ctest 5 本（加えて ViewClearanceShaderCompileTest）が通った。
+- U1 フィールドの今・前の原点を消費側へ公開し、曲げの共通の式を GLSL と C++ に置く: 着地(直し 0 回)
+- U4 WorldFieldInteractorComponent と集め役（Engine のメンバ）と集めの試験: 着地(直し 0 回)
+- U2 grass.vert がフィールドを引いて曲げ・押し倒し・前の位置を出す: 着地(直し 0 回)
+- U5 grassland に決まった道を走る体（胴 2・四肢 4）を置く: 着地(直し 0 回)
+- U3 株（foliage.vert）と VSM の株の影（vsm_draw.vert）をフィールドで曲げる: 着地(直し 2 回)
+- U6 GPU 試験 GrassTrampleVulkanTest を足し、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-10 G5-GR44-TRAMPLE（run 20261110-080408、完了）
+- Done: `WorldFieldPass` が 2 枚の画像それぞれの原点を記録し、今と前の画像と組にした座標（`WorldFieldFrameState`）を Declare で描画の文脈へ公開する（前の原点が分からないときは前＝今）。消費側の UBO の末尾に埋める `WorldFieldSampleConstants`（48 B）と、曲げ・押し倒しの共通の式（水平 = RG × 丈 × 0.7 × t²、高さ = −丈 × t × 0.7 × B）を `WorldField/WorldFieldSample.glsl` と `WorldFieldTypes` の C++ に同じ形で置いた
+- Done: `grass.vert` はブレードの根元で今の画像を今の原点で引き、風のベジエ変形の後へずれを足し接線も追従させる。前の位置は前の画像を前の原点で引いて同じ式で再評価する。`foliage.vert` と VSM の株の影（`vsm_draw.vert`）は `FoliagePlacement.glsl` の `ApplyFoliageWorldField` で同じ式を使う。フィールドが無い・値が 0 なら位置は今の式のまま。頂点のステージの読み取りは layout を保つ明示のバリア（ShaderResource → GenericRead）で同期する
+- Done: interactor を最後に受け取ってから 8 秒（τ 1.5 秒の約 5 倍）の間だけ、VSM の株の塊の境界を横へ BendScale × 丈・下へ FlattenScale × 丈だけ広げ、フィールドの範囲の中の株の影を毎フレーム描き直す。FoliagePass のセルのカリングも同じ条件で広げる。interactor を一度も渡さない荒野では境界・無効化・描画が今と同じ
+- Done: `WorldFieldInteractorComponent`（PROPERTY `Shapes` = 球・カプセル、局所の位置かソケットの名前、半径、強さ、チャンネル。配列は JSON 文字列で反射の保存・復元）と集め役 `WorldFieldInteractorGatherer`（Engine のメンバ）を足した。World の LateTick の後に `Engine::UpdateWorldFieldInteractors` が形ごとの前の位置を持たせ、カメラに近い順に最大 32 個を `RenderWorld::SetWorldFieldInteractors` へ渡す。ソケットは `SkinnedMeshComponent::GetSocketWorldTransform` を毎フレーム読み、引けなければ Entity の位置で代用する
+- Done: grassland に、入場時の視点の前方 18 m を中心とする半径 10 m の円を 5 m/s で走る見えない体（胴 2 個 r 0.28 m・四肢 4 個 r 0.13 m、四肢は骨格が決まるまで局所の位置の暫定）を置いた。退場で形を空にして消す
+- 試験: `WorldFieldInteractorGatherTest`（EntityTreeTest の束。前と今の位置が 1 フレームずれない・ソケットと代用・33 個目以降は遠い順に落ちる・消した Entity と Component の形が残らない）、`GrassShaderCompileTest`・`WindShaderCompileTest` にフィールドの sampler の束縛と UBO の大きさの確かめ、GPU の試験 `GrassTrampleVulkanTest`（RHITextureUpdateVulkanTest の束。ビルドだけ）
+- 証拠: `.harness/runs/20261110-080408/G5-GR44-TRAMPLE-verify.txt`（verify のビルド 4 本 exit 0、ctest 5/5 Passed）。numstat の 2 通りは各単位で一致
+- Next: G5-GR44-TRAMPLE-CHECK で `GrassTrampleVulkanTest`・`WorldFieldUpdateVulkanTest` を装置で実行する。人が見るときの見どころ: ランチャーから grassland に入り、最初の視点の前方 8〜28 m の円の道で、見えない体の通り道の草と株が押し分けられて後ろで約 1.5 秒かけて戻り、株の影も同じく曲がること。荒野（wasteland）の草・株・影が前と変わらないこと
+- Notes: paths の外を最小限触った: `WorldFieldPass.h/.cpp`・`ViewRenderContext.h`（座標の公開の口）、`ApplicationProcessor.cpp`（LateTick の後の呼び出し 1 か所）、`GrassPass.h`・`FoliagePass.h`・`VirtualShadowMapPass.h`、`VirtualShadowMapRaster.h/.cpp`（VSM の株の描画の記述子と UBO 160 B）、`VirtualShadowMapFoliageCasters.h`（境界の余白の引数）。RHI/Vulkan の `ShaderResource` の同期先に頂点のステージが無いので、各パスで明示のバリアを張って補った
+- Notes: 草のブレードの生成側（GrassGenerate.comp）のカリングは曲げの余白を見ていないので、画面の端で押されたブレードが欠けることがありうる。体がいない間はフィールドの更新・描画の結果は変わらない
