@@ -5,7 +5,9 @@
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Rendering/FoliageTypes.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/GBufferOverlayTargets.h"
+#include <cstddef>
 #include <cstdint>
 
 namespace NorvesLib::RHI
@@ -16,6 +18,38 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    /** @brief 株の頂点・断片シェーダーに渡す std140 定数。末尾のフィールドは頂点段だけが読む。 */
+    struct alignas(16) FoliageUniform
+    {
+        float view[16];
+        float projection[16];
+        float previousView[16];
+        float previousProjection[16];
+        float cameraPosition[4];
+        float wind[4];
+        float windParams[4];
+        float stemColor[4];
+        float tipColorA[4];
+        float tipColorB[4];
+        float frameParams[4];
+        float windField[4];
+        WorldFieldSampleConstants worldField;
+    };
+    static_assert(offsetof(FoliageUniform, view) == 0u);
+    static_assert(offsetof(FoliageUniform, projection) == 64u);
+    static_assert(offsetof(FoliageUniform, previousView) == 128u);
+    static_assert(offsetof(FoliageUniform, previousProjection) == 192u);
+    static_assert(offsetof(FoliageUniform, cameraPosition) == 256u);
+    static_assert(offsetof(FoliageUniform, wind) == 272u);
+    static_assert(offsetof(FoliageUniform, windParams) == 288u);
+    static_assert(offsetof(FoliageUniform, stemColor) == 304u);
+    static_assert(offsetof(FoliageUniform, tipColorA) == 320u);
+    static_assert(offsetof(FoliageUniform, tipColorB) == 336u);
+    static_assert(offsetof(FoliageUniform, frameParams) == 352u);
+    static_assert(offsetof(FoliageUniform, windField) == 368u);
+    static_assert(offsetof(FoliageUniform, worldField) == 384u);
+    static_assert(sizeof(FoliageUniform) == 432u);
+
     /**
      * @brief 草・低木の株（FoliageTypes.h の束）を、インスタンス描画で GBuffer へ直接ラスタするパス
      *
@@ -53,12 +87,16 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr VertexBuffer;
             RHI::BufferPtr IndexBuffer;
             RHI::BufferPtr InstanceBuffer;
+            float MaxHeightScale = 0.0f;
+            bool bHasMaxHeightScale = false;
             uint64_t LastUsedExecute = 0;
         };
 
         /// メッシュの頂点・インデックスのバッファを outVertex・outIndex へ返す（無ければ作る）
         bool AcquireMeshBuffers(const Container::TSharedPtr<const FoliageMeshData> &mesh, RHI::BufferPtr &outVertex,
                                 RHI::BufferPtr &outIndex);
+        /// 書き換えないインスタンス配列から最大の高さ倍率を一度だけ求める
+        float AcquireMaxHeightScale(const Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> &instances);
         /// インスタンスの配列のバッファを返す（無ければ作る）
         RHI::BufferPtr AcquireInstanceBuffer(const Container::TSharedPtr<const Container::VariableArray<FoliageInstance>> &instances);
         /// 長く使われていないバッファを捨てる
@@ -74,8 +112,15 @@ namespace NorvesLib::Core::Rendering
         GBufferOverlayPipelineDesc m_OverlayPipelineDesc;
         // 共有の記述子セットのレイアウト（セットは毎フレーム借りる）
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
+        RHI::TexturePtr m_NeutralWorldField;
+        RHI::SamplerPtr m_WorldFieldSampler;
+        RGResourceHandle m_WorldFieldCurrentHandle;
+        RGResourceHandle m_WorldFieldPreviousHandle;
         RGResourceHandle m_ColorHandles[GBufferOverlayTargets::kColorTargetCount];
         RGResourceHandle m_DepthHandle;
+        // フィールドの余白を保つため、最後に干渉子を見た時刻を覚える。
+        double m_LastWorldFieldInteractorTime = 0.0;
+        bool m_bSawWorldFieldInteractor = false;
         // 最後にログへ出した束の数（変わったときだけ 1 行出す）
         uint32_t m_LoggedBatchCount = 0;
         uint64_t m_LoggedInstanceCount = 0;

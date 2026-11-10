@@ -43,7 +43,9 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 foliageWind;
     // x = 風速[m/s]（従来の風では突風の塊の流れる速さ）、y = 突風の塊の大きさ[m]、z = 突風の強さ、w = 乱流の強さ
     vec4 foliageWindParams;
+    WorldFieldSampleConstants worldField;
 } params;
+layout(set = 0, binding = 6) uniform sampler2D foliageWorldFieldCurrent;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmInstances
 {
@@ -99,7 +101,10 @@ vec3 VsmPlaceFoliageVertex(VisibilityDrawRecord record, uint vertexIndex, vec4 w
         offset = FoliageWindOffsetFor(root.xz, flex, plantHeight, world1.z, partPhase, params.foliageWind.z,
                                       params.foliageWind.xy, params.foliageWindParams.xy, world2.x, world2.y);
     }
-    return ApplyFoliageWind(placed, offset, max(local.y, 0.0));
+    const float heightAboveRoot = max(local.y, 0.0);
+    const vec3 windPosition = ApplyFoliageWind(placed, offset, heightAboveRoot);
+    return ApplyFoliageWorldField(windPosition, root, plantHeight, heightAboveRoot,
+                                  foliageWorldFieldCurrent, params.worldField, false);
 }
 
 layout(location = 0) flat out uint outPhysicalPage;
