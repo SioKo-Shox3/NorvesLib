@@ -10622,3 +10622,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 grass.vert がフィールドを引いて曲げ・押し倒し・前の位置を出す: 着地(直し 0 回)
 - U5 grassland に決まった道を走る体（胴 2・四肢 4）を置く: 着地(直し 0 回)
 - U3 株（foliage.vert）と VSM の株の影（vsm_draw.vert）をフィールドで曲げる: 着地(直し 2 回)
+- U6 GPU 試験 GrassTrampleVulkanTest を足し、タスクの verify を全部回す: 着地(直し 0 回)
