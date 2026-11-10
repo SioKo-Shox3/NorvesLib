@@ -10639,3 +10639,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ(G10-GR63-SKIN-CULL, 反復 2): verify のビルド（`CameraViewConstantsTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingHdrSceneCaptureTest`・`RenderingVelocityVulkanTest`・`RHITextureUpdateVulkanTest`・`RenderingGoldenImageTest`・`Game`）は終了コード 0。ctest（golden 4 本は人の決まりで `-E "Golden|PathTracingReference"` で外す）は 12/12 Passed（`VirtualShadowMapVulkanTest` を含む、`VUID_COUNT=0`）。
 - Next(G10-GR63-SKIN-CULL, 反復 2): 反復 1 の Next のとおり。人が見るときの見どころも反復 1 の Next のとおり（撮影・計測の確かめは回さない決まり）。
 - U1 GPU へ渡す切り抜きの値の型・共通の GLSL・草の生成と CPU の写しの間引き: 着地(直し 0 回)
+- U4 grassland に主人公の代わりの体と、ViewClearanceComponent 付きのスプリングアームのカメラを足す: 着地(直し 0 回)
