@@ -10617,11 +10617,24 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-062828/verify-G9-GR87-CLIP-QUANTIZE-U6.txt`（verify のビルド exit 0、ctest 7/7 Passed、rig-split の実 cook で ClipBank の minor が既定 0・`--clip-quantize` で 1）
 - Next: なし（アプリを起動する確かめは無い）
 - Notes: CI の `Test/Tools/ClipBankV1Oracle.py` は量子化しない cook の出力（minor 0）だけを読むので直していない。`--clip-quantize` の出力を oracle で読むには CMPR の復号が要る。`SkeletalRoleFileCli.cpp` の `--bvh` の CLI は `--clip-quantize` を今の未知の引数の誤りで拒否する
-- G5-GR26-LIGHTING-MODELS: 統合ブランチを取り込み、RenderingHdrSceneCaptureTest.cpp の衝突（TAA リアクティブとシェーディングモデル照明のシナリオ）を両方残して互いに併用不可にした。Debug のビルドと関係の GPU 試験 6 本が通過（Golden は決まりで外す）。
 
-## 2026-11-10 G5-GR26-LIGHTING-MODELS（run 20261110-065330 の反復 5、完了）
-
-- Done: 実装は足さず、verify の ctest を GBuffer の試験とそれ以外の 2 行に分けた（試験の名前は 1 本も減らしていない。`--timeout 300` のまま、GBuffer の試験には CMake の TIMEOUT 900 が効く）。Debug の verify のビルドは EXIT=0（`.harness/runs/20261110-065330/G5-GR26-final-build.txt`）。`RenderingShadingModelGBufferVulkanTest` は Passed 249 秒（`G5-GR26-final-ctest-1.txt`）。`RenderingShadingModelLightingVulkanTest`・`ShadingModelContractTest`・`RenderingHdrIndoorSceneVulkanTest`・`RenderingHdrOutdoorSceneVulkanTest` は Passed（`G5-GR26-final-ctest-2.txt`）。
-- Notes: Golden の 4 本は決まりにより合否に使わない。参考までに同じ実行では Outdoor の 2 本が Passed、Indoor の 2 本（通常と GBuffer の予備の経路）が `mean_flip=0.0000137`・raw 最大 1・10 画素で mismatch だった。原因（この項目の変更か、取り込んだ統合ブランチの変更か）は確かめていない。
-- 人が見るときの見どころ: G5-GR27-MATERIAL-SCENES-CHECK で、PaleFlat の球の明暗の差が小さいこと、Fur の明暗の境目が明るいこと、Eye の鏡面が P0 で強くなることを見る。DefaultLit の各シーンの見た目は変わらない想定。
-- Next: G5-GR27-MATERIAL-SCENES-CHECK。
+- G10-GR63-SKIN-CULL: 統合ブランチ feature/scene-launcher を取り込み、スキンの絞り込みの検証シナリオを TAA リアクティブ・シェーディングモデルのシナリオと併存させた。verify のビルド EXIT=0、ctest 12/12 合格（Golden は決まりにより外した）。
+- Notes(G10-GR63-SKIN-CULL): 足す前の 3 点（SkinnedLodSelectionTest、CameraViewConstantsTest の束の MEMBER）。反証する契約: スキンの描画の主カメラの視錐台の判定は保守的で、視錐台の外のプロキシだけが描画 0 になり、中と境界にまたがるものは残る。CSM のカスケードの XY の範囲の外のキャスターだけがそのカスケードで省かれる。SunShadowParameters の Sanitize は NaN・負・λ の範囲外を「設定のまま（0）」か範囲の端へ寄せる。ほかの手段で気づけるか: 気づけない。省きすぎは端の消えとして撮影でしか見えず（撮影は回さない決まり）、省き足りないのは見た目が変わらず黙って速度だけ失う。失敗が黙って起きるか: 起きる。判定の符号や行列の規約の取り違えでも試験とログは何も言わない。
+- U2 純関数（スキンの視錐台の判定）・描画の局所境界・SunShadowParameters の型: 着地(直し 0 回)
+- U7 合成の高密度スキン SkinnedGiantFixture: 着地(直し 0 回)
+- U3 シーンの値（SunShadowParameters と絞り込みの切り替え）を FramePacket へ届け、CSM の分割と VSM の範囲へ効かせる: 着地(直し 0 回)
+- U1 スキンの VB・IB を DeviceLocal にし、描画の記録の前に転送を済ませる: 着地(直し 0 回)
+- U5 予備の GBufferPass のスキンの主カメラの絞り込み: 着地(直し 0 回)
+- U6 CSM のカスケードごとにスキンと通常のメッシュの描画を絞る: 着地(直し 1 回)
+- U8 CPU の SkinnedLodSelectionTest: 着地(直し 0 回)
+- U4 可視バッファの経路の主カメラの絞り込みと、変形の対象の絞り込み・統計: 着地(直し 1 回)
+- U9 文書（RenderingFlow.md・Testing.md）: 着地(直し 0 回)
+- U10 GPU の RenderingSkinnedCullVulkanTest 2 本とタスクの verify: 着地(直し 0 回)
+- Done(G10-GR63-SKIN-CULL): スキンの VB・IB を DeviceLocal（ステージング経由、フレームの始めに初回の転送）にし、ログは `SKINNED_MESH_MEMORY vb=DeviceLocal ib=DeviceLocal`。主カメラの視錐台の外のスキンを、可視バッファの経路（`SkinningComputePass` の変形は見える描画と影の出力を読むときの影を落とす描画だけ、`VisibilityRasterPass` は見えない instance を記録しない）と予備の `GBufferPass` で記録しない。記録したスキンの描画は両経路で `SkinnedGBufferRecordedDraws` に数える。CSM のカスケードごとに、XY の範囲に入らないスキンと通常のメッシュの描画を省く（`SelectCascadedShadowCasterDraws`、境界が無い描画は残す、`CSM_CASTER_CULL` のログ）。太陽の影の調整口を `SunShadowParameters`（MaxDistance・SplitLambda、Sanitize 付き、既定 80 m・λ 0.5 のまま）にし、`RenderWorld::SetSunShadowParameters` から CSM の分割と CSM・VSM の範囲へ届ける（旧 `SetSunShadowMaxDistance` は転送）。合成の高密度スキン `SkinnedGiantFixture`、CPU の `SkinnedLodSelectionTest`、GPU の `RenderingSkinnedCullVulkanTest`・`RenderingSkinnedCullGBufferFallbackVulkanTest` を足し、RenderingFlow.md・Testing.md に書いた。
+- 確かめ(G10-GR63-SKIN-CULL): verify のビルド（`CameraViewConstantsTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingHdrSceneCaptureTest`・`RenderingVelocityVulkanTest`・`RHITextureUpdateVulkanTest`・`RenderingGoldenImageTest`・`Game`、加えて `SkeletalFramePacketSnapshotTest`）は終了コード 0。ctest（golden は人の決まりで外す）は 13 本中 12 本が Passed: `SkinnedLodSelectionTest`・`CameraViewConstantsTest`・`VirtualShadowMapClipmapTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingSkinnedCullVulkanTest`・`RenderingSkinnedCullGBufferFallbackVulkanTest`・`RenderingVelocitySkinnedVulkanTest`・`RenderingVelocitySkinnedGBufferFallbackVulkanTest`・`ComputeSkinningVulkanTest`・`VisibilityResolveVulkanTest`・`SkeletalFramePacketSnapshotTest`。GPU の 2 本の出力はどちらも `SKINNED_CULL behind_on=0 behind_off=1 front_on=1 front_off=1 diff_pixels=0 max_diff=0`。`SkeletalFramePacketSnapshotTest` は着手前（DeviceLocal の変更の前）も後も Passed で、増えた失敗は無い（`SkinnedRenderPathContractTest` は止まったままなので回していない）。
+- Next(G10-GR63-SKIN-CULL): 部位の境界（G10-GR63-PART-CULL）、LOD（G10-GR63-LOD-BUILDER・G10-GR63-LOD-RUNTIME）、距離を伸ばしたときの近いカスケードのテクセルと犬の影の計測（G10-GR63-GIANT-CHECK）。人が見るときの見どころ: ランチャーから入るスキンのあるシーン（犬）で、カメラを回してスキンが画面の端から出入りする所に欠け・ちらつきが無いか、太陽の影（VSM・検証アプリの CSM）で画面の外の犬の影が地面に残るか。撮影・計測の確かめは回さない決まり。
+- Notes(G10-GR63-SKIN-CULL): `VirtualShadowMapVulkanTest` はこの項目の変更の前（U4 の差分を外した基準）でも落ちる（ケース A・B で GPU の印のページ 0、F・I・K・K2・W・J4・J5 も）。原因は試験のメッシュの表の行が 64 バイトでシェーダーの `MegaMeshEntry` の 80 バイトとずれていること。`task/BUILD-HEALTH-1109` の b9108742 で直っていて、統合ブランチにはまだ入っていない。golden 4 本はビルドだけ通し、比べていない。CSM の通常のメッシュのインスタンシング描画の境界は、点光源の影と同じく同じメッシュの MeshProxy を包む球で、proxy を持たないインスタンスの集まりは境界が求まらず全カスケードに残る。
+- U11 VirtualShadowMapVulkanTest のメッシュの表の行を MegaMeshEntry の 80 バイトにそろえ、タスクの verify を通す: 着地(直し 1 回)
+- Done(G10-GR63-SKIN-CULL, 反復 2): 差し戻しの `VirtualShadowMapVulkanTest` を直した。試験のメッシュの表の行を `MegaMeshEntry` の 80 バイトにそろえ（境界球を足す）、VSM の印付けにカメラ相対の逆行列と近遠比・LOD の閾値を渡す。試験ファイルは `task/BUILD-HEALTH-1109` の b9108742 の版とバイト単位で同じ内容にしたので、統合で衝突しない。80 バイトの直しだけではケース A・B・J1・J4・J5 が残り、印付けの入力の直しも要った。
+- 確かめ(G10-GR63-SKIN-CULL, 反復 2): verify のビルド（`CameraViewConstantsTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingHdrSceneCaptureTest`・`RenderingVelocityVulkanTest`・`RHITextureUpdateVulkanTest`・`RenderingGoldenImageTest`・`Game`）は終了コード 0。ctest（golden 4 本は人の決まりで `-E "Golden|PathTracingReference"` で外す）は 12/12 Passed（`VirtualShadowMapVulkanTest` を含む、`VUID_COUNT=0`）。
+- Next(G10-GR63-SKIN-CULL, 反復 2): 反復 1 の Next のとおり。人が見るときの見どころも反復 1 の Next のとおり（撮影・計測の確かめは回さない決まり）。

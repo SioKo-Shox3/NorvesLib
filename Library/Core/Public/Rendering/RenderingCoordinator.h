@@ -16,6 +16,7 @@
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/Wind.h"
 #include "Rendering/SkyOcclusion.h"
+#include "Rendering/SunShadowParameters.h"
 #include "Rendering/WorldFieldTypes.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
@@ -440,11 +441,21 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentUniformRadiance(bool bEnabled, const Math::Vector3& radiance);
 
         /**
-         * @brief 太陽の影を受ける最大のカメラからの距離（m）を設定する（GameThread）
+         * @brief 太陽の影の距離と CSM の分割の λ を設定する（GameThread）
+         * @param parameters 範囲を補正して保持し、次の FramePacket へ値コピーする。各値の 0 は ShadowMapPass の設定のまま
+         */
+        void SetSunShadowParameters(const SunShadowParameters& parameters);
+        const SunShadowParameters& GetSunShadowParameters() const { return m_SunShadowParameters; }
+
+        /**
+         * @brief 太陽の影を受ける最大のカメラからの距離（m）だけを替える（GameThread。SplitLambda は保つ）
          * @param distance 0より大きい有限の値。0・範囲外はShadowMapPassの設定（既定80 m）へ戻す。次のFramePacketへ値コピーする
          */
         void SetSunShadowMaxDistance(float distance);
-        float GetSunShadowMaxDistance() const { return m_SunShadowMaxDistance; }
+        float GetSunShadowMaxDistance() const { return m_SunShadowParameters.MaxDistance; }
+
+        /** @brief 検証用にスキンの主カメラの視錐台による絞り込みを切り替え、次の FramePacket へ写す（既定 true） */
+        void SetSkinnedViewCullingEnabled(bool bEnabled);
 
         /**
          * @brief 不透明物に掛ける空気遠近（遠景の霞）を設定する（GameThread）
@@ -734,7 +745,8 @@ namespace NorvesLib::Core::Rendering
         float m_StaticEnvironmentMaxRadiance = 0.0f;
         bool m_bStaticEnvironmentUniform = false;
         Math::Vector3 m_StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
-        float m_SunShadowMaxDistance = 0.0f;
+        SunShadowParameters m_SunShadowParameters;
+        bool m_bSkinnedViewCulling = true;
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
         FoliageScene m_Foliage;

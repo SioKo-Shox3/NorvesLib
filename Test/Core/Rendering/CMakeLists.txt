@@ -76,6 +76,7 @@ set_target_properties(RenderingGpuTestSupport PROPERTIES FOLDER "Test/Core/Rende
 
 add_library(RenderingValidationFixtureSupport STATIC
     RenderingValidation/RenderingValidationScene.cpp
+    RenderingValidation/SkinnedGiantFixture.cpp
     RenderingValidation/RenderingValidationApplication.cpp
 )
 target_link_libraries(RenderingValidationFixtureSupport PUBLIC Core)
@@ -887,6 +888,7 @@ register_rendering_gpu_test(
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
+    SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
@@ -961,6 +963,19 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=scene-color
     --extension-stage-scenario=post)
+register_rendering_gpu_test(
+    RenderingSkinnedCullVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front)
+register_rendering_gpu_test(
+    RenderingSkinnedCullGBufferFallbackVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front
+    --visibility-buffer=off)
 register_rendering_gpu_test(
     RenderingHdrIndoorSceneVulkanTest
     RenderingHdrSceneCaptureTest
@@ -1535,6 +1550,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
     MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
     MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
+    MEMBER SkinnedLodSelectionTest SkinnedLodSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1591,6 +1607,8 @@ add_test(NAME WorldFieldInputSanitizeTest COMMAND CameraViewConstantsTest --test
 add_test(NAME WorldFieldScrollMathTest COMMAND CameraViewConstantsTest --test=WorldFieldScrollMathTest)
 # 草のタイル選別をCPUで検証する。
 add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
+# スキンの視錐台・CSM のカスケードの絞り込みと太陽の影の調整口の Sanitize を CPU で検証する。
+add_test(NAME SkinnedLodSelectionTest COMMAND CameraViewConstantsTest --test=SkinnedLodSelectionTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
