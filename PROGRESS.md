@@ -10638,3 +10638,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(G10-GR63-SKIN-CULL, 反復 2): 差し戻しの `VirtualShadowMapVulkanTest` を直した。試験のメッシュの表の行を `MegaMeshEntry` の 80 バイトにそろえ（境界球を足す）、VSM の印付けにカメラ相対の逆行列と近遠比・LOD の閾値を渡す。試験ファイルは `task/BUILD-HEALTH-1109` の b9108742 の版とバイト単位で同じ内容にしたので、統合で衝突しない。80 バイトの直しだけではケース A・B・J1・J4・J5 が残り、印付けの入力の直しも要った。
 - 確かめ(G10-GR63-SKIN-CULL, 反復 2): verify のビルド（`CameraViewConstantsTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingHdrSceneCaptureTest`・`RenderingVelocityVulkanTest`・`RHITextureUpdateVulkanTest`・`RenderingGoldenImageTest`・`Game`）は終了コード 0。ctest（golden 4 本は人の決まりで `-E "Golden|PathTracingReference"` で外す）は 12/12 Passed（`VirtualShadowMapVulkanTest` を含む、`VUID_COUNT=0`）。
 - Next(G10-GR63-SKIN-CULL, 反復 2): 反復 1 の Next のとおり。人が見るときの見どころも反復 1 の Next のとおり（撮影・計測の確かめは回さない決まり）。
+
+- G5-GR26-LIGHTING-MODELS: 統合ブランチを取り込み、RenderingHdrSceneCaptureTest.cpp の衝突（TAA リアクティブとシェーディングモデル照明のシナリオ）を両方残して互いに併用不可にした。Debug のビルドと関係の GPU 試験 6 本が通過（Golden は決まりで外す）。
+
+## 2026-11-10 G5-GR26-LIGHTING-MODELS（run 20261110-065330 の反復 5、完了）
+
+- Done: 実装は足さず、verify の ctest を GBuffer の試験とそれ以外の 2 行に分けた（試験の名前は 1 本も減らしていない。`--timeout 300` のまま、GBuffer の試験には CMake の TIMEOUT 900 が効く）。Debug の verify のビルドは EXIT=0（`.harness/runs/20261110-065330/G5-GR26-final-build.txt`）。`RenderingShadingModelGBufferVulkanTest` は Passed 249 秒（`G5-GR26-final-ctest-1.txt`）。`RenderingShadingModelLightingVulkanTest`・`ShadingModelContractTest`・`RenderingHdrIndoorSceneVulkanTest`・`RenderingHdrOutdoorSceneVulkanTest` は Passed（`G5-GR26-final-ctest-2.txt`）。
+- Notes: Golden の 4 本は決まりにより合否に使わない。参考までに同じ実行では Outdoor の 2 本が Passed、Indoor の 2 本（通常と GBuffer の予備の経路）が `mean_flip=0.0000137`・raw 最大 1・10 画素で mismatch だった。原因（この項目の変更か、取り込んだ統合ブランチの変更か）は確かめていない。
+- 人が見るときの見どころ: G5-GR27-MATERIAL-SCENES-CHECK で、PaleFlat の球の明暗の差が小さいこと、Fur の明暗の境目が明るいこと、Eye の鏡面が P0 で強くなることを見る。DefaultLit の各シーンの見た目は変わらない想定。
+- Next: G5-GR27-MATERIAL-SCENES-CHECK。
+- U1 照明の定数にシェーディングモデルの係数を足し、P0・P1 の意味を表に書く: 着地(直し 0 回)
+- U2 PaleFlat の GBuffer 書き込みで粗さ 1・金属度 0 にする: 着地(直し 0 回)
+- U3 ShadingModels.glsl の 3 つの口と lighting.frag の ID の分岐: 着地(直し 1 回)
+- U4 GPU 試験 RenderingShadingModelLightingVulkanTest を足す: 着地(直し 0 回)
+## G5-GR26-LIGHTING-MODELS（2026-11-10）
+- Done: `lighting.frag` が GBuffer のシェーディングモデルの ID で描き分ける。ID が 0（DefaultLit）の画素は今の文と同じ順・同じ式のまま通り、0 でない画素（検証表示を除く）だけ `Assets/Shaders/Common/ShadingModels.glsl` の 3 つの口を呼ぶ: 光源のループの前の `ApplyShadingModelSurface`（面の補正）、光源ごとの `EvaluateShadingModelDirect`（`EvaluateAnalyticalDirectEndpointBRDF` の代わり。ニューラル BRDF は通らず解析の式）、最後の `ShadingModelFinalize`。最初の式は Fur = wrap の拡散と粗さの下限を付けた鏡面（異方性は GR33 の後）、Eye = 鏡面 × (1 + P0 × 増分)、PaleFlat = アルベドを輝度へ寄せ、直接光を一定値に・環境光を向きに依らない放射照度に置き換えて明暗の差を落とし、間接鏡面も同じ割合で減らす。PaleFlat は GBuffer に書く時点で粗さ 1・金属度 0（`GBufferEncodeMaterialForShadingModel`。SSR は改造しない）。係数は照明の UBO の `shadingModelParams[2]`（`LightingPassSettings` の係数の構造体、既定は仮）で差し替えられる。`GpuLayoutRegistry.md` に各モデルの P0・P1 の意味と UBO の新しい行を書いた。GPU の試験 `RenderingShadingModelLightingVulkanTest`（`--scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting`、方向光 1 灯の下に灰色の球 6 個）を足した。
+- 証拠: `.harness/runs/20261110-065330/G5-GR26-LIGHTING-MODELS-final-verify.txt`（verify のビルドの行 exit 0、ctest の RenderingShadingModelLightingVulkanTest・RenderingShadingModelGBufferVulkanTest・ShadingModelContractTest・RenderingHdrIndoorSceneVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 5/5 合格）。BackBuffer の sRGB 値の輝度で、PaleFlat の明暗の差 0.60（上限 2）、DefaultLit 126.96（下限 20）、Fur の境目 13.20 > DefaultLit 0.08、Eye の鏡面 148.96 < 177.36 < 191.52（P0 = 0・0.5・1）。基準画像の試験 4 本（RenderingGolden*）は回さない決まりで verify から外した。ID 0 の経路の文面は変えていない。
+- Next: 起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。今はどのシーンも既定の材質が DefaultLit なので、人が見るときは Rendering3DTest（天球・地面・球・岩）と荒野の見た目が変わらないことを見る。
+- Notes: 屋内の基準画像（RenderingGoldenIndoorVulkanTest・同 GBufferFallback）は、この項目の照明の変更を入れる前のシェーダーでも 10 画素・最大 1 階調の差（mean_flip 0.000013729）で落ちる。前の項目のどれかから続いている差で、基準画像は回さない決まりなので追っていない。
