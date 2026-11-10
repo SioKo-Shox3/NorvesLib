@@ -42,18 +42,36 @@ namespace NorvesLib::Modules::Physics
         void Tick(float deltaTime) override;
         void StepPreFixed(float fixedDeltaTime) override;
         void StepFixed(float fixedDeltaTime) override;
+        EPhysicsResult RegisterStaticColliderChunk(StaticColliderChunkKey key,
+            Core::Container::Span<const StaticColliderDesc> colliders) override;
+        EPhysicsResult UnregisterStaticColliderChunk(StaticColliderChunkKey key) override;
         void Shutdown() override;
         void Uninstall(Core::Engine::Engine& engine) override;
 
     private:
         struct ColliderSlot
         {
+            bool bDetached = false;
+            uint64_t ChunkKey = 0;
             ColliderComponent* Component = nullptr;
             Core::Entity* Owner = nullptr;
             uint32_t Generation = 1;
             bool bOccupied = false;
             bool bActive = false;
             bool bRetired = false;
+        };
+
+        struct StaticColliderChunk
+        {
+            Core::Container::VariableArray<uint32_t> SlotIndices;
+            Core::Container::VariableArray<PhysicsShapeProxy> Proxies;
+        };
+
+        struct PendingStaticColliderChunkOperation
+        {
+            uint64_t Key = 0;
+            bool bRegister = false;
+            StaticColliderChunk Chunk;
         };
 
         struct BodySlot
@@ -150,6 +168,11 @@ namespace NorvesLib::Modules::Physics
         void PublishSnapshot();
         EPhysicsProxyMobility DetermineProxyMobility(const PhysicsShapeProxy& proxy) const;
         void BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle = false) const;
+        bool IsStaticColliderChunkRegistered(uint64_t key) const;
+        void SubmitStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation);
+        void ApplyStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation);
+        void ApplyPendingStaticColliderChunkOperations();
+        void RebuildPublishedSnapshot();
         void ResetTransientState();
         Math::Transform GetFreshWorldTransform(const Core::Entity& entity) const;
         Core::Scene::BodyHandle FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle = false) const;
@@ -207,6 +230,8 @@ namespace NorvesLib::Modules::Physics
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
+        Core::Container::UnorderedMap<uint64_t, StaticColliderChunk> m_StaticColliderChunks;
+        Core::Container::VariableArray<PendingStaticColliderChunkOperation> m_PendingStaticColliderChunkOperations;
         // 占有中のスロットだけを持つ。Owner ごとに高々 1 つ。
         Core::Container::UnorderedMap<const Core::Entity*, uint32_t> m_ColliderSlotByOwner;
         Core::Container::UnorderedMap<const Core::Entity*, uint32_t> m_BodySlotByOwner;

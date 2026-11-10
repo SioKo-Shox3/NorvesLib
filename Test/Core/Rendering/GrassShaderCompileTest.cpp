@@ -1,9 +1,10 @@
-﻿// 草の生成と引数の初期化を、GPU を使わず実際のシェーダーからコンパイルする。
+﻿// 草の生成・引数の初期化・描画を、GPU を使わず実際のシェーダーからコンパイルする。
 #ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
 #endif
 
 #include "RHI/Vulkan/VulkanShaderCompiler.h"
+#include "Rendering/GrassPass.h"
 #include "FileStream/FileStream.h"
 #include <spirv-headers/spirv.hpp>
 #include <cstddef>
@@ -96,6 +97,129 @@ namespace
         return true;
     }
 
+    // SPIR-V の型・メンバオフセット・束縛を反射し、描画 UBO と 2D sampler の契約を確かめる。
+    bool CheckWorldFieldBindings(const ShaderCompileResult& result)
+    {
+        const auto& bytes = result.ByteCode;
+        const auto readWord = [&bytes](std::size_t index)
+        {
+            uint32_t word = 0;
+            std::memcpy(&word, bytes.data() + index * sizeof(word), sizeof(word));
+            return word;
+        };
+        struct ReflectedId
+        {
+            uint32_t Size = 0;
+            uint32_t Type = 0;
+            uint32_t Binding = UINT32_MAX;
+            uint32_t Set = UINT32_MAX;
+            uint32_t Storage = UINT32_MAX;
+            bool bImage2D = false;
+            bool bSampled2D = false;
+            bool bBlock = false;
+            VariableArray<uint32_t> MemberOffsets;
+        };
+        VariableArray<ReflectedId> ids(readWord(3));
+        const std::size_t wordCount = bytes.size() / sizeof(uint32_t);
+        for (std::size_t cursor = 5; cursor < wordCount;)
+        {
+            const uint32_t instruction = readWord(cursor);
+            const uint32_t count = instruction >> spv::WordCountShift;
+            const uint32_t opcode = instruction & spv::OpCodeMask;
+            const auto operand = [&](uint32_t index) { return readWord(cursor + index); };
+            switch (opcode)
+            {
+            case spv::OpDecorate:
+            {
+                ReflectedId& id = ids[operand(1)];
+                if (operand(2) == spv::DecorationBinding)
+                {
+                    id.Binding = operand(3);
+                }
+                else if (operand(2) == spv::DecorationDescriptorSet)
+                {
+                    id.Set = operand(3);
+                }
+                else if (operand(2) == spv::DecorationBlock)
+                {
+                    id.bBlock = true;
+                }
+                break;
+            }
+            case spv::OpMemberDecorate:
+                if (operand(3) == spv::DecorationOffset)
+                {
+                    auto& offsets = ids[operand(1)].MemberOffsets;
+                    if (offsets.size() <= operand(2))
+                    {
+                        offsets.resize(operand(2) + 1, UINT32_MAX);
+                    }
+                    offsets[operand(2)] = operand(4);
+                }
+                break;
+            case spv::OpTypeFloat:
+            case spv::OpTypeInt:
+                ids[operand(1)].Size = operand(2) / 8;
+                break;
+            case spv::OpTypeVector:
+            case spv::OpTypeMatrix:
+                ids[operand(1)].Size = ids[operand(2)].Size * operand(3);
+                break;
+            case spv::OpTypeStruct:
+            {
+                ReflectedId& id = ids[operand(1)];
+                // 描画 UBO は mat4 とベクトルとフィールドの構造体だけで、配列は持たない。
+                if (id.MemberOffsets.size() == count - 2)
+                {
+                    for (uint32_t member = 0; member < count - 2; ++member)
+                    {
+                        id.Size = id.MemberOffsets[member] + ids[operand(member + 2)].Size;
+                    }
+                    id.Size = (id.Size + 15u) & ~15u;
+                }
+                break;
+            }
+            case spv::OpTypeImage:
+                ids[operand(1)].bImage2D = operand(3) == spv::Dim2D && operand(4) == 0 &&
+                    operand(5) == 0 && operand(6) == 0 && operand(7) == 1;
+                break;
+            case spv::OpTypeSampledImage:
+                ids[operand(1)].bSampled2D = ids[operand(2)].bImage2D;
+                break;
+            case spv::OpTypePointer:
+                ids[operand(1)].Type = operand(3);
+                break;
+            case spv::OpVariable:
+                ids[operand(2)].Type = operand(1);
+                ids[operand(2)].Storage = operand(3);
+                break;
+            default:
+                break;
+            }
+            cursor += count;
+        }
+        bool bConstants = false;
+        bool bSamplers[2] = {};
+        for (const ReflectedId& id : ids)
+        {
+            if (id.Set != 0 || id.Type == 0)
+            {
+                continue;
+            }
+            const ReflectedId& type = ids[ids[id.Type].Type];
+            if (id.Binding == 0 && id.Storage == spv::StorageClassUniform)
+            {
+                bConstants = type.bBlock &&
+                    type.Size == sizeof(NorvesLib::Core::Rendering::GrassDrawWorldFieldConstants);
+            }
+            else if (id.Binding >= 4 && id.Binding <= 5 && id.Storage == spv::StorageClassUniformConstant)
+            {
+                bSamplers[id.Binding - 4] = type.bSampled2D;
+            }
+        }
+        return bConstants && bSamplers[0] && bSamplers[1];
+    }
+
     bool TryReadExecutionModel(const ShaderCompileResult& result, std::uint32_t& executionModel)
     {
         const auto& byteCode = result.ByteCode;
@@ -146,18 +270,28 @@ namespace
 int main()
 {
     const String root = NORVES_SOURCE_ROOT "/Assets/Shaders/";
-    const char* const paths[] = {"Grass/GrassArgsInit.comp", "Grass/GrassGenerate.comp"};
+    const struct ShaderCase
+    {
+        const char* Path;
+        ShaderStage Stage;
+        spv::ExecutionModel Model;
+    } paths[] = {
+        {"Grass/GrassArgsInit.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute},
+        {"Grass/GrassGenerate.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute},
+        {"Grass/grass.vert", ShaderStage::Vertex, spv::ExecutionModelVertex},
+        {"Grass/grass.frag", ShaderStage::Pixel, spv::ExecutionModelFragment}};
     VulkanShaderCompiler compiler;
     bool allPassed = true;
-    for (const char* path : paths)
+    for (const auto& shader : paths)
     {
+        const char* path = shader.Path;
         String source;
         if (!ExpandShader(root, path, source))
         {
             allPassed = false;
             continue;
         }
-        const ShaderCompileResult result = compiler.CompileFromSource(source, ShaderStage::Compute, path);
+        const ShaderCompileResult result = compiler.CompileFromSource(source, shader.Stage, path);
         if (!result.bSuccess || result.ByteCode.empty())
         {
             std::cerr << "[失敗] " << path << " のコンパイルまたは SPIR-V の生成に失敗しました: "
@@ -166,13 +300,19 @@ int main()
             continue;
         }
         std::uint32_t executionModel = 0;
-        if (!TryReadExecutionModel(result, executionModel) || executionModel != spv::ExecutionModelGLCompute)
+        if (!TryReadExecutionModel(result, executionModel) || executionModel != shader.Model)
         {
-            std::cerr << "[失敗] " << path << " の実行モデルが GLCompute ではありません。" << std::endl;
+            std::cerr << "[失敗] " << path << " の実行モデルが指定したステージと一致しません。" << std::endl;
             allPassed = false;
             continue;
         }
-        std::cout << "[成功] " << path << " を GLCompute としてコンパイルしました。" << std::endl;
+        if (shader.Stage == ShaderStage::Vertex && !CheckWorldFieldBindings(result))
+        {
+            std::cerr << "[失敗] 草の世界フィールドの sampler 束縛 4/5 または描画 UBO のサイズが一致しません。" << std::endl;
+            allPassed = false;
+            continue;
+        }
+        std::cout << "[成功] " << path << " を指定したステージでコンパイルしました。" << std::endl;
     }
     return allPassed ? 0 : 1;
 }

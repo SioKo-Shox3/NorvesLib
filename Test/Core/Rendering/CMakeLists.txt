@@ -76,6 +76,7 @@ set_target_properties(RenderingGpuTestSupport PROPERTIES FOLDER "Test/Core/Rende
 
 add_library(RenderingValidationFixtureSupport STATIC
     RenderingValidation/RenderingValidationScene.cpp
+    RenderingValidation/SkinnedGiantFixture.cpp
     RenderingValidation/RenderingValidationApplication.cpp
 )
 target_link_libraries(RenderingValidationFixtureSupport PUBLIC Core)
@@ -367,6 +368,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER ViewClearanceShaderCompileTest ViewClearanceShaderCompileTest.cpp
     MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
     MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
     MEMBER PathTracingNonUniformSamplerSpirvTest PathTracingNonUniformSamplerSpirvTest.cpp
@@ -387,6 +389,7 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+add_test(NAME ViewClearanceShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=ViewClearanceShaderCompileTest)
 add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
 # 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
 add_test(NAME WorldFieldShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WorldFieldShaderCompileTest)
@@ -619,6 +622,24 @@ set_tests_properties(GrassGenerateVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 草の GBuffer を GPU で読み戻し、法線・AO・速度を確かめる。
+add_test(NAME GrassGBufferVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassGBufferVulkanTest)
+set_tests_properties(GrassGBufferVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 世界フィールドによる通り道の被覆の減少と、前の画像・原点で再評価した速度を確かめる。
+add_test(NAME GrassTrampleVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassTrampleVulkanTest)
+set_tests_properties(GrassTrampleVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME WindGlslParityVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WindGlslParityVulkanTest)
 set_tests_properties(WindGlslParityVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -684,6 +705,8 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
+    MEMBER GrassGBufferVulkanTest GrassGBufferVulkanTest.cpp
+    MEMBER GrassTrampleVulkanTest GrassTrampleVulkanTest.cpp
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
@@ -878,6 +901,8 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
+    SkinnedCullScenario.cpp
+    TemporalAAReactiveScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
@@ -1049,14 +1074,38 @@ set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
+register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+# 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
+# 書き手なしとゼロの書き手で TAA 後の RGB がビット一致することも確かめる。
+register_rendering_gpu_test(
+    RenderingTemporalAAReactiveVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color
+    --temporal-aa-reactive-scenario=ab)
 register_rendering_gpu_test(
     RenderExtensionStageVulkanTest
     RenderingHdrSceneCaptureTest
     --scene=outdoor
     --capture-source=scene-color
     --extension-stage-scenario=post)
+register_rendering_gpu_test(
+    RenderingSkinnedCullVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front)
+register_rendering_gpu_test(
+    RenderingSkinnedCullGBufferFallbackVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --skinned-cull-scenario=behind-front
+    --visibility-buffer=off)
 register_rendering_gpu_test(
     RenderingHdrIndoorSceneVulkanTest
     RenderingHdrSceneCaptureTest
@@ -1632,6 +1681,8 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER WorldFieldInputSanitizeTest WorldFieldInputSanitizeTest.cpp
     MEMBER WorldFieldScrollMathTest WorldFieldScrollMathTest.cpp
     MEMBER GrassTileSelectionTest GrassTileSelectionTest.cpp
+    MEMBER GrassClearanceReferenceTest GrassClearanceReferenceTest.cpp
+    MEMBER SkinnedLodSelectionTest SkinnedLodSelectionTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1688,6 +1739,9 @@ add_test(NAME WorldFieldInputSanitizeTest COMMAND CameraViewConstantsTest --test
 add_test(NAME WorldFieldScrollMathTest COMMAND CameraViewConstantsTest --test=WorldFieldScrollMathTest)
 # 草のタイル選別をCPUで検証する。
 add_test(NAME GrassTileSelectionTest COMMAND CameraViewConstantsTest --test=GrassTileSelectionTest)
+add_test(NAME GrassClearanceReferenceTest COMMAND CameraViewConstantsTest --test=GrassClearanceReferenceTest)
+# スキンの視錐台・CSM のカスケードの絞り込みと太陽の影の調整口の Sanitize を CPU で検証する。
+add_test(NAME SkinnedLodSelectionTest COMMAND CameraViewConstantsTest --test=SkinnedLodSelectionTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp

@@ -284,6 +284,10 @@ namespace NorvesLib::Tools::AssetCook
                 hash.Integer(std::bit_cast<uint64_t>(settings.MaxJointErrorMeters));
                 hash.Integer(std::bit_cast<uint64_t>(settings.MaxRotationErrorDegrees));
             }
+            if (request.ClipOptimize.bQuantize)
+            {
+                hash.Text("norves.clip-quantize.v1");
+            }
             candidate.Fingerprint=hash.Value;out=std::move(candidate);error.clear();return true;
         }
     }

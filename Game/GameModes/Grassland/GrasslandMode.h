@@ -1,5 +1,6 @@
 ﻿// 草原のクック済み地形を TerrainComponent で配置し、谷・尾根・低い視点の見え方を確かめる開発用シーン。
 // 視点は SceneCatalog.h の kGrasslandViews（near・valley・low）。自由飛行と撮影時の視点の切り替えに対応する。
+// 開発ビルドでは H キーで犬大の代役を追う視点へ切り替え、主人公との間の草の間引きを確認する。
 // 地形は Assets/TerrainSpecs/Grassland/GrasslandTerrain.json と Scripts/Terrain/GenerateGrasslandHeight.py から
 // クックした Assets/Terrain/Grassland/Grassland.nvtrn と Tiles/GrasslandTile_<x>_<z>.generated を使う。
 #pragma once
@@ -8,6 +9,7 @@
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
+#include "Core/Public/Input/IInputController.h"
 #include "Core/Public/Scatter/ScatterSystem.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
@@ -20,11 +22,37 @@ namespace NorvesLib::Core
 
 namespace NorvesLib::Core::Component
 {
+    class CameraComponent;
+    class MeshComponent;
+    class SpringArmComponent;
     class TerrainComponent;
 }
 
 namespace Game::GameModes
 {
+
+#if NORVES_BUILD_DEVELOPMENT
+    /// 主人公視点の切り替えの押下だけを集約する入力の受け手
+    class GrasslandViewInputCollector : public NorvesLib::Core::Input::IInputController
+    {
+    public:
+        bool OnKey(const NorvesLib::Core::Input::KeyEvent& event) override;
+        bool ConsumeToggleRequest();
+        void OnInputReset() override { m_bToggleRequested = false; }
+        void OnInputFocusChanged(bool bFocused) override
+        {
+            if (!bFocused)
+            {
+                OnInputReset();
+            }
+        }
+        const char* DebugName() const override { return "GrasslandViewInputCollector"; }
+
+    private:
+        /// 押しっぱなしの繰り返しを含めない、未処理の切り替え要求
+        bool m_bToggleRequested = false;
+    };
+#endif
 
     struct GrasslandData
     {
@@ -52,7 +80,30 @@ namespace Game::GameModes
         NorvesLib::Core::Entity* m_pTerrainCollider = nullptr;
         /// 配置完了後のコライダー作成を試したか
         bool m_bTerrainColliderAttempted = false;
+        /// 草を押す見えない走行体（非所有）。スコープが寿命を管理する
+        NorvesLib::Core::Entity* m_pRunningBody = nullptr;
+        /// 入場時の視点から決め、カメラを動かしても変わらない周回路
+        NorvesLib::Math::Vector3 m_RunCenter;
+        float m_RunAngle = 0.0f;
         uint32_t m_TickCount = 0;
+#if NORVES_BUILD_DEVELOPMENT
+        /// H キーの押下を集約する、主人公視点専用の入力の受け手
+        GrasslandViewInputCollector m_ViewInput;
+        /// 入力ルーターへの登録を Leave で返すための印
+        bool m_bViewInputRegistered = false;
+        /// 主人公視点を描画側へ渡しているか（既定は自由飛行）
+        bool m_bHeroView = false;
+        /// 生成に失敗したとき、同じ滞在中の資源の再生成を防ぐ印
+        bool m_bHeroCreationAttempted = false;
+        /// 犬大の代役とアームの支点（非所有。スコープが寿命を持つ）
+        NorvesLib::Core::Entity* m_pHero = nullptr;
+        /// 自由飛行へ戻るときに代役を隠すための参照（非所有）
+        NorvesLib::Core::Component::MeshComponent* m_pHeroMesh = nullptr;
+        /// 主人公を追うカメラ（非所有。所有する Entity はスコープが追跡する）
+        NorvesLib::Core::Component::CameraComponent* m_pHeroCamera = nullptr;
+        /// カメラの公開直前に姿勢を更新するアーム（非所有）
+        NorvesLib::Core::Component::SpringArmComponent* m_pHeroSpringArm = nullptr;
+#endif
     };
 
     class GrasslandRoutine

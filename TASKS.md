@@ -39,11 +39,22 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
-- status: blocked
-- done-when: 統合ブランチで Debug の構成(テスト有効)のビルドが通り、`Golden`・`PathTracingReference` を外した ctest が全部通る(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- status: todo
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 12 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracingLighting" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(Hdr|RayTracing)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
@@ -5696,7 +5707,7 @@
 - notes: 選定課題 G9-S3（人型のシ者の骨格の出所）は推奨どおり、実在の骨格（Mixamo・Rigify・Kimodo）の選定を G10 の着手前まで保留すると決めた。理由: エンジンの側は正準ロール表をデータにして骨格に依存しないので、G9 の完了条件は合成の人型で閉じられ、Kimodo の実出力の骨格は未確認で、頒布のライセンス（Mixamo の規約本文は未取得、Kimodo の重みは NVIDIA Open Model License）も公式で確かめていないため。よってここでは `Assets/Retarget/` に特定の骨格のプリセットを置かない。今のコードの事実: vocabulary は quadruped_v1 しか受けない（`Library/Core/Private/Animation/SkeletalRoleProfile.cpp:617-620`）。`SkeletalRole` は四足の列挙だけ（`SkeletalRoleProfile.h:8-34`）なので、人型は列挙を足すか vocabulary ごとの表にする（作り方は実装に任せるが、quadruped_v1 の既存の値と出力を変えない）。manifest には分離 v1 の `SkeletonId` が入る（`Library/Core/Public/Asset/AssetManifest.h:83-91`）。既存の `Test/Tools/AssetCookRigSplitSmoke.py` は CI（`windows-assetcook.yml`）だけで回るので、この機で回せるよう CTest の cmake の台本にした（他の AssetCook の smoke と同じ形。`Tools/AssetCook/CMakeLists.txt:252-275`）。生成AIの実物（GLB・BVH）はリポジトリに入れず、小さい合成のフィクスチャだけを置く。出典: 要件 `#### GR85` の設計案 (6)(7)、受け入れ確認の RetargetCookTest (d) と AssetCookRetargetSmoke、ロードマップの選定課題一覧の G9-S3。
 
 ## G9-GR87-CLIP-QUANTIZE: ClipBank v1 にクリップの量子化と一様な時刻の記録を足し、読み込み時に展開する
-- status: todo
+- status: done
 - after: G9-GR87-CLIP-OPTIMIZER, G9-GR85-HUMANOID-SMOKE
 - gr: GR87
 - needs-gr: GR82, GR12
@@ -5825,7 +5836,7 @@
 - notes: 今のコードの事実: `--animation-debug` は Rendering3DTest の明示の合成の場面で、ImGui のビルドを要し（`Game/GameApplicationHandler.cpp:2013, 2879`）、`AnimationDebugScene` がコードで合成のキャラクターと剣を作って `AnimatorDebugView`・`SocketDebugView` を Attach する（`Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp:115-203`、Detach は 245 行）。今の合成のキャラクターは四足の脚の鎖を持たないので、四足の合成のキャラクターを足す。UNCERTAIN: Rendering3DTest の World に物理のモジュールが載り、`PhysicsGroundQuery` を使えるかは未確認。解消するには `AnimationDebugScene.cpp` と Rendering3DTest の World の組み立てを読む。載らない場合は、斜面と階段の解析の `IGroundQuery`（試験のモックと同じ形）を場面の中で使い、そのことを `PROGRESS.md` に書く。調整した値をサイドカーへ書き戻す仕組み（G18 の GR99）は作らず、ImGui の値を手で写す（ロードマップ G9 の依存）。起動画面の見た目を変えない（AGENTS.md の絶対規則 7）。見た目の確かめは `G9-GR15-AB-CAPTURE-CHECK` に分けた。GR13 は animation-debug の場面のソケットと剣のため。出典: ロードマップ G9 の完了条件の GR15 の ModifierOrderTest と「共通」、要件 `#### GR14` と `#### GR15` の【調整とデバッグ】。
 
 ## G5-GR26-LIGHTING-MODELS: 照明がシェーディングモデルの ID で描き分ける口（面の補正・光源ごと・最後の色）を作り、Fur・Eye・PaleFlat の最初の式を入れる
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS
 - gr: GR26
 - done-when: `lighting.frag` が GBuffer から G5-GR26-GBUFFER-CONTRACT の関数でモデルの ID と P0・P1 を読み、ID が 0（DefaultLit）の画素は今のコードをそのまま通る。ID が 0 でない画素だけ `Assets/Shaders/Common/ShadingModels.glsl` の 3 つの口を呼ぶ: 光源のループの前の面の補正（albedo・粗さ・金属度・法線・AO）、光源ごとの直接光（lighting.frag:1313 の `EvaluateAnalyticalDirectEndpointBRDF` の代わり）、最後の色の補正。Fur は wrap の拡散と粗い鏡面（異方性は接線を持つ GR33 の後）、Eye は P0（湿り）で鏡面の強さを上げる、PaleFlat は面の補正で平らなアルベドにして最後の色で影と環境光の明暗の差を落とす（PaleFlat は書き込みの時点で粗さ 1・金属度 0 にし、SSR は改造しない）。ID が 0 でないときニューラル BRDF の分岐（lighting.frag:1306 の `bNeuralBRDFEnabled`）は解析の式へ落とす。式の係数（wrap の量、明暗の差の落とし方など）は P0・P1 か照明の定数にしてデータで差し替えられる形にし、既定は仮と書く。各モデルの P0・P1 の意味を `Docs/Architecture/GpuLayoutRegistry.md` の表に書く（DefaultLit は P0 = 濡れ感度、Fur は P0 = 濡れ度・P1 = シェルの高さの割合、Eye は P0 = 湿り、PaleFlat は P0 = 消滅度）。GPU の `RenderingShadingModelLightingVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、PaleFlat の球の明るい側と影の側の ROI の BackBuffer の輝度の差が 2/255 以下で DefaultLit の同じ条件では十分大きい・Fur の球の明暗の境目の ROI が DefaultLit より明るい・Eye の鏡面の ROI が P0 に応じて単調に増える、を確かめる。golden 4 本が変わらない。
@@ -5858,7 +5869,7 @@
 - notes: 選定課題 G5B-S5（草の作り方。企画の提案『草の作り方』は未定）: (A) GPU で生成する曲がった帯のブレード（要件の基準線）を新しい GrassPass で描き、今の FoliagePass（株のメッシュの CPU のインスタンス）は低木・株・散布の物に残す、(B) 今の FoliagePass の株を草の場から CPU で撒いて増やす、(C) GPU で生成するカード（板ポリ＋アルファテスト）、のうち (A) を採る。理由: 要件が 1 画面で数十万〜数百万本・コンピュートでの生成とカリングを求め、FoliagePass は束ごとに不変のインスタンスの配列を GPU へ置き区画ごとに CPU で切る作り（`Library/Core/Public/Rendering/FoliageTypes.h` 冒頭、`FoliagePass.h` 18〜30 行）で、カメラの移動に応じた生成には向かない。(C) は GR27 とアルファのちらつきの対策（GR30）が要る。機構（タイル・カリング・間接描画）は (C) に移っても共通。今の描画の並び（`SceneView.cpp` 1058〜1226 行）はロードマップの時点から変わっていて、可視バッファの解決・デカール・FoliagePass が GBuffer の後にある。GrassPass は FoliagePass と同じく解決の後に GBuffer へ重ねる（頂点を動かすので解決に載せない）。GR28 の間接ディスパッチは RHI に既にある（`ICommandList.h` 518 行の `DispatchIndirect`）が、可視タイルの数は CPU が決めて直接 Dispatch でよい（タイルの選別の GPU 化は後でよい）。HZB は MegaGeometryPass が持つ（`MegaGeometryPass.h` 77〜103 行の `MegaHiZContract`・`MegaPrevHiZStatus`）ので、VirtualShadowMapPass と同じく MegaGeometryPass への参照を渡して読み取りだけで使う。バッファは少数の大きなものにまとめる（1 リソース = 1 回の確保。ロードマップ 1296 行）。`RenderGraphCompileTest` は無効にしてある（Docs/Testing.md 62 行）ので使わない。試験を足す理由: 生成の数の誤り（ハッシュ・間引き・カリングの取り違え）は、絵では草が少し疎・密に見えるだけで気づけず、CPU の写しとの完全一致でしか捕まえられない。危険地帯（RenderThread・GPU の資源の寿命）なので評価者を通す。
 
 ## G5-GR43-GRASS-DRAW: 生成したブレードを曲がった帯として GBuffer へ描き、連続の LOD・近接のフェード・風・velocity・濡れの受け口を入れる
-- status: todo
+- status: done
 - after: G5-GR43-GRASS-GENERATE, G5-GR46-WIND-FIELD, G5-GR42-GRASS-FIELD-ASSET
 - gr: GR43
 - done-when: GrassPass が GBuffer 互換の描き先（5 枚と深度へ重ねる。FoliagePass の `EnsureTargets`・`CreatePipeline` と共通の補助へ切り出し、FoliagePass もそれを使う）を開き、LOD ごとに「ブレードの SSBO の LOD の範囲を offset 付きで束ねた記述子のセット」で `DrawIndexedIndirect` を 3 回出す（頂点のバッファ無し。共有のインデックスのバッファは LOD0=7 分割・LOD1=3 分割・LOD2=1 分割の帯を連結。cullMode=None・depth Less/Write・MRT 5 枚は blend off）。`Assets/Shaders/Grass/grass.vert` は `gl_VertexIndex` から（区切り・左右）を決め、根元→先端を 2 次ベジエ（傾き＋曲がり＋`Common/Wind.glsl` の風＋踏み倒しの口（GR44 まで 0））で曲げ、幅を先端へ細め、視線に横向きのときは幅と法線を視線の側へ寄せ、画素より細い帯は最小の画素幅まで広げる。向き・位相・色の個体差は位置のハッシュから再導出する。`grass.frag` は Albedo = 根元色→先端色×個体差×濡れ（G5-GR42 の有効な濡れ度の式。全体の濡れ度は GR49 までの定数の受け口）・Albedo.a=1・法線を上へ寄せ裏面は反転・Material（金属 0・粗さは濡れで下げる・AO は根元ほど暗い）・Emissive=0・Velocity は gbuffer.frag と同じ式。前の位置は前の時刻・前のカメラで再評価する。近接のフェードは、カメラから約 1.2 m 以内は草丈を縮め、約 0.35 m 以内は画面ドア（ディザ）で discard。影は落とさない（受けるだけ）。grassland の草原に草を出す。撮影の解析の台本 `Scripts/Grass/GrassCaptureCheck.py`（距離のスイープの被覆率・平均輝度の連続性、近接での緑の最大連結成分の割合、しきい値は `Test/Core/Rendering/Thresholds/RenderingValidation/GrassLodSweep.tsv`）とカメラの台本 `Scripts/CameraScripts/grassland-sweep.txt`（10 m→120 m を 1 m 刻み）を書く（走らせるのは G5-GR43-GRASS-CHECK）。`GrassShaderCompileTest` に grass.vert・grass.frag を足して通る。GPU の試験 `GrassGBufferVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。GBuffer を読み戻し、Albedo.a=1・法線が単位長・根元の AO が先端より暗い・カメラ静止で風なしなら velocity=0・風ありのカメラ静止で velocity が同じ式の CPU の写しの有限差分と 0.002 以内）をビルドできる。
@@ -5957,7 +5968,7 @@
 - notes: ロードマップ GR30 の A（995〜1045 行）。GR30 は SS-TAA-P2 の後（ロードマップ）で、SS-TAA-P2 は done（Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md）。風の式の中身は GR46（G5 の後半）が持ち、この項目は契約と時刻の基準と velocity まで。4096 秒で巻くのは float の精度のため（1 時間を超えると刻みが粗くなる）で、風の周波数は 1/4096 Hz の整数倍に量子化する制約を GR46 へ渡す（Common/VertexAnimation.glsl の注釈と割り当て表に書く）。GBuffer の UBO の `frameParams` という名前は既に別の意味で使われている（GBufferPass.cpp:669。前のカメラの履歴・プリエクスポージャ・VT）ので、新しい欄は別の名前にする。10-02 の後に可視バッファ（既定は on）が入り、velocity は解決が三角形から作る（Common/VisibilityResolve.glsl:504 の `VisComputeVelocity`）ので、解決とソフトのラスタ（visbuffer_sw_raster.comp）も同じ式を通す必要がある（ロードマップの節には無い）。UNCERTAIN: 解決が三角形の頂点を読み直す所（VisibilityTriangleFetch.glsl）でインスタンスの値と時刻を引けるかは、読んで確かめる。危険地帯（GBuffer・可視バッファ・TAA の入力・RenderThread）なので評価者を通す。完了条件の GR30 の velocity とフレームの欠落の行、要件 `#### GR30`。
 
 ## G5-GR30-REACTIVE: TAA にリアクティブの入力（Scene.Reactive）を足し、velocity を持たない半透明・粒子の残像を消せるようにする
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA
 - gr: GR30
 - done-when: 名前付きの資源 `Scene.Reactive`（R8_UNORM）を `RenderGraphResourceNames.h` に足し、`TemporalAAPass` の Declare（TemporalAAPass.inl:358 付近）が有れば読み、無ければ 1x1 のゼロを結ぶ。`temporal_aa.frag` に binding 5 を足し、今の重み（temporal_aa.frag:198 の currentWeight）をリアクティブで 1 へ寄せ、分散のクリップの箱の半幅をリアクティブで広げる（係数は TAA の定数にして既定は仮）。書き手の口: ForwardPass の半透明の材質に「リアクティブを書く」の印（既定は書かない）を足し、印のある材質だけが色と同じブレンドの係数で被覆率を `Scene.Reactive` へ積む。拡張のパス（G5-GR25-STAGE-REGISTRY の Transparent 段）が同じ資源へ書ける手助け（RenderExtensionHelpers）を足す。GPU の `RenderingTemporalAAReactiveVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の SceneColor を撮る形で登録）が、画面を横切る半透明の板の A/B で、板が去った後にピークの 5% を超える画素が残るフレームの数が、リアクティブ有りで 2 以内・無しで 8 以上を確かめ、書き手が無いときの TAA の出力が導入前とビット一致であることも確かめる。golden 4 本が変わらない。
@@ -6028,7 +6039,7 @@
 - notes: 選定課題 G5B-S8（踏み倒しの規模）: 企画の提案『低い視点と高い草』（好感触・未採用）が採られない場合の縮小案（フィールドを作らず interactor 8 個を UBO で草へ直接渡す。ロードマップ 946 行）は採らず、フィールドの基盤を作る。理由: 作者の決定（縮小版は採らない・保留の提案もエンジンの機能として採る）と、同じ基盤を枯れ度（GR45）・雨の遮蔽・足跡（GR59 など）が共用するため。設計はロードマップ 926〜942 行。トロイダルのアドレスは使わず整数画素のシフトの ping-pong にする（消費側は uv = (worldXZ − origin)/extent で引くだけ）。2 枚の所有と状態の追跡は TemporalAAPass の履歴と同じ流儀で、フレームを飛ばしたときに今と前を取り違えない（ロードマップ 1304 行）。RenderingCoordinator の時間は実時間の積算なので、ポーズ中も草は戻る（GR02 まで。ロードマップ 1299 行）。SceneRevision に interactor を入れるのが最大の落とし穴（毎フレーム RTGI の履歴が捨てられる。ロードマップ 1298 行）なので契約の試験で固定する。頂点のステージから RGBA16F を線形で引けるかは装置で未確認（ロードマップ 1302 行）で、G5-GR44-TRAMPLE-CHECK で確かめる。試験を足す理由: shift の丸めの取り違え・入力の消し忘れ・ハッシュへの混入は、草がわずかにずれる・跡が残る・RTGI がちらつくだけで、原因を撮影から辿れない。危険地帯（RenderThread のデータ契約・GPU の資源）なので評価者を通す。
 
 ## G5-GR44-TRAMPLE: 草と株が世界空間のフィールドで押し分けられ、体の Component が毎フレーム押す形を集めて渡す
-- status: todo
+- status: done
 - after: G5-GR44-WORLD-FIELD, G5-GR43-GRASS-DRAW, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR44
 - needs-gr: GR13
@@ -6112,7 +6123,7 @@
 - notes: 設計はロードマップ 1069〜1079 行（GR113 の CPU 側の契約とカットシーン）。GR01（更新の段階）・GR12（姿勢の評価）・GR06（カメラ）は統合ブランチにあるが確かめ直し中なので needs-gr に書く。ロードマップの時点の読み（`Rendering3DTestRoutine.cpp` が GameMode の Tick の中で `BuildCameraProxy` を呼び、スプリングアームの更新より前で 1 フレーム遅れうる。ロードマップ 1057・1323 行）は、GR01 の段階の名前で今の順を読み直して決める。今の SpringArm の公開は `GetPivotObjectId`・`ResolvePivot`・`GetTargetOffset`（`Library/Core/Public/Component/SpringArmComponent.h` 47〜59 行）で、注視点を直接返す関数は無い。CameraProxy は `Library/Core/Public/Rendering/SceneProxy.h` 439 行。カメラ単位の値なので、カットシーン用の別カメラでも独立に切り替わる。タイムラインの `ViewClearance.Strength` のトラック（GR66）とショットの定義の「草の切り抜き: 既定/無効」（GR62）は G14 の範囲で、この項目は `SetMode` と Strength の口までを作る。切り抜きの半径の既定は主人公の体の幅＋余白程度の仮の値で、提案『低い視点と高い草』の「草で視界が遮られる」を壊さない大きさは作者の判断（ロードマップ 1326 行）。試験を足す理由: 切り抜きの式の端（B より奥・feather・Strength=0）と 1 フレームの遅れは、画面では主人公の縁がわずかに見える・隠れるだけで、撮影 1 枚では気づけない。危険地帯（Public API・RenderThread のデータ契約）なので評価者を通す。
 
 ## G5-GR113-GRASS-CLEARANCE: カメラと主人公の間と、カメラの直前の草・株を、生成の段で決定的に間引いて低くする
-- status: todo
+- status: done
 - after: G5-GR113-CLEARANCE-CPU, G5-GR43-GRASS-DRAW, G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
@@ -6238,7 +6249,7 @@
 - stop-when: プッシュする、workflow を起動する、byte の照合を外す・正規化する、`powershell.exe` の binary の hash の照合を外す、凍結基準の JSON を書き換える。
 
 ## G10-GR63-SKIN-CULL: スキンの頂点・索引を DeviceLocal に置き、主カメラの視錐台と CSM のカスケードごとにスキンの描画を省き、太陽の影の調整口を値の型にまとめる
-- status: todo
+- status: done
 - gr: GR63
 - done-when: (1) `SkinnedMeshGpuStore` の VB・IB（今は `Library/Core/Private/Rendering/SkinnedMeshGpuStore.cpp:399`・`:416` で `CPUAccessible = true`）を DeviceLocal（`CPUAccessible = false`、ステージング経由の転送）にし、最初の転送を読み込みの時点で済ませる。毎フレーム書くパレット（`:129`・`:170`）は今のまま。VB・IB のメモリの型を `SKINNED_MESH_MEMORY vb=<型> ib=<型>` の 1 行で 1 回だけログに出す。(2) 主カメラの視錐台: `AppendSkinnedDrawCommands`（`SkinnedDrawCommands.cpp:6`。カメラを見ない）が作ったスキンの描画を、`AnimatedBounds` × `WorldTransform` の境界でビューの View×Projection と照らす純関数を `Library/Core/Public/Rendering/SkinnedLodSelection.h`（実装は Private）に置く。可視バッファのラスタ（`VisibilityRasterPass`）と fallback の `GBufferPass` のスキンの描画は、視錐台の外の描画を記録しない。`SkinningComputePass` の変形は「主カメラに見える」か「影を落とす」描画だけにする（VSM は主カメラの錐台の外の影も描く。`VirtualShadowMapCasters.h` の冒頭の注釈）。可視バッファの経路で `SkinnedGBufferRecordedDraws`（`FramePacket.h:52`）が数えられていなければ、同じ統計に数える。 (3) CSM のカスケードごとの絞り込み: `ShadowMapPass.cpp:1296` のカスケードのループは今 MegaGeometry だけを `CascadedShadowCascadeMayContainCaster` で省いている（`:1387`）。同じ判定を、スキン（境界は `BuildSkinnedShadowCasterWorldBounds`、`DirectionalShadowLightMatrices.cpp:321`）と通常のメッシュの描画にも掛け、XY の範囲に入らないカスケードへ描画を出さない。(4) 太陽の影の調整口: 既にある `RenderWorld::SetSunShadowMaxDistance`（`RenderWorld.h:219` → `SceneProxy.h:584` の `SunShadowMaxDistance`）を、値の型 `SunShadowParameters`（MaxDistance・SplitLambda。Sanitize 付き。0 と負は ShadowMapPass の設定のまま）へ広げ、`RenderWorld::SetSunShadowParameters` から FramePacket の値で CSM の分割（`CascadedShadowLightMatrices.cpp:167` の `SplitLambda`）と VSM の範囲へ届ける。旧 `SetSunShadowMaxDistance` は新しい口へ転送して残す。既定値は変えない（80 m）。(5) 試験用の合成の高密度スキン `SkinnedGiantFixture`（`Test/Core/Rendering/RenderingValidation/`。管状のメッシュ・128 関節・滑らかな重みをコードで作る。既定は LOD0 で 100 万三角形、試験では三角形数を引数で減らせる。バイナリをリポジトリに置かない）を足す。 (6) CPU の `SkinnedLodSelectionTest`（`CameraViewConstantsTest` の束へ MEMBER。足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: 視錐台の外のプロキシは描画が 0、カスケードの XY 範囲の外のキャスターはそのカスケードの描画が 0 で範囲内なら残る、境界にまたがるものは残る（保守的）、`SunShadowParameters` の Sanitize（NaN・負・λ の範囲外）。(7) GPU の `RenderingSkinnedCullVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、可視バッファの on と `--visibility-buffer=off` の `RenderingSkinnedCullGBufferFallbackVulkanTest` の 2 本を登録）: 縮小した `SkinnedGiantFixture` をカメラの後ろに置くとスキンの記録の描画が 0、前に置くと絞り込みを切った場合とバックバッファの画素が一致（差 0）。既存の `RenderingVelocitySkinnedVulkanTest`・`RenderingVelocitySkinnedGBufferFallbackVulkanTest`・`ComputeSkinningVulkanTest`・`VisibilityResolveVulkanTest`・`VirtualShadowMapVulkanTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`VirtualShadowMapClipmapTest` と golden 4 本が通る。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest SkinnedSubmeshDrawContractTest CascadedShadowLightMatricesTest RenderingHdrSceneCaptureTest RenderingVelocityVulkanTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
@@ -6432,7 +6443,7 @@
 - notes: 設計はロードマップ 2054〜2068 行（GR09 の S2・S3）、完了条件は 2573〜2576 行、リスクは 2678〜2686 行。木は一様格子でなく AABB の木にする（地形のタイル・巨大なシ者の部位のような大きなプロキシが混ざっても崩れない。2060 行）。ただし地形の高さ場は G5-GR38-PHYSICS-HEIGHTFIELD のとおり SAP の外の別枠のままで、木にも入れない。毎ステップ動く Body の無いコライダー（スクリプトで動かす trigger など）は毎ステップの作り直しになるので、「2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す」を後で足せる形にしておく（この項目では入れない。2066 行）。単精度の座標で遠方の AABB の比較が丸まる件（2686 行）は、谷ひとつ（数 km）の範囲では起きない前提で、試験は原点から 4 km までの配置で行う。試験を足す理由: 反証する契約は「静的が変わらないステップでは木を作り直さず、作り直しても結果と順が同じ」こと。作り直しの漏れ（古い木で探す）は、動かした岩を素通りするなどまれな形でしか出ず、作り直し過ぎは重さとしてしか出ないので、撮影・ログでは気づけず黙って起きる。回数で判定するので Debug でも決定的。危険地帯（物理）なので評価者を通す。やらないこと: Entity の無いコライダーとチャンク単位の部分木（G12-GR09-DETACHED-COLLIDERS）、時間の計測（G12-GR09-SCALE-MEASURE）。
 
 ## G12-GR09-DETACHED-COLLIDERS: Entity を作らない静的なコライダーをチャンク単位で物理へ登録・解除できるようにする
-- status: todo
+- status: done
 - after: G12-GR09-STATIC-TREE
 - gr: GR09
 - done-when: `Library/Modules/Physics/Public/Physics/PhysicsTypes.h` に `StaticColliderDesc`（形 = 球・箱・カプセル、ワールドの変換、レイヤー・マスク、表面の番号（G5-GR38 の `SurfaceId`）、UserData。trigger は持たない）と `StaticColliderChunkKey`（呼び手が決める 64bit の鍵）を足し、`IPhysicsModule`（今 IPhysicsModule.h:14〜32 は StepPreFixed・StepFixed だけ）に `RegisterStaticColliderChunk(key, Span<const StaticColliderDesc>)` と `UnregisterStaticColliderChunk(key)` を足す（GameThread だけ。固定ステップの最中の呼び出しは次のステップの頭まで遅らせる）。コライダーのスロットに `bDetached` を持たせて今と同じ世代つきのハンドルの空間に載せ、Component と Owner を持たない。`ReconcileActiveStates`・`BuildBroadphase`・`DispatchEvents`・`FindBodyHandle` など `slot.Component` / `slot.Owner` を読む所すべてに detached の分岐を足す（detached は常に有効・静的・イベントの通知先なし）。静的の木はチャンクごとの部分木＋その上の木の 2 段にし、チャンクの登録・解除で他のチャンクの部分木を作り直さない。問い合わせ（Raycast・Overlap・掃引・`CharacterMover` の `ExecuteQueryOverProxies`）と接触（動く球・カプセルを押し戻す）は detached にも当たり、当たりは Entity が無効で UserData と表面の番号を持つ。新設の `PhysicsDetachedColliderTest`（`PhysicsDynamicsTest` の束へ MEMBER）が通る: 5000 個を 1 回で登録しても World の Entity の数が変わらない。detached の箱に落とした動く球が止まり、Raycast が当たる。チャンクを解除するとプロキシと木の葉が減り、古いハンドルが世代で無効になり、問い合わせに当たらない。チャンク A の登録・解除でチャンク B の部分木の作り直しが 0 回（統計）。同じ鍵の二重登録・未知の鍵の解除・NaN の変換・trigger の指定を拒否する。G12-GR09-STATIC-TREE の verify の既存の試験が全部通る。
@@ -6540,7 +6551,7 @@
 - notes: 設計はロードマップ 2147〜2169 行（GR40 の構成・1〜4）、完了条件は 2595〜2596 行、リスクは 2707〜2716 行。今のコードで確かめた事実: `Library/Core/Public` に Streaming・セル・チャンクの語は無い。範囲の出し入れの予算（EcsWorld の仕事の列。`Ecs/EcsMassWork.h`、SCN-ECS-MASS-STREAM）と散布のチャンクの常駐（G5-GR90-SCATTER-RUNTIME の ScatterSystem）、ジオメトリのページの常駐（MegaGeometry）はそれぞれ自分の単位を持つ。この項目のセルはそれらを束ねる上の単位で、payload の口から下の仕組みを呼ぶだけにし、下の仕組みの予算を作り直さない。選定課題 G12A-S6（ストリーミングの範囲）: ロードマップは「全域を常駐できる規模なら距離のストリーミング（S2）は規模が決まってから」とする（2169・2171 行）が、作者の決定（必要な機能は全部やる）に従い、距離のストリーミング・予算・先読み・スナップロードまで全部作る。全域の常駐は Ra を地図の大きさにした設定の 1 つとして扱う。セルの大きさ（既定 256 m）と半径・k・予算の既定値は仮の値で、マニフェストと設定で替えられる（見どころの間隔は企画で未定。ロードマップ 2151 行）。GPU の資源の作成は既存の非同期の読み込み（`TextureAsyncLoadQueue`・`ModelAsyncLoadQueue`）とアセットの GPU のフラッシュの窓を使い、この項目では新しく作らない。試験を足す理由: 反証する契約は「状態の遷移・取り消し・繰り越し・追い出しが決まった順で起き、予算を超えない」こと。破れると遠くのセルが残り続ける・近くのセルが出ない・1 フレームに詰め込んでヒッチになるとして、長く歩いたときにだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード・Public API）なので評価者を通す。やらないこと: payload の中身（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）、GameMode の後始末（G12-GR40-GAMEMODE-ASYNC）、スナップロード（G12-GR40-SNAP-PREFETCH）。
 
 ## G12-GR40-GAMEMODE-ASYNC: GameMode を抜けるときに、走っている非同期の読み込みとセルのワーカーを止めて待ち、資源を一度だけ返すようにする
-- status: todo
+- status: done
 - after: G12-GR40-CELL-CORE
 - gr: GR40
 - done-when: `GameModeScope`（GameModeScope.h:40 の TODO）に `TrackAsync(IGameModeAsyncWork&)`（取り消しと結合の口を持つ非同期の仕事。非所有）を足し、`Cleanup`（GameModeScope.cpp:106）の先頭で、追跡した仕事と `StreamingSystem`（そのスコープが開いたセルの組）を止めて結合し（`TextureAsyncLoadQueue::CloseCancelAllAndWait`（TextureAsyncLoadQueue.h:94）と同じ形）、止まったあとに今の順（GameModeScope.h:31〜36 の 1〜5）で Entity と資源を返し、最後に、止めた仕事が返しそびれた資源（準備済みでコミットしなかったセルの CPU のデータ・コミット途中の資源）を返す。GPU の資源の破棄は RHI の破棄の列（提出の完了まで遅らせる。SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY）に任せ、ここでは待たない。`StreamingSystem` にスコープの単位で全セルを止める口（`StopAndJoin(scopeId)`）を足す。新設の `GameModeScopeAsyncTest`（`GameModeStateMachineTest` の束へ MEMBER）が通る: Leave の最中にワーカーが動いていても Cleanup がそれを止めて結合し、結合の後に完了の通知が来ない。準備済みでコミットしていないセルのデータが 1 回だけ返る。二重の Cleanup が安全（2 回目は何もしない）。追跡した Entity・メッシュ・材質・テクスチャがちょうど 1 回ずつ返る。`GameModeStateMachineTest`・`GameModeRegistryTest`・`SubRoutineTest` と G12-GR40-CELL-CORE の試験が通る。

@@ -117,7 +117,8 @@ namespace NorvesLib::Core::Rendering
         m_DescriptorSetLayout.reset();
         m_Device = nullptr;
         m_HistoryWriteIndex = 0u;
-        m_FieldState = {};
+        m_HistoryStates[0] = {};
+        m_HistoryStates[1] = {};
         m_Origin = {};
         m_LastUpdateTime = 0.0;
         m_bPrepared = false;
@@ -131,7 +132,7 @@ namespace NorvesLib::Core::Rendering
 
     WorldFieldState WorldFieldPass::GetFieldState() const
     {
-        WorldFieldState state = m_FieldState;
+        WorldFieldState state = m_HistoryStates[1u - m_HistoryWriteIndex];
         state.bValid = state.bValid && m_bEnabled && m_Settings.bEnabled;
         return state;
     }
@@ -162,7 +163,8 @@ namespace NorvesLib::Core::Rendering
         m_HistoryTextures[0] = first;
         m_HistoryTextures[1] = second;
         m_HistoryWriteIndex = 0u;
-        m_FieldState = {};
+        m_HistoryStates[0] = {};
+        m_HistoryStates[1] = {};
         m_Origin = {};
         return true;
     }
@@ -176,7 +178,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_bEnabled || !m_Settings.bEnabled || !m_UpdatePipeline || !context.CommandList ||
             !context.FrameResources || !camera || !std::isfinite(context.TotalTime) ||
             (context.MainCamera && camera->CameraId != context.MainCamera->CameraId) ||
-            (m_FieldState.bValid && context.TotalTime == m_LastUpdateTime))
+            (m_HistoryStates[1u - m_HistoryWriteIndex].bValid && context.TotalTime == m_LastUpdateTime))
         {
             return false;
         }
@@ -207,7 +209,7 @@ namespace NorvesLib::Core::Rendering
 
         // GR02 の sim 時間が来たら差し替える。
         const double dt = context.TotalTime - m_LastUpdateTime;
-        const bool bReset = !m_FieldState.bValid || dt < 0.0 || m_LastRange != m_Settings.Range ||
+        const bool bReset = !m_HistoryStates[1u - m_HistoryWriteIndex].bValid || dt < 0.0 || m_LastRange != m_Settings.Range ||
                             m_PreparedScroll.bReset;
         WorldFieldUpdateConstants constants;
         // reset では shift を使わない。巨大な移動の int64_t を int32_t へ狭めない。
@@ -264,15 +266,55 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    WorldFieldFrameState WorldFieldPass::GetFrameState(uint32_t& currentIndex, uint32_t& previousIndex) const
+    {
+        currentIndex = m_bPrepared ? m_HistoryWriteIndex : 1u - m_HistoryWriteIndex;
+        previousIndex = 1u - currentIndex;
+        WorldFieldFrameState state;
+        if (!m_bEnabled || !m_Settings.bEnabled)
+        {
+            return state;
+        }
+        state.Current = m_HistoryStates[currentIndex];
+        state.Previous = m_HistoryStates[previousIndex];
+        if (m_bPrepared)
+        {
+            state.Current.OriginXZ[0] = m_PreparedScroll.OriginXMeters;
+            state.Current.OriginXZ[1] = m_PreparedScroll.OriginZMeters;
+            state.Current.ExtentMeters = GetWorldFieldExtentMeters(m_PreparedRange);
+            state.Current.TexelSizeMeters = m_PreparedConstants.TexelSize;
+            state.Current.bValid = true;
+            if (m_ResetSet)
+            {
+                // この原点でゼロに消す前の画像にも、同じ有効な座標を付ける。
+                state.Previous = state.Current;
+            }
+        }
+        if (!state.Previous.bValid)
+        {
+            // 原点不明の画像は公開せず、画像そのものも「今」を使う。
+            previousIndex = currentIndex;
+            state.Previous = state.Current;
+        }
+        return state;
+    }
+
     void WorldFieldPass::Setup(ViewRenderContext& context)
     {
         PrepareUpdate(context);
+        uint32_t currentIndex;
+        uint32_t previousIndex;
+        context.PhysicalLighting.PublishWorldField(GetFrameState(currentIndex, previousIndex));
     }
 
     void WorldFieldPass::Declare(RenderGraphBuilder& builder)
     {
         const ViewRenderContext* context = builder.GetContext();
         m_bPrepared = false;
+        if (context)
+        {
+            context->PhysicalLighting.PublishWorldField({});
+        }
         if (!m_bEnabled || !m_Settings.bEnabled || !context || !context->CommandList)
         {
             return;
@@ -286,18 +328,22 @@ namespace NorvesLib::Core::Rendering
             m_bPrepared = false;
             NORVES_LOG_WARNING("WorldFieldPass", "世界フィールドの更新資源を借りられないため、前の状態を使います");
         }
-        if (!m_bPrepared && !m_FieldState.bValid)
+        if (!m_bPrepared && !m_HistoryStates[1u - m_HistoryWriteIndex].bValid)
         {
             return;
         }
-        const uint32_t currentIndex = m_bPrepared ? m_HistoryWriteIndex : 1u - m_HistoryWriteIndex;
-        const uint32_t previousIndex = 1u - currentIndex;
+        uint32_t currentIndex;
+        uint32_t previousIndex;
+        const WorldFieldFrameState state = GetFrameState(currentIndex, previousIndex);
         const RGResourceHandle current = builder.ImportTexture(m_HistoryTextures[currentIndex],
             GetFieldTextureState(*context, m_HistoryTextures[currentIndex]), "WorldField.Current");
-        const RGResourceHandle previous = builder.ImportTexture(m_HistoryTextures[previousIndex],
-            GetFieldTextureState(*context, m_HistoryTextures[previousIndex]), "WorldField.Previous");
+        const RGResourceHandle previous = previousIndex == currentIndex ? current :
+            builder.ImportTexture(m_HistoryTextures[previousIndex],
+                GetFieldTextureState(*context, m_HistoryTextures[previousIndex]), "WorldField.Previous");
         builder.PublishTexture(RenderGraphResourceNames::WorldFieldCurrent, current);
         builder.PublishTexture(RenderGraphResourceNames::WorldFieldPrevious, previous);
+        // Declare は SceneView の登録順に呼ばれるので、後続の消費側が画像と同じ組の座標を読める。
+        context->PhysicalLighting.PublishWorldField(state);
         if (m_bPrepared)
         {
             builder.Write(current, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
@@ -346,16 +392,19 @@ namespace NorvesLib::Core::Rendering
         commandList->TextureBarrier(m_HistoryTextures[m_HistoryWriteIndex],
             RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
 
-        // 宣言だけのフレームは確定しない。記録した画像を「今」にしてから次の書き込み側へ進める。
+        // 宣言だけのフレームは確定しない。実際に記録した画像と座標を組にして保存する。
+        uint32_t currentIndex;
+        uint32_t previousIndex;
+        const WorldFieldFrameState state = GetFrameState(currentIndex, previousIndex);
+        m_HistoryStates[currentIndex] = state.Current;
+        if (m_ResetSet)
+        {
+            m_HistoryStates[previousIndex] = state.Previous;
+        }
         m_HistoryWriteIndex = 1u - m_HistoryWriteIndex;
         m_Origin = m_PreparedScroll.Origin;
         m_LastRange = m_PreparedRange;
         m_LastUpdateTime = m_PreparedTime;
-        m_FieldState.OriginXZ[0] = m_PreparedScroll.OriginXMeters;
-        m_FieldState.OriginXZ[1] = m_PreparedScroll.OriginZMeters;
-        m_FieldState.ExtentMeters = GetWorldFieldExtentMeters(m_PreparedRange);
-        m_FieldState.TexelSizeMeters = m_PreparedConstants.TexelSize;
-        m_FieldState.bValid = true;
         m_bPrepared = false;
     }
 

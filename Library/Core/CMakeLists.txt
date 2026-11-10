@@ -115,6 +115,8 @@ set(PRIVATE_SOURCES
     Private/Animation/RigSplitBindingTestAccess.h
     Private/Animation/RigSplitBinding.cpp
     Private/Animation/ClipBankBindingTestAccess.h
+    Private/Asset/ClipQuantization.h
+    Private/Asset/ClipQuantization.cpp
     Private/Asset/CookedClipBankV1.cpp
     Private/Asset/CookedClipBankV1.h
     Private/Asset/RigSplitWire.h
@@ -274,7 +276,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
+    Private/Rendering/GrassBladeMesh.cpp
     Private/Rendering/WorldFieldPass.cpp
     Private/Rendering/WorldFieldTypes.cpp
     Private/Rendering/GrassGenerateReference.cpp
@@ -306,6 +310,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkinnedMeshGpuStore.cpp
     Private/Rendering/SkinnedMeshTypes.cpp
     Private/Rendering/SkinnedDrawCommands.cpp
+    Private/Rendering/SkinnedLodSelection.cpp
+    Private/Rendering/SunShadowParameters.cpp
+    Public/Rendering/SkinnedLodSelection.h
+    Public/Rendering/SunShadowParameters.h
     Private/Rendering/SkinnedDrawCommands.h
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
@@ -454,6 +462,7 @@ set(PRIVATE_SOURCES
     Private/Resource/ModelStaging.cpp
     # Component
     Private/Component/Component.cpp
+    Private/Component/WorldFieldInteractorComponent.cpp
     Private/Component/BoardComponent.cpp
     Private/Component/SpringArmComponent.cpp
     Private/Component/ViewClearanceComponent.cpp
@@ -877,6 +886,7 @@ set(PUBLIC_HEADERS
     Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h
+    Public/Component/WorldFieldInteractorComponent.h
     Public/Component/TickGroup.h
     Public/Component/BoardComponent.h
     Public/Component/TextComponent.h

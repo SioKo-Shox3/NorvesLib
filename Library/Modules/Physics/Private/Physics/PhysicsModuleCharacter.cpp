@@ -240,7 +240,7 @@ namespace NorvesLib::Modules::Physics
                     const auto& slot = m_ColliderSlots[handle.Index];
                     Math::Vector3 anchor;
                     float yaw;
-                    if (slot.bOccupied && slot.Generation == handle.Generation && IsColliderLifecycleActive(slot) &&
+                    if (!slot.bDetached && slot.bOccupied && slot.Generation == handle.Generation && IsColliderLifecycleActive(slot) &&
                         !slot.Component->m_bTrigger &&
                         Core::Scene::CanPhysicsLayersInteract(self->Layer, self->Mask, slot.Component->m_CollisionLayer,
                                                               slot.Component->m_CollisionMask) &&
@@ -404,7 +404,7 @@ namespace NorvesLib::Modules::Physics
             if (moved.bGrounded && moved.GroundCollider.Index < m_ColliderSlots.size())
             {
                 const auto& slot = m_ColliderSlots[moved.GroundCollider.Index];
-                if (slot.bOccupied && slot.Generation == moved.GroundCollider.Generation &&
+                if (!slot.bDetached && slot.bOccupied && slot.Generation == moved.GroundCollider.Generation &&
                     IsColliderLifecycleActive(slot))
                 {
                     c->m_bAnchor =

@@ -192,9 +192,10 @@ namespace
                 return ReadNextValue(argc, argv, index, value, error);
             };
 
+            const bool bClipFlag = argument == "--clip-optimize" || argument == "--clip-quantize";
             bool clipConsumed = false;
             const char* clipValue = equals != std::string::npos ? value.c_str() :
-                (argument == "--clip-optimize" || index + 1 >= argc ? nullptr : argv[index + 1]);
+                (bClipFlag || index + 1 >= argc ? nullptr : argv[index + 1]);
             if (!NorvesLib::Tools::AssetCook::TryParseClipOptimizeArgument(
                     argument, clipValue, outOptions.ClipOptimize, clipConsumed, error))
             {
@@ -202,7 +203,10 @@ namespace
             }
             if (clipConsumed)
             {
-                if (argument != "--clip-optimize" && equals == std::string::npos) ++index;
+                if (!bClipFlag && equals == std::string::npos)
+                {
+                    ++index;
+                }
                 continue;
             }
 
@@ -420,6 +424,12 @@ namespace
                 error = "unknown argument: " + argument;
                 return false;
             }
+        }
+
+        if (outOptions.ClipOptimize.bQuantize)
+        {
+            error = reinterpret_cast<const char*>(u8"この cook では --clip-quantize を指定できません");
+            return false;
         }
 
         NorvesLib::Tools::AssetCook::ErrorString usageError;
@@ -651,7 +661,7 @@ namespace
             << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"
             << "Bake budgets: [--cubic-max-depth 0..24] [--cubic-max-channel-samples 2..1048576] [--cubic-max-asset-samples 2..4194304]\n"
             << "Morph import: [--morph reject|drop]\n"
-            << reinterpret_cast<const char*>(u8"クリップ最適化: [--clip-optimize] [--clip-max-vertex-error-m <m>] [--clip-max-joint-error-m <m>] ")
+            << reinterpret_cast<const char*>(u8"クリップ設定: [--clip-optimize] [--clip-quantize] [--clip-max-vertex-error-m <m>] [--clip-max-joint-error-m <m>] ")
             << "[--clip-max-rotation-error-deg <deg>] [--clip-report <path>]\n";
     }
 

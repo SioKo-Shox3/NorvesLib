@@ -20,6 +20,17 @@ namespace NorvesLib::Core::Rendering
     /** @brief 履歴をクリップする箱の半幅（近傍の色の標準偏差の何倍か、YCoCg）。 */
     inline constexpr float TemporalAAVarianceClipGamma = 1.0f;
 
+    /** @brief 今のリアクティブ r でクリップの箱の半幅を (1 + k × r) 倍にする k。既定値は仮。 */
+    inline constexpr float TemporalAAReactiveClipWiden = 1.0f;
+
+    /**
+     * @brief 専用の R8 の履歴に持ち越すリアクティブへ毎フレーム掛ける減衰。既定値は仮。
+     *
+     * 板が去った後の画素では今のリアクティブは 0 なので、前のフレームのリアクティブを
+     * 持ち越さないと残像が消えない。
+     */
+    inline constexpr float TemporalAAReactiveHistoryDecay = 0.9f;
+
     /**
      * @brief 書き戻すときのシャープ化の強さ（上下左右4画素の平均との差を足す割合）。
      *

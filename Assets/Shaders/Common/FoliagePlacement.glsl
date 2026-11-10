@@ -4,6 +4,7 @@
 #define NORVES_FOLIAGE_PLACEMENT_GLSL
 
 #include "Common/Wind.glsl"
+#include "WorldField/WorldFieldSample.glsl"
 
 const float kFoliageTwoPi = 6.2831853;
 
@@ -74,6 +75,27 @@ vec3 ApplyFoliageWind(vec3 position, vec2 offset, float heightAboveRoot)
 {
     float drop = 0.5 * dot(offset, offset) / max(heightAboveRoot, 0.02);
     return position + vec3(offset.x, -min(drop, heightAboveRoot * 0.5), offset.y);
+}
+
+// 風で動かした後の位置に、根元で引いたフィールドのずれを加える。
+// 前の画像を渡すときは bPrevious を true にし、その画像に対応する原点と範囲を使う。
+vec3 ApplyFoliageWorldField(vec3 position, vec3 root, float plantHeight, float heightAboveRoot,
+                            sampler2D field, WorldFieldSampleConstants fieldConstants, bool bPrevious)
+{
+    if (fieldConstants.bEnabled == 0u || plantHeight <= 0.0)
+    {
+        return position;
+    }
+    vec2 originXZ = bPrevious ? fieldConstants.PreviousOriginXZ : fieldConstants.CurrentOriginXZ;
+    float invExtent = bPrevious ? fieldConstants.PreviousInvExtent : fieldConstants.CurrentInvExtent;
+    vec4 value = WorldFieldSampleAt(field, originXZ, invExtent, root.xz);
+    if (all(equal(value.rgb, vec3(0.0))))
+    {
+        return position;
+    }
+    float t = clamp(heightAboveRoot / plantHeight, 0.0, 1.0);
+    return position + WorldFieldDisplacement(value, plantHeight, t,
+                                              fieldConstants.BendScale, fieldConstants.FlattenScale);
 }
 
 // 株のローカルの値を Y 軸まわりに yaw の向きへ回す（c = cos(yaw)、s = sin(yaw)）

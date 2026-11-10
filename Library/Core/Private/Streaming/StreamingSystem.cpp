@@ -27,8 +27,9 @@ namespace NorvesLib::Core::Streaming
         }
     } // namespace
 
-    StreamingSystem::CellEntry::CellEntry(const StreamingCellDesc* pDesc, StreamingRetryPolicy retry)
-        : Cell(pDesc, retry)
+    StreamingSystem::CellEntry::CellEntry(const StreamingCellDesc* pDesc, StreamingRetryPolicy retry,
+                                          StreamingScopeId scopeId)
+        : Cell(pDesc, retry), ScopeId(scopeId)
     {
     }
 
@@ -86,7 +87,8 @@ namespace NorvesLib::Core::Streaming
         return true;
     }
 
-    bool StreamingSystem::LoadManifestFromText(const Container::String& text, CellManifestError* pOutError)
+    bool StreamingSystem::LoadManifestFromText(const Container::String& text, CellManifestError* pOutError,
+                                               StreamingScopeId scopeId)
     {
         Container::VariableArray<const char*> kinds;
         for (const auto& handler : m_Handlers)
@@ -104,7 +106,7 @@ namespace NorvesLib::Core::Streaming
         m_Cells.reserve(m_Manifest.GetCells().size());
         for (const auto& desc : m_Manifest.GetCells())
         {
-            m_Cells.emplace_back(&desc, m_Settings.Retry);
+            m_Cells.emplace_back(&desc, m_Settings.Retry, scopeId);
             auto& entry = m_Cells.back();
             for (const auto& payload : desc.Payloads)
             {
@@ -168,11 +170,12 @@ namespace NorvesLib::Core::Streaming
         }
     }
 
-    void StreamingSystem::CollectPrepares(double nowMs)
+    void StreamingSystem::CollectPrepares(double nowMs, const StreamingScopeId* pScopeId)
     {
         for (auto& entry : m_Cells)
         {
-            if (entry.Cell.GetState() == EStreamingCellState::Preparing &&
+            if ((pScopeId == nullptr || entry.ScopeId == *pScopeId) &&
+                entry.Cell.GetState() == EStreamingCellState::Preparing &&
                 Container::IsValid(entry.Completion) &&
                 entry.Completion->Done.Load(std::memory_order_acquire))
             {
@@ -184,21 +187,23 @@ namespace NorvesLib::Core::Streaming
         }
     }
 
-    void StreamingSystem::CancelAndWaitPrepares()
+    void StreamingSystem::CancelAndWaitPrepares(const StreamingScopeId* pScopeId)
     {
         bool bHasPrepares = false;
         for (auto& entry : m_Cells)
         {
-            if (entry.Cell.GetState() == EStreamingCellState::Preparing)
+            if ((pScopeId == nullptr || entry.ScopeId == *pScopeId) &&
+                entry.Cell.GetState() == EStreamingCellState::Preparing)
             {
                 bHasPrepares = true;
                 RequestUnload(entry);
             }
         }
-        // 全セルへ取り消しを通知してから、完了印を待つ。
+        // 対象の全セルへ取り消しを通知してから、完了印を待つ。
         for (const auto& entry : m_Cells)
         {
-            if (Container::IsValid(entry.Completion))
+            if ((pScopeId == nullptr || entry.ScopeId == *pScopeId) &&
+                Container::IsValid(entry.Completion))
             {
                 while (!entry.Completion->Done.Load(std::memory_order_acquire))
                 {
@@ -208,7 +213,7 @@ namespace NorvesLib::Core::Streaming
         }
         if (bHasPrepares)
         {
-            CollectPrepares(m_Clock->NowMs());
+            CollectPrepares(m_Clock->NowMs(), pScopeId);
         }
     }
 
@@ -570,6 +575,37 @@ namespace NorvesLib::Core::Streaming
         const auto bytes = CountResidentBytes();
         m_LastFrameStats.ResidentCpuBytes = bytes.Cpu;
         m_LastFrameStats.ResidentGpuBytes = bytes.Gpu;
+    }
+
+    void StreamingSystem::StopAndJoin(StreamingScopeId scopeId)
+    {
+        const auto belongsToScope = [scopeId](const CellEntry& entry)
+        {
+            return entry.ScopeId == scopeId;
+        };
+        if (!m_bHasManifest || std::find_if(m_Cells.begin(), m_Cells.end(), belongsToScope) == m_Cells.end())
+        {
+            return;
+        }
+
+        CancelAndWaitPrepares(&scopeId);
+        for (auto& entry : m_Cells)
+        {
+            if (belongsToScope(entry))
+            {
+                RequestUnload(entry);
+                while (entry.Cell.GetState() == EStreamingCellState::Unloading)
+                {
+                    UnloadOneStep(entry, m_Clock->NowMs());
+                }
+            }
+        }
+        m_Cells.erase(std::remove_if(m_Cells.begin(), m_Cells.end(), belongsToScope), m_Cells.end());
+        if (m_Cells.empty())
+        {
+            m_Manifest = CellManifest{};
+            m_bHasManifest = false;
+        }
     }
 
     void StreamingSystem::Shutdown()

@@ -112,8 +112,8 @@ void main()
     const uint receiverFlags = mvp.vtFeedbackParams.w > 0.5 ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u;
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
-    // PBR マテリアルパラメータとシェーディングパラメータ P0 を書く。
-    outMaterial = GBufferEncodeMaterial(textureSamples.Material, params.x);
+    // シェーディングモデルに応じた材質値と P0 を書く。
+    outMaterial = GBufferEncodeMaterialForShadingModel(textureSamples.Material, params.x, id);
 
     // 発光のプリエクスポージャ後の値とシェーディングパラメータ P1 を書く。
     // 発光は Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛ける（Lighting は露出を掛けずに足す）。

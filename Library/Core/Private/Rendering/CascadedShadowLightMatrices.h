@@ -65,6 +65,25 @@ namespace NorvesLib::Core::Rendering
         CascadedShadowCascade Cascades[CSM_CASCADE_COUNT];
     };
 
+    /** @brief 描画1つのワールド境界球。bHasBoundsがfalseなら境界が不明なので、すべての有効なカスケードへ描く。 */
+    struct CascadedShadowDrawBounds
+    {
+        BoundingSphere Bounds;
+        bool bHasBounds = false;
+    };
+
+    /**
+     * @brief カスケードへ描く描画の添え字を入力順で選ぶ。
+     *
+     * 出力を空にしてから、境界が不明な描画と影の地図のXYにかかる描画を残す。
+     * 無効なカスケードやdrawBoundsがnullptrの場合は何も選ばない。
+     */
+    void SelectCascadedShadowCasterDraws(
+        const CascadedShadowCascade& cascade,
+        const CascadedShadowDrawBounds* drawBounds,
+        uint32_t drawCount,
+        Container::VariableArray<uint32_t>& outDrawIndices);
+
     CascadedShadowMatrixSettings MakeDefaultCascadedShadowMatrixSettings();
 
     CascadedShadowMatrixResult BuildCascadedShadowLightMatrices(

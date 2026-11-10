@@ -74,6 +74,19 @@ Deferred pipeline の production 経路は pass pointer や `SharedResourceRegis
 `SceneView::SetupDeferredPipeline()` では production pass pointer 接続を行わない。
 `SetGBufferPass()` / `SetInputPass()` などの setter は legacy/fallback bridge 用の互換 API として残す。
 
+### スキンの転送と視錐台の絞り込み
+
+`SkinnedMeshGpuStore` の頂点バッファ（VB）とインデックスバッファ（IB）は `CPUAccessible = false` の DeviceLocal に置き、ステージングを経由して転送する。`FramePacket` のフレームリースに初めて載った資産は、RenderThread のフレームの始めに、パスの記録より前に転送する。ボーンパレットは毎フレーム書き込むため CPU から見えるメモリに置く。ログ有効時は、最初の転送で `SKINNED_MESH_MEMORY vb=<型> ib=<型>` を一度だけ出す。
+
+`AppendSkinnedDrawCommands` は姿勢に応じた局所の `AnimatedBounds` を `DrawCommand::Skinned.LocalBounds` に持たせる。`SkinnedLodSelection.h` の純関数 `MakeSkinnedViewFrustum` と `IsSkinnedDrawInView` は、主カメラの View×Projection から作った視錐台とワールド変換後の境界を照合する。判定は保守的で、面をまたぐ描画、境界がない描画、視錐台が無効な場合は残す。`RenderWorld::SetSkinnedViewCullingEnabled` は検証用の切り替えで、`SceneProxy::bSkinnedViewCulling` に写される。既定は on。
+
+可視バッファの経路では、`SkinningComputePass` は主カメラに見える描画と、影の出力を読むときは視錐台外でも影を落とす描画を変形する。VSM は主カメラの視錐台外の影も描くためである。`VisibilityRasterPass` は主カメラに見えないインスタンスを ID のラスタに記録しない。予備の `GBufferPass` も視錐台外のスキンを記録しない。両経路で記録したスキンの描画は `SkinnedGBufferRecordedDraws` に数える。
+
+### 太陽の影とカスケードの絞り込み
+
+`ShadowMapPass` は CSM の各カスケードで、MegaGeometry に加え、スキンと通常のメッシュの影を落とす描画を絞り込む。スキンの境界は `BuildSkinnedShadowCasterWorldBounds`、通常のメッシュは `MeshProxy` の境界球から求める。インスタンシングでは、同じメッシュの影を落とす proxy の境界球を包む球を使う。`SelectCascadedShadowCasterDraws` は `CascadedShadowCascadeMayContainCaster` を使い、影の地図の XY にかからないカスケードには描画を出さない。境界を求められない描画はすべての有効なカスケードに残す。ログ有効時は描画数か候補数が変わったときに `CSM_CASTER_CULL c0=<描いた>/<候補> …` を出す。
+
+`RenderWorld::SetSunShadowParameters` は `SunShadowParameters` の `MaxDistance` と `SplitLambda` を設定し、`SceneProxy::SunShadow` と `FramePacket` を経由して `ShadowMapPass` に渡す。`MaxDistance` は CSM と VSM の影の範囲、`SplitLambda` は CSM の分割に効く。`SanitizeSunShadowParameters` は非有限値と 0 以下を「設定のまま」を表す 0 にし、`SplitLambda` の上限を 1 にする。既定は 80 m と λ 0.5。旧 `SetSunShadowMaxDistance` も残り、新しい設定口へ転送する。
 ## 材質ごとの GBuffer プログラム
 
 GameThread は `RenderWorld::RegisterGBufferProgram(GBufferProgramDesc)` に名前とシェーダーのファイル名を渡す。初期化の窓では即時に登録され、窓が閉じた後の登録・解除は保留されて RenderThread の `SceneView::Render` 冒頭で反映される。頂点シェーダーの名前が空なら標準を使う。材質は `MaterialCreateData::Program` で名前を指定し、空なら標準を使う。未登録、シェーダーを読めない、またはパイプラインを作れない場合は標準へ落ちる。
@@ -190,6 +203,13 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 
 - `ViewRenderContext::DeltaTime` は通常 RenderThread のフレーム時間であり、ゲームの dt ではない。ゲーム時間には `ExtensionFrame` を使う。決定的撮影時は `DeltaTime` もパケットの固定刻みに置き換わる。
 - `PreviousRenderedTotalTime` は `RenderedObjectHistory` が渡す値で、描画がゲームのフレームを飛ばしても、物体の前の位置を最後に描いたフレームへ付け替える処理と同じ基準になる。
+
+### TAA と半透明
+
+`Scene.Reactive` は TAA 前の半透明による被覆率を R8_UNORM で表す。ForwardPass は材質の `bWritesReactive` の印のある半透明の描画だけを、主の描画の後に Scene.Reactive へ同じブレンドで描き直し、Transparent 段の拡張パスは `ReactiveTargetBinder` で書ける。
+TAA はリアクティブに応じて現在の色の割合を 1 へ寄せ、前フレームのリアクティブを専用の R8 履歴で減衰させながら持ち越す。色の履歴を収める箱の半幅は現在のリアクティブで広げる。
+雨や粒子は `PostTemporalAA` 段で TAA の後に合成することを推奨する。この経路ではリアクティブも velocity も要らない。
+リアクティブは湯気など TAA の前に描く半透明に使う。
 
 ### 拡張パスの補助
 

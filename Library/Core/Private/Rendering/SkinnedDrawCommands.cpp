@@ -68,6 +68,8 @@ namespace NorvesLib::Core::Rendering
                 command.Draw.bCastShadow = proxy.bCastShadow && !submesh.bNoShadow;
                 command.Skinned.FrameLeaseIndex = frameIndex;
                 command.Skinned.BonePalette = proxy.BonePalette;
+                command.Skinned.LocalBounds = proxy.AnimatedBounds;
+                command.Skinned.bHasLocalBounds = proxy.bHasAnimatedBounds;
                 packet->DrawCommands.push_back(std::move(command));
                 ++range.Count;
             }

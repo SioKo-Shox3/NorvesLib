@@ -15,7 +15,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveColor;
     vec4 pomParams; // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
-    vec4 sceneColorParams;
+    vec4 sceneColorParams; // x=プリエクスポージャ、y=被覆率を出す印
     mat4 lightView[4];
     mat4 lightProjection[4];
     vec4 shadowSplitDistances[2];
@@ -367,5 +367,10 @@ void main()
     }
 
     vec3 emissive = mvp.emissiveColor.rgb * mvp.emissiveColor.a;
+    if (mvp.sceneColorParams.y > 0.5)
+    {
+        outColor = vec4(1.0, 0.0, 0.0, alpha);
+        return;
+    }
     outColor = vec4((direct + ambient + emissive) * mvp.sceneColorParams.x, alpha);
 }

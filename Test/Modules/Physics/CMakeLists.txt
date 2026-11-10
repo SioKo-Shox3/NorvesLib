@@ -48,12 +48,14 @@ add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsDynamicsTest --test=PhysicsMo
 
 add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseQueryTest)
 add_test(NAME PhysicsBroadphaseScaleTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseScaleTest)
+add_test(NAME PhysicsDetachedColliderTest COMMAND PhysicsDynamicsTest --test=PhysicsDetachedColliderTest)
 add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyQueryTest)
 
 
 norves_add_test_bundle(PhysicsDynamicsTest
     FOLDER "Test/Modules/Physics"
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
+    MEMBER PhysicsDetachedColliderTest PhysicsDetachedColliderTest.cpp
     MEMBER CharacterDriveOptionsTest CharacterDriveOptionsTest.cpp
     MEMBER DogMovementSmokeGeometryTest DogMovementSmokeGeometryTest.cpp
     MEMBER PhysicsCharacterMoveTest PhysicsCharacterMoveTest.cpp

@@ -48,6 +48,7 @@ namespace NorvesLib::Core::Rendering
             data.Program = createInfo.Program;
             data.ProgramId = MakeGBufferProgramId(data.Program.c_str());
             data.Blend = createInfo.Blend;
+            data.bWritesReactive = createInfo.bWritesReactive;
             data.Shading = createInfo.Shading;
             for (uint32_t index = 0; index < ShadingParamCount; ++index)
             {

@@ -8,6 +8,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/SkinnedLodSelection.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
@@ -773,6 +774,12 @@ namespace NorvesLib::Core::Rendering
             cameraConstants.CopyCameraPosition(cameraPos);
         }
 
+        SkinnedViewFrustum skinnedViewFrustum;
+        if (activeCamera && context.SnapshotScene && context.SnapshotScene->bSkinnedViewCulling)
+        {
+            skinnedViewFrustum = MakeSkinnedViewFrustum(cameraConstants.ViewProjectionMatrix);
+        }
+
         const CameraProxy *previousCamera = context.GetPreviousCamera();
         const bool bHasPreviousCamera = activeCamera != nullptr && previousCamera != nullptr;
         CameraViewConstants previousCameraConstants = cameraConstants;
@@ -1048,6 +1055,11 @@ namespace NorvesLib::Core::Rendering
                 const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
                 if (bSkinned)
                 {
+                    // 姿勢の AnimatedBounds を WorldTransform で変換した保守的な境界で、主カメラの視錐台外を省く。
+                    if (!IsSkinnedDrawInView(cmd, skinnedViewFrustum))
+                    {
+                        continue;
+                    }
                     if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
                     {
                         continue;
