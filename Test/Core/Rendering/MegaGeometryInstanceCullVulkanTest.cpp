@@ -1,7 +1,10 @@
 ﻿// 本番の範囲・席の判定から BVH の段1へ渡る集合を、倍精度の幾何の参照と照合する。
 // 視錐台・距離・画素による取りこぼし、重複、空の間接 dispatch の誤った書き込みを検出する。
-// 記述子・表・列の契約は本番の公開定義を使い、後続の遮蔽ケースでも資源と記録の道具を共有できる。
+// 記述子・表・列の契約は本番の公開定義を使い、各ケースで資源と記録の道具を共有する。
+// (c) 前と今の HZB による2パスで可視球を取りこぼさず、両姿勢で深く隠れた球だけは葉へ渡さない。
+// (d) 前の HZB の契約が不一致なら遮蔽を使わず、(e) 回す列が溢れても全根の見直しで可視球を救う。
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/HiZPyramidPass.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/MegaGeometry/MegaGeometryCullUniforms.h"
 #include "Rendering/ShaderManager.h"
@@ -452,7 +455,8 @@ namespace
         resources.Ranges = MakeBuffer(fixture.Device, ranges.size() * sizeof(RangeBounds), storage, ranges.data());
         resources.Queue = MakeBuffer(fixture.Device, static_cast<uint64_t>(uniform.BvhLeafBase + uniform.BvhLeafCapacity) * 2u * sizeof(uint32_t), storage);
         resources.Counters = MakeBuffer(fixture.Device, BvhCounterBytes, storage | ResourceUsage::IndirectBuffer);
-        resources.Pass2 = MakeBuffer(fixture.Device, BvhPass2HeaderWords * sizeof(uint32_t), storage | ResourceUsage::IndirectBuffer);
+        resources.Pass2 = MakeBuffer(fixture.Device, BvhPass2BufferWords(uniform.BvhDeferCapacity,
+            uniform.BvhDeferNodeCapacity, uniform.BvhDeferClusterCapacity) * sizeof(uint32_t), storage | ResourceUsage::IndirectBuffer);
         resources.Stats = MakeBuffer(fixture.Device, StatsBufferBytes, storage);
         resources.DrawCounts = MakeBuffer(fixture.Device, SectionCount * sizeof(uint32_t), storage);
         resources.Dummy = MakeBuffer(fixture.Device, StatsBufferBytes, storage);
@@ -465,7 +469,8 @@ namespace
         DescriptorSetPtr Set;
     };
 
-    DispatchResources MakeDispatch(Fixture& fixture, const CullResources& resources, const CullUniformData& uniform)
+    DispatchResources MakeDispatch(Fixture& fixture, const CullResources& resources, const CullUniformData& uniform,
+                                   const TexturePtr& currentHiZ = nullptr, const TexturePtr& previousHiZ = nullptr)
     {
         DispatchResources dispatch;
         dispatch.Uniform = MakeBuffer(fixture.Device, sizeof(uniform), ResourceUsage::ConstantBuffer, &uniform);
@@ -481,7 +486,10 @@ namespace
             }
             else if (binding.binding == CullHiZBinding || binding.binding == PrevHiZBinding)
             {
-                dispatch.Set->BindTexture(binding.binding, fixture.Black);
+                const TexturePtr texture = binding.binding == CullHiZBinding
+                    ? (uniform.CullPass == CULL_PASS_SECOND && currentHiZ ? currentHiZ : fixture.Black)
+                    : (uniform.bPrevHiZEnabled != 0 && previousHiZ ? previousHiZ : fixture.Black);
+                dispatch.Set->BindTexture(binding.binding, texture);
                 dispatch.Set->BindSampler(binding.binding, fixture.Sampler);
             }
             else
@@ -733,6 +741,549 @@ namespace
         return mismatch == 0;
     }
 
+    struct TwoPassResult
+    {
+        CullResult First, Second;
+        VariableArray<uint32_t> Header;
+    };
+
+    // 列は両パスで共有する。読み戻しを挟んでも頭を消すのは1パス目だけで、2パス目はカウンタだけを戻す。
+    TwoPassResult RunTwoPassCull(Fixture& fixture, const Scene& scene, const CullUniformData& base,
+                                const MegaGeometryPass::CullOcclusionInputs& inputs,
+                                const TexturePtr& currentHiZ, const TexturePtr& previousHiZ)
+    {
+        const CullResources resources = MakeResources(fixture, scene, base);
+        CullUniformData first = base;
+        first.CullPass = CULL_PASS_FIRST;
+        MegaGeometryPass::ApplyCullOcclusion(first, first.CullPass, inputs);
+        CullUniformData range = first;
+        range.BvhStage = BvhStageRanges;
+        CullUniformData seats = first;
+        seats.BvhStage = 0;
+        seats.bBvhSeatsFromRanges = BvhSeatsFromRanges;
+        seats.BvhNextBase = base.BvhNodeCapacity;
+        CullUniformData roots = base;
+        roots.CullPass = CULL_PASS_SECOND;
+        MegaGeometryPass::ApplyCullOcclusion(roots, roots.CullPass, inputs);
+        roots.BvhStage = 0;
+        roots.bBvhSeatsFromRanges = BvhSeatsFromRoots;
+        roots.BvhNextBase = base.BvhNodeCapacity;
+        CullUniformData deferredRanges = roots;
+        deferredRanges.bBvhSeatsFromRanges = BvhSeatsFromDeferred;
+        CullUniformData deferredNodes = roots;
+        deferredNodes.BvhStage = BvhStageDeferredNodes;
+        const DispatchResources rangeDispatch = MakeDispatch(fixture, resources, range, currentHiZ, previousHiZ);
+        const DispatchResources seatDispatch = MakeDispatch(fixture, resources, seats, currentHiZ, previousHiZ);
+        const DispatchResources rootDispatch = MakeDispatch(fixture, resources, roots, currentHiZ, previousHiZ);
+        const DispatchResources deferredRangeDispatch = MakeDispatch(fixture, resources, deferredRanges, currentHiZ, previousHiZ);
+        const DispatchResources deferredNodeDispatch = MakeDispatch(fixture, resources, deferredNodes, currentHiZ, previousHiZ);
+        CommandListPtr command = fixture.Device->CreateCommandList();
+        Require(command != nullptr, "2パスのコマンドリストを作れませんでした");
+        command->Begin();
+        for (const BufferPtr& buffer : {resources.Instances, resources.Meshes, resources.Nodes, resources.Ranges})
+        {
+            command->BufferBarrier(buffer, ResourceState::Common, ResourceState::GenericRead);
+        }
+        command->BufferBarrier(resources.Queue, ResourceState::Common, ResourceState::UnorderedAccess);
+        for (const BufferPtr& buffer : {resources.Counters, resources.Pass2, resources.Stats, resources.DrawCounts, resources.Dummy})
+        {
+            command->BufferBarrier(buffer, ResourceState::Common, ResourceState::CopyDest);
+            const uint64_t bytes = buffer == resources.Pass2 ? BvhPass2HeaderWords * sizeof(uint32_t) : buffer->GetSize();
+            command->FillBuffer(buffer, 0, bytes, 0);
+            command->BufferBarrier(buffer, ResourceState::CopyDest, ResourceState::UnorderedAccess);
+        }
+        command->BufferBarrier(resources.Counters, ResourceState::CopyDest, ResourceState::IndirectArgument);
+        command->SetPipeline(fixture.Pipeline);
+        command->SetDescriptorSet(rangeDispatch.Set);
+        command->Dispatch((range.BvhRangeCount + CullGroupThreads - 1u) / CullGroupThreads, 1, 1);
+        auto barrier = [&]()
+        {
+            command->BufferBarrier(resources.Queue, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+            command->BufferBarrier(resources.Counters, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+            command->BufferBarrier(resources.Stats, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+        };
+        barrier();
+        command->BufferBarrier(resources.Pass2, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+        command->BufferBarrier(resources.Counters, ResourceState::UnorderedAccess, ResourceState::IndirectArgument);
+        command->SetDescriptorSet(seatDispatch.Set);
+        Require(command->DispatchIndirect(resources.Counters, BvhArgsBaseWords * sizeof(uint32_t)),
+            "1パス目の席の間接 dispatch を記録できませんでした");
+        const BufferPtr firstQueue = RecordReadback(fixture, command, resources.Queue);
+        const BufferPtr firstCounters = RecordReadback(fixture, command, resources.Counters);
+
+        command->BufferBarrier(resources.Queue, ResourceState::CopySource, ResourceState::UnorderedAccess);
+        command->BufferBarrier(resources.Counters, ResourceState::CopySource, ResourceState::CopyDest);
+        command->FillBuffer(resources.Counters, 0, BvhCounterBytes, 0);
+        command->BufferBarrier(resources.Counters, ResourceState::CopyDest, ResourceState::UnorderedAccess);
+        command->BufferBarrier(resources.Counters, ResourceState::CopyDest, ResourceState::IndirectArgument);
+        command->BufferBarrier(resources.Pass2, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+        command->BufferBarrier(resources.Pass2, ResourceState::UnorderedAccess, ResourceState::IndirectArgument);
+        command->BufferBarrier(resources.Stats, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+        command->SetDescriptorSet(rootDispatch.Set);
+        // 全根の引数はバッファ先頭（本番の DispatchIndirect と同じ）。列のオフセットは公開定義で求める。
+        Require(command->DispatchIndirect(resources.Pass2, 0), "2パス目の根の間接 dispatch を記録できませんでした");
+        barrier();
+        command->SetDescriptorSet(deferredRangeDispatch.Set);
+        Require(command->DispatchIndirect(resources.Pass2, BvhDeferArgsWord * sizeof(uint32_t)),
+            "回した範囲の間接 dispatch を記録できませんでした");
+        barrier();
+        command->SetDescriptorSet(deferredNodeDispatch.Set);
+        Require(command->DispatchIndirect(resources.Pass2, BvhDeferNodeArgsWord * sizeof(uint32_t)),
+            "回した節の間接 dispatch を記録できませんでした");
+        const BufferPtr secondQueue = RecordReadback(fixture, command, resources.Queue);
+        const BufferPtr secondCounters = RecordReadback(fixture, command, resources.Counters);
+        const BufferPtr header = RecordReadback(fixture, command, resources.Pass2);
+        command->End();
+        command->Submit(true);
+        fixture.Device->WaitIdle();
+        TwoPassResult result;
+        result.First.Queue = ReadWords(firstQueue);
+        result.First.Counters = ReadWords(firstCounters);
+        result.Second.Queue = ReadWords(secondQueue);
+        result.Second.Counters = ReadWords(secondCounters);
+        result.Header = ReadWords(header);
+        result.Header.resize(BvhPass2HeaderWords);
+        return result;
+    }
+
+    struct Point3
+    {
+        double X, Y, Z;
+        Point3 operator-(const Point3& other) const { return {X - other.X, Y - other.Y, Z - other.Z}; }
+        double Dot(const Point3& other) const { return X * other.X + Y * other.Y + Z * other.Z; }
+        Point3 Cross(const Point3& other) const
+        {
+            return {Y * other.Z - Z * other.Y, Z * other.X - X * other.Z, X * other.Y - Y * other.X};
+        }
+    };
+
+    struct Occluder
+    {
+        double HalfWidth = 24, HalfHeight = 14, Z = -50;
+    };
+
+    void Project(const ReferenceCamera& camera, const Point3& point, double clip[4])
+    {
+        for (int row = 0; row < 4; ++row)
+        {
+            clip[row] = camera.VP[row][0] * point.X + camera.VP[row][1] * point.Y
+                + camera.VP[row][2] * point.Z + camera.VP[row][3];
+        }
+    }
+
+    // 画素中心を通る直線と z=面の平面の交点を、投影の二つの一次方程式から倍精度で求める。
+    // HZB の照会式は使わず、合成深度と参照のどちらもワールドに固定された同じ四角形を扱う。
+    bool IntersectPlane(const ReferenceCamera& camera, double ndcX, double ndcY, const Occluder& panel,
+                        Point3& point, double& depth)
+    {
+        double equations[2][3];
+        const double ndc[] = {ndcX, ndcY};
+        for (int row = 0; row < 2; ++row)
+        {
+            equations[row][0] = camera.VP[row][0] - ndc[row] * camera.VP[3][0];
+            equations[row][1] = camera.VP[row][1] - ndc[row] * camera.VP[3][1];
+            equations[row][2] = -(camera.VP[row][2] - ndc[row] * camera.VP[3][2]) * panel.Z
+                - camera.VP[row][3] + ndc[row] * camera.VP[3][3];
+        }
+        const double determinant = equations[0][0] * equations[1][1] - equations[0][1] * equations[1][0];
+        if (std::abs(determinant) < 1e-12)
+        {
+            return false;
+        }
+        point = {(equations[0][2] * equations[1][1] - equations[0][1] * equations[1][2]) / determinant,
+            (equations[0][0] * equations[1][2] - equations[0][2] * equations[1][0]) / determinant, panel.Z};
+        double clip[4];
+        Project(camera, point, clip);
+        if (!(clip[3] > 0))
+        {
+            return false;
+        }
+        depth = clip[2] / clip[3];
+        return depth > 0 && depth < 1;
+    }
+
+    TexturePtr MakeOccluderDepth(Fixture& fixture, const ReferenceCamera& camera, const Occluder& panel)
+    {
+        VariableArray<float> depth;
+        depth.resize(static_cast<size_t>(ScreenWidth) * ScreenHeight);
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                Point3 point{};
+                double z = 1;
+                const bool bHit = IntersectPlane(camera, 2.0 * (x + 0.5) / ScreenWidth - 1,
+                    2.0 * (y + 0.5) / ScreenHeight - 1, panel, point, z)
+                    && std::abs(point.X) <= panel.HalfWidth && std::abs(point.Y) <= panel.HalfHeight;
+                // 本番と同じ Less 深度。何にも当たらない画素は 1、近い面ほど小さい。
+                depth[static_cast<size_t>(y) * ScreenWidth + x] = bHit ? static_cast<float>(z) : 1.0f;
+            }
+        }
+        TextureDesc desc;
+        desc.Width = ScreenWidth;
+        desc.Height = ScreenHeight;
+        desc.MipLevels = 1;
+        desc.TextureFormat = Format::R32_FLOAT;
+        desc.Usage = ResourceUsage::ShaderRead;
+        desc.DebugName = "InstanceCullOccluderDepth";
+        TexturePtr texture = fixture.Device->CreateTexture(desc);
+        Require(texture != nullptr, "合成深度を作れませんでした");
+        const uint32_t pitch = ScreenWidth * sizeof(float);
+        texture->Update(depth.data(), pitch, pitch * ScreenHeight, 0, 0);
+        return texture;
+    }
+
+    void BuildOcclusionPyramids(Fixture& fixture, HiZPyramid& previous, HiZPyramid& current,
+                               const CameraViewConstants& previousCamera, const CameraViewConstants& currentCamera,
+                               const Occluder& previousPanel, const Occluder& currentPanel)
+    {
+        const TexturePtr previousDepth = MakeOccluderDepth(fixture, ReferenceCamera(previousCamera), previousPanel);
+        const TexturePtr currentDepth = MakeOccluderDepth(fixture, ReferenceCamera(currentCamera), currentPanel);
+        CommandListPtr command = fixture.Device->CreateCommandList();
+        Require(command != nullptr, "HZB のコマンドリストを作れませんでした");
+        command->Begin();
+        Require(previous.Build(command.get(), previousDepth), "前の HZB を作れませんでした");
+        Require(current.Build(command.get(), currentDepth), "今の HZB を作れませんでした");
+        command->End();
+        command->Submit(true);
+        fixture.Device->WaitIdle();
+    }
+
+    // 仕様の参照: 球全体が面より奥の半空間と、視点・四角形の各辺による四つの内半空間に
+    // 入るときだけ隠れている。相対1e-4の帯にかかる球は見える側へ入れ、比較から除外しない。
+    bool IsVisibleAroundPanel(const ReferenceCamera& camera, const Sphere& sphere, const Occluder& panel)
+    {
+        const Point3 eye{camera.Position[0], camera.Position[1], camera.Position[2]};
+        const Point3 center{sphere.Center[0], sphere.Center[1], sphere.Center[2]};
+        const double distance = std::sqrt((center - eye).Dot(center - eye));
+        const double margin = sphere.Radius + 1e-4 * std::max(1.0, distance + sphere.Radius);
+        if (panel.Z - center.Z <= margin)
+        {
+            return true;
+        }
+        const Point3 corners[] = {{-panel.HalfWidth, -panel.HalfHeight, panel.Z},
+            {panel.HalfWidth, -panel.HalfHeight, panel.Z}, {panel.HalfWidth, panel.HalfHeight, panel.Z},
+            {-panel.HalfWidth, panel.HalfHeight, panel.Z}};
+        const Point3 panelCenter{0, 0, panel.Z};
+        for (int edge = 0; edge < 4; ++edge)
+        {
+            Point3 normal = (corners[edge] - eye).Cross(corners[(edge + 1) % 4] - eye);
+            if (normal.Dot(panelCenter - eye) < 0)
+            {
+                normal = {-normal.X, -normal.Y, -normal.Z};
+            }
+            if (normal.Dot(center - eye) <= margin * std::sqrt(normal.Dot(normal)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 球上の NDC 深度の最小値は、z-d*w=0 の平面が球に接する二つの d のうち小さい方。
+    // 射影の接平面を解く幾何の参照であり、シェーダーの球・HZB の近似式とは独立している。
+    double NearestSphereDepth(const ReferenceCamera& camera, const Sphere& sphere)
+    {
+        double clip[4];
+        Project(camera, {sphere.Center[0], sphere.Center[1], sphere.Center[2]}, clip);
+        double zz = 0, zw = 0, ww = 0;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            zz += camera.VP[2][axis] * camera.VP[2][axis];
+            zw += camera.VP[2][axis] * camera.VP[3][axis];
+            ww += camera.VP[3][axis] * camera.VP[3][axis];
+        }
+        const double rr = sphere.Radius * sphere.Radius;
+        const double a = clip[3] * clip[3] - rr * ww;
+        const double b = -2 * clip[2] * clip[3] + 2 * rr * zw;
+        const double c = clip[2] * clip[2] - rr * zz;
+        Require(a > 0, "深度の参照の球が視点をまたいでいます");
+        return (-b - std::sqrt(std::max(0.0, b * b - 4 * a * c))) / (2 * a);
+    }
+
+    // 深く隠れる契約: AABB の8頂点の投影矩形を max(幅, 高さ)+16画素ずつ全辺で広げる。
+    // 広げた矩形が画面と面の投影の内側にあり、面深度の4隅の最大が球の最前深度より1e-5手前なら十分な余裕がある。
+    bool IsDeeplyHidden(const ReferenceCamera& camera, const Sphere& sphere, const Occluder& panel)
+    {
+        if (IsVisibleAroundPanel(camera, sphere, panel))
+        {
+            return false;
+        }
+        double low[2] = {1e100, 1e100}, high[2] = {-1e100, -1e100};
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            double coordinates[3];
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                coordinates[axis] = sphere.Center[axis] + ((corner & (1 << axis)) ? sphere.Radius : -sphere.Radius);
+            }
+            double clip[4];
+            Project(camera, {coordinates[0], coordinates[1], coordinates[2]}, clip);
+            if (!(clip[3] > 0))
+            {
+                return false;
+            }
+            for (int axis = 0; axis < 2; ++axis)
+            {
+                const double pixel = (clip[axis] / clip[3] + 1) * 0.5 * (axis == 0 ? ScreenWidth : ScreenHeight);
+                low[axis] = std::min(low[axis], pixel);
+                high[axis] = std::max(high[axis], pixel);
+            }
+        }
+        const double expansion = std::max(high[0] - low[0], high[1] - low[1]) + 16;
+        double maxPanelDepth = 0;
+        for (int corner = 0; corner < 4; ++corner)
+        {
+            const double x = (corner & 1) ? high[0] + expansion : low[0] - expansion;
+            const double y = (corner & 2) ? high[1] + expansion : low[1] - expansion;
+            Point3 point{};
+            double depth = 1;
+            if (x <= 0 || x >= ScreenWidth || y <= 0 || y >= ScreenHeight
+                || !IntersectPlane(camera, 2 * x / ScreenWidth - 1, 2 * y / ScreenHeight - 1, panel, point, depth)
+                || std::abs(point.X) >= panel.HalfWidth || std::abs(point.Y) >= panel.HalfHeight)
+            {
+                return false;
+            }
+            maxPanelDepth = std::max(maxPanelDepth, depth);
+        }
+        return maxPanelDepth + 1e-5 < NearestSphereDepth(camera, sphere);
+    }
+
+    Scene MakeOcclusionScene()
+    {
+        Scene scene;
+        InitializeMeshes(scene);
+        // 64範囲を、手前・深く隠れる・縁・横の4種類にする。各範囲はコンパクトな8x8席。
+        for (uint32_t group = 0; group < 64; ++group)
+        {
+            const uint32_t index = group / 4;
+            const float gx = (static_cast<float>(index % 4) - 1.5f) * 4;
+            const float gy = (static_cast<float>(index / 4) - 1.5f) * 3;
+            for (uint32_t seat = 0; seat < BvhRangeSeats; ++seat)
+            {
+                float x = gx, y = gy, z = -90;
+                switch (group % 4)
+                {
+                case 0: z = -30; break;
+                case 1: break;
+                case 2: x = (index % 2 ? -1.0f : 1.0f) * (40 + static_cast<float>((index / 2) % 4) * 1.4f); break;
+                case 3: x = index % 2 ? -62.0f : 62.0f; z = -100; break;
+                }
+                x += (static_cast<float>(seat % 8) - 3.5f) * 0.08f;
+                y += (static_cast<float>(seat / 8) - 3.5f) * 0.08f;
+                AddInstance(scene, 0, Math::Vector3(x, y, z), Math::Vector3(0.175f, 0.175f, 0.175f), 0);
+            }
+        }
+        return scene;
+    }
+
+    CameraViewConstants MakeOcclusionCamera(const DevicePtr& device, uint32_t pose, bool bPrevious)
+    {
+        const float sign = pose % 2 ? -1.0f : 1.0f;
+        CameraProxy camera;
+        camera.PositionX = sign * (bPrevious ? -3.5f : 3.5f);
+        camera.PositionY = (static_cast<float>((pose / 2) % 4) - 1.5f) * (bPrevious ? 0.6f : -0.6f);
+        camera.PositionZ = bPrevious ? 0.5f : -0.5f;
+        const double yaw = (static_cast<double>(pose / 4) + 1) * 0.008 * (bPrevious ? -1 : 1);
+        const double pitch = (static_cast<double>(pose % 4) - 1.5) * 0.006 * (bPrevious ? 1 : -1);
+        camera.ForwardX = static_cast<float>(std::sin(yaw) * std::cos(pitch));
+        camera.ForwardY = static_cast<float>(std::sin(pitch));
+        camera.ForwardZ = static_cast<float>(-std::cos(yaw) * std::cos(pitch));
+        camera.UpX = camera.UpZ = 0;
+        camera.UpY = 1;
+        camera.FieldOfView = 60;
+        camera.NearPlane = 0.5f;
+        camera.FarPlane = 1024;
+        return CameraViewConstants::BuildForDevice(camera, static_cast<float>(ScreenWidth) / ScreenHeight, device.get());
+    }
+
+    CullUniformData MakeOcclusionUniform(const CameraViewConstants& camera, const Scene& scene)
+    {
+        CullUniformData uniform = MakeUniform(camera, static_cast<uint32_t>(scene.Instances.size()), 0);
+        uniform.BvhDeferCapacity = uniform.BvhRangeCount;
+        uniform.BvhDeferNodeCapacity = uniform.BvhDeferClusterCapacity = uniform.InstanceCount;
+        // 画素の判定を無効にし、全席が視錐台内であることは各姿勢で独立に確認する。
+        uniform.PixelCullWidth = uniform.PixelCullHeight = 0;
+        return uniform;
+    }
+
+    MegaGeometryPass::CullOcclusionInputs MakeOcclusionInputs(const CameraViewConstants& previousCamera,
+                                                             const HiZPyramid& previous, const HiZPyramid& current,
+                                                             bool bUsePrevious = true)
+    {
+        MegaGeometryPass::CullOcclusionInputs inputs;
+        inputs.DepthWidth = ScreenWidth;
+        inputs.DepthHeight = ScreenHeight;
+        inputs.bCurrentHiZ = current.IsReady();
+        inputs.CurrentHiZMipCount = current.GetMipCount();
+        inputs.bPrevHiZ = bUsePrevious;
+        inputs.PrevHiZMipCount = previous.GetMipCount();
+        inputs.PrevViewProjection = previousCamera.ViewProjectionMatrix;
+        return inputs;
+    }
+
+    struct OcclusionCounts
+    {
+        uint32_t Visible = 0, Deep = 0, FalseCulled = 0, DeepDrawn = 0;
+        uint32_t Hidden = 0, FalseKept = 0, Duplicated = 0, Recovered = 0;
+    };
+
+    OcclusionCounts CompareOcclusion(const Scene& scene, const CullUniformData& uniform, const TwoPassResult& result,
+                                    const CameraViewConstants& previousCamera, const CameraViewConstants& currentCamera,
+                                    uint32_t pose, const char* label, bool bRequireDeepHidden = true)
+    {
+        const auto first = LeafSet(result.First, uniform);
+        const auto second = LeafSet(result.Second, uniform);
+        const ReferenceCamera previous(previousCamera), current(currentCamera);
+        const Occluder panel;
+        OcclusionCounts counts;
+        for (uint32_t seat = 0; seat < uniform.InstanceCount; ++seat)
+        {
+            const Sphere& sphere = scene.Spheres[seat];
+            Require(Classify(current, sphere, uniform).IsVisible(), "遮蔽以外で落ちる席が入力に含まれています");
+            const bool bVisible = IsVisibleAroundPanel(current, sphere, panel);
+            const bool bDeep = IsDeeplyHidden(previous, sphere, panel) && IsDeeplyHidden(current, sphere, panel);
+            const bool bDrawn = first[seat] || second[seat];
+            counts.Visible += bVisible ? 1u : 0u;
+            counts.Deep += bDeep ? 1u : 0u;
+            counts.Hidden += !bVisible ? 1u : 0u;
+            counts.FalseKept += !bVisible && bDrawn ? 1u : 0u;
+            counts.Duplicated += first[seat] && second[seat] ? 1u : 0u;
+            counts.Recovered += !first[seat] && second[seat] ? 1u : 0u;
+            const bool bFalseCulled = bVisible && !bDrawn;
+            const bool bDeepDrawn = bDeep && bDrawn;
+            counts.FalseCulled += bFalseCulled ? 1u : 0u;
+            counts.DeepDrawn += bDeepDrawn ? 1u : 0u;
+            if ((bFalseCulled || (bRequireDeepHidden && bDeepDrawn))
+                && counts.FalseCulled + (bRequireDeepHidden ? counts.DeepDrawn : 0u) <= 8)
+            {
+                std::cerr << label << " 姿勢=" << pose << " 席=" << seat << " 中心=(" << sphere.Center[0]
+                    << ',' << sphere.Center[1] << ',' << sphere.Center[2] << ") 半径=" << sphere.Radius
+                    << " 偽のカリング=" << bFalseCulled << " 深く隠れるのに残る=" << bDeepDrawn << '\n';
+            }
+        }
+        std::cout << label << " 姿勢=" << pose << " 席=" << uniform.InstanceCount << " 見える=" << counts.Visible
+            << " 深く隠れる=" << counts.Deep << " 1パス目=" << result.First.Counters[BvhLeafCounter]
+            << " 2パス目=" << result.Second.Counters[BvhLeafCounter] << " 偽のカリング=" << counts.FalseCulled
+            << " 深く隠れるのに残る=" << counts.DeepDrawn << " 偽の残し=" << counts.FalseKept << '/' << counts.Hidden
+            << " 割合=" << (counts.Hidden ? 100.0 * counts.FalseKept / counts.Hidden : 0) << "% 重複=" << counts.Duplicated
+            << " 2パス目で救済=" << counts.Recovered << " 曖昧の除外=0\n";
+        return counts;
+    }
+
+    bool CheckTwoPassOcclusion(Fixture& fixture, ShaderManager& manager)
+    {
+        HiZPyramid previous, current;
+        Require(previous.Initialize(fixture.Device.get(), &manager) && current.Initialize(fixture.Device.get(), &manager),
+            "2パスの HZB を初期化できませんでした");
+        const Scene scene = MakeOcclusionScene();
+        const Occluder panel;
+        uint32_t totalHidden = 0, totalKept = 0, totalRecovered = 0, totalDuplicated = 0;
+        bool bPassed = true;
+        for (uint32_t pose = 0; pose < 16; ++pose)
+        {
+            const auto previousCamera = MakeOcclusionCamera(fixture.Device, pose, true);
+            const auto currentCamera = MakeOcclusionCamera(fixture.Device, pose, false);
+            BuildOcclusionPyramids(fixture, previous, current, previousCamera, currentCamera, panel, panel);
+            const auto uniform = MakeOcclusionUniform(currentCamera, scene);
+            const auto inputs = MakeOcclusionInputs(previousCamera, previous, current);
+            const auto result = RunTwoPassCull(fixture, scene, uniform, inputs, current.GetTexture(), previous.GetTexture());
+            Require(result.Header[BvhPass2FallbackWord] == 0, "通常の容量で回す列が溢れています");
+            const auto counts = CompareOcclusion(scene, uniform, result, previousCamera, currentCamera, pose, "(c)");
+            Require(counts.Visible > 0 && counts.Deep > 0, "見える席か深く隠れる席がありません");
+            bPassed = counts.FalseCulled == 0 && counts.DeepDrawn == 0 && bPassed;
+            totalHidden += counts.Hidden;
+            totalKept += counts.FalseKept;
+            totalRecovered += counts.Recovered;
+            totalDuplicated += counts.Duplicated;
+            if (pose == 0)
+            {
+                Require(result.Header[BvhDeferCountWord] > 2, "溢れの場面で回す範囲が不足しています");
+                auto limitedUniform = uniform;
+                limitedUniform.BvhDeferCapacity = 2;
+                const auto overflow = RunTwoPassCull(fixture, scene, limitedUniform, inputs, current.GetTexture(), previous.GetTexture());
+                // 全根の引数は間接バッファの先頭。公開の頭の範囲内だけを読む。
+                bool bRescan = overflow.Header[BvhPass2FallbackWord] != 0;
+                for (uint32_t component = 0; component < 3; ++component)
+                {
+                    bRescan = bRescan || overflow.Header[component] != 0;
+                }
+                const auto overflowCounts = CompareOcclusion(scene, limitedUniform, overflow, previousCamera, currentCamera, pose, "(e)", false);
+                std::cout << "(e) 回した範囲=" << overflow.Header[BvhDeferCountWord] << " 容量=" << limitedUniform.BvhDeferCapacity
+                    << " 全根の見直し=" << bRescan << " 溢れ=" << overflow.Header[BvhPass2FallbackWord] << '\n';
+                bPassed = bRescan && overflowCounts.FalseCulled == 0 && bPassed;
+            }
+        }
+        std::cout << "(c) 合計 偽の残し=" << totalKept << '/' << totalHidden << " 割合="
+            << (totalHidden ? 100.0 * totalKept / totalHidden : 0) << "% 重複=" << totalDuplicated
+            << " 2パス目で救済=" << totalRecovered << '\n';
+        Require(totalRecovered > 0, "前の HZB で回されて2パス目で描かれた席がありません");
+
+        // (d) 実在する前の HZB は全席を覆う面にする。契約が不一致なら、この深度ではなく黒が結ばれる。
+        const auto previousCamera = MakeOcclusionCamera(fixture.Device, 0, true);
+        const auto currentCamera = MakeOcclusionCamera(fixture.Device, 0, false);
+        const Occluder fullPanel{1000, 1000, -10};
+        BuildOcclusionPyramids(fixture, previous, current, previousCamera, currentCamera, fullPanel, panel);
+        const auto uniform = MakeOcclusionUniform(currentCamera, scene);
+        for (const auto& sphere : scene.Spheres)
+        {
+            Require(!IsVisibleAroundPanel(ReferenceCamera(previousCamera), sphere, fullPanel), "前の面が全席を隠していません");
+        }
+        MegaHiZContract previousContract;
+        previousContract.bValid = true;
+        previousContract.RenderFrame = 40;
+        previousContract.GameFrame = 60;
+        previousContract.DepthWidth = ScreenWidth;
+        previousContract.DepthHeight = ScreenHeight;
+        previousContract.ViewProjection = previousCamera.ViewProjectionMatrix;
+        MegaHiZContract currentContract = previousContract;
+        currentContract.RenderFrame++;
+        currentContract.GameFrame++;
+        currentContract.ViewProjection = currentCamera.ViewProjectionMatrix;
+        Require(EvaluatePreviousHiZ(previousContract, currentContract, false) == MegaPrevHiZStatus::Ready,
+            "契約不一致の試験の元が Ready ではありません");
+        const MegaPrevHiZStatus expected[] = {MegaPrevHiZStatus::Resize, MegaPrevHiZStatus::Stale, MegaPrevHiZStatus::Epoch};
+        const char* reasons[] = {"寸法", "記録の飛び", "エポック"};
+        for (uint32_t test = 0; test < 3; ++test)
+        {
+            MegaHiZContract changed = currentContract;
+            if (test == 0)
+            {
+                changed.DepthWidth++;
+            }
+            if (test == 1)
+            {
+                changed.RenderFrame++;
+            }
+            const auto status = EvaluatePreviousHiZ(previousContract, changed, test == 2);
+            Require(status == expected[test], "前の HZB の契約の判定理由が違います");
+            const bool bUsePrevious = MegaGeometryPass::CanUsePreviousHiZ(status, true);
+            Require(!bUsePrevious, "契約が不一致なのに前の HZB が有効です");
+            const auto inputs = MakeOcclusionInputs(previousCamera, previous, current, bUsePrevious);
+            const auto result = RunTwoPassCull(fixture, scene, uniform, inputs, current.GetTexture(), previous.GetTexture());
+            const auto first = LeafSet(result.First, uniform);
+            LeafSet(result.Second, uniform);
+            uint32_t mismatch = 0;
+            for (uint32_t seat = 0; seat < uniform.InstanceCount; ++seat)
+            {
+                const bool bExpected = Classify(ReferenceCamera(currentCamera), scene.Spheres[seat], uniform).IsVisible();
+                mismatch += (first[seat] != 0) != bExpected ? 1u : 0u;
+            }
+            uint32_t nonzeroHeader = result.Header[BvhDeferCountWord] + result.Header[BvhDeferNodeCountWord];
+            for (uint32_t component = 0; component < 3; ++component)
+            {
+                nonzeroHeader += result.Header[component];
+            }
+            std::cout << "(d) 理由=" << reasons[test] << " 席=" << uniform.InstanceCount
+                << " 前のHZB使用=" << bUsePrevious << " 1パス目=" << result.First.Counters[BvhLeafCounter]
+                << " 2パス目=" << result.Second.Counters[BvhLeafCounter] << " 不一致=" << mismatch
+                << " 回した範囲=" << result.Header[BvhDeferCountWord] << " 回した節=" << result.Header[BvhDeferNodeCountWord]
+                << " 頭の非零の和=" << nonzeroHeader << '\n';
+            bPassed = mismatch == 0 && nonzeroHeader == 0 && result.Second.Counters[BvhLeafCounter] == 0 && bPassed;
+        }
+        return bPassed;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -766,7 +1317,10 @@ namespace
             pipeline.computeShader = shader;
             pipeline.descriptorSetLayouts.push_back(MegaGeometryPass::BuildCullDescriptorSetDesc());
             fixture.Pipeline = device->CreateComputePipeline(pipeline);
-            fixture.Sampler = device->CreateSampler(SamplerDesc{});
+            SamplerDesc sampler;
+            sampler.filterMin = sampler.filterMag = sampler.filterMip = FilterMode::Linear;
+            sampler.addressU = sampler.addressV = sampler.addressW = TextureAddressMode::Clamp;
+            fixture.Sampler = device->CreateSampler(sampler);
             TextureDesc texture;
             texture.Width = texture.Height = texture.MipLevels = 1;
             texture.TextureFormat = Format::R32_FLOAT;
@@ -781,6 +1335,7 @@ namespace
             bPassed = CompareRandom(fixture, scene, camera) && bPassed;
             bPassed = CheckTangencies(fixture, camera) && bPassed;
             bPassed = CheckAllOutside(fixture, scene) && bPassed;
+            bPassed = CheckTwoPassOcclusion(fixture, manager) && bPassed;
             device->WaitIdle();
         }
         manager.Shutdown();

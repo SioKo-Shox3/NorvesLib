@@ -60,6 +60,15 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         inline constexpr uint32_t BvhDeferNodeCountWord = 15u;
         inline constexpr uint32_t BvhDeferClusterCountWord = 19u;
 
+        /** @brief 2 パス目へ回す範囲・節・クラスタの列と頭に必要な語数を、容量から求める */
+        constexpr uint64_t BvhPass2BufferWords(uint32_t rangeCapacity, uint32_t nodeCapacity, uint32_t clusterCapacity)
+        {
+            return static_cast<uint64_t>(BvhPass2HeaderWords)
+                + static_cast<uint64_t>(rangeCapacity) * BvhDeferEntryWords
+                + static_cast<uint64_t>(nodeCapacity) * BvhDeferPairWords
+                + static_cast<uint64_t>(clusterCapacity) * BvhDeferPairWords;
+        }
+
         // 席の段（段 0）の入力（cluster_bvh_cull.comp の SEATS_FROM_*）: 全部の根（溢れたときの 2 パス目）・範囲の段が積んだ範囲の一覧・回した範囲の列
         inline constexpr uint32_t BvhSeatsFromRoots = 0;
         inline constexpr uint32_t BvhSeatsFromRanges = 1;

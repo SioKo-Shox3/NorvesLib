@@ -131,10 +131,7 @@ namespace NorvesLib::Core::Rendering
         // 回した節の列・クラスタの列の容量（要素。溢れたら 2 パス目は全部の根を見直す）
         constexpr uint32_t BvhDeferNodeCapacity = 1u << 21;
         constexpr uint32_t BvhDeferClusterCapacity = 1u << 22;
-        constexpr uint64_t BvhPass2Words = static_cast<uint64_t>(BvhPass2HeaderWords) +
-                                           static_cast<uint64_t>(BvhDeferCapacity) * BvhDeferEntryWords +
-                                           static_cast<uint64_t>(BvhDeferNodeCapacity) * BvhDeferPairWords +
-                                           static_cast<uint64_t>(BvhDeferClusterCapacity) * BvhDeferPairWords;
+        constexpr uint64_t BvhPass2Words = BvhPass2BufferWords(BvhDeferCapacity, BvhDeferNodeCapacity, BvhDeferClusterCapacity);
         static_assert(BvhPass2Words <= 0x3FFFFFFFull, "2 パス目へ回す列の位置が uint32 に収まりません");
 
         // 記録の回数（1 から数える）から、ページの要求の重複を省く印を作る。0 は使わない（ページの表の初めの値）

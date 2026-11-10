@@ -10705,3 +10705,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。
 - U1 カリングの記述子の配置・定数・表の形・遮蔽の定数の詰め方をパスの外から使えるようにする: 着地(直し 0 回)
 - U2 MegaGeometryInstanceCullVulkanTest の骨組みと (a) 10 万席の視錐台・距離・画素の判定、(b) 全部が外: 着地(直し 1 回)
+- U3 2 パスの遮蔽 (c)・前フレームの HZB の契約が合わない (d)・2 パス目の列の溢れ (e) と最終の確かめ: 着地(直し 0 回)
