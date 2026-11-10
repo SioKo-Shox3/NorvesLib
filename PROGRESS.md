@@ -10713,3 +10713,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR40-GAMEMODE-ASYNC): GPU の資源の破棄は RHI の破棄の列に任せた（選定課題 G12A-S7 の B）。`ProceduralMeshGpuStore::UnregisterMesh` は表から消すだけで、バッファのデストラクタが Unmap の後に `DeferDestroy` へ入れるので、ホスト可視のバッファも描画中に壊れない（Unmap は GPU の読みに影響しない）。
 - Notes(G12-GR40-GAMEMODE-ASYNC): 試験はメッシュとテクスチャを作らず、件数が変わらないことだけを見る（`MeshResources::Register`・`TextureResources::CreateTexture` は初期化済みのデバイスが要る）。メッシュ・テクスチャの追跡の列は材質と同じく返した後に空にするので、二重の返却は材質の検査で反証している。
 - Notes(G12-GR40-GAMEMODE-ASYNC): `StopAndJoin` の完了の印はハンドラの Prepare の後・実行器のタスクの終わりより前に立つ。戻った後にハンドラは呼ばれないが、実行器の内側の後片付けまでは待たない。`UnloadStep` が `Failed` を返したセルも、`Shutdown` と同じく外す。`GameModeScope` のデストラクタは `Cleanup` を呼ばない（前からの振る舞い）。
+- U1 主の視点が正射影のとき MegaGeometry の LOD を正射影で選ぶ: 着地(直し 0 回)
