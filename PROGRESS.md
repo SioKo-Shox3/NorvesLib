@@ -10638,3 +10638,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(G10-GR63-SKIN-CULL, 反復 2): 差し戻しの `VirtualShadowMapVulkanTest` を直した。試験のメッシュの表の行を `MegaMeshEntry` の 80 バイトにそろえ（境界球を足す）、VSM の印付けにカメラ相対の逆行列と近遠比・LOD の閾値を渡す。試験ファイルは `task/BUILD-HEALTH-1109` の b9108742 の版とバイト単位で同じ内容にしたので、統合で衝突しない。80 バイトの直しだけではケース A・B・J1・J4・J5 が残り、印付けの入力の直しも要った。
 - 確かめ(G10-GR63-SKIN-CULL, 反復 2): verify のビルド（`CameraViewConstantsTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`RenderingHdrSceneCaptureTest`・`RenderingVelocityVulkanTest`・`RHITextureUpdateVulkanTest`・`RenderingGoldenImageTest`・`Game`）は終了コード 0。ctest（golden 4 本は人の決まりで `-E "Golden|PathTracingReference"` で外す）は 12/12 Passed（`VirtualShadowMapVulkanTest` を含む、`VUID_COUNT=0`）。
 - Next(G10-GR63-SKIN-CULL, 反復 2): 反復 1 の Next のとおり。人が見るときの見どころも反復 1 の Next のとおり（撮影・計測の確かめは回さない決まり）。
+- U1 GPU へ渡す切り抜きの値の型・共通の GLSL・草の生成と CPU の写しの間引き: 着地(直し 0 回)

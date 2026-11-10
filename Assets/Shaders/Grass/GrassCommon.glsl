@@ -2,12 +2,17 @@
 #ifndef NORVES_GRASS_COMMON_GLSL
 #define NORVES_GRASS_COMMON_GLSL
 
+#include "Common/ViewClearance.glsl"
+
 const uint kGrassLodCount = 3u;
 const uint kGrassHashSaltJitterX = 0u;
 const uint kGrassHashSaltJitterZ = 1u;
 const uint kGrassHashSaltKeep = 2u;
 const uint kGrassHashSaltHeight = 3u;
 const uint kGrassHashSaltFacing = 4u;
+const uint kGrassHashSaltClearance0 = 5u;
+const uint kGrassHashSaltClearance1 = 6u;
+const uint kGrassHashSaltClearance2 = 7u;
 const uint kGrassGenerateFlagHiZ = 1u;
 
 struct GrassTileInfo
@@ -51,7 +56,7 @@ struct GrassSpeciesGpuData
     vec4 LodKeepFraction;
 };
 
-// GrassGenerateConstants と同じ 480 バイトの std140 配置。
+// GrassGenerateConstants と同じ 544 バイトの std140 配置。
 layout(std140, set = 0, binding = 0) uniform GrassGenerateConstants
 {
     vec4 CameraPosition;
@@ -76,6 +81,7 @@ layout(std140, set = 0, binding = 0) uniform GrassGenerateConstants
     uvec4 Flags;
     mat4 HiZViewProjection;
     uvec4 HiZDimensions;
+    ViewClearanceData ViewClearance;
 } constants;
 
 // 引数は各 5 語、カウンタはバイト位置 64 から。予約語も含めて 80 バイト。
