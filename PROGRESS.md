@@ -10602,3 +10602,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: verify の ctest が呼ぶ GrassTileSelectionTest は CameraViewConstantsTest の束の中にあるが、verify のビルド行にはこのターゲットが無い。束の MEMBER を足す・変える項目は、その束のターゲットを枠の build でもビルドしてから終える。
 - U1 頂点アニメの共通の口(GLSL)と時刻の定数の組み立て(C++): 着地(直し 0 回)
 - U2 試験の揺れの許可を FramePacket で渡し、捕った画に描いた時刻を載せる: 着地(直し 1 回)
+- U7 FoliagePass の風の前の時刻を tPrev の基準へ替える: 着地(直し 0 回)
