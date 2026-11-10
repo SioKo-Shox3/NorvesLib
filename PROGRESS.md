@@ -10606,3 +10606,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 GBuffer のラスタ(静的・スキン・MegaGeometry)で 2 回評価する: 着地(直し 0 回)
 - U4 可視バッファのラスタの頂点シェーダー 3 本で同じ式を通す: 着地(直し 0 回)
 - U5 可視バッファの解決とソフトのラスタで今と前の位置を 2 回評価する: 着地(直し 0 回)
+- U6 影の描画(vsm_draw.vert・shadow.vert)を今の時刻で同じ式に通す: 着地(直し 1 回)

@@ -25,6 +25,7 @@
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
 #include "Common/FoliagePlacement.glsl"
+#include "Common/VertexAnimation.glsl"
 // binding 5: スライスの表（ページの一辺・texel・投影の行列）
 #define VSM_SLICE_BINDING 5
 #include "Common/VirtualShadowMapSlice.glsl"
@@ -43,6 +44,7 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 foliageWind;
     // x = 風速[m/s]（従来の風では突風の塊の流れる速さ）、y = 突風の塊の大きさ[m]、z = 突風の強さ、w = 乱流の強さ
     vec4 foliageWindParams;
+    vec4 vertexAnimTime;
 } params;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmInstances
@@ -145,6 +147,13 @@ void main()
                                 vertices.vertices[vertexIndex].pz,
                                 1.0);
         world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
+        // 手続きとスキンの塊は、影の記録が前フレーム用の欄に生の値を持つ。MegaGeometry は未指定。
+        const vec4 instanceParams = bMega ? vec4(-1.0) : uintBitsToFloat(record.previous);
+        const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
+        if (VertexAnimationKind(animParams) != VERTEX_ANIMATION_KIND_NONE)
+        {
+            world = ApplyVertexAnimation(world, local.xyz, animParams, params.vertexAnimTime.x);
+        }
     }
 
     const uint level = instance.y & 255u;

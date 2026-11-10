@@ -57,6 +57,7 @@ namespace NorvesLib::Core::Rendering
      * Record はビジビリティバッファの描画の記録（頂点・インデックスの読み方）。Kind は 0 以外・TriangleCount は 1 以上 128 以下にする。
      * World はローカル空間の位置をワールドへ変える 3×4 行列（行ごとに 4 要素。ワールドの x = World[0..3] と (位置, 1) の内積、y = World[4..7]、z = World[8..11]）。
      * ワールド空間の頂点（スキニングの出力など）は単位行列にする。
+     * 手続き・スキンの影の記録は前フレームを使わず、Record の前フレーム用 4 語に頂点アニメの生の値を格納する。
      * Bounds はワールドの境界（AABB）で、展開が覆うページを決める。三角形をすべて含むこと。
      * LevelMask はこの塊を展開するスライスの集合で、Reserved が組の番号 g（スライス / 32）。ビット b がスライス g × 32 + b。
      * CPU が境界から決めたスライスだけを展開が処理し、外のスライスは見ない。1 つの投影物が複数の組にまたがるときは、
@@ -178,6 +179,8 @@ namespace NorvesLib::Core::Rendering
          */
         float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float FoliageWindParams[4] = {};
+        /** @brief 頂点アニメの現在・前回の時刻と試験の揺れの許可 */
+        float VertexAnimTime[4] = {};
     };
 
     /** @brief 展開と描画の 2 つのパイプラインと、128×128 の添付なしのレンダーパスを持つ */
