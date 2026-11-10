@@ -74,6 +74,14 @@ Deferred pipeline の production 経路は pass pointer や `SharedResourceRegis
 `SceneView::SetupDeferredPipeline()` では production pass pointer 接続を行わない。
 `SetGBufferPass()` / `SetInputPass()` などの setter は legacy/fallback bridge 用の互換 API として残す。
 
+## 材質ごとの GBuffer プログラム
+
+GameThread は `RenderWorld::RegisterGBufferProgram(GBufferProgramDesc)` に名前とシェーダーのファイル名を渡す。初期化の窓では即時に登録され、窓が閉じた後の登録・解除は保留されて RenderThread の `SceneView::Render` 冒頭で反映される。頂点シェーダーの名前が空なら標準を使う。材質は `MaterialCreateData::Program` で名前を指定し、空なら標準を使う。未登録、シェーダーを読めない、またはパイプラインを作れない場合は標準へ落ちる。
+
+`GBufferPass` は `{program, cull, alphaClip, polygon, skinned}` を鍵とする表を持ち、初めて必要になった鍵のパイプラインを同期して作り、同じ鍵の材質で再利用する。作成成功時には `GBufferPipelineCreated program=<名前|standard> skinned=<0|1> polygon=<fill|line> cull=<back|none|front> alphaClip=<0|1> total=<N>` を INFO で出す。並列のコマンド記録中は表の検索だけを行い、シェーダーやパイプラインは記録の準備段で作る。パイプライン作成時に永続キャッシュは使わないため、新しい鍵の初回描画ではヒッチが生じうる。
+
+可視バッファ on ではプログラム指定の物は ID のラスタに含めず、`VisibilityResolvePass` の後・`DecalPass` の前の `GBufferProgramOverlayPass` が GBuffer と深度へ重ねる。標準材質だけのフレームでは重ねる資源を宣言しない。fallback（`--visibility-buffer=off`）では `GBufferPass` が標準材質の後にプログラム材質を描く。重ねる物は ID のラスタの深度に載らないため、2 パスの遮蔽に使う HZB の遮蔽物にならない。
+
 ## Legacy fallback 境界
 
 `SharedResourceRegistry` は主経路ではなく legacy/fallback bridge である。

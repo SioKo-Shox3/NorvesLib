@@ -279,6 +279,7 @@ namespace NorvesLib::Test::RenderingValidation
         bool AddR8OutdoorMovingSphere() const;
         bool SetR8OutdoorMovingSpherePosition(float x, float y, float z) const;
         bool ApplyShadingModelGBufferFixture() const;
+        bool ApplyGBufferProgramFixture(const Core::Container::String& programName) const;
         Core::Rendering::CameraProxy GetShadingModelGBufferCamera() const;
         // velocity の検証: 1本の骨で動く2 m四方の骨付きの四角形を、R5 の場面の受け手の手前（中心 (-3, 0, 10)）に
         // 置く。骨の平行移動のアニメーションは時刻 t 秒で (t, 0, 0) m（0〜1秒）。R5 の場面の準備の後に呼ぶ。

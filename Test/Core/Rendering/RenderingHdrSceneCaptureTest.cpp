@@ -2,6 +2,7 @@
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
 #include "RenderExtensionStageScenario.h"
+#include "GBufferProgramScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -1703,6 +1704,7 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
         RenderExtensionStageScenario m_ExtensionStageScenario;
+        GBufferProgramScenario m_GBufferProgramScenario;
 
     public:
         enum class TransparentPhysicalStage : uint8_t
@@ -1778,6 +1780,20 @@ namespace
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
                 return false;
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::GBufferEmissive ||
+                    m_bShadingModelScenario || m_ExtensionStageScenario.IsEnabled() ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario)
+                {
+                    LOG_ERROR("GBuffer プログラムの検証には indoor と gbuffer-emissive を単独で指定してください");
+                    return false;
+                }
+                RequireVisibilityBufferPath();
             }
             if (m_bShadingModelScenario)
             {
@@ -2005,6 +2021,10 @@ namespace
             {
                 LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
                 return GetFixture().ApplyShadingModelGBufferFixture();
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                return m_GBufferProgramScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
             }
             if (m_ExtensionStageScenario.IsEnabled())
             {
@@ -2285,6 +2305,10 @@ namespace
                 m_bShadingModelScenario = true;
                 return true;
             }
+            if (argument.find(TEXT("--gbuffer-program-scenario=")) == 0)
+            {
+                return m_GBufferProgramScenario.ParseArgument(argument, outFailureReason);
+            }
             if (argument.find(TEXT("--extension-stage-scenario=")) == 0)
             {
                 return m_ExtensionStageScenario.ParseArgument(argument, outFailureReason);
@@ -2486,6 +2510,10 @@ namespace
             {
                 return EvaluateShadingModelGBufferFrame(frame, reason);
             }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                return m_GBufferProgramScenario.Evaluate(frame, reason);
+            }
             if (m_ExtensionStageScenario.IsEnabled())
             {
                 return m_ExtensionStageScenario.Evaluate(frame, reason);
@@ -2611,6 +2639,11 @@ namespace
                 auto fog = MakeDefaultVolumetricFogParameters();
                 fog.bEnabled = false;
                 renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                m_GBufferProgramScenario.ApplyState(renderWorld);
                 return;
             }
             if (m_ExtensionStageScenario.IsEnabled())

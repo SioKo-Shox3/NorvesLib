@@ -10565,3 +10565,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 登録簿を SceneView に持たせ、RenderWorld の窓口と RenderThread での反映を配線する: 着地(直し 0 回)
 - U4 GBufferPass の固定のパイプラインを鍵ごとに遅延して作る表へ置き換え、プログラムのシェーダーを読む: 着地(直し 1 回)
 - U5 可視バッファが on のとき、プログラムの材質をラスタから外し、解決の後・DecalPass の前に GBuffer と深度へ重ねて描く: 着地(直し 0 回)
+- U6 GPU の試験 RenderingGBufferProgramVulkanTest と文書、タスクの verify: 着地(直し 0 回)

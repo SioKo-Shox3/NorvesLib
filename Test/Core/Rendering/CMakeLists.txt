@@ -877,6 +877,7 @@ register_rendering_gpu_test(
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
+    GBufferProgramScenario.cpp
 )
 target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
@@ -931,6 +932,53 @@ set_tests_properties(RenderingShadingModelGBufferVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# 二つの経路で同じプログラムを使う材質とパイプラインの共有を検証する。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunGBufferProgramTest.cmake" CONTENT [=[
+set(failures "")
+set(log_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/GBufferProgram")
+file(MAKE_DIRECTORY "${log_directory}")
+foreach(visibility IN ITEMS on off)
+    set(arguments --scene=indoor --gbuffer-program-scenario=fixed --capture-source=gbuffer-emissive)
+    if(visibility STREQUAL "off")
+        list(APPEND arguments --visibility-buffer=off)
+    endif()
+    execute_process(COMMAND "${TEST_EXECUTABLE}" ${arguments}
+        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    file(WRITE "${log_directory}/${visibility}-output.log" "${output}${error}")
+    message("visibility=${visibility}\n${output}${error}")
+    if(NOT result STREQUAL "0")
+        list(APPEND failures "visibility=${visibility} exit=${result}")
+    endif()
+    if(EXISTS "${TEST_WORKING_DIRECTORY}/RenderingHdrSceneCapture.log")
+        file(COPY_FILE "${TEST_WORKING_DIRECTORY}/RenderingHdrSceneCapture.log"
+            "${log_directory}/${visibility}.log")
+        file(STRINGS "${log_directory}/${visibility}.log" created
+            REGEX "GBufferPipelineCreated program=Test[.]FixedColor skinned=0 polygon=fill cull=(back|none|front) alphaClip=[01] total=[0-9]+")
+        list(LENGTH created created_count)
+        message("GBUFFER_PROGRAM_PIPELINES visibility=${visibility} count=${created_count}")
+        if(NOT created_count EQUAL 1)
+            list(APPEND failures "visibility=${visibility} pipeline_count=${created_count}")
+        endif()
+    else()
+        list(APPEND failures "visibility=${visibility} log_missing")
+    endif()
+endforeach()
+if(failures)
+    message(FATAL_ERROR "GBuffer プログラムの検証が失敗しました: ${failures}")
+endif()
+]=])
+add_test(NAME RenderingGBufferProgramVulkanTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
+        "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_BINARY_DIR}/RunGBufferProgramTest.cmake")
+set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
+    TIMEOUT 900
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 register_rendering_gpu_test(
