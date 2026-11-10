@@ -13,6 +13,7 @@
 #include "Rendering/GrassPass.h"
 #include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/SkyOcclusionMapPass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -903,6 +904,7 @@ namespace NorvesLib::Core::Rendering
                                                context.SceneRevision,
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
+        context.SkyOcclusion.Reset();
         struct PhysicalLightingScope final
         {
             ViewRenderContext& Context;
@@ -1212,6 +1214,9 @@ namespace NorvesLib::Core::Rendering
         ssaoSettings.Intensity = 1.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
+
+        // 空を遮る形状からクリップマップを更新し、照明へ公開する。
+        AddPass(MakeUnique<SkyOcclusionMapPass>());
 
         // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
