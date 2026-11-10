@@ -724,6 +724,8 @@ namespace NorvesLib::Core::Rendering
         GrassGenerateConstants constants = BuildGrassGenerateConstants(
             m_Settings, cameraPosition, planes.Planes, field->LayerAResolution, field->LayerBResolution,
             field->ChunkSizeMeters, bUseHiZ ? &hiZContract : nullptr);
+        // 主カメラの切り抜きを草の生成に渡し、無効なら定数は 0 で従来どおりにする。
+        SetGrassViewClearance(constants, camera->ViewClearance);
         if (bUseHiZ)
         {
             constants.HiZDimensions[2] = hiZMipCount;

@@ -262,6 +262,9 @@ namespace NorvesLib::Core::Rendering
     {
     public:
         void BeginFrame(uint64_t completedSubmissionSerial);
+        // パスの記録より前に、このフレームが参照するメッシュを転送する。
+        void PreloadFrameLeases(
+            const Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>>& frameLeases);
         bool PrepareDraw(const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
                          const Container::VariableArray<Math::Matrix4x4>& bonePalette,
                          const Math::Matrix4x4& worldTransform,

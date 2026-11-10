@@ -6,6 +6,7 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/ViewClearance.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/Wind.h"
 #include "RHI/ICommandList.h"
@@ -437,6 +438,8 @@ namespace NorvesLib::Core::Rendering
                            : cameraConstants;
 
         FoliageUniform frameTemplate{};
+        frameTemplate.viewClearance =
+            MakeViewClearanceGpuData(activeCamera->ViewClearance, activeCamera->ViewClearance.bAffectGrass);
         frameTemplate.worldField = BuildWorldFieldSampleConstants(context.PhysicalLighting.WorldField);
         RHI::TexturePtr currentField = m_WorldFieldCurrentHandle.IsValid() ? resources.GetTexture(m_WorldFieldCurrentHandle) : RHI::TexturePtr{};
         RHI::TexturePtr previousField = m_WorldFieldPreviousHandle.IsValid() ? resources.GetTexture(m_WorldFieldPreviousHandle) : RHI::TexturePtr{};

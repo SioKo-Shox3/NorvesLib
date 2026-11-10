@@ -4,6 +4,7 @@
 // インスタンスの位置・向き・大きさでワールドへ置いてから、根元は動かず先ほど大きく風下へずらす
 
 #include "Common/FoliagePlacement.glsl"
+#include "Common/ViewClearance.glsl"
 
 // 先頭は foliage.frag が読む Common/FoliageData.glsl と共通。頂点段だけ末尾にフィールドの定数を持つ。
 layout(std140, set = 0, binding = 0) uniform FoliageData
@@ -20,6 +21,7 @@ layout(std140, set = 0, binding = 0) uniform FoliageData
     vec4 tipColorB;
     vec4 frameParams;
     vec4 windField;
+    ViewClearanceData viewClearance;
     WorldFieldSampleConstants worldField;
 } foliage;
 layout(set = 0, binding = 1) uniform sampler2D foliageWorldFieldCurrent;
@@ -83,6 +85,12 @@ void main()
     float fadeScale = FoliageFadeScale(root, inInstanceFadeThreshold);
     float widthScale = inInstanceParams.x * fadeScale;
     float heightScale = inInstanceParams.y * fadeScale;
+    // 主カメラと主人公の間・カメラの直前の株は、根元の可視度で低くする(影の描画は変えない)
+    if (ViewClearanceIsActive(foliage.viewClearance))
+    {
+        float clearance = ViewClearanceVisibility(foliage.viewClearance, root);
+        heightScale *= mix(foliage.viewClearance.Shape.w, 1.0, clearance);
+    }
     float colorVariation = inInstanceParams.z;
     float plantPhase = inInstanceParams.w;
 

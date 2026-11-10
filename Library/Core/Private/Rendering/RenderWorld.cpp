@@ -370,9 +370,19 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetStaticEnvironmentUniformRadiance(bEnabled, radiance);
     }
 
+    void RenderWorld::SetSunShadowParameters(const SunShadowParameters& parameters)
+    {
+        m_RenderingCoordinator.SetSunShadowParameters(parameters);
+    }
+
     void RenderWorld::SetSunShadowMaxDistance(float distance)
     {
         m_RenderingCoordinator.SetSunShadowMaxDistance(distance);
+    }
+
+    void RenderWorld::SetSkinnedViewCullingEnabled(bool bEnabled)
+    {
+        m_RenderingCoordinator.SetSkinnedViewCullingEnabled(bEnabled);
     }
 
     void RenderWorld::SetAerialPerspective(const AerialPerspectiveParameters& parameters)

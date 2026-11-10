@@ -2,6 +2,7 @@
 
 #include "Rendering/GrassFieldRenderData.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/ViewClearance.h"
 #include "Math/Vector3.h"
 #include "Math/Vector4.h"
 #include <cstddef>
@@ -17,6 +18,9 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGrassHashSaltKeep = 2;
     inline constexpr uint32_t kGrassHashSaltHeight = 3;
     inline constexpr uint32_t kGrassHashSaltFacing = 4;
+    inline constexpr uint32_t kGrassHashSaltClearance0 = 5;
+    inline constexpr uint32_t kGrassHashSaltClearance1 = 6;
+    inline constexpr uint32_t kGrassHashSaltClearance2 = 7;
     inline constexpr uint32_t kGrassGenerateFlagHiZ = 1u;
     // 1/255 の binary32。GLSL は uintBitsToFloat(0x3b808081u) として同じ値を使う。
     static constexpr float kGrassInv255 = 0x1.010102p-8f;
@@ -166,6 +170,7 @@ namespace NorvesLib::Core::Rendering
      * 判定の経路は加減乗算・比較・floor と整数演算だけ。浮動小数の除算・sqrt・三角関数を使わない。
      * GLSL は precise を付け、CPU の写しと同じ括弧・演算順を使う。dot / mix へ置き換えない。
      * 逆数・二乗・セル数は BuildGrassGenerateConstants で計算した値を CPU と GPU で共有する。
+     * 切り抜きの設定は SetGrassViewClearance で指定し、構築直後は無効。
      * 向きは u = 2 * unit(hash(gx, gz, band * 8 + 4)) - 1 とし、方向は (1 - u*u, 2*u)、
      * 長さは 1 + u*u。両面なので半円で十分で、描画側も同じハッシュと式から再導出する。
      * (tx, tz) = (camera.x - position.x, camera.z - position.z) とする。
@@ -197,9 +202,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t Flags[4] = {};                        // x の bit0: HZB を使う
         float HiZViewProjection[4][4] = {};            // GLSL mat4 の列を順に格納（CPU の VP を転置）
         uint32_t HiZDimensions[4] = {};                // 元の深度の幅、高さ、HZB の mip 数、予約
+        ViewClearanceGpuData ViewClearance;
     };
     static_assert(alignof(GrassGenerateConstants) == 16);
-    static_assert(sizeof(GrassGenerateConstants) == 480);
+    static_assert(sizeof(GrassGenerateConstants) == 544);
     static_assert(sizeof(GrassGenerateConstants) % 16 == 0);
     static_assert(offsetof(GrassGenerateConstants, CameraPosition) == 0);
     static_assert(offsetof(GrassGenerateConstants, FrustumPlanes) == 16);
@@ -223,6 +229,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GrassGenerateConstants, Flags) == 384);
     static_assert(offsetof(GrassGenerateConstants, HiZViewProjection) == 400);
     static_assert(offsetof(GrassGenerateConstants, HiZDimensions) == 464);
+    static_assert(offsetof(GrassGenerateConstants, ViewClearance) == 480);
 
     /**
      * @brief 平面は MatrixUtils::ExtractClipSpaceFrustumPlanes の Planes を渡す。
@@ -232,6 +239,9 @@ namespace NorvesLib::Core::Rendering
     GrassGenerateConstants BuildGrassGenerateConstants(const GrassGenerateSettings& settings,
         const Math::Vector3& cameraPos, const Math::Vector4 frustumPlanes[6], uint32_t layerARes,
         uint32_t layerBRes, float chunkSize, const MegaHiZContract* hizOrNull = nullptr);
+
+    /** @brief 草への適用設定を含めて切り抜きの定数を更新する。 */
+    void SetGrassViewClearance(GrassGenerateConstants& constants, const ViewClearanceParameters& parameters);
 
     /** @brief 整数の桁あふれは uint32_t の剰余。負の世界セル座標も uint32_t に写して渡す。 */
     inline uint32_t GrassHash(uint32_t x, uint32_t y, uint32_t z)

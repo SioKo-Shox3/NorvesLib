@@ -7,6 +7,7 @@
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/WorldFieldTypes.h"
 #include "Rendering/GBufferOverlayTargets.h"
+#include "Rendering/ViewClearance.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -33,6 +34,7 @@ namespace NorvesLib::Core::Rendering
         float tipColorB[4];
         float frameParams[4];
         float windField[4];
+        ViewClearanceGpuData viewClearance;
         WorldFieldSampleConstants worldField;
     };
     static_assert(offsetof(FoliageUniform, view) == 0u);
@@ -47,8 +49,9 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(FoliageUniform, tipColorB) == 336u);
     static_assert(offsetof(FoliageUniform, frameParams) == 352u);
     static_assert(offsetof(FoliageUniform, windField) == 368u);
-    static_assert(offsetof(FoliageUniform, worldField) == 384u);
-    static_assert(sizeof(FoliageUniform) == 432u);
+    static_assert(offsetof(FoliageUniform, viewClearance) == 384u);
+    static_assert(offsetof(FoliageUniform, worldField) == 448u);
+    static_assert(sizeof(FoliageUniform) == 496u);
 
     /**
      * @brief 草・低木の株（FoliageTypes.h の束）を、インスタンス描画で GBuffer へ直接ラスタするパス
