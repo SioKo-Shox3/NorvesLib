@@ -10669,3 +10669,5 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-065330/G5-GR26-LIGHTING-MODELS-final-verify.txt`（verify のビルドの行 exit 0、ctest の RenderingShadingModelLightingVulkanTest・RenderingShadingModelGBufferVulkanTest・ShadingModelContractTest・RenderingHdrIndoorSceneVulkanTest・RenderingHdrOutdoorSceneVulkanTest の 5/5 合格）。BackBuffer の sRGB 値の輝度で、PaleFlat の明暗の差 0.60（上限 2）、DefaultLit 126.96（下限 20）、Fur の境目 13.20 > DefaultLit 0.08、Eye の鏡面 148.96 < 177.36 < 191.52（P0 = 0・0.5・1）。基準画像の試験 4 本（RenderingGolden*）は回さない決まりで verify から外した。ID 0 の経路の文面は変えていない。
 - Next: 起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。今はどのシーンも既定の材質が DefaultLit なので、人が見るときは Rendering3DTest（天球・地面・球・岩）と荒野の見た目が変わらないことを見る。
 - Notes: 屋内の基準画像（RenderingGoldenIndoorVulkanTest・同 GBufferFallback）は、この項目の照明の変更を入れる前のシェーダーでも 10 画素・最大 1 階調の差（mean_flip 0.000013729）で落ちる。前の項目のどれかから続いている差で、基準画像は回さない決まりなので追っていない。
+
+- G5-GR44-TRAMPLE: feature/scene-launcher を取り込んだ。株の定数は切り抜き（384 バイト目）の後ろへ世界フィールドの定数を置き 496 バイトに、草原は主人公視点と走行体の両方を残した。verify のビルド 4 本と ctest 5 本（加えて ViewClearanceShaderCompileTest）が通った。
