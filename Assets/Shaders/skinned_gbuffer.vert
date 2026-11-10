@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -14,7 +15,14 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;
     vec4 frameParams;
+    vec4 vtFeedbackParams;
+    vec4 shadingParams;
+    vec4 shadingModel;
+    vec4 vertexAnimInstanceParams;
+    vec4 vertexAnimTime;
 } mvp;
+
+#include "Common/VertexAnimation.glsl"
 
 layout(std430, set = 0, binding = 8) readonly buffer SkinningMatrices
 {
@@ -130,7 +138,9 @@ vec3 SkinPreviousPosition()
 void main()
 {
     SkinnedVertex skinned = SkinVertex();
+    vec4 params = VertexAnimationParamsForFrame(mvp.vertexAnimInstanceParams, mvp.vertexAnimTime);
     vec4 worldPos = skinning.world * vec4(skinned.position, 1.0);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, skinned.position, params, mvp.vertexAnimTime.x);
     fragWorldPos = worldPos.xyz;
     vec3 worldNormal = mat3(skinning.worldNormal) * skinned.normal;
     fragNormal = dot(worldNormal, worldNormal) > 0.000001 ? normalize(worldNormal) : vec3(0.0);
@@ -141,7 +151,9 @@ void main()
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
     fragCurrentClip = mvp.projection * mvp.view * worldPos;
     // 直前のフレームの骨と変換で同じ頂点を動かし、前のカメラで投影する（gbuffer.frag が velocity にする）。
-    vec4 previousWorldPos = previousSkinning.world * vec4(SkinPreviousPosition(), 1.0);
+    vec3 previousLocalPos = SkinPreviousPosition();
+    vec4 previousWorldPos = previousSkinning.world * vec4(previousLocalPos, 1.0);
+    previousWorldPos.xyz = ApplyVertexAnimation(previousWorldPos.xyz, previousLocalPos, params, mvp.vertexAnimTime.y);
     fragPreviousClip = mvp.previousProjection * mvp.previousView * previousWorldPos;
     gl_Position = fragCurrentClip;
 }

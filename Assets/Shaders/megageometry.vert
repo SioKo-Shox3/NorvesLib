@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -16,7 +17,14 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams;    // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
+    vec4 materialParams;
+    vec4 vtFeedbackParams;
+    vec4 terrainParams[10];
+    vec4 shadingParams;
+    vec4 vertexAnimTime;
 } mvp;
+
+#include "Common/VertexAnimation.glsl"
 
 // インスタンスの表（binding 8）とメッシュの表（binding 22）。描画が引くのは変換だけ。
 #define MEGA_INSTANCE_BINDING 8
@@ -47,7 +55,9 @@ void main()
     mat4 world = instance.world;
     mat4 previousWorld = instance.previousWorld;
 
+    vec4 params = VertexAnimationParamsForFrame(vec4(-1.0), mvp.vertexAnimTime);
     vec4 worldPos = world * vec4(inPosition, 1.0);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, mvp.vertexAnimTime.x);
     fragWorldPos = worldPos.xyz;
 
     mat3 normalMatrix = mat3(world);
@@ -61,5 +71,15 @@ void main()
 
     gl_Position = mvp.projection * mvp.view * worldPos;
     fragCurrentClip = gl_Position;
-    fragPreviousClip = mvp.previousProjection * mvp.previousView * previousWorld * vec4(inPosition, 1.0);
+    vec4 previousWorldPos = previousWorld * vec4(inPosition, 1.0);
+    previousWorldPos.xyz = ApplyVertexAnimation(previousWorldPos.xyz, inPosition, params, mvp.vertexAnimTime.y);
+    if (VertexAnimationKind(params) == VERTEX_ANIMATION_KIND_NONE)
+    {
+        // 恒等のときは従来の行列の乗算順を保ち、丸めの差を出さない。
+        fragPreviousClip = mvp.previousProjection * mvp.previousView * previousWorld * vec4(inPosition, 1.0);
+    }
+    else
+    {
+        fragPreviousClip = mvp.previousProjection * mvp.previousView * previousWorldPos;
+    }
 }
