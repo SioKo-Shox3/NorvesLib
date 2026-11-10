@@ -259,6 +259,7 @@ namespace NorvesLib::Core::Rendering
         m_ProgramRegistryRevision = 0;
         m_bPipelinesPrepared = false;
         m_bParallelAttachmentsReady = false;
+        m_bProgramOverlayPrepared = false;
         m_SkinnedGBufferVertexShader.reset();
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
@@ -334,6 +335,31 @@ namespace NorvesLib::Core::Rendering
         return VisibilityResolveGeometry::IsSupported(device->GetCapabilities());
     }
 
+    bool GBufferPass::HasProgramDraws(const ViewRenderContext& context) const
+    {
+        const auto* materials = context.Resources.Materials;
+        if (!materials)
+        {
+            return false;
+        }
+        for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+        {
+            const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
+                                                       ? materials->GetData(command.Draw.MaterialHandle)
+                                                       : nullptr;
+            if (material && material->ProgramId != kStandardGBufferProgramId)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool GBufferPass::IsDrawingSkippedForVisibility(const ViewRenderContext& context) const
+    {
+        return ShouldSkipDraws(context.Device, context.GetActiveDebugMode());
+    }
+
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
@@ -341,6 +367,7 @@ namespace NorvesLib::Core::Rendering
         m_bPipelinesPrepared = false;
         m_bParallelAttachmentsReady = false;
         m_bHasSkinnedDraws = false;
+        m_bProgramOverlayPrepared = false;
         if (context)
         {
             for (const DrawCommand& command : context->GetActiveOpaqueCommands())
@@ -564,11 +591,11 @@ namespace NorvesLib::Core::Rendering
         m_bPipelinesPrepared = true;
     }
 
-    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context)
+    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context, bool bProgramOnly)
     {
         // Execute の BuildMaterialDescriptor と同じ条件（スカラー値があり、その枠のテクスチャが無い）で作る
         const auto* materials = context.Resources.Materials;
-        if (!materials || ShouldSkipDraws(context.Device, context.GetActiveDebugMode()))
+        if (!materials || (!bProgramOnly && ShouldSkipDraws(context.Device, context.GetActiveDebugMode())))
         {
             return;
         }
@@ -581,7 +608,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const auto* matData = materials->GetData(materialHandle);
-            if (!matData)
+            if (!matData || (bProgramOnly && matData->ProgramId == kStandardGBufferProgramId))
             {
                 continue;
             }
@@ -657,6 +684,73 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        RecordGBufferDraws(context, m_GBufferRenderPass, m_GBufferFramebuffer, DrawSelection::All);
+    }
+
+    void GBufferPass::PrepareProgramOverlay(const ViewRenderContext& context)
+    {
+        m_bProgramOverlayPrepared = false;
+        if (!m_bInitialized || !context.Resources.Materials)
+        {
+            return;
+        }
+        if (!m_GBufferRenderPass || !m_bRenderPassUsesRenderGraphInitialStates)
+        {
+            // グラフのテクスチャが確保される前でも、設定された形式で互換の render pass を用意できる。
+            const RHI::TexturePtr empty;
+            const RenderPassSignature signature = CreateGBufferRenderPassSignature(
+                ResolveGBufferWidth(context), ResolveGBufferHeight(context), empty, empty, empty, empty, empty, empty, true);
+            if (!EnsureGBufferRenderPass(signature))
+            {
+                return;
+            }
+        }
+        if (!AreGBufferResourcesReady())
+        {
+            return;
+        }
+        RefreshGBufferPrograms();
+        for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+        {
+            const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
+                                                       ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
+                                                       : nullptr;
+            if (material && material->ProgramId != kStandardGBufferProgramId)
+            {
+                GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned);
+            }
+        }
+        PrepareConstantMaterialTextures(context, true);
+        m_bProgramOverlayPrepared = true;
+    }
+
+    void GBufferPass::RecordProgramOverlay(ViewRenderContext& context,
+                                           const RHI::RenderPassPtr& renderPass,
+                                           const RHI::FramebufferPtr& framebuffer)
+    {
+        if (!m_bProgramOverlayPrepared || !renderPass || !framebuffer || !context.CommandList ||
+            !m_SceneRenderer || !context.Resources.Materials || !context.Resources.Textures ||
+            (!context.Resources.Meshes && !context.SkinnedMeshes))
+        {
+            return;
+        }
+        // 記録中は準備した表とテクスチャを読むだけにする。
+        m_bConstantTexturesPrepared = true;
+        RecordGBufferDraws(context, renderPass, framebuffer, DrawSelection::ProgramOnly);
+        m_bConstantTexturesPrepared = false;
+    }
+
+    void GBufferPass::RecordGBufferDraws(ViewRenderContext& context,
+                                         const RHI::RenderPassPtr& renderPass,
+                                         const RHI::FramebufferPtr& framebuffer,
+                                         DrawSelection selection)
+    {
+        const DrawCommandView opaqueCommands = context.GetActiveOpaqueCommands();
+        auto* materials = context.Resources.Materials;
+        auto* textures = context.Resources.Textures;
+        auto* meshes = context.Resources.Meshes;
+        const RHI::Viewport viewport = context.GetActiveLocalViewport();
+        const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
         const uint64_t instanceDataSize64 = context.InstanceDataBuffer
                                                 ? context.InstanceDataBuffer->GetSize()
                                                 : 0;
@@ -933,12 +1027,18 @@ namespace NorvesLib::Core::Rendering
         bool bAllocationFailed = false;
         for (uint32_t programPass = 0; programPass < 2 && !bAllocationFailed; ++programPass)
         {
+            if ((selection == DrawSelection::StandardOnly && programPass == 1) ||
+                (selection == DrawSelection::ProgramOnly && programPass == 0))
+            {
+                continue;
+            }
             for (const auto& cmd : opaqueCommands)
             {
                 const MaterialResourceData* materialData =
                     materials && cmd.Draw.MaterialHandle.IsValid() ? materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
                 const bool bProgramMaterial =
-                    m_SceneView && materialData && materialData->ProgramId != kStandardGBufferProgramId;
+                    (m_SceneView || selection == DrawSelection::ProgramOnly) && materialData &&
+                    materialData->ProgramId != kStandardGBufferProgramId;
                 if (bProgramMaterial != (programPass == 1))
                 {
                     continue;
@@ -993,7 +1093,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        EnqueueGBufferGeometryPass(context, gBufferCommands, viewport, scissor, meshes);
+        EnqueueGBufferGeometryPass(context, renderPass, framebuffer, gBufferCommands, viewport, scissor, meshes);
     }
 
     RHI::TexturePtr GBufferPass::GetOrCreateConstantGrayTexture(float value)
@@ -1055,6 +1155,8 @@ namespace NorvesLib::Core::Rendering
 
     void GBufferPass::EnqueueGBufferGeometryPass(
         ViewRenderContext &context,
+        const RHI::RenderPassPtr& renderPass,
+        const RHI::FramebufferPtr& framebuffer,
         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
         const RHI::Viewport &viewport,
         const RHI::ScissorRect &scissor,
@@ -1065,8 +1167,8 @@ namespace NorvesLib::Core::Rendering
             drawCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         }
 
-        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_GBufferRenderPass,
-                                                                     m_GBufferFramebuffer,
+        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(renderPass,
+                                                                     framebuffer,
                                                                      drawCommands,
                                                                      viewport,
                                                                      scissor,
@@ -1084,6 +1186,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         EnqueueGBufferGeometryPass(context,
+                                   m_GBufferRenderPass,
+                                   m_GBufferFramebuffer,
                                    MakeShared<Container::VariableArray<DrawCommand>>(),
                                    viewport,
                                    scissor,
@@ -1544,7 +1648,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    bool GBufferPass::PrepareProgramShaders(ViewRenderContext& context, const MaterialResourceData& material)
+    bool GBufferPass::PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material)
     {
         const GBufferProgramId id = material.ProgramId;
         const auto found = m_ProgramShaders.find(id);
@@ -1584,7 +1688,7 @@ namespace NorvesLib::Core::Rendering
         return bValid;
     }
 
-    RHI::PipelinePtr GBufferPass::GetGBufferPipeline(ViewRenderContext& context,
+    RHI::PipelinePtr GBufferPass::GetGBufferPipeline(const ViewRenderContext& context,
                                                      const MaterialResourceData* material,
                                                      bool bSkinned)
     {
@@ -1598,7 +1702,7 @@ namespace NorvesLib::Core::Rendering
         bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe;
 #endif
         GBufferPipelineKey key = MakeGBufferPipelineKey(m_SceneView ? material : nullptr, bSkinned, bWireframe);
-        if (m_bPipelinesPrepared)
+        if (m_bPipelinesPrepared || m_bProgramOverlayPrepared)
         {
             RHI::PipelinePtr pipeline = m_Pipelines.Find(key);
             if (!pipeline && key.Program != kStandardGBufferProgramId)

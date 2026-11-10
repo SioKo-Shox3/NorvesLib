@@ -5,6 +5,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/GBufferProgramOverlayPass.h"
 #include "Rendering/DecalPass.h"
 #include "Rendering/DistortionPass.h"
 #include "Rendering/DepthOfFieldPass.h"
@@ -1143,7 +1144,7 @@ namespace NorvesLib::Core::Rendering
         MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
 
-        // VisibilityRasterPass: 不透明の描画のすべて（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）を、
+        // VisibilityRasterPass: MegaGeometry のクラスタと、プログラム指定の無い不透明のメッシュ・スキニングの塊を、
         // VisBuffer.Id と GBuffer.Depth へ描く（on では GBuffer の描画の代わりに、debug では今の GBuffer の描画に加えて）。
         // --visibility-buffer=on|debug のときだけ足す。
         VisibilityRasterPass *visibilityRasterPassPtr = nullptr;
@@ -1189,6 +1190,12 @@ namespace NorvesLib::Core::Rendering
             // 2パスの遮蔽の HZB は、GBuffer の描画を止めている間は ID のラスタの深度から作る（記録をラスタの Execute へ移す）
             megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
             AddPass(std::move(visibilityResolvePass));
+
+            // プログラム材質は草と同じく解決できないため、解決の後の GBuffer と深度へ重ねて描く。
+            // ID のラスタの深度には載らず、2 パスの遮蔽の HZB の遮蔽物にはならない。
+            auto programOverlayPass = MakeUnique<GBufferProgramOverlayPass>();
+            programOverlayPass->SetGBufferPass(gbufferPassPtr);
+            AddPass(std::move(programOverlayPass));
         }
 
         // DecalPass: 画面空間の遅延デカールを解決・GBuffer の描画の後、草の前に重ねる。

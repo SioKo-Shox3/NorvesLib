@@ -10564,3 +10564,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 gbuffer.frag の本体と skinned_gbuffer.vert の頂点の読み方を Common へ切り出す: 着地(直し 1 回)
 - U3 登録簿を SceneView に持たせ、RenderWorld の窓口と RenderThread での反映を配線する: 着地(直し 0 回)
 - U4 GBufferPass の固定のパイプラインを鍵ごとに遅延して作る表へ置き換え、プログラムのシェーダーを読む: 着地(直し 1 回)
+- U5 可視バッファが on のとき、プログラムの材質をラスタから外し、解決の後・DecalPass の前に GBuffer と深度へ重ねて描く: 着地(直し 0 回)
