@@ -10607,3 +10607,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 可視バッファのラスタの頂点シェーダー 3 本で同じ式を通す: 着地(直し 0 回)
 - U5 可視バッファの解決とソフトのラスタで今と前の位置を 2 回評価する: 着地(直し 0 回)
 - U6 影の描画(vsm_draw.vert・shadow.vert)を今の時刻で同じ式に通す: 着地(直し 1 回)
+- Notes: 要起票: `VirtualShadowMapVulkanTest` がこの項目の変更の前（144cd0c9）から落ちる。ケース A・B の深度からのページの要求が GPU で 0 件（参照 18 件、統計の要求・割り当ても 0）で、描画を通るケース G は不一致 0。再現は `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1` の後に `ctest --test-dir build -C Debug -R "^VirtualShadowMapVulkanTest$" --output-on-failure`（終了コード 8）。後の G10・G12 の項目の verify がこの試験を含む。
