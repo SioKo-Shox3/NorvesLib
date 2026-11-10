@@ -61,6 +61,7 @@ target_include_directories(SceneQueryRaycastTest PRIVATE
 norves_add_test_bundle(EntityTreeTest
     FOLDER "Test/Core/Object"
     MEMBER EntityTreeTest EntityTreeTest.cpp
+    MEMBER WorldFieldInteractorGatherTest WorldFieldInteractorGatherTest.cpp
     MEMBER TickGroupConfigurationTest TickGroupConfigurationTest.cpp
     MEMBER WorldTickGroupTest WorldTickGroupTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
@@ -124,6 +125,7 @@ add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQueryOverlapTest)
 add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryRaycastTest --test=SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
+add_test(NAME WorldFieldInteractorGatherTest COMMAND EntityTreeTest --test=WorldFieldInteractorGatherTest)
 add_test(NAME ScatterSystemResidencyTest COMMAND EntityTreeTest --test=ScatterSystemResidencyTest)
 add_test(NAME StreamingCellStateMachineTest COMMAND EntityTreeTest --test=StreamingCellStateMachineTest)
 add_test(NAME StreamingBudgetTest COMMAND EntityTreeTest --test=StreamingBudgetTest)

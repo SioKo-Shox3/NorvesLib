@@ -269,7 +269,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 1 株の塊を記録に足す。どのスライスの範囲にも入らない塊は省き、記録の上限を超えたら書かずに数える
          * @param mesh 株の影に使う段のメッシュ（束の Mesh か ShadowLods の 1 つ）。風の置き方の株の高さは束の Mesh の Height を使う
-         * @param bStill true なら風で揺らさない（風の強さを 0 にして置き、境界も広げない）
+         * @param bStill true なら風で揺らさない（風の強さを 0 にする）
+         * @param fieldHorizontalMargin フィールドで横へ動く量の上限[m]（無効なら 0）
+         * @param fieldDownwardMargin フィールドで下へ動く量の上限[m]（無効なら 0）
          * @param inOutWorldBounds 出力: 足した塊の境界を合わせた箱（足さなければ変えない）
          * @return 足した塊の数
          */
@@ -283,7 +285,9 @@ namespace NorvesLib::Core::Rendering
                                               CasterBounds& inOutWorldBounds,
                                               bool& inOutHasWorldBounds,
                                               const CasterSliceTable* slices = nullptr,
-                                              bool bStill = false)
+                                              bool bStill = false,
+                                              float fieldHorizontalMargin = 0.0f,
+                                              float fieldDownwardMargin = 0.0f)
         {
             if (mesh.VertexAddress == 0u || mesh.IndexAddress == 0u || mesh.BlockBounds == nullptr || mesh.BlockCount == 0u || !batch.Mesh)
             {
@@ -309,7 +313,19 @@ namespace NorvesLib::Core::Rendering
                 {
                     break;
                 }
-                const CasterBounds bounds = FoliageInstanceBounds(mesh.BlockBounds[block], instance, fadeScale, windMargin);
+                CasterBounds bounds = FoliageInstanceBounds(mesh.BlockBounds[block], instance, fadeScale, windMargin);
+                // フィールドで横と下へ動く範囲を、カリングと無効化の両方に含める。
+                if (fieldHorizontalMargin > 0.0f)
+                {
+                    bounds.Min[0] -= fieldHorizontalMargin;
+                    bounds.Max[0] += fieldHorizontalMargin;
+                    bounds.Min[2] -= fieldHorizontalMargin;
+                    bounds.Max[2] += fieldHorizontalMargin;
+                }
+                if (fieldDownwardMargin > 0.0f)
+                {
+                    bounds.Min[1] -= fieldDownwardMargin;
+                }
                 const SliceMasks masks = MasksForBounds(clipmap, slices, bounds);
                 if (!masks.IsAny())
                 {

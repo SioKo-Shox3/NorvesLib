@@ -13,6 +13,8 @@ layout(std430, set = 0, binding = 2) readonly buffer GrassSpecies
     GrassSpeciesGpuData Species[];
 } speciesTable;
 layout(set = 0, binding = 3) uniform sampler2DArray layerA;
+layout(set = 0, binding = 4) uniform sampler2D worldFieldCurrent;
+layout(set = 0, binding = 5) uniform sampler2D worldFieldPrevious;
 
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
@@ -124,6 +126,32 @@ vec3 EvaluateGrassBladeVertex(GrassBladeRecord blade, GrassSpeciesGpuData specie
     precise float inverseV = 1.0 - v;
     precise vec3 center = (root * (inverseV * inverseV) + p1 * ((2.0 * inverseV) * v)) + p2 * (v * v);
     precise vec3 tangent = (p1 - root) * (2.0 * inverseV) + (p2 - p1) * (2.0 * v);
+
+    // 風・傾き・濡れのベジエ変形の後へ、LOD と近接フェードを反映した丈でフィールドのずれを足す。
+    // 既存の短い UBO では末尾を読まない。無効時は位置・接線の演算も追加しない。
+    if ((draw.Flags.x & kGrassDrawFlagWorldField) != 0u)
+    {
+        if (draw.WorldField.bEnabled != 0u)
+        {
+            vec4 field;
+            if (bPrevious)
+            {
+                // velocity の前の位置は、前の画像・原点・範囲から独立に再評価する。
+                field = WorldFieldSampleAt(worldFieldPrevious, draw.WorldField.PreviousOriginXZ,
+                    draw.WorldField.PreviousInvExtent, root.xz);
+            }
+            else
+            {
+                field = WorldFieldSampleAt(worldFieldCurrent, draw.WorldField.CurrentOriginXZ,
+                    draw.WorldField.CurrentInvExtent, root.xz);
+            }
+            center += WorldFieldDisplacement(field, h, v, draw.WorldField.BendScale, draw.WorldField.FlattenScale);
+            // 共通式の t 微分を接線へ足し、曲げ・押し倒し後の面の向きへ法線も追従させる。
+            tangent += vec3(field.r * h * draw.WorldField.BendScale * 2.0 * v,
+                -h * draw.WorldField.FlattenScale * clamp(field.b, 0.0, 1.0),
+                field.g * h * draw.WorldField.BendScale * 2.0 * v);
+        }
+    }
 
     // G5: 面と視線の内積が 0.5 未満なら水平ビルボードへ寄せる。左右と法線の符号を保つ。
     precise vec3 view = GrassNormalize(vec3(camera.x - center.x, 0.0, camera.z - center.z), facing);

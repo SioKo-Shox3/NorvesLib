@@ -10670,17 +10670,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。今はどのシーンも既定の材質が DefaultLit なので、人が見るときは Rendering3DTest（天球・地面・球・岩）と荒野の見た目が変わらないことを見る。
 - Notes: 屋内の基準画像（RenderingGoldenIndoorVulkanTest・同 GBufferFallback）は、この項目の照明の変更を入れる前のシェーダーでも 10 画素・最大 1 階調の差（mean_flip 0.000013729）で落ちる。前の項目のどれかから続いている差で、基準画像は回さない決まりなので追っていない。
 
-- U0 公開の型とプロキシのチャンクの欄を足す: 着地(直し 0 回)
-- U1 静的の木をチャンクごとの部分木＋上の木の 2 段にする: 着地(直し 0 回)
-- U2 Entity の無いコライダーのチャンクの登録・解除と、slot.Component / slot.Owner を読む所の分岐: 着地(直し 0 回)
-- U3 PhysicsDetachedColliderTest と試験の窓口を足し、タスクの verify を回す: 着地(直し 0 回)
-## 2026-11-05 G12-GR09-DETACHED-COLLIDERS（run 20261105-221334 の反復 1）
-- Done: `PhysicsTypes.h` に `EStaticColliderShape`・`StaticColliderDesc`（球・箱・カプセル、ワールドの変換、レイヤー・マスク、`SurfaceId`、UserData。trigger は拒否）・`StaticColliderChunkKey` を足し、`IPhysicsModule` に `RegisterStaticColliderChunk` / `UnregisterStaticColliderChunk` を足した。結果は二重の鍵 = `Duplicate`、未知の鍵 = `NotRegistered`、NaN の変換・trigger・不正な形 = `InvalidArgument`（チャンク全体を入れない）。固定ステップの最中の呼び出しは保留し、次の `StepPreFixed`／`StepFixed` の入口で当てる。コライダーのスロットに `bDetached`・`ChunkKey` を持たせて同じ世代つきのハンドルの空間に載せ、`RegisterCollider`・`ValidateCollider`・`IsColliderLifecycleActive`・`ResolveContacts`・`DispatchEvents`・`BuildBroadphase`・`ReleaseColliderSlot`・キャラクターの足場の錨に detached の分岐を足した（常に有効・静的・通知先なし）。静的の木はチャンク無しの群＋チャンクの鍵ごとの群の部分木と、群の境界の上の木の 2 段にし、署名が同じ群は部分木を使い回す（`SubtreeRebuildCount`・`SubtreeReuseCount`・`StaticTreeItemCount` の統計）。
-- 証拠: `.harness/runs/20261105-221334/verify-G12-GR09-DETACHED-COLLIDERS.txt`（verify の 2 行: Debug の PhysicsDynamicsTest・SceneQueryRaycastTest・Game のビルド exit 0、ctest 10 件 100% Passed）。`PhysicsDetachedColliderTest` の実測: 5000 個の 1 回の登録で Entity の数は不変、プロキシ・静的木の項目が各 5000 増。detached の箱に落とした球が 180 ステップで高さ 0.45〜0.55・速度 0.2 以下で止まり、下向きの Raycast が Entity 無効・UserData・SurfaceId つきで当たる。解除で作業用・公開用のプロキシと木の項目が 1 減り、古いハンドルの IsAlive が false、同じ Raycast が NoHit。C の登録後の作り直し 1・使い回し 2、A の解除後の作り直し 0・使い回し 2（B は作り直さない）。拒否 4 種と固定ステップの最中の登録の遅延も確認。
-- Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。散布・地形からの登録の結線は G12-GR47-SCATTER-COLLIDERS・G12-GR40-WORLD-PAYLOADS。
-- Notes: 静的の木のレイは上の木→部分木を手前から訪れて最近接の距離を群の間で引き継いで打ち切るが、葉の中の項目を厳密な入口順には並べないため、群を厳密な入口順に訪れる保証はない（結果は打ち切りの余白と同距離の規則で決まる）。群が非常に多いときの時間は未計測（G12-GR09-SCALE-MEASURE で測る）。
-- Notes: ステップの外で同じ鍵へ続けて操作したときは保留分を置き換えて即時に当てる。試験は B の部分木の写しの同一性を直接は比べず、作り直しの回数（統計）と B への Raycast の当たりで確かめている（部分木の型が .cpp の中にあり窓口から見えないため）。
-
-## 2026-11-06 G12-GR09-DETACHED-COLLIDERS（run 20261106-092851 の反復 1）
-- Done: 前回の反復で実装・試験は着地済み。評価者が枠切れ（429）で未実施だったため status が doing に戻っていた。コードは変えず、着地した HEAD で ctest 10 件を回し直して 100% Passed（`.harness/runs/20261106-092851/ctest-G12-GR09-DETACHED-COLLIDERS.txt`）を確かめ、done に戻した。
-- Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。
+- G5-GR44-TRAMPLE: feature/scene-launcher を取り込んだ。株の定数は切り抜き（384 バイト目）の後ろへ世界フィールドの定数を置き 496 バイトに、草原は主人公視点と走行体の両方を残した。verify のビルド 4 本と ctest 5 本（加えて ViewClearanceShaderCompileTest）が通った。
+- U1 フィールドの今・前の原点を消費側へ公開し、曲げの共通の式を GLSL と C++ に置く: 着地(直し 0 回)
+- U4 WorldFieldInteractorComponent と集め役（Engine のメンバ）と集めの試験: 着地(直し 0 回)
+- U2 grass.vert がフィールドを引いて曲げ・押し倒し・前の位置を出す: 着地(直し 0 回)
+- U5 grassland に決まった道を走る体（胴 2・四肢 4）を置く: 着地(直し 0 回)
+- U3 株（foliage.vert）と VSM の株の影（vsm_draw.vert）をフィールドで曲げる: 着地(直し 2 回)
+- U6 GPU 試験 GrassTrampleVulkanTest を足し、タスクの verify を全部回す: 着地(直し 0 回)
+## 2026-11-10 G5-GR44-TRAMPLE（run 20261110-080408、完了）
+- Done: `WorldFieldPass` が 2 枚の画像それぞれの原点を記録し、今と前の画像と組にした座標（`WorldFieldFrameState`）を Declare で描画の文脈へ公開する（前の原点が分からないときは前＝今）。消費側の UBO の末尾に埋める `WorldFieldSampleConstants`（48 B）と、曲げ・押し倒しの共通の式（水平 = RG × 丈 × 0.7 × t²、高さ = −丈 × t × 0.7 × B）を `WorldField/WorldFieldSample.glsl` と `WorldFieldTypes` の C++ に同じ形で置いた
+- Done: `grass.vert` はブレードの根元で今の画像を今の原点で引き、風のベジエ変形の後へずれを足し接線も追従させる。前の位置は前の画像を前の原点で引いて同じ式で再評価する。`foliage.vert` と VSM の株の影（`vsm_draw.vert`）は `FoliagePlacement.glsl` の `ApplyFoliageWorldField` で同じ式を使う。フィールドが無い・値が 0 なら位置は今の式のまま。頂点のステージの読み取りは layout を保つ明示のバリア（ShaderResource → GenericRead）で同期する
+- Done: interactor を最後に受け取ってから 8 秒（τ 1.5 秒の約 5 倍）の間だけ、VSM の株の塊の境界を横へ BendScale × 丈・下へ FlattenScale × 丈だけ広げ、フィールドの範囲の中の株の影を毎フレーム描き直す。FoliagePass のセルのカリングも同じ条件で広げる。interactor を一度も渡さない荒野では境界・無効化・描画が今と同じ
+- Done: `WorldFieldInteractorComponent`（PROPERTY `Shapes` = 球・カプセル、局所の位置かソケットの名前、半径、強さ、チャンネル。配列は JSON 文字列で反射の保存・復元）と集め役 `WorldFieldInteractorGatherer`（Engine のメンバ）を足した。World の LateTick の後に `Engine::UpdateWorldFieldInteractors` が形ごとの前の位置を持たせ、カメラに近い順に最大 32 個を `RenderWorld::SetWorldFieldInteractors` へ渡す。ソケットは `SkinnedMeshComponent::GetSocketWorldTransform` を毎フレーム読み、引けなければ Entity の位置で代用する
+- Done: grassland に、入場時の視点の前方 18 m を中心とする半径 10 m の円を 5 m/s で走る見えない体（胴 2 個 r 0.28 m・四肢 4 個 r 0.13 m、四肢は骨格が決まるまで局所の位置の暫定）を置いた。退場で形を空にして消す
+- 試験: `WorldFieldInteractorGatherTest`（EntityTreeTest の束。前と今の位置が 1 フレームずれない・ソケットと代用・33 個目以降は遠い順に落ちる・消した Entity と Component の形が残らない）、`GrassShaderCompileTest`・`WindShaderCompileTest` にフィールドの sampler の束縛と UBO の大きさの確かめ、GPU の試験 `GrassTrampleVulkanTest`（RHITextureUpdateVulkanTest の束。ビルドだけ）
+- 証拠: `.harness/runs/20261110-080408/G5-GR44-TRAMPLE-verify.txt`（verify のビルド 4 本 exit 0、ctest 5/5 Passed）。numstat の 2 通りは各単位で一致
+- Next: G5-GR44-TRAMPLE-CHECK で `GrassTrampleVulkanTest`・`WorldFieldUpdateVulkanTest` を装置で実行する。人が見るときの見どころ: ランチャーから grassland に入り、最初の視点の前方 8〜28 m の円の道で、見えない体の通り道の草と株が押し分けられて後ろで約 1.5 秒かけて戻り、株の影も同じく曲がること。荒野（wasteland）の草・株・影が前と変わらないこと
+- Notes: paths の外を最小限触った: `WorldFieldPass.h/.cpp`・`ViewRenderContext.h`（座標の公開の口）、`ApplicationProcessor.cpp`（LateTick の後の呼び出し 1 か所）、`GrassPass.h`・`FoliagePass.h`・`VirtualShadowMapPass.h`、`VirtualShadowMapRaster.h/.cpp`（VSM の株の描画の記述子と UBO 160 B）、`VirtualShadowMapFoliageCasters.h`（境界の余白の引数）。RHI/Vulkan の `ShaderResource` の同期先に頂点のステージが無いので、各パスで明示のバリアを張って補った
+- Notes: 草のブレードの生成側（GrassGenerate.comp）のカリングは曲げの余白を見ていないので、画面の端で押されたブレードが欠けることがありうる。体がいない間はフィールドの更新・描画の結果は変わらない
