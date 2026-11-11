@@ -10783,3 +10783,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(G12-GR94-MAP-CAPTURE): 人が見るときの見どころ: `Game.exe --scene=grassland --map-capture=Scripts/Map/map_spec.example.json --capture-png=map_capture/unused.png --capture-deterministic --window-size=1920x1080 --render-scale=1` で `map_capture/grassland/` にタイルの PNG と `capture_manifest.json` が出ること、タイルの継ぎ目で地物がずれないこと、撮った画像の向き（上 +Z・右 −X）。合成と cook は G12-GR94-MAP-COMPOSE-COOK。
 - Notes(G12-GR94-MAP-CAPTURE): 撮影の間は spec の太陽の向きで既定の物理空に置き換えるので、シーン固有の空（荒野の空など）は地図に出ない。正射影での空・フォグ・SSAO・DDGI / RTGI の見え方は未検証。正射影の主の視点では MegaGeometry の BVH の刈り込み・ソフトのラスタ・距離と画素の除外を外し全クラスタを平らに判定するので、広い範囲を 1 タイルに入れると重くなりうる。`--capture-png` のパスは決定的な撮影を点けるためだけに要り、その PNG は書かれない。
 - U1 PaleFlatParameters の値の型・C++ の参照の式と FramePacket までの受け渡し: 着地(直し 0 回)
+- U7 ShishaShowcase の場面 pale と引数 2 つ: 着地(直し 0 回)
