@@ -10856,3 +10856,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-065208/verify-G12-GR108-CULL-PARALLEL-last-unit.txt`（最後の単位の確かめの写し。verify のビルドの行が exit 0、verify の ctest が 100% tests passed, 0 tests failed out of 7（CullProxiesParallelEquivalenceTest・JobParallelForTest を含む）・exit 0。その後に変わったのは TASKS.md・PROGRESS.md だけ）
 - Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
 - Notes: 撮影・計測の確かめは回さない決まり。見た目は変わらない（既定は直列）
+## 2026-11-12 G10-GR65-PALEFLAT（run 20261112-065207 の反復 2、統合ブランチの取り込み）
+- Done: `feature/scene-launcher` を取り込み、`lighting.frag` の衝突（`LightingParams` の欄のコメント 3 行）を解いた。`shadingModelParams[1]` は予約のまま、`skyOcclusionInfo.w`（反射を辿る最大距離）・`skyOcclusionParams.w`（鏡面の強さ）は統合側の意味を採った。統合側の空の遮蔽の鏡面（`skyConeSpecularOcclusion`）は `specularAO` に掛かってから PaleFlat の `SpecularScale` が掛かる順で、互いの式は干渉しない。`GPULightingParams` は 1152 バイトのまま。
+- 証拠: `.harness/runs/20261112-065207/verify-merge-build.txt`（verify のビルド EXIT=0）、`verify-merge-ctest.txt`（PaleFlatShadingContractTest・MaterialResourcesTest・LightingLightBufferTest・RenderingPaleFlatVulkanTest・RenderingPaleFlatGBufferFallbackVulkanTest・VisibilityResolveVulkanTest の 6 本 Passed。Golden の 4 本は回さない決まりで外した）。
+- Next: なし（評価はランナーが回す）。
+- Notes: 撮影・計測の確かめは回さない決まり。人が見るときの見どころは前の記録（シ者の場面 `pale`）のまま。
