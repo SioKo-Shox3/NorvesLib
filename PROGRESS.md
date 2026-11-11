@@ -10856,3 +10856,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-065208/verify-G12-GR108-CULL-PARALLEL-last-unit.txt`（最後の単位の確かめの写し。verify のビルドの行が exit 0、verify の ctest が 100% tests passed, 0 tests failed out of 7（CullProxiesParallelEquivalenceTest・JobParallelForTest を含む）・exit 0。その後に変わったのは TASKS.md・PROGRESS.md だけ）
 - Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
 - Notes: 撮影・計測の確かめは回さない決まり。見た目は変わらない（既定は直列）
+- U1 優先度・取り消し・世代つきの非同期の列（FrameAsyncQueue）と列の単体の試験: 着地(直し 1 回)

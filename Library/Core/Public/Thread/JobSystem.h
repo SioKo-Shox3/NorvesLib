@@ -77,6 +77,9 @@ namespace NorvesLib::Thread
          */
         void StopAcceptingTasks();
 
+        /** @brief 初期化済みで、新しいタスクを受け付けているかを返す。 */
+        bool IsAcceptingTasks() const;
+
         /**
          * @brief 現在の有限タスク世代だけが完了するまで待機する
          */
