@@ -10784,3 +10784,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR94-MAP-CAPTURE): 撮影の間は spec の太陽の向きで既定の物理空に置き換えるので、シーン固有の空（荒野の空など）は地図に出ない。正射影での空・フォグ・SSAO・DDGI / RTGI の見え方は未検証。正射影の主の視点では MegaGeometry の BVH の刈り込み・ソフトのラスタ・距離と画素の除外を外し全クラスタを平らに判定するので、広い範囲を 1 タイルに入れると重くなりうる。`--capture-png` のパスは決定的な撮影を点けるためだけに要り、その PNG は書かれない。
 - U1 材質の切り抜きの値と、鍵・切り抜きの方式・重ねる経路を決める純粋な関数（CPU）: 着地(直し 0 回)
 - U2 切り抜きの判定の GLSL・gbuffer_alphaclip.frag・裏の面の法線の反転: 着地(直し 0 回)
+- U4 取り込んだ glTF の MASK・alphaCutoff・doubleSided を通し、MegaGeometry の材質へ写す（CPU）: 着地(直し 0 回)
