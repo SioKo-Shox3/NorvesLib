@@ -10738,3 +10738,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261110-110226/G12-GR31-CULL-CONTRACT-verify.txt`（verify のビルド RHITextureUpdateVulkanTest・RenderingGoldenImageTest exit 0、`ctest -N` で MegaGeometryInstanceCullVulkanTest が 1 件）。numstat の 2 通りは一致
 - Next: G12-GR31-CULL-CHECK で `MegaGeometryInstanceCullVulkanTest` を装置で実行する（GPU では未実行）。アプリを起動する確かめは無い（撮影・計測の確かめは回さない決まり）
 - Notes: GPU で回していないので、(c) の「見える」の帯（距離の相対 1e-4）と「深く隠れる」の余裕（投影の矩形を max(幅, 高さ) + 16 画素広げ、深度の差 1e-5）が実機で十分かは CULL-CHECK で分かる。全部の根を見直す間接引数（2 パス目の列の先頭の 3 語）には公開の名前が無く、試験は本番の `DispatchIndirect(pass2, 0)` と同じく先頭を読む
+- U11 統合ブランチを取り込んだ後のビルドと velocity の 14 本を回し、取り込みで壊れた所だけ直す: 着地(直し 1 回)

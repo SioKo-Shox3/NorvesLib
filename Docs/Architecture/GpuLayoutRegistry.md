@@ -340,7 +340,7 @@ C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`a
 
 ### VSM の VsmRasterParams
 
-C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShadowMapRaster.cpp` の `GPURasterParams` はその別名）、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **176 バイト**。`static_assert` が各フィールドの位置と大きさ 176（`worldField` の位置 112、`vertexAnimTime` の位置 160）を検査する。
+C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShadowMapRaster.cpp` の `GPURasterParams` はその別名）、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **176 バイト**。`static_assert` が各フィールドの位置と大きさ 176（`vertexAnimTime` の位置 112、`worldField` の位置 128）を検査する。`worldField` は末尾に置く（`WindShaderCompileTest` が UBO の末尾のメンバの位置と大きさを照合する）。
 
 | オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
 |---|---|---|---|---|
@@ -351,8 +351,8 @@ C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShado
 | 64 | 16 | `counts: uint32_t[4]` | `counts: uvec4` | 塊の数 / スライスの数 / インスタンス容量 / MegaGeometry のクラスタ記録容量 |
 | 80 | 16 | `foliageWind: float[4]` | `foliageWind: vec4` | xy = 風向（XZ）、z = 風の時計、w = 共通の風の突風の周波数（Hz。0 なら従来の風） |
 | 96 | 16 | `foliageWindParams: float[4]` | `foliageWindParams: vec4` | 風速 / 突風の大きさ / 突風の強さ / 乱流の強さ |
-| 112 | 48 | `worldField: WorldFieldSampleConstants` | `worldField: WorldFieldSampleConstants` | 株の影を曲げる世界フィールドの今・前の原点と範囲の逆数・曲げの係数（`WorldField/WorldFieldSample.glsl`）。株の塊だけが読む |
-| 160 | 16 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。影は x のみ使う。2 節の時刻欄の注記に従う |
+| 112 | 16 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。影は x のみ使う。2 節の時刻欄の注記に従う |
+| 128 | 48 | `worldField: WorldFieldSampleConstants` | `worldField: WorldFieldSampleConstants` | 株の影を曲げる世界フィールドの今・前の原点と範囲の逆数・曲げの係数（`WorldField/WorldFieldSample.glsl`）。株の塊だけが読む |
 
 `vsm_expand.comp` の同名 UBO 宣言は先頭 **112 バイト**（`foliageWindParams` まで）のままで、時刻欄を持たない。
 

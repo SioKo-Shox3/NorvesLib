@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // 展開は先頭 112 バイトを読み、描画が末尾の世界フィールド（株だけ）と頂点アニメの時刻を読む。
+        // 展開は先頭 112 バイトを読み、描画が頂点アニメの時刻と末尾の世界フィールド（株だけ）を読む。
         using GPURasterParams = VirtualShadowMapRasterParams;
 
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）

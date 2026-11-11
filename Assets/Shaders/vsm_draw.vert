@@ -44,8 +44,8 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 foliageWind;
     // x = 風速[m/s]（従来の風では突風の塊の流れる速さ）、y = 突風の塊の大きさ[m]、z = 突風の強さ、w = 乱流の強さ
     vec4 foliageWindParams;
-    WorldFieldSampleConstants worldField;
     vec4 vertexAnimTime;
+    WorldFieldSampleConstants worldField;
 } params;
 layout(set = 0, binding = 6) uniform sampler2D foliageWorldFieldCurrent;
 

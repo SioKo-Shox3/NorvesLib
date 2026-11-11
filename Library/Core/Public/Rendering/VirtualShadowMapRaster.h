@@ -138,9 +138,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t counts[4];
         float foliageWind[4];
         float foliageWindParams[4];
-        WorldFieldSampleConstants worldField;
         /** @brief 頂点アニメの今・前の時刻と試験の揺れの許可（影は x の今の時刻だけを使う） */
         float vertexAnimTime[4];
+        WorldFieldSampleConstants worldField;
     };
     static_assert(offsetof(VirtualShadowMapRasterParams, lightRight) == 0u);
     static_assert(offsetof(VirtualShadowMapRasterParams, lightUp) == 16u);
@@ -149,8 +149,8 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(VirtualShadowMapRasterParams, counts) == 64u);
     static_assert(offsetof(VirtualShadowMapRasterParams, foliageWind) == 80u);
     static_assert(offsetof(VirtualShadowMapRasterParams, foliageWindParams) == 96u);
-    static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 112u);
-    static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimTime) == 160u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimTime) == 112u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 128u);
     static_assert(sizeof(VirtualShadowMapRasterParams) == 176u);
 
     /**
