@@ -852,14 +852,17 @@ struct TerrainSplatLayerSample
     float Height;
 };
 
+const float TERRAIN_SPLAT_UV_ROTATION_STEPS = 8.0;
+const vec2 TERRAIN_SPLAT_UV_ROTATION_BLEND = vec2(0.3, 0.7);
+
 // 配列の 1 投影を勾配付きで標本する。法線の復号と傾きの回転は 3 層の投影と同じ規約。
 void AccumulateTerrainSplatProjection(inout TerrainSplatLayerSample acc, float weight,
                                       sampler2DArray albedoArray, sampler2DArray normalArray,
                                       sampler2DArray armArray, int layer, uint flags,
-                                      vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation,
+                                      vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation, vec2 offset,
                                       vec3 axisU, vec3 axisV)
 {
-    const vec3 coord = vec3(rotation * uv, float(layer));
+    const vec3 coord = vec3(rotation * uv + offset, float(layer));
     const vec2 dx = rotation * uvDx;
     const vec2 dy = rotation * uvDy;
     vec3 albedo = textureGrad(albedoArray, coord, dx, dy).rgb;
@@ -921,32 +924,52 @@ PbrMaterialTextureSamples ShadeTerrainSplat(TerrainSplatParams params,
             {
                 // YZ の U は Y、V は Z。既存の ZY の軸を UV と一緒に入れ替える。
                 AccumulateTerrainSplatProjection(samples[slot], projection.x, albedoArray, normalArray, armArray,
-                    layer, flags, p.yz * k, pdx.yz * k, pdy.yz * k, mat2(1.0), frame.SideXV, frame.SideXU);
+                    layer, flags, p.yz * k, pdx.yz * k, pdy.yz * k, mat2(1.0), vec2(0.0), frame.SideXV, frame.SideXU);
             }
             if (projection.y > 0.0)
             {
                 AccumulateTerrainSplatProjection(samples[slot], projection.y, albedoArray, normalArray, armArray,
-                    layer, flags, p.xz * k, pdx.xz * k, pdy.xz * k, mat2(1.0), frame.TopU, frame.TopV);
+                    layer, flags, p.xz * k, pdx.xz * k, pdy.xz * k, mat2(1.0), vec2(0.0), frame.TopU, frame.TopV);
             }
             if (projection.z > 0.0)
             {
                 AccumulateTerrainSplatProjection(samples[slot], projection.z, albedoArray, normalArray, armArray,
-                    layer, flags, p.xy * k, pdx.xy * k, pdy.xy * k, mat2(1.0), frame.SideZU, frame.SideZV);
+                    layer, flags, p.xy * k, pdx.xy * k, pdy.xy * k, mat2(1.0), vec2(0.0), frame.SideZU, frame.SideZV);
             }
         }
         else
         {
-            float angle = 0.0;
+            // 連続の角度で原点中心に回すと、UV の微分に k・|xz|・|∇θ| が加わって遠方の模様が潰れ、
+            // textureGrad の勾配とも合わない。段ごとに一定の回転とずらしを使い、隣の段の標本だけを混ぜる。
             if (params.cliff.z > 0.0)
             {
                 const vec2 seed = vec2(17.31, -41.7) * float(layer + 1);
-                angle = (TerrainValueNoise(xz * params.cliff.z + seed) * 2.0 - 1.0) * params.cliff.w;
+                const float level = TerrainValueNoise(xz * params.cliff.z + seed) * TERRAIN_SPLAT_UV_ROTATION_STEPS;
+                const float index = floor(level);
+                const float blend = smoothstep(TERRAIN_SPLAT_UV_ROTATION_BLEND.x,
+                                               TERRAIN_SPLAT_UV_ROTATION_BLEND.y, level - index);
+                for (int j = 0; j < 2; ++j)
+                {
+                    const float weight = j == 0 ? 1.0 - blend : blend;
+                    if (weight <= 0.0)
+                    {
+                        continue;
+                    }
+                    const ivec2 cell = ivec2(int(index) + j, 1009 + layer * 3);
+                    const float angle = (TerrainLatticeHash(cell) * 2.0 - 1.0) * params.cliff.w;
+                    const vec2 offset = vec2(TerrainLatticeHash(cell + ivec2(0, 1)),
+                                             TerrainLatticeHash(cell + ivec2(0, 2)));
+                    const float c = cos(angle);
+                    const float s = sin(angle);
+                    AccumulateTerrainSplatProjection(samples[slot], weight, albedoArray, normalArray, armArray,
+                        layer, flags, xz * k, pdx.xz * k, pdy.xz * k, mat2(c, s, -s, c), offset, frame.TopU, frame.TopV);
+                }
             }
-            const float c = cos(angle);
-            const float s = sin(angle);
-            const mat2 rotation = mat2(c, s, -s, c);
-            AccumulateTerrainSplatProjection(samples[slot], 1.0, albedoArray, normalArray, armArray,
-                layer, flags, xz * k, pdx.xz * k, pdy.xz * k, rotation, frame.TopU, frame.TopV);
+            else
+            {
+                AccumulateTerrainSplatProjection(samples[slot], 1.0, albedoArray, normalArray, armArray,
+                    layer, flags, xz * k, pdx.xz * k, pdy.xz * k, mat2(1.0), vec2(0.0), frame.TopU, frame.TopV);
+            }
         }
         const float wet = TerrainSplatWetness(params, layer);
         samples[slot].Albedo = TerrainApplyWetAlbedo(samples[slot].Albedo, wet);

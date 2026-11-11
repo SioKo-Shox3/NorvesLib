@@ -511,6 +511,102 @@ void main()
             Check(maxMarkerError <= ColorTolerance, "傾斜で選ばれる層の色が違います");
     }
 
+    bool CheckRotation(ProbeResources& resources)
+    {
+        if (!MakeTextures(resources, true))
+        {
+            return false;
+        }
+        constexpr uint32_t Size = 32u;
+        constexpr uint32_t Samples = Size * Size;
+        constexpr float Step = 1.0f / 64.0f;
+        constexpr float Origins[9][2] = {{0.5f, 0.25f}, {300.0f, 0.0f}, {0.0f, 300.0f},
+            {-300.0f, 0.0f}, {0.0f, -300.0f}, {212.0f, 212.0f}, {-212.0f, 212.0f},
+            {212.0f, -212.0f}, {-212.0f, -212.0f}};
+        auto splat = MakeSplat(2u);
+        splat.CliffLayer = 1;
+        VariableArray<ProbeOutput> reference, rotated;
+        for (uint32_t batch = 0; batch < 2u; ++batch)
+        {
+            const uint32_t count = batch == 0u ? 1u : 8u;
+            VariableArray<ProbeInput> inputs(count * Samples);
+            for (uint32_t location = 0; location < count; ++location)
+            {
+                const uint32_t origin = batch == 0u ? 0u : location + 1u;
+                for (uint32_t z = 0; z < Size; ++z)
+                {
+                    for (uint32_t x = 0; x < Size; ++x)
+                    {
+                        ProbeInput& p = inputs[location * Samples + z * Size + x];
+                        p = {};
+                        p.PositionDistance[0] = Origins[origin][0] + x * Step;
+                        p.PositionDistance[2] = Origins[origin][1] + z * Step;
+                        p.PositionDistance[3] = 10.0f;
+                        p.WorldDx[0] = Step;
+                        p.WorldDy[2] = Step;
+                        p.Normal[1] = 1.0f;
+                    }
+                }
+            }
+            splat.UvRotationWavelength = batch == 0u ? 0.0f : 23.0f;
+            splat.UvRotationDegrees = batch == 0u ? 0.0f : 180.0f;
+            if (!ReadShade(resources, splat, 0u, 0.0f, inputs, batch == 0u ? reference : rotated))
+            {
+                return false;
+            }
+        }
+
+        // 符号付き輝度差の分散を X・Z それぞれで求めて足す。向きが変わっても縞の細かさを測れる。
+        const auto energy = [=](const VariableArray<ProbeOutput>& outputs, uint32_t offset)
+        {
+            double result = 0.0;
+            for (uint32_t axis = 0; axis < 2u; ++axis)
+            {
+                double sum = 0.0;
+                double sumSquares = 0.0;
+                for (uint32_t z = 0; z < Size; ++z)
+                {
+                    for (uint32_t x = 0; x < Size; ++x)
+                    {
+                        if ((axis == 0u && x + 1u == Size) || (axis == 1u && z + 1u == Size))
+                        {
+                            continue;
+                        }
+                        const uint32_t index = offset + z * Size + x;
+                        const uint32_t next = index + (axis == 0u ? 1u : Size);
+                        const double difference = Luminance(outputs[next]) - Luminance(outputs[index]);
+                        sum += difference;
+                        sumSquares += difference * difference;
+                    }
+                }
+                constexpr double Count = Size * (Size - 1u);
+                const double mean = sum / Count;
+                result += sumSquares / Count - mean * mean;
+            }
+            return result;
+        };
+        const double referenceEnergy = energy(reference, 0u);
+        std::cout << "rotation E_ref=" << referenceEnergy << '\n';
+        if (!Check(referenceEnergy > 1.0e-5, "UV の回転の基準となる縞の輝度差が小さすぎます"))
+        {
+            return false;
+        }
+        bool passed = true;
+        double ratioSum = 0.0;
+        for (uint32_t location = 0; location < 8u; ++location)
+        {
+            const double ratio = energy(rotated, location * Samples) / referenceEnergy;
+            ratioSum += ratio;
+            std::cout << "rotation x=" << Origins[location + 1u][0] << " z=" << Origins[location + 1u][1]
+                << " ratio=" << ratio << " max=1.5" << '\n';
+            passed = Check(ratio <= 1.5, "原点から遠い平面で UV の回転が模様を潰しています") && passed;
+        }
+        const double meanRatio = ratioSum / 8.0;
+        std::cout << "rotation meanRatio=" << meanRatio << " min=0.3" << '\n';
+        // 二つの縞を混ぜると一部で振幅が落ちるので、消失の下限は全地点の平均に掛ける。
+        return Check(meanRatio >= 0.3, "UV の回転で模様が消えました") && passed;
+    }
+
     bool CheckWetness(ProbeResources& resources)
     {
         if (!MakeTextures(resources, false)) return false;
@@ -1041,10 +1137,11 @@ void main()
             const bool quadrants = CheckQuadrants(resources);
             const bool slope = CheckSlope(resources);
             const bool wetness = CheckWetness(resources);
+            const bool rotation = CheckRotation(resources);
             const bool threeLayer = CheckThreeLayerIdentity(device);
             std::cout << "quadrants=" << quadrants << " slope=" << slope << " wetness=" << wetness
-                << " threeLayer=" << threeLayer << '\n';
-            passed = quadrants && slope && wetness && threeLayer;
+                << " rotation=" << rotation << " threeLayer=" << threeLayer << '\n';
+            passed = quadrants && slope && wetness && rotation && threeLayer;
             device->WaitIdle();
         }
         const uint32_t errors = capture.Hits();
