@@ -28,6 +28,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/VertexAnimation.h"
 #include "Resource/SkinnedMeshResource.h"
 
 #include <algorithm>
@@ -3642,6 +3643,33 @@ namespace NorvesLib::Test::RenderingValidation
         skinned->SetVisible(true);
         m_R5SkinnedQuadAsset = asset;
         m_pR5SkinnedQuadEntity = entity;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyR5VertexAnimationFixture() const
+    {
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pR5ShadowReceiverEntity == nullptr ||
+            m_pR5ShadowOccluderEntity == nullptr || m_pR5ShadowReceiverMesh == nullptr ||
+            m_pR5ShadowOccluderMesh == nullptr || !AddR5SkinnedQuad())
+        {
+            return false;
+        }
+        auto* skinned = m_pR5SkinnedQuadEntity->GetComponent<Core::Component::SkinnedMeshComponent>();
+        if (skinned == nullptr)
+        {
+            return false;
+        }
+
+        // 同じ深さに横一列で置く。動く2枚は同位相なので常に離れ、恒等の板とも重ならない。
+        m_pR5SkinnedQuadEntity->SetPosition(-3.0f, 0.0f, 8.0f);
+        skinned->SetShadingParams(2, Core::Rendering::VertexAnimationKindTestSineParam);
+        m_pR5ShadowOccluderEntity->SetPosition(0.0f, 0.0f, 8.0f);
+        m_pR5ShadowOccluderEntity->SetScale(1.0f, 1.0f, 1.0f);
+        m_pR5ShadowOccluderMesh->SetShadingParams(2, Core::Rendering::VertexAnimationKindTestSineParam);
+        m_pR5ShadowOccluderMesh->SetCastShadow(false);
+        m_pR5ShadowReceiverEntity->SetPosition(3.0f, 0.0f, 8.0f);
+        m_pR5ShadowReceiverEntity->SetScale(1.0f, 1.0f, 1.0f);
+        m_pR5ShadowReceiverMesh->SetShadingParams(2, 0.0f);
         return true;
     }
 

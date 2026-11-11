@@ -58,6 +58,7 @@ namespace NorvesLib::Core::Rendering
      * Record はビジビリティバッファの描画の記録（頂点・インデックスの読み方）。Kind は 0 以外・TriangleCount は 1 以上 128 以下にする。
      * World はローカル空間の位置をワールドへ変える 3×4 行列（行ごとに 4 要素。ワールドの x = World[0..3] と (位置, 1) の内積、y = World[4..7]、z = World[8..11]）。
      * ワールド空間の頂点（スキニングの出力など）は単位行列にする。
+     * 手続き・スキンの影の記録は前フレームを使わず、Record の前フレーム用 4 語に頂点アニメの生の値を格納する。
      * Bounds はワールドの境界（AABB）で、展開が覆うページを決める。三角形をすべて含むこと。
      * LevelMask はこの塊を展開するスライスの集合で、Reserved が組の番号 g（スライス / 32）。ビット b がスライス g × 32 + b。
      * CPU が境界から決めたスライスだけを展開が処理し、外のスライスは見ない。1 つの投影物が複数の組にまたがるときは、
@@ -137,6 +138,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t counts[4];
         float foliageWind[4];
         float foliageWindParams[4];
+        /** @brief 頂点アニメの今・前の時刻と試験の揺れの許可（影は x の今の時刻だけを使う） */
+        float vertexAnimTime[4];
         WorldFieldSampleConstants worldField;
     };
     static_assert(offsetof(VirtualShadowMapRasterParams, lightRight) == 0u);
@@ -146,8 +149,9 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(VirtualShadowMapRasterParams, counts) == 64u);
     static_assert(offsetof(VirtualShadowMapRasterParams, foliageWind) == 80u);
     static_assert(offsetof(VirtualShadowMapRasterParams, foliageWindParams) == 96u);
-    static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 112u);
-    static_assert(sizeof(VirtualShadowMapRasterParams) == 160u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimTime) == 112u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 128u);
+    static_assert(sizeof(VirtualShadowMapRasterParams) == 176u);
 
     /**
      * @brief 1 回の記録の入力。バッファはすべて UnorderedAccess の状態で渡し、同じ状態で戻る
@@ -201,6 +205,8 @@ namespace NorvesLib::Core::Rendering
          */
         float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float FoliageWindParams[4] = {};
+        /** @brief 頂点アニメの現在・前回の時刻と試験の揺れの許可 */
+        float VertexAnimTime[4] = {};
         /** @brief 株の根元で引く ShaderResource 状態の画像。無ければ中立画像を使い、変形を無効にする。 */
         RHI::TexturePtr WorldFieldCurrent;
         WorldFieldSampleConstants WorldField;

@@ -294,6 +294,8 @@ namespace NorvesLib::Test::RenderingValidation
         // 置く。骨の平行移動のアニメーションは時刻 t 秒で (t, 0, 0) m（0〜1秒）。R5 の場面の準備の後に呼ぶ。
         bool AddR5SkinnedQuad() const;
         bool SetR5SkinnedQuadAnimationTime(float timeSeconds) const;
+        // 頂点アニメの揺れを、静的・骨付き・恒等の3枚で検証する。
+        bool ApplyR5VertexAnimationFixture() const;
         // 視錐台の絞り込み検証用に縮小した管状スキンを置く。
         bool AddSkinnedCullGiant() const;
         bool SetSkinnedCullGiantFront(bool bFront) const;

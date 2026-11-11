@@ -835,6 +835,28 @@ register_rendering_gpu_test(
     --scenario=skinned-motion
     --visibility-buffer=off)
 
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimDropVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim-drop)
+set_tests_properties(RenderingVelocityVertexAnimDropVulkanTest PROPERTIES
+    ENVIRONMENT "NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL=3")
+
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
 )

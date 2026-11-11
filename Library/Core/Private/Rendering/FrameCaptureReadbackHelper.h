@@ -69,6 +69,8 @@ namespace NorvesLib::Core::Rendering
         {
             uint64_t RequestId = 0;
             uint64_t FrameNumber = 0;
+            double GameTotalTime = 0.0;
+            double PreviousRenderedTotalTime = 0.0;
             uint32_t SlotIndex = 0;
             uint32_t Width = 0;
             uint32_t Height = 0;
@@ -149,7 +151,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t& outRowPitchBytes,
             uint64_t& outByteCount);
 
-        void PublishFailure(FrameCaptureResultStatus status, uint64_t frameNumber);
+        void PublishFailure(FrameCaptureResultStatus status, uint64_t frameNumber,
+                            double gameTotalTime = 0.0, double previousRenderedTotalTime = 0.0);
 
         Thread::Mutex m_Mutex;
         RHI::IDevice* m_Device = nullptr;
