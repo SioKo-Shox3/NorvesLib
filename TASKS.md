@@ -6142,7 +6142,7 @@
 - notes: 設計はロードマップ 1063 行（GR113 の層 A）。間引きは塊（ブレード・株）単位の確率的な間引きで、提案『草の作り方』が板ポリになっても同じ形で使える（ロードマップ 1081 行）。前方の草の遮りは残す（切り抜きは線分 AB の周りだけ）。切り抜きが「トンネル」に見えないよう、縁のぼかしと「消さずに低くする」の調整が要る（ロードマップ 1325 行）ので、値は既定を仮にして G5-GR113-CLEARANCE-CHECK の撮影で詰める。性能の目安（compute に足す時間 0.05 ms 未満。ロードマップ 1200 行）は記録だけ。試験を足す理由: 間引きの式が CPU と GPU でずれる・外側まで消えるのは、画面では草が少し薄いだけに見えて気づけず、主人公の縁のちらつきとして黙って出る。危険地帯（RenderThread）なので評価者を通す。
 
 ## G5-GR37-TERRAIN-LAYERS: 地形の材質を最大 8 層のスプラットの混ぜ合わせにし、急斜面のトライプラナー・高さでの先鋭化・濡れ度の受け口を入れる
-- status: todo
+- status: done
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR89-TERRAIN-MASKS, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR37
 - needs-gr: GR26

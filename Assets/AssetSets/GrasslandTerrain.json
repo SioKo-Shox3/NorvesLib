@@ -4,7 +4,123 @@
   "package_root": "Cooked/GrasslandTerrain",
   "default_variant": "default",
   "cook_assets": true,
-  "textures": [],
+  "textures": [
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/soil_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/dry_ground_01/dry_ground_01_diff_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/soil_albedo.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/soil_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/soil_normal",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/dry_ground_01/dry_ground_01_nor_dx_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/soil_normal.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/soil_normal.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/soil_arm",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/dry_ground_01/dry_ground_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/dry_ground_01/dry_ground_01_rough_4k.jpg",
+      "orm_occlusion": "Assets/Textures/PolyHaven/dry_ground_01/dry_ground_01_disp_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/soil_arm.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/soil_arm.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/moss_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_diff_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/moss_albedo.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/moss_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/moss_normal",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_nor_dx_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/moss_normal.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/moss_normal.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/moss_arm",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_rough_4k.jpg",
+      "orm_occlusion": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_disp_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/moss_arm.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/moss_arm.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/wet_mud_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_diff_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/wet_mud_albedo.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/wet_mud_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/wet_mud_normal",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_nor_dx_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/wet_mud_normal.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/wet_mud_normal.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/wet_mud_arm",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_rough_4k.jpg",
+      "orm_occlusion": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/wet_mud_arm.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/wet_mud_arm.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/rock_face_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/rock_face/rock_face_diff_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/rock_face_albedo.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/rock_face_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/rock_face_normal",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/rock_face/rock_face_nor_dx_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/rock_face_normal.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/rock_face_normal.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/rock_face_arm",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/rock_face/rock_face_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/rock_face/rock_face_rough_4k.jpg",
+      "orm_occlusion": "Assets/Textures/PolyHaven/rock_face/rock_face_disp_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/rock_face_arm.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/rock_face_arm.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/meadow_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/meadow_albedo.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/meadow_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/meadow_normal",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_nor_dx_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/meadow_normal.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/meadow_normal.nvtex"
+    },
+    {
+      "logical_path": "Assets/Terrain/Grassland/Layers/meadow_arm",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_rough_4k.jpg",
+      "orm_occlusion": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.jpg",
+      "package_name": "GrasslandTerrain/Layers/meadow_arm.nvpkg",
+      "entry_name": "Assets/Terrain/Grassland/Layers/meadow_arm.nvtex"
+    }
+  ],
   "models": [
     {
       "logical_path": "Assets/Terrain/Grassland/Tiles/GrasslandTile_0_0.generated",

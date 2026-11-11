@@ -606,6 +606,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_FramePointShadowCubeTexture;
         RHI::TexturePtr m_DefaultDDGIIrradianceAtlas;
         RHI::TexturePtr m_DefaultDDGIDistanceAtlas;
+        RHI::TexturePtr m_DefaultRTGITerrainSplatArray; // RTGI のスプラットを使わないときに束ねる 2 層の配列（1×1・0）
         RHI::SamplerPtr m_IBLSampler;         ///< 環境放射輝度用サンプラー
         RHI::SamplerPtr m_DiffuseIrradianceSampler;
         RHI::SamplerPtr m_PrefilteredSpecularSampler;

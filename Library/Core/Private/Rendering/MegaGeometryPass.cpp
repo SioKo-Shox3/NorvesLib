@@ -35,6 +35,7 @@
 #include "Rendering/TerrainBlendShading.h"
 #include "Rendering/TemporalAAParamOverride.h"
 #include "Rendering/TerrainSamplerOverride.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
@@ -69,6 +70,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainSurfaceMaskBindingIndex = 16;
         // 地形の遠景の地図の binding（megageometry.frag の terrainFarMapTexture。地表の分類の地図の次）
         constexpr uint32_t TerrainFarMapBindingIndex = 17;
+        // スプラットの配列 4 枚（18〜21）は TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_*_BINDING を使う
+        // スプラットの並びの UBO（23）は同じヘッダの TERRAIN_SPLAT_MEGA_PARAMS_BINDING を使う
 
         // 値を持たない起動引数（flag）があるか。起動引数は ApplicationProcessor の外（描画の層）でも読めるよう、
         // プロセスのコマンドラインを直接見る（VirtualShadowMapPass の --vsm-cache と同じ）
@@ -734,6 +737,39 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 未使用の枠も 2D 配列のビューで埋める。両方の層を透明な黒にする
+        RHI::TextureDesc splatFallbackDesc;
+        splatFallbackDesc.Width = 1u;
+        splatFallbackDesc.Height = 1u;
+        splatFallbackDesc.ArraySize = 2u;
+        splatFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        splatFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        splatFallbackDesc.DebugName = "MegaGeometry_DefaultTerrainSplatArray";
+        m_DefaultTerrainSplatArray = m_Device->CreateTexture(splatFallbackDesc);
+        if (!m_DefaultTerrainSplatArray)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "スプラットの代替配列テクスチャの作成に失敗");
+            return false;
+        }
+        const uint8_t splatFallbackPixel[4] = {0u, 0u, 0u, 0u};
+        for (uint32_t layer = 0; layer < splatFallbackDesc.ArraySize; ++layer)
+        {
+            m_DefaultTerrainSplatArray->Update(splatFallbackPixel, sizeof(splatFallbackPixel),
+                                                sizeof(splatFallbackPixel), 0u, layer);
+        }
+
+        // 重みの地図の端で反対側が混ざらないよう、線形の標本を端に固定する
+        RHI::SamplerDesc splatSamplerDesc = sampDesc;
+        splatSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        splatSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        splatSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_TerrainSplatSampler = m_Device->CreateSampler(splatSamplerDesc);
+        if (!m_TerrainSplatSampler)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "スプラットのサンプラーの作成に失敗");
+            return false;
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("MegaGeometryPass", "初期化完了 (MaxDrawCount: %u)", m_Settings.MaxDrawCount);
         return true;
@@ -904,6 +940,8 @@ namespace NorvesLib::Core::Rendering
         m_ConstantMaterialTextures.reset();
         m_DefaultLinearSampler.reset();
         m_TerrainSampler.reset();
+        m_TerrainSplatSampler.reset();
+        m_DefaultTerrainSplatArray.reset();
 
         m_Instances.clear();
         m_SceneInstanceDeltas.clear();
@@ -1858,7 +1896,13 @@ namespace NorvesLib::Core::Rendering
         // ID のラスタと解決、VSM の影）よりも前にここで書く。記録がどこで行われても（キューのコマンド・ID のラスタ）同じ表を使う。
         // 常駐の表への散在書き込みは、ここで直接コマンドリストへ記録する（RenderGraph はこのパスの前後でキューを流すので、
         // 読み手のパスの記録より前に並ぶ）
-        PrepareSceneTables(context.BuildMegaGeometryPassCommand(this).MegaGeometry, context.CommandList);
+        const FrameCommand drawCommand = context.BuildMegaGeometryPassCommand(this);
+        PrepareSceneTables(drawCommand.MegaGeometry, context.CommandList);
+        // 記録のコマンドには描画コンテキストがないため、同じフレームの準備結果へ濡れ度を写す
+        const auto *wetness = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
+        m_PreparedSceneTables.TerrainWetness = wetness ? wetness->Wetness : 0.0f;
+        m_PreparedSceneTables.FrameSerial = drawCommand.MegaGeometry.RenderFrameSerial;
+        m_PreparedSceneTables.InFlightIndex = drawCommand.MegaGeometry.InFlightIndex;
 
         // 解決が GBuffer を書くフレームは GBuffer の描画を止めるので、2パスの遮蔽の HZB の元になる深度が GBuffer に入らない。
         // ID のラスタがその Execute の中で記録を駆動して（ID・深度の1パス目 → HZB → 2パス目）、HZB を ID の深度から作る。
@@ -3631,6 +3675,9 @@ namespace NorvesLib::Core::Rendering
                                      m_PreparedSceneTables.InFlightIndex == command.InFlightIndex &&
                                      m_PreparedSceneTables.Slot != nullptr;
         FrameSlot *preparedSlot = bPreparedTables ? m_PreparedSceneTables.Slot : nullptr;
+        const float terrainWetness = m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
+                                     m_PreparedSceneTables.InFlightIndex == command.InFlightIndex
+                                         ? m_PreparedSceneTables.TerrainWetness : 0.0f;
         m_PreparedSceneTables = PreparedSceneTables{};
         if (!bPreparedTables)
         {
@@ -4212,6 +4259,41 @@ namespace NorvesLib::Core::Rendering
                     terrainTextures[5] = metallic;
                 }
             }
+            // スプラットは 4 枚とも引けたときだけ使い、欠けたときは全て代替の配列に戻す
+            const auto &splat = terrain.Splat;
+            RHI::TexturePtr splatTextures[4] = {m_DefaultTerrainSplatArray, m_DefaultTerrainSplatArray,
+                                                m_DefaultTerrainSplatArray, m_DefaultTerrainSplatArray};
+            bool bSplat = false;
+            if (terrain.IsSplatEnabled())
+            {
+                const TextureHandle splatHandles[4] = {splat.AlbedoArrayTexture, splat.NormalArrayTexture,
+                                                        splat.ArmArrayTexture, splat.SplatArrayTexture};
+                bSplat = true;
+                for (uint32_t index = 0; index < 4u; ++index)
+                {
+                    RHI::TexturePtr texture = resolveTexture(splatHandles[index], nullptr);
+                    if (!texture)
+                    {
+                        bSplat = false;
+                        break;
+                    }
+                    splatTextures[index] = texture;
+                }
+                if (!bSplat)
+                {
+                    for (RHI::TexturePtr &texture : splatTextures)
+                    {
+                        texture = m_DefaultTerrainSplatArray;
+                    }
+                }
+            }
+            const uint32_t splatFlags =
+                (splat.bNormalTwoChannel ? TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL : 0u) |
+                (IsTerrainAlbedoSrgbDecodeNeeded(splatTextures[0].get())
+                     ? TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE : 0u);
+            float splatParams[TERRAIN_SPLAT_PARAM_FLOATS] = {};
+            PackTerrainSplatParams(splat, bSplat, splatFlags, terrainWetness, splatParams);
+
             // 地表の分類の地図は引けたときだけ使う（引けなければ傾斜の式だけで混ぜる）。読まない枠はアルベドで埋める
             RHI::TexturePtr surfaceMask =
                 bTerrainBlend ? resolveTexture(terrain.SurfaceMaskTexture, nullptr) : RHI::TexturePtr();
@@ -4253,10 +4335,13 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(command.Textures, mat.HeightTexture, height.get(), feedbackTarget));
 
             sectionDraw.Uniform->Update(&uniform, sizeof(SectionUniformData));
+            sectionDraw.TerrainSplatUniform->Update(splatParams, sizeof(splatParams));
 
             const RHI::DescriptorSetPtr &descriptorSet = sectionDraw.DescriptorSet;
             descriptorSet->BindConstantBuffer(0, sectionDraw.Uniform, 0,
                                               static_cast<uint32_t>(sizeof(SectionUniformData)));
+            descriptorSet->BindConstantBuffer(TERRAIN_SPLAT_MEGA_PARAMS_BINDING, sectionDraw.TerrainSplatUniform, 0,
+                                              static_cast<uint32_t>(sizeof(splatParams)));
 
             // PBRテクスチャバインド（地形の混ぜ合わせの材質は、3 層とも異方性のサンプラーで標本する）
             const RHI::SamplerPtr &layerSampler = bTerrainBlend ? m_TerrainSampler : m_DefaultLinearSampler;
@@ -4281,6 +4366,13 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(TerrainSurfaceMaskBindingIndex, layerSampler);
             descriptorSet->BindTexture(TerrainFarMapBindingIndex, farMap);
             descriptorSet->BindSampler(TerrainFarMapBindingIndex, layerSampler);
+            const uint32_t splatBindings[4] = {TERRAIN_SPLAT_MEGA_ALBEDO_BINDING, TERRAIN_SPLAT_MEGA_NORMAL_BINDING,
+                                               TERRAIN_SPLAT_MEGA_ARM_BINDING, TERRAIN_SPLAT_MEGA_SPLAT_BINDING};
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                descriptorSet->BindTexture(splatBindings[index], splatTextures[index]);
+                descriptorSet->BindSampler(splatBindings[index], index == 3u ? m_TerrainSplatSampler : m_TerrainSampler);
+            }
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
@@ -5957,7 +6049,7 @@ namespace NorvesLib::Core::Rendering
     RHI::DescriptorSetDesc MegaGeometryPass::BuildDrawDescriptorSetDesc() const
     {
         // GBufferPassと同じ（set=0, binding 0=UBO, 1-6=textures）に、頂点シェーダーが引く
-        // インスタンスの表（8）・描画情報（9）・メッシュの表（22）を足した形
+        // インスタンスの表（8）・描画情報（9）・メッシュの表（22）と地形の材質（10〜21・23）を足した形
         RHI::DescriptorSetDesc desc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
@@ -5991,6 +6083,21 @@ namespace NorvesLib::Core::Rendering
             texBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(texBinding);
         }
+        // スプラットの層と重みの配列（18〜21）と、並びの UBO（23）
+        for (const uint32_t binding : {TERRAIN_SPLAT_MEGA_ALBEDO_BINDING, TERRAIN_SPLAT_MEGA_NORMAL_BINDING,
+                                       TERRAIN_SPLAT_MEGA_ARM_BINDING, TERRAIN_SPLAT_MEGA_SPLAT_BINDING})
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = binding;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(texBinding);
+        }
+        RHI::DescriptorBinding splatParamsBinding;
+        splatParamsBinding.binding = TERRAIN_SPLAT_MEGA_PARAMS_BINDING;
+        splatParamsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        splatParamsBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(splatParamsBinding);
         if (UsesVirtualTextureFeedbackBinding(m_Device))
         {
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);
@@ -7067,11 +7174,17 @@ namespace NorvesLib::Core::Rendering
                                      "MegaGeometry_DrawUBO");
                 SectionDraw sectionDraw;
                 sectionDraw.Uniform = m_Device->CreateBuffer(desc);
+                RHI::BufferDesc splatDesc(TERRAIN_SPLAT_PARAM_FLOATS * sizeof(float),
+                                          RHI::ResourceUsage::ConstantBuffer,
+                                          true,
+                                          "MegaGeometry_TerrainSplatUBO");
+                sectionDraw.TerrainSplatUniform = m_Device->CreateBuffer(splatDesc);
 #if NORVES_BUILD_DEVELOPMENT
                 NoteGpuSceneBuffer(sectionDraw.Uniform, desc, false);
+                NoteGpuSceneBuffer(sectionDraw.TerrainSplatUniform, splatDesc, false);
 #endif
                 sectionDraw.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
-                if (!sectionDraw.Uniform || !sectionDraw.DescriptorSet)
+                if (!sectionDraw.Uniform || !sectionDraw.TerrainSplatUniform || !sectionDraw.DescriptorSet)
                 {
                     return false;
                 }

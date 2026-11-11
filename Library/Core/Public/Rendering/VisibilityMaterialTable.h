@@ -58,6 +58,8 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * （材質の解決が GBuffer の法線の A に 2 を書く）
      */
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW = 64u;
+    /** @brief スプラットの材質。Header[3] に専用の要約を入れ、3 層・1 層の材質と分ける */
+    constexpr uint32_t MATERIAL_FLAG_TERRAIN_SPLAT = 128u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。144 バイト）

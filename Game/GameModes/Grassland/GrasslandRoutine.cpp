@@ -352,6 +352,7 @@ namespace Game::GameModes
                 return false;
             }
             component->SetTerrainPath("Assets/Terrain/Grassland/Grassland.nvtrn");
+            component->SetLayerTablePath("TerrainSpecs/Grassland/GrasslandLayers.json");
             component->SetTilePathPrefix("Assets/Terrain/Grassland/Tiles/GrasslandTile_");
             data.m_pTerrain = component;
             return true;

@@ -50,6 +50,19 @@ layout(set = 0, binding = 15) uniform sampler2D terrainRockOrmTexture;
 layout(set = 0, binding = 16) uniform sampler2D terrainSurfaceMaskTexture;
 // 地形の遠景の地図（地図の無い材質はアルベドが張られ、読まない）
 layout(set = 0, binding = 17) uniform sampler2D terrainFarMapTexture;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_ALBEDO_BINDING
+layout(set = 0, binding = 18) uniform sampler2DArray terrainSplatAlbedoArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_NORMAL_BINDING
+layout(set = 0, binding = 19) uniform sampler2DArray terrainSplatNormalArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_ARM_BINDING
+layout(set = 0, binding = 20) uniform sampler2DArray terrainSplatArmArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_SPLAT_BINDING
+layout(set = 0, binding = 21) uniform sampler2DArray terrainSplatArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_PARAMS_BINDING（vec4 × 12）
+layout(std140, set = 0, binding = 23) uniform TerrainSplatBlock
+{
+    vec4 terrainSplat[12];
+} splatBlock;
 
 #include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
@@ -197,6 +210,19 @@ void main()
                                             terrainSurfaceMaskTexture, terrainFarMapTexture, surface, bVirtualTexture,
                                             terrainNormal);
     }
+    TerrainSplatParams splat = MakeTerrainSplatParams(splatBlock.terrainSplat);
+    bool bTerrainSplat = !bTerrain && IsTerrainSplatEnabled(splat);
+    if (bTerrainSplat)
+    {
+        TerrainSurfaceInput surface;
+        surface.WorldPosition = fragWorldPos;
+        surface.WorldDx = worldDx;
+        surface.WorldDy = worldDy;
+        surface.GeometricNormal = fragNormal;
+        surface.CameraDistance = length(fragWorldPos - mvp.cameraPosition.xyz);
+        textureSamples = ShadeTerrainSplat(splat, terrainSplatAlbedoArray, terrainSplatNormalArray,
+                                           terrainSplatArmArray, terrainSplatArray, surface, terrainNormal);
+    }
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),
@@ -218,8 +244,8 @@ void main()
     {
         tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
     }
-    vec3 normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
-    const uint receiverFlags = bTerrain ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
+    vec3 normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
+    const uint receiverFlags = (bTerrain || bTerrainSplat) ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
     vec4 params = ResolveShadingParams(vec4(-1.0), mvp.shadingParams);
     uint id = uint(mvp.vtFeedbackParams.w + 0.5);
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);

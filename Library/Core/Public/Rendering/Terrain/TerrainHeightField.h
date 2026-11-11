@@ -238,6 +238,9 @@ namespace NorvesLib::Core::Rendering::Terrain
         uint32_t GetSplatLayerCount() const;
         /// スプラットの層の名前。範囲外は空
         Container::AnsiStringView GetSplatLayerName(uint32_t layer) const;
+        /// 頂点ごとに層数バイトを持つ行優先の重み。格子の並びは GetGridLayout と同じ。
+        /// スプラット無し・手続きの作り方では空。返す範囲は高さ場が所有する
+        Container::Span<const uint8_t> GetSplatWeights() const;
         /// タイルの行優先の番号。外周は最後のタイルに含め、範囲外・タイル無しは無効な番号
         uint32_t GetTileId(float x, float z) const;
 

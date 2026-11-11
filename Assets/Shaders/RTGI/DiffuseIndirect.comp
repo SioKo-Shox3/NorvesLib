@@ -29,6 +29,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     vec4 terrainSlope;   // x,y=土へ移る傾斜の始まり・終わり、z,w=岩肌へ移る傾斜の始まり・終わり（ラジアン）
     vec4 terrainHeight;  // x,y=土へ寄せる高さの始まり・終わり（m）、z=寄せの最大（ラジアン）
     vec4 foliageOcclusion; // x=株の冠の数（RTGIFoliageCrowns の行の数の半分。0 なら遮らない）
+    vec4 terrainSplat[12]; // 地図・形と濡れ度・崖・フラグ・8 層の値
 } parameters;
 
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
@@ -101,6 +102,9 @@ layout(set = 0, binding = 25) uniform sampler2D terrainSurfaceMask;
 layout(set = 0, binding = 26) uniform sampler2D terrainSandAlbedo;
 layout(set = 0, binding = 27) uniform sampler2D terrainDirtAlbedo;
 layout(set = 0, binding = 28) uniform sampler2D terrainRockAlbedo;
+// スプラットの各層のアルベドと当たりの位置の塗り。
+layout(set = 0, binding = 30) uniform sampler2DArray terrainSplatAlbedoArray;
+layout(set = 0, binding = 31) uniform sampler2DArray terrainSplatArray;
 // 株の冠の楕円体（LightingPass.cpp の RTGIFoliageCrown。1 つの冠が 2 行: 中心の xyz と中心を通る光線の光学的な厚さ、
 // 半径の逆数の xyz）。拡散の光線が通る冠の弦の長さで透過を掛け、株の根元の空の光を遮る
 layout(set = 0, binding = 29, std430) readonly buffer RTGIFoliageCrowns
@@ -123,6 +127,8 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 #include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
+#define NORVES_TERRAIN_SPLAT_CORE_ONLY 1
+#include "Common/TerrainLayerBlend.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
 // 鏡面の光線の当たりを画面の面と同じと見なす位置の差（m と、カメラからの距離に対する割合の大きい方）
 const float RTGI_SCREEN_INDIRECT_POSITION_TOLERANCE = 0.05;
@@ -1071,6 +1077,7 @@ void StoreTemporalSample(uvec2 pixel,
 
 // 地形の当たりの色: ラスタの 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl）を、当たりの点の分類の重みと各層の
 // 素材の平均の色で近似する。斑・凹凸の混ぜ・揺らぎ・地層は平均（被覆の割合）へ寄せる。値は TerrainLayerBlend.glsl と同じ
+// スプラットは塗りと崖の傾斜から上位 4 層を選び、濡れを掛けた各層の平均色を重みで混ぜる。高さによる先鋭化は行わない。
 const float RTGI_TERRAIN_SAND_FLOOR = 0.02; // TERRAIN_SURFACE_MASK_SAND_FLOOR
 // 細粒の地表のうち礫の舗石（土の枠）になる割合（TERRAIN_PAVEMENT_* の値ノイズの和が 0.56 ± 0.05 を越える平均の割合）
 const float RTGI_TERRAIN_FINE_PAVEMENT_COVERAGE = 0.34;
@@ -1166,6 +1173,35 @@ vec3 TerrainBounceAlbedo(vec3 position, vec3 normal)
     vec3 rock = TerrainLayerMeanAlbedo(terrainRockAlbedo, -1,
                                        (decodeBits & RTGI_TERRAIN_ROCK_ALBEDO_SRGB_DECODE) != 0u);
     return clamp(firstLayer * weights.x + dirt * weights.y + rock * weights.z, vec3(0.0), vec3(1.0));
+}
+
+// スプラットの当たりはラスタと同じ塗り・崖・上位 4 層の重みを使い、層の最も粗いミップで平均色を求める。
+vec3 TerrainSplatBounceAlbedo(vec3 position, vec3 normal)
+{
+    TerrainSplatParams params = MakeTerrainSplatParams(parameters.terrainSplat);
+    vec2 uv = TerrainSplatUv(params, position.xz);
+    vec4 spl0 = textureLod(terrainSplatArray, vec3(uv, 0.0), 0.0);
+    vec4 spl1 = params.shape.x > 4.0 ? textureLod(terrainSplatArray, vec3(uv, 1.0), 0.0) : vec4(0.0);
+    float slope = acos(clamp(normal.y, -1.0, 1.0));
+    float weights[8];
+    TerrainSplatLayerWeights(params, spl0, spl1, slope, weights);
+    ivec4 layers;
+    vec4 topWeights;
+    TerrainSplatSelectTop4(weights, layers, topWeights);
+    bool bDecode = (uint(params.flags.x) & TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE) != 0u;
+    float mip = float(max(textureQueryLevels(terrainSplatAlbedoArray) - 1, 0));
+    vec3 color = vec3(0.0);
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        int layer = layers[slot];
+        if (layer >= 0)
+        {
+            vec3 albedo = textureLod(terrainSplatAlbedoArray, vec3(0.5, 0.5, float(layer)), mip).rgb;
+            albedo = bDecode ? TerrainBounceSrgbToLinear(albedo) : albedo;
+            color += topWeights[slot] * TerrainApplyWetAlbedo(albedo, TerrainSplatWetness(params, layer));
+        }
+    }
+    return color;
 }
 
 // 拡散の散乱光線を1本たどり、始点へ入る放射輝度を返す。外れれば環境光、当たれば命中面の点・spot・
@@ -1322,10 +1358,15 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitPosition = rayOrigin + rayDirection * hitDistance;
     hitNormal = triangleNormal;
     hitBaseColor = hitInstance.baseColor.rgb;
-    // 地形の 3 層の混ぜ合わせの材質は、当たりの点の分類と層の平均の色を instance の色に掛け、鏡面を足す
+    // 地形の混ぜ合わせの材質は、当たりの点の重みと層の平均の色を instance の色に掛け、鏡面を足す
     if (hitInstance.rayProxy.y > 0.5 && parameters.terrainMaskMix.w > 0.5)
     {
         hitBaseColor *= TerrainBounceAlbedo(hitPosition, triangleNormal);
+        hitSpecularWeight = 1.0;
+    }
+    else if (hitInstance.rayProxy.y > 0.5 && IsTerrainSplatEnabled(MakeTerrainSplatParams(parameters.terrainSplat)))
+    {
+        hitBaseColor *= TerrainSplatBounceAlbedo(hitPosition, triangleNormal);
         hitSpecularWeight = 1.0;
     }
     // 照り返しを切る撮影（--rtgi-bounce=off）は拡散の光線の当たりの色と鏡面を 0 にする（外れた光線の空の光だけが残る）。

@@ -21,6 +21,7 @@
 #include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/PaleFlatShading.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -871,6 +872,8 @@ namespace NorvesLib::Core::Rendering
         float terrainHeight[4] = {};
         /// x=株の冠の数（RTGIFoliageCrown の数。0 なら遮らない。CollectRTGIFoliageCrowns）。
         float foliageOcclusion[4] = {};
+        /// スプラット（vec4 × 12）: 地図の外縁・形と濡れ度・崖と回転・フラグ・8 層の倍率と濡れやすさ。
+        float terrainSplat[TERRAIN_SPLAT_PARAM_FLOATS] = {};
     };
 
     /// RTGI の拡散の光線を遮る株の冠の数の上限と、選ぶ範囲[m]（カメラから冠の縁まで）
@@ -1014,7 +1017,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t CustomIndex = UINT32_MAX;
         float Transform[12] = {};
         /// x=光線に見せる形のずれの上限（世界の長さ、RayTracingSceneInstanceSnapshot::RayProxyErrorMeters）、
-        /// y=地形の 3 層の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）、z=影を落とさない不透明物体（1/0。
+        /// y=地形の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）、z=影を落とさない不透明物体（1/0。
         /// 拡散の光線が中から出る当たりを読み飛ばす）。w は未使用
         float RayProxy[4] = {};
     };
@@ -1032,7 +1035,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved = 0u;
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 256u);
+    static_assert(sizeof(RTGIComputeParameters) == 448u);
     static_assert(sizeof(RTGIInstanceData) == 128u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
@@ -1545,18 +1548,41 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 地形の当たりの色の値（RTGIComputeParameters の terrain*）と、束ねるテクスチャ（地図・砂・土・岩肌）を求める
      *
-     * 3 層のアルベドがすべて引けたときだけ有効にする。地図が引けなければ傾斜の式だけで混ぜる。
+     * 3 層はアルベドがすべて引けたときだけ有効にし、地図が無ければ傾斜の式だけで混ぜる。
+     * 3 層が無い場合、スプラットはアルベドと重みの配列がともに引けたときだけ有効にする。
      * 引けない枠は fallback を束ねる（シェーダーは無効の印で読まない）。
      */
     static void ResolveRTGITerrainBlend(const RayTracingTerrainBlendSnapshot& terrain,
                                         const TextureResources* textures,
                                         const RHI::TexturePtr& fallback,
+                                        const RHI::TexturePtr& fallbackArray,
+                                        float wetness,
                                         RTGIComputeParameters& parameters,
-                                        RHI::TexturePtr (&outTextures)[4])
+                                        RHI::TexturePtr (&outTextures)[4],
+                                        RHI::TexturePtr (&outSplatTextures)[2])
     {
         for (RHI::TexturePtr& texture : outTextures)
         {
             texture = fallback;
+        }
+        for (RHI::TexturePtr& texture : outSplatTextures)
+        {
+            texture = fallbackArray;
+        }
+        if (!terrain.bValid && terrain.bSplatValid && textures != nullptr)
+        {
+            const MegaGeometry::MegaTerrainSplat& splat = terrain.Splat;
+            const RHI::TexturePtr albedo = textures->GetRHITexturePtr(splat.AlbedoArrayTexture);
+            const RHI::TexturePtr weights = textures->GetRHITexturePtr(splat.SplatArrayTexture);
+            const uint32_t requiredLayers = std::max(2u, std::min(splat.LayerCount, MegaGeometry::MegaTerrainSplatMaxLayers));
+            if (albedo && weights && albedo->GetArraySize() >= requiredLayers && weights->GetArraySize() >= 2u)
+            {
+                outSplatTextures[0] = albedo;
+                outSplatTextures[1] = weights;
+                const uint32_t flags = IsTerrainAlbedoSrgbDecodeNeeded(albedo.get())
+                    ? TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE : 0u;
+                PackTerrainSplatParams(splat, true, flags, wetness, parameters.terrainSplat);
+            }
         }
         if (!terrain.bValid || textures == nullptr)
         {
@@ -1649,6 +1675,13 @@ namespace NorvesLib::Core::Rendering
             binding.stages = RHI::ShaderStage::Compute;
             descriptorSetDesc.bindings.push_back(binding);
         }
+        RHI::DescriptorBinding splatBinding;
+        splatBinding.binding = TERRAIN_SPLAT_RTGI_ALBEDO_BINDING;
+        splatBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        splatBinding.stages = RHI::ShaderStage::Compute;
+        descriptorSetDesc.bindings.push_back(splatBinding);
+        splatBinding.binding = TERRAIN_SPLAT_RTGI_SPLAT_BINDING;
+        descriptorSetDesc.bindings.push_back(splatBinding);
         return descriptorSetDesc;
     }
 
@@ -2216,6 +2249,28 @@ namespace NorvesLib::Core::Rendering
         const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x0000u};
         m_DefaultBlackTexture->Update(blackPixel, sizeof(blackPixel), sizeof(blackPixel));
 
+        // RTGI のスプラットを使わないときも 2D 配列のテクスチャを束ねる。
+        RHI::TextureDesc rtgiSplatFallbackDesc;
+        rtgiSplatFallbackDesc.Width = 1u;
+        rtgiSplatFallbackDesc.Height = 1u;
+        rtgiSplatFallbackDesc.ArraySize = 2u;
+        rtgiSplatFallbackDesc.MipLevels = 1u;
+        rtgiSplatFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        rtgiSplatFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        rtgiSplatFallbackDesc.DebugName = "RTGITerrainSplatArrayFallback";
+        m_DefaultRTGITerrainSplatArray = m_Device->CreateTexture(rtgiSplatFallbackDesc);
+        if (!m_DefaultRTGITerrainSplatArray)
+        {
+            NORVES_LOG_ERROR("LightingPass", "RTGI の地形スプラット用の代替配列を作成できません");
+            return false;
+        }
+        const uint8_t rtgiSplatFallbackPixel[4] = {};
+        for (uint32_t layer = 0u; layer < rtgiSplatFallbackDesc.ArraySize; ++layer)
+        {
+            m_DefaultRTGITerrainSplatArray->Update(rtgiSplatFallbackPixel, sizeof(rtgiSplatFallbackPixel),
+                                                   sizeof(rtgiSplatFallbackPixel), 0u, layer);
+        }
+
         RHI::TextureDesc ddgiIrradianceFallbackDesc;
         ddgiIrradianceFallbackDesc.Width = DDGI_ATLAS_TEXEL_COUNT;
         ddgiIrradianceFallbackDesc.Height = DDGI_ATLAS_TEXEL_COUNT;
@@ -2468,6 +2523,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture && !m_DefaultPointShadowCubeTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
+            !m_DefaultRTGITerrainSplatArray &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_LightingDescriptorSetLayout &&
             !m_RTGIComputePipeline && !m_RTGIComputeInstanceDataBuffer &&
             !m_RTGIDenoiserPipeline &&
@@ -2564,6 +2620,7 @@ namespace NorvesLib::Core::Rendering
         m_FramePointShadowCubeTexture.reset();
         m_DefaultDDGIIrradianceAtlas.reset();
         m_DefaultDDGIDistanceAtlas.reset();
+        m_DefaultRTGITerrainSplatArray.reset();
         m_bIBLAvailable = false;
         m_SkyAtmosphereIblParameters = SkyAtmosphereParameters{};
         m_SkyAtmosphereIblRadianceWidth = 0u;
@@ -4350,8 +4407,12 @@ namespace NorvesLib::Core::Rendering
         }
         parameters.foliageOcclusion[0] = static_cast<float>(foliageCrowns.size());
         RHI::TexturePtr terrainTextures[4];
+        RHI::TexturePtr terrainSplatTextures[2];
+        const Terrain::TerrainWetnessRenderData* terrainWetness = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
-                                m_DefaultBlackTexture, parameters, terrainTextures);
+                                m_DefaultBlackTexture, m_DefaultRTGITerrainSplatArray,
+                                terrainWetness ? terrainWetness->Wetness : 0.0f,
+                                parameters, terrainTextures, terrainSplatTextures);
         // xは0=無効、1=通常の有効履歴、2以上=カメラだけの動きで使う拡散の年齢上限（16）。
         // wは従来のままにし、動いている間も法線・材質による棄却を維持する。
         parameters.temporalState[0] = bCameraOnlyMotion ? RTGIHistoryCameraMotionMaximumAge
@@ -4542,6 +4603,10 @@ namespace NorvesLib::Core::Rendering
             computeDescriptorSet->BindTexture(25u + index, terrainTextures[index]);
             computeDescriptorSet->BindSampler(25u + index, m_GBufferSampler);
         }
+        computeDescriptorSet->BindTexture(TERRAIN_SPLAT_RTGI_ALBEDO_BINDING, terrainSplatTextures[0]);
+        computeDescriptorSet->BindSampler(TERRAIN_SPLAT_RTGI_ALBEDO_BINDING, m_DfgSampler);
+        computeDescriptorSet->BindTexture(TERRAIN_SPLAT_RTGI_SPLAT_BINDING, terrainSplatTextures[1]);
+        computeDescriptorSet->BindSampler(TERRAIN_SPLAT_RTGI_SPLAT_BINDING, m_DfgSampler);
         computeDescriptorSet->Update();
 
         const uint32_t groupCountX =

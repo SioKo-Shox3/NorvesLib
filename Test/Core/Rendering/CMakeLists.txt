@@ -368,6 +368,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER TerrainShaderCompileTest TerrainShaderCompileTest.cpp
     MEMBER ViewClearanceShaderCompileTest ViewClearanceShaderCompileTest.cpp
     MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
     MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
@@ -389,6 +390,8 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+# 地形のシェーダーを CPU でコンパイルし、実行モデル・束縛・画像型・定数ブロックの大きさを確かめる。
+add_test(NAME TerrainShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=TerrainShaderCompileTest)
 add_test(NAME ViewClearanceShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=ViewClearanceShaderCompileTest)
 add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
 # 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
@@ -415,6 +418,15 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
 # BC1・BC3・BC4・BC5・BC6H・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
 add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
 set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 地形スプラットの象限ごとの色、斜面での崖の細かさ、濡れの恒等性と暗化・粗さの減少を GPU から読み戻す。
+add_test(NAME TerrainLayerBlendVulkanTest COMMAND RHITextureUpdateVulkanTest --test=TerrainLayerBlendVulkanTest)
+set_tests_properties(TerrainLayerBlendVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
@@ -704,6 +716,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
     MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
+    MEMBER TerrainLayerBlendVulkanTest TerrainLayerBlendVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp

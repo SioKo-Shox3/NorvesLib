@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "cliff_layer": "rock_face",
+  "cliff_slope_deg": [
+    38,
+    55
+  ],
+  "height_blend_depth": 0.2,
+  "uv_rotation": {
+    "wavelength_m": 23,
+    "max_deg": 180
+  },
+  "layers": [
+    {
+      "name": "soil",
+      "surface": "Soil",
+      "tile_m": 2.5,
+      "wettability": 0.6,
+      "color": [
+        0.2,
+        0.15,
+        0.1
+      ],
+      "roughness": 0.9,
+      "albedo": "Assets/Terrain/Grassland/Layers/soil_albedo",
+      "normal": "Assets/Terrain/Grassland/Layers/soil_normal",
+      "arm": "Assets/Terrain/Grassland/Layers/soil_arm"
+    },
+    {
+      "name": "moss",
+      "surface": "Moss",
+      "tile_m": 2.0,
+      "wettability": 0.8,
+      "color": [
+        0.11,
+        0.15,
+        0.06
+      ],
+      "roughness": 0.85,
+      "albedo": "Assets/Terrain/Grassland/Layers/moss_albedo",
+      "normal": "Assets/Terrain/Grassland/Layers/moss_normal",
+      "arm": "Assets/Terrain/Grassland/Layers/moss_arm"
+    },
+    {
+      "name": "wet_mud",
+      "surface": "Mud",
+      "tile_m": 2.0,
+      "wettability": 1.0,
+      "color": [
+        0.1,
+        0.08,
+        0.06
+      ],
+      "roughness": 0.6,
+      "albedo": "Assets/Terrain/Grassland/Layers/wet_mud_albedo",
+      "normal": "Assets/Terrain/Grassland/Layers/wet_mud_normal",
+      "arm": "Assets/Terrain/Grassland/Layers/wet_mud_arm"
+    },
+    {
+      "name": "rock_face",
+      "surface": "Rock",
+      "tile_m": 6.0,
+      "wettability": 0.3,
+      "color": [
+        0.27,
+        0.25,
+        0.23
+      ],
+      "roughness": 0.8,
+      "albedo": "Assets/Terrain/Grassland/Layers/rock_face_albedo",
+      "normal": "Assets/Terrain/Grassland/Layers/rock_face_normal",
+      "arm": "Assets/Terrain/Grassland/Layers/rock_face_arm"
+    },
+    {
+      "name": "meadow",
+      "surface": "Soil",
+      "tile_m": 2.5,
+      "wettability": 0.5,
+      "color": [
+        0.16,
+        0.15,
+        0.08
+      ],
+      "roughness": 0.9,
+      "albedo": "Assets/Terrain/Grassland/Layers/meadow_albedo",
+      "normal": "Assets/Terrain/Grassland/Layers/meadow_normal",
+      "arm": "Assets/Terrain/Grassland/Layers/meadow_arm"
+    }
+  ]
+}

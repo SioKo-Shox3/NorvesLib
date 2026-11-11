@@ -5,6 +5,8 @@
 // ---------------------------------------------------------------------------
 #include "Rendering/Terrain/TerrainSystem.h"
 
+#include "Engine/Engine.h"
+
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -238,6 +240,22 @@ namespace NorvesLib::Core::Rendering::Terrain
         return m_AssetSystem;
     }
 
+    void TerrainSystem::SetWetness(float wetness)
+    {
+        m_Wetness = std::isfinite(wetness)
+            ? (wetness < 0.0f ? 0.0f : (wetness > 1.0f ? 1.0f : wetness)) : 0.0f;
+        if (Engine::GEngine != nullptr && &Engine::GEngine->GetTerrainSystem() == this)
+        {
+            const TerrainWetnessRenderData data{m_Wetness};
+            Engine::GEngine->GetRenderWorld().SetExtensionData(kTerrainWetnessRenderKey, data);
+        }
+    }
+
+    float TerrainSystem::GetWetness() const
+    {
+        return m_Wetness;
+    }
+
     void TerrainSystem::Clear()
     {
         while (m_FirstTerrain != TerrainHandle::InvalidIndex)
@@ -245,6 +263,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             ReleaseSlot(m_FirstTerrain);
         }
         m_TileResidency.reset();
+        SetWetness(0.0f);
     }
 
     const TerrainHeightField* TerrainSystem::FindTerrainRaw(float x, float z) const
