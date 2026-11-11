@@ -10758,3 +10758,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 反射の向きの樹冠の透過率（CPU の正解と GLSL）: 着地(直し 1 回)
 - Notes(G11-GR56-SKY-OCC-SPECULAR 反復 2・run 20261112-015210): 判断役の A を採り、反射の向きの樹冠の透過率（`EvaluateSkySpecularTransmittance`、CPU の正解と GLSL）を足した。円錐との小さい方で、粗さ 0.25 以下で全部・0.75 以上で効かない（地面・岩の粗さ 1.0 は辿らない）。反射を辿る最大距離（MaxHorizonMeters）は空いていた `skyOcclusionInfo.w` に float のビット列で渡す（照明と半透明。UBO の配置は同じ）。樹冠の試験の球の比は 0.170（円錐だけでは 0.518）、地面の比・林縁・無効の段は変わらない。球の比の判定の差分は前の作業ツリーが古い先頭のままだったので、控えたパッチを今の先頭で当て直す
 - U7 樹冠の下の球の鏡面の比の判定（U4 の当て直し）: 着地(直し 0 回)
+- U5 受け入れの文書とタスクの確かめ: 着地(直し 1 回)
