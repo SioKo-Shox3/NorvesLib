@@ -1929,6 +1929,7 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME CullProxiesParallelEquivalenceTest COMMAND SceneViewProxyLookupTest --test=CullProxiesParallelEquivalenceTest)
 add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
@@ -1937,6 +1938,7 @@ norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER CullProxiesParallelEquivalenceTest CullProxiesParallelEquivalenceTest.cpp
     MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
     MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
@@ -1944,6 +1946,9 @@ target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+# CullProxiesParallelEquivalenceTest は JobSystem::ParallelFor の上の試験なので、
+# この束のビルドで JobParallelForTest を含む JobSystemShutdownTest の実行ファイルもそろえる。
+add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)
 add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
 
 add_executable(ComponentDirtyTrackingTest
