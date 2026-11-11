@@ -368,6 +368,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER TerrainShaderCompileTest TerrainShaderCompileTest.cpp
     MEMBER ViewClearanceShaderCompileTest ViewClearanceShaderCompileTest.cpp
     MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
     MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
@@ -389,6 +390,8 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+# 地形のシェーダーを CPU でコンパイルし、実行モデル・束縛・画像型・定数ブロックの大きさを確かめる。
+add_test(NAME TerrainShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=TerrainShaderCompileTest)
 add_test(NAME ViewClearanceShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=ViewClearanceShaderCompileTest)
 add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
 # 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。

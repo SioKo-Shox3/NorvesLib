@@ -10789,3 +10789,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 RTGI の当たりの色をスプラットの層の平均色 × 重みにする: 着地(直し 1 回)
 - U4 MegaGeometry のハードのラスタでスプラットの層を描く: 着地(直し 1 回)
 - U7 TerrainComponent が層の表と SPL0・SPL1 からスプラットの材質を組み、草原に塗る（層のテクスチャは単色の仮）: 着地(直し 0 回)
+- U9 TerrainShaderCompileTest を足す: 着地(直し 2 回)
