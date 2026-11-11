@@ -6393,13 +6393,20 @@
 - notes: GR56 の P3（要件 5541-5547・5585 行）。今あるもの: SCN-RENDER-SPEC-OCCLUSION の土台（d96e2a2e）で、RTGI が有効なときだけ空の見え方で鏡面を遮り、遮った向きを周りの面の光で埋める（lighting.frag:696-750）。RT の無い構成と樹冠（TLAS に入れない）にはこの項目の円錐が効く。SCN-RENDER-SPEC-OCCLUSION は todo で同じ鏡面の式を触るので、その後に回す（after）。G7 の GR53 の濡れの鏡面にもこの値が掛かる前提（要件 5547 行）で、水たまりの反射は G11-GR59-PUDDLES がこの関数を使う。撮影で測る受け入れ（要件 5624・5625 行）を、起動しないで済むよう基準画像の試験の場面（RenderingGoldenImageTest の新しい場面の引数。新しい実行ファイルは作らない）で数値の判定にした。閾値（25〜60%・30%）は要件の初期目標で、美術の調整で変えうる（根拠は要件の目標値だけ）。PT との比べは G11-GR56-SKY-OCC-REFERENCE。危険地帯（lighting.frag・半透明）。評価者の反証を省かない。共有のファイル（lighting.frag・forward_transparent.frag）は差分を小さくする。試験を足す理由: 反証する契約は「樹冠の下の空の光が決めた比に落ち、無効で絵が変わらない」。暗くしすぎ・二重の遮りは「コントラストの低い世界」の絵として紛れ、撮影 1 枚の目視では決めにくく、黙って起きる。
 
 ## G11-GR56-SKY-OCC-REFERENCE: 空だけで照らした樹冠・林縁・岩の場面で、空の遮蔽のラスタをパストレーサーの正解と比べる参照比較の試験を足して通す
-- status: blocked
+- status: todo
 - after: G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - gpu: exclusive
-- done-when: 既存の `R7OutdoorPathTracingReferenceVulkanTest` の実行ファイル（R7OutdoorPathTracingReferenceVulkanTest.cpp と R7OutdoorPathTracingReferenceTest.py。新しい実行ファイルは作らない）に場面の引数を足し、`R56SkyOcclusionPathTracingReferenceVulkanTest` として登録して `NORVES_REFERENCE_TESTS`（Test/Core/Rendering/CMakeLists.txt:2273）に並べる。場面は地面・`ProceduralMeshGenerator::GenerateUVSphere` を広げた楕円体の樹冠 3 本・箱の岩、方向光なし・空だけ（R2 の昼）、RTGI 無効（IBL＋空の遮蔽）のラスタと、PT（拡散 2 回の跳ね返りの参照）。試験が通る: LDR-FLIP の平均・画素の最大・8×8 区画の最大が、参照の空の光を ±20% 変えた画像との知覚差から決めた閾値の内。(i) 樹冠の下・林縁から 3 m・開けた地面の 3 領域の平均輝度の比が PT の比の ±15% 以内。(ii) 負の対照: 空の遮蔽を無効にすると (i) が外れ、遮蔽物を水平に 2 m ずらすと外れる。結果の数値を `Docs/RenderingValidation/R56Acceptance.md` に書く。既存の R7 の参照比較が変わらない。
+- done-when: 既存の `R7OutdoorPathTracingReferenceVulkanTest` の実行ファイル(R7OutdoorPathTracingReferenceVulkanTest.cpp と R7OutdoorPathTracingReferenceTest.py。新しい実行ファイルは作らない)に場面の引数を足し、`R56SkyOcclusionPathTracingReferenceVulkanTest` として add_test で登録して、`NORVES_REFERENCE_TESTS`(Test/Core/Rendering/CMakeLists.txt の `set(NORVES_REFERENCE_TESTS`)に並べる。
+  場面は、地面・`ProceduralMeshGenerator::GenerateUVSphere` を広げた楕円体の樹冠 3 本・箱の岩で、方向光なし・空だけ(R2 の昼)。ラスタは RTGI 無効(IBL と空の遮蔽)、PT は拡散 2 回の跳ね返りの参照。遮蔽物は形と値を同じ物から作る(PT は実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る)。
+  判定のコードを `RasterPathTracingComparison.h` の流儀で書く:
+  (a) LDR-FLIP の平均・画素の最大・8×8 区画の最大を、参照の空の光を ±20% 変えた画像との知覚差から決めた閾値と比べる手順
+  (b) 樹冠の下・林縁から 3 m・開けた地面の 3 領域の平均輝度の比が、PT の比の ±15% 以内
+  (c) 負の対照: 空の遮蔽を無効にしたとき、遮蔽物を水平に 2 m ずらしたときに (b) が外れる
+  ±15%・±20% は、要件の初期目標の仮の値として定数に置く。場面の引数が無い R7 の既定の経路(`--scene=outdoor` と判定)は変えない。ビルドが通る。
+  `Docs/RenderingValidation/R56Acceptance.md` に節を足し、場面・領域・判定・負の対照・閾値の由来(要件の初期目標・未実測)と、「未実行。実行・閾値の確定・結果の数値は参照比較の段(`ctest -L Reference`)で行う」を書く。試験の実行・閾値の実測・結果の数値は、この項目の完了に含めない。
 - verify: `cmake --build build --config Debug --target R7OutdoorPathTracingReferenceVulkanTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(R56SkyOcclusionPathTracingReferenceVulkanTest|R7OutdoorPathTracingReferenceVulkanTest)$" --no-tests=error --output-on-failure --timeout 3600`
+- verify: `python -c "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8-sig').read())" Test/Core/Rendering/R7OutdoorPathTracingReferenceTest.py`
 - paths: Test/Core/Rendering/R7OutdoorPathTracingReferenceVulkanTest.cpp, Test/Core/Rendering/R7OutdoorPathTracingReferenceTest.py, Test/Core/Rendering/CMakeLists.txt, Test/Core/Rendering/RenderingValidation, Docs/RenderingValidation/R56Acceptance.md, TASKS.md, PROGRESS.md
 - notes: 要件 `#### GR56` の受け入れ確認の R56SkyOcclusionPathTracingReferenceVulkanTest（要件 5622 行）。参照比較の段（数分〜1 時間。Docs/Testing.md の段）で GPU を長く使うので `gpu: exclusive`。比べの道具は R7 と同じ `RasterPathTracingComparison.h` の流儀（要件の指定）。PT は遮蔽物の実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る（遮蔽物は形と値を同じ物から作る。要件 5639 行のリスク）。L1 の打ち切り誤差は「既知の方式差」として量を記録する（R7OutdoorAcceptance.md と同じ流儀）。閾値の ±15%・±20% は要件の初期目標で、実測の根拠を記録して確定する。試験を足す理由: 反証する契約は「ラスタの空の遮蔽が物理の正解の比に合う」。正解が無いと強さのつまみで見た目だけを合わせ、方式の誤りが残っても気づけない。
 
