@@ -41,7 +41,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
     vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] x=PaleFlatの直接光・環境光の明暗差を落とす割合（0で通常、1で全部）, y=平らな直接光のn·lと影の代替値, z=アルベドを輝度へ寄せる割合, w=予約0
     uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 0
-    vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 0
+    vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
     vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
     ivec4 skyOcclusionWindowOrigin[4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
     vec4 skyOcclusionTexelMeters; // 段ごとのテクセル幅(m)
@@ -150,6 +150,13 @@ layout(location = 2) out vec4 outSpecularReflectance;
 SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N)
 {
     return EvaluateSkyOcclusion(P, N, skyOcclusionVisibility, skyOcclusionAux,
+        params.skyOcclusionInfo, params.skyOcclusionParams,
+        params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
+}
+
+float EvaluateSkySpecularOcclusion(vec3 P, vec3 N, vec3 R, float roughness)
+{
+    return EvaluateSkySpecularOcclusion(P, N, R, roughness, skyOcclusionVisibility, skyOcclusionAux,
         params.skyOcclusionInfo, params.skyOcclusionParams,
         params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
 }
@@ -1452,6 +1459,11 @@ void main()
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        float skyConeSpecularOcclusion = 1.0;
+        if (params.skyOcclusionInfo.x != 0u)
+        {
+            skyConeSpecularOcclusion = EvaluateSkySpecularOcclusion(worldPos, N, reflect(-V, N), iblRoughness);
+        }
         // RTGI の鏡面の光線が空へ抜けた割合と、当たった面が返す光（EvaluateRTGIEnvironmentSpecular）
         float rtgiSkySpecularOcclusion = 1.0;
         vec3 rtgiSpecularHitRadiance = vec3(0.0);
@@ -1469,6 +1481,11 @@ void main()
             {
                 rtgiSpecularHitRadiance = min(max(specularHit, vec3(0.0)), vec3(65504.0));
             }
+            rtgiSkySpecularOcclusion = min(rtgiSkySpecularOcclusion, skyConeSpecularOcclusion);
+        }
+        else
+        {
+            specularAO *= skyConeSpecularOcclusion;
         }
 
         if (params.bIBLEnabled != 0u)

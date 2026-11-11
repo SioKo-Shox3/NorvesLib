@@ -5507,6 +5507,7 @@ namespace NorvesLib::Core::Rendering
             params.skyOcclusionParams[0] = skyOcclusion.Parameters.Strength;
             params.skyOcclusionParams[1] = skyOcclusion.Parameters.DiffuseExponent;
             params.skyOcclusionParams[2] = skyOcclusion.Parameters.GroundHeightMeters;
+            params.skyOcclusionParams[3] = skyOcclusion.Parameters.SpecularStrength;
             params.skyOcclusionBounce[0] = skyOcclusion.Parameters.OccluderBounceColorR *
                                          skyOcclusion.Parameters.OccluderBounceIntensity;
             params.skyOcclusionBounce[1] = skyOcclusion.Parameters.OccluderBounceColorG *

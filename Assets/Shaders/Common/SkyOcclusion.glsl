@@ -7,6 +7,8 @@ struct SkyOcclusionResult
     float visibility;
     vec3 bentNormal;
     float zenithVisibility;
+    vec3 coneAxis;
+    float coneVisibility;
 };
 
 ivec2 SkyOcclusionAddress(ivec2 worldTexel, ivec2 origin, int resolution)
@@ -43,6 +45,8 @@ SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N,
     result.visibility = 1.0;
     result.bentNormal = N;
     result.zenithVisibility = 1.0;
+    result.coneAxis = vec3(0.0, 1.0, 0.0);
+    result.coneVisibility = 1.0;
     if (info.x == 0u || info.y == 0u || info.z == 0u)
     {
         return result;
@@ -84,12 +88,67 @@ SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N,
         visibility = mix(visibility, 1.0, heightFade);
         zenithVisibility = mix(zenithVisibility, 1.0, heightFade);
         vec3 bent = SkyOcclusionNormalizeBent(vec3(-coefficients.y, 0.75 - coefficients.z, -coefficients.w));
+        float blockedBent = coefficients.x + (2.0 / 3.0) * dot(coefficients.yzw, bent);
+        float coneVisibility = clamp(1.0 - settings.x * blockedBent, 0.0, 1.0);
+        coneVisibility = mix(coneVisibility, 1.0, heightFade);
+        vec3 coneAxis = SkyOcclusionNormalizeBent(mix(bent, vec3(0.0, 1.0, 0.0), heightFade));
+        result.coneAxis = mix(result.coneAxis, coneAxis, fineWeight);
+        result.coneVisibility = mix(result.coneVisibility, coneVisibility, fineWeight);
         result.visibility = mix(result.visibility, visibility, fineWeight);
         result.zenithVisibility = mix(result.zenithVisibility, zenithVisibility, fineWeight);
         result.bentNormal = mix(result.bentNormal, bent, fineWeight);
     }
+    result.coneAxis = SkyOcclusionNormalizeBent(result.coneAxis);
     result.bentNormal = SkyOcclusionNormalizeBent(result.bentNormal);
     return result;
+}
+
+// CPU の正解（SkyOcclusionReference.cpp の EvaluateSkySpecularOcclusionCone）と同じ式。
+// 層の数は CPU の SkySpecularOcclusionLobeSampleCount とそろえる。
+const int SkySpecularOcclusionLobeSampleCount = 13;
+
+float EvaluateSkySpecularOcclusionCone(vec3 visibleAxis, float visibility, vec3 reflection, float roughness)
+{
+    float cosineAlpha = sqrt(1.0 - clamp(visibility, 0.0, 1.0));
+    float r = clamp(roughness, 0.0, 1.0);
+    float ggxAlpha = r * r;
+    float ggxAlphaSquared = ggxAlpha * ggxAlpha;
+    float cosineDelta = clamp(dot(visibleAxis, reflection), -1.0, 1.0);
+    float sineDelta = sqrt(max(0.0, 1.0 - cosineDelta * cosineDelta));
+    float weightedVisibility = 0.0;
+    float totalWeight = 0.0;
+    for (int index = 0; index < SkySpecularOcclusionLobeSampleCount; ++index)
+    {
+        float xi = (float(index) + 0.5) / float(SkySpecularOcclusionLobeSampleCount);
+        float angle = 2.0 * atan(ggxAlpha * sqrt(xi / (1.0 - xi)));
+        float cosine = cos(angle);
+        float sine = sin(angle);
+        float positiveCosine = max(cosine, 0.0);
+        float smithDenominator = positiveCosine + sqrt(
+            ggxAlphaSquared + (1.0 - ggxAlphaSquared) * positiveCosine * positiveCosine);
+        float weight = 2.0 * positiveCosine / max(smithDenominator, 1.0e-6);
+        float x = (cosineAlpha - cosine * cosineDelta) / max(sine * sineDelta, 1.0e-6);
+        float fraction = acos(clamp(x, -1.0, 1.0)) / 3.14159265358979323846;
+        weightedVisibility += weight * fraction;
+        totalWeight += weight;
+    }
+    return clamp(weightedVisibility / max(totalWeight, 1.0e-6), 0.0, 1.0);
+}
+
+float EvaluateSkySpecularOcclusion(vec3 P, vec3 N, vec3 R, float roughness,
+    sampler2DArray visibilityMap, sampler2DArray auxMap,
+    uvec4 info, vec4 settings, ivec4 windowOrigin[4], vec4 texelMeters)
+{
+    if (info.x == 0u || info.y == 0u || info.z == 0u)
+    {
+        return 1.0;
+    }
+    SkyOcclusionResult sky = EvaluateSkyOcclusion(P, N, visibilityMap, auxMap,
+        info, settings, windowOrigin, texelMeters);
+    float S_occ = EvaluateSkySpecularOcclusionCone(sky.coneAxis, sky.coneVisibility, R, roughness);
+    float S_open = EvaluateSkySpecularOcclusionCone(vec3(0.0, 1.0, 0.0), 1.0, R, roughness);
+    // 遮蔽物の無い空に対して失った分だけを引き、地平の下の地面の映り込みは変えない。
+    return clamp(1.0 - settings.w * max(S_open - S_occ, 0.0), 0.0, 1.0);
 }
 
 #endif
