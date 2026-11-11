@@ -65,6 +65,12 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * 天球と判定するため、透明部分が天球の穴にならないようにする。
      */
     constexpr uint32_t MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA = 128u;
+    /**
+     * @brief 裏の面も描く MegaGeometry の両面の材質
+     *
+     * 材質の解決は、裏から見た三角形の法線を反転する。
+     */
+    constexpr uint32_t MATERIAL_FLAG_TWO_SIDED = 256u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。144 バイト）
