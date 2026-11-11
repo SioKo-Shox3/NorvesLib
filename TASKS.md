@@ -10767,3 +10767,23 @@
 - verify: `ctest --test-dir build -C Debug -R "^(GrassTileSelectionTest|GrassShaderCompileTest|GrassFieldSnapshotContractTest|GrassGenerateVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/Rendering/GrassFieldRenderData.h, Library/Core/Public/Component/GrassFieldComponent.h, Library/Core/Private/Component/GrassFieldComponent.cpp, Library/Core/Public/Vegetation/Vegetation.h, Library/Core/Private/Vegetation/Vegetation.cpp, Library/Core/Public/Rendering/GrassPass.h, Library/Core/Private/Rendering/GrassPass.cpp, Library/Core/Public/Rendering/GrassFieldGpuWindow.h, Library/Core/Private/Rendering/GrassFieldGpuWindow.cpp, Library/Core/Public/Rendering/GrassTileSelector.h, Library/Core/Private/Rendering/GrassTileSelector.cpp, Library/Core/Public/Rendering/GrassGenerateReference.h, Library/Core/Private/Rendering/GrassGenerateReference.cpp, Assets/Shaders/Grass, Test/Core/Rendering/GrassTileSelectionTest.cpp, Test/Core/Rendering/GrassGenerateVulkanTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR43-GRASS-GENERATE
+
+## G10-SHISHA-SHOWCASE-P1: シ者の場面 base の代役のスキンを、外部の `fixture.bin` に頼らない自己完結の glTF から読む
+- status: todo
+- done-when: (1) `ShishaShowcaseBaseScene.cpp` の `AnalyzeSkeletal` の読み先を、新しい自己完結の glTF `Assets/Models/ShishaShowcase/Standin.gltf` に替える。この glTF はバッファを `data:application/octet-stream;base64,` で埋め込む。埋め込む中身は `Scripts/Test-M9World.ps1` の `Write-M9FixtureBin` が作る 416 バイトと同じにし、accessor・skin・animation は `ValidU8Float.gltf` と同じにする。`Assets/Models/M9Skinned` の中は変えない。(2) Game が Debug でビルドできる。(3) 新しい glTF のどの `buffers[].uri` も `data:` で始まり、復号したバイト数が `byteLength` と一致する。`Game/GameModes/ShishaShowcase` のソースに `M9Skinned` への参照が残らない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -Command "$g = Get-Content -Raw -LiteralPath 'Assets/Models/ShishaShowcase/Standin.gltf' | ConvertFrom-Json; foreach ($b in $g.buffers) { if (-not $b.uri.StartsWith('data:')) { 'external buffer: ' + $b.uri; exit 1 }; $n = [Convert]::FromBase64String($b.uri.Substring($b.uri.IndexOf(',') + 1)).Length; if ($n -ne $b.byteLength) { 'byteLength mismatch'; exit 1 } }; if (Select-String -Path 'Game/GameModes/ShishaShowcase/*.cpp' -Pattern 'M9Skinned' -Quiet) { 'still references M9Skinned'; exit 1 }"`
+- paths: Game/GameModes/ShishaShowcase/ShishaShowcaseBaseScene.cpp, Assets/Models/ShishaShowcase, TASKS.md, PROGRESS.md
+- effort: high
+- from: G12-GR108-POSE-PARALLEL
+- notes: 確かめた事実:
+  - `Assets/Models/M9Skinned/ValidU8Float.gltf:42` は `"uri": "fixture.bin"` を参照する。しかし `fixture.bin` は追跡されておらず、手元に無く、無視の対象でもない。
+  - 外部バッファは glTF の隣から読まれる(`GltfBufferFile.cpp` の `ReadBufferFileWithPath`)。そのため `ShishaShowcaseBaseScene.cpp:224-228` は `asset_decode_failed` で止まる。これは G10-SHISHA-SHOWCASE の done-when (2)「場面 base に M9Skinned のスキンを 1 体」が起動の確かめ無しで閉じた取りこぼし。
+  - 試験と台本(`Test-M9World.ps1:456`・`:577`、`CookDependencySnapshotTest`、`CookedSkeletalAssetTest.cmake.in` など)は M9Skinned を一時の置き場へ写し、そこで `fixture.bin` を作る。
+  - `ManagedTextureAssetSetCli.md:247` は `ValidU8Float.gltf` の blob が変わらないことを基準にしている。
+  - 以上の理由で、`fixture.bin` を M9Skinned へコミットする直し方は採らない。
+  - バッファの data URI は `GltfBufferSet.cpp:76-101` が読む(octet-stream と gltf-buffer の MIME)。
+  - 符号化は `ValidU8Float.gltf` に合わせる。
+  - 代役の形(骨 2 本の三角形を身長 1.8 m に合わせる)と ready の印の値は変えない。
+  - 中身がデコードできるかは、`Test-M9World.ps1:580` と同じ AssetCook の `--kind model` を一時の置き場へ回して確かめてよい(Game は起動しない)。
+  - G12-GR108-POSE-PARALLEL の `--skinned-crowd` も M9Skinned の同じ資産を読む予定なので、この自己完結の glTF を使える。
