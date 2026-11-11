@@ -1,0 +1,14 @@
+﻿{
+  "region": "Grassland",
+  "scene_id": "grassland",
+  "terrain": "Assets/TerrainSpecs/Grassland/GrasslandTerrain.json",
+  "capture_spec": "Assets/MapCaptureSpecs/Grassland.json",
+  "compose_options": {
+    "light_azimuth_deg": 315.0,
+    "light_altitude_deg": 45.0
+  },
+  "asset_set": "Assets/AssetSets/GrasslandMap.json",
+  "capture_dir": "build/Map/Grassland/capture",
+  "compose_dir": "build/Map/Grassland/compose",
+  "cook_dir": "build/CookedMaps/Grassland"
+}

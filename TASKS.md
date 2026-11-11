@@ -6659,7 +6659,7 @@
 - notes: 設計はロードマップ 2386〜2390 行（GR94 の 1. 撮影）。ロードマップは新しい GameMode（`Game/GameModes/MapCapture/`）と `SaveCapturedFramePng` の Library への公開化を書くが、今のコードには 1 回の起動で複数の視点を撮る `MultiViewCapture`（`--capture-views`。`Game/Debug/MultiViewCapture.h`、SCN-WL-CAPTURE-FAST で入った）と、Game の共用の PNG の書き出し `Game/Debug/CapturedFramePng.h` が既にあり、シーンは `--scene` で選べ、新しいシーンは自由飛行カメラを使う（`FreeCameraRig.h` の 6 行目）。決定: GameMode を新しく作らず、撮影の役（`Game/Debug`）としてどのシーンにも掛けられる形にする。理由: シーンを組み立てるコードを二重に持たずに済み、荒野・草原（G5）・読み込んだシーン（G12-GR92-PREFAB-FILE）のどれでも撮れる。BRDF の LUT と IBL の生成に起動ごとに十数秒かかる（ロードマップ 2382 行）ので、タイルごとに起動し直さない。共有のファイル（`GameApplicationHandler.cpp`）は引数の読み取りと撮影の役の持ち主の数行だけにして差分を小さくする。正射影での空・フォグ・SSAO・DDGI / RTGI の挙動は未検証（ロードマップ 2764 行）。UNCERTAIN: 主の視点の LOD の選び方が正射影で正しいか（`OrthoLod` は今は VSM の影だけが立てる）は、`MegaGeometryPass.cpp` の CullUniform を作る所を読んで確かめる。雨（GR49）が入るまでは雨を切る口は要らない。やらないこと: タイルの結合と合成（G12-GR94-MAP-COMPOSE-COOK）、地図の UI（GR70）。
 
 ## G12-GR94-MAP-COMPOSE-COOK: 撮ったタイルを結合し、地形のデータから陰影・等高線・水・道を重ねた地図の画像を作り、座標の変換の情報と一緒に cook する
-- status: todo
+- status: done
 - after: G12-GR94-MAP-TRANSFORM-PLAN, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR94
 - needs-gr: GR89
