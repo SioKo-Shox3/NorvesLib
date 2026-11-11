@@ -77,7 +77,8 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief シェーダーファイルからRHIシェーダーを取得（キャッシュあり）
-         * @param filename シェーダーファイル名（相対パス）
+         * @param filename エンジンのシェーダー置き場からの相対パス、または絶対パス
+         * @details 絶対パスはそのまま読み、include は常にエンジンのシェーダー置き場から解決する。
          * @param stage シェーダーステージ
          * @param entryPoint エントリーポイント名
          * @return RHIシェーダー（失敗時nullptr）
