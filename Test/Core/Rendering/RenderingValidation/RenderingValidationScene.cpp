@@ -1489,6 +1489,23 @@ namespace NorvesLib::Test::RenderingValidation
 
     void RenderingValidationSceneFixture::Shutdown(Core::Rendering::RenderResources&)
     {
+        if (m_pSkyOcclusionCanopyWorld != nullptr)
+        {
+            for (uint32_t handle : m_SkyOcclusionCanopyHandles)
+            {
+                if (handle != 0u)
+                {
+                    m_pSkyOcclusionCanopyWorld->UnregisterSkyOccluder(handle);
+                }
+            }
+            m_pSkyOcclusionCanopyWorld->SetStaticEnvironmentUniformRadiance(false, Math::Vector3::Zero);
+            m_pSkyOcclusionCanopyWorld->SetSkyOcclusionParameters(
+                Core::Rendering::MakeDefaultSkyOcclusionParameters());
+        }
+        m_SkyOcclusionCanopyHandles.fill(0u);
+        m_pSkyOcclusionCanopyWorld = nullptr;
+        m_bSkyOcclusionCanopyPrepared = false;
+        m_SkyOcclusionCanopyCamera = {};
         RenderingValidationResourceReleaser releaser(m_pResources);
         ShutdownPublishedInitialization(&releaser);
     }
@@ -2818,6 +2835,201 @@ namespace NorvesLib::Test::RenderingValidation
 
         m_pR5ShadowReceiverMesh->SetCastShadow(bCastShadow);
         return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplySkyOcclusionCanopyFixture() const
+    {
+        if (m_bSkyOcclusionCanopyPrepared)
+        {
+            return true;
+        }
+        if (m_SceneKind != SceneKind::Outdoor || m_pWorld == nullptr || m_pResources == nullptr ||
+            Core::Engine::GEngine == nullptr || m_pP4LightEntity == nullptr)
+        {
+            return false;
+        }
+        for (Core::Entity* entity : m_Objects)
+        {
+            if (entity == nullptr)
+            {
+                continue;
+            }
+            if (auto* mesh = entity->GetComponent<Core::Component::MeshComponent>())
+            {
+                mesh->SetVisible(false);
+            }
+            if (auto* light = entity->GetComponent<Core::Component::LightComponent>())
+            {
+                light->SetLightVisible(false);
+                entity->SetActive(false);
+            }
+        }
+        if (!SetBaseLightActive(false))
+        {
+            return false;
+        }
+        const TextureHandle normal = CreateR1FlatNormalTexture(*m_pResources);
+        if (!normal.IsValid())
+        {
+            return false;
+        }
+        m_Lease.TrackTexture(normal);
+        auto makeMaterial = [this, normal](float color, float metallic, float roughness,
+                                           bool bDiffuseOnly, const TCHAR* name) -> MaterialHandle
+        {
+            Core::Rendering::MaterialCreateData data;
+            data.NormalTexture = normal;
+            data.BaseColor[0] = color;
+            data.BaseColor[1] = color;
+            data.BaseColor[2] = color;
+            data.Metallic = metallic;
+            data.Roughness = roughness;
+            data.bDiffuseOnly = bDiffuseOnly;
+            data.bTwoSided = true;
+            data.bCastShadows = false;
+            data.DebugName = name;
+            const MaterialHandle material = m_pResources->Materials().Create(data);
+            if (material.IsValid())
+            {
+                m_Lease.TrackMaterial(material);
+            }
+            return material;
+        };
+        const MaterialHandle ground = makeMaterial(0.55f, 0.0f, 1.0f, true, TEXT("CanopyGround"));
+        const MaterialHandle mirror = makeMaterial(0.9f, 1.0f, 0.1f, false, TEXT("CanopyMirror"));
+        const MaterialHandle rock = makeMaterial(0.4f, 0.0f, 1.0f, true, TEXT("CanopyRock"));
+        if (!ground.IsValid() || !mirror.IsValid() || !rock.IsValid())
+        {
+            return false;
+        }
+
+        // 各面に別の法線を持つ 2 m 四方の箱を作る。
+        constexpr float faces[6][4][3] = {
+            {{-1,1,-1}, {-1,1,1}, {1,1,1}, {1,1,-1}},
+            {{-1,-1,1}, {-1,-1,-1}, {1,-1,-1}, {1,-1,1}},
+            {{1,-1,-1}, {1,1,-1}, {1,1,1}, {1,-1,1}},
+            {{-1,-1,1}, {-1,1,1}, {-1,1,-1}, {-1,-1,-1}},
+            {{1,-1,1}, {1,1,1}, {-1,1,1}, {-1,-1,1}},
+            {{-1,-1,-1}, {-1,1,-1}, {1,1,-1}, {1,-1,-1}}};
+        constexpr float normals[6][3] = {
+            {0,1,0}, {0,-1,0}, {1,0,0}, {-1,0,0}, {0,0,1}, {0,0,-1}};
+        constexpr uint32_t triangles[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> vertices;
+        Core::Container::VariableArray<uint32_t> indices;
+        for (uint32_t face = 0u; face < 6u; ++face)
+        {
+            for (uint32_t corner = 0u; corner < 4u; ++corner)
+            {
+                Core::Rendering::Mesh3DVertex vertex{};
+                for (uint32_t axis = 0u; axis < 3u; ++axis)
+                {
+                    vertex.Position[axis] = faces[face][corner][axis];
+                    vertex.Normal[axis] = normals[face][axis];
+                }
+                vertex.TexCoord[0] = corner == 2u || corner == 3u ? 1.0f : 0.0f;
+                vertex.TexCoord[1] = corner == 1u || corner == 2u ? 1.0f : 0.0f;
+                vertices.push_back(vertex);
+            }
+            for (uint32_t index : triangles)
+            {
+                indices.push_back(face * 4u + index);
+            }
+        }
+        constexpr MeshDataHandle rockMesh{0x52300006u};
+        if (!m_pResources->Meshes().Register(rockMesh, vertices.data(),
+                vertices.size() * sizeof(Core::Rendering::Mesh3DVertex), indices.data(),
+                static_cast<uint32_t>(indices.size())))
+        {
+            return false;
+        }
+        m_Lease.TrackMesh(rockMesh);
+        auto spawn = [this](MeshDataHandle meshHandle, MaterialHandle material,
+                            const Math::Vector3& position, const Math::Vector3& scale) -> bool
+        {
+            Core::Entity* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(position.x, position.y, position.z);
+            entity->SetScale(scale.x, scale.y, scale.z);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(meshHandle);
+            mesh->SetMaterial(0u, material);
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                mesh->SetCustomData(channel, 1.0f);
+            }
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(true);
+            mesh->SetVisible(true);
+            return true;
+        };
+        const SkyOcclusionCanopyPoints points = GetSkyOcclusionCanopyPoints();
+        if (!spawn(PlaneHandle, ground, Math::Vector3(0.0f, -1.0f, 0.0f), Math::Vector3(6.4f, 1.0f, 6.4f)) ||
+            !spawn(SphereHandle, mirror, points.SphereUnder, Math::Vector3(points.SphereRadius)) ||
+            !spawn(SphereHandle, mirror, points.SphereOpen, Math::Vector3(points.SphereRadius)) ||
+            !spawn(rockMesh, rock, Math::Vector3(8.0f, 0.0f, -7.0f), Math::Vector3::One))
+        {
+            return false;
+        }
+        auto& world = Core::Engine::GEngine->GetRenderWorld();
+        m_pSkyOcclusionCanopyWorld = &world;
+        const float trees[3][7] = {
+            {-2.0f, 3.5f, 0.0f, 4.0f, 2.0f, 4.0f, 0.9f},
+            {0.0f, 3.5f, 0.0f, 4.0f, 2.0f, 4.0f, 0.9f},
+            {2.0f, 3.5f, 0.0f, 4.0f, 2.0f, 4.0f, 0.9f}};
+        for (uint32_t i = 0u; i < 4u; ++i)
+        {
+            Core::Rendering::SkyOccluderProxy proxy = Core::Rendering::MakeDefaultSkyOccluderProxy();
+            if (i < 3u)
+            {
+                proxy.CenterX = trees[i][0]; proxy.CenterY = trees[i][1]; proxy.CenterZ = trees[i][2];
+                proxy.HalfExtentX = trees[i][3]; proxy.HalfExtentY = trees[i][4]; proxy.HalfExtentZ = trees[i][5];
+                proxy.Opacity = trees[i][6];
+                Core::Rendering::SetSkyOccluderShape(proxy, Core::Rendering::SkyOccluderShape::Ellipsoid);
+                Core::Rendering::SetSkyOccluderClass(proxy, Core::Rendering::SkyOccluderClass::Canopy);
+            }
+            else
+            {
+                proxy.CenterX = 8.0f; proxy.CenterY = 0.0f; proxy.CenterZ = -7.0f;
+                proxy.HalfExtentX = 1.0f; proxy.HalfExtentY = 1.0f; proxy.HalfExtentZ = 1.0f;
+                Core::Rendering::SetSkyOccluderShape(proxy, Core::Rendering::SkyOccluderShape::Box);
+                Core::Rendering::SetSkyOccluderClass(proxy, Core::Rendering::SkyOccluderClass::Solid);
+            }
+            m_SkyOcclusionCanopyHandles[i] = world.RegisterSkyOccluder(proxy);
+            if (m_SkyOcclusionCanopyHandles[i] == 0u)
+            {
+                return false;
+            }
+        }
+        // 大気の既定を保ち、方向光なしで IBL に均一な空の放射輝度を与える。
+        world.SetStaticEnvironmentUniformRadiance(true, Math::Vector3(200.0f, 200.0f, 200.0f));
+        m_SkyOcclusionCanopyCamera = BuildLookAtCamera(
+            Math::Vector3(4.25f, 24.0f, 0.6f), Math::Vector3(4.25f, -1.0f, 0.0f),
+            ValidationWidth, ValidationHeight);
+        if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                4.0f, 1.0f / 60.0f, 100.0f, 0.0f, m_SkyOcclusionCanopyCamera))
+        {
+            return false;
+        }
+        m_bSkyOcclusionCanopyPrepared = true;
+        return true;
+    }
+
+    const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetSkyOcclusionCanopyCamera() const
+    {
+        return m_SkyOcclusionCanopyCamera;
+    }
+
+    SkyOcclusionCanopyPoints RenderingValidationSceneFixture::GetSkyOcclusionCanopyPoints() const
+    {
+        return {};
     }
 
     bool RenderingValidationSceneFixture::ApplyR4CornellFixture() const

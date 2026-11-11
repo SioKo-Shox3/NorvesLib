@@ -9,6 +9,9 @@
 #include "Container/PointerTypes.h"
 #include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
+#include "Engine/Engine.h"
+#include "Math/MatrixUtils.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -111,6 +114,33 @@ namespace
         gtaoRoot += TEXT("/GTAO");
         CreateDirectory(validationRoot.c_str(), nullptr);
         CreateDirectory(gtaoRoot.c_str(), nullptr);
+    }
+
+    Core::Container::String CanopyPath(bool bStaging)
+    {
+        Core::Container::String path(bStaging ? NORVES_BINARY_ROOT : NORVES_SOURCE_ROOT);
+        path += bStaging ? TEXT("/RenderingValidation/BaselineStaging/SkyOcclusionCanopy.png.tmp")
+                         : TEXT("/Test/Core/Rendering/Baselines/RenderingValidation/SkyOcclusionCanopy.png");
+        return path;
+    }
+
+    Core::Container::String CanopyEnabledPath()
+    {
+        Core::Container::String path(NORVES_BINARY_ROOT);
+        path += TEXT("/RenderingValidation/SkyOcclusion/CanopyEnabled.png");
+        return path;
+    }
+
+    void EnsureCanopyDirectories()
+    {
+        Core::Container::String root(NORVES_BINARY_ROOT);
+        root += TEXT("/RenderingValidation");
+        CreateDirectory(root.c_str(), nullptr);
+        Core::Container::String staging = root;
+        staging += TEXT("/BaselineStaging");
+        CreateDirectory(staging.c_str(), nullptr);
+        root += TEXT("/SkyOcclusion");
+        CreateDirectory(root.c_str(), nullptr);
     }
 
     double DecodeSrgbByte(uint8_t value)
@@ -248,6 +278,14 @@ namespace
                 LOG_ERROR("GTAOの部屋の大きさの検査には indoor scene が必要です");
                 return false;
             }
+            if (m_bCanopyScenario &&
+                (GetRunConfig().Scene != SceneKind::Outdoor || GetRunConfig().bPathTracing ||
+                 GetRunConfig().bVisibilityBufferOff || m_bR3DensityScenario || m_bGtaoCornellScenario ||
+                 m_bMeasureVisual || m_bWriteR3DensityBaselineStaging))
+            {
+                LOG_ERROR("樹冠の検査には屋外の既定描画経路が必要で、他の場面とは併用できません");
+                return false;
+            }
             return true;
         }
 
@@ -256,6 +294,16 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_bCanopyScenario)
+            {
+                const auto& coordinator = Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator();
+                if (coordinator.IsRTGIEnabled() || coordinator.GetDDGIVolumeParameters().bEnabled)
+                {
+                    LOG_ERROR("樹冠の検査では RTGI と DDGI を無効にする必要があります");
+                    return false;
+                }
+                return GetFixture().ApplySkyOcclusionCanopyFixture();
             }
             if (m_bR3DensityScenario)
             {
@@ -277,6 +325,16 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument == TEXT("--sky-occlusion-scenario=canopy"))
+            {
+                if (m_bCanopyScenario)
+                {
+                    outFailureReason = TEXT("樹冠の場面が重複しています");
+                    return false;
+                }
+                m_bCanopyScenario = true;
+                return true;
+            }
             if (argument == TEXT("--ao-scenario=cornell-room"))
             {
                 if (m_bGtaoCornellScenario || m_bR3DensityScenario || m_bWriteBaselineStaging ||
@@ -340,6 +398,19 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bCanopyScenario)
+            {
+                renderWorld.SetMainCamera(GetFixture().GetSkyOcclusionCanopyCamera());
+                Core::Rendering::SkyOcclusionParameters parameters =
+                    Core::Rendering::MakeDefaultSkyOcclusionParameters();
+                parameters.GroundHeightMeters = -1.0f;
+                parameters.bUseCenterOverride = true;
+                parameters.CenterOverrideX = 4.25f;
+                parameters.CenterOverrideZ = 0.0f;
+                parameters.bEnabled = m_CanopyStage == 1u;
+                renderWorld.SetSkyOcclusionParameters(parameters);
+                return;
+            }
             if (m_bGtaoCornellScenario)
             {
                 // 部屋の内側をCornellの検証カメラで撮り、雑音除去後のGTAOの可視率をそのまま表示する
@@ -371,6 +442,12 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_bCanopyScenario && m_bCanopyStageFinished && !m_bCanopyDone)
+            {
+                m_CanopyStage = 1u;
+                m_bCanopyStageFinished = false;
+                m_bCanopyHasFirstFrame = false;
+            }
             if (m_bR3DensityScenario && m_R3DensityStage < R3DensityCount)
             {
                 ++m_R3DensityStage;
@@ -381,6 +458,15 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_bCanopyScenario)
+            {
+                if (m_bCanopyDone)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+                return true;
+            }
             (void)frame;
             if (!m_bR3DensityScenario || m_R3DensityStage >= R3DensityCount)
             {
@@ -394,6 +480,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& outFailureReason) override
         {
+            if (m_bCanopyScenario)
+            {
+                return EvaluateCanopyFrame(frame, outFailureReason);
+            }
             if (m_bR3DensityScenario)
             {
                 return EvaluateR3DensityGoldenFrame(frame, outFailureReason);
@@ -746,6 +836,256 @@ namespace
             return true;
         }
 
+        bool EvaluateCanopyFrame(const Core::Rendering::CapturedFrame& frame,
+                                 Core::Container::String& outFailureReason)
+        {
+            if (frame.RequestId != GetLastAcceptedRequestId() ||
+                (m_bCanopyHasPreviousFrame && frame.FrameNumber <= m_CanopyPreviousFrame))
+            {
+                outFailureReason = TEXT("樹冠の撮影順序が不正です");
+                return false;
+            }
+            m_bCanopyHasPreviousFrame = true;
+            m_CanopyPreviousFrame = frame.FrameNumber;
+            if (!m_bCanopyHasFirstFrame)
+            {
+                m_bCanopyHasFirstFrame = true;
+                m_CanopyFirstFrame = frame.FrameNumber;
+            }
+            // 初回の取得後も 32 描画フレーム待つ。遮蔽マップの全段の更新、環境 IBL の生成、
+            // GTAO の時間蓄積が最初のフレームで完了したと仮定しないため、両方の段で待つ。
+            constexpr uint64_t SettledFrames = 32u;
+            if (frame.FrameNumber - m_CanopyFirstFrame < SettledFrames)
+            {
+                return true;
+            }
+            std::cout << "SKY_OCCLUSION_CANOPY name="
+                      << (m_CanopyStage == 0u ? "settled_frames_disabled" : "settled_frames_enabled")
+                      << " value=" << (frame.FrameNumber - m_CanopyFirstFrame)
+                      << " limit=32.. result=PASS\n";
+
+            Core::Container::VariableArray<uint8_t> png;
+            Rgba8Image image;
+            if (EncodeCapturedFramePng(frame, png) != GoldenImageStatus::Success ||
+                DecodePng(Core::Container::Span<const uint8_t>(png), image) != GoldenImageStatus::Success ||
+                image.Width != ValidationWidth || image.Height != ValidationHeight)
+            {
+                outFailureReason = TEXT("樹冠の画像を読み取れません");
+                return false;
+            }
+            const auto points = GetFixture().GetSkyOcclusionCanopyPoints();
+            const auto& camera = GetFixture().GetSkyOcclusionCanopyCamera();
+            const auto view = Core::Rendering::CameraViewConstants::BuildViewMatrix(camera);
+            const auto projection = Core::Rendering::CameraViewConstants::BuildProjectionMatrix(
+                camera, static_cast<float>(image.Width) / static_cast<float>(image.Height));
+            // Vulkan の通常ビューと同じ Y・Z の補正を投影行列へ掛ける。
+            const auto viewProjection = projection * Math::MatrixUtils::CreateScale(1.0f, -1.0f, -1.0f) * view;
+            auto project = [&](const Math::Vector3& point, double& x, double& y) -> bool
+            {
+                const Math::Vector4 clip = Math::MatrixUtils::TransformPoint(viewProjection, point);
+                if (!(clip.w > 0.0f))
+                {
+                    return false;
+                }
+                x = (static_cast<double>(clip.x / clip.w) * 0.5 + 0.5) * image.Width;
+                y = (static_cast<double>(clip.y / clip.w) * 0.5 + 0.5) * image.Height;
+                return std::isfinite(x) && std::isfinite(y) && x >= 0.0 && y >= 0.0 &&
+                       x < image.Width && y < image.Height;
+            };
+            auto luminance = [&](uint32_t x, uint32_t y) -> double
+            {
+                const size_t offset = static_cast<size_t>(y) * image.RowPitchBytes + static_cast<size_t>(x) * 4u;
+                return 0.2126 * DecodeSrgbByte(image.Pixels[offset]) +
+                       0.7152 * DecodeSrgbByte(image.Pixels[offset + 1u]) +
+                       0.0722 * DecodeSrgbByte(image.Pixels[offset + 2u]);
+            };
+            auto boxMean = [&](const Math::Vector3& point, int radius, double& mean) -> bool
+            {
+                double x = 0.0, y = 0.0;
+                if (!project(point, x, y))
+                {
+                    return false;
+                }
+                const int cx = static_cast<int>(x), cy = static_cast<int>(y);
+                if (cx - radius < 0 || cy - radius < 0 ||
+                    cx + radius >= static_cast<int>(image.Width) || cy + radius >= static_cast<int>(image.Height))
+                {
+                    return false;
+                }
+                double sum = 0.0;
+                for (int iy = cy - radius; iy <= cy + radius; ++iy)
+                {
+                    for (int ix = cx - radius; ix <= cx + radius; ++ix)
+                    {
+                        sum += luminance(static_cast<uint32_t>(ix), static_cast<uint32_t>(iy));
+                    }
+                }
+                const int side = radius * 2 + 1;
+                mean = sum / static_cast<double>(side * side);
+                return std::isfinite(mean);
+            };
+            double under = 0.0, open = 0.0;
+            if (!boxMean(points.GroundUnder, 2, under) || !boxMean(points.GroundOpen, 2, open) || open <= 0.0)
+            {
+                outFailureReason = TEXT("樹冠の地面の測定点を画像へ写せません");
+                return false;
+            }
+            if (m_CanopyStage == 0u)
+            {
+                m_CanopyDisabledUnder = under;
+                EnsureCanopyDirectories();
+                if (m_bWriteBaselineStaging)
+                {
+                    if (SavePng(CanopyPath(true), Core::Container::Span<const uint8_t>(png)) !=
+                        GoldenImageStatus::Success)
+                    {
+                        outFailureReason = TEXT("樹冠の基準画像を書き出せません");
+                        return false;
+                    }
+                    m_bCanopyDone = true;
+                    return true;
+                }
+                Rgba8Image reference;
+                VisualGoldenThresholds thresholds;
+                ArtificialDifferenceSpec artificial;
+                PerceptualDifferenceMetrics metrics;
+                if (LoadPng(CanopyPath(false), reference) != GoldenImageStatus::Success ||
+                    !LoadVisualGoldenThresholds(ThresholdPath(), SceneKind::Outdoor, thresholds, artificial) ||
+                    CompareLdrFlip(reference, image, metrics) != PerceptualDiffStatus::Success)
+                {
+                    outFailureReason = TEXT("樹冠の基準画像または比較条件を読めません");
+                    return false;
+                }
+                const bool passed = MeetsVisualGoldenThresholds(metrics, thresholds);
+                std::cout << std::fixed << std::setprecision(9)
+                          << "SKY_OCCLUSION_CANOPY name=baseline_mean_flip value=" << metrics.MeanFlipError
+                          << " limit=" << thresholds.MaximumMeanFlipError
+                          << " result=" << (passed ? "PASS" : "FAIL") << '\n'
+                          << "SKY_OCCLUSION_CANOPY name=baseline_max_channel_delta value="
+                          << static_cast<unsigned>(metrics.Raw.MaxChannelDelta)
+                          << " limit=" << static_cast<unsigned>(thresholds.MaximumChannelDelta)
+                          << " result=" << (passed ? "PASS" : "FAIL") << '\n';
+                if (!passed)
+                {
+                    outFailureReason = TEXT("空の遮蔽が無効な樹冠の画像が基準と異なります");
+                    return false;
+                }
+                m_bCanopyStageFinished = true;
+                return true;
+            }
+            EnsureCanopyDirectories();
+            if (SavePng(CanopyEnabledPath(), Core::Container::Span<const uint8_t>(png)) !=
+                GoldenImageStatus::Success)
+            {
+                outFailureReason = TEXT("空の遮蔽が有効な画像を保存できません");
+                return false;
+            }
+            auto sphereMean = [&](const Math::Vector3& center, double& mean, uint8_t& maximum) -> bool
+            {
+                double x = 0.0, y = 0.0, edgeX = 0.0, edgeY = 0.0;
+                const Math::Vector3 right(camera.RightX, camera.RightY, camera.RightZ);
+                if (!project(center, x, y) || !project(center + right * points.SphereRadius, edgeX, edgeY))
+                {
+                    return false;
+                }
+                // 鏡球は半径の約 0.7 倍以内が空を映すため、境目を避けて 0.6 倍以内を平均する。
+                const double radius = std::hypot(edgeX - x, edgeY - y) * 0.6;
+                if (radius < 1.5 || x - radius < 0.0 || y - radius < 0.0 ||
+                    x + radius >= image.Width || y + radius >= image.Height)
+                {
+                    return false;
+                }
+                double sum = 0.0;
+                uint32_t count = 0u;
+                maximum = 0u;
+                for (int iy = static_cast<int>(std::floor(y - radius)); iy <= static_cast<int>(std::ceil(y + radius)); ++iy)
+                {
+                    for (int ix = static_cast<int>(std::floor(x - radius)); ix <= static_cast<int>(std::ceil(x + radius)); ++ix)
+                    {
+                        const double dx = ix + 0.5 - x, dy = iy + 0.5 - y;
+                        if (dx * dx + dy * dy <= radius * radius)
+                        {
+                            sum += luminance(static_cast<uint32_t>(ix), static_cast<uint32_t>(iy));
+                            const size_t offset = static_cast<size_t>(iy) * image.RowPitchBytes + static_cast<size_t>(ix) * 4u;
+                            maximum = std::max(maximum, image.Pixels[offset]);
+                            maximum = std::max(maximum, image.Pixels[offset + 1u]);
+                            maximum = std::max(maximum, image.Pixels[offset + 2u]);
+                            ++count;
+                        }
+                    }
+                }
+                if (count == 0u)
+                {
+                    return false;
+                }
+                mean = sum / count;
+                return std::isfinite(mean);
+            };
+            double sphereUnder = 0.0, sphereOpen = 0.0;
+            uint8_t underMaximum = 0u, openMaximum = 0u;
+            if (!sphereMean(points.SphereUnder, sphereUnder, underMaximum) ||
+                !sphereMean(points.SphereOpen, sphereOpen, openMaximum) || sphereOpen <= 0.0)
+            {
+                outFailureReason = TEXT("樹冠の鏡球の測定点を画像へ写せません");
+                return false;
+            }
+            const double ratio = under / open;
+            const bool ratioPassed = std::isfinite(ratio) && ratio >= 0.25 && ratio <= 0.60;
+            const double disabledRatio = m_CanopyDisabledUnder > 0.0 ? under / m_CanopyDisabledUnder : 1.0;
+            const bool changed = std::isfinite(disabledRatio) && disabledRatio < 0.99;
+            std::cout << std::fixed << std::setprecision(9)
+                      << "SKY_OCCLUSION_CANOPY name=ground_under value=" << under << " limit=none result=INFO\n"
+                      << "SKY_OCCLUSION_CANOPY name=ground_open value=" << open << " limit=0.15..0.5 result=INFO\n"
+                      << "SKY_OCCLUSION_CANOPY name=ground_ratio value=" << ratio << " limit=0.25..0.60 result="
+                      << (ratioPassed ? "PASS" : "FAIL") << '\n'
+                      << "SKY_OCCLUSION_CANOPY name=enabled_over_disabled value=" << disabledRatio
+                      << " limit=<0.99 result=" << (changed ? "PASS" : "FAIL") << '\n'
+                      << "SKY_OCCLUSION_CANOPY name=sphere_ratio value=" << sphereUnder / sphereOpen
+                      << " limit=0.30 result=INFO\n"
+                      << "SKY_OCCLUSION_CANOPY name=sphere_open_max_channel value="
+                      << static_cast<unsigned>(openMaximum) << " limit=<255 result=INFO\n";
+            const Math::Vector3 line = points.EdgeInside - points.EdgeOutside;
+            const double length = std::sqrt(static_cast<double>(line.x * line.x + line.y * line.y + line.z * line.z));
+            const uint32_t steps = static_cast<uint32_t>(std::lround(length / 0.5));
+            if (steps == 0u || std::abs(length - steps * 0.5) > 1.0e-4)
+            {
+                outFailureReason = TEXT("林縁の標本間隔が 0.5 m ではありません");
+                return false;
+            }
+            double previous = 0.0, maximumRise = 0.0, maximumChange = 0.0;
+            for (uint32_t i = 0u; i <= steps; ++i)
+            {
+                double value = 0.0;
+                if (!boxMean(points.EdgeOutside + line * (static_cast<float>(i) / steps), 1, value) || value <= 0.0)
+                {
+                    outFailureReason = TEXT("林縁の地面の標本を読み取れません");
+                    return false;
+                }
+                std::cout << "SKY_OCCLUSION_CANOPY name=edge_sample_" << i << " value=" << value
+                          << " limit=none result=INFO\n";
+                if (i > 0u)
+                {
+                    const double delta = (value - previous) / previous;
+                    maximumRise = std::max(maximumRise, delta);
+                    maximumChange = std::max(maximumChange, std::abs(delta));
+                }
+                previous = value;
+            }
+            const bool monotonic = maximumRise <= 0.005;
+            const bool smooth = maximumChange <= 0.15;
+            std::cout << "SKY_OCCLUSION_CANOPY name=edge_max_rise value=" << maximumRise
+                      << " limit=0.005 result=" << (monotonic ? "PASS" : "FAIL") << '\n'
+                      << "SKY_OCCLUSION_CANOPY name=edge_max_relative_change value=" << maximumChange
+                      << " limit=0.15 result=" << (smooth ? "PASS" : "FAIL") << '\n';
+            if (!ratioPassed || !changed || !monotonic || !smooth)
+            {
+                outFailureReason = TEXT("樹冠の地面の遮蔽率または林縁の連続性が基準を満たしません");
+                return false;
+            }
+            m_bCanopyDone = true;
+            return true;
+        }
+
         // 雑音除去後のGTAOの可視率を、Cornellの部屋の面ごとの領域で測る。
         // 部屋の大きさの壁・床・天井の中ほどは遮蔽がほとんど無く（壁全体が黒くならない）、
         // 奥の壁と左右の壁の境目・箱の接地部は中ほどより暗い（遮蔽が出ている）ことを確かめる。
@@ -865,6 +1205,15 @@ namespace
         }
 
     private:
+        bool m_bCanopyScenario = false;
+        bool m_bCanopyStageFinished = false;
+        bool m_bCanopyDone = false;
+        bool m_bCanopyHasFirstFrame = false;
+        bool m_bCanopyHasPreviousFrame = false;
+        uint32_t m_CanopyStage = 0u;
+        uint64_t m_CanopyFirstFrame = 0u;
+        uint64_t m_CanopyPreviousFrame = 0u;
+        double m_CanopyDisabledUnder = 0.0;
         bool m_bGtaoCornellScenario = false;
         bool m_bWriteBaselineStaging = false;
         bool m_bMeasureVisual = false;

@@ -10751,3 +10751,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: Debug か RelWithDebInfo で `--scene=rendering3dtest --sky-occluder-demo --rt-gi=off`（RTGI・DDGI が効く画素には今は掛けないので RTGI を切る）。初期視点の球・岩の周りと、緑の樹冠 3 つ（中心 (−4, 4.5, −3)・(0, 5, −4.5)・(4.5, 4, −3)）の下の地面が空の拡散の光の分だけ暗くなり、樹冠の外は変わらない。デバッグの表示 SkyVisibility で V(+Y) と曲げた法線を見る。カメラを動かしたときに縞・欠けが出ないか（窓は 16 テクセルごとに動く）。`--sky-occlusion` を付けない既定の起動では見た目は変わらない。撮影・計測の確かめは回さない決まり
 - Notes: 遮蔽が無効でもパスの初期化は走り、初期化に失敗すると遅延の描画の組み立てが途中で戻る（ほかの組み込みのパスと同じ扱い）。遮蔽物の列がストレージバッファの上限を超えるときと、整数のテクセルにならない追従の位置のときは、そのフレームの公開を見送る（照明は既定の配列で掛けない）。CPU の正解の積分の式は `IntegrateSkyOcclusion` と `IntegrateSkyOcclusionClipmap` の 2 か所にあり、式を変えるときは両方を直す
 - U1 鏡面の円錐の関数と lighting.frag の鏡面の遮り: 着地(直し 0 回)
+- U3 樹冠の場面の試験（場面・基準画像・測定）: 着地(直し 1 回)
