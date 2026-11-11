@@ -10269,3 +10269,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-205801/verify-G2-GR83-LOOSE-SKELETAL.txt`（build EXIT_CODE 0、ctest 9 本 100% tests passed, 0 tests failed out of 9）。
 - Next: 分割の 3 資産（RigSplitAssetLoader）の loose は判断待ち（論理パスがソースの名前と一致せず、切り出しの処理が Tools/AssetCook にある）。起動の確かめ（`--allow-loose-skeletal` で loose の読み込みとログの source=loose）は後回し。
 - Notes: タスクの verify の build の対象に `TextureResourcesAssetLoadProfileContractTest`（ModelResourcesAssetLoadProfileContractTest の収容先）が入っておらず、新しい作業ツリーでは ctest が Not Run になる。補助でビルドして回した。
+- U6 分割の 3 資産が loose を持たない決まりを文書に書き、タスクの verify を回す: 着地(直し 0 回)

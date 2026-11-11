@@ -22,7 +22,9 @@ Game の入口は開発ビルド（`NORVES_BUILD_DEVELOPMENT`）だけの `--all
 許可があっても、manifest 欠落・variant 欠落で resolve が `Source=Loose` を返したときだけ、worker で glTF/GLB を `Skeletal::DecodeSkeletalGltf` に渡し、cooked と同じ CPU 結果を組む。
 resolve は `FailOnCookedFailure` を維持し、cooked の読み・parse・entry・hash の失敗を loose に代えない。許可なしの loose は `source=none` の解決失敗になる。
 `AssetLoadProfile` の `skeletal_asset_resolve`・`skeletal_cooked_parse`・`skeletal_resource_create` は loose 読み込み時に `source=loose` を記録し、組立の段は CPU 結果の source を引き継ぐ。Resource 生成は GameThread（owner）の組立だけで行う。
-分割の 3 資産（`LoadRigSplitAsync`）は許可があっても cooked だけ（loose の対応は未決）。
+分割の 3 資産（`LoadRigSplitAsync`・`RigSplitAssetLoader`）は loose を持たず、許可があっても cooked だけを読む。
+理由は 2 つ。論理パス（`Models/Rig.nvskel`・`Models/Mesh.nvskel`・`Animations/*.nvclip`）がソースの glTF の名前と対応せず、静的モデルの loose と同じ規則では辿れない。1 つの glTF から 3 資産を切り出す処理（`RigSplitCook`・材質の計画・clip bank）は `Tools/AssetCook` にあり、Core から使えない。
+許可は分割の要求へ渡さない。`SkeletalAssetRuntime.cpp` は `bAllowLoose` を単一骨格の計画（`!splitRequest`）にだけ写し、`RigSplitAssetLoader.cpp` は `FailOnCookedFailure` と `UsedCooked` の検査で cooked に固定している。
 `Scripts/SummarizeAssetLoadProfile.ps1 -RequireCompleteCookedSkeletal` は上の 3 段すべてに `source=cooked`・`success=1` を求める。`-ExpectedCookedSkeletalLogicalPath` は任意で指定でき、モデル版のスイッチとは併用できない。
 
 ## 検証と制限

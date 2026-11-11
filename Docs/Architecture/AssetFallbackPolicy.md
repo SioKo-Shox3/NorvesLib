@@ -67,7 +67,7 @@ Cooked failure may fallback to loose assets only when the decision requires an e
 
 骨格資産は既定で cooked だけを読み込み、開発ビルドの `--allow-loose-skeletal` による明示の許可がある場合に限り、manifest 欠落・variant 欠落時の loose を採用できる。
 この許可は cooked の失敗を loose に代える `DebugLooseFallback` とは別であり、`FailOnCookedFailure` を維持して cooked の読み・parse・entry・hash の失敗を拒否する。
-分割の 3 資産は許可があっても cooked だけ（loose の対応は未決）。
+分割の 3 資産（`LoadRigSplitAsync`）は loose を持たず、許可があっても cooked だけを読む（論理パスがソースの名前と対応せず、切り出しが `Tools/AssetCook` にあるため。許可は分割の要求へ渡さない）。
 
 ## Prepared Texture Asset Semantics
 
