@@ -10611,7 +10611,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 GpuLayoutRegistry に UBO と記録の変更を書く: 着地(直し 0 回)
 - U10 揺れる板の velocity の GPU 試験を当て直して確かめる(U9 の切り直し): 着地(直し 0 回)
 - Done(G5-GR30-VERTEX-ANIM-VELOCITY): 頂点アニメの共通の口 `Common/VertexAnimation.glsl` の `ApplyVertexAnimation`(既定は恒等)を、GBuffer のラスタ(静的・スキン・MegaGeometry)・可視バッファのラスタ 3 本・解決とソフトのラスタ・影(VSM・影の地図)に通した。今は t = fmod(GameTotalTime, 4096)、前は tPrev = t − (GameTotalTime − PreviousRenderedTotalTime) で 2 回評価して前のクリップ座標を作る。FoliagePass の風の前の時刻も同じ基準へ替え、GpuLayoutRegistry に UBO・表の欄を書いた。
-- 証拠: `C:/Users/KINGkawamura/Documents/.slots/NorvesLib-2-u1/.harness/unit-verify.txt`(verify のビルド 3 ターゲットが exit_code=0、`^RenderingVelocity[A-Za-z]*VulkanTest$` の ctest が 14/14 Passed。揺れる板の ROI の最大相対誤差は可視バッファ on・予備の経路で 0.035%、フレームの欠落(t − tPrev = 2 フレーム)で 0.0017%、揺れ 0 の板の最大絶対誤差 6e-8)。golden 4 本は撮影・参照比較を回さない決まり(絶対規則 10)により回していない。
+- 証拠: `.harness/runs/20261111-213227/G5-GR30-VERTEX-ANIM-VELOCITY-verify.txt`(統合ブランチを取り込んだ後の HEAD で、verify のビルド `RenderingVelocityVulkanTest`・`RenderingGoldenImageTest`・`Game`・`RHIRayTracingApiContractTest` が EXIT_CODE 0、`^RenderingVelocity[A-Za-z]*VulkanTest$` の ctest が 14/14 Passed、`WindShaderCompileTest` が 1/1 Passed。揺れる板の ROI の最大相対誤差は可視バッファ on・予備の経路で static 0.000347・skinned 0.000350、フレームの欠落で static 0.0000169・skinned 0.0000159、恒等の板の最大絶対誤差は 6e-8 以下)
 - Next: G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA・G5-GR30-THIN-TAA-MEASURE(試験用の揺れの板を使う)、風の式の中身は GR46(周波数は 1/4096 Hz の整数倍に量子化する制約を VertexAnimation.glsl の注釈に書いた)。
 - Notes: 人が見るときの見どころ: wasteland の草・低木の風の揺れが前と同じに見えること(風の前の時刻の基準を替えた分)、rendering3dtest で見た目が変わらないこと(頂点アニメは既定で恒等)。試験の揺れは `RenderWorld::SetVertexAnimationTestDisplacementEnabled` を立てたときだけ有効。
 
@@ -10739,3 +10739,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: G12-GR31-CULL-CHECK で `MegaGeometryInstanceCullVulkanTest` を装置で実行する（GPU では未実行）。アプリを起動する確かめは無い（撮影・計測の確かめは回さない決まり）
 - Notes: GPU で回していないので、(c) の「見える」の帯（距離の相対 1e-4）と「深く隠れる」の余裕（投影の矩形を max(幅, 高さ) + 16 画素広げ、深度の差 1e-5）が実機で十分かは CULL-CHECK で分かる。全部の根を見直す間接引数（2 パス目の列の先頭の 3 語）には公開の名前が無く、試験は本番の `DispatchIndirect(pass2, 0)` と同じく先頭を読む
 - U11 統合ブランチを取り込んだ後のビルドと velocity の 14 本を回し、取り込みで壊れた所だけ直す: 着地(直し 1 回)
+## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 1、完了)
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ(衝突 9 ファイル)。VSM の定数 `VirtualShadowMapRasterParams` は統合側の世界フィールドと頂点アニメの時刻の両方を持ち、`vertexAnimTime` を 112、`worldField` を末尾の 128 に置いて全 176 バイトにした(`WindShaderCompileTest` が UBO の末尾のメンバを世界フィールドとして照合するため)。`vsm_draw.vert` と `GpuLayoutRegistry.md` の 9 節も同じ並び。株の切り抜きと頂点アニメの include、スキンの記録の数と頂点アニメの値の添え字、試験シーンのスキンの絞り込みと揺れる板は両方を残した。
+- 証拠: `.harness/runs/20261111-213227/G5-GR30-VERTEX-ANIM-VELOCITY-verify.txt`(ビルド EXIT_CODE 0、velocity の ctest 14/14 Passed、WindShaderCompileTest 1/1 Passed)。numstat の 2 通りは一致。
+- Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA・G5-GR30-THIN-TAA-MEASURE、風の式の中身は GR46。
+- Notes: 人が見るときの見どころ: wasteland の草・低木の風の揺れが前と同じに見えること(前の時刻の基準を替えた分)、rendering3dtest で見た目が変わらないこと(頂点アニメは既定で恒等)、grassland の株の影が見えない体の通り道で曲がること(VSM の定数の並びを変えた分)。撮影・計測の確かめは回さない決まり。done-when から golden 4 本の不変は判断役が外した(絶対規則 10)。
