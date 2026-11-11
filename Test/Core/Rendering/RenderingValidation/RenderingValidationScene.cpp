@@ -1090,6 +1090,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
         m_pR5SkinnedQuadEntity = nullptr;
+        m_pAlphaClipVelocityEntity = nullptr;
         m_pSkinnedCullGiantEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
 
@@ -1174,6 +1175,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
         m_pR5SkinnedQuadEntity = nullptr;
+        m_pAlphaClipVelocityEntity = nullptr;
         m_pSkinnedCullGiantEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
@@ -3227,7 +3229,9 @@ namespace NorvesLib::Test::RenderingValidation
     bool RenderingValidationSceneFixture::ApplyAlphaClipFixture(AlphaClipFixtureKind kind) const
     {
         using namespace Core::Rendering;
-        if (m_pWorld == nullptr || m_pResources == nullptr || m_SceneKind != SceneKind::Indoor)
+        const bool bVelocity = kind == AlphaClipFixtureKind::Velocity;
+        if (m_pWorld == nullptr || m_pResources == nullptr ||
+            m_SceneKind != (bVelocity ? SceneKind::Outdoor : SceneKind::Indoor))
         {
             return false;
         }
@@ -3239,10 +3243,17 @@ namespace NorvesLib::Test::RenderingValidation
         for (Core::Entity* entity : m_Objects)
         {
             entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+            if (bVelocity)
+            {
+                if (auto* mesh = entity->GetComponent<Core::Component::MeshComponent>())
+                {
+                    mesh->SetVisible(false);
+                }
+            }
         }
 
         TextureHandle checker;
-        if (kind == AlphaClipFixtureKind::Test || kind == AlphaClipFixtureKind::Skinned)
+        if (kind == AlphaClipFixtureKind::Test || kind == AlphaClipFixtureKind::Skinned || bVelocity)
         {
             uint8_t pixels[8u * 8u * 4u];
             for (uint32_t y = 0u; y < 8u; ++y)
@@ -3454,8 +3465,30 @@ namespace NorvesLib::Test::RenderingValidation
             return true;
         }
 
-        const bool bCoverage = kind == AlphaClipFixtureKind::Test;
-        const uint32_t plateCount = bCoverage ? 3u : 2u;
+        if (bVelocity)
+        {
+            // 不透明の背景を板の奥に置き、切り抜き後の画素にも静止物体を描く。
+            auto* background = m_pWorld->SpawnEntity();
+            if (background == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(background);
+            background->SetPosition(0.0f, AlphaClipVelocityPlate.Y, -2.0f);
+            background->SetScale(8.0f, 8.0f, 1.0f);
+            auto* backgroundMesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(background);
+            if (backgroundMesh == nullptr)
+            {
+                return false;
+            }
+            backgroundMesh->SetMeshHandle(handles[0]);
+            backgroundMesh->SetMaterial(0u, m_NeutralMaterial);
+            backgroundMesh->SetCastShadow(false);
+            backgroundMesh->SetReceiveShadow(false);
+        }
+
+        const bool bCoverage = kind == AlphaClipFixtureKind::Test || bVelocity;
+        const uint32_t plateCount = bVelocity ? 1u : (bCoverage ? 3u : 2u);
         for (uint32_t index = 0u; index < plateCount; ++index)
         {
             MaterialCreateData data;
@@ -3493,7 +3526,12 @@ namespace NorvesLib::Test::RenderingValidation
                 return false;
             }
             m_Objects.push_back(entity);
-            const auto& plate = bCoverage ? AlphaClipCoveragePlates[index] : AlphaClipLightingPlates[index];
+            const auto& plate = bVelocity ? AlphaClipVelocityPlate :
+                                (bCoverage ? AlphaClipCoveragePlates[index] : AlphaClipLightingPlates[index]);
+            if (bVelocity)
+            {
+                m_pAlphaClipVelocityEntity = entity;
+            }
             entity->SetPosition(plate.X, plate.Y, 0.0f);
             entity->SetScale(plate.HalfExtent, plate.HalfExtent, 1.0f);
             auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
@@ -3550,6 +3588,16 @@ namespace NorvesLib::Test::RenderingValidation
             light->SetIntensity(AlphaClipLightingLux);
             light->SetCastShadows(false);
         }
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetAlphaClipVelocityPositionX(float positionX) const
+    {
+        if (!std::isfinite(positionX) || m_pAlphaClipVelocityEntity == nullptr)
+        {
+            return false;
+        }
+        m_pAlphaClipVelocityEntity->SetPosition(positionX, AlphaClipVelocityPlate.Y, 0.0f);
         return true;
     }
 

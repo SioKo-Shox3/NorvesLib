@@ -785,6 +785,12 @@ register_rendering_gpu_test(
     --capture-source=gbuffer-velocity
     --scenario=object-motion)
 register_rendering_gpu_test(
+    RenderingVelocityAlphaClipVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=alpha-clip)
+register_rendering_gpu_test(
     RenderingVelocityFirstFrameVulkanTest
     RenderingVelocityVulkanTest
     --scene=indoor

@@ -28,6 +28,7 @@ namespace
         Static,
         CameraMotion,
         ObjectMotion,
+        AlphaClip,
         CameraObjectMotion,
         FirstFrameInvalidHistory,
         MoveThenStop,
@@ -267,7 +268,16 @@ namespace
                 return false;
             }
 
-            if (IsMotionScenario())
+            if (m_Scenario == Scenario::AlphaClip)
+            {
+                if (GetRunConfig().Scene != SceneKind::Outdoor ||
+                    !GetFixture().ApplyAlphaClipFixture(AlphaClipFixtureKind::Velocity))
+                {
+                    std::cerr << "RenderingVelocityVulkanTest: 切り抜きの場面を準備できなかった\n";
+                    return false;
+                }
+            }
+            else if (IsMotionScenario())
             {
                 if (GetRunConfig().Scene != SceneKind::Outdoor ||
                     !GetFixture().ApplyR5RayTracingShadowFixture())
@@ -337,6 +347,7 @@ namespace
                     }
                     else if ((m_Scenario == Scenario::CameraMotion ||
                               m_Scenario == Scenario::ObjectMotion ||
+                              m_Scenario == Scenario::AlphaClip ||
                               m_Scenario == Scenario::CameraObjectMotion ||
                               m_Scenario == Scenario::MoveThenStop ||
                               m_Scenario == Scenario::SkinnedMotion) &&
@@ -422,6 +433,11 @@ namespace
                 m_Scenario = Scenario::ObjectMotion;
                 return true;
             }
+            if (argument == TEXT("--scenario=alpha-clip"))
+            {
+                m_Scenario = Scenario::AlphaClip;
+                return true;
+            }
             if (argument == TEXT("--scenario=first-frame-invalid-history"))
             {
                 m_Scenario = Scenario::FirstFrameInvalidHistory;
@@ -467,7 +483,7 @@ namespace
         bool IsMotionScenario() const
         {
             return IsCameraMotionScenario() || m_Scenario == Scenario::ObjectMotion ||
-                   m_Scenario == Scenario::SkinnedMotion;
+                   m_Scenario == Scenario::AlphaClip || m_Scenario == Scenario::SkinnedMotion;
         }
 
         bool IsObjectMotionScenario() const
@@ -495,6 +511,13 @@ namespace
             return "unknown";
         }
 
+        CameraProxy GetAlphaClipVelocityCamera() const
+        {
+            CameraProxy camera = GetFixture().GetShadingModelGBufferCamera();
+            camera.PositionY = AlphaClipVelocityPlate.Y;
+            return camera;
+        }
+
         void ApplyStageState(Core::Rendering::RenderWorld& renderWorld)
         {
             if (!IsMotionScenario())
@@ -505,6 +528,17 @@ namespace
 
             const bool bMoved = m_Stage == CaptureStage::Moved ||
                                 m_Stage == CaptureStage::Stopped;
+            if (m_Scenario == Scenario::AlphaClip)
+            {
+                if (!GetFixture().SetAlphaClipVelocityPositionX(
+                        AlphaClipVelocityPlate.X + (bMoved ? AlphaClipVelocityOffsetX : 0.0f)))
+                {
+                    Fail("切り抜きの板の位置を更新できなかった");
+                    return;
+                }
+                renderWorld.SetMainCamera(GetAlphaClipVelocityCamera());
+                return;
+            }
             if (!GetFixture().SetR5RayTracingShadowReceiverPositionX(
                     IsObjectMotionScenario() && bMoved ? 1.5f : 0.0f))
             {
@@ -537,6 +571,10 @@ namespace
             if (m_Scenario == Scenario::SkinnedMotion)
             {
                 return EvaluateSkinnedMotion(frame, device.get(), outFailureReason);
+            }
+            if (m_Scenario == Scenario::AlphaClip)
+            {
+                return EvaluateAlphaClipMotion(frame, device.get(), outFailureReason);
             }
 
             const bool bCameraMotion = IsCameraMotionScenario();
@@ -591,6 +629,113 @@ namespace
                                          "background-object-motion",
                                          outFailureReason))
             {
+                return false;
+            }
+            return true;
+        }
+
+        bool EvaluateAlphaClipMotion(
+            const CapturedFrame& frame,
+            const RHI::IDevice* device,
+            Core::Container::String& outFailureReason)
+        {
+            const CameraProxy camera = GetAlphaClipVelocityCamera();
+            ExpectedVelocitySample expected;
+            if (!BuildExpectedVelocitySample(camera, camera,
+                                             Math::Vector3(AlphaClipVelocityPlate.X, AlphaClipVelocityPlate.Y, 0.0f),
+                                             Math::Vector3(AlphaClipVelocityPlate.X + AlphaClipVelocityOffsetX,
+                                                           AlphaClipVelocityPlate.Y, 0.0f),
+                                             device, expected))
+            {
+                outFailureReason = TEXT("切り抜きの板の期待速度を求められなかった");
+                return false;
+            }
+
+            constexpr float motionTolerance = 0.002f;
+            constexpr float staticToleranceSquared = 1.0e-8f;
+            const float expectedMagnitudeSquared = expected.ExpectedX * expected.ExpectedX +
+                                                   expected.ExpectedY * expected.ExpectedY;
+            const float focal = static_cast<float>(ValidationHeight) * 0.5f /
+                                std::tan(camera.FieldOfView * 3.14159265358979323846f / 360.0f);
+            const float scale = focal / camera.PositionZ;
+            const float halfExtentPixels = scale * AlphaClipVelocityPlate.HalfExtent;
+            const float texelPixels = halfExtentPixels * 2.0f / 8.0f;
+            if (texelPixels < 16.0f || expectedMagnitudeSquared <= 4.0f * motionTolerance * motionTolerance)
+            {
+                outFailureReason = TEXT("テクセルが小さいか、板の期待速度が背景と区別できない");
+                return false;
+            }
+
+            struct SampleStats
+            {
+                uint32_t Count = 0u;
+                float SumX = 0.0f;
+                float SumY = 0.0f;
+                float MaximumMagnitudeSquared = 0.0f;
+            };
+            SampleStats covered;
+            SampleStats clipped;
+            bool bPassed = true;
+            // 8×8 の各テクセルの中心を調べ、境界での補間やラスタ化の影響を避ける。
+            for (uint32_t y = 0u; y < 8u; ++y)
+            {
+                for (uint32_t x = 0u; x < 8u; ++x)
+                {
+                    const float worldX = AlphaClipVelocityPlate.X + AlphaClipVelocityOffsetX;
+                    const float pixelX = ValidationWidth * 0.5f + scale * worldX +
+                                         halfExtentPixels * ((static_cast<float>(x) + 0.5f) / 4.0f - 1.0f);
+                    const float pixelY = ValidationHeight * 0.5f -
+                                         scale * (AlphaClipVelocityPlate.Y - camera.PositionY) -
+                                         halfExtentPixels * ((static_cast<float>(y) + 0.5f) / 4.0f - 1.0f);
+                    if (pixelX < 0.0f || pixelY < 0.0f || pixelX >= ValidationWidth || pixelY >= ValidationHeight)
+                    {
+                        outFailureReason = TEXT("切り抜きのテクセル中心が画像の範囲外です");
+                        return false;
+                    }
+                    ExpectedVelocitySample pixel = expected;
+                    pixel.PixelX = static_cast<uint32_t>(pixelX);
+                    pixel.PixelY = static_cast<uint32_t>(pixelY);
+                    float actualX = 0.0f;
+                    float actualY = 0.0f;
+                    if (!ReadVelocitySample(frame, pixel, actualX, actualY))
+                    {
+                        outFailureReason = TEXT("切り抜きのテクセル中心の速度を読めなかった");
+                        return false;
+                    }
+                    const float magnitudeSquared = actualX * actualX + actualY * actualY;
+                    const bool bCovered = (x + y) % 2u == 0u;
+                    SampleStats& stats = bCovered ? covered : clipped;
+                    ++stats.Count;
+                    stats.SumX += actualX;
+                    stats.SumY += actualY;
+                    stats.MaximumMagnitudeSquared = std::max(stats.MaximumMagnitudeSquared, magnitudeSquared);
+                    const float differenceX = actualX - expected.ExpectedX;
+                    const float differenceY = actualY - expected.ExpectedY;
+                    const bool bSamplePassed = bCovered
+                        ? std::abs(differenceX) <= motionTolerance && std::abs(differenceY) <= motionTolerance
+                        : magnitudeSquared <= staticToleranceSquared &&
+                              differenceX * differenceX + differenceY * differenceY >
+                                  motionTolerance * motionTolerance;
+                    if (!bSamplePassed)
+                    {
+                        std::cerr << "速度の不一致: テクセル=(" << x << "," << y << ") 被覆="
+                                  << bCovered << " 画素=(" << pixel.PixelX << "," << pixel.PixelY
+                                  << ") 速度=(" << actualX << "," << actualY << ")\n";
+                        bPassed = false;
+                    }
+                }
+            }
+            std::cout << "切り抜き速度: 被覆数=" << covered.Count
+                      << " 平均=(" << covered.SumX / covered.Count << "," << covered.SumY / covered.Count << ")"
+                      << " 最大=" << std::sqrt(covered.MaximumMagnitudeSquared)
+                      << " 切り抜き数=" << clipped.Count
+                      << " 平均=(" << clipped.SumX / clipped.Count << "," << clipped.SumY / clipped.Count << ")"
+                      << " 最大=" << std::sqrt(clipped.MaximumMagnitudeSquared)
+                      << " 期待=(" << expected.ExpectedX << "," << expected.ExpectedY << ")"
+                      << " テクセル画素=" << texelPixels << "\n";
+            if (!bPassed || covered.Count != 32u || clipped.Count != 32u)
+            {
+                outFailureReason = TEXT("被覆または切り抜きのテクセルの速度が期待値と一致しない");
                 return false;
             }
             return true;

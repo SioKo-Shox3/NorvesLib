@@ -259,7 +259,8 @@ namespace NorvesLib::Test::RenderingValidation
         Opaque,
         Skinned,
         HashTaa,
-        HashNoTaa
+        HashNoTaa,
+        Velocity
     };
 
     // 判定と配置で同じ板の寸法を使う。座標は正面カメラから見たワールド空間。
@@ -277,6 +278,8 @@ namespace NorvesLib::Test::RenderingValidation
     inline constexpr AlphaClipPlateSpec AlphaClipSkinnedPlates[] = {
         {-2.31f, 0.0f, 2.31f}, {2.31f, 0.0f, 2.31f}};
     inline constexpr AlphaClipPlateSpec AlphaClipHashPlate = {0.0f, 0.0f, 2.6f};
+    inline constexpr AlphaClipPlateSpec AlphaClipVelocityPlate = {0.0f, 20.0f, 2.6f};
+    inline constexpr float AlphaClipVelocityOffsetX = 1.5f;
     inline constexpr uint8_t AlphaClipHashAlpha = 77u;
     inline constexpr float AlphaClipEmissiveNits = 1152.0f;
     inline constexpr float AlphaClipPlateNormalZ[] = {1.0f, -1.0f};
@@ -321,6 +324,7 @@ namespace NorvesLib::Test::RenderingValidation
         bool ApplyShadingModelGBufferFixture() const;
         bool ApplyGBufferProgramFixture(const Core::Container::String& programName) const;
         bool ApplyAlphaClipFixture(AlphaClipFixtureKind kind) const;
+        bool SetAlphaClipVelocityPositionX(float positionX) const;
         Core::Rendering::CameraProxy GetShadingModelGBufferCamera() const;
         // velocity の検証: 1本の骨で動く2 m四方の骨付きの四角形を、R5 の場面の受け手の手前（中心 (-3, 0, 10)）に
         // 置く。骨の平行移動のアニメーションは時刻 t 秒で (t, 0, 0) m（0〜1秒）。R5 の場面の準備の後に呼ぶ。
@@ -441,6 +445,7 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_ShadingModelSkinAsset;
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_AlphaClipSkinAsset;
+        mutable Core::Entity* m_pAlphaClipVelocityEntity = nullptr;
         mutable Core::Rendering::MegaGeometry::MegaMeshHandle m_ShadingModelMegaMesh =
             Core::Rendering::MegaGeometry::MegaMeshHandle::Invalid();
         bool m_bPublished = false;
