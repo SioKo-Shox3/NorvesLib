@@ -2458,7 +2458,8 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Rendering::MaterialCreateData materialData;
         materialData.AlbedoTexture = m_R3ShadowAlbedoTexture;
         materialData.Blend = Core::Rendering::BlendMode::Opaque;
-        materialData.bTwoSided = true;
+        // 両面は今まで GBuffer で効いていなかったので、前の描画を保つため不透明の材質は片面にする。
+        materialData.bTwoSided = false;
         materialData.bCastShadows = true;
         materialData.DebugName = TEXT("RenderingValidationR3ShadowedShafts");
         m_R3ShadowMaterial = m_pResources->Materials().Create(materialData);
@@ -2663,7 +2664,8 @@ namespace NorvesLib::Test::RenderingValidation
         materialData.AlbedoTexture = m_R5ShadowAlbedoTexture;
         materialData.Blend = Core::Rendering::BlendMode::Opaque;
         materialData.Shading = Core::Rendering::ShadingModel::DefaultLit;
-        materialData.bTwoSided = true;
+        // 両面は今まで GBuffer で効いていなかったので、前の描画を保つため不透明の材質は片面にする。
+        materialData.bTwoSided = false;
         materialData.bCastShadows = true;
         materialData.DebugName = TEXT("RenderingValidationR5RayTracingShadow");
         m_R5ShadowMaterial = m_pResources->Materials().Create(materialData);
@@ -3829,7 +3831,8 @@ namespace NorvesLib::Test::RenderingValidation
         }
         Core::Rendering::MaterialCreateData materialData;
         materialData.DebugName = TEXT("RenderingValidationBrightEmissivePlane");
-        materialData.bTwoSided = true;
+        // 両面は今まで GBuffer で効いていなかったので、前の描画を保つため不透明の材質は片面にする。
+        materialData.bTwoSided = false;
         materialData.bCastShadows = false;
         materialData.EmissiveColor[0] = emissiveColor[0];
         materialData.EmissiveColor[1] = emissiveColor[1];

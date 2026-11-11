@@ -155,13 +155,13 @@ namespace NorvesLib::Core::Rendering
         void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetVisibilityResolvePass() const { return m_ResolvePass; }
 
-        /** @brief このフレームの不透明描画にプログラム指定の材質があるか。 */
-        bool HasProgramDraws(const ViewRenderContext& context) const;
+        /** @brief このフレームの不透明描画に標準でない材質（プログラム・Masked・両面）があるか。 */
+        bool HasOverlayDraws(const ViewRenderContext& context) const;
         /** @brief 解決が GBuffer を書くため、このパスの描画を止めているか。 */
         bool IsDrawingSkippedForVisibility(const ViewRenderContext& context) const;
         /** @brief 重ね描きのパイプラインと材質テクスチャを RenderThread で準備する。 */
         void PrepareProgramOverlay(const ViewRenderContext& context);
-        /** @brief 準備済みのプログラム材質を、指定された Load/Store の描画先へ積む。 */
+        /** @brief 準備済みの標準でない材質（プログラム・Masked・両面）を、指定された Load/Store の描画先へ積む。 */
         void RecordProgramOverlay(ViewRenderContext& context,
                                   const RHI::RenderPassPtr& renderPass,
                                   const RHI::FramebufferPtr& framebuffer);
@@ -231,11 +231,11 @@ namespace NorvesLib::Core::Rendering
         bool IsMaterialDescriptorCacheEnabled();
         RHI::TexturePtr GetOrCreateConstantGrayTexture(float value);
         // 描く不透明の材質が使う 1x1 の灰色テクスチャ（作成と転送を伴う）を、並列の記録の前に作る
-        void PrepareConstantMaterialTextures(const ViewRenderContext& context, bool bProgramOnly = false);
+        void PrepareConstantMaterialTextures(const ViewRenderContext& context, bool bOverlayOnly = false);
         enum class DrawSelection
         {
             StandardOnly,
-            ProgramOnly,
+            OverlayOnly,
             All
         };
         void RecordGBufferDraws(ViewRenderContext& context,
@@ -341,6 +341,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_SkinnedGBufferVertexShader;
         RHI::ShaderPtr m_GBufferVertexShader;
         RHI::ShaderPtr m_GBufferFragmentShader;
+        RHI::ShaderPtr m_GBufferAlphaClipFragmentShader;
         bool m_bPipelinesPrepared = false;
         bool m_bParallelAttachmentsReady = false;
         // 重ね描きの表はグラフの宣言段で準備し、記録中は読むだけにする。

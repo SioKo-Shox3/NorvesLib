@@ -12,6 +12,7 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/GBufferProgramRegistry.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -1062,7 +1063,8 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
-            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlay(materialData))
             {
                 continue;
             }
@@ -1147,7 +1149,8 @@ namespace NorvesLib::Core::Rendering
                 (instance.Material.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
-            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlay(materialData))
             {
                 continue;
             }

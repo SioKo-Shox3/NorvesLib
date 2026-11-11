@@ -907,6 +907,7 @@ namespace NorvesLib::Core::Rendering
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
+        context.bTemporalAAApplied = false;
         struct PhysicalLightingScope final
         {
             ViewRenderContext& Context;
@@ -1020,6 +1021,7 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
+        context.bTemporalAAApplied = bApplyTemporalAA;
         SetTemporalAAApplied(bApplyTemporalAA, viewportId);
 
         // パスチェーンが存在すれば基底クラスのパスベース描画を実行
@@ -1193,7 +1195,7 @@ namespace NorvesLib::Core::Rendering
             megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
             AddPass(std::move(visibilityResolvePass));
 
-            // プログラム材質は草と同じく解決できないため、解決の後の GBuffer と深度へ重ねて描く。
+            // 標準でない材質（プログラム・Masked・両面）は草と同じく解決せず、解決の後の GBuffer と深度へ重ねて描く。
             // ID のラスタの深度には載らず、2 パスの遮蔽の HZB の遮蔽物にはならない。
             auto programOverlayPass = MakeUnique<GBufferProgramOverlayPass>();
             programOverlayPass->SetGBufferPass(gbufferPassPtr);

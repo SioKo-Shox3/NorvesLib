@@ -10786,3 +10786,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 切り抜きの判定の GLSL・gbuffer_alphaclip.frag・裏の面の法線の反転: 着地(直し 0 回)
 - U4 取り込んだ glTF の MASK・alphaCutoff・doubleSided を通し、MegaGeometry の材質へ写す（CPU）: 着地(直し 0 回)
 - U5 MegaGeometry の Masked の材質は切り抜かず、albedo.a を 1 で書く（天球の判定と衝突させない）: 着地(直し 0 回)
+- U3 GBufferPass・可視バッファのラスタ・重ねる経路を切り抜きと両面に広げ、TAA が掛かるかの印を渡す: 着地(直し 1 回)

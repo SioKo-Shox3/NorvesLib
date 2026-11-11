@@ -1141,6 +1141,14 @@ namespace NorvesLib::Core::Rendering
         uint64_t FrameNumber = 0;
 
         /**
+         * @brief このビューの今のフレームに TAA が実際に掛かるか。
+         *
+         * SceneView::Render が SetTemporalAAApplied と同じ値を立てる。
+         * 切り抜きの Hash はこれが偽なら Test に落ちる。
+         */
+        bool bTemporalAAApplied = false;
+
+        /**
          * @brief RenderThread が記録したフレームごとに 1 ずつ増える通し番号（同じフレームの全ビューポートで同じ値）
          *
          * 1 フレームに同じパスが何回も Execute される（複数のビューポート）ので、UBO・ディスクリプタセットなどの
