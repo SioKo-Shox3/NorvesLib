@@ -10764,3 +10764,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261111-223526/verify-G12-GR108-CULL-PARALLEL-iter2.txt`（`build/Test/Thread/Debug/JobSystemShutdownTest.exe` を消して無いことを確かめた後、verify のビルドの行がそのまま exit 0 で同じ実行ファイルを作り、verify の ctest が 100% tests passed, 0 tests failed out of 7（JobParallelForTest を含む）・exit 0。numstat の 2 通りが一致）
 - Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
 - Notes: 見た目は変わらない（既定は直列）ので、人が見る所は無い。撮影・計測の確かめは回さない決まり
+## 2026-11-12 G12-GR108-CULL-PARALLEL（run 20261112-065208 の反復 1、完了）
+- Done: 前の走行の後に評価者が枠切れで評価できず作業中に戻っていたものを、完了に戻した。コードは反復 2 のまま（作業単位 U1〜U4 はすべて着地済み）。差分を読み直し、メッシュのカリングの並列の経路はチャンクごとに自分の範囲の `SortDepth` と自分の一覧だけを書き、`FrustumCull`・`DistanceCull` は const で共有の状態を書かないこと、草のタイルの選択は密度のキャッシュの更新を並列の前に済ませること、2 つの試験が `JobSystem` を 4 ワーカーで初期化して並列の経路を実際に通すことを確かめた
+- 証拠: `.harness/runs/20261112-065208/verify-G12-GR108-CULL-PARALLEL-last-unit.txt`（最後の単位の確かめの写し。verify のビルドの行が exit 0、verify の ctest が 100% tests passed, 0 tests failed out of 7（CullProxiesParallelEquivalenceTest・JobParallelForTest を含む）・exit 0。その後に変わったのは TASKS.md・PROGRESS.md だけ）
+- Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
+- Notes: 撮影・計測の確かめは回さない決まり。見た目は変わらない（既定は直列）
