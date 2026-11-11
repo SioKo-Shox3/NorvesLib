@@ -6393,7 +6393,7 @@
 - notes: GR56 の P3（要件 5541-5547・5585 行）。今あるもの: SCN-RENDER-SPEC-OCCLUSION の土台（d96e2a2e）で、RTGI が有効なときだけ空の見え方で鏡面を遮り、遮った向きを周りの面の光で埋める（lighting.frag:696-750）。RT の無い構成と樹冠（TLAS に入れない）にはこの項目の円錐が効く。SCN-RENDER-SPEC-OCCLUSION は todo で同じ鏡面の式を触るので、その後に回す（after）。G7 の GR53 の濡れの鏡面にもこの値が掛かる前提（要件 5547 行）で、水たまりの反射は G11-GR59-PUDDLES がこの関数を使う。撮影で測る受け入れ（要件 5624・5625 行）を、起動しないで済むよう基準画像の試験の場面（RenderingGoldenImageTest の新しい場面の引数。新しい実行ファイルは作らない）で数値の判定にした。閾値（25〜60%・30%）は要件の初期目標で、美術の調整で変えうる（根拠は要件の目標値だけ）。PT との比べは G11-GR56-SKY-OCC-REFERENCE。危険地帯（lighting.frag・半透明）。評価者の反証を省かない。共有のファイル（lighting.frag・forward_transparent.frag）は差分を小さくする。試験を足す理由: 反証する契約は「樹冠の下の空の光が決めた比に落ち、無効で絵が変わらない」。暗くしすぎ・二重の遮りは「コントラストの低い世界」の絵として紛れ、撮影 1 枚の目視では決めにくく、黙って起きる。
 
 ## G11-GR56-SKY-OCC-REFERENCE: 空だけで照らした樹冠・林縁・岩の場面で、空の遮蔽のラスタをパストレーサーの正解と比べる参照比較の試験を足して通す
-- status: todo
+- status: blocked
 - after: G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - gpu: exclusive
