@@ -5367,6 +5367,27 @@ namespace NorvesLib::Core::Rendering
         GPULightingParams params = {};
         InitializeSafeCascadedShadowParams(params);
 
+        // 係数は非有限値を既定値へ戻し、負値と割合の範囲を補正して転送する。
+        const ShadingModelLightingConstants& constants = m_Settings.ShadingModelConstants;
+        const ShadingModelLightingConstants defaults{};
+        const auto sanitizeNonNegative = [](float value, float fallback)
+        {
+            return std::isfinite(value) ? std::max(value, 0.0f) : fallback;
+        };
+        params.shadingModelParams[0][0] = sanitizeNonNegative(constants.FurWrap, defaults.FurWrap);
+        params.shadingModelParams[0][1] =
+            sanitizeNonNegative(constants.FurMinSpecularRoughness, defaults.FurMinSpecularRoughness);
+        params.shadingModelParams[0][2] =
+            sanitizeNonNegative(constants.EyeSpecularBoostPerP0, defaults.EyeSpecularBoostPerP0);
+        params.shadingModelParams[0][3] = 0.0f;
+        params.shadingModelParams[1][0] =
+            std::min(sanitizeNonNegative(constants.PaleFlatFlatten, defaults.PaleFlatFlatten), 1.0f);
+        params.shadingModelParams[1][1] =
+            sanitizeNonNegative(constants.PaleFlatDirectTerm, defaults.PaleFlatDirectTerm);
+        params.shadingModelParams[1][2] =
+            std::min(sanitizeNonNegative(constants.PaleFlatDesaturate, defaults.PaleFlatDesaturate), 1.0f);
+        params.shadingModelParams[1][3] = 0.0f;
+
         using namespace NorvesLib::Math;
 
         params.cameraForward[0] = 0.0f;

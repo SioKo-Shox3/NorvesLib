@@ -31,6 +31,9 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // 既定の減衰時定数 1.5 秒の約 5 倍。FoliagePass の同名の定数と同じ秒数にする。
+        constexpr double WorldFieldInvalidationSeconds = 8.0;
+
         // ページの表・要求のビット列が持つスライスの数。太陽の段の後ろに、点光源の VSM のとき最大 4 灯 × 6 面 × 解像度の段を並べる
         // （点光源のスライスは UpdatePointLights が LEVEL_COUNT から並べる）
         uint32_t SliceCapacityFor(PointShadowMethod method)
@@ -263,7 +266,10 @@ namespace NorvesLib::Core::Rendering
                                    const CameraProxy& camera,
                                    double totalTime,
                                    const VirtualShadowMapClipmap& clipmap,
-                                   const VirtualShadowMap::CasterSliceTable* slices)
+                                   const VirtualShadowMap::CasterSliceTable* slices,
+                                   const WorldFieldState& fieldState,
+                                   const WorldFieldSampleConstants& fieldConstants,
+                                   bool bFieldRecentlyActive)
         {
             ++state.FoliageCollectCount;
             state.FoliageFarthest = 0.0f;
@@ -336,8 +342,13 @@ namespace NorvesLib::Core::Rendering
                 mesh.IndexCount = static_cast<uint32_t>(lodMesh->Indices.size());
                 VirtualShadowMap::CasterBounds bounds;
                 bool bHasBounds = false;
+                const float plantHeight = std::max(batch.Mesh->Height * instance.HeightScale * fadeScale, 0.0f);
+                const bool bExpandFieldBounds = fieldConstants.bEnabled != 0u && bFieldRecentlyActive;
+                const float fieldMargin = bExpandFieldBounds ? fieldConstants.BendScale * plantHeight : 0.0f;
+                const float fieldDownwardMargin = bExpandFieldBounds ? fieldConstants.FlattenScale * plantHeight : 0.0f;
                 const uint32_t added = VirtualShadowMap::AppendFoliageInstance(
-                    batch, mesh, instance, fadeScale, clipmap, state.Chunks, state.Stats, bounds, bHasBounds, slices, bStill);
+                    batch, mesh, instance, fadeScale, clipmap, state.Chunks, state.Stats, bounds, bHasBounds,
+                    slices, bStill, fieldMargin, fieldDownwardMargin);
                 if (added == 0u || !bHasBounds)
                 {
                     continue;
@@ -349,15 +360,26 @@ namespace NorvesLib::Core::Rendering
                 }
                 ++state.FoliageLodPlants[lod];
 
-                // キャッシュの無効化の入力: 風で揺れる株は毎フレーム動いた物として扱う（鍵は束のインスタンスの配列と番号）。
-                // 揺らさない段の株は、置き方か段が変わったときだけ動いた物にする
+                // 風かフィールドで動く株は毎フレーム無効にする（鍵は束のインスタンスの配列と番号）。
+                // 風を止めた段でも、フィールドに干渉されている間は同じように無効にする。
                 VirtualShadowMap::CasterMotionEntry motion;
                 motion.Key = VirtualShadowMap::CasterHashCombine(
                     VirtualShadowMap::CasterHashCombine(0x464F4C49ull, reinterpret_cast<uintptr_t>(batch.Instances.get())), candidate.Instance);
                 const float placement[5] = {instance.Position[0], instance.Position[1], instance.Position[2], instance.Yaw, fadeScale};
                 motion.Signature = VirtualShadowMap::CasterHashCombine(VirtualShadowMap::CasterHashFloats(1469598103934665603ull, placement, 5u),
                                                                        reinterpret_cast<uintptr_t>(lodMesh.get()));
-                motion.bAlwaysChanged = batch.WindStrength != 0.0f && !bStill;
+                const double rootX = instance.Position[0];
+                const double rootZ = instance.Position[2];
+                const bool bInActiveField = fieldConstants.bEnabled != 0u && bFieldRecentlyActive &&
+                    rootX >= fieldState.OriginXZ[0] && rootZ >= fieldState.OriginXZ[1] &&
+                    rootX < fieldState.OriginXZ[0] + fieldState.ExtentMeters &&
+                    rootZ < fieldState.OriginXZ[1] + fieldState.ExtentMeters;
+                // 範囲の出入りやフィールドの無効化でも、直前の影を消せるよう署名を変える。
+                if (bInActiveField)
+                {
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, 0x574F524C44464945ull);
+                }
+                motion.bAlwaysChanged = (batch.WindStrength != 0.0f && !bStill) || bInActiveField;
                 motion.bHasBounds = true;
                 motion.Bounds = bounds;
                 state.Motion.push_back(motion);
@@ -789,6 +811,10 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVerticesHandle = {};
         m_MegaCompleteHandle = {};
         m_DepthHandle = {};
+        m_WorldFieldCurrentHandle = {};
+        m_WorldFieldPreviousHandle = {};
+        m_LastWorldFieldInteractorTime = 0.0;
+        m_bSawWorldFieldInteractor = false;
         m_bDeclared = false;
         m_bActive = false;
         m_bInitialFilled = false;
@@ -841,6 +867,8 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVerticesHandle = {};
         m_MegaCompleteHandle = {};
         m_DepthHandle = {};
+        m_WorldFieldCurrentHandle = {};
+        m_WorldFieldPreviousHandle = {};
         m_bDeclared = false;
 
         // 作れなかった構成（装置の非対応・確保の失敗）では何も宣言しない
@@ -861,6 +889,19 @@ namespace NorvesLib::Core::Rendering
         if (builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normal))
         {
             builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal, normal, RHI::ResourceState::ShaderResource);
+        }
+
+        // 画像と座標は WorldFieldPass の先行する Declare で公開される。
+        RGTextureHandle currentField;
+        RGTextureHandle previousField;
+        const bool bCurrentAvailable = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldCurrent, currentField,
+                                                               RHI::ResourceState::ShaderResource);
+        const bool bPreviousAvailable = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldPrevious, previousField,
+                                                                RHI::ResourceState::ShaderResource);
+        if (bCurrentAvailable && bPreviousAvailable)
+        {
+            m_WorldFieldCurrentHandle = currentField;
+            m_WorldFieldPreviousHandle = previousField;
         }
 
         // 永続のバッファを取り込み、名前で公開する。状態の遷移は、実行の中で明示的に（Common ↔ CopyDest）行う
@@ -911,7 +952,8 @@ namespace NorvesLib::Core::Rendering
         builder.PreserveInsertionOrder();
     }
 
-    void VirtualShadowMapPass::CollectCasters(ViewRenderContext& context)
+    void VirtualShadowMapPass::CollectCasters(ViewRenderContext& context, const WorldFieldSampleConstants& fieldConstants,
+                                               bool bFieldRecentlyActive)
     {
         VirtualShadowMapCasterState& state = *m_Casters;
         state.Chunks.clear();
@@ -1059,7 +1101,8 @@ namespace NorvesLib::Core::Rendering
         if (context.SnapshotFoliage && !context.SnapshotFoliage->IsEmpty() && camera)
         {
             CollectFoliageCasters(m_Device, state, *context.SnapshotFoliage, context.Wind, *camera,
-                                   context.ExtensionFrame.GameTotalTime, clipmap, slices);
+                                   context.ExtensionFrame.GameTotalTime, clipmap, slices,
+                                   context.PhysicalLighting.WorldField.Current, fieldConstants, bFieldRecentlyActive);
         }
 
         // MegaGeometry の動きは前フレームと全部を比べず、MegaGeometryPass が変わった席・メッシュの変化から積んだ箱を
@@ -1157,7 +1200,9 @@ namespace NorvesLib::Core::Rendering
                         state.FoliageLodPlants[3]);
     }
 
-    bool VirtualShadowMapPass::RecordRaster(ViewRenderContext& context, uint64_t /*frameSerial*/)
+    bool VirtualShadowMapPass::RecordRaster(ViewRenderContext& context, uint64_t /*frameSerial*/,
+                                            const RHI::TexturePtr& worldFieldCurrent,
+                                            const WorldFieldSampleConstants& fieldConstants)
     {
         VirtualShadowMapCasterState& state = *m_Casters;
         const uint32_t chunkCount = static_cast<uint32_t>(state.Chunks.size());
@@ -1219,6 +1264,8 @@ namespace NorvesLib::Core::Rendering
         rasterDispatch.Draws = state.Draws;
         std::copy(state.FoliageWind, state.FoliageWind + 4, rasterDispatch.FoliageWind);
         std::copy(state.FoliageWindParams, state.FoliageWindParams + 4, rasterDispatch.FoliageWindParams);
+        rasterDispatch.WorldFieldCurrent = worldFieldCurrent;
+        rasterDispatch.WorldField = fieldConstants;
         if (bMega)
         {
             rasterDispatch.MegaChunks = m_MegaChunks;
@@ -1406,6 +1453,28 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::ICommandList* commandList = context.CommandList;
+        if (std::isfinite(context.TotalTime))
+        {
+            if (m_bSawWorldFieldInteractor && context.TotalTime < m_LastWorldFieldInteractorTime)
+            {
+                m_bSawWorldFieldInteractor = false;
+            }
+            if (context.SnapshotWorldFieldInteractors && !context.SnapshotWorldFieldInteractors->empty())
+            {
+                m_LastWorldFieldInteractorTime = context.TotalTime;
+                m_bSawWorldFieldInteractor = true;
+            }
+        }
+        const bool bFieldRecentlyActive = m_bSawWorldFieldInteractor && std::isfinite(context.TotalTime) &&
+            context.TotalTime - m_LastWorldFieldInteractorTime <= WorldFieldInvalidationSeconds;
+        WorldFieldSampleConstants fieldConstants = BuildWorldFieldSampleConstants(context.PhysicalLighting.WorldField);
+        RHI::TexturePtr currentField = m_WorldFieldCurrentHandle.IsValid() ? resources.GetTexture(m_WorldFieldCurrentHandle) : RHI::TexturePtr{};
+        const RHI::TexturePtr previousField = m_WorldFieldPreviousHandle.IsValid() ? resources.GetTexture(m_WorldFieldPreviousHandle) : RHI::TexturePtr{};
+        if (!currentField || !previousField || fieldConstants.bEnabled == 0u)
+        {
+            currentField.reset();
+            fieldConstants = {};
+        }
 
         if (m_PointShadowMethod == PointShadowMethod::Vsm)
         {
@@ -1496,7 +1565,7 @@ namespace NorvesLib::Core::Rendering
         const bool bPointCasters = m_PointShadowMethod == PointShadowMethod::Vsm && m_PointLights.LightCount != 0u;
         if (dispatch.Depth && dispatch.Clipmap && (dispatch.Clipmap->bEnabled || bPointCasters) && m_Raster->IsReady())
         {
-            CollectCasters(context);
+            CollectCasters(context, fieldConstants, bFieldRecentlyActive);
             PlanInvalidation(context);
             bCollected = true;
             dispatch.bCacheEnabled = m_bCacheEnabled;
@@ -1569,7 +1638,7 @@ namespace NorvesLib::Core::Rendering
             // ホストが書いた塊がある、または MegaGeometry のクラスタの記録を作ったフレームは、展開・描画を 1 回の流れで記録する
             if (!m_Casters->Chunks.empty() || m_bMegaCullRecorded)
             {
-                m_bRasterRecorded = RecordRaster(context, frameSerial);
+                m_bRasterRecorded = RecordRaster(context, frameSerial, currentField, fieldConstants);
                 m_LastCasterChunkCount = m_bRasterRecorded ? static_cast<uint32_t>(m_Casters->Chunks.size()) : 0u;
             }
         }
@@ -1614,8 +1683,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VirtualShadowMapPass::DeclaresAllLayoutChanges() const
     {
-        // グラフの Texture は深度を読むだけ（ShaderResource）で、ページの描画の render pass は添付を持たない。
-        // パスの中のバリアはすべてバッファ（宣言の Common へ戻す）なので layout を変えない
+        // 深度とフィールドは ShaderResource で読み、ページの描画の render pass は添付を持たない。
+        // フィールドの頂点段向けバリアは layout を保ち、バッファは宣言の Common へ戻す。
         return true;
     }
 

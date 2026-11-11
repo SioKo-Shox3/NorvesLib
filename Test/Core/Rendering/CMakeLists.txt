@@ -631,6 +631,15 @@ set_tests_properties(GrassGBufferVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 世界フィールドによる通り道の被覆の減少と、前の画像・原点で再評価した速度を確かめる。
+add_test(NAME GrassTrampleVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GrassTrampleVulkanTest)
+set_tests_properties(GrassTrampleVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME WindGlslParityVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WindGlslParityVulkanTest)
 set_tests_properties(WindGlslParityVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -680,6 +689,15 @@ set_tests_properties(RHIParallelRecordVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 本番の範囲・席の判定が渡す10万席の集合を倍精度の参照と照合し、接触球の保持と空の間接 dispatch を確かめる。
+add_test(NAME MegaGeometryInstanceCullVulkanTest COMMAND RHITextureUpdateVulkanTest --test=MegaGeometryInstanceCullVulkanTest)
+set_tests_properties(MegaGeometryInstanceCullVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -697,6 +715,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
     MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
+    MEMBER MegaGeometryInstanceCullVulkanTest MegaGeometryInstanceCullVulkanTest.cpp
     MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
     MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
     MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
@@ -706,6 +725,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDrawVulkanTest IndirectDrawVulkanTest.cpp
     MEMBER GrassGenerateVulkanTest GrassGenerateVulkanTest.cpp
     MEMBER GrassGBufferVulkanTest GrassGBufferVulkanTest.cpp
+    MEMBER GrassTrampleVulkanTest GrassTrampleVulkanTest.cpp
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER SkyOcclusionMapVulkanTest SkyOcclusionMapVulkanTest.cpp
@@ -956,6 +976,9 @@ set_tests_properties(RenderingShadingModelGBufferVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
+register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 # 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。

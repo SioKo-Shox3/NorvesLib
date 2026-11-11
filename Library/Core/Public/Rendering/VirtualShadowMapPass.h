@@ -28,6 +28,7 @@
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/ShadowMethod.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPointLights.h"
 #include "RHI/DeviceCapabilities.h"
@@ -463,11 +464,13 @@ namespace NorvesLib::Core::Rendering
         void UpdatePointLights(const ViewRenderContext& context);
         void ReleaseResources();
         /** @brief 影を落とす手続きメッシュとスキニングを、塊の記録に集める（CPU。段の範囲に入らない塊は省く） */
-        void CollectCasters(ViewRenderContext& context);
+        void CollectCasters(ViewRenderContext& context, const WorldFieldSampleConstants& fieldConstants,
+                            bool bFieldRecentlyActive);
         /** @brief 集めた投影物の動きを前フレームの記録と比べて、無効にするページのライト空間の矩形（なければ全ページ）を決める */
         void PlanInvalidation(ViewRenderContext& context);
         /** @brief 集めた塊を書き、展開 → 描画を記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
-        bool RecordRaster(ViewRenderContext& context, uint64_t frameSerial);
+        bool RecordRaster(ViewRenderContext& context, uint64_t frameSerial, const RHI::TexturePtr& worldFieldCurrent,
+                          const WorldFieldSampleConstants& fieldConstants);
         /** @brief MegaGeometry の投影物のカリングを記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
         bool RecordMegaCull(ViewRenderContext& context, uint64_t frameSerial);
         /** @brief 投影物の内訳（CasterStats）を、値が変わったとき・60 回ごとに VSM_CASTERS として出す */
@@ -541,6 +544,10 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_SkinnedVerticesHandle;
         RGResourceHandle m_MegaCompleteHandle;
         RGTextureHandle m_DepthHandle;
+        RGTextureHandle m_WorldFieldCurrentHandle;
+        RGTextureHandle m_WorldFieldPreviousHandle;
+        double m_LastWorldFieldInteractorTime = 0.0;
+        bool m_bSawWorldFieldInteractor = false;
         bool m_bDeclared = false;
         /** @brief プール・表を初期値で埋めたか（最初の実行で 1 回） */
         bool m_bInitialFilled = false;

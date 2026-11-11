@@ -60,11 +60,16 @@ namespace NorvesLib::Core::Streaming
         const StreamingSystemSettings& GetSettings() const;
         // マニフェストを持つ前だけ登録できる。ハンドラは Shutdown の完了まで生存させる。
         bool RegisterHandler(IStreamingPayloadHandler* pHandler);
-        // 解析成功時だけ旧セルを同期解放して置き換える。
-        bool LoadManifestFromText(const Container::String& text, CellManifestError* pOutError = nullptr);
+        // 解析成功時だけ旧セルを同期解放し、指定スコープのセルで置き換える。
+        bool LoadManifestFromText(const Container::String& text, CellManifestError* pOutError = nullptr,
+                                  StreamingScopeId scopeId = kDefaultStreamingScopeId);
         bool HasManifest() const;
         void SetFocus(const StreamingFocus& focus);
         void Update();
+        // 指定スコープの準備を取り消して待ち、予算を無視してセルの資源を同期解放し、セルを外す。
+        // 戻った後は対象セルの準備処理やハンドラ呼び出しは行われない。存在しないスコープは何もしない。
+        // 自動実行しない実行器に溜めた対象セルの仕事は、呼ぶ前に実行すること。
+        void StopAndJoin(StreamingScopeId scopeId);
         // Prepare の完了を待ち、予算を無視して全セルを解放する。繰り返し呼べる。
         void Shutdown();
         EStreamingCellState GetCellState(StreamingCellId id) const;
@@ -89,8 +94,9 @@ namespace NorvesLib::Core::Streaming
 
         struct CellEntry
         {
-            CellEntry(const StreamingCellDesc* pDesc, StreamingRetryPolicy retry);
+            CellEntry(const StreamingCellDesc* pDesc, StreamingRetryPolicy retry, StreamingScopeId scopeId);
             StreamingCell Cell;
+            StreamingScopeId ScopeId;
             Container::VariableArray<IStreamingPayloadHandler*> Handlers;
             Container::TSharedPtr<PrepareCompletion> Completion;
             StreamingPayloadBytes LastKnownBytes{};
@@ -101,8 +107,8 @@ namespace NorvesLib::Core::Streaming
         void FinishChange(CellEntry& entry, EStreamingCellState from);
         void RequestUnload(CellEntry& entry);
         void SetDormant(CellEntry& entry, bool bDormant);
-        void CollectPrepares(double nowMs);
-        void CancelAndWaitPrepares();
+        void CollectPrepares(double nowMs, const StreamingScopeId* pScopeId = nullptr);
+        void CancelAndWaitPrepares(const StreamingScopeId* pScopeId = nullptr);
         uint32_t CountResident(bool bLiveOnly) const;
         uint32_t CountInFlight() const;
         StreamingPayloadBytes CountCellResidentBytes(const CellEntry& entry) const;

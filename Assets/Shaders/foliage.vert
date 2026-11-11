@@ -3,8 +3,29 @@
 // 草・低木の株をインスタンスで描き、風で揺らす（FoliagePass）。頂点は株の根元を原点とするローカルの位置で、
 // インスタンスの位置・向き・大きさでワールドへ置いてから、根元は動かず先ほど大きく風下へずらす
 
-#include "Common/FoliageData.glsl"
 #include "Common/FoliagePlacement.glsl"
+#include "Common/ViewClearance.glsl"
+
+// 先頭は foliage.frag が読む Common/FoliageData.glsl と共通。頂点段だけ末尾にフィールドの定数を持つ。
+layout(std140, set = 0, binding = 0) uniform FoliageData
+{
+    mat4 view;
+    mat4 projection;
+    mat4 previousView;
+    mat4 previousProjection;
+    vec4 cameraPosition;
+    vec4 wind;
+    vec4 windParams;
+    vec4 stemColor;
+    vec4 tipColorA;
+    vec4 tipColorB;
+    vec4 frameParams;
+    vec4 windField;
+    ViewClearanceData viewClearance;
+    WorldFieldSampleConstants worldField;
+} foliage;
+layout(set = 0, binding = 1) uniform sampler2D foliageWorldFieldCurrent;
+layout(set = 0, binding = 2) uniform sampler2D foliageWorldFieldPrevious;
 
 // 頂点（FoliageVertex）
 layout(location = 0) in vec3 inPosition;
@@ -106,6 +127,10 @@ void main()
     vec2 previousOffset = FoliageWindOffset(root.xz, flex, plantHeight, plantPhase, partPhase, foliage.wind.w);
     vec3 worldPos = ApplyFoliageWind(position, currentOffset, heightAboveRoot);
     vec3 previousWorldPos = ApplyFoliageWind(position, previousOffset, heightAboveRoot);
+    worldPos = ApplyFoliageWorldField(worldPos, root, plantHeight, heightAboveRoot,
+                                      foliageWorldFieldCurrent, foliage.worldField, false);
+    previousWorldPos = ApplyFoliageWorldField(previousWorldPos, root, plantHeight, heightAboveRoot,
+                                              foliageWorldFieldPrevious, foliage.worldField, true);
 
     // 傾いた分だけ法線も風下へ倒す（先ほど大きい）
     vec2 tilt = currentOffset / max(plantHeight, 0.05);

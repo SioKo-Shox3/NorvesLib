@@ -64,14 +64,14 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetDesc MakeGrassDrawDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
-            for (uint32_t binding = 0; binding < 4; ++binding)
+            for (uint32_t binding = 0; binding < 6; ++binding)
             {
                 RHI::DescriptorBinding entry;
                 entry.binding = binding;
                 entry.type = binding == 0 ? RHI::ResourceBindType::ConstantBuffer :
-                             binding == 3 ? RHI::ResourceBindType::CombinedImageSampler :
+                             binding >= 3 ? RHI::ResourceBindType::CombinedImageSampler :
                                             RHI::ResourceBindType::StructuredBuffer;
-                entry.stages = binding == 1 || binding == 3 ? RHI::ShaderStage::Vertex :
+                entry.stages = binding == 1 || binding >= 3 ? RHI::ShaderStage::Vertex :
                     RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
                 desc.bindings.push_back(entry);
             }
@@ -317,6 +317,28 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        RHI::TextureDesc neutralDesc;
+        neutralDesc.Width = 1;
+        neutralDesc.Height = 1;
+        neutralDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        neutralDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        neutralDesc.DebugName = "Grass.NeutralWorldField";
+        RHI::TexturePtr neutral = device->CreateTexture(neutralDesc);
+        RHI::SamplerDesc samplerDesc;
+        samplerDesc.filterMin = RHI::FilterMode::Linear;
+        samplerDesc.filterMag = RHI::FilterMode::Linear;
+        samplerDesc.filterMip = RHI::FilterMode::Point;
+        samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        RHI::SamplerPtr sampler = device->CreateSampler(samplerDesc);
+        if (!neutral || !sampler)
+        {
+            return false;
+        }
+        // 初期化時の一度の転送で RGBA をすべて 0 にする。
+        const uint32_t zero = 0;
+        neutral->Update(&zero, sizeof(zero), sizeof(zero));
         indexBuffer->Update(indices.empty() ? &emptyIndex : indices.data(), indexBytes);
         desc.descriptorSetLayouts.push_back(layoutDesc);
         desc.depthCompareOp = RHI::CompareOp::Less;
@@ -326,6 +348,8 @@ namespace NorvesLib::Core::Rendering
         m_Device = device;
         m_DescriptorSetLayout = layout;
         m_IndexBuffer = indexBuffer;
+        m_NeutralWorldField = neutral;
+        m_WorldFieldSampler = sampler;
         m_OverlayPipelineDesc = desc;
         return true;
     }
@@ -335,6 +359,8 @@ namespace NorvesLib::Core::Rendering
         m_OverlayTargets.Reset();
         m_OverlayPipelineDesc = {};
         m_IndexBuffer.reset();
+        m_NeutralWorldField.reset();
+        m_WorldFieldSampler.reset();
         m_DescriptorSetLayout.reset();
         m_Device = nullptr;
     }
@@ -342,6 +368,7 @@ namespace NorvesLib::Core::Rendering
     bool GrassDrawGpu::Record(RHI::ICommandList* commandList, const GrassDrawRecordInputs& inputs)
     {
         if (!commandList || !m_Device || !m_IndexBuffer || !m_DescriptorSetLayout || !inputs.DepthTarget ||
+            !m_NeutralWorldField || !m_WorldFieldSampler ||
             !inputs.LayerA || !inputs.Sampler || !inputs.RecordBuffer || !inputs.ArgsBuffer ||
             inputs.ArgsBuffer->GetSize() < kGrassLodCount * kGrassArgsStride ||
             !HasRange(inputs.Constants, sizeof(GrassDrawConstants)) ||
@@ -349,6 +376,13 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        const bool bHasWorldField = inputs.WorldFieldCurrent && inputs.WorldFieldPrevious;
+        if (bHasWorldField && !HasRange(inputs.Constants, sizeof(GrassDrawWorldFieldConstants)))
+        {
+            return false;
+        }
+        const RHI::TexturePtr& currentField = bHasWorldField ? inputs.WorldFieldCurrent : m_NeutralWorldField;
+        const RHI::TexturePtr& previousField = bHasWorldField ? inputs.WorldFieldPrevious : m_NeutralWorldField;
         for (const RHI::TexturePtr& target : inputs.ColorTargets)
         {
             if (!target)
@@ -395,7 +429,22 @@ namespace NorvesLib::Core::Rendering
             set->BindStorageBuffer(2, inputs.Species.Buffer, inputs.Species.Offset, inputs.Species.Size);
             set->BindTexture(3, inputs.LayerA);
             set->BindSampler(3, inputs.Sampler);
+            set->BindTexture(4, currentField);
+            set->BindSampler(4, m_WorldFieldSampler);
+            set->BindTexture(5, previousField);
+            set->BindSampler(5, m_WorldFieldSampler);
             set->Update();
+        }
+        // ShaderResource の同期先は頂点段を含まないため、layout を保って頂点の読み取りへも公開する。
+        RHI::ExplicitTextureBarrierDesc fieldBarrier;
+        fieldBarrier.BeforeState = RHI::ResourceState::ShaderResource;
+        fieldBarrier.AfterState = RHI::ResourceState::GenericRead;
+        fieldBarrier.OldLayout = RHI::TextureLayout::ShaderReadOnly;
+        fieldBarrier.NewLayout = RHI::TextureLayout::ShaderReadOnly;
+        commandList->TextureBarrierExplicit(currentField, fieldBarrier);
+        if (previousField != currentField)
+        {
+            commandList->TextureBarrierExplicit(previousField, fieldBarrier);
         }
         // 生成した記録を頂点シェーダーからも読める状態にする。
         commandList->BufferBarrier(inputs.RecordBuffer, RHI::ResourceState::ShaderResource,
@@ -501,6 +550,9 @@ namespace NorvesLib::Core::Rendering
             handle = {};
         }
         m_DepthHandle = {};
+        m_WorldFieldCurrentHandle = {};
+        m_WorldFieldPreviousHandle = {};
+        m_WorldFieldConstants = {};
 #if NORVES_BUILD_DEVELOPMENT
         m_LastLoggedTileCount = UINT32_MAX;
 #endif
@@ -519,12 +571,31 @@ namespace NorvesLib::Core::Rendering
             handle = {};
         }
         m_DepthHandle = {};
+        m_WorldFieldCurrentHandle = {};
+        m_WorldFieldPreviousHandle = {};
+        m_WorldFieldConstants = {};
         // ネイティブの RenderGraph パスでは Setup が呼ばれないため、宣言時にも同じ条件を決める。
         const ViewRenderContext* context = builder.GetContext();
         m_bHasGrass = m_bEnabled && context && HasGrassField(*context);
         if (!m_bHasGrass)
         {
             return;
+        }
+
+        RGTextureHandle currentField;
+        RGTextureHandle previousField;
+        const bool bHasCurrent = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldCurrent,
+            currentField, RHI::ResourceState::ShaderResource);
+        const bool bHasPrevious = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldPrevious,
+            previousField, RHI::ResourceState::ShaderResource);
+        if (bHasCurrent && bHasPrevious)
+        {
+            m_WorldFieldConstants = BuildWorldFieldSampleConstants(context->PhysicalLighting.WorldField);
+            if (m_WorldFieldConstants.bEnabled != 0u)
+            {
+                m_WorldFieldCurrentHandle = currentField.ToResourceHandle();
+                m_WorldFieldPreviousHandle = previousField.ToResourceHandle();
+            }
         }
 
         // 描き先が無い構成で生成だけを行うときも、直前の描画の後に記録する。
@@ -715,7 +786,17 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        GrassDrawConstants drawConstants;
+        GrassDrawWorldFieldConstants extendedConstants;
+        GrassDrawConstants& drawConstants = extendedConstants.Draw;
+        if (m_WorldFieldCurrentHandle.IsValid() && m_WorldFieldPreviousHandle.IsValid())
+        {
+            drawInputs.WorldFieldCurrent = resources->GetTexture(m_WorldFieldCurrentHandle);
+            drawInputs.WorldFieldPrevious = resources->GetTexture(m_WorldFieldPreviousHandle);
+            if (drawInputs.WorldFieldCurrent && drawInputs.WorldFieldPrevious)
+            {
+                extendedConstants.WorldField = m_WorldFieldConstants;
+            }
+        }
         const CameraProxy* previousCamera = context.GetPreviousCamera();
         const CameraViewConstants previousConstants = previousCamera ?
             CameraViewConstants::BuildForDevice(*previousCamera, context.GetActiveAspectRatio(), context.Device) :
@@ -735,7 +816,7 @@ namespace NorvesLib::Core::Rendering
         drawConstants.CameraPosition[3] = pixelSize(*camera);
         drawConstants.PreviousCameraPosition[3] = previousCamera ? pixelSize(*previousCamera) :
             drawConstants.CameraPosition[3];
-        drawConstants.Flags[0] = previousCamera ? kGrassDrawFlagPreviousCamera : 0;
+        drawConstants.Flags[0] = (previousCamera ? kGrassDrawFlagPreviousCamera : 0) | kGrassDrawFlagWorldField;
         if (context.Wind.bEnabled)
         {
             drawConstants.Flags[0] |= kGrassDrawFlagWind;
@@ -769,7 +850,7 @@ namespace NorvesLib::Core::Rendering
         drawConstants.LayerWindow[0] = field->ChunkSizeMeters;
         drawConstants.LayerWindow[1] = static_cast<float>(m_FieldWindow.GetWindowSize());
         drawConstants.LayerWindow[2] = static_cast<float>(field->LayerAResolution);
-        const FrameUploadAllocation drawConstantAllocation = frameResources->AllocateConstants(drawConstants);
+        const FrameUploadAllocation drawConstantAllocation = frameResources->AllocateConstants(extendedConstants);
         if (!drawConstantAllocation.IsValid())
         {
             return;

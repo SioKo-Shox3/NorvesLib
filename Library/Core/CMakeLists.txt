@@ -461,6 +461,7 @@ set(PRIVATE_SOURCES
     Private/Resource/ModelStaging.cpp
     # Component
     Private/Component/Component.cpp
+    Private/Component/WorldFieldInteractorComponent.cpp
     Private/Component/BoardComponent.cpp
     Private/Component/SpringArmComponent.cpp
     Private/Component/ViewClearanceComponent.cpp
@@ -885,6 +886,7 @@ set(PUBLIC_HEADERS
     Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h
+    Public/Component/WorldFieldInteractorComponent.h
     Public/Component/TickGroup.h
     Public/Component/BoardComponent.h
     Public/Component/TextComponent.h

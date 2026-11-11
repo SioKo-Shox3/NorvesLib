@@ -135,6 +135,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t DDGIProbeCount = 0;
         bool bDDGIAtlasPublished = false;
 
+        /** @brief Declare の登録順で確定するフィールドの座標。画像の公開名と組にして読む。 */
+        mutable WorldFieldFrameState WorldField;
+
         /** @brief R6 RTGIの能力・結果・current/history履歴の公開値。 */
         RTGIResourcePublication RTGI;
         RTGIIndirectLightingSource IndirectLightingSource =
@@ -178,6 +181,7 @@ namespace NorvesLib::Core::Rendering
             DDGIDistanceAtlas.reset();
             DDGIProbeCount = 0;
             bDDGIAtlasPublished = false;
+            WorldField = {};
             RTGI.Clear();
             IndirectLightingSource = RTGIIndirectLightingSource::Raster;
             IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
@@ -366,6 +370,12 @@ namespace NorvesLib::Core::Rendering
             bIBLEnabled = bIBLEnabledValue;
             bLightingPublished = true;
             RefreshIndirectLightingSource();
+        }
+
+        /** @brief const な Declare 文脈から、消費側の宣言に先立って座標を公開する。 */
+        void PublishWorldField(const WorldFieldFrameState& state) const
+        {
+            WorldField = state;
         }
 
         void PublishDDGIAtlas(const RHI::TexturePtr& irradianceAtlas,
