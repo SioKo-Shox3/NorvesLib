@@ -139,6 +139,39 @@ MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変�
 
 `layers.w` の印は `DIRT_NORMAL_TWO_CHANNEL = 1`、`ROCK_NORMAL_TWO_CHANNEL = 2`、`SAND_ALBEDO_SRGB_DECODE = 4`、`DIRT_ALBEDO_SRGB_DECODE = 8`、`ROCK_ALBEDO_SRGB_DECODE = 16`（接頭辞はいずれも `TERRAIN_BLEND_`）。`layers.x = 0` は 1 層、`mask.z = 0` / `farMap.z = 0` は対応する地図なし。
 
+### スプラットの UBO と配列テクスチャ
+
+スプラットの追加では上記の `SectionUniformData` を変更せず、別の `TerrainSplatBlock` に値を置く。`MegaGeometryPass.cpp` は `TERRAIN_SPLAT_PARAM_FLOATS = 48` 個の float を別の定数バッファとして確保し、`megageometry.frag` は `std140` の `terrainSplat[12]`（`vec4` × 12 = **192 バイト**）として読む。以下はいずれも `set 0` の束縛である。
+
+| binding | C++ 定数（`TerrainBlendShading.h`） | GLSL 宣言（`megageometry.frag`） | 用途 |
+|---|---|---|---|
+| 18 | `TERRAIN_SPLAT_MEGA_ALBEDO_BINDING` | `sampler2DArray terrainSplatAlbedoArray` | 各層のアルベド |
+| 19 | `TERRAIN_SPLAT_MEGA_NORMAL_BINDING` | `sampler2DArray terrainSplatNormalArray` | 各層の法線 |
+| 20 | `TERRAIN_SPLAT_MEGA_ARM_BINDING` | `sampler2DArray terrainSplatArmArray` | 各層の AO・粗さ・金属度・高さ |
+| 21 | `TERRAIN_SPLAT_MEGA_SPLAT_BINDING` | `sampler2DArray terrainSplatArray` | 層の重みの地図 |
+| 23 | `TERRAIN_SPLAT_MEGA_PARAMS_BINDING` | `uniform TerrainSplatBlock` | 下表の `terrainSplat[12]` |
+
+値の正本は `TerrainBlendShading.h::PackTerrainSplatParams`、GLSL の対応名は `Common/TerrainLayerBlend.glsl::TerrainSplatParams` と `MakeTerrainSplatParams`。オフセットは `terrainSplat` の先頭からのバイト数で、各行の型は C++ の `float[4]`、GLSL の `vec4`。この並びは可視バッファの解決と RTGI でも共通である。
+
+| オフセット | 配列要素 / 対応名 | x | y | z | w |
+|---|---|---|---|---|---|
+| 0 | `terrainSplat[0] / map` | 地図の最小 X | 地図の最小 Z | X の広さの逆数（1/m） | Z の広さの逆数（1/m） |
+| 16 | `terrainSplat[1] / shape` | 層の数 | 崖の層の番号（なしは -1） | 高さ混ぜの深さ（1e-3 以上） | 地形の濡れ度（0〜1） |
+| 32 | `terrainSplat[2] / cliff` | 崖へ移る傾斜の開始（rad） | 同終了（開始 + 1e-4 以上） | UV 回転の雑音の波長の逆数（1/m） | 回転角の最大（rad） |
+| 48 | `terrainSplat[3] / flags` | 復号のビットマスクを float にした値 | 0 | 0 | 0 |
+| 64 | `terrainSplat[4] / layer[0]` | 層 0 の UV 倍率 | 層 0 の濡れやすさ | 0 | 0 |
+| 80 | `terrainSplat[5] / layer[1]` | 層 1 の UV 倍率 | 層 1 の濡れやすさ | 0 | 0 |
+| 96 | `terrainSplat[6] / layer[2]` | 層 2 の UV 倍率 | 層 2 の濡れやすさ | 0 | 0 |
+| 112 | `terrainSplat[7] / layer[3]` | 層 3 の UV 倍率 | 層 3 の濡れやすさ | 0 | 0 |
+| 128 | `terrainSplat[8] / layer[4]` | 層 4 の UV 倍率 | 層 4 の濡れやすさ | 0 | 0 |
+| 144 | `terrainSplat[9] / layer[5]` | 層 5 の UV 倍率 | 層 5 の濡れやすさ | 0 | 0 |
+| 160 | `terrainSplat[10] / layer[6]` | 層 6 の UV 倍率 | 層 6 の濡れやすさ | 0 | 0 |
+| 176 | `terrainSplat[11] / layer[7]` | 層 7 の UV 倍率 | 層 7 の濡れやすさ | 0 | 0 |
+
+`flags.x` は `TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL = 1`（bit 0）と `TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE = 2`（bit 1）。`PackTerrainSplatParams` は層数を `MegaTerrainSplatMaxLayers = 8` に制限し、範囲外の崖の層を -1 とする。各層の UV 倍率は `1 / max(TileMeters, 1e-3)`、濡れやすさは 0〜1 に制限し、使わない層は 0。UV 回転の波長が正でなければ `cliff.z = 0`。濡れ度は有限なら 0〜1 に制限し、非有限なら 0 とする。
+
+`PackTerrainSplatParams` は呼び出し側の `bEnabled` または `splat.bEnabled` が偽、層数が 0、地図の幅または奥行きが 1e-3 以下の場合、48 個すべてを 0 にする。`TerrainSplatUv` は `(worldXZ - map.xy) * map.zw` で地図の座標を求める。
+
 ## 3. GPUSceneInstanceData
 
 定義は `Library/Core/Public/Rendering/MeshTypes.h` の `GPUSceneInstanceData`。`alignas(16)`、56 float = **224 バイト**。大きさ・整列・各フィールドのオフセットは同ファイルの `static_assert` で固定されている。GLSL は `std430` の `InstanceData` として読む。
@@ -252,6 +285,15 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 
 C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み取り専用 SSBO は `StructuredBuffer`、24 は `RWBuffer`。27・28 の履歴資源名は `Depth` / `Normal` だが、ここでは鏡面の蓄積値として使用する。`rtgiSpecularHit.gba` は当たった面が返す露出後の光の平均、`rtgiSpecularSky.a` は空へ抜けた割合である。
 
+### RTGI のスプラット
+
+こちらは上の `lighting.frag` とは別の、`Assets/Shaders/RTGI/DiffuseIndirect.comp` の `set 0` の配置である。binding 1 の `RTGIComputeParameters` は `std140` で、`foliageOcclusion` の後ろ、オフセット 256 に `terrainSplat[12]` を持つ。C++ の `LightingPass.cpp::RTGIComputeParameters` は `float terrainSplat[TERRAIN_SPLAT_PARAM_FLOATS]` を末尾に持ち、全体の **448 バイト**を `static_assert` で検査する。追加分の **192 バイト**の成分は 2 節の表と同じ。
+
+| binding | C++ 定数（`TerrainBlendShading.h`） | GLSL 宣言（`DiffuseIndirect.comp`） | 用途 |
+|---|---|---|---|
+| 30 | `TERRAIN_SPLAT_RTGI_ALBEDO_BINDING` | `sampler2DArray terrainSplatAlbedoArray` | 各層のアルベド |
+| 31 | `TERRAIN_SPLAT_RTGI_SPLAT_BINDING` | `sampler2DArray terrainSplatArray` | 層の重みの地図 |
+
 ### GPULightingParams の空の遮蔽
 
 C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体は **1104 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、追加欄をすべてゼロにする。
@@ -307,3 +349,18 @@ C++ は `Library/Core/Public/Rendering/VisibilityMaterialTable.h` の `Visibilit
 材質表の作成は `VisibilityMaterialTable.cpp::MakeMaterialEntry`。`Header[1]` には 1 節の変換後の ID を格納する。手続きメッシュのインスタンス値は解決時にインスタンス表から読み、スキニングのインスタンス値は表を作るときに材質値へ重ねる。
 
 `VisMaterialEntry` の宣言は `Common/VisibilityResolve.glsl` の 1 か所にあり、`visbuffer_resolve.comp`、`visbuffer_resolve_dump.comp`、`visbuffer_resolve_tiles.comp`、`visbuffer_resolve_tiles_dump.comp` が同ファイルを include する。
+
+`VisibilityMaterialTable.cpp::MakeMaterialEntry` はスプラットの材質に `Header[0]` の `MATERIAL_FLAG_TERRAIN_SPLAT = 128`（bit 7）を立て、`Header[3]` に `HashTerrainSplat` の値を入れる。定数は `VisibilityMaterialTable.h` にあり、3 層の `MATERIAL_FLAG_TERRAIN_BLEND` とは別の印である。
+
+### 材質ごとの解決の UBO と配列テクスチャ
+
+`NORVES_VISRESOLVE_TILES` の `ResolveTileParams` は `tile`・`vt`・3 層の `terrain[10]` に続けて `terrainSplat[12]` を持つ。後者はオフセット 192 から **192 バイト**で、UBO 全体は従来の 192 バイトから **384 バイト**になった。`VisibilityResolvePass.cpp` の `TileParamsBytes` が 384 を検査し、`Common/VisibilityResolve.glsl` の `VIS_TILE_BINDING` は通常版が binding 11、dump 版が binding 12。`terrainSplat` の各成分は 2 節の表と同じ。
+
+`tileParams.tile.z` の `TILE_FLAG_TERRAIN_SPLAT` / `VIS_TILE_FLAG_TERRAIN_SPLAT` は 32（bit 5）で、スプラットの配列と並びを使う印。C++ の定数は `VisibilityResolvePass.h`、GLSL の定数は `Common/VisibilityResolve.glsl` にある。材質表の `Header[0]` の bit 7 とは別のフィールドである。
+
+| set | binding | C++ 定数（`TerrainBlendShading.h`） | GLSL 宣言（`VisibilityResolve.glsl`） | 用途 |
+|---|---|---|---|---|
+| 0 | 32 | `TERRAIN_SPLAT_VIS_ALBEDO_BINDING` | `sampler2DArray terrainSplatAlbedoTexture` | 各層のアルベド |
+| 0 | 33 | `TERRAIN_SPLAT_VIS_NORMAL_BINDING` | `sampler2DArray terrainSplatNormalTexture` | 各層の法線 |
+| 0 | 34 | `TERRAIN_SPLAT_VIS_ARM_BINDING` | `sampler2DArray terrainSplatArmTexture` | 各層の AO・粗さ・金属度・高さ |
+| 0 | 35 | `TERRAIN_SPLAT_VIS_SPLAT_BINDING` | `sampler2DArray terrainSplatMapTexture` | 層の重みの地図 |
