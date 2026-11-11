@@ -2606,6 +2606,7 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
+    SkeletalAnimationParallelTest.cpp
     SocketOracleTest.cpp
     SkeletalSamplerBaseline.cpp
     AnimPoseOpsTest.cpp
@@ -2630,6 +2631,9 @@ target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
 target_include_directories(SkeletalAnimationSamplingTest PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Library/Core/Private)
 set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
+# 並列姿勢試験は JobSystem の ParallelFor 契約を前提とするため、
+# JobParallelForTest を含む JobSystemShutdownTest の試験群を同じビルドでそろえる。
+add_dependencies(SkeletalAnimationSamplingTest JobSystemShutdownTest)
 
 add_executable(SkeletalFramePacketSnapshotTest
     SkeletalFramePacketSnapshotTest.cpp

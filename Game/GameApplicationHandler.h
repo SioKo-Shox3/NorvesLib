@@ -329,6 +329,13 @@ namespace Game
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        /// sandbox の合成スキンの体数（0 は配置しない）
+        uint32_t m_SkinnedCrowdCount = 0;
+        /// 姿勢の並列評価（-1 は指定なし、0 は無効、1 は有効）
+        int8_t m_ParallelPose = -1;
+        /// 並列にする最小数と 1 回の取り出し数（0 は指定なし）
+        uint32_t m_ParallelPoseMinCount = 0;
+        uint32_t m_ParallelPoseGrain = 0;
         /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
         uint32_t m_GrasslandScatterStressCount = 0;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する

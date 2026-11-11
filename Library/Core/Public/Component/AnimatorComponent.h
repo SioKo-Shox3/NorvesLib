@@ -153,6 +153,22 @@ namespace NorvesLib::Core::Component
         }
         [[nodiscard]] bool UpdateAnimation(float dt);
         [[nodiscard]] bool EvaluateAnimation();
+        /// GameThread 専用。評価を準備し、グラフの計算が必要なら true を返す。評価の有効設定は参照しない。
+        /// Begin から Finish まで、本コンポーネント・提出先メッシュ・使用資源の変更や破棄を禁止する。
+        /// 同じコンポーネントの評価を重ねず、各段のスレッド間の受け渡しは呼び手が同期する。
+        [[nodiscard]] bool BeginEvaluateAnimation();
+        /// 準備後に一度だけ呼ぶ。modifier がなければ任意のスレッド、あれば GameThread 専用。
+        void RunEvaluateAnimation();
+        /// GameThread 専用。Run の完了を同期してから呼び、成否を返して予約を下ろす。準備失敗時は false。
+        [[nodiscard]] bool FinishEvaluateAnimation();
+        /// GameThread 専用。同じ Entity の姿勢の提出先メッシュを返す。
+        SkinnedMeshComponent* GetPoseTargetMesh() const;
+        /// GameThread 専用。保留中のアニメーションイベントを配送する。
+        void DispatchPendingEvents();
+        /// 任意のスレッドから呼べる。modifier の追加・削除と同時には呼ばない。
+        bool HasPoseModifiers() const { return !m_Modifiers.empty(); }
+        /// 任意のスレッドから呼べる。評価の有効設定の変更と同時には呼ばない。
+        bool IsEvaluationEnabled() const { return m_bEvaluate; }
         void BuildDebugSnapshot(AnimatorDebugSnapshot&) const;
 
       private:
@@ -188,5 +204,6 @@ namespace NorvesLib::Core::Component
         float m_LastDelta = 0, m_Step = 0;
         bool m_bFrozen = false, m_bEvaluate = true;
         bool m_bApplyingModifiers = false;
+        bool m_bEvaluationPending = false, m_bEvaluationSucceeded = false;
     };
 } // namespace NorvesLib::Core::Component

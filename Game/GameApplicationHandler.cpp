@@ -219,6 +219,11 @@ namespace Game
         // --camera-path-play: カメラパスを持つシーンで、組み立てが済んだところからパスを再生したままにする（開発ビルドだけ。
         // 値を取らない。開始の時刻は --camera-path-time、無ければ 0 秒。計測でパスを飛ぶ負荷を撮るのに使う）。
         constexpr const TCHAR *kCameraPathPlayOption = TEXT("--camera-path-play");
+        // sandbox の合成スキンと姿勢の並列設定（開発ビルドだけ）
+        constexpr const TCHAR *kSkinnedCrowdOption = TEXT("--skinned-crowd");
+        constexpr const TCHAR *kParallelPoseOption = TEXT("--parallel-pose");
+        constexpr const TCHAR *kParallelPoseMinOption = TEXT("--parallel-pose-min");
+        constexpr const TCHAR *kParallelPoseGrainOption = TEXT("--parallel-pose-grain");
         // --camera-path-capture-time=<秒>: 再生を固定刻みで進め、指定時刻の姿勢を PNG に撮る（開発ビルドだけ）。
         constexpr const TCHAR *kCameraPathCaptureTimeOption = TEXT("--camera-path-capture-time=");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
@@ -747,6 +752,29 @@ namespace Game
             return true;
         }
 
+        // 名前が共通する引数も、名前の直後が終端か = の場合だけ一致させる。
+        bool TryMatchSandboxOption(const String &argument, const TCHAR *option, String &outValue, bool &bInlineValue)
+        {
+            String suffix;
+            if (!TryStripPrefix(argument, option, suffix))
+            {
+                return false;
+            }
+            if (suffix.empty())
+            {
+                outValue = {};
+                bInlineValue = false;
+                return true;
+            }
+            if (suffix[0] != TEXT('='))
+            {
+                return false;
+            }
+            outValue = suffix.substr(1);
+            bInlineValue = true;
+            return true;
+        }
+
         bool IsCommandLineOption(const String &argument)
         {
             return StartsWith(ToStdString(argument), TEXT("--"));
@@ -905,6 +933,10 @@ namespace Game
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        m_SkinnedCrowdCount = 0;
+        m_ParallelPose = -1;
+        m_ParallelPoseMinCount = 0;
+        m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
@@ -1657,6 +1689,99 @@ namespace Game
                 {
                     LOG_ERROR("--camera-path-time の秒数を読み取れません");
                     return false;
+                }
+#endif
+                continue;
+            }
+            enum class SandboxOption { None, SkinnedCrowd, ParallelPose, ParallelPoseMin, ParallelPoseGrain };
+            SandboxOption sandboxOption = SandboxOption::None;
+            const TCHAR *sandboxOptionName = nullptr;
+            bool bSandboxInlineValue = false;
+            if (TryMatchSandboxOption(args[i], kSkinnedCrowdOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::SkinnedCrowd;
+                sandboxOptionName = kSkinnedCrowdOption;
+            }
+            else if (TryMatchSandboxOption(args[i], kParallelPoseOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::ParallelPose;
+                sandboxOptionName = kParallelPoseOption;
+            }
+            else if (TryMatchSandboxOption(args[i], kParallelPoseMinOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::ParallelPoseMin;
+                sandboxOptionName = kParallelPoseMinOption;
+            }
+            else if (TryMatchSandboxOption(args[i], kParallelPoseGrainOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::ParallelPoseGrain;
+                sandboxOptionName = kParallelPoseGrainOption;
+            }
+            if (sandboxOption != SandboxOption::None)
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                const bool bDuplicate =
+                    (sandboxOption == SandboxOption::SkinnedCrowd && m_SkinnedCrowdCount != 0) ||
+                    (sandboxOption == SandboxOption::ParallelPose && m_ParallelPose != -1) ||
+                    (sandboxOption == SandboxOption::ParallelPoseMin && m_ParallelPoseMinCount != 0) ||
+                    (sandboxOption == SandboxOption::ParallelPoseGrain && m_ParallelPoseGrain != 0);
+                if (bDuplicate)
+                {
+                    LOG_ERROR("%s が重複しています", sandboxOptionName);
+                    return false;
+                }
+                if (!bSandboxInlineValue)
+                {
+                    if (i + 1 >= args.size() || args[i + 1].empty() || IsCommandLineOption(args[i + 1]))
+                    {
+                        LOG_ERROR("%s には値を指定してください", sandboxOptionName);
+                        return false;
+                    }
+                    sceneValue = args[++i];
+                }
+                if (sandboxOption == SandboxOption::ParallelPose)
+                {
+                    if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                    {
+                        LOG_ERROR("--parallel-pose は on または off で指定してください");
+                        return false;
+                    }
+                    m_ParallelPose = sceneValue == TEXT("on") ? 1 : 0;
+                }
+                else
+                {
+                    uint32_t value = 0;
+                    if (!TryParseUInt32(sceneValue, value) || value == 0 ||
+                        (sandboxOption == SandboxOption::SkinnedCrowd && value > 10000u))
+                    {
+                        if (sandboxOption == SandboxOption::SkinnedCrowd)
+                        {
+                            LOG_ERROR("--skinned-crowd は 1〜10000 の整数で指定してください");
+                        }
+                        else
+                        {
+                            LOG_ERROR("%s は 1 以上の整数で指定してください", sandboxOptionName);
+                        }
+                        return false;
+                    }
+                    if (sandboxOption == SandboxOption::SkinnedCrowd)
+                    {
+                        m_SkinnedCrowdCount = value;
+                    }
+                    else if (sandboxOption == SandboxOption::ParallelPoseMin)
+                    {
+                        m_ParallelPoseMinCount = value;
+                    }
+                    else
+                    {
+                        m_ParallelPoseGrain = value;
+                    }
+                }
+#else
+                LOG_WARNING("%s は開発ビルドだけで使えます。無視します", sandboxOptionName);
+                if (!bSandboxInlineValue && i + 1 < args.size() && !IsCommandLineOption(args[i + 1]))
+                {
+                    ++i;
                 }
 #endif
                 continue;
@@ -5390,11 +5515,17 @@ namespace Game
             Sandbox,
             [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
              pathTime = m_CameraPathTime,
-             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
-             viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
+             skinnedCrowdCount = m_SkinnedCrowdCount, parallelPose = m_ParallelPose,
+             parallelPoseMinCount = m_ParallelPoseMinCount, parallelPoseGrain = m_ParallelPoseGrain]
+            (const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
+                mode->GetData().m_SkinnedCrowdCount = skinnedCrowdCount;
+                mode->GetData().m_ParallelPose = parallelPose;
+                mode->GetData().m_ParallelPoseMinCount = parallelPoseMinCount;
+                mode->GetData().m_ParallelPoseGrain = parallelPoseGrain;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
