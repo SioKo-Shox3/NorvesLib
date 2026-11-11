@@ -532,3 +532,16 @@ Vulkan の 2 シナリオは次のように回す。
 cmake --build build --config Debug --target RenderingHdrSceneCaptureTest
 ctest --test-dir build -C Debug -R "^RenderingSkinnedCull(VulkanTest|GBufferFallbackVulkanTest)$" --output-on-failure
 ```
+
+## PaleFlat の照明の式の試験（MaterialResourcesTest の中の PaleFlatShadingContractTest）
+
+- 反証する契約: Flatness が 1 のとき直接光の係数は N・L と影に依らず [WrapMin, 1] に収まり、Flatness が 0 のとき Lambert と一致する。一定の放射輝度 L に対する全球の平均照度は πL となり、不正な設定値は Sanitize で補正される。
+- 撮影・ログでは気づけない理由: 撮影は回さない決まりで、式がずれても少し明暗のある白のまま動くため、通常のログでも気づけない。
+- 失敗は黙って起きる。例外もログも出ず、白の明るさと明暗比がずれる。
+
+テストを有効にした構成で、CPU の試験は次のように回す。
+
+```powershell
+cmake --build build --config Debug --target MaterialResourcesTest -- /m:1
+ctest --test-dir build -C Debug -R "^(PaleFlatShadingContractTest|MaterialResourcesTest|ShadingModelContractTest)$" --no-tests=error --output-on-failure --timeout 300
+```

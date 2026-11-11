@@ -1665,6 +1665,7 @@ add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
 add_test(NAME GBufferPipelineKeyTest COMMAND MaterialResourcesTest --test=GBufferPipelineKeyTest)
 add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
+add_test(NAME PaleFlatShadingContractTest COMMAND MaterialResourcesTest --test=PaleFlatShadingContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -2404,6 +2405,7 @@ norves_add_test_bundle(MaterialResourcesTest
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
     MEMBER GBufferPipelineKeyTest GBufferPipelineKeyTest.cpp
     MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
+    MEMBER PaleFlatShadingContractTest PaleFlatShadingContractTest.cpp
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE
