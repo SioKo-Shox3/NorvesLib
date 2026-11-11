@@ -43,6 +43,7 @@
 #include "Math/MatrixUtils.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include "Thread/JobSystem.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -236,6 +237,7 @@ namespace NorvesLib::Core::Rendering
         m_bEnableFrustumCulling = settings.bEnableFrustumCulling;
         m_bEnableOcclusionCulling = settings.bEnableOcclusionCulling;
         m_bEnableDistanceCulling = settings.bEnableDistanceCulling;
+        m_CullParallelSettings = settings.CullParallel;
         m_MaxDrawDistance = settings.MaxDrawDistance;
         m_bEnableInstancing = settings.bEnableInstancing;
         m_MinInstanceCount = settings.MinInstanceCount;
@@ -1484,40 +1486,15 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void SceneView::CullProxies(Viewport *viewport)
+    void SceneView::CullMeshProxyRange(size_t begin, size_t end,
+                                      const Math::Matrix4x4& viewProjection,
+                                      const Math::Vector3& cameraPosition,
+                                      Container::VariableArray<MeshProxy*>& outVisible)
     {
-        NORVES_STAT_TIME_START(cullingViewport);
-
-        m_VisibleMeshProxies.clear();
-        m_VisibleBoardProxies.clear();
-
-        if (!viewport)
+        const auto& suppressedMeshComponentIds = m_SuppressedMeshComponentIds;
+        for (size_t index = begin; index < end; ++index)
         {
-            return;
-        }
-
-        const CameraProxy &camera = viewport->GetCamera();
-        const Math::Matrix4x4 viewProjection =
-            CameraViewConstants::BuildCullingViewProjectionMatrix(camera, viewport->GetAspectRatio());
-
-        Math::Vector3 cameraPosition(
-            camera.PositionX,
-            camera.PositionY,
-            camera.PositionZ);
-
-        Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
-
-        for (BoardProxy& proxy : m_BoardProxies)
-        {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
-        }
-        for (BoardProxy& proxy : m_TransientBoardProxies)
-        {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
-        }
-
-        for (MeshProxy &proxy : m_MeshProxies)
-        {
+            MeshProxy& proxy = m_MeshProxies[index];
             if (suppressedMeshComponentIds.find(proxy.ComponentId) != suppressedMeshComponentIds.end())
             {
                 continue;
@@ -1538,9 +1515,84 @@ namespace NorvesLib::Core::Rendering
             if (bVisible)
             {
                 proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-                m_VisibleMeshProxies.push_back(&proxy);
+                outVisible.push_back(&proxy);
             }
         }
+    }
+
+    void SceneView::CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition)
+    {
+        const size_t n = m_MeshProxies.size();
+        const size_t chunkSize = std::max(m_CullParallelSettings.ChunkSize, size_t{1});
+        // 加算による桁あふれを避けて切り上げる
+        const size_t chunkCount = n / chunkSize + (n % chunkSize != 0 ? 1 : 0);
+        if (n < m_CullParallelSettings.MinProxyCount || chunkCount <= 1)
+        {
+            CullMeshProxyRange(0, n, viewProjection, cameraPosition, m_VisibleMeshProxies);
+            return;
+        }
+
+        if (m_CullChunkVisible.size() < chunkCount)
+        {
+            m_CullChunkVisible.resize(chunkCount);
+        }
+
+        NorvesLib::Thread::JobSystem::Get().ParallelFor(chunkCount, 1, [&](size_t chunk)
+        {
+            auto& out = m_CullChunkVisible[chunk];
+            out.clear();
+            const size_t begin = chunk * chunkSize;
+            const size_t end = begin + std::min(chunkSize, n - begin);
+            CullMeshProxyRange(begin, end, viewProjection, cameraPosition, out);
+        });
+
+        size_t visibleCount = 0;
+        for (size_t chunk = 0; chunk < chunkCount; ++chunk)
+        {
+            visibleCount += m_CullChunkVisible[chunk].size();
+        }
+        m_VisibleMeshProxies.reserve(visibleCount);
+
+        // 完了順によらず、元のプロキシの並びで連結する
+        for (size_t chunk = 0; chunk < chunkCount; ++chunk)
+        {
+            const auto& visible = m_CullChunkVisible[chunk];
+            m_VisibleMeshProxies.insert(m_VisibleMeshProxies.end(), visible.begin(), visible.end());
+        }
+    }
+
+    void SceneView::CullProxies(Viewport *viewport)
+    {
+        NORVES_STAT_TIME_START(cullingViewport);
+
+        m_VisibleMeshProxies.clear();
+        m_SuppressedMeshComponentIds.clear();
+        m_VisibleBoardProxies.clear();
+
+        if (!viewport)
+        {
+            return;
+        }
+
+        const CameraProxy &camera = viewport->GetCamera();
+        const Math::Matrix4x4 viewProjection =
+            CameraViewConstants::BuildCullingViewProjectionMatrix(camera, viewport->GetAspectRatio());
+
+        Math::Vector3 cameraPosition(
+            camera.PositionX,
+            camera.PositionY,
+            camera.PositionZ);
+
+        for (BoardProxy& proxy : m_BoardProxies)
+        {
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+        }
+        for (BoardProxy& proxy : m_TransientBoardProxies)
+        {
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+        }
+
+        CullMeshProxies(viewProjection, cameraPosition);
 
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
@@ -1552,6 +1604,7 @@ namespace NorvesLib::Core::Rendering
     {
         NORVES_STAT_TIME_START(cullingSnapshot);
         m_VisibleMeshProxies.clear();
+        m_SuppressedMeshComponentIds.clear();
         m_VisibleBoardProxies.clear();
 
         if (!viewport.bHasCamera)
@@ -1588,42 +1641,16 @@ namespace NorvesLib::Core::Rendering
         const Math::Matrix4x4 viewProjection =
             CameraViewConstants::BuildCullingViewProjectionMatrix(camera, aspectRatio);
 
-        Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
-
         for (BoardProxy& proxy : m_BoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
         }
         for (BoardProxy& proxy : m_TransientBoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
         }
 
-        for (MeshProxy &proxy : m_MeshProxies)
-        {
-            if (suppressedMeshComponentIds.find(proxy.ComponentId) != suppressedMeshComponentIds.end())
-            {
-                continue;
-            }
-
-            bool bVisible = true;
-
-            if (m_bEnableFrustumCulling && bVisible)
-            {
-                bVisible = FrustumCull(proxy, viewProjection);
-            }
-
-            if (m_bEnableDistanceCulling && bVisible)
-            {
-                bVisible = DistanceCull(proxy, cameraPosition);
-            }
-
-            if (bVisible)
-            {
-                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-                m_VisibleMeshProxies.push_back(&proxy);
-            }
-        }
+        CullMeshProxies(viewProjection, cameraPosition);
 
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
