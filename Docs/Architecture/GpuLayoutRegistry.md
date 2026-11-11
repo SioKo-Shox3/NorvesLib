@@ -271,8 +271,8 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体�
 
 | オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
 |---|---|---|---|
-| 976 | `skyOcclusionInfo: uint32_t[4]` | `uvec4` | 有効（1/0）/ 段の数 / 解像度 / 0 |
-| 992 | `skyOcclusionParams: float[4]` | `vec4` | Strength / DiffuseExponent / GroundHeightMeters / 0 |
+| 976 | `skyOcclusionInfo: uint32_t[4]` | `uvec4` | 有効（1/0）/ 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列） |
+| 992 | `skyOcclusionParams: float[4]` | `vec4` | Strength / DiffuseExponent / GroundHeightMeters / SpecularStrength |
 | 1008 | `skyOcclusionBounce: float[4]` | `vec4` | rgb = OccluderBounceColor × OccluderBounceIntensity、w = 0 |
 | 1024 | `skyOcclusionWindowOrigin: int32_t[4][4]` | `ivec4[4]` | 段ごとの xy = 窓の最小ワールドテクセル（X/Z）、zw = 0 |
 | 1088 | `skyOcclusionTexelMeters: float[4]` | `vec4` | 段ごとのテクセル幅（m）。使わない段は 0 |

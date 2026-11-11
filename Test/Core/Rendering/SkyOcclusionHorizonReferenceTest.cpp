@@ -126,6 +126,27 @@ namespace
         Expect(maxError <= 0.03, "半透明な平板の L1 可視率");
     }
 
+    void TestSpecularTransmittance()
+    {
+        const SkyOcclusionParameters parameters;
+        constexpr float opacity = 0.9f;
+        const SkyOcclusionReferenceGrid grid = MakeSlab(parameters, opacity);
+        const NorvesLib::Math::Vector3 position(0.0f, 0.25f, 0.0f);
+        const NorvesLib::Math::Vector3 directions[] = {
+            {std::sqrt(1.0f - 0.9f * 0.9f), 0.9f, 0.0f},
+            {std::sqrt(1.0f - 0.25f * 0.25f), 0.25f, 0.0f}};
+        const double sigma = -std::log(1.0 - static_cast<double>(opacity)) / 10.0;
+        for (const auto& direction : directions)
+        {
+            const double expected = std::exp(-sigma * (10.0 - position.y) / direction.y);
+            const double actual = EvaluateSkySpecularTransmittance(grid, parameters, position, direction);
+            const double relativeError = std::abs(actual - expected) / expected;
+            std::printf("鏡面の樹冠透過率: 方向の高さ %.2f、実測 %.10f、解析値 %.10f、相対誤差 %.10g\n",
+                direction.y, actual, expected, relativeError);
+            Expect(relativeError <= 1.0e-5, "樹冠の透過率と解析値の相対誤差");
+        }
+    }
+
     void TestWalls()
     {
         const SkyOcclusionParameters parameters;
@@ -250,6 +271,7 @@ int main()
     TestEmpty();
     TestOpaqueSlab();
     TestTransparentSlab();
+    TestSpecularTransmittance();
     TestWalls();
     TestSpecular();
     if (g_FailureCount != 0)

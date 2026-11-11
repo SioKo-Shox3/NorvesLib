@@ -1641,6 +1641,13 @@ register_rendering_gpu_test(
     --scene=indoor
     --capture-source=back-buffer
     --ao-scenario=cornell-room)
+# 樹冠の下の空の遮蔽と無効時の画像を確かめる。
+register_rendering_gpu_test(
+    RenderingSkyOcclusionCanopyVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --sky-occlusion-scenario=canopy)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 
