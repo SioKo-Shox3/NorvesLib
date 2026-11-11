@@ -38,8 +38,18 @@
 
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
+## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
+- status: todo
+- done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)のビルドが通り、ctest(GPU・Reference のラベルと Golden・PathTracingReference・Vulkan の名前を外す)が通る。
+- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure`
+- paths: Test/**, CMakeLists.txt
+- notes: 人の決定: 実行できたか以外を見ていないグラフィックの試験は要らない。試験を走らせて決めない(ウィンドウが開いて利用者の邪魔になる)。試験のコードを読んで決める。
+
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
 - status: todo
+- after: GFX-TEST-PRUNE-1112
 - done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 17 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。17 行の和集合が除外の後の全部と一致し重なりが無いことを `ctest -N` で確かめ、行ごとの本数と時間を `PROGRESS.md` に書く。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
