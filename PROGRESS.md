@@ -10276,3 +10276,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-075132/verify-G2-GR83-LOOSE-SKELETAL.txt`（`cmake --build ... CookedMeshTest AssetCook Game TextureResourcesAssetLoadProfileContractTest` の Build exit code 0、ctest 9 本 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
 - 人が見るときの見どころ: 開発ビルドの Game を `--scene=` で Rendering3DTest（骨格は `M9SkeletalPreparation.cpp` の `LoadAsync`）に入れ、`--allow-loose-skeletal` を付けたときログに `SKELETAL_ASSETS allow_loose=1` が出ること。manifest から骨格の項目を外して起動すると AssetLoadProfile の 3 段が `source=loose` になり、付けないと `source=none` の失敗になること。撮影・計測の確かめは回さない決まり。
 - Next: 分割の資産を cook せずに確かめる手段は無いまま。要るなら論理パス→ソースの対応表と分割の cook の CPU 部分の Core への移設を別の項目で起こす（今は分割の経路は本番から呼ばれていない）。
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、再検証の落ちの直し・完了）
+- Done: ランナーの再検証は、このブランチの `TASKS.md` に判断役が書き換えた done-when と verify が入っておらず、古い verify（build の対象に `TextureResourcesAssetLoadProfileContractTest` が無い版）で回って `ModelResourcesAssetLoadProfileContractTest` が Not Run になっていた。判断（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）で書き換えた done-when と verify を、統合ブランチの項目と同じ文面でこのブランチへ写した。コードの変更は無い。
+- 証拠: 書き換えた verify 2 本は、今と同じコード（0c76e9b5 以後の変更は `TASKS.md`・`PROGRESS.md` だけ）で回して合格している（U6 の確かめ: Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0）。
+- Notes: 盤面が判断で書き換えた欄が、作業のブランチの `TASKS.md` に入らないまま再開されると、ランナーは古い verify で再検証する。
