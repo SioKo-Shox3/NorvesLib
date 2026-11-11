@@ -1798,6 +1798,9 @@ target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+# CullProxiesParallelEquivalenceTest は JobSystem::ParallelFor の上の試験なので、
+# この束のビルドで JobParallelForTest を含む JobSystemShutdownTest の実行ファイルもそろえる。
+add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)
 add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
 
 add_executable(ComponentDirtyTrackingTest
