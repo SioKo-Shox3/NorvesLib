@@ -213,6 +213,18 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief Blend が Masked のときだけ効く切り抜き方式。
+     *
+     * Test は coverage < AlphaCutoff で破棄する。
+     * Hash は時間で変わるノイズの閾値で破棄し、TAA に積分させる。
+     */
+    enum class AlphaClipMode : uint8_t
+    {
+        Test,
+        Hash
+    };
+
+    /**
      * @brief シェーディングモデル
      */
     enum class ShadingModel : uint8_t
@@ -373,6 +385,10 @@ namespace NorvesLib::Core::Rendering
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
+        /// Masked の Test の閾値。RenderMaterialStore が有限の 0〜1 に正規化（非有限は 0.5）。
+        float AlphaCutoff = 0.5f;
+        /// Blend が Masked のときだけ効く切り抜き方式。
+        AlphaClipMode AlphaClip = AlphaClipMode::Test;
         /// 半透明のとき、被覆率を Scene.Reactive へ積み TAA の残像を抑える。既定は書かない。
         /// 雨・粒子は TAA の後の段で合成するのが推奨で、これは TAA の前に描く半透明だけに使う。
         bool bWritesReactive = false;
@@ -414,6 +430,10 @@ namespace NorvesLib::Core::Rendering
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
+        /// Masked の Test の閾値。RenderMaterialStore が有限の 0〜1 に正規化（非有限は 0.5）。
+        float AlphaCutoff = 0.5f;
+        /// Blend が Masked のときだけ効く切り抜き方式。
+        AlphaClipMode AlphaClip = AlphaClipMode::Test;
         /// 半透明のとき、被覆率を Scene.Reactive へ積み TAA の残像を抑える。既定は書かない。
         /// 雨・粒子は TAA の後の段で合成するのが推奨で、これは TAA の前に描く半透明だけに使う。
         bool bWritesReactive = false;

@@ -1287,7 +1287,8 @@ namespace NorvesLib::Test::RenderingValidation
                                          ? TEXT("RenderingValidationNeutral")
                                          : index == 1u ? TEXT("RenderingValidationEmissive")
                                                        : TEXT("RenderingValidationLegacyTransparent");
-            materialData.bTwoSided = true;
+            // 両面は今まで GBuffer で効いていなかったので、基準画像の見た目を保つため不透明の材質は片面にする。
+            materialData.bTwoSided = index == 2u;
             materialData.bCastShadows = false;
             if (index == 1u)
             {
@@ -1354,7 +1355,8 @@ namespace NorvesLib::Test::RenderingValidation
                 materialData.RoughnessTexture = roughnessTextures[roughnessIndex];
                 materialData.MetallicTexture = metallicQueryTextures[metallicQueryIndex];
                 materialData.AOTexture = aoTexture;
-                materialData.bTwoSided = true;
+                // 両面は今まで GBuffer で効いていなかったので、基準画像の見た目を保つため不透明の材質は片面にする。
+                materialData.bTwoSided = false;
                 materialData.bCastShadows = false;
                 materialData.DebugName = TEXT("RenderingValidationP4Material");
                 p4Materials[materialIndex] = resources.Materials().Create(materialData);
