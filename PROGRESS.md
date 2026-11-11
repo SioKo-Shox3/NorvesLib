@@ -10836,3 +10836,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（lighting.frag・forward_transparent.frag の危険地帯）。PT との比べは G11-GR56-SKY-OCC-REFERENCE、水たまりの反射は G11-GR59-PUDDLES がこの関数を使う
 - 人が見るときの見どころ: Debug か RelWithDebInfo で `--scene=rendering3dtest --sky-occluder-demo --sky-occlusion`。緑の樹冠 3 つの下で、球などの鏡面に映る空が暗くなり（滑らかな面ほど強く落ちる）、樹冠の外の映り込みは変わらない。粗い地面・岩の鏡面はほとんど変わらない（粗さ 0.75 以上は透過率を辿らない）。半透明の物体の鏡面も樹冠の下で同じく落ちる。`--sky-occlusion` を付けない既定の起動では見た目は変わらない。撮影・計測の確かめは回さない決まり
 - Notes: 開発用の比べの経路 `--rtgi-specular=off`（lighting.frag の `EvaluateRTGIEnvironmentSpecular` の `ddgiInfo.z` の分岐）は変更前の式のままで、空の遮蔽の鏡面の係数を掛けない。滑らかな画素で反射の向きの透過率の読みが最大 28 歩 × 4 回増えるが GPU の時間は測っていない
+
+- U1 SceneView のメッシュのカリングをチャンクに分けて並列に回す: 着地(直し 0 回)
+- U2 草のタイルの選択を行のチャンクに分けて並列に回し、直列との一致のケースを足す: 着地(直し 0 回)
+- U3 CullProxiesParallelEquivalenceTest を足してタスクの verify を通す: 着地(直し 0 回)
+## 2026-11-11 G12-GR108-CULL-PARALLEL（run 20261111-223526 の反復 1、完了）
+- Done: `SceneView::CullProxies` の 2 つの版（Viewport 版と ViewportSnapshot 版）で、板のループ（抑えるメッシュの集合を作る）を先に直列で済ませ、メッシュのループを共通の `CullMeshProxies` / `CullMeshProxyRange` にまとめた。メッシュのプロキシが `SceneViewCullParallelSettings::MinProxyCount` 以上でチャンク（`ChunkSize`）が 2 つ以上なら `JobSystem::ParallelFor` でチャンクごとのローカルの一覧に書き、チャンクの順に連結する（各チャンクが書くのは自分の範囲の `SortDepth` と自分の一覧だけ）。抑えたメッシュの集合はメンバ `m_SuppressedMeshComponentIds` に移し、`GetSuppressedMeshComponentIds()` で読める。設定は `SceneViewSettings::CullParallel` と `SetCullParallelSettings` で持つ。`GrassTileSelector::Select` は密度のキャッシュの更新を先に直列で済ませ、行（TileZ）の範囲の走査を切り出し、候補のタイルの数が `GrassTileSelectionParallelSettings::MinCandidateTileCount` 以上なら `RowsPerChunk` 行のチャンクに分けて並列に回し、チャンクの順に連結する。どちらも既定は直列（閾値の既定は型の最大値。G12-GR108-PERF-CHECK の測定で決める）。試験は `CullProxiesParallelEquivalenceTest`（SceneViewProxyLookupTest の束の MEMBER。メッシュ 0・1・63・64・65・129・10 万、チャンク 64 と 10 万では 1024 も、2 つの版の両方で、可視の一覧の順・要素・`SortDepth` のビット・全メッシュの `SortDepth`・抑えた集合が直列と一致し、並列を 2 回回して同じ）と、`GrassTileSelectionTest` の中の直列と並列（行のチャンク 1・3・64、各 2 回）のバイト一致のケース
+- 証拠: `.harness/runs/20261111-223526/verify-G12-GR108-CULL-PARALLEL.txt`（verify のビルドの行 2 本と JobSystemShutdownTest・CameraViewConstantsTest のビルドが exit 0、verify の ctest が 100% tests passed, 0 tests failed out of 7（CullProxiesParallelEquivalenceTest・SceneViewProxyLookupTest・SceneViewProxyReconcileTest・SceneViewViewportCommandTest・MeshBatcherTest・InstanceDataFlattenTest・JobParallelForTest）、GrassTileSelectionTest が Passed。10 万の場面は可視 7476・抑制 9 で両方の版とチャンク 64・1024 が一致。numstat の 2 通りが一致、新しい試験のファイルは BOM + CRLF）
+- Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める（今は直列なので実行時の振る舞いは変わらない）
+- Notes: 並列の経路ではチャンクの一覧をワーカーのスレッドで伸ばし、別のスレッドで解放することがある。`ThreadLocalCache` の `m_allocatedSize`（統計だけ）は解放したスレッドの側で引かれるので、そのスレッドの数が一時的に負へ回り込みうる（既存の ECS の `ParallelFor` でも同じ形）。描画の結果には関わらない。見た目は変わらない（既定は直列）ので、人が見る所は無い
+- U4 verify のビルドの行で JobParallelForTest の実行ファイルもそろうようにする: 着地(直し 0 回)
+## 2026-11-11 G12-GR108-CULL-PARALLEL（run 20261111-223526 の反復 2、完了）
+- Done: 反復 1 の差し戻し（ランナーの再実行で verify の ctest の `JobParallelForTest` が Not Run。`JobSystemShutdownTest` の束の実行ファイルを verify のビルドの行が作らない）を直した。`Test/Core/Rendering/CMakeLists.txt` で `add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)` を足し、verify のビルドの行だけで `ParallelFor` の試験の実行ファイルもそろうようにした。実装（カリングと草のタイルの選択の並列化）は反復 1 のまま
+- 証拠: `.harness/runs/20261111-223526/verify-G12-GR108-CULL-PARALLEL-iter2.txt`（`build/Test/Thread/Debug/JobSystemShutdownTest.exe` を消して無いことを確かめた後、verify のビルドの行がそのまま exit 0 で同じ実行ファイルを作り、verify の ctest が 100% tests passed, 0 tests failed out of 7（JobParallelForTest を含む）・exit 0。numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
+- Notes: 見た目は変わらない（既定は直列）ので、人が見る所は無い。撮影・計測の確かめは回さない決まり
+## 2026-11-12 G12-GR108-CULL-PARALLEL（run 20261112-065208 の反復 1、完了）
+- Done: 前の走行の後に評価者が枠切れで評価できず作業中に戻っていたものを、完了に戻した。コードは反復 2 のまま（作業単位 U1〜U4 はすべて着地済み）。差分を読み直し、メッシュのカリングの並列の経路はチャンクごとに自分の範囲の `SortDepth` と自分の一覧だけを書き、`FrustumCull`・`DistanceCull` は const で共有の状態を書かないこと、草のタイルの選択は密度のキャッシュの更新を並列の前に済ませること、2 つの試験が `JobSystem` を 4 ワーカーで初期化して並列の経路を実際に通すことを確かめた
+- 証拠: `.harness/runs/20261112-065208/verify-G12-GR108-CULL-PARALLEL-last-unit.txt`（最後の単位の確かめの写し。verify のビルドの行が exit 0、verify の ctest が 100% tests passed, 0 tests failed out of 7（CullProxiesParallelEquivalenceTest・JobParallelForTest を含む）・exit 0。その後に変わったのは TASKS.md・PROGRESS.md だけ）
+- Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
+- Notes: 撮影・計測の確かめは回さない決まり。見た目は変わらない（既定は直列）
