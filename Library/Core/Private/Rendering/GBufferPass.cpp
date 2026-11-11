@@ -253,11 +253,15 @@ namespace NorvesLib::Core::Rendering
         m_DepthHandle = {};
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
-        m_SkinnedGBufferPipeline.reset();
-        m_SkinnedGBufferWireframePipeline.reset();
-        m_GBufferPipeline.reset();
+        m_Pipelines.Clear();
+        m_ProgramShaders.clear();
+        m_WarnedPrograms.clear();
+        m_ProgramRegistry = nullptr;
+        m_ProgramRegistryRevision = 0;
+        m_bPipelinesPrepared = false;
+        m_bParallelAttachmentsReady = false;
+        m_bProgramOverlayPrepared = false;
         m_SkinnedGBufferVertexShader.reset();
-        m_GBufferWireframePipeline.reset();
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
@@ -299,13 +303,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // サイズ変更があればGBufferリソースを再作成
-        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr &&
-                                      m_SkinnedGBufferPipeline != nullptr;
-#if NORVES_BUILD_DEVELOPMENT
-        bGBufferPipelinesReady = bGBufferPipelinesReady &&
-                                 m_GBufferWireframePipeline != nullptr &&
-                                 m_SkinnedGBufferWireframePipeline != nullptr;
-#endif
+        const bool bGBufferResourcesReady = AreGBufferResourcesReady();
 
         if (width != m_CurrentWidth ||
             height != m_CurrentHeight ||
@@ -318,7 +316,7 @@ namespace NorvesLib::Core::Rendering
             !m_DepthTexture ||
             !m_GBufferRenderPass ||
             !m_GBufferFramebuffer ||
-            !bGBufferPipelinesReady)
+            !bGBufferResourcesReady)
         {
             CreateGBufferResources(width, height, context);
         }
@@ -338,11 +336,39 @@ namespace NorvesLib::Core::Rendering
         return VisibilityResolveGeometry::IsSupported(device->GetCapabilities());
     }
 
+    bool GBufferPass::HasProgramDraws(const ViewRenderContext& context) const
+    {
+        const auto* materials = context.Resources.Materials;
+        if (!materials)
+        {
+            return false;
+        }
+        for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+        {
+            const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
+                                                       ? materials->GetData(command.Draw.MaterialHandle)
+                                                       : nullptr;
+            if (material && material->ProgramId != kStandardGBufferProgramId)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool GBufferPass::IsDrawingSkippedForVisibility(const ViewRenderContext& context) const
+    {
+        return ShouldSkipDraws(context.Device, context.GetActiveDebugMode());
+    }
+
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
         m_bConstantTexturesPrepared = false;
+        m_bPipelinesPrepared = false;
+        m_bParallelAttachmentsReady = false;
         m_bHasSkinnedDraws = false;
+        m_bProgramOverlayPrepared = false;
         if (context)
         {
             for (const DrawCommand& command : context->GetActiveOpaqueCommands())
@@ -453,6 +479,11 @@ namespace NorvesLib::Core::Rendering
 
     void GBufferPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
+        // 並列の準備に失敗したとき、作業スレッドで資源や表の作成を再試行しない。
+        if (m_bPipelinesPrepared && !m_bParallelAttachmentsReady)
+        {
+            return;
+        }
         if (!m_bInitialized)
         {
             if (!Initialize(context))
@@ -475,21 +506,34 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!PrepareGBufferAttachments(albedo->GetWidth(),
-                                       albedo->GetHeight(),
-                                       albedo,
-                                       normal,
-                                       material,
-                                       emissive,
-                                       velocity,
-                                       depth,
-                                       true))
+        if (m_bPipelinesPrepared)
+        {
+            // 準備段と異なる添付先なら、作業スレッドで表や render pass を作り直さず描画を飛ばす。
+            if (albedo.get() != m_AlbedoTexture.get() || normal.get() != m_NormalTexture.get() ||
+                material.get() != m_MaterialTexture.get() || emissive.get() != m_EmissiveTexture.get() ||
+                velocity.get() != m_VelocityTexture.get() || depth.get() != m_DepthTexture.get())
+            {
+                NORVES_LOG_WARNING("GBufferPass", "並列記録の準備後に添付先が変わったため描画を飛ばします");
+                return;
+            }
+        }
+        else if (!PrepareGBufferAttachments(albedo->GetWidth(),
+                                            albedo->GetHeight(),
+                                            albedo,
+                                            normal,
+                                            material,
+                                            emissive,
+                                            velocity,
+                                            depth,
+                                            true))
         {
             return;
         }
 
         Execute(context);
         m_bConstantTexturesPrepared = false;
+        m_bPipelinesPrepared = false;
+        m_bParallelAttachmentsReady = false;
     }
 
     bool GBufferPass::DeclaresAllLayoutChanges() const
@@ -503,18 +547,21 @@ namespace NorvesLib::Core::Rendering
 
     RGRecordPolicy GBufferPass::GetRecordPolicy() const
     {
-        // Execute は区間の借りる口から定数と記述子を借りて描画を積むだけ（材質の灰色テクスチャは準備段で作る）。
+        // Execute は区間の借りる口から定数と記述子を借りて描画を積むだけ（灰色テクスチャとパイプラインは準備段で作る）。
         // スキンの描画は共有のパレットの記録へ書くので、あるフレームは直列で記録する
         return DeclaresAllLayoutChanges() && !m_bHasSkinnedDraws ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
     }
 
     void GBufferPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
     {
+        m_bPipelinesPrepared = false;
+        m_bParallelAttachmentsReady = false;
         if (!m_bInitialized && !Initialize(context))
         {
+            m_bPipelinesPrepared = true;
             return;
         }
-        // 出力が変わったフレームの render pass・framebuffer の作り直しを先に済ませる（Execute は同じなら何も作らない）
+        // 出力が変わったフレームの render pass・framebuffer の作り直しを先に済ませる。
         RHI::TexturePtr albedo = resources.GetTexture(m_AlbedoHandle);
         RHI::TexturePtr normal = resources.GetTexture(m_NormalHandle);
         RHI::TexturePtr material = resources.GetTexture(m_MaterialHandle);
@@ -523,18 +570,33 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr depth = resources.GetTexture(m_DepthHandle);
         if (albedo && normal && material && emissive && velocity && depth)
         {
-            PrepareGBufferAttachments(albedo->GetWidth(), albedo->GetHeight(), albedo, normal, material, emissive,
-                                      velocity, depth, true);
+            m_bParallelAttachmentsReady =
+                PrepareGBufferAttachments(albedo->GetWidth(), albedo->GetHeight(), albedo, normal, material, emissive,
+                                          velocity, depth, true);
         }
-        PrepareConstantMaterialTextures(context);
-        m_bConstantTexturesPrepared = true;
+        if (m_bParallelAttachmentsReady)
+        {
+            RefreshGBufferPrograms();
+            for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+            {
+                const MaterialResourceData* materialData =
+                    context.Resources.Materials && command.Draw.MaterialHandle.IsValid()
+                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
+                        : nullptr;
+                GetGBufferPipeline(context, materialData, command.Draw.PayloadKind == DrawPayloadKind::Skinned);
+            }
+            PrepareConstantMaterialTextures(context);
+            m_bConstantTexturesPrepared = true;
+        }
+        // 以後の Execute は表を読むだけにする。準備失敗時も作業スレッドで再試行しない。
+        m_bPipelinesPrepared = true;
     }
 
-    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context)
+    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context, bool bProgramOnly)
     {
         // Execute の BuildMaterialDescriptor と同じ条件（スカラー値があり、その枠のテクスチャが無い）で作る
         const auto* materials = context.Resources.Materials;
-        if (!materials || ShouldSkipDraws(context.Device, context.GetActiveDebugMode()))
+        if (!materials || (!bProgramOnly && ShouldSkipDraws(context.Device, context.GetActiveDebugMode())))
         {
             return;
         }
@@ -547,7 +609,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const auto* matData = materials->GetData(materialHandle);
-            if (!matData)
+            if (!matData || (bProgramOnly && matData->ProgramId == kStandardGBufferProgramId))
             {
                 continue;
             }
@@ -569,18 +631,17 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr &&
-                                      m_SkinnedGBufferPipeline != nullptr;
-#if NORVES_BUILD_DEVELOPMENT
-        bGBufferPipelinesReady = bGBufferPipelinesReady &&
-                                 m_GBufferWireframePipeline != nullptr &&
-                                 m_SkinnedGBufferWireframePipeline != nullptr;
-#endif
+        const bool bGBufferResourcesReady = AreGBufferResourcesReady();
 
-        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bGBufferPipelinesReady)
+        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bGBufferResourcesReady)
         {
-            NORVES_LOG_WARNING("GBufferPass", "GBuffer resources not ready, skipping");
+            NORVES_LOG_WARNING("GBufferPass", "GBuffer の準備ができていないため描画を飛ばします");
             return;
+        }
+
+        if (!m_bPipelinesPrepared)
+        {
+            RefreshGBufferPrograms();
         }
 
         // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
@@ -624,6 +685,73 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        RecordGBufferDraws(context, m_GBufferRenderPass, m_GBufferFramebuffer, DrawSelection::All);
+    }
+
+    void GBufferPass::PrepareProgramOverlay(const ViewRenderContext& context)
+    {
+        m_bProgramOverlayPrepared = false;
+        if (!m_bInitialized || !context.Resources.Materials)
+        {
+            return;
+        }
+        if (!m_GBufferRenderPass || !m_bRenderPassUsesRenderGraphInitialStates)
+        {
+            // グラフのテクスチャが確保される前でも、設定された形式で互換の render pass を用意できる。
+            const RHI::TexturePtr empty;
+            const RenderPassSignature signature = CreateGBufferRenderPassSignature(
+                ResolveGBufferWidth(context), ResolveGBufferHeight(context), empty, empty, empty, empty, empty, empty, true);
+            if (!EnsureGBufferRenderPass(signature))
+            {
+                return;
+            }
+        }
+        if (!AreGBufferResourcesReady())
+        {
+            return;
+        }
+        RefreshGBufferPrograms();
+        for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+        {
+            const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
+                                                       ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
+                                                       : nullptr;
+            if (material && material->ProgramId != kStandardGBufferProgramId)
+            {
+                GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned);
+            }
+        }
+        PrepareConstantMaterialTextures(context, true);
+        m_bProgramOverlayPrepared = true;
+    }
+
+    void GBufferPass::RecordProgramOverlay(ViewRenderContext& context,
+                                           const RHI::RenderPassPtr& renderPass,
+                                           const RHI::FramebufferPtr& framebuffer)
+    {
+        if (!m_bProgramOverlayPrepared || !renderPass || !framebuffer || !context.CommandList ||
+            !m_SceneRenderer || !context.Resources.Materials || !context.Resources.Textures ||
+            (!context.Resources.Meshes && !context.SkinnedMeshes))
+        {
+            return;
+        }
+        // 記録中は準備した表とテクスチャを読むだけにする。
+        m_bConstantTexturesPrepared = true;
+        RecordGBufferDraws(context, renderPass, framebuffer, DrawSelection::ProgramOnly);
+        m_bConstantTexturesPrepared = false;
+    }
+
+    void GBufferPass::RecordGBufferDraws(ViewRenderContext& context,
+                                         const RHI::RenderPassPtr& renderPass,
+                                         const RHI::FramebufferPtr& framebuffer,
+                                         DrawSelection selection)
+    {
+        const DrawCommandView opaqueCommands = context.GetActiveOpaqueCommands();
+        auto* materials = context.Resources.Materials;
+        auto* textures = context.Resources.Textures;
+        auto* meshes = context.Resources.Meshes;
+        const RHI::Viewport viewport = context.GetActiveLocalViewport();
+        const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
         const uint64_t instanceDataSize64 = context.InstanceDataBuffer
                                                 ? context.InstanceDataBuffer->GetSize()
                                                 : 0;
@@ -902,58 +1030,82 @@ namespace NorvesLib::Core::Rendering
             return allocation.DescriptorSet;
         };
 
-        for (const auto& cmd : opaqueCommands)
+        // 同じ種類の並びを保ち、標準の材質を先に積む。
+        bool bAllocationFailed = false;
+        for (uint32_t programPass = 0; programPass < 2 && !bAllocationFailed; ++programPass)
         {
-            DrawCommand drawCommand = cmd;
-            const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
-            if (bSkinned)
-            {
-                // 姿勢の AnimatedBounds を WorldTransform で変換した保守的な境界で、主カメラの視錐台外を省く。
-                if (!IsSkinnedDrawInView(cmd, skinnedViewFrustum))
-                {
-                    continue;
-                }
-                if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
-                {
-                    continue;
-                }
-            }
-            else if (!context.InstanceDataBuffer || instanceDataSize == 0)
+            if ((selection == DrawSelection::StandardOnly && programPass == 1) ||
+                (selection == DrawSelection::ProgramOnly && programPass == 0))
             {
                 continue;
             }
-
-            const uint64_t materialKey = drawCommand.Draw.MaterialHandle.Id;
-
-            RHI::DescriptorSetPtr descriptorSet;
-            if (!bSkinned && bMaterialDescriptorCacheEnabled)
+            for (const auto& cmd : opaqueCommands)
             {
-                descriptorSet = ResolveMaterialDescriptor<decltype(materialDescriptorCache), RHI::DescriptorSetPtr>(
-                    materialDescriptorCache,
-                    materialKey,
-                    [&](uint64_t) { return BuildMaterialDescriptor(drawCommand); });
-            }
-            else
-            {
-                descriptorSet = BuildMaterialDescriptor(drawCommand);
-            }
+                const MaterialResourceData* materialData =
+                    materials && cmd.Draw.MaterialHandle.IsValid() ? materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
+                const bool bProgramMaterial =
+                    (m_SceneView || selection == DrawSelection::ProgramOnly) && materialData &&
+                    materialData->ProgramId != kStandardGBufferProgramId;
+                if (bProgramMaterial != (programPass == 1))
+                {
+                    continue;
+                }
 
-            if (!descriptorSet)
-            {
-                NORVES_LOG_WARNING("GBufferPass", "UBO allocation failed, skipping remaining objects");
-                break;
-            }
+                DrawCommand drawCommand = cmd;
+                const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
+                if (bSkinned)
+                {
+                    // 姿勢の AnimatedBounds を WorldTransform で変換した保守的な境界で、主カメラの視錐台外を省く。
+                    if (!IsSkinnedDrawInView(cmd, skinnedViewFrustum))
+                    {
+                        continue;
+                    }
+                    if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (!context.InstanceDataBuffer || instanceDataSize == 0)
+                    {
+                        continue;
+                    }
+                    drawCommand.Pipeline = GetGBufferPipeline(context, materialData, false);
+                }
+                if (!drawCommand.Pipeline)
+                {
+                    continue;
+                }
 
-            if (!bSkinned)
-            {
-                drawCommand.Pipeline = SelectGBufferPipeline(context.GetActiveDebugMode());
+                const uint64_t materialKey = drawCommand.Draw.MaterialHandle.Id;
+                RHI::DescriptorSetPtr descriptorSet;
+                if (!bSkinned && bMaterialDescriptorCacheEnabled)
+                {
+                    descriptorSet = ResolveMaterialDescriptor<decltype(materialDescriptorCache), RHI::DescriptorSetPtr>(
+                        materialDescriptorCache,
+                        materialKey,
+                        [&](uint64_t) { return BuildMaterialDescriptor(drawCommand); });
+                }
+                else
+                {
+                    descriptorSet = BuildMaterialDescriptor(drawCommand);
+                }
+
+                if (!descriptorSet)
+                {
+                    NORVES_LOG_WARNING("GBufferPass", "UBO の確保に失敗したため残りの描画を飛ばします");
+                    bAllocationFailed = true;
+                    break;
+                }
+
+                drawCommand.DescriptorSet = descriptorSet;
+                drawCommand.DescriptorSetSlot = 0;
+                gBufferCommands->push_back(drawCommand);
             }
-            drawCommand.DescriptorSet = descriptorSet;
-            drawCommand.DescriptorSetSlot = 0;
-            gBufferCommands->push_back(drawCommand);
         }
 
-        EnqueueGBufferGeometryPass(context, gBufferCommands, viewport, scissor, meshes);
+        EnqueueGBufferGeometryPass(context, renderPass, framebuffer, gBufferCommands, viewport, scissor, meshes);
     }
 
     RHI::TexturePtr GBufferPass::GetOrCreateConstantGrayTexture(float value)
@@ -1015,6 +1167,8 @@ namespace NorvesLib::Core::Rendering
 
     void GBufferPass::EnqueueGBufferGeometryPass(
         ViewRenderContext &context,
+        const RHI::RenderPassPtr& renderPass,
+        const RHI::FramebufferPtr& framebuffer,
         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
         const RHI::Viewport &viewport,
         const RHI::ScissorRect &scissor,
@@ -1025,8 +1179,8 @@ namespace NorvesLib::Core::Rendering
             drawCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         }
 
-        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_GBufferRenderPass,
-                                                                     m_GBufferFramebuffer,
+        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(renderPass,
+                                                                     framebuffer,
                                                                      drawCommands,
                                                                      viewport,
                                                                      scissor,
@@ -1044,6 +1198,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         EnqueueGBufferGeometryPass(context,
+                                   m_GBufferRenderPass,
+                                   m_GBufferFramebuffer,
                                    MakeShared<Container::VariableArray<DrawCommand>>(),
                                    viewport,
                                    scissor,
@@ -1173,7 +1329,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        return EnsureGBufferPipeline();
+        return AreGBufferResourcesReady();
     }
 
     bool GBufferPass::AttachmentSignatureEquals(const AttachmentSignature& lhs,
@@ -1304,10 +1460,8 @@ namespace NorvesLib::Core::Rendering
         const RHI::RenderPassPtr previousRenderPass = m_GBufferRenderPass;
         const auto resetPipelines = [this]()
         {
-            m_SkinnedGBufferPipeline.reset();
-            m_SkinnedGBufferWireframePipeline.reset();
-            m_GBufferPipeline.reset();
-            m_GBufferWireframePipeline.reset();
+            m_Pipelines.Clear();
+            m_ProgramShaders.clear();
         };
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
@@ -1486,83 +1640,160 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool GBufferPass::EnsureGBufferPipeline()
+    bool GBufferPass::AreGBufferResourcesReady() const
     {
-        if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader ||
-            !m_SkinnedGBufferVertexShader || !m_GBufferFragmentShader)
-        {
-            return false;
-        }
-
-        // 毎フレーム呼ばれるので、実際にパイプラインを作ったときだけログを出す。
-        bool bCreated = false;
-        if (!m_GBufferPipeline)
-        {
-            if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Fill, m_GBufferPipeline))
-            {
-                return false;
-            }
-            bCreated = true;
-        }
-        if (!m_SkinnedGBufferPipeline)
-        {
-            if (!CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Fill, m_SkinnedGBufferPipeline))
-            {
-                return false;
-            }
-            bCreated = true;
-        }
-
-#if NORVES_BUILD_DEVELOPMENT
-        if (!m_GBufferWireframePipeline)
-        {
-            if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline))
-            {
-                return false;
-            }
-            bCreated = true;
-        }
-        if (!m_SkinnedGBufferWireframePipeline)
-        {
-            if (!CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Line,
-                                                     m_SkinnedGBufferWireframePipeline))
-            {
-                return false;
-            }
-            bCreated = true;
-        }
-#endif
-
-        if (bCreated)
-        {
-            NORVES_LOG_INFO("GBufferPass", "GBuffer pipelines created (%ux%u)", m_CurrentWidth, m_CurrentHeight);
-        }
-        return true;
+        return m_Device && m_GBufferRenderPass && m_GBufferVertexShader &&
+               m_SkinnedGBufferVertexShader && m_GBufferFragmentShader;
     }
 
-    bool GBufferPass::CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline)
+    void GBufferPass::RefreshGBufferPrograms()
     {
-        if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader || !m_GBufferFragmentShader)
+        const GBufferProgramRegistry* registry =
+            m_SceneView ? &m_SceneView->GetGBufferProgramRegistry() : nullptr;
+        const uint64_t revision = registry ? registry->GetRevision() : 0;
+        if (registry != m_ProgramRegistry || revision != m_ProgramRegistryRevision)
         {
-            return false;
+            m_Pipelines.Clear();
+            m_ProgramShaders.clear();
+            m_ProgramRegistry = registry;
+            m_ProgramRegistryRevision = revision;
+        }
+    }
+
+    bool GBufferPass::PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material)
+    {
+        const GBufferProgramId id = material.ProgramId;
+        const auto found = m_ProgramShaders.find(id);
+        if (found != m_ProgramShaders.end())
+        {
+            return found->second.bValid;
+        }
+
+        ProgramShaders shaders;
+        const GBufferProgramDesc* desc = m_ProgramRegistry ? m_ProgramRegistry->Find(id) : nullptr;
+        if (desc)
+        {
+            shaders.Name = desc->Name;
+            shaders.Vertex = desc->VertexShader.empty()
+                                 ? m_GBufferVertexShader
+                                 : (context.ShaderMgr ? context.ShaderMgr->LoadShader(desc->VertexShader, RHI::ShaderStage::Vertex)
+                                                      : nullptr);
+            shaders.Fragment = desc->FragmentShader.empty()
+                                   ? m_GBufferFragmentShader
+                                   : (context.ShaderMgr ? context.ShaderMgr->LoadShader(desc->FragmentShader, RHI::ShaderStage::Pixel)
+                                                        : nullptr);
+            shaders.SkinnedVertex = desc->SkinnedVertexShader.empty()
+                                        ? m_SkinnedGBufferVertexShader
+                                        : (context.ShaderMgr
+                                               ? context.ShaderMgr->LoadShader(desc->SkinnedVertexShader, RHI::ShaderStage::Vertex)
+                                               : nullptr);
+            shaders.bValid = shaders.Vertex && shaders.Fragment && shaders.SkinnedVertex;
+        }
+
+        const bool bValid = shaders.bValid;
+        m_ProgramShaders.emplace(id, shaders);
+        if (!bValid && m_WarnedPrograms.emplace(id, true).second)
+        {
+            NORVES_LOG_WARNING("GBufferPass", "プログラム '%s' を読み込めないため標準で描画します (id=%u)",
+                               desc ? desc->Name.c_str() : material.Program.c_str(), id);
+        }
+        return bValid;
+    }
+
+    RHI::PipelinePtr GBufferPass::GetGBufferPipeline(const ViewRenderContext& context,
+                                                     const MaterialResourceData* material,
+                                                     bool bSkinned)
+    {
+        if (!AreGBufferResourcesReady())
+        {
+            return nullptr;
+        }
+
+        bool bWireframe = false;
+#if NORVES_BUILD_DEVELOPMENT
+        bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe;
+#endif
+        GBufferPipelineKey key = MakeGBufferPipelineKey(m_SceneView ? material : nullptr, bSkinned, bWireframe);
+        if (m_bPipelinesPrepared || m_bProgramOverlayPrepared)
+        {
+            RHI::PipelinePtr pipeline = m_Pipelines.Find(key);
+            if (!pipeline && key.Program != kStandardGBufferProgramId)
+            {
+                key.Program = kStandardGBufferProgramId;
+                pipeline = m_Pipelines.Find(key);
+            }
+            return pipeline;
+        }
+
+        if (key.Program != kStandardGBufferProgramId && !PrepareProgramShaders(context, *material))
+        {
+            key.Program = kStandardGBufferProgramId;
+        }
+        const auto getOrCreate = [this](const GBufferPipelineKey& pipelineKey)
+        {
+            const uint32_t previousCount = m_Pipelines.GetCreatedCount();
+            RHI::PipelinePtr pipeline = m_Pipelines.GetOrCreate(
+                pipelineKey, [this](const GBufferPipelineKey& newKey) { return CreateGBufferPipeline(newKey); });
+            if (pipeline && m_Pipelines.GetCreatedCount() != previousCount)
+            {
+                const auto found = m_ProgramShaders.find(pipelineKey.Program);
+                const char* programName = pipelineKey.Program == kStandardGBufferProgramId
+                                              ? "standard"
+                                              : found->second.Name.c_str();
+                const char* polygon = pipelineKey.Polygon == RHI::PolygonMode::Line ? "line" : "fill";
+                const char* cull = pipelineKey.Cull == RHI::CullMode::Back
+                                       ? "back"
+                                       : (pipelineKey.Cull == RHI::CullMode::Front ? "front" : "none");
+                NORVES_LOG_INFO("GBufferPass", "GBufferPipelineCreated program=%s skinned=%u polygon=%s cull=%s alphaClip=%u total=%u",
+                                programName, static_cast<uint32_t>(pipelineKey.bSkinned), polygon, cull,
+                                static_cast<uint32_t>(pipelineKey.bAlphaClip), m_Pipelines.GetCreatedCount());
+            }
+            return pipeline;
+        };
+        RHI::PipelinePtr pipeline = getOrCreate(key);
+        if (!pipeline && key.Program != kStandardGBufferProgramId)
+        {
+            key.Program = kStandardGBufferProgramId;
+            pipeline = getOrCreate(key);
+        }
+        return pipeline;
+    }
+
+    RHI::PipelinePtr GBufferPass::CreateGBufferPipeline(const GBufferPipelineKey& key)
+    {
+        if (!AreGBufferResourcesReady())
+        {
+            return nullptr;
+        }
+
+        const ProgramShaders* shaders = nullptr;
+        if (key.Program != kStandardGBufferProgramId)
+        {
+            const auto found = m_ProgramShaders.find(key.Program);
+            if (found == m_ProgramShaders.end() || !found->second.bValid)
+            {
+                return nullptr;
+            }
+            shaders = &found->second;
         }
 
         // ========================================
         // GBuffer用パイプライン作成（初回のみ、またはレンダーパス変更時）
         // ========================================
         RHI::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.vertexShader = m_GBufferVertexShader;
-        pipelineDesc.pixelShader = m_GBufferFragmentShader;
+        pipelineDesc.vertexShader = shaders ? (key.bSkinned ? shaders->SkinnedVertex : shaders->Vertex)
+                                           : (key.bSkinned ? m_SkinnedGBufferVertexShader : m_GBufferVertexShader);
+        pipelineDesc.pixelShader = shaders ? shaders->Fragment : m_GBufferFragmentShader;
         pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
 
         // 頂点入力レイアウト（Position + Normal = Mesh3DVertexと同じ）
         RHI::VertexBindingDesc vertexBinding;
         vertexBinding.binding = 0;
-        vertexBinding.stride = sizeof(Mesh3DVertex);
+        vertexBinding.stride = key.bSkinned ? sizeof(SkinnedMeshVertex) : sizeof(Mesh3DVertex);
         vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
         pipelineDesc.vertexBindings.push_back(vertexBinding);
 
-        // Position: location=0, vec3
+        // 位置: location=0, vec3
         RHI::VertexAttributeDesc posAttr;
         posAttr.location = 0;
         posAttr.binding = 0;
@@ -1570,7 +1801,7 @@ namespace NorvesLib::Core::Rendering
         posAttr.offset = 0;
         pipelineDesc.vertexAttributes.push_back(posAttr);
 
-        // Normal: location=1, vec3
+        // 法線: location=1, vec3
         RHI::VertexAttributeDesc normalAttr;
         normalAttr.location = 1;
         normalAttr.binding = 0;
@@ -1578,7 +1809,7 @@ namespace NorvesLib::Core::Rendering
         normalAttr.offset = sizeof(float) * 3;
         pipelineDesc.vertexAttributes.push_back(normalAttr);
 
-        // TexCoord: location=2, vec2
+        // テクスチャ座標: location=2, vec2
         RHI::VertexAttributeDesc texCoordAttr;
         texCoordAttr.location = 2;
         texCoordAttr.binding = 0;
@@ -1587,11 +1818,12 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.vertexAttributes.push_back(texCoordAttr);
 
         // ラスタライザ
-        pipelineDesc.rasterState.polygonMode = polygonMode;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        pipelineDesc.rasterState.polygonMode = key.Polygon;
+        pipelineDesc.rasterState.cullMode = key.Cull;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
+        // bAlphaClip は後続の切り抜き対応で使う。現在はパイプラインの設定を変えない。
         // デプステスト有効
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
@@ -1647,140 +1879,18 @@ namespace NorvesLib::Core::Rendering
         }
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
-        outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        if (!outPipeline)
+        RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!pipeline)
         {
-            NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer pipeline");
-            return false;
+            NORVES_LOG_ERROR("GBufferPass", "GBuffer のパイプラインを作れませんでした");
         }
-
-        return true;
-    }
-
-    bool GBufferPass::CreateSkinnedGBufferPipelineVariant(
-        RHI::PolygonMode polygonMode,
-        RHI::PipelinePtr& outPipeline)
-    {
-        if (!m_Device || !m_GBufferRenderPass || !m_SkinnedGBufferVertexShader || !m_GBufferFragmentShader)
-        {
-            return false;
-        }
-
-        RHI::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.vertexShader = m_SkinnedGBufferVertexShader;
-        pipelineDesc.pixelShader = m_GBufferFragmentShader;
-        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-
-        RHI::VertexBindingDesc vertexBinding;
-        vertexBinding.binding = 0;
-        vertexBinding.stride = sizeof(SkinnedMeshVertex);
-        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
-        pipelineDesc.vertexBindings.push_back(vertexBinding);
-
-        RHI::VertexAttributeDesc position;
-        position.location = 0;
-        position.binding = 0;
-        position.format = RHI::Format::R32G32B32_FLOAT;
-        position.offset = 0;
-        pipelineDesc.vertexAttributes.push_back(position);
-
-        RHI::VertexAttributeDesc normal;
-        normal.location = 1;
-        normal.binding = 0;
-        normal.format = RHI::Format::R32G32B32_FLOAT;
-        normal.offset = 12;
-        pipelineDesc.vertexAttributes.push_back(normal);
-
-        RHI::VertexAttributeDesc texCoord;
-        texCoord.location = 2;
-        texCoord.binding = 0;
-        texCoord.format = RHI::Format::R32G32_FLOAT;
-        texCoord.offset = 24;
-        pipelineDesc.vertexAttributes.push_back(texCoord);
-
-        pipelineDesc.rasterState.polygonMode = polygonMode;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
-        pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
-        pipelineDesc.rasterState.lineWidth = 1.0f;
-        pipelineDesc.depthStencilState.depthTestEnable = true;
-        pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
-        for (int attachmentIndex = 0; attachmentIndex < 5; ++attachmentIndex)
-        {
-            RHI::BlendAttachmentDesc blendAttachment;
-            blendAttachment.blendEnable = false;
-            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blendAttachment);
-        }
-        pipelineDesc.renderPass = m_GBufferRenderPass;
-
-        RHI::DescriptorSetDesc descriptorSet;
-        RHI::DescriptorBinding uniformBinding;
-        uniformBinding.binding = 0;
-        uniformBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        uniformBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
-        descriptorSet.bindings.push_back(uniformBinding);
-        for (uint32_t bindingIndex = 1; bindingIndex <= 6; ++bindingIndex)
-        {
-            RHI::DescriptorBinding textureBinding;
-            textureBinding.binding = bindingIndex;
-            textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            textureBinding.stages = RHI::ShaderStage::Pixel;
-            descriptorSet.bindings.push_back(textureBinding);
-        }
-        RHI::DescriptorBinding instanceBinding;
-        instanceBinding.binding = 7;
-        instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
-        instanceBinding.stages = RHI::ShaderStage::Vertex;
-        descriptorSet.bindings.push_back(instanceBinding);
-        // binding 8-10: スキニングの現在のパレット・頂点・直前のフレームのパレット（DynamicUniformAllocator の配置と同じ）
-        for (uint32_t bindingIndex = 8; bindingIndex <= 10; ++bindingIndex)
-        {
-            RHI::DescriptorBinding storageBinding;
-            storageBinding.binding = bindingIndex;
-            storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
-            storageBinding.stages = RHI::ShaderStage::Vertex;
-            descriptorSet.bindings.push_back(storageBinding);
-        }
-        if (UsesVirtualTextureFeedbackBinding(m_Device))
-        {
-            AddVirtualTextureFeedbackBinding(descriptorSet, VirtualTextureFeedbackBindingIndex);
-        }
-        pipelineDesc.descriptorSetLayouts.push_back(descriptorSet);
-
-        outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        return outPipeline != nullptr;
-    }
-
-    RHI::PipelinePtr GBufferPass::SelectGBufferPipeline(DebugViewMode mode) const
-    {
-#if NORVES_BUILD_DEVELOPMENT
-        if (mode == DebugViewMode::Wireframe && m_GBufferWireframePipeline)
-        {
-            return m_GBufferWireframePipeline;
-        }
-#endif
-
-        return m_GBufferPipeline;
-    }
-
-    RHI::PipelinePtr GBufferPass::SelectSkinnedGBufferPipeline(DebugViewMode mode) const
-    {
-#if NORVES_BUILD_DEVELOPMENT
-        if (mode == DebugViewMode::Wireframe && m_SkinnedGBufferWireframePipeline)
-        {
-            return m_SkinnedGBufferWireframePipeline;
-        }
-#else
-        (void)mode;
-#endif
-        return m_SkinnedGBufferPipeline;
+        return pipeline;
     }
 
     bool GBufferPass::TryPrepareSkinnedCommand(
         ViewRenderContext& context,
         const DrawCommand& source,
-        DrawCommand& outCommand) const
+        DrawCommand& outCommand)
     {
         if (source.Draw.PayloadKind != DrawPayloadKind::Skinned ||
             source.Draw.bInstanced || source.Draw.InstanceCount != 1 ||
@@ -1819,7 +1929,11 @@ namespace NorvesLib::Core::Rendering
         outCommand.Skinned.PassKind = SkinnedMeshPassKind::GBuffer;
         outCommand.Skinned.FrameLease = frameLease;
         outCommand.Skinned.Prepared = prepared;
-        outCommand.Pipeline = SelectSkinnedGBufferPipeline(context.GetActiveDebugMode());
+        const MaterialResourceData* material =
+            context.Resources.Materials && source.Draw.MaterialHandle.IsValid()
+                ? context.Resources.Materials->GetData(source.Draw.MaterialHandle)
+                : nullptr;
+        outCommand.Pipeline = GetGBufferPipeline(context, material, true);
         return true;
     }
 

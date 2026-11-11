@@ -14,6 +14,7 @@
 #include "RenderResources.h"
 #include "RenderExtension/RenderExtension.h"
 #include "RenderExtension/RenderExtensionData.h"
+#include "GBufferProgramRegistry.h"
 #include "RHI/RHITypes.h"
 #include "Platform/NativeWindowHandle.h"
 #include "Container/Containers.h"
@@ -485,6 +486,20 @@ namespace NorvesLib::Core::Rendering
          * @details GameThread から呼ぶ。登録表の操作の反映は次のフレームの RenderThread の Render の先頭、初期化の窓では即時。
          */
         RenderExtensionRegistry* GetRenderExtensionRegistry();
+
+        /**
+         * @brief 主の SceneView に GBuffer プログラムを登録する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭（初期化の窓では即時）。
+         * プログラムを指定した材質（MaterialCreateData::Program）は登録が反映されるまで標準で描かれる。
+         */
+        bool RegisterGBufferProgram(const GBufferProgramDesc& desc);
+
+        /**
+         * @brief 主の SceneView から GBuffer プログラムの登録を解除する。SceneView が無ければ false。
+         * @details GameThread から呼ぶ。反映は次のフレームの RenderThread の Render の先頭（初期化の窓では即時）。
+         * プログラムを指定した材質（MaterialCreateData::Program）は登録が反映されるまで標準で描かれる。
+         */
+        bool UnregisterGBufferProgram(const char* name);
 
         // ========================================
         // 解像度変更

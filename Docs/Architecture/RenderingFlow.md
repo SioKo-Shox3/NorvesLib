@@ -87,6 +87,13 @@ Deferred pipeline の production 経路は pass pointer や `SharedResourceRegis
 `ShadowMapPass` は CSM の各カスケードで、MegaGeometry に加え、スキンと通常のメッシュの影を落とす描画を絞り込む。スキンの境界は `BuildSkinnedShadowCasterWorldBounds`、通常のメッシュは `MeshProxy` の境界球から求める。インスタンシングでは、同じメッシュの影を落とす proxy の境界球を包む球を使う。`SelectCascadedShadowCasterDraws` は `CascadedShadowCascadeMayContainCaster` を使い、影の地図の XY にかからないカスケードには描画を出さない。境界を求められない描画はすべての有効なカスケードに残す。ログ有効時は描画数か候補数が変わったときに `CSM_CASTER_CULL c0=<描いた>/<候補> …` を出す。
 
 `RenderWorld::SetSunShadowParameters` は `SunShadowParameters` の `MaxDistance` と `SplitLambda` を設定し、`SceneProxy::SunShadow` と `FramePacket` を経由して `ShadowMapPass` に渡す。`MaxDistance` は CSM と VSM の影の範囲、`SplitLambda` は CSM の分割に効く。`SanitizeSunShadowParameters` は非有限値と 0 以下を「設定のまま」を表す 0 にし、`SplitLambda` の上限を 1 にする。既定は 80 m と λ 0.5。旧 `SetSunShadowMaxDistance` も残り、新しい設定口へ転送する。
+## 材質ごとの GBuffer プログラム
+
+GameThread は `RenderWorld::RegisterGBufferProgram(GBufferProgramDesc)` に名前とシェーダーのファイル名を渡す。初期化の窓では即時に登録され、窓が閉じた後の登録・解除は保留されて RenderThread の `SceneView::Render` 冒頭で反映される。頂点シェーダーの名前が空なら標準を使う。材質は `MaterialCreateData::Program` で名前を指定し、空なら標準を使う。未登録、シェーダーを読めない、またはパイプラインを作れない場合は標準へ落ちる。
+
+`GBufferPass` は `{program, cull, alphaClip, polygon, skinned}` を鍵とする表を持ち、初めて必要になった鍵のパイプラインを同期して作り、同じ鍵の材質で再利用する。作成成功時には `GBufferPipelineCreated program=<名前|standard> skinned=<0|1> polygon=<fill|line> cull=<back|none|front> alphaClip=<0|1> total=<N>` を INFO で出す。並列のコマンド記録中は表の検索だけを行い、シェーダーやパイプラインは記録の準備段で作る。パイプライン作成時に永続キャッシュは使わないため、新しい鍵の初回描画ではヒッチが生じうる。
+
+可視バッファ on ではプログラム指定の物は ID のラスタに含めず、`VisibilityResolvePass` の後・`DecalPass` の前の `GBufferProgramOverlayPass` が GBuffer と深度へ重ねる。標準材質だけのフレームでは重ねる資源を宣言しない。fallback（`--visibility-buffer=off`）では `GBufferPass` が標準材質の後にプログラム材質を描く。重ねる物は ID のラスタの深度に載らないため、2 パスの遮蔽に使う HZB の遮蔽物にならない。
 
 ## Legacy fallback 境界
 

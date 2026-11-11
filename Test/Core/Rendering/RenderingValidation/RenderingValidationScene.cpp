@@ -3219,6 +3219,56 @@ namespace NorvesLib::Test::RenderingValidation
     }
 
 
+    bool RenderingValidationSceneFixture::ApplyGBufferProgramFixture(
+        const Core::Container::String& programName) const
+    {
+        using namespace Core::Rendering;
+        if (m_pWorld == nullptr || m_pResources == nullptr || programName.empty())
+        {
+            return false;
+        }
+
+        // 固定ステップの見張り役を残し、既存の物体を検査領域から外す。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+        }
+        constexpr float positions[] = {-2.0f, 0.0f, 2.0f};
+        for (uint32_t index = 0; index < 3u; ++index)
+        {
+            MaterialCreateData data;
+            if (index < 2u)
+            {
+                data.Program = programName;
+            }
+            data.BaseColor[0] = 0.25f + 0.25f * static_cast<float>(index);
+            data.ShadingParams[1] = index == 2u ? 0.25f : 0.1f * static_cast<float>(index + 1u);
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(positions[index], 1.5f, 0.0f);
+            entity->SetScale(0.65f, 0.65f, 0.65f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(SphereHandle);
+            mesh->SetMaterial(0u, material);
+            mesh->SetCastShadow(false);
+        }
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyShadingModelLightingFixture() const
     {
         using namespace Core::Rendering;

@@ -9,6 +9,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    using GBufferProgramId = uint32_t;
+    constexpr GBufferProgramId kStandardGBufferProgramId = 0;
+
+    /** @brief 名前からプログラム ID を求める。空または null は標準を表す。 */
+    GBufferProgramId MakeGBufferProgramId(const char* name);
 
     // ========================================
     // シェーダー関連型
@@ -380,6 +385,7 @@ namespace NorvesLib::Core::Rendering
         /// アルベド/π の拡散だけを数え、誘電体の F0（0.04）の鏡面と、その分の拡散の減りを掛けない。GBuffer の経路だけが読む
         bool bDiffuseOnly = false;
 
+        Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
     };
@@ -419,6 +425,8 @@ namespace NorvesLib::Core::Rendering
         bool bDiffuseOnly = false; ///< 鏡面の無い純ランバート（MaterialCreateData::bDiffuseOnly）
 
         uint32_t RefCount = 0;
+        GBufferProgramId ProgramId = kStandardGBufferProgramId; ///< Program から事前に計算した ID。
+        Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
     };

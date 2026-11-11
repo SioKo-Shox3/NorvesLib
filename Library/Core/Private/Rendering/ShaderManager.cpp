@@ -455,6 +455,11 @@ namespace NorvesLib::Core::Rendering
 
     String ShaderManager::BuildFullPath(const String &filename) const
     {
+        if (!filename.empty() &&
+            (filename[0] == '/' || filename[0] == '\\' || (filename.size() >= 2 && filename[1] == ':')))
+        {
+            return filename;
+        }
         return m_ShaderDirectory + filename;
     }
 
