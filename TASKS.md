@@ -6715,7 +6715,7 @@
 - notes: 設計はロードマップ 2537 行（マニフェストの事実）・2557 行（P1 の 5）・2565 行（P4）。P4 の AssetKind の追加（地形・散布）は G5 の `G5-GR89-NVTRN-FORMAT`（`AssetKind::World` を足す）が受け持つので、ここでは種別を足さず、足すときの手順（`TryParseAssetKind`・`GetAssetKindName`（`AssetManifest.h:146-147`）・AssetCook の `--kind`・FourCC）を表 1 か所で済む形にするだけにする。旧いランタイムで新しいマニフェストを読むと InvalidField で全体が無効になる（ロードマップ 2802 行）ので、ツールとランタイムを同時にビルドする運用のまま version を上げない。閾値は「線形の走査と結果が同じで、比べた回数が定数」で判定し、時間の閾値は置かない（時間は G12-GR111-PACK-BENCH-CHECK で記録する）。資産の読み込みの危険地帯なので評価者を通す。やらないこと: パックの書き側、圧縮。
 
 ## G2-GR83-LOOSE-SKELETAL: 骨格の資産を、明示したときだけ cooked でなく glTF/GLB から直に読めるようにし、読んだ元をログで分ける
-- status: done
+- status: doing
 - gr: GR83
 - done-when: 骨格の資産の読み込み(`SkeletalAssetLoader.cpp` の旧 NVSKEL の経路と `RigSplitAssetLoader.cpp` の 3 資産の経路)に、既定は今のまま cooked だけ(`FailOnCookedFailure` と UsedCooked の検査を変えない)、明示の許可があるときだけ loose(ソースの glTF/GLB を worker で decode して同じ CPU の結果を組む)を足す。許可は `SkeletalAssetSession`/`SkeletalAssetRuntime` の設定 1 つで持ち、Game の起動引数 `--allow-loose-skeletal` からだけ立てる。loose で読んだときは AssetLoadProfile の 3 段(`skeletal_asset_resolve`・`skeletal_cooked_parse`・`skeletal_resource_create`)の `source=loose` で分かり、既定のまま cooked が無いときは `source=none` の失敗で終わる(loose へ黙って落ちない)。
   cooked が壊れているとき(hash 不一致・parse 失敗)は許可があっても loose に代えない(`AssetFallbackPolicy.md` の DebugLooseFallback と同じ線引き)。`SkeletalAssetLoaderTest`・`SkeletalSplitAssetLoaderTest` に、(1) 既定で manifest が無いと失敗し Resource が残らない (2) 許可ありで同じ fixture(`Assets/Models/M9Skinned/ValidU8Float.gltf` と RigSplitCookTest の 3 資産の元)を loose で読むと cooked と同じ関節・頂点・clip 名になる (3) 許可ありでも壊れた cooked は loose に代えない、の検査を足す。
