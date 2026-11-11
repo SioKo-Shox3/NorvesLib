@@ -10270,3 +10270,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 分割の 3 資産（RigSplitAssetLoader）の loose は判断待ち（論理パスがソースの名前と一致せず、切り出しの処理が Tools/AssetCook にある）。起動の確かめ（`--allow-loose-skeletal` で loose の読み込みとログの source=loose）は後回し。
 - Notes: タスクの verify の build の対象に `TextureResourcesAssetLoadProfileContractTest`（ModelResourcesAssetLoadProfileContractTest の収容先）が入っておらず、新しい作業ツリーでは ctest が Not Run になる。補助でビルドして回した。
 - U6 分割の 3 資産が loose を持たない決まりを文書に書き、タスクの verify を回す: 着地(直し 0 回)
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、完了）
+- Done: 判断役の判断 (A) に従い、分割の 3 資産（`LoadRigSplitAsync`・`RigSplitAssetLoader`）は loose を持たず許可があっても cooked だけを読む、と決めて `SkeletalAssetLoader.md`・`AssetFallbackPolicy.md` の「未決」を決まりと理由（論理パスがソースの名前と対応しない・切り出しが `Tools/AssetCook` にある・許可を分割の要求へ渡さない）へ書き直した。完了の条件はこの判断で、分割の経路の loose と `SkeletalSplitAssetLoaderTest` の (2)(3) を外した形に改めた（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）。
+- 証拠: `.harness/runs/20261112-075132/verify-G2-GR83-LOOSE-SKELETAL.txt`（`cmake --build ... CookedMeshTest AssetCook Game TextureResourcesAssetLoadProfileContractTest` の Build exit code 0、ctest 9 本 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
+- 人が見るときの見どころ: 開発ビルドの Game を `--scene=` で Rendering3DTest（骨格は `M9SkeletalPreparation.cpp` の `LoadAsync`）に入れ、`--allow-loose-skeletal` を付けたときログに `SKELETAL_ASSETS allow_loose=1` が出ること。manifest から骨格の項目を外して起動すると AssetLoadProfile の 3 段が `source=loose` になり、付けないと `source=none` の失敗になること。撮影・計測の確かめは回さない決まり。
+- Next: 分割の資産を cook せずに確かめる手段は無いまま。要るなら論理パス→ソースの対応表と分割の cook の CPU 部分の Core への移設を別の項目で起こす（今は分割の経路は本番から呼ばれていない）。
