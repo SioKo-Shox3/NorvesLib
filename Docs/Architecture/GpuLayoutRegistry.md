@@ -39,13 +39,15 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 
 復号は `GBufferDecodeNormal` が `uint(clamp(round(normalSample.w), 0.0, 2047.0))` を作り、ID と印を各マスクで取り出す。`2047` は復号関数のクランプ上限であり、bit 8 以上に追加の意味は登録されていない。返す法線 xyz はこの関数では正規化しない。ID だけ、印だけを読む場合も `GBufferDecodeShadingModelId` / `GBufferDecodeReceiverFlags` / `GBufferHasReceiverFlag` を使う。
 
-| ID | C++ 定数（`GBufferContract`） | GLSL 定数 | 意味 |
-|---|---|---|---|
-| 0 | `ShadingModelDefaultLit` | `GBUFFER_SHADING_MODEL_DEFAULT_LIT` | 標準のライティング |
-| 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 |
-| 2 | `ShadingModelEye` | `GBUFFER_SHADING_MODEL_EYE` | 目 |
-| 3 | `ShadingModelPaleFlat` | `GBUFFER_SHADING_MODEL_PALE_FLAT` | 淡い平坦な面 |
-| 4〜15 | 予約 | 予約 | 未割当 |
+| ID | C++ 定数（`GBufferContract`） | GLSL 定数 | 意味 | P0 | P1 |
+|---|---|---|---|---|---|
+| 0 | `ShadingModelDefaultLit` | `GBUFFER_SHADING_MODEL_DEFAULT_LIT` | 標準のライティング | 濡れ感度 | 未使用 |
+| 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 | 濡れ度 | シェルの高さの割合 |
+| 2 | `ShadingModelEye` | `GBUFFER_SHADING_MODEL_EYE` | 目 | 湿り（鏡面の強さ） | 未使用 |
+| 3 | `ShadingModelPaleFlat` | `GBUFFER_SHADING_MODEL_PALE_FLAT` | 淡い平坦な面 | 消滅度 | 未使用 |
+| 4〜15 | 予約 | 予約 | 未割当 | 未割当 | 未割当 |
+
+ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0 のみで、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
 
 印の値はシフト前のビットマスク。複数を OR で併用できる。
 
@@ -244,6 +246,13 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | 0 | 28 | `sampler2D` | `rtgiSpecularSky` | `BindTexture(28, ...)`。このフレームの RTGI 履歴 `Normal`、または既定黒 |
 | 0 | 29 以降 | 未割当 | 空き | このレイアウトには宣言なし |
 
+`LightingParams` は全 976 バイトで、末尾の `shadingModelParams` はオフセット 944、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants` であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
+
+| 要素 | x | y | z | w |
+|---|---|---|---|---|
+| `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | 予約（0） |
+| `shadingModelParams[1]` | PaleFlat の直接光と環境光の明暗差を落とす割合（0 で通常、1 で全部） | 平らな直接光で n·l と影の代わりに使う値 | アルベドを輝度へ寄せる割合 | 予約（0） |
+
 0〜28 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
 
 C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み取り専用 SSBO は `StructuredBuffer`、24 は `RWBuffer`。27・28 の履歴資源名は `Depth` / `Normal` だが、ここでは鏡面の蓄積値として使用する。`rtgiSpecularHit.gba` は当たった面が返す露出後の光の平均、`rtgiSpecularSky.a` は空へ抜けた割合である。
@@ -331,7 +340,7 @@ C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`a
 
 ### VSM の VsmRasterParams
 
-C++ は `VirtualShadowMapRaster.cpp::GPURasterParams`、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **128 バイト**。`static_assert` が大きさ 128 と `vertexAnimTime` の位置 112 を検査する。
+C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShadowMapRaster.cpp` の `GPURasterParams` はその別名）、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **176 バイト**。`static_assert` が各フィールドの位置と大きさ 176（`worldField` の位置 112、`vertexAnimTime` の位置 160）を検査する。
 
 | オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
 |---|---|---|---|---|
@@ -342,7 +351,8 @@ C++ は `VirtualShadowMapRaster.cpp::GPURasterParams`、GLSL は `vsm_draw.vert:
 | 64 | 16 | `counts: uint32_t[4]` | `counts: uvec4` | 塊の数 / スライスの数 / インスタンス容量 / MegaGeometry のクラスタ記録容量 |
 | 80 | 16 | `foliageWind: float[4]` | `foliageWind: vec4` | xy = 風向（XZ）、z = 風の時計、w = 共通の風の突風の周波数（Hz。0 なら従来の風） |
 | 96 | 16 | `foliageWindParams: float[4]` | `foliageWindParams: vec4` | 風速 / 突風の大きさ / 突風の強さ / 乱流の強さ |
-| 112 | 16 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。影は x のみ使う。2 節の時刻欄の注記に従う |
+| 112 | 48 | `worldField: WorldFieldSampleConstants` | `worldField: WorldFieldSampleConstants` | 株の影を曲げる世界フィールドの今・前の原点と範囲の逆数・曲げの係数（`WorldField/WorldFieldSample.glsl`）。株の塊だけが読む |
+| 160 | 16 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。影は x のみ使う。2 節の時刻欄の注記に従う |
 
 `vsm_expand.comp` の同名 UBO 宣言は先頭 **112 バイト**（`foliageWindParams` まで）のままで、時刻欄を持たない。
 

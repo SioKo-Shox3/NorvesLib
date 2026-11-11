@@ -1,5 +1,7 @@
 ﻿#include "Asset/CookedClipBankV1.h"
 #include "Animation/SkeletalRootMotion.h"
+#include "Animation/ClipChannelSampler.h"
+#include "Asset/ClipQuantization.h"
 #include "Animation/RigRootFrame.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
@@ -23,14 +25,23 @@ namespace NorvesLib::Core::Skeletal
                                       Four('A', 'R', 'S', 'T'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
                                       Four('S', 'A', 'M', 'P'), Four('A', 'F', 'R', 'M'), Four('A', 'N', 'L', 'Y'),
                                       Four('R', 'M', 'T', 'N'), Four('E', 'V', 'N', 'T'), Four('M', 'A', 'R', 'K'),
-                                      Four('M', 'E', 'T', 'A')};
-        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96, 40, 32, 16, 48};
+                                      Four('M', 'E', 'T', 'A'), Four('C', 'M', 'P', 'R')};
+        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96, 40, 32, 16, 48, 4};
         constexpr uint32_t MaxBankEvents = 262144, MaxBankMarkers = 65536;
         struct Section
         {
             uint32_t Code = 0, Flags = 0, Record = 0, Count = 0;
             uint64_t Offset = 0, Size = 0;
         };
+        uint16_t U16(View b, size_t o)
+        {
+            return uint16_t(uint16_t(b[o]) | (uint16_t(b[o + 1]) << 8));
+        }
+        void W16(Bytes& b, size_t o, uint16_t v)
+        {
+            b[o] = uint8_t(v);
+            b[o + 1] = uint8_t(v >> 8);
+        }
         uint32_t U32(View b, size_t o)
         {
             return uint32_t(b[o]) | (uint32_t(b[o + 1]) << 8) | (uint32_t(b[o + 2]) << 16) | (uint32_t(b[o + 3]) << 24);
@@ -315,6 +326,154 @@ namespace NorvesLib::Core::Skeletal
             }
             return RigV1Status::Success;
         }
+        struct ChannelWirePlan
+        {
+            ClipChannelEncoding Encoding = ClipChannelEncoding::F32;
+            uint32_t TimeForm = 0;
+            float Start = 0, Step = 0;
+            TranslationQuantRange Range;
+        };
+        uint64_t ChannelDataBytes(uint32_t timeForm, ClipChannelEncoding encoding, uint32_t count)
+        {
+            if (timeForm == 0 && encoding == ClipChannelEncoding::F32)
+            {
+                return 0;
+            }
+            const uint64_t n = count;
+            uint64_t size = timeForm == 0 ? n * 4 : 0;
+            switch (encoding)
+            {
+            case ClipChannelEncoding::F32:
+                return size + n * 16;
+            case ClipChannelEncoding::RotSmallest3_32:
+                return size + n * 4;
+            case ClipChannelEncoding::RotSmallest3_48:
+                return size + n * 6;
+            case ClipChannelEncoding::TransQuant16:
+                return size + 24 + n * 6;
+            case ClipChannelEncoding::Const:
+                return size + 16;
+            }
+            return 0;
+        }
+        ChannelWirePlan PlanChannel(const SkeletalAnimationChannel& channel, float duration)
+        {
+            ChannelWirePlan plan;
+            plan.Encoding = ChooseClipChannelEncoding(channel);
+            const auto& samples = channel.Samples;
+            if (plan.Encoding == ClipChannelEncoding::TransQuant16)
+            {
+                plan.Range = ComputeTranslationQuantRange({samples.data(), samples.size()});
+                // 有限な元値でも範囲の差が float に収まらない場合は元の値を保持する。
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    if (!std::isfinite(plan.Range.Min[axis]) || !std::isfinite(plan.Range.Extent[axis]))
+                    {
+                        plan.Encoding = ClipChannelEncoding::F32;
+                    }
+                }
+                if (plan.Encoding == ClipChannelEncoding::TransQuant16)
+                {
+                    for (const auto& sample : samples)
+                    {
+                        uint16_t codes[3];
+                        EncodeTranslation16(sample.Value, plan.Range, codes);
+                        const auto value = DecodeTranslation16(codes, plan.Range);
+                        if (!std::isfinite(value.X) || !std::isfinite(value.Y) || !std::isfinite(value.Z))
+                        {
+                            plan.Encoding = ClipChannelEncoding::F32;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (samples.size() >= 2)
+            {
+                const float start = samples[0].TimeSeconds;
+                const float step = float((double(samples.back().TimeSeconds) - double(start)) / (samples.size() - 1));
+                bool bUniform = std::isfinite(step) && step > 0;
+                float previous = -1;
+                for (size_t i = 0; bUniform && i < samples.size(); ++i)
+                {
+                    const float time = Animation::Detail::UniformClipKeyTime(start, step, i);
+                    bUniform = std::isfinite(time) && time >= 0 && time <= duration && time > previous &&
+                               std::abs(double(time) - double(samples[i].TimeSeconds)) <= double(step) * 1e-3;
+                    previous = time;
+                }
+                if (bUniform)
+                {
+                    plan.TimeForm = 1;
+                    plan.Start = start;
+                    plan.Step = step;
+                }
+            }
+            return plan;
+        }
+        void WriteChannelData(Bytes& bytes, size_t offset, const SkeletalAnimationChannel& channel,
+                              const ChannelWirePlan& plan)
+        {
+            if (plan.TimeForm == 0)
+            {
+                for (const auto& sample : channel.Samples)
+                {
+                    WF(bytes, offset, sample.TimeSeconds);
+                    offset += 4;
+                }
+            }
+            if (plan.Encoding == ClipChannelEncoding::TransQuant16)
+            {
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    WF(bytes, offset + axis * 4, plan.Range.Min[axis]);
+                    WF(bytes, offset + 12 + axis * 4, plan.Range.Extent[axis]);
+                }
+                offset += 24;
+            }
+            for (const auto& sample : channel.Samples)
+            {
+                const auto& value = sample.Value;
+                switch (plan.Encoding)
+                {
+                case ClipChannelEncoding::F32:
+                case ClipChannelEncoding::Const:
+                    WF(bytes, offset, value.X);
+                    WF(bytes, offset + 4, value.Y);
+                    WF(bytes, offset + 8, value.Z);
+                    WF(bytes, offset + 12, value.W);
+                    offset += 16;
+                    break;
+                case ClipChannelEncoding::RotSmallest3_32:
+                    W32(bytes, offset, EncodeRotationSmallest3_32(value));
+                    offset += 4;
+                    break;
+                case ClipChannelEncoding::RotSmallest3_48:
+                {
+                    const auto bits = EncodeRotationSmallest3_48(value);
+                    for (size_t word = 0; word < 3; ++word)
+                    {
+                        W16(bytes, offset + word * 2, uint16_t(bits >> (word * 16)));
+                    }
+                    offset += 6;
+                    break;
+                }
+                case ClipChannelEncoding::TransQuant16:
+                {
+                    uint16_t codes[3];
+                    EncodeTranslation16(value, plan.Range, codes);
+                    for (size_t axis = 0; axis < 3; ++axis)
+                    {
+                        W16(bytes, offset + axis * 2, codes[axis]);
+                    }
+                    offset += 6;
+                    break;
+                }
+                }
+                if (plan.Encoding == ClipChannelEncoding::Const)
+                {
+                    break;
+                }
+            }
+        }
         void WriteRest(Bytes& b, size_t o, const SkeletalRestTransform& r)
         {
             const float values[] = {r.Translation.X, r.Translation.Y, r.Translation.Z, r.Rotation.X, r.Rotation.Y,
@@ -503,7 +662,7 @@ namespace NorvesLib::Core::Skeletal
         }
     }
     bool WriteClipBankV1(const ClipBankV1& bank, Bytes& out, RigV1Report& report, const RigV1Limits& limits,
-                         RigImportProfile profile)
+                         RigImportProfile profile, const ClipBankV1WriteOptions& options)
     {
         report = {};
         try
@@ -546,8 +705,21 @@ namespace NorvesLib::Core::Skeletal
                 active.push_back(11);
                 active.push_back(12);
             }
+            if (options.bQuantize)
+            {
+                active.push_back(13);
+            }
             const uint32_t sectionCount = uint32_t(active.size());
-            uint64_t estimated[13]{};
+            uint64_t estimated[14]{};
+            C::VariableArray<ChannelWirePlan> channelPlans;
+            if (options.bQuantize)
+            {
+                estimated[13] = 16;
+                for (const auto& clip : d->Clips)
+                {
+                    estimated[13] += clip.Channels.size() * 32;
+                }
+            }
             if (hasMetadata)
                 estimated[12] = d->Clips.size() * 48;
             estimated[9] = rootSamples * 40;
@@ -588,6 +760,17 @@ namespace NorvesLib::Core::Skeletal
                     countName(marker.Name);
                 for (const auto& channel : clip.Channels)
                 {
+                    if (options.bQuantize)
+                    {
+                        const auto plan = PlanChannel(channel, clip.DurationSeconds);
+                        channelPlans.push_back(plan);
+                        const auto size = ChannelDataBytes(plan.TimeForm, plan.Encoding, uint32_t(channel.Samples.size()));
+                        estimated[13] = (estimated[13] + size + 3) & ~uint64_t{3};
+                        if (size != 0)
+                        {
+                            continue;
+                        }
+                    }
                     estimated[6] += channel.Samples.size() * 32;
                 }
             }
@@ -596,13 +779,21 @@ namespace NorvesLib::Core::Skeletal
             {
                 estimatedTotal = ((estimatedTotal + 15) & ~uint64_t{15}) + estimated[i];
             }
-            if (estimatedTotal > limits.MaxWireBytes)
+            if (estimatedTotal > limits.MaxWireBytes || estimated[13] > UINT32_MAX)
             {
                 report.Status = RigV1Status::LimitExceeded;
                 return false;
             }
-            Bytes sections[13];
-            uint32_t counts[13]{};
+            Bytes sections[14];
+            uint32_t counts[14]{};
+            if (options.bQuantize)
+            {
+                sections[13].resize(size_t(estimated[13]), 0);
+                W32(sections[13], 0, 1);
+                W32(sections[13], 4, uint32_t(channelPlans.size()));
+            }
+            size_t compressedCursor = 16 + channelPlans.size() * 32;
+            size_t channelIndex = 0;
             C::VariableArray<uint64_t> jointOffsets;
             const auto addString = [&](const C::AnsiString& name)
             {
@@ -681,6 +872,25 @@ namespace NorvesLib::Core::Skeletal
                     W32(sections[5], c + 24, uint32_t(channel.Interpolation));
                     W32(sections[5], c + 32, uint32_t(sections[6].size() / 32));
                     W32(sections[5], c + 36, uint32_t(channel.Samples.size()));
+                    if (options.bQuantize)
+                    {
+                        const auto& plan = channelPlans[channelIndex];
+                        const size_t e = 16 + channelIndex++ * 32;
+                        const auto size = ChannelDataBytes(plan.TimeForm, plan.Encoding, uint32_t(channel.Samples.size()));
+                        W32(sections[5], c + 28, uint32_t(plan.Encoding));
+                        W32(sections[13], e, plan.TimeForm);
+                        W32(sections[13], e + 4, uint32_t(channel.Samples.size()));
+                        WF(sections[13], e + 8, plan.Start);
+                        WF(sections[13], e + 12, plan.Step);
+                        W32(sections[13], e + 16, uint32_t(compressedCursor));
+                        W32(sections[13], e + 20, uint32_t(size));
+                        if (size != 0)
+                        {
+                            WriteChannelData(sections[13], compressedCursor, channel, plan);
+                            compressedCursor = (compressedCursor + size_t(size) + 3) & ~size_t{3};
+                            continue;
+                        }
+                    }
                     for (const auto& sample : channel.Samples)
                     {
                         const auto s = sections[6].size();
@@ -785,6 +995,11 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
+            if (options.bQuantize)
+            {
+                const size_t dataStart = 16 + channelPlans.size() * 32;
+                W64(sections[13], 8, RigBytesHash({sections[13].data() + dataStart, sections[13].size() - dataStart}));
+            }
             uint64_t total = 256 + sectionCount * 32;
             for (uint32_t i : active)
             {
@@ -800,7 +1015,7 @@ namespace NorvesLib::Core::Skeletal
             Bytes candidate(static_cast<size_t>(total), 0);
             std::memcpy(candidate.data(), "NVSKELv1", 8);
             W32(candidate, 8, 256);
-            W32(candidate, 12, 1);
+            W32(candidate, 12, options.bQuantize ? 0x00010001u : 1u);
             W32(candidate, 16, 0x01020304);
             W32(candidate, 20, 3);
             W32(candidate, 28, sectionCount);
@@ -816,7 +1031,7 @@ namespace NorvesLib::Core::Skeletal
                 cursor = (cursor + 15) & ~size_t{15};
                 const size_t e = 256 + slot * 32;
                 W32(candidate, e, Codes[i]);
-                W32(candidate, e + 4, i >= 8 ? 0 : 1);
+                W32(candidate, e + 4, i >= 8 && i != 13 ? 0 : 1);
                 W64(candidate, e + 8, cursor);
                 W64(candidate, e + 16, sections[i].size());
                 W32(candidate, e + 24, RecordSizes[i]);
@@ -864,7 +1079,8 @@ namespace NorvesLib::Core::Skeletal
             {
                 return fail(RigV1Status::BadWire);
             }
-            if (U32(bytes, 12) != 1 || U32(bytes, 20) != 3 || U32(bytes, 64) != uint32_t(profile) ||
+            const auto minor = U16(bytes, 14);
+            if (U16(bytes, 12) != 1 || minor > 1 || U32(bytes, 20) != 3 || U32(bytes, 64) != uint32_t(profile) ||
                 U32(bytes, 68) != 1)
             {
                 return fail(RigV1Status::UnsupportedVersion);
@@ -884,6 +1100,8 @@ namespace NorvesLib::Core::Skeletal
             C::VariableArray<Section> directory;
             directory.reserve(count);
             Section known[8]{};
+            Section compressionSection{};
+            bool bCompression = false;
             Section analysisSection{};
             bool bAnalysis = false;
             Section motionSection{};
@@ -930,6 +1148,15 @@ namespace NorvesLib::Core::Skeletal
                     known[index] = s;
                     found[index] = true;
                 }
+                else if (s.Code == Codes[13])
+                {
+                    if (minor == 0 || s.Flags != 1 || s.Record != 4)
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    compressionSection = s;
+                    bCompression = true;
+                }
                 else if (s.Code == Four('A', 'N', 'L', 'Y'))
                 {
                     if (!IsStaticRootFrameProfile(profile) || s.Flags != 0 || s.Record != 96)
@@ -968,6 +1195,10 @@ namespace NorvesLib::Core::Skeletal
                 }
                 directory.push_back(s);
             }
+            if ((minor == 1) != bCompression)
+            {
+                return fail(RigV1Status::BadWire);
+            }
             for (uint32_t i = 0; i < sectionCount; ++i)
             {
                 if (!found[i])
@@ -976,7 +1207,8 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
             std::sort(directory.begin(), directory.end(),
-                      [](const Section& a, const Section& b) { return a.Offset < b.Offset; });
+                      [](const Section& a, const Section& b)
+                      { return a.Offset < b.Offset || (a.Offset == b.Offset && a.Size < b.Size); });
             uint64_t end = 256ull + count * 32ull;
             for (const auto& s : directory)
             {
@@ -998,6 +1230,106 @@ namespace NorvesLib::Core::Skeletal
                 (bMotion && motionSection.Count > limits.MaxSamples - known[6].Count))
             {
                 return fail(RigV1Status::LimitExceeded);
+            }
+            const View compression{bytes.data() + compressionSection.Offset, size_t(compressionSection.Size)};
+            const uint64_t compressedDataStart = 16ull + uint64_t(known[5].Count) * 32;
+            if (bCompression)
+            {
+                // 展開先を確保する前に、表全体と各ブロックの境界を検証する。
+                if (compression.size() < compressedDataStart || U32(compression, 0) != 1 ||
+                    U32(compression, 4) != known[5].Count)
+                {
+                    return fail(RigV1Status::BadWire);
+                }
+                if (U64(compression, 8) != RigBytesHash({compression.data() + size_t(compressedDataStart),
+                                                       compression.size() - size_t(compressedDataStart)}))
+                {
+                    return fail(RigV1Status::HashMismatch);
+                }
+            }
+            uint64_t compressedEnd = compressedDataStart, logicalSamples = motionSection.Count;
+            uint64_t storedSamples = 0;
+            for (uint32_t i = 0; i < known[5].Count; ++i)
+            {
+                const size_t c = size_t(known[5].Offset) + size_t(i) * 48;
+                const uint32_t encoding = U32(bytes, c + 28);
+                if (!bCompression)
+                {
+                    if (encoding != 0)
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    continue;
+                }
+                const size_t e = 16 + size_t(i) * 32;
+                const uint32_t timeForm = U32(compression, e), samples = U32(compression, e + 4);
+                const float start = F32(compression, e + 8), step = F32(compression, e + 12);
+                const uint64_t offset = U32(compression, e + 16), size = U32(compression, e + 20);
+                const auto path = U32(bytes, c + 12);
+                if (encoding > 4 || timeForm > 1 || samples == 0 || samples != U32(bytes, c + 36) ||
+                    !Zero(compression, e + 24, e + 32) ||
+                    (timeForm == 0 && (start != 0 || step != 0)) ||
+                    (timeForm == 1 && (!std::isfinite(start) || start < 0 || !std::isfinite(step) || step <= 0 ||
+                                       samples < 2)) ||
+                    ((encoding == 1 || encoding == 2) && path != uint32_t(SkeletalAnimationPath::Rotation)) ||
+                    (encoding == 3 && path != uint32_t(SkeletalAnimationPath::Translation)))
+                {
+                    return fail(RigV1Status::BadWire);
+                }
+                if (samples > limits.MaxSamples - logicalSamples)
+                {
+                    return fail(RigV1Status::LimitExceeded);
+                }
+                logicalSamples += samples;
+                const uint64_t aligned = (compressedEnd + 3) & ~uint64_t{3};
+                if (offset != aligned || offset > compression.size() || size > compression.size() - offset ||
+                    size != ChannelDataBytes(timeForm, static_cast<ClipChannelEncoding>(encoding), samples) ||
+                    !Zero(compression, size_t(compressedEnd), size_t(offset)) ||
+                    U32(bytes, c + 32) != storedSamples)
+                {
+                    return fail(RigV1Status::BadWire);
+                }
+                compressedEnd = offset + size;
+                if (timeForm == 0 && encoding == 0)
+                {
+                    if (storedSamples > known[6].Count || samples > known[6].Count - storedSamples)
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    storedSamples += samples;
+                }
+                const size_t values = size_t(offset) + (timeForm == 0 ? size_t(samples) * 4 : 0);
+                if (encoding == 2)
+                {
+                    for (uint32_t k = 0; k < samples; ++k)
+                    {
+                        const size_t v = values + size_t(k) * 6;
+                        const uint64_t bits = U16(compression, v) | (uint64_t(U16(compression, v + 2)) << 16) |
+                                              (uint64_t(U16(compression, v + 4)) << 32);
+                        if (!IsValidRotationSmallest3_48(bits))
+                        {
+                            return fail(RigV1Status::BadWire);
+                        }
+                    }
+                }
+                if (encoding == 3)
+                {
+                    for (size_t axis = 0; axis < 3; ++axis)
+                    {
+                        const float minimum = F32(compression, values + axis * 4);
+                        const float extent = F32(compression, values + 12 + axis * 4);
+                        if (!std::isfinite(minimum) || !std::isfinite(extent) || extent < 0)
+                        {
+                            return fail(RigV1Status::BadWire);
+                        }
+                    }
+                }
+            }
+            if (bCompression && (storedSamples != known[6].Count ||
+                ((compressedEnd + 3) & ~uint64_t{3}) != compression.size() ||
+                !Zero(compression, size_t(compressedEnd), compression.size())))
+            {
+                return fail(RigV1Status::BadWire);
             }
             const bool hasMetadata = metadataFound[2];
             if (metadataFound[0] != hasMetadata || metadataFound[1] != hasMetadata ||
@@ -1124,14 +1456,18 @@ namespace NorvesLib::Core::Skeletal
                 data->ClipSnapshots.push_back(U32(bytes, o + 12));
                 for (uint32_t n = 0; n < channels; ++n)
                 {
+                    const size_t entry = 16 + size_t(channelCursor) * 32;
                     const size_t c = size_t(known[5].Offset) + size_t(channelCursor++) * 48;
+                    const auto encoding = static_cast<ClipChannelEncoding>(U32(bytes, c + 28));
+                    const bool bCompressed = bCompression &&
+                        (U32(compression, entry) != 0 || encoding != ClipChannelEncoding::F32);
                     C::AnsiString jointName;
                     SkeletalAnimationChannel channel;
                     const auto samples = U32(bytes, c + 36);
                     if (!name(U64(bytes, c), U32(bytes, c + 8), jointName) ||
-                        U64(bytes, c + 16) != RigBytesHash(NameView(jointName)) || U32(bytes, c + 28) ||
+                        U64(bytes, c + 16) != RigBytesHash(NameView(jointName)) ||
                         U32(bytes, c + 32) != sampleCursor || sampleCursor > known[6].Count ||
-                        samples > known[6].Count - sampleCursor || !Zero(bytes, c + 40, c + 48))
+                        (!bCompressed && samples > known[6].Count - sampleCursor) || !Zero(bytes, c + 40, c + 48))
                     {
                         return fail(RigV1Status::InvalidClip);
                     }
@@ -1144,16 +1480,77 @@ namespace NorvesLib::Core::Skeletal
                     channel.Path = static_cast<SkeletalAnimationPath>(U32(bytes, c + 12));
                     channel.Interpolation = static_cast<SkeletalAnimationInterpolation>(U32(bytes, c + 24));
                     channel.Samples.reserve(samples);
-                    for (uint32_t k = 0; k < samples; ++k)
+                    if (bCompressed)
                     {
-                        const size_t s = size_t(known[6].Offset) + size_t(sampleCursor++) * 32;
-                        if (!Zero(bytes, s + 20, s + 32))
+                        const bool bUniform = U32(compression, entry) == 1;
+                        const size_t block = U32(compression, entry + 16);
+                        size_t values = block + (bUniform ? 0 : size_t(samples) * 4);
+                        TranslationQuantRange range;
+                        if (bUniform)
                         {
-                            return fail(RigV1Status::BadWire);
+                            channel.UniformStartSeconds = F32(compression, entry + 8);
+                            channel.UniformStepSeconds = F32(compression, entry + 12);
                         }
-                        channel.Samples.push_back(
-                            {F32(bytes, s),
-                             {F32(bytes, s + 4), F32(bytes, s + 8), F32(bytes, s + 12), F32(bytes, s + 16)}});
+                        if (encoding == ClipChannelEncoding::TransQuant16)
+                        {
+                            for (size_t axis = 0; axis < 3; ++axis)
+                            {
+                                range.Min[axis] = F32(compression, values + axis * 4);
+                                range.Extent[axis] = F32(compression, values + 12 + axis * 4);
+                            }
+                            values += 24;
+                        }
+                        for (uint32_t k = 0; k < samples; ++k)
+                        {
+                            SkeletalValue value;
+                            switch (encoding)
+                            {
+                            case ClipChannelEncoding::F32:
+                            case ClipChannelEncoding::Const:
+                            {
+                                const size_t v = values + (encoding == ClipChannelEncoding::Const ? 0 : size_t(k) * 16);
+                                value = {F32(compression, v), F32(compression, v + 4),
+                                         F32(compression, v + 8), F32(compression, v + 12)};
+                                break;
+                            }
+                            case ClipChannelEncoding::RotSmallest3_32:
+                                value = DecodeRotationSmallest3_32(U32(compression, values + size_t(k) * 4));
+                                break;
+                            case ClipChannelEncoding::RotSmallest3_48:
+                            {
+                                const size_t v = values + size_t(k) * 6;
+                                value = DecodeRotationSmallest3_48(U16(compression, v) |
+                                    (uint64_t(U16(compression, v + 2)) << 16) |
+                                    (uint64_t(U16(compression, v + 4)) << 32));
+                                break;
+                            }
+                            case ClipChannelEncoding::TransQuant16:
+                            {
+                                const size_t v = values + size_t(k) * 6;
+                                const uint16_t codes[] = {U16(compression, v), U16(compression, v + 2), U16(compression, v + 4)};
+                                value = DecodeTranslation16(codes, range);
+                                break;
+                            }
+                            }
+                            const float time = bUniform ? Animation::Detail::UniformClipKeyTime(
+                                channel.UniformStartSeconds, channel.UniformStepSeconds, k) :
+                                F32(compression, block + size_t(k) * 4);
+                            channel.Samples.push_back({time, value});
+                        }
+                    }
+                    else
+                    {
+                        for (uint32_t k = 0; k < samples; ++k)
+                        {
+                            const size_t s = size_t(known[6].Offset) + size_t(sampleCursor++) * 32;
+                            if (!Zero(bytes, s + 20, s + 32))
+                            {
+                                return fail(RigV1Status::BadWire);
+                            }
+                            channel.Samples.push_back(
+                                {F32(bytes, s),
+                                 {F32(bytes, s + 4), F32(bytes, s + 8), F32(bytes, s + 12), F32(bytes, s + 16)}});
+                        }
                     }
                     clip.Channels.push_back(std::move(channel));
                 }

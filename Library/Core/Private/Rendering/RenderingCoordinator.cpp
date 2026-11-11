@@ -48,6 +48,7 @@
 #include "Rendering/SkySunLight.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/Viewport.h"
 #include <algorithm>
 #include <cassert>
@@ -220,7 +221,8 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.x);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.y);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.z);
-            hash = HashRevisionValue(hash, packet.Scene.SunShadowMaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.SunShadow.MaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.SunShadow.SplitLambda);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.bEnabled);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.StartDistanceMeters);
@@ -4602,7 +4604,8 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.bStaticEnvironmentUniform = m_bStaticEnvironmentUniform;
         packet.Scene.StaticEnvironmentUniformRadiance = m_StaticEnvironmentUniformRadiance;
-        packet.Scene.SunShadowMaxDistance = m_SunShadowMaxDistance;
+        packet.Scene.SunShadow = m_SunShadowParameters;
+        packet.Scene.bSkinnedViewCulling = m_bSkinnedViewCulling;
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
@@ -5552,6 +5555,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
                 swapChain->GetCompletedSubmissionSerial());
+            m_RenderResources->SkinnedMeshes().PreloadFrameLeases(packet->SkinnedMeshFrameLeases);
             m_RenderResources->BeginRetireFrame(swapChain->GetCompletedSubmissionSerial());
             m_SceneRenderer.SetSkinnedMeshResources(&m_RenderResources->SkinnedMeshes());
         }
@@ -6220,6 +6224,20 @@ namespace NorvesLib::Core::Rendering
         // 統計更新
         const auto &rendererStats = m_SceneRenderer.GetStats();
         packet->Stats.SkinnedGBufferRecordedDraws = rendererStats.SkinnedGBufferDrawCallCount;
+        // 同じフレームに各ビューの ID ラスタが記録したスキニング描画を足す。
+        for (const auto &view : m_Views)
+        {
+            if (!view)
+            {
+                continue;
+            }
+            const auto *rasterPass = dynamic_cast<const VisibilityRasterPass *>(view->FindPass("VisibilityRasterPass"));
+            if (rasterPass)
+            {
+                packet->Stats.SkinnedGBufferRecordedDraws +=
+                    rasterPass->GetRecordedSkinnedDrawCountForFrame(viewContext.ResolveRenderFrameSerial());
+            }
+        }
         packet->Stats.SkinnedShadowRecordedDraws = rendererStats.SkinnedShadowDrawCallCount;
         renderStats.DrawCalls = rendererStats.DrawCallCount;
         renderStats.TrianglesRendered = rendererStats.TriangleCount;
@@ -6745,9 +6763,21 @@ namespace NorvesLib::Core::Rendering
                                 : Math::Vector3::Zero;
     }
 
+    void RenderingCoordinator::SetSunShadowParameters(const SunShadowParameters& parameters)
+    {
+        m_SunShadowParameters = SanitizeSunShadowParameters(parameters);
+    }
+
     void RenderingCoordinator::SetSunShadowMaxDistance(float distance)
     {
-        m_SunShadowMaxDistance = std::isfinite(distance) && distance > 0.0f ? distance : 0.0f;
+        SunShadowParameters parameters = m_SunShadowParameters;
+        parameters.MaxDistance = distance;
+        SetSunShadowParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetSkinnedViewCullingEnabled(bool bEnabled)
+    {
+        m_bSkinnedViewCulling = bEnabled;
     }
 
     void RenderingCoordinator::SetAerialPerspective(const AerialPerspectiveParameters& parameters)

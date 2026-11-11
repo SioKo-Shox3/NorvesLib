@@ -1163,9 +1163,9 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
         {
             const SkinningComputeInstance& instance = instances[instanceIndex];
-            // 半透明の一覧のスキニングは影のためだけに変形した物で、ID のラスタは不透明の描画だけを描く。
+            // 半透明や主カメラに見えない描画は影のために変形していても、ID のラスタには描かない。
             // 記録の instanceIndex は GetInstances() の添字のままにする（飛ばしても詰めない）
-            if (!instance.bOpaque || !instance.IndexBuffer || instance.IndexCount < 3)
+            if (!instance.bOpaque || !instance.bMainViewVisible || !instance.IndexBuffer || instance.IndexCount < 3)
             {
                 continue;
             }
@@ -1198,6 +1198,7 @@ namespace NorvesLib::Core::Rendering
                     : nullptr;
             const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData, instance.ShadingParams));
             uint32_t paramsIndex = std::numeric_limits<uint32_t>::max();
+            const auto firstRecord = records.size();
             for (const MeshIndexChunk& chunk : chunks)
             {
                 const uint32_t recordNumber = recordBase + static_cast<uint32_t>(records.size());
@@ -1241,6 +1242,10 @@ namespace NorvesLib::Core::Rendering
                 draw.RecordNumber = recordNumber;
                 draws.push_back(draw);
                 ++m_Stats.SkinnedRecords;
+            }
+            if (records.size() > firstRecord)
+            {
+                ++m_Work.SkinnedRecordedDrawCount;
             }
         }
     }
@@ -1689,6 +1694,14 @@ namespace NorvesLib::Core::Rendering
                 }
                 commandList->DrawIndexedInstanced(draw.IndexCount, 1, draw.FirstIndex, draw.VertexOffset, draw.RecordNumber);
             }
+            // 描画を記録できたときだけ、同じフレームの別のビューポートと合算する。
+            const uint64_t frameSerial = m_Work.Context->ResolveRenderFrameSerial();
+            if (m_RecordedSkinnedDrawSerial != frameSerial)
+            {
+                m_RecordedSkinnedDrawSerial = frameSerial;
+                m_RecordedSkinnedDrawCount = 0;
+            }
+            m_RecordedSkinnedDrawCount += m_Work.SkinnedRecordedDrawCount;
         }
     }
 

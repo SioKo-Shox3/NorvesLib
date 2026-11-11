@@ -2849,6 +2849,10 @@ namespace NorvesLib::Core::Engine
         {
             // World の段 LateTick → 段 PostLateTick: モジュールの LateTick → handler の OnLateUpdate
             GEngine->GetWorld().LateTick(times);
+        }
+        GEngine->UpdateWorldFieldInteractors();
+        if (bAdvanceSimulation)
+        {
             RunFrameStage(EFrameStage::PostLateTick, times.Unscaled, handler);
         }
         return result;

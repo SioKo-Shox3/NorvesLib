@@ -638,10 +638,6 @@ namespace NorvesLib::Core::Rendering
          */
         void TakeShadowInvalidation(MegaGeometryShadowInvalidation &out);
 
-    private:
-        /** @brief カリング用ユニフォームデータ（Common/MegaGeometryCull.glsl の CullUniforms と一致。VSM の投影物のカリングと同じ構造を使う） */
-        using CullUniformData = MegaGeometry::CullUniformData;
-
         /**
          * @brief 描く順のインスタンスの表の1要素（Common/MegaInstanceTable.glsl の MegaInstanceRow と一致）
          *
@@ -681,6 +677,30 @@ namespace NorvesLib::Core::Rendering
             float BoundsSphere[4];         // メッシュ全体の締まった境界球（ローカル。半径 0 なら無い）。インスタンスと範囲の判定が使う
         };
         static_assert(sizeof(GPUMegaMesh) == 80, "Common/MegaInstanceTable.glsl の MegaMeshEntry と大きさが一致しません");
+
+        /** @brief cluster_cull.comp・cluster_bvh_cull.comp のカリングの記述子セットの形。パイプライン・セット・GPU の試験が同じ形を使う */
+        static RHI::DescriptorSetDesc BuildCullDescriptorSetDesc();
+
+        /** @brief 1 回のカリングの記録が使う HZB（今のフレームと前のフレーム）の情報 */
+        struct CullOcclusionInputs
+        {
+            uint32_t DepthWidth = 0;   // HZB の元になった深度の寸法（HZB のミップ0 はその半分）
+            uint32_t DepthHeight = 0;
+            bool bCurrentHiZ = false;  // 今のフレームの HZB がある（2 パス目だけが使う）
+            uint32_t CurrentHiZMipCount = 0;
+            bool bPrevHiZ = false;     // 前のフレームの HZB を使う（契約が合ったフレームだけ。CanUsePreviousHiZ）
+            uint32_t PrevHiZMipCount = 0;
+            Math::Matrix4x4 PrevViewProjection = Math::Matrix4x4::Identity; // 前の HZB の深度を描いた VP
+        };
+
+        /** @brief この記録で使う HZB の欄だけをユニフォームへ書く */
+        static void ApplyCullOcclusion(MegaGeometry::CullUniformData& uniform, uint32_t cullPass, const CullOcclusionInputs& inputs);
+        /** @brief 前のフレームの HZB の契約が合い、構築済みかを判定する */
+        static bool CanUsePreviousHiZ(MegaPrevHiZStatus status, bool bPreviousHiZBuilt);
+
+    private:
+        /** @brief カリング用ユニフォームデータ（Common/MegaGeometryCull.glsl の CullUniforms と一致。VSM の投影物のカリングと同じ構造を使う） */
+        using CullUniformData = MegaGeometry::CullUniformData;
 
         /**
          * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
@@ -753,9 +773,6 @@ namespace NorvesLib::Core::Rendering
          * @brief カリング用GPUリソースを作成
          */
         bool CreateCullResources(RHI::IDevice *device);
-
-        /** @brief カリングのディスクリプタセットの形（cluster_cull.comp の binding 0〜13）。パイプラインとセットが同じ形を使う */
-        static RHI::DescriptorSetDesc BuildCullDescriptorSetDesc();
 
         /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜9）。パイプラインとセットが同じ形を使う */
         RHI::DescriptorSetDesc BuildDrawDescriptorSetDesc() const;

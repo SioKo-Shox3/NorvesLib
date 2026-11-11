@@ -143,11 +143,29 @@ namespace
     {
         CameraProxy Camera;
         float InverseViewProjection[16] = {};
+        float CameraRelativeInverseViewProjection[16] = {};
         float ViewProjection[16] = {};
         float CameraPosition[3] = {};
+        float DepthNearOverFar = 0.0f;
         VirtualShadowMapClipmapSettings Settings;
         VirtualShadowMapClipmap Clipmap;
     };
+
+    // CPU の参照は絶対座標、印付けはカメラ相対の逆行列と近遠比を使う
+    void UpdateCameraConstants(Scene& scene, const DevicePtr& device)
+    {
+        const CameraViewConstants constants =
+            CameraViewConstants::BuildForDevice(scene.Camera, scene.Camera.AspectRatio, device.get());
+        constants.CopyShaderInverseViewProjection(scene.InverseViewProjection);
+        constants.CopyShaderCameraRelativeInverseViewProjection(scene.CameraRelativeInverseViewProjection);
+        constants.CopyShaderViewProjection(scene.ViewProjection);
+        float depthLinearization[2] = {};
+        constants.CopyDepthLinearization(depthLinearization);
+        scene.DepthNearOverFar = depthLinearization[1];
+        scene.CameraPosition[0] = scene.Camera.PositionX;
+        scene.CameraPosition[1] = scene.Camera.PositionY;
+        scene.CameraPosition[2] = scene.Camera.PositionZ;
+    }
 
     // 列優先の行列（シェーダー向け）と同次座標の積
     void Multiply(const float* matrix, const double* vector, double* out)
@@ -201,13 +219,7 @@ namespace
         scene.Camera.FarPlane = 200.0f;
         scene.Camera.AspectRatio = static_cast<float>(ImageWidth) / static_cast<float>(ImageHeight);
 
-        const CameraViewConstants constants =
-            CameraViewConstants::BuildForDevice(scene.Camera, scene.Camera.AspectRatio, device.get());
-        constants.CopyShaderInverseViewProjection(scene.InverseViewProjection);
-        constants.CopyShaderViewProjection(scene.ViewProjection);
-        scene.CameraPosition[0] = scene.Camera.PositionX;
-        scene.CameraPosition[1] = scene.Camera.PositionY;
-        scene.CameraPosition[2] = scene.Camera.PositionZ;
+        UpdateCameraConstants(scene, device);
 
         // 段 0 の幅 1024 m（ページ 8 m・texel 6.25 cm）の 5 段。画素の大きさ × 2^-0.5 に合わせた段が 0〜3 に散る。
         // 核の幅（2 texel）は段 0 で 0.125 m で、曖昧さの許容（0.03 m）より十分大きい
@@ -287,12 +299,16 @@ namespace
                VirtualShadowMapPageTorusAddress(pageX, VirtualShadowMap::TABLE_DIMENSION);
     }
 
-    // 印付けに渡すカメラの前方（影の範囲は前方への距離で測る。範囲は設定の [0, MaxShadowDistance]）
-    void SetCameraForward(VirtualShadowMapPagesDispatch& dispatch, const Scene& scene)
+    // 印付けに本番と同じ形式のカメラの定数を渡す（影の範囲は設定の [0, MaxShadowDistance]）
+    void SetMarkCamera(VirtualShadowMapPagesDispatch& dispatch, const Scene& scene)
     {
+        std::memcpy(dispatch.InverseViewProjection, scene.CameraRelativeInverseViewProjection, sizeof(dispatch.InverseViewProjection));
+        std::memcpy(dispatch.CameraPosition, scene.CameraPosition, sizeof(dispatch.CameraPosition));
+        dispatch.DepthNearOverFar = scene.DepthNearOverFar;
         dispatch.CameraForward[0] = scene.Camera.ForwardX;
         dispatch.CameraForward[1] = scene.Camera.ForwardY;
         dispatch.CameraForward[2] = scene.Camera.ForwardZ;
+        dispatch.FovYDegrees = scene.Camera.FieldOfView;
     }
 
     // 画素を分類し、安定した画素ではそのページの集合（核の隣を含む / 画素の位置のページだけ）を返す
@@ -599,10 +615,7 @@ namespace
         dispatch.Clipmap = bPassClipmap ? &scene.Clipmap : nullptr;
         // この関数を使う従来のケースは、毎フレームすべて割り当て直す動き（--vsm-cache=off 相当）を確かめる。キャッシュを使う場面は RunCachePages
         dispatch.bCacheEnabled = false;
-        std::memcpy(dispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(dispatch.InverseViewProjection));
-        std::memcpy(dispatch.CameraPosition, scene.CameraPosition, sizeof(dispatch.CameraPosition));
-        SetCameraForward(dispatch, scene);
-        dispatch.FovYDegrees = scene.Camera.FieldOfView;
+        SetMarkCamera(dispatch, scene);
 
         const BufferPtr buffers[] = {resources.Pool, resources.PageTable, resources.RequestBits,
                                      resources.FreeList, resources.Stats, resources.DirtyList};
@@ -1084,10 +1097,7 @@ namespace
             pagesDispatch.DirtyList = resources.DirtyList;
             pagesDispatch.Depth = depth;
             pagesDispatch.Clipmap = &scene.Clipmap;
-            std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
-            std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
-            SetCameraForward(pagesDispatch, scene);
-            pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+            SetMarkCamera(pagesDispatch, scene);
             if (wide != nullptr)
             {
                 pagesDispatch.SliceCount = wide->SliceCount;
@@ -1947,7 +1957,7 @@ namespace
             uint32_t BvhInfo[4]; // BVH のアドレス（0）、節の数、ページの表の先頭は [3]
         };
 
-        // Common/MegaInstanceTable.glsl の MegaInstanceRow（144 バイト）と MegaMeshEntry（64 バイト）と同じ並び
+        // Common/MegaInstanceTable.glsl の MegaInstanceRow（144 バイト）と MegaMeshEntry（80 バイト）と同じ並び
         struct TestInstanceRow
         {
             float World[16];
@@ -1961,8 +1971,9 @@ namespace
             uint32_t ClusterInfo[4]; // アドレスの下位・上位、クラスタ数、予約
             uint32_t DrawInfo[4];    // 区間、頂点の基点、インデックスの基点、予約
             uint32_t BvhInfo[4];     // BVH のアドレス、節の数、ページの表の先頭
+            float BoundsSphere[4];  // メッシュ全体の境界球（半径 0 なら使わない）
         };
-        static_assert(sizeof(TestMesh) == 64, "MegaMeshEntry と大きさが一致しません");
+        static_assert(sizeof(TestMesh) == 80, "MegaMeshEntry と大きさが一致しません");
 
         // インスタンスごとに 1 行ずつのメッシュの表を作り、インスタンスの表の行はそれぞれ自分の番号の行を指す
         void SplitInstances(const TestInstance* source, uint32_t count, TestInstanceRow* rows, TestMesh* meshes)
@@ -1989,6 +2000,7 @@ namespace
         constexpr uint32_t ClusterCount = 15;
         constexpr uint32_t LevelCount = 4;
         constexpr float FirstTexelMeters = 0.25f;
+        constexpr float LodThresholdTexels = 1.0f;
         constexpr uint32_t FixedInstanceCount = 6;
         constexpr uint32_t InstanceCount = FixedInstanceCount + 1; // 末尾の 1 つは範囲の原点からの相対の位置で決める（SpecOf）
         constexpr uint32_t GeometryPageNone = 0xFFFFFFFFu;
@@ -2081,6 +2093,7 @@ namespace
         // （子のページが無いので、自分の誤差が許容を超えても自分を描く）
         void ExpectedClusters(uint32_t level, Container::VariableArray<uint32_t>& out, bool bLeafPageResident = true)
         {
+            static_assert(LodThresholdTexels == 1.0f, "ケース J の段ごとの高さは 1 texel の閾値を前提とします");
             out.clear();
             const uint32_t height = (level == 0u && !bLeafPageResident) ? 1u : level;
             for (uint32_t index = 0; index < ClusterCount; ++index)
@@ -2376,6 +2389,7 @@ namespace
             dispatch.MegaPageTable = geometryPages;
             dispatch.InstanceCount = InstanceCount;
             dispatch.TotalGroups = totalGroups;
+            dispatch.LodThresholdTexels = MegaCull::LodThresholdTexels;
             // 広い場面は、外から渡すスライスの表（先頭の段 + 繰り返したスライス）で動かす
             GPUVsmSlice wideSlices[VirtualShadowMapMaxSlices];
             if (bWide)
@@ -2548,7 +2562,7 @@ namespace
         constexpr double LightPosition[3] = {3.0, 4.0, 5.0};
         constexpr float LightRange = 50.0f;
         constexpr double BoundsRadius = 3.0;
-        // LOD の比（誤差 ÷ texel）の自然対数の絶対値がこれ未満なら、単精度の GPU が別の選び方をしうるので曖昧とする
+        // LOD の比（誤差 ÷ (texel × 閾値)）の自然対数の絶対値がこれ未満なら、単精度の GPU が別の選び方をしうるので曖昧とする
         constexpr double LodAmbiguity = 0.1;
         // ページの範囲の判定の余裕（面の NDC）を GPU の 1e-4 から縮めた場合と広げた場合で結果が変わるなら曖昧とする
         constexpr double GpuPageMargin = 1.0e-4;
@@ -2705,7 +2719,8 @@ namespace
         bool ClusterSelected(const SliceView& view, const double (&instance)[3], const Mega::GPUClusterData& cluster, double& minLogRatio)
         {
             const double center[3] = {instance[0] + cluster.BoundsCenterX, instance[1] + cluster.BoundsCenterY, instance[2] + cluster.BoundsCenterZ};
-            const double selfRatio = static_cast<double>(cluster.LODError) / TexelMeters(view, center, cluster.BoundsRadius);
+            const double selfRatio = static_cast<double>(cluster.LODError) /
+                                     (TexelMeters(view, center, cluster.BoundsRadius) * MegaCull::LodThresholdTexels);
             minLogRatio = std::min(minLogRatio, std::abs(std::log(selfRatio)));
             if (selfRatio > 1.0)
             {
@@ -2716,7 +2731,8 @@ namespace
                 return true;
             }
             const double parent[3] = {instance[0] + cluster.ParentCenterX, instance[1] + cluster.ParentCenterY, instance[2] + cluster.ParentCenterZ};
-            const double parentRatio = static_cast<double>(cluster.ParentError) / TexelMeters(view, parent, cluster.ParentRadius);
+            const double parentRatio = static_cast<double>(cluster.ParentError) /
+                                       (TexelMeters(view, parent, cluster.ParentRadius) * MegaCull::LodThresholdTexels);
             minLogRatio = std::min(minLogRatio, std::abs(std::log(parentRatio)));
             return !(parentRatio <= 1.0);
         }
@@ -2945,6 +2961,7 @@ namespace
             dispatch.MegaPageTable = geometryPages;
             dispatch.InstanceCount = InstanceCount;
             dispatch.TotalGroups = totalGroups;
+            dispatch.LodThresholdTexels = MegaCull::LodThresholdTexels;
 
             CommandListPtr commandList = device->CreateCommandList();
             if (!commandList)
@@ -3639,10 +3656,7 @@ namespace
         pagesDispatch.DirtyList = resources.DirtyList;
         pagesDispatch.Depth = depth;
         pagesDispatch.Clipmap = &scene.Clipmap;
-        std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
-        std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
-        SetCameraForward(pagesDispatch, scene);
-        pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+        SetMarkCamera(pagesDispatch, scene);
         const bool bPages = pages.Record(commandList.get(), pagesDispatch);
 
         VirtualShadowMapMegaCullDispatch cullDispatch;
@@ -3873,10 +3887,7 @@ namespace
                 frameDispatch.DirtyList = retryResources.DirtyList;
                 frameDispatch.Depth = depth;
                 frameDispatch.Clipmap = &scene.Clipmap;
-                std::memcpy(frameDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(frameDispatch.InverseViewProjection));
-                std::memcpy(frameDispatch.CameraPosition, scene.CameraPosition, sizeof(frameDispatch.CameraPosition));
-                SetCameraForward(frameDispatch, scene);
-                frameDispatch.FovYDegrees = scene.Camera.FieldOfView;
+                SetMarkCamera(frameDispatch, scene);
                 frameDispatch.bCacheEnabled = true;
                 const bool bFramePages = retryPages.Record(retryCommands.get(), frameDispatch);
 
@@ -4380,12 +4391,7 @@ namespace
         scene.Camera.NearPlane = 0.01f;
         scene.Camera.FarPlane = 100.0f;
         scene.Camera.AspectRatio = static_cast<float>(ImageWidth) / static_cast<float>(ImageHeight);
-        const CameraViewConstants constants = CameraViewConstants::BuildForDevice(scene.Camera, scene.Camera.AspectRatio, device.get());
-        constants.CopyShaderInverseViewProjection(scene.InverseViewProjection);
-        constants.CopyShaderViewProjection(scene.ViewProjection);
-        scene.CameraPosition[0] = scene.Camera.PositionX;
-        scene.CameraPosition[1] = scene.Camera.PositionY;
-        scene.CameraPosition[2] = scene.Camera.PositionZ;
+        UpdateCameraConstants(scene, device);
         scene.Clipmap = BuildVirtualShadowMapClipmap(sunDirection, 1u, Math::Vector3(scene.CameraPosition[0], scene.CameraPosition[1], scene.CameraPosition[2]), scene.Settings);
 
         // 受け手の平面（中心を通り、法線は光の向き）の深度の画像
@@ -8178,10 +8184,7 @@ namespace
         pagesDispatch.Clipmap = nullptr;
         pagesDispatch.PointLights = &pointScene.Lights;
         pagesDispatch.SliceCount = pointScene.SliceCount;
-        std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
-        std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
-        SetCameraForward(pagesDispatch, scene);
-        pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+        SetMarkCamera(pagesDispatch, scene);
         pagesDispatch.bCacheEnabled = tracker != nullptr;
         pagesDispatch.InvalidationSpheres = spheres.empty() ? nullptr : spheres.data();
         pagesDispatch.InvalidationSphereCount = static_cast<uint32_t>(spheres.size() / 4u);

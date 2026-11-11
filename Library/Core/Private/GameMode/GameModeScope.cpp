@@ -3,6 +3,7 @@
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Rendering/RenderResources.h"
+#include "Streaming/StreamingSystem.h"
 
 namespace NorvesLib::Core::GameMode
 {
@@ -138,6 +139,50 @@ namespace NorvesLib::Core::GameMode
         }
     }
 
+    void GameModeScope::TrackAsync(IGameModeAsyncWork& work)
+    {
+        for (IGameModeAsyncWork* existing : m_TrackedAsyncWorks)
+        {
+            if (existing == &work)
+            {
+                return;
+            }
+        }
+        if (m_pCleanupTracking != nullptr)
+        {
+            for (IGameModeAsyncWork* existing : m_pCleanupTracking->AsyncWorks)
+            {
+                if (existing == &work)
+                {
+                    return;
+                }
+            }
+        }
+        m_TrackedAsyncWorks.push_back(&work);
+    }
+
+    void GameModeScope::TrackStreaming(Streaming::StreamingSystem& system, Streaming::StreamingScopeId scopeId)
+    {
+        for (const TrackedStreamingScope& existing : m_TrackedStreamingScopes)
+        {
+            if (existing.System == &system && existing.ScopeId == scopeId)
+            {
+                return;
+            }
+        }
+        if (m_pCleanupTracking != nullptr)
+        {
+            for (const TrackedStreamingScope& existing : m_pCleanupTracking->StreamingScopes)
+            {
+                if (existing.System == &system && existing.ScopeId == scopeId)
+                {
+                    return;
+                }
+            }
+        }
+        m_TrackedStreamingScopes.push_back({&system, scopeId});
+    }
+
     void GameModeScope::AddCleanup(GameModeCleanupPhase phase, Delegate<void> callback)
     {
         if (!callback.IsBound())
@@ -252,14 +297,18 @@ namespace NorvesLib::Core::GameMode
         }
 
         m_bCleaningUp = true;
+        CleanupTracking cleanupTracking;
+        m_pCleanupTracking = &cleanupTracking;
         struct CleanupGuard
         {
             bool& Flag;
+            CleanupTracking*& Tracking;
             ~CleanupGuard()
             {
+                Tracking = nullptr;
                 Flag = false;
             }
-        } guard{m_bCleaningUp};
+        } guard{m_bCleaningUp, m_pCleanupTracking};
         ++m_AsyncTextureLifetime->Generation;
 
         auto drain = [](Container::VariableArray<Delegate<void>>& callbacks)
@@ -274,6 +323,24 @@ namespace NorvesLib::Core::GameMode
 
         do
         {
+            Container::VariableArray<IGameModeAsyncWork*> stoppedWorks;
+            while (!m_TrackedAsyncWorks.empty())
+            {
+                IGameModeAsyncWork* work = m_TrackedAsyncWorks.back();
+                m_TrackedAsyncWorks.pop_back();
+                stoppedWorks.push_back(work);
+                cleanupTracking.AsyncWorks.push_back(work);
+                work->CancelAndJoin();
+            }
+            while (!m_TrackedStreamingScopes.empty())
+            {
+                const TrackedStreamingScope entry = m_TrackedStreamingScopes.back();
+                m_TrackedStreamingScopes.pop_back();
+                cleanupTracking.StreamingScopes.push_back(entry);
+                // セルの資源は StopAndJoin 内の結合直後に UnloadStep・DiscardPrepared で返される。
+                entry.System->StopAndJoin(entry.ScopeId);
+            }
+
             drain(m_BeforeEntities);
 
             // 1) 親子の追跡の重複を除き、Entity を World から除去する
@@ -386,8 +453,15 @@ namespace NorvesLib::Core::GameMode
             m_TrackedModels.clear();
             m_TrackedMaterials.clear();
             m_TrackedTextures.clear();
-            // 終了済みの段へ追加された後始末も、同じ Cleanup の中で実行する。
-        } while (!m_BeforeEntities.empty() || !m_AfterEntities.empty());
+            while (!stoppedWorks.empty())
+            {
+                IGameModeAsyncWork* work = stoppedWorks.back();
+                stoppedWorks.pop_back();
+                work->ReleaseUnreturned();
+            }
+            // 終了済みの段へ追加された後始末や新しい追跡も、同じ Cleanup の中で処理する。
+        } while (!m_BeforeEntities.empty() || !m_AfterEntities.empty()
+            || !m_TrackedAsyncWorks.empty() || !m_TrackedStreamingScopes.empty());
     }
 
     bool GameModeScope::IsEmpty() const
@@ -398,7 +472,9 @@ namespace NorvesLib::Core::GameMode
             && m_TrackedMaterials.empty()
             && m_TrackedTextures.empty()
             && m_BeforeEntities.empty()
-            && m_AfterEntities.empty();
+            && m_AfterEntities.empty()
+            && m_TrackedAsyncWorks.empty()
+            && m_TrackedStreamingScopes.empty();
     }
 
 } // namespace NorvesLib::Core::GameMode

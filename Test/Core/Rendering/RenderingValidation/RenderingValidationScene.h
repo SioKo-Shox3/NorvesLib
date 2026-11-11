@@ -245,6 +245,13 @@ namespace NorvesLib::Test::RenderingValidation
         Complete
     };
 
+    // 上段は DefaultLit・PaleFlat・Fur、下段は Eye の P0 = 0・0.5・1。
+    inline constexpr float ShadingModelLightingSpherePositions[6][2] = {
+        {-3.0f, 1.6f}, {0.0f, 1.6f}, {3.0f, 1.6f},
+        {-3.0f, -1.6f}, {0.0f, -1.6f}, {3.0f, -1.6f}};
+    inline constexpr float ShadingModelLightingSphereRadius = 1.0f;
+    inline constexpr float ShadingModelLightingToLight[3] = {0.8f, 0.0f, 0.6f};
+
     inline constexpr uint32_t TransparentPhysicalLightingRowCount = 10u;
 
     class RenderingValidationSceneFixture final : private ISceneFixtureResourceReleaser
@@ -278,6 +285,8 @@ namespace NorvesLib::Test::RenderingValidation
         // R8の屋外の連番: 地面の上を動く球を1つ足し、中心の位置を変える（屋外のシーンだけ）。
         bool AddR8OutdoorMovingSphere() const;
         bool SetR8OutdoorMovingSpherePosition(float x, float y, float z) const;
+        bool ApplyShadingModelLightingFixture() const;
+        Core::Rendering::CameraProxy GetShadingModelLightingCamera() const;
         bool ApplyShadingModelGBufferFixture() const;
         Core::Rendering::CameraProxy GetShadingModelGBufferCamera() const;
         // velocity の検証: 1本の骨で動く2 m四方の骨付きの四角形を、R5 の場面の受け手の手前（中心 (-3, 0, 10)）に
@@ -286,6 +295,9 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR5SkinnedQuadAnimationTime(float timeSeconds) const;
         // 頂点アニメの揺れを、静的・骨付き・恒等の3枚で検証する。
         bool ApplyR5VertexAnimationFixture() const;
+        // 視錐台の絞り込み検証用に縮小した管状スキンを置く。
+        bool AddSkinnedCullGiant() const;
+        bool SetSkinnedCullGiantFront(bool bFront) const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
         bool SetR4CornellObjectOffsetX(float offsetX) const;
         bool SetR4CornellPointLightState(float offsetX, float intensity) const;
@@ -392,6 +404,8 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Entity* m_pR4CornellDynamicObjectEntity = nullptr;
         mutable Core::Entity* m_pR8OutdoorMovingSphereEntity = nullptr;
         mutable Core::Entity* m_pR5SkinnedQuadEntity = nullptr;
+        mutable Core::Entity* m_pSkinnedCullGiantEntity = nullptr;
+        mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_SkinnedCullGiantAsset;
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_R5SkinnedQuadAsset;
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_ShadingModelSkinAsset;

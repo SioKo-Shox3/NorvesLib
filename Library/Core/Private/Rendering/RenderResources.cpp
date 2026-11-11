@@ -1052,6 +1052,16 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void SkinnedMeshResources::PreloadFrameLeases(
+        const Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>>& frameLeases)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->SkinnedMeshes)
+        {
+            impl->SkinnedMeshes->PreloadFrameLeases(frameLeases);
+        }
+    }
+
     bool SkinnedMeshResources::PrepareDraw(
         const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
         const Container::VariableArray<Math::Matrix4x4>& bonePalette,

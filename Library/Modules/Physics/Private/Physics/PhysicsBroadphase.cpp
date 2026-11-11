@@ -21,8 +21,8 @@
 
 namespace NorvesLib::Modules::Physics
 {
-    // 木の形と形状値を共有する。組のフィルターは毎回のプロキシから読む。
-    struct PhysicsStaticTreeSnapshot
+    // 群ごとに木の形と形状値を共有する。組のフィルターは毎回のプロキシから読む。
+    struct PhysicsStaticSubtreeSnapshot
     {
         struct ProxySignature
         {
@@ -58,7 +58,19 @@ namespace NorvesLib::Modules::Physics
             }
         };
 
+        bool bHasStaticChunk = false;
+        uint64_t StaticChunkKey = 0;
         Core::Container::VariableArray<ProxySignature> Signatures;
+        StaticAabbTree Tree;
+        Math::AABB QueryBounds;
+        float MaxShapeSize = 0.0f;
+        bool bUsableQueryBounds = true;
+        bool bHasInvalidSweepBox = false;
+    };
+
+    struct PhysicsStaticTreeSnapshot
+    {
+        Core::Container::VariableArray<Core::Container::TSharedPtr<const PhysicsStaticSubtreeSnapshot>> Groups;
         StaticAabbTree Tree;
         Math::AABB QueryBounds;
         float MaxShapeSize = 0.0f;
@@ -68,6 +80,15 @@ namespace NorvesLib::Modules::Physics
 
     namespace
     {
+        bool IsStaticGroupLess(bool bLeftHasChunk, uint64_t leftKey, bool bRightHasChunk, uint64_t rightKey)
+        {
+            if (bLeftHasChunk != bRightHasChunk)
+            {
+                return !bLeftHasChunk;
+            }
+            return bLeftHasChunk && leftKey < rightKey;
+        }
+
         struct SweepEndpoint
         {
             float Coordinate = 0.0f;
@@ -680,6 +701,7 @@ namespace NorvesLib::Modules::Physics
         {
             const PhysicsStaticTreeSnapshot* Snapshot;
             Core::Container::Span<const uint32_t> TreeProxyIndices;
+            Core::Container::Span<const uint32_t> TreeGroupOffsets;
             Core::Container::Span<const uint32_t> NonTreeProxyIndices;
             uint64_t& VisitedNodeCount;
         };
@@ -743,16 +765,27 @@ namespace NorvesLib::Modules::Physics
                 }
                 float limit = closestLimit(context);
                 Result result = Result::Success;
-                tree->VisitedNodeCount += tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,limit,
-                    [&](uint32_t item)
+                const uint64_t visitedGroups = tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,limit,
+                    [&](uint32_t groupIndex)
                     {
                         if (result == Result::Success || result == Result::NoHit)
                         {
-                            result = visit(tree->TreeProxyIndices[item]);
-                            limit = std::fmin(limit,closestLimit(context));
+                            const auto& group = *tree->Snapshot->Groups[groupIndex];
+                            const uint32_t offset = tree->TreeGroupOffsets[groupIndex];
+                            tree->VisitedNodeCount += group.Tree.QueryRay(ray->Origin,ray->Direction,limit,
+                                [&](uint32_t item)
+                                {
+                                    if (result == Result::Success || result == Result::NoHit)
+                                    {
+                                        result = visit(tree->TreeProxyIndices[offset + item]);
+                                        limit = std::fmin(limit,closestLimit(context));
+                                    }
+                                    return limit;
+                                });
                         }
                         return limit;
                     });
+                tree->VisitedNodeCount += visitedGroups;
                 return result == Result::NoHit ? Result::Success : result;
             }
 
@@ -761,19 +794,35 @@ namespace NorvesLib::Modules::Physics
             {
                 indices.push_back(index);
             }
-            const auto collect = [&](uint32_t item) { indices.push_back(tree->TreeProxyIndices[item]); };
             if (ray != nullptr)
             {
-                tree->VisitedNodeCount += tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,maxDistance,
-                    [&](uint32_t item)
+                const uint64_t visitedGroups = tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,maxDistance,
+                    [&](uint32_t groupIndex)
                     {
-                        collect(item);
+                        const auto& group = *tree->Snapshot->Groups[groupIndex];
+                        const uint32_t offset = tree->TreeGroupOffsets[groupIndex];
+                        tree->VisitedNodeCount += group.Tree.QueryRay(ray->Origin,ray->Direction,maxDistance,
+                            [&](uint32_t item)
+                            {
+                                indices.push_back(tree->TreeProxyIndices[offset + item]);
+                                return maxDistance;
+                            });
                         return maxDistance;
                     });
+                tree->VisitedNodeCount += visitedGroups;
             }
             else
             {
-                tree->VisitedNodeCount += tree->Snapshot->Tree.QueryAabb(*bounds,collect);
+                const uint64_t visitedGroups = tree->Snapshot->Tree.QueryAabb(*bounds, [&](uint32_t groupIndex)
+                {
+                    const auto& group = *tree->Snapshot->Groups[groupIndex];
+                    const uint32_t offset = tree->TreeGroupOffsets[groupIndex];
+                    tree->VisitedNodeCount += group.Tree.QueryAabb(*bounds, [&](uint32_t item)
+                    {
+                        indices.push_back(tree->TreeProxyIndices[offset + item]);
+                    });
+                });
+                tree->VisitedNodeCount += visitedGroups;
             }
             std::sort(indices.begin(),indices.end());
             size_t nonTreeIndex = 0;
@@ -1386,6 +1435,7 @@ namespace NorvesLib::Modules::Physics
         outHits.resize(QueryHitLimit(m_Proxies.size(), query));
         size_t count = 0;
         const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_TreeGroupOffsets.data(),m_TreeGroupOffsets.size()},
             {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
         const Result result = ExecuteQueryOverProxiesImpl(
             Core::Container::Span<const PhysicsShapeProxy>(m_Proxies.data(), m_Proxies.size()), query,
@@ -1413,8 +1463,8 @@ namespace NorvesLib::Modules::Physics
         m_Proxies = std::move(proxies);
         assert(m_Proxies.size() <= UINT32_MAX);
         m_TreeProxyIndices.clear();
+        m_TreeGroupOffsets.clear();
         m_NonTreeProxyIndices.clear();
-        Core::Container::VariableArray<PhysicsStaticTreeSnapshot::ProxySignature> signatures;
         for (size_t index = 0; index < m_Proxies.size(); ++index)
         {
             const PhysicsShapeProxy& proxy = m_Proxies[index];
@@ -1424,56 +1474,161 @@ namespace NorvesLib::Modules::Physics
             if (bUseTree)
             {
                 m_TreeProxyIndices.push_back(static_cast<uint32_t>(index));
-                signatures.push_back({proxy.Collider, proxy.Shape, proxy.Sphere, proxy.Box, proxy.Capsule, proxy.Bounds});
             }
             else
             {
                 m_NonTreeProxyIndices.push_back(static_cast<uint32_t>(index));
             }
         }
+        std::sort(m_TreeProxyIndices.begin(), m_TreeProxyIndices.end(), [&](uint32_t left, uint32_t right)
+        {
+            const PhysicsShapeProxy& a = m_Proxies[left];
+            const PhysicsShapeProxy& b = m_Proxies[right];
+            if (IsStaticGroupLess(a.bHasStaticChunk, a.StaticChunkKey, b.bHasStaticChunk, b.StaticChunkKey))
+            {
+                return true;
+            }
+            if (IsStaticGroupLess(b.bHasStaticChunk, b.StaticChunkKey, a.bHasStaticChunk, a.StaticChunkKey))
+            {
+                return false;
+            }
+            return IsHandleLess(a.Collider, b.Collider);
+        });
+        m_Stats.StaticTreeItemCount = m_TreeProxyIndices.size();
 
-        if (signatures.empty())
+        Core::Container::VariableArray<Core::Container::TSharedPtr<const PhysicsStaticSubtreeSnapshot>> groups;
+        size_t previousGroupIndex = 0;
+        bool bGroupsChanged = false;
+        for (size_t first = 0; first < m_TreeProxyIndices.size();)
         {
-            m_StaticTree.reset();
-        }
-        else if (!m_StaticTree || m_StaticTree->Signatures.size() != signatures.size()
-            || !std::equal(signatures.begin(), signatures.end(), m_StaticTree->Signatures.begin()))
-        {
-            auto snapshot = Core::Container::MakeShared<PhysicsStaticTreeSnapshot>();
-            snapshot->Signatures = std::move(signatures);
+            const PhysicsShapeProxy& firstProxy = m_Proxies[m_TreeProxyIndices[first]];
+            const bool bHasChunk = firstProxy.bHasStaticChunk;
+            const uint64_t key = bHasChunk ? firstProxy.StaticChunkKey : 0;
+            size_t end = first + 1;
+            while (end < m_TreeProxyIndices.size())
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[m_TreeProxyIndices[end]];
+                if (proxy.bHasStaticChunk != bHasChunk || (bHasChunk && proxy.StaticChunkKey != key))
+                {
+                    break;
+                }
+                ++end;
+            }
+            m_TreeGroupOffsets.push_back(static_cast<uint32_t>(first));
+
+            Core::Container::VariableArray<PhysicsStaticSubtreeSnapshot::ProxySignature> signatures;
+            signatures.reserve(end - first);
+            for (size_t item = first; item < end; ++item)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[m_TreeProxyIndices[item]];
+                signatures.push_back({proxy.Collider, proxy.Shape, proxy.Sphere, proxy.Box, proxy.Capsule, proxy.Bounds});
+            }
+
+            if (m_StaticTree)
+            {
+                while (previousGroupIndex < m_StaticTree->Groups.size())
+                {
+                    const auto& previous = *m_StaticTree->Groups[previousGroupIndex];
+                    if (!IsStaticGroupLess(previous.bHasStaticChunk, previous.StaticChunkKey, bHasChunk, key))
+                    {
+                        break;
+                    }
+                    ++previousGroupIndex;
+                }
+                if (previousGroupIndex < m_StaticTree->Groups.size())
+                {
+                    const auto& previous = m_StaticTree->Groups[previousGroupIndex];
+                    if (previous->bHasStaticChunk == bHasChunk && (!bHasChunk || previous->StaticChunkKey == key))
+                    {
+                        ++previousGroupIndex;
+                        if (previous->Signatures.size() == signatures.size()
+                            && std::equal(signatures.begin(), signatures.end(), previous->Signatures.begin()))
+                        {
+                            groups.push_back(previous);
+                            ++m_Stats.SubtreeReuseCount;
+                            first = end;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            auto group = Core::Container::MakeShared<PhysicsStaticSubtreeSnapshot>();
+            group->bHasStaticChunk = bHasChunk;
+            group->StaticChunkKey = key;
+            group->Signatures = std::move(signatures);
             Core::Container::VariableArray<Math::AABB> bounds;
             Core::Container::VariableArray<Core::Scene::ColliderHandle> handles;
-            bounds.reserve(m_TreeProxyIndices.size());
-            handles.reserve(m_TreeProxyIndices.size());
-            for (uint32_t index : m_TreeProxyIndices)
+            bounds.reserve(end - first);
+            handles.reserve(end - first);
+            for (size_t item = first; item < end; ++item)
             {
-                const PhysicsShapeProxy& proxy = m_Proxies[index];
+                const PhysicsShapeProxy& proxy = m_Proxies[m_TreeProxyIndices[item]];
                 Math::AABB conservativeBounds = ConservativeProxyBounds(proxy);
                 conservativeBounds.Merge(proxy.Bounds);
-                snapshot->bUsableQueryBounds = snapshot->bUsableQueryBounds && IsUsableQueryBounds(conservativeBounds);
+                group->bUsableQueryBounds = group->bUsableQueryBounds && IsUsableQueryBounds(conservativeBounds);
                 if (bounds.empty())
                 {
-                    snapshot->QueryBounds = conservativeBounds;
+                    group->QueryBounds = conservativeBounds;
                 }
                 else
                 {
-                    snapshot->QueryBounds.Merge(conservativeBounds);
+                    group->QueryBounds.Merge(conservativeBounds);
                 }
                 const float shapeSize = proxy.Shape == EPhysicsProxyShape::Sphere ? proxy.Sphere.Radius
                     : proxy.Shape == EPhysicsProxyShape::Capsule ? proxy.Capsule.Radius
                     : std::fmax(proxy.Box.HalfExtents.x,std::fmax(proxy.Box.HalfExtents.y,proxy.Box.HalfExtents.z));
-                snapshot->MaxShapeSize = std::fmax(snapshot->MaxShapeSize,shapeSize);
-                snapshot->bHasInvalidSweepBox = snapshot->bHasInvalidSweepBox
+                group->MaxShapeSize = std::fmax(group->MaxShapeSize,shapeSize);
+                group->bHasInvalidSweepBox = group->bHasInvalidSweepBox
                     || (proxy.Shape == EPhysicsProxyShape::Box && !Math::IsValidSweepBox(proxy.Box));
                 bounds.push_back(conservativeBounds);
                 handles.push_back(proxy.Collider);
+            }
+            group->Tree.Build(
+                Core::Container::Span<const Math::AABB>(bounds.data(), bounds.size()),
+                Core::Container::Span<const Core::Scene::ColliderHandle>(handles.data(), handles.size()));
+            groups.push_back(std::move(group));
+            ++m_Stats.SubtreeRebuildCount;
+            bGroupsChanged = true;
+            first = end;
+        }
+
+        bGroupsChanged = bGroupsChanged || (m_StaticTree && m_StaticTree->Groups.size() != groups.size());
+        if (groups.empty())
+        {
+            m_StaticTree.reset();
+        }
+        else if (bGroupsChanged)
+        {
+            auto snapshot = Core::Container::MakeShared<PhysicsStaticTreeSnapshot>();
+            snapshot->Groups = std::move(groups);
+            Core::Container::VariableArray<Math::AABB> bounds;
+            Core::Container::VariableArray<Core::Scene::ColliderHandle> handles;
+            bounds.reserve(snapshot->Groups.size());
+            handles.reserve(snapshot->Groups.size());
+            for (size_t index = 0; index < snapshot->Groups.size(); ++index)
+            {
+                const auto& group = *snapshot->Groups[index];
+                if (index == 0)
+                {
+                    snapshot->QueryBounds = group.QueryBounds;
+                }
+                else
+                {
+                    snapshot->QueryBounds.Merge(group.QueryBounds);
+                }
+                snapshot->bUsableQueryBounds = snapshot->bUsableQueryBounds && group.bUsableQueryBounds;
+                snapshot->MaxShapeSize = std::fmax(snapshot->MaxShapeSize, group.MaxShapeSize);
+                snapshot->bHasInvalidSweepBox = snapshot->bHasInvalidSweepBox || group.bHasInvalidSweepBox;
+                bounds.push_back(group.QueryBounds);
+                handles.push_back({static_cast<uint32_t>(index), 1});
             }
             snapshot->Tree.Build(
                 Core::Container::Span<const Math::AABB>(bounds.data(), bounds.size()),
                 Core::Container::Span<const Core::Scene::ColliderHandle>(handles.data(), handles.size()));
             m_StaticTree = std::move(snapshot);
-            m_Stats.TreeRebuildCount = 1;
         }
+        m_Stats.TreeRebuildCount = bGroupsChanged ? 1 : 0;
 
         BuildCandidatePairs();
         m_Stats.CandidatePairCount = m_CandidatePairs.size();
@@ -1486,7 +1641,8 @@ namespace NorvesLib::Modules::Physics
 
     const StaticAabbTree* PhysicsBroadphase::GetStaticTree() const
     {
-        return m_StaticTree ? &m_StaticTree->Tree : nullptr;
+        return m_StaticTree && !m_StaticTree->Groups.empty() && !m_StaticTree->Groups[0]->bHasStaticChunk
+            ? &m_StaticTree->Groups[0]->Tree : nullptr;
     }
 
     const Core::Container::VariableArray<PhysicsShapeProxy>& PhysicsBroadphase::GetProxies() const
@@ -1641,6 +1797,7 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::PhysicsRaycastHit& outHit) const
     {
         const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_TreeGroupOffsets.data(),m_TreeGroupOffsets.size()},
             {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
         return RaycastOverProxiesImpl({m_Proxies.data(),m_Proxies.size()},ray,maxDistance,outHit,&tree);
     }
@@ -1665,6 +1822,7 @@ namespace NorvesLib::Modules::Physics
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit> converted(capacity);
         size_t count = 0;
         const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_TreeGroupOffsets.data(),m_TreeGroupOffsets.size()},
             {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
         const auto result = OverlapOverProxiesImpl({m_Proxies.data(),m_Proxies.size()},query,
             {scratch.data(),scratch.size()},{converted.data(),converted.size()},count,&tree);
@@ -1937,6 +2095,17 @@ namespace NorvesLib::Modules::Physics
 
         if (m_StaticTree)
         {
+            const auto visitStatic = [&](const Math::AABB& bounds, const auto& visitor)
+            {
+                m_StaticTree->Tree.QueryAabb(bounds, [&](uint32_t groupIndex)
+                {
+                    const uint32_t offset = m_TreeGroupOffsets[groupIndex];
+                    m_StaticTree->Groups[groupIndex]->Tree.QueryAabb(bounds, [&](uint32_t item)
+                    {
+                        visitor(m_TreeProxyIndices[offset + item]);
+                    });
+                });
+            };
             // SAP と木の所属は排他的なので、この経路では各組を動く側から 1 回だけ作る。
             for (uint32_t index : m_NonTreeProxyIndices)
             {
@@ -1945,9 +2114,8 @@ namespace NorvesLib::Modules::Physics
                 {
                     continue;
                 }
-                m_StaticTree->Tree.QueryAabb(proxy.Bounds, [&](uint32_t item)
+                visitStatic(proxy.Bounds, [&](uint32_t staticIndex)
                 {
-                    const uint32_t staticIndex = m_TreeProxyIndices[item];
                     if (canPair(proxy, m_Proxies[staticIndex]))
                     {
                         appendPair(index, staticIndex);
@@ -1962,9 +2130,8 @@ namespace NorvesLib::Modules::Physics
                 {
                     continue;
                 }
-                m_StaticTree->Tree.QueryAabb(proxy.Bounds, [&](uint32_t item)
+                visitStatic(proxy.Bounds, [&](uint32_t otherIndex)
                 {
-                    const uint32_t otherIndex = m_TreeProxyIndices[item];
                     const PhysicsShapeProxy& other = m_Proxies[otherIndex];
                     // 両方が能動側なら、ハンドルが小さい側からだけ作る。
                     if (index == otherIndex

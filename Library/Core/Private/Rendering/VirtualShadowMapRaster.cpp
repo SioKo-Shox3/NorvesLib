@@ -16,6 +16,7 @@
 #include "RHI/IFramebuffer.h"
 #include "RHI/IPipeline.h"
 #include "RHI/IRenderPass.h"
+#include "RHI/ITexture.h"
 
 #include <cwchar>
 #include <limits>
@@ -24,21 +25,8 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // シェーダー（vsm_expand.comp・vsm_draw.vert）の VsmRasterParams（std140）と同じ並び
-        struct GPURasterParams
-        {
-            float lightRight[4];
-            float lightUp[4];
-            float lightDirection[4];
-            float depth[4];      // x = 深度の原点、y = 1 / (2 × 深度の範囲)
-            uint32_t counts[4];  // x = 塊の数、y = スライスの数、z = インスタンスの容量、w = MegaGeometry のクラスタの記録の容量
-            float foliageWind[4];        // 株の塊の風: xy = 吹いていく向き（XZ）、z = 風の時計[s]
-            float foliageWindParams[4];  // x = 突風の速さ[m/s]、y = 突風の大きさ[m]
-            float vertexAnimTime[4];
-        };
-        // ページの一辺・texel・範囲の原点・投影の行列はスライスの表（GPUVsmSlice。ExpandBindSlices・DrawBindSlices）にある
-        static_assert(sizeof(GPURasterParams) == 128 && offsetof(GPURasterParams, vertexAnimTime) == 112,
-                      "vsm_draw.vert の VsmRasterParams と同じ並びにすること");
+        // 展開は先頭 112 バイトを読み、描画が末尾の世界フィールド（株だけ）と頂点アニメの時刻を読む。
+        using GPURasterParams = VirtualShadowMapRasterParams;
 
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
@@ -156,6 +144,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DrawBindPool = 3;
         constexpr uint32_t DrawBindMegaChunks = 4;
         constexpr uint32_t DrawBindSlices = 5;
+        constexpr uint32_t DrawBindWorldField = 6;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type, RHI::ShaderStage stages)
         {
@@ -188,6 +177,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(DrawBindPool, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Pixel));
             desc.bindings.push_back(MakeBinding(DrawBindMegaChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Vertex));
             desc.bindings.push_back(MakeBinding(DrawBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex));
+            desc.bindings.push_back(MakeBinding(DrawBindWorldField, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Vertex));
             return desc;
         }
 
@@ -419,7 +409,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VirtualShadowMapRaster::IsReady() const
     {
-        return m_Device != nullptr && m_ExpandPipeline && m_ExpandArgsPipeline && m_DrawPipeline && m_RenderPass && m_Framebuffer && m_IdentityIndices;
+        return m_Device != nullptr && m_ExpandPipeline && m_ExpandArgsPipeline && m_DrawPipeline && m_RenderPass &&
+               m_Framebuffer && m_IdentityIndices && m_NeutralWorldField && m_WorldFieldSampler;
     }
 
     bool VirtualShadowMapRaster::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
@@ -454,6 +445,26 @@ namespace NorvesLib::Core::Rendering
         // 展開・描画のパイプライン、添付の無い 128×128 のレンダーパスとフレームバッファ（RHI の作成は失敗すると例外を投げる）
         try
         {
+            RHI::TextureDesc neutralDesc;
+            neutralDesc.Width = 1;
+            neutralDesc.Height = 1;
+            neutralDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            neutralDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            neutralDesc.DebugName = "VsmRaster.NeutralWorldField";
+            m_NeutralWorldField = device->CreateTexture(neutralDesc);
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Linear;
+            samplerDesc.filterMag = RHI::FilterMode::Linear;
+            samplerDesc.filterMip = RHI::FilterMode::Point;
+            samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+            m_WorldFieldSampler = device->CreateSampler(samplerDesc);
+            if (m_NeutralWorldField)
+            {
+                const uint32_t zero = 0;
+                m_NeutralWorldField->Update(&zero, sizeof(zero), sizeof(zero));
+            }
             RHI::ComputePipelineDesc expandDesc;
             expandDesc.computeShader = m_ExpandShader;
             expandDesc.descriptorSetLayouts.push_back(MakeExpandLayout());
@@ -526,6 +537,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_Uses.Clear();
         m_IdentityIndices.reset();
+        m_NeutralWorldField.reset();
+        m_WorldFieldSampler.reset();
         m_Framebuffer.reset();
         m_DrawPipeline.reset();
         m_ExpandPipeline.reset();
@@ -617,6 +630,9 @@ namespace NorvesLib::Core::Rendering
         std::copy(dispatch.FoliageWind, dispatch.FoliageWind + 4, params.foliageWind);
         std::copy(dispatch.FoliageWindParams, dispatch.FoliageWindParams + 4, params.foliageWindParams);
         std::copy(dispatch.VertexAnimTime, dispatch.VertexAnimTime + 4, params.vertexAnimTime);
+        const bool bHasWorldField = dispatch.WorldFieldCurrent && dispatch.WorldField.bEnabled != 0u;
+        const RHI::TexturePtr& currentField = bHasWorldField ? dispatch.WorldFieldCurrent : m_NeutralWorldField;
+        params.worldField = bHasWorldField ? dispatch.WorldField : WorldFieldSampleConstants{};
 
         // スライスの表（ページの一辺・texel・範囲の原点・投影の行列）。外から渡されなければクリップマップから作る
         GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];
@@ -721,6 +737,8 @@ namespace NorvesLib::Core::Rendering
             use->DrawSet->BindStorageBuffer(DrawBindMegaChunks, bMega ? dispatch.MegaChunks : dispatch.Chunks, 0,
                                             ClampBindSize(bMega ? VirtualShadowMap::RasterChunkBytes(dispatch.MegaCapacity)
                                                                 : VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
+            use->DrawSet->BindTexture(DrawBindWorldField, currentField);
+            use->DrawSet->BindSampler(DrawBindWorldField, m_WorldFieldSampler);
             use->DrawSet->Update();
 
             RHI::Viewport viewport;
@@ -736,6 +754,13 @@ namespace NorvesLib::Core::Rendering
             scissor.right = static_cast<int32_t>(VirtualShadowMap::RASTER_VIEWPORT);
             scissor.bottom = static_cast<int32_t>(VirtualShadowMap::RASTER_VIEWPORT);
 
+            // ShaderResource の同期先に頂点段が無いため、layout を保って頂点の読み取りへ公開する。
+            RHI::ExplicitTextureBarrierDesc fieldBarrier;
+            fieldBarrier.BeforeState = RHI::ResourceState::ShaderResource;
+            fieldBarrier.AfterState = RHI::ResourceState::GenericRead;
+            fieldBarrier.OldLayout = RHI::TextureLayout::ShaderReadOnly;
+            fieldBarrier.NewLayout = RHI::TextureLayout::ShaderReadOnly;
+            commandList->TextureBarrierExplicit(currentField, fieldBarrier);
             commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
             commandList->SetViewport(viewport);
             commandList->SetScissor(scissor);

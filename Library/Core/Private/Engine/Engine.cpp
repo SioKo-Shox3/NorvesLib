@@ -45,6 +45,7 @@ namespace NorvesLib::Core::Engine
           m_InputDebugOverlay(m_InputSystem, m_InputRouter, m_InputMapper),
           m_InputRebindCapture(m_InputSystem, m_InputRouter, m_InputMapper)
     {
+        (void)Component::WorldFieldInteractorComponent::StaticClass();
         m_ScatterSystem.SetRenderWorld(&m_RenderWorld);
         m_InputSystem.SetRouter(&m_InputRouter);
         // 設定/active contextが無ければ入力を消費せず、旧controllerへ透過する。
@@ -52,6 +53,15 @@ namespace NorvesLib::Core::Engine
         // 同一Engineの正本/配線と単一ownerがctorで確定している。
         (void)m_InputDebugOverlay.Attach();
         (void)m_InputRebindCapture.Attach();
+    }
+
+    void Engine::UpdateWorldFieldInteractors()
+    {
+        const auto& camera = m_RenderWorld.GetRenderingCoordinator().GetMainCamera();
+        Container::VariableArray<Rendering::WorldFieldInteractor> interactors;
+        m_WorldFieldInteractorGatherer.Gather(
+            Math::Vector3(camera.PositionX, camera.PositionY, camera.PositionZ), interactors);
+        m_RenderWorld.SetWorldFieldInteractors({interactors.data(), interactors.size()});
     }
 
     Engine::~Engine()
