@@ -10753,3 +10753,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261111-213227/verify-G5-GR30-build.log`(HEAD a64a8977 のビルド EXIT 0)、`verify-G5-GR30-ctest-1.log`(5/5 Passed、360 秒)、`verify-G5-GR30-ctest-2.log`(5/5 Passed、391 秒)、`verify-G5-GR30-ctest-3.log`(4/4 Passed、244 秒)。numstat の 2 通りは一致。
 - Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。統合ブランチは取り込みの後に G5-GR26-GBUFFER-PROGRAMS(GBuffer の頂点・断片シェーダーの差し替え)などが進んでいるので、次の取り込みでは gbuffer.vert まわりの衝突に注意する。
 - Notes: 要起票: GPU の試験は 1 本 50〜110 秒の大半が起動時のシェーダーのコンパイルなので、`VulkanShaderCompiler.cpp` で SPIR-V をディスクに残して起動を速くする(RHI/Vulkan で危険地帯。この項目の paths の外)。
+
+## 2026-11-12 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261112-015206 の反復 1、完了)
+- Done: 前のランの評価者が枠切れ(429)で回らず、status が進行中へ戻っていたので完了に戻した。コードは前のランの検証の時点(d4f4e9a7)から変わっていない(その後の差分は TASKS.md の status の 1 行だけ)。
+- 証拠: 前のランの再検証の出力を `.harness/runs/20261112-015206/G5-GR30-prev-evidence/` に写した。`recheck-G5-GR30-VERTEX-ANIM-VELOCITY-3-1.txt`(ビルド exit=0)、`-3-2.txt`(5/5 Passed)、`-3-3.txt`(5/5 Passed)、`-3-4.txt`(4/4 Passed。VertexAnim・VertexAnimGBufferFallback・VertexAnimDrop を含む)。
+- Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。
