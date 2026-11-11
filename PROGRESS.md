@@ -10792,3 +10792,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 TerrainShaderCompileTest を足す: 着地(直し 2 回)
 - U8 層のテクスチャを cook 済みの Poly Haven の素材から 2D 配列に組む（無ければ単色の仮のまま）: 着地(直し 0 回)
 - U10 TerrainLayerBlendVulkanTest を足す（象限・斜面・濡れ）: 着地(直し 0 回)
+- U13 U11 の 3 層の新旧一致の検査を今の枠で着地させる（レビュー済みの中身の写しを置き、タスクの verify を回す）: 着地(直し 0 回)

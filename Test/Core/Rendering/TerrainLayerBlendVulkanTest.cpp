@@ -70,7 +70,7 @@ namespace
     }
 
     // ルートを基準に include を再帰展開し、実ファイルの BOM だけを読み込み時に除く。
-    bool ExpandShaderText(const String& text, String& expanded, uint32_t depth = 0u)
+    bool ExpandShaderText(const String& text, String& expanded, uint32_t depth = 0u, bool bBefore = false)
     {
         if (!Check(depth < 16u, "シェーダーの include が深すぎます")) return false;
         size_t start = 0;
@@ -85,7 +85,11 @@ namespace
                 const size_t first = line.find('"', directive + 8u);
                 const size_t last = first == String::npos ? String::npos : line.find('"', first + 1u);
                 if (!Check(last != String::npos, "include の引用符を読めません")) return false;
-                const String path = String(NORVES_SOURCE_ROOT "/Assets/Shaders/") + line.substr(first + 1u, last - first - 1u);
+                const String include = line.substr(first + 1u, last - first - 1u);
+                // 写しは 411e72cf のバイトをそのまま保存する。差し替えるのはこの 1 ファイルだけ。
+                const String path = bBefore && include == "Common/TerrainLayerBlend.glsl"
+                    ? String(NORVES_SOURCE_ROOT "/Test/Core/Rendering/TerrainLayerBlendBefore.glsl")
+                    : String(NORVES_SOURCE_ROOT "/Assets/Shaders/") + include;
                 FileStream::FileStream file;
                 if (!Check(file.Open(path, FileStream::FileMode::Read, FileStream::FileAccess::Read),
                            "シェーダーの共通ファイルを開けません")) return false;
@@ -96,7 +100,7 @@ namespace
                            "シェーダーを最後まで読めません")) return false;
                 const bool bBom = length >= 3 && static_cast<uint8_t>(bytes[0]) == 0xefu &&
                     static_cast<uint8_t>(bytes[1]) == 0xbbu && static_cast<uint8_t>(bytes[2]) == 0xbfu;
-                if (!ExpandShaderText(String(bytes.data() + (bBom ? 3u : 0u)), expanded, depth + 1u)) return false;
+                if (!ExpandShaderText(String(bytes.data() + (bBom ? 3u : 0u)), expanded, depth + 1u, bBefore)) return false;
             }
             else
             {
@@ -539,6 +543,456 @@ void main()
             Check(roughnessFailures == 0u, "濡れても粗さが下がりません");
     }
 
+    // (d) は独立した本文・束縛・資源で、同じ入力に対する 3 層の新旧の全出力を比べる。
+    struct ThreeLayerOutput
+    {
+        float Albedo[4];
+        float Material[4];
+        float TangentNormal[4];
+        float WorldNormal[4];
+    };
+    static_assert(sizeof(ThreeLayerOutput) == 64u);
+
+    bool BuildThreeLayerSource(String& source, bool bBefore)
+    {
+        const String probe = R"glsl(#version 450
+#define NORVES_MATERIAL_SAMPLING_EXPLICIT_GRADIENT 1
+#define NORVES_VT_FEEDBACK_COMPUTE 1
+#undef NORVES_VT_FEEDBACK
+#include "Common/GBufferEncoding.glsl"
+#include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SparseResidencySampling.glsl"
+#include "Common/VirtualTextureFeedback.glsl"
+#include "Common/PbrMaterialTextureSamplingCore.glsl"
+#include "Common/TerrainLayerBlend.glsl"
+layout(local_size_x = 64) in;
+struct ProbeInput { vec4 positionDistance; vec4 dx; vec4 dy; vec4 normal; };
+struct ThreeLayerOutput { vec4 albedo; vec4 material; vec4 tangentNormal; vec4 worldNormal; };
+layout(std430, set = 0, binding = 0) readonly buffer Inputs { ProbeInput values[]; } inputs;
+layout(std430, set = 0, binding = 1) writeonly buffer Outputs { ThreeLayerOutput values[]; } outputs;
+layout(set = 0, binding = 2) uniform sampler2D sandAlbedo;
+layout(set = 0, binding = 3) uniform sampler2D sandNormal;
+layout(set = 0, binding = 4) uniform sampler2D sandOrm;
+layout(set = 0, binding = 5) uniform sampler2D dirtAlbedo;
+layout(set = 0, binding = 6) uniform sampler2D dirtNormal;
+layout(set = 0, binding = 7) uniform sampler2D dirtOrm;
+layout(set = 0, binding = 8) uniform sampler2D rockAlbedo;
+layout(set = 0, binding = 9) uniform sampler2D rockNormal;
+layout(set = 0, binding = 10) uniform sampler2D rockOrm;
+layout(set = 0, binding = 11) uniform sampler2D surfaceMask;
+layout(set = 0, binding = 12) uniform sampler2D farMap;
+layout(std140, set = 0, binding = 13) uniform Params { vec4 terrain[10]; } params;
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uint(inputs.values.length())) return;
+    ProbeInput p = inputs.values[index];
+    TerrainSurfaceInput surface;
+    surface.WorldPosition = p.positionDistance.xyz;
+    surface.CameraDistance = p.positionDistance.w;
+    surface.WorldDx = p.dx.xyz;
+    surface.WorldDy = p.dy.xyz;
+    surface.GeometricNormal = p.normal.xyz;
+    TerrainBlendParams terrain;
+    terrain.slope = params.terrain[0];
+    terrain.height = params.terrain[1];
+    terrain.noise = params.terrain[2];
+    terrain.layers = params.terrain[3];
+    terrain.macro = params.terrain[4];
+    terrain.detail = params.terrain[5];
+    terrain.mask = params.terrain[6];
+    terrain.maskMix = params.terrain[7];
+    terrain.farMap = params.terrain[8];
+    terrain.farMix = params.terrain[9];
+    vec3 worldNormal;
+    PbrMaterialTextureSamples result = ShadeTerrainLayers(terrain,
+        sandAlbedo, sandNormal, sandOrm, p.normal.w > 0.5,
+        dirtAlbedo, dirtNormal, dirtOrm, rockAlbedo, rockNormal, rockOrm,
+        surfaceMask, farMap, surface, false, worldNormal);
+    outputs.values[index].albedo = result.Albedo;
+    outputs.values[index].material = vec4(result.Material, 0.0);
+    outputs.values[index].tangentNormal = vec4(result.TangentNormal, 0.0);
+    outputs.values[index].worldNormal = vec4(worldNormal, 0.0);
+}
+)glsl";
+        return ExpandShaderText(probe, source, 0u, bBefore);
+    }
+
+    DescriptorSetDesc MakeThreeLayerLayout()
+    {
+        DescriptorSetDesc layout;
+        for (uint32_t i = 0; i < 14u; ++i)
+        {
+            DescriptorBinding binding;
+            binding.binding = i;
+            binding.type = i == 0u ? ResourceBindType::StructuredBuffer : i == 1u ? ResourceBindType::RWBuffer :
+                i == 13u ? ResourceBindType::ConstantBuffer : ResourceBindType::CombinedImageSampler;
+            binding.stages = RHI::ShaderStage::Compute;
+            layout.bindings.push_back(binding);
+        }
+        return layout;
+    }
+
+    PipelinePtr CreateThreeLayerPipeline(IDevice& device, bool bBefore)
+    {
+        String source;
+        if (!BuildThreeLayerSource(source, bBefore))
+        {
+            return {};
+        }
+        ShaderCompilerPtr compiler = device.CreateShaderCompiler();
+        if (!Check(compiler != nullptr, "3 層のコンパイラを作れません"))
+        {
+            return {};
+        }
+        const auto compiled = compiler->CompileFromSource(source, RHI::ShaderStage::Compute,
+            bBefore ? "TerrainLayerBlend.Before" : "TerrainLayerBlend.Current");
+        if (!compiled.bSuccess)
+        {
+            std::cerr << "3 層の計算シェーダーをコンパイルできません: " << compiled.ErrorMessage.c_str() << '\n';
+            return {};
+        }
+        ShaderDesc shaderDesc;
+        shaderDesc.stage = RHI::ShaderStage::Compute;
+        shaderDesc.byteCode = compiled.ByteCode;
+        ShaderPtr shader = device.CreateShader(shaderDesc);
+        if (!Check(shader != nullptr, "3 層のシェーダーを作れません"))
+        {
+            return {};
+        }
+        ComputePipelineDesc desc;
+        desc.computeShader = shader;
+        desc.descriptorSetLayouts.push_back(MakeThreeLayerLayout());
+        return device.CreateComputePipeline(desc);
+    }
+
+    struct ThreeLayerResources
+    {
+        DevicePtr Device;
+        PipelinePtr Current;
+        PipelinePtr Before;
+        SamplerPtr RepeatSampler;
+        SamplerPtr ClampSampler;
+        TexturePtr Textures[11];
+    };
+
+    TexturePtr UploadThreeLayerTexture(IDevice& device, uint32_t width, uint32_t height,
+                                      const VariableArray<uint8_t>& pixels)
+    {
+        TextureDesc desc;
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = 1u;
+        desc.TextureFormat = Format::R8G8B8A8_UNORM;
+        desc.Usage = ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        desc.DebugName = "TerrainLayerBlendTest.ThreeLayerTexture";
+        TexturePtr texture = device.CreateTexture(desc);
+        const uint32_t bytes = static_cast<uint32_t>(pixels.size());
+        BufferPtr upload = device.CreateBuffer(BufferDesc(bytes, ResourceUsage::TransferSrc, true,
+            "TerrainLayerBlendTest.ThreeLayerUpload"));
+        CommandListPtr commands = device.CreateCommandList();
+        if (!Check(texture && upload && commands, "3 層のテクスチャ資源を作れません"))
+        {
+            return {};
+        }
+        upload->Update(pixels.data(), bytes);
+        commands->Begin();
+        commands->TextureBarrier(texture, ResourceState::Undefined, ResourceState::CopyDest);
+        commands->CopyBufferToTexture(upload, texture, width, height);
+        commands->TextureBarrier(texture, ResourceState::CopyDest, ResourceState::ShaderResource);
+        commands->End();
+        commands->Submit(true);
+        device.WaitIdle();
+        return texture;
+    }
+
+    bool MakeThreeLayerTextures(ThreeLayerResources& resources, bool bAtlas)
+    {
+        for (uint32_t i = 0; i < 11u; ++i)
+        {
+            const uint32_t height = i == 9u ? 128u : i == 10u ? 64u : 8u;
+            const uint32_t width = bAtlas && i < 6u ? height * 2u : height;
+            VariableArray<uint8_t> pixels(width * height * 4u);
+            for (uint32_t y = 0; y < height; ++y)
+            {
+                for (uint32_t x = 0; x < width; ++x)
+                {
+                    uint8_t* p = pixels.data() + (y * width + x) * 4u;
+                    const uint32_t pattern = (x * 17u + y * 29u + i * 37u) % 97u;
+                    if (i == 9u)
+                    {
+                        // 露岩・崖錐・細粒・礫・不足分の砂・混合の 6 区画。補間する境も標本する。
+                        const uint8_t masks[6][4] = {{255, 0, 0, 0}, {0, 255, 0, 0}, {0, 0, 255, 0},
+                            {0, 0, 0, 255}, {0, 0, 0, 0}, {48, 64, 80, 32}};
+                        std::memcpy(p, masks[(x * 3u / width) + (y >= height / 2u ? 3u : 0u)], 4u);
+                    }
+                    else if (i == 10u)
+                    {
+                        p[0] = static_cast<uint8_t>(104u + x / 2u);
+                        p[1] = static_cast<uint8_t>(112u + y / 3u);
+                        p[2] = static_cast<uint8_t>(24u + pattern);
+                        p[3] = static_cast<uint8_t>(32u + pattern / 2u);
+                    }
+                    else if (i % 3u == 1u)
+                    {
+                        // 中立でない法線にして、復号とトライプラナーの向きの違いも出力へ残す。
+                        p[0] = static_cast<uint8_t>(104u + pattern / 2u);
+                        p[1] = static_cast<uint8_t>(108u + (96u - pattern) / 3u);
+                        p[2] = 244u;
+                        p[3] = 255u;
+                    }
+                    else
+                    {
+                        p[0] = static_cast<uint8_t>(72u + pattern + i * 3u);
+                        p[1] = static_cast<uint8_t>(56u + (pattern * 3u) % 127u);
+                        p[2] = static_cast<uint8_t>(24u + (pattern * 5u + i * 11u) % 151u);
+                        p[3] = static_cast<uint8_t>(144u + pattern);
+                    }
+                }
+            }
+            resources.Textures[i] = UploadThreeLayerTexture(*resources.Device, width, height, pixels);
+            if (!resources.Textures[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    MegaGeometry::MegaTerrainBlend MakeThreeLayerBlend(bool bTwoChannel)
+    {
+        // WastelandRoutine の荒野と同じ値。地図だけを合成データの外縁へ合わせる。
+        MegaGeometry::MegaTerrainBlend blend;
+        blend.bEnabled = true;
+        blend.Dirt.UVScale = 1.5f / 2.0f;
+        blend.Rock.UVScale = 1.5f / 1.8f;
+        blend.Dirt.bNormalTwoChannel = bTwoChannel;
+        blend.Rock.bNormalTwoChannel = bTwoChannel;
+        blend.DirtSlopeDegrees[0] = 24.0f;
+        blend.DirtSlopeDegrees[1] = 33.0f;
+        blend.RockSlopeDegrees[0] = 37.0f;
+        blend.RockSlopeDegrees[1] = 48.0f;
+        blend.DirtHeightRange[0] = 12.0f;
+        blend.DirtHeightRange[1] = 50.0f;
+        blend.DirtHeightBiasDegrees = 10.0f;
+        blend.BlendDepth = 0.3f;
+        blend.MacroWavelengths[0] = 80.0f;
+        blend.MacroWavelengths[1] = 300.0f;
+        blend.MacroBrightness = 0.2f;
+        blend.MacroHue = 0.05f;
+        blend.DetailStartDistance = 10.0f;
+        blend.DetailDistanceRatio = 3.0f;
+        blend.DetailMaxLevel = 0.0f;
+        blend.TextureTileMeters = 1.5f;
+        blend.DetailSlopeVariance[0] = 0.393f;
+        blend.DetailSlopeVariance[1] = 0.623f;
+        blend.DetailSlopeVariance[2] = 0.283f;
+        for (uint32_t axis = 0; axis < 2u; ++axis)
+        {
+            blend.SurfaceMaskMinXZ[axis] = -128.0f;
+            blend.SurfaceMaskMaxXZ[axis] = 128.0f;
+            blend.FarMapMinXZ[axis] = -512.0f;
+            blend.FarMapMaxXZ[axis] = 512.0f;
+        }
+        blend.SurfaceMaskGravelToDirt = 0.5f;
+        blend.SurfaceMaskEdgeFadeMeters = 32.0f;
+        blend.SurfaceMaskWarpMeters = 2.0f;
+        blend.FarMapTexelMeters = 16.0f;
+        return blend;
+    }
+
+    VariableArray<ProbeInput> MakeThreeLayerInputs(bool bTwoChannel)
+    {
+        const float positions[][2] = {{-513.0f, 0.25f}, {-512.0f, 0.25f}, {-511.0f, 0.25f},
+            {-129.0f, 0.25f}, {-128.0f, 0.25f}, {-127.0f, 0.25f}, {-112.0f, 0.25f}, {-95.0f, 0.25f},
+            {-80.0f, -60.0f}, {0.25f, -60.0f}, {80.0f, -60.0f}, {-80.0f, 60.0f}, {0.25f, 60.0f},
+            {80.0f, 60.0f}, {0.25f, 0.25f}, {127.0f, 0.25f}, {128.0f, 0.25f}, {129.0f, 0.25f},
+            {511.0f, 0.25f}, {512.0f, 0.25f}, {513.0f, 0.25f}, {0.25f, -129.0f}, {0.25f, 129.0f}};
+        const float slopes[] = {0.0f, 23.9f, 24.0f, 28.5f, 33.0f, 37.0f, 42.5f, 48.0f, 60.0f, 89.0f};
+        const float heights[] = {-4.0f, 12.0f, 31.0f, 50.0f, 80.0f};
+        // 距離と画素幅は別の入力。遠景の 16/6 m・16/2 m の境の両側と途中を含む。
+        const float distanceFootprints[][2] = {{0.0f, 0.005f}, {9.99f, 0.02f}, {10.0f, 0.05f},
+            {10.01f, 0.1f}, {30.0f, 0.25f}, {100.0f, 1.0f}, {300.0f, 2.65f}, {301.0f, 16.0f / 6.0f},
+            {302.0f, 2.68f}, {600.0f, 4.0f}, {1000.0f, 7.99f}, {1001.0f, 8.0f}, {1002.0f, 8.01f}, {3000.0f, 16.0f}};
+        VariableArray<ProbeInput> inputs;
+        for (uint32_t location = 0; location < sizeof(positions) / sizeof(positions[0]); ++location)
+        {
+            for (float slope : slopes)
+            {
+                const float angle = slope * Pi / 180.0f;
+                const float azimuth = static_cast<float>(location % 4u) * Pi * 0.5f + 0.31f;
+                for (float height : heights)
+                {
+                    for (const auto& sample : distanceFootprints)
+                    {
+                        ProbeInput p = {};
+                        p.PositionDistance[0] = positions[location][0];
+                        p.PositionDistance[1] = height;
+                        p.PositionDistance[2] = positions[location][1];
+                        p.PositionDistance[3] = sample[0];
+                        p.Normal[0] = std::sin(angle) * std::cos(azimuth);
+                        p.Normal[1] = std::cos(angle);
+                        p.Normal[2] = std::sin(angle) * std::sin(azimuth);
+                        p.Normal[3] = bTwoChannel ? 1.0f : 0.0f;
+                        // 幾何の接平面の直交する勾配。どちらの長さも指定の画素幅にする。
+                        p.WorldDx[0] = std::cos(angle) * std::cos(azimuth) * sample[1];
+                        p.WorldDx[1] = -std::sin(angle) * sample[1];
+                        p.WorldDx[2] = std::cos(angle) * std::sin(azimuth) * sample[1];
+                        p.WorldDy[0] = -std::sin(azimuth) * sample[1];
+                        p.WorldDy[2] = std::cos(azimuth) * sample[1];
+                        inputs.push_back(p);
+                    }
+                }
+            }
+        }
+        return inputs;
+    }
+
+    bool ReadThreeLayerShade(ThreeLayerResources& resources, const PipelinePtr& pipeline, const float* packed,
+                            const VariableArray<ProbeInput>& inputs, VariableArray<ThreeLayerOutput>& outputs)
+    {
+        const uint32_t inputBytes = static_cast<uint32_t>(inputs.size() * sizeof(ProbeInput));
+        const uint32_t outputBytes = static_cast<uint32_t>(inputs.size() * sizeof(ThreeLayerOutput));
+        constexpr uint32_t ParamBytes = TERRAIN_BLEND_PARAM_FLOATS * sizeof(float);
+        BufferPtr input = resources.Device->CreateBuffer(BufferDesc(inputBytes, ResourceUsage::StorageBuffer |
+            ResourceUsage::ShaderRead, true, "TerrainLayerBlendTest.ThreeLayerInput"));
+        BufferPtr params = resources.Device->CreateBuffer(BufferDesc(ParamBytes, ResourceUsage::ConstantBuffer,
+            true, "TerrainLayerBlendTest.ThreeLayerParams"));
+        BufferPtr result = resources.Device->CreateBuffer(BufferDesc(outputBytes, ResourceUsage::StorageBuffer |
+            ResourceUsage::TransferSrc, true, "TerrainLayerBlendTest.ThreeLayerResult"));
+        BufferPtr readback = resources.Device->CreateBuffer(BufferDesc(outputBytes, ResourceUsage::TransferDst,
+            true, "TerrainLayerBlendTest.ThreeLayerReadback"));
+        DescriptorSetPtr set = resources.Device->CreateDescriptorSet(MakeThreeLayerLayout());
+        CommandListPtr commands = resources.Device->CreateCommandList();
+        if (!Check(input && params && result && readback && set && commands, "3 層の評価資源を作れません"))
+        {
+            return false;
+        }
+        input->Update(inputs.data(), inputBytes);
+        params->Update(packed, ParamBytes);
+        outputs.resize(inputs.size());
+        for (auto& value : outputs)
+        {
+            for (float* row : {value.Albedo, value.Material, value.TangentNormal, value.WorldNormal})
+            {
+                for (uint32_t c = 0; c < 4u; ++c)
+                {
+                    row[c] = std::numeric_limits<float>::quiet_NaN();
+                }
+            }
+        }
+        result->Update(outputs.data(), outputBytes);
+        set->BindStorageBuffer(0u, input, 0u, inputBytes);
+        set->BindStorageBuffer(1u, result, 0u, outputBytes);
+        set->BindConstantBuffer(13u, params, 0u, ParamBytes);
+        for (uint32_t i = 0; i < 11u; ++i)
+        {
+            set->BindTexture(i + 2u, resources.Textures[i]);
+            set->BindSampler(i + 2u, i >= 9u ? resources.ClampSampler : resources.RepeatSampler);
+        }
+        set->Update();
+        commands->Begin();
+        commands->BufferBarrier(result, ResourceState::Undefined, ResourceState::UnorderedAccess);
+        commands->SetPipeline(pipeline);
+        commands->SetDescriptorSet(set);
+        commands->Dispatch((static_cast<uint32_t>(inputs.size()) + 63u) / 64u, 1u, 1u);
+        commands->BufferBarrier(result, ResourceState::UnorderedAccess, ResourceState::CopySource);
+        commands->CopyBuffer(result, readback, outputBytes);
+        commands->BufferBarrier(readback, ResourceState::CopyDest, ResourceState::HostRead);
+        commands->End();
+        commands->Submit(true);
+        resources.Device->WaitIdle();
+        const void* mapped = readback->Map(0u, outputBytes);
+        if (!Check(mapped != nullptr, "3 層の読み戻しを写像できません"))
+        {
+            return false;
+        }
+        std::memcpy(outputs.data(), mapped, outputBytes);
+        readback->Unmap();
+        for (const auto& value : outputs)
+        {
+            for (const float* row : {value.Albedo, value.Material, value.TangentNormal, value.WorldNormal})
+            {
+                for (uint32_t c = 0; c < 4u; ++c)
+                {
+                    if (!Check(std::isfinite(row[c]), "3 層の出力が非有限、または未書き込みです"))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    bool CheckThreeLayerIdentity(const DevicePtr& device)
+    {
+        ThreeLayerResources resources;
+        resources.Device = device;
+        resources.Current = CreateThreeLayerPipeline(*device, false);
+        resources.Before = CreateThreeLayerPipeline(*device, true);
+        SamplerDesc sampler;
+        sampler.filterMin = sampler.filterMag = FilterMode::Linear;
+        sampler.filterMip = FilterMode::Point;
+        sampler.addressU = sampler.addressV = sampler.addressW = TextureAddressMode::Wrap;
+        resources.RepeatSampler = device->CreateSampler(sampler);
+        sampler.addressU = sampler.addressV = sampler.addressW = TextureAddressMode::Clamp;
+        resources.ClampSampler = device->CreateSampler(sampler);
+        if (!Check(resources.Current && resources.Before && resources.RepeatSampler && resources.ClampSampler,
+                   "3 層のパイプライン・サンプラーを作れません"))
+        {
+            return false;
+        }
+        bool passed = true;
+        for (uint32_t atlas = 0; atlas < 2u; ++atlas)
+        {
+            if (!MakeThreeLayerTextures(resources, atlas != 0u))
+            {
+                return false;
+            }
+            for (uint32_t encoding = 0; encoding < 4u; ++encoding)
+            {
+                const bool bTwoChannel = (encoding & 2u) != 0u;
+                const auto blend = MakeThreeLayerBlend(bTwoChannel);
+                const auto inputs = MakeThreeLayerInputs(bTwoChannel);
+                const uint32_t decode = (encoding & 1u) != 0u ? TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE |
+                    TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE | TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE : 0u;
+                for (uint32_t maps = 0; maps < 4u; ++maps)
+                {
+                    float packed[TERRAIN_BLEND_PARAM_FLOATS];
+                    PackTerrainBlendParams(blend, true, (maps & 1u) != 0u, (maps & 2u) != 0u, decode, packed);
+                    // 環境変数による確認用の色分けに依存せず、実際のアルベドを比べる。
+                    packed[31] = 0.0f;
+                    VariableArray<ThreeLayerOutput> current, before;
+                    if (!ReadThreeLayerShade(resources, resources.Current, packed, inputs, current) ||
+                        !ReadThreeLayerShade(resources, resources.Before, packed, inputs, before))
+                    {
+                        return false;
+                    }
+                    uint32_t mismatches = 0u;
+                    for (size_t i = 0; i < inputs.size(); ++i)
+                    {
+                        if (std::memcmp(&current[i], &before[i], sizeof(ThreeLayerOutput)) != 0)
+                        {
+                            if (mismatches == 0u)
+                            {
+                                const auto& p = inputs[i];
+                                std::cerr << "threeLayer firstMismatch=" << i << " position=(" << p.PositionDistance[0]
+                                    << ',' << p.PositionDistance[1] << ',' << p.PositionDistance[2] << ") distance="
+                                    << p.PositionDistance[3] << '\n';
+                            }
+                            ++mismatches;
+                        }
+                    }
+                    std::cout << "threeLayer atlas=" << atlas << " encoding=" << encoding << " maps=" << maps
+                        << " samples=" << inputs.size() << " bitMismatches=" << mismatches << '\n';
+                    passed = Check(mismatches == 0u, "3 層のアルベド・材質・法線が変更前とビット一致しません") && passed;
+                }
+            }
+        }
+        return passed;
+    }
+
     class ValidationCapture
     {
     public:
@@ -587,8 +1041,10 @@ void main()
             const bool quadrants = CheckQuadrants(resources);
             const bool slope = CheckSlope(resources);
             const bool wetness = CheckWetness(resources);
-            std::cout << "quadrants=" << quadrants << " slope=" << slope << " wetness=" << wetness << '\n';
-            passed = quadrants && slope && wetness;
+            const bool threeLayer = CheckThreeLayerIdentity(device);
+            std::cout << "quadrants=" << quadrants << " slope=" << slope << " wetness=" << wetness
+                << " threeLayer=" << threeLayer << '\n';
+            passed = quadrants && slope && wetness && threeLayer;
             device->WaitIdle();
         }
         const uint32_t errors = capture.Hits();
@@ -610,6 +1066,21 @@ int main(int argc, char** argv)
             if (!BuildProbeSource(source)) return 1;
             NorvesLib::FileStream::FileStream file;
             if (!file.Open(argv[2], NorvesLib::FileStream::FileMode::Write, NorvesLib::FileStream::FileAccess::Write)) return 1;
+            return file.Write(source.c_str(), source.size()) == source.size() ? 0 : 1;
+        }
+        if (argc == 3 && (std::strcmp(argv[1], "--dump-shader-current") == 0 ||
+                          std::strcmp(argv[1], "--dump-shader-before") == 0))
+        {
+            String source;
+            if (!BuildThreeLayerSource(source, std::strcmp(argv[1], "--dump-shader-before") == 0))
+            {
+                return 1;
+            }
+            NorvesLib::FileStream::FileStream file;
+            if (!file.Open(argv[2], NorvesLib::FileStream::FileMode::Write, NorvesLib::FileStream::FileAccess::Write))
+            {
+                return 1;
+            }
             return file.Write(source.c_str(), source.size()) == source.size() ? 0 : 1;
         }
         return RunTest();
