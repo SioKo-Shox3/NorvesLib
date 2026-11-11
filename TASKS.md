@@ -6686,6 +6686,7 @@
 
 ## G12-GR105-MODEL-TEXTURE-COOK: モデル（glTF・GLB）の cook が材質のテクスチャを役割ごとの BC とタイル配置（NVTEX v0.2）で焼き、AI 生成の 4K の材質を仮想テクスチャで読める形にする
 - status: todo
+- after: BUILD-HEALTH-1109
 - gr: GR105
 - needs-gr: GR29, GR88
 - done-when: (1) `Tools/AssetCook` のモデルの cook（GLB の埋め込みの画像と glTF の外部の画像）が、材質の枠の役割から使い方を決め（基本色 → `albedo`（BC7 sRGB）、法線 → `normal`（BC5。ミップは正規化しない平均の後に正規化し直す）、粗さ・AO・金属度 → `orm`（BC7 linear に 1 枚へ詰める。glTF の metallicRoughness と occlusion が別の画像でも詰める））、`--usage` の単独のテクスチャの cook と同じ `BlockCompressor` と同じタイル配置（NVTEX v0.2）で焼く。今の `nvtex.v0.rgba8.srgb` / `rgba8.linear` の無圧縮の出力（`Tools/AssetCook/AssetCookGlbSmoke.cmake.in:87`）は、取り込みの設定で明示したときだけ残す。(2) 取り込みの報告に、テクスチャごとの元の寸法・形式・cook 後のバイト数を出す。(3) 試験: `AssetCookGlbSmoke`・`AssetCookImportSmoke` の期待を新しい形式（BC7 sRGB・BC5・BC7 linear、`bTiled`、v0.2）に直し、3 枚の画像の GLB の fixture で ORM が 1 枚に詰まることを確かめる。`CookedTextureTest` に v0.2 の BC5 の法線の往復と、詰めた ORM のチャンネルの並び（R = AO、G = 粗さ、B = 金属度）のケースを足す。既存の `AssetCookTextureSmoke`・`AssetCookBlockCompressSmoke`・`ModelResourcesAssetCookSmoke`・`ImportedOpaqueRuntimeTest` が通る。
