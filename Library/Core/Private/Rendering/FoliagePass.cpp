@@ -6,6 +6,7 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/ViewClearance.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/Wind.h"
@@ -462,6 +463,7 @@ namespace NorvesLib::Core::Rendering
             renderHeight > 0 ? 2.0f * std::tan(halfFovRadians) / static_cast<float>(renderHeight) : 0.0f;
 
         // 共通の風はゲーム時間を使い、無効なときは従来の草・低木の風と時計を使う
+        // どちらの風も、前の時刻は最後に描いたフレームの時刻を基準にする
         // 影の描画 VirtualShadowMapPass も同じ風向と現在の時計を使う
         const FoliageWindParameters &wind = scene->Wind;
         if (context.Wind.bEnabled)
@@ -469,7 +471,7 @@ namespace NorvesLib::Core::Rendering
             WindDirectionXZ(context.Wind, frameTemplate.wind[0], frameTemplate.wind[1]);
             const float windTime = WindClockSeconds(context.ExtensionFrame.GameTotalTime);
             frameTemplate.wind[2] = windTime;
-            frameTemplate.wind[3] = windTime - context.ExtensionFrame.GameDeltaTime;
+            frameTemplate.wind[3] = windTime - VertexAnimationPreviousDeltaSeconds(context.ExtensionFrame);
             frameTemplate.windParams[0] = context.Wind.BaseSpeed;
             frameTemplate.windParams[1] = context.Wind.GustScaleMeters;
             frameTemplate.windField[0] = 1.0f;
@@ -482,7 +484,7 @@ namespace NorvesLib::Core::Rendering
             FoliageWindDirection(wind, frameTemplate.wind[0], frameTemplate.wind[1]);
             const float windTime = FoliageWindClock(context.TotalTime, wind);
             frameTemplate.wind[2] = windTime;
-            frameTemplate.wind[3] = windTime - context.DeltaTime;
+            frameTemplate.wind[3] = windTime - VertexAnimationPreviousDeltaSeconds(context.ExtensionFrame);
             frameTemplate.windParams[0] = wind.GustSpeed;
             frameTemplate.windParams[1] = wind.GustScale;
         }

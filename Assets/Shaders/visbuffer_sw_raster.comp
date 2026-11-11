@@ -27,6 +27,7 @@
 #define VIS_RECORD_TABLE_BINDING 2
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
+#include "Common/VertexAnimation.glsl"
 
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
@@ -44,6 +45,7 @@ layout(std140, set = 0, binding = 0) uniform VisFrame
 {
     mat4 view;
     mat4 projection;
+    vec4 vertexAnimTime;
 } frame;
 
 // binding 1: インスタンスの表、binding 22: メッシュの表。ここで引くのは変換だけ
@@ -157,11 +159,13 @@ void main()
 
     // クリップ空間（visbuffer_mega.vert と同じ式・同じ順序）から画面の位置と深度へ
     const mat4 world = LoadMegaInstance(instanceIndex).world;
+    const vec4 animationParams = VertexAnimationParamsForFrame(vec4(-1.0), frame.vertexAnimTime);
     ivec2 fixedPosition[3];
     float depth[3];
     for (uint k = 0u; k < 3u; ++k)
     {
-        const vec4 worldPosition = world * vec4(localPosition[k], 1.0);
+        vec4 worldPosition = world * vec4(localPosition[k], 1.0);
+        worldPosition.xyz = ApplyVertexAnimation(worldPosition.xyz, localPosition[k], animationParams, frame.vertexAnimTime.x);
         const vec4 clip = frame.projection * frame.view * worldPosition;
         if (!(clip.w > 0.0))
         {

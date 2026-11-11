@@ -50,6 +50,11 @@ namespace NorvesLib::Core::Rendering
         // [1].z: PaleFlat のアルベドを輝度へ寄せる割合
         // [1].w: 予約（0）
         float shadingModelParams[2][4];
+        uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
+        float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
+        float skyOcclusionBounce[4]; // rgb=遮蔽物の反射色×強度、w=0
+        int32_t skyOcclusionWindowOrigin[4][4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
+        float skyOcclusionTexelMeters[4]; // 段ごとのテクセル幅(m)
     };
 
     struct GPULightData
@@ -65,7 +70,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
     static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
     static_assert(offsetof(GPUDDGILightingParams, info) == 48);
-    static_assert(sizeof(GPULightingParams) == 976);
+    static_assert(sizeof(GPULightingParams) == 1104);
     static_assert(offsetof(GPULightingParams, invViewProjection) == 0);
     static_assert(offsetof(GPULightingParams, cameraPosition) == 64);
     static_assert(offsetof(GPULightingParams, ambientColor) == 80);
@@ -91,6 +96,11 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, invViewProjectionCameraRelative) == 864);
     static_assert(offsetof(GPULightingParams, depthLinearization) == 928);
     static_assert(offsetof(GPULightingParams, shadingModelParams) == 944);
+    static_assert(offsetof(GPULightingParams, skyOcclusionInfo) == 976);
+    static_assert(offsetof(GPULightingParams, skyOcclusionParams) == 992);
+    static_assert(offsetof(GPULightingParams, skyOcclusionBounce) == 1008);
+    static_assert(offsetof(GPULightingParams, skyOcclusionWindowOrigin) == 1024);
+    static_assert(offsetof(GPULightingParams, skyOcclusionTexelMeters) == 1088);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

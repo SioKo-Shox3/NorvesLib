@@ -15,9 +15,11 @@ layout(set = 0, binding = 0) uniform VisFrame
 {
     mat4 view;
     mat4 projection;
+    vec4 vertexAnimTime;
 } frame;
 
 #include "Common/SceneInstanceData.glsl"
+#include "Common/VertexAnimation.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
 {
@@ -36,6 +38,8 @@ void main()
     const uint instanceIndex = VisRecordInstanceIndex(visRecords[recordNumber]);
 
     vec4 worldPos = instances[instanceIndex].world * vec4(inPosition, 1.0);
+    const vec4 params = VertexAnimationParamsForFrame(instances[instanceIndex].shadingParams, frame.vertexAnimTime);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, frame.vertexAnimTime.x);
     gl_Position = frame.projection * frame.view * worldPos;
     outRecord = recordNumber;
 }

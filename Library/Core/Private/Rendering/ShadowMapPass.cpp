@@ -6,6 +6,7 @@
 #include "Rendering/PointShadowSnapshot.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
@@ -56,8 +57,9 @@ namespace NorvesLib::Core::Rendering
             // worldSource[0]=1の描画（MegaGeometry）はインスタンスではなくこの行列で置く
             float world[16];
             float worldSource[4];
+            float vertexAnimTime[4];
         };
-        static_assert(sizeof(ShadowPerObjectUBO) == 208);
+        static_assert(sizeof(ShadowPerObjectUBO) == 224 && offsetof(ShadowPerObjectUBO, vertexAnimTime) == 208);
 
         // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
         // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
@@ -939,7 +941,7 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) = 208 bytes
+            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) + vertexAnimTime(16) = 224 bytes
             // 定数と記述子セットは描画ごと・カスケードごとに FrameResources から借りる（数の上限は無い）
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
 
@@ -1251,6 +1253,8 @@ namespace NorvesLib::Core::Rendering
         const auto& lightProjData = plan.LightProjection;
         const uint32_t megaCasterCount = plan.MegaCasterCount;
         const uint32_t instanceDataSize = plan.InstanceDataSize;
+        float vertexAnimTime[4] = {};
+        MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement, vertexAnimTime);
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -1407,6 +1411,8 @@ namespace NorvesLib::Core::Rendering
                                 lightProjData[cascadeIndex],
                                 sizeof(uboData.lightProjection));
 
+                    std::memcpy(uboData.vertexAnimTime, vertexAnimTime, sizeof(uboData.vertexAnimTime));
+
                     // UBO更新
                     allocation.Write(&uboData, sizeof(ShadowPerObjectUBO));
                     if (bSkinned)
@@ -1483,6 +1489,7 @@ namespace NorvesLib::Core::Rendering
                                 sizeof(megaUboData.lightProjection));
                     std::memcpy(megaUboData.world, megaCaster.World, sizeof(megaUboData.world));
                     megaUboData.worldSource[0] = 1.0f;
+                    std::memcpy(megaUboData.vertexAnimTime, vertexAnimTime, sizeof(megaUboData.vertexAnimTime));
                     allocation.Write(&megaUboData, sizeof(megaUboData));
                     // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                     allocation.DescriptorSet->BindStorageBuffer(7,

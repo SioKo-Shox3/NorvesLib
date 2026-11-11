@@ -57,7 +57,7 @@ struct VisibilityDrawRecord
     uvec4 header;   // kind, instanceIndex, materialIndex, triangleCount
     uvec4 source;   // firstIndex, vertexBase, previousTransformIndex, flags
     uvec4 address;  // vertexAddress.xy, indexAddress.xy（x = 下位 32bit）
-    uvec4 previous; // previousVertexAddress.xy, lodPayload, reserved
+    uvec4 previous; // previousVertexAddress.xy, lodPayload, reserved（スキンは頂点アニメの値の表の添え字）
 };
 
 uint VisRecordKind(VisibilityDrawRecord r) { return r.header.x; }
@@ -130,6 +130,25 @@ uint VisTriangleIndexPosition(VisibilityDrawRecord r, uint triangleIndex, uint k
 {
     return VisRecordFirstIndex(r) + 3u * triangleIndex + k;
 }
+
+// スキンの記録の previous.w は別の表の添え字。表は描画ごとの生の ShadingParams を vec4 で持ち、
+// 負の未指定値もそのまま返す。読み手は取り込む前に表の set と binding を定義する。
+#if defined(VIS_VERTEX_ANIM_PARAMS_TABLE_SET) && defined(VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING)
+layout(std430, set = VIS_VERTEX_ANIM_PARAMS_TABLE_SET, binding = VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING) readonly buffer VisibilityVertexAnimParamsTable
+{
+    vec4 visVertexAnimParams[];
+};
+
+vec4 VisRecordVertexAnimParams(VisibilityDrawRecord record)
+{
+    const uint paramsIndex = record.previous.w;
+    if (VisRecordKind(record) != VIS_KIND_SKINNED_CHUNK || paramsIndex >= uint(visVertexAnimParams.length()))
+    {
+        return vec4(-1.0);
+    }
+    return visVertexAnimParams[paramsIndex];
+}
+#endif
 
 #if defined(VIS_RECORD_TABLE_SET) && defined(VIS_RECORD_TABLE_BINDING)
 layout(std430, set = VIS_RECORD_TABLE_SET, binding = VIS_RECORD_TABLE_BINDING) readonly buffer VisibilityRecordTable

@@ -328,12 +328,15 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/GBufferProgramOverlayPass.cpp
+    Private/Rendering/GBufferProgramRegistry.cpp
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/Wind.cpp
     Private/Rendering/SkyOcclusion.cpp
+    Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
     Private/Rendering/DDGIVolume.cpp
@@ -729,6 +732,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VolumetricFog.h
     Public/Rendering/Wind.h
     Public/Rendering/SkyOcclusion.h
+    Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h

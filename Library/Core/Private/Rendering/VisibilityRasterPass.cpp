@@ -23,6 +23,7 @@
 #include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VisibilityResolvePass.h"
 
@@ -37,7 +38,15 @@ namespace NorvesLib::Core::Rendering
 
     namespace
     {
-        constexpr uint32_t FrameUniformBytes = sizeof(float) * 32; // view + projection
+        struct alignas(16) VisFrameConstants
+        {
+            float View[16];
+            float Projection[16];
+            float VertexAnimTime[4];
+        };
+        static_assert(sizeof(VisFrameConstants) == 144, "VisFrame は行列 2 つと vec4 1 つ");
+
+        constexpr uint32_t FrameUniformBytes = sizeof(VisFrameConstants);
         constexpr uint32_t RecordParamsBytes = 16;                 // uvec4 counts
         constexpr uint32_t DebugParamsBytes = 16;                  // vec4 params
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
@@ -91,10 +100,10 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(descriptorBinding);
         }
 
-        // 描画のディスクリプタセット（3種類の描画で同じ形）: 0 = view・projection、1 = 種類ごとの表、2 = 種類ごとの表
+        // 描画のディスクリプタセット（3種類の描画で同じ形）: 0 = カメラと頂点アニメの定数、1・2 = 種類ごとの表
         //   MegaGeometry: 1 = インスタンスの表、2 = コマンドごとの描画情報
         //   手続き: 1 = 描画のインスタンスの表、2 = 記録の表
-        //   スキニング: 1 = 変形した頂点、2 = 記録の表（使わない）
+        //   スキニング: 1 = 変形した頂点、2 = 記録の表、3 = 頂点アニメの生の値の表
         // MegaGeometry のメッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING）
         constexpr uint32_t MegaMeshTableBinding = 22;
 
@@ -104,6 +113,7 @@ namespace NorvesLib::Core::Rendering
             AddBinding(desc, 0, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Vertex);
             AddBinding(desc, 1, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
             AddBinding(desc, 2, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
+            AddBinding(desc, 3, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
             // MegaGeometry のメッシュの表（visbuffer_mega.vert の MEGA_MESH_BINDING。手続き・スキニングの描画は読まない）
             AddBinding(desc, MegaMeshTableBinding, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
             return desc;
@@ -574,6 +584,7 @@ namespace NorvesLib::Core::Rendering
         m_RecordState = RHI::ResourceState::Common;
         m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_SkinnedChunkScratch = Container::VariableArray<MeshIndexChunk>{};
+        m_SkinnedVertexAnimParamsScratch = Container::VariableArray<SkinnedVertexAnimParams>{};
         m_MaterialEntryScratch = Container::VariableArray<VisibilityBuffer::MaterialEntry>{};
         m_SectionMaterialScratch = Container::VariableArray<uint32_t>{};
         m_MegaPipeline.reset();
@@ -602,6 +613,8 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVerticesHandle = {};
         m_LastRecordTable.reset();
         m_LastRecordTableBytes = 0;
+        m_LastSkinnedVertexAnimParamsTable.reset();
+        m_LastSkinnedVertexAnimParamsTableBytes = 0;
         m_Stats = VisibilityRasterFrameStats{};
         m_Device = nullptr;
         m_bInitialized = false;
@@ -792,7 +805,8 @@ namespace NorvesLib::Core::Rendering
                                                uint32_t sectionCount,
                                                uint32_t sectionSlotCount,
                                                uint32_t cpuRecordCount,
-                                               uint32_t materialCount)
+                                               uint32_t materialCount,
+                                               uint32_t skinnedVertexAnimParamsCount)
     {
         // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
         RHI::FrameResourceProtectedCreationScope protectedCreation;
@@ -913,6 +927,23 @@ namespace NorvesLib::Core::Rendering
             }
             slot.MaterialTable = buffer;
             slot.MaterialTableCapacity = capacity;
+        }
+
+        if (skinnedVertexAnimParamsCount > 0 &&
+            (!slot.SkinnedVertexAnimParamsTable || slot.SkinnedVertexAnimParamsCapacity < skinnedVertexAnimParamsCount))
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(skinnedVertexAnimParamsCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(SkinnedVertexAnimParams),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "VisBuffer_SkinnedVertexAnimParams");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.SkinnedVertexAnimParamsTable = buffer;
+            slot.SkinnedVertexAnimParamsCapacity = capacity;
         }
 
         if (!slot.FrameUniform)
@@ -1062,6 +1093,10 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
+            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            {
+                continue;
+            }
             const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData));
 
             // 描画の範囲（サブメッシュ・インスタンス）ごとに範囲が違うので、塊は範囲から作る。
@@ -1139,6 +1174,15 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
+            const MaterialResourceData* materialData =
+                (instance.Material.IsValid() && context.Resources.Materials)
+                    ? context.Resources.Materials->GetData(instance.Material)
+                    : nullptr;
+            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            {
+                continue;
+            }
+
             const SkinnedMeshIndexChunkResult chunkResult = BuildSkinnedMeshIndexChunks(
                 instance.IndexCount, instance.SourceFirstIndex, instance.SourceIndexCount, chunks);
             if (chunkResult == SkinnedMeshIndexChunkResult::Failure)
@@ -1161,11 +1205,8 @@ namespace NorvesLib::Core::Rendering
             }
 
             const uint64_t indexAddress = instance.IndexBuffer->GetDeviceAddress();
-            const MaterialResourceData* materialData =
-                (instance.Material.IsValid() && context.Resources.Materials)
-                    ? context.Resources.Materials->GetData(instance.Material)
-                    : nullptr;
             const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData, instance.ShadingParams));
+            uint32_t paramsIndex = std::numeric_limits<uint32_t>::max();
             const auto firstRecord = records.size();
             for (const MeshIndexChunk& chunk : chunks)
             {
@@ -1191,6 +1232,15 @@ namespace NorvesLib::Core::Rendering
                     ++m_Stats.DroppedChunks;
                     continue;
                 }
+                if (paramsIndex == std::numeric_limits<uint32_t>::max())
+                {
+                    // 生の 4 成分を描画ごとに 1 つ用意し、同じ描画の塊から共有する。
+                    SkinnedVertexAnimParams params;
+                    std::memcpy(params.Values, instance.ShadingParams, sizeof(params.Values));
+                    paramsIndex = static_cast<uint32_t>(m_SkinnedVertexAnimParamsScratch.size());
+                    m_SkinnedVertexAnimParamsScratch.push_back(params);
+                }
+                record.Reserved = paramsIndex;
                 records.push_back(record);
 
                 ChunkDraw draw;
@@ -1267,6 +1317,7 @@ namespace NorvesLib::Core::Rendering
         // フレームの材質の表: MegaGeometry の区間 → 手続き → スキニングの順に、実物の材質を 0 から詰めた番号にする
         m_MaterialTable.Clear();
         m_MaterialTerrainScratch.clear();
+        m_SkinnedVertexAnimParamsScratch.clear();
         VariableArray<uint32_t>& sectionMaterials = m_SectionMaterialScratch;
         sectionMaterials.clear();
         if (bHasPlan && camera)
@@ -1332,20 +1383,23 @@ namespace NorvesLib::Core::Rendering
                              bHasMegaDraw ? plan->SectionCount : 1u,
                              bHasMegaDraw ? plan->SectionCount * plan->PassCount : 1u,
                              static_cast<uint32_t>(cpuRecords.size()),
-                             static_cast<uint32_t>(materialEntries.size())))
+                             static_cast<uint32_t>(materialEntries.size()),
+                             static_cast<uint32_t>(m_SkinnedVertexAnimParamsScratch.size())))
         {
             NORVES_LOG_ERROR("VisibilityRasterPass", "ビジビリティバッファの資源を用意できませんでした");
             return PrepareResult::Failed;
         }
 
-        // view・projection（GBuffer・MegaGeometry と同じカメラの定数）
+        // view・projection と頂点アニメの時刻（3 種類の頂点シェーダーで共通）
         {
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*camera, context.GetActiveAspectRatio(), context.Device);
-            float frameData[32];
-            cameraConstants.CopyShaderView(frameData);
-            cameraConstants.CopyShaderProjection(frameData + 16);
-            slot.FrameUniform->Update(frameData, sizeof(frameData));
+            VisFrameConstants frameData{};
+            cameraConstants.CopyShaderView(frameData.View);
+            cameraConstants.CopyShaderProjection(frameData.Projection);
+            MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
+                                             frameData.VertexAnimTime);
+            slot.FrameUniform->Update(&frameData, sizeof(frameData));
         }
 
         // ホストが書く記録（手続き・スキニング）。MegaGeometry の範囲の後ろに置く。ホスト可視の置き場へ書き、
@@ -1367,6 +1421,14 @@ namespace NorvesLib::Core::Rendering
         {
             slot.MaterialTable->Update(materialEntries.data(),
                                        static_cast<uint64_t>(materialEntries.size()) * sizeof(VisibilityBuffer::MaterialEntry));
+        }
+
+        // スキンの生の値の表はホストが書き、ラスタと解決が記録の Reserved から引く。
+        if (!m_SkinnedVertexAnimParamsScratch.empty())
+        {
+            slot.SkinnedVertexAnimParamsTable->Update(
+                m_SkinnedVertexAnimParamsScratch.data(),
+                static_cast<uint64_t>(m_SkinnedVertexAnimParamsScratch.size()) * sizeof(SkinnedVertexAnimParams));
         }
 
         // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く（計算は RecordMegaRecords）。
@@ -1423,6 +1485,7 @@ namespace NorvesLib::Core::Rendering
             slot.MegaSet->BindStorageBuffer(1, plan->InstanceBuffer, 0, ClampBindSize(plan->InstanceBufferBytes));
             slot.MegaSet->BindStorageBuffer(MegaMeshTableBinding, plan->MeshBuffer, 0, ClampBindSize(plan->MeshBufferBytes));
             slot.MegaSet->BindStorageBuffer(2, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
+            slot.MegaSet->BindStorageBuffer(3, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.MegaSet->Update();
             slot.MegaInstanceBinding = plan->InstanceBuffer;
             slot.MegaMeshBinding = plan->MeshBuffer;
@@ -1434,6 +1497,7 @@ namespace NorvesLib::Core::Rendering
             slot.MeshSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.MeshSet->BindStorageBuffer(1, context.InstanceDataBuffer, 0, ClampBindSize(context.InstanceDataBuffer->GetSize()));
             slot.MeshSet->BindStorageBuffer(2, m_RecordTable, 0, ClampBindSize(tableBytes));
+            slot.MeshSet->BindStorageBuffer(3, m_RecordTable, 0, ClampBindSize(tableBytes));
             // メッシュの表は読まないが、同じ形のセットなので有効なバッファを結んでおく
             slot.MeshSet->BindStorageBuffer(MegaMeshTableBinding, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.MeshSet->Update();
@@ -1446,6 +1510,8 @@ namespace NorvesLib::Core::Rendering
             slot.SkinnedSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.SkinnedSet->BindStorageBuffer(1, skinnedVertices, 0, ClampBindSize(skinnedVertices->GetSize()));
             slot.SkinnedSet->BindStorageBuffer(2, m_RecordTable, 0, ClampBindSize(tableBytes));
+            slot.SkinnedSet->BindStorageBuffer(3, slot.SkinnedVertexAnimParamsTable, 0,
+                                               ClampBindSize(m_SkinnedVertexAnimParamsScratch.size() * sizeof(SkinnedVertexAnimParams)));
             slot.SkinnedSet->BindStorageBuffer(MegaMeshTableBinding, m_RecordTable, 0, ClampBindSize(tableBytes));
             slot.SkinnedSet->Update();
             slot.SkinnedRecordTableBinding = m_RecordTable;
@@ -1857,6 +1923,12 @@ namespace NorvesLib::Core::Rendering
         m_Stats.KeyBufferBytes = m_Work.bMerge ? m_Merge.GetKeyBufferBytes() : 0u;
         m_LastRecordTable = m_RecordTable;
         m_LastRecordTableBytes = m_Work.TableBytes;
+        if (!m_SkinnedVertexAnimParamsScratch.empty())
+        {
+            m_LastSkinnedVertexAnimParamsTable = slot.SkinnedVertexAnimParamsTable;
+            m_LastSkinnedVertexAnimParamsTableBytes =
+                static_cast<uint64_t>(m_SkinnedVertexAnimParamsScratch.size()) * sizeof(SkinnedVertexAnimParams);
+        }
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
         m_LastMaterialEntries.assign(materialEntries.begin(), materialEntries.end());
@@ -1919,6 +1991,8 @@ namespace NorvesLib::Core::Rendering
         m_Stats = VisibilityRasterFrameStats{};
         m_LastRecordTable.reset();
         m_LastRecordTableBytes = 0;
+        m_LastSkinnedVertexAnimParamsTable.reset();
+        m_LastSkinnedVertexAnimParamsTableBytes = 0;
         m_LastMaterialTable.reset();
         m_LastMaterialTableCount = 0;
         m_LastMaterialEntries.clear();
