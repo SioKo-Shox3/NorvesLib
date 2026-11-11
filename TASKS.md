@@ -6731,7 +6731,7 @@
 - notes: 設計はロードマップ 2484〜2486 行（確認した事実）と 2522〜2524 行（JobSystem の修理）。閾値の根拠: `JobSystemIdleCpuTest` の 1000 ms は、走るタスク 1 本ぶん（500 ms）の 2 倍。空転すれば 31 本 × 500 ms の桁になるので、閾値の揺れで偽の合否は出にくい。`ParallelForLatencyUnderLoadTest` の 1.5 倍は、今の `ParallelFor` が「ワーカーが長いタスクで塞がっていても呼び手だけで最後まで進む」（`Library/Core/Public/Thread/JobSystem.h:109-115`）約束を持つので、最悪でも直列とほぼ同じ時間になることから決めた。ロードマップの別のワーカーの束（FrameWorkerPool）は採らない: 統合ブランチに `ParallelFor`（SCN-ECS-JOBS）が既にあり、ECS のスケジューラ（`EcsScheduler.cpp:816`）・変換の系（`EcsTransformSystem.h:363`）・描画の記録（`RenderGraph.cpp:2583`）が使っているので、同じ口のまま遅れを試験で押さえる。危険地帯（ジョブ・メモリ）なので評価者を通す。やらないこと: 姿勢の評価・カリングの並列化（別のタスク）。
 
 ## G12-GR108-POSE-PARALLEL: 姿勢の確定の群で、評価の要る Animator とスキンメッシュの姿勢をジョブで並列に評価し、結果を直列と同じにする
-- status: doing
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G1-GR01-TICK-CONTRACT-DOC
 - gr: GR108
 - needs-gr: GR01, GR12
