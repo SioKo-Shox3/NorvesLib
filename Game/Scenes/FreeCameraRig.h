@@ -19,6 +19,7 @@
 // 実際の入力を無視し、1フレームを固定刻み（1/60 秒）で進める。台本が終わるまで IsScriptRunning() が真になる。
 // 台本の撮影の段取り（home・epoch・capture・wait-ready）は SetScriptCapture で渡した窓口（Debug/CameraScriptCapture.h）へ頼む。
 // home で戻る基準の視点は、Enter の視点か、最後に PlaceAt で置き直した視点。
+// 地図の撮影（Debug/MapCapture.h）が有効な間は、自由飛行・パス・台本の入力の代わりに撮影役がカメラを置く。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Debug/DebugConfig.h"
@@ -42,6 +43,7 @@ namespace NorvesLib::Core::Component
 namespace Game::Debug
 {
     class CameraScriptCapture;
+    class MapCapture;
 }
 
 namespace Game::Scenes
@@ -82,6 +84,12 @@ namespace Game::Scenes
         void SetScriptCapture(Game::Debug::CameraScriptCapture *pScriptCapture)
         {
             m_pScriptCapture = pScriptCapture;
+        }
+
+        /// 地図の撮影を頼む窓口（非所有）。Enter の前に呼ぶ
+        void SetMapCapture(Game::Debug::MapCapture* pMapCapture)
+        {
+            m_pMapCapture = pMapCapture;
         }
 
         /**
@@ -165,6 +173,7 @@ namespace Game::Scenes
         bool m_bScriptActive = false;
         uint32_t m_ScriptFramesPlayed = 0;
         Game::Debug::CameraScriptCapture *m_pScriptCapture = nullptr;
+        Game::Debug::MapCapture* m_pMapCapture = nullptr;
         /// 台本の home で戻る視点（Enter か PlaceAt の視点）
         FreeCameraPose m_HomePose{};
         /// 台本の wait-ready で、ストリーミングが落ち着くのを待っている

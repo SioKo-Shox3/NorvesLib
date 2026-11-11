@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 
 // ========================================
 // ビジビリティバッファ: MegaGeometry のクラスタを描く頂点シェーダー（位置だけを読む）
@@ -15,12 +16,14 @@ layout(set = 0, binding = 0) uniform VisFrame
 {
     mat4 view;
     mat4 projection;
+    vec4 vertexAnimTime;
 } frame;
 
 // インスタンスの表（binding 1）とメッシュの表（binding 22）。描画が引くのは変換だけ。
 #define MEGA_INSTANCE_BINDING 1
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
+#include "Common/VertexAnimation.glsl"
 
 // コマンドごとの描画情報（x = インスタンスの番号, y = payload）。添え字は firstInstance
 layout(std430, set = 0, binding = 2) readonly buffer DrawInfoBuffer
@@ -36,6 +39,8 @@ void main()
     mat4 world = LoadMegaInstance(drawInfo.x).world;
 
     vec4 worldPos = world * vec4(inPosition, 1.0);
+    const vec4 params = VertexAnimationParamsForFrame(vec4(-1.0), frame.vertexAnimTime);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, frame.vertexAnimTime.x);
     gl_Position = frame.projection * frame.view * worldPos;
     outRecord = uint(gl_InstanceIndex) + 1u;
 }

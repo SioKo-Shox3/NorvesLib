@@ -17,6 +17,7 @@
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Debug/CameraScriptCapture.h"
 #include "Debug/GeometrySettleTrace.h"
+#include "Debug/MapCapture.h"
 #include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -242,6 +243,8 @@ namespace Game
         Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
         // --capture-views で、1回の起動の中でシーンの複数の名前付き視点を順に撮る。
         Game::Debug::MultiViewCapture m_MultiViewCapture;
+        // --map-capture でシーンを真上からタイルごとに撮る。
+        Game::Debug::MapCapture m_MapCapture;
 #if NORVES_BUILD_DEVELOPMENT
         // SceneReady の遷移ごとに、描画済みパケットの状態を一度だけ記録する。
         bool m_bPreviousSceneReady = true;

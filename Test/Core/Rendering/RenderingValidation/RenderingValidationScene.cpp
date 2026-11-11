@@ -28,6 +28,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/VertexAnimation.h"
 #include "Resource/SkinnedMeshResource.h"
 
 #include <algorithm>
@@ -3431,6 +3432,56 @@ namespace NorvesLib::Test::RenderingValidation
     }
 
 
+    bool RenderingValidationSceneFixture::ApplyGBufferProgramFixture(
+        const Core::Container::String& programName) const
+    {
+        using namespace Core::Rendering;
+        if (m_pWorld == nullptr || m_pResources == nullptr || programName.empty())
+        {
+            return false;
+        }
+
+        // 固定ステップの見張り役を残し、既存の物体を検査領域から外す。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+        }
+        constexpr float positions[] = {-2.0f, 0.0f, 2.0f};
+        for (uint32_t index = 0; index < 3u; ++index)
+        {
+            MaterialCreateData data;
+            if (index < 2u)
+            {
+                data.Program = programName;
+            }
+            data.BaseColor[0] = 0.25f + 0.25f * static_cast<float>(index);
+            data.ShadingParams[1] = index == 2u ? 0.25f : 0.1f * static_cast<float>(index + 1u);
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(positions[index], 1.5f, 0.0f);
+            entity->SetScale(0.65f, 0.65f, 0.65f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(SphereHandle);
+            mesh->SetMaterial(0u, material);
+            mesh->SetCastShadow(false);
+        }
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyShadingModelLightingFixture() const
     {
         using namespace Core::Rendering;
@@ -3804,6 +3855,33 @@ namespace NorvesLib::Test::RenderingValidation
         skinned->SetVisible(true);
         m_R5SkinnedQuadAsset = asset;
         m_pR5SkinnedQuadEntity = entity;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyR5VertexAnimationFixture() const
+    {
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pR5ShadowReceiverEntity == nullptr ||
+            m_pR5ShadowOccluderEntity == nullptr || m_pR5ShadowReceiverMesh == nullptr ||
+            m_pR5ShadowOccluderMesh == nullptr || !AddR5SkinnedQuad())
+        {
+            return false;
+        }
+        auto* skinned = m_pR5SkinnedQuadEntity->GetComponent<Core::Component::SkinnedMeshComponent>();
+        if (skinned == nullptr)
+        {
+            return false;
+        }
+
+        // 同じ深さに横一列で置く。動く2枚は同位相なので常に離れ、恒等の板とも重ならない。
+        m_pR5SkinnedQuadEntity->SetPosition(-3.0f, 0.0f, 8.0f);
+        skinned->SetShadingParams(2, Core::Rendering::VertexAnimationKindTestSineParam);
+        m_pR5ShadowOccluderEntity->SetPosition(0.0f, 0.0f, 8.0f);
+        m_pR5ShadowOccluderEntity->SetScale(1.0f, 1.0f, 1.0f);
+        m_pR5ShadowOccluderMesh->SetShadingParams(2, Core::Rendering::VertexAnimationKindTestSineParam);
+        m_pR5ShadowOccluderMesh->SetCastShadow(false);
+        m_pR5ShadowReceiverEntity->SetPosition(3.0f, 0.0f, 8.0f);
+        m_pR5ShadowReceiverEntity->SetScale(1.0f, 1.0f, 1.0f);
+        m_pR5ShadowReceiverMesh->SetShadingParams(2, 0.0f);
         return true;
     }
 
