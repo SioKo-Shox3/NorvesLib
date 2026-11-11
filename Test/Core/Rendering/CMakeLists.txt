@@ -680,6 +680,15 @@ set_tests_properties(RHIParallelRecordVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 本番の範囲・席の判定が渡す10万席の集合を倍精度の参照と照合し、接触球の保持と空の間接 dispatch を確かめる。
+add_test(NAME MegaGeometryInstanceCullVulkanTest COMMAND RHITextureUpdateVulkanTest --test=MegaGeometryInstanceCullVulkanTest)
+set_tests_properties(MegaGeometryInstanceCullVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -697,6 +706,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
     MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
+    MEMBER MegaGeometryInstanceCullVulkanTest MegaGeometryInstanceCullVulkanTest.cpp
     MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
     MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
     MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
