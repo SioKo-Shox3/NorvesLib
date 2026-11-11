@@ -45,10 +45,7 @@ namespace NorvesLib::Core::Rendering
         // [0].y: Fur の鏡面に使う粗さの下限
         // [0].z: Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × この値)）
         // [0].w: 予約（0）
-        // [1].x: PaleFlat の直接光と環境光の明暗差を落とす割合（0 で通常、1 で全部）
-        // [1].y: PaleFlat の平らにした直接光で n·l と影の代わりに使う値
-        // [1].z: PaleFlat のアルベドを輝度へ寄せる割合
-        // [1].w: 予約（0）
+        // [1]: 予約（0）。PaleFlat は末尾の paleFlatColorAndWrapMin・paleFlatShape・paleFlatAverageIrradiance を使う
         float shadingModelParams[2][4];
         uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 0
         float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 0

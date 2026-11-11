@@ -10794,3 +10794,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 PaleFlat の照明の式の置き換えと DebugViewMode::ShadingModel: 着地(直し 0 回)
 - U5 GPU の RenderingPaleFlatVulkanTest の土台と 1 フレームの判定（明暗比・静的とスキン）: 着地(直し 0 回)
 - U6 GPU の判定の残り（太陽 4 倍・霧・光源の回転）とタスクの verify: 着地(直し 0 回)
+- U8 LightingPassGpuTypes.h の shadingModelParams[1] のコメントを予約へ直す: 着地(直し 0 回)
