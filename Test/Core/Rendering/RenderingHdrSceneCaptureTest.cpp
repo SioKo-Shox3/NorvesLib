@@ -3,6 +3,7 @@
 #include "RenderingValidation/RenderingValidationApplication.h"
 #include "RenderExtensionStageScenario.h"
 #include "GBufferProgramScenario.h"
+#include "PaleFlatScenario.h"
 #include "SkinnedCullScenario.h"
 #include "TemporalAAReactiveScenario.h"
 
@@ -1709,6 +1710,7 @@ namespace
     {
         RenderExtensionStageScenario m_ExtensionStageScenario;
         GBufferProgramScenario m_GBufferProgramScenario;
+        PaleFlatScenario m_PaleFlatScenario;
         SkinnedCullScenario m_SkinnedCullScenario;
         TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
 
@@ -1786,6 +1788,25 @@ namespace
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
                 return false;
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::SceneColor ||
+                    m_bShadingModelScenario || m_bShadingModelLightingScenario ||
+                    m_GBufferProgramScenario.IsEnabled() || m_ExtensionStageScenario.IsEnabled() ||
+                    m_SkinnedCullScenario.IsEnabled() || m_TemporalAAReactiveScenario.IsEnabled() ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario)
+                {
+                    LOG_ERROR("PaleFlat の検証には indoor と scene-color を単独で指定してください");
+                    return false;
+                }
+                if (!GetRunConfig().bVisibilityBufferOff)
+                {
+                    RequireVisibilityBufferPath();
+                }
             }
             if (m_GBufferProgramScenario.IsEnabled())
             {
@@ -2073,6 +2094,10 @@ namespace
             {
                 LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
                 return GetFixture().ApplyShadingModelGBufferFixture();
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
             }
             if (m_GBufferProgramScenario.IsEnabled())
             {
@@ -2391,6 +2416,10 @@ namespace
                 m_bShadingModelScenario = true;
                 return true;
             }
+            if (argument.find(TEXT("--pale-flat-scenario=")) == 0)
+            {
+                return m_PaleFlatScenario.ParseArgument(argument, outFailureReason);
+            }
             if (argument.find(TEXT("--gbuffer-program-scenario=")) == 0)
             {
                 return m_GBufferProgramScenario.ParseArgument(argument, outFailureReason);
@@ -2605,6 +2634,10 @@ namespace
             {
                 return EvaluateShadingModelGBufferFrame(frame, reason);
             }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.Evaluate(frame, reason);
+            }
             if (m_GBufferProgramScenario.IsEnabled())
             {
                 return m_GBufferProgramScenario.Evaluate(frame, reason);
@@ -2760,6 +2793,11 @@ namespace
                 auto fog = MakeDefaultVolumetricFogParameters();
                 fog.bEnabled = false;
                 renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                m_PaleFlatScenario.ApplyState(renderWorld);
                 return;
             }
             if (m_GBufferProgramScenario.IsEnabled())
@@ -3091,6 +3129,11 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                m_PaleFlatScenario.Advance();
+                return;
+            }
             if (m_SkinnedCullScenario.IsEnabled())
             {
                 m_SkinnedCullScenario.Advance();
@@ -3214,6 +3257,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.RequestFollowup(outRequest);
+            }
             if (m_SkinnedCullScenario.IsEnabled())
             {
                 return m_SkinnedCullScenario.RequestFollowup(outRequest);

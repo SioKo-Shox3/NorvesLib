@@ -921,6 +921,7 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
+    PaleFlatScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
@@ -1097,6 +1098,12 @@ set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
 # PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
 register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
     --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
+# HDR の明暗比と静的・スキンの一致を、可視バッファと従来の GBuffer の両経路で確かめる。
+register_rendering_gpu_test(RenderingPaleFlatVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks)
+register_rendering_gpu_test(RenderingPaleFlatGBufferFallbackVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks --visibility-buffer=off)
+
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 # 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。

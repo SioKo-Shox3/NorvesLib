@@ -1058,6 +1058,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR1OccluderMesh = nullptr;
         m_pR1PointLightEntity = nullptr;
         m_pR1DirectionalLightEntity = nullptr;
+        m_pPaleFlatLightEntity = nullptr;
         m_R1ScreenPlaneHandle = MeshDataHandle::Invalid();
         m_R1Textures.fill(TextureHandle::Invalid());
         m_R1TargetMaterials.fill(MaterialHandle::Invalid());
@@ -1142,6 +1143,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR1OccluderMesh = nullptr;
         m_pR1PointLightEntity = nullptr;
         m_pR1DirectionalLightEntity = nullptr;
+        m_pPaleFlatLightEntity = nullptr;
         m_R1ScreenPlaneHandle = MeshDataHandle::Invalid();
         m_R1Textures.fill(TextureHandle::Invalid());
         m_R1TargetMaterials.fill(MaterialHandle::Invalid());
@@ -3267,6 +3269,176 @@ namespace NorvesLib::Test::RenderingValidation
             mesh->SetCastShadow(false);
         }
         return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyPaleFlatFixture() const
+    {
+        using namespace Core::Rendering;
+        if (m_pWorld == nullptr || m_pResources == nullptr || m_pPaleFlatLightEntity != nullptr)
+        {
+            return false;
+        }
+        // 見張り役以外の既存の物と光源を止める。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+        }
+        m_pPaleFlatLightEntity = m_pWorld->SpawnEntity();
+        if (m_pPaleFlatLightEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(m_pPaleFlatLightEntity);
+        auto* light = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(m_pPaleFlatLightEntity);
+        if (light == nullptr || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+        {
+            return false;
+        }
+        light->SetLightColor(1.0f, 1.0f, 1.0f);
+        light->SetCastShadows(true);
+        if (!SetPaleFlatLightState(1000.0f, 0.8f, 0.0f, 0.6f))
+        {
+            return false;
+        }
+        MaterialCreateData paleData;
+        paleData.Shading = ShadingModel::PaleFlat;
+        paleData.Metallic = 0.0f;
+        paleData.Roughness = 1.0f;
+        const auto pale = m_pResources->Materials().Create(paleData);
+        MaterialCreateData grayData;
+        grayData.Shading = ShadingModel::DefaultLit;
+        grayData.Metallic = 0.0f;
+        grayData.Roughness = 1.0f;
+        grayData.BaseColor[0] = grayData.BaseColor[1] = grayData.BaseColor[2] = 0.18f;
+        const auto gray = m_pResources->Materials().Create(grayData);
+        if (pale.IsValid())
+        {
+            m_Lease.TrackMaterial(pale);
+        }
+        if (gray.IsValid())
+        {
+            m_Lease.TrackMaterial(gray);
+        }
+        if (!pale.IsValid() || !gray.IsValid())
+        {
+            return false;
+        }
+        for (uint32_t index = 0u; index < 2u; ++index)
+        {
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(PaleFlatSpherePositions[index][0], PaleFlatSpherePositions[index][1], 0.0f);
+            entity->SetScale(PaleFlatSphereRadius, PaleFlatSphereRadius, PaleFlatSphereRadius);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(SphereHandle);
+            mesh->SetMaterial(0u, index == 0u ? pale : gray);
+            const float color = index == 0u ? 1.0f : 0.18f;
+            mesh->SetCustomData(0u, color);
+            mesh->SetCustomData(1u, color);
+            mesh->SetCustomData(2u, color);
+            mesh->SetCustomData(3u, 1.0f);
+            mesh->SetCastShadow(true);
+        }
+        // M9 の GLTF は外部の fixture.bin を参照する。解析試験と同じ内容を生成し、原本には書かない。
+        const auto inputDirectory = std::filesystem::current_path() / "RenderingValidation" / "PaleFlatInputs";
+        std::filesystem::create_directories(inputDirectory);
+        const auto sourcePath = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path()
+                                    .parent_path().parent_path() / "Assets" / "Models" / "M9Skinned" / "ValidU8Float.gltf";
+        const auto gltfPath = inputDirectory / "ValidU8Float.gltf";
+        std::filesystem::copy_file(sourcePath, gltfPath, std::filesystem::copy_options::overwrite_existing);
+        const auto bytes = BuildFixtureBuffer();
+        {
+            auto output = FileStream::FileStream::Create(
+                ToShadingModelFixturePath(inputDirectory / "fixture.bin"), FileStream::FileMode::Write,
+                FileStream::FileAccess::Write, FileStream::FileShare::None);
+            if (!output || !output->IsOpen() || output->Write(bytes.data(), bytes.size()) != bytes.size())
+            {
+                return false;
+            }
+            output->Close();
+        }
+        auto decoded = Core::ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(ToShadingModelFixturePath(gltfPath));
+        if (!decoded.Succeeded() || decoded.Data.Clips.empty())
+        {
+            return false;
+        }
+        auto& registry = Core::GEngine.GetResourceRegistry();
+        auto skinMesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("PaleFlatM9Mesh"));
+        auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("PaleFlatM9Skeleton"));
+        auto clip = registry.CreateTransient<Core::AnimationClipResource>(TEXT("PaleFlatM9Clip"));
+        auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("PaleFlatM9Asset"));
+        if (!skinMesh || !skeleton || !clip || !asset)
+        {
+            return false;
+        }
+        skinMesh->SetVertices(std::move(decoded.Data.Vertices));
+        skinMesh->SetIndices(std::move(decoded.Data.Indices));
+        skinMesh->SetMeshNodeGlobalTransform(decoded.Data.MeshNodeGlobalTransform);
+        skinMesh->SetSubmeshTables(std::move(decoded.Data.SubMeshes), std::move(decoded.Data.MaterialSlots));
+        skeleton->SetJoints(std::move(decoded.Data.Joints));
+        clip->SetClip(std::move(decoded.Data.Clips[0]));
+        if (!skinMesh->Load() || !skeleton->Load() || !clip->Load())
+        {
+            return false;
+        }
+        asset->SetResources(skinMesh, skeleton, clip);
+        if (!asset->IsLoaded())
+        {
+            return false;
+        }
+        m_ShadingModelSkinAsset = asset;
+        auto* skinEntity = m_pWorld->SpawnEntity();
+        if (skinEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(skinEntity);
+        // 三角形の重心を下段の固定位置に置く。
+        skinEntity->SetPosition(PaleFlatSkinPosition[0] - 2.0f / 3.0f,
+                                PaleFlatSkinPosition[1] - 2.0f / 3.0f, 0.0f);
+        skinEntity->SetScale(2.0f, 2.0f, 2.0f);
+        auto* skin = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(skinEntity);
+        if (skin == nullptr)
+        {
+            return false;
+        }
+        skin->SetSkeletalAsset(asset);
+        // M9 のノードの平行移動を外し、骨の基準空間をこの場面の配置に合わせる。
+        skin->SetMeshNodeGlobalTransform(Math::Matrix4x4::Identity);
+        skin->SetMaterial(pale);
+        skin->SetPlaying(false);
+        skin->SetAnimationTimeSeconds(0.0f);
+        skin->SetCastShadow(false);
+        skin->SetVisible(true);
+
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetPaleFlatLightState(
+        float lux, float toLightX, float toLightY, float toLightZ) const
+    {
+        auto* light = m_pPaleFlatLightEntity != nullptr
+            ? m_pPaleFlatLightEntity->GetComponent<Core::Component::DirectionalLightComponent>() : nullptr;
+        if (light == nullptr)
+        {
+            return false;
+        }
+        light->SetIntensity(lux);
+        light->SetLightDirection(-toLightX, -toLightY, -toLightZ);
+        return true;
+    }
+
+    Core::Rendering::CameraProxy RenderingValidationSceneFixture::GetPaleFlatCamera() const
+    {
+        return GetShadingModelGBufferCamera();
     }
 
     bool RenderingValidationSceneFixture::ApplyShadingModelLightingFixture() const

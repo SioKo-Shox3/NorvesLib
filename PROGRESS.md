@@ -10792,3 +10792,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 CPU の PaleFlatShadingContractTest: 着地(直し 0 回)
 - U3 GPULightingParams の末尾拡張と CreateIblResources の全球の平均照度: 着地(直し 0 回)
 - U4 PaleFlat の照明の式の置き換えと DebugViewMode::ShadingModel: 着地(直し 0 回)
+- U5 GPU の RenderingPaleFlatVulkanTest の土台と 1 フレームの判定（明暗比・静的とスキン）: 着地(直し 0 回)

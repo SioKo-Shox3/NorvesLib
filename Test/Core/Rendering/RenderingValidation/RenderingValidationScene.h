@@ -252,6 +252,11 @@ namespace NorvesLib::Test::RenderingValidation
     inline constexpr float ShadingModelLightingSphereRadius = 1.0f;
     inline constexpr float ShadingModelLightingToLight[3] = {0.8f, 0.0f, 0.6f};
 
+    // PaleFlat の球・灰色の球と、M9 の三角形の重心。固定カメラの画素領域にも使う。
+    inline constexpr float PaleFlatSpherePositions[2][2] = {{-1.6f, 1.1f}, {1.6f, 1.1f}};
+    inline constexpr float PaleFlatSphereRadius = 1.0f;
+    inline constexpr float PaleFlatSkinPosition[2] = {0.0f, -1.6f};
+
     inline constexpr uint32_t TransparentPhysicalLightingRowCount = 10u;
 
     class RenderingValidationSceneFixture final : private ISceneFixtureResourceReleaser
@@ -285,6 +290,9 @@ namespace NorvesLib::Test::RenderingValidation
         // R8の屋外の連番: 地面の上を動く球を1つ足し、中心の位置を変える（屋外のシーンだけ）。
         bool AddR8OutdoorMovingSphere() const;
         bool SetR8OutdoorMovingSpherePosition(float x, float y, float z) const;
+        bool ApplyPaleFlatFixture() const;
+        bool SetPaleFlatLightState(float lux, float toLightX, float toLightY, float toLightZ) const;
+        Core::Rendering::CameraProxy GetPaleFlatCamera() const;
         bool ApplyShadingModelLightingFixture() const;
         Core::Rendering::CameraProxy GetShadingModelLightingCamera() const;
         bool ApplyShadingModelGBufferFixture() const;
@@ -362,6 +370,7 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Component::MeshComponent* m_pR1OccluderMesh = nullptr;
         mutable Core::Entity* m_pR1PointLightEntity = nullptr;
         mutable Core::Entity* m_pR1DirectionalLightEntity = nullptr;
+        mutable Core::Entity* m_pPaleFlatLightEntity = nullptr;
         mutable Core::Rendering::MeshDataHandle m_R1ScreenPlaneHandle =
             Core::Rendering::MeshDataHandle::Invalid();
         mutable Core::Container::FixedArray<Core::Rendering::TextureHandle, 9> m_R1Textures;
