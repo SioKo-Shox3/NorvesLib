@@ -10782,8 +10782,40 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(G12-GR94-MAP-CAPTURE): `.harness/runs/20261111-211655/verify-G12-GR94-MAP-CAPTURE.txt`（`cmake --build build --config Debug --target Game CameraViewConstantsTest FrameCaptureReadbackHelperTest -- /m:1` の終了コード 0、ctest の束は 100% tests passed, 0 tests failed out of 5・終了コード 0。`FrameCaptureReadbackHelperTest` は ctest の既存の設定で Disabled。numstat の 2 通りが一致）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next(G12-GR94-MAP-CAPTURE): 人が見るときの見どころ: `Game.exe --scene=grassland --map-capture=Scripts/Map/map_spec.example.json --capture-png=map_capture/unused.png --capture-deterministic --window-size=1920x1080 --render-scale=1` で `map_capture/grassland/` にタイルの PNG と `capture_manifest.json` が出ること、タイルの継ぎ目で地物がずれないこと、撮った画像の向き（上 +Z・右 −X）。合成と cook は G12-GR94-MAP-COMPOSE-COOK。
 - Notes(G12-GR94-MAP-CAPTURE): 撮影の間は spec の太陽の向きで既定の物理空に置き換えるので、シーン固有の空（荒野の空など）は地図に出ない。正射影での空・フォグ・SSAO・DDGI / RTGI の見え方は未検証。正射影の主の視点では MegaGeometry の BVH の刈り込み・ソフトのラスタ・距離と画素の除外を外し全クラスタを平らに判定するので、広い範囲を 1 タイルに入れると重くなりうる。`--capture-png` のパスは決定的な撮影を点けるためだけに要り、その PNG は書かれない。
+
 - Done(G5-GR30-VERTEX-ANIM-VELOCITY): 統合ブランチ feature/scene-launcher を取り込んだ（cc9f310f）。衝突した `Assets/Shaders/skinned_gbuffer.vert` は、統合側が `Common/SkinnedVertex.glsl` へ切り出したスキンの SSBO と関数をそのまま取り込み、`Common/VertexAnimation.glsl` の include と今・前の時刻で 2 回呼ぶ `ApplyVertexAnimation` を残す形で解いた。頂点を時間で動かす共通の口（既定は恒等）、今の時刻 t と最後に描いたフレームから求める前の時刻 tPrev、GBuffer・可視バッファ（ラスタ・解決・ソフトのラスタ）・影の描画・FoliagePass の風への適用、揺れる板の velocity の GPU 試験 3 本は前の反復までに入れたもの。
 - 証拠(G5-GR30-VERTEX-ANIM-VELOCITY): `.harness/runs/20261112-015206/verify-G5-GR30-VERTEX-ANIM-VELOCITY-after-merge-cc9f310f.txt`（HEAD cc9f310f で `cmake --build build --config Debug --target RenderingVelocityVulkanTest RenderingGoldenImageTest Game SkinnedRenderPathContractTest -- /m:1` が終了コード 0・エラー 0。verify の ctest 3 コマンドは 5・5・4 本がそれぞれ 100% tests passed（369・342・296 秒）、`SkinnedRenderPathContractTest` も Passed）。verify の ctest を 3 コマンドに分けたのは、ランナーの 1 コマンドの上限 600 秒に対して 14 本の合計が約 880 秒になるため（対象・`--timeout 300`・`--no-tests=error` は同じ）。golden の比較・撮影・計測は回さない決まり。
 - Next(G5-GR30-VERTEX-ANIM-VELOCITY): 風の式の中身は GR46 が持つ（周波数は 1/4096 Hz の整数倍に量子化する制約。`Common/VertexAnimation.glsl` の注釈と割り当て表に書いた）。人が見るときの見どころ: 草原・荒野で風に揺れる草と低木の周り（TAA の残像・ぼけが揺れに付いてくるか）、動いているキャラクター（スキン）の輪郭の動きぼけ。
 - Notes(G5-GR30-VERTEX-ANIM-VELOCITY): 統合側が入れた材質ごとの GBuffer プログラム（`GBufferProgramRegistry`）の独自の VS は、`MVPData` の `vertexAnimInstanceParams`・`vertexAnimTime` を受け取れるが、`ApplyVertexAnimation` を呼ぶかはそのプログラム次第（標準の VS だけが今と前の時刻で 2 回評価する）。
 - 要起票: 試験の起動のたびにシェーダーをコンパイルし直すため velocity の試験 1 本が 55〜110 秒かかる。`VulkanShaderCompiler.cpp` で SPIR-V をディスクに残せば縮む見込み（RHI/Vulkan なので危険地帯）。
+- U1 頂点アニメの共通の口(GLSL)と時刻の定数の組み立て(C++): 着地(直し 0 回)
+- U2 試験の揺れの許可を FramePacket で渡し、捕った画に描いた時刻を載せる: 着地(直し 1 回)
+- U7 FoliagePass の風の前の時刻を tPrev の基準へ替える: 着地(直し 0 回)
+- U3 GBuffer のラスタ(静的・スキン・MegaGeometry)で 2 回評価する: 着地(直し 0 回)
+- U4 可視バッファのラスタの頂点シェーダー 3 本で同じ式を通す: 着地(直し 0 回)
+- U5 可視バッファの解決とソフトのラスタで今と前の位置を 2 回評価する: 着地(直し 0 回)
+- U6 影の描画(vsm_draw.vert・shadow.vert)を今の時刻で同じ式に通す: 着地(直し 1 回)
+- Notes: 要起票: `VirtualShadowMapVulkanTest` がこの項目の変更の前（144cd0c9）から落ちる。ケース A・B の深度からのページの要求が GPU で 0 件（参照 18 件、統計の要求・割り当ても 0）で、描画を通るケース G は不一致 0。再現は `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1` の後に `ctest --test-dir build -C Debug -R "^VirtualShadowMapVulkanTest$" --output-on-failure`（終了コード 8）。後の G10・G12 の項目の verify がこの試験を含む。
+- U8 GpuLayoutRegistry に UBO と記録の変更を書く: 着地(直し 0 回)
+- U10 揺れる板の velocity の GPU 試験を当て直して確かめる(U9 の切り直し): 着地(直し 0 回)
+- Done(G5-GR30-VERTEX-ANIM-VELOCITY): 頂点アニメの共通の口 `Common/VertexAnimation.glsl` の `ApplyVertexAnimation`(既定は恒等)を、GBuffer のラスタ(静的・スキン・MegaGeometry)・可視バッファのラスタ 3 本・解決とソフトのラスタ・影(VSM・影の地図)に通した。今は t = fmod(GameTotalTime, 4096)、前は tPrev = t − (GameTotalTime − PreviousRenderedTotalTime) で 2 回評価して前のクリップ座標を作る。FoliagePass の風の前の時刻も同じ基準へ替え、GpuLayoutRegistry に UBO・表の欄を書いた。
+- Next: G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA・G5-GR30-THIN-TAA-MEASURE(試験用の揺れの板を使う)、風の式の中身は GR46(周波数は 1/4096 Hz の整数倍に量子化する制約を VertexAnimation.glsl の注釈に書いた)。
+- Notes: 人が見るときの見どころ: wasteland の草・低木の風の揺れが前と同じに見えること(風の前の時刻の基準を替えた分)、rendering3dtest で見た目が変わらないこと(頂点アニメは既定で恒等)。試験の揺れは `RenderWorld::SetVertexAnimationTestDisplacementEnabled` を立てたときだけ有効。
+- U11 統合ブランチを取り込んだ後のビルドと velocity の 14 本を回し、取り込みで壊れた所だけ直す: 着地(直し 1 回)
+- 証拠: `.harness/runs/20261111-213227/G5-GR30-VERTEX-ANIM-VELOCITY-verify.txt`(統合ブランチを取り込んだ後の HEAD で、verify のビルド `RenderingVelocityVulkanTest`・`RenderingGoldenImageTest`・`Game`・`RHIRayTracingApiContractTest` が EXIT_CODE 0、`^RenderingVelocity[A-Za-z]*VulkanTest$` の ctest が 14/14 Passed、`WindShaderCompileTest` が 1/1 Passed。揺れる板の ROI の最大相対誤差は可視バッファ on・予備の経路で static 0.000347・skinned 0.000350、フレームの欠落で static 0.0000169・skinned 0.0000159、恒等の板の最大絶対誤差は 6e-8 以下)
+## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 1、完了)
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ(衝突 9 ファイル)。VSM の定数 `VirtualShadowMapRasterParams` は統合側の世界フィールドと頂点アニメの時刻の両方を持ち、`vertexAnimTime` を 112、`worldField` を末尾の 128 に置いて全 176 バイトにした(`WindShaderCompileTest` が UBO の末尾のメンバを世界フィールドとして照合するため)。`vsm_draw.vert` と `GpuLayoutRegistry.md` の 9 節も同じ並び。株の切り抜きと頂点アニメの include、スキンの記録の数と頂点アニメの値の添え字、試験シーンのスキンの絞り込みと揺れる板は両方を残した。
+- 証拠: `.harness/runs/20261111-213227/G5-GR30-VERTEX-ANIM-VELOCITY-verify.txt`(ビルド EXIT_CODE 0、velocity の ctest 14/14 Passed、WindShaderCompileTest 1/1 Passed)。numstat の 2 通りは一致。
+- Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA・G5-GR30-THIN-TAA-MEASURE、風の式の中身は GR46。
+- Notes: 人が見るときの見どころ: wasteland の草・低木の風の揺れが前と同じに見えること(前の時刻の基準を替えた分)、rendering3dtest で見た目が変わらないこと(頂点アニメは既定で恒等)、grassland の株の影が見えない体の通り道で曲がること(VSM の定数の並びを変えた分)。撮影・計測の確かめは回さない決まり。done-when から golden 4 本の不変は判断役が外した(絶対規則 10)。
+## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 2、判断待ち)
+- Notes: verify の ctest 14 本は全部通るが合計 882 秒で、ランナーの再検証の 1 コマンド 10 分の上限を超える(1 本 50〜110 秒の大半は起動。既存の 11 本だけで約 700 秒)。verify の ctest を 5・5・4 本の 3 コマンドに分ける案を判断に回した。
+## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 3、完了)
+- Done: verify の ctest を 5・5・4 本の 3 コマンドに分けた。14 本を 1 コマンドで回すと合計 882 秒になり、ランナーの再検証の上限(1 コマンド 600 秒)を超えるため。対象の試験・`--timeout 300`・`--no-tests=error` はそのままで、3 本の正規表現は `-E "Golden|PathTracingReference"` を付けた `ctest -N` で #175〜#188 を 1 回ずつ覆う。
+- 証拠: `.harness/runs/20261111-213227/verify-G5-GR30-build.log`(HEAD a64a8977 のビルド EXIT 0)、`verify-G5-GR30-ctest-1.log`(5/5 Passed、360 秒)、`verify-G5-GR30-ctest-2.log`(5/5 Passed、391 秒)、`verify-G5-GR30-ctest-3.log`(4/4 Passed、244 秒)。numstat の 2 通りは一致。
+- Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。統合ブランチは取り込みの後に G5-GR26-GBUFFER-PROGRAMS(GBuffer の頂点・断片シェーダーの差し替え)などが進んでいるので、次の取り込みでは gbuffer.vert まわりの衝突に注意する。
+- Notes: 要起票: GPU の試験は 1 本 50〜110 秒の大半が起動時のシェーダーのコンパイルなので、`VulkanShaderCompiler.cpp` で SPIR-V をディスクに残して起動を速くする(RHI/Vulkan で危険地帯。この項目の paths の外)。
+## 2026-11-12 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261112-015206 の反復 1、完了)
+- Done: 前のランの評価者が枠切れ(429)で回らず、status が進行中へ戻っていたので完了に戻した。コードは前のランの検証の時点(d4f4e9a7)から変わっていない(その後の差分は TASKS.md の status の 1 行だけ)。
+- 証拠: 前のランの再検証の出力を `.harness/runs/20261112-015206/G5-GR30-prev-evidence/` に写した。`recheck-G5-GR30-VERTEX-ANIM-VELOCITY-3-1.txt`(ビルド exit=0)、`-3-2.txt`(5/5 Passed)、`-3-3.txt`(5/5 Passed)、`-3-4.txt`(4/4 Passed。VertexAnim・VertexAnimGBufferFallback・VertexAnimDrop を含む)。
+- Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。
