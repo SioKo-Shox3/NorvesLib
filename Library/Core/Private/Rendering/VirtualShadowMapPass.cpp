@@ -12,6 +12,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapFoliageCasters.h"
@@ -1019,7 +1020,9 @@ namespace NorvesLib::Core::Rendering
                         ++state.Stats.SkippedDraws;
                         continue;
                     }
-                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats, slices);
+                    // このプロキシの値は主描画の InstanceData.shadingParams の元で、カメラ外でも使える。
+                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats,
+                                                                slices, proxy.ShadingParams);
 
                     // キャッシュの無効化の入力: 同じ描画が同じ変換・範囲なら動いていない
                     VirtualShadowMap::CasterMotionEntry motion;
@@ -1030,9 +1033,17 @@ namespace NorvesLib::Core::Rendering
                     signature = VirtualShadowMap::CasterHashCombine(signature, input.FirstIndex);
                     signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexCount);
                     signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexOffset);
-                    motion.Signature = signature;
+                    const bool bAnimated = context.bVertexAnimationTestDisplacement && proxy.ShadingParams[2] >= 0.5f;
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(signature, bAnimated ? 1u : 0u);
+                    motion.bAlwaysChanged = bAnimated;
                     motion.bHasBounds = true;
                     motion.Bounds = VirtualShadowMap::TransformBoundsByWorld(world, *input.MeshBounds);
+                    if (bAnimated)
+                    {
+                        // キャッシュの消去は揺れの両端を含める。投影物の選択とカリングは変えない。
+                        motion.Bounds.Min[0] -= VertexAnimationTestSineAmplitudeMeters;
+                        motion.Bounds.Max[0] += VertexAnimationTestSineAmplitudeMeters;
+                    }
                     state.Motion.push_back(motion);
                 }
             }
@@ -1083,7 +1094,8 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
                 VirtualShadowMap::AppendSkinnedInstance(
-                    instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats, slices);
+                    instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats,
+                    slices, instance.ShadingParams);
 
                 // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う（鍵はコンポーネントとサブメッシュの範囲ごと）
                 VirtualShadowMap::CasterMotionEntry motion;
@@ -1092,6 +1104,11 @@ namespace NorvesLib::Core::Rendering
                 motion.bAlwaysChanged = true;
                 motion.bHasBounds = true;
                 motion.Bounds = bounds;
+                if (context.bVertexAnimationTestDisplacement && instance.ShadingParams[2] >= 0.5f)
+                {
+                    motion.Bounds.Min[0] -= VertexAnimationTestSineAmplitudeMeters;
+                    motion.Bounds.Max[0] += VertexAnimationTestSineAmplitudeMeters;
+                }
                 state.Motion.push_back(motion);
             }
         }
@@ -1264,6 +1281,8 @@ namespace NorvesLib::Core::Rendering
         rasterDispatch.Draws = state.Draws;
         std::copy(state.FoliageWind, state.FoliageWind + 4, rasterDispatch.FoliageWind);
         std::copy(state.FoliageWindParams, state.FoliageWindParams + 4, rasterDispatch.FoliageWindParams);
+        MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
+                                         rasterDispatch.VertexAnimTime);
         rasterDispatch.WorldFieldCurrent = worldFieldCurrent;
         rasterDispatch.WorldField = fieldConstants;
         if (bMega)

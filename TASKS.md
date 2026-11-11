@@ -5963,7 +5963,7 @@
 - notes: 絶対規則7 の確かめと、完了条件の GR26・GR27 の「Game を起動して Rendering3DTest が従来どおり見える」。当分アプリを起動しない決まりのため実装のタスクから分けた。golden の 2 シーンには地形・草・デカールが無いので、印の移し替えはここで初めて目で見る。性能は測らない。
 
 ## G5-GR30-VERTEX-ANIM-VELOCITY: 頂点を時間で動かす共通の口を作り、今と前の時刻で 2 回評価して、風・シェルで動く頂点の velocity を全経路で正しく出す
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA, G5-GR26-MATERIAL-PARAMS
 - gr: GR30
 - done-when: `Assets/Shaders/Common/VertexAnimation.glsl` に `vec3 ApplyVertexAnimation(vec3 worldPos, vec3 localPos, vec4 instanceParams, float time)`（既定は恒等）の契約を置く。時刻は描画の定数で渡し、今の時刻 t = fmod(GameTotalTime, 4096) と前の時刻 tPrev = t - (GameTotalTime - PreviousRenderedTotalTime)（差は double で取ってから float。G5-GR25-EXTENSION-DATA の `RenderExtensionFrameInfo`）にする。gbuffer.vert・skinned_gbuffer.vert（前のフレームのパレットの後に掛ける）・megageometry.vert と、可視バッファのラスタの頂点シェーダー（visbuffer_mesh.vert・visbuffer_mega.vert・visbuffer_skinned.vert）と解決（Common/VisibilityResolve.glsl の今と前の位置の組み立てと前のクリップ座標）とソフトのラスタ（visbuffer_sw_raster.comp）が、今は t、前は tPrev で 2 回呼んで位置と前のクリップ座標を作り、影の描画（vsm_draw.vert・shadow.vert）も今の時刻で同じ式を通す（影と本体がずれない）。インスタンスの値は G5-GR26-MATERIAL-PARAMS のインスタンス単位の値の枠を使う（UBO と表を広げたら `Docs/Architecture/GpuLayoutRegistry.md` を更新）。FoliagePass の風の前の時刻を同じ tPrev の基準へ替える。試験だけで使う変位の関数（instanceParams で選ぶ既知の正弦の揺れ。試験で許可したときだけ有効）を入れ、GPU の `RenderingVelocityVertexAnimVulkanTest` と `RenderingVelocityVertexAnimGBufferFallbackVulkanTest`（`RenderingVelocityVulkanTest` に scenario=vertex-anim を足して登録）が、揺れる板の GBuffer.Velocity の ROI が今と前の時刻の変位から計算した解析解と 5% 以内で一致し、揺れ 0 では velocity が 0（恒等のとき従来と同一）を、静的・スキン・可視バッファの on と fallback で確かめる。`RenderingVelocityVertexAnimDropVulkanTest`（同じ実行ファイル。`NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL` でフレームを落とす）が、フレームを落としても揺れる板の velocity が「最後に描いたフレームの時刻から今の時刻まで」の変位の解析解と 5% 以内で一致することを確かめる。統合ブランチを取り込んだ後のビルドで、既存の velocity の試験（RenderingVelocity*VulkanTest の 11 本）と新しい 3 本の計 14 本が通る（golden の比較は絶対規則 10 により回さない）。
@@ -6285,7 +6285,7 @@
 - notes: ロードマップ 1962 行「灰・光・白・残像・しがみつきの確認は専用の GameMode と検証シーンで行う」。G8 の `CombatSlice`（G8-GR17-SLICE-SMOKE）と同じく、ランチャーに載せないので起動の流れと各シーンの見た目（作業合意の絶対規則 7）は変わらない。場面ごとに引数を `GameApplicationHandler.cpp` へ足すと G10 の各項目がそのファイルでぶつかるので、引数は 1 つにして場面の表を GameMode のフォルダの中に置いた。`GameApplicationHandler.cpp` の差分は引数の解析と GameMode の登録の数行に絞る（G8 の項目も触る共有のファイル）。`needs-gr: GR01` は更新の群（ApplicationProcessor の後段）を前提にするため（G1-GR01-TICK-CONTRACT-DOC）。決まった刻みの時計（G4-GR02-FIXED-FRAME-CLOCK）がまだ無ければ、その引数は付けずに印の検査だけにする（撮影の時刻をそろえるのは後の確かめの項目で）。巨大なスキン（GR63）は試験の中の合成の fixture を使い、この場面には入れない（G10-GR63-GIANT-CHECK）。起動しての確かめは各要件の確かめの項目で行う。
 
 ## G10-GR65-PALEFLAT: シ者の均一な白（PaleFlat）を、調整できる値・全球の平均照度・専用の照明の式で仕上げ、露出と霧には従わせる
-- status: todo
+- status: done
 - after: G5-GR26-LIGHTING-MODELS, G10-SHISHA-SHOWCASE, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR65
 - needs-gr: GR26
@@ -6383,7 +6383,7 @@
 - notes: GR56 の P2（要件 5583 行、設計 5515-5539 行）。要件の「binding 21/22」「GPULightingParams 784 B」は古い: 今は lighting.frag が 0〜24・26〜28 を使い、`GPULightingParams` は 944 B（LightingPassGpuTypes.h:59）。番号とバイト数は着手時の空きの次を使い、決め打ちを文書に書かない（段階をまたぐ注意 4422・4474 行）。`Docs/Architecture/GpuLayoutRegistry.md`（G7-GR53-WET-WRITERS・G10-GR65-PALEFLAT が使う割り当て表）に登録してから使う。G10 の GR65 も同じ構造体の末尾に足す（+48 B）ので、先に入った側の後ろに足す。拡散への適用は RT の無い IBL の経路だけ（RTGI・DDGI との併用は G11-GR56-SKY-OCC-RT）。地形の高さと森のチャンクデータからの入力は G11-GR56-SKY-OCC-WORLD で、ここは手置きの遮蔽物と地面の高さのパラメータだけ。フル再構築の時間は数 ms の桁と推定（要件。未測定）で、計測は G11-GR56-SKY-OCC-CHECK。要件の設計の「SkyAtmospherePass の直前」に置き、PT は参照なので遮蔽を入れない（方式差）。選定課題 G11-S3（DDGI のカメラ追従・カスケード化。ロードマップ 4550 行）は推奨の (A) 作らないを採る: 屋外の遮蔽はこのクリップマップが受け持ち、DDGI の屋外の粗い格子は樹冠の下の数 m の遮蔽に届かない（要件の推定）。RTGI と組の実測で足りないと出たときだけ、G11-GR56-SKY-OCC-CHECK の報告から新しい項目にする。危険地帯（lighting.frag・GPULightingParams・RenderThread）。評価者の反証を省かない。lighting.frag・LightingPass.cpp・SceneView.cpp は共有のファイルなので差分を小さくする。試験を足す理由: 反証する契約は「GPU のクリップマップが CPU の正解と合う」「増分の更新が全部の作り直しと同じ」。折り返しの誤りはカメラが動いたときの縞や欠けとして一部の場所だけに出て、黙って起きる。
 
 ## G11-GR56-SKY-OCC-SPECULAR: 鏡面の環境光を、空の遮蔽の見える円錐と鏡面のローブの交差で全部の経路（IBL・DDGI・RTGI・半透明）で遮り、樹冠の下の濡れた面に空が映らないようにする
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-MAP
 - gr: GR56
 - done-when: (1) `Common/SkyOcclusion.glsl` に `EvaluateSkySpecularOcclusion(P, N, R, roughness)`（曲げた法線を軸、可視率から開きを決めた円錐と、粗さから決めた鏡面のローブの交差。G11-GR56-SKY-OCC-CPU の CPU の正解と同じ式）を足し、lighting.frag の鏡面の遮り（`specularAO`、lighting.frag:1346・1392 付近）に掛ける。RTGI が有効で RTGI の空の見え方（`rtgiSkySpecularOcclusion`、lighting.frag:1394-1404）があるときは、二重に数えないよう 2 つの小さい方を使う（SCN-RENDER-SPEC-OCCLUSION の `skySpecularOcclusion` の約束〔lighting.frag:696-716〕に合わせる）。IBL・DDGI・RTGI のどの経路も同じ関数を通す。`forward_transparent.frag` の鏡面の遮りにも同じく掛ける。(2) 画面空間の AO（GTAO）と二重に数えない規則: 積分の最初の歩 0.5 m と GTAO の半径（1〜2 m 以下）の関係を確かめ、文書（`Docs/RenderingValidation/R56Acceptance.md`、新規）に書く。(3) `RenderingGoldenImageTest` に場面の引数 `--sky-occlusion-scenario=canopy`（地面・楕円体の樹冠 3 つ・箱の岩・粗さ 0.1 の球を樹冠の下と開けた所に置き、方向光なしで空だけで照らす。RTGI 無効）を足し、`RenderingSkyOcclusionCanopyVulkanTest` として登録する（GTAO の `RenderingGTAOCornellRoomVulkanTest` と同じ形）。試験が通る: その試験で、樹冠の下の地面の平均輝度が開けた地面の 25〜60%、林縁から樹冠の下への線上の輝度が単調に下がり 0.5 m あたりの変化が 15% 以内、樹冠の下の粗さ 0.1 の球の鏡面の平均輝度が開けた所の 30% 以下、空の遮蔽を無効にした同じ場面が既定の絵と一致。`RenderingGolden*` の 4 試験と `RenderingGTAOCornellRoomVulkanTest` が変わらない。
@@ -6393,7 +6393,7 @@
 - notes: GR56 の P3（要件 5541-5547・5585 行）。今あるもの: SCN-RENDER-SPEC-OCCLUSION の土台（d96e2a2e）で、RTGI が有効なときだけ空の見え方で鏡面を遮り、遮った向きを周りの面の光で埋める（lighting.frag:696-750）。RT の無い構成と樹冠（TLAS に入れない）にはこの項目の円錐が効く。SCN-RENDER-SPEC-OCCLUSION は todo で同じ鏡面の式を触るので、その後に回す（after）。G7 の GR53 の濡れの鏡面にもこの値が掛かる前提（要件 5547 行）で、水たまりの反射は G11-GR59-PUDDLES がこの関数を使う。撮影で測る受け入れ（要件 5624・5625 行）を、起動しないで済むよう基準画像の試験の場面（RenderingGoldenImageTest の新しい場面の引数。新しい実行ファイルは作らない）で数値の判定にした。閾値（25〜60%・30%）は要件の初期目標で、美術の調整で変えうる（根拠は要件の目標値だけ）。PT との比べは G11-GR56-SKY-OCC-REFERENCE。危険地帯（lighting.frag・半透明）。評価者の反証を省かない。共有のファイル（lighting.frag・forward_transparent.frag）は差分を小さくする。試験を足す理由: 反証する契約は「樹冠の下の空の光が決めた比に落ち、無効で絵が変わらない」。暗くしすぎ・二重の遮りは「コントラストの低い世界」の絵として紛れ、撮影 1 枚の目視では決めにくく、黙って起きる。
 
 ## G11-GR56-SKY-OCC-REFERENCE: 空だけで照らした樹冠・林縁・岩の場面で、空の遮蔽のラスタをパストレーサーの正解と比べる参照比較の試験を足して通す
-- status: todo
+- status: blocked
 - after: G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - gpu: exclusive
@@ -6736,7 +6736,7 @@
 - notes: 設計はロードマップ 2484〜2486 行（確認した事実）と 2522〜2524 行（JobSystem の修理）。閾値の根拠: `JobSystemIdleCpuTest` の 1000 ms は、走るタスク 1 本ぶん（500 ms）の 2 倍。空転すれば 31 本 × 500 ms の桁になるので、閾値の揺れで偽の合否は出にくい。`ParallelForLatencyUnderLoadTest` の 1.5 倍は、今の `ParallelFor` が「ワーカーが長いタスクで塞がっていても呼び手だけで最後まで進む」（`Library/Core/Public/Thread/JobSystem.h:109-115`）約束を持つので、最悪でも直列とほぼ同じ時間になることから決めた。ロードマップの別のワーカーの束（FrameWorkerPool）は採らない: 統合ブランチに `ParallelFor`（SCN-ECS-JOBS）が既にあり、ECS のスケジューラ（`EcsScheduler.cpp:816`）・変換の系（`EcsTransformSystem.h:363`）・描画の記録（`RenderGraph.cpp:2583`）が使っているので、同じ口のまま遅れを試験で押さえる。危険地帯（ジョブ・メモリ）なので評価者を通す。やらないこと: 姿勢の評価・カリングの並列化（別のタスク）。
 
 ## G12-GR108-POSE-PARALLEL: 姿勢の確定の群で、評価の要る Animator とスキンメッシュの姿勢をジョブで並列に評価し、結果を直列と同じにする
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G1-GR01-TICK-CONTRACT-DOC
 - gr: GR108
 - needs-gr: GR01, GR12
@@ -6747,7 +6747,7 @@
 - notes: 設計はロードマップ 2488〜2516 行（アニメ評価の事実と P2）。今のコードの事実: 姿勢の評価は `PoseFinalize` の群の順序付きの系（`World.cpp:1504-1510` の `DispatchTickGroups(Input … PoseFinalize)`）から各 Component の `TickPoseFinalizeGroup` を直列に呼ぶ（`SkinnedMeshComponent.cpp:71-77`、`AnimatorComponent.cpp:281-285`）。GR12（G3-GR12）で `SkeletalPoseBuilder` の Prepare / Sample と Component ごとの scratch に分かれたので、並列の前提（直列の無駄を先に取る）はそろっている。GR01 の「ボーンの姿勢の確定の公開点」の後に並列の評価を置く順を保つので、GR01 と GR12 を needs-gr に入れた。決定性: 浮動小数の総和の順が変わる集約は並列にしない。画面の外・遠くの評価の間引きは GR10・GR12 の側の方針。`SkeletalAnimationSamplingTest` は 1 つの実行ファイル（`Test/Core/Rendering/CMakeLists.txt:2212-2229`）なので、ソースを足して同じ試験の中で回す。共有のファイル（`World.cpp`）は群の分配の所だけを触る。危険地帯（ジョブ・Object の寿命）なので評価者を通す。やらないこと: カリングの並列化、計測（G12-GR108-PERF-CHECK）。
 
 ## G12-GR108-CULL-PARALLEL: CPU の可視判定（メッシュのプロキシのカリングと草のタイルの選択）をチャンクに分けて並列に回し、結果の順・要素・距離を直列と同じにする
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR108
 - needs-gr: GR43
@@ -10767,3 +10767,23 @@
 - verify: `ctest --test-dir build -C Debug -R "^(GrassTileSelectionTest|GrassShaderCompileTest|GrassFieldSnapshotContractTest|GrassGenerateVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/Rendering/GrassFieldRenderData.h, Library/Core/Public/Component/GrassFieldComponent.h, Library/Core/Private/Component/GrassFieldComponent.cpp, Library/Core/Public/Vegetation/Vegetation.h, Library/Core/Private/Vegetation/Vegetation.cpp, Library/Core/Public/Rendering/GrassPass.h, Library/Core/Private/Rendering/GrassPass.cpp, Library/Core/Public/Rendering/GrassFieldGpuWindow.h, Library/Core/Private/Rendering/GrassFieldGpuWindow.cpp, Library/Core/Public/Rendering/GrassTileSelector.h, Library/Core/Private/Rendering/GrassTileSelector.cpp, Library/Core/Public/Rendering/GrassGenerateReference.h, Library/Core/Private/Rendering/GrassGenerateReference.cpp, Assets/Shaders/Grass, Test/Core/Rendering/GrassTileSelectionTest.cpp, Test/Core/Rendering/GrassGenerateVulkanTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR43-GRASS-GENERATE
+
+## G10-SHISHA-SHOWCASE-P1: シ者の場面 base の代役のスキンを、外部の `fixture.bin` に頼らない自己完結の glTF から読む
+- status: todo
+- done-when: (1) `ShishaShowcaseBaseScene.cpp` の `AnalyzeSkeletal` の読み先を、新しい自己完結の glTF `Assets/Models/ShishaShowcase/Standin.gltf` に替える。この glTF はバッファを `data:application/octet-stream;base64,` で埋め込む。埋め込む中身は `Scripts/Test-M9World.ps1` の `Write-M9FixtureBin` が作る 416 バイトと同じにし、accessor・skin・animation は `ValidU8Float.gltf` と同じにする。`Assets/Models/M9Skinned` の中は変えない。(2) Game が Debug でビルドできる。(3) 新しい glTF のどの `buffers[].uri` も `data:` で始まり、復号したバイト数が `byteLength` と一致する。`Game/GameModes/ShishaShowcase` のソースに `M9Skinned` への参照が残らない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -Command "$g = Get-Content -Raw -LiteralPath 'Assets/Models/ShishaShowcase/Standin.gltf' | ConvertFrom-Json; foreach ($b in $g.buffers) { if (-not $b.uri.StartsWith('data:')) { 'external buffer: ' + $b.uri; exit 1 }; $n = [Convert]::FromBase64String($b.uri.Substring($b.uri.IndexOf(',') + 1)).Length; if ($n -ne $b.byteLength) { 'byteLength mismatch'; exit 1 } }; if (Select-String -Path 'Game/GameModes/ShishaShowcase/*.cpp' -Pattern 'M9Skinned' -Quiet) { 'still references M9Skinned'; exit 1 }"`
+- paths: Game/GameModes/ShishaShowcase/ShishaShowcaseBaseScene.cpp, Assets/Models/ShishaShowcase, TASKS.md, PROGRESS.md
+- effort: high
+- from: G12-GR108-POSE-PARALLEL
+- notes: 確かめた事実:
+  - `Assets/Models/M9Skinned/ValidU8Float.gltf:42` は `"uri": "fixture.bin"` を参照する。しかし `fixture.bin` は追跡されておらず、手元に無く、無視の対象でもない。
+  - 外部バッファは glTF の隣から読まれる(`GltfBufferFile.cpp` の `ReadBufferFileWithPath`)。そのため `ShishaShowcaseBaseScene.cpp:224-228` は `asset_decode_failed` で止まる。これは G10-SHISHA-SHOWCASE の done-when (2)「場面 base に M9Skinned のスキンを 1 体」が起動の確かめ無しで閉じた取りこぼし。
+  - 試験と台本(`Test-M9World.ps1:456`・`:577`、`CookDependencySnapshotTest`、`CookedSkeletalAssetTest.cmake.in` など)は M9Skinned を一時の置き場へ写し、そこで `fixture.bin` を作る。
+  - `ManagedTextureAssetSetCli.md:247` は `ValidU8Float.gltf` の blob が変わらないことを基準にしている。
+  - 以上の理由で、`fixture.bin` を M9Skinned へコミットする直し方は採らない。
+  - バッファの data URI は `GltfBufferSet.cpp:76-101` が読む(octet-stream と gltf-buffer の MIME)。
+  - 符号化は `ValidU8Float.gltf` に合わせる。
+  - 代役の形(骨 2 本の三角形を身長 1.8 m に合わせる)と ready の印の値は変えない。
+  - 中身がデコードできるかは、`Test-M9World.ps1:580` と同じ AssetCook の `--kind model` を一時の置き場へ回して確かめてよい(Game は起動しない)。
+  - G12-GR108-POSE-PARALLEL の `--skinned-crowd` も M9Skinned の同じ資産を読む予定なので、この自己完結の glTF を使える。

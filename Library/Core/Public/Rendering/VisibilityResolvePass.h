@@ -121,7 +121,7 @@ namespace NorvesLib::Core::Rendering
             DumpMisc = 10,
         };
 
-        /** @brief シェーダーの ResolveParams（std140）と同じ 256 バイトの定数 */
+        /** @brief シェーダーの ResolveParams（std140）と同じ 272 バイトの定数 */
         struct alignas(16) ResolveParams
         {
             /** @brief ビュー空間 → ワールド（シェーダーの並び。列ごと） */
@@ -139,8 +139,10 @@ namespace NorvesLib::Core::Rendering
              * と同じ値。既定は 1）、 y = MegaGeometry
              * のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決） */
             float Frame[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+            /** @brief 今の時刻、前の時刻、試験の揺れの許可、0 */
+            float VertexAnimTime[4] = {};
         };
-        static_assert(sizeof(ResolveParams) == 256, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
+        static_assert(sizeof(ResolveParams) == 272, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
 
         /**
          * @brief ラスタと同じカメラの定数から ResolveParams を作る
@@ -279,6 +281,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 描画の記録の表（storage buffer）と、使っているバイト数 */
         RHI::BufferPtr RecordTable;
         uint64_t RecordTableBytes = 0;
+        /** @brief スキンの記録が指す生の ShadingParams の表。無ければ記録の表を代わりに束ねる */
+        RHI::BufferPtr SkinnedVertexAnimParamsTable;
+        uint64_t SkinnedVertexAnimParamsTableBytes = 0;
         /** @brief フレームの材質の表（MaterialEntry の並び）と、使っているバイト数 */
         RHI::BufferPtr MaterialTable;
         uint64_t MaterialTableBytes = 0;

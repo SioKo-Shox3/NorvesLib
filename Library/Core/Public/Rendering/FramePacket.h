@@ -287,6 +287,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 決定的な撮影（--capture-deterministic）のフレームか。経過時間は 1/60 秒の固定刻み。 */
         bool bDeterministicCapture = false;
 
+        /** @brief 試験だけで使う頂点アニメの正弦の揺れを許可する。 */
+        bool bVertexAnimationTestDisplacement = false;
+
         /** @brief 決定的な撮影のエポックの最初のフレームか。時間的な状態を捨てて数え直す合図。 */
         bool bTemporalEpochStart = false;
 
@@ -439,6 +442,7 @@ namespace NorvesLib::Core::Rendering
             DeltaTime = 0.0f;
             TotalTime = 0.0;
             bDeterministicCapture = false;
+            bVertexAnimationTestDisplacement = false;
             bTemporalEpochStart = false;
             EpochFrameIndex = 0;
             bRTGIEnabled = true;

@@ -252,7 +252,23 @@ namespace NorvesLib::Test::RenderingValidation
     inline constexpr float ShadingModelLightingSphereRadius = 1.0f;
     inline constexpr float ShadingModelLightingToLight[3] = {0.8f, 0.0f, 0.6f};
 
+    // PaleFlat の球・灰色の球と、M9 の三角形の重心。固定カメラの画素領域にも使う。
+    inline constexpr float PaleFlatSpherePositions[2][2] = {{-1.6f, 1.1f}, {1.6f, 1.1f}};
+    inline constexpr float PaleFlatSphereRadius = 1.0f;
+    inline constexpr float PaleFlatSkinPosition[2] = {0.0f, -1.6f};
+
     inline constexpr uint32_t TransparentPhysicalLightingRowCount = 10u;
+
+    struct SkyOcclusionCanopyPoints
+    {
+        Math::Vector3 GroundUnder = Math::Vector3(-0.5f, -1.0f, 1.5f);
+        Math::Vector3 GroundOpen = Math::Vector3(17.0f, -1.0f, 1.5f);
+        Math::Vector3 EdgeOutside = Math::Vector3(-8.0f, -1.0f, 1.5f);
+        Math::Vector3 EdgeInside = Math::Vector3(-0.5f, -1.0f, 1.5f);
+        Math::Vector3 SphereUnder = Math::Vector3(0.0f, -0.4f, -2.0f);
+        Math::Vector3 SphereOpen = Math::Vector3(17.0f, -0.4f, -2.0f);
+        float SphereRadius = 0.6f;
+    };
 
     class RenderingValidationSceneFixture final : private ISceneFixtureResourceReleaser
     {
@@ -279,12 +295,18 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR5RayTracingShadowOccluderCastsShadow(bool bCastShadow) const;
         bool SetR5RayTracingShadowReceiverCastsShadow(bool bCastShadow) const;
         bool ApplyR4CornellFixture() const;
+        bool ApplySkyOcclusionCanopyFixture() const;
+        const Core::Rendering::CameraProxy& GetSkyOcclusionCanopyCamera() const;
+        SkyOcclusionCanopyPoints GetSkyOcclusionCanopyPoints() const;
         bool AddR6CornellDynamicObject() const;
         // R8の被写界深度の比較: 短い箱の上のピント面の球と、その縁へ前ボケが掛かる手前の球を置く。
         bool AddR8DepthOfFieldObjects() const;
         // R8の屋外の連番: 地面の上を動く球を1つ足し、中心の位置を変える（屋外のシーンだけ）。
         bool AddR8OutdoorMovingSphere() const;
         bool SetR8OutdoorMovingSpherePosition(float x, float y, float z) const;
+        bool ApplyPaleFlatFixture() const;
+        bool SetPaleFlatLightState(float lux, float toLightX, float toLightY, float toLightZ) const;
+        Core::Rendering::CameraProxy GetPaleFlatCamera() const;
         bool ApplyShadingModelLightingFixture() const;
         Core::Rendering::CameraProxy GetShadingModelLightingCamera() const;
         bool ApplyShadingModelGBufferFixture() const;
@@ -294,6 +316,8 @@ namespace NorvesLib::Test::RenderingValidation
         // 置く。骨の平行移動のアニメーションは時刻 t 秒で (t, 0, 0) m（0〜1秒）。R5 の場面の準備の後に呼ぶ。
         bool AddR5SkinnedQuad() const;
         bool SetR5SkinnedQuadAnimationTime(float timeSeconds) const;
+        // 頂点アニメの揺れを、静的・骨付き・恒等の3枚で検証する。
+        bool ApplyR5VertexAnimationFixture() const;
         // 視錐台の絞り込み検証用に縮小した管状スキンを置く。
         bool AddSkinnedCullGiant() const;
         bool SetSkinnedCullGiantFront(bool bFront) const;
@@ -362,6 +386,7 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Component::MeshComponent* m_pR1OccluderMesh = nullptr;
         mutable Core::Entity* m_pR1PointLightEntity = nullptr;
         mutable Core::Entity* m_pR1DirectionalLightEntity = nullptr;
+        mutable Core::Entity* m_pPaleFlatLightEntity = nullptr;
         mutable Core::Rendering::MeshDataHandle m_R1ScreenPlaneHandle =
             Core::Rendering::MeshDataHandle::Invalid();
         mutable Core::Container::FixedArray<Core::Rendering::TextureHandle, 9> m_R1Textures;
@@ -396,6 +421,10 @@ namespace NorvesLib::Test::RenderingValidation
             Core::Rendering::TextureHandle::Invalid();
         mutable Core::Rendering::MaterialHandle m_R5ShadowMaterial =
             Core::Rendering::MaterialHandle::Invalid();
+        mutable bool m_bSkyOcclusionCanopyPrepared = false;
+        mutable Core::Rendering::CameraProxy m_SkyOcclusionCanopyCamera;
+        mutable Core::Rendering::RenderWorld* m_pSkyOcclusionCanopyWorld = nullptr;
+        mutable Core::Container::FixedArray<uint32_t, 4> m_SkyOcclusionCanopyHandles{};
         mutable bool m_bR4CornellFixturePrepared = false;
         mutable bool m_bR4CornellFixtureFailed = false;
         mutable Core::Rendering::CameraProxy m_R4CornellCamera;

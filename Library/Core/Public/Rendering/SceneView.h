@@ -18,11 +18,21 @@
 #include "Container/UnorderedSet.h"
 #include "Ecs/EcsSlotGate.h"
 #include <cstdint>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
     class SceneRenderer;
     class CanvasView;
+
+    /** @brief CPU のメッシュのプロキシのカリングをチャンクに分けて並列に回す設定 */
+    struct SceneViewCullParallelSettings
+    {
+        // メッシュのプロキシがこの数以上のときだけ並列に回す（既定は並列にしない）
+        size_t MinProxyCount = std::numeric_limits<size_t>::max();
+        // 1 チャンクのプロキシの数（0 は 1 として扱う）
+        size_t ChunkSize = 1024;
+    };
 
     /**
      * @brief SceneView設定
@@ -35,6 +45,8 @@ namespace NorvesLib::Core::Rendering
         float MaxDrawDistance = 10000.0f;     // 最大描画距離
         bool bEnableInstancing = true;        // インスタンシング有効
         uint32_t MinInstanceCount = 2;        // インスタンシング最小数
+
+        SceneViewCullParallelSettings CullParallel;
 
         SceneViewSettings()
         {
@@ -498,6 +510,9 @@ namespace NorvesLib::Core::Rendering
          */
         const Container::VariableArray<MeshProxy *> &GetVisibleMeshProxies() const { return m_VisibleMeshProxies; }
 
+        /** @brief 直近のカリングで板が抑えたメッシュの ComponentId */
+        const Container::UnorderedSet<uint64_t>& GetSuppressedMeshComponentIds() const { return m_SuppressedMeshComponentIds; }
+
         /**
          * @brief DrawCommandを取得
          */
@@ -528,6 +543,8 @@ namespace NorvesLib::Core::Rendering
         void SetFrustumCullingEnabled(bool bEnabled) { m_bEnableFrustumCulling = bEnabled; }
         void SetOcclusionCullingEnabled(bool bEnabled) { m_bEnableOcclusionCulling = bEnabled; }
         void SetDistanceCullingEnabled(bool bEnabled) { m_bEnableDistanceCulling = bEnabled; }
+        void SetCullParallelSettings(const SceneViewCullParallelSettings& settings) { m_CullParallelSettings = settings; }
+        const SceneViewCullParallelSettings& GetCullParallelSettings() const { return m_CullParallelSettings; }
         void SetMaxDrawDistance(float distance) { m_MaxDrawDistance = distance; }
 
         /**
@@ -582,6 +599,12 @@ namespace NorvesLib::Core::Rendering
                             const Math::Vector3& cameraPosition,
                             Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds);
 
+        void CullMeshProxyRange(size_t begin, size_t end,
+                                const Math::Matrix4x4& viewProjection,
+                                const Math::Vector3& cameraPosition,
+                                Container::VariableArray<MeshProxy*>& outVisible);
+        void CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition);
+
         void AppendWorldBoardDrawCommands();
 
         /**
@@ -613,6 +636,9 @@ namespace NorvesLib::Core::Rendering
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;
+        Container::UnorderedSet<uint64_t> m_SuppressedMeshComponentIds;
+        // チャンクごとの可視一覧の確保をフレーム間で使い回す
+        Container::VariableArray<Container::VariableArray<MeshProxy*>> m_CullChunkVisible;
         Container::VariableArray<BoardProxy *> m_VisibleBoardProxies;
 
         // バッチャー
@@ -629,6 +655,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bEnableOcclusionCulling = false;
         bool m_bEnableDistanceCulling = true;
         float m_MaxDrawDistance = 10000.0f;
+        SceneViewCullParallelSettings m_CullParallelSettings;
         bool m_bEnableInstancing = true;
         uint32_t m_MinInstanceCount = 2;
         bool m_bTemporalAAForced = false;

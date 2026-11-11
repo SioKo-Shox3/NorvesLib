@@ -68,7 +68,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief 1 回の dispatch の入力 */
         struct Inputs
         {
-            /** @brief ハードのラスタと同じカメラの行列（view・projection の 128 バイト。visbuffer_mega.vert の VisFrame） */
+            /** @brief ハードのラスタと同じカメラの行列と時刻（view・projection・vertexAnimTime の 144 バイト。visbuffer_mega.vert の VisFrame） */
             RHI::BufferPtr FrameUniform;
             /** @brief MegaGeometry のインスタンスの表（変換だけを引く） */
             RHI::BufferPtr InstanceBuffer;

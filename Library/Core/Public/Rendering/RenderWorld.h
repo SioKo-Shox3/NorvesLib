@@ -8,6 +8,7 @@
 #include "SkyAtmosphere.h"
 #include "SunShadowParameters.h"
 #include "VolumetricFog.h"
+#include "PaleFlatShading.h"
 #include "Wind.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
@@ -199,8 +200,21 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        /**
+         * @brief PaleFlat のシェーディングモデルの画素の見え方を設定する（GameThread）。
+         * @param parameters FramePacket の値として照明へ渡る設定。
+         */
+        void SetPaleFlatParameters(const PaleFlatParameters& parameters);
+
         /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
         void SetWindParameters(const WindParameters& parameters);
+
+        /** @brief 試験だけで使う頂点アニメの正弦の揺れ(shadingParams.z が 0.5 以上の描画)を有効にする（GameThread）。 */
+        void SetVertexAnimationTestDisplacementEnabled(bool bEnabled);
+        bool IsVertexAnimationTestDisplacementEnabled() const
+        {
+            return m_RenderingCoordinator.IsVertexAnimationTestDisplacementEnabled();
+        }
 
         // 空の遮蔽の値と遮蔽物を次の FramePacket へ値で公開する（GameThread）。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);

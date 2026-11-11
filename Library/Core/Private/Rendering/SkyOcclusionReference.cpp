@@ -353,4 +353,80 @@ namespace NorvesLib::Core::Rendering
         const float visibility = EvaluateSkyOcclusionVisibility(coefficients, bent.x, bent.y, bent.z);
         return EvaluateSkySpecularOcclusionCone(bent, visibility, reflection, roughness);
     }
+
+    float EvaluateSkySpecularTransmittance(
+        const SkyOcclusionReferenceGrid& grid, const SkyOcclusionParameters& parameters,
+        const Math::Vector3& position, const Math::Vector3& reflection)
+    {
+        if (reflection.y <= 0.0f)
+        {
+            return 1.0f;
+        }
+
+        double start = 0.0;
+        double nextEnd = SkyOcclusionHorizonFirstStepMeters;
+        double opticalDepth = 0.0;
+        for (std::uint32_t step = 0;
+             step < SkyOcclusionHorizonMaxStepCount && start < parameters.MaxHorizonMeters;
+             ++step)
+        {
+            const double end = std::min(nextEnd, static_cast<double>(parameters.MaxHorizonMeters));
+            const double midpoint = (start + end) * 0.5;
+            const double centeredX = (position.x + midpoint * reflection.x - grid.OriginX) /
+                grid.TexelMeters - 0.5;
+            const double centeredZ = (position.z + midpoint * reflection.z - grid.OriginZ) /
+                grid.TexelMeters - 0.5;
+            const double baseX = std::floor(centeredX);
+            const double baseZ = std::floor(centeredZ);
+            const double weightX = centeredX - baseX;
+            const double weightZ = centeredZ - baseZ;
+            const double lastIndex = static_cast<double>(grid.Resolution - 1u);
+            const auto ix0 = static_cast<std::uint32_t>(std::clamp(baseX, 0.0, lastIndex));
+            const auto ix1 = static_cast<std::uint32_t>(std::clamp(baseX + 1.0, 0.0, lastIndex));
+            const auto iz0 = static_cast<std::uint32_t>(std::clamp(baseZ, 0.0, lastIndex));
+            const auto iz1 = static_cast<std::uint32_t>(std::clamp(baseZ + 1.0, 0.0, lastIndex));
+            const SkyOcclusionReferenceColumn a = grid.At(ix0, iz0);
+            const SkyOcclusionReferenceColumn b = grid.At(ix1, iz0);
+            const SkyOcclusionReferenceColumn c = grid.At(ix0, iz1);
+            const SkyOcclusionReferenceColumn d = grid.At(ix1, iz1);
+            const auto interpolate = [weightX, weightZ](double a0, double b0, double c0, double d0)
+            {
+                const double lower = a0 + (b0 - a0) * weightX;
+                const double upper = c0 + (d0 - c0) * weightX;
+                return lower + (upper - lower) * weightZ;
+            };
+            // GPU の Aux と同じく、地面と地面からの樹冠の高さを別々に補間する。
+            const double ground = interpolate(a.Ground, b.Ground, c.Ground, d.Ground);
+            const double bottom = ground + interpolate(
+                static_cast<double>(a.CanopyBottom) - a.Ground,
+                static_cast<double>(b.CanopyBottom) - b.Ground,
+                static_cast<double>(c.CanopyBottom) - c.Ground,
+                static_cast<double>(d.CanopyBottom) - d.Ground);
+            const double top = ground + interpolate(
+                static_cast<double>(a.CanopyTop) - a.Ground,
+                static_cast<double>(b.CanopyTop) - b.Ground,
+                static_cast<double>(c.CanopyTop) - c.Ground,
+                static_cast<double>(d.CanopyTop) - d.Ground);
+            const double opacity = interpolate(
+                a.CanopyOpacity, b.CanopyOpacity, c.CanopyOpacity, d.CanopyOpacity);
+            if (opacity > 0.0 && top > bottom)
+            {
+                const double overlap = std::max(0.0,
+                    std::min(position.y + end * reflection.y, top) -
+                    std::max(position.y + start * reflection.y, bottom));
+                if (overlap > 0.0)
+                {
+                    if (opacity >= 0.9999f)
+                    {
+                        return 0.0f;
+                    }
+                    const double sigma = -std::log(1.0 - opacity) / std::max(top - bottom, 0.5);
+                    opticalDepth += sigma * overlap / reflection.y;
+                }
+            }
+            start = end;
+            nextEnd *= SkyOcclusionHorizonStepRatio;
+        }
+        return static_cast<float>(std::exp(-opticalDepth));
+    }
 } // namespace NorvesLib::Core::Rendering

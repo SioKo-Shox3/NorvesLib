@@ -22,6 +22,7 @@
 #include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/TerrainSamplerOverride.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -63,6 +64,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainTextureBindingFirst = 23u;
         // 撮影の AOV の幾何の法線（シェーダーの geometricNormalImage。地形のテクスチャの 8 枚より後ろ。全部の形に置く）
         constexpr uint32_t GeometricNormalBindingIndex = 31u;
+        // スキンの生の ShadingParams の表（共通・dump・tiles のすべてで同じ枠）
+        constexpr uint32_t VertexAnimParamsTableBindingIndex = 32u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -135,7 +138,7 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
-                // dump の有無に依らず、スプラットの 4 枚は共通の約束の 32〜35 に置く
+                // dump の有無に依らず、スプラットの 4 枚は共通の約束の 33〜36 に置く
                 for (uint32_t bindingIndex : TerrainSplatBindings)
                 {
                     RHI::DescriptorBinding binding;
@@ -156,6 +159,13 @@ namespace NorvesLib::Core::Rendering
                 RHI::DescriptorBinding binding;
                 binding.binding = GeometricNormalBindingIndex;
                 binding.type = RHI::ResourceBindType::RWTexture;
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
+            }
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = VertexAnimParamsTableBindingIndex;
+                binding.type = RHI::ResourceBindType::StructuredBuffer;
                 binding.stages = RHI::ShaderStage::Compute;
                 desc.bindings.push_back(binding);
             }
@@ -760,6 +770,14 @@ namespace NorvesLib::Core::Rendering
     {
         set.BindConstantBuffer(0, paramsUniform, 0, ParamsBytes);
         set.BindStorageBuffer(1, dispatch.RecordTable, 0, BindBytes(dispatch.RecordTable, dispatch.RecordTableBytes));
+        // スキンの記録が無いフレームも、有効なバッファを結ぶ（記録の種類が違えば読まない）。
+        const RHI::BufferPtr& vertexAnimParamsTable = dispatch.SkinnedVertexAnimParamsTable
+                                                        ? dispatch.SkinnedVertexAnimParamsTable
+                                                        : dispatch.RecordTable;
+        set.BindStorageBuffer(VertexAnimParamsTableBindingIndex, vertexAnimParamsTable, 0,
+                              BindBytes(vertexAnimParamsTable, dispatch.SkinnedVertexAnimParamsTable
+                                                                  ? dispatch.SkinnedVertexAnimParamsTableBytes
+                                                                  : dispatch.RecordTableBytes));
         set.BindTexture(2, dispatch.IdTexture);
         set.BindSampler(2, m_Sampler);
         set.BindStorageBuffer(3, dispatch.MaterialTable, 0, BindBytes(dispatch.MaterialTable, dispatch.MaterialTableBytes));
@@ -1330,6 +1348,8 @@ namespace NorvesLib::Core::Rendering
         }
         dispatch.RecordTable = recordTable;
         dispatch.RecordTableBytes = m_RasterPass->GetRecordTableBytes();
+        dispatch.SkinnedVertexAnimParamsTable = m_RasterPass->GetSkinnedVertexAnimParamsTable();
+        dispatch.SkinnedVertexAnimParamsTableBytes = m_RasterPass->GetSkinnedVertexAnimParamsTableBytes();
         dispatch.MaterialTable = materialTable;
         dispatch.MaterialTableBytes =
             static_cast<uint64_t>(m_RasterPass->GetMaterialTableCount()) * sizeof(VisibilityBuffer::MaterialEntry);
@@ -1377,6 +1397,8 @@ namespace NorvesLib::Core::Rendering
                                                                  dispatch.IdTexture->GetWidth(),
                                                                  dispatch.IdTexture->GetHeight(),
                                                                  m_RasterPass->GetMaterialTableCount());
+        MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
+                                         dispatch.Params.VertexAnimTime);
         // 撮影の AOV の幾何の法線は、書く先が画面全体に収まるときだけ書く（収まらなければ書かず、AOV は読めない値になる）
         if (m_GeometricNormalHandle.IsValid())
         {

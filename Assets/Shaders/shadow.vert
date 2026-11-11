@@ -12,9 +12,11 @@ layout(set = 0, binding = 0) uniform ShadowMVP
     mat4 lightProjection;
     mat4 world;
     vec4 worldSource;
+    vec4 vertexAnimTime;
 } shadowMVP;
 
 #include "Common/SceneInstanceData.glsl"
+#include "Common/VertexAnimation.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {
@@ -25,5 +27,17 @@ void main()
 {
     mat4 world = shadowMVP.worldSource.x > 0.5 ? shadowMVP.world
                                                : instances[gl_InstanceIndex].world;
-    gl_Position = shadowMVP.lightProjection * shadowMVP.lightView * world * vec4(inPosition, 1.0);
+    const vec4 instanceParams = shadowMVP.worldSource.x > 0.5 ? vec4(-1.0)
+                                                              : instances[gl_InstanceIndex].shadingParams;
+    const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, shadowMVP.vertexAnimTime);
+    if (VertexAnimationKind(animParams) == VERTEX_ANIMATION_KIND_NONE)
+    {
+        gl_Position = shadowMVP.lightProjection * shadowMVP.lightView * world * vec4(inPosition, 1.0);
+    }
+    else
+    {
+        vec4 worldPos = world * vec4(inPosition, 1.0);
+        worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, animParams, shadowMVP.vertexAnimTime.x);
+        gl_Position = shadowMVP.lightProjection * shadowMVP.lightView * worldPos;
+    }
 }

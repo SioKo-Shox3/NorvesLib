@@ -88,6 +88,19 @@ namespace NorvesLib::Core::Component
         // dirtyな姿勢だけ評価する。成功した再評価ごとにserialを進める。
         // 同じResourceの内容を直接編集した場合はSetSkeletalAssetで再設定して無効化する。
         [[nodiscard]] bool EvaluatePose();
+        /// GameThread 専用。姿勢の評価を準備し、計算が必要なら true を返す。
+        /// Begin から Finish まで、このコンポーネントと使用資源の変更・破棄・アンロードを禁止する。
+        /// 同じコンポーネントの評価を重ねず、各段のスレッド間の受け渡しは呼び手が同期する。
+        [[nodiscard]] bool BeginPoseEvaluation();
+        /// GameThread 専用。外部姿勢の計算を準備し、計算が必要なら true を返す。
+        /// BeginPoseEvaluation と同じ排他規則に従い、pose は Run の終了まで生存させて変更しない。
+        [[nodiscard]] bool BeginSubmitLocalPose(const Animation::LocalPose& pose);
+        /// 任意のスレッドから、準備後に一度だけ呼べる。自分の作業配列・姿勢・成否だけを書き換える。
+        void RunPoseEvaluation();
+        /// GameThread 専用。Run の完了を同期してから呼び、姿勢の成否を返す。計算不要時にも呼べる。
+        [[nodiscard]] bool FinishPoseEvaluation();
+        /// 任意のスレッドから呼べる。Begin・Finish と同時には呼ばない。予約は Finish まで保持される。
+        [[nodiscard]] bool HasPendingPoseEvaluation() const { return m_PendingClip || m_PendingLocalPose; }
         [[nodiscard]] bool SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings);
         const Animation::PoseBoundsSettings& GetPoseBoundsSettings() const noexcept { return m_PoseBoundsSettings; }
         uint64_t GetPoseSerial() const { return m_PoseSerial; }
@@ -129,6 +142,8 @@ namespace NorvesLib::Core::Component
         Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;
         bool HasCurrentPose() const;
+        // GameThread で計算段の作業配列・出力配列の容量を確保する。
+        void ReservePoseEvaluationBuffers(size_t jointCount);
         Math::Matrix4x4 BuildOwnerWorldTransform() const;
 
         Container::TSharedPtr<SkeletalAssetResource> m_SkeletalAsset;
@@ -139,6 +154,11 @@ namespace NorvesLib::Core::Component
         Animation::SkeletalPoseContext m_PoseContext;
         Animation::PoseScratch m_PoseScratch;
         Animation::PoseBoundsSettings m_PoseBoundsSettings;
+        // 準備から確定まで、呼び手が資源と外部姿勢の寿命・不変性を保証する。
+        const AnimationClipResource* m_PendingClip = nullptr;
+        const Animation::LocalPose* m_PendingLocalPose = nullptr;
+        float m_PendingPoseTimeSeconds = 0.0f;
+        bool m_bPoseEvaluationSucceeded = false;
         uint64_t m_PoseSerial = 0;
         Container::TWeakPtr<SkinnedMeshResource> m_EvaluatedMesh;
         Container::TWeakPtr<SkeletonResource> m_EvaluatedSkeleton;

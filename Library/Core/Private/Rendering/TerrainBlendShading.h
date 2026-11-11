@@ -34,10 +34,10 @@ namespace NorvesLib::Core::Rendering
     constexpr uint32_t TERRAIN_SPLAT_MEGA_SPLAT_BINDING = 21u;  // sampler2DArray
     constexpr uint32_t TERRAIN_SPLAT_MEGA_PARAMS_BINDING = 23u; // UBO（std140。vec4 terrainSplat[12]）
     // 可視バッファの解決（ResolveTileParams の terrain[10] の後ろに vec4 terrainSplat[12]）
-    constexpr uint32_t TERRAIN_SPLAT_VIS_ALBEDO_BINDING = 32u;
-    constexpr uint32_t TERRAIN_SPLAT_VIS_NORMAL_BINDING = 33u;
-    constexpr uint32_t TERRAIN_SPLAT_VIS_ARM_BINDING = 34u;
-    constexpr uint32_t TERRAIN_SPLAT_VIS_SPLAT_BINDING = 35u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_ALBEDO_BINDING = 33u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_NORMAL_BINDING = 34u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_ARM_BINDING = 35u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_SPLAT_BINDING = 36u;
     // RTGI（RTGIComputeParameters の foliageOcclusion の後ろに vec4 terrainSplat[12]）
     constexpr uint32_t TERRAIN_SPLAT_RTGI_ALBEDO_BINDING = 30u;
     constexpr uint32_t TERRAIN_SPLAT_RTGI_SPLAT_BINDING = 31u;

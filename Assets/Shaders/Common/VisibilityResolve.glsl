@@ -66,9 +66,12 @@
 
 #define VIS_RECORD_TABLE_SET 0
 #define VIS_RECORD_TABLE_BINDING 1
+#define VIS_VERTEX_ANIM_PARAMS_TABLE_SET 0
+#define VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING 32
 #include "Common/GBufferEncoding.glsl"
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
+#include "Common/VertexAnimation.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/PreExposedEmissive.glsl"
 #include "Common/MegaGeometryDebugColor.glsl"
@@ -85,6 +88,7 @@ layout(std140, set = 0, binding = 0) uniform ResolveParams
     uvec4 screen;          // x = 画面の幅, y = 画面の高さ, z = フラグ, w = 材質の表の件数
     vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）, y = MegaGeometry のデバッグの表示（RESOLVE_DEBUG_*）,
                            // z = 幾何の法線の印（RESOLVE_FLAG_GEOMETRIC_NORMAL のときだけ。w へそのまま書く）
+    vec4 vertexAnimTime;   // x = 今の時刻、y = 前の時刻、z = 試験の揺れの許可、w = 0
 } params;
 
 // params.screen.z のビット
@@ -212,10 +216,10 @@ layout(set = 0, binding = VIS_TERRAIN_BINDING + 6) uniform sampler2D terrainSurf
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 7) uniform sampler2D terrainFarMapTexture;
 
 // TerrainBlendShading.h の TERRAIN_SPLAT_VIS_*_BINDING と同じ（dump の版でも固定）
-layout(set = 0, binding = 32) uniform sampler2DArray terrainSplatAlbedoTexture; // TERRAIN_SPLAT_VIS_ALBEDO_BINDING
-layout(set = 0, binding = 33) uniform sampler2DArray terrainSplatNormalTexture; // TERRAIN_SPLAT_VIS_NORMAL_BINDING
-layout(set = 0, binding = 34) uniform sampler2DArray terrainSplatArmTexture;    // TERRAIN_SPLAT_VIS_ARM_BINDING
-layout(set = 0, binding = 35) uniform sampler2DArray terrainSplatMapTexture;    // TERRAIN_SPLAT_VIS_SPLAT_BINDING
+layout(set = 0, binding = 33) uniform sampler2DArray terrainSplatAlbedoTexture; // TERRAIN_SPLAT_VIS_ALBEDO_BINDING
+layout(set = 0, binding = 34) uniform sampler2DArray terrainSplatNormalTexture; // TERRAIN_SPLAT_VIS_NORMAL_BINDING
+layout(set = 0, binding = 35) uniform sampler2DArray terrainSplatArmTexture;    // TERRAIN_SPLAT_VIS_ARM_BINDING
+layout(set = 0, binding = 36) uniform sampler2DArray terrainSplatMapTexture;    // TERRAIN_SPLAT_VIS_SPLAT_BINDING
 
 #include "Common/SparseResidencySampling.glsl"
 // 計算シェーダーには暗黙の勾配が無いので、VT でない標本も解析的な微分で textureGrad する
@@ -307,6 +311,17 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
     const bool bHasPreviousTransform = previousTransformIndex != VIS_NO_PREVIOUS_TRANSFORM &&
                                        previousTransformIndex < uint(drawInstances.length());
 
+    vec4 instanceParams = vec4(-1.0);
+    if (kind == VIS_KIND_PROCEDURAL_CHUNK)
+    {
+        instanceParams = drawInstances[instanceIndex].shadingParams;
+    }
+    else if (kind == VIS_KIND_SKINNED_CHUNK)
+    {
+        instanceParams = VisRecordVertexAnimParams(record);
+    }
+    const vec4 animationParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
+
     // reference 型の変数には const を付けられない
     VisIndexWords indices = VisIndexWords(VisRecordIndexAddress(record));
     VisVertexArray vertices = VisVertexArray(VisRecordVertexAddress(record));
@@ -352,6 +367,13 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
             {
                 triangle.previous[k] = local;
             }
+        }
+        // 前の履歴が無い場合も、動かす前の今の位置を前の時刻で評価する。
+        // 恒等では従来の計算結果をそのまま保つ。法線の変形は GR46 が扱う。
+        if (VertexAnimationKind(animationParams) != VERTEX_ANIMATION_KIND_NONE)
+        {
+            triangle.position[k] = ApplyVertexAnimation(triangle.position[k], local, animationParams, params.vertexAnimTime.x);
+            triangle.previous[k] = ApplyVertexAnimation(triangle.previous[k], local, animationParams, params.vertexAnimTime.y);
         }
         triangle.uv[k] = vec2(vertex.u, vertex.v);
     }

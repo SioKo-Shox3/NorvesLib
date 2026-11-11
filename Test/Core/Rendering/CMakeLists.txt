@@ -848,6 +848,28 @@ register_rendering_gpu_test(
     --scenario=skinned-motion
     --visibility-buffer=off)
 
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimDropVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim-drop)
+set_tests_properties(RenderingVelocityVertexAnimDropVulkanTest PROPERTIES
+    ENVIRONMENT "NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL=3")
+
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
 )
@@ -934,6 +956,7 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
+    PaleFlatScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
@@ -1110,6 +1133,12 @@ set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
 # PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
 register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
     --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
+# HDR の明暗比と静的・スキンの一致を、可視バッファと従来の GBuffer の両経路で確かめる。
+register_rendering_gpu_test(RenderingPaleFlatVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks)
+register_rendering_gpu_test(RenderingPaleFlatGBufferFallbackVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks --visibility-buffer=off)
+
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 # 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
@@ -1632,6 +1661,13 @@ register_rendering_gpu_test(
     --scene=indoor
     --capture-source=back-buffer
     --ao-scenario=cornell-room)
+# 樹冠の下の空の遮蔽と無効時の画像を確かめる。
+register_rendering_gpu_test(
+    RenderingSkyOcclusionCanopyVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --sky-occlusion-scenario=canopy)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 
@@ -1678,6 +1714,7 @@ add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
 add_test(NAME GBufferPipelineKeyTest COMMAND MaterialResourcesTest --test=GBufferPipelineKeyTest)
 add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
+add_test(NAME PaleFlatShadingContractTest COMMAND MaterialResourcesTest --test=PaleFlatShadingContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -1913,6 +1950,7 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME CullProxiesParallelEquivalenceTest COMMAND SceneViewProxyLookupTest --test=CullProxiesParallelEquivalenceTest)
 add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
@@ -1921,6 +1959,7 @@ norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER CullProxiesParallelEquivalenceTest CullProxiesParallelEquivalenceTest.cpp
     MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
     MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
@@ -1928,6 +1967,9 @@ target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+# CullProxiesParallelEquivalenceTest は JobSystem::ParallelFor の上の試験なので、
+# この束のビルドで JobParallelForTest を含む JobSystemShutdownTest の実行ファイルもそろえる。
+add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)
 add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
 
 add_executable(ComponentDirtyTrackingTest
@@ -2417,6 +2459,7 @@ norves_add_test_bundle(MaterialResourcesTest
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
     MEMBER GBufferPipelineKeyTest GBufferPipelineKeyTest.cpp
     MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
+    MEMBER PaleFlatShadingContractTest PaleFlatShadingContractTest.cpp
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE
@@ -2576,6 +2619,7 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
+    SkeletalAnimationParallelTest.cpp
     SocketOracleTest.cpp
     SkeletalSamplerBaseline.cpp
     AnimPoseOpsTest.cpp
@@ -2600,6 +2644,9 @@ target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
 target_include_directories(SkeletalAnimationSamplingTest PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Library/Core/Private)
 set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
+# 並列姿勢試験は JobSystem の ParallelFor 契約を前提とするため、
+# JobParallelForTest を含む JobSystemShutdownTest の試験群を同じビルドでそろえる。
+add_dependencies(SkeletalAnimationSamplingTest JobSystemShutdownTest)
 
 add_executable(SkeletalFramePacketSnapshotTest
     SkeletalFramePacketSnapshotTest.cpp

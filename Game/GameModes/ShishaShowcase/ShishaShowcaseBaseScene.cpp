@@ -34,6 +34,8 @@ namespace Game::GameModes
     struct ShishaShowcaseStageState
     {
         bool m_bFailed = false;
+        bool m_bCloudLayerChanged = false;
+        CloudLayerParameters m_PreviousCloudLayer;
         Container::TSharedPtr<SkeletalAssetResource> m_Asset;
         Component::SkinnedMeshComponent* m_pSkinned = nullptr;
         MaterialHandle m_StandinMaterial;
@@ -206,9 +208,21 @@ namespace Game::GameModes
         ctx.Data.m_StageState = state;
         auto sky = MakeDefaultSkyAtmosphereParameters();
         sky.bEnabled = true;
-        sky.SunAltitudeDegrees = 40.0f;
+        sky.SunAltitudeDegrees = ctx.Data.m_SunElevationDegrees;
         sky.SunAzimuthDegrees = 30.0f;
         auto& renderWorld = ctx.Mode.EngineRef.GetRenderWorld();
+        if (ctx.Data.m_bOvercast)
+        {
+            // 空の太陽が方向光にも使われるため、太陽の輝度を下げて直接光を弱める。
+            sky.MieDensityScale = 8.0f;
+            sky.SunLuminanceNits *= 0.1f;
+            state->m_PreviousCloudLayer = renderWorld.GetRenderingCoordinator().GetCloudLayer();
+            state->m_bCloudLayerChanged = true;
+            CloudLayerParameters clouds;
+            clouds.bEnabled = true;
+            clouds.Coverage = 1.0f;
+            renderWorld.SetCloudLayer(clouds);
+        }
         renderWorld.SetSkyAtmosphere(sky);
         renderWorld.SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
         renderWorld.SetStaticEnvironmentIntensityScale(1.0f);
@@ -274,6 +288,11 @@ namespace Game::GameModes
 
     void LeaveShishaShowcaseStage(ShishaShowcaseSceneContext& ctx)
     {
+        const auto& state = ctx.Data.m_StageState;
+        if (state && state->m_bCloudLayerChanged)
+        {
+            ctx.Mode.EngineRef.GetRenderWorld().SetCloudLayer(state->m_PreviousCloudLayer);
+        }
         ctx.Data.m_StageState.reset();
     }
 
