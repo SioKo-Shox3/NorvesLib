@@ -455,7 +455,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         ShadingModel Shading = ShadingModel::DefaultLit;
         /**
          * @brief 取り込んだglTFのalphaMode・alphaCutoff・doubleSidedの写し。
-         * MegaGeometryは切り抜きと両面描画を行わず、Maskedも不透明として描く。
+         * MegaGeometryは切り抜かず、Maskedも不透明として描く。
+         * 両面の材質は背面カリングを外し、裏の面の法線を反転する。
          * albedo.aを1にする扱いは描画側の責務。
          */
         BlendMode Blend = BlendMode::Opaque;

@@ -108,10 +108,10 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
     return normalize(vec3(detailSlope, 1.0));
 }
 
-void WriteDebugGBuffer(vec3 albedo)
+void WriteDebugGBuffer(vec3 albedo, vec3 geometricNormal)
 {
     outAlbedo = vec4(albedo, 1.0);
-    outNormal = GBufferEncodeNormal(normalize(fragNormal), GBUFFER_SHADING_MODEL_DEFAULT_LIT, 0u);
+    outNormal = GBufferEncodeNormal(normalize(geometricNormal), GBUFFER_SHADING_MODEL_DEFAULT_LIT, 0u);
     outMaterial = GBufferEncodeMaterial(vec3(0.0, 1.0, 1.0), 0.0);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
     outVelocity = ComputeVelocity();
@@ -119,6 +119,9 @@ void WriteDebugGBuffer(vec3 albedo)
 
 void main()
 {
+    // 両面の材質は cull None で描くので裏の面の法線を反転する。
+    // 片面は背面カリングされ常に表なので、結果は変わらない。
+    vec3 geometricNormal = gl_FrontFacing ? fragNormal : -fragNormal;
     float debugMode = mvp.pomParams.z;
     float debugPayloadSupported = mvp.pomParams.w;
 
@@ -141,7 +144,7 @@ void main()
     vec3 worldDy = dFdy(fragWorldPos);
 
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
-    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
+    mat3 TBN = CalculateCotangentFrame(geometricNormal, fragWorldPos, fragTexCoord);
 
     // POM適用: ハイトマップがある場合のみUVオフセット
     vec2 texCoord = fragTexCoord;
@@ -159,13 +162,13 @@ void main()
     {
         if (debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS)
         {
-            WriteDebugGBuffer(ClusterDebugColor(fragDebugPayload));
+            WriteDebugGBuffer(ClusterDebugColor(fragDebugPayload), geometricNormal);
             return;
         }
 
         if (debugMode == DEBUG_VIEW_MODE_LOD_LEVEL)
         {
-            WriteDebugGBuffer(LODLevelDebugColor(fragDebugPayload));
+            WriteDebugGBuffer(LODLevelDebugColor(fragDebugPayload), geometricNormal);
             return;
         }
     }
@@ -188,7 +191,7 @@ void main()
         surface.WorldPosition = fragWorldPos;
         surface.WorldDx = worldDx;
         surface.WorldDy = worldDy;
-        surface.GeometricNormal = fragNormal;
+        surface.GeometricNormal = geometricNormal;
         surface.CameraDistance = length(fragWorldPos - mvp.cameraPosition.xyz);
         textureSamples = ShadeTerrainLayers(terrain, albedoTexture, normalTexture, metallicTexture,
                                             mvp.materialParams.y > 0.5,
