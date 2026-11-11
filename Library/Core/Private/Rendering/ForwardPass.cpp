@@ -23,6 +23,7 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -1387,6 +1388,7 @@ namespace NorvesLib::Core::Rendering
             transparentFrameTemplate.skyOcclusionInfo[0] = 1u;
             transparentFrameTemplate.skyOcclusionInfo[1] = skyOcclusion.LevelCount;
             transparentFrameTemplate.skyOcclusionInfo[2] = skyOcclusion.Resolution;
+            transparentFrameTemplate.skyOcclusionInfo[3] = std::bit_cast<uint32_t>(skyOcclusion.Parameters.MaxHorizonMeters);
             transparentFrameTemplate.skyOcclusionParams[0] = skyOcclusion.Parameters.Strength;
             transparentFrameTemplate.skyOcclusionParams[1] = skyOcclusion.Parameters.DiffuseExponent;
             transparentFrameTemplate.skyOcclusionParams[2] = skyOcclusion.Parameters.GroundHeightMeters;

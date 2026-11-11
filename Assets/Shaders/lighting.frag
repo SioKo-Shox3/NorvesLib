@@ -40,7 +40,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
     vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] x=PaleFlatの直接光・環境光の明暗差を落とす割合（0で通常、1で全部）, y=平らな直接光のn·lと影の代替値, z=アルベドを輝度へ寄せる割合, w=予約0
-    uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 0
+    uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
     vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
     vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
     ivec4 skyOcclusionWindowOrigin[4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
