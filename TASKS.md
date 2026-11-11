@@ -6003,7 +6003,8 @@
 - notes: ロードマップ GR30 の D（995〜1045 行）。鏡面の AA は毛・草の法線（頂点の法線が一定）には効かないので、毛の鏡面のちらつきは GR34・GR35 で別に見る。アルファハッシュと TAA の相性（C）は測ってから手を入れる方針（ロードマップ）なので、この項目では手を入れず G5-GR30-TAA-THIN-CHECK で測る。既定の見た目が変わるので、全シーンの撮影は G5-GR30-TAA-THIN-CHECK（絶対規則7）。golden の画像は Test/Core/Rendering/Baselines/RenderingValidation/ の 4 枚（GoldenBaselines.md:140〜144）で、更新は同書の Generate と Publish の手順で行う。危険地帯（GBuffer・可視バッファの解決）なので評価者を通す。完了条件の GR30 の鏡面の AA と golden の行、要件 `#### GR30`。
 
 ## G5-GR30-THIN-TAA-MEASURE: 細い毛状の形と Hash の切り抜きの葉の TAA のちらつきとゴーストを GPU の試験で測り、しきい値を置き、足りなければ Hash の画素をリアクティブへ書く
-- status: todo
+- status: backlog
+- parked: 描画・GPU の試験は回さない・作らない決まり(人の判断: 実行できたかしか見ていないグラフィックの試験は要らない。GPU の試験はウィンドウが開いて邪魔になる)
 - after: G5-GR30-THIN-SPECULAR-AA, G5-GR30-REACTIVE, G5-GR27-MASKED-GBUFFER
 - gr: GR30
 - done-when: GPU の `RenderingTemporalAAThinGeometryVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録。試験のシーンの中だけに、Hash の切り抜きの葉の板と、`Common/ThinGeometry.glsl` の幅の下限を通る細い毛状の形と、G5-GR30-VERTEX-ANIM-VELOCITY の試験用の揺れで動く板を置く）が、TAA を有効にして、(a) 静止のカメラの 32 フレームの ROI の輝度の時間方向の標準偏差、(b) カメラを回している間のゴーストの指標（TAA の出力と、同じ姿勢をジッタで平均した参照との ROI の最大差）を測って出し、`Test/Core/Rendering/Thresholds/RenderingValidation/` の TSV のしきい値以内を確かめる。しきい値は初回の実測から置く（先に数字を決めない。ロードマップ GR30 の完了条件）。Hash の雑音と分散のクリップの相性で測定が不足なら、ロードマップ GR30 の C の手（Hash で描いた画素を `Scene.Reactive` へ書く軽い追加）を入れて測り直し、入れた・入れないと測った値を `Docs/RenderingValidation/` の受入れの記録（新規の `TemporalAAThinGeometryAcceptance.md`）に書く。golden 4 本が変わらない（C の手を入れても切り抜きの材質が無いシーンは同じ）。
@@ -6015,7 +6016,7 @@
 ## G5-GR30-TAA-SCENES-CHECK: 鏡面の AA・頂点の動き・リアクティブを入れた後の全シーンの見た目と、回しているときのゴーストを撮って確かめる
 - status: backlog
 - parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
-- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - check: launch
 - gr: GR30
 - done-when: Game を Debug でビルドし、ランチャーに載った各シーン（rendering3dtest・wasteland・mega-bananas・night-village・material-gallery・interior-light・sandbox）を `Scripts/CaptureScene.ps1` で撮り、各シーンが SCENE_READY まで進み検証レイヤーのエラーが無い（台本の判定が 0 で終わる）。PNG を開き、ランチャーの見本画像（`Assets/Textures/Launcher/<id>.png`）と `.harness/runs/scene-capture/` の直近の撮影と並べて、差が鏡面の AA による細かいハイライトの減りだけで、wasteland の草の揺れ（FoliagePass の時刻の基準を替えた分）が前と同じに見えることを確かめる。rendering3dtest を `Scripts/CaptureStartupScene.ps1 -OrbitDegreesPerSecond` で回しながら撮った連続のフレームを開き、球と岩の縁に筋（ゴースト）が出ていないことを確かめる。所見を PROGRESS.md に書き、崩れていれば G5-GR30-VERTEX-ANIM-VELOCITY・G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA の done-when と paths の範囲で直す。
@@ -6185,7 +6186,7 @@
 
 ## G5-GR46-VERTEX-ANIM: 通常のメッシュの材質に風の頂点アニメを足し、GBuffer・影（方向光・点光源・VSM）・velocity に同じ変位を入れる
 - status: todo
-- after: G5-GR46-WIND-FIELD, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR46-WIND-FIELD, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR46
 - needs-gr: GR26, GR30
 - done-when: 材質に `VertexAnimationParams`（mode=None/Grass/Tree・amplitude・heightStart/heightEnd・frequencyScale・branchFactor・phaseRandom・stiffness）を GR26 の材質の値の枠に載せ（`MaterialCreateData`→`RenderMaterialStore` が複写）、GR30 が置く `Common/VertexAnimation.glsl` の `ApplyVertexAnimation` の中身を `Common/Wind.glsl` の風で実装する（樹木 = 幹の低周波＋枝先の高周波。マスクは頂点の高さを高さの範囲で正規化した値と幹の軸からの距離。個体差の位相はワールド行列の平行移動のハッシュ）。風の値は GBuffer 系のパスへ 1 フレームに 1 つの環境の UBO（新しい binding）で渡す。`gbuffer.vert`（`skinned_gbuffer.vert` は宣言の追従）・`shadow.vert`・`point_shadow.vert`・`vsm_draw.vert` が同じ変位を入れ、velocity は今の時刻と前の時刻の 2 回の評価で前の位置を出す（GR30 の約束）。可視バッファが On のとき、頂点アニメの材質の描画は ID のラスタと解決に載せず、解決の後に GBuffer へ重ねて描く（FoliagePass と同じ位置）。MegaGeometry は静的なので対象外。mode=None の材質の描画・UBO の値・出力は変わらない。`MaterialResourcesTest`・`GBufferMaterialDescriptorCacheTest` が新しい値を含めて通る。`WindShaderCompileTest` に、頂点アニメを有効にした gbuffer.vert・skinned_gbuffer.vert・shadow.vert・point_shadow.vert・vsm_draw.vert のコンパイルを足して通る。GPU の試験 `GBufferWindVelocityVulkanTest`（`RenderingVelocityVulkanTest` の実行ファイルに scenario として足す。風で揺れる板をカメラ静止で描き、velocity が今と前の変位の有限差分の解析値と 0.002 以内、mode=None と風なしで 0）と `ShadowWindConsistencyVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。同じ頂点の GBuffer の経路と影の経路（方向光・点光源・VSM）の変位が一致）をビルドできる（実行は G5-GR46-WIND-CHECK）。grassland に風で揺れる木（既存の手続きのメッシュか仮の幹と枝）を数本置く。
@@ -6274,7 +6275,7 @@
 
 ## G10-GR63-VELOCITY-GUARD: 前のフレームでカメラの背後・near 面の近くだった頂点の画素に「履歴なし」の印を書き、TAA と動きぼけがそれを読んで大きなにじみを出さないようにする
 - status: todo
-- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR63
 - needs-gr: GR30
 - done-when: (1) velocity の書き手 2 つ（可視バッファの解決 `Assets/Shaders/Common/VisibilityResolve.glsl:504` の `VisComputeVelocity`、fallback の GBuffer の断片。G5-GR26-GBUFFER-PROGRAMS の後は `Common/GBufferFragment.glsl`）が、前のフレームのクリップ座標の w が閾値（描画の定数。既定は仮）以下のとき通常の velocity を書かず「履歴なし」の印を書く。印の値と意味を 1 か所（`Assets/Shaders/Common/` の include と C++ の定数）に置き、`Docs/Architecture/GpuLayoutRegistry.md`（G5-GR26-GBUFFER-CONTRACT が作る割り当て表）に登録する。(2) 読み手: `temporal_aa.frag` は印の画素で履歴を捨てて今の色だけを使い、`MotionBlur.frag`・`MotionBlurTileMax.frag` は印の画素を速度 0 として扱う（32 px の上限で引き伸ばさない）。印の無い画素の結果は今と同じ。(3) `RenderingVelocityVulkanTest` に scenario を 2 つ足し、可視バッファの on と `--visibility-buffer=off` の両方で登録する（計 4 本）: `skinned-fast-rotation`（根の関節を既知の角速度で回したスキンの画素の GPU の velocity が解析値と 0.002 以内。`Docs/RenderingValidation/R6aVelocityAcceptance.md` と同じ許容）、`skinned-behind-near`（前のフレームで near 面の背後だった頂点の画素が印になり、TAA の後の色が今のフレームの色と一致し、動きぼけの後に 32 px 級のにじみが出ない）。既存の `RenderingVelocity*VulkanTest` の 11 本と golden 4 本が通る。
@@ -6322,7 +6323,7 @@
 
 ## G10-GR64-GHOST-RENDER: スキンに不透明度を持たせ、アルファハッシュと TAA で半透明の残像として GBuffer へ描き、影は落とさない
 - status: todo
-- after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR64
 - needs-gr: GR27, GR30
 - done-when: (1) `SkinnedMeshComponent::SetOpacity`・`GetOpacity`（0〜1、既定 1）から `SkinnedMeshProxy::Opacity` へ値で渡し、G5-GR26-MATERIAL-PARAMS のインスタンスの被覆率の乗数（`.w`）へ写す。不透明度が 1 未満のスキンは、材質が不透明でも G5-GR27-MASKED-GBUFFER の Hash の切り抜きで描く（可視バッファが on のときは解決の後に重ねる経路、fallback では切り抜きの描画）。不透明度が 1 のときは今の描画と同じ。(2) 不透明度が 1 未満の間は影を落とさない（CSM・VSM・点光源の影のどれにも出さない。`bCastShadow` の値は書き換えず、描画の側で外す）。(3) Hash の閾値が 8 フレームで層別化され、同じ画素の閾値が等間隔に並ぶことを保証する（G5-GR27-MASKED-GBUFFER の `Common/AlphaClip.glsl` の式がそうでなければ直す。TAA のジッタの番号をフレームの位相として使う）。(4) CPU の `SkinnedAlphaHashContractTest`（`CameraViewConstantsTest` の束へ MEMBER。`TemporalAAJitterTest` の隣。足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: Hash の C++ の参照で、8 フレームの被覆率が不透明度に等しい（画素全体の平均で ±2%）、同じ画素の閾値が 8 フレームで等間隔、不透明度 1 で破棄なし・0 で全部を破棄。参照と GLSL の定数が同じことを文字列の走査で確かめる。(5) GPU の `RenderingSkinnedGhostVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の色を撮る。on と `--visibility-buffer=off` の `RenderingSkinnedGhostGBufferFallbackVulkanTest`）: 静止したカメラで 16 フレーム回し、既知の背景の上の不透明度 0.5 のスキンの内側の画素の平均が mix(背景, スキンの色, 0.5) と 5% 以内、収束後の時間方向の標準偏差を記録して閾値（仮。実測で決めて TSV に置く）以内、`SkinnedShadowRecordedDraws` が不透明な本体の分だけ、霧の濃い条件で「不透明な本体に同じ霧を掛けた参照」× 不透明度と一致（許容は実測で決める）。golden 4 本と G5-GR27 の `RenderingAlphaClipVulkanTest` が通る。
@@ -6403,7 +6404,8 @@
 - notes: GR56 の P3（要件 5541-5547・5585 行）。今あるもの: SCN-RENDER-SPEC-OCCLUSION の土台（d96e2a2e）で、RTGI が有効なときだけ空の見え方で鏡面を遮り、遮った向きを周りの面の光で埋める（lighting.frag:696-750）。RT の無い構成と樹冠（TLAS に入れない）にはこの項目の円錐が効く。SCN-RENDER-SPEC-OCCLUSION は todo で同じ鏡面の式を触るので、その後に回す（after）。G7 の GR53 の濡れの鏡面にもこの値が掛かる前提（要件 5547 行）で、水たまりの反射は G11-GR59-PUDDLES がこの関数を使う。撮影で測る受け入れ（要件 5624・5625 行）を、起動しないで済むよう基準画像の試験の場面（RenderingGoldenImageTest の新しい場面の引数。新しい実行ファイルは作らない）で数値の判定にした。閾値（25〜60%・30%）は要件の初期目標で、美術の調整で変えうる（根拠は要件の目標値だけ）。PT との比べは G11-GR56-SKY-OCC-REFERENCE。危険地帯（lighting.frag・半透明）。評価者の反証を省かない。共有のファイル（lighting.frag・forward_transparent.frag）は差分を小さくする。試験を足す理由: 反証する契約は「樹冠の下の空の光が決めた比に落ち、無効で絵が変わらない」。暗くしすぎ・二重の遮りは「コントラストの低い世界」の絵として紛れ、撮影 1 枚の目視では決めにくく、黙って起きる。
 
 ## G11-GR56-SKY-OCC-REFERENCE: 空だけで照らした樹冠・林縁・岩の場面で、空の遮蔽のラスタをパストレーサーの正解と比べる参照比較の試験を足して通す
-- status: todo
+- status: backlog
+- parked: 描画・GPU の試験は回さない・作らない決まり(人の判断: 実行できたかしか見ていないグラフィックの試験は要らない。GPU の試験はウィンドウが開いて邪魔になる)
 - after: G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - gpu: exclusive
@@ -6507,7 +6509,7 @@
 
 ## G12-GR39-DEPTH-CONVENTION: 深度の規約（クリア値・比較・背景の判定・線形化）を C++ と GLSL の 1 か所に集め、深度の決め打ちのしきい値をなくす
 - status: todo
-- after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
+- after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR39
 - needs-gr: GR25, GR27, GR30, GR43
 - done-when: `Library/Core/Public/Rendering/DepthConvention.h`（クリア値・カメラの深度の比較の演算・「より手前」の比べ方・背景の判定 `IsBackgroundDepth`・`LinearizeDepth(depth, near, far)`）と `Assets/Shaders/Common/DepthConvention.glsl`（同じ意味の `IsBackgroundDepth`・`LinearDepth`・`IsCloserDepth`・`ClosestDepth`・`FarthestDepth`・`kDepthClear`）を足し、カメラの深度を書く・読む所を全部これに寄せる: 深度の比較の設定（今 `CompareOp::Less` を書く 7 ファイル: FoliagePass・ForwardPass・GBufferPass（1556・1665 行）・MegaGeometryPass・RibbonTrailRenderer・ShadowMapPass のうちカメラの深度の分・VisibilityRasterPass）、深度のクリア値（`Library/Core/Private/Rendering` の約 16 か所）、深度を読むシェーダー（今 `0.999`〜`0.999999`・`>= 1.0` を使う所: ssr.frag・gtao.frag・gtao_denoise.frag・lighting.frag・temporal_aa.frag（最小の深度の近傍の選択を含む）・volumetrics.frag・Common/VolumetricsCommon.glsl・DepthOfField.frag・MotionBlur.frag・MotionBlurTileMax.frag・cloud_layer*.frag・Common/CloudLayerCommon.glsl・bloom.frag・distortion_offset.frag・line.frag・RayTracing/RayTracingShadowRayGen.glsl・RTGI/DiffuseIndirect.comp・RTGI/CrossBilateralDenoise.comp・Common/VisibilityResolve.glsl ほか、着手時に `git grep` で全数を出す）。G5 が足した深度を使うパス（草・切り抜き・TAA のリアクティブ・拡張の段）も含める。背景は「クリア値と等しい深度」だけにし、距離で切っていた所（SSR の 0.999 は近 0.1・遠 1000 で約 91 m 以遠、SSAO の 0.9999 は約 500 m 以遠を背景扱い。ロードマップ 2130 行）は、意図した距離の上限ならメートルの定数に書き直し、意図でなければ外す（決めた中身を PROGRESS に書く）。この項目では標準の Z（手前 0・奥 1）のまま。可視バッファの 64bit の詰め方（Common/VisibilityBuffer.glsl:12〜13、atomicMin）は「より手前が小さい」鍵を作る関数を `DepthConvention.glsl` から呼ぶ形にする。新設の `DepthConventionTest`（`CameraViewConstantsTest` の束へ MEMBER）が通る: 本番の射影（`CameraViewConstants::BuildForDevice`。CameraViewConstants.cpp:49）で、近 0.05 m・遠 20 km と 近 0.1 m・遠 1000 m の深度が手前から奥へ単調、`IsBackgroundDepth` がクリア値だけで真、`LinearizeDepth` の往復の誤差が 10 m・1 km・10 km で許容内（許容は標準 Z の量子化から求めて試験に書く）。Game と golden の試験の実行ファイルがビルドでき、既存の CPU の試験が通る。golden（`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest`・両方の GBufferFallback）と GPU の試験の実行、遠景の SSR・SSAO の差で外れたときの `Docs/RenderingValidation/GoldenBaselines.md` の手順の再承認は G12-GR39-DEPTH-CHECK で行う。
@@ -7097,7 +7099,7 @@
 
 ## G7-GR57-GPU-DRAW: GPU の粒をワールドの空間の板・速度で伸ばした筋・面に沿う板として、ソフト・霧・環境光の色つきで TAA の前と後の段に描く
 - status: todo
-- after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR57
 - needs-gr: GR25, GR30
 - done-when: `GpuParticleDrawPass`（IViewPass と IRenderGraphPass。段の違う 2 つのインスタンス）を GR25 の Transparent の段（PreTAA。ForwardPass の後・DistortionPass の前）と PostTemporalAA の段（PostTAA。TAA の後の HDR の色は GR25 の `ResolveHdrChainHead` で引く）へ登録する。レンダーパスは色 1 枚だけ（深度の添付なし）で、SceneDepth をシェーダー資源で読み、深度の判定とソフトは断片で行う（選定課題 G7-S4 の (A)）。`Assets/Shaders/Particles/ParticleDraw.vert`: `gl_InstanceIndex` でスロットを引き、Billboard（world_board.vert のカメラの右・上）・VelocityStretch（頭 P・尾 P − v_rel×StreakShutterSeconds をクリップ空間で 2 点投影し、画面の向きに直交する幅を足す。幅が 1px 未満なら 1px にして不透明度を幅の比で下げる。ニア面をまたぐ端はニア面で切る）・SurfaceAligned（命中の法線に沿う板）。v_rel は粒の速度 − カメラの速度（前のカメラから）で、前のカメラが連続でないフレーム（`bPreviousMainCameraContinuous` が false）はカメラの項を 0 にする。PostTAA の段はジッタの無いカメラで投影する（DebugDrawPass と同じ）。大きさ・色・不透明度・伸びは寿命の折れ線（GpuEmitterParams の 8 キー）。`ParticleDraw.frag`: 形（手続きの丸・筋、またはテクスチャと GR136 のフリップブックの UV）、ソフト = saturate((場面の線形深度 − 粒の線形深度)/softMeters)、粒が不透明の面より奥なら捨てる、霧（`Common/HeightFog.glsl` の `EvaluateHeightFogForward`。加算は `ApplyHeightFogAdditive`）、照明 AmbientTinted（PhysicalLighting の拡散の放射照度を視線の側の向きで引く。forward_transparent.frag の拡散 IBL と同じ式。その view で照明の資源が無ければ Unlit と Scene の環境光に落とし、パスを捨てない）、出力はプリエクスポージャを掛けた premultiplied（One・InvSrcAlpha）か加算（One・One）でブレンドごとに別のパイプライン。PreTAA の段の半透明の粒は被覆率を G5 の GR30 の `Scene.Reactive` へ書く。描画は当面エミッタごとの `DrawInstanced(6, capacity, 0, base)`（間接の描画は G7-GR57-GPU-INDIRECT）。GPU のエミッタが 0 件のフレームはパスが何も記録しない（既定のシーンの見た目を変えない）。 試験: CPU の `GpuParticlePassOrderTest`（`SceneViewProxyLookupTest` の束の MEMBER）が、`SetupDeferredPipeline` を可視バッファの on と off で組んだときのパスの名前の並びで、シミュレーションが GBuffer を書く最後のパスの後・SSAO の前、PreTAA の描画が ForwardPass の後・DistortionPass の前、PostTAA の描画が TemporalAA の後、組み直しても 1 回ずつ同じ位置、を確かめる（パスの数や dispatch の数は写さない）。`GpuParticleShaderCompileTest` に ParticleDraw の vert・frag の全ブレンドのコンパイルを足す。GPU の `GpuParticleRenderVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）をビルドできる: 単一の粒の筋の画面の長さが |v_rel|×shutter の投影の ±1px、幅 1px 未満で総輝度がほぼ一定、深度差の sweep でソフトの不透明度が単調に増える、霧の減衰が `ComputeHeightFogTransmittance` と一致、空の値を変えると環境光の色が追随、検証レイヤーのエラー 0（閾値は `Test/Core/Rendering/Thresholds/RenderingValidation/GR57Draw.tsv`）。実行は G7-GR57-CHECK。
@@ -7141,7 +7143,7 @@
 
 ## G7-GR58-RAIN-NEAR: カメラの周りの箱で巻き戻る GPU の粒の雨筋を、雨量に連続に追随し、風と落ちる速さで傾き、相対速度で伸びる形で TAA の後に描く
 - status: todo
-- after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR58
 - needs-gr: GR46, GR30
 - done-when: 近距離の雨のエフェクト `Assets/Data/Vfx/Rain_Near.vfx.json`（GR136 の形式。Executor=Gpu・Counter の乱数・容量 2.4 万〈目安〉・形 CameraBox〈RainTuning の箱〉・WrapPolicy=WrapInCameraBox・WindInfluence〈GR46〉・GpuSpriteRenderer の VelocityStretch・段 PostTAA・照明 AmbientTinted に色の倍率・霧の影響 1・衝突は深度と平面で着いたら箱の上面へ戻す・近距離のフェード・箱の縁のフェード）を置き、`VfxEffectSerialization` の元の形式の読みで起動時に読む（スキーマの検証が通らなければ雨を出さずにログ）。EnvironmentSystem が有効で雨量 > 0 の間だけ、ParticleSystem の `VfxEffectSystem`（ParticleSystem.h:64 の GetVfxEffects）に Rain_Near のインスタンスを 1 つ持ち、毎フレーム `EvaluateRainNear(雨量, 風, RainTuning)` の値（有効な割合・不透明度・太さ・落ちる速さ）を `SetModuleParameter`・`SetEmitterProperty` で渡す。雨量 0 で破棄する（雨量 0 で粒も描画も 0）。粒の有効の判定は ActivationFraction（hash(i) < 有効な割合、境目の小幅のランプ）で、雨量の変化で粒が突然現れない。傾きは風（GR46 の `WindVelocity`）と落ちる速さで決まり、筋の長さは粒とカメラの相対速度 × StreakShutterSeconds。CameraBox の中心は GPU の側でパケットのメインのカメラの位置にする（Entity を動かさない）。GPU の `RainStreakVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）をビルドできる: 単一の粒で画面の筋の長さが |v_rel|×StreakShutterSeconds の投影の ±1px、風 4 m/s・落ちる速さ 8 m/s で画面の傾きが 26.6° ±1°、幅 1px 未満で総輝度がほぼ一定、霧の密度を上げると筋の不透明度が `ComputeHeightFogTransmittance` の予測と 10% 以内で減る、検証レイヤーのエラー 0。雨量の sweep の golden の場面 `R58RainSweepVulkanTest`（既存の実行ファイル `RenderingGoldenImageTest` に scenario=rain-sweep を足す。R3 の密度の sweep と同じ形で雨量 {0, 0.25, 0.5, 1.0}、閾値は `Test/Core/Rendering/Thresholds/RenderingValidation/R58RainSweep.tsv`）と、同じ scenario の雨量 0.5 を ctest の ENVIRONMENT で `NORVES_TEMPORAL_AA=1`（SceneView.cpp:1331）にした `R58RainTaaVulkanTest`（筋の ROI のピークの輝度が TAA なしの 80% 以上）を登録してビルドできる（基準の画像を撮るのと実行は G7-GR58-CHECK）。CPU の試験: `RainParametersTest` に Rain_Near.vfx.json がスキーマを通り Executor=Gpu で読めることを、`EnvironmentStateTest` に雨量 0→0.5→0 でインスタンスが 1 つ作られて破棄され、渡した値が `EvaluateRainNear` と一致することを足す。
@@ -7259,7 +7261,7 @@
 
 ## G12-GR47-INSTANCE-VARIATION: 散布の 1 本ごとに色味と個体差の種を持たせ、1 本だけを記録を書き換えずに隠せるようにする
 - status: todo
-- after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR47
 - needs-gr: GR26, GR30
 - done-when: `MegaScatterInstance`（MegaGeometryScatterComponent.h:51〜57。今は位置・回転・拡大・メッシュの表の番号だけ）に色味（RGBA8 を詰めた uint32。既定は白）と種（uint32。既定は散布の `Seed` と入力の番号のハッシュ）を足し、軽い行の値（`EcsMegaInstance`。EcsGpuSceneSlots.h:55〜60）と GPU の席の値へ通して、`GPUMegaInstance`（MegaGeometryPass.h:635〜645）の空き `Reserved0`・`Reserved1` に色味と種を入れる（`Common/MegaInstanceTable.glsl` の `MegaInstanceRow` と `LoadMegaInstance` も揃え、席の表の行 `GPUMegaSlotRow`（674〜679）を広げるか別の列にするかは着手時に決めて割り当て表 `Docs/Architecture/GpuLayoutRegistry.md` に登録する）。可視バッファの解決（`Common/VisibilityResolve.glsl`）と MegaGeometry のラスタの断片が Albedo に色味を掛ける（白ではビット単位で今と同じ）。種は G5-GR30 の `ApplyVertexAnimation` の instanceParams（風の位相）へ渡せる形にする。`MegaGeometryScatterComponent::SetInstanceHidden(inputIndex, bool)` を足し、1 本の非表示の切り替えで範囲（`kRangeRows` = 64 行）の全行を書き直さず、隠した席はカリングの前に落ちて影・RT にも出ない。検査 `MASS_RANGES` は隠した席を数えに入れる。新設の `MegaScatterVariationTest`（`EntityTreeTest` の束へ MEMBER）が通る: 色味と種が入力の番号ごとに保たれ、`UpdateInstances` と範囲の書き直しの後も変わらない、既定の種が同じ `Seed` で決定的、隠す・戻すで行の値（位置・回転）が変わらず公開の印だけが変わる、範囲の出し入れを挟んでも隠した状態が残る。`VisibilityResolveVulkanTest` に色味のケース（白でビット一致・色付きで Albedo が掛け算どおり）を足してビルドでき（実行は G12-GR47-FOREST-CHECK）、`EntityTreeTest` の既存の試験と `ScatterSystemResidencyTest` が通り、Game がビルドできる。
@@ -7543,7 +7545,7 @@
 ## G11-GR56-SKY-OCC-CHECK: 森の縁と開けた草原で空の遮蔽を起動して確かめ、GPU 時間とカメラの歩行での更新の費用を記録する
 - status: backlog
 - parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
-- after: G11-GR56-SKY-OCC-RT, G11-GR56-SKY-OCC-REFERENCE
+- after: G11-GR56-SKY-OCC-RT
 - gr: GR56
 - check: launch
 - gpu: exclusive
@@ -8042,7 +8044,7 @@
 
 ## G6-GR34-SHELL-PASS: スキン済みの体の Fur の材質の部分だけを、同じ頂点・同じパレットで N 枚の殻としてインスタンス描画で GBuffer へ重ね、毛の判定・毛先の細り・自己遮蔽の AO・距離による殻数の LOD を入れる
 - status: todo
-- after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR34
 - needs-gr: GR26, GR27, GR30, GR32
 - done-when: `SkinnedDrawParams`（`Library/Core/Public/Rendering/DrawCommand.h:63`）に `ShellCount`（既定 1）と最後の殻の割合を足し、`InstanceCount`・`bInstanced` とは別の欄にする（`GBufferPass::TryPrepareSkinnedCommand`（GBufferPass.cpp:1738〜1744）と `SceneRenderer::RecordSkinnedDrawCall`（SceneRenderer.cpp:572〜593）の外部指定のインスタンスの拒否は残す）。Fur の材質の slot（G6-GR91-FUR-MATERIAL-DATA の proxy の写し）だけ、カメラから `AnimatedBounds` の中心までの距離で連続の殻数 Nf を材質の LOD の表から決め（既定は仮で 3m 以内 32・10m 16・25m 8・50m 4・それより遠くは 1）、ceil(Nf) 枚を `DrawIndexedInstanced(count, ShellCount, start, 0, 0)` で描き、最後の殻は frac(Nf) で間引いてポッピングを避ける。視錐台の外の殻は `AnimatedBounds` で落とす。目・鼻・爪など Fur でない slot は今のまま 1 回。描く経路は G5-GR26-GBUFFER-PROGRAMS の GBuffer プログラムの登録簿に `fur_shell`（スキンの VS `Assets/Shaders/skinned_fur_gbuffer.vert`・FS `skinned_fur_gbuffer.frag`）を登録して使い、可視バッファが on なら解決の後に重ねる経路、fallback なら標準の後に描く。殻 0 も同じプログラムで描く。影の描画（`skinned_shadow.vert`・点光源・VSM）は毛の無い形のままで、殻を含まない。頂点シェーダーは G5 が切り出す `Common/SkinnedVertex.glsl` でスキニングし、殻の番号 = gl_InstanceIndex、h = 殻 /(N−1)、世界の位置 = P + normalize(N + F·h)·(MaxLength·h)（F は描画ごとの毛の力。この項目では UBO の値をそのまま使い、作るのは G6-GR34-COAT-SCENE）。velocity は下地のスキンの動き（前のパレット）に今の殻のずれを足した近似にする。断片シェーダーは UV のセルで毛 1 本を判定する（cell = uv·StrandDensity·密度、乱数 = セルの整数座標のハッシュ、毛の長さ = 長さのマップ·mix(0.6, 1, 乱数)、h が毛の長さを超えたら捨てる、太さ (1 − h/毛の長さ)^p で細らせる）。セルが画素より細かいとき（fwidth(cell) > 0.7）は 2 値の判定をやめて被覆率の期待値を G5-GR27-MASKED-GBUFFER の Hash の切り抜き（`Common/AlphaClip.glsl`）へ回し、幅の下限は G5-GR30-THIN-SPECULAR-AA の `Common/ThinGeometry.glsl` の `ClampStrandWidth` を通す。殻 0 は捨てない不透明の皮膚面で根元の色と AO を書く。色はアルベド × 根元から毛先への明るさ × 領域の表（Region のマップを texelFetch で読む）と下毛の色の混ぜ、AO = mix(AoRoot, 1, h^AoExponent) を Material.b へ、法線は normalize(mix(N, T, Tilt·h))（T は流れのマップを `CalculateCotangentFrame`（Common/ParallaxOcclusionMapping.glsl:14）で世界へ写したもの）。GBuffer へは G5-GR26-GBUFFER-CONTRACT の関数で、ID = Fur・P0 = 濡れ度（スキンのインスタンスの値、無ければ材質の値）・P1 = 流れの角（下の G6-S8）を書く。ファーの値は GBuffer の per-object UBO（今 336 バイト。GBufferPass.cpp:101・672）の後ろに FurMaterialGpuParams と描画ごとの値（毛の力・殻数・最後の殻の割合）を足して渡し、マップは今の 6 つのテクスチャの束縛（GBufferPass.cpp:110 付近の binding 1〜6）を Fur のときだけ読み替える（metallic → Length、roughness → Flow、ao → DensityClump、height → Region）。RenderGraph にパスもリソースも足さない。試験が通る: `SkinnedSubmeshDrawContractTest`（今の偽の ICommandList。SkinnedSubmeshDrawContractTest.cpp:163〜242）に、Fur の slot だけが `DrawIndexedInstanced(count, N, start, 0, 0)` で記録されてほかの slot は 1、N が距離に対して増えずに LOD の境目が表のとおり、視錐台の外は 0、外部から bInstanced か InstanceCount ≠ 1 を指定したスキンの描画は今までどおり拒否、影のパスの記録は殻を含まない、のケース。`FurShaderCompileTest`（`RHIRayTracingApiContractTest` の束へ MEMBER。`RHIRayTracingShaderStageCompileTest` と同じく `VulkanShaderCompiler` を CPU で使う）が skinned_fur_gbuffer.vert と .frag を通す。GPU の `RenderingFurShellVulkanTest` と `RenderingFurShellGBufferFallbackVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録。GBuffer の capture source は G5-GR26-MATERIAL-PARAMS が足すもの）が、試験の場面の部品 `Test/Core/Rendering/RenderingValidation/RenderingValidationScene` に足す合成のファントム（骨 1 本のスキンの円筒と、試験の中で作る一様のマップ）で、(a) 殻 1 枚なら下地で被覆 100%、(b) 32 枚で下地の外の毛の画素の割合が密度から求めた期待値の許容の内、(c) Material.b の AO が根元で小さく毛先で大きい（高さの帯ごと）、(d) Normal.w の ID が Fur、(e) 静止で velocity が 0、(f) 殻数を減らすと平均のアルベドが下地の色へ単調に近づく、を確かめる。Fur の材質の無い golden 4 本と既存のスキンの velocity が変わらない。
@@ -8530,7 +8532,7 @@
 
 ## G14-GR62-CUT-SERIAL: カメラの不連続の印 CutSerial を足し、カットのフレームで前のカメラ・TAA の履歴・連番の持ち越しを捨てる
 - status: todo
-- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR62
 - needs-gr: GR30
 - done-when: (1) `CameraProxy` に `uint32_t CutSerial = 0`（カットのたびに 1 増える通し番号。既定 0 で今と同じ）。`CameraComponent` に `MarkCameraCut()`（次の `BuildCameraProxy` から CutSerial が 1 増える。PROPERTY にはしない）。(2) `RenderingCoordinator::GenerateDrawCommands` の前のカメラの条件 `bPreviousMainCameraContinuous`（RenderingCoordinator.cpp:4811-4818）に「前のカメラと今のカメラの CutSerial と SourceCameraId が同じ」を足す（SourceCameraId の切り替えでも velocity を別のカメラの行列で作らない）。(3) `TemporalAAHistoryQuery`（TemporalAA.h:162）・`TemporalAAHistoryTracker`（:202）に CutSerial を足し、違えば `CameraChanged`。`FindReprojectionCamera`（:252）も CutSerial が違えば null（描かれずに捨てられたパケットをまたいでも、カットの向こうへ再投影しない）。(4) パストレーサー: `ApplyPathTracingSequenceCarry`（FramePacket.h:720）はカットのパケットで前のカメラと instance の前の変換を捨て、`SamplePathTracingCamera`（PathTracingCamera.h）の前のカメラの採用も同じ条件にする。(5) 規約の文書 `Docs/Architecture/CameraDiscontinuity.md`: CutSerial はカメラの不連続の唯一の印。進めるのは CameraDirector の Cut とカットシーンの出入り（G14-GR62-DIRECTOR）と `MarkCameraCut`（GR02 の補間を切るテレポート・GR71 のファストトラベル・GR55 の時間の飛ばしはこれを呼ぶ）。G7 の環境の `DiscontinuityId` とは別の印で、環境の不連続がカメラのカットを伴うときは呼ぶ側が両方を進める。(6) 試験: `CameraCutPreviousCameraTest`（`ViewportCameraIdRenderPlanTest` の束へ MEMBER）— CutSerial が変わったパケットで前のカメラを渡さず次のパケットで渡す、SourceCameraId の切り替えでも同じ、TAA の履歴が `CameraChanged` で捨てられる、捨てたパケットをまたいでも `FindReprojectionCamera` が null、`ApplyPathTracingSequenceCarry` がカットで前のカメラと instance の変換を捨てる。`RenderingVelocityVulkanTest`（Test/Core/Rendering/CMakeLists.txt:647）に `--scenario=camera-cut`（カメラを動かしながら途中のフレームで CutSerial を進める）を足して `RenderingVelocityCameraCutVulkanTest` として登録し、カットのフレームの velocity が全画素 0、次のフレームで 0 でない。既存の `CameraTableTest`・`TemporalAAJitterTest`・`RenderingVelocityCameraVulkanTest`・`RenderingVelocityMotionVulkanTest`・`R8PathTracingSequenceFrameVulkanTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` が通る。
@@ -9449,7 +9451,8 @@
   時間とメモリの目標（70 万三角形で P1+P2 が 30〜60 秒、ピーク 2GB 以下）は根拠なしの仮の値で、G17-GR80-REAL-CHECK で測ってから確定する。危険地帯（アセットの形式）なので評価者を通す。試験を足す理由: 簡略化が継ぎ目に亀裂を作る・縁を動かすと、遠景で背景が細く透けるだけで撮影では見落としやすく、黙って起きる。
 
 ## G17-GR80-LODCUT-CONTRACT: lodgraph の LOD の切り方が、どのカメラの距離でも穴と重なりの無い切断になることを、本番のカリングのシェーダーで縛る GPU の試験を足す
-- status: todo
+- status: backlog
+- parked: 描画・GPU の試験は回さない・作らない決まり(人の判断: 実行できたかしか見ていないグラフィックの試験は要らない。GPU の試験はウィンドウが開いて邪魔になる)
 - after: G12-GR31-CULL-CONTRACT
 - gr: GR80
 - done-when: 新設の `MegaGeometryLodCutVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。ラベル GPU・RenderingValidation、`RESOURCE_LOCK NorvesLibGPU`、`SKIP_RETURN_CODE 125`）が、試験の中で焼いた lodgraph の閉じた球（`BakeMeshLodDag`。束に `AssetCookLib` をリンクできなければ AssetCook で焼いた小さな `.nvmesh` を fixture にする）を `MegaGeometryResourceStore` に載せ、G12-GR31-CULL-CONTRACT が作る本番の `cluster_bvh_cull.comp` を合成の入力で dispatch する口（パスの側の記述子の配置と定数の定義を使う。試験に束縛を手で写さない）で、カメラの距離 12 通り × 向き 4 通りのクラスタの選択を読み戻して、試験の中の倍精度の CPU の参照と比べる: (a) 選んだクラスタの集合が DAG の切断になる（どの葉から根への道でも選ばれるのはちょうど 1 つ。親が描かれる所で子が描かれない）、(b) 選択が CPU の参照の誤差の判定（自分の誤差で描け、親の誤差で描けない）と一致する（判定のちょうど境の球は両方で描くとする）、(c) 選んだ三角形の位置で溶接した境界辺が 0（閉じた球に穴が無い）。Vulkan の validation error が 0 件であることも試験の中で見る。この項目では試験をビルドして ctest に載ることまでを確かめ、GPU での実行は G17-GR80-REAL-CHECK で行う。
@@ -9461,7 +9464,7 @@
 ## G17-GR80-REAL-CHECK: LOD の切り方の GPU の試験を回し、高密度の合成のメッシュと実物の犬で修復・簡略化の時間と結果を測り、継ぎ目の亀裂が無いことを撮って確かめる
 - status: backlog
 - parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
-- after: G17-GR80-SIMPLIFY, G17-GR80-LODCUT-CONTRACT, G2-GR83-ASSET-PREVIEW-SCENE
+- after: G17-GR80-SIMPLIFY, G2-GR83-ASSET-PREVIEW-SCENE
 - gr: GR80
 - check: launch
 - gpu: exclusive
