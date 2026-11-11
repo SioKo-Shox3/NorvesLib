@@ -150,6 +150,8 @@ namespace NorvesLib::Core::Rendering
         PointShadowDistance,
         /** @brief 画面空間AO（GTAO）の雑音除去後の可視率（白=遮蔽なし、黒=全遮蔽） */
         AmbientOcclusion,
+        /** @brief 左半分は空の可視率 V(+Y)、右半分は曲げた法線 */
+        SkyVisibility,
         Count
     };
 
@@ -179,6 +181,8 @@ namespace NorvesLib::Core::Rendering
             return "PointShadowDistance";
         case DebugViewMode::AmbientOcclusion:
             return "AmbientOcclusion";
+        case DebugViewMode::SkyVisibility:
+            return "SkyVisibility";
         case DebugViewMode::Count:
         default:
             return "Invalid";

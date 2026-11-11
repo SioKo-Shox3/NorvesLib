@@ -7,6 +7,7 @@
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/PointLightComponent.h"
+#include "Core/Public/Component/SkyOccluderComponent.h"
 #include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Component/TextComponent.h"
 #include "Core/Public/Debug/DebugConfig.h"
@@ -1965,6 +1966,58 @@ namespace Game::GameModes
         {
             return GameModeEnterResult::Failed;
         }
+        Entity* demoCanopies[3] = {};
+        if (data.m_bSkyOccluderDemo)
+        {
+            // 地面は Y=-1 m。樹冠と岩の代理を初期視点の正面に置く。
+            struct DemoOccluder
+            {
+                Math::Vector3 Center;
+                Math::Vector3 HalfExtents;
+                SkyOccluderShape Shape;
+                SkyOccluderClass Class;
+                float Opacity;
+            };
+            const DemoOccluder occluders[] = {
+                {Math::Vector3(-4.0f, 4.5f, -3.0f), Math::Vector3(3.0f, 1.5f, 3.5f),
+                 SkyOccluderShape::Ellipsoid, SkyOccluderClass::Canopy, 0.6f},
+                {Math::Vector3(0.0f, 5.0f, -4.5f), Math::Vector3(3.5f, 2.0f, 3.0f),
+                 SkyOccluderShape::Ellipsoid, SkyOccluderClass::Canopy, 0.7f},
+                {Math::Vector3(4.5f, 4.0f, -3.0f), Math::Vector3(3.0f, 1.5f, 3.5f),
+                 SkyOccluderShape::Ellipsoid, SkyOccluderClass::Canopy, 0.8f},
+                {Math::Vector3(3.0f, 0.0f, 0.0f), Math::Vector3(1.0f, 1.0f, 1.0f),
+                 SkyOccluderShape::Box, SkyOccluderClass::Solid, 1.0f},
+            };
+            uint32_t canopyIndex = 0;
+            for (const DemoOccluder& spec : occluders)
+            {
+                Entity* object = ctx.ScopeRef.SpawnObject<Entity>();
+                if (!object)
+                {
+                    LOG_ERROR("空の遮蔽物のオブジェクトを作成できませんでした");
+                    return GameModeEnterResult::Failed;
+                }
+                object->SetPosition(spec.Center);
+                object->SetScale(spec.HalfExtents);
+                auto* occluder = ctx.WorldRef.CreateComponent<Component::SkyOccluderComponent>(object);
+                if (!occluder)
+                {
+                    LOG_ERROR("空の遮蔽物のコンポーネントを作成できませんでした");
+                    return GameModeEnterResult::Failed;
+                }
+                occluder->getShape() = spec.Shape;
+                occluder->getOccluderClass() = spec.Class;
+                // 半寸法に持ち主の拡大率が掛かるため、形状の半寸法は単位値にする。
+                occluder->getHalfExtents() = Math::Vector3(1.0f, 1.0f, 1.0f);
+                occluder->getOpacity() = spec.Opacity;
+                occluder->getbBlocksRain() = false;
+                occluder->RefreshSkyOccluder();
+                if (spec.Class == SkyOccluderClass::Canopy)
+                {
+                    demoCanopies[canopyIndex++] = object;
+                }
+            }
+        }
         if (data.m_bPhysicsSmoke && !data.m_M8MinimalPhysicsSmoke.Enter(ctx))
         {
             return GameModeEnterResult::Failed;
@@ -3414,6 +3467,36 @@ namespace Game::GameModes
                 state->bSmokeSyncEmitted = true;
             }
         });
+        if (data.m_bSkyOccluderDemo)
+        {
+            if (data.m_ShowcaseMaterials.size() > 4u)
+            {
+                for (Entity* object : demoCanopies)
+                {
+                    // 同じ寸法の球を目印として描く。直接光の影は追加しない。
+                    auto* mesh = ctx.WorldRef.CreateComponent<Component::MeshComponent>(object);
+                    if (mesh)
+                    {
+                        mesh->SetMeshHandle(data.m_SphereMeshHandle);
+                        mesh->SetMaterial(0, data.m_ShowcaseMaterials[4]);
+                        mesh->SetCastShadow(false);
+                        mesh->SetCustomData(0, 0.12f);
+                        mesh->SetCustomData(1, 0.30f);
+                        mesh->SetCustomData(2, 0.08f);
+                        mesh->SetCustomData(3, 1.0f);
+                    }
+                }
+            }
+
+            auto& renderWorld = ctx.EngineRef.GetRenderWorld();
+            auto parameters = renderWorld.GetRenderingCoordinator().GetSkyOcclusionParameters();
+            data.m_bSkyOcclusionEnabledBeforeDemo = parameters.bEnabled;
+            data.m_SkyOcclusionGroundHeightBeforeDemo = parameters.GroundHeightMeters;
+            parameters.bEnabled = true;
+            parameters.GroundHeightMeters = -1.0f;
+            renderWorld.SetSkyOcclusionParameters(parameters);
+        }
+
         m9FailureGuard.bCommitted = true;
         // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の
         // Tick が判定する）。
@@ -4190,6 +4273,15 @@ namespace Game::GameModes
         data.m_CottageModelHandle = ModelHandle::Invalid();
         data.m_ShowcaseSphereObjects.clear();
         data.m_ShowcaseMaterials.clear();
+        if (data.m_bSkyOccluderDemo)
+        {
+            // デモで変更した値だけを戻し、他のシーンの設定を保つ。
+            auto& renderWorld = ctx.EngineRef.GetRenderWorld();
+            auto parameters = renderWorld.GetRenderingCoordinator().GetSkyOcclusionParameters();
+            parameters.bEnabled = data.m_bSkyOcclusionEnabledBeforeDemo;
+            parameters.GroundHeightMeters = data.m_SkyOcclusionGroundHeightBeforeDemo;
+            renderWorld.SetSkyOcclusionParameters(parameters);
+        }
         // 空はRenderWorldの設定なので、ほかのモードへ持ち越さないよう無効へ戻す。
         data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
         ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);

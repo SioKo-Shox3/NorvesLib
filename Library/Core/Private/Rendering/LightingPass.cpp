@@ -1961,6 +1961,16 @@ namespace NorvesLib::Core::Rendering
             dsDesc.bindings.push_back(rtgiSpecularBinding);
         }
 
+        // 空の遮蔽の係数と、受け手の高さを補正する値
+        for (uint32_t binding = 29u; binding <= 30u; ++binding)
+        {
+            RHI::DescriptorBinding skyOcclusionBinding;
+            skyOcclusionBinding.binding = binding;
+            skyOcclusionBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            skyOcclusionBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(skyOcclusionBinding);
+        }
+
         return dsDesc;
     }
 
@@ -2783,6 +2793,13 @@ namespace NorvesLib::Core::Rendering
                 m_bLegacyInputFallbackActive = true;
             }
         }
+
+        // 公開されたフレームだけ、遮蔽マップの書き込みから照明への依存を作る。
+        RGTextureHandle skyOcclusionHandle;
+        builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionVisibility,
+                               skyOcclusionHandle, RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionAux,
+                               skyOcclusionHandle, RHI::ResourceState::ShaderResource);
 
         RGTextureHandle ssaoHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::SSAOBlurred,
@@ -5099,6 +5116,19 @@ namespace NorvesLib::Core::Rendering
             bRTGISpecularReadable ? m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Normal : m_DefaultBlackTexture);
         lightingDescriptorSet->BindSampler(28, m_GBufferSampler);
 
+        const bool bSkyOcclusionPublished = context.SkyOcclusion.bSnapshotEnabled &&
+            context.SkyOcclusion.bValid && context.SkyOcclusion.VisibilityTexture &&
+            context.SkyOcclusion.AuxTexture;
+        // 既定のゼロ配列は初期化時に確保済み。texelFetch ではサンプラーの補間を使わない。
+        lightingDescriptorSet->BindTexture(29, bSkyOcclusionPublished
+            ? context.SkyOcclusion.VisibilityTexture : m_DefaultDDGIIrradianceAtlas);
+        lightingDescriptorSet->BindTexture(30, bSkyOcclusionPublished
+            ? context.SkyOcclusion.AuxTexture : m_DefaultDDGIIrradianceAtlas);
+        const RHI::SamplerPtr skyOcclusionSampler = bSkyOcclusionPublished && context.SkyOcclusion.Sampler
+            ? context.SkyOcclusion.Sampler : m_GBufferSampler;
+        lightingDescriptorSet->BindSampler(29, skyOcclusionSampler);
+        lightingDescriptorSet->BindSampler(30, skyOcclusionSampler);
+
         lightingDescriptorSet->Update();
 
         const auto observeUpload = [](const ExecuteUpload& upload) {
@@ -5467,6 +5497,29 @@ namespace NorvesLib::Core::Rendering
         params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         const bool bValidationMode = params.debugViewMode >= 246u &&
                                      params.debugViewMode <= 255u;
+        const auto& skyOcclusion = context.SkyOcclusion;
+        if (!bValidationMode && skyOcclusion.bSnapshotEnabled && skyOcclusion.bValid &&
+            skyOcclusion.VisibilityTexture && skyOcclusion.AuxTexture)
+        {
+            params.skyOcclusionInfo[0] = 1u;
+            params.skyOcclusionInfo[1] = skyOcclusion.LevelCount;
+            params.skyOcclusionInfo[2] = skyOcclusion.Resolution;
+            params.skyOcclusionParams[0] = skyOcclusion.Parameters.Strength;
+            params.skyOcclusionParams[1] = skyOcclusion.Parameters.DiffuseExponent;
+            params.skyOcclusionParams[2] = skyOcclusion.Parameters.GroundHeightMeters;
+            params.skyOcclusionBounce[0] = skyOcclusion.Parameters.OccluderBounceColorR *
+                                         skyOcclusion.Parameters.OccluderBounceIntensity;
+            params.skyOcclusionBounce[1] = skyOcclusion.Parameters.OccluderBounceColorG *
+                                         skyOcclusion.Parameters.OccluderBounceIntensity;
+            params.skyOcclusionBounce[2] = skyOcclusion.Parameters.OccluderBounceColorB *
+                                         skyOcclusion.Parameters.OccluderBounceIntensity;
+            for (uint32_t level = 0u; level < skyOcclusion.LevelCount && level < 4u; ++level)
+            {
+                params.skyOcclusionWindowOrigin[level][0] = skyOcclusion.WindowOrigin[level][0];
+                params.skyOcclusionWindowOrigin[level][1] = skyOcclusion.WindowOrigin[level][1];
+                params.skyOcclusionTexelMeters[level] = skyOcclusion.TexelMeters[level];
+            }
+        }
         params.bSSAOEnabled = bValidationMode ? 0u : (bSSAOAvailable ? 1u : 0u);
         params.bNeuralBRDFEnabled = bValidationMode ? 0u :
                                     (m_bNeuralBRDFAvailable ? 1u : 0u);

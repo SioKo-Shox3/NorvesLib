@@ -336,6 +336,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/Wind.cpp
     Private/Rendering/SkyOcclusion.cpp
+    Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
     Private/Rendering/DDGIVolume.cpp
@@ -731,6 +732,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VolumetricFog.h
     Public/Rendering/Wind.h
     Public/Rendering/SkyOcclusion.h
+    Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
