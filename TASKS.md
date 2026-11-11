@@ -6758,7 +6758,7 @@
 - notes: 設計はロードマップ 2492 行（カリングの事実）と 2518・2520 行（P3・P4 の草）。数百のプロキシではスレッドを起こす費用の方が高い（ロードマップ 2791 行）ので閾値で直列へ倒す。大規模の静的の配置のカリングは GPU 駆動（GR31・GR47、G12 前半）と MegaGeometry の GPU のカリング（BVH・2 パスの遮蔽。SCN-MEGA-INSTANCE-CULL など）が本筋で、CPU の並列はその外のプロキシのため。草の生成の本体は GPU の compute（`G5-GR43-GRASS-GENERATE`）なので、CPU の側はタイルの選択だけになる（GR42・GR43 の形式が決まってから触るので GR43 を needs-gr に入れた）。経路探索は複数フレームに跨る要求なので `ParallelFor` を使わない（G12-GR108-ASYNC-JOBS）。決定性: 可視の一覧はチャンクの順に連結し、直列と同じにする。危険地帯（ジョブ・RenderThread へ渡す値）なので評価者を通す。やらないこと: GPU のカリング、草の描画。
 
 ## G12-GR108-ASYNC-JOBS: 経路探索のように複数フレームに跨る重い計算を、優先度・取り消し・世代つきでジョブへ出し、後のフレームの決まった段で結果を受け取る口を作る
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT
 - gr: GR108
 - done-when: (1) `Library/Core/Public/Thread/FrameAsyncQueue.h`（名前は着手時に `Thread/` の命名に合わせてよい）が、要求（入力を値で持つ・優先度・持ち主の世代）を自前の優先度つきの列に持ち、同時に走らせる数（設定。既定は 4）だけ `JobSystem` へ投入する（pull 方式。`JobSystem` は優先度を見て取らないため）。要求の取り消し・優先度の付け直し・持ち主の世代が変わった要求の破棄ができる。完了した結果は GameThread の決まった段（World の段の同期点）でだけ渡し、結果の配送の中で World を変えてよい。(2) World の破棄・GameMode の Leave・`JobSystem` の受付の停止（`StopAcceptingTasks`）の後に、走っている要求の終わりを待ってから結果を捨て、Component が先に壊れていたら配送しない。(3) 試験（`JobSystemShutdownTest` の束へ MEMBER）: `FrameAsyncQueueTest`（優先度の高い要求が先に始まる、同時の数を超えない、取り消した要求の結果は配送されない、世代の変わった要求は捨てる、受付の停止の後に要求しても落ちず失敗として返る、10^4 件を流して全部がちょうど 1 回配送か破棄になる）。既存の `JobSystemShutdownTest`・`JobParallelForTest` が通る。
