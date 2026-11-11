@@ -188,6 +188,109 @@ namespace NorvesLib::Core::Rendering
                 static_cast<float>(3.0 * weight * sumY), static_cast<float>(3.0 * weight * sumZ)};
     }
 
+    SkyOcclusionL1 IntegrateSkyOcclusionClipmap(
+        Container::Span<const SkyOcclusionReferenceGrid* const> levels,
+        std::uint32_t receiverLevel, const SkyOcclusionParameters& parameters,
+        float worldX, float worldZ)
+    {
+        const SkyOcclusionReferenceGrid& grid = *levels[receiverLevel];
+        // 単段は既存の積分に渡し、同じ入力から同じビット列を返す。
+        if (levels.size() == 1u)
+        {
+            return IntegrateSkyOcclusion(grid, parameters, worldX, worldZ);
+        }
+        const double y0 = grid.Sample(worldX, worldZ).Ground + parameters.ReceiverHeightMeters;
+        double sumB = 0.0;
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumZ = 0.0;
+        for (std::uint32_t azimuth = 0; azimuth < SkyOcclusionAzimuthCount; ++azimuth)
+        {
+            const double phi = (static_cast<double>(azimuth) + 0.5) *
+                (2.0 * kPi / SkyOcclusionAzimuthCount);
+            const double directionX = std::cos(phi);
+            const double directionZ = std::sin(phi);
+            for (std::uint32_t elevation = 0; elevation < SkyOcclusionElevationCount; ++elevation)
+            {
+                const double sine = (static_cast<double>(elevation) + 0.5) /
+                    SkyOcclusionElevationCount;
+                const double cosine = std::sqrt(1.0 - sine * sine);
+                const double tangent = sine / cosine;
+                double start = 0.0;
+                double nextEnd = SkyOcclusionHorizonFirstStepMeters;
+                double opticalDepth = 0.0;
+                bool bOpaque = false;
+                for (std::uint32_t step = 0;
+                     step < SkyOcclusionHorizonMaxStepCount && start < parameters.MaxHorizonMeters;
+                     ++step)
+                {
+                    const double end = std::min(nextEnd, static_cast<double>(parameters.MaxHorizonMeters));
+                    const double midpoint = (start + end) * 0.5;
+                    const float sampleX = static_cast<float>(worldX + midpoint * directionX);
+                    const float sampleZ = static_cast<float>(worldZ + midpoint * directionZ);
+                    const std::uint32_t coarsest = static_cast<std::uint32_t>(levels.size() - 1u);
+                    std::uint32_t level = receiverLevel;
+                    // まず距離で候補を決め、窓の外ならさらに粗い段を探す。
+                    while (level < coarsest && midpoint >=
+                        static_cast<double>(levels[level]->Resolution) * levels[level]->TexelMeters / 8.0)
+                    {
+                        ++level;
+                    }
+                    while (level < coarsest)
+                    {
+                        const SkyOcclusionReferenceGrid& candidate = *levels[level];
+                        const float wx = std::floor(sampleX / candidate.TexelMeters);
+                        const float wz = std::floor(sampleZ / candidate.TexelMeters);
+                        const float ox = std::floor(candidate.OriginX / candidate.TexelMeters);
+                        const float oz = std::floor(candidate.OriginZ / candidate.TexelMeters);
+                        if (wx >= ox && wz >= oz &&
+                            wx < ox + static_cast<float>(candidate.Resolution) &&
+                            wz < oz + static_cast<float>(candidate.Resolution))
+                        {
+                            break;
+                        }
+                        ++level;
+                    }
+                    // 最も粗い窓の外では Sample が端の列へ丸める。
+                    const SkyOcclusionReferenceColumn column = levels[level]->Sample(sampleX, sampleZ);
+                    if (y0 + midpoint * tangent < column.Ground)
+                    {
+                        bOpaque = true;
+                        break;
+                    }
+                    if (column.CanopyOpacity > 0.0f && column.CanopyTop > column.CanopyBottom)
+                    {
+                        const double overlap = std::max(0.0,
+                            std::min(y0 + end * tangent, static_cast<double>(column.CanopyTop)) -
+                            std::max(y0 + start * tangent, static_cast<double>(column.CanopyBottom)));
+                        if (overlap > 0.0)
+                        {
+                            if (column.CanopyOpacity >= 0.9999f)
+                            {
+                                bOpaque = true;
+                                break;
+                            }
+                            const double sigma = -std::log(1.0 - column.CanopyOpacity) /
+                                std::max(static_cast<double>(column.CanopyTop - column.CanopyBottom), 0.5);
+                            opticalDepth += sigma * (overlap / tangent) / cosine;
+                        }
+                    }
+                    start = end;
+                    nextEnd *= SkyOcclusionHorizonStepRatio;
+                }
+                const double b = bOpaque ? 1.0 : 1.0 - std::exp(-opticalDepth);
+                sumB += b;
+                sumX += b * cosine * directionX;
+                sumY += b * sine;
+                sumZ += b * cosine * directionZ;
+            }
+        }
+        const double weight = 1.0 /
+            (2.0 * SkyOcclusionAzimuthCount * SkyOcclusionElevationCount);
+        return {static_cast<float>(weight * sumB), static_cast<float>(3.0 * weight * sumX),
+                static_cast<float>(3.0 * weight * sumY), static_cast<float>(3.0 * weight * sumZ)};
+    }
+
     float EvaluateSkyOcclusionB(const SkyOcclusionL1& coefficients, float nx, float ny, float nz)
     {
         return coefficients.B0 + (2.0f / 3.0f) *

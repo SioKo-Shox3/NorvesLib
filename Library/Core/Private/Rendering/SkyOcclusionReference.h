@@ -89,6 +89,17 @@ namespace NorvesLib::Core::Rendering
         const SkyOcclusionReferenceGrid& grid, const SkyOcclusionParameters& parameters,
         float worldX, float worldZ);
 
+    /**
+     * @brief 距離と窓の包含で段を選び、クリップマップの地平線を積分する。
+     *
+     * levels は細かい順の空でない格子列で、各窓はワールドテクセルに整列している。
+     * receiverLevel は levels の範囲内とし、格子のポインタはすべて有効とする。
+     */
+    SkyOcclusionL1 IntegrateSkyOcclusionClipmap(
+        Container::Span<const SkyOcclusionReferenceGrid* const> levels,
+        std::uint32_t receiverLevel, const SkyOcclusionParameters& parameters,
+        float worldX, float worldZ);
+
     /** @brief 単位法線に対する L1 のコサイン畳み込みを返す。 */
     float EvaluateSkyOcclusionB(const SkyOcclusionL1& coefficients, float nx, float ny, float nz);
     float EvaluateSkyOcclusionVisibility(
