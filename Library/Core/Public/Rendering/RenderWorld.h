@@ -8,6 +8,7 @@
 #include "SkyAtmosphere.h"
 #include "SunShadowParameters.h"
 #include "VolumetricFog.h"
+#include "PaleFlatShading.h"
 #include "Wind.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
@@ -198,6 +199,12 @@ namespace NorvesLib::Core::Rendering
          * @param parameters GameThread側で保持し、FramePacketへ値コピーする設定
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
+
+        /**
+         * @brief PaleFlat のシェーディングモデルの画素の見え方を設定する（GameThread）。
+         * @param parameters FramePacket の値として照明へ渡る設定。
+         */
+        void SetPaleFlatParameters(const PaleFlatParameters& parameters);
 
         /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
         void SetWindParameters(const WindParameters& parameters);
