@@ -239,6 +239,8 @@ const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
 const uint VIS_MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
 // 地形の面の材質（MegaTerrainBlend::IsTerrainSurface。混ぜ合わせの無い灰色の地形も含む）。撮影の AOV の地形の印に使う
 const uint VIS_MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
+// VisibilityMaterialTable.h の MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA と同じ値
+const uint VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA = 128u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから。頂点・インデックスの読み出しは Common/VisibilityTriangleFetch.glsl と共有）
@@ -744,7 +746,9 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     }
 
     VisMaterialSurface surface;
-    surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
+    const bool bOpaqueAlbedoAlpha = (entry.header.x & VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA) != 0u;
+    surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples),
+                          bOpaqueAlbedoAlpha ? 1.0 : samples.Albedo.a);
     surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
     surface.receiverFlags = bTerrain || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u

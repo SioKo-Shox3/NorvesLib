@@ -163,6 +163,10 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
                           (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
         entry.Header[1] = ToGBufferShadingModelId(material.Shading);
         entry.Header[2] = static_cast<uint32_t>(BlendMode::Opaque);
+        if (material.Blend == BlendMode::Masked)
+        {
+            entry.Header[0] |= MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA;
+        }
         if (material.TerrainBlend.IsTerrainSurface())
         {
             entry.Header[0] |= MATERIAL_FLAG_TERRAIN_SURFACE;

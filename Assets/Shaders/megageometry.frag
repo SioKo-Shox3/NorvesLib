@@ -29,7 +29,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
     vec4 terrainParams[10]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
-    vec4 shadingParams; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
+    vec4 shadingParams; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -210,7 +210,8 @@ void main()
         WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
                                           DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z), heightLod);
     }
-    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
+    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
+                     mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 tangentNormal = textureSamples.TangentNormal;

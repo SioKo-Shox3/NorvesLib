@@ -1895,6 +1895,7 @@ namespace NorvesLib::Core::Rendering
                     return false;
                 }
             }
+            // 切り抜きと両面描画は行わないため、AlphaCutoff と bTwoSided は比較しない。
             return a.Metallic == b.Metallic && a.Roughness == b.Roughness &&
                    a.OcclusionStrength == b.OcclusionStrength && a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
@@ -1902,7 +1903,7 @@ namespace NorvesLib::Core::Rendering
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
-                   a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading;
+                   a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading && a.Blend == b.Blend;
         }
 
         // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
@@ -1920,7 +1921,7 @@ namespace NorvesLib::Core::Rendering
             float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
             float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
-            float ShadingParams[4]; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
+            float ShadingParams[4]; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
         };
         static_assert(sizeof(SectionUniformData) <= 768u);
 
@@ -4107,6 +4108,8 @@ namespace NorvesLib::Core::Rendering
             {
                 uniform.ShadingParams[index] = mat.ShadingParams[index];
             }
+            // 予約成分を使い、切り抜かずに描く Masked のαが天球の判定に使われないようにする。
+            uniform.ShadingParams[ShadingParamReserved] = mat.Blend == BlendMode::Masked ? 1.0f : 0.0f;
             uniform.ObjectColor[0] = mat.BaseColor[0];
             uniform.ObjectColor[1] = mat.BaseColor[1];
             uniform.ObjectColor[2] = mat.BaseColor[2];
