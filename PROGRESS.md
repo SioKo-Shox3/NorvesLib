@@ -10747,3 +10747,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 
 ## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 2、判断待ち)
 - Notes: verify の ctest 14 本は全部通るが合計 882 秒で、ランナーの再検証の 1 コマンド 10 分の上限を超える(1 本 50〜110 秒の大半は起動。既存の 11 本だけで約 700 秒)。verify の ctest を 5・5・4 本の 3 コマンドに分ける案を判断に回した。
+
+## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 3、完了)
+- Done: verify の ctest を 5・5・4 本の 3 コマンドに分けた。14 本を 1 コマンドで回すと合計 882 秒になり、ランナーの再検証の上限(1 コマンド 600 秒)を超えるため。対象の試験・`--timeout 300`・`--no-tests=error` はそのままで、3 本の正規表現は `-E "Golden|PathTracingReference"` を付けた `ctest -N` で #175〜#188 を 1 回ずつ覆う。
+- 証拠: `.harness/runs/20261111-213227/verify-G5-GR30-build.log`(HEAD a64a8977 のビルド EXIT 0)、`verify-G5-GR30-ctest-1.log`(5/5 Passed、360 秒)、`verify-G5-GR30-ctest-2.log`(5/5 Passed、391 秒)、`verify-G5-GR30-ctest-3.log`(4/4 Passed、244 秒)。numstat の 2 通りは一致。
+- Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。統合ブランチは取り込みの後に G5-GR26-GBUFFER-PROGRAMS(GBuffer の頂点・断片シェーダーの差し替え)などが進んでいるので、次の取り込みでは gbuffer.vert まわりの衝突に注意する。
+- Notes: 要起票: GPU の試験は 1 本 50〜110 秒の大半が起動時のシェーダーのコンパイルなので、`VulkanShaderCompiler.cpp` で SPIR-V をディスクに残して起動を速くする(RHI/Vulkan で危険地帯。この項目の paths の外)。
