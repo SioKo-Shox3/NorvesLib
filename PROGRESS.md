@@ -10716,3 +10716,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 主の視点が正射影のとき MegaGeometry の LOD を正射影で選ぶ: 着地(直し 0 回)
 - U2 撮影の落ち着きの待ちとエポックの段取りを関数に切り出し MultiViewCapture が使う: 着地(直し 0 回)
 - U3 MapCapture（spec の読み取り・タイルの順の撮影・縁の切り取り・目録）と見本の spec: 着地(直し 1 回)
+- U4 FreeCameraRig と GameApplicationHandler へ --map-capture をつなぐ: 着地(直し 0 回)
