@@ -10759,3 +10759,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める（今は直列なので実行時の振る舞いは変わらない）
 - Notes: 並列の経路ではチャンクの一覧をワーカーのスレッドで伸ばし、別のスレッドで解放することがある。`ThreadLocalCache` の `m_allocatedSize`（統計だけ）は解放したスレッドの側で引かれるので、そのスレッドの数が一時的に負へ回り込みうる（既存の ECS の `ParallelFor` でも同じ形）。描画の結果には関わらない。見た目は変わらない（既定は直列）ので、人が見る所は無い
 - U4 verify のビルドの行で JobParallelForTest の実行ファイルもそろうようにする: 着地(直し 0 回)
+## 2026-11-11 G12-GR108-CULL-PARALLEL（run 20261111-223526 の反復 2、完了）
+- Done: 反復 1 の差し戻し（ランナーの再実行で verify の ctest の `JobParallelForTest` が Not Run。`JobSystemShutdownTest` の束の実行ファイルを verify のビルドの行が作らない）を直した。`Test/Core/Rendering/CMakeLists.txt` で `add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)` を足し、verify のビルドの行だけで `ParallelFor` の試験の実行ファイルもそろうようにした。実装（カリングと草のタイルの選択の並列化）は反復 1 のまま
+- 証拠: `.harness/runs/20261111-223526/verify-G12-GR108-CULL-PARALLEL-iter2.txt`（`build/Test/Thread/Debug/JobSystemShutdownTest.exe` を消して無いことを確かめた後、verify のビルドの行がそのまま exit 0 で同じ実行ファイルを作り、verify の ctest が 100% tests passed, 0 tests failed out of 7（JobParallelForTest を含む）・exit 0。numstat の 2 通りが一致）
+- Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
+- Notes: 見た目は変わらない（既定は直列）ので、人が見る所は無い。撮影・計測の確かめは回さない決まり
