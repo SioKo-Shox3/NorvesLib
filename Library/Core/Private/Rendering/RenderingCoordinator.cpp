@@ -1693,7 +1693,7 @@ namespace NorvesLib::Core::Rendering
             instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
         }
         instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
-        // 地形の 3 層の混ぜ合わせ: RTGI が当たりの点の分類と層の平均の色から当たりの色を決める（値はシーンで 1 組）
+        // 地形の混ぜ合わせ: RTGI が当たりの点の重みと層の平均の色から当たりの色を決める（値はシーンで 1 組）
         const MegaGeometry::MegaTerrainBlend& terrain = material.TerrainBlend;
         if (terrain.bEnabled)
         {
@@ -1714,6 +1714,16 @@ namespace NorvesLib::Core::Rendering
                 std::memcpy(snapshot.RockSlopeDegrees, terrain.RockSlopeDegrees, sizeof(snapshot.RockSlopeDegrees));
                 std::memcpy(snapshot.DirtHeightRange, terrain.DirtHeightRange, sizeof(snapshot.DirtHeightRange));
                 snapshot.DirtHeightBiasDegrees = terrain.DirtHeightBiasDegrees;
+            }
+        }
+        else if (terrain.IsSplatEnabled())
+        {
+            instance.bTerrainBlend = true;
+            RayTracingTerrainBlendSnapshot& snapshot = packet.RayTracingScene.TerrainBlend;
+            if (!snapshot.bValid && !snapshot.bSplatValid)
+            {
+                snapshot.bSplatValid = true;
+                snapshot.Splat = terrain.Splat;
             }
         }
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
