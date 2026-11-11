@@ -1093,6 +1093,10 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
+            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            {
+                continue;
+            }
             const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData));
 
             // 描画の範囲（サブメッシュ・インスタンス）ごとに範囲が違うので、塊は範囲から作る。
@@ -1170,6 +1174,15 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
+            const MaterialResourceData* materialData =
+                (instance.Material.IsValid() && context.Resources.Materials)
+                    ? context.Resources.Materials->GetData(instance.Material)
+                    : nullptr;
+            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            {
+                continue;
+            }
+
             const SkinnedMeshIndexChunkResult chunkResult = BuildSkinnedMeshIndexChunks(
                 instance.IndexCount, instance.SourceFirstIndex, instance.SourceIndexCount, chunks);
             if (chunkResult == SkinnedMeshIndexChunkResult::Failure)
@@ -1192,10 +1205,6 @@ namespace NorvesLib::Core::Rendering
             }
 
             const uint64_t indexAddress = instance.IndexBuffer->GetDeviceAddress();
-            const MaterialResourceData* materialData =
-                (instance.Material.IsValid() && context.Resources.Materials)
-                    ? context.Resources.Materials->GetData(instance.Material)
-                    : nullptr;
             const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData, instance.ShadingParams));
             uint32_t paramsIndex = std::numeric_limits<uint32_t>::max();
             const auto firstRecord = records.size();

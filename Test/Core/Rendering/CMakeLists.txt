@@ -648,6 +648,15 @@ set_tests_properties(WindGlslParityVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 空の遮蔽の積分と増分更新を GPU の読み戻しで確かめる。
+add_test(NAME SkyOcclusionMapVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SkyOcclusionMapVulkanTest)
+set_tests_properties(SkyOcclusionMapVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
 add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
 set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
@@ -719,6 +728,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER GrassTrampleVulkanTest GrassTrampleVulkanTest.cpp
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
+    MEMBER SkyOcclusionMapVulkanTest SkyOcclusionMapVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
@@ -932,6 +942,7 @@ register_rendering_gpu_test(
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
+    GBufferProgramScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
@@ -948,46 +959,163 @@ target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui
 )
 set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
-# GBuffer のソースと経路の組み合わせを走らせるスクリプトを生成する。
-file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake" CONTENT [=[
-# GBuffer の三つのソースを追加読み戻しで集め、二つの描画経路を同じ GPU ロックの下で検証する。
-set(failures "")
-foreach(visibility IN ITEMS on off)
-    set(arguments --scene=indoor --shading-model-scenario=gbuffer-paths --capture-source=gbuffer-normal)
-    if(visibility STREQUAL "off")
-        list(APPEND arguments --visibility-buffer=off)
+# 各起動の結果を別々に保存し、標準出力をパイプの次段へ流さない。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunHdrSceneCaptureOnce.cmake" CONTENT [=[
+file(MAKE_DIRECTORY "${RUN_DIRECTORY}")
+set(arguments --scene=indoor "${SCENARIO}" "${CAPTURE_SOURCE}")
+if(VISIBILITY STREQUAL "off")
+    list(APPEND arguments --visibility-buffer=off)
+endif()
+string(TIMESTAMP started_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
+execute_process(COMMAND "${TEST_EXECUTABLE}" ${arguments}
+    "--log-file=${LOG_DIRECTORY}/${VISIBILITY}.log"
+    "--run-directory=${RUN_DIRECTORY}"
+    WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+string(TIMESTAMP finished_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
+file(WRITE "${LOG_DIRECTORY}/${VISIBILITY}-output.log" "${output}${error}")
+file(WRITE "${LOG_DIRECTORY}/${VISIBILITY}-started-utc.txt" "${started_utc}")
+file(WRITE "${LOG_DIRECTORY}/${VISIBILITY}-finished-utc.txt" "${finished_utc}")
+file(WRITE "${LOG_DIRECTORY}/${VISIBILITY}-result.txt" "${result}")
+]=])
+# CMake のパイプラインで二つの子を同時に起動する。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunHdrSceneCapturePair.cmake" CONTENT [=[
+set(hdr_scene_capture_once_script "${CMAKE_CURRENT_LIST_DIR}/RunHdrSceneCaptureOnce.cmake")
+function(run_hdr_scene_capture_pair scenario capture_source log_directory)
+    file(MAKE_DIRECTORY "${log_directory}")
+    foreach(visibility IN ITEMS on off)
+        file(REMOVE "${log_directory}/${visibility}.log"
+            "${log_directory}/${visibility}-result.txt"
+            "${log_directory}/${visibility}-output.log"
+            "${log_directory}/${visibility}-started-utc.txt"
+            "${log_directory}/${visibility}-finished-utc.txt")
+    endforeach()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTEST_EXECUTABLE=${TEST_EXECUTABLE}"
+            "-DTEST_WORKING_DIRECTORY=${TEST_WORKING_DIRECTORY}"
+            "-DLOG_DIRECTORY=${log_directory}"
+            "-DRUN_DIRECTORY=${log_directory}/run-on"
+            "-DSCENARIO=${scenario}" "-DCAPTURE_SOURCE=${capture_source}" -DVISIBILITY=on
+            -P "${hdr_scene_capture_once_script}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTEST_EXECUTABLE=${TEST_EXECUTABLE}"
+            "-DTEST_WORKING_DIRECTORY=${TEST_WORKING_DIRECTORY}"
+            "-DLOG_DIRECTORY=${log_directory}"
+            "-DRUN_DIRECTORY=${log_directory}/run-off"
+            "-DSCENARIO=${scenario}" "-DCAPTURE_SOURCE=${capture_source}" -DVISIBILITY=off
+            -P "${hdr_scene_capture_once_script}"
+        RESULTS_VARIABLE launcher_results ERROR_VARIABLE launcher_error)
+    list(LENGTH launcher_results launcher_count)
+    if(NOT launcher_count EQUAL 2)
+        message(FATAL_ERROR "描画検証の起動結果が二つありません: ${launcher_results} ${launcher_error}")
     endif()
-    string(TIMESTAMP started_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
-    execute_process(COMMAND "${TEST_EXECUTABLE}" ${arguments}
-        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
-        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
-    string(TIMESTAMP finished_utc "%Y-%m-%dT%H:%M:%SZ" UTC)
-    set(timing_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/ShadingModelTiming")
-    file(MAKE_DIRECTORY "${timing_directory}")
-    file(COPY_FILE "${TEST_WORKING_DIRECTORY}/RenderingHdrSceneCapture.log"
-        "${timing_directory}/${visibility}.log")
-    message("visibility=${visibility}\n${output}${error}")
+    if(launcher_error)
+        message("${launcher_error}")
+    endif()
+    set(launcher_results "${launcher_results}" PARENT_SCOPE)
+endfunction()
+]=])
+# GBuffer の三つのソースを追加読み戻しで集め、二つの経路を同じ GPU ロックの下で同時に検証する。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake" CONTENT [=[
+include("${CMAKE_CURRENT_LIST_DIR}/RunHdrSceneCapturePair.cmake")
+set(failures "")
+set(timing_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/ShadingModelTiming")
+run_hdr_scene_capture_pair(--shading-model-scenario=gbuffer-paths --capture-source=gbuffer-normal "${timing_directory}")
+set(launcher_index 0)
+foreach(visibility IN ITEMS on off)
+    list(GET launcher_results ${launcher_index} launcher_result)
+    math(EXPR launcher_index "${launcher_index} + 1")
+    if(NOT launcher_result STREQUAL "0")
+        list(APPEND failures "visibility=${visibility} launcher_exit=${launcher_result}")
+    endif()
+    if(EXISTS "${timing_directory}/${visibility}-result.txt")
+        file(READ "${timing_directory}/${visibility}-result.txt" result)
+        file(READ "${timing_directory}/${visibility}-output.log" output)
+        file(READ "${timing_directory}/${visibility}-started-utc.txt" started_utc)
+        file(READ "${timing_directory}/${visibility}-finished-utc.txt" finished_utc)
+    else()
+        set(result "結果なし")
+        set(output "")
+        set(started_utc "不明")
+        set(finished_utc "不明")
+    endif()
+    message("visibility=${visibility}\n${output}")
     message("SHADING_MODEL_RUN visibility=${visibility} started_utc=${started_utc} finished_utc=${finished_utc} exit=${result}")
     if(NOT result STREQUAL "0")
         list(APPEND failures "visibility=${visibility} exit=${result}")
+    endif()
+    if(NOT EXISTS "${timing_directory}/${visibility}.log")
+        list(APPEND failures "visibility=${visibility} log_missing")
     endif()
 endforeach()
 if(failures)
     message(FATAL_ERROR "GBuffer の検証が失敗しました: ${failures}")
 endif()
 ]=])
-# 全ソース・全経路の検査を単一の試験と GPU ロックに束ねる。
+# 全ソース・全経路の同時起動を単一の試験と GPU ロックに束ねる。
 add_test(NAME RenderingShadingModelGBufferVulkanTest
     COMMAND ${CMAKE_COMMAND}
         "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
         "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
         -P "${CMAKE_CURRENT_BINARY_DIR}/RunShadingModelGBufferTest.cmake")
-# 二つの起動を束ねる。観測済みの最大300秒に、シェーダー初期化の変動を見込んで3倍を確保する。
+# 二つの起動を同時に走らせ、シェーダー初期化の変動に備えた時間を確保する。
 set_tests_properties(RenderingShadingModelGBufferVulkanTest PROPERTIES
     TIMEOUT 900
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# 二つの経路を同時に走らせ、同じプログラムを使う材質とパイプラインの共有を検証する。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunGBufferProgramTest.cmake" CONTENT [=[
+include("${CMAKE_CURRENT_LIST_DIR}/RunHdrSceneCapturePair.cmake")
+set(failures "")
+set(log_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/GBufferProgram")
+run_hdr_scene_capture_pair(--gbuffer-program-scenario=fixed --capture-source=gbuffer-emissive "${log_directory}")
+set(launcher_index 0)
+foreach(visibility IN ITEMS on off)
+    list(GET launcher_results ${launcher_index} launcher_result)
+    math(EXPR launcher_index "${launcher_index} + 1")
+    if(NOT launcher_result STREQUAL "0")
+        list(APPEND failures "visibility=${visibility} launcher_exit=${launcher_result}")
+    endif()
+    if(EXISTS "${log_directory}/${visibility}-result.txt")
+        file(READ "${log_directory}/${visibility}-result.txt" result)
+        file(READ "${log_directory}/${visibility}-output.log" output)
+    else()
+        set(result "結果なし")
+        set(output "")
+    endif()
+    message("visibility=${visibility}\n${output}")
+    if(NOT result STREQUAL "0")
+        list(APPEND failures "visibility=${visibility} exit=${result}")
+    endif()
+    if(EXISTS "${log_directory}/${visibility}.log")
+        file(STRINGS "${log_directory}/${visibility}.log" created
+            REGEX "GBufferPipelineCreated program=Test[.]FixedColor skinned=0 polygon=fill cull=(back|none|front) alphaClip=[01] total=[0-9]+")
+        list(LENGTH created created_count)
+        message("GBUFFER_PROGRAM_PIPELINES visibility=${visibility} count=${created_count}")
+        if(NOT created_count EQUAL 1)
+            list(APPEND failures "visibility=${visibility} pipeline_count=${created_count}")
+        endif()
+    else()
+        list(APPEND failures "visibility=${visibility} log_missing")
+    endif()
+endforeach()
+if(failures)
+    message(FATAL_ERROR "GBuffer プログラムの検証が失敗しました: ${failures}")
+endif()
+]=])
+add_test(NAME RenderingGBufferProgramVulkanTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
+        "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_BINARY_DIR}/RunGBufferProgramTest.cmake")
+set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
+    TIMEOUT 900
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
 register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
     --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
@@ -1557,6 +1685,7 @@ set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Renderi
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
+add_test(NAME GBufferPipelineKeyTest COMMAND MaterialResourcesTest --test=GBufferPipelineKeyTest)
 add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
@@ -2295,6 +2424,7 @@ norves_add_test_bundle(MaterialResourcesTest
     FOLDER "Test/Core/Rendering"
     MEMBER MaterialResourcesTest MaterialResourcesTest.cpp
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
+    MEMBER GBufferPipelineKeyTest GBufferPipelineKeyTest.cpp
     MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)

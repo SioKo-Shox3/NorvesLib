@@ -130,6 +130,10 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestInstancedMeshCountOption = TEXT("--rendering3dtest-instanced-mesh-count");
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
+        // --sky-occlusion: すべてのシーンで空の遮蔽を有効にする。
+        constexpr const TCHAR *kSkyOcclusionOption = TEXT("--sky-occlusion");
+        // --sky-occluder-demo: Rendering3DTest に空の遮蔽物を配置する。
+        constexpr const TCHAR *kSkyOccluderDemoOption = TEXT("--sky-occluder-demo");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
         constexpr const TCHAR* kAudioSmokeOption = TEXT("--audio-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
@@ -158,6 +162,8 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
+        bool s_bSkyOcclusion = false;
+        bool s_bSkyOccluderDemo = false;
         // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
         constexpr const TCHAR *kSceneOption = TEXT("--scene=");
@@ -165,6 +171,11 @@ namespace Game
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
         constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
+        // --map-capture=<spec.json>: シーンを真上からタイルごとに撮る（Debug/MapCapture.h）。
+        // --scene・--capture-png・--capture-deterministic が必要。--capture-png 自体は書かれない。
+        // --window-size と --render-scale=1 でバックバッファを spec に合わせる。
+        // 自由飛行カメラの無いシーンでは終了コード 1 で終了する。
+        constexpr const TCHAR *kMapCaptureOption = TEXT("--map-capture=");
         // --capture-views=<視点,...|all>: 1回の起動で、シーンの名前付き視点を順に撮る（決定的な撮影と併せて使う）。
         // all は既定の視点（default）と残りの全視点。先頭が起動時の視点で、--scene-view とは併用しない。
         // 保存先は --capture-png のパスのフォルダの <視点>.png（--capture-png 自身はこの撮影が書く。Debug/MultiViewCapture.h）。
@@ -520,6 +531,45 @@ namespace Game
             }
             outValue = value;
             return true;
+        }
+
+        // ApplicationProcessor が受け付ける小数・分数のうち、値がゼロのものを確かめる。
+        bool IsZeroFilmGrainValue(const String& text)
+        {
+            bool bDigits = false;
+            bool bDecimal = false;
+            bool bDenominator = false;
+            bool bDenominatorNonZero = false;
+            for (const TCHAR character : text)
+            {
+                if (character >= TEXT('0') && character <= TEXT('9'))
+                {
+                    if (!bDenominator && character != TEXT('0'))
+                    {
+                        return false;
+                    }
+                    if (bDenominator && character != TEXT('0'))
+                    {
+                        bDenominatorNonZero = true;
+                    }
+                    bDigits = true;
+                }
+                else if (character == TEXT('.') && !bDecimal && bDigits)
+                {
+                    bDecimal = true;
+                }
+                else if (character == TEXT('/') && !bDenominator && bDigits)
+                {
+                    bDenominator = true;
+                    bDigits = false;
+                    bDecimal = false;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            return bDigits && (!bDenominator || bDenominatorNonZero);
         }
 
 #if NORVES_BUILD_DEVELOPMENT
@@ -906,6 +956,8 @@ namespace Game
         s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
+        s_bSkyOcclusion = false;
+        s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
@@ -936,6 +988,8 @@ namespace Game
         bool bHasRendering3DTestImpostorSmokeCount = false;
         bool bHasRendering3DTestInstancedMeshCount = false;
         bool bHasRendering3DTestPhysicsSmoke = false;
+        bool bHasSkyOcclusion = false;
+        bool bHasSkyOccluderDemo = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -965,6 +1019,30 @@ namespace Game
 
                 s_bRendering3DTestPhysicsSmoke = true;
                 bHasRendering3DTestPhysicsSmoke = true;
+                continue;
+            }
+
+            if (args[i] == kSkyOcclusionOption)
+            {
+                if (bHasSkyOcclusion)
+                {
+                    LOG_ERROR("コマンドライン引数が重複しています: --sky-occlusion");
+                    return false;
+                }
+                s_bSkyOcclusion = true;
+                bHasSkyOcclusion = true;
+                continue;
+            }
+
+            if (args[i] == kSkyOccluderDemoOption)
+            {
+                if (bHasSkyOccluderDemo)
+                {
+                    LOG_ERROR("コマンドライン引数が重複しています: --sky-occluder-demo");
+                    return false;
+                }
+                s_bSkyOccluderDemo = true;
+                bHasSkyOccluderDemo = true;
                 continue;
             }
 
@@ -2985,6 +3063,8 @@ namespace Game
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
         // --capture-views と、その保存先・撮るまでのフレーム数を決める --capture-png・--exit-after-rendered-frames
         String capturePngPath;
+        String mapCaptureSpecPath;
+        bool bCaptureDeterministic = false;
         uint64_t captureSettledRenderedFrames = kCapturePngDefaultSettledRenderedFrames;
         uint64_t captureViewSettleRenderedFrames = Game::Debug::MultiViewCapture::kDefaultViewSettleRenderedFrames;
         bool bCaptureHdr = false;
@@ -2996,6 +3076,7 @@ namespace Game
         for (size_t i = 0; i < args.size(); ++i)
         {
             String value;
+            bCaptureDeterministic = bCaptureDeterministic || args[i] == TEXT("--capture-deterministic");
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureHdrOption))
             {
                 bCaptureHdr = true;
@@ -3015,6 +3096,20 @@ namespace Game
             else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureAovOption))
             {
                 bCaptureAov = true;
+            }
+            else if (args[i] == TEXT("--map-capture"))
+            {
+                LOG_ERROR("--map-capture には = に続けて設定ファイルのパスを指定してください");
+                return false;
+            }
+            else if (TryStripPrefix(args[i], kMapCaptureOption, value))
+            {
+                if (!mapCaptureSpecPath.empty() || value.empty())
+                {
+                    LOG_ERROR("--map-capture は1回だけ、空でない設定ファイルのパスを指定してください");
+                    return false;
+                }
+                mapCaptureSpecPath = value;
             }
             else if (TryStripPrefix(args[i], kCaptureViewsOption, value))
             {
@@ -3053,6 +3148,36 @@ namespace Game
                     geomSettleTraceSeconds > kGeomSettleTraceMaxSeconds)
                 {
                     LOG_ERROR("--geom-settle-trace には 1〜600 の秒数を指定する");
+                    return false;
+                }
+            }
+        }
+        if (!mapCaptureSpecPath.empty())
+        {
+            if (capturePngPath.empty() || !bCaptureDeterministic || m_StartupSceneId.empty())
+            {
+                LOG_ERROR("--map-capture には --scene・--capture-png・--capture-deterministic が必要です");
+                return false;
+            }
+            for (const auto& argument : args)
+            {
+                String value;
+                if (argument == TEXT("--capture-views") || argument == TEXT("--capture-sequence") ||
+                    argument == TEXT("--camera-script") || argument == TEXT("--camera-path-capture-time") ||
+                    argument == TEXT("--geom-settle-trace") ||
+                    TryStripPrefix(argument, kCaptureViewsOption, value) ||
+                    TryStripPrefix(argument, kCaptureSequenceOption, value) ||
+                    TryStripPrefix(argument, kCameraScriptOption, value) ||
+                    TryStripPrefix(argument, kCameraPathCaptureTimeOption, value) ||
+                    TryStripPrefix(argument, kGeomSettleTraceOption, value))
+                {
+                    LOG_ERROR("--map-capture は --capture-views・--capture-sequence・--camera-script・"
+                              "--camera-path-capture-time・--geom-settle-trace と併用できません");
+                    return false;
+                }
+                if (TryStripPrefix(argument, TEXT("--film-grain="), value) && !IsZeroFilmGrainValue(value))
+                {
+                    LOG_ERROR("--map-capture では --film-grain を 0 にしてください");
                     return false;
                 }
             }
@@ -3097,6 +3222,15 @@ namespace Game
         if (!ResolveStartupScene())
         {
             return false;
+        }
+        if (!mapCaptureSpecPath.empty())
+        {
+            String error;
+            if (!m_MapCapture.Configure(mapCaptureSpecPath, captureSettledRenderedFrames, &error))
+            {
+                LOG_ERROR("--map-capture の設定に失敗しました: %s", error.c_str());
+                return false;
+            }
         }
 #if NORVES_BUILD_DEVELOPMENT
         if (m_CameraPathCaptureTime >= 0.0 &&
@@ -3411,6 +3545,15 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            // RenderWorld の設定はシーン切り替えを通して保持される。
+            if (s_bSkyOcclusion)
+            {
+                auto& renderWorld = engine->GetRenderWorld();
+                auto parameters = renderWorld.GetRenderingCoordinator().GetSkyOcclusionParameters();
+                parameters.bEnabled = true;
+                renderWorld.SetSkyOcclusionParameters(parameters);
+            }
+
             // Game の Component の毎フレームの処理を World の順序付きの系へ登録する（シーンが作る前に済ませる）
             Game::Gameplay::FollowCameraComponent::RegisterTick(engine->GetWorld());
             Game::Gameplay::QuadrupedLocomotionComponent::RegisterTick(engine->GetWorld());
@@ -4323,6 +4466,11 @@ namespace Game
         {
             m_MultiViewCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
         }
+        if (m_MapCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_MapCapture.OnPreRender(&NorvesLib::Core::Engine::GEngine->GetWorld(),
+                                     NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
+        }
     }
 
     void GameApplicationHandler::OnPostRender()
@@ -4377,6 +4525,10 @@ namespace Game
         if (m_MultiViewCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_MultiViewCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
+        }
+        if (m_MapCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_MapCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
         }
         LogVramLedgerOnce();
 #if NORVES_BUILD_DEVELOPMENT
@@ -4567,7 +4719,8 @@ namespace Game
             return true;
         }
 #endif
-        return HasPendingM9WorldWork() || m_MultiViewCapture.IsHoldingEngineCapture();
+        return HasPendingM9WorldWork() || m_MultiViewCapture.IsHoldingEngineCapture() ||
+               m_MapCapture.IsHoldingEngineCapture();
     }
 
     void GameApplicationHandler::OnShutdown()
@@ -4904,6 +5057,7 @@ namespace Game
         };
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
+        const bool bSkyOccluderDemo = s_bSkyOccluderDemo;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
@@ -4952,7 +5106,7 @@ namespace Game
 #endif
         registerMode(
             Rendering3DTest,
-            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
+            [this, bUseCookedModel, bPhysicsSmoke, bSkyOccluderDemo, m9WorldAcceptance,
              lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
@@ -4968,6 +5122,7 @@ namespace Game
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
+                mode->GetData().m_bSkyOccluderDemo = bSkyOccluderDemo;
                 mode->GetData().m_bHasStartupCamera = s_bRendering3DTestHasStartupCamera;
                 mode->GetData().m_StartupCameraYaw = s_Rendering3DTestStartupCamera[0];
                 mode->GetData().m_StartupCameraPitch = s_Rendering3DTestStartupCamera[1];
@@ -5043,7 +5198,8 @@ namespace Game
         // バナナのシーン。本数・視点・台本は起動引数から渡す。
         registerMode(
             MegaBananas,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
 #if NORVES_BUILD_DEVELOPMENT
              captureTime = m_CameraPathCaptureTime, pathCapture = &m_CameraPathCapture,
 #endif
@@ -5053,6 +5209,7 @@ namespace Game
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MegaBananasMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5071,13 +5228,15 @@ namespace Game
         // 荒野のシーン。視点・台本は起動引数から渡す。
         registerMode(
             Wasteland,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              scriptCapture = &m_CameraScriptCapture,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_pScriptCapture = scriptCapture;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
@@ -5107,13 +5266,15 @@ namespace Game
         // 夜の集落のシーン。荒野のモードの型で、夜の集落として組む。視点・台本は起動引数から渡す（荒野の比較用の引数は渡さない）
         registerMode(
             NightVillage,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              scriptCapture = &m_CameraScriptCapture,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_bNightVillage = true;
                 mode->GetData().m_pScriptCapture = scriptCapture;
                 mode->GetData().m_ViewName = viewName;
@@ -5128,12 +5289,14 @@ namespace Game
         // 材質ギャラリー。視点・台本は起動引数から渡す。テクスチャが焼いてあるかは AssetSystem で確かめる
         registerMode(
             MaterialGallery,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MaterialGalleryMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5146,12 +5309,14 @@ namespace Game
         // 室内の光。視点・台本は起動引数から渡す。テクスチャと家具のメッシュが焼いてあるかは AssetSystem で確かめる
         registerMode(
             InteriorLight,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<InteriorLightMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5165,11 +5330,13 @@ namespace Game
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
         registerMode(
             Sandbox,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5181,12 +5348,14 @@ namespace Game
         // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
         registerMode(
             Grassland,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
              scatterStressCount = m_GrasslandScatterStressCount,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
@@ -5200,7 +5369,8 @@ namespace Game
         // バナナは --banana-count を指定したときだけ同時に置く（混在の負荷）。
         registerMode(
             MegaStress,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, bananaCount = m_bBananaCountSet ? m_BananaCount : 0u,
              entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
              movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
@@ -5211,6 +5381,7 @@ namespace Game
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MegaStressMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

@@ -1,0 +1,45 @@
+﻿{
+  "version": 1,
+  "name": "GrasslandMap",
+  "package_root": "Cooked/Maps/Grassland",
+  "default_variant": "default",
+  "cook_assets": false,
+  "textures": [
+    {
+      "logical_path": "Assets/Maps/Grassland/Map.png",
+      "source_path": "build/Map/Grassland/compose/map_2048.png",
+      "cook_usage": "albedo",
+      "package_name": "Map.nvpkg",
+      "entry_name": "Assets/Maps/Grassland/Map.nvtex"
+    },
+    {
+      "logical_path": "Assets/Maps/Grassland/height_r8.png",
+      "source_path": "build/Map/Grassland/compose/height_r8.png",
+      "cook_usage": "single",
+      "package_name": "height_r8.nvpkg",
+      "entry_name": "Assets/Maps/Grassland/height_r8.nvtex"
+    },
+    {
+      "logical_path": "Assets/Maps/Grassland/water_r8.png",
+      "source_path": "build/Map/Grassland/compose/water_r8.png",
+      "cook_usage": "single",
+      "package_name": "water_r8.nvpkg",
+      "entry_name": "Assets/Maps/Grassland/water_r8.nvtex"
+    },
+    {
+      "logical_path": "Assets/Maps/Grassland/road_r8.png",
+      "source_path": "build/Map/Grassland/compose/road_r8.png",
+      "cook_usage": "single",
+      "package_name": "road_r8.nvpkg",
+      "entry_name": "Assets/Maps/Grassland/road_r8.nvtex"
+    }
+  ],
+  "raws": [
+    {
+      "logical_path": "Assets/Maps/Grassland/map_transform.json",
+      "source_path": "build/Map/Grassland/compose/map_transform.json",
+      "package_name": "map_transform.nvpkg",
+      "entry_name": "__raw__"
+    }
+  ]
+}

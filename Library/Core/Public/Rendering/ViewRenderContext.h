@@ -7,6 +7,7 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/SkyOcclusion.h"
 #include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPointLights.h"
@@ -500,6 +501,65 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    /** @brief 空の遮蔽クリップマップを照明へ渡す資源。 */
+    struct SkyOcclusionRenderResources
+    {
+        SkyOcclusionParameters Parameters;
+        RHI::TexturePtr VisibilityTexture;
+        RHI::TexturePtr AuxTexture;
+        RHI::SamplerPtr Sampler;
+        int32_t WindowOrigin[4][2] = {};
+        float TexelMeters[4] = {};
+        uint32_t LevelCount = 0u;
+        uint32_t Resolution = 0u;
+        bool bSnapshotEnabled = false;
+        bool bValid = false;
+
+        void Reset()
+        {
+            Parameters = SkyOcclusionParameters{};
+            VisibilityTexture.reset();
+            AuxTexture.reset();
+            Sampler.reset();
+            for (uint32_t level = 0u; level < 4u; ++level)
+            {
+                WindowOrigin[level][0] = 0;
+                WindowOrigin[level][1] = 0;
+                TexelMeters[level] = 0.0f;
+            }
+            LevelCount = 0u;
+            Resolution = 0u;
+            bSnapshotEnabled = false;
+            bValid = false;
+        }
+
+        void Publish(const SkyOcclusionParameters& parameters,
+                     const RHI::TexturePtr& visibility,
+                     const RHI::TexturePtr& aux,
+                     const RHI::SamplerPtr& sampler,
+                     const int32_t windowOrigin[4][2],
+                     const float texelMeters[4],
+                     uint32_t levelCount,
+                     uint32_t resolution,
+                     bool bValidValue)
+        {
+            Parameters = parameters;
+            VisibilityTexture = visibility;
+            AuxTexture = aux;
+            Sampler = sampler;
+            for (uint32_t level = 0u; level < 4u; ++level)
+            {
+                WindowOrigin[level][0] = windowOrigin[level][0];
+                WindowOrigin[level][1] = windowOrigin[level][1];
+                TexelMeters[level] = texelMeters[level];
+            }
+            LevelCount = levelCount;
+            Resolution = resolution;
+            bSnapshotEnabled = parameters.bEnabled;
+            bValid = bValidValue;
+        }
+    };
+
     /**
      * @brief View描画コンテキスト
      *
@@ -517,6 +577,7 @@ namespace NorvesLib::Core::Rendering
     {
         PhysicalLightingResources PhysicalLighting;
         SkyAtmosphereRenderResources SkyAtmosphere;
+        SkyOcclusionRenderResources SkyOcclusion;
 
         // ========================================
         // RHIリソース

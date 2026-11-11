@@ -40,7 +40,7 @@
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
 - status: todo
-- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 12 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 17 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。17 行の和集合が除外の後の全部と一致し重なりが無いことを `ctest -N` で確かめ、行ごとの本数と時間を `PROGRESS.md` に書く。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
@@ -48,13 +48,18 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(Hdr|RayTracing)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingHdr" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingRayTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingShadingModel" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(DDGI|TemporalAA)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing|ShadingModel|DDGI|TemporalAA)"`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^CookManaged" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^CookManaged"`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[M-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$"`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
@@ -5846,7 +5851,7 @@
 - notes: ロードマップ GR26 の設計5（393〜461 行）。Fur・Eye・PaleFlat の本格の見た目（ファーのシェル GR34、濡れ GR35・GR53、シ者の明暗 GR65）は後の段階で、この項目は骨組みと最初の式まで（ロードマップ GR26 のリスク「GR26 単独では骨組みまで」）。PaleFlat と Eye は企画で未定の提案（色と明度のルール）に由来するが、作者の決定（保留の提案もエンジンの機能として採る）で入れる。Eye の青（#9DBFD1）は提案の値で未決なので既定に入れない。ID の分岐は同じモデルの画素がまとまるので発散は小さい見込み（未計測）。照明の UBO を広げるときは割り当て表を更新する（GPULightingParams は他の段階も触る）。半透明とパストレーサーは ID を読まない。危険地帯（ライティング）なので評価者を通す。起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。完了条件の GR26 の行、要件 `#### GR26`。
 
 ## G5-GR26-GBUFFER-PROGRAMS: 材質ごとに GBuffer の頂点・断片シェーダーを差し替えられるようにし、パイプラインを鍵ごとに遅延して作り、標準でない材質を可視バッファの経路から分けて描く
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G5-GR25-STAGE-REGISTRY
 - gr: GR26
 - done-when: `GBufferProgram`（名前から {VS, FS, スキンの VS}）の登録簿（`Library/Core/Public/Rendering/GBufferProgramRegistry.h` と Private の実装）を作り、`MaterialCreateData::Program`（既定は空 = 標準）で選ぶ。登録は `RenderWorld::RegisterGBufferProgram` の窓口から G5-GR25-STAGE-REGISTRY と同じ保留の列の約束で RenderThread へ渡す。`GBufferPass` の固定の 2 本と線画（GBufferPass.cpp:1459〜1490 の `CreateGBufferPipelineVariant`・`CreateSkinnedGBufferPipelineVariant`、`SelectGBufferPipeline` GBufferPass.cpp:1713）を、鍵 {program, cull, alphaClip, polygon, skinned} で初めて要ったときに作るパイプラインの表に置き換える（作成の回数をログに出す）。gbuffer.frag の本体を `Common/GBufferFragment.glsl` へ移して gbuffer.frag を #version と #include だけの包みにし、プログラムの FS は G5-GR26-GBUFFER-CONTRACT の書き込みの関数を呼ぶ約束にする。skinned_gbuffer.vert の頂点の読み方を `Common/SkinnedVertex.glsl` へ切り出す。可視バッファが on（既定）のとき、標準でない材質（プログラムを指定したもの。G5-GR27-MASKED-GBUFFER で切り抜き・両面も加わる）は可視バッファのラスタに載せず、可視バッファの解決の後・DecalPass の前に GBuffer と深度へ重ねて描く（FoliagePass が解決の後に重ねて描く今の形。SceneView.cpp:1185〜1188）。fallback（`--visibility-buffer=off`）では GBufferPass の中で標準の後に描く。CPU の `GBufferPipelineKeyTest`（`MaterialResourcesTest` の束の MEMBER）が、材質（プログラム・スキン・線画）から鍵を作る純粋な関数と、同じ鍵で 2 回目は作らないことを確かめる。GPU の `RenderingGBufferProgramVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、固定の色を書くダミーの FS を登録した材質が可視バッファの on と fallback の両方で標準と違う固定の色になり、プログラムを指定しない材質は変わらず、パイプラインが材質ごとでなく鍵ごとに 1 本だけ作られる（ログ）ことを確かめる。golden 4 本が変わらない。
@@ -6370,7 +6375,7 @@
 - notes: GR56 の P1（要件 5581 行）。選定課題 G11-S2（上方の遮蔽のデータの共有。ロードマップ 4549 行）は推奨の (B) を採る: 遮蔽物の値の型と手置きのコンポーネントは GR56 と GR59 で 1 つ（`SkyOccluderProxy` に「雨を遮るか」の印を持たせ、GR59 の RainOccluderComponent は作らない）、マップは別（GR56 は L1 のクリップマップ、GR59 は D32 の高い解像度の雨の遮蔽）。理由: 屋根の縁を鋭く切る雨の遮蔽と、滑らかな大域の可視率とで、要る解像度（9.4 cm と 0.5 m）と更新の頻度が違う一方、遮蔽物の管理（手置き・GR90 のチャンクデータ・取り込みの推定）は 1 本にできる。先に作るこの項目が共通の型を決める。今あるもの: 屋外の空の遮蔽は RTGI の光線の空の見え方（lighting.frag:1394-1404 の `rtgiSkySpecularOcclusion`）と SSAO・材質の AO だけで、RT が無い構成では空の光が全量入る（要件の判定は今も成り立つ）。2.5D で庇・洞窟の下は表せず、L1 は鋭い地平で誤差が出る（要件のリスク。閉形式との差を記録する）。試験は CPU の正解と GPU の比べの基準を兼ねる。新規のソースは UTF-8＋BOM＋CRLF。試験を足す理由: 反証する契約は「遮蔽の積分と L1 の畳み込みが閉形式に合う」「遮蔽物の増減で RTGI の履歴を捨てない」。この正解が GPU の試験と PT 比べの基準になり、ずれは絵では「少し暗い」としか見えず黙って起きる。ロードマップ 1989・2000 行、要件 `#### GR56`。
 
 ## G11-GR56-SKY-OCC-MAP: 遮蔽物から空の遮蔽のクリップマップを GPU で作り（写し込みと積分・カメラ追従の増分更新）、照明が拡散の空の光に掛ける
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-CPU
 - gr: GR56
 - done-when: (1) `SkyOcclusionMapPass`（`Library/Core/Public/Rendering/SkyOcclusionMapPass.h`・`Private/Rendering/SkyOcclusionMapPass.cpp`。IViewPass＋IRenderGraphPass、`SkyAtmospherePass` と同じく永続テクスチャを Import・Publish）が、3 段 × 256² のトロイダルのクリップマップ（遮蔽物 G・U・T・κ の RGBA32F、遮蔽率の L1 係数の RGBA16F、補助 G・U−G・T−G の RGBA16F）を持ち、`Assets/Shaders/SkyOcclusion/Splat.comp`（CPU が 8×8 のタイルごとに遮蔽物をビン分けした SSBO を読み、テクセルごとに決定的に写す）と `Integrate.comp`（G11-GR56-SKY-OCC-CPU の正解と同じ歩・同じ式。外周の歩は粗い段を引く）で作る。窓の中心は一定のテクセル数を越えたときだけ動かし、新しく出た行・列と、遮蔽物が変わった矩形だけを作り直す。(2) `SceneView::SetupDeferredPipeline` の空のパス（SceneView.cpp:1199）の前に足す（PT のパイプラインには足さない）。`ViewRenderContext` に `SkyOcclusionRenderResources`（`SkyAtmosphereRenderResources` と同じ形）を足す。(3) 照明: `Assets/Shaders/Common/SkyOcclusion.glsl` の `EvaluateSkyOcclusion(P, N)`（段の境界は数割で混ぜる。樹冠の層の中・上では弱める。受け手が地面より下を指すときも弱める）を lighting.frag が引き、拡散の空の光（IBL の経路）の AO に可視率 V を掛け、遮った向きから届く光（色×強さ×(1−V)×天頂の照度）を足す。LightingPass の記述子へ空いている次の binding を足し（今の lighting.frag は 0〜24・26〜28 を使う）、`GPULightingParams` の末尾に追記して `LightingPassGpuTypes.h:59` の static_assert を新しい大きさにする。無効（既定）またはマップが公開されていないときは 1×1 の既定のテクスチャと印 0 で、今の画素を 1 つも変えない。検証の表示（DDGI の検証と同じ扱い）では掛けない。(4) `DebugViewMode::SkyVisibility`（V(+Y) と曲げた法線を表示）を `RenderTypes.h` と lighting.frag の数へ足す。(5) Game に `--sky-occlusion`（どのシーンでも空の遮蔽を有効にする）を、Rendering3DTest に `--sky-occluder-demo`（楕円体の樹冠 3 つと箱の岩）を足す。試験が通る: `SkyOcclusionMapVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER）で、合成の 3 場面（楕円体の樹冠 1 本・林縁の壁・岩の塊）のクリップマップの読み戻しが CPU の正解と b0 と |c| の最大絶対差 0.03 以内、カメラを 1・7・64 テクセル動かした増分の更新（トロイダルの折り返しをまたぐ移動を含む）が新しい中心での全部の作り直しと 1e-3 以内。`DebugViewModeStringTest` が新しい表示を含めて通る。無効のまま `RenderingGolden*` の 4 試験の差が 0。
@@ -6651,7 +6656,7 @@
 - notes: 設計はロードマップ 2386〜2396 行（GR94 の 1. 撮影・4. 座標変換情報）と要件 `#### GR94`。規模の見積もり（4km 四方・0.5m/px・112 タイル）はロードマップ 2390 行の数で、仮の値（谷の大きさは企画で未定）。試験の置き場は、正射影の行列の試験 `OrthographicViewportMatrixTest` がある `CameraViewConstantsTest` の束（`Test/Core/Rendering/CMakeLists.txt`）にする（新しい実行ファイルを作らない。`Test/Core/Scene` の束は無い）。座標の向き・手系（`CreateLookAt` と clip 空間の補正の符号）で左右が反転しやすい（ロードマップ 2767 行）ので、非対称な目印で試験する。`MapTransform` は GR70・GR71（G15 の地図の UI）が使う。やらないこと: 撮影の実行（G12-GR94-MAP-CAPTURE）、合成と cook（G12-GR94-MAP-COMPOSE-COOK）。
 
 ## G12-GR94-MAP-CAPTURE: `--map-capture=<spec.json>` で、シーンを 1 回だけ起動して真上の正射影のタイルを固定の見た目で順に撮り、縁を切った PNG と撮影の目録を書く
-- status: todo
+- status: done
 - after: G12-GR94-MAP-TRANSFORM-PLAN
 - gr: GR94
 - done-when: (1) `Game/Debug/MapCapture.{h,cpp}` が、`--scene=<id>` と `--map-capture=<spec.json>` の起動で `BuildMapCapturePlan` の計画どおりに、シーンの自由飛行カメラ（`Game/Scenes/FreeCameraRig.h` の `GetCamera()`）を正射影（`CameraComponent::SetProjectionType`・`OrthoWidth`/`OrthoHeight`）の真上の姿勢へタイルごとに置き、ストリーミング（仮想テクスチャ・ジオメトリのページ）が落ち着くまで待ってから決定的な撮影のエポックを始め、撮って縁を切ったタイルの PNG（`Game/Debug/CapturedFramePng.h` の `SaveCapturedFramePng` を共用）を書き、全部を撮ったら `capture_manifest.json` を書いて終了（0）、失敗は終了（1）を頼む。待ちとエポックの段取りは `MultiViewCapture`（`Game/Debug/MultiViewCapture.h`）と同じ数え方にし、共通の部分を関数に切り出して両方が使う。(2) 撮影の間の見た目を固定する: 露出は Manual（spec の EV100）、TAA を切って FXAA、フィルムグレイン・ビネット無し、高さの霧と空気遠近は spec で切れる、太陽は spec の固定の斜めの向き、カメラの CullingMask は spec のレイヤー（既定 `MapVisible`）。自由飛行カメラを持たないシーンは理由を出して終了（1）。(3) 正射影の主カメラのとき、MegaGeometry の LOD を正射影で選ぶ（`MegaGeometryCullUniforms.h:47` の `OrthoLod` を主の視点でも立てる）。(4) `--map-capture` の無い起動は変わらない。`Game` がビルドでき、`MapCapturePlanTest`・`FrameCaptureReadbackHelperTest`・`CameraViewConstantsTest` の束が通る。
@@ -6661,7 +6666,7 @@
 - notes: 設計はロードマップ 2386〜2390 行（GR94 の 1. 撮影）。ロードマップは新しい GameMode（`Game/GameModes/MapCapture/`）と `SaveCapturedFramePng` の Library への公開化を書くが、今のコードには 1 回の起動で複数の視点を撮る `MultiViewCapture`（`--capture-views`。`Game/Debug/MultiViewCapture.h`、SCN-WL-CAPTURE-FAST で入った）と、Game の共用の PNG の書き出し `Game/Debug/CapturedFramePng.h` が既にあり、シーンは `--scene` で選べ、新しいシーンは自由飛行カメラを使う（`FreeCameraRig.h` の 6 行目）。決定: GameMode を新しく作らず、撮影の役（`Game/Debug`）としてどのシーンにも掛けられる形にする。理由: シーンを組み立てるコードを二重に持たずに済み、荒野・草原（G5）・読み込んだシーン（G12-GR92-PREFAB-FILE）のどれでも撮れる。BRDF の LUT と IBL の生成に起動ごとに十数秒かかる（ロードマップ 2382 行）ので、タイルごとに起動し直さない。共有のファイル（`GameApplicationHandler.cpp`）は引数の読み取りと撮影の役の持ち主の数行だけにして差分を小さくする。正射影での空・フォグ・SSAO・DDGI / RTGI の挙動は未検証（ロードマップ 2764 行）。UNCERTAIN: 主の視点の LOD の選び方が正射影で正しいか（`OrthoLod` は今は VSM の影だけが立てる）は、`MegaGeometryPass.cpp` の CullUniform を作る所を読んで確かめる。雨（GR49）が入るまでは雨を切る口は要らない。やらないこと: タイルの結合と合成（G12-GR94-MAP-COMPOSE-COOK）、地図の UI（GR70）。
 
 ## G12-GR94-MAP-COMPOSE-COOK: 撮ったタイルを結合し、地形のデータから陰影・等高線・水・道を重ねた地図の画像を作り、座標の変換の情報と一緒に cook する
-- status: todo
+- status: done
 - after: G12-GR94-MAP-TRANSFORM-PLAN, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR94
 - needs-gr: GR89
@@ -10764,3 +10769,23 @@
 - verify: `ctest --test-dir build -C Debug -R "^(GrassTileSelectionTest|GrassShaderCompileTest|GrassFieldSnapshotContractTest|GrassGenerateVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/Rendering/GrassFieldRenderData.h, Library/Core/Public/Component/GrassFieldComponent.h, Library/Core/Private/Component/GrassFieldComponent.cpp, Library/Core/Public/Vegetation/Vegetation.h, Library/Core/Private/Vegetation/Vegetation.cpp, Library/Core/Public/Rendering/GrassPass.h, Library/Core/Private/Rendering/GrassPass.cpp, Library/Core/Public/Rendering/GrassFieldGpuWindow.h, Library/Core/Private/Rendering/GrassFieldGpuWindow.cpp, Library/Core/Public/Rendering/GrassTileSelector.h, Library/Core/Private/Rendering/GrassTileSelector.cpp, Library/Core/Public/Rendering/GrassGenerateReference.h, Library/Core/Private/Rendering/GrassGenerateReference.cpp, Assets/Shaders/Grass, Test/Core/Rendering/GrassTileSelectionTest.cpp, Test/Core/Rendering/GrassGenerateVulkanTest.cpp, TASKS.md, PROGRESS.md
 - from: G5-GR43-GRASS-GENERATE
+
+## G10-SHISHA-SHOWCASE-P1: シ者の場面 base の代役のスキンを、外部の `fixture.bin` に頼らない自己完結の glTF から読む
+- status: todo
+- done-when: (1) `ShishaShowcaseBaseScene.cpp` の `AnalyzeSkeletal` の読み先を、新しい自己完結の glTF `Assets/Models/ShishaShowcase/Standin.gltf` に替える。この glTF はバッファを `data:application/octet-stream;base64,` で埋め込む。埋め込む中身は `Scripts/Test-M9World.ps1` の `Write-M9FixtureBin` が作る 416 バイトと同じにし、accessor・skin・animation は `ValidU8Float.gltf` と同じにする。`Assets/Models/M9Skinned` の中は変えない。(2) Game が Debug でビルドできる。(3) 新しい glTF のどの `buffers[].uri` も `data:` で始まり、復号したバイト数が `byteLength` と一致する。`Game/GameModes/ShishaShowcase` のソースに `M9Skinned` への参照が残らない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -Command "$g = Get-Content -Raw -LiteralPath 'Assets/Models/ShishaShowcase/Standin.gltf' | ConvertFrom-Json; foreach ($b in $g.buffers) { if (-not $b.uri.StartsWith('data:')) { 'external buffer: ' + $b.uri; exit 1 }; $n = [Convert]::FromBase64String($b.uri.Substring($b.uri.IndexOf(',') + 1)).Length; if ($n -ne $b.byteLength) { 'byteLength mismatch'; exit 1 } }; if (Select-String -Path 'Game/GameModes/ShishaShowcase/*.cpp' -Pattern 'M9Skinned' -Quiet) { 'still references M9Skinned'; exit 1 }"`
+- paths: Game/GameModes/ShishaShowcase/ShishaShowcaseBaseScene.cpp, Assets/Models/ShishaShowcase, TASKS.md, PROGRESS.md
+- effort: high
+- from: G12-GR108-POSE-PARALLEL
+- notes: 確かめた事実:
+  - `Assets/Models/M9Skinned/ValidU8Float.gltf:42` は `"uri": "fixture.bin"` を参照する。しかし `fixture.bin` は追跡されておらず、手元に無く、無視の対象でもない。
+  - 外部バッファは glTF の隣から読まれる(`GltfBufferFile.cpp` の `ReadBufferFileWithPath`)。そのため `ShishaShowcaseBaseScene.cpp:224-228` は `asset_decode_failed` で止まる。これは G10-SHISHA-SHOWCASE の done-when (2)「場面 base に M9Skinned のスキンを 1 体」が起動の確かめ無しで閉じた取りこぼし。
+  - 試験と台本(`Test-M9World.ps1:456`・`:577`、`CookDependencySnapshotTest`、`CookedSkeletalAssetTest.cmake.in` など)は M9Skinned を一時の置き場へ写し、そこで `fixture.bin` を作る。
+  - `ManagedTextureAssetSetCli.md:247` は `ValidU8Float.gltf` の blob が変わらないことを基準にしている。
+  - 以上の理由で、`fixture.bin` を M9Skinned へコミットする直し方は採らない。
+  - バッファの data URI は `GltfBufferSet.cpp:76-101` が読む(octet-stream と gltf-buffer の MIME)。
+  - 符号化は `ValidU8Float.gltf` に合わせる。
+  - 代役の形(骨 2 本の三角形を身長 1.8 m に合わせる)と ready の印の値は変えない。
+  - 中身がデコードできるかは、`Test-M9World.ps1:580` と同じ AssetCook の `--kind model` を一時の置き場へ回して確かめてよい(Game は起動しない)。
+  - G12-GR108-POSE-PARALLEL の `--skinned-crowd` も M9Skinned の同じ資産を読む予定なので、この自己完結の glTF を使える。
