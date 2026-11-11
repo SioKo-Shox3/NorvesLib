@@ -414,6 +414,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /** @brief 試験だけで使う頂点アニメの正弦の揺れ(shadingParams.z が 0.5 以上の描画)を有効にする（GameThread）。 */
+        void SetVertexAnimationTestDisplacementEnabled(bool bEnabled);
+        bool IsVertexAnimationTestDisplacementEnabled() const { return m_bVertexAnimationTestDisplacement; }
+
         // 空の遮蔽の値と遮蔽物を GameThread で保持し、次のパケットへ値で渡す。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
         SkyOcclusionParameters GetSkyOcclusionParameters() const { return m_SkyOcclusion; }
@@ -736,6 +740,7 @@ namespace NorvesLib::Core::Rendering
         VolumetricFogParameters m_VolumetricFog;
         PaleFlatParameters m_PaleFlat = MakeDefaultPaleFlatParameters();
         WindParameters m_Wind = MakeDefaultWindParameters();
+        bool m_bVertexAnimationTestDisplacement = false;
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         struct SkyOccluderEntry
         {

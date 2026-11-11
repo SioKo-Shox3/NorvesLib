@@ -33,6 +33,7 @@
 
 // HDR環境マップロード用
 #include "stb_image.h"
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -5549,9 +5550,11 @@ namespace NorvesLib::Core::Rendering
             params.skyOcclusionInfo[0] = 1u;
             params.skyOcclusionInfo[1] = skyOcclusion.LevelCount;
             params.skyOcclusionInfo[2] = skyOcclusion.Resolution;
+            params.skyOcclusionInfo[3] = std::bit_cast<uint32_t>(skyOcclusion.Parameters.MaxHorizonMeters);
             params.skyOcclusionParams[0] = skyOcclusion.Parameters.Strength;
             params.skyOcclusionParams[1] = skyOcclusion.Parameters.DiffuseExponent;
             params.skyOcclusionParams[2] = skyOcclusion.Parameters.GroundHeightMeters;
+            params.skyOcclusionParams[3] = skyOcclusion.Parameters.SpecularStrength;
             params.skyOcclusionBounce[0] = skyOcclusion.Parameters.OccluderBounceColorR *
                                          skyOcclusion.Parameters.OccluderBounceIntensity;
             params.skyOcclusionBounce[1] = skyOcclusion.Parameters.OccluderBounceColorG *

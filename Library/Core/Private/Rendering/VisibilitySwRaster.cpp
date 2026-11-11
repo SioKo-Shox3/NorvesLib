@@ -27,7 +27,7 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(SwRasterParams) == 80, "SwRasterParams は std140 の 5 つの 16 バイトの組");
 
-        constexpr uint32_t FrameUniformBytes = sizeof(float) * 32; // view + projection
+        constexpr uint32_t FrameUniformBytes = sizeof(float) * 36; // view・projection・vertexAnimTime
         // MegaGeometryPass のソフトの一覧の頭（パスごとに 4 語。間接 dispatch の引数の x・y・z と、積もうとした数）
         constexpr uint32_t ListHeaderStrideBytes = 4u * sizeof(uint32_t);
 
@@ -224,7 +224,10 @@ namespace NorvesLib::Core::Rendering
         params.Flags[1] = ComputeMaxScanSpan(inputs.SwRasterMaxPixels);
         use.Params->Update(&params, sizeof(params));
 
-        use.DescriptorSet->BindConstantBuffer(0, inputs.FrameUniform, 0, FrameUniformBytes);
+        // 旧来の行列だけの入力も、バッファの末尾を越えて束ねない。
+        // MegaGeometry の頂点アニメは恒等なので、その入力では時刻を参照しない。
+        const uint32_t frameBytes = std::min(FrameUniformBytes, ClampBindSize(inputs.FrameUniform->GetSize()));
+        use.DescriptorSet->BindConstantBuffer(0, inputs.FrameUniform, 0, frameBytes);
         use.DescriptorSet->BindStorageBuffer(1, inputs.InstanceBuffer, 0, ClampBindSize(inputs.InstanceBufferBytes));
         use.DescriptorSet->BindStorageBuffer(MegaMeshTableBinding, inputs.MeshBuffer, 0, ClampBindSize(inputs.MeshBufferBytes));
         use.DescriptorSet->BindStorageBuffer(2, inputs.RecordTable, 0, ClampBindSize(inputs.RecordTableBytes));

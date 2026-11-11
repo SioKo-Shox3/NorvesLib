@@ -2,6 +2,7 @@
 #include "Rendering/GrassTileSelector.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Math/MatrixUtils.h"
+#include "Thread/JobSystem.h"
 
 #include <cmath>
 #include <cstring>
@@ -11,7 +12,7 @@ using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
 namespace Math = NorvesLib::Math;
 
-int main()
+int RunGrassTileSelectionTest()
 {
     GrassFieldRenderData field;
     field.ChunkSizeMeters = 32.0f;
@@ -155,7 +156,38 @@ int main()
         std::cout << "失敗: 同一入力の再選別または別インスタンスの結果がバイト一致しません\n";
         return 1;
     }
-    std::cout << "GrassTileSelectionTest: 可視性・密度・距離帯・再現性を確認しました（近・中・遠: "
+    GrassTileSelector parallelSelector;
+    GrassTileSelectionParallelSettings parallelSettings;
+    parallelSettings.MinCandidateTileCount = 0;
+    const uint32_t rowsPerChunkCases[] = {1, 3, 64};
+    Container::VariableArray<GrassTileInfo> parallelTiles;
+    for (uint32_t rowsPerChunk : rowsPerChunkCases)
+    {
+        parallelSettings.RowsPerChunk = rowsPerChunk;
+        parallelSelector.SetParallelSettings(parallelSettings);
+        for (uint32_t iteration = 0; iteration < 2; ++iteration)
+        {
+            const uint32_t parallelCount = parallelSelector.Select(field, settings, input, parallelTiles);
+            if (parallelCount != count || parallelTiles.size() != tiles.size() ||
+                std::memcmp(tiles.data(), parallelTiles.data(), tiles.size() * sizeof(GrassTileInfo)) != 0)
+            {
+                std::cout << "失敗: 直列と並列のタイル選別結果がバイト一致しません（行数: "
+                          << rowsPerChunk << "、回数: " << iteration + 1 << "）\n";
+                return 1;
+            }
+        }
+    }
+
+    std::cout << "GrassTileSelectionTest: 可視性・密度・距離帯・再現性・直列と並列の一致を確認しました（近・中・遠: "
               << bandCounts[0] << "・" << bandCounts[1] << "・" << bandCounts[2] << "）\n";
     return 0;
+}
+
+int main()
+{
+    auto& jobSystem = NorvesLib::Thread::JobSystem::Get();
+    jobSystem.Initialize(4);
+    const int result = RunGrassTileSelectionTest();
+    jobSystem.Shutdown();
+    return result;
 }

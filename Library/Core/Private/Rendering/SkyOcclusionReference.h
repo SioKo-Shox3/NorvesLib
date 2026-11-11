@@ -122,4 +122,13 @@ namespace NorvesLib::Core::Rendering
     /** @brief L1 から曲げた法線と可視円錐を作り、鏡面可視率を返す。 */
     float EvaluateSkySpecularOcclusion(
         const SkyOcclusionL1& coefficients, const Math::Vector3& reflection, float roughness);
+
+    /**
+     * @brief 反射の単位方向に沿い、格子の樹冠層を通る光の透過率を求める。
+     *
+     * 設定は SanitizeSkyOcclusionParameters が定める有効範囲を前提とする。
+     */
+    float EvaluateSkySpecularTransmittance(
+        const SkyOcclusionReferenceGrid& grid, const SkyOcclusionParameters& parameters,
+        const Math::Vector3& position, const Math::Vector3& reflection);
 } // namespace NorvesLib::Core::Rendering

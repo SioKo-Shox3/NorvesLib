@@ -47,8 +47,8 @@ namespace NorvesLib::Core::Rendering
         // [0].w: 予約（0）
         // [1]: 予約（0）。PaleFlat は末尾の paleFlatColorAndWrapMin・paleFlatShape・paleFlatAverageIrradiance を使う
         float shadingModelParams[2][4];
-        uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 0
-        float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 0
+        uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
+        float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
         float skyOcclusionBounce[4]; // rgb=遮蔽物の反射色×強度、w=0
         int32_t skyOcclusionWindowOrigin[4][4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
         float skyOcclusionTexelMeters[4]; // 段ごとのテクセル幅(m)

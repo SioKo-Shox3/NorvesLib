@@ -156,7 +156,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        PublishFailure(failureStatus, frameNumber);
+        const bool bHasRecordedFrame = m_State == State::RecordedAwaitingSubmit &&
+                                       m_PendingReadback.RequestId == snapshot.RequestId &&
+                                       m_PendingReadback.FrameNumber == frameNumber;
+        PublishFailure(failureStatus, frameNumber,
+                       bHasRecordedFrame ? m_PendingReadback.GameTotalTime : 0.0,
+                       bHasRecordedFrame ? m_PendingReadback.PreviousRenderedTotalTime : 0.0);
         return true;
     }
 
@@ -206,7 +211,9 @@ namespace NorvesLib::Core::Rendering
         {
             PublishFailure(
                 FrameCaptureResultStatus::SourceUnavailable,
-                source ? source->FrameNumber : 0);
+                source ? source->FrameNumber : 0,
+                source ? source->GameTotalTime : 0.0,
+                source ? source->PreviousRenderedTotalTime : 0.0);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -217,7 +224,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t bytesPerPixel = 0;
         if (!TryGetBytesPerPixel(format, bytesPerPixel))
         {
-            PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source->FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source->FrameNumber,
+                           source->GameTotalTime, source->PreviousRenderedTotalTime);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -225,7 +233,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t byteCount = 0;
         if (!TryCalculateLayout(width, height, bytesPerPixel, rowPitchBytes, byteCount))
         {
-            PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source->FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source->FrameNumber,
+                           source->GameTotalTime, source->PreviousRenderedTotalTime);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -235,7 +244,8 @@ namespace NorvesLib::Core::Rendering
                                "FRAME_CAPTURE_SOURCE width=%u height=%u format=%u usage=0x%llx",
                                width, height, static_cast<unsigned>(format),
                                static_cast<unsigned long long>(source->Texture->GetUsage()));
-            PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber,
+                           source->GameTotalTime, source->PreviousRenderedTotalTime);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -246,7 +256,8 @@ namespace NorvesLib::Core::Rendering
             const FrameCaptureSource& sceneColor = sources.SceneColor;
             if (!sceneColor.Texture || !(sources.SceneColorPreExposure > 0.0f))
             {
-                PublishFailure(FrameCaptureResultStatus::SourceUnavailable, source->FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::SourceUnavailable, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             sceneColorReadback.Width = sceneColor.Texture->GetWidth();
@@ -256,7 +267,8 @@ namespace NorvesLib::Core::Rendering
             sceneColorReadback.Display = sources.SceneColorDisplay;
             if (!TryGetBytesPerPixel(sceneColorReadback.Format, sceneColorReadback.BytesPerPixel))
             {
-                PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source->FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             if (!TryCalculateLayout(sceneColorReadback.Width,
@@ -265,17 +277,20 @@ namespace NorvesLib::Core::Rendering
                                     sceneColorReadback.RowPitchBytes,
                                     sceneColorReadback.ByteCount))
             {
-                PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source->FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             if ((sceneColor.Texture->GetUsage() & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::None)
             {
-                PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             if (!EnsureReadbackSlot(m_SceneColorReadbackSlots[frameSlotIndex], sceneColorReadback.ByteCount))
             {
-                PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             sceneColorReadback.bRecorded = true;
@@ -296,7 +311,8 @@ namespace NorvesLib::Core::Rendering
                                              aovReadback.Images[imageIndex],
                                              aovStatus))
                 {
-                    PublishFailure(aovStatus, source->FrameNumber);
+                    PublishFailure(aovStatus, source->FrameNumber,
+                                   source->GameTotalTime, source->PreviousRenderedTotalTime);
                     return FrameCaptureRecordStatus::PublishedFailure;
                 }
             }
@@ -315,7 +331,8 @@ namespace NorvesLib::Core::Rendering
                                          atmosphereReadback.Image,
                                          atmosphereStatus))
             {
-                PublishFailure(atmosphereStatus, source->FrameNumber);
+                PublishFailure(atmosphereStatus, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             atmosphereReadback.Info = sources.AtmosphereInfo;
@@ -333,7 +350,8 @@ namespace NorvesLib::Core::Rendering
                                          cloudReadback.Image,
                                          cloudStatus))
             {
-                PublishFailure(cloudStatus, source->FrameNumber);
+                PublishFailure(cloudStatus, source->FrameNumber,
+                               source->GameTotalTime, source->PreviousRenderedTotalTime);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             cloudReadback.Info = sources.CloudInfo;
@@ -348,7 +366,8 @@ namespace NorvesLib::Core::Rendering
                                              cloudReadback.OpacityImage,
                                              opacityStatus))
                 {
-                    PublishFailure(opacityStatus, source->FrameNumber);
+                    PublishFailure(opacityStatus, source->FrameNumber,
+                                   source->GameTotalTime, source->PreviousRenderedTotalTime);
                     return FrameCaptureRecordStatus::PublishedFailure;
                 }
                 cloudReadback.bOpacityRecorded = true;
@@ -358,7 +377,8 @@ namespace NorvesLib::Core::Rendering
         ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
         if (!EnsureReadbackSlot(slot, byteCount))
         {
-            PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber,
+                           source->GameTotalTime, source->PreviousRenderedTotalTime);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -432,6 +452,8 @@ namespace NorvesLib::Core::Rendering
 
         m_PendingReadback.RequestId = m_ActiveRequest.RequestId;
         m_PendingReadback.FrameNumber = source->FrameNumber;
+        m_PendingReadback.GameTotalTime = source->GameTotalTime;
+        m_PendingReadback.PreviousRenderedTotalTime = source->PreviousRenderedTotalTime;
         m_PendingReadback.SlotIndex = frameSlotIndex;
         m_PendingReadback.Width = width;
         m_PendingReadback.Height = height;
@@ -461,7 +483,8 @@ namespace NorvesLib::Core::Rendering
         ReadbackSlot& slot = m_ReadbackSlots[frameSlotIndex];
         if (!slot.Buffer)
         {
-            PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                           m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
             return;
         }
 
@@ -472,13 +495,15 @@ namespace NorvesLib::Core::Rendering
         }
         catch (...)
         {
-            PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                           m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
             return;
         }
 
         if (!mappedData)
         {
-            PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                           m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
             return;
         }
 
@@ -486,6 +511,8 @@ namespace NorvesLib::Core::Rendering
         frame.Status = FrameCaptureResultStatus::Success;
         frame.RequestId = m_PendingReadback.RequestId;
         frame.FrameNumber = m_PendingReadback.FrameNumber;
+        frame.GameTotalTime = m_PendingReadback.GameTotalTime;
+        frame.PreviousRenderedTotalTime = m_PendingReadback.PreviousRenderedTotalTime;
         frame.Width = m_PendingReadback.Width;
         frame.Height = m_PendingReadback.Height;
         frame.Format = m_PendingReadback.Format;
@@ -520,7 +547,8 @@ namespace NorvesLib::Core::Rendering
             }
             if (!mappedSceneColor)
             {
-                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                               m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
                 return;
             }
             CapturedSceneColor& sceneColor = frame.SceneColor;
@@ -550,7 +578,8 @@ namespace NorvesLib::Core::Rendering
                                           m_PendingAov.Images[imageIndex],
                                           *aovImages[imageIndex]))
                 {
-                    PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                    PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                                   m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
                     return;
                 }
             }
@@ -564,7 +593,8 @@ namespace NorvesLib::Core::Rendering
                                       m_PendingAtmosphere.Image,
                                       frame.Atmosphere.Probe))
             {
-                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                               m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
                 return;
             }
             frame.Atmosphere.Info = m_PendingAtmosphere.Info;
@@ -577,7 +607,8 @@ namespace NorvesLib::Core::Rendering
                                       m_PendingClouds.Image,
                                       frame.Clouds.Probe))
             {
-                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                               m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
                 return;
             }
             frame.Clouds.Info = m_PendingClouds.Info;
@@ -588,7 +619,8 @@ namespace NorvesLib::Core::Rendering
                                           m_PendingClouds.OpacityImage,
                                           frame.Clouds.Opacity))
                 {
-                    PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber);
+                    PublishFailure(FrameCaptureResultStatus::MapFailed, m_PendingReadback.FrameNumber,
+                                   m_PendingReadback.GameTotalTime, m_PendingReadback.PreviousRenderedTotalTime);
                     return;
                 }
                 frame.Clouds.bOpacityValid = true;
@@ -785,12 +817,15 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void FrameCaptureReadbackHelper::PublishFailure(FrameCaptureResultStatus status, uint64_t frameNumber)
+    void FrameCaptureReadbackHelper::PublishFailure(FrameCaptureResultStatus status, uint64_t frameNumber,
+                                                   double gameTotalTime, double previousRenderedTotalTime)
     {
         CapturedFrame frame;
         frame.Status = status;
         frame.RequestId = m_ActiveRequest.RequestId;
         frame.FrameNumber = frameNumber;
+        frame.GameTotalTime = gameTotalTime;
+        frame.PreviousRenderedTotalTime = previousRenderedTotalTime;
 
         // 撮影の失敗は利用者側で理由が失われやすいので、状態の名前をここで残す。
         NORVES_LOG_WARNING("FrameCapture",

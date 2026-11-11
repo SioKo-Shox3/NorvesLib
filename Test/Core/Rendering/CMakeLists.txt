@@ -835,6 +835,28 @@ register_rendering_gpu_test(
     --scenario=skinned-motion
     --visibility-buffer=off)
 
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimDropVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim-drop)
+set_tests_properties(RenderingVelocityVertexAnimDropVulkanTest PROPERTIES
+    ENVIRONMENT "NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL=3")
+
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
 )
@@ -1626,6 +1648,13 @@ register_rendering_gpu_test(
     --scene=indoor
     --capture-source=back-buffer
     --ao-scenario=cornell-room)
+# 樹冠の下の空の遮蔽と無効時の画像を確かめる。
+register_rendering_gpu_test(
+    RenderingSkyOcclusionCanopyVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --sky-occlusion-scenario=canopy)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 
@@ -1908,6 +1937,7 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME CullProxiesParallelEquivalenceTest COMMAND SceneViewProxyLookupTest --test=CullProxiesParallelEquivalenceTest)
 add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
@@ -1916,6 +1946,7 @@ norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER CullProxiesParallelEquivalenceTest CullProxiesParallelEquivalenceTest.cpp
     MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
     MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
@@ -1923,6 +1954,9 @@ target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+# CullProxiesParallelEquivalenceTest は JobSystem::ParallelFor の上の試験なので、
+# この束のビルドで JobParallelForTest を含む JobSystemShutdownTest の実行ファイルもそろえる。
+add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)
 add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
 
 add_executable(ComponentDirtyTrackingTest

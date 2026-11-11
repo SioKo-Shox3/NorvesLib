@@ -340,6 +340,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetWindParameters(parameters);
     }
 
+    void RenderWorld::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
+    {
+        m_RenderingCoordinator.SetVertexAnimationTestDisplacementEnabled(bEnabled);
+    }
+
     void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         m_RenderingCoordinator.SetSkyOcclusionParameters(parameters);

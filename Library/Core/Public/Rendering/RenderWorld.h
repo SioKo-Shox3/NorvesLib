@@ -209,6 +209,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /** @brief 試験だけで使う頂点アニメの正弦の揺れ(shadingParams.z が 0.5 以上の描画)を有効にする（GameThread）。 */
+        void SetVertexAnimationTestDisplacementEnabled(bool bEnabled);
+        bool IsVertexAnimationTestDisplacementEnabled() const
+        {
+            return m_RenderingCoordinator.IsVertexAnimationTestDisplacementEnabled();
+        }
+
         // 空の遮蔽の値と遮蔽物を次の FramePacket へ値で公開する（GameThread）。
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters);
         SkyOccluderHandle RegisterSkyOccluder(const SkyOccluderProxy& proxy);
