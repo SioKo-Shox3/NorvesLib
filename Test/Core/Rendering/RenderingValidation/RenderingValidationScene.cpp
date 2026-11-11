@@ -3438,7 +3438,12 @@ namespace NorvesLib::Test::RenderingValidation
 
     Core::Rendering::CameraProxy RenderingValidationSceneFixture::GetPaleFlatCamera() const
     {
-        return GetShadingModelGBufferCamera();
+        auto camera = GetShadingModelGBufferCamera();
+        camera.ExposureMode = Core::Rendering::CameraExposureMode::Manual;
+        // 全段で同じ物理露出を使い、照度と霧の比を自動露出から独立させる。
+        Core::Component::CameraComponent::TryBuildExposureSnapshot(
+            4.0f, 1.0f / 60.0f, 100.0f, 0.0f, camera);
+        return camera;
     }
 
     bool RenderingValidationSceneFixture::ApplyShadingModelLightingFixture() const

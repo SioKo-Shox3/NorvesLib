@@ -26,6 +26,12 @@ namespace NorvesLib::Test::RenderingValidation
     private:
         bool EvaluateNormals(const RgbaFloatImage& image, Core::Container::String& reason);
         bool EvaluateColor(const RgbaFloatImage& image, Core::Container::String& reason) const;
+        bool FindBrightRoi(uint32_t object, const float light[3], int32_t& outX, int32_t& outY) const;
+        bool MeasureSun(const RgbaFloatImage& image, float outLuma[2]) const;
+        bool EvaluateSun(const RgbaFloatImage& image) const;
+        bool MeasureFogDifference(const RgbaFloatImage& image, float& outDifference) const;
+        bool EvaluateFog(const RgbaFloatImage& image) const;
+        bool EvaluateRotation(const RgbaFloatImage& image) const;
         bool IsSpherePixel(int32_t x, int32_t y, uint32_t object) const;
         bool IsSphereInterior(int32_t x, int32_t y, uint32_t object) const;
 
@@ -38,6 +44,10 @@ namespace NorvesLib::Test::RenderingValidation
         int32_t m_SkinY = 0;
         int32_t m_StaticX = 0;
         int32_t m_StaticY = 0;
+        float m_SunBaseline[2] = {};
+        float m_FogReferenceDifference = 0.0f;
+        bool m_bSunBaselineValid = false;
+        bool m_bFogReferenceValid = false;
         bool m_bEnabled = false;
         bool m_bInitialCapture = true;
         bool m_bAdvance = false;

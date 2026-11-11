@@ -6,6 +6,7 @@
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/ShadingModelIds.h"
+#include "Rendering/VolumetricFog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,7 @@ namespace NorvesLib::Test::RenderingValidation
     namespace
     {
         using namespace Core::Rendering;
-        enum class CheckKind { Normals, Baseline };
+        enum class CheckKind { Normals, Baseline, Sun, FogReference, Fog, Rotation };
 
         struct Stage
         {
@@ -35,9 +36,25 @@ namespace NorvesLib::Test::RenderingValidation
             {"normals", FrameCaptureSourceKind::GBufferNormal, CheckKind::Normals,
                 1000.0f, {0.8f, 0.0f, 0.6f}, false, 0.0f},
             {"baseline", FrameCaptureSourceKind::SceneColor, CheckKind::Baseline,
-                1000.0f, {0.8f, 0.0f, 0.6f}, false, 0.0f}};
+                1000.0f, {0.8f, 0.0f, 0.6f}, false, 0.0f},
+            {"lux4000", FrameCaptureSourceKind::SceneColor, CheckKind::Sun,
+                4000.0f, {0.8f, 0.0f, 0.6f}, false, 0.0f},
+            {"fog_reference", FrameCaptureSourceKind::SceneColor, CheckKind::FogReference,
+                1000.0f, {0.0f, 0.6f, 0.8f}, false, 0.0f},
+            {"fog_low", FrameCaptureSourceKind::SceneColor, CheckKind::Fog,
+                1000.0f, {0.0f, 0.6f, 0.8f}, true, 0.03f},
+            {"fog_high", FrameCaptureSourceKind::SceneColor, CheckKind::Fog,
+                1000.0f, {0.0f, 0.6f, 0.8f}, true, 0.08f},
+            {"rotate_minus40", FrameCaptureSourceKind::SceneColor, CheckKind::Rotation,
+                16000.0f, {-0.64278761f, 0.0f, 0.76604444f}, false, 0.0f},
+            {"rotate_0", FrameCaptureSourceKind::SceneColor, CheckKind::Rotation,
+                16000.0f, {0.0f, 0.0f, 1.0f}, false, 0.0f},
+            {"rotate_plus40", FrameCaptureSourceKind::SceneColor, CheckKind::Rotation,
+                16000.0f, {0.64278761f, 0.0f, 0.76604444f}, false, 0.0f}};
         constexpr uint32_t StageCount = sizeof(Stages) / sizeof(Stages[0]);
         constexpr uint64_t SettleFrames = 16;
+        // 強い直接光で環境光の寄与を抑え、粗さ 1 の鏡面も検出する。
+        constexpr float RotationCvLimit = 0.001f;
         constexpr float Pi = 3.14159265358979323846f;
 
         size_t Offset(const RgbaFloatImage& image, int32_t x, int32_t y)
@@ -86,6 +103,21 @@ namespace NorvesLib::Test::RenderingValidation
             std::cout << "PALE_FLAT_CHECK name=" << name << " value=" << value
                 << " limit=" << limit << " result=" << (bPassed ? "PASS" : "FAIL") << '\n';
             return bPassed;
+        }
+
+        float Luminance(const float rgb[3])
+        {
+            return rgb[0] * 0.2126f + rgb[1] * 0.7152f + rgb[2] * 0.0722f;
+        }
+
+        VolumetricFogParameters StageFog(const Stage& stage)
+        {
+            auto fog = MakeDefaultVolumetricFogParameters();
+            fog.bEnabled = stage.bFog;
+            fog.DensityAtBaseHeight = stage.FogDensity;
+            fog.HeightFalloffPerUnit = 0.01f;
+            fog.BaseHeight = 0.0f;
+            return fog;
         }
 
         bool Average(const RgbaFloatImage& image, int32_t x, int32_t y, int32_t radius, float rgb[3])
@@ -158,6 +190,12 @@ namespace NorvesLib::Test::RenderingValidation
             m_StageStartFrame = world.GetRenderedFrameCount();
             LOG_INFO("PaleFlat の段を適用 stage=%s wait_frames=%llu", stage.Name,
                 static_cast<unsigned long long>(SettleFrames));
+            std::cout << "PALE_FLAT_CHECK name=stage_state value=" << stage.Name
+                << " lux=" << stage.Lux << " to_light=" << stage.ToLight[0] << ','
+                << stage.ToLight[1] << ',' << stage.ToLight[2] << " fog_enabled=" << stage.bFog
+                << " fog_density=" << stage.FogDensity << " fog_falloff=0.01 fog_base_height=0"
+                << " pre_exposure=" << m_Fixture->GetPaleFlatCamera().PreExposure
+                << " limit=fixed result=PASS\n";
         }
         m_bStateValid = m_Fixture->SetPaleFlatLightState(stage.Lux,
             stage.ToLight[0], stage.ToLight[1], stage.ToLight[2]);
@@ -166,10 +204,7 @@ namespace NorvesLib::Test::RenderingValidation
         auto sky = MakeDefaultSkyAtmosphereParameters();
         sky.bEnabled = false;
         world.SetSkyAtmosphere(sky);
-        auto fog = MakeDefaultVolumetricFogParameters();
-        fog.bEnabled = stage.bFog;
-        fog.DensityAtBaseHeight = stage.FogDensity;
-        world.SetVolumetricFogParameters(fog);
+        world.SetVolumetricFogParameters(StageFog(stage));
         // 暗部を正値で保ちつつ、1000 lux の方向光より環境光を十分小さくする。
         world.SetStaticEnvironmentIntensityScale(0.001f);
     }
@@ -199,8 +234,32 @@ namespace NorvesLib::Test::RenderingValidation
             reason = TEXT("PaleFlat の取得画像の形式・寸法・画素値が不正です");
             return false;
         }
-        const bool bPassed = Stages[m_Stage].Check == CheckKind::Normals
-            ? EvaluateNormals(image, reason) : EvaluateColor(image, reason);
+        bool bPassed = false;
+        switch (Stages[m_Stage].Check)
+        {
+        case CheckKind::Normals:
+            bPassed = EvaluateNormals(image, reason);
+            break;
+        case CheckKind::Baseline:
+            bPassed = EvaluateColor(image, reason);
+            m_bSunBaselineValid = MeasureSun(image, m_SunBaseline);
+            bPassed = m_bSunBaselineValid && bPassed;
+            break;
+        case CheckKind::Sun:
+            bPassed = EvaluateSun(image);
+            break;
+        case CheckKind::FogReference:
+            m_bFogReferenceValid = MeasureFogDifference(image, m_FogReferenceDifference);
+            bPassed = Check("fog_reference_difference", m_FogReferenceDifference, 0.0f,
+                m_bFogReferenceValid && m_FogReferenceDifference > 0.0f);
+            break;
+        case CheckKind::Fog:
+            bPassed = EvaluateFog(image);
+            break;
+        case CheckKind::Rotation:
+            bPassed = EvaluateRotation(image);
+            break;
+        }
         m_bChecksPassed = m_bChecksPassed && bPassed;
         m_bAdvance = true;
         // ID の不一致も色の判定と併せて出力してから、最後の段で不合格にする。
@@ -208,7 +267,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             if (reason.empty())
             {
-                reason = TEXT("PaleFlat の ID または静的とスキンの法線の対応が不正です");
+                reason = TEXT("PaleFlat の GPU の判定に許容範囲外の値があります");
             }
             return false;
         }
@@ -405,6 +464,142 @@ namespace NorvesLib::Test::RenderingValidation
             reason = TEXT("PaleFlat の明暗比・DefaultLit の対照・静的とスキンの RGB 差のいずれかが許容範囲外です");
         }
         return bPassed;
+    }
+
+    bool PaleFlatScenario::FindBrightRoi(uint32_t object, const float light[3], int32_t& outX, int32_t& outY) const
+    {
+        float bestDot = -2.0f;
+        outX = outY = -1;
+        for (int32_t y = 3; y < static_cast<int32_t>(m_Normals.Height) - 3; ++y)
+        {
+            for (int32_t x = 3; x < static_cast<int32_t>(m_Normals.Width) - 3; ++x)
+            {
+                float normal[3];
+                if (!IsSphereInterior(x, y, object) || !ReadNormal(m_Normals, x, y, normal))
+                {
+                    continue;
+                }
+                const float dot = normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2];
+                if (dot > bestDot)
+                {
+                    bestDot = dot;
+                    outX = x;
+                    outY = y;
+                }
+            }
+        }
+        return outX >= 0;
+    }
+
+    bool PaleFlatScenario::MeasureSun(const RgbaFloatImage& image, float outLuma[2]) const
+    {
+        for (uint32_t object = 0u; object < 2u; ++object)
+        {
+            int32_t x, y;
+            float rgb[3] = {};
+            if (!FindBrightRoi(object, Stages[1].ToLight, x, y) || !Average(image, x, y, 2, rgb))
+            {
+                return false;
+            }
+            outLuma[object] = Luminance(rgb);
+            if (!(outLuma[object] > 0.0f))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool PaleFlatScenario::EvaluateSun(const RgbaFloatImage& image) const
+    {
+        float luma[2] = {};
+        const bool bValid = m_bSunBaselineValid && MeasureSun(image, luma);
+        const float paleRatio = bValid ? luma[0] / m_SunBaseline[0] : 0.0f;
+        const float cardRatio = bValid ? paleRatio / (luma[1] / m_SunBaseline[1]) : 0.0f;
+        const bool bPalePassed = Check("sun_4x_pale_ratio", paleRatio, 0.03f,
+            bValid && std::abs(paleRatio / 4.0f - 1.0f) <= 0.03f);
+        return Check("sun_4x_gray_card_ratio", cardRatio, 0.03f,
+            bValid && std::abs(cardRatio - 1.0f) <= 0.03f) && bPalePassed;
+    }
+
+    bool PaleFlatScenario::MeasureFogDifference(const RgbaFloatImage& image, float& outDifference) const
+    {
+        int32_t x, y;
+        if (!FindBrightRoi(0u, Stages[m_Stage].ToLight, x, y))
+        {
+            return false;
+        }
+        // 対称な視線を対にし、高さ・距離・光源との角度を揃えて霧の光を差し引く。
+        const int32_t mirroredX = static_cast<int32_t>(image.Width) - 1 - x;
+        float pale[3] = {}, gray[3] = {};
+        if (!IsSphereInterior(mirroredX, y, 1u) ||
+            !Average(image, x, y, 2, pale) || !Average(image, mirroredX, y, 2, gray))
+        {
+            return false;
+        }
+        outDifference = Luminance(pale) - Luminance(gray);
+        return std::isfinite(outDifference) && outDifference > 0.0f;
+    }
+
+    bool PaleFlatScenario::EvaluateFog(const RgbaFloatImage& image) const
+    {
+        float difference = 0.0f;
+        int32_t x, y;
+        float normal[3] = {};
+        const bool bValid = m_bFogReferenceValid && m_FogReferenceDifference > 0.0f &&
+            MeasureFogDifference(image, difference) &&
+            FindBrightRoi(0u, Stages[m_Stage].ToLight, x, y) && ReadNormal(m_Normals, x, y, normal);
+        const auto camera = m_Fixture->GetPaleFlatCamera();
+        const float dx = PaleFlatSpherePositions[0][0] + normal[0] * PaleFlatSphereRadius - camera.PositionX;
+        const float dy = PaleFlatSpherePositions[0][1] + normal[1] * PaleFlatSphereRadius - camera.PositionY;
+        const float dz = normal[2] * PaleFlatSphereRadius - camera.PositionZ;
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const auto fog = StageFog(Stages[m_Stage]);
+        const float expected = ComputeHeightFogTransmittance(fog, camera.PositionY, dy / distance, distance);
+        const float measured = bValid ? difference / m_FogReferenceDifference : -1.0f;
+        std::cout << "PALE_FLAT_CHECK name=fog_sample value=" << measured << " expected=" << expected
+            << " distance=" << distance << " ray_y=" << dy / distance << " limit=0.01 result="
+            << (bValid ? "PASS" : "FAIL") << '\n';
+        return Check(Stages[m_Stage].FogDensity < 0.05f ? "fog_low_transmittance" : "fog_high_transmittance",
+            std::abs(measured - expected), 0.01f,
+            bValid && expected >= 0.4f && expected <= 0.9f && std::abs(measured - expected) <= 0.01f);
+    }
+
+    bool PaleFlatScenario::EvaluateRotation(const RgbaFloatImage& image) const
+    {
+        double sum = 0.0, sumSquared = 0.0;
+        uint32_t count = 0u;
+        const auto& light = Stages[m_Stage].ToLight;
+        const auto parameters = MakeDefaultPaleFlatParameters();
+        for (int32_t y = 3; y < static_cast<int32_t>(image.Height) - 3; ++y)
+        {
+            for (int32_t x = 3; x < static_cast<int32_t>(image.Width) - 3; ++x)
+            {
+                float normal[3];
+                if (!IsSphereInterior(x, y, 0u) || !ReadNormal(m_Normals, x, y, normal))
+                {
+                    continue;
+                }
+                const float dot = normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2];
+                if (dot <= 0.2f)
+                {
+                    continue;
+                }
+                // 凸な球の正面は自分の影の外。球間の影もこの方位の範囲では重ならない。
+                const float ratio = Luminance(&image.Values[Offset(image, x, y)]) /
+                    EvaluatePaleFlatDirectFactor(dot, 1.0f, parameters);
+                sum += ratio;
+                sumSquared += static_cast<double>(ratio) * ratio;
+                ++count;
+            }
+        }
+        const double mean = count > 0u ? sum / count : 0.0;
+        const float cv = mean > 0.0 ? static_cast<float>(std::sqrt(std::max(0.0, sumSquared / count - mean * mean)) / mean)
+            : std::numeric_limits<float>::infinity();
+        LOG_INFO("PaleFlat の回転の検査 stage=%s pixels=%u mean=%g", Stages[m_Stage].Name, count, mean);
+        const char* name = light[0] < -0.1f ? "rotate_minus40_specular_cv"
+            : (light[0] > 0.1f ? "rotate_plus40_specular_cv" : "rotate_0_specular_cv");
+        return Check(name, cv, RotationCvLimit, count >= 200u && std::isfinite(cv) && cv <= RotationCvLimit);
     }
 
     void PaleFlatScenario::Advance()
