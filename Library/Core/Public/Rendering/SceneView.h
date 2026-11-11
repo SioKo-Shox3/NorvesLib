@@ -12,6 +12,7 @@
 #include "ShadowMethod.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/RenderExtension/RenderExtension.h"
+#include "Rendering/GBufferProgramRegistry.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
@@ -92,6 +93,18 @@ namespace NorvesLib::Core::Rendering
         const RenderExtensionRegistry& GetRenderExtensionRegistry() const
         {
             return m_RenderExtensions;
+        }
+
+        /** @brief GBuffer プログラムの登録簿。Register/Unregister は GameThread、Find は RenderThread から呼ぶ。 */
+        GBufferProgramRegistry& GetGBufferProgramRegistry()
+        {
+            return m_GBufferPrograms;
+        }
+
+        /** @brief GBuffer プログラムの登録簿の読み取り。Register/Unregister は GameThread、Find は RenderThread から呼ぶ。 */
+        const GBufferProgramRegistry& GetGBufferProgramRegistry() const
+        {
+            return m_GBufferPrograms;
         }
 
         // ========================================
@@ -605,6 +618,7 @@ namespace NorvesLib::Core::Rendering
 
     private:
         RenderExtensionRegistry m_RenderExtensions;
+        GBufferProgramRegistry m_GBufferPrograms;
 
         // MeshProxy（WorldからSceneViewに直接渡される）
         // MeshProxyの索引はComponentIdで管理し、ObjectIdはソートや所有元の文脈に使います。

@@ -1583,6 +1583,8 @@ namespace NorvesLib::Core::Rendering
         };
         SceneTablesStats m_SceneTablesStats;
         PreparedSceneTables m_PreparedSceneTables;
+        // このビューの記録前に準備した頂点アニメの時刻（記録中は読み取り専用）。
+        float m_VertexAnimTime[4] = {};
 
         // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）
         bool m_bVisibilityPlanEnabled = false;

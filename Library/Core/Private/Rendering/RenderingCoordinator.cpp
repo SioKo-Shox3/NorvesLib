@@ -4590,6 +4590,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
         packet.Scene.SetWindParameters(m_Wind);
+        packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -5854,6 +5855,7 @@ namespace NorvesLib::Core::Rendering
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.bVertexAnimationTestDisplacement = packet->bVertexAnimationTestDisplacement;
         viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
@@ -6143,6 +6145,35 @@ namespace NorvesLib::Core::Rendering
                 presentationEncodePath == RHI::PresentationEncodePath::HardwareSRGB;
             backBufferSource.bShaderSrgbEncode =
                 presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
+        }
+
+        // 全ビューはこの描画の ExtensionFrame を共有する。今回描いた撮影元だけに、その時刻を値で固定する。
+        FrameCaptureSource* captureSources[] =
+        {
+            &executionResult.CaptureSources.PresentationColor,
+            &executionResult.CaptureSources.SceneColor,
+            &executionResult.CaptureSources.BackBuffer,
+            &executionResult.CaptureSources.GBufferVelocity,
+            &executionResult.CaptureSources.RTGIDiffuseIndirect,
+            &executionResult.CaptureSources.RTGIHistoryAge,
+            &executionResult.CaptureSources.GBufferNormal,
+            &executionResult.CaptureSources.GBufferMaterial,
+            &executionResult.CaptureSources.GBufferEmissive,
+            &executionResult.CaptureSources.AovSurface,
+            &executionResult.CaptureSources.AovGeometry,
+            &executionResult.CaptureSources.AovLighting,
+            &executionResult.CaptureSources.AovIds,
+            &executionResult.CaptureSources.AtmosphereProbe,
+            &executionResult.CaptureSources.CloudProbe,
+            &executionResult.CaptureSources.CloudOpacity
+        };
+        for (FrameCaptureSource* source : captureSources)
+        {
+            if (source->Texture && source->FrameNumber == viewContext.ExtensionFrame.FrameNumber)
+            {
+                source->GameTotalTime = viewContext.ExtensionFrame.GameTotalTime;
+                source->PreviousRenderedTotalTime = viewContext.ExtensionFrame.PreviousRenderedTotalTime;
+            }
         }
 
         if (m_FrameCaptureReadbackHelper)
@@ -6645,6 +6676,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
     {
         m_Wind = SanitizeWindParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
+    {
+        m_bVertexAnimationTestDisplacement = bEnabled;
     }
 
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)

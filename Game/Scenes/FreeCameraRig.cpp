@@ -11,6 +11,7 @@
 #include "Core/Public/Rendering/FrameCaptureTypes.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Debug/CameraScriptCapture.h"
+#include "Debug/MapCapture.h"
 #include "Scenes/SceneViewSwitch.h"
 
 
@@ -187,6 +188,13 @@ namespace Game::Scenes
 
     void FreeCameraRig::Tick(GameModeContext &ctx, float deltaTime, bool bSuspended)
     {
+        if (m_pMapCapture != nullptr && m_pMapCapture->IsControllingCamera())
+        {
+            // 撮影中の入力や押しっぱなしの状態を持ち越さない。
+            m_Collector.ResetAll();
+            Publish(ctx);
+            return;
+        }
         if (bSuspended)
         {
             // ポーズメニューの間は何も動かさない。押しっぱなしの状態も持ち越さない。
@@ -428,6 +436,22 @@ namespace Game::Scenes
     {
         if (m_pCameraEntity == nullptr || m_pCamera == nullptr)
         {
+            return;
+        }
+        if (m_pMapCapture != nullptr && m_pMapCapture->IsControllingCamera())
+        {
+            m_pMapCapture->ApplyToCamera(*m_pCameraEntity, *m_pCamera);
+            m_Controller.SetPose(m_pCameraEntity->GetWorldTransform().position, m_Controller.GetYaw(),
+                                 m_Controller.GetPitch());
+            ctx.WorldRef.UpdateWorldTransforms();
+
+            CameraProxy proxy = m_ProxyTemplate;
+            if (!m_pCamera->BuildCameraProxy(proxy))
+            {
+                return;
+            }
+            m_pMapCapture->ApplyToProxy(proxy);
+            ctx.EngineRef.GetRenderWorld().SetMainCamera(proxy);
             return;
         }
         // エンティティの姿勢は、カメラの部品の投影や露出の値を CameraProxy へ組み立てる元になる。

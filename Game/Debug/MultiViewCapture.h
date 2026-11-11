@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Debug/CaptureSettle.h"
+
 #include "Core/Public/Container/String.h"
 #include "Core/Public/Container/VariableArray.h"
 
@@ -114,14 +116,12 @@ namespace Game::Debug
             Failed,
         };
 
-        bool IsLoading(NorvesLib::Core::Rendering::RenderWorld& renderWorld, bool bOtherPending,
-                       uint64_t renderedFrameCount) const;
         void Fail(const char* reason);
 
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String> m_ViewNames;
         NorvesLib::Core::Container::String m_OutputDirectory;
-        uint64_t m_SettledRenderedFrames = 0;
         uint64_t m_ViewSettleRenderedFrames = kDefaultViewSettleRenderedFrames;
+        CaptureSettle m_Settle;
         Game::Scenes::SceneViewSwitch* m_pViewSwitch = nullptr;
         bool m_bCaptureHdr = false;
         bool m_bCaptureAov = false;
@@ -131,11 +131,6 @@ namespace Game::Debug
 
         Phase m_Phase = Phase::Settling;
         size_t m_ViewIndex = 0;
-        bool m_bObservedPendingAssets = false;
-        bool m_bBaselineLatched = false;
-        uint64_t m_BaselineRenderedFrame = 0;
-        /// この描画フレーム数に届くまでは読み込み中として扱う（視点を置き直した後の待ち）
-        uint64_t m_SettleUntilRenderedFrame = 0;
         /// 撮影の要求・視点の切り替えの依頼を出したときの描画フレーム数（待ちの上限を数える）
         uint64_t m_WaitStartRenderedFrame = 0;
     };
