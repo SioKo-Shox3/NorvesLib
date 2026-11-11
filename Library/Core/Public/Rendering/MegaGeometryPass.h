@@ -774,7 +774,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool CreateCullResources(RHI::IDevice *device);
 
-        /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜9）。パイプラインとセットが同じ形を使う */
+        /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜23）。パイプラインとセットが同じ形を使う */
         RHI::DescriptorSetDesc BuildDrawDescriptorSetDesc() const;
 
         /**
@@ -797,6 +797,7 @@ namespace NorvesLib::Core::Rendering
         struct SectionDraw
         {
             RHI::BufferPtr Uniform;              // 材質の区間ごとの定数（PerObject UBO）
+            RHI::BufferPtr TerrainSplatUniform;   // 同じ区間のスプラットの並び（48 float）
             RHI::DescriptorSetPtr DescriptorSet; // 描画用（UBO・材質のテクスチャ・VTの要求・インスタンスの表・描画情報）
             uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
@@ -930,6 +931,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t FrameSerial = 0;
             uint32_t InFlightIndex = 0;
             FrameSlot *Slot = nullptr;
+            float TerrainWetness = 0.0f; // 同じフレームの写しから読んだ地形の濡れ度
         };
 
         /**
@@ -1414,6 +1416,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;     // Linear/Wrapサンプラー
         RHI::SamplerPtr m_TerrainSampler;           // 地形の混ぜ合わせの材質のサンプラー（異方性 16、Wrap。地面を斜めに見てもぼけない）
+        RHI::TexturePtr m_DefaultTerrainSplatArray; // 未使用時に束ねる 2 層の配列テクスチャ
+        RHI::SamplerPtr m_TerrainSplatSampler;     // スプラットの地図の線形・端に固定するサンプラー
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
