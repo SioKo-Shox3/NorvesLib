@@ -19,6 +19,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/TerrainSamplerOverride.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
@@ -37,13 +38,20 @@ namespace NorvesLib::Core::Rendering
         // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（224 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
-        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 192 バイト。
+        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 384 バイト。
         // tile = 横のタイル数・材質の番号・フラグ・予約、vt = VT のフィードバックのパラメータ（アルベド・法線・ORM・高さ）、
-        // terrain = 地形の混ぜ方の値（vec4 × 10。TerrainBlendShading.h の並び）
-        constexpr uint32_t TileParamsWords = 8u + VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS;
+        // terrain = 3 層の混ぜ方（vec4 × 10）、terrainSplat = スプラットの混ぜ方（vec4 × 12。TerrainBlendShading.h の並び）
+        constexpr uint32_t TileParamsWords = 8u + VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS + TERRAIN_SPLAT_PARAM_FLOATS;
         constexpr uint32_t TileParamsBytes = TileParamsWords * sizeof(uint32_t);
         static_assert(VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS == TERRAIN_BLEND_PARAM_FLOATS,
                       "シェーダーの TerrainBlendParams と同じ数でなければならない");
+
+        static_assert(VisibilityResolveGeometry::TERRAIN_SPLAT_PARAM_FLOATS == TERRAIN_SPLAT_PARAM_FLOATS,
+                      "シェーダーの TerrainSplatParams と同じ数でなければならない");
+        static_assert(TileParamsBytes == 384u, "シェーダーの ResolveTileParams（std140）と一致しなければならない");
+        constexpr uint32_t TerrainSplatBindings[VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT] = {
+            TERRAIN_SPLAT_VIS_ALBEDO_BINDING, TERRAIN_SPLAT_VIS_NORMAL_BINDING,
+            TERRAIN_SPLAT_VIS_ARM_BINDING, TERRAIN_SPLAT_VIS_SPLAT_BINDING};
 
         // 共通の束縛の数（0..8、材質の GBuffer の 9、発光の GBuffer の 10。検証用の版はさらに 11 の書き出し）
         constexpr uint32_t CommonBindingCount = 11u;
@@ -127,6 +135,15 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
+                // dump の有無に依らず、スプラットの 4 枚は共通の約束の 32〜35 に置く
+                for (uint32_t bindingIndex : TerrainSplatBindings)
+                {
+                    RHI::DescriptorBinding binding;
+                    binding.binding = bindingIndex;
+                    binding.type = RHI::ResourceBindType::CombinedImageSampler;
+                    binding.stages = RHI::ShaderStage::Compute;
+                    desc.bindings.push_back(binding);
+                }
             }
             {
                 RHI::DescriptorBinding binding;
@@ -178,6 +195,31 @@ namespace NorvesLib::Core::Rendering
         {
             material.bTerrainSurface = terrain && terrain->IsTerrainSurface();
             material.bTightSunShadow = terrain && terrain->IsTightSunShadowSurface();
+            if (terrain && terrain->IsSplatEnabled())
+            {
+                const MegaGeometry::MegaTerrainSplat& splat = terrain->Splat;
+                const TextureHandle handles[VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT] = {
+                    splat.AlbedoArrayTexture, splat.NormalArrayTexture, splat.ArmArrayTexture, splat.SplatArrayTexture};
+                for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT; ++index)
+                {
+                    material.TerrainSplatTextures[index] = ResolveMaterialTexture(textures, handles[index]);
+                    if (!material.TerrainSplatTextures[index])
+                    {
+                        for (RHI::TexturePtr& texture : material.TerrainSplatTextures)
+                        {
+                            texture.reset();
+                        }
+                        return;
+                    }
+                }
+                const uint32_t flags = (splat.bNormalTwoChannel ? TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL : 0u) |
+                    (IsTerrainAlbedoSrgbDecodeNeeded(material.TerrainSplatTextures[0].get())
+                        ? TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE : 0u);
+                // 濡れ度は Execute でフレームの値を入れる。無効な並びにはスプラットの印を付けない
+                PackTerrainSplatParams(splat, true, flags, 0.0f, material.TerrainSplatParams);
+                material.bTerrainSplat = material.TerrainSplatParams[4] > 0.5f;
+                return;
+            }
             if (!terrain || !terrain->bEnabled)
             {
                 return;
@@ -407,9 +449,11 @@ namespace NorvesLib::Core::Rendering
         m_DefaultFlatNormal.reset();
         m_DefaultBlack.reset();
         m_DefaultMidGray.reset();
+        m_DefaultTerrainSplatArray.reset();
         m_MaterialSampler.reset();
         m_MegaMaterialSampler.reset();
         m_TerrainMaterialSampler.reset();
+        m_TerrainSplatSampler.reset();
         m_ConstantGrayTextures.clear();
         m_Shader.reset();
         m_Device = nullptr;
@@ -442,7 +486,7 @@ namespace NorvesLib::Core::Rendering
     bool VisibilityResolve::EnsureMaterialDefaults()
     {
         if (m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&
-            m_MegaMaterialSampler && m_TerrainMaterialSampler)
+            m_MegaMaterialSampler && m_TerrainMaterialSampler && m_DefaultTerrainSplatArray && m_TerrainSplatSampler)
         {
             return true;
         }
@@ -489,6 +533,36 @@ namespace NorvesLib::Core::Rendering
         {
             m_DefaultMidGray = createDefault1x1("VisibilityResolveDefaultMidGray1x1", 128, 128, 128, 255);
         }
+        if (!m_DefaultTerrainSplatArray)
+        {
+            RHI::TextureDesc texDesc;
+            texDesc.Width = 1;
+            texDesc.Height = 1;
+            texDesc.ArraySize = 2;
+            texDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            texDesc.Usage = RHI::ResourceUsage::ShaderRead;
+            texDesc.DebugName = "VisibilityResolveDefaultTerrainSplatArray";
+            m_DefaultTerrainSplatArray = m_Device->CreateTexture(texDesc);
+            if (m_DefaultTerrainSplatArray)
+            {
+                const uint8_t pixel[4] = {};
+                for (uint32_t layer = 0; layer < 2u; ++layer)
+                {
+                    m_DefaultTerrainSplatArray->Update(pixel, 4, 4, 0, layer);
+                }
+            }
+        }
+        if (!m_TerrainSplatSampler)
+        {
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Linear;
+            samplerDesc.filterMag = RHI::FilterMode::Linear;
+            samplerDesc.filterMip = RHI::FilterMode::Linear;
+            samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+            m_TerrainSplatSampler = m_Device->CreateSampler(samplerDesc);
+        }
         if (!m_MaterialSampler)
         {
             RHI::SamplerDesc samplerDesc;
@@ -528,7 +602,7 @@ namespace NorvesLib::Core::Rendering
             m_TerrainMaterialSampler = m_Device->CreateSampler(samplerDesc);
         }
         return m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&
-               m_MegaMaterialSampler && m_TerrainMaterialSampler;
+               m_MegaMaterialSampler && m_TerrainMaterialSampler && m_DefaultTerrainSplatArray && m_TerrainSplatSampler;
     }
 
     RHI::TexturePtr VisibilityResolve::GetConstantGrayTexture(float value)
@@ -750,6 +824,8 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr Textures[VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT];
             RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
             float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
+            RHI::TexturePtr TerrainSplatTextures[VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT];
+            float TerrainSplatParams[TERRAIN_SPLAT_PARAM_FLOATS] = {};
             uint32_t Flags = 0;
             uint32_t Feedback[4] = {};
             bool bMegaGeometry = false;
@@ -862,6 +938,20 @@ namespace NorvesLib::Core::Rendering
                 bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_TERRAIN;
                 std::memcpy(bound.TerrainParams, input.TerrainParams, sizeof(bound.TerrainParams));
             }
+            const bool bTerrainSplat = !input.bTerrainBlend && input.bTerrainSplat;
+            for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT; ++index)
+            {
+                bound.TerrainSplatTextures[index] = bTerrainSplat ? input.TerrainSplatTextures[index] : m_DefaultTerrainSplatArray;
+                if (!bound.TerrainSplatTextures[index])
+                {
+                    return false;
+                }
+            }
+            if (bTerrainSplat)
+            {
+                bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_TERRAIN_SPLAT;
+                std::memcpy(bound.TerrainSplatParams, input.TerrainSplatParams, sizeof(bound.TerrainSplatParams));
+            }
             boundMaterials.push_back(bound);
 
             Use& use = m_Uses.Acquire();
@@ -905,11 +995,13 @@ namespace NorvesLib::Core::Rendering
             uint32_t tileParams[TileParamsWords] = {tilesX, static_cast<uint32_t>(material), bound.Flags, 0u,
                                                     bound.Feedback[0], bound.Feedback[1], bound.Feedback[2], bound.Feedback[3]};
             std::memcpy(&tileParams[8], bound.TerrainParams, sizeof(bound.TerrainParams));
+            std::memcpy(&tileParams[8u + VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS],
+                        bound.TerrainSplatParams, sizeof(bound.TerrainSplatParams));
             use.TileUniform->Update(tileParams, TileParamsBytes);
             RHI::IDescriptorSet& set = *use.TileDescriptorSet;
             // 地形の混ぜ合わせの材質は、3 層とも異方性のサンプラーで標本する（ラスタの MegaGeometryPass と同じ）
             const RHI::SamplerPtr& materialSampler =
-                (bound.Flags & VisibilityResolveGeometry::TILE_FLAG_TERRAIN) != 0u
+                (bound.Flags & (VisibilityResolveGeometry::TILE_FLAG_TERRAIN | VisibilityResolveGeometry::TILE_FLAG_TERRAIN_SPLAT)) != 0u
                     ? m_TerrainMaterialSampler
                     : (bound.bMegaGeometry ? m_MegaMaterialSampler : m_MaterialSampler);
             BindCommon(set, first.Uniform, dispatch);
@@ -925,6 +1017,12 @@ namespace NorvesLib::Core::Rendering
             {
                 set.BindTexture(TerrainTextureBindingFirst + index, bound.TerrainTextures[index]);
                 set.BindSampler(TerrainTextureBindingFirst + index, materialSampler);
+            }
+            for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT; ++index)
+            {
+                set.BindTexture(TerrainSplatBindings[index], bound.TerrainSplatTextures[index]);
+                set.BindSampler(TerrainSplatBindings[index],
+                                index == 3u ? m_TerrainSplatSampler : m_TerrainMaterialSampler);
             }
             if (m_bFeedback)
             {
@@ -1249,12 +1347,19 @@ namespace NorvesLib::Core::Rendering
             textures ? textures->GetVirtualTextureFeedbackTarget() : TextureResources::VirtualTextureFeedbackTarget{};
         dispatch.Feedback = feedbackTarget.Buffer;
         dispatch.FeedbackBytes = feedbackTarget.Bytes;
+        const Terrain::TerrainWetnessRenderData* wetnessData = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
+        const float wetness = wetnessData && std::isfinite(wetnessData->Wetness)
+            ? (wetnessData->Wetness < 0.0f ? 0.0f : (wetnessData->Wetness > 1.0f ? 1.0f : wetnessData->Wetness)) : 0.0f;
         const Container::VariableArray<VisibilityBuffer::MaterialEntry>& materialEntries = m_RasterPass->GetMaterialEntries();
         for (size_t index = 0; index < materialEntries.size(); ++index)
         {
             dispatch.Materials.push_back(
                 VisibilityResolveGeometry::MakeResolveMaterial(textures, materialEntries[index], feedbackTarget));
             AttachTerrainBlend(textures, m_RasterPass->GetMaterialTerrainBlend(index), dispatch.Materials.back());
+            if (dispatch.Materials.back().bTerrainSplat)
+            {
+                dispatch.Materials.back().TerrainSplatParams[7] = wetness;
+            }
         }
 
         // ラスタ（GBufferPass）と同じカメラの定数。前のカメラが無いときは速度を 0 にする

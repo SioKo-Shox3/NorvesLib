@@ -161,6 +161,8 @@ layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
     uvec4 vt;
     // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。VIS_TILE_FLAG_TERRAIN のときだけ読む）
     vec4 terrain[10];
+    // スプラットの層の並び（TerrainSplatParams。3 層の並びの後ろ）
+    vec4 terrainSplat[12];
 } tileParams;
 
 // tileParams.tile.z のビット（VisibilityResolvePass.h の TILE_FLAG_* と同じ）
@@ -169,6 +171,8 @@ const uint VIS_TILE_FLAG_SPARSE = 2u;  // 張ったテクスチャに sparse（V
 const uint VIS_TILE_FLAG_TERRAIN = 4u; // 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと tileParams.terrain を使う）
 const uint VIS_TILE_FLAG_TERRAIN_SURFACE = 8u; // 地形の面（混ぜ合わせの無い灰色の地形を含む。法線の A に地形の受け手を書く）
 const uint VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u; // 太陽の影を起伏に詰める地形の面（荒野。地形と影の両方の受け手の印を立てる）
+
+const uint VIS_TILE_FLAG_TERRAIN_SPLAT = 32u; // スプラットの配列の 4 枚と tileParams.terrainSplat を使う
 
 // MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
 layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
@@ -206,6 +210,12 @@ layout(set = 0, binding = VIS_TERRAIN_BINDING + 5) uniform sampler2D terrainRock
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 6) uniform sampler2D terrainSurfaceMaskTexture;
 // 地形の遠景の地図（地図の無い材質はアルベドが張られ、読まない）
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 7) uniform sampler2D terrainFarMapTexture;
+
+// TerrainBlendShading.h の TERRAIN_SPLAT_VIS_*_BINDING と同じ（dump の版でも固定）
+layout(set = 0, binding = 32) uniform sampler2DArray terrainSplatAlbedoTexture; // TERRAIN_SPLAT_VIS_ALBEDO_BINDING
+layout(set = 0, binding = 33) uniform sampler2DArray terrainSplatNormalTexture; // TERRAIN_SPLAT_VIS_NORMAL_BINDING
+layout(set = 0, binding = 34) uniform sampler2DArray terrainSplatArmTexture;    // TERRAIN_SPLAT_VIS_ARM_BINDING
+layout(set = 0, binding = 35) uniform sampler2DArray terrainSplatMapTexture;    // TERRAIN_SPLAT_VIS_SPLAT_BINDING
 
 #include "Common/SparseResidencySampling.glsl"
 // 計算シェーダーには暗黙の勾配が無いので、VT でない標本も解析的な微分で textureGrad する
@@ -700,6 +710,7 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     // （ラスタの megageometry.frag と同じ関数。位置はカメラ相対からワールドへ戻し、傾斜は補間した頂点の法線で測る。
     // 上の 1 層の標本は VT の要求にだけ使う）
     const bool bTerrain = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN) != 0u;
+    const bool bTerrainSplat = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SPLAT) != 0u;
     vec3 terrainNormal = resolved.normal;
     if (bTerrain)
     {
@@ -719,6 +730,19 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
                                      terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
                                      terrainSurfaceMaskTexture, terrainFarMapTexture, terrainSurface, bVirtualTexture,
                                      terrainNormal);
+    }
+
+    else if (bTerrainSplat)
+    {
+        TerrainSurfaceInput terrainSurface;
+        terrainSurface.WorldPosition = resolved.hitPosition + params.cameraPosition.xyz;
+        terrainSurface.WorldDx = resolved.dposdx;
+        terrainSurface.WorldDy = resolved.dposdy;
+        terrainSurface.GeometricNormal = resolved.normal;
+        terrainSurface.CameraDistance = length(resolved.hitPosition);
+        samples = ShadeTerrainSplat(MakeTerrainSplatParams(tileParams.terrainSplat),
+                                   terrainSplatAlbedoTexture, terrainSplatNormalTexture, terrainSplatArmTexture,
+                                   terrainSplatMapTexture, terrainSurface, terrainNormal);
     }
 
     // VT のフィードバック（ラスタの gbuffer.frag と同じ: アルベド・法線・ORM は POM の後の UV、高さは元の UV）
@@ -745,9 +769,9 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
 
     VisMaterialSurface surface;
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
-    surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
+    surface.normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
-    surface.receiverFlags = bTerrain || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u
+    surface.receiverFlags = bTerrain || bTerrainSplat || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u
                                 ? GBUFFER_RECEIVER_FLAG_TERRAIN
                                 : 0u;
     if ((tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW) != 0u)

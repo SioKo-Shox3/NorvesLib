@@ -10785,3 +10785,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 スプラットの層の形・並びの詰め方・束縛の番号・濡れ度の受け口を足す: 着地(直し 0 回)
 - U2 TerrainLayerBlend.glsl にスプラットの核と標本の関数を足す: 着地(直し 0 回)
 - U3 層の表（JSON）の読み込み・高さ場のスプラットの重みの取り出し・草原の層の表と Poly Haven の cook の項目を足す: 着地(直し 0 回)
+- U5 可視バッファの解決でスプラットの層を描く: 着地(直し 0 回)
