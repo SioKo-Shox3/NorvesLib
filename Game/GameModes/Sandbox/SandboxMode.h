@@ -16,6 +16,7 @@
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
+#include "Core/Public/Object/World.h"
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -47,6 +48,9 @@ namespace Game::GameModes
         /// 並列にする最小数と 1 回の取り出し数（0 は指定なし）
         uint32_t m_ParallelPoseMinCount = 0;
         uint32_t m_ParallelPoseGrain = 0;
+        /// 起動引数で上書きする前の World 設定。退出時だけ復元する。
+        NorvesLib::Core::World::PoseEvaluationParallelSettings m_PreviousPoseParallelSettings;
+        bool m_bRestorePoseParallelSettings = false;
         /// 全個体が共有するスキン資産
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_SkinnedCrowdAsset;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr

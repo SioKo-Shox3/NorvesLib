@@ -543,6 +543,27 @@ namespace Game::GameModes
         {
             CreateSkinnedCrowd(ctx, data);
         }
+        if (data.m_ParallelPose != -1 || data.m_ParallelPoseMinCount != 0 || data.m_ParallelPoseGrain != 0)
+        {
+            data.m_PreviousPoseParallelSettings = ctx.WorldRef.GetPoseEvaluationParallelSettings();
+            data.m_bRestorePoseParallelSettings = true;
+            auto settings = data.m_PreviousPoseParallelSettings;
+            if (data.m_ParallelPose != -1)
+            {
+                settings.bEnabled = data.m_ParallelPose == 1;
+            }
+            if (data.m_ParallelPoseMinCount != 0)
+            {
+                settings.MinBatchCount = data.m_ParallelPoseMinCount;
+            }
+            if (data.m_ParallelPoseGrain != 0)
+            {
+                settings.Grain = data.m_ParallelPoseGrain;
+            }
+            ctx.WorldRef.SetPoseEvaluationParallelSettings(settings);
+            LOG_INFO("sandbox: 姿勢の並列評価を設定しました（有効=%u、最小数=%u、取り出し数=%u）",
+                     settings.bEnabled ? 1u : 0u, settings.MinBatchCount, settings.Grain);
+        }
         return GameModeEnterResult::Succeeded;
     }
 
@@ -570,6 +591,11 @@ namespace Game::GameModes
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
         data.m_Rig.Leave(ctx);
         data.m_SkinnedCrowdAsset.reset();
+        if (data.m_bRestorePoseParallelSettings)
+        {
+            ctx.WorldRef.SetPoseEvaluationParallelSettings(data.m_PreviousPoseParallelSettings);
+            data.m_bRestorePoseParallelSettings = false;
+        }
         // 地面・材質・テクスチャ・カメラの実体は GameModeScope::Cleanup が返す。空は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);
         LOG_INFO("sandbox を終了します");
