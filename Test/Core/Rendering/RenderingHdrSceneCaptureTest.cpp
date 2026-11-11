@@ -7775,13 +7775,13 @@ namespace
                     return false;
                 }
             }
-            constexpr double paleMaximumDelta = 2.0;
             constexpr double defaultMinimumDelta = 20.0;
             const double paleDelta = std::abs(bright[1].Luma - shadow[1].Luma);
             const double defaultDelta = bright[0].Luma - shadow[0].Luma;
-            const bool bPalePassed = paleDelta <= paleMaximumDelta &&
-                bright[1].Luma > paleMaximumDelta && bright[1].Luma < 253.0 &&
-                shadow[1].Luma > paleMaximumDelta && shadow[1].Luma < 253.0;
+            // PaleFlat の明暗比の正式な判定は、専用の HDR 試験で行う。
+            const bool bPalePassed = paleDelta < 0.5 * defaultDelta &&
+                bright[1].Luma > 2.0 && bright[1].Luma < 253.0 &&
+                shadow[1].Luma > 2.0 && shadow[1].Luma < 253.0;
             const bool bDefaultPassed = defaultDelta >= defaultMinimumDelta;
             const bool bFurPassed = boundary[1].Luma > boundary[0].Luma;
             const bool bEyePassed = eye[0].Luma < eye[1].Luma && eye[1].Luma < eye[2].Luma;
@@ -7802,7 +7802,7 @@ namespace
             printRoi("Eye-P0=0.5", "specular", eye[1], bEyePassed);
             printRoi("Eye-P0=1", "specular", eye[2], bEyePassed);
             std::cout << "シェーディングモデル照明判定 object=PaleFlat delta=" << paleDelta
-                      << " maximum=" << paleMaximumDelta << " range=(2,253) result=" << (bPalePassed ? "PASS" : "FAIL") << "\n";
+                      << " 明暗差の上限（未満）=" << 0.5 * defaultDelta << " range=(2,253) result=" << (bPalePassed ? "PASS" : "FAIL") << "\n";
             std::cout << "シェーディングモデル照明判定 object=DefaultLit delta=" << defaultDelta
                       << " minimum=" << defaultMinimumDelta << " result=" << (bDefaultPassed ? "PASS" : "FAIL") << "\n";
             std::cout << "シェーディングモデル照明判定 object=Fur boundary_gain=" << boundary[1].Luma - boundary[0].Luma
@@ -7812,7 +7812,7 @@ namespace
                       << " minimum_exclusive=0 result=" << (bEyePassed ? "PASS" : "FAIL") << "\n";
             if (!(bPalePassed && bDefaultPassed && bFurPassed && bEyePassed))
             {
-                reason = TEXT("シェーディングモデル照明の明暗差・境目の拡散・鏡面の狭義単調増加の契約を満たしません");
+                reason = TEXT("シェーディングモデル照明の PaleFlat の明暗差が DefaultLit の半分未満かつ輝度が (2,253) 内・DefaultLit の明暗差・境目の拡散・鏡面の狭義単調増加の契約を満たしません");
                 return false;
             }
             return true;

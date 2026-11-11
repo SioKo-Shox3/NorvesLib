@@ -39,7 +39,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
-    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] x=PaleFlatの直接光・環境光の明暗差を落とす割合（0で通常、1で全部）, y=平らな直接光のn·lと影の代替値, z=アルベドを輝度へ寄せる割合, w=予約0
+    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] 予約（0）
     uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 0
     vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 0
     vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
@@ -178,7 +178,8 @@ const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE = 9u;
 const uint DEBUG_VIEW_MODE_AMBIENT_OCCLUSION = 10u;
 const uint DEBUG_VIEW_MODE_SKY_VISIBILITY = 11u;
-const uint DEBUG_VIEW_MODE_COUNT = 12u;
+const uint DEBUG_VIEW_MODE_SHADING_MODEL = 12u;
+const uint DEBUG_VIEW_MODE_COUNT = 13u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
@@ -1129,6 +1130,30 @@ void main()
         return;
     }
 
+    if (params.debugViewMode == DEBUG_VIEW_MODE_SHADING_MODEL)
+    {
+        // 後処理を通らない表示なので、表示の範囲の色をそのまま出す。
+        vec3 modelColor = vec3(1.0, 0.0, 1.0);
+        if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT)
+        {
+            modelColor = vec3(0.5, 0.5, 0.5);
+        }
+        else if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_FUR)
+        {
+            modelColor = vec3(1.0, 0.55, 0.1);
+        }
+        else if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_EYE)
+        {
+            modelColor = vec3(0.15, 0.45, 1.0);
+        }
+        else if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_PALE_FLAT)
+        {
+            modelColor = vec3(0.95, 0.95, 0.95);
+        }
+        outColor = vec4(modelColor, 1.0);
+        return;
+    }
+
     if (IsAlbedoDebugView())
     {
         outColor = vec4(albedoSample.rgb, 1.0);
@@ -1160,8 +1185,11 @@ void main()
     // 接触影を掛けない（画面の深度の比べは手前の葉と奥の葉の段で画素ごとに当たり外れになり、点の明暗に崩れる）
     bool bFoliageReceiver = GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
     ShadingModelSurface shadingSurface;
+    PaleFlatInputs pale;
     if (bShadingModelActive)
     {
+        pale = MakePaleFlatInputs(params.paleFlatColorAndWrapMin, params.paleFlatShape,
+                                  params.paleFlatAverageIrradiance);
         shadingSurface.id = normalData.shadingModelId;
         shadingSurface.p0 = GBufferDecodeP0(texture(gbufferMaterial, fragUV));
         shadingSurface.p1 = GBufferDecodeP1(texture(gbufferEmissive, fragUV));
@@ -1170,7 +1198,7 @@ void main()
         shadingSurface.roughness = roughness;
         shadingSurface.N = N;
         shadingSurface.ao = ao;
-        ApplyShadingModelSurface(shadingSurface, params.shadingModelParams[0], params.shadingModelParams[1]);
+        ApplyShadingModelSurface(shadingSurface, params.shadingModelParams[0], pale);
         albedo = shadingSurface.albedo;
         metallic = shadingSurface.metallic;
         roughness = shadingSurface.roughness;
@@ -1355,7 +1383,7 @@ void main()
             vec2 dfg = texture(brdfLUT, dfgCoordinate).rg;
             EvaluateShadingModelDirect(shadingSurface, N, V, L, H,
                                        lightColor * attenuation, dot(N, L), shadow, dfg,
-                                       params.shadingModelParams[0], params.shadingModelParams[1],
+                                       params.shadingModelParams[0], pale,
                                        Lo_diffuse, Lo_specular);
         }
         else if (bValidationLambert)
@@ -1626,15 +1654,9 @@ void main()
         {
             if (params.bIBLEnabled != 0u)
             {
-                // 6 軸の平均で、面の向きに依らない環境光の放射照度を求める。
-                flatAmbientIrradiance = (
-                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(1.0, 0.0, 0.0)), 0.0).rgb +
-                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(-1.0, 0.0, 0.0)), 0.0).rgb +
-                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, 1.0, 0.0)), 0.0).rgb +
-                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, -1.0, 0.0)), 0.0).rgb +
-                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, 0.0, 1.0)), 0.0).rgb +
-                    textureLod(diffuseIrradiance, EquirectangularUV(vec3(0.0, 0.0, -1.0)), 0.0).rgb
-                ) / 6.0 * params.ambientColor.w;
+                // 拡散照度の資源と組で届いた全球の平均照度を使う。
+                flatAmbientIrradiance = pale.bAverageIrradianceValid
+                    ? pale.averageIrradiance * params.ambientColor.w : vec3(0.0);
             }
             else
             {
@@ -1642,7 +1664,7 @@ void main()
             }
         }
         color = ShadingModelFinalize(shadingSurface, ambient, Lo_diffuse, Lo_specular,
-                                     flatAmbientIrradiance, params.shadingModelParams[0], params.shadingModelParams[1],
+                                     flatAmbientIrradiance, params.shadingModelParams[0], pale,
                                      indirectSpecular, indirectSpecularReflectance);
     }
     else

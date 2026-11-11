@@ -5428,12 +5428,9 @@ namespace NorvesLib::Core::Rendering
         params.shadingModelParams[0][2] =
             sanitizeNonNegative(constants.EyeSpecularBoostPerP0, defaults.EyeSpecularBoostPerP0);
         params.shadingModelParams[0][3] = 0.0f;
-        params.shadingModelParams[1][0] =
-            std::min(sanitizeNonNegative(constants.PaleFlatFlatten, defaults.PaleFlatFlatten), 1.0f);
-        params.shadingModelParams[1][1] =
-            sanitizeNonNegative(constants.PaleFlatDirectTerm, defaults.PaleFlatDirectTerm);
-        params.shadingModelParams[1][2] =
-            std::min(sanitizeNonNegative(constants.PaleFlatDesaturate, defaults.PaleFlatDesaturate), 1.0f);
+        params.shadingModelParams[1][0] = 0.0f;
+        params.shadingModelParams[1][1] = 0.0f;
+        params.shadingModelParams[1][2] = 0.0f;
         params.shadingModelParams[1][3] = 0.0f;
 
         using namespace NorvesLib::Math;

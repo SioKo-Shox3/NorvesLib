@@ -38,15 +38,6 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief Eye の鏡面の強さの P0 あたりの増分 */
         float EyeSpecularBoostPerP0 = 3.0f;
-
-        /** @brief PaleFlat の直接光と環境光の明暗差を落とす割合 */
-        float PaleFlatFlatten = 1.0f;
-
-        /** @brief PaleFlat の平らな直接光で n·l と影の代わりに使う値 */
-        float PaleFlatDirectTerm = 0.5f;
-
-        /** @brief PaleFlat のアルベドを輝度へ寄せる割合 */
-        float PaleFlatDesaturate = 0.5f;
     };
 
     /**

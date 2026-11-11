@@ -10791,3 +10791,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: PaleFlatShadingContractTest を足す前の 3 点（Docs/Testing.md）: (1) 反証する契約: PaleFlat の直接光の係数が Flatness 1 で N·L・影に依らず [WrapMin, 1] に収まる、Flatness 0 で Lambert（max(N·L,0)×影）と一致する、全球の平均照度が一定の放射輝度 L で πL になる、Sanitize が NaN・範囲外を既定・[0,1] へ戻す。(2) 壊れたとき撮影・ログで気づけるか: 撮影は回さない決まりで、式がずれても画面は「少し明暗がある白」のまま動くので、ログや検証レイヤーでは気づけない。(3) 失敗が黙って起きるか: 起きる。係数の範囲や πL の正規化を崩しても例外もログも出ず、白の明るさと明暗比が黙ってずれる。
 - U2 CPU の PaleFlatShadingContractTest: 着地(直し 0 回)
 - U3 GPULightingParams の末尾拡張と CreateIblResources の全球の平均照度: 着地(直し 0 回)
+- U4 PaleFlat の照明の式の置き換えと DebugViewMode::ShadingModel: 着地(直し 0 回)
