@@ -254,7 +254,7 @@ C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み�
 
 ### GPULightingParams の空の遮蔽
 
-C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体は **1104 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、追加欄をすべてゼロにする。
+C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全体は **1152 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、空の遮蔽の欄をすべてゼロにする。
 
 | オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
 |---|---|---|---|
@@ -265,6 +265,16 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体�
 | 1088 | `skyOcclusionTexelMeters: float[4]` | `vec4` | 段ごとのテクセル幅（m）。使わない段は 0 |
 
 既定の配列は初期化時に作るゼロの DDGI 照度配列と共有する。現行 RHI は層数 1 を 2D ビューとして作るため、既定は配列ビューを持つ複数層である。無効時はテクスチャを参照しない。
+
+### GPULightingParams の PaleFlat
+
+`skyOcclusionTexelMeters` の後ろの差分 +48 バイトを G10-GR65 が使う。`GPULightingParams` / `LightingParams` の全体は **1152 バイト**。
+
+| オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
+|---|---|---|---|
+| 1104 | `paleFlatColorAndWrapMin: float[4]` | `vec4` | rgb = `ConvertPaleFlatColorToLinear` で変換したリニア色、w = WrapMin |
+| 1120 | `paleFlatShape: float[4]` | `vec4` | ShadowStrength / AmbientLocalMix / SpecularScale / Flatness |
+| 1136 | `paleFlatAverageIrradiance: float[4]` | `vec4` | rgb = 選ばれた拡散照度の資源と組の全球の平均照度 E_avg（`ambientColor.w` を掛ける前）、w = 有効1・無効0。無効なら rgb も0 |
 
 ### 空の遮蔽クリップマップのチャネル
 

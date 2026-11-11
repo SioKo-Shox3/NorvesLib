@@ -74,6 +74,12 @@ Deferred pipeline の production 経路は pass pointer や `SharedResourceRegis
 `SceneView::SetupDeferredPipeline()` では production pass pointer 接続を行わない。
 `SetGBufferPass()` / `SetInputPass()` などの setter は legacy/fallback bridge 用の互換 API として残す。
 
+### IBL（環境光）
+
+全球の平均照度 E_avg は `CreateIblResources` が IBL の組ごとに CPU で求める。
+拡散照度の資源と同じ選び方で、強度（`ambientColor.w`）を掛ける前の値を照明の UBO に載せる。
+G11 の GR54 が雲量によって IBL を GPU で混ぜるときは、E_avg も同じ重みで線形に混ぜて更新する。
+
 ### スキンの転送と視錐台の絞り込み
 
 `SkinnedMeshGpuStore` の頂点バッファ（VB）とインデックスバッファ（IB）は `CPUAccessible = false` の DeviceLocal に置き、ステージングを経由して転送する。`FramePacket` のフレームリースに初めて載った資産は、RenderThread のフレームの始めに、パスの記録より前に転送する。ボーンパレットは毎フレーム書き込むため CPU から見えるメモリに置く。ログ有効時は、最初の転送で `SKINNED_MESH_MEMORY vb=<型> ib=<型>` を一度だけ出す。

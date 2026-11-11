@@ -45,6 +45,9 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
     ivec4 skyOcclusionWindowOrigin[4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
     vec4 skyOcclusionTexelMeters; // 段ごとのテクセル幅(m)
+    vec4 paleFlatColorAndWrapMin; // rgb=PaleFlat のリニア色（ConvertPaleFlatColorToLinear）、w=WrapMin
+    vec4 paleFlatShape; // x=ShadowStrength、y=AmbientLocalMix、z=SpecularScale、w=Flatness
+    vec4 paleFlatAverageIrradiance; // rgb=拡散照度の資源と組の全球の平均照度 E_avg（ambientColor.w を掛ける前）、w=有効1・無効0（rgbも0）
 } params;
 
 // ライトデータ構造
