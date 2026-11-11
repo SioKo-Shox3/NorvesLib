@@ -1781,6 +1781,7 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME CullProxiesParallelEquivalenceTest COMMAND SceneViewProxyLookupTest --test=CullProxiesParallelEquivalenceTest)
 add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
@@ -1789,6 +1790,7 @@ norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER CullProxiesParallelEquivalenceTest CullProxiesParallelEquivalenceTest.cpp
     MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
     MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )

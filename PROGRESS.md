@@ -10752,3 +10752,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 遮蔽が無効でもパスの初期化は走り、初期化に失敗すると遅延の描画の組み立てが途中で戻る（ほかの組み込みのパスと同じ扱い）。遮蔽物の列がストレージバッファの上限を超えるときと、整数のテクセルにならない追従の位置のときは、そのフレームの公開を見送る（照明は既定の配列で掛けない）。CPU の正解の積分の式は `IntegrateSkyOcclusion` と `IntegrateSkyOcclusionClipmap` の 2 か所にあり、式を変えるときは両方を直す
 - U1 SceneView のメッシュのカリングをチャンクに分けて並列に回す: 着地(直し 0 回)
 - U2 草のタイルの選択を行のチャンクに分けて並列に回し、直列との一致のケースを足す: 着地(直し 0 回)
+- U3 CullProxiesParallelEquivalenceTest を足してタスクの verify を通す: 着地(直し 0 回)
