@@ -6285,7 +6285,7 @@
 - notes: ロードマップ 1962 行「灰・光・白・残像・しがみつきの確認は専用の GameMode と検証シーンで行う」。G8 の `CombatSlice`（G8-GR17-SLICE-SMOKE）と同じく、ランチャーに載せないので起動の流れと各シーンの見た目（作業合意の絶対規則 7）は変わらない。場面ごとに引数を `GameApplicationHandler.cpp` へ足すと G10 の各項目がそのファイルでぶつかるので、引数は 1 つにして場面の表を GameMode のフォルダの中に置いた。`GameApplicationHandler.cpp` の差分は引数の解析と GameMode の登録の数行に絞る（G8 の項目も触る共有のファイル）。`needs-gr: GR01` は更新の群（ApplicationProcessor の後段）を前提にするため（G1-GR01-TICK-CONTRACT-DOC）。決まった刻みの時計（G4-GR02-FIXED-FRAME-CLOCK）がまだ無ければ、その引数は付けずに印の検査だけにする（撮影の時刻をそろえるのは後の確かめの項目で）。巨大なスキン（GR63）は試験の中の合成の fixture を使い、この場面には入れない（G10-GR63-GIANT-CHECK）。起動しての確かめは各要件の確かめの項目で行う。
 
 ## G10-GR65-PALEFLAT: シ者の均一な白（PaleFlat）を、調整できる値・全球の平均照度・専用の照明の式で仕上げ、露出と霧には従わせる
-- status: done
+- status: doing
 - after: G5-GR26-LIGHTING-MODELS, G10-SHISHA-SHOWCASE, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR65
 - needs-gr: GR26
