@@ -231,18 +231,44 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | 0 | 26 | `uniform VsmPointSampleBlock`（`std140`, `VsmPointSampleParams`） | `vsmPointBlock.point` | `BindConstantBuffer(26, vsmPointSampleUpload.Buffer, ...)` |
 | 0 | 27 | `sampler2D` | `rtgiSpecularHit` | `BindTexture(27, ...)`。このフレームの RTGI 履歴 `Depth`、または既定黒 |
 | 0 | 28 | `sampler2D` | `rtgiSpecularSky` | `BindTexture(28, ...)`。このフレームの RTGI 履歴 `Normal`、または既定黒 |
-| 0 | 29 以降 | 未割当 | 空き | このレイアウトには宣言なし |
+| 0 | 29 | `sampler2DArray` | `skyOcclusionVisibility` | `BindTexture(29, ...)`。公開済み Visibility、またはゼロの既定配列 |
+| 0 | 30 | `sampler2DArray` | `skyOcclusionAux` | `BindTexture(30, ...)`。公開済み Aux、またはゼロの既定配列 |
+| 0 | 31 以降 | 未割当 | 空き | このレイアウトには宣言なし |
 
-`LightingParams` は全 976 バイトで、末尾の `shadingModelParams` はオフセット 944、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants` であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
+`LightingParams` の `shadingModelParams` はオフセット 944（32 バイト）で、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants` であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
 
 | 要素 | x | y | z | w |
 |---|---|---|---|---|
 | `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | 予約（0） |
 | `shadingModelParams[1]` | PaleFlat の直接光と環境光の明暗差を落とす割合（0 で通常、1 で全部） | 平らな直接光で n·l と影の代わりに使う値 | アルベドを輝度へ寄せる割合 | 予約（0） |
 
-0〜28 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
+0〜30 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
 
 C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み取り専用 SSBO は `StructuredBuffer`、24 は `RWBuffer`。27・28 の履歴資源名は `Depth` / `Normal` だが、ここでは鏡面の蓄積値として使用する。`rtgiSpecularHit.gba` は当たった面が返す露出後の光の平均、`rtgiSpecularSky.a` は空へ抜けた割合である。
+
+### GPULightingParams の空の遮蔽
+
+C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体は **1104 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、追加欄をすべてゼロにする。
+
+| オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
+|---|---|---|---|
+| 976 | `skyOcclusionInfo: uint32_t[4]` | `uvec4` | 有効（1/0）/ 段の数 / 解像度 / 0 |
+| 992 | `skyOcclusionParams: float[4]` | `vec4` | Strength / DiffuseExponent / GroundHeightMeters / 0 |
+| 1008 | `skyOcclusionBounce: float[4]` | `vec4` | rgb = OccluderBounceColor × OccluderBounceIntensity、w = 0 |
+| 1024 | `skyOcclusionWindowOrigin: int32_t[4][4]` | `ivec4[4]` | 段ごとの xy = 窓の最小ワールドテクセル（X/Z）、zw = 0 |
+| 1088 | `skyOcclusionTexelMeters: float[4]` | `vec4` | 段ごとのテクセル幅（m）。使わない段は 0 |
+
+既定の配列は初期化時に作るゼロの DDGI 照度配列と共有する。現行 RHI は層数 1 を 2D ビューとして作るため、既定は配列ビューを持つ複数層である。無効時はテクスチャを参照しない。
+
+### 空の遮蔽クリップマップのチャネル
+
+各画像は R×R の 2D 配列で、層 k が段 k。テクセル幅は `BaseTexelMeters × 4^k`。窓の最小ワールドテクセルを (ox, oz) とし、[ox, ox+R) × [oz, oz+R) を覆う。中心は ((wx+0.5)·s, (wz+0.5)·s)、画像の番地は (wx mod R, wz mod R) の正の剰余である。
+
+| 画像 | 形式 | R | G | B | A |
+|---|---|---|---|---|---|
+| Occluders | RGBA32F | 地面高 G（絶対 m） | 樹冠の底 U（絶対 m） | 樹冠の頂 T（絶対 m。樹冠なしは G） | 樹冠の不透明度 κ |
+| Visibility | RGBA16F | b0 | cx | cy | cz |
+| Aux | RGBA16F | G − GroundHeightMeters | U − G | T − G | κ |
 
 ## 5. 表の更新手順
 

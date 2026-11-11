@@ -130,6 +130,10 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestInstancedMeshCountOption = TEXT("--rendering3dtest-instanced-mesh-count");
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
+        // --sky-occlusion: すべてのシーンで空の遮蔽を有効にする。
+        constexpr const TCHAR *kSkyOcclusionOption = TEXT("--sky-occlusion");
+        // --sky-occluder-demo: Rendering3DTest に空の遮蔽物を配置する。
+        constexpr const TCHAR *kSkyOccluderDemoOption = TEXT("--sky-occluder-demo");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
         constexpr const TCHAR* kAudioSmokeOption = TEXT("--audio-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
@@ -158,6 +162,8 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
+        bool s_bSkyOcclusion = false;
+        bool s_bSkyOccluderDemo = false;
         // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
         constexpr const TCHAR *kSceneOption = TEXT("--scene=");
@@ -950,6 +956,8 @@ namespace Game
         s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
+        s_bSkyOcclusion = false;
+        s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
@@ -980,6 +988,8 @@ namespace Game
         bool bHasRendering3DTestImpostorSmokeCount = false;
         bool bHasRendering3DTestInstancedMeshCount = false;
         bool bHasRendering3DTestPhysicsSmoke = false;
+        bool bHasSkyOcclusion = false;
+        bool bHasSkyOccluderDemo = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -1009,6 +1019,30 @@ namespace Game
 
                 s_bRendering3DTestPhysicsSmoke = true;
                 bHasRendering3DTestPhysicsSmoke = true;
+                continue;
+            }
+
+            if (args[i] == kSkyOcclusionOption)
+            {
+                if (bHasSkyOcclusion)
+                {
+                    LOG_ERROR("コマンドライン引数が重複しています: --sky-occlusion");
+                    return false;
+                }
+                s_bSkyOcclusion = true;
+                bHasSkyOcclusion = true;
+                continue;
+            }
+
+            if (args[i] == kSkyOccluderDemoOption)
+            {
+                if (bHasSkyOccluderDemo)
+                {
+                    LOG_ERROR("コマンドライン引数が重複しています: --sky-occluder-demo");
+                    return false;
+                }
+                s_bSkyOccluderDemo = true;
+                bHasSkyOccluderDemo = true;
                 continue;
             }
 
@@ -3511,6 +3545,15 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            // RenderWorld の設定はシーン切り替えを通して保持される。
+            if (s_bSkyOcclusion)
+            {
+                auto& renderWorld = engine->GetRenderWorld();
+                auto parameters = renderWorld.GetRenderingCoordinator().GetSkyOcclusionParameters();
+                parameters.bEnabled = true;
+                renderWorld.SetSkyOcclusionParameters(parameters);
+            }
+
             // Game の Component の毎フレームの処理を World の順序付きの系へ登録する（シーンが作る前に済ませる）
             Game::Gameplay::FollowCameraComponent::RegisterTick(engine->GetWorld());
             Game::Gameplay::QuadrupedLocomotionComponent::RegisterTick(engine->GetWorld());
@@ -5014,6 +5057,7 @@ namespace Game
         };
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
+        const bool bSkyOccluderDemo = s_bSkyOccluderDemo;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
@@ -5062,7 +5106,7 @@ namespace Game
 #endif
         registerMode(
             Rendering3DTest,
-            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
+            [this, bUseCookedModel, bPhysicsSmoke, bSkyOccluderDemo, m9WorldAcceptance,
              lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
@@ -5078,6 +5122,7 @@ namespace Game
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
+                mode->GetData().m_bSkyOccluderDemo = bSkyOccluderDemo;
                 mode->GetData().m_bHasStartupCamera = s_bRendering3DTestHasStartupCamera;
                 mode->GetData().m_StartupCameraYaw = s_Rendering3DTestStartupCamera[0];
                 mode->GetData().m_StartupCameraPitch = s_Rendering3DTestStartupCamera[1];

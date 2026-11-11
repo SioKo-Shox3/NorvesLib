@@ -392,6 +392,9 @@ namespace Game::GameModes
         uint32_t m_InstancedMeshCount = 0;
         bool m_bLayerCompositeSmoke = false;
         bool m_bPhysicsSmoke = false;
+        bool m_bSkyOccluderDemo = false;
+        bool m_bSkyOcclusionEnabledBeforeDemo = false;
+        float m_SkyOcclusionGroundHeightBeforeDemo = 0.0f;
         M8MinimalPhysicsSmoke m_M8MinimalPhysicsSmoke;
         TSharedPtr<M9WorldAcceptanceConfig> m_M9WorldAcceptance;
         NorvesLib::Core::Entity *m_pM9SkinnedObject = nullptr;
