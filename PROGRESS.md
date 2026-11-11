@@ -10703,13 +10703,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 ## 2026-11-06 G12-GR09-DETACHED-COLLIDERS（run 20261106-092851 の反復 1）
 - Done: 前回の反復で実装・試験は着地済み。評価者が枠切れ（429）で未実施だったため status が doing に戻っていた。コードは変えず、着地した HEAD で ctest 10 件を回し直して 100% Passed（`.harness/runs/20261106-092851/ctest-G12-GR09-DETACHED-COLLIDERS.txt`）を確かめ、done に戻した。
 - Next: ランナーの評価者の反証（Public API・物理の寿命の危険地帯）。アプリを起動する確かめは無い。
-- U1 カリングの記述子の配置・定数・表の形・遮蔽の定数の詰め方をパスの外から使えるようにする: 着地(直し 0 回)
-- U2 MegaGeometryInstanceCullVulkanTest の骨組みと (a) 10 万席の視錐台・距離・画素の判定、(b) 全部が外: 着地(直し 1 回)
-- U3 2 パスの遮蔽 (c)・前フレームの HZB の契約が合わない (d)・2 パス目の列の溢れ (e) と最終の確かめ: 着地(直し 0 回)
 
-## 2026-11-10 G12-GR31-CULL-CONTRACT（run 20261110-110226、完了）
-- Done: `cluster_bvh_cull.comp` 用の束縛の番号・カウンタと間接引数の並び・2 パス目の列の頭の語・段の印・席の入力・統計の語数・CullPass の値を `MegaGeometryCullUniforms.h` の `MegaGeometry::BvhCullLayout` へ移し、パスはそれを使う。`BuildCullDescriptorSetDesc`・`GPUMegaInstance`・`GPUMegaMesh` を公開し、遮蔽の欄の詰め方を `MegaGeometryPass::ApplyCullOcclusion`・`CanUsePreviousHiZ` に切り出した。2 パス目の列の語数は `BvhPass2BufferWords` で求める（値・振る舞いは同じ）
-- Done: 新設の GPU の試験 `MegaGeometryInstanceCullVulkanTest`（RHITextureUpdateVulkanTest の束。GPU・RenderingValidation、RESOURCE_LOCK NorvesLibGPU、SKIP 125）が、本番のシェーダーをパスの公開の定義で dispatch して倍精度の参照と比べる: (a) 固定の種の 10 万席（64 席の範囲）の視錐台・距離・画素の判定と、平面にちょうど接する球、(b) 全部が視錐台の外で葉の列 0・間接描画の数 0、(c) 合成の遮る面から本物の `HiZPyramid` で作った前と今の HZB で 16 姿勢の 2 パス（取りこぼし 0・両姿勢で深く隠れる席は描かない・偽の残しの割合を出力）、(d) 前の HZB の契約が合わない 3 通り（寸法・記録の飛び・エポック）で 1 パス目が遮蔽を使わず何も回さない、(e) 回す範囲の列を 2 にして溢れさせ、全部の根の見直しで取りこぼさない。validation error 0 件も試験の中で見る
-- 証拠: `.harness/runs/20261110-110226/G12-GR31-CULL-CONTRACT-verify.txt`（verify のビルド RHITextureUpdateVulkanTest・RenderingGoldenImageTest exit 0、`ctest -N` で MegaGeometryInstanceCullVulkanTest が 1 件）。numstat の 2 通りは一致
-- Next: G12-GR31-CULL-CHECK で `MegaGeometryInstanceCullVulkanTest` を装置で実行する（GPU では未実行）。アプリを起動する確かめは無い（撮影・計測の確かめは回さない決まり）
-- Notes: GPU で回していないので、(c) の「見える」の帯（距離の相対 1e-4）と「深く隠れる」の余裕（投影の矩形を max(幅, 高さ) + 16 画素広げ、深度の差 1e-5）が実機で十分かは CULL-CHECK で分かる。全部の根を見直す間接引数（2 パス目の列の先頭の 3 語）には公開の名前が無く、試験は本番の `DispatchIndirect(pass2, 0)` と同じく先頭を読む
+- U1 StreamingSystem にスコープの単位でセルを止めて結合し返す口 StopAndJoin(scopeId) を足す: 着地(直し 0 回)
+- U2 GameModeScope に TrackAsync(IGameModeAsyncWork&) と TrackStreaming を足し、Cleanup の先頭で止めて結合し、末尾で返しそびれを返す: 着地(直し 0 回)
+- U3 GameModeScopeAsyncTest を足し、タスクの verify を回す: 着地(直し 0 回)
+- Done(G12-GR40-GAMEMODE-ASYNC): `GameModeScope` に `IGameModeAsyncWork`（`CancelAndJoin`・`ReleaseUnreturned`）と `TrackAsync`（非所有）・`TrackStreaming(StreamingSystem&, StreamingScopeId)` を足した。`Cleanup` は世代を進めた直後に、追跡した仕事を後入れ先出しで止めて結合し、`StreamingSystem::StopAndJoin(scopeId)` でスコープのセルを止める。その後に今の順（Entity・メッシュ・モデル・材質・テクスチャ）で返し、最後に止めた仕事の `ReleaseUnreturned` を呼ぶ。2 回目の `Cleanup` は追跡が空なので何もしない。`StreamingSystem` は `LoadManifestFromText` にスコープの ID を受け、`StopAndJoin` がそのスコープのセルの準備を取り消して完了を待ち、準備済みを `DiscardPrepared` で 1 回だけ返し、コミット途中・常駐のセルを `UnloadStep` で同期に戻してセルを外す（全部外れたらマニフェストも外す）。試験は `GameModeScopeAsyncTest`（GameModeStateMachineTest の束）。
+- 証拠(G12-GR40-GAMEMODE-ASYNC): `.harness/runs/20261106-092852/verify-G12-GR40-GAMEMODE-ASYNC.txt`（`cmake --build build --config Debug --target GameModeStateMachineTest EntityTreeTest Game -- /m:1` の終了コード 0、ctest の 6 本 100% tests passed, 0 tests failed out of 6・終了コード 0）。アプリを起動する確かめはこの項目に無い。
+- Next(G12-GR40-GAMEMODE-ASYNC): ランナーの評価者の反証（Object・Resource の寿命の危険地帯）。実際のモードが `TrackAsync`・`TrackStreaming` を使うのは payload の項目（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）から。
+- Notes(G12-GR40-GAMEMODE-ASYNC): GPU の資源の破棄は RHI の破棄の列に任せた（選定課題 G12A-S7 の B）。`ProceduralMeshGpuStore::UnregisterMesh` は表から消すだけで、バッファのデストラクタが Unmap の後に `DeferDestroy` へ入れるので、ホスト可視のバッファも描画中に壊れない（Unmap は GPU の読みに影響しない）。
+- Notes(G12-GR40-GAMEMODE-ASYNC): 試験はメッシュとテクスチャを作らず、件数が変わらないことだけを見る（`MeshResources::Register`・`TextureResources::CreateTexture` は初期化済みのデバイスが要る）。メッシュ・テクスチャの追跡の列は材質と同じく返した後に空にするので、二重の返却は材質の検査で反証している。
+- Notes(G12-GR40-GAMEMODE-ASYNC): `StopAndJoin` の完了の印はハンドラの Prepare の後・実行器のタスクの終わりより前に立つ。戻った後にハンドラは呼ばれないが、実行器の内側の後片付けまでは待たない。`UnloadStep` が `Failed` を返したセルも、`Shutdown` と同じく外す。`GameModeScope` のデストラクタは `Cleanup` を呼ばない（前からの振る舞い）。
