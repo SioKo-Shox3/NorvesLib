@@ -6747,7 +6747,7 @@
 - notes: 設計はロードマップ 2488〜2516 行（アニメ評価の事実と P2）。今のコードの事実: 姿勢の評価は `PoseFinalize` の群の順序付きの系（`World.cpp:1504-1510` の `DispatchTickGroups(Input … PoseFinalize)`）から各 Component の `TickPoseFinalizeGroup` を直列に呼ぶ（`SkinnedMeshComponent.cpp:71-77`、`AnimatorComponent.cpp:281-285`）。GR12（G3-GR12）で `SkeletalPoseBuilder` の Prepare / Sample と Component ごとの scratch に分かれたので、並列の前提（直列の無駄を先に取る）はそろっている。GR01 の「ボーンの姿勢の確定の公開点」の後に並列の評価を置く順を保つので、GR01 と GR12 を needs-gr に入れた。決定性: 浮動小数の総和の順が変わる集約は並列にしない。画面の外・遠くの評価の間引きは GR10・GR12 の側の方針。`SkeletalAnimationSamplingTest` は 1 つの実行ファイル（`Test/Core/Rendering/CMakeLists.txt:2212-2229`）なので、ソースを足して同じ試験の中で回す。共有のファイル（`World.cpp`）は群の分配の所だけを触る。危険地帯（ジョブ・Object の寿命）なので評価者を通す。やらないこと: カリングの並列化、計測（G12-GR108-PERF-CHECK）。
 
 ## G12-GR108-CULL-PARALLEL: CPU の可視判定（メッシュのプロキシのカリングと草のタイルの選択）をチャンクに分けて並列に回し、結果の順・要素・距離を直列と同じにする
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR108
 - needs-gr: GR43
