@@ -9,6 +9,7 @@
 #include "Container/Containers.h"
 #include "Ecs/EcsCommandBuffer.h"
 #include "Ecs/EcsRenderSync.h"
+#include "Thread/FrameAsyncQueue.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -79,6 +80,35 @@ namespace NorvesLib::Core
 
         virtual void Initialize() override;
         virtual void Finalize() override;
+
+        /**
+         * @brief Component を持ち主として非同期の仕事を受け付ける。全操作は GameThread で呼ぶ。
+         * 結果の配送は World の段 Tick の先頭だけで行う。Component とその祖先が破棄予約中、
+         * または持ち主がこの World にいない場合は Rejected で破棄する。列が無いときも拒否する。
+         * Component を同じ World 内で別の Entity に付け替えた場合も、外した時点で要求を取り消す。
+         * 要求の識別子と持ち主の世代は World の初期化から終了まで有効。
+         */
+        Thread::FrameAsyncRequestId SubmitFrameAsync(Component::Component& owner,
+            Container::TUniquePtr<Thread::IFrameAsyncJob> job, int32_t priority, uint32_t ownerGeneration = 0);
+        /// Component 以外を持ち主として受け付ける。結果の配送は段 Tick の先頭だけで行い、列が無ければ Rejected で破棄する。
+        Thread::FrameAsyncRequestId SubmitFrameAsync(Thread::FrameAsyncOwner owner,
+            Container::TUniquePtr<Thread::IFrameAsyncJob> job, int32_t priority);
+        /// 要求を取り消す。通知は次の配送の点で行い、列が無ければ false を返す。
+        bool CancelFrameAsync(Thread::FrameAsyncRequestId id);
+        /// 待機中の要求の優先度を変更する。列が無ければ false を返す。
+        bool SetFrameAsyncPriority(Thread::FrameAsyncRequestId id, int32_t priority);
+        /// 持ち主の世代を登録し、古い世代の結果を無効にする。列が無ければ何もしない。
+        void SetFrameAsyncOwnerGeneration(uint64_t ownerKey, uint32_t generation);
+        /// Component 固有の持ち主の鍵を返す。
+        static uint64_t FrameAsyncOwnerKeyOf(const Component::Component& component);
+        /// Component 以外の持ち主の鍵を発行する。列が無ければ 0 を返す。鍵は World の初期化から終了まで有効。
+        uint64_t AllocateFrameAsyncOwnerKey();
+        /// GameMode の Leave にある IGameModeAsyncWork::CancelAndJoin 向けに、持ち主の要求を取り消して終了を待つ。列が無ければ何もしない。
+        void CancelFrameAsyncOwnerAndJoin(uint64_t ownerKey);
+        /// ワーカー上で同時に走る要求数の上限を設定する。0 は 1 とし、列が無いときも設定を保持する。
+        void SetFrameAsyncMaxConcurrent(uint32_t maxConcurrent);
+        /// 非同期の列の統計を返す。列が無ければ既定の値を返す。
+        Thread::FrameAsyncQueueStats GetFrameAsyncStats() const;
 
         /**
          * @brief World管理下のEntityを新規生成します
@@ -483,6 +513,9 @@ namespace NorvesLib::Core
         {
             return m_bDispatchingTicks || m_bCleaningObjects;
         }
+        Container::TUniquePtr<Thread::FrameAsyncQueue> m_FrameAsyncQueue;
+        uint32_t m_FrameAsyncMaxConcurrent = Thread::FrameAsyncQueueSettings{}.MaxConcurrent;
+        bool m_bClosingFrameAsyncQueue = false;
         uint64_t m_TickSerial = 0;
         float m_RenderInterpolationAlpha = 1;
         bool m_bRenderInterpolationAllowed = true;

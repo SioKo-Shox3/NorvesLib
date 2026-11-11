@@ -40,12 +40,30 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace NorvesLib::Core
 {
     namespace
     {
         constexpr uint32_t MaxPrefabNestedDepth = 16;
+
+        Thread::FrameAsyncRequestId RejectFrameAsyncJob(Container::TUniquePtr<Thread::IFrameAsyncJob> job)
+        {
+            if (job)
+            {
+                try
+                {
+                    job->Discard(Thread::FrameAsyncOutcome::Rejected);
+                }
+                catch (...)
+                {
+                    LOG_ERROR("非同期の要求を拒否した際に例外が発生しました");
+                }
+            }
+            return {};
+        }
+
         /// Entity::m_EcsCreateSlot の「予約なし」の値
         constexpr uint32_t kNoEntityCreateSlot = 0xFFFFFFFFu;
 
@@ -1076,6 +1094,12 @@ namespace NorvesLib::Core
             return;
         }
 
+        if (!m_FrameAsyncQueue)
+        {
+            m_FrameAsyncQueue = Container::MakeUnique<Thread::FrameAsyncQueue>(
+                nullptr, Thread::FrameAsyncQueueSettings{m_FrameAsyncMaxConcurrent});
+        }
+
         LOG_INFO("World::Initialize()");
 
         NextObjectId = 1;
@@ -1088,7 +1112,7 @@ namespace NorvesLib::Core
 
     void World::Finalize()
     {
-        if (!HasFlag(OF_Initialized))
+        if (!HasFlag(OF_Initialized) || m_bClosingFrameAsyncQueue)
         {
             return;
         }
@@ -1097,6 +1121,13 @@ namespace NorvesLib::Core
         {
             LOG_ERROR("World::Finalize cannot run during update or cleanup");
             return;
+        }
+        if (m_FrameAsyncQueue)
+        {
+            // Discard から Finalize に再入しても、Close 中の列を解放しない。
+            ScopedWorldFlag closing(m_bClosingFrameAsyncQueue);
+            m_FrameAsyncQueue->Close();
+            m_FrameAsyncQueue.reset();
         }
         EndTickCollection();
         ClearOrderedTicks();
@@ -1161,6 +1192,78 @@ namespace NorvesLib::Core
         Object::Finalize();
 
         LOG_INFO("World::Finalize() - Complete");
+    }
+
+    Thread::FrameAsyncRequestId World::SubmitFrameAsync(Component::Component& owner,
+        Container::TUniquePtr<Thread::IFrameAsyncJob> job, int32_t priority, uint32_t ownerGeneration)
+    {
+        const Entity* entity = owner.GetOwner();
+        if (!m_FrameAsyncQueue || !HasFlag(OF_Initialized) || !entity || entity->GetWorld() != this ||
+            owner.IsPendingDestroy() || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity))
+        {
+            return RejectFrameAsyncJob(std::move(job));
+        }
+        return m_FrameAsyncQueue->Submit(std::move(job), priority, {FrameAsyncOwnerKeyOf(owner), ownerGeneration});
+    }
+
+    Thread::FrameAsyncRequestId World::SubmitFrameAsync(Thread::FrameAsyncOwner owner,
+        Container::TUniquePtr<Thread::IFrameAsyncJob> job, int32_t priority)
+    {
+        if (!m_FrameAsyncQueue)
+        {
+            return RejectFrameAsyncJob(std::move(job));
+        }
+        return m_FrameAsyncQueue->Submit(std::move(job), priority, owner);
+    }
+
+    bool World::CancelFrameAsync(Thread::FrameAsyncRequestId id)
+    {
+        return m_FrameAsyncQueue && m_FrameAsyncQueue->Cancel(id);
+    }
+
+    bool World::SetFrameAsyncPriority(Thread::FrameAsyncRequestId id, int32_t priority)
+    {
+        return m_FrameAsyncQueue && m_FrameAsyncQueue->SetPriority(id, priority);
+    }
+
+    void World::SetFrameAsyncOwnerGeneration(uint64_t ownerKey, uint32_t generation)
+    {
+        if (m_FrameAsyncQueue)
+        {
+            m_FrameAsyncQueue->SetOwnerGeneration(ownerKey, generation);
+        }
+    }
+
+    uint64_t World::FrameAsyncOwnerKeyOf(const Component::Component& component)
+    {
+        return component.GetComponentId();
+    }
+
+    uint64_t World::AllocateFrameAsyncOwnerKey()
+    {
+        return m_FrameAsyncQueue ? m_FrameAsyncQueue->AllocateOwnerKey() : 0;
+    }
+
+    void World::CancelFrameAsyncOwnerAndJoin(uint64_t ownerKey)
+    {
+        if (m_FrameAsyncQueue)
+        {
+            m_FrameAsyncQueue->CancelOwnerAndJoin(ownerKey);
+        }
+    }
+
+    void World::SetFrameAsyncMaxConcurrent(uint32_t maxConcurrent)
+    {
+        m_FrameAsyncMaxConcurrent = maxConcurrent == 0 ? 1 : maxConcurrent;
+        if (m_FrameAsyncQueue)
+        {
+            m_FrameAsyncQueue->SetMaxConcurrent(m_FrameAsyncMaxConcurrent);
+        }
+    }
+
+    Thread::FrameAsyncQueueStats World::GetFrameAsyncStats() const
+    {
+        return m_FrameAsyncQueue ? m_FrameAsyncQueue->GetStats() : Thread::FrameAsyncQueueStats{};
     }
 
     bool World::AddInner(IUnknown* inner)
@@ -1521,6 +1624,16 @@ namespace NorvesLib::Core
         };
         using Context = Ecs::EcsSystemContext;
 
+        add(m_StageTick, "Tick.DeliverFrameAsync",
+            [](void* user, const Context&)
+            {
+                auto* world = static_cast<World*>(user);
+                if (world->m_FrameAsyncQueue)
+                {
+                    NorvesLib::Debug::ScopedStat statScope("World.FrameAsync.Deliver", "World");
+                    world->m_FrameAsyncQueue->DeliverCompleted();
+                }
+            });
         add(m_StageTick, "Tick.UpdateTransforms",
             [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
         add(m_StageTick, "Tick.DispatchGroups",
@@ -2204,6 +2317,10 @@ namespace NorvesLib::Core
 
     void World::InvalidateTickComponent(Component::Component& component)
     {
+        if (m_FrameAsyncQueue)
+        {
+            m_FrameAsyncQueue->CancelOwner(FrameAsyncOwnerKeyOf(component));
+        }
         RemoveOrderedTicks(component);
         for (auto& pending : m_PendingTickComponents)
         {

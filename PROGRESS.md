@@ -10857,3 +10857,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（ジョブ・RenderThread へ渡す値の危険地帯）。閾値とチャンクの大きさの既定は G12-GR108-PERF-CHECK で決める
 - Notes: 撮影・計測の確かめは回さない決まり。見た目は変わらない（既定は直列）
 - U1 優先度・取り消し・世代つきの非同期の列（FrameAsyncQueue）と列の単体の試験: 着地(直し 1 回)
+- U2 World の段の同期点での配送と、Component・World の寿命への接続: 着地(直し 1 回)

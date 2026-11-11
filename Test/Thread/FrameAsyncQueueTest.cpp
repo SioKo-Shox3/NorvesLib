@@ -1,4 +1,5 @@
 ﻿// 非同期の列の優先度、実行枠、取り消し、世代と受け渡しの一意性を確かめる。
+#include "Object/World.h"
 #include "Thread/FrameAsyncQueue.h"
 #include "Thread/JobSystem.h"
 #include "Thread/Mutex.h"
@@ -360,6 +361,184 @@ namespace
               stats.Delivered + stats.Discarded == Count, "全件を流した後の統計が一致しません");
     }
 
+    void WorldDeliveryCase()
+    {
+        std::cout << "World ケース1: Tick の先頭で配送し、Entity を生成" << std::endl;
+        using NorvesLib::Core::Entity;
+        using NorvesLib::Core::World;
+        using Component = NorvesLib::Core::Component::Component;
+        Receipt receipt;
+        Atomic<bool> bExecuted{false};
+        Entity* spawned = nullptr;
+        World world;
+        world.Initialize();
+        Entity* owner = world.SpawnEntity<Entity>();
+        Component* component = owner ? world.CreateComponent<Component>(owner) : nullptr;
+        Check(component != nullptr, "配送テストの Component を作れませんでした");
+        if (!component)
+        {
+            world.Finalize();
+            return;
+        }
+        const auto id = world.SubmitFrameAsync(*component, NewJob(receipt,
+            [&](const auto&) { bExecuted.Store(true); },
+            [&]() { spawned = world.SpawnEntity<Entity>(); }), 0);
+        Check(id.IsValid(), "World が Component の要求を受け付けませんでした");
+        Await([&]() { return bExecuted.Load(); }, "World の要求が実行されませんでした");
+        Await([&]() { return world.GetFrameAsyncStats().Completed == 1; }, "World の要求が完了しませんでした");
+        Check(receipt.Delivered == 0 && receipt.Discarded == 0 && spawned == nullptr,
+              "Tick より前に結果が通知されました");
+        world.Tick(0.016f);
+        Check(receipt.Delivered == 1 && receipt.Discarded == 0 && receipt.Destroyed == 1 && !receipt.bWrongThread,
+              "Tick の先頭で結果が一度だけ配送されませんでした");
+        Check(spawned && world.GetObjectCount() == 2 && world.FindEntityByObjectId(spawned->GetObjectId()) == spawned,
+              "配送中に生成した Entity が World にありません");
+        world.Finalize();
+    }
+
+    void WorldComponentLifetimeCase()
+    {
+        std::cout << "World ケース2: Component の破棄と持ち主の検証" << std::endl;
+        using NorvesLib::Core::Entity;
+        using NorvesLib::Core::World;
+        using Component = NorvesLib::Core::Component::Component;
+        Receipt running, pending, other, rejected, ancestorRejected, foreignRejected, uninitializedRejected;
+        Gate gate;
+        Atomic<bool> bPendingExecuted{false};
+        World world;
+        World foreignWorld;
+        foreignWorld.Initialize();
+        Entity* foreignEntity = foreignWorld.SpawnEntity<Entity>();
+        Component* foreignComponent = foreignEntity ? foreignWorld.CreateComponent<Component>(foreignEntity) : nullptr;
+        Check(foreignComponent != nullptr, "別の World の Component を作れませんでした");
+        if (!foreignComponent)
+        {
+            foreignWorld.Finalize();
+            return;
+        }
+        const auto uninitializedId = world.SubmitFrameAsync(*foreignComponent, NewJob(uninitializedRejected, EmptyExecute), 0);
+        Check(!uninitializedId.IsValid(), "未初期化の World が要求を受け付けました");
+        CheckDiscard(uninitializedRejected, FrameAsyncOutcome::Rejected);
+        world.Initialize();
+        const auto foreignId = world.SubmitFrameAsync(*foreignComponent, NewJob(foreignRejected, EmptyExecute), 0);
+        Check(!foreignId.IsValid(), "別の World の Component の要求を受け付けました");
+        CheckDiscard(foreignRejected, FrameAsyncOutcome::Rejected);
+        Entity* owner = world.SpawnEntity<Entity>();
+        Entity* otherOwner = world.SpawnEntity<Entity>();
+        Entity* ancestor = world.SpawnEntity<Entity>();
+        Entity* child = ancestor ? world.SpawnEntity<Entity>(ancestor) : nullptr;
+        Component* component = owner ? world.CreateComponent<Component>(owner) : nullptr;
+        Component* otherComponent = otherOwner ? world.CreateComponent<Component>(otherOwner) : nullptr;
+        Component* childComponent = child ? world.CreateComponent<Component>(child) : nullptr;
+        Check(component && otherComponent && childComponent, "寿命テストの Component を作れませんでした");
+        if (!component || !otherComponent || !childComponent)
+        {
+            world.Finalize();
+            foreignWorld.Finalize();
+            return;
+        }
+        ancestor->MarkForDestroy();
+        const auto ancestorId = world.SubmitFrameAsync(*childComponent, NewJob(ancestorRejected, EmptyExecute), 0);
+        Check(!ancestorId.IsValid(), "祖先が破棄予約中の要求を受け付けました");
+        CheckDiscard(ancestorRejected, FrameAsyncOutcome::Rejected);
+        world.SetFrameAsyncMaxConcurrent(1);
+        const auto runningId = world.SubmitFrameAsync(*component, NewJob(running, [&](const auto&)
+        {
+            gate.bStarted.Store(true);
+            const auto deadline = Clock::now() + std::chrono::seconds(10);
+            while (!gate.bRelease.Load() && Clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            gate.bEnded.Store(true);
+        }), 0);
+        gate.AwaitStart();
+        const auto pendingId = world.SubmitFrameAsync(*component, NewJob(pending,
+            [&](const auto&) { bPendingExecuted.Store(true); }), 0);
+        const auto otherId = world.SubmitFrameAsync(*otherComponent, NewJob(other, EmptyExecute), 0);
+        Check(runningId.IsValid() && pendingId.IsValid() && otherId.IsValid(), "寿命テストの要求が拒否されました");
+        component->MarkForDestroy();
+        const auto rejectedId = world.SubmitFrameAsync(*component, NewJob(rejected, EmptyExecute), 0);
+        Check(!rejectedId.IsValid(), "破棄予約中の Component の要求を受け付けました");
+        CheckDiscard(rejected, FrameAsyncOutcome::Rejected);
+        world.Tick(0.016f);
+        Check(!gate.bEnded.Load() && running.Delivered == 0, "回収前に塞いだ要求が終了しました");
+        gate.bRelease.Store(true);
+        Await([&]() { return gate.bEnded.Load(); }, "取り消された実行が終了しませんでした");
+        Await([&]()
+        {
+            const auto stats = world.GetFrameAsyncStats();
+            return stats.Pending == 0 && stats.Running == 0 && stats.Completed == 3;
+        }, "回収後の要求が完了しませんでした");
+        world.Tick(0.016f);
+        world.Tick(0.016f);
+        CheckDiscard(running, FrameAsyncOutcome::Cancelled);
+        CheckDiscard(pending, FrameAsyncOutcome::Cancelled);
+        Check(!bPendingExecuted.Load(), "待機中に取り消された要求が実行されました");
+        Check(other.Delivered == 1 && other.Discarded == 0 && other.Destroyed == 1 && !other.bWrongThread,
+              "別の Component の要求が配送されませんでした");
+        world.Finalize();
+        foreignWorld.Finalize();
+    }
+
+    void WorldShutdownCase()
+    {
+        std::cout << "World ケース3: 終了時に実行を待ち、再初期化" << std::endl;
+        using NorvesLib::Core::Entity;
+        using NorvesLib::Core::World;
+        using Component = NorvesLib::Core::Component::Component;
+        Receipt running, afterRestart;
+        Gate gate;
+        World world;
+        world.Initialize();
+        Entity* owner = world.SpawnEntity<Entity>();
+        Component* component = owner ? world.CreateComponent<Component>(owner) : nullptr;
+        Check(component != nullptr, "終了テストの Component を作れませんでした");
+        if (!component)
+        {
+            world.Finalize();
+            return;
+        }
+        const auto id = world.SubmitFrameAsync(*component, NewJob(running, [&](const auto&)
+        {
+            gate.bStarted.Store(true);
+            const auto deadline = Clock::now() + std::chrono::seconds(10);
+            while (!gate.bRelease.Load() && Clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            gate.bEnded.Store(true);
+        }), 0);
+        Check(id.IsValid(), "終了テストの要求が拒否されました");
+        gate.AwaitStart();
+        std::thread release([&]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            gate.bRelease.Store(true);
+        });
+        world.Finalize();
+        const bool bFinishedOnReturn = gate.bEnded.Load();
+        const bool bReleasedOnReturn = gate.bRelease.Load();
+        release.join();
+        Check(bFinishedOnReturn && bReleasedOnReturn, "World が要求の終了を待ちませんでした");
+        CheckDiscard(running, FrameAsyncOutcome::Shutdown);
+
+        world.Initialize();
+        owner = world.SpawnEntity<Entity>();
+        component = owner ? world.CreateComponent<Component>(owner) : nullptr;
+        Check(component != nullptr, "再初期化後の Component を作れませんでした");
+        if (component)
+        {
+            const auto newId = world.SubmitFrameAsync(*component, NewJob(afterRestart, EmptyExecute), 0);
+            Check(newId.IsValid(), "再初期化後の列が閉じたままです");
+            Await([&]() { return world.GetFrameAsyncStats().Completed == 1; }, "再初期化後の要求が完了しませんでした");
+            world.Tick(0.016f);
+            Check(afterRestart.Delivered == 1 && afterRestart.Discarded == 0 && afterRestart.Destroyed == 1,
+                  "再初期化後の要求が配送されませんでした");
+        }
+        world.Finalize();
+    }
+
     void AdmissionStopCase()
     {
         std::cout << "ケース7: JobSystem の受付停止" << std::endl;
@@ -391,8 +570,11 @@ int main()
     GenerationCase();
     OwnerJoinCase();
     ExactlyOnceCase();
+    WorldDeliveryCase();
+    WorldComponentLifetimeCase();
+    WorldShutdownCase();
     AdmissionStopCase();
     NorvesLib::Thread::JobSystem::Get().Shutdown();
-    std::cout << "FrameAsyncQueueTest: 7ケース、失敗数=" << Failures << std::endl;
+    std::cout << "FrameAsyncQueueTest: 10ケース、失敗数=" << Failures << std::endl;
     return Failures == 0 ? 0 : 1;
 }
