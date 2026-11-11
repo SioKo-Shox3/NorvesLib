@@ -5,3 +5,6 @@ emissive_tolerance	0.001	RGBA16Fの量子化を許容して固定の発光値を
 maximum_luma_delta	0.007843137254901961	sRGBの8bit輝度で2/255以内の表裏差を許容する
 minimum_background_luma_gain	0.1	両方の板が背景よりsRGBの8bit輝度で0.1以上明るいことを要求し暗い板同士の一致を除く
 minimum_texel_pixels	16	各テクセルの中心を境界から十分に離して読む
+hash_coverage_tolerance	0.03	16フレームの平均被覆率と77/255との差の許容値
+hash_minimum_changed_fraction	0.1	16フレーム内に被覆が変わる画素の最低割合
+hash_frame_count	16	時間方向の被覆率と位相の変化を調べる連続フレーム数

@@ -3,6 +3,14 @@
 #include "AlphaClipScenario.h"
 
 #include "FileStream/FileStream.h"
+#include "Rendering/FrameResourceOwner.h"
+#include "Rendering/RenderExtension/RenderExtension.h"
+#include "Rendering/RenderExtension/RenderExtensionData.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/ViewRenderContext.h"
+#include "RHI/ITexture.h"
+#include "Thread/Mutex.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -53,7 +61,187 @@ namespace NorvesLib::Test::RenderingValidation
                    rect.Bottom <= static_cast<int32_t>(ValidationHeight) &&
                    rect.Left < rect.Right && rect.Top < rect.Bottom;
         }
+        using namespace Core::Rendering;
+        namespace Container = Core::Container;
+        namespace RHI = NorvesLib::RHI;
+        constexpr size_t HashFrameElements = static_cast<size_t>(ValidationWidth) * ValidationHeight * 4u;
+        constexpr uint64_t HashFrameBytes = HashFrameElements * sizeof(uint16_t);
+        struct HashPhase { uint32_t Value; };
+        constexpr RenderExtensionDataKey<HashPhase> HashPhaseKey{
+            Core::Identity::Literal("Test.AlphaClip.Phase", sizeof("Test.AlphaClip.Phase") - 1)};
+
+        struct HashEvidence
+        {
+            Thread::Mutex Mutex;
+            Container::VariableArray<uint16_t> Images;
+            Container::VariableArray<uint8_t> Received;
+            uint32_t FrameCount = 0u;
+            uint32_t Count = 0u;
+            uint32_t TaaAppliedCount = 0u;
+            uint64_t FirstFrame = 0u;
+            uint64_t LastFrame = 0u;
+            bool bExpectTaa = false;
+            const char* Failure = nullptr;
+        };
+
+        void SetHashFailure(const Container::TSharedPtr<HashEvidence>& evidence, const char* reason)
+        {
+            Thread::ScopedLock lock(evidence->Mutex);
+            if (!evidence->Failure)
+            {
+                evidence->Failure = reason;
+            }
+        }
+
+        // GBuffer の生成後に生の発光をフレームの持ち主から借りた領域へ連続して写す。
+        class HashReadbackPass final : public IViewPass, public IRenderGraphPass, public IFrameReadbackReceiver
+        {
+        public:
+            explicit HashReadbackPass(const Container::TSharedPtr<HashEvidence>& evidence)
+                : m_Evidence(evidence), m_Receiver(this) {}
+            ~HashReadbackPass() override { Shutdown(); }
+            const char* GetName() const override { return "Ext.Test.AlphaClip.Readback"; }
+            bool Initialize(ViewRenderContext&) override { return true; }
+            void Shutdown() override { m_Receiver.CancelPending(); m_Pending.clear(); }
+            void Setup(ViewRenderContext&) override {}
+            void Execute(ViewRenderContext&) override {}
+
+            void Declare(RenderGraphBuilder& builder) override
+            {
+                m_Target = {};
+                const auto* context = builder.GetContext();
+                const auto* phase = context ? context->FindExtension(HashPhaseKey) : nullptr;
+                if (phase && phase->Value == 1u &&
+                    !builder.TryReadTexture(RenderGraphResourceNames::GBufferEmissive, m_Target,
+                                            RHI::ResourceState::ShaderResource))
+                {
+                    SetHashFailure(m_Evidence, "GBuffer の発光を読み戻し元に指定できません");
+                }
+                builder.PreserveInsertionOrder();
+            }
+
+            void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+            {
+                const auto* phase = context.FindExtension(HashPhaseKey);
+                if (!phase || phase->Value != 1u || !context.bDeterministicCapture)
+                {
+                    return;
+                }
+                if (context.bTemporalEpochStart && context.TemporalFrameIndex == 0u)
+                {
+                    m_bStarted = true;
+                    m_NextFrame = 0u;
+                }
+                if (!m_bStarted || m_NextFrame >= m_Evidence->FrameCount)
+                {
+                    return;
+                }
+                if (context.TemporalFrameIndex != m_NextFrame ||
+                    (m_NextFrame > 0u && context.FrameNumber != m_PreviousFrame + 1u))
+                {
+                    SetHashFailure(m_Evidence, "連続フレームの番号が飛びました");
+                    m_bStarted = false;
+                    return;
+                }
+                if (context.bTemporalAAApplied != m_Evidence->bExpectTaa)
+                {
+                    SetHashFailure(m_Evidence, "TAA の適用状態が指定と一致しません");
+                    m_bStarted = false;
+                    return;
+                }
+                const auto target = m_Target.IsValid() ? resources.GetTexture(m_Target) : RHI::TexturePtr{};
+                if (!target || target->GetWidth() != ValidationWidth || target->GetHeight() != ValidationHeight ||
+                    target->GetFormat() != RHI::Format::R16G16B16A16_FLOAT ||
+                    !context.FrameResources || !context.CommandList)
+                {
+                    SetHashFailure(m_Evidence, "GBuffer の発光または読み戻し元の寸法が不正です");
+                    m_bStarted = false;
+                    return;
+                }
+                FrameReadbackRequest request;
+                request.Receiver = &m_Receiver;
+                request.Size = HashFrameBytes;
+                const auto readback = context.FrameResources->RequestReadback(request);
+                if (!readback.IsValid())
+                {
+                    SetHashFailure(m_Evidence, "連続フレームの読み戻し先を借りられません");
+                    m_bStarted = false;
+                    return;
+                }
+                {
+                    Thread::ScopedLock lock(m_Evidence->Mutex);
+                    if (m_NextFrame == 0u)
+                    {
+                        m_Evidence->FirstFrame = context.FrameNumber;
+                    }
+                    m_Evidence->LastFrame = context.FrameNumber;
+                    m_Evidence->TaaAppliedCount += context.bTemporalAAApplied ? 1u : 0u;
+                }
+                m_PreviousFrame = context.FrameNumber;
+                m_Pending.push_back({readback.RequestId, m_NextFrame++});
+                auto* commands = context.CommandList;
+                commands->TextureBarrier(target, RHI::ResourceState::ShaderResource, RHI::ResourceState::CopySource);
+                commands->BufferBarrier(readback.Buffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+                commands->CopyTextureToBuffer(target, readback.Buffer, ValidationWidth, ValidationHeight, readback.Offset);
+                commands->BufferBarrier(readback.Buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead);
+                commands->TextureBarrier(target, RHI::ResourceState::CopySource, RHI::ResourceState::ShaderResource);
+            }
+
+            void OnFrameReadback(const FrameReadbackResult& result) override
+            {
+                for (size_t index = 0u; index < m_Pending.size(); ++index)
+                {
+                    if (m_Pending[index].RequestId != result.RequestId)
+                    {
+                        continue;
+                    }
+                    const uint32_t frame = m_Pending[index].Frame;
+                    m_Pending.erase(m_Pending.begin() + static_cast<std::ptrdiff_t>(index));
+                    Thread::ScopedLock lock(m_Evidence->Mutex);
+                    if (result.Status != FrameReadbackStatus::Delivered || !result.Data ||
+                        result.Size != HashFrameBytes || m_Evidence->Received[frame])
+                    {
+                        m_Evidence->Failure = "連続フレームの読み戻しが失敗または重複しました";
+                        return;
+                    }
+                    std::memcpy(m_Evidence->Images.data() + frame * HashFrameElements,
+                                result.Data, static_cast<size_t>(HashFrameBytes));
+                    m_Evidence->Received[frame] = 1u;
+                    ++m_Evidence->Count;
+                    return;
+                }
+                SetHashFailure(m_Evidence, "対応する読み戻し要求がありません");
+            }
+
+        private:
+            struct Pending { uint64_t RequestId; uint32_t Frame; };
+            Container::TSharedPtr<HashEvidence> m_Evidence;
+            FrameReadbackReceiver m_Receiver;
+            Container::VariableArray<Pending> m_Pending;
+            RGTextureHandle m_Target;
+            uint64_t m_PreviousFrame = 0u;
+            uint32_t m_NextFrame = 0u;
+            bool m_bStarted = false;
+        };
+
+        Container::TUniquePtr<IViewPass> CreateHashReadbackPass(void* context)
+        {
+            return Container::MakeUnique<HashReadbackPass>(*static_cast<Container::TSharedPtr<HashEvidence>*>(context));
+        }
     } // namespace
+
+    struct AlphaClipScenario::State
+    {
+        Container::TSharedPtr<HashEvidence> Evidence = Container::MakeShared<HashEvidence>();
+    };
+
+    AlphaClipScenario::AlphaClipScenario() : m_State(Container::MakeUnique<State>()) {}
+    AlphaClipScenario::~AlphaClipScenario() = default;
+
+    bool AlphaClipScenario::IsHash() const
+    {
+        return m_Kind == AlphaClipFixtureKind::HashTaa || m_Kind == AlphaClipFixtureKind::HashNoTaa;
+    }
 
     bool AlphaClipScenario::ParseArgument(const Core::Container::String& argument, Core::Container::String& reason)
     {
@@ -73,6 +261,18 @@ namespace NorvesLib::Test::RenderingValidation
         else if (argument == TEXT("--alpha-clip-scenario=opaque"))
         {
             m_Kind = AlphaClipFixtureKind::Opaque;
+        }
+        else if (argument == TEXT("--alpha-clip-scenario=skinned"))
+        {
+            m_Kind = AlphaClipFixtureKind::Skinned;
+        }
+        else if (argument == TEXT("--alpha-clip-scenario=hash-taa"))
+        {
+            m_Kind = AlphaClipFixtureKind::HashTaa;
+        }
+        else if (argument == TEXT("--alpha-clip-scenario=hash-no-taa"))
+        {
+            m_Kind = AlphaClipFixtureKind::HashNoTaa;
         }
         else
         {
@@ -152,7 +352,10 @@ namespace NorvesLib::Test::RenderingValidation
             {"emissive_tolerance", &m_EmissiveTolerance, false},
             {"maximum_luma_delta", &m_MaximumLumaDelta, false},
             {"minimum_background_luma_gain", &m_MinimumBackgroundLumaGain, false},
-            {"minimum_texel_pixels", &m_MinimumTexelPixels, false}};
+            {"minimum_texel_pixels", &m_MinimumTexelPixels, false},
+            {"hash_coverage_tolerance", &m_HashCoverageTolerance, false},
+            {"hash_minimum_changed_fraction", &m_HashMinimumChangedFraction, false},
+            {"hash_frame_count", &m_HashFrameCount, false}};
         while (char* line = takeLine())
         {
             char* value = std::strchr(line, '\t');
@@ -200,25 +403,57 @@ namespace NorvesLib::Test::RenderingValidation
             }
         }
         return m_CoverageTarget < 1.0 && m_CoverageTolerance < m_CoverageTarget &&
-               m_EmissiveTolerance < 1.0 && m_MaximumLumaDelta < 1.0 && m_MinimumBackgroundLumaGain < 1.0;
+               m_EmissiveTolerance < 1.0 && m_MaximumLumaDelta < 1.0 && m_MinimumBackgroundLumaGain < 1.0 &&
+               m_HashCoverageTolerance < 1.0 && m_HashMinimumChangedFraction < 1.0 && m_HashFrameCount == 16.0;
     }
 
     bool AlphaClipScenario::Initialize(Core::Rendering::RenderWorld& world, const RenderingValidationSceneFixture& fixture)
     {
-        (void)world;
         if (!LoadThresholds() || !fixture.ApplyAlphaClipFixture(m_Kind))
         {
             LOG_ERROR("切り抜きのしきい値または試験用シーンを準備できませんでした");
             return false;
         }
         m_Fixture = &fixture;
+        if (IsHash())
+        {
+            auto& evidence = *m_State->Evidence;
+            evidence.FrameCount = static_cast<uint32_t>(m_HashFrameCount);
+            evidence.bExpectTaa = m_Kind == AlphaClipFixtureKind::HashTaa;
+            evidence.Images.resize(static_cast<size_t>(evidence.FrameCount) * HashFrameElements);
+            evidence.Received.resize(evidence.FrameCount, 0u);
+            world.SetDeterministicCapture(true);
+            RenderExtensionDesc readback;
+            readback.Name = "Ext.Test.AlphaClip.Readback";
+            readback.Stage = RenderExtensionStage::AfterLighting;
+            if (!world.RegisterRenderExtension(readback, {CreateHashReadbackPass, &m_State->Evidence}))
+            {
+                LOG_ERROR("切り抜きの連続読み戻しパスを登録できませんでした");
+                return false;
+            }
+        }
         return true;
     }
 
-    void AlphaClipScenario::ApplyState(Core::Rendering::RenderWorld& world) const
+    void AlphaClipScenario::ApplyState(Core::Rendering::RenderWorld& world)
     {
-        world.SetMainCamera(m_Kind == AlphaClipFixtureKind::Opaque ? m_Fixture->GetCamera() :
-                                                                   m_Fixture->GetShadingModelGBufferCamera());
+        auto camera = m_Kind == AlphaClipFixtureKind::Opaque ? m_Fixture->GetCamera() :
+                                                              m_Fixture->GetShadingModelGBufferCamera();
+        if (m_Kind == AlphaClipFixtureKind::HashTaa)
+        {
+            camera.AntiAliasing = CameraAntiAliasingMode::TemporalAA;
+            camera.ExposureMode = CameraExposureMode::Manual;
+        }
+        world.SetMainCamera(camera);
+        if (IsHash())
+        {
+            world.SetExtensionData(HashPhaseKey, HashPhase{m_HashPhase});
+            if (m_HashPhase == 1u && !m_bHashEpochStarted)
+            {
+                world.BeginDeterministicEpoch();
+                m_bHashEpochStarted = true;
+            }
+        }
         auto sky = Core::Rendering::MakeDefaultSkyAtmosphereParameters();
         sky.bEnabled = false;
         world.SetSkyAtmosphere(sky);
@@ -227,7 +462,113 @@ namespace NorvesLib::Test::RenderingValidation
         world.SetVolumetricFogParameters(fog);
     }
 
-    bool AlphaClipScenario::Evaluate(const Core::Rendering::CapturedFrame& frame, Core::Container::String& reason) const
+    void AlphaClipScenario::Advance()
+    {
+        if (IsHash() && m_HashPhase == 0u)
+        {
+            m_HashPhase = 1u;
+        }
+        else if (IsHash() && m_bHashComplete)
+        {
+            m_HashPhase = 2u;
+        }
+    }
+
+    bool AlphaClipScenario::RequestFollowup(Core::Rendering::FrameCaptureRequest& request) const
+    {
+        if (!IsHash() || m_HashPhase >= 2u)
+        {
+            return false;
+        }
+        request.SourceKind = FrameCaptureSourceKind::GBufferEmissive;
+        return true;
+    }
+
+    bool AlphaClipScenario::EvaluateHash(Core::Container::String& reason)
+    {
+        auto& evidence = *m_State->Evidence;
+        Thread::ScopedLock lock(evidence.Mutex);
+        if (evidence.Failure)
+        {
+            reason = Container::String(evidence.Failure);
+            return false;
+        }
+        if (evidence.Count < evidence.FrameCount)
+        {
+            return true;
+        }
+        const auto camera = m_Fixture->GetShadingModelGBufferCamera();
+        const auto plate = ProjectPlate(AlphaClipHashPlate, camera);
+        PixelRect rect;
+        if (!MakeRect(plate, 7.0 / 8.0, rect))
+        {
+            reason = TEXT("Hash の検査領域が画像の範囲外です");
+            return false;
+        }
+        const double expectedEmissive = AlphaClipEmissiveNits * camera.PreExposure;
+        uint64_t coveredTotal = 0u;
+        uint64_t changedPixels = 0u;
+        uint64_t invalidPixels = 0u;
+        uint32_t maxCovered = 0u;
+        Container::VariableArray<uint32_t> frameCovered(evidence.FrameCount, 0u);
+        for (int32_t y = rect.Top; y < rect.Bottom; ++y)
+        {
+            for (int32_t x = rect.Left; x < rect.Right; ++x)
+            {
+                uint32_t pixelCovered = 0u;
+                for (uint32_t frame = 0u; frame < evidence.FrameCount; ++frame)
+                {
+                    const size_t offset = static_cast<size_t>(frame) * HashFrameElements +
+                        (static_cast<size_t>(y) * ValidationWidth + x) * 4u;
+                    bool bCovered = true;
+                    bool bClear = true;
+                    bool bFinite = true;
+                    for (uint32_t channel = 0u; channel < 4u; ++channel)
+                    {
+                        const double value = DecodeIeee754Binary16(evidence.Images[offset + channel]);
+                        bFinite = bFinite && std::isfinite(value);
+                        if (channel < 3u)
+                        {
+                            bCovered = bCovered && std::abs(value - expectedEmissive) <= m_EmissiveTolerance;
+                            bClear = bClear && std::abs(value) <= m_EmissiveTolerance;
+                        }
+                    }
+                    invalidPixels += (!bFinite || (!bCovered && !bClear)) ? 1u : 0u;
+                    pixelCovered += bCovered ? 1u : 0u;
+                    frameCovered[frame] += bCovered ? 1u : 0u;
+                }
+                coveredTotal += pixelCovered;
+                changedPixels += pixelCovered > 0u && pixelCovered < evidence.FrameCount ? 1u : 0u;
+            }
+        }
+        for (uint32_t count : frameCovered)
+        {
+            maxCovered = count > maxCovered ? count : maxCovered;
+        }
+        const uint32_t pixels = static_cast<uint32_t>((rect.Right - rect.Left) * (rect.Bottom - rect.Top));
+        const double coverage = static_cast<double>(coveredTotal) / (pixels * evidence.FrameCount);
+        const double changed = static_cast<double>(changedPixels) / pixels;
+        const double maxFrameCoverage = static_cast<double>(maxCovered) / pixels;
+        const double alpha = static_cast<double>(AlphaClipHashAlpha) / 255.0;
+        const bool bTaa = m_Kind == AlphaClipFixtureKind::HashTaa;
+        const bool bPassed = invalidPixels == 0u &&
+            (bTaa ? std::abs(coverage - alpha) <= m_HashCoverageTolerance &&
+                    changed >= m_HashMinimumChangedFraction && evidence.TaaAppliedCount == evidence.FrameCount :
+                    maxCovered == 0u && evidence.TaaAppliedCount == 0u);
+        LOG_INFO("Hash の判定 ALPHA_CLIP_RESULT scenario=%s frames=%u first_frame=%llu last_frame=%llu taa_applied_frames=%u coverage=%g target=%g changed_fraction=%g max_frame_coverage=%g invalid_pixels=%llu result=%s",
+                 bTaa ? "hash-taa" : "hash-no-taa", evidence.FrameCount,
+                 static_cast<unsigned long long>(evidence.FirstFrame), static_cast<unsigned long long>(evidence.LastFrame),
+                 evidence.TaaAppliedCount, coverage, alpha, changed, maxFrameCoverage,
+                 static_cast<unsigned long long>(invalidPixels), bPassed ? "PASS" : "FAIL");
+        m_bHashComplete = bPassed;
+        if (!bPassed)
+        {
+            reason = TEXT("Hash の平均被覆率、位相の変化または TAA 無しの被覆が基準を満たしません");
+        }
+        return bPassed;
+    }
+
+    bool AlphaClipScenario::Evaluate(const Core::Rendering::CapturedFrame& frame, Core::Container::String& reason)
     {
         if (!m_Fixture || !frame.IsSuccess() || frame.Width != ValidationWidth || frame.Height != ValidationHeight)
         {
@@ -238,6 +579,10 @@ namespace NorvesLib::Test::RenderingValidation
         {
             LOG_INFO("切り抜きの判定 ALPHA_CLIP_RESULT scenario=opaque captured=1 result=PASS");
             return true;
+        }
+        if (IsHash())
+        {
+            return m_HashPhase == 0u || EvaluateHash(reason);
         }
         const auto camera = m_Fixture->GetShadingModelGBufferCamera();
         if (m_Kind == AlphaClipFixtureKind::TwoSided)
@@ -332,6 +677,61 @@ namespace NorvesLib::Test::RenderingValidation
             }
             return bCovered;
         };
+        if (m_Kind == AlphaClipFixtureKind::Skinned)
+        {
+            double plateCoverage[2]{};
+            uint32_t matches[2]{};
+            double texelPixels = 0.0;
+            for (uint32_t index = 0u; index < 2u; ++index)
+            {
+                const auto plate = ProjectPlate(AlphaClipSkinnedPlates[index], camera);
+                texelPixels = plate.HalfExtent * 2.0 / 8.0;
+                PixelRect rect;
+                if (!MakeRect(plate, 7.0 / 8.0, rect))
+                {
+                    reason = TEXT("スキンの市松の検査領域が画像の範囲外です");
+                    return false;
+                }
+                uint32_t count = 0u;
+                uint32_t total = 0u;
+                for (int32_t y = rect.Top; y < rect.Bottom; ++y)
+                {
+                    for (int32_t x = rect.Left; x < rect.Right; ++x)
+                    {
+                        count += covered(x, y) ? 1u : 0u;
+                        ++total;
+                    }
+                }
+                plateCoverage[index] = static_cast<double>(count) / total;
+                for (uint32_t y = 0u; y < 8u; ++y)
+                {
+                    for (uint32_t x = 0u; x < 8u; ++x)
+                    {
+                        const int32_t px = static_cast<int32_t>(std::floor(plate.CenterX + plate.HalfExtent * ((x + 0.5) / 4.0 - 1.0)));
+                        const int32_t py = static_cast<int32_t>(std::floor(plate.CenterY - plate.HalfExtent * ((y + 0.5) / 4.0 - 1.0)));
+                        if (px < 0 || py < 0 || px >= static_cast<int32_t>(image.Width) || py >= static_cast<int32_t>(image.Height))
+                        {
+                            reason = TEXT("スキンのテクセル中心が画像の範囲外です");
+                            return false;
+                        }
+                        matches[index] += covered(px, py) == ((x + y) % 2u == 0u) ? 1u : 0u;
+                    }
+                }
+            }
+            const double delta = std::abs(plateCoverage[0] - plateCoverage[1]);
+            const bool bPassed = bFinite && texelPixels >= m_MinimumTexelPixels &&
+                std::abs(plateCoverage[0] - m_CoverageTarget) <= m_CoverageTolerance &&
+                std::abs(plateCoverage[1] - m_CoverageTarget) <= m_CoverageTolerance &&
+                delta <= m_CoverageTolerance && matches[0] == 64u && matches[1] == 64u;
+            LOG_INFO("スキンの判定 ALPHA_CLIP_RESULT scenario=skinned static_coverage=%g skinned_coverage=%g coverage_delta=%g static_texel_match=%u/64 skinned_texel_match=%u/64 texel_pixels=%g finite=%d result=%s",
+                     plateCoverage[0], plateCoverage[1], delta, matches[0], matches[1], texelPixels,
+                     bFinite ? 1 : 0, bPassed ? "PASS" : "FAIL");
+            if (!bPassed)
+            {
+                reason = TEXT("スキンと静的な市松の被覆またはテクセル中心が一致しません");
+            }
+            return bPassed;
+        }
         double coverage[3]{};
         uint32_t counts[3]{};
         uint32_t totals[3]{};

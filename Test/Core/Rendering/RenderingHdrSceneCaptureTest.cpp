@@ -3125,6 +3125,11 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_AlphaClipScenario.IsEnabled())
+            {
+                m_AlphaClipScenario.Advance();
+                return;
+            }
             if (m_SkinnedCullScenario.IsEnabled())
             {
                 m_SkinnedCullScenario.Advance();
@@ -3248,6 +3253,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_AlphaClipScenario.IsEnabled())
+            {
+                return m_AlphaClipScenario.RequestFollowup(outRequest);
+            }
             if (m_SkinnedCullScenario.IsEnabled())
             {
                 return m_SkinnedCullScenario.RequestFollowup(outRequest);

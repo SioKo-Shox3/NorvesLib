@@ -1189,6 +1189,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_R5SkinnedQuadAsset.reset();
         m_SkinnedCullGiantAsset.reset();
         m_ShadingModelSkinAsset.reset();
+        m_AlphaClipSkinAsset.reset();
         if (resources != nullptr && m_ShadingModelMegaMesh.IsValid())
         {
             resources->MegaGeometry().ReleaseMegaMesh(m_ShadingModelMegaMesh);
@@ -3241,7 +3242,7 @@ namespace NorvesLib::Test::RenderingValidation
         }
 
         TextureHandle checker;
-        if (kind == AlphaClipFixtureKind::Test)
+        if (kind == AlphaClipFixtureKind::Test || kind == AlphaClipFixtureKind::Skinned)
         {
             uint8_t pixels[8u * 8u * 4u];
             for (uint32_t y = 0u; y < 8u; ++y)
@@ -3260,6 +3261,22 @@ namespace NorvesLib::Test::RenderingValidation
             info.bInitialDataHasAllMips = true;
             info.DebugName = TEXT("RenderingValidationAlphaClipChecker");
             checker = m_pResources->Textures().CreateTexture(info, pixels, sizeof(pixels));
+            if (!checker.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackTexture(checker);
+        }
+        else if (kind == AlphaClipFixtureKind::HashTaa || kind == AlphaClipFixtureKind::HashNoTaa)
+        {
+            const uint8_t pixel[] = {255u, 255u, 255u, AlphaClipHashAlpha};
+            TextureCreateInfo info;
+            info.Width = info.Height = 1u;
+            info.MipLevels = 1u;
+            info.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            info.bInitialDataHasAllMips = true;
+            info.DebugName = TEXT("RenderingValidationAlphaClipHash");
+            checker = m_pResources->Textures().CreateTexture(info, pixel, sizeof(pixel));
             if (!checker.IsValid())
             {
                 return false;
@@ -3289,6 +3306,152 @@ namespace NorvesLib::Test::RenderingValidation
                 return false;
             }
             m_Lease.TrackMesh(handles[side]);
+        }
+
+        const bool bSkinned = kind == AlphaClipFixtureKind::Skinned;
+        const bool bHash = kind == AlphaClipFixtureKind::HashTaa || kind == AlphaClipFixtureKind::HashNoTaa;
+        if (bSkinned || bHash)
+        {
+            MaterialCreateData data;
+            data.bCastShadows = false;
+            data.Metallic = 0.0f;
+            data.Roughness = 0.7f;
+            data.EmissiveColor[0] = data.EmissiveColor[1] = data.EmissiveColor[2] = 1.0f;
+            data.EmissiveLuminanceNits = AlphaClipEmissiveNits;
+            data.AlbedoTexture = checker;
+            data.Blend = BlendMode::Masked;
+            data.AlphaClip = bHash ? AlphaClipMode::Hash : AlphaClipMode::Test;
+            data.AlphaCutoff = 0.5f;
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            const auto& plate = bSkinned ? AlphaClipSkinnedPlates[0] : AlphaClipHashPlate;
+            entity->SetPosition(plate.X, plate.Y, 0.0f);
+            entity->SetScale(plate.HalfExtent, plate.HalfExtent, 1.0f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(handles[0]);
+            mesh->SetMaterial(0u, material);
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(false);
+
+            if (bSkinned)
+            {
+                // 静的な板と同じ座標・UV・表の巻き順を、単一の骨に重み1で結ぶ。
+                Core::Container::VariableArray<Core::Skeletal::SkeletalVertex> vertices;
+                for (uint32_t index = 0u; index < 4u; ++index)
+                {
+                    Core::Skeletal::SkeletalVertex vertex{};
+                    vertex.Position.X = index % 2u == 0u ? -1.0f : 1.0f;
+                    vertex.Position.Y = index / 2u == 0u ? -1.0f : 1.0f;
+                    vertex.Normal.Z = 1.0f;
+                    vertex.TexCoord.U = static_cast<float>(index % 2u);
+                    vertex.TexCoord.V = static_cast<float>(index / 2u);
+                    vertex.JointIndices = {0u, 0u, 0u, 0u};
+                    vertex.JointWeights = {1.0f, 0.0f, 0.0f, 0.0f};
+                    vertices.push_back(vertex);
+                }
+                Core::Container::VariableArray<uint32_t> indices = {0u, 2u, 1u, 1u, 2u, 3u};
+                Core::Skeletal::SkeletalJoint joint;
+                joint.Name = TEXT("Root");
+                joint.ParentIndex = -1;
+                joint.InverseBindMatrix = {1.0f, 0.0f, 0.0f, 0.0f,
+                                           0.0f, 1.0f, 0.0f, 0.0f,
+                                           0.0f, 0.0f, 1.0f, 0.0f,
+                                           0.0f, 0.0f, 0.0f, 1.0f};
+                Core::Container::VariableArray<Core::Skeletal::SkeletalJoint> joints;
+                joints.push_back(std::move(joint));
+                Core::Skeletal::SkeletalAnimationChannel channel;
+                channel.JointIndex = 0u;
+                channel.Path = Core::Skeletal::SkeletalAnimationPath::Translation;
+                channel.Interpolation = Core::Skeletal::SkeletalAnimationInterpolation::Linear;
+                Core::Skeletal::SkeletalAnimationSample start;
+                start.TimeSeconds = 0.0f;
+                Core::Skeletal::SkeletalAnimationSample end;
+                end.TimeSeconds = 1.0f;
+                channel.Samples.push_back(start);
+                channel.Samples.push_back(end);
+                Core::Skeletal::SkeletalAnimationClip clip;
+                clip.Name = TEXT("Still");
+                clip.DurationSeconds = 1.0f;
+                clip.Channels.push_back(std::move(channel));
+                auto& registry = Core::GEngine.GetResourceRegistry();
+                auto skinMesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("AlphaClipSkinMesh"));
+                auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("AlphaClipSkeleton"));
+                auto animation = registry.CreateTransient<Core::AnimationClipResource>(TEXT("AlphaClipStill"));
+                auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("AlphaClipSkinAsset"));
+                if (!skinMesh || !skeleton || !animation || !asset)
+                {
+                    return false;
+                }
+                skinMesh->SetVertices(std::move(vertices));
+                skinMesh->SetIndices(std::move(indices));
+                skeleton->SetJoints(std::move(joints));
+                animation->SetClip(std::move(clip));
+                if (!skinMesh->Load() || !skeleton->Load() || !animation->Load())
+                {
+                    return false;
+                }
+                asset->SetResources(skinMesh, skeleton, animation);
+                if (!asset->IsLoaded())
+                {
+                    return false;
+                }
+                auto* skinEntity = m_pWorld->SpawnEntity();
+                if (skinEntity == nullptr)
+                {
+                    return false;
+                }
+                m_Objects.push_back(skinEntity);
+                const auto& skinPlate = AlphaClipSkinnedPlates[1];
+                skinEntity->SetPosition(skinPlate.X, skinPlate.Y, 0.0f);
+                skinEntity->SetScale(skinPlate.HalfExtent, skinPlate.HalfExtent, 1.0f);
+                auto* skin = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(skinEntity);
+                if (skin == nullptr)
+                {
+                    return false;
+                }
+                skin->SetSkeletalAsset(asset);
+                skin->SetMaterial(material);
+                skin->SetPlaying(false);
+                skin->SetLooping(false);
+                skin->SetAnimationTimeSeconds(0.0f);
+                skin->SetCastShadow(false);
+                skin->SetVisible(true);
+                m_AlphaClipSkinAsset = asset;
+            }
+
+            // Masked だけでは可視バッファに記録が残らないため、検査領域の外に不透明の見張りを置く。
+            auto* witness = m_pWorld->SpawnEntity();
+            if (witness == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(witness);
+            witness->SetPosition(0.0f, -3.8f, 0.0f);
+            witness->SetScale(0.1f, 0.1f, 1.0f);
+            auto* witnessMesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(witness);
+            if (witnessMesh == nullptr)
+            {
+                return false;
+            }
+            witnessMesh->SetMeshHandle(handles[0]);
+            witnessMesh->SetMaterial(0u, m_NeutralMaterial);
+            witnessMesh->SetCastShadow(false);
+            witnessMesh->SetReceiveShadow(false);
+            return true;
         }
 
         const bool bCoverage = kind == AlphaClipFixtureKind::Test;

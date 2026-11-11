@@ -10791,3 +10791,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U11 可視バッファの解決で、両面の MegaGeometry の材質の裏の面の法線を反転する: 着地(直し 1 回)
 - U6 GPU の試験 RenderingAlphaClipVulkanTest（Test の切り抜き・両面・不透明だけの作成の数）: 着地(直し 1 回)
 - U10 可視バッファのハードとソフトのラスタで、両面の区間の裏の面を描く: 着地(直し 0 回)
+- U7 RenderingAlphaClipVulkanTest にスキンの Masked と Hash・TAA の場合を足す: 着地(直し 0 回)

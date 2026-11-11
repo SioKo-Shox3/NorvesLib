@@ -256,7 +256,10 @@ namespace NorvesLib::Test::RenderingValidation
     {
         Test,
         TwoSided,
-        Opaque
+        Opaque,
+        Skinned,
+        HashTaa,
+        HashNoTaa
     };
 
     // 判定と配置で同じ板の寸法を使う。座標は正面カメラから見たワールド空間。
@@ -270,6 +273,11 @@ namespace NorvesLib::Test::RenderingValidation
         {-1.3f, 0.0f, 2.6f}, {3.0f, 1.5f, 0.6f}, {3.0f, -1.5f, 0.6f}};
     inline constexpr AlphaClipPlateSpec AlphaClipLightingPlates[] = {
         {-1.6f, 0.0f, 1.0f}, {1.6f, 0.0f, 1.0f}};
+    // 同じ大きさの四角形を左右に並べ、8×8 の各テクセルを約16画素で比較する。
+    inline constexpr AlphaClipPlateSpec AlphaClipSkinnedPlates[] = {
+        {-2.31f, 0.0f, 2.31f}, {2.31f, 0.0f, 2.31f}};
+    inline constexpr AlphaClipPlateSpec AlphaClipHashPlate = {0.0f, 0.0f, 2.6f};
+    inline constexpr uint8_t AlphaClipHashAlpha = 77u;
     inline constexpr float AlphaClipEmissiveNits = 1152.0f;
     inline constexpr float AlphaClipPlateNormalZ[] = {1.0f, -1.0f};
     inline constexpr float AlphaClipLightingDirection[] = {0.0f, 0.0f, -1.0f};
@@ -432,6 +440,7 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_R5SkinnedQuadAsset;
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_ShadingModelSkinAsset;
+        mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_AlphaClipSkinAsset;
         mutable Core::Rendering::MegaGeometry::MegaMeshHandle m_ShadingModelMegaMesh =
             Core::Rendering::MegaGeometry::MegaMeshHandle::Invalid();
         bool m_bPublished = false;
