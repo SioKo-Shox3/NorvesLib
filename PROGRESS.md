@@ -10748,3 +10748,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR108-POSE-PARALLEL): modifier の付いた Animator と、PoseFinalize に居る他の型（QuadrupedLocomotion・CharacterBody など）は区間を切るので、足の IK などを持つキャラクターが並ぶ場面では並列の効きが小さい。
 - Notes(G12-GR108-POSE-PARALLEL): 起動引数の解釈は paths の外の `Game/GameApplicationHandler.h`・`.cpp` に足した（sandbox へ値を渡す既存の経路がそこだけのため）。ロガーの非同期の待ち行列は複数のスレッドから同時に書く前提ではないので、ワーカーで走る経路（`AnimGraphInstance::Evaluate`・`SkeletalPoseBuilder::Sample`/`BuildPose`。今はログ無し）にログを足さない。
 - 要起票: `Game/GameModes/ShishaShowcase/ShishaShowcaseBaseScene.cpp:224` は `Assets/Models/M9Skinned/ValidU8Float.gltf` を元のまま `AnalyzeSkeletal` で読むが、glTF が参照する `fixture.bin`（`"uri": "fixture.bin"`）はリポジトリに無く（試験と台本が一時の置き場に都度生成する）、解析が失敗して `asset_decode_failed` で組み立てが止まる見込み（起動しての再現はしていない。ファイルの有無と参照で確認）。
+- U7 verify のビルド行で JobParallelForTest の実行ファイルも作られるようにし、タスクの verify を回し直す: 着地(直し 0 回)
