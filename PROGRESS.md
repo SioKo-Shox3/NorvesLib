@@ -10735,3 +10735,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR94-MAP-COMPOSE-COOK 反復 3): 再実行で AssetCookTextureSmoke が「--usage は albedo・normal・orm・single・height16 のどれかです」で落ちたのは、この枠の `build/` の Debug の AssetCook.exe が 11 月 3 日のまま（hdr・rg16 を受ける ae2a75f5・a12b1bee より前）だったため。コードは変えず、`cmake --build build --config Debug --target AssetCook CameraViewConstantsTest` で作り直して verify を 2 行とも通した（`.harness/runs/20261111-211659/G12-GR94-MAP-COMPOSE-COOK-verify.txt`: Ran 4 tests・OK、ctest 100% tests passed, 0 tests failed out of 3）。
 - U1 SkinnedMeshComponent の姿勢の評価を GameThread の準備・ワーカーの標本・GameThread の確定に分ける: 着地(直し 0 回)
 - U3 sandbox に開発ビルドだけの --skinned-crowd=<N> と姿勢の並列の設定の起動引数を足す: 着地(直し 0 回)
+- U2 AnimatorComponent の評価を GameThread の準備・ワーカーのグラフ評価・GameThread の確定に分ける: 着地(直し 0 回)
