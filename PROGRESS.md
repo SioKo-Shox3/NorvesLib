@@ -10744,3 +10744,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261111-213227/G5-GR30-VERTEX-ANIM-VELOCITY-verify.txt`(ビルド EXIT_CODE 0、velocity の ctest 14/14 Passed、WindShaderCompileTest 1/1 Passed)。numstat の 2 通りは一致。
 - Next: ランナーの評価者の反証(GBuffer・可視バッファ・TAA の入力・RenderThread の危険地帯)。G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA・G5-GR30-THIN-TAA-MEASURE、風の式の中身は GR46。
 - Notes: 人が見るときの見どころ: wasteland の草・低木の風の揺れが前と同じに見えること(前の時刻の基準を替えた分)、rendering3dtest で見た目が変わらないこと(頂点アニメは既定で恒等)、grassland の株の影が見えない体の通り道で曲がること(VSM の定数の並びを変えた分)。撮影・計測の確かめは回さない決まり。done-when から golden 4 本の不変は判断役が外した(絶対規則 10)。
+
+## 2026-11-11 G5-GR30-VERTEX-ANIM-VELOCITY(run 20261111-213227 の反復 2、判断待ち)
+- Notes: verify の ctest 14 本は全部通るが合計 882 秒で、ランナーの再検証の 1 コマンド 10 分の上限を超える(1 本 50〜110 秒の大半は起動。既存の 11 本だけで約 700 秒)。verify の ctest を 5・5・4 本の 3 コマンドに分ける案を判断に回した。
