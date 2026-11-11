@@ -38,15 +38,6 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief Eye の鏡面の強さの P0 あたりの増分 */
         float EyeSpecularBoostPerP0 = 3.0f;
-
-        /** @brief PaleFlat の直接光と環境光の明暗差を落とす割合 */
-        float PaleFlatFlatten = 1.0f;
-
-        /** @brief PaleFlat の平らな直接光で n·l と影の代わりに使う値 */
-        float PaleFlatDirectTerm = 0.5f;
-
-        /** @brief PaleFlat のアルベドを輝度へ寄せる割合 */
-        float PaleFlatDesaturate = 0.5f;
     };
 
     /**
@@ -592,16 +583,20 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_EnvironmentTexture; ///< HDR環境マップ（equirectangular）
         RHI::TexturePtr m_BrdfLutTexture;     ///< BRDF LUT（split-sum近似）
         RHI::TexturePtr m_DiffuseIrradianceTexture;
+        float m_AverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
         RHI::TexturePtr m_PrefilteredSpecularTexture;
         RHI::TexturePtr m_SkyAtmosphereDiffuseIrradianceTexture;
+        float m_SkyAtmosphereAverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
         RHI::TexturePtr m_SkyAtmospherePrefilteredSpecularTexture;
         /** @brief 地表から見た空の環境（視線方向の透過率込み）。RTGI・DDGIの不交差へ公開する。 */
         RHI::TexturePtr m_SkyAtmosphereEnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250EnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250DiffuseIrradianceTexture;
+        float m_ValidationRaw250AverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
         RHI::TexturePtr m_ValidationRaw250Texture;
         RHI::TexturePtr m_ValidationRaw252EnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw252DiffuseIrradianceTexture;
+        float m_ValidationRaw252AverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
         RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
         RHI::TexturePtr m_DefaultShadowMapArrayTexture;
@@ -629,6 +624,7 @@ namespace NorvesLib::Core::Rendering
         // 3 枚を退避し、一様な放射輝度から作った 3 枚を m_EnvironmentTexture などの位置に置く（選ぶ側の式は変えない）
         RHI::TexturePtr m_LoadedEnvironmentTexture;
         RHI::TexturePtr m_LoadedDiffuseIrradianceTexture;
+        float m_LoadedAverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
         RHI::TexturePtr m_LoadedPrefilteredSpecularTexture;
         bool m_bLoadedIBLAvailable = false;
         bool m_bUniformEnvironmentActive = false;

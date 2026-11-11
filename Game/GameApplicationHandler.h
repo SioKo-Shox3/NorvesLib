@@ -305,9 +305,14 @@ namespace Game
         float m_ShishaCameraOrbit = 0.0f;
         /// --shisha-scale で指定された代役の倍率。
         float m_ShishaScale = 1.0f;
-        /// カメラの周回速度と代役の倍率が指定済みか。
+        /// --shisha-sun-elevation で指定された太陽の高度（度）。
+        float m_ShishaSunElevationDegrees = 40.0f;
+        /// --shisha-overcast で曇天を指定したか。
+        bool m_bShishaOvercast = false;
+        /// 数値引数が指定済みか。
         bool m_bShishaCameraOrbitSet = false;
         bool m_bShishaScaleSet = false;
+        bool m_bShishaSunElevationSet = false;
 #endif
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;

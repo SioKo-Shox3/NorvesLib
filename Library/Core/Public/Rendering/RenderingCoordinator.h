@@ -14,6 +14,7 @@
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/PaleFlatShading.h"
 #include "Rendering/Wind.h"
 #include "Rendering/SkyOcclusion.h"
 #include "Rendering/SunShadowParameters.h"
@@ -407,6 +408,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
+        /** @brief PaleFlat の設定を GameThread で保持し、次の FramePacket へ値で渡す。 */
+        void SetPaleFlatParameters(const PaleFlatParameters& parameters);
+
         /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
         void SetWindParameters(const WindParameters& parameters);
 
@@ -734,6 +738,7 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        PaleFlatParameters m_PaleFlat = MakeDefaultPaleFlatParameters();
         WindParameters m_Wind = MakeDefaultWindParameters();
         bool m_bVertexAnimationTestDisplacement = false;
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();

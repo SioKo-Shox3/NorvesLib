@@ -920,8 +920,11 @@ namespace Game
         m_ShishaShowcaseScene = {};
         m_ShishaCameraOrbit = 0.0f;
         m_ShishaScale = 1.0f;
+        m_ShishaSunElevationDegrees = 40.0f;
+        m_bShishaOvercast = false;
         m_bShishaCameraOrbitSet = false;
         m_bShishaScaleSet = false;
+        m_bShishaSunElevationSet = false;
 #endif
         m_StartupSceneId = {};
         m_StartupSceneView = {};
@@ -1498,7 +1501,7 @@ namespace Game
                 m_DogMovementCaptureDir = dogCaptureDir;
                 continue;
             }
-            // --shisha-showcase=<場面> と周回速度・倍率は開発ビルドの専用モードに渡す。
+            // シ者の場面とカメラ・太陽・天候の指定は開発ビルドの専用モードに渡す。
             String shishaValue;
             if (args[i] == TEXT("--shisha-showcase") ||
                 TryStripPrefix(args[i], TEXT("--shisha-showcase="), shishaValue))
@@ -1575,6 +1578,48 @@ namespace Game
                 m_bShishaScaleSet = true;
 #else
                 LOG_ERROR("--shisha-scale は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            if (args[i] == TEXT("--shisha-sun-elevation") ||
+                TryStripPrefix(args[i], TEXT("--shisha-sun-elevation="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaSunElevationSet)
+                {
+                    LOG_ERROR("--shisha-sun-elevation が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(shishaValue, -10.0f, 90.0f, m_ShishaSunElevationDegrees))
+                {
+                    LOG_ERROR("--shisha-sun-elevation は −10〜90 の数（度）で指定してください");
+                    return false;
+                }
+                m_bShishaSunElevationSet = true;
+#else
+                LOG_ERROR("--shisha-sun-elevation は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            const bool bShishaOvercastFlag = args[i] == TEXT("--shisha-overcast");
+            if (bShishaOvercastFlag || TryStripPrefix(args[i], TEXT("--shisha-overcast="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaOvercast)
+                {
+                    LOG_ERROR("--shisha-overcast が重複しています");
+                    return false;
+                }
+                if (!bShishaOvercastFlag)
+                {
+                    LOG_ERROR("--shisha-overcast に値は指定できません");
+                    return false;
+                }
+                m_bShishaOvercast = true;
+#else
+                LOG_ERROR("--shisha-overcast は開発ビルドだけで使えます");
                 return false;
 #endif
                 continue;
@@ -3532,6 +3577,16 @@ namespace Game
             LOG_ERROR("--shisha-scale には --shisha-showcase が必要です");
             return false;
         }
+        if (m_bShishaSunElevationSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-sun-elevation には --shisha-showcase が必要です");
+            return false;
+        }
+        if (m_bShishaOvercast && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-overcast には --shisha-showcase が必要です");
+            return false;
+        }
 #endif
         if (m_bDogMovementAutopilot && !m_bDogMovementSmoke)
         {
@@ -5219,13 +5274,16 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
         registerMode(
             ShishaShowcase,
-            [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale](
+            [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale,
+             sunElevation = m_ShishaSunElevationDegrees, bOvercast = m_bShishaOvercast](
                 const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<ShishaShowcaseMode>();
                 mode->GetData().m_SceneName = sceneName;
                 mode->GetData().m_OrbitDegreesPerSecond = orbit;
                 mode->GetData().m_StandinScale = scale;
+                mode->GetData().m_SunElevationDegrees = sunElevation;
+                mode->GetData().m_bOvercast = bOvercast;
                 return mode;
             });
 #endif

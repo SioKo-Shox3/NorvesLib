@@ -21,6 +21,7 @@
 #include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/PaleFlatShading.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -206,7 +207,8 @@ namespace NorvesLib::Core::Rendering
                                    const char* prefilterName,
                                    RHI::TexturePtr& outEnvironment,
                                    RHI::TexturePtr& outDiffuse,
-                                   RHI::TexturePtr& outPrefilter)
+                                   RHI::TexturePtr& outPrefilter,
+                                   float outAverageIrradiance[3])
     {
         constexpr uint32_t workingWidth = 256u;
         constexpr uint32_t workingHeight = 128u;
@@ -216,6 +218,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t prefilterSamples = 1024u;
         constexpr double pi = 3.14159265358979323846;
 
+        std::fill_n(outAverageIrradiance, 3u, 0.0f);
         outEnvironment.reset();
         outDiffuse.reset();
         outPrefilter.reset();
@@ -437,6 +440,31 @@ namespace NorvesLib::Core::Rendering
                                   "working"))
         {
             return false;
+        }
+
+        double averageIrradiance[3] = {};
+        if (!ComputeEquirectangularAverageIrradiance(
+                workingData.data(), workingWidth, workingHeight, averageIrradiance))
+        {
+            return false;
+        }
+        if (bConstantSource)
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const double value = averageIrradiance[channel];
+                const double expected = diffuseExpectedRgb[channel];
+                const double relative = expected == 0.0 ? 0.0 :
+                    std::abs(value - expected) / std::abs(expected);
+                if ((expected == 0.0 && value != 0.0) ||
+                    !std::isfinite(value) || !std::isfinite(relative) || relative > 1.0e-3)
+                {
+                    NORVES_LOG_ERROR("LightingPass",
+                                     "IBL の全球の平均照度が一定の入力の πL と一致しません: channel=%u value=%g expected=%g",
+                                     channel, value, expected);
+                    return false;
+                }
+            }
         }
 
         Container::VariableArray<float> workingDirections(workingPixelCount * 3u, 0.0f);
@@ -714,6 +742,10 @@ namespace NorvesLib::Core::Rendering
         outEnvironment = environmentTexture;
         outDiffuse = diffuseTexture;
         outPrefilter = prefilterTexture;
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            outAverageIrradiance[channel] = static_cast<float>(averageIrradiance[channel]);
+        }
         return true;
     }
 
@@ -2505,20 +2537,25 @@ namespace NorvesLib::Core::Rendering
         // IBL resources
         m_LoadedEnvironmentTexture.reset();
         m_LoadedDiffuseIrradianceTexture.reset();
+        std::fill_n(m_LoadedAverageIrradiance, 3u, 0.0f);
         m_LoadedPrefilteredSpecularTexture.reset();
         m_bLoadedIBLAvailable = false;
         m_bUniformEnvironmentActive = false;
         m_EnvironmentTexture.reset();
         m_DiffuseIrradianceTexture.reset();
+        std::fill_n(m_AverageIrradiance, 3u, 0.0f);
         m_PrefilteredSpecularTexture.reset();
         m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+        std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
         m_SkyAtmospherePrefilteredSpecularTexture.reset();
         m_SkyAtmosphereEnvironmentTexture.reset();
         m_ValidationRaw250EnvironmentTexture.reset();
         m_ValidationRaw250DiffuseIrradianceTexture.reset();
+        std::fill_n(m_ValidationRaw250AverageIrradiance, 3u, 0.0f);
         m_ValidationRaw250Texture.reset();
         m_ValidationRaw252EnvironmentTexture.reset();
         m_ValidationRaw252DiffuseIrradianceTexture.reset();
+        std::fill_n(m_ValidationRaw252AverageIrradiance, 3u, 0.0f);
         m_ValidationRaw252PrefilteredSpecularTexture.reset();
         m_BrdfLutTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -5218,10 +5255,12 @@ namespace NorvesLib::Core::Rendering
             {
                 m_EnvironmentTexture = m_LoadedEnvironmentTexture;
                 m_DiffuseIrradianceTexture = m_LoadedDiffuseIrradianceTexture;
+                std::copy_n(m_LoadedAverageIrradiance, 3u, m_AverageIrradiance);
                 m_PrefilteredSpecularTexture = m_LoadedPrefilteredSpecularTexture;
                 m_bIBLAvailable = m_bLoadedIBLAvailable;
                 m_LoadedEnvironmentTexture.reset();
                 m_LoadedDiffuseIrradianceTexture.reset();
+                std::fill_n(m_LoadedAverageIrradiance, 3u, 0.0f);
                 m_LoadedPrefilteredSpecularTexture.reset();
                 m_bUniformEnvironmentActive = false;
             }
@@ -5249,6 +5288,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr environment;
         RHI::TexturePtr diffuse;
         RHI::TexturePtr prefilter;
+        float averageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 sourceData,
                                 kUniformWidth,
@@ -5258,7 +5298,8 @@ namespace NorvesLib::Core::Rendering
                                 "UniformEnvironment.PrefilteredSpecular",
                                 environment,
                                 diffuse,
-                                prefilter))
+                                prefilter,
+                                averageIrradiance))
         {
             NORVES_LOG_WARNING("LightingPass", "Uniform environment IBL generation failed; keeping static environment");
             return;
@@ -5267,11 +5308,13 @@ namespace NorvesLib::Core::Rendering
         {
             m_LoadedEnvironmentTexture = m_EnvironmentTexture;
             m_LoadedDiffuseIrradianceTexture = m_DiffuseIrradianceTexture;
+            std::copy_n(m_AverageIrradiance, 3u, m_LoadedAverageIrradiance);
             m_LoadedPrefilteredSpecularTexture = m_PrefilteredSpecularTexture;
             m_bLoadedIBLAvailable = m_bIBLAvailable;
         }
         m_EnvironmentTexture = environment;
         m_DiffuseIrradianceTexture = diffuse;
+        std::copy_n(averageIrradiance, 3u, m_AverageIrradiance);
         m_PrefilteredSpecularTexture = prefilter;
         m_bIBLAvailable = true;
         m_bUniformEnvironmentActive = true;
@@ -5290,6 +5333,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device || !sanitized.bEnabled || radianceWidth == 0u || radianceHeight == 0u)
         {
             m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+            std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
             m_SkyAtmospherePrefilteredSpecularTexture.reset();
             m_SkyAtmosphereEnvironmentTexture.reset();
             m_bSkyAtmosphereIblCacheValid = false;
@@ -5311,6 +5355,7 @@ namespace NorvesLib::Core::Rendering
         m_bSkyAtmosphereIblCacheValid = true;
         m_bSkyAtmosphereIblAvailable = false;
         m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+        std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
         m_SkyAtmospherePrefilteredSpecularTexture.reset();
         m_SkyAtmosphereEnvironmentTexture.reset();
 
@@ -5329,6 +5374,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr generatedEnvironment;
         RHI::TexturePtr generatedDiffuse;
         RHI::TexturePtr generatedPrefilter;
+        float generatedAverageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 sourceData,
                                 radianceWidth,
@@ -5338,7 +5384,8 @@ namespace NorvesLib::Core::Rendering
                                 "SkyAtmosphere.PrefilteredSpecular",
                                 generatedEnvironment,
                                 generatedDiffuse,
-                                generatedPrefilter))
+                                generatedPrefilter,
+                                generatedAverageIrradiance))
         {
             NORVES_LOG_WARNING("LightingPass",
                                "Sky atmosphere IBL generation failed; using black IBL");
@@ -5346,6 +5393,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_SkyAtmosphereDiffuseIrradianceTexture = generatedDiffuse;
+        std::copy_n(generatedAverageIrradiance, 3u, m_SkyAtmosphereAverageIrradiance);
         m_SkyAtmospherePrefilteredSpecularTexture = generatedPrefilter;
         m_SkyAtmosphereEnvironmentTexture = generatedEnvironment;
         m_bSkyAtmosphereIblAvailable =
@@ -5381,12 +5429,9 @@ namespace NorvesLib::Core::Rendering
         params.shadingModelParams[0][2] =
             sanitizeNonNegative(constants.EyeSpecularBoostPerP0, defaults.EyeSpecularBoostPerP0);
         params.shadingModelParams[0][3] = 0.0f;
-        params.shadingModelParams[1][0] =
-            std::min(sanitizeNonNegative(constants.PaleFlatFlatten, defaults.PaleFlatFlatten), 1.0f);
-        params.shadingModelParams[1][1] =
-            sanitizeNonNegative(constants.PaleFlatDirectTerm, defaults.PaleFlatDirectTerm);
-        params.shadingModelParams[1][2] =
-            std::min(sanitizeNonNegative(constants.PaleFlatDesaturate, defaults.PaleFlatDesaturate), 1.0f);
+        params.shadingModelParams[1][0] = 0.0f;
+        params.shadingModelParams[1][1] = 0.0f;
+        params.shadingModelParams[1][2] = 0.0f;
         params.shadingModelParams[1][3] = 0.0f;
 
         using namespace NorvesLib::Math;
@@ -5673,6 +5718,51 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        const PaleFlatParameters paleFlat = SanitizePaleFlatParameters(
+            context.SnapshotScene != nullptr ? context.SnapshotScene->PaleFlat : MakeDefaultPaleFlatParameters());
+        ConvertPaleFlatColorToLinear(paleFlat, params.paleFlatColorAndWrapMin);
+        params.paleFlatColorAndWrapMin[3] = paleFlat.WrapMin;
+        params.paleFlatShape[0] = paleFlat.ShadowStrength;
+        params.paleFlatShape[1] = paleFlat.AmbientLocalMix;
+        params.paleFlatShape[2] = paleFlat.SpecularScale;
+        params.paleFlatShape[3] = paleFlat.Flatness;
+
+        // 拡散照度のテクスチャと全球の平均照度を、同じ分岐で組として選ぶ。
+        struct DiffuseIrradianceSelection
+        {
+            const RHI::TexturePtr& Texture;
+            const float* AverageIrradiance;
+        };
+        const auto selectDiffuseIrradiance = [&]() -> DiffuseIrradianceSelection
+        {
+            if (bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture)
+            {
+                return {m_ValidationRaw252DiffuseIrradianceTexture, m_ValidationRaw252AverageIrradiance};
+            }
+            if (bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture)
+            {
+                return {m_ValidationRaw250DiffuseIrradianceTexture, m_ValidationRaw250AverageIrradiance};
+            }
+            if (bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture)
+            {
+                return {m_SkyAtmosphereDiffuseIrradianceTexture, m_SkyAtmosphereAverageIrradiance};
+            }
+            if (bSkyAtmosphereRequested)
+            {
+                return {m_DefaultBlackTexture, nullptr};
+            }
+            if (m_bIBLAvailable && m_DiffuseIrradianceTexture)
+            {
+                return {m_DiffuseIrradianceTexture, m_AverageIrradiance};
+            }
+            return {m_DefaultBlackTexture, nullptr};
+        };
+        const DiffuseIrradianceSelection selectedDiffuse = selectDiffuseIrradiance();
+        if (params.bIBLEnabled != 0u && selectedDiffuse.AverageIrradiance != nullptr)
+        {
+            std::copy_n(selectedDiffuse.AverageIrradiance, 3u, params.paleFlatAverageIrradiance);
+            params.paleFlatAverageIrradiance[3] = 1.0f;
+        }
         outParams = params;
 
         // RTGI・DDGIの不交差は、IBLと同じ地表から見た空（視線方向の透過率込み）を引く。
@@ -5686,16 +5776,7 @@ namespace NorvesLib::Core::Rendering
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
         const RHI::SamplerPtr& environmentRadianceSampler =
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler;
-        const RHI::TexturePtr& diffuseIrradiance =
-            bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture ?
-                m_ValidationRaw252DiffuseIrradianceTexture :
-            bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
-                m_ValidationRaw250DiffuseIrradianceTexture :
-            bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture ?
-                m_SkyAtmosphereDiffuseIrradianceTexture :
-            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
-            m_bIBLAvailable && m_DiffuseIrradianceTexture ?
-                m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
+        const RHI::TexturePtr& diffuseIrradiance = selectedDiffuse.Texture;
         const RHI::TexturePtr& prefilteredSpecular =
             bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
                 m_ValidationRaw252PrefilteredSpecularTexture :
@@ -5751,6 +5832,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr environmentTexture;
         RHI::TexturePtr diffuseTexture;
         RHI::TexturePtr prefilterTexture;
+        float averageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 sourceData,
                                 sourceWidth,
@@ -5760,7 +5842,8 @@ namespace NorvesLib::Core::Rendering
                                 "PrefilteredSpecular",
                                 environmentTexture,
                                 diffuseTexture,
-                                prefilterTexture))
+                                prefilterTexture,
+                                averageIrradiance))
         {
             NORVES_LOG_ERROR("LightingPass",
                              "Failed to create environment source or derived IBL resources");
@@ -5769,6 +5852,7 @@ namespace NorvesLib::Core::Rendering
 
         m_EnvironmentTexture = environmentTexture;
         m_DiffuseIrradianceTexture = diffuseTexture;
+        std::copy_n(averageIrradiance, 3u, m_AverageIrradiance);
         m_PrefilteredSpecularTexture = prefilterTexture;
         m_EnvironmentMipLevels = 1u;
         NORVES_LOG_INFO("LightingPass", "Environment source and derived IBL resources created");
@@ -5811,6 +5895,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr nonconstantEnvironment;
         RHI::TexturePtr nonconstantDiffuse;
         RHI::TexturePtr nonconstantPrefilter;
+        float nonconstantAverageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 nonconstantSource,
                                 width,
@@ -5820,7 +5905,8 @@ namespace NorvesLib::Core::Rendering
                                 "ValidationRaw250Prefilter",
                                 nonconstantEnvironment,
                                 nonconstantDiffuse,
-                                nonconstantPrefilter))
+                                nonconstantPrefilter,
+                                nonconstantAverageIrradiance))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create raw250 validation snapshots");
             return false;
@@ -5829,6 +5915,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr constantEnvironment;
         RHI::TexturePtr constantDiffuse;
         RHI::TexturePtr constantPrefilter;
+        float constantAverageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 constantSource,
                                 width,
@@ -5838,7 +5925,8 @@ namespace NorvesLib::Core::Rendering
                                 "ValidationRaw252Prefilter",
                                 constantEnvironment,
                                 constantDiffuse,
-                                constantPrefilter))
+                                constantPrefilter,
+                                constantAverageIrradiance))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create raw252 validation snapshots");
             return false;
@@ -5846,9 +5934,11 @@ namespace NorvesLib::Core::Rendering
 
         m_ValidationRaw250EnvironmentTexture = nonconstantEnvironment;
         m_ValidationRaw250DiffuseIrradianceTexture = nonconstantDiffuse;
+        std::copy_n(nonconstantAverageIrradiance, 3u, m_ValidationRaw250AverageIrradiance);
         m_ValidationRaw250Texture = nonconstantPrefilter;
         m_ValidationRaw252EnvironmentTexture = constantEnvironment;
         m_ValidationRaw252DiffuseIrradianceTexture = constantDiffuse;
+        std::copy_n(constantAverageIrradiance, 3u, m_ValidationRaw252AverageIrradiance);
         m_ValidationRaw252PrefilteredSpecularTexture = constantPrefilter;
         return true;
     }

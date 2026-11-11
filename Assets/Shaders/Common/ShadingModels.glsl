@@ -2,6 +2,8 @@
 #ifndef NORVES_SHADING_MODELS_GLSL
 #define NORVES_SHADING_MODELS_GLSL
 
+#include "Common/PaleFlatShading.glsl"
+
 struct ShadingModelSurface
 {
     uint id;
@@ -14,16 +16,14 @@ struct ShadingModelSurface
     float ao;
 };
 
-/// 光源の評価前に面を補正する。c1.z は輝度へ寄せる割合、c1.x は明暗差を落とす割合。
-void ApplyShadingModelSurface(inout ShadingModelSurface s, vec4 c0, vec4 c1)
+/// 光源の評価前に PaleFlat の色・金属度・粗さを設定し、AO は保持する。
+void ApplyShadingModelSurface(inout ShadingModelSurface s, vec4 c0, PaleFlatInputs pale)
 {
     if (s.id == GBUFFER_SHADING_MODEL_PALE_FLAT)
     {
-        float luminance = dot(s.albedo, vec3(0.2126, 0.7152, 0.0722));
-        s.albedo = mix(s.albedo, vec3(luminance), c1.z);
+        s.albedo = pale.color;
         s.metallic = 0.0;
         s.roughness = 1.0;
-        s.ao = mix(s.ao, 1.0, c1.x);
     }
 }
 
@@ -34,11 +34,11 @@ float ShadingModelSpecularRoughness(ShadingModelSurface s, vec4 c0)
 }
 
 /// 直接光を加算する。c0.x は Fur の wrap、c0.z は Eye の湿り P0 あたりの鏡面増分。
-/// c1.x は PaleFlat の明暗差を落とす割合、c1.y は平らな直接光の n·l と影の代替値。
+/// PaleFlat は専用の直接光の係数と、独立した鏡面の倍率を使う。
 void EvaluateShadingModelDirect(ShadingModelSurface s,
                                 vec3 N, vec3 V, vec3 L, vec3 H,
                                 vec3 lightRadiance, float NdotLSigned, float shadow,
-                                vec2 dfg, vec4 c0, vec4 c1,
+                                vec2 dfg, vec4 c0, PaleFlatInputs pale,
                                 inout vec3 diffuse, inout vec3 specular)
 {
     vec3 diffuseBrdf;
@@ -63,8 +63,8 @@ void EvaluateShadingModelDirect(ShadingModelSurface s,
     else if (s.id == GBUFFER_SHADING_MODEL_PALE_FLAT)
     {
         diffuse += EvaluateLambertDiffuseBRDF(s.albedo) * lightRadiance *
-                   mix(NdotL * shadow, c1.y, c1.x);
-        specular += specularBrdf * lightRadiance * NdotL * shadow * (1.0 - c1.x);
+                   EvaluatePaleFlatDirectFactor(NdotLSigned, shadow, pale);
+        specular += specularBrdf * lightRadiance * max(NdotLSigned, 0.0) * shadow * pale.specularScale;
     }
     else
     {
@@ -74,18 +74,21 @@ void EvaluateShadingModelDirect(ShadingModelSurface s,
     }
 }
 
-/// 露出前の色を返す。c1.x は PaleFlat の環境光を平らにし、間接鏡面を減らす割合。
+/// 露出前の色を返す。PaleFlat は平均照度と局所の拡散を混ぜ、間接鏡面に倍率を掛ける。
 vec3 ShadingModelFinalize(ShadingModelSurface s,
                           vec3 ambient, vec3 directDiffuse, vec3 directSpecular,
-                          vec3 flatAmbientIrradiance, vec4 c0, vec4 c1,
+                          vec3 flatAmbientIrradiance, vec4 c0, PaleFlatInputs pale,
                           inout vec3 indirectSpecular,
                           inout vec3 indirectSpecularReflectance)
 {
     if (s.id == GBUFFER_SHADING_MODEL_PALE_FLAT)
     {
-        ambient = mix(ambient, s.albedo / PI * flatAmbientIrradiance, c1.x);
-        indirectSpecular *= 1.0 - c1.x;
-        indirectSpecularReflectance *= 1.0 - c1.x;
+        vec3 localDiffuse = max(ambient - indirectSpecular, vec3(0.0));
+        vec3 uniformDiffuse = s.albedo / PI * flatAmbientIrradiance;
+        vec3 diffuseAmbient = mix(uniformDiffuse, localDiffuse, EvaluatePaleFlatAmbientLocalWeight(pale));
+        indirectSpecular *= pale.specularScale;
+        indirectSpecularReflectance *= pale.specularScale;
+        ambient = diffuseAmbient + indirectSpecular;
     }
     return ambient + directDiffuse + directSpecular;
 }

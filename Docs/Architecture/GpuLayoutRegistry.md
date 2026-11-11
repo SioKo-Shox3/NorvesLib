@@ -54,6 +54,9 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 | 4〜15 | 予約 | 予約 | 未割当 | 未割当 | 未割当 |
 
 ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0 のみで、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
+PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係数は `mix(max(NdotL, 0) * shadow, mix(WrapMin, 1, clamp(NdotL * 0.5 + 0.5, 0, 1) * mix(1, shadow, ShadowStrength)), Flatness)`（shadow は 0〜1 に補正）とする。
+環境光の拡散は `Color / PI * flatAmbientIrradiance` と AO・RTGI・DDGI・空の遮蔽を含む局所の拡散を `mix(1, AmbientLocalMix, Flatness)` の重みで混ぜる。`flatAmbientIrradiance` は IBL が有効なら `E_avg * ambientColor.w`（平均照度が無効なら 0）、IBL が無効なら `ambientColor.rgb * ambientColor.w * PI` とする。
+直接・間接の鏡面と間接鏡面の反射率には、それぞれ `SpecularScale` を掛ける。
 
 印の値はシフト前のビットマスク。複数を OR で併用できる。
 
@@ -254,12 +257,12 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | 0 | 30 | `sampler2DArray` | `skyOcclusionAux` | `BindTexture(30, ...)`。公開済み Aux、またはゼロの既定配列 |
 | 0 | 31 以降 | 未割当 | 空き | このレイアウトには宣言なし |
 
-`LightingParams` の `shadingModelParams` はオフセット 944（32 バイト）で、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants` であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
+`LightingParams` の `shadingModelParams` はオフセット 944（32 バイト）で、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。Fur・Eye の C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants`（`FurWrap`・`FurMinSpecularRoughness`・`EyeSpecularBoostPerP0`）であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
 
 | 要素 | x | y | z | w |
 |---|---|---|---|---|
 | `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | 予約（0） |
-| `shadingModelParams[1]` | PaleFlat の直接光と環境光の明暗差を落とす割合（0 で通常、1 で全部） | 平らな直接光で n·l と影の代わりに使う値 | アルベドを輝度へ寄せる割合 | 予約（0） |
+| `shadingModelParams[1]` | 予約（0）。PaleFlat は `paleFlatColorAndWrapMin`・`paleFlatShape`・`paleFlatAverageIrradiance` を使う | 予約（0） | 予約（0） | 予約（0） |
 
 0〜30 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
 
@@ -267,7 +270,7 @@ C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み�
 
 ### GPULightingParams の空の遮蔽
 
-C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体は **1104 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、追加欄をすべてゼロにする。
+C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全体は **1152 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、空の遮蔽の欄をすべてゼロにする。
 
 | オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
 |---|---|---|---|
@@ -278,6 +281,16 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の末尾。全体�
 | 1088 | `skyOcclusionTexelMeters: float[4]` | `vec4` | 段ごとのテクセル幅（m）。使わない段は 0 |
 
 既定の配列は初期化時に作るゼロの DDGI 照度配列と共有する。現行 RHI は層数 1 を 2D ビューとして作るため、既定は配列ビューを持つ複数層である。無効時はテクスチャを参照しない。
+
+### GPULightingParams の PaleFlat
+
+`skyOcclusionTexelMeters` の後ろの差分 +48 バイトを G10-GR65 が使う。`GPULightingParams` / `LightingParams` の全体は **1152 バイト**。
+
+| オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
+|---|---|---|---|
+| 1104 | `paleFlatColorAndWrapMin: float[4]` | `vec4` | rgb = `ConvertPaleFlatColorToLinear` で変換したリニア色、w = WrapMin |
+| 1120 | `paleFlatShape: float[4]` | `vec4` | ShadowStrength / AmbientLocalMix / SpecularScale / Flatness |
+| 1136 | `paleFlatAverageIrradiance: float[4]` | `vec4` | rgb = 選ばれた拡散照度の資源と組の全球の平均照度 E_avg（`ambientColor.w` を掛ける前）、w = 有効1・無効0。無効なら rgb も0 |
 
 ### 空の遮蔽クリップマップのチャネル
 

@@ -10,6 +10,7 @@
 #include "SunShadowParameters.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
+#include "PaleFlatShading.h"
 #include "Wind.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
@@ -580,6 +581,8 @@ namespace NorvesLib::Core::Rendering
         float AmbientIntensity = 1.0f;
         SkyAtmosphereParameters SkyAtmosphere;
         VolumetricFogParameters VolumetricFog;
+        // PaleFlat の画素の見え方をフレームごとに値で保持する。
+        PaleFlatParameters PaleFlat = MakeDefaultPaleFlatParameters();
         // 世界で共通の風。SceneRevision には含めない。
         WindParameters Wind = MakeDefaultWindParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
@@ -637,6 +640,7 @@ namespace NorvesLib::Core::Rendering
             DDGIVolume = MakeDefaultDDGIVolumeParameters();
             SkyAtmosphere = SkyAtmosphereParameters{};
             VolumetricFog = MakeDefaultVolumetricFogParameters();
+            PaleFlat = MakeDefaultPaleFlatParameters();
             Wind = MakeDefaultWindParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
@@ -664,6 +668,11 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
         {
             VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+        }
+
+        void SetPaleFlatParameters(const PaleFlatParameters& parameters)
+        {
+            PaleFlat = SanitizePaleFlatParameters(parameters);
         }
 
         void SetWindParameters(const WindParameters& parameters)
