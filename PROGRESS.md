@@ -10715,3 +10715,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(G12-GR40-GAMEMODE-ASYNC): `StopAndJoin` の完了の印はハンドラの Prepare の後・実行器のタスクの終わりより前に立つ。戻った後にハンドラは呼ばれないが、実行器の内側の後片付けまでは待たない。`UnloadStep` が `Failed` を返したセルも、`Shutdown` と同じく外す。`GameModeScope` のデストラクタは `Cleanup` を呼ばない（前からの振る舞い）。
 - U4 レビュー済みの NVTRN の読み手を写し、行末を CRLF にそろえる: 着地(直し 0 回)
 - U5 レビュー済みの合成の台本と単体試験を写す: 着地(直し 0 回)
+- U3 BuildMap.ps1 と地図の一覧の雛形、通しの確かめ: 着地(直し 1 回)
