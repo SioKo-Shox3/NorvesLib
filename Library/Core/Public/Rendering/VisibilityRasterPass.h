@@ -385,6 +385,7 @@ namespace NorvesLib::Core::Rendering
             bool bDrawMesh = false;
             bool bDrawSkinned = false;
             RHI::PipelinePtr MegaPipeline;
+            RHI::PipelinePtr MegaTwoSidedPipeline;
             RHI::PipelinePtr MeshPipeline;
             RHI::PipelinePtr SkinnedPipeline;
             Container::VariableArray<VisibilityBuffer::DrawRecord> CpuRecords;
@@ -529,6 +530,8 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_RecordsShader;
         RHI::ShaderPtr m_RecordArgsShader;
         RHI::PipelinePtr m_MegaPipeline;
+        RHI::PipelinePtr m_MegaTwoSidedPipeline;
+        bool m_bLoggedMegaTwoSidedFallback = false;
         RHI::PipelinePtr m_MeshPipeline;
         RHI::PipelinePtr m_SkinnedPipeline;
         RHI::PipelinePtr m_RecordsPipeline;
