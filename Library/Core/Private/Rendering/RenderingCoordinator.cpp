@@ -4589,6 +4589,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetPaleFlatParameters(m_PaleFlat);
         packet.Scene.SetWindParameters(m_Wind);
         packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
@@ -6671,6 +6672,11 @@ namespace NorvesLib::Core::Rendering
         const VolumetricFogParameters& parameters)
     {
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetPaleFlatParameters(const PaleFlatParameters& parameters)
+    {
+        m_PaleFlat = SanitizePaleFlatParameters(parameters);
     }
 
     void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)

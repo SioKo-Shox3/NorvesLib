@@ -25,6 +25,7 @@
 #include "Engine/NorvesEngine.h"
 #include "Logging/LogMacros.h"
 #include "Thread/Atomic.h"
+#include "Thread/JobSystem.h"
 #include "Object/Entity.h"
 #include "Object/PrefabAsset.h"
 #include "Rendering/CanvasView.h"
@@ -1935,6 +1936,232 @@ namespace NorvesLib::Core
         const Component::ComponentTickRegistration* registration = FindComponentTick(component.GetClass());
         return registration != nullptr ? registration->TimeChannel : Engine::TimeChannel::World;
     }
+    struct World::OrderedTickRecord
+    {
+        World* Owner = nullptr;
+        Entity* OwnerEntity = nullptr;
+        Component::Component* Target = nullptr;
+        Component::ComponentTickFn Body = nullptr;
+        Component::ETickGroup Group = Component::ETickGroup::Default;
+        int16_t Priority = 0;
+        size_t Ordinal = 0;
+        Engine::TimeChannel Channel = Engine::TimeChannel::World;
+        Ecs::EcsOrderedHandle Handle;
+        /// 最後に収集で見つけた回（m_OrderedTickWalk）
+        uint64_t SeenWalk = 0;
+    };
+
+    void World::SetPoseEvaluationParallelSettings(const PoseEvaluationParallelSettings& settings)
+    {
+        m_PoseEvaluationParallelSettings = settings;
+    }
+
+    const World::PoseEvaluationParallelSettings& World::GetPoseEvaluationParallelSettings() const
+    {
+        return m_PoseEvaluationParallelSettings;
+    }
+
+    const World::PoseEvaluationParallelStats& World::GetPoseEvaluationParallelStats() const
+    {
+        return m_PoseEvaluationParallelStats;
+    }
+
+    uint32_t World::CollectPoseEvaluationSegment(uint32_t system, uint32_t first, uint32_t count,
+                                                uint32_t& outEvaluationCount)
+    {
+        m_PoseEvaluationEntries.clear();
+        outEvaluationCount = 0;
+        // 最大でも呼び先の数だけ入る表を負荷率 1/2 以下で保つ。容量も世代も区間をまたいで再利用する。
+        size_t visitCapacity = 16;
+        while (visitCapacity < size_t(count) * 2)
+        {
+            visitCapacity *= 2;
+        }
+        if (m_PoseMeshVisits.size() < visitCapacity)
+        {
+            m_PoseMeshVisits.clear();
+            m_PoseMeshVisits.resize(visitCapacity);
+        }
+        if (++m_PoseMeshVisitSegment == 0)
+        {
+            for (auto& visit : m_PoseMeshVisits)
+            {
+                visit.Segment = 0;
+            }
+            ++m_PoseMeshVisitSegment;
+        }
+        uint32_t index = first;
+        for (; index < count; ++index)
+        {
+            Ecs::OrderedRunView view;
+            if (!m_Scheduler->GetOrderedRun(system, index, view))
+            {
+                continue;
+            }
+            if (view.Run != &World::RunOrderedTick)
+            {
+                break;
+            }
+            const auto* record = static_cast<const OrderedTickRecord*>(view.User);
+            if (view.Group != Component::ETickGroup::PoseFinalize ||
+                (record->Body != m_AnimatorPoseFinalizeBody && record->Body != m_SkinnedPoseFinalizeBody))
+            {
+                break;
+            }
+            float tickDelta = 0;
+            if (!PrepareOrderedTick(*record, tickDelta))
+            {
+                continue;
+            }
+            PoseEvaluationEntry entry;
+            entry.OrderedIndex = index;
+            entry.RecordIdentity = record;
+            entry.Target = record->Target;
+            Component::SkinnedMeshComponent* mesh = nullptr;
+            if (record->Body == m_AnimatorPoseFinalizeBody)
+            {
+                entry.Animator = static_cast<Component::AnimatorComponent*>(entry.Target);
+                if (entry.Animator->HasPoseModifiers())
+                {
+                    break;
+                }
+                entry.bEvaluate = entry.Animator->IsEvaluationEnabled();
+                mesh = entry.Animator->GetPoseTargetMesh();
+            }
+            else
+            {
+                entry.Mesh = static_cast<Component::SkinnedMeshComponent*>(entry.Target);
+                entry.bEvaluate = !entry.Mesh->IsExternalAnimationDriven();
+                if (entry.bEvaluate)
+                {
+                    mesh = entry.Mesh;
+                }
+            }
+            if (mesh != nullptr)
+            {
+                const size_t mask = m_PoseMeshVisits.size() - 1;
+                size_t slot = std::hash<Component::SkinnedMeshComponent*>{}(mesh) & mask;
+                while (m_PoseMeshVisits[slot].Segment == m_PoseMeshVisitSegment &&
+                       m_PoseMeshVisits[slot].Mesh != mesh)
+                {
+                    slot = (slot + 1) & mask;
+                }
+                auto& visit = m_PoseMeshVisits[slot];
+                if (visit.Segment == m_PoseMeshVisitSegment)
+                {
+                    // 同じメッシュを 2 度準備すると予約を消すので、2 度目の呼び先は区間に含めない。
+                    break;
+                }
+                visit.Mesh = mesh;
+                visit.Segment = m_PoseMeshVisitSegment;
+            }
+            outEvaluationCount += entry.bEvaluate ? 1u : 0u;
+            m_PoseEvaluationEntries.push_back(entry);
+        }
+        return index;
+    }
+
+    void World::ExecutePoseEvaluationSegment(uint32_t system)
+    {
+        m_PoseAnimatorJobs.clear();
+        m_PoseMeshJobs.clear();
+        m_PoseMeshesToFinish.clear();
+        const size_t entryCount = m_PoseEvaluationEntries.size();
+        m_PoseAnimatorJobs.reserve(entryCount);
+        m_PoseMeshJobs.reserve(entryCount);
+        m_PoseMeshesToFinish.reserve(entryCount);
+        // 準備と確定は GameThread で番号順に行い、ワーカーには各 Component の計算だけを渡す。
+        for (const auto& entry : m_PoseEvaluationEntries)
+        {
+            if (m_bTickDupCheck)
+            {
+                NoteTickDispatchForCheck(*entry.Target, Component::ETickGroup::PoseFinalize);
+            }
+            if (entry.Animator != nullptr && entry.bEvaluate && entry.Animator->BeginEvaluateAnimation())
+            {
+                m_PoseAnimatorJobs.push_back(entry.Animator);
+            }
+        }
+        const size_t grain = std::max(size_t(1), size_t(m_PoseEvaluationParallelSettings.Grain));
+        {
+            Ecs::EcsParallelScope parallel;
+            auto* jobs = m_PoseAnimatorJobs.data();
+            // ワーカーが未初期化（0 本）でも、ParallelFor は呼び手だけで最後まで進む。
+            NorvesLib::Thread::JobSystem::Get().ParallelFor(m_PoseAnimatorJobs.size(), grain, [jobs](size_t index)
+            {
+                jobs[index]->RunEvaluateAnimation();
+            });
+        }
+        for (const auto& entry : m_PoseEvaluationEntries)
+        {
+            Component::SkinnedMeshComponent* mesh = nullptr;
+            bool bRun = false;
+            if (entry.Animator != nullptr && entry.bEvaluate)
+            {
+                if (entry.Animator->FinishEvaluateAnimation())
+                {
+                    mesh = entry.Animator->GetPoseTargetMesh();
+                    bRun = mesh->BeginSubmitLocalPose(entry.Animator->GetFinalPose());
+                }
+            }
+            else if (entry.Mesh != nullptr && entry.bEvaluate)
+            {
+                mesh = entry.Mesh;
+                bRun = mesh->BeginPoseEvaluation();
+            }
+            if (mesh != nullptr)
+            {
+                // Begin が false でも Finish は呼ぶ。描画の汚れと確定の順は元の番号順を保つ。
+                m_PoseMeshesToFinish.push_back(mesh);
+                if (bRun)
+                {
+                    m_PoseMeshJobs.push_back(mesh);
+                }
+            }
+        }
+        {
+            Ecs::EcsParallelScope parallel;
+            auto* jobs = m_PoseMeshJobs.data();
+            NorvesLib::Thread::JobSystem::Get().ParallelFor(m_PoseMeshJobs.size(), grain, [jobs](size_t index)
+            {
+                jobs[index]->RunPoseEvaluation();
+            });
+        }
+        for (auto* mesh : m_PoseMeshesToFinish)
+        {
+            (void)mesh->FinishPoseEvaluation();
+        }
+        // 束ねた区間では全評価の後にイベントを配る。配送中に後ろの Animator のパラメータを
+        // 変更しても今回の評価には反映されない。配送順と、直前の有効性検査による配送回数は直列と同じ。
+        // ただし、束ねてよい型でも収集時の検査で飛ばした呼び先は、前のイベント配送で
+        // 有効に戻れば呼ぶ直列経路と異なり、この区間では呼ばない。
+        for (size_t index = 0; index < entryCount; ++index)
+        {
+            // 配送はゲームコードを呼び、記録を即座に消すことがある。値を写して毎回同じ番号を読み直す。
+            const PoseEvaluationEntry entry = m_PoseEvaluationEntries[index];
+            if (entry.Animator == nullptr)
+            {
+                continue;
+            }
+            Ecs::OrderedRunView view;
+            if (!m_Scheduler->GetOrderedRun(system, entry.OrderedIndex, view) ||
+                view.Run != &World::RunOrderedTick || view.User != entry.RecordIdentity)
+            {
+                continue;
+            }
+            const auto* record = static_cast<const OrderedTickRecord*>(view.User);
+            float tickDelta = 0;
+            if (record->Target == entry.Target && PrepareOrderedTick(*record, tickDelta))
+            {
+                entry.Animator->DispatchPendingEvents();
+            }
+        }
+        ++m_PoseEvaluationParallelStats.BatchedSegments;
+        m_PoseEvaluationParallelStats.AnimatorJobs += m_PoseAnimatorJobs.size();
+        m_PoseEvaluationParallelStats.MeshJobs += m_PoseMeshJobs.size();
+        m_PoseEvaluationParallelStats.LastSegmentEntries = static_cast<uint32_t>(entryCount);
+    }
+
     void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
                                    const Engine::FrameTimes* times)
     {
@@ -1978,12 +2205,51 @@ namespace NorvesLib::Core
         Ecs::EcsSystemContext orderedContext;
         orderedContext.World = m_EcsWorld.get();
         orderedContext.CollectionSerial = m_Scheduler->GetCollectionSerial();
+        uint32_t serialPoseBoundary = orderedCount;
         for (uint32_t orderedIndex = 0; orderedIndex < orderedCount; ++orderedIndex)
         {
             Ecs::OrderedRunView view;
             if (!m_Scheduler->GetOrderedRun(orderedSystem, orderedIndex, view) || view.Group < first || view.Group > last)
             {
                 continue;
+            }
+            if (m_PoseEvaluationParallelSettings.bEnabled && orderedIndex != serialPoseBoundary &&
+                view.Group == Component::ETickGroup::PoseFinalize && view.Run == &World::RunOrderedTick)
+            {
+                const auto* record = static_cast<const OrderedTickRecord*>(view.User);
+                if (record->Body == m_AnimatorPoseFinalizeBody || record->Body == m_SkinnedPoseFinalizeBody)
+                {
+                    uint32_t evaluationCount = 0;
+                    const uint32_t segmentEnd = CollectPoseEvaluationSegment(orderedSystem, orderedIndex, orderedCount,
+                                                                             evaluationCount);
+                    if (segmentEnd > orderedIndex)
+                    {
+                        if (evaluationCount >= m_PoseEvaluationParallelSettings.MinBatchCount &&
+                            m_PoseEvaluationEntries.size() > 1)
+                        {
+                            publish(Component::ETickGroup::PoseFinalize);
+                            ExecutePoseEvaluationSegment(orderedSystem);
+                        }
+                        else
+                        {
+                            // 閾値未満でも区間を探し直さず、元と同じ関数を同じ番号順で呼ぶ。
+                            for (uint32_t index = orderedIndex; index < segmentEnd; ++index)
+                            {
+                                Ecs::OrderedRunView serialView;
+                                if (m_Scheduler->GetOrderedRun(orderedSystem, index, serialView) &&
+                                    serialView.Group >= first && serialView.Group <= last)
+                                {
+                                    publish(serialView.Group);
+                                    serialView.Run(serialView.User, orderedContext);
+                                }
+                            }
+                        }
+                        // 区間を切った呼び先自身は、次の反復で通常の直列経路を通す。
+                        serialPoseBoundary = segmentEnd;
+                        orderedIndex = segmentEnd - 1;
+                        continue;
+                    }
+                }
             }
             publish(view.Group);
             view.Run(view.User, orderedContext);
@@ -2081,6 +2347,7 @@ namespace NorvesLib::Core
         animator.GroupRuns[static_cast<size_t>(Component::ETickGroup::PoseFinalize)] =
             [](Component::Component& component, float)
         { static_cast<Component::AnimatorComponent&>(component).TickPoseFinalizeGroup(); };
+        m_AnimatorPoseFinalizeBody = animator.GroupRuns[static_cast<size_t>(Component::ETickGroup::PoseFinalize)];
         animator.TimeChannel = Engine::TimeChannel::Animation;
         animator.Writes.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type);
         RegisterComponentTick(Component::AnimatorComponent::StaticClass(), animator);
@@ -2095,25 +2362,11 @@ namespace NorvesLib::Core
         skinned.GroupRuns[static_cast<size_t>(Component::ETickGroup::PoseFinalize)] =
             [](Component::Component& component, float)
         { static_cast<Component::SkinnedMeshComponent&>(component).TickPoseFinalizeGroup(); };
+        m_SkinnedPoseFinalizeBody = skinned.GroupRuns[static_cast<size_t>(Component::ETickGroup::PoseFinalize)];
         skinned.TimeChannel = Engine::TimeChannel::Animation;
         skinned.Writes.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type);
         RegisterComponentTick(Component::SkinnedMeshComponent::StaticClass(), skinned);
     }
-
-    struct World::OrderedTickRecord
-    {
-        World* Owner = nullptr;
-        Entity* OwnerEntity = nullptr;
-        Component::Component* Target = nullptr;
-        Component::ComponentTickFn Body = nullptr;
-        Component::ETickGroup Group = Component::ETickGroup::Default;
-        int16_t Priority = 0;
-        size_t Ordinal = 0;
-        Engine::TimeChannel Channel = Engine::TimeChannel::World;
-        Ecs::EcsOrderedHandle Handle;
-        /// 最後に収集で見つけた回（m_OrderedTickWalk）
-        uint64_t SeenWalk = 0;
-    };
 
     uint32_t World::OrderedTickSystemOf(Component::ETickGroup group) const
     {
@@ -2252,27 +2505,32 @@ namespace NorvesLib::Core
         record->Owner->ExecuteOrderedTick(*record);
     }
 
-    void World::ExecuteOrderedTick(OrderedTickRecord& record)
+    bool World::PrepareOrderedTick(const OrderedTickRecord& record, float& outDelta) const
     {
-        // 本体の中で自分が外されると記録も消えるので、使う値は先に写す
-        Entity* owner = record.OwnerEntity;
-        Component::Component* target = record.Target;
-        const Component::ComponentTickFn body = record.Body;
-        const Component::ETickGroup group = record.Group;
-        const Engine::TimeChannel channel = record.Channel;
-        if (owner == nullptr || target == nullptr || body == nullptr || !CanDispatchEntity(*owner))
+        const Entity* owner = record.OwnerEntity;
+        const Component::Component* target = record.Target;
+        if (owner == nullptr || target == nullptr || record.Body == nullptr || !CanDispatchEntity(*owner))
         {
-            return;
+            return false;
         }
         if (target->GetOwner() != owner || !target->IsActive() || !target->IsTickEnabled() || target->IsPendingDestroy())
         {
-            return;
+            return false;
         }
+        return TryResolveChannelDelta(*owner, record.Channel, outDelta);
+    }
+
+    void World::ExecuteOrderedTick(OrderedTickRecord& record)
+    {
         float tickDelta = 0;
-        if (!TryResolveChannelDelta(*owner, channel, tickDelta))
+        if (!PrepareOrderedTick(record, tickDelta))
         {
             return;
         }
+        // 本体の中で自分が外されると記録も消えるので、使う値は先に写す。
+        Component::Component* target = record.Target;
+        const Component::ComponentTickFn body = record.Body;
+        const Component::ETickGroup group = record.Group;
         if (m_bTickDupCheck)
         {
             NoteTickDispatchForCheck(*target, group);

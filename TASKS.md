@@ -6285,7 +6285,7 @@
 - notes: ロードマップ 1962 行「灰・光・白・残像・しがみつきの確認は専用の GameMode と検証シーンで行う」。G8 の `CombatSlice`（G8-GR17-SLICE-SMOKE）と同じく、ランチャーに載せないので起動の流れと各シーンの見た目（作業合意の絶対規則 7）は変わらない。場面ごとに引数を `GameApplicationHandler.cpp` へ足すと G10 の各項目がそのファイルでぶつかるので、引数は 1 つにして場面の表を GameMode のフォルダの中に置いた。`GameApplicationHandler.cpp` の差分は引数の解析と GameMode の登録の数行に絞る（G8 の項目も触る共有のファイル）。`needs-gr: GR01` は更新の群（ApplicationProcessor の後段）を前提にするため（G1-GR01-TICK-CONTRACT-DOC）。決まった刻みの時計（G4-GR02-FIXED-FRAME-CLOCK）がまだ無ければ、その引数は付けずに印の検査だけにする（撮影の時刻をそろえるのは後の確かめの項目で）。巨大なスキン（GR63）は試験の中の合成の fixture を使い、この場面には入れない（G10-GR63-GIANT-CHECK）。起動しての確かめは各要件の確かめの項目で行う。
 
 ## G10-GR65-PALEFLAT: シ者の均一な白（PaleFlat）を、調整できる値・全球の平均照度・専用の照明の式で仕上げ、露出と霧には従わせる
-- status: todo
+- status: done
 - after: G5-GR26-LIGHTING-MODELS, G10-SHISHA-SHOWCASE, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR65
 - needs-gr: GR26
@@ -6736,7 +6736,7 @@
 - notes: 設計はロードマップ 2484〜2486 行（確認した事実）と 2522〜2524 行（JobSystem の修理）。閾値の根拠: `JobSystemIdleCpuTest` の 1000 ms は、走るタスク 1 本ぶん（500 ms）の 2 倍。空転すれば 31 本 × 500 ms の桁になるので、閾値の揺れで偽の合否は出にくい。`ParallelForLatencyUnderLoadTest` の 1.5 倍は、今の `ParallelFor` が「ワーカーが長いタスクで塞がっていても呼び手だけで最後まで進む」（`Library/Core/Public/Thread/JobSystem.h:109-115`）約束を持つので、最悪でも直列とほぼ同じ時間になることから決めた。ロードマップの別のワーカーの束（FrameWorkerPool）は採らない: 統合ブランチに `ParallelFor`（SCN-ECS-JOBS）が既にあり、ECS のスケジューラ（`EcsScheduler.cpp:816`）・変換の系（`EcsTransformSystem.h:363`）・描画の記録（`RenderGraph.cpp:2583`）が使っているので、同じ口のまま遅れを試験で押さえる。危険地帯（ジョブ・メモリ）なので評価者を通す。やらないこと: 姿勢の評価・カリングの並列化（別のタスク）。
 
 ## G12-GR108-POSE-PARALLEL: 姿勢の確定の群で、評価の要る Animator とスキンメッシュの姿勢をジョブで並列に評価し、結果を直列と同じにする
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G1-GR01-TICK-CONTRACT-DOC
 - gr: GR108
 - needs-gr: GR01, GR12

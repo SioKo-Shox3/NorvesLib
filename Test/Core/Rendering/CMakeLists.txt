@@ -943,6 +943,7 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
+    PaleFlatScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
@@ -1119,6 +1120,12 @@ set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
 # PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
 register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
     --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
+# HDR の明暗比と静的・スキンの一致を、可視バッファと従来の GBuffer の両経路で確かめる。
+register_rendering_gpu_test(RenderingPaleFlatVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks)
+register_rendering_gpu_test(RenderingPaleFlatGBufferFallbackVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks --visibility-buffer=off)
+
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 # 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
@@ -1694,6 +1701,7 @@ add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
 add_test(NAME GBufferPipelineKeyTest COMMAND MaterialResourcesTest --test=GBufferPipelineKeyTest)
 add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
+add_test(NAME PaleFlatShadingContractTest COMMAND MaterialResourcesTest --test=PaleFlatShadingContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -2438,6 +2446,7 @@ norves_add_test_bundle(MaterialResourcesTest
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
     MEMBER GBufferPipelineKeyTest GBufferPipelineKeyTest.cpp
     MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
+    MEMBER PaleFlatShadingContractTest PaleFlatShadingContractTest.cpp
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE
@@ -2597,6 +2606,7 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
+    SkeletalAnimationParallelTest.cpp
     SocketOracleTest.cpp
     SkeletalSamplerBaseline.cpp
     AnimPoseOpsTest.cpp
@@ -2621,6 +2631,9 @@ target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
 target_include_directories(SkeletalAnimationSamplingTest PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Library/Core/Private)
 set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
+# 並列姿勢試験は JobSystem の ParallelFor 契約を前提とするため、
+# JobParallelForTest を含む JobSystemShutdownTest の試験群を同じビルドでそろえる。
+add_dependencies(SkeletalAnimationSamplingTest JobSystemShutdownTest)
 
 add_executable(SkeletalFramePacketSnapshotTest
     SkeletalFramePacketSnapshotTest.cpp
