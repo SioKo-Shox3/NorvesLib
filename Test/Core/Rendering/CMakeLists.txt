@@ -921,6 +921,7 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
+    AlphaClipScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
@@ -1090,6 +1091,80 @@ add_test(NAME RenderingGBufferProgramVulkanTest
         -P "${CMAKE_CURRENT_BINARY_DIR}/RunGBufferProgramTest.cmake")
 set_tests_properties(RenderingGBufferProgramVulkanTest PROPERTIES
     TIMEOUT 900
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# 切り抜き・両面・不透明だけの作成を、二つの描画経路の組ごとに確かめる。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunAlphaClipTest.cmake" CONTENT [=[
+include("${CMAKE_CURRENT_LIST_DIR}/RunHdrSceneCapturePair.cmake")
+set(failures "")
+foreach(scenario IN ITEMS test two-sided opaque)
+    set(log_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/AlphaClip/${scenario}")
+    if(scenario STREQUAL "two-sided")
+        set(capture_source --capture-source=back-buffer)
+    else()
+        set(capture_source --capture-source=gbuffer-emissive)
+    endif()
+    run_hdr_scene_capture_pair("--alpha-clip-scenario=${scenario}" "${capture_source}" "${log_directory}")
+    set(launcher_index 0)
+    foreach(visibility IN ITEMS on off)
+        list(GET launcher_results ${launcher_index} launcher_result)
+        math(EXPR launcher_index "${launcher_index} + 1")
+        if(NOT launcher_result STREQUAL "0")
+            list(APPEND failures "scenario=${scenario} visibility=${visibility} launcher_exit=${launcher_result}")
+        endif()
+        if(EXISTS "${log_directory}/${visibility}-result.txt")
+            file(READ "${log_directory}/${visibility}-result.txt" result)
+            file(READ "${log_directory}/${visibility}-output.log" output)
+        else()
+            set(result "結果なし")
+            set(output "")
+        endif()
+        message("scenario=${scenario} visibility=${visibility}\n${output}")
+        if(NOT result STREQUAL "0")
+            list(APPEND failures "scenario=${scenario} visibility=${visibility} exit=${result}")
+        endif()
+        if(EXISTS "${log_directory}/${visibility}.log")
+            file(STRINGS "${log_directory}/${visibility}.log" created REGEX "GBufferPipelineCreated")
+            list(LENGTH created created_count)
+            set(nonstandard_count 0)
+            set(alpha_clip_count 0)
+            foreach(line IN LISTS created)
+                if(NOT line MATCHES " cull=back alphaClip=0( |$)")
+                    math(EXPR nonstandard_count "${nonstandard_count} + 1")
+                endif()
+                if(line MATCHES " alphaClip=1( |$)")
+                    math(EXPR alpha_clip_count "${alpha_clip_count} + 1")
+                endif()
+            endforeach()
+            if(scenario STREQUAL "opaque")
+                message("ALPHA_CLIP_OPAQUE_PIPELINES visibility=${visibility} count=${created_count} nonstandard=${nonstandard_count}")
+                if(created_count LESS 1 OR NOT nonstandard_count EQUAL 0)
+                    list(APPEND failures "scenario=opaque visibility=${visibility} pipeline_count=${created_count} nonstandard=${nonstandard_count}")
+                endif()
+            elseif(scenario STREQUAL "test")
+                message("ALPHA_CLIP_TEST_PIPELINES visibility=${visibility} count=${created_count} alpha_clip=${alpha_clip_count}")
+                if(alpha_clip_count LESS 1)
+                    list(APPEND failures "scenario=test visibility=${visibility} alpha_clip_count=${alpha_clip_count}")
+                endif()
+            endif()
+        else()
+            list(APPEND failures "scenario=${scenario} visibility=${visibility} log_missing")
+        endif()
+    endforeach()
+endforeach()
+if(failures)
+    message(FATAL_ERROR "切り抜きと両面の検証が失敗しました: ${failures}")
+endif()
+]=])
+add_test(NAME RenderingAlphaClipVulkanTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
+        "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_BINARY_DIR}/RunAlphaClipTest.cmake")
+set_tests_properties(RenderingAlphaClipVulkanTest PROPERTIES
+    TIMEOUT 1500
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

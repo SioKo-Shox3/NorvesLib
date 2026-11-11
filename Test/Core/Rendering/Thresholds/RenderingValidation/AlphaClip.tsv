@@ -1,0 +1,7 @@
+﻿名前	値	根拠
+coverage_target	0.5	白黒が同数の8×8市松の被覆率
+coverage_tolerance	0.02	境界のラスタ化と線形フィルターに対する被覆率の許容差
+emissive_tolerance	0.001	RGBA16Fの量子化を許容して固定の発光値を識別する
+maximum_luma_delta	0.007843137254901961	sRGBの8bit輝度で2/255以内の表裏差を許容する
+minimum_background_luma_gain	0.1	両方の板が背景よりsRGBの8bit輝度で0.1以上明るいことを要求し暗い板同士の一致を除く
+minimum_texel_pixels	16	各テクセルの中心を境界から十分に離して読む

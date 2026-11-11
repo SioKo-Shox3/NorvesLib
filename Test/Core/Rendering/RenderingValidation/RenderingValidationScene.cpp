@@ -3223,6 +3223,173 @@ namespace NorvesLib::Test::RenderingValidation
     }
 
 
+    bool RenderingValidationSceneFixture::ApplyAlphaClipFixture(AlphaClipFixtureKind kind) const
+    {
+        using namespace Core::Rendering;
+        if (m_pWorld == nullptr || m_pResources == nullptr || m_SceneKind != SceneKind::Indoor)
+        {
+            return false;
+        }
+        if (kind == AlphaClipFixtureKind::Opaque)
+        {
+            return true;
+        }
+        // 固定ステップの見張り役を残し、既存の物体と光源を検査領域から除く。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+        }
+
+        TextureHandle checker;
+        if (kind == AlphaClipFixtureKind::Test)
+        {
+            uint8_t pixels[8u * 8u * 4u];
+            for (uint32_t y = 0u; y < 8u; ++y)
+            {
+                for (uint32_t x = 0u; x < 8u; ++x)
+                {
+                    const uint32_t offset = (y * 8u + x) * 4u;
+                    pixels[offset] = pixels[offset + 1u] = pixels[offset + 2u] = 255u;
+                    pixels[offset + 3u] = ((x + y) % 2u == 0u) ? 255u : 0u;
+                }
+            }
+            TextureCreateInfo info;
+            info.Width = info.Height = 8u;
+            info.MipLevels = 1u;
+            info.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            info.bInitialDataHasAllMips = true;
+            info.DebugName = TEXT("RenderingValidationAlphaClipChecker");
+            checker = m_pResources->Textures().CreateTexture(info, pixels, sizeof(pixels));
+            if (!checker.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackTexture(checker);
+        }
+
+        // 表裏で頂点の法線と巻き順を一緒に反転させる。UV は両方で同じにする。
+        constexpr MeshDataHandle handles[] = {MeshDataHandle{0x414C5001u}, MeshDataHandle{0x414C5002u}};
+        for (uint32_t side = 0u; side < 2u; ++side)
+        {
+            Mesh3DVertex vertices[4]{};
+            for (uint32_t index = 0u; index < 4u; ++index)
+            {
+                vertices[index].Position[0] = (index % 2u == 0u) ? -1.0f : 1.0f;
+                vertices[index].Position[1] = (index / 2u == 0u) ? -1.0f : 1.0f;
+                vertices[index].Normal[2] = AlphaClipPlateNormalZ[side];
+                vertices[index].TexCoord[0] = static_cast<float>(index % 2u);
+                vertices[index].TexCoord[1] = static_cast<float>(index / 2u);
+            }
+            // +Z 側のカメラへ表を見せる巻き順は、GBuffer の Clockwise に合わせる。
+            constexpr uint32_t frontIndices[] = {0u, 2u, 1u, 1u, 2u, 3u};
+            constexpr uint32_t backIndices[] = {0u, 1u, 2u, 1u, 3u, 2u};
+            if (!m_pResources->Meshes().Register(handles[side], vertices, sizeof(vertices),
+                                                 side == 0u ? frontIndices : backIndices, 6u))
+            {
+                return false;
+            }
+            m_Lease.TrackMesh(handles[side]);
+        }
+
+        const bool bCoverage = kind == AlphaClipFixtureKind::Test;
+        const uint32_t plateCount = bCoverage ? 3u : 2u;
+        for (uint32_t index = 0u; index < plateCount; ++index)
+        {
+            MaterialCreateData data;
+            data.bCastShadows = false;
+            data.bTwoSided = bCoverage ? index == 2u : true;
+            data.Metallic = 0.0f;
+            data.Roughness = 0.7f;
+            if (bCoverage)
+            {
+                data.EmissiveColor[0] = data.EmissiveColor[1] = data.EmissiveColor[2] = 1.0f;
+                data.EmissiveLuminanceNits = AlphaClipEmissiveNits;
+                if (index == 0u)
+                {
+                    data.AlbedoTexture = checker;
+                    data.Blend = BlendMode::Masked;
+                    data.AlphaClip = AlphaClipMode::Test;
+                    data.AlphaCutoff = 0.5f;
+                }
+            }
+            else
+            {
+                data.BaseColor[0] = data.BaseColor[1] = data.BaseColor[2] = 0.8f;
+                // 法線の向きだけを比べるため、視線によって変わる鏡面反射を含めない。
+                data.bDiffuseOnly = true;
+            }
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            const auto& plate = bCoverage ? AlphaClipCoveragePlates[index] : AlphaClipLightingPlates[index];
+            entity->SetPosition(plate.X, plate.Y, 0.0f);
+            entity->SetScale(plate.HalfExtent, plate.HalfExtent, 1.0f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            // 市松の板はカメラへ表を見せ、表の法線は +Z（カメラ側）を向く。
+            // 片面の裏向きの板はカメラへ裏を見せ、表の法線は -Z（奥側）を向く。
+            // 両面の裏向きの板はカメラへ裏を見せ、表の法線は -Z（奥側）を向く。
+            // 輝度の左の板はカメラへ表を見せ、表の法線は +Z（カメラ側）を向く。
+            // 輝度の右の板はカメラへ裏を見せ、表の法線は -Z、裏の有効な法線は +Z を向く。
+            mesh->SetMeshHandle(handles[index == 0u ? 0u : 1u]);
+            mesh->SetMaterial(0u, material);
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(false);
+        }
+        if (!bCoverage)
+        {
+            // 両面の板だけでは可視バッファに記録が無くなるため、検査領域外に不透明の小さい板を置く。
+            // これで既定の起動が解決を通り、その後に両面の板を重ねたことも既存の経路検査で確かめられる。
+            auto* witness = m_pWorld->SpawnEntity();
+            if (witness == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(witness);
+            witness->SetPosition(0.0f, -3.8f, 0.0f);
+            witness->SetScale(0.1f, 0.1f, 1.0f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(witness);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(handles[0]);
+            mesh->SetMaterial(0u, m_NeutralMaterial);
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(false);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            auto* light = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(entity);
+            if (light == nullptr || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+            {
+                return false;
+            }
+            // カメラの視線と同じ -Z へ光を送り、両方の可視面をカメラ側から等しく照らす。
+            light->SetLightDirection(AlphaClipLightingDirection[0], AlphaClipLightingDirection[1],
+                                     AlphaClipLightingDirection[2]);
+            light->SetLightColor(1.0f, 1.0f, 1.0f);
+            light->SetIntensity(AlphaClipLightingLux);
+            light->SetCastShadows(false);
+        }
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyGBufferProgramFixture(
         const Core::Container::String& programName) const
     {
