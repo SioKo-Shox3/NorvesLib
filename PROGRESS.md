@@ -10753,3 +10753,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 鏡面の円錐の関数と lighting.frag の鏡面の遮り: 着地(直し 0 回)
 - U3 樹冠の場面の試験（場面・基準画像・測定）: 着地(直し 1 回)
 - Notes(G11-GR56-SKY-OCC-SPECULAR 反復 1): 樹冠の場面は検証の場面の持ち主 `Test/Core/Rendering/RenderingValidation/RenderingValidationScene.h/.cpp`（paths の外の試験の支え）に `ApplySkyOcclusionCanopyFixture` として足した（GTAO の Cornell と同じ置き方）。空の大気を有効にするとエンジンが空の太陽の方向光を必ず足すので、「方向光なし・空だけ」は大気を無効のまま一様な静的環境（`SetStaticEnvironmentUniformRadiance`、放射輝度 200）で照らす形にした。鏡面の比は球の円板の半径 0.6 倍の内側（空を映す所）で測る。無効の段の基準画像 `SkyOcclusionCanopy.png` は鏡面の遮りの変更の前の版で作った。鏡面の値は遮蔽物の無い空の交差から失った分だけを引く形（`1 − SpecularStrength·max(0, S_open − S_occ)`）で、遮蔽物の無い所と地平の下の向きは変えない。SpecularStrength は `skyOcclusionParams.w` で渡す（GpuLayoutRegistry.md の行を直した）。SCN-RENDER-SPEC-OCCLUSION は backlog（parked）なので待たない
+- U2 半透明の鏡面の遮り: 着地(直し 1 回)

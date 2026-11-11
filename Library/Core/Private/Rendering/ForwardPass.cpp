@@ -34,6 +34,18 @@ namespace NorvesLib::Core::Rendering
         // VT の要求のバッファの binding（forward_transparent.frag の VT_FEEDBACK_BINDING と同じ。点光源のキューブシャドウ 14 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 15;
 
+        static void AddSkyOcclusionBindings(RHI::DescriptorSetDesc& descriptorSetDesc)
+        {
+            for (uint32_t binding = 16u; binding <= 17u; ++binding)
+            {
+                RHI::DescriptorBinding textureBinding;
+                textureBinding.binding = binding;
+                textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                textureBinding.stages = RHI::ShaderStage::Pixel;
+                descriptorSetDesc.bindings.push_back(textureBinding);
+            }
+        }
+
         struct alignas(16) TransparentForwardUBO
         {
             float view[16];
@@ -58,6 +70,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t virtualTextureFeedbackHeightParam; // 同じく高さ
             float staticEnvironmentMaxRadiance; // 静的HDRの鏡面の放射輝度の上限（倍率を掛ける前。0は上限なし）
             alignas(16) float cameraForward[4];
+            uint32_t skyOcclusionInfo[4];
+            float skyOcclusionParams[4];
+            int32_t skyOcclusionWindowOrigin[4][4];
+            float skyOcclusionTexelMeters[4];
         };
 
         static_assert(alignof(TransparentForwardUBO) == 16);
@@ -83,7 +99,12 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackHeightParam) == 776);
         static_assert(offsetof(TransparentForwardUBO, staticEnvironmentMaxRadiance) == 780);
         static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
-        static_assert(sizeof(TransparentForwardUBO) == 800);
+        static_assert(offsetof(TransparentForwardUBO, skyOcclusionInfo) == 800);
+        static_assert(offsetof(TransparentForwardUBO, skyOcclusionParams) == 816);
+        static_assert(offsetof(TransparentForwardUBO, skyOcclusionWindowOrigin) == 832);
+        static_assert(offsetof(TransparentForwardUBO, skyOcclusionTexelMeters) == 896);
+        static_assert(sizeof(TransparentForwardUBO) == 912);
+        static_assert(PhysicalLightingShadowCascadeCount >= 2u);
 
         static void InitializeSafeTransparentShadowParams(TransparentForwardUBO& ubo)
         {
@@ -261,6 +282,8 @@ namespace NorvesLib::Core::Rendering
                 AddVirtualTextureFeedbackBinding(descriptorSetDesc, VirtualTextureFeedbackBindingIndex);
             }
 
+            AddSkyOcclusionBindings(descriptorSetDesc);
+
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, descriptorSetDesc))
             {
@@ -325,6 +348,7 @@ namespace NorvesLib::Core::Rendering
             m_DefaultBlackTexture = createDefault1x1Texture("ForwardDefaultBlack1x1", 0, 0, 0, 255);
             m_DefaultMidGrayTexture = createDefault1x1Texture("ForwardDefaultMidGray1x1", 128, 128, 128, 255);
 
+            // 影の予備の配列（4 層）を、空の遮蔽が未公開のときの結び先にも使う（そのときシェーダーは引かない）。
             RHI::TextureDesc shadowMapFallbackDesc;
             shadowMapFallbackDesc.Width = 1u;
             shadowMapFallbackDesc.Height = 1u;
@@ -569,6 +593,12 @@ namespace NorvesLib::Core::Rendering
             {
                 m_RenderGraphDepthHandle = depthHandle.ToResourceHandle();
             }
+
+            RGTextureHandle skyOcclusionHandle;
+            builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionVisibility,
+                                   skyOcclusionHandle, RHI::ResourceState::ShaderResource);
+            builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionAux,
+                                   skyOcclusionHandle, RHI::ResourceState::ShaderResource);
 
             // このビューの半透明一覧だけを調べ、板・impostor はリアクティブの対象にしない。
             const ViewRenderContext* context = builder.GetContext();
@@ -941,6 +971,8 @@ namespace NorvesLib::Core::Rendering
         {
             AddVirtualTextureFeedbackBinding(descriptorSetDesc, VirtualTextureFeedbackBindingIndex);
         }
+
+        AddSkyOcclusionBindings(descriptorSetDesc);
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -1346,6 +1378,29 @@ namespace NorvesLib::Core::Rendering
         transparentFrameTemplate.iblIntensity = physicalLighting.IBLIntensity;
         transparentFrameTemplate.staticEnvironmentMaxRadiance = physicalLighting.StaticEnvironmentMaxRadiance;
 
+        const auto& skyOcclusion = context.SkyOcclusion;
+        const bool bSkyOcclusionPublished = skyOcclusion.bSnapshotEnabled && skyOcclusion.bValid &&
+            skyOcclusion.VisibilityTexture && skyOcclusion.AuxTexture;
+        const bool bValidationMode = activeDebugModeValue >= 246u && activeDebugModeValue <= 255u;
+        if (!bValidationMode && bSkyOcclusionPublished)
+        {
+            transparentFrameTemplate.skyOcclusionInfo[0] = 1u;
+            transparentFrameTemplate.skyOcclusionInfo[1] = skyOcclusion.LevelCount;
+            transparentFrameTemplate.skyOcclusionInfo[2] = skyOcclusion.Resolution;
+            transparentFrameTemplate.skyOcclusionParams[0] = skyOcclusion.Parameters.Strength;
+            transparentFrameTemplate.skyOcclusionParams[1] = skyOcclusion.Parameters.DiffuseExponent;
+            transparentFrameTemplate.skyOcclusionParams[2] = skyOcclusion.Parameters.GroundHeightMeters;
+            transparentFrameTemplate.skyOcclusionParams[3] = skyOcclusion.Parameters.SpecularStrength;
+            for (uint32_t level = 0u; level < skyOcclusion.LevelCount && level < 4u; ++level)
+            {
+                transparentFrameTemplate.skyOcclusionWindowOrigin[level][0] = skyOcclusion.WindowOrigin[level][0];
+                transparentFrameTemplate.skyOcclusionWindowOrigin[level][1] = skyOcclusion.WindowOrigin[level][1];
+                transparentFrameTemplate.skyOcclusionTexelMeters[level] = skyOcclusion.TexelMeters[level];
+            }
+        }
+        const RHI::SamplerPtr skyOcclusionSampler = bSkyOcclusionPublished && skyOcclusion.Sampler
+            ? skyOcclusion.Sampler : m_DefaultLinearSampler;
+
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
 
@@ -1537,6 +1592,12 @@ namespace NorvesLib::Core::Rendering
                     bPointShadowCubesPublished ? physicalLighting.PointShadowCubeSampler
                                                : m_DefaultLinearSampler);
                 BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
+                descriptorSet->BindTexture(16, bSkyOcclusionPublished
+                    ? skyOcclusion.VisibilityTexture : m_DefaultShadowMapArrayTexture);
+                descriptorSet->BindTexture(17, bSkyOcclusionPublished
+                    ? skyOcclusion.AuxTexture : m_DefaultShadowMapArrayTexture);
+                descriptorSet->BindSampler(16, skyOcclusionSampler);
+                descriptorSet->BindSampler(17, skyOcclusionSampler);
                 descriptorSet->Update();
             };
             bindDescriptorSet(allocation.DescriptorSet);
