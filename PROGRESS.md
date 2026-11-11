@@ -10736,3 +10736,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 SkinnedMeshComponent の姿勢の評価を GameThread の準備・ワーカーの標本・GameThread の確定に分ける: 着地(直し 0 回)
 - U3 sandbox に開発ビルドだけの --skinned-crowd=<N> と姿勢の並列の設定の起動引数を足す: 着地(直し 0 回)
 - U2 AnimatorComponent の評価を GameThread の準備・ワーカーのグラフ評価・GameThread の確定に分ける: 着地(直し 0 回)
+- U6 sandbox の合成スキンの資産を、外部バッファを生成してから読む: 着地(直し 0 回)

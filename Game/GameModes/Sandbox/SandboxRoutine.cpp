@@ -12,6 +12,7 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
+#include "Core/Public/Platform/PlatformFile.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
 #include "Core/Public/Rendering/RenderResources.h"
@@ -23,9 +24,15 @@
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cwchar>
+#include <filesystem>
+#include <system_error>
 #include <utility>
+
+#include <Windows.h>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::GameMode;
@@ -164,11 +171,204 @@ namespace Game::GameModes
             return true;
         }
 
+        // M9 の試験で生成する fixture.bin と同じオフセット・値を little-endian で書く。
+        Container::VariableArray<uint8_t> MakeSkinnedCrowdFixture()
+        {
+            Container::VariableArray<uint8_t> bytes(416, uint8_t{0});
+            const auto writeFloat = [&bytes](size_t offset, float value)
+            {
+                const uint32_t bits = std::bit_cast<uint32_t>(value);
+                for (size_t index = 0; index < 4; ++index)
+                {
+                    bytes[offset + index] = static_cast<uint8_t>(bits >> (index * 8));
+                }
+            };
+            const auto writeU16 = [&bytes](size_t offset, uint16_t value)
+            {
+                bytes[offset] = static_cast<uint8_t>(value);
+                bytes[offset + 1] = static_cast<uint8_t>(value >> 8);
+            };
+
+            constexpr float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+            constexpr float normals[] = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+            constexpr float texCoords[] = {0, 0, 1, 0, 0, 1};
+            constexpr uint8_t joints[] = {0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0};
+            constexpr float weights[] = {0.75f, 0.25f, 0, 0, 0.5f, 0.5f, 0, 0, 1, 0, 0, 0};
+            constexpr float translations[] = {0, 1, 0, 0, 3, 0};
+            constexpr float rotations[] = {0, 0, 0, 1, 0, 0, 1, 0};
+
+            for (size_t index = 0; index < 9; ++index)
+            {
+                writeFloat(index * 4, positions[index]);
+                writeFloat(36 + index * 4, normals[index]);
+            }
+            for (size_t index = 0; index < 6; ++index)
+            {
+                writeFloat(72 + index * 4, texCoords[index]);
+                writeFloat(360 + index * 4, translations[index]);
+            }
+            for (size_t index = 0; index < 12; ++index)
+            {
+                bytes[96 + index] = joints[index];
+                writeFloat(132 + index * 4, weights[index]);
+            }
+            writeU16(216, 0);
+            writeU16(218, 1);
+            writeU16(220, 2);
+            for (size_t index = 0; index < 4; ++index)
+            {
+                writeFloat(224 + index * 5 * 4, 1.0f);
+                writeFloat(288 + index * 5 * 4, 1.0f);
+            }
+            writeFloat(288 + 13 * 4, -1.0f);
+            writeFloat(352, 0.0f);
+            writeFloat(356, 2.0f);
+            for (size_t index = 0; index < 8; ++index)
+            {
+                writeFloat(384 + index * 4, rotations[index]);
+            }
+            return bytes;
+        }
+
+        // 作成に成功したディレクトリだけを所有し、途中で失敗しても後片付けする。
+        struct TemporarySkinnedDirectory
+        {
+            std::filesystem::path Path;
+
+            bool Create()
+            {
+                std::error_code error;
+                auto root = std::filesystem::temp_directory_path(error);
+                if (error)
+                {
+                    return false;
+                }
+                root = std::filesystem::absolute(root, error);
+                if (error)
+                {
+                    return false;
+                }
+                for (uint32_t suffix = 0; suffix < 256; ++suffix)
+                {
+                    wchar_t name[96]{};
+                    if (std::swprintf(name, 96, L"NorvesSandboxSkinned-%lu-%u",
+                                      static_cast<unsigned long>(GetCurrentProcessId()), suffix) < 0)
+                    {
+                        return false;
+                    }
+                    auto candidate = root / name;
+                    if (std::filesystem::create_directory(candidate, error))
+                    {
+                        Path = std::move(candidate);
+                        return true;
+                    }
+                    if (error && error != std::errc::file_exists)
+                    {
+                        return false;
+                    }
+                    error.clear();
+                }
+                return false;
+            }
+
+            ~TemporarySkinnedDirectory()
+            {
+                if (!Path.empty())
+                {
+                    std::error_code error;
+                    std::filesystem::remove_all(Path, error);
+                    if (error)
+                    {
+                        LOG_WARNING("sandbox: 一時ディレクトリを削除できませんでした（PID=%lu、エラー=%d）",
+                                    static_cast<unsigned long>(GetCurrentProcessId()), error.value());
+                    }
+                }
+            }
+        };
+
+        // Platform の入出力は UTF-8、解析器は Windows の通常のマルチバイトパスを受け取る。
+        bool EncodeSkinnedPath(const wchar_t* path, UINT codePage, Container::String& outPath)
+        {
+            const bool bUtf8 = codePage == CP_UTF8;
+            const DWORD flags = bUtf8 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
+            BOOL bUsedDefault = FALSE;
+            BOOL* pUsedDefault = bUtf8 ? nullptr : &bUsedDefault;
+            const int size = WideCharToMultiByte(codePage, flags, path, -1, nullptr, 0, nullptr, pUsedDefault);
+            if (size <= 0 || bUsedDefault)
+            {
+                return false;
+            }
+            Container::VariableArray<char> bytes(static_cast<size_t>(size));
+            if (WideCharToMultiByte(codePage, flags, path, -1, bytes.data(), size, nullptr, pUsedDefault) != size ||
+                bUsedDefault)
+            {
+                return false;
+            }
+            outPath = Container::String(bytes.data());
+            return true;
+        }
+
+        bool MakeSkinnedAnalyzerPath(const std::filesystem::path& directory, Container::String& outPath)
+        {
+            if (!EncodeSkinnedPath(directory.c_str(), GetACP(), outPath))
+            {
+                // 文字コードに収まらないディレクトリは、利用可能なら短縮名を使う。
+                const DWORD size = GetShortPathNameW(directory.c_str(), nullptr, 0);
+                if (size == 0)
+                {
+                    return false;
+                }
+                Container::VariableArray<wchar_t> shortPath(size);
+                const DWORD length = GetShortPathNameW(directory.c_str(), shortPath.data(), size);
+                if (length == 0 || length >= size || !EncodeSkinnedPath(shortPath.data(), GetACP(), outPath))
+                {
+                    return false;
+                }
+            }
+            outPath += "\\ValidU8Float.gltf";
+            return true;
+        }
+
         // 共有資産と時刻 0 の境界を先に作り、読み込み失敗時は Entity を作らない。
         bool LoadSkinnedCrowdAsset(SandboxData &data, Math::Vector3 &outOffset)
         {
-            auto decoded = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(
-                Container::String(TEXT("Assets/Models/M9Skinned/ValidU8Float.gltf")));
+            Container::String sourcePath("Assets/Models/M9Skinned/ValidU8Float.gltf");
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            sourcePath = Container::String(NORVES_SOURCE_ASSET_DIR) + "/Models/M9Skinned/ValidU8Float.gltf";
+#endif
+            Container::VariableArray<uint8_t> sourceBytes;
+            if (!Platform::ReadFileBytes(sourcePath, sourceBytes).bSuccess)
+            {
+                return false;
+            }
+
+            Skeletal::SkeletalGltfDecodeResult decoded;
+            {
+                TemporarySkinnedDirectory temporary;
+                if (!temporary.Create())
+                {
+                    return false;
+                }
+                Container::String directory;
+                if (!EncodeSkinnedPath(temporary.Path.c_str(), CP_UTF8, directory))
+                {
+                    return false;
+                }
+                const Container::String gltfPath = directory + "\\ValidU8Float.gltf";
+                const Container::String bufferPath = directory + "\\fixture.bin";
+                const auto fixture = MakeSkinnedCrowdFixture();
+                if (!Platform::WriteFileAtomic(gltfPath, sourceBytes, false).bSuccess ||
+                    !Platform::WriteFileAtomic(bufferPath, fixture, false).bSuccess)
+                {
+                    return false;
+                }
+                Container::String analyzerPath;
+                if (!MakeSkinnedAnalyzerPath(temporary.Path, analyzerPath))
+                {
+                    return false;
+                }
+                decoded = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(analyzerPath);
+            }
             if (!decoded.Succeeded() || decoded.Data.Clips.empty())
             {
                 return false;
