@@ -39,7 +39,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
-- status: todo
+- status: blocked
 - done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 12 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
