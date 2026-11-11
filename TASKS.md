@@ -6649,7 +6649,7 @@
 - notes: 設計はロードマップ 2386〜2396 行（GR94 の 1. 撮影・4. 座標変換情報）と要件 `#### GR94`。規模の見積もり（4km 四方・0.5m/px・112 タイル）はロードマップ 2390 行の数で、仮の値（谷の大きさは企画で未定）。試験の置き場は、正射影の行列の試験 `OrthographicViewportMatrixTest` がある `CameraViewConstantsTest` の束（`Test/Core/Rendering/CMakeLists.txt`）にする（新しい実行ファイルを作らない。`Test/Core/Scene` の束は無い）。座標の向き・手系（`CreateLookAt` と clip 空間の補正の符号）で左右が反転しやすい（ロードマップ 2767 行）ので、非対称な目印で試験する。`MapTransform` は GR70・GR71（G15 の地図の UI）が使う。やらないこと: 撮影の実行（G12-GR94-MAP-CAPTURE）、合成と cook（G12-GR94-MAP-COMPOSE-COOK）。
 
 ## G12-GR94-MAP-CAPTURE: `--map-capture=<spec.json>` で、シーンを 1 回だけ起動して真上の正射影のタイルを固定の見た目で順に撮り、縁を切った PNG と撮影の目録を書く
-- status: todo
+- status: done
 - after: G12-GR94-MAP-TRANSFORM-PLAN
 - gr: GR94
 - done-when: (1) `Game/Debug/MapCapture.{h,cpp}` が、`--scene=<id>` と `--map-capture=<spec.json>` の起動で `BuildMapCapturePlan` の計画どおりに、シーンの自由飛行カメラ（`Game/Scenes/FreeCameraRig.h` の `GetCamera()`）を正射影（`CameraComponent::SetProjectionType`・`OrthoWidth`/`OrthoHeight`）の真上の姿勢へタイルごとに置き、ストリーミング（仮想テクスチャ・ジオメトリのページ）が落ち着くまで待ってから決定的な撮影のエポックを始め、撮って縁を切ったタイルの PNG（`Game/Debug/CapturedFramePng.h` の `SaveCapturedFramePng` を共用）を書き、全部を撮ったら `capture_manifest.json` を書いて終了（0）、失敗は終了（1）を頼む。待ちとエポックの段取りは `MultiViewCapture`（`Game/Debug/MultiViewCapture.h`）と同じ数え方にし、共通の部分を関数に切り出して両方が使う。(2) 撮影の間の見た目を固定する: 露出は Manual（spec の EV100）、TAA を切って FXAA、フィルムグレイン・ビネット無し、高さの霧と空気遠近は spec で切れる、太陽は spec の固定の斜めの向き、カメラの CullingMask は spec のレイヤー（既定 `MapVisible`）。自由飛行カメラを持たないシーンは理由を出して終了（1）。(3) 正射影の主カメラのとき、MegaGeometry の LOD を正射影で選ぶ（`MegaGeometryCullUniforms.h:47` の `OrthoLod` を主の視点でも立てる）。(4) `--map-capture` の無い起動は変わらない。`Game` がビルドでき、`MapCapturePlanTest`・`FrameCaptureReadbackHelperTest`・`CameraViewConstantsTest` の束が通る。

@@ -3663,6 +3663,11 @@ namespace NorvesLib::Core::Rendering
         using namespace NorvesLib::Math;
 
         const auto &cam = command.MainCamera;
+        const bool bOrthographic = cam.Projection == ProjectionType::Orthographic;
+        // 主のシェーダーの正射影 texel は 1 m なので、画素単位の許容をワールドの長さへ直す。
+        const float lodWorldUnitsPerPixel = bOrthographic && m_CurrentHeight > 0
+                                                ? std::abs(cam.OrthoHeight) / static_cast<float>(m_CurrentHeight)
+                                                : 1.0f;
         const float aspectRatio = m_CurrentHeight > 0
                                       ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
                                       : 1.0f;
@@ -3746,15 +3751,37 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         using Section = SceneSection;
         using Drawable = SceneDrawable;
-        SceneTables &tables = m_SceneTables;
         if (!bPreparedTables)
         {
             if (m_bSceneSlotsDirty)
             {
                 AssignSceneTableSlots();
             }
-            BuildSceneTables(command, tables);
+            BuildSceneTables(command, m_SceneTables);
         }
+        SceneTables orthographicTables;
+        if (bOrthographic)
+        {
+            // 通常の表の写しを使い、次の透視の記録へ換算済みの床や平らな並びを残さない。
+            orthographicTables = m_SceneTables;
+            for (GPUMegaMesh &mesh : orthographicTables.Meshes)
+            {
+                mesh.MainLodFloorPixels *= lodWorldUnitsPerPixel;
+            }
+            // BVH の節の誤差は透視の式なので、全インスタンスを平らなクラスタの列で判定する。
+            // 影の表と予備行は同じ位置に保ち、主の判定のワークグループだけを振り直す。
+            orthographicTables.TotalGroups = 0;
+            for (GPUMegaEntry &entry : orthographicTables.Entries)
+            {
+                entry.FirstGroup = static_cast<uint32_t>(orthographicTables.TotalGroups);
+                orthographicTables.TotalGroups +=
+                    (static_cast<uint64_t>(orthographicTables.Meshes[entry.MeshIndex].ClusterCount) + 63u) / 64u;
+            }
+            orthographicTables.BvhInstanceCount = 0;
+            orthographicTables.BvhLevelCapacity.clear();
+            orthographicTables.BvhLeafCapacity = 0;
+        }
+        SceneTables &tables = bOrthographic ? orthographicTables : m_SceneTables;
         VariableArray<Section> &sections = tables.Sections;
         const VariableArray<Drawable> &drawables = tables.Drawables;
         const VariableArray<GPUMegaEntry> &instanceTable = tables.Entries;
@@ -3802,7 +3829,8 @@ namespace NorvesLib::Core::Rendering
         // 64bit のバッファ（深度 + ID）への書き込みが 64bit アトミックを使い、合流が ID のラスタ（sink）の後ろにあるので、
         // どちらかが無ければ振り分けない。振り分けた一覧はパスごとなので、2 パスの遮蔽の判定のときだけ使う
         bool bSwRasterBin = false;
-        if (m_bSwRasterRequested)
+        // ソフトの振り分けの画素半径は透視の式なので、正射影ではハードだけで描く。
+        if (m_bSwRasterRequested && !bOrthographic)
         {
             const char *fallbackReason = nullptr;
             if (!sink)
@@ -4013,7 +4041,20 @@ namespace NorvesLib::Core::Rendering
                 recordEmptyRenderPass();
                 return;
             }
-            PublishShadowCasterInputs(frameSlot, tables);
+            // 影へは主の平らな判定用の規模を渡さず、元の表の集計値を公開する。
+            // 影専用の並びとメッシュの BVH は写しでも保ち、主の床は影が読まない。
+            PublishShadowCasterInputs(frameSlot, m_SceneTables);
+        }
+        else if (bOrthographic)
+        {
+            // 前段のページの版と資源は引き継ぐ。散在書き込みの staging は別の組から借り、
+            // 既に記録された前段の転送内容を上書きせずに、主の判定用の表へ切り替える。
+            FrameSlot &uploadSlot = m_FrameSlots.Acquire();
+            if (!UpdateResidentSceneTables(uploadSlot, tables, cmdList, 0u))
+            {
+                recordEmptyRenderPass();
+                return;
+            }
         }
 
         // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）。
@@ -4262,8 +4303,13 @@ namespace NorvesLib::Core::Rendering
         const bool bProjectionJittered = cam.ProjectionJitterNdcX != 0.0f || cam.ProjectionJitterNdcY != 0.0f;
         baseUniform.LODBias =
             m_Settings.LODBias * (bProjectionJittered ? GetTemporalAABlendParams().GeometryLodScale : 1.0f);
+        if (bOrthographic)
+        {
+            baseUniform.OrthoLod = 1u;
+            baseUniform.LODBias *= lodWorldUnitsPerPixel;
+        }
         baseUniform.ScreenHeight = static_cast<float>(m_CurrentHeight);
-        // projectionFactor = screenHeight / (2 * tan(fov/2))
+        // 透視の誤差を画素へ直す倍率（正射影の LOD では使わない）
         const float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
         baseUniform.ProjectionFactor = (halfFovTan > 1e-6f)
                                            ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
@@ -4280,8 +4326,10 @@ namespace NorvesLib::Core::Rendering
         // インスタンスの判定: 範囲の数・距離・画素の大きさ（描く範囲が描画先の全体のときだけ）
         const uint32_t bvhRangeCount = (bvhInstanceCount + BvhRangeSeats - 1u) / BvhRangeSeats;
         baseUniform.BvhRangeCount = bvhRangeCount;
-        baseUniform.InstanceCullDistance = m_Settings.InstanceCullDistance;
-        if (m_Settings.bInstancePixelCull && IsPixelCullViewport(command.Viewport, m_CurrentWidth, m_CurrentHeight))
+        // 正射影では視点からの距離で除外せず、平らな判定では使わない画素の除外も無効にする。
+        baseUniform.InstanceCullDistance = bOrthographic ? 0.0f : m_Settings.InstanceCullDistance;
+        if (!bOrthographic && m_Settings.bInstancePixelCull &&
+            IsPixelCullViewport(command.Viewport, m_CurrentWidth, m_CurrentHeight))
         {
             baseUniform.PixelCullWidth = static_cast<float>(m_CurrentWidth);
             baseUniform.PixelCullHeight = static_cast<float>(m_CurrentHeight);
@@ -4295,7 +4343,7 @@ namespace NorvesLib::Core::Rendering
         // メッシュ共通のLOD球を持つメッシュの選ばれる段を、変わったときに記録する
         for (const Drawable &drawable : drawables)
         {
-            if (drawable.GpuData && drawable.GpuData->LODBounds.IsValid())
+            if (!bOrthographic && drawable.GpuData && drawable.GpuData->LODBounds.IsValid())
             {
                 LogUniformLODSelection(m_Instances[drawable.InstanceIndex], *drawable.GpuData, baseUniform);
             }
