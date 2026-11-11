@@ -8,8 +8,10 @@
 // 両方が重なる升目は黄にして、動いた向きと距離を画像から読めるようにしてある。
 // 視点は SceneCatalog.h の kSandboxViews（overview・low・top）。--camera-script=<file> で入力の台本を流せる。
 // 地面を囲む一周のカメラパス（kSandboxPath）を持ち、P キー（ゲームパッドは Y）で再生・停止する。
+// --skinned-crowd=<N> を指定すると、姿勢の評価用に合成スキンを N 体配置する。
 // ---------------------------------------------------------------------------
 
+#include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Container/String.h"
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/IGameMode.h"
@@ -17,6 +19,13 @@
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
+
+#include <cstdint>
+
+namespace NorvesLib::Core
+{
+    class SkeletalAssetResource;
+}
 
 namespace Game::GameModes
 {
@@ -31,6 +40,15 @@ namespace Game::GameModes
         float m_CameraPathTime = -1.0f;
         /// 組み立てが済んだところからカメラパスを再生する（--camera-path-play）
         bool m_bCameraPathPlay = false;
+        /// 合成スキンの体数（0 は配置しない）
+        uint32_t m_SkinnedCrowdCount = 0;
+        /// 姿勢の並列評価（-1 は指定なし、0 は無効、1 は有効）
+        int8_t m_ParallelPose = -1;
+        /// 並列にする最小数と 1 回の取り出し数（0 は指定なし）
+        uint32_t m_ParallelPoseMinCount = 0;
+        uint32_t m_ParallelPoseGrain = 0;
+        /// 全個体が共有するスキン資産
+        NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_SkinnedCrowdAsset;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
         /// 実行中の視点の切り替えの依頼（非所有。--capture-views の撮影が使う）。無いなら nullptr

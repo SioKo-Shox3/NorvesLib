@@ -1,8 +1,13 @@
 ﻿#include "GameModes/Sandbox/SandboxMode.h"
 
+#include "Core/Public/Animation/SkeletalAnimationSampler.h"
+#include "Core/Public/Animation/SkeletalAssetResource.h"
+#include "Core/Public/Animation/SkeletalPoseBounds.h"
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
+#include "Core/Public/Component/SkinnedMeshComponent.h"
 #include "Core/Public/Engine/Engine.h"
+#include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
@@ -13,11 +18,14 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
+#include "Core/Public/Resource/GLTFAnalyzer.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
 
+#include <cmath>
 #include <cstdint>
+#include <utility>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::GameMode;
@@ -28,6 +36,8 @@ namespace Game::GameModes
 
     namespace
     {
+        namespace Math = NorvesLib::Math;
+
         // 空の太陽は仰角 40°・方位 30°（Rendering3DTest の既定と同じ）
         constexpr float kSunAltitudeDegrees = 40.0f;
         constexpr float kSunAzimuthDegrees = 30.0f;
@@ -154,6 +164,122 @@ namespace Game::GameModes
             return true;
         }
 
+        // 共有資産と時刻 0 の境界を先に作り、読み込み失敗時は Entity を作らない。
+        bool LoadSkinnedCrowdAsset(SandboxData &data, Math::Vector3 &outOffset)
+        {
+            auto decoded = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(
+                Container::String(TEXT("Assets/Models/M9Skinned/ValidU8Float.gltf")));
+            if (!decoded.Succeeded() || decoded.Data.Clips.empty())
+            {
+                return false;
+            }
+
+            auto &registry = GEngine.GetResourceRegistry();
+            auto mesh = registry.CreateTransient<SkinnedMeshResource>(TEXT("SandboxCrowdMesh"));
+            auto skeleton = registry.CreateTransient<SkeletonResource>(TEXT("SandboxCrowdSkeleton"));
+            auto clip = registry.CreateTransient<AnimationClipResource>(TEXT("SandboxCrowdClip"));
+            auto asset = registry.CreateTransient<SkeletalAssetResource>(TEXT("SandboxCrowdAsset"));
+            if (!mesh || !skeleton || !clip || !asset)
+            {
+                return false;
+            }
+            mesh->SetVertices(std::move(decoded.Data.Vertices));
+            mesh->SetIndices(std::move(decoded.Data.Indices));
+            mesh->SetSubmeshTables(std::move(decoded.Data.SubMeshes), std::move(decoded.Data.MaterialSlots));
+            mesh->SetMeshNodeGlobalTransform(decoded.Data.MeshNodeGlobalTransform);
+            skeleton->SetJoints(std::move(decoded.Data.Joints));
+            clip->SetClip(std::move(decoded.Data.Clips[0]));
+            if (!mesh->Load() || !skeleton->Load() || !clip->Load() ||
+                !std::isfinite(clip->GetClip().DurationSeconds) || clip->GetClip().DurationSeconds <= 0.0f)
+            {
+                return false;
+            }
+            asset->SetResources(mesh, skeleton, clip);
+            if (!asset->IsLoaded() || !asset->IsValid())
+            {
+                return false;
+            }
+
+            // glTF のメッシュノードの変換を含む実寸を使い、格子点が足元の中心に来るようにする。
+            const auto &values = mesh->GetMeshNodeGlobalTransform();
+            const Math::Matrix4x4 meshTransform(
+                values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
+                values[8], values[9], values[10], values[11], values[12], values[13], values[14], values[15]);
+            Animation::SkeletalPoseSnapshot pose;
+            Math::AABB bounds;
+            const auto &vertices = mesh->GetVertices();
+            if (!Animation::SkeletalAnimationSampler::Sample(*skeleton, *clip, *mesh, 0.0f, meshTransform, pose) ||
+                vertices.empty() || !Animation::ComputeExactBounds(
+                    {vertices.data(), vertices.size()}, {pose.BonePalette.data(), pose.BonePalette.size()}, true, bounds))
+            {
+                return false;
+            }
+            const auto center = bounds.Center();
+            outOffset = Math::Vector3(-center.x, -bounds.Min.y, -center.z);
+            data.m_SkinnedCrowdAsset = asset;
+            return true;
+        }
+
+        void CreateSkinnedCrowd(GameModeContext &ctx, SandboxData &data)
+        {
+            Math::Vector3 offset;
+            if (!LoadSkinnedCrowdAsset(data, offset))
+            {
+                LOG_ERROR("sandbox: 合成スキンの資産を読み込めませんでした。配置を省略します");
+                return;
+            }
+
+            MaterialCreateData materialData;
+            materialData.DebugName = "SandboxCrowdMaterial";
+            materialData.Metallic = 0.0f;
+            materialData.Roughness = 0.7f;
+            materialData.bTwoSided = true;
+            const MaterialHandle material = ctx.RenderResourcesRef.Materials().Create(materialData);
+            if (!material.IsValid())
+            {
+                LOG_ERROR("sandbox: 合成スキンの材質を作れませんでした。配置を省略します");
+                return;
+            }
+            ctx.ScopeRef.TrackMaterial(material);
+
+            constexpr float kSpacing = 1.5f;
+            constexpr float kCenterZ = 3.0f;
+            constexpr float kTimeStepSeconds = 0.137f;
+            const uint32_t columns = static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(data.m_SkinnedCrowdCount))));
+            const uint32_t rows = (data.m_SkinnedCrowdCount + columns - 1u) / columns;
+            const float startX = -0.5f * static_cast<float>(columns - 1u) * kSpacing;
+            const float startZ = kCenterZ - 0.5f * static_cast<float>(rows - 1u) * kSpacing;
+            const auto clip = data.m_SkinnedCrowdAsset->GetAnimationClip();
+            const float duration = clip->GetClip().DurationSeconds;
+            for (uint32_t i = 0; i < data.m_SkinnedCrowdCount; ++i)
+            {
+                Entity *entity = ctx.ScopeRef.SpawnObject<Entity>();
+                if (entity == nullptr)
+                {
+                    LOG_ERROR("sandbox: 合成スキンの Entity を作れませんでした（作成済み %u 体）", i);
+                    return;
+                }
+                auto *component = ctx.WorldRef.CreateComponent<Component::SkinnedMeshComponent>(entity);
+                if (component == nullptr)
+                {
+                    LOG_ERROR("sandbox: 合成スキンの Component を作れませんでした（作成済み %u 体）", i);
+                    return;
+                }
+                component->SetSkeletalAsset(data.m_SkinnedCrowdAsset);
+                if (!component->SetAnimationClip(clip))
+                {
+                    LOG_ERROR("sandbox: 合成スキンのクリップを設定できませんでした（作成済み %u 体）", i);
+                    return;
+                }
+                entity->SetPosition(startX + static_cast<float>(i % columns) * kSpacing + offset.x, offset.y,
+                                    startZ + static_cast<float>(i / columns) * kSpacing + offset.z);
+                component->SetMaterial(material);
+                component->SetLooping(true);
+                component->SetAnimationTimeSeconds(std::fmod(static_cast<float>(i) * kTimeStepSeconds, duration));
+                component->SetPlaying(true);
+            }
+        }
+
         void ApplyEnvironment(GameModeContext &ctx)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
@@ -213,6 +339,10 @@ namespace Game::GameModes
         camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
         camera->SetExposureCompensation(0.0f);
         camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
+        if (data.m_SkinnedCrowdCount > 0)
+        {
+            CreateSkinnedCrowd(ctx, data);
+        }
         return GameModeEnterResult::Succeeded;
     }
 
@@ -239,6 +369,7 @@ namespace Game::GameModes
     {
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
         data.m_Rig.Leave(ctx);
+        data.m_SkinnedCrowdAsset.reset();
         // 地面・材質・テクスチャ・カメラの実体は GameModeScope::Cleanup が返す。空は RenderWorld の設定なので戻す。
         ResetEnvironment(ctx);
         LOG_INFO("sandbox を終了します");
