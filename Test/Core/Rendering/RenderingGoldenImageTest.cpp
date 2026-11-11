@@ -924,6 +924,47 @@ namespace
                 mean = sum / static_cast<double>(side * side);
                 return std::isfinite(mean);
             };
+            auto sphereMean = [&](const Math::Vector3& center, double& mean, uint8_t& maximum) -> bool
+            {
+                double x = 0.0, y = 0.0, edgeX = 0.0, edgeY = 0.0;
+                const Math::Vector3 right(camera.RightX, camera.RightY, camera.RightZ);
+                if (!project(center, x, y) || !project(center + right * points.SphereRadius, edgeX, edgeY))
+                {
+                    return false;
+                }
+                // 鏡球は半径の約 0.7 倍以内が空を映すため、境目を避けて 0.6 倍以内を平均する。
+                const double radius = std::hypot(edgeX - x, edgeY - y) * 0.6;
+                if (radius < 1.5 || x - radius < 0.0 || y - radius < 0.0 ||
+                    x + radius >= image.Width || y + radius >= image.Height)
+                {
+                    return false;
+                }
+                double sum = 0.0;
+                uint32_t count = 0u;
+                maximum = 0u;
+                for (int iy = static_cast<int>(std::floor(y - radius)); iy <= static_cast<int>(std::ceil(y + radius)); ++iy)
+                {
+                    for (int ix = static_cast<int>(std::floor(x - radius)); ix <= static_cast<int>(std::ceil(x + radius)); ++ix)
+                    {
+                        const double dx = ix + 0.5 - x, dy = iy + 0.5 - y;
+                        if (dx * dx + dy * dy <= radius * radius)
+                        {
+                            sum += luminance(static_cast<uint32_t>(ix), static_cast<uint32_t>(iy));
+                            const size_t offset = static_cast<size_t>(iy) * image.RowPitchBytes + static_cast<size_t>(ix) * 4u;
+                            maximum = std::max(maximum, image.Pixels[offset]);
+                            maximum = std::max(maximum, image.Pixels[offset + 1u]);
+                            maximum = std::max(maximum, image.Pixels[offset + 2u]);
+                            ++count;
+                        }
+                    }
+                }
+                if (count == 0u)
+                {
+                    return false;
+                }
+                mean = sum / count;
+                return std::isfinite(mean);
+            };
             double under = 0.0, open = 0.0;
             if (!boxMean(points.GroundUnder, 2, under) || !boxMean(points.GroundOpen, 2, open) || open <= 0.0)
             {
@@ -933,6 +974,12 @@ namespace
             if (m_CanopyStage == 0u)
             {
                 m_CanopyDisabledUnder = under;
+                uint8_t maximum = 0u;
+                if (!sphereMean(points.SphereUnder, m_CanopyDisabledSphereUnder, maximum))
+                {
+                    outFailureReason = TEXT("樹冠の鏡球の測定点を画像へ写せません");
+                    return false;
+                }
                 EnsureCanopyDirectories();
                 if (m_bWriteBaselineStaging)
                 {
@@ -980,47 +1027,6 @@ namespace
                 outFailureReason = TEXT("空の遮蔽が有効な画像を保存できません");
                 return false;
             }
-            auto sphereMean = [&](const Math::Vector3& center, double& mean, uint8_t& maximum) -> bool
-            {
-                double x = 0.0, y = 0.0, edgeX = 0.0, edgeY = 0.0;
-                const Math::Vector3 right(camera.RightX, camera.RightY, camera.RightZ);
-                if (!project(center, x, y) || !project(center + right * points.SphereRadius, edgeX, edgeY))
-                {
-                    return false;
-                }
-                // 鏡球は半径の約 0.7 倍以内が空を映すため、境目を避けて 0.6 倍以内を平均する。
-                const double radius = std::hypot(edgeX - x, edgeY - y) * 0.6;
-                if (radius < 1.5 || x - radius < 0.0 || y - radius < 0.0 ||
-                    x + radius >= image.Width || y + radius >= image.Height)
-                {
-                    return false;
-                }
-                double sum = 0.0;
-                uint32_t count = 0u;
-                maximum = 0u;
-                for (int iy = static_cast<int>(std::floor(y - radius)); iy <= static_cast<int>(std::ceil(y + radius)); ++iy)
-                {
-                    for (int ix = static_cast<int>(std::floor(x - radius)); ix <= static_cast<int>(std::ceil(x + radius)); ++ix)
-                    {
-                        const double dx = ix + 0.5 - x, dy = iy + 0.5 - y;
-                        if (dx * dx + dy * dy <= radius * radius)
-                        {
-                            sum += luminance(static_cast<uint32_t>(ix), static_cast<uint32_t>(iy));
-                            const size_t offset = static_cast<size_t>(iy) * image.RowPitchBytes + static_cast<size_t>(ix) * 4u;
-                            maximum = std::max(maximum, image.Pixels[offset]);
-                            maximum = std::max(maximum, image.Pixels[offset + 1u]);
-                            maximum = std::max(maximum, image.Pixels[offset + 2u]);
-                            ++count;
-                        }
-                    }
-                }
-                if (count == 0u)
-                {
-                    return false;
-                }
-                mean = sum / count;
-                return std::isfinite(mean);
-            };
             double sphereUnder = 0.0, sphereOpen = 0.0;
             uint8_t underMaximum = 0u, openMaximum = 0u;
             if (!sphereMean(points.SphereUnder, sphereUnder, underMaximum) ||
@@ -1029,6 +1035,9 @@ namespace
                 outFailureReason = TEXT("樹冠の鏡球の測定点を画像へ写せません");
                 return false;
             }
+            const double sphereRatio = sphereUnder / sphereOpen;
+            const bool sphereRatioPassed = std::isfinite(sphereRatio) && sphereRatio <= 0.30;
+            const double disabledSphereRatio = sphereUnder / m_CanopyDisabledSphereUnder;
             const double ratio = under / open;
             const bool ratioPassed = std::isfinite(ratio) && ratio >= 0.25 && ratio <= 0.60;
             const double disabledRatio = m_CanopyDisabledUnder > 0.0 ? under / m_CanopyDisabledUnder : 1.0;
@@ -1040,8 +1049,10 @@ namespace
                       << (ratioPassed ? "PASS" : "FAIL") << '\n'
                       << "SKY_OCCLUSION_CANOPY name=enabled_over_disabled value=" << disabledRatio
                       << " limit=<0.99 result=" << (changed ? "PASS" : "FAIL") << '\n'
-                      << "SKY_OCCLUSION_CANOPY name=sphere_ratio value=" << sphereUnder / sphereOpen
-                      << " limit=0.30 result=INFO\n"
+                      << "SKY_OCCLUSION_CANOPY name=sphere_ratio value=" << sphereRatio
+                      << " limit=0.30 result=" << (sphereRatioPassed ? "PASS" : "FAIL") << '\n'
+                      << "SKY_OCCLUSION_CANOPY name=sphere_under_enabled_over_disabled value=" << disabledSphereRatio
+                      << " limit=none result=INFO\n"
                       << "SKY_OCCLUSION_CANOPY name=sphere_open_max_channel value="
                       << static_cast<unsigned>(openMaximum) << " limit=<255 result=INFO\n";
             const Math::Vector3 line = points.EdgeInside - points.EdgeOutside;
@@ -1077,9 +1088,9 @@ namespace
                       << " limit=0.005 result=" << (monotonic ? "PASS" : "FAIL") << '\n'
                       << "SKY_OCCLUSION_CANOPY name=edge_max_relative_change value=" << maximumChange
                       << " limit=0.15 result=" << (smooth ? "PASS" : "FAIL") << '\n';
-            if (!ratioPassed || !changed || !monotonic || !smooth)
+            if (!ratioPassed || !changed || !monotonic || !smooth || !sphereRatioPassed)
             {
-                outFailureReason = TEXT("樹冠の地面の遮蔽率または林縁の連続性が基準を満たしません");
+                outFailureReason = TEXT("樹冠の地面の遮蔽率・林縁の連続性・樹冠の下の球の鏡面の比のいずれかが基準を満たしません");
                 return false;
             }
             m_bCanopyDone = true;
@@ -1214,6 +1225,7 @@ namespace
         uint64_t m_CanopyFirstFrame = 0u;
         uint64_t m_CanopyPreviousFrame = 0u;
         double m_CanopyDisabledUnder = 0.0;
+        double m_CanopyDisabledSphereUnder = 0.0;
         bool m_bGtaoCornellScenario = false;
         bool m_bWriteBaselineStaging = false;
         bool m_bMeasureVisual = false;
