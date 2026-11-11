@@ -44,6 +44,160 @@
 //   - 模様の 1 枚が縮んで法線マップの傾きを落とした分は、その層の法線の傾きの分散（params.farMix.yzw）を粗さの α² に足して
 //     鏡面の広がりへ移す（細かい凹凸が画素ごとに鋭く光るちらつきを出さず、遠くの面の光り方を細かい凹凸のある面のままにする）。
 
+// スプラットは最大 8 層の塗りを崖の傾斜で補正し、上位 4 層を高さで混ぜ、層ごとに濡れを反映する。
+// NORVES_TERRAIN_SPLAT_CORE_ONLY を定義すると、テクスチャや材質の型に依存しない核だけを取り込む。
+// RTGI はこの核で重み・上位 4 層・濡れを共有し、ラスタと可視バッファの解決は ShadeTerrainSplat で標本する。
+
+#ifndef NORVES_TERRAIN_SPLAT_CORE_GLSL
+#define NORVES_TERRAIN_SPLAT_CORE_GLSL
+
+// C++ の PackTerrainSplatParams と同じ vec4 × 12 の並び。
+struct TerrainSplatParams
+{
+    vec4 map;
+    vec4 shape;
+    vec4 cliff;
+    vec4 flags;
+    vec4 layer[8];
+};
+
+const uint TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL = 1u;
+const uint TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE = 2u;
+const float TERRAIN_WET_ALBEDO_SCALE = 0.55; // 濡れきった面のアルベドの倍率
+const float TERRAIN_WET_ROUGHNESS = 0.15; // 濡れきった面の粗さの上限
+
+TerrainSplatParams MakeTerrainSplatParams(vec4 values[12])
+{
+    TerrainSplatParams p;
+    p.map = values[0];
+    p.shape = values[1];
+    p.cliff = values[2];
+    p.flags = values[3];
+    for (int i = 0; i < 8; ++i)
+    {
+        p.layer[i] = values[4 + i];
+    }
+    return p;
+}
+
+bool IsTerrainSplatEnabled(TerrainSplatParams p)
+{
+    return p.shape.x > 0.5 && p.map.z > 0.0;
+}
+
+vec2 TerrainSplatUv(TerrainSplatParams p, vec2 worldXZ)
+{
+    return (worldXZ - p.map.xy) * p.map.zw;
+}
+
+// 塗りの重みを層の数で切り、崖の塗りは傾斜の重みで置き換えて、全体の和を 1 にする。
+void TerrainSplatLayerWeights(TerrainSplatParams p, vec4 spl0, vec4 spl1, float slopeRadians,
+                               out float weights[8])
+{
+    const int count = clamp(int(p.shape.x), 0, 8);
+    const int cliffLayer = p.shape.y >= 0.0 && p.shape.y < float(count) ? int(p.shape.y) : -1;
+    float sum = 0.0;
+    int firstOther = -1;
+    for (int i = 0; i < 8; ++i)
+    {
+        weights[i] = i < count ? (i < 4 ? spl0[i] : spl1[i - 4]) : 0.0;
+        if (i < count && i != cliffLayer)
+        {
+            sum += weights[i];
+            if (firstOther < 0)
+            {
+                firstOther = i;
+            }
+        }
+    }
+    if (cliffLayer >= 0)
+    {
+        const float cliffWeight = smoothstep(p.cliff.x, p.cliff.y, slopeRadians);
+        for (int i = 0; i < 8; ++i)
+        {
+            if (i != cliffLayer)
+            {
+                weights[i] = sum > 1.0e-6 ? weights[i] * ((1.0 - cliffWeight) / sum) : 0.0;
+            }
+        }
+        weights[cliffLayer] = firstOther >= 0 ? cliffWeight : 1.0;
+        if (sum <= 1.0e-6 && firstOther >= 0)
+        {
+            weights[firstOther] = 1.0 - cliffWeight;
+        }
+    }
+    else if (sum > 0.0)
+    {
+        for (int i = 0; i < 8; ++i)
+        {
+            weights[i] /= sum;
+        }
+    }
+    else
+    {
+        weights[0] = 1.0;
+    }
+}
+
+// 昇順に探して厳密に大きい重みだけを採ることで、同点なら小さい層番号を残す。
+void TerrainSplatSelectTop4(float weights[8], out ivec4 layers, out vec4 topWeights)
+{
+    layers = ivec4(-1);
+    topWeights = vec4(0.0);
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        float best = 0.0;
+        int bestLayer = -1;
+        for (int i = 0; i < 8; ++i)
+        {
+            if (all(notEqual(layers, ivec4(i))) && weights[i] > best)
+            {
+                best = weights[i];
+                bestLayer = i;
+            }
+        }
+        layers[slot] = bestLayer;
+        topWeights[slot] = best;
+    }
+    const float sum = dot(topWeights, vec4(1.0));
+    if (sum > 0.0)
+    {
+        topWeights /= sum;
+    }
+    else
+    {
+        layers = ivec4(0, -1, -1, -1);
+        topWeights = vec4(1.0, 0.0, 0.0, 0.0);
+    }
+}
+
+float TerrainSplatWetness(TerrainSplatParams p, int layer)
+{
+    return layer < 0 ? 0.0 : clamp(p.shape.w * p.layer[layer].y, 0.0, 1.0);
+}
+
+vec3 TerrainApplyWetAlbedo(vec3 albedo, float wet)
+{
+    if (wet == 0.0)
+    {
+        return albedo;
+    }
+    return albedo * mix(1.0, TERRAIN_WET_ALBEDO_SCALE, wet);
+}
+
+float TerrainApplyWetRoughness(float roughness, float wet)
+{
+    if (wet == 0.0)
+    {
+        return roughness;
+    }
+    return mix(roughness, min(roughness, TERRAIN_WET_ROUGHNESS), wet);
+}
+
+#endif // NORVES_TERRAIN_SPLAT_CORE_GLSL
+
+#ifndef NORVES_TERRAIN_SPLAT_CORE_ONLY
+
 #ifndef NORVES_TERRAIN_LAYER_BLEND_GLSL
 #define NORVES_TERRAIN_LAYER_BLEND_GLSL
 
@@ -688,4 +842,139 @@ PbrMaterialTextureSamples ShadeTerrainLayers(TerrainBlendParams params,
     return result;
 }
 
+// スプラットの標本: 塗りの重み → 崖の傾斜 → 上位 4 層 → 高さの先鋭化 → 濡れ。
+// 濡れは層ごとの標本に掛け、高さで決めた重みで混ぜる。高さと法線の傾きは濡れで変えない。
+struct TerrainSplatLayerSample
+{
+    vec3 Albedo;
+    vec3 Material;
+    vec3 Perturbation;
+    float Height;
+};
+
+// 配列の 1 投影を勾配付きで標本する。法線の復号と傾きの回転は 3 層の投影と同じ規約。
+void AccumulateTerrainSplatProjection(inout TerrainSplatLayerSample acc, float weight,
+                                      sampler2DArray albedoArray, sampler2DArray normalArray,
+                                      sampler2DArray armArray, int layer, uint flags,
+                                      vec2 uv, vec2 uvDx, vec2 uvDy, mat2 rotation,
+                                      vec3 axisU, vec3 axisV)
+{
+    const vec3 coord = vec3(rotation * uv, float(layer));
+    const vec2 dx = rotation * uvDx;
+    const vec2 dy = rotation * uvDy;
+    vec3 albedo = textureGrad(albedoArray, coord, dx, dy).rgb;
+    if ((flags & TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE) != 0u)
+    {
+        albedo = TerrainSrgbToLinear(albedo);
+    }
+    const vec3 tangentNormal = DecodePbrTangentNormal(
+        textureGrad(normalArray, coord, dx, dy), (flags & TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL) != 0u);
+    const vec4 arm = textureGrad(armArray, coord, dx, dy);
+    // 緑は反転せず、回した UV の傾きを元へ戻して、接平面へ落とした投影の軸に載せる。
+    const vec2 slope = transpose(rotation) * (tangentNormal.xy / max(tangentNormal.z, 0.1));
+    acc.Albedo += albedo * weight;
+    acc.Material += vec3(arm.b, arm.g, arm.r) * weight;
+    acc.Perturbation += (axisU * slope.x + axisV * slope.y) * weight;
+    acc.Height += arm.a * weight;
+}
+
+PbrMaterialTextureSamples ShadeTerrainSplat(TerrainSplatParams params,
+                                            sampler2DArray albedoArray, sampler2DArray normalArray,
+                                            sampler2DArray armArray, sampler2DArray splatArray,
+                                            TerrainSurfaceInput surface, out vec3 worldNormal)
+{
+    const vec3 n = normalize(surface.GeometricNormal);
+    const float slope = acos(clamp(n.y, -1.0, 1.0));
+    const vec2 xz = surface.WorldPosition.xz;
+    const vec2 uv = TerrainSplatUv(params, xz);
+    const vec4 spl0 = textureLod(splatArray, vec3(uv, 0.0), 0.0);
+    const vec4 spl1 = params.shape.x > 4.0 ? textureLod(splatArray, vec3(uv, 1.0), 0.0) : vec4(0.0);
+    float weights[8];
+    TerrainSplatLayerWeights(params, spl0, spl1, slope, weights);
+    ivec4 layers;
+    vec4 topWeights;
+    TerrainSplatSelectTop4(weights, layers, topWeights);
+
+    const TerrainProjectionFrame frame = MakeTerrainProjectionFrame(n);
+    const vec3 projection = ComputeTerrainTriplanarWeights(n);
+    const uint flags = uint(params.flags.x);
+    const vec3 p = surface.WorldPosition;
+    const vec3 pdx = surface.WorldDx;
+    const vec3 pdy = surface.WorldDy;
+    TerrainSplatLayerSample samples[4];
+    vec4 heights = vec4(0.0);
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        samples[slot].Albedo = vec3(0.0);
+        samples[slot].Material = vec3(0.0);
+        samples[slot].Perturbation = vec3(0.0);
+        samples[slot].Height = 0.0;
+        const int layer = layers[slot];
+        if (layer < 0)
+        {
+            continue;
+        }
+        const float k = params.layer[layer].x;
+        if (float(layer) == params.shape.y)
+        {
+            if (projection.x > 0.0)
+            {
+                // YZ の U は Y、V は Z。既存の ZY の軸を UV と一緒に入れ替える。
+                AccumulateTerrainSplatProjection(samples[slot], projection.x, albedoArray, normalArray, armArray,
+                    layer, flags, p.yz * k, pdx.yz * k, pdy.yz * k, mat2(1.0), frame.SideXV, frame.SideXU);
+            }
+            if (projection.y > 0.0)
+            {
+                AccumulateTerrainSplatProjection(samples[slot], projection.y, albedoArray, normalArray, armArray,
+                    layer, flags, p.xz * k, pdx.xz * k, pdy.xz * k, mat2(1.0), frame.TopU, frame.TopV);
+            }
+            if (projection.z > 0.0)
+            {
+                AccumulateTerrainSplatProjection(samples[slot], projection.z, albedoArray, normalArray, armArray,
+                    layer, flags, p.xy * k, pdx.xy * k, pdy.xy * k, mat2(1.0), frame.SideZU, frame.SideZV);
+            }
+        }
+        else
+        {
+            float angle = 0.0;
+            if (params.cliff.z > 0.0)
+            {
+                const vec2 seed = vec2(17.31, -41.7) * float(layer + 1);
+                angle = (TerrainValueNoise(xz * params.cliff.z + seed) * 2.0 - 1.0) * params.cliff.w;
+            }
+            const float c = cos(angle);
+            const float s = sin(angle);
+            const mat2 rotation = mat2(c, s, -s, c);
+            AccumulateTerrainSplatProjection(samples[slot], 1.0, albedoArray, normalArray, armArray,
+                layer, flags, xz * k, pdx.xz * k, pdy.xz * k, rotation, frame.TopU, frame.TopV);
+        }
+        const float wet = TerrainSplatWetness(params, layer);
+        samples[slot].Albedo = TerrainApplyWetAlbedo(samples[slot].Albedo, wet);
+        samples[slot].Material.y = TerrainApplyWetRoughness(samples[slot].Material.y, wet);
+        heights[slot] = samples[slot].Height;
+    }
+
+    const vec4 h = topWeights + heights * clamp(topWeights * 4.0, vec4(0.0), vec4(1.0));
+    const float top = max(max(h.x, h.y), max(h.z, h.w)) - params.shape.z;
+    vec4 w = max(h - vec4(top), vec4(0.0)) * step(vec4(1.0e-4), topWeights);
+    const float sum = dot(w, vec4(1.0));
+    w = sum > 1.0e-6 ? w / sum : topWeights;
+
+    PbrMaterialTextureSamples result;
+    result.Albedo = vec4(0.0, 0.0, 0.0, 1.0);
+    result.Material = vec3(0.0);
+    result.TangentNormal = vec3(0.0, 0.0, 1.0);
+    vec3 perturbation = vec3(0.0);
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        result.Albedo.rgb += samples[slot].Albedo * w[slot];
+        result.Material += samples[slot].Material * w[slot];
+        perturbation += samples[slot].Perturbation * w[slot];
+    }
+    worldNormal = normalize(n + perturbation);
+    return result;
+}
+
 #endif // NORVES_TERRAIN_LAYER_BLEND_GLSL
+
+#endif // NORVES_TERRAIN_SPLAT_CORE_ONLY
