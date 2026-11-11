@@ -424,6 +424,15 @@ set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 地形スプラットの象限ごとの色、斜面での崖の細かさ、濡れの恒等性と暗化・粗さの減少を GPU から読み戻す。
+add_test(NAME TerrainLayerBlendVulkanTest COMMAND RHITextureUpdateVulkanTest --test=TerrainLayerBlendVulkanTest)
+set_tests_properties(TerrainLayerBlendVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetLogGateTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetLogGateTest)
 
 add_test(NAME SparseCapabilitiesVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseCapabilitiesVulkanTest)
@@ -707,6 +716,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
     MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
+    MEMBER TerrainLayerBlendVulkanTest TerrainLayerBlendVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp

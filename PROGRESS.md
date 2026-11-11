@@ -10791,3 +10791,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 TerrainComponent が層の表と SPL0・SPL1 からスプラットの材質を組み、草原に塗る（層のテクスチャは単色の仮）: 着地(直し 0 回)
 - U9 TerrainShaderCompileTest を足す: 着地(直し 2 回)
 - U8 層のテクスチャを cook 済みの Poly Haven の素材から 2D 配列に組む（無ければ単色の仮のまま）: 着地(直し 0 回)
+- U10 TerrainLayerBlendVulkanTest を足す（象限・斜面・濡れ）: 着地(直し 0 回)
