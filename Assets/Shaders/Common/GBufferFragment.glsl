@@ -1,5 +1,7 @@
 ﻿// GBuffer の標準の断片シェーダーの本体。材質ごとのプログラムの FS は、この本体か
 // Common/GBufferEncoding.glsl の GBufferEncodeNormal・GBufferEncodeMaterial・GBufferEncodeEmissive を通して 5 枚へ書く約束。
+// GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質だけに使う。
+// discard が早期深度テストを妨げる実装が多いため、通常の FS と分ける。
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 #extension GL_ARB_sparse_texture2 : require
 #endif
@@ -27,7 +29,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0）
     vec4 shadingParams; // 材質の値。スキンだけインスタンスの値を重ねた値。負は未指定。
-    vec4 shadingModel; // x=GBuffer の ID
+    vec4 shadingModel; // x=GBuffer のシェーディングモデル ID, y=切り抜き閾値 cutoff（0〜1）, z=切り抜き方式（0=なし、1=Test、2=Hash）, w=Hash の位相（0〜63、フレームごとに変化）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -39,6 +41,9 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/GBufferEncoding.glsl"
+#ifdef GBUFFER_ALPHA_CLIP
+#include "Common/AlphaClip.glsl"
+#endif
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 11
@@ -56,6 +61,9 @@ layout(location = 4) out vec2 outVelocity;  // RT4: 現在の UV - 前の UV
 
 void main()
 {
+    // 両面材質はカリングなしで描くため、裏面の法線を反転する。背面カリング時は常に表面なので変わらない。
+    vec3 geometricNormal = gl_FrontFacing ? fragNormal : -fragNormal;
+
     // POMパラメータ取得
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;
@@ -69,7 +77,7 @@ void main()
     }
 
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
-    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
+    mat3 TBN = CalculateCotangentFrame(geometricNormal, fragWorldPos, fragTexCoord);
 
     // POM適用: ハイトマップがある場合のみUVオフセット
     vec2 texCoord = fragTexCoord;
@@ -100,11 +108,26 @@ void main()
         WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
                                           DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z), heightLod);
     }
-    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
-                     textureSamples.Albedo.a);
-
     // インスタンスの指定を材質より優先し、未指定の成分には既定値を使う。
     vec4 params = ResolveShadingParams(fragInstanceShadingParams, mvp.shadingParams);
+
+#ifdef GBUFFER_ALPHA_CLIP
+    float coverage = textureSamples.Albedo.a * params.w;
+    uint alphaClipMode = uint(mvp.shadingModel.z + 0.5);
+    uint alphaClipPhase = uint(mvp.shadingModel.w + 0.5);
+    if (AlphaClipShouldDiscard(coverage, mvp.shadingModel.y, alphaClipMode, floor(gl_FragCoord.xy), alphaClipPhase))
+    {
+        discard;
+    }
+#endif
+
+    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
+                     textureSamples.Albedo.a);
+#ifdef GBUFFER_ALPHA_CLIP
+    // 残った画素が天球と判定されないよう、不透明として書く。
+    outAlbedo.a = 1.0;
+#endif
+
     uint id = uint(mvp.shadingModel.x + 0.5) & GBUFFER_SHADING_MODEL_ID_MASK;
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
