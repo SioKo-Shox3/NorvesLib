@@ -10738,3 +10738,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 AnimatorComponent の評価を GameThread の準備・ワーカーのグラフ評価・GameThread の確定に分ける: 着地(直し 0 回)
 - U6 sandbox の合成スキンの資産を、外部バッファを生成してから読む: 着地(直し 0 回)
 - U4 World の PoseFinalize の群で、Animator とスキンメッシュの評価を 2 つの波で ParallelFor に回す: 着地(直し 1 回)
+- U5 直列と並列の一致の試験を足し、タスクの verify を回す: 着地(直し 1 回)
