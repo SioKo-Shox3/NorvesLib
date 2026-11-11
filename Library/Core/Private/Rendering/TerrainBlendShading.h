@@ -3,6 +3,7 @@
 // 地形の 3 層の混ぜ合わせ（MegaGeometry::MegaTerrainBlend）を、シェーダーの TerrainBlendParams（vec4 × 10。
 // Assets/Shaders/Common/TerrainLayerBlend.glsl）へ詰める。MegaGeometryPass（ハードのラスタ）と
 // VisibilityResolvePass（可視バッファの解決）が同じ並びで使う。
+// スプラットの並び（TerrainSplatParams。vec4 × 12）と束縛の番号もここに置き、ラスタ・可視バッファ・RTGI で共有する。
 
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "RHI/ITexture.h"
@@ -22,6 +23,24 @@ namespace NorvesLib::Core::Rendering
     constexpr uint32_t TERRAIN_BLEND_SAND_ALBEDO_SRGB_DECODE = 4u;
     constexpr uint32_t TERRAIN_BLEND_DIRT_ALBEDO_SRGB_DECODE = 8u;
     constexpr uint32_t TERRAIN_BLEND_ROCK_ALBEDO_SRGB_DECODE = 16u;
+
+    constexpr uint32_t TERRAIN_SPLAT_PARAM_FLOATS = 48u;
+    constexpr uint32_t TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL = 1u;
+    constexpr uint32_t TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE = 2u;
+    // MegaGeometry のハードのラスタ（megageometry.frag、set 0）
+    constexpr uint32_t TERRAIN_SPLAT_MEGA_ALBEDO_BINDING = 18u; // sampler2DArray
+    constexpr uint32_t TERRAIN_SPLAT_MEGA_NORMAL_BINDING = 19u; // sampler2DArray
+    constexpr uint32_t TERRAIN_SPLAT_MEGA_ARM_BINDING = 20u;    // sampler2DArray
+    constexpr uint32_t TERRAIN_SPLAT_MEGA_SPLAT_BINDING = 21u;  // sampler2DArray
+    constexpr uint32_t TERRAIN_SPLAT_MEGA_PARAMS_BINDING = 23u; // UBO（std140。vec4 terrainSplat[12]）
+    // 可視バッファの解決（ResolveTileParams の terrain[10] の後ろに vec4 terrainSplat[12]）
+    constexpr uint32_t TERRAIN_SPLAT_VIS_ALBEDO_BINDING = 32u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_NORMAL_BINDING = 33u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_ARM_BINDING = 34u;
+    constexpr uint32_t TERRAIN_SPLAT_VIS_SPLAT_BINDING = 35u;
+    // RTGI（RTGIComputeParameters の foliageOcclusion の後ろに vec4 terrainSplat[12]）
+    constexpr uint32_t TERRAIN_SPLAT_RTGI_ALBEDO_BINDING = 30u;
+    constexpr uint32_t TERRAIN_SPLAT_RTGI_SPLAT_BINDING = 31u;
 
     /**
      * @brief アルベドのテクスチャを、標本の後にシェーダーで sRGB から線形へ戻すか
@@ -147,6 +166,55 @@ namespace NorvesLib::Core::Rendering
         {
             const float variance = blend.DetailSlopeVariance[layer];
             out[37 + layer] = std::isfinite(variance) && variance > 0.0f ? variance : 0.0f;
+        }
+    }
+
+    /// スプラットの層の並びを詰める（並びは TerrainLayerBlend.glsl の TerrainSplatParams と同じ。vec4 × 12）
+    /// bEnabled が偽（テクスチャが引けない）なら 48 個とも 0。flagBits は TERRAIN_SPLAT_FLAG_* の和。wetness は 0..1 へ丸める
+    inline void PackTerrainSplatParams(const MegaGeometry::MegaTerrainSplat& splat, bool bEnabled, uint32_t flagBits,
+                                      float wetness, float out[TERRAIN_SPLAT_PARAM_FLOATS])
+    {
+        for (uint32_t index = 0; index < TERRAIN_SPLAT_PARAM_FLOATS; ++index)
+        {
+            out[index] = 0.0f;
+        }
+        const float width = splat.SplatMaxXZ[0] - splat.SplatMinXZ[0];
+        const float depth = splat.SplatMaxXZ[1] - splat.SplatMinXZ[1];
+        if (!bEnabled || !splat.bEnabled || splat.LayerCount == 0u ||
+            !(width > 1.0e-3f) || !(depth > 1.0e-3f))
+        {
+            return;
+        }
+
+        constexpr float DegreesToRadians = 3.14159265358979f / 180.0f;
+        const uint32_t layerCount = splat.LayerCount < MegaGeometry::MegaTerrainSplatMaxLayers
+            ? splat.LayerCount : MegaGeometry::MegaTerrainSplatMaxLayers;
+        const auto clampUnit = [](float value)
+        {
+            return value > 0.0f ? (value < 1.0f ? value : 1.0f) : 0.0f;
+        };
+        out[0] = splat.SplatMinXZ[0];
+        out[1] = splat.SplatMinXZ[1];
+        out[2] = 1.0f / width;
+        out[3] = 1.0f / depth;
+        out[4] = static_cast<float>(layerCount);
+        out[5] = splat.CliffLayer >= 0 && splat.CliffLayer < static_cast<int32_t>(layerCount)
+            ? static_cast<float>(splat.CliffLayer) : -1.0f;
+        out[6] = splat.HeightBlendDepth > 1.0e-3f ? splat.HeightBlendDepth : 1.0e-3f;
+        out[7] = std::isfinite(wetness) ? clampUnit(wetness) : 0.0f;
+        out[8] = splat.CliffSlopeDegrees[0] * DegreesToRadians;
+        const float cliffEnd = splat.CliffSlopeDegrees[1] * DegreesToRadians;
+        // smoothstep の終わりを始まり + 1e-4 以上へずらす（3 層の range と同じ）。
+        out[9] = cliffEnd > out[8] + 1.0e-4f ? cliffEnd : out[8] + 1.0e-4f;
+        out[10] = splat.UvRotationWavelength > 0.0f ? 1.0f / splat.UvRotationWavelength : 0.0f;
+        out[11] = splat.UvRotationDegrees * DegreesToRadians;
+        out[12] = static_cast<float>(flagBits);
+        for (uint32_t layer = 0; layer < layerCount; ++layer)
+        {
+            const float tileMeters = splat.Layers[layer].TileMeters > 1.0e-3f
+                ? splat.Layers[layer].TileMeters : 1.0e-3f;
+            out[16u + layer * 4u] = 1.0f / tileMeters;
+            out[17u + layer * 4u] = clampUnit(splat.Layers[layer].Wettability);
         }
     }
 } // namespace NorvesLib::Core::Rendering

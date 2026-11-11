@@ -10,6 +10,7 @@
 #include "Container/VariableArray.h"
 #include "Math/Vector2.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/RenderExtension/RenderExtensionData.h"
 
 #include <cstdint>
 #include <limits>
@@ -21,6 +22,15 @@ namespace NorvesLib::Core::Asset
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
+    /// 地形全体の濡れ度を描画へ渡すフレームの値。
+    struct TerrainWetnessRenderData
+    {
+        float Wetness = 0.0f;
+    };
+
+    inline constexpr RenderExtensionDataKey<TerrainWetnessRenderData> kTerrainWetnessRenderKey{
+        Identity::Literal("TerrainWetness", sizeof("TerrainWetness") - 1)};
+
     /// 地形の登録を識別する世代付きハンドル。
     struct TerrainHandle
     {
@@ -119,7 +129,14 @@ namespace NorvesLib::Core::Rendering::Terrain
         void SetAssetSystem(Container::TSharedPtr<const Asset::AssetSystem> assetSystem);
         Container::TSharedPtr<const Asset::AssetSystem> GetAssetSystem() const;
 
-        /// すべての登録を解除し、タイルの印を全常駐に戻す。資産システムの設定は保持する。
+        /// GameThread で濡れ度を設定する。0..1 へ丸め、有限でなければ 0 にする。
+        /// GR49（天候）・GR53 が来るまでの受け口。地形全体で 1 つの値。
+        void SetWetness(float wetness);
+
+        /// GameThread で地形全体の濡れ度を取得する。
+        float GetWetness() const;
+
+        /// すべての登録を解除し、タイルの印を全常駐、濡れ度を 0 に戻す。資産システムの設定は保持する。
         void Clear();
 
     private:
@@ -143,5 +160,6 @@ namespace NorvesLib::Core::Rendering::Terrain
         uint32_t m_TerrainCount = 0u;
         Container::TSharedPtr<const Asset::AssetSystem> m_AssetSystem;
         Container::TSharedPtr<const TerrainTileResidency> m_TileResidency;
+        float m_Wetness = 0.0f;
     };
 } // namespace NorvesLib::Core::Rendering::Terrain
