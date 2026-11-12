@@ -35,6 +35,9 @@ namespace NorvesLib::Core::AssetImport
         const ArmChannelPolicy& policy, double factor, ArmChannelDecision& out) noexcept;
     // Texture出力時も同じ式を使う。AOは1+strength*(sample-1)、他はfactor*sample。
     [[nodiscard]] MaterialPolicyStatus BakeArmByte(uint8_t sample, ArmChannel channel, double factor, uint8_t& out) noexcept;
+    // baseColorFactorのRGB 1成分をsRGBのUNORM8へ焼く。sRGB→線形→×factor→sRGBの順で計算し、
+    // 丸めはBakeArmByteと同じfloor(x+0.5)。factorは有限の0〜1。失敗時outは保持。
+    [[nodiscard]] MaterialPolicyStatus BakeBaseColorByte(uint8_t srgbSample, double factor, uint8_t& out) noexcept;
     struct EmissiveScale
     {
         bool Present = false;
