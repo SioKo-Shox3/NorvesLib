@@ -261,6 +261,7 @@ namespace NorvesLib::Core::Rendering
         // Batcherをクリア
         m_Batcher.Clear();
 
+        m_RenderExtensions.ShutdownShadowCasters();
         View::Shutdown();
     }
 
@@ -1033,6 +1034,7 @@ namespace NorvesLib::Core::Rendering
         {
             // DrawCommandはGameThreadのGenerateDrawCommands()でスナップショット済み
             // context.SnapshotDrawCommands等から各パスが参照する
+            m_RenderExtensions.CollectShadowCasters(context);
             View::Render(context);
         }
         else
