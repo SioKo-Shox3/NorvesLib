@@ -1,8 +1,12 @@
 ﻿// セルのストリーミング全体を扱う。
 #include "Streaming/StreamingSystem.h"
 
+#include "Logging/LogMacros.h"
+
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <numeric>
 #include <thread>
 #include <utility>
 
@@ -27,6 +31,80 @@ namespace NorvesLib::Core::Streaming
         }
     } // namespace
 
+    StreamingHitchCounter::StreamingHitchCounter(uint32_t windowFrames, uint32_t minSamples, double hitchRatio)
+        : m_WindowFrames(std::max(windowFrames, uint32_t{1})),
+          m_MinSamples(std::clamp(minSamples, uint32_t{1}, m_WindowFrames)),
+          m_HitchRatio(hitchRatio)
+    {
+        m_Samples.reserve(m_WindowFrames);
+        m_SortedSamples.reserve(m_WindowFrames);
+    }
+
+    bool StreamingHitchCounter::AddFrame(double frameMs)
+    {
+        if (!std::isfinite(frameMs) || frameMs < 0.0)
+        {
+            return false;
+        }
+
+        bool bHitch = false;
+        m_LastMedianMs = 0.0;
+        if (m_Samples.size() >= m_MinSamples)
+        {
+            m_SortedSamples.assign(m_Samples.begin(), m_Samples.end());
+            const auto middle = m_SortedSamples.begin() + m_SortedSamples.size() / 2;
+            std::nth_element(m_SortedSamples.begin(), middle, m_SortedSamples.end());
+            m_LastMedianMs = *middle;
+            if (m_SortedSamples.size() % 2 == 0)
+            {
+                const double lower = *std::max_element(m_SortedSamples.begin(), middle);
+                m_LastMedianMs = std::midpoint(lower, *middle);
+            }
+            if (frameMs > m_LastMedianMs * m_HitchRatio)
+            {
+                bHitch = true;
+                ++m_HitchCount;
+                m_LastHitchFrameMs = frameMs;
+            }
+        }
+
+        if (m_Samples.size() < m_WindowFrames)
+        {
+            m_Samples.push_back(frameMs);
+        }
+        else
+        {
+            m_Samples[m_NextSample] = frameMs;
+            m_NextSample = (m_NextSample + 1) % m_WindowFrames;
+        }
+        return bHitch;
+    }
+
+    uint32_t StreamingHitchCounter::GetHitchCount() const
+    {
+        return m_HitchCount;
+    }
+
+    double StreamingHitchCounter::GetLastHitchFrameMs() const
+    {
+        return m_LastHitchFrameMs;
+    }
+
+    double StreamingHitchCounter::GetLastMedianMs() const
+    {
+        return m_LastMedianMs;
+    }
+
+    void StreamingHitchCounter::Reset()
+    {
+        m_Samples.clear();
+        m_SortedSamples.clear();
+        m_NextSample = 0;
+        m_HitchCount = 0;
+        m_LastHitchFrameMs = 0.0;
+        m_LastMedianMs = 0.0;
+    }
+
     StreamingSystem::CellEntry::CellEntry(const StreamingCellDesc* pDesc, StreamingRetryPolicy retry,
                                           StreamingScopeId scopeId)
         : Cell(pDesc, retry), ScopeId(scopeId)
@@ -48,6 +126,7 @@ namespace NorvesLib::Core::Streaming
         CancelAndWaitPrepares();
         m_Clock = pClock != nullptr ? pClock : &m_DefaultClock;
         m_Executor = pExecutor != nullptr ? pExecutor : &m_DefaultExecutor;
+        m_bHasLastUpdateMs = false;
     }
 
     bool StreamingSystem::SetSettings(const StreamingSystemSettings& settings)
@@ -144,6 +223,8 @@ namespace NorvesLib::Core::Streaming
             }
         }
         m_bHasManifest = true;
+        m_HitchCounter.Reset();
+        m_bHasLastUpdateMs = false;
         return true;
     }
 
@@ -357,6 +438,22 @@ namespace NorvesLib::Core::Streaming
         m_LastFrameStats = {};
         m_LastFrameStats.Frame = m_Frame;
         const double now = m_Clock->NowMs();
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_bHasManifest)
+        {
+            if (m_bHasLastUpdateMs && m_HitchCounter.AddFrame(now - m_LastUpdateMs))
+            {
+                LOG_INFO("STREAMING_HITCH count=%u frame_ms=%.2f median_ms=%.2f フレームの時間が直近の中央値の 2 倍を超えました",
+                         m_HitchCounter.GetHitchCount(), m_HitchCounter.GetLastHitchFrameMs(), m_HitchCounter.GetLastMedianMs());
+            }
+            m_LastUpdateMs = now;
+            m_bHasLastUpdateMs = true;
+        }
+        else
+        {
+            m_bHasLastUpdateMs = false;
+        }
+#endif
         CollectPrepares(now);
 
         Container::VariableArray<CellEntry*> candidates;

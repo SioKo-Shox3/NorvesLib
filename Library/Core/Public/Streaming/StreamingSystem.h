@@ -1,6 +1,7 @@
 ﻿// セルのストリーミング全体を扱う。
 #pragma once
 
+#include "Container/VariableArray.h"
 #include "Streaming/CellManifest.h"
 #include "Streaming/IStreamingEnvironment.h"
 #include "Streaming/IStreamingPayloadHandler.h"
@@ -38,6 +39,35 @@ namespace NorvesLib::Core::Streaming
         uint64_t ResidentCpuBytes = 0;
         uint64_t ResidentGpuBytes = 0;
         uint32_t Evictions = 0;
+    };
+
+    // フレームの時間を直近の窓の中央値と比べ、ratio 倍を超えた回数を数える。GameThread だけで使う。
+    // 窓の長さと最少標本数は最低 1 とし、最少標本数が窓の長さを超えるときは窓の長さにする。
+    class StreamingHitchCounter
+    {
+    public:
+        explicit StreamingHitchCounter(uint32_t windowFrames = 120, uint32_t minSamples = 30, double hitchRatio = 2.0);
+        // 非有限・負の値は無視する。有効な値は追加前の窓で判定してから窓に入れる。
+        // 標本が最少数以上あり、中央値の hitchRatio 倍を厳密に超えた場合だけ true。
+        bool AddFrame(double frameMs);
+        uint32_t GetHitchCount() const;
+        // 最後にヒッチと数えたフレームの時間。無ければ 0。
+        double GetLastHitchFrameMs() const;
+        // 最後の有効な入力で判定に使った中央値。判定しなかったら 0。
+        double GetLastMedianMs() const;
+        // 窓と回数と記録を空にする。
+        void Reset();
+
+    private:
+        uint32_t m_WindowFrames;
+        uint32_t m_MinSamples;
+        double m_HitchRatio;
+        Container::VariableArray<double> m_Samples;
+        Container::VariableArray<double> m_SortedSamples;
+        uint32_t m_NextSample = 0;
+        uint32_t m_HitchCount = 0;
+        double m_LastHitchFrameMs = 0.0;
+        double m_LastMedianMs = 0.0;
     };
 
     // 公開操作はすべて GameThread で直列に呼ぶ。ハンドラと注入環境は非所有。
@@ -131,7 +161,10 @@ namespace NorvesLib::Core::Streaming
         Container::VariableArray<CellEntry> m_Cells;
         Container::VariableArray<StreamingTransition> m_Transitions;
         StreamingFrameStats m_LastFrameStats;
+        StreamingHitchCounter m_HitchCounter;
+        double m_LastUpdateMs = 0.0;
         uint64_t m_Frame = 0;
+        bool m_bHasLastUpdateMs = false;
         bool m_bHasManifest = false;
         bool m_bRecordTransitions = false;
     };

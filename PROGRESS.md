@@ -11026,3 +11026,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・アセットロード・物理の危険地帯）。人が見るときの見どころ: 開発ビルドで `--scene=grassland --grassland-streaming` を付けて起動し、near の視点から地形の反対の隅へ自由飛行で移ると、離れたセルの散布（岩・倒木・低木・草の塊）が休眠で消え、岩の当たりが外れ、さらに離れると地形の区画が外れる。戻ると再び読まれる。休眠中の地形は描画が残る。引数なしの grassland（ランチャーから・`--scene=grassland`）は今までと同じ見た目と流れのはず。
 - Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（既存の `--grassland-scatter-stress` と同じ形）。`--grassland-streaming` では Unload の輪 448 m が地形の対角（約 724 m）より短いので、隅にいると反対の隅の区画が外れて地形に穴が見える（開発の引数だけの挙動）。散布は距離の常駐を切るので、岩以外の種もセルで出し入れされる。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD。
 - U1 ペイロードの申告に「使える状態」と GPU バイトの数え方を足す: 着地(直し 0 回)
+- U2 ヒッチの数え方と記録、新しい試験の骨組み: 着地(直し 0 回)
