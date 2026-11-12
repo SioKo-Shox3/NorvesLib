@@ -913,6 +913,7 @@ namespace NorvesLib::Core::Rendering
         m_PrevHiZNotReadyCount = 0;
 
         m_DrawPipeline.reset();
+        m_DrawTwoSidedPipeline.reset();
         m_DrawWireframePipeline.reset();
         m_DrawVertexShader.reset();
         m_DrawFragmentShader.reset();
@@ -1943,6 +1944,7 @@ namespace NorvesLib::Core::Rendering
                     return false;
                 }
             }
+            // 切り抜きは行わないため AlphaCutoff は比較しない。両面は区間ごとにカリングとパイプラインを選ぶので比較する。
             return a.Metallic == b.Metallic && a.Roughness == b.Roughness &&
                    a.OcclusionStrength == b.OcclusionStrength && a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
@@ -1950,7 +1952,8 @@ namespace NorvesLib::Core::Rendering
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
-                   a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading;
+                   a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading && a.Blend == b.Blend &&
+                   a.bTwoSided == b.bTwoSided;
         }
 
         // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
@@ -1968,7 +1971,7 @@ namespace NorvesLib::Core::Rendering
             float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
             float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
-            float ShadingParams[4]; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
+            float ShadingParams[4]; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
             float VertexAnimTime[4];
         };
         static_assert(offsetof(SectionUniformData, VertexAnimTime) == 544u);
@@ -2060,6 +2063,7 @@ namespace NorvesLib::Core::Rendering
         mesh.SectionIndex = sectionIndex;
         mesh.VertexBase = static_cast<uint32_t>(vertexBase);
         mesh.IndexBase = static_cast<uint32_t>(indexBase);
+        mesh.Flags = gpuData.Material.bTwoSided ? MegaMeshFlagTwoSided : 0u;
         mesh.PageTableBase = gpuData.PageTableBase;
         // 締まった境界球。有限で半径が正のときだけ載せ、無ければ判定は根の節の球を使う。実行時の LOD の TotalBounds は最も細かい段
         // だけから作るので、表へ写した後に mega_scene_scatter.comp の段 3 が、半径を全段のクラスタの球を包むまで広げる
@@ -4162,6 +4166,8 @@ namespace NorvesLib::Core::Rendering
             {
                 uniform.ShadingParams[index] = mat.ShadingParams[index];
             }
+            // 予約成分を使い、切り抜かずに描く Masked のαが天球の判定に使われないようにする。
+            uniform.ShadingParams[ShadingParamReserved] = mat.Blend == BlendMode::Masked ? 1.0f : 0.0f;
             uniform.ObjectColor[0] = mat.BaseColor[0];
             uniform.ObjectColor[1] = mat.BaseColor[1];
             uniform.ObjectColor[2] = mat.BaseColor[2];
@@ -5072,7 +5078,8 @@ namespace NorvesLib::Core::Rendering
             }
             cmdList->SetViewport(command.Viewport);
             cmdList->SetScissor(command.Scissor);
-            cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
+            const RHI::PipelinePtr defaultPipeline = SelectDrawPipeline(command.DebugMode);
+            RHI::PipelinePtr currentPipeline;
 
             for (uint32_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
             {
@@ -5082,10 +5089,19 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
 
+                const auto *gpuData = section.Representative;
+                const bool bUseTwoSided = gpuData->Material.bTwoSided &&
+                                          defaultPipeline.get() == m_DrawPipeline.get() && m_DrawTwoSidedPipeline;
+                const RHI::PipelinePtr pipeline = bUseTwoSided ? m_DrawTwoSidedPipeline : defaultPipeline;
+                if (currentPipeline.get() != pipeline.get())
+                {
+                    cmdList->SetPipeline(pipeline);
+                    currentPipeline = pipeline;
+                }
+
                 cmdList->SetDescriptorSet(frameSlot.Sections[sectionIndex].DescriptorSet, 0);
 
                 // 頂点/インデックスバッファ設定（プールの塊の先頭から。メッシュの位置はコマンドの基点が持つ）
-                const auto *gpuData = section.Representative;
                 cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
                 cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
 
@@ -7418,6 +7434,7 @@ namespace NorvesLib::Core::Rendering
         if (!bRequireDrawPipeline)
         {
             m_DrawPipeline.reset();
+            m_DrawTwoSidedPipeline.reset();
             m_DrawWireframePipeline.reset();
             return true;
         }
@@ -7425,29 +7442,47 @@ namespace NorvesLib::Core::Rendering
         if (!m_DrawVertexShader || !m_DrawFragmentShader)
         {
             m_DrawPipeline.reset();
+            m_DrawTwoSidedPipeline.reset();
             m_DrawWireframePipeline.reset();
             return false;
         }
 
         m_DrawPipeline.reset();
+        m_DrawTwoSidedPipeline.reset();
         m_DrawWireframePipeline.reset();
 
-        if (!CreateDrawPipelineVariant(RHI::PolygonMode::Fill, m_DrawPipeline))
+        if (!CreateDrawPipelineVariant(RHI::PolygonMode::Fill, RHI::CullMode::Back, m_DrawPipeline))
         {
             return false;
         }
 
 #if NORVES_BUILD_DEVELOPMENT
-        if (!CreateDrawPipelineVariant(RHI::PolygonMode::Line, m_DrawWireframePipeline))
+        if (!CreateDrawPipelineVariant(RHI::PolygonMode::Line, RHI::CullMode::Back, m_DrawWireframePipeline))
         {
             return false;
         }
 #endif
 
+        try
+        {
+            CreateDrawPipelineVariant(RHI::PolygonMode::Fill, RHI::CullMode::None, m_DrawTwoSidedPipeline);
+        }
+        catch (...)
+        {
+            // 作成時の例外も片面のパイプラインへの代替として扱う。
+            m_DrawTwoSidedPipeline.reset();
+        }
+        if (!m_DrawTwoSidedPipeline && !m_bTwoSidedPipelineWarningLogged)
+        {
+            NORVES_LOG_WARNING("MegaGeometryPass", "両面のパイプラインを作れないため、片面のパイプラインで描きます");
+            m_bTwoSidedPipelineWarningLogged = true;
+        }
+
         return true;
     }
 
-    bool MegaGeometryPass::CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr &outPipeline)
+    bool MegaGeometryPass::CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::CullMode cullMode,
+                                                      RHI::PipelinePtr &outPipeline)
     {
         if (!m_Device || !m_GBufferRenderPass || !m_DrawVertexShader || !m_DrawFragmentShader)
         {
@@ -7493,7 +7528,7 @@ namespace NorvesLib::Core::Rendering
 
         // ラスタライザ
         pipelineDesc.rasterState.polygonMode = polygonMode;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        pipelineDesc.rasterState.cullMode = cullMode;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
@@ -7520,7 +7555,10 @@ namespace NorvesLib::Core::Rendering
         outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
         if (!outPipeline)
         {
-            NORVES_LOG_ERROR("MegaGeometryPass", "グラフィックスパイプラインの作成に失敗");
+            if (cullMode != RHI::CullMode::None)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "グラフィックスパイプラインの作成に失敗");
+            }
             return false;
         }
 

@@ -57,6 +57,25 @@ namespace NorvesLib::Core::Rendering
         };
     };
 
+    /** @brief GBuffer の切り抜き方式。数値はシェーダーの UBO の方式の値と一致させる。 */
+    enum class GBufferAlphaClip : uint8_t
+    {
+        None = 0,
+        Test = 1,
+        Hash = 2
+    };
+
+    /** @brief Masked の切り抜き方式を求める。TAA が掛からないビューでは Hash を Test に落とす。 */
+    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied);
+
+    /**
+     * @brief 標準の不透明の経路に載せず、別に描く材質かを求める。
+     *
+     * 可視バッファが on のときは解決の後に重ね、fallback では標準の後に分けて描く。
+     * 早期の深度の恩恵を不透明に残す。
+     */
+    bool RequiresGBufferOverlay(const MaterialResourceData* material);
+
     /** @brief 材質と描画の種類からパイプラインの鍵を作る。 */
     GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe);
 

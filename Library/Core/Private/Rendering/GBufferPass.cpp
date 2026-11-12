@@ -94,6 +94,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_GBufferAlphaClipFragmentShader =
+            context.ShaderMgr->LoadShader("gbuffer_alphaclip.frag", RHI::ShaderStage::Pixel);
+        if (!m_GBufferAlphaClipFragmentShader)
+        {
+            NORVES_LOG_WARNING("GBufferPass", "切り抜きのシェーダーを読み込めないため、切り抜きなしで描画します");
+        }
+
         m_bInitialized = true;
 
         // ========================================
@@ -268,6 +275,7 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedGBufferVertexShader.reset();
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
+        m_GBufferAlphaClipFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -340,7 +348,7 @@ namespace NorvesLib::Core::Rendering
         return VisibilityResolveGeometry::IsSupported(device->GetCapabilities());
     }
 
-    bool GBufferPass::HasProgramDraws(const ViewRenderContext& context) const
+    bool GBufferPass::HasOverlayDraws(const ViewRenderContext& context) const
     {
         const auto* materials = context.Resources.Materials;
         if (!materials)
@@ -352,7 +360,7 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (material && material->ProgramId != kStandardGBufferProgramId)
+            if (RequiresGBufferOverlay(material))
             {
                 return true;
             }
@@ -596,11 +604,11 @@ namespace NorvesLib::Core::Rendering
         m_bPipelinesPrepared = true;
     }
 
-    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context, bool bProgramOnly)
+    void GBufferPass::PrepareConstantMaterialTextures(const ViewRenderContext& context, bool bOverlayOnly)
     {
         // Execute の BuildMaterialDescriptor と同じ条件（スカラー値があり、その枠のテクスチャが無い）で作る
         const auto* materials = context.Resources.Materials;
-        if (!materials || (!bProgramOnly && ShouldSkipDraws(context.Device, context.GetActiveDebugMode())))
+        if (!materials || (!bOverlayOnly && ShouldSkipDraws(context.Device, context.GetActiveDebugMode())))
         {
             return;
         }
@@ -613,7 +621,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const auto* matData = materials->GetData(materialHandle);
-            if (!matData || (bProgramOnly && matData->ProgramId == kStandardGBufferProgramId))
+            if (!matData || (bOverlayOnly && !RequiresGBufferOverlay(matData)))
             {
                 continue;
             }
@@ -720,7 +728,7 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (material && material->ProgramId != kStandardGBufferProgramId)
+            if (RequiresGBufferOverlay(material))
             {
                 GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned);
             }
@@ -741,7 +749,7 @@ namespace NorvesLib::Core::Rendering
         }
         // 記録中は準備した表とテクスチャを読むだけにする。
         m_bConstantTexturesPrepared = true;
-        RecordGBufferDraws(context, renderPass, framebuffer, DrawSelection::ProgramOnly);
+        RecordGBufferDraws(context, renderPass, framebuffer, DrawSelection::OverlayOnly);
         m_bConstantTexturesPrepared = false;
     }
 
@@ -808,7 +816,7 @@ namespace NorvesLib::Core::Rendering
             float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
             float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0。gbuffer.frag が > 0.5 を判定し、Normal.w の DIFFUSE_ONLY の受け手の印へ変換）
             float shadingParams[4]; // 材質の値。スキンではインスタンスの値を重ねる。負は未指定。
-            float shadingModel[4]; // x=GBuffer の ID、yzw=0
+            float shadingModel[4]; // x=GBuffer の ID、y=cutoff、z=切り抜き方式（0/1/2）、w=Hash の位相
             float vertexAnimInstanceParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
             float vertexAnimTime[4];
         };
@@ -843,7 +851,7 @@ namespace NorvesLib::Core::Rendering
         // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
         const TextureResources::VirtualTextureFeedbackTarget feedbackTarget = textures->GetVirtualTextureFeedbackTarget();
 
-        // Execute の中だけで使う（記述子はビュー・フレームの定数を含む。借りた記述子はこのフレームの回収まで使える）
+        // この記録の中だけで使う（記述子はビュー・フレームの定数と Hash の位相を含み、次の記録へ持ち越さない）
         Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
 
@@ -875,6 +883,9 @@ namespace NorvesLib::Core::Rendering
                 uboData.shadingParams[i] = -1.0f;
             }
             uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(ShadingModel::DefaultLit));
+            uboData.shadingModel[1] = 0.0f;
+            uboData.shadingModel[2] = 0.0f;
+            uboData.shadingModel[3] = 0.0f;
 
             TextureHandle matAlbedo;
             TextureHandle matNormal;
@@ -921,6 +932,9 @@ namespace NorvesLib::Core::Rendering
                         uboData.shadingParams[i] = matData->ShadingParams[i];
                     }
                     uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(matData->Shading));
+                    uboData.shadingModel[1] = matData->AlphaCutoff;
+                    uboData.shadingModel[2] = static_cast<float>(ResolveGBufferAlphaClip(matData, context.bTemporalAAApplied));
+                    uboData.shadingModel[3] = static_cast<float>(context.FrameNumber % 64u);
                 }
             }
 
@@ -1041,12 +1055,12 @@ namespace NorvesLib::Core::Rendering
             return allocation.DescriptorSet;
         };
 
-        // 同じ種類の並びを保ち、標準の材質を先に積む。
+        // 同じ種類の並びを保ち、標準の後に標準でない材質（プログラム・Masked・両面）を積む。
         bool bAllocationFailed = false;
-        for (uint32_t programPass = 0; programPass < 2 && !bAllocationFailed; ++programPass)
+        for (uint32_t overlayPass = 0; overlayPass < 2 && !bAllocationFailed; ++overlayPass)
         {
-            if ((selection == DrawSelection::StandardOnly && programPass == 1) ||
-                (selection == DrawSelection::ProgramOnly && programPass == 0))
+            if ((selection == DrawSelection::StandardOnly && overlayPass == 1) ||
+                (selection == DrawSelection::OverlayOnly && overlayPass == 0))
             {
                 continue;
             }
@@ -1054,10 +1068,9 @@ namespace NorvesLib::Core::Rendering
             {
                 const MaterialResourceData* materialData =
                     materials && cmd.Draw.MaterialHandle.IsValid() ? materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
-                const bool bProgramMaterial =
-                    (m_SceneView || selection == DrawSelection::ProgramOnly) && materialData &&
-                    materialData->ProgramId != kStandardGBufferProgramId;
-                if (bProgramMaterial != (programPass == 1))
+                const bool bOverlayMaterial =
+                    (m_SceneView || selection == DrawSelection::OverlayOnly) && RequiresGBufferOverlay(materialData);
+                if (bOverlayMaterial != (overlayPass == 1))
                 {
                     continue;
                 }
@@ -1733,6 +1746,11 @@ namespace NorvesLib::Core::Rendering
                 key.Program = kStandardGBufferProgramId;
                 pipeline = m_Pipelines.Find(key);
             }
+            if (!pipeline && key.bAlphaClip)
+            {
+                key.bAlphaClip = false;
+                pipeline = m_Pipelines.Find(key);
+            }
             return pipeline;
         }
 
@@ -1767,6 +1785,11 @@ namespace NorvesLib::Core::Rendering
             key.Program = kStandardGBufferProgramId;
             pipeline = getOrCreate(key);
         }
+        if (!pipeline && key.bAlphaClip)
+        {
+            key.bAlphaClip = false;
+            pipeline = getOrCreate(key);
+        }
         return pipeline;
     }
 
@@ -1794,7 +1817,13 @@ namespace NorvesLib::Core::Rendering
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = shaders ? (key.bSkinned ? shaders->SkinnedVertex : shaders->Vertex)
                                            : (key.bSkinned ? m_SkinnedGBufferVertexShader : m_GBufferVertexShader);
-        pipelineDesc.pixelShader = shaders ? shaders->Fragment : m_GBufferFragmentShader;
+        // プログラム材質の切り抜きはプログラムの責任。標準材質だけ切り抜き用のシェーダーへ切り替える。
+        pipelineDesc.pixelShader = shaders ? shaders->Fragment
+                                          : (key.bAlphaClip ? m_GBufferAlphaClipFragmentShader : m_GBufferFragmentShader);
+        if (!pipelineDesc.pixelShader)
+        {
+            return nullptr;
+        }
         pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
 
         // 頂点入力レイアウト（Position + Normal = Mesh3DVertexと同じ）
@@ -1834,7 +1863,6 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
-        // bAlphaClip は後続の切り抜き対応で使う。現在はパイプラインの設定を変えない。
         // デプステスト有効
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;

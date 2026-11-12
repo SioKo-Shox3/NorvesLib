@@ -754,7 +754,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 if (!ValidateImportedTexture(prepared[i].Payload->Texture,
                                              i == 0 ? Asset::CookedTextureColorSpace::SRGB
                                                     : Asset::CookedTextureColorSpace::Linear,
-                                             i == 0, reason))
+                                             i == 0 && source.Alpha == ImportedAlphaMode::Opaque, reason))
                 {
                     reason += " role=";
                     reason += roles[i];
@@ -788,6 +788,10 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             material.Metallic = source.Metallic;
             material.Roughness = source.Roughness;
             material.OcclusionStrength = source.OcclusionStrength;
+            material.Blend = source.Alpha == ImportedAlphaMode::Mask ? Rendering::BlendMode::Masked
+                                                                    : Rendering::BlendMode::Opaque;
+            material.AlphaCutoff = std::clamp(source.AlphaCutoff, 0.0f, 1.0f);
+            material.bTwoSided = source.bDoubleSided;
             Rendering::TextureHandle *standard[] = {&material.AlbedoTexture, &material.NormalTexture};
             for (size_t i = 0; i < 2; ++i)
             {
