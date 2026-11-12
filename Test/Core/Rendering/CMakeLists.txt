@@ -669,6 +669,15 @@ set_tests_properties(SkyOcclusionMapVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 雨の屋根の高さと位置、スキンメッシュと地形の除外を深度の読み戻しで確かめる。
+add_test(NAME OverheadHeightMapVulkanTest COMMAND RHITextureUpdateVulkanTest --test=OverheadHeightMapVulkanTest)
+set_tests_properties(OverheadHeightMapVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
 add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
 set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
@@ -742,6 +751,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER SkyOcclusionMapVulkanTest SkyOcclusionMapVulkanTest.cpp
+    MEMBER OverheadHeightMapVulkanTest OverheadHeightMapVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
