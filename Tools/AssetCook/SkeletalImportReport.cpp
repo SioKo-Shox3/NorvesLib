@@ -19,6 +19,17 @@ namespace NorvesLib::Tools::AssetCook
         if ((!failed && !ready && !cached) || !IsValidSkeletalGltfDecodeOptions(input.Options) ||
             (ready && (!diagnostics.bDecodeAttempted || diagnostics.DecodeStatus != 0)) ||
             (cached && diagnostics.bDecodeAttempted)) return {};
+        if (!input.BaseColorBakes.empty())
+        {
+            if (!ready || input.BaseColorBakes.size() > 256 || input.BaseColorBakes.data() == nullptr) return {};
+            const auto unitFactor = [](float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; };
+            for (const auto& entry : input.BaseColorBakes)
+            {
+                if ((entry.MaterialIndex >= UINT32_MAX && entry.MaterialIndex != UINT64_MAX) ||
+                    !unitFactor(entry.Factor[0]) || !unitFactor(entry.Factor[1]) || !unitFactor(entry.Factor[2]) ||
+                    (entry.Factor[0] == 1.0f && entry.Factor[1] == 1.0f && entry.Factor[2] == 1.0f)) return {};
+            }
+        }
         const bool measured = diagnostics.bDecodeAttempted && input.Options.InfluencePolicy == SkeletalInfluencePolicy::ReduceToFour;
         if (measured)
         {
@@ -255,7 +266,29 @@ namespace NorvesLib::Tools::AssetCook
                 text(",\"scan_complete\":true}");
             }
         }
-        text("}}");
+        text("}");
+        if (!input.BaseColorBakes.empty())
+        {
+            text(",\"base_color_bakes\":[");
+            for (size_t index = 0; index < input.BaseColorBakes.size(); ++index)
+            {
+                if (index != 0) text(",");
+                const auto& entry = input.BaseColorBakes[index];
+                text("{\"material\":");
+                if (entry.MaterialIndex == UINT64_MAX) text("null"); else number(entry.MaterialIndex);
+                text(",\"factor\":[");
+                for (size_t channel = 0; channel < 3; ++channel)
+                {
+                    if (channel != 0) text(",");
+                    number(entry.Factor[channel] == 0.0f ? 0.0f : entry.Factor[channel]);
+                }
+                text("],\"albedo\":\"");
+                text(entry.bSolid ? "solid" : "texture");
+                text("\"}");
+            }
+            text("]");
+        }
+        text("}");
         if (!valid) return {};
         result.bValid = true;
         return result;

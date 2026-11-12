@@ -103,6 +103,8 @@ add_library(AssetCookLib STATIC
     TextureAssetSetCook.cpp
     TextureAssetSetCook.h
     TextureAssetSetCli.cpp
+    TextureAssetSetGenerators.cpp
+    TextureAssetSetGenerators.h
     TextureAssetSetOutput.cpp
     TextureAssetSetOutput.h
     TextureAssetSetSpec.cpp

@@ -281,3 +281,88 @@ foreach(expected IN ITEMS "${terrain_hash}" "${wrong_hash}")
     endif()
 endforeach()
 message(STATUS "散布の cook・manifest・地形ハッシュと entry type の拒否を確認しました")
+
+# 近景 32 m 四方と、8 m 格子・幅 32 m の外周を同じ入力画像から焼く。
+file(WRITE "${SMOKE_DIR}/Spec/terrain-outer.json" [=[{
+  "version": 1,
+  "height_source": { "path": "height_formula_33x33_16bit.png", "format": "png16", "flip_z": false },
+  "height_mapping": { "min_m": 0.0, "max_m": 65.535 },
+  "cell_size_m": 1.0, "tile_cells": 16, "fit": "error", "require_bit_depth": 16, "seed": 1, "recipe": {},
+  "outer_ring": {
+    "height_source": { "path": "height_formula_33x33_16bit.png", "format": "png16", "flip_z": false },
+    "height_mapping": { "min_m": 0.0, "max_m": 65.535 },
+    "cell_size_m": 8.0, "width_m": 32.0, "blend_m": 16.0
+  }
+}
+]=])
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}" --input "${SMOKE_DIR}/Spec/terrain-outer.json"
+        --out "${SMOKE_DIR}/Cooked/Outer.nvpkg" --manifest "${SMOKE_DIR}/outer.manifest.json"
+        --logical Terrain/Smoke/Outer.nvtrn --kind world --entry Terrain/Smoke/Outer.nvtrn
+        --entry-type Trn0 --format nvtrn.v0.height16
+    RESULT_VARIABLE outer_result OUTPUT_VARIABLE outer_output ERROR_VARIABLE outer_error)
+if(NOT "${outer_result}" STREQUAL "0")
+    message(FATAL_ERROR "外周付き world の cook が失敗しました: ${outer_output}${outer_error}")
+endif()
+file(READ "${SMOKE_DIR}/outer.manifest.json" outer_manifest)
+foreach(expected IN ITEMS "world" "Trn0" "nvtrn.v0.height16" "source_hash" "cooked_hash")
+    string(FIND "${outer_manifest}" "${expected}" field_position)
+    if(field_position EQUAL -1)
+        message(FATAL_ERROR "外周付き world の manifest に ${expected} がありません: ${outer_manifest}")
+    endif()
+endforeach()
+function(cook_nvtrn_outer_tile case_name input_path tile expected_vertices expected_triangles edge_vertices)
+    set(package "${SMOKE_DIR}/Cooked/${case_name}.nvpkg")
+    set(manifest_path "${SMOKE_DIR}/${case_name}.manifest.json")
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input_path}"
+            --out "${package}"
+            --manifest "${manifest_path}"
+            --logical Terrain/Smoke/Tile.nvmesh
+            --kind model
+            --entry Terrain/Smoke/Tile.nvmesh
+            --entry-type Msh0
+            --format nvmesh.v1.mesh3d.pnt.u32.lodgraph
+            --variant default
+            --generate "terrain-tile:nvtrn:outer:${tile}"
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr)
+    if(NOT "${result}" STREQUAL "0")
+        message(FATAL_ERROR "地形区画 ${case_name} の cook が失敗しました (${result}): ${stdout}${stderr}")
+    endif()
+    string(FIND "${stdout}" "TERRAIN_NVTRN_OUTER_TILE tile=${tile} tiles=3x3 vertices=${expected_vertices} triangles=${expected_triangles} edge_vertices=${edge_vertices}" summary_position)
+    if(summary_position EQUAL -1)
+        message(FATAL_ERROR "地形区画 ${case_name} の要約がありません: ${stdout}${stderr}")
+    endif()
+    if(NOT EXISTS "${package}" OR NOT EXISTS "${manifest_path}")
+        message(FATAL_ERROR "地形区画 ${case_name} のパッケージか manifest がありません")
+    endif()
+    file(SIZE "${package}" package_size)
+    if(package_size EQUAL 0)
+        message(FATAL_ERROR "地形区画 ${case_name} のパッケージが空です")
+    endif()
+    file(READ "${manifest_path}" tile_manifest)
+    string(REGEX MATCH "\"kind\"[ \t\r\n]*:[ \t\r\n]*\"model\"" kind_match "${tile_manifest}")
+    if(NOT kind_match)
+        message(FATAL_ERROR "地形区画 ${case_name} の manifest は kind=model ではありません: ${tile_manifest}")
+    endif()
+    string(REGEX MATCH "\"source_hash\"[ \t\r\n]*:[ \t\r\n]*\"([0-9a-fA-F]+)\"" hash_match "${tile_manifest}")
+    if(NOT hash_match)
+        message(FATAL_ERROR "地形区画 ${case_name} の manifest に source hash がありません: ${tile_manifest}")
+    endif()
+    foreach(expected IN ITEMS "Msh0" "nvmesh.v1.mesh3d.pnt.u32.lodgraph")
+        string(FIND "${tile_manifest}" "${expected}" field_position)
+        if(field_position EQUAL -1)
+            message(FATAL_ERROR "外周区画 ${case_name} の manifest に ${expected} がありません: ${tile_manifest}")
+        endif()
+    endforeach()
+    set("${case_name}_source_hash" "${CMAKE_MATCH_1}" PARENT_SCOPE)
+    message(STATUS "地形区画 ${case_name}: ${stdout}")
+endfunction()
+
+cook_nvtrn_outer_tile(outer_shared "${SMOKE_DIR}/Spec/terrain-outer.json" "1,0" 53 60 33)
+cook_nvtrn_outer_tile(outer_corner "${SMOKE_DIR}/Spec/terrain-outer.json" "0,0" 25 32 0)
+expect_nvtrn_tile_failure(outer_hole "${SMOKE_DIR}/Spec/terrain-outer.json" "outer:1,1" "穴の中")
+expect_nvtrn_tile_failure(outer_out_of_range "${SMOKE_DIR}/Spec/terrain-outer.json" "outer:3,0" "tiles=3x3")

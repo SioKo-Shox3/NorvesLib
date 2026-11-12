@@ -133,6 +133,24 @@ namespace NorvesLib::Tools::AssetCook
                 ",\"joints\":" + Number(report.Totals.Joints) +
                 ",\"texture_bytes\":" + Number(report.Totals.TextureBytes) +
                 ",\"cooked_bytes\":" + Number(report.Totals.CookedBytes) + "}}\n";
+        if (report.Generators.size() != 0)
+        {
+            json.pop_back();
+            json.pop_back();
+            json += ",\"generators\":[";
+            md += "\n## Generators\n\n";
+            for (size_t i = 0; i < report.Generators.size(); ++i)
+            {
+                const auto& generator = report.Generators[i];
+                if (i)
+                {
+                    json += ",";
+                }
+                json += "{\"name\":" + Quote(generator.Name) + ",\"status\":" + Quote(generator.Status) + "}";
+                md += "- " + generator.Name + ": " + generator.Status + "\n";
+            }
+            json += "]}\n";
+        }
         // 既存reportを置換しない。nativeの排他的な新規directory/fileだけを作る。
 #if defined(_WIN32)
         namespace N = Detail::ManagedStoreNative;

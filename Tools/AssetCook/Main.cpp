@@ -361,7 +361,7 @@ namespace
                 if (value != "displaced-sphere" && value.rfind("terrain-tile:", 0) != 0)
                 {
                     error = "--generate は displaced-sphere・terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・"
-                            "terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z> を指定できます";
+                            "terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z>・terrain-tile:nvtrn:outer:<x>,<z> を指定できます";
                     return false;
                 }
                 outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
@@ -651,6 +651,7 @@ namespace
             << "       AssetCook --input <terrain_spec.json|terrain.nvtrn> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
             << "--format nvmesh.v1.mesh3d.pnt.u32.lodgraph --variant default --generate terrain-tile:nvtrn:<x>,<z>\n"
+            << "       外周区画: 同じ指定で --generate terrain-tile:nvtrn:outer:<x>,<z>\n"
             << "テクスチャ用途: --usage albedo|normal|orm|single|height16|hdr|rg16\n"
             << "用途の形式: [--format rgba16f（hdr）|bc3（albedo・orm）]（hdr の既定は BC6H）\n"
             << "用途の設定: [--quality fast|normal|best] [--flip-normal-y（normal のみ）]\n"

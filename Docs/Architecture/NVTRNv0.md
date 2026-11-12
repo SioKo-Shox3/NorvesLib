@@ -16,11 +16,12 @@ cook の使い方と処理は下の「cook（AssetCook --kind world）」に記�
 | 項目 | 値 |
 | --- | --- |
 | `Magic` | `{'N','V','T','R','N','v','0','\0'}`（8 バイト、末尾 NUL を含む） |
-| `VersionMajor` / `VersionMinor` | 0 / 0 |
+| `VersionMajor` / `VersionMinor` | 0 / 0（外周なし）、0 / 1（外周あり） |
 | `EndianMarker` | `0x01020304` |
 | `HeaderSize` | 192 バイト |
 | `LayerRecordSize` | 32 バイト |
 | `TileRecordHeadSize` / `TileLayerRangeSize` | 80 / 24 バイト |
+| `OuterRingBlockSize` / `OuterTileRecordSize` | 80 / 104 バイト（v0.1） |
 | `PayloadAlignment` | 64 バイト |
 | `MaxLodCount` / `MaxLayerCount` / `MaxSemanticBytes` | 8 / 16 / 255 |
 | `LayerEncodingRawHeight16` / `LayerEncodingEmbeddedNvtex` | 1 / 2 |
@@ -33,10 +34,11 @@ FourCC のバイト順は `MakeAssetPackageFourCC` と同じ。
 ## ファイルの並び
 
 ```text
-header -> layer table -> tile table -> string table -> padding -> payload
+v0.0: header -> layer table -> tile table -> string table -> padding -> payload
+v0.1: header -> outer ring block -> layer table -> tile table -> outer tile table -> string table -> padding -> payload
 ```
 
-表どうしは隙間なく並ぶ。`TileCount = TileCountX * TileCountZ` とすると、配置は次のとおり。
+表どうしは隙間なく並ぶ。`TileCount = TileCountX * TileCountZ` とすると、v0.0 の配置は次のとおり。
 
 | 領域 | 先頭 | 大きさ |
 | --- | --- | --- |
@@ -45,6 +47,10 @@ header -> layer table -> tile table -> string table -> padding -> payload
 | タイル表 | `TileTableOffset = LayerTableOffset + LayerTableSize` | `TileTableSize = TileCount * TileRecordSize` |
 | 文字列表 | `StringTableOffset = TileTableOffset + TileTableSize` | `StringTableSize` |
 | ペイロード | `PayloadOffset = AlignUp(StringTableOffset + StringTableSize, 64)` | `PayloadSize = FileSize - PayloadOffset` |
+
+v0.1 ではヘッダ直後の 192..271 に外周の記述があり、レイヤ表は 272 から始まる。
+近景タイル表の直後に外周タイル表を置き、その直後に文字列表を置く。
+外周タイル表の位置と大きさは外周の記述に記録する。外周のない出力は v0.0 のままである。
 
 `AlignUp(value, 64)` は 64 の倍数への切り上げ。
 文字列表の終端からペイロード先頭までと、ペイロード内のレイヤ間の隙間は 0 で埋める。
@@ -59,9 +65,9 @@ header -> layer table -> tile table -> string table -> padding -> payload
 | 0 | `uint8[8]` | `Magic` | `NVTRNv0\0` |
 | 8 | `uint32` | `HeaderSize` | 192 |
 | 12 | `uint16` | `VersionMajor` | 0 |
-| 14 | `uint16` | `VersionMinor` | 0 |
+| 14 | `uint16` | `VersionMinor` | 0（外周なし）または 1（外周あり） |
 | 16 | `uint32` | `EndianMarker` | `0x01020304` |
-| 20 | `uint32` | `Flags` | 予約、0 |
+| 20 | `uint32` | `Flags` | v0.0 は 0、v0.1 は `HeaderFlagOuterRing = 1` |
 | 24 | `uint64` | `FileSize` | ファイル全体のバイト数、入力 blob の大きさと一致 |
 | 32 | `uint64` | `PayloadHash` | この欄の 8 バイトを除くファイル全体の FNV-1a64 |
 | 40 | `uint32` | `CellCountX` | 地形全体の x 方向のセル数、正 |
@@ -81,15 +87,94 @@ header -> layer table -> tile table -> string table -> padding -> payload
 | 108 | `uint32` | `LayerRecordSize` | 32 |
 | 112 | `uint32` | `TileRecordSize` | `80 + LayerCount * 24` |
 | 116 | `uint32` | `Reserved1` | 予約、0 |
-| 120 | `uint64` | `LayerTableOffset` | レイヤ表の絶対位置、192 |
+| 120 | `uint64` | `LayerTableOffset` | レイヤ表の絶対位置、v0.0 は 192、v0.1 は 272 |
 | 128 | `uint64` | `LayerTableSize` | `LayerCount * 32` |
 | 136 | `uint64` | `TileTableOffset` | レイヤ表の直後の絶対位置 |
 | 144 | `uint64` | `TileTableSize` | `TileCountX * TileCountZ * TileRecordSize` |
-| 152 | `uint64` | `StringTableOffset` | タイル表の直後の絶対位置 |
+| 152 | `uint64` | `StringTableOffset` | 最後のタイル表の直後の絶対位置 |
 | 160 | `uint64` | `StringTableSize` | 意味の文字列を連結したバイト数 |
 | 168 | `uint64` | `PayloadOffset` | 文字列表の終端を 64 バイト境界へ切り上げた絶対位置 |
 | 176 | `uint64` | `PayloadSize` | ペイロード先頭からファイル末尾までのバイト数 |
 | 184 | `uint64` | `Reserved2` | 予約、0 |
+
+## 外周の記述（v0.1）
+
+外周の記述はヘッダ直後の 80 バイト。各オフセットはこの記述の先頭からの相対位置。
+
+| オフセット | 型 | 項目 | 意味 |
+| ---: | --- | --- | --- |
+| 0 / 4 | `uint32` | `CellCountX` / `CellCountZ` | 外周格子のセル数 |
+| 8 | `uint32` | `TileCells` | タイルの一辺のセル数 |
+| 12 / 16 | `uint32` | `TileCountX` / `TileCountZ` | 外周格子のタイル数 |
+| 20 / 24 | `uint32` | `HoleTileMinX` / `HoleTileMinZ` | 穴の最小タイル座標 |
+| 28 / 32 | `uint32` | `HoleTileCountX` / `HoleTileCountZ` | 穴の各方向のタイル数 |
+| 36 | `float` | `CellSizeM` | 外周セルの一辺 [m] |
+| 40 / 48 | `double` | `OriginX` / `OriginZ` | 外周標本 (0,0) の世界座標 [m] |
+| 56 / 64 | `uint64` | `TileTableOffset` / `TileTableSize` | 外周タイル表の絶対位置とバイト数 |
+| 72 | `uint64` | `Reserved` | 0 |
+
+`CellCountX = TileCountX * TileCells`（z も同じ）。`TileCells` は 2..1024 の 2 の冪、
+`CellSizeM` は有限で正、原点は有限とする。標本 (i,j) の世界 x/z は
+`(OriginX + i*CellSizeM, OriginZ + j*CellSizeM)`。高さの原点と写像はヘッダの
+`OriginY`・`HeightMinM`・`HeightMaxM` を共用する。
+
+### 穴と近景との一致
+
+穴はタイル座標の半開矩形 `[HoleTileMinX, HoleTileMinX+HoleTileCountX)` ×
+`[HoleTileMinZ, HoleTileMinZ+HoleTileCountZ)`。各方向の個数は 1 以上で、矩形は格子の範囲内とし、
+外周タイルを 1 枚以上残す。穴の世界座標の原点と幅は近景の原点と幅に一致する。
+各値の差の許容は `1e-6 * max(1, abs(近景の値))` m。
+
+外周と近景のセル寸法の比から `R = round(外周 CellSizeM / 近景 CellSizeM)` を求める。
+`R >= 1`、比との差は `1e-6 * R` 以下。穴の縁に乗る外周 HGT0 標本は、
+同じ位置を持つ近景 HGT0 の `uint16` 標本と一致する。近景のタイル境界に同じ位置の標本が
+複数ある場合はすべてと一致させる。穴の角に点だけ接する外周タイルの標本も含む。
+
+### 外周タイル表と共有辺
+
+穴の外の全タイルがちょうど 1 回ずつ現れる。件数は
+`TileCountX*TileCountZ - HoleTileCountX*HoleTileCountZ` で 1 以上。
+各 104 バイトのレコードは近景と同じ 80 バイトの先頭と、HGT0 の 24 バイトの区間 1 本からなる。
+座標は外周のタイル座標、AABB はヘッダの近景原点からの相対座標。高さ・AABB・LOD 誤差は
+近景と同じ規則で、未使用 LOD とオフセット 76 の予約欄は 0。
+オフセット 40 は外周表だけ `Flags` として使い、近景では予約欄の 0 のままとする。
+
+| ビット | 定数 | 意味 |
+| ---: | --- | --- |
+| 1 | `OuterTileFlagOuter` | 外周タイルには必ず立つ |
+| 2 | `OuterTileFlagSharedNegZ` | -Z 辺が穴と接する |
+| 4 | `OuterTileFlagSharedPosX` | +X 辺が穴と接する |
+| 8 | `OuterTileFlagSharedPosZ` | +Z 辺が穴と接する |
+| 16 | `OuterTileFlagSharedNegX` | -X 辺が穴と接する |
+
+共有辺のビットは位置から求めた 1 本以下で、角で点だけ接するタイルには立たない。
+他のビットは 0。外周は `(TileCells+1)²` 個の `uint16` を持つ HGT0 だけを格納し、
+法線・マスク・スプラットは持たない。writer は外周も z 昇順、各行 x 昇順に並べる。
+読み手は表の順を問わず座標から番号を引く表を作り、穴には `0xFFFFFFFF` を入れる。
+
+### 外周区画の NVMESH 生成
+
+`AssetCook --kind model --format nvmesh.v1.mesh3d.pnt.u32.lodgraph
+--generate terrain-tile:nvtrn:outer:<x>,<z>` は、NVTRN または地形 spec から外周の区画を焼く。
+番号は外周タイルの座標で、外周のない入力・穴の中・範囲外は拒否する。
+近景は `terrain-tile:nvtrn:<x>,<z>` で焼く。
+
+粗い頂点は外周全格子の `(TileCells+1)²` 点で、座標は double の原点と番号・間隔から float に丸める。
+高さは外周全格子の高さ場、法線は外周セルの半分の間隔で採取する。穴の縁に乗る頂点は角も含め、
+近景の格子番号・座標式・高さ場・法線の採取間隔を使う。矩形の端で float の丸めにより採取点が外へ出た場合は、
+近景の区画と同じく最も近い内側の float に寄せる。これにより共有する位置・高さ・法線がビット一致する。
+UV は世界座標の x・z を 4 m で割る。
+
+共有辺の印がある辺には `R*TileCells+1` 個の近景頂点を置く。その辺に沿う最初の 1 升の帯は、
+細かい辺の列と 1 升内側の粗い列をジッパーでつなぐ。辺に沿った位置の比が小さい側を進め、
+同点では細かい側を先に進める。帯の両端は隣の外周区画と共有する粗い辺で閉じる。
+ほかの升目は外周全格子の列・行に対する `UsesMainDiagonal` で分割し、XZ の外積の Y が負の巻き方にそろえる。
+面積 0 の三角形は拒否する。`CookLodGraphMesh` の `bLockOpenBoundary=true` により、
+近景との共有辺と外周区画どうしの境界の頂点を LOD の全段で固定する。
+
+SourceHash は NVTRN 全バイト・外周の識別子・タイル番号・TileCells・テクスチャの広さ・版から作る。
+標準出力の `TERRAIN_NVTRN_OUTER_TILE` は、区画番号・外周の区画数・頂点数・三角形数・
+`edge_vertices`（共有辺の細かい頂点数、共有辺なしは 0）を報告する。
 
 ## レイヤ表と文字列表
 
@@ -154,6 +239,7 @@ writer は入力順によらず TileZ 昇順、各行で TileX 昇順に書く�
 writer はタイル表の順 × レイヤ表の順に、各データの開始を 64 バイト境界へ切り上げて配置する。
 読み手もペイロードをタイル表の順 × レイヤ表の順に 64 バイト境界へ詰めた並びとして求め、違えば TableLayoutMismatch とする。
 HGT0 は生の高さ標本、それ以外は NVTEX v0 のヘッダとペイロードを含むファイル全体を格納する。
+v0.1 は近景の全データの後に、外周タイル表の順で各 HGT0 を同様に 64 バイト境界へ詰める。
 DataSize は前後のアラインメント用の隙間を含まない。
 LodCount は誤差欄の有効数であり、HGT0 の標本列を LOD ごとに複数格納する指定ではない。
 
@@ -208,7 +294,7 @@ FNV-1a64 は暗号学的な真正性を保証するものではない。
 | `InvalidBlob` | 無効または空の blob |
 | `HeaderTooSmall` | 192 バイト未満 |
 | `BadMagic` | Magic が不一致 |
-| `UnsupportedVersion` | 主版または副版が 0 以外 |
+| `UnsupportedVersion` | 主版が 0 以外、副版が 2 以上、または副版 1 で Flags が 1 以外 |
 | `EndianMismatch` | EndianMarker が不一致 |
 | `HeaderSizeMismatch` | HeaderSize が 192 以外 |
 | `FileSizeMismatch` | 宣言したファイル長と実際の長さが不一致（切り詰めを含む） |
@@ -222,34 +308,41 @@ FNV-1a64 は暗号学的な真正性を保証するものではない。
 | `IntegerOverflow` | 大きさ・位置などの整数演算や格納可能な件数を超過 |
 | `InvalidLayerRecord` | レイヤの規則または意味の文字列が不正 |
 | `DuplicateLayerFourCC` | レイヤの FourCC が重複 |
-| `TileIndexOutOfRange` | タイル座標が範囲外 |
+| `TileIndexOutOfRange` | タイル座標が範囲外、または外周タイルが穴の中 |
 | `DuplicateTile` | タイル座標が重複 |
 | `InvalidTileBounds` | 高さ・AABB が非有限または min > max、有効 LOD 誤差が非有限または負 |
 | `LayerRangeOutOfRange` | データ区間がペイロード外、開始が 64 バイト境界以外、または大きさが 0 |
 | `HeightSizeMismatch` | HGT0 の大きさが `(TileCells + 1)² * 2` と不一致 |
 | `LayerHashMismatch` | DataHash が不一致 |
 | `EmbeddedTextureInvalid` | `ParseCookedTexture(sub, false)` の失敗、または形式・色空間がレイヤ表と不一致 |
+| `InvalidOuterRing` | 外周の寸法・穴・倍率・原点・予約欄・表の位置や大きさ、タイルの印・共有辺が不正 |
+| `OuterEdgeMismatch` | 穴の縁にある外周と近景の HGT0 標本が不一致 |
 
 検査は次の順に行う。整数演算の桁あふれは、その値を使う前に検査する。
 表の予約欄と未使用 LOD 欄は、全体ハッシュより前にまとめて調べるのではなく、その表を読む段階で検査する。
 
 1. blob が無効・空でないこと、ヘッダ長、Magic、版、EndianMarker、HeaderSize、FileSize、
-   ヘッダの予約欄（Flags・Reserved0・Reserved1・Reserved2）の順に検査する。
+   ヘッダの予約欄の順に検査する。v0.1 の Flags 不一致は版の段階で UnsupportedVersion、
+   v0.0 の Flags 非 0 は予約欄の段階で ReservedFieldNonZero。
 2. PayloadHash を検査する。
-3. 寸法・原点・高さの写像、LodCount、LayerCount、レコード長の順に検査する。
-4. 大きさ・位置の整数演算の桁あふれを検査し、表の配置・大きさ・64 バイト境界・ファイル末尾との整合、
+3. 近景の寸法・原点・高さの写像、LodCount、LayerCount、レコード長の順に検査する。
+   v0.1 は続いて外周の記述の大きさ・寸法・穴・倍率・原点・予約欄を検査する。
+4. 大きさ・位置の整数演算の桁あふれを検査し、v0.1 は外周表の位置・大きさを検査する。
+   続いて、表の配置・大きさ・64 バイト境界・ファイル末尾との整合、
    文字列表の終端からペイロードまでの 0 埋めを検査する（TableLayoutMismatch）。
    続いて、タイル番号と各配列に格納できる件数の上限を検査する（IntegerOverflow）。
 5. レイヤ表は全件の予約欄を先に検査する。次に各件の規則と意味の文字列を検査し、
    文字列が先頭から連続して詰まり、印字可能 ASCII であることを求める。
    その後、文字列の合計と文字列表の大きさの一致、FourCC の重複の順に検査する。
-6. タイル表は全件の予約欄と未使用 LOD 欄を先に検査する。
-   続いて、座標の範囲、座標の重複、高さ・AABB・使用する LOD の誤差、各区間の範囲、
-   HGT0 の大きさ、DataHash、埋め込み NVTEX の順に、それぞれ全件を検査してから次へ進む。
+6. 近景、外周の順に全件の予約欄と未使用 LOD 欄を先に検査する。
+   続いて、近景と外周の座標の範囲、近景と外周の重複、外周の印、
+   高さ・AABB・使用する LOD の誤差、各区間の範囲、HGT0 の大きさ、DataHash、
+   埋め込み NVTEX の順に、それぞれ近景と外周の全件を検査してから次へ進む。
 7. 最後に、正常な区間がタイル表の順 × レイヤ表の順に、各開始を 64 バイト境界へ切り上げて
    隙間なく詰まり、整列の隙間が 0 で、最後の区間の終端がファイル末尾であることを検査する
    （TableLayoutMismatch。切り上げの桁あふれは IntegerOverflow）。
-   大きさやハッシュの不正を先にそれぞれの種別で分類するため、この配置検査を最後に行う。
+   近景に続く外周 HGT0 の順と隙間も検査する。
+8. v0.1 は最後に穴の縁の外周と近景の標本を照合する（OuterEdgeMismatch）。
 
 ## manifest との結び付き
 
@@ -304,7 +397,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -Asse
 ### スペック
 
 ルートはオブジェクトで、`version` は整数 `1`。
-ルート・`height_source`・`height_mapping` の未知のキーは拒否する。
+ルート・`height_source`・`height_mapping`・`outer_ring`（その高さ入力・写像を含む）の未知のキーは拒否する。
 数値は有限であることを求め、整数欄は小数を受け付けない。
 
 | 欄 | 意味・条件・省略時の値 |
@@ -355,6 +448,30 @@ PNG8 は `terrain_height_bit_depth=8` を含む警告を出し、1 段の高さ�
 土・苔・湿った泥・岩肌・草地の 5 層を湿り・傾斜・雑音で混ぜ、流れ・低標高・凹地の湿りと
 傾斜による岩、湿りと傾斜による草密度を生成する。凹み度は既定の規則で焼き、雑音の振幅を 0.2 にして
 水たまりの縁を少し不揃いにする。道の画像はまだないため `paint` は指定しない。
+
+`outer_ring` は任意のオブジェクトで、指定すると NVTRN v0.1 の外周 HGT0 を生成する。
+省略時は v0.0 を生成し、高さ・警告・入力ハッシュの処理も同じである。
+
+| キー（`outer_ring` 内） | 意味・規則 |
+| --- | --- |
+| `height_source` | 必須。トップレベルと同じ `path`・`format`・RAW 寸法・`endian`・`exr_channel`・`flip_z`。相対パスはスペックの親ディレクトリ基準 |
+| `height_mapping` | トップレベルと同じ。整数は `min_m/max_m` または `scale_m/offset_m` が必須。浮動小数点は `scale/offset`（既定 1/0） |
+| `cell_size_m` | 既定 16 m。有限で 8..32 m、近景のセル寸法の整数倍（比の相対許容 1e-6） |
+| `width_m` | 必須。近景矩形の各辺の外側へ広げる幅 [m]。有限で正、外周セル寸法の整数倍 |
+| `blend_m` | 既定 256 m。有限で 0..`width_m`。近景の縁へ寄せる帯の幅。`width_m` が 256 m 未満なら明示する |
+
+外周の原点 X/Z は近景の原点 X/Z からそれぞれ `width_m` を引いた値。
+外周のセル数は X/Z ごとに `(近景の幅 + 2*width_m)/cell_size_m` とする。
+近景の幅 X/Z が外周のセル寸法で割り切れない入力は拒否する。
+外周の `TileCells` は、近景の幅 X/外周セル・近景の幅 Z/外周セル・`width_m`/外周セルの
+すべてを割り切る 64 以下の最大の 2 の冪。2 未満になる入力は拒否する。
+近景矩形を覆うタイルを穴とし、その外側の全タイルを生成する。
+セル倍数の浮動小数点の照合は相対 1e-6 を許容し、近景のセル数は外周との整数比で正確に割り切る必要がある。
+
+外周画像は穴を含む外周矩形全体を覆い、(0,0) と最後の画素が格子の両端に対応する。
+指定形式で復号してメートルへ写像し、`flip_z` を適用する。画像寸法と外周の頂点数が異なる場合は
+両端を保つ双線形補間で格子へ取り、同じなら恒等変換とする。外周には近景の `fit`・`smooth` を適用しない。
+穴の内部・縁の入力高さは生成値へ使わない。
 
 ### マスク recipe のキーと既定値
 
@@ -489,6 +606,23 @@ splat 以外は、ペイント適用後に `round(clamp(v,0,1)*255)` で 8bit �
 9. 量子化した高さを復元し、各タイルの LOD 誤差・高さの min/max・AABB を求める。
 10. HGT0・NRM0 と生成したマスクのレイヤを NVTRN へ書き、`Trn0` エントリのパッケージと manifest を書く。
 
+外周がある場合は、近景の平滑化の後、量子化の前に外周格子を生成する。
+穴の外の頂点について、近景矩形までのユークリッド距離を `d`、矩形上の最近点を `p` とする。
+`hEdge` は量子化前の近景高さを `p` で辺に沿って線形補間した値、`hInput` は外周画像の双線形補間値。
+`t=clamp(d/blend_m,0,1)`、`w=t*t*(3-2*t)` として `h=hEdge+(hInput-hEdge)*w` を double の m で求める。
+`blend_m=0` なら `w=1` とする。角の外側も同じユークリッド距離を使う。
+
+ヘッダの高さ写像は、近景の全標本と、穴の外の外周格子の頂点高さを合わせた min/max。
+その float の写像で近景と外周を量子化するため、外周があると近景の uint16 は変わり得る。
+穴の縁（角を含む）は量子化済みの近景 uint16 をそのまま写す。
+近景の格子番号は `(外周の格子番号 - 穴の最初のセル番号)*R`、`R=round(外周セル/近景セル)`。
+これにより共有辺だけでなく、穴の角に点だけ接する外周タイルも同じ標本値を持つ。
+
+外周タイルの高さ min/max・AABB・LOD 誤差は近景と同じ関数で、外周の量子化後の復元高さから求める。
+外周の AABB の x/z は外周原点からのタイル座標に、近景原点から外周原点への差を加える。
+LOD 数は近景と共通の 4。外周の stride は `min(1<<LOD, 外周TileCells)` とし、
+タイル全体より粗い LOD には最粗格子の誤差を使う。外周が持つレイヤは HGT0 だけである。
+
 `NRM0` は線形 RG8（`RG8UNorm`）の NVTEX 全体を埋め込んだレイヤ。
 R に x、G に z を `round((n*0.5+0.5)*255)`（0..255 に制限）で符号化する。
 読み手は R/G を `n=byte*2/255-1` で戻し、上向きの y を
@@ -530,7 +664,7 @@ y の範囲は量子化後に復元した全タイル標本の min/max で、x/z
 `cooked_hash` はパッケージに入る NVTRN の全バイトを対象にした payload の FNV-1a64 で、
 NVTRN ヘッダの `PayloadHash`（自身の 8 バイトを除く）とは異なる。
 `source_hash` はスペックと参照した全入力のバイトから求める FNV-1a64。
-スペック、高さファイル、`paint` 配列順の各ペイントファイルの順に、
+スペック、近景の高さファイル、外周があれば外周の高さファイル、`paint` 配列順の各ペイントファイルの順に、
 各ファイルのバイト長を uint64 リトルエンディアン 8 バイトで投入し、続けてそのファイルの全バイトを投入する。
 `InputFiles` にも同じ順で入力パスを追加する。パスの文字列ではなくファイル内容が対象で、
 JSON の空白や seed だけの変更もハッシュを変える。
@@ -671,6 +805,8 @@ writer は全入力を検査し、タイルを座標順に並べて表とデー�
 `TileIndexOutOfRange`、`DuplicateTile`、`InvalidTileBounds`、`LayerBytesCountMismatch`、
 `HeightSizeMismatch`、`EmbeddedTextureInvalid`、`IntegerOverflow`。
 未使用 LOD 欄の非 0 も writer では InvalidTileBounds になる。
+外周ありの入力では `InvalidOuterRing`・`OuterEdgeMismatch` も返す。
+外周表の位置と大きさ、共有辺の印は writer が決定する。
 
 ### 解析とレイヤの参照
 
@@ -683,6 +819,9 @@ TileIndexByCoord は `TileZ * TileCountX + TileX` から Tiles の番号を引�
 | 補助関数 | 用途 |
 | --- | --- |
 | `GetSamplesPerSide()` | `TileCells + 1` |
+| `GetOuterSamplesPerSide()` | 外周の `TileCells + 1`。外周なしは 0 |
+| `FindOuterTile(tileX, tileZ, outIndex)` | 外周座標からタイルを探す。穴や範囲外は null |
+| `GetOuterHeightSample(tileIndex, sampleX, sampleZ)` | 外周の uint16 標本。範囲外は 0 |
 | `FindTile(tileX, tileZ, outTileIndex)` | 座標からタイルを探し、任意でタイル番号も得る |
 | `FindLayer(fourCC)` | レイヤ番号を探す。見つからなければ -1 |
 | `GetLayerRange(tileIndex, layerIndex)` | 対応する DataOffset・DataSize・DataHash を参照する |

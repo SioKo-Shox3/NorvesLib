@@ -75,6 +75,32 @@ namespace TextureCliTest
         Write(path, {reinterpret_cast<const uint8_t*>(text), std::strlen(text)});
     }
 #if defined(_WIN32)
+    int GeneratorChild(int argc, char** argv)
+    {
+        if (argc == 6 && std::strcmp(argv[2], "copy") == 0)
+        {
+            const auto bytes = Read(std::filesystem::path(argv[3]));
+            Write(std::filesystem::path(argv[4]), bytes);
+            std::ofstream counter(std::filesystem::path(argv[5]), std::ios::binary | std::ios::app);
+            CHECK(counter);
+            counter.put('1');
+            counter.close();
+            CHECK(!counter.fail());
+            return 0;
+        }
+        if (argc == 4 && std::strcmp(argv[2], "fail") == 0)
+        {
+            char* end = nullptr;
+            const long code = std::strtol(argv[3], &end, 10);
+            CHECK(end != argv[3] && *end == '\0');
+            return static_cast<int>(code);
+        }
+        if (argc == 3 && std::strcmp(argv[2], "noop") == 0)
+        {
+            return 0;
+        }
+        return 2;
+    }
     // 同一プロセスの待機時間を全呼び出しで共有し、上限を超えたら最後の Busy を返す。
     ULONGLONG gVolumeBusyWaitedMs = 0;
     template <class F> auto RetryVolumeBusy(F&& operation)
@@ -305,6 +331,184 @@ namespace TextureCliTest
             CHECK(result == Update::NeedsRecovery && stop.bReached && out.ClaimId == "held");
         }
     };
+    TestText GeneratorCommandPrefix()
+    {
+        Array<wchar_t> executable(32768, 0);
+        const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+        CHECK(length && length < executable.size());
+        const auto path = PathText(std::filesystem::path(executable.data()));
+        TestText command = "[\"";
+        for (const char c : path)
+        {
+            if (c == '\\' || c == '"')
+            {
+                command.push_back('\\');
+            }
+            command.push_back(c);
+        }
+        command += "\",\"--test=TextureManagedCliTest\",\"--generator-child\",";
+        return command;
+    }
+    TestText Generator(const char* name, const TestText& command, const char* inputs, const char* outputs,
+                       const char* extra = "")
+    {
+        TestText result = "{\"name\":\"";
+        result += name;
+        result += "\",\"command\":";
+        result += command;
+        result += ",\"inputs\":";
+        result += inputs;
+        result += ",\"outputs\":";
+        result += outputs;
+        result += extra;
+        result += "}";
+        return result;
+    }
+    void WriteGeneratorSpec(const Fixture& f, const TestText& generators)
+    {
+        TestText spec =
+            R"json({"version":2,"name":"cli-generators","package_root":"Cooked/Probe","default_variant":"default","assets":[{"kind":"texture","logical_path":"Textures/a.ppm","source_path":"a.ppm","format":"nvtex.v0.rgba8.linear","package_name":"a.nvpkg","entry_name":"a.nvtex"},{"kind":"texture","logical_path":"Textures/b.ppm","source_path":"b.ppm","format":"nvtex.v0.rgba8.linear","package_name":"b.nvpkg","entry_name":"b.nvtex"}],"generators":[)json";
+        spec += generators;
+        spec += "]}";
+        Write(f.Spec, BytesOf(spec));
+    }
+    void Generators(const std::filesystem::path& root)
+    {
+        Fixture f(root / "generators-v2");
+        CHECK(std::filesystem::create_directory(f.Source / "gen"));
+        const auto input = f.Source / "gen/a.src";
+        const auto counter = f.Source / "gen/count.txt";
+        const auto a = f.Source / "a.ppm";
+        Write(input, "P6\n2 2\n255\nmnopqrstuvwx");
+        const auto original = Read(a);
+        CHECK(Read(input) != original);
+
+        const auto prefix = GeneratorCommandPrefix();
+        const auto copyA = prefix + R"json("copy","gen/a.src","a.ppm","gen/count.txt"])json";
+        const auto copyAfter = prefix + R"json("copy","gen/a.src","gen/after.ppm","gen/count.txt"])json";
+        const auto fail = prefix + R"json("fail","7"])json";
+        const auto noop = prefix + R"json("noop"])json";
+        const auto makeA = Generator("make_a", copyA, R"json(["gen/a.src"])json", R"json(["a.ppm"])json");
+        WriteGeneratorSpec(f, makeA);
+
+        // 明示しない呼び出しでは generator を起動しない。
+        Call(f.Arguments(), 0);
+        CHECK(!std::filesystem::exists(counter) && Read(a) == original);
+        auto request = f.ServiceRequest();
+        request.bRunGenerators = true;
+        CookBatchReport report;
+        request.Report = &report;
+        CookManagedBootstrapOutcome out;
+        TestText error;
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(report.Generators.size() == 1 && report.Generators[0].Name == "make_a" &&
+              report.Generators[0].Status == "ran");
+        CHECK(Read(counter).size() == 1 && Read(a) == Read(input));
+
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::NoChange);
+        CHECK(report.Generators.size() == 1 && report.Generators[0].Name == "make_a" &&
+              report.Generators[0].Status == "skipped");
+        CHECK(Read(counter).size() == 1);
+
+        const auto aPackage = f.Runtime / "Cooked/Probe/a.nvpkg";
+        const auto bPackage = f.Runtime / "Cooked/Probe/b.nvpkg";
+        const auto aBefore = Read(aPackage);
+        const auto bBefore = Read(bPackage);
+        const auto bId = Identity(bPackage);
+        const auto bTime = std::filesystem::last_write_time(bPackage);
+        auto changed = Read(input);
+        changed.back() ^= 0x55;
+        Write(input, changed);
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(report.Generators.size() == 1 && report.Generators[0].Name == "make_a" &&
+              report.Generators[0].Status == "ran");
+        CHECK(Read(counter).size() == 2 && Read(a) == Read(input));
+        CHECK(report.Assets.size() == 2 && report.Assets[0].LogicalPath == "Textures/a.ppm" &&
+              report.Assets[0].bProcessed && !report.Assets[0].bSkipped &&
+              report.Assets[1].LogicalPath == "Textures/b.ppm" && report.Assets[1].bProcessed &&
+              report.Assets[1].bSkipped);
+        CHECK(Read(aPackage) != aBefore && Read(bPackage) == bBefore && Same(bId, Identity(bPackage)) &&
+              std::filesystem::last_write_time(bPackage) == bTime);
+        Call(f.Arguments(), 0);
+        CHECK(Read(counter).size() == 2);
+
+        // 途中の失敗では以後を起動せず、runtime には反映しない。
+        const auto broken = Generator("broken", fail, R"json(["gen/a.src"])json", R"json(["gen/broken.out"])json");
+        const auto after = Generator("after", copyAfter, R"json(["gen/a.src"])json", R"json(["gen/after.ppm"])json");
+        WriteGeneratorSpec(f, makeA + "," + broken + "," + after);
+        changed.back() ^= 0x33;
+        Write(input, changed);
+        const auto beforeFailure = Snapshot(f.Runtime);
+        const auto manifest = Read(f.Runtime / "manifest.json");
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Error);
+        CHECK(error.find("name=broken") != TestText::npos && error.find("exit_code=7") != TestText::npos);
+        CHECK(report.Generators.size() == 3 && report.Generators[0].Name == "make_a" &&
+              report.Generators[0].Status == "ran" && report.Generators[1].Name == "broken" &&
+              report.Generators[1].Status == "failed" && report.Generators[2].Name == "after" &&
+              report.Generators[2].Status == "not_run");
+        CHECK(Read(counter).size() == 3 && !std::filesystem::exists(f.Source / "gen/after.ppm"));
+        Unchanged(beforeFailure, Snapshot(f.Runtime));
+        CHECK(Read(f.Runtime / "manifest.json") == manifest);
+        auto runArgs = f.Arguments();
+        runArgs.push_back("--run-generators");
+        Call(runArgs, 1);
+        CHECK(Read(counter).size() == 4 && !std::filesystem::exists(f.Source / "gen/after.ppm"));
+        Unchanged(beforeFailure, Snapshot(f.Runtime));
+        CHECK(Read(f.Runtime / "manifest.json") == manifest);
+
+        WriteGeneratorSpec(f, Generator("missing", noop, R"json(["gen/a.src"])json",
+                                        R"json(["gen/missing.out"])json"));
+        CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Error);
+        CHECK(error.find("missing_output=") != TestText::npos);
+        Unchanged(beforeFailure, Snapshot(f.Runtime));
+        CHECK(Read(f.Runtime / "manifest.json") == manifest);
+
+        // spec の拒否はどの generator も実行する前に行う。
+        struct InvalidSpec
+        {
+            TestText Generators;
+            const char* Field;
+        };
+        const char* inputs = R"json(["gen/a.src"])json";
+        const char* output = R"json(["gen/after.ppm"])json";
+        const Array<InvalidSpec> invalid = {
+            {makeA + "," + Generator("other", copyAfter, inputs, output, R"json(,"shell":true)json"),
+             "unsupported_generator_field"},
+            {makeA + "," + Generator("make_a", copyAfter, inputs, output), "generators.duplicate_name"},
+            {makeA + "," + Generator("other", "[]", inputs, output), "generators.command"},
+            {makeA + "," + Generator("other", copyAfter, R"json(["../x"])json", output), "generators.inputs"},
+            {makeA + "," + Generator("other", copyAfter, inputs, R"json(["../x"])json"), "generators.outputs"},
+            {makeA + "," + Generator("other", copyAfter, inputs, output, R"json(,"cwd":"../x")json"),
+             "generators.cwd"},
+            {makeA + "," + Generator("first", copyAfter, inputs, R"json(["gen/out"])json") + "," +
+                 Generator("second", copyAfter, inputs, R"json(["gen/out/x.bin"])json"),
+             "generators.outputs_overlap"},
+            {makeA + "," + Generator("other", copyAfter, inputs, R"json(["a.ppm"])json"),
+             "generators.asset_source"}};
+        const auto beforeInvalid = Snapshot(f.Runtime);
+        const auto countBeforeInvalid = Read(counter);
+        for (const auto& item : invalid)
+        {
+            WriteGeneratorSpec(f, item.Generators);
+            CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Error);
+            const TestText expected = TestText("texture_asset_set: invalid spec field ") + item.Field;
+            CHECK(error.find(expected) != TestText::npos);
+            Unchanged(beforeInvalid, Snapshot(f.Runtime));
+            CHECK(Read(counter) == countBeforeInvalid);
+            if (std::strcmp(item.Field, "generators.duplicate_name") == 0)
+            {
+                Call(runArgs, 1);
+                Unchanged(beforeInvalid, Snapshot(f.Runtime));
+                CHECK(Read(counter) == countBeforeInvalid);
+            }
+        }
+        Call({"--recover", "--runtime-root", PathText(f.Runtime), "--run-generators"}, 1);
+        WriteGeneratorSpec(f, makeA);
+        runArgs.push_back("--run-generators");
+        Call(runArgs, 1);
+        Unchanged(beforeInvalid, Snapshot(f.Runtime));
+        CHECK(Read(counter) == countBeforeInvalid);
+    }
     void MixedBatch(const std::filesystem::path& root)
     {
         Fixture f(root / "mixed-v2");
@@ -430,6 +634,7 @@ namespace TextureCliTest
     {
         MixedBatch(root);
         BudgetWithoutReport(root);
+        Generators(root);
         {
             Fixture f(root / "service");
             CookManagedBootstrapOutcome out;
@@ -571,7 +776,7 @@ namespace TextureCliTest
             Unchanged(before, Snapshot(empty));
         }
         std::puts(
-            "TEXTURE_MANAGED_CLI result=pass adapter_nochange_update_explicit_workspace_recovery_source_absent_pending_refusal_raw_paths_bom");
+            "TEXTURE_MANAGED_CLI result=pass adapter_nochange_update_explicit_workspace_recovery_source_absent_pending_refusal_raw_paths_bom_generators");
     }
     void RunWithVolumeGuard(const std::filesystem::path& root)
     {
@@ -590,9 +795,13 @@ namespace TextureCliTest
     }
 #endif
 } // 名前空間 TextureCliTest
-int main()
+int main(int argc, char** argv)
 {
 #if defined(_WIN32)
+    if (argc > 1 && std::strcmp(argv[1], "--generator-child") == 0)
+    {
+        return TextureCliTest::GeneratorChild(argc, argv);
+    }
     wchar_t name[128]{};
     std::swprintf(name, 128, L"nmt-%lu-%llu", GetCurrentProcessId(), GetTickCount64());
     // 管理ストアは RuntimeRoot の祖先を列挙するため、項目の多い共有の TEMP の外に置く。
@@ -602,6 +811,8 @@ int main()
     CHECK(std::filesystem::remove_all(root) > 0);
     return 0;
 #else
+    (void)argc;
+    (void)argv;
     return 125;
 #endif
 }

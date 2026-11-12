@@ -75,6 +75,22 @@ namespace NorvesLib::Tools::AssetCook
             }
             return image;
         }
+        bool SameGenerators(const Array<CookGeneratorRecord>& a, const Array<CookGeneratorRecord>& b)
+        {
+            if (a.size() != b.size())
+            {
+                return false;
+            }
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                if (a[i].Name != b[i].Name || a[i].InputsHash != b[i].InputsHash ||
+                    a[i].CommandHash != b[i].CommandHash)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
         bool SamePlan(const CookPreparedPlan& a, const CookPreparedPlan& b)
         {
             if (a.Context.Dependencies.SchemaVersion != b.Context.Dependencies.SchemaVersion ||
@@ -265,6 +281,7 @@ namespace NorvesLib::Tools::AssetCook
             Array<Core::Asset::AssetCookedReference> references;
             CookOwnedState afterState;
             afterState.Binding = snap.ParsedState.Binding;
+            afterState.Generators = request.Generators ? *request.Generators : snap.ParsedState.Generators;
             afterState.Records.resize(snap.Plans.size());
             bool bAllSkip = true;
             for (size_t i = 0; i < snap.Plans.size(); ++i)
@@ -316,7 +333,8 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
-            if (bAllSkip && snap.Manifest.bPresent && EqualBytes(snap.Manifest.Value.Data, BytesOf(aggregate)))
+            if (bAllSkip && snap.Manifest.bPresent && EqualBytes(snap.Manifest.Value.Data, BytesOf(aggregate)) &&
+                SameGenerators(afterState.Generators, snap.ParsedState.Generators))
             {
                 if (!CheckManagedBudgets(request, op.Error))
                 {

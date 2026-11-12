@@ -183,6 +183,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 {
                     std::fprintf(stderr, "AssetCook warning: %s\n", warning.c_str());
                 }
+                PrintRigSplitBaseColorImportReport(split, result);
             }
             hash = result.SourceHash;
             images = std::move(result.TexturePlans);

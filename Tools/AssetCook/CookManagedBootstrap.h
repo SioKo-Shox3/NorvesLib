@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "CookOwnerResolver.h"
+#include "CookOwnedState.h"
 #include "SingleAssetCook.h"
 #include "CookBatchReport.h"
 namespace NorvesLib::Tools::AssetCook
@@ -17,6 +18,8 @@ namespace NorvesLib::Tools::AssetCook
         CookBatchReport* Report = nullptr;
         uint32_t Jobs = 1;
         bool bForce = false, bPrune = false;
+        // generator の記録。nullptr なら前回の state の記録を引き継ぐ(新規 root では空)。指すときはこの列で置き換える。
+        const Core::Container::VariableArray<CookGeneratorRecord>* Generators = nullptr;
     };
     struct CookManagedBootstrapOutcome
     {

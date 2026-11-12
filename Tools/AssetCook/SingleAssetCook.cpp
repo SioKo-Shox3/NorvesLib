@@ -845,6 +845,10 @@ namespace NorvesLib::Tools::AssetCook
                     ? CookDisplacedSphereToNvmesh(inputBytes.data(), inputBytes.size(), options.Format, logicalPath,
                                                   meshResult, meshError, options.FallbackMinTriangles,
                                                   options.DagRootMaxClusters)
+                : bTerrainTile && terrainSource == TerrainTileSource::NvtrnOuter
+                    ? CookTerrainNvtrnOuterTileToNvmesh(inputBytes.data(), inputBytes.size(), inputPath, terrainTileX,
+                        terrainTileZ, options.Format, logicalPath, meshResult, meshError,
+                        options.FallbackMinTriangles, options.DagRootMaxClusters)
                 : bTerrainTile && terrainSource == TerrainTileSource::Nvtrn
                     ? CookTerrainNvtrnTileToNvmesh(inputBytes.data(), inputBytes.size(), inputPath, terrainTileX,
                                                    terrainTileZ, options.Format, logicalPath, meshResult, meshError,

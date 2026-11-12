@@ -1132,6 +1132,207 @@ Frame Time: 0.5
                              png.begin()));
         std::printf("RIG_SPLIT_CASE bounded_image_ownership result=pass\n");
     }
+
+    void BaseColorBakes(F::Fixture& f)
+    {
+        // 反証する契約: 色係数を sRGB アルベドへ焼き、材質の RGB を 1 にする。画像がなければ 4×4 を作り、係数 1 では出力を変えない。
+        // 気づける手段: スキンのシェーダーは材質の BaseColor を読まず、撮影もしないため、画素・材質・参照を直接確かめる。
+        // 黙って起きるか: cook が成功しても色やアルファ、参照先が誤ることがある。
+        const F::Bytes pixels{255, 128, 64, 200, 10, 20, 30, 255, 200, 100, 50, 0, 255, 255, 255, 255};
+        const auto png = X::Png(2, 2, pixels);
+        F::WriteBytes("RigV1Fixture/base-color-bake.png", png);
+        const auto textured = [&](const F::Text& material)
+        {
+            return F::Replace(X::AddMaterial(f.Json, material), "\"skins\":",
+                              R"("textures":[{"source":0}],"images":[{"uri":"base-color-bake.png"}],"skins":)");
+        };
+        const auto json = textured(
+            R"({"name":"Body","pbrMetallicRoughness":{"baseColorFactor":[0.5,0.25,1,0.75],"baseColorTexture":{"index":0}}})");
+        const auto request = X::Request();
+        const auto bakedPath = request.MeshPath + ".mat0.albedo.rgba8";
+        const auto originalPath = request.MeshPath + ".img0.png";
+        const auto baked = X::CookSource(json);
+        const F::Bytes expected{188, 66, 64, 200, 5, 6, 30, 255, 146, 50, 50, 0, 188, 137, 255, 255};
+        const Cook::MeshEmbeddedImage* bakedImage = nullptr;
+        for (const auto& image : baked.TexturePlans)
+        {
+            RIG_CHECK(image.LogicalPath != originalPath);
+            if (image.LogicalPath == bakedPath)
+            {
+                RIG_CHECK(bakedImage == nullptr);
+                bakedImage = &image;
+            }
+        }
+        RIG_CHECK(bakedImage != nullptr && bakedImage->ImageIndex == (uint64_t{1} << 34) &&
+                  bakedImage->Roles == static_cast<uint8_t>(Cook::MeshImageRole::Albedo) &&
+                  bakedImage->Payload == Cook::MeshImagePayload::RawRgba8 &&
+                  bakedImage->Format == "nvtex.v0.rgba8.srgb" && bakedImage->Width == 2 && bakedImage->Height == 2 &&
+                  bakedImage->GetBytes().size() == expected.size() &&
+                  std::equal(bakedImage->GetBytes().begin(), bakedImage->GetBytes().end(), expected.begin()));
+        S::SkinMeshV1 mesh;
+        S::RigV1Report report;
+        RIG_CHECK(S::ParseSkinMeshV1(F::View(baked.Mesh.Payload), mesh, report));
+        RIG_CHECK(!mesh.GetData()->Materials.empty());
+        const auto& material = mesh.GetData()->Materials[0];
+        RIG_CHECK(material.Record.BaseColor[0] == 1 && material.Record.BaseColor[1] == 1 &&
+                  material.Record.BaseColor[2] == 1 && material.Record.BaseColor[3] == 0.75f &&
+                  material.Textures[0] == bakedPath);
+        RIG_CHECK(baked.BaseColorBakes.size() == 1 && baked.BaseColorBakes[0].MaterialIndex == 0 &&
+                  baked.BaseColorBakes[0].Factor[0] == 0.5f && baked.BaseColorBakes[0].Factor[1] == 0.25f &&
+                  baked.BaseColorBakes[0].Factor[2] == 1.0f && !baked.BaseColorBakes[0].bSolid);
+        Cook::SkeletalImportReportInput input;
+        input.Outcome = Cook::SkeletalImportOutcome::PayloadReady;
+        input.SourceHash = baked.SourceHash;
+        input.Options = request.DecodeOptions;
+        input.Diagnostics.bDecodeAttempted = true;
+        input.Diagnostics.DecodeStatus = 0;
+        input.Diagnostics.Report = baked.DecodeReport;
+        input.BaseColorBakes = {baked.BaseColorBakes.data(), baked.BaseColorBakes.size()};
+        const auto importReport = Cook::BuildSkeletalImportReport(input);
+        RIG_CHECK(importReport.bValid &&
+                  std::strstr(importReport.Bytes,
+                              R"("base_color_bakes":[{"material":0,"factor":[0.5,0.25,1],"albedo":"texture"}])"));
+        std::printf("RIG_SPLIT_CASE base_color_texture_bake result=pass\n");
+
+        const auto solid = X::CookSource(X::AddMaterial(
+            f.Json, R"({"name":"Tint","pbrMetallicRoughness":{"baseColorFactor":[0.5,0.25,1,1]}})"));
+        const Cook::MeshEmbeddedImage* solidImage = nullptr;
+        for (const auto& image : solid.TexturePlans)
+        {
+            if (image.LogicalPath == bakedPath)
+            {
+                RIG_CHECK(solidImage == nullptr);
+                solidImage = &image;
+            }
+        }
+        RIG_CHECK(solidImage != nullptr && solidImage->Payload == Cook::MeshImagePayload::RawRgba8 &&
+                  solidImage->Format == "nvtex.v0.rgba8.srgb" && solidImage->Width == 4 && solidImage->Height == 4 &&
+                  solidImage->GetBytes().size() == 4 * 4 * 4);
+        const uint8_t solidPixel[] = {188, 137, 255, 255};
+        for (size_t offset = 0; offset < solidImage->GetBytes().size(); offset += 4)
+        {
+            RIG_CHECK(std::equal(solidPixel, solidPixel + 4, solidImage->GetBytes().begin() + offset));
+        }
+        RIG_CHECK(S::ParseSkinMeshV1(F::View(solid.Mesh.Payload), mesh, report));
+        RIG_CHECK(!mesh.GetData()->Materials.empty());
+        const auto& solidMaterial = mesh.GetData()->Materials[0];
+        RIG_CHECK(solidMaterial.Record.BaseColor[0] == 1 && solidMaterial.Record.BaseColor[1] == 1 &&
+                  solidMaterial.Record.BaseColor[2] == 1 && solidMaterial.Record.BaseColor[3] == 1 &&
+                  solidMaterial.Textures[0] == bakedPath);
+        RIG_CHECK(solid.BaseColorBakes.size() == 1 && solid.BaseColorBakes[0].bSolid);
+        std::printf("RIG_SPLIT_CASE base_color_solid_bake result=pass\n");
+
+        const auto explicitOne = X::CookSource(textured(
+            R"({"name":"Body","pbrMetallicRoughness":{"baseColorFactor":[1,1,1,1],"baseColorTexture":{"index":0}}})"));
+        const auto implicitOne = X::CookSource(textured(
+            R"({"name":"Body","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}})"));
+        RIG_CHECK(explicitOne.Mesh.Payload == implicitOne.Mesh.Payload && explicitOne.BaseColorBakes.empty() &&
+                  implicitOne.BaseColorBakes.empty() && explicitOne.TexturePlans.size() == implicitOne.TexturePlans.size());
+        bool bFoundOriginal = false;
+        for (size_t i = 0; i < explicitOne.TexturePlans.size(); ++i)
+        {
+            const auto& first = explicitOne.TexturePlans[i];
+            const auto& second = implicitOne.TexturePlans[i];
+            RIG_CHECK(first.LogicalPath == second.LogicalPath &&
+                      first.LogicalPath.find(C::AnsiStringView(".albedo.rgba8")) == F::Text::npos &&
+                      first.GetBytes().size() == second.GetBytes().size() &&
+                      std::equal(first.GetBytes().begin(), first.GetBytes().end(), second.GetBytes().begin()));
+            bFoundOriginal |= first.LogicalPath == originalPath;
+        }
+        RIG_CHECK(bFoundOriginal);
+        for (const auto* cooked : {&explicitOne, &implicitOne})
+        {
+            RIG_CHECK(S::ParseSkinMeshV1(F::View(cooked->Mesh.Payload), mesh, report));
+            RIG_CHECK(!mesh.GetData()->Materials.empty());
+            const auto& unchangedMaterial = mesh.GetData()->Materials[0];
+            RIG_CHECK(unchangedMaterial.Record.BaseColor[0] == 1 && unchangedMaterial.Record.BaseColor[1] == 1 &&
+                      unchangedMaterial.Record.BaseColor[2] == 1 && unchangedMaterial.Record.BaseColor[3] == 1 &&
+                      unchangedMaterial.Textures[0] == originalPath);
+        }
+        std::filesystem::remove("RigV1Fixture/base-color-bake.png");
+        std::printf("RIG_SPLIT_CASE base_color_unit_factor_unchanged result=pass\n");
+    }
+
+    void BaseColorBakeIncremental(F::Fixture& f)
+    {
+        // 反証する契約: 焼いた画像を増分の出力在庫へ含め、色係数の変更で再 cook して画像パッケージを更新する。
+        // 気づける手段: skip では前の出力がそのまま使われるため、manifest・在庫・判定・出力を直接確かめる。
+        // 黙って起きるか: 不正に skip しても成功として扱われ、古い色が残る。
+        const auto sourceRoot = f.Root / "RigV1Fixture";
+        const auto source = sourceRoot / "base-color-incremental.gltf";
+        const auto image = sourceRoot / "base-color-incremental.png";
+        const F::Bytes pixels{255, 128, 64, 200, 10, 20, 30, 255, 200, 100, 50, 0, 255, 255, 255, 255};
+        F::WriteBytes(image, X::Png(2, 2, pixels));
+        auto json = X::AddMaterial(
+            f.Json,
+            R"({"name":"Body","pbrMetallicRoughness":{"baseColorFactor":[0.5,0.25,1,0.75],"baseColorTexture":{"index":0}}})");
+        json = F::Replace(json, "\"skins\":",
+                          R"("textures":[{"source":0}],"images":[{"uri":"base-color-incremental.png"}],"skins":)");
+        F::WriteBytes(source, F::Bytes(json.begin(), json.end()));
+        Cook::SingleAssetCookRequest request;
+        request.InputPath = source;
+        request.PackagePath = f.Root / "base-color-incremental/Cooked/mesh.nvpk";
+        request.ManifestPath = f.Root / "base-color-incremental/manifest.json";
+        request.Kind = "model";
+        request.Format = "nvskel.v1.skinmesh.pnujiw.u32";
+        request.EntryTypeText = "Skm1";
+        request.EntryName = "mesh";
+        request.LogicalPath = "Models/BaseColor";
+        request.Variant = "default";
+        const auto bakedPath = request.LogicalPath + ".mat0.albedo.rgba8";
+        Cook::CookDecisionContext before, context;
+        F::Text error;
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, nullptr, nullptr, before, error) == Cook::CookDecision::Cook);
+        RIG_CHECK(Cook::CookSingleAsset(before.Request, error));
+        const auto readManifest = [&](Core::Asset::AssetManifest& manifest)
+        {
+            const auto bytes = F::ReadBytes(request.ManifestPath);
+            return manifest.LoadFromJsonText(C::String(
+                F::Text(C::AnsiStringView(reinterpret_cast<const char*>(bytes.data()), bytes.size())).c_str()));
+        };
+        const auto findBaked = [&](const Core::Asset::AssetManifest& manifest)
+            -> const Core::Asset::AssetCookedReference*
+        {
+            for (size_t i = 0; i < manifest.GetReferenceCount(); ++i)
+            {
+                const auto& ref = manifest.GetReference(i);
+                if (ref.Kind == Core::Asset::AssetKind::Texture && ref.LogicalPath == bakedPath)
+                {
+                    return &ref;
+                }
+            }
+            return nullptr;
+        };
+        Core::Asset::AssetManifest manifest;
+        RIG_CHECK(readManifest(manifest));
+        const auto* firstRef = findBaked(manifest);
+        RIG_CHECK(firstRef != nullptr);
+        const auto firstPackage = F::ReadBytes(request.ManifestPath.parent_path() / firstRef->CookedPackage.c_str());
+        RIG_CHECK(!firstPackage.empty());
+        Cook::CookOutputRecord record;
+        RIG_CHECK(Cook::CaptureCookOutputRecord(before, manifest, record, error));
+        bool bRecordedTexture = false;
+        for (const auto& output : record.Outputs)
+        {
+            bRecordedTexture |= output.Reference.Kind == Core::Asset::AssetKind::Texture &&
+                                output.Reference.LogicalPath == bakedPath;
+        }
+        RIG_CHECK(bRecordedTexture);
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, &record, &manifest, context, error) == Cook::CookDecision::Skip);
+        json = F::Replace(json, "[0.5,0.25,1,0.75]", "[0.25,0.5,1,0.75]");
+        F::WriteBytes(source, F::Bytes(json.begin(), json.end()));
+        RIG_CHECK(Cook::DecideCookCache(request, 7, true, &record, &manifest, context, error) == Cook::CookDecision::Cook);
+        RIG_CHECK(Cook::CookSingleAsset(context.Request, error));
+        Core::Asset::AssetManifest updatedManifest;
+        RIG_CHECK(readManifest(updatedManifest));
+        const auto* secondRef = findBaked(updatedManifest);
+        RIG_CHECK(secondRef != nullptr);
+        const auto secondPackage = F::ReadBytes(request.ManifestPath.parent_path() / secondRef->CookedPackage.c_str());
+        RIG_CHECK(!secondPackage.empty() && secondPackage != firstPackage);
+        std::filesystem::remove(source);
+        std::filesystem::remove(image);
+        std::printf("RIG_SPLIT_CASE base_color_incremental_recook result=pass\n");
+    }
 } // namespace
 int main()
 {
@@ -1147,6 +1348,8 @@ int main()
     CapturedInputs(fixture);
     MixedBudget(fixture);
     Images(fixture);
+    BaseColorBakes(fixture);
+    BaseColorBakeIncremental(fixture);
     NameAndPackageLimits(fixture);
     ImageLocatorAndBudgets(fixture);
     DerivedCopies(fixture);

@@ -1,6 +1,7 @@
 ﻿#include "Asset/CookedTerrainFormat.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include "Tools/AssetCook/TerrainSpec.h"
+#include "Tools/AssetCook/MeshCooker.h"
 #include "Tools/AssetCook/TextureCooker.h"
 
 #include <algorithm>
@@ -143,6 +144,8 @@ namespace
         case CookedTerrainParseStatus::HeightSizeMismatch: return "HeightSizeMismatch";
         case CookedTerrainParseStatus::LayerHashMismatch: return "LayerHashMismatch";
         case CookedTerrainParseStatus::EmbeddedTextureInvalid: return "EmbeddedTextureInvalid";
+        case CookedTerrainParseStatus::InvalidOuterRing: return "InvalidOuterRing";
+        case CookedTerrainParseStatus::OuterEdgeMismatch: return "OuterEdgeMismatch";
         }
         return "Unknown";
     }
@@ -421,6 +424,8 @@ namespace
         const char* source = "\"path\":\"surface.raw\",\"format\":\"raw16\",\"width\":65,\"height\":49,\"endian\":\"little\",\"flip_z\":false";
         const auto spec = WriteTerrainSpec("surface.json", source, mapping, CookCellSize);
         const auto first = CookTerrainChecked(spec);
+        // 外周の無い spec の出力が変わっていないことを縛る。値は Debug の今の実装で取った。
+        CHECK(ComputeCookedTerrainFileHash(Span<const uint8_t>(first.Build.NvtrnBytes)) == 0xf0ed32e16a9c1073ull);
         const auto repeated = CookTerrainChecked(spec);
         CHECK(first.Build.NvtrnBytes == repeated.Build.NvtrnBytes);
         const uint64_t payloadHash = ComputeAssetPackagePayloadHash(first.Build.NvtrnBytes.data(), first.Build.NvtrnBytes.size());
@@ -796,6 +801,8 @@ namespace
 
         const auto slopeSpec = WriteTerrainSpec("mask-slope.json", slopeSource, "\"scale_m\":0.05,\"offset_m\":0", 1.0, 17, slopeRecipe);
         const auto slopeFirst = CookTerrainChecked(slopeSpec);
+        // 外周の無い spec の出力が変わっていないことを縛る。値は Debug の今の実装で取った。
+        CHECK(ComputeCookedTerrainFileHash(Span<const uint8_t>(slopeFirst.Build.NvtrnBytes)) == 0xa70e0dc0a2c5673aull);
         WriteTerrainSpec("mask-slope.json", slopeSource, "\"scale_m\":0.05,\"offset_m\":0", 1.0, 99, slopeRecipe);
         const auto slopeSecond = CookTerrainChecked(slopeSpec);
         const auto flatSpec = WriteTerrainSpec("mask-flat.json", flatSource, "\"scale_m\":0.05,\"offset_m\":0", 1.0, 1, flatRecipe);
@@ -1177,6 +1184,424 @@ namespace
         std::cout << Utf8(u8"凹み度 (d) PDL0 なしの旧形式は層なし・標本値 0、PDL0 ありの底=") << currentBottom << "\n";
     }
 
+    ByteArray CheckOuterRing()
+    {
+        CookedTerrainWriteDesc input;
+        input.CellCountX = 16;
+        input.CellCountZ = 16;
+        input.TileCells = 8;
+        input.LodCount = 2;
+        input.CellSizeM = 1.0f;
+        input.OriginX = 1000.0;
+        input.OriginY = 12.0;
+        input.OriginZ = -240.0;
+        input.HeightMinM = -20.0f;
+        input.HeightMaxM = 120.0f;
+        input.Layers.resize(1);
+        input.Layers[0].FourCC = HeightLayerFourCC;
+        input.Layers[0].Encoding = LayerEncodingRawHeight16;
+        input.Layers[0].Semantic = "height";
+        input.bHasOuterRing = true;
+        auto& ring = input.OuterRing;
+        ring.CellCountX = 6;
+        ring.CellCountZ = 6;
+        ring.TileCells = 2;
+        ring.TileCountX = 3;
+        ring.TileCountZ = 3;
+        ring.HoleTileMinX = 1;
+        ring.HoleTileMinZ = 1;
+        ring.HoleTileCountX = 1;
+        ring.HoleTileCountZ = 1;
+        ring.CellSizeM = 8.0f;
+        ring.OriginX = input.OriginX - 16.0;
+        ring.OriginZ = input.OriginZ - 16.0;
+
+        const auto sample = [](int x, int z) { return static_cast<uint16_t>(3000 + x + z * 32); };
+        ByteArray nearHeights[4];
+        input.Tiles.resize(4);
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            const uint32_t coordinate = 3 - index;
+            auto& tile = input.Tiles[index];
+            tile.TileX = coordinate % 2;
+            tile.TileZ = coordinate / 2;
+            tile.HeightMinM = 0.0f;
+            tile.HeightMaxM = 100.0f;
+            tile.AabbMin[0] = static_cast<float>(tile.TileX * 8);
+            tile.AabbMin[2] = static_cast<float>(tile.TileZ * 8);
+            tile.AabbMax[0] = tile.AabbMin[0] + 8.0f;
+            tile.AabbMax[1] = 100.0f;
+            tile.AabbMax[2] = tile.AabbMin[2] + 8.0f;
+            auto& height = nearHeights[coordinate];
+            height.resize(9 * 9 * 2);
+            for (uint32_t z = 0; z <= 8; ++z)
+            {
+                for (uint32_t x = 0; x <= 8; ++x)
+                {
+                    WriteLe16(height, 2 * (z * 9 + x), sample(static_cast<int>(tile.TileX * 8 + x), static_cast<int>(tile.TileZ * 8 + z)));
+                }
+            }
+            tile.LayerBytes.push_back(Span<const uint8_t>(height));
+        }
+        ByteArray outerHeights[9];
+        input.OuterTiles.resize(8);
+        uint32_t index = 0;
+        for (int coordinate = 8; coordinate >= 0; --coordinate)
+        {
+            if (coordinate == 4)
+            {
+                continue;
+            }
+            auto& tile = input.OuterTiles[index++];
+            tile.TileX = static_cast<uint32_t>(coordinate % 3);
+            tile.TileZ = static_cast<uint32_t>(coordinate / 3);
+            tile.HeightMinM = 0.0f;
+            tile.HeightMaxM = 100.0f;
+            tile.AabbMin[0] = static_cast<float>(static_cast<int>(tile.TileX) * 16 - 16);
+            tile.AabbMin[2] = static_cast<float>(static_cast<int>(tile.TileZ) * 16 - 16);
+            tile.AabbMax[0] = tile.AabbMin[0] + 16.0f;
+            tile.AabbMax[1] = 100.0f;
+            tile.AabbMax[2] = tile.AabbMin[2] + 16.0f;
+            tile.LodMaxErrorM[1] = 2.0f;
+            auto& height = outerHeights[static_cast<size_t>(coordinate)];
+            height.resize(3 * 3 * 2);
+            for (uint32_t z = 0; z <= 2; ++z)
+            {
+                for (uint32_t x = 0; x <= 2; ++x)
+                {
+                    WriteLe16(height, 2 * (z * 3 + x), sample(static_cast<int>((tile.TileX * 2 + x) * 8) - 16,
+                                                               static_cast<int>((tile.TileZ * 2 + z) * 8) - 16));
+                }
+            }
+            tile.HeightBytes = Span<const uint8_t>(height);
+        }
+        ByteArray bytes;
+        ByteArray repeated;
+        CHECK(WriteCookedTerrain(input, bytes) == CookedTerrainWriteStatus::Success);
+        CHECK(WriteCookedTerrain(input, repeated) == CookedTerrainWriteStatus::Success && repeated == bytes);
+        std::swap(input.OuterTiles[0], input.OuterTiles[7]);
+        CHECK(WriteCookedTerrain(input, repeated) == CookedTerrainWriteStatus::Success && repeated == bytes);
+        std::swap(input.OuterTiles[0], input.OuterTiles[7]);
+        CHECK(ReadLe16(bytes, HeaderOffset::VersionMinor) == VersionMinorOuterRing);
+        CHECK(ReadLe32(bytes, HeaderOffset::Flags) == HeaderFlagOuterRing);
+        CHECK(ReadLe64(bytes, HeaderOffset::LayerTableOffset) == HeaderSize + OuterRingBlockSize);
+        CHECK(ReadLe64(bytes, HeaderOffset::PayloadHash) == ComputeCookedTerrainFileHash(Span<const uint8_t>(bytes)));
+        const auto parsed = ParseCookedTerrain(AssetBlob::CopyBytes(Span<const uint8_t>(bytes)));
+        CHECK(parsed.Succeeded());
+        const auto& terrain = parsed.Terrain;
+        CHECK(terrain.bHasOuterRing && terrain.GetOuterSamplesPerSide() == 3 && terrain.OuterTiles.size() == 8);
+        const auto& actualRing = terrain.OuterRing;
+        CHECK(actualRing.CellCountX == ring.CellCountX && actualRing.CellCountZ == ring.CellCountZ);
+        CHECK(actualRing.TileCells == ring.TileCells && actualRing.TileCountX == ring.TileCountX && actualRing.TileCountZ == ring.TileCountZ);
+        CHECK(actualRing.HoleTileMinX == ring.HoleTileMinX && actualRing.HoleTileMinZ == ring.HoleTileMinZ);
+        CHECK(actualRing.HoleTileCountX == ring.HoleTileCountX && actualRing.HoleTileCountZ == ring.HoleTileCountZ);
+        CHECK(actualRing.CellSizeM == ring.CellSizeM && actualRing.OriginX == ring.OriginX && actualRing.OriginZ == ring.OriginZ);
+        CHECK(actualRing.TileTableOffset == ReadLe64(bytes, HeaderOffset::TileTableOffset) + ReadLe64(bytes, HeaderOffset::TileTableSize));
+        CHECK(actualRing.TileTableSize == 8 * OuterTileRecordSize && actualRing.Reserved == 0);
+        CHECK(ReadLe64(bytes, HeaderSize + OuterRingOffset::TileTableOffset) == actualRing.TileTableOffset);
+        CHECK(ReadLe64(bytes, HeaderSize + OuterRingOffset::TileTableSize) == actualRing.TileTableSize);
+        CHECK(terrain.FindOuterTile(1, 1) == nullptr && terrain.FindOuterTile(3, 0) == nullptr);
+        CHECK(terrain.OuterTileIndexByCoord[4] == std::numeric_limits<uint32_t>::max());
+        constexpr uint32_t flags[9] = {1, 9, 1, 5, 0, 17, 1, 3, 1};
+        uint32_t expectedIndex = 0;
+        for (uint32_t coordinate = 0; coordinate < 9; ++coordinate)
+        {
+            if (coordinate == 4)
+            {
+                continue;
+            }
+            uint32_t found = std::numeric_limits<uint32_t>::max();
+            const auto* tile = terrain.FindOuterTile(coordinate % 3, coordinate / 3, &found);
+            CHECK(tile != nullptr && found == expectedIndex && tile == &terrain.OuterTiles[expectedIndex]);
+            CHECK(tile->Flags == flags[coordinate]);
+            const auto& expected = input.OuterTiles[7 - expectedIndex];
+            CHECK(tile->TileX == expected.TileX && tile->TileZ == expected.TileZ);
+            CHECK(tile->HeightMinM == expected.HeightMinM && tile->HeightMaxM == expected.HeightMaxM);
+            CHECK(tile->Height.DataSize == 18 && tile->Height.DataOffset % PayloadAlignment == 0);
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                CHECK(tile->AabbMin[axis] == expected.AabbMin[axis] && tile->AabbMax[axis] == expected.AabbMax[axis]);
+            }
+            for (uint32_t lod = 0; lod < MaxLodCount; ++lod)
+            {
+                CHECK(tile->LodMaxErrorM[lod] == expected.LodMaxErrorM[lod]);
+            }
+            for (uint32_t z = 0; z <= 2; ++z)
+            {
+                for (uint32_t x = 0; x <= 2; ++x)
+                {
+                    CHECK(terrain.GetOuterHeightSample(found, x, z) == ReadLe16(outerHeights[coordinate], 2 * (z * 3 + x)));
+                }
+            }
+            ++expectedIndex;
+        }
+        CHECK(terrain.GetOuterHeightSample(8, 0, 0) == 0 && terrain.GetOuterHeightSample(0, 3, 0) == 0);
+        return bytes;
+    }
+
+    CookedTerrainData CookOuterRingFixture()
+    {
+        const auto nearPng = SaveGray8Png(33, 49);
+        ByteArray pixels(11 * 13);
+        for (size_t i = 0; i < pixels.size(); ++i)
+        {
+            pixels[i] = static_cast<uint8_t>(200 + i % 40);
+        }
+        ByteArray outerPng;
+        CHECK(stbi_write_png_to_func(AppendPngBytes, &outerPng, 11, 13, 1, pixels.data(), 11) != 0);
+        WriteTerrainFile(TerrainTempRoot / "outer-near.png", Span<const uint8_t>(nearPng));
+        WriteTerrainFile(TerrainTempRoot / "outer-far.png", Span<const uint8_t>(outerPng));
+        const auto spec = WriteTerrainSpec("outer-cook.json", "\"path\":\"outer-near.png\",\"format\":\"png8\"",
+            "\"min_m\":-20,\"max_m\":40", 1.0, 1,
+            ",\"outer_ring\":{\"height_source\":{\"path\":\"outer-far.png\",\"format\":\"png8\",\"flip_z\":true},"
+            "\"height_mapping\":{\"min_m\":1000,\"max_m\":2000},\"cell_size_m\":8,\"width_m\":32,\"blend_m\":24}");
+        const auto cooked = CookTerrainChecked(spec);
+        CHECK(cooked.InputFiles.size() == 3 && cooked.InputFiles[2] == TerrainTempRoot / "outer-far.png");
+        const auto parsed = ParseCookedTerrain(AssetBlob::CopyBytes(Span<const uint8_t>(cooked.Build.NvtrnBytes)));
+        CHECK(parsed.Succeeded() && parsed.Terrain.bHasOuterRing);
+        CHECK(parsed.Terrain.OuterRing.TileCells == 2);
+        CHECK(parsed.Terrain.HeightMinM == -20.0f && parsed.Terrain.HeightMaxM > 1700.0f);
+        return parsed.Terrain;
+    }
+
+    void CheckCookedOuterSharedHeights(const CookedTerrainData& terrain)
+    {
+        const auto& ring = terrain.OuterRing;
+        const double nearEndX = terrain.OriginX + terrain.CellCountX * terrain.CellSizeM;
+        const double nearEndZ = terrain.OriginZ + terrain.CellCountZ * terrain.CellSizeM;
+        uint32_t sharedTiles = 0, cornerOnlyTiles = 0;
+        for (uint32_t index = 0; index < terrain.OuterTiles.size(); ++index)
+        {
+            const auto& tile = terrain.OuterTiles[index];
+            const bool bShared = (tile.Flags & ~OuterTileFlagOuter) != 0;
+            uint32_t matches = 0;
+            for (uint32_t z = 0; z <= ring.TileCells; ++z)
+            {
+                for (uint32_t x = 0; x <= ring.TileCells; ++x)
+                {
+                    const double wx = ring.OriginX + (tile.TileX * ring.TileCells + x) * ring.CellSizeM;
+                    const double wz = ring.OriginZ + (tile.TileZ * ring.TileCells + z) * ring.CellSizeM;
+                    if (wx < terrain.OriginX || wx > nearEndX || wz < terrain.OriginZ || wz > nearEndZ ||
+                        (wx != terrain.OriginX && wx != nearEndX && wz != terrain.OriginZ && wz != nearEndZ))
+                    {
+                        continue;
+                    }
+                    const auto nx = static_cast<uint32_t>((wx - terrain.OriginX) / terrain.CellSizeM);
+                    const auto nz = static_cast<uint32_t>((wz - terrain.OriginZ) / terrain.CellSizeM);
+                    const uint32_t tx = std::min(nx / terrain.TileCells, terrain.TileCountX - 1);
+                    const uint32_t tz = std::min(nz / terrain.TileCells, terrain.TileCountZ - 1);
+                    uint32_t nearIndex = 0;
+                    CHECK(terrain.FindTile(tx, tz, &nearIndex) != nullptr);
+                    const float nearHeight = terrain.DecodeHeightM(terrain.GetHeightSample(nearIndex,
+                        nx - tx * terrain.TileCells, nz - tz * terrain.TileCells));
+                    const float outerHeight = terrain.DecodeHeightM(terrain.GetOuterHeightSample(index, x, z));
+                    CHECK(std::bit_cast<uint32_t>(nearHeight) == std::bit_cast<uint32_t>(outerHeight));
+                    CHECK(outerHeight < 41.0f);
+                    ++matches;
+                }
+            }
+            if (bShared)
+            {
+                CHECK(matches == ring.TileCells + 1);
+                ++sharedTiles;
+            }
+            else if (matches != 0)
+            {
+                CHECK(matches == 1);
+                ++cornerOnlyTiles;
+            }
+        }
+        // cook と同じ形から辺の頂点を取り出し、タイルの重複端点を除いてビットで照合する。
+        AnsiString geometryError;
+        VariableArray<TerrainNvtrnTileGeometry> nearGeometry(terrain.Tiles.size());
+        for (size_t i = 0; i < terrain.Tiles.size(); ++i)
+        {
+            CHECK(BuildTerrainNvtrnTileGeometry(terrain, terrain.Tiles[i].TileX, terrain.Tiles[i].TileZ,
+                nearGeometry[i], geometryError));
+        }
+        VariableArray<TerrainNvtrnTileGeometry> outerGeometry(terrain.OuterTiles.size());
+        const auto sameVertex = [](const auto& a, const auto& b)
+        {
+            CHECK(std::memcmp(a.Position, b.Position, sizeof(a.Position)) == 0);
+            CHECK(std::memcmp(a.Normal, b.Normal, sizeof(a.Normal)) == 0);
+        };
+        const auto edgeVertices = [&](const auto& geometries, uint32_t fixedAxis, float fixed,
+                                       float begin, float end)
+        {
+            VariableArray<TerrainNvtrnTileVertex> result;
+            const uint32_t alongAxis = 2 - fixedAxis;
+            for (const auto& geometry : geometries)
+            {
+                for (const auto& vertex : geometry.Vertices)
+                {
+                    if (vertex.Position[fixedAxis] == fixed && vertex.Position[alongAxis] >= begin &&
+                        vertex.Position[alongAxis] <= end)
+                    {
+                        result.push_back(vertex);
+                    }
+                }
+            }
+            std::sort(result.begin(), result.end(), [alongAxis](const auto& a, const auto& b)
+            {
+                return a.Position[alongAxis] < b.Position[alongAxis];
+            });
+            size_t count = 0;
+            for (size_t i = 0; i < result.size(); ++i)
+            {
+                if (count != 0 && result[count - 1].Position[alongAxis] == result[i].Position[alongAxis])
+                {
+                    sameVertex(result[count - 1], result[i]);
+                }
+                else
+                {
+                    result[count++] = result[i];
+                }
+            }
+            result.resize(count);
+            return result;
+        };
+        const auto compareEdges = [&](const auto& a, const auto& b, uint32_t fixedAxis,
+                                      float fixed, float begin, float end, size_t expected)
+        {
+            const auto edgeA = edgeVertices(a, fixedAxis, fixed, begin, end);
+            const auto edgeB = edgeVertices(b, fixedAxis, fixed, begin, end);
+            CHECK(edgeA.size() == expected && edgeB.size() == expected);
+            for (size_t i = 0; i < expected; ++i)
+            {
+                sameVertex(edgeA[i], edgeB[i]);
+            }
+        };
+        const uint32_t ratio = static_cast<uint32_t>(std::round(ring.CellSizeM / terrain.CellSizeM));
+        for (size_t i = 0; i < terrain.OuterTiles.size(); ++i)
+        {
+            const auto& tile = terrain.OuterTiles[i];
+            auto& geometry = outerGeometry[i];
+            CHECK(BuildTerrainNvtrnOuterTileGeometry(terrain, tile.TileX, tile.TileZ, geometry, geometryError));
+            CHECK(geometry.Indices.size() % 3 == 0 && !geometry.Indices.empty());
+            for (size_t t = 0; t < geometry.Indices.size(); t += 3)
+            {
+                CHECK(geometry.Indices[t] < geometry.Vertices.size());
+                CHECK(geometry.Indices[t + 1] < geometry.Vertices.size());
+                CHECK(geometry.Indices[t + 2] < geometry.Vertices.size());
+                const auto& a = geometry.Vertices[geometry.Indices[t]].Position;
+                const auto& b = geometry.Vertices[geometry.Indices[t + 1]].Position;
+                const auto& c = geometry.Vertices[geometry.Indices[t + 2]].Position;
+                const double crossY = (double(b[2]) - a[2]) * (double(c[0]) - a[0]) -
+                    (double(b[0]) - a[0]) * (double(c[2]) - a[2]);
+                CHECK(crossY < 0.0);
+            }
+            const uint32_t shared = tile.Flags & ~OuterTileFlagOuter;
+            CHECK(geometry.EdgeVertexCount == (shared ? ratio * ring.TileCells + 1 : 0));
+            if (shared == 0)
+            {
+                continue;
+            }
+            const bool bHorizontal = (shared & (OuterTileFlagSharedNegZ | OuterTileFlagSharedPosZ)) != 0;
+            const uint32_t fixedAxis = bHorizontal ? 2 : 0;
+            const bool bPositive = (shared & (OuterTileFlagSharedPosZ | OuterTileFlagSharedPosX)) != 0;
+            const float fixed = bHorizontal
+                ? static_cast<float>(bPositive ? terrain.OriginZ : nearEndZ)
+                : static_cast<float>(bPositive ? terrain.OriginX : nearEndX);
+            const double origin = bHorizontal ? ring.OriginX : ring.OriginZ;
+            const uint32_t along = (bHorizontal ? tile.TileX : tile.TileZ) * ring.TileCells;
+            const float begin = static_cast<float>(origin + double(along) * ring.CellSizeM);
+            const float end = static_cast<float>(origin + double(along + ring.TileCells) * ring.CellSizeM);
+            compareEdges(Span<const TerrainNvtrnTileGeometry>(&geometry, 1), nearGeometry,
+                fixedAxis, fixed, begin, end, ratio * ring.TileCells + 1);
+        }
+        // ジッパーの両端も、隣の外周タイルと同じ粗い辺で終わる。
+        for (size_t i = 0; i < terrain.OuterTiles.size(); ++i)
+        {
+            const auto& tile = terrain.OuterTiles[i];
+            for (uint32_t direction = 0; direction < 2; ++direction)
+            {
+                uint32_t neighbor = 0;
+                if (terrain.FindOuterTile(tile.TileX + (direction == 0), tile.TileZ + (direction == 1), &neighbor) == nullptr)
+                {
+                    continue;
+                }
+                const uint32_t fixedAxis = direction == 0 ? 0 : 2;
+                const double fixedOrigin = direction == 0 ? ring.OriginX : ring.OriginZ;
+                const double alongOrigin = direction == 0 ? ring.OriginZ : ring.OriginX;
+                const uint32_t fixedCell = ((direction == 0 ? tile.TileX : tile.TileZ) + 1) * ring.TileCells;
+                const uint32_t alongCell = (direction == 0 ? tile.TileZ : tile.TileX) * ring.TileCells;
+                compareEdges(Span<const TerrainNvtrnTileGeometry>(&outerGeometry[i], 1),
+                    Span<const TerrainNvtrnTileGeometry>(&outerGeometry[neighbor], 1), fixedAxis,
+                    static_cast<float>(fixedOrigin + double(fixedCell) * ring.CellSizeM),
+                    static_cast<float>(alongOrigin + double(alongCell) * ring.CellSizeM),
+                    static_cast<float>(alongOrigin + double(alongCell + ring.TileCells) * ring.CellSizeM),
+                    ring.TileCells + 1);
+            }
+        }
+        CHECK(sharedTiles == 2 * (ring.HoleTileCountX + ring.HoleTileCountZ));
+        CHECK(cornerOnlyTiles == 4);
+        std::cout << Utf8(u8"外周と近景の共有辺の高さがビット一致（角を含む）\n");
+    }
+
+    void CheckCookedOuterCoverage(const CookedTerrainData& terrain)
+    {
+        const auto& ring = terrain.OuterRing;
+        VariableArray<uint32_t> counts(size_t(ring.TileCountX) * ring.TileCountZ);
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            CHECK(tile.TileX < ring.TileCountX && tile.TileZ < ring.TileCountZ);
+            ++counts[size_t(tile.TileZ) * ring.TileCountX + tile.TileX];
+        }
+        for (uint32_t z = 0; z < ring.TileCountZ; ++z)
+        {
+            for (uint32_t x = 0; x < ring.TileCountX; ++x)
+            {
+                const bool bHole = x >= ring.HoleTileMinX && x < ring.HoleTileMinX + ring.HoleTileCountX &&
+                                   z >= ring.HoleTileMinZ && z < ring.HoleTileMinZ + ring.HoleTileCountZ;
+                CHECK(counts[size_t(z) * ring.TileCountX + x] + (bHole ? 1u : 0u) == 1);
+            }
+        }
+        const double tileExtent = ring.TileCells * ring.CellSizeM;
+        CHECK(ring.OriginX + ring.HoleTileMinX * tileExtent == terrain.OriginX);
+        CHECK(ring.OriginZ + ring.HoleTileMinZ * tileExtent == terrain.OriginZ);
+        CHECK(ring.HoleTileCountX * tileExtent == terrain.CellCountX * terrain.CellSizeM);
+        CHECK(ring.HoleTileCountZ * tileExtent == terrain.CellCountZ * terrain.CellSizeM);
+        struct Rectangle
+        {
+            double MinX, MinZ, MaxX, MaxZ;
+        };
+        VariableArray<Rectangle> rectangles;
+        const auto appendRectangle = [&](const auto& tile, double originX, double originZ, double extent)
+        {
+            const Rectangle rect{originX + tile.TileX * extent, originZ + tile.TileZ * extent,
+                                 originX + (tile.TileX + 1) * extent, originZ + (tile.TileZ + 1) * extent};
+            CHECK(terrain.OriginX + tile.AabbMin[0] == rect.MinX && terrain.OriginZ + tile.AabbMin[2] == rect.MinZ);
+            CHECK(terrain.OriginX + tile.AabbMax[0] == rect.MaxX && terrain.OriginZ + tile.AabbMax[2] == rect.MaxZ);
+            rectangles.push_back(rect);
+        };
+        for (const auto& tile : terrain.Tiles)
+        {
+            appendRectangle(tile, terrain.OriginX, terrain.OriginZ, terrain.TileCells * terrain.CellSizeM);
+        }
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            appendRectangle(tile, ring.OriginX, ring.OriginZ, tileExtent);
+        }
+        double totalArea = 0.0;
+        for (size_t i = 0; i < rectangles.size(); ++i)
+        {
+            const auto& a = rectangles[i];
+            CHECK(a.MinX >= ring.OriginX && a.MinZ >= ring.OriginZ);
+            CHECK(a.MaxX <= ring.OriginX + ring.CellCountX * ring.CellSizeM);
+            CHECK(a.MaxZ <= ring.OriginZ + ring.CellCountZ * ring.CellSizeM);
+            totalArea += (a.MaxX - a.MinX) * (a.MaxZ - a.MinZ);
+            for (size_t j = 0; j < i; ++j)
+            {
+                const auto& b = rectangles[j];
+                const double overlapX = std::max(0.0, std::min(a.MaxX, b.MaxX) - std::max(a.MinX, b.MinX));
+                const double overlapZ = std::max(0.0, std::min(a.MaxZ, b.MaxZ) - std::max(a.MinZ, b.MinZ));
+                CHECK(overlapX * overlapZ == 0.0);
+            }
+        }
+        CHECK(totalArea == double(ring.CellCountX) * ring.CellCountZ * ring.CellSizeM * ring.CellSizeM);
+        std::cout << Utf8(u8"外周のタイルが宣言した範囲を穴なく覆う\n");
+    }
+
     void CheckTerrainCookPath()
     {
         CreateTerrainTemp();
@@ -1184,6 +1609,9 @@ namespace
         CheckTerrainFormatsAndRejection();
         CheckTerrainMasks();
         CheckTerrainPuddle();
+        const auto outer = CookOuterRingFixture();
+        CheckCookedOuterSharedHeights(outer);
+        CheckCookedOuterCoverage(outer);
         std::error_code error;
         std::filesystem::remove_all(TerrainTempRoot, error);
         CHECK(!error && !std::filesystem::exists(TerrainTempRoot));
@@ -1280,6 +1708,8 @@ int main()
     CHECK(parsed.Status == CookedTerrainParseStatus::Success);
     const auto& terrain = parsed.Terrain;
     CheckHeader(bytes, input, terrain);
+    CHECK(!terrain.bHasOuterRing && terrain.OuterTiles.empty() && terrain.OuterTileIndexByCoord.empty());
+    CHECK(terrain.GetOuterSamplesPerSide() == 0 && terrain.FindOuterTile(0, 0) == nullptr && terrain.GetOuterHeightSample(0, 0, 0) == 0);
     CHECK(terrain.Tiles.size() == input.Tiles.size());
     CHECK(terrain.GetSamplesPerSide() == 5);
     for (size_t layerIndex = 0; layerIndex < input.Layers.size(); ++layerIndex)
@@ -1330,6 +1760,7 @@ int main()
     }
     std::cout << Utf8(u8"往復: Success、全欄とバイト列が一致\n");
 
+    const ByteArray outerBytes = CheckOuterRing();
     const size_t tileTable = static_cast<size_t>(ReadLe64(bytes, HeaderOffset::TileTableOffset));
     const size_t tileRecordSize = ReadLe32(bytes, HeaderOffset::TileRecordSize);
     const size_t heightRange = tileTable + TileRecordOffset::LayerRanges;
@@ -1380,6 +1811,22 @@ int main()
         ByteArray changed = bytes;
         WriteLe16(changed, HeaderOffset::VersionMinor, 1);
         CheckRejection(Utf8(u8"副版の不一致"), changed, CookedTerrainParseStatus::UnsupportedVersion);
+    }
+    {
+        ByteArray changed = bytes;
+        WriteLe16(changed, HeaderOffset::VersionMinor, 2);
+        CheckRejection(Utf8(u8"未対応の副版 2"), changed, CookedTerrainParseStatus::UnsupportedVersion);
+    }
+    {
+        ByteArray changed = outerBytes;
+        const size_t table = static_cast<size_t>(ReadLe64(changed, HeaderSize + OuterRingOffset::TileTableOffset));
+        const size_t range = table + OuterTileRecordSize + TileRecordOffset::LayerRanges;
+        const size_t height = static_cast<size_t>(ReadLe64(changed, range + TileLayerRangeOffset::DataOffset));
+        const size_t heightSize = static_cast<size_t>(ReadLe64(changed, range + TileLayerRangeOffset::DataSize));
+        changed[height + 2 * (2 * 3 + 1)] ^= 1;
+        WriteLe64(changed, range + TileLayerRangeOffset::DataHash, ComputeCookedTexturePayloadHash(changed.data() + height, heightSize));
+        Rehash(changed);
+        CheckRejection(Utf8(u8"外周の縁の高さ標本"), changed, CookedTerrainParseStatus::OuterEdgeMismatch);
     }
     {
         ByteArray changed = bytes;

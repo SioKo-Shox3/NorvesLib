@@ -2,7 +2,7 @@
   "version": 0,
   "terrain": {
     "path": "../TerrainSpecs/Grassland/GrasslandTerrain.json",
-    "cooked_hash": "2fbadb9d5677e80d"
+    "cooked_hash": "3455d60b54f23a5c"
   },
   "chunk_size_m": 32,
   "seed": 89021090,

@@ -1,5 +1,6 @@
 ﻿#include "Resource/MaterialImportPolicy.h"
 #include "Asset/CookedMaterialFormat.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -134,6 +135,19 @@ namespace NorvesLib::Core::AssetImport
         // UNORM8のbyte領域で直接計算し、sample/255の丸めを挟まない。
         const double value=channel==ArmChannel::Occlusion ? (1.0-factor)*255.0+factor*sample : factor*sample;
         out=static_cast<uint8_t>(std::floor(value+0.5));
+        return MaterialPolicyStatus::Success;
+    }
+    MaterialPolicyStatus BakeBaseColorByte(uint8_t srgbSample, double factor, uint8_t& out) noexcept
+    {
+        if (!Unit(factor))
+        {
+            return MaterialPolicyStatus::InvalidInput;
+        }
+        const double c = static_cast<double>(srgbSample) / 255.0;
+        const double linear = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+        const double v = linear * factor;
+        const double s = v <= 0.0031308 ? 12.92 * v : 1.055 * std::pow(v, 1.0 / 2.4) - 0.055;
+        out = static_cast<uint8_t>(std::clamp(std::floor(s * 255.0 + 0.5), 0.0, 255.0));
         return MaterialPolicyStatus::Success;
     }
     EmissiveScale SelectEmissiveScale(EmissiveScale material, EmissiveScale asset, EmissiveScale assetSet) noexcept

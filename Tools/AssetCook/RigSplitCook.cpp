@@ -5,6 +5,7 @@
 #include "GeometryInspection.h"
 #include "Resource/SkeletalImportPolicy.h"
 #include "Resource/MaterialImportSettings.h"
+#include "Resource/MaterialImportPolicy.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
 #include <bit>
@@ -441,6 +442,104 @@ namespace NorvesLib::Tools::AssetCook
                 hash.Number(key);
                 hash.Number(plan.SourceHash);
                 hash.Number(plan.SettingsHash);
+                if (plan.Material.BaseColor[0] != 1.0f || plan.Material.BaseColor[1] != 1.0f ||
+                    plan.Material.BaseColor[2] != 1.0f)
+                {
+                    const float factor[] = {plan.Material.BaseColor[0], plan.Material.BaseColor[1],
+                                            plan.Material.BaseColor[2]};
+                    const bool bSolid = plan.Textures[0].empty();
+                    auto albedo = plan.Images.end();
+                    const DecodedTextureRgba8* decoded = nullptr;
+                    uint32_t width = 4, height = 4;
+                    if (!bSolid)
+                    {
+                        albedo = std::find_if(plan.Images.begin(), plan.Images.end(),
+                                              [&](const auto& image) { return image.LogicalPath == plan.Textures[0]; });
+                        if (albedo == plan.Images.end())
+                        {
+                            return fail("split_albedo_bake");
+                        }
+                        const auto sourceImage = std::find_if(images.Entries.begin(), images.Entries.end(),
+                                                              [&](const auto& entry)
+                                                              { return entry.Index == albedo->ImageIndex; });
+                        if (sourceImage == images.Entries.end())
+                        {
+                            return fail("split_albedo_bake");
+                        }
+                        decoded = &sourceImage->Decoded;
+                        width = decoded->Width;
+                        height = decoded->Height;
+                    }
+                    const uint64_t byteCount = uint64_t(width) * height * 4;
+                    if (!images.ReserveDerived(byteCount, width, height, error))
+                    {
+                        error = "split_albedo_output_limit";
+                        return false;
+                    }
+                    uint8_t table[3][256]{};
+                    for (size_t channel = 0; channel < 3; ++channel)
+                    {
+                        for (unsigned value = 0; value < 256; ++value)
+                        {
+                            if (I::BakeBaseColorByte(static_cast<uint8_t>(value), factor[channel],
+                                                     table[channel][value]) != I::MaterialPolicyStatus::Success)
+                            {
+                                return fail("split_albedo_bake");
+                            }
+                        }
+                    }
+                    if (decoded && decoded->Pixels.size() != byteCount)
+                    {
+                        return fail("split_albedo_bake");
+                    }
+                    Bytes pixels(static_cast<size_t>(byteCount));
+                    for (size_t offset = 0; offset < pixels.size(); offset += 4)
+                    {
+                        for (size_t channel = 0; channel < 3; ++channel)
+                        {
+                            pixels[offset + channel] = table[channel][decoded ? decoded->Pixels[offset + channel] : 255];
+                        }
+                        pixels[offset + 3] = decoded ? decoded->Pixels[offset + 3] : 255;
+                    }
+                    MeshEmbeddedImage baked;
+                    if (!baked.SetRawRgba8(pixels, width, height))
+                    {
+                        return fail("split_albedo_bake");
+                    }
+                    baked.ImageIndex = key == UINT64_MAX ? (uint64_t{3} << 33) : (uint64_t{1} << 34) + key;
+                    baked.Roles = static_cast<uint8_t>(MeshImageRole::Albedo);
+                    baked.Format = "nvtex.v0.rgba8.srgb";
+                    baked.LogicalPath = request.MeshPath + (key == UINT64_MAX ? Text(".matdefault.albedo.rgba8")
+                                                                               : Text(".mat") + Number(key) + ".albedo.rgba8");
+                    Hash raw;
+                    raw.String("NorvesLib.RigSplit.baked-albedo.v1");
+                    raw.Number(static_cast<uint8_t>(baked.Payload));
+                    raw.Number(baked.Width);
+                    raw.Number(baked.Height);
+                    raw.String(baked.Format);
+                    raw.Data(baked.GetBytes());
+                    baked.SourceHash = raw.Value;
+                    if (!bSolid)
+                    {
+                        albedo->Roles &= static_cast<uint8_t>(~static_cast<uint8_t>(MeshImageRole::Albedo));
+                        if (albedo->Roles == 0)
+                        {
+                            plan.Images.erase(albedo);
+                        }
+                    }
+                    plan.Textures[0] = baked.LogicalPath;
+                    for (size_t channel = 0; channel < 3; ++channel)
+                    {
+                        plan.Material.BaseColor[channel] = 1.0f;
+                    }
+                    plan.Images.push_back(std::move(baked));
+                    hash.String("NorvesLib.RigSplit.base-color-bake.v1");
+                    for (float value : factor)
+                    {
+                        hash.Number(std::bit_cast<uint32_t>(value));
+                    }
+                    candidate.BaseColorBakes.push_back({key, {factor[0], factor[1], factor[2]}, bSolid});
+                }
                 for (auto& image : plan.Images)
                 {
                     if (image.ImageIndex == SyntheticArmImageIndex)
@@ -610,6 +709,30 @@ namespace NorvesLib::Tools::AssetCook
             report.Status = S::RigV1Status::Exception;
             error = "split_cook_exception";
             return false;
+        }
+    }
+    void PrintRigSplitBaseColorImportReport(const RigSplitCookRequest& request, const RigSplitCookResult& result)
+    {
+        if (result.BaseColorBakes.empty())
+        {
+            return;
+        }
+        SkeletalImportReportInput input;
+        input.Outcome = SkeletalImportOutcome::PayloadReady;
+        input.SourceHash = result.SourceHash;
+        input.Options = request.DecodeOptions;
+        input.Diagnostics.bDecodeAttempted = true;
+        input.Diagnostics.DecodeStatus = 0;
+        input.Diagnostics.Report = result.DecodeReport;
+        input.BaseColorBakes = {result.BaseColorBakes.data(), result.BaseColorBakes.size()};
+        const auto json = BuildSkeletalImportReport(input);
+        if (json.bValid)
+        {
+            std::fprintf(stderr, "import_report=%.*s\n", int(json.Size), json.Bytes);
+        }
+        else
+        {
+            std::fprintf(stderr, "骨格ImportReportの測定値が不正です\n");
         }
     }
 } // namespace NorvesLib::Tools::AssetCook

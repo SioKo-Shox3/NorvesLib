@@ -11025,16 +11025,61 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-115210/G12-GR40-WORLD-PAYLOADS-final-verify.txt`（verify のビルド `EntityTreeTest`・`PhysicsDynamicsTest`・`Game` が exit 0。ctest は StreamingPayloadTest・StreamingColliderPayloadTest・StreamingCellStateMachineTest・StreamingBudgetTest・ScatterSystemResidencyTest・EntityActiveInHierarchyTest・PhysicsParentDormancyTest・PhysicsDetachedColliderTest・EntityTreeTest・PhysicsDynamicsTest の 10/10 合格。2 つの JSON の読み込みも通る）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next: ランナーの評価者の反証（Object の寿命・アセットロード・物理の危険地帯）。人が見るときの見どころ: 開発ビルドで `--scene=grassland --grassland-streaming` を付けて起動し、near の視点から地形の反対の隅へ自由飛行で移ると、離れたセルの散布（岩・倒木・低木・草の塊）が休眠で消え、岩の当たりが外れ、さらに離れると地形の区画が外れる。戻ると再び読まれる。休眠中の地形は描画が残る。引数なしの grassland（ランチャーから・`--scene=grassland`）は今までと同じ見た目と流れのはず。
 - Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（既存の `--grassland-scatter-stress` と同じ形）。`--grassland-streaming` では Unload の輪 448 m が地形の対角（約 724 m）より短いので、隅にいると反対の隅の区画が外れて地形に穴が見える（開発の引数だけの挙動）。散布は距離の常駐を切るので、岩以外の種もセルで出し入れされる。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD。
-- U1 鏡面の AA の共通の関数と強さの定数を置く: 着地(直し 0 回)
-- U2 細い帯の幅の下限の関数 ClampStrandWidth を置く: 着地(直し 0 回)
-- U3 ラスタの GBuffer（静的・スキン・切り抜き）に鏡面の AA を入れる: 着地(直し 0 回)
-- U4 MegaGeometry のラスタに鏡面の AA を入れる: 着地(直し 0 回)
-- U5 可視バッファの解決に鏡面の AA を入れる（解析的な微分）: 着地(直し 0 回)
-- U7 配置の文書の直しを当て、タスクのビルドと CPU の検査を通す（U6 の切り直し）: 着地(直し 0 回)
-### G5-GR30-THIN-SPECULAR-AA 鏡面の AA と細い帯の幅の下限（2026-11-12、run 20261112-165213）
-- Done: `Assets/Shaders/Common/SpecularAntiAliasing.glsl` に Tokuyoshi-Kaplanyan 型の鏡面の AA を置いた。σ² = k × 0.25(|dN/dx|² + |dN/dy|²)。GBuffer の粗さは知覚の粗さ r なので、done-when の式の roughness を GGX の α = r² と読み、α' = sqrt(α² + min(2σ², 0.18))、r' = sqrt(α') とする。強さ k は `Library/Core/Public/Rendering/SpecularAntiAliasing.h` の `SpecularAAStrength`（既定 1.0、仮。0 で無効）を UBO で渡す。GBuffer の書き手 3 つに入れた: ラスタの GBuffer（`Common/GBufferFragment.glsl`。静的・スキン・切り抜き。`PerObjectUBO` を 416 バイトにし、切り抜きの discard より前に dFdxFine/dFdyFine で法線の微分を取る）、MegaGeometry のラスタ（`megageometry.frag`。地形の法線を含む確定の直後。`SectionUniformData` を 576 バイト）、可視バッファの解決（`Common/VisibilityResolve.glsl`。計算シェーダーなので、隣の画素の重心座標で補間の法線を作り、材質の面では法線マップを UV + duvdx / + duvdy で 2 回追加に標本して差を取る。強さは `ResolveParams.frame.w`、大きさ 272 は変えない）。`Common/ThinGeometry.glsl` に `ClampStrandWidth(worldWidth, viewDepth, projFactor)`（幅を最低 1 画素へ広げ、広げた幅と被覆率 = 元の幅 / 広げた幅を返す）と、被覆率を G5-GR27 の Hash の切り抜きの被覆に掛ける約束（使い手は GR34 のシェルと GR43 の草）を置いた。`Docs/Architecture/GpuLayoutRegistry.md` の UBO の欄を合わせた。
-- 証拠: `.harness/runs/20261112-165213/G5-GR30-THIN-SPECULAR-AA-U8-verify.txt`（HEAD f1ba2f7d に試験の 2 行を当てた版。差し替えた verify のビルドの行 `RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game RHIRayTracingApiContractTest MaterialResourcesTest` が TASK_BUILD_EXIT=0、ctest の行 TerrainShaderCompileTest・GBufferMaterialDescriptorCacheTest・GBufferPipelineKeyTest・ShadingModelContractTest が 4/4 Passed・TASK_CTEST_EXIT=0、TerrainShaderCompileTest の出力に gbuffer.frag と gbuffer_alphaclip.frag の `[検査]`・`[成功]` の行が VT・sparse の無し・有りの 2 通りずつ、numstat 一致）。TerrainShaderCompileTest は今回から GBuffer の通常・切り抜きの断片シェーダー（`Common/GBufferFragment.glsl` と鏡面の AA を読む）もコンパイルする。
-- 回さなかったもの: done-when の GPU の試験 `RenderingSpecularAAVulkanTest`（高周波の法線マップの球の 8 ジッタのハイライトの輝度の標準偏差の A/B）は作らず、golden 4 本の比較と再承認もしていない（CLAUDE.md 絶対規則 10: 描画・GPU の試験は新しく作らない、Vulkan・Golden の試験は回さない）。verify の ctest の行は名前に Vulkan を含む試験だけで盤面の除外で 0 本になるため、判断役の判断に従い CPU の検査（シェーダーのコンパイルと GBuffer の配置・鍵の契約）へ差し替えた。撮影・計測の確かめは回さない決まり。
-- Next: ランナーの評価者の反証（GBuffer・可視バッファの解決の危険地帯）。全シーンの見た目の確かめは G5-GR30-TAA-THIN-CHECK。人が見るときの見どころ: DefaultLit の鏡面のハイライトが、法線の変化の大きい所で少し鈍る。Rendering3DTest の岩（法線マップの細かい凹凸）と球の縁のハイライトのきらめき・ちらつきが減り、荒野の遠くの地面・岩・崖（MegaGeometry と可視バッファの解決）の鏡面の砂嵐のような粒が減る。平らな面と粗い面はほぼ変わらない。`SpecularAAStrength` を 0 にすると前の見た目に戻る。
-- Notes: 既知の限界: 草・低木（`foliage.frag`・`Grass/grass.frag`）には入れていない（頂点の法線が一定で効かない。GR34・GR35・GR43 で見る）。可視バッファの解決の地形・スプラットの層は補間の法線の差だけで、層の法線マップと POM のずれの変化は σ² に入らない。解決は材質の法線マップを画素ごとに 2 回多く標本する（性能は未計測）。`ClampStrandWidth` の使い手はまだ無い。
-- U8 シェーダーのコンパイルの検査に GBuffer の断片シェーダー 2 本を足し、差し替えた verify を通す: 着地(直し 0 回)
+
+- U11 cook_report に generator の行を出す(U3 の切り直し): 着地(直し 0 回)
+- U9 spec v2 の generators を解析・検査する(U1 の切り直し): 着地(直し 0 回)
+- U10 cook state に generator の記録を任意欄で持たせる(U2 の切り直し): 着地(直し 0 回)
+- U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
+- U5 generator の実行器(hash・CreateProcessW)を新設する: 着地(直し 0 回)
+- U6 --run-generators を CLI と asset-set の cook に接続する: 着地(直し 0 回)
+- U7 TextureManagedCliTest に generator の試験を足す: 着地(直し 1 回)
+- U8 文書に書き、タスクの verify を通す: 着地(直し 0 回)
+
+## G2-GR96-GENERATORS（2026-11-12、完了）
+- Done: asset-set の spec v2 の最上位に任意の `generators`（`name`・`command`・`inputs`・`outputs`・`cwd`）を受け、名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・asset の source を 2 つの generator が出すこと・未知のキーを spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う（または宣言した outputs が欠けた）generator を宣言順に shell を通さず `CreateProcessW` で走らせ、全部成功してから今までどおり cook する。失敗は名前と終了コードを出して cook せず 1 で終わる。前回の hash は claim の cook state の任意欄 `generators` に cook state と同じ取引で残し、cook_report と stderr に各 generator の `ran`/`skipped`/`failed`/`not_run` を出す。`--recover` とは併用できない。付けないときは generator を走らせず前回の記録を引き継ぐ（既存の spec と CLI の出力は byte 一致）。試験は `TextureManagedCliTest` に試験の exe 自身を `--generator-child` で子にする場合を足し、文書は `TextureAssetSetSpec.md`・`ManagedTextureAssetSetCli.md`・`Testing.md` に書いた。
+- 証拠: verify 3 行を、全単位の着地後と同じコードの作業ツリーで回した出力 `.harness/relay/G2-GR96-GENERATORS-U8-verify.txt`（ビルド EXIT_CODE 0、ctest 100% tests passed, 0 tests failed out of 9、`AssetCookCliParityTest.py` Ran 13 tests OK、各 EXIT_CODE 0）。
+- Next: なし。
+- Notes: 前の走行の単位 U1〜U3 は作業ツリーがほかのタスクに使い回されて差分が失われていたので、同じブリーフで U9〜U11 として切り直した。
+- Notes: `CookManagedBootstrapRequest` は `CookManagedBootstrap.h` にあるので、記録を渡す 1 欄をこのヘッダに足した。実行器は新しいファイル `Tools/AssetCook/TextureAssetSetGenerators.{h,cpp}` に置いた（どちらも paths の外の同じモジュール）。
+- Notes: コードを読んだ範囲の制約（試験では確かめていない）: spec v2・`--prune` なしで spec から外した asset を保持している root では、generator の記録だけが変わった更新が intent の `live_count` の検査で通らない見込み。保持した記録がある manifest のみの更新と同じ形の既存の制約。
+- Notes: generator は管理 store のボリューム lock の外で走るので、同じ spec の generator を 2 つの cook が同時に走らせることは防がない（文書に記載）。AssetCook の CLI だけの変更で、シーンの見た目は変わらない。撮影・計測の確かめは回さない決まり。
+
+## G12-GR39-FAR-RING: 統合ブランチの取り込み（2026-11-12）
+- Done: `feature/scene-launcher` を取り込み、`TerrainComponent.cpp` の衝突を解いた。区画を 1 つずつ出し入れする流し込み（`PlaceTileAt`・`RemoveTileAt`・site）と外周の区画を同じ配置の記録に収め、記録は区画の一覧と同じ並び（近景は行優先の番号、外周はその後ろ）に持つ。外周の区画は外周の印（遠景の 1 色の材質・`outer_` の区画メッシュ）を保ったまま置く。流し込みのときは近景を流し込みに任せ、外周の遠景だけを予算で置く（外周の無い地形の流し込みは取り込み前と同じ動き）。
+- 証拠: verify 3 行。ビルド EXIT=0（`.harness/runs/20261112-140346/merge-verify-build.txt`）、ctest 5 件 100% Passed（コードページ 932 のコンソール。`merge-verify-ctest-cp932.txt`）、CookAssets の Grassland EXIT=0（cooked=17 skipped=64。`merge-verify-cook.txt`）。
+- 見どころ（人が見るとき）: `--scene=grassland` で外周の山並みが出ること。流し込みを有効にした起動でも、近景の区画の出し入れと別に外周が置かれること。
+- Notes: 要起票: `AssetCookTerrainSmoke` の `outer_hole` は、ctest を UTF-8（コードページ 65001）のコンソールで回すと「拒否理由が想定と違います」で落ちる（AssetCook は /utf-8 なしでビルドされ、日本語の拒否理由を ANSI のバイトで出すため、期待の「穴の中」と食い違う。`merge-verify-ctest.txt`）。コードページ 932 では通る。
+- U1 NVTRN v0.1 の外周の区画表を読み書きする: 着地(直し 0 回)
+- U3 NVTRN の外周から照会用の高さ場（全格子と 4 本の帯）を作る: 着地(直し 0 回)
+- U2 地形 spec の outer_ring を cook して外周のタイルを NVTRN に書く: 着地(直し 1 回)
+- U4 外周の区画メッシュ terrain-tile:nvtrn:outer を焼く: 着地(直し 0 回)
+- U5 TerrainComponent が外周の区画を同じ予算で置き、帯の高さ場を登録する: 着地(直し 0 回)
+- U6 草原に外周を足し、遠方面と影の到達距離を地形の広さから決める: 着地(直し 0 回)
+### G12-GR39-FAR-RING 谷の外周の粗い遠景のタイル（2026-11-12、run 20261112-115210）
+- Done: NVTRN に副版 1（ヘッダの Flags の bit0）を足し、外周の記述（80 バイト）・外周のタイル表（印と共有辺のビット、HGT0 の区間 1 本）・外周の HGT0 を載せられるようにした。外周の無い spec の出力は v0.0 のままで、CookedTerrainTest の固定ハッシュ 2 件（`f0ed32e16a9c1073`・`a70e0dc0a2c5673a`。形式を変える前の Debug の実装で取った値）が今とのバイト一致を縛る。読み手は穴の縁の外周の標本が近景の uint16 と違うと `OuterEdgeMismatch`、記述・表・印の不正は `InvalidOuterRing` で拒否する。地形 spec に任意の `outer_ring`（height_source・height_mapping・cell_size_m 既定 16（8〜32）・width_m・blend_m 既定 256）を足し、cook が外周の格子を作って、近景の矩形からの距離 blend_m の帯で近景の縁の高さへ smoothstep で寄せ、穴の縁の標本は近景の uint16 を写す（外周の TileCells は近景の幅と width_m のセル数を全部割り切る 64 以下で最大の 2 の冪）。外周の画像の取り込みは `ImportHeightfield` の `bKeepSourceSize`（fit を通さない）。`TerrainHeightField` に外周の全格子と近景に重ならない 4 本の帯を作る口を足し、`TerrainComponent` が帯を近景の後に `TerrainSystem` へ登録する（外周の範囲の高さの照会は粗いセルで引け、両方の外は今どおり `kOutOfRangeHeight`）。外周の区画メッシュ `terrain-tile:nvtrn:outer:<x>,<z>` は近景と接する辺に近景の格子の全頂点（高さ・法線とも近景の高さ場から）を置き、最初の 1 升をジッパーで粗い格子へつなぎ、境は LOD の全段で固定する。外周の区画は近景の後ろに同じ TilesPerFrame で置き、層の標本なしの遠景の材質（スプラットの重みの平均で層の代表色・粗さを混ぜた 1 色と頂点の法線）で描く。草原は `GrasslandOuterHeight.png`（225×225、16bit、0〜256 m の山並み。`GenerateGrasslandHeight.py --outer` で再現）を外周に足し（16 m・幅 1536 m・帯 256 m → 7×7 タイルの外周 48 区画、範囲 −1536〜2048 m 四方）、地形を読み終えた後に範囲の対角線 D から遠方面 = max(今の値, 1.1·D)（約 5575 m）と `SetSunShadowMaxDistance(D)`（約 5069 m）を決め、シーンを抜けるときに影の距離を 0 へ戻す。
+- 証拠: `.harness/runs/20261112-115210/G12-GR39-FAR-RING-final-verify.txt`（verify のビルド exit 0、ctest で CookedTerrainTest・TerrainHeightFieldTest・AssetCookTerrainSmoke・AssetManifestTest・MathGeometryTest の 5/5 合格、`CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` が `COOK_ASSETS cooked=81 skipped=0` で exit 0（TERRAIN_NVTRN_OUTER_TILE 48 行・近景 16 行、散布 1、新しい NVTRN の cooked_hash `3455d60b54f23a5c` を散布に記録）、生成スクリプトの近景の出力が今の GrasslandHeight.png とバイト一致し外周の出力が 2 回で同じバイト）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- Next: G12-GR39-TERRAIN-CHECK の撮影で継ぎ目を見る。人が見るときの見どころ: grassland の谷の中から外周の山並みが地平まで切れずに続くこと、谷の縁（近景 0〜512 m 四方の外周の線。特に四隅）で近景と外周の間に隙間・段・明るさの段差が無いこと、外周の山の影が谷へ落ちること、外周の色が近景の草地の遠景と大きく浮かないこと。
+- Notes: 外周つきの spec では高さの写像（HeightMinM/MaxM）が近景と外周の和になるので、草原の近景の量子化の段は約 0.28 mm から約 3.3 mm（20.57〜239.59 m）に粗くなった。固定ハッシュは Debug の cook で取った値で、RelWithDebInfo で同じバイトになるかは確かめていない。荒野は今の遠景の経路（`kTerrainHorizonFormat`）のまま移していない。
+- 要起票: AssetCookMeshSmoke が統合ブランチの先頭（2a1db73 の前から）で落ちる。`Tools/AssetCook/MeshCooker.cpp` 4309 行の `std::string reason;`（9fc197e0 で入った）を `AssetCookMeshSmoke.cmake.in` 853 行の源の検査が「std owned container/string spelling」で拒否する（`ctest -R "^AssetCookMeshSmoke$"` で再現）。
+### G12-GR39-FAR-RING 谷の外周の粗い遠景のタイル（2026-11-12、run 20261112-115210）
+- U1 NVTRN v0.1 の外周の区画表を読み書きする: 着地(直し 0 回)
+- U3 NVTRN の外周から照会用の高さ場（全格子と 4 本の帯）を作る: 着地(直し 0 回)
+- U2 地形 spec の outer_ring を cook して外周のタイルを NVTRN に書く: 着地(直し 1 回)
+- U4 外周の区画メッシュ terrain-tile:nvtrn:outer を焼く: 着地(直し 0 回)
+- U5 TerrainComponent が外周の区画を同じ予算で置き、帯の高さ場を登録する: 着地(直し 0 回)
+- U6 草原に外周を足し、遠方面と影の到達距離を地形の広さから決める: 着地(直し 0 回)
+- Done: NVTRN に副版 1（ヘッダの Flags の bit0）を足し、外周の記述（80 バイト）・外周のタイル表（印と共有辺のビット、HGT0 の区間 1 本）・外周の HGT0 を載せられるようにした。外周の無い spec の出力は v0.0 のままで、CookedTerrainTest の固定ハッシュ 2 件（`f0ed32e16a9c1073`・`a70e0dc0a2c5673a`。形式を変える前の Debug の実装で取った値）が今とのバイト一致を縛る。読み手は穴の縁の外周の標本が近景の uint16 と違うと `OuterEdgeMismatch`、記述・表・印の不正は `InvalidOuterRing` で拒否する。地形 spec に任意の `outer_ring`（height_source・height_mapping・cell_size_m 既定 16（8〜32）・width_m・blend_m 既定 256）を足し、cook が外周の格子を作って、近景の矩形からの距離 blend_m の帯で近景の縁の高さへ smoothstep で寄せ、穴の縁の標本は近景の uint16 を写す（外周の TileCells は近景の幅と width_m のセル数を全部割り切る 64 以下で最大の 2 の冪）。外周の画像の取り込みは `ImportHeightfield` の `bKeepSourceSize`（fit を通さない）。`TerrainHeightField` に外周の全格子と近景に重ならない 4 本の帯を作る口を足し、`TerrainComponent` が帯を近景の後に `TerrainSystem` へ登録する（外周の範囲の高さの照会は粗いセルで引け、両方の外は今どおり `kOutOfRangeHeight`）。外周の区画メッシュ `terrain-tile:nvtrn:outer:<x>,<z>` は近景と接する辺に近景の格子の全頂点（高さ・法線とも近景の高さ場から）を置き、最初の 1 升をジッパーで粗い格子へつなぎ、境は LOD の全段で固定する。外周の区画は近景の後ろに同じ TilesPerFrame で置き、層の標本なしの遠景の材質（スプラットの重みの平均で層の代表色・粗さを混ぜた 1 色と頂点の法線）で描く。草原は `GrasslandOuterHeight.png`（225×225、16bit、0〜256 m の山並み。`GenerateGrasslandHeight.py --outer` で再現）を外周に足し（16 m・幅 1536 m・帯 256 m → 7×7 タイルの外周 48 区画、範囲 −1536〜2048 m 四方）、地形を読み終えた後に範囲の対角線 D から遠方面 = max(今の値, 1.1·D)（約 5575 m）と `SetSunShadowMaxDistance(D)`（約 5069 m）を決め、シーンを抜けるときに影の距離を 0 へ戻す。
+- 証拠: `.harness/runs/20261112-115210/G12-GR39-FAR-RING-final-verify.txt`（verify のビルド exit 0、ctest で CookedTerrainTest・TerrainHeightFieldTest・AssetCookTerrainSmoke・AssetManifestTest・MathGeometryTest の 5/5 合格、`CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` が `COOK_ASSETS cooked=81 skipped=0` で exit 0（TERRAIN_NVTRN_OUTER_TILE 48 行・近景 16 行、散布 1、新しい NVTRN の cooked_hash `3455d60b54f23a5c` を散布に記録）、生成スクリプトの近景の出力が今の GrasslandHeight.png とバイト一致し外周の出力が 2 回で同じバイト）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- Next: G12-GR39-TERRAIN-CHECK の撮影で継ぎ目を見る。人が見るときの見どころ: grassland の谷の中から外周の山並みが地平まで切れずに続くこと、谷の縁（近景 0〜512 m 四方の外周の線。特に四隅）で近景と外周の間に隙間・段・明るさの段差が無いこと、外周の山の影が谷へ落ちること、外周の色が近景の草地の遠景と大きく浮かないこと。
+- Notes: 外周つきの spec では高さの写像（HeightMinM/MaxM）が近景と外周の和になるので、草原の近景の量子化の段は約 0.28 mm から約 3.3 mm（20.57〜239.59 m）に粗くなった。固定ハッシュは Debug の cook で取った値で、RelWithDebInfo で同じバイトになるかは確かめていない。荒野は今の遠景の経路（`kTerrainHorizonFormat`）のまま移していない。
+- 要起票: AssetCookMeshSmoke が統合ブランチの先頭（2a1db73 の前から）で落ちる。`Tools/AssetCook/MeshCooker.cpp` 4309 行の `std::string reason;`（9fc197e0 で入った）を `AssetCookMeshSmoke.cmake.in` 853 行の源の検査が「std owned container/string spelling」で拒否する（`ctest -R "^AssetCookMeshSmoke$"` で再現）。
+
+- U1 焼き込みの基礎(画素の式と import_report の欄): 着地(直し 0 回)
+- U2 CookedMaterialV1.md に暫定の決まりを書く: 着地(直し 0 回)
+- U3 骨格の cook で baseColorFactor をアルベドへ焼き、焼いた記録を import_report に出す: 着地(直し 0 回)
+- U4 焼き込みの試験を足し、タスクの verify を通す: 着地(直し 0 回)
+### G2-GR79-SKIN-BASECOLOR-BAKE 骨格つき資産の baseColorFactor のアルベドへの焼き込み（2026-11-12、run 20261112-130654）
+- Done: split cook（`CookRigSplitV1NativePath`。`--rig-split` と asset-set の skeletal の両方）で、材質の BaseColor の RGB が (1,1,1) でないとき、アルベドの decoded 画素を `BakeBaseColorByte`（sRGB→線形→×factor→sRGB、丸め floor(x+0.5)、alpha 不変）で焼いた RGBA8 の sRGB texture を `<mesh>.mat<N>.albedo.rgba8`（ImageIndex 2^34+N）で出し、MATS の BaseColor の RGB を 1 にする（alpha は保持）。アルベドの texture が無い材質は 4×4 の単色。元の画像はほかの役が無ければ出さない。焼いたときだけ source hash に印と factor を足すので、factor (1,1,1) の出力は前とバイト一致。焼いた記録を `RigSplitCookResult::BaseColorBakes` に持ち、skeletal の import_report の root に `base_color_bakes` を出す（`--rig-split` と asset-set は焼いたときだけ stderr へ `import_report=` の 1 行）。静的 NVMESH v1 の経路とシェーダーは変えていない。`CookedMaterialV1.md` に暫定の決まり（スキンのシェーダーが材質の色を読むようになったら外す）を書いた。RigSplitCookTest に 4 件（texel の期待値と BaseColor=1・import_report、texture 無しの 4×4、factor 1 で不変、増分の在庫と factor 変更での再 cook）を足した。
+- 証拠: `.harness/runs/20261112-130654/verify-G2-GR79-SKIN-BASECOLOR-BAKE-U4.txt`（verify のビルドの行 exit 0、verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて 7/7 合格、`RIG_SPLIT_CASE base_color_* result=pass` の 4 行）。
+- Next: ランナーの評価者の反証。人が見るときの見どころ: factor≠1 の材質を持つ骨格つきの資産（AI 生成の GLB など）を cook し直し、そのスキンメッシュを出すシーンで材質の色が出ること。factor が 1 の既存の骨格の資産は見た目が変わらない。撮影・計測の確かめは回さない決まり。
+- Notes: paths の外の `Tools/AssetCook/SkeletalImportReport.h`（記録の型と入力欄）・`RigSplitFileCook.cpp`・`RigSingleCook.cpp`（import_report を出す呼び出し各 1 行）を触った。`--rig-split` と asset-set の骨格経路はこれまで import_report を出していなかったため、焼いた材質があるときだけ出す形にした。既知の限界: 焼いたアルベドは raw RGBA8 で元の PNG/JPEG より出力が大きく、画素の予算（`ReserveDerived`）を消費するので、大きなアルベドで factor≠1 の材質が多いと `split_albedo_output_limit` で止まることがある。

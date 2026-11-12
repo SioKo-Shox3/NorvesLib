@@ -54,6 +54,35 @@ BaseColor/metallic/roughnessの入力範囲は[公式PBR schema](https://raw.git
 [occlusion schema](https://raw.githubusercontent.com/KhronosGroup/glTF/main/specification/2.0/schema/material.occlusionTextureInfo.schema.json)の式は1 + strength × (texture − 1)。
 Metallic/Roughnessのfactor×textureとは別であり、ignore/constant/autoの既定方針が決まることとは独立した仕様条件である。
 
+## 骨格つき資産の baseColorFactor の焼き込み(暫定)
+
+スキンのGBufferの頂点シェーダーは`Assets/Shaders/skinned_gbuffer.vert`で`fragObjectColor = vec3(1.0)`と物体色を固定するため、
+MATSのBaseColorはスキン描画に効かない。シェーダーは変えず、cookで色をアルベドへ移す暫定の規則とする。
+
+- 対象はNVSKEL v1のsplit cook、`Tools/AssetCook/RigSplitCook.cpp`の`CookRigSplitV1NativePath`での材質の組み立て。
+  `--rig-split`とasset-setの`skeletal`の両方がこの入口を通る。静的モデル(NVMESH v1)は`MegaMeshMaterial`がBaseColorを使うので焼かない。
+- 材質recordのBaseColorのRGBのどれかが1でないときだけ焼く。factorが(1,1,1)のときは、出力(texture・MATS・source hash)が
+  焼き込み導入前とバイト一致する。暗黙材質はfactorが常に1なので焼かれない。
+- 各texelのRGBはsRGB → 線形 → ×factor → sRGBの順で計算する。byteへの丸めはARMの焼き込み(`BakeArmByte`)と同じ`floor(x+0.5)`。
+  alphaは変えない。画素の式は`MaterialImportPolicy`の`Core::AssetImport::BakeBaseColorByte`で定める。
+  mipは焼いた基準の画素から既存のtexture cookが作るので、全mipにfactorが掛かる。
+- アルベドのtextureが無い材質は、4×4の単色のsRGBアルベドを作る。RGBはfactorをsRGBにした値、alphaは255とする。
+- 出力は材質ごとの別の論理パス`<mesh>.mat<N>.albedo.rgba8`、formatは`nvtex.v0.rgba8.srgb`とする。
+  既存のARMの`<mesh>.mat<N>.arm.rgba8`と同じ命名の規則で、Nは元のglTF材質番号。
+  材質のAlbedo参照をこのパスに差し替え、MATSのBaseColorのRGBを1にして二重に掛からないようにする。alphaは元のまま保持する。
+  元の画像は、ほかの材質や役(発光など)が使っていなければ出力しない。
+- 焼いたアルベドのImageIndexは`2^34 + 材質番号`、暗黙材質は`3 × 2^33`を予約する。
+  元画像の32bit番号、ARMの`2^32 + 材質番号` / `2^33`と重ならない。
+  asset-setのpackage名`<package>.img<ImageIndex>.nvpkg`もこの番号で決まる。
+- 焼いたtextureはcookの出力の在庫(manifestの参照)に入る。factorはglTFの本文にあるので、factorを変えると
+  source hashと焼いたtextureが変わって再cookされる。焼いたときだけsource hashに焼き込みの印とfactorを足す。
+- 焼いた材質があるときだけ、skeletalのimport_reportのrootに
+  `"base_color_bakes":[{"material":N,"factor":[r,g,b],"albedo":"texture"|"solid"}]`を出す。暗黙材質は`"material":null`とする。
+  `--rig-split`とasset-setの骨格経路は、焼いた材質があるときだけstderrへ`import_report=`の1行を出す。
+  焼いた材質が無いときのimport_reportとログは変わらない。
+
+スキンのシェーダーが材質の色を読むようになったら、この焼き込みを外し、MATSのBaseColorをそのまま使う。
+
 ## 検証と残作業
 
 CookedMaterialFormatTestに独立Python struct.pack由来の128B golden、値/flags/予約/参照境界、

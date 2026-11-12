@@ -1,5 +1,6 @@
 ﻿#include "Asset/CookedTerrainFormat.h"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -8,6 +9,40 @@
 
 namespace NorvesLib::Core::Asset
 {
+    namespace TerrainOuterRingDetail
+    {
+        bool IsHole(const CookedTerrainOuterRing& ring, uint32_t x, uint32_t z) noexcept
+        {
+            return x >= ring.HoleTileMinX && x - ring.HoleTileMinX < ring.HoleTileCountX &&
+                   z >= ring.HoleTileMinZ && z - ring.HoleTileMinZ < ring.HoleTileCountZ;
+        }
+
+        uint32_t TileFlags(const CookedTerrainOuterRing& ring, uint32_t x, uint32_t z) noexcept
+        {
+            using namespace CookedTerrainFormatV0;
+            uint32_t flags = OuterTileFlagOuter;
+            const bool bInX = x >= ring.HoleTileMinX && x - ring.HoleTileMinX < ring.HoleTileCountX;
+            const bool bInZ = z >= ring.HoleTileMinZ && z - ring.HoleTileMinZ < ring.HoleTileCountZ;
+            if (bInX && z == ring.HoleTileMinZ + ring.HoleTileCountZ)
+            {
+                flags |= OuterTileFlagSharedNegZ;
+            }
+            if (bInZ && x + 1 == ring.HoleTileMinX)
+            {
+                flags |= OuterTileFlagSharedPosX;
+            }
+            if (bInX && z + 1 == ring.HoleTileMinZ)
+            {
+                flags |= OuterTileFlagSharedPosZ;
+            }
+            if (bInZ && x == ring.HoleTileMinX + ring.HoleTileCountX)
+            {
+                flags |= OuterTileFlagSharedNegX;
+            }
+            return flags;
+        }
+    }
+
     namespace
     {
         using namespace CookedTerrainFormatV0;
@@ -90,11 +125,124 @@ namespace NorvesLib::Core::Asset
             return true;
         }
 
+        bool NearEqual(double value, double expected) noexcept
+        {
+            return std::isfinite(value) && std::isfinite(expected) &&
+                   std::abs(value - expected) <= 1e-6 * std::max(1.0, std::abs(expected));
+        }
+
+        bool IsValidOuterRing(const CookedTerrainOuterRing& ring, const CookedTerrainData& nearTerrain) noexcept
+        {
+            if (ring.TileCells < 2 || ring.TileCells > 1024 || (ring.TileCells & (ring.TileCells - 1)) != 0 ||
+                ring.TileCountX == 0 || ring.TileCountZ == 0 ||
+                static_cast<uint64_t>(ring.TileCountX) * ring.TileCells != ring.CellCountX ||
+                static_cast<uint64_t>(ring.TileCountZ) * ring.TileCells != ring.CellCountZ ||
+                ring.HoleTileCountX == 0 || ring.HoleTileCountZ == 0 ||
+                ring.HoleTileMinX >= ring.TileCountX || ring.HoleTileMinZ >= ring.TileCountZ ||
+                ring.HoleTileCountX > ring.TileCountX - ring.HoleTileMinX ||
+                ring.HoleTileCountZ > ring.TileCountZ - ring.HoleTileMinZ ||
+                !std::isfinite(ring.CellSizeM) || ring.CellSizeM <= 0.0f ||
+                !std::isfinite(ring.OriginX) || !std::isfinite(ring.OriginZ) || ring.Reserved != 0)
+            {
+                return false;
+            }
+            const double ratio = static_cast<double>(ring.CellSizeM) / nearTerrain.CellSizeM;
+            const double rounded = std::round(ratio);
+            if (!std::isfinite(ratio) || rounded < 1.0 ||
+                std::abs(ratio - rounded) > 1e-6 * rounded)
+            {
+                return false;
+            }
+            const double tileWidth = static_cast<double>(ring.TileCells) * ring.CellSizeM;
+            return NearEqual(ring.OriginX + ring.HoleTileMinX * tileWidth, nearTerrain.OriginX) &&
+                   NearEqual(ring.OriginZ + ring.HoleTileMinZ * tileWidth, nearTerrain.OriginZ) &&
+                   NearEqual(ring.HoleTileCountX * tileWidth, static_cast<double>(nearTerrain.CellCountX) * nearTerrain.CellSizeM) &&
+                   NearEqual(ring.HoleTileCountZ * tileWidth, static_cast<double>(nearTerrain.CellCountZ) * nearTerrain.CellSizeM);
+        }
+
+        // 穴の角に点だけで接するタイルも含め、同じ位置を持つ近景タイルの標本をすべて照合する。
+        bool OuterEdgesMatch(const CookedTerrainData& terrain, const uint8_t* data) noexcept
+        {
+            const auto& ring = terrain.OuterRing;
+            const uint64_t minX = static_cast<uint64_t>(ring.HoleTileMinX) * ring.TileCells;
+            const uint64_t minZ = static_cast<uint64_t>(ring.HoleTileMinZ) * ring.TileCells;
+            const uint64_t maxX = minX + static_cast<uint64_t>(ring.HoleTileCountX) * ring.TileCells;
+            const uint64_t maxZ = minZ + static_cast<uint64_t>(ring.HoleTileCountZ) * ring.TileCells;
+            const double ratio = std::round(static_cast<double>(ring.CellSizeM) / terrain.CellSizeM);
+            const uint64_t outerSide = static_cast<uint64_t>(ring.TileCells) + 1;
+            const uint64_t nearSide = static_cast<uint64_t>(terrain.TileCells) + 1;
+            for (const auto& tile : terrain.OuterTiles)
+            {
+                const uint64_t baseX = static_cast<uint64_t>(tile.TileX) * ring.TileCells;
+                const uint64_t baseZ = static_cast<uint64_t>(tile.TileZ) * ring.TileCells;
+                if (baseX > maxX || baseX + ring.TileCells < minX || baseZ > maxZ || baseZ + ring.TileCells < minZ)
+                {
+                    continue;
+                }
+                const auto matches = [&](uint32_t sx, uint32_t sz)
+                {
+                    const uint64_t x = baseX + sx;
+                    const uint64_t z = baseZ + sz;
+                    if (!(((z == minZ || z == maxZ) && x >= minX && x <= maxX) ||
+                          ((x == minX || x == maxX) && z >= minZ && z <= maxZ)))
+                    {
+                        return true;
+                    }
+                    const double nearX = x == maxX ? terrain.CellCountX : static_cast<double>(x - minX) * ratio;
+                    const double nearZ = z == maxZ ? terrain.CellCountZ : static_cast<double>(z - minZ) * ratio;
+                    if (nearX > terrain.CellCountX || nearZ > terrain.CellCountZ)
+                    {
+                        return true;
+                    }
+                    const uint64_t nx = static_cast<uint64_t>(nearX);
+                    const uint64_t nz = static_cast<uint64_t>(nearZ);
+                    const uint16_t outer = ReadLe16(data, static_cast<size_t>(tile.Height.DataOffset + 2 * (sz * outerSide + sx)));
+                    const uint32_t tx1 = static_cast<uint32_t>(std::min<uint64_t>(nx / terrain.TileCells, terrain.TileCountX - 1));
+                    const uint32_t tz1 = static_cast<uint32_t>(std::min<uint64_t>(nz / terrain.TileCells, terrain.TileCountZ - 1));
+                    const uint32_t tx0 = nx != 0 && nx % terrain.TileCells == 0 ? static_cast<uint32_t>(nx / terrain.TileCells - 1) : tx1;
+                    const uint32_t tz0 = nz != 0 && nz % terrain.TileCells == 0 ? static_cast<uint32_t>(nz / terrain.TileCells - 1) : tz1;
+                    for (uint32_t tz = tz0; tz <= tz1; ++tz)
+                    {
+                        for (uint32_t tx = tx0; tx <= tx1; ++tx)
+                        {
+                            const size_t coord = static_cast<size_t>(static_cast<uint64_t>(tz) * terrain.TileCountX + tx);
+                            const size_t index = terrain.TileIndexByCoord[coord];
+                            const auto& height = terrain.LayerRanges[index * terrain.Layers.size()];
+                            const uint64_t localX = nx - static_cast<uint64_t>(tx) * terrain.TileCells;
+                            const uint64_t localZ = nz - static_cast<uint64_t>(tz) * terrain.TileCells;
+                            if (ReadLe16(data, static_cast<size_t>(height.DataOffset + 2 * (localZ * nearSide + localX))) != outer)
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                    return true;
+                };
+                for (uint32_t i = 0; i <= ring.TileCells; ++i)
+                {
+                    if (!matches(i, 0) || !matches(i, ring.TileCells) ||
+                        !matches(0, i) || !matches(ring.TileCells, i))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
         CookedTerrainParseResult Fail(CookedTerrainParseStatus status)
         {
             CookedTerrainParseResult result;
             result.Status = status;
             return result;
+        }
+    }
+
+    namespace TerrainOuterRingDetail
+    {
+        bool IsValid(const CookedTerrainOuterRing& ring, const CookedTerrainData& nearTerrain) noexcept
+        {
+            return IsValidOuterRing(ring, nearTerrain);
         }
     }
 
@@ -186,6 +334,54 @@ namespace NorvesLib::Core::Asset
         return ReadLe16(SourceBlob.GetData(), static_cast<size_t>(absoluteOffset));
     }
 
+    uint32_t CookedTerrainData::GetOuterSamplesPerSide() const noexcept
+    {
+        return bHasOuterRing ? OuterRing.TileCells + 1 : 0;
+    }
+
+    const CookedTerrainOuterTile* CookedTerrainData::FindOuterTile(uint32_t tileX, uint32_t tileZ, uint32_t* outIndex) const noexcept
+    {
+        if (!bHasOuterRing || tileX >= OuterRing.TileCountX || tileZ >= OuterRing.TileCountZ)
+        {
+            return nullptr;
+        }
+        const uint64_t coordinate = static_cast<uint64_t>(tileZ) * OuterRing.TileCountX + tileX;
+        if (coordinate >= OuterTileIndexByCoord.size())
+        {
+            return nullptr;
+        }
+        const uint32_t index = OuterTileIndexByCoord[static_cast<size_t>(coordinate)];
+        if (index >= OuterTiles.size() || OuterTiles[index].TileX != tileX || OuterTiles[index].TileZ != tileZ)
+        {
+            return nullptr;
+        }
+        if (outIndex != nullptr)
+        {
+            *outIndex = index;
+        }
+        return &OuterTiles[index];
+    }
+
+    uint16_t CookedTerrainData::GetOuterHeightSample(uint32_t outerTileIndex, uint32_t sampleX, uint32_t sampleZ) const noexcept
+    {
+        const uint32_t side = GetOuterSamplesPerSide();
+        if (outerTileIndex >= OuterTiles.size() || sampleX >= side || sampleZ >= side || !SourceBlob.IsValid())
+        {
+            return 0;
+        }
+        const auto& range = OuterTiles[outerTileIndex].Height;
+        uint64_t sampleOffset = 0;
+        uint64_t absoluteOffset = 0;
+        if (!IsRangeWithin(range.DataOffset, range.DataSize, SourceBlob.GetSize()) ||
+            !CheckedMultiply(sampleZ, side, sampleOffset) || !CheckedAdd(sampleOffset, sampleX, sampleOffset) ||
+            !CheckedMultiply(sampleOffset, 2, sampleOffset) || !IsRangeWithin(sampleOffset, 2, range.DataSize) ||
+            !CheckedAdd(range.DataOffset, sampleOffset, absoluteOffset) || !IsRangeWithin(absoluteOffset, 2, SourceBlob.GetSize()))
+        {
+            return 0;
+        }
+        return ReadLe16(SourceBlob.GetData(), static_cast<size_t>(absoluteOffset));
+    }
+
     float CookedTerrainData::DecodeHeightM(uint16_t value) const noexcept
     {
         const double minimum = HeightMinM;
@@ -211,8 +407,10 @@ namespace NorvesLib::Core::Asset
         {
             return Fail(CookedTerrainParseStatus::BadMagic);
         }
-        if (ReadLe16(data, HeaderOffset::VersionMajor) != VersionMajor ||
-            ReadLe16(data, HeaderOffset::VersionMinor) != VersionMinor)
+        const uint16_t minor = ReadLe16(data, HeaderOffset::VersionMinor);
+        const uint32_t flags = ReadLe32(data, HeaderOffset::Flags);
+        if (ReadLe16(data, HeaderOffset::VersionMajor) != VersionMajor || minor > VersionMinorOuterRing ||
+            (minor == VersionMinorOuterRing && flags != HeaderFlagOuterRing))
         {
             return Fail(CookedTerrainParseStatus::UnsupportedVersion);
         }
@@ -229,7 +427,7 @@ namespace NorvesLib::Core::Asset
         {
             return Fail(CookedTerrainParseStatus::FileSizeMismatch);
         }
-        if (ReadLe32(data, HeaderOffset::Flags) != 0 || ReadLe32(data, HeaderOffset::Reserved0) != 0 ||
+        if ((minor == VersionMinor && flags != 0) || ReadLe32(data, HeaderOffset::Reserved0) != 0 ||
             ReadLe32(data, HeaderOffset::Reserved1) != 0 || ReadLe64(data, HeaderOffset::Reserved2) != 0)
         {
             return Fail(CookedTerrainParseStatus::ReservedFieldNonZero);
@@ -281,6 +479,49 @@ namespace NorvesLib::Core::Asset
             return Fail(CookedTerrainParseStatus::RecordSizeMismatch);
         }
 
+        terrain.bHasOuterRing = minor == VersionMinorOuterRing;
+        uint64_t outerGridCount = 0;
+        uint64_t outerTileCount = 0;
+        uint64_t outerHeightSize = 0;
+        uint64_t expectedOuterTableSize = 0;
+        uint64_t outerTableEnd = 0;
+        if (terrain.bHasOuterRing)
+        {
+            if (fileSize < HeaderSize + OuterRingBlockSize)
+            {
+                return Fail(CookedTerrainParseStatus::InvalidOuterRing);
+            }
+            const size_t block = HeaderSize;
+            auto& ring = terrain.OuterRing;
+            ring.CellCountX = ReadLe32(data, block + OuterRingOffset::CellCountX);
+            ring.CellCountZ = ReadLe32(data, block + OuterRingOffset::CellCountZ);
+            ring.TileCells = ReadLe32(data, block + OuterRingOffset::TileCells);
+            ring.TileCountX = ReadLe32(data, block + OuterRingOffset::TileCountX);
+            ring.TileCountZ = ReadLe32(data, block + OuterRingOffset::TileCountZ);
+            ring.HoleTileMinX = ReadLe32(data, block + OuterRingOffset::HoleTileMinX);
+            ring.HoleTileMinZ = ReadLe32(data, block + OuterRingOffset::HoleTileMinZ);
+            ring.HoleTileCountX = ReadLe32(data, block + OuterRingOffset::HoleTileCountX);
+            ring.HoleTileCountZ = ReadLe32(data, block + OuterRingOffset::HoleTileCountZ);
+            ring.CellSizeM = ReadFloat(data, block + OuterRingOffset::CellSizeM);
+            ring.OriginX = ReadDouble(data, block + OuterRingOffset::OriginX);
+            ring.OriginZ = ReadDouble(data, block + OuterRingOffset::OriginZ);
+            ring.TileTableOffset = ReadLe64(data, block + OuterRingOffset::TileTableOffset);
+            ring.TileTableSize = ReadLe64(data, block + OuterRingOffset::TileTableSize);
+            ring.Reserved = ReadLe64(data, block + OuterRingOffset::Reserved);
+            if (!IsValidOuterRing(ring, terrain))
+            {
+                return Fail(CookedTerrainParseStatus::InvalidOuterRing);
+            }
+            outerGridCount = static_cast<uint64_t>(ring.TileCountX) * ring.TileCountZ;
+            outerTileCount = outerGridCount - static_cast<uint64_t>(ring.HoleTileCountX) * ring.HoleTileCountZ;
+            outerHeightSize = static_cast<uint64_t>(ring.TileCells + 1) * (ring.TileCells + 1) * 2;
+            if (outerTileCount == 0 || !CheckedMultiply(outerTileCount, OuterTileRecordSize, expectedOuterTableSize) ||
+                !CheckedAdd(ring.TileTableOffset, ring.TileTableSize, outerTableEnd))
+            {
+                return Fail(CookedTerrainParseStatus::InvalidOuterRing);
+            }
+        }
+
         const uint64_t layerTableOffset = ReadLe64(data, HeaderOffset::LayerTableOffset);
         const uint64_t layerTableSize = ReadLe64(data, HeaderOffset::LayerTableSize);
         const uint64_t tileTableOffset = ReadLe64(data, HeaderOffset::TileTableOffset);
@@ -314,8 +555,15 @@ namespace NorvesLib::Core::Asset
         {
             return Fail(CookedTerrainParseStatus::IntegerOverflow);
         }
-        if (layerTableOffset != HeaderSize || layerTableSize != expectedLayerSize ||
-            tileTableOffset != layerEnd || tileTableSize != expectedTileSize || stringTableOffset != tileEnd ||
+        if (terrain.bHasOuterRing &&
+            (terrain.OuterRing.TileTableOffset != tileEnd || terrain.OuterRing.TileTableSize != expectedOuterTableSize ||
+             outerTableEnd != stringTableOffset || !IsRangeWithin(terrain.OuterRing.TileTableOffset, terrain.OuterRing.TileTableSize, fileSize)))
+        {
+            return Fail(CookedTerrainParseStatus::InvalidOuterRing);
+        }
+        if (layerTableOffset != HeaderSize + (terrain.bHasOuterRing ? OuterRingBlockSize : 0) || layerTableSize != expectedLayerSize ||
+            tileTableOffset != layerEnd || tileTableSize != expectedTileSize ||
+            (!terrain.bHasOuterRing && stringTableOffset != tileEnd) ||
             payloadOffset != expectedPayloadOffset || payloadEnd != fileSize ||
             !IsRangeWithin(layerTableOffset, layerTableSize, fileSize) ||
             !IsRangeWithin(tileTableOffset, tileTableSize, fileSize) ||
@@ -327,7 +575,8 @@ namespace NorvesLib::Core::Asset
         }
         if (tileCount > std::numeric_limits<uint32_t>::max() || tileCount > terrain.Tiles.max_size() ||
             tileCount > terrain.TileIndexByCoord.max_size() || rangeCount > terrain.LayerRanges.max_size() ||
-            layerCount > terrain.Layers.max_size())
+            layerCount > terrain.Layers.max_size() || outerTileCount > std::numeric_limits<uint32_t>::max() ||
+            outerTileCount > terrain.OuterTiles.max_size() || outerGridCount > terrain.OuterTileIndexByCoord.max_size())
         {
             return Fail(CookedTerrainParseStatus::IntegerOverflow);
         }
@@ -406,6 +655,21 @@ namespace NorvesLib::Core::Asset
                 }
             }
         }
+        for (uint64_t tileIndex = 0; tileIndex < outerTileCount; ++tileIndex)
+        {
+            const size_t record = static_cast<size_t>(terrain.OuterRing.TileTableOffset + tileIndex * OuterTileRecordSize);
+            if (ReadLe32(data, record + TileRecordOffset::Reserved1) != 0)
+            {
+                return Fail(CookedTerrainParseStatus::ReservedFieldNonZero);
+            }
+            for (uint32_t lod = terrain.LodCount; lod < MaxLodCount; ++lod)
+            {
+                if (ReadFloat(data, record + TileRecordOffset::LodMaxErrorM + lod * 4) != 0.0f)
+                {
+                    return Fail(CookedTerrainParseStatus::ReservedFieldNonZero);
+                }
+            }
+        }
         terrain.Tiles.resize(static_cast<size_t>(tileCount));
         terrain.LayerRanges.resize(static_cast<size_t>(rangeCount));
         terrain.TileIndexByCoord.resize(static_cast<size_t>(tileCount), std::numeric_limits<uint32_t>::max());
@@ -439,6 +703,36 @@ namespace NorvesLib::Core::Asset
                 range.DataHash = ReadLe64(data, rangeOffset + TileLayerRangeOffset::DataHash);
             }
         }
+        terrain.OuterTiles.resize(static_cast<size_t>(outerTileCount));
+        terrain.OuterTileIndexByCoord.resize(static_cast<size_t>(outerGridCount), std::numeric_limits<uint32_t>::max());
+        for (uint64_t tileIndex = 0; tileIndex < outerTileCount; ++tileIndex)
+        {
+            const size_t record = static_cast<size_t>(terrain.OuterRing.TileTableOffset + tileIndex * OuterTileRecordSize);
+            auto& tile = terrain.OuterTiles[static_cast<size_t>(tileIndex)];
+            tile.TileX = ReadLe32(data, record + TileRecordOffset::TileX);
+            tile.TileZ = ReadLe32(data, record + TileRecordOffset::TileZ);
+            if (tile.TileX >= terrain.OuterRing.TileCountX || tile.TileZ >= terrain.OuterRing.TileCountZ ||
+                TerrainOuterRingDetail::IsHole(terrain.OuterRing, tile.TileX, tile.TileZ))
+            {
+                return Fail(CookedTerrainParseStatus::TileIndexOutOfRange);
+            }
+            tile.HeightMinM = ReadFloat(data, record + TileRecordOffset::HeightMinM);
+            tile.HeightMaxM = ReadFloat(data, record + TileRecordOffset::HeightMaxM);
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                tile.AabbMin[axis] = ReadFloat(data, record + TileRecordOffset::AabbMin + axis * 4);
+                tile.AabbMax[axis] = ReadFloat(data, record + TileRecordOffset::AabbMax + axis * 4);
+            }
+            tile.Flags = ReadLe32(data, record + TileRecordOffset::Reserved0);
+            for (uint32_t lod = 0; lod < MaxLodCount; ++lod)
+            {
+                tile.LodMaxErrorM[lod] = ReadFloat(data, record + TileRecordOffset::LodMaxErrorM + lod * 4);
+            }
+            const size_t range = record + TileRecordOffset::LayerRanges;
+            tile.Height.DataOffset = ReadLe64(data, range + TileLayerRangeOffset::DataOffset);
+            tile.Height.DataSize = ReadLe64(data, range + TileLayerRangeOffset::DataSize);
+            tile.Height.DataHash = ReadLe64(data, range + TileLayerRangeOffset::DataHash);
+        }
         for (uint64_t tileIndex = 0; tileIndex < tileCount; ++tileIndex)
         {
             const auto& tile = terrain.Tiles[static_cast<size_t>(tileIndex)];
@@ -449,7 +743,45 @@ namespace NorvesLib::Core::Asset
             }
             terrain.TileIndexByCoord[coordinate] = static_cast<uint32_t>(tileIndex);
         }
+        for (uint64_t tileIndex = 0; tileIndex < outerTileCount; ++tileIndex)
+        {
+            const auto& tile = terrain.OuterTiles[static_cast<size_t>(tileIndex)];
+            const size_t coordinate = static_cast<size_t>(static_cast<uint64_t>(tile.TileZ) * terrain.OuterRing.TileCountX + tile.TileX);
+            if (terrain.OuterTileIndexByCoord[coordinate] != std::numeric_limits<uint32_t>::max())
+            {
+                return Fail(CookedTerrainParseStatus::DuplicateTile);
+            }
+            terrain.OuterTileIndexByCoord[coordinate] = static_cast<uint32_t>(tileIndex);
+        }
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            if (tile.Flags != TerrainOuterRingDetail::TileFlags(terrain.OuterRing, tile.TileX, tile.TileZ))
+            {
+                return Fail(CookedTerrainParseStatus::InvalidOuterRing);
+            }
+        }
         for (const auto& tile : terrain.Tiles)
+        {
+            if (!std::isfinite(tile.HeightMinM) || !std::isfinite(tile.HeightMaxM) || tile.HeightMinM > tile.HeightMaxM)
+            {
+                return Fail(CookedTerrainParseStatus::InvalidTileBounds);
+            }
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                if (!std::isfinite(tile.AabbMin[axis]) || !std::isfinite(tile.AabbMax[axis]) || tile.AabbMin[axis] > tile.AabbMax[axis])
+                {
+                    return Fail(CookedTerrainParseStatus::InvalidTileBounds);
+                }
+            }
+            for (uint32_t lod = 0; lod < terrain.LodCount; ++lod)
+            {
+                if (!std::isfinite(tile.LodMaxErrorM[lod]) || tile.LodMaxErrorM[lod] < 0.0f)
+                {
+                    return Fail(CookedTerrainParseStatus::InvalidTileBounds);
+                }
+            }
+        }
+        for (const auto& tile : terrain.OuterTiles)
         {
             if (!std::isfinite(tile.HeightMinM) || !std::isfinite(tile.HeightMaxM) || tile.HeightMinM > tile.HeightMaxM)
             {
@@ -478,6 +810,15 @@ namespace NorvesLib::Core::Asset
                 return Fail(CookedTerrainParseStatus::LayerRangeOutOfRange);
             }
         }
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            const auto& range = tile.Height;
+            if (range.DataSize == 0 || range.DataOffset < payloadOffset || range.DataOffset % PayloadAlignment != 0 ||
+                !IsRangeWithin(range.DataOffset, range.DataSize, fileSize))
+            {
+                return Fail(CookedTerrainParseStatus::LayerRangeOutOfRange);
+            }
+        }
         for (uint64_t tileIndex = 0; tileIndex < tileCount; ++tileIndex)
         {
             if (terrain.LayerRanges[static_cast<size_t>(tileIndex * layerCount)].DataSize != heightSize)
@@ -485,8 +826,23 @@ namespace NorvesLib::Core::Asset
                 return Fail(CookedTerrainParseStatus::HeightSizeMismatch);
             }
         }
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            if (tile.Height.DataSize != outerHeightSize)
+            {
+                return Fail(CookedTerrainParseStatus::HeightSizeMismatch);
+            }
+        }
         for (const auto& range : terrain.LayerRanges)
         {
+            if (ComputeCookedTexturePayloadHash(data + static_cast<size_t>(range.DataOffset), static_cast<size_t>(range.DataSize)) != range.DataHash)
+            {
+                return Fail(CookedTerrainParseStatus::LayerHashMismatch);
+            }
+        }
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            const auto& range = tile.Height;
             if (ComputeCookedTexturePayloadHash(data + static_cast<size_t>(range.DataOffset), static_cast<size_t>(range.DataSize)) != range.DataHash)
             {
                 return Fail(CookedTerrainParseStatus::LayerHashMismatch);
@@ -523,9 +879,28 @@ namespace NorvesLib::Core::Asset
             }
             previousEnd = range.DataOffset + range.DataSize;
         }
+        for (const auto& tile : terrain.OuterTiles)
+        {
+            const auto& range = tile.Height;
+            uint64_t expectedOffset = 0;
+            if (!AlignPayload(previousEnd, expectedOffset))
+            {
+                return Fail(CookedTerrainParseStatus::IntegerOverflow);
+            }
+            if (range.DataOffset != expectedOffset ||
+                !IsZeroFilled(data, static_cast<size_t>(previousEnd), static_cast<size_t>(range.DataOffset)))
+            {
+                return Fail(CookedTerrainParseStatus::TableLayoutMismatch);
+            }
+            previousEnd = range.DataOffset + range.DataSize;
+        }
         if (previousEnd != fileSize)
         {
             return Fail(CookedTerrainParseStatus::TableLayoutMismatch);
+        }
+        if (terrain.bHasOuterRing && !OuterEdgesMatch(terrain, data))
+        {
+            return Fail(CookedTerrainParseStatus::OuterEdgeMismatch);
         }
         terrain.SourceBlob = std::move(sourceBlob);
         result.Status = CookedTerrainParseStatus::Success;

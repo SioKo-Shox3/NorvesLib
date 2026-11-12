@@ -12,11 +12,20 @@ namespace NorvesLib::Core::Asset
         inline constexpr size_t MagicSize = sizeof(Magic);
         inline constexpr uint16_t VersionMajor = 0;
         inline constexpr uint16_t VersionMinor = 0;
+        inline constexpr uint16_t VersionMinorOuterRing = 1;
+        inline constexpr uint32_t HeaderFlagOuterRing = 1u;
         inline constexpr uint32_t EndianMarker = 0x01020304u;
         inline constexpr size_t HeaderSize = 192;
         inline constexpr size_t LayerRecordSize = 32;
         inline constexpr size_t TileRecordHeadSize = 80;
         inline constexpr size_t TileLayerRangeSize = 24;
+        inline constexpr size_t OuterRingBlockSize = 80;
+        inline constexpr size_t OuterTileRecordSize = TileRecordHeadSize + TileLayerRangeSize;
+        inline constexpr uint32_t OuterTileFlagOuter = 1u;
+        inline constexpr uint32_t OuterTileFlagSharedNegZ = 2u;
+        inline constexpr uint32_t OuterTileFlagSharedPosX = 4u;
+        inline constexpr uint32_t OuterTileFlagSharedPosZ = 8u;
+        inline constexpr uint32_t OuterTileFlagSharedNegX = 16u;
         inline constexpr uint32_t PayloadAlignment = 64;
         inline constexpr uint32_t MaxLodCount = 8;
         inline constexpr uint32_t MaxLayerCount = 16;
@@ -68,6 +77,26 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t PayloadOffset = 168;    // uint64、文字列表の後を 64 境界へ切り上げた絶対位置。
             inline constexpr size_t PayloadSize = 176;      // uint64、ファイル末尾までのバイト数。
             inline constexpr size_t Reserved2 = 184;        // uint64、予約（0）。
+        }
+
+        // 外周の記述の先頭からの相対位置。
+        namespace OuterRingOffset
+        {
+            inline constexpr size_t CellCountX = 0;
+            inline constexpr size_t CellCountZ = 4;
+            inline constexpr size_t TileCells = 8;
+            inline constexpr size_t TileCountX = 12;
+            inline constexpr size_t TileCountZ = 16;
+            inline constexpr size_t HoleTileMinX = 20;
+            inline constexpr size_t HoleTileMinZ = 24;
+            inline constexpr size_t HoleTileCountX = 28;
+            inline constexpr size_t HoleTileCountZ = 32;
+            inline constexpr size_t CellSizeM = 36;
+            inline constexpr size_t OriginX = 40;
+            inline constexpr size_t OriginZ = 48;
+            inline constexpr size_t TileTableOffset = 56;
+            inline constexpr size_t TileTableSize = 64;
+            inline constexpr size_t Reserved = 72;
         }
 
         namespace LayerRecordOffset
@@ -134,7 +163,9 @@ namespace NorvesLib::Core::Asset
         LayerRangeOutOfRange,    // ペイロード範囲外、64 境界以外、または大きさ 0。
         HeightSizeMismatch,
         LayerHashMismatch,
-        EmbeddedTextureInvalid  // NVTEX の解析失敗、または形式・色空間の不一致。
+        EmbeddedTextureInvalid, // NVTEX の解析失敗、または形式・色空間の不一致。
+        InvalidOuterRing,       // 外周の記述、表の位置・大きさ、またはタイルの印が不正。
+        OuterEdgeMismatch       // 穴の縁で外周と近景の高さ標本が不一致。
     };
 
     struct CookedTerrainLayer
@@ -164,6 +195,32 @@ namespace NorvesLib::Core::Asset
         float LodMaxErrorM[CookedTerrainFormatV0::MaxLodCount] = {};
     };
 
+    struct CookedTerrainOuterRing
+    {
+        uint32_t CellCountX = 0;
+        uint32_t CellCountZ = 0;
+        uint32_t TileCells = 0;
+        uint32_t TileCountX = 0;
+        uint32_t TileCountZ = 0;
+        uint32_t HoleTileMinX = 0;
+        uint32_t HoleTileMinZ = 0;
+        uint32_t HoleTileCountX = 0;
+        uint32_t HoleTileCountZ = 0;
+        float CellSizeM = 0.0f;
+        double OriginX = 0.0;
+        double OriginZ = 0.0;
+        // 書き手は表の位置と大きさを自動で埋める。
+        uint64_t TileTableOffset = 0;
+        uint64_t TileTableSize = 0;
+        uint64_t Reserved = 0;
+    };
+
+    struct CookedTerrainOuterTile : CookedTerrainTile
+    {
+        uint32_t Flags = 0;
+        CookedTerrainLayerRange Height;
+    };
+
     struct CookedTerrainData
     {
         AssetBlob SourceBlob;
@@ -184,8 +241,15 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedTerrainTile> Tiles; // ファイル内の順。
         Container::VariableArray<CookedTerrainLayerRange> LayerRanges; // tileIndex * Layers.size() + layerIndex。
         Container::VariableArray<uint32_t> TileIndexByCoord; // TileZ * TileCountX + TileX から Tiles の番号を引く。
+        bool bHasOuterRing = false;
+        CookedTerrainOuterRing OuterRing;
+        Container::VariableArray<CookedTerrainOuterTile> OuterTiles;
+        Container::VariableArray<uint32_t> OuterTileIndexByCoord; // 穴の添字は 0xFFFFFFFF。
 
         [[nodiscard]] uint32_t GetSamplesPerSide() const noexcept; // TileCells + 1。
+        [[nodiscard]] uint32_t GetOuterSamplesPerSide() const noexcept; // 外周がなければ 0。
+        [[nodiscard]] const CookedTerrainOuterTile* FindOuterTile(uint32_t tileX, uint32_t tileZ, uint32_t* outIndex = nullptr) const noexcept;
+        [[nodiscard]] uint16_t GetOuterHeightSample(uint32_t outerTileIndex, uint32_t sampleX, uint32_t sampleZ) const noexcept;
         [[nodiscard]] const CookedTerrainTile* FindTile(uint32_t tileX, uint32_t tileZ, uint32_t* outTileIndex = nullptr) const noexcept;
         [[nodiscard]] int32_t FindLayer(AssetPackageFourCC fourCC) const noexcept; // 見つからなければ -1。
         [[nodiscard]] const CookedTerrainLayerRange* GetLayerRange(uint32_t tileIndex, uint32_t layerIndex) const noexcept;
@@ -243,6 +307,11 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<Container::Span<const uint8_t>> LayerBytes;
     };
 
+    struct CookedTerrainOuterTileDesc : CookedTerrainTile
+    {
+        Container::Span<const uint8_t> HeightBytes;
+    };
+
     struct CookedTerrainWriteDesc
     {
         uint32_t CellCountX = 0;
@@ -257,6 +326,9 @@ namespace NorvesLib::Core::Asset
         float HeightMaxM = 0.0f;
         Container::VariableArray<CookedTerrainLayerDesc> Layers;
         Container::VariableArray<CookedTerrainTileDesc> Tiles;
+        bool bHasOuterRing = false;
+        CookedTerrainOuterRing OuterRing;
+        Container::VariableArray<CookedTerrainOuterTileDesc> OuterTiles;
     };
 
     enum class CookedTerrainWriteStatus : uint8_t
@@ -274,7 +346,9 @@ namespace NorvesLib::Core::Asset
         LayerBytesCountMismatch,
         HeightSizeMismatch,
         EmbeddedTextureInvalid,
-        IntegerOverflow
+        IntegerOverflow,
+        InvalidOuterRing,
+        OuterEdgeMismatch
     };
 
     // 全入力を検査して座標順に書く。失敗時は outBytes を空にする。

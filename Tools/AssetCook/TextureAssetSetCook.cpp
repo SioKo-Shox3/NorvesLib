@@ -1,6 +1,9 @@
 ﻿// texture spec v1の入力を共通管理controllerへ適合する。独立した公開・増分判断は置かない。
 #include "TextureAssetSetCook.h"
 #include "TextureAssetSetSpec.h"
+#include "TextureAssetSetGenerators.h"
+#include "CookStateFile.h"
+#include "CookManagedTransactionController.h"
 #include "CookManagedStoreInitialization.h"
 #include "CookOutputSetGuard.h"
 #include "CookOutputPaths.h"
@@ -121,6 +124,46 @@ namespace NorvesLib::Tools::AssetCook
                 request.Report->bWarnBudget = request.bWarnBudget;
                 request.Report->RuntimeRoot = runtime;
             }
+            Core::Container::VariableArray<CookGeneratorRecord> records;
+            if (request.bRunGenerators && !spec.Generators.empty())
+            {
+                Core::Container::VariableArray<CookGeneratorRecord> previous;
+                if (observed == CookManagedStoreResult::Observed && observation.bRuntimeRootClaimed &&
+                    observation.Owner.bFinalRuntimeRootPresent)
+                {
+                    CookStateFileRequest stateScope;
+                    stateScope.RuntimeRoot = observation.Owner.FinalRuntimeRootLocator;
+                    stateScope.StatePath = stateScope.RuntimeRoot.parent_path() / Detail::ManagedStoreNative::StoreLeaf /
+                                           Detail::ManagedTransaction::StateLeaf(observation.CurrentRootClaimId);
+                    stateScope.ExpectedBinding = observation.Owner.ExpectedBinding;
+                    CookOwnedState state;
+                    const auto loaded = LoadCookOwnedState(stateScope, state, error);
+                    if (loaded == CookStateLoadResult::Missing)
+                    {
+                        return Fail(error, "generator_state_missing");
+                    }
+                    if (loaded == CookStateLoadResult::Error)
+                    {
+                        return Result::Error;
+                    }
+                    previous = std::move(state.Generators);
+                }
+                TextureAssetSetGeneratorRunResult ran;
+                Text runError;
+                const bool succeeded = RunTextureAssetSetGenerators(
+                    {sourceRoot, runtime, specPath, spec.Generators, previous}, ran, runError);
+                if (request.Report)
+                {
+                    request.Report->Generators = std::move(ran.Rows);
+                }
+                if (!succeeded)
+                {
+                    error = "texture_asset_set: ";
+                    error.append(runError);
+                    return Result::Error;
+                }
+                records = std::move(ran.Records);
+            }
             Core::Container::VariableArray<CookAssetBudget> budgets;
             Core::Container::VariableArray<SingleAssetCookRequest> assets;
             Core::Container::VariableArray<CookPreparedPlan> plans;
@@ -205,6 +248,10 @@ namespace NorvesLib::Tools::AssetCook
             managed.Jobs = request.Jobs;
             managed.bForce = request.bForce;
             managed.bPrune = request.bPrune;
+            if (request.bRunGenerators)
+            {
+                managed.Generators = &records;
+            }
             if (spec.Version == 2)
             {
                 managed.Budgets = budgets;

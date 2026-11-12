@@ -9,6 +9,7 @@
 #include "Tools/AssetCook/MeshCooker.h"
 #include "Tools/AssetCook/TerrainCooker.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -302,6 +303,291 @@ namespace
         std::cout << "標本数=" << points.size() << "\n";
         Expect(maximum.Value < 1e-4, "法線に NaN・無限大がなく、長さと 1 の差が 1e-4 未満（最大差と座標は上記）");
     }
+    uint16_t OuterFixtureNearSample(uint32_t x, uint32_t z)
+    {
+        // 縁は平面のままにし、内側だけに起伏を付ける。
+        return static_cast<uint16_t>(12000 + 19 * x + 11 * z + x * (16 - x) * z * (16 - z) / 32);
+    }
+
+    uint16_t OuterFixtureSample(uint32_t column, uint32_t row)
+    {
+        const int32_t x = (static_cast<int32_t>(column) - 2) * 4;
+        const int32_t z = (static_cast<int32_t>(row) - 2) * 4;
+        if (x >= 0 && x <= 16 && z >= 0 && z <= 16)
+        {
+            return OuterFixtureNearSample(static_cast<uint32_t>(x), static_cast<uint32_t>(z));
+        }
+        return static_cast<uint16_t>(12000 + 19 * x + 11 * z + 500 +
+            (column * 97 + row * 211 + column * row * 53) % 700);
+    }
+
+    void WriteOuterFixtureSample(Container::VariableArray<uint8_t>& bytes, size_t index, uint16_t value)
+    {
+        bytes[index * 2] = static_cast<uint8_t>(value & 0xffu);
+        bytes[index * 2 + 1] = static_cast<uint8_t>(value >> 8);
+    }
+
+    void TestOuterRing()
+    {
+        Asset::CookedTerrainWriteDesc input;
+        input.CellCountX = 16;
+        input.CellCountZ = 16;
+        input.TileCells = 8;
+        input.LodCount = 1;
+        input.CellSizeM = 1.0f;
+        input.OriginX = 40.0;
+        input.OriginY = 12.25;
+        input.OriginZ = -30.0;
+        input.HeightMinM = -20.0f;
+        input.HeightMaxM = 120.0f;
+        input.Layers.resize(1);
+        input.Layers[0].FourCC = Asset::CookedTerrainFormatV0::HeightLayerFourCC;
+        input.Layers[0].Encoding = Asset::CookedTerrainFormatV0::LayerEncodingRawHeight16;
+        input.Layers[0].Semantic = "height";
+        input.bHasOuterRing = true;
+        auto& ring = input.OuterRing;
+        ring.CellCountX = 8;
+        ring.CellCountZ = 8;
+        ring.TileCells = 2;
+        ring.TileCountX = 4;
+        ring.TileCountZ = 4;
+        ring.HoleTileMinX = 1;
+        ring.HoleTileMinZ = 1;
+        ring.HoleTileCountX = 2;
+        ring.HoleTileCountZ = 2;
+        ring.CellSizeM = 4.0f;
+        ring.OriginX = input.OriginX - 8.0;
+        ring.OriginZ = input.OriginZ - 8.0;
+
+        Container::VariableArray<uint8_t> nearBytes[4];
+        input.Tiles.resize(4);
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            auto& tile = input.Tiles[index];
+            tile.TileX = index % 2;
+            tile.TileZ = index / 2;
+            tile.HeightMinM = input.HeightMinM;
+            tile.HeightMaxM = input.HeightMaxM;
+            tile.AabbMin[0] = static_cast<float>(tile.TileX * 8);
+            tile.AabbMin[1] = input.HeightMinM;
+            tile.AabbMin[2] = static_cast<float>(tile.TileZ * 8);
+            tile.AabbMax[0] = tile.AabbMin[0] + 8.0f;
+            tile.AabbMax[1] = input.HeightMaxM;
+            tile.AabbMax[2] = tile.AabbMin[2] + 8.0f;
+            nearBytes[index].resize(9 * 9 * 2);
+            for (uint32_t z = 0; z <= 8; ++z)
+            {
+                for (uint32_t x = 0; x <= 8; ++x)
+                {
+                    WriteOuterFixtureSample(nearBytes[index], z * 9 + x,
+                        OuterFixtureNearSample(tile.TileX * 8 + x, tile.TileZ * 8 + z));
+                }
+            }
+            tile.LayerBytes.push_back(Container::Span<const uint8_t>(nearBytes[index]));
+        }
+        Container::VariableArray<uint8_t> outerBytes[16];
+        input.OuterTiles.resize(12);
+        uint32_t outerIndex = 0;
+        for (uint32_t tz = 0; tz < 4; ++tz)
+        {
+            for (uint32_t tx = 0; tx < 4; ++tx)
+            {
+                if (tx >= 1 && tx < 3 && tz >= 1 && tz < 3)
+                {
+                    continue;
+                }
+                auto& tile = input.OuterTiles[outerIndex++];
+                tile.TileX = tx;
+                tile.TileZ = tz;
+                tile.HeightMinM = input.HeightMinM;
+                tile.HeightMaxM = input.HeightMaxM;
+                tile.AabbMin[0] = static_cast<float>(static_cast<int32_t>(tx) * 8 - 8);
+                tile.AabbMin[1] = input.HeightMinM;
+                tile.AabbMin[2] = static_cast<float>(static_cast<int32_t>(tz) * 8 - 8);
+                tile.AabbMax[0] = tile.AabbMin[0] + 8.0f;
+                tile.AabbMax[1] = input.HeightMaxM;
+                tile.AabbMax[2] = tile.AabbMin[2] + 8.0f;
+                auto& bytes = outerBytes[tz * 4 + tx];
+                bytes.resize(3 * 3 * 2);
+                for (uint32_t z = 0; z <= 2; ++z)
+                {
+                    for (uint32_t x = 0; x <= 2; ++x)
+                    {
+                        WriteOuterFixtureSample(bytes, z * 3 + x, OuterFixtureSample(tx * 2 + x, tz * 2 + z));
+                    }
+                }
+                tile.HeightBytes = Container::Span<const uint8_t>(bytes);
+            }
+        }
+        Container::VariableArray<uint8_t> encoded;
+        const auto status = Asset::WriteCookedTerrain(input, encoded);
+        if (status != Asset::CookedTerrainWriteStatus::Success)
+        {
+            Expect(false, "手組みの外周付き NVTRN を書き出せる");
+            std::cout << "書き出し状態=" << static_cast<uint32_t>(status) << "\n";
+            return;
+        }
+        const auto parsed = Asset::ParseCookedTerrain(Asset::AssetBlob::CopyBytes(Container::Span<const uint8_t>(encoded)));
+        if (!parsed.Succeeded())
+        {
+            Expect(false, "手組みの外周付き NVTRN を解析できる");
+            std::cout << "解析状態=" << static_cast<uint32_t>(parsed.Status) << "\n";
+            return;
+        }
+        Container::AnsiString error = "前回のエラー";
+        const auto nearField = Terrain::TerrainHeightField::CreateFromCookedTerrain(parsed.Terrain, error);
+        if (!nearField)
+        {
+            Expect(false, "外周の試験の近景の高さ場を作れる");
+            std::cout << error.c_str() << "\n";
+            return;
+        }
+        const auto full = Terrain::TerrainHeightField::CreateOuterRingFromCookedTerrain(parsed.Terrain, error);
+        if (!full || !error.empty())
+        {
+            Expect(false, "外周の全格子の高さ場を作れる");
+            std::cout << error.c_str() << "\n";
+            return;
+        }
+        Container::VariableArray<Container::TSharedPtr<const Terrain::TerrainHeightField>> strips;
+        strips.push_back(full);
+        if (!Terrain::TerrainHeightField::CreateOuterRingStripsFromCookedTerrain(parsed.Terrain, strips, error) ||
+            !error.empty() || strips.size() != 4)
+        {
+            Expect(false, "外周を北・南・西・東の 4 本の帯にできる");
+            std::cout << error.c_str() << "\n";
+            return;
+        }
+
+        const auto restored = [&](uint32_t x, uint32_t z)
+        {
+            return static_cast<float>(parsed.Terrain.OriginY + parsed.Terrain.DecodeHeightM(OuterFixtureSample(x, z)));
+        };
+        const auto expectedHeight = [&](uint32_t x, uint32_t z, double u, double v)
+        {
+            const double h00 = restored(x, z);
+            const double h10 = restored(x + 1, z);
+            const double h01 = restored(x, z + 1);
+            const double h11 = restored(x + 1, z + 1);
+            if (Terrain::UsesMainDiagonal(x, z))
+            {
+                return u >= v ? h00 + u * (h10 - h00) + v * (h11 - h10)
+                              : h00 + v * (h01 - h00) + u * (h11 - h01);
+            }
+            return u + v <= 1.0 ? h00 + u * (h10 - h00) + v * (h01 - h00)
+                                : h11 + (1.0 - v) * (h10 - h11) + (1.0 - u) * (h01 - h11);
+        };
+        struct Rectangle
+        {
+            uint32_t MinX;
+            uint32_t MinZ;
+            uint32_t MaxX;
+            uint32_t MaxZ;
+        };
+        const Rectangle rectangles[] = {{0, 0, 8, 2}, {0, 6, 8, 8}, {0, 2, 2, 6}, {6, 2, 8, 6}};
+        const double offsets[][2] = {{0.0, 0.0}, {0.2, 0.65}, {0.75, 0.749},
+                                     {0.75, 0.751}, {0.2, 0.799}, {0.2, 0.801}};
+        MaximumError interpolation;
+        MaximumError fullComparison;
+        for (uint32_t stripIndex = 0; stripIndex < 4; ++stripIndex)
+        {
+            const auto& rectangle = rectangles[stripIndex];
+            for (uint32_t z = rectangle.MinZ; z < rectangle.MaxZ; ++z)
+            {
+                for (uint32_t x = rectangle.MinX; x < rectangle.MaxX; ++x)
+                {
+                    for (const auto& offset : offsets)
+                    {
+                        const float px = static_cast<float>(ring.OriginX + (x + offset[0]) * ring.CellSizeM);
+                        const float pz = static_cast<float>(ring.OriginZ + (z + offset[1]) * ring.CellSizeM);
+                        // 実際に float に丸められた座標で期待値を求める。
+                        const double u = (static_cast<double>(px) - ring.OriginX) / ring.CellSizeM - x;
+                        const double v = (static_cast<double>(pz) - ring.OriginZ) / ring.CellSizeM - z;
+                        const float actual = strips[stripIndex]->SampleHeight(px, pz);
+                        interpolation.Observe(std::fabs(static_cast<double>(actual) - expectedHeight(x, z, u, v)), px, pz);
+                        fullComparison.Observe(std::fabs(static_cast<double>(actual) - full->SampleHeight(px, pz)), px, pz);
+                    }
+                }
+            }
+        }
+        interpolation.Print("(d) 外周の各帯と三角形の補間");
+        fullComparison.Print("(d) 外周の各帯と全格子");
+        Expect(interpolation.Value <= 1e-4 && fullComparison.Value <= 1e-4,
+            "4 本の帯の頂点・升目・対角線付近が全格子の補間と一致する");
+
+        MaximumError interior;
+        for (uint32_t z = 2; z <= 6; ++z)
+        {
+            for (uint32_t x = 2; x <= 6; ++x)
+            {
+                interior.Observe(std::fabs(static_cast<double>(full->GetGridVertexHeight(x, z)) - restored(x, z)),
+                    static_cast<float>(x), static_cast<float>(z));
+            }
+        }
+        Expect(interior.Value == 0.0, "全格子の穴の内側は近景の標本から復元する");
+
+        double maxSlope = 0.0;
+        const auto observeSlopes = [&](const Terrain::TerrainHeightField& field)
+        {
+            const auto layout = field.GetGridLayout();
+            for (uint32_t z = 0; z < layout.Rows; ++z)
+            {
+                for (uint32_t x = 0; x < layout.Columns; ++x)
+                {
+                    const double h = field.GetGridVertexHeight(x, z);
+                    if (x + 1 < layout.Columns)
+                    {
+                        maxSlope = std::max(maxSlope, std::fabs(field.GetGridVertexHeight(x + 1, z) - h) / layout.Spacing);
+                    }
+                    if (z + 1 < layout.Rows)
+                    {
+                        maxSlope = std::max(maxSlope, std::fabs(field.GetGridVertexHeight(x, z + 1) - h) / layout.Spacing);
+                    }
+                }
+            }
+        };
+        observeSlopes(*nearField);
+        observeSlopes(*full);
+        constexpr float epsilon = 1e-3f;
+        MaximumError seam;
+        for (uint32_t point = 0; point <= 8; ++point)
+        {
+            const float alongX = static_cast<float>(input.OriginX + point * 2);
+            const float alongZ = static_cast<float>(input.OriginZ + point * 2);
+            const float x0 = static_cast<float>(input.OriginX);
+            const float x1 = x0 + 16.0f;
+            const float z0 = static_cast<float>(input.OriginZ);
+            const float z1 = z0 + 16.0f;
+            seam.Observe(std::fabs(static_cast<double>(nearField->SampleHeight(alongX, z0 + epsilon)) -
+                strips[0]->SampleHeight(alongX, z0 - epsilon)), alongX, z0);
+            seam.Observe(std::fabs(static_cast<double>(nearField->SampleHeight(alongX, z1 - epsilon)) -
+                strips[1]->SampleHeight(alongX, z1 + epsilon)), alongX, z1);
+            seam.Observe(std::fabs(static_cast<double>(nearField->SampleHeight(x0 + epsilon, alongZ)) -
+                strips[2]->SampleHeight(x0 - epsilon, alongZ)), x0, alongZ);
+            seam.Observe(std::fabs(static_cast<double>(nearField->SampleHeight(x1 - epsilon, alongZ)) -
+                strips[3]->SampleHeight(x1 + epsilon, alongZ)), x1, alongZ);
+        }
+        const double tolerance = (input.HeightMaxM - input.HeightMinM) / 65535.0 + maxSlope * 2.0 * epsilon;
+        seam.Print("(d) 外周と近景の境界の両側");
+        std::cout << "境界の許容差=" << tolerance << "\n";
+        Expect(seam.Value <= tolerance, "近景の 4 辺の両側は量子化と傾きの許容差以内でつながる");
+
+        const Point outside[] = {{31.0f, -22.0f}, {65.0f, -22.0f}, {48.0f, -39.0f}, {48.0f, -5.0f}};
+        for (const auto& point : outside)
+        {
+            bool bOutOfRange = std::isnan(nearField->SampleHeight(point.X, point.Z));
+            for (const auto& strip : strips)
+            {
+                bOutOfRange = bOutOfRange && std::isnan(strip->SampleHeight(point.X, point.Z));
+            }
+            Expect(bOutOfRange, "外周の矩形の外では近景と全帯が範囲外を返す");
+        }
+        for (const auto& strip : strips)
+        {
+            Expect(std::isnan(strip->SampleHeight(48.0f, -22.0f)), "帯は近景の穴の内部を覆わない");
+        }
+    }
+
 }
 
 int main()
@@ -335,11 +621,12 @@ int main()
     const auto points = MakePoints();
     TestMeshHeight(*field, triangles, points);
     TestUnitNormals(*field, points);
+    TestOuterRing();
     if (g_FailureCount != 0)
     {
         std::cout << "失敗数: " << g_FailureCount << "\n";
         return 1;
     }
-    std::cout << "TerrainHeightFieldTest: 3 件の検査に合格\n";
+    std::cout << "TerrainHeightFieldTest: 4 件の検査に合格\n";
     return 0;
 }

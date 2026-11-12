@@ -2,6 +2,13 @@
   "version": 1,
   "height_source": { "path": "GrasslandHeight.png", "format": "png16", "flip_z": false },
   "height_mapping": { "min_m": 0.0, "max_m": 64.0 },
+  "outer_ring": {
+    "height_source": { "path": "GrasslandOuterHeight.png", "format": "png16", "flip_z": false },
+    "height_mapping": { "min_m": 0.0, "max_m": 256.0 },
+    "cell_size_m": 16.0,
+    "width_m": 1536.0,
+    "blend_m": 256.0
+  },
   "cell_size_m": 1.0,
   "tile_cells": 128,
   "fit": "error",

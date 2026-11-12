@@ -200,6 +200,240 @@ namespace NorvesLib::Tools::AssetCook
             }
             return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
         }
+        Error GeneratorPaths(const JsonValue& item, const char* key,
+                             Core::Container::VariableArray<AnsiString>& out, bool bRequireOutput)
+        {
+            JsonValue values;
+            const auto error = Field(item, key, values);
+            if (error != Error::None)
+            {
+                return error;
+            }
+            if (!values.IsArray())
+            {
+                return Error::InvalidType;
+            }
+            if (values.GetArraySize() > MaximumTextureAssetSetGeneratorPaths ||
+                (bRequireOutput && values.GetArraySize() == 0))
+            {
+                return Error::InvalidValue;
+            }
+            out.reserve(values.GetArraySize());
+            for (size_t i = 0; i < values.GetArraySize(); ++i)
+            {
+                const auto value = values.GetArrayElement(i);
+                if (!value.IsString())
+                {
+                    return Error::InvalidType;
+                }
+                AnsiString path;
+                if (!CopyText(value.AsString(), path) || NormalizeRelative(path, false) != Error::None)
+                {
+                    return Error::UnsafePath;
+                }
+                out.push_back(std::move(path));
+            }
+            return Error::None;
+        }
+        TextureAssetSetResult ParseGenerators(const JsonValue& root, TextureAssetSetSpec& candidate)
+        {
+            JsonValue generators;
+            auto error = Field(root, "generators", generators);
+            if (error == Error::MissingField)
+            {
+                return {};
+            }
+            if (error != Error::None)
+            {
+                return {error, SIZE_MAX, "generators"};
+            }
+            if (!generators.IsArray())
+            {
+                return {Error::InvalidType, SIZE_MAX, "generators"};
+            }
+            if (generators.GetArraySize() > MaximumTextureAssetSetGenerators)
+            {
+                return {Error::InvalidValue, SIZE_MAX, "generators"};
+            }
+            candidate.Generators.reserve(generators.GetArraySize());
+            for (size_t index = 0; index < generators.GetArraySize(); ++index)
+            {
+                const auto item = generators.GetArrayElement(index);
+                if (!item.IsObject())
+                {
+                    return {Error::InvalidType, index, "generators"};
+                }
+                const char* keys[] = {"name", "command", "inputs", "outputs", "cwd"};
+                if (!OnlyKeys(item, keys, 5))
+                {
+                    return {Error::InvalidValue, index, "unsupported_generator_field"};
+                }
+                TextureAssetSetGenerator generator;
+                error = StringField(item, "name", generator.Name);
+                if (error != Error::None)
+                {
+                    return {error, index, "generators.name"};
+                }
+                size_t begin = 0, end = 0;
+                if (generator.Name.size() > 128 || !PrintableAscii(generator.Name) ||
+                    !TrimBounds(generator.Name, begin, end) || begin != 0 || end != generator.Name.size())
+                {
+                    return {Error::InvalidValue, index, "generators.name"};
+                }
+                JsonValue command;
+                error = Field(item, "command", command);
+                if (error != Error::None)
+                {
+                    return {error, index, "generators.command"};
+                }
+                if (!command.IsArray())
+                {
+                    return {Error::InvalidType, index, "generators.command"};
+                }
+                if (command.GetArraySize() == 0 || command.GetArraySize() > MaximumTextureAssetSetGeneratorArguments)
+                {
+                    return {Error::InvalidValue, index, "generators.command"};
+                }
+                generator.Command.reserve(command.GetArraySize());
+                for (size_t i = 0; i < command.GetArraySize(); ++i)
+                {
+                    const auto value = command.GetArrayElement(i);
+                    if (!value.IsString())
+                    {
+                        return {Error::InvalidType, index, "generators.command"};
+                    }
+                    AnsiString argument;
+                    if (!CopyText(value.AsString(), argument) || argument.empty() ||
+                        argument.size() > MaximumTextureAssetSetGeneratorArgumentBytes ||
+                        (i == 0 && !TrimBounds(argument, begin, end)))
+                    {
+                        return {Error::InvalidValue, index, "generators.command"};
+                    }
+                    for (const unsigned char c : argument)
+                    {
+                        if (c < 32 || c == 127)
+                        {
+                            return {Error::InvalidValue, index, "generators.command"};
+                        }
+                    }
+                    generator.Command.push_back(std::move(argument));
+                }
+                error = GeneratorPaths(item, "inputs", generator.Inputs, false);
+                if (error != Error::None)
+                {
+                    return {error, index, "generators.inputs"};
+                }
+                error = GeneratorPaths(item, "outputs", generator.Outputs, true);
+                if (error != Error::None)
+                {
+                    return {error, index, "generators.outputs"};
+                }
+                JsonValue cwd;
+                error = Field(item, "cwd", cwd);
+                if (error != Error::MissingField)
+                {
+                    if (error != Error::None)
+                    {
+                        return {error, index, "generators.cwd"};
+                    }
+                    if (!cwd.IsString())
+                    {
+                        return {Error::InvalidType, index, "generators.cwd"};
+                    }
+                    if (!CopyText(cwd.AsString(), generator.Cwd))
+                    {
+                        return {Error::UnsafePath, index, "generators.cwd"};
+                    }
+                    if (generator.Cwd == ".")
+                    {
+                        generator.Cwd.clear();
+                    }
+                    else if (NormalizeRelative(generator.Cwd, false) != Error::None)
+                    {
+                        return {Error::UnsafePath, index, "generators.cwd"};
+                    }
+                }
+                candidate.Generators.push_back(std::move(generator));
+            }
+            return {};
+        }
+        bool PathCovers(AnsiStringView output, AnsiStringView source)
+        {
+            return CompareIgnoreAsciiCase(output, source) == 0 ||
+                (source.size() > output.size() && source[output.size()] == '/' &&
+                 CompareIgnoreAsciiCase(output, {source.data(), output.size()}) == 0);
+        }
+        TextureAssetSetResult ValidateGenerators(const TextureAssetSetSpec& candidate)
+        {
+            const auto& generators = candidate.Generators;
+            if (generators.empty())
+            {
+                return {};
+            }
+            for (size_t i = 0; i < generators.size(); ++i)
+            {
+                for (size_t j = 0; j < i; ++j)
+                {
+                    if (CompareIgnoreAsciiCase(generators[i].Name, generators[j].Name) == 0)
+                    {
+                        return {Error::InvalidValue, i, "generators.duplicate_name"};
+                    }
+                }
+            }
+            size_t outputCount = 0;
+            for (const auto& generator : generators)
+            {
+                outputCount += generator.Outputs.size();
+            }
+            if (outputCount > MaximumTextureAssetSetGeneratorOutputsTotal)
+            {
+                return {Error::InvalidValue, SIZE_MAX, "generators.outputs"};
+            }
+            for (size_t i = 0; i < candidate.Textures.size(); ++i)
+            {
+                auto source = candidate.Textures[i].SourcePath;
+                if (NormalizeRelative(source, false) != Error::None)
+                {
+                    continue;
+                }
+                size_t coveringGenerators = 0;
+                for (const auto& generator : generators)
+                {
+                    for (const auto& output : generator.Outputs)
+                    {
+                        if (PathCovers(output, source))
+                        {
+                            ++coveringGenerators;
+                            break;
+                        }
+                    }
+                    if (coveringGenerators > 1)
+                    {
+                        return {Error::InvalidValue, i, "generators.asset_source"};
+                    }
+                }
+            }
+            for (size_t i = 0; i < generators.size(); ++i)
+            {
+                for (size_t outputIndex = 0; outputIndex < generators[i].Outputs.size(); ++outputIndex)
+                {
+                    const auto& output = generators[i].Outputs[outputIndex];
+                    for (size_t j = 0; j <= i; ++j)
+                    {
+                        const size_t previousCount = j == i ? outputIndex : generators[j].Outputs.size();
+                        for (size_t k = 0; k < previousCount; ++k)
+                        {
+                            const auto& previous = generators[j].Outputs[k];
+                            if (PathCovers(previous, output) || PathCovers(output, previous))
+                            {
+                                return {Error::InvalidValue, i, "generators.outputs_overlap"};
+                            }
+                        }
+                    }
+                }
+            }
+            return {};
+        }
     }
     TextureAssetSetResult ParseTextureAssetSetSpec(const Core::JsonValue& root, TextureAssetSetSpec& out,
                                                    bool bAllowVersion2)
@@ -217,8 +451,8 @@ namespace NorvesLib::Tools::AssetCook
         if (candidate.Version == 2)
         {
             const char* keys[] = {"version", "name",    "package_root",       "default_variant",
-                                  "assets",  "budgets", "emissiveNitsPerUnit"};
-            if (!OnlyKeys(root, keys, 7))
+                                  "assets",  "budgets", "emissiveNitsPerUnit", "generators"};
+            if (!OnlyKeys(root, keys, 8))
             {
                 return {Error::InvalidValue, static_cast<size_t>(-1), "unsupported_spec_field"};
             }
@@ -491,6 +725,19 @@ namespace NorvesLib::Tools::AssetCook
                 if (compare(order[i - 1], order[i]) == 0)
                     return {packages ? Error::DuplicatePackage : Error::DuplicateLogicalKey,
                         order[i], packages ? "package_name" : "logical_path/variant"};
+            }
+        }
+        if (candidate.Version == 2)
+        {
+            const auto parsed = ParseGenerators(root, candidate);
+            if (!parsed.Succeeded())
+            {
+                return parsed;
+            }
+            const auto validated = ValidateGenerators(candidate);
+            if (!validated.Succeeded())
+            {
+                return validated;
             }
         }
         out = std::move(candidate);

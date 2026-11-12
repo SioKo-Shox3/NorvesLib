@@ -11,7 +11,8 @@
 # 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h。terrain-tile:<x>,<z> は
 # 荒野の手続きの地形の区画、terrain-tile:dem:<x>,<z> は DEM の格子の区画で、source_path が格子の記述（height.json）、
 # extra_sources が格子のファイルと区画の割り方のヘッダ。一覧の DEM の項目は Scripts/Terrain/WriteTerrainAssetSet.py が書く。
-# terrain-tile:nvtrn:<x>,<z> は地形スペックか NVTRN の区画で、extra_sources に高さ入力と高さ場のヘッダを入れる）を持つ。
+# terrain-tile:nvtrn:<x>,<z>・terrain-tile:nvtrn:outer:<x>,<z> は地形スペックか NVTRN の近景・外周の区画で、
+# extra_sources に高さ入力と高さ場のヘッダを入れる）を持つ。
 # 一覧の "worlds"（省略可）の各項目は logical_path・source_path・package_name・entry_name と、
 # format（省略時は nvtrn.v0.height16）・variant（省略時は一覧の default_variant）を持つ。
 # nvtrn.v0.height16 は地形を NVTRN へ焼き、地形のスペックと height_source.path の高さ入力を変更の検出に含める。
@@ -800,18 +801,18 @@ foreach ($specFile in $specFiles) {
         # （source_path は格子の記述で、AssetCook が高さ場の読む記述と同じか・格子のファイルの SHA-256 が記述と合うかを確かめる。
         # 格子のファイルと区画の割り方のヘッダは extra_sources に入れ、どれが変わっても焼き直す）。
         # "terrain-tile:dem-plain:<x>,<z>" は dem と同じ区画を崖の細部（TerrainCliffDetail.cpp）なしで焼く（撮り比べ用）。
-        # "terrain-tile:nvtrn:<x>,<z>" は地形スペックか NVTRN から区画を焼く。
+        # "terrain-tile:nvtrn:<x>,<z>"・"terrain-tile:nvtrn:outer:<x>,<z>" は地形スペックか NVTRN から近景・外周の区画を焼く。
         $isPlacementTerrain = $false
         $isTerrain = $false
         $isNvtrnTerrain = $false
         if (Test-PropertyExists -Object $model -Name "generate") {
             $generate = Get-StringField -Object $model -Name "generate" -Context $context
-            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:|nvtrn:)?\d+,\d+$')) {
-                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z> だけを指定できます"
+            if (($generate -ne "displaced-sphere") -and ($generate -notmatch '^terrain-tile:(dem:|dem-plain:|nvtrn:(outer:)?)?\d+,\d+$')) {
+                throw "$context の generate は displaced-sphere か terrain-tile:<x>,<z>・terrain-tile:dem:<x>,<z>・terrain-tile:dem-plain:<x>,<z>・terrain-tile:nvtrn:<x>,<z>・terrain-tile:nvtrn:outer:<x>,<z> だけを指定できます"
             }
             $cookArguments += @("--generate", $generate)
             $isTerrain = $generate -match '^terrain-tile:'
-            $isNvtrnTerrain = $generate -match '^terrain-tile:nvtrn:\d+,\d+$'
+            $isNvtrnTerrain = $generate -match '^terrain-tile:nvtrn:(outer:)?\d+,\d+$'
             if ($isNvtrnTerrain -and (($OnlyPatterns.Count -eq 0) -or (Test-OnlyTarget -LogicalPath $logicalPath))) {
                 Initialize-NvtrnTerrainStampSources
                 $stampTexts += $NvtrnTerrainStampSourcePaths
@@ -899,6 +900,17 @@ foreach ($specFile in $specFiles) {
             $repoUri = [System.Uri]::new($RepoRoot + [System.IO.Path]::DirectorySeparatorChar)
             $heightText = [System.Uri]::UnescapeDataString($repoUri.MakeRelativeUri([System.Uri]::new($heightPath)).ToString())
             $sourceTexts = @($sourceText, $heightText)
+            if ((Test-PropertyExists -Object $terrainSpec -Name "outer_ring") -and
+                (Test-PropertyExists -Object $terrainSpec.outer_ring -Name "height_source") -and
+                (Test-PropertyExists -Object $terrainSpec.outer_ring.height_source -Name "path")) {
+                $outerHeightPath = Get-StringField -Object $terrainSpec.outer_ring.height_source -Name "path" `
+                    -Context "$context の地形のスペックの outer_ring.height_source"
+                if (-not [System.IO.Path]::IsPathRooted($outerHeightPath)) {
+                    $outerHeightPath = Join-Path (Split-Path -Parent $sourcePath) $outerHeightPath
+                }
+                $outerHeightPath = [System.IO.Path]::GetFullPath($outerHeightPath)
+                $sourceTexts += [System.Uri]::UnescapeDataString($repoUri.MakeRelativeUri([System.Uri]::new($outerHeightPath)).ToString())
+            }
         }
         elseif ($format -eq "nvgfld.v0") {
             $entryType = "Gfd0"
@@ -942,6 +954,13 @@ foreach ($specFile in $specFiles) {
                     $heightText = Get-StringField -Object $terrainSpec.height_source -Name "path" `
                         -Context "$context の地形のスペックの height_source"
                     $sourceTexts += & $resolveFieldSource $terrainPath $heightText
+                    if ((Test-PropertyExists -Object $terrainSpec -Name "outer_ring") -and
+                        (Test-PropertyExists -Object $terrainSpec.outer_ring -Name "height_source") -and
+                        (Test-PropertyExists -Object $terrainSpec.outer_ring.height_source -Name "path")) {
+                        $outerHeightText = Get-StringField -Object $terrainSpec.outer_ring.height_source -Name "path" `
+                            -Context "$context の地形のスペックの outer_ring.height_source"
+                        $sourceTexts += & $resolveFieldSource $terrainPath $outerHeightText
+                    }
                 }
             }
             elseif ($sourceType -eq "png") {
@@ -992,6 +1011,13 @@ foreach ($specFile in $specFiles) {
                 $heightText = Get-StringField -Object $terrainSpec.height_source -Name "path" `
                     -Context "$context の地形のスペックの height_source"
                 $sourceTexts += & $resolveScatterSource $terrainPath $heightText
+                if ((Test-PropertyExists -Object $terrainSpec -Name "outer_ring") -and
+                    (Test-PropertyExists -Object $terrainSpec.outer_ring -Name "height_source") -and
+                    (Test-PropertyExists -Object $terrainSpec.outer_ring.height_source -Name "path")) {
+                    $outerHeightText = Get-StringField -Object $terrainSpec.outer_ring.height_source -Name "path" `
+                        -Context "$context の地形のスペックの outer_ring.height_source"
+                    $sourceTexts += & $resolveScatterSource $terrainPath $outerHeightText
+                }
             }
         }
         else {
