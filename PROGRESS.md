@@ -11037,3 +11037,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 回さなかったもの: done-when の GPU の試験 `RenderingSpecularAAVulkanTest`（高周波の法線マップの球の 8 ジッタのハイライトの輝度の標準偏差の A/B）は作らず、golden 4 本の比較と再承認もしていない（CLAUDE.md 絶対規則 10: 描画・GPU の試験は新しく作らない、Vulkan・Golden の試験は回さない）。verify の ctest の行は全部が Vulkan の試験なので、それらを外すと対象が残らない。
 - Next: ランナーの評価者の反証（GBuffer・可視バッファの解決の危険地帯）。全シーンの見た目の確かめは G5-GR30-TAA-THIN-CHECK。人が見るときの見どころ: DefaultLit の鏡面のハイライトが、法線の変化の大きい所で少し鈍る。Rendering3DTest の岩（法線マップの細かい凹凸）と球の縁のハイライトのきらめき・ちらつきが減り、荒野の遠くの地面・岩・崖（MegaGeometry と可視バッファの解決）の鏡面の砂嵐のような粒が減る。平らな面と粗い面はほぼ変わらない。`SpecularAAStrength` を 0 にすると前の見た目に戻る。
 - Notes: 既知の限界: 草・低木（`foliage.frag`・`Grass/grass.frag`）には入れていない（頂点の法線が一定で効かない。GR34・GR35・GR43 で見る）。可視バッファの解決の地形・スプラットの層は補間の法線の差だけで、層の法線マップと POM のずれの変化は σ² に入らない。解決は材質の法線マップを画素ごとに 2 回多く標本する（性能は未計測）。`ClampStrandWidth` の使い手はまだ無い。
+- U8 シェーダーのコンパイルの検査に GBuffer の断片シェーダー 2 本を足し、差し替えた verify を通す: 着地(直し 0 回)

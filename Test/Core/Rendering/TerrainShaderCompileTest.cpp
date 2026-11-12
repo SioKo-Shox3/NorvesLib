@@ -1,4 +1,4 @@
-﻿// 地形のシェーダーを CPU でコンパイルし、C++ と SPIR-V の束縛・型・定数の大きさを照合する。
+﻿// 地形のシェーダーを CPU でコンパイルし、C++ と SPIR-V の束縛・型・定数の大きさを照合する。GBuffer の通常・切り抜き断片シェーダーもコンパイルし、実行モデルを確かめる。
 #ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
 #endif
@@ -426,7 +426,9 @@ int main()
         {"megageometry.frag", ShaderStage::Pixel, spv::ExecutionModelFragment, BindingContract::Mega},
         {"visbuffer_resolve.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute, BindingContract::CompileOnly},
         {"visbuffer_resolve_tiles.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute, BindingContract::Tiles},
-        {"RTGI/DiffuseIndirect.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute, BindingContract::Rtgi}};
+        {"RTGI/DiffuseIndirect.comp", ShaderStage::Compute, spv::ExecutionModelGLCompute, BindingContract::Rtgi},
+        {"gbuffer.frag", ShaderStage::Pixel, spv::ExecutionModelFragment, BindingContract::CompileOnly},
+        {"gbuffer_alphaclip.frag", ShaderStage::Pixel, spv::ExecutionModelFragment, BindingContract::CompileOnly}};
     // 各マクロの #if の両方の向きを通す最小の組として、実行時にあり得る全部無効・全部有効を使う。
     // Debug の shaderc の最適化が遅いため、中間の組の重複したコンパイルを省く。
     const struct MacroCase
