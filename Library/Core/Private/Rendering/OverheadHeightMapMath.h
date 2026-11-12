@@ -106,4 +106,23 @@ namespace NorvesLib::Core::Rendering
     // 箱の上面、または 8 方位・4 環の三角形ドームの高さを返す。
     bool EvaluateOverheadRoofTopY(
         const SkyOccluderProxy& proxy, float x, float z, float& outTopY);
+
+    // 雨の遮蔽パスが描画済みと準備中の窓、遮蔽物の収集結果を保持する。
+    struct OverheadHeightMapPassState
+    {
+        OverheadHeightMapSettings Settings;
+        OverheadHeightMapRedrawState RedrawState;
+        OverheadHeightMapRedrawState PreparedState;
+        OverheadHeightMapWindow CollectedWindow;
+        Container::VariableArray<SkyOccluderProxy> DerivedOccluders;
+        Container::VariableArray<SkyOccluderProxy> CollectedOccluders;
+        uint64_t CollectedHash = 0u;
+        uint32_t BoxCount = 0u;
+        uint32_t PreparedBoxCount = 0u;
+        double LastCollectionSeconds = 0.0;
+        bool bHasCollection = false;
+        bool bWarnedTruncated = false;
+        bool bPrepared = false;
+        bool bRedraw = false;
+    };
 } // namespace NorvesLib::Core::Rendering

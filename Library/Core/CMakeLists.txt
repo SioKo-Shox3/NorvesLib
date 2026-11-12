@@ -337,6 +337,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/Wind.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
+    Private/Rendering/OverheadHeightMapPass.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
     Private/Rendering/OverheadHeightMapMath.h
@@ -736,6 +737,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/Wind.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
+    Public/Rendering/OverheadHeightMapPass.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h

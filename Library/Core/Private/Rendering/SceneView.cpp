@@ -15,6 +15,7 @@
 #include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/SkyOcclusionMapPass.h"
+#include "Rendering/OverheadHeightMapPass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -909,6 +910,7 @@ namespace NorvesLib::Core::Rendering
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
+        context.OverheadHeightMap.Invalidate();
         struct PhysicalLightingScope final
         {
             ViewRenderContext& Context;
@@ -1108,6 +1110,9 @@ namespace NorvesLib::Core::Rendering
         shadowMapPass->SetRegisterLegacyBridge(false);
         shadowMapPass->SetShadowMethod(m_ShadowMethod);
         AddPass(std::move(shadowMapPass));
+
+        // 真上からの雨の遮蔽を深度画像へ描く。
+        AddPass(MakeUnique<OverheadHeightMapPass>());
 
         // NeuralMaterialDecodePass: ニューラルマテリアルの事前デコード（Compute）
         auto neuralDecodePass = MakeUnique<NeuralMaterialDecodePass>();
