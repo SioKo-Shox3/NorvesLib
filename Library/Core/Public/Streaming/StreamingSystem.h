@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Container/VariableArray.h"
+#include "Delegate/Delegate.h"
 #include "Streaming/CellManifest.h"
 #include "Streaming/IStreamingEnvironment.h"
 #include "Streaming/IStreamingPayloadHandler.h"
@@ -18,6 +19,22 @@ namespace NorvesLib::Core::Streaming
         StreamingRetryPolicy Retry;
         uint32_t MaxInFlightPrepares = 4;
     };
+
+    enum class EStreamingSnapStatus : uint8_t
+    {
+        Ready,
+        Cancelled,
+        Failed
+    };
+
+    struct StreamingSnapResult
+    {
+        EStreamingSnapStatus Status = EStreamingSnapStatus::Ready;
+        uint32_t Cells = 0;      // 対象のセルの数。
+        double ElapsedMs = 0.0;  // 注入した時計で測る、要求から通知までの時間。
+    };
+
+    using StreamingSnapCallback = Delegate<void, const StreamingSnapResult&>;
 
     struct StreamingTransition
     {
@@ -98,6 +115,16 @@ namespace NorvesLib::Core::Streaming
         bool HasManifest() const;
         void SetFocus(const StreamingFocus& focus);
         void Update();
+        // position から水平距離 radius 以内のセルを、輪と予算によらず最優先で読む。
+        // 全対象が Active で全ペイロードが IsPayloadReady になった Update の終わりに Ready を一度通知する。
+        // 対象が Failed になったら Failed を一度通知する。対象ゼロでも最初の Update で Ready を通知する。
+        // 未完了の前の要求には、新しい要求を据えた後に Cancelled を一度通知する。
+        // マニフェストなし・非有限の位置・負か非有限の半径・未束縛の通知先は false とし、通知しない。
+        // Ready の後も焦点が目的地から radius 以内へ入る最初の Update まで対象を Active に保つ。
+        // 通知中に Update・Shutdown・StopAndJoin・LoadManifestFromText を呼ばないこと。
+        bool RequestSnapLoad(const Math::Vector3& position, float radius, StreamingSnapCallback onReady);
+        // 未完了なら Cancelled を一度通知する。通知済みなら到着待ちの保持を外す。要求なしなら何もしない。
+        void CancelSnapLoad();
         // 指定スコープの準備を取り消して待ち、予算を無視してセルの資源を同期解放し、セルを外す。
         // 戻った後は対象セルの準備処理やハンドラ呼び出しは行われない。存在しないスコープは何もしない。
         // 自動実行しない実行器に溜めた対象セルの仕事は、呼ぶ前に実行すること。
@@ -134,8 +161,11 @@ namespace NorvesLib::Core::Streaming
             StreamingPayloadBytes LastKnownBytes{};
             float Priority = 0.0f;
             bool bEvicted = false;
+            bool bSnapTarget = false;
         };
 
+        // 通知先を取り出し、呼び直しに備えて先に要求状態を整える。
+        StreamingSnapCallback DetachSnapCallback(EStreamingSnapStatus status, StreamingSnapResult& result);
         void FinishChange(CellEntry& entry, EStreamingCellState from);
         void RequestUnload(CellEntry& entry);
         void SetDormant(CellEntry& entry, bool bDormant);
@@ -156,6 +186,13 @@ namespace NorvesLib::Core::Streaming
         IStreamingJobExecutor* m_Executor;
         StreamingSystemSettings m_Settings;
         StreamingFocus m_Focus;
+        Math::Vector3 m_SnapPosition;
+        float m_SnapRadius = 0.0f;
+        StreamingSnapCallback m_SnapCallback;
+        double m_SnapRequestMs = 0.0;
+        uint32_t m_SnapCells = 0;
+        bool m_bSnapPending = false;
+        bool m_bSnapHeld = false;
         CellManifest m_Manifest;
         Container::VariableArray<HandlerEntry> m_Handlers;
         Container::VariableArray<CellEntry> m_Cells;

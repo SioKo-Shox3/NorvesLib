@@ -4,6 +4,8 @@
 #include <iostream>
 #include <limits>
 
+using namespace NorvesLib;
+using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Streaming;
 
 namespace
@@ -23,6 +25,246 @@ namespace
             std::cerr << Utf8(u8"検査失敗: ") << Utf8(message) << "\n";
         }
         return bCondition;
+    }
+
+    class FakeClock final : public IStreamingClock
+    {
+    public:
+        double NowMs() const override
+        {
+            return TimeMs;
+        }
+
+        double TimeMs = 100.0;
+    };
+
+    class ImmediateExecutor final : public IStreamingJobExecutor
+    {
+    public:
+        bool Submit(Thread::TaskFunction job) override
+        {
+            job();
+            return true;
+        }
+    };
+
+    class FakeHandler final : public IStreamingPayloadHandler
+    {
+    public:
+        explicit FakeHandler(FakeClock& clock) : m_Clock(clock)
+        {
+        }
+
+        const char* GetKind() const override
+        {
+            return "alpha";
+        }
+
+        EStreamingPrepareResult Prepare(const StreamingPayloadContext&, const StreamingCancelToken& cancel) override
+        {
+            return cancel.IsCancelled() ? EStreamingPrepareResult::Cancelled : EStreamingPrepareResult::Success;
+        }
+
+        EStreamingStepResult CommitStep(const StreamingPayloadContext&, StreamingStepCursor& cursor,
+                                        uint64_t& outCommittedBytes) override
+        {
+            m_Clock.TimeMs += 0.5;
+            outCommittedBytes = 16;
+            return ++cursor.Step == 3 ? EStreamingStepResult::Done : EStreamingStepResult::InProgress;
+        }
+
+        bool IsPayloadReady(const StreamingPayloadContext& context) const override
+        {
+            return Ready[context.Cell - 11][context.PayloadIndex];
+        }
+
+        void SetDormant(const StreamingPayloadContext&, bool) override
+        {
+        }
+
+        EStreamingStepResult UnloadStep(const StreamingPayloadContext&, StreamingStepCursor&) override
+        {
+            return EStreamingStepResult::Done;
+        }
+
+        void DiscardPrepared(const StreamingPayloadContext&) override
+        {
+        }
+
+        StreamingPayloadBytes GetResidentBytes(const StreamingPayloadContext&) const override
+        {
+            return {64, 32};
+        }
+
+        bool Ready[3][2]{};
+
+    private:
+        FakeClock& m_Clock;
+    };
+
+    struct SnapRig
+    {
+        FakeClock Clock;
+        ImmediateExecutor Executor;
+        FakeHandler Handler{Clock};
+        StreamingSystem System;
+
+        bool Load()
+        {
+            System.SetEnvironment(&Clock, &Executor);
+            StreamingSystemSettings settings;
+            settings.Ring.ActiveRadius = 10.0f;
+            settings.Ring.DormantRadius = 25.0f;
+            settings.Ring.UnloadRadius = 40.0f;
+            settings.Ring.DirectionWeight = 0.0f;
+            settings.Ring.LatencySeconds = 0.0f;
+            settings.MaxInFlightPrepares = 1;
+            settings.Budget.MaxResidentCells = 1;
+            settings.Budget.MaxCpuBytes = 1;
+            settings.Budget.MaxGpuBytes = 1;
+            settings.Budget.PerFrameCommitMs = 0.1;
+            settings.Budget.PerFrameCommitBytes = 1;
+            if (!Check(System.SetSettings(settings), u8"スナップ用の設定を受け付けません") ||
+                !Check(System.RegisterHandler(&Handler), u8"スナップ用のハンドラを登録できません"))
+            {
+                return false;
+            }
+            const Container::String manifest = R"({"format":"norves.cell-manifest.v1","origin":[0,0,0],"cellSize":1,"cells":[
+                {"id":11,"bounds":{"min":[0,-1,-1],"max":[1,1,1]},"payloads":[
+                    {"kind":"alpha","logicalPath":"cells/first"},{"kind":"alpha","logicalPath":"cells/second"}]},
+                {"id":12,"bounds":{"min":[2,-1,-1],"max":[3,1,1]},"payloads":[
+                    {"kind":"alpha","logicalPath":"cells/first"},{"kind":"alpha","logicalPath":"cells/second"}]},
+                {"id":13,"bounds":{"min":[100,-1,-1],"max":[101,1,1]},"payloads":[
+                    {"kind":"alpha","logicalPath":"cells/first"},{"kind":"alpha","logicalPath":"cells/second"}]}]})";
+            if (!Check(System.LoadManifestFromText(manifest), u8"スナップ用のマニフェストを読み込めません"))
+            {
+                return false;
+            }
+            System.SetFocus({Math::Vector3(1000.0f, 0.0f, 0.0f), Math::Vector3::Zero});
+            return true;
+        }
+
+        void Advance()
+        {
+            Clock.TimeMs += 16.0;
+            System.Update();
+        }
+
+        bool FirstTargetsActive() const
+        {
+            return System.GetCellState(11) == EStreamingCellState::Active &&
+                System.GetCellState(12) == EStreamingCellState::Active;
+        }
+    };
+
+    void TestSnapReadyAfterAllActive()
+    {
+        uint32_t notifications = 0;
+        StreamingSnapResult received;
+        SnapRig rig;
+        if (!rig.Load())
+        {
+            return;
+        }
+        rig.Advance();
+        Check(rig.System.GetCellState(11) == EStreamingCellState::Unloaded &&
+              rig.System.GetCellState(12) == EStreamingCellState::Unloaded,
+              u8"遠い焦点だけでスナップ対象が読み込まれました");
+        const double requestedAt = rig.Clock.TimeMs;
+        Check(rig.System.RequestSnapLoad(Math::Vector3::Zero, 2.0f,
+            [&](const StreamingSnapResult& result)
+            {
+                ++notifications;
+                received = result;
+                Check(rig.FirstTargetsActive(), u8"通知時点で対象の全セルが Active ではありません");
+                Check(result.ElapsedMs == rig.Clock.TimeMs - requestedAt,
+                      u8"通知までの経過時間が注入した時計と合いません");
+            }), u8"スナップ要求を受け付けません");
+        Check(notifications == 0, u8"Update 前にスナップ完了を通知しました");
+        rig.Advance();
+        Check(rig.System.GetLastFrameStats().InFlightPrepares == 2 && notifications == 0,
+              u8"準備の同時実行数の上限を越えて対象を投入できないか、準備中に通知しました");
+        rig.Advance();
+        Check(rig.FirstTargetsActive() && rig.System.GetLastFrameStats().CommitSteps == 12 &&
+              rig.System.GetLastFrameStats().CommitBytes == 192,
+              u8"時間・バイト・常駐数の予算を越えて全対象をコミットできません");
+        for (uint32_t frame = 0; frame < 4; ++frame)
+        {
+            rig.Advance();
+            Check(rig.FirstTargetsActive() && notifications == 0,
+                  u8"ペイロードの常駐待ちの間に通知するか対象を手放しました");
+        }
+        rig.Handler.Ready[0][0] = true;
+        rig.Handler.Ready[0][1] = true;
+        rig.Handler.Ready[1][0] = true;
+        for (uint32_t frame = 0; frame < 3; ++frame)
+        {
+            rig.Advance();
+            Check(notifications == 0, u8"最後のペイロードの常駐前に通知しました");
+        }
+        rig.Handler.Ready[1][1] = true;
+        rig.Advance();
+        Check(notifications == 1 && received.Status == EStreamingSnapStatus::Ready && received.Cells == 2,
+              u8"全ペイロードの常駐後の Update で Ready と対象数を一度だけ通知しません");
+        for (uint32_t frame = 0; frame < 40; ++frame)
+        {
+            rig.Advance();
+            Check(rig.FirstTargetsActive() && notifications == 1,
+                  u8"到着前に対象を休止・解放するか完了を二重に通知しました");
+        }
+        Check(rig.System.GetCellState(13) == EStreamingCellState::Unloaded,
+              u8"目的地の半径外のセルまで読み込みました");
+        rig.System.CancelSnapLoad();
+        Check(notifications == 1, u8"通知済みの保持を外したときに再び通知しました");
+    }
+
+    void TestSnapSupersededIsCancelledOnce()
+    {
+        uint32_t firstNotifications = 0;
+        uint32_t secondNotifications = 0;
+        StreamingSnapResult firstResult;
+        StreamingSnapResult secondResult;
+        SnapRig rig;
+        if (!rig.Load())
+        {
+            return;
+        }
+        Check(rig.System.RequestSnapLoad(Math::Vector3::Zero, 2.0f,
+            [&](const StreamingSnapResult& result)
+            {
+                ++firstNotifications;
+                firstResult = result;
+            }), u8"最初のスナップ要求を受け付けません");
+        rig.Advance();
+        Check(firstNotifications == 0 && rig.System.GetCellState(11) == EStreamingCellState::Preparing,
+              u8"差し替え前の最初の要求が未完了ではありません");
+        Check(rig.System.RequestSnapLoad(Math::Vector3(100.0f, 0.0f, 0.0f), 0.0f,
+            [&](const StreamingSnapResult& result)
+            {
+                ++secondNotifications;
+                secondResult = result;
+                Check(rig.System.GetCellState(13) == EStreamingCellState::Active,
+                      u8"二番目の要求の対象が Active になる前に通知しました");
+            }), u8"二番目のスナップ要求を受け付けません");
+        Check(firstNotifications == 1 && firstResult.Status == EStreamingSnapStatus::Cancelled &&
+              firstResult.Cells == 2 && secondNotifications == 0,
+              u8"差し替え時に最初の要求へ Cancelled を一度だけ通知しません");
+        rig.Advance();
+        rig.Advance();
+        Check(secondNotifications == 0 && rig.System.GetCellState(13) == EStreamingCellState::Active,
+              u8"二番目の対象が Active にならないかペイロードの常駐前に通知しました");
+        rig.Handler.Ready[2][0] = true;
+        rig.Handler.Ready[2][1] = true;
+        rig.Advance();
+        Check(secondNotifications == 1 && secondResult.Status == EStreamingSnapStatus::Ready && secondResult.Cells == 1,
+              u8"二番目の要求が Ready で一度だけ完了しません");
+        for (uint32_t frame = 0; frame < 40; ++frame)
+        {
+            rig.Advance();
+        }
+        Check(firstNotifications == 1 && secondNotifications == 1,
+              u8"差し替えた要求か二番目の要求が重複して通知されました");
+        rig.System.CancelSnapLoad();
     }
 
     void TestHitchCounting()
@@ -104,6 +346,8 @@ namespace
 int main()
 {
     TestHitchCounting();
+    TestSnapReadyAfterAllActive();
+    TestSnapSupersededIsCancelledOnce();
     if (g_Failures != 0)
     {
         std::cerr << Utf8(u8"検査失敗数: ") << g_Failures << "\n";
