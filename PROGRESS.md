@@ -11086,3 +11086,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 SkinnedMeshResource に slot ごとの材質の元(record と 4 つの論理パス)と split の世代を公開する: 着地(直し 0 回)
 - U2 skin の材質 record と所有の論理パスから ImportedMaterialStaging を作る多重定義を足す: 着地(直し 0 回)
 - U3 SkinnedMaterialBuilder を足す(slot ごとに texture を解決して材質を作り、資産の世代に結び、component へ付ける): 着地(直し 0 回)
+- U6 ImportedMaterialStagingTest の日本語の論理パスのリテラルを UTF-8 のバイトの escape にする: 着地(直し 0 回)
