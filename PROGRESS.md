@@ -10979,3 +10979,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 焼き込みの基礎(画素の式と import_report の欄): 着地(直し 0 回)
 - U2 CookedMaterialV1.md に暫定の決まりを書く: 着地(直し 0 回)
 - U3 骨格の cook で baseColorFactor をアルベドへ焼き、焼いた記録を import_report に出す: 着地(直し 0 回)
+- U4 焼き込みの試験を足し、タスクの verify を通す: 着地(直し 0 回)
