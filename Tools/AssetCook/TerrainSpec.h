@@ -6,6 +6,15 @@
 
 namespace NorvesLib::Tools::AssetCook
 {
+    struct TerrainOuterRingSpec
+    {
+        std::filesystem::path HeightSourcePath;
+        HeightImportDesc Import;
+        double CellSizeM = 16.0;
+        double WidthM = 0.0;
+        double BlendM = 256.0;
+    };
+
     struct TerrainSpec
     {
         std::filesystem::path SpecPath;          // 絶対パス。
@@ -16,6 +25,8 @@ namespace NorvesLib::Tools::AssetCook
         uint64_t Seed = 0;
         bool bHasRecipe = false;
         TerrainRecipe Recipe;
+        bool bHasOuterRing = false;
+        TerrainOuterRingSpec OuterRing;
     };
 
     // スペック JSON のバイト列を解析する。specPath は相対パスの基準（その親ディレクトリ）。

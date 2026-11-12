@@ -25,6 +25,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t RequireBitDepth = 0;   // 0 は要求なし、16 は 8bit を拒否。
         double SmoothSigmaM = 0.0;      // ガウスの σ [m]。0 は平滑化なし。
         double CellSizeM = 1.0;         // 標本の間隔 [m]。
+        bool bKeepSourceSize = false;  // 真なら fit（TileCells の倍数＋1 への合わせ）を通さず、入力の寸法のまま返す。外周の入力用。
     };
 
     struct TerrainHeightGrid

@@ -11,6 +11,11 @@
 #include <cstdint>
 #include <filesystem>
 
+namespace NorvesLib::Core::Asset
+{
+    struct CookedTerrainData;
+}
+
 namespace NorvesLib::Core::AssetImport
 {
     struct ImportSettingsFileOptions;
@@ -169,6 +174,7 @@ namespace NorvesLib::Tools::AssetCook
         Procedural,
         Dem,
         Nvtrn,
+        NvtrnOuter,
     };
 
     // --generate の区画番号と入力の種類を読む。DEM・NVTRN の区画数は入力から決まるため、クック時に範囲を確かめる。
@@ -207,9 +213,42 @@ namespace NorvesLib::Tools::AssetCook
                                                   uint32_t dagRootMaxClusters = 0,
                                                   bool bAllowCliffDetail = true);
 
+    // 地形区画の位置・法線・UV と、三角形の頂点番号。共有辺の細かい頂点数も返す。
+    struct TerrainNvtrnTileVertex
+    {
+        float Position[3] = {};
+        float Normal[3] = {};
+        float TexCoord[2] = {};
+    };
+
+    struct TerrainNvtrnTileGeometry
+    {
+        Core::Container::VariableArray<TerrainNvtrnTileVertex> Vertices;
+        Core::Container::VariableArray<uint32_t> Indices;
+        uint32_t EdgeVertexCount = 0;
+    };
+
+    [[nodiscard]] bool BuildTerrainNvtrnTileGeometry(const Core::Asset::CookedTerrainData& terrain,
+        uint32_t tileX, uint32_t tileZ, TerrainNvtrnTileGeometry& outGeometry, Core::Container::AnsiString& error);
+    [[nodiscard]] bool BuildTerrainNvtrnOuterTileGeometry(const Core::Asset::CookedTerrainData& terrain,
+        uint32_t tileX, uint32_t tileZ, TerrainNvtrnTileGeometry& outGeometry, Core::Container::AnsiString& error);
+
     // NVTRN または地形 spec の区画を NVMESH v1 に焼く。spec の相対パスは inputPath の親を基準に解決する。
     // 外周の頂点は階層のどの段でも動かさない。
     [[nodiscard]] bool CookTerrainNvtrnTileToNvmesh(const uint8_t* inputBytes,
+                                                    size_t inputSize,
+                                                    const std::filesystem::path& inputPath,
+                                                    uint32_t tileX,
+                                                    uint32_t tileZ,
+                                                    Core::Container::AnsiStringView format,
+                                                    Core::Container::AnsiStringView logicalPath,
+                                                    MeshCookResult& outResult,
+                                                    Core::Container::AnsiString& error,
+                                                    uint32_t fallbackMinTriangles = 0,
+                                                    uint32_t dagRootMaxClusters = 0);
+
+    // 外周の区画を焼く。穴に接する辺は近景の全頂点へ縫い、開いた境界を LOD の全段で固定する。
+    [[nodiscard]] bool CookTerrainNvtrnOuterTileToNvmesh(const uint8_t* inputBytes,
                                                     size_t inputSize,
                                                     const std::filesystem::path& inputPath,
                                                     uint32_t tileX,

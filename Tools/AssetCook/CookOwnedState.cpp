@@ -146,6 +146,25 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(error, "invalid_header_or_binding");
             }
+            if (state.Generators.size() > MaximumCookStateGenerators)
+            {
+                return Fail(error, "invalid_generator_records");
+            }
+            for (size_t i = 0; i < state.Generators.size(); ++i)
+            {
+                const auto& generator = state.Generators[i];
+                if (!TextValid(generator.Name) || !IsHex(generator.InputsHash, 64) || !IsHex(generator.CommandHash, 64))
+                {
+                    return Fail(error, "invalid_generator_records");
+                }
+                for (size_t j = 0; j < i; ++j)
+                {
+                    if (Compare(generator.Name, state.Generators[j].Name, true) == 0)
+                    {
+                        return Fail(error, "invalid_generator_records");
+                    }
+                }
+            }
             Core::Container::VariableArray<const AssetCookedReference*> rows;
             for (const auto& owned : state.Records)
             {
@@ -642,7 +661,10 @@ namespace NorvesLib::Tools::AssetCook
         const auto root = document.GetRoot();
         CookOwnedState candidate;
         StateText producer;
-        if (!Shape(root, {"schema", "producer", "owner", "root", "manifest", "generation", "records"}) ||
+        const bool bGenerators = root.IsObject() && root.GetObjectSize() == 8;
+        if (!(bGenerators
+                  ? Shape(root, {"schema", "producer", "owner", "root", "manifest", "generation", "records", "generators"})
+                  : Shape(root, {"schema", "producer", "owner", "root", "manifest", "generation", "records"})) ||
             !Number(root.FindMember("schema"), candidate.SchemaVersion) ||
             !ReadText(root.FindMember("producer"), producer) || !Equal(producer, Producer) ||
             !ReadText(root.FindMember("owner"), candidate.Binding.OwnerId) ||
@@ -667,6 +689,29 @@ namespace NorvesLib::Tools::AssetCook
                 return Fail(error, "invalid_record_fields");
             }
             candidate.Records.push_back(std::move(record));
+        }
+        if (bGenerators)
+        {
+            const auto generators = root.FindMember("generators");
+            if (!generators.IsArray() || generators.GetArraySize() == 0 ||
+                generators.GetArraySize() > MaximumCookStateGenerators)
+            {
+                return Fail(error, "invalid_generator_fields");
+            }
+            candidate.Generators.reserve(generators.GetArraySize());
+            for (size_t i = 0; i < generators.GetArraySize(); ++i)
+            {
+                const auto item = generators.GetArrayElement(i);
+                CookGeneratorRecord generator;
+                if (!Shape(item, {"name", "inputs", "command"}) ||
+                    !ReadText(item.FindMember("name"), generator.Name) ||
+                    !ReadText(item.FindMember("inputs"), generator.InputsHash) || !IsHex(generator.InputsHash, 64) ||
+                    !ReadText(item.FindMember("command"), generator.CommandHash) || !IsHex(generator.CommandHash, 64))
+                {
+                    return Fail(error, "invalid_generator_fields");
+                }
+                candidate.Generators.push_back(std::move(generator));
+            }
         }
         if (!Validate(candidate, error))
         {
@@ -725,6 +770,26 @@ namespace NorvesLib::Tools::AssetCook
                 w.Output(output);
             }
             w.Add("]}");
+        }
+        if (!state.Generators.empty())
+        {
+            w.Add("],\"generators\":[");
+            bool bFirstGenerator = true;
+            for (const auto& generator : state.Generators)
+            {
+                if (!bFirstGenerator)
+                {
+                    w.Add(",");
+                }
+                bFirstGenerator = false;
+                w.Add("{\"name\":");
+                w.Quoted(generator.Name);
+                w.Add(",\"inputs\":");
+                w.Quoted(generator.InputsHash);
+                w.Add(",\"command\":");
+                w.Quoted(generator.CommandHash);
+                w.Add("}");
+            }
         }
         w.Add("]}\n");
         if (!w.bGood)

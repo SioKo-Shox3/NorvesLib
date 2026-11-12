@@ -462,7 +462,7 @@ namespace NorvesLib::Tools::AssetCook
                     }
                 }
             }
-            if (!FitGrid(desc, result, outError) || !SmoothGrid(desc, grid, outError))
+            if ((!desc.bKeepSourceSize && !FitGrid(desc, result, outError)) || !SmoothGrid(desc, grid, outError))
             {
                 return false;
             }
