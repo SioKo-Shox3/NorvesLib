@@ -10942,3 +10942,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 Core の payload handler 3 種（terrain-tile・scatter-chunk・placement）を足す: 着地(直し 0 回)
 - U5 Physics に static-colliders の handler を足し、Install で登録する: 着地(直し 0 回)
 - U6 StreamingPayloadTest を足す（Core の handler 3 種を本物の World で確かめる）: 着地(直し 1 回)
+- U7 StreamingColliderPayloadTest を足す（static-colliders と placement の物理）: 着地(直し 1 回)
