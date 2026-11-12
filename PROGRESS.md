@@ -10937,3 +10937,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠（反復 2）: `.harness/runs/20261112-065206/G5-GR37-TERRAIN-LAYERS-final-verify-2.txt`（verify のビルド 3 行 exit 0、ctest 3/3 合格（TerrainShaderCompileTest 99.10 秒）。`--dump-shader-current` の本文の glslc のコンパイル exit 0。式を CPU に写した使い捨ての計算で、`CheckRotation` の比は前の式で 8.7〜49.1（平均 25.8。検査が落ちる）、直した式で 0.52〜1.00（平均 0.92。通る））。GPU での実行は G5-GR37-TERRAIN-CHECK。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next（反復 2）: 人が見るときの見どころに、grassland の原点から離れた平地（地形の端に近い所）で土・苔・草地の地肌の模様が潰れず、近くと同じ細かさに見えること、段の変わり目（数 m の幅）で模様が二重に見えすぎないことを足す。
 - U1 ストリーミングの口を payload の実装に合わせて広げる: 着地(直し 0 回)
+- U2 ScatterSystem にセルから常駐を指定する口を足す: 着地(直し 0 回)
