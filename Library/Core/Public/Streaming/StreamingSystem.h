@@ -60,6 +60,8 @@ namespace NorvesLib::Core::Streaming
         const StreamingSystemSettings& GetSettings() const;
         // マニフェストを持つ前だけ登録できる。ハンドラは Shutdown の完了まで生存させる。
         bool RegisterHandler(IStreamingPayloadHandler* pHandler);
+        // 未登録・nullptr は false。マニフェストを持つ間は先に Shutdown() で全セルを同期解放してから外す。
+        bool UnregisterHandler(IStreamingPayloadHandler* pHandler);
         // 解析成功時だけ旧セルを同期解放し、指定スコープのセルで置き換える。
         bool LoadManifestFromText(const Container::String& text, CellManifestError* pOutError = nullptr,
                                   StreamingScopeId scopeId = kDefaultStreamingScopeId);

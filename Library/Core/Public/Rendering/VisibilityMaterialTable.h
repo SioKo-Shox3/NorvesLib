@@ -60,6 +60,19 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_TIGHT_SHADOW = 64u;
     /** @brief スプラットの材質。Header[3] に専用の要約を入れ、3 層・1 層の材質と分ける */
     constexpr uint32_t MATERIAL_FLAG_TERRAIN_SPLAT = 128u;
+    /**
+     * @brief 切り抜かずに描く Masked の MegaGeometry の材質
+     *
+     * 材質の解決はテクスチャのαを albedo.a に書かず 1 にする。lighting.frag が albedo.a < 0.01 を
+     * 天球と判定するため、透明部分が天球の穴にならないようにする。
+     */
+    constexpr uint32_t MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA = 256u;
+    /**
+     * @brief 裏の面も描く MegaGeometry の両面の材質
+     *
+     * 材質の解決は、裏から見た三角形の法線を反転する。
+     */
+    constexpr uint32_t MATERIAL_FLAG_TWO_SIDED = 512u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。144 バイト）

@@ -12,6 +12,7 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/GBufferProgramRegistry.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <limits>
 
 namespace NorvesLib::Core::Rendering
@@ -525,6 +527,7 @@ namespace NorvesLib::Core::Rendering
         if (!CreateRenderPass() || !CreatePipelines(context))
         {
             m_MegaPipeline.reset();
+            m_MegaTwoSidedPipeline.reset();
             m_MeshPipeline.reset();
             m_SkinnedPipeline.reset();
             m_RecordsPipeline.reset();
@@ -588,6 +591,7 @@ namespace NorvesLib::Core::Rendering
         m_MaterialEntryScratch = Container::VariableArray<VisibilityBuffer::MaterialEntry>{};
         m_SectionMaterialScratch = Container::VariableArray<uint32_t>{};
         m_MegaPipeline.reset();
+        m_MegaTwoSidedPipeline.reset();
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
         m_RecordsPipeline.reset();
@@ -679,6 +683,7 @@ namespace NorvesLib::Core::Rendering
         const auto createGraphics = [this](const RHI::ShaderPtr& vertexShader,
                                            bool bVertexInput,
                                            RHI::PolygonMode polygonMode,
+                                           RHI::CullMode cullMode,
                                            RHI::PipelinePtr& outPipeline) -> bool
         {
             RHI::GraphicsPipelineDesc pipelineDesc;
@@ -703,9 +708,9 @@ namespace NorvesLib::Core::Rendering
                 pipelineDesc.vertexAttributes.push_back(positionAttribute);
             }
 
-            // ラスタライザは GBuffer と同じ（裏面を捨て、時計回りが表）
+            // 時計回りを表とし、材質に応じて裏面を捨てるかを選ぶ
             pipelineDesc.rasterState.polygonMode = polygonMode;
-            pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+            pipelineDesc.rasterState.cullMode = cullMode;
             pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
             pipelineDesc.rasterState.lineWidth = 1.0f;
 
@@ -733,19 +738,36 @@ namespace NorvesLib::Core::Rendering
             return outPipeline != nullptr;
         };
 
-        if (!createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Fill, m_MegaPipeline) ||
-            !createGraphics(m_MeshVertexShader, true, RHI::PolygonMode::Fill, m_MeshPipeline) ||
-            !createGraphics(m_SkinnedVertexShader, false, RHI::PolygonMode::Fill, m_SkinnedPipeline))
+        if (!createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Fill, RHI::CullMode::Back, m_MegaPipeline) ||
+            !createGraphics(m_MeshVertexShader, true, RHI::PolygonMode::Fill, RHI::CullMode::Back, m_MeshPipeline) ||
+            !createGraphics(m_SkinnedVertexShader, false, RHI::PolygonMode::Fill, RHI::CullMode::Back, m_SkinnedPipeline))
         {
             return false;
+        }
+
+        // 両面の塗りを作れない装置でも片面の描画は使い続ける。
+        try
+        {
+            createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Fill, RHI::CullMode::None,
+                           m_MegaTwoSidedPipeline);
+        }
+        catch (const std::exception&)
+        {
+            m_MegaTwoSidedPipeline.reset();
+        }
+        if (!m_MegaTwoSidedPipeline && !m_bLoggedMegaTwoSidedFallback)
+        {
+            m_bLoggedMegaTwoSidedFallback = true;
+            NORVES_LOG_WARNING("VisibilityRasterPass", "両面の描画パイプラインを作れません。"
+                                                       "MegaGeometry は裏面を捨てる描画を使います");
         }
 
 #if NORVES_BUILD_DEVELOPMENT
         // 線のパイプラインが作れなくても塗りの描画は使える。3 種が揃わないときは作れたぶんも捨て、
         // IsDrawReady(Wireframe) を false にして GBuffer のワイヤーフレームの描画へ戻す
-        if (!createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Line, m_MegaWireframePipeline) ||
-            !createGraphics(m_MeshVertexShader, true, RHI::PolygonMode::Line, m_MeshWireframePipeline) ||
-            !createGraphics(m_SkinnedVertexShader, false, RHI::PolygonMode::Line, m_SkinnedWireframePipeline))
+        if (!createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Line, RHI::CullMode::Back, m_MegaWireframePipeline) ||
+            !createGraphics(m_MeshVertexShader, true, RHI::PolygonMode::Line, RHI::CullMode::Back, m_MeshWireframePipeline) ||
+            !createGraphics(m_SkinnedVertexShader, false, RHI::PolygonMode::Line, RHI::CullMode::Back, m_SkinnedWireframePipeline))
         {
             m_MegaWireframePipeline.reset();
             m_MeshWireframePipeline.reset();
@@ -1093,7 +1115,8 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
-            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlay(materialData))
             {
                 continue;
             }
@@ -1178,7 +1201,8 @@ namespace NorvesLib::Core::Rendering
                 (instance.Material.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
-            if (materialData && materialData->ProgramId != kStandardGBufferProgramId)
+            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlay(materialData))
             {
                 continue;
             }
@@ -1610,7 +1634,8 @@ namespace NorvesLib::Core::Rendering
                                                uint32_t endPass)
     {
         RHI::ICommandList* commandList = m_Work.CommandList;
-        commandList->SetPipeline(m_Work.MegaPipeline);
+        RHI::PipelinePtr boundPipeline = m_Work.MegaPipeline;
+        commandList->SetPipeline(boundPipeline);
         commandList->SetDescriptorSet(m_Work.Slot->MegaSet, 0);
         const bool bMultiDrawIndirect = m_Device && m_Device->GetCapabilities().bMultiDrawIndirect;
         for (uint32_t passIndex = firstPass; passIndex < endPass; ++passIndex)
@@ -1623,6 +1648,15 @@ namespace NorvesLib::Core::Rendering
                 if (section.Capacity == 0 || !section.VertexBuffer || !section.IndexBuffer)
                 {
                     continue;
+                }
+                const RHI::PipelinePtr& pipeline = section.Material.bTwoSided
+                                                       ? m_Work.MegaTwoSidedPipeline
+                                                       : m_Work.MegaPipeline;
+                if (pipeline != boundPipeline)
+                {
+                    // 両方のレイアウトは同一なので、結んだ記述子セットは切り替え後も有効。
+                    commandList->SetPipeline(pipeline);
+                    boundPipeline = pipeline;
                 }
                 commandList->SetVertexBuffer(section.VertexBuffer, 0, 0);
                 commandList->SetIndexBuffer(section.IndexBuffer, 0);
@@ -2055,6 +2089,9 @@ namespace NorvesLib::Core::Rendering
         // 解決が線の画素を GBuffer へ書く）。線のパイプラインが揃わないときは、解決のパスが従来の GBuffer の描画へ戻している
         const bool bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe && HasWireframePipelines();
         m_Work.MegaPipeline = bWireframe ? m_MegaWireframePipeline : m_MegaPipeline;
+        m_Work.MegaTwoSidedPipeline = !bWireframe && m_MegaTwoSidedPipeline
+                                          ? m_MegaTwoSidedPipeline
+                                          : m_Work.MegaPipeline;
         m_Work.MeshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
         m_Work.SkinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
 

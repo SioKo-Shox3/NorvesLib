@@ -1,0 +1,475 @@
+{
+  "format": "norves.cell-manifest.v1",
+  "origin": [
+    0,
+    0,
+    0
+  ],
+  "cellSize": 128,
+  "cells": [
+    {
+      "id": 0,
+      "bounds": {
+        "min": [
+          0,
+          -1000,
+          0
+        ],
+        "max": [
+          128,
+          1000,
+          128
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "bounds": {
+        "min": [
+          128,
+          -1000,
+          0
+        ],
+        "max": [
+          256,
+          1000,
+          128
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "bounds": {
+        "min": [
+          256,
+          -1000,
+          0
+        ],
+        "max": [
+          384,
+          1000,
+          128
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "bounds": {
+        "min": [
+          384,
+          -1000,
+          0
+        ],
+        "max": [
+          512,
+          1000,
+          128
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "bounds": {
+        "min": [
+          0,
+          -1000,
+          128
+        ],
+        "max": [
+          128,
+          1000,
+          256
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "bounds": {
+        "min": [
+          128,
+          -1000,
+          128
+        ],
+        "max": [
+          256,
+          1000,
+          256
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "bounds": {
+        "min": [
+          256,
+          -1000,
+          128
+        ],
+        "max": [
+          384,
+          1000,
+          256
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "bounds": {
+        "min": [
+          384,
+          -1000,
+          128
+        ],
+        "max": [
+          512,
+          1000,
+          256
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "bounds": {
+        "min": [
+          0,
+          -1000,
+          256
+        ],
+        "max": [
+          128,
+          1000,
+          384
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "bounds": {
+        "min": [
+          128,
+          -1000,
+          256
+        ],
+        "max": [
+          256,
+          1000,
+          384
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "bounds": {
+        "min": [
+          256,
+          -1000,
+          256
+        ],
+        "max": [
+          384,
+          1000,
+          384
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "bounds": {
+        "min": [
+          384,
+          -1000,
+          256
+        ],
+        "max": [
+          512,
+          1000,
+          384
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "bounds": {
+        "min": [
+          0,
+          -1000,
+          384
+        ],
+        "max": [
+          128,
+          1000,
+          512
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "bounds": {
+        "min": [
+          128,
+          -1000,
+          384
+        ],
+        "max": [
+          256,
+          1000,
+          512
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "bounds": {
+        "min": [
+          256,
+          -1000,
+          384
+        ],
+        "max": [
+          384,
+          1000,
+          512
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "bounds": {
+        "min": [
+          384,
+          -1000,
+          384
+        ],
+        "max": [
+          512,
+          1000,
+          512
+        ]
+      },
+      "payloads": [
+        {
+          "kind": "terrain-tile",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "scatter-chunk",
+          "logicalPath": "grassland"
+        },
+        {
+          "kind": "static-colliders",
+          "logicalPath": "World/Grassland.rocks.colliders.json"
+        }
+      ]
+    }
+  ]
+}

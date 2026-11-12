@@ -17,6 +17,11 @@ namespace NorvesLib::Modules::Physics
     class PhysicsModuleTestAccess
     {
     public:
+        static StaticColliderPayloadHandler& GetStaticColliderPayloadHandler(IPhysicsModule& module)
+        {
+            return static_cast<PhysicsModule&>(module).m_StaticColliderPayloadHandler;
+        }
+
         static EPhysicsResult UnregisterColliderForTest(IPhysicsModule& module, ColliderComponent& collider)
         {
             return GetConcrete(module).UnregisterCollider(collider);

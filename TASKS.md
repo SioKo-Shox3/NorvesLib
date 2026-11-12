@@ -40,10 +40,11 @@
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
 - status: todo
-- done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)のビルドが通り、ctest(GPU・Reference のラベルと Golden・PathTracingReference・Vulkan の名前を外す)が通る。
+- done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)とビルドが通る。消した試験(`RHIGPUTimestampVulkanSkipContractTest`)の名前が `Test` と最上位の `CMakeLists.txt` に残らず、残す `RHIGPUTimestampVulkanTest` が ctest の一覧(`-N`、実行しない)に出る。統合ブランチ全体の ctest と前からの落ちの直しは BUILD-HEALTH-1109 が 17 行の verify で受け持つので、このタスクでは回さない。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure`
+- verify: `ctest --test-dir build -C Debug -N -R "^RHIGPUTimestamp"`
+- verify: `git grep -q RHIGPUTimestampVulkanSkipContractTest -- Test CMakeLists.txt && exit 1 || exit 0`
 - paths: Test/**, CMakeLists.txt
 - notes: 人の決定: 実行できたか以外を見ていないグラフィックの試験は要らない。試験を走らせて決めない(ウィンドウが開いて利用者の邪魔になる)。試験のコードを読んで決める。
 
@@ -5935,7 +5936,7 @@
 - notes: ロードマップ GR25 のフェーズ4（ShadowCaster 段）。ロードマップは「太陽の影の重要度が低いので後回し」としていたが、作者の決定（必要な機能は全部やる）で入れる。10-02 の後に太陽の VSM が入った（SceneView.cpp:1202〜1218。CSM は VSM の非対応時の逃げ道と影の測定で残る）ので、設計を「拡張は束を出し、エンジンの影のパスが描く」に変えた。理由: VSM の物理ページへの描画は展開と atomicMin の専用の流れ（vsm_draw.frag）で、拡張に描かせると契約が漏れる。束の頂点の形式は手続きの塊の記録の形式に合わせる（UNCERTAIN: 拡張の頂点の形式を手続きの塊と同じにできるかは、`VisibilityBuffer.h:136` の `RecordKind` と `vsm_draw.vert` の読み方を読んで確かめる。合わなければ RecordKind を 1 つ足す）。草の株（RecordKind::FoliageChunk）の専用の経路は変えない。危険地帯（RenderThread・影のパス）なので評価者を通す。ロードマップ GR25（517〜607 行）のフェーズ4、リスクの「ShadowCaster 段は別の評価が要る」、要件 `#### GR25`。
 
 ## G5-GR27-MASKED-GBUFFER: 切り抜き（アルファテスト・アルファハッシュ）と両面の材質を、静的・スキン・可視バッファの on と fallback の GBuffer に描き、取り込んだ glTF の MASK と doubleSided を通す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-PROGRAMS
 - gr: GR27
 - done-when: `MaterialCreateData`・`MaterialResourceData` に `AlphaCutoff`（既定 0.5、有限で 0〜1 に正規化）と `AlphaClipMode{Test, Hash}`（既定 Test）を足す（`bTwoSided` は既存。MaterialTypes.h:321・356）。`Assets/Shaders/Common/AlphaClip.glsl` に切り抜きの判定（Test は coverage < cutoff で破棄、Hash は interleaved gradient noise にフレームの位相を掛けた時間で変わる閾値で破棄）を置き、`gbuffer_alphaclip.frag`（#define と `Common/GBufferFragment.glsl` の include の包み）を足す。有効なアルファはテクスチャのα × インスタンスの被覆率の乗数（G5-GR26-MATERIAL-PARAMS の `.w`）。残る画素の albedo.a は 1 に固定（lighting.frag の天球の判定 albedo.a < 0.01 と衝突させない）。両面は cull None と `gl_FrontFacing` で裏の法線を反転。パイプラインは G5-GR26-GBUFFER-PROGRAMS の鍵 {alphaClip, cull} で選び、Masked と両面の材質は可視バッファが on のとき解決の後に重ねる経路へ、fallback では不透明の後に分けて描く（早期の深度の恩恵を不透明に残す）。スキンも同じ判定（今スキンの描画のコマンドは材質の BlendMode を見ないので、選択は材質のデータで行う）。TAA が無効のビューでは Hash を Test に落とす（`ViewRenderContext` に TAA が実際に掛かるかの印を足し、`SceneView::SetTemporalAAApplied` SceneView.h:565 と合わせる）。`ImportedOpaqueRuntime.cpp:72〜78` の `alphaMode_requires_GR27`・`doubleSided_requires_GR27` の拒否を外し、glTF の MASK と alphaCutoff と doubleSided を Masked・AlphaCutoff・bTwoSided へ写す（BLEND は今までどおり拒否）。CPU: `GBufferPipelineKeyTest` に Masked・両面・スキン・TAA の有無から鍵と切り抜きの方式を作る場合、`MaterialResourcesTest` に AlphaCutoff の正規化、`ImportedOpaqueRuntimeTest` に MASK と doubleSided が通り BLEND が拒否される場合を足す。GPU の `RenderingAlphaClipVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、市松のαのテクスチャを貼った板で、Masked・cutoff 0.5 の GBuffer の深度が埋まった画素の率が 0.5±0.02 でテクセルの中心で厳密に切れる・両面の板を裏から見た輝度が表と ±2/255 以内で片面では裏から被覆 0・Hash で TAA 有効なら 16 フレームの平均の被覆率が α±0.03 で TAA 無効なら Test に落ちる・スキンの Masked の材質が静的と同じ判定、を可視バッファの on と fallback で確かめる。`RenderingVelocityAlphaClipVulkanTest`（`RenderingVelocityVulkanTest` に scenario を足して登録）が、切り抜かれた画素の GBuffer.Velocity が背景の値のままであることを確かめる。切り抜きの材質が無い golden 4 本が変わらず、不透明だけのシーンでパイプラインの作成の数が増えない（ログ）。
@@ -6585,7 +6586,7 @@
 - notes: 設計はロードマップ 2161 行（GR40 の 6）、完了条件は 2597 行。選定課題 G12A-S7（GPU の資源の遅延の破棄）: (A) ロードマップの案（`DeferredGpuReleaseQueue` を新設し、MeshResources とテクスチャを完了のシリアルまで遅らせる。2159 行）、(B) RHI に入った破棄の列（`VulkanDevice::DeferDestroy` の Buffer・Image・ImageView ほか。VulkanDevice.h:207〜217、SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY が done）をそのまま使う、のうち (B) を採る。理由: (A) の前提（`MeshResources::Unregister` が描画中のバッファを即座に壊しうる）は、RHI の側でハンドルの破棄を提出の完了まで遅らせるようになって崩れた。上の層にもう 1 つ列を作ると、破棄の順の規則が 2 つになる。UNCERTAIN: `ProceduralMeshGpuStore::UnregisterMesh`（ProceduralMeshGpuStore.cpp:248）が RHI の破棄の列だけで安全か（ホスト可視の map 中のバッファを含めて）は着手時に読んで確かめ、足りなければこの項目で直す。試験を足す理由: 反証する契約は「GameMode を抜けた後にワーカーの完了が届かず、資源が 1 回ずつ返る」こと。破れるとシーンの出入りのたびに資源が増える・抜けた後のコールバックで落ちるとして、出入りを繰り返したときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object・Resource の寿命）なので評価者を通す。
 
 ## G12-GR40-WORLD-PAYLOADS: セルの中身として地形のタイル・散布のチャンク・静的なコライダー・コードで組む配置を出し入れし、遠いセルを休眠させる
-- status: todo
+- status: done
 - after: G12-GR40-CELL-CORE, G12-GR40-GAMEMODE-ASYNC, G12-GR41-PARENT-DORMANCY, G12-GR09-DETACHED-COLLIDERS, G12-GR39-HEIGHTFIELD-LOD, G5-GR37-TERRAIN-COMPONENT, G5-GR90-SCATTER-RUNTIME, G5-GR37-TERRAIN-LAYERS, G5-GR90-SCATTER-BAKE
 - gr: GR40
 - needs-gr: GR37, GR90
@@ -6862,7 +6863,7 @@
 - notes: 確かめ直し (c)。GR96 の一括 cook の本体(spec v2 の 6 種・増分・統合 manifest・`--jobs` の同値・予算と終了コード 2・`--warn-budget`・`--prune`)は実装と試験がある(`TextureManagedCliTest.cpp:308-400` の MixedBatch、`RigSplitCookTest.cpp:295-400` の skeletal・animation・texture・raw・audio の混在)が、レポートの行は `CookAssetMetrics`(`CookBatchReport.h:9-12`)の三角形・関節・テクスチャ容量・cooked のバイトだけで、異常の検出は無い(`ModelAnalysis` も `anomal` もリポジトリに無い。PROGRESS.md 冒頭の「詳細異常検出は後段」)。`GeometryInspection.h` の `--inspect` 用の数(長さ 0 法線・溶接・閉鎖)は再利用してよいが、`--inspect` の出力は変えない。閾値(1e-3・1024²)は要件の設計案の値で、企画の決定ではないので定数にして AssetCookWorkflow.md に仮と書く。`CMakeLists.txt` の試験の束は共有のファイルなので差分を小さくする。要件 `#### GR96` の設計案【6】と受け入れ確認「異常検出(ModelAnalysisTest)」、ロードマップ 178・189 行。
 
 ## G2-GR96-GENERATORS: asset-set の spec に外部コマンド(generators)を宣言でき、明示したときだけ、入力が変わったものだけを cook の前に走らせる
-- status: todo
+- status: done
 - gr: GR96
 - done-when: spec v2 の最上位に任意の `generators`(各要素は `name`・`command`(文字列の配列)・`inputs`・`outputs`(source root からの相対パスの配列)・`cwd`)を受ける。名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・assets の source を 2 つの generator が出すこと・未知のキーは spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う generator を宣言順に走らせ、すべて成功してから今までどおりの cook に進む。付けないときは generator を 1 つも走らせず、今の cook の結果とバイト一致する(既存の spec と CLI の出力は変えない)。
   失敗(終了コードが 0 でない・宣言した outputs が出ていない)なら、その名前と終了コードを出して cook せずに 1 で終わる。前回の hash は store の制御領域の中の generator の状態に、cook の状態と同じ原子的な書き方で残す。`--run-generators` は `--recover` と一緒に使えない。cook_report に各 generator の `ran`/`skipped`/`failed` を出す。

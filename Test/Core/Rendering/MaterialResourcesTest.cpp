@@ -489,6 +489,60 @@ namespace
         assert(data->ShadingParams[3] == -1.0f);
     }
 
+    void TestMaterialAlphaClipValuesAreSanitized()
+    {
+        RenderResources manager;
+        MaterialCreateData createInfo;
+        const MaterialResourceData defaultData;
+        assert(createInfo.AlphaCutoff == 0.5f);
+        assert(createInfo.AlphaClip == AlphaClipMode::Test);
+        assert(defaultData.AlphaCutoff == 0.5f);
+        assert(defaultData.AlphaClip == AlphaClipMode::Test);
+
+        const MaterialHandle handle = manager.Materials().Create(createInfo);
+        assert(handle.IsValid());
+        const MaterialResourceData *data = manager.Materials().GetData(handle);
+        assert(data != nullptr);
+        assert(data->AlphaCutoff == 0.5f);
+        assert(data->AlphaClip == AlphaClipMode::Test);
+
+        struct Case
+        {
+            float Cutoff;
+            float ExpectedCutoff;
+            AlphaClipMode Clip;
+            AlphaClipMode ExpectedClip;
+        };
+        const Case cases[] = {
+            {0.25f, 0.25f, AlphaClipMode::Hash, AlphaClipMode::Hash},
+            {-1.0f, 0.0f, AlphaClipMode::Test, AlphaClipMode::Test},
+            {2.0f, 1.0f, AlphaClipMode::Hash, AlphaClipMode::Hash},
+            {std::numeric_limits<float>::quiet_NaN(), 0.5f, AlphaClipMode::Hash, AlphaClipMode::Hash},
+            {std::numeric_limits<float>::infinity(), 0.5f, AlphaClipMode::Hash, AlphaClipMode::Hash},
+            {-std::numeric_limits<float>::infinity(), 0.5f, AlphaClipMode::Hash, AlphaClipMode::Hash},
+            {0.0f, 0.0f, static_cast<AlphaClipMode>(2), AlphaClipMode::Test},
+            {1.0f, 1.0f, static_cast<AlphaClipMode>(255), AlphaClipMode::Test}};
+        for (const Case &row : cases)
+        {
+            createInfo.AlphaCutoff = row.Cutoff;
+            createInfo.AlphaClip = row.Clip;
+            const MaterialHandle createdHandle = manager.Materials().Create(createInfo);
+            assert(createdHandle.IsValid());
+            data = manager.Materials().GetData(createdHandle);
+            assert(data != nullptr);
+            assert(data->AlphaCutoff == row.ExpectedCutoff);
+            assert(data->AlphaClip == row.ExpectedClip);
+            manager.Materials().Release(createdHandle);
+
+            assert(manager.Materials().Update(handle, createInfo));
+            data = manager.Materials().GetData(handle);
+            assert(data != nullptr);
+            assert(data->AlphaCutoff == row.ExpectedCutoff);
+            assert(data->AlphaClip == row.ExpectedClip);
+        }
+        manager.Materials().Release(handle);
+    }
+
     void TestMaterialResourceLoadRejectsInvalidEmissiveWithoutSideEffects()
     {
         for (const InvalidEmissiveRow &row : InvalidEmissiveRows)
@@ -586,6 +640,7 @@ int main()
     TestMaterialCreateCanonicalizesPositiveEmissive();
     TestMaterialShadingParamsAreCopied();
     TestMaterialShadingParamsAreSanitized();
+    TestMaterialAlphaClipValuesAreSanitized();
     TestMaterialResourceLoadRejectsInvalidEmissiveWithoutSideEffects();
     TestMaterialResourceLoadCanonicalizesPositiveEmissive();
 

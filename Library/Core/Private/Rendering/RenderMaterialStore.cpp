@@ -20,6 +20,20 @@ namespace NorvesLib::Core::Rendering
             return value > 1.0f ? 1.0f : value;
         }
 
+        // 切り抜きの閾値を有限の 0〜1 へ収め、非有限は既定値に戻す。
+        float SanitizeAlphaCutoff(float value)
+        {
+            if (!std::isfinite(value))
+            {
+                return 0.5f;
+            }
+            if (value < 0.0f)
+            {
+                return 0.0f;
+            }
+            return value > 1.0f ? 1.0f : value;
+        }
+
         bool TryCopyMaterialCreateData(const MaterialCreateData &createInfo, MaterialResourceData &outData)
         {
             MaterialResourceData data;
@@ -48,6 +62,8 @@ namespace NorvesLib::Core::Rendering
             data.Program = createInfo.Program;
             data.ProgramId = MakeGBufferProgramId(data.Program.c_str());
             data.Blend = createInfo.Blend;
+            data.AlphaCutoff = SanitizeAlphaCutoff(createInfo.AlphaCutoff);
+            data.AlphaClip = createInfo.AlphaClip == AlphaClipMode::Hash ? AlphaClipMode::Hash : AlphaClipMode::Test;
             data.bWritesReactive = createInfo.bWritesReactive;
             data.Shading = createInfo.Shading;
             for (uint32_t index = 0; index < ShadingParamCount; ++index)

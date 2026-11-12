@@ -534,6 +534,15 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         /** @brief GBuffer に書くシェーディングモデル。 */
         ShadingModel Shading = ShadingModel::DefaultLit;
         /**
+         * @brief 取り込んだglTFのalphaMode・alphaCutoff・doubleSidedの写し。
+         * MegaGeometryは切り抜かず、Maskedも不透明として描く。
+         * 両面の材質は背面カリングを外し、裏の面の法線を反転する。
+         * albedo.aを1にする扱いは描画側の責務。
+         */
+        BlendMode Blend = BlendMode::Opaque;
+        float AlphaCutoff = 0.5f;
+        bool bTwoSided = false;
+        /**
          * @brief x=P0、y=P1、z=予約、w=被覆率の乗数（1=不変）。負は未指定。
          * MegaGeometryResourceStore の材質コピー時に SanitizeShadingParam で正規化する。
          */
