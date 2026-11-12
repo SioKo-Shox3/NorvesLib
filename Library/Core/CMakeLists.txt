@@ -463,6 +463,8 @@ set(PRIVATE_SOURCES
     Private/Resource/ModelAssetResolver.cpp
     Private/Rendering/ConstantMaterialTextureCache.cpp
     Private/Resource/ImportedOpaqueRuntime.cpp
+    Private/Resource/SkinnedMaterialBuilder.h
+    Private/Resource/SkinnedMaterialBuilder.cpp
     Private/Resource/ModelMaterialStaging.cpp
     Private/Resource/ModelStaging.cpp
     # Component

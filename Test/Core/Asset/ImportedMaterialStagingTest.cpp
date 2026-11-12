@@ -33,7 +33,8 @@ namespace ImportedMaterialTest
         mesh.Layout = A::CookedMeshLayout::ClusteredV1;
         A::CookedMeshMaterial material;
         Bytes strings;
-        const char* paths[] = {"Textures/犬/base.png", "Textures/normal.png", arm, "Textures/emissive.png"};
+        // 実行文字コードに依らず UTF-8 のバイトにするため、escape で記述する。
+        const char* paths[] = {"Textures/\xe7\x8a\xac/base.png", "Textures/normal.png", arm, "Textures/emissive.png"};
         A::CookedMeshStringRef* references[] = {&material.AlbedoTexture, &material.NormalTexture, &material.ArmTexture,
                                                 &material.EmissiveTexture};
         A::CookedMaterialStringRef* wire[] = {&material.Pbr.Albedo, &material.Pbr.Normal, &material.Pbr.Arm,
@@ -91,7 +92,8 @@ namespace ImportedMaterialTest
         Same(p.OcclusionStrength, s.OcclusionStrength);
         Same(p.NormalScale, s.NormalScale);
         Same(p.AlphaCutoff, s.AlphaCutoff);
-        CHECK(s.AlbedoPath == "Textures/犬/base.png" && s.NormalPath == "Textures/normal.png" &&
+        // 実行文字コードに依らず UTF-8 のバイトにするため、escape で記述する。
+        CHECK(s.AlbedoPath == "Textures/\xe7\x8a\xac/base.png" && s.NormalPath == "Textures/normal.png" &&
               s.ArmPath == "Textures/arm.nvtex" && s.EmissivePath == "Textures/emissive.png");
     }
     void Reject(const A::CookedMeshData& mesh, Status expected, size_t index = 0)

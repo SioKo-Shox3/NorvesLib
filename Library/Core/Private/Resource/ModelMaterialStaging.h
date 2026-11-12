@@ -44,4 +44,9 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
     [[nodiscard]] MaterialStagingStatus BuildImportedMaterialStaging(const Asset::CookedMeshData& mesh,
                                                                      size_t materialIndex,
                                                                      ImportedMaterialStaging& out);
+    // 3 資産の SkinnedMesh の材質(StringRef が 0 の record と、所有の 4 つの論理パス)を写す。
+    // texturePaths は albedo・normal・arm・emissive の 4 つちょうど。検査と写し方は CookedMeshData 版と同じで、成功時だけ out を置き換える。
+    [[nodiscard]] MaterialStagingStatus BuildImportedMaterialStaging(const Asset::CookedMaterialRecord& record,
+                                                                    Container::Span<const Container::AnsiString> texturePaths,
+                                                                    ImportedMaterialStaging& out);
 } // namespace NorvesLib::Core::ResourceIO::ModelStaging

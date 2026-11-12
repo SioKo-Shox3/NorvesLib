@@ -33,6 +33,8 @@ cmake -S . -B build -DNORVES_BUILD_TESTS=ON
 
 `ClipOptimizerTest`（`CookedMeshTest` の中）は、定数・既定姿勢チャンネル、位置・回転・スキニングの削減誤差、端点と STEP の保持、再適用と決定性、無効入力の拒否、最適化を無効にした旧形式・v1 cook のバイト列と `SourceHash` の一致を検査する。誤差やバイト差は cook の成功・ログだけでは分からず、失敗は黙って起きる。
 
+`SkeletalSplitRuntimeTest`（`CookedMeshTest` の中）の `materials` は、2 材質の rig の cook・読込と FakeDevice を使い、slot 数・名前・`MaterialCreateData` の値、MASK・texture 解決の失敗の slot ごとの分離、資産解放後の `Collect` による材質回収を反証する。
+
 ## 1つだけ回す
 
 テスト名と実行ファイル（ビルドのターゲット）が違うことがあるので、先にコマンドを確かめる。
@@ -112,6 +114,15 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - 反証する契約: markerからのイベント配送はclipノードの `markerEvents` によるopt-inであり、既定では配送しない。有効時は同名の点イベントを `(prev, cur]` で1回だけ出し、既定minWeight 0.3・周回・同期グループ内の同名の重複除去に従う。EventIndexはeventsの件数 + markerの添字、Value・IntValueは0。真偽値以外のmarkerEventsは拒否する。
 - ほかの手段で気づけるか: 気づけない。配送の欠落や重複、名前や時刻の食い違いは足音や同期が鳴らない・ずれるだけで、撮影やログには出ない。
 - 失敗が黙って起きるか: 起きる。イベントの配送が変わっても落ちない。
+
+`SkeletalBvhClipImportTest` に自動の rest 補正の場合を置く理由:
+
+分岐・End Site を持ち全フレームで回る手書きの多関節 BVH と、rest の振りと捻りが ±20° ずれた対象を使う。期待値は試験内で BVH の FK を別に計算して求め、補正の実装式をそのまま期待値にしない。
+
+- 反証する契約: `align_bones` は全フレームで元と出力の骨方向誤差を 0.1° 以内（要件の暫定値）に保ち、共通の `up_hint` を変えても捻りだけが変わり骨方向は変わらない。RootFrame・メッシュの node の変換・bind の scale を持つ対象でも成り立ち、同じ入力を 2 回変換した clip と報告はビット一致する。
+- 反証する契約: `match` は許容内なら C = I と補正前後で同じ角度を報告し、許容超過なら `rest_direction_mismatch` で拒否して出力の clip と報告を保つ。末端は親からの方向を使う。`align_bones` は向きが正反対（180°）の骨も補正後に元の骨方向と一致させる（`match` では `rest_direction_mismatch`）。`up_hint` が骨方向と平行なら捻りを加えず最小回転だけを使う。向きの決まらない root は `match`・`align_bones` では `rest_bone_direction_missing` で拒否し、`explicit` では方向を理由に拒否しない。未写像の対象関節にはチャンネルを出さず bind のローカル姿勢を保つ。
+- ほかの手段で気づけるか: 気づけない。式の取り違えは見た目では数度のずれにしか出ず、cook の成功や通常のログでは、全フレームの骨方向、捻りとの分離、変換を持つ対象、拒否時の出力保持、2 回のビット一致まで確かめられない。
+- 失敗が黙って起きるか: 起きる。式や退化時の扱いが誤っていても cook は黙って通り、誤った向きの clip や非決定的な出力を作りうる。
 
 `RetargetCookTest`（`CookedMeshTest` の中）を置く理由:
 
