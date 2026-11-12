@@ -10968,3 +10968,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U11 cook_report に generator の行を出す(U3 の切り直し): 着地(直し 0 回)
 - U9 spec v2 の generators を解析・検査する(U1 の切り直し): 着地(直し 0 回)
 - U10 cook state に generator の記録を任意欄で持たせる(U2 の切り直し): 着地(直し 0 回)
+- U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
