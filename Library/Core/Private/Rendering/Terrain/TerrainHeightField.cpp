@@ -1162,6 +1162,290 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
     }
 
+    Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::CreateOuterRingFromCookedTerrain(
+        const Asset::CookedTerrainData& terrain, Container::AnsiString& outError)
+    {
+        outError.clear();
+        if (!terrain.bHasOuterRing)
+        {
+            outError = "NVTRN に外周がありません";
+            return {};
+        }
+        const auto& ring = terrain.OuterRing;
+        if (terrain.CellCountX == 0 || terrain.CellCountZ == 0 || terrain.TileCells == 0 ||
+            terrain.CellCountX == UINT32_MAX || terrain.CellCountZ == UINT32_MAX ||
+            terrain.CellCountX % terrain.TileCells != 0 || terrain.CellCountZ % terrain.TileCells != 0 ||
+            terrain.TileCountX != terrain.CellCountX / terrain.TileCells ||
+            terrain.TileCountZ != terrain.CellCountZ / terrain.TileCells ||
+            !std::isfinite(terrain.CellSizeM) || terrain.CellSizeM <= 0.0f ||
+            !std::isfinite(terrain.OriginX) || !std::isfinite(terrain.OriginY) || !std::isfinite(terrain.OriginZ) ||
+            !std::isfinite(terrain.HeightMinM) || !std::isfinite(terrain.HeightMaxM) ||
+            terrain.HeightMinM > terrain.HeightMaxM ||
+            ring.TileCells < 2 || ring.TileCells > 1024 || (ring.TileCells & (ring.TileCells - 1)) != 0 ||
+            ring.TileCountX == 0 || ring.TileCountZ == 0 ||
+            ring.CellCountX == UINT32_MAX || ring.CellCountZ == UINT32_MAX ||
+            static_cast<uint64_t>(ring.TileCountX) * ring.TileCells != ring.CellCountX ||
+            static_cast<uint64_t>(ring.TileCountZ) * ring.TileCells != ring.CellCountZ ||
+            ring.HoleTileCountX == 0 || ring.HoleTileCountZ == 0 ||
+            ring.HoleTileMinX >= ring.TileCountX || ring.HoleTileMinZ >= ring.TileCountZ ||
+            ring.HoleTileCountX > ring.TileCountX - ring.HoleTileMinX ||
+            ring.HoleTileCountZ > ring.TileCountZ - ring.HoleTileMinZ ||
+            !std::isfinite(ring.CellSizeM) || ring.CellSizeM <= 0.0f ||
+            !std::isfinite(ring.OriginX) || !std::isfinite(ring.OriginZ))
+        {
+            outError = "NVTRN の外周または近景の格子の寸法・原点・高さの写像が不正です";
+            return {};
+        }
+
+        const uint64_t columns = static_cast<uint64_t>(ring.CellCountX) + 1;
+        const uint64_t rows = static_cast<uint64_t>(ring.CellCountZ) + 1;
+        const uint64_t outerTileCount = static_cast<uint64_t>(ring.TileCountX) * ring.TileCountZ;
+        const uint64_t holeTileCount = static_cast<uint64_t>(ring.HoleTileCountX) * ring.HoleTileCountZ;
+        const uint64_t nearTileCount = static_cast<uint64_t>(terrain.TileCountX) * terrain.TileCountZ;
+        const uint64_t nearSide = static_cast<uint64_t>(terrain.TileCells) + 1;
+        if (columns * rows > std::numeric_limits<size_t>::max() / sizeof(float) ||
+            nearSide * nearSide > std::numeric_limits<size_t>::max() / sizeof(uint16_t) ||
+            outerTileCount > UINT32_MAX || nearTileCount > UINT32_MAX ||
+            nearTileCount > std::numeric_limits<size_t>::max() / sizeof(Asset::AssetBlob) ||
+            holeTileCount == outerTileCount || terrain.OuterTiles.size() != outerTileCount - holeTileCount ||
+            terrain.Tiles.size() != nearTileCount)
+        {
+            outError = "NVTRN の外周または近景の格子・タイルの大きさが不正です";
+            return {};
+        }
+
+        const double ratio = static_cast<double>(ring.CellSizeM) / terrain.CellSizeM;
+        const double roundedRatio = std::round(ratio);
+        const auto nearEqual = [](double value, double expected)
+        {
+            return std::isfinite(value) && std::isfinite(expected) &&
+                std::abs(value - expected) <= 1e-6 * std::max(1.0, std::abs(expected));
+        };
+        const uint64_t holeCellsX = static_cast<uint64_t>(ring.HoleTileCountX) * ring.TileCells;
+        const uint64_t holeCellsZ = static_cast<uint64_t>(ring.HoleTileCountZ) * ring.TileCells;
+        if (!std::isfinite(ratio) || roundedRatio < 1.0 || roundedRatio > UINT32_MAX ||
+            std::abs(ratio - roundedRatio) > 1e-6 * roundedRatio ||
+            (holeCellsX - 1) * static_cast<uint64_t>(roundedRatio) > terrain.CellCountX ||
+            (holeCellsZ - 1) * static_cast<uint64_t>(roundedRatio) > terrain.CellCountZ ||
+            !nearEqual(ring.OriginX + static_cast<double>(ring.HoleTileMinX) * ring.TileCells * ring.CellSizeM, terrain.OriginX) ||
+            !nearEqual(ring.OriginZ + static_cast<double>(ring.HoleTileMinZ) * ring.TileCells * ring.CellSizeM, terrain.OriginZ) ||
+            !nearEqual(static_cast<double>(holeCellsX) * ring.CellSizeM, static_cast<double>(terrain.CellCountX) * terrain.CellSizeM) ||
+            !nearEqual(static_cast<double>(holeCellsZ) * ring.CellSizeM, static_cast<double>(terrain.CellCountZ) * terrain.CellSizeM))
+        {
+            outError = "NVTRN の外周の穴と近景の原点・幅・セルの比が一致しません";
+            return {};
+        }
+        const int32_t heightLayer = terrain.FindLayer(Asset::CookedTerrainFormatV0::HeightLayerFourCC);
+        if (heightLayer < 0 ||
+            terrain.Layers[heightLayer].Encoding != Asset::CookedTerrainFormatV0::LayerEncodingRawHeight16 ||
+            terrain.Layers[heightLayer].PixelFormat != Asset::CookedTexturePixelFormat::R16UNorm ||
+            terrain.Layers[heightLayer].ColorSpace != Asset::CookedTextureColorSpace::Linear ||
+            !terrain.SourceBlob.IsValid())
+        {
+            outError = "NVTRN に生の uint16 の HGT0 レイヤがありません";
+            return {};
+        }
+
+        try
+        {
+            Container::VariableArray<Asset::AssetBlob> nearTiles(static_cast<size_t>(nearTileCount));
+            const size_t nearTileBytes = static_cast<size_t>(nearSide * nearSide) * sizeof(uint16_t);
+            for (size_t index = 0; index < terrain.Tiles.size(); ++index)
+            {
+                const auto& tile = terrain.Tiles[index];
+                if (tile.TileX >= terrain.TileCountX || tile.TileZ >= terrain.TileCountZ)
+                {
+                    outError = "NVTRN の近景タイルの座標が範囲外です";
+                    return {};
+                }
+                auto& blob = nearTiles[static_cast<size_t>(tile.TileZ) * terrain.TileCountX + tile.TileX];
+                if (blob.IsValid())
+                {
+                    outError = "NVTRN の近景タイルの座標が重複しています";
+                    return {};
+                }
+                blob = terrain.GetLayerBlob(static_cast<uint32_t>(index), static_cast<uint32_t>(heightLayer));
+                if (!blob.IsValid() || blob.GetSize() != nearTileBytes)
+                {
+                    outError = "NVTRN の近景タイルの HGT0 が欠けているか大きさが不正です";
+                    return {};
+                }
+            }
+
+            const uint32_t minX = ring.HoleTileMinX * ring.TileCells;
+            const uint32_t minZ = ring.HoleTileMinZ * ring.TileCells;
+            const uint32_t maxX = minX + static_cast<uint32_t>(holeCellsX);
+            const uint32_t maxZ = minZ + static_cast<uint32_t>(holeCellsZ);
+            const uint32_t cellRatio = static_cast<uint32_t>(roundedRatio);
+            const size_t gridCount = static_cast<size_t>(columns * rows);
+            Container::VariableArray<uint16_t> samples(gridCount);
+            Container::VariableArray<uint8_t> assigned(gridCount, 0);
+            // 境界に外周タイルがない場合もあるので、穴の縁を含めて近景から先に埋める。
+            for (uint32_t z = minZ; z <= maxZ; ++z)
+            {
+                for (uint32_t x = minX; x <= maxX; ++x)
+                {
+                    // 穴の終端は、幅の許容誤差を持つ NVTRN の照合と同じく近景の終端に合わせる。
+                    const uint32_t nearX = x == maxX ? terrain.CellCountX : (x - minX) * cellRatio;
+                    const uint32_t nearZ = z == maxZ ? terrain.CellCountZ : (z - minZ) * cellRatio;
+                    const uint32_t tx = std::min(nearX / terrain.TileCells, terrain.TileCountX - 1);
+                    const uint32_t tz = std::min(nearZ / terrain.TileCells, terrain.TileCountZ - 1);
+                    const auto& blob = nearTiles[static_cast<size_t>(tz) * terrain.TileCountX + tx];
+                    const size_t offset = (static_cast<size_t>(nearZ - tz * terrain.TileCells) * static_cast<size_t>(nearSide) +
+                        (nearX - tx * terrain.TileCells)) * sizeof(uint16_t);
+                    const uint8_t* data = blob.GetData() + offset;
+                    const size_t target = static_cast<size_t>(z) * static_cast<size_t>(columns) + x;
+                    samples[target] = static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
+                    assigned[target] = 1;
+                }
+            }
+
+            Container::VariableArray<uint8_t> outerAssigned(static_cast<size_t>(outerTileCount), 0);
+            const uint64_t outerSide = static_cast<uint64_t>(ring.TileCells) + 1;
+            const uint64_t outerTileBytes = outerSide * outerSide * sizeof(uint16_t);
+            for (size_t index = 0; index < terrain.OuterTiles.size(); ++index)
+            {
+                const auto& tile = terrain.OuterTiles[index];
+                if (tile.TileX >= ring.TileCountX || tile.TileZ >= ring.TileCountZ ||
+                    (tile.TileX >= ring.HoleTileMinX && tile.TileX - ring.HoleTileMinX < ring.HoleTileCountX &&
+                     tile.TileZ >= ring.HoleTileMinZ && tile.TileZ - ring.HoleTileMinZ < ring.HoleTileCountZ))
+                {
+                    outError = "NVTRN の外周タイルの座標が範囲外または穴の内側です";
+                    return {};
+                }
+                const size_t coordinate = static_cast<size_t>(tile.TileZ) * ring.TileCountX + tile.TileX;
+                if (outerAssigned[coordinate] != 0)
+                {
+                    outError = "NVTRN の外周タイルの座標が重複しています";
+                    return {};
+                }
+                outerAssigned[coordinate] = 1;
+                if (tile.Height.DataSize != outerTileBytes || tile.Height.DataOffset > terrain.SourceBlob.GetSize() ||
+                    tile.Height.DataSize > terrain.SourceBlob.GetSize() - tile.Height.DataOffset)
+                {
+                    outError = "NVTRN の外周タイルの HGT0 が欠けているか大きさが不正です";
+                    return {};
+                }
+                for (uint32_t z = 0; z <= ring.TileCells; ++z)
+                {
+                    for (uint32_t x = 0; x <= ring.TileCells; ++x)
+                    {
+                        const uint16_t value = terrain.GetOuterHeightSample(static_cast<uint32_t>(index), x, z);
+                        const size_t column = static_cast<size_t>(tile.TileX) * ring.TileCells + x;
+                        const size_t row = static_cast<size_t>(tile.TileZ) * ring.TileCells + z;
+                        const size_t target = row * static_cast<size_t>(columns) + column;
+                        if (assigned[target] != 0 && samples[target] != value)
+                        {
+                            outError = "NVTRN の外周タイルまたは近景との共有標本が一致しません";
+                            return {};
+                        }
+                        samples[target] = value;
+                        assigned[target] = 1;
+                    }
+                }
+            }
+
+            Container::VariableArray<float> heights(gridCount);
+            for (size_t index = 0; index < gridCount; ++index)
+            {
+                if (assigned[index] == 0)
+                {
+                    outError = "NVTRN の外周格子に標本の欠落があります";
+                    return {};
+                }
+                heights[index] = static_cast<float>(terrain.OriginY + terrain.DecodeHeightM(samples[index]));
+                if (!std::isfinite(heights[index]))
+                {
+                    outError = "NVTRN から復元した世界座標の高さが有限の float に収まりません";
+                    return {};
+                }
+            }
+            const TerrainGridLayout layout{static_cast<uint32_t>(columns), static_cast<uint32_t>(rows),
+                ring.OriginX, ring.OriginZ, ring.CellSizeM};
+            return CreateFromSamples(layout, Container::Span<const float>(heights), nullptr, 0, outError);
+        }
+        catch (const std::bad_alloc&)
+        {
+            outError = "NVTRN の外周格子を作るメモリを確保できません";
+            return {};
+        }
+        catch (const std::length_error&)
+        {
+            outError = "NVTRN の外周格子の配列が格納上限を超えています";
+            return {};
+        }
+    }
+
+    bool TerrainHeightField::CreateOuterRingStripsFromCookedTerrain(const Asset::CookedTerrainData& terrain,
+        Container::VariableArray<Container::TSharedPtr<const TerrainHeightField>>& outStrips,
+        Container::AnsiString& outError)
+    {
+        outStrips.clear();
+        const auto full = CreateOuterRingFromCookedTerrain(terrain, outError);
+        if (!full)
+        {
+            return false;
+        }
+        const auto& ring = terrain.OuterRing;
+        const uint32_t minX = ring.HoleTileMinX * ring.TileCells;
+        const uint32_t minZ = ring.HoleTileMinZ * ring.TileCells;
+        const uint32_t maxX = minX + ring.HoleTileCountX * ring.TileCells;
+        const uint32_t maxZ = minZ + ring.HoleTileCountZ * ring.TileCells;
+        struct Rectangle
+        {
+            uint32_t MinX;
+            uint32_t MinZ;
+            uint32_t MaxX;
+            uint32_t MaxZ;
+        };
+        const Rectangle rectangles[] = {
+            {0, 0, ring.CellCountX, minZ}, {0, maxZ, ring.CellCountX, ring.CellCountZ},
+            {0, minZ, minX, maxZ}, {maxX, minZ, ring.CellCountX, maxZ}};
+        const TerrainGridLayout fullLayout = full->GetGridLayout();
+        try
+        {
+            Container::VariableArray<Container::TSharedPtr<const TerrainHeightField>> strips;
+            for (const auto& rectangle : rectangles)
+            {
+                if (rectangle.MinX == rectangle.MaxX || rectangle.MinZ == rectangle.MaxZ)
+                {
+                    continue;
+                }
+                const TerrainGridLayout layout{rectangle.MaxX - rectangle.MinX + 1, rectangle.MaxZ - rectangle.MinZ + 1,
+                    fullLayout.FirstX + rectangle.MinX * fullLayout.Spacing,
+                    fullLayout.FirstZ + rectangle.MinZ * fullLayout.Spacing, fullLayout.Spacing};
+                Container::VariableArray<float> heights(static_cast<size_t>(layout.Columns) * layout.Rows);
+                for (uint32_t z = 0; z < layout.Rows; ++z)
+                {
+                    for (uint32_t x = 0; x < layout.Columns; ++x)
+                    {
+                        heights[static_cast<size_t>(z) * layout.Columns + x] =
+                            full->GetGridVertexHeight(rectangle.MinX + x, rectangle.MinZ + z);
+                    }
+                }
+                // 各帯の開始列・行は偶数の TileCells の倍数なので、局所番号と全格子番号の和の偶奇は等しく、対角線も一致する。
+                auto strip = CreateFromSamples(layout, Container::Span<const float>(heights), nullptr, 0, outError);
+                if (!strip)
+                {
+                    return false;
+                }
+                strips.push_back(std::move(strip));
+            }
+            outStrips = std::move(strips);
+            return true;
+        }
+        catch (const std::bad_alloc&)
+        {
+            outError = "NVTRN の外周の帯を作るメモリを確保できません";
+            return false;
+        }
+        catch (const std::length_error&)
+        {
+            outError = "NVTRN の外周の帯の配列が格納上限を超えています";
+            return false;
+        }
+    }
+
     Container::TSharedPtr<const TerrainHeightField> TerrainHeightField::CreateFromSamples(
         const TerrainGridLayout& layout, Container::Span<const float> heights, const TerrainSplatSamples* splat,
         uint32_t tileCells, Container::AnsiString& outError)
