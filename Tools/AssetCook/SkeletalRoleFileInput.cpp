@@ -1,4 +1,5 @@
 ﻿#include "SkeletalRoleFileInput.h"
+#include "SkeletalRoleFileCli.h"
 #include "SkeletalRoleFileInputTestAccess.h"
 #include "SingleAssetCook.h"
 #include "NativeCookPath.h"
@@ -71,6 +72,17 @@ namespace NorvesLib::Tools::AssetCook
             }
         }
     } // namespace
+    bool Detail::LoadSkeletalBvhFileBytes(const std::filesystem::path& path, size_t maximum,
+                                           C::VariableArray<uint8_t>& out, C::AnsiString& error)
+    {
+        C::VariableArray<uint8_t> candidate;
+        if (!Read(path, maximum, "bvh", candidate, error, nullptr, nullptr))
+        {
+            return false;
+        }
+        out = std::move(candidate);
+        return true;
+    }
     bool DecodeSkeletalRoleUtf8Text(C::AnsiStringView bytes, C::String& out)
     {
         using Char = C::String::value_type;

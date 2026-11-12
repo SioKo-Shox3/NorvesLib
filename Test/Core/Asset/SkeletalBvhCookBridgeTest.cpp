@@ -6,6 +6,9 @@
 #include "Tools/AssetCook/SkeletalRoleFileInput.h"
 #include "Tools/AssetCook/SkeletalRoleFileInputTestAccess.h"
 #include "Tools/AssetCook/SkeletalRoleFileCliTestAccess.h"
+#include "Tools/AssetCook/SkeletalRoleFileCli.h"
+#include "Tools/AssetCook/NativeCookPath.h"
+#include "Text/JsonDocument.h"
 #include "Tools/AssetCook/AssetCookLegacyOptions.h"
 #include "Tools/AssetCook/AssetCookOutput.h"
 #include "M9LooseFixture.h"
@@ -1332,6 +1335,200 @@ namespace
             "SKELETAL_ROLE_FILE result=pass typed_hash_forced_cook_owned_request_dependencies_alias_mutation_publication_record_actual_sampler");
     }
 
+    void DumpFkPositions()
+    {
+        char name[80];
+        std::snprintf(name, sizeof(name), "norves-dump-fk-positions-%lld",
+                      static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto root = std::filesystem::temp_directory_path() / name;
+        CHECK(std::filesystem::create_directory(root));
+        struct Cleanup
+        {
+            std::filesystem::path Path;
+            ~Cleanup()
+            {
+                std::error_code e;
+                std::filesystem::remove_all(Path, e);
+            }
+        } cleanup{root};
+        const auto path = root / "pose.bvh";
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        CHECK(file);
+        file << R"bvh(HIERARCHY
+ROOT Hips
+{
+  OFFSET 1 2 3
+  CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+  JOINT Spine
+  {
+    OFFSET 0 1 0
+    CHANNELS 3 Zrotation Yrotation Xrotation
+    JOINT Head
+    {
+      OFFSET 0 0 2
+      CHANNELS 3 Zrotation Yrotation Xrotation
+      End Site
+      {
+        OFFSET 0 0 1
+      }
+    }
+  }
+}
+MOTION
+Frames: 2
+Frame Time: 0.0625
+10 20 30 0 0 0 0 0 0 0 0 0
+10 20 30 90 0 0 90 0 90 0 0 0
+)bvh";
+        file.close();
+        CHECK(!file.fail());
+        Text pathUtf8;
+        CHECK(Cook::Detail::EncodeCookPathUtf8(path, pathUtf8));
+        C::VariableArray<Text> tokens = {"AssetCook", "--bvh", pathUtf8, "--dump-fk", "0,1"};
+        // 列ベクトルで R = Rz・Ry・Rx。フレーム 0 は親位置に各 OFFSET を足す。
+        // フレーム 1 の Spine は Rz(90)・(0,1,0)=(-1,0,0)、Head への変位は
+        // Rz(90)・Rz(90)・Rx(90)・(0,0,2)=(0,2,0)。additive は根に (1,2,3) を加える。
+        const double expected[2][6][3] = {
+            {{10, 20, 30}, {10, 21, 30}, {10, 21, 32}, {10, 20, 30}, {9, 20, 30}, {9, 22, 30}},
+            {{11, 22, 33}, {11, 23, 33}, {11, 23, 35}, {11, 22, 33}, {10, 22, 33}, {10, 24, 33}}};
+        const char* joints[] = {"Hips", "Spine", "Head", "Hips", "Spine", "Head"};
+        const char* coordinates[] = {"x", "y", "z"};
+        for (size_t convention = 0; convention < 2; ++convention)
+        {
+            if (convention == 1)
+            {
+                tokens.push_back("--position-convention=additive");
+            }
+            Text json = "sentinel", error;
+            CHECK(Cook::Detail::RunSkeletalBvhFkDump(tokens, json, error));
+            Core::JsonDocument document;
+            CHECK(Core::JsonDocument::TryParseUtf8(TextView(json), document));
+            const auto value = document.GetRoot();
+            CHECK(value.IsObject());
+            CHECK(value.FindMember("format").IsString() && value.FindMember("format").AsString() == "norves-bvh-fk");
+            CHECK(value.FindMember("version").IsNumber() && value.FindMember("version").AsNumber() == 1);
+            CHECK(value.FindMember("producer").IsString() && value.FindMember("producer").AsString() == "AssetCook");
+            CHECK(value.FindMember("position_convention").IsString() &&
+                  value.FindMember("position_convention").AsString() == (convention == 0 ? "absolute" : "additive"));
+            const auto frames = value.FindMember("frames");
+            CHECK(frames.IsArray() && frames.GetArraySize() == 2);
+            for (size_t i = 0; i < 2; ++i)
+            {
+                CHECK(frames.GetArrayElement(i).IsNumber() && frames.GetArrayElement(i).AsNumber() == i);
+            }
+            const auto positions = value.FindMember("positions");
+            CHECK(positions.IsArray() && positions.GetArraySize() == 6);
+            for (size_t i = 0; i < 6; ++i)
+            {
+                const auto position = positions.GetArrayElement(i);
+                CHECK(position.IsObject());
+                CHECK(position.FindMember("joint").IsString() && position.FindMember("joint").AsString() == joints[i]);
+                CHECK(position.FindMember("frame").IsNumber() && position.FindMember("frame").AsNumber() == i / 3);
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    const auto coordinate = position.FindMember(coordinates[axis]);
+                    CHECK(coordinate.IsNumber());
+                    CHECK(std::abs(coordinate.AsNumber() - expected[convention][i][axis]) < 1e-9);
+                }
+            }
+        }
+    }
+
+    void DumpFkRejects()
+    {
+        char name[80];
+        std::snprintf(name, sizeof(name), "norves-dump-fk-rejects-%lld",
+                      static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto root = std::filesystem::temp_directory_path() / name;
+        CHECK(std::filesystem::create_directory(root));
+        struct Cleanup
+        {
+            std::filesystem::path Path;
+            ~Cleanup()
+            {
+                std::error_code e;
+                std::filesystem::remove_all(Path, e);
+            }
+        } cleanup{root};
+        const auto path = root / "pose.bvh";
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        CHECK(file);
+        file << R"bvh(HIERARCHY
+ROOT Hips
+{
+  OFFSET 1 2 3
+  CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+  JOINT Spine
+  {
+    OFFSET 0 1 0
+    CHANNELS 3 Zrotation Yrotation Xrotation
+    JOINT Head
+    {
+      OFFSET 0 0 2
+      CHANNELS 3 Zrotation Yrotation Xrotation
+      End Site
+      {
+        OFFSET 0 0 1
+      }
+    }
+  }
+}
+MOTION
+Frames: 2
+Frame Time: 0.0625
+10 20 30 0 0 0 0 0 0 0 0 0
+10 20 30 90 0 0 90 0 90 0 0 0
+)bvh";
+        file.close();
+        CHECK(!file.fail());
+        Text pathUtf8;
+        CHECK(Cook::Detail::EncodeCookPathUtf8(path, pathUtf8));
+        const C::VariableArray<Text> base = {"AssetCook", "--bvh", pathUtf8, "--dump-fk", "0,1"};
+        const auto reject = [](const C::VariableArray<Text>& tokens, const char* expected)
+        {
+            Text json = "sentinel", error;
+            CHECK(!Cook::Detail::RunSkeletalBvhFkDump(tokens, json, error));
+            CHECK(json == "sentinel" && error == expected);
+        };
+        for (const char* invalid : {",", "0,", ",0", "0,,1", "-1", "+1", "1.5", "a", " 1", "1 ", "0x1", "4294967296"})
+        {
+            auto tokens = base;
+            tokens[4] = invalid;
+            reject(tokens, "role_cli: dump_fk_frames");
+        }
+        auto tokens = base;
+        tokens[4] = "";
+        reject(tokens, "role_cli: empty_value");
+        tokens[4] = "1,1";
+        reject(tokens, "role_cli: dump_fk_duplicate_frame");
+        for (const char* invalid : {"2", "0,2"})
+        {
+            tokens = base;
+            tokens[4] = invalid;
+            reject(tokens, "role_cli: dump_fk_frame_out_of_range");
+        }
+        tokens = base;
+        tokens.push_back("--out");
+        tokens.push_back("x");
+        reject(tokens, "role_cli: dump_fk_output_conflict");
+        tokens = base;
+        tokens.push_back("--manifest=x");
+        reject(tokens, "role_cli: dump_fk_output_conflict");
+        tokens = base;
+        tokens.push_back("--clip-report");
+        tokens.push_back("x");
+        reject(tokens, "role_cli: dump_fk_output_conflict");
+        reject({"AssetCook", "--dump-fk", "0"}, "role_cli: dump_fk_missing_bvh");
+        tokens = base;
+        tokens.push_back("--position-convention");
+        tokens.push_back("sideways");
+        reject(tokens, "role_cli: dump_fk_position_convention");
+        tokens = base;
+        tokens.push_back("--kind");
+        tokens.push_back("model");
+        reject(tokens, "role_cli: dump_fk_unexpected_argument");
+    }
+
 } // namespace
 int main()
 {
@@ -1341,6 +1538,8 @@ int main()
     RoleCookContracts();
     RoleArgumentContracts();
     RoleFileContracts();
+    DumpFkPositions();
+    DumpFkRejects();
     std::puts(
         "SKELETAL_BVH_COOK_BRIDGE result=pass explicit_add_replace_zero_clip_rig_morph_hash_package_asset_system_sampler_atomic_no_cli");
     return 0;
