@@ -170,6 +170,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief キューブシャドウの資源を初めて要るときに作ります（失敗したら以後は点光源の影を描かない） */
         bool EnsurePointShadowResources(const ViewRenderContext& context);
 
+        /** @brief 点光源のマスク用資源だけを解放します */
+        void ReleasePointShadowAlphaClipResources();
+
         /** @brief 選ばれた点光源ごとにキューブの6面を描きます */
         void ExecutePointShadows(ViewRenderContext& context);
 
@@ -263,6 +266,13 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_SkinnedPointShadowPipeline;
         // 面ごとのUBO（非スキンの描画は面ごとに1つを共有し、スキンの描画はcomponentごと・面ごとに共有する）
         DynamicUniformAllocator m_PointShadowUniformAllocator;
+        RHI::ShaderPtr m_PointShadowAlphaClipVertexShader;
+        RHI::ShaderPtr m_SkinnedPointShadowAlphaClipVertexShader;
+        RHI::ShaderPtr m_PointShadowAlphaClipFragmentShader;
+        RHI::PipelinePtr m_PointShadowAlphaClipPipeline;
+        RHI::PipelinePtr m_SkinnedPointShadowAlphaClipPipeline;
+        DynamicUniformAllocator m_PointShadowAlphaClipUniformAllocator;
+        bool m_bLoggedPointShadowAlphaClipFailure = false;
         bool m_bPointShadowResourcesReady = false;
         bool m_bPointShadowResourcesFailed = false;
         // 最後に記録したキューブシャドウの灯の数。変わったときだけ記録する。

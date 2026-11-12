@@ -11013,3 +11013,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 CSM（ShadowMapPass の太陽のカスケード）で Masked の材質をマスク用のパイプラインで描く: 着地(直し 0 回)
 - U5 VSM の描画（VirtualShadowMapRaster）にマスク用のパイプラインと、塊の範囲ごとの切り替えを足す: 着地(直し 0 回)
 - U2 VSM の描画のシェーダーの切り抜きの版: 着地(直し 0 回)
+- U4 点光源のキューブの影で Masked の材質をマスク用のパイプラインで描く: 着地(直し 0 回)
