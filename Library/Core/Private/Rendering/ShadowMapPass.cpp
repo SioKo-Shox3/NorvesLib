@@ -17,6 +17,7 @@
 #include "Rendering/ShadowCasterRanges.h"
 #include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SparseResidencyShading.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -49,6 +50,14 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(PointShadowFaceUBO) == 224);
 
+        // 点光源の面の定数の後ろにマスクの閾値・被覆率・sparse の有無を渡す。
+        struct PointShadowAlphaClipUBO
+        {
+            PointShadowFaceUBO Base;
+            float alphaClip[4];
+        };
+        static_assert(sizeof(PointShadowAlphaClipUBO) == 240 && offsetof(PointShadowAlphaClipUBO, alphaClip) == 224);
+
         // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
         struct ShadowPerObjectUBO
         {
@@ -60,6 +69,53 @@ namespace NorvesLib::Core::Rendering
             float vertexAnimTime[4];
         };
         static_assert(sizeof(ShadowPerObjectUBO) == 224 && offsetof(ShadowPerObjectUBO, vertexAnimTime) == 208);
+
+        // マスクの閾値・被覆率と sparse の有無を既存の CSM 定数の後ろに渡す。
+        struct ShadowAlphaClipUBO
+        {
+            ShadowPerObjectUBO Base;
+            float alphaClip[4];
+        };
+        static_assert(sizeof(ShadowAlphaClipUBO) == 240 && offsetof(ShadowAlphaClipUBO, alphaClip) == 224);
+
+        // 材質の解決結果をカスケードと点光源の面の間で共有する。
+        struct ShadowAlphaClipMaterial
+        {
+            RHI::TexturePtr Albedo;
+            float Cutoff = 0.0f;
+            float Coverage = 1.0f;
+            bool bMasked = false;
+            bool bSparse = false;
+        };
+
+        ShadowAlphaClipMaterial ResolveShadowAlphaClipMaterial(const ViewRenderContext& context,
+                                                              const DrawCommand& command)
+        {
+            ShadowAlphaClipMaterial material;
+            if (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
+            {
+                const MaterialResourceData* data = context.Resources.Materials->GetData(command.Draw.MaterialHandle);
+                if (data && data->Blend == BlendMode::Masked)
+                {
+                    material.bMasked = true;
+                    material.Cutoff = data->AlphaCutoff;
+                    material.Coverage = data->ShadingParams[3] >= 0.0f ? data->ShadingParams[3] : 1.0f;
+                    if (data->AlbedoTexture.IsValid() && context.Resources.Textures)
+                    {
+                        material.Albedo = context.Resources.Textures->GetRHITexturePtr(data->AlbedoTexture);
+                        material.bSparse = AnySparseTexture(material.Albedo);
+                    }
+                }
+            }
+            return material;
+        }
+
+        bool HasSameShadowAlphaClipValues(const ShadowAlphaClipMaterial& lhs,
+                                         const ShadowAlphaClipMaterial& rhs)
+        {
+            return lhs.Albedo == rhs.Albedo && lhs.Cutoff == rhs.Cutoff &&
+                   lhs.Coverage == rhs.Coverage && lhs.bSparse == rhs.bSparse;
+        }
 
         // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
         // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
@@ -792,6 +848,10 @@ namespace NorvesLib::Core::Rendering
         // パスが所有する計画に前回の描画数と候補数を保ち、変わったときだけ記録する。
         uint32_t LoggedCasterDraws[PhysicalLightingShadowCascadeCount] = {~0u, ~0u, ~0u, ~0u};
         uint32_t LoggedCasterCandidates = ~0u;
+        uint32_t LoggedAlphaClipDraws[PhysicalLightingShadowCascadeCount] = {~0u, ~0u, ~0u, ~0u};
+        uint32_t LoggedAlphaClipFallback = ~0u;
+        uint32_t LoggedPointAlphaClipDraws = ~0u;
+        uint32_t LoggedPointAlphaClipFallback = ~0u;
 #endif
         float LightView[PhysicalLightingShadowCascadeCount][16] = {};
         float LightProjection[PhysicalLightingShadowCascadeCount][16] = {};
@@ -1076,6 +1136,70 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create skinned shadow pipeline");
             return failInitialize();
         }
+        // マスク用の資源を作れない場合も、不透明の経路で影を残す。
+        m_AlphaClipVertexShader = context.ShaderMgr->LoadShader("shadow_alphaclip.vert", RHI::ShaderStage::Vertex);
+        m_SkinnedAlphaClipVertexShader =
+            context.ShaderMgr->LoadShader("skinned_shadow_alphaclip.vert", RHI::ShaderStage::Vertex);
+        m_AlphaClipFragmentShader = context.ShaderMgr->LoadShader("shadow_alphaclip.frag", RHI::ShaderStage::Pixel);
+        bool bAlphaClipReady = m_AlphaClipVertexShader && m_SkinnedAlphaClipVertexShader && m_AlphaClipFragmentShader;
+        if (bAlphaClipReady)
+        {
+            RHI::SamplerDesc alphaSamplerDesc;
+            alphaSamplerDesc.filterMin = RHI::FilterMode::Linear;
+            alphaSamplerDesc.filterMag = RHI::FilterMode::Linear;
+            alphaSamplerDesc.filterMip = RHI::FilterMode::Linear;
+            alphaSamplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            alphaSamplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+            alphaSamplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+            m_AlphaClipSampler = m_Device->CreateSampler(alphaSamplerDesc);
+            bAlphaClipReady = static_cast<bool>(m_AlphaClipSampler);
+        }
+        if (bAlphaClipReady)
+        {
+            RHI::DescriptorSetDesc alphaDesc = dsDesc;
+            alphaDesc.bindings[0].stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+            RHI::DescriptorBinding albedoBinding;
+            albedoBinding.binding = 10;
+            albedoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            albedoBinding.stages = RHI::ShaderStage::Pixel;
+            alphaDesc.bindings.push_back(albedoBinding);
+            bAlphaClipReady = m_AlphaClipUniformAllocator.Initialize(m_Device, sizeof(ShadowAlphaClipUBO), alphaDesc);
+            if (bAlphaClipReady)
+            {
+                RHI::GraphicsPipelineDesc alphaPipelineDesc = pipelineDesc;
+                alphaPipelineDesc.vertexShader = m_AlphaClipVertexShader;
+                alphaPipelineDesc.pixelShader = m_AlphaClipFragmentShader;
+                alphaPipelineDesc.descriptorSetLayouts.clear();
+                alphaPipelineDesc.descriptorSetLayouts.push_back(alphaDesc);
+                RHI::VertexAttributeDesc uvAttr;
+                uvAttr.location = 2;
+                uvAttr.binding = 0;
+                uvAttr.format = RHI::Format::R32G32_FLOAT;
+                uvAttr.offset = sizeof(float) * 6;
+                alphaPipelineDesc.vertexAttributes.push_back(uvAttr);
+                m_AlphaClipPipeline = m_Device->CreateGraphicsPipeline(alphaPipelineDesc);
+
+                RHI::GraphicsPipelineDesc skinnedAlphaPipelineDesc = skinnedPipelineDesc;
+                skinnedAlphaPipelineDesc.vertexShader = m_SkinnedAlphaClipVertexShader;
+                skinnedAlphaPipelineDesc.pixelShader = m_AlphaClipFragmentShader;
+                skinnedAlphaPipelineDesc.descriptorSetLayouts.clear();
+                skinnedAlphaPipelineDesc.descriptorSetLayouts.push_back(alphaDesc);
+                m_SkinnedAlphaClipPipeline = m_Device->CreateGraphicsPipeline(skinnedAlphaPipelineDesc);
+                bAlphaClipReady = m_AlphaClipPipeline && m_SkinnedAlphaClipPipeline;
+            }
+        }
+        if (!bAlphaClipReady)
+        {
+            NORVES_LOG_WARNING("ShadowMapPass", "CSM の切り抜き用資源を作れないため、不透明の影を描きます");
+            m_AlphaClipPipeline.reset();
+            m_SkinnedAlphaClipPipeline.reset();
+            m_AlphaClipVertexShader.reset();
+            m_SkinnedAlphaClipVertexShader.reset();
+            m_AlphaClipFragmentShader.reset();
+            m_AlphaClipSampler.reset();
+            m_AlphaClipUniformAllocator.Shutdown();
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("ShadowMapPass", "ShadowMapPass initialized");
         return true;
@@ -1083,6 +1207,13 @@ namespace NorvesLib::Core::Rendering
 
     void ShadowMapPass::Shutdown()
     {
+        m_AlphaClipPipeline.reset();
+        m_SkinnedAlphaClipPipeline.reset();
+        m_AlphaClipVertexShader.reset();
+        m_SkinnedAlphaClipVertexShader.reset();
+        m_AlphaClipFragmentShader.reset();
+        m_AlphaClipSampler.reset();
+        m_AlphaClipUniformAllocator.Shutdown();
         m_ShadowMapTexture.reset();
         m_ShadowSampler.reset();
         m_ShadowMapHandle = {};
@@ -1103,8 +1234,10 @@ namespace NorvesLib::Core::Rendering
         m_PointShadowPipeline.reset();
         m_SkinnedPointShadowPipeline.reset();
         m_PointShadowUniformAllocator.Shutdown();
+        ReleasePointShadowAlphaClipResources();
         m_bPointShadowResourcesReady = false;
         m_bPointShadowResourcesFailed = false;
+        m_bLoggedPointShadowAlphaClipFailure = false;
         m_LoggedPointShadowLightCount = 0;
         m_MegaCasters.reset();
         m_SceneView = nullptr;
@@ -1330,12 +1463,14 @@ namespace NorvesLib::Core::Rendering
         // 境界の解決は影を落とす描画ごとに1回だけ行い、元の描画順のまま候補を保つ。
         Container::VariableArray<const DrawCommand*> casterCommands;
         Container::VariableArray<CascadedShadowDrawBounds> casterDrawBounds;
+        Container::VariableArray<ShadowAlphaClipMaterial> casterMaterials;
         if (bCanBuildShadowCommands)
         {
             Container::VariableArray<ShadowCasterMeshBounds> meshBoundsByObject;
             BuildShadowCasterMeshBounds(context.SnapshotMeshProxies, meshBoundsByObject);
             casterCommands.reserve(drawCommands.size());
             casterDrawBounds.reserve(drawCommands.size());
+            casterMaterials.reserve(drawCommands.size());
             for (const DrawCommand& command : drawCommands)
             {
                 if (!command.Draw.bCastShadow)
@@ -1349,14 +1484,18 @@ namespace NorvesLib::Core::Rendering
                                                                   bounds.Bounds);
                 // 有限な境界を求められない描画は、保守的にすべてのカスケードへ残す。
                 bounds.bHasBounds = bounds.bHasBounds && IsDrawableMegaBounds(bounds.Bounds);
+                const ShadowAlphaClipMaterial material = ResolveShadowAlphaClipMaterial(context, command);
                 casterCommands.push_back(&command);
                 casterDrawBounds.push_back(bounds);
+                casterMaterials.push_back(material);
             }
         }
         const uint32_t casterCandidateCount = static_cast<uint32_t>(casterDrawBounds.size());
         Container::VariableArray<uint32_t> selectedCasterIndices;
 #if NORVES_ENABLE_LOGGING
         uint32_t casterDrawCounts[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t alphaClipDrawCounts[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t alphaClipFallbackCount = 0;
 #endif
 
         // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに別の定数と記述子セットを借りる。
@@ -1394,12 +1533,29 @@ namespace NorvesLib::Core::Rendering
                     {
                         continue;
                     }
-                    // 定数と記述子セットを借りる
-                    auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
-                    if (!allocation.UniformBuffer)
+                    const ShadowAlphaClipMaterial& material = casterMaterials[drawIndex];
+                    const RHI::PipelinePtr& alphaPipeline = bSkinned ? m_SkinnedAlphaClipPipeline : m_AlphaClipPipeline;
+                    DynamicUniformAllocator::Allocation allocation;
+                    bool bAlphaClip = false;
+                    if (material.bMasked && material.Albedo && alphaPipeline && m_AlphaClipSampler &&
+                        m_AlphaClipUniformAllocator.IsInitialized())
                     {
-                        NORVES_LOG_WARNING("ShadowMapPass", "UBO allocation failed, skipping remaining objects");
-                        break;
+                        allocation = m_AlphaClipUniformAllocator.Allocate(context.FrameResources);
+                        bAlphaClip = allocation.IsValid();
+                    }
+                    if (!bAlphaClip)
+                    {
+                        allocation = m_UniformAllocator.Allocate(context.FrameResources);
+                        if (!allocation.UniformBuffer)
+                        {
+                            if (material.bMasked)
+                            {
+                                NORVES_LOG_WARNING("ShadowMapPass", "影の定数を借りられないため、この描画を省きます");
+                                continue;
+                            }
+                            NORVES_LOG_WARNING("ShadowMapPass", "UBO allocation failed, skipping remaining objects");
+                            break;
+                        }
                     }
 
                     // UBOデータ構築（worldSourceは0のままにしてインスタンスの行列で置く）
@@ -1414,7 +1570,21 @@ namespace NorvesLib::Core::Rendering
                     std::memcpy(uboData.vertexAnimTime, vertexAnimTime, sizeof(uboData.vertexAnimTime));
 
                     // UBO更新
-                    allocation.Write(&uboData, sizeof(ShadowPerObjectUBO));
+                    if (bAlphaClip)
+                    {
+                        ShadowAlphaClipUBO alphaUbo = {};
+                        alphaUbo.Base = uboData;
+                        alphaUbo.alphaClip[0] = material.Cutoff;
+                        alphaUbo.alphaClip[1] = bSkinned && cmd.Draw.ShadingParams[3] >= 0.0f
+                                                    ? cmd.Draw.ShadingParams[3]
+                                                    : material.Coverage;
+                        alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                        allocation.Write(&alphaUbo, sizeof(alphaUbo));
+                    }
+                    else
+                    {
+                        allocation.Write(&uboData, sizeof(ShadowPerObjectUBO));
+                    }
                     if (bSkinned)
                     {
                         allocation.DescriptorSet->BindStorageBuffer(
@@ -1435,9 +1605,18 @@ namespace NorvesLib::Core::Rendering
                                                                     0,
                                                                     instanceDataSize);
                     }
+                    if (bAlphaClip)
+                    {
+                        allocation.DescriptorSet->BindTexture(10, material.Albedo);
+                        allocation.DescriptorSet->BindSampler(10, m_AlphaClipSampler);
+                    }
                     allocation.DescriptorSet->Update();
 
-                    if (!bSkinned)
+                    if (bAlphaClip)
+                    {
+                        drawCommand.Pipeline = alphaPipeline;
+                    }
+                    else if (!bSkinned)
                     {
                         drawCommand.Pipeline = m_ShadowPipeline;
                     }
@@ -1446,6 +1625,14 @@ namespace NorvesLib::Core::Rendering
                     shadowCommands->push_back(drawCommand);
 #if NORVES_ENABLE_LOGGING
                     ++casterDrawCounts[cascadeIndex];
+                    if (bAlphaClip)
+                    {
+                        ++alphaClipDrawCounts[cascadeIndex];
+                    }
+                    else if (material.bMasked)
+                    {
+                        ++alphaClipFallbackCount;
+                    }
 #endif
                 }
             }
@@ -1516,6 +1703,22 @@ namespace NorvesLib::Core::Rendering
         }
 
 #if NORVES_ENABLE_LOGGING
+        bool bAlphaClipCountsChanged = alphaClipFallbackCount != m_FramePlan->LoggedAlphaClipFallback;
+        m_FramePlan->LoggedAlphaClipFallback = alphaClipFallbackCount;
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            bAlphaClipCountsChanged = bAlphaClipCountsChanged ||
+                alphaClipDrawCounts[cascadeIndex] != m_FramePlan->LoggedAlphaClipDraws[cascadeIndex];
+            m_FramePlan->LoggedAlphaClipDraws[cascadeIndex] = alphaClipDrawCounts[cascadeIndex];
+        }
+        if (bAlphaClipCountsChanged)
+        {
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSM の切り抜きの描画: CSM_ALPHA_CLIP c0=%u c1=%u c2=%u c3=%u fallback=%u",
+                            alphaClipDrawCounts[0], alphaClipDrawCounts[1],
+                            alphaClipDrawCounts[2], alphaClipDrawCounts[3], alphaClipFallbackCount);
+        }
+
         // 候補数との差が省いた描画数になる。描画数か候補数が変わったときだけ記録する。
         bool bCasterCountsChanged = casterCandidateCount != m_FramePlan->LoggedCasterCandidates;
         m_FramePlan->LoggedCasterCandidates = casterCandidateCount;
@@ -1771,6 +1974,16 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void ShadowMapPass::ReleasePointShadowAlphaClipResources()
+    {
+        m_PointShadowAlphaClipPipeline.reset();
+        m_SkinnedPointShadowAlphaClipPipeline.reset();
+        m_PointShadowAlphaClipVertexShader.reset();
+        m_SkinnedPointShadowAlphaClipVertexShader.reset();
+        m_PointShadowAlphaClipFragmentShader.reset();
+        m_PointShadowAlphaClipUniformAllocator.Shutdown();
+    }
+
     bool ShadowMapPass::EnsurePointShadowResources(const ViewRenderContext& context)
     {
         if (m_bPointShadowResourcesReady)
@@ -1794,6 +2007,7 @@ namespace NorvesLib::Core::Rendering
             m_PointShadowPipeline.reset();
             m_SkinnedPointShadowPipeline.reset();
             m_PointShadowUniformAllocator.Shutdown();
+            ReleasePointShadowAlphaClipResources();
             m_bPointShadowResourcesFailed = true;
             return false;
         };
@@ -1928,6 +2142,60 @@ namespace NorvesLib::Core::Rendering
             return failPointShadow("skinned pipeline");
         }
 
+        // 不透明の資源を保ったまま、マスク用の記述子とパイプラインを別に作る。
+        ReleasePointShadowAlphaClipResources();
+        m_PointShadowAlphaClipVertexShader =
+            context.ShaderMgr->LoadShader("point_shadow_alphaclip.vert", RHI::ShaderStage::Vertex);
+        m_SkinnedPointShadowAlphaClipVertexShader =
+            context.ShaderMgr->LoadShader("skinned_point_shadow_alphaclip.vert", RHI::ShaderStage::Vertex);
+        m_PointShadowAlphaClipFragmentShader =
+            context.ShaderMgr->LoadShader("point_shadow_alphaclip.frag", RHI::ShaderStage::Pixel);
+        bool bAlphaClipReady = m_AlphaClipSampler && m_PointShadowAlphaClipVertexShader &&
+                               m_SkinnedPointShadowAlphaClipVertexShader && m_PointShadowAlphaClipFragmentShader;
+        if (bAlphaClipReady)
+        {
+            RHI::DescriptorSetDesc alphaDesc = setDesc;
+            RHI::DescriptorBinding albedoBinding;
+            albedoBinding.binding = 10;
+            albedoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            albedoBinding.stages = RHI::ShaderStage::Pixel;
+            alphaDesc.bindings.push_back(albedoBinding);
+            bAlphaClipReady = m_PointShadowAlphaClipUniformAllocator.Initialize(
+                m_Device, sizeof(PointShadowAlphaClipUBO), alphaDesc);
+            if (bAlphaClipReady)
+            {
+                RHI::GraphicsPipelineDesc alphaPipelineDesc = pipelineDesc;
+                alphaPipelineDesc.vertexShader = m_PointShadowAlphaClipVertexShader;
+                alphaPipelineDesc.pixelShader = m_PointShadowAlphaClipFragmentShader;
+                alphaPipelineDesc.descriptorSetLayouts.clear();
+                alphaPipelineDesc.descriptorSetLayouts.push_back(alphaDesc);
+                RHI::VertexAttributeDesc uvAttribute;
+                uvAttribute.location = 2;
+                uvAttribute.binding = 0;
+                uvAttribute.format = RHI::Format::R32G32_FLOAT;
+                uvAttribute.offset = sizeof(float) * 6;
+                alphaPipelineDesc.vertexAttributes.push_back(uvAttribute);
+                m_PointShadowAlphaClipPipeline = m_Device->CreateGraphicsPipeline(alphaPipelineDesc);
+
+                RHI::GraphicsPipelineDesc skinnedAlphaPipelineDesc = skinnedPipelineDesc;
+                skinnedAlphaPipelineDesc.vertexShader = m_SkinnedPointShadowAlphaClipVertexShader;
+                skinnedAlphaPipelineDesc.pixelShader = m_PointShadowAlphaClipFragmentShader;
+                skinnedAlphaPipelineDesc.descriptorSetLayouts.clear();
+                skinnedAlphaPipelineDesc.descriptorSetLayouts.push_back(alphaDesc);
+                m_SkinnedPointShadowAlphaClipPipeline = m_Device->CreateGraphicsPipeline(skinnedAlphaPipelineDesc);
+                bAlphaClipReady = m_PointShadowAlphaClipPipeline && m_SkinnedPointShadowAlphaClipPipeline;
+            }
+        }
+        if (!bAlphaClipReady)
+        {
+            if (!m_bLoggedPointShadowAlphaClipFailure)
+            {
+                NORVES_LOG_WARNING("ShadowMapPass", "点光源のキューブの切り抜き用資源を作れないため、不透明の影を描きます");
+                m_bLoggedPointShadowAlphaClipFailure = true;
+            }
+            ReleasePointShadowAlphaClipResources();
+        }
+
         m_bPointShadowResourcesReady = true;
         NORVES_LOG_INFO("ShadowMapPass",
                         "点光源のキューブシャドウを作成: point_shadow_face_resolution=%u "
@@ -1949,10 +2217,29 @@ namespace NorvesLib::Core::Rendering
                             "点光源のキューブシャドウ: point_shadow_lights=%u",
                             lightCount);
         }
+#if NORVES_ENABLE_LOGGING
+        uint32_t alphaClipDrawCount = 0;
+        uint32_t alphaClipFallbackCount = 0;
+        const auto logAlphaClipCounts = [&]()
+        {
+            if (m_FramePlan && (alphaClipDrawCount != m_FramePlan->LoggedPointAlphaClipDraws ||
+                                alphaClipFallbackCount != m_FramePlan->LoggedPointAlphaClipFallback))
+            {
+                m_FramePlan->LoggedPointAlphaClipDraws = alphaClipDrawCount;
+                m_FramePlan->LoggedPointAlphaClipFallback = alphaClipFallbackCount;
+                NORVES_LOG_INFO("ShadowMapPass",
+                                "点光源のキューブの影の切り抜きの描画: POINT_SHADOW_ALPHA_CLIP draws=%u fallback=%u",
+                                alphaClipDrawCount, alphaClipFallbackCount);
+            }
+        };
+#endif
         // 影を落とす点光源が無いフレームは何も描かない（Declareも公開しない）。
         if (lightCount == 0 || !m_PointShadowCubeHandle.IsValid() ||
             !EnsurePointShadowResources(context))
         {
+#if NORVES_ENABLE_LOGGING
+            logAlphaClipCounts();
+#endif
             return;
         }
 
@@ -1970,6 +2257,7 @@ namespace NorvesLib::Core::Rendering
         struct PointShadowCaster
         {
             DrawCommand Command;
+            ShadowAlphaClipMaterial Material;
             BoundingSphere Bounds;
             bool bHasBounds = false;
             bool bSkinned = false;
@@ -2003,6 +2291,11 @@ namespace NorvesLib::Core::Rendering
                     }
                     caster.Command = command;
                     caster.Command.Pipeline = m_PointShadowPipeline;
+                }
+                caster.Material = ResolveShadowAlphaClipMaterial(context, command);
+                if (caster.bSkinned && command.Draw.ShadingParams[3] >= 0.0f)
+                {
+                    caster.Material.Coverage = command.Draw.ShadingParams[3];
                 }
                 caster.bHasBounds = ResolveShadowCasterDrawBounds(command,
                                                                  meshBoundsByObject,
@@ -2063,6 +2356,16 @@ namespace NorvesLib::Core::Rendering
                     // 非スキンの描画はこの面のUBOとインスタンスを1つの記述子セットで共有する。
                     RHI::DescriptorSetPtr sharedFaceSet;
                     SkinnedShadowComponentBindings<RHI::DescriptorSetPtr> skinnedFaceSets;
+                    // 静的は解決済みの値で共有し、スキンは材質ごとに部品の共有を分ける。
+                    struct AlphaClipFaceBindings
+                    {
+                        MaterialHandle Handle;
+                        ShadowAlphaClipMaterial Material;
+                        bool bSkinned = false;
+                        RHI::DescriptorSetPtr StaticSet;
+                        SkinnedShadowComponentBindings<RHI::DescriptorSetPtr> SkinnedSets;
+                    };
+                    Container::VariableArray<AlphaClipFaceBindings> alphaFaceSets;
                     for (const PointShadowCaster& caster : casters)
                     {
                         if (caster.bHasBounds &&
@@ -2072,7 +2375,85 @@ namespace NorvesLib::Core::Rendering
                         }
 
                         DrawCommand drawCommand = caster.Command;
-                        if (caster.bSkinned)
+                        const ShadowAlphaClipMaterial& material = caster.Material;
+                        const RHI::PipelinePtr& alphaPipeline = caster.bSkinned
+                            ? m_SkinnedPointShadowAlphaClipPipeline : m_PointShadowAlphaClipPipeline;
+                        bool bAlphaClip = false;
+                        if (material.bMasked && material.Albedo && alphaPipeline && m_AlphaClipSampler &&
+                            m_PointShadowAlphaClipUniformAllocator.IsInitialized())
+                        {
+                            const auto createAlphaSet = [&]() -> RHI::DescriptorSetPtr
+                            {
+                                auto allocation = m_PointShadowAlphaClipUniformAllocator.Allocate(context.FrameResources);
+                                if (!allocation.IsValid())
+                                {
+                                    return {};
+                                }
+                                PointShadowAlphaClipUBO alphaUbo = {};
+                                alphaUbo.Base = faceData;
+                                alphaUbo.alphaClip[0] = material.Cutoff;
+                                alphaUbo.alphaClip[1] = material.Coverage;
+                                alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                                allocation.Write(&alphaUbo, sizeof(alphaUbo));
+                                allocation.DescriptorSet->BindTexture(10, material.Albedo);
+                                allocation.DescriptorSet->BindSampler(10, m_AlphaClipSampler);
+                                if (caster.bSkinned)
+                                {
+                                    if (!BindSkinnedShadowStorage(drawCommand.Skinned.Prepared, allocation.DescriptorSet.get()))
+                                    {
+                                        return {};
+                                    }
+                                }
+                                else
+                                {
+                                    allocation.DescriptorSet->BindStorageBuffer(7, context.InstanceDataBuffer, 0, instanceDataSize);
+                                    allocation.DescriptorSet->Update();
+                                }
+                                return allocation.DescriptorSet;
+                            };
+                            size_t bindingIndex = 0;
+                            for (; bindingIndex < alphaFaceSets.size(); ++bindingIndex)
+                            {
+                                const AlphaClipFaceBindings& binding = alphaFaceSets[bindingIndex];
+                                if (binding.bSkinned == caster.bSkinned &&
+                                    (!caster.bSkinned || binding.Handle == drawCommand.Draw.MaterialHandle) &&
+                                    HasSameShadowAlphaClipValues(binding.Material, material))
+                                {
+                                    break;
+                                }
+                            }
+                            if (bindingIndex == alphaFaceSets.size())
+                            {
+                                AlphaClipFaceBindings binding;
+                                binding.Handle = drawCommand.Draw.MaterialHandle;
+                                binding.Material = material;
+                                binding.bSkinned = caster.bSkinned;
+                                if (!caster.bSkinned)
+                                {
+                                    binding.StaticSet = createAlphaSet();
+                                }
+                                alphaFaceSets.push_back(binding);
+                            }
+                            AlphaClipFaceBindings& binding = alphaFaceSets[bindingIndex];
+                            if (caster.bSkinned)
+                            {
+                                const auto& prepared = drawCommand.Skinned.Prepared;
+                                const SkinnedShadowBindingKey key{prepared.ComponentId, prepared.PreparationEpoch,
+                                    prepared.MeshHandle.Id, prepared.MeshHandle.Generation,
+                                    prepared.PaletteBuffer.get(), prepared.VertexBuffer.get()};
+                                bAlphaClip = binding.SkinnedSets.TryGet(key, createAlphaSet, drawCommand.DescriptorSet);
+                            }
+                            else
+                            {
+                                drawCommand.DescriptorSet = binding.StaticSet;
+                                bAlphaClip = static_cast<bool>(binding.StaticSet);
+                            }
+                        }
+                        if (bAlphaClip)
+                        {
+                            drawCommand.Pipeline = alphaPipeline;
+                        }
+                        else if (caster.bSkinned)
                         {
                             const auto& prepared = drawCommand.Skinned.Prepared;
                             const SkinnedShadowBindingKey key{prepared.ComponentId,prepared.PreparationEpoch,
@@ -2122,6 +2503,16 @@ namespace NorvesLib::Core::Rendering
                         }
                         drawCommand.DescriptorSetSlot = 0;
                         faceCommands->push_back(drawCommand);
+#if NORVES_ENABLE_LOGGING
+                        if (bAlphaClip)
+                        {
+                            ++alphaClipDrawCount;
+                        }
+                        else if (material.bMasked)
+                        {
+                            ++alphaClipFallbackCount;
+                        }
+#endif
                     }
 
                     Container::String faceLevels;
@@ -2188,6 +2579,9 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+#if NORVES_ENABLE_LOGGING
+        logAlphaClipCounts();
+#endif
         if (pointMegaLevels != m_LoggedPointMegaLevels)
         {
             m_LoggedPointMegaLevels = pointMegaLevels;
