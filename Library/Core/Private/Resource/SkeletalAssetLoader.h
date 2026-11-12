@@ -19,6 +19,8 @@ namespace NorvesLib::Core::ResourceIO
     {
         Container::TSharedPtr<const Asset::AssetSystem> Assets;
         Container::AnsiString LogicalPath;
+        // manifestに項目がない場合に限り、ソース資産の読み込みを許可する。
+        bool bAllowLoose = false;
     };
     enum class SkeletalAssetLoadStatus : uint8_t
     {
@@ -61,6 +63,7 @@ namespace NorvesLib::Core::ResourceIO
         [[nodiscard]] const Asset::CookedSkeletalData* GetData() const noexcept;
         [[nodiscard]] Container::AnsiStringView GetLogicalPath() const noexcept;
         [[nodiscard]] const Container::String* GetResourcePath() const noexcept;
+        [[nodiscard]] Asset::AssetResolveSource GetSource() const noexcept;
 
       private:
         struct State;

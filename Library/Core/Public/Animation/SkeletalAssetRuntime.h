@@ -94,6 +94,8 @@ namespace NorvesLib::Core
         size_t MaxBundleClips = 1024;
         uint64_t MaxRegistrySlots = 65536, MaxRegistryMapEntries = 262144, MaxRegistryBuckets = 1048576;
         size_t MaxSplitKeyBytes = 256 * 1024;
+        // manifestに項目がない場合、単一骨格のソース資産読み込みを許可する。
+        bool bAllowLoose = false;
     };
     struct SkeletalAdmissionResult
     {

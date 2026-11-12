@@ -1,8 +1,10 @@
 ﻿// 草原のクック済み地形を TerrainComponent で配置し、谷・尾根・低い視点の見え方を確かめる開発用シーン。
 // 視点は SceneCatalog.h の kGrasslandViews（near・valley・low）。自由飛行と撮影時の視点の切り替えに対応する。
 // 開発ビルドでは H キーで犬大の代役を追う視点へ切り替え、主人公との間の草の間引きを確認する。
+// --grassland-streaming では地形の区画・散布・岩の当たりをセル単位で出し入れする。
 // 地形は Assets/TerrainSpecs/Grassland/GrasslandTerrain.json と Scripts/Terrain/GenerateGrasslandHeight.py から
-// クックした Assets/Terrain/Grassland/Grassland.nvtrn と Tiles/GrasslandTile_<x>_<z>.generated を使う。
+// クックした Assets/Terrain/Grassland/Grassland.nvtrn と近景の Tiles/GrasslandTile_<x>_<z>.generated、
+// 外周の Tiles/GrasslandTile_outer_<x>_<z>.generated を使う。
 #pragma once
 
 #include "Core/Public/Container/String.h"
@@ -11,6 +13,10 @@
 #include "Core/Public/GameMode/TGameMode.h"
 #include "Core/Public/Input/IInputController.h"
 #include "Core/Public/Scatter/ScatterSystem.h"
+#if NORVES_BUILD_DEVELOPMENT
+#include "Core/Public/Streaming/StreamingSystem.h"
+#include "Core/Public/Streaming/WorldPayloadHandlers.h"
+#endif
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
 #include "Scenes/SceneViewSwitch.h"
@@ -72,6 +78,8 @@ namespace Game::GameModes
         Game::Scenes::FreeCameraRig m_Rig;
         /// 地形の配置完了を確かめる非所有の参照。実体はスコープで追跡した Entity が所有する
         NorvesLib::Core::Component::TerrainComponent* m_pTerrain = nullptr;
+        /// 地形の広さから決めた遠方面。未設定なら 0。後から作る主人公カメラにも使う
+        float m_TerrainFarPlane = 0.0f;
         /// 散布と、地形の配置を待つ開発用の合成本数。
         NorvesLib::Core::Scatter::ScatterHandle m_Scatter = NorvesLib::Core::Scatter::kInvalidScatterHandle;
         uint32_t m_ScatterStressCount = 0;
@@ -87,6 +95,18 @@ namespace Game::GameModes
         float m_RunAngle = 0.0f;
         uint32_t m_TickCount = 0;
 #if NORVES_BUILD_DEVELOPMENT
+        /// セル単位の流し込みを有効にする起動引数。
+        bool m_bStreaming = false;
+        NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::Streaming::TerrainTilePayloadHandler> m_TerrainHandler;
+        NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::Streaming::ScatterChunkPayloadHandler> m_ScatterHandler;
+        NorvesLib::Core::Streaming::CellManifest m_StreamingManifest;
+        NorvesLib::Core::Streaming::StreamingSystemSettings m_PreviousStreamingSettings;
+        NorvesLib::Math::Vector3 m_PreviousStreamingFocus;
+        bool m_bTerrainHandlerRegistered = false;
+        bool m_bScatterHandlerRegistered = false;
+        bool m_bStreamingSettingsChanged = false;
+        bool m_bStreamingManifestLoaded = false;
+        bool m_bPreviousStreamingFocus = false;
         /// H キーの押下を集約する、主人公視点専用の入力の受け手
         GrasslandViewInputCollector m_ViewInput;
         /// 入力ルーターへの登録を Leave で返すための印

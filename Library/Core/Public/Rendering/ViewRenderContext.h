@@ -561,6 +561,75 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief 真上からの雨の遮蔽の深度マップを後続のパスへ渡す資源。
+     *
+     * 深度 =（TopY − y）÷ RangeMeters、1.0 は上が開けている。
+     * u =（x − OriginX）÷ CoverageMeters、v =（z − OriginZ）÷ CoverageMeters。
+     * テクセルの列が X、行が Z。OriginX・OriginZ は窓の最小角のワールド座標（m）。
+     * 一致しない・無効のときは、引く側が「開けている」として扱う。
+     */
+    struct OverheadHeightMapResources
+    {
+        uint64_t FrameNumber = 0;
+        uint32_t ViewId = UINT32_MAX;
+        uint32_t ViewportId = UINT32_MAX;
+        bool bActive = false;
+
+        RHI::TexturePtr Texture;
+        RHI::SamplerPtr Sampler;
+        float OriginX = 0.0f;
+        float OriginZ = 0.0f;
+        float TexelMeters = 0.0f;
+        float CoverageMeters = 0.0f;
+        uint32_t Resolution = 0u;
+        float TopY = 0.0f;
+        float RangeMeters = 0.0f;
+        /** @brief 描いた中身があるか。 */
+        bool bValid = false;
+
+        void Publish(uint64_t frameNumber,
+                     uint32_t viewId,
+                     uint32_t viewportId,
+                     const RHI::TexturePtr& texture,
+                     const RHI::SamplerPtr& sampler,
+                     float originX,
+                     float originZ,
+                     float texelMeters,
+                     float coverageMeters,
+                     uint32_t resolution,
+                     float topY,
+                     float rangeMeters,
+                     bool bValidValue)
+        {
+            FrameNumber = frameNumber;
+            ViewId = viewId;
+            ViewportId = viewportId;
+            bActive = true;
+            Texture = texture;
+            Sampler = sampler;
+            OriginX = originX;
+            OriginZ = originZ;
+            TexelMeters = texelMeters;
+            CoverageMeters = coverageMeters;
+            Resolution = resolution;
+            TopY = topY;
+            RangeMeters = rangeMeters;
+            bValid = bValidValue;
+        }
+
+        bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId) const
+        {
+            return bActive && bValid && Texture && FrameNumber == frameNumber &&
+                   ViewId == viewId && ViewportId == viewportId;
+        }
+
+        void Invalidate()
+        {
+            *this = OverheadHeightMapResources{};
+        }
+    };
+
+    /**
      * @brief View描画コンテキスト
      *
      * View::Render()に渡される描画実行に必要なリソースの参照をまとめた構造体。
@@ -578,6 +647,7 @@ namespace NorvesLib::Core::Rendering
         PhysicalLightingResources PhysicalLighting;
         SkyAtmosphereRenderResources SkyAtmosphere;
         SkyOcclusionRenderResources SkyOcclusion;
+        OverheadHeightMapResources OverheadHeightMap;
 
         // ========================================
         // RHIリソース
@@ -1139,6 +1209,14 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketの単調なフレーム番号 */
         uint64_t FrameNumber = 0;
+
+        /**
+         * @brief このビューの今のフレームに TAA が実際に掛かるか。
+         *
+         * SceneView::Render が SetTemporalAAApplied と同じ値を立てる。
+         * 切り抜きの Hash はこれが偽なら Test に落ちる。
+         */
+        bool bTemporalAAApplied = false;
 
         /**
          * @brief RenderThread が記録したフレームごとに 1 ずつ増える通し番号（同じフレームの全ビューポートで同じ値）

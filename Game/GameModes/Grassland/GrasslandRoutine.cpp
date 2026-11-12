@@ -1,9 +1,12 @@
 ﻿// 草原の谷と尾根を、既定の 1 層の材質・物理空・太陽で描く開発用シーン。
-// 地形の出どころは GrasslandTerrain.json と GenerateGrasslandHeight.py。クック済みの高さ場と 4×4 の区画を使う。
+// 地形の出どころは GrasslandTerrain.json と GenerateGrasslandHeight.py。近景 4×4 と外周の区画を使う。
 // near は地表から 0.6 m、valley は谷底から尾根、low は谷沿いを低い角度で見る固定視点。
 #include "GameModes/Grassland/GrasslandMode.h"
 #include "GameModes/Grassland/GrasslandScatter.h"
 
+#if NORVES_BUILD_DEVELOPMENT
+#include "Core/Public/Asset/AssetFileReader.h"
+#endif
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/GrassFieldComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
@@ -262,6 +265,10 @@ namespace Game::GameModes
             camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
             camera->SetExposureCompensation(0.0f);
             camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
+            if (data.m_TerrainFarPlane > 0.0f)
+            {
+                camera->SetFarPlane(std::fmax(camera->GetFarPlane(), data.m_TerrainFarPlane));
+            }
             data.m_pHero = hero;
             data.m_pHeroMesh = heroMesh;
             data.m_pHeroCamera = camera;
@@ -355,6 +362,12 @@ namespace Game::GameModes
             component->SetLayerTablePath("TerrainSpecs/Grassland/GrasslandLayers.json");
             component->SetTilePathPrefix("Assets/Terrain/Grassland/Tiles/GrasslandTile_");
             data.m_pTerrain = component;
+#if NORVES_BUILD_DEVELOPMENT
+            if (data.m_bStreaming)
+            {
+                component->SetTileStreaming(true);
+            }
+#endif
             return true;
         }
 
@@ -392,6 +405,140 @@ namespace Game::GameModes
             return true;
         }
 
+#if NORVES_BUILD_DEVELOPMENT
+        constexpr Streaming::StreamingScopeId kGrasslandStreamingScopeId = 0x47524153534c414eULL;
+
+        void StopGrasslandStreaming(GameModeContext& ctx, GrasslandData& data)
+        {
+            auto& system = ctx.EngineRef.GetStreamingSystem();
+            if (data.m_bStreamingManifestLoaded)
+            {
+                system.StopAndJoin(kGrasslandStreamingScopeId);
+                data.m_bStreamingManifestLoaded = false;
+            }
+            if (data.m_TerrainHandler)
+            {
+                data.m_TerrainHandler->UnbindSite("grassland");
+            }
+            if (data.m_bScatterHandlerRegistered)
+            {
+                system.UnregisterHandler(data.m_ScatterHandler.get());
+                data.m_bScatterHandlerRegistered = false;
+            }
+            if (data.m_bTerrainHandlerRegistered)
+            {
+                system.UnregisterHandler(data.m_TerrainHandler.get());
+                data.m_bTerrainHandlerRegistered = false;
+            }
+            data.m_ScatterHandler.reset();
+            data.m_TerrainHandler.reset();
+            if (data.m_bStreamingSettingsChanged)
+            {
+                system.SetSettings(data.m_PreviousStreamingSettings);
+                data.m_bStreamingSettingsChanged = false;
+            }
+            data.m_StreamingManifest = Streaming::CellManifest{};
+            data.m_bPreviousStreamingFocus = false;
+        }
+
+        bool StartGrasslandStreaming(GameModeContext& ctx, GrasslandData& data)
+        {
+            auto& scatter = ctx.EngineRef.GetScatterSystem();
+            if (data.m_Scatter == Scatter::kInvalidScatterHandle ||
+                !scatter.SetScatterName(data.m_Scatter, "grassland") ||
+                !scatter.SetDistanceResidency(data.m_Scatter, false))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING 散布の登録または常駐設定に失敗しました");
+                return false;
+            }
+
+            Asset::AssetReadRequest request;
+            request.InputPath = "World/Grassland.cells.json";
+            request.bAllowAbsolutePath = false;
+            request.MaxReadBytes = 1024u * 1024u;
+            const auto file = Asset::AssetFileReader().Read(request);
+            if (!file.Succeeded())
+            {
+                LOG_ERROR("GRASSLAND_STREAMING status=%u reason=%s セルのマニフェストを読めません",
+                          static_cast<unsigned>(file.Status), file.Reason.c_str());
+                return false;
+            }
+            const uint8_t* bytes = file.Blob.GetData();
+            size_t size = file.Blob.GetSize();
+            if (size >= 3 && bytes[0] == 0xefu && bytes[1] == 0xbbu && bytes[2] == 0xbfu)
+            {
+                bytes += 3;
+                size -= 3;
+            }
+            Container::String text;
+            if (size != 0)
+            {
+                text.append(reinterpret_cast<const char*>(bytes), size);
+            }
+            const char* kinds[] = {Streaming::kTerrainTilePayloadKind, Streaming::kScatterChunkPayloadKind,
+                                   Streaming::kStaticCollidersPayloadKind};
+            Streaming::CellManifestError error;
+            if (!Streaming::CellManifest::TryParse(text, {kinds, 3}, data.m_StreamingManifest, &error))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING error=%s cell=%d payload=%d %s",
+                          Streaming::ToString(error.Code), error.CellIndex, error.PayloadIndex, error.Message.c_str());
+                return false;
+            }
+
+            auto& system = ctx.EngineRef.GetStreamingSystem();
+            data.m_TerrainHandler = Container::MakeUnique<Streaming::TerrainTilePayloadHandler>(ctx.EngineRef.GetTerrainSystem());
+            data.m_ScatterHandler = Container::MakeUnique<Streaming::ScatterChunkPayloadHandler>(scatter);
+            if (!data.m_TerrainHandler->BindSite("grassland", &data.m_pTerrain->GetTileSite()))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING 地形の配置先を束ねられません");
+                return false;
+            }
+            if (!system.RegisterHandler(data.m_TerrainHandler.get()))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING 地形のハンドラーを登録できません");
+                return false;
+            }
+            data.m_bTerrainHandlerRegistered = true;
+            if (!system.RegisterHandler(data.m_ScatterHandler.get()))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING 散布のハンドラーを登録できません");
+                return false;
+            }
+            data.m_bScatterHandlerRegistered = true;
+
+            data.m_PreviousStreamingSettings = system.GetSettings();
+            Streaming::StreamingSystemSettings settings;
+            settings.Ring.ActiveRadius = 192.0f;
+            settings.Ring.DormantRadius = 320.0f;
+            settings.Ring.UnloadRadius = 448.0f;
+            if (!system.SetSettings(settings))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING セルの距離を設定できません");
+                return false;
+            }
+            data.m_bStreamingSettingsChanged = true;
+            if (!system.LoadManifestFromText(text, &error, kGrasslandStreamingScopeId))
+            {
+                LOG_ERROR("GRASSLAND_STREAMING error=%s cell=%d payload=%d %s",
+                          Streaming::ToString(error.Code), error.CellIndex, error.PayloadIndex, error.Message.c_str());
+                return false;
+            }
+            data.m_bStreamingManifestLoaded = true;
+            ctx.ScopeRef.TrackStreaming(system, kGrasslandStreamingScopeId);
+            if (const auto* camera = data.m_Rig.GetCamera())
+            {
+                if (const auto* owner = camera->GetOwner())
+                {
+                    system.SetFocus({owner->GetPosition(), Math::Vector3::Zero});
+                }
+            }
+            data.m_bPreviousStreamingFocus = false;
+            LOG_INFO("GRASSLAND_STREAMING cells=%u セルの流し込みを開始します",
+                     static_cast<unsigned>(data.m_StreamingManifest.GetCells().size()));
+            return true;
+        }
+#endif
+
         void ApplyEnvironment(GameModeContext& ctx)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
@@ -421,6 +568,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetWindParameters(MakeDefaultWindParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
         }
     } // namespace
 
@@ -431,6 +579,7 @@ namespace Game::GameModes
         data.m_pRunningBody = nullptr;
         data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
+        data.m_TerrainFarPlane = 0.0f;
         data.m_Scatter = Scatter::kInvalidScatterHandle;
         data.m_bScatterPending = data.m_ScatterStressCount > 0;
         data.m_pTerrainCollider = nullptr;
@@ -476,6 +625,16 @@ namespace Game::GameModes
         camera->SetExposureCompensation(0.0f);
         camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
 #if NORVES_BUILD_DEVELOPMENT
+        if (data.m_bStreaming && !StartGrasslandStreaming(ctx, data))
+        {
+            StopGrasslandStreaming(ctx, data);
+            ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
+            data.m_Scatter = Scatter::kInvalidScatterHandle;
+            data.m_Rig.Leave(ctx);
+            ResetEnvironment(ctx);
+            Game::Scenes::EndSceneAssembly(ctx.EngineRef);
+            return GameModeEnterResult::Failed;
+        }
         data.m_ViewInput.OnInputReset();
         ctx.EngineRef.GetInputRouter().RegisterController(&data.m_ViewInput, I::InputRouter::PriorityGame);
         data.m_bViewInputRegistered = true;
@@ -486,6 +645,33 @@ namespace Game::GameModes
     void GrasslandRoutine::Tick(GameModeContext& ctx, GrasslandData& data, float deltaTime)
     {
         ++data.m_TickCount;
+        if (data.m_TerrainFarPlane == 0.0f && data.m_pTerrain != nullptr)
+        {
+            float minX = 0.0f;
+            float minZ = 0.0f;
+            float maxX = 0.0f;
+            float maxZ = 0.0f;
+            if (data.m_pTerrain->GetTerrainBoundsXZ(minX, minZ, maxX, maxZ))
+            {
+                const float width = maxX - minX;
+                const float depth = maxZ - minZ;
+                const float diagonal = std::sqrt(width * width + depth * depth);
+                // 地形内のどの視点からも端まで描き、影も地形全体に落とす。
+                auto* camera = data.m_Rig.GetCamera();
+                data.m_TerrainFarPlane = std::fmax(camera->GetFarPlane(), diagonal * 1.1f);
+                camera->SetFarPlane(data.m_TerrainFarPlane);
+#if NORVES_BUILD_DEVELOPMENT
+                if (data.m_pHeroCamera != nullptr)
+                {
+                    data.m_pHeroCamera->SetFarPlane(std::fmax(data.m_pHeroCamera->GetFarPlane(), data.m_TerrainFarPlane));
+                }
+#endif
+                ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(diagonal);
+                LOG_INFO("GRASSLAND_TERRAIN_EXTENT min=(%.3f,%.3f) max=(%.3f,%.3f) far_m=%.3f shadow_m=%.3f",
+                         static_cast<double>(minX), static_cast<double>(minZ), static_cast<double>(maxX),
+                         static_cast<double>(maxZ), static_cast<double>(data.m_TerrainFarPlane), static_cast<double>(diagonal));
+            }
+        }
 #if NORVES_BUILD_DEVELOPMENT
         const bool bViewRequested = data.m_pViewSwitch != nullptr && data.m_pViewSwitch->IsRequested();
         if (bViewRequested && data.m_bHeroView)
@@ -524,10 +710,41 @@ namespace Game::GameModes
 #endif
         UpdateRunningBody(data, bSuspended ? 0.0f : deltaTime);
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
-        // すべての区画が揃ってから撮影を許可する。欠損区画を含む地形を準備完了として扱わない。
-        const bool bTerrainReady = data.m_pTerrain != nullptr && data.m_pTerrain->IsFullyPlaced() &&
-                                   data.m_pTerrain->GetPlacedTileCount() == data.m_pTerrain->GetTileCount();
-        if (bTerrainReady && !data.m_bTerrainColliderAttempted)
+        // 通常は全区画、流し込みではカメラを含むセルが揃うまで準備完了を待つ。
+        bool bTerrainReady = data.m_pTerrain != nullptr && data.m_pTerrain->IsFullyPlaced() &&
+                             data.m_pTerrain->GetPlacedTileCount() == data.m_pTerrain->GetTileCount();
+        bool bCanAttachTerrainCollider = bTerrainReady;
+#if NORVES_BUILD_DEVELOPMENT
+        if (data.m_bStreaming)
+        {
+            bCanAttachTerrainCollider = data.m_pTerrain != nullptr && data.m_pTerrain->GetHeightField() != nullptr;
+            bTerrainReady = false;
+            const Component::CameraComponent* camera = data.m_bHeroView ? data.m_pHeroCamera : data.m_Rig.GetCamera();
+            if (camera != nullptr && camera->GetOwner() != nullptr)
+            {
+                const Math::Vector3 position = camera->GetOwner()->GetPosition();
+                Math::Vector3 velocity = Math::Vector3::Zero;
+                if (data.m_bPreviousStreamingFocus && std::isfinite(deltaTime) && deltaTime > 0.0f)
+                {
+                    velocity = (position - data.m_PreviousStreamingFocus) / deltaTime;
+                }
+                data.m_PreviousStreamingFocus = position;
+                data.m_bPreviousStreamingFocus = true;
+                auto& system = ctx.EngineRef.GetStreamingSystem();
+                system.SetFocus({position, velocity});
+                for (const auto& cell : data.m_StreamingManifest.GetCells())
+                {
+                    if (Streaming::ContainsHorizontalPoint(cell.Bounds, position.x, position.z))
+                    {
+                        bTerrainReady = bCanAttachTerrainCollider &&
+                            system.GetCellState(cell.Id) == Streaming::EStreamingCellState::Active;
+                        break;
+                    }
+                }
+            }
+        }
+#endif
+        if (bCanAttachTerrainCollider && !data.m_bTerrainColliderAttempted)
         {
             data.m_bTerrainColliderAttempted = true;
             const P::EPhysicsResult result = P::AttachTerrainCollider(ctx.WorldRef, *data.m_pTerrain, data.m_pTerrainCollider);
@@ -568,6 +785,12 @@ namespace Game::GameModes
     void GrasslandRoutine::Leave(GameModeContext& ctx, GrasslandData& data, GameModeExitReason)
     {
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
+#if NORVES_BUILD_DEVELOPMENT
+        if (data.m_bStreaming)
+        {
+            StopGrasslandStreaming(ctx, data);
+        }
+#endif
         ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
         data.m_Scatter = Scatter::kInvalidScatterHandle;
         data.m_bScatterPending = false;
@@ -599,6 +822,7 @@ namespace Game::GameModes
         }
         data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
+        data.m_TerrainFarPlane = 0.0f;
         data.m_pTerrainCollider = nullptr;
         data.m_bTerrainColliderAttempted = false;
         // 地形・草の場・カメラの Entity は GameModeScope::Cleanup が返す。各 Component の EndPlay で登録を返す。

@@ -52,7 +52,53 @@ namespace
         assert(firstKey != skinnedKey && skinnedKey.bSkinned);
         assert(firstKey != wireframeKey && wireframeKey.Polygon == RHI::PolygonMode::Line);
         assert(firstKey.Polygon == RHI::PolygonMode::Fill);
-        assert(firstKey.Cull == RHI::CullMode::Back && !firstKey.bAlphaClip);
+        assert(firstKey.Cull == RHI::CullMode::None && firstKey.bAlphaClip);
+        assert(emptyKey.Cull == RHI::CullMode::Back && !emptyKey.bAlphaClip);
+
+        for (uint32_t masked = 0; masked < 2u; ++masked)
+        {
+            for (uint32_t twoSided = 0; twoSided < 2u; ++twoSided)
+            {
+                MaterialResourceData material;
+                material.Blend = masked ? BlendMode::Masked : BlendMode::Opaque;
+                material.bTwoSided = twoSided != 0u;
+                const auto staticKey = MakeGBufferPipelineKey(&material, false, false);
+                const auto skinKey = MakeGBufferPipelineKey(&material, true, false);
+                assert(staticKey.Cull == (twoSided ? RHI::CullMode::None : RHI::CullMode::Back));
+                assert(staticKey.bAlphaClip == (masked != 0u));
+                assert(!staticKey.bSkinned && skinKey.bSkinned);
+                auto expectedSkinKey = staticKey;
+                expectedSkinKey.bSkinned = true;
+                assert(skinKey == expectedSkinKey);
+            }
+        }
+
+        assert(ResolveGBufferAlphaClip(nullptr, false) == GBufferAlphaClip::None);
+        assert(ResolveGBufferAlphaClip(nullptr, true) == GBufferAlphaClip::None);
+        MaterialResourceData material;
+        assert(ResolveGBufferAlphaClip(&material, false) == GBufferAlphaClip::None);
+        assert(ResolveGBufferAlphaClip(&material, true) == GBufferAlphaClip::None);
+        material.Blend = BlendMode::Masked;
+        assert(ResolveGBufferAlphaClip(&material, false) == GBufferAlphaClip::Test);
+        assert(ResolveGBufferAlphaClip(&material, true) == GBufferAlphaClip::Test);
+        material.AlphaClip = AlphaClipMode::Hash;
+        assert(ResolveGBufferAlphaClip(&material, false) == GBufferAlphaClip::Test);
+        assert(ResolveGBufferAlphaClip(&material, true) == GBufferAlphaClip::Hash);
+        material.Blend = BlendMode::Opaque;
+        assert(ResolveGBufferAlphaClip(&material, false) == GBufferAlphaClip::None);
+        assert(ResolveGBufferAlphaClip(&material, true) == GBufferAlphaClip::None);
+
+        assert(!RequiresGBufferOverlay(nullptr));
+        assert(!RequiresGBufferOverlay(empty));
+        material = MaterialResourceData{};
+        material.ProgramId = MakeGBufferProgramId("Terrain");
+        assert(RequiresGBufferOverlay(&material));
+        material = MaterialResourceData{};
+        material.Blend = BlendMode::Masked;
+        assert(RequiresGBufferOverlay(&material));
+        material = MaterialResourceData{};
+        material.bTwoSided = true;
+        assert(RequiresGBufferOverlay(&material));
 
         create.Program = "";
         const bool bUpdated = store.UpdateMaterial(firstHandle, create);

@@ -6,6 +6,7 @@
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsBroadphase.h"
 #include "Physics/PhysicsTypes.h"
+#include "Physics/StaticColliderPayloadHandler.h"
 #include "Scene/SceneQuery.h"
 #include "Thread/Thread.h"
 
@@ -209,6 +210,7 @@ namespace NorvesLib::Modules::Physics
         bool IsOwnerThread() const;
         Core::Scene::EPhysicsSceneQueryResult GetReadinessResult() const;
 
+        StaticColliderPayloadHandler m_StaticColliderPayloadHandler;
         Core::Engine::Engine* m_Engine = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bBound = false;

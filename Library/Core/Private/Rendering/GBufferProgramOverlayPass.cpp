@@ -42,7 +42,7 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        if (!m_GBufferPass->HasProgramDraws(*context))
+        if (!m_GBufferPass->HasOverlayDraws(*context))
         {
             if (!m_bLoggedEmpty)
             {

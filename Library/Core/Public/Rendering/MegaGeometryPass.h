@@ -656,6 +656,9 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(GPUMegaInstance) == 144, "Common/MegaInstanceTable.glsl の MegaInstanceRow と大きさが一致しません");
 
+        // Common/MegaInstanceTable.glsl の MEGA_MESH_FLAG_TWO_SIDED と一致する材質の印
+        static constexpr uint32_t MegaMeshFlagTwoSided = 1u;
+
         /**
          * @brief メッシュの表の1要素（GPU送信用。Common/MegaInstanceTable.glsl の MegaMeshEntry と一致）
          */
@@ -669,7 +672,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t SectionIndex;         // 材質の区間の番号
             uint32_t VertexBase;           // 頂点の基点（プールの塊の先頭から。頂点単位）
             uint32_t IndexBase;            // インデックスの基点（プールの塊の先頭から。インデックス単位）
-            uint32_t Reserved1;
+            uint32_t Flags;                // 材質の印（bit 0 = 両面。Common/MegaInstanceTable.glsl の MEGA_MESH_FLAG_TWO_SIDED と一致）
             uint32_t BvhAddressLow;        // グループの BVH の節の配列のデバイスアドレス（BVH をたどらないメッシュは 0）
             uint32_t BvhAddressHigh;
             uint32_t BvhNodeCount;
@@ -783,7 +786,7 @@ namespace NorvesLib::Core::Rendering
         bool CreateDrawPipeline(ViewRenderContext &context,
                                 bool bRequireDrawPipeline = true,
                                 bool bUseRenderGraphAttachmentStates = false);
-        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr &outPipeline);
+        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::CullMode cullMode, RHI::PipelinePtr &outPipeline);
         RHI::PipelinePtr SelectDrawPipeline(DebugViewMode mode) const;
 
         /**
@@ -1282,7 +1285,9 @@ namespace NorvesLib::Core::Rendering
 
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;
+        RHI::PipelinePtr m_DrawTwoSidedPipeline;
         RHI::PipelinePtr m_DrawWireframePipeline;
+        bool m_bTwoSidedPipelineWarningLogged = false;
         RHI::ShaderPtr m_DrawVertexShader;
         RHI::ShaderPtr m_DrawFragmentShader;
 

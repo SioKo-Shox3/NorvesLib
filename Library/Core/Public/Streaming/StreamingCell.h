@@ -36,8 +36,10 @@ namespace NorvesLib::Core::Streaming
 
         bool OnPrepareFinished(EStreamingPrepareResult result, double nowMs);
         bool BeginCommit();
+        // Waiting は InProgress と同じく状態とカーソルを保つ。
         bool OnCommitStep(EStreamingStepResult result);
         // コミット失敗後の待ち時間は最後のアンロード歩の時刻から数える。
+        // Waiting が渡された場合も InProgress と同じに扱う。
         bool OnUnloadStep(EStreamingStepResult result, double nowMs);
 
         // 添字とカーソルは Committing または Unloading の間だけ有効。

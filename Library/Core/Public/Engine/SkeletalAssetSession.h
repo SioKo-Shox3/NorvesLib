@@ -20,6 +20,12 @@ namespace NorvesLib::Core
         SkeletalAssetSession& operator=(const SkeletalAssetSession&) = delete;
         // lifecycle操作は明示ownerのみ。Registry/JobsはEndまで借用する。
         [[nodiscard]] SkeletalRuntimeStatus Begin(ResourceRegistry&, Thread::JobSystem&, Thread::Thread::ThreadId);
+        // BindSnapshot成功後は変更できない。Begin後はownerのみ。設定はEnd後も残る。
+        [[nodiscard]] SkeletalRuntimeStatus SetAllowLooseSkeletal(bool allow);
+        [[nodiscard]] bool IsLooseSkeletalAllowed() const noexcept
+        {
+            return m_bAllowLooseSkeletal;
+        }
         [[nodiscard]] SkeletalRuntimeStatus BindSnapshot(Container::TSharedPtr<const Asset::AssetSystem>);
         [[nodiscard]] SkeletalFlushResult Flush(uint32_t maxGroups = 4);
         [[nodiscard]] SkeletalRuntimeStatus Close();
@@ -59,6 +65,7 @@ namespace NorvesLib::Core
         Container::TUniquePtr<SkeletalAssetRuntime> m_Runtime;
         Container::TSharedPtr<const Asset::AssetSystem> m_Snapshot;
         bool m_bActive = false, m_bOwnsRegistry = false, m_bClosed = false, m_bDrained = false;
+        bool m_bAllowLooseSkeletal = false;
     };
     // production TickとCPU試験で同じ配送順を使う。simulation pauseの外側で呼ぶ。
     [[nodiscard]] SkeletalFlushResult TickSkeletalOwnerAssetsAndHandler(SkeletalAssetSession& session,

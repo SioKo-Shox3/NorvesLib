@@ -938,6 +938,7 @@ namespace Game
         m_ParallelPoseMinCount = 0;
         m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
+        m_bGrasslandStreaming = false;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1036,6 +1037,20 @@ namespace Game
             // コマンドライン引数のログ出力
             LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
 #if NORVES_BUILD_DEVELOPMENT
+            if (args[i] == TEXT("--allow-loose-skeletal"))
+            {
+                const auto status = NorvesLib::Core::GEngine.GetSkeletalAssetSession().SetAllowLooseSkeletal(true);
+                if (status == SkeletalRuntimeStatus::Success || status == SkeletalRuntimeStatus::Unchanged)
+                {
+                    LOG_INFO("SKELETAL_ASSETS allow_loose=1 骨格の資産を loose からも読みます");
+                }
+                else
+                {
+                    LOG_WARNING_F("SKELETAL_ASSETS allow_loose=failed status=%u 骨格の loose 読み込みを許可できません",
+                                  static_cast<uint32_t>(status));
+                }
+                continue;
+            }
             // --capture-aov（1 視点の撮影でも複数視点の撮影でも）は、描画の初期化の前に RTGI の遮蔽の診断を頼む。LightingPass が
             // RTGI の出力の a へ空の分と読み飛ばしの分類を詰め、GBufferAovPass が AOV の照明の g・b に写す
             if (args[i] == TEXT("--capture-aov"))
@@ -1865,6 +1880,21 @@ namespace Game
                 continue;
             }
 #if NORVES_BUILD_DEVELOPMENT
+            if (args[i] == TEXT("--grassland-streaming"))
+            {
+                if (m_bGrasslandStreaming)
+                {
+                    LOG_ERROR("--grassland-streaming が重複しています");
+                    return false;
+                }
+                if (m_GrasslandScatterStressCount != 0)
+                {
+                    LOG_ERROR("--grassland-streaming と --grassland-scatter-stress は同時に指定できません");
+                    return false;
+                }
+                m_bGrasslandStreaming = true;
+                continue;
+            }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
             {
                 uint32_t count = 0;
@@ -1876,6 +1906,11 @@ namespace Game
                 if (!TryParseUInt32(sceneValue, count) || count == 0 || count > 2000000u)
                 {
                     LOG_ERROR("--grassland-scatter-stress は 1〜2000000 の整数で指定してください");
+                    return false;
+                }
+                if (m_bGrasslandStreaming)
+                {
+                    LOG_ERROR("--grassland-streaming と --grassland-scatter-stress は同時に指定できません");
                     return false;
                 }
                 m_GrasslandScatterStressCount = count;
@@ -5540,12 +5575,13 @@ namespace Game
             [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
              pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
-             scatterStressCount = m_GrasslandScatterStressCount,
+             scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
+                mode->GetData().m_bStreaming = bStreaming;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

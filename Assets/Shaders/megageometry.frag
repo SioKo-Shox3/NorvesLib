@@ -29,7 +29,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
     vec4 terrainParams[10]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
-    vec4 shadingParams; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
+    vec4 shadingParams; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -121,10 +121,10 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
     return normalize(vec3(detailSlope, 1.0));
 }
 
-void WriteDebugGBuffer(vec3 albedo)
+void WriteDebugGBuffer(vec3 albedo, vec3 geometricNormal)
 {
     outAlbedo = vec4(albedo, 1.0);
-    outNormal = GBufferEncodeNormal(normalize(fragNormal), GBUFFER_SHADING_MODEL_DEFAULT_LIT, 0u);
+    outNormal = GBufferEncodeNormal(normalize(geometricNormal), GBUFFER_SHADING_MODEL_DEFAULT_LIT, 0u);
     outMaterial = GBufferEncodeMaterial(vec3(0.0, 1.0, 1.0), 0.0);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
     outVelocity = ComputeVelocity();
@@ -132,6 +132,9 @@ void WriteDebugGBuffer(vec3 albedo)
 
 void main()
 {
+    // 両面の材質は cull None で描くので裏の面の法線を反転する。
+    // 片面は背面カリングされ常に表なので、結果は変わらない。
+    vec3 geometricNormal = gl_FrontFacing ? fragNormal : -fragNormal;
     float debugMode = mvp.pomParams.z;
     float debugPayloadSupported = mvp.pomParams.w;
 
@@ -154,7 +157,7 @@ void main()
     vec3 worldDy = dFdy(fragWorldPos);
 
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
-    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
+    mat3 TBN = CalculateCotangentFrame(geometricNormal, fragWorldPos, fragTexCoord);
 
     // POM適用: ハイトマップがある場合のみUVオフセット
     vec2 texCoord = fragTexCoord;
@@ -172,13 +175,13 @@ void main()
     {
         if (debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS)
         {
-            WriteDebugGBuffer(ClusterDebugColor(fragDebugPayload));
+            WriteDebugGBuffer(ClusterDebugColor(fragDebugPayload), geometricNormal);
             return;
         }
 
         if (debugMode == DEBUG_VIEW_MODE_LOD_LEVEL)
         {
-            WriteDebugGBuffer(LODLevelDebugColor(fragDebugPayload));
+            WriteDebugGBuffer(LODLevelDebugColor(fragDebugPayload), geometricNormal);
             return;
         }
     }
@@ -201,7 +204,7 @@ void main()
         surface.WorldPosition = fragWorldPos;
         surface.WorldDx = worldDx;
         surface.WorldDy = worldDy;
-        surface.GeometricNormal = fragNormal;
+        surface.GeometricNormal = geometricNormal;
         surface.CameraDistance = length(fragWorldPos - mvp.cameraPosition.xyz);
         textureSamples = ShadeTerrainLayers(terrain, albedoTexture, normalTexture, metallicTexture,
                                             mvp.materialParams.y > 0.5,
@@ -236,7 +239,8 @@ void main()
         WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
                                           DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z), heightLod);
     }
-    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
+    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
+                     mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 tangentNormal = textureSamples.TangentNormal;

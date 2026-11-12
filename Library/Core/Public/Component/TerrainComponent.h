@@ -1,5 +1,6 @@
 ﻿// クック済み地形の高さ場と区画メッシュを所有し、層の表からスプラット材質を作って区画を配置する。
 // 地形は BeginPlay ではなくパス設定後の最初の Tick で読むため、作成してから値を設定できる。
+// 流し込みを有効にすると、区画を 1 つずつ出し入れできる。
 // EndPlay でモデルと高さ場の登録を返し、配置途中でも保持した資源を残さない。
 // 所有者の破棄では子 Entity を Inner の連鎖に任せ、所有者が残る場合だけ明示的に外す。
 #pragma once
@@ -9,6 +10,7 @@
 #include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Streaming/ITerrainTileSite.h"
 
 namespace NorvesLib::Core::Component
 {
@@ -50,7 +52,25 @@ namespace NorvesLib::Core::Component
         void SetTilesPerFrame(uint32_t count) { getTilesPerFrame() = count; }
         uint32_t GetTilesPerFrame() { return getTilesPerFrame(); }
 
+        /// 地形を読む最初の Tick までに設定する。有効なら区画を自動で置かず、PlaceTileAt / RemoveTileAt で 1 つずつ出し入れする。
+        void SetTileStreaming(bool bEnabled) { m_bTileStreaming = bEnabled; }
+        bool IsTileStreaming() const { return m_bTileStreaming; }
+
+        /// 以下の区画の操作・照会はすべて GameThread で行う。読込み前・範囲外の操作は何もしない。
+        /// 既に置いてあれば真。常駐の印は呼ぶ側が設定する。
+        bool PlaceTileAt(uint32_t x, uint32_t z);
+        void RemoveTileAt(uint32_t x, uint32_t z);
+        bool IsTilePlacedAt(uint32_t x, uint32_t z) const;
+        /// 行優先の番号。読込み前・範囲外は kInvalidTerrainTileId。
+        uint32_t GetTileIdAt(uint32_t x, uint32_t z) const;
+        /// 区画が実際に覆う升目の中心を境界と照合し、Z→X の順で返す。読込み前は空。
+        void CollectTilesInBounds(const Streaming::StreamingBounds& bounds,
+                                  Container::VariableArray<Streaming::TerrainTileCoordinate>& out) const;
+        Streaming::ITerrainTileSite& GetTileSite() { return m_TileSite; }
+
         Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> GetHeightField() const { return m_HeightField; }
+        /// 読み込んだ近景と外周の XZ 範囲を返す。読込み前・失敗時は false を返し、出力を変えない。
+        bool GetTerrainBoundsXZ(float& outMinX, float& outMinZ, float& outMaxX, float& outMaxZ) const;
         uint32_t GetPlacedTileCount() const { return m_PlacedTileCount; }
         uint32_t GetTileCount() const { return static_cast<uint32_t>(m_Tiles.size()); }
         /// 欠けた区画を含め、全区画の配置の試行が終わったかを返す。読込み前と読込み失敗時は偽。
@@ -68,23 +88,56 @@ namespace NorvesLib::Core::Component
         PROPERTY(uint32_t, TilesPerFrame)
 
     private:
+        class TileSite final : public Streaming::ITerrainTileSite
+        {
+        public:
+            explicit TileSite(TerrainComponent* owner) : m_Owner(owner) {}
+            Streaming::ETerrainTileSiteState GetSiteState() const override;
+            void CollectTilesInBounds(const Streaming::StreamingBounds& bounds,
+                                     Container::VariableArray<Streaming::TerrainTileCoordinate>& outTiles) const override;
+            uint32_t GetTileId(const Streaming::TerrainTileCoordinate& tile) const override;
+            bool PlaceTile(const Streaming::TerrainTileCoordinate& tile) override;
+            void RemoveTile(const Streaming::TerrainTileCoordinate& tile) override;
+            bool IsTilePlaced(const Streaming::TerrainTileCoordinate& tile) const override;
+
+        private:
+            TerrainComponent* m_Owner; // 非所有。所有者のメンバとして同じ寿命を持つ。
+        };
+
         struct TileCoordinate
         {
             uint32_t X = 0;
             uint32_t Z = 0;
+            bool bOuter = false;
+        };
+
+        struct OuterTerrainRegistration
+        {
+            Rendering::Terrain::TerrainHandle Handle;
+            Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> HeightField;
+        };
+
+        struct PlacedTile
+        {
+            uint64_t ChildEntityId = 0;
+            Rendering::ModelHandle Model;
+            bool bPlaced = false;
         };
 
         void SetDefaults();
         bool LoadTerrain();
-        void LoadSplatMaterial(const Rendering::Terrain::TerrainHeightField& heightField);
+        void LoadSplatMaterial(const Rendering::Terrain::TerrainHeightField& heightField, bool bNeedsOuterMaterial);
         void ReleaseSplatTextures();
+        void ReleaseOuterTerrains();
         void PlacePendingTiles();
-        bool PlaceTile(const TileCoordinate& tile);
+        /// record は m_Tiles と同じ並びの配置の記録の番号（近景は行優先の番号、外周はその後ろ）。
+        bool PlaceTile(const TileCoordinate& tile, uint32_t record);
 
         // 保存するのは上の値だけ。以下の登録と所有物は BeginPlay / EndPlay の間だけ有効。
         Container::TSharedPtr<const Asset::AssetSystem> m_AssetSystem;
         Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> m_HeightField;
         Rendering::Terrain::TerrainHandle m_TerrainHandle;
+        Container::VariableArray<OuterTerrainRegistration> m_OuterTerrains;
         Rendering::Terrain::TerrainSystem* m_TerrainSystem = nullptr;
         Rendering::RenderResources* m_RenderResources = nullptr;
         World* m_World = nullptr;
@@ -92,11 +145,18 @@ namespace NorvesLib::Core::Component
         uint64_t m_OwnerEntityId = 0;
         bool m_bEndingPlay = false;
         bool m_bLoadFailed = false;
+        bool m_bTileStreaming = false;
+        TileSite m_TileSite{this};
         Container::VariableArray<TileCoordinate> m_Tiles;
         // Tick 内の生成では ECS の行が未作成なので、即座に発行される ObjectId で子を記録する。
-        Container::VariableArray<uint64_t> m_ChildEntityIds;
-        Container::VariableArray<Rendering::ModelHandle> m_Models;
+        Container::VariableArray<PlacedTile> m_PlacedTiles;
+        uint32_t m_TileCountX = 0;
+        uint32_t m_TileCountZ = 0;
+        uint32_t m_TileCells = 0;
         Rendering::MegaGeometry::MegaTerrainSplat m_Splat;
+        float m_OuterBaseColor[3] = {};
+        float m_OuterRoughness = 0.0f;
+        bool m_bHasOuterMaterial = false;
         uint32_t m_NextTile = 0;
         uint32_t m_PlacedTileCount = 0;
     };

@@ -5,6 +5,7 @@
 #include "Container/VariableArray.h"
 #include "Math/Vector3.h"
 
+#include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Streaming
@@ -15,6 +16,15 @@ namespace NorvesLib::Core::Streaming
 
     using StreamingCellId = uint32_t;
     inline constexpr StreamingCellId kInvalidStreamingCellId = 0xFFFFFFFFu;
+
+    /// 地形の区画を表すペイロードの種類。
+    inline constexpr const char* kTerrainTilePayloadKind = "terrain-tile";
+    /// 散布のチャンクを表すペイロードの種類。
+    inline constexpr const char* kScatterChunkPayloadKind = "scatter-chunk";
+    /// 静的なコライダーを表すペイロードの種類。
+    inline constexpr const char* kStaticCollidersPayloadKind = "static-colliders";
+    /// コードで組む配置を表すペイロードの種類。
+    inline constexpr const char* kPlacementPayloadKind = "placement";
 
     enum class EStreamingCellState : uint8_t
     {
@@ -48,7 +58,10 @@ namespace NorvesLib::Core::Streaming
     {
         InProgress,
         Done,
-        Failed
+        Failed,
+        /// 進みがなく、このフレームはこのセルのコミットの歩をやめる。CommitStep だけが返す。
+        /// UnloadStep は返さない。返したら InProgress と同じに扱う。
+        Waiting
     };
 
     enum class EStreamingPrepareResult : uint8_t
@@ -63,6 +76,15 @@ namespace NorvesLib::Core::Streaming
         Math::Vector3 Min;
         Math::Vector3 Max;
     };
+
+    /// X と Z の半開区間 [Min, Max) に点が入るかを返す。非有限の水平成分は含めない。
+    inline bool ContainsHorizontalPoint(const StreamingBounds& bounds, float x, float z)
+    {
+        return std::isfinite(x) && std::isfinite(z) &&
+            std::isfinite(bounds.Min.x) && std::isfinite(bounds.Max.x) &&
+            std::isfinite(bounds.Min.z) && std::isfinite(bounds.Max.z) &&
+            bounds.Min.x <= x && x < bounds.Max.x && bounds.Min.z <= z && z < bounds.Max.z;
+    }
 
     struct StreamingPayloadDesc
     {
@@ -95,5 +117,7 @@ namespace NorvesLib::Core::Streaming
         StreamingCellId Cell;
         uint32_t PayloadIndex;
         const StreamingPayloadDesc* Desc;
+        /// payload が属するセルの記述。境界から含める区画やチャンクを決める。非所有で、マニフェストの差し替えまで有効。
+        const StreamingCellDesc* CellDesc = nullptr;
     };
 } // namespace NorvesLib::Core::Streaming

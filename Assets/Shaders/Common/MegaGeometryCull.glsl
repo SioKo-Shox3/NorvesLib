@@ -1049,9 +1049,11 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     uint usedChildPage = INVALID_PAGE_ID;
     // 描いたとき・LOD で選ばれたが遮蔽で落ちたときに使用の印を出す、このクラスタ自身のページ（焼き込みの階層を持たないクラスタはページを持たない）
     uint ownPage = ((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u) ? cluster.bakedInfo.w : INVALID_PAGE_ID;
+    // 両面の材質は裏からも見えるので、法線のコーンで捨てない。
     bool bPassesBasicTests =
         !FrustumCullSphere(center, radius) &&
-        !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
+        (((instance.drawInfo.w & MEGA_MESH_FLAG_TWO_SIDED) != 0u) ||
+         !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius)) &&
         (((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u)
              ? ShouldDrawBakedCluster(cluster, instance.bvhInfo.w, requestPage, usedChildPage)
              : ShouldDrawCluster(cluster, center));

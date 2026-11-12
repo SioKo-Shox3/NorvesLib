@@ -39,7 +39,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
-- status: done
+- status: todo
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)とビルドが通る。消した試験(`RHIGPUTimestampVulkanSkipContractTest`)の名前が `Test` と最上位の `CMakeLists.txt` に残らず、残す `RHIGPUTimestampVulkanTest` が ctest の一覧(`-N`、実行しない)に出る。統合ブランチ全体の ctest と前からの落ちの直しは BUILD-HEALTH-1109 が 17 行の verify で受け持つので、このタスクでは回さない。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
@@ -5936,7 +5936,7 @@
 - notes: ロードマップ GR25 のフェーズ4（ShadowCaster 段）。ロードマップは「太陽の影の重要度が低いので後回し」としていたが、作者の決定（必要な機能は全部やる）で入れる。10-02 の後に太陽の VSM が入った（SceneView.cpp:1202〜1218。CSM は VSM の非対応時の逃げ道と影の測定で残る）ので、設計を「拡張は束を出し、エンジンの影のパスが描く」に変えた。理由: VSM の物理ページへの描画は展開と atomicMin の専用の流れ（vsm_draw.frag）で、拡張に描かせると契約が漏れる。束の頂点の形式は手続きの塊の記録の形式に合わせる（UNCERTAIN: 拡張の頂点の形式を手続きの塊と同じにできるかは、`VisibilityBuffer.h:136` の `RecordKind` と `vsm_draw.vert` の読み方を読んで確かめる。合わなければ RecordKind を 1 つ足す）。草の株（RecordKind::FoliageChunk）の専用の経路は変えない。危険地帯（RenderThread・影のパス）なので評価者を通す。ロードマップ GR25（517〜607 行）のフェーズ4、リスクの「ShadowCaster 段は別の評価が要る」、要件 `#### GR25`。
 
 ## G5-GR27-MASKED-GBUFFER: 切り抜き（アルファテスト・アルファハッシュ）と両面の材質を、静的・スキン・可視バッファの on と fallback の GBuffer に描き、取り込んだ glTF の MASK と doubleSided を通す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-PROGRAMS
 - gr: GR27
 - done-when: `MaterialCreateData`・`MaterialResourceData` に `AlphaCutoff`（既定 0.5、有限で 0〜1 に正規化）と `AlphaClipMode{Test, Hash}`（既定 Test）を足す（`bTwoSided` は既存。MaterialTypes.h:321・356）。`Assets/Shaders/Common/AlphaClip.glsl` に切り抜きの判定（Test は coverage < cutoff で破棄、Hash は interleaved gradient noise にフレームの位相を掛けた時間で変わる閾値で破棄）を置き、`gbuffer_alphaclip.frag`（#define と `Common/GBufferFragment.glsl` の include の包み）を足す。有効なアルファはテクスチャのα × インスタンスの被覆率の乗数（G5-GR26-MATERIAL-PARAMS の `.w`）。残る画素の albedo.a は 1 に固定（lighting.frag の天球の判定 albedo.a < 0.01 と衝突させない）。両面は cull None と `gl_FrontFacing` で裏の法線を反転。パイプラインは G5-GR26-GBUFFER-PROGRAMS の鍵 {alphaClip, cull} で選び、Masked と両面の材質は可視バッファが on のとき解決の後に重ねる経路へ、fallback では不透明の後に分けて描く（早期の深度の恩恵を不透明に残す）。スキンも同じ判定（今スキンの描画のコマンドは材質の BlendMode を見ないので、選択は材質のデータで行う）。TAA が無効のビューでは Hash を Test に落とす（`ViewRenderContext` に TAA が実際に掛かるかの印を足し、`SceneView::SetTemporalAAApplied` SceneView.h:565 と合わせる）。`ImportedOpaqueRuntime.cpp:72〜78` の `alphaMode_requires_GR27`・`doubleSided_requires_GR27` の拒否を外し、glTF の MASK と alphaCutoff と doubleSided を Masked・AlphaCutoff・bTwoSided へ写す（BLEND は今までどおり拒否）。CPU: `GBufferPipelineKeyTest` に Masked・両面・スキン・TAA の有無から鍵と切り抜きの方式を作る場合、`MaterialResourcesTest` に AlphaCutoff の正規化、`ImportedOpaqueRuntimeTest` に MASK と doubleSided が通り BLEND が拒否される場合を足す。GPU の `RenderingAlphaClipVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、市松のαのテクスチャを貼った板で、Masked・cutoff 0.5 の GBuffer の深度が埋まった画素の率が 0.5±0.02 でテクセルの中心で厳密に切れる・両面の板を裏から見た輝度が表と ±2/255 以内で片面では裏から被覆 0・Hash で TAA 有効なら 16 フレームの平均の被覆率が α±0.03 で TAA 無効なら Test に落ちる・スキンの Masked の材質が静的と同じ判定、を可視バッファの on と fallback で確かめる。`RenderingVelocityAlphaClipVulkanTest`（`RenderingVelocityVulkanTest` に scenario を足して登録）が、切り抜かれた画素の GBuffer.Velocity が背景の値のままであることを確かめる。切り抜きの材質が無い golden 4 本が変わらず、不透明だけのシーンでパイプラインの作成の数が増えない（ログ）。
@@ -5949,9 +5949,9 @@
 - status: todo
 - after: G5-GR27-MASKED-GBUFFER
 - gr: GR27
-- done-when: Masked の材質の影の描画で、アルベドのαを標本して cutoff で破棄する（影では Hash を使わず Test。PCF と相性が悪いため）。CSM（`ShadowMapPass`）はマスク用のパイプライン（`shadow_alphaclip.vert`・`shadow_alphaclip.frag`。UV の頂点の属性とアルベドの binding を足す）と、マスク用の別の DynamicUniformAllocator（UBO の枠の上限 カスケード数×描画数 をマスクの分で食わない）を持ち、コマンドごとに材質を引いて Masked だけをそれで描く。太陽と点光源の VSM（`vsm_draw.vert`・`vsm_draw.frag`。記録の頂点は BDA で読む。VirtualShadowMapRaster.h の描画の規則）は、Masked の材質の塊の記録に材質の参照を持たせ、断片で破棄してから atomicMin で書く（破棄した texel は書かない）。点光源のキューブの影（`point_shadow.vert`・`point_shadow.frag`）とスキンの影（`skinned_shadow.vert`。UV は SkinVertexWords の word 6・7。64 バイトの頂点の ABI は変えない）も同じ判定にする。GPU の `RenderingAlphaClipShadowVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、市松のαの板が床へ落とす影の ROI の被覆率が 0 でも 100% でもなく、不透明の板（全面の影）と明確に違うこと（A/B）を `--shadow-method` の vsm と csm のそれぞれで確かめ、点光源の影とスキンの影でも同じ A/B を確かめる。Masked の材質が無い golden 4 本と VSM の溢れの統計が変わらない。
-- verify: `cmake --build build --config Debug --target RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(RenderingAlphaClipShadowVulkanTest|RenderingAlphaClipVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- done-when: Masked の材質の影の描画で、アルベドのαを標本して cutoff で破棄する（影では Hash を使わず Test）。CSM（`ShadowMapPass`）はマスク用のパイプライン（`shadow_alphaclip.vert`・`shadow_alphaclip.frag`）と、マスク用の別の DynamicUniformAllocator を持ち、Masked だけをそれで描く。太陽と点光源の VSM（`vsm_draw.vert`・`vsm_draw.frag`）は、Masked の塊の記録に材質の参照を持たせ、断片で破棄してから atomicMin で書く。点光源のキューブの影（`point_shadow.vert`・`point_shadow.frag`）とスキンの影（`skinned_shadow.vert`。64 バイトの頂点の ABI は不変）も同じ判定にする。GPU の `RenderingAlphaClipShadowVulkanTest`（`RenderingHdrSceneCaptureTest` の scenario。市松のαの板の影の被覆率の A/B を vsm・csm・点光源・スキンで判定する形）は登録だけして、盤面では回さない（絶対規則 10）。Masked の材質を持たない描画が分岐の前と同じ経路を通り、golden と VSM の溢れの統計に効かない形であることは、評価者が差分を読んで確かめる。verify のビルド（Game と影の CPU の試験を含む）が通り、除外の後に残る影と VSM の CPU の試験 7 本が通る。
+- verify: `cmake --build build --config Debug --target RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game CameraViewConstantsTest DirectionalShadowLightMatricesTest CascadedShadowLightMatricesTest SkinnedShadowComponentBindingsTest RHIRayTracingApiContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "Shadow|^WindShaderCompileTest$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Test/Core/Rendering/Thresholds, TASKS.md, PROGRESS.md
 - notes: ロードマップ GR27 の設計4（462〜516 行）とフェーズ (d)(e)。10-02 の後に太陽と点光源の VSM が入り（SceneView.cpp:1202〜1218。VTG9-VSM-POINT-DEFAULT-ON で起動画面の点光源も VSM）、ロードマップが前提にした CSM の ShadowMapPass は逃げ道になったので、VSM を主の対象に加えた。草の株の VSM の専用の経路（RecordKind::FoliageChunk）は変えない（草が影を落とすかは G11-S4 の範囲）。マスクの影の投影物が多い森では UBO の枠と描画ごとの記述子の更新が増える（リスクとして記録）。RT の影・DDGI・RTGI・パストレーサーは切り抜きを反映しない（GR104）。危険地帯（影のパス・RenderThread）なので評価者を通す。完了条件の GR27 の影の行、要件 `#### GR27`。
 
@@ -6424,7 +6424,7 @@
 - notes: 要件 `#### GR56` の受け入れ確認の R56SkyOcclusionPathTracingReferenceVulkanTest（要件 5622 行）。参照比較の段（数分〜1 時間。Docs/Testing.md の段）で GPU を長く使うので `gpu: exclusive`。比べの道具は R7 と同じ `RasterPathTracingComparison.h` の流儀（要件の指定）。PT は遮蔽物の実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る（遮蔽物は形と値を同じ物から作る。要件 5639 行のリスク）。L1 の打ち切り誤差は「既知の方式差」として量を記録する（R7OutdoorAcceptance.md と同じ流儀）。閾値の ±15%・±20% は要件の初期目標で、実測の根拠を記録して確定する。試験を足す理由: 反証する契約は「ラスタの空の遮蔽が物理の正解の比に合う」。正解が無いと強さのつまみで見た目だけを合わせ、方式の誤りが残っても気づけない。
 
 ## G11-GR59-OVERHEAD-MAP: 真上からの雨の遮蔽の深度マップ（カメラに追従する 96 m・1024²）を遮蔽物の天面の形から作って公開し、「雨に当たるか」を引けるようにする
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-CPU, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS
 - gr: GR59
 - needs-gr: GR37
@@ -6531,7 +6531,7 @@
 - notes: 選定課題 G12A-S3（数 km の深度精度）: (A) 標準 Z のまま近方面を上げ遠方面を絞る（ロードマップの第 1 段。荒野は近 0.5 m でしのいでいる）、(B) 逆 Z・有限の遠方面・D32F（第 2 段）、(C) 逆 Z・無限遠、のうち (B) を採る。理由: 犬の低い視点と草の中のカメラは近 0.05〜0.1 m が要り（DogMovementSmokeRoutine.cpp:189 は 0.05）、(A) では 1 km で 1 m 超の刻みになる（G12-GR39-DEPTH-CONVENTION の notes の計算）。(C) は `CameraPicking` などが遠方面の値を使い（ロードマップ 2706 行）、雲・霧が遠方面の手前の深度を前提にするので、遠方面はカメラの設定のまま有限にする。順番は、規約の集約（G12-GR39-DEPTH-CONVENTION）と MegaGeometry のカリングの試験（G12-GR31-CULL-CONTRACT）を先に入れて安全網にする（GR30 の TAA と GR31 の Hi-Z はこの規約の上に乗る。ロードマップ 2132 行）。影の地図はカメラの深度と別なので変えない（ShadowMapPass は `AdjustProjectionForClipSpace(proj,false)` を別に呼ぶ。ロードマップ 2132 行。着手時に読み直す）。荒野の近 0.5 m・遠 400 km はこの項目では変えない（見た目を変えない。近方面を戻すかは G12-GR39-DEPTH-CHECK の結果を見て別の項目にする）。試験を足す理由: 反証する契約は「本番の射影と深度の設定で、近 0.05 m のまま 5 km 先の 0.5 m の前後が崩れない」こと。Z ファイトは遠景のちらつきとしてしか出ず、1 枚の撮影では霞に紛れ、ログにも出ず黙って起きる。危険地帯（RenderThread・GBuffer・RHI の使い方）なので評価者を通す。golden の再承認を伴う。
 
 ## G12-GR39-FAR-RING: 地形の cook に谷の外周の粗い遠景のタイルを足し、近景の区画と隙間なくつなぎ、遠景の材質と影・遠方面を地形の広さに合わせる
-- status: todo
+- status: done
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR89-TERRAIN-MASKS, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER
 - gr: GR39
 - needs-gr: GR37, GR89
@@ -6586,7 +6586,7 @@
 - notes: 設計はロードマップ 2161 行（GR40 の 6）、完了条件は 2597 行。選定課題 G12A-S7（GPU の資源の遅延の破棄）: (A) ロードマップの案（`DeferredGpuReleaseQueue` を新設し、MeshResources とテクスチャを完了のシリアルまで遅らせる。2159 行）、(B) RHI に入った破棄の列（`VulkanDevice::DeferDestroy` の Buffer・Image・ImageView ほか。VulkanDevice.h:207〜217、SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY が done）をそのまま使う、のうち (B) を採る。理由: (A) の前提（`MeshResources::Unregister` が描画中のバッファを即座に壊しうる）は、RHI の側でハンドルの破棄を提出の完了まで遅らせるようになって崩れた。上の層にもう 1 つ列を作ると、破棄の順の規則が 2 つになる。UNCERTAIN: `ProceduralMeshGpuStore::UnregisterMesh`（ProceduralMeshGpuStore.cpp:248）が RHI の破棄の列だけで安全か（ホスト可視の map 中のバッファを含めて）は着手時に読んで確かめ、足りなければこの項目で直す。試験を足す理由: 反証する契約は「GameMode を抜けた後にワーカーの完了が届かず、資源が 1 回ずつ返る」こと。破れるとシーンの出入りのたびに資源が増える・抜けた後のコールバックで落ちるとして、出入りを繰り返したときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object・Resource の寿命）なので評価者を通す。
 
 ## G12-GR40-WORLD-PAYLOADS: セルの中身として地形のタイル・散布のチャンク・静的なコライダー・コードで組む配置を出し入れし、遠いセルを休眠させる
-- status: todo
+- status: done
 - after: G12-GR40-CELL-CORE, G12-GR40-GAMEMODE-ASYNC, G12-GR41-PARENT-DORMANCY, G12-GR09-DETACHED-COLLIDERS, G12-GR39-HEIGHTFIELD-LOD, G5-GR37-TERRAIN-COMPONENT, G5-GR90-SCATTER-RUNTIME, G5-GR37-TERRAIN-LAYERS, G5-GR90-SCATTER-BAKE
 - gr: GR40
 - needs-gr: GR37, GR90
@@ -6825,7 +6825,7 @@
 - notes: 設計はロードマップ 2537 行（マニフェストの事実）・2557 行（P1 の 5）・2565 行（P4）。P4 の AssetKind の追加（地形・散布）は G5 の `G5-GR89-NVTRN-FORMAT`（`AssetKind::World` を足す）が受け持つので、ここでは種別を足さず、足すときの手順（`TryParseAssetKind`・`GetAssetKindName`（`AssetManifest.h:146-147`）・AssetCook の `--kind`・FourCC）を表 1 か所で済む形にするだけにする。旧いランタイムで新しいマニフェストを読むと InvalidField で全体が無効になる（ロードマップ 2802 行）ので、ツールとランタイムを同時にビルドする運用のまま version を上げない。閾値は「線形の走査と結果が同じで、比べた回数が定数」で判定し、時間の閾値は置かない（時間は G12-GR111-PACK-BENCH-CHECK で記録する）。資産の読み込みの危険地帯なので評価者を通す。やらないこと: パックの書き側、圧縮。
 
 ## G2-GR83-LOOSE-SKELETAL: 骨格の資産を、明示したときだけ cooked でなく glTF/GLB から直に読めるようにし、読んだ元をログで分ける
-- status: todo
+- status: done
 - gr: GR83
 - done-when: 骨格の資産の読み込みの旧 NVSKEL の経路(`SkeletalAssetLoader.cpp`)に、loose の読み込みを足す。既定は今のまま cooked だけ(`FailOnCookedFailure` と UsedCooked の検査を変えない)。明示の許可があるときだけ loose(ソースの glTF/GLB を worker で decode して同じ CPU の結果を組む)を使う。分割の 3 資産の経路(`RigSplitAssetLoader.cpp`・`LoadRigSplitAsync`)は loose を持たず、許可があっても cooked だけのままにする(許可を分割の要求へ渡さない)。許可は `SkeletalAssetSession`/`SkeletalAssetRuntime` の設定 1 つで持ち、Game の起動引数 `--allow-loose-skeletal` からだけ立てる。loose で読んだことは、AssetLoadProfile の 3 段(`skeletal_asset_resolve`・`skeletal_cooked_parse`・`skeletal_resource_create`)の `source=loose` で分かる。既定のまま cooked が無いときは `source=none` の失敗で終わる(loose へ黙って落ちない)。
   cooked が壊れているとき(hash 不一致・parse 失敗)は、許可があっても loose に代えない(`AssetFallbackPolicy.md` の DebugLooseFallback と同じ線引き)。`SkeletalAssetLoaderTest` に 3 つの検査を足す: (1) 既定で manifest が無いと失敗し、Resource が残らない (2) 許可ありで `Assets/Models/M9Skinned/ValidU8Float.gltf` を loose で読むと、cooked と同じ関節・頂点・clip 名になる (3) 許可ありでも、壊れた cooked は loose に代えない。
@@ -6863,7 +6863,7 @@
 - notes: 確かめ直し (c)。GR96 の一括 cook の本体(spec v2 の 6 種・増分・統合 manifest・`--jobs` の同値・予算と終了コード 2・`--warn-budget`・`--prune`)は実装と試験がある(`TextureManagedCliTest.cpp:308-400` の MixedBatch、`RigSplitCookTest.cpp:295-400` の skeletal・animation・texture・raw・audio の混在)が、レポートの行は `CookAssetMetrics`(`CookBatchReport.h:9-12`)の三角形・関節・テクスチャ容量・cooked のバイトだけで、異常の検出は無い(`ModelAnalysis` も `anomal` もリポジトリに無い。PROGRESS.md 冒頭の「詳細異常検出は後段」)。`GeometryInspection.h` の `--inspect` 用の数(長さ 0 法線・溶接・閉鎖)は再利用してよいが、`--inspect` の出力は変えない。閾値(1e-3・1024²)は要件の設計案の値で、企画の決定ではないので定数にして AssetCookWorkflow.md に仮と書く。`CMakeLists.txt` の試験の束は共有のファイルなので差分を小さくする。要件 `#### GR96` の設計案【6】と受け入れ確認「異常検出(ModelAnalysisTest)」、ロードマップ 178・189 行。
 
 ## G2-GR96-GENERATORS: asset-set の spec に外部コマンド(generators)を宣言でき、明示したときだけ、入力が変わったものだけを cook の前に走らせる
-- status: todo
+- status: done
 - gr: GR96
 - done-when: spec v2 の最上位に任意の `generators`(各要素は `name`・`command`(文字列の配列)・`inputs`・`outputs`(source root からの相対パスの配列)・`cwd`)を受ける。名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・assets の source を 2 つの generator が出すこと・未知のキーは spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う generator を宣言順に走らせ、すべて成功してから今までどおりの cook に進む。付けないときは generator を 1 つも走らせず、今の cook の結果とバイト一致する(既存の spec と CLI の出力は変えない)。
   失敗(終了コードが 0 でない・宣言した outputs が出ていない)なら、その名前と終了コードを出して cook せずに 1 で終わる。前回の hash は store の制御領域の中の generator の状態に、cook の状態と同じ原子的な書き方で残す。`--run-generators` は `--recover` と一緒に使えない。cook_report に各 generator の `ran`/`skipped`/`failed` を出す。
@@ -6887,7 +6887,7 @@
 - notes: 確かめ直し (b)(c)。今は `TextureAssetSetCook.cpp:204` が `CookManagedBootstrapRequest managed{owner, assets, bytes, spec.Version, ...}` で spec の版(1 か 2)を cooker の版として渡し、全種別で 1 つの値になっている。このため cooker のコードを変えても記録の版が変わらず、依存の fingerprint が同じなら古い出力のまま skipped になる(G2-S6-ASSET-SET-P2 で、main のクラスタ化が出力を変えた例がある)。要件の受け入れ確認「cooker_revision の保護」を満たす試験も無い。単体 CLI の出力と既存の 79 出力の基準(`AssetCookCliParity.py`)は変えない。GENERATORS と同じ `TextureAssetSetCook.cpp` を触るので after でつないだ。`SkeletalRoleFileCookerRevision`(`SkeletalRoleFileCook.h:6`)の既存の別系統はこの表に寄せるか、寄せないなら理由を CookCacheDecision.md に書く。要件 `#### GR96` の設計案【3】と受け入れ確認「cooker_revision の保護」。
 
 ## G2-GR79-SKIN-BASECOLOR-BAKE: 骨格つきの資産の cook で、baseColorFactor が 1 でない材質の色をアルベドへ焼き込み、スキンの描画でも材質の色が出るようにする
-- status: todo
+- status: done
 - gr: GR79
 - done-when: 3 資産の cook(`RigSplitCook.cpp` の材質の組み立て、`--rig-split` と asset-set の skeletal の両方)で、材質の baseColorFactor の RGB が (1,1,1) でないとき、その材質のアルベドの全 mip を factor 倍した sRGB の texture を材質ごとの別の論理パス(`<mesh>.mat<N>.albedo` の形。既存の `.mat<N>.arm.rgba8` と同じ命名の規則)で出し、MATS の BaseColor の RGB を 1 にして二重に掛からないようにする。アルベドの texture が無い材質は 4×4 の単色の sRGB アルベドを作る。factor が (1,1,1) のときは今と出力がバイト一致する。焼いたことと元の factor を skeletal の import_report に出す。
   掛け算は線形の空間で行い(sRGB → 線形 → ×factor → sRGB)、丸めは既存の ARM の焼き込み(`BakeArmByte`)と同じ規則にする。alpha は変えない。静的モデル(NVMESH v1)の経路は変えない(`MegaMeshMaterial` が BaseColor を使うので焼かない)。
@@ -10810,3 +10810,12 @@
   - 代役の形(骨 2 本の三角形を身長 1.8 m に合わせる)と ready の印の値は変えない。
   - 中身がデコードできるかは、`Test-M9World.ps1:580` と同じ AssetCook の `--kind model` を一時の置き場へ回して確かめてよい(Game は起動しない)。
   - G12-GR108-POSE-PARALLEL の `--skinned-crowd` も M9Skinned の同じ資産を読む予定なので、この自己完結の glTF を使える。
+
+## G12-GR39-FAR-RING-P1: AssetCookTerrainSmoke の `outer_hole` の拒否理由の照合を、コンソールのコードページに関わらず通す
+- status: todo
+- done-when: `AssetCookTerrainSmoke` が、コードページ 932 のコンソールでも 65001 のコンソールでも Passed になる。照合の文字列(`outer_hole` の「穴の中」)と合否の条件は変えない。原因はこう見ている。`MeshCooker.cpp` の `terrain-tile:nvtrn:outer の区画番号は穴の中です` は素の narrow リテラルなので、AssetCook を /utf-8 なしでビルドすると ANSI(932)のバイトで出る。一方、smoke の `expect_nvtrn_tile_failure` は `execute_process` の出力を今のコンソールのコードページで読むので、65001 では食い違う。直し方は、骨格の診断(`reinterpret_cast<const char*>(u8"...")`)と同じく地形の区画の拒否理由も UTF-8 で出し、smoke の `execute_process` に `ENCODING UTF-8` を付けるのが目安(CookedSkeletalAssetTest を直した G2-GR78-SURFACE-CENTROID-CHECK-P1 と同じ形)。ほかの区画の照合(`tiles=2x2`・`NVTRN`・`tiles=3x3`)も、両方のコードページで通ったままにする。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 600 -R AssetCookTerrainSmoke && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 600 -R AssetCookTerrainSmoke"`
+- paths: Tools/AssetCook/AssetCookTerrainSmoke.cmake.in, Tools/AssetCook/MeshCooker.cpp, TASKS.md, PROGRESS.md
+- effort: medium
+- from: G12-GR39-FAR-RING
