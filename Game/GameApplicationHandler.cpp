@@ -938,6 +938,7 @@ namespace Game
         m_ParallelPoseMinCount = 0;
         m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
+        m_bGrasslandStreaming = false;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1879,6 +1880,21 @@ namespace Game
                 continue;
             }
 #if NORVES_BUILD_DEVELOPMENT
+            if (args[i] == TEXT("--grassland-streaming"))
+            {
+                if (m_bGrasslandStreaming)
+                {
+                    LOG_ERROR("--grassland-streaming が重複しています");
+                    return false;
+                }
+                if (m_GrasslandScatterStressCount != 0)
+                {
+                    LOG_ERROR("--grassland-streaming と --grassland-scatter-stress は同時に指定できません");
+                    return false;
+                }
+                m_bGrasslandStreaming = true;
+                continue;
+            }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
             {
                 uint32_t count = 0;
@@ -1890,6 +1906,11 @@ namespace Game
                 if (!TryParseUInt32(sceneValue, count) || count == 0 || count > 2000000u)
                 {
                     LOG_ERROR("--grassland-scatter-stress は 1〜2000000 の整数で指定してください");
+                    return false;
+                }
+                if (m_bGrasslandStreaming)
+                {
+                    LOG_ERROR("--grassland-streaming と --grassland-scatter-stress は同時に指定できません");
                     return false;
                 }
                 m_GrasslandScatterStressCount = count;
@@ -5554,12 +5575,13 @@ namespace Game
             [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
              pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
-             scatterStressCount = m_GrasslandScatterStressCount,
+             scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
+                mode->GetData().m_bStreaming = bStreaming;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

@@ -61,7 +61,8 @@ namespace NorvesLib::Modules::Physics
     } // namespace
 
     PhysicsModule::PhysicsModule()
-        : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
+        : m_StaticColliderPayloadHandler(*this)
+        , m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
     {
     }
 
@@ -94,6 +95,11 @@ namespace NorvesLib::Modules::Physics
 
         m_Engine = &engine;
         m_bBound = true;
+        m_StaticColliderPayloadHandler.SetScatterSystem(&engine.GetScatterSystem());
+        if (!engine.GetStreamingSystem().RegisterHandler(&m_StaticColliderPayloadHandler))
+        {
+            LOG_WARNING("PHYSICS_STREAMING_HANDLER_SKIPPED マニフェストが既にあるか、同じ種類のハンドラが登録済みです");
+        }
         engine.GetSceneQuery().SetTerrainSystem(&engine.GetTerrainSystem());
         RegisterWorldSystems(engine.GetWorld());
         return true;
@@ -303,6 +309,9 @@ namespace NorvesLib::Modules::Physics
         {
             return;
         }
+
+        engine.GetStreamingSystem().UnregisterHandler(&m_StaticColliderPayloadHandler);
+        m_StaticColliderPayloadHandler.SetScatterSystem(nullptr);
 
         // Unavailable は provider が既に存在しないため dangling binding はない。
         engine.GetSceneQuery().SetTerrainSystem(nullptr);

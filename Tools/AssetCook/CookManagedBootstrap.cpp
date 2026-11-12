@@ -307,6 +307,10 @@ namespace NorvesLib::Tools::AssetCook
             draft.ManifestBefore.Parent = draft.Root;
             CookOwnedState state;
             state.Binding = owner.ExpectedBinding;
+            if (request.Generators)
+            {
+                state.Generators = *request.Generators;
+            }
             Array<Core::Asset::AssetCookedReference> references;
             if (!Detail::CookPreparedBatch(stages, request.Jobs, op.Error))
             {

@@ -301,6 +301,7 @@ namespace NorvesLib::Core::Component
         World* world = owner ? owner->GetWorld() : nullptr;
         if (!Engine::GEngine || !world)
         {
+            m_bLoadFailed = true;
             LOG_WARNING("TERRAIN_COMPONENT_SKIPPED エンジンまたは所有者の World がありません");
             return;
         }
@@ -452,6 +453,12 @@ namespace NorvesLib::Core::Component
         }
 
         LoadSplatMaterial(*heightField, bOuterReady);
+        m_TileCountX = parsed.Terrain.TileCountX;
+        m_TileCountZ = parsed.Terrain.TileCountZ;
+        m_TileCells = parsed.Terrain.TileCells;
+        // 配置の記録は m_Tiles と同じ並び（近景は行優先の番号、外周はその後ろ）に持つ。
+        const size_t outerTileCount = bOuterReady ? parsed.Terrain.OuterTiles.size() : 0u;
+        m_PlacedTiles.resize(static_cast<size_t>(tileCount) + outerTileCount);
         m_Tiles.reserve(static_cast<size_t>(tileCount));
         for (uint32_t z = 0; z < parsed.Terrain.TileCountZ; ++z)
         {
@@ -748,14 +755,34 @@ namespace NorvesLib::Core::Component
                 SetTickEnabled(false);
                 return;
             }
+            if (m_bTileStreaming)
+            {
+                for (uint32_t z = 0; z < m_TileCountZ; ++z)
+                {
+                    for (uint32_t x = 0; x < m_TileCountX; ++x)
+                    {
+                        m_TerrainSystem->SetTileResident(GetTileIdAt(x, z), false);
+                    }
+                }
+                const uint32_t nearTileCount = m_TileCountX * m_TileCountZ;
+                LOG_INFO("TERRAIN_COMPONENT_STREAMING tiles=%u", nearTileCount);
+                if (nearTileCount == GetTileCount())
+                {
+                    SetTickEnabled(false);
+                    return;
+                }
+                // 近景の区画は流し込みが出し入れする。外周の遠景はどこからも見えるので、後ろの外周だけを予算で置く。
+                m_NextTile = nearTileCount;
+            }
         }
         const uint32_t configuredBudget = GetTilesPerFrame();
         const uint32_t budget = configuredBudget == 0 ? 1u : configuredBudget;
         for (uint32_t processed = 0; processed < budget && m_NextTile < GetTileCount(); ++processed)
         {
-            if (PlaceTile(m_Tiles[m_NextTile]))
+            const uint32_t record = m_NextTile;
+            if (!m_PlacedTiles[record].bPlaced)
             {
-                ++m_PlacedTileCount;
+                PlaceTile(m_Tiles[record], record);
             }
             ++m_NextTile;
         }
@@ -766,7 +793,7 @@ namespace NorvesLib::Core::Component
         }
     }
 
-    bool TerrainComponent::PlaceTile(const TileCoordinate& tile)
+    bool TerrainComponent::PlaceTile(const TileCoordinate& tile, uint32_t record)
     {
         char suffix[64];
         std::snprintf(suffix, sizeof(suffix), "%u_%u.generated", tile.X, tile.Z);
@@ -851,9 +878,120 @@ namespace NorvesLib::Core::Component
         child->SetPosition(0.0f, 0.0f, 0.0f);
         component->SetMegaMeshHandle(megaMesh);
         component->SetCastShadow(GetCastShadow());
-        m_ChildEntityIds.push_back(child->GetObjectId());
-        m_Models.push_back(model);
+        auto& placed = m_PlacedTiles[record];
+        placed.ChildEntityId = child->GetObjectId();
+        placed.Model = model;
+        placed.bPlaced = true;
+        ++m_PlacedTileCount;
         return true;
+    }
+
+    bool TerrainComponent::PlaceTileAt(uint32_t x, uint32_t z)
+    {
+        const uint32_t tileId = GetTileIdAt(x, z);
+        if (tileId == Rendering::Terrain::kInvalidTerrainTileId)
+        {
+            return false;
+        }
+        return m_PlacedTiles[tileId].bPlaced || PlaceTile({x, z}, tileId);
+    }
+
+    void TerrainComponent::RemoveTileAt(uint32_t x, uint32_t z)
+    {
+        const uint32_t tileId = GetTileIdAt(x, z);
+        if (tileId == Rendering::Terrain::kInvalidTerrainTileId || !m_PlacedTiles[tileId].bPlaced)
+        {
+            return;
+        }
+        auto& placed = m_PlacedTiles[tileId];
+        if (Entity* child = m_World->FindEntityByObjectId(placed.ChildEntityId))
+        {
+            m_World->RemoveEntity(child);
+        }
+        m_RenderResources->MegaGeometry().ReleaseModel(placed.Model);
+        placed = {};
+        --m_PlacedTileCount;
+    }
+
+    bool TerrainComponent::IsTilePlacedAt(uint32_t x, uint32_t z) const
+    {
+        const uint32_t tileId = GetTileIdAt(x, z);
+        return tileId != Rendering::Terrain::kInvalidTerrainTileId && m_PlacedTiles[tileId].bPlaced;
+    }
+
+    uint32_t TerrainComponent::GetTileIdAt(uint32_t x, uint32_t z) const
+    {
+        if (!m_TerrainHandle.IsValid() || x >= m_TileCountX || z >= m_TileCountZ)
+        {
+            return Rendering::Terrain::kInvalidTerrainTileId;
+        }
+        return z * m_TileCountX + x;
+    }
+
+    void TerrainComponent::CollectTilesInBounds(const Streaming::StreamingBounds& bounds,
+        Container::VariableArray<Streaming::TerrainTileCoordinate>& out) const
+    {
+        out.clear();
+        if (!m_TerrainHandle.IsValid() || !m_HeightField)
+        {
+            return;
+        }
+        const auto layout = m_HeightField->GetGridLayout();
+        for (uint32_t z = 0; z < m_TileCountZ; ++z)
+        {
+            const double firstZ = static_cast<double>(z) * m_TileCells;
+            // 外周の端数も最後の区画に含め、実際に覆う升目の範囲の中点を使う。
+            const double endZ = z + 1u == m_TileCountZ ? layout.Rows - 1u :
+                std::min(firstZ + m_TileCells, static_cast<double>(layout.Rows - 1u));
+            const float cz = static_cast<float>(layout.FirstZ + (firstZ + endZ) * 0.5 * layout.Spacing);
+            for (uint32_t x = 0; x < m_TileCountX; ++x)
+            {
+                const double firstX = static_cast<double>(x) * m_TileCells;
+                const double endX = x + 1u == m_TileCountX ? layout.Columns - 1u :
+                    std::min(firstX + m_TileCells, static_cast<double>(layout.Columns - 1u));
+                const float cx = static_cast<float>(layout.FirstX + (firstX + endX) * 0.5 * layout.Spacing);
+                if (Streaming::ContainsHorizontalPoint(bounds, cx, cz))
+                {
+                    out.push_back({x, z});
+                }
+            }
+        }
+    }
+
+    Streaming::ETerrainTileSiteState TerrainComponent::TileSite::GetSiteState() const
+    {
+        if (m_Owner->m_TerrainHandle.IsValid())
+        {
+            return Streaming::ETerrainTileSiteState::Ready;
+        }
+        return m_Owner->m_bLoadFailed ? Streaming::ETerrainTileSiteState::Failed :
+            Streaming::ETerrainTileSiteState::Loading;
+    }
+
+    void TerrainComponent::TileSite::CollectTilesInBounds(const Streaming::StreamingBounds& bounds,
+        Container::VariableArray<Streaming::TerrainTileCoordinate>& outTiles) const
+    {
+        m_Owner->CollectTilesInBounds(bounds, outTiles);
+    }
+
+    uint32_t TerrainComponent::TileSite::GetTileId(const Streaming::TerrainTileCoordinate& tile) const
+    {
+        return m_Owner->GetTileIdAt(tile.X, tile.Z);
+    }
+
+    bool TerrainComponent::TileSite::PlaceTile(const Streaming::TerrainTileCoordinate& tile)
+    {
+        return m_Owner->PlaceTileAt(tile.X, tile.Z);
+    }
+
+    void TerrainComponent::TileSite::RemoveTile(const Streaming::TerrainTileCoordinate& tile)
+    {
+        m_Owner->RemoveTileAt(tile.X, tile.Z);
+    }
+
+    bool TerrainComponent::TileSite::IsTilePlaced(const Streaming::TerrainTileCoordinate& tile) const
+    {
+        return m_Owner->IsTilePlacedAt(tile.X, tile.Z);
     }
 
     void TerrainComponent::EndPlay()
@@ -880,27 +1018,43 @@ namespace NorvesLib::Core::Component
         {
             // Component 単体の解除では、すでに消えた子を ObjectId で避けて、残る子だけを外す。
             // Tick / cleanup 中なら RemoveEntity が破棄を予約し、安全な回収位置まで待つ。
-            for (uint64_t id : m_ChildEntityIds)
+            for (const auto& placed : m_PlacedTiles)
             {
-                if (Entity* child = m_World->FindEntityByObjectId(id))
+                if (!placed.bPlaced)
+                {
+                    continue;
+                }
+                if (Entity* child = m_World->FindEntityByObjectId(placed.ChildEntityId))
                 {
                     m_World->RemoveEntity(child);
                 }
             }
         }
-        m_ChildEntityIds.clear();
         // モデルはここで返す。子の連鎖破棄が残っていても、GPU 資源はエンジンが使用完了まで保持する。
         if (m_RenderResources)
         {
-            for (Rendering::ModelHandle model : m_Models)
+            for (const auto& placed : m_PlacedTiles)
             {
-                m_RenderResources->MegaGeometry().ReleaseModel(model);
+                if (placed.bPlaced)
+                {
+                    m_RenderResources->MegaGeometry().ReleaseModel(placed.Model);
+                }
             }
         }
-        m_Models.clear();
+        m_PlacedTiles.clear();
         ReleaseSplatTextures();
         if (m_TerrainSystem && m_TerrainHandle.IsValid())
         {
+            if (m_bTileStreaming)
+            {
+                for (uint32_t z = 0; z < m_TileCountZ; ++z)
+                {
+                    for (uint32_t x = 0; x < m_TileCountX; ++x)
+                    {
+                        m_TerrainSystem->SetTileResident(GetTileIdAt(x, z), true);
+                    }
+                }
+            }
             m_TerrainSystem->UnregisterTerrain(m_TerrainHandle);
         }
         ReleaseOuterTerrains();
@@ -914,6 +1068,9 @@ namespace NorvesLib::Core::Component
         m_OuterRoughness = 0.0f;
         m_bHasOuterMaterial = false;
         m_Tiles.clear();
+        m_TileCountX = 0;
+        m_TileCountZ = 0;
+        m_TileCells = 0;
         m_NextTile = 0;
         m_PlacedTileCount = 0;
         m_bLoadFailed = false;

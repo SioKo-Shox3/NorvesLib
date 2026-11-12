@@ -10,6 +10,7 @@ namespace NorvesLib::Tools::AssetCook
         CookBatchReport* Report = nullptr;
         uint32_t Jobs = 1;
         bool bForce = false, bPrune = false;
+        bool bRunGenerators = false;
     };
     enum class TextureAssetSetCookResult
     {

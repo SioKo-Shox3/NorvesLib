@@ -11010,15 +11010,36 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（差し戻しへの対応差分）。人が GPU の試験を回すとき（`ctest -R "^RenderingAlphaClipVulkanTest$"`、約 15 分）は、on と off の両方のログの `ALPHA_CLIP_RESULT scenario=test` の行で `result=PASS`・`depth_filled` が 0.48〜0.52・`invalid_pixels=0`・`plate_depth` < `probe_depth` を見る。見た目の見どころ: 切り抜きの材質を使う既定のシーンは無いので、Rendering3DTest（天球・地面・球・岩）と荒野は変わらない想定。
 - Notes: 既知の限界: 切り抜きの FS は早期の深度試験を失う（Masked の材質だけ）。VT のフィードバックは discard の前で書くので、隠れた画素と切り抜いた画素も要求を出しうる（アルベドのタイルは被覆率を決めるのに要る）。評価者の non-blocking として残したもの: `MegaGeometryPass::CreateDrawPipeline` と `VisibilityRasterPass::CreatePipelines` が cull None のパイプラインを常に先に作るので、不透明だけのシーンでもパイプラインが 2 本増える（GPU の試験が数えるのは `GBufferPipelineCreated` だけ）。`VisibilityResolve.glsl` の両面の法線の反転は視線に `cameraPosition - position[0]` を使い、正射影の主の視点では表裏を誤りうる。`ModelStaging.cpp` の `std::clamp` は NaN を通す（MegaGeometry は値を使わないので今は害が無い）。`RenderingAlphaClipVulkanTest` の深度の試しは盤面のワーカーでは回せず（Vulkan のドライバが隠されている）、GPU の上では未実行。
 
-### G12-GR39-FAR-RING 谷の外周の粗い遠景のタイル（2026-11-12、run 20261112-115210）
-- U1 NVTRN v0.1 の外周の区画表を読み書きする: 着地(直し 0 回)
-- U3 NVTRN の外周から照会用の高さ場（全格子と 4 本の帯）を作る: 着地(直し 0 回)
-- U2 地形 spec の outer_ring を cook して外周のタイルを NVTRN に書く: 着地(直し 1 回)
-- U4 外周の区画メッシュ terrain-tile:nvtrn:outer を焼く: 着地(直し 0 回)
-- U5 TerrainComponent が外周の区画を同じ予算で置き、帯の高さ場を登録する: 着地(直し 0 回)
-- U6 草原に外周を足し、遠方面と影の到達距離を地形の広さから決める: 着地(直し 0 回)
-- Done: NVTRN に副版 1（ヘッダの Flags の bit0）を足し、外周の記述（80 バイト）・外周のタイル表（印と共有辺のビット、HGT0 の区間 1 本）・外周の HGT0 を載せられるようにした。外周の無い spec の出力は v0.0 のままで、CookedTerrainTest の固定ハッシュ 2 件（`f0ed32e16a9c1073`・`a70e0dc0a2c5673a`。形式を変える前の Debug の実装で取った値）が今とのバイト一致を縛る。読み手は穴の縁の外周の標本が近景の uint16 と違うと `OuterEdgeMismatch`、記述・表・印の不正は `InvalidOuterRing` で拒否する。地形 spec に任意の `outer_ring`（height_source・height_mapping・cell_size_m 既定 16（8〜32）・width_m・blend_m 既定 256）を足し、cook が外周の格子を作って、近景の矩形からの距離 blend_m の帯で近景の縁の高さへ smoothstep で寄せ、穴の縁の標本は近景の uint16 を写す（外周の TileCells は近景の幅と width_m のセル数を全部割り切る 64 以下で最大の 2 の冪）。外周の画像の取り込みは `ImportHeightfield` の `bKeepSourceSize`（fit を通さない）。`TerrainHeightField` に外周の全格子と近景に重ならない 4 本の帯を作る口を足し、`TerrainComponent` が帯を近景の後に `TerrainSystem` へ登録する（外周の範囲の高さの照会は粗いセルで引け、両方の外は今どおり `kOutOfRangeHeight`）。外周の区画メッシュ `terrain-tile:nvtrn:outer:<x>,<z>` は近景と接する辺に近景の格子の全頂点（高さ・法線とも近景の高さ場から）を置き、最初の 1 升をジッパーで粗い格子へつなぎ、境は LOD の全段で固定する。外周の区画は近景の後ろに同じ TilesPerFrame で置き、層の標本なしの遠景の材質（スプラットの重みの平均で層の代表色・粗さを混ぜた 1 色と頂点の法線）で描く。草原は `GrasslandOuterHeight.png`（225×225、16bit、0〜256 m の山並み。`GenerateGrasslandHeight.py --outer` で再現）を外周に足し（16 m・幅 1536 m・帯 256 m → 7×7 タイルの外周 48 区画、範囲 −1536〜2048 m 四方）、地形を読み終えた後に範囲の対角線 D から遠方面 = max(今の値, 1.1·D)（約 5575 m）と `SetSunShadowMaxDistance(D)`（約 5069 m）を決め、シーンを抜けるときに影の距離を 0 へ戻す。
-- 証拠: `.harness/runs/20261112-115210/G12-GR39-FAR-RING-final-verify.txt`（verify のビルド exit 0、ctest で CookedTerrainTest・TerrainHeightFieldTest・AssetCookTerrainSmoke・AssetManifestTest・MathGeometryTest の 5/5 合格、`CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` が `COOK_ASSETS cooked=81 skipped=0` で exit 0（TERRAIN_NVTRN_OUTER_TILE 48 行・近景 16 行、散布 1、新しい NVTRN の cooked_hash `3455d60b54f23a5c` を散布に記録）、生成スクリプトの近景の出力が今の GrasslandHeight.png とバイト一致し外周の出力が 2 回で同じバイト）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
-- Next: G12-GR39-TERRAIN-CHECK の撮影で継ぎ目を見る。人が見るときの見どころ: grassland の谷の中から外周の山並みが地平まで切れずに続くこと、谷の縁（近景 0〜512 m 四方の外周の線。特に四隅）で近景と外周の間に隙間・段・明るさの段差が無いこと、外周の山の影が谷へ落ちること、外周の色が近景の草地の遠景と大きく浮かないこと。
-- Notes: 外周つきの spec では高さの写像（HeightMinM/MaxM）が近景と外周の和になるので、草原の近景の量子化の段は約 0.28 mm から約 3.3 mm（20.57〜239.59 m）に粗くなった。固定ハッシュは Debug の cook で取った値で、RelWithDebInfo で同じバイトになるかは確かめていない。荒野は今の遠景の経路（`kTerrainHorizonFormat`）のまま移していない。
-- 要起票: AssetCookMeshSmoke が統合ブランチの先頭（2a1db73 の前から）で落ちる。`Tools/AssetCook/MeshCooker.cpp` 4309 行の `std::string reason;`（9fc197e0 で入った）を `AssetCookMeshSmoke.cmake.in` 853 行の源の検査が「std owned container/string spelling」で拒否する（`ctest -R "^AssetCookMeshSmoke$"` で再現）。
+- U1 ストリーミングの口を payload の実装に合わせて広げる: 着地(直し 0 回)
+- U2 ScatterSystem にセルから常駐を指定する口を足す: 着地(直し 0 回)
+- U3 TerrainComponent に区画単位で置く・外す口と ITerrainTileSite の実装を足す: 着地(直し 0 回)
+- U4 Core の payload handler 3 種（terrain-tile・scatter-chunk・placement）を足す: 着地(直し 0 回)
+- U5 Physics に static-colliders の handler を足し、Install で登録する: 着地(直し 0 回)
+- U6 StreamingPayloadTest を足す（Core の handler 3 種を本物の World で確かめる）: 着地(直し 1 回)
+- U7 StreamingColliderPayloadTest を足す（static-colliders と placement の物理）: 着地(直し 1 回)
+- U8 grassland にセルの出し入れを結線し、タスクの verify を回す: 着地(直し 0 回)
+### G12-GR40-WORLD-PAYLOADS セルの中身の出し入れと遠いセルの休眠（2026-11-12、run 20261112-115210）
+- Done: セルの payload の handler を 4 種足した。Core の `Streaming::TerrainTilePayloadHandler`・`ScatterChunkPayloadHandler`・`PlacementPayloadHandler`（`Library/Core/Public/Streaming/WorldPayloadHandlers.h`。所有と登録は使う側）と、Physics の `StaticColliderPayloadHandler`（PhysicsModule が Install で `StreamingSystem` に登録し、Uninstall で解除。Core は Physics を参照しない）。含める区画・チャンク・個体は、中心の XZ がセルの境界の半開区間 [min, max) に入るもの（`ContainsHorizontalPoint`）。`terrain-tile` は `ITerrainTileSite`（`TerrainComponent::GetTileSite()`。`SetTileStreaming(true)` で自動配置を止め、`PlaceTileAt`・`RemoveTileAt` で区画ごとに置く）に 1 歩 1 区画を置いて `TerrainSystem::SetTileResident` を立て、休眠は印だけ落として描画を残す。`scatter-chunk` は `ScatterSystem` の名前（`SetScatterName`）で散布を引き、距離の常駐を切って（`SetDistanceResidency(false)`）1 歩 1 チャンクを `PinChunk`、休眠は `SetChunkDormant`（範囲の Active を落とす）。`static-colliders` は `norves.static-colliders.v1` の JSON（明示の形と、`scatter` の項目で散布の個体から作る球）をワーカーで読み、コミットで `RegisterStaticColliderChunk`、休眠とアンロードで解除。`placement` は Game が登録する作り手で、セルのルートの Entity の下に 1 歩数個ずつ作り、休眠はルートの `SetActive(false)`、アンロードはルートごと消す。進みのない待ちは `EStreamingStepResult::Waiting`。
+- grassland: 開発ビルドだけの `--grassland-streaming`（`--grassland-scatter-stress` とは同時に付けられない）で、地形の 4×4 区画・散布のチャンク・岩の当たりを 128 m の 16 セル（`Assets/World/Grassland.cells.json`、岩の当たりは `Assets/World/Grassland.rocks.colliders.json` の半径 1.0 m・中心 0.5 m 上の球）で出し入れする。輪は Active 192 m・Dormant 320 m・Unload 448 m。地形のコライダーは高さ場が読めた時点で付け（当たるのは常駐の印が立った区画だけ）、準備完了はカメラのいるセルが Active になったとき。引数なしの起動の組み立てと見た目は変えていない。
+- 試験: `StreamingPayloadTest`（`EntityTreeTest` の束）は本物の World・StreamingSystem・ScatterSystem・TerrainSystem で、予算の内の生成（1 フレームに高々 3 個、複数フレームに分かれる）、休眠で Tick・描画の同期の 5 つの口（Mesh・SkinnedMesh・Light・MegaGeometry・Board）・SceneQuery から外れ地形の proxy は残ること、復帰、アンロードで Entity・散布の範囲・区画の印が戻ること、出し入れ 20 周で数が基準に戻ること、2 回の流しで遷移とフレームの記録がビット一致することを確かめる。`StreamingColliderPayloadTest`（`PhysicsDynamicsTest` の束）は本物の Engine と Physics で、明示の形・散布の個体の形・配置の ColliderComponent が、コミットで当たり、休眠・アンロードで当たらず、復帰で当たり、20 周でプロキシ数・静的木の項目数・Entity 数が基準に戻ること、新しいプロセスでの再実行と当たりと遷移の記録が一致することを確かめる。
+- 証拠: `.harness/runs/20261112-115210/G12-GR40-WORLD-PAYLOADS-final-verify.txt`（verify のビルド `EntityTreeTest`・`PhysicsDynamicsTest`・`Game` が exit 0。ctest は StreamingPayloadTest・StreamingColliderPayloadTest・StreamingCellStateMachineTest・StreamingBudgetTest・ScatterSystemResidencyTest・EntityActiveInHierarchyTest・PhysicsParentDormancyTest・PhysicsDetachedColliderTest・EntityTreeTest・PhysicsDynamicsTest の 10/10 合格。2 つの JSON の読み込みも通る）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- Next: ランナーの評価者の反証（Object の寿命・アセットロード・物理の危険地帯）。人が見るときの見どころ: 開発ビルドで `--scene=grassland --grassland-streaming` を付けて起動し、near の視点から地形の反対の隅へ自由飛行で移ると、離れたセルの散布（岩・倒木・低木・草の塊）が休眠で消え、岩の当たりが外れ、さらに離れると地形の区画が外れる。戻ると再び読まれる。休眠中の地形は描画が残る。引数なしの grassland（ランチャーから・`--scene=grassland`）は今までと同じ見た目と流れのはず。
+- Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（既存の `--grassland-scatter-stress` と同じ形）。`--grassland-streaming` では Unload の輪 448 m が地形の対角（約 724 m）より短いので、隅にいると反対の隅の区画が外れて地形に穴が見える（開発の引数だけの挙動）。散布は距離の常駐を切るので、岩以外の種もセルで出し入れされる。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD。
+
+- U11 cook_report に generator の行を出す(U3 の切り直し): 着地(直し 0 回)
+- U9 spec v2 の generators を解析・検査する(U1 の切り直し): 着地(直し 0 回)
+- U10 cook state に generator の記録を任意欄で持たせる(U2 の切り直し): 着地(直し 0 回)
+- U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
+- U5 generator の実行器(hash・CreateProcessW)を新設する: 着地(直し 0 回)
+- U6 --run-generators を CLI と asset-set の cook に接続する: 着地(直し 0 回)
+- U7 TextureManagedCliTest に generator の試験を足す: 着地(直し 1 回)
+- U8 文書に書き、タスクの verify を通す: 着地(直し 0 回)
+
+## G2-GR96-GENERATORS（2026-11-12、完了）
+- Done: asset-set の spec v2 の最上位に任意の `generators`（`name`・`command`・`inputs`・`outputs`・`cwd`）を受け、名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・asset の source を 2 つの generator が出すこと・未知のキーを spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う（または宣言した outputs が欠けた）generator を宣言順に shell を通さず `CreateProcessW` で走らせ、全部成功してから今までどおり cook する。失敗は名前と終了コードを出して cook せず 1 で終わる。前回の hash は claim の cook state の任意欄 `generators` に cook state と同じ取引で残し、cook_report と stderr に各 generator の `ran`/`skipped`/`failed`/`not_run` を出す。`--recover` とは併用できない。付けないときは generator を走らせず前回の記録を引き継ぐ（既存の spec と CLI の出力は byte 一致）。試験は `TextureManagedCliTest` に試験の exe 自身を `--generator-child` で子にする場合を足し、文書は `TextureAssetSetSpec.md`・`ManagedTextureAssetSetCli.md`・`Testing.md` に書いた。
+- 証拠: verify 3 行を、全単位の着地後と同じコードの作業ツリーで回した出力 `.harness/relay/G2-GR96-GENERATORS-U8-verify.txt`（ビルド EXIT_CODE 0、ctest 100% tests passed, 0 tests failed out of 9、`AssetCookCliParityTest.py` Ran 13 tests OK、各 EXIT_CODE 0）。
+- Next: なし。
+- Notes: 前の走行の単位 U1〜U3 は作業ツリーがほかのタスクに使い回されて差分が失われていたので、同じブリーフで U9〜U11 として切り直した。
+- Notes: `CookManagedBootstrapRequest` は `CookManagedBootstrap.h` にあるので、記録を渡す 1 欄をこのヘッダに足した。実行器は新しいファイル `Tools/AssetCook/TextureAssetSetGenerators.{h,cpp}` に置いた（どちらも paths の外の同じモジュール）。
+- Notes: コードを読んだ範囲の制約（試験では確かめていない）: spec v2・`--prune` なしで spec から外した asset を保持している root では、generator の記録だけが変わった更新が intent の `live_count` の検査で通らない見込み。保持した記録がある manifest のみの更新と同じ形の既存の制約。
+- Notes: generator は管理 store のボリューム lock の外で走るので、同じ spec の generator を 2 つの cook が同時に走らせることは防がない（文書に記載）。AssetCook の CLI だけの変更で、シーンの見た目は変わらない。撮影・計測の確かめは回さない決まり。

@@ -23,7 +23,7 @@ namespace NorvesLib::Core::Streaming
 
         StreamingPayloadContext MakeContext(const StreamingCell& cell, uint32_t index)
         {
-            return {cell.GetId(), index, &cell.GetDesc().Payloads[index]};
+            return {cell.GetId(), index, &cell.GetDesc().Payloads[index], &cell.GetDesc()};
         }
     } // namespace
 
@@ -84,6 +84,29 @@ namespace NorvesLib::Core::Streaming
             }
         }
         m_Handlers.push_back({Container::String(pKind), pHandler});
+        return true;
+    }
+
+    bool StreamingSystem::UnregisterHandler(IStreamingPayloadHandler* pHandler)
+    {
+        if (pHandler == nullptr)
+        {
+            return false;
+        }
+        const auto handler = std::find_if(m_Handlers.begin(), m_Handlers.end(),
+            [pHandler](const HandlerEntry& entry)
+            {
+                return entry.Handler == pHandler;
+            });
+        if (handler == m_Handlers.end())
+        {
+            return false;
+        }
+        if (m_bHasManifest)
+        {
+            Shutdown();
+        }
+        m_Handlers.erase(handler);
         return true;
     }
 
@@ -463,7 +486,7 @@ namespace NorvesLib::Core::Streaming
                             result = EStreamingPrepareResult::Cancelled;
                             break;
                         }
-                        result = pHandlers[i]->Prepare({pDesc->Id, i, &pDesc->Payloads[i]}, *token);
+                        result = pHandlers[i]->Prepare({pDesc->Id, i, &pDesc->Payloads[i], pDesc}, *token);
                         if (result != EStreamingPrepareResult::Success)
                         {
                             break;
@@ -558,6 +581,11 @@ namespace NorvesLib::Core::Streaming
                 const auto from = pEntry->Cell.GetState();
                 pEntry->Cell.OnCommitStep(result);
                 FinishChange(*pEntry, from);
+                if (result == EStreamingStepResult::Waiting)
+                {
+                    // 進みのない待ちで空回りせず、時計を止めた環境でも次のセルへ進む。
+                    break;
+                }
                 if (pEntry->Cell.GetState() == EStreamingCellState::Dormant)
                 {
                     SetDormant(*pEntry, true);

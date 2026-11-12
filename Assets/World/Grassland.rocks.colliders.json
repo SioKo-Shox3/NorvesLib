@@ -1,0 +1,13 @@
+{
+  "format": "norves.static-colliders.v1",
+  "colliders": [],
+  "scatter": [
+    {
+      "name": "grassland",
+      "species": "rock",
+      "shape": "sphere",
+      "radius": 1.0,
+      "centerHeight": 0.5
+    }
+  ]
+}
