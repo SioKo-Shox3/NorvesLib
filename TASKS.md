@@ -10819,3 +10819,27 @@
 - paths: Tools/AssetCook/AssetCookTerrainSmoke.cmake.in, Tools/AssetCook/MeshCooker.cpp, TASKS.md, PROGRESS.md
 - effort: medium
 - from: G12-GR39-FAR-RING
+
+## G2-GR79-SKINNED-MATERIAL-BUILDER-P1: 3 資産の split で読んだ SkinnedMesh に描画 lease を出し、SkinnedMaterialBuilder で付けた材質で骨格つきの資産を描けるようにする
+- status: todo
+- after: G2-GR79-SKINNED-MATERIAL-BUILDER
+- gr: GR79, GR83
+- done-when: split の 3 資産の経路で読んだ `SkinnedMeshResource` が、`Load` で描画 lease(`Rendering::SkinnedMeshAssetLease`)を出す。頂点・索引・submesh は split の mesh(`GetVertices`・`GetIndices`・`GetSubMeshes`)から取る。slot の名前は `m_MaterialSlots` から MATS の順で並べる。handle は ResourceId と描画の世代で作る。`Unload` と split の世代を更新したときは `ReleaseAssetLease` で lease を離す。split でない経路の lease の振る舞いは変えない。
+  `RigSplitAssetAccess::Matches`(`RigSplitPublicationIdentity.cpp:575`)は今「lease が無いこと」を条件にしている。これを、lease があっても cache hit が今と同じに成り立つ照合に替える。`SkeletalSplitPublicationTest` と `SkeletalSplitAssetLoaderTest` が通ればよい。
+  CPU の試験として `SkeletalSplitRuntimeTest` に次を足す。RigSplitCookTest の 2 材質の rig を cook して読み、GPU を使わずに確かめる。
+  (1) `GetRenderAssetLease()` があり、slot の名前が 2 つで、順が MATS どおり。
+  (2) `SkinnedMaterialBuilder::Build` の後の `Bind` が、作れた slot をすべて `Bound` にする(`Rejected` が 0)。`TryGetSlotMaterial` が作った handle を返す。
+  (3) World に置いた component で `EvaluatePose` と `BuildSkinnedMeshProxy` が成功し、`MaterialCount == 2` で、各 slot が builder の handle になる(`SkeletalAssetSessionTest` の proxy の確かめ方に合わせる)。
+  (4) 資産を解放すると lease が離れ、component が古い handle の slot 材質を返さない。
+  `Docs/Architecture/RigSplitV1Wire.md:49` の「render lease は発行しない」と、`Docs/Architecture/SkeletalAssetRuntime.md:63` の「split は `SetSlotMaterial` が失敗し `Rejected`/描画は境界の外」を、今の振る舞いに書き直す。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook ResourceRegistryTest SkeletalFramePacketSnapshotTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalSplitRuntimeTest|SkeletalSplitPublicationTest|SkeletalSplitAssetLoaderTest|SkeletalAssetRuntimeTest|SkeletalAssetSessionTest|SkeletalMaterialBindingsTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|SkeletalFramePacketSnapshotTest|MaterialResourcesTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Resource/SkinnedMeshResource.cpp, Library/Core/Public/Resource/SkinnedMeshResource.h, Library/Core/Private/Resource/RigSplitPublicationIdentity.cpp, Library/Core/Private/Animation/RigSplitBinding.cpp, Test/Core/Asset/SkeletalSplitRuntimeTest.cpp, Docs/Architecture/RigSplitV1Wire.md, Docs/Architecture/SkeletalAssetRuntime.md, TASKS.md, PROGRESS.md
+- from: G2-GR79-SKINNED-MATERIAL-BUILDER
+- notes: 根拠を以下に挙げる。
+  - `SkinnedMeshResource::Load` の split の分岐(`SkinnedMeshResource.cpp:43-47`)と `RefreshRenderAssetLease`(同 262-265 行)は、split のとき lease を作らない。
+  - `SkinnedMeshComponent::SetSlotMaterial`(`SkinnedMeshComponent.cpp:442-448`)と `GetMaterialSlotCount`(同 379-386 行)は lease が要る。そのため `BuildSkinnedMeshProxy`(同 515-519 行)は slot 数 0 で false を返す。
+  - 一方で `SkinnedMaterialBuilder::Build` は split でない mesh を `NotSplitMesh` で断る(`SkinnedMaterialBuilder.cpp:215-218`)。結果として、builder の `Bind` は常に `Rejected` になる。`SkeletalAssetRuntime.md:63` もこれを「描画は境界の外」と認めている。
+  - todo の `G2-GR83-ASSET-PREVIEW-SCENE` は「骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける」を前提にしている。`G10-GR63-LOD-RUNTIME` も lease を「RigSplit の読み込みから」作る前提にしている。それなのに、split に lease を出す作業はどのタスクにも無い。
+  - BonePalette は split でも split の InverseBind と InverseMesh で作られる(`SkeletalPoseBuilder.cpp:68-71, 290`)。なので lease の頂点は split の mesh の頂点のままでよい。
+  - 危険地帯(アセットロード・Resource の寿命・Public API)なので、評価者を通す。
