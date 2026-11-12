@@ -1,11 +1,16 @@
 ﻿#include "Resource/SkeletalAssetLoader.h"
 #include "Resource/SkeletalAssetLoaderTestAccess.h"
+#include "Resource/SkeletalGltfDecode.h"
+#include "Resource/SkeletalSubmeshBounds.h"
+#include "Resource/SkeletalSubmeshLayout.h"
+#include "Resource/SkeletalLimits.h"
 #include "Asset/AssetSystem.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "Object/ResourceRegistry.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <exception>
+#include <filesystem>
 #include <type_traits>
 #include <utility>
 
@@ -17,6 +22,7 @@ namespace NorvesLib::Core::ResourceIO
         Asset::CookedSkeletalData Data;
         C::AnsiString LogicalPath;
         C::String ResourcePath;
+        Asset::AssetResolveSource Source = Asset::AssetResolveSource::None;
     };
     CookedSkeletalCpuAsset::CookedSkeletalCpuAsset() = default;
     CookedSkeletalCpuAsset::~CookedSkeletalCpuAsset() = default;
@@ -33,6 +39,10 @@ namespace NorvesLib::Core::ResourceIO
     const C::String* CookedSkeletalCpuAsset::GetResourcePath() const noexcept
     {
         return m_State ? &m_State->ResourcePath : nullptr;
+    }
+    Asset::AssetResolveSource CookedSkeletalCpuAsset::GetSource() const noexcept
+    {
+        return m_State ? m_State->Source : Asset::AssetResolveSource::None;
     }
     namespace
     {
@@ -72,6 +82,92 @@ namespace NorvesLib::Core::ResourceIO
             out = C::String(units.data());
             return true;
         }
+        // NVSKELの書き出しで付与・検査される値を、同じCore関数で揃える。
+        bool PrepareLooseSkeletal(Skeletal::SkeletalGltfData& data)
+        {
+            if (data.Vertices.empty() || data.Vertices.size() > UINT32_MAX || data.Indices.empty() ||
+                data.Indices.size() > UINT32_MAX || data.Joints.empty() ||
+                data.Joints.size() > Skeletal::LegacyMaximumJointCount || data.Clips.empty() ||
+                data.Clips.size() > UINT32_MAX)
+            {
+                return false;
+            }
+            const auto layout = Skeletal::ResolveSkeletalSubmeshLayout(
+                {data.SubMeshes.data(), data.SubMeshes.size()}, data.Indices.size(), data.MaterialSlots.size());
+            if (!layout.Succeeded())
+            {
+                return false;
+            }
+            if (layout.bUsesImplicitSingleSubmesh)
+            {
+                data.SubMeshes.push_back(layout.ImplicitSubmesh);
+                Skeletal::SkeletalMaterialSlot slot;
+                slot.Name = "Default";
+                data.MaterialSlots.push_back(std::move(slot));
+            }
+            for (auto& submesh : data.SubMeshes)
+            {
+                if (!Skeletal::ComputeSkeletalSubmeshBounds(
+                        {data.Indices.data() + submesh.IndexStart, submesh.IndexCount}, data.Vertices.size(),
+                        [&data](uint32_t index) { return data.Vertices[index].Position; }, submesh))
+                {
+                    return false;
+                }
+            }
+            if (!Skeletal::ValidateSkeletalSubmeshData({data.SubMeshes.data(), data.SubMeshes.size()},
+                    {data.Indices.data(), data.Indices.size()}, data.Vertices.size(), data.MaterialSlots.size())
+                     .Succeeded())
+            {
+                return false;
+            }
+            uint64_t nameBytes = 0;
+            const auto validName = [&nameBytes](const C::String& name)
+            {
+                const auto measured = Asset::MeasureSkeletalNameEncoding(
+                    2, C::Span<const C::String::value_type>{name.data(), name.size()});
+                if (!measured.Succeeded() || measured.ByteCount > UINT32_MAX - nameBytes)
+                {
+                    return false;
+                }
+                nameBytes += measured.ByteCount;
+                return true;
+            };
+            for (const auto& joint : data.Joints)
+            {
+                if (!validName(joint.Name))
+                {
+                    return false;
+                }
+            }
+            uint64_t channelCount = 0, sampleCount = 0;
+            for (auto& clip : data.Clips)
+            {
+                if (!validName(clip.Name) || !clip.RootMotion.empty() || clip.Channels.empty() ||
+                    clip.Channels.size() > UINT32_MAX - channelCount)
+                {
+                    return false;
+                }
+                channelCount += clip.Channels.size();
+                for (const auto& channel : clip.Channels)
+                {
+                    if (channel.Samples.empty() || channel.Samples.size() > UINT32_MAX - sampleCount)
+                    {
+                        return false;
+                    }
+                    sampleCount += channel.Samples.size();
+                }
+                // NVSKEL v0にはclip metadataが保存されない。
+                clip.Metadata = {};
+            }
+            for (const auto& slot : data.MaterialSlots)
+            {
+                if (!validName(slot.Name))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
         bool MetadataMatches(const Asset::AssetCookedReference& reference, const Skeletal::SkeletalGltfData& data)
         {
             if (!reference.bHasSkeletalMetadata)
@@ -109,16 +205,23 @@ namespace NorvesLib::Core::ResourceIO
             }
             report.ResolveStatus = resolved.Status;
             report.Source = resolved.Source;
-            if (!resolved.UsedCooked())
+            const bool bCooked = resolved.UsedCooked();
+            const bool bLoose = plan.bAllowLoose && resolved.Succeeded() &&
+                                resolved.Source == Asset::AssetResolveSource::Loose;
+            if (!bCooked && !bLoose)
             {
+                if (!plan.bAllowLoose && report.Source == Asset::AssetResolveSource::Loose)
+                {
+                    report.Source = Asset::AssetResolveSource::None;
+                }
                 report.Status = SkeletalAssetLoadStatus::ResolveRejected;
                 LogStage("skeletal_asset_resolve", "worker", resolved.NormalizedLogicalPath, report, false);
                 return false;
             }
             const auto& reference = resolved.CookedReference;
-            if (reference.Kind != Asset::AssetKind::Model ||
+            if (bCooked && (reference.Kind != Asset::AssetKind::Model ||
                 reference.EntryType != Asset::MakeAssetPackageFourCC('S', 'k', 'l', '0') ||
-                reference.Format != "nvskel.v0.skinned.pnujiw.u32" || reference.CookedVersion != 0)
+                reference.Format != "nvskel.v0.skinned.pnujiw.u32" || reference.CookedVersion != 0))
             {
                 report.Status = SkeletalAssetLoadStatus::FormatRejected;
                 LogStage("skeletal_asset_resolve", "worker", resolved.NormalizedLogicalPath, report, false);
@@ -128,16 +231,45 @@ namespace NorvesLib::Core::ResourceIO
             LogStage("skeletal_asset_resolve", "worker", resolved.NormalizedLogicalPath, report, true);
             Asset::CookedSkeletalParseResult parsed;
             report.bParseAttempted = true;
+            if (bCooked)
             {
                 NORVES_STAT_SCOPE_CATEGORY("SkeletalAsset.ParseCooked", "AssetLoad");
                 parsed = Asset::ParseCookedSkeletal(resolved.Blob);
+            }
+            else
+            {
+                NORVES_STAT_SCOPE_CATEGORY("SkeletalAsset.DecodeLoose", "AssetLoad");
+                parsed.Status = Asset::CookedSkeletalParseStatus::InvalidRecord;
+                if (resolved.LoosePath.HasResolvedPath())
+                {
+                    const auto& sourcePath = resolved.LoosePath.GetResolvedPath();
+                    const auto decode = [&](const auto& path)
+                    {
+                        return Skeletal::DecodeRigGltfNativePath(
+                            resolved.Blob.GetSpan(), std::filesystem::path(path.begin(), path.end()));
+                    };
+#if defined(UNICODE)
+                    // AssetFileReaderと同様にUTF-8を優先し、失敗時はローカルコードページを使う。
+                    C::String widePath;
+                    auto decoded = ResourcePath(sourcePath, widePath) ? decode(widePath) : decode(sourcePath);
+#else
+                    // narrow版のAssetFileReaderは、読み取りに使ったbytesをそのまま渡す。
+                    auto decoded = decode(sourcePath);
+#endif
+                    if (decoded.Succeeded() && PrepareLooseSkeletal(decoded.Data))
+                    {
+                        parsed.Status = Asset::CookedSkeletalParseStatus::Success;
+                        parsed.Data.SourceBlob = resolved.Blob;
+                        parsed.Data.Skeletal = std::move(decoded.Data);
+                    }
+                }
             }
             report.ParseStatus = parsed.Status;
             if (!parsed.Succeeded())
             {
                 report.Status = SkeletalAssetLoadStatus::ParseRejected;
             }
-            else if (!MetadataMatches(reference, parsed.Data.Skeletal))
+            else if (bCooked && !MetadataMatches(reference, parsed.Data.Skeletal))
             {
                 report.Status = SkeletalAssetLoadStatus::MetadataMismatch;
             }
@@ -155,6 +287,7 @@ namespace NorvesLib::Core::ResourceIO
                 return false;
             }
             candidate->Data = std::move(parsed.Data);
+            candidate->Source = report.Source;
             LogStage("skeletal_cooked_parse", "worker", resolved.NormalizedLogicalPath, report, true);
             out.m_State = std::move(candidate);
             return true;
@@ -174,6 +307,10 @@ namespace NorvesLib::Core::ResourceIO
                                                       void* probeContext)
     {
         report = {};
+        if (cpu.GetSource() == Asset::AssetResolveSource::Loose)
+        {
+            report.Source = Asset::AssetResolveSource::Loose;
+        }
         const auto finish = [&](SkeletalAssetLoadStatus status)
         {
             report.Status = status;
@@ -196,7 +333,7 @@ namespace NorvesLib::Core::ResourceIO
             {
                 return finish(SkeletalAssetLoadStatus::InvalidCpuResult);
             }
-            report.Source = Asset::AssetResolveSource::Cooked;
+            report.Source = cpu.GetSource();
             NORVES_STAT_SCOPE_CATEGORY("SkeletalAsset.CreateResources", "AssetLoad");
             // CPU結果を保持し、途中の通常失敗/確保例外でも再試行できる所有copyを使う。
             auto data = cpu.GetData()->Skeletal;

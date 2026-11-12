@@ -10936,13 +10936,32 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done（反復 2、差し戻しの直し）: 崖以外の層の UV の回転を、低周波の雑音（波長 23 m）の値を 8 段に区切った段ごとに一定の角度とずらしにし、隣の段の標本と段の中の位置 0.3〜0.7 の smoothstep で混ぜる形に直した（`TerrainLayerBlend.glsl` の `ShadeTerrainSplat`。ハードのラスタと可視バッファの解決の両方に効く。RTGI は UV を使わないので変わらない）。前の式は場所ごとに連続に変わる角度で原点中心に回していて、UV の微分に k·|xz|·|∇θ| が乗り、原点から 300 m で模様が数十倍に潰れ、textureGrad の勾配とも合わなかった。標本ごとに回転が一定なので UV の微分は R·k で厳密になり、勾配とも一致する。費用は混ぜる区間だけ崖以外の層の標本が 2 倍。`TerrainLayerBlendVulkanTest` に `CheckRotation`（原点から約 300 m の 8 か所の平面の 2D の輝度差の分散を、原点付近の回転なしと比べる。各所の比 ≤ 1.5、平均 ≥ 0.3）を足した。
 - 証拠（反復 2）: `.harness/runs/20261112-065206/G5-GR37-TERRAIN-LAYERS-final-verify-2.txt`（verify のビルド 3 行 exit 0、ctest 3/3 合格（TerrainShaderCompileTest 99.10 秒）。`--dump-shader-current` の本文の glslc のコンパイル exit 0。式を CPU に写した使い捨ての計算で、`CheckRotation` の比は前の式で 8.7〜49.1（平均 25.8。検査が落ちる）、直した式で 0.52〜1.00（平均 0.92。通る））。GPU での実行は G5-GR37-TERRAIN-CHECK。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next（反復 2）: 人が見るときの見どころに、grassland の原点から離れた平地（地形の端に近い所）で土・苔・草地の地肌の模様が潰れず、近くと同じ細かさに見えること、段の変わり目（数 m の幅）で模様が二重に見えすぎないことを足す。
-- U1 窓・正射影・描き直しの判定・屋根の高さの CPU の計算と OverheadHeightMapMathTest: 着地(直し 0 回)
-- U2 ViewRenderContext に OverheadHeightMapResources、RenderGraphResourceNames に OverheadHeightMap を足す: 着地(直し 0 回)
-- U3 天面を描く頂点シェーダーと、屋根の高さ・雨に当たるか・上の空の見え方を引く GLSL: 着地(直し 0 回)
-- U4 OverheadHeightMapPass を作り、SetupDeferredPipeline の ShadowMapPass の直後に足す: 着地(直し 1 回)
-- U5 OverheadHeightMapVulkanTest を足し、タスクの verify を回す: 着地(直し 0 回)
-### G11-GR59-OVERHEAD-MAP 雨の遮蔽の深度マップ（2026-11-12、run 20261112-115209）
-- Done: `OverheadHeightMapPass`（IViewPass＋IRenderGraphPass）が D32_FLOAT 1024²・96 m・カメラの XZ をテクセルへ丸めた真下向きの正射影の深度（(topY − y) ÷ range、消去 1.0 = 開けている）を、頂点なしの描画で遮蔽物の天面だけ描く。遮蔽物は「雨を遮る」印の `SkyOccluderProxy`、MeshProxy の局所 AABB の箱、MegaGeometryProxy の境界球の楕円体（地形の材質 `IsTerrainSurface` とスキンメッシュは除く。影を落とさない proxy も除く）。窓が 8 テクセル以上動く・topY が変わる・遮蔽物が変わるときだけ全面を描き直す（4 Hz の上限）。`RenderGraphResourceNames::OverheadHeightMap` で公開・Export し、`ViewRenderContext::OverheadHeightMap`（`OverheadHeightMapResources`）へ並列の記録の前にも公開する。`Assets/Shaders/Common/OverheadHeightMap.glsl` に屋根の高さ・雨に当たるか・上の空の見え方（4 半径の標本で屋根が地面より 2 m 以上高い割合）を置き、無効・範囲外は開けている扱い。SetupDeferredPipeline の ShadowMapPass の直後に足した（PT には足さない）。試験 `OverheadHeightMapMathTest`（CameraViewConstantsTest の束）と `OverheadHeightMapVulkanTest`（RHITextureUpdateVulkanTest の束）を足した。
-- 証拠: `.harness/runs/20261112-115209/u5-rebuild.txt`（verify のビルドの行、HEAD 08f7e6ab と同じ中身で 4 ターゲット EXIT=0）、`.harness/runs/20261112-115209/u5-ctest.txt`（verify の ctest の行に `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて OverheadHeightMapMathTest・SkyOcclusionModelTest の 2/2 合格）。OverheadHeightMapVulkanTest と RenderingGolden* の 4 本は Vulkan・Golden の試験を回さない決まりで実行していない（OverheadHeightMapVulkanTest はビルドと ctest への登録まで）。
-- Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの順と公開）。マップを使う側は G11-GR59-RAIN-HIT・G11-GR59-PUDDLES。撮影・計測の確かめは回さない決まり。使う側がまだ無いので、人が見るときは Rendering3DTest とランチャーの各シーンの見た目が前と変わらないことだけを見る。
-- Notes: 既知の限界: 遮蔽物の集め直しは、描いた窓での変化の見張り（0.25 s ごと）と描き直しの前だけで、そのたびに全 MeshProxy・MegaGeometryProxy を回す（窓の外は境界球で先に飛ばす）。散布の proxy が非常に多いシーンでは、その回だけ描画スレッドの CPU 時間が増える見込み（測っていない）。厚みの無いメッシュ（局所 AABB の幅 0 の軸がある）は屋根にならない。形の自動推定は GR81 の範囲で、当面はメッシュ = 箱・Mega = 楕円体の既定。OverheadHeightMapVulkanTest は実行していないので、読み戻しの向きと深度の同期は確かめていない。
+
+- U1 旧 NVSKEL のローダに明示許可の loose を足し、ローダ試験 3 件を足す: 着地(直し 0 回)
+- U2 要約スクリプトに骨格の契約を足し、契約試験に 3 ケースを足す: 着地(直し 0 回)
+- U3 ランタイムとセッションに loose 許可の設定を 1 つ持たせる: 着地(直し 0 回)
+- U4 Game の起動引数 --allow-loose-skeletal で許可を立てる: 着地(直し 0 回)
+- U5 文書に決まりを書き、タスクの verify を回す: 着地(直し 0 回)
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-05、分割の 3 資産だけ判断待ち）
+- Done: 旧 NVSKEL の骨格ローダに明示の許可があるときだけの loose を足した（manifest 欠落・variant 欠落のときだけ glTF/GLB を worker で decode、壊れた cooked は代えない、3 段の AssetLoadProfile は source=loose）。許可は `SkeletalAssetSession::SetAllowLooseSkeletal` → `SkeletalRuntimeLimits::bAllowLoose` → `CookedSkeletalLoadPlan::bAllowLoose` で、Game の `--allow-loose-skeletal`（開発ビルドだけ）からだけ立つ。`SummarizeAssetLoadProfile.ps1 -RequireCompleteCookedSkeletal` と契約の 3 ケース、`SkeletalAssetLoaderTest` の 3 件、文書（SkeletalAssetLoader.md・AssetFallbackPolicy.md の kind の一覧を 7 種に）を足した。
+- 証拠: `.harness/runs/20261105-205801/verify-G2-GR83-LOOSE-SKELETAL.txt`（build EXIT_CODE 0、ctest 9 本 100% tests passed, 0 tests failed out of 9）。
+- Next: 分割の 3 資産（RigSplitAssetLoader）の loose は判断待ち（論理パスがソースの名前と一致せず、切り出しの処理が Tools/AssetCook にある）。起動の確かめ（`--allow-loose-skeletal` で loose の読み込みとログの source=loose）は後回し。
+- Notes: タスクの verify の build の対象に `TextureResourcesAssetLoadProfileContractTest`（ModelResourcesAssetLoadProfileContractTest の収容先）が入っておらず、新しい作業ツリーでは ctest が Not Run になる。補助でビルドして回した。
+- U6 分割の 3 資産が loose を持たない決まりを文書に書き、タスクの verify を回す: 着地(直し 0 回)
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、完了）
+- Done: 判断役の判断 (A) に従い、分割の 3 資産（`LoadRigSplitAsync`・`RigSplitAssetLoader`）は loose を持たず許可があっても cooked だけを読む、と決めて `SkeletalAssetLoader.md`・`AssetFallbackPolicy.md` の「未決」を決まりと理由（論理パスがソースの名前と対応しない・切り出しが `Tools/AssetCook` にある・許可を分割の要求へ渡さない）へ書き直した。完了の条件はこの判断で、分割の経路の loose と `SkeletalSplitAssetLoaderTest` の (2)(3) を外した形に改めた（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）。
+- 証拠: `.harness/runs/20261112-075132/verify-G2-GR83-LOOSE-SKELETAL.txt`（`cmake --build ... CookedMeshTest AssetCook Game TextureResourcesAssetLoadProfileContractTest` の Build exit code 0、ctest 9 本 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
+- 人が見るときの見どころ: 開発ビルドの Game を `--scene=` で Rendering3DTest（骨格は `M9SkeletalPreparation.cpp` の `LoadAsync`）に入れ、`--allow-loose-skeletal` を付けたときログに `SKELETAL_ASSETS allow_loose=1` が出ること。manifest から骨格の項目を外して起動すると AssetLoadProfile の 3 段が `source=loose` になり、付けないと `source=none` の失敗になること。撮影・計測の確かめは回さない決まり。
+- Next: 分割の資産を cook せずに確かめる手段は無いまま。要るなら論理パス→ソースの対応表と分割の cook の CPU 部分の Core への移設を別の項目で起こす（今は分割の経路は本番から呼ばれていない）。
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、再検証の落ちの直し・完了）
+- Done: ランナーの再検証は、このブランチの `TASKS.md` に判断役が書き換えた done-when と verify が入っておらず、古い verify（build の対象に `TextureResourcesAssetLoadProfileContractTest` が無い版）で回って `ModelResourcesAssetLoadProfileContractTest` が Not Run になっていた。判断（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）で書き換えた done-when と verify を、統合ブランチの項目と同じ文面でこのブランチへ写した。コードの変更は無い。
+- 証拠: 書き換えた verify 2 本は、今と同じコード（0c76e9b5 以後の変更は `TASKS.md`・`PROGRESS.md` だけ）で回して合格している（U6 の確かめ: Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0）。
+- Notes: 盤面が判断で書き換えた欄が、作業のブランチの `TASKS.md` に入らないまま再開されると、ランナーは古い verify で再検証する。
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、評価の中断からの再開・完了）
+- Done: 前の走行は評価の途中で止まった。コードは 0c76e9b5 から変わっていない（その後の変更は `TASKS.md`・`PROGRESS.md` だけ）ので、項目を完了に戻す。
+- 証拠: 今と同じコードで回した verify 2 本の出力 `.harness/runs/20261112-115211/prior-verify-G2-GR83-LOOSE-SKELETAL.txt`（Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
+- Notes: 人が見るときの見どころは上の 2026-11-12 の完了の記録のとおり。撮影・計測の確かめは回さない決まり。

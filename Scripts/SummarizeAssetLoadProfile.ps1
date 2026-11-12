@@ -8,7 +8,11 @@ param(
 
     [string]$ExpectedCookedModelLogicalPath = "",
 
-    [string]$ExpectedCookedModelDebugName = ""
+    [string]$ExpectedCookedModelDebugName = "",
+
+    [switch]$RequireCompleteCookedSkeletal,
+
+    [string]$ExpectedCookedSkeletalLogicalPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +20,11 @@ $ErrorActionPreference = "Stop"
 
 if ($RequireCompleteModelFlush -and $RequireCompleteCookedModel) {
     [Console]::Error.WriteLine("Cooked model contract failed: incompatible switches")
+    exit 2
+}
+
+if ($RequireCompleteCookedSkeletal -and ($RequireCompleteModelFlush -or $RequireCompleteCookedModel)) {
+    [Console]::Error.WriteLine("Skeletal cooked contract failed: incompatible switches")
     exit 2
 }
 
@@ -274,7 +283,7 @@ foreach ($line in Get-Content -LiteralPath $resolvedLogPath) {
     }
 }
 
-if ($records.Count -eq 0) {
+if ($records.Count -eq 0 -and -not $RequireCompleteCookedSkeletal) {
     Write-Error "No AssetLoadProfile records found in '$resolvedLogPath'."
     exit 1
 }
@@ -282,6 +291,51 @@ if ($records.Count -eq 0) {
 $stageSet = @{}
 foreach ($record in $records) {
     $stageSet[$record.Stage] = $true
+}
+
+function Fail-CookedSkeletalContract {
+    param([string]$Reason)
+
+    [Console]::Error.WriteLine("Skeletal cooked contract failed: $Reason")
+    exit 2
+}
+
+if ($RequireCompleteCookedSkeletal) {
+    $skeletalStages = @("skeletal_asset_resolve", "skeletal_cooked_parse", "skeletal_resource_create")
+    $skeletalPath = $null
+    foreach ($stage in $skeletalStages) {
+        $matches = @($records | Where-Object { $_.Stage -eq $stage })
+        if ($matches.Count -eq 0) {
+            Fail-CookedSkeletalContract "missing required stage=$stage"
+        }
+        if ($matches.Count -ne 1) {
+            Fail-CookedSkeletalContract "stage=$stage must occur exactly once"
+        }
+        $record = $matches[0]
+        if ((Get-Field $record.Fields "source") -ne "cooked") {
+            Fail-CookedSkeletalContract "stage=$stage source must be cooked"
+        }
+        if ((Get-NumberField $record.Fields "success") -ne 1) {
+            Fail-CookedSkeletalContract "stage=$stage success must be 1"
+        }
+        if ((Get-NumberField $record.Fields "status") -ne 0) {
+            Fail-CookedSkeletalContract "stage=$stage status must be 0"
+        }
+        $path = Get-Field $record.Fields "normalized_path"
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            Fail-CookedSkeletalContract "stage=$stage normalized_path must be non-empty"
+        }
+        if ($null -eq $skeletalPath) {
+            $skeletalPath = $path
+        }
+        elseif ($path -ne $skeletalPath) {
+            Fail-CookedSkeletalContract "stage=$stage normalized_path mismatch"
+        }
+    }
+    if (-not [string]::IsNullOrEmpty($ExpectedCookedSkeletalLogicalPath) -and
+        $skeletalPath -ne $ExpectedCookedSkeletalLogicalPath) {
+        Fail-CookedSkeletalContract "normalized_path mismatch: expected=$ExpectedCookedSkeletalLogicalPath actual=$skeletalPath"
+    }
 }
 
 function Fail-CookedModelContract {
@@ -758,6 +812,11 @@ Write-Output ""
 
 if ($RequireCompleteCookedModel) {
     Write-Output "Cooked model contract: PASS"
+    Write-Output ""
+}
+
+if ($RequireCompleteCookedSkeletal) {
+    Write-Output "Skeletal cooked contract: PASS"
     Write-Output ""
 }
 
