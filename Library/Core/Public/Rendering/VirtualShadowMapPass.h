@@ -46,6 +46,7 @@ namespace NorvesLib::Core::Rendering
 {
     class GpuResources;
     class MegaGeometryPass;
+    class RenderExtensionRegistry;
     class SkinningComputePass;
     class VirtualShadowMapMegaCull;
     class VirtualShadowMapMegaCullStatsReporter;
@@ -376,6 +377,8 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief スキニングの投影物の取り出し元（同じ View のパス。null ならスキニングの投影物は描かない） */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningPass = pass; }
+        /** @brief 同じ View の描画中に有効な、拡張の影の束の取り出し元 */
+        void SetRenderExtensionRegistry(const RenderExtensionRegistry* registry) { m_RenderExtensions = registry; }
         /** @brief MegaGeometry の投影物の取り出し元（同じ View の主の経路。null なら MegaGeometry の投影物はカリングしない） */
         void SetMegaGeometryPass(MegaGeometryPass* pass) { m_MegaPass = pass; }
         const MegaGeometryPass* GetMegaGeometryPass() const { return m_MegaPass; }
@@ -515,6 +518,7 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<VirtualShadowMapMegaCull> m_MegaCull;
         Container::TUniquePtr<VirtualShadowMapMegaCullStatsReporter> m_MegaReporter;
         const SkinningComputePass* m_SkinningPass = nullptr;
+        const RenderExtensionRegistry* m_RenderExtensions = nullptr;
         // 投影物のカリングの入力を読み、キャッシュの無効化（MegaGeometryPass::TakeShadowInvalidation）を取り出す
         MegaGeometryPass* m_MegaPass = nullptr;
         StatsSlot m_StatsSlots[StatsSlotCount];

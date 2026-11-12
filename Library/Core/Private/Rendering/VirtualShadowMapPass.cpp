@@ -9,6 +9,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/RenderExtension/RenderExtension.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/SparseResidencyShading.h"
@@ -155,6 +156,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaskedChunkCount = 0;
         uint32_t MaskedDroppedDrawCount = 0;
         uint32_t LoggedMaskedCounts[5] = {};
+        uint32_t LoggedExtensionCounts[6] = {};
+        bool bExtensionLogged = false;
 #endif
         VirtualShadowMap::CasterStats Stats;
         /** @brief 作業配列（毎フレーム容量を使い回す） */
@@ -1242,6 +1245,102 @@ namespace NorvesLib::Core::Rendering
                 state.Motion.push_back(motion);
             }
         }
+
+        // ----- 描画の拡張の束（ShadowCaster の段） -----
+#if NORVES_ENABLE_LOGGING
+        uint32_t extensionCounts[6] = {};
+        const uint32_t extensionFirstChunk = static_cast<uint32_t>(state.Chunks.size());
+        const uint32_t extensionFirstMaskedChunk = state.MaskedChunkCount;
+        const uint32_t extensionFirstSkippedDraw = state.Stats.SkippedDraws;
+#endif
+        if (m_RenderExtensions)
+        {
+            const RenderExtensionShadowCasterFrame& frame = m_RenderExtensions->GetShadowCasters();
+#if NORVES_ENABLE_LOGGING
+            extensionCounts[0] = static_cast<uint32_t>(frame.GetDraws().size());
+            extensionCounts[1] = static_cast<uint32_t>(frame.GetInstances().size());
+#endif
+            for (const RenderExtensionShadowCasterDraw& draw : frame.GetDraws())
+            {
+                VirtualShadowMap::ProceduralDrawInput input;
+                input.VertexAddress = draw.VertexBuffer->GetDeviceAddress();
+                input.IndexAddress = draw.IndexBuffer->GetDeviceAddress();
+                if (input.VertexAddress == 0u || input.IndexAddress == 0u)
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                const bool bPoint = draw.bPointLightShadow && state.bUseSliceTable;
+                if (!bPoint && !clipmap.bEnabled)
+                {
+                    continue;
+                }
+                input.FirstIndex = draw.FirstIndex;
+                input.IndexCount = draw.IndexCount;
+                input.VertexOffset = draw.VertexOffset;
+                input.MeshBounds = &draw.LocalBounds;
+                if (!VirtualShadowMap::PlanProceduralChunks(input, state.PlanScratch, state.Plan))
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                const float params[4] = {-1.0f, -1.0f, -1.0f, draw.CoverageMultiplier};
+                const MaskedCasterMaterial material = ResolveMaskedCasterMaterial(context, draw.Material, params);
+#if NORVES_ENABLE_LOGGING
+                extensionCounts[5] += bPoint ? 1u : 0u;
+#endif
+                for (uint32_t instanceIndex = 0; instanceIndex < draw.InstanceCount; ++instanceIndex)
+                {
+                    const RenderExtensionShadowCasterInstance& instance = frame.GetInstances()[draw.FirstInstance + instanceIndex];
+                    const uint32_t firstChunk = static_cast<uint32_t>(state.Chunks.size());
+                    // 表を渡さない束は、組 0 の太陽の段だけに印を付ける。
+                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, instance.World, clipmap, state.Chunks, state.Stats,
+                                                                bPoint ? slices : nullptr, nullptr);
+                    const bool bMasked = AppendMaskedCasterDraw(state, material, firstChunk);
+
+                    VirtualShadowMap::CasterMotionEntry motion;
+                    motion.Key = VirtualShadowMap::CasterHashCombine(VirtualShadowMap::CasterHashCombine(0x45585453ull, draw.Key), instanceIndex);
+                    uint64_t signature = VirtualShadowMap::CasterHashFloats(1469598103934665603ull, instance.World, 16u);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexAddress);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexAddress);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.FirstIndex);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexCount);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexOffset);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, draw.ContentRevision);
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(signature, bPoint ? 1u : 0u);
+                    if (material.Albedo)
+                    {
+                        // 材質と切り抜きの範囲の変化も、ページの再描画へ反映する。
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, draw.Material.Id);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, std::bit_cast<uint32_t>(material.Cutoff));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, std::bit_cast<uint32_t>(material.Coverage));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.AlbedoId);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, reinterpret_cast<uintptr_t>(material.Albedo.get()));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.bSparse ? 1u : 0u);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, bMasked ? 1u : 0u);
+                    }
+                    motion.bAlwaysChanged = false;
+                    motion.bHasBounds = true;
+                    motion.Bounds = VirtualShadowMap::TransformBoundsByWorld(instance.World, draw.LocalBounds);
+                    state.Motion.push_back(motion);
+                }
+            }
+        }
+#if NORVES_ENABLE_LOGGING
+        extensionCounts[2] = static_cast<uint32_t>(state.Chunks.size()) - extensionFirstChunk;
+        extensionCounts[3] = state.MaskedChunkCount - extensionFirstMaskedChunk;
+        extensionCounts[4] = state.Stats.SkippedDraws - extensionFirstSkippedDraw;
+        if ((extensionCounts[0] != 0u || state.bExtensionLogged) &&
+            (!state.bExtensionLogged || !std::equal(extensionCounts, extensionCounts + 6u, state.LoggedExtensionCounts)))
+        {
+            std::copy(extensionCounts, extensionCounts + 6u, state.LoggedExtensionCounts);
+            state.bExtensionLogged = true;
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_EXTENSION_CASTERS draws=%u instances=%u chunks=%u masked_chunks=%u skipped=%u point_draws=%u",
+                            extensionCounts[0], extensionCounts[1], extensionCounts[2],
+                            extensionCounts[3], extensionCounts[4], extensionCounts[5]);
+        }
+#endif
 
         // ----- 草・低木の株: カメラに近い株（束の ShadowDistance 以内）を近い順に、株の塊の予算まで -----
         const CameraProxy* camera = context.GetActiveCamera();

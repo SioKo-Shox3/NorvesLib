@@ -11132,3 +11132,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `RenderingAlphaClipShadowVulkanTest` と golden 4 本は ctest に登録したまま、盤面では回さない。切り抜きの影の被覆率の A/B（vsm・csm・点光源・スキン）と golden 4 本の不変は GPU の上で未確認。人が GPU の試験を回すときの確かめと見どころは、上の G5-GR27-MASKED-SHADOW の節の Next に書いた。
 - U1 影を落とす物の束の型・拡張の受け口・登録の表での集め（RenderThread）: 着地(直し 0 回)
 - U2 CSM（太陽のカスケード）と点光源のキューブの影へ拡張の束を描く: 着地(直し 0 回)
+- U3 VSM（太陽の段・点光源の面）へ拡張の束を手続きの塊の記録として渡す: 着地(直し 0 回)
