@@ -1,0 +1,129 @@
+﻿#version 460
+
+// 作業タイルのテクセル中心で遮蔽物の鉛直区間を評価し、列へまとめる。
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#include "SkyOcclusion/SkyOcclusionMapCommon.glsl"
+
+// SkyOccluderProxy と同じ 64 バイトの並びを使う。
+struct SkyOccluderProxy
+{
+    vec4 centerYaw;
+    vec4 halfExtentBase;
+    float opacity;
+    uint flags;
+    uint reserved[6];
+};
+
+const uint kSkyOccluderShapeBoxFlag = 1u << 0u;
+const uint kSkyOccluderClassCanopyFlag = 1u << 1u;
+
+layout(std430, set = 0, binding = 1) readonly buffer SkyOcclusionProxies
+{
+    SkyOccluderProxy proxies[];
+} occluders;
+
+layout(std430, set = 0, binding = 2) readonly buffer SkyOcclusionSplatTiles
+{
+    SkyOcclusionWorkTile tiles[];
+} work;
+
+layout(std430, set = 0, binding = 3) readonly buffer SkyOcclusionIndices
+{
+    uint indices[];
+} lists;
+
+layout(rgba32f, set = 0, binding = 4) uniform writeonly image2DArray occluderMap;
+
+bool EvaluateSkyOccluderColumn(SkyOccluderProxy proxy, vec2 worldPosition,
+    out float bottom, out float top)
+{
+    // 有効な遮蔽物だけが CPU から届く。回転と交差式は SkyOcclusion.h に合わせる。
+    vec2 offset = worldPosition - proxy.centerYaw.xz;
+    float cosine = cos(proxy.centerYaw.w);
+    float sine = sin(proxy.centerYaw.w);
+    float localX = cosine * offset.x - sine * offset.y;
+    float localZ = sine * offset.x + cosine * offset.y;
+    if (isnan(localX) || isinf(localX) || isnan(localZ) || isinf(localZ))
+    {
+        return false;
+    }
+
+    bottom = proxy.centerYaw.y - proxy.halfExtentBase.y;
+    top = proxy.centerYaw.y + proxy.halfExtentBase.y;
+    if ((proxy.flags & kSkyOccluderShapeBoxFlag) == 0u)
+    {
+        float normalizedX = localX / proxy.halfExtentBase.x;
+        float normalizedZ = localZ / proxy.halfExtentBase.z;
+        float q = 1.0 - normalizedX * normalizedX - normalizedZ * normalizedZ;
+        if (q < 0.0)
+        {
+            return false;
+        }
+        float verticalRadius = proxy.halfExtentBase.y * sqrt(q);
+        bottom = proxy.centerYaw.y - verticalRadius;
+        top = proxy.centerYaw.y + verticalRadius;
+    }
+    else if (abs(localX) > proxy.halfExtentBase.x || abs(localZ) > proxy.halfExtentBase.z)
+    {
+        return false;
+    }
+
+    if (proxy.halfExtentBase.w > 0.0)
+    {
+        bottom = max(bottom, proxy.centerYaw.y - proxy.halfExtentBase.y + proxy.halfExtentBase.w);
+    }
+    return bottom <= top && !isnan(bottom) && !isinf(bottom) && !isnan(top) && !isinf(top);
+}
+
+void main()
+{
+    uint tileIndex = gl_WorkGroupID.x;
+    if (tileIndex >= map.counts.z)
+    {
+        return;
+    }
+    SkyOcclusionWorkTile tile = work.tiles[tileIndex];
+    if (tile.level >= map.counts.x)
+    {
+        return;
+    }
+    ivec2 worldTexel = SkyOcclusionWorldTexel(tile);
+    if (!SkyOcclusionWindowContainsTexel(worldTexel, tile.level))
+    {
+        return;
+    }
+    vec2 worldPosition = SkyOcclusionWorldCenter(worldTexel, tile.level);
+    float ground = map.heights.x;
+    float bottom = ground;
+    float top = ground;
+    float transmittance = 1.0;
+    bool bHasCanopy = false;
+    uint count = lists.indices[tile.listOffset];
+    // 列は CPU が不透明度の昇順に並べ、透過率の積の順を固定する。
+    for (uint index = 0u; index < count; ++index)
+    {
+        SkyOccluderProxy proxy = occluders.proxies[lists.indices[tile.listOffset + 1u + index]];
+        float proxyBottom;
+        float proxyTop;
+        if (!EvaluateSkyOccluderColumn(proxy, worldPosition, proxyBottom, proxyTop))
+        {
+            continue;
+        }
+        if ((proxy.flags & kSkyOccluderClassCanopyFlag) == 0u)
+        {
+            ground = max(ground, proxyTop);
+        }
+        else
+        {
+            bottom = bHasCanopy ? min(bottom, proxyBottom) : proxyBottom;
+            top = bHasCanopy ? max(top, proxyTop) : proxyTop;
+            bHasCanopy = true;
+            transmittance *= 1.0 - clamp(proxy.opacity, 0.0, 1.0);
+        }
+    }
+    bottom = bHasCanopy ? max(bottom, ground) : ground;
+    top = bHasCanopy ? top : ground;
+    imageStore(occluderMap, SkyOcclusionTextureCoordinate(worldTexel, tile.level),
+        vec4(ground, bottom, top, 1.0 - transmittance));
+}

@@ -18,6 +18,7 @@ int main()
     assert(std::strcmp(DebugViewModeToString(DebugViewMode::GBufferMaterial), "GBufferMaterial") == 0);
     assert(std::strcmp(DebugViewModeToString(DebugViewMode::GBufferDepth), "GBufferDepth") == 0);
     assert(std::strcmp(DebugViewModeToString(DebugViewMode::LODLevel), "LODLevel") == 0);
+    assert(std::strcmp(DebugViewModeToString(DebugViewMode::SkyVisibility), "SkyVisibility") == 0);
     assert(std::strcmp(DebugViewModeToString(DebugViewMode::Count), "Invalid") == 0);
     assert(std::strcmp(DebugViewModeToString(static_cast<DebugViewMode>(255)), "Invalid") == 0);
 

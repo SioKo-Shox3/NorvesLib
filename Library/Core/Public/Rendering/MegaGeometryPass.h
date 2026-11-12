@@ -552,6 +552,23 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 記録したフレームの数（フレームの通し番号が変わるたびに 1 進む。通し番号が無い記録は記録ごとに 1 進む） */
         uint64_t GetRenderFrameCount() const { return m_RenderFrameCount; }
+
+        /** @brief 最後に生成できた HZB と、その深度の契約を読み取り用に返す。 */
+        bool GetLatestHiZForRead(RHI::TexturePtr& outTexture, MegaHiZContract& outContract,
+                                 uint32_t& outMipCount) const
+        {
+            outTexture.reset();
+            outContract = MegaHiZContract{};
+            outMipCount = 0;
+            if (!m_bHiZReady || !m_HiZContracts[m_HiZIndex].bValid || !m_HiZ[m_HiZIndex].IsReady())
+            {
+                return false;
+            }
+            outTexture = m_HiZ[m_HiZIndex].GetTexture();
+            outContract = m_HiZContracts[m_HiZIndex];
+            outMipCount = m_HiZ[m_HiZIndex].GetMipCount();
+            return true;
+        }
         /** @brief 最後に記録した 2 パスのフレームで、前のフレームの HZB が使えたか（Ready）と使えない理由 */
         MegaPrevHiZStatus GetPreviousHiZStatus() const { return m_PrevHiZStatus; }
         /** @brief フレームごとの資源の組の数（選んだ飛行中のフレームの番号の枠。検査用） */
@@ -621,10 +638,6 @@ namespace NorvesLib::Core::Rendering
          */
         void TakeShadowInvalidation(MegaGeometryShadowInvalidation &out);
 
-    private:
-        /** @brief カリング用ユニフォームデータ（Common/MegaGeometryCull.glsl の CullUniforms と一致。VSM の投影物のカリングと同じ構造を使う） */
-        using CullUniformData = MegaGeometry::CullUniformData;
-
         /**
          * @brief 描く順のインスタンスの表の1要素（Common/MegaInstanceTable.glsl の MegaInstanceRow と一致）
          *
@@ -664,6 +677,30 @@ namespace NorvesLib::Core::Rendering
             float BoundsSphere[4];         // メッシュ全体の締まった境界球（ローカル。半径 0 なら無い）。インスタンスと範囲の判定が使う
         };
         static_assert(sizeof(GPUMegaMesh) == 80, "Common/MegaInstanceTable.glsl の MegaMeshEntry と大きさが一致しません");
+
+        /** @brief cluster_cull.comp・cluster_bvh_cull.comp のカリングの記述子セットの形。パイプライン・セット・GPU の試験が同じ形を使う */
+        static RHI::DescriptorSetDesc BuildCullDescriptorSetDesc();
+
+        /** @brief 1 回のカリングの記録が使う HZB（今のフレームと前のフレーム）の情報 */
+        struct CullOcclusionInputs
+        {
+            uint32_t DepthWidth = 0;   // HZB の元になった深度の寸法（HZB のミップ0 はその半分）
+            uint32_t DepthHeight = 0;
+            bool bCurrentHiZ = false;  // 今のフレームの HZB がある（2 パス目だけが使う）
+            uint32_t CurrentHiZMipCount = 0;
+            bool bPrevHiZ = false;     // 前のフレームの HZB を使う（契約が合ったフレームだけ。CanUsePreviousHiZ）
+            uint32_t PrevHiZMipCount = 0;
+            Math::Matrix4x4 PrevViewProjection = Math::Matrix4x4::Identity; // 前の HZB の深度を描いた VP
+        };
+
+        /** @brief この記録で使う HZB の欄だけをユニフォームへ書く */
+        static void ApplyCullOcclusion(MegaGeometry::CullUniformData& uniform, uint32_t cullPass, const CullOcclusionInputs& inputs);
+        /** @brief 前のフレームの HZB の契約が合い、構築済みかを判定する */
+        static bool CanUsePreviousHiZ(MegaPrevHiZStatus status, bool bPreviousHiZBuilt);
+
+    private:
+        /** @brief カリング用ユニフォームデータ（Common/MegaGeometryCull.glsl の CullUniforms と一致。VSM の投影物のカリングと同じ構造を使う） */
+        using CullUniformData = MegaGeometry::CullUniformData;
 
         /**
          * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
@@ -737,10 +774,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool CreateCullResources(RHI::IDevice *device);
 
-        /** @brief カリングのディスクリプタセットの形（cluster_cull.comp の binding 0〜13）。パイプラインとセットが同じ形を使う */
-        static RHI::DescriptorSetDesc BuildCullDescriptorSetDesc();
-
-        /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜9）。パイプラインとセットが同じ形を使う */
+        /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜23）。パイプラインとセットが同じ形を使う */
         RHI::DescriptorSetDesc BuildDrawDescriptorSetDesc() const;
 
         /**
@@ -763,6 +797,7 @@ namespace NorvesLib::Core::Rendering
         struct SectionDraw
         {
             RHI::BufferPtr Uniform;              // 材質の区間ごとの定数（PerObject UBO）
+            RHI::BufferPtr TerrainSplatUniform;   // 同じ区間のスプラットの並び（48 float）
             RHI::DescriptorSetPtr DescriptorSet; // 描画用（UBO・材質のテクスチャ・VTの要求・インスタンスの表・描画情報）
             uint64_t BufferRevision = 0; // 最後に結んだ GPU Scene バッファの版
         };
@@ -896,6 +931,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t FrameSerial = 0;
             uint32_t InFlightIndex = 0;
             FrameSlot *Slot = nullptr;
+            float TerrainWetness = 0.0f; // 同じフレームの写しから読んだ地形の濡れ度
         };
 
         /**
@@ -1380,6 +1416,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;     // Linear/Wrapサンプラー
         RHI::SamplerPtr m_TerrainSampler;           // 地形の混ぜ合わせの材質のサンプラー（異方性 16、Wrap。地面を斜めに見てもぼけない）
+        RHI::TexturePtr m_DefaultTerrainSplatArray; // 未使用時に束ねる 2 層の配列テクスチャ
+        RHI::SamplerPtr m_TerrainSplatSampler;     // スプラットの地図の線形・端に固定するサンプラー
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
@@ -1549,6 +1587,8 @@ namespace NorvesLib::Core::Rendering
         };
         SceneTablesStats m_SceneTablesStats;
         PreparedSceneTables m_PreparedSceneTables;
+        // このビューの記録前に準備した頂点アニメの時刻（記録中は読み取り専用）。
+        float m_VertexAnimTime[4] = {};
 
         // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）
         bool m_bVisibilityPlanEnabled = false;

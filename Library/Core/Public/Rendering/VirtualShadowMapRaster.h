@@ -31,6 +31,7 @@
 // 装置が間接描画の firstInstance・バッファのアドレスを使えないときは作れない（IsReady が false）。
 
 #include "Rendering/FrameUseRing.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapSample.h"
@@ -57,6 +58,7 @@ namespace NorvesLib::Core::Rendering
      * Record はビジビリティバッファの描画の記録（頂点・インデックスの読み方）。Kind は 0 以外・TriangleCount は 1 以上 128 以下にする。
      * World はローカル空間の位置をワールドへ変える 3×4 行列（行ごとに 4 要素。ワールドの x = World[0..3] と (位置, 1) の内積、y = World[4..7]、z = World[8..11]）。
      * ワールド空間の頂点（スキニングの出力など）は単位行列にする。
+     * 手続き・スキンの影の記録は前フレームを使わず、Record の前フレーム用 4 語に頂点アニメの生の値を格納する。
      * Bounds はワールドの境界（AABB）で、展開が覆うページを決める。三角形をすべて含むこと。
      * LevelMask はこの塊を展開するスライスの集合で、Reserved が組の番号 g（スライス / 32）。ビット b がスライス g × 32 + b。
      * CPU が境界から決めたスライスだけを展開が処理し、外のスライスは見ない。1 つの投影物が複数の組にまたがるときは、
@@ -126,6 +128,31 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t RASTER_VIEWPORT = PAGE_RESOLUTION;
     } // namespace VirtualShadowMap
 
+    /** @brief VSM の展開・描画に渡す std140 定数。フィールドは株の頂点だけが読む。 */
+    struct alignas(16) VirtualShadowMapRasterParams
+    {
+        float lightRight[4];
+        float lightUp[4];
+        float lightDirection[4];
+        float depth[4];
+        uint32_t counts[4];
+        float foliageWind[4];
+        float foliageWindParams[4];
+        /** @brief 頂点アニメの今・前の時刻と試験の揺れの許可（影は x の今の時刻だけを使う） */
+        float vertexAnimTime[4];
+        WorldFieldSampleConstants worldField;
+    };
+    static_assert(offsetof(VirtualShadowMapRasterParams, lightRight) == 0u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, lightUp) == 16u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, lightDirection) == 32u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, depth) == 48u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, counts) == 64u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, foliageWind) == 80u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, foliageWindParams) == 96u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimTime) == 112u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 128u);
+    static_assert(sizeof(VirtualShadowMapRasterParams) == 176u);
+
     /**
      * @brief 1 回の記録の入力。バッファはすべて UnorderedAccess の状態で渡し、同じ状態で戻る
      */
@@ -178,6 +205,11 @@ namespace NorvesLib::Core::Rendering
          */
         float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float FoliageWindParams[4] = {};
+        /** @brief 頂点アニメの現在・前回の時刻と試験の揺れの許可 */
+        float VertexAnimTime[4] = {};
+        /** @brief 株の根元で引く ShaderResource 状態の画像。無ければ中立画像を使い、変形を無効にする。 */
+        RHI::TexturePtr WorldFieldCurrent;
+        WorldFieldSampleConstants WorldField;
     };
 
     /** @brief 展開と描画の 2 つのパイプラインと、128×128 の添付なしのレンダーパスを持つ */
@@ -234,6 +266,8 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr m_Framebuffer;
         /** @brief 0, 1, 2, … の連番（頂点の番号 = 塊の中の三角形 × 3 + 角を作るための、描画の中で使う頂点の列） */
         RHI::BufferPtr m_IdentityIndices;
+        RHI::TexturePtr m_NeutralWorldField;
+        RHI::SamplerPtr m_WorldFieldSampler;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastDrawCount = 0;
         bool m_bLastMegaDraw = false;

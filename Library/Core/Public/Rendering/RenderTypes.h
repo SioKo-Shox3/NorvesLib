@@ -150,6 +150,10 @@ namespace NorvesLib::Core::Rendering
         PointShadowDistance,
         /** @brief 画面空間AO（GTAO）の雑音除去後の可視率（白=遮蔽なし、黒=全遮蔽） */
         AmbientOcclusion,
+        /** @brief 左半分は空の可視率 V(+Y)、右半分は曲げた法線 */
+        SkyVisibility,
+        /** @brief GBuffer のシェーディングモデルの ID を色で出す（DefaultLit=灰、Fur=橙、Eye=青、PaleFlat=白、予約=紫紅） */
+        ShadingModel,
         Count
     };
 
@@ -179,6 +183,10 @@ namespace NorvesLib::Core::Rendering
             return "PointShadowDistance";
         case DebugViewMode::AmbientOcclusion:
             return "AmbientOcclusion";
+        case DebugViewMode::SkyVisibility:
+            return "SkyVisibility";
+        case DebugViewMode::ShadingModel:
+            return "ShadingModel";
         case DebugViewMode::Count:
         default:
             return "Invalid";
@@ -222,6 +230,7 @@ namespace NorvesLib::Core::Rendering
         PostProcess = 1 << 3,
         Shadow = 1 << 4,
         Debug = 1 << 5,
+        MapVisible = 1 << 6, // 地図の真上の撮影に載せる地形・建物・道など。
         All = 0xFF
     };
 

@@ -5,7 +5,9 @@
 #include "RHI/RHITypes.h"
 #include "Rendering/MegaGeometry/GeometryPageSource.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/MaterialTypes.h"
 #include <cstdint>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
 {
@@ -319,6 +321,70 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         }
     };
 
+    /// スプラットの層の数の上限（SPL0・SPL1 の 8 チャンネル）
+    constexpr uint32_t MegaTerrainSplatMaxLayers = 8u;
+
+    struct MegaTerrainSplatLayer
+    {
+        float TileMeters = 4.0f;   // テクスチャの 1 枚が覆う実寸（m）
+        float Wettability = 0.0f;  // 濡れやすさ（0..1。地形の濡れ度に掛ける）
+        char SurfaceName[32] = {}; // 表面の名前（終端付き。描画は読まない。足音などの消費者が引く）
+
+        bool operator==(const MegaTerrainSplatLayer& other) const
+        {
+            return TileMeters == other.TileMeters && Wettability == other.Wettability &&
+                   std::strncmp(SurfaceName, other.SurfaceName, sizeof(SurfaceName)) == 0;
+        }
+    };
+
+    struct MegaTerrainSplat
+    {
+        bool bEnabled = false;
+        uint32_t LayerCount = 0;            // 1..MegaTerrainSplatMaxLayers
+        TextureHandle AlbedoArrayTexture;   // 2D 配列（配列の層 = スプラットの層。配列の層の数は 2 以上）
+        TextureHandle NormalArrayTexture;   // 2D 配列（bNormalTwoChannel なら BC5 の XY）
+        TextureHandle ArmArrayTexture;      // 2D 配列（R=AO・G=粗さ・B=金属度・A=高さ）
+        bool bNormalTwoChannel = false;
+        TextureHandle SplatArrayTexture;    // 2 層の 2D 配列（RGBA8 線形。層 0 = SPL0 = 層 0〜3 の重み、層 1 = SPL1 = 層 4〜7）
+        float SplatMinXZ[2] = {0.0f, 0.0f}; // 地図の外縁（画素の縁）のワールドの X・Z の最小（u = 0・v = 0）
+        float SplatMaxXZ[2] = {0.0f, 0.0f}; // 同じく最大（u = 1・v = 1）
+        int32_t CliffLayer = -1;            // 崖の層（塗りでなく傾斜で重みを決め、3 方向投影で標本する。負ならなし）
+        float CliffSlopeDegrees[2] = {38.0f, 55.0f}; // 崖の層へ移る傾斜（度）の始まりと終わり
+        float HeightBlendDepth = 0.2f;      // ARM.A の高さで重みを先鋭化する深さ（0..1 の尺度。小さいほど境が鋭い）
+        float UvRotationWavelength = 23.0f; // UV を回す低周波の雑音の波長（m）
+        float UvRotationDegrees = 180.0f;   // UV を回す角度の最大（度）
+        MegaTerrainSplatLayer Layers[MegaTerrainSplatMaxLayers];
+
+        bool operator==(const MegaTerrainSplat& other) const
+        {
+            if (!bEnabled && !other.bEnabled)
+            {
+                return true;
+            }
+            if (bEnabled != other.bEnabled || LayerCount != other.LayerCount ||
+                AlbedoArrayTexture != other.AlbedoArrayTexture || NormalArrayTexture != other.NormalArrayTexture ||
+                ArmArrayTexture != other.ArmArrayTexture || bNormalTwoChannel != other.bNormalTwoChannel ||
+                SplatArrayTexture != other.SplatArrayTexture ||
+                SplatMinXZ[0] != other.SplatMinXZ[0] || SplatMinXZ[1] != other.SplatMinXZ[1] ||
+                SplatMaxXZ[0] != other.SplatMaxXZ[0] || SplatMaxXZ[1] != other.SplatMaxXZ[1] ||
+                CliffLayer != other.CliffLayer ||
+                CliffSlopeDegrees[0] != other.CliffSlopeDegrees[0] || CliffSlopeDegrees[1] != other.CliffSlopeDegrees[1] ||
+                HeightBlendDepth != other.HeightBlendDepth || UvRotationWavelength != other.UvRotationWavelength ||
+                UvRotationDegrees != other.UvRotationDegrees)
+            {
+                return false;
+            }
+            for (uint32_t layer = 0; layer < MegaTerrainSplatMaxLayers; ++layer)
+            {
+                if (!(Layers[layer] == other.Layers[layer]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    };
+
     /**
      * @brief 地形の 3 層（砂・乾いた土・岩肌）の混ぜ合わせ
      *
@@ -336,6 +402,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      * UV はワールドの位置 ÷ TextureTileMeters（メッシュの UV は使わない）。
      * bEnabled が偽、または 2・3 層目のテクスチャがそろわないときは、従来どおり 1 層の材質として描く。
      * 混ぜ合わせが効くのは MegaGeometry の描画（ハードのラスタ・可視バッファの解決）で、影・レイトレーシングは 1 層目で扱う。
+     *
+     * スプラットの形（Splat）: 最大 8 層の配列テクスチャと塗りの重みを持つ。3 層の bEnabled が立っていれば 3 層を使う。
+     * 濡れ度はフレームごとの値で材質に持たない。スプラットを描くのはラスタ・可視バッファ・RTGI。
      */
     struct MegaTerrainBlend
     {
@@ -382,10 +451,18 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         // 傾きを落とした分を、粗さの α² に足して鏡面の広がりへ移す（0 なら粗さを変えない）
         float DetailSlopeVariance[3] = {0.0f, 0.0f, 0.0f};
 
-        /** @brief 地形の面か（混ぜ合わせの材質か、bTerrainSurface）。影の余裕・接触影・影の LOD を地形の扱いにする */
+        MegaTerrainSplat Splat;
+
+        /** @brief 3 層を使わず、スプラットの形を使うか。 */
+        bool IsSplatEnabled() const
+        {
+            return !bEnabled && Splat.bEnabled;
+        }
+
+        /** @brief 地形の面か（3 層・スプラットの材質か、bTerrainSurface）。影の余裕・接触影・影の LOD を地形の扱いにする */
         bool IsTerrainSurface() const
         {
-            return bEnabled || bTerrainSurface;
+            return bEnabled || bTerrainSurface || Splat.bEnabled;
         }
 
         /** @brief 地形の面で、太陽の影を起伏に詰めるか（bTightSunShadow）。ずらしを外し、影の LOD を細かくする */
@@ -398,6 +475,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         {
             if (bEnabled != other.bEnabled || bTerrainSurface != other.bTerrainSurface ||
                 bTightSunShadow != other.bTightSunShadow)
+            {
+                return false;
+            }
+            if (!(Splat == other.Splat))
             {
                 return false;
             }
@@ -449,6 +530,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float EmissiveLuminanceNits = 0.0f;            // 輝度(nits)
         // 負のmetal/roughは従来の黒/白。textureがあればscalarを再乗算しない。
         float Metallic = -1.0f, Roughness = -1.0f, OcclusionStrength = 1.0f;
+
+        /** @brief GBuffer に書くシェーディングモデル。 */
+        ShadingModel Shading = ShadingModel::DefaultLit;
+        /**
+         * @brief x=P0、y=P1、z=予約、w=被覆率の乗数（1=不変）。負は未指定。
+         * MegaGeometryResourceStore の材質コピー時に SanitizeShadingParam で正規化する。
+         */
+        float ShadingParams[ShadingParamCount] = {-1.0f, -1.0f, -1.0f, -1.0f};
 
         // PBRテクスチャ（無効なハンドルの場合はデフォルトテクスチャを使用）
         TextureHandle AlbedoTexture;

@@ -1,7 +1,9 @@
 ﻿#pragma once
 
+#include "Container/Span.h"
 #include "Module/IModule.h"
 #include "Module/ModuleRegistry.h"
+#include "Physics/PhysicsTypes.h"
 
 namespace NorvesLib::Modules::Physics
 {
@@ -15,6 +17,29 @@ namespace NorvesLib::Modules::Physics
     {
     public:
         virtual ~IPhysicsModule() = default;
+
+        /**
+         * @brief Entity を持たない、常に有効な静的コライダーのチャンクを登録する。
+         *
+         * 所有者の GameThread 以外は WrongThread、未初期化は InvalidState。
+         * 遅延操作を順に反映した状態で同じ鍵があれば Duplicate。
+         * トリガー、非有限な変換、不正な寸法や合成できない形状は InvalidArgument とし、
+         * その場で全件検証して、不正な項目があればチャンク全体を登録しない。
+         * 空の範囲は鍵だけを予約する。通知先と Body は持たず、問い合わせと接触には参加する。
+         * 固定ステップ・可変キャラクター処理・入力収集中は操作を順に保留し、
+         * 次の StepPreFixed または StepFixed の入口の検査後に反映する。それ以外は即時に反映する。
+         */
+        virtual EPhysicsResult RegisterStaticColliderChunk(StaticColliderChunkKey key,
+            Core::Container::Span<const StaticColliderDesc> colliders) = 0;
+
+        /**
+         * @brief 静的コライダーのチャンクを解除し、以前のハンドルを無効にする。
+         *
+         * 所有者の GameThread 以外は WrongThread、未初期化は InvalidState。
+         * 遅延操作を順に反映した状態で未知の鍵なら NotRegistered。
+         * 登録と同じ時点で検証し、処理中は次のステップの入口まで順に保留する。
+         */
+        virtual EPhysicsResult UnregisterStaticColliderChunk(StaticColliderChunkKey key) = 0;
 
         /**
          * @brief 固定ステップ 1 歩の前半（剛体の前の位置の写し）

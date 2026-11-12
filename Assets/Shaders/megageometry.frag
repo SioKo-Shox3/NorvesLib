@@ -27,8 +27,9 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
     vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
-    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
     vec4 terrainParams[10]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
+    vec4 shadingParams; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -49,7 +50,21 @@ layout(set = 0, binding = 15) uniform sampler2D terrainRockOrmTexture;
 layout(set = 0, binding = 16) uniform sampler2D terrainSurfaceMaskTexture;
 // 地形の遠景の地図（地図の無い材質はアルベドが張られ、読まない）
 layout(set = 0, binding = 17) uniform sampler2D terrainFarMapTexture;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_ALBEDO_BINDING
+layout(set = 0, binding = 18) uniform sampler2DArray terrainSplatAlbedoArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_NORMAL_BINDING
+layout(set = 0, binding = 19) uniform sampler2DArray terrainSplatNormalArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_ARM_BINDING
+layout(set = 0, binding = 20) uniform sampler2DArray terrainSplatArmArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_SPLAT_BINDING
+layout(set = 0, binding = 21) uniform sampler2DArray terrainSplatArray;
+// TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_PARAMS_BINDING（vec4 × 12）
+layout(std140, set = 0, binding = 23) uniform TerrainSplatBlock
+{
+    vec4 terrainSplat[12];
+} splatBlock;
 
+#include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 7
@@ -61,11 +76,11 @@ layout(set = 0, binding = 17) uniform sampler2D terrainFarMapTexture;
 #include "Common/MegaGeometryDebugColor.glsl"
 
 // GBuffer MRT出力
-layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
-layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + 地形の受け手なら 1（A。lighting.frag の影の余裕を変える）
-layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
-layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
-layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV（gbuffer.frag と同じ）
+layout(location = 0) out vec4 outAlbedo;    // RT0: アルベド（RGB）とアルファ（A）
+layout(location = 1) out vec4 outNormal;    // RT1: ワールド法線（RGB）と材質 ID・受け手の印（A）
+layout(location = 2) out vec4 outMaterial;  // RT2: 金属度（R）・粗さ（G）・AO（B）・材質値 P0（A）
+layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB）・材質値 P1（A）
+layout(location = 4) out vec2 outVelocity;  // RT4: 現在の UV - 前の UV（gbuffer.frag と同じ）
 
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
 const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
@@ -109,9 +124,9 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
 void WriteDebugGBuffer(vec3 albedo)
 {
     outAlbedo = vec4(albedo, 1.0);
-    outNormal = vec4(normalize(fragNormal), 0.0);
-    outMaterial = vec4(0.0, 1.0, 1.0, 0.0);
-    outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
+    outNormal = GBufferEncodeNormal(normalize(fragNormal), GBUFFER_SHADING_MODEL_DEFAULT_LIT, 0u);
+    outMaterial = GBufferEncodeMaterial(vec3(0.0, 1.0, 1.0), 0.0);
+    outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
     outVelocity = ComputeVelocity();
 }
 
@@ -195,6 +210,19 @@ void main()
                                             terrainSurfaceMaskTexture, terrainFarMapTexture, surface, bVirtualTexture,
                                             terrainNormal);
     }
+    TerrainSplatParams splat = MakeTerrainSplatParams(splatBlock.terrainSplat);
+    bool bTerrainSplat = !bTerrain && IsTerrainSplatEnabled(splat);
+    if (bTerrainSplat)
+    {
+        TerrainSurfaceInput surface;
+        surface.WorldPosition = fragWorldPos;
+        surface.WorldDx = worldDx;
+        surface.WorldDy = worldDy;
+        surface.GeometricNormal = fragNormal;
+        surface.CameraDistance = length(fragWorldPos - mvp.cameraPosition.xyz);
+        textureSamples = ShadeTerrainSplat(splat, terrainSplatAlbedoArray, terrainSplatNormalArray,
+                                           terrainSplatArmArray, terrainSplatArray, surface, terrainNormal);
+    }
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),
@@ -216,16 +244,19 @@ void main()
     {
         tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
     }
-    vec3 normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
-    outNormal = vec4(normal, bTerrain ? 1.0 : 0.0);
+    vec3 normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
+    const uint receiverFlags = (bTerrain || bTerrainSplat) ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
+    vec4 params = ResolveShadingParams(vec4(-1.0), mvp.shadingParams);
+    uint id = uint(mvp.vtFeedbackParams.w + 0.5);
+    outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
-    // PBRマテリアルパラメータ（POM補正済みUV使用）
-    outMaterial = vec4(textureSamples.Material, 0.0);
+    // 視差補正済みの UV で標本した材質値をシェーディングモデルに応じて P0 と書く。
+    outMaterial = GBufferEncodeMaterialForShadingModel(textureSamples.Material, params.x, id);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
-    outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveColor.rgb,
-                                                 fragEmissiveColor.a,
-                                                 mvp.frameParams.y),
-                       1.0);
+    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveColor.rgb,
+                                                                fragEmissiveColor.a,
+                                                                mvp.frameParams.y),
+                                       params.y);
     outVelocity = ComputeVelocity();
 }

@@ -15,7 +15,10 @@ namespace NorvesLib::Core::Rendering
         BackBuffer,
         GBufferVelocity,
         RTGIDiffuseIndirect, ///< R6 RTGIのデノイズ後の間接光（検証用）
-        RTGIHistoryAge       ///< R6 RTGIの書き込み済み履歴age（検証用）
+        RTGIHistoryAge,      ///< R6 RTGIの書き込み済み履歴age（検証用）
+        GBufferNormal,       ///< RGBA16F。w にシェーディングモデルの ID と受け手の印（検証用）
+        GBufferMaterial,     ///< RGBA8。a に P0（検証用）
+        GBufferEmissive      ///< RGBA16F。a に P1（検証用）
     };
 
     struct FrameCaptureRequest
@@ -129,6 +132,10 @@ namespace NorvesLib::Core::Rendering
         RHI::ResourceState CurrentState = RHI::ResourceState::ShaderResource;
         RHI::ResourceState RestoreState = RHI::ResourceState::ShaderResource;
         uint64_t FrameNumber = 0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::GameTotalTime（秒）。 */
+        double GameTotalTime = 0.0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::PreviousRenderedTotalTime（秒）。 */
+        double PreviousRenderedTotalTime = 0.0;
         RHI::PresentationColorSpace ColorSpace = RHI::PresentationColorSpace::Unknown;
         RHI::PresentationTransfer Transfer = RHI::PresentationTransfer::Unknown;
         bool bHardwareSrgbEncode = false;
@@ -371,6 +378,9 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource GBufferVelocity;
         FrameCaptureSource RTGIDiffuseIndirect;
         FrameCaptureSource RTGIHistoryAge;
+        FrameCaptureSource GBufferNormal;
+        FrameCaptureSource GBufferMaterial;
+        FrameCaptureSource GBufferEmissive;
         /**
          * @brief GBufferAovPass の出力（RGBA32F）。表面 = アルベド（線形 RGB）+ 粗さ、幾何 = ワールドの法線 + 視線方向の深度 m
          *
@@ -426,6 +436,12 @@ namespace NorvesLib::Core::Rendering
                 return &RTGIDiffuseIndirect;
             case FrameCaptureSourceKind::RTGIHistoryAge:
                 return &RTGIHistoryAge;
+            case FrameCaptureSourceKind::GBufferNormal:
+                return &GBufferNormal;
+            case FrameCaptureSourceKind::GBufferMaterial:
+                return &GBufferMaterial;
+            case FrameCaptureSourceKind::GBufferEmissive:
+                return &GBufferEmissive;
             default:
                 return nullptr;
             }
@@ -439,6 +455,9 @@ namespace NorvesLib::Core::Rendering
             GBufferVelocity = FrameCaptureSource{};
             RTGIDiffuseIndirect = FrameCaptureSource{};
             RTGIHistoryAge = FrameCaptureSource{};
+            GBufferNormal = FrameCaptureSource{};
+            GBufferMaterial = FrameCaptureSource{};
+            GBufferEmissive = FrameCaptureSource{};
             AovSurface = FrameCaptureSource{};
             AovGeometry = FrameCaptureSource{};
             AovLighting = FrameCaptureSource{};
@@ -534,6 +553,10 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureResultStatus Status = FrameCaptureResultStatus::SourceUnavailable;
         uint64_t RequestId = 0;
         uint64_t FrameNumber = 0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::GameTotalTime（秒）。 */
+        double GameTotalTime = 0.0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::PreviousRenderedTotalTime（秒）。 */
+        double PreviousRenderedTotalTime = 0.0;
         uint32_t Width = 0;
         uint32_t Height = 0;
         RHI::Format Format = RHI::Format::UNKNOWN;

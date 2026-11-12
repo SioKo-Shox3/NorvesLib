@@ -191,12 +191,33 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief 形式の対応を調べる用途
+     */
+    enum class FormatUsage : uint8_t
+    {
+        Sampled,
+        RenderTarget,
+        Storage,
+        LinearMipGeneration
+    };
+
+    /**
      * @brief デバイスインターフェース
      */
     class IDevice
     {
     public:
         virtual ~IDevice() = default;
+
+        /**
+         * @brief 指定した形式が用途に対応しているかを返す
+         * @note Vulkan では物理デバイスの optimal tiling の形式特性を照会する。
+         *       LinearMipGeneration は GenerateMipmaps を呼べるかを示す。
+         */
+        virtual bool IsFormatSupported(Format format, FormatUsage) const
+        {
+            return format != Format::UNKNOWN;
+        }
 
         /**
          * @brief バッファを作成

@@ -31,6 +31,8 @@ cmake -S . -B build -DNORVES_BUILD_TESTS=ON
 起動する。引数を付けずに起動すると吸収先のテストが走る。新しいテストは実行ファイルを増やさず、
 関係する束へ `MEMBER` として足すか、既存のテストにケースとして足す。
 
+`ClipOptimizerTest`（`CookedMeshTest` の中）は、定数・既定姿勢チャンネル、位置・回転・スキニングの削減誤差、端点と STEP の保持、再適用と決定性、無効入力の拒否、最適化を無効にした旧形式・v1 cook のバイト列と `SourceHash` の一致を検査する。誤差やバイト差は cook の成功・ログだけでは分からず、失敗は黙って起きる。
+
 ## 1つだけ回す
 
 テスト名と実行ファイル（ビルドのターゲット）が違うことがあるので、先にコマンドを確かめる。
@@ -110,6 +112,27 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - 反証する契約: markerからのイベント配送はclipノードの `markerEvents` によるopt-inであり、既定では配送しない。有効時は同名の点イベントを `(prev, cur]` で1回だけ出し、既定minWeight 0.3・周回・同期グループ内の同名の重複除去に従う。EventIndexはeventsの件数 + markerの添字、Value・IntValueは0。真偽値以外のmarkerEventsは拒否する。
 - ほかの手段で気づけるか: 気づけない。配送の欠落や重複、名前や時刻の食い違いは足音や同期が鳴らない・ずれるだけで、撮影やログには出ない。
 - 失敗が黙って起きるか: 起きる。イベントの配送が変わっても落ちない。
+
+`RetargetCookTest`（`CookedMeshTest` の中）を置く理由:
+
+(d) 合成の人型から比率の異なる合成の人型へ写すケースでは、`humanoid_v1` の語彙で方向の誤差と二足の接地（足滑り・地面からの高さ・IK 失敗）の上限を満たす契約を反証する。実在の骨格のプリセットは使わない。
+
+解析的な二関節 IK で接地する四足歩行を作り、出力 ClipBank の独立した FK で、再接地中の滑り 5 mm 以下・地面からの高さ誤差 3 mm 以下・IK 失敗 0 コマと、遊脚の局所回転角速度が無効時の 1.5 倍以内であることを確かめる。これらのしきい値は合成歩行に対する仮の値である。
+前脚 1.3 倍・後脚 1.1 倍の対象では、再接地を無効にした負の対照の滑りが 5 cm 以上になること、`leg_length_ratio: 2.0` では骨盤が下がって同じ接地精度と IK 失敗 0 コマを満たすことも検査する。元の接地は BVH の FK で 1 mm 未満と確かめ、報告の接地区間を入力の位相と照合する。
+
+- 反証する契約: version 1 profile の BVH / glTF からの出力ハッシュを固定し、GR85 の変更で既存出力が変わらない。30 fps・61 フレームの合成四足の歩行では、脚が 1.3 倍で rest の向きも異なる対象に対し、報告された関節回転誤差と cook 済み ClipBank から独立に比較した骨方向の誤差がともに 0.1 度以内、`root_scale` と対象／元のルート移動距離の比がいずれも 1.3 ± 1e-3、対象 SkeletonId が一致し、上限超過は失敗することを確かめる。0.1 度と 1e-3 はこの合成例の許容値である。
+- ほかの手段で気づけるか: 気づけない。cook の成功やログだけでは、旧出力のバイト差、異なる rest 向きでの回転誤差、倍率や骨格 ID の食い違いを検出できない。
+- 失敗が黙って起きるか: 起きる。出力や再生が成功したまま、歩幅・骨の向き・骨格との対応や上限判定が誤ることがある。
+
+合成例は胴・脚の rest の局所回転を変え、平行移動に親の rest 回転の逆を掛けて、元と同じ world の骨方向を保つ。脚の各ロールに `up_hint`、`proportions.root_scale` に `"auto"` を指定し、ルート抽出・平滑化を無効にして cook する。実測の報告回転誤差は最大 `4.10716575326e-06` 度、payload の全 61 フレームを FK して元の BVH と比べた骨方向誤差は最大 `5.36045699921e-06` 度、`root_scale` は `1.29999995024`、ルート距離は元 `2` m・対象 `2.59999990463` m（比 `1.29999995232`）だった。ClipBank・対象の `BuildRigTopology`・報告の SkeletonId の一致も検査する。同じ入力に平滑化半径 5 を指定すると誤差 `9.7473884630225385` 度で cook が失敗し、`retarget_report_limit` と、保存された報告の `joint_error_exceeded` を確認する。v1 と v2 の入力はそれぞれ一意な一時ディレクトリで扱い、終了時に削除する。
+
+`AssetCookRetargetSmoke` を置く理由:
+
+`Tools/AssetCook/AssetCookRetargetSmoke.cmake.in` を CTest から実行し、既存の `AssetCook` を使う。試験用の実行ファイルは増やさない。入力は `Test/Tools/Fixtures/Retarget/` の BVH・二つの四足骨格・profile である。
+
+- 反証する契約: 1 つの BVH から二つの異なる骨格へ `--retarget-clip` で cook し、各出力の SkeletonId が同じ対象の `--rig-split` の値と一致する。報告の上限内判定と四脚の接地区間も検査する。上限超過では非 0 終了し、失敗の報告を保存して出力ディレクトリを公開しない。同じ入力を別の出力先へもう一度 cook すると、出力ファイルの相対パス集合・全バイト列と報告 JSON のバイト列が一致する。
+- ほかの手段で気づけるか: 気づけない。Library の単体試験や通常の成功ログでは、CLI 引数から公開出力までの接続、分離した骨格との ID の一致、拒否時の非公開、再 cook の全ファイルの一致を確かめられない。
+- 失敗が黙って起きるか: 起きる。cook が成功したまま異なる骨格 ID や非決定的な出力を作り、上限超過時にも利用可能な出力を残しうる。
 
 `RigSplitCookTest` の `FootContactMetadataAndWindows`（`CookedMeshTest` の中）を置く理由:
 
@@ -508,3 +531,56 @@ Look（`TestLookAt`）:
 - 反証する契約: アンカーの位置は三角形の 3 頂点を `SkinPosition` でスキニングして重心で補間し持ち主のワールドを掛けた値と一致する。回る関節のアンカーの速度は `ω×r` に一致する。関節のバケットの探索は候補の関節の中で総当たりと同じ三角形を返し、調べる三角形が少ない。`MeshRevision` の不一致・潰れた三角形・NaN のパレット・範囲外の三角形で落ちずに無効か落ちる先（関節のフレーム）を返す。62.5 ms のキーの継ぎ目で平滑の加速度の尖りが抑えられ、平滑なしでは閾値を超えて試験が効いていることも確かめる。重心座標つきの交差の `(u, v)` が交点を再現し、既存の `RayIntersectsTriangle` の結果を変えないことは、既存の `GeometryIntersectionExtraTest` で確かめる。
 - 撮影・ログでは気づけない理由: 呼び出し側（突き立ての結線・表面の放出）はまだ無く、画面に出ない純粋な計算なので、数 mm のずれ・バケットの取りこぼし・平滑の効き不足は撮影でもログでも見えない。
 - 失敗は黙って起きる。無効を返さずにずれた点や古いメッシュの点を返しても落ちず、後の段で刺さる位置や速度がずれるだけになる。
+
+## スキンの絞り込みと太陽の影の設定の試験
+
+- `SkinnedLodSelectionTest` は `CameraViewConstantsTest` の束の MEMBER として、CPU で選別と設定値を確かめる。主カメラの視錐台外のスキンは描画数 0 になり、面をまたぐものは残る。CSM のカスケードの影の地図の XY の外にある描画は省き、内側・縁・境界不明の描画は残す。`SunShadowParameters` の `SanitizeSunShadowParameters` も確かめる。
+- `RenderingSkinnedCullVulkanTest` と `RenderingSkinnedCullGBufferFallbackVulkanTest` は `RenderingHdrSceneCaptureTest` のシナリオとして、縮小した `SkinnedGiantFixture` をカメラの後ろに置くと記録されたスキンの描画数が 0 になり、前に置くと絞り込みを切った場合とバックバッファの画素の差が 0 になることを確かめる。前者は可視バッファ on、後者は `--visibility-buffer=off` の予備 GBuffer 経路を使う。
+
+`Test/Core/Rendering/RenderingValidation/` の `SkinnedGiantFixture` は、バイナリを置かずに管状のスキンを生成する。既定は 128 関節、LOD0 で約 100 万三角形で、生成時の `TargetTriangleCount` で三角形数を減らせる。
+
+テストを有効にした構成で、CPU の試験は次のように回す。
+
+```powershell
+cmake --build build --config Debug --target CameraViewConstantsTest
+ctest --test-dir build -C Debug -R "^SkinnedLodSelectionTest$" --output-on-failure
+```
+
+Vulkan の 2 シナリオは次のように回す。
+
+```powershell
+cmake --build build --config Debug --target RenderingHdrSceneCaptureTest
+ctest --test-dir build -C Debug -R "^RenderingSkinnedCull(VulkanTest|GBufferFallbackVulkanTest)$" --output-on-failure
+```
+
+## PaleFlat の照明の式の試験（MaterialResourcesTest の中の PaleFlatShadingContractTest）
+
+- 反証する契約: Flatness が 1 のとき直接光の係数は N・L と影に依らず [WrapMin, 1] に収まり、Flatness が 0 のとき Lambert と一致する。一定の放射輝度 L に対する全球の平均照度は πL となり、不正な設定値は Sanitize で補正される。
+- 撮影・ログでは気づけない理由: 撮影は回さない決まりで、式がずれても少し明暗のある白のまま動くため、通常のログでも気づけない。
+- 失敗は黙って起きる。例外もログも出ず、白の明るさと明暗比がずれる。
+
+テストを有効にした構成で、CPU の試験は次のように回す。
+
+```powershell
+cmake --build build --config Debug --target MaterialResourcesTest -- /m:1
+ctest --test-dir build -C Debug -R "^(PaleFlatShadingContractTest|MaterialResourcesTest|ShadingModelContractTest)$" --no-tests=error --output-on-failure --timeout 300
+```
+
+GPU の試験は `RenderingPaleFlatVulkanTest`（Visibility Buffer 有効）と
+`RenderingPaleFlatGBufferFallbackVulkanTest`（無効）で、同じ固定カメラ・手動露出の HDR を検査する。
+
+- 反証する契約: PaleFlat の明暗比の上限、DefaultLit の対照、静的とスキンの一致、太陽の照度を 4 倍にしたときの線形性と灰色の球との比（相対差 3% 以内）、高さフォグの透過率の合成（絶対差 0.01 以内）、光源の回転時に鏡面が出ないこと（直接光の係数で割った輝度の変動係数 0.1% 以下、200 画素以上）。
+- 撮影・ログでは気づけない理由: 撮影は回さない決まりで、白の明暗・露出・霧への追従が崩れても動き続けるため、通常のログでは気づけない。
+- 失敗は黙って起きる。例外を出さず、照度に対する白の明るさや霧の混ざり方、視線に依る光沢がずれる。
+
+霧は密度 0.03 / 0.08、基準高さ 0、高さ減衰 0.01、光源へ向かう向き (0, 0.6, 0.8) を使う。
+左右対称の球の ROI の差で共通の霧の光を消し、球面の法線から求めた表面位置までの
+`ComputeHeightFogTransmittance` と比較する。光源の X 成分が 0 なので左右の視線の位相角が等しい。
+回転は照度 16000 lux、方位 −40°・0°・+40°とし、GBufferNormal で球の内側かつ N・L > 0.2 の画素を選ぶ。
+回転段は直接光を強めて環境光の寄与を抑え、粗さ 1 の鏡面の変動を検出する。
+各段は適用から 16 描画フレーム待ち、`PALE_FLAT_CHECK` に状態・判定値・許容値・結果を出力する。
+
+```powershell
+cmake --build build --config Debug --target RenderingHdrSceneCaptureTest -- /m:1
+ctest --test-dir build -C Debug -R "^(RenderingPaleFlatVulkanTest|RenderingPaleFlatGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300
+```

@@ -5,10 +5,16 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/GBufferProgramOverlayPass.h"
 #include "Rendering/DecalPass.h"
 #include "Rendering/DistortionPass.h"
+#include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/MotionBlurPass.h"
 #include "Rendering/FoliagePass.h"
+#include "Rendering/GrassPass.h"
+#include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/SkyOcclusionMapPass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -38,6 +44,7 @@
 #include "Math/MatrixUtils.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include "Thread/JobSystem.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -88,6 +95,10 @@ namespace NorvesLib::Core::Rendering
             outData.CustomData[1] = static_cast<float>(proxy.ImpostorAtlasWidth);
             outData.CustomData[2] = static_cast<float>(proxy.ImpostorAtlasHeight);
             outData.CustomData[3] = proxy.LODSwitchDistance;
+            for (float &value : outData.ShadingParams)
+            {
+                value = -1.0f;
+            }
         }
 
         // BillboardComponent::BuildBoardProxy と同じ式で、板の基点から各頂点を包む境界を作る。
@@ -227,6 +238,7 @@ namespace NorvesLib::Core::Rendering
         m_bEnableFrustumCulling = settings.bEnableFrustumCulling;
         m_bEnableOcclusionCulling = settings.bEnableOcclusionCulling;
         m_bEnableDistanceCulling = settings.bEnableDistanceCulling;
+        m_CullParallelSettings = settings.CullParallel;
         m_MaxDrawDistance = settings.MaxDrawDistance;
         m_bEnableInstancing = settings.bEnableInstancing;
         m_MinInstanceCount = settings.MinInstanceCount;
@@ -884,6 +896,9 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::Render(ViewRenderContext &context)
     {
+        m_RenderExtensions.ApplyPending();
+        m_GBufferPrograms.ApplyPending();
+
         const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
         const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
         context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
@@ -893,6 +908,7 @@ namespace NorvesLib::Core::Rendering
                                                context.SceneRevision,
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
+        context.SkyOcclusion.Reset();
         struct PhysicalLightingScope final
         {
             ViewRenderContext& Context;
@@ -1108,6 +1124,9 @@ namespace NorvesLib::Core::Rendering
         SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
 
+        // カメラに追従する世界フィールドを、ジオメトリの描画より先に更新する。
+        AddPass(MakeUnique<WorldFieldPass>());
+
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
@@ -1129,7 +1148,7 @@ namespace NorvesLib::Core::Rendering
         MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
 
-        // VisibilityRasterPass: 不透明の描画のすべて（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）を、
+        // VisibilityRasterPass: MegaGeometry のクラスタと、プログラム指定の無い不透明のメッシュ・スキニングの塊を、
         // VisBuffer.Id と GBuffer.Depth へ描く（on では GBuffer の描画の代わりに、debug では今の GBuffer の描画に加えて）。
         // --visibility-buffer=on|debug のときだけ足す。
         VisibilityRasterPass *visibilityRasterPassPtr = nullptr;
@@ -1175,6 +1194,12 @@ namespace NorvesLib::Core::Rendering
             // 2パスの遮蔽の HZB は、GBuffer の描画を止めている間は ID のラスタの深度から作る（記録をラスタの Execute へ移す）
             megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
             AddPass(std::move(visibilityResolvePass));
+
+            // プログラム材質は草と同じく解決できないため、解決の後の GBuffer と深度へ重ねて描く。
+            // ID のラスタの深度には載らず、2 パスの遮蔽の HZB の遮蔽物にはならない。
+            auto programOverlayPass = MakeUnique<GBufferProgramOverlayPass>();
+            programOverlayPass->SetGBufferPass(gbufferPassPtr);
+            AddPass(std::move(programOverlayPass));
         }
 
         // DecalPass: 画面空間の遅延デカールを解決・GBuffer の描画の後、草の前に重ねる。
@@ -1187,6 +1212,11 @@ namespace NorvesLib::Core::Rendering
         // 束が無いフレームは何も宣言しない（既定の描画は変えない）
         AddPass(MakeUnique<FoliagePass>());
 
+        // GrassPass: 草の場からタイルごとのブレードと間接描画の引数を生成する。
+        auto grassPass = MakeUnique<GrassPass>();
+        grassPass->SetMegaGeometryPass(megaGeometryPassPtr);
+        AddPass(std::move(grassPass));
+
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
         // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
         SSAOSettings ssaoSettings;
@@ -1194,6 +1224,9 @@ namespace NorvesLib::Core::Rendering
         ssaoSettings.Intensity = 1.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
+
+        // 空を遮る形状からクリップマップを更新し、照明へ公開する。
+        AddPass(MakeUnique<SkyOcclusionMapPass>());
 
         // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
@@ -1318,6 +1351,11 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
 
+        // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
+        AddPass(Container::MakeUnique<DepthOfFieldPass>());
+        // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
+        AddPass(Container::MakeUnique<MotionBlurPass>());
+
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
@@ -1371,6 +1409,7 @@ namespace NorvesLib::Core::Rendering
         postProcessStack->AddPass(std::move(debugDrawPass));
 
         SetPostProcessStack(std::move(postProcessStack));
+        m_RenderExtensions.ReinsertAll();
 
         NORVES_LOG_INFO("SceneView",
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Volumetrics -> Forward(Transparent) -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
@@ -1415,6 +1454,7 @@ namespace NorvesLib::Core::Rendering
         toneMappingSettings.VignetteIntensity = 0.0f;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
         SetPostProcessStack(std::move(postProcessStack));
+        m_RenderExtensions.NotePathTracingPipeline();
     }
 
     void SceneView::CullBoardProxy(BoardProxy& proxy,
@@ -1454,40 +1494,15 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void SceneView::CullProxies(Viewport *viewport)
+    void SceneView::CullMeshProxyRange(size_t begin, size_t end,
+                                      const Math::Matrix4x4& viewProjection,
+                                      const Math::Vector3& cameraPosition,
+                                      Container::VariableArray<MeshProxy*>& outVisible)
     {
-        NORVES_STAT_TIME_START(cullingViewport);
-
-        m_VisibleMeshProxies.clear();
-        m_VisibleBoardProxies.clear();
-
-        if (!viewport)
+        const auto& suppressedMeshComponentIds = m_SuppressedMeshComponentIds;
+        for (size_t index = begin; index < end; ++index)
         {
-            return;
-        }
-
-        const CameraProxy &camera = viewport->GetCamera();
-        const Math::Matrix4x4 viewProjection =
-            CameraViewConstants::BuildCullingViewProjectionMatrix(camera, viewport->GetAspectRatio());
-
-        Math::Vector3 cameraPosition(
-            camera.PositionX,
-            camera.PositionY,
-            camera.PositionZ);
-
-        Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
-
-        for (BoardProxy& proxy : m_BoardProxies)
-        {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
-        }
-        for (BoardProxy& proxy : m_TransientBoardProxies)
-        {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
-        }
-
-        for (MeshProxy &proxy : m_MeshProxies)
-        {
+            MeshProxy& proxy = m_MeshProxies[index];
             if (suppressedMeshComponentIds.find(proxy.ComponentId) != suppressedMeshComponentIds.end())
             {
                 continue;
@@ -1508,9 +1523,84 @@ namespace NorvesLib::Core::Rendering
             if (bVisible)
             {
                 proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-                m_VisibleMeshProxies.push_back(&proxy);
+                outVisible.push_back(&proxy);
             }
         }
+    }
+
+    void SceneView::CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition)
+    {
+        const size_t n = m_MeshProxies.size();
+        const size_t chunkSize = std::max(m_CullParallelSettings.ChunkSize, size_t{1});
+        // 加算による桁あふれを避けて切り上げる
+        const size_t chunkCount = n / chunkSize + (n % chunkSize != 0 ? 1 : 0);
+        if (n < m_CullParallelSettings.MinProxyCount || chunkCount <= 1)
+        {
+            CullMeshProxyRange(0, n, viewProjection, cameraPosition, m_VisibleMeshProxies);
+            return;
+        }
+
+        if (m_CullChunkVisible.size() < chunkCount)
+        {
+            m_CullChunkVisible.resize(chunkCount);
+        }
+
+        NorvesLib::Thread::JobSystem::Get().ParallelFor(chunkCount, 1, [&](size_t chunk)
+        {
+            auto& out = m_CullChunkVisible[chunk];
+            out.clear();
+            const size_t begin = chunk * chunkSize;
+            const size_t end = begin + std::min(chunkSize, n - begin);
+            CullMeshProxyRange(begin, end, viewProjection, cameraPosition, out);
+        });
+
+        size_t visibleCount = 0;
+        for (size_t chunk = 0; chunk < chunkCount; ++chunk)
+        {
+            visibleCount += m_CullChunkVisible[chunk].size();
+        }
+        m_VisibleMeshProxies.reserve(visibleCount);
+
+        // 完了順によらず、元のプロキシの並びで連結する
+        for (size_t chunk = 0; chunk < chunkCount; ++chunk)
+        {
+            const auto& visible = m_CullChunkVisible[chunk];
+            m_VisibleMeshProxies.insert(m_VisibleMeshProxies.end(), visible.begin(), visible.end());
+        }
+    }
+
+    void SceneView::CullProxies(Viewport *viewport)
+    {
+        NORVES_STAT_TIME_START(cullingViewport);
+
+        m_VisibleMeshProxies.clear();
+        m_SuppressedMeshComponentIds.clear();
+        m_VisibleBoardProxies.clear();
+
+        if (!viewport)
+        {
+            return;
+        }
+
+        const CameraProxy &camera = viewport->GetCamera();
+        const Math::Matrix4x4 viewProjection =
+            CameraViewConstants::BuildCullingViewProjectionMatrix(camera, viewport->GetAspectRatio());
+
+        Math::Vector3 cameraPosition(
+            camera.PositionX,
+            camera.PositionY,
+            camera.PositionZ);
+
+        for (BoardProxy& proxy : m_BoardProxies)
+        {
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+        }
+        for (BoardProxy& proxy : m_TransientBoardProxies)
+        {
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+        }
+
+        CullMeshProxies(viewProjection, cameraPosition);
 
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
@@ -1522,6 +1612,7 @@ namespace NorvesLib::Core::Rendering
     {
         NORVES_STAT_TIME_START(cullingSnapshot);
         m_VisibleMeshProxies.clear();
+        m_SuppressedMeshComponentIds.clear();
         m_VisibleBoardProxies.clear();
 
         if (!viewport.bHasCamera)
@@ -1558,42 +1649,16 @@ namespace NorvesLib::Core::Rendering
         const Math::Matrix4x4 viewProjection =
             CameraViewConstants::BuildCullingViewProjectionMatrix(camera, aspectRatio);
 
-        Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
-
         for (BoardProxy& proxy : m_BoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
         }
         for (BoardProxy& proxy : m_TransientBoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, suppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
         }
 
-        for (MeshProxy &proxy : m_MeshProxies)
-        {
-            if (suppressedMeshComponentIds.find(proxy.ComponentId) != suppressedMeshComponentIds.end())
-            {
-                continue;
-            }
-
-            bool bVisible = true;
-
-            if (m_bEnableFrustumCulling && bVisible)
-            {
-                bVisible = FrustumCull(proxy, viewProjection);
-            }
-
-            if (m_bEnableDistanceCulling && bVisible)
-            {
-                bVisible = DistanceCull(proxy, cameraPosition);
-            }
-
-            if (bVisible)
-            {
-                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-                m_VisibleMeshProxies.push_back(&proxy);
-            }
-        }
+        CullMeshProxies(viewProjection, cameraPosition);
 
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;

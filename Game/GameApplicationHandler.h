@@ -17,6 +17,7 @@
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Debug/CameraScriptCapture.h"
 #include "Debug/GeometrySettleTrace.h"
+#include "Debug/MapCapture.h"
 #include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -242,6 +243,8 @@ namespace Game
         Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
         // --capture-views で、1回の起動の中でシーンの複数の名前付き視点を順に撮る。
         Game::Debug::MultiViewCapture m_MultiViewCapture;
+        // --map-capture でシーンを真上からタイルごとに撮る。
+        Game::Debug::MapCapture m_MapCapture;
 #if NORVES_BUILD_DEVELOPMENT
         // SceneReady の遷移ごとに、描画済みパケットの状態を一度だけ記録する。
         bool m_bPreviousSceneReady = true;
@@ -302,9 +305,14 @@ namespace Game
         float m_ShishaCameraOrbit = 0.0f;
         /// --shisha-scale で指定された代役の倍率。
         float m_ShishaScale = 1.0f;
-        /// カメラの周回速度と代役の倍率が指定済みか。
+        /// --shisha-sun-elevation で指定された太陽の高度（度）。
+        float m_ShishaSunElevationDegrees = 40.0f;
+        /// --shisha-overcast で曇天を指定したか。
+        bool m_bShishaOvercast = false;
+        /// 数値引数が指定済みか。
         bool m_bShishaCameraOrbitSet = false;
         bool m_bShishaScaleSet = false;
+        bool m_bShishaSunElevationSet = false;
 #endif
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
@@ -321,6 +329,13 @@ namespace Game
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        /// sandbox の合成スキンの体数（0 は配置しない）
+        uint32_t m_SkinnedCrowdCount = 0;
+        /// 姿勢の並列評価（-1 は指定なし、0 は無効、1 は有効）
+        int8_t m_ParallelPose = -1;
+        /// 並列にする最小数と 1 回の取り出し数（0 は指定なし）
+        uint32_t m_ParallelPoseMinCount = 0;
+        uint32_t m_ParallelPoseGrain = 0;
         /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
         uint32_t m_GrasslandScatterStressCount = 0;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する

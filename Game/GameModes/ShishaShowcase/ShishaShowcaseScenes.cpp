@@ -8,7 +8,8 @@ namespace Game::GameModes
     // 場面を足すときはこの一覧に 1 行だけ足す（名前, 入口の関数の接尾辞）。
     // 場面のファイルでは Build/Update/Leave + 接尾辞の 3 関数を Game::GameModes に定義する。
 #define SHISHA_SHOWCASE_SCENES(X) \
-    X("base", ShishaShowcaseBaseScene)
+    X("base", ShishaShowcaseBaseScene) \
+    X("pale", ShishaShowcasePaleScene)
 
 #define SHISHA_SHOWCASE_DECLARE(name, suffix) \
     bool Build##suffix(ShishaShowcaseSceneContext&); \

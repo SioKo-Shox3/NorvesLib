@@ -69,6 +69,11 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TILE_FLAG_TERRAIN_SURFACE = 8u;
         /** @brief 太陽の影を起伏に詰める地形の面（GBuffer の法線の A に 2 を書く。lighting.frag が法線の向きへずらさない） */
         constexpr uint32_t TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u;
+        /** @brief スプラットの層を持つ地形の材質（配列の 4 枚と専用の並びを束ねる） */
+        constexpr uint32_t TILE_FLAG_TERRAIN_SPLAT = 32u;
+        constexpr uint32_t TERRAIN_SPLAT_TEXTURE_COUNT = 4u;
+        /** @brief シェーダーの ResolveTileParams::terrainSplat[12] の float の数 */
+        constexpr uint32_t TERRAIN_SPLAT_PARAM_FLOATS = 48u;
         /** @brief 地形の 2・3 層目のテクスチャの数（土・岩肌のアルベド・法線・ORM） */
         constexpr uint32_t TERRAIN_LAYER_TEXTURE_COUNT = 6;
         /** @brief 地表の分類の地図の、地形のテクスチャの並びでの添え字（2・3 層目の 6 枚の次） */
@@ -116,7 +121,7 @@ namespace NorvesLib::Core::Rendering
             DumpMisc = 10,
         };
 
-        /** @brief シェーダーの ResolveParams（std140）と同じ 256 バイトの定数 */
+        /** @brief シェーダーの ResolveParams（std140）と同じ 272 バイトの定数 */
         struct alignas(16) ResolveParams
         {
             /** @brief ビュー空間 → ワールド（シェーダーの並び。列ごと） */
@@ -134,8 +139,10 @@ namespace NorvesLib::Core::Rendering
              * と同じ値。既定は 1）、 y = MegaGeometry
              * のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決） */
             float Frame[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+            /** @brief 今の時刻、前の時刻、試験の揺れの許可、0 */
+            float VertexAnimTime[4] = {};
         };
-        static_assert(sizeof(ResolveParams) == 256, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
+        static_assert(sizeof(ResolveParams) == 272, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
 
         /**
          * @brief ラスタと同じカメラの定数から ResolveParams を作る
@@ -260,6 +267,10 @@ namespace NorvesLib::Core::Rendering
         bool bTightSunShadow = false;
         RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
         float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
+        /** @brief 配列の 4 枚と並びが有効なスプラットの材質。3 層の混ぜ合わせとは排他的 */
+        bool bTerrainSplat = false;
+        RHI::TexturePtr TerrainSplatTextures[VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT];
+        float TerrainSplatParams[VisibilityResolveGeometry::TERRAIN_SPLAT_PARAM_FLOATS] = {};
     };
 
     /** @brief 1 回の解決の入力と出力 */
@@ -270,6 +281,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 描画の記録の表（storage buffer）と、使っているバイト数 */
         RHI::BufferPtr RecordTable;
         uint64_t RecordTableBytes = 0;
+        /** @brief スキンの記録が指す生の ShadingParams の表。無ければ記録の表を代わりに束ねる */
+        RHI::BufferPtr SkinnedVertexAnimParamsTable;
+        uint64_t SkinnedVertexAnimParamsTableBytes = 0;
         /** @brief フレームの材質の表（MaterialEntry の並び）と、使っているバイト数 */
         RHI::BufferPtr MaterialTable;
         uint64_t MaterialTableBytes = 0;
@@ -452,9 +466,13 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultFlatNormal;
         RHI::TexturePtr m_DefaultBlack;
         RHI::TexturePtr m_DefaultMidGray;
+        // スプラットを使わない材質の枠も 2D 配列の view にするため、2 層の代替を束ねる
+        RHI::TexturePtr m_DefaultTerrainSplatArray;
         RHI::SamplerPtr m_MaterialSampler;
         RHI::SamplerPtr m_MegaMaterialSampler;
         RHI::SamplerPtr m_TerrainMaterialSampler;
+        // スプラットの重みの地図は端で止めて線形に引く（反対の縁を混ぜない）
+        RHI::SamplerPtr m_TerrainSplatSampler;
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
         bool m_bTextureCreationAllowed = true;
         bool m_bLoggedTextureCreationBlocked = false;

@@ -39,6 +39,15 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
+    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] 予約（0）
+    uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
+    vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
+    vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
+    ivec4 skyOcclusionWindowOrigin[4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
+    vec4 skyOcclusionTexelMeters; // 段ごとのテクセル幅(m)
+    vec4 paleFlatColorAndWrapMin; // rgb=PaleFlat のリニア色（ConvertPaleFlatColorToLinear）、w=WrapMin
+    vec4 paleFlatShape; // x=ShadowStrength、y=AmbientLocalMix、z=SpecularScale、w=Flatness
+    vec4 paleFlatAverageIrradiance; // rgb=拡散照度の資源と組の全球の平均照度 E_avg（ambientColor.w を掛ける前）、w=有効1・無効0（rgbも0）
 } params;
 
 // ライトデータ構造
@@ -79,6 +88,8 @@ layout(set = 0, binding = 19) uniform sampler2D rtgiDiffuseIndirect;
 // rtgiSpecularHit の gba = 当たった面が返す光の平均（露出後、空へ抜けた標本は 0）、rtgiSpecularSky の a = 空へ抜けた割合
 layout(set = 0, binding = 27) uniform sampler2D rtgiSpecularHit;
 layout(set = 0, binding = 28) uniform sampler2D rtgiSpecularSky;
+layout(set = 0, binding = 29) uniform sampler2DArray skyOcclusionVisibility;
+layout(set = 0, binding = 30) uniform sampler2DArray skyOcclusionAux;
 // 点光源のキューブシャドウ（キューブiに光源からの距離/範囲を格納。無いフレームは距離1の既定値）
 layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 
@@ -134,7 +145,25 @@ layout(location = 2) out vec4 outSpecularReflectance;
 // PBR関連関数
 // ========================================
 
+#include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/ShadingModels.glsl"
+#include "Common/SkyOcclusion.glsl"
+
+SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N)
+{
+    return EvaluateSkyOcclusion(P, N, skyOcclusionVisibility, skyOcclusionAux,
+        params.skyOcclusionInfo, params.skyOcclusionParams,
+        params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
+}
+
+float EvaluateSkySpecularOcclusion(vec3 P, vec3 N, vec3 R, float roughness)
+{
+    return EvaluateSkySpecularOcclusion(P, N, R, roughness, skyOcclusionVisibility, skyOcclusionAux,
+        params.skyOcclusionInfo, params.skyOcclusionParams,
+        params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
+}
+
 #include "Common/PointShadow.glsl"
 // probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
 // 重みが集まって斑点になるのを防ぐ。
@@ -155,7 +184,9 @@ const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE = 9u;
 const uint DEBUG_VIEW_MODE_AMBIENT_OCCLUSION = 10u;
-const uint DEBUG_VIEW_MODE_COUNT = 11u;
+const uint DEBUG_VIEW_MODE_SKY_VISIBILITY = 11u;
+const uint DEBUG_VIEW_MODE_SHADING_MODEL = 12u;
+const uint DEBUG_VIEW_MODE_COUNT = 13u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
@@ -497,26 +528,25 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         // （半画素ぶんの余裕より深い）にあるときだけ遮りとする。画素の中心の深度だけで比べると、物体の手前の面のすぐ外を
         // かすめる段も、画素の中の面の傾きの差で奥と判定され、影の縁が1画素ほど外へ広がる。
         // 幾何の面の向きを作れない画素（輪郭の孤立した画素など）は GBuffer の法線で判定する。
-        vec4 sceneNormalSample = texelFetch(gbufferNormal, texel, 0);
-        vec3 sceneNormal = sceneNormalSample.xyz;
+        GBufferNormalData sceneNormalData = GBufferDecodeNormal(texelFetch(gbufferNormal, texel, 0));
+        vec3 sceneNormal = sceneNormalData.normal;
         float sceneNormalLength = length(sceneNormal);
         if (!(sceneNormalLength > 0.0))
         {
             continue;
         }
         sceneNormal /= sceneNormalLength;
-        // 草・低木の株の画素（GBuffer の材質の A が株の印）は遮らない。株は細い枝と葉のまばらな塊で、深度の面とその奥の
+        // 草・低木の株の画素（FOLIAGE_CLUMP の印）は遮らない。株は細い枝と葉のまばらな塊で、深度の面とその奥の
         // 厚さを詰まった物とみなすと、画面の上で株の輪郭のすぐ下の地面に塊の影が出る。株の影は太陽の影（VSM）が受け持つ
-        float sceneMaterialMark = texelFetch(gbufferMaterial, texel, 0).a;
-        if (sceneMaterialMark > 0.125 && sceneMaterialMark < 0.375)
+        if (GBufferNormalHasReceiverFlag(sceneNormalData, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP))
         {
             continue;
         }
         if (bTerrainReceiver)
         {
-            // 地形の受け手を地形の画素（A が 1）は遮らない。地形どうしの陰は太陽の影が受け持ち、接触影が拾うのは
-            // 地形の細かな凹凸と三角形の折れ目による誤った点だけになる。地形に据えた岩・礫・低木（A が 0）は遮る
-            if (sceneNormalSample.w > 0.5)
+            // 地形の受け手を地形の画素（TERRAIN の印）は遮らない。地形どうしの陰は太陽の影が受け持ち、接触影が拾うのは
+            // 地形の細かな凹凸と三角形の折れ目による誤った点だけになる。地形に据えた岩・礫・低木（TERRAIN の印なし）は遮る
+            if (GBufferNormalHasReceiverFlag(sceneNormalData, GBUFFER_RECEIVER_FLAG_TERRAIN))
             {
                 continue;
             }
@@ -944,8 +974,8 @@ void main()
 
     // GBufferからデータを取得
     vec4 albedoSample = texture(gbufferAlbedo, fragUV);
-    vec4 normalSample = texture(gbufferNormal, fragUV);
-    vec4 materialSample = texture(gbufferMaterial, fragUV);
+    GBufferNormalData normalData = GBufferDecodeNormal(texture(gbufferNormal, fragUV));
+    vec3 materialSample = texture(gbufferMaterial, fragUV).rgb;
     float depthSample = texture(gbufferDepth, fragUV).r;
 
     bool bRayTracingShadowValidationMode =
@@ -996,7 +1026,7 @@ void main()
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
             return;
         }
-        vec3 debugNormal = normalize(normalSample.xyz) * 0.5 + 0.5;
+        vec3 debugNormal = normalize(normalData.normal) * 0.5 + 0.5;
         outColor = vec4(debugNormal, 1.0);
         return;
     }
@@ -1107,6 +1137,30 @@ void main()
         return;
     }
 
+    if (params.debugViewMode == DEBUG_VIEW_MODE_SHADING_MODEL)
+    {
+        // 後処理を通らない表示なので、表示の範囲の色をそのまま出す。
+        vec3 modelColor = vec3(1.0, 0.0, 1.0);
+        if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT)
+        {
+            modelColor = vec3(0.5, 0.5, 0.5);
+        }
+        else if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_FUR)
+        {
+            modelColor = vec3(1.0, 0.55, 0.1);
+        }
+        else if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_EYE)
+        {
+            modelColor = vec3(0.15, 0.45, 1.0);
+        }
+        else if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_PALE_FLAT)
+        {
+            modelColor = vec3(0.95, 0.95, 0.95);
+        }
+        outColor = vec4(modelColor, 1.0);
+        return;
+    }
+
     if (IsAlbedoDebugView())
     {
         outColor = vec4(albedoSample.rgb, 1.0);
@@ -1117,22 +1171,49 @@ void main()
     bool bValidationLambert = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
                               bValidationHardShadow;
     bool bValidationPBR = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
+    bool bShadingModelActive = normalData.shadingModelId != GBUFFER_SHADING_MODEL_DEFAULT_LIT &&
+                               !bValidationLambert && !bValidationPBR &&
+                               params.debugViewMode != DEBUG_VIEW_MODE_RAW251 &&
+                               params.debugViewMode != DEBUG_VIEW_MODE_RAW252;
 
     // データ展開
     vec3 albedo = albedoSample.rgb;
-    vec3 N = normalize(normalSample.xyz);
-    // 地形の受け手（megageometry.frag・VisibilityResolve が法線の A に 1 を書く）。影の余裕と接触影の判定を変える。
-    // A が 2 なら影を起伏に詰める地形の受け手（VisibilityResolve の VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW）
-    bool bTerrainReceiver = normalSample.w > 0.5;
-    bool bTightTerrainShadow = normalSample.w > 1.5;
+    vec3 N = normalize(normalData.normal);
+    // 地形の受け手（TERRAIN の印）は、影の余裕と接触影の判定を変える。
+    // TIGHT_TERRAIN_SHADOW の印は、影を起伏に詰める地形の受け手を示す。
+    bool bTerrainReceiver = GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_TERRAIN);
+    bool bTightTerrainShadow = GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_TIGHT_TERRAIN_SHADOW);
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
-    // 鏡面の無い材質（GBuffer の材質の A が 1。MaterialCreateData::bDiffuseOnly）。直接光・環境光とも純ランバートで数える
-    bool bDiffuseOnlyMaterial = materialSample.a > 0.5;
-    // 草・低木の株（GBuffer の材質の A が 0.25。foliage.frag）。株は太陽の VSM に描かれ、株の中の影は VSM が受け持つので、
+    // 鏡面の無い材質（DIFFUSE_ONLY の印）。直接光・環境光とも純ランバートで数える
+    bool bDiffuseOnlyMaterial = GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY);
+    // 草・低木の株（FOLIAGE_CLUMP の印）。株は太陽の VSM に描かれ、株の中の影は VSM が受け持つので、
     // 接触影を掛けない（画面の深度の比べは手前の葉と奥の葉の段で画素ごとに当たり外れになり、点の明暗に崩れる）
-    bool bFoliageReceiver = materialSample.a > 0.125 && materialSample.a < 0.375;
+    bool bFoliageReceiver = GBufferNormalHasReceiverFlag(normalData, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
+    ShadingModelSurface shadingSurface;
+    PaleFlatInputs pale;
+    if (bShadingModelActive)
+    {
+        pale = MakePaleFlatInputs(params.paleFlatColorAndWrapMin, params.paleFlatShape,
+                                  params.paleFlatAverageIrradiance);
+        shadingSurface.id = normalData.shadingModelId;
+        shadingSurface.p0 = GBufferDecodeP0(texture(gbufferMaterial, fragUV));
+        shadingSurface.p1 = GBufferDecodeP1(texture(gbufferEmissive, fragUV));
+        shadingSurface.albedo = albedo;
+        shadingSurface.metallic = metallic;
+        shadingSurface.roughness = roughness;
+        shadingSurface.N = N;
+        shadingSurface.ao = ao;
+        ApplyShadingModelSurface(shadingSurface, params.shadingModelParams[0], pale);
+        albedo = shadingSurface.albedo;
+        metallic = shadingSurface.metallic;
+        roughness = shadingSurface.roughness;
+        N = shadingSurface.N;
+        ao = shadingSurface.ao;
+        // DDGI の材質 AO にも、画面空間 AO を重ねる前の補正値を渡す。
+        materialSample.b = ao;
+    }
     // 拡散の環境光に掛ける遮蔽（多重反射の近似で色ごとに弱める）
     vec3 diffuseAO = vec3(ao);
 
@@ -1156,6 +1237,14 @@ void main()
 
     // ワールド座標を復元
     vec3 worldPos = ReconstructWorldPosition(fragUV, depthSample);
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_SKY_VISIBILITY)
+    {
+        SkyOcclusionResult sky = EvaluateSkyOcclusion(worldPos, N);
+        outColor = vec4(fragUV.x < 0.5 ? vec3(sky.zenithVisibility)
+                                     : 0.5 * sky.bentNormal + 0.5, 1.0);
+        return;
+    }
 
     // カメラからの視線ベクトル
     vec3 V = normalize(params.cameraPosition.xyz - worldPos);
@@ -1293,9 +1382,20 @@ void main()
             sunShadowVisibility = shadow;
         }
 
-        if (bValidationLambert)
+        if (bShadingModelActive)
         {
-            // Validation 253: pure direct Lambert. No shadow, ambient, emissive or specular term.
+            float specularRoughness = ShadingModelSpecularRoughness(shadingSurface, params.shadingModelParams[0]);
+            vec2 dfgCoordinate = clamp(vec2(validationNdotV, specularRoughness),
+                                       vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+            vec2 dfg = texture(brdfLUT, dfgCoordinate).rg;
+            EvaluateShadingModelDirect(shadingSurface, N, V, L, H,
+                                       lightColor * attenuation, dot(N, L), shadow, dfg,
+                                       params.shadingModelParams[0], pale,
+                                       Lo_diffuse, Lo_specular);
+        }
+        else if (bValidationLambert)
+        {
+            // 検証表示 253: 直接光の純 Lambert のみ。影・環境光・発光・鏡面を含めない。
             Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * radiance;
         }
         else if (bDiffuseOnlyMaterial)
@@ -1390,6 +1490,11 @@ void main()
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        float skyConeSpecularOcclusion = 1.0;
+        if (params.skyOcclusionInfo.x != 0u)
+        {
+            skyConeSpecularOcclusion = EvaluateSkySpecularOcclusion(worldPos, N, reflect(-V, N), iblRoughness);
+        }
         // RTGI の鏡面の光線が空へ抜けた割合と、当たった面が返す光（EvaluateRTGIEnvironmentSpecular）
         float rtgiSkySpecularOcclusion = 1.0;
         vec3 rtgiSpecularHitRadiance = vec3(0.0);
@@ -1407,6 +1512,11 @@ void main()
             {
                 rtgiSpecularHitRadiance = min(max(specularHit, vec3(0.0)), vec3(65504.0));
             }
+            rtgiSkySpecularOcclusion = min(rtgiSkySpecularOcclusion, skyConeSpecularOcclusion);
+        }
+        else
+        {
+            specularAO *= skyConeSpecularOcclusion;
         }
 
         if (params.bIBLEnabled != 0u)
@@ -1470,6 +1580,29 @@ void main()
                 indirectSpecularReflectance = vec3(0.0);
                 indirectSpecular = vec3(0.0);
             }
+            // 無効時の AO と照明の計算を保ち、有効な IBL の拡散だけを評価し直す。
+            if (params.skyOcclusionInfo.x != 0u && !bRTGIAvailable && !bDDGIAvailable)
+            {
+                SkyOcclusionResult sky = EvaluateSkyOcclusion(worldPos, N);
+                vec3 skyDiffuseAO = iblDiffuseAO * sky.visibility;
+                if (bDiffuseOnlyMaterial)
+                {
+                    vec3 irradiance = textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
+                    vec3 diffuseOnly = irradiance * (albedo / PI) *
+                        EvaluateDiffuseMaterialWeight(metallic) * skyDiffuseAO;
+                    ambient = diffuseOnly * iblIntensity;
+                }
+                else
+                {
+                    ambient = EvaluateIblEndpoint(iblAlbedo, metallic, iblRoughness, N, V,
+                        skyDiffuseAO, specularAO, iblIntensity, brdf, false, vec3(0.0));
+                }
+                vec3 zenithIrradiance = textureLod(diffuseIrradiance,
+                    EquirectangularUV(vec3(0.0, 1.0, 0.0)), 0.0).rgb;
+                ambient += params.skyOcclusionBounce.rgb * (1.0 - sky.visibility) *
+                    zenithIrradiance * (albedo / PI) * EvaluateDiffuseMaterialWeight(metallic) *
+                    iblIntensity * iblDiffuseAO;
+            }
         }
         else
         {
@@ -1530,6 +1663,26 @@ void main()
     if (bValidationLambert)
     {
         color = Lo_diffuse;
+    }
+    else if (bShadingModelActive)
+    {
+        vec3 flatAmbientIrradiance = vec3(0.0);
+        if (shadingSurface.id == GBUFFER_SHADING_MODEL_PALE_FLAT)
+        {
+            if (params.bIBLEnabled != 0u)
+            {
+                // 拡散照度の資源と組で届いた全球の平均照度を使う。
+                flatAmbientIrradiance = pale.bAverageIrradianceValid
+                    ? pale.averageIrradiance * params.ambientColor.w : vec3(0.0);
+            }
+            else
+            {
+                flatAmbientIrradiance = params.ambientColor.rgb * params.ambientColor.w * PI;
+            }
+        }
+        color = ShadingModelFinalize(shadingSurface, ambient, Lo_diffuse, Lo_specular,
+                                     flatAmbientIrradiance, params.shadingModelParams[0], pale,
+                                     indirectSpecular, indirectSpecularReflectance);
     }
     else
     {

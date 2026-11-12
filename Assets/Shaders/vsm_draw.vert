@@ -25,11 +25,12 @@
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
 #include "Common/FoliagePlacement.glsl"
+#include "Common/VertexAnimation.glsl"
 // binding 5: スライスの表（ページの一辺・texel・投影の行列）
 #define VSM_SLICE_BINDING 5
 #include "Common/VirtualShadowMapSlice.glsl"
 
-// std140。VirtualShadowMapRaster.cpp の GPURasterParams と同じ並び
+// std140。VirtualShadowMapRaster.h の VirtualShadowMapRasterParams と同じ並び（全 176 バイト）
 layout(std140, set = 0, binding = 0) uniform VsmRasterParams
 {
     vec4 lightRight;
@@ -39,11 +40,14 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 depth;
     // x: ホストが書いた塊の数（これ以降の塊の番号は MegaGeometry のクラスタの記録）
     uvec4 counts;
-    // 株の塊の風: xy = 吹いていく向き（XZ。長さ 1）、z = 風の時計[s]
+    // 株の塊の風: xy = 吹いていく向き（XZ。長さ 1）、z = 風の時計[s]、w = 共通の風の突風の周波数[Hz]（0 なら従来の風）
     vec4 foliageWind;
-    // x = 突風の塊の流れる速さ[m/s]、y = 塊の大きさ[m]
+    // x = 風速[m/s]（従来の風では突風の塊の流れる速さ）、y = 突風の塊の大きさ[m]、z = 突風の強さ、w = 乱流の強さ
     vec4 foliageWindParams;
+    vec4 vertexAnimTime;
+    WorldFieldSampleConstants worldField;
 } params;
+layout(set = 0, binding = 6) uniform sampler2D foliageWorldFieldCurrent;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmInstances
 {
@@ -87,9 +91,22 @@ vec3 VsmPlaceFoliageVertex(VisibilityDrawRecord record, uint vertexIndex, vec4 w
     const vec3 local = position * vec3(widthScale, heightScale, widthScale);
     const vec3 placed = root + FoliageRotateYaw(local, c, s);
     const float plantHeight = world2.z * heightScale;
-    const vec2 offset = FoliageWindOffsetFor(root.xz, flex, plantHeight, world1.z, partPhase, params.foliageWind.z,
-                                             params.foliageWind.xy, params.foliageWindParams.xy, world2.x, world2.y);
-    return ApplyFoliageWind(placed, offset, max(local.y, 0.0));
+    vec2 offset;
+    if (params.foliageWind.w > 0.0)
+    {
+        offset = FoliageWindOffsetShared(root.xz, flex, plantHeight, world1.z, partPhase, params.foliageWind.z,
+                                         params.foliageWind.xy, params.foliageWindParams.x, params.foliageWindParams.z,
+                                         params.foliageWind.w, params.foliageWindParams.y, world2.x, world2.y);
+    }
+    else
+    {
+        offset = FoliageWindOffsetFor(root.xz, flex, plantHeight, world1.z, partPhase, params.foliageWind.z,
+                                      params.foliageWind.xy, params.foliageWindParams.xy, world2.x, world2.y);
+    }
+    const float heightAboveRoot = max(local.y, 0.0);
+    const vec3 windPosition = ApplyFoliageWind(placed, offset, heightAboveRoot);
+    return ApplyFoliageWorldField(windPosition, root, plantHeight, heightAboveRoot,
+                                  foliageWorldFieldCurrent, params.worldField, false);
 }
 
 layout(location = 0) flat out uint outPhysicalPage;
@@ -135,6 +152,13 @@ void main()
                                 vertices.vertices[vertexIndex].pz,
                                 1.0);
         world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
+        // 手続きとスキンの塊は、影の記録が前フレーム用の欄に生の値を持つ。MegaGeometry は未指定。
+        const vec4 instanceParams = bMega ? vec4(-1.0) : uintBitsToFloat(record.previous);
+        const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
+        if (VertexAnimationKind(animParams) != VERTEX_ANIMATION_KIND_NONE)
+        {
+            world = ApplyVertexAnimation(world, local.xyz, animParams, params.vertexAnimTime.x);
+        }
     }
 
     const uint level = instance.y & 255u;

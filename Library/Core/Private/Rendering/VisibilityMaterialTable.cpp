@@ -73,6 +73,50 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
             return hash != 0u ? hash : 1u;
         }
 
+        // スプラットの値だけを要約する。構造体のパディングやフレームの濡れ度は含めない
+        uint32_t HashTerrainSplat(const MegaGeometry::MegaTerrainSplat& splat)
+        {
+            uint32_t hash = 2166136261u;
+            const auto mix = [&hash](const void* data, size_t bytes)
+            {
+                const uint8_t* p = static_cast<const uint8_t*>(data);
+                for (size_t index = 0; index < bytes; ++index)
+                {
+                    hash = (hash ^ p[index]) * 16777619u;
+                }
+            };
+            for (const TextureHandle* handle : {&splat.AlbedoArrayTexture, &splat.NormalArrayTexture,
+                                                &splat.ArmArrayTexture, &splat.SplatArrayTexture})
+            {
+                mix(&handle->Id, sizeof(handle->Id));
+            }
+            mix(&splat.LayerCount, sizeof(splat.LayerCount));
+            const uint8_t twoChannel = splat.bNormalTwoChannel ? 1u : 0u;
+            mix(&twoChannel, sizeof(twoChannel));
+            mix(splat.SplatMinXZ, sizeof(splat.SplatMinXZ));
+            mix(splat.SplatMaxXZ, sizeof(splat.SplatMaxXZ));
+            mix(&splat.CliffLayer, sizeof(splat.CliffLayer));
+            mix(splat.CliffSlopeDegrees, sizeof(splat.CliffSlopeDegrees));
+            mix(&splat.HeightBlendDepth, sizeof(splat.HeightBlendDepth));
+            mix(&splat.UvRotationWavelength, sizeof(splat.UvRotationWavelength));
+            mix(&splat.UvRotationDegrees, sizeof(splat.UvRotationDegrees));
+            for (const MegaGeometry::MegaTerrainSplatLayer& layer : splat.Layers)
+            {
+                mix(&layer.TileMeters, sizeof(layer.TileMeters));
+                mix(&layer.Wettability, sizeof(layer.Wettability));
+                // 名前は終端までを読む。終端より後ろの未使用バイトは材質の識別に含めない
+                size_t length = 0;
+                while (length < sizeof(layer.SurfaceName) && layer.SurfaceName[length] != '\0')
+                {
+                    ++length;
+                }
+                mix(layer.SurfaceName, length);
+                const uint8_t terminator = 0u;
+                mix(&terminator, sizeof(terminator));
+            }
+            return hash != 0u ? hash : 1u;
+        }
+
         bool SameBytes(const MaterialEntry& a, const MaterialEntry& b)
         {
             return std::memcmp(&a, &b, sizeof(MaterialEntry)) == 0;
@@ -88,6 +132,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     MaterialEntry MakeMaterialEntry(const MaterialResourceData* data)
     {
         MaterialEntry entry;
+        entry.Header[1] = GBufferContract::ShadingModelDefaultLit;
         if (!data)
         {
             return entry;
@@ -96,6 +141,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         for (uint32_t channel = 0; channel < 4; ++channel)
         {
             entry.BaseColor[channel] = data->BaseColor[channel];
+            entry.ShadingParams[channel] = data->ShadingParams[channel];
         }
         for (uint32_t channel = 0; channel < 3; ++channel)
         {
@@ -109,7 +155,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         entry.Header[0] = (data->bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
                           (data->HeightTexture.IsValid() ? MATERIAL_FLAG_HAS_HEIGHT : 0u) |
                           (data->bDiffuseOnly ? MATERIAL_FLAG_DIFFUSE_ONLY : 0u);
-        entry.Header[1] = static_cast<uint32_t>(data->Shading);
+        entry.Header[1] = ToGBufferShadingModelId(data->Shading);
         entry.Header[2] = static_cast<uint32_t>(data->Blend);
         StoreHandle(&entry.TexturesA[0], data->AlbedoTexture.Id);
         StoreHandle(&entry.TexturesA[2], data->NormalTexture.Id);
@@ -121,12 +167,29 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         return entry;
     }
 
+    MaterialEntry MakeMaterialEntry(const MaterialResourceData* data, const float* instanceShadingParams)
+    {
+        MaterialEntry entry = MakeMaterialEntry(data);
+        if (instanceShadingParams)
+        {
+            for (uint32_t channel = 0; channel < ShadingParamCount; ++channel)
+            {
+                if (instanceShadingParams[channel] >= 0.0f)
+                {
+                    entry.ShadingParams[channel] = instanceShadingParams[channel];
+                }
+            }
+        }
+        return entry;
+    }
+
     MaterialEntry MakeMaterialEntry(const MegaGeometry::MegaMeshMaterial& material)
     {
         MaterialEntry entry;
         for (uint32_t channel = 0; channel < 4; ++channel)
         {
             entry.BaseColor[channel] = material.BaseColor[channel];
+            entry.ShadingParams[channel] = material.ShadingParams[channel];
         }
         for (uint32_t channel = 0; channel < 3; ++channel)
         {
@@ -142,7 +205,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         std::memcpy(&entry.TexturesD[2], &material.OcclusionStrength, sizeof(float));
         entry.Header[0] = (material.bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
                           (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
-        entry.Header[1] = static_cast<uint32_t>(ShadingModel::DefaultLit);
+        entry.Header[1] = ToGBufferShadingModelId(material.Shading);
         entry.Header[2] = static_cast<uint32_t>(BlendMode::Opaque);
         if (material.TerrainBlend.IsTerrainSurface())
         {
@@ -156,6 +219,11 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         {
             entry.Header[0] |= MATERIAL_FLAG_TERRAIN_BLEND;
             entry.Header[3] = HashTerrainBlend(material.TerrainBlend);
+        }
+        else if (material.TerrainBlend.IsSplatEnabled())
+        {
+            entry.Header[0] |= MATERIAL_FLAG_TERRAIN_SPLAT;
+            entry.Header[3] = HashTerrainSplat(material.TerrainBlend.Splat);
         }
         StoreHandle(&entry.TexturesA[0], material.AlbedoTexture.Id);
         StoreHandle(&entry.TexturesA[2], material.NormalTexture.Id);

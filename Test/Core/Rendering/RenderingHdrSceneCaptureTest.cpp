@@ -1,6 +1,11 @@
 ﻿#include "RenderingValidation/GpuTestEnvironment.h"
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
+#include "RenderExtensionStageScenario.h"
+#include "GBufferProgramScenario.h"
+#include "PaleFlatScenario.h"
+#include "SkinnedCullScenario.h"
+#include "TemporalAAReactiveScenario.h"
 
 #include "Application/IApplicationHandler.h"
 #include "Boot/AppLauncher.h"
@@ -9,7 +14,9 @@
 #include "Engine/Engine.h"
 #include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
+#include "Math/VectorUtils.h"
 #include "Module/ModuleRegistry.h"
+#include "Platform/PlatformProcess.h"
 #include "ImGuiModule/IImGuiView.h"
 #include "ImGuiModule/ImGuiModule.h"
 #include "Rendering/PathTracingPass.h"
@@ -1701,6 +1708,12 @@ namespace
 
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
+        RenderExtensionStageScenario m_ExtensionStageScenario;
+        GBufferProgramScenario m_GBufferProgramScenario;
+        PaleFlatScenario m_PaleFlatScenario;
+        SkinnedCullScenario m_SkinnedCullScenario;
+        TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
+
     public:
         enum class TransparentPhysicalStage : uint8_t
         {
@@ -1774,6 +1787,99 @@ namespace
 
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
+                return false;
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::SceneColor ||
+                    m_bShadingModelScenario || m_bShadingModelLightingScenario ||
+                    m_GBufferProgramScenario.IsEnabled() || m_ExtensionStageScenario.IsEnabled() ||
+                    m_SkinnedCullScenario.IsEnabled() || m_TemporalAAReactiveScenario.IsEnabled() ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario)
+                {
+                    LOG_ERROR("PaleFlat の検証には indoor と scene-color を単独で指定してください");
+                    return false;
+                }
+                if (!GetRunConfig().bVisibilityBufferOff)
+                {
+                    RequireVisibilityBufferPath();
+                }
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::GBufferEmissive ||
+                    m_bShadingModelScenario || m_ExtensionStageScenario.IsEnabled() ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario || m_bShadingModelLightingScenario ||
+                    m_SkinnedCullScenario.IsEnabled() || m_TemporalAAReactiveScenario.IsEnabled())
+                {
+                    LOG_ERROR("GBuffer プログラムの検証には indoor と gbuffer-emissive を単独で指定してください");
+                    return false;
+                }
+                RequireVisibilityBufferPath();
+            }
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                if (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                    m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                    m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario ||
+                    m_TemporalAAReactiveScenario.IsEnabled() || m_bShadingModelScenario ||
+                    GetRunConfig().Scene != SceneKind::Outdoor ||
+                    GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
+                {
+                    LOG_ERROR("スキンの絞り込み検証には outdoor と back-buffer を単独で指定してください");
+                    return false;
+                }
+                RequireVisibilityBufferPath();
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled() &&
+                (m_ExtensionStageScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                 m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                 m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario || m_bShadingModelScenario ||
+                 m_bShadingModelLightingScenario))
+            {
+                LOG_ERROR("TAA リアクティブのシナリオは他のシナリオと併用できません");
+                return false;
+            }
+            if (m_bShadingModelLightingScenario)
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::BackBuffer ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario || m_ExtensionStageScenario.IsEnabled())
+                {
+                    LOG_ERROR("シェーディングモデル照明検証には indoor と BackBuffer を単独で指定してください");
+                    return false;
+                }
+            }
+            if (m_bShadingModelScenario)
+            {
+                const auto source = GetRunConfig().CaptureSource;
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    (source != FrameCaptureSourceKind::GBufferNormal &&
+                     source != FrameCaptureSourceKind::GBufferMaterial &&
+                     source != FrameCaptureSourceKind::GBufferEmissive) ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario || m_ExtensionStageScenario.IsEnabled())
+                {
+                    LOG_ERROR("シェーディングモデルの検証には indoor と GBuffer のソースを単独で指定してください");
+                    return false;
+                }
+                RequireVisibilityBufferPath();
+            }
+            if (m_ExtensionStageScenario.IsEnabled() &&
+                (m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bAllNumericalScenario ||
+                 m_bKnownCdScenario || m_bP4Scenario || m_bTransparentPhysicalLightingScenario ||
+                 m_bEmissiveDaylightScenario))
+            {
+                LOG_ERROR("拡張の段のシナリオは他のシナリオと併用できません");
                 return false;
             }
             if (m_bAllNumericalScenario &&
@@ -1966,9 +2072,45 @@ namespace
 
         bool OnInitialize() override
         {
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=base_fixture_begin");
+            }
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                return m_SkinnedCullScenario.Initialize(GetFixture(), Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene, GetRunConfig().CaptureSource);
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
+            }
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
+                return GetFixture().ApplyShadingModelGBufferFixture();
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                return m_GBufferProgramScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
+            }
+            if (m_bShadingModelLightingScenario)
+            {
+                return GetFixture().ApplyShadingModelLightingFixture();
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(),
+                    GetRunConfig().Scene == SceneKind::Outdoor, GetRunConfig().CaptureSource);
             }
             if (m_bEmissiveDaylightScenario)
             {
@@ -2184,6 +2326,13 @@ namespace
 
         void OnPreRender() override
         {
+            if (m_bShadingModelScenario && !m_bShadingModelFirstFrameLogged && Core::Engine::GEngine != nullptr)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=first_prerender rendered_frame=%llu fixed_steps=%llu",
+                         static_cast<unsigned long long>(Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount()),
+                         static_cast<unsigned long long>(GetFixture().GetObservedFixedStepCount()));
+                m_bShadingModelFirstFrameLogged = true;
+            }
             RenderingValidationApplicationHandler::OnPreRender();
             if (m_bAllNumericalScenario && Core::Engine::GEngine != nullptr)
             {
@@ -2211,7 +2360,15 @@ namespace
                 Modules::Gui::UnregisterImGuiView(&m_MarkerView);
                 m_bMarkerRegistered = false;
             }
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=fixture_shutdown_begin");
+            }
             RenderingValidationApplicationHandler::OnPreShutdown();
+            if (m_bShadingModelScenario)
+            {
+                LOG_INFO("シェーディングモデル時刻 stage=fixture_shutdown_end");
+            }
         }
 
     protected:
@@ -2219,6 +2376,58 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            const Core::Container::String runDirectoryPrefix(TEXT("--run-directory="));
+            if (argument.find(runDirectoryPrefix) == 0)
+            {
+                const Core::Container::String directory = argument.substr(runDirectoryPrefix.size());
+                if (directory.empty() || !Core::Platform::SetWorkingDirectory(directory))
+                {
+                    outFailureReason = TEXT("描画検証の作業ディレクトリを設定できません");
+                    LOG_ERROR("描画検証の作業ディレクトリを設定できません");
+                    return false;
+                }
+                return true;
+            }
+            if (argument.find(TEXT("--skinned-cull-scenario=")) == 0)
+            {
+                return m_SkinnedCullScenario.ParseArgument(argument, outFailureReason);
+            }
+            if (argument.find(TEXT("--temporal-aa-reactive-scenario=")) == 0)
+            {
+                return m_TemporalAAReactiveScenario.ParseArgument(argument, outFailureReason);
+            }
+            if (argument == TEXT("--shading-model-scenario=lighting"))
+            {
+                if (m_bShadingModelScenario || m_bShadingModelLightingScenario)
+                {
+                    outFailureReason = TEXT("シェーディングモデルのシナリオが重複しています");
+                    return false;
+                }
+                m_bShadingModelLightingScenario = true;
+                return true;
+            }
+            if (argument == TEXT("--shading-model-scenario=gbuffer-paths"))
+            {
+                if (m_bShadingModelScenario || m_bShadingModelLightingScenario)
+                {
+                    outFailureReason = TEXT("シェーディングモデルのシナリオが重複しています");
+                    return false;
+                }
+                m_bShadingModelScenario = true;
+                return true;
+            }
+            if (argument.find(TEXT("--pale-flat-scenario=")) == 0)
+            {
+                return m_PaleFlatScenario.ParseArgument(argument, outFailureReason);
+            }
+            if (argument.find(TEXT("--gbuffer-program-scenario=")) == 0)
+            {
+                return m_GBufferProgramScenario.ParseArgument(argument, outFailureReason);
+            }
+            if (argument.find(TEXT("--extension-stage-scenario=")) == 0)
+            {
+                return m_ExtensionStageScenario.ParseArgument(argument, outFailureReason);
+            }
             const bool bEmissiveDaylight1mNits = argument == TEXT("--emissive-scenario=daylight-1m-nits");
             const bool bEmissiveDaylightAboveHalf = argument == TEXT("--emissive-scenario=daylight-above-32768");
             if (bEmissiveDaylight1mNits || bEmissiveDaylightAboveHalf)
@@ -2412,6 +2621,35 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                return m_SkinnedCullScenario.Evaluate(frame, Core::Engine::GEngine->GetRenderWorld(),
+                    GetLastAcceptedRequestId(), reason);
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.Evaluate(frame, reason);
+            }
+            if (m_bShadingModelScenario)
+            {
+                return EvaluateShadingModelGBufferFrame(frame, reason);
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.Evaluate(frame, reason);
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                return m_GBufferProgramScenario.Evaluate(frame, reason);
+            }
+            if (m_bShadingModelLightingScenario)
+            {
+                return EvaluateShadingModelLightingFrame(frame, reason);
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.Evaluate(frame, reason);
+            }
             if (m_bEmissiveDaylightScenario)
             {
                 return EvaluateEmissiveDaylightFrame(frame, reason);
@@ -2524,6 +2762,54 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                m_SkinnedCullScenario.ApplyState(GetFixture(), renderWorld);
+                return;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.ApplyState(renderWorld, GetFixture().GetCamera());
+                return;
+            }
+            if (m_bShadingModelLightingScenario)
+            {
+                renderWorld.SetMainCamera(GetFixture().GetShadingModelLightingCamera());
+                auto sky = MakeDefaultSkyAtmosphereParameters();
+                sky.bEnabled = false;
+                renderWorld.SetSkyAtmosphere(sky);
+                auto fog = MakeDefaultVolumetricFogParameters();
+                fog.bEnabled = false;
+                renderWorld.SetVolumetricFogParameters(fog);
+                renderWorld.SetStaticEnvironmentIntensityScale(0.0f);
+                return;
+            }
+            if (m_bShadingModelScenario)
+            {
+                renderWorld.SetMainCamera(GetFixture().GetShadingModelGBufferCamera());
+                auto sky = MakeDefaultSkyAtmosphereParameters();
+                sky.bEnabled = false;
+                renderWorld.SetSkyAtmosphere(sky);
+                auto fog = MakeDefaultVolumetricFogParameters();
+                fog.bEnabled = false;
+                renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                m_PaleFlatScenario.ApplyState(renderWorld);
+                return;
+            }
+            if (m_GBufferProgramScenario.IsEnabled())
+            {
+                m_GBufferProgramScenario.ApplyState(renderWorld);
+                return;
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                m_ExtensionStageScenario.ApplyState(renderWorld, GetFixture().GetCamera());
+                return;
+            }
             if (m_bEmissiveDaylightScenario)
             {
                 ApplyEmissiveDaylightCamera(renderWorld);
@@ -2843,6 +3129,31 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                m_PaleFlatScenario.Advance();
+                return;
+            }
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                m_SkinnedCullScenario.Advance();
+                return;
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                m_TemporalAAReactiveScenario.Advance();
+                return;
+            }
+            if (m_bShadingModelScenario)
+            {
+                ++m_ShadingModelCaptureIndex;
+                return;
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                m_ExtensionStageScenario.Advance();
+                return;
+            }
             if (m_bR3Scenario)
             {
                 switch (m_R3ScenarioKind)
@@ -2946,6 +3257,31 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.RequestFollowup(outRequest);
+            }
+            if (m_SkinnedCullScenario.IsEnabled())
+            {
+                return m_SkinnedCullScenario.RequestFollowup(outRequest);
+            }
+            if (m_TemporalAAReactiveScenario.IsEnabled())
+            {
+                return m_TemporalAAReactiveScenario.RequestFollowup(outRequest);
+            }
+            if (m_bShadingModelScenario)
+            {
+                if (m_ShadingModelCaptureIndex >= 3u)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = GetShadingModelCaptureSource();
+                return true;
+            }
+            if (m_ExtensionStageScenario.IsEnabled())
+            {
+                return m_ExtensionStageScenario.RequestFollowup(outRequest);
+            }
             if (m_bR3Scenario)
             {
                 bool bComplete = false;
@@ -7382,6 +7718,282 @@ namespace
                    EncodeSrgbReference(0.0031309f) == 10u;
         }
 
+        bool EvaluateShadingModelLightingFrame(const CapturedFrame& frame, Core::Container::String& reason)
+        {
+            const bool bBgra = frame.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               frame.Format == RHI::Format::B8G8R8A8_SRGB;
+            const bool bRgba = frame.Format == RHI::Format::R8G8B8A8_UNORM ||
+                               frame.Format == RHI::Format::R8G8B8A8_SRGB;
+            const bool bHardwareFormat = RHI::IsPresentationSrgbFormat(frame.Format);
+            if (!frame.IsSuccess() || frame.RequestId != GetLastAcceptedRequestId() ||
+                frame.Width != ValidationWidth || frame.Height != ValidationHeight ||
+                frame.BytesPerPixel != 4u || (!bBgra && !bRgba) ||
+                frame.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+                frame.Transfer != RHI::PresentationTransfer::SRGB ||
+                frame.bHardwareSrgbEncode != bHardwareFormat ||
+                frame.bShaderSrgbEncode == bHardwareFormat ||
+                frame.RowPitchBytes < frame.Width * 4u ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("シェーディングモデル照明検証の BackBuffer の形式・符号化・保存領域が不正です");
+                return false;
+            }
+            struct RoiSample
+            {
+                double Luma = 0.0;
+                int32_t X = 0;
+                int32_t Y = 0;
+                float NdotL = 0.0f;
+            };
+            const auto camera = GetFixture().GetShadingModelLightingCamera();
+            const Math::Vector3 cameraPosition(camera.PositionX, camera.PositionY, camera.PositionZ);
+            const Math::Vector3 toLight(ShadingModelLightingToLight[0], ShadingModelLightingToLight[1],
+                                       ShadingModelLightingToLight[2]);
+            const float focalPixels = static_cast<float>(frame.Height) * 0.5f /
+                std::tan(camera.FieldOfView * 3.14159265358979323846f / 360.0f);
+            auto sample = [&](uint32_t objectIndex, const Math::Vector3& normal, RoiSample& out) -> bool
+            {
+                const Math::Vector3 center(ShadingModelLightingSpherePositions[objectIndex][0],
+                                           ShadingModelLightingSpherePositions[objectIndex][1], 0.0f);
+                const auto surface = center + normal * ShadingModelLightingSphereRadius;
+                const auto toCamera = cameraPosition - surface;
+                if (Math::VectorUtils::Dot(normal, toCamera) <= 0.0f || toCamera.z <= 0.0f)
+                {
+                    reason = TEXT("シェーディングモデル照明検証の ROI が球の可視面にありません");
+                    return false;
+                }
+                out.X = static_cast<int32_t>(std::lround(static_cast<float>(frame.Width) * 0.5f +
+                    focalPixels * surface.x / toCamera.z));
+                out.Y = static_cast<int32_t>(std::lround(static_cast<float>(frame.Height) * 0.5f -
+                    focalPixels * surface.y / toCamera.z));
+                out.NdotL = Math::VectorUtils::Dot(normal, toLight);
+                if (out.X < 2 || out.Y < 2 || out.X + 2 >= static_cast<int32_t>(frame.Width) ||
+                    out.Y + 2 >= static_cast<int32_t>(frame.Height))
+                {
+                    reason = TEXT("シェーディングモデル照明検証の ROI が BackBuffer の範囲外です");
+                    return false;
+                }
+                for (int32_t y = out.Y - 2; y <= out.Y + 2; ++y)
+                {
+                    for (int32_t x = out.X - 2; x <= out.X + 2; ++x)
+                    {
+                        const size_t offset = static_cast<size_t>(y) * frame.RowPitchBytes +
+                                              static_cast<size_t>(x) * 4u;
+                        // sRGB の符号値を線形化せず、0〜255 のまま Rec.709 の重みで平均する。
+                        out.Luma += 0.2126 * frame.Pixels[offset + (bBgra ? 2u : 0u)] +
+                                    0.7152 * frame.Pixels[offset + 1u] +
+                                    0.0722 * frame.Pixels[offset + (bBgra ? 0u : 2u)];
+                    }
+                }
+                out.Luma /= 25.0;
+                return true;
+            };
+            auto halfNormal = [&](uint32_t index)
+            {
+                const Math::Vector3 center(ShadingModelLightingSpherePositions[index][0],
+                                           ShadingModelLightingSpherePositions[index][1], 0.0f);
+                auto normal = Math::VectorUtils::Normalize(toLight +
+                    Math::VectorUtils::Normalize(cameraPosition - center));
+                // 球の中心ではなく、鏡面の表面点での視線から半ベクトルを求める。
+                for (uint32_t iteration = 0u; iteration < 12u; ++iteration)
+                {
+                    normal = Math::VectorUtils::Normalize(toLight + Math::VectorUtils::Normalize(
+                        cameraPosition - center - normal * ShadingModelLightingSphereRadius));
+                }
+                return normal;
+            };
+            const Math::Vector3 shadowNormal(-0.8f, 0.0f, 0.6f);
+            const Math::Vector3 perpendicular(-toLight.z, 0.0f, toLight.x);
+            const auto boundaryNormal = perpendicular * std::sqrt(0.99f) - toLight * 0.1f;
+            RoiSample bright[2], shadow[2], boundary[2], eye[3];
+            for (uint32_t index = 0u; index < 2u; ++index)
+            {
+                if (!sample(index, halfNormal(index), bright[index]) ||
+                    !sample(index, shadowNormal, shadow[index]) ||
+                    !sample(index * 2u, boundaryNormal, boundary[index]))
+                {
+                    return false;
+                }
+            }
+            for (uint32_t index = 0u; index < 3u; ++index)
+            {
+                if (!sample(index + 3u, halfNormal(index + 3u), eye[index]))
+                {
+                    return false;
+                }
+            }
+            constexpr double defaultMinimumDelta = 20.0;
+            const double paleDelta = std::abs(bright[1].Luma - shadow[1].Luma);
+            const double defaultDelta = bright[0].Luma - shadow[0].Luma;
+            // PaleFlat の明暗比の正式な判定は、専用の HDR 試験で行う。
+            const bool bPalePassed = paleDelta < 0.5 * defaultDelta &&
+                bright[1].Luma > 2.0 && bright[1].Luma < 253.0 &&
+                shadow[1].Luma > 2.0 && shadow[1].Luma < 253.0;
+            const bool bDefaultPassed = defaultDelta >= defaultMinimumDelta;
+            const bool bFurPassed = boundary[1].Luma > boundary[0].Luma;
+            const bool bEyePassed = eye[0].Luma < eye[1].Luma && eye[1].Luma < eye[2].Luma;
+            auto printRoi = [](const char* object, const char* roi, const RoiSample& value, bool bPassed)
+            {
+                std::cout << "シェーディングモデル照明検証 object=" << object << " roi=" << roi
+                          << " luma=" << value.Luma << " encoding=sRGB-0..255 weights=Rec.709"
+                          << " roi_center=" << value.X << "," << value.Y << " pixels=25 n_dot_l=" << value.NdotL
+                          << " result=" << (bPassed ? "PASS" : "FAIL") << "\n";
+            };
+            printRoi("DefaultLit", "bright", bright[0], bDefaultPassed);
+            printRoi("DefaultLit", "shadow", shadow[0], bDefaultPassed);
+            printRoi("PaleFlat", "bright", bright[1], bPalePassed);
+            printRoi("PaleFlat", "shadow", shadow[1], bPalePassed);
+            printRoi("DefaultLit", "boundary", boundary[0], bFurPassed);
+            printRoi("Fur", "boundary", boundary[1], bFurPassed);
+            printRoi("Eye-P0=0", "specular", eye[0], bEyePassed);
+            printRoi("Eye-P0=0.5", "specular", eye[1], bEyePassed);
+            printRoi("Eye-P0=1", "specular", eye[2], bEyePassed);
+            std::cout << "シェーディングモデル照明判定 object=PaleFlat delta=" << paleDelta
+                      << " 明暗差の上限（未満）=" << 0.5 * defaultDelta << " range=(2,253) result=" << (bPalePassed ? "PASS" : "FAIL") << "\n";
+            std::cout << "シェーディングモデル照明判定 object=DefaultLit delta=" << defaultDelta
+                      << " minimum=" << defaultMinimumDelta << " result=" << (bDefaultPassed ? "PASS" : "FAIL") << "\n";
+            std::cout << "シェーディングモデル照明判定 object=Fur boundary_gain=" << boundary[1].Luma - boundary[0].Luma
+                      << " minimum_exclusive=0 result=" << (bFurPassed ? "PASS" : "FAIL") << "\n";
+            std::cout << "シェーディングモデル照明判定 object=Eye gains=" << eye[1].Luma - eye[0].Luma
+                      << "," << eye[2].Luma - eye[1].Luma
+                      << " minimum_exclusive=0 result=" << (bEyePassed ? "PASS" : "FAIL") << "\n";
+            if (!(bPalePassed && bDefaultPassed && bFurPassed && bEyePassed))
+            {
+                reason = TEXT("シェーディングモデル照明の PaleFlat の明暗差が DefaultLit の半分未満かつ輝度が (2,253) 内・DefaultLit の明暗差・境目の拡散・鏡面の狭義単調増加の契約を満たしません");
+                return false;
+            }
+            return true;
+        }
+
+        FrameCaptureSourceKind GetShadingModelCaptureSource() const
+        {
+            constexpr FrameCaptureSourceKind sources[] = {
+                FrameCaptureSourceKind::GBufferNormal,
+                FrameCaptureSourceKind::GBufferMaterial,
+                FrameCaptureSourceKind::GBufferEmissive};
+            const auto initial = GetRunConfig().CaptureSource;
+            const uint32_t firstIndex = initial == FrameCaptureSourceKind::GBufferMaterial ? 1u :
+                (initial == FrameCaptureSourceKind::GBufferEmissive ? 2u : 0u);
+            return sources[(firstIndex + m_ShadingModelCaptureIndex) % 3u];
+        }
+
+        bool EvaluateShadingModelGBufferFrame(const CapturedFrame& frame, Core::Container::String& reason)
+        {
+            LOG_INFO("シェーディングモデル時刻 stage=capture_evaluated source_index=%u request_id=%llu capture_frame=%llu consumed_frame=%llu fixed_steps=%llu",
+                     m_ShadingModelCaptureIndex,
+                     static_cast<unsigned long long>(frame.RequestId),
+                     static_cast<unsigned long long>(frame.FrameNumber),
+                     static_cast<unsigned long long>(Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount()),
+                     static_cast<unsigned long long>(GetFixture().GetObservedFixedStepCount()));
+            const auto source = GetShadingModelCaptureSource();
+            const bool bNormal = source == FrameCaptureSourceKind::GBufferNormal;
+            const bool bMaterial = source == FrameCaptureSourceKind::GBufferMaterial;
+            const uint32_t bytesPerPixel = bMaterial ? 4u : 8u;
+            if (!frame.IsSuccess() || frame.Width != ValidationWidth || frame.Height != ValidationHeight ||
+                frame.BytesPerPixel != bytesPerPixel ||
+                frame.Format != (bMaterial ? RHI::Format::R8G8B8A8_UNORM : RHI::Format::R16G16B16A16_FLOAT) ||
+                frame.RowPitchBytes < frame.Width * bytesPerPixel ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("シェーディングモデルの GBuffer の形式・寸法・保存領域が不正です");
+                return false;
+            }
+            struct ExpectedObject
+            {
+                const char* Name;
+                float X;
+                float Y;
+                uint32_t Id;
+                float P0;
+                float P1;
+            };
+            // ID の数値は契約そのものを期待値とし、実装の変換関数から求めない。
+            constexpr ExpectedObject objects[] = {
+                {"static-fur", -2.0f, 1.5f, 1u, 0.25f, 0.75f},
+                {"instance-override", 0.0f, 1.5f, 3u, 0.6f, 0.9f},
+                {"instance-material-fallback", 2.0f, 1.5f, 3u, 0.2f, 0.4f},
+                {"skinned-m9-override-p0", -1.0f, -1.5f, 2u, 0.8f, 0.55f},
+                {"mega-pale-flat", 1.0f, -1.5f, 3u, 0.45f, 0.65f}};
+            const auto camera = GetFixture().GetShadingModelGBufferCamera();
+            const float focalPixels = static_cast<float>(frame.Height) * 0.5f /
+                std::tan(camera.FieldOfView * 3.14159265358979323846f / 360.0f);
+            const char* field = bNormal ? "ID" : (bMaterial ? "P0" : "P1");
+            bool bPassed = true;
+            for (const auto& object : objects)
+            {
+                const int32_t centerX = static_cast<int32_t>(std::lround(
+                    static_cast<float>(frame.Width) * 0.5f + focalPixels * object.X / camera.PositionZ));
+                const int32_t centerY = static_cast<int32_t>(std::lround(
+                    static_cast<float>(frame.Height) * 0.5f - focalPixels * object.Y / camera.PositionZ));
+                const float expected = bNormal ? static_cast<float>(object.Id) : (bMaterial ? object.P0 : object.P1);
+                float minimum = std::numeric_limits<float>::infinity();
+                float maximum = -std::numeric_limits<float>::infinity();
+                bool bObjectPassed = true;
+                for (int32_t y = centerY - 2; y <= centerY + 2; ++y)
+                {
+                    for (int32_t x = centerX - 2; x <= centerX + 2; ++x)
+                    {
+                        if (x < 0 || y < 0 || x >= static_cast<int32_t>(frame.Width) ||
+                            y >= static_cast<int32_t>(frame.Height))
+                        {
+                            reason = TEXT("シェーディングモデルの ROI が GBuffer の範囲外です");
+                            return false;
+                        }
+                        const size_t offset = static_cast<size_t>(y) * frame.RowPitchBytes +
+                                              static_cast<size_t>(x) * bytesPerPixel;
+                        float actual;
+                        if (bMaterial)
+                        {
+                            actual = frame.Pixels[offset + 3] / 255.0f;
+                        }
+                        else
+                        {
+                            uint16_t half;
+                            std::memcpy(&half, frame.Pixels.data() + offset + 6u, sizeof(half));
+                            actual = DecodeIeee754Binary16(half);
+                        }
+                        bool bPixelPassed = std::isfinite(actual);
+                        if (bNormal)
+                        {
+                            bPixelPassed = bPixelPassed && actual >= 0.0f && actual <= 65504.0f;
+                            if (bPixelPassed)
+                            {
+                                actual = static_cast<float>(static_cast<uint32_t>(std::lround(actual)) & 15u);
+                                bPixelPassed = actual == expected;
+                            }
+                        }
+                        else
+                        {
+                            const float tolerance = bMaterial ? 1.0f / 255.0f : std::max(1e-3f, expected * 1e-3f);
+                            bPixelPassed = bPixelPassed && std::abs(actual - expected) <= tolerance;
+                        }
+                        minimum = std::min(minimum, actual);
+                        maximum = std::max(maximum, actual);
+                        bObjectPassed = bObjectPassed && bPixelPassed;
+                    }
+                }
+                std::cout << "シェーディングモデル検証 object=" << object.Name
+                          << " visibility=" << (GetRunConfig().bVisibilityBufferOff ? "off" : "on")
+                          << " field=" << field << " expected=" << expected
+                          << " actual_min=" << minimum << " actual_max=" << maximum
+                          << " roi_center=" << centerX << "," << centerY
+                          << " pixels=25 result=" << (bObjectPassed ? "PASS" : "FAIL") << "\n";
+                bPassed = bPassed && bObjectPassed;
+            }
+            m_bShadingModelCapturesPassed = m_bShadingModelCapturesPassed && bPassed;
+            if (!m_bShadingModelCapturesPassed)
+            {
+                reason = TEXT("GBuffer の ID・P0・P1 が材質またはインスタンスの期待値と一致しません");
+            }
+            // 三つのソースの不一致を集め、最後の取得で全体を判定する。
+            return m_ShadingModelCaptureIndex < 2u || m_bShadingModelCapturesPassed;
+        }
+
+        bool m_bShadingModelLightingScenario = false;
+        uint32_t m_ShadingModelCaptureIndex = 0u;
+        bool m_bShadingModelCapturesPassed = true;
+        bool m_bShadingModelFirstFrameLogged = false;
+        bool m_bShadingModelScenario = false;
         bool m_bEmissiveDaylightScenario = false;
         bool m_bEmissiveAboveHalfScenario = false;
         bool m_bEmissiveDaylightCameraApplied = false;
@@ -7949,9 +8561,23 @@ int main(int argc, char** argv)
     config.Api = RHI::GraphicsAPI::Vulkan;
     config.LogFileName = TEXT("RenderingHdrSceneCapture.log");
     config.CreateHandler = &CreateHandler;
+    const Core::Container::String logFilePrefix(TEXT("--log-file="));
+    bool bLogFileSpecified = false;
     for (int index = 1; index < argc; ++index)
     {
         const Core::Container::String argument(argv[index]);
+        if (argument.find(logFilePrefix) == 0)
+        {
+            const Core::Container::String logFile = argument.substr(logFilePrefix.size());
+            if (bLogFileSpecified || logFile.empty())
+            {
+                std::cerr << "ログファイルの指定が空か重複しています\n";
+                return 1;
+            }
+            config.LogFileName = logFile;
+            bLogFileSpecified = true;
+            continue;
+        }
         config.Arguments.push_back(argument);
     }
     if (bAllNumericalScenario)

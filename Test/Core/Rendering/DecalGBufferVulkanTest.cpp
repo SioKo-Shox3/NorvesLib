@@ -4,6 +4,7 @@
 #include "Rendering/DecalTypes.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/ShadingModelIds.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RenderingValidation/GpuTestEnvironment.h"
 
@@ -101,7 +102,7 @@ namespace
     }
 
     bool CheckPixels(const uint8_t* bytes, const CameraViewConstants& camera, const DecalInstance& decal,
-                     float materialAlpha, bool bShouldDraw, const char* label)
+                     float normalAlpha, bool bShouldDraw, const char* label)
     {
         const Math::Quaternion rotation(decal.Rotation[0], decal.Rotation[1], decal.Rotation[2], decal.Rotation[3]);
         const Math::Quaternion inverse(-rotation.x, -rotation.y, -rotation.z, rotation.w);
@@ -116,8 +117,8 @@ namespace
                                 std::abs(stepX.z) + std::abs(stepY.z)};
         const float normal[] = {expectedNormal.x, expectedNormal.y, expectedNormal.z};
         const float clearAlbedo[] = {0.2f, 0.3f, 0.4f, 0.6f};
-        const float clearNormal[] = {0.0f, 1.0f, 0.0f, 0.7f};
-        const float clearMaterial[] = {0.1f, 0.5f, 0.9f, materialAlpha};
+        const float clearNormal[] = {0.0f, 1.0f, 0.0f, normalAlpha};
+        const float clearMaterial[] = {0.1f, 0.5f, 0.9f, 0.0f};
         uint32_t errors = 0;
         uint32_t insideCount = 0;
         uint32_t outsideCount = 0;
@@ -255,13 +256,13 @@ namespace
     }
 
     bool RunCase(const DevicePtr& device, DecalPass& pass, FrameResourceOwners& owners,
-                 const CameraViewConstants& camera, DecalInstance decal, float materialAlpha,
+                 const CameraViewConstants& camera, DecalInstance decal, float normalAlpha,
                  bool bShouldDraw, uint64_t caseIndex, const char* label)
     {
         const Format formats[] = {Format::R8G8B8A8_UNORM, Format::R16G16B16A16_FLOAT,
                                   Format::R8G8B8A8_UNORM, Format::D32_FLOAT};
-        const float clearColors[][4] = {{0.2f, 0.3f, 0.4f, 0.6f}, {0.0f, 1.0f, 0.0f, 0.7f},
-                                         {0.1f, 0.5f, 0.9f, materialAlpha}};
+        const float clearColors[][4] = {{0.2f, 0.3f, 0.4f, 0.6f}, {0.0f, 1.0f, 0.0f, normalAlpha},
+                                         {0.1f, 0.5f, 0.9f, 0.0f}};
         TexturePtr textures[4];
         for (uint32_t image = 0; image < 4u; ++image)
         {
@@ -333,7 +334,7 @@ namespace
             {
                 commandList->TextureBarrier(textures[image], ResourceState::CopySource, drawStates[image]);
             }
-            bRecorded = pass.RecordDecals(textures[0], textures[1], textures[2], textures[3],
+            bRecorded = pass.RecordDecals(textures[0], textures[1], textures[3],
                                           *commandList, *frame, scene, camera);
         }
         if (bRecorded)
@@ -365,7 +366,7 @@ namespace
             std::cerr << TestName << " " << label << ": 読み戻しを写像できません\n";
             return false;
         }
-        const bool bPassed = CheckPixels(bytes, camera, decal, materialAlpha, bShouldDraw, label);
+        const bool bPassed = CheckPixels(bytes, camera, decal, normalAlpha, bShouldDraw, label);
         readback->Unmap();
         return bPassed;
     }
@@ -436,10 +437,12 @@ namespace
         decal.NormalOpacity = 1.0f;
         decal.EdgeFade = 0.0f;
 
+        const float foliageNormalW = static_cast<float>(GBufferContract::PackNormalW(
+            GBufferContract::ShadingModelDefaultLit, GBufferContract::ReceiverFlagFoliageClump));
         bool bPassed = RunCase(device, pass, owners, camera, decal, 0.0f, true, 0u, "場合 A");
-        bPassed = RunCase(device, pass, owners, camera, decal, 0.25f, false, 1u, "場合 B") && bPassed;
+        bPassed = RunCase(device, pass, owners, camera, decal, foliageNormalW, false, 1u, "場合 B") && bPassed;
         decal.Flags = DecalFlags::ReceiveFoliage;
-        bPassed = RunCase(device, pass, owners, camera, decal, 0.25f, true, 2u, "場合 C") && bPassed;
+        bPassed = RunCase(device, pass, owners, camera, decal, foliageNormalW, true, 2u, "場合 C") && bPassed;
 
         device->WaitIdle();
         pass.Shutdown();

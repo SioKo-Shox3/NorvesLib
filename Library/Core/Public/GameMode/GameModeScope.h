@@ -5,6 +5,7 @@
 #include "Object/Entity.h"
 #include "Object/World.h"
 #include "Rendering/RenderTypes.h"
+#include "Streaming/StreamingTypes.h"
 #include <type_traits>
 
 // 重いサブシステムヘッダのインクルードを避け、前方宣言のみ使用する。
@@ -14,6 +15,11 @@ namespace NorvesLib::Core
 {
     class World;
 
+    namespace Streaming
+    {
+        class StreamingSystem;
+    }
+
     namespace Rendering
     {
         class RenderResources;
@@ -22,6 +28,22 @@ namespace NorvesLib::Core
 
 namespace NorvesLib::Core::GameMode
 {
+    /**
+     * @brief GameThread で停止と資源の返却を行う非同期の仕事
+     *
+     * Cleanup の各周で CancelAndJoin、追跡した Entity と資源の返却、ReleaseUnreturned の順に呼ぶ。
+     * 重複登録は無視され、追加登録のない2回目の Cleanup ではどちらも呼ばれない。
+     */
+    class IGameModeAsyncWork
+    {
+    public:
+        virtual ~IGameModeAsyncWork() = default;
+        // GameThread。新しい仕事の受け付けを閉じ、走っている仕事を取り消して終わるまで待つ。戻った後は完了の通知を出さない。
+        virtual void CancelAndJoin() = 0;
+        // GameThread。追跡した Entity と資源を返した後に呼ぶ。止めた仕事が返しそびれた資源を返す。
+        virtual void ReleaseUnreturned() = 0;
+    };
+
     /** @brief Entity の除去に対する後始末の実行位置 */
     enum class GameModeCleanupPhase : uint8_t
     {
@@ -61,6 +83,7 @@ namespace NorvesLib::Core::GameMode
      * Leave 時に確立された順序で安全にクリーンアップするためのヘルパー。
      *
      * クリーンアップ順序:
+     *   非同期の仕事を停止・結合（後入れ先出し）し、追跡したセルのワーカーも停止・結合する
      *   BeforeEntities — 非同期の取り消し・音の停止など（後入れ先出し）
      *   1) World::RemoveObject      — SceneView プロキシを除去
      *   AfterEntities — Entity が参照していた資源の後始末（後入れ先出し）
@@ -68,6 +91,7 @@ namespace NorvesLib::Core::GameMode
      *   3) MegaGeometryResources::ReleaseModel — MegaGeometry モデルを解放
      *   4) MaterialResources::Release — 材質を解放（材質が持つ VT も返す）
      *   5) TextureResources::ReleaseTexture — 追跡したテクスチャを解放
+     *   停止した仕事が返しそびれた資源を返す（後入れ先出し）
      *
      * 非コピー設計（二重 Cleanup 防止）。
      *
@@ -156,6 +180,22 @@ namespace NorvesLib::Core::GameMode
         void TrackTexture(NorvesLib::Core::Rendering::TextureHandle handle);
 
         /**
+         * @brief GameThread で非同期の仕事を追跡する。同じ仕事の重複登録は無視する。
+         *
+         * 非所有。work は Cleanup が戻るまで生存させる。
+         * Cleanup 中の追加も同じ Cleanup で停止・結合し、返しそびれた資源を返す。
+         */
+        void TrackAsync(IGameModeAsyncWork& work);
+
+        /**
+         * @brief GameThread でセルのスコープを追跡する。同じ system と scopeId の組の重複登録は無視する。
+         *
+         * 非所有。system は Cleanup が戻るまで生存させる。
+         * Cleanup 中の追加も同じ Cleanup で StopAndJoin を呼ぶ。
+         */
+        void TrackStreaming(Streaming::StreamingSystem& system, Streaming::StreamingScopeId scopeId);
+
+        /**
          * @brief 型を問わない後始末を登録する。未束縛は無視する。
          *
          * Cleanup 中、実行中・未実行の段へ追加した登録はその段で実行する（実行中なら次に呼ぶ）。
@@ -203,6 +243,7 @@ namespace NorvesLib::Core::GameMode
         /**
          * @brief 追跡リソースを確立された順序で解放する
          *
+         * 非同期の仕事を後入れ先出しで停止・結合し、追跡したセルのワーカーも停止・結合する。
          * BeforeEntities を後入れ先出しで実行する。
          * 1) 追跡 Entity を World から除去（root は RemoveObject、child は RemoveEntity）
          * AfterEntities を後入れ先出しで実行する。
@@ -210,6 +251,8 @@ namespace NorvesLib::Core::GameMode
          * 3) 全 ModelHandle を MegaGeometryResources::ReleaseModel で解放
          * 4) 全 MaterialHandle を MaterialResources::Release で解放（材質の VT も返す）
          * 5) 追跡したテクスチャを TextureResources::ReleaseTexture で解放
+         * その周で停止した仕事が返しそびれた資源を後入れ先出しで返す。
+         * 途中で追加された追跡や後始末も、同じ Cleanup で空になるまで処理する。
          *
          * m_pWorld / m_pRenderResources が nullptr の場合はその処理をスキップ（冪等）。
          * 再入時は何もせず戻る。呼び出しの開始時に非同期の呼び戻しの世代を進める。
@@ -224,6 +267,23 @@ namespace NorvesLib::Core::GameMode
         bool IsEmpty() const;
 
     private:
+        struct TrackedStreamingScope
+        {
+            Streaming::StreamingSystem* System;
+            Streaming::StreamingScopeId ScopeId;
+        };
+
+        // 同じ Cleanup 中に処理済みの仕事やセルが再登録されても、重複して呼ばない。
+        struct CleanupTracking
+        {
+            Container::VariableArray<IGameModeAsyncWork*> AsyncWorks;
+            Container::VariableArray<TrackedStreamingScope> StreamingScopes;
+        };
+
+        CleanupTracking* m_pCleanupTracking = nullptr;
+        Container::VariableArray<IGameModeAsyncWork*> m_TrackedAsyncWorks;
+        Container::VariableArray<TrackedStreamingScope> m_TrackedStreamingScopes;
+
         struct AsyncTextureLifetime
         {
             GameModeScope* Scope = nullptr;

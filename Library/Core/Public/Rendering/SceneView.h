@@ -11,16 +11,28 @@
 #include "SwRasterMode.h"
 #include "ShadowMethod.h"
 #include "Rendering/AutoExposure.h"
+#include "Rendering/RenderExtension/RenderExtension.h"
+#include "Rendering/GBufferProgramRegistry.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
 #include "Ecs/EcsSlotGate.h"
 #include <cstdint>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
     class SceneRenderer;
     class CanvasView;
+
+    /** @brief CPU のメッシュのプロキシのカリングをチャンクに分けて並列に回す設定 */
+    struct SceneViewCullParallelSettings
+    {
+        // メッシュのプロキシがこの数以上のときだけ並列に回す（既定は並列にしない）
+        size_t MinProxyCount = std::numeric_limits<size_t>::max();
+        // 1 チャンクのプロキシの数（0 は 1 として扱う）
+        size_t ChunkSize = 1024;
+    };
 
     /**
      * @brief SceneView設定
@@ -33,6 +45,8 @@ namespace NorvesLib::Core::Rendering
         float MaxDrawDistance = 10000.0f;     // 最大描画距離
         bool bEnableInstancing = true;        // インスタンシング有効
         uint32_t MinInstanceCount = 2;        // インスタンシング最小数
+
+        SceneViewCullParallelSettings CullParallel;
 
         SceneViewSettings()
         {
@@ -59,12 +73,39 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief デフォルトコンストラクタ
          */
-        SceneView() = default;
+        SceneView()
+            : m_RenderExtensions(this)
+        {
+        }
 
         /**
          * @brief デストラクタ
          */
         virtual ~SceneView() = default;
+
+        /** @brief 拡張の登録表。Register/Unregister/SetEnabled は GameThread から、反映は RenderThread の Render の先頭。 */
+        RenderExtensionRegistry& GetRenderExtensionRegistry()
+        {
+            return m_RenderExtensions;
+        }
+
+        /** @brief 拡張の登録表の読み取り。Register/Unregister/SetEnabled は GameThread から、反映は RenderThread の Render の先頭。 */
+        const RenderExtensionRegistry& GetRenderExtensionRegistry() const
+        {
+            return m_RenderExtensions;
+        }
+
+        /** @brief GBuffer プログラムの登録簿。Register/Unregister は GameThread、Find は RenderThread から呼ぶ。 */
+        GBufferProgramRegistry& GetGBufferProgramRegistry()
+        {
+            return m_GBufferPrograms;
+        }
+
+        /** @brief GBuffer プログラムの登録簿の読み取り。Register/Unregister は GameThread、Find は RenderThread から呼ぶ。 */
+        const GBufferProgramRegistry& GetGBufferProgramRegistry() const
+        {
+            return m_GBufferPrograms;
+        }
 
         // ========================================
         // ライフサイクル
@@ -469,6 +510,9 @@ namespace NorvesLib::Core::Rendering
          */
         const Container::VariableArray<MeshProxy *> &GetVisibleMeshProxies() const { return m_VisibleMeshProxies; }
 
+        /** @brief 直近のカリングで板が抑えたメッシュの ComponentId */
+        const Container::UnorderedSet<uint64_t>& GetSuppressedMeshComponentIds() const { return m_SuppressedMeshComponentIds; }
+
         /**
          * @brief DrawCommandを取得
          */
@@ -499,6 +543,8 @@ namespace NorvesLib::Core::Rendering
         void SetFrustumCullingEnabled(bool bEnabled) { m_bEnableFrustumCulling = bEnabled; }
         void SetOcclusionCullingEnabled(bool bEnabled) { m_bEnableOcclusionCulling = bEnabled; }
         void SetDistanceCullingEnabled(bool bEnabled) { m_bEnableDistanceCulling = bEnabled; }
+        void SetCullParallelSettings(const SceneViewCullParallelSettings& settings) { m_CullParallelSettings = settings; }
+        const SceneViewCullParallelSettings& GetCullParallelSettings() const { return m_CullParallelSettings; }
         void SetMaxDrawDistance(float distance) { m_MaxDrawDistance = distance; }
 
         /**
@@ -553,6 +599,12 @@ namespace NorvesLib::Core::Rendering
                             const Math::Vector3& cameraPosition,
                             Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds);
 
+        void CullMeshProxyRange(size_t begin, size_t end,
+                                const Math::Matrix4x4& viewProjection,
+                                const Math::Vector3& cameraPosition,
+                                Container::VariableArray<MeshProxy*>& outVisible);
+        void CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition);
+
         void AppendWorldBoardDrawCommands();
 
         /**
@@ -565,6 +617,9 @@ namespace NorvesLib::Core::Rendering
         void SetTemporalAAApplied(bool bApplied, uint32_t viewportId);
 
     private:
+        RenderExtensionRegistry m_RenderExtensions;
+        GBufferProgramRegistry m_GBufferPrograms;
+
         // MeshProxy（WorldからSceneViewに直接渡される）
         // MeshProxyの索引はComponentIdで管理し、ObjectIdはソートや所有元の文脈に使います。
         Container::VariableArray<MeshProxy> m_MeshProxies;
@@ -581,6 +636,9 @@ namespace NorvesLib::Core::Rendering
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;
+        Container::UnorderedSet<uint64_t> m_SuppressedMeshComponentIds;
+        // チャンクごとの可視一覧の確保をフレーム間で使い回す
+        Container::VariableArray<Container::VariableArray<MeshProxy*>> m_CullChunkVisible;
         Container::VariableArray<BoardProxy *> m_VisibleBoardProxies;
 
         // バッチャー
@@ -597,6 +655,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bEnableOcclusionCulling = false;
         bool m_bEnableDistanceCulling = true;
         float m_MaxDrawDistance = 10000.0f;
+        SceneViewCullParallelSettings m_CullParallelSettings;
         bool m_bEnableInstancing = true;
         uint32_t m_MinInstanceCount = 2;
         bool m_bTemporalAAForced = false;

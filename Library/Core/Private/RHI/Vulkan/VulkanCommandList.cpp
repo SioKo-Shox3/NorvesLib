@@ -23,6 +23,9 @@ namespace NorvesLib::RHI::Vulkan
 
     using namespace NorvesLib::Core::Container;
 
+    static_assert(sizeof(DrawIndirectCommand) == sizeof(VkDrawIndirectCommand));
+    static_assert(sizeof(DispatchIndirectCommand) == sizeof(VkDispatchIndirectCommand));
+
     namespace
     {
         vk::BuildAccelerationStructureFlagsKHR GetAccelerationStructureBuildFlags(
@@ -1470,11 +1473,91 @@ namespace NorvesLib::RHI::Vulkan
         m_commandBuffer.dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
     }
 
+    bool VulkanCommandList::DrawIndirect(BufferPtr indirectBuffer, uint64_t offset,
+                                         uint32_t drawCount, uint32_t stride)
+    {
+        auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        if (!vkBuffer || (vkBuffer->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
+            (offset % 4u) != 0u || drawCount > m_device->GetMaxDrawIndirectCount() ||
+            (drawCount > 1u && (!m_device->GetCapabilities().bMultiDrawIndirect ||
+                                (stride % 4u) != 0u || stride < sizeof(DrawIndirectCommand))))
+        {
+            return false;
+        }
+
+        uint64_t referencedSize = 0;
+        if (drawCount > 0u)
+        {
+            const uint64_t bufferSize = vkBuffer->GetSize();
+            if (offset > bufferSize || bufferSize - offset < sizeof(DrawIndirectCommand))
+            {
+                return false;
+            }
+            const uint64_t lastCommandOffset = static_cast<uint64_t>(drawCount - 1u) * stride;
+            if (lastCommandOffset > bufferSize - offset - sizeof(DrawIndirectCommand))
+            {
+                return false;
+            }
+            referencedSize = lastCommandOffset + sizeof(DrawIndirectCommand);
+        }
+
+        // 0 件では引数を読まないので、空の範囲を監視へ登録しない。
+        if (referencedSize > 0u)
+        {
+            vkBuffer->NoteFrameResourceReference(offset, referencedSize);
+        }
+        m_commandBuffer.drawIndirect(vkBuffer->GetVkBuffer(), offset, drawCount, stride);
+        return true;
+    }
+
+    bool VulkanCommandList::DrawIndirectCount(BufferPtr indirectBuffer, uint64_t indirectOffset,
+                                              BufferPtr countBuffer, uint64_t countOffset,
+                                              uint32_t maxDrawCount, uint32_t stride)
+    {
+        auto vkIndirect = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        auto vkCount = DynamicPointerCast<VulkanBuffer>(countBuffer);
+        if (!m_device->GetCapabilities().bDrawIndirectCount || !vkIndirect || !vkCount ||
+            (vkIndirect->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
+            (vkCount->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
+            (indirectOffset % 4u) != 0u || (countOffset % 4u) != 0u ||
+            (stride % 4u) != 0u || stride < sizeof(DrawIndirectCommand) ||
+            countOffset > vkCount->GetSize() || vkCount->GetSize() - countOffset < sizeof(uint32_t))
+        {
+            return false;
+        }
+
+        uint64_t referencedSize = 0;
+        if (maxDrawCount > 0u)
+        {
+            const uint64_t bufferSize = vkIndirect->GetSize();
+            if (indirectOffset > bufferSize || bufferSize - indirectOffset < sizeof(DrawIndirectCommand))
+            {
+                return false;
+            }
+            const uint64_t lastCommandOffset = static_cast<uint64_t>(maxDrawCount - 1u) * stride;
+            if (lastCommandOffset > bufferSize - indirectOffset - sizeof(DrawIndirectCommand))
+            {
+                return false;
+            }
+            referencedSize = lastCommandOffset + sizeof(DrawIndirectCommand);
+        }
+
+        // 0 件では引数を読まないが、件数バッファの参照は記録する。
+        if (referencedSize > 0u)
+        {
+            vkIndirect->NoteFrameResourceReference(indirectOffset, referencedSize);
+        }
+        vkCount->NoteFrameResourceReference(countOffset, sizeof(uint32_t));
+        m_commandBuffer.drawIndirectCount(vkIndirect->GetVkBuffer(), indirectOffset,
+                                          vkCount->GetVkBuffer(), countOffset, maxDrawCount, stride);
+        return true;
+    }
+
     bool VulkanCommandList::DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
     {
         // VkDispatchIndirectCommand（uint32_t x 3）の大きさ。offset は 4 の倍数で、引数がバッファに収まること。
         // バッファは IndirectBuffer の用途で作られていること（VUID-vkCmdDispatchIndirect-buffer-02709）
-        constexpr uint64_t DispatchIndirectCommandBytes = 3u * sizeof(uint32_t);
+        constexpr uint64_t DispatchIndirectCommandBytes = sizeof(DispatchIndirectCommand);
         auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
         if (!vkBuffer || (vkBuffer->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
             (offset % 4u) != 0u || offset > vkBuffer->GetSize() ||

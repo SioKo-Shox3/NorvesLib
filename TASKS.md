@@ -38,6 +38,41 @@
 
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
+## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
+- status: todo
+- done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)のビルドが通り、ctest(GPU・Reference のラベルと Golden・PathTracingReference・Vulkan の名前を外す)が通る。
+- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure`
+- paths: Test/**, CMakeLists.txt
+- notes: 人の決定: 実行できたか以外を見ていないグラフィックの試験は要らない。試験を走らせて決めない(ウィンドウが開いて利用者の邪魔になる)。試験のコードを読んで決める。
+
+## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
+- status: todo
+- after: GFX-TEST-PRUNE-1112
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 17 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。17 行の和集合が除外の後の全部と一致し重なりが無いことを `ctest -N` で確かめ、行ごとの本数と時間を `PROGRESS.md` に書く。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug -- -m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracingLighting" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingHdr" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingRayTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingShadingModel" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(DDGI|TemporalAA)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing|ShadingModel|DDGI|TemporalAA)"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^CookManaged" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^CookManaged"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[M-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$"`
+- paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
+- notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
+
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
 - status: done
 - done-when: Game にシーンの一覧（id・日本語の表示名・説明・見本画像のパス・対応する GameMode・名前付き視点・必要な資産）を1か所に定義し、`--scene=<id>` で起動直後にそのシーンへ入る（`rendering3dtest` は今の Rendering3DTest）。未知の id はエラーをログに出して既定へ落ちる。この項目の時点の既定（引数なし）はまだ Rendering3DTest。`Scripts/CaptureStartupScene.ps1` と、Game.exe を起動して Rendering3DTest を前提にする他のスクリプト（`Test-CameraWorld.ps1`・`Test-M6AngelScriptHotReload.ps1`・`Test-M8MinimalPhysics.ps1`・`Test-M9World.ps1`・`RunCookedTextureGameSmoke.ps1`・`RunCookedModelGameProfile.ps1` を読んで判断）が `--scene=rendering3dtest` を渡す。新しい `Scripts/CaptureScene.ps1 -Scene <id> -OutDir <dir> [-Views <名前,...>] [-Configuration Debug|RelWithDebInfo|Release] [-Width <px> -Height <px>] [-GameArgs <先頭の -- を除いた引数,...>] [-RequireAssets]` が指定のシーンを撮って視点ごとの PNG と `metrics.json`（平均輝度・白飛び・黒つぶれの画素率）を出し、Game の起動失敗・PNG の欠け・Game.log のエラー（シェーダーのコンパイル失敗・検証レイヤーのエラー・`-RequireAssets` のときの資産の欠け）で非 0、成功で `CAPTURE_SCENE result=pass` を出す（名前付き視点が入るまでは既定の1枚）。シーンの組み立てが終わった印（SceneReady）を `--capture-deterministic` で待つ仕組みを全シーン共通にする。窓の大きさを変える引数が無ければ足す（`-Width/-Height` が使う）。`CaptureStartupScene.ps1` の 3 視点を撮り、main の撮影と並べて開いて同じ見た目であることを確かめる。
@@ -3065,7 +3100,8 @@
 - paths: Game/GameModes/Wasteland, Tools/AssetCook, Library/Core/Public/Rendering/Terrain, Library/Core/Private/Rendering/Terrain, Scripts, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-25 親が SCN-WL-CLIFF-GEN-LEDGES の反復 8 の BLOCKED（推奨の案 A と別に、案 B の全域の置き方の直し）から足した。荒野の全部の物の見た目が変わるので、回帰の撮影は反復の最初に `before` を撮り、`after` の差の画を開いて変わった所と理由を書く。草と低木の置き方を変えると、植物の Cycles の参照（SCN-WLR-PLANT-REF など）の固定の株は別の配置なので、参照の古さを確かめて一覧を書く。1 反復で閉じなければ、草と低木・石 → 岩 に分ける。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行、撮影は組か視点で分ける）。 2026-10-26（判断・SCN-WL-CLIFF-GEN-TALUS の反復 13）: この項目を TALUS の前へ出した。実装の条件: 置いた物（崖錐の岩・足元の岩・草と低木・大きな石・石・小礫）の根元の高さは、崖の生成の範囲では焼いた面と同じ高さから取る（今の Game は DEM の `TerrainHeightField::SampleHeight` で取り〔`WastelandLayout.cpp`・`WastelandFoliage.cpp`・`WastelandGravel.cpp`〕、焼いた面を見ているのは検査の `--sample-cooked-terrain` だけ）。後で崖の生成の版を上げても物が面に付いてくる形にする。やり方は実装で選ぶ（AssetCook と Game で崖の細部の高さの関数を共有するか、クックが焼いた面の高さの格子を書き出して Game が読むか）。読み込みの経路に触るなら、アセットロードの危険地帯として扱う。done-when と verify は変えていない。 2026-10-26（run 20261026-002702 の反復 14、未達）: 草と低木・石の根元を根元の円の 6 点の高さで決める形にした（`WastelandFoliage::SampleRootRing`・`WastelandGravel::StoneGroundLine`。DEM の格子から取る）。違反は草と低木 138728 → 1064、大きな石 38619 → 5480、物の減りは草と低木 0.25 %・大きな石 0.01 %（`WastelandShape.md` の「根元の円で置く」）。残り: (a) 刻みの範囲（Battleship Rock）と崖の生成の 2 範囲の石と小礫（小礫 28814・石 10300 の大半）と範囲の外の残り（草と低木 170・大きな石 1026）は置き方の地面と焼いた面のずれで、焼いた面の高さから取る形が要る。(b) 岩は置き方を変えていない（149533）。73820 個は最も深い足元が窓 max(0.5 m, 高さの 20 %) より深い。次の反復は (b) の岩の据え直し（規則を見直すなら写真の崖錐の岩の埋まり方を根拠に）か (a) のどちらかから始め、閉じなければ (a) と (b) を別の項目に分ける。見た目の課題: 収まらない低木 B を低木 A に替える規則で B が 37.8 % 減り A に移った（B:A が 50:50 → 31:69。ref_far_01 の近景の 4 株・ref_ground_02 の 11 株が葉の無い株から葉の付いた株に替わる）。種の割合を保つ形（傾きで A と B を振り分けて全体の割合を保つ、B の根元の枝を直す）を次の反復で決める。GPU 時間（ref_ground_01）は前の Game.exe で測っていない（前の 6 視点・回帰の before は撮った）。
 ## SCN-WL-SHADOW-LAUNCH-VARIANCE: 崖錐の岩の影が起動ごとに変わる原因を突き止め、同じ条件の撮影で影が同じになるようにする
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-WL-CLIFF-GEN-TALUS
 - done-when: SCN-WL-SHAPE-TERRAIN-AOV の記録（PROGRESS.md の要起票）: 同じ Game.exe・同じ起動引数で ref_cliff_01 を別々の起動で撮ると、崖錐の岩の影の画素が変わり、1 段以内の画素の割合が大きく下がる起動がある（0.98 の例）。撮影の検査が描画の変更なしで落ちうる。原因の候補（影の仮想ページ〔VSM〕のキャッシュの中身が、ジオメトリのページの常駐が届く間合いで変わる・撮影のフレームの決め方）を、起動を 5 回以上繰り返す撮影で切り分けて文書に書く。直し（例: 撮影のフレームを、影のページとジオメトリのページが落ち着いてから決める）を入れる。合否: 同じ条件で別々の起動で 5 回撮った ref_cliff_01 の PNG の、どの 2 枚の組でも 1 段以内の画素が 99.9 % 以上（今の最悪の組の値を前として記録）。既定の描画の見た目は変えない。GPU 時間と、撮影 1 回の時間を前後で記録。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
@@ -3075,7 +3111,8 @@
 - notes: 危険地帯（影のページ・ジオメトリのページの常駐）。2026-10-25 親が PROGRESS.md の要起票から足した。`LaunchVariance.py`（この項目で作る。CaptureScene.ps1 を同じ引数で別々の起動で回して組ごとの差を出す）の名前と引数は変えてよいが verify も合わせる。5 回の撮影が 10 分を超えるなら、回数を分けた行にする。Git Bash では `cmake --build ... -- /m:1` の `/m:1` が `m:1` に書き換わって MSBuild が MSB1008 で落ちるので、ビルドは PowerShell で回す。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。verify は 1 行 10 分未満（RelWithDebInfo のビルドは別の行）。
 
 ## SCN-WL-CLOUD-TOWERS: 遠い積雲に上へ伸びる塔の形を足し、頂を写真の積雲の盛り上がりに近づける
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-WL-SHADOW-LAUNCH-VARIANCE
 - done-when: SCN-WL-CLOUD-SHAPE-ACCEPT の記録（PROGRESS.md の要起票、`far/far_01_sky_zoom.png`）: 遠い積雲の頂に、km の規模で上へ伸びる塔の形（カリフラワー状の盛り上がり）が無く、写真 far_01 と並べると頂が平たく灰色に見える。雲の層の形（`CloudLayerCommon.glsl` の高さの分布・形のノイズの高さによる削り）に、塊ごとの頂の高さの揺れと、上ほど細くなる塔の形を足す（底は平らなまま。凝結高度で底がそろうのは実際の姿）。合否: (1) 固定した `cloud-shape.json` と遠景の判定（`cloud-far-accept.json`）が通ったまま、(2) ref_far_01 の雲の外形の上の縁の高さの揺れ（列ごとの雲の上端の画素の行の標準偏差）が今の値の 1.5 倍以上（写真 far_01 の値も並べて記録。写真との比は診断）、(3) far_01 の空を拡大して写真と並べて開き、頂が盛り上がる塊に見えることを確かめる、(4) `--cloud-dump --verify` が既存の許容で通る（密度の式を変えるなら照合の写しも直す）、(5) 雲の Cycles の正解との比べ（`cloud-ref.json`）は、密度場が変わるので反復の中で描き直して悪くならないことを確かめる（約 17 分。同期で走らせる）。ref_cliff_02 の低い空が写真の層積雲の濃淡に届かないのは撮影日の天気の違いとして記録する（直さない）。GPU 時間（ref_far_01）を前後で記録。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3205,7 +3242,8 @@
 - notes: 2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 7 の評価の 2 周目の差し戻しから、確かめを 1 反復に収まる大きさに分けて足した。`ReferenceCheck.py --occlusion` に `--off-root`（同じ版の off の撮影の置き場。範囲の外の行を off と比べて上の合格の決まりで判定する）を足す（名前は変えてよいが verify も合わせる）。1 組の撮影は約 2 分。反復の中で地形を焼き直さない（地形が変わったら off と今の形を両方撮り直す）。壁時計（75 分）の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。シェーダーと描画の経路は変えない（この項目は確かめるだけ。直しが要る差を見つけたら値を付けて BLOCKED）。
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-REG: 鏡面の遮りの回帰の 4 シーン・golden・GPU 時間・material-gallery を、同じ最終の版で変更前の鏡面の経路と並べて確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-RENDER-SPEC-OCC-VERIFY-OCC, SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1, SCN-RENDER-SPEC-WIDE-ESS, SCN-RENDER-SPEC-ROOF-HITS, SCN-WL-CLIFF-GEN-TALUS
 - done-when: SCN-RENDER-SPEC-OCCLUSION の確かめの残り（run 20261026-002702 の反復 7 の評価の 2 件目）: 同じ Game.exe（HEAD のシェーダー）で、(1) 回帰の 4 シーンの before を `--rtgi-specular=off`、after を今の形で撮り、差の画を開いて変わった所と理由を書く（`CaptureRegression.ps1` に `-GameArgs` を足す）、(2) golden の 2 本（Indoor・Outdoor）を回し、変わるなら差の原因と物理的な妥当さを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認する、(3) GPU 時間を荒野の ref_ground_01 と interior-light の 1 視点で、off と今の形の 300 フレームの中央値で記録する（RT と GI 入りの目安 30 fps の中）、(4) material-gallery を off と今の形で撮って並べて開き、粗さの分岐（細いローブと広いローブの混ぜ）の見た目を書く。記録は `InteriorLightReference.md` と PROGRESS.md。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3226,7 +3264,8 @@
 - notes: 2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 7 の評価の 2 周目の差し戻しから足した。interior-light の視点の名前が overview でなければ、実際の名前に直して verify も合わせる。material-gallery の撮影に `-RequireAssets` が合わなければ外してよい。壁時計（75 分）の残りが 25 分を切ったら新しい撮影を始めず、撮れた所までをコミットして doing のまま終える（未達のまま DONE にしない）。verify は 1 行 10 分未満。シェーダーと描画の経路は変えない（この項目は確かめるだけ。直しが要る差を見つけたら値を付けて BLOCKED）。
 
 ## SCN-RENDER-SPEC-OCCLUSION: 鏡面の環境光（IBL・空の前計算の鏡面）を、見えない空の分だけ遮る
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-WL-OCCLUSION-ACCEPT, SCN-RENDER-SPEC-OCC-VERIFY-OCC, SCN-RENDER-SPEC-OCC-VERIFY-REG
 - done-when: SCN-INTERIOR-ROOM の反復 39 の比べ（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/compare/`、`Docs/RenderingValidation/InteriorLightReference.md`）: 日陰の床の輝度がエンジン ÷ Cycles で 2.5 倍（overview）〜16 倍（window）、青 ÷ 緑 1.23 / 0.71。`lighting.frag` の IBL・RTGI の鏡面が空の前計算をそのまま足し、室内でも遮られない（RTGI の床の空の見え方は 2〜3 %）。鏡面の環境光を、見えない空の分だけ遮る（候補: RTGI の空の見え方・曲げた法線から鏡面の遮りを作る）。材質の AO と二重に数えない（SCN-WL-MATERIAL-AO-SHADING の結論）。`InteriorLightReference.py --compare` に正解の置き場を指す `--reference` と、領域の比を判定する `--expect` を足す（この項目で）。合否（`interior-spec-occlusion.json`）: 3 視点の日陰の床の輝度のエンジン ÷ Cycles が 0.8〜1.25、青 ÷ 緑の比が ±10 %。窓の日だまりの形・位置は前と同じ。荒野の遮蔽と共通の照明の値が悪くならない（notes）。回帰の 4 シーンと material-gallery・interior-light を撮って開き、基準画像（golden）の検査を回し、変わるなら SCN-WL-GOLDEN-REAPPROVE と同じ手順で再承認する。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3238,7 +3277,8 @@
 - notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。 2026-10-25（親）: 走行 20261025-120217 の反復 9 の BLOCKED（空の見え方のコサインの重みの割合で鏡面を遮り、周りの面の光で埋める土台〔d96e2a2e〕で日陰の床の比は 2.5〜16 倍から 0.64〜1.24 へ寄ったが、overview の床の輝度 0.635 と 3 視点の青 ÷ 緑の比〔0.76〜1.17〕が範囲の外。反射の向きにだけ窓や日向の壁が見える形を今の情報で作れない）を推奨の案 1 で解いた: この項目の続きとして、RTGI に反射の向きの周り（GGX のローブ）の光線を 1 本足し、空へ抜けた割合と当たった面の光を時間で蓄積して、照明の鏡面の空の遮りと埋めをこの値から作る（d96e2a2e の変更は土台として残す）。合否の行（`interior-spec-occlusion.json`）は変えない。GPU 時間は荒野の ref_ground_01 と室内の 1 視点で前後を記録し、RT と GI 入りの目安（30 fps）の中に収める。荒野の遮蔽の必須の比と共通の照明の行が悪くならないことは、前の反復と同じ範囲で確かめる（地形の変更で古くなった参照による fail は前の反復の記録と同じ理由として書き、新しい差だけを見る）。1 反復で閉じなければ、進んだ所（光線の追加と蓄積 → 照明への接続）までコミットして doing のまま終える（新しい判断が要るときだけ BLOCKED）。 2026-10-25（親）: 反復 12 の BLOCKED（前の室内の正解は Blender の空のテクスチャを輝度だけ合わせて倍していて、窓越しの空の色がエンジンとずれていた。エンジンの空の LUT で描き直すと青 ÷ 緑の 3 行と日だまりの IoU の 3 行は合格し、日陰の床の輝度の 3 行は 0.612・0.694・0.720 で、部屋の中の拡散の照り返しの不足〔2 回目のバウンスで打ち切り〕が残る）を推奨の案 A で解いた: (1) エンジンの空の LUT で描き直した正解（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/cycles/`。前の絵は `cycles-blender-sky/`）をこの項目と後の室内の項目の正解として採る（荒野の正解と同じ扱い。`InteriorLightReference.md` に描き方の変更と前後の空の画素の比を書く）。(2) この項目は鏡面の遮りの範囲で閉じる: `interior-spec-occlusion.json` の青 ÷ 緑の 3 行と日だまりの 3 行はそのまま、日陰の床の輝度の 3 行は上限（1.25 以下。空の映り込みの余分が消えたこと）だけをこの項目で見て、下限（0.8 以上）は SCN-RENDER-RTGI-HIT-ALBEDO の合否（`interior-hit-albedo.json` の床の行）へ移す。行の分け直しは仕様の弱めではなく項目の受け持ちの移し替えとして文書に書く。(3) 拡散の照り返しの変更（画面の RTGI の履歴を当たりに使う試し）はこの項目に入れない（入っていれば戻し、測った値を記録に残す）。(4) 反復 11 の評価の残り 2 件はこの項目で通す: 荒野の `rocks-sky/contact_near/slope30-60_d10-50` の対照の輝度比（0.962、下限 0.97）は同じ地形で前と今のシェーダーを比べてこの変更の分を切り分け、範囲へ戻す。共通の照明の組は今の版で撮り直して `--light-final` を通す（地形の変更で古くなった参照による fail は前の記録と同じ理由として分け、新しい差だけを見る）。この走行の評価の差し戻しは 1/2 周なので、評価に出す前に (2) と (4) を全部の行で開いて確かめる。 2026-10-25（親）: 反復 14 の BLOCKED（判断の要らない続きの BLOCKED。荒野の rocks-sky/contact_near の 0.962 は鏡面の遮りだけから来て、空の前計算が地平の下の地面の光まで畳み込んでいるのに、粗い面で地形に当たった光線の分をさらに引くため。BRDF の重みと空へ抜けた光線の空の光を両方使うと荒野は 0.995 に直るが、室内 overview の青 ÷ 緑が 0.886 に落ちる）を、この項目の続きとして解いた。次の反復は、反復 14 の案（BRDF の重みを粗さで混ぜる形）に加えて、原因に沿った形も候補にする: 前計算の環境光を地平の上の空だけの分と地平の下の分に分け、光線の空の見え方（地平の上の光線のうち空へ抜けた割合）はその空だけの分にだけ掛け、地平の下と地形に当たった向きは当たった面の光で埋める（地面を二重に数えない）。どちらの形でも、まず荒野の rocks-sky と室内の 3 視点だけを撮って両方の行が通る形を決め、そのあと回帰の before・after、golden、GPU 時間、荒野の遮蔽の 8 組、共通の照明の組を回す。壁時計に全部が収まらなければ、シェーダーの変更と済んだ検証をコミットして doing のまま終え、残りの検証を次の反復で回す（判断が要らない続きでは BLOCKED を返さない）。評価の差し戻しは残り 1 周なので、全部の行が通るまで DONE にしない。この後の 2 反復で荒野と室内の両方が通る形が見つからなければ、試した形ごとの値を付けて BLOCKED にする（親が範囲を決める）。 2026-10-25（親）: 反復 16 の評価の 2 周目の差し戻しで blocked（室内の 9 行と rocks-sky の対照 0.995 は合格。残りは (i) 共通の照明の `bounce/ref_cliff_01/shadow_ground/chroma_diff` 0.0346〔上限 0.02、前は 0.0036〕、(ii) 荒野の遮蔽の `ref_cliff_01/slope60-180_d500-100000` が rocks-cliff-sky 0.9622・terrain-sky 0.9513〔下限 0.97〕で原因が分かれていない、8 組の入力の指紋が揃っていない、(iii) 今の版の material-gallery の撮影が無い）を、この項目の続きとして todo に戻した。遠い急な崖の行は、反復 15 で崖の棚の版 9 を焼いた地形（Cycles の参照を描いた後の地形の変更）と重なるので、比べ方を次の形にする: (1) 開発ビルドだけの起動引数 `--rtgi-specular=off`（変更前の鏡面の環境光の経路に戻す。Release では使えない。`--rtgi-bounce` と同じ形）を足し、同じ Game.exe・同じ焼いた地形で、荒野の遮蔽の 8 組と共通の照明の組を off と今の形で撮る（反復の中で地形を焼き直さない）。(2) 範囲の外の行ごとに、off と今の形の値を並べた表を `InteriorLightReference.md` に書く: off でも範囲の外なら、地形の変更による古い参照の分として、今の形の値が off から行の揺れ（照明の組は前の記録の起動の揺れ、遮蔽は 0.005）を超えて悪くならないことで合格とする。off では範囲内で今の形で外れる行（(i) の chroma_diff はその見込み）は、この変更の差なので直す（日陰の地面の照り返しの色が当たりの面の光で変わる分を確かめる）。(3) 8 組と共通の照明の組は全部、同じ最終の版で撮り直して入力の指紋を揃える。(4) material-gallery を今の版で撮って開く。評価の差し戻しはこの走行で使い切ったので、(1)〜(4) を全部の行で開いて確かめてから DONE にする。壁時計に収まらなければ、済んだ所までコミットして doing のまま終える。 2026-10-26（親）: run 20261026-002702 の反復 3 の BLOCKED（`ref_cliff_01` の `slope60-180_d500-100000` の対照の暗さは、粗さ 1 の急な面の反射のローブの約 2 割が谷底と下の斜面に当たる分を遮った結果で、今の形 ÷ off は terrain-sky 0.975・rocks-cliff-sky 0.977。ただしエンジン ÷ Cycles は off 0.995・1.004 から今の形 0.970・0.981 へ離れた。開けた急な面は off でも Cycles より 2.5 % 暗く、遮りの前は空の光の数えすぎがその不足を隠していた）を、推奨の案 1 に守りを足して解いた: (1) `occlusion-accept.json` のこの層の 2 行（terrain-sky・rocks-cliff-sky）は、下限を今の形の値から 0.005 引いた値（0.946・0.957。これより暗くしない守り）に一時的に替え、行の note に「SCN-RENDER-ROUGH-STEEP-ENERGY が 1 ± 0.03 へ戻す」と書く。ほかの行は変えない。(2) この項目の記録には、同じ Game.exe・同じ焼いた地形の `--rtgi-specular=off` との比（0.97 以上）と、エンジン ÷ Cycles を off と今の形で並べて書く。(3) 開けた急な面の不足（粗さ 1 の鏡面の多重散乱のエネルギー、谷底からの拡散の照り返し、当たりの光の量）は新しい項目 SCN-RENDER-ROUGH-STEEP-ENERGY（SCN-RENDER-RTGI-HIT-ALBEDO の後）へ移した。(4) 次の反復はシェーダーを変えずに、8 組と共通の照明の組を off と今の形で同じ最終の版で撮り、`--occlusion` と `--light-final` の判定を最後まで出す（前の `shadow_ground/chroma_diff` を含め、範囲の外の行は全部 off と並べて表に書く。off で範囲内・今の形で外れる行が (1) の 2 行のほかに残れば直すか、値を付けて BLOCKED）。そのあと回帰の before・after、golden、GPU 時間、material-gallery を同じ最終の版で回して閉じる。評価に出す前に、評価者の前の指摘（判定の出力の欠け・古い after）を全部の行で開いて確かめる。 2026-10-26（親）: run 20261026-002702 の反復 7 の評価の 2 周目の差し戻しで blocked（室内の 9 行・共通の照明の off との並べ〔shadow_ground/chroma_diff は off 0.0045 → 今 0.0033 で合格〕・一時の下限の判定は済んだ。残りは荒野の遮蔽の 8 組の off との並べと、回帰・golden・GPU 時間の最終の証拠）。この項目の確かめは 1 反復に収まらないので、SCN-RENDER-SPEC-OCC-VERIFY-OCC（遮蔽の 8 組）と SCN-RENDER-SPEC-OCC-VERIFY-REG（回帰・golden・GPU 時間・material-gallery）に分けた。この項目はその 2 つが done になった後に、シェーダーを変えずに 2 つの記録を引いて閉じる（新しい撮影は要らない。done-when の各行がどの記録で満たされたかを表で書く）。評価の差し戻しはこの走行で使い切っているので、2 つの記録を開いて全部の行を確かめてから DONE にする。
 
 ## SCN-RENDER-RTGI-HIT-ALBEDO: RTGI の当たりの反射率を、テクスチャの粗いミップの平均から引く
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-RENDER-SPEC-OCCLUSION
 - done-when: SCN-INTERIOR-ROOM の反復 39 の比べ: 日陰の壁がエンジン ÷ Cycles 1.25〜1.50 倍、天井 1.55〜2.00 倍。RTGI の当たりの反射率がテクスチャを引かず、instance の色（単位のアルベドの 99 百分位の倍率）だけになっている（`LightingPass.cpp` の RTGIInstanceData・`DiffuseIndirect.comp`）。地形の 3 層の当たりと同じように、当たりの材質のアルベドのテクスチャの最も粗いミップの平均（または当たりの UV で引く低いミップ）を反射率にする。室内の単位のアルベドの回避（`Scripts/MakeInteriorLightAlbedo.py`）が要らなくなるなら元のアルベドに戻す。合否（`interior-hit-albedo.json`）: 3 視点の日陰の壁・天井・隅の輝度のエンジン ÷ Cycles が 0.85〜1.15。荒野の遮蔽と共通の照明の値が悪くならない（notes）、灰色の材質の撮影（`wasteland-gray-material`）の当たりは灰色のまま。回帰の 4 シーンと material-gallery・interior-light を撮って開き、golden の検査、変わるなら再承認。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3250,7 +3290,8 @@
 - notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。 2026-10-25（親）: SCN-RENDER-SPEC-OCCLUSION の反復 12 の判断（推奨の案 A）で、室内の正解をエンジンの空の LUT で描き直した版（`.harness/runs/scene-capture/SCN-INTERIOR-ROOM-ref/cycles/`）に替えた。done-when の前提の数（壁 1.25〜1.50 倍・天井 1.55〜2.00 倍）は前の正解で測った値なので、反復の最初に新しい正解で測り直して書き直す（反復 12 の値: 日陰の床 0.612・0.694・0.720 倍、日陰の壁 0.69〜0.81 倍で、明るすぎから暗すぎへ変わった）。SCN-RENDER-SPEC-OCCLUSION から移した日陰の床の輝度の下限はこの項目の `interior-hit-albedo.json` の床の行（0.85〜1.15）で見る。原因の候補は当たりの反射率（単位のアルベド × 99 百分位）とバウンスの数（2 回目で打ち切り）の両方で、当たりの反射率を直しても届かずバウンスの数が原因と分かったら、RTGI-MULTI-BOUNCE（backlog）の中身（当たり面が画面に見えるときの RTGI の履歴の再利用、見えないときの 3 回目以降）をこの項目で扱ってよい。1 反復で閉じなければ、進んだ所までコミットして doing のまま終える（反射率 → バウンスの順）。全シーンの拡散の GI が変わるので、荒野の遮蔽の 8 組と共通の照明の組の撮り直しを verify の行に足して通す（組ごとに 1 行、1 行 10 分未満）。
 
 ## SCN-RENDER-ROUGH-STEEP-ENERGY: 開けた急な崖の粗い面が Cycles より暗い分を、鏡面の多重散乱と照り返しの不足から直す
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-RENDER-RTGI-HIT-ALBEDO
 - done-when: SCN-RENDER-SPEC-OCCLUSION の run 20261026-002702 の反復 3 の切り分け（`Docs/RenderingValidation/InteriorLightReference.md` の「遠い急な崖の対照の暗さの切り分け」）: 荒野の `ref_cliff_01` の `slope60-180_d500-100000`（遠い急な崖、粗さ 1 の灰色の材質）の対照の画素のエンジン ÷ Cycles は、鏡面の遮りを切った形（`--rtgi-specular=off`）で 0.995（terrain-sky）・1.004（rocks-cliff-sky）、今の形で 0.970・0.981。開けた急な面（くぼみ 0.05 以下）は off でも Cycles より 2.5 % 暗く、遮りの前は空の光の数えすぎが不足を隠していた。不足の出どころを、(a) 粗さ 1 の鏡面の多重散乱のエネルギー（単散乱の GGX で失う分）、(b) 谷底と下の斜面からの拡散の照り返しの量（バウンスの数・当たりの光）、(c) 鏡面の光線が当たった面の光の量、に分けて測り（各候補を切った・足した撮影で、開けた急な面とくぼみの深い帯の両方のエンジン ÷ Cycles を並べる）、当たった出どころを直す。鏡面の遮りは弱めない。合否: (1) その層の 2 行のエンジン ÷ Cycles が 0.985 以上、(2) SCN-RENDER-SPEC-OCCLUSION で一時的に下げた `occlusion-accept.json` のその層の 2 行を、前の記録との比 1 ± 0.03 へ戻して通す（note の一時の印を消す）、(3) 荒野の遮蔽の必須の比とほかの行、rocks-sky の対照、室内の `interior-spec-occlusion.json` の 9 行が悪くならない、(4) 回帰の 4 シーン・material-gallery・interior-light を撮って開き、golden を確かめ、変わるなら差の原因と物理的な妥当さを書いて再承認する、(5) GPU 時間（荒野の ref_ground_01・室内の 1 視点、300 フレーム）を前後で記録。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3266,7 +3307,8 @@
 - check: launch
 - notes: 危険地帯（描画の既定・全シーンに効く）。2026-10-26 親が SCN-RENDER-SPEC-OCCLUSION の反復 3 の BLOCKED から足した。SCN-RENDER-RTGI-HIT-ALBEDO の後に回す（バウンスの数と当たりの反射率がそこで変わるので、反復の最初に今の値を測り直して書き直す）。反復の最初に回帰の撮影の `before` を撮る。8 組の残りと共通の照明の組（`--light-final`）は、変えた経路が効く組を反復の中で撮り直して通す（verify の行は足してよい。1 行 10 分未満）。多重散乱のエネルギーの補い（例えば Kulla-Conty 系の補正）を足すなら、全部の粗い材質の見た目が変わるので material-gallery の 4 視点を前後で並べて開く。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える（未達のまま DONE にしない）。
 ## SCN-RENDER-RTGI-TEMPORAL: RTGI の時間の蓄積を、60 フレームの撮影で壁の粒が目立たない所まで上げる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-RENDER-RTGI-HIT-ALBEDO
 - done-when: SCN-INTERIOR-ROOM の反復 39: 漆喰の壁と天井の粗い粒が 60 フレームの撮影で残る（300 フレームで大きく減る）。RTGI の時間の蓄積とデノイズを、動きの残像を増やさずに収束を早める形で直す（候補: 履歴の長さの上限・分散で導くデノイズ・空間の再利用）。量: 平らな壁・天井の領域の高い周波数の輝度の標準偏差 ÷ 平均（`--compare` に足す）。合否（`interior-temporal.json`）: 60 フレームの撮影の粒の量が、今の 300 フレームの撮影の量の 1.5 倍以内。動きの撮影（荒野の `camera-script` か回帰の -Motion）で残像・ちらつきが増えない（前後を開いて確かめ、数があれば記録）。荒野の遮蔽と共通の照明の値が悪くならない（notes）。回帰の 4 シーンと material-gallery・interior-light を撮って開き、golden の検査、変わるなら再承認。GPU 時間（1 視点、300 フレーム）を前後で記録。反復の最初に回帰の撮影の `before` を撮る。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3278,7 +3320,8 @@
 - notes: 危険地帯（描画の既定。全シーンに効く）。2026-10-23 親が SCN-INTERIOR-ROOM の反復 39 の BLOCKED（推奨の案 1）から足した。荒野の遮蔽の受け入れ（SCN-WL-OCCLUSION-ACCEPT）の後に回し、荒野の遮蔽と共通の照明の値が悪くならないことを確かめる（`OcclusionSets.py --capture --sets <組>` を組ごとの行で撮り、`--occlusion --expect occlusion-accept.json` と、共通の照明の組の撮り直しで `--light-final` を通す。verify の行はこの項目で足してよい。1 行 10 分未満）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 時間の見積もり: 回帰の before・after 各 7〜9 分、ビルド 3〜6 分、室内の撮影 約 3 分、荒野の組の撮り直し 約 25 分。
 
 ## SCN-INTERIOR-ROOM: 室内の光のシーンを組む
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-RENDER-SPEC-OCCLUSION, SCN-RENDER-RTGI-HIT-ALBEDO, SCN-RENDER-RTGI-TEMPORAL
 - done-when: `interior-light` シーン: 約 12×8×5 m の部屋（床は木の板、壁は漆喰かレンガ、天井の梁。手続きの箱と Poly Haven のテクスチャ）の一面に大きな窓（開口）を開け、低い夕日が差し込む。生成した家具を置き、赤いラグか色の強い壁で色移り（RTGI）が分かる配置にする。床は少し艶があり反射（SSR）が見える。窓の外に地面と空が見える。名前付き視点 `overview`・`window`（窓へ向かう逆光）・`corner`（奥の隅）。撮影を開いて、窓から入る光と影の形、奥の隅の照り返し、白飛び・黒つぶれを確かめる。`interior-light` の cycle smoke 2 周（RelWithDebInfo。1 シーンの最小。1 コマンド 10 分に収めるため 2026-10-19 に 3 周から変えた）が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3325,7 +3368,8 @@
 - notes: 2026-10-23 親が SCN-GOLDEN-REVERIFY の再検証の落ちから足した。全体のビルドは 10〜20 分かかる見込み（1 コマンド 10 分の再検証の上限に当たるなら、verify を落ちていた対象の名前を並べたビルドに分ける）。壁時計（75 分）の残りが 25 分を切ったら新しい試しを始めず、分かったことを書いてコミットして終える。 2026-10-23（親）: SCN-GOLDEN-REVERIFY の反復 5 の調べ（`blocked/resolved/SCN-GOLDEN-REVERIFY-target.md`）: 落ちるのは 4 つの試験の対象だけ。AssetManifestReloadBridgeLoopbackTest（Rendering3DTestRoutine.cpp の stb_image.h の include の場所が無い）、NorvesLibBridgeAdapterScriptComponentTest（Game の WastelandRoutine・CameraScriptCapture・MultiViewCapture・BananaFieldBuilder などのソースが対象に無い、未解決 31 件）、RenderGraphCompileTest（LightingPass::OnFrameReadback が未解決。ctest では既に DISABLED）、RenderingDDGILightingContractTest（今は無い DDGIProbePass::FrameResources・m_FrameResources を参照、12 件）。直すか、実装の写しで意味の無い試験なら消すかを、ユーザーの方針（試験も意味を吟味する・写しの試験は直さず消す）に照らして試験ごとに決め、理由を記録する。
 
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-THUMBNAILS, SCN-WASTELAND-POLISH, SCN-INTERIOR-SHAFTS, SCN-FIX-SKY-BANDING, SCN-MEGA-ACCEPT-1M
 - done-when: 計画書の受入れの節の全項目を確かめて `Docs/RenderingValidation/SceneLauncherAcceptance.md` に書く: Debug・RelWithDebInfo・Release で引数なしの起動がランチャー（撮影を開いて確認）、全シーンの cycle smoke（各3周）が pass、全シーンの全視点の撮影を開いた所見、各シーンの性能（1920×1080・RelWithDebInfo の値を記録する。RT と GI を入れた既定の構成と、荒野・室内の光は合否に使わない。RT と GI を切った構成で 16.6 ms を超えるシーンだけ、内訳から直す設定を決めて直すか、未達としてユーザーへ渡す。最終の設定が同じなら SCN-WASTELAND-POLISH などの証拠を使い、撮り直さない。夜のシーンでは点光源の影の内訳も見る）、Rendering3DTest の撮影が main と見た目で変わらないこと、生成と Poly Haven の資産の一覧（id・出典・ライセンス・作り方）。見つけた不具合は直すか、`SCN-FIX-<名前>` の項目として TASKS.md に足す。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
@@ -3400,7 +3444,8 @@
 - notes: 2026-10-14 SCN-MEGA-ACCEPT-1M の診断から。SCN-MEGA-FIX-TLAS-REBUILD・SCN-MEGA-FIX-MIXED-DEFICIT の後に回す。
 
 ## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷を、固定した 4 つの負荷と閾値で判定する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-MEGA-FIX-STRESS-GPU
 - done-when: 問い: 最終の配置・描画の経路の 4 つの負荷で、RT と GI を切った構成で 60 fps を満たせるか（RT と GI を入れた既定の構成は値を記録するだけ。4 つの撮影は RT と GI を切る引数で撮り、無ければ足す）。変わる判断: 既定を 100万本にする・直す項目を足す・止めてユーザーへ渡す。- 固定した 4 つの負荷: 100万本 horizon の静止、カメラパスの再生（パス 1 周を計測の窓に含める）、100万本 + mega-stress 5万個の 1% 移動、同じく 64 m 区画のストリーミング（区画の解放から再公開までを窓に含め、ログで確かめる）。- 各負荷で 300 フレーム以上、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）。- 溢れがすべて 0、メモリ ≤ 3 GB（対象は計画の GPU Scene まわりの構造。使用中だけでなく、飛行中の複数のスロット・持ち続ける容量・回収待ちを含む最大の確保量）、Entity の数が本数によらない。PNG を開いて穴と影の欠けが無いことを見る。- 不合格の負荷は、同じ撮影の内訳から直す先を決める: GPU は範囲・インスタンス・BVH の判定、binning と記録、ハード・ソフトの両方のラスタ（`VisibilityRasterPass` を含む）、2 パス目、合流・HZB、VSM（全体とページの処理・カリング・描画。親と子の区間を二重に足さない）の時間と処理の件数。処理の量が多すぎるのか単価が高いのかを分ける。CPU は待ちと作業を分け、支配する関数・系（`RT.BuildAccelerationStructures` とその入力の選択、`RG.Record.*`、ECS の系と同期点、ストリーミングの作成・公開）を特定する。既存の区間で分けられない所だけ区間を足して撮り直す。構造・件数・ログで説明できない規模の依存が残ったときだけ、同じ配置・条件で本数を 30万へ下げた負荷を 1 つ足して比べる。直す先ごとに `SCN-MEGA-FIX-<名前>` を足す。- 合格したら既定の本数を 100万にする。受入れ文書の書き方は前と同じ。どれかの負荷で GPU・gt・rt の p95 のどれかが 25 ms を超えたら、その時点の撮影と内訳を付けてループを止めてユーザーへ渡す（自動で 30万の診断を続けない）。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/static --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
@@ -4168,7 +4213,8 @@
 - from: SCN-BUILD-ALL-TESTS
 
 ## SCN-RENDER-SPEC-WIDE-ESS-P1: night-village で VRAM の予算が足りないとき、ジオメトリのページが常駐 0 まで外される原因を突き止めて直す
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - done-when: SCN-WL-GEOM-LOWVRAM の「予算が足りないときは粗い段に下がって落ち着く」と食い違う形を、night-village で再現して原因を示し、直す。
   - 元の例: SCN-RENDER-SPEC-WIDE-ESS の before の overview(`<親>/.slots/NorvesLib-3/.harness/runs/regression/SCN-RENDER-SPEC-WIDE-ESS/before/night-village/overview.Game.log`)。ヒープの予算が約 6130 MB まで下がった(並べて走るほかの枠の Game と GPU を分け合った)。プール以外が 5396〜5761 MB、影のプールが 623 MB で、ジオメトリの枠の目標は 0〜111 MB。これが外せない区画(根、約 670 MB)を下回り、ページの目標が 0 になって 1101 ページを外し resident=0 になった。そのあと wanted=1538・ready=64 のまま budget_blocked が 4→7 と増えて止まった。ジオメトリのプールの塊(2048 MB)は確保されたままなので、ページを外してもヒープの使用量は減っていない見込み。
   - 再現: 開発ビルドの `vram-budget-mb` で、ジオメトリの枠の目標が根の区画を下回る上限にして night-village を撮る(目安 6100 MB。値を変えたら verify も合わせる)。直す前の撮影で同じ形(常駐 0・要求が予算で止まったまま)になることを、値で PROGRESS.md に残す。
@@ -4222,7 +4268,8 @@
 - notes: 危険地帯(RTGI は全シーンに効く)なので、評価者を通す。反復の最初に回帰の撮影の before(-Motion)を撮る。再生の撮影の保存フレームのパスの時刻が 16.83 秒でなければ、静止の行の `camera-path-time` をその時刻に合わせ、verify も直す。履歴の棄却を緩めるだけで粒を消す直し(残像が増える)にはしない。SCN-RENDER-RTGI-TEMPORAL(静止の収束)と同じシェーダーを触るので、そちらが先に統合されていたら反復の最初に測り直す。壁時計(75 分)の残りが 25 分を切ったら新しい撮影を始めない。撮れた所までをコミットし、doing のまま終える(未達のまま DONE にしない)。verify は 1 行 10 分未満。
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-REG-P1: RTGI の鏡面の光線の粒を、60 フレームの撮影で粗い金属・屋根・バナナに残さない
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: SCN-RENDER-RTGI-TEMPORAL
 - done-when: RTGI の反射の向きの光線は 1 画素 1 本で、撮影の 60 フレームの蓄積の後も、粗さ 0.6〜1.0 の金属(material-gallery の球)・rendering3dtest の屋根・バナナに細かな粒を残す(SCN-RENDER-SPEC-OCC-VERIFY-REG の `gallery-side-by-side-spheres.png`・`regression-detail-house.png`)。反復の最初に、SCN-RENDER-RTGI-TEMPORAL の後の今の形で測り直す。量は `Scripts/RtgiGrain.py` で取る(SCN-MEGA-ACCEPT-1M-P1 と同じ量。まだ無ければ作る)。3 つの領域で、高い周波数の輝度の標準偏差 ÷ 平均を、既定の撮影(60 フレーム)と長い蓄積の撮影(`-GpuTimingFrames 300`)で比べる。領域と上限は `Scripts/Terrain/ExpectSpecs/rtgi-grain-specular.json` に書く。合否: 3 つの領域とも、60 フレーム ÷ 長い蓄積が 1.5 以下(直す前の値も記録する)。測り直しの時点で既に満たしていれば、値を書いて直さずに閉じる。直す場合(候補: 鏡面の光線の時間の蓄積、粗さで導くデノイズ、粗い面の光線の数)は、長い蓄積の撮影で 3 つの領域の平均の輝度の前後の比を 1 ± 0.01 に収める(鏡面の明るさを変えない)。回帰の 4 シーンと material-gallery を撮って開き、golden を確かめる。変わるなら差の原因と物理的な妥当さを書いて再承認する。GPU 時間(material-gallery の 1 視点、300 フレーム)を前後で記録する。記録先は `InteriorLightReference.md`。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
@@ -4286,7 +4333,8 @@
 - from: SCN-MEGA-FIX-TLAS-REBUILD
 
 ## SCN-FIX-SKY-BANDING-CHECK: 空の階調の段（波打つ横縞）を消す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-FIX-SKY-BANDING で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-FIX-SKY-BANDING の done-when を満たすことを確かめる。満たさなければ SCN-FIX-SKY-BANDING の done-when と paths の範囲で直す。
@@ -4296,13 +4344,14 @@
 - from: SCN-FIX-SKY-BANDING
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P4: 1M 静止の `MegaBvhC1Leaf` の 10-14 からの +2.4 ms と、11-01 の 10 ms 超の山を、葉の段のクラスタごとの仕事から切り分けて減らす
-- status: todo
-- done-when: 問い: 1M の既定の horizon の静止で、`MegaBvhC1Leaf` の median が 10-14 の 2.560 ms から 11-01 の 4.995 ms に増えた。席・節・クラスタ・可視の件数もドライバ(610.88)も同じで、葉より上の段は変わっていない(`SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」)。11-01 にはこれとは別に、300 フレーム中 33 フレームが 10 ms 以上になる山がある(最大 35.1 ms・p95 15.482 ms)。10-14 と 10-29 には無い。候補は 2 つ。1 つは 4a3a43d6 の形で、`Common/MegaGeometryCull.glsl` の `ProcessCluster` が、子に任せて描かないクラスタからも `RequestPage` を呼び、そのたびに `requestStamp` へ `atomicExchange` する。もう 1 つは e5e06e0d の `cluster_bvh_cull.comp` の `BindClusterInstance` にある `mainLodFloor`・`EffectiveLodBias()`。手順: (1) 編集の前に、今の版を同じ条件で撮る(before)。葉の median・p95・10 ms 以上のフレーム数と、`GEOMETRY_PAGES`・`MEGA_OCCLUSION`・`SW_RASTER_BIN` の行を控える。(2) `RequestPage` を、先に `requestStamp` を読み、今のフレームの印が付いていれば atomic を打たない形にする。列へ積む要求の集合は変えない。これで足りなければ波(subgroup)でまとめる。e5e06e0d の寄与は、シェーダーを一時的に戻した撮影で測る(戻したまま残さない)。(3) 直した版でも 10 ms 以上のフレームが出るなら、もう 1 回撮って再現するかを見る。山のフレームの前後のログの行と並べて原因を書く。(4) 前後の値と寄与の表を同じ節に書く。合否: 直した版で `MegaBvhC1Leaf` の median ≤ 3.3 ms、p95 ≤ 5.0 ms。`GEOMETRY_PAGES` の resident・peak・request_overflow と、`MEGA_OCCLUSION`・`SW_RASTER_BIN` の件数が before と同じ(ページの要求とストリーミングの振る舞いを変えていない)。回帰の撮影が pass し、前後の PNG を開いて穴・欠けが無い。基準画像の 2 本が Passed。
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
+- done-when: 問い: 1M の既定の horizon の静止で、`MegaBvhC1Leaf` の median が 10-14 の 2.560 ms から 11-01 の 4.995 ms に増え、11-01 には 10 ms 以上のフレームの山(300 中 33)がある。これを葉の段のクラスタごとの仕事から切り分けて減らす。`RequestPage` は、先に `requestStamp` を読み、今のフレームの印なら atomic を打たない形にする(列へ積む要求の集合は変えない)。e5e06e0d の寄与は、シェーダーを一時的に戻した撮影で測る。前後の値と寄与の表は `SceneLauncherAcceptance.md` の「葉の段の要求の印の読み」節に書く。合否: 直した版で `MegaBvhC1Leaf` の median ≤ 3.3 ms・p95 ≤ 5.0 ms。`GEOMETRY_PAGES` の resident・peak・request_overflow と、`MEGA_OCCLUSION`・`SW_RASTER_BIN` の件数が before と同じ。回帰の撮影が pass し、前後の PNG を開いて穴・欠けが無い。`RenderingGoldenOutdoorVulkanTest` が Passed。`RenderingGoldenIndoorVulkanTest` は Passed か、`RequestPage` の変更を戻した版と同じ値で落ちる(この変更によらない差)。後者なら、値と分類を受入れ文書に既知の限界として書いてあり、PROGRESS.md の Notes に Indoor を直す項目の `要起票:` がある。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P4/static`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P4/static --views horizon --timing --min-frames 300 --require-pass MegaBvhC1Leaf --max-pass-median-ms MegaBvhC1Leaf=3.3 --max-pass-p95-ms MegaBvhC1Leaf=5`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Terrain/CaptureRegression.ps1 -Item SCN-MEGA-FIX-TLAS-REBUILD-P4 -Phase after`
 - verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^RenderingGoldenOutdoorVulkanTest$"`
 - paths: Assets/Shaders/Common/MegaGeometryCull.glsl, Assets/Shaders/cluster_bvh_cull.comp, Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
 - gpu: exclusive
 - check: launch
@@ -4310,7 +4359,8 @@
 - notes: MegaGeometry のカリングは全シーンに効く危険地帯なので、評価者を通す。反復の最初に、回帰の撮影の before(`-Phase before`)と葉の before を撮る。シェーダーは実行時に Assets から作るので、寄与を測り分ける撮影に C++ の再ビルドは要らない。Game の外の GPU の処理と重なった撮影は合否に使わず、撮り直す。
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P5: 1M 静止の `LightingPass` の 10-14 からの +1.2 ms を RTGI の当たりの統計と鏡面の光線に分け、統計の費用を計測から外せるようにする
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - done-when: 問い: 1M の既定の horizon の静止で、`LightingPass` の median が 10-14 の 1.657 ms から 11-01 の 2.857 ms に増えた(TLAS は 120 フレームとも skip で同じ)。候補は 3 つ。(a) baaf64b4 の鏡面の光線(`TraceSpecularRay` と、条件つきの `TraceSecondBounce`)。(b) 9e922381・9a2fee63 が足した鏡面の計算。(c) cff879b2 の当たりの統計。統計は開発ビルドでは毎フレーム走り、`DiffuseIndirect.comp` の `main` の barrier 2 回と共有の atomicAdd、`LightingPass.cpp` の TLAS の並びの走査と読み戻しを足す。性能は RelWithDebInfo で測るので、統計の費用はそのまま計測に乗る。手順: (1) 開発ビルドだけの引数 `--rtgi-hit-stats=on|off` を足す。既定は on。今の `RTGI_HITS` の行の中身と、行が出る条件は変えない(`Scripts/Terrain/RtScene.py`・`ReferenceCheck.py` が読む)。(2) 1M 静止を、既定・`rtgi-hit-stats=off`・`rtgi-specular=off` の 3 本撮る。`LightingPass` の median・p95 を 10-14・11-01 の値と表に並べ、+1.2 ms を統計・鏡面・残りに分けて、`SceneLauncherAcceptance.md` の「10-14 からの静止の GPU の増え」に書く。(3) 統計の寄与(既定 − off の median)が 0.1 ms を超えたら、行の中身を変えずに軽くして 0.1 ms 以下にする。(4) 鏡面の光線は機能なので消さない。寄与が 0.5 ms を超えたら、PROGRESS.md の Notes に `要起票:` で残す。合否: 既定と off の median の差が 0.1 ms 以下。既定の撮影の Game.log に `RTGI_HITS` の行があり、off の撮影には無い。基準画像の 2 本が Passed(統計の変更で画は変わらない)。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -Build -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/default`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -Views horizon -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -TimeoutSeconds 1800 -GameArgs banana-count=1000000,rtgi-hit-stats=off -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TLAS-REBUILD-P5/nostats`
@@ -4326,7 +4376,8 @@
 - notes: RTGI は全シーンに効く危険地帯なので、評価者を通す。統計を軽くするときも、数える光線と当たりの定義は変えない。
 
 ## SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1-CHECK: 鏡面の直しの後の最終の版で、荒野の遮蔽の 8 組を変更前の鏡面の経路と並べて判定し直す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when を満たすことを確かめる。満たさなければ SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1 の done-when と paths の範囲で直す。
@@ -4351,7 +4402,8 @@
 - from: SCN-RENDER-SPEC-OCC-VERIFY-OCC-P1
 
 ## G2-GR82-V1-REST-POSE-GUARD-CHECK: clip作成時骨格の差を束縛時に検査する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: G2-GR82-V1-REST-POSE-GUARD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR82-V1-REST-POSE-GUARD の done-when を満たすことを確かめる。満たさなければ G2-GR82-V1-REST-POSE-GUARD の done-when と paths の範囲で直す。
@@ -4360,7 +4412,8 @@
 - from: G2-GR82-V1-REST-POSE-GUARD
 
 ## G2-GR78-SURFACE-CENTROID-CHECK: 表面重心の極端値精度を確認する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: G2-GR78-SURFACE-CENTROID で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR78-SURFACE-CENTROID の done-when を満たすことを確かめる。満たさなければ G2-GR78-SURFACE-CENTROID の done-when と paths の範囲で直す。
@@ -4377,7 +4430,8 @@
 - from: G2-GR78-SURFACE-CENTROID-CHECK
 
 ## G2-GR77-NATIVE-ACCEPTANCE-CHECK: 実物GLBとnative統合の受入れを記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: G2-GR77-NATIVE-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR77-NATIVE-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR77-NATIVE-ACCEPTANCE の done-when と paths の範囲で直す。
@@ -4386,7 +4440,8 @@
 - from: G2-GR77-NATIVE-ACCEPTANCE
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-P3-CHECK: GPU 計測の撮影でも、終了までの描画フレームを SceneReady の後から数える(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-MEGA-FIX-TLAS-REBUILD-P3 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-TLAS-REBUILD-P3 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-TLAS-REBUILD-P3 の done-when と paths の範囲で直す。
@@ -4397,7 +4452,8 @@
 - from: SCN-MEGA-FIX-TLAS-REBUILD-P3
 
 ## SCN-MEGA-FIX-TLAS-REBUILD-CHECK: TLAS を、インスタンスの顔ぶれが替わったら作り直す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-MEGA-FIX-TLAS-REBUILD で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-TLAS-REBUILD の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-TLAS-REBUILD の done-when と paths の範囲で直す。
@@ -4407,7 +4463,8 @@
 - from: SCN-MEGA-FIX-TLAS-REBUILD
 
 ## SCN-MEGA-FIX-STRESS-GPU-CHECK: 1M + mega-stress 5 万個の GPU 時間を 16.6 ms に収める(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-MEGA-FIX-STRESS-GPU で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU の done-when と paths の範囲で直す。
@@ -4417,7 +4474,8 @@
 - from: SCN-MEGA-FIX-STRESS-GPU
 
 ## PT-NONUNIFORM-SAMPLER-CHECK: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: PT-NONUNIFORM-SAMPLER で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、PT-NONUNIFORM-SAMPLER の done-when を満たすことを確かめる。満たさなければ PT-NONUNIFORM-SAMPLER の done-when と paths の範囲で直す。
@@ -4427,7 +4485,8 @@
 - from: PT-NONUNIFORM-SAMPLER
 
 ## SCN-INTERIOR-SHAFTS-CHECK: 窓から入る光の筋を出す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-INTERIOR-SHAFTS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-INTERIOR-SHAFTS の done-when を満たすことを確かめる。満たさなければ SCN-INTERIOR-SHAFTS の done-when と paths の範囲で直す。
@@ -4437,7 +4496,8 @@
 - from: SCN-INTERIOR-SHAFTS
 
 ## TEST-FULL-CTEST-BASELINE-CHECK: 全体CTestの既存の失敗を直す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: TEST-FULL-CTEST-BASELINE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、TEST-FULL-CTEST-BASELINE の done-when を満たすことを確かめる。満たさなければ TEST-FULL-CTEST-BASELINE の done-when と paths の範囲で直す。
@@ -4446,7 +4506,8 @@
 - from: TEST-FULL-CTEST-BASELINE
 
 ## SCN-THUMBNAILS-CHECK: ランチャーのカードに各シーンの見本画像を出す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-THUMBNAILS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-THUMBNAILS の done-when を満たすことを確かめる。満たさなければ SCN-THUMBNAILS の done-when と paths の範囲で直す。
@@ -4456,7 +4517,8 @@
 - from: SCN-THUMBNAILS
 
 ## FIX-NORMAL-MATRIX-SCALE-CHECK: 法線行列の小スケール退化判定を尺度不変にする(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: FIX-NORMAL-MATRIX-SCALE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、FIX-NORMAL-MATRIX-SCALE の done-when を満たすことを確かめる。満たさなければ FIX-NORMAL-MATRIX-SCALE の done-when と paths の範囲で直す。
@@ -4466,7 +4528,8 @@
 - from: FIX-NORMAL-MATRIX-SCALE
 
 ## GAME-GR136-VFX-CHECK: Niagara 相当の VFX システムを実装する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: GAME-GR136-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR136-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR136-VFX の done-when と paths の範囲で直す。
@@ -4475,7 +4538,8 @@
 - from: GAME-GR136-VFX
 
 ## G2-GR32-GPU-ACCEPTANCE-CHECK: 多材質と旧描画互換をWindows GPUで確認する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: G2-GR32-GPU-ACCEPTANCE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE の done-when と paths の範囲で直す。
@@ -4487,7 +4551,8 @@
 - from: G2-GR32-GPU-ACCEPTANCE
 
 ## GAME-GR133-VFX-CHECK: デカール（地面や体に残る跡）を実装する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: GAME-GR133-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR133-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR133-VFX の done-when と paths の範囲で直す。
@@ -4497,7 +4562,8 @@
 - from: GAME-GR133-VFX
 
 ## GAME-GR134-VFX-CHECK: メッシュのエフェクトを実装する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: GAME-GR134-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR134-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR134-VFX の done-when と paths の範囲で直す。
@@ -4507,7 +4573,8 @@
 - from: GAME-GR134-VFX
 
 ## GAME-GR137-VFX-CHECK: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: GAME-GR137-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR137-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR137-VFX の done-when と paths の範囲で直す。
@@ -4517,7 +4584,8 @@
 - from: GAME-GR137-VFX
 
 ## GAME-GR130-VFX-CHECK: 剣のトレイル（リボン）を実装する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: GAME-GR130-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR130-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR130-VFX の done-when と paths の範囲で直す。
@@ -4527,7 +4595,8 @@
 - from: GAME-GR130-VFX
 
 ## GAME-GR135-VFX-CHECK: 空気の歪み（屈折）を実装する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: GAME-GR135-VFX で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、GAME-GR135-VFX の done-when を満たすことを確かめる。満たさなければ GAME-GR135-VFX の done-when と paths の範囲で直す。
@@ -4643,7 +4712,8 @@
 - from: GAME-GR130-VFX-CHECK
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK: 崖の生成に、壁から崖錐へ移る崩れた大きな塊を足す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-WL-CLIFF-GEN-TALUS で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-GEN-TALUS の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-GEN-TALUS の done-when と paths の範囲で直す。
@@ -4725,7 +4795,8 @@
   - 塊が遮蔽の組の小物の書き出し（occlusion_props）に入ると、遮蔽の Cycles の正解が古くなる。遮蔽の組は rocks・rocks-cliff で、視点は contact_near・ref_cliff_01、範囲は視点から 300 m 以内。入るなら `要起票:` で残す。
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P2: 荒野の遮蔽の比べの Cycles の正解を、版 19 に焼き直した地形で描き直す
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - after: SCN-WL-CLIFF-GEN-TALUS-CHECK
@@ -4860,7 +4931,8 @@
 - from: TEST-FULL-CTEST-BASELINE-CHECK
 
 ## G2-GR32-GPU-ACCEPTANCE-P1-CHECK: スキニングの計算と出力の頂点の範囲を、submesh ごとでなく component ごとに 1 回にする(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: G2-GR32-GPU-ACCEPTANCE-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、G2-GR32-GPU-ACCEPTANCE-P1 の done-when を満たすことを確かめる。満たさなければ G2-GR32-GPU-ACCEPTANCE-P1 の done-when と paths の範囲で直す。
@@ -4894,7 +4966,8 @@
   - `Busy` の期待や callback の回数の期待を弱める
 
 ## SCN-MEGA-FIX-STRESS-GPU-CHECK-P1-CHECK: RT と GI を切って撮る開発用の起動引数 `--rt-gi=off` を足す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-MEGA-FIX-STRESS-GPU-CHECK-P1 の done-when と paths の範囲で直す。
@@ -4940,7 +5013,8 @@
 - stop-when: 2 本を ctest の対象や CI の `-R` から外して通す、受付を締める検査(`requestDuringClear == 0`)を緩める・消す、プッシュする、workflow を起動する。
 
 ## SCN-WL-CLIFF-GEN-TALUS-CHECK-P1-CHECK: 壁から崖錐へ移る所の崩れた大きな塊（数 m〜十数 m）を、岩の物として崖の生成の 7 範囲の壁の足元に置く(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-GEN-TALUS-CHECK-P1 の done-when と paths の範囲で直す。
@@ -5010,7 +5084,8 @@
 - from: G2-MATERIAL-SELECTION-INTEGRATION-P1-P1-P1-P1
 
 ## SCN-WL-CLIFF-BLOCKS-CASTLE-CHECK: 崖の生成の castle の 5 範囲（ref_far_01、5〜9 km）の壁の足に、崩れた塊を物の岩として置き、far_01 の壁の足の一致を上げる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: SCN-WL-CLIFF-BLOCKS-CASTLE で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、SCN-WL-CLIFF-BLOCKS-CASTLE の done-when を満たすことを確かめる。満たさなければ SCN-WL-CLIFF-BLOCKS-CASTLE の done-when と paths の範囲で直す。
@@ -5078,7 +5153,7 @@
 - notes: 確かめ直しの (b)。今あるのは、臨界減衰の半減期と 1/30・1/60・1/144 の一致（CriticalDampingTest.cpp）、衝突の解の d-margin・即時の縮め・伸ばしの速さの上限（CameraCollisionSolverTest。要件の受け入れ確認を満たす）、球の掃引の probe のフィルタ（SceneCameraProbeTest）、物理の実体で壁にアームが縮み Trigger を除外し補間した描画の位置を読む 1 例（PhysicsFixedStepPipelineTest.cpp 1183-1261 行）。要件 `#### GR06` の受け入れ確認のうち、オーバーシュート、不規則な dt、目標が動くときの速度の連続、ヨーの最短角、速度演出の単調と飽和、Trauma の減衰、FollowCameraLateTickTest、自身を除外しないときの再現は無い。ロックオン・焦点・フェード・設定の解析（FollowCameraProfile.cpp）は試験が 1 本も無い。FollowCameraLateTickTest はロードマップ 275 行が ApplicationFixedStepPipelineTest の束に置くと書くが、`FollowCameraComponent` は Game のソースで `PhysicsDynamicsTest` にだけ組み込まれている（Test/Modules/Physics/CMakeLists.txt 69-73 行）ので、この束の新しい MEMBER の中で World を手で進めて測る（固定ステップの手順は PhysicsFixedStepPipelineTest.cpp 1223-1229 行の PrepareRenderInterpolationStep、移動、CaptureRenderInterpolationStep、SetRenderInterpolationAlpha に倣う）。偽の provider の結び方は `Test/Core/Camera/SceneCameraProbeTest.cpp` に倣う。CMakeLists.txt の MEMBER の行は `MEMBER PhysicsFixedStepPipelineTest` の次、add_test は末尾に置く（他のタスクの行と hunk を分ける）。臨界減衰のばねは共通の部品として `Math/CriticalDamping.h` に既にある（ロードマップ 4458 行の直す点は満たしている）。5 本のレイの対比の試験は作らない（ロードマップ 264 行で球の掃引に決まっている）。やらないこと: しがみつき中の補正と `ILockOnTarget`（`G4-GR06-CLING-LOCKON`）、低い視点の数値の決定（`FollowCameraProfile.json` の仮の値のまま）。
 
 ## G5-GR28-DRAW-INDIRECT: RHI にインデックス無しの間接描画（単発・件数つき）を足し、多重の間接描画の能力を正しく扱う
-- status: todo
+- status: done
 - gr: GR28
 - done-when: `ICommandList` に既定実装つき（何も記録せず false を返す）の `DrawIndirect(indirectBuffer, offset, drawCount, stride)` と `DrawIndirectCount(indirectBuffer, indirectOffset, countBuffer, countOffset, maxDrawCount, stride)` を足し、`VulkanCommandList` が引数を検査して（オフセットが 4 の倍数・`ResourceUsage::IndirectBuffer` を持つ・範囲内・`drawCount>1` は `bMultiDrawIndirect` があるときだけ・Count 版は `bDrawIndirectCount` があるときだけ。満たさなければ false で何も記録しない）記録する。`DeviceCapabilities::bMultiDrawIndirect` を足し、論理デバイスの作成で物理デバイスが対応するときだけ `multiDrawIndirect` を有効にする（`drawIndirectFirstInstance` と同じ書き方。VulkanDevice.cpp:1420）。`Library/Core/Public/RHI/IndirectCommands.h` に `DrawIndirectCommand`（16 バイト）と、既存の `DispatchIndirect` が読む `DispatchIndirectCommand`（12 バイト）を置く。`MegaGeometryPass.cpp:5020` と `VisibilityRasterPass.cpp:1571` の「Count が無いときに drawCount=区間の容量で `DrawIndexedIndirect` を呼ぶ」分岐を、`bMultiDrawIndirect` が無ければ drawCount=1 の繰り返しにする。CPU の `RHIIndirectApiContractTest`（`RHIRayTracingApiContractTest` の束の MEMBER）が、新しい 2 つを実装しない最小の偽のコマンドリストがコンパイルでき既定で false を返すことを確かめる。GPU の `IndirectDrawVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。`IndirectDispatchVulkanTest` と同じ作り）が、計算シェーダーが書いた `DrawIndirectCommand{3k,1,0,0}` で小さな描画先に描いた被覆画素が三角形 k 個分に一致する・カウントが 0 で何も描かれず 2 で 2 件分描かれる・drawCount>1 は `bMultiDrawIndirect` が無ければ false・能力を偽ると Count 版が false、をどれも validation のメッセージ 0 件で確かめる。既存の `IndirectDispatchVulkanTest` と golden 4 本が変わらず通る。
 - verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
@@ -5153,7 +5228,8 @@
 - notes: 確かめ直し (b)。今の止まり方: G1 のコミット(4f033d86〜da0c30cb、2026-10-03)が、この試験の `PhysicsFixture` の利用を 1 ケースから 7 ケースへ増やした(のちに ColliderLocalPose で 8)。fixture は毎回 `assert(Registry.InstallAll(Engine))`(`PhysicsBroadphaseQueryTest.cpp:230`)で大域の ModuleRegistry を入れ直すが、`ModuleRegistry::InstallAll` は Created 以外の段では何もせず false を返し(`ModuleRegistry.cpp:75-80`)、`ShutdownAll` の後は Uninstalled になる(`ModuleRegistry.cpp:198-232`)。このため 2 個目の fixture(`TestColliderMetadataSnapshot`)で assert が落ち、以後の GR08 の統合のケースは一度も走っていない。PROGRESS.md:1967 と 2395 に既知の失敗として記録があり、2026-11-03 に 10-23 の Debug ビルドで同じ assert を再現した。G1 を書いた AI は Windows でビルドも実行もできず(`Docs/Architecture/GameFoundationValidation.md:43-50`)、この統合は未実行のまま。直し方: 試験の側で、ケースごとに子プロセスで走らせる(`ApplicationFixedStepPipelineTest.cpp` の `kCaseCount` と子プロセスの作りが前例)か、1 つの fixture を全ケースで使い回して World だけ作り直す。ModuleRegistry の冪等のガードを緩める製品の変更はしない(Engine の寿命の契約。危険地帯)。`InstallAll` のような副作用のある呼び出しは `assert(...)` の外へ出す(NDEBUG で呼び出しごと消える。`Docs/Testing.md` の負債の節)。同じ 10-23 の Debug ビルドで pass を確かめたもの(2026-11-03): PhysicsProxyQueryTest・PhysicsProxyVisitorTest・PhysicsRayPrecisionTest・PhysicsQueryPruningTest・PhysicsLegacyQueryTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・PhysicsDynamicsTest・PhysicsFixedStepPipelineTest・PhysicsLifecycleEventTest・GeometryContactTest・GeometrySeparationTest・GeometrySweepTest。これらの期待値は変えない。SceneQueryRaycastTest・SceneQueryOverlapTest・PhysicsModuleLinkTest は今回回していない(G1 前からある試験。落ちたら着手前の状態で再現するかを先に確かめる)。G4 の試験(PhysicsCharacterMoveTest・ColliderLocalPoseTest・CharacterPlatformMotionTest・CharacterDriveOptionsTest・DogMovementSmokeGeometryTest)は verify の外で着手前と後に回し、新しく落ちたものだけを回帰とみなす。終わったら `Docs/Architecture/PhysicsQueries.md` の「Windows.h 依存で未確認」の行(12・24・30・37・68 行)を、Windows の Debug で回した記録に直す。文書: ロードマップ 136・148-149・159 行、要件 `#### GR08` の受け入れ確認(GameFeatureRequirements.md:1050-1060)。選定課題: G1-S6 は (c) を採り、自前の物理を続ける(G4 の CharacterMover が既にこのクエリの上に載っていて、外部物理へ移す具体の要求が出ていないため。移すなら IPhysicsSceneQueryProvider の裏で差し替える)。G1-S9 は (a)(`RefreshDynamicSnapshot` は実装済み。常用は G12 の GR09 の後)。やらないこと: Release 構成での実行(要件の注のとおり許可が出たときに 1 回)、OBB の掃引・CCD、性能の計測。
 
 ## G3-GR10-ANIM-DEBUG-LAUNCH-CHECK: 合成の調整画面（--animation-debug）で状態・重み・位相・ソケットの追従を目で確かめ、既定の経路のスキンの描画が崩れていないことを撮って確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G3-GR10-ANIMATOR-ORACLE, G3-GR10-GRAPH-FORMAT-GAPS, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR10, GR12, GR13
 - check: launch
@@ -5194,7 +5270,7 @@
 - notes: 確かめ直しの (b)。`G4-GR128` は構文確認だけで done になっている。統合の差分（1b5e925c）で `SkeletalClipProcessing.cpp` に外れ値の置き換え・平滑・周期の平均・時間の補正が入った（SkeletalClipProcessing.cpp 91 行・364-424 行・567-703 行）が、`ReplacedSpikes`・`SmoothedChannels`・`AveragedCycles`・`SpikeThresholdRadians`・`bAverageCycles`・`SmoothingRadius` を見る試験は 1 本も無い（`TimeScale` だけ RigStaticRootFrameWireTest.cpp 136 行・218 行が使う）。周期の検出とループの切り出しの既存の検査は `Test/Core/Asset/SkeletalClipProcessingCases.h`（G2 の GR84 の分）にある。合成のクリップの作り方はそのファイル 12-40 行の `SkeletalClipPoseSource` の Sample の callback に倣う。要件 `#### GR128` の受け入れ確認の MotionProcessingTest (i)〜(iv)・(vi) に当たる。接地の (v) は cook の側にあるので `G4-GR128-CLEANUP-CASES` で見る。G4-S2 の決定: (C) C++ だけを採る（推奨の (A) 二段構えの Slice 0 の Blender の台本は NorvesLib に置かない）。理由: 統合済みの実装が既に C++ の経路（Core の `ProcessSkeletalClip` と AssetCook の `ApplyRigMotionCleanup`。role-profile の processing で明示して有効にする）になっていて、(C) の欠点だった GR84（BVH の読み込み）と GR82（クリップの形式）の完了待ちは G2 の統合で解けている。CTest と決定論に最初から載る。副問 1: Blender の台本が要るなら DogGame の art/generator/ に置く（企画の資料を NorvesLib に入れない取り決め）。副問 2: 周期の検出・再サンプル・ループは Core の共通の処理（GR84 と GR11 の `DetectCycle` が使うもの）だけにし、AssetCook は再実装しない。Blender 版と C++ 版の同値の確かめ（受け入れ確認）は、Blender 版を作らないので行わない。CMakeLists.txt の MEMBER の行は `MEMBER SkeletalBvhClipImportTest` の次、add_test は 315 行の `SkeletalBvhClipImportTest` の次に置く（`G4-GR128-CLEANUP-CASES` の行と hunk を分ける）。ロードマップ 4456 行は GR128 を G9 へ移す案を書くが、ここでは G4 の担当として確かめ直す。やらないこと: 足の IK の固定、別の骨格への再接地（GR85・GR14）。
 
 ## G5-GR29-RHI-FORMATS: RHI に残りの形式（R16G16・RGB10A2・R11G11B10F・BC3・BC6H）を足し、形式の表を 1 つにして対応の照会を作る
-- status: todo
+- status: done
 - gr: GR29
 - done-when: `RHI::Format` の末尾に `R16G16_UNORM`・`R10G10B10A2_UNORM`・`R11G11B10_FLOAT`・`BC3_UNORM`・`BC3_SRGB`・`BC6H_UFLOAT` を足す（既存の値は変えない。RHITypes.h:48 の注記）。形式ごとの性質（ブロックの幅・高さ・バイト数、チャンネル数、圧縮・深度・sRGB・整数か）を 1 つの表（`Library/Core/Public/RHI/FormatInfo.h`）に置き、`GetFormatBlockInfo`・`GetFormatBytesPerPixel`（IGPUResourceAllocator.h:90。表に無い形式を黙って 4 バイトとみなす既定をやめ、assert と 0 にする）・`IsBlockCompressedFormat`・`IsUnsignedIntegerFormat` をそこから引く。Vulkan の対応表の 2 か所（`VulkanDevice::InitFormatMaps` VulkanDevice.cpp:1813 と `ConvertToVkFormat` VulkanTexture.cpp:284）を 1 つの表から引く形にし、`Format` と `vk::Format` の対応が全単射であることを試験で確かめる。`IDevice::IsFormatSupported(Format, 用途)`（標本・描画先・storage・線形ブリットのミップ生成。`vkGetPhysicalDeviceFormatProperties`）を足し、`GpuResourceStore` は線形ブリットのミップ生成に対応しない形式で `GenerateMipmaps` を呼ばない（VulkanCommandList.cpp:1967 の throw に至らない）。`TextureCreateInfo::Format`（GpuResourceTypes.h:57）に同じ形式を足し、`GpuResourceStore` の形式の switch（`GetTextureBytesPerPixel` GpuResourceStore.cpp:184 ほか）と `ImpostorBake.cpp` の switch を表へ寄せる。CPU の `RHIBlockCompressedFormatTest` を、全形式が表を持つ・BC3/BC6H が 4x4 で 16 バイト・ミップの末尾（2x2・1x1）が 1 ブロックを占める、へ広げる。GPU の `RHIBlockCompressedTextureVulkanTest` に手で組んだ BC3・BC6H のブロックの標本を足し、新しい `RHIFormatReadbackVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が R16_UNORM・R16G16_UNORM の 16bit の勾配を k/65535 の誤差 1e-5 以内、R10G10B10A2_UNORM を 10bit の量子化に厳密一致、R11G11B10_FLOAT を描画先に描いて読み戻して仮数のビット数の許容内で確かめる（描画先に使えない装置では `IsFormatSupported` が偽を返し、その場合だけ skip と理由をログに出す）。golden 2 本と既存の BC・テクスチャの試験が変わらず通る。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedTextureUploadTest RenderingGoldenImageTest Game -- /m:1`
@@ -5203,7 +5279,7 @@
 - notes: 確かめ直し: GR29 の大半は VTG1-RHI-BC-FORMATS・VTG1-BC-UPLOAD（作者の Windows の環境で検証済み。Docs/History/2026-10-07-G2Integration/CompletedTasks-01.md）で済んでいる（BC1/BC4/BC5/BC7・R16_UNORM・R32_UINT・textureCompressionBC の照会と有効化・`DeviceCapabilities::bTextureCompressionBC`・ブロック単位の見積り `EstimateTextureSize`・全ミップのアップロード）。この項目は残りだけを扱う。決定: `GenerateMipmaps` の戻り値は void のままにし（純粋仮想の型を変えると全部の偽のコマンドリストに波及する）、呼ぶ前に `IsFormatSupported` で弾く契約にする。ロードマップの「throw でなく false を返す」の代わりで、目的（非対応の形式で落ちない）は同じ。`FrameCaptureReadbackHelper` は未知の形式を既に false で返す（FrameCaptureReadbackHelper.cpp:651）ので変えない（その試験 `FrameCaptureReadbackHelperTest` は実行から外されている。Docs/Testing.md）。BC3 の符号化は bc7enc_rdo の rgbcx に既にある（Library/ThirdParty/bc7enc_rdo/upstream/rgbcx.h:255）が、クッカーへつなぐのは G5-GR88-BC6H-QUALITY。R11G11B10F の描画先・R16_UNORM の storage の可否は本機で未確認なので実行時に照会する。軽量 HDR の描画先への切り替え（SceneColor を R11G11B10F にする）はこの項目でしない（既定の描画経路と見た目が変わる。絶対規則7）。危険地帯（RHI 公開 API・Vulkan）なので評価者を通す。ロードマップ GR29（299〜341 行）、要件 `#### GR29`。
 
 ## G5-GR88-HDR-INPUT: クッカーが EXR・HDR の浮動小数の入力を読み、浮動小数の HDR と 16bit の高さ・2 チャンネルを精度を落とさず焼く
-- status: todo
+- status: done
 - after: G5-GR29-RHI-FORMATS
 - gr: GR88
 - done-when: `Tools/AssetCook/TextureCooker` が `.exr`（`NorvesThirdParty_TinyEXR`。Library/Core/CMakeLists.txt:862 の静的ライブラリを AssetCook にもリンクし、include を足す）と `.hdr`（`stbi_loadf_from_memory`）を浮動小数のまま読む。`--usage hdr` が RGBA16F（無圧縮・全ミップ。ミップは線形の平均）を書く。`--usage height16` が浮動小数の入力を `--height-range <min>,<max>` で 0..65535 へ正規化して R16 を書く（範囲外の値があれば失敗。黙って丸めない）。`--require-16bit` を付けると 8bit の入力の height16 は失敗する（今は x*257 で拡大して通す。TextureCooker.cpp:695 の `DecodeSourceImage16`）。2 チャンネル 16bit の `--usage rg16`（R16G16_UNORM、線形、全ミップ）を足す。NVTEX に RGBA16F と RG16UNorm の画素形式（色空間は Linear だけを許す）を足し、`CookedTextureLoader` と `MapCookedTextureFormat`（CookedTextureUpload.cpp）が RHI の `R16G16B16A16_FLOAT`・`R16G16_UNORM` へ写して読み込める。`AssetCookTextureUsageSmoke`（`AssetCookTextureSmoke` から呼ぶ）に、小さな合成の EXR（float の勾配。fixture をリポジトリに置く）を hdr で焼いた mip0 が半精度の丸めの範囲で入力と一致・height16 の EXR の正規化が期待の整数に一致・範囲外の値で失敗・8bit 入力と `--require-16bit` で失敗、を足す。`CookedTextureTest` に新しい 2 形式のヘッダとミップのバイト数・Linear 以外の色空間の拒否を足す。既存の用途（albedo・normal・orm・single・height16）の出力が同じ入力で cooked_hash 不変。
@@ -5213,7 +5289,7 @@
 - notes: 確かめ直し: GR88 の大半は VTG1-NVTEX-V01・VTG1-BC7ENC-VENDOR・VTG1-COOKER-USAGE・VTG1-MATERIAL-ORM・VTG1-STARTUP-COOKED（作者の Windows の環境で検証済み。Docs/History/2026-10-07-G2Integration/CompletedTasks-01.md）で済んでいる（用途別の BC7/BC5/BC4 の cook、16bit PNG の height16 の精度、法線のミップの非正規化平均と再正規化、ORM の 1 枚、`--flip-normal-y` Main.cpp:318、BC5 の法線の Z の復元、起動画面のクック済みの BC）。asset-set の用途は `Scripts/CookAssets.ps1:646` が `--usage` を渡しているので扱わない。この項目は残りの浮動小数の入力と 16bit の厳格さだけ。決定: ロードマップの ARM の 3 枚の BC4 への展開（設計(7)）は採らない。VTG1 で ORM の 1 枚（BC7 linear）に決まって起動画面がそれで描かれているため。NVTEX は今 v0.2（タイル配置。TextureCooker.cpp:1252 の nvtex.v0.2.*）なので、新しい形式は今の版の読み込みを保つ作法で足す（旧版を読めなくしない）。実物の HDR の資産はリポジトリに入れない（fixture は合成）。BC6H は G5-GR88-BC6H-QUALITY。危険地帯（アセットロード）なので評価者を通す。ロードマップ GR88（342〜392 行）の設計(1)(2)(8)、完了条件の GR88【16bit】、要件 `#### GR88`。
 
 ## G5-GR88-BC6H-QUALITY: BC6H と BC3 をクッカーへつなぎ、実物のテクスチャで圧縮の画質を測って記録する
-- status: todo
+- status: done
 - after: G5-GR29-RHI-FORMATS, G5-GR88-HDR-INPUT
 - gr: GR88
 - done-when: BC6H の符号化を `Library/ThirdParty/DirectXTex/` に固定の版で取り込み（`LICENSE`・`UPSTREAM.json` に版・commit・取得元・sha256・SPDX。BC の符号化と復号に要るファイルだけ）、独立の静的ライブラリにして AssetCook にだけリンクする（Core・Game はリンクしない。`Library/ThirdParty/bc7enc_rdo/` の前例）。`Tools/AssetCook/BlockCompressor` に BC6H（符号なし）と BC3（bc7enc_rdo の rgbcx の `encode_bc3`）を足し、`--usage hdr` の既定を BC6H にし（RGBA16F は `--format rgba16f` の明示で残す）、`--format bc3` を受ける。NVTEX に BC3（Linear・sRGB）と BC6H（Linear だけ）の画素形式を足し、`MapCookedTextureFormat` が RHI の `BC3_UNORM`/`BC3_SRGB`/`BC6H_UFLOAT` へ写して読み込める。`AssetCookBlockCompressSmoke` に、BC6H（合成の HDR 画像を符号化・復号した対数の誤差）と BC3 の PSNR のケースと、`Assets/Textures/Silver` の実物（`silver_albedo.png` を BC7 sRGB、`silver_normal-ogl.png` を BC5、AO・粗さ・メタリックを詰めた ORM を BC7 linear）を 512 四方に切り出して符号化・復号した画質（albedo の PSNR、法線の平均と最大の角度の誤差、ORM の各チャンネルの最大差）を測って出すケースを足す。初回の実測値を `Docs/RenderingValidation/TextureCompressionAcceptance.md`（新規）に記録し、しきい値は実測から置く（ロードマップの暫定値は albedo 40 dB 以上・法線の平均 1.0 度以下・最大 6 度以下・ORM 8/255 以下）。`CookedTextureTest` に BC3・BC6H のヘッダとミップのバイト数・BC6H と sRGB の組の拒否を足す。既存の用途の出力は cooked_hash 不変。
@@ -5242,7 +5318,7 @@
 - notes: IK・ボーン制約の実装は今のコードに無い（`Library`・`Game`・`Tools`・`Test` を `TwoBoneIK|GroundQuery|ClipOptimizer` で検索して 0 件、2026-11-03）。解はモデル空間の位置と回転だけで定義し、関節ローカルへの戻しは呼び出し側（`G9-GR15-POSE-MODIFIER-BASE` の `AngleDistribution` の補助や cook 側）がする。これで回転の規約（LocalPose は glTF の列規約、`Library/Core/Public/Animation/PoseTypes.h:9`）にこの関数が依存せず、ロードマップ G9 のリスク「回転規約や軸の取り違え」をオラクルの試験で固定できる。名前は要件 GR85 の `TwoBoneIk` ではなく GR14 の `TwoBoneIK` に揃える。外部の段階を待たないので needs-gr は無い。GR85 の再接地（`G9-GR85-FOOT-REPLANT`）もこの関数を使う。出典: 要件 `#### GR14` の設計案【ソルバ】(1)、受け入れ確認の TwoBoneIKTest。
 
 ## G9-GR87-CLIP-OPTIMIZER: cook 時にクリップのキーを誤差の上限つきで減らす段（形式は変えない）を足す
-- status: todo
+- status: done
 - gr: GR87
 - needs-gr: GR82, GR84, GR12
 - done-when: (1) `ClipOptimizer`（`Library/Core/Private/Animation/ClipOptimizer.h/.cpp`）: 四元数の半球の連続化、定数チャンネルの 1 キー化（全キーが先頭から許容内）、bind（作者 rest）のローカルと許容内で等しいチャンネルの削除、チャンネルごとの誤差つきキー削減（Ramer–Douglas–Peucker 型の貪欲法。回転の許容は関節基準 δθ_j = ε_pos / L_j、L_j はその関節から下流の末端またはスキン頂点までの最大距離）、元のキー時刻と中点と 3 倍のオーバーサンプルで元と削減後を同じ評価の経路で比べる大域検証（関節位置と頂点位置の最大誤差。超えたら許容を 0.7 倍にして最大 4 回やり直し、それでも超えたら失敗）を作る。先頭のキーと DurationSeconds の時刻のキーは必ず残し、全チャンネルを消してクリップを空にしない。決定的（並べ替えやハッシュの順に依らない）で冪等。`ClipCompressionReport` の JSON（キー数とバイト数の前後、関節ごとの最大位置誤差 m と回転誤差 °、頂点の最大誤差 m、削除・1 キー化したチャンネル数）を出す。平滑化はしない。(2) AssetCook に `--clip-optimize`、`--clip-max-vertex-error-m`（既定 0.002、仮）、`--clip-max-joint-error-m`（既定 0.001、仮）、`--clip-max-rotation-error-deg`（既定 0.1、仮）、`--clip-report <path>` を足し、旧形式の glTF→NVSKEL の cook（`CookGltfToNvskelInternal` の decode の直後）と、v1 の ClipBank を作る cook（`--rig-split`・`--retarget-clip`・`--bvh` の `BuildClipBankV1` の前。`replacementClips` の引数を使う）に差す。上限を超えたら cook を 0 でない終了コードと理由のメッセージで失敗させる。`--clip-optimize` を付けない cook の出力は変更前とバイト一致する。(3) `ClipOptimizerTest`（`CookedMeshTest` の束へ `MEMBER`）で、合成の正弦・ステップ・定数のチャンネルについて、(a) 定数は 1 キー化され bind と等しいものは消える、(b) 元のキー時刻と中点での誤差が指定の許容以下（≤ で厳密に）、(c) 2 回かけても変わらない、(d) 2 回の出力が一致する、(e) `Assets/Models/M9Skinned/` 相当の小さいメッシュで大域検証が頂点の最大誤差 ≤ max_vertex_error_m を保証する、(f) 最適化を切った経路の cook のバイト列が最適化の段を通さない経路と一致する、を確かめる。(4) 既存の `CookedSkeletalAssetTest`・`CookedClipBankV1Test`・`RigSplitCookTest`・`SkeletalBvhCookBridgeTest` を書き換えずに通し、下の verify が通る。
@@ -5253,7 +5329,8 @@
 - notes: 選定課題 G9-S4（圧縮の許容と平滑化）は推奨の A に決めた: 平滑化は G4 の GR128 だけが行い（`SkeletalClipProcessingSettings` の `SmoothingRadius`・`SpikeThresholdRadians` として既にある。`Library/Core/Private/Animation/SkeletalClipProcessing.h:20-24`）、GR87 は平滑しない。理由: 平滑は誤差を持ち込む見た目の判断で、GR128 と重ねると二重になる。許容（頂点 2 mm・関節位置 1 mm・回転 0.1°）は仮の既定値で、実 BVH（V01full）の前後を見て作者が決める。実 BVH の記録（`NORVES_REAL_BVH`）は任意で、完了条件に入れない。今のコードの事実: 旧形式のローダは DurationSeconds と最大のサンプル時刻の一致を要求し（`Library/Core/Private/Asset/CookedSkeletalLoader.cpp:614`）、v1 の ClipBank はチャンネルの無いクリップを拒む（`Library/Core/Private/Asset/CookedClipBankV1.cpp:223-224`）ので、終端のキーとチャンネル 1 本以上を残す。v1 の cook は 3 か所で `BuildClipBankV1` を呼ぶ（`Tools/AssetCook/RigClipBankCook.cpp:27`・`RigRetargetCook.cpp:306`・`RigSplitCook.cpp:502`）。UNCERTAIN: クリップに無い関節が bind（作者 rest）のローカルに戻るかを、旧形式と v1 の両方の評価の経路で確かめていない。解消するには `SkeletalPoseBuilder` と `ClipChannelSampler` の欠けたチャンネルの扱いを読む。戻らない経路では、bind と等しいチャンネルも消さずに 1 キー化に留める。ロードマップの「GR85 と GR87 は MeshCooker.cpp・Main.cpp を共有するので同時には進めない」に従い、GR85 のタスクはこのタスクの後に置いた。アセットロードの危険地帯なので評価者を通す。出典: 要件 `#### GR87` の設計案 (1)〜(4)(7)、受け入れ確認の ClipOptimizerTest と【互換】、ロードマップの選定課題一覧の G9-S4。
 
 ## FIX-NORMAL-MATRIX-SCALE-CHECK-P1-CHECK: GPU スキニングの法線行列の退化判定を、CPU と同じ尺度不変の規則にする(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gpu: exclusive
 - done-when: FIX-NORMAL-MATRIX-SCALE-CHECK-P1 で、当分アプリを起動しない決まりのため後回しにした確かめ(下の verify)を回し、FIX-NORMAL-MATRIX-SCALE-CHECK-P1 の done-when を満たすことを確かめる。満たさなければ FIX-NORMAL-MATRIX-SCALE-CHECK-P1 の done-when と paths の範囲で直す。
@@ -5283,7 +5360,8 @@
 - notes: 確かめ直し (c)。選定課題 G1-S7 は (b) を採る: エンジンはビットの型(`PhysicsCollisionMask`、`PhysicsQueryTypes.h:92-94`)と `Default` だけを持ち、名前とビットの対応はデータに置く(草・知覚の名前は好感触の提案に依り後で変わるので、エンジンの型に焼き込まない。G1 の実装も `PhysicsQueries.md:4` で「ゲームが名前とbit割当を決め、Core/Physicsにゲーム固有名を置かない」と決めている)。ただし今のコードには名前の表がどこにも無い(`Terrain`・`CameraBlock`・`Hurtbox` の文字列は Library・Game・Assets/Config に 0 件)。このままだと、カメラの遮蔽(G4 の GR06。今の `FollowCameraComponent.cpp:203-208` は自分を除くだけで全レイヤーに当たる)、攻撃判定(G8 の GR16)、取り込み設定でのレイヤーの指定(G17 の GR81。Tools から読めるよう、読み込みは Game でなく Core に置く)、知覚(G13)が、それぞれビットの値を手で書くことになる。表の読み込みは Core、データは Assets、読む時点は Game とし、Game は表を持つだけで、使う側の書き換え(カメラの遮蔽を CameraBlock に絞るなど)はしない(見た目と挙動を変えないため。各段階が採る)。JSON の読み方は `InputBindingJson.cpp`(`Text/JsonDocument.h`)にそろえ、独自の型(Container::String・VariableArray)を使う。`PhysicsLayerTableTest` は `SceneQueryRaycastTest` の束へ MEMBER で足す(`Test/Core/Object/CMakeLists.txt:47-58`)。足す理由(`Docs/Testing.md` の 3 点を同じ変更で書く): 反証する契約は「名前は表のとおりの 1 ビットに引け、未知の名前・重複・範囲外は拒まれる」。ほかの手段では気づけない(ビットを取り違えても、壁を素通りするカメラや当たらない攻撃として、ログも出ずに現れる)。失敗は黙って起きる。新しい公開ヘッダは `Library/Core/CMakeLists.txt` の `PUBLIC_HEADERS` に、ソースは明示の一覧に足す。文書: ロードマップ 136 行、選定課題一覧の G1-S7(4492 行〜)、要件 `#### GR08`。やらないこと: シーンへの Layer の保存(G12 の GR93)、取り込み設定からの指定(G17 の GR81)、既存の呼び出し側の書き換え。 `after` は、同じ `PhysicsQueries.md` と SceneQuery の試験の束を触るため(並べると取り込みでぶつかる)。
 
 ## G1-GR01-TICK-SMOKE-CHECK: Game の起動で後段のカメラ確定の印 TICK_STAGE_SMOKE が 1 回出ることを、カメラの世界のスモークで機械で確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - check: launch
 - gr: GR01
 - done-when: `Scripts/Test-CameraWorld.ps1` が、既存の `CAMERA_COMPONENT_SMOKE` の印の数え方(`Test-CameraWorld.ps1:149-153`)と同じく、`TICK_STAGE_SMOKE order=ok stage=late_camera` がちょうど 1 回出ることを確かめ、無いか 2 回以上なら非 0 で終わる。Game の起動に `--window-background` を足す(利用者の前面の窓を奪わない。`Test-M8MinimalPhysics.ps1:112` が前例)。Debug で回して `CAMERA_WORLD_SMOKE result=pass configuration=Debug` を出す。`-ContractOnly` の結果(`CAMERA_WORLD_CONTRACT result=pass`)は変わらない。
@@ -5348,7 +5426,8 @@
 - notes: 確かめ直しの (c)。要件 `#### GR07` の受け入れ確認の Game スモーク（`--rendering3dtest-character-smoke` が `CHARACTER_SMOKE stage=complete` を出し、`Scripts/Test-CharacterMove.ps1` が Debug と Release で result=pass）、GR05 の LOCOMOTION_SMOKE（襲歩への到達時間・旋回の半径・着地の位置）、GR06 の 3 枚の撮影、GR02 の実機のヒットストップは、どれも起動しないと確かめられないが、それを流す仕組みが無い。今の `--dog-movement-smoke`（Game/GameModes/DogMovementSmoke/DogMovementSmokeRoutine.cpp）は床と壁だけの比較の画面で、人がキーを押して動かす。噛みつきの入力で 100 ms 止める印（236-251 行・285 行）と準備の印（297 行）はあるが、段・坂・足場・完了の印・自動の入力・台本（`Scripts/` に Test-CharacterMove.ps1 も Test-DogMovement.ps1 も無い）が無い。スモークの置き場は Rendering3DTest ではなくこの比較の画面にする（起動画面の見た目を変えない。AGENTS.md の絶対規則 7）。入力の記録と再生（GR99、G18）はまだ無いので、データの入力の列で代える（ロードマップ 280 行の「GR05 → GR99 は JSON で代える」と同じ考え）。 `--capture-deterministic` で毎フレーム 1/60 秒に固定するので、印の値は実行ごとに同じになり、許容差を狭くできる。`--scene` とは併用できない（GameApplicationHandler.cpp 3849-3861 行）ので、`Scripts/CaptureScene.ps1` は使わない。新しい Game のソースは Game/CMakeLists.txt の GLOB_RECURSE（CONFIGURE_DEPENDS）で拾われる。試験の束に新しいソースを足すときは、Test/Modules/Physics/CMakeLists.txt の SOURCES の末尾に置く（`G4-GR06-FOLLOW-CASES` の MEMBER の行と hunk を分ける）。起動して確かめるのは `G4-GR07-DOG-SMOKE-CHECK`。やらないこと: 地形（GR38）・草（GR44）、犬のモデルとアニメーションの差し替え、歩き方の数値の決定。
 
 ## G4-GR07-DOG-SMOKE-CHECK: 犬の移動のコースを起動して走らせ、移動・運動・カメラ・ヒットストップの起動の受け入れ確認を確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G4-GR07-DOG-SMOKE-COURSE, G4-GR07-MOVER-CASES, G4-GR07-BODY-CASES, G4-GR05-MODEL-CASES, G4-GR05-COMPONENT-CASES, G4-GR06-FOLLOW-CASES
 - gr: GR07
 - check: launch
@@ -5361,7 +5440,7 @@
 - notes: 当分アプリを起動しない決まりのため、`G4-GR07-DOG-SMOKE-COURSE` の起動の確かめをここへ分けた。要件 `#### GR07`（Game スモークと台本の Debug / Release）、`#### GR05`（LOCOMOTION_SMOKE）、`#### GR06`（低い視点・疾走の FOV の拡大・壁際の 3 枚と、FOV とアーム長の数値）、`#### GR02`（ヒットストップ 0.1 秒でカメラが止まらずワールドだけが止まる）の起動の受け入れ確認を 1 回の起動の流れでまとめて見る。`gr` は GR07 だけを書いたが、GR05・GR06・GR02 の起動の確かめも兼ねる。GPU を占有する計測はしない（撮影 3 枚と印だけ）。GR06 の受け入れ確認の「起動画面（Rendering3DTest 既定）が変わらないこと」は、G4 の統合（1b5e925c、2026-10-08）から起動画面の作業が大きく進んでいて着手前の像と比べられないので、ここでは扱わない（G4 の差分は Rendering3DTestRoutine.cpp を触っていない）。高いリフレッシュの表示でのカクつき（GR02）はモニターに依るので、見たら所見だけを PROGRESS.md に残す。
 
 ## G5-GR25-STAGE-REGISTRY: 描画の拡張の段（GBuffer・照明の後・半透明・TAA の後・トーンマップの後）へ、ゲーム側のパスを名前で差し込む口を作る
-- status: todo
+- status: done
 - gr: GR25
 - done-when: `Library/Core/Public/Rendering/RenderExtension/RenderExtension.h` に `RenderExtensionStage`（GBuffer・AfterLighting・Transparent・PostTemporalAA・PostTonemap・ShadowCaster）・`RenderExtensionDesc{Name, Stage, Order}`・パスのファクトリを登録する `RenderExtensionRegistry`（SceneView が所有）を置く。段は既存のパスの名前を錨に解決する（今の並びでは GBuffer = FoliagePass の後・SSAOPass の前、AfterLighting = LightingPass の後、Transparent = ForwardPass の後・DistortionPass の前、PostTemporalAA = PostProcessStack の TemporalAAPass の後、PostTonemap = VignettePass の後。ShadowCaster の中身は G5-GR25-SHADOW-CASTER-STAGE）。`SceneView::SetupDeferredPipeline`（SceneView.cpp:1058）が末尾で登録を全部入れ直し、2 回組み直しても拡張が 1 回ずつ同じ位置に戻る。今 `RenderingCoordinator.cpp:2845-2847` で組んだ後から足している DepthOfFieldPass・MotionBlurPass を `SetupDeferredPipeline` の中へ移し、組み直しで消えないようにする（移した後の実行の並びは移す前と同じ）。登録・解除・有効の切り替えは GameThread から mutex で守った保留の列に積み、RenderThread が `SceneView::Render` の先頭で反映する（m_Passes を書き換えるのは RenderThread だけ。最初のフレームの前の初期化の窓では即時）。拡張のパスは `IViewPass` と `IRenderGraphPass` の両方を継ぐ型だけを受け（レガシーの経路は登録で拒否）、`Initialize` の失敗と `Execute` の例外は守りの包みがそのパスだけを無効にしてログを 1 回出し、`View::Render` を止めない。`IRenderModule` に既定実装つきの `RegisterRenderExtensions(RenderExtensionRegistry&)`、`RenderWorld` に `RegisterRenderExtension(desc, factory)` の窓口を足す。パストレーサーの経路（`SetupPathTracingPipeline`）では拡張を入れずログを 1 回出す。CPU の `RenderExtensionRegistryTest`（`SceneViewProxyLookupTest` の束の MEMBER）が、各段に偽のパスを入れたときのパス名の並び・Order が同じなら登録順・同名の二重登録の拒否・解除で元の並びに戻る・組み直しで重ならない・別のスレッドから登録と解除を連打しながら反映を回しても反映の時以外に m_Passes の件数と各ポインタが変わらない・`Initialize` が偽を返す拡張を入れても他のパスの実行数が減らない、を確かめる。拡張 0 件で golden 4 本が変わらない。`Docs/Architecture/RenderingFlow.md` に段と錨の表、スレッドの約束、パス名の規約（`Ext.<Game>.<Name>`）を書く。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest RenderingGoldenImageTest Game -- /m:1`
@@ -5370,7 +5449,7 @@
 - notes: GR25 は今のコードに無い（`RenderExtension`・`InsertPassAfter` の grep が 0 件、IRenderModule.h は `GetOverlayPass` だけ）。ロードマップの節（517〜607 行）は 10-02 の並びで書かれており、その後に可視バッファ（VisibilityRaster・MaterialTileClassify・VisibilityResolve）・DecalPass・FoliagePass・SSR の照明直後への移動・CloudLayerPass・DistortionPass・VSM が入ったので、錨は今の `SetupDeferredPipeline`（SceneView.cpp:1088〜1371）で取り直した。GBuffer の段は「GBuffer を書く最後のパス（今は FoliagePass）の後」とし、可視バッファの on と off（`--visibility-buffer`、既定は on。ApplicationProcessor.cpp:1204）のどちらでも同じ位置になることを試験で確かめる。`RenderGraphCompileTest` は実装の写しとして実行から外されている（Test/Core/Rendering/CMakeLists.txt:1785）ので、並びの検査はパス名の並びの契約だけにし、dispatch の数などを写さない（Docs/Testing.md の約束）。拡張のデータ枠と時間は G5-GR25-EXTENSION-DATA、影を落とす段は G5-GR25-SHADOW-CASTER-STAGE、起動しての確かめは G5-GR25-SCENES-CHECK。危険地帯（Public API・RenderThread）なので評価者を通す。完了条件の GR25 の行（1116〜1122 行）、要件 `#### GR25`。
 
 ## G5-GR25-EXTENSION-DATA: GameThread の値をフレームのスナップショットで拡張のパスへ渡す枠と、ゲームの時間・前に描いたフレームの時刻を渡す
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY
 - gr: GR25
 - done-when: `Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h` に `RenderExtensionDataKey<T>{Identity}`（T は trivially copyable を static_assert）と不変の `RenderExtensionBlob{Identity, LayoutHash, Count, Revision, バイト列}` を置き、`RenderWorld::SetExtensionData<T>(key, value)` と `SetExtensionArray<T>(key, span)`（GameThread 専用。`RenderWorld::SetFoliage` と同じ規約）を足す。前回とバイト一致の Set は同じ共有ポインタと Revision を使い回し、`RenderingCoordinator::SnapshotSceneParameters`（RenderingCoordinator.cpp:4560）で `FramePacket` のシーンの `Extensions` へ共有ポインタを写すだけにする（変わらないフレームはデータの写しが 0）。RenderThread 側は `ViewRenderContext` から `FindExtension(key)` で `const T*` か `Span<const T>` を引き、LayoutHash が合わなければ nullptr とログ 1 回。拡張データの変化は `ComputeSceneRevisionHash`（RenderingCoordinator.cpp:1201。RTGI と DDGI の履歴のリセット）に含めない。`ViewRenderContext` に `RenderExtensionFrameInfo{FrameNumber, GameTotalTime, GameDeltaTime, PreviousRenderedTotalTime}` を足し、PreviousRenderedTotalTime は `RenderedObjectHistory` が最後に描いたパケットの TotalTime を覚えて返す（描画がゲームのフレームを飛ばしたときも、物体の前の位置の付け替えと同じ基準）。`RenderExtension/RenderExtensionHelpers.h` に、GBuffer の段の描画先（5 枚と深度を Load/Store で開く RenderPass と Framebuffer。描画先が替わったら作り直す）をまとめる `GBufferTargetBinder` と、TAA の後の段で今の HDR の色の資源の名前を返す `ResolveHdrChainHead` を置く。CPU の `RenderExtensionDataTest`（`SceneViewProxyLookupTest` の束の MEMBER）が、Set の後に GameThread の値を変えてもスナップショット済みのパケットの値が変わらない・バイト一致の Set で共有ポインタと Revision が不変・LayoutHash の不一致で nullptr・パケットの Clear で空・パケットの枠の使い回しで前のフレームの値が残らない、を確かめる。GPU の `RenderExtensionStageVulkanTest`（既存の実行ファイル `RenderingHdrSceneCaptureTest` に scenario の引数を足して登録する）が outdoor の固定シーンに 5 段の目印のパスを入れ、GBuffer 段で床に書いた色が照明・影・SSAO を受ける・AfterLighting 段の加算が Volumetrics の霧で減る・Transparent 段は深度テストで手前の物の後ろに描かれない・PostTemporalAA 段の目印が TAA 有効でもフレームごとに同じ値・PostTonemap 段の値がトーンマップを受けない、を確かめ、拡張データで渡した色が目印のパスに届くことも確かめる。拡張 0 件で golden 4 本が変わらない。
@@ -5380,7 +5459,8 @@
 - notes: `ViewRenderContext::DeltaTime` は RenderThread のフレーム時間で、ゲームの dt ではない（ロードマップ GR25 の設計の現状の項）ので、FrameInfo で名前を分ける。UNCERTAIN: `FoliagePass.cpp:361` が風の前の時刻を `context.DeltaTime` で作っており、描画がフレームを飛ばしたときに基準がずれる疑いがある。直すのは G5-GR30-VERTEX-ANIM-VELOCITY で、ここでは FrameInfo を用意するだけ。既存の型付きの枠（`SceneProxy` の `Foliage` など。SceneProxy.h:590）は移さない（この枠はゲーム側・モジュール側が足す新しい値のため）。FramePacket が共有ポインタを抱える前例は `SkinnedMeshFrameLeases`（FramePacket.h:375）。GPU の資源はブロブに入れない（GameThread は GPU に触れない。絶対規則4）。MB 級の配列を毎フレーム Set しない約束と、1 つの View に複数の Viewport があるときパスの中の履歴を Viewport の id で分ける約束を注釈に書く。危険地帯（Public API・RenderThread・FramePacket）なので評価者を通す。ロードマップ GR25 の設計 B・C・D（517〜607 行）、完了条件の GR25 の行、要件 `#### GR25`。
 
 ## G5-GR25-SCENES-CHECK: 描画の拡張の段を入れた後も、全シーンの見た目と被写界深度・動きぼけが変わらないことを撮って確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA
 - check: launch
 - gr: GR25
@@ -5397,7 +5477,7 @@
 - notes: 絶対規則7（起動の流れと各シーンの見た目を保つ）の確かめ。当分アプリを起動しない決まりのため、実装のタスクから分けた。シーンの id は Game/Scenes/SceneCatalog.h:143〜457。mega-stress は負荷のシーンなので撮らない。性能は測らない（GPU の占有は要らない）。
 
 ## G5-GR26-GBUFFER-CONTRACT: GBuffer の空きチャネルの意味（シェーディングモデルの ID・受け手の印・材質の値 2 つ）を 1 つの契約にまとめ、全部の書き手と読み手を揃える
-- status: todo
+- status: done
 - gr: GR26
 - done-when: `Library/Core/Public/Rendering/ShadingModelIds.h` に GBuffer のシェーディングモデルの ID の表（DefaultLit=0・Fur・Eye・PaleFlat・以降は予約）と受け手の印（地形の受け手・影を起伏に詰める地形・草の株・鏡面の無い材質）を置き、`Assets/Shaders/Common/GBufferEncoding.glsl` に同じ表の `const uint` と書き込み・読み取りの関数を置く。符号化は Normal.w（RGBA16F）に ID と印を整数で詰め、Material.a（RGBA8）を材質の値 P0、Emissive.a（RGBA16F。今は 1 を書くだけで誰も読まない）を P1 にする。今の場当たりの意味（Normal.w の 1 と 2 = 地形の受け手・影を詰めた地形。lighting.frag:1126〜1127。Material.a の 1 = 鏡面の無い材質、0.25 = 草の株。lighting.frag:1132〜1135・lighting.frag:510・decal.frag:42〜45）を印へ移す。書き手（gbuffer.frag:103〜109、megageometry.frag:112〜114 と 220〜226、foliage.frag:45〜48、Common/VisibilityResolve.glsl:829〜838）と読み手（lighting.frag・decal.frag ほか grep で見つかるもの）を全部その関数に通す。P0 と P1 はこの項目では既定 0 を書く（値の入口は G5-GR26-MATERIAL-PARAMS）。CPU の `ShadingModelContractTest`（`MaterialResourcesTest` の束の MEMBER）が、ShadingModelIds.h の表と GBufferEncoding.glsl の const の宣言を文字列の走査で突き合わせ、Assets/Shaders の中で GBuffer の Normal.w・Material.a・Emissive.a を直に書く・読む箇所が無い（全部が関数を通る）ことを確かめる。GPU で golden 4 本（可視バッファの on と fallback）が導入前と一致（目標は FLIP の平均 0・最大のチャネルの差 0）、`DecalGBufferVulkanTest`（範囲外と各 A を変えない・既定で草に描かない）と `VisibilityResolveVulkanTest` が通る。`Docs/Architecture/GpuLayoutRegistry.md`（新規）に、GBuffer の各チャネル、GBuffer と MegaGeometry の per-object UBO（GBufferPass.cpp:672 の 336 バイトなど）、`GPUSceneInstanceData`（MeshTypes.h:269 の 52 float）、lighting.frag の binding の割り当て表を書き、以後の段階は決め打ちの値でなく表に登録して使う約束を書く。
 - verify: `cmake --build build --config Debug --target MaterialResourcesTest DecalGBufferVulkanTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
@@ -5416,7 +5496,8 @@
 - notes: 設計はロードマップ 703〜727 行（GR38 の 1 と 2）。高さ場の型は GR37 と共有し（G5-GR37-TERRAIN-COMPONENT で cook 済みの作り方を足す `Rendering::Terrain::TerrainHeightField`）、三角形メッシュ化はしない。照会はメッシュの最細段（LOD0）と同じ対角で、LOD1 以上の見た目とは最大 maxVerticalError だけずれる（ロードマップ 1261 行）。辺・頂点の法線の不連続はジッタの元になる（ロードマップ 1262 行）ので、球は最近点の法線、辺・頂点の当たりは滑らかな法線へ寄せる。表面の扱いは選定課題 G13-S7 の推奨 (A)（ロードマップ 4563 行）に合わせて決める（G5B-S12）: 保存のキーは表面の名前（文字列）で、`SurfaceId` は地形の層の番号（u8）。層→名前の表を地形の材質の記述に持ち、足音・水しぶき・足 IK などの消費者は名前で引く。名前の一覧は企画で未定なので仮の値をデータに置く（Soil・Gravel・Moss・Mud・Rock・Sand・Water。ロードマップ 727 行）。試験を足す理由: 当たりの点・法線・深さの誤りは、犬の接地が数 cm ずれる・斜面でがたつくだけで、撮影でもログでも気づきにくく、物理と移動の全部の上で黙って効く。性能（`SampleGround` 1 回 0.2µs 以下、100 m の Raycast 5µs 以下。ロードマップ 1147 行）は記録だけで、合否にしない。
 
 ## G5-GR46-WIND-FIELD: 世界で共通の風の場（CPU と GLSL で同じ式）を FramePacket で渡し、草・低木の揺れがそれを使えるようにする
-- status: todo
+- status: done
+- after: G5-GR25-EXTENSION-DATA
 - gr: GR46
 - done-when: `Library/Core/{Public,Private}/Rendering/Wind.{h,cpp}` に `WindParameters`（bEnabled・風向 DirectionYawDegrees・平均風速 BaseSpeed[m/s]・GustStrength・GustFrequencyHz・GustScaleMeters・Turbulence）・`MakeDefaultWindParameters`・`SanitizeWindParameters`・CPU の `EvaluateWind(params, position, time)`（風速ベクトル = 風向×速さ×(1＋突風×(雑音×2−1))＋乱流。突風の雑音は「位置を風向へ射影/スケール − 時間×周波数」を引数にした整数ハッシュの値ノイズ（5 次の補間））を置き、`Assets/Shaders/Common/Wind.glsl` に同じ整数ハッシュと同じ演算の順の `WindVelocity` を置く。時刻は `fmod(TotalTime, 4096)` の float（GR30 の約束。周波数は 1/4096 Hz の整数倍へ量子化）。`RenderWorld::SetWindParameters` → RenderingCoordinator が保持 → FramePacket へ値で写す経路を `SetVolumetricFogParameters` と同じ型で足し、`ComputeSceneRevisionHash` には入れない。FoliagePass（`foliage.vert`）と VSM の株の影（`vsm_draw.vert`）は、パケットの風が有効なら風向と突風の値を `Common/Wind.glsl` から取り、無効なら今の `FoliageWindParameters` の式のまま（荒野は風を設定しないので見た目が変わらない）。grassland のシーンが風を設定する。 試験が通る: `WindParametersTest`（`CameraViewConstantsTest` の束へ MEMBER）で、Sanitize が NaN・負の速さ・範囲外の値を既定へ戻し、風向が単位ベクトルで、長い時間の平均の風速が BaseSpeed と一致し、突風が設定の振れ幅に収まり、同じ（位置・時刻）でビット一致する。`FramePacketWindSnapshotContractTest`（同じ束。Private の include が要れば束に足す）で、風だけが違う 2 つのパケットの `ComputeSceneRevisionHash` が等しく、写した後に GameThread の値を変えてもパケットが変わらない。`WindShaderCompileTest`（`RHIRayTracingApiContractTest` の束へ MEMBER）で `Common/Wind.glsl` を含むシェーダーと、風を有効にした `foliage.vert`・`vsm_draw.vert` が CPU でコンパイルできる。GPU の試験 `WindGlslParityVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。compute で 1024 点の風速を求めて読み戻し、`EvaluateWind` と最大絶対差 1e-4 以内）をビルドできる（実行は G5-GR46-WIND-CHECK）。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
@@ -5517,7 +5598,8 @@
 - notes: 設計はロードマップ 1715〜1734 行(P4・P5)。選定課題 G8-S8(音の装置が無い環境。1717 行・1882 行で「開発者判断」)を決めた: 通常の起動では NullAudioBackend へ明示に切り替え、警告の行と診断の印で見えるようにする。M9 のスモークは今の厳しい失敗のまま。理由: 音の装置が無い・RDP の環境で起動そのものが止まるのを避け、失敗は握り潰さずログと印に残す。論理層が無音でも動くので、GR75 の音のイベントも試せる。選定課題 G8-S10(仮の音の素材)を決めた: 生成の台本で作る小さな合成の WAV を置き、生成 AI の実物は入れない(引き継ぎの注意 4 の「小さな合成の fixture」と同じ)。理由: 音の生成モデルが企画で未決で(1884 行)、バンクの値で後から差し替えられる。UNCERTAIN: 通常の起動で cook 済みの音を引く経路(asset root とマニフェスト。M9 は `Test-M9World.ps1` が一時ディレクトリで AssetCook を回す)が今あるかを確かめていない。着手時に `AssetSystem::ResolveAsset` の root を読み、無ければバンクと WAV を cook する手順(AssetCook の `--kind audio` と `--kind raw`)をこの項目で足す。`Game/GameApplicationHandler.cpp` は G8 のほかの項目も触るので差分を絞る。起動の流れと見た目は変わらない(音だけ)。起動しての確かめは G8-GR72-AUDIO-CHECK。危険地帯: Public API・アセットの読み込みなので評価者を通す。
 
 ## G8-GR72-AUDIO-CHECK: 実機の XAudio2 で雨のループと足音を鳴らし、ループの停止から破棄までの一周と M9 の受入れを確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR72
 - check: launch
@@ -5605,7 +5687,7 @@
 - notes: 今のコードの事実: イベントは Animation の群の Update で積まれ、PoseFinalize の群で姿勢の評価と modifier の後に配られる（`Library/Core/Private/Component/AnimatorComponent.cpp:281-286`）。購読で受けると 1 フレーム遅れるので、modifier の文脈から、そのフレームに積まれてまだ配っていないイベントを読み取り専用で読む口を足す。UNCERTAIN: `AnimationEventQueue` は件数（`PendingCount`、`Library/Core/Public/Animation/AnimationEvents.h:47`）しか出しておらず、中身を写さずに読み取り専用の範囲を返せるかは未確認。解消するには `AnimationEvents.h/.cpp` の積み方を読む。写す必要があるなら、確保を初期化時に済ませて定常で確保しない形にする。接地の PhaseMarker から `Foot.<脚>.Down` のイベントを出す処理は GR11 の範囲（「段階をまたぐ注意」の「G3 / GR11」）なので、ここでは名前を設定で受けるだけにする。足の固定は歩幅合わせ（GR10・GR11 の公称速度）と接地の検出に依るので、16fps 由来の素材や浮遊期の長い襲歩で外れることを `Docs/Architecture/AnimationRuntime.md` に書く。Public API（`PoseModifier.h`・`AnimationEvents.h`）に触れるので評価者を通す。出典: 要件 `#### GR14` の【足の固定】【決定性】、受け入れ確認の FootPlantTest と FootIKDeterminismTest。
 
 ## G9-GR85-RETARGET-PROPORTION: 比率の違う骨格へのリターゲットに、脚の長さの比によるルートの拡縮・ロールごとのねじれの固定・誤差の報告と上限を足す
-- status: todo
+- status: done
 - after: G9-GR87-CLIP-OPTIMIZER
 - gr: GR85
 - needs-gr: GR82, GR84
@@ -5617,7 +5699,7 @@
 - notes: 今のコードの事実（GR84・GR128 で入っているもの）: 正準ロール表 quadruped_v1 は `SkeletalRole`（`Library/Core/Private/Animation/SkeletalRoleProfile.h:8-34`）、全体の `RestUpHint` と明示の `RootScale`（同 56-58 行）、`--retarget-clip --skeleton --role-profile --clip --clip-name`（`Tools/AssetCook/RigRetargetCli.cpp:29-127`）、純粋な回転の写し `RetargetSkeletalClip`（`SkeletalClipRetarget.h:50-54`）。profile は version 1・vocabulary quadruped_v1 しか受けない（`SkeletalRoleProfile.cpp:604-620`）。足りないのは比率の自動化、ロールごとのねじれ、報告と上限、再接地（`G9-GR85-FOOT-REPLANT`）、人型（`G9-GR85-HUMANOID-SMOKE`）。要件の `SkeletonCompat`（TopologyId・BindPoseId）は新しく作らない: GR82 の v1 で、名前順の正準トポロジーのハッシュ `SkeletonId`（`Library/Core/Private/Animation/RigV1Types.h:13-19`、リテラルの固定は `Test/Core/Asset/CookedClipBankV1Test.cpp:102`）と rest のハッシュ・`RestMismatch` の拒否（`Library/Core/Public/Animation/RigBindingTypes.h:47, 69-93`、`Test/Core/Asset/SkeletalClipBankBindingTest.cpp:97-102`）が既にある。名前は「段階をまたぐ注意」の「G9 / GR87 段2・GR85」のとおり SkeletonId に合わせ、BindPoseId の役は rest のハッシュが担う。BoneMap とロール表を別の形式にしない（同注意の「G2 / GR84」）ので、ロールの profile を拡張する。GR82・GR84 は G2 で仕上げ中なので needs-gr に入れた。数値は仮。アセットロードの危険地帯なので評価者を通す。出典: 要件 `#### GR85` の設計案 (2)(3)(4)(7)、受け入れ確認の RetargetCookTest (a) と【回帰】。
 
 ## G9-GR85-FOOT-REPLANT: 別の骨格へ写したクリップの足を、cook 時に平らな地面へ再接地させる
-- status: todo
+- status: done
 - after: G9-GR85-RETARGET-PROPORTION, G9-GR14-TWO-BONE-IK, G3-GR11-EVENT-PROPERTIES
 - gr: GR85
 - needs-gr: GR84, GR11
@@ -5628,7 +5710,7 @@
 - notes: G4 の `G4-GR128` は「足の IK 固定や別骨格への再接地は後続項目」として残している（`TASKS.md` の `G4-GR128` の notes）。「段階をまたぐ注意」の「G4 / GR128」も Slice 1 の足先の残差の固定を GR85・GR14 に任せると書くので、このタスクがその残りを引き受ける。接地の検出は、GR11 の `AnalyzeFootContacts`（`Library/Core/Public/Animation/MotionAnalysis.h:44-47`）が鉛直の高さと速さだけを見て水平の足滑りを判定しない（同ファイルの注記）ので、水平の速さの条件をここで足す。共通にできる部分は GR11・GR128 の関数を呼び、周期・接地の検出を二重に作らない（同注意の「G2 / GR84」）。接地面は平らな `ground.height` だけで、地形への適応は実行時の GR14（G9 の非ゴール）。16fps の動画由来の素材は接地の検出が外れやすいので、検出の結果を報告に出す。しきい値は仮で、初回の実測で決める。GR84 は G2 で、GR11 は G3 で確かめ直し中なので needs-gr に入れた。アセットロードの危険地帯なので評価者を通す。出典: 要件 `#### GR85` の設計案 (5)、受け入れ確認の RetargetCookTest (b)(c)。
 
 ## G9-GR85-HUMANOID-SMOKE: 人型のロール表と二足の再接地を足し、1 つの BVH から 2 つの骨格へ cook する流れを試験で押さえる
-- status: todo
+- status: done
 - after: G9-GR85-FOOT-REPLANT
 - gr: GR85
 - needs-gr: GR82, GR84
@@ -5640,7 +5722,7 @@
 - notes: 選定課題 G9-S3（人型のシ者の骨格の出所）は推奨どおり、実在の骨格（Mixamo・Rigify・Kimodo）の選定を G10 の着手前まで保留すると決めた。理由: エンジンの側は正準ロール表をデータにして骨格に依存しないので、G9 の完了条件は合成の人型で閉じられ、Kimodo の実出力の骨格は未確認で、頒布のライセンス（Mixamo の規約本文は未取得、Kimodo の重みは NVIDIA Open Model License）も公式で確かめていないため。よってここでは `Assets/Retarget/` に特定の骨格のプリセットを置かない。今のコードの事実: vocabulary は quadruped_v1 しか受けない（`Library/Core/Private/Animation/SkeletalRoleProfile.cpp:617-620`）。`SkeletalRole` は四足の列挙だけ（`SkeletalRoleProfile.h:8-34`）なので、人型は列挙を足すか vocabulary ごとの表にする（作り方は実装に任せるが、quadruped_v1 の既存の値と出力を変えない）。manifest には分離 v1 の `SkeletonId` が入る（`Library/Core/Public/Asset/AssetManifest.h:83-91`）。既存の `Test/Tools/AssetCookRigSplitSmoke.py` は CI（`windows-assetcook.yml`）だけで回るので、この機で回せるよう CTest の cmake の台本にした（他の AssetCook の smoke と同じ形。`Tools/AssetCook/CMakeLists.txt:252-275`）。生成AIの実物（GLB・BVH）はリポジトリに入れず、小さい合成のフィクスチャだけを置く。出典: 要件 `#### GR85` の設計案 (6)(7)、受け入れ確認の RetargetCookTest (d) と AssetCookRetargetSmoke、ロードマップの選定課題一覧の G9-S3。
 
 ## G9-GR87-CLIP-QUANTIZE: ClipBank v1 にクリップの量子化と一様な時刻の記録を足し、読み込み時に展開する
-- status: todo
+- status: done
 - after: G9-GR87-CLIP-OPTIMIZER, G9-GR85-HUMANOID-SMOKE
 - gr: GR87
 - needs-gr: GR82, GR12
@@ -5662,7 +5744,7 @@
 - notes: 確かめ直しの (c)。選定課題 G3-S9 は A を採る（足接地・周期の解析器は Library の `Animation` に 1 つ置き、GR128 の cook は再実装せずにそれを呼ぶ。ロードマップ 4523 行）。理由: 今は同じ判定が 2 か所にあり（Library の `AnalyzeFootContacts` は全足共通の最低の高さ・ヒステリシスなし〔MotionAnalysis.cpp:96-140〕、G4 の GR128 で入った `RigMotionCleanup.cpp:88-200` は自前の FK・足ごとの最低の高さ・ヒステリシス 1.5）、同じクリップでも窓がずれうる。ロードマップ 4384 行（接地の検出を 3 段階が作る）の指摘どおり。ヒステリシスと足ごとの基準は cook の形を共通の既定にする（前足と後足で静止の高さが違う四足でも窓が取れるため）。`GroundOffset` は今どおり全足の最低。名前の規約はロードマップ 4453 行（接地の PhaseMarker から接地イベント `Foot.<脚>.Down` を自動で出す処理を GR11 に入れる・ドット区切りにそろえる）と 4418 行（G11 の shake_begin/shake_end は窓イベント 1 つにすべき）に従う。脚の記号は G16 の GR75 の書き方（`Foot.LH.Down`）に合わせた。marker から出すイベントを opt-in にした理由: 今の試験とグラフには marker と同名の点イベントを両方持つクリップがあり（AnimGraphRuntimeTest.cpp:788-793）、常に出すと配送が二重になる。marker の名前はクリップ内で一意（AnimationRuntime.md:42）なので、ループの 1 周には足ごとに Down/Up が 1 つずつで足り、複数回の接地があるループしないクリップは点イベントで持つ。同期グループの参加クリップで接地を検出できなかった脚があると marker の集合がそろわず `MarkerMismatch` になる（今の `<role>_down` でも同じ）ので、report の `needs_review` に出ることを確かめる。`Assets`・`Test`・`Game` に `<role>_down` の名前を使うデータは無い（`git grep "paw_down\|generate_foot_markers"` は Docs と AssetCook だけ）。G4 の GR128（`G4-GR128` は構文確認だけで done。`RigMotionCleanup` を通す試験は今ない）の確かめ直しが同じファイルを触るので `needs-gr: GR128` で後に回す。`Docs/Testing.md` の 3 点: 反証する契約は「接地の判定が 1 つで、Library と cook が同じ窓を出す・名前の規約・marker のイベントの opt-in」。撮影・ログでは気づけない（窓のずれや名前の食い違いは、足音や同期が鳴らない・ずれるだけで落ちない）。失敗は黙って起きる。危険地帯（Public API・cook の出力）なので評価者を通す。やらないこと: 周期の検出（`DetectCycle` は G2 の共通処理を既に使っている。AnimationRuntime.md:57）、地形との実際の接触、足音の再生（G16）、実素材の接地の目視。
 
 ## G5-GR26-MATERIAL-PARAMS: 材質ごとのシェーディングモデルと値 P0・P1 を、静的・インスタンス・スキン・MegaGeometry・可視バッファの全経路で GBuffer へ届け、インスタンス単位の上書きを足す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-CONTRACT
 - gr: GR26
 - done-when: `ShadingModel`（MaterialTypes.h）に Fur・PaleFlat を足し（Eye は既存）、`MaterialCreateData`・`MaterialResourceData` に `ShadingParams[4]`（負は未指定。`RenderMaterialStore.cpp` の任意の単位スカラーの正規化と同じ規約。NaN・範囲外は正規化）を足し、CPU の ShadingModel から GBuffer の ID への変換を 1 か所に置く。値は GBuffer の per-object UBO（GBufferPass.cpp:662〜672。今 336 バイトで空きの欄が無いので vec4 を足して表 `Docs/Architecture/GpuLayoutRegistry.md` を更新）、MegaGeometry の材質（`MegaMeshMaterial` MegaGeometryTypes.h:443）、可視バッファの材質の表（`MaterialEntry` VisibilityMaterialTable.h:72。`Header[1]` が ShadingModel の欄で、今は常に DefaultLit。128 バイトで余白が無いので広げ、GLSL 側の写し `VisMaterialEntry`（Common/VisibilityResolve.glsl:105）も揃える）へ通し、各書き手が G5-GR26-GBUFFER-CONTRACT の関数で ID・P0・P1 を書く。インスタンス単位の上書き: `MeshComponent::SetShadingParams(index, value)`（`SetCustomData` MeshComponent.h:197 と同じ形）から `MeshProxy`・`FillGPUSceneInstanceData`（DrawCommand.cpp:40）・`GPUSceneInstanceData`（MeshTypes.h:269 の 52 float を 56 float へ。static_assert を更新）へ通し、GLSL の `struct InstanceData` の 8 本の写し（board2d.vert・forward_transparent.vert・gbuffer.vert・impostor.vert・point_shadow.vert・shadow.vert・visbuffer_mesh.vert・world_board.vert）を `Common/SceneInstanceData.glsl` の 1 本の include に置き換える。スキンは `SkinnedMeshComponent`・`SkinnedMeshProxy`（SkinnedMeshTypes.h:175）に同じ 4 値を持たせる。インスタンスの値が 0 以上ならそれを、負なら材質の値を使い、`.w` は被覆率の乗数（1 = 不変。G5-GR27-MASKED-GBUFFER が使う）と定める。CPU: `MaterialResourcesTest` に ShadingParams のコピーと不正値の正規化、`InstanceDataFlattenTest`・`InstanceBufferRingTest` に新しい欄の位置と既定 -1 と大きさ、`VisibilityMaterialTableTest` に ID と P0・P1 の格納、`ShadingModelContractTest` に「InstanceData を使う頂点シェーダーが全部 `Common/SceneInstanceData.glsl` を include し、struct の写しを持たない」の走査を足す。GPU の `RenderingShadingModelGBufferVulkanTest`（既存の実行ファイル `RenderingHdrSceneCaptureTest` に scenario と GBuffer の Normal・Material・Emissive の capture source を足して登録。capture source は `FrameCaptureTypes.h` の `GBufferVelocity` の前例）が、4 経路（静的・インスタンスの上書き・スキン（M9Skinned の fixture）・MegaGeometry）と可視バッファの on と fallback で、球の中心の ROI の ID が設定と厳密に一致・P0 が 8bit の量子化値（±1/255）・P1 が半精度の許容内・インスタンスの値が負なら材質の値へ落ちる、を確かめる。golden 4 本が変わらない（DefaultLit で P0・P1 が 0 の書き込みは導入前と同じ）。
@@ -5720,7 +5802,8 @@
 - notes: 完了の条件の出所はロードマップ 1811 行(GR16 のスモーク)・1819 行(GR18)・1827 行(GR17)。3 つのスモークを 1 つのモードにまとめたのは、同じ場面(犬・シ者・領域)を共有し、起動の確かめを 1 つの項目(G8-GR17-SLICE-CHECK)で済ませるため。GR131 の決定(ロードマップ 4282 行「当たりを出す場面を用意して確かめる」)と GR132 の決定(4359 行「撃破の場面(GR17)ができてから撮影で確かめる」。G8 には血しぶきの粒と地面の滲みまでを入れる推奨。4347 行)の場面をこの項目で用意する。既存の GAME-GR131-VFX・GAME-GR132-VFX は書き換えない。ランチャーに載せないので、起動の流れと各シーンの見た目(作業合意の絶対規則 7)は変わらない。`--combat-bench` の計測は Release に入れない(絶対規則 8。測るのは RelWithDebInfo)。起動しての確かめは G8-GR17-SLICE-CHECK(この項目の after に起動の項目を挙げない)。やらないこと: リセットとセーブの縦の道(G8-GR76-RESET-LIFETIME)、本来の UI(GR68)。
 
 ## G8-GR17-SLICE-CHECK: 戦闘の垂直スライスを起動して、30fps と 144fps の当たりの一致・遭遇と敵の流れ・火花と血の見た目・判定の CPU 時間を確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G8-GR17-SLICE-SMOKE
 - gr: GR17
 - check: launch
@@ -5768,7 +5851,7 @@
 - notes: 今のコードの事実: `--animation-debug` は Rendering3DTest の明示の合成の場面で、ImGui のビルドを要し（`Game/GameApplicationHandler.cpp:2013, 2879`）、`AnimationDebugScene` がコードで合成のキャラクターと剣を作って `AnimatorDebugView`・`SocketDebugView` を Attach する（`Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp:115-203`、Detach は 245 行）。今の合成のキャラクターは四足の脚の鎖を持たないので、四足の合成のキャラクターを足す。UNCERTAIN: Rendering3DTest の World に物理のモジュールが載り、`PhysicsGroundQuery` を使えるかは未確認。解消するには `AnimationDebugScene.cpp` と Rendering3DTest の World の組み立てを読む。載らない場合は、斜面と階段の解析の `IGroundQuery`（試験のモックと同じ形）を場面の中で使い、そのことを `PROGRESS.md` に書く。調整した値をサイドカーへ書き戻す仕組み（G18 の GR99）は作らず、ImGui の値を手で写す（ロードマップ G9 の依存）。起動画面の見た目を変えない（AGENTS.md の絶対規則 7）。見た目の確かめは `G9-GR15-AB-CAPTURE-CHECK` に分けた。GR13 は animation-debug の場面のソケットと剣のため。出典: ロードマップ G9 の完了条件の GR15 の ModifierOrderTest と「共通」、要件 `#### GR14` と `#### GR15` の【調整とデバッグ】。
 
 ## G5-GR26-LIGHTING-MODELS: 照明がシェーディングモデルの ID で描き分ける口（面の補正・光源ごと・最後の色）を作り、Fur・Eye・PaleFlat の最初の式を入れる
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS
 - gr: GR26
 - done-when: `lighting.frag` が GBuffer から G5-GR26-GBUFFER-CONTRACT の関数でモデルの ID と P0・P1 を読み、ID が 0（DefaultLit）の画素は今のコードをそのまま通る。ID が 0 でない画素だけ `Assets/Shaders/Common/ShadingModels.glsl` の 3 つの口を呼ぶ: 光源のループの前の面の補正（albedo・粗さ・金属度・法線・AO）、光源ごとの直接光（lighting.frag:1313 の `EvaluateAnalyticalDirectEndpointBRDF` の代わり）、最後の色の補正。Fur は wrap の拡散と粗い鏡面（異方性は接線を持つ GR33 の後）、Eye は P0（湿り）で鏡面の強さを上げる、PaleFlat は面の補正で平らなアルベドにして最後の色で影と環境光の明暗の差を落とす（PaleFlat は書き込みの時点で粗さ 1・金属度 0 にし、SSR は改造しない）。ID が 0 でないときニューラル BRDF の分岐（lighting.frag:1306 の `bNeuralBRDFEnabled`）は解析の式へ落とす。式の係数（wrap の量、明暗の差の落とし方など）は P0・P1 か照明の定数にしてデータで差し替えられる形にし、既定は仮と書く。各モデルの P0・P1 の意味を `Docs/Architecture/GpuLayoutRegistry.md` の表に書く（DefaultLit は P0 = 濡れ感度、Fur は P0 = 濡れ度・P1 = シェルの高さの割合、Eye は P0 = 湿り、PaleFlat は P0 = 消滅度）。GPU の `RenderingShadingModelLightingVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、PaleFlat の球の明るい側と影の側の ROI の BackBuffer の輝度の差が 2/255 以下で DefaultLit の同じ条件では十分大きい・Fur の球の明暗の境目の ROI が DefaultLit より明るい・Eye の鏡面の ROI が P0 に応じて単調に増える、を確かめる。golden 4 本が変わらない。
@@ -5778,7 +5861,7 @@
 - notes: ロードマップ GR26 の設計5（393〜461 行）。Fur・Eye・PaleFlat の本格の見た目（ファーのシェル GR34、濡れ GR35・GR53、シ者の明暗 GR65）は後の段階で、この項目は骨組みと最初の式まで（ロードマップ GR26 のリスク「GR26 単独では骨組みまで」）。PaleFlat と Eye は企画で未定の提案（色と明度のルール）に由来するが、作者の決定（保留の提案もエンジンの機能として採る）で入れる。Eye の青（#9DBFD1）は提案の値で未決なので既定に入れない。ID の分岐は同じモデルの画素がまとまるので発散は小さい見込み（未計測）。照明の UBO を広げるときは割り当て表を更新する（GPULightingParams は他の段階も触る）。半透明とパストレーサーは ID を読まない。危険地帯（ライティング）なので評価者を通す。起動しての確かめは G5-GR27-MATERIAL-SCENES-CHECK。完了条件の GR26 の行、要件 `#### GR26`。
 
 ## G5-GR26-GBUFFER-PROGRAMS: 材質ごとに GBuffer の頂点・断片シェーダーを差し替えられるようにし、パイプラインを鍵ごとに遅延して作り、標準でない材質を可視バッファの経路から分けて描く
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G5-GR25-STAGE-REGISTRY
 - gr: GR26
 - done-when: `GBufferProgram`（名前から {VS, FS, スキンの VS}）の登録簿（`Library/Core/Public/Rendering/GBufferProgramRegistry.h` と Private の実装）を作り、`MaterialCreateData::Program`（既定は空 = 標準）で選ぶ。登録は `RenderWorld::RegisterGBufferProgram` の窓口から G5-GR25-STAGE-REGISTRY と同じ保留の列の約束で RenderThread へ渡す。`GBufferPass` の固定の 2 本と線画（GBufferPass.cpp:1459〜1490 の `CreateGBufferPipelineVariant`・`CreateSkinnedGBufferPipelineVariant`、`SelectGBufferPipeline` GBufferPass.cpp:1713）を、鍵 {program, cull, alphaClip, polygon, skinned} で初めて要ったときに作るパイプラインの表に置き換える（作成の回数をログに出す）。gbuffer.frag の本体を `Common/GBufferFragment.glsl` へ移して gbuffer.frag を #version と #include だけの包みにし、プログラムの FS は G5-GR26-GBUFFER-CONTRACT の書き込みの関数を呼ぶ約束にする。skinned_gbuffer.vert の頂点の読み方を `Common/SkinnedVertex.glsl` へ切り出す。可視バッファが on（既定）のとき、標準でない材質（プログラムを指定したもの。G5-GR27-MASKED-GBUFFER で切り抜き・両面も加わる）は可視バッファのラスタに載せず、可視バッファの解決の後・DecalPass の前に GBuffer と深度へ重ねて描く（FoliagePass が解決の後に重ねて描く今の形。SceneView.cpp:1185〜1188）。fallback（`--visibility-buffer=off`）では GBufferPass の中で標準の後に描く。CPU の `GBufferPipelineKeyTest`（`MaterialResourcesTest` の束の MEMBER）が、材質（プログラム・スキン・線画）から鍵を作る純粋な関数と、同じ鍵で 2 回目は作らないことを確かめる。GPU の `RenderingGBufferProgramVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、固定の色を書くダミーの FS を登録した材質が可視バッファの on と fallback の両方で標準と違う固定の色になり、プログラムを指定しない材質は変わらず、パイプラインが材質ごとでなく鍵ごとに 1 本だけ作られる（ログ）ことを確かめる。golden 4 本が変わらない。
@@ -5788,7 +5871,7 @@
 - notes: ロードマップ GR26 の設計6（393〜461 行）。決定: 可視バッファの解決は計算シェーダーで材質ごとの FS を走らせられないので、標準でない材質は解決の後にラスタで重ねる経路へ分ける（FoliagePass の前例。草も同じ理由で解決の経路に載せていない。SceneView.cpp:1185〜1187 の注釈）。重ねる物は HZB の遮蔽物にならない（既知の限界として記録する）。ShaderManager は #define のバリアントを持たないが、include をテキストで展開するので #define を書いた包みのファイルでバリアントを作る。パイプラインの作成は同期でキャッシュ無しなので、初回のヒッチは GR106 の領域（ここでは数を増やさないことだけを守る）。G5-GR27-MASKED-GBUFFER がこの鍵の表と分ける経路に乗る。危険地帯（GBuffer・RenderThread・Public API）なので評価者を通す。完了条件の GR26 の「GBuffer プログラム」の行、要件 `#### GR26`。
 
 ## G5-GR43-GRASS-GENERATE: 草のブレードをカメラの周りのタイルごとに compute で生成・カリングし、LOD ごとの間接描画の引数を作る
-- status: todo
+- status: done
 - after: G5-GR42-GRASS-FIELD-CORE
 - gr: GR43
 - done-when: `Library/Core/{Public,Private}/Rendering/` に `GrassPass`（`IViewPass`・`IRenderGraphPass`。`SceneView::SetupDeferredPipeline` の FoliagePass の後・SSAO の前に足し、草の場が無いフレームは何も宣言しない）・`GrassFieldGpuWindow`（カメラの周り N×N チャンク（既定 16×16）の LayerA・LayerB を RGBA8 の 2D 配列テクスチャに常駐させる。層の番号は (cz mod N)×N＋(cx mod N) で間接の表を持たない。新しく要るチャンクだけをステージングへ書いて `CopyBufferToTexture` で 1 フレーム K 枚まで送る。同期の `ITexture::Update` は使わない）・`GrassTileSelector`（CPU。カメラの周りを 8 m のタイルに割り、距離の帯（0: 〜25 m、1: 〜60 m、2: 〜120 m。値は設定）と、草丈で膨らませた視錐台で選び、チャンク表の最大密度が 0 のタイルを捨て、TileInfo（32B）を SSBO に書く）を足す。`Assets/Shaders/Grass/GrassArgsInit.comp`（LOD 0〜2 の `DrawIndexedIndirectCommand` の instanceCount とカウンタを 0 にする）と `GrassGenerate.comp`（1 タイル = 1 ワークグループ（64 スレッド）。帯ごとの間隔の格子点＋セル座標のハッシュのジッタを候補にし、場を双線形で引いた密度 d と距離に連続な間引き率 lodKeep で「d×lodKeep > hash2(セル)」を残し、残った幅を 1/√lodKeep 倍。視錐台の球の判定・向きのカリング・MegaGeometry の前フレームの HZB（契約が有効なときだけ）で落とし、LOD のバケットへ atomicAdd で詰める。記録は 16B/本（位置 float3＋高さ 10bit・幅 8bit・種別 6bit・fade 8bit）。容量を超えたら数えるだけで書かない）を足す。候補の生成と判定の CPU の写し `GrassGenerateReference`（同じハッシュ）を置く。フレームごとの定数・記述子は FrameResources から借りる。 試験が通る: `GrassTileSelectionTest`（`CameraViewConstantsTest` の束へ MEMBER）で、視錐台の外のタイルと最大密度 0 のタイルが選ばれず、帯が距離で決まり、同じカメラで結果がビット一致する。`GrassShaderCompileTest`（`RHIRayTracingApiContractTest` の束へ MEMBER）で `GrassArgsInit.comp`・`GrassGenerate.comp` が CPU でコンパイルできる。GPU の試験 `GrassGenerateVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。固定のカメラと一様な場（密度 1・高さ 1）で compute を回して LOD のカウンタを読み戻し、`GrassGenerateReference` の数と完全に一致、視錐台の外と密度 0 の領域は 0 本、容量を超える設定でカウンタがあふれても間接の引数が容量を超えない）をビルドできる（実行は G5-GR43-GRASS-CHECK）。
@@ -5801,7 +5884,7 @@
 - notes: 選定課題 G5B-S5（草の作り方。企画の提案『草の作り方』は未定）: (A) GPU で生成する曲がった帯のブレード（要件の基準線）を新しい GrassPass で描き、今の FoliagePass（株のメッシュの CPU のインスタンス）は低木・株・散布の物に残す、(B) 今の FoliagePass の株を草の場から CPU で撒いて増やす、(C) GPU で生成するカード（板ポリ＋アルファテスト）、のうち (A) を採る。理由: 要件が 1 画面で数十万〜数百万本・コンピュートでの生成とカリングを求め、FoliagePass は束ごとに不変のインスタンスの配列を GPU へ置き区画ごとに CPU で切る作り（`Library/Core/Public/Rendering/FoliageTypes.h` 冒頭、`FoliagePass.h` 18〜30 行）で、カメラの移動に応じた生成には向かない。(C) は GR27 とアルファのちらつきの対策（GR30）が要る。機構（タイル・カリング・間接描画）は (C) に移っても共通。今の描画の並び（`SceneView.cpp` 1058〜1226 行）はロードマップの時点から変わっていて、可視バッファの解決・デカール・FoliagePass が GBuffer の後にある。GrassPass は FoliagePass と同じく解決の後に GBuffer へ重ねる（頂点を動かすので解決に載せない）。GR28 の間接ディスパッチは RHI に既にある（`ICommandList.h` 518 行の `DispatchIndirect`）が、可視タイルの数は CPU が決めて直接 Dispatch でよい（タイルの選別の GPU 化は後でよい）。HZB は MegaGeometryPass が持つ（`MegaGeometryPass.h` 77〜103 行の `MegaHiZContract`・`MegaPrevHiZStatus`）ので、VirtualShadowMapPass と同じく MegaGeometryPass への参照を渡して読み取りだけで使う。バッファは少数の大きなものにまとめる（1 リソース = 1 回の確保。ロードマップ 1296 行）。`RenderGraphCompileTest` は無効にしてある（Docs/Testing.md 62 行）ので使わない。試験を足す理由: 生成の数の誤り（ハッシュ・間引き・カリングの取り違え）は、絵では草が少し疎・密に見えるだけで気づけず、CPU の写しとの完全一致でしか捕まえられない。危険地帯（RenderThread・GPU の資源の寿命）なので評価者を通す。
 
 ## G5-GR43-GRASS-DRAW: 生成したブレードを曲がった帯として GBuffer へ描き、連続の LOD・近接のフェード・風・velocity・濡れの受け口を入れる
-- status: todo
+- status: done
 - after: G5-GR43-GRASS-GENERATE, G5-GR46-WIND-FIELD, G5-GR42-GRASS-FIELD-ASSET
 - gr: GR43
 - done-when: GrassPass が GBuffer 互換の描き先（5 枚と深度へ重ねる。FoliagePass の `EnsureTargets`・`CreatePipeline` と共通の補助へ切り出し、FoliagePass もそれを使う）を開き、LOD ごとに「ブレードの SSBO の LOD の範囲を offset 付きで束ねた記述子のセット」で `DrawIndexedIndirect` を 3 回出す（頂点のバッファ無し。共有のインデックスのバッファは LOD0=7 分割・LOD1=3 分割・LOD2=1 分割の帯を連結。cullMode=None・depth Less/Write・MRT 5 枚は blend off）。`Assets/Shaders/Grass/grass.vert` は `gl_VertexIndex` から（区切り・左右）を決め、根元→先端を 2 次ベジエ（傾き＋曲がり＋`Common/Wind.glsl` の風＋踏み倒しの口（GR44 まで 0））で曲げ、幅を先端へ細め、視線に横向きのときは幅と法線を視線の側へ寄せ、画素より細い帯は最小の画素幅まで広げる。向き・位相・色の個体差は位置のハッシュから再導出する。`grass.frag` は Albedo = 根元色→先端色×個体差×濡れ（G5-GR42 の有効な濡れ度の式。全体の濡れ度は GR49 までの定数の受け口）・Albedo.a=1・法線を上へ寄せ裏面は反転・Material（金属 0・粗さは濡れで下げる・AO は根元ほど暗い）・Emissive=0・Velocity は gbuffer.frag と同じ式。前の位置は前の時刻・前のカメラで再評価する。近接のフェードは、カメラから約 1.2 m 以内は草丈を縮め、約 0.35 m 以内は画面ドア（ディザ）で discard。影は落とさない（受けるだけ）。grassland の草原に草を出す。撮影の解析の台本 `Scripts/Grass/GrassCaptureCheck.py`（距離のスイープの被覆率・平均輝度の連続性、近接での緑の最大連結成分の割合、しきい値は `Test/Core/Rendering/Thresholds/RenderingValidation/GrassLodSweep.tsv`）とカメラの台本 `Scripts/CameraScripts/grassland-sweep.txt`（10 m→120 m を 1 m 刻み）を書く（走らせるのは G5-GR43-GRASS-CHECK）。`GrassShaderCompileTest` に grass.vert・grass.frag を足して通る。GPU の試験 `GrassGBufferVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。GBuffer を読み戻し、Albedo.a=1・法線が単位長・根元の AO が先端より暗い・カメラ静止で風なしなら velocity=0・風ありのカメラ静止で velocity が同じ式の CPU の写しの有限差分と 0.002 以内）をビルドできる。
@@ -5813,7 +5896,8 @@
 - notes: 設計はロードマップ 903〜909 行（GR43 の描画とブレードの形と見た目）。影の扱いは選定課題 G11-S4（ロードマップ 4551 行）の推奨 (A)（草は影を落とさず受けるだけ。足元の暗さは根元の AO）に合わせる（G5B-S6）。今の FoliagePass の株は VSM へ近い株の影を落とす（`VirtualShadowMapFoliageCasters.h`）が、それは株の束の設定のまま変えない。細い帯の広げ方は FoliagePass の `MinPixelWidth`・`MaxWidenRatio`（`foliage.vert` 70〜80 行付近）と同じ考えで書き、GR30 が `Common/ThinGeometry.glsl` の `ClampStrandWidth` を置いたらそれに寄せる（待たない）。lighting.frag は Albedo.a < 0.01 を天球とみなすので Albedo.a は必ず 1（ロードマップ 905 行）。GBuffer に植物のシェーディングモデルが無く逆光の透けは出ない（ロードマップ 1292 行。GR26 の材質の拡張に任せる）。FoliagePass の描き先の作り方を共通の補助へ移すのは、荒野の草の出力を変えない純粋な移し替えにし、G5-GR43-GRASS-CHECK で荒野の撮影を比べる。試験を足す理由: GBuffer の書き方の誤り（a が 1 でない・法線が単位長でない・velocity の前の位置の取り違え）は、照明や TAA のちらつきに紛れて撮影では原因が分からない。危険地帯（GBuffer・RenderThread）なので評価者を通す。
 
 ## G5-GR43-GRASS-CHECK: GPU の草の生成と描画を起動して確かめ、距離のスイープ・近接のフェード・検証レイヤー・GPU の時間を撮って記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR43
 - check: launch
@@ -5871,7 +5955,8 @@
 - notes: ロードマップ GR27 の設計4（462〜516 行）とフェーズ (d)(e)。10-02 の後に太陽と点光源の VSM が入り（SceneView.cpp:1202〜1218。VTG9-VSM-POINT-DEFAULT-ON で起動画面の点光源も VSM）、ロードマップが前提にした CSM の ShadowMapPass は逃げ道になったので、VSM を主の対象に加えた。草の株の VSM の専用の経路（RecordKind::FoliageChunk）は変えない（草が影を落とすかは G11-S4 の範囲）。マスクの影の投影物が多い森では UBO の枠と描画ごとの記述子の更新が増える（リスクとして記録）。RT の影・DDGI・RTGI・パストレーサーは切り抜きを反映しない（GR104）。危険地帯（影のパス・RenderThread）なので評価者を通す。完了条件の GR27 の影の行、要件 `#### GR27`。
 
 ## G5-GR27-MATERIAL-SCENES-CHECK: GBuffer の契約・シェーディングモデル・切り抜きを入れた後も、全シーンの見た目が変わらないことを撮って確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-SHADOW
 - check: launch
 - gr: GR26, GR27
@@ -5888,17 +5973,17 @@
 - notes: 絶対規則7 の確かめと、完了条件の GR26・GR27 の「Game を起動して Rendering3DTest が従来どおり見える」。当分アプリを起動しない決まりのため実装のタスクから分けた。golden の 2 シーンには地形・草・デカールが無いので、印の移し替えはここで初めて目で見る。性能は測らない。
 
 ## G5-GR30-VERTEX-ANIM-VELOCITY: 頂点を時間で動かす共通の口を作り、今と前の時刻で 2 回評価して、風・シェルで動く頂点の velocity を全経路で正しく出す
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA, G5-GR26-MATERIAL-PARAMS
 - gr: GR30
-- done-when: `Assets/Shaders/Common/VertexAnimation.glsl` に `vec3 ApplyVertexAnimation(vec3 worldPos, vec3 localPos, vec4 instanceParams, float time)`（既定は恒等）の契約を置く。時刻は描画の定数で渡し、今の時刻 t = fmod(GameTotalTime, 4096) と前の時刻 tPrev = t - (GameTotalTime - PreviousRenderedTotalTime)（差は double で取ってから float。G5-GR25-EXTENSION-DATA の `RenderExtensionFrameInfo`）にする。gbuffer.vert:58・skinned_gbuffer.vert:143（前のフレームのパレットの後に掛ける）・megageometry.vert:64 と、可視バッファのラスタの頂点シェーダー（visbuffer_mesh.vert・visbuffer_mega.vert・visbuffer_skinned.vert）と解決（Common/VisibilityResolve.glsl:321〜333 の今と前の位置の組み立て、:493 の前のクリップ座標）が、今は t、前は tPrev で 2 回呼んで位置と前のクリップ座標を作り、影の描画（vsm_draw.vert・shadow.vert）も今の時刻で同じ式を通す（影と本体がずれない）。インスタンスの値は G5-GR26-MATERIAL-PARAMS のインスタンス単位の値の枠を使う（UBO と表を広げたら `Docs/Architecture/GpuLayoutRegistry.md` を更新）。FoliagePass の風の前の時刻（FoliagePass.cpp:361 の `windTime - context.DeltaTime`。DeltaTime は RenderThread のフレーム時間）を同じ tPrev の基準へ替える。試験だけで使う変位の関数（instanceParams で選ぶ既知の正弦の揺れ。試験の定義のときだけ有効）を入れ、GPU の `RenderingVelocityVertexAnimVulkanTest` と `RenderingVelocityVertexAnimGBufferFallbackVulkanTest`（`RenderingVelocityVulkanTest` に scenario=vertex-anim を足して登録。既存の camera-object-motion の解析解と同じ形式）が、揺れる板の GBuffer.Velocity の ROI が今と前の時刻の変位から計算した解析解と 5% 以内で一致し、揺れ 0 では velocity が 0（恒等のとき従来と同一）を、静的・スキン・可視バッファの on と fallback で確かめる。`RenderingVelocityVertexAnimDropVulkanTest`（同じ実行ファイル。既存の `NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL` RenderThread.h でフレームを落とす）が、フレームを落としても揺れる板の velocity が「最後に描いたフレームの時刻から今の時刻まで」の変位の解析解と 5% 以内で一致する（物体の前の位置の付け替えと同じ基準。move-then-stop と同じ枠組み）ことを確かめる。既存の velocity の試験（RenderingVelocity*VulkanTest の 11 本）と golden 4 本が変わらない。
+- done-when: `Assets/Shaders/Common/VertexAnimation.glsl` に `vec3 ApplyVertexAnimation(vec3 worldPos, vec3 localPos, vec4 instanceParams, float time)`（既定は恒等）の契約を置く。時刻は描画の定数で渡し、今の時刻 t = fmod(GameTotalTime, 4096) と前の時刻 tPrev = t - (GameTotalTime - PreviousRenderedTotalTime)（差は double で取ってから float。G5-GR25-EXTENSION-DATA の `RenderExtensionFrameInfo`）にする。gbuffer.vert・skinned_gbuffer.vert（前のフレームのパレットの後に掛ける）・megageometry.vert と、可視バッファのラスタの頂点シェーダー（visbuffer_mesh.vert・visbuffer_mega.vert・visbuffer_skinned.vert）と解決（Common/VisibilityResolve.glsl の今と前の位置の組み立てと前のクリップ座標）とソフトのラスタ（visbuffer_sw_raster.comp）が、今は t、前は tPrev で 2 回呼んで位置と前のクリップ座標を作り、影の描画（vsm_draw.vert・shadow.vert）も今の時刻で同じ式を通す（影と本体がずれない）。インスタンスの値は G5-GR26-MATERIAL-PARAMS のインスタンス単位の値の枠を使う（UBO と表を広げたら `Docs/Architecture/GpuLayoutRegistry.md` を更新）。FoliagePass の風の前の時刻を同じ tPrev の基準へ替える。試験だけで使う変位の関数（instanceParams で選ぶ既知の正弦の揺れ。試験で許可したときだけ有効）を入れ、GPU の `RenderingVelocityVertexAnimVulkanTest` と `RenderingVelocityVertexAnimGBufferFallbackVulkanTest`（`RenderingVelocityVulkanTest` に scenario=vertex-anim を足して登録）が、揺れる板の GBuffer.Velocity の ROI が今と前の時刻の変位から計算した解析解と 5% 以内で一致し、揺れ 0 では velocity が 0（恒等のとき従来と同一）を、静的・スキン・可視バッファの on と fallback で確かめる。`RenderingVelocityVertexAnimDropVulkanTest`（同じ実行ファイル。`NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL` でフレームを落とす）が、フレームを落としても揺れる板の velocity が「最後に描いたフレームの時刻から今の時刻まで」の変位の解析解と 5% 以内で一致することを確かめる。統合ブランチを取り込んだ後のビルドで、既存の velocity の試験（RenderingVelocity*VulkanTest の 11 本）と新しい 3 本の計 14 本が通る（golden の比較は絶対規則 10 により回さない）。
 - verify: `cmake --build build --config Debug --target RenderingVelocityVulkanTest RenderingGoldenImageTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(RenderingVelocity[A-Za-z]*VulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `ctest --test-dir build -C Debug -R "^RenderingVelocity[A-Za-z]*VulkanTest$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, Docs/Architecture/GpuLayoutRegistry.md, TASKS.md, PROGRESS.md
 - notes: ロードマップ GR30 の A（995〜1045 行）。GR30 は SS-TAA-P2 の後（ロードマップ）で、SS-TAA-P2 は done（Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md）。風の式の中身は GR46（G5 の後半）が持ち、この項目は契約と時刻の基準と velocity まで。4096 秒で巻くのは float の精度のため（1 時間を超えると刻みが粗くなる）で、風の周波数は 1/4096 Hz の整数倍に量子化する制約を GR46 へ渡す（Common/VertexAnimation.glsl の注釈と割り当て表に書く）。GBuffer の UBO の `frameParams` という名前は既に別の意味で使われている（GBufferPass.cpp:669。前のカメラの履歴・プリエクスポージャ・VT）ので、新しい欄は別の名前にする。10-02 の後に可視バッファ（既定は on）が入り、velocity は解決が三角形から作る（Common/VisibilityResolve.glsl:504 の `VisComputeVelocity`）ので、解決とソフトのラスタ（visbuffer_sw_raster.comp）も同じ式を通す必要がある（ロードマップの節には無い）。UNCERTAIN: 解決が三角形の頂点を読み直す所（VisibilityTriangleFetch.glsl）でインスタンスの値と時刻を引けるかは、読んで確かめる。危険地帯（GBuffer・可視バッファ・TAA の入力・RenderThread）なので評価者を通す。完了条件の GR30 の velocity とフレームの欠落の行、要件 `#### GR30`。
 
 ## G5-GR30-REACTIVE: TAA にリアクティブの入力（Scene.Reactive）を足し、velocity を持たない半透明・粒子の残像を消せるようにする
-- status: todo
+- status: done
 - after: G5-GR25-EXTENSION-DATA
 - gr: GR30
 - done-when: 名前付きの資源 `Scene.Reactive`（R8_UNORM）を `RenderGraphResourceNames.h` に足し、`TemporalAAPass` の Declare（TemporalAAPass.inl:358 付近）が有れば読み、無ければ 1x1 のゼロを結ぶ。`temporal_aa.frag` に binding 5 を足し、今の重み（temporal_aa.frag:198 の currentWeight）をリアクティブで 1 へ寄せ、分散のクリップの箱の半幅をリアクティブで広げる（係数は TAA の定数にして既定は仮）。書き手の口: ForwardPass の半透明の材質に「リアクティブを書く」の印（既定は書かない）を足し、印のある材質だけが色と同じブレンドの係数で被覆率を `Scene.Reactive` へ積む。拡張のパス（G5-GR25-STAGE-REGISTRY の Transparent 段）が同じ資源へ書ける手助け（RenderExtensionHelpers）を足す。GPU の `RenderingTemporalAAReactiveVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の SceneColor を撮る形で登録）が、画面を横切る半透明の板の A/B で、板が去った後にピークの 5% を超える画素が残るフレームの数が、リアクティブ有りで 2 以内・無しで 8 以上を確かめ、書き手が無いときの TAA の出力が導入前とビット一致であることも確かめる。golden 4 本が変わらない。
@@ -5918,7 +6003,8 @@
 - notes: ロードマップ GR30 の D（995〜1045 行）。鏡面の AA は毛・草の法線（頂点の法線が一定）には効かないので、毛の鏡面のちらつきは GR34・GR35 で別に見る。アルファハッシュと TAA の相性（C）は測ってから手を入れる方針（ロードマップ）なので、この項目では手を入れず G5-GR30-TAA-THIN-CHECK で測る。既定の見た目が変わるので、全シーンの撮影は G5-GR30-TAA-THIN-CHECK（絶対規則7）。golden の画像は Test/Core/Rendering/Baselines/RenderingValidation/ の 4 枚（GoldenBaselines.md:140〜144）で、更新は同書の Generate と Publish の手順で行う。危険地帯（GBuffer・可視バッファの解決）なので評価者を通す。完了条件の GR30 の鏡面の AA と golden の行、要件 `#### GR30`。
 
 ## G5-GR30-THIN-TAA-MEASURE: 細い毛状の形と Hash の切り抜きの葉の TAA のちらつきとゴーストを GPU の試験で測り、しきい値を置き、足りなければ Hash の画素をリアクティブへ書く
-- status: todo
+- status: backlog
+- parked: 描画・GPU の試験は回さない・作らない決まり(人の判断: 実行できたかしか見ていないグラフィックの試験は要らない。GPU の試験はウィンドウが開いて邪魔になる)
 - after: G5-GR30-THIN-SPECULAR-AA, G5-GR30-REACTIVE, G5-GR27-MASKED-GBUFFER
 - gr: GR30
 - done-when: GPU の `RenderingTemporalAAThinGeometryVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録。試験のシーンの中だけに、Hash の切り抜きの葉の板と、`Common/ThinGeometry.glsl` の幅の下限を通る細い毛状の形と、G5-GR30-VERTEX-ANIM-VELOCITY の試験用の揺れで動く板を置く）が、TAA を有効にして、(a) 静止のカメラの 32 フレームの ROI の輝度の時間方向の標準偏差、(b) カメラを回している間のゴーストの指標（TAA の出力と、同じ姿勢をジッタで平均した参照との ROI の最大差）を測って出し、`Test/Core/Rendering/Thresholds/RenderingValidation/` の TSV のしきい値以内を確かめる。しきい値は初回の実測から置く（先に数字を決めない。ロードマップ GR30 の完了条件）。Hash の雑音と分散のクリップの相性で測定が不足なら、ロードマップ GR30 の C の手（Hash で描いた画素を `Scene.Reactive` へ書く軽い追加）を入れて測り直し、入れた・入れないと測った値を `Docs/RenderingValidation/` の受入れの記録（新規の `TemporalAAThinGeometryAcceptance.md`）に書く。golden 4 本が変わらない（C の手を入れても切り抜きの材質が無いシーンは同じ）。
@@ -5928,8 +6014,9 @@
 - notes: ロードマップ GR30 の C と完了条件の「ゴースト/ちらつき」の行（995〜1045 行）。ロードマップは SS-TAA-P2 の連続撮影（起動しての撮影）で測る案だったが、当分アプリを起動しない決まりと、起動画面の見た目を変えない決まり（見本を起動画面に足せない）から、GPU の試験の固定シーンで測る形にした（ロードマップの試験の案にも新規の RenderingTemporalAAThinGeometryVulkanTest がある）。風の本当の式は GR46（G5 の後半）なので、ここでは試験用の揺れで測る。危険地帯（TAA・GBuffer）なので評価者を通す。要件 `#### GR30`。
 
 ## G5-GR30-TAA-SCENES-CHECK: 鏡面の AA・頂点の動き・リアクティブを入れた後の全シーンの見た目と、回しているときのゴーストを撮って確かめる
-- status: todo
-- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
+- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - check: launch
 - gr: GR30
 - done-when: Game を Debug でビルドし、ランチャーに載った各シーン（rendering3dtest・wasteland・mega-bananas・night-village・material-gallery・interior-light・sandbox）を `Scripts/CaptureScene.ps1` で撮り、各シーンが SCENE_READY まで進み検証レイヤーのエラーが無い（台本の判定が 0 で終わる）。PNG を開き、ランチャーの見本画像（`Assets/Textures/Launcher/<id>.png`）と `.harness/runs/scene-capture/` の直近の撮影と並べて、差が鏡面の AA による細かいハイライトの減りだけで、wasteland の草の揺れ（FoliagePass の時刻の基準を替えた分）が前と同じに見えることを確かめる。rendering3dtest を `Scripts/CaptureStartupScene.ps1 -OrbitDegreesPerSecond` で回しながら撮った連続のフレームを開き、球と岩の縁に筋（ゴースト）が出ていないことを確かめる。所見を PROGRESS.md に書き、崩れていれば G5-GR30-VERTEX-ANIM-VELOCITY・G5-GR30-REACTIVE・G5-GR30-THIN-SPECULAR-AA の done-when と paths の範囲で直す。
@@ -5956,7 +6043,7 @@
 - notes: 計画役の調べ: このコミットは別の AI が Linux で書き、Windows のビルドも試験もしていない（コミットの PROGRESS の文「関連ソースの構文確認と…ローカルスモークが成功した。CIは起動していない」）。統合ブランチには地形の衝突が無い（Library/Modules/Physics に heightfield・terrain の grep が 0 件）ので、GR38 の土台として使える。一方、統合ブランチには荒野の作業で別の高さ場 `Library/Core/Public/Rendering/Terrain/TerrainHeightField.h`（手続きと DEM の格子。クッカーと Game の据え置きが同じ関数を引く）と MegaGeometry へ焼いた地形の描画がある。2 つの高さ場の関係（どちらを正にするか、TerrainHeightField から HeightField の格子を作るか）はこの項目では変えず、所見を notes と PROGRESS.md に残して GR37・GR38 の計画（G5 の後半の計画役）へ渡す。この項目は G5 の前半の要件ではないが、取り込みは前半の計画役に任されたので書いた（後半の計画が同じ取り込みを書いていれば、どちらか一方だけを盤面に入れる）。危険地帯（物理の公開の型 ColliderComponent・Object の寿命）なので評価者を通す。
 
 ## G5-GR44-WORLD-FIELD: カメラに追従する世界空間のフィールドに、動く体（球・カプセル）を毎フレーム焼いて時間で減衰させる基盤を足す
-- status: todo
+- status: done
 - gr: GR44
 - done-when: `Library/Core/Public/Rendering/WorldFieldTypes.h` に `WorldFieldInteractor`（P0[3]・Radius・P1[3]・Strength・PrevP0[3]・PrevRadius・PrevP1[3]・ChannelMask の 64B。最大 32 個）と `WorldFieldSettings`（範囲と画素の大きさ: 既定 64 m 角・0.25 m/画素、128 m・0.5 m も選べる。中心: カメラ／カメラ＋視線方向 10 m。減衰の時定数 τ 既定 1.5 秒）と Sanitize を置く。`RenderWorld::SetWorldFieldInteractors(Span)` を毎フレーム受け、RenderingCoordinator が保持してパケットへ値で写した後に入力を空にする（呼ばれなければ止まる。消えた Entity の分が残らない）。`ComputeSceneRevisionHash` には入れない。`WorldFieldPass`（GBufferPass より前。RGBA16F の 256×256 を 2 枚の ping-pong で持ち、`RHI::TextureDesc` を直接使って作る（DDGIProbePass の前例）。名前付きの資源として今と前のフィールドを公開する）と `Assets/Shaders/WorldField/WorldFieldUpdate.comp`（out(uv) = in(uv+shift)×exp(−dt/τ)、範囲外は 0。中心は画素の格子にスナップし shift は整数。今フレームの interactor を前→今の掃引のカプセルとして「強い方を採る」で合成。R,G = 曲げの向き（XZ・草丈で割った無次元量）、B = 押し倒しの量、A = 痕跡の強さ（足跡・濡れ跡の予約））を足す。dt はパケットの TotalTime の差（GR02 の sim 時間が来たら差し替える）。試験が通る: `WorldFieldInputSanitizeTest`・`FramePacketWorldFieldSnapshotContractTest`・`WorldFieldScrollMathTest`（いずれも `CameraViewConstantsTest` の束へ MEMBER。NaN/Inf・負の半径・33 個目以降を安全に丸める／interactor だけが違う 2 つのパケットのハッシュが等しく、写した後に入力が空になり、GameThread の書き換えがパケットに及ばない／中心の移動から整数の shift を求める計算が、負の座標・境ちょうど・大きな移動で期待どおり）。`WorldFieldShaderCompileTest`（`RHIRayTracingApiContractTest` の束へ MEMBER）で `WorldFieldUpdate.comp` が CPU でコンパイルできる。GPU の試験 `WorldFieldUpdateVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。+X へ動くカプセルの後ろの画素で曲げの向きが +X から 10° 以内、減衰が exp(−t/τ) と 5% 以内、中心を 3 画素動かすとデータがちょうど 3 画素ずれ範囲外は 0）をビルドできる（実行は G5-GR44-TRAMPLE-CHECK）。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
@@ -5968,7 +6055,7 @@
 - notes: 選定課題 G5B-S8（踏み倒しの規模）: 企画の提案『低い視点と高い草』（好感触・未採用）が採られない場合の縮小案（フィールドを作らず interactor 8 個を UBO で草へ直接渡す。ロードマップ 946 行）は採らず、フィールドの基盤を作る。理由: 作者の決定（縮小版は採らない・保留の提案もエンジンの機能として採る）と、同じ基盤を枯れ度（GR45）・雨の遮蔽・足跡（GR59 など）が共用するため。設計はロードマップ 926〜942 行。トロイダルのアドレスは使わず整数画素のシフトの ping-pong にする（消費側は uv = (worldXZ − origin)/extent で引くだけ）。2 枚の所有と状態の追跡は TemporalAAPass の履歴と同じ流儀で、フレームを飛ばしたときに今と前を取り違えない（ロードマップ 1304 行）。RenderingCoordinator の時間は実時間の積算なので、ポーズ中も草は戻る（GR02 まで。ロードマップ 1299 行）。SceneRevision に interactor を入れるのが最大の落とし穴（毎フレーム RTGI の履歴が捨てられる。ロードマップ 1298 行）なので契約の試験で固定する。頂点のステージから RGBA16F を線形で引けるかは装置で未確認（ロードマップ 1302 行）で、G5-GR44-TRAMPLE-CHECK で確かめる。試験を足す理由: shift の丸めの取り違え・入力の消し忘れ・ハッシュへの混入は、草がわずかにずれる・跡が残る・RTGI がちらつくだけで、原因を撮影から辿れない。危険地帯（RenderThread のデータ契約・GPU の資源）なので評価者を通す。
 
 ## G5-GR44-TRAMPLE: 草と株が世界空間のフィールドで押し分けられ、体の Component が毎フレーム押す形を集めて渡す
-- status: todo
+- status: done
 - after: G5-GR44-WORLD-FIELD, G5-GR43-GRASS-DRAW, G3-GR13-SOCKET-ORACLE-TIMING
 - gr: GR44
 - needs-gr: GR13
@@ -5982,7 +6069,8 @@
 - notes: 設計はロードマップ 932・936〜944 行（GR44 の草の側・interactor の経路・集める側）。ロードマップの案は集め役を Game 側に置くが、犬・動物（G13）・シ者（G8・G10）が同じ部品を使うので Library の Component にする。ソケット（GR13）は統合ブランチにあるが確かめ直し中なので needs-gr に書く。骨格が決まるまで足の位置は暫定で、胴の中心の近似でも動く形にする（ロードマップ 1303 行）。曲げの向きは速度の向きと放射の向きの合成、強さは速さと半径の内の距離の 2 乗落ち（ロードマップ 942 行）。フィールドの範囲の外（32 m 超）は曲がらないので、カットシーンでは中心を視線の先へずらす設定を使う（GR62 の運用。ロードマップ 1300 行）。草の場の本体（GR42）は書き換えない。知覚の遮蔽へは反映しない（選定課題 G13-S4 の付随の推奨。ロードマップ 4560 行）。試験を足す理由: 集めた位置が 1 フレームずれる・消えた体の形が残るのは、草が体からわずかに遅れて割れる・何も無い所が凹むだけで、1 枚の撮影では分からない。危険地帯（RenderThread・Public API）なので評価者を通す。
 
 ## G5-GR44-TRAMPLE-CHECK: 世界空間のフィールドと草の踏み倒しを GPU で確かめ、走る体が草を割る様子と既存のシーンを撮って比べる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE
 - gr: GR44
 - check: launch
@@ -6021,7 +6109,8 @@
 - notes: 選定課題 G5B-S9（散布の実行時の描画経路）: (A) ロードマップの案（`DrawPayloadKind::ScatterChunk` を足し、ホスト可視のアリーナの SSBO と範囲の割り当て器を新しく作って GBufferPass・ShadowMapPass に統合する。ロードマップ 975〜977 行）、(B) 既にある 2 つの経路を使う: 静的な物は `MegaGeometryScatterComponent`（Object 1 つで本数によらず置け、範囲の出し入れと予算が SCN-ECS-MASS-ROWS・SCN-ECS-MASS-STREAM で入っている。RT と VSM にも入る）、風で揺れる株は `FoliageBatch` の区画（`FoliageTypes.h` の `FoliageCell`。区画ごとのカリングと距離の間引きがある）、のうち (B) を採る。理由: (A) の前提（大量の散布に使える経路が無い。ロードマップ 955 行）が今は崩れていて、3 つ目のインスタンスの経路を作ると影・RT・可視バッファへの対応を二重に持つことになる。GR25（描画の拡張点）にも依存しなくなる。Rendering3DTest に `--scatter-test` を足す案（ロードマップ 981 行）は、起動画面を変えない決まり（絶対規則 7）に合わせて grassland の開発ビルドの引数に置き換える。荒野は `RenderWorld::SetFoliage` の合成の口へ移すだけで、渡す一覧の中身を変えない（`WastelandRoutine.cpp` 712〜733 行付近）。試験を足す理由: Entity が本数に比例して増える・予算を超えて一度に常駐させる・解放した範囲が残って描かれるのは、撮影 1 枚では気づけず、長く歩いたときの重さや残像として黙って出る。危険地帯（Object の寿命・RenderThread・アセットロード）なので評価者を通す。
 
 ## G5-GR90-SCATTER-CHECK: 焼いた散布の描画と出し入れを起動して確かめ、可視のチャンク・描画の数・インスタンスの数を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR90-SCATTER-RUNTIME
 - gr: GR90
 - check: launch
@@ -6050,7 +6139,7 @@
 - notes: 設計はロードマップ 1069〜1079 行（GR113 の CPU 側の契約とカットシーン）。GR01（更新の段階）・GR12（姿勢の評価）・GR06（カメラ）は統合ブランチにあるが確かめ直し中なので needs-gr に書く。ロードマップの時点の読み（`Rendering3DTestRoutine.cpp` が GameMode の Tick の中で `BuildCameraProxy` を呼び、スプリングアームの更新より前で 1 フレーム遅れうる。ロードマップ 1057・1323 行）は、GR01 の段階の名前で今の順を読み直して決める。今の SpringArm の公開は `GetPivotObjectId`・`ResolvePivot`・`GetTargetOffset`（`Library/Core/Public/Component/SpringArmComponent.h` 47〜59 行）で、注視点を直接返す関数は無い。CameraProxy は `Library/Core/Public/Rendering/SceneProxy.h` 439 行。カメラ単位の値なので、カットシーン用の別カメラでも独立に切り替わる。タイムラインの `ViewClearance.Strength` のトラック（GR66）とショットの定義の「草の切り抜き: 既定/無効」（GR62）は G14 の範囲で、この項目は `SetMode` と Strength の口までを作る。切り抜きの半径の既定は主人公の体の幅＋余白程度の仮の値で、提案『低い視点と高い草』の「草で視界が遮られる」を壊さない大きさは作者の判断（ロードマップ 1326 行）。試験を足す理由: 切り抜きの式の端（B より奥・feather・Strength=0）と 1 フレームの遅れは、画面では主人公の縁がわずかに見える・隠れるだけで、撮影 1 枚では気づけない。危険地帯（Public API・RenderThread のデータ契約）なので評価者を通す。
 
 ## G5-GR113-GRASS-CLEARANCE: カメラと主人公の間と、カメラの直前の草・株を、生成の段で決定的に間引いて低くする
-- status: todo
+- status: done
 - after: G5-GR113-CLEARANCE-CPU, G5-GR43-GRASS-DRAW, G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
@@ -6064,7 +6153,7 @@
 - notes: 設計はロードマップ 1063 行（GR113 の層 A）。間引きは塊（ブレード・株）単位の確率的な間引きで、提案『草の作り方』が板ポリになっても同じ形で使える（ロードマップ 1081 行）。前方の草の遮りは残す（切り抜きは線分 AB の周りだけ）。切り抜きが「トンネル」に見えないよう、縁のぼかしと「消さずに低くする」の調整が要る（ロードマップ 1325 行）ので、値は既定を仮にして G5-GR113-CLEARANCE-CHECK の撮影で詰める。性能の目安（compute に足す時間 0.05 ms 未満。ロードマップ 1200 行）は記録だけ。試験を足す理由: 間引きの式が CPU と GPU でずれる・外側まで消えるのは、画面では草が少し薄いだけに見えて気づけず、主人公の縁のちらつきとして黙って出る。危険地帯（RenderThread）なので評価者を通す。
 
 ## G5-GR37-TERRAIN-LAYERS: 地形の材質を最大 8 層のスプラットの混ぜ合わせにし、急斜面のトライプラナー・高さでの先鋭化・濡れ度の受け口を入れる
-- status: todo
+- status: done
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR89-TERRAIN-MASKS, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR37
 - needs-gr: GR26
@@ -6077,7 +6166,8 @@
 - notes: 選定課題 G5B-S2（層材質の置き場）: (A) 今の `MegaTerrainBlend`（3 層固定。`Library/Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h` 306〜400 行付近）にスプラットの形を足して一般化する、(B) GR26 の材質の種別として TerrainLayered を新しく作る（ロードマップ 686 行）、のうち (A) を採る。理由: 地形は MegaGeometry の経路だけで描き（G5B-S1）、その経路のラスタ・可視バッファの解決・RTGI が既に `MegaTerrainBlend` を読んでいる。ただし地形の値は MegaGeometry の区画の UBO（`MegaGeometryPass.cpp` 1981 行の `TerrainParams`。`SectionUniformData` は 1983 行で 768B 以下）に載っていて、GR26 が同じ UBO の割り当てを決める（段階をまたぐ注意の割り当て表。ロードマップ 4488 行）ので needs-gr に GR26 を書く。層を増やす値は UBO に詰めず、層の表を別の束縛に置くのを第一案にし、GR26 の表に登録する。2D 配列テクスチャは RHI にある（ロードマップ 680 行）。VRAM は 8 層×1024² で約 110MB（無圧縮の概算。ロードマップ 1254 行）なので、BC（`RHITypes.h` 50〜55 行に BC1/4/5/7 がある）で焼くか 512² に絞る。シェーダーの CPU コンパイルの試験を足す理由: 当分アプリを起動しないので、コンパイルの失敗は撮影まで気づけず、そのあいだ地形は 1 層に戻るだけで落ちない。危険地帯（描画・RenderThread・Public API）なので評価者を通す。
 
 ## G5-GR37-TERRAIN-CHECK: 地形の描画（層・亀裂・影・TLAS）を起動して確かめ、ほかのシーンの見た目が変わらないことを撮って比べる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS
 - gr: GR37
 - check: launch
@@ -6096,7 +6186,7 @@
 
 ## G5-GR46-VERTEX-ANIM: 通常のメッシュの材質に風の頂点アニメを足し、GBuffer・影（方向光・点光源・VSM）・velocity に同じ変位を入れる
 - status: todo
-- after: G5-GR46-WIND-FIELD, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR46-WIND-FIELD, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR46
 - needs-gr: GR26, GR30
 - done-when: 材質に `VertexAnimationParams`（mode=None/Grass/Tree・amplitude・heightStart/heightEnd・frequencyScale・branchFactor・phaseRandom・stiffness）を GR26 の材質の値の枠に載せ（`MaterialCreateData`→`RenderMaterialStore` が複写）、GR30 が置く `Common/VertexAnimation.glsl` の `ApplyVertexAnimation` の中身を `Common/Wind.glsl` の風で実装する（樹木 = 幹の低周波＋枝先の高周波。マスクは頂点の高さを高さの範囲で正規化した値と幹の軸からの距離。個体差の位相はワールド行列の平行移動のハッシュ）。風の値は GBuffer 系のパスへ 1 フレームに 1 つの環境の UBO（新しい binding）で渡す。`gbuffer.vert`（`skinned_gbuffer.vert` は宣言の追従）・`shadow.vert`・`point_shadow.vert`・`vsm_draw.vert` が同じ変位を入れ、velocity は今の時刻と前の時刻の 2 回の評価で前の位置を出す（GR30 の約束）。可視バッファが On のとき、頂点アニメの材質の描画は ID のラスタと解決に載せず、解決の後に GBuffer へ重ねて描く（FoliagePass と同じ位置）。MegaGeometry は静的なので対象外。mode=None の材質の描画・UBO の値・出力は変わらない。`MaterialResourcesTest`・`GBufferMaterialDescriptorCacheTest` が新しい値を含めて通る。`WindShaderCompileTest` に、頂点アニメを有効にした gbuffer.vert・skinned_gbuffer.vert・shadow.vert・point_shadow.vert・vsm_draw.vert のコンパイルを足して通る。GPU の試験 `GBufferWindVelocityVulkanTest`（`RenderingVelocityVulkanTest` の実行ファイルに scenario として足す。風で揺れる板をカメラ静止で描き、velocity が今と前の変位の有限差分の解析値と 0.002 以内、mode=None と風なしで 0）と `ShadowWindConsistencyVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。同じ頂点の GBuffer の経路と影の経路（方向光・点光源・VSM）の変位が一致）をビルドできる（実行は G5-GR46-WIND-CHECK）。grassland に風で揺れる木（既存の手続きのメッシュか仮の幹と枝）を数本置く。
@@ -6110,7 +6200,8 @@
 - notes: 設計はロードマップ 864〜880 行（GR46 のシェーダー側の口・P2〜P4）。GR30 が頂点アニメの口（`Common/VertexAnimation.glsl` の `ApplyVertexAnimation`、2 回の評価、時刻の値）を、GR26 が材質の値の枠と UBO の割り当て表（ロードマップ 4488 行）を作るので、両方を needs-gr に書く。この項目は GR30 の口の中身（風）と、材質の値と、影の経路を足す。風の値の渡し方は選定課題 G7-S2（ロードマップ 4529 行）の推奨 (A)（1 フレームに 1 つの環境の UBO を各パスの新しい binding に結ぶ。物体ごとの UBO を増やさない）に合わせる。今の UBO は GBuffer が 336B（`GBufferPass.cpp` 101・672 行）、影が 208B（`ShadowMapPass.cpp` 60 行）。可視バッファの解決は三角形を読み直して位置を作る（`SceneView.cpp` 1159〜1178 行）ので、頂点を動かす物を解決に載せると変位が消える。草・低木の FoliagePass が解決に載らない理由と同じ（`SceneView.cpp` 1185〜1188 行のコメント）。頂点の色が無い（GR33 が未了）ので樹木のマスクは高さと幹の軸の距離の近似になる（ロードマップ 1287 行）。RT・パストレーサーは静止の姿勢のまま（GR104 の範囲）。影の頂点アニメは描画ごとの材質の引きでコストが増える（ロードマップ 1289 行）ので、GPU の時間は G5-GR46-WIND-CHECK で記録する。危険地帯（GBuffer・影・RenderThread）なので評価者を通す。
 
 ## G5-GR46-WIND-CHECK: 風の GLSL と CPU の一致・風の velocity・影の変位の一致を GPU で確かめ、揺れと既存のシーンを撮って比べる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR46
 - check: launch
@@ -6141,7 +6232,8 @@
 - notes: 設計はロードマップ 1065〜1067 行（GR113 の層 B と層 C）。層 B の材質の印は GR26、アルファテストの変種は GR27、層 C の段の登録は GR25 が作るので needs-gr に書く（GR113 の要件の依存。`GameFeatureRequirements.md` 11808 行）。discard は早期 Z を失うので、印の付いた材質だけに限り、MegaGeometry の大きな遮蔽物へ広げすぎない（ロードマップ 1324 行）。層 C は選定課題 G5B-S11 として、作者の決定（必要な機能は全部やる）に従って実装し、既定は無効にする（『コントラストの低い世界』でシルエットが人工的に見えるかは見た目の判断。ロードマップ 1067 行）。設定は GR120（可読性の補助。G15）と共有する前提で名前を付ける。スキンの種類は `SkinnedMeshPassKind`（`Library/Core/Public/Rendering/SkinnedMeshTypes.h` 138 行）。ForwardPass にはスキンが出ないので半透明の経路では代えられない（ロードマップ 1067 行）。GBuffer の UBO は今 336B（`GBufferPass.cpp` 101・672 行）で、ロードマップの「320→368」は古い値なので使わない。試験を足す理由: 遮蔽物の抜け方と主人公の見え方の割合は、撮影を目で見ても「なんとなく見える」で終わり、印の無い材質まで抜けた・影まで抜けたといった誤りが黙って残る。危険地帯（GBuffer・RenderThread・Public API）なので評価者を通す。
 
 ## G5-GR113-CLEARANCE-CHECK: 草越しの視認性の確保を起動して確かめ、カメラの高さごとの主人公の見え方・ちらつき・カットシーンの無効を撮って数値にする
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G5-GR113-GRASS-CLEARANCE, G5-GR113-OCCLUDER-DITHER, G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON
 - gr: GR113
 - needs-gr: GR01, GR12, GR06
@@ -6173,7 +6265,7 @@
 - stop-when: プッシュする、workflow を起動する、byte の照合を外す・正規化する、`powershell.exe` の binary の hash の照合を外す、凍結基準の JSON を書き換える。
 
 ## G10-GR63-SKIN-CULL: スキンの頂点・索引を DeviceLocal に置き、主カメラの視錐台と CSM のカスケードごとにスキンの描画を省き、太陽の影の調整口を値の型にまとめる
-- status: todo
+- status: done
 - gr: GR63
 - done-when: (1) `SkinnedMeshGpuStore` の VB・IB（今は `Library/Core/Private/Rendering/SkinnedMeshGpuStore.cpp:399`・`:416` で `CPUAccessible = true`）を DeviceLocal（`CPUAccessible = false`、ステージング経由の転送）にし、最初の転送を読み込みの時点で済ませる。毎フレーム書くパレット（`:129`・`:170`）は今のまま。VB・IB のメモリの型を `SKINNED_MESH_MEMORY vb=<型> ib=<型>` の 1 行で 1 回だけログに出す。(2) 主カメラの視錐台: `AppendSkinnedDrawCommands`（`SkinnedDrawCommands.cpp:6`。カメラを見ない）が作ったスキンの描画を、`AnimatedBounds` × `WorldTransform` の境界でビューの View×Projection と照らす純関数を `Library/Core/Public/Rendering/SkinnedLodSelection.h`（実装は Private）に置く。可視バッファのラスタ（`VisibilityRasterPass`）と fallback の `GBufferPass` のスキンの描画は、視錐台の外の描画を記録しない。`SkinningComputePass` の変形は「主カメラに見える」か「影を落とす」描画だけにする（VSM は主カメラの錐台の外の影も描く。`VirtualShadowMapCasters.h` の冒頭の注釈）。可視バッファの経路で `SkinnedGBufferRecordedDraws`（`FramePacket.h:52`）が数えられていなければ、同じ統計に数える。 (3) CSM のカスケードごとの絞り込み: `ShadowMapPass.cpp:1296` のカスケードのループは今 MegaGeometry だけを `CascadedShadowCascadeMayContainCaster` で省いている（`:1387`）。同じ判定を、スキン（境界は `BuildSkinnedShadowCasterWorldBounds`、`DirectionalShadowLightMatrices.cpp:321`）と通常のメッシュの描画にも掛け、XY の範囲に入らないカスケードへ描画を出さない。(4) 太陽の影の調整口: 既にある `RenderWorld::SetSunShadowMaxDistance`（`RenderWorld.h:219` → `SceneProxy.h:584` の `SunShadowMaxDistance`）を、値の型 `SunShadowParameters`（MaxDistance・SplitLambda。Sanitize 付き。0 と負は ShadowMapPass の設定のまま）へ広げ、`RenderWorld::SetSunShadowParameters` から FramePacket の値で CSM の分割（`CascadedShadowLightMatrices.cpp:167` の `SplitLambda`）と VSM の範囲へ届ける。旧 `SetSunShadowMaxDistance` は新しい口へ転送して残す。既定値は変えない（80 m）。(5) 試験用の合成の高密度スキン `SkinnedGiantFixture`（`Test/Core/Rendering/RenderingValidation/`。管状のメッシュ・128 関節・滑らかな重みをコードで作る。既定は LOD0 で 100 万三角形、試験では三角形数を引数で減らせる。バイナリをリポジトリに置かない）を足す。 (6) CPU の `SkinnedLodSelectionTest`（`CameraViewConstantsTest` の束へ MEMBER。足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: 視錐台の外のプロキシは描画が 0、カスケードの XY 範囲の外のキャスターはそのカスケードの描画が 0 で範囲内なら残る、境界にまたがるものは残る（保守的）、`SunShadowParameters` の Sanitize（NaN・負・λ の範囲外）。(7) GPU の `RenderingSkinnedCullVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、可視バッファの on と `--visibility-buffer=off` の `RenderingSkinnedCullGBufferFallbackVulkanTest` の 2 本を登録）: 縮小した `SkinnedGiantFixture` をカメラの後ろに置くとスキンの記録の描画が 0、前に置くと絞り込みを切った場合とバックバッファの画素が一致（差 0）。既存の `RenderingVelocitySkinnedVulkanTest`・`RenderingVelocitySkinnedGBufferFallbackVulkanTest`・`ComputeSkinningVulkanTest`・`VisibilityResolveVulkanTest`・`VirtualShadowMapVulkanTest`・`SkinnedSubmeshDrawContractTest`・`CascadedShadowLightMatricesTest`・`VirtualShadowMapClipmapTest` と golden 4 本が通る。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest SkinnedSubmeshDrawContractTest CascadedShadowLightMatricesTest RenderingHdrSceneCaptureTest RenderingVelocityVulkanTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
@@ -6183,7 +6275,7 @@
 
 ## G10-GR63-VELOCITY-GUARD: 前のフレームでカメラの背後・near 面の近くだった頂点の画素に「履歴なし」の印を書き、TAA と動きぼけがそれを読んで大きなにじみを出さないようにする
 - status: todo
-- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR63
 - needs-gr: GR30
 - done-when: (1) velocity の書き手 2 つ（可視バッファの解決 `Assets/Shaders/Common/VisibilityResolve.glsl:504` の `VisComputeVelocity`、fallback の GBuffer の断片。G5-GR26-GBUFFER-PROGRAMS の後は `Common/GBufferFragment.glsl`）が、前のフレームのクリップ座標の w が閾値（描画の定数。既定は仮）以下のとき通常の velocity を書かず「履歴なし」の印を書く。印の値と意味を 1 か所（`Assets/Shaders/Common/` の include と C++ の定数）に置き、`Docs/Architecture/GpuLayoutRegistry.md`（G5-GR26-GBUFFER-CONTRACT が作る割り当て表）に登録する。(2) 読み手: `temporal_aa.frag` は印の画素で履歴を捨てて今の色だけを使い、`MotionBlur.frag`・`MotionBlurTileMax.frag` は印の画素を速度 0 として扱う（32 px の上限で引き伸ばさない）。印の無い画素の結果は今と同じ。(3) `RenderingVelocityVulkanTest` に scenario を 2 つ足し、可視バッファの on と `--visibility-buffer=off` の両方で登録する（計 4 本）: `skinned-fast-rotation`（根の関節を既知の角速度で回したスキンの画素の GPU の velocity が解析値と 0.002 以内。`Docs/RenderingValidation/R6aVelocityAcceptance.md` と同じ許容）、`skinned-behind-near`（前のフレームで near 面の背後だった頂点の画素が印になり、TAA の後の色が今のフレームの色と一致し、動きぼけの後に 32 px 級のにじみが出ない）。既存の `RenderingVelocity*VulkanTest` の 11 本と golden 4 本が通る。
@@ -6204,7 +6296,7 @@
 - notes: ロードマップ 1962 行「灰・光・白・残像・しがみつきの確認は専用の GameMode と検証シーンで行う」。G8 の `CombatSlice`（G8-GR17-SLICE-SMOKE）と同じく、ランチャーに載せないので起動の流れと各シーンの見た目（作業合意の絶対規則 7）は変わらない。場面ごとに引数を `GameApplicationHandler.cpp` へ足すと G10 の各項目がそのファイルでぶつかるので、引数は 1 つにして場面の表を GameMode のフォルダの中に置いた。`GameApplicationHandler.cpp` の差分は引数の解析と GameMode の登録の数行に絞る（G8 の項目も触る共有のファイル）。`needs-gr: GR01` は更新の群（ApplicationProcessor の後段）を前提にするため（G1-GR01-TICK-CONTRACT-DOC）。決まった刻みの時計（G4-GR02-FIXED-FRAME-CLOCK）がまだ無ければ、その引数は付けずに印の検査だけにする（撮影の時刻をそろえるのは後の確かめの項目で）。巨大なスキン（GR63）は試験の中の合成の fixture を使い、この場面には入れない（G10-GR63-GIANT-CHECK）。起動しての確かめは各要件の確かめの項目で行う。
 
 ## G10-GR65-PALEFLAT: シ者の均一な白（PaleFlat）を、調整できる値・全球の平均照度・専用の照明の式で仕上げ、露出と霧には従わせる
-- status: todo
+- status: done
 - after: G5-GR26-LIGHTING-MODELS, G10-SHISHA-SHOWCASE, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR65
 - needs-gr: GR26
@@ -6215,7 +6307,8 @@
 - notes: ロードマップ 1946・1958 行、要件 `#### GR65` の設計案と受け入れ確認。ロードマップの「784B → 832B」は古く、今の `GPULightingParams` は 944 バイトなので、差分の +48 バイトを割り当て表に登録する形で書いた（「段階をまたぐ注意」4422・4470 行）。G11 の GR54 が IBL を GPU で混ぜるときは E_avg も同じ重みで線形に混ぜる、と `Docs/Architecture/RenderingFlow.md` に書く（4470 行。G11 の項目への申し送り）。シェーディングモデルの ID・GBuffer の符号化・PaleFlat の書き込み時の粗さ 1・金属度 0 は G5-GR26-GBUFFER-CONTRACT・G5-GR26-MATERIAL-PARAMS・G5-GR26-LIGHTING-MODELS が入れるので、ここは値と式だけ（要件の「足りないもの」のうち GR26 の分は G5）。選定課題 G10-S6（PaleFlat の見えの既定と適用範囲）は推奨どおり決めた: 6 つの値は `PaleFlatParameters` で変えられる形にし、既定は仮（色は提案の #E3E5DF。WrapMin などは要件の設計案の初期値）。濡れ（GR53）は PaleFlat に掛けない（安全側）。夕方・曇天・夜の許容は決めず、G10-GR65-PALEFLAT-CHECK の撮影の値を `PaleFlatAcceptance.md` に並べ、決めるのは作者。理由: 出所が企画で未定の提案『色と明度のルール』で、見ながら決めるのは作者（ロードマップの選定課題一覧の G10-S6）。G10 の中では `gbuffer.frag`・GBufferPass・`lighting.frag` を共有する GR65・GR64・GR60 を直列にする（ロードマップ 1977 行）ので、G10-GR64-GHOST-RENDER と G10-GR60-DISSOLVE はこの後。危険地帯（lighting.frag・GBuffer・GPULightingParams）なので評価者を通す。DefaultLit の画素は変えないので起動画面（絶対規則 7）は golden で守る。やらないこと: パストレーサーの PaleFlat（ロードマップの非ゴール）、校正の撮影（G10-GR65-PALEFLAT-CHECK）。
 
 ## G10-GR65-PALEFLAT-CHECK: 白の質感を起動して撮り、太陽 45 度・夕方・曇天での表示の値を記録して既定の値の判断を作者へ渡す
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G10-GR65-PALEFLAT
 - gr: GR65
 - check: launch
@@ -6230,7 +6323,7 @@
 
 ## G10-GR64-GHOST-RENDER: スキンに不透明度を持たせ、アルファハッシュと TAA で半透明の残像として GBuffer へ描き、影は落とさない
 - status: todo
-- after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR64
 - needs-gr: GR27, GR30
 - done-when: (1) `SkinnedMeshComponent::SetOpacity`・`GetOpacity`（0〜1、既定 1）から `SkinnedMeshProxy::Opacity` へ値で渡し、G5-GR26-MATERIAL-PARAMS のインスタンスの被覆率の乗数（`.w`）へ写す。不透明度が 1 未満のスキンは、材質が不透明でも G5-GR27-MASKED-GBUFFER の Hash の切り抜きで描く（可視バッファが on のときは解決の後に重ねる経路、fallback では切り抜きの描画）。不透明度が 1 のときは今の描画と同じ。(2) 不透明度が 1 未満の間は影を落とさない（CSM・VSM・点光源の影のどれにも出さない。`bCastShadow` の値は書き換えず、描画の側で外す）。(3) Hash の閾値が 8 フレームで層別化され、同じ画素の閾値が等間隔に並ぶことを保証する（G5-GR27-MASKED-GBUFFER の `Common/AlphaClip.glsl` の式がそうでなければ直す。TAA のジッタの番号をフレームの位相として使う）。(4) CPU の `SkinnedAlphaHashContractTest`（`CameraViewConstantsTest` の束へ MEMBER。`TemporalAAJitterTest` の隣。足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く）: Hash の C++ の参照で、8 フレームの被覆率が不透明度に等しい（画素全体の平均で ±2%）、同じ画素の閾値が 8 フレームで等間隔、不透明度 1 で破棄なし・0 で全部を破棄。参照と GLSL の定数が同じことを文字列の走査で確かめる。(5) GPU の `RenderingSkinnedGhostVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、TAA を有効にして TAA の後の色を撮る。on と `--visibility-buffer=off` の `RenderingSkinnedGhostGBufferFallbackVulkanTest`）: 静止したカメラで 16 フレーム回し、既知の背景の上の不透明度 0.5 のスキンの内側の画素の平均が mix(背景, スキンの色, 0.5) と 5% 以内、収束後の時間方向の標準偏差を記録して閾値（仮。実測で決めて TSV に置く）以内、`SkinnedShadowRecordedDraws` が不透明な本体の分だけ、霧の濃い条件で「不透明な本体に同じ霧を掛けた参照」× 不透明度と一致（許容は実測で決める）。golden 4 本と G5-GR27 の `RenderingAlphaClipVulkanTest` が通る。
@@ -6291,7 +6384,7 @@
 - notes: GR56 の P1（要件 5581 行）。選定課題 G11-S2（上方の遮蔽のデータの共有。ロードマップ 4549 行）は推奨の (B) を採る: 遮蔽物の値の型と手置きのコンポーネントは GR56 と GR59 で 1 つ（`SkyOccluderProxy` に「雨を遮るか」の印を持たせ、GR59 の RainOccluderComponent は作らない）、マップは別（GR56 は L1 のクリップマップ、GR59 は D32 の高い解像度の雨の遮蔽）。理由: 屋根の縁を鋭く切る雨の遮蔽と、滑らかな大域の可視率とで、要る解像度（9.4 cm と 0.5 m）と更新の頻度が違う一方、遮蔽物の管理（手置き・GR90 のチャンクデータ・取り込みの推定）は 1 本にできる。先に作るこの項目が共通の型を決める。今あるもの: 屋外の空の遮蔽は RTGI の光線の空の見え方（lighting.frag:1394-1404 の `rtgiSkySpecularOcclusion`）と SSAO・材質の AO だけで、RT が無い構成では空の光が全量入る（要件の判定は今も成り立つ）。2.5D で庇・洞窟の下は表せず、L1 は鋭い地平で誤差が出る（要件のリスク。閉形式との差を記録する）。試験は CPU の正解と GPU の比べの基準を兼ねる。新規のソースは UTF-8＋BOM＋CRLF。試験を足す理由: 反証する契約は「遮蔽の積分と L1 の畳み込みが閉形式に合う」「遮蔽物の増減で RTGI の履歴を捨てない」。この正解が GPU の試験と PT 比べの基準になり、ずれは絵では「少し暗い」としか見えず黙って起きる。ロードマップ 1989・2000 行、要件 `#### GR56`。
 
 ## G11-GR56-SKY-OCC-MAP: 遮蔽物から空の遮蔽のクリップマップを GPU で作り（写し込みと積分・カメラ追従の増分更新）、照明が拡散の空の光に掛ける
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-CPU
 - gr: GR56
 - done-when: (1) `SkyOcclusionMapPass`（`Library/Core/Public/Rendering/SkyOcclusionMapPass.h`・`Private/Rendering/SkyOcclusionMapPass.cpp`。IViewPass＋IRenderGraphPass、`SkyAtmospherePass` と同じく永続テクスチャを Import・Publish）が、3 段 × 256² のトロイダルのクリップマップ（遮蔽物 G・U・T・κ の RGBA32F、遮蔽率の L1 係数の RGBA16F、補助 G・U−G・T−G の RGBA16F）を持ち、`Assets/Shaders/SkyOcclusion/Splat.comp`（CPU が 8×8 のタイルごとに遮蔽物をビン分けした SSBO を読み、テクセルごとに決定的に写す）と `Integrate.comp`（G11-GR56-SKY-OCC-CPU の正解と同じ歩・同じ式。外周の歩は粗い段を引く）で作る。窓の中心は一定のテクセル数を越えたときだけ動かし、新しく出た行・列と、遮蔽物が変わった矩形だけを作り直す。(2) `SceneView::SetupDeferredPipeline` の空のパス（SceneView.cpp:1199）の前に足す（PT のパイプラインには足さない）。`ViewRenderContext` に `SkyOcclusionRenderResources`（`SkyAtmosphereRenderResources` と同じ形）を足す。(3) 照明: `Assets/Shaders/Common/SkyOcclusion.glsl` の `EvaluateSkyOcclusion(P, N)`（段の境界は数割で混ぜる。樹冠の層の中・上では弱める。受け手が地面より下を指すときも弱める）を lighting.frag が引き、拡散の空の光（IBL の経路）の AO に可視率 V を掛け、遮った向きから届く光（色×強さ×(1−V)×天頂の照度）を足す。LightingPass の記述子へ空いている次の binding を足し（今の lighting.frag は 0〜24・26〜28 を使う）、`GPULightingParams` の末尾に追記して `LightingPassGpuTypes.h:59` の static_assert を新しい大きさにする。無効（既定）またはマップが公開されていないときは 1×1 の既定のテクスチャと印 0 で、今の画素を 1 つも変えない。検証の表示（DDGI の検証と同じ扱い）では掛けない。(4) `DebugViewMode::SkyVisibility`（V(+Y) と曲げた法線を表示）を `RenderTypes.h` と lighting.frag の数へ足す。(5) Game に `--sky-occlusion`（どのシーンでも空の遮蔽を有効にする）を、Rendering3DTest に `--sky-occluder-demo`（楕円体の樹冠 3 つと箱の岩）を足す。試験が通る: `SkyOcclusionMapVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER）で、合成の 3 場面（楕円体の樹冠 1 本・林縁の壁・岩の塊）のクリップマップの読み戻しが CPU の正解と b0 と |c| の最大絶対差 0.03 以内、カメラを 1・7・64 テクセル動かした増分の更新（トロイダルの折り返しをまたぐ移動を含む）が新しい中心での全部の作り直しと 1e-3 以内。`DebugViewModeStringTest` が新しい表示を含めて通る。無効のまま `RenderingGolden*` の 4 試験の差が 0。
@@ -6301,8 +6394,8 @@
 - notes: GR56 の P2（要件 5583 行、設計 5515-5539 行）。要件の「binding 21/22」「GPULightingParams 784 B」は古い: 今は lighting.frag が 0〜24・26〜28 を使い、`GPULightingParams` は 944 B（LightingPassGpuTypes.h:59）。番号とバイト数は着手時の空きの次を使い、決め打ちを文書に書かない（段階をまたぐ注意 4422・4474 行）。`Docs/Architecture/GpuLayoutRegistry.md`（G7-GR53-WET-WRITERS・G10-GR65-PALEFLAT が使う割り当て表）に登録してから使う。G10 の GR65 も同じ構造体の末尾に足す（+48 B）ので、先に入った側の後ろに足す。拡散への適用は RT の無い IBL の経路だけ（RTGI・DDGI との併用は G11-GR56-SKY-OCC-RT）。地形の高さと森のチャンクデータからの入力は G11-GR56-SKY-OCC-WORLD で、ここは手置きの遮蔽物と地面の高さのパラメータだけ。フル再構築の時間は数 ms の桁と推定（要件。未測定）で、計測は G11-GR56-SKY-OCC-CHECK。要件の設計の「SkyAtmospherePass の直前」に置き、PT は参照なので遮蔽を入れない（方式差）。選定課題 G11-S3（DDGI のカメラ追従・カスケード化。ロードマップ 4550 行）は推奨の (A) 作らないを採る: 屋外の遮蔽はこのクリップマップが受け持ち、DDGI の屋外の粗い格子は樹冠の下の数 m の遮蔽に届かない（要件の推定）。RTGI と組の実測で足りないと出たときだけ、G11-GR56-SKY-OCC-CHECK の報告から新しい項目にする。危険地帯（lighting.frag・GPULightingParams・RenderThread）。評価者の反証を省かない。lighting.frag・LightingPass.cpp・SceneView.cpp は共有のファイルなので差分を小さくする。試験を足す理由: 反証する契約は「GPU のクリップマップが CPU の正解と合う」「増分の更新が全部の作り直しと同じ」。折り返しの誤りはカメラが動いたときの縞や欠けとして一部の場所だけに出て、黙って起きる。
 
 ## G11-GR56-SKY-OCC-SPECULAR: 鏡面の環境光を、空の遮蔽の見える円錐と鏡面のローブの交差で全部の経路（IBL・DDGI・RTGI・半透明）で遮り、樹冠の下の濡れた面に空が映らないようにする
-- status: todo
-- after: G11-GR56-SKY-OCC-MAP, SCN-RENDER-SPEC-OCCLUSION
+- status: done
+- after: G11-GR56-SKY-OCC-MAP
 - gr: GR56
 - done-when: (1) `Common/SkyOcclusion.glsl` に `EvaluateSkySpecularOcclusion(P, N, R, roughness)`（曲げた法線を軸、可視率から開きを決めた円錐と、粗さから決めた鏡面のローブの交差。G11-GR56-SKY-OCC-CPU の CPU の正解と同じ式）を足し、lighting.frag の鏡面の遮り（`specularAO`、lighting.frag:1346・1392 付近）に掛ける。RTGI が有効で RTGI の空の見え方（`rtgiSkySpecularOcclusion`、lighting.frag:1394-1404）があるときは、二重に数えないよう 2 つの小さい方を使う（SCN-RENDER-SPEC-OCCLUSION の `skySpecularOcclusion` の約束〔lighting.frag:696-716〕に合わせる）。IBL・DDGI・RTGI のどの経路も同じ関数を通す。`forward_transparent.frag` の鏡面の遮りにも同じく掛ける。(2) 画面空間の AO（GTAO）と二重に数えない規則: 積分の最初の歩 0.5 m と GTAO の半径（1〜2 m 以下）の関係を確かめ、文書（`Docs/RenderingValidation/R56Acceptance.md`、新規）に書く。(3) `RenderingGoldenImageTest` に場面の引数 `--sky-occlusion-scenario=canopy`（地面・楕円体の樹冠 3 つ・箱の岩・粗さ 0.1 の球を樹冠の下と開けた所に置き、方向光なしで空だけで照らす。RTGI 無効）を足し、`RenderingSkyOcclusionCanopyVulkanTest` として登録する（GTAO の `RenderingGTAOCornellRoomVulkanTest` と同じ形）。試験が通る: その試験で、樹冠の下の地面の平均輝度が開けた地面の 25〜60%、林縁から樹冠の下への線上の輝度が単調に下がり 0.5 m あたりの変化が 15% 以内、樹冠の下の粗さ 0.1 の球の鏡面の平均輝度が開けた所の 30% 以下、空の遮蔽を無効にした同じ場面が既定の絵と一致。`RenderingGolden*` の 4 試験と `RenderingGTAOCornellRoomVulkanTest` が変わらない。
 - verify: `cmake --build build --config Debug --target RenderingGoldenImageTest RHITextureUpdateVulkanTest CameraViewConstantsTest Game -- /m:1`
@@ -6311,13 +6404,21 @@
 - notes: GR56 の P3（要件 5541-5547・5585 行）。今あるもの: SCN-RENDER-SPEC-OCCLUSION の土台（d96e2a2e）で、RTGI が有効なときだけ空の見え方で鏡面を遮り、遮った向きを周りの面の光で埋める（lighting.frag:696-750）。RT の無い構成と樹冠（TLAS に入れない）にはこの項目の円錐が効く。SCN-RENDER-SPEC-OCCLUSION は todo で同じ鏡面の式を触るので、その後に回す（after）。G7 の GR53 の濡れの鏡面にもこの値が掛かる前提（要件 5547 行）で、水たまりの反射は G11-GR59-PUDDLES がこの関数を使う。撮影で測る受け入れ（要件 5624・5625 行）を、起動しないで済むよう基準画像の試験の場面（RenderingGoldenImageTest の新しい場面の引数。新しい実行ファイルは作らない）で数値の判定にした。閾値（25〜60%・30%）は要件の初期目標で、美術の調整で変えうる（根拠は要件の目標値だけ）。PT との比べは G11-GR56-SKY-OCC-REFERENCE。危険地帯（lighting.frag・半透明）。評価者の反証を省かない。共有のファイル（lighting.frag・forward_transparent.frag）は差分を小さくする。試験を足す理由: 反証する契約は「樹冠の下の空の光が決めた比に落ち、無効で絵が変わらない」。暗くしすぎ・二重の遮りは「コントラストの低い世界」の絵として紛れ、撮影 1 枚の目視では決めにくく、黙って起きる。
 
 ## G11-GR56-SKY-OCC-REFERENCE: 空だけで照らした樹冠・林縁・岩の場面で、空の遮蔽のラスタをパストレーサーの正解と比べる参照比較の試験を足して通す
-- status: todo
+- status: backlog
+- parked: 描画・GPU の試験は回さない・作らない決まり(人の判断: 実行できたかしか見ていないグラフィックの試験は要らない。GPU の試験はウィンドウが開いて邪魔になる)
 - after: G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - gpu: exclusive
-- done-when: 既存の `R7OutdoorPathTracingReferenceVulkanTest` の実行ファイル（R7OutdoorPathTracingReferenceVulkanTest.cpp と R7OutdoorPathTracingReferenceTest.py。新しい実行ファイルは作らない）に場面の引数を足し、`R56SkyOcclusionPathTracingReferenceVulkanTest` として登録して `NORVES_REFERENCE_TESTS`（Test/Core/Rendering/CMakeLists.txt:2273）に並べる。場面は地面・`ProceduralMeshGenerator::GenerateUVSphere` を広げた楕円体の樹冠 3 本・箱の岩、方向光なし・空だけ（R2 の昼）、RTGI 無効（IBL＋空の遮蔽）のラスタと、PT（拡散 2 回の跳ね返りの参照）。試験が通る: LDR-FLIP の平均・画素の最大・8×8 区画の最大が、参照の空の光を ±20% 変えた画像との知覚差から決めた閾値の内。(i) 樹冠の下・林縁から 3 m・開けた地面の 3 領域の平均輝度の比が PT の比の ±15% 以内。(ii) 負の対照: 空の遮蔽を無効にすると (i) が外れ、遮蔽物を水平に 2 m ずらすと外れる。結果の数値を `Docs/RenderingValidation/R56Acceptance.md` に書く。既存の R7 の参照比較が変わらない。
+- done-when: 既存の `R7OutdoorPathTracingReferenceVulkanTest` の実行ファイル(R7OutdoorPathTracingReferenceVulkanTest.cpp と R7OutdoorPathTracingReferenceTest.py。新しい実行ファイルは作らない)に場面の引数を足し、`R56SkyOcclusionPathTracingReferenceVulkanTest` として add_test で登録して、`NORVES_REFERENCE_TESTS`(Test/Core/Rendering/CMakeLists.txt の `set(NORVES_REFERENCE_TESTS`)に並べる。
+  場面は、地面・`ProceduralMeshGenerator::GenerateUVSphere` を広げた楕円体の樹冠 3 本・箱の岩で、方向光なし・空だけ(R2 の昼)。ラスタは RTGI 無効(IBL と空の遮蔽)、PT は拡散 2 回の跳ね返りの参照。遮蔽物は形と値を同じ物から作る(PT は実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る)。
+  判定のコードを `RasterPathTracingComparison.h` の流儀で書く:
+  (a) LDR-FLIP の平均・画素の最大・8×8 区画の最大を、参照の空の光を ±20% 変えた画像との知覚差から決めた閾値と比べる手順
+  (b) 樹冠の下・林縁から 3 m・開けた地面の 3 領域の平均輝度の比が、PT の比の ±15% 以内
+  (c) 負の対照: 空の遮蔽を無効にしたとき、遮蔽物を水平に 2 m ずらしたときに (b) が外れる
+  ±15%・±20% は、要件の初期目標の仮の値として定数に置く。場面の引数が無い R7 の既定の経路(`--scene=outdoor` と判定)は変えない。ビルドが通る。
+  `Docs/RenderingValidation/R56Acceptance.md` に節を足し、場面・領域・判定・負の対照・閾値の由来(要件の初期目標・未実測)と、「未実行。実行・閾値の確定・結果の数値は参照比較の段(`ctest -L Reference`)で行う」を書く。試験の実行・閾値の実測・結果の数値は、この項目の完了に含めない。
 - verify: `cmake --build build --config Debug --target R7OutdoorPathTracingReferenceVulkanTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(R56SkyOcclusionPathTracingReferenceVulkanTest|R7OutdoorPathTracingReferenceVulkanTest)$" --no-tests=error --output-on-failure --timeout 3600`
+- verify: `python -c "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8-sig').read())" Test/Core/Rendering/R7OutdoorPathTracingReferenceTest.py`
 - paths: Test/Core/Rendering/R7OutdoorPathTracingReferenceVulkanTest.cpp, Test/Core/Rendering/R7OutdoorPathTracingReferenceTest.py, Test/Core/Rendering/CMakeLists.txt, Test/Core/Rendering/RenderingValidation, Docs/RenderingValidation/R56Acceptance.md, TASKS.md, PROGRESS.md
 - notes: 要件 `#### GR56` の受け入れ確認の R56SkyOcclusionPathTracingReferenceVulkanTest（要件 5622 行）。参照比較の段（数分〜1 時間。Docs/Testing.md の段）で GPU を長く使うので `gpu: exclusive`。比べの道具は R7 と同じ `RasterPathTracingComparison.h` の流儀（要件の指定）。PT は遮蔽物の実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る（遮蔽物は形と値を同じ物から作る。要件 5639 行のリスク）。L1 の打ち切り誤差は「既知の方式差」として量を記録する（R7OutdoorAcceptance.md と同じ流儀）。閾値の ±15%・±20% は要件の初期目標で、実測の根拠を記録して確定する。試験を足す理由: 反証する契約は「ラスタの空の遮蔽が物理の正解の比に合う」。正解が無いと強さのつまみで見た目だけを合わせ、方式の誤りが残っても気づけない。
 
@@ -6356,7 +6457,7 @@
 - notes: 設計はロードマップ 2028〜2052 行（GR09 の S0・S1）、完了条件は 2572〜2575 行。今のコードで確かめた事実（2026-11-03、`feature/scene-launcher`）: 固定ステップ（`PhysicsModule::StepFixed` PhysicsModule.cpp:215〜246）はブロードフェーズを 2 回作る（241 行と `PublishSnapshot` 1293〜1295 行）、`BuildBroadphase`（1302〜1343）は毎回全部のコライダーのプロキシを作り直し、`BuildCandidatePairs`（PhysicsBroadphase.cpp:1255〜1332）は X 区間の重なりしか見ない。行番号は G5-GR38-PHYSICS-HEIGHTFIELD（地形を SAP の外に置き、形の分岐を書き直す）の後でずれるので、着手時に読み直す。地形のコライダーは G5 のとおり SAP の外の別枠のままにする。ロードマップの GR41 のフェーズ 5（重複検査の撤去）はこの項目で済ませ、GR41 側では扱わない。試験を足す理由（Docs/Testing.md の 3 点）: 反証する契約は「速くした探索が、組・最近接・重なりの結果と順を素朴な総当たりから 1 つも変えない」こと。組の取りこぼしは、まれな配置で物が岩を抜ける・trigger が出ないとして長く遊んだときにだけ出て、撮影・ログでは気づけず、黙って起きる。参照実装は試験の中だけに置き、本体に残さない。危険地帯（物理の寿命・公開の挙動）なので評価者を通す。やらないこと: 静的の木（G12-GR09-STATIC-TREE）、Entity の無いコライダー（G12-GR09-DETACHED-COLLIDERS）、計測（G12-GR09-SCALE-MEASURE）。ReconcileActiveStates の二重ループの解消は親の休眠と一緒に G12-GR41-PARENT-DORMANCY で行う。
 
 ## G12-GR09-STATIC-TREE: 静的なコライダーを AABB の木に入れ、動く物だけを毎ステップ更新し、問い合わせも木でたどる
-- status: todo
+- status: done
 - after: G12-GR09-BROADPHASE-S0S1
 - gr: GR09
 - done-when: (S2) `PhysicsShapeProxy` に `bStatic`（既定 false）を足し、`PhysicsModule::BuildBroadphase` が「有効な Dynamic / Kinematic のボディを持たないコライダー」を静的にする。新設の `Library/Modules/Physics/Private/Physics/StaticAabbTree.{h,cpp}`（平らな配列の節、葉は 4 プロキシ以下、上からの最大軸の中央値の分割。重心を（座標・ハンドル）の順に並べて同じ入力から同じ木を作る）を `Library/Modules/Physics/CMakeLists.txt` の `PHYSICS_PRIVATE_SOURCES` に明示で足す。`PhysicsBroadphase::SetProxies` の署名は変えず、中で静的なプロキシを分け、静的の部分の署名（ハンドル・世代・形・変換後の値）が前回と同じなら木を使い回し、違えば 1 ステップに最大 1 回作り直す。動く物どうしは今の X 軸の SAP、動く物と静的は動く物の AABB で木に問い合わせ、組は（First, Second）の正規形で整列して G12-GR09-BROADPHASE-S0S1 と同じ候補の順を保つ。作業用と公開用の 2 つのブロードフェーズは、変わらない木を `TSharedPtr`（`Container/PointerTypes.h`）で共有する。(S3) `PhysicsBroadphase::VisitProxiesInAabb`・`VisitProxiesAlongRay`（今 PhysicsBroadphase.cpp:704〜728。`VisitProxyCandidates` の全プロキシの走査）の中だけを、木の走査（レイは手前から訪れて打ち切る）＋動く物の線形走査にし、結果はハンドルの順に整える。同距離の最近接は大きいハンドルが勝つ規則（872 行）を保つ。公開の API と PhysicsModule からの呼び方は変えない。`PhysicsBroadphaseScaleTest` にケースを足して通る: 静的 5000＋動く 50 で、静的が変わらない定常のステップは木の作り直しが 0 回、狭域判定の回数が 動く数×16 以下、ResolveContacts のプロキシの探索が 組の数×log2(P) 以下。静的を 1 個動かしたステップは作り直しがちょうど 1 回。入力の順を入れ替えても、同じ入力で 2 回作っても、同じ木（節の並び）と同じ問い合わせの結果。素朴な参照との差分（組・Raycast・Overlap・掃引）が混ざった形 2000 個で完全に一致する。Body の無い Entity を `SetWorldTransform` で動かすと次のステップに反映される既存の契約（`PhysicsBroadphaseQueryTest` の `TestSnapshotScaleAndRayContract`）と、G12-GR09-BROADPHASE-S0S1 の verify の既存の試験が全部通る。
@@ -6366,7 +6467,7 @@
 - notes: 設計はロードマップ 2054〜2068 行（GR09 の S2・S3）、完了条件は 2573〜2576 行、リスクは 2678〜2686 行。木は一様格子でなく AABB の木にする（地形のタイル・巨大なシ者の部位のような大きなプロキシが混ざっても崩れない。2060 行）。ただし地形の高さ場は G5-GR38-PHYSICS-HEIGHTFIELD のとおり SAP の外の別枠のままで、木にも入れない。毎ステップ動く Body の無いコライダー（スクリプトで動かす trigger など）は毎ステップの作り直しになるので、「2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す」を後で足せる形にしておく（この項目では入れない。2066 行）。単精度の座標で遠方の AABB の比較が丸まる件（2686 行）は、谷ひとつ（数 km）の範囲では起きない前提で、試験は原点から 4 km までの配置で行う。試験を足す理由: 反証する契約は「静的が変わらないステップでは木を作り直さず、作り直しても結果と順が同じ」こと。作り直しの漏れ（古い木で探す）は、動かした岩を素通りするなどまれな形でしか出ず、作り直し過ぎは重さとしてしか出ないので、撮影・ログでは気づけず黙って起きる。回数で判定するので Debug でも決定的。危険地帯（物理）なので評価者を通す。やらないこと: Entity の無いコライダーとチャンク単位の部分木（G12-GR09-DETACHED-COLLIDERS）、時間の計測（G12-GR09-SCALE-MEASURE）。
 
 ## G12-GR09-DETACHED-COLLIDERS: Entity を作らない静的なコライダーをチャンク単位で物理へ登録・解除できるようにする
-- status: todo
+- status: done
 - after: G12-GR09-STATIC-TREE
 - gr: GR09
 - done-when: `Library/Modules/Physics/Public/Physics/PhysicsTypes.h` に `StaticColliderDesc`（形 = 球・箱・カプセル、ワールドの変換、レイヤー・マスク、表面の番号（G5-GR38 の `SurfaceId`）、UserData。trigger は持たない）と `StaticColliderChunkKey`（呼び手が決める 64bit の鍵）を足し、`IPhysicsModule`（今 IPhysicsModule.h:14〜32 は StepPreFixed・StepFixed だけ）に `RegisterStaticColliderChunk(key, Span<const StaticColliderDesc>)` と `UnregisterStaticColliderChunk(key)` を足す（GameThread だけ。固定ステップの最中の呼び出しは次のステップの頭まで遅らせる）。コライダーのスロットに `bDetached` を持たせて今と同じ世代つきのハンドルの空間に載せ、Component と Owner を持たない。`ReconcileActiveStates`・`BuildBroadphase`・`DispatchEvents`・`FindBodyHandle` など `slot.Component` / `slot.Owner` を読む所すべてに detached の分岐を足す（detached は常に有効・静的・イベントの通知先なし）。静的の木はチャンクごとの部分木＋その上の木の 2 段にし、チャンクの登録・解除で他のチャンクの部分木を作り直さない。問い合わせ（Raycast・Overlap・掃引・`CharacterMover` の `ExecuteQueryOverProxies`）と接触（動く球・カプセルを押し戻す）は detached にも当たり、当たりは Entity が無効で UserData と表面の番号を持つ。新設の `PhysicsDetachedColliderTest`（`PhysicsDynamicsTest` の束へ MEMBER）が通る: 5000 個を 1 回で登録しても World の Entity の数が変わらない。detached の箱に落とした動く球が止まり、Raycast が当たる。チャンクを解除するとプロキシと木の葉が減り、古いハンドルが世代で無効になり、問い合わせに当たらない。チャンク A の登録・解除でチャンク B の部分木の作り直しが 0 回（統計）。同じ鍵の二重登録・未知の鍵の解除・NaN の変換・trigger の指定を拒否する。G12-GR09-STATIC-TREE の verify の既存の試験が全部通る。
@@ -6376,7 +6477,8 @@
 - notes: 設計はロードマップ 2070 行（GR09 の S4）、完了条件は 2578 行、リスクは 2682 行。選定課題 G12A-S1（GR09 の S4 を入れるか。ロードマップは「大きな世界をチャンクで出し入れすると決めたときだけ」とする）: 作者の決定（必要な機能は全部やる）に従い入れる。理由: GR47 の森・岩の幹の当たり（ロードマップ 2258 行）と GR40 のセルの出し入れが、数千のコライダーを Entity と ColliderComponent で作ると World の全走査と寿命の後始末に乗ってしまう（2683 行）。Core の散布（G5-GR90 の ScatterSystem）・地形は Physics を参照しないので、つなぐのは Physics 側（G12-GR47-SCATTER-COLLIDERS）。公開の API を足すので危険地帯（Public API・物理の寿命）として評価者を通す。試験を足す理由: 反証する契約は「Entity の無いコライダーが当たり、解除したら古いハンドルで当たらず、ほかのチャンクを作り直さない」こと。解除の漏れは見えない壁として、作り直しの漏れは素通りとして遊んでいるときにだけ出て、撮影・ログでは気づけず黙って起きる。やらないこと: 散布・地形からの登録の結線（G12-GR47-SCATTER-COLLIDERS・G12-GR40-WORLD-PAYLOADS）、detached の trigger とイベント。
 
 ## G12-GR09-SCALE-MEASURE: 静的 1000・5000・20000 個の物理の固定ステップとレイの時間を RelWithDebInfo で測って記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR09-DETACHED-COLLIDERS
 - gr: GR09
 - check: launch
@@ -6397,7 +6499,7 @@
 - notes: 設計はロードマップ 2200 行（GR41 のフェーズ 3）、完了条件は 2606 行、リスクは 2719 行。確かめ直しの結果（GR41 の残り）: フェーズ 0〜2・4 に当たるものは SCN-ECS の系列で済んでいる。変更の無いメッシュの作り直しの省略と全走査の撤去は SCN-ECS-RENDER-SYNC-SWITCH・SCN-MEGA-FIX-RENDERSYNC-WALK（`WorldSyncDifferentialTest`）、走査の配列の確保は Tick の系への移し替え（SCN-ECS-TICK-*・SCN-ECS-TICK-REMOVE）、SceneQuery の差分（refit）は SCN-ECS-SCENEQUERY、計測は SCN-MEGA-MEASURE-CPU（5 万個の静止でゲームスレッドの段の合計 ≤ 2 ms の合格条件）が done。フェーズ 5 は G12-GR09-BROADPHASE-S0S1 に入れた。残るのはこの休眠の伝播だけなので、ロードマップの WorldScaleBenchTest・WorldSyncSkipUnchangedTest・SceneQueryIncrementalTest は足さない（同じ契約を既存の試験と検査 `ECS_RENDER_SYNC`・`ECS_SCENEQUERY` が持つ）。距離による World の休眠はセル（G12-GR40-WORLD-PAYLOADS）がこの関数の上に載せる。休眠は既存の物理イベントの意味を変える（休眠で OverlapEnd が出る）ので、ゲームの側の受け手は「休眠でも End が来る」と読む、と `Docs/Architecture/PhysicsQueries.md` に 1 行足す。Dynamic のボディが親を持つと捨てる今の規則（PhysicsModule.cpp:975〜979）は変えない。試験を足す理由: 反証する契約は「親の休眠が子の物理まで届き、イベントが 1 回ずつ出る」こと。届かないと休眠させたセルの敵の当たりが残り、見えない壁や二重の End として遊んでいるときにだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・物理）なので評価者を通す。
 
 ## G12-GR31-CULL-CONTRACT: MegaGeometry の範囲・インスタンスのカリング（視錐台・距離・画素の大きさ・前フレームの HZB の 2 パス）を GPU の試験で CPU の参照に縛る
-- status: todo
+- status: done
 - gr: GR31
 - done-when: 新設の `MegaGeometryInstanceCullVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。ラベル GPU・RenderingValidation、`RESOURCE_LOCK NorvesLibGPU`、`SKIP_RETURN_CODE 125`。`VirtualShadowMapVulkanTest` のケース J と同じく本番のシェーダーを合成した入力で回す）が、本番の `Assets/Shaders/cluster_bvh_cull.comp` の範囲（AABB）と席の段を、`MegaGeometryPass` が使う記述子の配置・定数の定義（パスの側の定義を試験から使う。試験に束縛を手で写さない）で dispatch し、試験の中の倍精度の CPU の参照と比べる: (a) 固定の種で作った 10 万個の席（64 行の範囲に並べ、メッシュの締まった境界球 × 倍率）で、BVH の段 1 へ渡る席の集合が、視錐台・距離（`InstanceCullDistance`）・画素の大きさの参照と一致する（平面にちょうど接する球は両方で可視とする）。(b) 全部が視錐台の外なら渡る席が 0、間接描画の数が 0。(c) 2 パスの遮蔽: 既知の遮る面から作った前フレームの HZB と今フレームの HZB で、カメラの姿勢を 16 通り変え、今フレームで解析的に見える席（球の最も手前が今の深度より手前）が 1 パス目か 2 パス目のどちらかで必ず描かれ（偽のカリング 0）、両フレームとも面の奥に完全に隠れる席は描かれない。偽の残し（隠れているのに描く）の割合を試験の出力に書く。(d) 前フレームの HZB の契約が合わない（`MEGA_PREV_HIZ ready=0` に当たる入力）と 1 パス目は遮蔽を使わない。(e) 2 パス目の列の容量を小さくして溢れさせると、溢れた範囲を遮蔽なしで走査し直して描き、取りこぼさない。Vulkan の validation error が 0 件であることも試験の中で見る。この項目では試験をビルドして ctest に載ることまでを確かめ、GPU での実行と既存の GPU の試験の回帰は G12-GR31-CULL-CHECK で行う（利用者のほかのアプリに GPU で影響を出さないため。G5 の GPU の試験と同じ扱い）。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
@@ -6407,7 +6509,7 @@
 
 ## G12-GR39-DEPTH-CONVENTION: 深度の規約（クリア値・比較・背景の判定・線形化）を C++ と GLSL の 1 か所に集め、深度の決め打ちのしきい値をなくす
 - status: todo
-- after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
+- after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR39
 - needs-gr: GR25, GR27, GR30, GR43
 - done-when: `Library/Core/Public/Rendering/DepthConvention.h`（クリア値・カメラの深度の比較の演算・「より手前」の比べ方・背景の判定 `IsBackgroundDepth`・`LinearizeDepth(depth, near, far)`）と `Assets/Shaders/Common/DepthConvention.glsl`（同じ意味の `IsBackgroundDepth`・`LinearDepth`・`IsCloserDepth`・`ClosestDepth`・`FarthestDepth`・`kDepthClear`）を足し、カメラの深度を書く・読む所を全部これに寄せる: 深度の比較の設定（今 `CompareOp::Less` を書く 7 ファイル: FoliagePass・ForwardPass・GBufferPass（1556・1665 行）・MegaGeometryPass・RibbonTrailRenderer・ShadowMapPass のうちカメラの深度の分・VisibilityRasterPass）、深度のクリア値（`Library/Core/Private/Rendering` の約 16 か所）、深度を読むシェーダー（今 `0.999`〜`0.999999`・`>= 1.0` を使う所: ssr.frag・gtao.frag・gtao_denoise.frag・lighting.frag・temporal_aa.frag（最小の深度の近傍の選択を含む）・volumetrics.frag・Common/VolumetricsCommon.glsl・DepthOfField.frag・MotionBlur.frag・MotionBlurTileMax.frag・cloud_layer*.frag・Common/CloudLayerCommon.glsl・bloom.frag・distortion_offset.frag・line.frag・RayTracing/RayTracingShadowRayGen.glsl・RTGI/DiffuseIndirect.comp・RTGI/CrossBilateralDenoise.comp・Common/VisibilityResolve.glsl ほか、着手時に `git grep` で全数を出す）。G5 が足した深度を使うパス（草・切り抜き・TAA のリアクティブ・拡張の段）も含める。背景は「クリア値と等しい深度」だけにし、距離で切っていた所（SSR の 0.999 は近 0.1・遠 1000 で約 91 m 以遠、SSAO の 0.9999 は約 500 m 以遠を背景扱い。ロードマップ 2130 行）は、意図した距離の上限ならメートルの定数に書き直し、意図でなければ外す（決めた中身を PROGRESS に書く）。この項目では標準の Z（手前 0・奥 1）のまま。可視バッファの 64bit の詰め方（Common/VisibilityBuffer.glsl:12〜13、atomicMin）は「より手前が小さい」鍵を作る関数を `DepthConvention.glsl` から呼ぶ形にする。新設の `DepthConventionTest`（`CameraViewConstantsTest` の束へ MEMBER）が通る: 本番の射影（`CameraViewConstants::BuildForDevice`。CameraViewConstants.cpp:49）で、近 0.05 m・遠 20 km と 近 0.1 m・遠 1000 m の深度が手前から奥へ単調、`IsBackgroundDepth` がクリア値だけで真、`LinearizeDepth` の往復の誤差が 10 m・1 km・10 km で許容内（許容は標準 Z の量子化から求めて試験に書く）。Game と golden の試験の実行ファイルがビルドでき、既存の CPU の試験が通る。golden（`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest`・両方の GBufferFallback）と GPU の試験の実行、遠景の SSR・SSAO の差で外れたときの `Docs/RenderingValidation/GoldenBaselines.md` の手順の再承認は G12-GR39-DEPTH-CHECK で行う。
@@ -6451,7 +6553,8 @@
 - notes: 設計はロードマップ 2136 行（GR39 の 5. コライダーの LOD）。高さ場の型は G5 が共有する `Rendering::Terrain::TerrainHeightField`（Library/Core/Public/Rendering/Terrain/TerrainHeightField.h。G5-GR37-TERRAIN-COMPONENT が cook 済みからの作り方を、G5-GR38-HEIGHTFIELD-QUERY が照会を足す）。遠くの NPC の接地などは粗い段で引き、見た目（MegaGeometry の区画の LOD）とは最大でその段の誤差だけずれる。タイルの常駐を決めるのはセル（G12-GR40-WORLD-PAYLOADS）で、この項目は印の口と物理側の当たりの切り替えまで。試験を足す理由: 粗い段が保守的でないと早期の棄却で当たりを落とし、犬が地面を抜けるのはまれな斜面だけで、撮影・ログでは気づけず黙って起きる。常駐でないタイルの当たりが残ると見えない地面として出る。危険地帯（物理）なので評価者を通す。
 
 ## G12-GR39-TERRAIN-CHECK: 谷の地形の遠景・遠距離の影・長い移動での穴を起動して確かめ、区画とページの数を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR39-FAR-RING, G12-GR39-REVERSE-Z, G12-GR39-HEIGHTFIELD-LOD
 - gr: GR39
 - check: launch
@@ -6463,7 +6566,7 @@
 - notes: ロードマップ 2588・2591〜2594 行の受け入れの撮影の部分（地平線の地図の on/off の比較は G12A-S5 で VSM を採ったので、太陽の高さの比較に置き換えた）。シーン grassland と視点 near・valley・low は G5-GR37-TERRAIN-COMPONENT が足す。UNCERTAIN: `--camera-script` の台本が grassland の自由飛行カメラで 4 km を一定の速さで動けるか（台本の形式は `Scripts/CameraScripts/*.txt`、引数は GameApplicationHandler.cpp:172〜175）。動けなければシーンのカメラパス（`SceneCatalog.h` の `ScenePathDescriptor` と `--camera-path-play`）を足して撮る。直す必要が出たら、この項目では直さずに `G12-GR39-FIX-<名前>` を足す。
 
 ## G12-GR40-CELL-CORE: ワールドを格子のセルに分け、セルの状態の遷移・優先度の輪・予算つきのコミットを行う StreamingSystem の骨格を足す
-- status: todo
+- status: done
 - gr: GR40
 - done-when: `Library/Core/{Public,Private}/Streaming/`（namespace `NorvesLib::Core::Streaming`。`Library/Core/CMakeLists.txt` に明示で足す）に次を置く。`CellManifest`（`Text/JsonDocument.h` で読む JSON。{format, origin, cellSize, cells:[{id, bounds, payloads:[{kind, logicalPath}]}]}。未知の kind・id の重複・NaN の境界・cellSize ≤ 0・論理パスの `..` と絶対パスを種別つきで拒否）。`IStreamingPayloadHandler`（payload の種類ごとの口: ワーカーで動く `Prepare`（ファイルの読み・解析・デコード。CPU だけ）、GameThread で 1 歩ずつ進む `CommitStep(cursor)`、`SetDormant(bool)`、1 歩ずつの `UnloadStep(cursor)`、CPU と GPU のバイトの申告）。`StreamingCell` の状態の遷移（Unloaded → Preparing → ReadyToCommit → Committing → Active ⇄ Dormant → Unloading → Unloaded。Preparing 中の取り消し、Committing 中のアンロードの要求、読み込みの失敗の再試行と諦め）。`StreamingBudget`{PerFrameCommitMs, PerFrameCommitBytes, MaxResidentCells, MaxCpuBytes, MaxGpuBytes}。優先度と輪（優先度 = 距離 − k×進行方向への射影、Active の半径 Ra < Dormant の半径 Rd < Unload の半径 Ru のヒステリシス、先読みの距離 = セル幅 + 速さ×遅れ）。`StreamingSystem`（`Engine::Engine` のメンバ。ParticleSystem と同じ置き方でシングルトンにしない）が、焦点（位置・速度）を受けて毎フレーム状態を進める。進めるのはフレームの段の系 `PostTick.Streaming`（ApplicationProcessor.cpp:2910 付近の `PostTick.Particles` と同じ登録の仕方）。`Prepare` は JobSystem に 1 セル 1 タスクで出し、完了の印を GameThread で見る（`Task::Then` は使わない）。新設の `StreamingCellStateMachineTest` と `StreamingBudgetTest`（`EntityTreeTest` の束へ MEMBER。ソースは `Test/Core/Streaming/`）が、偽の payload（遅れ・失敗・取り消しを注入、時計と JobSystem の代わりを差し替えて決定的に）で通る: 全部の遷移、Preparing 中の取り消し、Committing 中のアンロードの要求、失敗の再試行と諦め、同じ入力でビット一致の遷移の列。予算を超えるコミットが次のフレームへ繰り越され、1 フレームのコミットの時間が予算＋1 歩を超えない、MaxResidentCells を超えると優先度の低いセルから追い出す、輪の境で 1 フレームごとに往復しない。`CellManifest` の拒否の各ケース。
 - verify: `cmake --build build --config Debug --target EntityTreeTest JobSystemShutdownTest Game -- /m:1`
@@ -6472,7 +6575,7 @@
 - notes: 設計はロードマップ 2147〜2169 行（GR40 の構成・1〜4）、完了条件は 2595〜2596 行、リスクは 2707〜2716 行。今のコードで確かめた事実: `Library/Core/Public` に Streaming・セル・チャンクの語は無い。範囲の出し入れの予算（EcsWorld の仕事の列。`Ecs/EcsMassWork.h`、SCN-ECS-MASS-STREAM）と散布のチャンクの常駐（G5-GR90-SCATTER-RUNTIME の ScatterSystem）、ジオメトリのページの常駐（MegaGeometry）はそれぞれ自分の単位を持つ。この項目のセルはそれらを束ねる上の単位で、payload の口から下の仕組みを呼ぶだけにし、下の仕組みの予算を作り直さない。選定課題 G12A-S6（ストリーミングの範囲）: ロードマップは「全域を常駐できる規模なら距離のストリーミング（S2）は規模が決まってから」とする（2169・2171 行）が、作者の決定（必要な機能は全部やる）に従い、距離のストリーミング・予算・先読み・スナップロードまで全部作る。全域の常駐は Ra を地図の大きさにした設定の 1 つとして扱う。セルの大きさ（既定 256 m）と半径・k・予算の既定値は仮の値で、マニフェストと設定で替えられる（見どころの間隔は企画で未定。ロードマップ 2151 行）。GPU の資源の作成は既存の非同期の読み込み（`TextureAsyncLoadQueue`・`ModelAsyncLoadQueue`）とアセットの GPU のフラッシュの窓を使い、この項目では新しく作らない。試験を足す理由: 反証する契約は「状態の遷移・取り消し・繰り越し・追い出しが決まった順で起き、予算を超えない」こと。破れると遠くのセルが残り続ける・近くのセルが出ない・1 フレームに詰め込んでヒッチになるとして、長く歩いたときにだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード・Public API）なので評価者を通す。やらないこと: payload の中身（G12-GR40-WORLD-PAYLOADS・G12-GR40-SCENE-PAYLOAD）、GameMode の後始末（G12-GR40-GAMEMODE-ASYNC）、スナップロード（G12-GR40-SNAP-PREFETCH）。
 
 ## G12-GR40-GAMEMODE-ASYNC: GameMode を抜けるときに、走っている非同期の読み込みとセルのワーカーを止めて待ち、資源を一度だけ返すようにする
-- status: todo
+- status: done
 - after: G12-GR40-CELL-CORE
 - gr: GR40
 - done-when: `GameModeScope`（GameModeScope.h:40 の TODO）に `TrackAsync(IGameModeAsyncWork&)`（取り消しと結合の口を持つ非同期の仕事。非所有）を足し、`Cleanup`（GameModeScope.cpp:106）の先頭で、追跡した仕事と `StreamingSystem`（そのスコープが開いたセルの組）を止めて結合し（`TextureAsyncLoadQueue::CloseCancelAllAndWait`（TextureAsyncLoadQueue.h:94）と同じ形）、止まったあとに今の順（GameModeScope.h:31〜36 の 1〜5）で Entity と資源を返し、最後に、止めた仕事が返しそびれた資源（準備済みでコミットしなかったセルの CPU のデータ・コミット途中の資源）を返す。GPU の資源の破棄は RHI の破棄の列（提出の完了まで遅らせる。SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY）に任せ、ここでは待たない。`StreamingSystem` にスコープの単位で全セルを止める口（`StopAndJoin(scopeId)`）を足す。新設の `GameModeScopeAsyncTest`（`GameModeStateMachineTest` の束へ MEMBER）が通る: Leave の最中にワーカーが動いていても Cleanup がそれを止めて結合し、結合の後に完了の通知が来ない。準備済みでコミットしていないセルのデータが 1 回だけ返る。二重の Cleanup が安全（2 回目は何もしない）。追跡した Entity・メッシュ・材質・テクスチャがちょうど 1 回ずつ返る。`GameModeStateMachineTest`・`GameModeRegistryTest`・`SubRoutineTest` と G12-GR40-CELL-CORE の試験が通る。
@@ -6503,7 +6606,7 @@
 - notes: 設計はロードマップ 2155〜2157・2165 行（GR40 の 3・4・8）、完了条件は 2599〜2602 行。ファストトラベルの消費者（地図と暗転、GR71）は G15 の範囲で、ここでは口と開発用の引数まで。目的地が寝床かどうかに依らない形にする（寝床は企画で未定）。瞬間移動そのもの（補間・履歴を切る）は G4 の `CharacterBodyComponent::Teleport` と G14 の CutSerial の規約に従い、ここでは作らない。暗転の長さの目安（2 秒以内。ロードマップ 2600 行）は計測で決めるもので、合否にしない。試験を足す理由: 反証する契約は「スナップロードの完了の通知が、目的地の全セルと地形が揃ってから 1 回だけ来る」こと。早すぎると移動先で地面が無く犬が落ち、二重だと暗転が 2 回解けるとして、ファストトラベルのときだけ出て撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード）なので評価者を通す。
 
 ## G12-GR45-DRYNESS-CPU: 枯れ度を解析的な源（円・楕円・減衰）の一覧で持つ DrynessMap と、Entity に付けて置く WitherSourceComponent を足す
-- status: todo
+- status: done
 - after: G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET
 - gr: GR45
 - needs-gr: GR42
@@ -6514,7 +6617,8 @@
 - notes: 設計はロードマップ 2213〜2217 行（GR45 の方針・CPU）、完了条件は 2610〜2612 行、リスクは 2725〜2730 行。選定課題 G12A-S8（枯れ度の持ち方）: (A) ラスタの地図に書き込む、(B) 解析的な源の一覧を正本にし、地図は毎フレームその評価にする（ロードマップの方針）、のうち (B) を採る。理由: 円・楕円・減衰の書き込み・回復の時間・セーブとリスタートの再現が、源の数十個の状態だけで済み、差分のアップロードも履歴も要らない（2213 行）。美術が描く不規則な枯れ地は、G5-GR42 の LayerB の A（予約。今は 0）に焼く「基礎の枯れ度」と max を取る形で G12-GR45-GRASS-DRYNESS で足す。『枯れた草地』は企画で未採否だが、作者の決定（保留の提案もエンジンの機能として採る）で作る。枯れた色・回復の秒数などゲームの値はデータで、既定は仮。回復は World のチャンネル（ポーズとヒットストップに従う）で進める（ロードマップ 2729 行。G4 の GR02 のチャンネル）。セーブへの結線は G12-GR45-WITHER-GAMEPLAY。試験を足す理由: 反証する契約は「源の評価が解析値どおりで、保存と復元で枯れ度がビット一致する」こと。食い違いは草の色の境が少しずれる・リスタートで枯れ地が戻らない／残るとして出て、撮影 1 枚では気づけず黙って起きる（クエリは AI・足音も使う）。危険地帯（Public API・Object の寿命）なので評価者を通す。
 
 ## G12-GR39-DEPTH-CHECK: 逆 Z と深度の規約の変更を GPU の試験と起動で確かめ、ほかのシーンの見た目が変わらないこと・遠景の前後が崩れないことを撮って比べる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR39-REVERSE-Z
 - gr: GR39
 - check: launch
@@ -6539,7 +6643,7 @@
 - notes: 設計はロードマップ 2285〜2325 行（GR92 の設計 1・4）と要件 `#### GR92` の設計案。今のコードの事実: `SerializeValue` は String・enum・算術・Vector2/3/4・Quaternion・Transform 以外で false（`Library/Core/Public/Object/RuntimeSchema.h:521-580`）、`SceneFileFormatVersion = 2`（`Library/Core/Public/Scene/SceneSerializer.h:92`。v1 の移行は `SceneSerializer.cpp:70`）、`LoadIntoWorld` は bool を返し（`SceneSerializer.h:124`）、`PivotObjectId` は uint64 の PROPERTY（`SpringArmComponent.h:74`）。ロードマップの後に ECS 化が入り、描画の値の多くは `ECS_PROPERTY`（列に置くプロパティ。`MegaGeometryComponent.h:47`・`BoardComponent.h:125`・`SkinnedMeshComponent.h:98`）になったので、AssetRef の分岐が `ECS_PROPERTY` の経路でも同じ TypeOps を通ることを確かめる。`TypeOps` は関数ポインタで文脈を持てず、PROPERTY の型は静的初期化で既定登録される（ロードマップ 2296 行）ので、構築時に TypeOps を上書きする方式は採らず、型の側のメンバ関数を見る分岐にする。ハンドル → パスの逆引きの表は作らない。ファイル（領域）をまたぐ参照は ObjectId / alias でなく文字列の安定キーだけ（GR93 のマーカーの Key）。`SpringArmComponentTest` は `EntityTreeTest` の束にある。Public API（`RuntimeSchema.h` は全 Component が依存する公開ヘッダ）と Object/Resource の寿命の危険地帯なので評価者を通す。やらないこと: コンポーネントの非同期の束縛（G12-GR92-ASSET-BIND）、Prefab のファイル（G12-GR92-PREFAB-FILE）、Bridge（G12-GR92-BRIDGE-SCENE）。
 
 ## G12-GR93-MARKERS-SNAP: 持ち場・寝床とファストトラベル点・見どころ・動物の出現点・匂いの痕跡のマーカーをシーンに保存でき、地面へ吸着できる
-- status: todo
+- status: done
 - after: G12-GR92-ASSETREF-SCENE-V3, G8-GR18-ENCOUNTER-ZONES, G8-GR18-INTERACTION
 - gr: GR93
 - needs-gr: GR18
@@ -6550,7 +6654,7 @@
 - notes: 設計はロードマップ 2329〜2359 行（GR93 の位置づけ・項目表・保存・吸着）。置き場: ロードマップは `Library/Core/Public/Component/` を推奨するが、G8 の `G8-GR18-ENCOUNTER-ZONES`・`G8-GR18-INTERACTION` が遭遇領域・近接の操作の Component を `Library/Modules/Gameplay` に置き、試験を `PhysicsDynamicsTest` の束（`Test/Modules/Physics/CMakeLists.txt`）に入れるので、それに合わせる（ロードマップ 2370 行「GR18 / GR23 が置く場所に従う」）。持ち場の形（Shape・Extents・Height）と中心は `EncounterZoneComponent` の PROPERTY（形状・寸法・EnemyId）を正本にして、マーカー側には持ち場の持ち主の Key と交戦の半径だけを置く。枯れの半径は G12 前半の GR45 の枯れのソースが持つので重ねない。寝床の近接の操作は `InteractableComponent`（G8-GR18-INTERACTION）が受け持ち、`RestPointComponent` はその配置データだけ。匂いの痕跡はこのマーカーを正本にする（選定課題 G13-S5 の推奨 (A)。G13 の GR23 が読み込み時に ScentTrail へ変換する）。Bridge の enum の穴（GR92 で塞ぐまで `WireJsonToSerialized` が enum を拒否する）を避けるため、種別は String の ID にする。ColliderComponent は PROPERTY を持たない（ロードマップ 2333 行）ので、トリガーの形はマーカーと遭遇領域の形状データから作り、コライダー自体は保存しない。地形が物理に入れば（G5 の `G5-GR38-PHYSICS-HEIGHTFIELD`）同じ Raycast が地形に当たるので、吸着の呼び出し口は変えない。三角形の当たりは `Math::RayIntersectsTriangle`（`Library/Core/Public/Math/GeometryIntersection.h:403`）が使える。Object の寿命の危険地帯なので評価者を通す。やらないこと: 遭遇・近接の振る舞い（GR18）、配置の画面（G12-GR93-EDIT-VIEW）、検証の台本（G12-GR93-VALIDATE）。
 
 ## G12-GR93-VALIDATE: 配置のシーンと地形のソースから、持ち場の欠け・キーの重複・寝床の到達性・見どころの間の所要時間を検査して報告する台本を作る
-- status: todo
+- status: done
 - after: G12-GR93-MARKERS-SNAP, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR93
 - needs-gr: GR89
@@ -6560,7 +6664,7 @@
 - notes: 設計はロードマップ 2361 行（GR93 の 4. 配置の検証）と 2758〜2760 行のリスク。巡航の速度と見どころの間隔の帯は、未定の提案『マップの密度』の値（秒速 10m 前後、300〜600m）を既定にしない（作者の方針: 企画が決めていない数値はデータで受け、作業を止めない）。地形のソースの読み方は GR89 の形式（`G5-GR89-TERRAIN-COOKER` が決める `Assets/TerrainSpecs/` のハイトマップと変換の情報）に合わせるので needs-gr に入れた。到達性は格子の近似なので、犬の跳躍・段差の越え方（GR05・GR07 の移動の仕様）と食い違うと誤判定する。通行の判定を差し替えられる形にし、GR21 の経路探索ができたらそちらへ移す。マーカーの Key・持ち場の持ち主の対応は G12-GR93-MARKERS-SNAP の項目表に従う。やらないこと: エンジン内での検証の表示、実の谷のデータでの実行（G12-GR93-EDIT-CHECK）。
 
 ## G12-GR94-MAP-TRANSFORM-PLAN: 地図とワールドの座標の変換と、真上の正射影のタイル撮影の割り付けを、起動せずに試験できる形で作る
-- status: todo
+- status: done
 - gr: GR94
 - done-when: (1) `Library/Core/Public/Scene/MapTransform.h` に `MapTransform`（ワールドの x,z の矩形・1 画素のメートル・向き（北 = +Z など）・画像の寸法）と `WorldToMapUV` / `MapUVToWorld`、JSON の読み書き（`map_transform.json`）がある。scale が 0 以下・NaN・矩形の潰れを拒否する。(2) `Library/Core/Public/Scene/MapCapturePlan.h` の `BuildMapCapturePlan(spec)` が、撮影の spec（範囲・pixel_size_m・tile_margin_px・バックバッファの寸法・高さの範囲・固定の EV100・待ちのフレーム数・出力先）から、タイルの格子と、各タイルのワールドの矩形・縁を含むカメラの正射影の幅と高さ・真上のカメラの姿勢（forward = -Y、up = +Z）・near/far（高さの範囲から）・縁を切った後の画素の矩形を決定的に返し、`capture_manifest.json` の内容（タイルの格子、各タイルのワールドの矩形、ファイル名、固定した設定）を書ける。(3) `RenderLayer` に `MapVisible = 1 << 6` を足す（今は Default〜Debug の 6 ビット。`RenderTypes.h:217-226`）。(4) 試験（`CameraViewConstantsTest` の束へ MEMBER）: `MapTransformTest`（world ↔ UV の往復の誤差が 1e-4 画素未満、JSON の往復、不正な値の拒否、非対称な 3 点で向きが決めたとおり）、`MapCapturePlanTest`（4km 四方・0.5m/px・1280×720・縁 64px で 8 列 × 14 行 = 112 タイル、隣り合うタイルの縁を切った矩形が重ならず隙間も無く範囲を覆う、同じ spec で同じ計画、正射影の行列が `OrthographicViewportMatrixTest` の約束と合う）。既存の `CameraViewConstantsTest` の束の試験が通る。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
@@ -6569,7 +6673,7 @@
 - notes: 設計はロードマップ 2386〜2396 行（GR94 の 1. 撮影・4. 座標変換情報）と要件 `#### GR94`。規模の見積もり（4km 四方・0.5m/px・112 タイル）はロードマップ 2390 行の数で、仮の値（谷の大きさは企画で未定）。試験の置き場は、正射影の行列の試験 `OrthographicViewportMatrixTest` がある `CameraViewConstantsTest` の束（`Test/Core/Rendering/CMakeLists.txt`）にする（新しい実行ファイルを作らない。`Test/Core/Scene` の束は無い）。座標の向き・手系（`CreateLookAt` と clip 空間の補正の符号）で左右が反転しやすい（ロードマップ 2767 行）ので、非対称な目印で試験する。`MapTransform` は GR70・GR71（G15 の地図の UI）が使う。やらないこと: 撮影の実行（G12-GR94-MAP-CAPTURE）、合成と cook（G12-GR94-MAP-COMPOSE-COOK）。
 
 ## G12-GR94-MAP-CAPTURE: `--map-capture=<spec.json>` で、シーンを 1 回だけ起動して真上の正射影のタイルを固定の見た目で順に撮り、縁を切った PNG と撮影の目録を書く
-- status: todo
+- status: done
 - after: G12-GR94-MAP-TRANSFORM-PLAN
 - gr: GR94
 - done-when: (1) `Game/Debug/MapCapture.{h,cpp}` が、`--scene=<id>` と `--map-capture=<spec.json>` の起動で `BuildMapCapturePlan` の計画どおりに、シーンの自由飛行カメラ（`Game/Scenes/FreeCameraRig.h` の `GetCamera()`）を正射影（`CameraComponent::SetProjectionType`・`OrthoWidth`/`OrthoHeight`）の真上の姿勢へタイルごとに置き、ストリーミング（仮想テクスチャ・ジオメトリのページ）が落ち着くまで待ってから決定的な撮影のエポックを始め、撮って縁を切ったタイルの PNG（`Game/Debug/CapturedFramePng.h` の `SaveCapturedFramePng` を共用）を書き、全部を撮ったら `capture_manifest.json` を書いて終了（0）、失敗は終了（1）を頼む。待ちとエポックの段取りは `MultiViewCapture`（`Game/Debug/MultiViewCapture.h`）と同じ数え方にし、共通の部分を関数に切り出して両方が使う。(2) 撮影の間の見た目を固定する: 露出は Manual（spec の EV100）、TAA を切って FXAA、フィルムグレイン・ビネット無し、高さの霧と空気遠近は spec で切れる、太陽は spec の固定の斜めの向き、カメラの CullingMask は spec のレイヤー（既定 `MapVisible`）。自由飛行カメラを持たないシーンは理由を出して終了（1）。(3) 正射影の主カメラのとき、MegaGeometry の LOD を正射影で選ぶ（`MegaGeometryCullUniforms.h:47` の `OrthoLod` を主の視点でも立てる）。(4) `--map-capture` の無い起動は変わらない。`Game` がビルドでき、`MapCapturePlanTest`・`FrameCaptureReadbackHelperTest`・`CameraViewConstantsTest` の束が通る。
@@ -6579,7 +6683,7 @@
 - notes: 設計はロードマップ 2386〜2390 行（GR94 の 1. 撮影）。ロードマップは新しい GameMode（`Game/GameModes/MapCapture/`）と `SaveCapturedFramePng` の Library への公開化を書くが、今のコードには 1 回の起動で複数の視点を撮る `MultiViewCapture`（`--capture-views`。`Game/Debug/MultiViewCapture.h`、SCN-WL-CAPTURE-FAST で入った）と、Game の共用の PNG の書き出し `Game/Debug/CapturedFramePng.h` が既にあり、シーンは `--scene` で選べ、新しいシーンは自由飛行カメラを使う（`FreeCameraRig.h` の 6 行目）。決定: GameMode を新しく作らず、撮影の役（`Game/Debug`）としてどのシーンにも掛けられる形にする。理由: シーンを組み立てるコードを二重に持たずに済み、荒野・草原（G5）・読み込んだシーン（G12-GR92-PREFAB-FILE）のどれでも撮れる。BRDF の LUT と IBL の生成に起動ごとに十数秒かかる（ロードマップ 2382 行）ので、タイルごとに起動し直さない。共有のファイル（`GameApplicationHandler.cpp`）は引数の読み取りと撮影の役の持ち主の数行だけにして差分を小さくする。正射影での空・フォグ・SSAO・DDGI / RTGI の挙動は未検証（ロードマップ 2764 行）。UNCERTAIN: 主の視点の LOD の選び方が正射影で正しいか（`OrthoLod` は今は VSM の影だけが立てる）は、`MegaGeometryPass.cpp` の CullUniform を作る所を読んで確かめる。雨（GR49）が入るまでは雨を切る口は要らない。やらないこと: タイルの結合と合成（G12-GR94-MAP-COMPOSE-COOK）、地図の UI（GR70）。
 
 ## G12-GR94-MAP-COMPOSE-COOK: 撮ったタイルを結合し、地形のデータから陰影・等高線・水・道を重ねた地図の画像を作り、座標の変換の情報と一緒に cook する
-- status: todo
+- status: done
 - after: G12-GR94-MAP-TRANSFORM-PLAN, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR94
 - needs-gr: GR89
@@ -6590,7 +6694,8 @@
 - notes: 設計はロードマップ 2392〜2398 行（GR94 の 2. 結合と合成・3. cook・5. 外部コマンドの一括化）。エンジンに結合のコードは入れない（ロードマップ 2374 行の方針）。ロードマップ 2394 行は「NVTEX v0 は BC が無いので 2048² RGBA8 の 1 枚」と書くが、今は NVTEX v0.1 の BC1/BC4/BC5/BC7 とクッカーの `--usage`（`Library/Core/Public/Asset/CookedTextureFormat.h:23-37`、`Tools/AssetCook/Main.cpp:57`）があるので BC7 で cook する。ズームの要るタイルのピラミッド（`Maps/<地域>/z<n>/<x>_<y>`）は GR70（G15 の地図の UI）の段階で足す。高低・水・道は撮影に頼らず地形のデータから作るので、GR89 の形式を needs-gr に入れた。GR96 の generators（外部コマンドの宣言）は統合ブランチに無いので、当面は `BuildMap.ps1` が順に呼び、GR96 ができたらその宣言へ移す。`AssetCookTextureSmoke`・`AssetCookRawSmoke` は `Tools/AssetCook/CMakeLists.txt` の add_test にある。やらないこと: 撮影（G12-GR94-MAP-CAPTURE）、地図の UI（GR70）。
 
 ## G12-GR94-MAP-CHECK: 合成のシーンと暫定の谷を真上から撮って地図を作り、位置・向き・継ぎ目・決定性と、既定の起動画面が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR94-MAP-CAPTURE, G12-GR94-MAP-COMPOSE-COOK
 - gr: GR94
 - check: launch
@@ -6605,6 +6710,7 @@
 
 ## G12-GR105-MODEL-TEXTURE-COOK: モデル（glTF・GLB）の cook が材質のテクスチャを役割ごとの BC とタイル配置（NVTEX v0.2）で焼き、AI 生成の 4K の材質を仮想テクスチャで読める形にする
 - status: todo
+- after: BUILD-HEALTH-1109
 - gr: GR105
 - needs-gr: GR29, GR88
 - done-when: (1) `Tools/AssetCook` のモデルの cook（GLB の埋め込みの画像と glTF の外部の画像）が、材質の枠の役割から使い方を決め（基本色 → `albedo`（BC7 sRGB）、法線 → `normal`（BC5。ミップは正規化しない平均の後に正規化し直す）、粗さ・AO・金属度 → `orm`（BC7 linear に 1 枚へ詰める。glTF の metallicRoughness と occlusion が別の画像でも詰める））、`--usage` の単独のテクスチャの cook と同じ `BlockCompressor` と同じタイル配置（NVTEX v0.2）で焼く。今の `nvtex.v0.rgba8.srgb` / `rgba8.linear` の無圧縮の出力（`Tools/AssetCook/AssetCookGlbSmoke.cmake.in:87`）は、取り込みの設定で明示したときだけ残す。(2) 取り込みの報告に、テクスチャごとの元の寸法・形式・cook 後のバイト数を出す。(3) 試験: `AssetCookGlbSmoke`・`AssetCookImportSmoke` の期待を新しい形式（BC7 sRGB・BC5・BC7 linear、`bTiled`、v0.2）に直し、3 枚の画像の GLB の fixture で ORM が 1 枚に詰まることを確かめる。`CookedTextureTest` に v0.2 の BC5 の法線の往復と、詰めた ORM のチャンネルの並び（R = AO、G = 粗さ、B = 金属度）のケースを足す。既存の `AssetCookTextureSmoke`・`AssetCookBlockCompressSmoke`・`ModelResourcesAssetCookSmoke`・`ImportedOpaqueRuntimeTest` が通る。
@@ -6624,7 +6730,8 @@
 - notes: 背景は G12-GR105-MODEL-TEXTURE-COOK の notes。ロードマップの GR105 の受け入れ確認（2652〜2660 行）のうち、予算の追従・1 フレームの適用の予算・tail の先行の読み込み・収束後の一致は VTG の段 2 の受け入れで確かめ済み（`Docs/RenderingValidation/VirtualizationAcceptance.md` の段 2）で、このタスクはその仕組みをモデルの材質の経路へ広げる。段 2 の既知の限界（同 193〜203 行）: sparse の無い GPU の復帰は偽の装置の契約の試験でだけ確かめた、フィードバックの要求は画素の中心のタイル 1 件だけ。共有のファイル（`Rendering3DTestRoutine.cpp`）は、地面の材質の VT の作り方を Library の共通の関数の呼び出しに置き換えるだけにし、起動画面の見た目を変えない（絶対規則 7。G12-GR105-STREAM-CHECK で撮って比べる）。UNCERTAIN: 前方描画とパストレーシングの材質の表が今どこまで VT を引けるか（`PathTracingClosestHit.glsl:38` は `NORVES_RETURN_SPARSE_RESIDENT_LOD` を持つ）は、着手時に `ForwardPass.cpp` の VT の分岐を読んで確かめる。危険地帯（RHI/Vulkan・RenderThread・Object/Resource の寿命・資産の読み込み）なので評価者を通す。やらないこと: ストリーマの方式の変更、GPU のフィードバックの改良。
 
 ## G12-GR105-STREAM-CHECK: モデルの材質を仮想テクスチャにした後、絞った VRAM の予算で荒野と集落を撮り、予算の内に収まり見た目が全常駐と同等で、起動画面が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR105-MODEL-VT-RUNTIME
 - gr: GR105
 - check: launch
@@ -6639,7 +6746,7 @@
 - notes: 要件 `#### GR105` の受け入れ確認の「予算追従」「収束後の一致」「起動」（ロードマップ 2656〜2660 行）を、モデルの材質の経路で確かめ直す。LM Studio 相当の外部の負荷での挙動は開発機で手で確かめて記録する（自動化しない。ロードマップ 2657 行）。撮影を開いて目で確かめる。違ったら G12-GR105-MODEL-TEXTURE-COOK・G12-GR105-MODEL-VT-RUNTIME の paths の範囲で直す。
 
 ## G12-GR108-JOBSYSTEM-WAIT: ジョブの仕組みのワーカーが、走っているタスクがあるだけで空転しないようにし、起床の取りこぼしと取得の全体のロックを無くす
-- status: todo
+- status: done
 - gr: GR108
 - done-when: (1) `JobSystem` のワーカーの待ちの条件を、まだ始まっていないタスクの数（`m_queuedTaskCount` とは別の数）にし、述語付きの待ちとロックの中の通知で起床の取りこぼしを無くす。今は `m_queuedTaskCount == 0` のときだけ待ち（`Library/Core/Private/Thread/JobSystem.cpp:1005-1010`）、この数は実行の完了の後にしか減らない（`MarkQueuedTaskCompleted`）ので、タスクが 1 つ走っているだけで他のワーカーが待たずに取得を回し続ける。(2) `GetNextTaskWorkStealing` の取得の全体のロック（`m_workerThreadMutex`）を、キューごとのロックにする。(3) 既定のワーカーの数（今は `hardware_concurrency - 1`。同 57〜61 行、この機は 31 本）を設定（引数 `--job-workers=<N>` と `JobSystem::Initialize` の引数）で変えられるようにする。既定の値は変えず、G12-GR108-PERF-CHECK の測定で決める。(4) 試験（`JobSystemShutdownTest` の束へ MEMBER）: `JobSystemIdleCpuTest`（500 ms の長いタスク 1 本の実行中のプロセスの CPU 時間が 1000 ms 以下。修理の前に失敗することを先に記録してから直す）、`ParallelForLatencyUnderLoadTest`（`JobSystem` に 64 本の長いタスクを流した状態でも、`ParallelFor` が終わるまでの時間が、同じ仕事を直列に回した時間の 1.5 倍以下、全番号がちょうど 1 回呼ばれる）。既存の `JobSystemShutdownTest`・`JobParallelForTest`・`RingBufferTest`・`ThreadLocalStorageTest`・`EcsSchedulerTest` が通る。
 - verify: `cmake --build build --config Debug --target JobSystemShutdownTest EntityTreeTest -- /m:1`
@@ -6648,7 +6755,7 @@
 - notes: 設計はロードマップ 2484〜2486 行（確認した事実）と 2522〜2524 行（JobSystem の修理）。閾値の根拠: `JobSystemIdleCpuTest` の 1000 ms は、走るタスク 1 本ぶん（500 ms）の 2 倍。空転すれば 31 本 × 500 ms の桁になるので、閾値の揺れで偽の合否は出にくい。`ParallelForLatencyUnderLoadTest` の 1.5 倍は、今の `ParallelFor` が「ワーカーが長いタスクで塞がっていても呼び手だけで最後まで進む」（`Library/Core/Public/Thread/JobSystem.h:109-115`）約束を持つので、最悪でも直列とほぼ同じ時間になることから決めた。ロードマップの別のワーカーの束（FrameWorkerPool）は採らない: 統合ブランチに `ParallelFor`（SCN-ECS-JOBS）が既にあり、ECS のスケジューラ（`EcsScheduler.cpp:816`）・変換の系（`EcsTransformSystem.h:363`）・描画の記録（`RenderGraph.cpp:2583`）が使っているので、同じ口のまま遅れを試験で押さえる。危険地帯（ジョブ・メモリ）なので評価者を通す。やらないこと: 姿勢の評価・カリングの並列化（別のタスク）。
 
 ## G12-GR108-POSE-PARALLEL: 姿勢の確定の群で、評価の要る Animator とスキンメッシュの姿勢をジョブで並列に評価し、結果を直列と同じにする
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G1-GR01-TICK-CONTRACT-DOC
 - gr: GR108
 - needs-gr: GR01, GR12
@@ -6659,7 +6766,7 @@
 - notes: 設計はロードマップ 2488〜2516 行（アニメ評価の事実と P2）。今のコードの事実: 姿勢の評価は `PoseFinalize` の群の順序付きの系（`World.cpp:1504-1510` の `DispatchTickGroups(Input … PoseFinalize)`）から各 Component の `TickPoseFinalizeGroup` を直列に呼ぶ（`SkinnedMeshComponent.cpp:71-77`、`AnimatorComponent.cpp:281-285`）。GR12（G3-GR12）で `SkeletalPoseBuilder` の Prepare / Sample と Component ごとの scratch に分かれたので、並列の前提（直列の無駄を先に取る）はそろっている。GR01 の「ボーンの姿勢の確定の公開点」の後に並列の評価を置く順を保つので、GR01 と GR12 を needs-gr に入れた。決定性: 浮動小数の総和の順が変わる集約は並列にしない。画面の外・遠くの評価の間引きは GR10・GR12 の側の方針。`SkeletalAnimationSamplingTest` は 1 つの実行ファイル（`Test/Core/Rendering/CMakeLists.txt:2212-2229`）なので、ソースを足して同じ試験の中で回す。共有のファイル（`World.cpp`）は群の分配の所だけを触る。危険地帯（ジョブ・Object の寿命）なので評価者を通す。やらないこと: カリングの並列化、計測（G12-GR108-PERF-CHECK）。
 
 ## G12-GR108-CULL-PARALLEL: CPU の可視判定（メッシュのプロキシのカリングと草のタイルの選択）をチャンクに分けて並列に回し、結果の順・要素・距離を直列と同じにする
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR108
 - needs-gr: GR43
@@ -6670,7 +6777,7 @@
 - notes: 設計はロードマップ 2492 行（カリングの事実）と 2518・2520 行（P3・P4 の草）。数百のプロキシではスレッドを起こす費用の方が高い（ロードマップ 2791 行）ので閾値で直列へ倒す。大規模の静的の配置のカリングは GPU 駆動（GR31・GR47、G12 前半）と MegaGeometry の GPU のカリング（BVH・2 パスの遮蔽。SCN-MEGA-INSTANCE-CULL など）が本筋で、CPU の並列はその外のプロキシのため。草の生成の本体は GPU の compute（`G5-GR43-GRASS-GENERATE`）なので、CPU の側はタイルの選択だけになる（GR42・GR43 の形式が決まってから触るので GR43 を needs-gr に入れた）。経路探索は複数フレームに跨る要求なので `ParallelFor` を使わない（G12-GR108-ASYNC-JOBS）。決定性: 可視の一覧はチャンクの順に連結し、直列と同じにする。危険地帯（ジョブ・RenderThread へ渡す値）なので評価者を通す。やらないこと: GPU のカリング、草の描画。
 
 ## G12-GR108-ASYNC-JOBS: 経路探索のように複数フレームに跨る重い計算を、優先度・取り消し・世代つきでジョブへ出し、後のフレームの決まった段で結果を受け取る口を作る
-- status: todo
+- status: done
 - after: G12-GR108-JOBSYSTEM-WAIT
 - gr: GR108
 - done-when: (1) `Library/Core/Public/Thread/FrameAsyncQueue.h`（名前は着手時に `Thread/` の命名に合わせてよい）が、要求（入力を値で持つ・優先度・持ち主の世代）を自前の優先度つきの列に持ち、同時に走らせる数（設定。既定は 4）だけ `JobSystem` へ投入する（pull 方式。`JobSystem` は優先度を見て取らないため）。要求の取り消し・優先度の付け直し・持ち主の世代が変わった要求の破棄ができる。完了した結果は GameThread の決まった段（World の段の同期点）でだけ渡し、結果の配送の中で World を変えてよい。(2) World の破棄・GameMode の Leave・`JobSystem` の受付の停止（`StopAcceptingTasks`）の後に、走っている要求の終わりを待ってから結果を捨て、Component が先に壊れていたら配送しない。(3) 試験（`JobSystemShutdownTest` の束へ MEMBER）: `FrameAsyncQueueTest`（優先度の高い要求が先に始まる、同時の数を超えない、取り消した要求の結果は配送されない、世代の変わった要求は捨てる、受付の停止の後に要求しても落ちず失敗として返る、10^4 件を流して全部がちょうど 1 回配送か破棄になる）。既存の `JobSystemShutdownTest`・`JobParallelForTest` が通る。
@@ -6680,7 +6787,8 @@
 - notes: 設計はロードマップ 2520 行（P4 の経路探索は複数フレームに跨る非同期の要求なので JobSystem へ投入して後のフレームで回収する）と 2457 行（JobSystem は優先度を見ないので自前の優先度つきの列で pull する）。経路探索そのもの（GR21・GR22、G13）は方式が未決で、G13 の GR21 は GR108 を待つ（ロードマップ 103 行の表の GR21 → GR108）ので、ここでは経路探索を待たず（待つと循環になる）、GR21・GR22 が載る口だけを作る。同時の数の既定 4 はロードマップ 2457 行の例の値（根拠は文書の例で、実測ではない）。流れ場（flow field）を採るならこの口は使わない。独自型の規則（ロードマップ 2793 行）: 新しいコードで `std::function` / `std::vector` を使わない。危険地帯（ジョブ・Object の寿命）なので評価者を通す。やらないこと: 経路探索の実装（G13）。
 
 ## G12-GR108-PERF-CHECK: スキンの群れとメガストレスで、直列と並列の姿勢の評価・カリング・フレームの CPU の時間を RelWithDebInfo で測り、並列の閾値とワーカーの数の既定を決める
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR108-POSE-PARALLEL, G12-GR108-CULL-PARALLEL
 - gr: GR108
 - check: launch
@@ -6696,6 +6804,7 @@
 
 ## G12-GR111-PACKAGE-READ: パッケージの先頭だけから索引を作り、エントリを範囲読みで直接読み、資産 1 つの解決でファイルの全体の読み込み・全体のコピー・繰り返しのハッシュをしないようにする
 - status: todo
+- after: BUILD-HEALTH-1109
 - gr: GR111
 - done-when: (1) `Library/Core/Public/Asset/PackageIndex.h`（値の型）が、ファイルの先頭の `[0, BlobDataOffset)`（ヘッダ・エントリの表・名前の表）だけから、名前 + 種別 → エントリの O(1) の索引を作る。ペイロードは読まずハッシュもしない。重複のエントリと短い・壊れた表を拒否する。(2) `Library/Core/Public/Asset/PackageSource.h` の `IPackageSource::ReadRange(offset, size, dst)` と、Windows の `ReadFile` + `OVERLAPPED` のオフセットの指定で 1 つのハンドルを複数のワーカーから同時に読める `FilePackageSource`（開いたままの小さな LRU）と、試験・旧の経路の `MemoryPackageSource` がある。mmap は使わない。(3) `AssetSystem` の中の `AssetPackageStore`（スナップショットの世代で無効にする）が、パス → `PackageIndex` をキャッシュし、`AssetSystem::ResolveAsset` と `TextureAssetLoader` の重複した流れ（`AssetSystem.cpp:265-283`、`TextureAssetLoader.cpp:1020`）を「OpenEntry(論理パス, 種別, variant) → 範囲読みで直接 AssetBlob へ」に 1 つにする。AssetBlob にゼロ埋めしない確保を足す。(4) 検証の方針 `AssetVerifyMode{None, IndexOnly, Full}`: Release は None（マニフェストの `cooked_hash` と索引の PayloadHash の等価の比較はバイトを舐めないので常に行う）、開発は IndexOnly と初回だけ Full（ワーカーの上で、(パス, 大きさ, 更新の時刻) でキャッシュ）。`ParseCookedTexture` の payload のハッシュも同じ方針に従う。1 回の読み込みのハッシュは最大 1 回。(5) 試験（`AssetSystemTest` の束へ MEMBER）: `PackageIndexTest`（先頭だけの入力から作った索引が全体の `ParseV1Package` の結果とエントリの数・名前・offset・size・ハッシュで一致、短い・壊れた表の失敗、重複の拒否、ペイロードの部分を渡さないソースで成功）、`PackageRangeReadTest`（試験の中で組んだ複数エントリのパックを 8 スレッドから同時に ReadRange して全バイトが一致、NVTEX の 1 ミップの範囲読みが全体の読みから切り出した同じ範囲と一致）、`AssetVerifyModeTest`（None でハッシュしたバイトの数のカウンタが 0、Full で 1 バイトの反転を検出、1 回の読み込みのハッシュの総バイトが対象のエントリの大きさ以下）、新旧の経路の `ResolveAsset` の結果（Blob の中身・Entry・Reason・状態）が cook 済みの成功・パッケージの欠け・エントリの欠け・ハッシュの不一致・loose の全ケースで一致。既存の `AssetSystemTest`・`PackageFormatTest`・`AssetManifestTest`・`AssetFileReaderTest`・`CookedTextureTest`・`CookedMeshTest`・`TextureResourcesAssetCookSmoke`・`ModelResourcesAssetCookSmoke`・`AssetLoadProfileSummaryContractTest` が通る。
 - verify: `cmake --build build --config Debug --target AssetSystemTest CookedMeshTest TextureResourcesAssetCookSmokeTest ModelResourcesAssetCookSmokeTest TextureResourcesTextureAssetTest -- /m:1`
@@ -6726,7 +6835,8 @@
 - notes: 確かめ直し (c)。選定課題 G2-S5 は作者の承認記録に無い(`Docs/Architecture/G2ImportDecisions.md` の「他の選定との境界」で S5 は未承認)ので、推奨の (B) を採った: 既定は cooked だけ、`--allow-loose-skeletal` の明示のときだけ loose、ログに source=loose を必ず残す。理由は、開発中の確かめが速く、cook の経路の検証も空洞化せず、`AssetFallbackPolicy.md` の「明示ログが要る」に合うこと(ロードマップ 4511 行)。今のコードは cooked だけ: `SkeletalAssetLoader.cpp:108` と `RigSplitAssetLoader.cpp:96` が `FailOnCookedFailure` 固定で、`SkeletalAssetLoader.md` も「loose を成功扱いしない」と書く。`--allow-loose-skeletal` はリポジトリのどこにも無く、`SummarizeAssetLoadProfile.ps1` に骨格の契約も無い(モデルの `-RequireCompleteCookedModel` だけ)。論理パスとソースの対応は静的モデルの loose の解決(AssetSystem の loose fallback)と同じ規則にする。合わない形が要るなら止めて報告する。Resource の生成は今どおり GameThread の Flush だけ(worker で作らない)。`GameApplicationHandler.cpp` は共有のファイルなので差分を小さくする。危険地帯(アセットロード・Public API)なので評価者を通す。新しい試験の実行ファイルは作らない(既存の MEMBER にケースを足す。足す前に `Docs/Testing.md` の 3 点を書く)。要件 `#### GR83` の受け入れ確認「ログ契約」、ロードマップ 176 行。
 
 ## G2-GR83-M9-WORLD-CHECK: M9 の世界の受入れを、新しい骨格のローダを通して Debug と Release で起動して確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G2-GR83-LOOSE-SKELETAL
 - gr: GR83
 - check: launch
@@ -6741,6 +6851,7 @@
 
 ## G2-GR96-MODEL-ANALYSIS: 一括 cook の取り込みレポートに、法線・面積 0・UV・UV の重なり・欠けたテクスチャ・ウェイトの異常の数を出す
 - status: todo
+- after: BUILD-HEALTH-1109
 - gr: GR96
 - done-when: `Tools/AssetCook/ModelAnalysis.{h,cpp}` に、頂点・index・UV・影響(関節と重み)の配列だけを受ける純関数 `AnalyzeModelGeometry` を置き、次の数を返す: 法線が非有限・単位長から 1e-3 を超えて外れる頂点、面積 0 の三角形、UV が [0,1] の外の頂点、UV の重なり率(1024² の被覆ラスタで 2 回以上塗られた texel ÷ 塗られた texel)、重みの合計が 1 から 1e-3 を超えて外れる頂点、影響 0 の頂点、8bit 量子化の最大誤差。
   `--asset-set` の model・skeletal の行で、cooked の package(engine が実際に使う値)からこの関数を呼び、`CookAssetReportRow` に結果を持たせて `cook_report.json` の各行の `anomalies` と `cook_report.md` に出す。cook のときにしか分からない数(縮約で失った重みの合計と最大。`SkeletalImportReport` の値)は cook した行だけに出し、skipped の行では null にする(0 と書かない)。glTF の材質が参照するテクスチャが spec にも manifest にも無いときは、その行の `missing_textures` に論理パスを並べる。異常は警告で、終了コードは変えない(予算超過の 2 と別)。
@@ -6988,7 +7099,7 @@
 
 ## G7-GR57-GPU-DRAW: GPU の粒をワールドの空間の板・速度で伸ばした筋・面に沿う板として、ソフト・霧・環境光の色つきで TAA の前と後の段に描く
 - status: todo
-- after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR57
 - needs-gr: GR25, GR30
 - done-when: `GpuParticleDrawPass`（IViewPass と IRenderGraphPass。段の違う 2 つのインスタンス）を GR25 の Transparent の段（PreTAA。ForwardPass の後・DistortionPass の前）と PostTemporalAA の段（PostTAA。TAA の後の HDR の色は GR25 の `ResolveHdrChainHead` で引く）へ登録する。レンダーパスは色 1 枚だけ（深度の添付なし）で、SceneDepth をシェーダー資源で読み、深度の判定とソフトは断片で行う（選定課題 G7-S4 の (A)）。`Assets/Shaders/Particles/ParticleDraw.vert`: `gl_InstanceIndex` でスロットを引き、Billboard（world_board.vert のカメラの右・上）・VelocityStretch（頭 P・尾 P − v_rel×StreakShutterSeconds をクリップ空間で 2 点投影し、画面の向きに直交する幅を足す。幅が 1px 未満なら 1px にして不透明度を幅の比で下げる。ニア面をまたぐ端はニア面で切る）・SurfaceAligned（命中の法線に沿う板）。v_rel は粒の速度 − カメラの速度（前のカメラから）で、前のカメラが連続でないフレーム（`bPreviousMainCameraContinuous` が false）はカメラの項を 0 にする。PostTAA の段はジッタの無いカメラで投影する（DebugDrawPass と同じ）。大きさ・色・不透明度・伸びは寿命の折れ線（GpuEmitterParams の 8 キー）。`ParticleDraw.frag`: 形（手続きの丸・筋、またはテクスチャと GR136 のフリップブックの UV）、ソフト = saturate((場面の線形深度 − 粒の線形深度)/softMeters)、粒が不透明の面より奥なら捨てる、霧（`Common/HeightFog.glsl` の `EvaluateHeightFogForward`。加算は `ApplyHeightFogAdditive`）、照明 AmbientTinted（PhysicalLighting の拡散の放射照度を視線の側の向きで引く。forward_transparent.frag の拡散 IBL と同じ式。その view で照明の資源が無ければ Unlit と Scene の環境光に落とし、パスを捨てない）、出力はプリエクスポージャを掛けた premultiplied（One・InvSrcAlpha）か加算（One・One）でブレンドごとに別のパイプライン。PreTAA の段の半透明の粒は被覆率を G5 の GR30 の `Scene.Reactive` へ書く。描画は当面エミッタごとの `DrawInstanced(6, capacity, 0, base)`（間接の描画は G7-GR57-GPU-INDIRECT）。GPU のエミッタが 0 件のフレームはパスが何も記録しない（既定のシーンの見た目を変えない）。 試験: CPU の `GpuParticlePassOrderTest`（`SceneViewProxyLookupTest` の束の MEMBER）が、`SetupDeferredPipeline` を可視バッファの on と off で組んだときのパスの名前の並びで、シミュレーションが GBuffer を書く最後のパスの後・SSAO の前、PreTAA の描画が ForwardPass の後・DistortionPass の前、PostTAA の描画が TemporalAA の後、組み直しても 1 回ずつ同じ位置、を確かめる（パスの数や dispatch の数は写さない）。`GpuParticleShaderCompileTest` に ParticleDraw の vert・frag の全ブレンドのコンパイルを足す。GPU の `GpuParticleRenderVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）をビルドできる: 単一の粒の筋の画面の長さが |v_rel|×shutter の投影の ±1px、幅 1px 未満で総輝度がほぼ一定、深度差の sweep でソフトの不透明度が単調に増える、霧の減衰が `ComputeHeightFogTransmittance` と一致、空の値を変えると環境光の色が追随、検証レイヤーのエラー 0（閾値は `Test/Core/Rendering/Thresholds/RenderingValidation/GR57Draw.tsv`）。実行は G7-GR57-CHECK。
@@ -7032,7 +7143,7 @@
 
 ## G7-GR58-RAIN-NEAR: カメラの周りの箱で巻き戻る GPU の粒の雨筋を、雨量に連続に追随し、風と落ちる速さで傾き、相対速度で伸びる形で TAA の後に描く
 - status: todo
-- after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR58
 - needs-gr: GR46, GR30
 - done-when: 近距離の雨のエフェクト `Assets/Data/Vfx/Rain_Near.vfx.json`（GR136 の形式。Executor=Gpu・Counter の乱数・容量 2.4 万〈目安〉・形 CameraBox〈RainTuning の箱〉・WrapPolicy=WrapInCameraBox・WindInfluence〈GR46〉・GpuSpriteRenderer の VelocityStretch・段 PostTAA・照明 AmbientTinted に色の倍率・霧の影響 1・衝突は深度と平面で着いたら箱の上面へ戻す・近距離のフェード・箱の縁のフェード）を置き、`VfxEffectSerialization` の元の形式の読みで起動時に読む（スキーマの検証が通らなければ雨を出さずにログ）。EnvironmentSystem が有効で雨量 > 0 の間だけ、ParticleSystem の `VfxEffectSystem`（ParticleSystem.h:64 の GetVfxEffects）に Rain_Near のインスタンスを 1 つ持ち、毎フレーム `EvaluateRainNear(雨量, 風, RainTuning)` の値（有効な割合・不透明度・太さ・落ちる速さ）を `SetModuleParameter`・`SetEmitterProperty` で渡す。雨量 0 で破棄する（雨量 0 で粒も描画も 0）。粒の有効の判定は ActivationFraction（hash(i) < 有効な割合、境目の小幅のランプ）で、雨量の変化で粒が突然現れない。傾きは風（GR46 の `WindVelocity`）と落ちる速さで決まり、筋の長さは粒とカメラの相対速度 × StreakShutterSeconds。CameraBox の中心は GPU の側でパケットのメインのカメラの位置にする（Entity を動かさない）。GPU の `RainStreakVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）をビルドできる: 単一の粒で画面の筋の長さが |v_rel|×StreakShutterSeconds の投影の ±1px、風 4 m/s・落ちる速さ 8 m/s で画面の傾きが 26.6° ±1°、幅 1px 未満で総輝度がほぼ一定、霧の密度を上げると筋の不透明度が `ComputeHeightFogTransmittance` の予測と 10% 以内で減る、検証レイヤーのエラー 0。雨量の sweep の golden の場面 `R58RainSweepVulkanTest`（既存の実行ファイル `RenderingGoldenImageTest` に scenario=rain-sweep を足す。R3 の密度の sweep と同じ形で雨量 {0, 0.25, 0.5, 1.0}、閾値は `Test/Core/Rendering/Thresholds/RenderingValidation/R58RainSweep.tsv`）と、同じ scenario の雨量 0.5 を ctest の ENVIRONMENT で `NORVES_TEMPORAL_AA=1`（SceneView.cpp:1331）にした `R58RainTaaVulkanTest`（筋の ROI のピークの輝度が TAA なしの 80% 以上）を登録してビルドできる（基準の画像を撮るのと実行は G7-GR58-CHECK）。CPU の試験: `RainParametersTest` に Rain_Near.vfx.json がスキーマを通り Executor=Gpu で読めることを、`EnvironmentStateTest` に雨量 0→0.5→0 でインスタンスが 1 つ作られて破棄され、渡した値が `EvaluateRainNear` と一致することを足す。
@@ -7042,7 +7153,8 @@
 - notes: 要件 `#### GR58` の設計案（A）と【フェーズ】P2。GR136 の決定（ロードマップ 4228 行）どおり、雨は GR136 の定義で書いたエフェクトを GPU の実行先で回す。設計案の「天候用の常駐 Entity（ParticleEmitterComponent）」は採らず、EnvironmentSystem が VfxEffectSystem のインスタンスを持つ（雨は場面の物でなく気象の一部で、雨量と同じ所で寿命を決められるため。理由を PROGRESS.md に書く）。クック済みの `.nvfx` を資産の集合から引くのは GR96 の後で、今は元の形式を読む。PostTAA に置くので被写界深度・動きぼけ・SSR の対象外（G14 の GR62 で筋の幅を CoC に合わせる。ロードマップ 1558 行）。三人称のカメラの追従の揺れや切り替えで筋が跳ぶのは、前のカメラが不連続なフレームでカメラの項を 0 にする G7-GR57-GPU-DRAW の扱いで抑える。嗅覚ナビ（G13）の表示より下に描き、雨量に依らせない（要件の【未定の案との関係】）。眼の高さ 0.5〜0.8 m の視点で筋が間近に出るので近距離のフェードを持つ。数値は全部仮で、見た目の調整は G7-GR58-CHECK の撮影を見てデータで行う。試験を足す理由: 筋の長さ・傾き・霧の減衰の誤りは、雨の絵の中では気づきにくく黙って起きる。危険地帯（RenderThread・EnvironmentSystem の寿命）なので評価者を通す。ロードマップ 1540・1554 行。
 
 ## G7-GR49-CHECK: 環境を既定の無効で入れた後も golden と起動画面が変わらず、環境の引数で起動すると解決の 1 行が出て、決定的な撮影が 2 回で一致することを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES
 - gr: GR49
 - check: launch
@@ -7056,7 +7168,8 @@
 - notes: 絶対規則 7（起動の流れと見た目を保つ）と、要件 `#### GR49` の受け入れ確認の「既存の golden が不変」「Game」「決定論の撮影」。当分アプリを起動しない決まりのため実装のタスクから分けた。決定的な撮影は今の `--capture-deterministic`（1/60 秒の固定の刻み。RenderingCoordinator.cpp:4480-4497）で足り、GR02 の固定刻みの時計（G4-GR02-FIXED-FRAME-CLOCK）は待たない（段階をまたぐ注意 4463 行の前提は、今の決定的な撮影の刻みで満たす。GR49 の時刻は World のチャンネルの積算なので、刻みが固定なら同じ値になる）。GR50・GR53 の前は引数を与えても空の雲量以外の見た目は変わらない。性能は測らない。
 
 ## G7-GR50-CHECK: 曇り度 0・0.5・1 の昼の撮影で、曇天で太陽の円盤が消え、日向と影の差が縮み、空が背景で最も明るくなることと、既定 0 で今の絵が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT, G7-GR49-ENV-INTERFACES
 - gr: GR50
 - check: launch
@@ -7069,7 +7182,8 @@
 - notes: 要件 `#### GR50` の受け入れ確認の撮影・PT 対ラスタ・霧との整合・ログ。合否の比（1.15・白飛び 1%）は仮。色と明度のルール（企画で未定）は採っていないので「空の ROI が最大」だけを見る（霧と空の輝度比 0.75〜0.85 は入れない）。ROI の値と PNG の場所は `Docs/RenderingValidation/G7Acceptance.md`（G7 の受入れの記録。この段階で最初に書く項目が作る）に書く。性能は測らない。`-CloudCovers` は G7-GR49-ENV-INTERFACES が足す。
 
 ## G7-GR51-CHECK: 霧の式の GPU と CPU の一致、霧の切り出しの前後で golden と R3 の霧が変わらないこと、半透明・板・インポスターが不透明と同じ霧を受けることを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR51
 - check: launch
@@ -7082,7 +7196,8 @@
 - notes: 要件 `#### GR51` の受け入れ確認。UNCERTAIN: 起動画面に半透明の物が遠くにあるかは撮って確かめる（無ければ GPU の試験の場面で足り、撮影は霧の無い所が変わらないことの確かめだけにする）。荒野の視点の名前は Game/Scenes/SceneCatalog.h の荒野の表（overview・ground）。性能は測らない。
 
 ## G12-GR31-CULL-CHECK: MegaGeometry のカリングの GPU の試験を回し、偽のカリングが 0 で偽の残しの割合を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR31-CULL-CONTRACT
 - gr: GR31
 - check: launch
@@ -7129,7 +7244,8 @@
 - notes: 設計はロードマップ 2215・2225 行（GR45 の P4、ランタイムの今の値はセーブの側が持つ）、完了条件は 2611 行、リスクは 2728・2729 行。『倒すと草が戻る』は企画で未定の提案だが、作者の決定でエンジンとゲームの機能として作る（回復の秒数などの値はデータで仮）。セーブとシ者の仕組みは G8（GR76・GR17）が作るので、この項目は結線だけ。束の名前と試験の置き場は G8 の項目に合わせる（G8-GR76-STATE-AUTOSAVE は `LoggerSinkTest` の束、G8-GR17-ENEMY-COMPONENT は `PhysicsDynamicsTest` の束と `Test/Modules/Gameplay`。着手時に G8 の実装を読んで合わせる）。共有のファイル（`Game/Save` の ProgressSaveData、試験の束の CMakeLists）は差分を小さくする。試験を足す理由: 反証する契約は「撃破で草が決まった時間で戻り、セーブとリスタートで枯れ地が同じ状態に戻る」こと。破れるとリスタートで倒したはずの枯れ地が残る・戻ったはずの草が枯れるとして、セーブを挟んだときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（セーブの形式・Object の寿命）なので評価者を通す。
 
 ## G12-GR45-DRYNESS-CHECK: 枯れ度の GPU の試験を回し、枯れた草地が遠くから分かること・リスタートで同じ絵になることを撮って確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR45-GRASS-DRYNESS, G12-GR45-WITHER-GAMEPLAY
 - gr: GR45
 - check: launch
@@ -7145,7 +7261,7 @@
 
 ## G12-GR47-INSTANCE-VARIATION: 散布の 1 本ごとに色味と個体差の種を持たせ、1 本だけを記録を書き換えずに隠せるようにする
 - status: todo
-- after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR47
 - needs-gr: GR26, GR30
 - done-when: `MegaScatterInstance`（MegaGeometryScatterComponent.h:51〜57。今は位置・回転・拡大・メッシュの表の番号だけ）に色味（RGBA8 を詰めた uint32。既定は白）と種（uint32。既定は散布の `Seed` と入力の番号のハッシュ）を足し、軽い行の値（`EcsMegaInstance`。EcsGpuSceneSlots.h:55〜60）と GPU の席の値へ通して、`GPUMegaInstance`（MegaGeometryPass.h:635〜645）の空き `Reserved0`・`Reserved1` に色味と種を入れる（`Common/MegaInstanceTable.glsl` の `MegaInstanceRow` と `LoadMegaInstance` も揃え、席の表の行 `GPUMegaSlotRow`（674〜679）を広げるか別の列にするかは着手時に決めて割り当て表 `Docs/Architecture/GpuLayoutRegistry.md` に登録する）。可視バッファの解決（`Common/VisibilityResolve.glsl`）と MegaGeometry のラスタの断片が Albedo に色味を掛ける（白ではビット単位で今と同じ）。種は G5-GR30 の `ApplyVertexAnimation` の instanceParams（風の位相）へ渡せる形にする。`MegaGeometryScatterComponent::SetInstanceHidden(inputIndex, bool)` を足し、1 本の非表示の切り替えで範囲（`kRangeRows` = 64 行）の全行を書き直さず、隠した席はカリングの前に落ちて影・RT にも出ない。検査 `MASS_RANGES` は隠した席を数えに入れる。新設の `MegaScatterVariationTest`（`EntityTreeTest` の束へ MEMBER）が通る: 色味と種が入力の番号ごとに保たれ、`UpdateInstances` と範囲の書き直しの後も変わらない、既定の種が同じ `Seed` で決定的、隠す・戻すで行の値（位置・回転）が変わらず公開の印だけが変わる、範囲の出し入れを挟んでも隠した状態が残る。`VisibilityResolveVulkanTest` に色味のケース（白でビット一致・色付きで Albedo が掛け算どおり）を足してビルドでき（実行は G12-GR47-FOREST-CHECK）、`EntityTreeTest` の既存の試験と `ScatterSystemResidencyTest` が通り、Game がビルドできる。
@@ -7175,7 +7291,8 @@
 - notes: 設計はロードマップ 2541 行（圧縮のライブラリの事実）と 2563 行（P3 圧縮）。決定（ロードマップ 2563 行が「本人判断（GR110）」とする zstd の扱い）: 推奨として `Library/ThirdParty/zstd` に切り出し、ライセンスの原文を同梱する。理由: 外部の依存は vendored で `LICENSE` と `UPSTREAM.json` を置く既存の規則（`Docs/Plans/VirtualizedTextureGeometryPlan.md` 121 行、`Library/ThirdParty/meshoptimizer/UPSTREAM.json` の前例）に合い、TinyEXR の私有のラッパーに依存し続けると、ライセンスの原文が無いまま（ロードマップ 2798 行）配布に入る。zstd は BSD-3-Clause と GPL-2.0 の二重のライセンスで、BSD-3-Clause を採る（SPDX は upstream の LICENSE に合わせて書く）。原本は upstream の公式の配布（GitHub の facebook/zstd のリリースのタグ）から取り、版と sha256 を記録する。LZ4 は足さない（要件は「zstd/LZ4 等」で、1 つで足りる）。BC 圧縮済みのテクスチャは効果が小さい見込み（未測）なので既定は無圧縮にし、G12-GR111-PACK-BENCH で配布の大きさと展開の費用を記録する。資産の読み込みの危険地帯なので評価者を通す。やらないこと: 配布の検査の CI、GR110 の配布のライセンスの一覧（G19）。
 
 ## G12-GR111-PACK-BENCH-CHECK: 合成の 2000 資産で、旧と新の経路のマニフェストの読み込み・資産の解決・起動の時間とパックの大きさを RelWithDebInfo で測り、閾値を決めて記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR111-MANIFEST-INDEX, G12-GR111-PACK-WRITER, G12-GR111-ZSTD-CHUNKS
 - gr: GR111
 - check: launch
@@ -7196,7 +7313,8 @@
 - notes: 設計はロードマップ 2267 行（GR48 の 1. メッシュ LOD の選択）。LOD の鎖のファイルは NVMESH を段ごとの別のファイルで参照する（形式は変えない）。AI 生成の高ポリのメッシュの鎖の生成は GR80（G17）の担当で、ここでは鎖を受ける側だけを作り、試験は分割の細かさの違う手続きの球で行う。MegaGeometry はクラスタの LOD（NVMESH v1 の階層。VTG の段 4）を自分で選び、影（VSM）と TLAS（粗い段）にも入る（SCN-MEGA-RT-SELECT・SCN-MEGA-VSM-BVH-SUN）ので、ロードマップ 2267 行の「MegaGeometry の LOD DAG は影に描かれないので森の木には使わない」は今は当たらない。木の近景と中景は MegaGeometry でも静的メッシュでも描けるようにし、遠景のインポスターへの切り替えだけをこの判定で共通にする。G12 前半の GR47（大規模の配置の層）の個体の判定は、その層のチャンクの距離の帯で同じ式を使う（G12-GR48-LAYER-SHADOW でつなぐ）。危険地帯（RenderThread へ渡す値）なので評価者を通す。やらないこと: クロスフェード（G12-GR48-CROSSFADE）、インポスターの GBuffer の描画（G12-GR48-IMPOSTOR-GBUFFER）。
 
 ## G2-REAL-DOG-ASSETS-CHECK: 実物の生成 GLB の犬を、実寸・向き・ARM の畳み込み・一括 cook のレポートで取り込み、並べて撮って確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G2-GR83-ASSET-PREVIEW-SCENE, G2-GR96-MODEL-ANALYSIS
 - gr: GR78, GR79, GR96
 - check: launch
@@ -7212,7 +7330,8 @@
 - notes: 確かめ直し (b) の起動と実物の部分。要件の実物の受入れ GR78「2 体を同じ位置に置いて撮影し、頭の向きを目視で揃える」、GR79「金属的な光沢や黒い斑が出ないことを PNG を開いて確認」、GR96「実データ: DogGame の資産を 1 つの spec にして cook し、cook_report.md を開いて確認」に当たる。既存の `G2-GR77-NATIVE-ACCEPTANCE-CHECK` はバナナの撮影だけで、犬の実寸・向き・ARM は扱わない。ARM の既定(auto + AO ignore、AI 生成では metallic も ignore)は作者が 10-04 に承認済みで「最終の採否は撮影の見た目で行う」(`G2ImportDecisions.md` の「GR79 ARM・発光」)。見た目が悪ければ既定を変えずに材質単位の上書きで直し、既定を変えるべきかは作者へ回す(`要起票:`)。犬の forward の符号は生成器と seed で変わりうるので 1 体ごとに sidecar に書く(要件 GR78 のリスク)。verify の撮影の行の `-GameArgs` の論理パスは、(1) の cook で付けた論理パスに合わせて直してよい。
 
 ## G2-GR82-REAL-RIG-CHECK: Blender 5.2.2 の書き出しと実物の犬のリグ・実物の BVH を通して cook し、クリップ名で再生して撮って確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G2-GR82-SKELETON-HINT-LEGACY, G2-GR84-REAL-BVH-GATE, G2-GR83-ASSET-PREVIEW-SCENE
 - gr: GR82, GR83, GR84
 - check: launch
@@ -7243,7 +7362,8 @@
 - notes: 確かめ直し (c)。発光と normalScale は cook と cooked の record までは通る(`CookedMaterialV1.md` の wire 表に EmissiveNits・NormalScale)が、ランタイムは「シェーダーが対応しない」として拒否する(`ImportedOpaqueRuntime.cpp:80-87`、`ImportedOpaqueRuntime.md` の「対応範囲」)。`MegaMeshMaterial` に発光の texture の枠が無い。要件 GR79 は emissive を「描画まで届く」形で取り込むことを求める。G5 の `G5-GR26-MATERIAL-PARAMS` が同じ構造体(`MegaMeshMaterial`・`MaterialEntry`・GBuffer の per-object UBO)を広げるので、その後に入れて衝突を避ける。Mask・Blend・両面は G5 の GR27 の範囲(`G5-GR27-MASKED-GBUFFER`)なのでここでは扱わない。発光の nits の換算(`emissiveNitsPerUnit`)は作者の承認どおり未設定なら拒否のまま。危険地帯(GBuffer・MegaGeometry・可視バッファ・Public API の MaterialCreateData)なので評価者を通す。既定の起動画面の見た目を変えない(基準画像の試験で確かめる)。要件 `#### GR79`。
 
 ## G7-GR53-CHECK: 濡れの式の GPU と CPU の一致と全経路の揃いを確かめ、濡れ 0・0.5・1 の撮影で地面が暗くつやが出て SSR の反射が現れ、濡れ 0 で今の絵が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G7-GR53-WET-MODEL, G7-GR53-WET-WRITERS, G7-GR49-ENV-INTERFACES
 - gr: GR53
 - check: launch
@@ -7258,7 +7378,8 @@
 - notes: 要件 `#### GR53` の受け入れ確認。`-SkinnedProbe` は CaptureStartupScene.ps1:188 の switch（骨付きのパネル）。草の濡れは G5 の草のシーン（grassland）で G7-GR58-CHECK の段階の撮影と一緒に見る。濡れた地面の粗さは 0.2〜0.4 になり SSR の切り捨ての粗さ（0.5）の内側に入るので、SSR の弱め方の調整が先に入っていれば見た目が安定する（要件の【SSR との関係】）。性能は測らない。
 
 ## G7-GR57-CHECK: GPU の粒の生成・更新・衝突・描画・間接の描画の試験を GPU で回し、5 万粒の GPU 時間を記録して、既存の粒と golden が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR57
 - check: launch
@@ -7271,7 +7392,8 @@
 - notes: 要件 `#### GR57` の受け入れ確認（GPU・状態、衝突、描画、規模・性能、回帰）。性能の計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。GPU を占有するので `gpu: exclusive`。パスの並びの契約は CPU の `GpuParticlePassOrderTest` が既に見ている。表面・ボーンのエミッタ（P6）は `G10-GR60-SKIN-SURFACE-EMITTER` に任せたので確かめない（G7-GR57-GPU-DEFINITION の notes）。
 
 ## G7-GR58-CHECK: 雨の試験を GPU で回して雨量の sweep の基準を撮り、雨量 0・0.5・1 の起動画面と草の場面で曇天・濡れた地面・霧に沈む雨筋を確かめ、G7 の受入れの記録を仕上げる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G7-GR58-RAIN-MODEL, G7-GR58-RAIN-CURTAIN, G7-GR58-RAIN-NEAR, G7-GR57-GPU-INDIRECT, G7-GR50-CHECK, G7-GR53-CHECK, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR58
 - needs-gr: GR37, GR43
@@ -7287,7 +7409,8 @@
 - notes: ロードマップ 1554 行（GR58 の完了条件）と 1555 行（段階の撮影確認）。段階の完了はロードマップの更新ルールのとおり、完了のゲートを通ったコミットに trailer `GameFeatureRoadmap: G7 complete` を付ける（この項目が G7 の最後）。grassland のシーンは G5 の GR37・GR43 が作るので needs-gr で待ち、視点の名前は G5 のシーンの表（G5-GR46-WIND-CHECK が near・near_gust・valley を使う）に合わせる。基準の画像を新しく作るので、採る前に PNG を開いて雨の見た目が成り立っていることを確かめ、所見を PROGRESS.md に書く。性能の計測は RelWithDebInfo（絶対規則 8）。
 
 ## G11-GR114-SHADOW-CHECK: 太陽の影の調整口と上限を入れた後の影の位置・長さ・欠けを起動して確かめ、影の変わる基準画像を再承認する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G11-GR114-SHADOW-PARAMS, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR114
 - needs-gr: GR34, GR43, GR50
@@ -7336,7 +7459,8 @@
 - notes: 選定課題 G11-S1（太陽が連続して動くときの更新方式。ロードマップ 4548 行）は推奨の (A) ローリング・キーフレームを採る。理由: 作者の決定で GR55 の時計（昼夜の連続表示）も作るので、暗転で隠す (C) では足りない。完全 GPU 移植の (B) は L〜XL で危険地帯に深く入るので、(A) でも足りないと G11-GR54-SKY-MEASURE の計測で出たときだけ別の項目にする。`SkyAtmosphereModel` の同時の構築の安全は未検証（要件のリスク）なので、試験で固定してからワーカーへ渡す。静的なメンバや mutable を持たないことは、着手時に `SkyAtmosphere.h` を読んで確かめる（UNCERTAIN: 確かめていない）。転送は合計 1 MB 未満の見込み（要件の値。未計測）。太陽方位のずらしで済むのは、晴天の空が太陽との方位差だけで決まるため（`BuildSkyViewTable` の表。要件 5317 行）。地面の項は方位に依らない。PT は `HashPathSky` で個別に再累積するので変えない。太陽角を SceneRevision に入れる量子化は G11-GR55-CLOCK-SKIP。`GameApplicationHandler.cpp` は共有のファイルなので差分を小さくする。危険地帯（RenderThread・ワーカーとの受け渡し・テクスチャの寿命）。評価者の反証を省かない。試験を足す理由: 反証する契約は「切り替えの前後で重みが跳ばない」「遅れても古いキーに留まる」「同時に作っても結果が同じ」。跳びは 1 フレームの明るさの段差として連続撮影でしか見えず、同時構築の競合は稀にしか起きず黙って起きる。ロードマップ 1987・1998 行、要件 `#### GR54` の P2。
 
 ## G11-GR54-SKY-MEASURE: 空 LUT・IBL の生成時間と、雲量・太陽の連続変化で引っ掛かりが無いことを起動して測り、記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G11-GR54-SUN-KEYFRAMES
 - gr: GR54
 - check: launch
@@ -7384,7 +7508,8 @@
 - notes: 要件 `#### GR55` の (N)。星と月の円盤は非ゴール（ロードマップ 1993 行）で、夜は「暗い空＋月明かりの方向光」まで。月明かりの 0.2 lux は要件の 0.1〜0.3 lux 案の中央で、根拠は要件の案だけ（実測なし）。夜の露出の下限の値は G11-GR55-NIGHT-CHECK の撮影で決めて、データへ書く。太陽高度の範囲を広げると既存の試験・基準画像に波及しうる（要件のリスク）ので、正の高度の値が変わらないことを試験で固定する。VSM・CSM は太陽の方向光が無いフレームで影を描かない（今の `MakeSkySunLightProxy` が false のとき）ことを着手時に読んで確かめる（UNCERTAIN: 方向光が無いときの VSM の扱いを読んでいない）。月明かりの影を有効にしたときは G11-GR114-SHADOW-PARAMS の口で強さを落とす。`GameApplicationHandler.cpp`・`CaptureStartupScene.ps1` は共有のファイルなので差分を小さくする。危険地帯（空の Sanitize は全シーンに効く）。評価者の反証を省かない。試験を足す理由: 反証する契約は「負の高度で NaN が出ない」「正の高度の値が変わらない」。NaN は 1 画素の黒や白として撮影に紛れ、黙って起きる。ロードマップ 1988・1999 行。
 
 ## G11-GR55-NIGHT-CHECK: 夕方から夜への明るさの変わり方と、時計を動かしたときの空・露出の追従を起動して確かめ、夜の露出の下限を決める
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G11-GR55-NIGHT, G11-GR54-SKY-MEASURE
 - gr: GR55
 - check: launch
@@ -7418,8 +7543,9 @@
 - notes: GR56 の P4 の後半（要件 5553-5563 行）。選定課題 G11-S5（樹木を RTGI・DDGI・影の TLAS に入れるか。ロードマップ 4552 行）は推奨の (A) を採る: 入れない（PT の参照にだけ mask 0x04 で当てる）。理由: TLAS は描画から毎フレーム CPU で列挙して作り、数万の instance の費用は未測定、ray query は `gl_RayFlagsOpaqueEXT` で葉の切り抜きを見ず暗くなりすぎる、BLAS の構築が同期、の 3 点（要件）。今は MegaGeometry（地形・岩・小屋）も TLAS に入る（RenderingCoordinator.cpp:1400・1642 の `AppendMegaGeometryInstances`）ので、要件の「静的 glTF は TLAS に入らない」は古い。岩陰は光線が解き、樹冠だけをこの組が補う。株（低木）は SCN-WL-PLANT-ROOT-OCCLUSION で RTGI の拡散の光線に見せている（mask 0x02 と `SetRTGINonShadowCasterOcclusion`）ので、その経路は変えない。DDGI のカメラ追従（P5）は G11-S3 の (A) で作らない（G11-GR56-SKY-OCC-MAP の notes）。視錐台の外の頭上の樹冠が TLAS から抜ける恐れ（ロードマップ 2009 行の推論）は、樹冠を TLAS で解かずこのマップが受け持つので影響しない。危険地帯（RT の契約・lighting.frag）。評価者の反証を省かない。試験を足す理由: 反証する契約は「mask 0x04 の物が RTGI・DDGI に当たらず PT に当たる」。当たると樹冠の下が二重に暗くなるが、撮影では強さの調整と区別がつかず黙って起きる。
 
 ## G11-GR56-SKY-OCC-CHECK: 森の縁と開けた草原で空の遮蔽を起動して確かめ、GPU 時間とカメラの歩行での更新の費用を記録する
-- status: todo
-- after: G11-GR56-SKY-OCC-RT, G11-GR56-SKY-OCC-REFERENCE
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
+- after: G11-GR56-SKY-OCC-RT
 - gr: GR56
 - check: launch
 - gpu: exclusive
@@ -7466,7 +7592,8 @@
 - notes: GR59 の P4・P5（要件 5997-6005 行）。選定課題 G11-S9（水たまりの反射の水準。ロードマップ 4556 行）は推奨の (A) を採る: 空の見え方（GR56 の鏡面の遮り）を掛けた IBL の鏡面と、SSR の粗さの連続化（SS-POST-TUNE。`Docs/History/2026-10-07-G2Integration/CompletedTasks-06.md` で done）まで。理由: 平面反射の (B) は L で、低い視点の撮影で違和感が出たときに考える（G11-GR59-RAIN-CHECK で見る）。局所反射のプローブ (C) は非ゴール（ロードマップ 1993 行）。濡れの共通モデル（GR53、`Common/WetSurface.glsl` の `ApplyWetSurface`）と濡れの値（GR49）は G7 の項目（G7-GR53-WET-MODEL・G7-GR53-WET-WRITERS・G7-GR49-ENV-SYSTEM）で、今のコードには無い（`Wetness` の grep で 0 件）。名前はそれに合わせた。GR44 の世界空間のフィールドの名前と場所（`WorldField` と書いたのは仮）は G5-GR44-WORLD-FIELD の実物に合わせる。濡れの GBuffer の書き込みは経路が複数あり GR53 の約束に従う（ロードマップ 2011 行）。G5 の GR26 が GBuffer の空きの意味を決めるので、水たまりの印は GR26 の約束の内で持つ。共有のファイル（gbuffer.frag・megageometry.frag・lighting.frag・地形のシェーダー）は差分を小さくする。危険地帯（GBuffer・lighting.frag）。評価者の反証を省かない。試験を足す理由: 反証する契約は「被覆 0 で絵を変えない」「屋根・樹冠の下に空が映らない」「波紋が時刻に決定的」。樹冠の下で空が映る誤りは低い視点でだけ目立ち、黙って起きる。ロードマップ 1990・2001 行。
 
 ## G11-GR59-RAIN-CHECK: 雨の草原で、屋根・樹冠の下の雨の遮蔽・着水・足の水しぶき・水たまりと反射を起動して確かめ、雨の場面の基準画像を承認する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G11-GR59-RAIN-HIT, G11-GR59-FOOT-SPLASH, G11-GR59-PUDDLES
 - gr: GR59
 - check: launch
@@ -7513,7 +7640,8 @@
 - notes: GR52 の P2（要件 5184 行）。谷の朝霧・シ者の周りの霧を Entity に付けて動かす用途。G7 の GR51（`Common/HeightFog.glsl`、霧を前向きの描画へ広げる）と G5 の GR46（風の式の正本。G7-S1 の決定）を使う。名前は G7 の節（ロードマップ 1538 行）と G5-GR46-WIND-FIELD の notes に合わせた。8 個の上限は要件の案（根拠は UBO の大きさの見込みだけ）。froxel 化（P3）は作らない（G11-GR52-FOG-STEPS の notes）。局所霧は PT・RT・DDGI が知らない（ラスタだけ。方式差として記録）。共有のファイル（forward_transparent.frag・world_board.frag・RenderingCoordinator.cpp）は差分を小さくする。危険地帯（volumetrics・半透明）。評価者の反証を省かない。試験を足す理由: 反証する契約は「解析の積分が数値積分に合う」「0 個で絵が変わらない」。積分の誤りは霧の濃さの違いとして見え、強さのつまみと区別がつかず黙って起きる。ロードマップ 1986・1997 行。
 
 ## G11-GR52-FOG-CHECK: 低い視点・弱い雨・雲間の光の筋の草原（構図 01 相当）を起動して確かめ、霧の GPU 時間を記録して grassland の霧の既定を決める
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G11-GR52-CLOUD-SHAFTS, G11-GR52-LOCAL-FOG
 - gr: GR52
 - check: launch
@@ -7622,7 +7750,8 @@
 - notes: GR63 の Phase 2（ロードマップ 1943 行、要件 `#### GR63` の Phase 2）。関節基準の境界（`JointBindBounds`・`TransformJointBounds`）は G3 の GR12 で入り、全頂点の走査は既に `Sample` から外れている（`SkeletalPoseBounds.h:18-52`）ので、ここは部位版を足すだけ（ロードマップの「GR12 と共有」）。G10-S3（Phase 3 スキンキャッシュ・Phase 4 メッシュレットの GPU カリングの採否）は推奨どおり「実測の前には作らない」(A) と決め、G10-GR63-GIANT-CHECK の計測で判断を記録する。理由: 10-02 の後に既定の可視バッファの経路は `SkinningComputePass` が計算で 1 回だけ変形して ID のラスタ・解決・VSM が読む（`SceneView.cpp:1102-1209`）ので、Phase 3 のスキンキャッシュに当たる部分が既にある。残る頂点シェーダーのスキニングは fallback と CSM だけ。危険地帯（RenderThread・影・Public API）なので評価者を通す。やらないこと: Phase 3・4 の実装、計測。
 
 ## G10-GR63-GIANT-CHECK: 巨大なスキンの GPU 時間・描画数・メモリの型と LOD の生成時間を RelWithDebInfo で測って記録し、Phase 3・4 と遠距離の影の判断を残す
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G10-GR63-PART-CULL, G10-GR63-VELOCITY-GUARD
 - gr: GR63
 - check: launch
@@ -7648,7 +7777,8 @@
 - notes: ロードマップ 1947・1959 行、要件 `#### GR64` の置き場所と受け入れ確認の GhostPoseComponentTest・予算。`History` は要件の「PoseHistory（SkeletalPoseSnapshot のリングバッファ）」の案だが、子の姿勢は `SubmitLocalPose` で渡すので、パレットでなく局所の姿勢（`LocalPose`）を積む（パレットを積むと子の姿勢の評価と二重になる）。Animator が無い持ち主の `History` は、持ち主のクリップと時刻を積んで同じ形で並べる。子の Entity が RenderingCoordinator の前フレームの状態（`m_PreviousSkinnedStates`。`RenderingCoordinator.h:729`）に残骸を積まないことは要件のリスク。新しい Component はロードマップの「段階をまたぐ注意」4444 行のとおり TickStages.md の割り当て表に必ず載せる。危険地帯（Object の寿命・Public API）なので評価者を通す。やらないこと: 残像の描画（G10-GR64-GHOST-RENDER）、カメラの周回の撮影（G10-GR64-GHOST-CHECK）。
 
 ## G10-GR64-GHOST-CHECK: 残像を起動して静止・カメラの周回・残像が動く場合で撮り、ちらつきと筋の有無と案 A を続けるかの判断を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G10-GR64-GHOST-POSE
 - gr: GR64
 - check: launch
@@ -7696,7 +7826,8 @@
 - notes: ロードマップ 1945・1957 行、要件 `#### GR60` の (a) の粒の見た目・灰雲、(c)、タイムライン連携、P4・P5。選定課題 G10-S4（消え方の表現）は推奨どおり、決まるまで灰と光の 2 セットを両方持ち、決まったら要らないほうを削る、と決めた。崩壊（C）は姿勢のクリップと破片の量の違いなので、同じ枠（ディゾルブ・表面のエミッタ・効果の定義）で破片の量の値を上げれば作れる。理由: 企画で未決で、決めるのは作者（ロードマップの選定課題一覧の G10-S4）。消えるのはスキンメッシュの切断でなく、ディゾルブ・粒・破片の板・カメラの揺れで見せる（要件の (c)。メッシュの切断と回転する剛体の破片は作らない）。撃破の流れ（G8 の `OnDefeatStarted` と GR132 の `DefeatBloodPresenter`）への結線は、G8 の `CombatSlice` を書き換えず、この項目では確かめの場面だけにする（企画の「頬を撫でた後に消える」の時間はクリップと犬の反応が決まってから。要件のタイムライン連携）。灰の風（GR46）は GR57 の粒が受ける風の入力に任せる。危険地帯（RenderThread のパーティクル・アセットの読み込み）なので評価者を通す。起動しての確かめは G10-GR60-VANISH-CHECK。
 
 ## G10-GR60-VANISH-CHECK: 灰と光の 2 セットの消滅を起動して撮り、画面の指標と巨大な体での GPU 時間を記録して並べる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G10-GR60-VANISH-EFFECT
 - gr: GR60
 - check: launch
@@ -7734,7 +7865,8 @@
 - notes: ロードマップ 1949・1965 行（G9 の GR14・GR15 は `LegFlailDriver` のためだけ）、要件 `#### GR20` の設計案 (3) と実装順 6)。G9 が無い間は付けず、ぶら下がりだけで成立させる（要件の (3)）ので、G10-GR20-GRIP-COMPONENTS とは分けた。UNCERTAIN: G9 の `FootIKModifier` が脚ごとの外からの目標のオフセットを受ける口を持つかは、G9 の実装を読んで確かめる。無ければ `*.posemod.json` の脚の名前で引ける最小の口を足し、G9 の試験が変わらないことを確かめる。Library の Animation（Core）は Gameplay に依存しないので、modifier の実体は Gameplay に置き、Core の口だけを使う。危険地帯（Public API の姿勢の後処理）なので評価者を通す。起動しての確かめは G10-GR20-CLING-CHECK。
 
 ## G10-GR20-CLING-CHECK: 突き立てとぶら下がりを起動して走らせ、表面への追従の誤差・荷重・ゲージ・解除の流れと DebugDraw の表示を確かめて記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G10-GR19-ANCHOR-ATTACH, G10-GR20-GRIP-COMPONENTS, G10-GR20-LEG-FLAIL
 - gr: GR19, GR20
 - check: launch
@@ -7747,7 +7879,8 @@
 - notes: 要件 `#### GR19` と `#### GR20` の Game のスモーク（`--anchor-smoke`・`--grip-smoke`。G10-SHISHA-SHOWCASE の場面にした）と目視の確かめ、ロードマップ 1960・1961 行。1e-3 m は根拠の無い仮の値（要件は誤差を出すとだけ書く）で、値を記録して作者が決める。`--shisha-debug-draw` は G10-GR20-GRIP-COMPONENTS の DebugDraw の切り替えの引数（名前が違えば合わせる）。手応え（ゲージの減り方・荷重）は要件のリスクで、調整は作者が見て決める。
 
 ## G11-GR36-SHAKE-CHECK: 濡れた犬が身震いして水滴を飛ばし乾いていく時系列を起動して撮り、濡れ度の記録と見た目を確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G11-GR36-DROPLETS
 - gr: GR36
 - check: launch
@@ -7758,7 +7891,8 @@
 - notes: 要件 `#### GR36` の受け入れ確認の撮影（要件 3855 行）。場面と引数は G6 の項目（G6-GR34-COAT-SCENE の `--fur-debug` と視点 fur-near・fur-mid・fur-far、G6-GR35-WETNESS-STATE の `--fur-wetness`）に合わせ、`--coat-shake-at` は G11-GR36-WETNESS-DYNAMICS が足す（撮影の行の形は G6-GR34-FUR-CHECK と同じ）。W の時系列のログの行は G11-GR36-WETNESS-DYNAMICS で開発ビルドだけ出す形にする（その項目の実装者が足す。名前はここに合わせる）。コードは変えない。ロードマップ 1996 行。
 
 ## G12-GR47-FOREST-CHECK: 手で置いた森と規則の散布を起動して確かめ、個体差・RT の除外・GPU とゲームスレッドの時間を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR47-SCATTER-COLLIDERS, G12-GR31-CULL-CHECK
 - gr: GR47
 - check: launch
@@ -7805,7 +7939,8 @@
 - notes: 設計はロードマップ 2318 行（GR92 の設計 6）。今のコードの事実: 能力の一覧は scene.query / scene.edit / scene.liveUpdate / object.query / object.edit / asset.read / asset.reload だけ（`Game/Bridge/NorvesLibBridgeAdapter.cpp:1842-1848`）。Bridge SDK（NorvesEditor の `bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp`）の `IBridgeEngineAdapter` には scene の保存・読み込みと Component の追加の口が無く（scene は getTree・createObject・deleteObject・reparentObject・duplicateObject、object は getSnapshot・setProperty だけ。adapter.hpp 99〜135 行）、SDK は NorvesEditor のリポジトリにある。決定: GR137 の決定（ロードマップ 4322〜4326 行。線の上の名前は SDK に足す必要があり、範囲の外なので足さず、エンジンの側の処理を SDK に依存しない部品で置く）に合わせ、scene.save / scene.load / object.addComponent の線の上の口と getCapabilities への掲載はこの項目でしない。SDK に口ができたら、この部品へつなぐだけにする。理由: NorvesEditor のリポジトリはこの計画の書き換えの範囲の外で、SDK の型を使わない部品にすれば Game 全体を組み込まずに CPU で試験できる。`NorvesLibBridgeAdapterScriptComponentTest` の束は Game のソースを組み込むので全体のビルドから外されている（`Test/Game/Bridge/CMakeLists.txt` 11〜13 行）ため、試験はそこへ足さない。共有のファイル（`NorvesLibBridgeAdapter.cpp`）は 3 か所のつなぎだけにして差分を小さくする。Object/Resource の寿命の危険地帯なので評価者を通す。やらないこと: NorvesEditor 側の口と画面、Bridge の配置の UI（GR93 は ImGui を一次手段にする）。
 
 ## G12-GR92-LOAD-SCENE-CHECK: シーンのファイルから組んだ場面を起動して撮り、資産の束縛・欠けた資産の扱い・既定の起動画面が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR92-PREFAB-FILE, G12-GR92-ASSET-BIND
 - gr: GR92
 - check: launch
@@ -7826,7 +7961,8 @@
 - notes: 設計はロードマップ 2357 行（GR93 の 2. エディタ配置）。一次手段は ImGui（NorvesEditor 本体は読んでいないので、Bridge は G12-GR92-BRIDGE-SCENE のエンジンの側の部品に載せた二次手段）。ImGui の画面の登録は `GameApplicationHandler.cpp:3186-3207` の `RegisterImGuiView` の前例に倣い、共有のファイルは登録の数行だけにして差分を小さくする。`--imgui` の無い起動は変えない（`GameApplicationHandler.cpp:70-73` の no-op の約束）。マーカーが数百を超えるとデバッグ描画の頂点の上限に当たる（ロードマップ 2762 行）ので距離で絞る。危険地帯（Bridge 側の Component の生成が Object の寿命に触れる）なので評価者を通す。`BridgeAssetPropertyEditTest` は今 Core だけにリンクする（`Test/Game/Bridge/CMakeLists.txt` 91〜107 行）ので、マーカーのケースのために Gameplay のモジュールのライブラリを足す（`Test/Game/Bridge/CMakeLists.txt` の該当の数行だけ）。やらないこと: 草の密度・枯れのペイント（G12-GR93-PAINT）、NorvesEditor の画面。
 
 ## G12-GR93-EDIT-CHECK: 配置のシーンを ImGui 付きで起動して撮り、マーカー・持ち場・痕跡のデバッグ描画を確かめ、暫定のシーンで検証の報告を読む
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR93-EDIT-VIEW, G12-GR93-VALIDATE, G12-GR92-LOAD-SCENE-CHECK
 - gr: GR93
 - check: launch
@@ -7870,7 +8006,8 @@
 - notes: 決定 G6-S3（提案『変形するキャラは共通の土台を張り直す』の採否）: 採る（作者の決定「企画で保留の提案もエンジンの機能として採る」）。張り直し（1）とウェイトの keep・transfer（2）の両方を作る。土台メッシュ（四足・人型。UV と頂点グループ付き）は作者が手で作る資産で、リポジトリにも `Y:/AI` にも無い。この項目は合成の fixture で作り、実物の土台での確かめは G6-GR103-BLENDER-CHECK（無ければそこで代わりの土台を使い、そのことを記録する）。ロードマップの (3) の JSON 後処理は G6-S2 のとおり採らない（G6-GR103-RIG-SPEC-VALIDATE の notes）。Rigify の有効化・アドオンの追加・Blender の設定の変更・ダウンロードはしない（ロードマップ 1503 行。承認が要る）。`--factory-startup` だけで動く範囲に限る。ベイクのデバイスを CPU に固定するのは、利用者が同じ PC で GPU を使うアプリを動かしているため（GPU を取り合わない）。Blender の出力の版の違い（UniRig の出力は Khronos glTF Blender I/O v4.2.57、手元は 5.2.2。ロードマップ 1502 行）は版の表で止める。TRELLIS.2 の脚や尾がくっつく形（ロードマップ 1500 行）は Shrinkwrap の距離の報告としきい値で検出する。この項目では Blender を起動しない（盤面の決まりで `blender` を含む確かめは後回しになる）ので、Blender の上でしか分からない誤りは G6-GR103-BLENDER-CHECK で見つけて直す。試験を足す理由: Procrustes の符号や行列の向きの誤りは、向きが不定の AI のメッシュでは見た目で区別しにくく、黙って起きる。ロードマップ 1340〜1352 行の (1)〜(3)、1498〜1503 行のリスク、要件 `#### GR103`。
 
 ## G6-GR103-BLENDER-CHECK: Blender の段を実際にヘッドレスで回し、合成の fixture と実物の犬で張り直し・ウェイト・書き出し・cook・再生まで通ることを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G6-GR103-BLENDER-STAGES
 - gr: GR103
 - check: launch
@@ -7907,7 +8044,7 @@
 
 ## G6-GR34-SHELL-PASS: スキン済みの体の Fur の材質の部分だけを、同じ頂点・同じパレットで N 枚の殻としてインスタンス描画で GBuffer へ重ね、毛の判定・毛先の細り・自己遮蔽の AO・距離による殻数の LOD を入れる
 - status: todo
-- after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR34
 - needs-gr: GR26, GR27, GR30, GR32
 - done-when: `SkinnedDrawParams`（`Library/Core/Public/Rendering/DrawCommand.h:63`）に `ShellCount`（既定 1）と最後の殻の割合を足し、`InstanceCount`・`bInstanced` とは別の欄にする（`GBufferPass::TryPrepareSkinnedCommand`（GBufferPass.cpp:1738〜1744）と `SceneRenderer::RecordSkinnedDrawCall`（SceneRenderer.cpp:572〜593）の外部指定のインスタンスの拒否は残す）。Fur の材質の slot（G6-GR91-FUR-MATERIAL-DATA の proxy の写し）だけ、カメラから `AnimatedBounds` の中心までの距離で連続の殻数 Nf を材質の LOD の表から決め（既定は仮で 3m 以内 32・10m 16・25m 8・50m 4・それより遠くは 1）、ceil(Nf) 枚を `DrawIndexedInstanced(count, ShellCount, start, 0, 0)` で描き、最後の殻は frac(Nf) で間引いてポッピングを避ける。視錐台の外の殻は `AnimatedBounds` で落とす。目・鼻・爪など Fur でない slot は今のまま 1 回。描く経路は G5-GR26-GBUFFER-PROGRAMS の GBuffer プログラムの登録簿に `fur_shell`（スキンの VS `Assets/Shaders/skinned_fur_gbuffer.vert`・FS `skinned_fur_gbuffer.frag`）を登録して使い、可視バッファが on なら解決の後に重ねる経路、fallback なら標準の後に描く。殻 0 も同じプログラムで描く。影の描画（`skinned_shadow.vert`・点光源・VSM）は毛の無い形のままで、殻を含まない。頂点シェーダーは G5 が切り出す `Common/SkinnedVertex.glsl` でスキニングし、殻の番号 = gl_InstanceIndex、h = 殻 /(N−1)、世界の位置 = P + normalize(N + F·h)·(MaxLength·h)（F は描画ごとの毛の力。この項目では UBO の値をそのまま使い、作るのは G6-GR34-COAT-SCENE）。velocity は下地のスキンの動き（前のパレット）に今の殻のずれを足した近似にする。断片シェーダーは UV のセルで毛 1 本を判定する（cell = uv·StrandDensity·密度、乱数 = セルの整数座標のハッシュ、毛の長さ = 長さのマップ·mix(0.6, 1, 乱数)、h が毛の長さを超えたら捨てる、太さ (1 − h/毛の長さ)^p で細らせる）。セルが画素より細かいとき（fwidth(cell) > 0.7）は 2 値の判定をやめて被覆率の期待値を G5-GR27-MASKED-GBUFFER の Hash の切り抜き（`Common/AlphaClip.glsl`）へ回し、幅の下限は G5-GR30-THIN-SPECULAR-AA の `Common/ThinGeometry.glsl` の `ClampStrandWidth` を通す。殻 0 は捨てない不透明の皮膚面で根元の色と AO を書く。色はアルベド × 根元から毛先への明るさ × 領域の表（Region のマップを texelFetch で読む）と下毛の色の混ぜ、AO = mix(AoRoot, 1, h^AoExponent) を Material.b へ、法線は normalize(mix(N, T, Tilt·h))（T は流れのマップを `CalculateCotangentFrame`（Common/ParallaxOcclusionMapping.glsl:14）で世界へ写したもの）。GBuffer へは G5-GR26-GBUFFER-CONTRACT の関数で、ID = Fur・P0 = 濡れ度（スキンのインスタンスの値、無ければ材質の値）・P1 = 流れの角（下の G6-S8）を書く。ファーの値は GBuffer の per-object UBO（今 336 バイト。GBufferPass.cpp:101・672）の後ろに FurMaterialGpuParams と描画ごとの値（毛の力・殻数・最後の殻の割合）を足して渡し、マップは今の 6 つのテクスチャの束縛（GBufferPass.cpp:110 付近の binding 1〜6）を Fur のときだけ読み替える（metallic → Length、roughness → Flow、ao → DensityClump、height → Region）。RenderGraph にパスもリソースも足さない。試験が通る: `SkinnedSubmeshDrawContractTest`（今の偽の ICommandList。SkinnedSubmeshDrawContractTest.cpp:163〜242）に、Fur の slot だけが `DrawIndexedInstanced(count, N, start, 0, 0)` で記録されてほかの slot は 1、N が距離に対して増えずに LOD の境目が表のとおり、視錐台の外は 0、外部から bInstanced か InstanceCount ≠ 1 を指定したスキンの描画は今までどおり拒否、影のパスの記録は殻を含まない、のケース。`FurShaderCompileTest`（`RHIRayTracingApiContractTest` の束へ MEMBER。`RHIRayTracingShaderStageCompileTest` と同じく `VulkanShaderCompiler` を CPU で使う）が skinned_fur_gbuffer.vert と .frag を通す。GPU の `RenderingFurShellVulkanTest` と `RenderingFurShellGBufferFallbackVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録。GBuffer の capture source は G5-GR26-MATERIAL-PARAMS が足すもの）が、試験の場面の部品 `Test/Core/Rendering/RenderingValidation/RenderingValidationScene` に足す合成のファントム（骨 1 本のスキンの円筒と、試験の中で作る一様のマップ）で、(a) 殻 1 枚なら下地で被覆 100%、(b) 32 枚で下地の外の毛の画素の割合が密度から求めた期待値の許容の内、(c) Material.b の AO が根元で小さく毛先で大きい（高さの帯ごと）、(d) Normal.w の ID が Fur、(e) 静止で velocity が 0、(f) 殻数を減らすと平均のアルベドが下地の色へ単調に近づく、を確かめる。Fur の材質の無い golden 4 本と既存のスキンの velocity が変わらない。
@@ -7939,7 +8076,8 @@
 - notes: 決定 G6-S11（風の当て方）: 風は GameThread の FurCoatComponent で引かず、殻の頂点シェーダーで頂点の位置ごとに `Common/Wind.glsl` を引く。理由: 選定課題 G7-S1 の推奨 (A)（G5-GR46-WIND-FIELD の notes。GR46 の式を正本にし、草・雨筋・毛が同じ関数を呼ぶ）と G7-S2 の推奨 (A)（風は 1 フレームに 1 つの環境の UBO で渡し、物体ごとの UBO を増やさない）に合わせ、草と毛の揺れがずれないようにするため。重力の垂れと体の慣性は体全体で 1 つの値なので Component で作る。ロードマップ 1377 行は「FurCoatComponent が風の場を位置でサンプル」とするが、それより細かい。毛の力を revision に入れないのは、毎フレーム変わる値で全画面の履歴が捨てられないため（ロードマップ 1445 行の CustomData の前例の失敗）。FurCoatComponent は GR35（濡れ度の状態。G6-GR35-WETNESS-STATE）と GR36（G11。身震い・乾燥）が拡張するので、状態を足しやすい形にする。犬の資産は G6-GR103-BLENDER-CHECK の後に manifest に入る（無ければファントムだけで場面は成り立つ）。合成のファントムは試験の場面の部品（G6-GR34-SHELL-PASS）と同じ作り方にして、試験と場面で同じ形を見る。共有のファイル（`Game/GameApplicationHandler.cpp` の `--fur-debug` の引数）は差分を小さくする（`--animation-debug` の扱い 2013 行の隣）。試験を足す理由: ばねの時定数や刻みの依存の誤りは、毛が少し揺れすぎる・30fps と 144fps で揺れ方が違うだけで、撮影 1 枚では分からず、黙って起きる。危険地帯（RenderThread との受け渡し・シーンの保存形式）なので評価者を通す。撮影と目視は G6-GR34-FUR-CHECK。ロードマップ 1377・1380 行、要件 `#### GR34`。
 
 ## G6-GR34-FUR-CHECK: ファーを起動して撮り、近景・中景・遠景の見た目と既存のシーンの不変を確かめ、ファーの golden を承認し、殻数と距離と解像度ごとの GPU の時間を測って記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G6-GR34-FUR-LIGHTING, G6-GR34-COAT-SCENE
 - gr: GR34
 - check: launch
@@ -7954,7 +8092,8 @@
 - notes: 確かめの対象はロードマップ 1475〜1478 行（golden・回帰・撮影・性能）。計測は Release でなく RelWithDebInfo（AGENTS.md の絶対規則 8）。計測の組（殻数 4 × 視点 3 × 解像度 2）の残りの 23 本は、上の計測の行の `fur-shell-count`・`-Views`・`-Width`/`-Height`・`-OutDir` を替えて回す。性能の数字は未測定でこれが初回（ロードマップ 1478・1504 行）。TAA の既定（ロードマップ 1505 行の SS-TAA-P2）は done（G5-GR30-VERTEX-ANIM-VELOCITY の notes）なので、毛先のアルファハッシュは TAA で平均された見え方で見る。影の法線のオフセットによる自己影・ピーターパン（ロードマップ 1508 行）と、暗い毛色の 8bit の GBuffer のバンディング（1507 行）も (1) で見て、出ていれば記録する（直すのは別のタスク）。golden の基準の画像の承認は作者に任された判断（G5-GR30-THIN-SPECULAR-AA の notes と同じ扱い）。golden の試験と台本の場面の追加はコードの変更だが、基準の画像は GPU で撮らないと作れないので、この起動のタスクに入れた。要件 `#### GR34`。
 
 ## G6-GR91-FUR-MAPS-CHECK: Blender で犬の土台メッシュから毛のマップを焼いて流れの線画を目で確かめ、cook したマップと材質が実行時に cook 済みの経路で読まれ、ImGui の調整が届くことを起動して確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G6-GR91-FUR-FLOW-MAPS, G6-GR103-BLENDER-CHECK, G6-GR34-COAT-SCENE
 - gr: GR91
 - check: launch
@@ -7990,7 +8129,8 @@
 - notes: 決定 G6-S12（濡れの適用の範囲と符号化）: この項目は Fur の画素（殻と殻 0 の皮膚）だけを濡らす。鼻・肉球・目など Fur でないスキンの slot と静的なメッシュの濡れは GR53（G7。地面・草・岩の濡れ）の仕組みで行う。理由: 選定課題 G7-S6 の推奨 (A)（DefaultLit では Material.a = P0 を「濡れ感度」のままにし、濡れは GBuffer へ書く前にアルベド・粗さ・法線へ適用済みにして最終の w は書き戻さない）と G5-GR26-GBUFFER-CONTRACT の契約（DefaultLit の P0 = 濡れ感度）に合わせると、Fur でない slot に毛の濡れ度 W を P0 で渡すと意味がぶつかる。Fur では照明がつやを強めるのに w が要るので、P0 = その画素の w とする（G6-S8。G7-S6 の (A) の「G6 の GR35 の実装が先に決まっていれば合わせる」に当たる決定として `Docs/Architecture/GpuLayoutRegistry.md` に書く）。`Common/SurfaceWetness.glsl` の暗化・彩度・粗さの式は GR53 がそのまま使えるよう、Fur に依らない形にする（ロードマップ 1447 行）。SSR は Fur を飛ばす（G6-GR34-FUR-LIGHTING）ので、濡れ毛のつやは直接光と IBL で出す（ロードマップ 1457・1522 行）。色の値（#D8DAD4・kDark ≒ 0.62）は企画で未定の提案の値なので、エンジンの既定には入れずファントムの材質のデータに入れる。GBuffer の Albedo は 8bit の線形で、暗化した暗い毛色に階調の不足が出うる（ロードマップ 1525 行）が、出たかは G6-GR35-WET-CHECK の撮影で見る。AI のアルベドに光や濡れが焼き込まれていると暗化が二重に掛かる（1524 行）ので、基準のアルベドは乾いた色が前提と `Docs/Architecture/FurRendering.md` に書く。試験を足す理由: 暗化と粗さの式の取り違え・W = 0 で恒等でないこと・束感の長さの縮みの誤りは、雨の絵が少し違うだけで撮影 1 枚では分からず、黙って起きる。危険地帯（GBuffer・ライティング）なので評価者を通す。ロードマップ 1447〜1459・1490・1492・1493 行、要件 `#### GR35`。
 
 ## G6-GR35-WET-CHECK: 濡れ度 0・0.5・1 の毛を起動して撮り、平均の輝度が濡れ度とともに下がり、束感とハイライトの変化と腹・顔の灰への沈みが見えることを確かめて記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G6-GR35-WET-LOOK, G6-GR35-WETNESS-STATE, G6-GR34-FUR-CHECK
 - gr: GR35
 - check: launch
@@ -8026,7 +8166,8 @@
 - notes: 設計はロードマップ 2267 行（配置の層の個体は距離の帯で同じ判定）と 2277・2279 行（GBuffer のインポスター、影はクロスフェードしない）。要件の「GBuffer への書き込み（ライティング・影・霧に参加）」の影を、受けるだけでなく落とすまで含めて採る（作者の方針: 必要な機能は全部やる）。配置の層の形式と描画の経路は G12 前半の GR47 が決めるので needs-gr に入れ、層のファイル・関数の名前はその形に合わせる（paths の `Library/Core/{Public,Private}/Rendering` の中で、GR47 が置いた層のファイルだけを触る）。GR47 の試験の束の名前は GR47 のタスクが決めた名前で verify に足す。インポスターは RT（TLAS）には入れない（遠景は TLAS の範囲の外。ロードマップ 2741 行）。危険地帯（GBuffer・VSM・RenderThread）なので評価者を通す。やらないこと: 実の AI の木の調整（G12-GR48-CHECK）。
 
 ## G12-GR48-CHECK: 木の LOD とインポスターの場面を起動して距離のスイープを撮り、ポッピング・明るさの跳び・検証レイヤーの誤りが無く、ベイクの時間とアトラスの VRAM を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR48-LAYER-SHADOW
 - gr: GR48
 - check: launch
@@ -8051,7 +8192,8 @@
 - notes: 設計はロードマップ 2151・2153 行（GR40 の 1・2）、リスクは 2710〜2711 行。シーンの保存は今 MeshHandle などの資源の参照を持てない（ロードマップ 2151 行）ので、シーンの部分木を payload にできるのは GR92（G12 の後半の計画役）の後。ルートを返す読み込みは GR92 の完了条件（ロードマップ 2630 行）にあり、G12 の後半の G12-GR92-ASSETREF-SCENE-V3（シーンの形式 v3・読み込みの戻り値）が作るので、ここでは作らず使う。`SceneSerializer.cpp` は GR92 と同じファイルなので、分割は関数の切り出しだけにして差分を小さくする。試験を足す理由: 反証する契約は「分けて読んだ結果が 1 回で読んだ結果と同じで、取り消しで何も残らない」こと。破れるとセルの出入りで小物が二重に出る・半端に残るとして、まれにしか出ず、撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード）なので評価者を通す。
 
 ## G12-GR40-STREAM-CHECK: セルの出し入れとスナップロードを起動して確かめ、ヒッチの数・読み込みの時間・フレームの時間を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G12-GR40-SNAP-PREFETCH, G12-GR40-SCENE-PAYLOAD, G12-GR39-TERRAIN-CHECK
 - gr: GR40
 - check: launch
@@ -8291,7 +8433,8 @@
 - notes: 設計は要件 `#### GR116` の設計 2)、ロードマップ 2815 行。G8-GR72 の `SetVoiceVolume`・論理サウンド層・既定の起動での Audio の登録（`G8-GR72-AUDIO-COMPONENT-BOOT`）の上に載せる。今の `XAudio2Backend::CreateVoice` はフィルタを指定せず、XAudio2 のフィルタの API はこのリポジトリで未使用・未検証（要件の注）。リスナーと 3D の位置の自動追従は G16 の GR73 の仕事なので、ここは「呼び手が位置を与える」形で代える（ロードマップ 2831 行）。G16 の GR73 が入るときは、この適用口に GR73 の声の位置とリスナーを差し込む（G16-S8 の (a)）。予算 4 声・10 Hz・時定数 0.15 s は要件の案の値で、実測の根拠は無い（データで替える）。UNCERTAIN: G8 の音のスモーク（`--audio-smoke`）の置き場は未着手で、`Game/GameModes/AudioSmoke` と名前が違えばそちらに合わせる。`-ContractOnly` は起動せず台本の契約だけを確かめる（`Test-M9World.ps1:8`・`539`）。危険地帯（Public API: `IAudioService`・`IAudioBackend`）なので評価者を通す。試験を足す理由: 反証する契約は「目標値へ跳ばずに収束し、予算を超えず、免除のクラスを変えない」こと。外れるとクリック音や一部の声だけ遮蔽されない形で出て、ログでは気づけず黙って起きる。やらないこと: 3D 定位・バス・リバーブ（GR73、G16）、足音の騒音（GR75、G16）。
 
 ## G13-GR116-AUDIO-CHECK: 実機の XAudio2 で遮蔽のフィルタが掛かり、草と岩の間を動くと値がなめらかに変わることを確かめる（後回しにしたアプリの起動の確かめ）
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G13-GR116-AUDIO-ACOUSTICS
 - gr: GR116
 - check: launch
@@ -8389,7 +8532,7 @@
 
 ## G14-GR62-CUT-SERIAL: カメラの不連続の印 CutSerial を足し、カットのフレームで前のカメラ・TAA の履歴・連番の持ち越しを捨てる
 - status: todo
-- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR30-THIN-TAA-MEASURE
+- after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR62
 - needs-gr: GR30
 - done-when: (1) `CameraProxy` に `uint32_t CutSerial = 0`（カットのたびに 1 増える通し番号。既定 0 で今と同じ）。`CameraComponent` に `MarkCameraCut()`（次の `BuildCameraProxy` から CutSerial が 1 増える。PROPERTY にはしない）。(2) `RenderingCoordinator::GenerateDrawCommands` の前のカメラの条件 `bPreviousMainCameraContinuous`（RenderingCoordinator.cpp:4811-4818）に「前のカメラと今のカメラの CutSerial と SourceCameraId が同じ」を足す（SourceCameraId の切り替えでも velocity を別のカメラの行列で作らない）。(3) `TemporalAAHistoryQuery`（TemporalAA.h:162）・`TemporalAAHistoryTracker`（:202）に CutSerial を足し、違えば `CameraChanged`。`FindReprojectionCamera`（:252）も CutSerial が違えば null（描かれずに捨てられたパケットをまたいでも、カットの向こうへ再投影しない）。(4) パストレーサー: `ApplyPathTracingSequenceCarry`（FramePacket.h:720）はカットのパケットで前のカメラと instance の前の変換を捨て、`SamplePathTracingCamera`（PathTracingCamera.h）の前のカメラの採用も同じ条件にする。(5) 規約の文書 `Docs/Architecture/CameraDiscontinuity.md`: CutSerial はカメラの不連続の唯一の印。進めるのは CameraDirector の Cut とカットシーンの出入り（G14-GR62-DIRECTOR）と `MarkCameraCut`（GR02 の補間を切るテレポート・GR71 のファストトラベル・GR55 の時間の飛ばしはこれを呼ぶ）。G7 の環境の `DiscontinuityId` とは別の印で、環境の不連続がカメラのカットを伴うときは呼ぶ側が両方を進める。(6) 試験: `CameraCutPreviousCameraTest`（`ViewportCameraIdRenderPlanTest` の束へ MEMBER）— CutSerial が変わったパケットで前のカメラを渡さず次のパケットで渡す、SourceCameraId の切り替えでも同じ、TAA の履歴が `CameraChanged` で捨てられる、捨てたパケットをまたいでも `FindReprojectionCamera` が null、`ApplyPathTracingSequenceCarry` がカットで前のカメラと instance の変換を捨てる。`RenderingVelocityVulkanTest`（Test/Core/Rendering/CMakeLists.txt:647）に `--scenario=camera-cut`（カメラを動かしながら途中のフレームで CutSerial を進める）を足して `RenderingVelocityCameraCutVulkanTest` として登録し、カットのフレームの velocity が全画素 0、次のフレームで 0 でない。既存の `CameraTableTest`・`TemporalAAJitterTest`・`RenderingVelocityCameraVulkanTest`・`RenderingVelocityMotionVulkanTest`・`R8PathTracingSequenceFrameVulkanTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` が通る。
@@ -8430,7 +8573,8 @@
 - notes: 選定課題 G14-S3（Cinematic の置き場所。ロードマップ 4567 行）を決めた: `Library/Modules/Cinematic` に Domain と Module の 2 つの target（Audio と同じ。Library/Modules/Audio/CMakeLists.txt）で置き、最終のカメラの確定は `IModule::Tick` でも `IModule::LateTick` でもなく、Game の `GameApplicationHandler::OnLateUpdate` の後段のカメラの slot の Dispatch の直後に 1 回だけ行う。理由: G1 の確かめ直しの結果（Docs/Architecture/TickStages.md:117-118）で、今のゲームカメラの最終の proxy は OnLateUpdate の slot から確定し、Module Late はそれより前、通常の TickAll は描画同期の後なので、どちらで確定しても確定点が 2 つになる（段階をまたぐ注意 4435・4444・4478 行の直す点をこの形で満たす）。Module にする理由は Core から Module への一方向の依存と、Physics・Audio と同じ形で CPU だけで試験できること。ApplicationProcessor は触らない。試験の置き場: 実行ファイルを増やさない決まり（Docs/Testing.md:27-32）に合わせ、ロードマップ 2876 行の `Test/Modules/Cinematic` の新しい束は作らず、ソースだけを `Test/Modules/Cinematic/` に置いて `GameModeStateMachineTest` の束（Test/Core/GameMode/CMakeLists.txt:5）へ入れる（G8 の Gameplay の試験を `PhysicsDynamicsTest` の束へ入れる前例と同じ。カットシーンの GameMode の試験と同じ束になる）。G14 の Cinematic の CPU の試験はすべてこの束に入れる。被弾のカメラシェイクは G4 の `FollowCameraComponent::AddTrauma`（DogMovementSmokeRoutine.cpp:213 で使用）がゲームカメラ側で持つので、Director には重ねない（ショットの手持ちの揺れだけを持つ）。レターボックスは表示の段で掛け、PT の連番の EXR（シーンリニア）には入れない。UNCERTAIN: PT の主ビュー（SceneView.cpp:1398 以降）の後処理にもレターボックスを掛けるかは、その経路が PostProcessStack を共有するかを読んで決める（共有しないなら掛けない）。`needs-gr: GR13` はソケット追従のピント（要件の設計案の 6）のため。共有のファイル（GameApplicationHandler.cpp・Rendering3DTestRoutine.cpp）は差分を登録と呼び出しの数行に絞る。起動画面はショットが無い限りゲームカメラを bit そのまま通すので変わらない（G14-GR62-SCENES-CHECK で撮る）。危険地帯（新しい Public API の面・カメラの確定の順・GameMode とモジュールの寿命）。評価者を通す。
 
 ## G14-GR62-REFERENCE-CHECK: 広い CoC・多角形の絞り・シャッター角を PT 参照と比べ、DOF の GPU の時間を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G14-GR62-DOF-WIDE, G14-GR62-LENS-SHUTTER
 - gr: GR62
 - check: launch
@@ -8442,7 +8586,8 @@
 - notes: ロードマップ 2876 行（GR62 の完了条件の PT 参照の行）と 2880 行（DOF の GPU の時間は記録のみ）、要件 `#### GR62` の受け入れ確認。参照比較の段は数分〜1 時間以上 GPU を使い、PC を使ってよいときだけ回す段（Docs/Testing.md:22）なので、実装の項目から分けて GPU を占有する確かめにした。計測は Release でなく RelWithDebInfo（AGENTS.md の絶対規則 8）。UNCERTAIN: パス単位の GPU の時間の取り方は `Docs/agent-guide/build-and-verify.md` の計測の節と既存の GPU の統計（`Debug/Stats.h`）を読んで決める。
 
 ## G14-GR62-SCENES-CHECK: プロファイル・物理カメラ・広い DOF・Director・レターボックスを入れた後も、起動画面とランチャーの各シーンの見た目が変わらず、シャッター角の筋が指定時だけ出ることを撮って確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G14-GR61-GRADE-PASS, G14-GR62-DOF-WIDE, G14-GR62-DIRECTOR
 - gr: GR61, GR62
 - check: launch
@@ -8650,7 +8795,8 @@
 - notes: 前例は G8-GR72-AUDIO-COMPONENT-BOOT の (4)(`Scripts/Test-AudioSmoke.ps1` と `--audio-smoke`)。XAudio2 の最終のミックスを数で取る手段(自作の XAPO)は未使用の API なので作らず、CPU の側の係数をマーカーの行に出す(G8-GR72-AUDIO-CHECK の notes と同じ)。ロードマップ 2998・3006・3014 行の実機の確かめの台本。`Game/GameApplicationHandler.cpp` は共有のファイルなので差分を小さくし、起動の流れと見た目を変えない。G13 の `G13-GR116-AUDIO-ACOUSTICS` も同じ台本と Game の音のスモークを触るので、モードの名前と引数がぶつからないようにする(遮蔽の確かめのモードは G13 の担当)。起動しての確かめは G16-GR73-SPATIAL-CHECK・G16-GR74-STREAM-CHECK・G16-GR75-AMBIENCE-CHECK。
 
 ## G16-GR73-SPATIAL-CHECK: 実機の XAudio2 で定位・休眠・バス・ダッキング・リバーブを鳴らして確かめ、聴感の表を作者に回す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G16-AUDIO-SMOKE-MODES, G12-GR09-BROADPHASE-S0S1, G12-GR09-STATIC-TREE, G12-GR09-DETACHED-COLLIDERS
 - gr: GR73
 - check: launch
@@ -8662,7 +8808,8 @@
 - notes: 受け入れ確認はロードマップ 2979・2998 行。遮蔽(フィルタの API・既定の有効と無効・1 フレームのコスト。ロードマップ 2955 行)の実機の確かめは G13 の `G13-GR116-AUDIO-CHECK` の範囲なのでここでは見ない。音を鳴らすので、作者がほかのアプリを使っている間は回さない。
 
 ## G16-GR74-STREAM-CHECK: 実機でストリームのループ 3 本を長く鳴らしてヒッチでも途切れないことと復号の時間を確かめ、ループの継ぎ目の聴感の表を作者に回す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G16-AUDIO-SMOKE-MODES
 - gr: GR74, GR95
 - check: launch
@@ -8674,7 +8821,8 @@
 - notes: 受け入れ確認はロードマップ 2988・3006 行。復号の時間は RelWithDebInfo で測る(作業合意の絶対規則 8)。10 分かかり音を鳴らすので、作者がほかのアプリを使っている間は回さない。
 
 ## G16-GR75-AMBIENCE-CHECK: 実機で雨の量の変化と 3 種の地表の足音を鳴らし、足音のキーの連鎖と休眠の復帰を確かめ、聴感の表を作者に回す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G16-AUDIO-SMOKE-MODES
 - gr: GR75
 - check: launch
@@ -8797,7 +8945,8 @@
 - notes: 試験のソースは `Test/Game/Map/` に置く（`Test/Game/Bridge` の前例）。設計はロードマップ 2906 行（GR70）と要件 `#### GR70` の設計 1・2・4・5・7・8、受け入れ確認の MapProjectionTest・MapViewStateTest・DiscoveredGridTest・MapMarkerVisibilityTest。要件の設計 1 は地図の情報を `Assets/Maps/<name>.map.json` に自前で持つが、G12-GR94-MAP-TRANSFORM-PLAN が `MapTransform` と `map_transform.json` を作り「GR70・GR71 が使う」と書いているので、それを正にする（地図の形式を二重に持たない）。マーカーの元の配置は G12 の GR93 のマーカー（`G12-GR93-MARKERS-SNAP` の `RestPointComponent`・`PoiMarkerComponent`）で、`Assets/Maps/<name>.markers.json` は作らない。保存は G8 の `ProgressSaveData` が既に `progress.mapMask` の欄を持つ（`G8-GR76-STATE-AUTOSAVE` の done-when (3)）のでそこへ載せる。選定課題 G15-S10（シ者の地図の表示の既定）を決めた: (b) 初期は Hidden、発見・噂で Approximate → Exact（`map_markers.json` の既定のデータ）。理由: 推奨の案は文書に無い。(b) は (a)（カテゴリを最初から Exact にする）と (c)（カテゴリを無効にする）のどちらへもデータの書き換えだけで移れる中間で、地図・嗅覚のナビ・枯れた草地の重なり（作者の回答待ち）を先に決めずに済む。描画・拡縮・霧のコードはどの回答でも変わらない（ロードマップ 4584 行）。選定課題 G15-S12（地図を開けない状況）を決めた: 既定は全状況で開ける（決定事項「演出のために地図を消すなどユーザビリティを削ることはしない」）。禁止の範囲を足すときは `CanOpenMap()` の理由のキーで画面に出す。試験を足す理由: 反証する契約は「座標の往復と向き」「カーソルの下の点が動かないズーム」「発見済みの保存の往復」「可視性の規則」。左右・上下の反転や保存の欠けは、地図の画面がまだ無く撮影もしないので黙って起きる。やらないこと: 地図の画面と描画（G15-GR70-MAP-SCREEN）、ズームのタイル（G15-GR70-MAP-PYRAMID）。
 
 ## G13-GR22-AI-SMOKE-CHECK: 動物の AI のスモーク（ナビ・追従・知覚・嗅覚）を起動して通し、嗅覚の帯の GPU の試験と撮影、起動画面が変わらないことを確かめる（後回しにしたアプリの起動の確かめ）
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G13-GR21-NAV-OBSTACLES, G13-GR22-BEHAVIOR-AFFINITY, G13-GR22-FLIGHT-FLOCK, G13-GR24-PERCEPTION-SERVICE, G13-GR23-SCENT-PASS, G13-GR21-NAV-STREAMING
 - gr: GR22
 - check: launch
@@ -8816,7 +8965,8 @@
 - notes: 当分アプリを起動しない決まりのため、G13 の実装のタスクの起動の確かめ（ロードマップ 2828 行の実機・撮影、要件 `#### GR21`・`#### GR22`・`#### GR23`・`#### GR24` の実機の受け入れ確認）をここへまとめた。`gr` は GR22 だけを書いたが、GR21・GR23・GR24 の起動の確かめも兼ねる。G13 の前の起動画面の像が無ければ、G13 の最初の実装のタスクの前の統合ブランチで撮ってから比べる（撮り方は G5-GR37-TERRAIN-CHECK の notes と同じ）。ロードマップの `RenderingGoldenIndoor/OutdoorVulkanTest` はもう無いので起動画面の撮影で代える。Release を回す理由: ロードマップ 2821 行は CPU の試験を Debug と Release の両方で通すとする。EntityHandle が無効になる心配は今は無い（`World.cpp:3893-3900`）が、NDEBUG の構成だけで落ちる assert の副作用の負債がある（`Docs/Testing.md:54`）。帯の輝度差の比 0.9 はロードマップ 2828 行の値。「心を開いたように見える」の質（ロードマップ 2837 行）は作者の目で見る確認に回し、所見だけを残す。
 
 ## G14-GR66-PLAYBACK-CHECK: カットシーンを起動して再生・一時停止・スキップ・ゲームカメラへの戻りを確かめ、EXR の連番の書き出しを 8 フレームと 240 フレームで確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G14-GR66-TRACKS, G14-GR66-SEQUENCE
 - gr: GR66
 - check: launch
@@ -8856,7 +9006,8 @@
 - notes: 選定課題 G14-S10（道具のビルドの構成。ロードマップ 4574 行）は推奨の (a) を採る: `NORVES_ENABLE_IMGUI` のビルドだけにし、出荷のビルドは OFF のまま道具のコードを空の TU にする。理由: 前例（DirectionalLightEditSubRoutine）と同じで、別の構成を足すとビルドの組み合わせが増える。絶対規則 8（Release にデバッグの機能を入れない）とも合う。ロードマップ 2864-2865 行、要件 `#### GR67` の設計案の 2〜6。`needs-gr: GR76` は原子的な書き込み（G8-GR76-SAVE-STORAGE の WriteFileAtomic。`SceneSerializer::SaveToFile` は一時ファイルを経ない、要件の根拠）を使うため。G8 の関数の名前・置き場が違えば実物に合わせる。`build-noimgui` は OFF の構成の確かめのための別のビルドの置き場（初回は全体のビルドで時間が掛かる）。起動しての確かめ（台本と手動の表の実施）は G14-GR67-EDITOR-CHECK。共有のファイル（GameApplicationHandler.cpp）は差分を引数の解析の数行に絞る。危険地帯（アクターの借用と返却・入力の二重の反応）。評価者を通す。
 
 ## G14-GR67-EDITOR-CHECK: カットシーンの編集の道具を起動して、台本の確かめと手動の確かめの表を 1 回行う
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G14-GR67-EDITOR-UI
 - gr: GR67
 - check: launch
@@ -8946,7 +9097,8 @@
 - notes: 選定課題 G14-S2（プリレンダの書き出しのレンダラ。ロードマップ 4566 行）は推奨の (c) を採る: PT とラスタの蓄積を併用する（犬の出るカットはラスタの蓄積、静的な場面は PT）。理由: PT の TLAS は Mesh だけで、スキンの犬・MegaGeometry の小物は写らない（要件 `#### GR127` の根拠。PT のスキンは G18 の GR104 まで入らない）。ラスタの蓄積は GR02 の固定の刻み（`needs-gr: GR02`。G4-GR02-FIXED-FRAME-CLOCK）が前提。ロードマップ 2867-2868 行と 2894 行（連番の driver の Game 側への移しは GR66 で 1 回だけ。GR127 はそこへラスタの蓄積を足す）、要件の設計案の (1)(2)。書き出しは 7 分で約 20 時間の見積もり（ロードマップ 2891 行）なので、プレビューを最初から持つ。新しい道具 `ExrToDisplay` は試験の実行ファイルではない（`Tools/CMakeLists.txt` の add_subdirectory に足す）。UNCERTAIN: ラスタの描画で SceneColor の float の取得が R8 と同じように K 回のジッタつきで使えるか（TAA の履歴とジッタの扱い）は、`FrameCaptureHdrWriter.cpp` と TAA のジッタの経路を読んで確かめ、TAA を切った構成で蓄積する。実際の書き出し・エンコード・画質の往復の確かめは G14-GR127-VIDEO-CHECK。危険地帯（撮影の要求・RenderThread との受け渡し）。評価者を通す。
 
 ## G14-GR127-VIDEO-CHECK: 動画の書き出しから再生までを起動して通し、デコードの速さ・画質の往復・A/V の同期・再生中の負荷を測って記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G14-GR127-DAV1D, G14-GR127-VIDEO-OVERLAY, G14-GR127-VIDEO-EXPORT
 - gr: GR127
 - check: launch
@@ -8960,7 +9112,8 @@
 - notes: ロードマップ 2879 行（GR127 の完了条件の画質の往復と A/V の同期）と 2891 行（dav1d の速さ・8bit の提示のバンディング・SamplesPlayed の精度・書き出しの所要は未検証）、要件 `#### GR127` の受け入れ確認の「画質の往復」「A/V の同期の実測」「性能」の行。選定課題 G14-S1 の推奨のスパイク（速度で決める）を、実装の後のこの確かめで行う（G14-GR127-DAV1D の notes）。ffmpeg（SVT-AV1 入り）はこの PC に要る外部の道具で、無ければ止まって作者に伝える（ダウンロードは作者の承認が要る）。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。台本の引数の名前は実物に合わせて直してよい。数値の目安は要件の初期の案で、作者の承認を経ていない（記録して判断を回す）。
 
 ## G15-GR69-TEXT-CHECK: 日本語の文字の描画と atlas の焼き直しを GPU の試験と撮影で確かめ、atlas の寸法・グリフの数・焼きの時間・GPU のメモリを記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR69-ASYNC-ATLAS, G15-GR68-GAME-SCREENS
 - gr: GR69
 - check: launch
@@ -8983,7 +9136,8 @@
 - notes: 設計は要件 `#### GR68` の設計 8・10、ロードマップ 2904 行（Game の側は `Game/UI/` に Title・Pause・Settings・Save/Load・Credits）。Title・Pause・ConfirmQuit・Ending の画面はフローと一緒に G15-GR119-GAME-FLOW が作り、この項目は残りの画面と検証のシーンを作る。HUD の量は企画で未定（『振る舞いだけで見せる』）なので、既定は空でデータで切り替える（ロードマップ 2904 行）。選定課題 G15-S11（寝床）に合わせ、Save の画面の `bManualSaveAllowed` は既定 true（決定事項「ユーザビリティを削らない」に沿い、寝床を採ってもメニューからのセーブを残す。G15-GR71-TRAVEL-CORE の notes）。撮影の検証をシーンにするのは、G12 の地図の撮影（`G12-GR94-MAP-CAPTURE` の notes: GameMode を新しく作らず撮影の役としてどのシーンにも掛ける）と同じく、既存の `--scene` と `CaptureScene.ps1`（`--scene=<id> --capture-png`。同ファイル 2 行目）の段取りに載せるため。試験を足す理由: 反証する契約は「どの解像度・倍率でも操作できる部品がはみ出さず重ならない」「表に無いキーを使わない」。破れると開発ビルドでキーの文字列が出るか部品が画面の外に出るだけで、全部の解像度を撮ることはしないので黙って起きる。共有のファイル（`GameApplicationHandler.cpp`）は引数の読み取りの数行だけにする。
 
 ## G15-GR68-UI-CHECK: UI の部品と画面を GPU の試験と解像度・倍率ごとの撮影で確かめ、受入れの記録を作り、描画の命令の数と Canvas の記録の時間を測る(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR68-GAME-SCREENS
 - gr: GR68
 - check: launch
@@ -9007,7 +9161,8 @@
 - notes: 設計はロードマップ 2905 行（GR119 の Game の側）と要件 `#### GR119` の設計 (5)・(6)、受け入れ確認の「流れ」「終了確認」。ロードマップ 2921 行はフローの側を GR68・GR70・GR71 の後に置くが、地図とファストトラベルの画面は Push で積むだけなので、この項目は画面の積みの口までにし、地図の画面の結線は G15-GR70-MAP-SCREEN、旅行は G15-GR71-TRAVEL-WIRE が行う。G14-GR66-GAMEMODE を after にした: タイムラインがポーズに従う約束（ロードマップ 2921 行）を、G14 が決めた「上に積まれたら Suspend」の形で結ぶ。既存の `PauseMenu`（ImGui）はランチャーへ戻る開発の導線なので消さない（`GameApplicationHandler.cpp:3680-3745` の `UpdatePauseMenu`）。製品の Pause の画面の「ランチャーへ戻る」は開発ビルドだけに出す。Esc の取り合いは、フローのモードの間は ImGui の PauseMenu を `SetEnabled(false)` にして避ける。UNCERTAIN: G8 の戦闘の垂直スライスの場面の名前（GameMode か `--scene` の ID か）は G8-GR17-SLICE-SMOKE の実装を読んで `game_flow.json` の既定に書く。試験を足す理由: 反証する契約は「流れの遷移の順」「ポーズ中にプレイの世界が動かない」「閉じる要求の扱い」。破れても画面の撮影 1 枚では見えず、操作の順でだけ出て黙って起きる。共有のファイル（`GameApplicationHandler.cpp`）は登録と引数の読み取りに絞って差分を小さくする。危険地帯: GameMode と Object の寿命なので評価者を通す。
 
 ## G15-GR119-FLOW-CHECK: ゲームの流れのスモークを起動して走らせ、ポーズ・フォーカスの喪失・閉じる要求の振る舞いと起動画面を確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR119-GAME-FLOW, G15-GR68-GAME-SCREENS
 - gr: GR119
 - check: launch
@@ -9041,7 +9196,8 @@
 - notes: G12-GR94-MAP-COMPOSE-COOK の notes が「ズームの要るタイルのピラミッドは GR70（G15 の地図の UI）の段階で足す」と書いているのを受ける項目。要件 `#### GR70` のリスク 2（4096² の RGBA8 は 64MiB）と、広い世界なら GR105 のタイル・ストリーミングが要る（要件の設計の最後の段落）への対応。谷ひとつの規模（企画で未定）なら 2048² の 1 枚で足り、この経路は使われないが、作者の決定（必要な機能は全部やる）で入れる。試験を足す理由: 反証する契約は「選んだタイルが窓を覆う」「読み込み中に穴が出ない」「上限を守る」。穴やメモリの増加はズームを動かしたときだけ出て撮影 1 枚では見えず、黙って起きる。やらないこと: 地図の画像の撮影と合成そのもの（G12）。
 
 ## G15-GR70-MAP-CHECK: 地図の画面の霧・マーカー・ズームを GPU の試験と撮影で確かめ、霧の縁の見え方を作者の判断の材料として残す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR70-MAP-PYRAMID
 - gr: GR70
 - check: launch
@@ -9065,7 +9221,8 @@
 - notes: 設計はロードマップ 2907 行と「段階をまたぐ注意」の「G15 / GR71」（4482 行: テレポートは G4 の `CharacterBodyComponent::Teleport`、G14 の CutSerial で履歴を捨てる、時間の経過は G11 の `EnvironmentSystem::SkipTo` を直接呼ぶ。スタブは段階の順を入れ替えて先に着手するときだけ）。G15 は G11・G12・G14 の後なので、`IStreamingReadiness`・`IEnvironmentTimeline` のスタブは作らず、実物を呼ぶ。ノードの定義はロードマップの `Assets/Maps/<name>.nodes.json` でなく G12 の `RestPointComponent`（G12-GR93-MARKERS-SNAP）を正にする（配置のデータを二重に持たない）。寝床の近接の操作は G8 の `InteractableComponent` が受け持つ（G12-GR93-MARKERS-SNAP の notes）。追従カメラは今 `FollowCameraComponent`（`Game/Gameplay/Camera/FollowCameraComponent.h`）で、カットの口が無ければ足す（needs-gr の GR06）。CutSerial は G14-GR62-CUT-SERIAL が `CameraProxy::CutSerial` と `CameraComponent::MarkCameraCut()` として足すので after にした。自動露出の順応を即時にする口は未確認（要件のリスク 5）で、黒の間の Settling で順応させ、残るなら G15-GR71-TRAVEL-CHECK で記録して項目を足す。試験を足す理由: 反証する契約は「ノードの表が配置から正しくでき、スナップロードの完了の前にテレポートしない」「履歴を捨てるのはテレポートの適用と同じフレームで 1 回」。破れると地面の無い所へ落ちる・暗転の後に TAA の尾が残るが、旅行のときだけ出て黙って起きる。共有のファイル（`GameApplicationHandler.cpp`）は引数の読み取りと持ち主の数行に絞る。危険地帯: Object の寿命とアセットの読み込み（スナップロード）なので評価者を通す。
 
 ## G15-GR71-TRAVEL-CHECK: ファストトラベルを起動して走らせ、暗転・待ち・到着とタイムアウトの経路、暗転の解けた直後の見た目を確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR71-TRAVEL-WIRE
 - gr: GR71
 - check: launch
@@ -9121,7 +9278,8 @@
 - notes: 選定課題 G15-S9 で拡張の範囲（MegaGeometry の輪郭）を採ったことによる項目（G15-GR120-POST-MULTIPLIERS の notes。ロードマップ 2910 行の非ゴールの「MegaGeometry への輪郭強調」を作者の決定で範囲に入れた）。地形は MegaGeometry で描かれ TLAS と VSM に入っている（BRIEF の第 1 波の事実）ので、目印（廃墟）が MegaGeometry のことがある。G12-GR31-CULL-CONTRACT が同じ `MegaGeometryPass.cpp` のカリングを試験で固定するので after にした。UNCERTAIN: マスクへ描くのに使う MegaGeometry のラスタの経路（ハードのラスタ・ソフトのラスタ・可視のバッファ）のどれを流用するかは、`MegaGeometryPass.cpp` の描画の組み立てを読んで決める。可視のバッファの経路ではインスタンスの ID からタグを引けば追加のラスタが要らない見込み。試験を足す理由: 反証する契約は「タグの無い MegaGeometry の描画が変わらない」「経路によらず同じマスク」。破れると起動画面の地形の絵が変わるか、経路によって輪郭が消えるが、目印の場面を撮るまで気づけず黙って起きる。危険地帯: 描画の RenderThread 側なので評価者を通す。
 
 ## G15-GR120-A11Y-CHECK: アクセシビリティの乗数・色覚の補正・輪郭を GPU の試験と撮影で確かめ、既定で見た目が変わらないことと輪郭の効きを記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR120-COLOR-FLASH, G15-GR120-HIGHLIGHT-MEGA
 - gr: GR120
 - check: launch
@@ -9155,7 +9313,8 @@
 - notes: 設計は要件 `#### GR121` の設計 4（インラインの記法は GR69 が入ってから）とロードマップ 2903 行の TextLayout の `{icon:Action}`。G8-GR18-INTERACTION の notes が「プロンプトの表示は本来の UI は GR68、日本語は GR69」と書いているのを受ける項目。試験を足す理由: 反証する契約は「文中のグリフが装置と割当に追従し、行の組みが崩れない」「操作のプロンプトの表示が変更の通知と 1 対 1」。破れると案内の絵が古いまま残る・点滅するが、装置を替えて近づいたときだけ出て黙って起きる。共有のファイル（`GameApplicationHandler.cpp`）は購読の数行だけにする。
 
 ## G15-GR121-PROMPT-CHECK: ボタンのプロンプトとカーソルの切り替えを、キーボードとパッドの両方で撮って確かめ、実機の確認の手順を残す(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G15-GR121-INLINE-PROMPT
 - gr: GR121
 - check: launch
@@ -9246,7 +9405,8 @@
 - notes: ロードマップ 3055 行は MegaGeometry を「第 2 段階」とするが、取り込んだ静的モデルは MegaGeometry で描かれ（`Docs/Architecture/ImportedOpaqueRuntime.md` の「MegaMeshMaterial へ渡す」）、可視バッファの解決は計算シェーダーで三角形を引いて GBuffer を書く（`visbuffer_resolve.comp` → `Common/VisibilityResolve.glsl`）ので、AI の資産の法線マップに接線を効かせるにはここが本体になる（作者の決定「必要な機能は全部やる」）。記録の 64B は使い切っている（予約は `previous.w` の 1 語だけ）ので、記録を広げずに並列の表に置く（記録の配置に決め打ちしたシェーダー・試験を壊さないため）。UNCERTAIN: 並列の表の束縛の場所は、可視バッファのパスの記述子の配置を読んで決める（ファイル名は着手時に `VisibilityBuffer.h` の利用者を grep して確かめる。paths の `VisibilityBufferPass.cpp` は推定）。危険地帯（GBuffer・RHI・RenderThread・アセットロード）なので評価者を通す。試験を足す理由: 解決の経路の接線の誤りは法線マップの陰影が少し変わるだけで撮影では見分けにくく、黙って起きる。拡張の無い画素がビット一致することは、既存の見た目を壊していない証拠になる。
 
 ## G17-GR33-GPU-CHECK: 頂点の拡張の属性の GPU の試験と既存の見た目の回帰を回し、実物の犬の接線つきの描画を撮って確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G17-GR33-RASTER-STREAM, G17-GR33-VISBUFFER-MEGA, G2-GR83-ASSET-PREVIEW-SCENE
 - gr: GR33
 - check: launch
@@ -9291,7 +9451,8 @@
   時間とメモリの目標（70 万三角形で P1+P2 が 30〜60 秒、ピーク 2GB 以下）は根拠なしの仮の値で、G17-GR80-REAL-CHECK で測ってから確定する。危険地帯（アセットの形式）なので評価者を通す。試験を足す理由: 簡略化が継ぎ目に亀裂を作る・縁を動かすと、遠景で背景が細く透けるだけで撮影では見落としやすく、黙って起きる。
 
 ## G17-GR80-LODCUT-CONTRACT: lodgraph の LOD の切り方が、どのカメラの距離でも穴と重なりの無い切断になることを、本番のカリングのシェーダーで縛る GPU の試験を足す
-- status: todo
+- status: backlog
+- parked: 描画・GPU の試験は回さない・作らない決まり(人の判断: 実行できたかしか見ていないグラフィックの試験は要らない。GPU の試験はウィンドウが開いて邪魔になる)
 - after: G12-GR31-CULL-CONTRACT
 - gr: GR80
 - done-when: 新設の `MegaGeometryLodCutVulkanTest`（`RHITextureUpdateVulkanTest` の束へ MEMBER。ラベル GPU・RenderingValidation、`RESOURCE_LOCK NorvesLibGPU`、`SKIP_RETURN_CODE 125`）が、試験の中で焼いた lodgraph の閉じた球（`BakeMeshLodDag`。束に `AssetCookLib` をリンクできなければ AssetCook で焼いた小さな `.nvmesh` を fixture にする）を `MegaGeometryResourceStore` に載せ、G12-GR31-CULL-CONTRACT が作る本番の `cluster_bvh_cull.comp` を合成の入力で dispatch する口（パスの側の記述子の配置と定数の定義を使う。試験に束縛を手で写さない）で、カメラの距離 12 通り × 向き 4 通りのクラスタの選択を読み戻して、試験の中の倍精度の CPU の参照と比べる: (a) 選んだクラスタの集合が DAG の切断になる（どの葉から根への道でも選ばれるのはちょうど 1 つ。親が描かれる所で子が描かれない）、(b) 選択が CPU の参照の誤差の判定（自分の誤差で描け、親の誤差で描けない）と一致する（判定のちょうど境の球は両方で描くとする）、(c) 選んだ三角形の位置で溶接した境界辺が 0（閉じた球に穴が無い）。Vulkan の validation error が 0 件であることも試験の中で見る。この項目では試験をビルドして ctest に載ることまでを確かめ、GPU での実行は G17-GR80-REAL-CHECK で行う。
@@ -9301,8 +9462,9 @@
 - notes: GR80 の P3 の受け入れ確認「MegaGeometryLodCutVulkanTest（GR31 と共同）で任意のカメラ距離のカットに穴が無い」（ロードマップ 3207 行）。CPU の側（誤差の単調性・境界球の包含・誤差のしきい値で切った各メッシュに穴や割れ目が無いこと）は既存の `AssetCookMeshSimplifySmoke`（`Tools/AssetCook/AssetCookMeshSimplifySmoke.cpp` の冒頭の説明）が確かめているので、ここでは GPU の選択だけを縛る。G12-GR31-CULL-CONTRACT の試験の口（範囲・席の段を単独で dispatch する入口）を使うので、その後にした。パスの既定の動きは変えない（試験用の入口を足すだけ）。危険地帯（RHI の使い方）なので評価者を通す。`Test/Core/Rendering/CMakeLists.txt` は共有のファイルなので差分を小さくする。試験を足す理由: LOD の切り方の誤りは、ある距離の 1 フレームに細い隙間が出るか三角形が二重に描かれるだけで、撮影の比較では見落とされやすく、ログにも出ず黙って起きる。
 
 ## G17-GR80-REAL-CHECK: LOD の切り方の GPU の試験を回し、高密度の合成のメッシュと実物の犬で修復・簡略化の時間と結果を測り、継ぎ目の亀裂が無いことを撮って確かめる
-- status: todo
-- after: G17-GR80-SIMPLIFY, G17-GR80-LODCUT-CONTRACT, G2-GR83-ASSET-PREVIEW-SCENE
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
+- after: G17-GR80-SIMPLIFY, G2-GR83-ASSET-PREVIEW-SCENE
 - gr: GR80
 - check: launch
 - gpu: exclusive
@@ -9410,7 +9572,8 @@
 - notes: 設計はロードマップ 3844 行（8 の事実）・3882〜3892 行（D1〜D5）、受け入れ確認 4094 行。今のコードで確かめた事実: `RegisterForCallbacks`・`OnCriticalError`・`IXAudio2EngineCallback` は Audio のモジュールに無く、`XAudio2Create` → `CreateMasteringVoice` だけ（`XAudio2Backend.cpp:61`・`66`）。決定: D4（`IMMNotificationClient`）は「自動で追従しないときだけ」（ロードマップ 3890 行）にせず、常に入れる。理由: 実機の実験（ヘッドホンを抜く）は今は起動できず先に決められない。既定の装置を設定で替えた（古い装置が残る）場合は装置の喪失にならず、`OnCriticalError` だけでは追えない見込み（XAudio2 の一般の挙動で、この PC では未確認）。作り直しは同じ関数なので、両方から来ても害が無い。D3（`SetSuspended`。フォーカスの喪失・最小化での音の停止）は G15-GR119-WINDOW-EVENTS の (4)（Audio のモジュールが `OnPauseStateChanged` で全体を一時停止）が作るので、この項目では作らない。0.5 秒のまとめは根拠なしの仮。実機の抜き差しの確かめは G19-GR118-RUNTIME-CHECK。G16 の音の項目（`G16-GR73-BUS-MIXER` など）も Audio のモジュールを触るので、差分を作り直しの関数と通知の口に絞る。試験を足す理由: 反証する契約は「装置が無くなっても落ちず、戻ったら鳴る」「古いコールバックを新しい Voice に混ぜない」。破れるとヘッドホンを抜いたときだけ落ちる・音が戻らず、開発機では出ず黙って起きる。危険地帯: スレッドの境界（XAudio2 のスレッド）と Public API なので評価者を通す。
 
 ## G19-GR118-RUNTIME-CHECK: 表示の切り替え・デバイスロストの注入・VSync を切った試験を起動して確かめ、実機の手での確かめの手順を記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR118-FATAL-ERROR, G19-GR118-DISPLAY-WINDOW, G19-GR118-VSYNC-SCALE, G19-GR118-FRAME-PACING, G19-GR118-AUDIO-DEVICE
 - gr: GR118
 - check: launch
@@ -9480,7 +9643,8 @@
 - notes: `G12-GR47-SCATTER-COLLIDERS` の notes は「衝突の形の自動生成（GR81、G17）は範囲外で、形は種の表に人が書く（生成AIの木の形から幹のカプセルを作る作業は GR81 に任せる）」とする。この項目がその受け口。Core の散布は Physics を参照しない規約（同じ notes）なので、資産から desc への変換は Physics 側に置き、散布は論理パスを運ぶだけにする。凸包の detached の形を使うので G17-GR81-CONVEX-RUNTIME の後にした。危険地帯（物理・Object の寿命）なので評価者を通す。試験を足す理由: 資産の形の変換（ヨー・拡大）の取り違えは、木の幹からずれた所に見えない壁ができるだけで、撮影・ログでは気づけず黙って起きる。
 
 ## G17-GR81-REAL-CHECK: 実物の犬を各方式で当てはめて cook し、寸法・体積比・時間を手で決めた形と比べて記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G17-GR81-COOK-ENTRY
 - gr: GR81
 - check: launch
@@ -9625,7 +9789,8 @@
   ベイクのデバイスを CPU に固定するのは利用者が同じ PC で GPU を使うアプリを動かしているため。Rigify・アドオン・Blender の設定の変更・ダウンロードはしない（`--factory-startup` で動く範囲）。犬は G6-S3（張り直しを採る）の土台メッシュへ `rebuild_on_base.py` が焼くので、この項目の主な対象は静的な小物（3187 行）。`rebuild_on_base.py`（G6 の段）を触るのでその差分を小さくする。GR88 の BC の形式は G5 の項目が入れるので needs-gr でつなぐ（既定の RGBA8 の出力はそれを待たずに動く形にする）。この項目では Blender を起動しない。
 
 ## G17-GR129-BAKE-CHECK: Blender で低ポリのベイクを実際に回し、法線の規約・縁の膨張・再現性・見た目の比較・エンジンの読み込みまで確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G17-GR129-BAKE-BLENDER, G2-GR83-ASSET-PREVIEW-SCENE
 - gr: GR129
 - check: launch
@@ -9734,7 +9899,8 @@
 - notes: 設計はロードマップ 3612〜3616 行（P4 の c・P5・P6）。決めたこと: 予算の初期値は SS-ACCEPT の 16.6 ms だけ（ロードマップ 3614 行。ほかの数値は企画に無く、根拠の無い値を置かない）。予算の検査の台本はロードマップの新しい `Scripts/RunPerfBudget.ps1` でなく、今の撮影の metrics の検査（`Scripts/CheckCaptureMetrics.py`。SCN-MEGA-METRICS で足したパス・区間の p95）へ `--budget` を足す。理由: 撮影の流れ（`CaptureScene.ps1 -GpuTimingFrames`）が既にパスの p95 を出しており、同じ計測を二つ作らない。`RunPerfBudget.ps1 -Config Release` と Release でも出せる Canvas のオーバーレイ（ロードマップ 3612 行）は AGENTS.md の絶対規則 8 と食い違うので作らず、表示は開発ビルドの ImGui の統計の窓（`--imgui`）にする（人の判断待ち）。VRAM の内訳は GR105 の台帳を待たず、今ある `VideoMemoryBudgetManager`（`Library/Core/Public/Rendering/VideoMemoryBudgetManager.h`。VT・Geometry・ShadowMap のプール）を使う。試験を足す理由: 反証する契約は「続いた超過だけを違反にし、予算の無い項目で落とさない」「台本の予算の判定が超過で 1 を返す」。破れると予算の検査が黙って空振りする。共有のファイル（`ApplicationProcessor.cpp`）は差分を小さくする。
 
 ## G19-GR109-CHECK: 起動画面で、性能の報告・trace・予算の判定が実機で出ることと、計測そのものの重さを測って記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR109-BUDGET-VIEW
 - gr: GR109
 - check: launch
@@ -9878,7 +10044,8 @@
 - notes: 設計はロードマップ 3536〜3538 行（■設計 5・6）とリスク 4125〜4134 行。今の事実: パイプラインは各パスの `Ensure*Pipeline` が最初のフレームの `Execute` の中で遅れて作る（ロードマップ 3522 行）。決めたこと: 保存先はユーザーデータの領域（配布先が Program Files だと exe の横に書けない。ロードマップ 4131 行）。周期の保存の間隔 5 分は根拠なしの仮の値で、`Docs/Performance/ShaderStartup.md`（G19-GR106-CHECK）の記録を見て人が直してよい。ウォームアップの漏れ（`Execute` の中で条件つきで作るパイプライン）は (6) のカウンタで見つけ、G19-GR106-CHECK で漏れたパスをウォームアップへ足す。危険地帯（RHI/Vulkan、デバイスの寿命。デストラクタの待機の失敗の保持の経路の前で保存する。ロードマップ 4130 行）なので評価者を通す。試験を足す理由: 反証する契約は「壊れた・別の GPU のキャッシュを読まない」「書きかけのファイルが残らない」。破れるとドライバが落ちうるが、起動のたびには起きず黙って残る。共有のファイル（`RenderingCoordinator.cpp`・`ApplicationProcessor.cpp`）は差分を小さくする。やらないこと: シェーダーのバンドル（G19-GR106-SHADER-BUNDLE）、実機での 3 つのモードの確かめ（G19-GR106-CHECK）。
 
 ## G19-GR106-CHECK: 配布と同じシェーダーの置き方で起動でき、3 つの描画のモードで最初の可視フレームの後にパイプラインを作らないことを確かめ、起動の時間を記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR106-SHADER-BUNDLE, G19-GR106-PIPELINE-CACHE
 - gr: GR106
 - check: launch
@@ -9916,7 +10083,8 @@
 - notes: 設計はロードマップ 3574〜3579 行（■設計 4〜6）とリスク 4136〜4142 行。今の事実: キャンバスのカメラは既に RenderScale でなく画面の大きさに従う（`ViewportCameraIdRenderPlanTest.cpp:220-243`）ので、ロードマップ 4048 行の「Canvas が RenderScale に追従する契約の期待値を変える」は済んでいる。キャンバスをシーンと別の大きさで合成する変更は G15-GR68-CANVAS-BOOT の (3) なので needs-gr GR68（それまでは UI がぼけうる）。段の 5 つの値と EMA・ヒステリシスの数はロードマップの案のままで、実測の根拠は無い（G19-GR107-CHECK の記録の後に人が直してよい）。既定を切にするのは目標 ms が企画で未決のため。Release では GPU の時間が無い（`VulkanCommandList.cpp:518-525` の `SupportsGPUTimestamps` は `NORVES_ENABLE_STATS` のときだけ真）ので動的解像度は働かない。Release に GPU の計測を入れるのは AGENTS.md の絶対規則 8 と食い違うので、このタスクでは作らない（人の判断待ち）。TAAU・FSR は採らない（RenderingRoadmap の非ゴール。ロードマップ 3579 行）。危険地帯（RenderThread・FramePacket・RHI）なので評価者を通す。試験を足す理由: 反証する契約は「振動しない・スパイクで下げない」「段の変更で GPU を待たずスワップチェーンを作り直さない」。破れると目に見えるのは揺れやカクつきだけで、ログに出ず黙って起きる。G19-GR118-VSYNC-SCALE（G19 の後半）が `RenderWorld::SetRenderScale` を描画の静止点の保留の方式にして `RenderingCoordinator::SetRenderScale` を触るので、その後にする。`SetDynamicRenderScale` はその保留の経路と別に置き、設定の画面の倍率（RenderScale）を上限として段を掛ける（設定の変更のときは保留の経路が勝ち、動的な段を 1.0 から数え直す）。共有のファイルは差分を小さくする。
 
 ## G19-GR107-CHECK: ティアごとの GPU の時間と見た目の差を測って記録し、動的解像度が収まって振動しないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR107-QUALITY-TIERS, G19-GR107-DYNAMIC-RES, G19-GR109-BUDGET-VIEW
 - gr: GR107
 - check: launch
@@ -9972,7 +10140,8 @@
 - notes: 設計はロードマップ 3649〜3655 行（■設計 4〜7）と要件 `#### GR110`。決めたこと: (a) 配布は ZIP・フォルダを基本にし、Steamworks は使わない（頒布先は企画で未決。Steam の連携は GR122（G19 の後半）の境界で後から足す。ロードマップ 3651 行）。(b) ThirdParty の原文の追加（ロードマップ 3660 行の「本人判断」）は推奨を採って足す。理由: 表示の義務（BSD・MIT）を満たすのに原文が要り、TinyEXR の私有の zstd は `tinyexr_zstd.h` が `deps/zstd/LICENSE` を参照するのにファイルが無い（ロードマップ 3639 行）。原文は upstream の公式の配布から取り、版を台帳に書く。(c) 配布の組み立ては普通の `build` と別のビルドのディレクトリ（`build/Distribution/cmake`。`.gitignore` の `/build/` の下）で、Release の既定を変えない（G19-GR110-RUNTIME-PATHS の notes (a)）。(d) PDB は配布物に入れない（G19-GR112-BUILD-INFO の保管の台本が別に持つ）。UNCERTAIN: Vulkan SDK（1.4.309.0）の導入先のどこに shaderc・glslang・SPIRV-Tools の原文があるか（ロードマップ 4134 行の未確認 c）。見つからなければ upstream の同じ版の原文を取り、そう台帳に書く。開発機のパスが exe に残るかは未確認（`__FILE__` など。ロードマップ 4160 行）。検査で見つかれば原因を記録し、直せないものは既知の限界として `Distribution.md` に書く。試験を足す理由: 反証する契約は「ThirdParty の全部に台帳と原文がある」。破れる（新しいライブラリを足して台帳を忘れる）と、表記の無いまま配布に入り、ビルドも起動も通るので黙って起きる。共有のファイル（`Game/CMakeLists.txt`・ルートの `CMakeLists.txt`）は差分を小さくする。生成 AI の素材の出所の申告（G19-GR122-AI-DISCLOSURE）と素材の出所の記録（GR97）は別のタスク。やらないこと: 配布物の起動の確かめ（G19-GR110-DIST-CHECK）。
 
 ## G19-GR110-DIST-CHECK: 組み立てた配布物を別の場所へ写して起動でき、cooked とバンドルだけで描けることと、ZIP からも同じに動くことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR110-DIST-PACKAGE
 - gr: GR110
 - check: launch
@@ -10032,7 +10201,8 @@
 - notes: 設計はロードマップ 3744〜3756 行（P3 の 3-1〜3-7）とリスク 4171〜4172 行。G19-GR118-FATAL-ERROR（G19 の後半）が device lost の型（`DeviceLostError`）と `MarkDeviceLost` と呼び元を作るので、ロードマップ 3744 行の `NotifyQueueResult` の新しい口は作らず、あちらの口に fault の採取を載せる。今の事実（ロードマップから変わったもの）: `MAX_FRAMES_IN_FLIGHT` は今 2（`VulkanSwapChain.h:193`。ロードマップの 1 は古い）なので、パスの履歴は 2 フレーム以上を保つ。描画の記録はジョブのコマンドリストで並列に走る（`RenderGraph.cpp:2583`）ので、履歴は複数のスレッドから書かれ、実行の順の番号はグラフの順で付ける。`VK_EXT_memory_budget` は既に有効（`VulkanDevice.cpp:2004-2010`）。決めたこと: パスの履歴とチェックポイントは落ちたときの報告にだけ使い、計測やプロファイリングではないので全構成で有効にする（AGENTS.md の絶対規則 8 の「ログ・統計・GPU 計測・プロファイリング」に当たらないと読んだ。UNCERTAIN: 作者が Release から外すと決めたら `NORVES_BUILD_DEVELOPMENT` の中へ閉じる。費用は 1 パスあたり数回の書き込みとコマンド 1 個）。故意の GPU の fault は開発ビルドだけ。Nsight Aftermath は SDK とライセンスの確認が要るので採らない（ロードマップ 3754 行）。非 NVIDIA では GPU の到達の情報は空で、fault の情報と CPU の履歴だけになる。危険地帯（RHI/Vulkan・Public API の `ICommandList.h`）なので評価者を通す。試験を足す理由: 反証する契約は「fault の情報が乏しい（description が空・ベンダー 0）ときでも報告ができ、marker から正しいパスを引ける」。破れても device lost が起きるまで気づけず、起きたときに手がかりが黙って欠ける。共有のファイル（`RenderingCoordinator.cpp`・`ApplicationProcessor.cpp`・`RenderGraph.cpp`）は差分を小さくする。
 
 ## G19-GR112-CRASH-CHECK: 故意のクラッシュの種別ごとに報告・ダンプが揃い、起動の失敗と前回の異常終了も残ることを、実機の起動で確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR112-CRASH-HANDLERS
 - gr: GR112
 - check: launch
@@ -10105,7 +10275,8 @@
 - notes: 設計はロードマップ 3815 行（3. 出荷の時の扱い: Release はキャッシュに頼らず、BC6H ができた後に環境の cook 資産を AssetCook に足す）。GR29・GR88 は G5-GR88-HDR-INPUT（NVTEX に RGBA16F）と G5-GR88-BC6H-QUALITY（NVTEX に BC6H）が足すので after にした。needs-gr GR110: GR110 の Release の cook 専用（ロードマップ 3622 行〜。HDR の環境マップは cook 専用の例外でばらのまま）と、実行ファイルからの相対の資産の根を使うため。この項目は「cook 済みの環境があればそれを使い、無ければばらの HDR」にし、GR110 の例外の扱いは変えない（cook 済みが無ければ今のまま動く）。GR54 が静的な HDR の IBL を GPU で作るようになったら、CPU の `IblGeneration` は cook の時と試験の参照に残る（ロードマップ 3815 行）。AssetKind の番号: Environment は 13（段階をまたいだ割り振りで World = 7・Material = 8（G6）・Collision = 9（G17）・Video = 10（G14）、11〜12 は G19 の前半と G18 に残す）。既存の値は変えない。危険地帯: アセットのロード・ライティングの初期化なので評価者を通す。
 
 ## G19-GR117-STARTUP-CHECK: 起動の時間を Debug と RelWithDebInfo でキャッシュの有り・無しで測って予算を決め、キャッシュで見た目が変わらないことを撮って確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR117-STARTUP-PROFILE, G19-GR117-DFG-BAKE, G19-GR117-IBL-CACHE, G19-GR117-ENV-COOK
 - gr: GR117
 - check: launch
@@ -10121,7 +10292,8 @@
 - notes: 受け入れ確認はロードマップ 4079 行（計測）・4082 行（golden の非回帰）・4083 行（改善の確認）と要件 `#### GR117`。ロードマップは 3 構成（Release を含む）で測ると書くが、AGENTS.md の絶対規則 8 に従い Debug と RelWithDebInfo で測る（Release は記録を持たない）。7 秒の大半が Debug の添字の遅さかもしれない（ロードマップ 4181 行）ので、構成ごとの内訳を並べて書く。性能を測るので `gpu: exclusive`。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
 
 ## G19-GR123-NONASCII-CHECK: 非 ASCII のフォルダに置いた Game を起動して確かめ、UTF-8 の文字コードの下で GPU の試験が変わらないことと、日本語の利用者名での手の確かめの手順を記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR123-UTF8-PATHS, G19-GR123-UTF8-MANIFEST, G19-GR110-RUNTIME-PATHS, G19-GR110-COOKED-ONLY, G19-GR110-DIST-PACKAGE, G19-GR112-BUILD-INFO, G19-GR112-CRASH-WRITER, G19-GR112-CRASH-HANDLERS, G19-GR112-GPU-LOST
 - gr: GR123
 - check: launch
@@ -10196,7 +10368,8 @@
 - notes: ロードマップ 3370 行（段階 4 草・ファー。方針案）とリスク 3492 行。選定課題 G18-S14（ファーと草をパストレーサーでどう見せるか）は方針案を採る: ファーは入れず体の材質で近似し、草は連番だけ近傍の板で入れる。理由: 草の全本数とシェルを PT に入れるのは現実的でなく（要件 `#### GR104`）、PT の見本は照明・影・GI の構図の確かめが主用途。作者の決定（必要な機能は全部やる）でロードマップの「段階 4 は任意」を作る側にした。草の場のデータと生成の写しの名前は G5 の `G5-GR42-GRASS-FIELD-ASSET`・`G5-GR43-GRASS-GENERATE` の実装に合わせる（名前が違えば読み替えて PROGRESS.md に書く）。ファーのシェーディングモデルの ID は G5 の GR26 と G6 の GR34 の決めた値を使う。危険地帯（RT・パストレーサー）なので評価者を通す。
 
 ## G19-GR124-NORT-CHECK: RT のあり・なしで起動画面を朝昼夕に撮って明るさの指標を比べ、RT なしと VRAM を絞ったときの GPU のフレームの時間を測って対応の段の文書に記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR124-DEVICE-SELECTION, G19-GR124-CAPABILITY-OVERRIDES, G19-GR109-TIMELINE-TRACE, G19-GR109-GPU-HISTORY, G19-GR109-BUDGET-VIEW, G18-GR100-COLOR-METRICS
 - gr: GR124
 - check: launch
@@ -10212,7 +10385,8 @@
 - notes: 受け入れ確認はロードマップ 4112〜4114 行と要件 `#### GR124`。ロードマップ 4113 行は「Release 1280x720」と書くが、AGENTS.md の絶対規則 8 に従い RelWithDebInfo で測る。needs-gr GR109（GPU の時間の記録の形）と GR100（低いコントラストの見た目の指標。ロードマップ 3987 行の (c)）。RT ありの側の撮影は起動画面の既定（RTGI が有効。`Rendering3DTestRoutine.cpp:1679-1684`）。4096 MiB は段 B の機体の VRAM の例として置いた根拠なしの仮の値で、文書に「仮」と書く。最低の VRAM の数は GR88（BC）・GR105（VRAM の予算）・GR80（AI のメッシュの簡略化）の後でないと意味が無い（ロードマップ 4215 行）ので、ここでは測った値を残すだけで要件の数を決めない。性能を測るので `gpu: exclusive`。この項目ではコードを直さない。失敗したら原因を PROGRESS.md に書き、直す項目を TASKS.md に足す。
 
 ## G19-GR125-HDR-CHECK: HDR の出力を起動して確かめ、SDR の既定の起動が変わらないことを撮り、HDR のモニターでの手の確かめの手順を記録する(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G19-GR125-HDR-PRESENT, G19-GR125-HDR-DISPLAY, G19-GR125-HDR-LUT, G18-GR100-COLOR-METRICS
 - gr: GR125
 - check: launch
@@ -10247,7 +10421,8 @@
   - アプリは起動しない。
 
 ## G18-GR126-CHECK: 乱数のハッシュが GPU と CPU で一致し、起動のシードがログに出ることを、起動して確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR126-RANDOM-STREAMS, G18-GR126-FIXED-STEP-POLICY
 - gr: GR126
 - check: launch
@@ -10262,7 +10437,8 @@
 - notes: 1 視点の撮影のログの名前は `<視点>.Game.log`（`Scripts/CaptureScene.ps1` 14〜17 行の説明）。UNCERTAIN: `sandbox` の視点に `overview` があるかは `Game/Scenes/SceneCatalog.h` で確かめる（無ければ既定の視点の名前に置き換え、置き換えたことを PROGRESS.md に書く）。直すべき所が見つかったら、ここでは直さず別の項目を足す。
 
 ## G18-GR101-CHECK: シェーダーのその場の差し替えと確認ビューアの表示・資産の差し替えを、起動して確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR101-SHADER-PASSES, G18-GR101-ASSET-VIEWER, G18-GR101-ASSET-RELOAD
 - gr: GR101
 - check: launch
@@ -10276,7 +10452,8 @@
 - notes: (4) はキー操作と目視が要るので作者が確かめて記録する（ワーカーは手順と結果の欄を PROGRESS.md に用意する）。`FiveInfluences.gltf` が cook の段で拒否される（GR86 の既定は拒否）なら、その拒否が failures に理由つきで出れば合格とする。台本の引数の名前は `G18-GR101-ASSET-RELOAD` で決めたものに合わせ、違えば verify の行を直して PROGRESS.md に書く。直すべき所が見つかったら、ここでは直さず別の項目を足す。
 
 ## G18-GR98-CHECK: 実行中の Game でスクリプトの数値とコルーチンの書き換えがその場で効くことを、起動して確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR98-RUNTIME-BASE, G18-GR98-API-CORE, G18-GR98-API-GAMEPLAY, G18-GR98-COROUTINES
 - gr: GR98
 - check: launch
@@ -10288,7 +10465,8 @@
 - notes: 完了条件 3413 行。Release はログが無効（NORVES_ENABLE_LOGGING）なので Debug で確かめる。直すべき所が見つかったら、ここでは直さず別の項目を足す。
 
 ## G18-GR99-CHECK: 入力の再生で同じ操作の再走行が一致し、デバッグの描画・重ね描き・フリーカメラ・調整値の保存が実機で効くことを、起動して確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR99-TUNING, G18-GR99-TUNING-GROUPS, G18-GR99-INPUT-REPLAY, G18-GR99-DEBUG-VIS, G18-GR99-DEBUG-OVERLAY
 - gr: GR99
 - check: launch
@@ -10302,7 +10480,8 @@
 - notes: 完了条件 3416・3420・3421 行。台本の引数の名前は `G18-GR99-INPUT-REPLAY` で決めたものに合わせ、違えば verify の行を直して PROGRESS.md に書く。CSV が一致しなければ、どのフレームのどの Entity から違うかを記録して直す項目を足す（ここでは直さない）。
 
 ## G18-GR100-CHECK: 起動画面の撮影の結果に色と明度の計測をかけ、1920×1080 で数秒で計測の JSON が出ることを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR100-COLOR-METRICS
 - gr: GR100
 - check: launch
@@ -10313,7 +10492,8 @@
 - notes: 完了条件 3424・3426 行。撮影は手動の露出・FXAA・グレイン無しで固定するのが望ましい（ロードマップ 3470 行）が、起動画面の既定の撮影の条件を変えないので、条件を結果に書くだけにする。
 
 ## G18-GR102-CHECK: 深度・法線・物の ID の書き出しと撮影のセッションを、GPU の試験と起動で確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR102-AOV-EXPORT, G18-GR102-CAPTURE-SESSION, G18-GR102-OBJECT-ID
 - gr: GR102
 - check: launch
@@ -10328,7 +10508,8 @@
 - notes: 完了条件 3434〜3440 行。台本の引数は `G18-GR102-AOV-EXPORT`・`G18-GR102-CAPTURE-SESSION` で決めたものに合わせ、違えば verify の行を直して PROGRESS.md に書く。sandbox にスキン・Mega が含まれるなら PT の比べには含まない場面（R7 の屋外の試験の場面など）を選び、選んだ場面を書く。ControlNet へ入れた生成の結果の記録（3440 行）は DogGame の側の作業なので作者に回す。直すべき所が見つかったら、ここでは直さず別の項目を足す。
 
 ## G18-GR104-CHECK: スキン・切り抜き・草が RT と パストレーサーに写ることと、BLAS の構築の時間を、GPU の試験と起動で確かめて記録する
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G18-GR104-BLAS-RECORD, G18-GR104-SKINNED-BLAS, G18-GR104-MASKED-ANYHIT, G18-GR104-FOLIAGE-FUR-PT, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS
 - gr: GR104
 - check: launch
@@ -10345,7 +10526,8 @@
 - notes: 完了条件 3442〜3446 行。計測は Release でなく RelWithDebInfo（AGENTS.md の絶対規則 8）。`CaptureStartupScene.ps1` には `-Width`・`-Height` が無いので、解像度は `-GameArgs window-size=1280x720`（ApplicationProcessor.cpp:662-666 の `--window-size=`）で渡す。リフィットの比べは `G18-GR104-SKINNED-BLAS` の設定を `-GameArgs` で切り替えて 2 回測る（設定の名前はそのタスクで決めたもの）。地形の区画は G5 の GR37 を待つ（needs-gr）。R7 のラスタ対 PT の比べ（`RasterPathTracingComparison`）にスキンを含む場面をかける確かめは Reference の段で重いので、作者の許可が出たときに 1 回行い、行わなければ未実施と書く。直すべき所が見つかったら、ここでは直さず別の項目を足す。
 
 ## G8-GR76-RESET-CHECK: Game を起動してリセットを 50 回繰り返し、資源の数の戻り・検証層の誤り 0・GPU の資源の漏れ・起動画面を確かめる(後回しにしたアプリの起動の確かめ)
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G8-GR76-RESET-LIFETIME
 - gr: GR76
 - check: launch
@@ -10358,7 +10540,8 @@
 - notes: 受け入れ確認はロードマップ 1847 行(GPU の段の部分)・1849〜1850 行。性能の計測ではないので `gpu: exclusive` は付けない。漏れが見つかったら、原因を PROGRESS.md に書き、直す項目を TASKS.md に足す(この項目で寿命のコードを直さない)。撮影の PNG は開いて見る。
 
 ## G9-GR15-AB-CAPTURE-CHECK: 足 IK と手続き層の有無を animation-debug の場面で撮り比べ、既定の起動画面が変わらないことを確かめる
-- status: todo
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
 - after: G9-GR15-ORDER-DEBUG-VIEW
 - check: launch
 - gr: GR15, GR14
@@ -10556,3 +10739,73 @@
 - verify: `ctest --test-dir build -C Debug -R "^(ProgressionStateTest|EnemyStateMachineTest|DefeatGateTest|EncounterSerializationTest)$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Modules/Gameplay/Public/Gameplay/Progression/ProgressionState.h, Library/Modules/Gameplay/Private/Gameplay/Progression/ProgressionState.cpp, Test/Modules/Gameplay/ProgressionStateTest.cpp
 - from: G8-GR76-RESET-LIFETIME
+
+## G2-GR96-MODEL-ANALYSIS-P1: 骨格の分割 cook の profile と関節の上限を 1 つの関数から引き、cook と取り込みレポートが同じ値で読む
+- status: todo
+- done-when: `Tools/AssetCook/CookRigPayload.h` と `CookRigPayload.cpp` に次の 2 つを置く。(1) asset-set の骨格を分割して cook するときの設定(`RigImportProfile::StaticRootFrame256` と、それに合う `RigV1Limits`)を返す関数。(2) profile の値から `RigV1Limits` を求める関数(今の `profileValue == 3 ? 256 : 128` と同じ規則)。cook の側(`RigSingleCook.cpp` の `BuildRigSingleOutputs`、`CookRigPayload.cpp` の `InspectCookedRigPayload`)とレポートの側(`TextureAssetSetCook.cpp` で縮約で失った重みを求めるための decode、`CookOutputPackage.cpp` の `Profile()` で skinmesh を読む `ParseSkinMeshV1`)は、この関数から設定を引く。これら 4 か所に、`limits.MaxJoints = 256`・`Profile == 3 ? 256 : 128`・`constexpr auto profile = ...StaticRootFrame256` の写しと「RigSingleCook.cpp と同じ設定を使う」の注記が残らない(`git grep -n -E "MaxJoints *=|StaticRootFrame256" -- Tools/AssetCook/RigSingleCook.cpp Tools/AssetCook/CookRigPayload.cpp Tools/AssetCook/TextureAssetSetCook.cpp Tools/AssetCook/CookOutputPackage.cpp` で当たるのは関数の呼び出しだけ)。cook の出力・`cook_report.json` の数・manifest の中身は変わらない(既存の試験が期待値を変えずに通る)。新しい試験は足さない(値の写しを持つ試験は、写しをやめた実装の写しになるため)。`RigRetargetCook.cpp`・`RigSplitFileCli.cpp` に残る同じ写しは範囲の外にする。`git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` が一致する。アプリは起動しない。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(ModelAnalysisTest|RigSplitCookTest|TextureManagedCliTest|CookOutputPackageTest|CookCacheDecisionTest|CookedSkeletalAssetTest|AssetCookGlbSmoke)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Tools/AssetCook/CookRigPayload.h, Tools/AssetCook/CookRigPayload.cpp, Tools/AssetCook/RigSingleCook.cpp, Tools/AssetCook/TextureAssetSetCook.cpp, Tools/AssetCook/CookOutputPackage.cpp, TASKS.md, PROGRESS.md
+- from: G2-GR96-MODEL-ANALYSIS
+- after: G2-GR96-MODEL-ANALYSIS
+
+補足(判断の根拠): レポートの側の写しは、元のタスクのブランチ `task/G2-GR96-MODEL-ANALYSIS` にしかありません(`TextureAssetSetCook.cpp` の `limits.MaxJoints = 256` と `StaticRootFrame256`、`CookOutputPackage.cpp` の `actual.Profile == 3 ? 256 : 128`)。統合ブランチにはまだ入っていないので、after に元のタスクを置きました。
+
+写しがずれても試験は落ちません。cook の設定だけが変わると、レポートの decode は失敗して null を出すか、cook と違う decode で求めた「縮約で失った重み」を出します。どちらも黙って起きます。元のタスクは「cook 時の値」「engine が実際に使う値」を出すことを求めているので、その目的に要る直しと判断して TASK にしました。
+
+## SCN-GOLDEN-INDOOR-DIFF-1107: 統合ブランチで RenderingGoldenIndoorVulkanTest が 10 画素・raw 最大 1 の差で落ちる原因のコミットを突き止め、再承認か直しで通す
+- status: backlog
+- parked: 撮影・GPU の計測・参照比較・アプリの起動の確かめは回さない決まり(人の判断)。見た目は人がゲームを動かして確かめる
+- done-when: 統合ブランチ feature/scene-launcher の HEAD で、基準画像の検査 4 本(Indoor・Outdoor・IndoorGBufferFallback・OutdoorGBufferFallback)がすべて Passed。手順は次のとおり。(1) HEAD で Indoor を回し、10 画素の差(mean_flip 0.000013729・raw 最大 1・max_flip の座標 (41,118))が出るかを確かめる。(2) 出るなら、Indoor が最後に Passed だった再承認 816957d8 から HEAD までのうち、`Assets/Shaders`・`Library/Core/Source/Rendering` を触ったコミット(22 件)を二分探索し、差を入れたコミットを見つける。各段の判定は、Debug の `RenderingGoldenImageTest` のビルドと Indoor の ctest だけで行う。(3) 差がそのコミットの意図した変更だけで生じ、物理的な期待値に近い向きなら、`Docs/RenderingValidation/GoldenBaselines.md` の手順で Indoor と IndoorGBufferFallback を再承認する(差が出ていれば Outdoor 系も同じく)。新しい SHA-256 を GoldenBaselines.md に書き、差を入れたコミット・差の分類(再承認か直しか)・根拠を `R1Acceptance.md` に節として書き、根拠をコミット本文にも書く。(4) 意図しない差で、直しが paths の外のコードに要るなら、原因のコミットと箇所を R1Acceptance.md に書き、PROGRESS.md の Notes に `要起票:` で直しを残す(基準画像は動かさない)。
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- paths: Test/Core/Rendering/Baselines/RenderingValidation/Indoor.png, Test/Core/Rendering/Baselines/RenderingValidation/IndoorGBufferFallback.png, Test/Core/Rendering/Baselines/RenderingValidation/Outdoor.png, Test/Core/Rendering/Baselines/RenderingValidation/OutdoorGBufferFallback.png, Docs/RenderingValidation/GoldenBaselines.md, Docs/RenderingValidation/R1Acceptance.md, TASKS.md, PROGRESS.md
+- gpu: exclusive
+- from: SCN-MEGA-FIX-TLAS-REBUILD-P4
+
+## G5-GR28-DRAW-INDIRECT-P1: 既存のインデックス付きの間接描画と MegaGeometry の区間の容量を、装置の maxDrawIndirectCount 以下に抑える
+- status: todo
+- done-when: `DeviceCapabilities` に `MaxDrawIndirectCount` を足す。値は論理デバイスを作るときに `limits.maxDrawIndirectCount` から入れる。`VulkanCommandList::DrawIndirect` の上限の検査は、`m_device->GetMaxDrawIndirectCount()` ではなくこの能力の値を見る。`VulkanCommandList::DrawIndexedIndirect` は、drawCount が `MaxDrawIndirectCount` を超えるときと、drawCount>1 で `bMultiDrawIndirect` が無いときは何も記録しない。そのうえで既存の流儀どおり例外を投げる。`MegaGeometryPass.cpp` の区間の容量（`assignSectionCapacities` の `sectionLimit`。3922 行付近）は `MaxDrawIndirectCount` 以下に抑える。これで件数つき（`DrawIndexedIndirectCount` の maxDrawCount と GPU が書く件数）の分岐も、多重（`DrawIndexedIndirect` の drawCount）の分岐も、上限を超える件数を出さない。両方の能力が無い装置で 1 件ずつ描く分岐は変えない（対応の段は G19-GR124 で決める）。`IndirectDrawVulkanTest` に試験を足す。能力を偽って `MaxDrawIndirectCount=1` にしたとき、`DrawIndirect` の drawCount=2 が false を返し、`DrawIndexedIndirect` の drawCount=2 が例外を投げ、どちらも何も記録せず validation のメッセージが 0 件であることを確かめる。既存の `IndirectDispatchVulkanTest`・`RHIIndirectApiContractTest`・golden 4 本が変わらず通る。
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest RenderingGoldenImageTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIIndirectApiContractTest|IndirectDispatchVulkanTest|IndirectDrawVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/RHI/DeviceCapabilities.h, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Test/Core/Rendering/IndirectDrawVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR28-DRAW-INDIRECT
+
+## G5-GR29-RHI-FORMATS-P1: 全ミップを渡すテクスチャの転送に失敗したとき、`TextureAssetRuntime::CreateTexture` が有効なハンドルを返さないようにする
+- status: todo
+- done-when: `TextureAssetRuntime::CreateTexture`(TextureAssetRuntime.cpp:182)は、`UploadTextureData` の結果が `bUploadAttempted && !bUploadSucceeded` のとき、ハンドルを手放して `TextureHandle::Invalid()` を返す。全ミップを渡す形式は `bInitialDataHasAllMips` か BC 形式で、`HasPackedMipChain` が真になる。`GpuResourceStore::CreateTexture(createInfo, data, dataSize)` は GpuResourceStore.cpp:454 で既に同じ扱いにしており、公開の `TextureResources::CreateTexture(createInfo, data, dataSize)`(RenderResources.cpp:388)もこれと同じ結果になる。読み込みの記録 `stage=texture_create_upload` の `success` にも `bUploadSucceeded` を入れる。`RHIBlockCompressedTextureVulkanTest` の `RunShortDataCase` に、同じ store に `Bind` した `TextureAssetRuntime` を通す場合を足す。1 ブロックぶん足りない BC7 の初期データで `Invalid` が返れば合格とする。既存の BC の試験と `RenderResourcesDomainContractTest` はそのまま通る。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(RHIBlockCompressedTextureVulkanTest|RenderResourcesDomainContractTest|TextureAssetReloadAdmissionTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Rendering/TextureAssetRuntime.cpp, Test/Core/Rendering/RHIBlockCompressedTextureVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR29-RHI-FORMATS
+
+## G5-GR43-GRASS-GENERATE-P1: 草の生成に地形の高さ場を渡し、ブレードの根元を地面に置き、タイルの選別も地形の高さで行う
+- status: todo
+- done-when: grassland の地形の高さ場(`TerrainComponent::GetHeightField()` の `TSharedPtr<const Rendering::Terrain::TerrainHeightField>`)を、草の場の描画データに値で載せる(例: `GrassFieldComponent` が同じ World の地形を見つけ、`GrassFieldRenderData` に持たせて公開する)。RenderThread へは FramePacket 越しに渡し、RenderThread から GameThread の Component は引かない。GrassPass へ届いたら、GPU へは高さのテクスチャかタイルごとの高さの格子で送る。送り方は `GrassFieldGpuWindow` と同じくステージングと `CopyBufferToTexture` / コピーで行い、同期の `ITexture::Update` は使わない。生成では `GrassGenerate.comp` と `GrassGenerateReference` の両方が、ブレードの根元の Y を、その XZ での高さ場の値(`TerrainHeightField::SampleHeight` の LOD 0 と同じ三角形の補間)にする。`GrassTileSelector` は、タイルの視錐台の判定と距離の帯を、そのタイルの地形の高さの範囲(最小〜最大に草丈を足した範囲)で行う。高さ場が無いときは今の `GroundHeightMeters` の動きのまま。試験が通る: `GrassTileSelectionTest` に、起伏のある合成の高さ場(斜面と丘)のケースを足す。中身は、(a) 地面 0 の前提なら視錐台の外になる高い丘の上のタイルが選ばれること、(b) `GrassGenerateReference` が出すブレードの Y がその XZ の `SampleHeight` と 1 mm 以内で一致すること、(c) 高さ場が無いときは全ブレードの Y が `GroundHeightMeters` になること。`GrassGenerateVulkanTest` にも同じ起伏の高さ場のケースを足し、GPU が書いたブレードの記録を読み戻して、各ブレードの Y と CPU の写しの Y との差が 1 cm 以内で、LOD のカウンタが CPU の写しの数と完全に一致することを確かめる。
+- verify: `cmake --build build --config Debug --target CameraViewConstantsTest -- /m:1`
+- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest -- /m:1`
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(GrassTileSelectionTest|GrassShaderCompileTest|GrassFieldSnapshotContractTest|GrassGenerateVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Public/Rendering/GrassFieldRenderData.h, Library/Core/Public/Component/GrassFieldComponent.h, Library/Core/Private/Component/GrassFieldComponent.cpp, Library/Core/Public/Vegetation/Vegetation.h, Library/Core/Private/Vegetation/Vegetation.cpp, Library/Core/Public/Rendering/GrassPass.h, Library/Core/Private/Rendering/GrassPass.cpp, Library/Core/Public/Rendering/GrassFieldGpuWindow.h, Library/Core/Private/Rendering/GrassFieldGpuWindow.cpp, Library/Core/Public/Rendering/GrassTileSelector.h, Library/Core/Private/Rendering/GrassTileSelector.cpp, Library/Core/Public/Rendering/GrassGenerateReference.h, Library/Core/Private/Rendering/GrassGenerateReference.cpp, Assets/Shaders/Grass, Test/Core/Rendering/GrassTileSelectionTest.cpp, Test/Core/Rendering/GrassGenerateVulkanTest.cpp, TASKS.md, PROGRESS.md
+- from: G5-GR43-GRASS-GENERATE
+
+## G10-SHISHA-SHOWCASE-P1: シ者の場面 base の代役のスキンを、外部の `fixture.bin` に頼らない自己完結の glTF から読む
+- status: todo
+- done-when: (1) `ShishaShowcaseBaseScene.cpp` の `AnalyzeSkeletal` の読み先を、新しい自己完結の glTF `Assets/Models/ShishaShowcase/Standin.gltf` に替える。この glTF はバッファを `data:application/octet-stream;base64,` で埋め込む。埋め込む中身は `Scripts/Test-M9World.ps1` の `Write-M9FixtureBin` が作る 416 バイトと同じにし、accessor・skin・animation は `ValidU8Float.gltf` と同じにする。`Assets/Models/M9Skinned` の中は変えない。(2) Game が Debug でビルドできる。(3) 新しい glTF のどの `buffers[].uri` も `data:` で始まり、復号したバイト数が `byteLength` と一致する。`Game/GameModes/ShishaShowcase` のソースに `M9Skinned` への参照が残らない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -Command "$g = Get-Content -Raw -LiteralPath 'Assets/Models/ShishaShowcase/Standin.gltf' | ConvertFrom-Json; foreach ($b in $g.buffers) { if (-not $b.uri.StartsWith('data:')) { 'external buffer: ' + $b.uri; exit 1 }; $n = [Convert]::FromBase64String($b.uri.Substring($b.uri.IndexOf(',') + 1)).Length; if ($n -ne $b.byteLength) { 'byteLength mismatch'; exit 1 } }; if (Select-String -Path 'Game/GameModes/ShishaShowcase/*.cpp' -Pattern 'M9Skinned' -Quiet) { 'still references M9Skinned'; exit 1 }"`
+- paths: Game/GameModes/ShishaShowcase/ShishaShowcaseBaseScene.cpp, Assets/Models/ShishaShowcase, TASKS.md, PROGRESS.md
+- effort: high
+- from: G12-GR108-POSE-PARALLEL
+- notes: 確かめた事実:
+  - `Assets/Models/M9Skinned/ValidU8Float.gltf:42` は `"uri": "fixture.bin"` を参照する。しかし `fixture.bin` は追跡されておらず、手元に無く、無視の対象でもない。
+  - 外部バッファは glTF の隣から読まれる(`GltfBufferFile.cpp` の `ReadBufferFileWithPath`)。そのため `ShishaShowcaseBaseScene.cpp:224-228` は `asset_decode_failed` で止まる。これは G10-SHISHA-SHOWCASE の done-when (2)「場面 base に M9Skinned のスキンを 1 体」が起動の確かめ無しで閉じた取りこぼし。
+  - 試験と台本(`Test-M9World.ps1:456`・`:577`、`CookDependencySnapshotTest`、`CookedSkeletalAssetTest.cmake.in` など)は M9Skinned を一時の置き場へ写し、そこで `fixture.bin` を作る。
+  - `ManagedTextureAssetSetCli.md:247` は `ValidU8Float.gltf` の blob が変わらないことを基準にしている。
+  - 以上の理由で、`fixture.bin` を M9Skinned へコミットする直し方は採らない。
+  - バッファの data URI は `GltfBufferSet.cpp:76-101` が読む(octet-stream と gltf-buffer の MIME)。
+  - 符号化は `ValidU8Float.gltf` に合わせる。
+  - 代役の形(骨 2 本の三角形を身長 1.8 m に合わせる)と ready の印の値は変えない。
+  - 中身がデコードできるかは、`Test-M9World.ps1:580` と同じ AssetCook の `--kind model` を一時の置き場へ回して確かめてよい(Game は起動しない)。
+  - G12-GR108-POSE-PARALLEL の `--skinned-crowd` も M9Skinned の同じ資産を読む予定なので、この自己完結の glTF を使える。

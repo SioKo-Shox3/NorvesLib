@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 
 // ========================================
 // ビジビリティバッファ: 手続きメッシュの塊を描く頂点シェーダー（位置だけを読む）
@@ -14,16 +15,11 @@ layout(set = 0, binding = 0) uniform VisFrame
 {
     mat4 view;
     mat4 projection;
+    vec4 vertexAnimTime;
 } frame;
 
-struct InstanceData
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
+#include "Common/VertexAnimation.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
 {
@@ -42,6 +38,8 @@ void main()
     const uint instanceIndex = VisRecordInstanceIndex(visRecords[recordNumber]);
 
     vec4 worldPos = instances[instanceIndex].world * vec4(inPosition, 1.0);
+    const vec4 params = VertexAnimationParamsForFrame(instances[instanceIndex].shadingParams, frame.vertexAnimTime);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, frame.vertexAnimTime.x);
     gl_Position = frame.projection * frame.view * worldPos;
     outRecord = recordNumber;
 }

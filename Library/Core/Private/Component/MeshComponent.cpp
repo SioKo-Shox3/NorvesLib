@@ -180,6 +180,25 @@ namespace NorvesLib::Core::Component
         return 0.0f;
     }
 
+    void MeshComponent::SetShadingParams(uint32_t index, float value)
+    {
+        if (index >= Rendering::ShadingParamCount)
+        {
+            return;
+        }
+        const float sanitized = Rendering::SanitizeShadingParam(value);
+        if (m_ShadingParams[index] != sanitized)
+        {
+            m_ShadingParams[index] = sanitized;
+            MarkRenderStateDirty();
+        }
+    }
+
+    float MeshComponent::GetShadingParams(uint32_t index) const
+    {
+        return index < Rendering::ShadingParamCount ? m_ShadingParams[index] : -1.0f;
+    }
+
     // ========================================
     // バウンディング
     // ========================================
@@ -298,6 +317,7 @@ namespace NorvesLib::Core::Component
         for (uint32_t i = 0; i < 4; ++i)
         {
             outProxy.CustomData[i] = m_CustomData[i];
+            outProxy.ShadingParams[i] = m_ShadingParams[i];
         }
 
         return true;

@@ -8,6 +8,7 @@
 #include "Gameplay/Combat/HitboxComponent.h"
 #include "Gameplay/Combat/HurtboxSetComponent.h"
 #include "Gameplay/Enemy/EnemyComponent.h"
+#include "Gameplay/Level/GameplayComponentClasses.h"
 #include "Gameplay/World/EncounterZoneComponent.h"
 #include "Gameplay/World/InteractableComponent.h"
 #include "Gameplay/World/ZoneSensorComponent.h"
@@ -125,13 +126,7 @@ namespace NorvesLib::Modules::Gameplay
 
     void GameplayModule::RegisterReflectedTypes()
     {
-        Core::ClassRegistry::Get().RegisterClass(Combat::HealthComponent::StaticClass());
-        Core::ClassRegistry::Get().RegisterClass(Combat::HitboxComponent::StaticClass());
-        Core::ClassRegistry::Get().RegisterClass(Combat::HurtboxSetComponent::StaticClass());
-        Core::ClassRegistry::Get().RegisterClass(Enemy::EnemyComponent::StaticClass());
-        Core::ClassRegistry::Get().RegisterClass(World::ZoneSensorComponent::StaticClass());
-        Core::ClassRegistry::Get().RegisterClass(World::EncounterZoneComponent::StaticClass());
-        Core::ClassRegistry::Get().RegisterClass(World::InteractableComponent::StaticClass());
+        Level::RegisterGameplayComponentClasses();
     }
 
     bool GameplayModule::Initialize()

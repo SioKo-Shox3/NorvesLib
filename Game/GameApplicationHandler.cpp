@@ -130,6 +130,10 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestInstancedMeshCountOption = TEXT("--rendering3dtest-instanced-mesh-count");
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
+        // --sky-occlusion: すべてのシーンで空の遮蔽を有効にする。
+        constexpr const TCHAR *kSkyOcclusionOption = TEXT("--sky-occlusion");
+        // --sky-occluder-demo: Rendering3DTest に空の遮蔽物を配置する。
+        constexpr const TCHAR *kSkyOccluderDemoOption = TEXT("--sky-occluder-demo");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
         constexpr const TCHAR* kAudioSmokeOption = TEXT("--audio-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
@@ -158,6 +162,8 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
+        bool s_bSkyOcclusion = false;
+        bool s_bSkyOccluderDemo = false;
         // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
         constexpr const TCHAR *kSceneOption = TEXT("--scene=");
@@ -165,6 +171,11 @@ namespace Game
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
         constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
+        // --map-capture=<spec.json>: シーンを真上からタイルごとに撮る（Debug/MapCapture.h）。
+        // --scene・--capture-png・--capture-deterministic が必要。--capture-png 自体は書かれない。
+        // --window-size と --render-scale=1 でバックバッファを spec に合わせる。
+        // 自由飛行カメラの無いシーンでは終了コード 1 で終了する。
+        constexpr const TCHAR *kMapCaptureOption = TEXT("--map-capture=");
         // --capture-views=<視点,...|all>: 1回の起動で、シーンの名前付き視点を順に撮る（決定的な撮影と併せて使う）。
         // all は既定の視点（default）と残りの全視点。先頭が起動時の視点で、--scene-view とは併用しない。
         // 保存先は --capture-png のパスのフォルダの <視点>.png（--capture-png 自身はこの撮影が書く。Debug/MultiViewCapture.h）。
@@ -208,6 +219,11 @@ namespace Game
         // --camera-path-play: カメラパスを持つシーンで、組み立てが済んだところからパスを再生したままにする（開発ビルドだけ。
         // 値を取らない。開始の時刻は --camera-path-time、無ければ 0 秒。計測でパスを飛ぶ負荷を撮るのに使う）。
         constexpr const TCHAR *kCameraPathPlayOption = TEXT("--camera-path-play");
+        // sandbox の合成スキンと姿勢の並列設定（開発ビルドだけ）
+        constexpr const TCHAR *kSkinnedCrowdOption = TEXT("--skinned-crowd");
+        constexpr const TCHAR *kParallelPoseOption = TEXT("--parallel-pose");
+        constexpr const TCHAR *kParallelPoseMinOption = TEXT("--parallel-pose-min");
+        constexpr const TCHAR *kParallelPoseGrainOption = TEXT("--parallel-pose-grain");
         // --camera-path-capture-time=<秒>: 再生を固定刻みで進め、指定時刻の姿勢を PNG に撮る（開発ビルドだけ）。
         constexpr const TCHAR *kCameraPathCaptureTimeOption = TEXT("--camera-path-capture-time=");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
@@ -522,6 +538,45 @@ namespace Game
             return true;
         }
 
+        // ApplicationProcessor が受け付ける小数・分数のうち、値がゼロのものを確かめる。
+        bool IsZeroFilmGrainValue(const String& text)
+        {
+            bool bDigits = false;
+            bool bDecimal = false;
+            bool bDenominator = false;
+            bool bDenominatorNonZero = false;
+            for (const TCHAR character : text)
+            {
+                if (character >= TEXT('0') && character <= TEXT('9'))
+                {
+                    if (!bDenominator && character != TEXT('0'))
+                    {
+                        return false;
+                    }
+                    if (bDenominator && character != TEXT('0'))
+                    {
+                        bDenominatorNonZero = true;
+                    }
+                    bDigits = true;
+                }
+                else if (character == TEXT('.') && !bDecimal && bDigits)
+                {
+                    bDecimal = true;
+                }
+                else if (character == TEXT('/') && !bDenominator && bDigits)
+                {
+                    bDenominator = true;
+                    bDigits = false;
+                    bDecimal = false;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            return bDigits && (!bDenominator || bDenominatorNonZero);
+        }
+
 #if NORVES_BUILD_DEVELOPMENT
         // 固定刻みの Tick 数を計算するときは、引数の秒数を float に丸める前の精度で使う。
         bool TryParsePathCaptureTime(const String &text, double &outValue)
@@ -697,6 +752,29 @@ namespace Game
             return true;
         }
 
+        // 名前が共通する引数も、名前の直後が終端か = の場合だけ一致させる。
+        bool TryMatchSandboxOption(const String &argument, const TCHAR *option, String &outValue, bool &bInlineValue)
+        {
+            String suffix;
+            if (!TryStripPrefix(argument, option, suffix))
+            {
+                return false;
+            }
+            if (suffix.empty())
+            {
+                outValue = {};
+                bInlineValue = false;
+                return true;
+            }
+            if (suffix[0] != TEXT('='))
+            {
+                return false;
+            }
+            outValue = suffix.substr(1);
+            bInlineValue = true;
+            return true;
+        }
+
         bool IsCommandLineOption(const String &argument)
         {
             return StartsWith(ToStdString(argument), TEXT("--"));
@@ -842,8 +920,11 @@ namespace Game
         m_ShishaShowcaseScene = {};
         m_ShishaCameraOrbit = 0.0f;
         m_ShishaScale = 1.0f;
+        m_ShishaSunElevationDegrees = 40.0f;
+        m_bShishaOvercast = false;
         m_bShishaCameraOrbitSet = false;
         m_bShishaScaleSet = false;
+        m_bShishaSunElevationSet = false;
 #endif
         m_StartupSceneId = {};
         m_StartupSceneView = {};
@@ -852,6 +933,10 @@ namespace Game
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
 #if NORVES_BUILD_DEVELOPMENT
+        m_SkinnedCrowdCount = 0;
+        m_ParallelPose = -1;
+        m_ParallelPoseMinCount = 0;
+        m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
@@ -906,6 +991,8 @@ namespace Game
         s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
+        s_bSkyOcclusion = false;
+        s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
@@ -936,6 +1023,8 @@ namespace Game
         bool bHasRendering3DTestImpostorSmokeCount = false;
         bool bHasRendering3DTestInstancedMeshCount = false;
         bool bHasRendering3DTestPhysicsSmoke = false;
+        bool bHasSkyOcclusion = false;
+        bool bHasSkyOccluderDemo = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -979,6 +1068,30 @@ namespace Game
 
                 s_bRendering3DTestPhysicsSmoke = true;
                 bHasRendering3DTestPhysicsSmoke = true;
+                continue;
+            }
+
+            if (args[i] == kSkyOcclusionOption)
+            {
+                if (bHasSkyOcclusion)
+                {
+                    LOG_ERROR("コマンドライン引数が重複しています: --sky-occlusion");
+                    return false;
+                }
+                s_bSkyOcclusion = true;
+                bHasSkyOcclusion = true;
+                continue;
+            }
+
+            if (args[i] == kSkyOccluderDemoOption)
+            {
+                if (bHasSkyOccluderDemo)
+                {
+                    LOG_ERROR("コマンドライン引数が重複しています: --sky-occluder-demo");
+                    return false;
+                }
+                s_bSkyOccluderDemo = true;
+                bHasSkyOccluderDemo = true;
                 continue;
             }
 
@@ -1402,7 +1515,7 @@ namespace Game
                 m_DogMovementCaptureDir = dogCaptureDir;
                 continue;
             }
-            // --shisha-showcase=<場面> と周回速度・倍率は開発ビルドの専用モードに渡す。
+            // シ者の場面とカメラ・太陽・天候の指定は開発ビルドの専用モードに渡す。
             String shishaValue;
             if (args[i] == TEXT("--shisha-showcase") ||
                 TryStripPrefix(args[i], TEXT("--shisha-showcase="), shishaValue))
@@ -1483,6 +1596,48 @@ namespace Game
 #endif
                 continue;
             }
+            if (args[i] == TEXT("--shisha-sun-elevation") ||
+                TryStripPrefix(args[i], TEXT("--shisha-sun-elevation="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaSunElevationSet)
+                {
+                    LOG_ERROR("--shisha-sun-elevation が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(shishaValue, -10.0f, 90.0f, m_ShishaSunElevationDegrees))
+                {
+                    LOG_ERROR("--shisha-sun-elevation は −10〜90 の数（度）で指定してください");
+                    return false;
+                }
+                m_bShishaSunElevationSet = true;
+#else
+                LOG_ERROR("--shisha-sun-elevation は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            const bool bShishaOvercastFlag = args[i] == TEXT("--shisha-overcast");
+            if (bShishaOvercastFlag || TryStripPrefix(args[i], TEXT("--shisha-overcast="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaOvercast)
+                {
+                    LOG_ERROR("--shisha-overcast が重複しています");
+                    return false;
+                }
+                if (!bShishaOvercastFlag)
+                {
+                    LOG_ERROR("--shisha-overcast に値は指定できません");
+                    return false;
+                }
+                m_bShishaOvercast = true;
+#else
+                LOG_ERROR("--shisha-overcast は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
             String sceneValue;
             if (TryStripPrefix(args[i], kSceneOption, sceneValue))
             {
@@ -1548,6 +1703,99 @@ namespace Game
                 {
                     LOG_ERROR("--camera-path-time の秒数を読み取れません");
                     return false;
+                }
+#endif
+                continue;
+            }
+            enum class SandboxOption { None, SkinnedCrowd, ParallelPose, ParallelPoseMin, ParallelPoseGrain };
+            SandboxOption sandboxOption = SandboxOption::None;
+            const TCHAR *sandboxOptionName = nullptr;
+            bool bSandboxInlineValue = false;
+            if (TryMatchSandboxOption(args[i], kSkinnedCrowdOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::SkinnedCrowd;
+                sandboxOptionName = kSkinnedCrowdOption;
+            }
+            else if (TryMatchSandboxOption(args[i], kParallelPoseOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::ParallelPose;
+                sandboxOptionName = kParallelPoseOption;
+            }
+            else if (TryMatchSandboxOption(args[i], kParallelPoseMinOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::ParallelPoseMin;
+                sandboxOptionName = kParallelPoseMinOption;
+            }
+            else if (TryMatchSandboxOption(args[i], kParallelPoseGrainOption, sceneValue, bSandboxInlineValue))
+            {
+                sandboxOption = SandboxOption::ParallelPoseGrain;
+                sandboxOptionName = kParallelPoseGrainOption;
+            }
+            if (sandboxOption != SandboxOption::None)
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                const bool bDuplicate =
+                    (sandboxOption == SandboxOption::SkinnedCrowd && m_SkinnedCrowdCount != 0) ||
+                    (sandboxOption == SandboxOption::ParallelPose && m_ParallelPose != -1) ||
+                    (sandboxOption == SandboxOption::ParallelPoseMin && m_ParallelPoseMinCount != 0) ||
+                    (sandboxOption == SandboxOption::ParallelPoseGrain && m_ParallelPoseGrain != 0);
+                if (bDuplicate)
+                {
+                    LOG_ERROR("%s が重複しています", sandboxOptionName);
+                    return false;
+                }
+                if (!bSandboxInlineValue)
+                {
+                    if (i + 1 >= args.size() || args[i + 1].empty() || IsCommandLineOption(args[i + 1]))
+                    {
+                        LOG_ERROR("%s には値を指定してください", sandboxOptionName);
+                        return false;
+                    }
+                    sceneValue = args[++i];
+                }
+                if (sandboxOption == SandboxOption::ParallelPose)
+                {
+                    if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                    {
+                        LOG_ERROR("--parallel-pose は on または off で指定してください");
+                        return false;
+                    }
+                    m_ParallelPose = sceneValue == TEXT("on") ? 1 : 0;
+                }
+                else
+                {
+                    uint32_t value = 0;
+                    if (!TryParseUInt32(sceneValue, value) || value == 0 ||
+                        (sandboxOption == SandboxOption::SkinnedCrowd && value > 10000u))
+                    {
+                        if (sandboxOption == SandboxOption::SkinnedCrowd)
+                        {
+                            LOG_ERROR("--skinned-crowd は 1〜10000 の整数で指定してください");
+                        }
+                        else
+                        {
+                            LOG_ERROR("%s は 1 以上の整数で指定してください", sandboxOptionName);
+                        }
+                        return false;
+                    }
+                    if (sandboxOption == SandboxOption::SkinnedCrowd)
+                    {
+                        m_SkinnedCrowdCount = value;
+                    }
+                    else if (sandboxOption == SandboxOption::ParallelPoseMin)
+                    {
+                        m_ParallelPoseMinCount = value;
+                    }
+                    else
+                    {
+                        m_ParallelPoseGrain = value;
+                    }
+                }
+#else
+                LOG_WARNING("%s は開発ビルドだけで使えます。無視します", sandboxOptionName);
+                if (!bSandboxInlineValue && i + 1 < args.size() && !IsCommandLineOption(args[i + 1]))
+                {
+                    ++i;
                 }
 #endif
                 continue;
@@ -2999,6 +3247,8 @@ namespace Game
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
         // --capture-views と、その保存先・撮るまでのフレーム数を決める --capture-png・--exit-after-rendered-frames
         String capturePngPath;
+        String mapCaptureSpecPath;
+        bool bCaptureDeterministic = false;
         uint64_t captureSettledRenderedFrames = kCapturePngDefaultSettledRenderedFrames;
         uint64_t captureViewSettleRenderedFrames = Game::Debug::MultiViewCapture::kDefaultViewSettleRenderedFrames;
         bool bCaptureHdr = false;
@@ -3010,6 +3260,7 @@ namespace Game
         for (size_t i = 0; i < args.size(); ++i)
         {
             String value;
+            bCaptureDeterministic = bCaptureDeterministic || args[i] == TEXT("--capture-deterministic");
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureHdrOption))
             {
                 bCaptureHdr = true;
@@ -3029,6 +3280,20 @@ namespace Game
             else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kCaptureAovOption))
             {
                 bCaptureAov = true;
+            }
+            else if (args[i] == TEXT("--map-capture"))
+            {
+                LOG_ERROR("--map-capture には = に続けて設定ファイルのパスを指定してください");
+                return false;
+            }
+            else if (TryStripPrefix(args[i], kMapCaptureOption, value))
+            {
+                if (!mapCaptureSpecPath.empty() || value.empty())
+                {
+                    LOG_ERROR("--map-capture は1回だけ、空でない設定ファイルのパスを指定してください");
+                    return false;
+                }
+                mapCaptureSpecPath = value;
             }
             else if (TryStripPrefix(args[i], kCaptureViewsOption, value))
             {
@@ -3067,6 +3332,36 @@ namespace Game
                     geomSettleTraceSeconds > kGeomSettleTraceMaxSeconds)
                 {
                     LOG_ERROR("--geom-settle-trace には 1〜600 の秒数を指定する");
+                    return false;
+                }
+            }
+        }
+        if (!mapCaptureSpecPath.empty())
+        {
+            if (capturePngPath.empty() || !bCaptureDeterministic || m_StartupSceneId.empty())
+            {
+                LOG_ERROR("--map-capture には --scene・--capture-png・--capture-deterministic が必要です");
+                return false;
+            }
+            for (const auto& argument : args)
+            {
+                String value;
+                if (argument == TEXT("--capture-views") || argument == TEXT("--capture-sequence") ||
+                    argument == TEXT("--camera-script") || argument == TEXT("--camera-path-capture-time") ||
+                    argument == TEXT("--geom-settle-trace") ||
+                    TryStripPrefix(argument, kCaptureViewsOption, value) ||
+                    TryStripPrefix(argument, kCaptureSequenceOption, value) ||
+                    TryStripPrefix(argument, kCameraScriptOption, value) ||
+                    TryStripPrefix(argument, kCameraPathCaptureTimeOption, value) ||
+                    TryStripPrefix(argument, kGeomSettleTraceOption, value))
+                {
+                    LOG_ERROR("--map-capture は --capture-views・--capture-sequence・--camera-script・"
+                              "--camera-path-capture-time・--geom-settle-trace と併用できません");
+                    return false;
+                }
+                if (TryStripPrefix(argument, TEXT("--film-grain="), value) && !IsZeroFilmGrainValue(value))
+                {
+                    LOG_ERROR("--map-capture では --film-grain を 0 にしてください");
                     return false;
                 }
             }
@@ -3111,6 +3406,15 @@ namespace Game
         if (!ResolveStartupScene())
         {
             return false;
+        }
+        if (!mapCaptureSpecPath.empty())
+        {
+            String error;
+            if (!m_MapCapture.Configure(mapCaptureSpecPath, captureSettledRenderedFrames, &error))
+            {
+                LOG_ERROR("--map-capture の設定に失敗しました: %s", error.c_str());
+                return false;
+            }
         }
 #if NORVES_BUILD_DEVELOPMENT
         if (m_CameraPathCaptureTime >= 0.0 &&
@@ -3287,6 +3591,16 @@ namespace Game
             LOG_ERROR("--shisha-scale には --shisha-showcase が必要です");
             return false;
         }
+        if (m_bShishaSunElevationSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-sun-elevation には --shisha-showcase が必要です");
+            return false;
+        }
+        if (m_bShishaOvercast && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-overcast には --shisha-showcase が必要です");
+            return false;
+        }
 #endif
         if (m_bDogMovementAutopilot && !m_bDogMovementSmoke)
         {
@@ -3425,6 +3739,15 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            // RenderWorld の設定はシーン切り替えを通して保持される。
+            if (s_bSkyOcclusion)
+            {
+                auto& renderWorld = engine->GetRenderWorld();
+                auto parameters = renderWorld.GetRenderingCoordinator().GetSkyOcclusionParameters();
+                parameters.bEnabled = true;
+                renderWorld.SetSkyOcclusionParameters(parameters);
+            }
+
             // Game の Component の毎フレームの処理を World の順序付きの系へ登録する（シーンが作る前に済ませる）
             Game::Gameplay::FollowCameraComponent::RegisterTick(engine->GetWorld());
             Game::Gameplay::QuadrupedLocomotionComponent::RegisterTick(engine->GetWorld());
@@ -4337,6 +4660,11 @@ namespace Game
         {
             m_MultiViewCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
         }
+        if (m_MapCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_MapCapture.OnPreRender(&NorvesLib::Core::Engine::GEngine->GetWorld(),
+                                     NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
+        }
     }
 
     void GameApplicationHandler::OnPostRender()
@@ -4391,6 +4719,10 @@ namespace Game
         if (m_MultiViewCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
         {
             m_MultiViewCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
+        }
+        if (m_MapCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_MapCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld(), HasPendingM9WorldWork());
         }
         LogVramLedgerOnce();
 #if NORVES_BUILD_DEVELOPMENT
@@ -4581,7 +4913,8 @@ namespace Game
             return true;
         }
 #endif
-        return HasPendingM9WorldWork() || m_MultiViewCapture.IsHoldingEngineCapture();
+        return HasPendingM9WorldWork() || m_MultiViewCapture.IsHoldingEngineCapture() ||
+               m_MapCapture.IsHoldingEngineCapture();
     }
 
     void GameApplicationHandler::OnShutdown()
@@ -4918,6 +5251,7 @@ namespace Game
         };
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
+        const bool bSkyOccluderDemo = s_bSkyOccluderDemo;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
@@ -4954,19 +5288,22 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
         registerMode(
             ShishaShowcase,
-            [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale](
+            [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale,
+             sunElevation = m_ShishaSunElevationDegrees, bOvercast = m_bShishaOvercast](
                 const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<ShishaShowcaseMode>();
                 mode->GetData().m_SceneName = sceneName;
                 mode->GetData().m_OrbitDegreesPerSecond = orbit;
                 mode->GetData().m_StandinScale = scale;
+                mode->GetData().m_SunElevationDegrees = sunElevation;
+                mode->GetData().m_bOvercast = bOvercast;
                 return mode;
             });
 #endif
         registerMode(
             Rendering3DTest,
-            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
+            [this, bUseCookedModel, bPhysicsSmoke, bSkyOccluderDemo, m9WorldAcceptance,
              lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
@@ -4982,6 +5319,7 @@ namespace Game
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
+                mode->GetData().m_bSkyOccluderDemo = bSkyOccluderDemo;
                 mode->GetData().m_bHasStartupCamera = s_bRendering3DTestHasStartupCamera;
                 mode->GetData().m_StartupCameraYaw = s_Rendering3DTestStartupCamera[0];
                 mode->GetData().m_StartupCameraPitch = s_Rendering3DTestStartupCamera[1];
@@ -5057,7 +5395,8 @@ namespace Game
         // バナナのシーン。本数・視点・台本は起動引数から渡す。
         registerMode(
             MegaBananas,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
 #if NORVES_BUILD_DEVELOPMENT
              captureTime = m_CameraPathCaptureTime, pathCapture = &m_CameraPathCapture,
 #endif
@@ -5067,6 +5406,7 @@ namespace Game
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MegaBananasMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5085,13 +5425,15 @@ namespace Game
         // 荒野のシーン。視点・台本は起動引数から渡す。
         registerMode(
             Wasteland,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              scriptCapture = &m_CameraScriptCapture,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_pScriptCapture = scriptCapture;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
@@ -5121,13 +5463,15 @@ namespace Game
         // 夜の集落のシーン。荒野のモードの型で、夜の集落として組む。視点・台本は起動引数から渡す（荒野の比較用の引数は渡さない）
         registerMode(
             NightVillage,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              scriptCapture = &m_CameraScriptCapture,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<WastelandMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_bNightVillage = true;
                 mode->GetData().m_pScriptCapture = scriptCapture;
                 mode->GetData().m_ViewName = viewName;
@@ -5142,12 +5486,14 @@ namespace Game
         // 材質ギャラリー。視点・台本は起動引数から渡す。テクスチャが焼いてあるかは AssetSystem で確かめる
         registerMode(
             MaterialGallery,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MaterialGalleryMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5160,12 +5506,14 @@ namespace Game
         // 室内の光。視点・台本は起動引数から渡す。テクスチャと家具のメッシュが焼いてあるかは AssetSystem で確かめる
         registerMode(
             InteriorLight,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<InteriorLightMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5179,11 +5527,19 @@ namespace Game
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
         registerMode(
             Sandbox,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
-             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
-             viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
+             skinnedCrowdCount = m_SkinnedCrowdCount, parallelPose = m_ParallelPose,
+             parallelPoseMinCount = m_ParallelPoseMinCount, parallelPoseGrain = m_ParallelPoseGrain]
+            (const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
+                mode->GetData().m_SkinnedCrowdCount = skinnedCrowdCount;
+                mode->GetData().m_ParallelPose = parallelPose;
+                mode->GetData().m_ParallelPoseMinCount = parallelPoseMinCount;
+                mode->GetData().m_ParallelPoseGrain = parallelPoseGrain;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5195,12 +5551,14 @@ namespace Game
         // 草原地形の grassland は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
         registerMode(
             Grassland,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
              scatterStressCount = m_GrasslandScatterStressCount,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
@@ -5214,7 +5572,8 @@ namespace Game
         // バナナは --banana-count を指定したときだけ同時に置く（混在の負荷）。
         registerMode(
             MegaStress,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, bananaCount = m_bBananaCountSet ? m_BananaCount : 0u,
              entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
              movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
@@ -5225,6 +5584,7 @@ namespace Game
                 -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<MegaStressMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

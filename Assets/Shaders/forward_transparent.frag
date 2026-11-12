@@ -15,7 +15,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveColor;
     vec4 pomParams; // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
-    vec4 sceneColorParams;
+    vec4 sceneColorParams; // x=プリエクスポージャ、y=被覆率を出す印
     mat4 lightView[4];
     mat4 lightProjection[4];
     vec4 shadowSplitDistances[2];
@@ -32,6 +32,10 @@ layout(set = 0, binding = 0) uniform MVPData
     uint virtualTextureFeedbackHeightParam; // 同じく高さ
     float staticEnvironmentMaxRadiance; // 静的HDRの鏡面の放射輝度の上限（倍率を掛ける前。0は上限なし）
     vec4 cameraForward;
+    uvec4 skyOcclusionInfo;
+    vec4 skyOcclusionParams;
+    ivec4 skyOcclusionWindowOrigin[4];
+    vec4 skyOcclusionTexelMeters;
 } mvp;
 
 layout(set = 0, binding = 1) uniform sampler2D albedoTexture;
@@ -61,6 +65,8 @@ layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular;
 layout(set = 0, binding = 13) uniform sampler2D dfgLut;
 // 点光源のキューブシャドウ（LightingPassと同じキューブ配列。光源バッファのattenuation.wで引く）
 layout(set = 0, binding = 14) uniform samplerCubeArray pointShadowCubes;
+layout(set = 0, binding = 16) uniform sampler2DArray skyOcclusionVisibility;
+layout(set = 0, binding = 17) uniform sampler2DArray skyOcclusionAux;
 
 layout(location = 0) out vec4 outColor;
 
@@ -71,6 +77,7 @@ layout(location = 0) out vec4 outColor;
 #include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PointShadow.glsl"
+#include "Common/SkyOcclusion.glsl"
 
 vec2 EquirectangularUV(vec3 direction)
 {
@@ -363,9 +370,17 @@ void main()
         vec3 specularIBL = prefilteredColor *
                            ((1.0 - metallic) * Ed + metallic * Ec);
         float specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        specularAO *= EvaluateSkySpecularOcclusion(fragWorldPos, normal, reflectionDirection, roughness,
+            skyOcclusionVisibility, skyOcclusionAux, mvp.skyOcclusionInfo, mvp.skyOcclusionParams,
+            mvp.skyOcclusionWindowOrigin, mvp.skyOcclusionTexelMeters);
         ambient = (diffuseIBL * ao + specularIBL * specularAO) * mvp.iblIntensity;
     }
 
     vec3 emissive = mvp.emissiveColor.rgb * mvp.emissiveColor.a;
+    if (mvp.sceneColorParams.y > 0.5)
+    {
+        outColor = vec4(1.0, 0.0, 0.0, alpha);
+        return;
+    }
     outColor = vec4((direct + ambient + emissive) * mvp.sceneColorParams.x, alpha);
 }

@@ -89,6 +89,17 @@ namespace NorvesLib::Core::Rendering
         const SkyOcclusionReferenceGrid& grid, const SkyOcclusionParameters& parameters,
         float worldX, float worldZ);
 
+    /**
+     * @brief 距離と窓の包含で段を選び、クリップマップの地平線を積分する。
+     *
+     * levels は細かい順の空でない格子列で、各窓はワールドテクセルに整列している。
+     * receiverLevel は levels の範囲内とし、格子のポインタはすべて有効とする。
+     */
+    SkyOcclusionL1 IntegrateSkyOcclusionClipmap(
+        Container::Span<const SkyOcclusionReferenceGrid* const> levels,
+        std::uint32_t receiverLevel, const SkyOcclusionParameters& parameters,
+        float worldX, float worldZ);
+
     /** @brief 単位法線に対する L1 のコサイン畳み込みを返す。 */
     float EvaluateSkyOcclusionB(const SkyOcclusionL1& coefficients, float nx, float ny, float nz);
     float EvaluateSkyOcclusionVisibility(
@@ -111,4 +122,13 @@ namespace NorvesLib::Core::Rendering
     /** @brief L1 から曲げた法線と可視円錐を作り、鏡面可視率を返す。 */
     float EvaluateSkySpecularOcclusion(
         const SkyOcclusionL1& coefficients, const Math::Vector3& reflection, float roughness);
+
+    /**
+     * @brief 反射の単位方向に沿い、格子の樹冠層を通る光の透過率を求める。
+     *
+     * 設定は SanitizeSkyOcclusionParameters が定める有効範囲を前提とする。
+     */
+    float EvaluateSkySpecularTransmittance(
+        const SkyOcclusionReferenceGrid& grid, const SkyOcclusionParameters& parameters,
+        const Math::Vector3& position, const Math::Vector3& reflection);
 } // namespace NorvesLib::Core::Rendering

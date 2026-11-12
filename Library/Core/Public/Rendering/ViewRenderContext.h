@@ -7,12 +7,16 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/SkyOcclusion.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPointLights.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
+#include "Wind.h"
+#include "RenderExtension/RenderExtensionData.h"
 #include "Container/Containers.h"
 #include <cmath>
 #include <cstdint>
@@ -42,6 +46,7 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapPassSettings;
     struct PointShadowSnapshot;
     struct RayTracingSceneSnapshot;
+    struct GrassFieldRenderData;
 
     struct RenderGraphDebugCapture
     {
@@ -130,6 +135,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t DDGIProbeCount = 0;
         bool bDDGIAtlasPublished = false;
 
+        /** @brief Declare の登録順で確定するフィールドの座標。画像の公開名と組にして読む。 */
+        mutable WorldFieldFrameState WorldField;
+
         /** @brief R6 RTGIの能力・結果・current/history履歴の公開値。 */
         RTGIResourcePublication RTGI;
         RTGIIndirectLightingSource IndirectLightingSource =
@@ -173,6 +181,7 @@ namespace NorvesLib::Core::Rendering
             DDGIDistanceAtlas.reset();
             DDGIProbeCount = 0;
             bDDGIAtlasPublished = false;
+            WorldField = {};
             RTGI.Clear();
             IndirectLightingSource = RTGIIndirectLightingSource::Raster;
             IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
@@ -363,6 +372,12 @@ namespace NorvesLib::Core::Rendering
             RefreshIndirectLightingSource();
         }
 
+        /** @brief const な Declare 文脈から、消費側の宣言に先立って座標を公開する。 */
+        void PublishWorldField(const WorldFieldFrameState& state) const
+        {
+            WorldField = state;
+        }
+
         void PublishDDGIAtlas(const RHI::TexturePtr& irradianceAtlas,
                               const RHI::TexturePtr& distanceAtlas,
                               uint32_t probeCount,
@@ -486,6 +501,65 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    /** @brief 空の遮蔽クリップマップを照明へ渡す資源。 */
+    struct SkyOcclusionRenderResources
+    {
+        SkyOcclusionParameters Parameters;
+        RHI::TexturePtr VisibilityTexture;
+        RHI::TexturePtr AuxTexture;
+        RHI::SamplerPtr Sampler;
+        int32_t WindowOrigin[4][2] = {};
+        float TexelMeters[4] = {};
+        uint32_t LevelCount = 0u;
+        uint32_t Resolution = 0u;
+        bool bSnapshotEnabled = false;
+        bool bValid = false;
+
+        void Reset()
+        {
+            Parameters = SkyOcclusionParameters{};
+            VisibilityTexture.reset();
+            AuxTexture.reset();
+            Sampler.reset();
+            for (uint32_t level = 0u; level < 4u; ++level)
+            {
+                WindowOrigin[level][0] = 0;
+                WindowOrigin[level][1] = 0;
+                TexelMeters[level] = 0.0f;
+            }
+            LevelCount = 0u;
+            Resolution = 0u;
+            bSnapshotEnabled = false;
+            bValid = false;
+        }
+
+        void Publish(const SkyOcclusionParameters& parameters,
+                     const RHI::TexturePtr& visibility,
+                     const RHI::TexturePtr& aux,
+                     const RHI::SamplerPtr& sampler,
+                     const int32_t windowOrigin[4][2],
+                     const float texelMeters[4],
+                     uint32_t levelCount,
+                     uint32_t resolution,
+                     bool bValidValue)
+        {
+            Parameters = parameters;
+            VisibilityTexture = visibility;
+            AuxTexture = aux;
+            Sampler = sampler;
+            for (uint32_t level = 0u; level < 4u; ++level)
+            {
+                WindowOrigin[level][0] = windowOrigin[level][0];
+                WindowOrigin[level][1] = windowOrigin[level][1];
+                TexelMeters[level] = texelMeters[level];
+            }
+            LevelCount = levelCount;
+            Resolution = resolution;
+            bSnapshotEnabled = parameters.bEnabled;
+            bValid = bValidValue;
+        }
+    };
+
     /**
      * @brief View描画コンテキスト
      *
@@ -503,6 +577,7 @@ namespace NorvesLib::Core::Rendering
     {
         PhysicalLightingResources PhysicalLighting;
         SkyAtmosphereRenderResources SkyAtmosphere;
+        SkyOcclusionRenderResources SkyOcclusion;
 
         // ========================================
         // RHIリソース
@@ -547,6 +622,20 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
         const SceneProxy *SnapshotScene = nullptr;
+
+        /** @brief スナップショットから拡張の値を借用する。未接続または一致する値が無ければ nullptr。 */
+        template <typename T>
+        const T* FindExtension(const RenderExtensionDataKey<T>& key) const
+        {
+            return SnapshotScene ? FindRenderExtensionValue(SnapshotScene->Extensions, key) : nullptr;
+        }
+
+        /** @brief スナップショットから拡張の配列を借用する。未接続または一致する配列が無ければ空。 */
+        template <typename T>
+        Container::Span<const T> FindExtensionArray(const RenderExtensionDataKey<T>& key) const
+        {
+            return SnapshotScene ? FindRenderExtensionArray(SnapshotScene->Extensions, key) : Container::Span<const T>{};
+        }
 
         /** @brief FramePacketが所有するRT scene snapshot */
         const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
@@ -605,6 +694,12 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 草・低木の株の束と風のスナップショット（FramePacket::Scene.Foliage を指す） */
         const FoliageScene *SnapshotFoliage = nullptr;
+
+        /** @brief 草の場のスナップショット（FramePacket::GrassField を指す。草の場が無いフレームは nullptr） */
+        const GrassFieldRenderData *SnapshotGrassField = nullptr;
+
+        /** @brief パケット所有の世界フィールド干渉子の配列を借用する読み取り専用ポインタ。 */
+        const Container::VariableArray<WorldFieldInteractor>* SnapshotWorldFieldInteractors = nullptr;
 
         /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
         const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
@@ -1097,6 +1192,15 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief アプリケーション開始からの経過時間（秒） */
         double TotalTime = 0.0;
+
+        /** @brief ゲームの時間。DeltaTime は RenderThread のフレーム時間なので、拡張のパスはこちらを使う。 */
+        RenderExtensionFrameInfo ExtensionFrame;
+
+        /** @brief フレームパケットから値で写した、試験だけで使う頂点アニメの正弦の揺れの許可。 */
+        bool bVertexAnimationTestDisplacement = false;
+
+        /** @brief フレームパケットから値で写した世界共通の風。 */
+        WindParameters Wind = MakeDefaultWindParameters();
 
         /**
          * @brief 決定的な撮影（--capture-deterministic）のフレームか

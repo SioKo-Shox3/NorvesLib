@@ -4,6 +4,7 @@
 #include "WorkStealingQueue.h"
 #include "ConditionVariable.h"
 #include "Mutex.h"
+#include "ReadWriteLock.h"
 #include "Atomic.h"
 #include <memory>
 #include <queue>
@@ -75,6 +76,9 @@ namespace NorvesLib::Thread
          * @brief 新しいタスクの受理を停止する
          */
         void StopAcceptingTasks();
+
+        /** @brief 初期化済みで、新しいタスクを受け付けているかを返す。 */
+        bool IsAcceptingTasks() const;
 
         /**
          * @brief 現在の有限タスク世代だけが完了するまで待機する
@@ -214,7 +218,7 @@ namespace NorvesLib::Thread
         // 次のタスクを取得（ワークスチーリング用）
         TaskPtr GetNextTaskWorkStealing(size_t threadIndex);
 
-        // ランダムなスレッドからタスクを盗む
+        // ワーカー番号の次から全ローカルキューを巡回してタスクを盗む
         TaskPtr StealTask(size_t currentThreadIndex);
 
         // 現在の負荷に基づいて適切なスレッド数を計算
@@ -307,7 +311,7 @@ namespace NorvesLib::Thread
         // ワーカーの稼働率の目標値
         static constexpr float TARGET_WORKER_UTILIZATION = 0.7f;
 
-        // ランダムデバイス（タスクスチーリング用）
+        // 提出先の選択用。ワーカーミューテックスの中でだけ使う。
         std::mt19937 m_randomGenerator;
 
         // 同期用オブジェクト
@@ -315,6 +319,10 @@ namespace NorvesLib::Thread
         mutable Mutex m_resizeMutex;
         mutable Mutex m_queueMutex;
         mutable Mutex m_workerThreadMutex;
+        // 入れ子の取得順は resize → workerThread → localQueues → queue → 各キュー。
+        // 起床用ロックは最後に取り、保持中はキューやワーカーのロックを取らない。
+        ReadWriteLock m_localQueuesLock;
+        Mutex m_workerWakeMutex;
         ConditionVariable m_conditionVar;
         Atomic<bool> m_shutdownRequested;
         Atomic<bool> m_monitorActive;
@@ -332,6 +340,9 @@ namespace NorvesLib::Thread
 
         // キュー内のタスク追跡
         Atomic<size_t> m_queuedTaskCount;
+
+        // 実行中の仕事では起こし続けないよう、未着手の仕事だけを待機条件に使う。
+        Atomic<size_t> m_pendingTaskCount;
 
         // プロセッサ使用率の履歴
         static constexpr size_t UTILIZATION_HISTORY_SIZE = 10;

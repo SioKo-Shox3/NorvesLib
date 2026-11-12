@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "Rendering/ShadingModelIds.h"
 #include "Container/Containers.h"
 #include <cmath>
 #include <cstdint>
@@ -8,6 +9,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    using GBufferProgramId = uint32_t;
+    constexpr GBufferProgramId kStandardGBufferProgramId = 0;
+
+    /** @brief 名前からプログラム ID を求める。空または null は標準を表す。 */
+    GBufferProgramId MakeGBufferProgramId(const char* name);
 
     // ========================================
     // シェーダー関連型
@@ -218,8 +224,58 @@ namespace NorvesLib::Core::Rendering
         Cloth,      // 布
         Hair,       // 髪
         Eye,        // 目
-        Custom      // カスタム
+        Custom,     // カスタム
+        Fur,        // 毛皮
+        PaleFlat    // 淡い平坦な面
     };
+
+    // CPU の列挙と GBuffer の ID を切り離す唯一の変換。Unlit は当面 DefaultLit に写す。
+    constexpr uint32_t ToGBufferShadingModelId(ShadingModel model)
+    {
+        switch (model)
+        {
+        case ShadingModel::Fur:
+            return GBufferContract::ShadingModelFur;
+        case ShadingModel::Eye:
+            return GBufferContract::ShadingModelEye;
+        case ShadingModel::PaleFlat:
+            return GBufferContract::ShadingModelPaleFlat;
+        default:
+            return GBufferContract::ShadingModelDefaultLit;
+        }
+    }
+
+    // x = P0（GBuffer の Material.a、8bit）、y = P1（Emissive.a、半精度）、z = 予約、
+    // w = 被覆率の乗数（1 = 不変）。負は未指定。
+    inline constexpr uint32_t ShadingParamCount = 4u;
+    inline constexpr uint32_t ShadingParamP0 = 0u;
+    inline constexpr uint32_t ShadingParamP1 = 1u;
+    inline constexpr uint32_t ShadingParamReserved = 2u;
+    inline constexpr uint32_t ShadingParamCoverageScale = 3u;
+
+    // 負と NaN を未指定にし、1 を超える値を 1 に収める。
+    inline float SanitizeShadingParam(float value)
+    {
+        if (!(value >= 0.0f))
+        {
+            return -1.0f;
+        }
+        return value > 1.0f ? 1.0f : value;
+    }
+
+    // インスタンス、材質、既定値の順に指定された値を採用する。
+    inline float ResolveShadingParam(float instanceValue, float materialValue, uint32_t index)
+    {
+        if (instanceValue >= 0.0f)
+        {
+            return instanceValue;
+        }
+        if (materialValue >= 0.0f)
+        {
+            return materialValue;
+        }
+        return index == ShadingParamCoverageScale ? 1.0f : 0.0f;
+    }
 
     /**
      * @brief エミッシブ入力をY=1のchromaticityとnitsへ正規化します。
@@ -317,13 +373,19 @@ namespace NorvesLib::Core::Rendering
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
+        /// 半透明のとき、被覆率を Scene.Reactive へ積み TAA の残像を抑える。既定は書かない。
+        /// 雨・粒子は TAA の後の段で合成するのが推奨で、これは TAA の前に描く半透明だけに使う。
+        bool bWritesReactive = false;
         ShadingModel Shading = ShadingModel::DefaultLit;
+        // 並びは ShadingParamP0・P1・Reserved・CoverageScale。負は未指定で、RenderMaterialStore のコピー時に正規化する。
+        float ShadingParams[ShadingParamCount] = {-1.0f, -1.0f, -1.0f, -1.0f};
         bool bTwoSided = false;
         bool bCastShadows = true;
         /// 鏡面反射を持たない純ランバートの面にする（照明の尺度の検証用の灰色の板など）。直接光・環境光とも
         /// アルベド/π の拡散だけを数え、誘電体の F0（0.04）の鏡面と、その分の拡散の減りを掛けない。GBuffer の経路だけが読む
         bool bDiffuseOnly = false;
 
+        Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
     };
@@ -352,12 +414,19 @@ namespace NorvesLib::Core::Rendering
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
+        /// 半透明のとき、被覆率を Scene.Reactive へ積み TAA の残像を抑える。既定は書かない。
+        /// 雨・粒子は TAA の後の段で合成するのが推奨で、これは TAA の前に描く半透明だけに使う。
+        bool bWritesReactive = false;
         ShadingModel Shading = ShadingModel::DefaultLit;
+        // 並びは ShadingParamP0・P1・Reserved・CoverageScale。負は未指定で、RenderMaterialStore のコピー時に正規化する。
+        float ShadingParams[ShadingParamCount] = {-1.0f, -1.0f, -1.0f, -1.0f};
         bool bTwoSided = false;
         bool bCastShadows = true;
         bool bDiffuseOnly = false; ///< 鏡面の無い純ランバート（MaterialCreateData::bDiffuseOnly）
 
         uint32_t RefCount = 0;
+        GBufferProgramId ProgramId = kStandardGBufferProgramId; ///< Program から事前に計算した ID。
+        Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
     };

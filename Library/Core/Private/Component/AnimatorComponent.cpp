@@ -463,15 +463,49 @@ namespace NorvesLib::Core::Component
     }
     bool AnimatorComponent::EvaluateAnimation()
     {
+        if (BeginEvaluateAnimation())
+        {
+            RunEvaluateAnimation();
+        }
+        if (!FinishEvaluateAnimation())
+        {
+            return false;
+        }
+        return GetPoseTargetMesh()->SubmitLocalPose(m_FinalPose);
+    }
+    bool AnimatorComponent::BeginEvaluateAnimation()
+    {
+        m_bEvaluationPending = false;
+        m_bEvaluationSucceeded = false;
         auto* mesh = Mesh();
         if (!mesh || !m_Graph || !m_Graph->IsLoaded() || m_Graph->GetData() != m_Instance.GetGraph() ||
             mesh->GetSkeletalAsset() != m_BoundAsset || !m_BoundAsset ||
             m_BoundAsset->GetSkeleton() != m_BoundSkeleton || m_BoundAsset->GetMesh() != m_BoundMesh ||
-            !m_Instance.SetMeshTransform(mesh->GetMeshNodeGlobalTransform()) || !m_Instance.Evaluate())
+            !m_Instance.SetMeshTransform(mesh->GetMeshNodeGlobalTransform()))
         {
             return false;
         }
+        m_bEvaluationPending = true;
+        return true;
+    }
+    void AnimatorComponent::RunEvaluateAnimation()
+    {
+        if (!m_bEvaluationPending)
+        {
+            return;
+        }
+        m_bEvaluationSucceeded = false;
+        if (!m_Instance.Evaluate())
+        {
+            return;
+        }
         m_FinalPose = m_Instance.GetLocalPose();
+        if (!HasPoseModifiers())
+        {
+            m_bEvaluationSucceeded = true;
+            return;
+        }
+        auto* mesh = GetPoseTargetMesh();
         Animation::PoseModifierContext context(m_BoundAsset->GetSkeleton()->GetPoseRuntime(), m_LastDelta,
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
@@ -491,22 +525,32 @@ namespace NorvesLib::Core::Component
         context.SetOwner(GetOwner());
         context.SetSkeletonAsset(m_BoundSkeleton.get());
         m_bApplyingModifiers = true;
-        bool applied = true;
+        m_bEvaluationSucceeded = true;
         for (const auto& modifier : m_Modifiers)
         {
             context.Invalidate();
             if (!modifier->Apply(m_FinalPose, context))
             {
-                applied = false;
+                m_bEvaluationSucceeded = false;
                 break;
             }
         }
         m_bApplyingModifiers = false;
-        if (!applied)
-        {
-            return false;
-        }
-        return mesh->SubmitLocalPose(m_FinalPose);
+    }
+    bool AnimatorComponent::FinishEvaluateAnimation()
+    {
+        const bool bSucceeded = m_bEvaluationPending && m_bEvaluationSucceeded;
+        m_bEvaluationPending = false;
+        m_bEvaluationSucceeded = false;
+        return bSucceeded;
+    }
+    SkinnedMeshComponent* AnimatorComponent::GetPoseTargetMesh() const
+    {
+        return Mesh();
+    }
+    void AnimatorComponent::DispatchPendingEvents()
+    {
+        m_Instance.Events().Dispatch();
     }
     void AnimatorComponent::TickAnimationGroup(float dt)
     {
@@ -515,8 +559,10 @@ namespace NorvesLib::Core::Component
     void AnimatorComponent::TickPoseFinalizeGroup()
     {
         if (m_bEvaluate)
+        {
             (void)EvaluateAnimation();
-        m_Instance.Events().Dispatch();
+        }
+        DispatchPendingEvents();
     }
     void AnimatorComponent::BuildDebugSnapshot(AnimatorDebugSnapshot& out) const
     {

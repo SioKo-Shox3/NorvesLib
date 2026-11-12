@@ -581,6 +581,38 @@ namespace
         return false;
     }
 
+    // --job-workers=<n>: JobSystem のワーカー数（1 以上 256 以下の整数）
+    bool TryParseJobWorkersOption(const String& argument, uint32_t& outWorkers, bool& bMatched)
+    {
+        const String prefix = TEXT("--job-workers=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 3u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed == 0u || parsed > 256u)
+        {
+            return false;
+        }
+        outWorkers = parsed;
+        return true;
+    }
+
     // --vsm-pool-pages=<n>: VSM の物理ページのプールのページの数（1 以上の整数。装置の上限へは VirtualShadowMapPass が締める）
     bool TryParseVsmPoolPagesOption(const String& argument, uint32_t& outPages, bool& bMatched)
     {
@@ -1136,6 +1168,16 @@ namespace NorvesLib::Core::Engine
             if (ParseFixedUpdateRateArgument(argument.c_str(),fixedRate)==FixedUpdateArgumentResult::Invalid)
             { LOG_ERROR("固定更新の起動引数には60または120を指定してください");return false; }
         }
+        uint32_t jobWorkerCount = 0u;
+        for (const auto& argument : config.Arguments)
+        {
+            bool bMatchedJobWorkers = false;
+            if (!TryParseJobWorkersOption(argument, jobWorkerCount, bMatchedJobWorkers) && bMatchedJobWorkers)
+            {
+                LOG_ERROR("ApplicationProcessor の起動引数 --job-workers の値が不正です: 1 以上 256 以下の整数にしてください");
+                return false;
+            }
+        }
         if (!m_FixedStepScheduler->SetRate(fixedRate))
         { LOG_ERROR("固定更新の設定が不正か、既に実行中です");return false; }
         GApplicationLifecycleState = {};
@@ -1144,8 +1186,9 @@ namespace NorvesLib::Core::Engine
 
         // JobSystemを初期化（ワーカースレッドの起動）
         GApplicationLifecycleState.bJobSystem = true;
-        Thread::JobSystem::Get().Initialize();
-        LOG_INFO("JobSystem initialized");
+        Thread::JobSystem::Get().Initialize(jobWorkerCount);
+        LOG_INFO("JobSystem を初期化しました: ワーカー %zu 本",
+                 Thread::JobSystem::Get().GetWorkerThreadCount());
 
         // GEngineを作成
         if (!CreateEngine())
@@ -1850,6 +1893,17 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             GApplicationLifecycleState.bModules = true;
+
+            if (auto* registry = GEngine->GetRenderWorld().GetRenderExtensionRegistry())
+            {
+                for (Module::IRenderModule* renderModule : Module::GetModuleRegistry().GetRenderModules())
+                {
+                    if (renderModule)
+                    {
+                        renderModule->RegisterRenderExtensions(*registry);
+                    }
+                }
+            }
         }
 
         // OnPostInitialize呼び出し
@@ -1867,6 +1921,11 @@ namespace NorvesLib::Core::Engine
         }
         // Handler/モジュールの初期化後に購読し、通知はmessage処理外へ遅延する。
         ConnectInputWindow(GEngine->GetMainWindowShared());
+        // ゲームスレッドが走り出す前に初期化時の即時反映を終了する。
+        if (auto* registry = GEngine->GetRenderWorld().GetRenderExtensionRegistry())
+        {
+            registry->CloseInitializationWindow();
+        }
         GEngine->SetRunning(true);
         GApplicationLifecycleState.bRunning = true;
         transaction.Commit();
@@ -2023,6 +2082,8 @@ namespace NorvesLib::Core::Engine
                 GEngine->GetRenderWorld().WaitForRender();
                 GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
             }
+            // Prepare を待ち、GameMode・World・描画資源を片付ける前にセルを解放する。
+            GEngine->GetStreamingSystem().Shutdown();
             if (lifecycle.bJobSystem)
             {
                 Thread::JobSystem::Get().StopAcceptingTasks();
@@ -2777,6 +2838,7 @@ namespace NorvesLib::Core::Engine
             // 段 PreSimulation: GameMode の状態機械 → World の段 Tick → 段 PostTick: 粒子
             RunFrameStage(EFrameStage::PreSimulation, times.Unscaled, handler);
             GEngine->GetWorld().Tick(times);
+            GEngine->GetVegetation().Tick(times.World);
             RunFrameStage(EFrameStage::PostTick, times.Particle, handler);
         }
         const FixedStepAdvanceResult result =
@@ -2787,6 +2849,10 @@ namespace NorvesLib::Core::Engine
         {
             // World の段 LateTick → 段 PostLateTick: モジュールの LateTick → handler の OnLateUpdate
             GEngine->GetWorld().LateTick(times);
+        }
+        GEngine->UpdateWorldFieldInteractors();
+        if (bAdvanceSimulation)
+        {
             RunFrameStage(EFrameStage::PostLateTick, times.Unscaled, handler);
         }
         return result;
@@ -2974,6 +3040,8 @@ namespace NorvesLib::Core::Engine
 
         add(EFrameStage::PostTick, "PostTick.Particles",
             [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+        add(EFrameStage::PostTick, "PostTick.Streaming",
+            [](void*, const Context&) { GEngine->GetStreamingSystem().Update(); });
 
         add(EFrameStage::FixedModulePre, "FixedModulePre.PreFixedTick",
             [](void*, const Context& context) { Module::GetModuleRegistry().DispatchPreFixedTick(context.DeltaTime); });

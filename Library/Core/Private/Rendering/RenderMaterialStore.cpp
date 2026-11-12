@@ -45,8 +45,15 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
+            data.Program = createInfo.Program;
+            data.ProgramId = MakeGBufferProgramId(data.Program.c_str());
             data.Blend = createInfo.Blend;
+            data.bWritesReactive = createInfo.bWritesReactive;
             data.Shading = createInfo.Shading;
+            for (uint32_t index = 0; index < ShadingParamCount; ++index)
+            {
+                data.ShadingParams[index] = SanitizeShadingParam(createInfo.ShadingParams[index]);
+            }
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;
             data.bDiffuseOnly = createInfo.bDiffuseOnly;

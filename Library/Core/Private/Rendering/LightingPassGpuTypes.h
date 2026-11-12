@@ -41,6 +41,20 @@ namespace NorvesLib::Core::Rendering
         float contactShadowParams[4]; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
         float invViewProjectionCameraRelative[16]; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
         float depthLinearization[4]; // x=近方面(m), y=近方面÷遠方面（深度から前方への距離を求める。正射影は0で、invViewProjectionで戻す）
+        // [0].x: Fur の wrap の量（0 で通常の Lambert）
+        // [0].y: Fur の鏡面に使う粗さの下限
+        // [0].z: Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × この値)）
+        // [0].w: 予約（0）
+        // [1]: 予約（0）。PaleFlat は末尾の paleFlatColorAndWrapMin・paleFlatShape・paleFlatAverageIrradiance を使う
+        float shadingModelParams[2][4];
+        uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
+        float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
+        float skyOcclusionBounce[4]; // rgb=遮蔽物の反射色×強度、w=0
+        int32_t skyOcclusionWindowOrigin[4][4]; // 段ごとのxy=窓の最小ワールドテクセル、zw=0
+        float skyOcclusionTexelMeters[4]; // 段ごとのテクセル幅(m)
+        float paleFlatColorAndWrapMin[4]; // rgb=PaleFlat のリニア色（ConvertPaleFlatColorToLinear）、w=WrapMin
+        float paleFlatShape[4]; // x=ShadowStrength、y=AmbientLocalMix、z=SpecularScale、w=Flatness
+        float paleFlatAverageIrradiance[4]; // rgb=拡散照度の資源と組の全球の平均照度 E_avg（ambientColor.w を掛ける前）、w=有効1・無効0（rgbも0）
     };
 
     struct GPULightData
@@ -56,7 +70,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
     static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
     static_assert(offsetof(GPUDDGILightingParams, info) == 48);
-    static_assert(sizeof(GPULightingParams) == 944);
+    static_assert(sizeof(GPULightingParams) == 1152);
     static_assert(offsetof(GPULightingParams, invViewProjection) == 0);
     static_assert(offsetof(GPULightingParams, cameraPosition) == 64);
     static_assert(offsetof(GPULightingParams, ambientColor) == 80);
@@ -81,6 +95,15 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, contactShadowParams) == 848);
     static_assert(offsetof(GPULightingParams, invViewProjectionCameraRelative) == 864);
     static_assert(offsetof(GPULightingParams, depthLinearization) == 928);
+    static_assert(offsetof(GPULightingParams, shadingModelParams) == 944);
+    static_assert(offsetof(GPULightingParams, skyOcclusionInfo) == 976);
+    static_assert(offsetof(GPULightingParams, skyOcclusionParams) == 992);
+    static_assert(offsetof(GPULightingParams, skyOcclusionBounce) == 1008);
+    static_assert(offsetof(GPULightingParams, skyOcclusionWindowOrigin) == 1024);
+    static_assert(offsetof(GPULightingParams, skyOcclusionTexelMeters) == 1088);
+    static_assert(offsetof(GPULightingParams, paleFlatColorAndWrapMin) == 1104);
+    static_assert(offsetof(GPULightingParams, paleFlatShape) == 1120);
+    static_assert(offsetof(GPULightingParams, paleFlatAverageIrradiance) == 1136);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

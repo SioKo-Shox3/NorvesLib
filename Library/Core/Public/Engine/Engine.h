@@ -10,6 +10,7 @@
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Component/WorldFieldInteractorComponent.h"
 #include "Scatter/ScatterSystem.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
@@ -22,6 +23,7 @@
 #include "Input/InputRebindCaptureManager.h"
 #include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
+#include "Streaming/StreamingSystem.h"
 #include "Vegetation/Vegetation.h"
 #include "Thread/Atomic.h"
 
@@ -363,6 +365,13 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        Component::WorldFieldInteractorGatherer& GetWorldFieldInteractorGatherer()
+        {
+            return m_WorldFieldInteractorGatherer;
+        }
+
+        void UpdateWorldFieldInteractors();
+
         Rendering::Terrain::TerrainSystem& GetTerrainSystem()
         {
             return m_TerrainSystem;
@@ -391,6 +400,18 @@ namespace NorvesLib::Core::Engine
         const Particle::ParticleSystem& GetParticleSystem() const
         {
             return m_ParticleSystem;
+        }
+
+        /// セルのストリーミングを管理する。GameThread で使用する。
+        Streaming::StreamingSystem& GetStreamingSystem()
+        {
+            return m_StreamingSystem;
+        }
+
+        /// セルのストリーミングを参照する。GameThread で使用する。
+        const Streaming::StreamingSystem& GetStreamingSystem() const
+        {
+            return m_StreamingSystem;
         }
 
         Vegetation::Vegetation& GetVegetation()
@@ -540,11 +561,13 @@ namespace NorvesLib::Core::Engine
         // 破棄順を保つため、この順序を変えない。
         Rendering::Terrain::TerrainSystem m_TerrainSystem;
         Scatter::ScatterSystem m_ScatterSystem;
+        Component::WorldFieldInteractorGatherer m_WorldFieldInteractorGatherer;
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;
 
         Particle::ParticleSystem m_ParticleSystem;
+        Streaming::StreamingSystem m_StreamingSystem;
         Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
 

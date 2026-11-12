@@ -6,6 +6,7 @@
 #include "Rendering/PointShadowSnapshot.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
@@ -56,8 +57,9 @@ namespace NorvesLib::Core::Rendering
             // worldSource[0]=1の描画（MegaGeometry）はインスタンスではなくこの行列で置く
             float world[16];
             float worldSource[4];
+            float vertexAnimTime[4];
         };
-        static_assert(sizeof(ShadowPerObjectUBO) == 208);
+        static_assert(sizeof(ShadowPerObjectUBO) == 224 && offsetof(ShadowPerObjectUBO, vertexAnimTime) == 208);
 
         // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
         // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
@@ -223,12 +225,42 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 物体IDで引くMeshProxyの境界球
-        struct PointShadowMeshBounds
+        struct ShadowCasterMeshBounds
         {
             uint64_t ObjectId = 0;
             MeshDataHandle Mesh;
             BoundingSphere Bounds;
         };
+
+        // 点光源とCSMが共有する、影を落とす可視のMeshProxyの境界球を物体ID順に並べる。
+        void BuildShadowCasterMeshBounds(
+            const Container::VariableArray<MeshProxy>* meshProxies,
+            Container::VariableArray<ShadowCasterMeshBounds>& meshBoundsByObject)
+        {
+            meshBoundsByObject.clear();
+            if (meshProxies != nullptr)
+            {
+                meshBoundsByObject.reserve(meshProxies->size());
+                for (const MeshProxy& proxy : *meshProxies)
+                {
+                    if (!proxy.bVisible || !proxy.bCastShadow)
+                    {
+                        continue;
+                    }
+                    ShadowCasterMeshBounds entry;
+                    entry.ObjectId = proxy.ObjectId;
+                    entry.Mesh = proxy.MeshHandle;
+                    entry.Bounds = proxy.WorldBounds;
+                    meshBoundsByObject.push_back(entry);
+                }
+                std::sort(meshBoundsByObject.begin(),
+                          meshBoundsByObject.end(),
+                          [](const ShadowCasterMeshBounds& lhs, const ShadowCasterMeshBounds& rhs)
+                          {
+                              return lhs.ObjectId < rhs.ObjectId;
+                          });
+            }
+        }
 
         BoundingSphere MergeBoundingSpheres(const BoundingSphere& lhs, const BoundingSphere& rhs)
         {
@@ -263,9 +295,9 @@ namespace NorvesLib::Core::Rendering
 
         // 描画コマンドのワールド境界球を求める。求められないときはfalse（選別せずに描く）。
         // インスタンシング描画は同じメッシュを持つ影を落とすMeshProxyの境界球をすべて包む球にする。
-        bool ResolvePointShadowDrawBounds(
+        bool ResolveShadowCasterDrawBounds(
             const DrawCommand& command,
-            const Container::VariableArray<PointShadowMeshBounds>& meshBoundsByObject,
+            const Container::VariableArray<ShadowCasterMeshBounds>& meshBoundsByObject,
             const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
             BoundingSphere& outBounds)
         {
@@ -289,7 +321,7 @@ namespace NorvesLib::Core::Rendering
             {
                 BoundingSphere merged;
                 bool bFound = false;
-                for (const PointShadowMeshBounds& entry : meshBoundsByObject)
+                for (const ShadowCasterMeshBounds& entry : meshBoundsByObject)
                 {
                     if (entry.Mesh == command.Draw.MeshHandle)
                     {
@@ -305,7 +337,7 @@ namespace NorvesLib::Core::Rendering
                 meshBoundsByObject.begin(),
                 meshBoundsByObject.end(),
                 command.Draw.ObjectId,
-                [](const PointShadowMeshBounds& entry, uint64_t objectId)
+                [](const ShadowCasterMeshBounds& entry, uint64_t objectId)
                 {
                     return entry.ObjectId < objectId;
                 });
@@ -754,6 +786,13 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapFramePlan
     {
         CascadedShadowMatrixResult Cascades;
+        // 最後に記録した分割の λ。フレームをまたいで保持し、変わったときだけ記録する。
+        float LoggedSplitLambda = -1.0f;
+#if NORVES_ENABLE_LOGGING
+        // パスが所有する計画に前回の描画数と候補数を保ち、変わったときだけ記録する。
+        uint32_t LoggedCasterDraws[PhysicalLightingShadowCascadeCount] = {~0u, ~0u, ~0u, ~0u};
+        uint32_t LoggedCasterCandidates = ~0u;
+#endif
         float LightView[PhysicalLightingShadowCascadeCount][16] = {};
         float LightProjection[PhysicalLightingShadowCascadeCount][16] = {};
         uint32_t MegaCasterCount = 0u;
@@ -902,7 +941,7 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) = 208 bytes
+            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) + vertexAnimTime(16) = 224 bytes
             // 定数と記述子セットは描画ごと・カスケードごとに FrameResources から借りる（数の上限は無い）
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
 
@@ -1214,6 +1253,8 @@ namespace NorvesLib::Core::Rendering
         const auto& lightProjData = plan.LightProjection;
         const uint32_t megaCasterCount = plan.MegaCasterCount;
         const uint32_t instanceDataSize = plan.InstanceDataSize;
+        float vertexAnimTime[4] = {};
+        MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement, vertexAnimTime);
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -1286,6 +1327,38 @@ namespace NorvesLib::Core::Rendering
                             fogBudgetDropped);
         }
 
+        // 境界の解決は影を落とす描画ごとに1回だけ行い、元の描画順のまま候補を保つ。
+        Container::VariableArray<const DrawCommand*> casterCommands;
+        Container::VariableArray<CascadedShadowDrawBounds> casterDrawBounds;
+        if (bCanBuildShadowCommands)
+        {
+            Container::VariableArray<ShadowCasterMeshBounds> meshBoundsByObject;
+            BuildShadowCasterMeshBounds(context.SnapshotMeshProxies, meshBoundsByObject);
+            casterCommands.reserve(drawCommands.size());
+            casterDrawBounds.reserve(drawCommands.size());
+            for (const DrawCommand& command : drawCommands)
+            {
+                if (!command.Draw.bCastShadow)
+                {
+                    continue;
+                }
+                CascadedShadowDrawBounds bounds;
+                bounds.bHasBounds = ResolveShadowCasterDrawBounds(command,
+                                                                  meshBoundsByObject,
+                                                                  context.SnapshotSkinnedMeshProxies,
+                                                                  bounds.Bounds);
+                // 有限な境界を求められない描画は、保守的にすべてのカスケードへ残す。
+                bounds.bHasBounds = bounds.bHasBounds && IsDrawableMegaBounds(bounds.Bounds);
+                casterCommands.push_back(&command);
+                casterDrawBounds.push_back(bounds);
+            }
+        }
+        const uint32_t casterCandidateCount = static_cast<uint32_t>(casterDrawBounds.size());
+        Container::VariableArray<uint32_t> selectedCasterIndices;
+#if NORVES_ENABLE_LOGGING
+        uint32_t casterDrawCounts[PhysicalLightingShadowCascadeCount] = {};
+#endif
+
         // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに別の定数と記述子セットを借りる。
         uint32_t megaDrawCounts[PhysicalLightingShadowCascadeCount] = {};
         uint32_t megaTriangleCounts[PhysicalLightingShadowCascadeCount] = {};
@@ -1300,14 +1373,14 @@ namespace NorvesLib::Core::Rendering
             auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
             if (bCanBuildShadowCommands)
             {
-                // DrawCommand配列を取得し、影を落とすコマンドのみ描画
-                for (const auto &cmd : drawCommands)
+                SelectCascadedShadowCasterDraws(cascadedShadowMatrices.Cascades[cascadeIndex],
+                                                casterDrawBounds.data(),
+                                                casterCandidateCount,
+                                                selectedCasterIndices);
+                // 選ばれた描画だけ準備する。どこにも描かないスキンはパレットも借りない。
+                for (const uint32_t drawIndex : selectedCasterIndices)
                 {
-                    if (!cmd.Draw.bCastShadow)
-                    {
-                        continue;
-                    }
-
+                    const DrawCommand& cmd = *casterCommands[drawIndex];
                     DrawCommand drawCommand = cmd;
                     const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
                     if (bSkinned)
@@ -1337,6 +1410,8 @@ namespace NorvesLib::Core::Rendering
                     std::memcpy(uboData.lightProjection,
                                 lightProjData[cascadeIndex],
                                 sizeof(uboData.lightProjection));
+
+                    std::memcpy(uboData.vertexAnimTime, vertexAnimTime, sizeof(uboData.vertexAnimTime));
 
                     // UBO更新
                     allocation.Write(&uboData, sizeof(ShadowPerObjectUBO));
@@ -1369,6 +1444,9 @@ namespace NorvesLib::Core::Rendering
                     drawCommand.DescriptorSet = allocation.DescriptorSet;
                     drawCommand.DescriptorSetSlot = 0;
                     shadowCommands->push_back(drawCommand);
+#if NORVES_ENABLE_LOGGING
+                    ++casterDrawCounts[cascadeIndex];
+#endif
                 }
             }
 
@@ -1411,6 +1489,7 @@ namespace NorvesLib::Core::Rendering
                                 sizeof(megaUboData.lightProjection));
                     std::memcpy(megaUboData.world, megaCaster.World, sizeof(megaUboData.world));
                     megaUboData.worldSource[0] = 1.0f;
+                    std::memcpy(megaUboData.vertexAnimTime, vertexAnimTime, sizeof(megaUboData.vertexAnimTime));
                     allocation.Write(&megaUboData, sizeof(megaUboData));
                     // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                     allocation.DescriptorSet->BindStorageBuffer(7,
@@ -1435,6 +1514,27 @@ namespace NorvesLib::Core::Rendering
                 scissor,
                 meshes));
         }
+
+#if NORVES_ENABLE_LOGGING
+        // 候補数との差が省いた描画数になる。描画数か候補数が変わったときだけ記録する。
+        bool bCasterCountsChanged = casterCandidateCount != m_FramePlan->LoggedCasterCandidates;
+        m_FramePlan->LoggedCasterCandidates = casterCandidateCount;
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            bCasterCountsChanged = bCasterCountsChanged ||
+                casterDrawCounts[cascadeIndex] != m_FramePlan->LoggedCasterDraws[cascadeIndex];
+            m_FramePlan->LoggedCasterDraws[cascadeIndex] = casterDrawCounts[cascadeIndex];
+        }
+        if (bCasterCountsChanged)
+        {
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSM_CASTER_CULL c0=%u/%u c1=%u/%u c2=%u/%u c3=%u/%u",
+                            casterDrawCounts[0], casterCandidateCount,
+                            casterDrawCounts[1], casterCandidateCount,
+                            casterDrawCounts[2], casterCandidateCount,
+                            casterDrawCounts[3], casterCandidateCount);
+        }
+#endif
 
         // カスケードごとに描いたMegaGeometryの数と三角形数を、変わったときだけ記録する。
         bool bMegaCountsChanged = false;
@@ -1494,19 +1594,25 @@ namespace NorvesLib::Core::Rendering
         context.ActiveShadowMapSettings = &m_Settings;
         // シーンが FramePacket で影の到達距離を指定していればそれを、無ければパスの設定を使う（CSM と VSM で同じ値）
         const float maxShadowDistance =
-            context.SnapshotScene != nullptr && context.SnapshotScene->SunShadowMaxDistance > 0.0f
-                ? context.SnapshotScene->SunShadowMaxDistance
+            context.SnapshotScene != nullptr && context.SnapshotScene->SunShadow.MaxDistance > 0.0f
+                ? context.SnapshotScene->SunShadow.MaxDistance
                 : m_Settings.MaxShadowDistance;
-        if (maxShadowDistance != m_LoggedMaxShadowDistance)
-        {
-            m_LoggedMaxShadowDistance = maxShadowDistance;
-            NORVES_LOG_INFO("ShadowMapPass", "太陽の影の到達距離: sun_shadow_max_distance=%.1f m", maxShadowDistance);
-        }
         CascadedShadowMatrixSettings cascadedSettings =
             MakeDefaultCascadedShadowMatrixSettings();
         cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
         cascadedSettings.MaxShadowDistance = maxShadowDistance;
         cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
+        if (context.SnapshotScene != nullptr && context.SnapshotScene->SunShadow.SplitLambda > 0.0f)
+        {
+            cascadedSettings.SplitLambda = context.SnapshotScene->SunShadow.SplitLambda;
+        }
+        if (maxShadowDistance != m_LoggedMaxShadowDistance || cascadedSettings.SplitLambda != plan.LoggedSplitLambda)
+        {
+            m_LoggedMaxShadowDistance = maxShadowDistance;
+            plan.LoggedSplitLambda = cascadedSettings.SplitLambda;
+            NORVES_LOG_INFO("ShadowMapPass", "太陽の影の到達距離: sun_shadow_max_distance=%.1f m split_lambda=%.2f",
+                            maxShadowDistance, cascadedSettings.SplitLambda);
+        }
 
         const uint64_t instanceDataSize64 = context.InstanceDataBuffer
                                                 ? context.InstanceDataBuffer->GetSize()
@@ -1571,7 +1677,7 @@ namespace NorvesLib::Core::Rendering
                 splitDistances[splitIndex] = cascadedShadowMatrices.SplitDistances[splitIndex];
             }
 
-            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離だけで決まるため、
+            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離・分割の λ で決まるため、
             // 分割の奥が変わったときだけ記録する。
             const float splitFar = cascadedShadowMatrices.SplitDistances[CSM_CASCADE_COUNT];
             if (splitFar != m_LoggedCascadeSplitFar)
@@ -1850,30 +1956,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // キャスターの境界球を物体IDで引けるように並べる。
-        Container::VariableArray<PointShadowMeshBounds> meshBoundsByObject;
-        if (context.SnapshotMeshProxies != nullptr)
-        {
-            meshBoundsByObject.reserve(context.SnapshotMeshProxies->size());
-            for (const MeshProxy& proxy : *context.SnapshotMeshProxies)
-            {
-                if (!proxy.bVisible || !proxy.bCastShadow)
-                {
-                    continue;
-                }
-                PointShadowMeshBounds entry;
-                entry.ObjectId = proxy.ObjectId;
-                entry.Mesh = proxy.MeshHandle;
-                entry.Bounds = proxy.WorldBounds;
-                meshBoundsByObject.push_back(entry);
-            }
-            std::sort(meshBoundsByObject.begin(),
-                      meshBoundsByObject.end(),
-                      [](const PointShadowMeshBounds& lhs, const PointShadowMeshBounds& rhs)
-                      {
-                          return lhs.ObjectId < rhs.ObjectId;
-                      });
-        }
+        Container::VariableArray<ShadowCasterMeshBounds> meshBoundsByObject;
+        BuildShadowCasterMeshBounds(context.SnapshotMeshProxies, meshBoundsByObject);
 
         const uint64_t instanceDataSize64 = context.InstanceDataBuffer
                                                 ? context.InstanceDataBuffer->GetSize()
@@ -1920,7 +2004,7 @@ namespace NorvesLib::Core::Rendering
                     caster.Command = command;
                     caster.Command.Pipeline = m_PointShadowPipeline;
                 }
-                caster.bHasBounds = ResolvePointShadowDrawBounds(command,
+                caster.bHasBounds = ResolveShadowCasterDrawBounds(command,
                                                                  meshBoundsByObject,
                                                                  context.SnapshotSkinnedMeshProxies,
                                                                  caster.Bounds);

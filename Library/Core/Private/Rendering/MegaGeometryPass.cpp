@@ -35,7 +35,9 @@
 #include "Rendering/TerrainBlendShading.h"
 #include "Rendering/TemporalAAParamOverride.h"
 #include "Rendering/TerrainSamplerOverride.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityMerge.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -43,6 +45,7 @@
 #include "Text/IdentityPool.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -54,6 +57,8 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        using namespace MegaGeometry::BvhCullLayout;
+
         // VT の要求のバッファの binding（megageometry.frag の VT_FEEDBACK_BINDING と同じ。材質のテクスチャ 1-6 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
         // 地形の 2・3 層目のテクスチャの binding（megageometry.frag の terrain*Texture。土のアルベド・法線・ORM、岩肌の同じ 3 枚）
@@ -65,8 +70,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainSurfaceMaskBindingIndex = 16;
         // 地形の遠景の地図の binding（megageometry.frag の terrainFarMapTexture。地表の分類の地図の次）
         constexpr uint32_t TerrainFarMapBindingIndex = 17;
-        // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
-        constexpr uint32_t MegaMeshTableBindingIndex = 22;
+        // スプラットの配列 4 枚（18〜21）は TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_*_BINDING を使う
+        // スプラットの並びの UBO（23）は同じヘッダの TERRAIN_SPLAT_MEGA_PARAMS_BINDING を使う
 
         // 値を持たない起動引数（flag）があるか。起動引数は ApplicationProcessor の外（描画の層）でも読めるよう、
         // プロセスのコマンドラインを直接見る（VirtualShadowMapPass の --vsm-cache と同じ）
@@ -105,43 +110,13 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
         constexpr uint32_t DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
 
-        // cluster_cull.comp の cullPass（CULL_PASS_* と同じ値）
-        constexpr uint32_t CULL_PASS_SINGLE = 0u; // 従来の1回の判定（遮蔽の判定なし）
-        constexpr uint32_t CULL_PASS_FIRST = 1u;  // 1パス目: 前のフレームの HZB に隠れていないものを描き、隠れたものを 2 パス目へ回す
-        constexpr uint32_t CULL_PASS_SECOND = 2u; // 2パス目: 回されたものを今のフレームの HZB で判定して描く
-
-        // 統計（cluster_cull.comp の stats[12]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
-        // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
-        // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）、
-        // 11 は区間の描画コマンドの上限（MaxDrawCount）を超えて積めなかった可視クラスタの数（両パスの合計）、
-        // 12 は BVH のたどりの列の容量を超えて落ちた要素の数（両パスの合計）、13 は 2 パス目へ回した列（範囲・節・クラスタ）のどれかの容量を超えたか（1 なら超えた）、
-        // 14・15 は BVH の節の列の 1 段・葉の列へ積もうとした数の最大（容量を超えた分も含む）。
-        // 16 からは可視クラスタの binning（Common/MegaGeometryCull.glsl の STAT_BIN_*）: 16 は全体の列へ積もうとした数、
-        // 17〜30 は新旧の照合（17 = 旧のコマンドの数、18・19 = 新・旧のソフトの数、20 = 範囲の外の要素、21 = 詰めた位置の重なり、
-        // 22 = 数の違う区間、23・24 / 25・26 = 新・旧の集合の hash の和、27・28 / 29・30 = 新・旧のソフトの集合の hash の和）。
-        // 31〜41 は前のフレームの HZB による 1 パス目の判定（Common/MegaGeometryCull.glsl の STAT_TWOPASS_*）
-        constexpr uint32_t StatsBufferWords = 48u;
-        constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
-
         // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
         // 積もうとした数の 4 語ずつ（SW_RASTER_HEADER_WORDS = 8 語）で、その後にパスごとのコマンドの位置の列が続く。
         // 一覧の容量はパスごとのコマンド数まで（間接 dispatch の引数は 2 次元なので、x の上限 65535 を超えても y へ折り返す）
         constexpr uint32_t SwRasterHeaderWords = 8u;
 
-        // グループの BVH のたどり（cluster_bvh_cull.comp）。BvhStageClusters は葉のクラスタの判定の段の印、
-        // BvhLeafSlots は葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）、
-        // BvhCounterCount はカウンタのバッファの語数（添え字 s は段 s の入力の数（段 0 は範囲の段が積んだ範囲の数）、BvhLeafCounter は葉の列の数。
-        // BvhArgsBaseWords からは段 s と葉の段の間接 dispatch の引数が BvhArgsStrideWords 語ずつ並ぶ。
-        // Common/MegaGeometryCull.glsl の BVH_LEAF_COUNTER・BVH_ARGS_BASE・BVH_ARGS_STRIDE と一致）
-        constexpr uint32_t BvhStageClusters = 0xFFFFFFFFu;
+        // 葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）
         constexpr uint32_t BvhLeafSlots = MegaGeometry::GROUP_BVH_MAX_LEAF_CLUSTERS;
-        constexpr uint32_t BvhLeafCounter = 16;
-        constexpr uint32_t BvhArgsBaseWords = 32;
-        constexpr uint32_t BvhArgsStrideWords = 4;
-        constexpr uint32_t BvhCounterCount = 128;
-        constexpr uint32_t BvhCounterBytes = BvhCounterCount * sizeof(uint32_t);
-        static_assert(BvhArgsBaseWords + (BvhLeafCounter + 1u) * BvhArgsStrideWords <= BvhCounterCount,
-                      "BVH の間接 dispatch の引数がカウンタのバッファに収まりません");
         static_assert(MegaGeometry::GROUP_BVH_MAX_LEVELS <= BvhLeafCounter,
                       "BVH の段のカウンタが葉の列のカウンタと重なります");
 
@@ -156,37 +131,13 @@ namespace NorvesLib::Core::Rendering
         static_assert(static_cast<uint64_t>(BvhLeafQueueCapacity) * BvhLeafSlots <= 0xFFFFFFFFull,
                       "葉の段のスレッドの番号が uint32 に収まりません");
 
-        // 2 パス目へ回す列（cluster_bvh_cull.comp の binding 14）。前のフレームの HZB を使う 1 パス目が、隠れた範囲（席の印）・節・
-        // クラスタを積み、2 パス目がそれだけを今のフレームの HZB で判定する。頭の BvhPass2HeaderWords 語は、全部の根を見直す
-        // dispatch の引数（どれかの列が溢れたときだけ 0 でなくなる）・溢れた数、各列の間接 dispatch の引数（BvhDefer*ArgsWord から 3 語）と
-        // 積もうとした数。頭の後ろに範囲の列（1 要素 BvhDeferEntryWords 語: 範囲・席 0〜31 の印・席 32〜63 の印・予約）、
-        // 節の列（1 要素 BvhDeferPairWords 語: インスタンス・節）、クラスタの列（同じく インスタンス・クラスタの番号）が並ぶ。
-        // 各パスの頭で 0 にするカウンタとは別に持ち、1 パス目の前に頭だけを 0 にする
-        constexpr uint32_t BvhPass2HeaderWords = 32;
-        constexpr uint32_t BvhDeferArgsWord = 8;
-        constexpr uint32_t BvhDeferNodeArgsWord = 12;
-        constexpr uint32_t BvhDeferClusterArgsWord = 16;
-        constexpr uint32_t BvhDeferEntryWords = 4;
-        constexpr uint32_t BvhDeferPairWords = 2;
         // 回した範囲の列の容量（範囲。1 範囲 = 64 席なので 400 万席まで溢れない）
         constexpr uint32_t BvhDeferCapacity = 1u << 16;
         // 回した節の列・クラスタの列の容量（要素。溢れたら 2 パス目は全部の根を見直す）
         constexpr uint32_t BvhDeferNodeCapacity = 1u << 21;
         constexpr uint32_t BvhDeferClusterCapacity = 1u << 22;
-        constexpr uint64_t BvhPass2Words = static_cast<uint64_t>(BvhPass2HeaderWords) +
-                                           static_cast<uint64_t>(BvhDeferCapacity) * BvhDeferEntryWords +
-                                           static_cast<uint64_t>(BvhDeferNodeCapacity) * BvhDeferPairWords +
-                                           static_cast<uint64_t>(BvhDeferClusterCapacity) * BvhDeferPairWords;
+        constexpr uint64_t BvhPass2Words = BvhPass2BufferWords(BvhDeferCapacity, BvhDeferNodeCapacity, BvhDeferClusterCapacity);
         static_assert(BvhPass2Words <= 0x3FFFFFFFull, "2 パス目へ回す列の位置が uint32 に収まりません");
-        // 席の段（段 0）の入力（cluster_bvh_cull.comp の SEATS_FROM_*）: 全部の根（溢れたときの 2 パス目）・範囲の段が積んだ範囲の一覧・回した範囲の列
-        constexpr uint32_t BvhSeatsFromRoots = 0;
-        constexpr uint32_t BvhSeatsFromRanges = 1;
-        constexpr uint32_t BvhSeatsFromDeferred = 2;
-        // 2 パス目へ回した節の段・クラスタの段の印（cluster_bvh_cull.comp の BVH_STAGE_DEFERRED_*）
-        constexpr uint32_t BvhStageDeferredClusters = 0xFFFFFFFDu;
-        constexpr uint32_t BvhStageDeferredNodes = 0xFFFFFFFCu;
-        // 前のフレームの HZB（Common/MegaGeometryCull.glsl の binding 26。前の HZB を使うフレームの両パスが読む）
-        constexpr uint32_t PrevHiZBinding = 26;
 
         // 記録の回数（1 から数える）から、ページの要求の重複を省く印を作る。0 は使わない（ページの表の初めの値）
         uint32_t PageRequestStampOf(uint64_t frameCount)
@@ -194,21 +145,11 @@ namespace NorvesLib::Core::Rendering
             return static_cast<uint32_t>(frameCount % 0xFFFFFFFFull) + 1u;
         }
 
-        // インスタンスの判定の範囲（cluster_bvh_cull.comp の範囲の段・mega_scene_scatter.comp の段 2）。BVH を持つインスタンスを
-        // 描く順に BvhRangeSeats 席ずつ区切り、範囲ごとの AABB（vec4 × 2 = RangeBoundsBytes）を常駐の表に持つ。範囲の段は
-        // 通った範囲を節の列 0 へ積み、席の段は 1 範囲 = 1 ワークグループ（64 スレッド）で席を判定する。
-        // BvhStageRanges は範囲の段の印、RangeBoundsBinding はカリングのディスクリプタセットの binding
-        constexpr uint32_t BvhRangeSeats = 64;
-        constexpr uint32_t BvhStageRanges = 0xFFFFFFFEu;
-        constexpr uint32_t RangeBoundsBytes = 8u * sizeof(float);
-        constexpr uint32_t RangeBoundsBinding = 15;
-
         // 可視クラスタの全体の列（Common/MegaGeometryCull.glsl の binding 23）。要素は uvec4（席・クラスタの番号・区画・区画の中の位置）で、
         // 全パス通しの固定容量（本数・区間の数によらない）。超えた要素は積まずに数える（MEGA_CAPACITY の visible_list_overflow）。
         // バナナ 100 万本と mega-stress 5 万個を 1920×1080 で 1% 移動・64 m 区画ストリーミングしたとき、
         // 列へ積もうとした数は最大約 482 万。既定の容量は約 3 割の余裕を持ち、1 要素につき列 16 バイトと照合の印 4 バイトを取る。
         // 大きさの目安: バナナ 1 万本 overview の 1 パス目で約 36 万クラスタ
-        constexpr uint32_t VisibleListBinding = 23;
         constexpr uint32_t DefaultVisibleListCapacity = 6u << 20;
         // 列の容量。比較の撮影（Game の --wasteland-finest-lod）は見える地形を全部最も細かい段で描き、1 視点で 600 万クラスタを
         // 超えるので、環境変数 NORVES_MEGA_VISIBLE_LIST_CAPACITY（既定の容量〜1 << 25）で広げる（開発ビルドだけ。
@@ -254,8 +195,6 @@ namespace NorvesLib::Core::Rendering
         // [BinRecordCommandBaseWord] = 記録用のコマンドの先頭、[BinRecordTableWord] = 記録の区間の表の区間のカウンタの中の先頭の語。
         // 20・21 はパスが列へ積んだ要素の範囲で GPU が書く）。頭の後ろに区画の数・区画の先頭（各 2 × 要素の数）と、
         // 旧の区間の接頭和（要素の数 + 1）が続く
-        constexpr uint32_t BinCounterBinding = 24;
-        constexpr uint32_t BinCheckMarkBinding = 25;
         constexpr uint32_t BinListCounterWord = 0; // 全体の列へ積もうとした数（BIN_LIST_COUNTER）
         constexpr uint32_t BinCheckArgsWord = 4;
         constexpr uint32_t BinCountWord = 8;
@@ -798,6 +737,39 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 未使用の枠も 2D 配列のビューで埋める。両方の層を透明な黒にする
+        RHI::TextureDesc splatFallbackDesc;
+        splatFallbackDesc.Width = 1u;
+        splatFallbackDesc.Height = 1u;
+        splatFallbackDesc.ArraySize = 2u;
+        splatFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        splatFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        splatFallbackDesc.DebugName = "MegaGeometry_DefaultTerrainSplatArray";
+        m_DefaultTerrainSplatArray = m_Device->CreateTexture(splatFallbackDesc);
+        if (!m_DefaultTerrainSplatArray)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "スプラットの代替配列テクスチャの作成に失敗");
+            return false;
+        }
+        const uint8_t splatFallbackPixel[4] = {0u, 0u, 0u, 0u};
+        for (uint32_t layer = 0; layer < splatFallbackDesc.ArraySize; ++layer)
+        {
+            m_DefaultTerrainSplatArray->Update(splatFallbackPixel, sizeof(splatFallbackPixel),
+                                                sizeof(splatFallbackPixel), 0u, layer);
+        }
+
+        // 重みの地図の端で反対側が混ざらないよう、線形の標本を端に固定する
+        RHI::SamplerDesc splatSamplerDesc = sampDesc;
+        splatSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        splatSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        splatSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_TerrainSplatSampler = m_Device->CreateSampler(splatSamplerDesc);
+        if (!m_TerrainSplatSampler)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "スプラットのサンプラーの作成に失敗");
+            return false;
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("MegaGeometryPass", "初期化完了 (MaxDrawCount: %u)", m_Settings.MaxDrawCount);
         return true;
@@ -968,6 +940,8 @@ namespace NorvesLib::Core::Rendering
         m_ConstantMaterialTextures.reset();
         m_DefaultLinearSampler.reset();
         m_TerrainSampler.reset();
+        m_TerrainSplatSampler.reset();
+        m_DefaultTerrainSplatArray.reset();
 
         m_Instances.clear();
         m_SceneInstanceDeltas.clear();
@@ -1883,6 +1857,8 @@ namespace NorvesLib::Core::Rendering
 
     MegaGeometryPass::PreparedFrameAction MegaGeometryPass::PrepareFrame(ViewRenderContext &context)
     {
+        MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
+                                         m_VertexAnimTime);
         m_bFrameRecordDeferred = false;
 
         const bool bCanEnqueueEmptyTransitionPass =
@@ -1920,7 +1896,13 @@ namespace NorvesLib::Core::Rendering
         // ID のラスタと解決、VSM の影）よりも前にここで書く。記録がどこで行われても（キューのコマンド・ID のラスタ）同じ表を使う。
         // 常駐の表への散在書き込みは、ここで直接コマンドリストへ記録する（RenderGraph はこのパスの前後でキューを流すので、
         // 読み手のパスの記録より前に並ぶ）
-        PrepareSceneTables(context.BuildMegaGeometryPassCommand(this).MegaGeometry, context.CommandList);
+        const FrameCommand drawCommand = context.BuildMegaGeometryPassCommand(this);
+        PrepareSceneTables(drawCommand.MegaGeometry, context.CommandList);
+        // 記録のコマンドには描画コンテキストがないため、同じフレームの準備結果へ濡れ度を写す
+        const auto *wetness = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
+        m_PreparedSceneTables.TerrainWetness = wetness ? wetness->Wetness : 0.0f;
+        m_PreparedSceneTables.FrameSerial = drawCommand.MegaGeometry.RenderFrameSerial;
+        m_PreparedSceneTables.InFlightIndex = drawCommand.MegaGeometry.InFlightIndex;
 
         // 解決が GBuffer を書くフレームは GBuffer の描画を止めるので、2パスの遮蔽の HZB の元になる深度が GBuffer に入らない。
         // ID のラスタがその Execute の中で記録を駆動して（ID・深度の1パス目 → HZB → 2パス目）、HZB を ID の深度から作る。
@@ -1954,6 +1936,13 @@ namespace NorvesLib::Core::Rendering
                     return false;
                 }
             }
+            for (uint32_t index = 0; index < ShadingParamCount; ++index)
+            {
+                if (a.ShadingParams[index] != b.ShadingParams[index])
+                {
+                    return false;
+                }
+            }
             return a.Metallic == b.Metallic && a.Roughness == b.Roughness &&
                    a.OcclusionStrength == b.OcclusionStrength && a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
@@ -1961,7 +1950,7 @@ namespace NorvesLib::Core::Rendering
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
-                   a.TerrainBlend == b.TerrainBlend;
+                   a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading;
         }
 
         // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
@@ -1977,9 +1966,13 @@ namespace NorvesLib::Core::Rendering
             float PreviousProjection[16];
             float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
             float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
-            float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
+            float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
+            float ShadingParams[4]; // x=P0, y=P1, z=予約, w=被覆率の乗数（負は未指定）
+            float VertexAnimTime[4];
         };
+        static_assert(offsetof(SectionUniformData, VertexAnimTime) == 544u);
+        static_assert(sizeof(SectionUniformData) == 560u);
         static_assert(sizeof(SectionUniformData) <= 768u);
 
         constexpr uint32_t SectionUniformBufferBytes = 768;
@@ -3682,6 +3675,9 @@ namespace NorvesLib::Core::Rendering
                                      m_PreparedSceneTables.InFlightIndex == command.InFlightIndex &&
                                      m_PreparedSceneTables.Slot != nullptr;
         FrameSlot *preparedSlot = bPreparedTables ? m_PreparedSceneTables.Slot : nullptr;
+        const float terrainWetness = m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
+                                     m_PreparedSceneTables.InFlightIndex == command.InFlightIndex
+                                         ? m_PreparedSceneTables.TerrainWetness : 0.0f;
         m_PreparedSceneTables = PreparedSceneTables{};
         if (!bPreparedTables)
         {
@@ -3721,6 +3717,11 @@ namespace NorvesLib::Core::Rendering
         using namespace NorvesLib::Math;
 
         const auto &cam = command.MainCamera;
+        const bool bOrthographic = cam.Projection == ProjectionType::Orthographic;
+        // 主のシェーダーの正射影 texel は 1 m なので、画素単位の許容をワールドの長さへ直す。
+        const float lodWorldUnitsPerPixel = bOrthographic && m_CurrentHeight > 0
+                                                ? std::abs(cam.OrthoHeight) / static_cast<float>(m_CurrentHeight)
+                                                : 1.0f;
         const float aspectRatio = m_CurrentHeight > 0
                                       ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
                                       : 1.0f;
@@ -3804,15 +3805,37 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         using Section = SceneSection;
         using Drawable = SceneDrawable;
-        SceneTables &tables = m_SceneTables;
         if (!bPreparedTables)
         {
             if (m_bSceneSlotsDirty)
             {
                 AssignSceneTableSlots();
             }
-            BuildSceneTables(command, tables);
+            BuildSceneTables(command, m_SceneTables);
         }
+        SceneTables orthographicTables;
+        if (bOrthographic)
+        {
+            // 通常の表の写しを使い、次の透視の記録へ換算済みの床や平らな並びを残さない。
+            orthographicTables = m_SceneTables;
+            for (GPUMegaMesh &mesh : orthographicTables.Meshes)
+            {
+                mesh.MainLodFloorPixels *= lodWorldUnitsPerPixel;
+            }
+            // BVH の節の誤差は透視の式なので、全インスタンスを平らなクラスタの列で判定する。
+            // 影の表と予備行は同じ位置に保ち、主の判定のワークグループだけを振り直す。
+            orthographicTables.TotalGroups = 0;
+            for (GPUMegaEntry &entry : orthographicTables.Entries)
+            {
+                entry.FirstGroup = static_cast<uint32_t>(orthographicTables.TotalGroups);
+                orthographicTables.TotalGroups +=
+                    (static_cast<uint64_t>(orthographicTables.Meshes[entry.MeshIndex].ClusterCount) + 63u) / 64u;
+            }
+            orthographicTables.BvhInstanceCount = 0;
+            orthographicTables.BvhLevelCapacity.clear();
+            orthographicTables.BvhLeafCapacity = 0;
+        }
+        SceneTables &tables = bOrthographic ? orthographicTables : m_SceneTables;
         VariableArray<Section> &sections = tables.Sections;
         const VariableArray<Drawable> &drawables = tables.Drawables;
         const VariableArray<GPUMegaEntry> &instanceTable = tables.Entries;
@@ -3860,7 +3883,8 @@ namespace NorvesLib::Core::Rendering
         // 64bit のバッファ（深度 + ID）への書き込みが 64bit アトミックを使い、合流が ID のラスタ（sink）の後ろにあるので、
         // どちらかが無ければ振り分けない。振り分けた一覧はパスごとなので、2 パスの遮蔽の判定のときだけ使う
         bool bSwRasterBin = false;
-        if (m_bSwRasterRequested)
+        // ソフトの振り分けの画素半径は透視の式なので、正射影ではハードだけで描く。
+        if (m_bSwRasterRequested && !bOrthographic)
         {
             const char *fallbackReason = nullptr;
             if (!sink)
@@ -4071,7 +4095,20 @@ namespace NorvesLib::Core::Rendering
                 recordEmptyRenderPass();
                 return;
             }
-            PublishShadowCasterInputs(frameSlot, tables);
+            // 影へは主の平らな判定用の規模を渡さず、元の表の集計値を公開する。
+            // 影専用の並びとメッシュの BVH は写しでも保ち、主の床は影が読まない。
+            PublishShadowCasterInputs(frameSlot, m_SceneTables);
+        }
+        else if (bOrthographic)
+        {
+            // 前段のページの版と資源は引き継ぐ。散在書き込みの staging は別の組から借り、
+            // 既に記録された前段の転送内容を上書きせずに、主の判定用の表へ切り替える。
+            FrameSlot &uploadSlot = m_FrameSlots.Acquire();
+            if (!UpdateResidentSceneTables(uploadSlot, tables, cmdList, 0u))
+            {
+                recordEmptyRenderPass();
+                return;
+            }
         }
 
         // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）。
@@ -4108,6 +4145,7 @@ namespace NorvesLib::Core::Rendering
             SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
 
             SectionUniformData uniform{};
+            std::memcpy(uniform.VertexAnimTime, m_VertexAnimTime, sizeof(uniform.VertexAnimTime));
             cameraConstants.CopyShaderView(uniform.View);
             cameraConstants.CopyShaderProjection(uniform.Projection);
             cameraConstants.CopyCameraPosition(uniform.CameraPosition);
@@ -4119,6 +4157,11 @@ namespace NorvesLib::Core::Rendering
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
+            uniform.VtFeedbackParams[3] = static_cast<float>(ToGBufferShadingModelId(mat.Shading));
+            for (uint32_t index = 0; index < ShadingParamCount; ++index)
+            {
+                uniform.ShadingParams[index] = mat.ShadingParams[index];
+            }
             uniform.ObjectColor[0] = mat.BaseColor[0];
             uniform.ObjectColor[1] = mat.BaseColor[1];
             uniform.ObjectColor[2] = mat.BaseColor[2];
@@ -4216,6 +4259,41 @@ namespace NorvesLib::Core::Rendering
                     terrainTextures[5] = metallic;
                 }
             }
+            // スプラットは 4 枚とも引けたときだけ使い、欠けたときは全て代替の配列に戻す
+            const auto &splat = terrain.Splat;
+            RHI::TexturePtr splatTextures[4] = {m_DefaultTerrainSplatArray, m_DefaultTerrainSplatArray,
+                                                m_DefaultTerrainSplatArray, m_DefaultTerrainSplatArray};
+            bool bSplat = false;
+            if (terrain.IsSplatEnabled())
+            {
+                const TextureHandle splatHandles[4] = {splat.AlbedoArrayTexture, splat.NormalArrayTexture,
+                                                        splat.ArmArrayTexture, splat.SplatArrayTexture};
+                bSplat = true;
+                for (uint32_t index = 0; index < 4u; ++index)
+                {
+                    RHI::TexturePtr texture = resolveTexture(splatHandles[index], nullptr);
+                    if (!texture)
+                    {
+                        bSplat = false;
+                        break;
+                    }
+                    splatTextures[index] = texture;
+                }
+                if (!bSplat)
+                {
+                    for (RHI::TexturePtr &texture : splatTextures)
+                    {
+                        texture = m_DefaultTerrainSplatArray;
+                    }
+                }
+            }
+            const uint32_t splatFlags =
+                (splat.bNormalTwoChannel ? TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL : 0u) |
+                (IsTerrainAlbedoSrgbDecodeNeeded(splatTextures[0].get())
+                     ? TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE : 0u);
+            float splatParams[TERRAIN_SPLAT_PARAM_FLOATS] = {};
+            PackTerrainSplatParams(splat, bSplat, splatFlags, terrainWetness, splatParams);
+
             // 地表の分類の地図は引けたときだけ使う（引けなければ傾斜の式だけで混ぜる）。読まない枠はアルベドで埋める
             RHI::TexturePtr surfaceMask =
                 bTerrainBlend ? resolveTexture(terrain.SurfaceMaskTexture, nullptr) : RHI::TexturePtr();
@@ -4257,10 +4335,13 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(command.Textures, mat.HeightTexture, height.get(), feedbackTarget));
 
             sectionDraw.Uniform->Update(&uniform, sizeof(SectionUniformData));
+            sectionDraw.TerrainSplatUniform->Update(splatParams, sizeof(splatParams));
 
             const RHI::DescriptorSetPtr &descriptorSet = sectionDraw.DescriptorSet;
             descriptorSet->BindConstantBuffer(0, sectionDraw.Uniform, 0,
                                               static_cast<uint32_t>(sizeof(SectionUniformData)));
+            descriptorSet->BindConstantBuffer(TERRAIN_SPLAT_MEGA_PARAMS_BINDING, sectionDraw.TerrainSplatUniform, 0,
+                                              static_cast<uint32_t>(sizeof(splatParams)));
 
             // PBRテクスチャバインド（地形の混ぜ合わせの材質は、3 層とも異方性のサンプラーで標本する）
             const RHI::SamplerPtr &layerSampler = bTerrainBlend ? m_TerrainSampler : m_DefaultLinearSampler;
@@ -4285,6 +4366,13 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(TerrainSurfaceMaskBindingIndex, layerSampler);
             descriptorSet->BindTexture(TerrainFarMapBindingIndex, farMap);
             descriptorSet->BindSampler(TerrainFarMapBindingIndex, layerSampler);
+            const uint32_t splatBindings[4] = {TERRAIN_SPLAT_MEGA_ALBEDO_BINDING, TERRAIN_SPLAT_MEGA_NORMAL_BINDING,
+                                               TERRAIN_SPLAT_MEGA_ARM_BINDING, TERRAIN_SPLAT_MEGA_SPLAT_BINDING};
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                descriptorSet->BindTexture(splatBindings[index], splatTextures[index]);
+                descriptorSet->BindSampler(splatBindings[index], index == 3u ? m_TerrainSplatSampler : m_TerrainSampler);
+            }
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
@@ -4315,8 +4403,13 @@ namespace NorvesLib::Core::Rendering
         const bool bProjectionJittered = cam.ProjectionJitterNdcX != 0.0f || cam.ProjectionJitterNdcY != 0.0f;
         baseUniform.LODBias =
             m_Settings.LODBias * (bProjectionJittered ? GetTemporalAABlendParams().GeometryLodScale : 1.0f);
+        if (bOrthographic)
+        {
+            baseUniform.OrthoLod = 1u;
+            baseUniform.LODBias *= lodWorldUnitsPerPixel;
+        }
         baseUniform.ScreenHeight = static_cast<float>(m_CurrentHeight);
-        // projectionFactor = screenHeight / (2 * tan(fov/2))
+        // 透視の誤差を画素へ直す倍率（正射影の LOD では使わない）
         const float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
         baseUniform.ProjectionFactor = (halfFovTan > 1e-6f)
                                            ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
@@ -4333,8 +4426,10 @@ namespace NorvesLib::Core::Rendering
         // インスタンスの判定: 範囲の数・距離・画素の大きさ（描く範囲が描画先の全体のときだけ）
         const uint32_t bvhRangeCount = (bvhInstanceCount + BvhRangeSeats - 1u) / BvhRangeSeats;
         baseUniform.BvhRangeCount = bvhRangeCount;
-        baseUniform.InstanceCullDistance = m_Settings.InstanceCullDistance;
-        if (m_Settings.bInstancePixelCull && IsPixelCullViewport(command.Viewport, m_CurrentWidth, m_CurrentHeight))
+        // 正射影では視点からの距離で除外せず、平らな判定では使わない画素の除外も無効にする。
+        baseUniform.InstanceCullDistance = bOrthographic ? 0.0f : m_Settings.InstanceCullDistance;
+        if (!bOrthographic && m_Settings.bInstancePixelCull &&
+            IsPixelCullViewport(command.Viewport, m_CurrentWidth, m_CurrentHeight))
         {
             baseUniform.PixelCullWidth = static_cast<float>(m_CurrentWidth);
             baseUniform.PixelCullHeight = static_cast<float>(m_CurrentHeight);
@@ -4348,7 +4443,7 @@ namespace NorvesLib::Core::Rendering
         // メッシュ共通のLOD球を持つメッシュの選ばれる段を、変わったときに記録する
         for (const Drawable &drawable : drawables)
         {
-            if (drawable.GpuData && drawable.GpuData->LODBounds.IsValid())
+            if (!bOrthographic && drawable.GpuData && drawable.GpuData->LODBounds.IsValid())
             {
                 LogUniformLODSelection(m_Instances[drawable.InstanceIndex], *drawable.GpuData, baseUniform);
             }
@@ -4502,25 +4597,17 @@ namespace NorvesLib::Core::Rendering
             uniformData.bStatsEnabled = (statsSlot && cullPass != CULL_PASS_SINGLE) ? 1u : 0u;
             uniformData.SectionBase = passIndex * sectionCount;
 
-            // 遮蔽の判定（2パス目だけ）。HZB の元の深度の解像度を渡す（HZB のミップ0 はその半分）
-            if (bSecond && hiZTexture && m_DepthTexture)
-            {
-                uniformData.HiZWidth = m_DepthTexture->GetWidth();
-                uniformData.HiZHeight = m_DepthTexture->GetHeight();
-                uniformData.HiZMipCount = m_HiZ[m_HiZIndex].GetMipCount();
-                uniformData.bHiZEnabled = 1;
-            }
-            // 前のフレームの HZB（1 パス目は隠れたものを回す判定、2 パス目は 1 パス目が描いたかの判定し直し）。
-            // 寸法は契約で今の深度と同じことを確かめてある
+            // 記述子が使う前の HZB の条件は、ユニフォームと同じまま保つ
             const bool bPrevHiZ = cullPass != CULL_PASS_SINGLE && prevHiZTexture && m_DepthTexture;
-            if (bPrevHiZ)
-            {
-                uniformData.HiZWidth = m_DepthTexture->GetWidth();
-                uniformData.HiZHeight = m_DepthTexture->GetHeight();
-                uniformData.PrevHiZMipCount = prevHiZMipCount;
-                uniformData.bPrevHiZEnabled = 1;
-                Math::MatrixUtils::TransposeToShaderData(prevHiZViewProjection, uniformData.PrevViewProjection);
-            }
+            CullOcclusionInputs occlusionInputs;
+            occlusionInputs.DepthWidth = m_DepthTexture ? m_DepthTexture->GetWidth() : 0;
+            occlusionInputs.DepthHeight = m_DepthTexture ? m_DepthTexture->GetHeight() : 0;
+            occlusionInputs.bCurrentHiZ = hiZTexture && m_DepthTexture;
+            occlusionInputs.CurrentHiZMipCount = m_HiZ[m_HiZIndex].GetMipCount();
+            occlusionInputs.bPrevHiZ = bPrevHiZ;
+            occlusionInputs.PrevHiZMipCount = prevHiZMipCount;
+            occlusionInputs.PrevViewProjection = prevHiZViewProjection;
+            ApplyCullOcclusion(uniformData, cullPass, occlusionInputs);
             frameSlot.CullUniform[passIndex]->Update(&uniformData, sizeof(CullUniformData));
 
             // ----------------------------------------
@@ -4529,55 +4616,55 @@ namespace NorvesLib::Core::Rendering
             const auto bindCullDescriptors = [&](const RHI::DescriptorSetPtr &descriptorSet,
                                                  const RHI::BufferPtr &cullUniformBuffer, uint64_t &bufferRevision) -> void
             {
-                descriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
+                descriptorSet->BindConstantBuffer(CullUniformBinding, cullUniformBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
-                descriptorSet->BindStorageBuffer(1, m_InstanceTableBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullInstanceTableBinding, m_InstanceTableBuffer, 0,
                                                  static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
                 descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, m_MeshTableBuffer, 0,
                                                  static_cast<uint32_t>(tables.Meshes.size() * sizeof(GPUMegaMesh)));
-                descriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullIndirectDrawBinding, m_IndirectDrawBuffer, 0,
                                                  static_cast<uint32_t>(m_IndirectDrawBuffer->GetSize()));
-                descriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullDrawCountBinding, m_DrawCountBuffer, 0,
                                                  static_cast<uint32_t>(m_DrawCountBuffer->GetSize()));
 
                 // binding 4 の HZB は2パス目の遮蔽の判定（bHiZEnabled=1）だけが読む
-                descriptorSet->BindTexture(4, (bSecond && hiZTexture) ? hiZTexture : m_DefaultBlackTexture);
-                descriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                descriptorSet->BindTexture(CullHiZBinding, (bSecond && hiZTexture) ? hiZTexture : m_DefaultBlackTexture);
+                descriptorSet->BindSampler(CullHiZBinding, m_DefaultLinearSampler);
                 // binding 26 の前のフレームの HZB は前の HZB を使うフレームの両パス（bPrevHiZEnabled=1）だけが読む
                 descriptorSet->BindTexture(PrevHiZBinding, bPrevHiZ ? prevHiZTexture : m_DefaultBlackTexture);
                 descriptorSet->BindSampler(PrevHiZBinding, m_DefaultLinearSampler);
 
                 // binding 6: 統計（統計を取らない記録は代わりのバッファ）
-                descriptorSet->BindStorageBuffer(6, statsBuffer, 0, StatsBufferBytes);
-                descriptorSet->BindStorageBuffer(7, frameSlot.SectionBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullStatsBinding, statsBuffer, 0, StatsBufferBytes);
+                descriptorSet->BindStorageBuffer(CullSectionBinding, frameSlot.SectionBuffer, 0,
                                                  static_cast<uint32_t>(sectionCount * passCount * 2u * sizeof(uint32_t)));
-                descriptorSet->BindStorageBuffer(8, m_DrawInfoBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullDrawInfoBinding, m_DrawInfoBuffer, 0,
                                                  static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
                 // binding 9・10・14: BVH のたどりの列・カウンタ・2 パス目へ回す列（BVH を使わない経路は触らない。
                 // BVH のインスタンスがまだ現れず列を作っていなければ、代わりにカウンタを結ぶ）
                 const RHI::BufferPtr &bvhQueue = m_BvhQueueBuffer ? m_BvhQueueBuffer : m_BvhCounterBuffer;
                 const RHI::BufferPtr &bvhPass2 = m_BvhPass2Buffer ? m_BvhPass2Buffer : m_BvhCounterBuffer;
-                descriptorSet->BindStorageBuffer(9, bvhQueue, 0, static_cast<uint32_t>(bvhQueue->GetSize()));
-                descriptorSet->BindStorageBuffer(10, m_BvhCounterBuffer, 0, BvhCounterBytes);
-                descriptorSet->BindStorageBuffer(14, bvhPass2, 0, static_cast<uint32_t>(bvhPass2->GetSize()));
+                descriptorSet->BindStorageBuffer(BvhQueueBinding, bvhQueue, 0, static_cast<uint32_t>(bvhQueue->GetSize()));
+                descriptorSet->BindStorageBuffer(BvhCounterBinding, m_BvhCounterBuffer, 0, BvhCounterBytes);
+                descriptorSet->BindStorageBuffer(BvhPass2Binding, bvhPass2, 0, static_cast<uint32_t>(bvhPass2->GetSize()));
                 // binding 15: 範囲の境界（常駐の表を書けた記録だけが走るので在る。無ければ代わりにカウンタを結ぶ）
                 const RHI::BufferPtr &rangeBounds = m_RangeBoundsBuffer ? m_RangeBoundsBuffer : m_BvhCounterBuffer;
                 descriptorSet->BindStorageBuffer(RangeBoundsBinding, rangeBounds, 0,
                                                  static_cast<uint32_t>(rangeBounds->GetSize()));
                 // binding 11・12: ページの表（このフレームの常駐）と、ページの要求の列
-                descriptorSet->BindStorageBuffer(11, frameSlot.PageTableBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullPageTableBinding, frameSlot.PageTableBuffer, 0,
                                                  static_cast<uint32_t>(frameSlot.PageTableBuffer->GetSize()));
-                descriptorSet->BindStorageBuffer(12, pageRequestBuffer, 0,
+                descriptorSet->BindStorageBuffer(CullPageRequestBinding, pageRequestBuffer, 0,
                                                  static_cast<uint32_t>(pageRequestBuffer->GetSize()));
                 // binding 13: ソフトウェアラスタの一覧（振り分けないフレームは触らないので代わりのバッファを結ぶ）
                 if (bSwRasterBin)
                 {
-                    descriptorSet->BindStorageBuffer(13, m_SwRasterBuffer, 0,
+                    descriptorSet->BindStorageBuffer(CullSwRasterBinding, m_SwRasterBuffer, 0,
                                                      static_cast<uint32_t>(m_SwRasterBuffer->GetSize()));
                 }
                 else
                 {
-                    descriptorSet->BindStorageBuffer(13, m_DummyStatsBuffer, 0, StatsBufferBytes);
+                    descriptorSet->BindStorageBuffer(CullSwRasterBinding, m_DummyStatsBuffer, 0, StatsBufferBytes);
                 }
                 // binding 23〜25: 可視クラスタの全体の列・binning の数え・照合の印。列を作れなかった・照合しないときは代わりのバッファを
                 // 結ぶ（列は代わりのバッファの長さを容量として積み、その中身は読まれない）
@@ -4964,7 +5051,7 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
-        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
+        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに間接描画を発行する）
         auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
                                const RHI::FramebufferPtr &framebuffer,
                                uint32_t passIndex) -> void
@@ -5005,21 +5092,31 @@ namespace NorvesLib::Core::Rendering
                 // IndirectDraw発行
                 // DrawIndirectCount対応の場合はGPU側カウントを参照し、
                 // 実際に可視なクラスタ数だけドローコールを発行する。
-                // 非対応の場合は区間のコマンドの最大数をそのまま使用（積まれなかった分は instanceCount=0 で空振り）。
+                // 非対応の場合は区間の容量まで、多重描画に対応していればまとめて、非対応なら1件ずつ発行する。
+                // 積まれなかったコマンドは instanceCount=0 で空振りする。
                 const uint64_t commandOffsetBytes =
                     (static_cast<uint64_t>(passIndex) * commandsPerPass + section.CommandBase) * IndirectCommandBytes;
-            if (caps.bDrawIndirectCount)
-            {
+                if (caps.bDrawIndirectCount)
+                {
                     cmdList->DrawIndexedIndirectCount(m_IndirectDrawBuffer, commandOffsetBytes, m_DrawCountBuffer,
                                                       static_cast<uint64_t>(passIndex * sectionCount + sectionIndex) *
                                                           sizeof(uint32_t),
                                                       section.Capacity, IndirectCommandBytes);
-            }
-            else
-            {
+                }
+                else if (caps.bMultiDrawIndirect)
+                {
                     cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer, commandOffsetBytes, section.Capacity,
-                        IndirectCommandBytes);
-            }
+                                                 IndirectCommandBytes);
+                }
+                else
+                {
+                    for (uint32_t i = 0; i < section.Capacity; ++i)
+                    {
+                        cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer,
+                                                     commandOffsetBytes + static_cast<uint64_t>(i) * IndirectCommandBytes,
+                                                     1, IndirectCommandBytes);
+                    }
+                }
         }
 
             cmdList->EndRenderPass();
@@ -5064,7 +5161,7 @@ namespace NorvesLib::Core::Rendering
             LogPreviousHiZStatus(m_HiZContracts[previousHiZIndex], currentContract, epochFrame);
             // 契約が合うフレームだけ、1 パス目の範囲・席・節・クラスタを前の HZB で判定する。合わないフレームは 1 パス目が
             // 遮蔽の判定をせずに全部を描き、2 パス目へは何も回さない
-            const bool bUsePrevHiZ = m_PrevHiZStatus == MegaPrevHiZStatus::Ready && m_HiZ[previousHiZIndex].IsReady();
+            const bool bUsePrevHiZ = CanUsePreviousHiZ(m_PrevHiZStatus, m_HiZ[previousHiZIndex].IsReady());
             if (bUsePrevHiZ)
             {
                 prevHiZTexture = m_HiZ[previousHiZIndex].GetTexture();
@@ -5887,6 +5984,34 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void MegaGeometryPass::ApplyCullOcclusion(MegaGeometry::CullUniformData& uniform, uint32_t cullPass,
+                                              const CullOcclusionInputs& inputs)
+    {
+        // 遮蔽の判定（2パス目だけ）。HZB の元の深度の解像度を渡す（HZB のミップ0 はその半分）
+        if (cullPass == CULL_PASS_SECOND && inputs.bCurrentHiZ)
+        {
+            uniform.HiZWidth = inputs.DepthWidth;
+            uniform.HiZHeight = inputs.DepthHeight;
+            uniform.HiZMipCount = inputs.CurrentHiZMipCount;
+            uniform.bHiZEnabled = 1;
+        }
+        // 前のフレームの HZB（1 パス目は隠れたものを回す判定、2 パス目は 1 パス目が描いたかの判定し直し）。
+        // 寸法は契約で今の深度と同じことを確かめてある
+        if (cullPass != CULL_PASS_SINGLE && inputs.bPrevHiZ)
+        {
+            uniform.HiZWidth = inputs.DepthWidth;
+            uniform.HiZHeight = inputs.DepthHeight;
+            uniform.PrevHiZMipCount = inputs.PrevHiZMipCount;
+            uniform.bPrevHiZEnabled = 1;
+            Math::MatrixUtils::TransposeToShaderData(inputs.PrevViewProjection, uniform.PrevViewProjection);
+        }
+    }
+
+    bool MegaGeometryPass::CanUsePreviousHiZ(MegaPrevHiZStatus status, bool bPreviousHiZBuilt)
+    {
+        return status == MegaPrevHiZStatus::Ready && bPreviousHiZBuilt;
+    }
+
     RHI::DescriptorSetDesc MegaGeometryPass::BuildCullDescriptorSetDesc()
     {
         RHI::DescriptorSetDesc desc;
@@ -5898,33 +6023,33 @@ namespace NorvesLib::Core::Rendering
             descriptorBinding.stages = RHI::ShaderStage::Compute;
             desc.bindings.push_back(descriptorBinding);
         };
-        addBinding(0, RHI::ResourceBindType::ConstantBuffer);        // カリング用ユニフォーム
-        addBinding(1, RHI::ResourceBindType::StructuredBuffer);      // インスタンスの表
-        addBinding(2, RHI::ResourceBindType::RWBuffer);              // IndirectDrawコマンド
-        addBinding(3, RHI::ResourceBindType::RWBuffer);              // 区間ごとのカウンタ
-        addBinding(4, RHI::ResourceBindType::CombinedImageSampler);  // Hi-Z
-        addBinding(6, RHI::ResourceBindType::RWBuffer);              // 統計
-        addBinding(7, RHI::ResourceBindType::StructuredBuffer);      // 区間の表
-        addBinding(8, RHI::ResourceBindType::RWBuffer);              // 描画情報
-        addBinding(9, RHI::ResourceBindType::RWBuffer);              // BVH のたどりの列
-        addBinding(10, RHI::ResourceBindType::RWBuffer);             // BVH のたどりのカウンタ
-        addBinding(11, RHI::ResourceBindType::RWBuffer);             // ページの表（常駐 + 要求の印）
-        addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
-        addBinding(13, RHI::ResourceBindType::RWBuffer);             // ソフトウェアラスタの一覧と間接 dispatch の引数
-        addBinding(14, RHI::ResourceBindType::RWBuffer);             // BVH のたどりの 2 パス目へ回す列と間接 dispatch の引数
-        addBinding(RangeBoundsBinding, RHI::ResourceBindType::StructuredBuffer); // 範囲の境界（インスタンスの判定の範囲の段）
+        addBinding(CullUniformBinding, RHI::ResourceBindType::ConstantBuffer);          // カリング用ユニフォーム
+        addBinding(CullInstanceTableBinding, RHI::ResourceBindType::StructuredBuffer);  // インスタンスの表
+        addBinding(CullIndirectDrawBinding, RHI::ResourceBindType::RWBuffer);           // IndirectDrawコマンド
+        addBinding(CullDrawCountBinding, RHI::ResourceBindType::RWBuffer);              // 区間ごとのカウンタ
+        addBinding(CullHiZBinding, RHI::ResourceBindType::CombinedImageSampler);        // Hi-Z
+        addBinding(CullStatsBinding, RHI::ResourceBindType::RWBuffer);                  // 統計
+        addBinding(CullSectionBinding, RHI::ResourceBindType::StructuredBuffer);        // 区間の表
+        addBinding(CullDrawInfoBinding, RHI::ResourceBindType::RWBuffer);               // 描画情報
+        addBinding(BvhQueueBinding, RHI::ResourceBindType::RWBuffer);                   // BVH のたどりの列
+        addBinding(BvhCounterBinding, RHI::ResourceBindType::RWBuffer);                 // BVH のたどりのカウンタ
+        addBinding(CullPageTableBinding, RHI::ResourceBindType::RWBuffer);              // ページの表（常駐 + 要求の印）
+        addBinding(CullPageRequestBinding, RHI::ResourceBindType::RWBuffer);            // ページの要求の列
+        addBinding(CullSwRasterBinding, RHI::ResourceBindType::RWBuffer);               // ソフトウェアラスタの一覧と間接 dispatch の引数
+        addBinding(BvhPass2Binding, RHI::ResourceBindType::RWBuffer);                   // BVH のたどりの 2 パス目へ回す列と間接 dispatch の引数
+        addBinding(RangeBoundsBinding, RHI::ResourceBindType::StructuredBuffer);        // 範囲の境界（インスタンスの判定の範囲の段）
         addBinding(MegaMeshTableBindingIndex, RHI::ResourceBindType::StructuredBuffer); // メッシュの表
-        addBinding(VisibleListBinding, RHI::ResourceBindType::RWBuffer);  // 可視クラスタの全体の列
-        addBinding(BinCounterBinding, RHI::ResourceBindType::RWBuffer);   // binning の数え・接頭和・照合の引数
-        addBinding(BinCheckMarkBinding, RHI::ResourceBindType::RWBuffer); // 照合の印（開発ビルドの照合だけが使う）
-        addBinding(PrevHiZBinding, RHI::ResourceBindType::CombinedImageSampler); // 前のフレームの HZB（前の HZB を使うフレームの両パスが読む）
+        addBinding(VisibleListBinding, RHI::ResourceBindType::RWBuffer);                // 可視クラスタの全体の列
+        addBinding(BinCounterBinding, RHI::ResourceBindType::RWBuffer);                 // binning の数え・接頭和・照合の引数
+        addBinding(BinCheckMarkBinding, RHI::ResourceBindType::RWBuffer);               // 照合の印（開発ビルドの照合だけが使う）
+        addBinding(PrevHiZBinding, RHI::ResourceBindType::CombinedImageSampler);        // 前のフレームの HZB（前の HZB を使うフレームの両パスが読む）
         return desc;
     }
 
     RHI::DescriptorSetDesc MegaGeometryPass::BuildDrawDescriptorSetDesc() const
     {
         // GBufferPassと同じ（set=0, binding 0=UBO, 1-6=textures）に、頂点シェーダーが引く
-        // インスタンスの表（8）・描画情報（9）・メッシュの表（22）を足した形
+        // インスタンスの表（8）・描画情報（9）・メッシュの表（22）と地形の材質（10〜21・23）を足した形
         RHI::DescriptorSetDesc desc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
@@ -5958,6 +6083,21 @@ namespace NorvesLib::Core::Rendering
             texBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(texBinding);
         }
+        // スプラットの層と重みの配列（18〜21）と、並びの UBO（23）
+        for (const uint32_t binding : {TERRAIN_SPLAT_MEGA_ALBEDO_BINDING, TERRAIN_SPLAT_MEGA_NORMAL_BINDING,
+                                       TERRAIN_SPLAT_MEGA_ARM_BINDING, TERRAIN_SPLAT_MEGA_SPLAT_BINDING})
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = binding;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(texBinding);
+        }
+        RHI::DescriptorBinding splatParamsBinding;
+        splatParamsBinding.binding = TERRAIN_SPLAT_MEGA_PARAMS_BINDING;
+        splatParamsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        splatParamsBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(splatParamsBinding);
         if (UsesVirtualTextureFeedbackBinding(m_Device))
         {
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);
@@ -7034,11 +7174,17 @@ namespace NorvesLib::Core::Rendering
                                      "MegaGeometry_DrawUBO");
                 SectionDraw sectionDraw;
                 sectionDraw.Uniform = m_Device->CreateBuffer(desc);
+                RHI::BufferDesc splatDesc(TERRAIN_SPLAT_PARAM_FLOATS * sizeof(float),
+                                          RHI::ResourceUsage::ConstantBuffer,
+                                          true,
+                                          "MegaGeometry_TerrainSplatUBO");
+                sectionDraw.TerrainSplatUniform = m_Device->CreateBuffer(splatDesc);
 #if NORVES_BUILD_DEVELOPMENT
                 NoteGpuSceneBuffer(sectionDraw.Uniform, desc, false);
+                NoteGpuSceneBuffer(sectionDraw.TerrainSplatUniform, splatDesc, false);
 #endif
                 sectionDraw.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
-                if (!sectionDraw.Uniform || !sectionDraw.DescriptorSet)
+                if (!sectionDraw.Uniform || !sectionDraw.TerrainSplatUniform || !sectionDraw.DescriptorSet)
                 {
                     return false;
                 }

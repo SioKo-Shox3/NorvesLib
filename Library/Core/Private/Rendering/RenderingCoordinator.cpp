@@ -21,7 +21,6 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
-#include "Rendering/DepthOfFieldPass.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
@@ -29,7 +28,6 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/InstanceBufferRing.h"
-#include "Rendering/MotionBlurPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
@@ -50,6 +48,7 @@
 #include "Rendering/SkySunLight.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/Viewport.h"
 #include <algorithm>
 #include <cassert>
@@ -186,12 +185,14 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
             hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
             hash = HashRevisionValue(hash, static_cast<uint32_t>(proxy.LayerMask));
-            return HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            hash = HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+            return HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
         }
 
         uint64_t HashSkinnedMeshProxyRevision(const SkinnedMeshProxy& proxy)
         {
             uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
+            hash = HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);
@@ -220,7 +221,8 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.x);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.y);
             hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentUniformRadiance.z);
-            hash = HashRevisionValue(hash, packet.Scene.SunShadowMaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.SunShadow.MaxDistance);
+            hash = HashRevisionValue(hash, packet.Scene.SunShadow.SplitLambda);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.bEnabled);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.DistanceScale);
             hash = HashRevisionValue(hash, packet.Scene.AerialPerspective.StartDistanceMeters);
@@ -1691,7 +1693,7 @@ namespace NorvesLib::Core::Rendering
             instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
         }
         instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
-        // 地形の 3 層の混ぜ合わせ: RTGI が当たりの点の分類と層の平均の色から当たりの色を決める（値はシーンで 1 組）
+        // 地形の混ぜ合わせ: RTGI が当たりの点の重みと層の平均の色から当たりの色を決める（値はシーンで 1 組）
         const MegaGeometry::MegaTerrainBlend& terrain = material.TerrainBlend;
         if (terrain.bEnabled)
         {
@@ -1712,6 +1714,16 @@ namespace NorvesLib::Core::Rendering
                 std::memcpy(snapshot.RockSlopeDegrees, terrain.RockSlopeDegrees, sizeof(snapshot.RockSlopeDegrees));
                 std::memcpy(snapshot.DirtHeightRange, terrain.DirtHeightRange, sizeof(snapshot.DirtHeightRange));
                 snapshot.DirtHeightBiasDegrees = terrain.DirtHeightBiasDegrees;
+            }
+        }
+        else if (terrain.IsSplatEnabled())
+        {
+            instance.bTerrainBlend = true;
+            RayTracingTerrainBlendSnapshot& snapshot = packet.RayTracingScene.TerrainBlend;
+            if (!snapshot.bValid && !snapshot.bSplatValid)
+            {
+                snapshot.bSplatValid = true;
+                snapshot.Splat = terrain.Splat;
             }
         }
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
@@ -2842,10 +2854,6 @@ namespace NorvesLib::Core::Rendering
             m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
                                                       settings.SwRaster, settings.SwRasterMaxPixels);
-            // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
-            m_MainSceneView->AddPass(Container::MakeUnique<DepthOfFieldPass>());
-            // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
-            m_MainSceneView->AddPass(Container::MakeUnique<MotionBlurPass>());
             NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
         }
 
@@ -4591,6 +4599,9 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetPaleFlatParameters(m_PaleFlat);
+        packet.Scene.SetWindParameters(m_Wind);
+        packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -4604,15 +4615,22 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
         packet.Scene.bStaticEnvironmentUniform = m_bStaticEnvironmentUniform;
         packet.Scene.StaticEnvironmentUniformRadiance = m_StaticEnvironmentUniformRadiance;
-        packet.Scene.SunShadowMaxDistance = m_SunShadowMaxDistance;
+        packet.Scene.SunShadow = m_SunShadowParameters;
+        packet.Scene.bSkinnedViewCulling = m_bSkinnedViewCulling;
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
         packet.Scene.Foliage = m_Foliage;
         packet.GrassField = m_GrassField;
+        packet.WorldFieldInteractors.clear();
+        packet.WorldFieldInteractors.insert(packet.WorldFieldInteractors.end(),
+                                            m_WorldFieldInteractors.begin(), m_WorldFieldInteractors.end());
+        // このフレームの入力を写し終えたら、容量を保ったまま空にする。
+        m_WorldFieldInteractors.clear();
         packet.Scene.RibbonTrails = m_RibbonTrails;
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
+        m_ExtensionData.SnapshotTo(packet.Scene.Extensions);
         packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
         packet.bRTGINonShadowCasterOcclusion = m_bRTGINonShadowCasterOcclusion;
@@ -5159,8 +5177,9 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        // パケットを確保できなかったフレームの帯も翌フレームへ持ち越さない。
+        // パケットを確保できなかったフレームの入力も翌フレームへ持ち越さない。
         m_RibbonTrails.Clear();
+        m_WorldFieldInteractors.clear();
 
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
@@ -5547,6 +5566,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
                 swapChain->GetCompletedSubmissionSerial());
+            m_RenderResources->SkinnedMeshes().PreloadFrameLeases(packet->SkinnedMeshFrameLeases);
             m_RenderResources->BeginRetireFrame(swapChain->GetCompletedSubmissionSerial());
             m_SceneRenderer.SetSkinnedMeshResources(&m_RenderResources->SkinnedMeshes());
         }
@@ -5845,6 +5865,9 @@ namespace NorvesLib::Core::Rendering
                                              ? &packet->PreviousMainCamera
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
+        viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.bVertexAnimationTestDisplacement = packet->bVertexAnimationTestDisplacement;
+        viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
@@ -5858,6 +5881,8 @@ namespace NorvesLib::Core::Rendering
                                                                       packet->DrawCommandRange);
         viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
+        viewContext.SnapshotGrassField = packet->GrassField.get();
+        viewContext.SnapshotWorldFieldInteractors = &packet->WorldFieldInteractors;
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;
@@ -6133,6 +6158,35 @@ namespace NorvesLib::Core::Rendering
                 presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
         }
 
+        // 全ビューはこの描画の ExtensionFrame を共有する。今回描いた撮影元だけに、その時刻を値で固定する。
+        FrameCaptureSource* captureSources[] =
+        {
+            &executionResult.CaptureSources.PresentationColor,
+            &executionResult.CaptureSources.SceneColor,
+            &executionResult.CaptureSources.BackBuffer,
+            &executionResult.CaptureSources.GBufferVelocity,
+            &executionResult.CaptureSources.RTGIDiffuseIndirect,
+            &executionResult.CaptureSources.RTGIHistoryAge,
+            &executionResult.CaptureSources.GBufferNormal,
+            &executionResult.CaptureSources.GBufferMaterial,
+            &executionResult.CaptureSources.GBufferEmissive,
+            &executionResult.CaptureSources.AovSurface,
+            &executionResult.CaptureSources.AovGeometry,
+            &executionResult.CaptureSources.AovLighting,
+            &executionResult.CaptureSources.AovIds,
+            &executionResult.CaptureSources.AtmosphereProbe,
+            &executionResult.CaptureSources.CloudProbe,
+            &executionResult.CaptureSources.CloudOpacity
+        };
+        for (FrameCaptureSource* source : captureSources)
+        {
+            if (source->Texture && source->FrameNumber == viewContext.ExtensionFrame.FrameNumber)
+            {
+                source->GameTotalTime = viewContext.ExtensionFrame.GameTotalTime;
+                source->PreviousRenderedTotalTime = viewContext.ExtensionFrame.PreviousRenderedTotalTime;
+            }
+        }
+
         if (m_FrameCaptureReadbackHelper)
         {
             captureRecordStatus = m_FrameCaptureReadbackHelper->TryRecordCopy(
@@ -6181,6 +6235,20 @@ namespace NorvesLib::Core::Rendering
         // 統計更新
         const auto &rendererStats = m_SceneRenderer.GetStats();
         packet->Stats.SkinnedGBufferRecordedDraws = rendererStats.SkinnedGBufferDrawCallCount;
+        // 同じフレームに各ビューの ID ラスタが記録したスキニング描画を足す。
+        for (const auto &view : m_Views)
+        {
+            if (!view)
+            {
+                continue;
+            }
+            const auto *rasterPass = dynamic_cast<const VisibilityRasterPass *>(view->FindPass("VisibilityRasterPass"));
+            if (rasterPass)
+            {
+                packet->Stats.SkinnedGBufferRecordedDraws +=
+                    rasterPass->GetRecordedSkinnedDrawCountForFrame(viewContext.ResolveRenderFrameSerial());
+            }
+        }
         packet->Stats.SkinnedShadowRecordedDraws = rendererStats.SkinnedShadowDrawCallCount;
         renderStats.DrawCalls = rendererStats.DrawCallCount;
         renderStats.TrianglesRendered = rendererStats.TriangleCount;
@@ -6616,6 +6684,21 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetPaleFlatParameters(const PaleFlatParameters& parameters)
+    {
+        m_PaleFlat = SanitizePaleFlatParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
+    {
+        m_Wind = SanitizeWindParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
+    {
+        m_bVertexAnimationTestDisplacement = bEnabled;
+    }
+
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
     {
         const SkyOcclusionParameters sanitized = SanitizeSkyOcclusionParameters(parameters);
@@ -6696,9 +6779,21 @@ namespace NorvesLib::Core::Rendering
                                 : Math::Vector3::Zero;
     }
 
+    void RenderingCoordinator::SetSunShadowParameters(const SunShadowParameters& parameters)
+    {
+        m_SunShadowParameters = SanitizeSunShadowParameters(parameters);
+    }
+
     void RenderingCoordinator::SetSunShadowMaxDistance(float distance)
     {
-        m_SunShadowMaxDistance = std::isfinite(distance) && distance > 0.0f ? distance : 0.0f;
+        SunShadowParameters parameters = m_SunShadowParameters;
+        parameters.MaxDistance = distance;
+        SetSunShadowParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetSkinnedViewCullingEnabled(bool bEnabled)
+    {
+        m_bSkinnedViewCulling = bEnabled;
     }
 
     void RenderingCoordinator::SetAerialPerspective(const AerialPerspectiveParameters& parameters)
@@ -6719,6 +6814,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetGrassField(Container::TSharedPtr<const GrassFieldRenderData> grassField)
     {
         m_GrassField = std::move(grassField);
+    }
+
+    void RenderingCoordinator::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
+    {
+        SanitizeWorldFieldInteractors(interactors, m_WorldFieldInteractors);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)

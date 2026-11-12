@@ -1,0 +1,162 @@
+cmake_minimum_required(VERSION 3.19)
+
+# JSON の構造を検査し、同じ BVH を二つの四足リグへ cook する。
+if(NOT DEFINED ASSET_COOK_EXE OR NOT DEFINED SOURCE_ROOT OR NOT DEFINED SMOKE_DIR OR SMOKE_DIR STREQUAL "")
+    message(FATAL_ERROR "ASSET_COOK_EXE・SOURCE_ROOT・SMOKE_DIR が必要です")
+endif()
+
+set(fixtures "${SOURCE_ROOT}/Test/Tools/Fixtures/Retarget")
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}")
+
+function(cook case_name)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}" ${ARGN}
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr)
+    file(WRITE "${SMOKE_DIR}/${case_name}.stdout.txt" "${stdout}")
+    file(WRITE "${SMOKE_DIR}/${case_name}.stderr.txt" "${stderr}")
+    if(NOT "${result}" STREQUAL "0")
+        message(FATAL_ERROR "${case_name} の cook が失敗しました (${result}): ${stdout}${stderr}")
+    endif()
+    message(STATUS "RETARGET_COOK case=${case_name} exit=${result}")
+endfunction()
+
+# 分離出力は skeleton のエントリを選ぶ。retarget 出力も同じ metadata を読む。
+function(skeleton_id manifest_path expected_format output_name)
+    file(READ "${manifest_path}" manifest)
+    string(JSON count LENGTH "${manifest}" assets)
+    if(count LESS 1)
+        message(FATAL_ERROR "manifest に資産がありません: ${manifest_path}")
+    endif()
+    math(EXPR last "${count} - 1")
+    set(found 0)
+    foreach(index RANGE 0 ${last})
+        string(JSON format GET "${manifest}" assets ${index} format)
+        if(format STREQUAL expected_format)
+            string(JSON id GET "${manifest}" assets ${index} metadata skeleton_id)
+            string(LENGTH "${id}" length)
+            if(NOT length EQUAL 16 OR NOT id MATCHES "^[0-9a-f]+$" OR id STREQUAL "0000000000000000")
+                message(FATAL_ERROR "SkeletonId の形式が不正です: ${manifest_path}: ${id}")
+            endif()
+            math(EXPR found "${found} + 1")
+            set(${output_name} "${id}" PARENT_SCOPE)
+        endif()
+    endforeach()
+    if(NOT found EQUAL 1)
+        message(FATAL_ERROR "${expected_format} のエントリが一意ではありません: ${manifest_path}")
+    endif()
+endfunction()
+
+function(retarget case_name skeleton profile)
+    cook("${case_name}" --retarget-clip
+        --input "${fixtures}/grounded_walk.bvh"
+        --skeleton "${fixtures}/${skeleton}"
+        --role-profile "${profile}"
+        --out "${SMOKE_DIR}/${case_name}"
+        --logical Animations/RetargetSmoke/Walk --clip-name Walk
+        --retarget-report "${SMOKE_DIR}/${case_name}.report.json")
+endfunction()
+
+# 上限が測定済みであり、各脚に接地区間があることも確かめる。
+function(check_report case_name expected_id)
+    file(READ "${SMOKE_DIR}/${case_name}.report.json" report)
+    string(JSON id GET "${report}" target_skeleton_id)
+    string(JSON status GET "${report}" result status)
+    string(JSON clip_count LENGTH "${report}" clips)
+    if(NOT id STREQUAL expected_id OR NOT status STREQUAL "within" OR NOT clip_count EQUAL 1)
+        message(FATAL_ERROR "${case_name} の報告の ID・上限判定・クリップ数が不正です: ${report}")
+    endif()
+    string(JSON contacts LENGTH "${report}" clips 0 foot_contacts)
+    if(NOT contacts EQUAL 4)
+        message(FATAL_ERROR "${case_name} の四脚の接地報告がありません")
+    endif()
+    foreach(index RANGE 0 3)
+        string(JSON intervals LENGTH "${report}" clips 0 foot_contacts ${index} frames)
+        if(intervals LESS 1)
+            message(FATAL_ERROR "${case_name} の脚 ${index} に接地区間がありません")
+        endif()
+    endforeach()
+    string(JSON root_scale GET "${report}" clips 0 root_scale)
+    string(JSON joint_error GET "${report}" clips 0 rotation_retarget_error_deg max)
+    string(JSON foot_slide GET "${report}" clips 0 foot_slide_m after)
+    message(STATUS "RETARGET_REPORT case=${case_name} skeleton_id=${id} root_scale=${root_scale} joint_error_deg=${joint_error} foot_slide_m=${foot_slide} contacts=${contacts}")
+endfunction()
+
+set(profile "${fixtures}/quadruped.json")
+foreach(target IN ITEMS A B)
+    if(target STREQUAL "A")
+        set(skeleton long_legs.gltf)
+    else()
+        set(skeleton long_body.gltf)
+    endif()
+    cook("rig-${target}" --rig-split
+        --input "${fixtures}/${skeleton}" --out "${SMOKE_DIR}/rig-${target}"
+        --logical "Models/RetargetSmoke/${target}" --root-joint root)
+    skeleton_id("${SMOKE_DIR}/rig-${target}/manifest.json" nvskel.v1.skeleton "rig_id_${target}")
+    retarget("clip-${target}" "${skeleton}" "${profile}")
+    skeleton_id("${SMOKE_DIR}/clip-${target}/manifest.json" nvskel.v1.clips "clip_id_${target}")
+    if(NOT "${rig_id_${target}}" STREQUAL "${clip_id_${target}}")
+        message(FATAL_ERROR "対象 ${target} の分離骨格とクリップの SkeletonId が違います")
+    endif()
+    check_report("clip-${target}" "${rig_id_${target}}")
+endforeach()
+if(rig_id_A STREQUAL rig_id_B)
+    message(FATAL_ERROR "二つの対象骨格の SkeletonId が同じです")
+endif()
+
+# 合格 profile の上限だけを厳しくする。失敗の報告先は公開出力の外に置く。
+file(READ "${profile}" strict_profile)
+string(JSON strict_profile SET "${strict_profile}" report max_joint_error_deg 0.000000000001)
+string(JSON strict_profile SET "${strict_profile}" report max_foot_slide_m 0)
+file(WRITE "${SMOKE_DIR}/strict.json" "${strict_profile}")
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}" --retarget-clip
+        --input "${fixtures}/grounded_walk.bvh"
+        --skeleton "${fixtures}/long_legs.gltf" --role-profile "${SMOKE_DIR}/strict.json"
+        --out "${SMOKE_DIR}/rejected" --logical Animations/RetargetSmoke/Walk --clip-name Walk
+        --retarget-report "${SMOKE_DIR}/rejected.report.json"
+    RESULT_VARIABLE rejected_result
+    OUTPUT_VARIABLE rejected_stdout
+    ERROR_VARIABLE rejected_stderr)
+file(WRITE "${SMOKE_DIR}/rejected.stdout.txt" "${rejected_stdout}")
+file(WRITE "${SMOKE_DIR}/rejected.stderr.txt" "${rejected_stderr}")
+if("${rejected_result}" STREQUAL "0" OR NOT rejected_stderr MATCHES "retarget_report_limit:")
+    message(FATAL_ERROR "厳しい上限が期待した理由で拒否されませんでした (${rejected_result}): ${rejected_stdout}${rejected_stderr}")
+endif()
+if(EXISTS "${SMOKE_DIR}/rejected")
+    message(FATAL_ERROR "上限超過の出力ディレクトリが公開されました")
+endif()
+file(READ "${SMOKE_DIR}/rejected.report.json" rejected_report)
+string(JSON rejected_status GET "${rejected_report}" result status)
+if(NOT rejected_status MATCHES "^(joint_error_exceeded|foot_slide_exceeded)$")
+    message(FATAL_ERROR "上限超過ではない理由で失敗しました: ${rejected_status}")
+endif()
+string(STRIP "${rejected_stderr}" rejected_message)
+message(STATUS "RETARGET_REJECT exit=${rejected_result} unpublished=true error=${rejected_message}")
+
+# 新しい出力先でも、全ファイルの相対パスとバイト列が一致すること。
+retarget(clip-A-repeat long_legs.gltf "${profile}")
+file(GLOB_RECURSE original_files LIST_DIRECTORIES false RELATIVE "${SMOKE_DIR}/clip-A" "${SMOKE_DIR}/clip-A/*")
+file(GLOB_RECURSE repeat_files LIST_DIRECTORIES false RELATIVE "${SMOKE_DIR}/clip-A-repeat" "${SMOKE_DIR}/clip-A-repeat/*")
+list(SORT original_files)
+list(SORT repeat_files)
+if(NOT original_files OR NOT original_files STREQUAL repeat_files)
+    message(FATAL_ERROR "再 cook のファイル集合が違います: ${original_files} / ${repeat_files}")
+endif()
+foreach(relative_path IN LISTS original_files)
+    file(SHA256 "${SMOKE_DIR}/clip-A/${relative_path}" original_hash)
+    file(SHA256 "${SMOKE_DIR}/clip-A-repeat/${relative_path}" repeat_hash)
+    if(NOT original_hash STREQUAL repeat_hash)
+        message(FATAL_ERROR "再 cook のバイト列が違います: ${relative_path}")
+    endif()
+    message(STATUS "RETARGET_BYTES path=${relative_path} sha256=${original_hash}")
+endforeach()
+file(SHA256 "${SMOKE_DIR}/clip-A.report.json" original_report_hash)
+file(SHA256 "${SMOKE_DIR}/clip-A-repeat.report.json" repeat_report_hash)
+if(NOT original_report_hash STREQUAL repeat_report_hash)
+    message(FATAL_ERROR "再 cook の報告 JSON のバイト列が違います")
+endif()
+list(LENGTH original_files file_count)
+message(STATUS "RETARGET_SMOKE result=pass skeleton_A=${rig_id_A} skeleton_B=${rig_id_B} limits_rejected_unpublished=true byte_identical_files=${file_count} report_identical=true")

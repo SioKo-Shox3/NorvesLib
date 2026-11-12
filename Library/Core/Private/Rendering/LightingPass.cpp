@@ -21,6 +21,8 @@
 #include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/TerrainBlendShading.h"
+#include "Rendering/Terrain/TerrainSystem.h"
+#include "Rendering/PaleFlatShading.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -32,6 +34,7 @@
 
 // HDR環境マップロード用
 #include "stb_image.h"
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -205,7 +208,8 @@ namespace NorvesLib::Core::Rendering
                                    const char* prefilterName,
                                    RHI::TexturePtr& outEnvironment,
                                    RHI::TexturePtr& outDiffuse,
-                                   RHI::TexturePtr& outPrefilter)
+                                   RHI::TexturePtr& outPrefilter,
+                                   float outAverageIrradiance[3])
     {
         constexpr uint32_t workingWidth = 256u;
         constexpr uint32_t workingHeight = 128u;
@@ -215,6 +219,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t prefilterSamples = 1024u;
         constexpr double pi = 3.14159265358979323846;
 
+        std::fill_n(outAverageIrradiance, 3u, 0.0f);
         outEnvironment.reset();
         outDiffuse.reset();
         outPrefilter.reset();
@@ -436,6 +441,31 @@ namespace NorvesLib::Core::Rendering
                                   "working"))
         {
             return false;
+        }
+
+        double averageIrradiance[3] = {};
+        if (!ComputeEquirectangularAverageIrradiance(
+                workingData.data(), workingWidth, workingHeight, averageIrradiance))
+        {
+            return false;
+        }
+        if (bConstantSource)
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const double value = averageIrradiance[channel];
+                const double expected = diffuseExpectedRgb[channel];
+                const double relative = expected == 0.0 ? 0.0 :
+                    std::abs(value - expected) / std::abs(expected);
+                if ((expected == 0.0 && value != 0.0) ||
+                    !std::isfinite(value) || !std::isfinite(relative) || relative > 1.0e-3)
+                {
+                    NORVES_LOG_ERROR("LightingPass",
+                                     "IBL の全球の平均照度が一定の入力の πL と一致しません: channel=%u value=%g expected=%g",
+                                     channel, value, expected);
+                    return false;
+                }
+            }
         }
 
         Container::VariableArray<float> workingDirections(workingPixelCount * 3u, 0.0f);
@@ -713,6 +743,10 @@ namespace NorvesLib::Core::Rendering
         outEnvironment = environmentTexture;
         outDiffuse = diffuseTexture;
         outPrefilter = prefilterTexture;
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            outAverageIrradiance[channel] = static_cast<float>(averageIrradiance[channel]);
+        }
         return true;
     }
 
@@ -838,6 +872,8 @@ namespace NorvesLib::Core::Rendering
         float terrainHeight[4] = {};
         /// x=株の冠の数（RTGIFoliageCrown の数。0 なら遮らない。CollectRTGIFoliageCrowns）。
         float foliageOcclusion[4] = {};
+        /// スプラット（vec4 × 12）: 地図の外縁・形と濡れ度・崖と回転・フラグ・8 層の倍率と濡れやすさ。
+        float terrainSplat[TERRAIN_SPLAT_PARAM_FLOATS] = {};
     };
 
     /// RTGI の拡散の光線を遮る株の冠の数の上限と、選ぶ範囲[m]（カメラから冠の縁まで）
@@ -981,7 +1017,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t CustomIndex = UINT32_MAX;
         float Transform[12] = {};
         /// x=光線に見せる形のずれの上限（世界の長さ、RayTracingSceneInstanceSnapshot::RayProxyErrorMeters）、
-        /// y=地形の 3 層の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）、z=影を落とさない不透明物体（1/0。
+        /// y=地形の混ぜ合わせの材質（1/0。当たりの色を地形の値から決める）、z=影を落とさない不透明物体（1/0。
         /// 拡散の光線が中から出る当たりを読み飛ばす）。w は未使用
         float RayProxy[4] = {};
     };
@@ -999,7 +1035,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved = 0u;
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 256u);
+    static_assert(sizeof(RTGIComputeParameters) == 448u);
     static_assert(sizeof(RTGIInstanceData) == 128u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
@@ -1512,18 +1548,41 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 地形の当たりの色の値（RTGIComputeParameters の terrain*）と、束ねるテクスチャ（地図・砂・土・岩肌）を求める
      *
-     * 3 層のアルベドがすべて引けたときだけ有効にする。地図が引けなければ傾斜の式だけで混ぜる。
+     * 3 層はアルベドがすべて引けたときだけ有効にし、地図が無ければ傾斜の式だけで混ぜる。
+     * 3 層が無い場合、スプラットはアルベドと重みの配列がともに引けたときだけ有効にする。
      * 引けない枠は fallback を束ねる（シェーダーは無効の印で読まない）。
      */
     static void ResolveRTGITerrainBlend(const RayTracingTerrainBlendSnapshot& terrain,
                                         const TextureResources* textures,
                                         const RHI::TexturePtr& fallback,
+                                        const RHI::TexturePtr& fallbackArray,
+                                        float wetness,
                                         RTGIComputeParameters& parameters,
-                                        RHI::TexturePtr (&outTextures)[4])
+                                        RHI::TexturePtr (&outTextures)[4],
+                                        RHI::TexturePtr (&outSplatTextures)[2])
     {
         for (RHI::TexturePtr& texture : outTextures)
         {
             texture = fallback;
+        }
+        for (RHI::TexturePtr& texture : outSplatTextures)
+        {
+            texture = fallbackArray;
+        }
+        if (!terrain.bValid && terrain.bSplatValid && textures != nullptr)
+        {
+            const MegaGeometry::MegaTerrainSplat& splat = terrain.Splat;
+            const RHI::TexturePtr albedo = textures->GetRHITexturePtr(splat.AlbedoArrayTexture);
+            const RHI::TexturePtr weights = textures->GetRHITexturePtr(splat.SplatArrayTexture);
+            const uint32_t requiredLayers = std::max(2u, std::min(splat.LayerCount, MegaGeometry::MegaTerrainSplatMaxLayers));
+            if (albedo && weights && albedo->GetArraySize() >= requiredLayers && weights->GetArraySize() >= 2u)
+            {
+                outSplatTextures[0] = albedo;
+                outSplatTextures[1] = weights;
+                const uint32_t flags = IsTerrainAlbedoSrgbDecodeNeeded(albedo.get())
+                    ? TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE : 0u;
+                PackTerrainSplatParams(splat, true, flags, wetness, parameters.terrainSplat);
+            }
         }
         if (!terrain.bValid || textures == nullptr)
         {
@@ -1616,6 +1675,13 @@ namespace NorvesLib::Core::Rendering
             binding.stages = RHI::ShaderStage::Compute;
             descriptorSetDesc.bindings.push_back(binding);
         }
+        RHI::DescriptorBinding splatBinding;
+        splatBinding.binding = TERRAIN_SPLAT_RTGI_ALBEDO_BINDING;
+        splatBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        splatBinding.stages = RHI::ShaderStage::Compute;
+        descriptorSetDesc.bindings.push_back(splatBinding);
+        splatBinding.binding = TERRAIN_SPLAT_RTGI_SPLAT_BINDING;
+        descriptorSetDesc.bindings.push_back(splatBinding);
         return descriptorSetDesc;
     }
 
@@ -1961,6 +2027,16 @@ namespace NorvesLib::Core::Rendering
             dsDesc.bindings.push_back(rtgiSpecularBinding);
         }
 
+        // 空の遮蔽の係数と、受け手の高さを補正する値
+        for (uint32_t binding = 29u; binding <= 30u; ++binding)
+        {
+            RHI::DescriptorBinding skyOcclusionBinding;
+            skyOcclusionBinding.binding = binding;
+            skyOcclusionBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            skyOcclusionBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(skyOcclusionBinding);
+        }
+
         return dsDesc;
     }
 
@@ -2172,6 +2248,28 @@ namespace NorvesLib::Core::Rendering
         }
         const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x0000u};
         m_DefaultBlackTexture->Update(blackPixel, sizeof(blackPixel), sizeof(blackPixel));
+
+        // RTGI のスプラットを使わないときも 2D 配列のテクスチャを束ねる。
+        RHI::TextureDesc rtgiSplatFallbackDesc;
+        rtgiSplatFallbackDesc.Width = 1u;
+        rtgiSplatFallbackDesc.Height = 1u;
+        rtgiSplatFallbackDesc.ArraySize = 2u;
+        rtgiSplatFallbackDesc.MipLevels = 1u;
+        rtgiSplatFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        rtgiSplatFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        rtgiSplatFallbackDesc.DebugName = "RTGITerrainSplatArrayFallback";
+        m_DefaultRTGITerrainSplatArray = m_Device->CreateTexture(rtgiSplatFallbackDesc);
+        if (!m_DefaultRTGITerrainSplatArray)
+        {
+            NORVES_LOG_ERROR("LightingPass", "RTGI の地形スプラット用の代替配列を作成できません");
+            return false;
+        }
+        const uint8_t rtgiSplatFallbackPixel[4] = {};
+        for (uint32_t layer = 0u; layer < rtgiSplatFallbackDesc.ArraySize; ++layer)
+        {
+            m_DefaultRTGITerrainSplatArray->Update(rtgiSplatFallbackPixel, sizeof(rtgiSplatFallbackPixel),
+                                                   sizeof(rtgiSplatFallbackPixel), 0u, layer);
+        }
 
         RHI::TextureDesc ddgiIrradianceFallbackDesc;
         ddgiIrradianceFallbackDesc.Width = DDGI_ATLAS_TEXEL_COUNT;
@@ -2425,6 +2523,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture && !m_DefaultPointShadowCubeTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
+            !m_DefaultRTGITerrainSplatArray &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_LightingDescriptorSetLayout &&
             !m_RTGIComputePipeline && !m_RTGIComputeInstanceDataBuffer &&
             !m_RTGIDenoiserPipeline &&
@@ -2494,20 +2593,25 @@ namespace NorvesLib::Core::Rendering
         // IBL resources
         m_LoadedEnvironmentTexture.reset();
         m_LoadedDiffuseIrradianceTexture.reset();
+        std::fill_n(m_LoadedAverageIrradiance, 3u, 0.0f);
         m_LoadedPrefilteredSpecularTexture.reset();
         m_bLoadedIBLAvailable = false;
         m_bUniformEnvironmentActive = false;
         m_EnvironmentTexture.reset();
         m_DiffuseIrradianceTexture.reset();
+        std::fill_n(m_AverageIrradiance, 3u, 0.0f);
         m_PrefilteredSpecularTexture.reset();
         m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+        std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
         m_SkyAtmospherePrefilteredSpecularTexture.reset();
         m_SkyAtmosphereEnvironmentTexture.reset();
         m_ValidationRaw250EnvironmentTexture.reset();
         m_ValidationRaw250DiffuseIrradianceTexture.reset();
+        std::fill_n(m_ValidationRaw250AverageIrradiance, 3u, 0.0f);
         m_ValidationRaw250Texture.reset();
         m_ValidationRaw252EnvironmentTexture.reset();
         m_ValidationRaw252DiffuseIrradianceTexture.reset();
+        std::fill_n(m_ValidationRaw252AverageIrradiance, 3u, 0.0f);
         m_ValidationRaw252PrefilteredSpecularTexture.reset();
         m_BrdfLutTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -2516,6 +2620,7 @@ namespace NorvesLib::Core::Rendering
         m_FramePointShadowCubeTexture.reset();
         m_DefaultDDGIIrradianceAtlas.reset();
         m_DefaultDDGIDistanceAtlas.reset();
+        m_DefaultRTGITerrainSplatArray.reset();
         m_bIBLAvailable = false;
         m_SkyAtmosphereIblParameters = SkyAtmosphereParameters{};
         m_SkyAtmosphereIblRadianceWidth = 0u;
@@ -2783,6 +2888,13 @@ namespace NorvesLib::Core::Rendering
                 m_bLegacyInputFallbackActive = true;
             }
         }
+
+        // 公開されたフレームだけ、遮蔽マップの書き込みから照明への依存を作る。
+        RGTextureHandle skyOcclusionHandle;
+        builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionVisibility,
+                               skyOcclusionHandle, RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionAux,
+                               skyOcclusionHandle, RHI::ResourceState::ShaderResource);
 
         RGTextureHandle ssaoHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::SSAOBlurred,
@@ -4295,8 +4407,12 @@ namespace NorvesLib::Core::Rendering
         }
         parameters.foliageOcclusion[0] = static_cast<float>(foliageCrowns.size());
         RHI::TexturePtr terrainTextures[4];
+        RHI::TexturePtr terrainSplatTextures[2];
+        const Terrain::TerrainWetnessRenderData* terrainWetness = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
         ResolveRTGITerrainBlend(context.SnapshotRayTracingScene->TerrainBlend, context.Resources.Textures,
-                                m_DefaultBlackTexture, parameters, terrainTextures);
+                                m_DefaultBlackTexture, m_DefaultRTGITerrainSplatArray,
+                                terrainWetness ? terrainWetness->Wetness : 0.0f,
+                                parameters, terrainTextures, terrainSplatTextures);
         // xは0=無効、1=通常の有効履歴、2以上=カメラだけの動きで使う拡散の年齢上限（16）。
         // wは従来のままにし、動いている間も法線・材質による棄却を維持する。
         parameters.temporalState[0] = bCameraOnlyMotion ? RTGIHistoryCameraMotionMaximumAge
@@ -4487,6 +4603,10 @@ namespace NorvesLib::Core::Rendering
             computeDescriptorSet->BindTexture(25u + index, terrainTextures[index]);
             computeDescriptorSet->BindSampler(25u + index, m_GBufferSampler);
         }
+        computeDescriptorSet->BindTexture(TERRAIN_SPLAT_RTGI_ALBEDO_BINDING, terrainSplatTextures[0]);
+        computeDescriptorSet->BindSampler(TERRAIN_SPLAT_RTGI_ALBEDO_BINDING, m_DfgSampler);
+        computeDescriptorSet->BindTexture(TERRAIN_SPLAT_RTGI_SPLAT_BINDING, terrainSplatTextures[1]);
+        computeDescriptorSet->BindSampler(TERRAIN_SPLAT_RTGI_SPLAT_BINDING, m_DfgSampler);
         computeDescriptorSet->Update();
 
         const uint32_t groupCountX =
@@ -5099,6 +5219,19 @@ namespace NorvesLib::Core::Rendering
             bRTGISpecularReadable ? m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Normal : m_DefaultBlackTexture);
         lightingDescriptorSet->BindSampler(28, m_GBufferSampler);
 
+        const bool bSkyOcclusionPublished = context.SkyOcclusion.bSnapshotEnabled &&
+            context.SkyOcclusion.bValid && context.SkyOcclusion.VisibilityTexture &&
+            context.SkyOcclusion.AuxTexture;
+        // 既定のゼロ配列は初期化時に確保済み。texelFetch ではサンプラーの補間を使わない。
+        lightingDescriptorSet->BindTexture(29, bSkyOcclusionPublished
+            ? context.SkyOcclusion.VisibilityTexture : m_DefaultDDGIIrradianceAtlas);
+        lightingDescriptorSet->BindTexture(30, bSkyOcclusionPublished
+            ? context.SkyOcclusion.AuxTexture : m_DefaultDDGIIrradianceAtlas);
+        const RHI::SamplerPtr skyOcclusionSampler = bSkyOcclusionPublished && context.SkyOcclusion.Sampler
+            ? context.SkyOcclusion.Sampler : m_GBufferSampler;
+        lightingDescriptorSet->BindSampler(29, skyOcclusionSampler);
+        lightingDescriptorSet->BindSampler(30, skyOcclusionSampler);
+
         lightingDescriptorSet->Update();
 
         const auto observeUpload = [](const ExecuteUpload& upload) {
@@ -5187,10 +5320,12 @@ namespace NorvesLib::Core::Rendering
             {
                 m_EnvironmentTexture = m_LoadedEnvironmentTexture;
                 m_DiffuseIrradianceTexture = m_LoadedDiffuseIrradianceTexture;
+                std::copy_n(m_LoadedAverageIrradiance, 3u, m_AverageIrradiance);
                 m_PrefilteredSpecularTexture = m_LoadedPrefilteredSpecularTexture;
                 m_bIBLAvailable = m_bLoadedIBLAvailable;
                 m_LoadedEnvironmentTexture.reset();
                 m_LoadedDiffuseIrradianceTexture.reset();
+                std::fill_n(m_LoadedAverageIrradiance, 3u, 0.0f);
                 m_LoadedPrefilteredSpecularTexture.reset();
                 m_bUniformEnvironmentActive = false;
             }
@@ -5218,6 +5353,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr environment;
         RHI::TexturePtr diffuse;
         RHI::TexturePtr prefilter;
+        float averageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 sourceData,
                                 kUniformWidth,
@@ -5227,7 +5363,8 @@ namespace NorvesLib::Core::Rendering
                                 "UniformEnvironment.PrefilteredSpecular",
                                 environment,
                                 diffuse,
-                                prefilter))
+                                prefilter,
+                                averageIrradiance))
         {
             NORVES_LOG_WARNING("LightingPass", "Uniform environment IBL generation failed; keeping static environment");
             return;
@@ -5236,11 +5373,13 @@ namespace NorvesLib::Core::Rendering
         {
             m_LoadedEnvironmentTexture = m_EnvironmentTexture;
             m_LoadedDiffuseIrradianceTexture = m_DiffuseIrradianceTexture;
+            std::copy_n(m_AverageIrradiance, 3u, m_LoadedAverageIrradiance);
             m_LoadedPrefilteredSpecularTexture = m_PrefilteredSpecularTexture;
             m_bLoadedIBLAvailable = m_bIBLAvailable;
         }
         m_EnvironmentTexture = environment;
         m_DiffuseIrradianceTexture = diffuse;
+        std::copy_n(averageIrradiance, 3u, m_AverageIrradiance);
         m_PrefilteredSpecularTexture = prefilter;
         m_bIBLAvailable = true;
         m_bUniformEnvironmentActive = true;
@@ -5259,6 +5398,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device || !sanitized.bEnabled || radianceWidth == 0u || radianceHeight == 0u)
         {
             m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+            std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
             m_SkyAtmospherePrefilteredSpecularTexture.reset();
             m_SkyAtmosphereEnvironmentTexture.reset();
             m_bSkyAtmosphereIblCacheValid = false;
@@ -5280,6 +5420,7 @@ namespace NorvesLib::Core::Rendering
         m_bSkyAtmosphereIblCacheValid = true;
         m_bSkyAtmosphereIblAvailable = false;
         m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+        std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
         m_SkyAtmospherePrefilteredSpecularTexture.reset();
         m_SkyAtmosphereEnvironmentTexture.reset();
 
@@ -5298,6 +5439,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr generatedEnvironment;
         RHI::TexturePtr generatedDiffuse;
         RHI::TexturePtr generatedPrefilter;
+        float generatedAverageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 sourceData,
                                 radianceWidth,
@@ -5307,7 +5449,8 @@ namespace NorvesLib::Core::Rendering
                                 "SkyAtmosphere.PrefilteredSpecular",
                                 generatedEnvironment,
                                 generatedDiffuse,
-                                generatedPrefilter))
+                                generatedPrefilter,
+                                generatedAverageIrradiance))
         {
             NORVES_LOG_WARNING("LightingPass",
                                "Sky atmosphere IBL generation failed; using black IBL");
@@ -5315,6 +5458,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_SkyAtmosphereDiffuseIrradianceTexture = generatedDiffuse;
+        std::copy_n(generatedAverageIrradiance, 3u, m_SkyAtmosphereAverageIrradiance);
         m_SkyAtmospherePrefilteredSpecularTexture = generatedPrefilter;
         m_SkyAtmosphereEnvironmentTexture = generatedEnvironment;
         m_bSkyAtmosphereIblAvailable =
@@ -5336,6 +5480,24 @@ namespace NorvesLib::Core::Rendering
         // ライティングパラメータを構築
         GPULightingParams params = {};
         InitializeSafeCascadedShadowParams(params);
+
+        // 係数は非有限値を既定値へ戻し、負値と割合の範囲を補正して転送する。
+        const ShadingModelLightingConstants& constants = m_Settings.ShadingModelConstants;
+        const ShadingModelLightingConstants defaults{};
+        const auto sanitizeNonNegative = [](float value, float fallback)
+        {
+            return std::isfinite(value) ? std::max(value, 0.0f) : fallback;
+        };
+        params.shadingModelParams[0][0] = sanitizeNonNegative(constants.FurWrap, defaults.FurWrap);
+        params.shadingModelParams[0][1] =
+            sanitizeNonNegative(constants.FurMinSpecularRoughness, defaults.FurMinSpecularRoughness);
+        params.shadingModelParams[0][2] =
+            sanitizeNonNegative(constants.EyeSpecularBoostPerP0, defaults.EyeSpecularBoostPerP0);
+        params.shadingModelParams[0][3] = 0.0f;
+        params.shadingModelParams[1][0] = 0.0f;
+        params.shadingModelParams[1][1] = 0.0f;
+        params.shadingModelParams[1][2] = 0.0f;
+        params.shadingModelParams[1][3] = 0.0f;
 
         using namespace NorvesLib::Math;
 
@@ -5446,6 +5608,31 @@ namespace NorvesLib::Core::Rendering
         params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         const bool bValidationMode = params.debugViewMode >= 246u &&
                                      params.debugViewMode <= 255u;
+        const auto& skyOcclusion = context.SkyOcclusion;
+        if (!bValidationMode && skyOcclusion.bSnapshotEnabled && skyOcclusion.bValid &&
+            skyOcclusion.VisibilityTexture && skyOcclusion.AuxTexture)
+        {
+            params.skyOcclusionInfo[0] = 1u;
+            params.skyOcclusionInfo[1] = skyOcclusion.LevelCount;
+            params.skyOcclusionInfo[2] = skyOcclusion.Resolution;
+            params.skyOcclusionInfo[3] = std::bit_cast<uint32_t>(skyOcclusion.Parameters.MaxHorizonMeters);
+            params.skyOcclusionParams[0] = skyOcclusion.Parameters.Strength;
+            params.skyOcclusionParams[1] = skyOcclusion.Parameters.DiffuseExponent;
+            params.skyOcclusionParams[2] = skyOcclusion.Parameters.GroundHeightMeters;
+            params.skyOcclusionParams[3] = skyOcclusion.Parameters.SpecularStrength;
+            params.skyOcclusionBounce[0] = skyOcclusion.Parameters.OccluderBounceColorR *
+                                         skyOcclusion.Parameters.OccluderBounceIntensity;
+            params.skyOcclusionBounce[1] = skyOcclusion.Parameters.OccluderBounceColorG *
+                                         skyOcclusion.Parameters.OccluderBounceIntensity;
+            params.skyOcclusionBounce[2] = skyOcclusion.Parameters.OccluderBounceColorB *
+                                         skyOcclusion.Parameters.OccluderBounceIntensity;
+            for (uint32_t level = 0u; level < skyOcclusion.LevelCount && level < 4u; ++level)
+            {
+                params.skyOcclusionWindowOrigin[level][0] = skyOcclusion.WindowOrigin[level][0];
+                params.skyOcclusionWindowOrigin[level][1] = skyOcclusion.WindowOrigin[level][1];
+                params.skyOcclusionTexelMeters[level] = skyOcclusion.TexelMeters[level];
+            }
+        }
         params.bSSAOEnabled = bValidationMode ? 0u : (bSSAOAvailable ? 1u : 0u);
         params.bNeuralBRDFEnabled = bValidationMode ? 0u :
                                     (m_bNeuralBRDFAvailable ? 1u : 0u);
@@ -5596,6 +5783,51 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        const PaleFlatParameters paleFlat = SanitizePaleFlatParameters(
+            context.SnapshotScene != nullptr ? context.SnapshotScene->PaleFlat : MakeDefaultPaleFlatParameters());
+        ConvertPaleFlatColorToLinear(paleFlat, params.paleFlatColorAndWrapMin);
+        params.paleFlatColorAndWrapMin[3] = paleFlat.WrapMin;
+        params.paleFlatShape[0] = paleFlat.ShadowStrength;
+        params.paleFlatShape[1] = paleFlat.AmbientLocalMix;
+        params.paleFlatShape[2] = paleFlat.SpecularScale;
+        params.paleFlatShape[3] = paleFlat.Flatness;
+
+        // 拡散照度のテクスチャと全球の平均照度を、同じ分岐で組として選ぶ。
+        struct DiffuseIrradianceSelection
+        {
+            const RHI::TexturePtr& Texture;
+            const float* AverageIrradiance;
+        };
+        const auto selectDiffuseIrradiance = [&]() -> DiffuseIrradianceSelection
+        {
+            if (bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture)
+            {
+                return {m_ValidationRaw252DiffuseIrradianceTexture, m_ValidationRaw252AverageIrradiance};
+            }
+            if (bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture)
+            {
+                return {m_ValidationRaw250DiffuseIrradianceTexture, m_ValidationRaw250AverageIrradiance};
+            }
+            if (bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture)
+            {
+                return {m_SkyAtmosphereDiffuseIrradianceTexture, m_SkyAtmosphereAverageIrradiance};
+            }
+            if (bSkyAtmosphereRequested)
+            {
+                return {m_DefaultBlackTexture, nullptr};
+            }
+            if (m_bIBLAvailable && m_DiffuseIrradianceTexture)
+            {
+                return {m_DiffuseIrradianceTexture, m_AverageIrradiance};
+            }
+            return {m_DefaultBlackTexture, nullptr};
+        };
+        const DiffuseIrradianceSelection selectedDiffuse = selectDiffuseIrradiance();
+        if (params.bIBLEnabled != 0u && selectedDiffuse.AverageIrradiance != nullptr)
+        {
+            std::copy_n(selectedDiffuse.AverageIrradiance, 3u, params.paleFlatAverageIrradiance);
+            params.paleFlatAverageIrradiance[3] = 1.0f;
+        }
         outParams = params;
 
         // RTGI・DDGIの不交差は、IBLと同じ地表から見た空（視線方向の透過率込み）を引く。
@@ -5609,16 +5841,7 @@ namespace NorvesLib::Core::Rendering
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
         const RHI::SamplerPtr& environmentRadianceSampler =
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler;
-        const RHI::TexturePtr& diffuseIrradiance =
-            bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture ?
-                m_ValidationRaw252DiffuseIrradianceTexture :
-            bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
-                m_ValidationRaw250DiffuseIrradianceTexture :
-            bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture ?
-                m_SkyAtmosphereDiffuseIrradianceTexture :
-            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
-            m_bIBLAvailable && m_DiffuseIrradianceTexture ?
-                m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
+        const RHI::TexturePtr& diffuseIrradiance = selectedDiffuse.Texture;
         const RHI::TexturePtr& prefilteredSpecular =
             bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
                 m_ValidationRaw252PrefilteredSpecularTexture :
@@ -5674,6 +5897,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr environmentTexture;
         RHI::TexturePtr diffuseTexture;
         RHI::TexturePtr prefilterTexture;
+        float averageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 sourceData,
                                 sourceWidth,
@@ -5683,7 +5907,8 @@ namespace NorvesLib::Core::Rendering
                                 "PrefilteredSpecular",
                                 environmentTexture,
                                 diffuseTexture,
-                                prefilterTexture))
+                                prefilterTexture,
+                                averageIrradiance))
         {
             NORVES_LOG_ERROR("LightingPass",
                              "Failed to create environment source or derived IBL resources");
@@ -5692,6 +5917,7 @@ namespace NorvesLib::Core::Rendering
 
         m_EnvironmentTexture = environmentTexture;
         m_DiffuseIrradianceTexture = diffuseTexture;
+        std::copy_n(averageIrradiance, 3u, m_AverageIrradiance);
         m_PrefilteredSpecularTexture = prefilterTexture;
         m_EnvironmentMipLevels = 1u;
         NORVES_LOG_INFO("LightingPass", "Environment source and derived IBL resources created");
@@ -5734,6 +5960,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr nonconstantEnvironment;
         RHI::TexturePtr nonconstantDiffuse;
         RHI::TexturePtr nonconstantPrefilter;
+        float nonconstantAverageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 nonconstantSource,
                                 width,
@@ -5743,7 +5970,8 @@ namespace NorvesLib::Core::Rendering
                                 "ValidationRaw250Prefilter",
                                 nonconstantEnvironment,
                                 nonconstantDiffuse,
-                                nonconstantPrefilter))
+                                nonconstantPrefilter,
+                                nonconstantAverageIrradiance))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create raw250 validation snapshots");
             return false;
@@ -5752,6 +5980,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr constantEnvironment;
         RHI::TexturePtr constantDiffuse;
         RHI::TexturePtr constantPrefilter;
+        float constantAverageIrradiance[3] = {};
         if (!CreateIblResources(m_Device,
                                 constantSource,
                                 width,
@@ -5761,7 +5990,8 @@ namespace NorvesLib::Core::Rendering
                                 "ValidationRaw252Prefilter",
                                 constantEnvironment,
                                 constantDiffuse,
-                                constantPrefilter))
+                                constantPrefilter,
+                                constantAverageIrradiance))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create raw252 validation snapshots");
             return false;
@@ -5769,9 +5999,11 @@ namespace NorvesLib::Core::Rendering
 
         m_ValidationRaw250EnvironmentTexture = nonconstantEnvironment;
         m_ValidationRaw250DiffuseIrradianceTexture = nonconstantDiffuse;
+        std::copy_n(nonconstantAverageIrradiance, 3u, m_ValidationRaw250AverageIrradiance);
         m_ValidationRaw250Texture = nonconstantPrefilter;
         m_ValidationRaw252EnvironmentTexture = constantEnvironment;
         m_ValidationRaw252DiffuseIrradianceTexture = constantDiffuse;
+        std::copy_n(constantAverageIrradiance, 3u, m_ValidationRaw252AverageIrradiance);
         m_ValidationRaw252PrefilteredSpecularTexture = constantPrefilter;
         return true;
     }

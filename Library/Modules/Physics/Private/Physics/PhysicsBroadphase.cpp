@@ -5,6 +5,7 @@
 #include "Rendering/Terrain/TerrainHeightField.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cfloat>
 #include <limits>
@@ -20,8 +21,74 @@
 
 namespace NorvesLib::Modules::Physics
 {
+    // 群ごとに木の形と形状値を共有する。組のフィルターは毎回のプロキシから読む。
+    struct PhysicsStaticSubtreeSnapshot
+    {
+        struct ProxySignature
+        {
+            Core::Scene::ColliderHandle Collider;
+            EPhysicsProxyShape Shape;
+            Math::Sphere Sphere;
+            Math::OBB Box;
+            Math::Capsule Capsule;
+            Math::AABB Bounds;
+
+            bool operator==(const ProxySignature& other) const
+            {
+                if (Collider != other.Collider || Shape != other.Shape
+                    || Bounds.Min != other.Bounds.Min || Bounds.Max != other.Bounds.Max)
+                {
+                    return false;
+                }
+                switch (Shape)
+                {
+                case EPhysicsProxyShape::Sphere:
+                    return Sphere.Center == other.Sphere.Center && Sphere.Radius == other.Sphere.Radius;
+                case EPhysicsProxyShape::Box:
+                    return Box.Center == other.Box.Center && Box.HalfExtents == other.Box.HalfExtents
+                        && Box.Axes[0] == other.Box.Axes[0] && Box.Axes[1] == other.Box.Axes[1]
+                        && Box.Axes[2] == other.Box.Axes[2];
+                case EPhysicsProxyShape::Capsule:
+                    return Capsule.PointA == other.Capsule.PointA && Capsule.PointB == other.Capsule.PointB
+                        && Capsule.Radius == other.Capsule.Radius;
+                case EPhysicsProxyShape::HeightField:
+                    return false;
+                }
+                return false;
+            }
+        };
+
+        bool bHasStaticChunk = false;
+        uint64_t StaticChunkKey = 0;
+        Core::Container::VariableArray<ProxySignature> Signatures;
+        StaticAabbTree Tree;
+        Math::AABB QueryBounds;
+        float MaxShapeSize = 0.0f;
+        bool bUsableQueryBounds = true;
+        bool bHasInvalidSweepBox = false;
+    };
+
+    struct PhysicsStaticTreeSnapshot
+    {
+        Core::Container::VariableArray<Core::Container::TSharedPtr<const PhysicsStaticSubtreeSnapshot>> Groups;
+        StaticAabbTree Tree;
+        Math::AABB QueryBounds;
+        float MaxShapeSize = 0.0f;
+        bool bUsableQueryBounds = true;
+        bool bHasInvalidSweepBox = false;
+    };
+
     namespace
     {
+        bool IsStaticGroupLess(bool bLeftHasChunk, uint64_t leftKey, bool bRightHasChunk, uint64_t rightKey)
+        {
+            if (bLeftHasChunk != bRightHasChunk)
+            {
+                return !bLeftHasChunk;
+            }
+            return bLeftHasChunk && leftKey < rightKey;
+        }
+
         struct SweepEndpoint
         {
             float Coordinate = 0.0f;
@@ -629,37 +696,146 @@ namespace NorvesLib::Modules::Physics
             return Math::AABB();
         }
 
+        // インスタンスだけが渡す同期借用。公開の Span 問い合わせは線形のまま使う。
+        struct QueryTreeContext
+        {
+            const PhysicsStaticTreeSnapshot* Snapshot;
+            Core::Container::Span<const uint32_t> TreeProxyIndices;
+            Core::Container::Span<const uint32_t> TreeGroupOffsets;
+            Core::Container::Span<const uint32_t> NonTreeProxyIndices;
+            uint64_t& VisitedNodeCount;
+        };
+
         template<typename Predicate>
         Core::Scene::EPhysicsSceneQueryResult VisitProxyCandidates(
             Core::Container::Span<const PhysicsShapeProxy> proxies, PhysicsBroadphase::ProxyVisitCallback visitor,
-            void* context, PhysicsBroadphase::ProxyVisitCallback precheck, const Predicate& candidate)
+            void* context, PhysicsBroadphase::ProxyVisitCallback precheck, const Predicate& candidate,
+            const QueryTreeContext* tree = nullptr, const Math::AABB* bounds = nullptr,
+            const Math::Ray* ray = nullptr, float maxDistance = 0.0f,
+            float (*closestLimit)(void*) = nullptr)
         {
             using Result = Core::Scene::EPhysicsSceneQueryResult;
             if (visitor == nullptr || (proxies.size() != 0 && proxies.data() == nullptr))
             {
                 return Result::InvalidArgument;
             }
-            for (size_t index = 0; index < proxies.size(); ++index)
+            const auto visit = [&](size_t index)
             {
                 const auto& proxy = proxies[index];
                 if (precheck)
                 {
                     const auto result = precheck(proxy,context);
-                    if (result == Result::NoHit)
-                    {
-                        continue;
-                    }
                     if (result != Result::Success)
                     {
                         return result;
                     }
                 }
-                // 不正proxyを空間除外で隠さず、呼出側の検証へ渡す。
+                // 不正なプロキシを空間除外で隠さず、呼び出し側の検証へ渡す。
                 if (IsValidProxyGeometry(proxy) && !candidate(ConservativeProxyBounds(proxy)))
                 {
-                    continue;
+                    return Result::NoHit;
                 }
-                const auto result = visitor(proxy,context);
+                return visitor(proxy,context);
+            };
+            if (tree == nullptr || (bounds == nullptr && ray == nullptr))
+            {
+                for (size_t index = 0; index < proxies.size(); ++index)
+                {
+                    const auto result = visit(index);
+                    if (result != Result::Success && result != Result::NoHit)
+                    {
+                        return result;
+                    }
+                }
+                return Result::Success;
+            }
+
+            // 実際に木を使うときだけ、既定の全数計上を訪問節数と線形訪問数に置き換える。
+            tree->VisitedNodeCount -= proxies.size();
+            if (ray != nullptr && closestLimit != nullptr)
+            {
+                for (uint32_t index : tree->NonTreeProxyIndices)
+                {
+                    ++tree->VisitedNodeCount;
+                    const auto result = visit(index);
+                    if (result != Result::Success && result != Result::NoHit)
+                    {
+                        return result;
+                    }
+                }
+                float limit = closestLimit(context);
+                Result result = Result::Success;
+                const uint64_t visitedGroups = tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,limit,
+                    [&](uint32_t groupIndex)
+                    {
+                        if (result == Result::Success || result == Result::NoHit)
+                        {
+                            const auto& group = *tree->Snapshot->Groups[groupIndex];
+                            const uint32_t offset = tree->TreeGroupOffsets[groupIndex];
+                            tree->VisitedNodeCount += group.Tree.QueryRay(ray->Origin,ray->Direction,limit,
+                                [&](uint32_t item)
+                                {
+                                    if (result == Result::Success || result == Result::NoHit)
+                                    {
+                                        result = visit(tree->TreeProxyIndices[offset + item]);
+                                        limit = std::fmin(limit,closestLimit(context));
+                                    }
+                                    return limit;
+                                });
+                        }
+                        return limit;
+                    });
+                tree->VisitedNodeCount += visitedGroups;
+                return result == Result::NoHit ? Result::Success : result;
+            }
+
+            Core::Container::VariableArray<uint32_t> indices;
+            for (uint32_t index : tree->NonTreeProxyIndices)
+            {
+                indices.push_back(index);
+            }
+            if (ray != nullptr)
+            {
+                const uint64_t visitedGroups = tree->Snapshot->Tree.QueryRay(ray->Origin,ray->Direction,maxDistance,
+                    [&](uint32_t groupIndex)
+                    {
+                        const auto& group = *tree->Snapshot->Groups[groupIndex];
+                        const uint32_t offset = tree->TreeGroupOffsets[groupIndex];
+                        tree->VisitedNodeCount += group.Tree.QueryRay(ray->Origin,ray->Direction,maxDistance,
+                            [&](uint32_t item)
+                            {
+                                indices.push_back(tree->TreeProxyIndices[offset + item]);
+                                return maxDistance;
+                            });
+                        return maxDistance;
+                    });
+                tree->VisitedNodeCount += visitedGroups;
+            }
+            else
+            {
+                const uint64_t visitedGroups = tree->Snapshot->Tree.QueryAabb(*bounds, [&](uint32_t groupIndex)
+                {
+                    const auto& group = *tree->Snapshot->Groups[groupIndex];
+                    const uint32_t offset = tree->TreeGroupOffsets[groupIndex];
+                    tree->VisitedNodeCount += group.Tree.QueryAabb(*bounds, [&](uint32_t item)
+                    {
+                        indices.push_back(tree->TreeProxyIndices[offset + item]);
+                    });
+                });
+                tree->VisitedNodeCount += visitedGroups;
+            }
+            std::sort(indices.begin(),indices.end());
+            size_t nonTreeIndex = 0;
+            for (uint32_t index : indices)
+            {
+                // 木の候補は節の訪問で計上済み。線形部分だけを加算する。
+                if (nonTreeIndex < tree->NonTreeProxyIndices.size()
+                    && tree->NonTreeProxyIndices[nonTreeIndex] == index)
+                {
+                    ++tree->VisitedNodeCount;
+                    ++nonTreeIndex;
+                }
+                const auto result = visit(index);
                 if (result != Result::Success && result != Result::NoHit)
                 {
                     return result;
@@ -670,7 +846,8 @@ namespace NorvesLib::Modules::Physics
 
         // 接触/分離に残るfloat幾何の保守的な尺度上限を維持する。
         // ray内部のdouble化だけでは全queryの安全域を拡大しない。始点からの相対尺度で判定。
-        bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query)
+        bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query,
+            const PhysicsStaticTreeSnapshot* summary = nullptr)
         {
             using Kind = Core::Scene::EPhysicsQueryKind;
             const Math::Vector3 origin = query.Kind == Kind::RaycastClosest || query.Kind == Kind::RaycastAll ? query.Ray.Origin
@@ -722,6 +899,19 @@ namespace NorvesLib::Modules::Physics
                 const double squared = scale * scale;
                 return bRepresentable && squared * squared * squared <= static_cast<double>(FLT_MAX) / 4096.0;
             };
+            if (summary != nullptr)
+            {
+                // 和の全隅は各形状の中心・端点を包み、最大サイズは半径と半径長を上から押さえる。
+                for (uint32_t corner = 0; corner < 8; ++corner)
+                {
+                    includePoint(Math::Vector3(
+                        (corner & 1) != 0 ? summary->QueryBounds.Max.x : summary->QueryBounds.Min.x,
+                        (corner & 2) != 0 ? summary->QueryBounds.Max.y : summary->QueryBounds.Min.y,
+                        (corner & 4) != 0 ? summary->QueryBounds.Max.z : summary->QueryBounds.Min.z));
+                }
+                scale = std::fmax(scale,summary->MaxShapeSize);
+                return summary->bUsableQueryBounds && isRepresentable();
+            }
             switch (proxy.Shape)
             {
             case EPhysicsProxyShape::Sphere:
@@ -1071,6 +1261,28 @@ namespace NorvesLib::Modules::Physics
             size_t Count = 0;
             bool bApplyFilter = true;
         };
+        float ClosestQueryLimit(void* context)
+        {
+            const auto& collection = *static_cast<QueryCollection*>(context);
+            if (collection.Count == 0)
+            {
+                return collection.Query.MaxDistance;
+            }
+            const double distance = collection.Hits[0].Distance;
+            // 距離の丸めと同距離の節を残し、大きいハンドルが勝つ既存規則を保つ。
+            return static_cast<float>(std::fmin(collection.Query.MaxDistance,distance + 1e-4 * (1.0 + distance)));
+        }
+
+        bool CanUseQueryTree(const QueryTreeContext* tree, const Core::Scene::PhysicsQueryDesc& query)
+        {
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            return tree != nullptr && tree->Snapshot != nullptr && !tree->TreeProxyIndices.empty()
+                && !tree->Snapshot->Tree.IsEmpty()
+                && !((query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule)
+                    && tree->Snapshot->bHasInvalidSweepBox)
+                && HasRepresentableQueryScale(PhysicsShapeProxy(),query,tree->Snapshot);
+        }
+
         Core::Scene::EPhysicsSceneQueryResult CheckQueryCandidate(const PhysicsShapeProxy& proxy, void* context)
         {
             const auto& collection = *static_cast<QueryCollection*>(context);
@@ -1113,8 +1325,13 @@ namespace NorvesLib::Modules::Physics
     {
         Core::Scene::EPhysicsSceneQueryResult ExecuteQueryOverProxiesImpl(
             Core::Container::Span<const PhysicsShapeProxy> proxies, const Core::Scene::PhysicsQueryDesc& query,
-            Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount, bool bApplyFilter)
+            Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount, bool bApplyFilter,
+            const QueryTreeContext* tree = nullptr)
         {
+            if (tree != nullptr)
+            {
+                tree->VisitedNodeCount += proxies.size();
+            }
             using Result = Core::Scene::EPhysicsSceneQueryResult;
             outHitCount = 0;
             if (outHits.size() != 0 && outHits.data() == nullptr)
@@ -1134,18 +1351,47 @@ namespace NorvesLib::Modules::Physics
             {
                 return Result::InvalidArgument;
             }
+            if (!CanUseQueryTree(tree,query))
+            {
+                tree = nullptr;
+            }
             QueryCollection collection{query,outHits,limit,0,bApplyFilter};
             Result result;
             if (query.Kind == Core::Scene::EPhysicsQueryKind::RaycastClosest || query.Kind == Core::Scene::EPhysicsQueryKind::RaycastAll)
             {
-                result = PhysicsBroadphase::VisitProxiesAlongRay(proxies,query.Ray,query.MaxDistance,CollectQueryCandidate,&collection,CheckQueryCandidate);
+                const Math::Ray ray(query.Ray.Origin,QueryUnit(query.Ray.Direction));
+                result = VisitProxyCandidates(proxies,CollectQueryCandidate,&collection,CheckQueryCandidate,
+                    [&](const Math::AABB& candidate) { return BoundsMayMeetRay(candidate,ray.Origin,ray.Direction,query.MaxDistance); },
+                    tree,nullptr,&ray,query.MaxDistance,
+                    query.Kind == Core::Scene::EPhysicsQueryKind::RaycastClosest ? ClosestQueryLimit : nullptr);
             }
             else
             {
                 Math::AABB bounds;
                 if (TryQueryBounds(query,bounds))
                 {
-                    result = PhysicsBroadphase::VisitProxiesInAabb(proxies,bounds,CollectQueryCandidate,&collection,CheckQueryCandidate);
+                    Math::AABB treeBounds = bounds;
+                    if (tree != nullptr)
+                    {
+                        // 木の AABB 判定は厳密なので、既存の候補判定の余白を問い合わせ側に足す。
+                        const double margin = 1e-4 + 1e-5
+                            * std::fmax(BoundCoordinateScale(bounds),BoundCoordinateScale(tree->Snapshot->QueryBounds));
+                        const auto expand = [&](float coordinate, double offset, float toward)
+                        {
+                            return std::nextafter(static_cast<float>(static_cast<double>(coordinate) + offset),toward);
+                        };
+                        const float infinity = std::numeric_limits<float>::infinity();
+                        treeBounds.Min = Math::Vector3(expand(bounds.Min.x,-margin,-infinity),
+                            expand(bounds.Min.y,-margin,-infinity),expand(bounds.Min.z,-margin,-infinity));
+                        treeBounds.Max = Math::Vector3(expand(bounds.Max.x,margin,infinity),
+                            expand(bounds.Max.y,margin,infinity),expand(bounds.Max.z,margin,infinity));
+                        if (!IsUsableQueryBounds(treeBounds))
+                        {
+                            tree = nullptr;
+                        }
+                    }
+                    result = VisitProxyCandidates(proxies,CollectQueryCandidate,&collection,CheckQueryCandidate,
+                        [&](const Math::AABB& candidate) { return BoundsMayOverlap(bounds,candidate); },tree,&treeBounds);
                 }
                 else
                 {
@@ -1179,18 +1425,21 @@ namespace NorvesLib::Modules::Physics
         const Core::Scene::PhysicsQueryDesc& query,
         Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const
     {
-        m_Stats.VisitedNodeCount += m_Proxies.size();
         using Result = Core::Scene::EPhysicsSceneQueryResult;
         outHits.clear();
         if (!IsValidQuery(query))
         {
+            m_Stats.VisitedNodeCount += m_Proxies.size();
             return Result::InvalidArgument;
         }
         outHits.resize(QueryHitLimit(m_Proxies.size(), query));
         size_t count = 0;
-        const Result result = ExecuteQueryOverProxies(
+        const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_TreeGroupOffsets.data(),m_TreeGroupOffsets.size()},
+            {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
+        const Result result = ExecuteQueryOverProxiesImpl(
             Core::Container::Span<const PhysicsShapeProxy>(m_Proxies.data(), m_Proxies.size()), query,
-            Core::Container::Span<Core::Scene::PhysicsQueryHit>(outHits.data(), outHits.size()), count);
+            Core::Container::Span<Core::Scene::PhysicsQueryHit>(outHits.data(), outHits.size()), count,true,&tree);
         outHits.resize(result == Result::Success ? count : 0);
         return result;
     }
@@ -1212,8 +1461,188 @@ namespace NorvesLib::Modules::Physics
         }
 
         m_Proxies = std::move(proxies);
+        assert(m_Proxies.size() <= UINT32_MAX);
+        m_TreeProxyIndices.clear();
+        m_TreeGroupOffsets.clear();
+        m_NonTreeProxyIndices.clear();
+        for (size_t index = 0; index < m_Proxies.size(); ++index)
+        {
+            const PhysicsShapeProxy& proxy = m_Proxies[index];
+            // 2 回以上変わったら動く側へ移し、120 ステップ変わらなければ戻す規則を追加する場所。
+            const bool bUseTree = proxy.bStatic && proxy.Shape != EPhysicsProxyShape::HeightField
+                && IsValidProxyGeometry(proxy);
+            if (bUseTree)
+            {
+                m_TreeProxyIndices.push_back(static_cast<uint32_t>(index));
+            }
+            else
+            {
+                m_NonTreeProxyIndices.push_back(static_cast<uint32_t>(index));
+            }
+        }
+        std::sort(m_TreeProxyIndices.begin(), m_TreeProxyIndices.end(), [&](uint32_t left, uint32_t right)
+        {
+            const PhysicsShapeProxy& a = m_Proxies[left];
+            const PhysicsShapeProxy& b = m_Proxies[right];
+            if (IsStaticGroupLess(a.bHasStaticChunk, a.StaticChunkKey, b.bHasStaticChunk, b.StaticChunkKey))
+            {
+                return true;
+            }
+            if (IsStaticGroupLess(b.bHasStaticChunk, b.StaticChunkKey, a.bHasStaticChunk, a.StaticChunkKey))
+            {
+                return false;
+            }
+            return IsHandleLess(a.Collider, b.Collider);
+        });
+        m_Stats.StaticTreeItemCount = m_TreeProxyIndices.size();
+
+        Core::Container::VariableArray<Core::Container::TSharedPtr<const PhysicsStaticSubtreeSnapshot>> groups;
+        size_t previousGroupIndex = 0;
+        bool bGroupsChanged = false;
+        for (size_t first = 0; first < m_TreeProxyIndices.size();)
+        {
+            const PhysicsShapeProxy& firstProxy = m_Proxies[m_TreeProxyIndices[first]];
+            const bool bHasChunk = firstProxy.bHasStaticChunk;
+            const uint64_t key = bHasChunk ? firstProxy.StaticChunkKey : 0;
+            size_t end = first + 1;
+            while (end < m_TreeProxyIndices.size())
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[m_TreeProxyIndices[end]];
+                if (proxy.bHasStaticChunk != bHasChunk || (bHasChunk && proxy.StaticChunkKey != key))
+                {
+                    break;
+                }
+                ++end;
+            }
+            m_TreeGroupOffsets.push_back(static_cast<uint32_t>(first));
+
+            Core::Container::VariableArray<PhysicsStaticSubtreeSnapshot::ProxySignature> signatures;
+            signatures.reserve(end - first);
+            for (size_t item = first; item < end; ++item)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[m_TreeProxyIndices[item]];
+                signatures.push_back({proxy.Collider, proxy.Shape, proxy.Sphere, proxy.Box, proxy.Capsule, proxy.Bounds});
+            }
+
+            if (m_StaticTree)
+            {
+                while (previousGroupIndex < m_StaticTree->Groups.size())
+                {
+                    const auto& previous = *m_StaticTree->Groups[previousGroupIndex];
+                    if (!IsStaticGroupLess(previous.bHasStaticChunk, previous.StaticChunkKey, bHasChunk, key))
+                    {
+                        break;
+                    }
+                    ++previousGroupIndex;
+                }
+                if (previousGroupIndex < m_StaticTree->Groups.size())
+                {
+                    const auto& previous = m_StaticTree->Groups[previousGroupIndex];
+                    if (previous->bHasStaticChunk == bHasChunk && (!bHasChunk || previous->StaticChunkKey == key))
+                    {
+                        ++previousGroupIndex;
+                        if (previous->Signatures.size() == signatures.size()
+                            && std::equal(signatures.begin(), signatures.end(), previous->Signatures.begin()))
+                        {
+                            groups.push_back(previous);
+                            ++m_Stats.SubtreeReuseCount;
+                            first = end;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            auto group = Core::Container::MakeShared<PhysicsStaticSubtreeSnapshot>();
+            group->bHasStaticChunk = bHasChunk;
+            group->StaticChunkKey = key;
+            group->Signatures = std::move(signatures);
+            Core::Container::VariableArray<Math::AABB> bounds;
+            Core::Container::VariableArray<Core::Scene::ColliderHandle> handles;
+            bounds.reserve(end - first);
+            handles.reserve(end - first);
+            for (size_t item = first; item < end; ++item)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[m_TreeProxyIndices[item]];
+                Math::AABB conservativeBounds = ConservativeProxyBounds(proxy);
+                conservativeBounds.Merge(proxy.Bounds);
+                group->bUsableQueryBounds = group->bUsableQueryBounds && IsUsableQueryBounds(conservativeBounds);
+                if (bounds.empty())
+                {
+                    group->QueryBounds = conservativeBounds;
+                }
+                else
+                {
+                    group->QueryBounds.Merge(conservativeBounds);
+                }
+                const float shapeSize = proxy.Shape == EPhysicsProxyShape::Sphere ? proxy.Sphere.Radius
+                    : proxy.Shape == EPhysicsProxyShape::Capsule ? proxy.Capsule.Radius
+                    : std::fmax(proxy.Box.HalfExtents.x,std::fmax(proxy.Box.HalfExtents.y,proxy.Box.HalfExtents.z));
+                group->MaxShapeSize = std::fmax(group->MaxShapeSize,shapeSize);
+                group->bHasInvalidSweepBox = group->bHasInvalidSweepBox
+                    || (proxy.Shape == EPhysicsProxyShape::Box && !Math::IsValidSweepBox(proxy.Box));
+                bounds.push_back(conservativeBounds);
+                handles.push_back(proxy.Collider);
+            }
+            group->Tree.Build(
+                Core::Container::Span<const Math::AABB>(bounds.data(), bounds.size()),
+                Core::Container::Span<const Core::Scene::ColliderHandle>(handles.data(), handles.size()));
+            groups.push_back(std::move(group));
+            ++m_Stats.SubtreeRebuildCount;
+            bGroupsChanged = true;
+            first = end;
+        }
+
+        bGroupsChanged = bGroupsChanged || (m_StaticTree && m_StaticTree->Groups.size() != groups.size());
+        if (groups.empty())
+        {
+            m_StaticTree.reset();
+        }
+        else if (bGroupsChanged)
+        {
+            auto snapshot = Core::Container::MakeShared<PhysicsStaticTreeSnapshot>();
+            snapshot->Groups = std::move(groups);
+            Core::Container::VariableArray<Math::AABB> bounds;
+            Core::Container::VariableArray<Core::Scene::ColliderHandle> handles;
+            bounds.reserve(snapshot->Groups.size());
+            handles.reserve(snapshot->Groups.size());
+            for (size_t index = 0; index < snapshot->Groups.size(); ++index)
+            {
+                const auto& group = *snapshot->Groups[index];
+                if (index == 0)
+                {
+                    snapshot->QueryBounds = group.QueryBounds;
+                }
+                else
+                {
+                    snapshot->QueryBounds.Merge(group.QueryBounds);
+                }
+                snapshot->bUsableQueryBounds = snapshot->bUsableQueryBounds && group.bUsableQueryBounds;
+                snapshot->MaxShapeSize = std::fmax(snapshot->MaxShapeSize, group.MaxShapeSize);
+                snapshot->bHasInvalidSweepBox = snapshot->bHasInvalidSweepBox || group.bHasInvalidSweepBox;
+                bounds.push_back(group.QueryBounds);
+                handles.push_back({static_cast<uint32_t>(index), 1});
+            }
+            snapshot->Tree.Build(
+                Core::Container::Span<const Math::AABB>(bounds.data(), bounds.size()),
+                Core::Container::Span<const Core::Scene::ColliderHandle>(handles.data(), handles.size()));
+            m_StaticTree = std::move(snapshot);
+        }
+        m_Stats.TreeRebuildCount = bGroupsChanged ? 1 : 0;
+
         BuildCandidatePairs();
         m_Stats.CandidatePairCount = m_CandidatePairs.size();
+    }
+
+    void PhysicsBroadphase::ShareStaticTreeFrom(const PhysicsBroadphase& source)
+    {
+        m_StaticTree = source.m_StaticTree;
+    }
+
+    const StaticAabbTree* PhysicsBroadphase::GetStaticTree() const
+    {
+        return m_StaticTree && !m_StaticTree->Groups.empty() && !m_StaticTree->Groups[0]->bHasStaticChunk
+            ? &m_StaticTree->Groups[0]->Tree : nullptr;
     }
 
     const Core::Container::VariableArray<PhysicsShapeProxy>& PhysicsBroadphase::GetProxies() const
@@ -1261,87 +1690,116 @@ namespace NorvesLib::Modules::Physics
         return nullptr;
     }
 
+    const PhysicsShapeProxy* PhysicsBroadphase::GetPairProxy(uint32_t proxyIndex, Core::Scene::ColliderHandle expected) const
+    {
+        ++m_Stats.ProxyLookupCount;
+        if (proxyIndex < m_Proxies.size() && m_Proxies[proxyIndex].Collider == expected)
+        {
+            return &m_Proxies[proxyIndex];
+        }
+        return FindProxy(expected);
+    }
+
     void PhysicsBroadphase::RecordNarrowPhaseTest() const
     {
         ++m_Stats.NarrowPhaseTestCount;
     }
 
+    namespace
+    {
+        Core::Scene::EPhysicsSceneQueryResult RaycastOverProxiesImpl(Core::Container::Span<const PhysicsShapeProxy> proxies,
+            const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit, const QueryTreeContext* tree)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            outHit = {};
+            Core::Scene::PhysicsQueryDesc query;
+            query.Ray = ray;
+            query.MaxDistance = maxDistance;
+            query.MaxHits = 1;
+            Core::Scene::PhysicsQueryHit hit[1];
+            size_t count = 0;
+            const auto result = ExecuteQueryOverProxiesImpl(proxies,query,hit,count,false,tree);
+            if (result == Result::Success)
+            {
+                outHit.Collider = hit[0].Collider;
+                outHit.Body = hit[0].Body;
+                outHit.Entity = hit[0].Entity;
+                outHit.bHasEntity = hit[0].bHasEntity;
+                outHit.Point = hit[0].Point;
+                outHit.Normal = hit[0].Normal;
+                outHit.Distance = hit[0].Distance;
+                outHit.UserData = hit[0].UserData;
+                outHit.SurfaceId = hit[0].SurfaceId;
+            }
+            return result;
+        }
+
+        Core::Scene::EPhysicsSceneQueryResult OverlapOverProxiesImpl(Core::Container::Span<const PhysicsShapeProxy> proxies,
+            const Core::Scene::PhysicsQueryDesc& query, Core::Container::Span<Core::Scene::PhysicsQueryHit> scratch,
+            Core::Container::Span<Core::Scene::PhysicsOverlapHit> outHits, size_t& outHitCount, const QueryTreeContext* tree)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            outHitCount = 0;
+            if (outHits.size() != 0 && outHits.data() == nullptr)
+            {
+                return Result::InvalidArgument;
+            }
+            for (auto& hit : outHits)
+            {
+                hit = {};
+            }
+            if ((query.Kind != Kind::OverlapSphere && query.Kind != Kind::OverlapBox && query.Kind != Kind::OverlapCapsule)
+                || outHits.size() < QueryHitLimit(proxies.size(),query))
+            {
+                return Result::InvalidArgument;
+            }
+            size_t count = 0;
+            const auto result = ExecuteQueryOverProxiesImpl(proxies,query,scratch,count,false,tree);
+            if (result != Result::Success)
+            {
+                return result;
+            }
+            for (size_t index = 0; index < count; ++index)
+            {
+                const auto& source = scratch[index];
+                auto& hit = outHits[index];
+                hit.Collider = source.Collider;
+                hit.Body = source.Body;
+                hit.Entity = source.Entity;
+                hit.bHasEntity = source.bHasEntity;
+                hit.UserData = source.UserData;
+                hit.SurfaceId = source.SurfaceId;
+                hit.Contact.Normal = source.Normal * -1.0f;
+                hit.Contact.Depth = source.Depth;
+                hit.Contact.Point = source.Point;
+            }
+            outHitCount = count;
+            return Result::Success;
+        }
+
+    } // namespace
+
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::RaycastOverProxies(Core::Container::Span<const PhysicsShapeProxy> proxies,
         const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit)
     {
-        using Result = Core::Scene::EPhysicsSceneQueryResult;
-        outHit = {};
-        Core::Scene::PhysicsQueryDesc query;
-        query.Ray = ray;
-        query.MaxDistance = maxDistance;
-        query.MaxHits = 1;
-        Core::Scene::PhysicsQueryHit hit[1];
-        size_t count = 0;
-        const auto result = ExecuteQueryOverProxiesImpl(proxies,query,hit,count,false);
-        if (result == Result::Success)
-        {
-            outHit.Collider = hit[0].Collider;
-            outHit.Body = hit[0].Body;
-            outHit.Entity = hit[0].Entity;
-            outHit.bHasEntity = hit[0].bHasEntity;
-            outHit.Point = hit[0].Point;
-            outHit.Normal = hit[0].Normal;
-            outHit.Distance = hit[0].Distance;
-            outHit.UserData = hit[0].UserData;
-            outHit.SurfaceId = hit[0].SurfaceId;
-        }
-        return result;
+        return RaycastOverProxiesImpl(proxies,ray,maxDistance,outHit,nullptr);
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::OverlapOverProxies(Core::Container::Span<const PhysicsShapeProxy> proxies,
         const Core::Scene::PhysicsQueryDesc& query, Core::Container::Span<Core::Scene::PhysicsQueryHit> scratch,
         Core::Container::Span<Core::Scene::PhysicsOverlapHit> outHits, size_t& outHitCount)
     {
-        using Result = Core::Scene::EPhysicsSceneQueryResult;
-        using Kind = Core::Scene::EPhysicsQueryKind;
-        outHitCount = 0;
-        if (outHits.size() != 0 && outHits.data() == nullptr)
-        {
-            return Result::InvalidArgument;
-        }
-        for (auto& hit : outHits)
-        {
-            hit = {};
-        }
-        if ((query.Kind != Kind::OverlapSphere && query.Kind != Kind::OverlapBox && query.Kind != Kind::OverlapCapsule)
-            || outHits.size() < QueryHitLimit(proxies.size(),query))
-        {
-            return Result::InvalidArgument;
-        }
-        size_t count = 0;
-        const auto result = ExecuteQueryOverProxiesImpl(proxies,query,scratch,count,false);
-        if (result != Result::Success)
-        {
-            return result;
-        }
-        for (size_t index = 0; index < count; ++index)
-        {
-            const auto& source = scratch[index];
-            auto& hit = outHits[index];
-            hit.Collider = source.Collider;
-            hit.Body = source.Body;
-            hit.Entity = source.Entity;
-            hit.bHasEntity = source.bHasEntity;
-            hit.UserData = source.UserData;
-            hit.SurfaceId = source.SurfaceId;
-            hit.Contact.Normal = source.Normal * -1.0f;
-            hit.Contact.Depth = source.Depth;
-            hit.Contact.Point = source.Point;
-        }
-        outHitCount = count;
-        return Result::Success;
+        return OverlapOverProxiesImpl(proxies,query,scratch,outHits,outHitCount,nullptr);
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::RaycastQuery(const Math::Ray& ray, float maxDistance,
         Core::Scene::PhysicsRaycastHit& outHit) const
     {
-        m_Stats.VisitedNodeCount += m_Proxies.size();
-        return RaycastOverProxies({m_Proxies.data(),m_Proxies.size()},ray,maxDistance,outHit);
+        const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_TreeGroupOffsets.data(),m_TreeGroupOffsets.size()},
+            {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
+        return RaycastOverProxiesImpl({m_Proxies.data(),m_Proxies.size()},ray,maxDistance,outHit,&tree);
     }
 
     bool PhysicsBroadphase::Raycast(const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit) const
@@ -1352,19 +1810,22 @@ namespace NorvesLib::Modules::Physics
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::AppendOverlapQuery(const Core::Scene::PhysicsQueryDesc& query,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
-        m_Stats.VisitedNodeCount += m_Proxies.size();
         using Result = Core::Scene::EPhysicsSceneQueryResult;
         using Kind = Core::Scene::EPhysicsQueryKind;
         if (!IsValidQuery(query) || (query.Kind != Kind::OverlapSphere && query.Kind != Kind::OverlapBox && query.Kind != Kind::OverlapCapsule))
         {
+            m_Stats.VisitedNodeCount += m_Proxies.size();
             return Result::InvalidArgument;
         }
         const size_t capacity = QueryHitLimit(m_Proxies.size(),query);
         Core::Container::VariableArray<Core::Scene::PhysicsQueryHit> scratch(capacity);
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit> converted(capacity);
         size_t count = 0;
-        const auto result = OverlapOverProxies({m_Proxies.data(),m_Proxies.size()},query,
-            {scratch.data(),scratch.size()},{converted.data(),converted.size()},count);
+        const QueryTreeContext tree{m_StaticTree.get(),{m_TreeProxyIndices.data(),m_TreeProxyIndices.size()},
+            {m_TreeGroupOffsets.data(),m_TreeGroupOffsets.size()},
+            {m_NonTreeProxyIndices.data(),m_NonTreeProxyIndices.size()},m_Stats.VisitedNodeCount};
+        const auto result = OverlapOverProxiesImpl({m_Proxies.data(),m_Proxies.size()},query,
+            {scratch.data(),scratch.size()},{converted.data(),converted.size()},count,&tree);
         if (result == Result::Success)
         {
             static_assert(std::is_nothrow_copy_constructible_v<Core::Scene::PhysicsOverlapHit>);
@@ -1553,7 +2014,7 @@ namespace NorvesLib::Modules::Physics
         Core::Container::VariableArray<SweepEndpoint> endpoints;
         Core::Container::VariableArray<size_t> heightFieldIndices;
         Core::Container::VariableArray<size_t> shapeIndices;
-        endpoints.reserve(m_Proxies.size() * 2);
+        endpoints.reserve(m_NonTreeProxyIndices.size() * 2);
         for (size_t index = 0; index < m_Proxies.size(); ++index)
         {
             const PhysicsShapeProxy& proxy = m_Proxies[index];
@@ -1564,6 +2025,14 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
             shapeIndices.push_back(index);
+        }
+        for (uint32_t index : m_NonTreeProxyIndices)
+        {
+            const PhysicsShapeProxy& proxy = m_Proxies[index];
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                continue;
+            }
             endpoints.push_back(SweepEndpoint{proxy.Bounds.Min.x, index, proxy.Collider, true, proxy.Layer, proxy.Mask});
             endpoints.push_back(SweepEndpoint{proxy.Bounds.Max.x, index, proxy.Collider, false, proxy.Layer, proxy.Mask});
         }
@@ -1574,6 +2043,23 @@ namespace NorvesLib::Modules::Physics
         }
 
         m_CandidatePairs.clear();
+        const auto appendPair = [&](uint32_t firstIndex, uint32_t secondIndex)
+        {
+            if (IsHandleLess(m_Proxies[secondIndex].Collider, m_Proxies[firstIndex].Collider))
+            {
+                std::swap(firstIndex, secondIndex);
+            }
+            m_CandidatePairs.push_back({m_Proxies[firstIndex].Collider, m_Proxies[secondIndex].Collider,
+                firstIndex, secondIndex});
+        };
+        const auto canPair = [](const PhysicsShapeProxy& first, const PhysicsShapeProxy& second)
+        {
+            return first.Bounds.Min.x <= second.Bounds.Max.x && first.Bounds.Max.x >= second.Bounds.Min.x
+                && first.Bounds.Min.y <= second.Bounds.Max.y && first.Bounds.Max.y >= second.Bounds.Min.y
+                && first.Bounds.Min.z <= second.Bounds.Max.z && first.Bounds.Max.z >= second.Bounds.Min.z
+                && Core::Scene::CanPhysicsLayersInteract(first.Layer, first.Mask, second.Layer, second.Mask)
+                && CanProxyMobilitiesInteract(first.Mobility, second.Mobility);
+        };
         Core::Container::VariableArray<SweepEndpoint> active;
         for (const SweepEndpoint& endpoint : endpoints)
         {
@@ -1590,10 +2076,7 @@ namespace NorvesLib::Modules::Physics
                     {
                         continue;
                     }
-                    PhysicsCandidatePair pair;
-                    pair.First = IsHandleLess(endpoint.Collider, other.Collider) ? endpoint.Collider : other.Collider;
-                    pair.Second = IsHandleLess(endpoint.Collider, other.Collider) ? other.Collider : endpoint.Collider;
-                    m_CandidatePairs.push_back(pair);
+                    appendPair(static_cast<uint32_t>(endpoint.ProxyIndex), static_cast<uint32_t>(other.ProxyIndex));
                 }
                 active.push_back(endpoint);
                 continue;
@@ -1610,9 +2093,70 @@ namespace NorvesLib::Modules::Physics
             }
         }
 
+        if (m_StaticTree)
+        {
+            const auto visitStatic = [&](const Math::AABB& bounds, const auto& visitor)
+            {
+                m_StaticTree->Tree.QueryAabb(bounds, [&](uint32_t groupIndex)
+                {
+                    const uint32_t offset = m_TreeGroupOffsets[groupIndex];
+                    m_StaticTree->Groups[groupIndex]->Tree.QueryAabb(bounds, [&](uint32_t item)
+                    {
+                        visitor(m_TreeProxyIndices[offset + item]);
+                    });
+                });
+            };
+            // SAP と木の所属は排他的なので、この経路では各組を動く側から 1 回だけ作る。
+            for (uint32_t index : m_NonTreeProxyIndices)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[index];
+                if (proxy.Shape == EPhysicsProxyShape::HeightField)
+                {
+                    continue;
+                }
+                visitStatic(proxy.Bounds, [&](uint32_t staticIndex)
+                {
+                    if (canPair(proxy, m_Proxies[staticIndex]))
+                    {
+                        appendPair(index, staticIndex);
+                    }
+                });
+            }
+
+            for (uint32_t index : m_TreeProxyIndices)
+            {
+                const PhysicsShapeProxy& proxy = m_Proxies[index];
+                if (!CanProxyMobilitiesInteract(proxy.Mobility, EPhysicsProxyMobility::Static))
+                {
+                    continue;
+                }
+                visitStatic(proxy.Bounds, [&](uint32_t otherIndex)
+                {
+                    const PhysicsShapeProxy& other = m_Proxies[otherIndex];
+                    // 両方が能動側なら、ハンドルが小さい側からだけ作る。
+                    if (index == otherIndex
+                        || (CanProxyMobilitiesInteract(other.Mobility, EPhysicsProxyMobility::Static)
+                            && !IsHandleLess(proxy.Collider, other.Collider)))
+                    {
+                        return;
+                    }
+                    if (canPair(proxy, other))
+                    {
+                        appendPair(index, otherIndex);
+                    }
+                });
+            }
+        }
+
         if (m_CandidatePairs.size() > 1)
         {
             std::sort(m_CandidatePairs.begin(), m_CandidatePairs.end(), IsPairLess);
+#ifndef NDEBUG
+            for (size_t index = 1; index < m_CandidatePairs.size(); ++index)
+            {
+                assert(IsPairLess(m_CandidatePairs[index - 1], m_CandidatePairs[index]));
+            }
+#endif
         }
 
         if (heightFieldIndices.empty())
@@ -1652,8 +2196,9 @@ namespace NorvesLib::Modules::Physics
                     continue;
                 }
 
-                const PhysicsCandidatePair pair{first.Collider, second.Collider};
-                // SAP には地形の組が無いので、重複検査せず整列済みの組と線形に併合する。
+                const PhysicsCandidatePair pair{first.Collider, second.Collider,
+                    static_cast<uint32_t>(firstIndex), static_cast<uint32_t>(secondIndices[index])};
+                // 整列済みの列には地形の組が無いので、重複検査せず線形に併合する。
                 while (sapIndex < m_CandidatePairs.size() && IsPairLess(m_CandidatePairs[sapIndex], pair))
                 {
                     mergedPairs.push_back(m_CandidatePairs[sapIndex++]);

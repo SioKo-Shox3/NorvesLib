@@ -9,6 +9,7 @@ norves_add_test_bundle(GameModeStateMachineTest
     MEMBER SubRoutineTest SubRoutineTest.cpp
     MEMBER TStateMachineTest TStateMachineTest.cpp
     MEMBER GameModeScopeLeakTest GameModeScopeLeakTest.cpp
+    MEMBER GameModeScopeAsyncTest GameModeScopeAsyncTest.cpp
 )
 target_link_libraries(GameModeStateMachineTest PRIVATE Core)
 target_include_directories(GameModeStateMachineTest PRIVATE
@@ -22,3 +23,5 @@ add_test(NAME SubRoutineTest COMMAND GameModeStateMachineTest --test=SubRoutineT
 add_test(NAME TStateMachineTest COMMAND GameModeStateMachineTest --test=TStateMachineTest)
 
 add_test(NAME GameModeScopeLeakTest COMMAND GameModeStateMachineTest --test=GameModeScopeLeakTest)
+
+add_test(NAME GameModeScopeAsyncTest COMMAND GameModeStateMachineTest --test=GameModeScopeAsyncTest)

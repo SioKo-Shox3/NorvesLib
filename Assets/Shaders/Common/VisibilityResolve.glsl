@@ -66,8 +66,12 @@
 
 #define VIS_RECORD_TABLE_SET 0
 #define VIS_RECORD_TABLE_BINDING 1
+#define VIS_VERTEX_ANIM_PARAMS_TABLE_SET 0
+#define VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING 32
+#include "Common/GBufferEncoding.glsl"
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
+#include "Common/VertexAnimation.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/PreExposedEmissive.glsl"
 #include "Common/MegaGeometryDebugColor.glsl"
@@ -84,6 +88,7 @@ layout(std140, set = 0, binding = 0) uniform ResolveParams
     uvec4 screen;          // x = 画面の幅, y = 画面の高さ, z = フラグ, w = 材質の表の件数
     vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）, y = MegaGeometry のデバッグの表示（RESOLVE_DEBUG_*）,
                            // z = 幾何の法線の印（RESOLVE_FLAG_GEOMETRIC_NORMAL のときだけ。w へそのまま書く）
+    vec4 vertexAnimTime;   // x = 今の時刻、y = 前の時刻、z = 試験の揺れの許可、w = 0
 } params;
 
 // params.screen.z のビット
@@ -101,7 +106,7 @@ const uint RESOLVE_DEBUG_LOD_LEVEL = 2u;
 
 layout(set = 0, binding = 2) uniform usampler2D idTexture;
 
-// フレームの材質の表の 1 件（VisibilityMaterialTable.h の MaterialEntry と同じ 128 バイト）
+// フレームの材質の表の 1 件（VisibilityMaterialTable.h の MaterialEntry と同じ 144 バイト）
 struct VisMaterialEntry
 {
     vec4 baseColor;
@@ -112,6 +117,7 @@ struct VisMaterialEntry
     uvec4 texturesB;
     uvec4 texturesC;
     uvec4 texturesD;
+    vec4 shadingParams;
 };
 
 layout(std430, set = 0, binding = 3) readonly buffer MaterialTable
@@ -125,18 +131,11 @@ layout(std430, set = 0, binding = 3) readonly buffer MaterialTable
 #include "Common/MegaInstanceTable.glsl"
 
 // 描画のインスタンスの表（gbuffer.vert の InstanceData と一致）
-struct VisDrawInstance
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 normalRows[3];
-    vec4 objectColor;
-    vec4 customData;
-};
+#include "Common/SceneInstanceData.glsl"
 
 layout(std430, set = 0, binding = 5) readonly buffer DrawInstanceBuffer
 {
-    VisDrawInstance drawInstances[];
+    InstanceData drawInstances[];
 };
 
 layout(set = 0, binding = 6, rgba8) writeonly uniform image2D albedoImage;
@@ -166,6 +165,8 @@ layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
     uvec4 vt;
     // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。VIS_TILE_FLAG_TERRAIN のときだけ読む）
     vec4 terrain[10];
+    // スプラットの層の並び（TerrainSplatParams。3 層の並びの後ろ）
+    vec4 terrainSplat[12];
 } tileParams;
 
 // tileParams.tile.z のビット（VisibilityResolvePass.h の TILE_FLAG_* と同じ）
@@ -173,7 +174,9 @@ const uint VIS_TILE_FLAG_ORM = 1u;     // ORM の 1 枚が metallicTexture の�
 const uint VIS_TILE_FLAG_SPARSE = 2u;  // 張ったテクスチャに sparse（VT）が 1 枚でもある
 const uint VIS_TILE_FLAG_TERRAIN = 4u; // 地形の 3 層の混ぜ合わせを持つ材質（2・3 層目のテクスチャと tileParams.terrain を使う）
 const uint VIS_TILE_FLAG_TERRAIN_SURFACE = 8u; // 地形の面（混ぜ合わせの無い灰色の地形を含む。法線の A に地形の受け手を書く）
-const uint VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u; // 太陽の影を起伏に詰める地形の面（荒野。法線の A に 2 を書く）
+const uint VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW = 16u; // 太陽の影を起伏に詰める地形の面（荒野。地形と影の両方の受け手の印を立てる）
+
+const uint VIS_TILE_FLAG_TERRAIN_SPLAT = 32u; // スプラットの配列の 4 枚と tileParams.terrainSplat を使う
 
 // MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
 layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
@@ -212,6 +215,12 @@ layout(set = 0, binding = VIS_TERRAIN_BINDING + 6) uniform sampler2D terrainSurf
 // 地形の遠景の地図（地図の無い材質はアルベドが張られ、読まない）
 layout(set = 0, binding = VIS_TERRAIN_BINDING + 7) uniform sampler2D terrainFarMapTexture;
 
+// TerrainBlendShading.h の TERRAIN_SPLAT_VIS_*_BINDING と同じ（dump の版でも固定）
+layout(set = 0, binding = 33) uniform sampler2DArray terrainSplatAlbedoTexture; // TERRAIN_SPLAT_VIS_ALBEDO_BINDING
+layout(set = 0, binding = 34) uniform sampler2DArray terrainSplatNormalTexture; // TERRAIN_SPLAT_VIS_NORMAL_BINDING
+layout(set = 0, binding = 35) uniform sampler2DArray terrainSplatArmTexture;    // TERRAIN_SPLAT_VIS_ARM_BINDING
+layout(set = 0, binding = 36) uniform sampler2DArray terrainSplatMapTexture;    // TERRAIN_SPLAT_VIS_SPLAT_BINDING
+
 #include "Common/SparseResidencySampling.glsl"
 // 計算シェーダーには暗黙の勾配が無いので、VT でない標本も解析的な微分で textureGrad する
 #define NORVES_MATERIAL_SAMPLING_EXPLICIT_GRADIENT 1
@@ -240,7 +249,7 @@ const uint VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL = 1u;
 const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
 // MegaGeometry の区間の材質。ラスタの MegaGeometryPass は等方の Linear のサンプラーで標本し、粗さが無いときは白（1）を張る
 const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
-// 鏡面の無い純ランバートの材質。GBuffer の材質の A に 1 を書く（gbuffer.frag と同じ印）
+// 鏡面の無い純ランバートの材質。GBuffer の法線の A に受け手の印を書く（gbuffer.frag と同じ印）
 const uint VIS_MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
 // 地形の面の材質（MegaTerrainBlend::IsTerrainSurface。混ぜ合わせの無い灰色の地形も含む）。撮影の AOV の地形の印に使う
 const uint VIS_MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
@@ -302,6 +311,17 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
     const bool bHasPreviousTransform = previousTransformIndex != VIS_NO_PREVIOUS_TRANSFORM &&
                                        previousTransformIndex < uint(drawInstances.length());
 
+    vec4 instanceParams = vec4(-1.0);
+    if (kind == VIS_KIND_PROCEDURAL_CHUNK)
+    {
+        instanceParams = drawInstances[instanceIndex].shadingParams;
+    }
+    else if (kind == VIS_KIND_SKINNED_CHUNK)
+    {
+        instanceParams = VisRecordVertexAnimParams(record);
+    }
+    const vec4 animationParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
+
     // reference 型の変数には const を付けられない
     VisIndexWords indices = VisIndexWords(VisRecordIndexAddress(record));
     VisVertexArray vertices = VisVertexArray(VisRecordVertexAddress(record));
@@ -324,7 +344,7 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
         else if (kind == VIS_KIND_PROCEDURAL_CHUNK)
         {
             // gbuffer.vert と同じ式: 法線は法線行列の行から作る
-            const VisDrawInstance instance = drawInstances[instanceIndex];
+            const InstanceData instance = drawInstances[instanceIndex];
             triangle.position[k] = (instance.world * vec4(local, 1.0)).xyz;
             triangle.normal[k] = VisNormalizeVertexNormal(instance.normalRows[0].xyz * localNormal.x +
                                                           instance.normalRows[1].xyz * localNormal.y +
@@ -347,6 +367,13 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
             {
                 triangle.previous[k] = local;
             }
+        }
+        // 前の履歴が無い場合も、動かす前の今の位置を前の時刻で評価する。
+        // 恒等では従来の計算結果をそのまま保つ。法線の変形は GR46 が扱う。
+        if (VertexAnimationKind(animationParams) != VERTEX_ANIMATION_KIND_NONE)
+        {
+            triangle.position[k] = ApplyVertexAnimation(triangle.position[k], local, animationParams, params.vertexAnimTime.x);
+            triangle.previous[k] = ApplyVertexAnimation(triangle.previous[k], local, animationParams, params.vertexAnimTime.y);
         }
         triangle.uv[k] = vec2(vertex.u, vertex.v);
     }
@@ -525,7 +552,7 @@ vec2 VisComputeVelocity(vec2 pixelCenter, vec4 previousClip)
 bool VisLoadMaterial(uint materialIndex, out VisMaterialEntry entry)
 {
     entry = VisMaterialEntry(vec4(1.0), vec4(0.0), vec4(-1.0, -1.0, 0.05, 0.0), uvec4(0u), uvec4(0u), uvec4(0u),
-                             uvec4(0u), uvec4(0u));
+                             uvec4(0u), uvec4(0u), vec4(-1.0));
     if (materialIndex >= uint(materials.length()))
     {
         return false;
@@ -551,13 +578,27 @@ vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bH
     return bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
 }
 
+// 手続きの描画だけインスタンスの表を読む。スキニングの値は材質の表へ重ね済み
+vec4 VisShadingParamsForRecord(VisibilityDrawRecord record)
+{
+    if (VisRecordKind(record) == VIS_KIND_PROCEDURAL_CHUNK)
+    {
+        const uint instanceIndex = VisRecordInstanceIndex(record);
+        if (instanceIndex < uint(drawInstances.length()))
+        {
+            return drawInstances[instanceIndex].shadingParams;
+        }
+    }
+    return vec4(-1.0);
+}
+
 // 画素の面の値（GBuffer の 3 枚に書くもの）
 struct VisMaterialSurface
 {
     vec4 albedo;     // rgb = インスタンスの色 × アルベド、a = アルベドのテクスチャの α
     vec3 normal;     // 法線マップを適用したワールド法線
     vec3 material;   // 金属度・粗さ・AO
-    float terrain;   // 地形の受け手なら 1、影を起伏に詰める地形の受け手なら 2（法線の A に書く。lighting.frag の影の余裕・ずらしを変える）
+    uint receiverFlags; // 地形などの受け手の印（材質 ID と合わせて法線の A に書く）
 };
 
 // 8bit の 1x1 テクスチャの値（ラスタは材質のスカラー値を 1x1 の UNORM テクスチャにして張る）
@@ -573,7 +614,7 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
     VisMaterialSurface surface;
     surface.albedo = vec4(objectColor, 1.0);
     surface.normal = resolved.normal;
-    surface.terrain = 0.0;
+    surface.receiverFlags = 0u;
     const float metallic = (bHasMaterial && entry.scalars.x >= 0.0) ? VisQuantize8(entry.scalars.x) : 0.0;
     // 粗さの既定は、手続き・スキニング（GBufferPass）が中間灰、MegaGeometry（MegaGeometryPass）が白
     const bool bMegaGeometry = bHasMaterial && (entry.header.x & VIS_MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
@@ -691,6 +732,7 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     // （ラスタの megageometry.frag と同じ関数。位置はカメラ相対からワールドへ戻し、傾斜は補間した頂点の法線で測る。
     // 上の 1 層の標本は VT の要求にだけ使う）
     const bool bTerrain = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN) != 0u;
+    const bool bTerrainSplat = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SPLAT) != 0u;
     vec3 terrainNormal = resolved.normal;
     if (bTerrain)
     {
@@ -710,6 +752,19 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
                                      terrainRockAlbedoTexture, terrainRockNormalTexture, terrainRockOrmTexture,
                                      terrainSurfaceMaskTexture, terrainFarMapTexture, terrainSurface, bVirtualTexture,
                                      terrainNormal);
+    }
+
+    else if (bTerrainSplat)
+    {
+        TerrainSurfaceInput terrainSurface;
+        terrainSurface.WorldPosition = resolved.hitPosition + params.cameraPosition.xyz;
+        terrainSurface.WorldDx = resolved.dposdx;
+        terrainSurface.WorldDy = resolved.dposdy;
+        terrainSurface.GeometricNormal = resolved.normal;
+        terrainSurface.CameraDistance = length(resolved.hitPosition);
+        samples = ShadeTerrainSplat(MakeTerrainSplatParams(tileParams.terrainSplat),
+                                   terrainSplatAlbedoTexture, terrainSplatNormalTexture, terrainSplatArmTexture,
+                                   terrainSplatMapTexture, terrainSurface, terrainNormal);
     }
 
     // VT のフィードバック（ラスタの gbuffer.frag と同じ: アルベド・法線・ORM は POM の後の UV、高さは元の UV）
@@ -736,11 +791,15 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
 
     VisMaterialSurface surface;
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
-    surface.normal = bTerrain ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
+    surface.normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
-    surface.terrain = (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW) != 0u                    ? 2.0
-                      : bTerrain || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u ? 1.0
-                                                                                             : 0.0;
+    surface.receiverFlags = bTerrain || bTerrainSplat || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u
+                                ? GBUFFER_RECEIVER_FLAG_TERRAIN
+                                : 0u;
+    if ((tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_TIGHT_SHADOW) != 0u)
+    {
+        surface.receiverFlags |= GBUFFER_RECEIVER_FLAG_TERRAIN | GBUFFER_RECEIVER_FLAG_TIGHT_TERRAIN_SHADOW;
+    }
     return surface;
 }
 #endif
@@ -812,7 +871,7 @@ void main()
         surface.albedo = vec4(debugView == RESOLVE_DEBUG_CLUSTERS ? ClusterDebugColor(payload) : LODLevelDebugColor(payload), 1.0);
         surface.normal = resolved.normal;
         surface.material = vec3(0.0, 1.0, 1.0);
-        surface.terrain = 0.0;
+        surface.receiverFlags = 0u;
     }
 #ifdef NORVES_VISRESOLVE_TILES
     // 表から引ける材質の dispatch だけがテクスチャを束ねている（引けない材質の番号は定数の面）
@@ -827,15 +886,24 @@ void main()
     }
 
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
-    imageStore(normalImage, ivec2(pixel), vec4(surface.normal, surface.terrain));
     const bool bDiffuseOnly = bHasMaterial && !bDebugView && (materialEntry.header.x & VIS_MATERIAL_FLAG_DIFFUSE_ONLY) != 0u;
-    imageStore(materialImage, ivec2(pixel), vec4(surface.material, bDiffuseOnly ? 1.0 : 0.0));
+    const uint receiverFlags = surface.receiverFlags | (bDiffuseOnly ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u);
+    uint shadingModelId = GBUFFER_SHADING_MODEL_DEFAULT_LIT;
+    vec4 shadingParams = vec4(0.0, 0.0, 0.0, 1.0);
+    if (bHasMaterial && !bDebugView)
+    {
+        shadingModelId = materialEntry.header.y & GBUFFER_SHADING_MODEL_ID_MASK;
+        shadingParams = ResolveShadingParams(VisShadingParamsForRecord(record), materialEntry.shadingParams);
+    }
+    imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, shadingModelId, receiverFlags));
+    // シェーディングモデルに応じた材質値と P0 を書く。
+    imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterialForShadingModel(surface.material, shadingParams.x, shadingModelId));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
     const vec3 emissive = (bHasMaterial && !bDebugView)
                               ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a, params.frame.x)
                               : vec3(0.0);
-    imageStore(emissiveImage, ivec2(pixel), vec4(emissive, 1.0));
+    imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, shadingParams.y));
     if ((params.screen.z & RESOLVE_FLAG_GEOMETRIC_NORMAL) != 0u)
     {
         // 面の法線は 3 頂点の辺の外積（補間の法線や法線マップを含まない形そのもの）。巻きの向きに依らず頂点の法線の側へ向け、
