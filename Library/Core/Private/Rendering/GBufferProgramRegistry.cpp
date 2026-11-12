@@ -34,13 +34,29 @@ namespace NorvesLib::Core::Rendering
     {
         GBufferPipelineKey key;
         key.Program = material ? material->ProgramId : kStandardGBufferProgramId;
-        // 既存の見た目を保つため、両面と切り抜きは後続の G5-GR27-MASKED-GBUFFER で接続する。
-        // 現時点では bTwoSided と Blend を読まず、背面カリング・切り抜きなしに固定する。
-        key.Cull = RHI::CullMode::Back;
-        key.bAlphaClip = false;
+        // 両面の材質はカリングせず、Masked の材質は切り抜きを有効にする。
+        key.Cull = material && material->bTwoSided ? RHI::CullMode::None : RHI::CullMode::Back;
+        key.bAlphaClip = material && material->Blend == BlendMode::Masked;
         key.Polygon = bWireframe ? RHI::PolygonMode::Line : RHI::PolygonMode::Fill;
         key.bSkinned = bSkinned;
         return key;
+    }
+
+    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied)
+    {
+        if (!material || material->Blend != BlendMode::Masked)
+        {
+            return GBufferAlphaClip::None;
+        }
+        return material->AlphaClip == AlphaClipMode::Hash && bTemporalAAApplied
+                   ? GBufferAlphaClip::Hash
+                   : GBufferAlphaClip::Test;
+    }
+
+    bool RequiresGBufferOverlay(const MaterialResourceData* material)
+    {
+        return material && (material->ProgramId != kStandardGBufferProgramId ||
+                            material->Blend == BlendMode::Masked || material->bTwoSided);
     }
 
     struct GBufferProgramRegistry::State

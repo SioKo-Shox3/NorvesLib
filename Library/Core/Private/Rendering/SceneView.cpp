@@ -15,6 +15,7 @@
 #include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/SkyOcclusionMapPass.h"
+#include "Rendering/OverheadHeightMapPass.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -909,6 +910,8 @@ namespace NorvesLib::Core::Rendering
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
+        context.bTemporalAAApplied = false;
+        context.OverheadHeightMap.Invalidate();
         struct PhysicalLightingScope final
         {
             ViewRenderContext& Context;
@@ -1022,6 +1025,7 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
+        context.bTemporalAAApplied = bApplyTemporalAA;
         SetTemporalAAApplied(bApplyTemporalAA, viewportId);
 
         // パスチェーンが存在すれば基底クラスのパスベース描画を実行
@@ -1109,6 +1113,9 @@ namespace NorvesLib::Core::Rendering
         shadowMapPass->SetShadowMethod(m_ShadowMethod);
         AddPass(std::move(shadowMapPass));
 
+        // 真上からの雨の遮蔽を深度画像へ描く。
+        AddPass(MakeUnique<OverheadHeightMapPass>());
+
         // NeuralMaterialDecodePass: ニューラルマテリアルの事前デコード（Compute）
         auto neuralDecodePass = MakeUnique<NeuralMaterialDecodePass>();
         neuralDecodePass->SetSceneView(this);
@@ -1195,7 +1202,7 @@ namespace NorvesLib::Core::Rendering
             megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
             AddPass(std::move(visibilityResolvePass));
 
-            // プログラム材質は草と同じく解決できないため、解決の後の GBuffer と深度へ重ねて描く。
+            // 標準でない材質（プログラム・Masked・両面）は草と同じく解決せず、解決の後の GBuffer と深度へ重ねて描く。
             // ID のラスタの深度には載らず、2 パスの遮蔽の HZB の遮蔽物にはならない。
             auto programOverlayPass = MakeUnique<GBufferProgramOverlayPass>();
             programOverlayPass->SetGBufferPass(gbufferPassPtr);

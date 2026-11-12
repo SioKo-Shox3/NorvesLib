@@ -83,6 +83,27 @@ namespace NorvesLib::Core
             return Status::PreparationException;
         }
     }
+    Status SkeletalAssetSession::SetAllowLooseSkeletal(bool allow)
+    {
+        if (m_bActive && !IsOwner())
+        {
+            return Status::WrongOwner;
+        }
+        if (m_bClosed)
+        {
+            return Status::Closed;
+        }
+        if (m_Snapshot)
+        {
+            return Status::AlreadyBound;
+        }
+        if (m_bAllowLooseSkeletal == allow)
+        {
+            return Status::Unchanged;
+        }
+        m_bAllowLooseSkeletal = allow;
+        return Status::Success;
+    }
     Status SkeletalAssetSession::BindSnapshot(Container::TSharedPtr<const Asset::AssetSystem> snapshot)
     {
         if (!m_bActive)
@@ -109,7 +130,9 @@ namespace NorvesLib::Core
         {
             return Status::Busy;
         }
-        const auto result = m_Runtime->Bind(*m_pRegistry, *m_pJobs, snapshot, m_Owner);
+        SkeletalRuntimeLimits limits;
+        limits.bAllowLoose = m_bAllowLooseSkeletal;
+        const auto result = m_Runtime->Bind(*m_pRegistry, *m_pJobs, snapshot, m_Owner, limits);
         if (result == Status::Success)
         {
             m_Snapshot = std::move(snapshot);

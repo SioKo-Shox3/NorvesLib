@@ -5935,7 +5935,7 @@
 - notes: ロードマップ GR25 のフェーズ4（ShadowCaster 段）。ロードマップは「太陽の影の重要度が低いので後回し」としていたが、作者の決定（必要な機能は全部やる）で入れる。10-02 の後に太陽の VSM が入った（SceneView.cpp:1202〜1218。CSM は VSM の非対応時の逃げ道と影の測定で残る）ので、設計を「拡張は束を出し、エンジンの影のパスが描く」に変えた。理由: VSM の物理ページへの描画は展開と atomicMin の専用の流れ（vsm_draw.frag）で、拡張に描かせると契約が漏れる。束の頂点の形式は手続きの塊の記録の形式に合わせる（UNCERTAIN: 拡張の頂点の形式を手続きの塊と同じにできるかは、`VisibilityBuffer.h:136` の `RecordKind` と `vsm_draw.vert` の読み方を読んで確かめる。合わなければ RecordKind を 1 つ足す）。草の株（RecordKind::FoliageChunk）の専用の経路は変えない。危険地帯（RenderThread・影のパス）なので評価者を通す。ロードマップ GR25（517〜607 行）のフェーズ4、リスクの「ShadowCaster 段は別の評価が要る」、要件 `#### GR25`。
 
 ## G5-GR27-MASKED-GBUFFER: 切り抜き（アルファテスト・アルファハッシュ）と両面の材質を、静的・スキン・可視バッファの on と fallback の GBuffer に描き、取り込んだ glTF の MASK と doubleSided を通す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-PROGRAMS
 - gr: GR27
 - done-when: `MaterialCreateData`・`MaterialResourceData` に `AlphaCutoff`（既定 0.5、有限で 0〜1 に正規化）と `AlphaClipMode{Test, Hash}`（既定 Test）を足す（`bTwoSided` は既存。MaterialTypes.h:321・356）。`Assets/Shaders/Common/AlphaClip.glsl` に切り抜きの判定（Test は coverage < cutoff で破棄、Hash は interleaved gradient noise にフレームの位相を掛けた時間で変わる閾値で破棄）を置き、`gbuffer_alphaclip.frag`（#define と `Common/GBufferFragment.glsl` の include の包み）を足す。有効なアルファはテクスチャのα × インスタンスの被覆率の乗数（G5-GR26-MATERIAL-PARAMS の `.w`）。残る画素の albedo.a は 1 に固定（lighting.frag の天球の判定 albedo.a < 0.01 と衝突させない）。両面は cull None と `gl_FrontFacing` で裏の法線を反転。パイプラインは G5-GR26-GBUFFER-PROGRAMS の鍵 {alphaClip, cull} で選び、Masked と両面の材質は可視バッファが on のとき解決の後に重ねる経路へ、fallback では不透明の後に分けて描く（早期の深度の恩恵を不透明に残す）。スキンも同じ判定（今スキンの描画のコマンドは材質の BlendMode を見ないので、選択は材質のデータで行う）。TAA が無効のビューでは Hash を Test に落とす（`ViewRenderContext` に TAA が実際に掛かるかの印を足し、`SceneView::SetTemporalAAApplied` SceneView.h:565 と合わせる）。`ImportedOpaqueRuntime.cpp:72〜78` の `alphaMode_requires_GR27`・`doubleSided_requires_GR27` の拒否を外し、glTF の MASK と alphaCutoff と doubleSided を Masked・AlphaCutoff・bTwoSided へ写す（BLEND は今までどおり拒否）。CPU: `GBufferPipelineKeyTest` に Masked・両面・スキン・TAA の有無から鍵と切り抜きの方式を作る場合、`MaterialResourcesTest` に AlphaCutoff の正規化、`ImportedOpaqueRuntimeTest` に MASK と doubleSided が通り BLEND が拒否される場合を足す。GPU の `RenderingAlphaClipVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、市松のαのテクスチャを貼った板で、Masked・cutoff 0.5 の GBuffer の深度が埋まった画素の率が 0.5±0.02 でテクセルの中心で厳密に切れる・両面の板を裏から見た輝度が表と ±2/255 以内で片面では裏から被覆 0・Hash で TAA 有効なら 16 フレームの平均の被覆率が α±0.03 で TAA 無効なら Test に落ちる・スキンの Masked の材質が静的と同じ判定、を可視バッファの on と fallback で確かめる。`RenderingVelocityAlphaClipVulkanTest`（`RenderingVelocityVulkanTest` に scenario を足して登録）が、切り抜かれた画素の GBuffer.Velocity が背景の値のままであることを確かめる。切り抜きの材質が無い golden 4 本が変わらず、不透明だけのシーンでパイプラインの作成の数が増えない（ログ）。
@@ -6423,7 +6423,7 @@
 - notes: 要件 `#### GR56` の受け入れ確認の R56SkyOcclusionPathTracingReferenceVulkanTest（要件 5622 行）。参照比較の段（数分〜1 時間。Docs/Testing.md の段）で GPU を長く使うので `gpu: exclusive`。比べの道具は R7 と同じ `RasterPathTracingComparison.h` の流儀（要件の指定）。PT は遮蔽物の実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る（遮蔽物は形と値を同じ物から作る。要件 5639 行のリスク）。L1 の打ち切り誤差は「既知の方式差」として量を記録する（R7OutdoorAcceptance.md と同じ流儀）。閾値の ±15%・±20% は要件の初期目標で、実測の根拠を記録して確定する。試験を足す理由: 反証する契約は「ラスタの空の遮蔽が物理の正解の比に合う」。正解が無いと強さのつまみで見た目だけを合わせ、方式の誤りが残っても気づけない。
 
 ## G11-GR59-OVERHEAD-MAP: 真上からの雨の遮蔽の深度マップ（カメラに追従する 96 m・1024²）を遮蔽物の天面の形から作って公開し、「雨に当たるか」を引けるようにする
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-CPU, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS
 - gr: GR59
 - needs-gr: GR37
@@ -6824,7 +6824,7 @@
 - notes: 設計はロードマップ 2537 行（マニフェストの事実）・2557 行（P1 の 5）・2565 行（P4）。P4 の AssetKind の追加（地形・散布）は G5 の `G5-GR89-NVTRN-FORMAT`（`AssetKind::World` を足す）が受け持つので、ここでは種別を足さず、足すときの手順（`TryParseAssetKind`・`GetAssetKindName`（`AssetManifest.h:146-147`）・AssetCook の `--kind`・FourCC）を表 1 か所で済む形にするだけにする。旧いランタイムで新しいマニフェストを読むと InvalidField で全体が無効になる（ロードマップ 2802 行）ので、ツールとランタイムを同時にビルドする運用のまま version を上げない。閾値は「線形の走査と結果が同じで、比べた回数が定数」で判定し、時間の閾値は置かない（時間は G12-GR111-PACK-BENCH-CHECK で記録する）。資産の読み込みの危険地帯なので評価者を通す。やらないこと: パックの書き側、圧縮。
 
 ## G2-GR83-LOOSE-SKELETAL: 骨格の資産を、明示したときだけ cooked でなく glTF/GLB から直に読めるようにし、読んだ元をログで分ける
-- status: todo
+- status: done
 - gr: GR83
 - done-when: 骨格の資産の読み込みの旧 NVSKEL の経路(`SkeletalAssetLoader.cpp`)に、loose の読み込みを足す。既定は今のまま cooked だけ(`FailOnCookedFailure` と UsedCooked の検査を変えない)。明示の許可があるときだけ loose(ソースの glTF/GLB を worker で decode して同じ CPU の結果を組む)を使う。分割の 3 資産の経路(`RigSplitAssetLoader.cpp`・`LoadRigSplitAsync`)は loose を持たず、許可があっても cooked だけのままにする(許可を分割の要求へ渡さない)。許可は `SkeletalAssetSession`/`SkeletalAssetRuntime` の設定 1 つで持ち、Game の起動引数 `--allow-loose-skeletal` からだけ立てる。loose で読んだことは、AssetLoadProfile の 3 段(`skeletal_asset_resolve`・`skeletal_cooked_parse`・`skeletal_resource_create`)の `source=loose` で分かる。既定のまま cooked が無いときは `source=none` の失敗で終わる(loose へ黙って落ちない)。
   cooked が壊れているとき(hash 不一致・parse 失敗)は、許可があっても loose に代えない(`AssetFallbackPolicy.md` の DebugLooseFallback と同じ線引き)。`SkeletalAssetLoaderTest` に 3 つの検査を足す: (1) 既定で manifest が無いと失敗し、Resource が残らない (2) 許可ありで `Assets/Models/M9Skinned/ValidU8Float.gltf` を loose で読むと、cooked と同じ関節・頂点・clip 名になる (3) 許可ありでも、壊れた cooked は loose に代えない。

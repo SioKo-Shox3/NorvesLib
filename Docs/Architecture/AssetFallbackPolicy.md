@@ -31,7 +31,7 @@ The manifest is a JSON object:
 
 ## Fields
 
-`kind` accepts `texture`, `model`, and `raw`. Unknown kinds are rejected in manifest parsing.
+`kind` accepts `texture`, `model`, `raw`, `audio`, `skeleton`, `animation`, and `world`. Unknown kinds are rejected in manifest parsing.
 
 `source_hash` and `cooked_hash` are FNV-1a64 values encoded as exactly 16 lowercase hex characters. Uppercase hex and non-hex characters are rejected.
 
@@ -62,6 +62,12 @@ The default mode fails. It does not silently fallback to loose assets.
 
 Debug fallback mode:
 Cooked failure may fallback to loose assets only when the decision requires an explicit log. The decision preserves failure kind, logical path, cooked package, entry name, and reason so Phase 7 can log the exact fallback.
+
+## 骨格資産の loose 許可
+
+骨格資産は既定で cooked だけを読み込み、開発ビルドの `--allow-loose-skeletal` による明示の許可がある場合に限り、manifest 欠落・variant 欠落時の loose を採用できる。
+この許可は cooked の失敗を loose に代える `DebugLooseFallback` とは別であり、`FailOnCookedFailure` を維持して cooked の読み・parse・entry・hash の失敗を拒否する。
+分割の 3 資産（`LoadRigSplitAsync`）は loose を持たず、許可があっても cooked だけを読む（論理パスがソースの名前と対応せず、切り出しが `Tools/AssetCook` にあるため。許可は分割の要求へ渡さない）。
 
 ## Prepared Texture Asset Semantics
 
