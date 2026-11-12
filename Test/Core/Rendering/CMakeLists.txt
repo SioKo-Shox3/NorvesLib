@@ -669,6 +669,15 @@ set_tests_properties(SkyOcclusionMapVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 雨の屋根の高さと位置、スキンメッシュと地形の除外を深度の読み戻しで確かめる。
+add_test(NAME OverheadHeightMapVulkanTest COMMAND RHITextureUpdateVulkanTest --test=OverheadHeightMapVulkanTest)
+set_tests_properties(OverheadHeightMapVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # 世界フィールドの曲げの向き・指数減衰・3 画素のスクロールを GPU の読み戻しで確かめる。
 add_test(NAME WorldFieldUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest --test=WorldFieldUpdateVulkanTest)
 set_tests_properties(WorldFieldUpdateVulkanTest PROPERTIES
@@ -742,6 +751,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER WindGlslParityVulkanTest WindGlslParityVulkanTest.cpp
     MEMBER WorldFieldUpdateVulkanTest WorldFieldUpdateVulkanTest.cpp
     MEMBER SkyOcclusionMapVulkanTest SkyOcclusionMapVulkanTest.cpp
+    MEMBER OverheadHeightMapVulkanTest OverheadHeightMapVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
     MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
@@ -1836,6 +1846,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
     MEMBER ViewClearanceModelTest ViewClearanceModelTest.cpp
     MEMBER SkyOcclusionModelTest SkyOcclusionModelTest.cpp
+    MEMBER OverheadHeightMapMathTest OverheadHeightMapMathTest.cpp
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
@@ -1890,6 +1901,7 @@ add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoEx
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 add_test(NAME ViewClearanceModelTest COMMAND CameraViewConstantsTest --test=ViewClearanceModelTest)
 add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOcclusionModelTest)
+add_test(NAME OverheadHeightMapMathTest COMMAND CameraViewConstantsTest --test=OverheadHeightMapMathTest)
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
