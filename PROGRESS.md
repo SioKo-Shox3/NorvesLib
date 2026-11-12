@@ -11083,3 +11083,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-130654/verify-G2-GR79-SKIN-BASECOLOR-BAKE-U4.txt`（verify のビルドの行 exit 0、verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて 7/7 合格、`RIG_SPLIT_CASE base_color_* result=pass` の 4 行）。
 - Next: ランナーの評価者の反証。人が見るときの見どころ: factor≠1 の材質を持つ骨格つきの資産（AI 生成の GLB など）を cook し直し、そのスキンメッシュを出すシーンで材質の色が出ること。factor が 1 の既存の骨格の資産は見た目が変わらない。撮影・計測の確かめは回さない決まり。
 - Notes: paths の外の `Tools/AssetCook/SkeletalImportReport.h`（記録の型と入力欄）・`RigSplitFileCook.cpp`・`RigSingleCook.cpp`（import_report を出す呼び出し各 1 行）を触った。`--rig-split` と asset-set の骨格経路はこれまで import_report を出していなかったため、焼いた材質があるときだけ出す形にした。既知の限界: 焼いたアルベドは raw RGBA8 で元の PNG/JPEG より出力が大きく、画素の予算（`ReserveDerived`）を消費するので、大きなアルベドで factor≠1 の材質が多いと `split_albedo_output_limit` で止まることがある。
+- U5 保存した差分を当て、管理 store の asset ごとの版を入れ直す: 着地(直し 0 回)
