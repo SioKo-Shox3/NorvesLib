@@ -171,6 +171,7 @@ namespace NorvesLib::Core::Streaming
     {
         if (m_State != EStreamingCellState::Committing ||
             (result != EStreamingStepResult::InProgress &&
+             result != EStreamingStepResult::Waiting &&
              result != EStreamingStepResult::Done &&
              result != EStreamingStepResult::Failed))
         {
@@ -200,13 +201,14 @@ namespace NorvesLib::Core::Streaming
     {
         if (m_State != EStreamingCellState::Unloading ||
             (result != EStreamingStepResult::InProgress &&
+             result != EStreamingStepResult::Waiting &&
              result != EStreamingStepResult::Done &&
              result != EStreamingStepResult::Failed))
         {
             return false;
         }
 
-        if (result != EStreamingStepResult::InProgress)
+        if (result != EStreamingStepResult::InProgress && result != EStreamingStepResult::Waiting)
         {
             if (m_CurrentPayloadIndex > 0)
             {

@@ -1,5 +1,6 @@
 ﻿// クック済み地形の高さ場と区画メッシュを所有し、層の表からスプラット材質を作って区画を配置する。
 // 地形は BeginPlay ではなくパス設定後の最初の Tick で読むため、作成してから値を設定できる。
+// 流し込みを有効にすると、区画を 1 つずつ出し入れできる。
 // EndPlay でモデルと高さ場の登録を返し、配置途中でも保持した資源を残さない。
 // 所有者の破棄では子 Entity を Inner の連鎖に任せ、所有者が残る場合だけ明示的に外す。
 #pragma once
@@ -9,6 +10,7 @@
 #include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Streaming/ITerrainTileSite.h"
 
 namespace NorvesLib::Core::Component
 {
@@ -50,6 +52,22 @@ namespace NorvesLib::Core::Component
         void SetTilesPerFrame(uint32_t count) { getTilesPerFrame() = count; }
         uint32_t GetTilesPerFrame() { return getTilesPerFrame(); }
 
+        /// 地形を読む最初の Tick までに設定する。有効なら区画を自動で置かず、PlaceTileAt / RemoveTileAt で 1 つずつ出し入れする。
+        void SetTileStreaming(bool bEnabled) { m_bTileStreaming = bEnabled; }
+        bool IsTileStreaming() const { return m_bTileStreaming; }
+
+        /// 以下の区画の操作・照会はすべて GameThread で行う。読込み前・範囲外の操作は何もしない。
+        /// 既に置いてあれば真。常駐の印は呼ぶ側が設定する。
+        bool PlaceTileAt(uint32_t x, uint32_t z);
+        void RemoveTileAt(uint32_t x, uint32_t z);
+        bool IsTilePlacedAt(uint32_t x, uint32_t z) const;
+        /// 行優先の番号。読込み前・範囲外は kInvalidTerrainTileId。
+        uint32_t GetTileIdAt(uint32_t x, uint32_t z) const;
+        /// 区画が実際に覆う升目の中心を境界と照合し、Z→X の順で返す。読込み前は空。
+        void CollectTilesInBounds(const Streaming::StreamingBounds& bounds,
+                                  Container::VariableArray<Streaming::TerrainTileCoordinate>& out) const;
+        Streaming::ITerrainTileSite& GetTileSite() { return m_TileSite; }
+
         Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> GetHeightField() const { return m_HeightField; }
         uint32_t GetPlacedTileCount() const { return m_PlacedTileCount; }
         uint32_t GetTileCount() const { return static_cast<uint32_t>(m_Tiles.size()); }
@@ -68,10 +86,33 @@ namespace NorvesLib::Core::Component
         PROPERTY(uint32_t, TilesPerFrame)
 
     private:
+        class TileSite final : public Streaming::ITerrainTileSite
+        {
+        public:
+            explicit TileSite(TerrainComponent* owner) : m_Owner(owner) {}
+            Streaming::ETerrainTileSiteState GetSiteState() const override;
+            void CollectTilesInBounds(const Streaming::StreamingBounds& bounds,
+                                     Container::VariableArray<Streaming::TerrainTileCoordinate>& outTiles) const override;
+            uint32_t GetTileId(const Streaming::TerrainTileCoordinate& tile) const override;
+            bool PlaceTile(const Streaming::TerrainTileCoordinate& tile) override;
+            void RemoveTile(const Streaming::TerrainTileCoordinate& tile) override;
+            bool IsTilePlaced(const Streaming::TerrainTileCoordinate& tile) const override;
+
+        private:
+            TerrainComponent* m_Owner; // 非所有。所有者のメンバとして同じ寿命を持つ。
+        };
+
         struct TileCoordinate
         {
             uint32_t X = 0;
             uint32_t Z = 0;
+        };
+
+        struct PlacedTile
+        {
+            uint64_t ChildEntityId = 0;
+            Rendering::ModelHandle Model;
+            bool bPlaced = false;
         };
 
         void SetDefaults();
@@ -92,10 +133,14 @@ namespace NorvesLib::Core::Component
         uint64_t m_OwnerEntityId = 0;
         bool m_bEndingPlay = false;
         bool m_bLoadFailed = false;
+        bool m_bTileStreaming = false;
+        TileSite m_TileSite{this};
         Container::VariableArray<TileCoordinate> m_Tiles;
         // Tick 内の生成では ECS の行が未作成なので、即座に発行される ObjectId で子を記録する。
-        Container::VariableArray<uint64_t> m_ChildEntityIds;
-        Container::VariableArray<Rendering::ModelHandle> m_Models;
+        Container::VariableArray<PlacedTile> m_PlacedTiles;
+        uint32_t m_TileCountX = 0;
+        uint32_t m_TileCountZ = 0;
+        uint32_t m_TileCells = 0;
         Rendering::MegaGeometry::MegaTerrainSplat m_Splat;
         uint32_t m_NextTile = 0;
         uint32_t m_PlacedTileCount = 0;
