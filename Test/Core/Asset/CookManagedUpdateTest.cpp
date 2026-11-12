@@ -625,6 +625,46 @@ namespace UpdateTest
             CHECK(f.Run(out, error) == Update::NoChange);
         }
         {
+            Fixture f(root / "per-asset-revision");
+            Fixture sibling(f.Base, false);
+            sibling.Runtime = f.Base / "RevisionRuntime";
+            sibling.Owner.FinalRuntimeRoot = sibling.Runtime;
+            for (size_t i = 0; i < 2; ++i)
+            {
+                auto& asset = sibling.Assets[i];
+                asset.PackagePath = sibling.Runtime / "Cooked" / asset.PackagePath.filename();
+                asset.ManifestPath = sibling.Runtime / "manifest.json";
+            }
+            auto request = sibling.Request();
+            request.Assets = {sibling.Assets.data(), 2};
+            uint64_t revisions[] = {7, 7};
+            request.CookerRevision = 0;
+            request.CookerRevisions = {revisions, 2};
+            CHECK(RetryVolumeBusy([&]() { return BootstrapCookManagedAssetSet(request, out, error); }) == Boot::Created);
+
+            const auto skippedBytes = Read(sibling.Assets[1].PackagePath);
+            CookBatchReport report;
+            request.Report = &report;
+            revisions[0] = 8;
+            CHECK(RetryVolumeBusy([&]() { return UpdateCookManagedAssetSet(request, out, error); }) == Update::Updated);
+            CHECK(report.Assets.size() == 2);
+            CHECK(report.Assets[0].bProcessed && !report.Assets[0].bSkipped);
+            CHECK(report.Assets[1].bProcessed && report.Assets[1].bSkipped);
+            CHECK(Read(sibling.Assets[1].PackagePath) == skippedBytes);
+            CHECK(RetryVolumeBusy([&]() { return UpdateCookManagedAssetSet(request, out, error); }) == Update::NoChange);
+
+            const auto manifest = Read(sibling.Runtime / "manifest.json");
+            request.CookerRevisions = {revisions, 1};
+            CHECK(RetryVolumeBusy([&]() { return UpdateCookManagedAssetSet(request, out, error); }) == Update::Error);
+            CHECK(error.find("request_limits") != TestText::npos);
+            CHECK(Read(sibling.Runtime / "manifest.json") == manifest);
+            revisions[1] = 0;
+            request.CookerRevisions = {revisions, 2};
+            CHECK(RetryVolumeBusy([&]() { return UpdateCookManagedAssetSet(request, out, error); }) == Update::Error);
+            CHECK(error.find("request_limits") != TestText::npos);
+            CHECK(Read(sibling.Runtime / "manifest.json") == manifest);
+        }
+        {
             Fixture f(root / "manifest-only");
             const Before before(f);
             const auto packages = Snapshot(f.Runtime / "Cooked");

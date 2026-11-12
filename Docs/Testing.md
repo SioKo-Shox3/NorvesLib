@@ -600,3 +600,21 @@ ctest --test-dir build -C Debug -R "^(RenderingPaleFlatVulkanTest|RenderingPaleF
 - CLI の `--recover` と `--run-generators` の併用、および `--run-generators` の重複を終了コード1で拒否する。
 
 再実行の欠落・余分な cook・失敗後の誤公開は、通常の成功ログだけでは区別できない。実行回数、report の status、source と runtime の byte 列・ファイル同一性を照合して、処理が継続したまま生成物や管理状態が食い違う場合を検出する。
+
+## cooker の版と出力の基準表の試験（CookCacheDecisionTest の中）
+
+- 反証する契約: cooker の出力のバイトが変わったら、その種別の cooker の版が上がっていること。上がっていないと、依存の印が同じ増分 cook は古い出力のまま skipped になる。
+- ほかの手段で気づけない理由: skipped は cook のログを出さず前の出力を使い続けるので、見た目や成功のログでは区別できない。
+- 失敗は黙って起きる。cook が成功したように見えても、古い出力が使われ続ける。
+
+texture・model・skeletal・animation・audio・raw の実 cook の出力を、`Test/Core/Asset/CookerRevisionGolden.json` の版・形式・出力順の hash と照合する。照合関数は合成入力でも、版の上げ忘れと表の更新忘れを拒否し、版と表を同時に上げた場合は通ることを確かめる。
+
+animation の行は、cook の出力に入力の絶対パスが入るため、パスを160バイトにそろえ、パッケージ内の該当バイトをすべて X に伏せ、パスから計算される payload の hash の2欄（nvpkg の entry と clip bank）も0にしたバイト列の FNV-1a 64 で照合する。cook がパスを書かなくなったら「出力が変わった」で落ちるので、版を上げて表を直す。
+
+cooker の出力を変えたら、`Tools/AssetCook/CookerRevisions.h` の該当種別の版を 1 上げ、試験が出す実際の値で `CookerRevisionGolden.json` の行の `revision` と `cooked_hash` を直す。版だけ・表だけを直すと落ちる。出力ごとの hash は primary が先の記録順で、16 桁の小文字 16 進文字列として保存する。更新後は次を2回続けて実行し、一時ディレクトリが変わっても一致することを確かめる。
+
+```powershell
+cmake --build build --config Debug --target CookedMeshTest -- /m:1
+ctest --test-dir build -C Debug -R "^CookCacheDecisionTest$" --no-tests=error --output-on-failure --timeout 300
+ctest --test-dir build -C Debug -R "^CookCacheDecisionTest$" --no-tests=error --output-on-failure --timeout 300
+```
