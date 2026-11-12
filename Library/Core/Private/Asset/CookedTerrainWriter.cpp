@@ -7,6 +7,13 @@
 
 namespace NorvesLib::Core::Asset
 {
+    namespace TerrainOuterRingDetail
+    {
+        bool IsHole(const CookedTerrainOuterRing& ring, uint32_t x, uint32_t z) noexcept;
+        uint32_t TileFlags(const CookedTerrainOuterRing& ring, uint32_t x, uint32_t z) noexcept;
+        bool IsValid(const CookedTerrainOuterRing& ring, const CookedTerrainData& nearTerrain) noexcept;
+    }
+
     namespace
     {
         using namespace CookedTerrainFormatV0;
@@ -99,7 +106,8 @@ namespace NorvesLib::Core::Asset
             return layer.FourCC != HeightLayerFourCC && layer.Encoding == LayerEncodingEmbeddedNvtex;
         }
 
-        bool IsValidTileBounds(const CookedTerrainTileDesc& tile, uint32_t lodCount) noexcept
+        template <typename Tile>
+        bool IsValidTileBounds(const Tile& tile, uint32_t lodCount) noexcept
         {
             if (!std::isfinite(tile.HeightMinM) || !std::isfinite(tile.HeightMaxM) || tile.HeightMinM > tile.HeightMaxM)
             {
@@ -165,6 +173,7 @@ namespace NorvesLib::Core::Asset
         uint64_t heightSize = 0;
         uint64_t tileRecordSize = 0;
         uint64_t layerTableSize = 0;
+        const uint64_t layerTableOffset = HeaderSize + (desc.bHasOuterRing ? OuterRingBlockSize : 0);
         uint64_t tileTableOffset = 0;
         uint64_t tileTableSize = 0;
         uint64_t stringTableOffset = 0;
@@ -177,7 +186,7 @@ namespace NorvesLib::Core::Asset
             !CheckedAdd(TileRecordHeadSize, tileRecordSize, tileRecordSize) ||
             tileRecordSize > std::numeric_limits<uint32_t>::max() ||
             !CheckedMultiply(layerCount, LayerRecordSize, layerTableSize) ||
-            !CheckedAdd(HeaderSize, layerTableSize, tileTableOffset) ||
+            !CheckedAdd(layerTableOffset, layerTableSize, tileTableOffset) ||
             !CheckedMultiply(tileCount, tileRecordSize, tileTableSize) ||
             !CheckedAdd(tileTableOffset, tileTableSize, stringTableOffset) ||
             !CheckedMultiply(tileCount, layerCount, rangeCount))
@@ -207,6 +216,34 @@ namespace NorvesLib::Core::Asset
             }
         }
 
+        uint64_t outerGridCount = 0;
+        uint64_t outerTileCount = 0;
+        uint64_t outerTableOffset = 0;
+        uint64_t outerTableSize = 0;
+        uint64_t outerHeightSize = 0;
+        if (desc.bHasOuterRing)
+        {
+            CookedTerrainData nearTerrain;
+            nearTerrain.CellCountX = desc.CellCountX;
+            nearTerrain.CellCountZ = desc.CellCountZ;
+            nearTerrain.CellSizeM = desc.CellSizeM;
+            nearTerrain.OriginX = desc.OriginX;
+            nearTerrain.OriginZ = desc.OriginZ;
+            const auto& ring = desc.OuterRing;
+            if (!TerrainOuterRingDetail::IsValid(ring, nearTerrain))
+            {
+                return fail(CookedTerrainWriteStatus::InvalidOuterRing);
+            }
+            outerGridCount = static_cast<uint64_t>(ring.TileCountX) * ring.TileCountZ;
+            outerTileCount = outerGridCount - static_cast<uint64_t>(ring.HoleTileCountX) * ring.HoleTileCountZ;
+            outerHeightSize = static_cast<uint64_t>(ring.TileCells + 1) * (ring.TileCells + 1) * 2;
+            outerTableOffset = stringTableOffset;
+            if (outerTileCount == 0 || !CheckedMultiply(outerTileCount, OuterTileRecordSize, outerTableSize) ||
+                !CheckedAdd(outerTableOffset, outerTableSize, stringTableOffset))
+            {
+                return fail(CookedTerrainWriteStatus::InvalidOuterRing);
+            }
+        }
         uint64_t payloadOffset = 0;
         if (!CheckedAdd(stringTableOffset, stringTableSize, payloadOffset) || !AlignPayload(payloadOffset, payloadOffset))
         {
@@ -219,8 +256,12 @@ namespace NorvesLib::Core::Asset
 
         Container::VariableArray<const CookedTerrainTileDesc*> orderedTiles;
         Container::VariableArray<CookedTerrainLayerRange> ranges;
+        Container::VariableArray<const CookedTerrainOuterTileDesc*> orderedOuterTiles;
+        Container::VariableArray<CookedTerrainLayerRange> outerRanges;
         Container::VariableArray<uint8_t> bytes;
-        if (tileCount > orderedTiles.max_size() || rangeCount > ranges.max_size() || payloadOffset > bytes.max_size())
+        if (tileCount > orderedTiles.max_size() || rangeCount > ranges.max_size() || payloadOffset > bytes.max_size() ||
+            outerGridCount > orderedOuterTiles.max_size() || outerTileCount > outerRanges.max_size() ||
+            outerTileCount > std::numeric_limits<uint32_t>::max())
         {
             return fail(CookedTerrainWriteStatus::IntegerOverflow);
         }
@@ -276,6 +317,38 @@ namespace NorvesLib::Core::Asset
             }
         }
 
+        orderedOuterTiles.resize(static_cast<size_t>(outerGridCount), nullptr);
+        for (const auto& tile : desc.OuterTiles)
+        {
+            if (!desc.bHasOuterRing)
+            {
+                break;
+            }
+            if (tile.TileX >= desc.OuterRing.TileCountX || tile.TileZ >= desc.OuterRing.TileCountZ ||
+                TerrainOuterRingDetail::IsHole(desc.OuterRing, tile.TileX, tile.TileZ))
+            {
+                return fail(CookedTerrainWriteStatus::TileIndexOutOfRange);
+            }
+            const size_t coordinate = static_cast<size_t>(static_cast<uint64_t>(tile.TileZ) * desc.OuterRing.TileCountX + tile.TileX);
+            if (orderedOuterTiles[coordinate] != nullptr)
+            {
+                return fail(CookedTerrainWriteStatus::DuplicateTile);
+            }
+            orderedOuterTiles[coordinate] = &tile;
+            if (!IsValidTileBounds(tile, desc.LodCount))
+            {
+                return fail(CookedTerrainWriteStatus::InvalidTileBounds);
+            }
+            if (tile.HeightBytes.data() == nullptr || tile.HeightBytes.size() != outerHeightSize)
+            {
+                return fail(CookedTerrainWriteStatus::HeightSizeMismatch);
+            }
+        }
+        if (desc.bHasOuterRing && desc.OuterTiles.size() != outerTileCount)
+        {
+            return fail(CookedTerrainWriteStatus::InvalidOuterRing);
+        }
+
         // 全タイルが一度ずつ現れるため、座標の添字順が z 昇順、次に x 昇順になる。
         ranges.resize(static_cast<size_t>(rangeCount));
         uint64_t fileSize = payloadOffset;
@@ -294,15 +367,36 @@ namespace NorvesLib::Core::Asset
             }
         }
 
-        // 検査がすべて済んでから生成する。予約欄とアラインメントの隙間は 0 のまま保つ。
+        outerRanges.resize(static_cast<size_t>(outerTileCount));
+        size_t outerRangeIndex = 0;
+        for (const auto* tile : orderedOuterTiles)
+        {
+            if (tile == nullptr)
+            {
+                continue;
+            }
+            auto& range = outerRanges[outerRangeIndex++];
+            if (!AlignPayload(fileSize, range.DataOffset) || !CheckedAdd(range.DataOffset, tile->HeightBytes.size(), fileSize) ||
+                fileSize > bytes.max_size())
+            {
+                return fail(CookedTerrainWriteStatus::IntegerOverflow);
+            }
+            range.DataSize = tile->HeightBytes.size();
+        }
+
+        // 予約欄とアラインメントの隙間は 0 のまま保つ。
         // 別の配列へ書くことで、入力ビューが outBytes を参照していても読み終わるまで有効にする。
         bytes.resize(static_cast<size_t>(fileSize), 0);
         uint8_t* data = bytes.data();
         std::memcpy(data, Magic, MagicSize);
         WriteLe32(data, HeaderOffset::HeaderSize, static_cast<uint32_t>(HeaderSize));
         WriteLe16(data, HeaderOffset::VersionMajor, VersionMajor);
-        WriteLe16(data, HeaderOffset::VersionMinor, VersionMinor);
+        WriteLe16(data, HeaderOffset::VersionMinor, desc.bHasOuterRing ? VersionMinorOuterRing : VersionMinor);
         WriteLe32(data, HeaderOffset::EndianMarker, EndianMarker);
+        if (desc.bHasOuterRing)
+        {
+            WriteLe32(data, HeaderOffset::Flags, HeaderFlagOuterRing);
+        }
         WriteLe64(data, HeaderOffset::FileSize, fileSize);
         WriteLe32(data, HeaderOffset::CellCountX, desc.CellCountX);
         WriteLe32(data, HeaderOffset::CellCountZ, desc.CellCountZ);
@@ -319,7 +413,7 @@ namespace NorvesLib::Core::Asset
         WriteLe32(data, HeaderOffset::LayerCount, layerCount);
         WriteLe32(data, HeaderOffset::LayerRecordSize, static_cast<uint32_t>(LayerRecordSize));
         WriteLe32(data, HeaderOffset::TileRecordSize, static_cast<uint32_t>(tileRecordSize));
-        WriteLe64(data, HeaderOffset::LayerTableOffset, HeaderSize);
+        WriteLe64(data, HeaderOffset::LayerTableOffset, layerTableOffset);
         WriteLe64(data, HeaderOffset::LayerTableSize, layerTableSize);
         WriteLe64(data, HeaderOffset::TileTableOffset, tileTableOffset);
         WriteLe64(data, HeaderOffset::TileTableSize, tileTableSize);
@@ -328,11 +422,30 @@ namespace NorvesLib::Core::Asset
         WriteLe64(data, HeaderOffset::PayloadOffset, payloadOffset);
         WriteLe64(data, HeaderOffset::PayloadSize, fileSize - payloadOffset);
 
+        if (desc.bHasOuterRing)
+        {
+            const size_t block = HeaderSize;
+            const auto& ring = desc.OuterRing;
+            WriteLe32(data, block + OuterRingOffset::CellCountX, ring.CellCountX);
+            WriteLe32(data, block + OuterRingOffset::CellCountZ, ring.CellCountZ);
+            WriteLe32(data, block + OuterRingOffset::TileCells, ring.TileCells);
+            WriteLe32(data, block + OuterRingOffset::TileCountX, ring.TileCountX);
+            WriteLe32(data, block + OuterRingOffset::TileCountZ, ring.TileCountZ);
+            WriteLe32(data, block + OuterRingOffset::HoleTileMinX, ring.HoleTileMinX);
+            WriteLe32(data, block + OuterRingOffset::HoleTileMinZ, ring.HoleTileMinZ);
+            WriteLe32(data, block + OuterRingOffset::HoleTileCountX, ring.HoleTileCountX);
+            WriteLe32(data, block + OuterRingOffset::HoleTileCountZ, ring.HoleTileCountZ);
+            WriteFloat(data, block + OuterRingOffset::CellSizeM, ring.CellSizeM);
+            WriteDouble(data, block + OuterRingOffset::OriginX, ring.OriginX);
+            WriteDouble(data, block + OuterRingOffset::OriginZ, ring.OriginZ);
+            WriteLe64(data, block + OuterRingOffset::TileTableOffset, outerTableOffset);
+            WriteLe64(data, block + OuterRingOffset::TileTableSize, outerTableSize);
+        }
         uint32_t semanticOffset = 0;
         for (size_t layerIndex = 0; layerIndex < layerCount; ++layerIndex)
         {
             const auto& layer = desc.Layers[layerIndex];
-            const size_t recordOffset = HeaderSize + layerIndex * LayerRecordSize;
+            const size_t recordOffset = static_cast<size_t>(layerTableOffset + layerIndex * LayerRecordSize);
             WriteLe32(data, recordOffset + LayerRecordOffset::FourCC, layer.FourCC);
             WriteLe32(data, recordOffset + LayerRecordOffset::Encoding, layer.Encoding);
             WriteLe32(data, recordOffset + LayerRecordOffset::PixelFormat, static_cast<uint32_t>(layer.PixelFormat));
@@ -374,7 +487,60 @@ namespace NorvesLib::Core::Asset
                 WriteLe64(data, offset + TileLayerRangeOffset::DataHash, range.DataHash);
             }
         }
+        outerRangeIndex = 0;
+        for (const auto* tile : orderedOuterTiles)
+        {
+            if (tile == nullptr)
+            {
+                continue;
+            }
+            auto& range = outerRanges[outerRangeIndex];
+            const size_t record = static_cast<size_t>(outerTableOffset + outerRangeIndex * OuterTileRecordSize);
+            ++outerRangeIndex;
+            WriteLe32(data, record + TileRecordOffset::TileX, tile->TileX);
+            WriteLe32(data, record + TileRecordOffset::TileZ, tile->TileZ);
+            WriteFloat(data, record + TileRecordOffset::HeightMinM, tile->HeightMinM);
+            WriteFloat(data, record + TileRecordOffset::HeightMaxM, tile->HeightMaxM);
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                WriteFloat(data, record + TileRecordOffset::AabbMin + axis * 4, tile->AabbMin[axis]);
+                WriteFloat(data, record + TileRecordOffset::AabbMax + axis * 4, tile->AabbMax[axis]);
+            }
+            WriteLe32(data, record + TileRecordOffset::Reserved0,
+                      TerrainOuterRingDetail::TileFlags(desc.OuterRing, tile->TileX, tile->TileZ));
+            for (uint32_t lod = 0; lod < desc.LodCount; ++lod)
+            {
+                WriteFloat(data, record + TileRecordOffset::LodMaxErrorM + lod * 4, tile->LodMaxErrorM[lod]);
+            }
+            std::memcpy(data + static_cast<size_t>(range.DataOffset), tile->HeightBytes.data(), tile->HeightBytes.size());
+            range.DataHash = ComputeCookedTexturePayloadHash(tile->HeightBytes);
+            const size_t height = record + TileRecordOffset::LayerRanges;
+            WriteLe64(data, height + TileLayerRangeOffset::DataOffset, range.DataOffset);
+            WriteLe64(data, height + TileLayerRangeOffset::DataSize, range.DataSize);
+            WriteLe64(data, height + TileLayerRangeOffset::DataHash, range.DataHash);
+        }
         WriteLe64(data, HeaderOffset::PayloadHash, ComputeCookedTerrainFileHash({data, bytes.size()}));
+        if (desc.bHasOuterRing)
+        {
+            // 同じ読み手の規則で縁を照合し、入力のバイト列を余分に複製しない。
+            auto owner = Container::MakeShared<Container::VariableArray<uint8_t>>();
+            owner->swap(bytes);
+            const auto parsed = ParseCookedTerrain(AssetBlob::FromOwnedBytes(owner));
+            if (!parsed.Succeeded())
+            {
+                if (parsed.Status == CookedTerrainParseStatus::OuterEdgeMismatch)
+                {
+                    return fail(CookedTerrainWriteStatus::OuterEdgeMismatch);
+                }
+                if (parsed.Status == CookedTerrainParseStatus::IntegerOverflow)
+                {
+                    return fail(CookedTerrainWriteStatus::IntegerOverflow);
+                }
+                return fail(CookedTerrainWriteStatus::InvalidOuterRing);
+            }
+            outBytes.swap(*owner);
+            return CookedTerrainWriteStatus::Success;
+        }
         outBytes.swap(bytes);
         return CookedTerrainWriteStatus::Success;
     }
