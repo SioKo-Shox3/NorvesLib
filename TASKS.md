@@ -5946,7 +5946,7 @@
 - notes: ロードマップ GR27 の設計1〜3・5（462〜516 行）とフェーズ (a)〜(c)。10-02 の後に既定の不透明の経路が可視バッファ（ID のラスタと計算の解決）になったので、切り抜きと両面の材質は G5-GR26-GBUFFER-PROGRAMS の「解決の後に重ねる」経路で描く（可視バッファのラスタに αの標本を足す案は、ID のラスタの頂点の形式と HZB の作り方に波及するので採らない）。discard を含むシェーダーは早期の深度を外す実装が多いので別のファイルにして Masked の材質だけに限る（本機の性能は未計測）。MegaGeometry には切り抜きを入れない（AI の生成のメッシュは不透明。両面だけは後回しにせず、MegaGeometry の材質の bTwoSided で cull を選ぶ）。RT・DDGI・RTGI・パストレーサーには切り抜きが反映されない（GR104 の範囲。既知の限界として記録）。両面の法線の反転は、法線の向きが不揃いな AI の生成の薄い面で逆に破綻しうる（リスクとして記録）。Hash と TAA の相性の詰めは G5-GR30-THIN-SPECULAR-AA と G5-GR30-TAA-THIN-CHECK。しきい値の TSV は `Test/Core/Rendering/Thresholds/RenderingValidation/` に置く。危険地帯（GBuffer・RenderThread・アセットロード）なので評価者を通す。完了条件の GR27 の行、要件 `#### GR27`。
 
 ## G5-GR27-MASKED-SHADOW: 切り抜きの材質が、太陽の VSM・CSM・点光源の影・スキンの影に切り抜いた形の影を落とす
-- status: doing
+- status: blocked
 - after: G5-GR27-MASKED-GBUFFER
 - gr: GR27
 - done-when: Masked の材質の影の描画で、アルベドのαを標本して cutoff で破棄する（影では Hash を使わず Test。PCF と相性が悪いため）。CSM（`ShadowMapPass`）はマスク用のパイプライン（`shadow_alphaclip.vert`・`shadow_alphaclip.frag`。UV の頂点の属性とアルベドの binding を足す）と、マスク用の別の DynamicUniformAllocator（UBO の枠の上限 カスケード数×描画数 をマスクの分で食わない）を持ち、コマンドごとに材質を引いて Masked だけをそれで描く。太陽と点光源の VSM（`vsm_draw.vert`・`vsm_draw.frag`。記録の頂点は BDA で読む。VirtualShadowMapRaster.h の描画の規則）は、Masked の材質の塊の記録に材質の参照を持たせ、断片で破棄してから atomicMin で書く（破棄した texel は書かない）。点光源のキューブの影（`point_shadow.vert`・`point_shadow.frag`）とスキンの影（`skinned_shadow.vert`。UV は SkinVertexWords の word 6・7。64 バイトの頂点の ABI は変えない）も同じ判定にする。GPU の `RenderingAlphaClipShadowVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、市松のαの板が床へ落とす影の ROI の被覆率が 0 でも 100% でもなく、不透明の板（全面の影）と明確に違うこと（A/B）を `--shadow-method` の vsm と csm のそれぞれで確かめ、点光源の影とスキンの影でも同じ A/B を確かめる。Masked の材質が無い golden 4 本と VSM の溢れの統計が変わらない。
