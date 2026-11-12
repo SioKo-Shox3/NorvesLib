@@ -11130,3 +11130,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-175117/verify-G5-GR27-MASKED-SHADOW-build.txt`（HEAD 63f664c8。verify のビルドの行 BUILD_EXIT=0・エラーの行 0）、`.harness/runs/20261112-175117/verify-G5-GR27-MASKED-SHADOW-ctest.txt`（verify の ctest の行に決まりの除外を付けて 7/7 Passed: WindShaderCompileTest・PointShadowFaceMatricesTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・DirectionalShadowLightMatricesTest・CascadedShadowLightMatricesTest・SkinnedShadowComponentBindingsTest。CTEST_EXIT=0）。
 - Next: ランナーの評価者の反証（危険地帯: 影のパス・RenderThread）。Masked の材質を持たない描画が分岐の前と同じ経路を通り、golden と VSM の溢れの統計に効かないことは、評価者が差分を読んで確かめる。
 - Notes: `RenderingAlphaClipShadowVulkanTest` と golden 4 本は ctest に登録したまま、盤面では回さない。切り抜きの影の被覆率の A/B（vsm・csm・点光源・スキン）と golden 4 本の不変は GPU の上で未確認。人が GPU の試験を回すときの確かめと見どころは、上の G5-GR27-MASKED-SHADOW の節の Next に書いた。
+
+- U1 実物の BVH を環境変数の指定のときだけ読む RealBvhAcceptanceTest を足す: 着地(直し 0 回)
+- U2 role-file の CLI に --dump-fk を足す: 着地(直し 0 回)
+- U3 Blender の FK を書き出す台本と、2 つの JSON を突き合わせる台本を足す: 着地(直し 0 回)
+- U4 使い方と試験の理由を文書に書き、タスクの verify を通す: 着地(直し 0 回)
+### G2-GR84-REAL-BVH-GATE 実物の BVH の受け入れの試験、`--dump-fk`、Blender と突き合わせる台本（2026-11-12、run 20261112-175216）
+- Done: `CookedMeshTest` の束に MEMBER `RealBvhAcceptanceTest`（`SKIP_RETURN_CODE 125`）。`NORVES_MOTION_SAMPLE_DIR` が無ければ 125、あれば `Dog#V01full/Dog_Dog_rot6d_pred.bvh` の関節 53・End Site 11・1 フレームの値 162・フレーム 67・Frame Time 0.033333 と、`override_fps` 16 の clip の Duration 4.125 秒を確かめ、rest の誤差・ループ・推定の速さを `REAL_BVH` の行で stdout に出す。AssetCook の role-file の CLI に `--dump-fk <frames>`（`--bvh` 必須、`--position-convention absolute|additive`、出力先の引数と一緒なら拒否）を足し、各関節のワールド位置を `norves-bvh-fk` v1 の JSON で出す。`Test/Tools/BlenderBvhFk.py`・`Test/Tools/CompareBvhFk.py`（`--self-test` つき）と、`Docs/Architecture/BvhImport.md`・`Docs/Testing.md` の使い方と理由。
+- 試験: `SkeletalBvhCookBridgeTest` の `DumpFkPositions`（手書きの BVH の 6 位置を直書きの期待値と 1e-9 で、absolute と additive の両方）・`DumpFkRejects`（不正なフレーム・重複・範囲外・出力先の衝突・必須の欠落）。
+- 証拠: `.harness/runs/20261112-175216/G2-GR84-REAL-BVH-GATE-U4-verify.txt`（verify のビルドの行 exit 0、verify の ctest の行は 5 Passed・`RealBvhAcceptanceTest` は環境変数なしで Skipped、`CompareBvhFk.py --self-test` は result=pass。実物を指定した `RealBvhAcceptanceTest` は Passed、実物の `--dump-fk 0,17,33` は 159 件で、同じものとの Compare は exit 0、0.002 ずらした写しとは exit 1）。
+- 実測（2026-11-12、恒等写像の target）: duration_seconds=4.125、rest_error_after_max_degrees=1.7e-06、loop_detected=1・period_frames=12.50・seam 3.02°→0°、estimated_speed_m_s=0（ルートの位置が全フレームで一定）、rotation_error_max_degrees=15.34。数値は BvhImport.md に記録した。
+- Next: ランナーの評価者の反証。Blender との実物の照合（`BlenderBvhFk.py` を Blender で回し、`CompareBvhFk.py` で frame 0/17/33 の差が 1e-3 m 以内か）は後の確かめのタスクで回す（この項目では Blender を走らせない決まり）。
+- Notes: `--dump-fk` の位置の規約は既定を `absolute` にした（Blender の公式 importer は位置チャンネルで OFFSET を置き換える: `import_bvh.py` の `Vector(bvh_loc) - bvh_node.rest_head_local`）。role profile と同じ `additive` は `--position-convention additive` で出せる。Blender の台本は importer を `axis_forward='Y', axis_up='Z'` で呼んで軸の変換を恒等にし、BVH のフレーム f を場面のフレーム 1+f として読む。
