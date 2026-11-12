@@ -10938,3 +10938,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next（反復 2）: 人が見るときの見どころに、grassland の原点から離れた平地（地形の端に近い所）で土・苔・草地の地肌の模様が潰れず、近くと同じ細かさに見えること、段の変わり目（数 m の幅）で模様が二重に見えすぎないことを足す。
 - U1 ストリーミングの口を payload の実装に合わせて広げる: 着地(直し 0 回)
 - U2 ScatterSystem にセルから常駐を指定する口を足す: 着地(直し 0 回)
+- U3 TerrainComponent に区画単位で置く・外す口と ITerrainTileSite の実装を足す: 着地(直し 0 回)
