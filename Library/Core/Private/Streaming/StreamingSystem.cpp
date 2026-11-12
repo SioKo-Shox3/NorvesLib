@@ -1,8 +1,13 @@
 ﻿// セルのストリーミング全体を扱う。
 #include "Streaming/StreamingSystem.h"
 
+#include "Logging/LogMacros.h"
+
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <limits>
+#include <numeric>
 #include <thread>
 #include <utility>
 
@@ -27,6 +32,80 @@ namespace NorvesLib::Core::Streaming
         }
     } // namespace
 
+    StreamingHitchCounter::StreamingHitchCounter(uint32_t windowFrames, uint32_t minSamples, double hitchRatio)
+        : m_WindowFrames(std::max(windowFrames, uint32_t{1})),
+          m_MinSamples(std::clamp(minSamples, uint32_t{1}, m_WindowFrames)),
+          m_HitchRatio(hitchRatio)
+    {
+        m_Samples.reserve(m_WindowFrames);
+        m_SortedSamples.reserve(m_WindowFrames);
+    }
+
+    bool StreamingHitchCounter::AddFrame(double frameMs)
+    {
+        if (!std::isfinite(frameMs) || frameMs < 0.0)
+        {
+            return false;
+        }
+
+        bool bHitch = false;
+        m_LastMedianMs = 0.0;
+        if (m_Samples.size() >= m_MinSamples)
+        {
+            m_SortedSamples.assign(m_Samples.begin(), m_Samples.end());
+            const auto middle = m_SortedSamples.begin() + m_SortedSamples.size() / 2;
+            std::nth_element(m_SortedSamples.begin(), middle, m_SortedSamples.end());
+            m_LastMedianMs = *middle;
+            if (m_SortedSamples.size() % 2 == 0)
+            {
+                const double lower = *std::max_element(m_SortedSamples.begin(), middle);
+                m_LastMedianMs = std::midpoint(lower, *middle);
+            }
+            if (frameMs > m_LastMedianMs * m_HitchRatio)
+            {
+                bHitch = true;
+                ++m_HitchCount;
+                m_LastHitchFrameMs = frameMs;
+            }
+        }
+
+        if (m_Samples.size() < m_WindowFrames)
+        {
+            m_Samples.push_back(frameMs);
+        }
+        else
+        {
+            m_Samples[m_NextSample] = frameMs;
+            m_NextSample = (m_NextSample + 1) % m_WindowFrames;
+        }
+        return bHitch;
+    }
+
+    uint32_t StreamingHitchCounter::GetHitchCount() const
+    {
+        return m_HitchCount;
+    }
+
+    double StreamingHitchCounter::GetLastHitchFrameMs() const
+    {
+        return m_LastHitchFrameMs;
+    }
+
+    double StreamingHitchCounter::GetLastMedianMs() const
+    {
+        return m_LastMedianMs;
+    }
+
+    void StreamingHitchCounter::Reset()
+    {
+        m_Samples.clear();
+        m_SortedSamples.clear();
+        m_NextSample = 0;
+        m_HitchCount = 0;
+        m_LastHitchFrameMs = 0.0;
+        m_LastMedianMs = 0.0;
+    }
+
     StreamingSystem::CellEntry::CellEntry(const StreamingCellDesc* pDesc, StreamingRetryPolicy retry,
                                           StreamingScopeId scopeId)
         : Cell(pDesc, retry), ScopeId(scopeId)
@@ -48,6 +127,7 @@ namespace NorvesLib::Core::Streaming
         CancelAndWaitPrepares();
         m_Clock = pClock != nullptr ? pClock : &m_DefaultClock;
         m_Executor = pExecutor != nullptr ? pExecutor : &m_DefaultExecutor;
+        m_bHasLastUpdateMs = false;
     }
 
     bool StreamingSystem::SetSettings(const StreamingSystemSettings& settings)
@@ -144,6 +224,8 @@ namespace NorvesLib::Core::Streaming
             }
         }
         m_bHasManifest = true;
+        m_HitchCounter.Reset();
+        m_bHasLastUpdateMs = false;
         return true;
     }
 
@@ -155,6 +237,93 @@ namespace NorvesLib::Core::Streaming
     void StreamingSystem::SetFocus(const StreamingFocus& focus)
     {
         m_Focus = focus;
+    }
+
+    bool StreamingSystem::PrefetchHint(const Math::Vector3& position)
+    {
+        if (!m_bHasManifest || !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitX)) ||
+            !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitY)) ||
+            !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitZ)))
+        {
+            return false;
+        }
+
+        for (auto& entry : m_Cells)
+        {
+            entry.bPrefetch = ComputeHorizontalDistance(entry.Cell.GetDesc().Bounds, position) <=
+                m_Settings.Ring.ActiveRadius;
+        }
+        return true;
+    }
+
+    void StreamingSystem::ClearPrefetchHint()
+    {
+        for (auto& entry : m_Cells)
+        {
+            entry.bPrefetch = false;
+        }
+    }
+
+    StreamingSnapCallback StreamingSystem::DetachSnapCallback(EStreamingSnapStatus status, StreamingSnapResult& result)
+    {
+        result = {status, m_SnapCells, m_Clock->NowMs() - m_SnapRequestMs};
+        auto callback = std::move(m_SnapCallback);
+        m_bSnapHeld = m_bSnapPending && status == EStreamingSnapStatus::Ready;
+        m_bSnapPending = false;
+        if (!m_bSnapHeld)
+        {
+            for (auto& entry : m_Cells)
+            {
+                entry.bSnapTarget = false;
+            }
+        }
+        return callback;
+    }
+
+    bool StreamingSystem::RequestSnapLoad(const Math::Vector3& position, float radius, StreamingSnapCallback onReady)
+    {
+        if (!m_bHasManifest || !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitX)) ||
+            !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitY)) ||
+            !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitZ)) ||
+            !std::isfinite(radius) || radius < 0.0f || !onReady.IsBound())
+        {
+            return false;
+        }
+
+        const double previousRequestMs = m_SnapRequestMs;
+        StreamingSnapResult previousResult;
+        auto previousCallback = DetachSnapCallback(EStreamingSnapStatus::Cancelled, previousResult);
+        m_SnapPosition = position;
+        m_SnapRadius = radius;
+        m_SnapCallback = std::move(onReady);
+        m_SnapRequestMs = m_Clock->NowMs();
+        m_SnapCells = 0;
+        m_bSnapPending = true;
+        for (auto& entry : m_Cells)
+        {
+            entry.bSnapTarget = ComputeHorizontalDistance(entry.Cell.GetDesc().Bounds, position) <= radius;
+            if (entry.bSnapTarget)
+            {
+                ++m_SnapCells;
+            }
+        }
+        if (previousCallback.IsBound())
+        {
+            previousResult.ElapsedMs = m_Clock->NowMs() - previousRequestMs;
+            previousCallback(previousResult);
+        }
+        return true;
+    }
+
+    void StreamingSystem::CancelSnapLoad()
+    {
+        if (!m_bSnapPending && !m_bSnapHeld)
+        {
+            return;
+        }
+        StreamingSnapResult result;
+        auto callback = DetachSnapCallback(EStreamingSnapStatus::Cancelled, result);
+        callback.InvokeIfBound(result);
     }
 
     void StreamingSystem::FinishChange(CellEntry& entry, EStreamingCellState from)
@@ -310,7 +479,7 @@ namespace NorvesLib::Core::Streaming
         for (auto& entry : m_Cells)
         {
             const auto state = entry.Cell.GetState();
-            if (!IsResident(state) || state == EStreamingCellState::Unloading || entry.bEvicted ||
+            if (!IsResident(state) || state == EStreamingCellState::Unloading || entry.bEvicted || entry.bSnapTarget ||
                 (bWithResidentBytes && !HasResidentBytes(state)))
             {
                 continue;
@@ -333,6 +502,11 @@ namespace NorvesLib::Core::Streaming
     {
         std::sort(cells.begin(), cells.end(), [bWorstFirst](const CellEntry* pLeft, const CellEntry* pRight)
         {
+            // 通常セルの優先度が同じ最小値でも、スナップ対象を先に進める。
+            if (!bWorstFirst && pLeft->bSnapTarget != pRight->bSnapTarget)
+            {
+                return pLeft->bSnapTarget;
+            }
             if (pLeft->Priority == pRight->Priority)
             {
                 return bWorstFirst ? pLeft->Cell.GetId() > pRight->Cell.GetId() :
@@ -357,17 +531,77 @@ namespace NorvesLib::Core::Streaming
         m_LastFrameStats = {};
         m_LastFrameStats.Frame = m_Frame;
         const double now = m_Clock->NowMs();
+#if NORVES_BUILD_DEVELOPMENT
+        if (m_bHasManifest)
+        {
+            if (m_bHasLastUpdateMs && m_HitchCounter.AddFrame(now - m_LastUpdateMs))
+            {
+                LOG_INFO("STREAMING_HITCH count=%u frame_ms=%.2f median_ms=%.2f フレームの時間が直近の中央値の 2 倍を超えました",
+                         m_HitchCounter.GetHitchCount(), m_HitchCounter.GetLastHitchFrameMs(), m_HitchCounter.GetLastMedianMs());
+            }
+            m_LastUpdateMs = now;
+            m_bHasLastUpdateMs = true;
+        }
+        else
+        {
+            m_bHasLastUpdateMs = false;
+        }
+#endif
         CollectPrepares(now);
+
+        if (m_bSnapHeld &&
+            ComputeHorizontalDistance({m_SnapPosition, m_SnapPosition}, m_Focus.Position) <= m_SnapRadius)
+        {
+            // 到着したフレームから通常の輪に戻す。
+            m_bSnapHeld = false;
+            for (auto& entry : m_Cells)
+            {
+                entry.bSnapTarget = false;
+            }
+        }
 
         Container::VariableArray<CellEntry*> candidates;
         for (auto& entry : m_Cells)
         {
             entry.bEvicted = false;
+            if (entry.bSnapTarget)
+            {
+                entry.Priority = -std::numeric_limits<float>::max();
+                const auto from = entry.Cell.GetState();
+                if (from == EStreamingCellState::Unloaded && entry.Cell.CanBeginPrepare(now))
+                {
+                    candidates.push_back(&entry);
+                }
+                else if (from == EStreamingCellState::Dormant || from == EStreamingCellState::Preparing ||
+                         from == EStreamingCellState::ReadyToCommit || from == EStreamingCellState::Committing)
+                {
+                    entry.Cell.SetWantDormant(false);
+                    FinishChange(entry, from);
+                    if (from == EStreamingCellState::Dormant)
+                    {
+                        SetDormant(entry, false);
+                    }
+                }
+                continue;
+            }
             const auto& bounds = entry.Cell.GetDesc().Bounds;
             const float distance = ComputeHorizontalDistance(bounds, m_Focus.Position);
             entry.Priority = ComputePriority(bounds, m_Focus, m_Settings.Ring);
             const float loadRadius = ComputeLoadRadius(m_Manifest.GetCellSize(), m_Focus, m_Settings.Ring);
-            const auto decision = DecideRing(entry.Cell.GetState(), distance, loadRadius, m_Settings.Ring);
+            auto decision = DecideRing(entry.Cell.GetState(), distance, loadRadius, m_Settings.Ring);
+            if (entry.bPrefetch)
+            {
+                if (decision == EStreamingRingDecision::Unload)
+                {
+                    decision = entry.Cell.GetState() == EStreamingCellState::Active ?
+                        EStreamingRingDecision::MakeDormant : EStreamingRingDecision::None;
+                }
+                else if (decision == EStreamingRingDecision::None &&
+                         entry.Cell.GetState() == EStreamingCellState::Unloaded)
+                {
+                    decision = EStreamingRingDecision::Load;
+                }
+            }
             switch (decision)
             {
             case EStreamingRingDecision::Unload:
@@ -416,50 +650,54 @@ namespace NorvesLib::Core::Streaming
             // Preparing の取り消しは非同期なので、解放を依頼した分をここでは差し引く。
             --liveCount;
         }
-        if (IsOverByteBudget())
+        while (IsOverByteBudget())
         {
             auto* pWorst = FindWorstLive(true);
-            if (pWorst != nullptr)
+            if (pWorst == nullptr)
             {
-                RequestUnload(*pWorst);
-                pWorst->bEvicted = true;
-                ++m_LastFrameStats.Evictions;
+                break;
             }
+            RequestUnload(*pWorst);
+            pWorst->bEvicted = true;
+            ++m_LastFrameStats.Evictions;
         }
 
         SortCells(candidates, false);
         for (auto* pEntry : candidates)
         {
-            if (CountInFlight() >= m_Settings.MaxInFlightPrepares)
+            if (!pEntry->bSnapTarget)
             {
-                break;
-            }
-            if (pEntry->bEvicted || IsOverByteBudget())
-            {
-                continue;
-            }
-            if (IsOverByteBudget(pEntry->LastKnownBytes))
-            {
-                auto* pWorst = FindWorstLive(true);
-                if (pWorst != nullptr && pEntry->Priority < pWorst->Priority)
+                if (CountInFlight() >= m_Settings.MaxInFlightPrepares)
                 {
-                    RequestUnload(*pWorst);
-                    pWorst->bEvicted = true;
-                    ++m_LastFrameStats.Evictions;
+                    break;
                 }
-                continue;
-            }
-            if (CountResident(false) >= m_Settings.Budget.MaxResidentCells)
-            {
-                auto* pWorst = FindWorstLive();
-                if (CountResident(true) >= m_Settings.Budget.MaxResidentCells && pWorst != nullptr &&
-                    pEntry->Priority < pWorst->Priority)
+                if (pEntry->bEvicted || IsOverByteBudget())
                 {
-                    RequestUnload(*pWorst);
-                    pWorst->bEvicted = true;
-                    ++m_LastFrameStats.Evictions;
+                    continue;
                 }
-                continue;
+                if (IsOverByteBudget(pEntry->LastKnownBytes))
+                {
+                    auto* pWorst = FindWorstLive(true);
+                    if (pWorst != nullptr && pEntry->Priority < pWorst->Priority)
+                    {
+                        RequestUnload(*pWorst);
+                        pWorst->bEvicted = true;
+                        ++m_LastFrameStats.Evictions;
+                    }
+                    continue;
+                }
+                if (CountResident(false) >= m_Settings.Budget.MaxResidentCells)
+                {
+                    auto* pWorst = FindWorstLive();
+                    if (CountResident(true) >= m_Settings.Budget.MaxResidentCells && pWorst != nullptr &&
+                        pEntry->Priority < pWorst->Priority)
+                    {
+                        RequestUnload(*pWorst);
+                        pWorst->bEvicted = true;
+                        ++m_LastFrameStats.Evictions;
+                    }
+                    continue;
+                }
             }
 
             const auto from = pEntry->Cell.GetState();
@@ -552,13 +790,13 @@ namespace NorvesLib::Core::Streaming
         }
         for (auto* pEntry : committing)
         {
-            if (!canStep())
+            if (!pEntry->bSnapTarget && !canStep())
             {
                 break;
             }
             if (pEntry->Cell.GetState() == EStreamingCellState::ReadyToCommit)
             {
-                if (IsOverByteBudget())
+                if (!pEntry->bSnapTarget && IsOverByteBudget())
                 {
                     continue;
                 }
@@ -570,7 +808,7 @@ namespace NorvesLib::Core::Streaming
                     SetDormant(*pEntry, true);
                 }
             }
-            while (pEntry->Cell.GetState() == EStreamingCellState::Committing && canStep())
+            while (pEntry->Cell.GetState() == EStreamingCellState::Committing && (pEntry->bSnapTarget || canStep()))
             {
                 const uint32_t index = pEntry->Cell.GetCurrentPayloadIndex();
                 uint64_t bytes = 0;
@@ -603,6 +841,40 @@ namespace NorvesLib::Core::Streaming
         const auto bytes = CountResidentBytes();
         m_LastFrameStats.ResidentCpuBytes = bytes.Cpu;
         m_LastFrameStats.ResidentGpuBytes = bytes.Gpu;
+
+        if (m_bSnapPending)
+        {
+            bool bReady = true;
+            bool bFailed = false;
+            for (const auto& entry : m_Cells)
+            {
+                if (!entry.bSnapTarget)
+                {
+                    continue;
+                }
+                const auto state = entry.Cell.GetState();
+                bFailed = bFailed || state == EStreamingCellState::Failed;
+                if (state != EStreamingCellState::Active)
+                {
+                    bReady = false;
+                    continue;
+                }
+                for (uint32_t i = 0; i < entry.Handlers.size(); ++i)
+                {
+                    if (!entry.Handlers[i]->IsPayloadReady(MakeContext(entry.Cell, i)))
+                    {
+                        bReady = false;
+                    }
+                }
+            }
+            if (bFailed || bReady)
+            {
+                StreamingSnapResult result;
+                auto callback = DetachSnapCallback(
+                    bFailed ? EStreamingSnapStatus::Failed : EStreamingSnapStatus::Ready, result);
+                callback.InvokeIfBound(result);
+            }
+        }
     }
 
     void StreamingSystem::StopAndJoin(StreamingScopeId scopeId)
@@ -616,6 +888,11 @@ namespace NorvesLib::Core::Streaming
             return;
         }
 
+        const bool bCancelSnap = std::any_of(m_Cells.begin(), m_Cells.end(),
+            [&belongsToScope](const CellEntry& entry)
+            {
+                return entry.bSnapTarget && belongsToScope(entry);
+            });
         CancelAndWaitPrepares(&scopeId);
         for (auto& entry : m_Cells)
         {
@@ -634,6 +911,10 @@ namespace NorvesLib::Core::Streaming
             m_Manifest = CellManifest{};
             m_bHasManifest = false;
         }
+        if (bCancelSnap)
+        {
+            CancelSnapLoad();
+        }
     }
 
     void StreamingSystem::Shutdown()
@@ -650,6 +931,7 @@ namespace NorvesLib::Core::Streaming
         m_Cells.clear();
         m_Manifest = CellManifest{};
         m_bHasManifest = false;
+        CancelSnapLoad();
     }
 
     EStreamingCellState StreamingSystem::GetCellState(StreamingCellId id) const
