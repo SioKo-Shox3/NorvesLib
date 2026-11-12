@@ -11084,3 +11084,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証。人が見るときの見どころ: factor≠1 の材質を持つ骨格つきの資産（AI 生成の GLB など）を cook し直し、そのスキンメッシュを出すシーンで材質の色が出ること。factor が 1 の既存の骨格の資産は見た目が変わらない。撮影・計測の確かめは回さない決まり。
 - Notes: paths の外の `Tools/AssetCook/SkeletalImportReport.h`（記録の型と入力欄）・`RigSplitFileCook.cpp`・`RigSingleCook.cpp`（import_report を出す呼び出し各 1 行）を触った。`--rig-split` と asset-set の骨格経路はこれまで import_report を出していなかったため、焼いた材質があるときだけ出す形にした。既知の限界: 焼いたアルベドは raw RGBA8 で元の PNG/JPEG より出力が大きく、画素の予算（`ReserveDerived`）を消費するので、大きなアルベドで factor≠1 の材質が多いと `split_albedo_output_limit` で止まることがある。
 - U1 SkinnedMeshResource に slot ごとの材質の元(record と 4 つの論理パス)と split の世代を公開する: 着地(直し 0 回)
+- U2 skin の材質 record と所有の論理パスから ImportedMaterialStaging を作る多重定義を足す: 着地(直し 0 回)
