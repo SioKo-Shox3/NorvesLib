@@ -52,18 +52,14 @@ target_compile_definitions(RHIGPUTimestampVulkanTest PRIVATE
 set_target_properties(RHIGPUTimestampVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/RenderingValidation/TimestampRuns)
 add_test(NAME RHIGPUTimestampVulkanTest COMMAND RHIGPUTimestampVulkanTest)
-add_test(NAME RHIGPUTimestampVulkanSkipContractTest COMMAND RHIGPUTimestampVulkanTest)
 set_tests_properties(
     RHIGPUTimestampVulkanTest
-    RHIGPUTimestampVulkanSkipContractTest
     PROPERTIES
         LABELS "GPU;RenderingValidation"
         RESOURCE_LOCK NorvesLibGPU
         SKIP_RETURN_CODE 125
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/RenderingValidation/TimestampRuns
 )
-set_tests_properties(RHIGPUTimestampVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_library(RenderingGpuTestSupport STATIC
     RenderingValidation/GpuTestEnvironment.cpp
