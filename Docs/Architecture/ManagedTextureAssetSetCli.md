@@ -289,3 +289,48 @@ gh workflow run windows-assetcook.yml --ref <branch> -f frozen_parity=true
 この指定では従来どおりrecipe照合と全出力のbyte比較を実行する。mainのクラスタ化（`13ba56a7`）以後の出力は旧基準と一致しないため、凍結時点の出力を確かめ直すときだけ使う。
 
 push時の `[validate-assets]` / `[validate-merge]` の起動条件と検証範囲は変わらない。
+
+## cook の前の generator（--run-generators）
+
+```powershell
+AssetCook --asset-set <spec.json> --runtime-root <directory> --source-root <directory> --run-generators
+```
+
+`--run-generators` を付けた場合だけ、spec v2 の `generators` を cook の前に実行する。引数値を取らないフラグで、重複指定や `--run-generators=<value>`、`--recover` との併用は終了コード1で拒否する。spec の検査は generator を起動する前に完了する。固定 pending 等の管理状態の観測も先に行う。
+
+各 generator は宣言順に処理し、次のいずれかなら実行して `ran`、すべて該当しなければ `skipped` となる。
+
+- 同じ名前（完全一致）の前回の記録がない。
+- inputs の hash が前回と異なる。
+- command の正準形の hash が前回と異なる。
+- 宣言された outputs のいずれかが存在しない、または存在の確認に失敗する。
+
+inputs は各段を判断する直前に読み取るため、前の generator の output を後の generator の input にできる。各入力は通常ファイルである必要がある。inputs の宣言順に `path + "\n" + byte 数の10進表記 + "\n" + 内容の SHA-256（小文字16進64桁）+ "\n"` を連結し、その全体の SHA-256 を inputs の hash とする。空の inputs は空列の hash になる。ファイルの時刻には依存しない。
+
+command の正準形は `command\n`、各 command 要素、`cwd\n`、正規化した cwd、`outputs\n`、正規化した各 output の順に並べる。値はそれぞれ `UTF-8 の byte 数の10進表記 + ":" + 値 + "\n"` で符号化し、その全体の SHA-256 を取る。command の引数の空白や順序、cwd、outputs の順序も判定に含まれる。省略した cwd と `"."` は同じ空文字列として記録される。プログラム本体の内容や出力の内容は、この判定では hash 化しない。実行ファイル等の内容変更も検知したい場合は inputs に宣言する。
+
+### 起動と出力先
+
+Windows の `CreateProcessW` で shell を通さず直接起動し、子の終了を待つ。command は1要素が1引数で、shell 用の引用符をあらかじめ付けない。空白・引用符を含む引数は Windows の引数引用規則で符号化し、引用符直前の逆斜線を `2n+1` 本、閉じ引用符直前の末尾の逆斜線を `2n` 本にする。`argv[0]` は全体を引用符で囲み、プログラム名そのものに `"` があると `generator_command` で拒否する。構築した command line は終端 NUL を除いて32766 UTF-16 code unit 以下で、超過は `generator_command_too_long` となる。`|`・`>`・環境変数等の shell 展開は行わない。
+
+絶対 path のプログラムはその path を使い、`/` または `\` を含む相対 path のプログラムは generator の cwd から絶対化する。区切りのない名前は `CreateProcessW` の通常の実行ファイル探索に任せる。cwd は省略時 source root、指定時 source root 相対。inputs・outputs の基準は cwd にかかわらず source root のままであり、command 内の相対引数は子が cwd を基準に解釈する。親の環境を継承し、有効な標準入力・標準出力・標準エラーの handle だけを複製して子に渡す。子の標準出力・標準エラーを別途収集・解析することはない。
+
+実行の前に全 generator の path と出力先を解決する。宣言した outputs が runtime root、同じ親の `.norves-assetcook`、`<runtime-leaf>.reports` の内部・同一・祖先になる場合や、spec 自体またはその祖先になる場合は `generator_output_protected name=<name> output=<path>` で拒否する。比較は path の区間ごとに大文字小文字を無視して行う。この保護は宣言した outputs の検査であり、子プロセスの書き込みを隔離する sandbox ではない。
+
+### 失敗・記録・report
+
+子が非ゼロで終了すると `generator_failed name=<name> exit_code=<code>`、0で終了しても output が欠けると `generator_failed name=<name> exit_code=0 missing_output=<path>` を報告する。起動・待機・終了コード取得の失敗は `generator_launch_failed name=<name> win32=<code>` となる。入力の不在・読込失敗はそれぞれ `generator_input_missing name=<name> input=<path>`・`generator_input_read name=<name> input=<path>`、hash の失敗は `generator_hash name=<name>` となる。これらは cook に進まず CLI の終了コード1となる。起動できない場合は子の終了コードはなく、Win32 エラーを報告する。
+
+失敗した generator は `failed`、処理しなかった残りは `not_run` とし、既に完了した段の `ran`・`skipped` は保持する。全 path の事前検査で失敗した場合は、それ以前の段も未実行なので `not_run` のままとなる。子が source 側に既に作った出力は巻き戻さない。
+
+前回の記録は runtime の claim に対応する cook state の任意欄 `generators` から読み取る。各要素は `{"name":"make_texture","inputs":"<sha256>","command":"<sha256>"}` で、空なら欄自体を省略する。欄のない旧 state は記録なしとして扱うが、所有済み root の state ファイル自体が欠ける場合は `generator_state_missing` で停止する。不正な state や binding の不一致も停止する。
+
+全 generator の成功後、新しい記録は cook state と同じ管理取引で保存する。generator の失敗時は記録を保存しないため、途中で成功した段も、その記録が前回と異なるままなら次回再実行される。cook の公開前に失敗した場合も未公開の記録は採用しない。公開後のエラーや復旧では通常の管理取引の確定状態に従う。
+
+資産がすべて Skip で manifest の内容も同じでも、generator の記録だけが変われば `unchanged` にはせず、資産を再 cook せず記録を更新する。state ファイルだけを書き換える処理ではなく、通常の取引で state・index の世代を進め、同一内容の manifest も再公開する。
+
+`--run-generators` を付けない場合は generator を一切実行せず、既存 state の記録を引き継ぐ。既存の cook の出力形式と byte 列は変わらず、入力も出力も変わらない再実行は通常どおり `unchanged` となる。この呼び出しでは report に generator の行を追加しない。
+
+実行結果がある場合、`cook_report.json` の任意配列 `generators` に宣言順で `{"name":"make_texture","status":"ran"}` の形を出し、`cook_report.md` にも `Generators` の節を出す。status は `ran`・`skipped`・`failed`・`not_run`。stderr には各行を `AssetCook generator name=<name> status=<status>` として出し、起動直前には `AssetCook generator running name=<name>` も出す。report の保存先は `cook_report_directory=<path>` で示す。generator の失敗時も結果を report に残す。
+
+generator は管理 store のボリューム lock の外で走る。同じ spec の generator を2つの cook が同時に実行することは協調 writer の前提の外であり、防止しない。呼び出し側で同じ生成入力・出力への同時実行を避ける必要がある。

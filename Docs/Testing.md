@@ -584,3 +584,15 @@ GPU の試験は `RenderingPaleFlatVulkanTest`（Visibility Buffer 有効）と
 cmake --build build --config Debug --target RenderingHdrSceneCaptureTest -- /m:1
 ctest --test-dir build -C Debug -R "^(RenderingPaleFlatVulkanTest|RenderingPaleFlatGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300
 ```
+
+## asset-set の generator の試験（TextureManagedCliTest の中）
+
+`TextureManagedCliTest` は `CookedMeshTest` の束に入り、同じ試験 exe を `--test=TextureManagedCliTest --generator-child` 付きで子として起動する。子は入力のコピーと実行回数の記録、指定した終了コードでの失敗、出力を作らない成功を行うため、外部の生成ツールに依存しない。
+
+- `--run-generators` を付けない CLI 呼び出しでは子を起動せず、元の source を保持する。付けた初回は `ran`、同じ入力の再実行は `skipped` となり、実行回数も変わらない。
+- inputs の1 byte を変えると再実行し、その output を source にする asset だけを再 cook する。他の package は byte 列・native ID・更新時刻を保持する。
+- 途中の子が終了コード7で失敗すると、名前と終了コードを報告して cook を行わない。前の段は `ran`、失敗した段は `failed`、後の段は `not_run` となる。runtime のファイルと manifest は変わらず、次回も未保存の記録に基づいて再実行する。子が0で終了しても宣言 output が欠ければ失敗する。
+- spec の未知キー、名前重複、空の command、不正な inputs・outputs・cwd、outputs の祖先・子孫の重なり、asset source の複数被覆は、該当する `Field` で拒否する。拒否前に子は起動せず、runtime も変えない。
+- CLI の `--recover` と `--run-generators` の併用、および `--run-generators` の重複を終了コード1で拒否する。
+
+再実行の欠落・余分な cook・失敗後の誤公開は、通常の成功ログだけでは区別できない。実行回数、report の status、source と runtime の byte 列・ファイル同一性を照合して、処理が継続したまま生成物や管理状態が食い違う場合を検出する。
