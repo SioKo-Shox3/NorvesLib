@@ -1,7 +1,8 @@
 ﻿// GBuffer の標準の断片シェーダーの本体。材質ごとのプログラムの FS は、この本体か
 // Common/GBufferEncoding.glsl の GBufferEncodeNormal・GBufferEncodeMaterial・GBufferEncodeEmissive を通して 5 枚へ書く約束。
 // GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質だけに使う。
-// discard が早期深度テストを妨げる実装が多いため、通常の FS と分ける。
+// discard で深度の書き込みも止めるため、切り抜きの FS では早期の深度テストを宣言しない。
+// 通常の FS の早期深度テストを保つため、切り抜きを分ける。
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 #extension GL_ARB_sparse_texture2 : require
 #endif
@@ -47,6 +48,10 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 11
+#ifdef GBUFFER_ALPHA_CLIP
+// 切り抜いた画素の深度への書き込みを discard で止めるため、早期の深度テストを宣言しない。
+#define NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS 1
+#endif
 #include "Common/VirtualTextureFeedback.glsl"
 #include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
