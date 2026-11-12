@@ -33,7 +33,8 @@ AssetCook --retarget-clip --input run.bvh --skeleton dog.gltf --role-profile rol
 }
 ```
 
-- rest mode: `explicit`は既存C、`match`は骨方向の許容差超過を拒否、`align_bones`は最小swingと定義できるup-hint twistからCを求める。方向が作れない場合は明示Cを使う
+- rest mode: `explicit` は指定 C で W = C·D·Cᵀ·B、`match` は C = I で骨方向の許容差超過を拒否、`align_bones` は最小回転と up_hint による捻りから C を求め、W = D·Cᵀ·B で骨方向を元に合わせる。
+  `match`・`align_bones` で方向が作れない場合は `rest_bone_direction_missing` で拒否する。詳細は [SkeletalBvhClipImport.md の「自動のrest補正（match・align_bones）」](SkeletalBvhClipImport.md#自動のrest補正matchalign_bones) を参照する。
 - root scale: 正の倍率、または`auto_height`。後者はmapped pelvis（未指定時root）とpawの高さ比を使い、pawがなければ拒否する
 - loop mode: `none`は全期間、`range`は`start_seconds`/`end_seconds`、`auto`は十分な反復がある場合に周期を検出する。検出できない場合は全期間を保持する
 - glTFの時刻は作者の秒を使う。BVHのfps上書きをglTFに指定すると拒否する
