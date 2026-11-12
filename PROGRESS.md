@@ -10976,3 +10976,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-115209/u5-rebuild.txt`（verify のビルドの行、HEAD 08f7e6ab と同じ中身で 4 ターゲット EXIT=0）、`.harness/runs/20261112-115209/u5-ctest.txt`（verify の ctest の行に `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて OverheadHeightMapMathTest・SkyOcclusionModelTest の 2/2 合格）。OverheadHeightMapVulkanTest と RenderingGolden* の 4 本は Vulkan・Golden の試験を回さない決まりで実行していない（OverheadHeightMapVulkanTest はビルドと ctest への登録まで）。
 - Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの順と公開）。マップを使う側は G11-GR59-RAIN-HIT・G11-GR59-PUDDLES。撮影・計測の確かめは回さない決まり。使う側がまだ無いので、人が見るときは Rendering3DTest とランチャーの各シーンの見た目が前と変わらないことだけを見る。
 - Notes: 既知の限界: 遮蔽物の集め直しは、描いた窓での変化の見張り（0.25 s ごと）と描き直しの前だけで、そのたびに全 MeshProxy・MegaGeometryProxy を回す（窓の外は境界球で先に飛ばす）。散布の proxy が非常に多いシーンでは、その回だけ描画スレッドの CPU 時間が増える見込み（測っていない）。厚みの無いメッシュ（局所 AABB の幅 0 の軸がある）は屋根にならない。形の自動推定は GR81 の範囲で、当面はメッシュ = 箱・Mega = 楕円体の既定。OverheadHeightMapVulkanTest は実行していないので、読み戻しの向きと深度の同期は確かめていない。
+
+## G5-GR27-MASKED-GBUFFER（2026-11-12、統合ブランチの取り込みの後に完了へ戻す）
+- Done: 統合ブランチ `feature/scene-launcher`（G11-GR59-OVERHEAD-MAP まで）を取り込んだ。衝突は `SceneView::Render` の冒頭のビューごとのリセットの 1 か所で、TAA が掛かったかの印の初期化（`context.bTemporalAAApplied = false`）と雨の遮蔽マップの無効化（`context.OverheadHeightMap.Invalidate()`）の両方を残した。
+- 証拠: `.harness/runs/20261112-115209/merge2-verify-build.txt`（verify のビルドの行 EXIT=0）、`.harness/runs/20261112-115209/merge2-verify-ctest.txt`（verify の ctest に `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて GBufferPipelineKeyTest・MaterialResourcesTest・ImportedOpaqueRuntimeTest の 3/3 合格、EXIT=0）。
+- Notes: Vulkan・Golden の試験は回さない決まり。人が見るときの見どころは前の完了の記録のとおり。
