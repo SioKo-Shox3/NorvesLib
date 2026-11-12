@@ -1,6 +1,13 @@
 ﻿// 分離modeも実GR83 runtimeの同ready/owner/取消/Drainを使うことを反証する。
 #include "RigSplitPublicationFixture.h"
 #include "Resource/SkeletalAssetRuntimeTestAccess.h"
+#include "Resource/SkinnedMaterialBuilder.h"
+#include "Rendering/RenderResources.h"
+#include "RHI/IDevice.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ITexture.h"
+#include "Tools/AssetCook/AssetCookOutput.h"
+#include "Tools/AssetCook/TextureCooker.h"
 #include "Animation/SkeletalAssetRuntime.h"
 #include "Engine/SkeletalAssetSession.h"
 #include "Application/ApplicationHandlerBase.h"
@@ -583,6 +590,277 @@ namespace
         jobs.Shutdown();
         std::printf("SPLIT_RUNTIME_CASE result=pass actual_session_pause_delivery_consumer_owned_borrowed_shutdown\n");
     }
+    namespace X = NorvesLib::Tests::RigSplitFixture;
+    namespace V = NorvesLib::Tests::RigV1Fixture;
+    namespace H = NorvesLib::RHI;
+    namespace Rendering = Core::Rendering;
+    namespace Cook = NorvesLib::Tools::AssetCook;
+
+    class FakeTexture final : public H::ITexture
+    {
+    public:
+        explicit FakeTexture(const H::TextureDesc& desc) : Desc(desc) {}
+        uint32_t GetWidth() const override { return Desc.Width; }
+        uint32_t GetHeight() const override { return Desc.Height; }
+        uint32_t GetDepth() const override { return Desc.Depth; }
+        uint32_t GetMipLevels() const override { return Desc.MipLevels; }
+        uint32_t GetArraySize() const override { return Desc.ArraySize; }
+        H::Format GetFormat() const override { return Desc.TextureFormat; }
+        H::ResourceUsage GetUsage() const override { return Desc.Usage; }
+        bool IsCubemap() const override { return Desc.IsCubemap; }
+        void Update(const void* data, uint32_t row, uint32_t slice, uint32_t mip = 0, uint32_t layer = 0) override
+        {
+            RIG_CHECK(data && row && slice && mip < Desc.MipLevels && layer < Desc.ArraySize);
+            const auto* bytes = static_cast<const uint8_t*>(data);
+            Pixels.assign(bytes, bytes + slice);
+        }
+    private:
+        H::TextureDesc Desc;
+        V::Bytes Pixels;
+    };
+    class FakeBuffer final : public H::IBuffer
+    {
+    public:
+        explicit FakeBuffer(const H::BufferDesc& desc) : Desc(desc), Data(static_cast<size_t>(desc.Size)) {}
+        uint64_t GetSize() const override { return Desc.Size; }
+        void* Map(uint64_t offset = 0, uint64_t size = 0) override
+        {
+            (void)size;
+            return offset < Data.size() ? Data.data() + static_cast<size_t>(offset) : nullptr;
+        }
+        void Unmap() override {}
+        void Update(const void* data, uint64_t size, uint64_t offset = 0) override
+        {
+            RIG_CHECK(data && offset <= Data.size() && size <= Data.size() - offset);
+            std::memcpy(Data.data() + static_cast<size_t>(offset), data, static_cast<size_t>(size));
+        }
+        H::ResourceUsage GetUsage() const override { return Desc.Usage; }
+    private:
+        H::BufferDesc Desc;
+        V::Bytes Data;
+    };
+    class FakeDevice final : public H::IDevice
+    {
+    public:
+        H::BufferPtr CreateBuffer(const H::BufferDesc& desc) override { return C::MakeShared<FakeBuffer>(desc); }
+        H::TexturePtr CreateTexture(const H::TextureDesc& desc) override { return C::MakeShared<FakeTexture>(desc); }
+        H::SamplerPtr CreateSampler(const H::SamplerDesc&) override { return {}; }
+        H::ShaderPtr CreateShader(const H::ShaderDesc&) override { return {}; }
+        H::CommandListPtr CreateCommandList() override { return {}; }
+        H::SwapChainPtr CreateSwapChain(const H::SwapChainDesc&) override { return {}; }
+        H::RenderPassPtr CreateRenderPass(const H::RenderPassDesc&) override { return {}; }
+        H::FramebufferPtr CreateFramebuffer(const H::FramebufferDesc&) override { return {}; }
+        H::PipelinePtr CreateGraphicsPipeline(const H::GraphicsPipelineDesc&) override { return {}; }
+        H::PipelinePtr CreateComputePipeline(const H::ComputePipelineDesc&) override { return {}; }
+        H::DescriptorSetPtr CreateDescriptorSet(const H::DescriptorSetDesc&) override { return {}; }
+        H::ShaderCompilerPtr CreateShaderCompiler() override { return {}; }
+        H::IGPUResourceAllocator* GetResourceAllocator() override { return nullptr; }
+        void WaitIdle() override {}
+        H::API GetAPI() const override { return H::API::None; }
+        const H::DeviceCapabilities& GetCapabilities() const override { return Capabilities; }
+        NorvesLib::Math::Matrix4x4 AdjustProjectionForClipSpace(const NorvesLib::Math::Matrix4x4& p,
+                                                              bool flip = true) const override
+        {
+            (void)flip;
+            return p;
+        }
+    private:
+        H::DeviceCapabilities Capabilities;
+    };
+    V::Text TwoMaterials(const V::Text& base, const V::Text& first, const V::Text& second)
+    {
+        const V::Text primitive =
+            R"({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5},"indices":8,"mode":4})";
+        const auto a = V::Replace(primitive, "\"mode\":4", "\"mode\":4,\"material\":0");
+        const auto b = V::Replace(primitive, "\"mode\":4", "\"mode\":4,\"material\":1");
+        auto json = V::Replace(base, primitive.c_str(), a + "," + b);
+        return V::Replace(json, "\"skins\":", V::Text("\"materials\":[") + first + "," + second + "],\"skins\":");
+    }
+    V::Text WriteMaterialTextures(const Cook::RigSplitCookResult& cooked)
+    {
+        V::Text json = "{\"version\":1,\"assets\":[";
+        bool first = true;
+        for (const auto& image : cooked.TexturePlans)
+        {
+            RIG_CHECK(image.Payload == Cook::MeshImagePayload::RawRgba8);
+            Cook::TextureCookResult texture;
+            V::Text error;
+            RIG_CHECK(Cook::CookRgba8ToNvtex(image.GetBytes(), image.Width, image.Height, image.Format, texture, error));
+            V::Bytes package;
+            uint64_t hash = 0;
+            // package codec の既存 API 境界だけは標準文字列を受け取る。
+            std::string packageError;
+            RIG_CHECK(Cook::Detail::BuildSingleSkeletalEntryPackage(
+                "asset", Core::Asset::MakeAssetPackageFourCC('T', 'e', 'x', '0'),
+                texture.NvtexBytes, package, hash, packageError));
+            const auto path = image.LogicalPath + ".nvpk";
+            std::filesystem::create_directories(std::filesystem::path(path.c_str()).parent_path());
+            V::WriteBytes(path.c_str(), package);
+            if (!first)
+            {
+                json += ",";
+            }
+            first = false;
+            json += V::Text("{\"logical_path\":\"") + image.LogicalPath +
+                    "\",\"kind\":\"texture\",\"source_hash\":\"0000000000000001\",\"variant\":\"default\",\"format\":\"" +
+                    image.Format + "\",\"cooked_package\":\"" + path +
+                    "\",\"entry_name\":\"asset\",\"entry_type\":\"Tex0\",\"cooked_hash\":\"" +
+                    Core::Asset::FormatAssetHashHex(hash) + "\",\"cooked_version\":0}";
+        }
+        return json + "]}";
+    }
+    void Materials(T::JobSystem::ExecutionMode mode)
+    {
+        // 契約: cook の slot 値、slot ごとの失敗、資産解放後の材質回収を CPU だけで反証する。
+        Environment env(mode);
+        const V::Text body =
+            R"({"name":"Body","pbrMetallicRoughness":{"baseColorFactor":[0.5,0.25,1,1],"metallicFactor":0.25,"roughnessFactor":0.75}})";
+        const V::Text trim =
+            R"({"name":"Trim","pbrMetallicRoughness":{"metallicFactor":1,"roughnessFactor":0.5}})";
+        const auto paths = X::Request();
+        // 既定の Auto は開いた形を両面にするが、スキンでは両面を表せないため取り込み時に切る。
+        X::Sidecar(R"({"version":1,"material":{"doubleSided":"force_false"}})");
+        const auto cooked = X::CookSource(TwoMaterials(env.Files.Files.Json, body, trim), paths);
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        X::WritePackages(cooked);
+        const auto textureManifest = WriteMaterialTextures(cooked);
+        Core::Skeletal::SkinMeshV1 mesh;
+        Core::Skeletal::RigV1Report report;
+        RIG_CHECK(Core::Skeletal::ParseSkinMeshV1(V::View(cooked.Mesh.Payload), mesh, report));
+        const auto* data = mesh.GetData();
+        RIG_CHECK(data && data->Slots.size() == 2 && data->Materials.size() == 2);
+        RIG_CHECK(cooked.SlotSourceMaterials.size() == 2 &&
+                  cooked.SlotSourceMaterials[0] == 0 && cooked.SlotSourceMaterials[1] == 1);
+        for (size_t i = 0; i < 2; ++i)
+        {
+            const auto& material = data->Materials[i];
+            std::printf("SPLIT_RUNTIME_MATERIAL slot=%zu name=%s base=(%g,%g,%g,%g) metallic=%g roughness=%g "
+                        "albedo=%s normal=%s arm=%s emissive=%s\n",
+                        i, data->Slots[i].Name.c_str(), material.Record.BaseColor[0], material.Record.BaseColor[1],
+                        material.Record.BaseColor[2], material.Record.BaseColor[3],
+                        material.Record.Metallic, material.Record.Roughness, material.Textures[0].c_str(),
+                        material.Textures[1].c_str(), material.Textures[2].c_str(), material.Textures[3].c_str());
+        }
+        const auto manifest = [](const Cook::RigSplitCookResult& source, const Cook::RigSplitCookRequest& request)
+        {
+            return V::Text("{\"version\":1,\"assets\":[") +
+                   F::Record(source.ManifestJson, request.SkeletonPath) + "," +
+                   F::Record(source.ManifestJson, request.MeshPath) + "," +
+                   F::Record(source.ManifestJson, request.BankPath) + "]}";
+        };
+        RIG_CHECK(env.Value.SetSnapshot(env.Files.MakeSnapshot(manifest(cooked, paths))) == S::Success);
+        Core::Skeletal::RigSplitRequest request;
+        request.SkeletonPath = paths.SkeletonPath;
+        request.MeshPath = paths.MeshPath;
+        request.BankPaths = {paths.BankPath};
+        auto completed = One(env, request);
+        RIG_CHECK(completed.Failure == Failure::None && completed.Asset);
+
+        auto device = C::MakeShared<FakeDevice>();
+        Rendering::RenderResources resources;
+        resources.SetGeometryPoolBlockBytes(1ull << 20);
+        RIG_CHECK(resources.Initialize(device));
+        RIG_CHECK(resources.Textures().SetTextureAssetRoot(
+            C::String(env.Files.Files.Root.generic_string().c_str())));
+        RIG_CHECK(resources.Textures().LoadTextureAssetManifestFromJsonText(
+            NorvesLib::Tests::SkeletalLoaderFixture::CoreText(textureManifest)));
+        {
+            // builder は借用先の resources より先に破棄する。
+            R::SkinnedMaterialBuilder builder(resources, T::Thread::GetCurrentThreadId());
+            const auto before = resources.Materials().GetCount();
+            const auto built = builder.Build(completed.Asset);
+            if (built && built->Status != R::SkinnedMaterialBuildStatus::Success)
+            {
+                for (const auto& slot : built->Slots)
+                {
+                    std::fprintf(stderr, "SPLIT_RUNTIME_MATERIAL_FAILURE slot=%u status=%u reason=%s\n",
+                                 slot.Slot, unsigned(slot.Status), slot.Reason.c_str());
+                }
+            }
+            RIG_CHECK(built && built->Status == R::SkinnedMaterialBuildStatus::Success && built->Slots.size() == 2);
+            const auto& a = built->Slots[0];
+            const auto& b = built->Slots[1];
+            RIG_CHECK(a.Slot == 0 && a.Name == C::String(_T("Body")) &&
+                      b.Slot == 1 && b.Name == C::String(_T("Trim")));
+            RIG_CHECK(a.Status == R::SkinnedMaterialSlotStatus::Created &&
+                      b.Status == R::SkinnedMaterialSlotStatus::Created);
+            RIG_CHECK(a.CreateData.BaseColor[0] == 1 && a.CreateData.BaseColor[1] == 1 &&
+                      a.CreateData.BaseColor[2] == 1 && a.CreateData.BaseColor[3] == 1 &&
+                      a.CreateData.Metallic == 0.25f && a.CreateData.Roughness == 0.75f &&
+                      a.CreateData.AlbedoTexture.IsValid() && !a.CreateData.NormalTexture.IsValid() &&
+                      !a.CreateData.AOTexture.IsValid() && !a.CreateData.RoughnessTexture.IsValid() &&
+                      !a.CreateData.MetallicTexture.IsValid());
+            RIG_CHECK(b.CreateData.BaseColor[0] == 1 && b.CreateData.BaseColor[1] == 1 &&
+                      b.CreateData.BaseColor[2] == 1 && b.CreateData.BaseColor[3] == 1 &&
+                      b.CreateData.Metallic == 1 && b.CreateData.Roughness == 0.5f &&
+                      !b.CreateData.AlbedoTexture.IsValid() && !b.CreateData.NormalTexture.IsValid() &&
+                      !b.CreateData.AOTexture.IsValid() && !b.CreateData.RoughnessTexture.IsValid() &&
+                      !b.CreateData.MetallicTexture.IsValid());
+            RIG_CHECK(a.Material.IsValid() && b.Material.IsValid() &&
+                      resources.Materials().GetData(a.Material) && resources.Materials().GetData(b.Material));
+            RIG_CHECK(builder.Build(completed.Asset) == built && resources.Materials().GetCount() == before + 2);
+
+            // texture の manifest が無い場合は、対応する slot だけを失敗させる。
+            Rendering::RenderResources missingTextures;
+            missingTextures.SetGeometryPoolBlockBytes(1ull << 20);
+            RIG_CHECK(missingTextures.Initialize(device));
+            {
+                R::SkinnedMaterialBuilder missingBuilder(missingTextures, T::Thread::GetCurrentThreadId());
+                const auto missing = missingBuilder.Build(completed.Asset);
+                RIG_CHECK(missing && missing->Status == R::SkinnedMaterialBuildStatus::PartialFailure &&
+                          missing->Slots.size() == 2);
+                RIG_CHECK(missing->Slots[0].Status == R::SkinnedMaterialSlotStatus::TextureFailed &&
+                          missing->Slots[0].Reason == "imported_opaque: cooked_texture_required role=albedo" &&
+                          !missing->Slots[0].Material.IsValid());
+                RIG_CHECK(missing->Slots[1].Status == R::SkinnedMaterialSlotStatus::Created &&
+                          missing->Slots[1].Material.IsValid() &&
+                          missingTextures.Materials().GetData(missing->Slots[1].Material));
+            }
+            missingTextures.Shutdown();
+
+            // MASK は別 mesh の snapshot で読み、正常な Body が作成されることも確かめる。
+            auto maskPaths = paths;
+            maskPaths.MeshPath = "Models/MaskMesh.nvskel";
+            const auto maskTrim = V::Replace(trim, "\"name\":\"Trim\"", "\"name\":\"Trim\",\"alphaMode\":\"MASK\"");
+            X::Sidecar(R"({"version":1,"material":{"doubleSided":"force_false"}})");
+            const auto masked = X::CookSource(TwoMaterials(env.Files.Files.Json, body, maskTrim), maskPaths);
+            std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+            X::WritePackages(masked);
+            const auto maskTextures = WriteMaterialTextures(masked);
+            RIG_CHECK(resources.Textures().LoadTextureAssetManifestFromJsonText(
+                NorvesLib::Tests::SkeletalLoaderFixture::CoreText(maskTextures)));
+            RIG_CHECK(env.Value.SetSnapshot(env.Files.MakeSnapshot(manifest(masked, maskPaths))) == S::Success);
+            auto maskRequest = request;
+            maskRequest.MeshPath = maskPaths.MeshPath;
+            auto maskCompleted = One(env, maskRequest);
+            RIG_CHECK(maskCompleted.Failure == Failure::None && maskCompleted.Asset);
+            {
+                R::SkinnedMaterialBuilder maskBuilder(resources, T::Thread::GetCurrentThreadId());
+                const auto mask = maskBuilder.Build(maskCompleted.Asset);
+                RIG_CHECK(mask && mask->Status == R::SkinnedMaterialBuildStatus::PartialFailure &&
+                          mask->Slots.size() == 2);
+                RIG_CHECK(mask->Slots[0].Status == R::SkinnedMaterialSlotStatus::Created &&
+                          mask->Slots[0].Material.IsValid() && resources.Materials().GetData(mask->Slots[0].Material));
+                RIG_CHECK(mask->Slots[1].Status == R::SkinnedMaterialSlotStatus::Unsupported &&
+                          mask->Slots[1].Reason == "imported_opaque: alphaMode_mask_unsupported" &&
+                          !mask->Slots[1].Material.IsValid());
+            }
+            maskCompleted = {};
+
+            const Rendering::MaterialHandle handles[] = {a.Material, b.Material};
+            completed = {};
+            env.Registry.CollectGarbage();
+            env.Registry.CollectGarbage();
+            RIG_CHECK(builder.Collect() >= 1);
+            for (const auto handle : handles)
+            {
+                RIG_CHECK(resources.Materials().GetData(handle) == nullptr);
+            }
+            RIG_CHECK(builder.GetEntryCount() == 0 && resources.Materials().GetCount() == before);
+        }
+        resources.Shutdown();
+        std::printf("SPLIT_RUNTIME_CASE materials result=pass\n");
+    }
     bool Run(const char* name, T::JobSystem::ExecutionMode mode)
     {
         if (std::strcmp(name, "sharing") == 0)
@@ -616,6 +894,10 @@ namespace
         else if (std::strcmp(name, "session") == 0)
         {
             Session(mode);
+        }
+        else if (std::strcmp(name, "materials") == 0)
+        {
+            Materials(mode);
         }
         else
         {
@@ -652,7 +934,7 @@ int main(int argc, char** argv)
     }
     for (const char* mode : {"simple", "steal"})
     {
-        for (const char* name : {"sharing", "policy", "mixed", "reentry", "failures", "cancel", "handoff", "session"})
+        for (const char* name : {"sharing", "policy", "mixed", "reentry", "failures", "cancel", "handoff", "session", "materials"})
         {
             Child(argv[0], name, mode);
         }
