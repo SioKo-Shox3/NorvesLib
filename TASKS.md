@@ -39,7 +39,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
-- status: todo
+- status: done
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)のビルドが通り、ctest(GPU・Reference のラベルと Golden・PathTracingReference・Vulkan の名前を外す)が通る。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
