@@ -37,6 +37,13 @@ namespace NorvesLib::Core::Streaming
         // GameThread で 1 歩だけ進め、この歩でコミットしたバイト数を返す。
         virtual EStreamingStepResult CommitStep(const StreamingPayloadContext& context, StreamingStepCursor& cursor, uint64_t& outCommittedBytes) = 0;
 
+        // GameThread で、Active のペイロードが使える状態かを申告する（地形なら区画の常駐の印が立ったか）。既定は true。
+        virtual bool IsPayloadReady(const StreamingPayloadContext& context) const
+        {
+            (void)context;
+            return true;
+        }
+
         // GameThread で Active と Dormant を切り替える。
         virtual void SetDormant(const StreamingPayloadContext& context, bool bDormant) = 0;
 

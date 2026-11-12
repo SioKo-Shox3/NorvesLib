@@ -5949,9 +5949,9 @@
 - status: todo
 - after: G5-GR27-MASKED-GBUFFER
 - gr: GR27
-- done-when: Masked の材質の影の描画で、アルベドのαを標本して cutoff で破棄する（影では Hash を使わず Test。PCF と相性が悪いため）。CSM（`ShadowMapPass`）はマスク用のパイプライン（`shadow_alphaclip.vert`・`shadow_alphaclip.frag`。UV の頂点の属性とアルベドの binding を足す）と、マスク用の別の DynamicUniformAllocator（UBO の枠の上限 カスケード数×描画数 をマスクの分で食わない）を持ち、コマンドごとに材質を引いて Masked だけをそれで描く。太陽と点光源の VSM（`vsm_draw.vert`・`vsm_draw.frag`。記録の頂点は BDA で読む。VirtualShadowMapRaster.h の描画の規則）は、Masked の材質の塊の記録に材質の参照を持たせ、断片で破棄してから atomicMin で書く（破棄した texel は書かない）。点光源のキューブの影（`point_shadow.vert`・`point_shadow.frag`）とスキンの影（`skinned_shadow.vert`。UV は SkinVertexWords の word 6・7。64 バイトの頂点の ABI は変えない）も同じ判定にする。GPU の `RenderingAlphaClipShadowVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、市松のαの板が床へ落とす影の ROI の被覆率が 0 でも 100% でもなく、不透明の板（全面の影）と明確に違うこと（A/B）を `--shadow-method` の vsm と csm のそれぞれで確かめ、点光源の影とスキンの影でも同じ A/B を確かめる。Masked の材質が無い golden 4 本と VSM の溢れの統計が変わらない。
-- verify: `cmake --build build --config Debug --target RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(RenderingAlphaClipShadowVulkanTest|RenderingAlphaClipVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- done-when: Masked の材質の影の描画で、アルベドのαを標本して cutoff で破棄する（影では Hash を使わず Test）。CSM（`ShadowMapPass`）はマスク用のパイプライン（`shadow_alphaclip.vert`・`shadow_alphaclip.frag`）と、マスク用の別の DynamicUniformAllocator を持ち、Masked だけをそれで描く。太陽と点光源の VSM（`vsm_draw.vert`・`vsm_draw.frag`）は、Masked の塊の記録に材質の参照を持たせ、断片で破棄してから atomicMin で書く。点光源のキューブの影（`point_shadow.vert`・`point_shadow.frag`）とスキンの影（`skinned_shadow.vert`。64 バイトの頂点の ABI は不変）も同じ判定にする。GPU の `RenderingAlphaClipShadowVulkanTest`（`RenderingHdrSceneCaptureTest` の scenario。市松のαの板の影の被覆率の A/B を vsm・csm・点光源・スキンで判定する形）は登録だけして、盤面では回さない（絶対規則 10）。Masked の材質を持たない描画が分岐の前と同じ経路を通り、golden と VSM の溢れの統計に効かない形であることは、評価者が差分を読んで確かめる。verify のビルド（Game と影の CPU の試験を含む）が通り、除外の後に残る影と VSM の CPU の試験 7 本が通る。
+- verify: `cmake --build build --config Debug --target RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game CameraViewConstantsTest DirectionalShadowLightMatricesTest CascadedShadowLightMatricesTest SkinnedShadowComponentBindingsTest RHIRayTracingApiContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "Shadow|^WindShaderCompileTest$" --no-tests=error --output-on-failure --timeout 300`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Test/Core/Rendering/Thresholds, TASKS.md, PROGRESS.md
 - notes: ロードマップ GR27 の設計4（462〜516 行）とフェーズ (d)(e)。10-02 の後に太陽と点光源の VSM が入り（SceneView.cpp:1202〜1218。VTG9-VSM-POINT-DEFAULT-ON で起動画面の点光源も VSM）、ロードマップが前提にした CSM の ShadowMapPass は逃げ道になったので、VSM を主の対象に加えた。草の株の VSM の専用の経路（RecordKind::FoliageChunk）は変えない（草が影を落とすかは G11-S4 の範囲）。マスクの影の投影物が多い森では UBO の枠と描画ごとの記述子の更新が増える（リスクとして記録）。RT の影・DDGI・RTGI・パストレーサーは切り抜きを反映しない（GR104）。危険地帯（影のパス・RenderThread）なので評価者を通す。完了条件の GR27 の影の行、要件 `#### GR27`。
 
@@ -6597,7 +6597,7 @@
 - notes: 設計はロードマップ 2151〜2167 行（GR40 の 1・2・7・9）、完了条件は 2598 行。休眠の意味は payload ごとに決める: ゲームの Entity（敵・NPC・小物）は Tick・物理・描画から外す（ロードマップの「遠距離の休眠」）、地形と散布は遠景に要るので描画を残して物理と当たりだけを外す。地形のノードの LOD とページの常駐は MegaGeometry が自分で持つ（G12A-S4）ので、セルが決めるのは区画を置くか・物理に載せるかだけ（ロードマップ 2167 行の分担）。Core の散布・地形から Physics を呼ばない向き（G5-GR38-PHYSICS-HEIGHTFIELD の notes と同じ）を守り、コライダーの handler は Physics 側に置く。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD（GR92 を待つ）。共有のファイル（`Game/GameModes/Grassland` の組み立て、`Test/Modules/Physics/CMakeLists.txt`）は差分を小さくする。試験を足す理由: 反証する契約は「休眠したセルが Tick・描画・照会・物理のすべてから外れ、出し入れを繰り返しても数が戻る」こと。漏れは遠くの敵の当たりや Tick が残る・行や Entity が少しずつ増えるとして長く遊んだときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object の寿命・アセットロード・物理）なので評価者を通す。
 
 ## G12-GR40-SNAP-PREFETCH: ファストトラベル向けのスナップロードと先読み、セルのメモリの会計、ヒッチの記録を足す
-- status: todo
+- status: done
 - after: G12-GR40-WORLD-PAYLOADS
 - gr: GR40
 - done-when: `StreamingSystem` に `RequestSnapLoad(position, radius, onReady)`（目的地の周りの Ra のセルを最優先・予算なし（暗転中の想定）で読み、全部が Active になり、地形のタイルの常駐（`TerrainSystem::SetTileResident`）も満たしたら `onReady` を 1 回だけ呼ぶ。後から来た要求が前の要求を取り消し、取り消した方の `onReady` は取り消しの印つきで 1 回だけ呼ぶ）と `PrefetchHint(position)`（地図で選んだ目的地の周りのセルを Dormant まで読んでおく。Active にはしない）を足す。payload の申告から CPU と GPU のバイトを数え（GPU は作った資源の大きさ。メッシュは `ProceduralMeshGPUData` の頂点・インデックスのバッファの `GetSize` など）、`MaxCpuBytes`・`MaxGpuBytes` を超えたら優先度の低いセルから追い出す。フレームの時間が直近の中央値の 2 倍を超えた回数を `STREAMING_HITCH count=<n> frame_ms=<ms> median_ms=<ms>` で Game.log に出す（性能の門ではなく記録。GR109 と連携する余地を残す）。開発ビルドだけの引数 `--streaming-snap-test=<x>,<z>` で、grassland の起動後にスナップロード → 瞬間移動の流れを 1 回行い、所要時間を `STREAMING_SNAP ready_ms=<ms> cells=<n>` で出す。新設の `StreamingSnapLoadTest`（`EntityTreeTest` の束へ MEMBER）が偽の payload で通る: `onReady` が Ra の全セルの Active の後に 1 回だけ来る、2 つ目の要求で 1 つ目が取り消しの印つきで 1 回だけ終わる、`PrefetchHint` のセルが Dormant で止まる、バイトの予算を超えると優先度の低い順に追い出す、ヒッチの数え方が合成のフレームの時間の列で期待どおり。G12-GR40-WORLD-PAYLOADS の試験が通る。
@@ -6875,7 +6875,7 @@
 - notes: 確かめ直し (c)。spec v2 の最上位で受けるキーは `version`・`name`・`package_root`・`default_variant`・`assets`・`budgets`・`emissiveNitsPerUnit` の 7 つだけで(`TextureAssetSetSpec.cpp:219-224`)、generators は無い(リポジトリを grep しても ThirdParty の外に無い)。ロードマップは generators を G2 の「後段」と書くが(178 行)、GR96 はほかの段階に無く、作者の決定(必要な機能は全部やる)により G2 で作る。既定で走らせないのは、Blender・Game の撮影・GPU を使う重い処理を束ねるためで、要件の設計案【7】のとおり。この試験では Blender・Game・GPU を使わず、試験の exe の子だけで確かめる。走らせるコマンドは spec に書いたものだけで、shell を通さず `CreateProcessW` に配列から組んだ引数を渡す(引用の取り違えを防ぐ)。管理 store の制御領域・原子的な書き換えの決まり(`CookManagedUpdate.md`・`CookOwnedState.md`)は弱めない。要件 `#### GR96` の設計案【7】、ロードマップ 178 行。
 
 ## G2-GR96-COOKER-REVISION: 増分 cook の鍵に種別ごとの cooker の版を入れ、cooker の出力が変わったのに版を上げ忘れたことを試験で見つける
-- status: todo
+- status: done
 - after: G2-GR96-GENERATORS
 - gr: GR96
 - done-when: `Tools/AssetCook/CookerRevisions.h` に種別(texture・model・skeletal・animation・audio・raw)ごとの cooker の版の定数を置き、`--asset-set` の各 asset の cook の記録と増分の判定(`DecideCookCache`・`PrepareCookOutputPlan` に渡す `cookerRevision`)は、その asset の種別の版を使う。spec の版を cooker の版の代わりに使わない。ある種別の版を上げると、その種別の asset だけが次の cook で再 cook され、ほかは skipped のまま。
