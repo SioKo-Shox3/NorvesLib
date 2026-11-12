@@ -11107,3 +11107,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（`--grassland-streaming` と同じ形）。主人公視点（H キー）では主人公を動かさず自由飛行のカメラだけを移すので、焦点が主人公に残り、目的地のセルの保持は自由飛行へ戻るまで続く。瞬間移動の補間・履歴を切る規約（`CharacterBodyComponent::Teleport`・CutSerial）と、地図と暗転の消費者（GR71）はこの項目では作っていない。暗転の長さ（2 秒以内の目安）は計測で決めるもので、合否にしていない。
 - U1 旧経路(profile1)の骨格の抽出で skin.skeleton の省略を受け、唯一の根の関節を求める: 着地(直し 0 回)
 - U2 Blender の書き出しと同じ形の fixture 2 つ・README・Blender の書き出しスクリプトを足す: 着地(直し 0 回)
+- U3 AssetCook の旧経路の骨格の拒否に --rig-split への案内を足す: 着地(直し 0 回)
