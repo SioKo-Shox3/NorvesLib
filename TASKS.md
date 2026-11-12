@@ -6875,7 +6875,7 @@
 - notes: 確かめ直し (c)。spec v2 の最上位で受けるキーは `version`・`name`・`package_root`・`default_variant`・`assets`・`budgets`・`emissiveNitsPerUnit` の 7 つだけで(`TextureAssetSetSpec.cpp:219-224`)、generators は無い(リポジトリを grep しても ThirdParty の外に無い)。ロードマップは generators を G2 の「後段」と書くが(178 行)、GR96 はほかの段階に無く、作者の決定(必要な機能は全部やる)により G2 で作る。既定で走らせないのは、Blender・Game の撮影・GPU を使う重い処理を束ねるためで、要件の設計案【7】のとおり。この試験では Blender・Game・GPU を使わず、試験の exe の子だけで確かめる。走らせるコマンドは spec に書いたものだけで、shell を通さず `CreateProcessW` に配列から組んだ引数を渡す(引用の取り違えを防ぐ)。管理 store の制御領域・原子的な書き換えの決まり(`CookManagedUpdate.md`・`CookOwnedState.md`)は弱めない。要件 `#### GR96` の設計案【7】、ロードマップ 178 行。
 
 ## G2-GR96-COOKER-REVISION: 増分 cook の鍵に種別ごとの cooker の版を入れ、cooker の出力が変わったのに版を上げ忘れたことを試験で見つける
-- status: todo
+- status: done
 - after: G2-GR96-GENERATORS
 - gr: GR96
 - done-when: `Tools/AssetCook/CookerRevisions.h` に種別(texture・model・skeletal・animation・audio・raw)ごとの cooker の版の定数を置き、`--asset-set` の各 asset の cook の記録と増分の判定(`DecideCookCache`・`PrepareCookOutputPlan` に渡す `cookerRevision`)は、その asset の種別の版を使う。spec の版を cooker の版の代わりに使わない。ある種別の版を上げると、その種別の asset だけが次の cook で再 cook され、ほかは skipped のまま。

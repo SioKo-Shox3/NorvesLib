@@ -11,6 +11,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::Span<const SingleAssetCookRequest> Assets;
         // 解析に使ったspecの原bytes。lock取得後と公開直前に実fileと一致させる。
         Core::Container::Span<const uint8_t> ExpectedSpecBytes;
+        // CookerRevisions が空のときに全 asset に使う cooker の版。
         uint64_t CookerRevision = 1;
         bool bLegacyTextureManifest = true;
         Core::Container::Span<const CookAssetBudget> Budgets;
@@ -20,7 +21,32 @@ namespace NorvesLib::Tools::AssetCook
         bool bForce = false, bPrune = false;
         // generator の記録。nullptr なら前回の state の記録を引き継ぐ(新規 root では空)。指すときはこの列で置き換える。
         const Core::Container::VariableArray<CookGeneratorRecord>* Generators = nullptr;
+        // asset ごとの cooker の版(Assets と同じ並び)。空なら全 asset に CookerRevision を使う。
+        Core::Container::Span<const uint64_t> CookerRevisions;
     };
+    [[nodiscard]] inline uint64_t CookerRevisionOf(const CookManagedBootstrapRequest& request, size_t index)
+    {
+        return request.CookerRevisions.empty() ? request.CookerRevision : request.CookerRevisions[index];
+    }
+    [[nodiscard]] inline bool ValidCookerRevisions(const CookManagedBootstrapRequest& request)
+    {
+        if (request.CookerRevisions.empty())
+        {
+            return request.CookerRevision != 0;
+        }
+        if (!request.CookerRevisions.data() || request.CookerRevisions.size() != request.Assets.size())
+        {
+            return false;
+        }
+        for (const uint64_t revision : request.CookerRevisions)
+        {
+            if (revision == 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
     struct CookManagedBootstrapOutcome
     {
         Core::Container::AnsiString ClaimId;
