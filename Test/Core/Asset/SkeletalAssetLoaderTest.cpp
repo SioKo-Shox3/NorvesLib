@@ -2,6 +2,8 @@
 #include "Resource/SkeletalAssetLoader.h"
 #include "Resource/SkeletalAssetLoaderTestAccess.h"
 #include "SkeletalLoaderFixture.h"
+#include "M9LooseFixture.h"
+#include "Tools/AssetCook/MeshCooker.h"
 #include "Asset/AssetSystem.h"
 #include "Asset/AssetManifest.h"
 #include "Tools/AssetCook/SkeletalBvhCook.h"
@@ -184,6 +186,151 @@ namespace
                          static_cast<unsigned>(report.ParseStatus), plan.LogicalPath.c_str());
         }
         return loaded;
+    }
+    bool HasProfile(const Sink& sink, size_t first, const char* stage, const char* source, const char* success)
+    {
+        for (size_t i = first; i < sink.Messages.size(); ++i)
+        {
+            const auto& message = sink.Messages[i];
+            if (message.find(stage) != C::String::npos && message.find(source) != C::String::npos &&
+                message.find(success) != C::String::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    void RunLoose(const Sink& sink)
+    {
+        constexpr const char* logical = "Models/M9Skinned/ValidU8Float.gltf";
+        Fixture fixture;
+        const auto looseRoot = fixture.Root / "loose";
+        const auto sourcePath = looseRoot / logical;
+        CHECK(std::filesystem::create_directories(sourcePath.parent_path()));
+        auto sourceRoot = std::filesystem::path(__FILE__);
+        if (sourceRoot.is_absolute())
+        {
+            sourceRoot = sourceRoot.parent_path().parent_path().parent_path().parent_path();
+        }
+        else
+        {
+            sourceRoot = std::filesystem::current_path();
+            for (size_t depth = 0; depth < 8 && !std::filesystem::exists(sourceRoot / "Assets" / logical); ++depth)
+            {
+                sourceRoot = sourceRoot.parent_path();
+            }
+        }
+        std::ifstream input(sourceRoot / "Assets" / logical, std::ios::binary | std::ios::ate);
+        CHECK(input);
+        const auto length = input.tellg();
+        CHECK(length > 0);
+        Bytes source(static_cast<size_t>(length));
+        input.seekg(0);
+        input.read(reinterpret_cast<char*>(source.data()), static_cast<std::streamsize>(source.size()));
+        CHECK(input);
+        const auto write = [](const std::filesystem::path& path, const uint8_t* bytes, size_t size)
+        {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            CHECK(output);
+            output.write(reinterpret_cast<const char*>(bytes), static_cast<std::streamsize>(size));
+            output.close();
+            CHECK(!output.fail());
+        };
+        write(sourcePath, source.data(), source.size());
+        const auto buffer = NorvesLib::Tests::AssetFixtures::BuildM9LooseBuffer<Bytes>(
+            F::WriteFloat, F::WriteLe16, F::WriteMatrix);
+        write(sourcePath.parent_path() / "fixture.bin", buffer.data(), buffer.size());
+        constexpr char importSettings[] = "{\"version\":1,\"units\":{\"scale\":2}}";
+        write(sourcePath.parent_path() / "ValidU8Float.gltf.import.json",
+              reinterpret_cast<const uint8_t*>(importSettings), sizeof(importSettings) - 1);
+        const C::AnsiString looseRootText(looseRoot.generic_string().c_str());
+        auto looseAssets = C::MakeShared<A::AssetSystem>(C::AnsiString(fixture.Root.generic_string().c_str()));
+        looseAssets->SetLooseAssetRoot(looseRootText);
+        Core::ResourceRegistry registry;
+        CHECK(registry.Initialize());
+        const auto resources = registry.GetResourceCount(), paths = registry.GetCachedPathCount();
+        const R::SkeletalAssetCreateContext context{&registry, NorvesLib::Thread::Thread::GetCurrentThreadId()};
+        R::SkeletalAssetLoadReport report;
+
+        // 許可なしでは、looseが存在してもCPU結果を公開せず組立にも進めない。
+        R::CookedSkeletalCpuAsset rejected;
+        C::TSharedPtr<Core::SkeletalAssetResource> absent;
+        auto first = sink.Messages.size();
+        CHECK(!R::LoadCookedSkeletalForWorker({looseAssets, logical}, rejected, report));
+        CHECK(report.Status == R::SkeletalAssetLoadStatus::ResolveRejected &&
+              report.ResolveStatus == A::AssetResolveStatus::SuccessLoose && report.Source == A::AssetResolveSource::None &&
+              report.bResolveAttempted && !report.bParseAttempted && !report.bCreateAttempted && !rejected.GetData());
+#if NORVES_ENABLE_LOGGING
+        CHECK(HasProfile(sink, first, "stage=skeletal_asset_resolve", "source=none", "success=0"));
+#endif
+        CHECK(!R::AssembleCookedSkeletalAsset(rejected, context, absent, report) && !absent &&
+              report.Status == R::SkeletalAssetLoadStatus::InvalidCpuResult && !report.bCreateAttempted);
+        first = sink.Messages.size();
+        CHECK(!R::LoadCookedSkeletalForWorker({looseAssets, "Models/M9Skinned/Missing.gltf"}, rejected, report));
+        CHECK(report.Source == A::AssetResolveSource::None && !rejected.GetData());
+#if NORVES_ENABLE_LOGGING
+        CHECK(HasProfile(sink, first, "stage=skeletal_asset_resolve", "source=none", "success=0"));
+#endif
+        CHECK(registry.GetResourceCount() == resources && registry.GetCachedPathCount() == paths);
+
+        // cookと別rootのlooseを同じ元データ・外部bin・設定で読み、所有結果を比較する。
+        Cook::SkeletalCookResult cooked;
+        C::AnsiString error;
+        CHECK(Cook::CookGltfToNvskelNativePath(source.data(), source.size(),
+              "nvskel.v0.skinned.pnujiw.u32", sourcePath, cooked, error));
+        CHECK(cooked.bHasImportSettings);
+        auto cookedAssets = fixture.Assets(cooked.NvskelBytes, logical);
+        cookedAssets->SetLooseAssetRoot(looseRootText);
+        R::CookedSkeletalCpuAsset cookedCpu, looseCpu;
+        CHECK(LoadSuccess({cookedAssets, logical}, cookedCpu, report));
+        CHECK(report.Source == A::AssetResolveSource::Cooked);
+        first = sink.Messages.size();
+        bool loaded = false;
+        NorvesLib::Thread::Thread worker([&] {
+            loaded = R::LoadCookedSkeletalForWorker({looseAssets, logical, true}, looseCpu, report);
+        });
+        worker.Join();
+        CHECK(loaded && report.Status == R::SkeletalAssetLoadStatus::Success &&
+              report.Source == A::AssetResolveSource::Loose && report.bParseAttempted && !report.bCreateAttempted);
+        CHECK(registry.GetResourceCount() == resources && registry.GetCachedPathCount() == paths);
+        const auto* looseData = looseCpu.GetData();
+        CHECK(looseData && cookedCpu.GetData() && looseData->SourceBlob.GetSize() == source.size() &&
+              std::memcmp(looseData->SourceBlob.GetData(), source.data(), source.size()) == 0);
+        CHECK(looseData->Skeletal.Vertices.size() == 3 && looseData->Skeletal.Vertices[1].Position.X == 2.f);
+        C::TSharedPtr<Core::SkeletalAssetResource> looseAsset;
+        CHECK(R::AssembleCookedSkeletalAsset(looseCpu, context, looseAsset, report));
+        CHECK(looseAsset && report.Status == R::SkeletalAssetLoadStatus::Success &&
+              report.Source == A::AssetResolveSource::Loose && report.bCreateAttempted);
+        SameData(*looseData, *looseAsset);
+        SameData(*cookedCpu.GetData(), *looseAsset);
+        CHECK(looseData->Skeletal.Clips.size() == cookedCpu.GetData()->Skeletal.Clips.size());
+        for (size_t i = 0; i < looseData->Skeletal.Clips.size(); ++i)
+        {
+            CHECK(Core::Animation::SameClipMetadata(looseData->Skeletal.Clips[i].Metadata,
+                                                   cookedCpu.GetData()->Skeletal.Clips[i].Metadata));
+        }
+#if NORVES_ENABLE_LOGGING
+        for (const char* stage : {"stage=skeletal_asset_resolve", "stage=skeletal_cooked_parse",
+                                  "stage=skeletal_resource_create"})
+        {
+            CHECK(HasProfile(sink, first, stage, "source=loose", "success=1"));
+        }
+#endif
+        CHECK(registry.GetResourceCount() == resources && registry.GetCachedPathCount() == paths);
+
+        // 同じlooseが存在しても、manifestのcooked破損をlooseで隠さない。
+        auto brokenAssets = fixture.Assets(cooked.NvskelBytes, logical, "nvskel.v0.skinned.pnujiw.u32", false, true);
+        brokenAssets->SetLooseAssetRoot(looseRootText);
+        R::CookedSkeletalCpuAsset brokenCpu;
+        first = sink.Messages.size();
+        CHECK(!R::LoadCookedSkeletalForWorker({brokenAssets, logical, true}, brokenCpu, report));
+        CHECK(report.Status == R::SkeletalAssetLoadStatus::ResolveRejected &&
+              report.ResolveStatus == A::AssetResolveStatus::CookedEntryHashMismatch &&
+              report.Source == A::AssetResolveSource::None && !report.bParseAttempted && !brokenCpu.GetData());
+#if NORVES_ENABLE_LOGGING
+        CHECK(HasProfile(sink, first, "stage=skeletal_asset_resolve", "source=none", "success=0"));
+#endif
+        CHECK(registry.GetResourceCount() == resources && registry.GetCachedPathCount() == paths);
     }
     void Run()
     {
@@ -431,6 +578,7 @@ int main()
     Sink sink;
     logger.AddSink(&sink);
     Run();
+    RunLoose(sink);
     logger.Flush();
 #if NORVES_ENABLE_LOGGING
     for (const char* stage :
