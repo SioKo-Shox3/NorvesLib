@@ -340,6 +340,11 @@ namespace Game
         uint32_t m_GrasslandScatterStressCount = 0;
         /// --grassland-streaming で草原をセル単位で出し入れする。
         bool m_bGrasslandStreaming = false;
+        /// --streaming-snap-test=<x>,<z> で組み立て後にスナップロードと自由飛行カメラの移動を一度行う。
+        bool m_bStreamingSnapTest = false;
+        /// スナップロードの目的地のワールド X・Z 座標[m]。
+        float m_StreamingSnapTestX = 0.0f;
+        float m_StreamingSnapTestZ = 0.0f;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;

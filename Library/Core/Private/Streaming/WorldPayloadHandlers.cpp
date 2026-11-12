@@ -4,7 +4,9 @@
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
+#include "Rendering/ProceduralMeshGPUData.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "RHI/IBuffer.h"
 #include "Scatter/ScatterSystem.h"
 
 #include <utility>
@@ -61,6 +63,20 @@ namespace NorvesLib::Core::Streaming
             return EStreamingStepResult::Failed;
         }
     } // namespace
+
+    StreamingPayloadBytes MeasureMeshGpuBytes(const Rendering::ProceduralMeshGPUData& mesh)
+    {
+        StreamingPayloadBytes bytes;
+        if (Container::IsValid(mesh.VertexBuffer))
+        {
+            bytes.Gpu += mesh.VertexBuffer->GetSize();
+        }
+        if (Container::IsValid(mesh.IndexBuffer))
+        {
+            bytes.Gpu += mesh.IndexBuffer->GetSize();
+        }
+        return bytes;
+    }
 
     TerrainTilePayloadHandler::TerrainTilePayloadHandler(Rendering::Terrain::TerrainSystem& terrainSystem)
         : m_TerrainSystem(terrainSystem)
@@ -175,6 +191,28 @@ namespace NorvesLib::Core::Streaming
         m_TerrainSystem.SetTileResident(tileId, true);
         ++cursor.Step;
         return state.PlacedTileIds.size() == state.Tiles.size() ? EStreamingStepResult::Done : EStreamingStepResult::InProgress;
+    }
+
+    bool TerrainTilePayloadHandler::IsPayloadReady(const StreamingPayloadContext& context) const
+    {
+        const auto it = m_States.find(PayloadKey(context));
+        if (it == m_States.end())
+        {
+            return false;
+        }
+        const auto& state = it->second;
+        if (state.PlacedTileIds.size() != state.Tiles.size())
+        {
+            return false;
+        }
+        for (const uint32_t tileId : state.PlacedTileIds)
+        {
+            if (!m_TerrainSystem.IsTileResident(tileId))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void TerrainTilePayloadHandler::SetDormant(const StreamingPayloadContext& context, bool bDormant)
@@ -496,10 +534,17 @@ namespace NorvesLib::Core::Streaming
                 return FailPayload(GetKind(), context, "配置のルートがありません");
             }
             const auto spawnItem = binding->Builder.SpawnItem;
+            const auto measureItem = binding->Builder.MeasureItem;
             const PlacementSpawnContext spawnContext{m_World, *root, context.Cell, context.CellDesc->Bounds};
             if (!spawnItem(spawnContext, state.SpawnedCount))
             {
                 return FailPayload(GetKind(), context, "配置の項目を作れませんでした");
+            }
+            if (measureItem.IsBound())
+            {
+                const auto bytes = measureItem(spawnContext, state.SpawnedCount);
+                state.ResidentBytes.Cpu += bytes.Cpu;
+                state.ResidentBytes.Gpu += bytes.Gpu;
             }
             ++state.SpawnedCount;
             ++spawnedThisStep;
@@ -540,8 +585,9 @@ namespace NorvesLib::Core::Streaming
         }
     }
 
-    StreamingPayloadBytes PlacementPayloadHandler::GetResidentBytes(const StreamingPayloadContext&) const
+    StreamingPayloadBytes PlacementPayloadHandler::GetResidentBytes(const StreamingPayloadContext& context) const
     {
-        return {};
+        const auto it = m_States.find(PayloadKey(context));
+        return it == m_States.end() ? StreamingPayloadBytes{} : it->second.ResidentBytes;
     }
 } // namespace NorvesLib::Core::Streaming
