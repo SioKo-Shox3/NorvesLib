@@ -6583,7 +6583,7 @@
 - notes: 設計はロードマップ 2161 行（GR40 の 6）、完了条件は 2597 行。選定課題 G12A-S7（GPU の資源の遅延の破棄）: (A) ロードマップの案（`DeferredGpuReleaseQueue` を新設し、MeshResources とテクスチャを完了のシリアルまで遅らせる。2159 行）、(B) RHI に入った破棄の列（`VulkanDevice::DeferDestroy` の Buffer・Image・ImageView ほか。VulkanDevice.h:207〜217、SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY が done）をそのまま使う、のうち (B) を採る。理由: (A) の前提（`MeshResources::Unregister` が描画中のバッファを即座に壊しうる）は、RHI の側でハンドルの破棄を提出の完了まで遅らせるようになって崩れた。上の層にもう 1 つ列を作ると、破棄の順の規則が 2 つになる。UNCERTAIN: `ProceduralMeshGpuStore::UnregisterMesh`（ProceduralMeshGpuStore.cpp:248）が RHI の破棄の列だけで安全か（ホスト可視の map 中のバッファを含めて）は着手時に読んで確かめ、足りなければこの項目で直す。試験を足す理由: 反証する契約は「GameMode を抜けた後にワーカーの完了が届かず、資源が 1 回ずつ返る」こと。破れるとシーンの出入りのたびに資源が増える・抜けた後のコールバックで落ちるとして、出入りを繰り返したときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object・Resource の寿命）なので評価者を通す。
 
 ## G12-GR40-WORLD-PAYLOADS: セルの中身として地形のタイル・散布のチャンク・静的なコライダー・コードで組む配置を出し入れし、遠いセルを休眠させる
-- status: todo
+- status: done
 - after: G12-GR40-CELL-CORE, G12-GR40-GAMEMODE-ASYNC, G12-GR41-PARENT-DORMANCY, G12-GR09-DETACHED-COLLIDERS, G12-GR39-HEIGHTFIELD-LOD, G5-GR37-TERRAIN-COMPONENT, G5-GR90-SCATTER-RUNTIME, G5-GR37-TERRAIN-LAYERS, G5-GR90-SCATTER-BAKE
 - gr: GR40
 - needs-gr: GR37, GR90
