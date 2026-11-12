@@ -173,10 +173,11 @@ namespace NorvesLib::Tools::AssetCook
                 return Fail(error, "control_or_spec_changed");
             }
             Array<CookPreparedPlan> fresh;
-            for (const auto& plan : plans)
+            for (size_t i = 0; i < plans.size(); ++i)
             {
+                const auto& plan = plans[i];
                 CookPreparedPlan candidate;
-                if (!PrepareCookOutputPlan(plan.Context.Request, request.CookerRevision, nullptr, candidate, error) ||
+                if (!PrepareCookOutputPlan(plan.Context.Request, CookerRevisionOf(request, i), nullptr, candidate, error) ||
                     !SamePlan(plan, candidate))
                 {
                     return Fail(error, "dependencies_changed");
@@ -192,7 +193,7 @@ namespace NorvesLib::Tools::AssetCook
         {
             if (request.Assets.empty() || !request.Assets.data() || request.Assets.size() > MaximumCookSetPlans ||
                 request.ExpectedSpecBytes.empty() || !request.ExpectedSpecBytes.data() ||
-                request.ExpectedSpecBytes.size() > MaximumCookStateBytes || !request.CookerRevision)
+                request.ExpectedSpecBytes.size() > MaximumCookStateBytes || !ValidCookerRevisions(request))
             {
                 return Fail(op.Error, "request_limits");
             }
@@ -223,14 +224,15 @@ namespace NorvesLib::Tools::AssetCook
             Array<CookPreparedPlan> plans, stages;
             Array<Identity> workDirectories;
             Array<std::filesystem::path> workLeaves;
-            for (const auto& asset : request.Assets)
+            for (size_t i = 0; i < request.Assets.size(); ++i)
             {
+                const auto& asset = request.Assets[i];
                 if (request.bLegacyTextureManifest && asset.Kind != "texture")
                 {
                     return Fail(op.Error, "texture_v1_only");
                 }
                 CookPreparedPlan plan;
-                if (!PrepareCookOutputPlan(asset, request.CookerRevision, nullptr, plan, op.Error) ||
+                if (!PrepareCookOutputPlan(asset, CookerRevisionOf(request, i), nullptr, plan, op.Error) ||
                     !PlanScope(plan, owner.ExpectedBinding, request.bLegacyTextureManifest, op.Error))
                 {
                     return false;

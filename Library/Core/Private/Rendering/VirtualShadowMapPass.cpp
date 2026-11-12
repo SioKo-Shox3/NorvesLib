@@ -11,6 +11,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
+#include "Rendering/SparseResidencyShading.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -25,6 +26,7 @@
 #include "RHI/IDevice.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cwchar>
 
@@ -148,6 +150,12 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr Draws;
         /** @brief 今回の Execute が集めた塊の記録と内訳 */
         Container::VariableArray<VsmShadowChunk> Chunks;
+        Container::VariableArray<VirtualShadowMapMaskedDraw> MaskedDraws;
+#if NORVES_ENABLE_LOGGING
+        uint32_t MaskedChunkCount = 0;
+        uint32_t MaskedDroppedDrawCount = 0;
+        uint32_t LoggedMaskedCounts[5] = {};
+#endif
         VirtualShadowMap::CasterStats Stats;
         /** @brief 作業配列（毎フレーム容量を使い回す） */
         VirtualShadowMap::ProceduralPlanScratch PlanScratch;
@@ -214,6 +222,100 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 使われなくなった株のメッシュのバッファを捨てるまでに待つ集めの回数（飛行中のフレームとビューの数より十分に多い） */
         constexpr uint64_t FoliageMeshReleaseDelay = 64;
+
+        /** @brief 影の切り抜きに使える材質と、描画ごとに解決した被覆率 */
+        struct MaskedCasterMaterial
+        {
+            RHI::TexturePtr Albedo;
+            uint64_t AlbedoId = 0;
+            float Cutoff = 0.0f;
+            float Coverage = 1.0f;
+            bool bSparse = false;
+        };
+
+        MaskedCasterMaterial ResolveMaskedCasterMaterial(const ViewRenderContext& context,
+                                                         MaterialHandle handle,
+                                                         const float* shadingParams)
+        {
+            MaskedCasterMaterial result;
+            if (!handle.IsValid() || !context.Resources.Materials || !context.Resources.Textures)
+            {
+                return result;
+            }
+            const MaterialResourceData* data = context.Resources.Materials->GetData(handle);
+            if (!data || data->Blend != BlendMode::Masked || !data->AlbedoTexture.IsValid())
+            {
+                return result;
+            }
+            result.Albedo = context.Resources.Textures->GetRHITexturePtr(data->AlbedoTexture);
+            if (!result.Albedo)
+            {
+                return result;
+            }
+            result.AlbedoId = data->AlbedoTexture.Id;
+            result.Cutoff = data->AlphaCutoff;
+            result.Coverage = shadingParams[3] >= 0.0f ? shadingParams[3]
+                              : data->ShadingParams[3] >= 0.0f ? data->ShadingParams[3] : 1.0f;
+            result.bSparse = AnySparseTexture(result.Albedo);
+            return result;
+        }
+
+        /** @brief 今回追加した塊へ材質の参照を書き、連続する同じ材質の範囲は延ばす */
+        bool AppendMaskedCasterDraw(VirtualShadowMapCasterState& state,
+                                    const MaskedCasterMaterial& material,
+                                    uint32_t firstChunk)
+        {
+            const uint32_t endChunk = static_cast<uint32_t>(state.Chunks.size());
+            if (!material.Albedo || firstChunk == endChunk)
+            {
+                return false;
+            }
+            const uint32_t cutoffBits = std::bit_cast<uint32_t>(material.Cutoff);
+            const uint32_t coverageBits = std::bit_cast<uint32_t>(material.Coverage);
+            const uint32_t sparseBit = material.bSparse ? 0x80000000u : 0u;
+            bool bExtend = false;
+            if (!state.MaskedDraws.empty())
+            {
+                const VirtualShadowMapMaskedDraw& previous = state.MaskedDraws.back();
+                if (previous.FirstChunk + previous.ChunkCount == firstChunk && previous.Albedo == material.Albedo)
+                {
+                    const auto& record = state.Chunks[firstChunk - 1u].Record;
+                    bExtend = (record.MaterialIndex & 0x80000000u) == sparseBit &&
+                              record.InstanceIndex == cutoffBits && record.Reserved == coverageBits;
+                }
+            }
+            if (!bExtend && state.MaskedDraws.size() >= VirtualShadowMap::MAX_MASKED_DRAWS)
+            {
+#if NORVES_ENABLE_LOGGING
+                ++state.MaskedDroppedDrawCount;
+#endif
+                return false;
+            }
+            if (bExtend)
+            {
+                state.MaskedDraws.back().ChunkCount += endChunk - firstChunk;
+            }
+            else
+            {
+                VirtualShadowMapMaskedDraw draw;
+                draw.FirstChunk = firstChunk;
+                draw.ChunkCount = endChunk - firstChunk;
+                draw.Albedo = material.Albedo;
+                state.MaskedDraws.push_back(draw);
+            }
+            const uint32_t rangeIndex = static_cast<uint32_t>(state.MaskedDraws.size() - 1u);
+            for (uint32_t index = firstChunk; index < endChunk; ++index)
+            {
+                auto& record = state.Chunks[index].Record;
+                record.MaterialIndex = (rangeIndex + 1u) | sparseBit;
+                record.InstanceIndex = cutoffBits;
+                record.Reserved = coverageBits;
+            }
+#if NORVES_ENABLE_LOGGING
+            state.MaskedChunkCount += endChunk - firstChunk;
+#endif
+            return true;
+        }
 
         // 株のメッシュの VSM 用のバッファとブロックの境界を返す（無ければ作る）。作れなければ -1
         int32_t AcquireFoliageShadowMesh(RHI::IDevice* device,
@@ -958,6 +1060,11 @@ namespace NorvesLib::Core::Rendering
     {
         VirtualShadowMapCasterState& state = *m_Casters;
         state.Chunks.clear();
+        state.MaskedDraws.clear();
+#if NORVES_ENABLE_LOGGING
+        state.MaskedChunkCount = 0;
+        state.MaskedDroppedDrawCount = 0;
+#endif
         state.Motion.clear();
         state.Stats = {};
         state.bUseSliceTable = false;
@@ -1020,9 +1127,18 @@ namespace NorvesLib::Core::Rendering
                         ++state.Stats.SkippedDraws;
                         continue;
                     }
+                    // サブメッシュの材質番号は描画コマンドと同じ規則で選び、無効なら先頭の材質を使う。
+                    const uint32_t materialIndex = proxy.SubMeshCount != 0u &&
+                                                   proxy.SubMeshes[rangeIndex].MaterialIndex < proxy.MaterialCount &&
+                                                   proxy.SubMeshes[rangeIndex].MaterialIndex < MAX_MATERIAL_SLOTS
+                                                       ? proxy.SubMeshes[rangeIndex].MaterialIndex : 0u;
+                    const MaterialHandle materialHandle = proxy.Materials[materialIndex];
+                    const MaskedCasterMaterial material = ResolveMaskedCasterMaterial(context, materialHandle, proxy.ShadingParams);
+                    const uint32_t firstChunk = static_cast<uint32_t>(state.Chunks.size());
                     // このプロキシの値は主描画の InstanceData.shadingParams の元で、カメラ外でも使える。
                     VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats,
                                                                 slices, proxy.ShadingParams);
+                    const bool bMasked = AppendMaskedCasterDraw(state, material, firstChunk);
 
                     // キャッシュの無効化の入力: 同じ描画が同じ変換・範囲なら動いていない
                     VirtualShadowMap::CasterMotionEntry motion;
@@ -1035,6 +1151,17 @@ namespace NorvesLib::Core::Rendering
                     signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexOffset);
                     const bool bAnimated = context.bVertexAnimationTestDisplacement && proxy.ShadingParams[2] >= 0.5f;
                     motion.Signature = VirtualShadowMap::CasterHashCombine(signature, bAnimated ? 1u : 0u);
+                    if (material.Albedo)
+                    {
+                        // 材質の編集・テクスチャの差し替え・範囲の上限による描画方式の変化も、影の再描画に反映する。
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, materialHandle.Id);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, std::bit_cast<uint32_t>(material.Cutoff));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, std::bit_cast<uint32_t>(material.Coverage));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.AlbedoId);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, reinterpret_cast<uintptr_t>(material.Albedo.get()));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.bSparse ? 1u : 0u);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, bMasked ? 1u : 0u);
+                    }
                     motion.bAlwaysChanged = bAnimated;
                     motion.bHasBounds = true;
                     motion.Bounds = VirtualShadowMap::TransformBoundsByWorld(world, *input.MeshBounds);
@@ -1093,9 +1220,12 @@ namespace NorvesLib::Core::Rendering
                         }
                     }
                 }
+                const MaskedCasterMaterial material = ResolveMaskedCasterMaterial(context, instance.Material, instance.ShadingParams);
+                const uint32_t firstChunk = static_cast<uint32_t>(state.Chunks.size());
                 VirtualShadowMap::AppendSkinnedInstance(
                     instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats,
                     slices, instance.ShadingParams);
+                AppendMaskedCasterDraw(state, material, firstChunk);
 
                 // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う（鍵はコンポーネントとサブメッシュの範囲ごと）
                 VirtualShadowMap::CasterMotionEntry motion;
@@ -1277,6 +1407,8 @@ namespace NorvesLib::Core::Rendering
         rasterDispatch.Stats = m_Stats;
         rasterDispatch.Chunks = use.Chunks;
         rasterDispatch.ChunkCount = chunkCount;
+        rasterDispatch.MaskedDraws = state.MaskedDraws.empty() ? nullptr : state.MaskedDraws.data();
+        rasterDispatch.MaskedDrawCount = static_cast<uint32_t>(state.MaskedDraws.size());
         rasterDispatch.Instances = state.Instances;
         rasterDispatch.Draws = state.Draws;
         std::copy(state.FoliageWind, state.FoliageWind + 4, rasterDispatch.FoliageWind);
@@ -1292,6 +1424,18 @@ namespace NorvesLib::Core::Rendering
             rasterDispatch.MegaCapacity = VirtualShadowMap::MEGA_CULL_LIST_CAPACITY;
         }
         const bool bRecorded = m_Raster->Record(commandList, rasterDispatch);
+#if NORVES_ENABLE_LOGGING
+        const uint32_t maskedCounts[5] = {state.MaskedChunkCount, static_cast<uint32_t>(state.MaskedDraws.size()),
+                                           state.MaskedDroppedDrawCount, m_Raster->GetLastMaskedDrawCount(),
+                                           m_Raster->GetLastMaskedFallbackCount()};
+        if (!std::equal(maskedCounts, maskedCounts + 5, state.LoggedMaskedCounts))
+        {
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM の切り抜きの塊: VSM_ALPHA_CLIP chunks=%u ranges=%u dropped=%u drawn=%u fallback=%u",
+                            maskedCounts[0], maskedCounts[1], maskedCounts[2], maskedCounts[3], maskedCounts[4]);
+            std::copy(maskedCounts, maskedCounts + 5, state.LoggedMaskedCounts);
+        }
+#endif
         m_bMegaDrawRecorded = bRecorded && m_Raster->WasMegaDrawRecorded();
 
         for (uint32_t index = 0; index < rasterBufferCount; ++index)
