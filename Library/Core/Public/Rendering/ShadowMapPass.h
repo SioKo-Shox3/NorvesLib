@@ -206,6 +206,12 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_ShadowPipeline;
         RHI::ShaderPtr m_ShadowVertexShader;
         RHI::ShaderPtr m_ShadowFragmentShader;
+        RHI::PipelinePtr m_AlphaClipPipeline;
+        RHI::PipelinePtr m_SkinnedAlphaClipPipeline;
+        RHI::ShaderPtr m_AlphaClipVertexShader;
+        RHI::ShaderPtr m_SkinnedAlphaClipVertexShader;
+        RHI::ShaderPtr m_AlphaClipFragmentShader;
+        RHI::SamplerPtr m_AlphaClipSampler;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
@@ -243,6 +249,8 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+        // 記述子の形と定数の確保数を不透明の描画から分ける。
+        DynamicUniformAllocator m_AlphaClipUniformAllocator;
 
         // 点光源のキューブシャドウ（最初に影を落とす点光源が現れたフレームで作る）
         RHI::TexturePtr m_PointShadowCubeTexture;
