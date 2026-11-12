@@ -6921,7 +6921,7 @@
 - notes: 確かめ直し (b)。自動の補正は実装がある(`SkeletalRoleProfile.cpp:256-316` が `rest_pose.mode` の explicit・match・align_bones と `up_hint`・`maximum_error_degrees` を読み、`SkeletalClipRetarget.cpp:603-640` が向きの差から補正を作る)が、試験は 2 関節で骨の向きを 90° 変えた 1 件だけで、補正の角度(`AfterRadians < 1e-6`)を見るだけ(`RigSplitCookTest.cpp:209-222`)。要件の受け入れ確認 (b)「骨ごとに rest を ±20° 捻ったエンジン骨格(C≠I)でも、変換後の各骨のワールド方向が BVH の骨方向と 0.1° 以内」と (c) を、変換した clip の全フレームで確かめるものが無い。文書も「自動Cの意味…は後続で定義する」のまま(`SkeletalBvhClipImport.md:80-85`)。0.1° は要件の暫定値。研究用ライセンスの実 BVH は fixture にしない(手書きの合成値だけ)。要件 `#### GR84` の設計案 c と受け入れ確認【SkeletalClipRetargetTest】。
 
 ## G2-GR84-REAL-BVH-GATE: 実物の BVH を環境変数の指定のときだけ読む試験と、関節のワールド位置を出す `--dump-fk` と、Blender と突き合わせる台本を足す
-- status: todo
+- status: done
 - gr: GR84
 - done-when: (1) `CookedMeshTest` の束に MEMBER `RealBvhAcceptanceTest` を足し(新しい exe は作らない)、`add_test` に `SKIP_RETURN_CODE 125` を付ける。環境変数 `NORVES_MOTION_SAMPLE_DIR` が無ければ 125 で終わる。あれば `<dir>/Dog#V01full/Dog_Dog_rot6d_pred.bvh` を読み、関節 53・End Site 11・1 フレームの値 162・フレーム 67・Frame Time 0.033333 を確かめ、`--source-fps 16` 相当の設定で clip にして Duration=(67-1)/16 秒、rest の誤差・ループの検出・推定の速さを stdout に出す。ファイルが無い・値が違えば失敗する。
   (2) role-file の CLI(`SkeletalRoleFileCli.cpp`)に `--dump-fk <frames>`(例 `0,17,33`)を足し、`--bvh` の入力の各関節のワールド位置を、指定のフレームごとに JSON(関節名・フレーム・x y z。BVH の元の座標と単位のまま)で stdout に出して cook せずに終わる。`--dump-fk` は出力先の引数と一緒に使えない。`SkeletalRoleFileCliTest` 相当の既存の CLI の試験(`SkeletalBvhCookBridgeTest` か `SkeletalCliOptionsTest`)に、手書きの BVH で位置が試験に直に書いた期待値と 1e-9 で一致すること、不正なフレームの指定の拒否を足す。
