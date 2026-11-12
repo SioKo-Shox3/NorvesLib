@@ -4,6 +4,8 @@
 //
 // 計算シェーダーが取り込むときは、先に NORVES_VT_FEEDBACK_COMPUTE を定義する。フラグメント専用の宣言（early_fragment_tests）と
 // gl_FragCoord を使う関数を除き、画素の位置を引数に取る版（…AtPixel）だけを使う。
+// discard で深度の書き込みを止めるフラグメントシェーダー（切り抜きなど）は、取り込み前に
+// NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS を定義して早期の深度テストを外す。隠れた画素も要求を書くことがある。
 //
 // NORVES_VT_FEEDBACK が定義されているとき（デバイスが fragmentStoresAndAtomics・shaderResourceResidency・sparse の 2D 部分常駐を有効にしたとき。
 // シェーダーコンパイラが定義する）だけ、要求のバッファ（storage buffer）へ書く。定義されていないときは何もしない。
@@ -33,10 +35,12 @@ layout(std430, set = VT_FEEDBACK_SET, binding = VT_FEEDBACK_BINDING) buffer Virt
     uint vtFeedbackWords[];
 };
 
-// フラグメントシェーダーが storage buffer へ書くと、実装によっては深度テストが後ろへ回る（早期 Z が効かなくなる）ので、
-// 深度テストを先に行う指定にする。これを取り込むシェーダーは深度を書かず、discard も深度テストの結果を変えない。
-// 隠れた画素は要求を書かないので、画面に映るタイルだけが要求になる。
-#ifndef NORVES_VT_FEEDBACK_COMPUTE
+// フラグメントシェーダーが storage buffer へ書くと、実装によっては深度テストが後ろへ回る（早期 Z が効かなくなる）。
+// NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS を定義しない場合、深度テストを先に行う。
+// この場合は深度を明示的に書かず、discard も深度テストの結果を変えないことを前提とし、隠れた画素は要求を書かない。
+// discard で深度の書き込みを止める切り抜きなどは、この印を取り込み前に定義して早期テストを外す。
+// その場合は隠れた画素も要求を書くことがある。
+#if !defined(NORVES_VT_FEEDBACK_COMPUTE) && !defined(NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS)
 layout(early_fragment_tests) in;
 #endif
 

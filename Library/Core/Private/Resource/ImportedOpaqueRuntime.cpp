@@ -69,13 +69,9 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         {
             return Fail(reason, "logical_path");
         }
-        if (material.Alpha != ImportedAlphaMode::Opaque)
+        if (material.Alpha == ImportedAlphaMode::Blend)
         {
-            return Fail(reason, "alphaMode_requires_GR27");
-        }
-        if (material.bDoubleSided)
-        {
-            return Fail(reason, "doubleSided_requires_GR27");
+            return Fail(reason, "alphaMode_blend_unsupported");
         }
         if (material.NormalScale != 1)
         {
@@ -86,6 +82,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             return Fail(reason, "emissiveTexture_requires_shader_support");
         }
         // OPAQUEのfactor alphaは仕様どおり無視。nits0の発光画像も寄与0で、読み込まない。
+        // MASKはテクスチャのα×factor alphaを被覆率としAlphaCutoffで切るが、MegaGeometryでは切り抜かない。
         return true;
     }
     bool ValidateImportedTexture(const Asset::CookedTextureData& texture, Asset::CookedTextureColorSpace colorSpace,

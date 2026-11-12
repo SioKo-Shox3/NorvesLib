@@ -12,7 +12,7 @@
 // ワークグループの番号でクラスタを引き、記録の表の「1 + 一覧の値」番の記録から 3 頂点の位置を読む。ハードのラスタ（visbuffer_mega.vert・visbuffer.frag）と合わせる規則:
 //   - 位置は visbuffer_mega.vert と同じ式（projection * view * (world * 位置)）。ID は VisEncodeId(1 + コマンドの位置, 三角形の番号)。
 //   - 画面の位置は、ビューポートの変換のあと 1/256 画素の固定小数点へ丸め、辺の関数は整数（64bit）で厳密に求める。
-//   - 背面（裏面を捨て、時計回りが表）を省く。画素の中心が三角形の内側にあるかを辺の関数で判定し、
+//   - 片面の材質は裏面を省き、両面の材質は裏面も描く（時計回りが表）。画素の中心が三角形の内側にあるかを辺の関数で判定し、
 //     辺の上の画素は top-left 規則（上の辺と左の辺だけが含む）で、隣り合う三角形に二重に塗られず、隙間もできない。
 //   - 深度（ビューポートの変換後の z）は画面空間で線形に補間する（ハードの補間と同じ。透視の補正はしない）。
 //   - 書くのは atomicMin（上位 32bit = 深度のビット、下位 32bit = ID）。手前の深度が残り、同じ深度なら小さい ID が残る。
@@ -48,7 +48,7 @@ layout(std140, set = 0, binding = 0) uniform VisFrame
     vec4 vertexAnimTime;
 } frame;
 
-// binding 1: インスタンスの表、binding 22: メッシュの表。ここで引くのは変換だけ
+// binding 1: インスタンスの表、binding 22: メッシュの表。変換と両面の印を引く
 #define MEGA_INSTANCE_BINDING 1
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
@@ -158,7 +158,8 @@ void main()
     }
 
     // クリップ空間（visbuffer_mega.vert と同じ式・同じ順序）から画面の位置と深度へ
-    const mat4 world = LoadMegaInstance(instanceIndex).world;
+    const MegaInstance instance = LoadMegaInstance(instanceIndex);
+    const mat4 world = instance.world;
     const vec4 animationParams = VertexAnimationParamsForFrame(vec4(-1.0), frame.vertexAnimTime);
     ivec2 fixedPosition[3];
     float depth[3];
@@ -183,11 +184,27 @@ void main()
         depth[k] = z;
     }
 
-    // 表向き（時計回り）だけを描く。面積 0 の三角形は描かない
-    const int64_t area = SwEdge(fixedPosition[0], fixedPosition[1], fixedPosition[2]);
-    if (area <= 0)
+    // 面積 0 は描かず、片面の材質は表向き（時計回り）だけを描く。
+    int64_t area = SwEdge(fixedPosition[0], fixedPosition[1], fixedPosition[2]);
+    if (area == 0)
     {
         return;
+    }
+    if (area < 0)
+    {
+        if ((instance.drawInfo.w & MEGA_MESH_FLAG_TWO_SIDED) == 0u)
+        {
+            return;
+        }
+        // 両面の材質は裏からも見える。後で使う頂点ごとの位置と深度をそろえて表向きにする。
+        // ID は記録と三角形の番号だけなので、解決が元の頂点から求める重心は入れ替えの影響を受けない。
+        const ivec2 savedPosition = fixedPosition[1];
+        fixedPosition[1] = fixedPosition[2];
+        fixedPosition[2] = savedPosition;
+        const float savedDepth = depth[1];
+        depth[1] = depth[2];
+        depth[2] = savedDepth;
+        area = -area;
     }
     const float inverseArea = 1.0 / float(area);
 

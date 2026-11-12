@@ -1092,6 +1092,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
         m_pR5SkinnedQuadEntity = nullptr;
+        m_pAlphaClipVelocityEntity = nullptr;
         m_pSkinnedCullGiantEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
 
@@ -1177,6 +1178,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
         m_pR5SkinnedQuadEntity = nullptr;
+        m_pAlphaClipVelocityEntity = nullptr;
         m_pSkinnedCullGiantEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
@@ -1192,6 +1194,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_R5SkinnedQuadAsset.reset();
         m_SkinnedCullGiantAsset.reset();
         m_ShadingModelSkinAsset.reset();
+        m_AlphaClipSkinAsset.reset();
         if (resources != nullptr && m_ShadingModelMegaMesh.IsValid())
         {
             resources->MegaGeometry().ReleaseMegaMesh(m_ShadingModelMegaMesh);
@@ -1290,7 +1293,8 @@ namespace NorvesLib::Test::RenderingValidation
                                          ? TEXT("RenderingValidationNeutral")
                                          : index == 1u ? TEXT("RenderingValidationEmissive")
                                                        : TEXT("RenderingValidationLegacyTransparent");
-            materialData.bTwoSided = true;
+            // 両面は今まで GBuffer で効いていなかったので、基準画像の見た目を保つため不透明の材質は片面にする。
+            materialData.bTwoSided = index == 2u;
             materialData.bCastShadows = false;
             if (index == 1u)
             {
@@ -1357,7 +1361,8 @@ namespace NorvesLib::Test::RenderingValidation
                 materialData.RoughnessTexture = roughnessTextures[roughnessIndex];
                 materialData.MetallicTexture = metallicQueryTextures[metallicQueryIndex];
                 materialData.AOTexture = aoTexture;
-                materialData.bTwoSided = true;
+                // 両面は今まで GBuffer で効いていなかったので、基準画像の見た目を保つため不透明の材質は片面にする。
+                materialData.bTwoSided = false;
                 materialData.bCastShadows = false;
                 materialData.DebugName = TEXT("RenderingValidationP4Material");
                 p4Materials[materialIndex] = resources.Materials().Create(materialData);
@@ -2476,7 +2481,8 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Rendering::MaterialCreateData materialData;
         materialData.AlbedoTexture = m_R3ShadowAlbedoTexture;
         materialData.Blend = Core::Rendering::BlendMode::Opaque;
-        materialData.bTwoSided = true;
+        // 両面は今まで GBuffer で効いていなかったので、前の描画を保つため不透明の材質は片面にする。
+        materialData.bTwoSided = false;
         materialData.bCastShadows = true;
         materialData.DebugName = TEXT("RenderingValidationR3ShadowedShafts");
         m_R3ShadowMaterial = m_pResources->Materials().Create(materialData);
@@ -2681,7 +2687,8 @@ namespace NorvesLib::Test::RenderingValidation
         materialData.AlbedoTexture = m_R5ShadowAlbedoTexture;
         materialData.Blend = Core::Rendering::BlendMode::Opaque;
         materialData.Shading = Core::Rendering::ShadingModel::DefaultLit;
-        materialData.bTwoSided = true;
+        // 両面は今まで GBuffer で効いていなかったので、前の描画を保つため不透明の材質は片面にする。
+        materialData.bTwoSided = false;
         materialData.bCastShadows = true;
         materialData.DebugName = TEXT("RenderingValidationR5RayTracingShadow");
         m_R5ShadowMaterial = m_pResources->Materials().Create(materialData);
@@ -3433,6 +3440,381 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+
+    bool RenderingValidationSceneFixture::ApplyAlphaClipFixture(AlphaClipFixtureKind kind) const
+    {
+        using namespace Core::Rendering;
+        const bool bVelocity = kind == AlphaClipFixtureKind::Velocity;
+        if (m_pWorld == nullptr || m_pResources == nullptr ||
+            m_SceneKind != (bVelocity ? SceneKind::Outdoor : SceneKind::Indoor))
+        {
+            return false;
+        }
+        if (kind == AlphaClipFixtureKind::Opaque)
+        {
+            return true;
+        }
+        // 固定ステップの見張り役を残し、既存の物体と光源を検査領域から除く。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+            if (bVelocity)
+            {
+                if (auto* mesh = entity->GetComponent<Core::Component::MeshComponent>())
+                {
+                    mesh->SetVisible(false);
+                }
+            }
+        }
+
+        TextureHandle checker;
+        if (kind == AlphaClipFixtureKind::Test || kind == AlphaClipFixtureKind::Skinned || bVelocity)
+        {
+            uint8_t pixels[8u * 8u * 4u];
+            for (uint32_t y = 0u; y < 8u; ++y)
+            {
+                for (uint32_t x = 0u; x < 8u; ++x)
+                {
+                    const uint32_t offset = (y * 8u + x) * 4u;
+                    pixels[offset] = pixels[offset + 1u] = pixels[offset + 2u] = 255u;
+                    pixels[offset + 3u] = ((x + y) % 2u == 0u) ? 255u : 0u;
+                }
+            }
+            TextureCreateInfo info;
+            info.Width = info.Height = 8u;
+            info.MipLevels = 1u;
+            info.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            info.bInitialDataHasAllMips = true;
+            info.DebugName = TEXT("RenderingValidationAlphaClipChecker");
+            checker = m_pResources->Textures().CreateTexture(info, pixels, sizeof(pixels));
+            if (!checker.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackTexture(checker);
+        }
+        else if (kind == AlphaClipFixtureKind::HashTaa || kind == AlphaClipFixtureKind::HashNoTaa)
+        {
+            const uint8_t pixel[] = {255u, 255u, 255u, AlphaClipHashAlpha};
+            TextureCreateInfo info;
+            info.Width = info.Height = 1u;
+            info.MipLevels = 1u;
+            info.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            info.bInitialDataHasAllMips = true;
+            info.DebugName = TEXT("RenderingValidationAlphaClipHash");
+            checker = m_pResources->Textures().CreateTexture(info, pixel, sizeof(pixel));
+            if (!checker.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackTexture(checker);
+        }
+
+        // 表裏で頂点の法線と巻き順を一緒に反転させる。UV は両方で同じにする。
+        constexpr MeshDataHandle handles[] = {MeshDataHandle{0x414C5001u}, MeshDataHandle{0x414C5002u}};
+        for (uint32_t side = 0u; side < 2u; ++side)
+        {
+            Mesh3DVertex vertices[4]{};
+            for (uint32_t index = 0u; index < 4u; ++index)
+            {
+                vertices[index].Position[0] = (index % 2u == 0u) ? -1.0f : 1.0f;
+                vertices[index].Position[1] = (index / 2u == 0u) ? -1.0f : 1.0f;
+                vertices[index].Normal[2] = AlphaClipPlateNormalZ[side];
+                vertices[index].TexCoord[0] = static_cast<float>(index % 2u);
+                vertices[index].TexCoord[1] = static_cast<float>(index / 2u);
+            }
+            // +Z 側のカメラへ表を見せる巻き順は、GBuffer の Clockwise に合わせる。
+            constexpr uint32_t frontIndices[] = {0u, 2u, 1u, 1u, 2u, 3u};
+            constexpr uint32_t backIndices[] = {0u, 1u, 2u, 1u, 3u, 2u};
+            if (!m_pResources->Meshes().Register(handles[side], vertices, sizeof(vertices),
+                                                 side == 0u ? frontIndices : backIndices, 6u))
+            {
+                return false;
+            }
+            m_Lease.TrackMesh(handles[side]);
+        }
+
+        const bool bSkinned = kind == AlphaClipFixtureKind::Skinned;
+        const bool bHash = kind == AlphaClipFixtureKind::HashTaa || kind == AlphaClipFixtureKind::HashNoTaa;
+        if (bSkinned || bHash)
+        {
+            MaterialCreateData data;
+            data.bCastShadows = false;
+            data.Metallic = 0.0f;
+            data.Roughness = 0.7f;
+            data.EmissiveColor[0] = data.EmissiveColor[1] = data.EmissiveColor[2] = 1.0f;
+            data.EmissiveLuminanceNits = AlphaClipEmissiveNits;
+            data.AlbedoTexture = checker;
+            data.Blend = BlendMode::Masked;
+            data.AlphaClip = bHash ? AlphaClipMode::Hash : AlphaClipMode::Test;
+            data.AlphaCutoff = 0.5f;
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            const auto& plate = bSkinned ? AlphaClipSkinnedPlates[0] : AlphaClipHashPlate;
+            entity->SetPosition(plate.X, plate.Y, 0.0f);
+            entity->SetScale(plate.HalfExtent, plate.HalfExtent, 1.0f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(handles[0]);
+            mesh->SetMaterial(0u, material);
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(false);
+
+            if (bSkinned)
+            {
+                // 静的な板と同じ座標・UV・表の巻き順を、単一の骨に重み1で結ぶ。
+                Core::Container::VariableArray<Core::Skeletal::SkeletalVertex> vertices;
+                for (uint32_t index = 0u; index < 4u; ++index)
+                {
+                    Core::Skeletal::SkeletalVertex vertex{};
+                    vertex.Position.X = index % 2u == 0u ? -1.0f : 1.0f;
+                    vertex.Position.Y = index / 2u == 0u ? -1.0f : 1.0f;
+                    vertex.Normal.Z = 1.0f;
+                    vertex.TexCoord.U = static_cast<float>(index % 2u);
+                    vertex.TexCoord.V = static_cast<float>(index / 2u);
+                    vertex.JointIndices = {0u, 0u, 0u, 0u};
+                    vertex.JointWeights = {1.0f, 0.0f, 0.0f, 0.0f};
+                    vertices.push_back(vertex);
+                }
+                Core::Container::VariableArray<uint32_t> indices = {0u, 2u, 1u, 1u, 2u, 3u};
+                Core::Skeletal::SkeletalJoint joint;
+                joint.Name = TEXT("Root");
+                joint.ParentIndex = -1;
+                joint.InverseBindMatrix = {1.0f, 0.0f, 0.0f, 0.0f,
+                                           0.0f, 1.0f, 0.0f, 0.0f,
+                                           0.0f, 0.0f, 1.0f, 0.0f,
+                                           0.0f, 0.0f, 0.0f, 1.0f};
+                Core::Container::VariableArray<Core::Skeletal::SkeletalJoint> joints;
+                joints.push_back(std::move(joint));
+                Core::Skeletal::SkeletalAnimationChannel channel;
+                channel.JointIndex = 0u;
+                channel.Path = Core::Skeletal::SkeletalAnimationPath::Translation;
+                channel.Interpolation = Core::Skeletal::SkeletalAnimationInterpolation::Linear;
+                Core::Skeletal::SkeletalAnimationSample start;
+                start.TimeSeconds = 0.0f;
+                Core::Skeletal::SkeletalAnimationSample end;
+                end.TimeSeconds = 1.0f;
+                channel.Samples.push_back(start);
+                channel.Samples.push_back(end);
+                Core::Skeletal::SkeletalAnimationClip clip;
+                clip.Name = TEXT("Still");
+                clip.DurationSeconds = 1.0f;
+                clip.Channels.push_back(std::move(channel));
+                auto& registry = Core::GEngine.GetResourceRegistry();
+                auto skinMesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("AlphaClipSkinMesh"));
+                auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("AlphaClipSkeleton"));
+                auto animation = registry.CreateTransient<Core::AnimationClipResource>(TEXT("AlphaClipStill"));
+                auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("AlphaClipSkinAsset"));
+                if (!skinMesh || !skeleton || !animation || !asset)
+                {
+                    return false;
+                }
+                skinMesh->SetVertices(std::move(vertices));
+                skinMesh->SetIndices(std::move(indices));
+                skeleton->SetJoints(std::move(joints));
+                animation->SetClip(std::move(clip));
+                if (!skinMesh->Load() || !skeleton->Load() || !animation->Load())
+                {
+                    return false;
+                }
+                asset->SetResources(skinMesh, skeleton, animation);
+                if (!asset->IsLoaded())
+                {
+                    return false;
+                }
+                auto* skinEntity = m_pWorld->SpawnEntity();
+                if (skinEntity == nullptr)
+                {
+                    return false;
+                }
+                m_Objects.push_back(skinEntity);
+                const auto& skinPlate = AlphaClipSkinnedPlates[1];
+                skinEntity->SetPosition(skinPlate.X, skinPlate.Y, 0.0f);
+                skinEntity->SetScale(skinPlate.HalfExtent, skinPlate.HalfExtent, 1.0f);
+                auto* skin = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(skinEntity);
+                if (skin == nullptr)
+                {
+                    return false;
+                }
+                skin->SetSkeletalAsset(asset);
+                skin->SetMaterial(material);
+                skin->SetPlaying(false);
+                skin->SetLooping(false);
+                skin->SetAnimationTimeSeconds(0.0f);
+                skin->SetCastShadow(false);
+                skin->SetVisible(true);
+                m_AlphaClipSkinAsset = asset;
+            }
+
+            // Masked だけでは可視バッファに記録が残らないため、検査領域の外に不透明の見張りを置く。
+            auto* witness = m_pWorld->SpawnEntity();
+            if (witness == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(witness);
+            witness->SetPosition(0.0f, -3.8f, 0.0f);
+            witness->SetScale(0.1f, 0.1f, 1.0f);
+            auto* witnessMesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(witness);
+            if (witnessMesh == nullptr)
+            {
+                return false;
+            }
+            witnessMesh->SetMeshHandle(handles[0]);
+            witnessMesh->SetMaterial(0u, m_NeutralMaterial);
+            witnessMesh->SetCastShadow(false);
+            witnessMesh->SetReceiveShadow(false);
+            return true;
+        }
+
+        if (bVelocity)
+        {
+            // 不透明の背景を板の奥に置き、切り抜き後の画素にも静止物体を描く。
+            auto* background = m_pWorld->SpawnEntity();
+            if (background == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(background);
+            background->SetPosition(0.0f, AlphaClipVelocityPlate.Y, -2.0f);
+            background->SetScale(8.0f, 8.0f, 1.0f);
+            auto* backgroundMesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(background);
+            if (backgroundMesh == nullptr)
+            {
+                return false;
+            }
+            backgroundMesh->SetMeshHandle(handles[0]);
+            backgroundMesh->SetMaterial(0u, m_NeutralMaterial);
+            backgroundMesh->SetCastShadow(false);
+            backgroundMesh->SetReceiveShadow(false);
+        }
+
+        const bool bCoverage = kind == AlphaClipFixtureKind::Test || bVelocity;
+        const uint32_t plateCount = bVelocity ? 1u : (bCoverage ? 3u : 2u);
+        for (uint32_t index = 0u; index < plateCount; ++index)
+        {
+            MaterialCreateData data;
+            data.bCastShadows = false;
+            data.bTwoSided = bCoverage ? index == 2u : true;
+            data.Metallic = 0.0f;
+            data.Roughness = 0.7f;
+            if (bCoverage)
+            {
+                data.EmissiveColor[0] = data.EmissiveColor[1] = data.EmissiveColor[2] = 1.0f;
+                data.EmissiveLuminanceNits = AlphaClipEmissiveNits;
+                if (index == 0u)
+                {
+                    data.AlbedoTexture = checker;
+                    data.Blend = BlendMode::Masked;
+                    data.AlphaClip = AlphaClipMode::Test;
+                    data.AlphaCutoff = 0.5f;
+                }
+            }
+            else
+            {
+                data.BaseColor[0] = data.BaseColor[1] = data.BaseColor[2] = 0.8f;
+                // 法線の向きだけを比べるため、視線によって変わる鏡面反射を含めない。
+                data.bDiffuseOnly = true;
+            }
+            const auto material = m_pResources->Materials().Create(data);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            const auto& plate = bVelocity ? AlphaClipVelocityPlate :
+                                (bCoverage ? AlphaClipCoveragePlates[index] : AlphaClipLightingPlates[index]);
+            if (bVelocity)
+            {
+                m_pAlphaClipVelocityEntity = entity;
+            }
+            entity->SetPosition(plate.X, plate.Y, 0.0f);
+            entity->SetScale(plate.HalfExtent, plate.HalfExtent, 1.0f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            // 市松の板はカメラへ表を見せ、表の法線は +Z（カメラ側）を向く。
+            // 片面の裏向きの板はカメラへ裏を見せ、表の法線は -Z（奥側）を向く。
+            // 両面の裏向きの板はカメラへ裏を見せ、表の法線は -Z（奥側）を向く。
+            // 輝度の左の板はカメラへ表を見せ、表の法線は +Z（カメラ側）を向く。
+            // 輝度の右の板はカメラへ裏を見せ、表の法線は -Z、裏の有効な法線は +Z を向く。
+            mesh->SetMeshHandle(handles[index == 0u ? 0u : 1u]);
+            mesh->SetMaterial(0u, material);
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(false);
+        }
+        if (!bCoverage)
+        {
+            // 両面の板だけでは可視バッファに記録が無くなるため、検査領域外に不透明の小さい板を置く。
+            // これで既定の起動が解決を通り、その後に両面の板を重ねたことも既存の経路検査で確かめられる。
+            auto* witness = m_pWorld->SpawnEntity();
+            if (witness == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(witness);
+            witness->SetPosition(0.0f, -3.8f, 0.0f);
+            witness->SetScale(0.1f, 0.1f, 1.0f);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(witness);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(handles[0]);
+            mesh->SetMaterial(0u, m_NeutralMaterial);
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(false);
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            auto* light = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(entity);
+            if (light == nullptr || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+            {
+                return false;
+            }
+            // カメラの視線と同じ -Z へ光を送り、両方の可視面をカメラ側から等しく照らす。
+            light->SetLightDirection(AlphaClipLightingDirection[0], AlphaClipLightingDirection[1],
+                                     AlphaClipLightingDirection[2]);
+            light->SetLightColor(1.0f, 1.0f, 1.0f);
+            light->SetIntensity(AlphaClipLightingLux);
+            light->SetCastShadows(false);
+        }
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetAlphaClipVelocityPositionX(float positionX) const
+    {
+        if (!std::isfinite(positionX) || m_pAlphaClipVelocityEntity == nullptr)
+        {
+            return false;
+        }
+        m_pAlphaClipVelocityEntity->SetPosition(positionX, AlphaClipVelocityPlate.Y, 0.0f);
+        return true;
+    }
 
     bool RenderingValidationSceneFixture::ApplyGBufferProgramFixture(
         const Core::Container::String& programName) const
@@ -4244,7 +4626,8 @@ namespace NorvesLib::Test::RenderingValidation
         }
         Core::Rendering::MaterialCreateData materialData;
         materialData.DebugName = TEXT("RenderingValidationBrightEmissivePlane");
-        materialData.bTwoSided = true;
+        // 両面は今まで GBuffer で効いていなかったので、前の描画を保つため不透明の材質は片面にする。
+        materialData.bTwoSided = false;
         materialData.bCastShadows = false;
         materialData.EmissiveColor[0] = emissiveColor[0];
         materialData.EmissiveColor[1] = emissiveColor[1];
