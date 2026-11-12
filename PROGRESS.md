@@ -10966,3 +10966,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: 今と同じコードで回した verify 2 本の出力 `.harness/runs/20261112-115211/prior-verify-G2-GR83-LOOSE-SKELETAL.txt`（Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
 - Notes: 人が見るときの見どころは上の 2026-11-12 の完了の記録のとおり。撮影・計測の確かめは回さない決まり。
 - U11 cook_report に generator の行を出す(U3 の切り直し): 着地(直し 0 回)
+- U9 spec v2 の generators を解析・検査する(U1 の切り直し): 着地(直し 0 回)
