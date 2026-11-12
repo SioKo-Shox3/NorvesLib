@@ -6530,7 +6530,7 @@
 - notes: 選定課題 G12A-S3（数 km の深度精度）: (A) 標準 Z のまま近方面を上げ遠方面を絞る（ロードマップの第 1 段。荒野は近 0.5 m でしのいでいる）、(B) 逆 Z・有限の遠方面・D32F（第 2 段）、(C) 逆 Z・無限遠、のうち (B) を採る。理由: 犬の低い視点と草の中のカメラは近 0.05〜0.1 m が要り（DogMovementSmokeRoutine.cpp:189 は 0.05）、(A) では 1 km で 1 m 超の刻みになる（G12-GR39-DEPTH-CONVENTION の notes の計算）。(C) は `CameraPicking` などが遠方面の値を使い（ロードマップ 2706 行）、雲・霧が遠方面の手前の深度を前提にするので、遠方面はカメラの設定のまま有限にする。順番は、規約の集約（G12-GR39-DEPTH-CONVENTION）と MegaGeometry のカリングの試験（G12-GR31-CULL-CONTRACT）を先に入れて安全網にする（GR30 の TAA と GR31 の Hi-Z はこの規約の上に乗る。ロードマップ 2132 行）。影の地図はカメラの深度と別なので変えない（ShadowMapPass は `AdjustProjectionForClipSpace(proj,false)` を別に呼ぶ。ロードマップ 2132 行。着手時に読み直す）。荒野の近 0.5 m・遠 400 km はこの項目では変えない（見た目を変えない。近方面を戻すかは G12-GR39-DEPTH-CHECK の結果を見て別の項目にする）。試験を足す理由: 反証する契約は「本番の射影と深度の設定で、近 0.05 m のまま 5 km 先の 0.5 m の前後が崩れない」こと。Z ファイトは遠景のちらつきとしてしか出ず、1 枚の撮影では霞に紛れ、ログにも出ず黙って起きる。危険地帯（RenderThread・GBuffer・RHI の使い方）なので評価者を通す。golden の再承認を伴う。
 
 ## G12-GR39-FAR-RING: 地形の cook に谷の外周の粗い遠景のタイルを足し、近景の区画と隙間なくつなぎ、遠景の材質と影・遠方面を地形の広さに合わせる
-- status: done
+- status: doing
 - after: G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR89-TERRAIN-MASKS, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER
 - gr: GR39
 - needs-gr: GR37, GR89
