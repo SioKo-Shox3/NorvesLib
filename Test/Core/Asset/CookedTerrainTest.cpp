@@ -1,6 +1,7 @@
 ﻿#include "Asset/CookedTerrainFormat.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include "Tools/AssetCook/TerrainSpec.h"
+#include "Tools/AssetCook/MeshCooker.h"
 #include "Tools/AssetCook/TextureCooker.h"
 
 #include <algorithm>
@@ -1408,6 +1409,128 @@ namespace
             {
                 CHECK(matches == 1);
                 ++cornerOnlyTiles;
+            }
+        }
+        // cook と同じ形から辺の頂点を取り出し、タイルの重複端点を除いてビットで照合する。
+        AnsiString geometryError;
+        VariableArray<TerrainNvtrnTileGeometry> nearGeometry(terrain.Tiles.size());
+        for (size_t i = 0; i < terrain.Tiles.size(); ++i)
+        {
+            CHECK(BuildTerrainNvtrnTileGeometry(terrain, terrain.Tiles[i].TileX, terrain.Tiles[i].TileZ,
+                nearGeometry[i], geometryError));
+        }
+        VariableArray<TerrainNvtrnTileGeometry> outerGeometry(terrain.OuterTiles.size());
+        const auto sameVertex = [](const auto& a, const auto& b)
+        {
+            CHECK(std::memcmp(a.Position, b.Position, sizeof(a.Position)) == 0);
+            CHECK(std::memcmp(a.Normal, b.Normal, sizeof(a.Normal)) == 0);
+        };
+        const auto edgeVertices = [&](const auto& geometries, uint32_t fixedAxis, float fixed,
+                                       float begin, float end)
+        {
+            VariableArray<TerrainNvtrnTileVertex> result;
+            const uint32_t alongAxis = 2 - fixedAxis;
+            for (const auto& geometry : geometries)
+            {
+                for (const auto& vertex : geometry.Vertices)
+                {
+                    if (vertex.Position[fixedAxis] == fixed && vertex.Position[alongAxis] >= begin &&
+                        vertex.Position[alongAxis] <= end)
+                    {
+                        result.push_back(vertex);
+                    }
+                }
+            }
+            std::sort(result.begin(), result.end(), [alongAxis](const auto& a, const auto& b)
+            {
+                return a.Position[alongAxis] < b.Position[alongAxis];
+            });
+            size_t count = 0;
+            for (size_t i = 0; i < result.size(); ++i)
+            {
+                if (count != 0 && result[count - 1].Position[alongAxis] == result[i].Position[alongAxis])
+                {
+                    sameVertex(result[count - 1], result[i]);
+                }
+                else
+                {
+                    result[count++] = result[i];
+                }
+            }
+            result.resize(count);
+            return result;
+        };
+        const auto compareEdges = [&](const auto& a, const auto& b, uint32_t fixedAxis,
+                                      float fixed, float begin, float end, size_t expected)
+        {
+            const auto edgeA = edgeVertices(a, fixedAxis, fixed, begin, end);
+            const auto edgeB = edgeVertices(b, fixedAxis, fixed, begin, end);
+            CHECK(edgeA.size() == expected && edgeB.size() == expected);
+            for (size_t i = 0; i < expected; ++i)
+            {
+                sameVertex(edgeA[i], edgeB[i]);
+            }
+        };
+        const uint32_t ratio = static_cast<uint32_t>(std::round(ring.CellSizeM / terrain.CellSizeM));
+        for (size_t i = 0; i < terrain.OuterTiles.size(); ++i)
+        {
+            const auto& tile = terrain.OuterTiles[i];
+            auto& geometry = outerGeometry[i];
+            CHECK(BuildTerrainNvtrnOuterTileGeometry(terrain, tile.TileX, tile.TileZ, geometry, geometryError));
+            CHECK(geometry.Indices.size() % 3 == 0 && !geometry.Indices.empty());
+            for (size_t t = 0; t < geometry.Indices.size(); t += 3)
+            {
+                CHECK(geometry.Indices[t] < geometry.Vertices.size());
+                CHECK(geometry.Indices[t + 1] < geometry.Vertices.size());
+                CHECK(geometry.Indices[t + 2] < geometry.Vertices.size());
+                const auto& a = geometry.Vertices[geometry.Indices[t]].Position;
+                const auto& b = geometry.Vertices[geometry.Indices[t + 1]].Position;
+                const auto& c = geometry.Vertices[geometry.Indices[t + 2]].Position;
+                const double crossY = (double(b[2]) - a[2]) * (double(c[0]) - a[0]) -
+                    (double(b[0]) - a[0]) * (double(c[2]) - a[2]);
+                CHECK(crossY < 0.0);
+            }
+            const uint32_t shared = tile.Flags & ~OuterTileFlagOuter;
+            CHECK(geometry.EdgeVertexCount == (shared ? ratio * ring.TileCells + 1 : 0));
+            if (shared == 0)
+            {
+                continue;
+            }
+            const bool bHorizontal = (shared & (OuterTileFlagSharedNegZ | OuterTileFlagSharedPosZ)) != 0;
+            const uint32_t fixedAxis = bHorizontal ? 2 : 0;
+            const bool bPositive = (shared & (OuterTileFlagSharedPosZ | OuterTileFlagSharedPosX)) != 0;
+            const float fixed = bHorizontal
+                ? static_cast<float>(bPositive ? terrain.OriginZ : nearEndZ)
+                : static_cast<float>(bPositive ? terrain.OriginX : nearEndX);
+            const double origin = bHorizontal ? ring.OriginX : ring.OriginZ;
+            const uint32_t along = (bHorizontal ? tile.TileX : tile.TileZ) * ring.TileCells;
+            const float begin = static_cast<float>(origin + double(along) * ring.CellSizeM);
+            const float end = static_cast<float>(origin + double(along + ring.TileCells) * ring.CellSizeM);
+            compareEdges(Span<const TerrainNvtrnTileGeometry>(&geometry, 1), nearGeometry,
+                fixedAxis, fixed, begin, end, ratio * ring.TileCells + 1);
+        }
+        // ジッパーの両端も、隣の外周タイルと同じ粗い辺で終わる。
+        for (size_t i = 0; i < terrain.OuterTiles.size(); ++i)
+        {
+            const auto& tile = terrain.OuterTiles[i];
+            for (uint32_t direction = 0; direction < 2; ++direction)
+            {
+                uint32_t neighbor = 0;
+                if (terrain.FindOuterTile(tile.TileX + (direction == 0), tile.TileZ + (direction == 1), &neighbor) == nullptr)
+                {
+                    continue;
+                }
+                const uint32_t fixedAxis = direction == 0 ? 0 : 2;
+                const double fixedOrigin = direction == 0 ? ring.OriginX : ring.OriginZ;
+                const double alongOrigin = direction == 0 ? ring.OriginZ : ring.OriginX;
+                const uint32_t fixedCell = ((direction == 0 ? tile.TileX : tile.TileZ) + 1) * ring.TileCells;
+                const uint32_t alongCell = (direction == 0 ? tile.TileZ : tile.TileX) * ring.TileCells;
+                compareEdges(Span<const TerrainNvtrnTileGeometry>(&outerGeometry[i], 1),
+                    Span<const TerrainNvtrnTileGeometry>(&outerGeometry[neighbor], 1), fixedAxis,
+                    static_cast<float>(fixedOrigin + double(fixedCell) * ring.CellSizeM),
+                    static_cast<float>(alongOrigin + double(alongCell) * ring.CellSizeM),
+                    static_cast<float>(alongOrigin + double(alongCell + ring.TileCells) * ring.CellSizeM),
+                    ring.TileCells + 1);
             }
         }
         CHECK(sharedTiles == 2 * (ring.HoleTileCountX + ring.HoleTileCountZ));

@@ -10939,3 +10939,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 NVTRN v0.1 の外周の区画表を読み書きする: 着地(直し 0 回)
 - U3 NVTRN の外周から照会用の高さ場（全格子と 4 本の帯）を作る: 着地(直し 0 回)
 - U2 地形 spec の outer_ring を cook して外周のタイルを NVTRN に書く: 着地(直し 1 回)
+- U4 外周の区画メッシュ terrain-tile:nvtrn:outer を焼く: 着地(直し 0 回)

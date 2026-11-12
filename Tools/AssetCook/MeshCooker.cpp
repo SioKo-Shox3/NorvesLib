@@ -102,12 +102,7 @@ namespace NorvesLib::Tools::AssetCook
             Index,
         };
 
-        struct MeshVertexPnt
-        {
-            float Position[3] = {};
-            float Normal[3] = {};
-            float TexCoord[2] = {};
-        };
+        using MeshVertexPnt = TerrainNvtrnTileVertex;
 
         static_assert(sizeof(MeshVertexPnt) == Format::VertexRecordSize);
 
@@ -3683,14 +3678,123 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool BuildTerrainNvtrnTileGeometryInternal(const Core::Asset::CookedTerrainData& terrain,
+            uint32_t tileX, uint32_t tileZ, TerrainNvtrnTileGeometry& outGeometry, AnsiString& error)
+        {
+            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
+            outGeometry = {};
+            if (tileX >= terrain.TileCountX || tileZ >= terrain.TileCountZ)
+            {
+                error = AnsiString("terrain-tile:nvtrn の区画番号が範囲外です: tiles=") +
+                        FormatInteger(terrain.TileCountX) + "x" + FormatInteger(terrain.TileCountZ);
+                return false;
+            }
+            AnsiString fieldError;
+            const auto field = Terrain::TerrainHeightField::CreateFromCookedTerrain(terrain, fieldError);
+            if (!field)
+            {
+                error = AnsiString("NVTRN から高さ場を作れません: ") + fieldError;
+                return false;
+            }
+
+            const Terrain::TerrainGridLayout layout = field->GetGridLayout();
+            const uint32_t cells = terrain.TileCells;
+            const uint32_t side = cells + 1;
+            const uint32_t firstColumn = tileX * cells;
+            const uint32_t firstRow = tileZ * cells;
+            const float normalSpacing = static_cast<float>(layout.Spacing * 0.5);
+            const double lastX = layout.FirstX + static_cast<double>(layout.Columns - 1) * layout.Spacing;
+            const double lastZ = layout.FirstZ + static_cast<double>(layout.Rows - 1) * layout.Spacing;
+            // float に丸めた端が格子の外へ出たときだけ、法線の採取点を最も近い内側の float に寄せる。
+            const auto sampleCoordinate = [](float value, double first, double last)
+            {
+                if (static_cast<double>(value) < first)
+                {
+                    return std::nextafter(value, std::numeric_limits<float>::infinity());
+                }
+                if (static_cast<double>(value) > last)
+                {
+                    return std::nextafter(value, -std::numeric_limits<float>::infinity());
+                }
+                return value;
+            };
+            auto& vertices = outGeometry.Vertices;
+            vertices.resize(static_cast<size_t>(side) * side);
+            for (uint32_t row = 0; row < side; ++row)
+            {
+                for (uint32_t column = 0; column < side; ++column)
+                {
+                    const uint32_t globalColumn = firstColumn + column;
+                    const uint32_t globalRow = firstRow + row;
+                    const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
+                    const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
+                    const float y = field->GetGridVertexHeight(globalColumn, globalRow);
+                    Terrain::TerrainNormal normal = field->SampleNormal(x, z, normalSpacing);
+                    if (!field->Contains(x, z))
+                    {
+                        normal = field->SampleNormal(sampleCoordinate(x, layout.FirstX, lastX),
+                                                     sampleCoordinate(z, layout.FirstZ, lastZ), normalSpacing);
+                    }
+                    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+                        !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
+                    {
+                        error = "NVTRN の区画の頂点の位置・法線が有限でありません";
+                        return false;
+                    }
+                    MeshVertexPnt& vertex = vertices[static_cast<size_t>(row) * side + column];
+                    vertex.Position[0] = x;
+                    vertex.Position[1] = y;
+                    vertex.Position[2] = z;
+                    vertex.Normal[0] = normal.X;
+                    vertex.Normal[1] = normal.Y;
+                    vertex.Normal[2] = normal.Z;
+                    vertex.TexCoord[0] = x / kTerrainNvtrnTextureTileMeters;
+                    vertex.TexCoord[1] = z / kTerrainNvtrnTextureTileMeters;
+                }
+            }
+
+            auto& indices = outGeometry.Indices;
+            indices.reserve(static_cast<size_t>(cells) * cells * 6);
+            for (uint32_t row = 0; row < cells; ++row)
+            {
+                for (uint32_t column = 0; column < cells; ++column)
+                {
+                    const uint32_t i00 = row * side + column;
+                    const uint32_t i10 = i00 + 1;
+                    const uint32_t i01 = i00 + side;
+                    const uint32_t i11 = i01 + 1;
+                    if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
+                    {
+                        indices.push_back(i00);
+                        indices.push_back(i10);
+                        indices.push_back(i11);
+                        indices.push_back(i00);
+                        indices.push_back(i11);
+                        indices.push_back(i01);
+                    }
+                    else
+                    {
+                        indices.push_back(i00);
+                        indices.push_back(i10);
+                        indices.push_back(i01);
+                        indices.push_back(i10);
+                        indices.push_back(i11);
+                        indices.push_back(i01);
+                    }
+                }
+            }
+
+            return true;
+        }
+
         // NVTRN の全タイルを高さ場に戻し、指定区画の世界座標のメッシュを焼く。
         bool CookTerrainNvtrnTileInternal(const uint8_t* inputBytes, size_t inputSize,
                                           const std::filesystem::path& inputPath, uint32_t tileX, uint32_t tileZ,
                                           AnsiStringView format, AnsiStringView logicalPath, MeshCookResult& outResult,
-                                          AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
+                                          AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters,
+                                          bool bOuter = false)
         {
             namespace Asset = NorvesLib::Core::Asset;
-            namespace Terrain = NorvesLib::Core::Rendering::Terrain;
             namespace TerrainFormat = NorvesLib::Core::Asset::CookedTerrainFormatV0;
 
             if (format != SupportedMeshFormatLodGraph)
@@ -3729,120 +3833,43 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             const Asset::CookedTerrainData& terrain = parsed.Terrain;
-            if (tileX >= terrain.TileCountX || tileZ >= terrain.TileCountZ)
+            TerrainNvtrnTileGeometry geometry;
+            if (!(bOuter ? BuildTerrainNvtrnOuterTileGeometry(terrain, tileX, tileZ, geometry, error)
+                         : BuildTerrainNvtrnTileGeometry(terrain, tileX, tileZ, geometry, error)))
             {
-                error = AnsiString("terrain-tile:nvtrn の区画番号が範囲外です: tiles=") +
-                        FormatInteger(terrain.TileCountX) + "x" + FormatInteger(terrain.TileCountZ);
                 return false;
             }
-            AnsiString fieldError;
-            const auto field = Terrain::TerrainHeightField::CreateFromCookedTerrain(terrain, fieldError);
-            if (!field)
-            {
-                error = AnsiString("NVTRN から高さ場を作れません: ") + fieldError;
-                return false;
-            }
-
-            const Terrain::TerrainGridLayout layout = field->GetGridLayout();
-            const uint32_t cells = terrain.TileCells;
-            const uint32_t side = cells + 1;
-            const uint32_t firstColumn = tileX * cells;
-            const uint32_t firstRow = tileZ * cells;
-            const float normalSpacing = static_cast<float>(layout.Spacing * 0.5);
-            const double lastX = layout.FirstX + static_cast<double>(layout.Columns - 1) * layout.Spacing;
-            const double lastZ = layout.FirstZ + static_cast<double>(layout.Rows - 1) * layout.Spacing;
-            // float に丸めた端が格子の外へ出たときだけ、法線の採取点を最も近い内側の float に寄せる。
-            const auto sampleCoordinate = [](float value, double first, double last)
-            {
-                if (static_cast<double>(value) < first)
-                {
-                    return std::nextafter(value, std::numeric_limits<float>::infinity());
-                }
-                if (static_cast<double>(value) > last)
-                {
-                    return std::nextafter(value, -std::numeric_limits<float>::infinity());
-                }
-                return value;
-            };
-            VariableArray<MeshVertexPnt> vertices(static_cast<size_t>(side) * side);
-            for (uint32_t row = 0; row < side; ++row)
-            {
-                for (uint32_t column = 0; column < side; ++column)
-                {
-                    const uint32_t globalColumn = firstColumn + column;
-                    const uint32_t globalRow = firstRow + row;
-                    const float x = static_cast<float>(layout.FirstX + static_cast<double>(globalColumn) * layout.Spacing);
-                    const float z = static_cast<float>(layout.FirstZ + static_cast<double>(globalRow) * layout.Spacing);
-                    const float y = field->GetGridVertexHeight(globalColumn, globalRow);
-                    Terrain::TerrainNormal normal = field->SampleNormal(x, z, normalSpacing);
-                    if (!field->Contains(x, z))
-                    {
-                        normal = field->SampleNormal(sampleCoordinate(x, layout.FirstX, lastX),
-                                                     sampleCoordinate(z, layout.FirstZ, lastZ), normalSpacing);
-                    }
-                    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
-                        !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
-                    {
-                        error = "NVTRN の区画の頂点の位置・法線が有限でありません";
-                        return false;
-                    }
-                    MeshVertexPnt& vertex = vertices[static_cast<size_t>(row) * side + column];
-                    vertex.Position[0] = x;
-                    vertex.Position[1] = y;
-                    vertex.Position[2] = z;
-                    vertex.Normal[0] = normal.X;
-                    vertex.Normal[1] = normal.Y;
-                    vertex.Normal[2] = normal.Z;
-                    vertex.TexCoord[0] = x / kTerrainNvtrnTextureTileMeters;
-                    vertex.TexCoord[1] = z / kTerrainNvtrnTextureTileMeters;
-                }
-            }
-
-            VariableArray<uint32_t> indices;
-            indices.reserve(static_cast<size_t>(cells) * cells * 6);
-            for (uint32_t row = 0; row < cells; ++row)
-            {
-                for (uint32_t column = 0; column < cells; ++column)
-                {
-                    const uint32_t i00 = row * side + column;
-                    const uint32_t i10 = i00 + 1;
-                    const uint32_t i01 = i00 + side;
-                    const uint32_t i11 = i01 + 1;
-                    if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
-                    {
-                        indices.push_back(i00);
-                        indices.push_back(i10);
-                        indices.push_back(i11);
-                        indices.push_back(i00);
-                        indices.push_back(i11);
-                        indices.push_back(i01);
-                    }
-                    else
-                    {
-                        indices.push_back(i00);
-                        indices.push_back(i10);
-                        indices.push_back(i01);
-                        indices.push_back(i10);
-                        indices.push_back(i11);
-                        indices.push_back(i01);
-                    }
-                }
-            }
-
+            const auto& vertices = geometry.Vertices;
+            const auto& indices = geometry.Indices;
+            const uint32_t cells = bOuter ? terrain.OuterRing.TileCells : terrain.TileCells;
             MeshCookResult result;
             if (!CookLodGraphMesh(vertices, indices, {}, result, error, fallbackMinTriangles, dagRootMaxClusters, 0, true))
             {
                 return false;
             }
             uint64_t hash = Fnv1a64Update(Format::Fnv1a64OffsetBasis, nvtrnBytes, nvtrnSize);
+            if (bOuter)
+            {
+                constexpr AnsiStringView outerMarker("terrain-tile:nvtrn:outer");
+                hash = Fnv1a64Update(hash, reinterpret_cast<const uint8_t*>(outerMarker.data()), outerMarker.size());
+            }
             hash = Fnv1a64UpdateLe64(hash, tileX);
             hash = Fnv1a64UpdateLe64(hash, tileZ);
             hash = Fnv1a64UpdateLe64(hash, cells);
             hash = Fnv1a64UpdateLe64(hash, std::bit_cast<uint32_t>(kTerrainNvtrnTextureTileMeters));
             hash = Fnv1a64UpdateLe64(hash, kTerrainNvtrnTileVersion);
             result.SourceHash = hash;
-            std::printf("TERRAIN_NVTRN_TILE tile=%u,%u tiles=%ux%u vertices=%zu triangles=%zu\n",
-                        tileX, tileZ, terrain.TileCountX, terrain.TileCountZ, vertices.size(), indices.size() / 3);
+            if (bOuter)
+            {
+                std::printf("TERRAIN_NVTRN_OUTER_TILE tile=%u,%u tiles=%ux%u vertices=%zu triangles=%zu edge_vertices=%u\n",
+                    tileX, tileZ, terrain.OuterRing.TileCountX, terrain.OuterRing.TileCountZ,
+                    vertices.size(), indices.size() / 3, geometry.EdgeVertexCount);
+            }
+            else
+            {
+                std::printf("TERRAIN_NVTRN_TILE tile=%u,%u tiles=%ux%u vertices=%zu triangles=%zu\n",
+                            tileX, tileZ, terrain.TileCountX, terrain.TileCountZ, vertices.size(), indices.size() / 3);
+            }
             outResult = std::move(result);
             return true;
         }
@@ -4697,6 +4724,12 @@ namespace NorvesLib::Tools::AssetCook
         {
             source = TerrainTileSource::Nvtrn;
             rest = rest.substr(nvtrnPrefix.size());
+            const AnsiStringView outerPrefix("outer:");
+            if (rest.size() > outerPrefix.size() && rest.substr(0, outerPrefix.size()) == outerPrefix)
+            {
+                source = TerrainTileSource::NvtrnOuter;
+                rest = rest.substr(outerPrefix.size());
+            }
         }
         const size_t comma = rest.find(',');
         if (comma == AnsiStringView::npos || comma == 0)
@@ -4710,7 +4743,8 @@ namespace NorvesLib::Tools::AssetCook
         const auto parsedZ = std::from_chars(rest.data() + comma + 1, end, z);
         const uint32_t limit = source == TerrainTileSource::Dem ? 65536u : Spec::kTilesPerSide;
         if (parsedX.ec != std::errc{} || parsedX.ptr != rest.data() + comma || parsedZ.ec != std::errc{} ||
-            parsedZ.ptr != end || (source != TerrainTileSource::Nvtrn && (x >= limit || z >= limit)))
+            parsedZ.ptr != end || (source != TerrainTileSource::Nvtrn && source != TerrainTileSource::NvtrnOuter &&
+                                 (x >= limit || z >= limit)))
         {
             return false;
         }
@@ -4757,6 +4791,248 @@ namespace NorvesLib::Tools::AssetCook
         return true;
     }
 
+    bool BuildTerrainNvtrnTileGeometry(const Core::Asset::CookedTerrainData& terrain,
+        uint32_t tileX, uint32_t tileZ, TerrainNvtrnTileGeometry& outGeometry, AnsiString& error)
+    {
+        return BuildTerrainNvtrnTileGeometryInternal(terrain, tileX, tileZ, outGeometry, error);
+    }
+
+    bool BuildTerrainNvtrnOuterTileGeometry(const Core::Asset::CookedTerrainData& terrain,
+        uint32_t tileX, uint32_t tileZ, TerrainNvtrnTileGeometry& outGeometry, AnsiString& error)
+    {
+        namespace Terrain = Core::Rendering::Terrain;
+        namespace TerrainFormat = Core::Asset::CookedTerrainFormatV0;
+        outGeometry = {};
+        if (!terrain.bHasOuterRing)
+        {
+            error = "terrain-tile:nvtrn:outer の入力に外周がありません";
+            return false;
+        }
+        const auto& ring = terrain.OuterRing;
+        if (tileX >= ring.TileCountX || tileZ >= ring.TileCountZ)
+        {
+            error = AnsiString("terrain-tile:nvtrn:outer の区画番号が範囲外です: tiles=") +
+                FormatInteger(ring.TileCountX) + "x" + FormatInteger(ring.TileCountZ);
+            return false;
+        }
+        const auto* tile = terrain.FindOuterTile(tileX, tileZ);
+        if (tile == nullptr)
+        {
+            error = "terrain-tile:nvtrn:outer の区画番号は穴の中です";
+            return false;
+        }
+        const auto field = Terrain::TerrainHeightField::CreateOuterRingFromCookedTerrain(terrain, error);
+        if (!field)
+        {
+            return false;
+        }
+        const auto nearField = Terrain::TerrainHeightField::CreateFromCookedTerrain(terrain, error);
+        if (!nearField)
+        {
+            return false;
+        }
+        const auto layout = field->GetGridLayout();
+        const auto nearLayout = nearField->GetGridLayout();
+        const uint32_t cells = ring.TileCells;
+        const uint32_t side = cells + 1;
+        const uint32_t firstColumn = tileX * cells;
+        const uint32_t firstRow = tileZ * cells;
+        const uint32_t minX = ring.HoleTileMinX * cells;
+        const uint32_t minZ = ring.HoleTileMinZ * cells;
+        const uint32_t maxX = minX + ring.HoleTileCountX * cells;
+        const uint32_t maxZ = minZ + ring.HoleTileCountZ * cells;
+        const uint64_t ratio = static_cast<uint64_t>(std::round(layout.Spacing / nearLayout.Spacing));
+        const uint64_t fineCells64 = ratio * cells;
+        if (fineCells64 >= UINT32_MAX || static_cast<uint64_t>(side) * side + fineCells64 > UINT32_MAX)
+        {
+            error = "NVTRN の外周区画の頂点数が上限を超えます";
+            return false;
+        }
+        const uint32_t fineCells = static_cast<uint32_t>(fineCells64);
+        // 近景と同じ計算順で座標・高さ・法線・UV を作る。端の採取点だけを内側へ寄せる。
+        const auto makeVertex = [&](const Terrain::TerrainHeightField& source, uint32_t column, uint32_t row,
+                                    TerrainNvtrnTileVertex& vertex)
+        {
+            const auto grid = source.GetGridLayout();
+            const float x = static_cast<float>(grid.FirstX + static_cast<double>(column) * grid.Spacing);
+            const float z = static_cast<float>(grid.FirstZ + static_cast<double>(row) * grid.Spacing);
+            const float y = source.GetGridVertexHeight(column, row);
+            const float normalSpacing = static_cast<float>(grid.Spacing * 0.5);
+            auto normal = source.SampleNormal(x, z, normalSpacing);
+            if (!source.Contains(x, z))
+            {
+                const auto sampleCoordinate = [](float value, double first, double last)
+                {
+                    if (static_cast<double>(value) < first)
+                    {
+                        return std::nextafter(value, std::numeric_limits<float>::infinity());
+                    }
+                    if (static_cast<double>(value) > last)
+                    {
+                        return std::nextafter(value, -std::numeric_limits<float>::infinity());
+                    }
+                    return value;
+                };
+                normal = source.SampleNormal(
+                    sampleCoordinate(x, grid.FirstX, grid.FirstX + static_cast<double>(grid.Columns - 1) * grid.Spacing),
+                    sampleCoordinate(z, grid.FirstZ, grid.FirstZ + static_cast<double>(grid.Rows - 1) * grid.Spacing),
+                    normalSpacing);
+            }
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+                !std::isfinite(normal.X) || !std::isfinite(normal.Y) || !std::isfinite(normal.Z))
+            {
+                error = "NVTRN の外周区画の頂点の位置・法線が有限でありません";
+                return false;
+            }
+            vertex.Position[0] = x;
+            vertex.Position[1] = y;
+            vertex.Position[2] = z;
+            vertex.Normal[0] = normal.X;
+            vertex.Normal[1] = normal.Y;
+            vertex.Normal[2] = normal.Z;
+            vertex.TexCoord[0] = x / kTerrainNvtrnTextureTileMeters;
+            vertex.TexCoord[1] = z / kTerrainNvtrnTextureTileMeters;
+            return true;
+        };
+        // 穴の角も格子の整数座標で判定し、近景の終端は近景自身の番号に合わせる。
+        const auto nearColumn = [&](uint32_t column)
+        {
+            return column == maxX ? terrain.CellCountX : static_cast<uint32_t>((column - minX) * ratio);
+        };
+        const auto nearRow = [&](uint32_t row)
+        {
+            return row == maxZ ? terrain.CellCountZ : static_cast<uint32_t>((row - minZ) * ratio);
+        };
+        auto& vertices = outGeometry.Vertices;
+        auto& indices = outGeometry.Indices;
+        vertices.resize(static_cast<size_t>(side) * side);
+        for (uint32_t row = 0; row <= cells; ++row)
+        {
+            for (uint32_t column = 0; column <= cells; ++column)
+            {
+                const uint32_t gx = firstColumn + column;
+                const uint32_t gz = firstRow + row;
+                const bool bHoleEdge = gx >= minX && gx <= maxX && gz >= minZ && gz <= maxZ &&
+                    (gx == minX || gx == maxX || gz == minZ || gz == maxZ);
+                auto& vertex = vertices[static_cast<size_t>(row) * side + column];
+                if (!(bHoleEdge ? makeVertex(*nearField, nearColumn(gx), nearRow(gz), vertex)
+                                : makeVertex(*field, gx, gz, vertex)))
+                {
+                    return false;
+                }
+            }
+        }
+        const uint32_t shared = tile->Flags & ~TerrainFormat::OuterTileFlagOuter;
+        const bool bNegZ = (shared & TerrainFormat::OuterTileFlagSharedNegZ) != 0;
+        const bool bPosZ = (shared & TerrainFormat::OuterTileFlagSharedPosZ) != 0;
+        const bool bNegX = (shared & TerrainFormat::OuterTileFlagSharedNegX) != 0;
+        const bool bPosX = (shared & TerrainFormat::OuterTileFlagSharedPosX) != 0;
+        const auto appendTriangle = [&](uint32_t a, uint32_t b, uint32_t c)
+        {
+            const auto& pa = vertices[a].Position;
+            const auto& pb = vertices[b].Position;
+            const auto& pc = vertices[c].Position;
+            const double crossY = (double(pb[2]) - pa[2]) * (double(pc[0]) - pa[0]) -
+                                  (double(pb[0]) - pa[0]) * (double(pc[2]) - pa[2]);
+            if (crossY == 0.0)
+            {
+                error = "NVTRN の外周区画に面積 0 の三角形があります";
+                return false;
+            }
+            if (crossY > 0.0)
+            {
+                std::swap(b, c);
+            }
+            indices.push_back(a);
+            indices.push_back(b);
+            indices.push_back(c);
+            return true;
+        };
+        for (uint32_t row = 0; row < cells; ++row)
+        {
+            for (uint32_t column = 0; column < cells; ++column)
+            {
+                if ((bNegZ && row == 0) || (bPosZ && row + 1 == cells) ||
+                    (bNegX && column == 0) || (bPosX && column + 1 == cells))
+                {
+                    continue;
+                }
+                const uint32_t i00 = row * side + column;
+                const uint32_t i10 = i00 + 1;
+                const uint32_t i01 = i00 + side;
+                const uint32_t i11 = i01 + 1;
+                if (Terrain::UsesMainDiagonal(firstColumn + column, firstRow + row))
+                {
+                    if (!appendTriangle(i00, i10, i11) || !appendTriangle(i00, i11, i01))
+                    {
+                        return false;
+                    }
+                }
+                else if (!appendTriangle(i00, i10, i01) || !appendTriangle(i10, i11, i01))
+                {
+                    return false;
+                }
+            }
+        }
+        if (shared != 0)
+        {
+            const bool bHorizontal = bNegZ || bPosZ;
+            const uint32_t edgeColumn = bPosX ? cells : 0;
+            const uint32_t edgeRow = bPosZ ? cells : 0;
+            const auto coarseEdgeIndex = [&](uint32_t along, bool bInside)
+            {
+                const uint32_t column = bHorizontal ? along : (bInside ? (bPosX ? cells - 1 : 1) : edgeColumn);
+                const uint32_t row = bHorizontal ? (bInside ? (bPosZ ? cells - 1 : 1) : edgeRow) : along;
+                return row * side + column;
+            };
+            VariableArray<uint32_t> fineEdge(static_cast<size_t>(fineCells) + 1);
+            for (uint32_t i = 0; i <= fineCells; ++i)
+            {
+                if (i % ratio == 0)
+                {
+                    fineEdge[i] = coarseEdgeIndex(static_cast<uint32_t>(i / ratio), false);
+                    continue;
+                }
+                const uint32_t gx = firstColumn + (bHorizontal ? 0 : edgeColumn);
+                const uint32_t gz = firstRow + (bHorizontal ? edgeRow : 0);
+                TerrainNvtrnTileVertex vertex;
+                if (!makeVertex(*nearField, nearColumn(gx) + (bHorizontal ? i : 0),
+                    nearRow(gz) + (bHorizontal ? 0 : i), vertex))
+                {
+                    return false;
+                }
+                fineEdge[i] = static_cast<uint32_t>(vertices.size());
+                vertices.push_back(vertex);
+            }
+            // 辺の始点からの比が小さい列を進める。同点は細かい側を先に進める。
+            // 比の比較を整数の交差積にして、両端は隣のタイルと共有する粗い辺で閉じる。
+            uint32_t i = 0, j = 0;
+            while (i < fineCells || j < cells)
+            {
+                const bool bAdvanceFine = j == cells || (i < fineCells &&
+                    static_cast<uint64_t>(i + 1) * cells <= static_cast<uint64_t>(j + 1) * fineCells);
+                if (bAdvanceFine)
+                {
+                    if (!appendTriangle(fineEdge[i], fineEdge[i + 1], coarseEdgeIndex(j, true)))
+                    {
+                        return false;
+                    }
+                    ++i;
+                }
+                else
+                {
+                    if (!appendTriangle(fineEdge[i], coarseEdgeIndex(j + 1, true), coarseEdgeIndex(j, true)))
+                    {
+                        return false;
+                    }
+                    ++j;
+                }
+            }
+            outGeometry.EdgeVertexCount = fineCells + 1;
+        }
+        return true;
+    }
+
     bool CookTerrainNvtrnTileToNvmesh(const uint8_t* inputBytes, size_t inputSize,
                                       const std::filesystem::path& inputPath, uint32_t tileX, uint32_t tileZ,
                                       NorvesLib::Core::Container::AnsiStringView format,
@@ -4766,6 +5042,17 @@ namespace NorvesLib::Tools::AssetCook
     {
         return CookTerrainNvtrnTileInternal(inputBytes, inputSize, inputPath, tileX, tileZ, format, logicalPath,
                                             outResult, error, fallbackMinTriangles, dagRootMaxClusters);
+    }
+
+    bool CookTerrainNvtrnOuterTileToNvmesh(const uint8_t* inputBytes, size_t inputSize,
+                                      const std::filesystem::path& inputPath, uint32_t tileX, uint32_t tileZ,
+                                      NorvesLib::Core::Container::AnsiStringView format,
+                                      NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
+                                      NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles,
+                                      uint32_t dagRootMaxClusters)
+    {
+        return CookTerrainNvtrnTileInternal(inputBytes, inputSize, inputPath, tileX, tileZ, format, logicalPath,
+                                            outResult, error, fallbackMinTriangles, dagRootMaxClusters, true);
     }
 
     bool CheckTerrainDemTileSeam(uint32_t tileAX, uint32_t tileAZ, uint32_t tileBX, uint32_t tileBZ, bool& outPass,
