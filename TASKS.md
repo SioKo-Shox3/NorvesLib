@@ -39,7 +39,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
-- status: todo
+- status: done
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)とビルドが通る。消した試験(`RHIGPUTimestampVulkanSkipContractTest`)の名前が `Test` と最上位の `CMakeLists.txt` に残らず、残す `RHIGPUTimestampVulkanTest` が ctest の一覧(`-N`、実行しない)に出る。統合ブランチ全体の ctest と前からの落ちの直しは BUILD-HEALTH-1109 が 17 行の verify で受け持つので、このタスクでは回さない。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
@@ -6898,7 +6898,7 @@
 - notes: 確かめ直し (c)。スキンの GBuffer の頂点シェーダーは物体色を固定する(`Assets/Shaders/skinned_gbuffer.vert:136` の `fragObjectColor = vec3(1.0)`)ので、cook が MATS に入れた BaseColor(`RigSplitCook.cpp:470-480` で record をそのまま写す)は描画に効かない。2 材質のパネルも「スキン描画は材質の基本色を使わないため」単色のアルベドで色を持たせている(`NVSKELMigrationInventory.md` の「範囲drawの接続」)。ロードマップの軟い依存(193 行)と要件 GR79 の設計案 (8) は「factor≠1 のときだけ cook でアルベドへ焼いて代える」としている。G5 の `G5-GR26-MATERIAL-PARAMS` はスキンの物体色を扱わないので重ならない。シェーダーは変えない(GBuffer の危険地帯に入らない)。スキンのシェーダーが材質の色を読むようになったら、この焼き込みを外す(そのときは MATS の BaseColor をそのまま使う)と CookedMaterialV1.md に書く。要件 `#### GR79` の設計案 (8)。
 
 ## G2-GR79-SKINNED-MATERIAL-BUILDER: cooked のスキンメッシュの材質の表から slot ごとの材質を作り、骨格つきの資産を読むだけで材質つきで描けるようにする
-- status: todo
+- status: done
 - after: G2-GR83-LOOSE-SKELETAL
 - gr: GR79
 - done-when: 3 資産の経路で読んだ SkinnedMesh の MATS(材質 record と 4 つの texture の論理パス)を、公開する CPU の資産(`SkinnedMeshResource` か 3 資産の束)に slot の名前と並べて保持する。`SkinnedMaterialBuilder`(GR83 のローダの配下)が、GameThread で、slot ごとに texture を cooked の経路で解決し(静的モデルの v1 材質と同じ `BuildImportedMaterialStaging`・`ValidateImportedTexture`・`SplitImportedArmChannels` を使い、アルベドは sRGB、normal と ARM は linear を検査する)、`MaterialCreateData` を組んで `RenderMaterialStore` で作り、`SkinnedMeshComponent::SetSlotMaterial(slot, handle)` で付ける。
