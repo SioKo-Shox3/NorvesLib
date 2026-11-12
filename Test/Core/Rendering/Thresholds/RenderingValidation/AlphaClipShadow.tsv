@@ -1,0 +1,7 @@
+﻿名前	値	根拠
+inner_fraction	0.6	影の外縁のフィルターを避け、四隅を結ぶ領域の内側を調べる
+opaque_minimum	0.9	不透明板の投影領域がほぼ影で覆われることを要求する
+masked_minimum	0.25	市松の影が消えていないことを要求する
+masked_maximum	0.75	市松の穴が不透明に塞がれていないことを要求する
+minimum_difference	0.3	不透明板と切り抜き板の被覆の差を要求する
+minimum_light_ratio	2.0	影の無い床と不透明板の影の明暗差を要求する

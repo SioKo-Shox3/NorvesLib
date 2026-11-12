@@ -11015,3 +11015,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 VSM の描画のシェーダーの切り抜きの版: 着地(直し 0 回)
 - U4 点光源のキューブの影で Masked の材質をマスク用のパイプラインで描く: 着地(直し 0 回)
 - U6 VSM の投影物の収集で Masked の材質の塊に材質の参照を持たせ、範囲を描画へ渡す: 着地(直し 0 回)
+- U7 GPU の試験 RenderingAlphaClipShadowVulkanTest と、タスクの verify: 着地(直し 0 回)
