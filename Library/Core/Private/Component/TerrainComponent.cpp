@@ -322,6 +322,32 @@ namespace NorvesLib::Core::Component
         SetTickEnabled(true);
     }
 
+    bool TerrainComponent::GetTerrainBoundsXZ(float& outMinX, float& outMinZ, float& outMaxX, float& outMaxZ) const
+    {
+        Math::AABB bounds;
+        if (!m_TerrainHandle.IsValid() || !m_HeightField || !m_HeightField->GetBounds(bounds))
+        {
+            return false;
+        }
+        for (const auto& outer : m_OuterTerrains)
+        {
+            Math::AABB outerBounds;
+            if (!outer.HeightField || !outer.HeightField->GetBounds(outerBounds))
+            {
+                return false;
+            }
+            bounds.Min.x = std::min(bounds.Min.x, outerBounds.Min.x);
+            bounds.Min.z = std::min(bounds.Min.z, outerBounds.Min.z);
+            bounds.Max.x = std::max(bounds.Max.x, outerBounds.Max.x);
+            bounds.Max.z = std::max(bounds.Max.z, outerBounds.Max.z);
+        }
+        outMinX = bounds.Min.x;
+        outMinZ = bounds.Min.z;
+        outMaxX = bounds.Max.x;
+        outMaxZ = bounds.Max.z;
+        return true;
+    }
+
     bool TerrainComponent::LoadTerrain()
     {
         auto assetSystem = m_TerrainSystem->GetAssetSystem();
@@ -369,11 +395,70 @@ namespace NorvesLib::Core::Component
         m_AssetSystem = assetSystem;
         m_HeightField = heightField;
         m_TerrainHandle = handle;
-        LoadSplatMaterial(*heightField);
+
+        bool bOuterReady = false;
+        if (parsed.Terrain.bHasOuterRing)
+        {
+            if (parsed.Terrain.OuterTiles.empty() ||
+                parsed.Terrain.OuterTiles.size() > std::numeric_limits<uint32_t>::max() - tileCount)
+            {
+                LOG_WARNING("TERRAIN_COMPONENT_OUTER_SKIPPED 外周の区画数が扱える範囲にありません");
+            }
+            else
+            {
+                try
+                {
+                    Container::VariableArray<Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField>> strips;
+                    Container::AnsiString outerError;
+                    if (!Rendering::Terrain::TerrainHeightField::CreateOuterRingStripsFromCookedTerrain(
+                            parsed.Terrain, strips, outerError))
+                    {
+                        LOG_WARNING("TERRAIN_COMPONENT_OUTER_SKIPPED 外周の高さ場を作れません: %s", outerError.c_str());
+                    }
+                    else if (strips.empty())
+                    {
+                        LOG_WARNING("TERRAIN_COMPONENT_OUTER_SKIPPED 外周の高さ場の帯がありません");
+                    }
+                    else
+                    {
+                        // 登録後に配列の確保で失敗しても、ハンドルを失わないよう先に確保する。
+                        m_OuterTerrains.reserve(strips.size());
+                        m_Tiles.reserve(static_cast<size_t>(tileCount + parsed.Terrain.OuterTiles.size()));
+                        for (const auto& strip : strips)
+                        {
+                            const auto outerHandle = m_TerrainSystem->RegisterTerrain(strip);
+                            if (!outerHandle.IsValid())
+                            {
+                                LOG_WARNING("TERRAIN_COMPONENT_OUTER_SKIPPED 外周の高さ場を登録できません");
+                                break;
+                            }
+                            m_OuterTerrains.push_back({outerHandle, strip});
+                        }
+                        bOuterReady = m_OuterTerrains.size() == strips.size();
+                    }
+                }
+                catch (const std::exception& exception)
+                {
+                    LOG_WARNING("TERRAIN_COMPONENT_OUTER_SKIPPED 外周を準備できません: %s", exception.what());
+                }
+                catch (...)
+                {
+                    LOG_WARNING("TERRAIN_COMPONENT_OUTER_SKIPPED 外周を準備できません");
+                }
+                if (!bOuterReady)
+                {
+                    ReleaseOuterTerrains();
+                }
+            }
+        }
+
+        LoadSplatMaterial(*heightField, bOuterReady);
         m_TileCountX = parsed.Terrain.TileCountX;
         m_TileCountZ = parsed.Terrain.TileCountZ;
         m_TileCells = parsed.Terrain.TileCells;
-        m_PlacedTiles.resize(static_cast<size_t>(tileCount));
+        // 配置の記録は m_Tiles と同じ並び（近景は行優先の番号、外周はその後ろ）に持つ。
+        const size_t outerTileCount = bOuterReady ? parsed.Terrain.OuterTiles.size() : 0u;
+        m_PlacedTiles.resize(static_cast<size_t>(tileCount) + outerTileCount);
         m_Tiles.reserve(static_cast<size_t>(tileCount));
         for (uint32_t z = 0; z < parsed.Terrain.TileCountZ; ++z)
         {
@@ -382,11 +467,19 @@ namespace NorvesLib::Core::Component
                 m_Tiles.push_back({x, z});
             }
         }
+        if (bOuterReady)
+        {
+            for (const auto& tile : parsed.Terrain.OuterTiles)
+            {
+                m_Tiles.push_back({tile.TileX, tile.TileZ, true});
+            }
+        }
 
         return true;
     }
 
-    void TerrainComponent::LoadSplatMaterial(const Rendering::Terrain::TerrainHeightField& heightField)
+    void TerrainComponent::LoadSplatMaterial(
+        const Rendering::Terrain::TerrainHeightField& heightField, bool bNeedsOuterMaterial)
     {
         const Container::String tablePath = GetLayerTablePath();
         const uint32_t sourceLayerCount = heightField.GetSplatLayerCount();
@@ -402,6 +495,48 @@ namespace NorvesLib::Core::Component
         {
             LOG_WARNING("TERRAIN_COMPONENT_LAYERS_SKIPPED path=%s 層の表を読めません: %s", tablePath.c_str(), error.c_str());
             return;
+        }
+        if (bNeedsOuterMaterial)
+        {
+            const auto layout = heightField.GetGridLayout();
+            const auto weights = heightField.GetSplatWeights();
+            const uint64_t vertexCount = static_cast<uint64_t>(layout.Columns) * layout.Rows;
+            if (sourceLayerCount <= Rendering::MegaGeometry::MegaTerrainSplatMaxLayers &&
+                desc.Layers.size() == sourceLayerCount && vertexCount > 0 &&
+                vertexCount <= std::numeric_limits<size_t>::max() / sourceLayerCount &&
+                weights.size() == static_cast<size_t>(vertexCount) * sourceLayerCount)
+            {
+                double layerWeights[Rendering::MegaGeometry::MegaTerrainSplatMaxLayers] = {};
+                for (size_t vertex = 0; vertex < static_cast<size_t>(vertexCount); ++vertex)
+                {
+                    for (uint32_t layer = 0; layer < sourceLayerCount; ++layer)
+                    {
+                        layerWeights[layer] += weights[vertex * sourceLayerCount + layer];
+                    }
+                }
+                double totalWeight = 0.0;
+                double color[3] = {};
+                double roughness = 0.0;
+                for (uint32_t layer = 0; layer < sourceLayerCount; ++layer)
+                {
+                    const double weight = layerWeights[layer];
+                    totalWeight += weight;
+                    for (uint32_t channel = 0; channel < 3; ++channel)
+                    {
+                        color[channel] += weight * desc.Layers[layer].PlaceholderColor[channel];
+                    }
+                    roughness += weight * desc.Layers[layer].PlaceholderRoughness;
+                }
+                if (totalWeight > 0.0)
+                {
+                    for (uint32_t channel = 0; channel < 3; ++channel)
+                    {
+                        m_OuterBaseColor[channel] = static_cast<float>(color[channel] / totalWeight);
+                    }
+                    m_OuterRoughness = static_cast<float>(roughness / totalWeight);
+                    m_bHasOuterMaterial = true;
+                }
+            }
         }
         const auto device = Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetDevice();
         if (!device)
@@ -590,6 +725,18 @@ namespace NorvesLib::Core::Component
         m_Splat = {};
     }
 
+    void TerrainComponent::ReleaseOuterTerrains()
+    {
+        if (m_TerrainSystem)
+        {
+            for (const auto& outer : m_OuterTerrains)
+            {
+                m_TerrainSystem->UnregisterTerrain(outer.Handle);
+            }
+        }
+        m_OuterTerrains.clear();
+    }
+
     void TerrainComponent::PlacePendingTiles()
     {
         if (!bBegunPlay || !m_TerrainSystem || m_bLoadFailed)
@@ -617,17 +764,26 @@ namespace NorvesLib::Core::Component
                         m_TerrainSystem->SetTileResident(GetTileIdAt(x, z), false);
                     }
                 }
-                SetTickEnabled(false);
-                LOG_INFO("TERRAIN_COMPONENT_STREAMING tiles=%u", GetTileCount());
-                return;
+                const uint32_t nearTileCount = m_TileCountX * m_TileCountZ;
+                LOG_INFO("TERRAIN_COMPONENT_STREAMING tiles=%u", nearTileCount);
+                if (nearTileCount == GetTileCount())
+                {
+                    SetTickEnabled(false);
+                    return;
+                }
+                // 近景の区画は流し込みが出し入れする。外周の遠景はどこからも見えるので、後ろの外周だけを予算で置く。
+                m_NextTile = nearTileCount;
             }
         }
         const uint32_t configuredBudget = GetTilesPerFrame();
         const uint32_t budget = configuredBudget == 0 ? 1u : configuredBudget;
         for (uint32_t processed = 0; processed < budget && m_NextTile < GetTileCount(); ++processed)
         {
-            const auto& tile = m_Tiles[m_NextTile];
-            PlaceTileAt(tile.X, tile.Z);
+            const uint32_t record = m_NextTile;
+            if (!m_PlacedTiles[record].bPlaced)
+            {
+                PlaceTile(m_Tiles[record], record);
+            }
             ++m_NextTile;
         }
         if (IsFullyPlaced())
@@ -637,11 +793,15 @@ namespace NorvesLib::Core::Component
         }
     }
 
-    bool TerrainComponent::PlaceTile(const TileCoordinate& tile)
+    bool TerrainComponent::PlaceTile(const TileCoordinate& tile, uint32_t record)
     {
         char suffix[64];
         std::snprintf(suffix, sizeof(suffix), "%u_%u.generated", tile.X, tile.Z);
         Container::String logicalPath = GetTilePathPrefix();
+        if (tile.bOuter)
+        {
+            logicalPath += "outer_";
+        }
         logicalPath += suffix;
         const auto resolved = m_AssetSystem->ResolveAsset(logicalPath, Asset::AssetKind::Model);
         if (!resolved.UsedCooked())
@@ -672,7 +832,21 @@ namespace NorvesLib::Core::Component
         createInfo.Material.Roughness = GetRoughness();
         createInfo.Material.Metallic = 0.0f;
         createInfo.Material.TerrainBlend.bTerrainSurface = true;
-        createInfo.Material.TerrainBlend.Splat = m_Splat;
+        if (tile.bOuter)
+        {
+            if (m_bHasOuterMaterial)
+            {
+                for (uint32_t channel = 0; channel < 3; ++channel)
+                {
+                    createInfo.Material.BaseColor[channel] = m_OuterBaseColor[channel];
+                }
+                createInfo.Material.Roughness = m_OuterRoughness;
+            }
+        }
+        else
+        {
+            createInfo.Material.TerrainBlend.Splat = m_Splat;
+        }
         createInfo.DebugName = logicalPath.c_str();
         auto& megaGeometry = m_RenderResources->MegaGeometry();
         const auto megaMesh = megaGeometry.CreateMegaMesh(createInfo);
@@ -704,7 +878,7 @@ namespace NorvesLib::Core::Component
         child->SetPosition(0.0f, 0.0f, 0.0f);
         component->SetMegaMeshHandle(megaMesh);
         component->SetCastShadow(GetCastShadow());
-        auto& placed = m_PlacedTiles[GetTileIdAt(tile.X, tile.Z)];
+        auto& placed = m_PlacedTiles[record];
         placed.ChildEntityId = child->GetObjectId();
         placed.Model = model;
         placed.bPlaced = true;
@@ -719,7 +893,7 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
-        return m_PlacedTiles[tileId].bPlaced || PlaceTile({x, z});
+        return m_PlacedTiles[tileId].bPlaced || PlaceTile({x, z}, tileId);
     }
 
     void TerrainComponent::RemoveTileAt(uint32_t x, uint32_t z)
@@ -883,9 +1057,16 @@ namespace NorvesLib::Core::Component
             }
             m_TerrainSystem->UnregisterTerrain(m_TerrainHandle);
         }
+        ReleaseOuterTerrains();
         m_TerrainHandle = {};
         m_HeightField.reset();
         m_AssetSystem.reset();
+        for (float& channel : m_OuterBaseColor)
+        {
+            channel = 0.0f;
+        }
+        m_OuterRoughness = 0.0f;
+        m_bHasOuterMaterial = false;
         m_Tiles.clear();
         m_TileCountX = 0;
         m_TileCountZ = 0;

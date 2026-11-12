@@ -69,6 +69,8 @@ namespace NorvesLib::Core::Component
         Streaming::ITerrainTileSite& GetTileSite() { return m_TileSite; }
 
         Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> GetHeightField() const { return m_HeightField; }
+        /// 読み込んだ近景と外周の XZ 範囲を返す。読込み前・失敗時は false を返し、出力を変えない。
+        bool GetTerrainBoundsXZ(float& outMinX, float& outMinZ, float& outMaxX, float& outMaxZ) const;
         uint32_t GetPlacedTileCount() const { return m_PlacedTileCount; }
         uint32_t GetTileCount() const { return static_cast<uint32_t>(m_Tiles.size()); }
         /// 欠けた区画を含め、全区画の配置の試行が終わったかを返す。読込み前と読込み失敗時は偽。
@@ -106,6 +108,13 @@ namespace NorvesLib::Core::Component
         {
             uint32_t X = 0;
             uint32_t Z = 0;
+            bool bOuter = false;
+        };
+
+        struct OuterTerrainRegistration
+        {
+            Rendering::Terrain::TerrainHandle Handle;
+            Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> HeightField;
         };
 
         struct PlacedTile
@@ -117,15 +126,18 @@ namespace NorvesLib::Core::Component
 
         void SetDefaults();
         bool LoadTerrain();
-        void LoadSplatMaterial(const Rendering::Terrain::TerrainHeightField& heightField);
+        void LoadSplatMaterial(const Rendering::Terrain::TerrainHeightField& heightField, bool bNeedsOuterMaterial);
         void ReleaseSplatTextures();
+        void ReleaseOuterTerrains();
         void PlacePendingTiles();
-        bool PlaceTile(const TileCoordinate& tile);
+        /// record は m_Tiles と同じ並びの配置の記録の番号（近景は行優先の番号、外周はその後ろ）。
+        bool PlaceTile(const TileCoordinate& tile, uint32_t record);
 
         // 保存するのは上の値だけ。以下の登録と所有物は BeginPlay / EndPlay の間だけ有効。
         Container::TSharedPtr<const Asset::AssetSystem> m_AssetSystem;
         Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField> m_HeightField;
         Rendering::Terrain::TerrainHandle m_TerrainHandle;
+        Container::VariableArray<OuterTerrainRegistration> m_OuterTerrains;
         Rendering::Terrain::TerrainSystem* m_TerrainSystem = nullptr;
         Rendering::RenderResources* m_RenderResources = nullptr;
         World* m_World = nullptr;
@@ -142,6 +154,9 @@ namespace NorvesLib::Core::Component
         uint32_t m_TileCountZ = 0;
         uint32_t m_TileCells = 0;
         Rendering::MegaGeometry::MegaTerrainSplat m_Splat;
+        float m_OuterBaseColor[3] = {};
+        float m_OuterRoughness = 0.0f;
+        bool m_bHasOuterMaterial = false;
         uint32_t m_NextTile = 0;
         uint32_t m_PlacedTileCount = 0;
     };
