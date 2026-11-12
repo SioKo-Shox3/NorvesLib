@@ -337,3 +337,16 @@ GetClipCountは格納エントリ数。GetClip(index)は範囲外で空、GetCli
 ## 分離v1の256関節（GR86）
 
 `RigImportProfile::StaticRootFrame256`（wire profile 3）と `RigV1Limits::MaxJoints = 256` を明示した入力だけ、256関節まで受ける。静的親frame・作者rest・AFRM・束縛proofの規則はprofile 2と共通。旧NVSKELとprofile 1/2は128のままで、予算の増加によって上限を迂回できない。頂点ABI・4影響・RHI形式は変えない。
+
+## `skin.skeleton` の扱い
+
+旧 NVSKEL 0.2（`--kind model --entry-type Skl0`、`DecodeSkeletalGltf`・`DecodeRigGltf`・`GLTFAnalyzer::AnalyzeSkeletal`）と NVSKEL v1 の profile1（`DirectTrs128`）では、`skeleton` があれば、その node は関節で、親を持たない根の関節である必要がある。省略時は、関節の集合と node の親子から唯一の根の関節を求める。
+どちらの場合も、関節の親は関節だけとし、非関節の親を持つ関節は拒否し、根が 2 つ以上・循環も拒否する。省略時は加えて、求めた根が選んだ scene から届かなければ拒否する。`skeleton` のある資産の出力は前と同じ。
+
+NVSKEL v1 の profile2/3（`StaticRootFrame128`・`StaticRootFrame256`）では、`skeleton` は省略してよく、指定時は根の関節かその祖先である必要がある。`--rig-split` と asset-set の skeletal の既定は profile3。
+根の上の非関節の祖先（Armature）は静的な TRS・正の一様 scale だけ受け、その変換を作者 frame に入れる。詳細は [RigStaticRootFrame128.md](RigStaticRootFrame128.md) を参照。
+
+Blender の書き出し（`io_scene_gltf2`）は `skeleton` を書かず、根の bone と skinned mesh を非関節の `Armature` node の下に置く。このため Blender の資産は旧経路では拒否され、AssetCook の失敗の文に `--rig-split` への案内が出る。Blender の資産は `--rig-split`（NVSKEL v1）で cook する。
+
+形を写した fixture は `Assets/Models/M9Skinned/NoSkeletonHint.gltf`（Armature 無し。旧経路と v1 の両方で受ける）と `Assets/Models/M9Skinned/BlenderArmature.gltf`（Armature の親。旧経路は拒否、profile3 は受ける）。中身は同じディレクトリの `README.md` を参照。
+実物の書き出しは `Test/Tools/BlenderExportMinimalRig.py` を Blender の中で `--background --python` で走らせて作れる。

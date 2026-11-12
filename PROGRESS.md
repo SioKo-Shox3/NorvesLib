@@ -11108,3 +11108,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 旧経路(profile1)の骨格の抽出で skin.skeleton の省略を受け、唯一の根の関節を求める: 着地(直し 0 回)
 - U2 Blender の書き出しと同じ形の fixture 2 つ・README・Blender の書き出しスクリプトを足す: 着地(直し 0 回)
 - U3 AssetCook の旧経路の骨格の拒否に --rig-split への案内を足す: 着地(直し 0 回)
+- U4 skin.skeleton の扱いを経路ごとに文書へ書き、足す試験の理由を Testing.md に書く: 着地(直し 1 回)
