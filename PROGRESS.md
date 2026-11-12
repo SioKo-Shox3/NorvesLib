@@ -11011,3 +11011,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: 切り抜きの FS は早期の深度試験を失う（Masked の材質だけ）。VT のフィードバックは discard の前で書くので、隠れた画素と切り抜いた画素も要求を出しうる（アルベドのタイルは被覆率を決めるのに要る）。評価者の non-blocking として残したもの: `MegaGeometryPass::CreateDrawPipeline` と `VisibilityRasterPass::CreatePipelines` が cull None のパイプラインを常に先に作るので、不透明だけのシーンでもパイプラインが 2 本増える（GPU の試験が数えるのは `GBufferPipelineCreated` だけ）。`VisibilityResolve.glsl` の両面の法線の反転は視線に `cameraPosition - position[0]` を使い、正射影の主の視点では表裏を誤りうる。`ModelStaging.cpp` の `std::clamp` は NaN を通す（MegaGeometry は値を使わないので今は害が無い）。`RenderingAlphaClipVulkanTest` の深度の試しは盤面のワーカーでは回せず（Vulkan のドライバが隠されている）、GPU の上では未実行。
 - U1 影の切り抜きの判定の GLSL と、CSM・点光源のキューブの切り抜きのシェーダー: 着地(直し 0 回)
 - U3 CSM（ShadowMapPass の太陽のカスケード）で Masked の材質をマスク用のパイプラインで描く: 着地(直し 0 回)
+- U5 VSM の描画（VirtualShadowMapRaster）にマスク用のパイプラインと、塊の範囲ごとの切り替えを足す: 着地(直し 0 回)
