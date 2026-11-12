@@ -99,6 +99,21 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - ほかの手段で気づけるか: 気づけない。loose が代わりに読まれると画面上は正常に見える。
 - 失敗が黙って起きるか: 起きる。壊れた cooked を隠して実行が続く可能性がある。
 
+`GLTFSkeletalAnalyzerTest` の `NoSkeletonHint.gltf` の試験を足す理由:
+- 反証する契約: 旧経路が `skin.skeleton` の無い資産を受け、`skeleton` を足した同じ資産と関節（名前・親・逆バインド行列）・頂点・索引・clip が一致する。根の求め方が hint と同じ結果になる。
+- ほかの手段で気づけるか: 気づけない。Blender の資産を旧経路で cook しなければ出ず、間違った根でも cook は成功しうる。
+- 失敗が黙って起きるか: 起きる。別の関節を根にすると姿勢が崩れるだけで失敗にならない。
+
+`GLTFSkeletalAnalyzerTest` の `BlenderArmature.gltf` の試験を足す理由:
+- 反証する契約: 旧経路は根の上の非関節の親（Armature）を今までどおり `InvalidSkeleton` で拒否し、hint の省略を受けることで黙って Armature の変換を落として受けることがない。
+- ほかの手段で気づけるか: 気づけない。受けてしまうと Armature の回転と scale が消えた姿勢で描かれ、撮影しない限り分からない。
+- 失敗が黙って起きるか: 起きる。
+
+`RigStaticRootFrameImportTest` の Blender の形の試験を足す理由:
+- 反証する契約: Blender の書き出しの形（`skeleton` 無し・Armature の下に根の bone と mesh・深さ優先の joints）を profile3 が受け、Armature の TRS が作者 frame に入る。
+- ほかの手段で気づけるか: 気づけない。実物の Blender の資産の確かめは別にするが、合成の Armature の fixture は node の並びが Blender と違う。
+- 失敗が黙って起きるか: 起きる。frame を落としても cook は成功する。
+
 `AssetLoadProfileSummaryContract.cmake.in`（`AssetLoadProfileSummaryContractTest`）の骨格 cooked 要約の 3 ケースを足す理由:
 - 反証する契約: `-RequireCompleteCookedSkeletal` は解決・解析・資源生成の 3 段がすべて `source=cooked`・`success=1` なら合格し、1 段だけ `source=loose` の場合と 1 段が欠ける場合は不合格にする。
 - ほかの手段で気づけるか: ログを直接照合すれば気づけるが、撮影や読み込みの成否だけでは要約の誤判定は分からない。要約自体が不完全な記録を拒否することを確かめる必要がある。

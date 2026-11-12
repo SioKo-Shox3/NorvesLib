@@ -398,7 +398,13 @@ namespace
             Copy(sourceRoot, "ValidU8Float.gltf");
             Copy(sourceRoot, "ValidU16Unorm8.gltf");
             Copy(sourceRoot, "ValidU8Unorm16.gltf");
+            Copy(sourceRoot, "NoSkeletonHint.gltf");
+            Copy(sourceRoot, "BlenderArmature.gltf");
             WriteBytes(Root / "fixture.bin", BuildFixtureBuffer());
+
+            Container::String withSkeleton = ReadText(Root / "NoSkeletonHint.gltf");
+            ReplaceOnce(withSkeleton, "\"joints\"", "\"skeleton\": 1, \"joints\"");
+            WriteText(Root / "NoSkeletonHintWithSkeleton.gltf", withSkeleton);
 
             const Container::String valid = ReadText(Root / "ValidU8Float.gltf");
             const Container::String validU16Weights = ReadText(Root / "ValidU8Unorm16.gltf");
@@ -687,6 +693,111 @@ namespace
         assert(rotation.Samples[1].Value.W == 0.0f);
     }
 
+    void AssertSameData(const Skeletal::SkeletalGltfData& a, const Skeletal::SkeletalGltfData& b)
+    {
+        for (size_t i = 0; i < 16; ++i)
+        {
+            assert(a.MeshNodeGlobalTransform[i] == b.MeshNodeGlobalTransform[i]);
+        }
+        assert(a.Joints.size() == b.Joints.size());
+        for (size_t i = 0; i < a.Joints.size(); ++i)
+        {
+            const auto& x = a.Joints[i];
+            const auto& y = b.Joints[i];
+            assert(x.Name == y.Name && x.ParentIndex == y.ParentIndex);
+            for (size_t j = 0; j < 16; ++j)
+            {
+                assert(x.InverseBindMatrix[j] == y.InverseBindMatrix[j]);
+            }
+        }
+        assert(a.Vertices.size() == b.Vertices.size());
+        for (size_t i = 0; i < a.Vertices.size(); ++i)
+        {
+            const auto& x = a.Vertices[i];
+            const auto& y = b.Vertices[i];
+            assert(x.Position.X == y.Position.X && x.Position.Y == y.Position.Y && x.Position.Z == y.Position.Z);
+            assert(x.Normal.X == y.Normal.X && x.Normal.Y == y.Normal.Y && x.Normal.Z == y.Normal.Z);
+            assert(x.TexCoord.U == y.TexCoord.U && x.TexCoord.V == y.TexCoord.V);
+            for (size_t j = 0; j < 4; ++j)
+            {
+                assert(x.JointIndices[j] == y.JointIndices[j] && x.JointWeights[j] == y.JointWeights[j]);
+            }
+        }
+        assert(a.Indices.size() == b.Indices.size());
+        for (size_t i = 0; i < a.Indices.size(); ++i)
+        {
+            assert(a.Indices[i] == b.Indices[i]);
+        }
+        assert(a.SubMeshes.size() == b.SubMeshes.size());
+        for (size_t i = 0; i < a.SubMeshes.size(); ++i)
+        {
+            const auto& x = a.SubMeshes[i];
+            const auto& y = b.SubMeshes[i];
+            assert(x.IndexStart == y.IndexStart && x.IndexCount == y.IndexCount && x.MaterialSlot == y.MaterialSlot &&
+                   x.VertexCount == y.VertexCount && x.bNoShadow == y.bNoShadow && x.BoundsRadius == y.BoundsRadius);
+            for (size_t j = 0; j < 3; ++j)
+            {
+                assert(x.BoundsCenter[j] == y.BoundsCenter[j]);
+            }
+        }
+        assert(a.MaterialSlots.size() == b.MaterialSlots.size());
+        for (size_t i = 0; i < a.MaterialSlots.size(); ++i)
+        {
+            assert(a.MaterialSlots[i].Name == b.MaterialSlots[i].Name);
+        }
+        assert(a.Clips.size() == b.Clips.size());
+        for (size_t i = 0; i < a.Clips.size(); ++i)
+        {
+            const auto& x = a.Clips[i];
+            const auto& y = b.Clips[i];
+            assert(x.Name == y.Name && x.DurationSeconds == y.DurationSeconds &&
+                   x.RootMotionJoint == y.RootMotionJoint && x.RootMotion.size() == y.RootMotion.size());
+            for (size_t j = 0; j < x.RootMotion.size(); ++j)
+            {
+                const auto& p = x.RootMotion[j];
+                const auto& q = y.RootMotion[j];
+                assert(p.TimeSeconds == q.TimeSeconds && p.TranslationX == q.TranslationX &&
+                       p.TranslationZ == q.TranslationZ && p.YawRadians == q.YawRadians);
+            }
+            assert(x.Channels.size() == y.Channels.size());
+            for (size_t j = 0; j < x.Channels.size(); ++j)
+            {
+                const auto& p = x.Channels[j];
+                const auto& q = y.Channels[j];
+                assert(p.JointIndex == q.JointIndex && p.Path == q.Path && p.Interpolation == q.Interpolation &&
+                       p.UniformStartSeconds == q.UniformStartSeconds && p.UniformStepSeconds == q.UniformStepSeconds &&
+                       p.Samples.size() == q.Samples.size());
+                for (size_t k = 0; k < p.Samples.size(); ++k)
+                {
+                    const auto& u = p.Samples[k];
+                    const auto& v = q.Samples[k];
+                    assert(u.TimeSeconds == v.TimeSeconds && u.Value.X == v.Value.X && u.Value.Y == v.Value.Y &&
+                           u.Value.Z == v.Value.Z && u.Value.W == v.Value.W);
+                }
+            }
+            const auto& p = x.Metadata;
+            const auto& q = y.Metadata;
+            assert(p.Loop.bEnabled == q.Loop.bEnabled && p.Loop.Start == q.Loop.Start && p.Loop.End == q.Loop.End &&
+                   p.Root.Mode == q.Root.Mode && p.Root.Joint == q.Root.Joint && p.Root.bX == q.Root.bX &&
+                   p.Root.bZ == q.Root.bZ && p.Root.bYaw == q.Root.bYaw &&
+                   p.Root.NominalSpeed == q.Root.NominalSpeed && p.GroundOffset == q.GroundOffset);
+            assert(p.Events.size() == q.Events.size());
+            for (size_t j = 0; j < p.Events.size(); ++j)
+            {
+                const auto& u = p.Events[j];
+                const auto& v = q.Events[j];
+                assert(u.Name.GetView() == v.Name.GetView() && u.Time == v.Time && u.EndTime == v.EndTime &&
+                       u.MinWeight == v.MinWeight && u.Value == v.Value && u.IntValue == v.IntValue);
+            }
+            assert(p.Markers.size() == q.Markers.size());
+            for (size_t j = 0; j < p.Markers.size(); ++j)
+            {
+                assert(p.Markers[j].Name.GetView() == q.Markers[j].Name.GetView() &&
+                       p.Markers[j].Time == q.Markers[j].Time);
+            }
+        }
+    }
+
     void ExpectReject(const SkeletalFixtureDirectory& fixture,
                       const char* name,
                       Skeletal::SkeletalGltfDecodeStatus expectedStatus)
@@ -749,6 +860,18 @@ int main()
         std::cout << "fixture ValidU8Unorm16.gltf passed\n";
     }
 
+    {
+        const auto omitted = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path("NoSkeletonHint.gltf"));
+        const auto explicitHint = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path("NoSkeletonHintWithSkeleton.gltf"));
+        assert(omitted.Succeeded() && explicitHint.Succeeded());
+        AssertSameData(omitted.Data, explicitHint.Data);
+        assert(omitted.Data.Joints.size() == 2);
+        assert(omitted.Data.Joints[0].Name == "Bone" && omitted.Data.Joints[0].ParentIndex == -1);
+        assert(omitted.Data.Joints[1].Name == "Bone.001" && omitted.Data.Joints[1].ParentIndex == 0);
+        assert(omitted.Data.Clips.size() == 1 && omitted.Data.Clips[0].Name == "ArmatureAction");
+        std::cout << "fixture NoSkeletonHint.gltf passed\n";
+    }
+
     // These mutations respectively remove bounds validation and each v0 feature gate.
     const Skeletal::SkeletalGltfDecodeResult invalidU16WeightSum =
         Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path("InvalidU16WeightSum.gltf"));
@@ -778,6 +901,7 @@ int main()
     }
     ExpectReject(fixture,"MalformedInfluence.gltf",Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
 
+    ExpectReject(fixture, "BlenderArmature.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
     ExpectReject(fixture, "OutOfRangeJoint.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
     ExpectReject(fixture, "TwoSkins.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedSkinCount);
     const auto twoPrimitives = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path("TwoPrimitives.gltf"));

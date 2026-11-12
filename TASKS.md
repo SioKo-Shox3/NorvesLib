@@ -6933,7 +6933,7 @@
 - notes: 確かめ直し (c)。BVH の取り込みの本体(回転順・Frame Time の上書き・写像・周期 11.6 コマ・ルート移動・2 回の cook のバイト一致)は試験がある(`BvhDecodeTest`・`BvhEvaluateTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhCookBridgeTest.cpp:437` の繰り返しの一致)が、要件の受け入れ確認の【実データ】と【手動クロスチェック】の受け皿が無い: 環境変数の名前も `--dump-fk` もリポジトリに無く、`BvhImport.md:35` は「Blenderとの実物照合…は別の未完条件」と書く。環境変数は、段階をまたぐ注意(ロードマップ 4423 行)の食い違いを解くため、G4 の GR128 と同じ `NORVES_MOTION_SAMPLE_DIR`(無ければ 125)にそろえた。要件の `NORVES_REAL_BVH` は使わない(BvhImport.md に読み替えを書く)。実 BVH は研究用ライセンスなのでリポジトリに入れない。値(53・11・162・67)は要件の 2026-09 の観測で、違ったら作者の手元の版を PROGRESS.md に書いて止める。要件 `#### GR84` の受け入れ確認【実データ】【手動クロスチェック】。
 
 ## G2-GR82-SKELETON-HINT-LEGACY: `skin.skeleton` の無い glTF を旧 NVSKEL の経路でも受け、Blender の書き出しと同じ形の fixture で両方の経路を固定する
-- status: todo
+- status: done
 - gr: GR82, GR86
 - done-when: `SkeletalGltfDecode.cpp` の profile1・旧 NVSKEL 0.2 の骨格の抽出(1651〜1655 行の `TryReadRequiredUInt32(skin, "skeleton", ...)`)を、`skeleton` があれば今と同じ検査、無ければ関節の集合と node の親子から唯一の根の関節を求める形にする(profile2/3 の `ExtractStaticRootFrame` と同じ規則: 根が 2 つ以上・循環・選んだ scene から届かない関節は拒否)。profile1 の「関節の親は関節だけ」(非関節の親を拒否)は変えない。`skeleton` のある既存の資産の出力はバイト一致する。
   `Assets/Models/M9Skinned/` に Blender 5.2.2 の glTF の書き出しと同じ形の手書きの fixture を 2 つ足す: `NoSkeletonHint.gltf`(`skin.skeleton` 無し・Armature の node 無し・2 関節・clip 1)と `BlenderArmature.gltf`(`skin.skeleton` 無し・回転と一様 scale を持つ非関節の親 `Armature` の下に根の関節・`joints` の並びは Blender と同じ深さ優先・clip 名は Blender の `<Armature>Action` の形)。形は `io_scene_gltf2` の書き出し(skins.py の `__gather_skeleton` が None を返す)に合わせ、fixture の頭のコメント相当の別ファイル `Assets/Models/M9Skinned/README.md` に、どの書き出しの形を写したかを書く。

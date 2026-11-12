@@ -4316,6 +4316,10 @@ namespace NorvesLib::Tools::AssetCook
                     error += " morph_validated_targets=" + FormatInteger(decoded.Report.DroppedMorphTargetCount);
                     error += " morph_validated_channels=" + FormatInteger(decoded.Report.DroppedMorphAnimationChannelCount);
                 }
+                if (decoded.Status == Core::Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton)
+                {
+                    error += reinterpret_cast<const char*>(u8" 関節の親が関節ではない node（Blender の Armature など）の場合、旧 NVSKEL 0.2 では対応していません。--rig-split（NVSKEL v1）で cook してください。");
+                }
                 return false;
             }
 
