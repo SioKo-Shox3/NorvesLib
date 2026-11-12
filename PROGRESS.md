@@ -10939,3 +10939,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 ストリーミングの口を payload の実装に合わせて広げる: 着地(直し 0 回)
 - U2 ScatterSystem にセルから常駐を指定する口を足す: 着地(直し 0 回)
 - U3 TerrainComponent に区画単位で置く・外す口と ITerrainTileSite の実装を足す: 着地(直し 0 回)
+- U4 Core の payload handler 3 種（terrain-tile・scatter-chunk・placement）を足す: 着地(直し 0 回)
