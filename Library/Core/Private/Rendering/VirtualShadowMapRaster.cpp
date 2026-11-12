@@ -18,6 +18,7 @@
 #include "RHI/IRenderPass.h"
 #include "RHI/ITexture.h"
 
+#include <algorithm>
 #include <cwchar>
 #include <limits>
 
@@ -145,6 +146,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DrawBindMegaChunks = 4;
         constexpr uint32_t DrawBindSlices = 5;
         constexpr uint32_t DrawBindWorldField = 6;
+        constexpr uint32_t DrawBindAlbedo = 7;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type, RHI::ShaderStage stages)
         {
@@ -178,6 +180,13 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(DrawBindMegaChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Vertex));
             desc.bindings.push_back(MakeBinding(DrawBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex));
             desc.bindings.push_back(MakeBinding(DrawBindWorldField, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Vertex));
+            return desc;
+        }
+
+        RHI::DescriptorSetDesc MakeMaskDrawLayout()
+        {
+            RHI::DescriptorSetDesc desc = MakeDrawLayout();
+            desc.bindings.push_back(MakeBinding(DrawBindAlbedo, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel));
             return desc;
         }
 
@@ -499,6 +508,40 @@ namespace NorvesLib::Core::Rendering
                 drawDesc.renderPass = m_RenderPass;
                 drawDesc.descriptorSetLayouts.push_back(MakeDrawLayout());
                 m_DrawPipeline = device->CreateGraphicsPipeline(drawDesc);
+
+                // 切り抜きだけは任意の機能。読み込み・作成の失敗を通常の描画へ波及させない。
+                try
+                {
+                    m_MaskVertexShader = shaderManager->LoadShader("vsm_draw_alphaclip.vert", RHI::ShaderStage::Vertex);
+                    m_MaskFragmentShader = shaderManager->LoadShader("vsm_draw_alphaclip.frag", RHI::ShaderStage::Pixel);
+                    if (m_MaskVertexShader && m_MaskFragmentShader)
+                    {
+                        RHI::SamplerDesc albedoSamplerDesc;
+                        albedoSamplerDesc.filterMin = RHI::FilterMode::Linear;
+                        albedoSamplerDesc.filterMag = RHI::FilterMode::Linear;
+                        albedoSamplerDesc.filterMip = RHI::FilterMode::Linear;
+                        albedoSamplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+                        albedoSamplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+                        albedoSamplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+                        m_AlbedoSampler = device->CreateSampler(albedoSamplerDesc);
+                        drawDesc.vertexShader = m_MaskVertexShader;
+                        drawDesc.pixelShader = m_MaskFragmentShader;
+                        drawDesc.descriptorSetLayouts[0] = MakeMaskDrawLayout();
+                        m_MaskDrawPipeline = device->CreateGraphicsPipeline(drawDesc);
+                    }
+                }
+                catch (...)
+                {
+                    m_MaskDrawPipeline.reset();
+                }
+                if (!m_MaskDrawPipeline || !m_AlbedoSampler)
+                {
+                    m_MaskDrawPipeline.reset();
+                    m_AlbedoSampler.reset();
+                    m_MaskVertexShader.reset();
+                    m_MaskFragmentShader.reset();
+                    NORVES_LOG_WARNING("VirtualShadowMapRaster", "VSM の切り抜き用の作成に失敗。切り抜きの範囲は不透明で描く");
+                }
             }
 
             // 頂点の番号（gl_VertexIndex）を 0, 1, 2, … にするための連番のインデックス
@@ -541,6 +584,10 @@ namespace NorvesLib::Core::Rendering
         m_WorldFieldSampler.reset();
         m_Framebuffer.reset();
         m_DrawPipeline.reset();
+        m_MaskDrawPipeline.reset();
+        m_AlbedoSampler.reset();
+        m_MaskVertexShader.reset();
+        m_MaskFragmentShader.reset();
         m_ExpandPipeline.reset();
         m_ExpandArgsPipeline.reset();
         m_RenderPass.reset();
@@ -550,6 +597,8 @@ namespace NorvesLib::Core::Rendering
         m_ExpandShader.reset();
         m_Device = nullptr;
         m_LastDrawCount = 0;
+        m_LastMaskedDrawCount = 0;
+        m_LastMaskedFallbackCount = 0;
         m_bLastMegaDraw = false;
         m_bMegaSupported = false;
     }
@@ -589,6 +638,8 @@ namespace NorvesLib::Core::Rendering
     bool VirtualShadowMapRaster::Record(RHI::ICommandList* commandList, const VirtualShadowMapRasterDispatch& dispatch)
     {
         m_LastDrawCount = 0;
+        m_LastMaskedDrawCount = 0;
+        m_LastMaskedFallbackCount = 0;
         m_bLastMegaDraw = false;
         if (!IsReady() || !commandList || dispatch.PoolPages == 0 || dispatch.PoolPages > VirtualShadowMap::MAX_POOL_PAGES ||
             !dispatch.Pool || !dispatch.PageTable || !dispatch.Stats || !dispatch.Chunks || !dispatch.Instances || !dispatch.Draws)
@@ -648,6 +699,59 @@ namespace NorvesLib::Core::Rendering
         if (!AcquireUse(use))
         {
             return false;
+        }
+
+        // 不正な範囲も実在する塊へ切り詰めて残し、不透明で描いた数を重複なく数える。
+        constexpr uint32_t FallbackMask = std::numeric_limits<uint32_t>::max();
+        struct MaskSpan
+        {
+            uint32_t First;
+            uint32_t End;
+            uint32_t MaskIndex;
+        };
+        Container::VariableArray<MaskSpan> maskSpans;
+        if (dispatch.MaskedDraws)
+        {
+            uint64_t previousEnd = 0;
+            for (uint32_t index = 0; index < dispatch.MaskedDrawCount; ++index)
+            {
+                const VirtualShadowMapMaskedDraw& draw = dispatch.MaskedDraws[index];
+                const uint64_t end = static_cast<uint64_t>(draw.FirstChunk) + draw.ChunkCount;
+                const bool bValid = draw.FirstChunk >= previousEnd && end <= dispatch.ChunkCount && draw.Albedo &&
+                                    index < VirtualShadowMap::MAX_MASKED_DRAWS && m_MaskDrawPipeline;
+                previousEnd = std::max(previousEnd, end);
+                if (draw.ChunkCount != 0u && draw.FirstChunk < dispatch.ChunkCount)
+                {
+                    maskSpans.push_back({draw.FirstChunk, static_cast<uint32_t>(std::min<uint64_t>(end, dispatch.ChunkCount)),
+                                         bValid ? index : FallbackMask});
+                }
+            }
+            std::sort(maskSpans.begin(), maskSpans.end(), [](const MaskSpan& left, const MaskSpan& right)
+            {
+                return left.First < right.First;
+            });
+            size_t count = 0;
+            for (size_t index = 0; index < maskSpans.size(); ++index)
+            {
+                const MaskSpan span = maskSpans[index];
+                if (count != 0u && span.First < maskSpans[count - 1u].End)
+                {
+                    // 重なる範囲は材質を一意に選べないため、重なった範囲全体を不透明へ倒す。
+                    MaskSpan& merged = maskSpans[count - 1u];
+                    merged.End = std::max(merged.End, span.End);
+                    merged.MaskIndex = FallbackMask;
+                }
+                else
+                {
+                    maskSpans[count++] = span;
+                }
+            }
+            maskSpans.resize(count);
+        }
+        else if (dispatch.MaskedDrawCount != 0u)
+        {
+            // 配列が無いと境界を復元できないため、ホストの全塊を不透明へのフォールバックとして数える。
+            maskSpans.push_back({0u, dispatch.ChunkCount, FallbackMask});
         }
 
         // ----- 展開 -----
@@ -727,19 +831,61 @@ namespace NorvesLib::Core::Rendering
         // ----- 描画 -----
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmDraw");
-            use->DrawSet->BindConstantBuffer(DrawBindParams, use->Uniform, 0, sizeof(params));
-            use->DrawSet->BindStorageBuffer(DrawBindSlices, use->Slices, 0, sliceBytes);
-            use->DrawSet->BindStorageBuffer(DrawBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
-            use->DrawSet->BindStorageBuffer(DrawBindChunks, dispatch.Chunks, 0,
-                                            ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
-            use->DrawSet->BindStorageBuffer(DrawBindPool, dispatch.Pool, 0,
-                                            ClampBindSize(VirtualShadowMap::PoolBytes(dispatch.PoolPages)));
-            use->DrawSet->BindStorageBuffer(DrawBindMegaChunks, bMega ? dispatch.MegaChunks : dispatch.Chunks, 0,
-                                            ClampBindSize(bMega ? VirtualShadowMap::RasterChunkBytes(dispatch.MegaCapacity)
-                                                                : VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
-            use->DrawSet->BindTexture(DrawBindWorldField, currentField);
-            use->DrawSet->BindSampler(DrawBindWorldField, m_WorldFieldSampler);
+            const auto bindDrawSet = [&](const RHI::DescriptorSetPtr& set)
+            {
+                set->BindConstantBuffer(DrawBindParams, use->Uniform, 0, sizeof(params));
+                set->BindStorageBuffer(DrawBindSlices, use->Slices, 0, sliceBytes);
+                set->BindStorageBuffer(DrawBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
+                set->BindStorageBuffer(DrawBindChunks, dispatch.Chunks, 0,
+                                       ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
+                set->BindStorageBuffer(DrawBindPool, dispatch.Pool, 0,
+                                       ClampBindSize(VirtualShadowMap::PoolBytes(dispatch.PoolPages)));
+                set->BindStorageBuffer(DrawBindMegaChunks, bMega ? dispatch.MegaChunks : dispatch.Chunks, 0,
+                                       ClampBindSize(bMega ? VirtualShadowMap::RasterChunkBytes(dispatch.MegaCapacity)
+                                                           : VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
+                set->BindTexture(DrawBindWorldField, currentField);
+                set->BindSampler(DrawBindWorldField, m_WorldFieldSampler);
+            };
+            bindDrawSet(use->DrawSet);
             use->DrawSet->Update();
+            if (m_MaskDrawPipeline && dispatch.MaskedDraws && !maskSpans.empty())
+            {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
+                const uint32_t setCount = std::min(dispatch.MaskedDrawCount, VirtualShadowMap::MAX_MASKED_DRAWS);
+                if (use->MaskSets.size() < setCount)
+                {
+                    use->MaskSets.resize(setCount);
+                }
+                for (MaskSpan& span : maskSpans)
+                {
+                    if (span.MaskIndex == FallbackMask)
+                    {
+                        continue;
+                    }
+                    RHI::DescriptorSetPtr& set = use->MaskSets[span.MaskIndex];
+                    try
+                    {
+                        if (!set)
+                        {
+                            set = m_Device->CreateDescriptorSet(MakeMaskDrawLayout());
+                        }
+                    }
+                    catch (...)
+                    {
+                        set.reset();
+                    }
+                    if (!set)
+                    {
+                        span.MaskIndex = FallbackMask;
+                        continue;
+                    }
+                    bindDrawSet(set);
+                    // アルベドは GBuffer と同じ断片で標本する ShaderResource 状態。追加の遷移は不要。
+                    set->BindTexture(DrawBindAlbedo, dispatch.MaskedDraws[span.MaskIndex].Albedo);
+                    set->BindSampler(DrawBindAlbedo, m_AlbedoSampler);
+                    set->Update();
+                }
+            }
 
             RHI::Viewport viewport;
             viewport.x = 0.0f;
@@ -768,8 +914,30 @@ namespace NorvesLib::Core::Rendering
             commandList->SetDescriptorSet(use->DrawSet, 0);
             commandList->SetIndexBuffer(m_IdentityIndices, 0, RHI::IndexType::Uint32);
             // 塊ごとに 1 回（instanceCount = その塊を描くページの数、firstInstance = インスタンスの範囲の先頭）
+            size_t spanIndex = 0;
+            uint32_t boundMask = FallbackMask;
             for (uint32_t chunk = 0; chunk < dispatch.ChunkCount; ++chunk)
             {
+                while (spanIndex < maskSpans.size() && chunk >= maskSpans[spanIndex].End)
+                {
+                    ++spanIndex;
+                }
+                const bool bInRange = spanIndex < maskSpans.size() && chunk >= maskSpans[spanIndex].First;
+                const uint32_t maskIndex = bInRange ? maskSpans[spanIndex].MaskIndex : FallbackMask;
+                if (maskIndex != boundMask)
+                {
+                    commandList->SetPipeline(maskIndex == FallbackMask ? m_DrawPipeline : m_MaskDrawPipeline);
+                    commandList->SetDescriptorSet(maskIndex == FallbackMask ? use->DrawSet : use->MaskSets[maskIndex], 0);
+                    boundMask = maskIndex;
+                }
+                if (maskIndex != FallbackMask)
+                {
+                    ++m_LastMaskedDrawCount;
+                }
+                else if (bInRange)
+                {
+                    ++m_LastMaskedFallbackCount;
+                }
                 commandList->DrawIndexedIndirect(dispatch.Draws, DrawHeaderBytes + static_cast<uint64_t>(chunk) * DrawCommandStride, 1u,
                                                  DrawCommandStride);
                 ++m_LastDrawCount;
@@ -778,6 +946,11 @@ namespace NorvesLib::Core::Rendering
             // インスタンスごとの定数バッファは要らない（CSM の MegaGeometry の影のように DynamicUniformAllocator のスロットを使わない）
             if (bMega)
             {
+                if (boundMask != FallbackMask)
+                {
+                    commandList->SetPipeline(m_DrawPipeline);
+                    commandList->SetDescriptorSet(use->DrawSet, 0);
+                }
                 commandList->DrawIndexedIndirectCount(dispatch.Draws,
                                                       DrawHeaderBytes + static_cast<uint64_t>(dispatch.ChunkCount) * DrawCommandStride,
                                                       dispatch.MegaList, 0u, dispatch.MegaCapacity, DrawCommandStride);
