@@ -11030,3 +11030,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ラスタの GBuffer（静的・スキン・切り抜き）に鏡面の AA を入れる: 着地(直し 0 回)
 - U4 MegaGeometry のラスタに鏡面の AA を入れる: 着地(直し 0 回)
 - U5 可視バッファの解決に鏡面の AA を入れる（解析的な微分）: 着地(直し 0 回)
+- U7 配置の文書の直しを当て、タスクのビルドと CPU の検査を通す（U6 の切り直し）: 着地(直し 0 回)
