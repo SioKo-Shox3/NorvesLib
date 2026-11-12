@@ -6886,7 +6886,7 @@
 - notes: 確かめ直し (b)(c)。今は `TextureAssetSetCook.cpp:204` が `CookManagedBootstrapRequest managed{owner, assets, bytes, spec.Version, ...}` で spec の版(1 か 2)を cooker の版として渡し、全種別で 1 つの値になっている。このため cooker のコードを変えても記録の版が変わらず、依存の fingerprint が同じなら古い出力のまま skipped になる(G2-S6-ASSET-SET-P2 で、main のクラスタ化が出力を変えた例がある)。要件の受け入れ確認「cooker_revision の保護」を満たす試験も無い。単体 CLI の出力と既存の 79 出力の基準(`AssetCookCliParity.py`)は変えない。GENERATORS と同じ `TextureAssetSetCook.cpp` を触るので after でつないだ。`SkeletalRoleFileCookerRevision`(`SkeletalRoleFileCook.h:6`)の既存の別系統はこの表に寄せるか、寄せないなら理由を CookCacheDecision.md に書く。要件 `#### GR96` の設計案【3】と受け入れ確認「cooker_revision の保護」。
 
 ## G2-GR79-SKIN-BASECOLOR-BAKE: 骨格つきの資産の cook で、baseColorFactor が 1 でない材質の色をアルベドへ焼き込み、スキンの描画でも材質の色が出るようにする
-- status: todo
+- status: done
 - gr: GR79
 - done-when: 3 資産の cook(`RigSplitCook.cpp` の材質の組み立て、`--rig-split` と asset-set の skeletal の両方)で、材質の baseColorFactor の RGB が (1,1,1) でないとき、その材質のアルベドの全 mip を factor 倍した sRGB の texture を材質ごとの別の論理パス(`<mesh>.mat<N>.albedo` の形。既存の `.mat<N>.arm.rgba8` と同じ命名の規則)で出し、MATS の BaseColor の RGB を 1 にして二重に掛からないようにする。アルベドの texture が無い材質は 4×4 の単色の sRGB アルベドを作る。factor が (1,1,1) のときは今と出力がバイト一致する。焼いたことと元の factor を skeletal の import_report に出す。
   掛け算は線形の空間で行い(sRGB → 線形 → ×factor → sRGB)、丸めは既存の ARM の焼き込み(`BakeArmByte`)と同じ規則にする。alpha は変えない。静的モデル(NVMESH v1)の経路は変えない(`MegaMeshMaterial` が BaseColor を使うので焼かない)。
