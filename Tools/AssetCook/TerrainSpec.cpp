@@ -812,6 +812,219 @@ namespace NorvesLib::Tools::AssetCook
                 hash *= Prime;
             }
         }
+
+        bool ParseHeightInput(const JsonValue& root, const std::filesystem::path& absoluteSpec,
+                              std::filesystem::path& sourcePath, HeightImportDesc& import, AnsiString& outError)
+        {
+            const JsonValue source = root.FindMember("height_source");
+            if (!source.IsObject())
+            {
+                return FailField(absoluteSpec, "height_source", source, "高さ入力をオブジェクトで指定してください。", outError);
+            }
+            const char* sourceKeys[] = {"path", "format", "width", "height", "endian", "exr_channel", "flip_z"};
+            if (!CheckKeys(source, "height_source", sourceKeys, sizeof(sourceKeys) / sizeof(sourceKeys[0]), absoluteSpec, outError))
+            {
+                return false;
+            }
+            if (!ReadSpecPath(source.FindMember("path"), absoluteSpec, "height_source.path", sourcePath, outError))
+            {
+                return false;
+            }
+
+            AnsiString format;
+            const JsonValue formatValue = source.FindMember("format");
+            if (!ReadText(formatValue, absoluteSpec, "height_source.format", format, outError))
+            {
+                return false;
+            }
+            if (format == "png16")
+            {
+                import.Format = HeightSourceFormat::Png16;
+            }
+            else if (format == "png8")
+            {
+                import.Format = HeightSourceFormat::Png8;
+            }
+            else if (format == "raw16")
+            {
+                import.Format = HeightSourceFormat::Raw16;
+            }
+            else if (format == "raw32f")
+            {
+                import.Format = HeightSourceFormat::Raw32F;
+            }
+            else if (format == "exr")
+            {
+                import.Format = HeightSourceFormat::Exr;
+            }
+            else
+            {
+                return FailField(absoluteSpec, "height_source.format", formatValue,
+                                 "png16・png8・raw16・raw32f・exr のいずれかを指定してください。", outError);
+            }
+
+            const bool bRaw = import.Format == HeightSourceFormat::Raw16 ||
+                              import.Format == HeightSourceFormat::Raw32F;
+            const bool bInteger = import.Format == HeightSourceFormat::Png16 ||
+                                  import.Format == HeightSourceFormat::Png8 ||
+                                  import.Format == HeightSourceFormat::Raw16;
+            if (bRaw)
+            {
+                if (!ReadInteger(source.FindMember("width"), absoluteSpec, "height_source.width", 2, UINT32_MAX,
+                                 import.RawWidth, "2 以上 4294967295 以下の整数を指定してください。", outError) ||
+                    !ReadInteger(source.FindMember("height"), absoluteSpec, "height_source.height", 2, UINT32_MAX,
+                                 import.RawHeight, "2 以上 4294967295 以下の整数を指定してください。", outError))
+                {
+                    return false;
+                }
+                const JsonValue endianValue = source.FindMember("endian");
+                if (endianValue.IsValid())
+                {
+                    AnsiString endian;
+                    if (!ReadText(endianValue, absoluteSpec, "height_source.endian", endian, outError))
+                    {
+                        return false;
+                    }
+                    if (endian != "little" && endian != "big")
+                    {
+                        return FailField(absoluteSpec, "height_source.endian", endianValue,
+                                         "little または big を指定してください。", outError);
+                    }
+                    import.bRawBigEndian = endian == "big";
+                }
+            }
+            else if (!RejectPresent(source, "width", absoluteSpec, "height_source.width",
+                                    "width は raw16・raw32f だけに指定できます。削除してください。", outError) ||
+                     !RejectPresent(source, "height", absoluteSpec, "height_source.height",
+                                    "height は raw16・raw32f だけに指定できます。削除してください。", outError) ||
+                     !RejectPresent(source, "endian", absoluteSpec, "height_source.endian",
+                                    "endian は raw16・raw32f だけに指定できます。削除してください。", outError))
+            {
+                return false;
+            }
+
+            const JsonValue channel = source.FindMember("exr_channel");
+            if (import.Format == HeightSourceFormat::Exr)
+            {
+                if (channel.IsValid() && !ReadText(channel, absoluteSpec, "height_source.exr_channel",
+                                                    import.ExrChannel, outError))
+                {
+                    return false;
+                }
+            }
+            else if (channel.IsValid())
+            {
+                return FailField(absoluteSpec, "height_source.exr_channel", channel,
+                                 "exr_channel は exr だけに指定できます。削除してください。", outError);
+            }
+            const JsonValue flip = source.FindMember("flip_z");
+            if (flip.IsValid())
+            {
+                if (!flip.IsBoolean())
+                {
+                    return FailField(absoluteSpec, "height_source.flip_z", flip, "true または false を指定してください。", outError);
+                }
+                import.bFlipZ = flip.AsBool();
+            }
+
+            const JsonValue mapping = root.FindMember("height_mapping");
+            if (!mapping.IsValid() && bInteger)
+            {
+                return FailField(absoluteSpec, "height_mapping", mapping,
+                                 "高さの単位は推測しません。min_m/max_m または scale_m/offset_m を指定してください。", outError);
+            }
+            if (mapping.IsValid())
+            {
+                if (!mapping.IsObject())
+                {
+                    return FailField(absoluteSpec, "height_mapping", mapping, "高さ写像をオブジェクトで指定してください。", outError);
+                }
+                const char* mappingKeys[] = {"min_m", "max_m", "scale_m", "offset_m", "scale", "offset"};
+                if (!CheckKeys(mapping, "height_mapping", mappingKeys, sizeof(mappingKeys) / sizeof(mappingKeys[0]),
+                               absoluteSpec, outError))
+                {
+                    return false;
+                }
+                if (bInteger)
+                {
+                    if (!RejectPresent(mapping, "scale", absoluteSpec, "height_mapping.scale",
+                                       "整数入力には min_m/max_m または scale_m/offset_m を指定してください。", outError) ||
+                        !RejectPresent(mapping, "offset", absoluteSpec, "height_mapping.offset",
+                                       "整数入力には min_m/max_m または scale_m/offset_m を指定してください。", outError))
+                    {
+                        return false;
+                    }
+                    const JsonValue minimum = mapping.FindMember("min_m");
+                    const JsonValue maximum = mapping.FindMember("max_m");
+                    const JsonValue scale = mapping.FindMember("scale_m");
+                    const JsonValue offset = mapping.FindMember("offset_m");
+                    const bool bMinMax = minimum.IsValid() || maximum.IsValid();
+                    const bool bScaleOffset = scale.IsValid() || offset.IsValid();
+                    if (bMinMax && bScaleOffset)
+                    {
+                        return FailField(absoluteSpec, scale.IsValid() ? "height_mapping.scale_m" : "height_mapping.offset_m",
+                                         scale.IsValid() ? scale : offset,
+                                         "min_m/max_m と scale_m/offset_m は混在できません。一方の組だけを指定してください。", outError);
+                    }
+                    if (bMinMax)
+                    {
+                        double minM = 0.0;
+                        double maxM = 0.0;
+                        if (!ReadNumber(minimum, absoluteSpec, "height_mapping.min_m", minM, outError) ||
+                            !ReadNumber(maximum, absoluteSpec, "height_mapping.max_m", maxM, outError))
+                        {
+                            return false;
+                        }
+                        if (maxM < minM)
+                        {
+                            return FailField(absoluteSpec, "height_mapping.max_m", maximum,
+                                             "max_m は min_m 以上にしてください。", outError);
+                        }
+                        const double divisor = import.Format == HeightSourceFormat::Png8 ? 255.0 : 65535.0;
+                        const double difference = maxM - minM;
+                        import.Scale = std::isfinite(difference) ? difference / divisor : maxM / divisor - minM / divisor;
+                        import.Offset = minM;
+                    }
+                    else if (bScaleOffset)
+                    {
+                        if (!ReadNumber(scale, absoluteSpec, "height_mapping.scale_m", import.Scale, outError) ||
+                            (offset.IsValid() && !ReadNumber(offset, absoluteSpec, "height_mapping.offset_m", import.Offset, outError)))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        return FailField(absoluteSpec, "height_mapping", mapping,
+                                         "高さの単位は推測しません。min_m/max_m または scale_m/offset_m を指定してください。", outError);
+                    }
+                }
+                else
+                {
+                    if (!RejectPresent(mapping, "min_m", absoluteSpec, "height_mapping.min_m",
+                                       "浮動小数点入力には scale・offset を指定してください。", outError) ||
+                        !RejectPresent(mapping, "max_m", absoluteSpec, "height_mapping.max_m",
+                                       "浮動小数点入力には scale・offset を指定してください。", outError) ||
+                        !RejectPresent(mapping, "scale_m", absoluteSpec, "height_mapping.scale_m",
+                                       "浮動小数点入力には scale・offset を指定してください。", outError) ||
+                        !RejectPresent(mapping, "offset_m", absoluteSpec, "height_mapping.offset_m",
+                                       "浮動小数点入力には scale・offset を指定してください。", outError))
+                    {
+                        return false;
+                    }
+                    const JsonValue scale = mapping.FindMember("scale");
+                    const JsonValue offset = mapping.FindMember("offset");
+                    if ((scale.IsValid() && !ReadNumber(scale, absoluteSpec, "height_mapping.scale", import.Scale, outError)) ||
+                        (offset.IsValid() && !ReadNumber(offset, absoluteSpec, "height_mapping.offset", import.Offset, outError)))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
     } // namespace
 
     bool ParseTerrainSpec(Span<const uint8_t> specBytes, const std::filesystem::path& specPath,
@@ -847,7 +1060,7 @@ namespace NorvesLib::Tools::AssetCook
             return FailField(absoluteSpec, "$", root, "ルートをオブジェクトにしてください。", outError);
         }
         const char* rootKeys[] = {"version", "height_source", "height_mapping", "cell_size_m", "tile_cells",
-                                  "fit", "require_bit_depth", "smooth", "seed", "recipe"};
+                                  "fit", "require_bit_depth", "smooth", "seed", "recipe", "outer_ring"};
         if (!CheckKeys(root, "", rootKeys, sizeof(rootKeys) / sizeof(rootKeys[0]), absoluteSpec, outError))
         {
             return false;
@@ -862,210 +1075,9 @@ namespace NorvesLib::Tools::AssetCook
 
         TerrainSpec candidate;
         candidate.SpecPath = absoluteSpec;
-        const JsonValue source = root.FindMember("height_source");
-        if (!source.IsObject())
-        {
-            return FailField(absoluteSpec, "height_source", source, "高さ入力をオブジェクトで指定してください。", outError);
-        }
-        const char* sourceKeys[] = {"path", "format", "width", "height", "endian", "exr_channel", "flip_z"};
-        if (!CheckKeys(source, "height_source", sourceKeys, sizeof(sourceKeys) / sizeof(sourceKeys[0]), absoluteSpec, outError))
+        if (!ParseHeightInput(root, absoluteSpec, candidate.HeightSourcePath, candidate.Import, outError))
         {
             return false;
-        }
-        if (!ReadSpecPath(source.FindMember("path"), absoluteSpec, "height_source.path", candidate.HeightSourcePath, outError))
-        {
-            return false;
-        }
-
-        AnsiString format;
-        const JsonValue formatValue = source.FindMember("format");
-        if (!ReadText(formatValue, absoluteSpec, "height_source.format", format, outError))
-        {
-            return false;
-        }
-        if (format == "png16")
-        {
-            candidate.Import.Format = HeightSourceFormat::Png16;
-        }
-        else if (format == "png8")
-        {
-            candidate.Import.Format = HeightSourceFormat::Png8;
-        }
-        else if (format == "raw16")
-        {
-            candidate.Import.Format = HeightSourceFormat::Raw16;
-        }
-        else if (format == "raw32f")
-        {
-            candidate.Import.Format = HeightSourceFormat::Raw32F;
-        }
-        else if (format == "exr")
-        {
-            candidate.Import.Format = HeightSourceFormat::Exr;
-        }
-        else
-        {
-            return FailField(absoluteSpec, "height_source.format", formatValue,
-                             "png16・png8・raw16・raw32f・exr のいずれかを指定してください。", outError);
-        }
-
-        const bool bRaw = candidate.Import.Format == HeightSourceFormat::Raw16 ||
-                          candidate.Import.Format == HeightSourceFormat::Raw32F;
-        const bool bInteger = candidate.Import.Format == HeightSourceFormat::Png16 ||
-                              candidate.Import.Format == HeightSourceFormat::Png8 ||
-                              candidate.Import.Format == HeightSourceFormat::Raw16;
-        if (bRaw)
-        {
-            if (!ReadInteger(source.FindMember("width"), absoluteSpec, "height_source.width", 2, UINT32_MAX,
-                             candidate.Import.RawWidth, "2 以上 4294967295 以下の整数を指定してください。", outError) ||
-                !ReadInteger(source.FindMember("height"), absoluteSpec, "height_source.height", 2, UINT32_MAX,
-                             candidate.Import.RawHeight, "2 以上 4294967295 以下の整数を指定してください。", outError))
-            {
-                return false;
-            }
-            const JsonValue endianValue = source.FindMember("endian");
-            if (endianValue.IsValid())
-            {
-                AnsiString endian;
-                if (!ReadText(endianValue, absoluteSpec, "height_source.endian", endian, outError))
-                {
-                    return false;
-                }
-                if (endian != "little" && endian != "big")
-                {
-                    return FailField(absoluteSpec, "height_source.endian", endianValue,
-                                     "little または big を指定してください。", outError);
-                }
-                candidate.Import.bRawBigEndian = endian == "big";
-            }
-        }
-        else if (!RejectPresent(source, "width", absoluteSpec, "height_source.width",
-                                "width は raw16・raw32f だけに指定できます。削除してください。", outError) ||
-                 !RejectPresent(source, "height", absoluteSpec, "height_source.height",
-                                "height は raw16・raw32f だけに指定できます。削除してください。", outError) ||
-                 !RejectPresent(source, "endian", absoluteSpec, "height_source.endian",
-                                "endian は raw16・raw32f だけに指定できます。削除してください。", outError))
-        {
-            return false;
-        }
-
-        const JsonValue channel = source.FindMember("exr_channel");
-        if (candidate.Import.Format == HeightSourceFormat::Exr)
-        {
-            if (channel.IsValid() && !ReadText(channel, absoluteSpec, "height_source.exr_channel",
-                                                candidate.Import.ExrChannel, outError))
-            {
-                return false;
-            }
-        }
-        else if (channel.IsValid())
-        {
-            return FailField(absoluteSpec, "height_source.exr_channel", channel,
-                             "exr_channel は exr だけに指定できます。削除してください。", outError);
-        }
-        const JsonValue flip = source.FindMember("flip_z");
-        if (flip.IsValid())
-        {
-            if (!flip.IsBoolean())
-            {
-                return FailField(absoluteSpec, "height_source.flip_z", flip, "true または false を指定してください。", outError);
-            }
-            candidate.Import.bFlipZ = flip.AsBool();
-        }
-
-        const JsonValue mapping = root.FindMember("height_mapping");
-        if (!mapping.IsValid() && bInteger)
-        {
-            return FailField(absoluteSpec, "height_mapping", mapping,
-                             "高さの単位は推測しません。min_m/max_m または scale_m/offset_m を指定してください。", outError);
-        }
-        if (mapping.IsValid())
-        {
-            if (!mapping.IsObject())
-            {
-                return FailField(absoluteSpec, "height_mapping", mapping, "高さ写像をオブジェクトで指定してください。", outError);
-            }
-            const char* mappingKeys[] = {"min_m", "max_m", "scale_m", "offset_m", "scale", "offset"};
-            if (!CheckKeys(mapping, "height_mapping", mappingKeys, sizeof(mappingKeys) / sizeof(mappingKeys[0]),
-                           absoluteSpec, outError))
-            {
-                return false;
-            }
-            if (bInteger)
-            {
-                if (!RejectPresent(mapping, "scale", absoluteSpec, "height_mapping.scale",
-                                   "整数入力には min_m/max_m または scale_m/offset_m を指定してください。", outError) ||
-                    !RejectPresent(mapping, "offset", absoluteSpec, "height_mapping.offset",
-                                   "整数入力には min_m/max_m または scale_m/offset_m を指定してください。", outError))
-                {
-                    return false;
-                }
-                const JsonValue minimum = mapping.FindMember("min_m");
-                const JsonValue maximum = mapping.FindMember("max_m");
-                const JsonValue scale = mapping.FindMember("scale_m");
-                const JsonValue offset = mapping.FindMember("offset_m");
-                const bool bMinMax = minimum.IsValid() || maximum.IsValid();
-                const bool bScaleOffset = scale.IsValid() || offset.IsValid();
-                if (bMinMax && bScaleOffset)
-                {
-                    return FailField(absoluteSpec, scale.IsValid() ? "height_mapping.scale_m" : "height_mapping.offset_m",
-                                     scale.IsValid() ? scale : offset,
-                                     "min_m/max_m と scale_m/offset_m は混在できません。一方の組だけを指定してください。", outError);
-                }
-                if (bMinMax)
-                {
-                    double minM = 0.0;
-                    double maxM = 0.0;
-                    if (!ReadNumber(minimum, absoluteSpec, "height_mapping.min_m", minM, outError) ||
-                        !ReadNumber(maximum, absoluteSpec, "height_mapping.max_m", maxM, outError))
-                    {
-                        return false;
-                    }
-                    if (maxM < minM)
-                    {
-                        return FailField(absoluteSpec, "height_mapping.max_m", maximum,
-                                         "max_m は min_m 以上にしてください。", outError);
-                    }
-                    const double divisor = candidate.Import.Format == HeightSourceFormat::Png8 ? 255.0 : 65535.0;
-                    const double difference = maxM - minM;
-                    candidate.Import.Scale = std::isfinite(difference) ? difference / divisor : maxM / divisor - minM / divisor;
-                    candidate.Import.Offset = minM;
-                }
-                else if (bScaleOffset)
-                {
-                    if (!ReadNumber(scale, absoluteSpec, "height_mapping.scale_m", candidate.Import.Scale, outError) ||
-                        (offset.IsValid() && !ReadNumber(offset, absoluteSpec, "height_mapping.offset_m", candidate.Import.Offset, outError)))
-                    {
-                        return false;
-                    }
-                }
-                else
-                {
-                    return FailField(absoluteSpec, "height_mapping", mapping,
-                                     "高さの単位は推測しません。min_m/max_m または scale_m/offset_m を指定してください。", outError);
-                }
-            }
-            else
-            {
-                if (!RejectPresent(mapping, "min_m", absoluteSpec, "height_mapping.min_m",
-                                   "浮動小数点入力には scale・offset を指定してください。", outError) ||
-                    !RejectPresent(mapping, "max_m", absoluteSpec, "height_mapping.max_m",
-                                   "浮動小数点入力には scale・offset を指定してください。", outError) ||
-                    !RejectPresent(mapping, "scale_m", absoluteSpec, "height_mapping.scale_m",
-                                   "浮動小数点入力には scale・offset を指定してください。", outError) ||
-                    !RejectPresent(mapping, "offset_m", absoluteSpec, "height_mapping.offset_m",
-                                   "浮動小数点入力には scale・offset を指定してください。", outError))
-                {
-                    return false;
-                }
-                const JsonValue scale = mapping.FindMember("scale");
-                const JsonValue offset = mapping.FindMember("offset");
-                if ((scale.IsValid() && !ReadNumber(scale, absoluteSpec, "height_mapping.scale", candidate.Import.Scale, outError)) ||
-                    (offset.IsValid() && !ReadNumber(offset, absoluteSpec, "height_mapping.offset", candidate.Import.Offset, outError)))
-                {
-                    return false;
-                }
-            }
         }
 
         const JsonValue cellSize = root.FindMember("cell_size_m");
@@ -1170,6 +1182,55 @@ namespace NorvesLib::Tools::AssetCook
             }
             candidate.bHasRecipe = true;
         }
+        const JsonValue outer = root.FindMember("outer_ring");
+        if (outer.IsValid())
+        {
+            if (!outer.IsObject())
+            {
+                return FailField(absoluteSpec, "outer_ring", outer, "外周をオブジェクトで指定してください。", outError);
+            }
+            const char* keys[] = {"height_source", "height_mapping", "cell_size_m", "width_m", "blend_m"};
+            if (!CheckKeys(outer, "outer_ring", keys, sizeof(keys) / sizeof(keys[0]), absoluteSpec, outError))
+            {
+                return false;
+            }
+            auto& ring = candidate.OuterRing;
+            AnsiString detail;
+            if (!ParseHeightInput(outer, absoluteSpec, ring.HeightSourcePath, ring.Import, detail))
+            {
+                outError = "outer_ring: ";
+                outError += detail;
+                return false;
+            }
+            const auto outerCell = outer.FindMember("cell_size_m");
+            const auto blend = outer.FindMember("blend_m");
+            if ((outerCell.IsValid() && !ReadNumber(outerCell, absoluteSpec, "outer_ring.cell_size_m", ring.CellSizeM, outError)) ||
+                !ReadNumber(outer.FindMember("width_m"), absoluteSpec, "outer_ring.width_m", ring.WidthM, outError) ||
+                (blend.IsValid() && !ReadNumber(blend, absoluteSpec, "outer_ring.blend_m", ring.BlendM, outError)))
+            {
+                return false;
+            }
+            const double ratio = ring.CellSizeM / candidate.CellSizeM;
+            const double widthCells = ring.WidthM / ring.CellSizeM;
+            if (ring.CellSizeM < 8.0 || ring.CellSizeM > 32.0 || !std::isfinite(ratio) ||
+                std::round(ratio) < 1.0 || std::abs(ratio - std::round(ratio)) > 1e-6 * std::round(ratio))
+            {
+                return FailField(absoluteSpec, "outer_ring.cell_size_m", outerCell,
+                                 "8..32 m かつ近景の cell_size_m の整数倍（相対許容 1e-6）にしてください。", outError);
+            }
+            if (ring.WidthM <= 0.0 || !std::isfinite(widthCells) || std::round(widthCells) < 1.0 ||
+                std::abs(widthCells - std::round(widthCells)) > 1e-6 * std::round(widthCells))
+            {
+                return FailField(absoluteSpec, "outer_ring.width_m", outer.FindMember("width_m"),
+                                 "正で外周の cell_size_m の整数倍にしてください。", outError);
+            }
+            if (ring.BlendM < 0.0 || ring.BlendM > ring.WidthM)
+            {
+                return FailField(absoluteSpec, "outer_ring.blend_m", blend,
+                                 "0 以上 width_m 以下にしてください。省略時は 256 m です。", outError);
+            }
+            candidate.bHasOuterRing = true;
+        }
         outSpec = std::move(candidate);
         return true;
     }
@@ -1217,6 +1278,30 @@ namespace NorvesLib::Tools::AssetCook
         candidate.InputFiles.push_back(candidate.Spec.HeightSourcePath);
 
         TerrainBuildSettings settings{candidate.Spec.CellSizeM, candidate.Spec.TileCells};
+        TerrainOuterRingInput outerInput;
+        HeightImportResult outerImported;
+        if (candidate.Spec.bHasOuterRing)
+        {
+            const auto& outer = candidate.Spec.OuterRing;
+            VariableArray<uint8_t> outerBytes;
+            if (!ReadBinary(outer.HeightSourcePath, outerBytes, detail))
+            {
+                return FailStage("外周入力の読み込み", outer.HeightSourcePath, detail, outError);
+            }
+            HeightImportDesc outerImport = outer.Import;
+            outerImport.bKeepSourceSize = true;
+            if (!ImportHeightfield({outerBytes.data(), outerBytes.size()}, outerImport, outerImported, detail))
+            {
+                return FailStage("外周入力の取り込み", outer.HeightSourcePath, detail, outError);
+            }
+            HashFile(candidate.SourceHash, {outerBytes.data(), outerBytes.size()});
+            candidate.InputFiles.push_back(outer.HeightSourcePath);
+            outerInput.Grid = std::move(outerImported.Grid);
+            outerInput.CellSizeM = outer.CellSizeM;
+            outerInput.WidthM = outer.WidthM;
+            outerInput.BlendM = outer.BlendM;
+            settings.OuterRing = &outerInput;
+        }
         TerrainMaskFields fields;
         if (candidate.Spec.bHasRecipe)
         {
@@ -1254,6 +1339,12 @@ namespace NorvesLib::Tools::AssetCook
         candidate.SourceHeight = imported.SourceHeight;
         candidate.SourceBitDepth = imported.SourceBitDepth;
         candidate.Warnings = std::move(imported.Warnings);
+        for (auto& warning : outerImported.Warnings)
+        {
+            AnsiString text = "outer_ring: ";
+            text += warning;
+            candidate.Warnings.push_back(std::move(text));
+        }
         outResult = std::move(candidate);
         return true;
     }

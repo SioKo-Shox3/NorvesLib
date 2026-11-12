@@ -16,6 +16,21 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<uint32_t> JointNodes;
         Core::Container::AnsiString SkeletonPath, RoleProfilePath, SourceClip, ClipName;
     };
+    inline constexpr size_t MaximumTextureAssetSetGenerators = 64;
+    inline constexpr size_t MaximumTextureAssetSetGeneratorArguments = 256;
+    inline constexpr size_t MaximumTextureAssetSetGeneratorArgumentBytes = 4096;
+    inline constexpr size_t MaximumTextureAssetSetGeneratorPaths = 1024;
+    inline constexpr size_t MaximumTextureAssetSetGeneratorOutputsTotal = 1024;
+
+    // cook の前に走らせる外部コマンドの宣言。path は source root からの相対で、正規化済み(区切りは /)。
+    struct TextureAssetSetGenerator
+    {
+        Core::Container::AnsiString Name; // 印字可能 ASCII、1〜128 byte
+        Core::Container::VariableArray<Core::Container::AnsiString> Command; // [0] がプログラム。UTF-8 のまま
+        Core::Container::VariableArray<Core::Container::AnsiString> Inputs; // 空でもよい
+        Core::Container::VariableArray<Core::Container::AnsiString> Outputs; // 1 つ以上
+        Core::Container::AnsiString Cwd; // 空なら source root
+    };
     struct TextureAssetSetSpec
     {
         uint32_t Version = 1;
@@ -23,6 +38,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::AssetImport::EmissiveScale Emission;
         Core::Container::AnsiString Name, PackageRoot, DefaultVariant;
         Core::Container::VariableArray<TextureAssetSetEntry> Textures;
+        Core::Container::VariableArray<TextureAssetSetGenerator> Generators;
     };
     enum class TextureAssetSetError
     {

@@ -221,6 +221,17 @@ namespace NorvesLib::Core::Rendering::Terrain
         static Container::TSharedPtr<const TerrainHeightField> CreateFromCookedTerrain(const Asset::CookedTerrainData &terrain,
                                                                                        Container::AnsiString &outError);
 
+        /// NVTRN の外周と穴の内側の近景標本をつなぎ、世界座標の高さを持つ全格子を作る。
+        /// 不正な寸法や共有標本の不一致は空を返して outError に理由を書き、成功時は空にする。
+        static Container::TSharedPtr<const TerrainHeightField> CreateOuterRingFromCookedTerrain(
+            const Asset::CookedTerrainData& terrain, Container::AnsiString& outError);
+
+        /// 外周を近景と升目が重ならない最大 4 本の帯に分ける。outStrips は毎回空にしてから格納する。
+        /// 失敗時は false と理由を返し、成功時は outError を空にする。
+        static bool CreateOuterRingStripsFromCookedTerrain(const Asset::CookedTerrainData& terrain,
+            Container::VariableArray<Container::TSharedPtr<const TerrainHeightField>>& outStrips,
+            Container::AnsiString& outError);
+
         /// 行優先の有限な高さの標本から格子を作る。Columns・Rows は 2 以上、Spacing は有限で正。
         /// splat は省略できる。tileCells が正なら両辺の升目数を割り切る必要がある。
         /// 不正な値なら空を返して outError に理由を書き、成功時は outError を空にする

@@ -110,6 +110,7 @@ namespace NorvesLib::Core::Scatter
         scatter.Handle = m_NextHandle++;
         scatter.WorldPtr = &world;
         scatter.Data = std::move(data);
+        scatter.Chunks.resize(scatter.Data->Chunks.size());
         scatter.Species.resize(scatter.Data->Species.size());
         const auto fail = [&]()
         {
@@ -248,6 +249,18 @@ namespace NorvesLib::Core::Scatter
         return scatter.Handle;
     }
 
+    ScatterSystem::ScatterState* ScatterSystem::Find(ScatterHandle handle)
+    {
+        for (auto& scatter : m_Scatters)
+        {
+            if (scatter.Handle == handle)
+            {
+                return &scatter;
+            }
+        }
+        return nullptr;
+    }
+
     const ScatterSystem::ScatterState* ScatterSystem::Find(ScatterHandle handle) const
     {
         for (const auto& scatter : m_Scatters)
@@ -332,6 +345,333 @@ namespace NorvesLib::Core::Scatter
         }
     }
 
+    bool ScatterSystem::ReleaseChunkUnits(ScatterState& scatter, uint32_t chunk)
+    {
+        bool bFoliageChanged = false;
+        for (uint32_t speciesIndex = 0; speciesIndex < scatter.Species.size(); ++speciesIndex)
+        {
+            auto& species = scatter.Species[speciesIndex];
+            if (chunk >= species.Chunks.size())
+            {
+                continue;
+            }
+            auto& unit = species.Chunks[chunk];
+            if (!unit.bResident)
+            {
+                continue;
+            }
+            if (auto* component = ResolveMega(scatter, species))
+            {
+                for (uint32_t range = 0; range < unit.RangeCount; ++range)
+                {
+                    component->SetRangeActive(unit.FirstRange + range, false);
+                }
+            }
+            if (species.RenderPath == Asset::ScatterRenderPath::Foliage)
+            {
+                Container::VariableArray<Rendering::FoliageInstance>().swap(unit.FoliageInstances);
+                bFoliageChanged = true;
+            }
+            unit.bResident = false;
+            RecordEvent(scatter, chunk, speciesIndex, false);
+        }
+        return bFoliageChanged;
+    }
+
+    bool ScatterSystem::SetScatterName(ScatterHandle handle, Container::AnsiStringView name)
+    {
+        auto* scatter = Find(handle);
+        if (scatter == nullptr)
+        {
+            return false;
+        }
+        const ScatterHandle existing = FindScatter(name);
+        if (existing != kInvalidScatterHandle && existing != handle)
+        {
+            return false;
+        }
+        Container::AnsiString ownedName(name.size(), '\0');
+        for (size_t index = 0; index < name.size(); ++index)
+        {
+            ownedName[index] = name[index];
+        }
+        scatter->Name = std::move(ownedName);
+        return true;
+    }
+
+    ScatterHandle ScatterSystem::FindScatter(Container::AnsiStringView name) const
+    {
+        if (name.empty())
+        {
+            return kInvalidScatterHandle;
+        }
+        for (const auto& scatter : m_Scatters)
+        {
+            if (scatter.Name.size() == name.size() && std::equal(scatter.Name.begin(), scatter.Name.end(), name.begin()))
+            {
+                return scatter.Handle;
+            }
+        }
+        return kInvalidScatterHandle;
+    }
+
+    Container::TSharedPtr<const Asset::CookedScatterData> ScatterSystem::GetData(ScatterHandle handle) const
+    {
+        const auto* scatter = Find(handle);
+        return scatter != nullptr ? scatter->Data : Container::TSharedPtr<const Asset::CookedScatterData>();
+    }
+
+    bool ScatterSystem::SetDistanceResidency(ScatterHandle handle, bool bEnabled)
+    {
+        auto* scatter = Find(handle);
+        if (scatter == nullptr)
+        {
+            return false;
+        }
+        if (scatter->bDistanceResidency == bEnabled)
+        {
+            return true;
+        }
+        scatter->bDistanceResidency = bEnabled;
+        if (!bEnabled)
+        {
+            for (auto& species : scatter->Species)
+            {
+                for (uint32_t chunk = 0; chunk < species.Chunks.size(); ++chunk)
+                {
+                    auto& unit = species.Chunks[chunk];
+                    unit.bDistanceRequested = false;
+                    unit.bRequested = unit.Bytes > 0 && scatter->Chunks[chunk].bPinned;
+                }
+            }
+            bool bFoliageChanged = false;
+            for (uint32_t chunk = 0; chunk < scatter->Chunks.size(); ++chunk)
+            {
+                if (!scatter->Chunks[chunk].bPinned)
+                {
+                    bFoliageChanged |= ReleaseChunkUnits(*scatter, chunk);
+                }
+            }
+            RecountStats();
+            if (bFoliageChanged)
+            {
+                RebuildFoliageScene();
+            }
+        }
+        return true;
+    }
+
+    bool ScatterSystem::PinChunk(ScatterHandle handle, uint32_t chunk)
+    {
+        auto* scatter = Find(handle);
+        if (scatter == nullptr || chunk >= scatter->Chunks.size())
+        {
+            return false;
+        }
+        auto& state = scatter->Chunks[chunk];
+        if (state.bPinned)
+        {
+            return true;
+        }
+        state.bPinned = true;
+        bool bFoliageChanged = false;
+        for (uint32_t speciesIndex = 0; speciesIndex < scatter->Species.size(); ++speciesIndex)
+        {
+            auto& species = scatter->Species[speciesIndex];
+            if (chunk >= species.Chunks.size())
+            {
+                continue;
+            }
+            auto& unit = species.Chunks[chunk];
+            if (unit.Bytes == 0)
+            {
+                continue;
+            }
+            unit.bRequested = true;
+            if (unit.bResident)
+            {
+                continue;
+            }
+            if (species.RenderPath == Asset::ScatterRenderPath::Foliage)
+            {
+                if (!MakeFoliageResident(*scatter, chunk, speciesIndex))
+                {
+                    continue;
+                }
+                bFoliageChanged = true;
+            }
+            else
+            {
+                auto* component = ResolveMega(*scatter, species);
+                if (component == nullptr || unit.FirstRange > component->GetRangeCount() ||
+                    unit.RangeCount > component->GetRangeCount() - unit.FirstRange)
+                {
+                    continue;
+                }
+                for (uint32_t range = 0; range < unit.RangeCount; ++range)
+                {
+                    component->SetRangeActive(unit.FirstRange + range, !state.bDormant);
+                }
+            }
+            unit.bResident = true;
+            RecordEvent(*scatter, chunk, speciesIndex, true);
+        }
+        RecountStats();
+        if (bFoliageChanged)
+        {
+            RebuildFoliageScene();
+        }
+        return true;
+    }
+
+    bool ScatterSystem::UnpinChunk(ScatterHandle handle, uint32_t chunk)
+    {
+        auto* scatter = Find(handle);
+        if (scatter == nullptr || chunk >= scatter->Chunks.size())
+        {
+            return false;
+        }
+        auto& state = scatter->Chunks[chunk];
+        state.bPinned = false;
+        if (scatter->bDistanceResidency)
+        {
+            SetChunkDormant(handle, chunk, false);
+        }
+        else
+        {
+            state.bDormant = false;
+        }
+        for (auto& species : scatter->Species)
+        {
+            if (chunk < species.Chunks.size())
+            {
+                auto& unit = species.Chunks[chunk];
+                unit.bRequested = scatter->bDistanceResidency && unit.bDistanceRequested;
+            }
+        }
+        const bool bFoliageChanged = !scatter->bDistanceResidency && ReleaseChunkUnits(*scatter, chunk);
+        RecountStats();
+        if (bFoliageChanged)
+        {
+            RebuildFoliageScene();
+        }
+        return true;
+    }
+
+    bool ScatterSystem::IsChunkPinned(ScatterHandle handle, uint32_t chunk) const
+    {
+        const auto* scatter = Find(handle);
+        return scatter != nullptr && chunk < scatter->Chunks.size() && scatter->Chunks[chunk].bPinned;
+    }
+
+    bool ScatterSystem::IsChunkResident(ScatterHandle handle, uint32_t chunk) const
+    {
+        const auto* scatter = Find(handle);
+        if (scatter == nullptr || chunk >= scatter->Chunks.size())
+        {
+            return false;
+        }
+        for (const auto& species : scatter->Species)
+        {
+            if (chunk < species.Chunks.size())
+            {
+                const auto& unit = species.Chunks[chunk];
+                if (unit.Bytes > 0 && !unit.bResident)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    bool ScatterSystem::SetChunkDormant(ScatterHandle handle, uint32_t chunk, bool bDormant)
+    {
+        auto* scatter = Find(handle);
+        if (scatter == nullptr || chunk >= scatter->Chunks.size())
+        {
+            return false;
+        }
+        auto& state = scatter->Chunks[chunk];
+        if (state.bDormant == bDormant)
+        {
+            return true;
+        }
+        state.bDormant = bDormant;
+        bool bFoliageChanged = false;
+        for (auto& species : scatter->Species)
+        {
+            if (chunk >= species.Chunks.size() || !species.Chunks[chunk].bResident)
+            {
+                continue;
+            }
+            const auto& unit = species.Chunks[chunk];
+            if (species.RenderPath == Asset::ScatterRenderPath::Foliage)
+            {
+                bFoliageChanged = true;
+            }
+            else if (auto* component = ResolveMega(*scatter, species))
+            {
+                for (uint32_t range = 0; range < unit.RangeCount; ++range)
+                {
+                    component->SetRangeActive(unit.FirstRange + range, !bDormant);
+                }
+            }
+        }
+        if (bFoliageChanged)
+        {
+            RebuildFoliageScene();
+        }
+        return true;
+    }
+
+    bool ScatterSystem::IsChunkDormant(ScatterHandle handle, uint32_t chunk) const
+    {
+        const auto* scatter = Find(handle);
+        return scatter != nullptr && chunk < scatter->Chunks.size() && scatter->Chunks[chunk].bDormant;
+    }
+
+    void ScatterSystem::CollectChunksInBounds(ScatterHandle handle, const Math::Vector3& boundsMin,
+                                               const Math::Vector3& boundsMax,
+                                               Container::VariableArray<uint32_t>& outChunks) const
+    {
+        outChunks.clear();
+        const auto* scatter = Find(handle);
+        if (scatter == nullptr)
+        {
+            return;
+        }
+        const auto& data = *scatter->Data;
+        for (uint32_t chunk = 0; chunk < data.Chunks.size(); ++chunk)
+        {
+            const auto& source = data.Chunks[chunk];
+            const double x = data.OriginX + (static_cast<double>(source.ChunkX) + 0.5) * data.ChunkSizeMeters;
+            const double z = data.OriginZ + (static_cast<double>(source.ChunkZ) + 0.5) * data.ChunkSizeMeters;
+            if (x >= boundsMin.x && x < boundsMax.x && z >= boundsMin.z && z < boundsMax.z)
+            {
+                outChunks.push_back(chunk);
+            }
+        }
+    }
+
+    uint64_t ScatterSystem::GetChunkBytes(ScatterHandle handle, uint32_t chunk) const
+    {
+        const auto* scatter = Find(handle);
+        if (scatter == nullptr || chunk >= scatter->Chunks.size())
+        {
+            return 0;
+        }
+        uint64_t bytes = 0;
+        for (const auto& species : scatter->Species)
+        {
+            if (chunk < species.Chunks.size())
+            {
+                bytes += species.Chunks[chunk].Bytes;
+            }
+        }
+        return bytes;
+    }
+
     void ScatterSystem::Update(const Math::Vector3& cameraPosition)
     {
         ++m_Frame;
@@ -362,8 +702,10 @@ namespace NorvesLib::Core::Scatter
                         continue;
                     }
                     const float distance = DistanceToChunk(cameraPosition, scatter.Data->Chunks[chunk]);
-                    unit.bRequested = distance <= species.ResidencyDistance;
-                    if (unit.bResident && distance > species.ResidencyDistance + m_Budget.ReleaseHysteresisMeters)
+                    unit.bDistanceRequested = scatter.bDistanceResidency && distance <= species.ResidencyDistance;
+                    unit.bRequested = unit.bDistanceRequested || scatter.Chunks[chunk].bPinned;
+                    if (scatter.bDistanceResidency && !scatter.Chunks[chunk].bPinned && unit.bResident &&
+                        distance > species.ResidencyDistance + m_Budget.ReleaseHysteresisMeters)
                     {
                         if (component != nullptr)
                         {
@@ -446,7 +788,7 @@ namespace NorvesLib::Core::Scatter
             {
                 for (uint32_t range = 0; range < unit.RangeCount; ++range)
                 {
-                    component->SetRangeActive(unit.FirstRange + range, true);
+                    component->SetRangeActive(unit.FirstRange + range, !scatter.Chunks[candidate.Chunk].bDormant);
                 }
             }
             unit.bResident = true;
@@ -536,9 +878,10 @@ namespace NorvesLib::Core::Scatter
                 }
                 size_t instanceCount = 0;
                 size_t cellCount = 0;
-                for (const auto& unit : species.Chunks)
+                for (uint32_t chunk = 0; chunk < species.Chunks.size(); ++chunk)
                 {
-                    if (unit.bResident)
+                    const auto& unit = species.Chunks[chunk];
+                    if (unit.bResident && !scatter.Chunks[chunk].bDormant)
                     {
                         instanceCount += unit.FoliageInstances.size();
                         ++cellCount;
@@ -552,9 +895,10 @@ namespace NorvesLib::Core::Scatter
                 auto cells = Container::MakeShared<Container::VariableArray<Rendering::FoliageCell>>();
                 instances->reserve(instanceCount);
                 cells->reserve(cellCount);
-                for (const auto& unit : species.Chunks)
+                for (uint32_t chunk = 0; chunk < species.Chunks.size(); ++chunk)
                 {
-                    if (!unit.bResident)
+                    const auto& unit = species.Chunks[chunk];
+                    if (!unit.bResident || scatter.Chunks[chunk].bDormant)
                     {
                         continue;
                     }

@@ -70,6 +70,7 @@ set(PRIVATE_SOURCES
     Private/Streaming/StreamingEnvironment.cpp
     Private/Streaming/StreamingPriority.cpp
     Private/Streaming/StreamingSystem.cpp
+    Private/Streaming/WorldPayloadHandlers.cpp
     Private/Vegetation/GrassSpecies.cpp
     Private/Vegetation/GrassField.cpp
     Private/Vegetation/GrassFieldAsset.cpp
@@ -628,6 +629,7 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Streaming/StreamingTypes.h
+    Public/Streaming/ITerrainTileSite.h
     Public/Streaming/StreamingBudget.h
     Public/Streaming/IStreamingPayloadHandler.h
     Public/Streaming/IStreamingEnvironment.h
@@ -635,6 +637,7 @@ set(PUBLIC_HEADERS
     Public/Streaming/StreamingCell.h
     Public/Streaming/StreamingPriority.h
     Public/Streaming/StreamingSystem.h
+    Public/Streaming/WorldPayloadHandlers.h
     Public/Vegetation/GrassSpecies.h
     Public/Vegetation/GrassField.h
     Public/Vegetation/GrassFieldAsset.h

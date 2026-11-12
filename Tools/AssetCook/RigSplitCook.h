@@ -1,6 +1,7 @@
 ﻿#pragma once
 // 明示library入口。候補bytes/manifestを所有し、file公開や増分skipは行わない。
 #include "RigSplitImageInputs.h"
+#include "SkeletalImportReport.h"
 #include "ClipOptimizeCliOptions.h"
 #include "Asset/CookedSkinMeshV1.h"
 #include "Asset/AssetManifest.h"
@@ -36,6 +37,8 @@ namespace NorvesLib::Tools::AssetCook
         RigSplitCookEntry Skeleton, Mesh, Bank;
         Core::Container::AnsiString ManifestJson;
         Core::Container::VariableArray<MeshEmbeddedImage> TexturePlans;
+        // baseColorFactorをアルベドへ焼いた材質。元の材質番号の昇順。
+        Core::Container::VariableArray<SkeletalBaseColorBake> BaseColorBakes;
         Core::Container::VariableArray<uint64_t> SlotSourceMaterials;
         Core::AssetImport::LoadedImportSettingsDocument Import;
         Core::Skeletal::SkeletalGltfDecodeReport DecodeReport;
@@ -51,4 +54,6 @@ namespace NorvesLib::Tools::AssetCook
     [[nodiscard]] bool CookRigSplitV1NativePath(Core::Container::Span<const uint8_t> source, const RigSplitCookRequest&,
                                                 RigSplitCookResult& out, Core::Skeletal::RigV1Report&,
                                                 Core::Container::AnsiString& error);
+    // 焼いた材質があるときだけ、stderrへskeletalのimport_reportを1行出す。無いときは何も出さない。
+    void PrintRigSplitBaseColorImportReport(const RigSplitCookRequest&, const RigSplitCookResult&);
 } // namespace NorvesLib::Tools::AssetCook

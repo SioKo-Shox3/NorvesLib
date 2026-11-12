@@ -144,6 +144,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 std::fprintf(stderr, "AssetCook warning: %s\n", warning.c_str());
             }
+            PrintRigSplitBaseColorImportReport(selected, cooked);
             C::VariableArray<RigSplitCookEntry> entries;
             entries.push_back(std::move(cooked.Skeleton));
             entries.push_back(std::move(cooked.Mesh));
