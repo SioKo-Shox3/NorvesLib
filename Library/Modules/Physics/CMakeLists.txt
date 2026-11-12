@@ -25,6 +25,8 @@ set(PHYSICS_PRIVATE_SOURCES
     Private/Physics/StaticAabbTree.cpp
     Private/Physics/PhysicsBroadphase.cpp
     Private/Physics/PhysicsModule.cpp
+    Private/Physics/StaticColliderPayloadHandler.h
+    Private/Physics/StaticColliderPayloadHandler.cpp
     Private/Physics/RigidBodyComponent.cpp
     Private/Physics/TerrainColliderBinding.cpp
 )

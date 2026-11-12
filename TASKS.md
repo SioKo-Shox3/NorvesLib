@@ -39,7 +39,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
-- status: todo
+- status: blocked
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)のビルドが通り、ctest(GPU・Reference のラベルと Golden・PathTracingReference・Vulkan の名前を外す)が通る。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
@@ -6585,7 +6585,7 @@
 - notes: 設計はロードマップ 2161 行（GR40 の 6）、完了条件は 2597 行。選定課題 G12A-S7（GPU の資源の遅延の破棄）: (A) ロードマップの案（`DeferredGpuReleaseQueue` を新設し、MeshResources とテクスチャを完了のシリアルまで遅らせる。2159 行）、(B) RHI に入った破棄の列（`VulkanDevice::DeferDestroy` の Buffer・Image・ImageView ほか。VulkanDevice.h:207〜217、SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY が done）をそのまま使う、のうち (B) を採る。理由: (A) の前提（`MeshResources::Unregister` が描画中のバッファを即座に壊しうる）は、RHI の側でハンドルの破棄を提出の完了まで遅らせるようになって崩れた。上の層にもう 1 つ列を作ると、破棄の順の規則が 2 つになる。UNCERTAIN: `ProceduralMeshGpuStore::UnregisterMesh`（ProceduralMeshGpuStore.cpp:248）が RHI の破棄の列だけで安全か（ホスト可視の map 中のバッファを含めて）は着手時に読んで確かめ、足りなければこの項目で直す。試験を足す理由: 反証する契約は「GameMode を抜けた後にワーカーの完了が届かず、資源が 1 回ずつ返る」こと。破れるとシーンの出入りのたびに資源が増える・抜けた後のコールバックで落ちるとして、出入りを繰り返したときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（Object・Resource の寿命）なので評価者を通す。
 
 ## G12-GR40-WORLD-PAYLOADS: セルの中身として地形のタイル・散布のチャンク・静的なコライダー・コードで組む配置を出し入れし、遠いセルを休眠させる
-- status: todo
+- status: done
 - after: G12-GR40-CELL-CORE, G12-GR40-GAMEMODE-ASYNC, G12-GR41-PARENT-DORMANCY, G12-GR09-DETACHED-COLLIDERS, G12-GR39-HEIGHTFIELD-LOD, G5-GR37-TERRAIN-COMPONENT, G5-GR90-SCATTER-RUNTIME, G5-GR37-TERRAIN-LAYERS, G5-GR90-SCATTER-BAKE
 - gr: GR40
 - needs-gr: GR37, GR90
