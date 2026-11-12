@@ -10971,3 +10971,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
 - U5 generator の実行器(hash・CreateProcessW)を新設する: 着地(直し 0 回)
 - U6 --run-generators を CLI と asset-set の cook に接続する: 着地(直し 0 回)
+- U7 TextureManagedCliTest に generator の試験を足す: 着地(直し 1 回)
