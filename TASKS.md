@@ -10810,3 +10810,12 @@
   - 代役の形(骨 2 本の三角形を身長 1.8 m に合わせる)と ready の印の値は変えない。
   - 中身がデコードできるかは、`Test-M9World.ps1:580` と同じ AssetCook の `--kind model` を一時の置き場へ回して確かめてよい(Game は起動しない)。
   - G12-GR108-POSE-PARALLEL の `--skinned-crowd` も M9Skinned の同じ資産を読む予定なので、この自己完結の glTF を使える。
+
+## G12-GR39-FAR-RING-P1: AssetCookTerrainSmoke の `outer_hole` の拒否理由の照合を、コンソールのコードページに関わらず通す
+- status: todo
+- done-when: `AssetCookTerrainSmoke` が、コードページ 932 のコンソールでも 65001 のコンソールでも Passed になる。照合の文字列(`outer_hole` の「穴の中」)と合否の条件は変えない。原因はこう見ている。`MeshCooker.cpp` の `terrain-tile:nvtrn:outer の区画番号は穴の中です` は素の narrow リテラルなので、AssetCook を /utf-8 なしでビルドすると ANSI(932)のバイトで出る。一方、smoke の `expect_nvtrn_tile_failure` は `execute_process` の出力を今のコンソールのコードページで読むので、65001 では食い違う。直し方は、骨格の診断(`reinterpret_cast<const char*>(u8"...")`)と同じく地形の区画の拒否理由も UTF-8 で出し、smoke の `execute_process` に `ENCODING UTF-8` を付けるのが目安(CookedSkeletalAssetTest を直した G2-GR78-SURFACE-CENTROID-CHECK-P1 と同じ形)。ほかの区画の照合(`tiles=2x2`・`NVTRN`・`tiles=3x3`)も、両方のコードページで通ったままにする。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `cmd /c "chcp 932 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 600 -R AssetCookTerrainSmoke && chcp 65001 >nul && ctest --test-dir build -C Debug --output-on-failure --timeout 600 -R AssetCookTerrainSmoke"`
+- paths: Tools/AssetCook/AssetCookTerrainSmoke.cmake.in, Tools/AssetCook/MeshCooker.cpp, TASKS.md, PROGRESS.md
+- effort: medium
+- from: G12-GR39-FAR-RING
