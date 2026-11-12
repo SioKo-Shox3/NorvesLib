@@ -23,11 +23,17 @@ namespace NorvesLib::Tools::AssetCook
         CookAssetMetrics Metrics;
         CookAssetBudget Budget;
     };
+    // generator 1 つの結果。Status は "ran"・"skipped"・"failed"・"not_run"(前の generator の失敗で走らなかった)のどれか。
+    struct CookGeneratorReportRow
+    {
+        Core::Container::AnsiString Name, Status;
+    };
     struct CookBatchReport
     {
         bool bEnabled = false, bWarnBudget = false;
         std::filesystem::path RuntimeRoot, ReportDirectory;
         Core::Container::VariableArray<CookAssetReportRow> Assets;
+        Core::Container::VariableArray<CookGeneratorReportRow> Generators;
         CookAssetMetrics Totals;
         uint32_t BudgetErrors = 0;
         bool bFailed = false;
