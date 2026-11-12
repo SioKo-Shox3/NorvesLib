@@ -6910,7 +6910,7 @@
 - notes: 確かめ直し (c)。cook は MATS に材質 record と texture を書く(`RigSplitCook.cpp:463-483`)が、ランタイムは件数を照合するだけで(`RigSplitAssetLoader.cpp:147-150`)、`SkinnedMeshResource` には slot の名前しか残らない(`SkinnedMeshResource.h:41-43`。`SkeletalMaterialSlot` は Name だけ)。cooked の record から `MaterialCreateData` を組む処理はリポジトリに無く(`SkinnedMaterialBuilder` も `CookedMaterialToMaterialCreateData` も無い)、`DogMovementSmoke` などは材質を手で組んでいる。要件 GR79 の設計案 (8) の「GR83 のローダ側の SkinnedMaterialBuilder が 論理パス→TextureResources→RenderMaterialStore::CreateMaterial→SkinnedMeshComponent::SetMaterial へつなぐ」部分。スキンでは BaseColor が描画に効かないので、色は `G2-GR79-SKIN-BASECOLOR-BAKE` の焼き込みに頼る(この項目では BaseColor をそのまま `MaterialCreateData` に入れるだけ)。Resource・材質の生成は GameThread だけ。危険地帯(アセットロード・Public API)なので評価者を通す。新しいソースは `Library/Core/CMakeLists.txt` の明示のリストへ足す。要件 `#### GR79`、ロードマップ 172 行。
 
 ## G2-GR84-REST-ALIGN-CASES: BVH を rest の向きが違う骨格へ移すときの自動の補正(match・align_bones)を、多関節の骨格と全フレームの骨の向きで試験に固定する
-- status: todo
+- status: done
 - gr: GR84
 - done-when: `SkeletalBvhClipImportTest` に、手書きの BVH(分岐を含む 5 関節以上・End Site・6 フレーム以上で各関節が回る)と、同じ関節名で各骨の rest を ±20°(振りと捻りの両方)ずらした target 骨格の組を足し、`RetargetSkeletalClip` の結果を `SkeletalAnimationSampler` で全フレーム評価して次を確かめる。期待値は BVH の FK を試験の中で別に計算した値で、実装を写さない。
   (1) `rest_pose.mode=align_bones`: 各骨のワールドの向き(関節から写像済みの子の平均へ)が BVH の骨の向きと全フレームで 0.1° 以内。`up_hint` を変えると捻りだけが変わり、骨の向きは変わらない。同じ入力で 2 回の結果がビット一致する。(2) 非恒等の `MeshNodeGlobalTransform` と bind の scale を持つ target でも (1) が成り立つ(行と列の規約の取り違えを検出する)。(3) `match`: ずれが `maximum_error_degrees` 以内なら成功して補正前後の角度を report に出し、超えたら `rest_direction_mismatch` で失敗し出力を変えない。(4) 子の無い末端・向きが反対(180°)の骨・`up_hint` が骨の向きと平行のときの扱い(拒否の理由の名前)を固定する。(5) 未写像の target 関節はチャンネルを出さず bind のローカルのまま。

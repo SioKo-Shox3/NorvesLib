@@ -581,7 +581,7 @@ namespace NorvesLib::Core::Animation
                 }
                 for (const auto& pair : c.Mapping.Pairs)
                 {
-                    // kernel はルートも C D C^T B とし、入力を射影した double 目標を work に残す。
+                    // kernel は入力を射影した double のワールド回転を work に残す。
                     const double angle = D::RetargetRotationAngle(world[pair.TargetIndex],
                                                                    c.Work[pair.TargetIndex].WorldRotation) *
                                          (180.0 / 3.14159265358979323846);
@@ -1094,6 +1094,17 @@ namespace NorvesLib::Core::Animation
             c.Target[i] = {target[i].ParentIndex,
                            target[i].ParentIndex < 0 ? targetRotations[i] : Matrix(Rotation(target[i].Rest.Rotation)),
                            targetRotations[i]};
+        }
+        if (settings.RestMode == SkeletalRestCorrectionMode::AlignBones)
+        {
+            // align_bones は rest の向きを元に合わせた bind（C^T B）へ差分 D を掛ける。
+            for (size_t i = 0; i < c.Mapping.Pairs.size(); ++i)
+            {
+                const auto targetIndex = c.Mapping.Pairs[i].TargetIndex;
+                c.Target[targetIndex].BindWorldRotation =
+                    D::RetargetMultiply(D::RetargetTranspose(c.Corrections[i]), targetRotations[targetIndex]);
+                c.Corrections[i] = {};
+            }
         }
         if (!Frame(source.RootFrame, c.SourceFrame, c.SourceFramePosition, c.SourceFrameScale) ||
             !Frame(author->RootFrame, c.TargetFrame, c.TargetFramePosition, c.TargetFrameScale))
