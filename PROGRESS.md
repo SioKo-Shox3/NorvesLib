@@ -10977,3 +10977,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの順と公開）。マップを使う側は G11-GR59-RAIN-HIT・G11-GR59-PUDDLES。撮影・計測の確かめは回さない決まり。使う側がまだ無いので、人が見るときは Rendering3DTest とランチャーの各シーンの見た目が前と変わらないことだけを見る。
 - Notes: 既知の限界: 遮蔽物の集め直しは、描いた窓での変化の見張り（0.25 s ごと）と描き直しの前だけで、そのたびに全 MeshProxy・MegaGeometryProxy を回す（窓の外は境界球で先に飛ばす）。散布の proxy が非常に多いシーンでは、その回だけ描画スレッドの CPU 時間が増える見込み（測っていない）。厚みの無いメッシュ（局所 AABB の幅 0 の軸がある）は屋根にならない。形の自動推定は GR81 の範囲で、当面はメッシュ = 箱・Mega = 楕円体の既定。OverheadHeightMapVulkanTest は実行していないので、読み戻しの向きと深度の同期は確かめていない。
 - U1 焼き込みの基礎(画素の式と import_report の欄): 着地(直し 0 回)
+- U2 CookedMaterialV1.md に暫定の決まりを書く: 着地(直し 0 回)
