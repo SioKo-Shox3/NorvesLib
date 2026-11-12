@@ -339,6 +339,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/SkyOcclusionReference.h
     Private/Rendering/SkyOcclusionReference.cpp
+    Private/Rendering/OverheadHeightMapMath.h
+    Private/Rendering/OverheadHeightMapMath.cpp
     Private/Rendering/DDGIVolume.cpp
     Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp

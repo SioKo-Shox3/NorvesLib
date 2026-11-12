@@ -1742,6 +1742,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
     MEMBER ViewClearanceModelTest ViewClearanceModelTest.cpp
     MEMBER SkyOcclusionModelTest SkyOcclusionModelTest.cpp
+    MEMBER OverheadHeightMapMathTest OverheadHeightMapMathTest.cpp
     MEMBER SkyOcclusionHorizonReferenceTest SkyOcclusionHorizonReferenceTest.cpp
     MEMBER SkyOcclusionSnapshotContractTest SkyOcclusionSnapshotContractTest.cpp
     MEMBER GrassFieldSnapshotContractTest GrassFieldSnapshotContractTest.cpp
@@ -1796,6 +1797,7 @@ add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoEx
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 add_test(NAME ViewClearanceModelTest COMMAND CameraViewConstantsTest --test=ViewClearanceModelTest)
 add_test(NAME SkyOcclusionModelTest COMMAND CameraViewConstantsTest --test=SkyOcclusionModelTest)
+add_test(NAME OverheadHeightMapMathTest COMMAND CameraViewConstantsTest --test=OverheadHeightMapMathTest)
 add_test(NAME SkyOcclusionHorizonReferenceTest COMMAND CameraViewConstantsTest --test=SkyOcclusionHorizonReferenceTest)
 add_test(NAME SkyOcclusionSnapshotContractTest COMMAND CameraViewConstantsTest --test=SkyOcclusionSnapshotContractTest)
 add_test(NAME GrassFieldSnapshotContractTest COMMAND CameraViewConstantsTest --test=GrassFieldSnapshotContractTest)
