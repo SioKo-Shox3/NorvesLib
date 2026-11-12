@@ -1,5 +1,5 @@
 ﻿// 草原の谷と尾根を、既定の 1 層の材質・物理空・太陽で描く開発用シーン。
-// 地形の出どころは GrasslandTerrain.json と GenerateGrasslandHeight.py。クック済みの高さ場と 4×4 の区画を使う。
+// 地形の出どころは GrasslandTerrain.json と GenerateGrasslandHeight.py。近景 4×4 と外周の区画を使う。
 // near は地表から 0.6 m、valley は谷底から尾根、low は谷沿いを低い角度で見る固定視点。
 #include "GameModes/Grassland/GrasslandMode.h"
 #include "GameModes/Grassland/GrasslandScatter.h"
@@ -262,6 +262,10 @@ namespace Game::GameModes
             camera->SetShutterSpeed(ComputeShutterSpeedForEV100(camera->GetAperture(), camera->GetISO(), kExposureEV100));
             camera->SetExposureCompensation(0.0f);
             camera->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
+            if (data.m_TerrainFarPlane > 0.0f)
+            {
+                camera->SetFarPlane(std::fmax(camera->GetFarPlane(), data.m_TerrainFarPlane));
+            }
             data.m_pHero = hero;
             data.m_pHeroMesh = heroMesh;
             data.m_pHeroCamera = camera;
@@ -421,6 +425,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetWindParameters(MakeDefaultWindParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
+            ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(0.0f);
         }
     } // namespace
 
@@ -431,6 +436,7 @@ namespace Game::GameModes
         data.m_pRunningBody = nullptr;
         data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
+        data.m_TerrainFarPlane = 0.0f;
         data.m_Scatter = Scatter::kInvalidScatterHandle;
         data.m_bScatterPending = data.m_ScatterStressCount > 0;
         data.m_pTerrainCollider = nullptr;
@@ -486,6 +492,33 @@ namespace Game::GameModes
     void GrasslandRoutine::Tick(GameModeContext& ctx, GrasslandData& data, float deltaTime)
     {
         ++data.m_TickCount;
+        if (data.m_TerrainFarPlane == 0.0f && data.m_pTerrain != nullptr)
+        {
+            float minX = 0.0f;
+            float minZ = 0.0f;
+            float maxX = 0.0f;
+            float maxZ = 0.0f;
+            if (data.m_pTerrain->GetTerrainBoundsXZ(minX, minZ, maxX, maxZ))
+            {
+                const float width = maxX - minX;
+                const float depth = maxZ - minZ;
+                const float diagonal = std::sqrt(width * width + depth * depth);
+                // 地形内のどの視点からも端まで描き、影も地形全体に落とす。
+                auto* camera = data.m_Rig.GetCamera();
+                data.m_TerrainFarPlane = std::fmax(camera->GetFarPlane(), diagonal * 1.1f);
+                camera->SetFarPlane(data.m_TerrainFarPlane);
+#if NORVES_BUILD_DEVELOPMENT
+                if (data.m_pHeroCamera != nullptr)
+                {
+                    data.m_pHeroCamera->SetFarPlane(std::fmax(data.m_pHeroCamera->GetFarPlane(), data.m_TerrainFarPlane));
+                }
+#endif
+                ctx.EngineRef.GetRenderWorld().SetSunShadowMaxDistance(diagonal);
+                LOG_INFO("GRASSLAND_TERRAIN_EXTENT min=(%.3f,%.3f) max=(%.3f,%.3f) far_m=%.3f shadow_m=%.3f",
+                         static_cast<double>(minX), static_cast<double>(minZ), static_cast<double>(maxX),
+                         static_cast<double>(maxZ), static_cast<double>(data.m_TerrainFarPlane), static_cast<double>(diagonal));
+            }
+        }
 #if NORVES_BUILD_DEVELOPMENT
         const bool bViewRequested = data.m_pViewSwitch != nullptr && data.m_pViewSwitch->IsRequested();
         if (bViewRequested && data.m_bHeroView)
@@ -599,6 +632,7 @@ namespace Game::GameModes
         }
         data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
+        data.m_TerrainFarPlane = 0.0f;
         data.m_pTerrainCollider = nullptr;
         data.m_bTerrainColliderAttempted = false;
         // 地形・草の場・カメラの Entity は GameModeScope::Cleanup が返す。各 Component の EndPlay で登録を返す。

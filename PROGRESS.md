@@ -10941,3 +10941,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 地形 spec の outer_ring を cook して外周のタイルを NVTRN に書く: 着地(直し 1 回)
 - U4 外周の区画メッシュ terrain-tile:nvtrn:outer を焼く: 着地(直し 0 回)
 - U5 TerrainComponent が外周の区画を同じ予算で置き、帯の高さ場を登録する: 着地(直し 0 回)
+- U6 草原に外周を足し、遠方面と影の到達距離を地形の広さから決める: 着地(直し 0 回)
