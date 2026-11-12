@@ -52,18 +52,14 @@ target_compile_definitions(RHIGPUTimestampVulkanTest PRIVATE
 set_target_properties(RHIGPUTimestampVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/RenderingValidation/TimestampRuns)
 add_test(NAME RHIGPUTimestampVulkanTest COMMAND RHIGPUTimestampVulkanTest)
-add_test(NAME RHIGPUTimestampVulkanSkipContractTest COMMAND RHIGPUTimestampVulkanTest)
 set_tests_properties(
     RHIGPUTimestampVulkanTest
-    RHIGPUTimestampVulkanSkipContractTest
     PROPERTIES
         LABELS "GPU;RenderingValidation"
         RESOURCE_LOCK NorvesLibGPU
         SKIP_RETURN_CODE 125
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/RenderingValidation/TimestampRuns
 )
-set_tests_properties(RHIGPUTimestampVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_library(RenderingGpuTestSupport STATIC
     RenderingValidation/GpuTestEnvironment.cpp
@@ -973,6 +969,7 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
     AlphaClipScenario.cpp
+    AlphaClipShadowScenario.cpp
     PaleFlatScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
@@ -1229,6 +1226,118 @@ add_test(NAME RenderingAlphaClipVulkanTest
         "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
         -P "${CMAKE_CURRENT_BINARY_DIR}/RunAlphaClipTest.cmake")
 set_tests_properties(RenderingAlphaClipVulkanTest PROPERTIES
+    TIMEOUT 1500
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# 太陽と点光源の各方式を単独で起動し、画像の判定とマスク用経路の記録を確かめる。
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RunAlphaClipShadowTest.cmake" CONTENT [=[
+set(once_script "${CMAKE_CURRENT_LIST_DIR}/RunHdrSceneCaptureOnce.cmake")
+set(failures "")
+foreach(run IN ITEMS sun-csm sun-vsm point-cube point-vsm)
+    if(run STREQUAL "sun-csm")
+        set(scenario sun)
+        set(method csm)
+        set(options "--alpha-clip-shadow-scenario=sun;--shadow-method=csm")
+    elseif(run STREQUAL "sun-vsm")
+        set(scenario sun)
+        set(method vsm)
+        set(options "--alpha-clip-shadow-scenario=sun;--shadow-method=vsm")
+    elseif(run STREQUAL "point-cube")
+        set(scenario point)
+        set(method cube)
+        set(options "--alpha-clip-shadow-scenario=point;--shadow-method=csm;--point-shadow-method=cube")
+    else()
+        set(scenario point)
+        set(method vsm)
+        set(options "--alpha-clip-shadow-scenario=point;--shadow-method=vsm;--point-shadow-method=vsm")
+    endif()
+    set(log_directory "${TEST_WORKING_DIRECTORY}/RenderingValidation/AlphaClipShadow/${run}")
+    file(MAKE_DIRECTORY "${log_directory}")
+    file(REMOVE "${log_directory}/on.log" "${log_directory}/on-result.txt"
+                "${log_directory}/on-output.log" "${log_directory}/on-started-utc.txt"
+                "${log_directory}/on-finished-utc.txt")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTEST_EXECUTABLE=${TEST_EXECUTABLE}"
+            "-DTEST_WORKING_DIRECTORY=${TEST_WORKING_DIRECTORY}"
+            "-DLOG_DIRECTORY=${log_directory}"
+            "-DRUN_DIRECTORY=${log_directory}/run"
+            "-DSCENARIO=${options}" "-DCAPTURE_SOURCE=--capture-source=scene-color"
+            -DVISIBILITY=on -P "${once_script}"
+        RESULT_VARIABLE launcher_result OUTPUT_VARIABLE launcher_output ERROR_VARIABLE launcher_error)
+    if(launcher_output OR launcher_error)
+        message("${launcher_output}${launcher_error}")
+    endif()
+    if(NOT launcher_result STREQUAL "0")
+        list(APPEND failures "run=${run} launcher_exit=${launcher_result}")
+    endif()
+    if(EXISTS "${log_directory}/on-result.txt")
+        file(READ "${log_directory}/on-result.txt" result)
+    else()
+        set(result "結果なし")
+        list(APPEND failures "run=${run} result_missing")
+    endif()
+    if(EXISTS "${log_directory}/on-output.log")
+        file(READ "${log_directory}/on-output.log" output)
+        message("影の検証 scenario=${scenario} method=${method}\\n${output}")
+    endif()
+    if(NOT result STREQUAL "0")
+        list(APPEND failures "run=${run} exit=${result}")
+    endif()
+    if(NOT EXISTS "${log_directory}/on.log")
+        list(APPEND failures "run=${run} log_missing")
+        continue()
+    endif()
+    if(method STREQUAL "csm")
+        set(marker "CSM_ALPHA_CLIP")
+        set(draw_pattern "c[0-3]=[1-9][0-9]*")
+    elseif(method STREQUAL "cube")
+        set(marker "POINT_SHADOW_ALPHA_CLIP")
+        set(draw_pattern "draws=[1-9][0-9]*")
+    else()
+        set(marker "VSM_ALPHA_CLIP")
+        set(draw_pattern "drawn=[1-9][0-9]*")
+    endif()
+    file(STRINGS "${log_directory}/on.log" lines REGEX "${marker} ")
+    set(found_draw FALSE)
+    foreach(line IN LISTS lines)
+        message("${line}")
+        if(NOT line MATCHES "fallback=0( |$)")
+            list(APPEND failures "run=${run} fallback_or_invalid=${line}")
+        elseif(line MATCHES "${draw_pattern}")
+            set(found_draw TRUE)
+        endif()
+    endforeach()
+    if(NOT found_draw)
+        list(APPEND failures "run=${run} masked_draw_missing")
+    endif()
+    foreach(pair IN ITEMS static skinned)
+        file(STRINGS "${log_directory}/on.log" results
+            REGEX "ALPHA_CLIP_SHADOW_RESULT scenario=${scenario} method=${method} pair=${pair} ")
+        if(NOT results)
+            list(APPEND failures "run=${run} pair=${pair} result_missing")
+        else()
+            foreach(line IN LISTS results)
+                message("${line}")
+                if(NOT line MATCHES "result=PASS( |$)")
+                    list(APPEND failures "run=${run} pair=${pair} result_failed")
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+endforeach()
+if(failures)
+    message(FATAL_ERROR "切り抜きの影の検証が失敗しました: ${failures}")
+endif()
+]=])
+add_test(NAME RenderingAlphaClipShadowVulkanTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DTEST_EXECUTABLE=$<TARGET_FILE:RenderingHdrSceneCaptureTest>"
+        "-DTEST_WORKING_DIRECTORY=${CMAKE_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_BINARY_DIR}/RunAlphaClipShadowTest.cmake")
+set_tests_properties(RenderingAlphaClipShadowVulkanTest PROPERTIES
     TIMEOUT 1500
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU

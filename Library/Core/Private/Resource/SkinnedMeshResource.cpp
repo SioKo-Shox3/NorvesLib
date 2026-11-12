@@ -59,6 +59,7 @@ namespace NorvesLib::Core
     void SkinnedMeshResource::Unload()
     {
         ++m_PoseRevision;
+        ++m_SplitMeshGeneration;
         m_PoseBounds = {};
         m_SplitMesh.reset();
         ReleaseRenderAssetLease();
@@ -66,6 +67,7 @@ namespace NorvesLib::Core
         m_Indices.clear();
         m_SubMeshes.clear();
         m_MaterialSlots.clear();
+        m_SlotMaterialSources.clear();
         SetResourceState(ResourceState::Unloaded);
     }
 
@@ -73,11 +75,20 @@ namespace NorvesLib::Core
     {
         size_t size = sizeof(SkinnedMeshResource) + m_Vertices.size() * sizeof(Skeletal::SkeletalVertex) +
             m_Indices.size() * sizeof(uint32_t) + m_SubMeshes.size() * sizeof(Skeletal::SkeletalSubMesh) +
-            m_MaterialSlots.size() * sizeof(Skeletal::SkeletalMaterialSlot);
+            m_MaterialSlots.size() * sizeof(Skeletal::SkeletalMaterialSlot) +
+            m_SlotMaterialSources.size() * sizeof(Skeletal::SkeletalSlotMaterialSource);
         size += m_PoseBounds.AllocatedBytes();
         for (const auto& slot : m_MaterialSlots)
         {
             size += slot.Name.size() * sizeof(Container::String::value_type);
+        }
+        for (const auto& source : m_SlotMaterialSources)
+        {
+            size += source.SlotName.size() * sizeof(Container::String::value_type);
+            for (const auto& path : source.Textures)
+            {
+                size += path.size() * sizeof(Container::AnsiString::value_type);
+            }
         }
         if (m_SplitMesh)
         {
@@ -109,25 +120,47 @@ namespace NorvesLib::Core
             return false;
         }
         Container::VariableArray<Skeletal::SkeletalMaterialSlot> slots;
+        Container::VariableArray<Skeletal::SkeletalSlotMaterialSource> sources;
         slots.reserve(mesh.m_Data->Slots.size());
+        sources.reserve(mesh.m_Data->Slots.size());
         for (const auto& slot : mesh.m_Data->Slots)
         {
+            if (slot.MaterialIndex >= mesh.m_Data->Materials.size())
+            {
+                return false;
+            }
             Skeletal::SkeletalMaterialSlot native;
             if (!Skeletal::SplitWire::NativeName(slot.Name, native.Name))
             {
                 return false;
             }
+            const auto& material = mesh.m_Data->Materials[slot.MaterialIndex];
+            Skeletal::SkeletalSlotMaterialSource source;
+            source.SlotName = native.Name;
+            source.MaterialIndex = slot.MaterialIndex;
+            source.Record = material.Record;
+            source.Record.Albedo = {};
+            source.Record.Normal = {};
+            source.Record.Arm = {};
+            source.Record.Emissive = {};
+            for (size_t i = 0; i < 4; ++i)
+            {
+                source.Textures[i] = material.Textures[i];
+            }
             slots.push_back(std::move(native));
+            sources.push_back(std::move(source));
         }
         ReleaseRenderAssetLease();
         m_Vertices.clear();
         m_Indices.clear();
         m_SubMeshes.clear();
         m_MaterialSlots = std::move(slots);
+        m_SlotMaterialSources = std::move(sources);
         ++m_PoseRevision;
         m_SplitMesh = mesh.m_Data;
         m_bSplitV1 = true;
         Animation::BuildMeshPoseBounds(m_SplitMesh->Vertices, 0, m_PoseBounds);
+        ++m_SplitMeshGeneration;
         return true;
     }
     bool SkinnedMeshResource::IsSplitV1() const noexcept
@@ -137,6 +170,15 @@ namespace NorvesLib::Core
     const Skeletal::SkinMeshV1Data* SkinnedMeshResource::GetSplitMesh() const noexcept
     {
         return m_SplitMesh.get();
+    }
+    const Container::VariableArray<Skeletal::SkeletalSlotMaterialSource>&
+    SkinnedMeshResource::GetSlotMaterialSources() const noexcept
+    {
+        return m_SlotMaterialSources;
+    }
+    uint64_t SkinnedMeshResource::GetSplitMeshGeneration() const noexcept
+    {
+        return m_SplitMeshGeneration;
     }
     void SkinnedMeshResource::SetVertices(Container::VariableArray<Skeletal::SkeletalVertex>&& vertices)
     {

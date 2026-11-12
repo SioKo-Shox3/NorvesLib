@@ -39,7 +39,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
-- status: todo
+- status: done
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)とビルドが通る。消した試験(`RHIGPUTimestampVulkanSkipContractTest`)の名前が `Test` と最上位の `CMakeLists.txt` に残らず、残す `RHIGPUTimestampVulkanTest` が ctest の一覧(`-N`、実行しない)に出る。統合ブランチ全体の ctest と前からの落ちの直しは BUILD-HEALTH-1109 が 17 行の verify で受け持つので、このタスクでは回さない。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
@@ -5946,7 +5946,7 @@
 - notes: ロードマップ GR27 の設計1〜3・5（462〜516 行）とフェーズ (a)〜(c)。10-02 の後に既定の不透明の経路が可視バッファ（ID のラスタと計算の解決）になったので、切り抜きと両面の材質は G5-GR26-GBUFFER-PROGRAMS の「解決の後に重ねる」経路で描く（可視バッファのラスタに αの標本を足す案は、ID のラスタの頂点の形式と HZB の作り方に波及するので採らない）。discard を含むシェーダーは早期の深度を外す実装が多いので別のファイルにして Masked の材質だけに限る（本機の性能は未計測）。MegaGeometry には切り抜きを入れない（AI の生成のメッシュは不透明。両面だけは後回しにせず、MegaGeometry の材質の bTwoSided で cull を選ぶ）。RT・DDGI・RTGI・パストレーサーには切り抜きが反映されない（GR104 の範囲。既知の限界として記録）。両面の法線の反転は、法線の向きが不揃いな AI の生成の薄い面で逆に破綻しうる（リスクとして記録）。Hash と TAA の相性の詰めは G5-GR30-THIN-SPECULAR-AA と G5-GR30-TAA-THIN-CHECK。しきい値の TSV は `Test/Core/Rendering/Thresholds/RenderingValidation/` に置く。危険地帯（GBuffer・RenderThread・アセットロード）なので評価者を通す。完了条件の GR27 の行、要件 `#### GR27`。
 
 ## G5-GR27-MASKED-SHADOW: 切り抜きの材質が、太陽の VSM・CSM・点光源の影・スキンの影に切り抜いた形の影を落とす
-- status: todo
+- status: done
 - after: G5-GR27-MASKED-GBUFFER
 - gr: GR27
 - done-when: Masked の材質の影の描画で、アルベドのαを標本して cutoff で破棄する（影では Hash を使わず Test）。CSM（`ShadowMapPass`）はマスク用のパイプライン（`shadow_alphaclip.vert`・`shadow_alphaclip.frag`）と、マスク用の別の DynamicUniformAllocator を持ち、Masked だけをそれで描く。太陽と点光源の VSM（`vsm_draw.vert`・`vsm_draw.frag`）は、Masked の塊の記録に材質の参照を持たせ、断片で破棄してから atomicMin で書く。点光源のキューブの影（`point_shadow.vert`・`point_shadow.frag`）とスキンの影（`skinned_shadow.vert`。64 バイトの頂点の ABI は不変）も同じ判定にする。GPU の `RenderingAlphaClipShadowVulkanTest`（`RenderingHdrSceneCaptureTest` の scenario。市松のαの板の影の被覆率の A/B を vsm・csm・点光源・スキンで判定する形）は登録だけして、盤面では回さない（絶対規則 10）。Masked の材質を持たない描画が分岐の前と同じ経路を通り、golden と VSM の溢れの統計に効かない形であることは、評価者が差分を読んで確かめる。verify のビルド（Game と影の CPU の試験を含む）が通り、除外の後に残る影と VSM の CPU の試験 7 本が通る。
@@ -5994,12 +5994,12 @@
 - notes: ロードマップ GR30 の B（995〜1045 行）。UNCERTAIN: SceneColor の撮影（FrameCaptureTypes.h:31 の「ブルーム前の HDR」）が TAA の後の値かは読んで確かめる（前の値なら BackBuffer を撮る）。SceneColor の A は 1 固定（照明の出力と ForwardPass のブレンド）なので、リアクティブを A に載せられず別の資源にする。推奨の経路は別: 雨・粒子は GR25 の PostTemporalAA 段で TAA の後に合成する（リアクティブも velocity も要らない）。リアクティブは TAA の前に描く半透明（湯気など）だけに使うと RenderingFlow.md に書く。独立のブレンド（independentBlend）は要さない（色と同じ係数で被覆率が積もる）。TAA の記述子の配置と RenderGraph の依存（書き手が無いとき）が変わるので、書き手 0 のときの出力の一致を試験で守る。危険地帯（TAA・RenderThread）なので評価者を通す。完了条件の GR30 のリアクティブの行、要件 `#### GR30`。
 
 ## G5-GR30-THIN-SPECULAR-AA: 細い形状と高周波の法線のちらつきを抑える鏡面の AA と、1 画素未満の毛・草の幅の下限を入れる
-- status: blocked
+- status: todo
 - after: G5-GR26-GBUFFER-CONTRACT, G5-GR27-MASKED-GBUFFER, G5-GR30-VERTEX-ANIM-VELOCITY
 - gr: GR30
-- done-when: 鏡面の AA（Tokuyoshi-Kaplanyan 型: σ² = 0.25(|dN/dx|² + |dN/dy|²)、roughness' = sqrt(roughness² + min(2σ², 0.18))）を、法線を確定した直後に GBuffer の全部の書き手へ入れる（`Common/GBufferFragment.glsl`・megageometry.frag は dFdx/dFdy、可視バッファの解決 Common/VisibilityResolve.glsl は解決が既に作る画素ごとの偏微分（:449〜489 の duvdx・dposdx）から法線の変化を求める。計算シェーダーには dFdx が無い）。強さの係数は描画の定数にして既定は仮（段階的に入れられる）。`Assets/Shaders/Common/ThinGeometry.glsl` に `ClampStrandWidth(worldWidth, viewDepth, projFactor)` で幅を最低 1 画素へ広げ、細った分の被覆率を返す関数を置き、被覆率を G5-GR27-MASKED-GBUFFER の Hash の被覆へ回す約束を書く（使い手は GR34 のシェルと GR43 の草）。GPU の `RenderingSpecularAAVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、高周波の法線マップを持つ球の 8 ジッタのフレームにわたるハイライトの輝度の標準偏差が、AA 有りで無しの 50% 以下（A/B）を可視バッファの on と fallback で確かめる。鏡面の AA で DefaultLit の見た目が変わるので、golden 4 本の差がその変更だけによることを確かめて再承認し（`Docs/RenderingValidation/GoldenBaselines.md` の手順。作者に任された判断）、Indoor と Outdoor の差分と根拠をコミット本文に書く。
-- verify: `cmake --build build --config Debug --target RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(RenderingSpecularAAVulkanTest|RenderingAlphaClipVulkanTest|RenderingShadingModelGBufferVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300`
+- done-when: 鏡面の AA（Tokuyoshi-Kaplanyan 型: σ² = 0.25(|dN/dx|² + |dN/dy|²)、roughness' = sqrt(roughness² + min(2σ², 0.18))）を、法線を確定した直後に GBuffer の全部の書き手へ入れる（`Common/GBufferFragment.glsl`・megageometry.frag は dFdx/dFdy、可視バッファの解決 Common/VisibilityResolve.glsl は解決が既に作る画素ごとの偏微分（duvdx・dposdx）から法線の変化を求める）。強さの係数は描画の定数にして既定は仮。`Assets/Shaders/Common/ThinGeometry.glsl` に `ClampStrandWidth(worldWidth, viewDepth, projFactor)` を置く。この関数は幅を最低 1 画素へ広げ、細った分の被覆率を返す。被覆率を G5-GR27-MASKED-GBUFFER の Hash の被覆へ回す約束も書く（使い手は GR34 のシェルと GR43 の草）。`TerrainShaderCompileTest` が gbuffer.frag・gbuffer_alphaclip.frag・megageometry.frag・visbuffer_resolve*.comp を、マクロの全部無効・全部有効の両方の組でコンパイルして通る。GBuffer の配置と鍵の CPU の検査（ShadingModelContractTest・GBufferMaterialDescriptorCacheTest・GBufferPipelineKeyTest）も通る。GPU の A/B の試験（RenderingSpecularAAVulkanTest）は作らない。golden 4 本の比較と再承認もしない（絶対規則 10）。見た目は人がゲームを動かして見る。
+- verify: `cmake --build build --config Debug --target RenderingHdrSceneCaptureTest RenderingGoldenImageTest Game RHIRayTracingApiContractTest MaterialResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(TerrainShaderCompileTest|ShadingModelContractTest|GBufferMaterialDescriptorCacheTest|GBufferPipelineKeyTest)$" --no-tests=error --output-on-failure --timeout 600`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/GBufferPass.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Private/Rendering/VisibilityResolvePass.cpp, Library/Core/Public/Rendering, Test/Core/Rendering, Test/Core/Rendering/Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: ロードマップ GR30 の D（995〜1045 行）。鏡面の AA は毛・草の法線（頂点の法線が一定）には効かないので、毛の鏡面のちらつきは GR34・GR35 で別に見る。アルファハッシュと TAA の相性（C）は測ってから手を入れる方針（ロードマップ）なので、この項目では手を入れず G5-GR30-TAA-THIN-CHECK で測る。既定の見た目が変わるので、全シーンの撮影は G5-GR30-TAA-THIN-CHECK（絶対規則7）。golden の画像は Test/Core/Rendering/Baselines/RenderingValidation/ の 4 枚（GoldenBaselines.md:140〜144）で、更新は同書の Generate と Publish の手順で行う。危険地帯（GBuffer・可視バッファの解決）なので評価者を通す。完了条件の GR30 の鏡面の AA と golden の行、要件 `#### GR30`。
 
@@ -6898,7 +6898,7 @@
 - notes: 確かめ直し (c)。スキンの GBuffer の頂点シェーダーは物体色を固定する(`Assets/Shaders/skinned_gbuffer.vert:136` の `fragObjectColor = vec3(1.0)`)ので、cook が MATS に入れた BaseColor(`RigSplitCook.cpp:470-480` で record をそのまま写す)は描画に効かない。2 材質のパネルも「スキン描画は材質の基本色を使わないため」単色のアルベドで色を持たせている(`NVSKELMigrationInventory.md` の「範囲drawの接続」)。ロードマップの軟い依存(193 行)と要件 GR79 の設計案 (8) は「factor≠1 のときだけ cook でアルベドへ焼いて代える」としている。G5 の `G5-GR26-MATERIAL-PARAMS` はスキンの物体色を扱わないので重ならない。シェーダーは変えない(GBuffer の危険地帯に入らない)。スキンのシェーダーが材質の色を読むようになったら、この焼き込みを外す(そのときは MATS の BaseColor をそのまま使う)と CookedMaterialV1.md に書く。要件 `#### GR79` の設計案 (8)。
 
 ## G2-GR79-SKINNED-MATERIAL-BUILDER: cooked のスキンメッシュの材質の表から slot ごとの材質を作り、骨格つきの資産を読むだけで材質つきで描けるようにする
-- status: todo
+- status: done
 - after: G2-GR83-LOOSE-SKELETAL
 - gr: GR79
 - done-when: 3 資産の経路で読んだ SkinnedMesh の MATS(材質 record と 4 つの texture の論理パス)を、公開する CPU の資産(`SkinnedMeshResource` か 3 資産の束)に slot の名前と並べて保持する。`SkinnedMaterialBuilder`(GR83 のローダの配下)が、GameThread で、slot ごとに texture を cooked の経路で解決し(静的モデルの v1 材質と同じ `BuildImportedMaterialStaging`・`ValidateImportedTexture`・`SplitImportedArmChannels` を使い、アルベドは sRGB、normal と ARM は linear を検査する)、`MaterialCreateData` を組んで `RenderMaterialStore` で作り、`SkinnedMeshComponent::SetSlotMaterial(slot, handle)` で付ける。

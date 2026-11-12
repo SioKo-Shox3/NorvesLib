@@ -33,6 +33,8 @@ cmake -S . -B build -DNORVES_BUILD_TESTS=ON
 
 `ClipOptimizerTest`（`CookedMeshTest` の中）は、定数・既定姿勢チャンネル、位置・回転・スキニングの削減誤差、端点と STEP の保持、再適用と決定性、無効入力の拒否、最適化を無効にした旧形式・v1 cook のバイト列と `SourceHash` の一致を検査する。誤差やバイト差は cook の成功・ログだけでは分からず、失敗は黙って起きる。
 
+`SkeletalSplitRuntimeTest`（`CookedMeshTest` の中）の `materials` は、2 材質の rig の cook・読込と FakeDevice を使い、slot 数・名前・`MaterialCreateData` の値、MASK・texture 解決の失敗の slot ごとの分離、資産解放後の `Collect` による材質回収を反証する。
+
 ## 1つだけ回す
 
 テスト名と実行ファイル（ビルドのターゲット）が違うことがあるので、先にコマンドを確かめる。

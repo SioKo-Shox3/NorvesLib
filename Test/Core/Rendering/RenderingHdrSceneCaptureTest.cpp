@@ -4,6 +4,7 @@
 #include "RenderExtensionStageScenario.h"
 #include "GBufferProgramScenario.h"
 #include "AlphaClipScenario.h"
+#include "AlphaClipShadowScenario.h"
 #include "PaleFlatScenario.h"
 #include "SkinnedCullScenario.h"
 #include "TemporalAAReactiveScenario.h"
@@ -1712,6 +1713,7 @@ namespace
         RenderExtensionStageScenario m_ExtensionStageScenario;
         GBufferProgramScenario m_GBufferProgramScenario;
         AlphaClipScenario m_AlphaClipScenario;
+        AlphaClipShadowScenario m_AlphaClipShadowScenario;
         PaleFlatScenario m_PaleFlatScenario;
         SkinnedCullScenario m_SkinnedCullScenario;
         TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
@@ -1790,6 +1792,21 @@ namespace
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
                 return false;
+            }
+            if (m_AlphaClipShadowScenario.IsEnabled())
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::SceneColor ||
+                    !m_AlphaClipShadowScenario.HasValidMethods() || m_AlphaClipScenario.IsEnabled() ||
+                    m_GBufferProgramScenario.IsEnabled() || m_bShadingModelScenario || m_bShadingModelLightingScenario ||
+                    m_ExtensionStageScenario.IsEnabled() || m_SkinnedCullScenario.IsEnabled() || m_PaleFlatScenario.IsEnabled() ||
+                    m_TemporalAAReactiveScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                    m_bKnownCdScenario || m_bP4Scenario || m_bAllNumericalScenario ||
+                    m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario)
+                {
+                    LOG_ERROR("切り抜きの影の検証には indoor、scene-color と対応する影の方式を単独で指定してください");
+                    return false;
+                }
             }
             if (m_AlphaClipScenario.IsEnabled())
             {
@@ -2111,6 +2128,10 @@ namespace
             {
                 LOG_INFO("シェーディングモデル時刻 stage=base_fixture_end");
                 return GetFixture().ApplyShadingModelGBufferFixture();
+            }
+            if (m_AlphaClipShadowScenario.IsEnabled())
+            {
+                return m_AlphaClipShadowScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
             }
             if (m_AlphaClipScenario.IsEnabled())
             {
@@ -2437,6 +2458,15 @@ namespace
                 m_bShadingModelScenario = true;
                 return true;
             }
+            if (argument.find(TEXT("--alpha-clip-shadow-scenario=")) == 0)
+            {
+                return m_AlphaClipShadowScenario.ParseArgument(argument, outFailureReason);
+            }
+            if (argument.find(TEXT("--shadow-method=")) == 0 ||
+                argument.find(TEXT("--point-shadow-method=")) == 0)
+            {
+                return m_AlphaClipShadowScenario.ParseMethodArgument(argument, outFailureReason);
+            }
             if (argument.find(TEXT("--alpha-clip-scenario=")) == 0)
             {
                 return m_AlphaClipScenario.ParseArgument(argument, outFailureReason);
@@ -2659,6 +2689,10 @@ namespace
             {
                 return EvaluateShadingModelGBufferFrame(frame, reason);
             }
+            if (m_AlphaClipShadowScenario.IsEnabled())
+            {
+                return m_AlphaClipShadowScenario.Evaluate(frame, reason);
+            }
             if (m_AlphaClipScenario.IsEnabled())
             {
                 return m_AlphaClipScenario.Evaluate(frame, reason);
@@ -2822,6 +2856,11 @@ namespace
                 auto fog = MakeDefaultVolumetricFogParameters();
                 fog.bEnabled = false;
                 renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
+            if (m_AlphaClipShadowScenario.IsEnabled())
+            {
+                m_AlphaClipShadowScenario.ApplyState(renderWorld);
                 return;
             }
             if (m_AlphaClipScenario.IsEnabled())
@@ -3163,6 +3202,10 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_AlphaClipShadowScenario.IsEnabled())
+            {
+                return;
+            }
             if (m_AlphaClipScenario.IsEnabled())
             {
                 m_AlphaClipScenario.Advance();
@@ -3296,6 +3339,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_AlphaClipShadowScenario.IsEnabled())
+            {
+                return false;
+            }
             if (m_AlphaClipScenario.IsEnabled())
             {
                 return m_AlphaClipScenario.RequestFollowup(outRequest);
