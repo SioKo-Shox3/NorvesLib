@@ -11186,3 +11186,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 実測（2026-11-12、恒等写像の target）: duration_seconds=4.125、rest_error_after_max_degrees=1.7e-06、loop_detected=1・period_frames=12.50・seam 3.02°→0°、estimated_speed_m_s=0（ルートの位置が全フレームで一定）、rotation_error_max_degrees=15.34。数値は BvhImport.md に記録した。
 - Next: ランナーの評価者の反証。Blender との実物の照合（`BlenderBvhFk.py` を Blender で回し、`CompareBvhFk.py` で frame 0/17/33 の差が 1e-3 m 以内か）は後の確かめのタスクで回す（この項目では Blender を走らせない決まり）。
 - Notes: `--dump-fk` の位置の規約は既定を `absolute` にした（Blender の公式 importer は位置チャンネルで OFFSET を置き換える: `import_bvh.py` の `Vector(bvh_loc) - bvh_node.rest_head_local`）。role profile と同じ `additive` は `--position-convention additive` で出せる。Blender の台本は importer を `axis_forward='Y', axis_up='Z'` で呼んで軸の変換を恒等にし、BVH のフレーム f を場面のフレーム 1+f として読む。
+
+- U1 旧経路(profile1)の骨格の抽出で skin.skeleton の省略を受け、唯一の根の関節を求める: 着地(直し 0 回)
+- U2 Blender の書き出しと同じ形の fixture 2 つ・README・Blender の書き出しスクリプトを足す: 着地(直し 0 回)
+- U3 AssetCook の旧経路の骨格の拒否に --rig-split への案内を足す: 着地(直し 0 回)
+- U4 skin.skeleton の扱いを経路ごとに文書へ書き、足す試験の理由を Testing.md に書く: 着地(直し 1 回)
+- U5 2 つの試験を足し、タスクの verify を回す: 着地(直し 0 回)
+### G2-GR82-SKELETON-HINT-LEGACY 旧 NVSKEL の経路で skin.skeleton の省略を受け、Blender の書き出しの形の fixture で両経路を固定する（2026-11-12、run 20261112-175835）
+- Done: `SkeletalGltfDecode.cpp` の profile1（旧 NVSKEL 0.2・`DecodeSkeletalGltf`）の骨格の抽出は、`skin.skeleton` があれば今と同じ検査、無ければ親を持たない関節がちょうど 1 つで、選んだ scene から届くときにそれを根にする（根が 0 個・2 つ以上・届かないは InvalidSkeleton）。「関節の親は関節だけ」（非関節の親の拒否）は変えていない。到達の判定のため `ParseNodeContract` は `Reachable` を profile に関係なく持つ。`skeleton` のある資産の経路の処理は前と同じ。`Assets/Models/M9Skinned/` に `NoSkeletonHint.gltf`（Armature の node 無し・2 関節・clip 1）と `BlenderArmature.gltf`（回転と一様 scale を持つ非関節の親 `Armature`・joints は深さ優先・clip `ArmatureAction`）を足し、写した io_scene_gltf2 の形を同じ場所の README.md に書いた。`Test/Tools/BlenderExportMinimalRig.py`（2 bone・1 action・skin の mesh を glTF separate で書き出す）を足した（Blender は走らせていない）。AssetCook の旧経路の拒否で状態が InvalidSkeleton のとき、Armature の親を持つ資産は `--rig-split`（NVSKEL v1）で cook するよう案内を足した（先頭の機械照合の文字列は変えない）。`SkeletalImportLimits.md` に経路ごとの `skin.skeleton` の扱い、`RigStaticRootFrame128.md` に profile1 も省略を受ける旨、`Testing.md` に試験を足す理由を書いた。
+- 試験: GLTFSkeletalAnalyzerTest に、NoSkeletonHint.gltf が旧経路で成功し `"skeleton": 1` を足した版と関節・頂点・索引・サブメッシュ・clip の全値が一致すること、BlenderArmature.gltf が旧経路で InvalidSkeleton になること。RigStaticRootFrameImportTest に、BlenderArmature.gltf が profile3（StaticRootFrame256）で成功し、作者 frame が Armature の T·R·S（X 軸まわり 90 度・scale 0.5・平行移動 (1,0,−2)）から独立に出した値と 1e-6 以内で一致し、関節の rest に Armature の変換を焼かないこと。
+- 証拠: `.harness/runs/20261112-175835/verify-G2-GR82-SKELETON-HINT-LEGACY-U5.txt`（verify のビルドの行 exit code 0、verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて 9/9 Passed、`fixture NoSkeletonHint.gltf passed` と `ROOT_FRAME_IMPORT_CASE result=pass blender_layout_profile3_armature_author_frame` の出力あり）。
+- Next: ランナーの評価者の反証（アセットロードの危険地帯）。実物の Blender での書き出しと fixture の形の照合、実犬の cook は `G2-GR82-REAL-RIG-CHECK`。撮影・計測の確かめは回さない決まり（見た目は変わらない）。
+- Notes: 段階をまたぐ注意の「求めた根が関節でなければ子の関節 1 つを根にする」は、profile1 の「関節の親は関節だけ」の契約に合わないので旧経路には入れず、v1 の経路（Armature を作者 frame に入れる）で満たす。
