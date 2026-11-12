@@ -10281,3 +10281,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: ランナーの再検証は、このブランチの `TASKS.md` に判断役が書き換えた done-when と verify が入っておらず、古い verify（build の対象に `TextureResourcesAssetLoadProfileContractTest` が無い版）で回って `ModelResourcesAssetLoadProfileContractTest` が Not Run になっていた。判断（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）で書き換えた done-when と verify を、統合ブランチの項目と同じ文面でこのブランチへ写した。コードの変更は無い。
 - 証拠: 書き換えた verify 2 本は、今と同じコード（0c76e9b5 以後の変更は `TASKS.md`・`PROGRESS.md` だけ）で回して合格している（U6 の確かめ: Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0）。
 - Notes: 盤面が判断で書き換えた欄が、作業のブランチの `TASKS.md` に入らないまま再開されると、ランナーは古い verify で再検証する。
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、評価の中断からの再開・完了）
+- Done: 前の走行は評価の途中で止まった。コードは 0c76e9b5 から変わっていない（その後の変更は `TASKS.md`・`PROGRESS.md` だけ）ので、項目を完了に戻す。
+- 証拠: 今と同じコードで回した verify 2 本の出力 `.harness/runs/20261112-115211/prior-verify-G2-GR83-LOOSE-SKELETAL.txt`（Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
+- Notes: 人が見るときの見どころは上の 2026-11-12 の完了の記録のとおり。撮影・計測の確かめは回さない決まり。
