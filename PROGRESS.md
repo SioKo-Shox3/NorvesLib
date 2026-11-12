@@ -10943,3 +10943,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 Physics に static-colliders の handler を足し、Install で登録する: 着地(直し 0 回)
 - U6 StreamingPayloadTest を足す（Core の handler 3 種を本物の World で確かめる）: 着地(直し 1 回)
 - U7 StreamingColliderPayloadTest を足す（static-colliders と placement の物理）: 着地(直し 1 回)
+- U8 grassland にセルの出し入れを結線し、タスクの verify を回す: 着地(直し 0 回)

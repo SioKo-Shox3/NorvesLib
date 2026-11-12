@@ -338,6 +338,8 @@ namespace Game
         uint32_t m_ParallelPoseGrain = 0;
         /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
         uint32_t m_GrasslandScatterStressCount = 0;
+        /// --grassland-streaming で草原をセル単位で出し入れする。
+        bool m_bGrasslandStreaming = false;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;
