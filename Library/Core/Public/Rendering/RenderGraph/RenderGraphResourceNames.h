@@ -76,6 +76,8 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         Identity::Literal("SkyOcclusion.Visibility", sizeof("SkyOcclusion.Visibility") - 1);
     inline constexpr Identity SkyOcclusionAux =
         Identity::Literal("SkyOcclusion.Aux", sizeof("SkyOcclusion.Aux") - 1);
+    // 真上からの雨の遮蔽の深度マップ。深度 =（topY − y）÷ range、1.0 は上が開けている。
+    inline constexpr Identity OverheadHeightMap = Identity::Literal("OverheadHeightMap", sizeof("OverheadHeightMap") - 1);
     inline constexpr Identity SSAORaw = Identity::Literal("SSAO.Raw", sizeof("SSAO.Raw") - 1);
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);

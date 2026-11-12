@@ -6423,7 +6423,7 @@
 - notes: 要件 `#### GR56` の受け入れ確認の R56SkyOcclusionPathTracingReferenceVulkanTest（要件 5622 行）。参照比較の段（数分〜1 時間。Docs/Testing.md の段）で GPU を長く使うので `gpu: exclusive`。比べの道具は R7 と同じ `RasterPathTracingComparison.h` の流儀（要件の指定）。PT は遮蔽物の実際の形を描き、ラスタは同じ形の遮蔽物の値で遮る（遮蔽物は形と値を同じ物から作る。要件 5639 行のリスク）。L1 の打ち切り誤差は「既知の方式差」として量を記録する（R7OutdoorAcceptance.md と同じ流儀）。閾値の ±15%・±20% は要件の初期目標で、実測の根拠を記録して確定する。試験を足す理由: 反証する契約は「ラスタの空の遮蔽が物理の正解の比に合う」。正解が無いと強さのつまみで見た目だけを合わせ、方式の誤りが残っても気づけない。
 
 ## G11-GR59-OVERHEAD-MAP: 真上からの雨の遮蔽の深度マップ（カメラに追従する 96 m・1024²）を遮蔽物の天面の形から作って公開し、「雨に当たるか」を引けるようにする
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-CPU, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS
 - gr: GR59
 - needs-gr: GR37
