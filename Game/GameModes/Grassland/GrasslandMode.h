@@ -2,6 +2,7 @@
 // 視点は SceneCatalog.h の kGrasslandViews（near・valley・low）。自由飛行と撮影時の視点の切り替えに対応する。
 // 開発ビルドでは H キーで犬大の代役を追う視点へ切り替え、主人公との間の草の間引きを確認する。
 // --grassland-streaming では地形の区画・散布・岩の当たりをセル単位で出し入れする。
+// --streaming-snap-test=<x>,<z> では組み立て後にスナップロードし、自由飛行カメラを目的地へ一度移す。
 // 地形は Assets/TerrainSpecs/Grassland/GrasslandTerrain.json と Scripts/Terrain/GenerateGrasslandHeight.py から
 // クックした Assets/Terrain/Grassland/Grassland.nvtrn と Tiles/GrasslandTile_<x>_<z>.generated を使う。
 #pragma once
@@ -94,6 +95,20 @@ namespace Game::GameModes
 #if NORVES_BUILD_DEVELOPMENT
         /// セル単位の流し込みを有効にする起動引数。
         bool m_bStreaming = false;
+        /// 組み立て後にスナップロードと自由飛行カメラの移動を一度行う起動引数。
+        bool m_bStreamingSnapTest = false;
+        /// 目的地のワールド X・Z 座標[m]。
+        float m_StreamingSnapTestX = 0.0f;
+        float m_StreamingSnapTestZ = 0.0f;
+        /// 要求を一度試したか。受理されなかった場合も再試行しない。
+        bool m_bStreamingSnapRequested = false;
+        /// PostTick または取り消し時に通知を受けたか。
+        bool m_bStreamingSnapReceived = false;
+        NorvesLib::Core::Streaming::StreamingSnapResult m_StreamingSnapResult;
+        /// 通知結果の処理を済ませたか。Ready の場合は自由飛行カメラの移動も完了している。
+        bool m_bStreamingSnapHandled = false;
+        /// Ready を受けて自由飛行カメラを目的地へ移したか。
+        bool m_bStreamingSnapTeleported = false;
         NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::Streaming::TerrainTilePayloadHandler> m_TerrainHandler;
         NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::Streaming::ScatterChunkPayloadHandler> m_ScatterHandler;
         NorvesLib::Core::Streaming::CellManifest m_StreamingManifest;

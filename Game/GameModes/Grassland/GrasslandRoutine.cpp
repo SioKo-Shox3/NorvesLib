@@ -407,6 +407,10 @@ namespace Game::GameModes
         void StopGrasslandStreaming(GameModeContext& ctx, GrasslandData& data)
         {
             auto& system = ctx.EngineRef.GetStreamingSystem();
+            if (data.m_bStreamingSnapRequested && !data.m_bStreamingSnapReceived)
+            {
+                system.CancelSnapLoad();
+            }
             if (data.m_bStreamingManifestLoaded)
             {
                 system.StopAndJoin(kGrasslandStreamingScopeId);
@@ -571,6 +575,13 @@ namespace Game::GameModes
     {
         LOG_INFO("grassland を開始します");
         data.m_TickCount = 0;
+#if NORVES_BUILD_DEVELOPMENT
+        data.m_bStreamingSnapRequested = false;
+        data.m_bStreamingSnapReceived = false;
+        data.m_StreamingSnapResult = {};
+        data.m_bStreamingSnapHandled = false;
+        data.m_bStreamingSnapTeleported = false;
+#endif
         data.m_pRunningBody = nullptr;
         data.m_RunAngle = 0.0f;
         data.m_pTerrain = nullptr;
@@ -676,6 +687,45 @@ namespace Game::GameModes
         data.m_Rig.Tick(ctx, deltaTime, bSuspended);
 #endif
         UpdateRunningBody(data, bSuspended ? 0.0f : deltaTime);
+#if NORVES_BUILD_DEVELOPMENT
+        bool bTeleportedThisTick = false;
+        if (data.m_bStreamingSnapReceived && !data.m_bStreamingSnapHandled)
+        {
+            data.m_bStreamingSnapHandled = true;
+            const auto& result = data.m_StreamingSnapResult;
+            if (result.Status == Streaming::EStreamingSnapStatus::Ready)
+            {
+                LOG_INFO("STREAMING_SNAP ready_ms=%.1f cells=%u スナップロードが済みました", result.ElapsedMs, result.Cells);
+                const auto& controller = data.m_Rig.GetController();
+                const Math::Vector3 position = controller.GetPosition();
+                float y = position.y;
+                const auto heightField = data.m_pTerrain != nullptr ? data.m_pTerrain->GetHeightField() : nullptr;
+                if (heightField)
+                {
+                    const float currentHeight = heightField->SampleHeight(position.x, position.z);
+                    const float targetHeight = heightField->SampleHeight(data.m_StreamingSnapTestX, data.m_StreamingSnapTestZ);
+                    if (std::isfinite(currentHeight) && std::isfinite(targetHeight))
+                    {
+                        y = targetHeight + (position.y - currentHeight);
+                    }
+                }
+                // 主人公視点でも主人公は動かさず、自由飛行カメラだけを今の向きのまま置き直す。
+                const Game::Scenes::FreeCameraPose pose{
+                    {data.m_StreamingSnapTestX, y, data.m_StreamingSnapTestZ}, controller.GetYaw(), controller.GetPitch()};
+                data.m_Rig.PlaceAt(pose);
+                bTeleportedThisTick = true;
+                data.m_bStreamingSnapTeleported = true;
+                data.m_bPreviousStreamingFocus = false;
+                LOG_INFO("STREAMING_SNAP teleported x=%.1f z=%.1f y=%.1f 自由飛行カメラを移しました",
+                         data.m_StreamingSnapTestX, data.m_StreamingSnapTestZ, y);
+            }
+            else
+            {
+                const char* status = result.Status == Streaming::EStreamingSnapStatus::Cancelled ? "Cancelled" : "Failed";
+                LOG_WARNING("STREAMING_SNAP status=%s cells=%u カメラを移さずスナップロードを終了します", status, result.Cells);
+            }
+        }
+#endif
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
         // 通常は全区画、流し込みではカメラを含むセルが揃うまで準備完了を待つ。
         bool bTerrainReady = data.m_pTerrain != nullptr && data.m_pTerrain->IsFullyPlaced() &&
@@ -689,7 +739,9 @@ namespace Game::GameModes
             const Component::CameraComponent* camera = data.m_bHeroView ? data.m_pHeroCamera : data.m_Rig.GetCamera();
             if (camera != nullptr && camera->GetOwner() != nullptr)
             {
-                const Math::Vector3 position = camera->GetOwner()->GetPosition();
+                // PlaceAt はコントローラーだけを置き直し、カメラの実体は次のリグの Tick で追いつくため、この Tick だけその位置を使う。
+                const Math::Vector3 position = bTeleportedThisTick && !data.m_bHeroView
+                    ? data.m_Rig.GetController().GetPosition() : camera->GetOwner()->GetPosition();
                 Math::Vector3 velocity = Math::Vector3::Zero;
                 if (data.m_bPreviousStreamingFocus && std::isfinite(deltaTime) && deltaTime > 0.0f)
                 {
@@ -745,6 +797,23 @@ namespace Game::GameModes
         if (bReady)
         {
             data.m_Rig.NotifySceneReady();
+#if NORVES_BUILD_DEVELOPMENT
+            if (data.m_bStreaming && data.m_bStreamingSnapTest && !data.m_bStreamingSnapRequested)
+            {
+                data.m_bStreamingSnapRequested = true;
+                auto& system = ctx.EngineRef.GetStreamingSystem();
+                if (!system.RequestSnapLoad({data.m_StreamingSnapTestX, 0.0f, data.m_StreamingSnapTestZ},
+                                            system.GetSettings().Ring.ActiveRadius,
+                                            [pData = &data](const Streaming::StreamingSnapResult& result)
+                                            {
+                                                pData->m_StreamingSnapResult = result;
+                                                pData->m_bStreamingSnapReceived = true;
+                                            }))
+                {
+                    LOG_ERROR("STREAMING_SNAP スナップロードの要求を受理できませんでした");
+                }
+            }
+#endif
         }
         Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kGrasslandSceneId, bReady);
     }

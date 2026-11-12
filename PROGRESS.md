@@ -11029,3 +11029,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 ヒッチの数え方と記録、新しい試験の骨組み: 着地(直し 0 回)
 - U3 スナップロード（RequestSnapLoad / CancelSnapLoad）: 着地(直し 0 回)
 - U6 先読みとバイトの予算での追い出しのループ化（U4 のレビュー済みの差分を当て直す）: 着地(直し 0 回)
+- U5 grassland の開発用引数 --streaming-snap-test と全体の確かめ: 着地(直し 1 回)
