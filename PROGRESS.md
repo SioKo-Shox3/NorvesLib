@@ -10938,3 +10938,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next（反復 2）: 人が見るときの見どころに、grassland の原点から離れた平地（地形の端に近い所）で土・苔・草地の地肌の模様が潰れず、近くと同じ細かさに見えること、段の変わり目（数 m の幅）で模様が二重に見えすぎないことを足す。
 - U1 窓・正射影・描き直しの判定・屋根の高さの CPU の計算と OverheadHeightMapMathTest: 着地(直し 0 回)
 - U2 ViewRenderContext に OverheadHeightMapResources、RenderGraphResourceNames に OverheadHeightMap を足す: 着地(直し 0 回)
+- U3 天面を描く頂点シェーダーと、屋根の高さ・雨に当たるか・上の空の見え方を引く GLSL: 着地(直し 0 回)
