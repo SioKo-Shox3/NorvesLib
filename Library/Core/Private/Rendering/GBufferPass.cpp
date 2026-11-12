@@ -12,6 +12,7 @@
 #include "Rendering/SkinnedLodSelection.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/SpecularAntiAliasing.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -109,8 +110,8 @@ namespace NorvesLib::Core::Rendering
         {
             // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
             // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）
-            // + 頂点アニメのインスタンス値・時刻（32）= 400 バイト
-            constexpr uint32_t UBO_SIZE = 400;
+            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）= 416 バイト
+            constexpr uint32_t UBO_SIZE = 416;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -819,10 +820,12 @@ namespace NorvesLib::Core::Rendering
             float shadingModel[4]; // x=GBuffer の ID、y=cutoff、z=切り抜き方式（0/1/2）、w=Hash の位相
             float vertexAnimInstanceParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
             float vertexAnimTime[4];
+            float specularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
         };
         static_assert(offsetof(PerObjectUBO, vertexAnimInstanceParams) == 368u);
         static_assert(offsetof(PerObjectUBO, vertexAnimTime) == 384u);
-        static_assert(sizeof(PerObjectUBO) == 400u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(offsetof(PerObjectUBO, specularAAParams) == 400u);
+        static_assert(sizeof(PerObjectUBO) == 416u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -835,6 +838,7 @@ namespace NorvesLib::Core::Rendering
         previousCameraConstants.CopyShaderProjection(previousProjData);
 
         PerObjectUBO frameTemplate{};
+        MakeSpecularAAConstants(frameTemplate.specularAAParams);
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
                                          frameTemplate.vertexAnimTime);
         std::memcpy(frameTemplate.view, viewData, sizeof(viewData));

@@ -11027,3 +11027,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（既存の `--grassland-scatter-stress` と同じ形）。`--grassland-streaming` では Unload の輪 448 m が地形の対角（約 724 m）より短いので、隅にいると反対の隅の区画が外れて地形に穴が見える（開発の引数だけの挙動）。散布は距離の常駐を切るので、岩以外の種もセルで出し入れされる。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD。
 - U1 鏡面の AA の共通の関数と強さの定数を置く: 着地(直し 0 回)
 - U2 細い帯の幅の下限の関数 ClampStrandWidth を置く: 着地(直し 0 回)
+- U3 ラスタの GBuffer（静的・スキン・切り抜き）に鏡面の AA を入れる: 着地(直し 0 回)
