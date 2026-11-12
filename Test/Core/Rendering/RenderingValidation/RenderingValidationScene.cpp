@@ -3445,6 +3445,7 @@ namespace NorvesLib::Test::RenderingValidation
     {
         using namespace Core::Rendering;
         const bool bVelocity = kind == AlphaClipFixtureKind::Velocity;
+        const bool bShadow = kind == AlphaClipFixtureKind::ShadowSun || kind == AlphaClipFixtureKind::ShadowPoint;
         if (m_pWorld == nullptr || m_pResources == nullptr ||
             m_SceneKind != (bVelocity ? SceneKind::Outdoor : SceneKind::Indoor))
         {
@@ -3468,25 +3469,26 @@ namespace NorvesLib::Test::RenderingValidation
         }
 
         TextureHandle checker;
-        if (kind == AlphaClipFixtureKind::Test || kind == AlphaClipFixtureKind::Skinned || bVelocity)
+        if (kind == AlphaClipFixtureKind::Test || kind == AlphaClipFixtureKind::Skinned || bVelocity || bShadow)
         {
-            uint8_t pixels[8u * 8u * 4u];
-            for (uint32_t y = 0u; y < 8u; ++y)
+            uint8_t pixels[8u * 8u * 4u]{};
+            const uint32_t size = bShadow ? 4u : 8u;
+            for (uint32_t y = 0u; y < size; ++y)
             {
-                for (uint32_t x = 0u; x < 8u; ++x)
+                for (uint32_t x = 0u; x < size; ++x)
                 {
-                    const uint32_t offset = (y * 8u + x) * 4u;
+                    const uint32_t offset = (y * size + x) * 4u;
                     pixels[offset] = pixels[offset + 1u] = pixels[offset + 2u] = 255u;
                     pixels[offset + 3u] = ((x + y) % 2u == 0u) ? 255u : 0u;
                 }
             }
             TextureCreateInfo info;
-            info.Width = info.Height = 8u;
+            info.Width = info.Height = size;
             info.MipLevels = 1u;
             info.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
             info.bInitialDataHasAllMips = true;
             info.DebugName = TEXT("RenderingValidationAlphaClipChecker");
-            checker = m_pResources->Textures().CreateTexture(info, pixels, sizeof(pixels));
+            checker = m_pResources->Textures().CreateTexture(info, pixels, size * size * 4u);
             if (!checker.IsValid())
             {
                 return false;
@@ -3532,6 +3534,205 @@ namespace NorvesLib::Test::RenderingValidation
                 return false;
             }
             m_Lease.TrackMesh(handles[side]);
+        }
+
+        if (bShadow)
+        {
+            // 四つの板は頂点・UV・テクスチャを共有し、材質の切り抜き設定だけを変える。
+            MaterialHandle materials[2];
+            for (uint32_t index = 0u; index < 2u; ++index)
+            {
+                MaterialCreateData data;
+                data.bCastShadows = true;
+                data.bTwoSided = true;
+                data.bDiffuseOnly = true;
+                data.BaseColor[0] = data.BaseColor[1] = data.BaseColor[2] = 0.8f;
+                data.Metallic = 0.0f;
+                data.Roughness = 0.7f;
+                data.AlbedoTexture = checker;
+                if (index == 0u)
+                {
+                    data.Blend = BlendMode::Masked;
+                    data.AlphaClip = AlphaClipMode::Test;
+                    data.AlphaCutoff = 0.5f;
+                }
+                materials[index] = m_pResources->Materials().Create(data);
+                if (!materials[index].IsValid())
+                {
+                    return false;
+                }
+                m_Lease.TrackMaterial(materials[index]);
+            }
+
+            // ワールド行列は行ベクトルで、回転後の各軸にスケールを掛ける。
+            const auto horizontal = Math::QuaternionUtils::FromEulerAngles(
+                Math::Vector3(Math::Constants::PI * 0.5f, 0.0f, 0.0f));
+            auto spawnStatic = [&](const AlphaClipPlateSpec& plate, float height, MaterialHandle material, bool cast)
+            {
+                auto* entity = m_pWorld->SpawnEntity();
+                if (!entity)
+                {
+                    return false;
+                }
+                m_Objects.push_back(entity);
+                entity->SetPosition(plate.X, height, plate.Y);
+                entity->SetRotation(horizontal);
+                entity->SetScale(plate.HalfExtent, 1.0f, plate.HalfExtent);
+                auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+                if (!mesh)
+                {
+                    return false;
+                }
+                mesh->SetMeshHandle(handles[0]);
+                mesh->SetMaterial(0u, material);
+                mesh->SetCastShadow(cast);
+                mesh->SetReceiveShadow(!cast);
+                mesh->SetVisible(true);
+                return true;
+            };
+            // 床は影を落とさず、板の影だけを受ける。
+            MaterialCreateData floorData;
+            floorData.bCastShadows = false;
+            floorData.bDiffuseOnly = true;
+            floorData.BaseColor[0] = floorData.BaseColor[1] = floorData.BaseColor[2] = 0.8f;
+            floorData.Metallic = 0.0f;
+            floorData.Roughness = 1.0f;
+            const auto floorMaterial = m_pResources->Materials().Create(floorData);
+            if (!floorMaterial.IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(floorMaterial);
+            if (!spawnStatic({0.0f, 0.0f, 8.0f}, 0.0f, floorMaterial, false) ||
+                !spawnStatic(AlphaClipShadowPlates[0], AlphaClipShadowPlateHeight, materials[0], true) ||
+                !spawnStatic(AlphaClipShadowPlates[1], AlphaClipShadowPlateHeight, materials[1], true))
+            {
+                return false;
+            }
+
+            // 既存のスキン板と同じ四頂点・単一骨・静止アニメーションを二枚で共有する。
+            Core::Container::VariableArray<Core::Skeletal::SkeletalVertex> vertices;
+            for (uint32_t index = 0u; index < 4u; ++index)
+            {
+                Core::Skeletal::SkeletalVertex vertex{};
+                vertex.Position.X = index % 2u == 0u ? -1.0f : 1.0f;
+                vertex.Position.Y = index / 2u == 0u ? -1.0f : 1.0f;
+                vertex.Normal.Z = 1.0f;
+                vertex.TexCoord.U = static_cast<float>(index % 2u);
+                vertex.TexCoord.V = static_cast<float>(index / 2u);
+                vertex.JointIndices = {0u, 0u, 0u, 0u};
+                vertex.JointWeights = {1.0f, 0.0f, 0.0f, 0.0f};
+                vertices.push_back(vertex);
+            }
+            Core::Container::VariableArray<uint32_t> indices = {0u, 2u, 1u, 1u, 2u, 3u};
+            Core::Skeletal::SkeletalJoint joint;
+            joint.Name = TEXT("Root");
+            joint.ParentIndex = -1;
+            joint.InverseBindMatrix = {1.0f, 0.0f, 0.0f, 0.0f,
+                                       0.0f, 1.0f, 0.0f, 0.0f,
+                                       0.0f, 0.0f, 1.0f, 0.0f,
+                                       0.0f, 0.0f, 0.0f, 1.0f};
+            Core::Container::VariableArray<Core::Skeletal::SkeletalJoint> joints;
+            joints.push_back(std::move(joint));
+            Core::Skeletal::SkeletalAnimationChannel channel;
+            channel.JointIndex = 0u;
+            channel.Path = Core::Skeletal::SkeletalAnimationPath::Translation;
+            channel.Interpolation = Core::Skeletal::SkeletalAnimationInterpolation::Linear;
+            Core::Skeletal::SkeletalAnimationSample start;
+            start.TimeSeconds = 0.0f;
+            Core::Skeletal::SkeletalAnimationSample end;
+            end.TimeSeconds = 1.0f;
+            channel.Samples.push_back(start);
+            channel.Samples.push_back(end);
+            Core::Skeletal::SkeletalAnimationClip clip;
+            clip.Name = TEXT("Still");
+            clip.DurationSeconds = 1.0f;
+            clip.Channels.push_back(std::move(channel));
+            auto& registry = Core::GEngine.GetResourceRegistry();
+            auto skinMesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("AlphaClipShadowSkinMesh"));
+            auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("AlphaClipShadowSkeleton"));
+            auto animation = registry.CreateTransient<Core::AnimationClipResource>(TEXT("AlphaClipShadowStill"));
+            auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("AlphaClipShadowSkinAsset"));
+            if (!skinMesh || !skeleton || !animation || !asset)
+            {
+                return false;
+            }
+            skinMesh->SetVertices(std::move(vertices));
+            skinMesh->SetIndices(std::move(indices));
+            skeleton->SetJoints(std::move(joints));
+            animation->SetClip(std::move(clip));
+            if (!skinMesh->Load() || !skeleton->Load() || !animation->Load())
+            {
+                return false;
+            }
+            asset->SetResources(skinMesh, skeleton, animation);
+            if (!asset->IsLoaded())
+            {
+                return false;
+            }
+            m_AlphaClipSkinAsset = asset;
+            for (uint32_t index = 0u; index < 2u; ++index)
+            {
+                auto* entity = m_pWorld->SpawnEntity();
+                if (!entity)
+                {
+                    return false;
+                }
+                m_Objects.push_back(entity);
+                const auto& plate = AlphaClipShadowPlates[index + 2u];
+                entity->SetPosition(plate.X, AlphaClipShadowPlateHeight, plate.Y);
+                entity->SetRotation(horizontal);
+                entity->SetScale(plate.HalfExtent, 1.0f, plate.HalfExtent);
+                auto* skin = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(entity);
+                if (!skin)
+                {
+                    return false;
+                }
+                skin->SetSkeletalAsset(asset);
+                skin->SetMaterial(materials[index]);
+                skin->SetPlaying(false);
+                skin->SetLooping(false);
+                skin->SetAnimationTimeSeconds(0.0f);
+                skin->SetCastShadow(true);
+                skin->SetVisible(true);
+            }
+
+            auto* lightEntity = m_pWorld->SpawnEntity();
+            if (!lightEntity)
+            {
+                return false;
+            }
+            m_Objects.push_back(lightEntity);
+            if (kind == AlphaClipFixtureKind::ShadowSun)
+            {
+                auto* light = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(lightEntity);
+                if (!light || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+                {
+                    return false;
+                }
+                light->SetLightDirection(AlphaClipShadowSunDirection[0], AlphaClipShadowSunDirection[1],
+                                         AlphaClipShadowSunDirection[2]);
+                light->SetLightColor(1.0f, 1.0f, 1.0f);
+                light->SetIntensity(10000.0f);
+                light->SetCastShadows(true);
+            }
+            else
+            {
+                // 点光源の VSM は太陽 VSM のパスを使うが、太陽光源そのものは要らない。
+                lightEntity->SetPosition(AlphaClipShadowPointPosition[0], AlphaClipShadowPointPosition[1],
+                                         AlphaClipShadowPointPosition[2]);
+                auto* light = m_pWorld->CreateComponent<Core::Component::PointLightComponent>(lightEntity);
+                if (!light || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lumen))
+                {
+                    return false;
+                }
+                light->SetLightColor(1.0f, 1.0f, 1.0f);
+                light->SetIntensity(100000.0f);
+                light->SetRange(30.0f);
+                light->SetCastShadows(true);
+                light->SetLightVisible(true);
+            }
+            return true;
         }
 
         const bool bSkinned = kind == AlphaClipFixtureKind::Skinned;

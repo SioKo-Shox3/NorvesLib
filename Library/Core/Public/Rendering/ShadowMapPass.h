@@ -170,6 +170,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief キューブシャドウの資源を初めて要るときに作ります（失敗したら以後は点光源の影を描かない） */
         bool EnsurePointShadowResources(const ViewRenderContext& context);
 
+        /** @brief 点光源のマスク用資源だけを解放します */
+        void ReleasePointShadowAlphaClipResources();
+
         /** @brief 選ばれた点光源ごとにキューブの6面を描きます */
         void ExecutePointShadows(ViewRenderContext& context);
 
@@ -206,6 +209,12 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_ShadowPipeline;
         RHI::ShaderPtr m_ShadowVertexShader;
         RHI::ShaderPtr m_ShadowFragmentShader;
+        RHI::PipelinePtr m_AlphaClipPipeline;
+        RHI::PipelinePtr m_SkinnedAlphaClipPipeline;
+        RHI::ShaderPtr m_AlphaClipVertexShader;
+        RHI::ShaderPtr m_SkinnedAlphaClipVertexShader;
+        RHI::ShaderPtr m_AlphaClipFragmentShader;
+        RHI::SamplerPtr m_AlphaClipSampler;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
@@ -243,6 +252,8 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+        // 記述子の形と定数の確保数を不透明の描画から分ける。
+        DynamicUniformAllocator m_AlphaClipUniformAllocator;
 
         // 点光源のキューブシャドウ（最初に影を落とす点光源が現れたフレームで作る）
         RHI::TexturePtr m_PointShadowCubeTexture;
@@ -255,6 +266,13 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_SkinnedPointShadowPipeline;
         // 面ごとのUBO（非スキンの描画は面ごとに1つを共有し、スキンの描画はcomponentごと・面ごとに共有する）
         DynamicUniformAllocator m_PointShadowUniformAllocator;
+        RHI::ShaderPtr m_PointShadowAlphaClipVertexShader;
+        RHI::ShaderPtr m_SkinnedPointShadowAlphaClipVertexShader;
+        RHI::ShaderPtr m_PointShadowAlphaClipFragmentShader;
+        RHI::PipelinePtr m_PointShadowAlphaClipPipeline;
+        RHI::PipelinePtr m_SkinnedPointShadowAlphaClipPipeline;
+        DynamicUniformAllocator m_PointShadowAlphaClipUniformAllocator;
+        bool m_bLoggedPointShadowAlphaClipFailure = false;
         bool m_bPointShadowResourcesReady = false;
         bool m_bPointShadowResourcesFailed = false;
         // 最後に記録したキューブシャドウの灯の数。変わったときだけ記録する。

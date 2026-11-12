@@ -8,7 +8,10 @@
 #include "Tools/AssetCook/CookCacheDecisionTestAccess.h"
 #include "Tools/AssetCook/AssetCookLegacyOptions.h"
 #include "Tools/AssetCook/CookOutputPaths.h"
+#include "Tools/AssetCook/CookerRevisions.h"
+#include "Text/JsonDocument.h"
 #include "M9LooseFixture.h"
+#include "ClipBankV1Fixture.h"
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +36,9 @@ using namespace NorvesLib::Core::Asset;
 using namespace NorvesLib::Tools::AssetCook;
 namespace
 {
+    constexpr size_t AnimationSourceLabelBytes = 160;
+    // CookedClipBankV1.cpp の W64(candidate, 48, ...) が書く bank の payload hash の位置。
+    constexpr size_t ClipBankPayloadHashOffset = 48;
     using Bytes = Container::VariableArray<uint8_t>;
     using Text = Container::AnsiString;
     Bytes Read(const std::filesystem::path& path)
@@ -124,6 +130,242 @@ namespace
         CookOutputRecord Record;
         AssetManifest Live;
     };
+    using Hashes = Container::VariableArray<Text>;
+    Text HashList(const Hashes& hashes)
+    {
+        Text result = "[";
+        for (size_t i = 0; i < hashes.size(); ++i)
+        {
+            if (i != 0)
+            {
+                result.append(", ");
+            }
+            result.append("\"");
+            result.append(hashes[i]);
+            result.append("\"");
+        }
+        result.append("]");
+        return result;
+    }
+    Hashes CookedHashes(const Fixture& fixture)
+    {
+        Hashes hashes;
+        for (const auto& output : fixture.Record.Outputs)
+        {
+            char hex[17];
+            std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(output.Reference.CookedHash));
+            hashes.push_back(hex);
+        }
+        return hashes;
+    }
+    Hashes MaskedAnimationHashes(const Fixture& fixture)
+    {
+        auto bytes = Read(fixture.Request.PackagePath);
+        const auto label = std::filesystem::absolute(fixture.Request.InputPath).lexically_normal().generic_u8string();
+        CHECK(label.size() == AnimationSourceLabelBytes);
+        // cook が入力の絶対パスを rig snapshot の Label に書くため、置き場所で hash が変わる。
+        // ラベルの長さをそろえ、パッケージ内の同じバイト列をすべて伏せて照合する。
+        size_t replacements = 0;
+        for (size_t i = 0; i + label.size() <= bytes.size();)
+        {
+            if (std::memcmp(bytes.data() + i, label.data(), label.size()) == 0)
+            {
+                std::memset(bytes.data() + i, 'X', label.size());
+                ++replacements;
+                i += label.size();
+            }
+            else
+            {
+                ++i;
+            }
+        }
+        if (replacements == 0)
+        {
+            std::fprintf(stderr, "cooker の出力が変わった。animation の入力の絶対パスが出力にない。版を上げて表を更新する\n");
+            CHECK(false);
+        }
+        namespace PackageFormat = AssetPackageFormatV1;
+        const auto requireRange = [&](uint64_t offset, uint64_t count, const char* field)
+        {
+            if (offset > bytes.size() || count > bytes.size() - offset)
+            {
+                std::fprintf(stderr, "animation の %s の位置または長さがパッケージの範囲外\n", field);
+                CHECK(false);
+            }
+        };
+        requireRange(PackageFormat::HeaderOffset::EntryTableOffset, 8, "EntryTableOffset");
+        requireRange(PackageFormat::HeaderOffset::EntryCount, 4, "EntryCount");
+        const auto tableOffset = Get(bytes, PackageFormat::HeaderOffset::EntryTableOffset, 8);
+        const auto entryCount = Get(bytes, PackageFormat::HeaderOffset::EntryCount, 4);
+        requireRange(tableOffset, entryCount * PackageFormat::EntryRecordSize, "entry table");
+        if (entryCount != 1)
+        {
+            std::fprintf(stderr, "animation の fixture のパッケージには entry が1つ必要\n");
+            CHECK(false);
+        }
+        const auto payloadOffset = Get(bytes, static_cast<size_t>(tableOffset) + PackageFormat::EntryOffset::DataOffset, 8);
+        requireRange(payloadOffset, ClipBankPayloadHashOffset + 8, "clip bank payload hash");
+        // パスを含む payload から計算された hash も置き場所で変わるため、両方の欄を伏せる。
+        // payload 自体はパス以外を保持するので、その内容の変更は照合で検出できる。
+        for (uint64_t i = 0; i < entryCount; ++i)
+        {
+            const auto entryOffset = static_cast<size_t>(tableOffset + i * PackageFormat::EntryRecordSize);
+            Put(bytes, entryOffset + PackageFormat::EntryOffset::PayloadHash, 0, 8);
+        }
+        Put(bytes, static_cast<size_t>(payloadOffset) + ClipBankPayloadHashOffset, 0, 8);
+        uint64_t hash = 14695981039346656037ull;
+        for (const auto byte : bytes)
+        {
+            hash ^= byte;
+            hash *= 1099511628211ull;
+        }
+        char hex[17];
+        std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash));
+        return {hex};
+    }
+    Text CheckCookerRevisionRow(const char* kind, uint64_t tableRevision, const Hashes& tableHashes,
+                               uint64_t currentRevision, const Hashes& actualHashes)
+    {
+        bool bSameHashes = tableHashes.size() == actualHashes.size();
+        for (size_t i = 0; bSameHashes && i < tableHashes.size(); ++i)
+        {
+            bSameHashes = tableHashes[i] == actualHashes[i];
+        }
+        if (tableRevision == currentRevision && bSameHashes)
+        {
+            return {};
+        }
+        Text message;
+        if (tableRevision == currentRevision)
+        {
+            message = "cooker の出力が変わった。";
+            message.append(kind);
+            message.append(" の版を上げて表を更新する");
+        }
+        else
+        {
+            char revisions[160];
+            std::snprintf(revisions, sizeof(revisions), " の版(%llu)が表(%llu)と違う。",
+                          static_cast<unsigned long long>(currentRevision), static_cast<unsigned long long>(tableRevision));
+            message = kind;
+            message.append(revisions);
+            message.append("表の revision と cooked_hash を今の値へ更新する");
+        }
+        message.append("。実際の cooked_hash: ");
+        message.append(HashList(actualHashes));
+        return message;
+    }
+    void VerifyCookerRevisionComparator()
+    {
+        const Hashes a = {"000000000000000a"}, b = {"000000000000000b"};
+        CHECK(CheckCookerRevisionRow("raw", 3, a, 3, b).find("の版を上げて表を更新する") != Text::npos);
+        CHECK(CheckCookerRevisionRow("raw", 4, b, 4, b).empty());
+        CHECK(!CheckCookerRevisionRow("raw", 3, a, 4, b).empty());
+    }
+    void VerifyCookerRevisionGolden(const Fixture& texture, const Fixture& model, const Fixture& skeletal,
+                                    const Fixture& animation, const Fixture& audio, const Fixture& raw,
+                                    const Hashes& animationHashes)
+    {
+        const char* kinds[] = {"texture", "model", "skeletal", "animation", "audio", "raw"};
+        const Fixture* fixtures[] = {&texture, &model, &skeletal, &animation, &audio, &raw};
+        const auto bytes = Read("Test/Core/Asset/CookerRevisionGolden.json");
+        const size_t offset = bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
+        JsonDocument document;
+        if (!JsonDocument::TryParseUtf8({bytes.data() + offset, bytes.size() - offset}, document))
+        {
+            std::fprintf(stderr, "cooker の出力の基準表を JSON として読めない\n");
+            CHECK(false);
+        }
+        const auto table = document.GetRoot();
+        const auto rows = table.FindMember("rows");
+        bool bValid = table.IsObject() && table.FindMember("version").IsIntegerLiteral() &&
+                      table.FindMember("version").AsNumber() == 1 && rows.IsArray() && rows.GetArraySize() == 6;
+        Container::VariableArray<Text> results;
+        if (!bValid)
+        {
+            results.push_back("基準表の version は 1、rows は6種別を1行ずつにする");
+        }
+        size_t counts[6] = {};
+        for (size_t i = 0; i < rows.GetArraySize(); ++i)
+        {
+            const auto row = rows.GetArrayElement(i);
+            const auto kind = row.FindMember("kind");
+            size_t index = 0;
+            while (index < 6 && (!kind.IsString() || kind.AsString() != kinds[index]))
+            {
+                ++index;
+            }
+            if (index == 6)
+            {
+                results.push_back("基準表に未知の種別または kind が不正な行がある");
+                bValid = false;
+                continue;
+            }
+            ++counts[index];
+            const auto format = row.FindMember("format");
+            const auto revision = row.FindMember("revision");
+            const auto hashes = row.FindMember("cooked_hash");
+            const bool bRevisionValid = revision.IsIntegerLiteral() && revision.AsNumber() >= 0 &&
+                                        revision.AsNumber() <= 9007199254740991.0;
+            bool bRowValid = bRevisionValid && format.IsString() &&
+                             format.AsString() == fixtures[index]->Request.Format.c_str() &&
+                             hashes.IsArray() && hashes.GetArraySize() > 0;
+            Hashes tableHashes;
+            for (size_t j = 0; j < hashes.GetArraySize(); ++j)
+            {
+                const auto hash = hashes.GetArrayElement(j);
+                Text text;
+                bool bHashValid = hash.IsString() && hash.AsString().size() == 16;
+                for (auto c : hash.AsString())
+                {
+                    bHashValid = bHashValid && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+                    text.push_back(static_cast<char>(c));
+                }
+                bRowValid = bRowValid && bHashValid;
+                tableHashes.push_back(text);
+            }
+            const auto actualHashes = index == 3 ? animationHashes : CookedHashes(*fixtures[index]);
+            const auto currentRevision = CookerRevisionForKind(Text(kinds[index]));
+            Text result = kinds[index];
+            result.append(": ");
+            if (!bRowValid)
+            {
+                result.append("基準表の format・revision・cooked_hash が不正。実際の cooked_hash: ");
+                result.append(HashList(actualHashes));
+            }
+            else
+            {
+                const auto message = CheckCookerRevisionRow(kinds[index], static_cast<uint64_t>(revision.AsNumber()),
+                                                           tableHashes, currentRevision, actualHashes);
+                bRowValid = message.empty();
+                result.append(bRowValid ? "一致。実際の cooked_hash: " : message.c_str());
+                if (bRowValid)
+                {
+                    result.append(HashList(actualHashes));
+                }
+            }
+            results.push_back(result);
+            bValid = bValid && bRowValid;
+        }
+        for (size_t i = 0; i < 6; ++i)
+        {
+            if (counts[i] != 1)
+            {
+                Text message = kinds[i];
+                message.append(" の行はちょうど1行必要");
+                results.push_back(message);
+                bValid = false;
+            }
+        }
+        if (!bValid)
+        {
+            for (const auto& result : results)
+            {
+                std::fprintf(stderr, "%s\n", result.c_str());
+            }
+            CHECK(false);
+        }
+    }
     CookDecision Decide(const SingleAssetCookRequest& r, const CookOutputRecord* record, const AssetManifest* manifest,
                         uint64_t revision = 7, bool bAllow = true, CookDecisionReason* reason = nullptr)
     {
@@ -484,10 +726,15 @@ int main()
     const char* formats[] = {"nvtex.v0.rgba8.srgb", "nvtex.v0.rgba8.linear", "nvtex.v0.rg8.linear",
                              "nvtex.v0.r8.linear"};
     const char* labels[] = {"srgb", "linear", "rg", "r"};
+    Fixture srgb;
     for (size_t i = 0; i < 4; ++i)
     {
         auto f = Make(root, labels[i], root / "tiny.ppm", "texture", "Tex0", formats[i]);
         Misses(f);
+        if (i == 0)
+        {
+            srgb = f;
+        }
     }
     const auto unicode = root / std::filesystem::path(L"\u753b\u50cf.ppm");
     Write(unicode, ppm);
@@ -549,6 +796,27 @@ int main()
     auto changedOptions = skeletalFixture.Request;
     changedOptions.SkeletalDecode.InfluencePolicy = Skeletal::SkeletalInfluencePolicy::ReduceToFour;
     CHECK(Decide(changedOptions, &skeletalFixture.Record, &skeletalFixture.Live) == CookDecision::Cook);
+    // 作業ディレクトリを変えず、分割 rig の animation と同じ入力を組み立てる。
+    const auto initialLabel = std::filesystem::absolute(root / "rig/rig.gltf").lexically_normal().generic_u8string();
+    if (initialLabel.size() > AnimationSourceLabelBytes)
+    {
+        std::fprintf(stderr, "animation の入力の絶対パスが %zu バイトあり、%zu バイトにそろえられない\n",
+                     initialLabel.size(), AnimationSourceLabelBytes);
+        CHECK(false);
+    }
+    Text rigDirectoryName = "rig";
+    for (size_t i = initialLabel.size(); i < AnimationSourceLabelBytes; ++i)
+    {
+        rigDirectoryName.push_back('p');
+    }
+    const auto rigDirectory = root / rigDirectoryName.c_str();
+    CHECK(std::filesystem::create_directory(rigDirectory));
+    const auto rigJson = NorvesLib::Tests::RigV1Fixture::BaseJson();
+    WriteText(rigDirectory / "rig.gltf", rigJson.c_str());
+    Write(rigDirectory / "fixture.bin", NorvesLib::Tests::RigV1Fixture::Buffer());
+    auto animation = Make(root, "animation", rigDirectory / "rig.gltf", "animation", "Anm1", "nvskel.v1.clips");
+    VerifyCookerRevisionComparator();
+    VerifyCookerRevisionGolden(srgb, mesh, skeletalFixture, animation, audio, raw, MaskedAnimationHashes(animation));
     // 実cookの記録を使い、skip許可時も不正な材質設定がpreflightで拒否される。
     {
         const auto materialGlb = root / "material.glb";
@@ -668,9 +936,9 @@ int main()
         r.PackagePath = r.ManifestPath.parent_path() / leaf;
         SingleAssetCookRequest normalized;
         Text normalizeError, normalizedPath;
-        if (Detail::NormalizeCacheCookRequest(r, normalized, normalizeError))
+        if (NorvesLib::Tools::AssetCook::Detail::NormalizeCacheCookRequest(r, normalized, normalizeError))
         {
-            CHECK(Detail::CookOutputPaths::AsciiPath(normalized.PackagePath, normalizedPath));
+            CHECK(NorvesLib::Tools::AssetCook::Detail::CookOutputPaths::AsciiPath(normalized.PackagePath, normalizedPath));
             std::fprintf(stderr, "unsafe_leaf=%s normalized=%s\n", leaf, normalizedPath.c_str());
         }
         const auto decision = Decide(r, nullptr, nullptr);
@@ -710,8 +978,8 @@ int main()
     const auto junction = root / "junction", junctionTarget = root / "junction-target";
     std::filesystem::create_directory(junctionTarget);
     Text junctionText, targetText;
-    CHECK(Detail::CookOutputPaths::AsciiPath(junction, junctionText));
-    CHECK(Detail::CookOutputPaths::AsciiPath(junctionTarget, targetText));
+    CHECK(NorvesLib::Tools::AssetCook::Detail::CookOutputPaths::AsciiPath(junction, junctionText));
+    CHECK(NorvesLib::Tools::AssetCook::Detail::CookOutputPaths::AsciiPath(junctionTarget, targetText));
     for (auto& c : junctionText)
     {
         if (c == '/')
@@ -748,14 +1016,14 @@ int main()
     Text error;
     for (bool bAllowSkip : {false, true})
     {
-        CHECK(Detail::DecideCookCacheWithProbe(raw.Request, 7, bAllowSkip, bAllowSkip ? &raw.Record : nullptr,
+        CHECK(NorvesLib::Tools::AssetCook::Detail::DecideCookCacheWithProbe(raw.Request, 7, bAllowSkip, bAllowSkip ? &raw.Record : nullptr,
                                                &raw.Live, held, error, Mutate, &mutation) == CookDecision::Error);
         CHECK(held.Request.LogicalPath == "held" && held.Dependencies.Fingerprint == 321);
         Write(raw.Request.InputPath, original);
     }
     auto heldRecord = raw.Record;
     heldRecord.SchemaVersion = 99;
-    CHECK(!Detail::CaptureCookOutputRecordWithProbe(raw.Before, raw.Live, heldRecord, error, Mutate, &mutation));
+    CHECK(!NorvesLib::Tools::AssetCook::Detail::CaptureCookOutputRecordWithProbe(raw.Before, raw.Live, heldRecord, error, Mutate, &mutation));
     CHECK(heldRecord.SchemaVersion == 99 && heldRecord.Outputs.size() == raw.Record.Outputs.size());
     CHECK(!CaptureCookOutputRecord(raw.Before, raw.Live, heldRecord, error));
     Write(raw.Request.InputPath, original);

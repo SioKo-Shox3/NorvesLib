@@ -15,6 +15,11 @@ namespace NorvesLib::Core
     class World;
 }
 
+namespace NorvesLib::Core::Rendering
+{
+    struct ProceduralMeshGPUData;
+}
+
 namespace NorvesLib::Core::Rendering::Terrain
 {
     class TerrainSystem;
@@ -27,6 +32,9 @@ namespace NorvesLib::Core::Scatter
 
 namespace NorvesLib::Core::Streaming
 {
+    // メッシュの頂点・インデックスのバッファの GetSize の和を GPU のバイトとして返す。バッファが無ければ 0 として数える。
+    StreamingPayloadBytes MeasureMeshGpuBytes(const Rendering::ProceduralMeshGPUData& mesh);
+
     // 3 種とも事前に読むファイルはなく、Prepare はワーカーで取り消しの印だけを見る。
     // それ以外の操作とペイロードの状態はすべて GameThread に限る。
     // TerrainSystem はハンドラーより長く生き、site は束ねている間は利用側が生かす。
@@ -36,6 +44,8 @@ namespace NorvesLib::Core::Streaming
         explicit TerrainTilePayloadHandler(Rendering::Terrain::TerrainSystem& terrainSystem);
         TerrainTilePayloadHandler(const TerrainTilePayloadHandler&) = delete;
         TerrainTilePayloadHandler& operator=(const TerrainTilePayloadHandler&) = delete;
+
+        bool IsPayloadReady(const StreamingPayloadContext& context) const override;
 
         bool BindSite(Container::AnsiStringView name, ITerrainTileSite* pSite);
         // 束ねを外した後は区画を除去できないため、site 側で片付ける。
@@ -113,6 +123,8 @@ namespace NorvesLib::Core::Streaming
     {
         Delegate<uint32_t, const PlacementSpawnContext&> CountItems;
         Delegate<bool, const PlacementSpawnContext&, uint32_t> SpawnItem;
+        // 任意。SpawnItem が成功した項目が作った資源のバイト（GPU は作った資源の大きさ。メッシュなら MeasureMeshGpuBytes）を返す。未束縛なら 0。
+        Delegate<StreamingPayloadBytes, const PlacementSpawnContext&, uint32_t> MeasureItem;
     };
 
     // World はハンドラーより長く生きる。World を片付ける前に StreamingSystem の
@@ -153,6 +165,7 @@ namespace NorvesLib::Core::Streaming
             uint64_t RootId = 0;
             uint32_t ItemCount = 0;
             uint32_t SpawnedCount = 0;
+            StreamingPayloadBytes ResidentBytes;
         };
 
         const BuilderBinding* FindBuilder(Container::AnsiStringView name) const;

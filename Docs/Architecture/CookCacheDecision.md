@@ -26,6 +26,14 @@ callerはcurrentManifestがRequest.ManifestPathの現在の集約状態である
 
 CaptureCookOutputRecordはcook前のcontext、成功cook後のmanifestと実packageを検証する。開始時・出力読込後の依存がcook前snapshotと一致するときだけrecordを置換する。これはcallerが実際に変換を実行したという証明でも、複数fileのatomic snapshotでもない。後続publisherのwriter lock・公開直前再確認・回復処理が別途必要。
 
+## cooker の版（GR96）
+
+- 増分の鍵となる依存の印と記録の `revision` には、asset-set の種別（texture・model・skeletal・animation・audio・raw）ごとの定数を使う。定数は `Tools/AssetCook/CookerRevisions.h` に置き、spec の版を cooker の版の代わりに使わない。skeletal は単一の要求では model の kind で cook するが、版は spec の種別名で引く
+- 形式・既定値・処理の手順・依存ライブラリの更新など、ある種別の cooker の出力バイトが変わる変更をしたら、その種別の版を 1 上げる。他の条件が同じなら、次の cook では版を上げた種別の asset だけが記録の版違い（`RecordVersion`）で再 cook され、ほかの種別は skipped のままになる
+- `CookCacheDecisionTest` は種別ごとの小さな fixture を cook し、`Test/Core/Asset/CookerRevisionGolden.json` の `revision` と `cooked_hash` に照合する。出力が変わったのに版が同じなら「cooker の出力が変わった。<種別> の版を上げて表を更新する」で落ちる。版を上げたら試験が出す実際の値で表の行を直す。版と表を同時に直したときだけ通る
+- 以前の管理 store は記録の版に spec の版（1 か 2）を入れていた。種別の版は 3 から始め、1 と 2 を使わない（`static_assert`）ので、既存 store を読んだ最初の cook は全件を再 cook する
+- role-file の単体 cook（`CookSkeletalRoleFile`）は毎回 cook して skip せず、記録を管理 store に保存しない。`SkeletalRoleFileCookerRevision` は依存の印に入り、単体 CLI が `dependency_hash=` として出すため、表へ寄せて値を変えると単体 CLI の出力が変わる。asset-set の skeletal とは別経路なので、別の定数のまま置く
+
 ## 検証
 
 実Windowsで全kindのcook→record→Skip、派生画像、外部buffer/image/未使用image、sidecar、無関係なmanifest変更、package padding、hard link・case alias・junction、危険path、判定途中の入力変更と出力保持を検証する。private probeはこの途中変更試験だけに使い、production入口はprobe無しで呼ぶ。

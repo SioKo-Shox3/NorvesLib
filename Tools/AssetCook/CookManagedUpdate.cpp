@@ -150,11 +150,11 @@ namespace NorvesLib::Tools::AssetCook
                 const auto* old = previous == SIZE_MAX ? nullptr : &snap.ParsedState.Records[previous].Record;
                 CookDecisionContext decision;
                 const auto* parsed = snap.bManifestParsed ? &snap.ParsedManifest : nullptr;
-                const auto now = DecideCookCache(request.Assets[i], request.CookerRevision, !request.bForce, old,
+                const auto now = DecideCookCache(request.Assets[i], CookerRevisionOf(request, i), !request.bForce, old,
                                                  parsed, decision, op.Error);
                 CookPreparedPlan plan;
                 if (now != snap.Decisions[i] || now == CookDecision::Error ||
-                    !PrepareCookOutputPlan(request.Assets[i], request.CookerRevision, parsed, plan, op.Error) ||
+                    !PrepareCookOutputPlan(request.Assets[i], CookerRevisionOf(request, i), parsed, plan, op.Error) ||
                     !SamePlan(plan, snap.Plans[i]))
                 {
                     return Fail(op.Error, "update_dependencies_or_decision_changed");
@@ -177,7 +177,7 @@ namespace NorvesLib::Tools::AssetCook
         {
             if (request.Assets.empty() || !request.Assets.data() || request.Assets.size() > MaximumCookSetPlans ||
                 request.ExpectedSpecBytes.empty() || !request.ExpectedSpecBytes.data() ||
-                request.ExpectedSpecBytes.size() > MaximumCookStateBytes || !request.CookerRevision)
+                request.ExpectedSpecBytes.size() > MaximumCookStateBytes || !ValidCookerRevisions(request))
             {
                 return Fail(op.Error, "request_limits");
             }
@@ -222,11 +222,12 @@ namespace NorvesLib::Tools::AssetCook
                 Text parseError;
                 snap.bManifestParsed = LoadManifest(snap.Manifest.Value.Data, snap.ParsedManifest, parseError);
             }
-            for (const auto& asset : request.Assets)
+            for (size_t i = 0; i < request.Assets.size(); ++i)
             {
+                const auto& asset = request.Assets[i];
                 CookPreparedPlan plan;
                 if ((request.bLegacyTextureManifest && asset.Kind != "texture") ||
-                    !PrepareCookOutputPlan(asset, request.CookerRevision,
+                    !PrepareCookOutputPlan(asset, CookerRevisionOf(request, i),
                                            snap.bManifestParsed ? &snap.ParsedManifest : nullptr, plan, op.Error) ||
                     plan.Outputs.empty() ||
                     (request.bLegacyTextureManifest &&
@@ -253,7 +254,7 @@ namespace NorvesLib::Tools::AssetCook
                 const size_t previous = snap.Inventory.Assets[i].PreviousRecordIndex;
                 const auto* old = previous == SIZE_MAX ? nullptr : &snap.ParsedState.Records[previous].Record;
                 const auto decision =
-                    DecideCookCache(request.Assets[i], request.CookerRevision, !request.bForce, old,
+                    DecideCookCache(request.Assets[i], CookerRevisionOf(request, i), !request.bForce, old,
                                     snap.bManifestParsed ? &snap.ParsedManifest : nullptr, context, op.Error);
                 if (decision == CookDecision::Error ||
                     context.Dependencies.Fingerprint != snap.Plans[i].Context.Dependencies.Fingerprint)

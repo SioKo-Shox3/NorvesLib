@@ -17,6 +17,10 @@
 //     草・低木の株の塊（RecordKind::FoliageChunk）だけは頂点が FoliageVertex で、記録の World に置いた株の置き方と描画の定数の風で
 //     foliage.vert と同じ式（Common/FoliagePlacement.glsl）で置く（展開は三角形ごとのページの絞り込みをせず、境界が覆うページへ描く）。
 //   - 断片シェーダーは物理ページの texel へ atomicMin(floatBitsToUint(深度 [0,1])) を書く（何も無い texel は 1.0 のビット）。
+//   - 切り抜きの塊は Record.MaterialIndex = (範囲の添字 + 1) | (VT なら bit 31)、0 は不透明。
+//     Record.InstanceIndex は cutoff の float のビット、Record.Reserved は解決済みの被覆率の乗数の float のビット（不透明はインスタンスの生の w）。
+//     指定範囲だけアルベドを結んだマスク用で描き、α × 乗数 < cutoff の断片は atomicMin の前に捨てる（Hash でなく Test）。
+//     MegaGeometry のクラスタと草の株の塊は切り抜かない。
 //   - 物理ページへ書く前に、消去（VirtualShadowMapPages の VsmClear）が dirty のページを 1.0 のビットで埋めていること。
 //
 // 同じファイルに、MegaGeometry の投影物（bCastShadow のインスタンス）を段ごとにカリングする VirtualShadowMapMegaCull も置く
@@ -82,6 +86,8 @@ namespace NorvesLib::Core::Rendering
 
     namespace VirtualShadowMap
     {
+        /** @brief 1 回の記録でマスク用の記述子セットを用意する範囲の数の上限 */
+        constexpr uint32_t MAX_MASKED_DRAWS = 1024;
         /** @brief 塊の記録の大きさ（バイト）。chunks 件ぶん（最低 1 件） */
         constexpr uint64_t RasterChunkBytes(uint32_t chunks)
         {
@@ -153,6 +159,15 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 128u);
     static_assert(sizeof(VirtualShadowMapRasterParams) == 176u);
 
+    /** @brief 切り抜きの材質で描く、ホストが書いた塊の範囲（先頭の塊の番号の昇順・重ならない・ChunkCount の内側） */
+    struct VirtualShadowMapMaskedDraw
+    {
+        uint32_t FirstChunk = 0;
+        uint32_t ChunkCount = 0;
+        /** @brief 切り抜きに使うアルベド（材質の AlbedoTexture を解決したもの。ShaderResource 状態） */
+        RHI::TexturePtr Albedo;
+    };
+
     /**
      * @brief 1 回の記録の入力。バッファはすべて UnorderedAccess の状態で渡し、同じ状態で戻る
      */
@@ -183,6 +198,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 塊の記録（VsmShadowChunk の並び）と数 */
         RHI::BufferPtr Chunks;
         uint32_t ChunkCount = 0;
+        /** @brief 切り抜きの範囲。配列の添字が Record.MaterialIndex の範囲の番号に対応する */
+        const VirtualShadowMapMaskedDraw* MaskedDraws = nullptr;
+        uint32_t MaskedDrawCount = 0;
         /**
          * @brief 展開の出力: インスタンス（容量はバッファの大きさ ÷ 16 バイト）と、間接描画の引数（塊の容量は (大きさ − 頭) ÷ 20 バイト。
          * ChunkCount + MegaCapacity 件ぶん以上）
@@ -237,6 +255,10 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 直前の Record が記録した、ホストが書いた塊ごとの間接描画の回数（= その塊の数。MegaGeometry の 1 回は含まない） */
         uint32_t GetLastDrawCount() const { return m_LastDrawCount; }
+        /** @brief 直前の Record がマスク用で描いた塊の数 */
+        uint32_t GetLastMaskedDrawCount() const { return m_LastMaskedDrawCount; }
+        /** @brief 直前の Record が切り抜きの範囲内で不透明へ倒して描いた塊の数 */
+        uint32_t GetLastMaskedFallbackCount() const { return m_LastMaskedFallbackCount; }
         /** @brief 直前の Record が MegaGeometry のクラスタの記録を描く間接描画（DrawIndexedIndirectCount）を記録したか */
         bool WasMegaDrawRecorded() const { return m_bLastMegaDraw; }
         /** @brief MegaGeometry のクラスタの記録を描けるか（装置が DrawIndexedIndirectCount を使える） */
@@ -250,6 +272,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr ExpandSet;
             RHI::DescriptorSetPtr DrawSet;
+            Container::VariableArray<RHI::DescriptorSetPtr> MaskSets;
         };
 
         bool AcquireUse(Use*& outUse);
@@ -259,9 +282,13 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_ExpandArgsShader;
         RHI::ShaderPtr m_VertexShader;
         RHI::ShaderPtr m_FragmentShader;
+        RHI::ShaderPtr m_MaskVertexShader;
+        RHI::ShaderPtr m_MaskFragmentShader;
         RHI::PipelinePtr m_ExpandPipeline;
         RHI::PipelinePtr m_ExpandArgsPipeline;
         RHI::PipelinePtr m_DrawPipeline;
+        RHI::PipelinePtr m_MaskDrawPipeline;
+        RHI::SamplerPtr m_AlbedoSampler;
         RHI::RenderPassPtr m_RenderPass;
         RHI::FramebufferPtr m_Framebuffer;
         /** @brief 0, 1, 2, … の連番（頂点の番号 = 塊の中の三角形 × 3 + 角を作るための、描画の中で使う頂点の列） */
@@ -270,6 +297,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_WorldFieldSampler;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastDrawCount = 0;
+        uint32_t m_LastMaskedDrawCount = 0;
+        uint32_t m_LastMaskedFallbackCount = 0;
         bool m_bLastMegaDraw = false;
         bool m_bMegaSupported = false;
     };

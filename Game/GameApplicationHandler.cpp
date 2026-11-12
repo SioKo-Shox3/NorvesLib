@@ -939,6 +939,9 @@ namespace Game
         m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
         m_bGrasslandStreaming = false;
+        m_bStreamingSnapTest = false;
+        m_StreamingSnapTestX = 0.0f;
+        m_StreamingSnapTestZ = 0.0f;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1895,6 +1898,39 @@ namespace Game
                 m_bGrasslandStreaming = true;
                 continue;
             }
+            if (TryStripPrefix(args[i], TEXT("--streaming-snap-test="), sceneValue) ||
+                args[i] == TEXT("--streaming-snap-test"))
+            {
+                if (m_bStreamingSnapTest)
+                {
+                    LOG_ERROR("--streaming-snap-test が重複しています");
+                    return false;
+                }
+                size_t comma = 0;
+                while (comma < sceneValue.size() && sceneValue[comma] != TEXT(','))
+                {
+                    ++comma;
+                }
+                float x = 0.0f;
+                float z = 0.0f;
+                constexpr float maxCoordinate = std::numeric_limits<float>::max();
+                if (args[i] == TEXT("--streaming-snap-test") || comma == sceneValue.size() ||
+                    !TryParseBoundedFloat(sceneValue.substr(0, comma), -maxCoordinate, maxCoordinate, x) ||
+                    !TryParseBoundedFloat(sceneValue.substr(comma + 1), -maxCoordinate, maxCoordinate, z))
+                {
+                    LOG_ERROR("--streaming-snap-test は <x>,<z> の形で有限の小数を2つ指定してください");
+                    return false;
+                }
+                if (m_GrasslandScatterStressCount != 0)
+                {
+                    LOG_ERROR("--streaming-snap-test と --grassland-scatter-stress は同時に指定できません");
+                    return false;
+                }
+                m_bStreamingSnapTest = true;
+                m_StreamingSnapTestX = x;
+                m_StreamingSnapTestZ = z;
+                continue;
+            }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
             {
                 uint32_t count = 0;
@@ -1908,9 +1944,9 @@ namespace Game
                     LOG_ERROR("--grassland-scatter-stress は 1〜2000000 の整数で指定してください");
                     return false;
                 }
-                if (m_bGrasslandStreaming)
+                if (m_bGrasslandStreaming || m_bStreamingSnapTest)
                 {
-                    LOG_ERROR("--grassland-streaming と --grassland-scatter-stress は同時に指定できません");
+                    LOG_ERROR("--grassland-streaming または --streaming-snap-test と --grassland-scatter-stress は同時に指定できません");
                     return false;
                 }
                 m_GrasslandScatterStressCount = count;
@@ -5576,12 +5612,16 @@ namespace Game
              pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
              scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
+             bSnapTest = m_bStreamingSnapTest, snapTestX = m_StreamingSnapTestX, snapTestZ = m_StreamingSnapTestZ,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
-                mode->GetData().m_bStreaming = bStreaming;
+                mode->GetData().m_bStreaming = bStreaming || bSnapTest;
+                mode->GetData().m_bStreamingSnapTest = bSnapTest;
+                mode->GetData().m_StreamingSnapTestX = snapTestX;
+                mode->GetData().m_StreamingSnapTestZ = snapTestZ;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

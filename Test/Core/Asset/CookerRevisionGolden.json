@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "rows": [
+    {"kind": "texture", "fixture": "tiny.ppm srgb", "format": "nvtex.v0.rgba8.srgb", "revision": 3, "cooked_hash": ["d7ef4ece39879ea0"]},
+    {"kind": "model", "fixture": "embedded_tri.glb mesh", "format": "nvmesh.v0.mesh3d.pnt.u32.clustered", "revision": 3, "cooked_hash": ["b9b9f2b35d86a45c", "89162a71f7e6d170", "5c3ae9fb49c47183", "5c3ae9fb49c47183"]},
+    {"kind": "skeletal", "fixture": "M9Skinned/ValidU8Float.gltf skel", "format": "nvskel.v0.skinned.pnujiw.u32", "revision": 3, "cooked_hash": ["129d848925d28c73"]},
+    {"kind": "animation", "fixture": "RigV1Fixture の rig.gltf と fixture.bin。nvpkg の中の入力の絶対パス(160 バイトにそろえる)を X に伏せ、payload の hash の 2 欄(nvpkg の entry と clip bank)も 0 にしたバイトの FNV-1a 64", "format": "nvskel.v1.clips", "revision": 3, "cooked_hash": ["451bf027031b75c9"]},
+    {"kind": "audio", "fixture": "tone.wav audio", "format": "nvaud.v0.pcm16", "revision": 3, "cooked_hash": ["5fd96700dc18dc45"]},
+    {"kind": "raw", "fixture": "raw.bin abc", "format": "raw.v0", "revision": 3, "cooked_hash": ["e71fa2190541574b"]}
+  ]
+}

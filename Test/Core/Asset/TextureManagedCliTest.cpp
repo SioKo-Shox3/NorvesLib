@@ -5,6 +5,9 @@
 #include "Tools/AssetCook/CookManagedStoreInitialization.h"
 #include "Tools/AssetCook/CookDestinationLockTestAccess.h"
 #include "Tools/AssetCook/CookManagedTransactionIntent.h"
+#include "Tools/AssetCook/CookManagedTransactionController.h"
+#include "Tools/AssetCook/CookStateFile.h"
+#include "Tools/AssetCook/CookerRevisions.h"
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "Text/JsonDocument.h"
 #include "Tools/AssetCook/TextureAssetSetCook.h"
@@ -316,7 +319,8 @@ namespace TextureCliTest
                 value.bReached = true;
                 return false;
             };
-            CookManagedUpdateRequest request{{Spec, Runtime, "manifest.json"}, Assets, BytesOf(SpecText), 1};
+            // CLI と同じ版。v1 の spec は texture だけなので、CLI は全 asset に texture の cooker の版を使う。
+            CookManagedUpdateRequest request{{Spec, Runtime, "manifest.json"}, Assets, BytesOf(SpecText), CookerRevisions::Texture};
             CookManagedUpdateOutcome out;
             out.ClaimId = "held";
             TestText error;
@@ -522,6 +526,22 @@ namespace TextureCliTest
         CookManagedBootstrapOutcome out;
         TestText error;
         CHECK(CookGuarded(request, out, error) == TextureAssetSetCookResult::Created);
+        const CookOwnerResolveRequest owner{f.Spec, f.Runtime, "manifest.json"};
+        CookManagedStoreObservation observation;
+        CHECK(WithVolumeGuard([&]() { return ObserveCookManagedStore(owner, observation, error); }) ==
+              CookManagedStoreResult::Observed);
+        CookStateFileRequest stateScope;
+        stateScope.RuntimeRoot = observation.Owner.FinalRuntimeRootLocator;
+        stateScope.StatePath = stateScope.RuntimeRoot.parent_path() / Access::ManagedStoreNative::StoreLeaf /
+                               Access::ManagedTransaction::StateLeaf(observation.CurrentRootClaimId);
+        stateScope.ExpectedBinding = observation.Owner.ExpectedBinding;
+        CookOwnedState state;
+        CHECK(LoadCookOwnedState(stateScope, state, error) == CookStateLoadResult::Loaded);
+        const auto* textureRecord = FindCookOwnedRecord(state, {"Textures/a.ppm", Asset::AssetKind::Texture, "default"});
+        const auto* rawRecord = FindCookOwnedRecord(state, {"Data/config", Asset::AssetKind::Raw, "default"});
+        CHECK(textureRecord && rawRecord && textureRecord->CookerRevision == CookerRevisions::Texture &&
+              rawRecord->CookerRevision == CookerRevisions::Raw && textureRecord->CookerRevision != 2 &&
+              rawRecord->CookerRevision != 2);
         CHECK(report.Assets.size() == 2 && report.Assets[0].Metrics.TextureBytes == 20 &&
               report.Assets[1].Metrics.TextureBytes == 0);
         CHECK(std::filesystem::is_regular_file(report.ReportDirectory / "cook_report.json"));

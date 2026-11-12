@@ -260,7 +260,9 @@ namespace NorvesLib::Test::RenderingValidation
         Skinned,
         HashTaa,
         HashNoTaa,
-        Velocity
+        Velocity,
+        ShadowSun,
+        ShadowPoint
     };
 
     // 判定と配置で同じ板の寸法を使う。座標は正面カメラから見たワールド空間。
@@ -277,6 +279,15 @@ namespace NorvesLib::Test::RenderingValidation
     // 同じ大きさの四角形を左右に並べ、8×8 の各テクセルを約16画素で比較する。
     inline constexpr AlphaClipPlateSpec AlphaClipSkinnedPlates[] = {
         {-2.31f, 0.0f, 2.31f}, {2.31f, 0.0f, 2.31f}};
+    // 既存の静的・スキンの対を、影が重ならない二つの列へ縮めて置く。Y は床上の Z 座標。
+    inline constexpr AlphaClipPlateSpec AlphaClipShadowPlates[] = {
+        {AlphaClipSkinnedPlates[0].X * 0.75f, -1.8f, 0.5f},
+        {AlphaClipSkinnedPlates[1].X * 0.75f, -1.8f, 0.5f},
+        {AlphaClipSkinnedPlates[0].X * 0.75f,  1.8f, 0.5f},
+        {AlphaClipSkinnedPlates[1].X * 0.75f,  1.8f, 0.5f}};
+    inline constexpr float AlphaClipShadowPlateHeight = 1.5f;
+    inline constexpr float AlphaClipShadowSunDirection[3] = {0.0f, -1.0f, 1.0f};
+    inline constexpr float AlphaClipShadowPointPosition[3] = {0.0f, 8.0f, -8.0f};
     inline constexpr AlphaClipPlateSpec AlphaClipHashPlate = {0.0f, 0.0f, 2.6f};
     inline constexpr AlphaClipPlateSpec AlphaClipVelocityPlate = {0.0f, 20.0f, 2.6f};
     inline constexpr float AlphaClipVelocityOffsetX = 1.5f;
