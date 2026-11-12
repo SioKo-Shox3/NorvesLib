@@ -2,6 +2,7 @@
 #include "RigStaticRootFrameFixture.h"
 #include "Resource/RigGltfImportCapture.h"
 #include "Resource/SkeletalGltfDecode.h"
+#include <cmath>
 namespace F = NorvesLib::Tests::RigV1Fixture;
 namespace H = NorvesLib::Tests::RigStaticRootFrameFixture;
 namespace Core = NorvesLib::Core;
@@ -187,6 +188,50 @@ namespace
         std::printf(
             "ROOT_FRAME_IMPORT_CASE result=pass malformed_hint_static_domain_scene_cycle_interjoint_animated_parent_rejected\n");
     }
+    void BlenderLayoutProfile3(F::Fixture& f)
+    {
+        f.SetBuffer(f.Binary);
+        const auto json = F::BaseJson("BlenderArmature.gltf");
+        S::RigAuthoringCpu out;
+        S::RigV1Report report;
+        S::RigV1Limits limits;
+        limits.MaxJoints = 256;
+        RIG_CHECK(S::DecodeRigAuthoringWithProfileNativePath(F::View(json), "RigV1Fixture/rig.gltf",
+                                                             S::RigImportProfile::StaticRootFrame256, out, report,
+                                                             limits));
+        const auto* data = out.GetData();
+        RIG_CHECK(data && data->Profile == S::RigImportProfile::StaticRootFrame256);
+        constexpr float expectedFrame[16] = {
+            0.5f, 0, 0, 0, 0, 0, 0.5f, 0, 0, -0.5f, 0, 0, 1, 0, -2, 1};
+        for (size_t i = 0; i < 16; ++i)
+        {
+            RIG_CHECK(std::fabs(data->RootFrame[i] - expectedFrame[i]) <= 0.000001f);
+        }
+        const auto& joints = data->Geometry.Joints;
+        RIG_CHECK(joints.size() == 2 && data->LocalRest.size() == joints.size());
+        size_t rootIndex = joints.size();
+        size_t childIndex = joints.size();
+        for (size_t i = 0; i < joints.size(); ++i)
+        {
+            if (joints[i].Name == "Bone")
+            {
+                rootIndex = i;
+            }
+            else if (joints[i].Name == "Bone.001")
+            {
+                childIndex = i;
+            }
+        }
+        RIG_CHECK(rootIndex < joints.size() && childIndex < joints.size());
+        RIG_CHECK(joints[rootIndex].ParentIndex == -1 &&
+                  joints[childIndex].ParentIndex == static_cast<int32_t>(rootIndex));
+        const auto& rootRest = data->LocalRest[rootIndex];
+        RIG_CHECK(rootRest.Translation.X == 0 && rootRest.Translation.Y == 0 && rootRest.Translation.Z == 0 &&
+                  rootRest.Rotation.X == 0 && rootRest.Rotation.Y == 0 && rootRest.Rotation.Z == 0 &&
+                  rootRest.Rotation.W == 1 && rootRest.Scale.X == 1 && rootRest.Scale.Y == 1 && rootRest.Scale.Z == 1);
+        RIG_CHECK(data->LocalRest[childIndex].Translation.Y == 1);
+        std::printf("ROOT_FRAME_IMPORT_CASE result=pass blender_layout_profile3_armature_author_frame\n");
+    }
     void JointCapacity(F::Fixture& f)
     {
         const auto json = JointCountSource(f, 128);
@@ -243,6 +288,7 @@ int main()
     Reject(f);
     Budgets(f);
     JointCapacity(f);
+    BlenderLayoutProfile3(f);
     std::printf("ROOT_FRAME_IMPORT result=pass explicit_static_parent_author_frame_owned_limits\n");
     return 0;
 }

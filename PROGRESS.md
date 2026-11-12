@@ -11109,3 +11109,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 Blender の書き出しと同じ形の fixture 2 つ・README・Blender の書き出しスクリプトを足す: 着地(直し 0 回)
 - U3 AssetCook の旧経路の骨格の拒否に --rig-split への案内を足す: 着地(直し 0 回)
 - U4 skin.skeleton の扱いを経路ごとに文書へ書き、足す試験の理由を Testing.md に書く: 着地(直し 1 回)
+- U5 2 つの試験を足し、タスクの verify を回す: 着地(直し 0 回)
