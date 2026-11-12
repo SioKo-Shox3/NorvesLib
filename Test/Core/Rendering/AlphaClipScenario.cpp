@@ -1,14 +1,20 @@
-﻿// discard は深度と全 MRT の書き込みを一緒に捨てるため、GBuffer.Emissive の書き込みの有無で
-// 切り抜きによる深度の書き込みの有無も確かめる。背景と区別できる固定の発光値を被覆の印にする。
+﻿// test は GBuffer 段の深度の試しで深度の有無を直接数える。早期の深度試験を持つ FS では discard が深度を止めず、色だけでは確かめられない。
+// skinned と Hash は背景と区別できる固定の発光値の書き込みで被覆を数える。
 #include "AlphaClipScenario.h"
 
 #include "FileStream/FileStream.h"
+#include "Math/MatrixUtils.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderExtension/RenderExtension.h"
 #include "Rendering/RenderExtension/RenderExtensionData.h"
+#include "Rendering/RenderExtension/RenderExtensionHelpers.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
 #include "Thread/Mutex.h"
 #include "Logging/LogMacros.h"
@@ -69,6 +75,186 @@ namespace NorvesLib::Test::RenderingValidation
         struct HashPhase { uint32_t Value; };
         constexpr RenderExtensionDataKey<HashPhase> HashPhaseKey{
             Core::Identity::Literal("Test.AlphaClip.Phase", sizeof("Test.AlphaClip.Phase") - 1)};
+
+        struct DepthProbeParams
+        {
+            float Emissive[4];
+            float Depth[4];
+        };
+        constexpr RenderExtensionDataKey<DepthProbeParams> DepthProbeKey{
+            Core::Identity::Literal("Test.AlphaClip.DepthProbe", sizeof("Test.AlphaClip.DepthProbe") - 1)};
+
+        bool BuildDepthProbe(const CameraProxy& camera, DepthProbeParams& params, float& plateDepth)
+        {
+            const float aspect = static_cast<float>(ValidationWidth) / static_cast<float>(ValidationHeight);
+            // 列ベクトル規約で板と 0.25 m 奥の点を写す。ビューの -Z を投影の +Z へ直す補正は
+            // CameraViewConstants::BuildCullingViewProjectionMatrix と Vulkan の描画時と同じ。Y の反転は深度に影響しない。
+            const auto clipSpaceCorrection = Math::MatrixUtils::CreateScale(1.0f, 1.0f, -1.0f);
+            const auto viewProjection = CameraViewConstants::BuildProjectionMatrix(camera, aspect) *
+                                        clipSpaceCorrection *
+                                        CameraViewConstants::BuildViewMatrix(camera);
+            const auto plateClip = viewProjection * Math::Vector4(0.0f, 0.0f, 0.0f, 1.0f);
+            const auto probeClip = viewProjection * Math::Vector4(0.0f, 0.0f, -0.25f, 1.0f);
+            plateDepth = plateClip.z / plateClip.w;
+            params = {{0.0f, AlphaClipEmissiveNits * camera.PreExposure, 0.0f, 1.0f},
+                      {probeClip.z / probeClip.w, 0.0f, 0.0f, 0.0f}};
+            return std::isfinite(plateDepth) && std::isfinite(params.Depth[0]) &&
+                   0.0f < plateDepth && plateDepth < params.Depth[0] && params.Depth[0] < 1.0f;
+        }
+
+        // 板より奥の深度で試しの色を描き、GBuffer の深度が空の画素だけを識別する。
+        class DepthProbePass final : public IViewPass, public IRenderGraphPass
+        {
+        public:
+            ~DepthProbePass() override
+            {
+                Shutdown();
+            }
+
+            const char* GetName() const override
+            {
+                return "Ext.Test.AlphaClip.DepthProbe";
+            }
+
+            bool Initialize(ViewRenderContext& context) override
+            {
+                m_Device = context.Device;
+                Container::String root(NORVES_SOURCE_ROOT "/Test/Core/Rendering/Shaders");
+                if (!m_Device || !m_Shaders.Initialize(m_Device, root))
+                {
+                    return false;
+                }
+                m_GBuffer.Initialize(m_Device);
+                m_Vertex = m_Shaders.LoadShader("alpha_clip_depth_probe.vert", RHI::ShaderStage::Vertex);
+                m_Fragment = m_Shaders.LoadShader("alpha_clip_depth_probe.frag", RHI::ShaderStage::Pixel);
+                RHI::DescriptorBinding binding;
+                binding.binding = 0;
+                binding.type = RHI::ResourceBindType::ConstantBuffer;
+                binding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+                m_DescriptorDesc.bindings.push_back(binding);
+                m_Layout = m_Device->GetOrCreateDescriptorSetLayout(m_DescriptorDesc);
+                m_bInitialized = m_Vertex && m_Fragment && m_Layout;
+                return m_bInitialized;
+            }
+
+            void Shutdown() override
+            {
+                m_GBuffer.Reset();
+                m_Pipeline.reset();
+                m_RenderPass.reset();
+                m_Layout.reset();
+                m_Vertex.reset();
+                m_Fragment.reset();
+                m_DescriptorDesc.bindings.clear();
+                m_Shaders.Shutdown();
+                m_Device = nullptr;
+                m_bInitialized = false;
+            }
+
+            void Setup(ViewRenderContext&) override {}
+            void Execute(ViewRenderContext&) override {}
+
+            void Declare(RenderGraphBuilder& builder) override
+            {
+                m_Target = {};
+                if (m_GBuffer.Declare(builder))
+                {
+                    builder.TryGetTexture(RenderGraphResourceNames::GBufferEmissive, m_Target);
+                }
+                builder.PreserveInsertionOrder();
+            }
+
+            void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+            {
+                const auto* params = context.FindExtension(DepthProbeKey);
+                if (!params || !m_bInitialized || !context.FrameResources || !context.CommandList || !m_Target.IsValid())
+                {
+                    // データや描画先が欠けたフレームは描かず、試しの色の欠落を判定に残す。
+                    return;
+                }
+                const auto target = resources.GetTexture(m_Target);
+                if (!target || !PrepareGBuffer(resources))
+                {
+                    return;
+                }
+                const auto allocation = context.FrameResources->AllocateConstants(*params);
+                const auto set = context.FrameResources->AllocateDescriptorSet(m_Layout).Set;
+                if (!allocation.IsValid() || !set)
+                {
+                    return;
+                }
+                set->BindConstantBuffer(0, allocation.Buffer, allocation.GetOffset32(), sizeof(*params));
+                set->Update();
+                RHI::Viewport viewport;
+                viewport.width = static_cast<float>(target->GetWidth());
+                viewport.height = static_cast<float>(target->GetHeight());
+                RHI::ScissorRect scissor;
+                scissor.right = target->GetWidth();
+                scissor.bottom = target->GetHeight();
+                auto* commands = context.CommandList;
+                commands->BeginRenderPass(m_RenderPass, m_GBuffer.GetFramebuffer());
+                commands->SetViewport(viewport);
+                commands->SetScissor(scissor);
+                commands->SetPipeline(m_Pipeline);
+                commands->SetDescriptorSet(set);
+                commands->Draw(3);
+                commands->EndRenderPass();
+            }
+
+        private:
+            RHI::PipelinePtr CreatePipeline()
+            {
+                RHI::GraphicsPipelineDesc pipeline;
+                pipeline.vertexShader = m_Vertex;
+                pipeline.pixelShader = m_Fragment;
+                pipeline.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+                pipeline.rasterState.cullMode = RHI::CullMode::None;
+                pipeline.depthStencilState.depthTestEnable = true;
+                pipeline.depthStencilState.depthWriteEnable = false;
+                pipeline.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+                for (uint32_t index = 0u; index < 5u; ++index)
+                {
+                    RHI::BlendAttachmentDesc blend;
+                    blend.blendEnable = false;
+                    blend.colorWriteMask = index == 3u ? RHI::ColorWriteMask::All : RHI::ColorWriteMask::None;
+                    pipeline.blendState.attachments.push_back(blend);
+                }
+                pipeline.renderPass = m_RenderPass;
+                pipeline.descriptorSetLayouts.push_back(m_DescriptorDesc);
+                return m_Device->CreateGraphicsPipeline(pipeline);
+            }
+
+            bool PrepareGBuffer(RenderGraphResources& resources)
+            {
+                if (!m_GBuffer.Prepare(resources))
+                {
+                    return false;
+                }
+                if (m_RenderPass != m_GBuffer.GetRenderPass())
+                {
+                    m_RenderPass = m_GBuffer.GetRenderPass();
+                    m_Pipeline = CreatePipeline();
+                }
+                return static_cast<bool>(m_Pipeline);
+            }
+
+            RHI::IDevice* m_Device = nullptr;
+            ShaderManager m_Shaders;
+            GBufferTargetBinder m_GBuffer;
+            RHI::ShaderPtr m_Vertex;
+            RHI::ShaderPtr m_Fragment;
+            RHI::DescriptorSetDesc m_DescriptorDesc;
+            RHI::DescriptorSetLayoutPtr m_Layout;
+            RHI::RenderPassPtr m_RenderPass;
+            RHI::PipelinePtr m_Pipeline;
+            RGTextureHandle m_Target;
+            bool m_bInitialized = false;
+        };
+
+        Container::TUniquePtr<IViewPass> CreateDepthProbePass(void*)
+        {
+            return Container::MakeUnique<DepthProbePass>();
+        }
 
         struct HashEvidence
         {
@@ -233,6 +419,9 @@ namespace NorvesLib::Test::RenderingValidation
     struct AlphaClipScenario::State
     {
         Container::TSharedPtr<HashEvidence> Evidence = Container::MakeShared<HashEvidence>();
+        DepthProbeParams Probe{};
+        float PlateDepth = 0.0f;
+        bool bDepthValid = false;
     };
 
     AlphaClipScenario::AlphaClipScenario() : m_State(Container::MakeUnique<State>()) {}
@@ -415,6 +604,17 @@ namespace NorvesLib::Test::RenderingValidation
             return false;
         }
         m_Fixture = &fixture;
+        if (m_Kind == AlphaClipFixtureKind::Test)
+        {
+            RenderExtensionDesc probe;
+            probe.Name = "Ext.Test.AlphaClip.DepthProbe";
+            probe.Stage = RenderExtensionStage::GBuffer;
+            if (!world.RegisterRenderExtension(probe, {CreateDepthProbePass, nullptr}))
+            {
+                LOG_ERROR("切り抜きの深度を調べるパスを登録できませんでした");
+                return false;
+            }
+        }
         if (IsHash())
         {
             auto& evidence = *m_State->Evidence;
@@ -445,6 +645,14 @@ namespace NorvesLib::Test::RenderingValidation
             camera.ExposureMode = CameraExposureMode::Manual;
         }
         world.SetMainCamera(camera);
+        if (m_Kind == AlphaClipFixtureKind::Test)
+        {
+            m_State->bDepthValid = BuildDepthProbe(camera, m_State->Probe, m_State->PlateDepth);
+            if (m_State->bDepthValid)
+            {
+                world.SetExtensionData(DepthProbeKey, m_State->Probe);
+            }
+        }
         if (IsHash())
         {
             world.SetExtensionData(HashPhaseKey, HashPhase{m_HashPhase});
@@ -732,9 +940,33 @@ namespace NorvesLib::Test::RenderingValidation
             }
             return bPassed;
         }
+        enum class DepthPixelKind { Plate, Probe, Invalid };
+        auto classifyDepth = [&](int32_t x, int32_t y)
+        {
+            const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+            bool bPlate = true;
+            bool bProbe = true;
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                const double value = image.Values[offset + channel];
+                if (!std::isfinite(value))
+                {
+                    bFinite = false;
+                    return DepthPixelKind::Invalid;
+                }
+                if (channel < 3u)
+                {
+                    bPlate = bPlate && std::abs(value - expectedEmissive) <= m_EmissiveTolerance;
+                    bProbe = bProbe && std::abs(value - m_State->Probe.Emissive[channel]) <= m_EmissiveTolerance;
+                }
+            }
+            return bPlate ? DepthPixelKind::Plate : bProbe ? DepthPixelKind::Probe : DepthPixelKind::Invalid;
+        };
         double coverage[3]{};
         uint32_t counts[3]{};
         uint32_t totals[3]{};
+        uint32_t probeCounts[3]{};
+        uint32_t invalidPixels = 0u;
         const auto checker = ProjectPlate(AlphaClipCoveragePlates[0], camera);
         const double texelPixels = checker.HalfExtent * 2.0 / 8.0;
         for (uint32_t index = 0u; index < 3u; ++index)
@@ -745,14 +977,17 @@ namespace NorvesLib::Test::RenderingValidation
             const double innerFraction = index == 0u ? 7.0 / 8.0 : 1.0 - 1.0 / plate.HalfExtent;
             if (!MakeRect(plate, innerFraction, rect))
             {
-                reason = TEXT("切り抜きの検査領域が画像の範囲外です");
+                reason = TEXT("切り抜きの深度の検査領域が画像の範囲外です");
                 return false;
             }
             for (int32_t y = rect.Top; y < rect.Bottom; ++y)
             {
                 for (int32_t x = rect.Left; x < rect.Right; ++x)
                 {
-                    counts[index] += covered(x, y) ? 1u : 0u;
+                    const auto kind = classifyDepth(x, y);
+                    counts[index] += kind == DepthPixelKind::Plate ? 1u : 0u;
+                    probeCounts[index] += kind == DepthPixelKind::Probe ? 1u : 0u;
+                    invalidPixels += kind == DepthPixelKind::Invalid ? 1u : 0u;
                     ++totals[index];
                 }
             }
@@ -767,21 +1002,26 @@ namespace NorvesLib::Test::RenderingValidation
                 const int32_t pixelY = static_cast<int32_t>(std::floor(checker.CenterY - checker.HalfExtent * ((y + 0.5) / 4.0 - 1.0)));
                 if (pixelX < 0 || pixelY < 0 || pixelX >= static_cast<int32_t>(image.Width) || pixelY >= static_cast<int32_t>(image.Height))
                 {
-                    reason = TEXT("テクセル中心が画像の範囲外です");
+                    reason = TEXT("深度を調べるテクセル中心が画像の範囲外です");
                     return false;
                 }
-                matched += covered(pixelX, pixelY) == ((x + y) % 2u == 0u) ? 1u : 0u;
+                const auto expectedKind = (x + y) % 2u == 0u ? DepthPixelKind::Plate : DepthPixelKind::Probe;
+                matched += classifyDepth(pixelX, pixelY) == expectedKind ? 1u : 0u;
             }
         }
-        const bool bPassed = bFinite && texelPixels >= m_MinimumTexelPixels &&
+        const bool bPassed = m_State->bDepthValid && bFinite && invalidPixels == 0u && texelPixels >= m_MinimumTexelPixels &&
             std::abs(coverage[0] - m_CoverageTarget) <= m_CoverageTolerance && matched == 64u &&
-            counts[1] == 0u && counts[2] == totals[2];
-        LOG_INFO("切り抜きの判定 ALPHA_CLIP_RESULT scenario=test coverage=%g texel_match=%u/64 single_back_coverage=%g two_back_coverage=%g single_back_pixels=%u/%u two_back_pixels=%u/%u texel_pixels=%g finite=%d result=%s",
+            counts[1] == 0u && probeCounts[1] == totals[1] && counts[2] == totals[2];
+        LOG_INFO("切り抜きの深度の判定 ALPHA_CLIP_RESULT scenario=test coverage=%g texel_match=%u/64 single_back_coverage=%g two_back_coverage=%g single_back_pixels=%u/%u two_back_pixels=%u/%u texel_pixels=%g finite=%d result=%s depth_filled=%g probe_pixels=%u invalid_pixels=%u plate_depth=%.9g probe_depth=%.9g",
                  coverage[0], matched, coverage[1], coverage[2], counts[1], totals[1], counts[2], totals[2], texelPixels,
-                 bFinite ? 1 : 0, bPassed ? "PASS" : "FAIL");
+                 bFinite ? 1 : 0, bPassed ? "PASS" : "FAIL", coverage[0],
+                 probeCounts[0] + probeCounts[1] + probeCounts[2], invalidPixels,
+                 m_State->PlateDepth, m_State->Probe.Depth[0]);
         if (!bPassed)
         {
-            reason = TEXT("市松の被覆率・テクセル中心または裏向きの被覆が基準を満たしません");
+            reason = !m_State->bDepthValid
+                ? TEXT("板と試しの深度が 0 < 板の深度 < 試しの深度 < 1 を満たしません")
+                : TEXT("市松の深度が埋まった率・テクセル中心・裏向きの深度または試しの色が基準を満たしません");
         }
         return bPassed;
     }
