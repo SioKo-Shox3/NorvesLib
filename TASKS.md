@@ -5994,7 +5994,7 @@
 - notes: ロードマップ GR30 の B（995〜1045 行）。UNCERTAIN: SceneColor の撮影（FrameCaptureTypes.h:31 の「ブルーム前の HDR」）が TAA の後の値かは読んで確かめる（前の値なら BackBuffer を撮る）。SceneColor の A は 1 固定（照明の出力と ForwardPass のブレンド）なので、リアクティブを A に載せられず別の資源にする。推奨の経路は別: 雨・粒子は GR25 の PostTemporalAA 段で TAA の後に合成する（リアクティブも velocity も要らない）。リアクティブは TAA の前に描く半透明（湯気など）だけに使うと RenderingFlow.md に書く。独立のブレンド（independentBlend）は要さない（色と同じ係数で被覆率が積もる）。TAA の記述子の配置と RenderGraph の依存（書き手が無いとき）が変わるので、書き手 0 のときの出力の一致を試験で守る。危険地帯（TAA・RenderThread）なので評価者を通す。完了条件の GR30 のリアクティブの行、要件 `#### GR30`。
 
 ## G5-GR30-THIN-SPECULAR-AA: 細い形状と高周波の法線のちらつきを抑える鏡面の AA と、1 画素未満の毛・草の幅の下限を入れる
-- status: todo
+- status: blocked
 - after: G5-GR26-GBUFFER-CONTRACT, G5-GR27-MASKED-GBUFFER, G5-GR30-VERTEX-ANIM-VELOCITY
 - gr: GR30
 - done-when: 鏡面の AA（Tokuyoshi-Kaplanyan 型: σ² = 0.25(|dN/dx|² + |dN/dy|²)、roughness' = sqrt(roughness² + min(2σ², 0.18))）を、法線を確定した直後に GBuffer の全部の書き手へ入れる（`Common/GBufferFragment.glsl`・megageometry.frag は dFdx/dFdy、可視バッファの解決 Common/VisibilityResolve.glsl は解決が既に作る画素ごとの偏微分（:449〜489 の duvdx・dposdx）から法線の変化を求める。計算シェーダーには dFdx が無い）。強さの係数は描画の定数にして既定は仮（段階的に入れられる）。`Assets/Shaders/Common/ThinGeometry.glsl` に `ClampStrandWidth(worldWidth, viewDepth, projFactor)` で幅を最低 1 画素へ広げ、細った分の被覆率を返す関数を置き、被覆率を G5-GR27-MASKED-GBUFFER の Hash の被覆へ回す約束を書く（使い手は GR34 のシェルと GR43 の草）。GPU の `RenderingSpecularAAVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、高周波の法線マップを持つ球の 8 ジッタのフレームにわたるハイライトの輝度の標準偏差が、AA 有りで無しの 50% 以下（A/B）を可視バッファの on と fallback で確かめる。鏡面の AA で DefaultLit の見た目が変わるので、golden 4 本の差がその変更だけによることを確かめて再承認し（`Docs/RenderingValidation/GoldenBaselines.md` の手順。作者に任された判断）、Indoor と Outdoor の差分と根拠をコミット本文に書く。
