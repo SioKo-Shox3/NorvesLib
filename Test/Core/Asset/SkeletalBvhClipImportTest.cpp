@@ -1081,7 +1081,8 @@ namespace
         {
             return {.11 * (frame + 1), .025 * (frame + 1), -.07 * (frame + 1)};
         }
-        C::AnsiString Target(double swingDegrees, double twistDegrees, bool rootFrame, bool extraLeaf) const
+        C::AnsiString Target(double swingDegrees, double twistDegrees, bool rootFrame, bool extraLeaf,
+                             const double* jointSwings = nullptr) const
         {
             const size_t count = JointCount + (extraLeaf ? 1 : 0), mesh = count, armature = count + 1;
             C::AnsiString json = rootFrame ? R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[)"
@@ -1095,7 +1096,8 @@ namespace
             {
                 const V reference = i % 2 ? V{1, 0, 0} : V{0, 0, 1};
                 const auto axis = Cross(Joints[i].Offset, reference);
-                offsets[i] = Mul(AxisAngle(axis, (i % 2 ? 1 : -1) * swingDegrees).Rotate(Joints[i].Offset), 1.1);
+                const double swing = jointSwings ? jointSwings[i] : (i % 2 ? 1 : -1) * swingDegrees;
+                offsets[i] = Mul(AxisAngle(axis, swing).Rotate(Joints[i].Offset), 1.1);
             }
             Q worlds[JointCount];
             double scales[JointCount]{};
@@ -1325,6 +1327,16 @@ namespace
         }
     }
 
+    double BoneDirectionError(const AlignBonesFixture& f, size_t joint,
+                              const AlignBonesFixture::V (&reference)[AlignBonesFixture::JointCount],
+                              const AlignBonesFixture::V (&actual)[AlignBonesFixture::JointCount])
+    {
+        AlignBonesFixture::V expectedDirection, actualDirection;
+        CHECK(f.Direction(joint, reference, expectedDirection));
+        CHECK(f.Direction(joint, actual, actualDirection));
+        return AlignBonesFixture::Angle(expectedDirection, actualDirection);
+    }
+
     void TestAlignBonesDirections(bool rootFrame)
     {
         using Fixture = AlignBonesFixture;
@@ -1462,7 +1474,7 @@ namespace
                     continue;
                 }
                 CHECK(f.Direction(i, actual, actualDirection));
-                maximum = std::max(maximum, Fixture::Angle(expectedDirection, actualDirection));
+                maximum = std::max(maximum, BoneDirectionError(f, i, reference, actual));
                 ++compared;
                 if (!rootFrame)
                 {
@@ -1513,6 +1525,307 @@ namespace
             CHECK(twistCount > 0 && maxTwist >= 1 && maxAxisError <= .01);
         }
     }
+    struct RestCorrectionCase
+    {
+        using Fixture = AlignBonesFixture;
+        using V = Fixture::V;
+        Fixture Input;
+        A::SkeletalRoleProfile Profile;
+        A::SkeletalRetargetClipSource Source;
+        S::RigAuthoringCpu Target;
+        A::SkeletalClipRetargetSettings Settings;
+        C::AnsiString Error;
+        V SourceRest[Fixture::JointCount]{};
+        V TargetRest[Fixture::JointCount]{};
+
+        RestCorrectionCase()
+        {
+            B::BvhDocument document;
+            CHECK(B::DecodeBvh(F::View(Input.BvhText), {}, document).Succeeded());
+            CHECK(A::ParseSkeletalRoleProfile(F::View(Input.ProfileText), {}, Profile).Succeeded());
+            CHECK(A::MakeBvhRetargetClipSource(document, Profile.Settings, C::String("RestCorrection"), Source, Error));
+            // BVH の OFFSET を足して rest を得る。アニメーションの先頭姿勢は使わない。
+            for (size_t i = 0; i < Fixture::JointCount; ++i)
+            {
+                const auto& joint = document.Joints[i];
+                SourceRest[i] = joint.Parent == UINT32_MAX ? joint.Offset
+                    : Fixture::Add(SourceRest[joint.Parent], joint.Offset);
+            }
+            Settings.Processing.Loop = A::SkeletalLoopSelection::None;
+            Settings.Processing.bExtractRootMotion = false;
+            Settings.Processing.OutputFps = 8;
+        }
+
+        void Load(double swing, const double* jointSwings = nullptr)
+        {
+            // 捻りを付けず rest の位置を double の FK で組み立て、細かな補正行列も比較できるようにする。
+            auto json = Input.Target(swing, 0, false, true, jointSwings);
+            // 未写像の回転と scale も既定値への置換を検出できる bind にする。
+            json = F::Replace(json, R"({"name":"UnmappedLeaf","translation":[0.2,-0.15,0.4]})",
+                              R"({"name":"UnmappedLeaf","translation":[0.2,-0.15,0.4],)"
+                              R"("rotation":[0,0,0.25881904510252074,0.9659258262890683],"scale":[1.2,1.2,1.2]})");
+            S::RigV1Report report;
+            CHECK(S::DecodeRigAuthoringWithProfileNativePath(F::View(json), "RigV1Fixture/target.gltf",
+                  S::RigImportProfile::StaticRootFrame256, Target, report));
+            const auto* data = Target.GetData();
+            CHECK(data && data->LocalRest.size() == Fixture::JointCount + 1);
+            for (size_t i = 0; i < Fixture::JointCount; ++i)
+            {
+                const auto& rest = data->LocalRest[i];
+                CHECK(rest.Rotation.X == 0 && rest.Rotation.Y == 0 && rest.Rotation.Z == 0 && rest.Rotation.W == 1);
+                CHECK(rest.Scale.X == 1 && rest.Scale.Y == 1 && rest.Scale.Z == 1);
+                const V offset{rest.Translation.X, rest.Translation.Y, rest.Translation.Z};
+                const int parent = data->Geometry.Joints[i].ParentIndex;
+                TargetRest[i] = parent < 0 ? offset : Fixture::Add(TargetRest[parent], offset);
+            }
+        }
+
+        V RestDirection(size_t joint, const V (&positions)[Fixture::JointCount]) const
+        {
+            V direction;
+            if (Input.Direction(joint, positions, direction))
+            {
+                return direction;
+            }
+            CHECK(Input.Joints[joint].Parent >= 0);
+            return Fixture::Unit(Fixture::Sub(positions[joint], positions[Input.Joints[joint].Parent]));
+        }
+
+        bool Run(S::SkeletalAnimationClip& clip, A::SkeletalClipRetargetReport& report)
+        {
+            const bool success = A::RetargetSkeletalClip(Source, Target, Profile, Settings, clip, report, Error);
+            if (!success)
+            {
+                std::fprintf(stderr, "REST_CORRECTION error=%s\n", Error.c_str());
+            }
+            return success;
+        }
+
+        void Reject(const char* expected, S::SkeletalAnimationClip& clip, A::SkeletalClipRetargetReport& report)
+        {
+            const auto beforeClip = clip;
+            const auto beforeReport = report;
+            CHECK(!Run(clip, report));
+            CHECK(Error == expected);
+            SameRetargetClip(beforeClip, clip);
+            SameRetargetReport(beforeReport, report);
+        }
+
+        void SampleDirections(const S::SkeletalAnimationClip& clip, bool checkUnmapped)
+        {
+            const auto* data = Target.GetData();
+            Core::SkeletonResource skeleton;
+            Core::AnimationClipResource resource;
+            Core::SkinnedMeshResource meshResource;
+            skeleton.Initialize();
+            resource.Initialize();
+            meshResource.Initialize();
+            skeleton.SetJoints(C::VariableArray<S::SkeletalJoint>(data->Geometry.Joints));
+            CHECK(skeleton.SetAuthorRestPose(data->LocalRest) && skeleton.Load());
+            resource.SetClip(S::SkeletalAnimationClip(clip));
+            CHECK(resource.Load());
+            const auto mesh = RowMatrix(data->Geometry.MeshNodeGlobalTransform);
+            const auto frame = RowMatrix(data->RootFrame);
+            const size_t leaf = Fixture::JointCount;
+            if (checkUnmapped)
+            {
+                CHECK(data->Geometry.Joints[leaf].Name == C::String("UnmappedLeaf"));
+                for (const auto& channel : clip.Channels)
+                {
+                    CHECK(channel.JointIndex != leaf);
+                }
+            }
+            double maximum = 0;
+            size_t compared = 0;
+            for (uint32_t sample = 0; sample < Fixture::FrameCount; ++sample)
+            {
+                A::SkeletalPoseSnapshot pose;
+                CHECK(A::SkeletalAnimationSampler::Sample(skeleton, resource, meshResource, sample * .125f, mesh, pose));
+                V reference[Fixture::JointCount], actual[Fixture::JointCount];
+                Input.SourcePositions(sample, reference);
+                for (size_t i = 0; i < Fixture::JointCount; ++i)
+                {
+                    const auto world = pose.JointModelMatrices[i] * mesh * frame;
+                    actual[i] = {world.m30, world.m31, world.m32};
+                }
+                for (size_t i = 0; i < Fixture::JointCount; ++i)
+                {
+                    V direction;
+                    if (Input.Direction(i, reference, direction))
+                    {
+                        maximum = std::max(maximum, BoneDirectionError(Input, i, reference, actual));
+                        ++compared;
+                    }
+                }
+                if (checkUnmapped)
+                {
+                    // 行ベクトルの子行列から動く親を除き、bind のローカル TRS と照合する。
+                    const int parent = data->Geometry.Joints[leaf].ParentIndex;
+                    CHECK(parent == 2);
+                    const auto local = pose.JointModelMatrices[leaf] * M::MatrixUtils::Inverse(pose.JointModelMatrices[parent]);
+                    const auto& rest = data->LocalRest[leaf];
+                    Near(local.m30, rest.Translation.X, 1e-6);
+                    Near(local.m31, rest.Translation.Y, 1e-6);
+                    Near(local.m32, rest.Translation.Z, 1e-6);
+                    const Fixture::Q rotation{rest.Rotation.X, rest.Rotation.Y, rest.Rotation.Z, rest.Rotation.W};
+                    const double scales[]{rest.Scale.X, rest.Scale.Y, rest.Scale.Z};
+                    const V basis[]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+                    for (size_t row = 0; row < 3; ++row)
+                    {
+                        const V axis{local.values[row * 4], local.values[row * 4 + 1], local.values[row * 4 + 2]};
+                        Near(Fixture::Length(axis), scales[row], 1e-6);
+                        const V actualAxis = Fixture::Unit(axis), expectedAxis = rotation.Rotate(basis[row]);
+                        Near(actualAxis.X, expectedAxis.X, 1e-6);
+                        Near(actualAxis.Y, expectedAxis.Y, 1e-6);
+                        Near(actualAxis.Z, expectedAxis.Z, 1e-6);
+                    }
+                }
+            }
+            std::fprintf(stderr, "REST_CORRECTION max_direction_degrees=%.9f comparisons=%zu unmapped=%u\n",
+                         maximum, compared, unsigned(checkUnmapped));
+            CHECK(compared == Fixture::FrameCount * 6);
+            CHECK(maximum <= .1);
+        }
+    };
+
+    void TestMatchRestDirections()
+    {
+        using F = AlignBonesFixture;
+        RestCorrectionCase c;
+        const double swings[]{0, 1.1, -1.3, 1.5, -1.7, 1.9, -2.1, 2.3, -2.5};
+        c.Load(0, swings);
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::Match;
+        S::SkeletalAnimationClip clip;
+        A::SkeletalClipRetargetReport report;
+        CHECK(c.Run(clip, report));
+        CHECK(report.Corrections.size() == F::JointCount);
+        double maximum = 0;
+        for (const auto& correction : report.Corrections)
+        {
+            CHECK(correction.SourceJoint < F::JointCount && correction.TargetJoint < F::JointCount);
+            const double expected = F::Angle(c.RestDirection(correction.SourceJoint, c.SourceRest),
+                                             c.RestDirection(correction.TargetJoint, c.TargetRest)) * F::Pi / 180;
+            std::fprintf(stderr, "MATCH_REST joint=%u expected_radians=%.12f before_radians=%.12f\n",
+                         correction.TargetJoint, expected, correction.BeforeRadians);
+            Near(correction.BeforeRadians, expected, 1e-6);
+            CHECK(!correction.bDirectionMissing && correction.AfterRadians == correction.BeforeRadians);
+            for (size_t i = 0; i < 9; ++i)
+            {
+                CHECK(correction.Correction.Values[i] == (i % 4 == 0 ? 1 : 0));
+            }
+            maximum = std::max(maximum, expected);
+        }
+        CHECK(maximum > 2 * F::Pi / 180 && maximum < 5 * F::Pi / 180);
+        // 失敗時に空出力との取り違えを検出できる、非既定値の clip と報告を残す。
+        clip.Name = "AtomicSentinel";
+        clip.DurationSeconds = 17;
+        clip.Channels[0].Samples[0].Value.X = .375f;
+        report.RootScale = 7;
+        report.Processing.PoseEvaluations = 123;
+        report.Corrections[0].BeforeRadians = .625;
+        c.Settings.MaximumRestErrorRadians = maximum - .01 * F::Pi / 180;
+        c.Reject("rest_direction_mismatch", clip, report);
+        c.Load(20);
+        c.Settings.MaximumRestErrorRadians = A::SkeletalClipRetargetSettings{}.MaximumRestErrorRadians;
+        c.Reject("rest_direction_mismatch", clip, report);
+    }
+
+    void TestRestCorrectionEdges()
+    {
+        using F = AlignBonesFixture;
+        RestCorrectionCase c;
+        c.Load(20);
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::AlignBones;
+        S::SkeletalAnimationClip clip;
+        A::SkeletalClipRetargetReport report;
+        CHECK(c.Run(clip, report));
+        size_t leaves = 0;
+        for (const auto& correction : report.Corrections)
+        {
+            const size_t joint = correction.TargetJoint;
+            if (joint == 4 || joint == 6 || joint == 8)
+            {
+                const auto parent = c.Input.Joints[joint].Parent;
+                const double expected = F::Angle(F::Sub(c.SourceRest[joint], c.SourceRest[parent]),
+                                                 F::Sub(c.TargetRest[joint], c.TargetRest[parent])) * F::Pi / 180;
+                Near(correction.BeforeRadians, expected, 1e-6);
+                CHECK(correction.AfterRadians < 1e-6 && !correction.bDirectionMissing);
+                ++leaves;
+            }
+        }
+        CHECK(leaves == 3);
+        CHECK(report.UnmappedTarget >= 1);
+        CHECK(std::find(report.UnmappedTargetNames.begin(), report.UnmappedTargetNames.end(),
+                        C::AnsiString("UnmappedLeaf")) != report.UnmappedTargetNames.end());
+        c.SampleDirections(clip, true);
+
+        const double antiparallel[]{0, 0, 0, 0, 180, 0, 0, 0, 0};
+        c.Load(0, antiparallel);
+        CHECK(c.Run(clip, report));
+        size_t opposite = 0;
+        for (const auto& correction : report.Corrections)
+        {
+            if (correction.TargetJoint == 3)
+            {
+                Near(correction.BeforeRadians, F::Pi, 1e-6);
+                CHECK(correction.AfterRadians < 1e-6);
+                ++opposite;
+            }
+        }
+        CHECK(opposite == 1);
+        c.SampleDirections(clip, false);
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::Match;
+        c.Reject("rest_direction_mismatch", clip, report);
+
+        c.Load(20);
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::AlignBones;
+        // source の保存精度で厳密に平行にし、up の投影が退化する条件を与える。
+        const auto& offset = c.Source.Joints[4].Rest.Translation;
+        c.Settings.UpHint = {offset.X, offset.Y, offset.Z};
+        CHECK(c.Run(clip, report));
+        const auto from = F::Unit(c.Settings.UpHint), to = c.RestDirection(3, c.TargetRest);
+        const double degrees = std::acos(std::clamp(F::Dot(from, to), -1.0, 1.0)) * 180 / F::Pi;
+        const auto swing = F::AxisAngle(F::Cross(from, to), degrees);
+        size_t parallel = 0;
+        for (const auto& correction : report.Corrections)
+        {
+            if (correction.TargetJoint == 3)
+            {
+                const F::V basis[]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+                for (size_t col = 0; col < 3; ++col)
+                {
+                    const auto expected = swing.Rotate(basis[col]);
+                    Near(correction.Correction.Values[col], expected.X, 1e-9);
+                    Near(correction.Correction.Values[3 + col], expected.Y, 1e-9);
+                    Near(correction.Correction.Values[6 + col], expected.Z, 1e-9);
+                }
+                ++parallel;
+            }
+        }
+        CHECK(parallel == 1);
+        c.SampleDirections(clip, false);
+        c.Settings.UpHint = {0, 0, 0};
+        c.Reject("retarget_input", clip, report);
+
+        c.Settings.UpHint = {0, 1, 0};
+        for (size_t role = 1; role < A::SkeletalRoleCount; ++role)
+        {
+            c.Profile.Source[role].clear();
+            c.Profile.Target[role].clear();
+        }
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::Match;
+        c.Reject("rest_bone_direction_missing", clip, report);
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::AlignBones;
+        c.Reject("rest_bone_direction_missing", clip, report);
+        c.Settings.RestMode = A::SkeletalRestCorrectionMode::Explicit;
+        CHECK(c.Run(clip, report));
+        CHECK(report.Corrections.size() == 1 && report.Corrections[0].SourceJoint == 0 &&
+              report.Corrections[0].TargetJoint == 0 && report.Corrections[0].bDirectionMissing);
+        for (size_t i = 0; i < 9; ++i)
+        {
+            CHECK(report.Corrections[0].Correction.Values[i] == (i % 4 == 0 ? 1 : 0));
+        }
+    }
 } // namespace
 int main()
 {
@@ -1532,6 +1845,8 @@ int main()
     TestErrorsBudgetsAndAtomicOutput();
     TestAlignBonesDirections(false);
     TestAlignBonesDirections(true);
+    TestMatchRestDirections();
+    TestRestCorrectionEdges();
     std::puts(
         "SKELETAL_BVH_CLIP_IMPORT result=pass source_rotation_plan_explicit_time_hemisphere_actual_keys_root_diagnostics_limits_owned_atomic_no_cli");
     return 0;
