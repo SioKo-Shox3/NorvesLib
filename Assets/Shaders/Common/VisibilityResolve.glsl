@@ -253,6 +253,10 @@ const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
 const uint VIS_MATERIAL_FLAG_DIFFUSE_ONLY = 16u;
 // 地形の面の材質（MegaTerrainBlend::IsTerrainSurface。混ぜ合わせの無い灰色の地形も含む）。撮影の AOV の地形の印に使う
 const uint VIS_MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
+// VisibilityMaterialTable.h の MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA と同じ値
+const uint VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA = 256u;
+// VisibilityMaterialTable.h の MATERIAL_FLAG_TWO_SIDED と同じ値
+const uint VIS_MATERIAL_FLAG_TWO_SIDED = 512u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから。頂点・インデックスの読み出しは Common/VisibilityTriangleFetch.glsl と共有）
@@ -485,7 +489,7 @@ struct VisResolvedPixel
 };
 
 // pixelCenter は画素の中心（整数の画素の位置 + 0.5）
-VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter)
+VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter, bool bTwoSided)
 {
     const vec3 cameraPosition = params.cameraPosition.xyz;
     const vec3 p0 = triangle.position[0] - cameraPosition;
@@ -510,8 +514,27 @@ VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter)
     result.duvdx = VisInterpolate(triangle.uv[0], triangle.uv[1], triangle.uv[2], baryX) - result.uv;
     result.duvdy = VisInterpolate(triangle.uv[0], triangle.uv[1], triangle.uv[2], baryY) - result.uv;
 
-    const vec3 interpolatedNormal =
+    vec3 interpolatedNormal =
         VisInterpolate(triangle.normal[0], triangle.normal[1], triangle.normal[2], baryCenter);
+    // 両面の材質は裏の面も描くので、カメラから見て表の向きの反対側にある三角形の法線を反転する。
+    // 表の向きは頂点の法線の側で決め、巻きの符号には依らない。
+    // 頂点の法線と巻きが不揃いなメッシュでは、ラスタの経路（gl_FrontFacing）と反転の判定が違いうる。
+    if (bTwoSided)
+    {
+        const vec3 vertexNormalSum = triangle.normal[0] + triangle.normal[1] + triangle.normal[2];
+        if (dot(vertexNormalSum, vertexNormalSum) > 1.0e-6)
+        {
+            vec3 faceCross = cross(e1, e2);
+            if (dot(faceCross, vertexNormalSum) < 0.0)
+            {
+                faceCross = -faceCross;
+            }
+            if (dot(faceCross, cameraPosition - triangle.position[0]) < 0.0)
+            {
+                interpolatedNormal = -interpolatedNormal;
+            }
+        }
+    }
     result.normal = normalize(interpolatedNormal);
     result.tangentFrame = VisCotangentFrame(interpolatedNormal, result.dposdx, result.dposdy, result.duvdx, result.duvdy);
 
@@ -790,7 +813,9 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     }
 
     VisMaterialSurface surface;
-    surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
+    const bool bOpaqueAlbedoAlpha = (entry.header.x & VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA) != 0u;
+    surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples),
+                          bOpaqueAlbedoAlpha ? 1.0 : samples.Albedo.a);
     surface.normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
     surface.material = samples.Material;
     surface.receiverFlags = bTerrain || bTerrainSplat || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u
@@ -851,14 +876,16 @@ void main()
         return;
     }
 
-    const vec2 pixelCenter = vec2(pixel) + vec2(0.5);
-    const VisResolvedPixel resolved = VisResolveTriangle(triangle, pixelCenter);
-    const vec2 velocity = VisComputeVelocity(pixelCenter, resolved.previousClip);
-
     // 材質の表から引けない材質の番号は、白・幾何の法線の面にする
     const uint materialIndex = VisRecordMaterialIndex(record);
     VisMaterialEntry materialEntry;
     const bool bHasMaterial = VisLoadMaterial(materialIndex, materialEntry);
+    const bool bTwoSided = bHasMaterial && (materialEntry.header.x & VIS_MATERIAL_FLAG_TWO_SIDED) != 0u;
+
+    const vec2 pixelCenter = vec2(pixel) + vec2(0.5);
+    const VisResolvedPixel resolved = VisResolveTriangle(triangle, pixelCenter, bTwoSided);
+    const vec2 velocity = VisComputeVelocity(pixelCenter, resolved.previousClip);
+
     const vec3 objectColor = VisObjectColor(record, materialEntry, bHasMaterial);
     // MegaGeometry のデバッグの表示（megageometry.frag の WriteDebugGBuffer と同じ面: 幾何の法線・金属度 0・粗さ 1・AO 1・発光 0）。
     // ラスタと同じく、材質のテクスチャは引かず VT の要求も書かない

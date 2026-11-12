@@ -600,6 +600,10 @@ namespace NorvesLib::Core
                     r->Id = NextId++;
                     r->Generation = Generation;
                     r->Plan = {Snapshot, logicalPath};
+                    if (!splitRequest)
+                    {
+                        r->Plan.bAllowLoose = Limits.bAllowLoose;
+                    }
                     r->bSplit = bool(splitRequest);
                     r->SplitIdentity = std::move(splitIdentity);
                     r->PublicationLimits = publicationLimits;

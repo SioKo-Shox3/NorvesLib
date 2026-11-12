@@ -10936,18 +10936,76 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done（反復 2、差し戻しの直し）: 崖以外の層の UV の回転を、低周波の雑音（波長 23 m）の値を 8 段に区切った段ごとに一定の角度とずらしにし、隣の段の標本と段の中の位置 0.3〜0.7 の smoothstep で混ぜる形に直した（`TerrainLayerBlend.glsl` の `ShadeTerrainSplat`。ハードのラスタと可視バッファの解決の両方に効く。RTGI は UV を使わないので変わらない）。前の式は場所ごとに連続に変わる角度で原点中心に回していて、UV の微分に k·|xz|·|∇θ| が乗り、原点から 300 m で模様が数十倍に潰れ、textureGrad の勾配とも合わなかった。標本ごとに回転が一定なので UV の微分は R·k で厳密になり、勾配とも一致する。費用は混ぜる区間だけ崖以外の層の標本が 2 倍。`TerrainLayerBlendVulkanTest` に `CheckRotation`（原点から約 300 m の 8 か所の平面の 2D の輝度差の分散を、原点付近の回転なしと比べる。各所の比 ≤ 1.5、平均 ≥ 0.3）を足した。
 - 証拠（反復 2）: `.harness/runs/20261112-065206/G5-GR37-TERRAIN-LAYERS-final-verify-2.txt`（verify のビルド 3 行 exit 0、ctest 3/3 合格（TerrainShaderCompileTest 99.10 秒）。`--dump-shader-current` の本文の glslc のコンパイル exit 0。式を CPU に写した使い捨ての計算で、`CheckRotation` の比は前の式で 8.7〜49.1（平均 25.8。検査が落ちる）、直した式で 0.52〜1.00（平均 0.92。通る））。GPU での実行は G5-GR37-TERRAIN-CHECK。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next（反復 2）: 人が見るときの見どころに、grassland の原点から離れた平地（地形の端に近い所）で土・苔・草地の地肌の模様が潰れず、近くと同じ細かさに見えること、段の変わり目（数 m の幅）で模様が二重に見えすぎないことを足す。
-- U1 ストリーミングの口を payload の実装に合わせて広げる: 着地(直し 0 回)
-- U2 ScatterSystem にセルから常駐を指定する口を足す: 着地(直し 0 回)
-- U3 TerrainComponent に区画単位で置く・外す口と ITerrainTileSite の実装を足す: 着地(直し 0 回)
-- U4 Core の payload handler 3 種（terrain-tile・scatter-chunk・placement）を足す: 着地(直し 0 回)
-- U5 Physics に static-colliders の handler を足し、Install で登録する: 着地(直し 0 回)
-- U6 StreamingPayloadTest を足す（Core の handler 3 種を本物の World で確かめる）: 着地(直し 1 回)
-- U7 StreamingColliderPayloadTest を足す（static-colliders と placement の物理）: 着地(直し 1 回)
-- U8 grassland にセルの出し入れを結線し、タスクの verify を回す: 着地(直し 0 回)
-### G12-GR40-WORLD-PAYLOADS セルの中身の出し入れと遠いセルの休眠（2026-11-12、run 20261112-115210）
-- Done: セルの payload の handler を 4 種足した。Core の `Streaming::TerrainTilePayloadHandler`・`ScatterChunkPayloadHandler`・`PlacementPayloadHandler`（`Library/Core/Public/Streaming/WorldPayloadHandlers.h`。所有と登録は使う側）と、Physics の `StaticColliderPayloadHandler`（PhysicsModule が Install で `StreamingSystem` に登録し、Uninstall で解除。Core は Physics を参照しない）。含める区画・チャンク・個体は、中心の XZ がセルの境界の半開区間 [min, max) に入るもの（`ContainsHorizontalPoint`）。`terrain-tile` は `ITerrainTileSite`（`TerrainComponent::GetTileSite()`。`SetTileStreaming(true)` で自動配置を止め、`PlaceTileAt`・`RemoveTileAt` で区画ごとに置く）に 1 歩 1 区画を置いて `TerrainSystem::SetTileResident` を立て、休眠は印だけ落として描画を残す。`scatter-chunk` は `ScatterSystem` の名前（`SetScatterName`）で散布を引き、距離の常駐を切って（`SetDistanceResidency(false)`）1 歩 1 チャンクを `PinChunk`、休眠は `SetChunkDormant`（範囲の Active を落とす）。`static-colliders` は `norves.static-colliders.v1` の JSON（明示の形と、`scatter` の項目で散布の個体から作る球）をワーカーで読み、コミットで `RegisterStaticColliderChunk`、休眠とアンロードで解除。`placement` は Game が登録する作り手で、セルのルートの Entity の下に 1 歩数個ずつ作り、休眠はルートの `SetActive(false)`、アンロードはルートごと消す。進みのない待ちは `EStreamingStepResult::Waiting`。
-- grassland: 開発ビルドだけの `--grassland-streaming`（`--grassland-scatter-stress` とは同時に付けられない）で、地形の 4×4 区画・散布のチャンク・岩の当たりを 128 m の 16 セル（`Assets/World/Grassland.cells.json`、岩の当たりは `Assets/World/Grassland.rocks.colliders.json` の半径 1.0 m・中心 0.5 m 上の球）で出し入れする。輪は Active 192 m・Dormant 320 m・Unload 448 m。地形のコライダーは高さ場が読めた時点で付け（当たるのは常駐の印が立った区画だけ）、準備完了はカメラのいるセルが Active になったとき。引数なしの起動の組み立てと見た目は変えていない。
-- 試験: `StreamingPayloadTest`（`EntityTreeTest` の束）は本物の World・StreamingSystem・ScatterSystem・TerrainSystem で、予算の内の生成（1 フレームに高々 3 個、複数フレームに分かれる）、休眠で Tick・描画の同期の 5 つの口（Mesh・SkinnedMesh・Light・MegaGeometry・Board）・SceneQuery から外れ地形の proxy は残ること、復帰、アンロードで Entity・散布の範囲・区画の印が戻ること、出し入れ 20 周で数が基準に戻ること、2 回の流しで遷移とフレームの記録がビット一致することを確かめる。`StreamingColliderPayloadTest`（`PhysicsDynamicsTest` の束）は本物の Engine と Physics で、明示の形・散布の個体の形・配置の ColliderComponent が、コミットで当たり、休眠・アンロードで当たらず、復帰で当たり、20 周でプロキシ数・静的木の項目数・Entity 数が基準に戻ること、新しいプロセスでの再実行と当たりと遷移の記録が一致することを確かめる。
-- 証拠: `.harness/runs/20261112-115210/G12-GR40-WORLD-PAYLOADS-final-verify.txt`（verify のビルド `EntityTreeTest`・`PhysicsDynamicsTest`・`Game` が exit 0。ctest は StreamingPayloadTest・StreamingColliderPayloadTest・StreamingCellStateMachineTest・StreamingBudgetTest・ScatterSystemResidencyTest・EntityActiveInHierarchyTest・PhysicsParentDormancyTest・PhysicsDetachedColliderTest・EntityTreeTest・PhysicsDynamicsTest の 10/10 合格。2 つの JSON の読み込みも通る）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
-- Next: ランナーの評価者の反証（Object の寿命・アセットロード・物理の危険地帯）。人が見るときの見どころ: 開発ビルドで `--scene=grassland --grassland-streaming` を付けて起動し、near の視点から地形の反対の隅へ自由飛行で移ると、離れたセルの散布（岩・倒木・低木・草の塊）が休眠で消え、岩の当たりが外れ、さらに離れると地形の区画が外れる。戻ると再び読まれる。休眠中の地形は描画が残る。引数なしの grassland（ランチャーから・`--scene=grassland`）は今までと同じ見た目と流れのはず。
-- Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（既存の `--grassland-scatter-stress` と同じ形）。`--grassland-streaming` では Unload の輪 448 m が地形の対角（約 724 m）より短いので、隅にいると反対の隅の区画が外れて地形に穴が見える（開発の引数だけの挙動）。散布は距離の常駐を切るので、岩以外の種もセルで出し入れされる。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD。
+
+- U1 旧 NVSKEL のローダに明示許可の loose を足し、ローダ試験 3 件を足す: 着地(直し 0 回)
+- U2 要約スクリプトに骨格の契約を足し、契約試験に 3 ケースを足す: 着地(直し 0 回)
+- U3 ランタイムとセッションに loose 許可の設定を 1 つ持たせる: 着地(直し 0 回)
+- U4 Game の起動引数 --allow-loose-skeletal で許可を立てる: 着地(直し 0 回)
+- U5 文書に決まりを書き、タスクの verify を回す: 着地(直し 0 回)
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-05、分割の 3 資産だけ判断待ち）
+- Done: 旧 NVSKEL の骨格ローダに明示の許可があるときだけの loose を足した（manifest 欠落・variant 欠落のときだけ glTF/GLB を worker で decode、壊れた cooked は代えない、3 段の AssetLoadProfile は source=loose）。許可は `SkeletalAssetSession::SetAllowLooseSkeletal` → `SkeletalRuntimeLimits::bAllowLoose` → `CookedSkeletalLoadPlan::bAllowLoose` で、Game の `--allow-loose-skeletal`（開発ビルドだけ）からだけ立つ。`SummarizeAssetLoadProfile.ps1 -RequireCompleteCookedSkeletal` と契約の 3 ケース、`SkeletalAssetLoaderTest` の 3 件、文書（SkeletalAssetLoader.md・AssetFallbackPolicy.md の kind の一覧を 7 種に）を足した。
+- 証拠: `.harness/runs/20261105-205801/verify-G2-GR83-LOOSE-SKELETAL.txt`（build EXIT_CODE 0、ctest 9 本 100% tests passed, 0 tests failed out of 9）。
+- Next: 分割の 3 資産（RigSplitAssetLoader）の loose は判断待ち（論理パスがソースの名前と一致せず、切り出しの処理が Tools/AssetCook にある）。起動の確かめ（`--allow-loose-skeletal` で loose の読み込みとログの source=loose）は後回し。
+- Notes: タスクの verify の build の対象に `TextureResourcesAssetLoadProfileContractTest`（ModelResourcesAssetLoadProfileContractTest の収容先）が入っておらず、新しい作業ツリーでは ctest が Not Run になる。補助でビルドして回した。
+- U6 分割の 3 資産が loose を持たない決まりを文書に書き、タスクの verify を回す: 着地(直し 0 回)
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、完了）
+- Done: 判断役の判断 (A) に従い、分割の 3 資産（`LoadRigSplitAsync`・`RigSplitAssetLoader`）は loose を持たず許可があっても cooked だけを読む、と決めて `SkeletalAssetLoader.md`・`AssetFallbackPolicy.md` の「未決」を決まりと理由（論理パスがソースの名前と対応しない・切り出しが `Tools/AssetCook` にある・許可を分割の要求へ渡さない）へ書き直した。完了の条件はこの判断で、分割の経路の loose と `SkeletalSplitAssetLoaderTest` の (2)(3) を外した形に改めた（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）。
+- 証拠: `.harness/runs/20261112-075132/verify-G2-GR83-LOOSE-SKELETAL.txt`（`cmake --build ... CookedMeshTest AssetCook Game TextureResourcesAssetLoadProfileContractTest` の Build exit code 0、ctest 9 本 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
+- 人が見るときの見どころ: 開発ビルドの Game を `--scene=` で Rendering3DTest（骨格は `M9SkeletalPreparation.cpp` の `LoadAsync`）に入れ、`--allow-loose-skeletal` を付けたときログに `SKELETAL_ASSETS allow_loose=1` が出ること。manifest から骨格の項目を外して起動すると AssetLoadProfile の 3 段が `source=loose` になり、付けないと `source=none` の失敗になること。撮影・計測の確かめは回さない決まり。
+- Next: 分割の資産を cook せずに確かめる手段は無いまま。要るなら論理パス→ソースの対応表と分割の cook の CPU 部分の Core への移設を別の項目で起こす（今は分割の経路は本番から呼ばれていない）。
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、再検証の落ちの直し・完了）
+- Done: ランナーの再検証は、このブランチの `TASKS.md` に判断役が書き換えた done-when と verify が入っておらず、古い verify（build の対象に `TextureResourcesAssetLoadProfileContractTest` が無い版）で回って `ModelResourcesAssetLoadProfileContractTest` が Not Run になっていた。判断（`blocked/resolved/G2-GR83-LOOSE-SKELETAL.md`）で書き換えた done-when と verify を、統合ブランチの項目と同じ文面でこのブランチへ写した。コードの変更は無い。
+- 証拠: 書き換えた verify 2 本は、今と同じコード（0c76e9b5 以後の変更は `TASKS.md`・`PROGRESS.md` だけ）で回して合格している（U6 の確かめ: Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0）。
+- Notes: 盤面が判断で書き換えた欄が、作業のブランチの `TASKS.md` に入らないまま再開されると、ランナーは古い verify で再検証する。
+
+## G2-GR83-LOOSE-SKELETAL（2026-11-12、評価の中断からの再開・完了）
+- Done: 前の走行は評価の途中で止まった。コードは 0c76e9b5 から変わっていない（その後の変更は `TASKS.md`・`PROGRESS.md` だけ）ので、項目を完了に戻す。
+- 証拠: 今と同じコードで回した verify 2 本の出力 `.harness/runs/20261112-115211/prior-verify-G2-GR83-LOOSE-SKELETAL.txt`（Build exit code 0、ctest 100% tests passed, 0 tests failed out of 9、CTest exit code 0、numstat 2 通り一致）。
+- Notes: 人が見るときの見どころは上の 2026-11-12 の完了の記録のとおり。撮影・計測の確かめは回さない決まり。
+
+- U1 窓・正射影・描き直しの判定・屋根の高さの CPU の計算と OverheadHeightMapMathTest: 着地(直し 0 回)
+- U2 ViewRenderContext に OverheadHeightMapResources、RenderGraphResourceNames に OverheadHeightMap を足す: 着地(直し 0 回)
+- U3 天面を描く頂点シェーダーと、屋根の高さ・雨に当たるか・上の空の見え方を引く GLSL: 着地(直し 0 回)
+- U4 OverheadHeightMapPass を作り、SetupDeferredPipeline の ShadowMapPass の直後に足す: 着地(直し 1 回)
+- U5 OverheadHeightMapVulkanTest を足し、タスクの verify を回す: 着地(直し 0 回)
+### G11-GR59-OVERHEAD-MAP 雨の遮蔽の深度マップ（2026-11-12、run 20261112-115209）
+- Done: `OverheadHeightMapPass`（IViewPass＋IRenderGraphPass）が D32_FLOAT 1024²・96 m・カメラの XZ をテクセルへ丸めた真下向きの正射影の深度（(topY − y) ÷ range、消去 1.0 = 開けている）を、頂点なしの描画で遮蔽物の天面だけ描く。遮蔽物は「雨を遮る」印の `SkyOccluderProxy`、MeshProxy の局所 AABB の箱、MegaGeometryProxy の境界球の楕円体（地形の材質 `IsTerrainSurface` とスキンメッシュは除く。影を落とさない proxy も除く）。窓が 8 テクセル以上動く・topY が変わる・遮蔽物が変わるときだけ全面を描き直す（4 Hz の上限）。`RenderGraphResourceNames::OverheadHeightMap` で公開・Export し、`ViewRenderContext::OverheadHeightMap`（`OverheadHeightMapResources`）へ並列の記録の前にも公開する。`Assets/Shaders/Common/OverheadHeightMap.glsl` に屋根の高さ・雨に当たるか・上の空の見え方（4 半径の標本で屋根が地面より 2 m 以上高い割合）を置き、無効・範囲外は開けている扱い。SetupDeferredPipeline の ShadowMapPass の直後に足した（PT には足さない）。試験 `OverheadHeightMapMathTest`（CameraViewConstantsTest の束）と `OverheadHeightMapVulkanTest`（RHITextureUpdateVulkanTest の束）を足した。
+- 証拠: `.harness/runs/20261112-115209/u5-rebuild.txt`（verify のビルドの行、HEAD 08f7e6ab と同じ中身で 4 ターゲット EXIT=0）、`.harness/runs/20261112-115209/u5-ctest.txt`（verify の ctest の行に `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて OverheadHeightMapMathTest・SkyOcclusionModelTest の 2/2 合格）。OverheadHeightMapVulkanTest と RenderingGolden* の 4 本は Vulkan・Golden の試験を回さない決まりで実行していない（OverheadHeightMapVulkanTest はビルドと ctest への登録まで）。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの順と公開）。マップを使う側は G11-GR59-RAIN-HIT・G11-GR59-PUDDLES。撮影・計測の確かめは回さない決まり。使う側がまだ無いので、人が見るときは Rendering3DTest とランチャーの各シーンの見た目が前と変わらないことだけを見る。
+- Notes: 既知の限界: 遮蔽物の集め直しは、描いた窓での変化の見張り（0.25 s ごと）と描き直しの前だけで、そのたびに全 MeshProxy・MegaGeometryProxy を回す（窓の外は境界球で先に飛ばす）。散布の proxy が非常に多いシーンでは、その回だけ描画スレッドの CPU 時間が増える見込み（測っていない）。厚みの無いメッシュ（局所 AABB の幅 0 の軸がある）は屋根にならない。形の自動推定は GR81 の範囲で、当面はメッシュ = 箱・Mega = 楕円体の既定。OverheadHeightMapVulkanTest は実行していないので、読み戻しの向きと深度の同期は確かめていない。
+
+## G5-GR27-MASKED-GBUFFER（2026-11-12、統合ブランチの取り込みの後に完了へ戻す）
+- Done: 統合ブランチ `feature/scene-launcher`（G11-GR59-OVERHEAD-MAP まで）を取り込んだ。衝突は `SceneView::Render` の冒頭のビューごとのリセットの 1 か所で、TAA が掛かったかの印の初期化（`context.bTemporalAAApplied = false`）と雨の遮蔽マップの無効化（`context.OverheadHeightMap.Invalidate()`）の両方を残した。
+- 証拠: `.harness/runs/20261112-115209/merge2-verify-build.txt`（verify のビルドの行 EXIT=0）、`.harness/runs/20261112-115209/merge2-verify-ctest.txt`（verify の ctest に `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて GBufferPipelineKeyTest・MaterialResourcesTest・ImportedOpaqueRuntimeTest の 3/3 合格、EXIT=0）。
+- Notes: Vulkan・Golden の試験は回さない決まり。人が見るときの見どころは前の完了の記録のとおり。
+- U1 材質の切り抜きの値と、鍵・切り抜きの方式・重ねる経路を決める純粋な関数（CPU）: 着地(直し 0 回)
+- U2 切り抜きの判定の GLSL・gbuffer_alphaclip.frag・裏の面の法線の反転: 着地(直し 0 回)
+- U4 取り込んだ glTF の MASK・alphaCutoff・doubleSided を通し、MegaGeometry の材質へ写す（CPU）: 着地(直し 0 回)
+- U5 MegaGeometry の Masked の材質は切り抜かず、albedo.a を 1 で書く（天球の判定と衝突させない）: 着地(直し 0 回)
+- U3 GBufferPass・可視バッファのラスタ・重ねる経路を切り抜きと両面に広げ、TAA が掛かるかの印を渡す: 着地(直し 1 回)
+- U9 MegaGeometry の両面の材質のデータ・クラスタのカリング・予備の経路: 着地(直し 0 回)
+- U11 可視バッファの解決で、両面の MegaGeometry の材質の裏の面の法線を反転する: 着地(直し 1 回)
+- U6 GPU の試験 RenderingAlphaClipVulkanTest（Test の切り抜き・両面・不透明だけの作成の数）: 着地(直し 1 回)
+- U10 可視バッファのハードとソフトのラスタで、両面の区間の裏の面を描く: 着地(直し 0 回)
+- U7 RenderingAlphaClipVulkanTest にスキンの Masked と Hash・TAA の場合を足す: 着地(直し 0 回)
+- U8 RenderingVelocityAlphaClipVulkanTest と、タスクの verify: 着地(直し 1 回)
+### G5-GR27-MASKED-GBUFFER 切り抜きと両面の材質（2026-11-12、run 20261112-065206）
+- Done: 材質に `AlphaClipMode{Test, Hash}`・`AlphaCutoff`（既定 0.5、非有限は 0.5、0〜1 に丸める）を足し、`MakeGBufferPipelineKey` が Masked で alphaClip、`bTwoSided` で cull None を選ぶ。`Common/AlphaClip.glsl`（Test は被覆率 < 閾値で破棄、Hash は interleaved gradient noise にフレームの位相 0〜63 を掛けた閾値）と `gbuffer_alphaclip.frag` を足し、有効なαはテクスチャのα × 被覆率の乗数（`.w`）、残る画素の albedo.a は 1。裏の面は `gl_FrontFacing` で法線を反転する。可視バッファが on のとき Masked・両面の材質は ID のラスタから外して解決の後に重ね、fallback では不透明の後に描く。スキンも材質のデータで同じ判定。`ViewRenderContext::bTemporalAAApplied`（`SceneView::SetTemporalAAApplied` と同じ値）が立たないビューでは Hash を Test に落とす。取り込んだ glTF の MASK・alphaCutoff・doubleSided を通し（BLEND は拒否のまま）、MegaGeometry の材質へ写す。MegaGeometry は切り抜かず albedo.a を 1 で書き、両面の材質は別の区間にして法線のコーンのカリングを飛ばし、ハードとソフトのラスタ・予備の経路で裏の面を描き、解決で裏の法線を反転する。
+- 証拠: `.harness/runs/20261112-065206/verify-G5-GR27-MASKED-GBUFFER-U8.txt`（verify のビルドの行 build_exit=0。ctest は GBufferPipelineKeyTest・MaterialResourcesTest・ImportedOpaqueRuntimeTest・RenderingAlphaClipVulkanTest 884.5 秒・RenderingVelocityAlphaClipVulkanTest 89.1 秒・RenderingVelocityStaticVulkanTest・RenderingVelocitySkinnedVulkanTest・RenderingGBufferProgramVulkanTest の 8/8 Passed、Total 1321.59 秒、ctest_exit=0。速度の判定は被覆するテクセル 32 個の平均 (0.162354, 0)・期待 (0.16238, 0)、切り抜かれるテクセル 32 個の最大 1.79e-7。numstat の 2 通りが一致）。基準画像の試験 4 本は回さない決まり（`-E "Golden|PathTracingReference"`）。
+- Next: ランナーの評価者の反証（GBuffer・RenderThread・アセットロードの危険地帯）。Hash と TAA の詰めは G5-GR30-THIN-SPECULAR-AA・G5-GR30-TAA-THIN-CHECK。人が見るときの見どころ: 既定の材質は不透明・片面なので Rendering3DTest（天球・地面・球・岩）と荒野は変わらない想定。今回から `bTwoSided = true` が効くので、ShishaShowcase の検証資産の代役（`ShishaShowcaseStandin`。周回で裏からも見える）、CombatSlice の犬と床、DogMovementSmoke の 3 色の材質が両面（cull None・解決の後に重ねる経路）で描かれる。閉じた形なら見た目は変わらないはず。
+- Notes: 既知の限界: RT・DDGI・RTGI・パストレーサーには切り抜きが反映されない（GR104）。MegaGeometry は切り抜かない（Masked の材質も不透明として描く）。両面の法線の反転は、法線の向きが不揃いな AI の生成の薄い面で逆に破綻しうる。重ねる物（切り抜き・両面）は可視バッファの ID のラスタの深度に載らず、2 パスの遮蔽の HZB の遮蔽物にならない。検証の場面の不透明の材質の `bTwoSided`（今まで効いていなかった値）は基準画像の見た目を保つため false に戻した。glTF の材質の写しは `FinalizeImportedMaterial`（`ModelStaging.cpp`。paths の `ModelMaterialStaging.cpp` ではなくこちらにある）で行った。`RenderingVelocityAlphaClipVulkanTest` は可視バッファ on の経路だけ（fallback の被覆は RenderingAlphaClipVulkanTest が確かめる）。
+### G5-GR27-MASKED-GBUFFER の verify の時間切れの直し（2026-11-12、run 20261112-115209）
+- Done: ランナーの再検証は verify の ctest で GPU の試験 5 本を順に回し、1 コマンド 10 分の上限を超えていた（RenderingAlphaClipVulkanTest だけで約 884 秒）。人の決まりどおり Vulkan・GPU・Golden の試験を外す（`-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"`）と、verify の ctest は GBufferPipelineKeyTest・MaterialResourcesTest・ImportedOpaqueRuntimeTest の 3 本になり、上限に当たらない。コードは変えていない。
+- 証拠: `.harness/runs/20261112-115209/verify-G5-GR27-MASKED-GBUFFER-final.txt`（HEAD f18334f1。verify のビルドの行 BUILD_EXIT=0・エラー 0 件、ctest 3/3 Passed・Total 0.17 秒・CTEST_EXIT=0）。GPU の試験の合格は前回の `.harness/runs/20261112-065206/verify-G5-GR27-MASKED-GBUFFER-U8.txt`（8/8 Passed）。
+- Next: ランナーの評価者の反証（GBuffer・RenderThread・アセットロードの危険地帯）。
+- Notes: 盤面のワーカーでは Vulkan のドライバが隠されていて（`VK_DRIVER_FILES` が存在しないファイルを指す）、GPU の 5 本（RenderingAlphaClipVulkanTest・RenderingVelocityAlphaClipVulkanTest・RenderingVelocityStaticVulkanTest・RenderingVelocitySkinnedVulkanTest・RenderingGBufferProgramVulkanTest）は Vulkan の初期化で落ちる。人が手で回すと、RenderingAlphaClipVulkanTest は 6 つの場合 × 可視バッファ on/off の 12 回の起動で約 884 秒かかる（1 回の起動の大半は Debug のシェーダーの実行時のコンパイル。80 本で約 160 秒）。全段を 1 回の起動にまとめる版は、見張り役の見分け方を直した後の two-sided の段を最後まで確かめられなかったので入れていない。Vulkan が使えた回の ctest で、RenderingVelocitySkinnedVulkanTest が一度だけ初期化中（`visbuffer_resolve.comp` のコンパイルの直後）にエラーの行も WER の記録も無く 33.74 秒で終わった（同じ版のほかの 2 回は合格。ログは `.harness/runs/20261112-115209/velocity-skinned-init-stop.log`）。
+- U13 切り抜きの断片シェーダーで早期の深度試験を宣言せず、切り抜いた画素に深度を書かない: 着地(直し 0 回)
+- U14 切り抜きの試験の test の場面で、GBuffer の深度が埋まった画素を後から描く深度の試しで直接数える: 着地(直し 0 回)
+### G5-GR27-MASKED-GBUFFER の差し戻しの直し: 切り抜いた画素に深度を書かない（2026-11-12、run 20261112-115209）
+- Done: VT のフィードバックに対応した装置（`NORVES_VT_FEEDBACK` を定義する装置）では、`Common/VirtualTextureFeedback.glsl` が `layout(early_fragment_tests) in;` を宣言する。このため切り抜きの FS の discard は色の 5 枚しか止められず、穴の画素にも板の深度が書かれていた。そこで取り込む側の印 `NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS` で早期の深度試験を外せるようにし、`GBufferFragment.glsl` が `GBUFFER_ALPHA_CLIP` のときに定義するようにした（不透明の `gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` の早期の深度試験はそのまま）。`RenderingAlphaClipVulkanTest` の test の場面では、GBuffer 段（予備の経路の切り抜きの描画・可視バッファ on の重ねる経路の後）に深度の試しのパスを足した。試しのパスは、板の 0.25 m 奥の深度（エンジンの射影と Vulkan の Z の補正で求める。板 0.988488・試し 0.988868）の全画面三角形を、深度の試験あり・書き込みなしで GBuffer.Emissive にだけ描く。判定は「板」「試し」「不正」の 3 つに分けて数える: 市松の深度が埋まった率 0.5±0.02、テクセル中心は偶数が板・奇数が試し、片面の裏は全部が試し、両面の裏は全部が板、不正 0。
+- 証拠: `.harness/runs/20261112-115209/verify-G5-GR27-MASKED-GBUFFER-U13.txt`（glslc と spirv-dis の結果。変更前の `gbuffer_alphaclip.frag` は VT ありで EarlyFragmentTests 1・discard 1、変更後は 0・1。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` は VT ありで 1 のまま。計算の解決 4 本はコンパイルが通る）。`.harness/runs/20261112-115209/verify-G5-GR27-MASKED-GBUFFER-U14.txt`（verify のビルドの行 EXIT_CODE 0・エラーの行 0。新しい試しのシェーダー 2 本は glslc が 0。ctest は決まりどおり `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて GBufferPipelineKeyTest・MaterialResourcesTest・ImportedOpaqueRuntimeTest の 3/3 Passed、Total 0.17 秒・EXIT_CODE 0。numstat の 2 通りが一致し、新しいファイルは BOM + CRLF）。
+- Next: ランナーの評価者の反証（差し戻しへの対応差分）。人が GPU の試験を回すとき（`ctest -R "^RenderingAlphaClipVulkanTest$"`、約 15 分）は、on と off の両方のログの `ALPHA_CLIP_RESULT scenario=test` の行で `result=PASS`・`depth_filled` が 0.48〜0.52・`invalid_pixels=0`・`plate_depth` < `probe_depth` を見る。見た目の見どころ: 切り抜きの材質を使う既定のシーンは無いので、Rendering3DTest（天球・地面・球・岩）と荒野は変わらない想定。
+- Notes: 既知の限界: 切り抜きの FS は早期の深度試験を失う（Masked の材質だけ）。VT のフィードバックは discard の前で書くので、隠れた画素と切り抜いた画素も要求を出しうる（アルベドのタイルは被覆率を決めるのに要る）。評価者の non-blocking として残したもの: `MegaGeometryPass::CreateDrawPipeline` と `VisibilityRasterPass::CreatePipelines` が cull None のパイプラインを常に先に作るので、不透明だけのシーンでもパイプラインが 2 本増える（GPU の試験が数えるのは `GBufferPipelineCreated` だけ）。`VisibilityResolve.glsl` の両面の法線の反転は視線に `cameraPosition - position[0]` を使い、正射影の主の視点では表裏を誤りうる。`ModelStaging.cpp` の `std::clamp` は NaN を通す（MegaGeometry は値を使わないので今は害が無い）。`RenderingAlphaClipVulkanTest` の深度の試しは盤面のワーカーでは回せず（Vulkan のドライバが隠されている）、GPU の上では未実行。

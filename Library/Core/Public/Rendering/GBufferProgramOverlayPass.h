@@ -1,4 +1,4 @@
-﻿// 解決後の GBuffer にプログラム材質を重ねるパス。
+﻿// 解決後の GBuffer に標準でない材質（プログラム・Masked・両面）を重ねるパス。
 #pragma once
 
 #include "Rendering/IViewPass.h"

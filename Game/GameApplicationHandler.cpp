@@ -1037,6 +1037,20 @@ namespace Game
             // コマンドライン引数のログ出力
             LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
 #if NORVES_BUILD_DEVELOPMENT
+            if (args[i] == TEXT("--allow-loose-skeletal"))
+            {
+                const auto status = NorvesLib::Core::GEngine.GetSkeletalAssetSession().SetAllowLooseSkeletal(true);
+                if (status == SkeletalRuntimeStatus::Success || status == SkeletalRuntimeStatus::Unchanged)
+                {
+                    LOG_INFO("SKELETAL_ASSETS allow_loose=1 骨格の資産を loose からも読みます");
+                }
+                else
+                {
+                    LOG_WARNING_F("SKELETAL_ASSETS allow_loose=failed status=%u 骨格の loose 読み込みを許可できません",
+                                  static_cast<uint32_t>(status));
+                }
+                continue;
+            }
             // --capture-aov（1 視点の撮影でも複数視点の撮影でも）は、描画の初期化の前に RTGI の遮蔽の診断を頼む。LightingPass が
             // RTGI の出力の a へ空の分と読み飛ばしの分類を詰め、GBufferAovPass が AOV の照明の g・b に写す
             if (args[i] == TEXT("--capture-aov"))

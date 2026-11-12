@@ -333,13 +333,16 @@ namespace ImportedRuntimeTest
         CHECK(!S::ValidateImportedOpaqueMaterial(bad, reason));
         bad = material;
         bad.bDoubleSided = true;
-        CHECK(!S::ValidateImportedOpaqueMaterial(bad, reason));
-        for (auto alpha : {S::ImportedAlphaMode::Mask, S::ImportedAlphaMode::Blend})
-        {
-            bad = material;
-            bad.Alpha = alpha;
-            CHECK(!S::ValidateImportedOpaqueMaterial(bad, reason));
-        }
+        CHECK(S::ValidateImportedOpaqueMaterial(bad, reason));
+        bad = material;
+        bad.Alpha = S::ImportedAlphaMode::Mask;
+        CHECK(S::ValidateImportedOpaqueMaterial(bad, reason));
+        bad.bDoubleSided = true;
+        CHECK(S::ValidateImportedOpaqueMaterial(bad, reason));
+        bad = material;
+        bad.Alpha = S::ImportedAlphaMode::Blend;
+        CHECK(!S::ValidateImportedOpaqueMaterial(bad, reason) &&
+              reason.find("alphaMode_blend_unsupported") != Text::npos);
         bad = material;
         bad.Shading = R::ShadingModel::Unlit;
         CHECK(!S::ValidateImportedOpaqueMaterial(bad, reason));
@@ -558,7 +561,7 @@ namespace ImportedRuntimeTest
             }
             resources.Shutdown();
         }
-        for (unsigned mode = 0; mode < 4; ++mode)
+        for (unsigned mode : {0u, 3u, 4u})
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
@@ -570,13 +573,9 @@ namespace ImportedRuntimeTest
             {
                 m.NormalScale = 2;
             }
-            if (mode == 1)
+            if (mode == 4)
             {
-                m.bDoubleSided = true;
-            }
-            if (mode == 2)
-            {
-                m.Alpha = S::ImportedAlphaMode::Mask;
+                m.Alpha = S::ImportedAlphaMode::Blend;
             }
             if (mode == 3)
             {
@@ -591,6 +590,60 @@ namespace ImportedRuntimeTest
             CHECK(status == S::ModelFinalizeStatus::UnsupportedImportedMaterial && device->Textures.empty() &&
                   device->Buffers.empty());
             resources.Shutdown();
+        }
+        {
+            Bytes image = pixels;
+            image[3] = 0;
+            image[7] = 128;
+            const auto albedo = Package(root, "mask_albedo.nvpkg", "Textures/mask_albedo",
+                                        Nvtex(image, "nvtex.v0.rgba8.srgb"), false, 0, "nvtex.v0.rgba8.srgb");
+            struct ImportedModeCase
+            {
+                S::ImportedAlphaMode Alpha;
+                bool bDoubleSided;
+                float Cutoff;
+                R::BlendMode ExpectedBlend;
+                float ExpectedCutoff;
+                bool bTransparentAlbedo;
+            };
+            for (const auto& test : {
+                     ImportedModeCase{S::ImportedAlphaMode::Opaque, true, 0.0f, R::BlendMode::Opaque, 0.0f, false},
+                     ImportedModeCase{S::ImportedAlphaMode::Mask, false, 0.35f, R::BlendMode::Masked, 0.35f, false},
+                     ImportedModeCase{S::ImportedAlphaMode::Mask, true, 1.5f, R::BlendMode::Masked, 1.0f, true}})
+            {
+                R::RenderResources resources;
+                auto device = MakeShared<FakeDevice>();
+                resources.SetGeometryPoolBlockBytes(1ull << 20);
+                CHECK(resources.Initialize(device));
+                SetupTextures(resources, root, albedo);
+                auto staging = Stage();
+                auto& material = staging.ImportedMaterial;
+                material.Alpha = test.Alpha;
+                material.bDoubleSided = test.bDoubleSided;
+                material.AlphaCutoff = test.Cutoff;
+                if (test.bTransparentAlbedo)
+                {
+                    material.AlbedoPath = "Textures/mask_albedo";
+                }
+                auto status = S::ModelFinalizeStatus::Failed;
+                const auto model = S::FinalizeModelStaging(
+                    staging, {resources.Textures(), resources.MegaGeometry()}, "test", 1, &status);
+                CHECK(model.IsValid() && status == S::ModelFinalizeStatus::Success);
+                const auto mesh = resources.MegaGeometry().GetModelMegaMeshHandle(model);
+                const auto* gpu = resources.MegaGeometry().GetMegaMeshGPUData(mesh);
+                CHECK(gpu);
+                CHECK(gpu->Material.Blend == test.ExpectedBlend);
+                CHECK(gpu->Material.AlphaCutoff == test.ExpectedCutoff);
+                CHECK(gpu->Material.bTwoSided == test.bDoubleSided);
+                if (test.bTransparentAlbedo)
+                {
+                    const auto* texture = static_cast<const FakeTexture*>(
+                        resources.Textures().GetRHITexture(gpu->Material.AlbedoTexture));
+                    CHECK(texture && texture->Updates.size() == 2 && texture->Updates[0].Pixels == image);
+                }
+                resources.MegaGeometry().ReleaseModel(model);
+                resources.Shutdown();
+            }
         }
         for (unsigned failure = 0; failure < 3; ++failure)
         {
