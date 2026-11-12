@@ -93,10 +93,11 @@ namespace
 
         StreamingPayloadBytes GetResidentBytes(const StreamingPayloadContext&) const override
         {
-            return {64, 32};
+            return ResidentBytes;
         }
 
         bool Ready[3][2]{};
+        StreamingPayloadBytes ResidentBytes{64, 32};
 
     private:
         FakeClock& m_Clock;
@@ -267,6 +268,154 @@ namespace
         rig.System.CancelSnapLoad();
     }
 
+    void TestPrefetchStopsAtDormant()
+    {
+        using S = EStreamingCellState;
+        SnapRig rig;
+        Check(!rig.System.PrefetchHint(Math::Vector3::Zero), u8"マニフェストなしで先読みを受け付けました");
+        if (!rig.Load())
+        {
+            return;
+        }
+
+        auto settings = rig.System.GetSettings();
+        settings.Budget.MaxResidentCells = 3;
+        settings.Budget.MaxCpuBytes = 1024;
+        settings.Budget.MaxGpuBytes = 1024;
+        if (!Check(rig.System.SetSettings(settings), u8"先読み用の設定を受け付けません"))
+        {
+            return;
+        }
+        rig.System.SetRecordTransitions(true);
+        Check(rig.System.PrefetchHint(Math::Vector3::Zero) &&
+              rig.System.PrefetchHint(Math::Vector3(100.0f, 0.0f, 0.0f)),
+              u8"先読みヒントを設定または差し替えできません");
+        const float invalid = std::numeric_limits<float>::quiet_NaN();
+        Check(!rig.System.PrefetchHint(Math::Vector3(0.0f, invalid, 0.0f)),
+              u8"非有限の位置を先読みヒントに受け付けました");
+
+        bool bStayedDormant = true;
+        bool bWithinFrameBudget = true;
+        for (uint32_t frame = 0; frame < 40; ++frame)
+        {
+            rig.Advance();
+            const auto& stats = rig.System.GetLastFrameStats();
+            bWithinFrameBudget = bWithinFrameBudget && stats.InFlightPrepares <= 1 &&
+                stats.CommitSteps <= 1 && stats.CommitBytes <= 16;
+            if (frame >= 20)
+            {
+                bStayedDormant = bStayedDormant && rig.System.GetCellState(13) == S::Dormant;
+            }
+        }
+        uint32_t activeTransitions = 0;
+        uint32_t unloadingTransitions = 0;
+        for (const auto& transition : rig.System.GetTransitions())
+        {
+            if (transition.Cell == 13)
+            {
+                activeTransitions += transition.To == S::Active ? 1 : 0;
+                unloadingTransitions += transition.To == S::Unloading ? 1 : 0;
+            }
+        }
+        Check(bStayedDormant && rig.System.GetCellState(13) == S::Dormant &&
+              activeTransitions == 0 && unloadingTransitions == 0,
+              u8"遠い先読み対象が Active や Unloading を経由せず Dormant に留まりません");
+        Check(bWithinFrameBudget, u8"先読みが通常のフレーム予算を超えました");
+        Check(rig.System.GetCellState(11) == S::Unloaded && rig.System.GetCellState(12) == S::Unloaded,
+              u8"差し替え前のヒントに含まれたセルを読み込みました");
+
+        rig.Handler.Ready[2][0] = true;
+        rig.Handler.Ready[2][1] = true;
+        bool bSnapReady = false;
+        Check(rig.System.RequestSnapLoad(Math::Vector3(100.0f, 0.0f, 0.0f), 0.0f,
+            [&](const StreamingSnapResult& result)
+            {
+                bSnapReady = result.Status == EStreamingSnapStatus::Ready;
+            }), u8"先読み対象へのスナップ要求を受け付けません");
+        rig.Advance();
+        Check(bSnapReady && rig.System.GetCellState(13) == S::Active,
+              u8"先読み対象をスナップ対象として Active にできません");
+        rig.System.CancelSnapLoad();
+        rig.Advance();
+        Check(rig.System.GetCellState(13) == S::Dormant,
+              u8"スナップの保持を外した遠い先読み対象が Dormant へ戻りません");
+
+        rig.System.ClearTransitions();
+        rig.System.ClearPrefetchHint();
+        rig.Advance();
+        bool bUnloading = false;
+        for (const auto& transition : rig.System.GetTransitions())
+        {
+            bUnloading = bUnloading || (transition.Cell == 13 && transition.From == S::Dormant &&
+                                       transition.To == S::Unloading);
+        }
+        Check(bUnloading, u8"ヒントを外した直後の Update で解放を始めません");
+    }
+
+    void TestByteBudgetEvictsLowestPriorityFirst()
+    {
+        using S = EStreamingCellState;
+        SnapRig rig;
+        if (!rig.Load())
+        {
+            return;
+        }
+        rig.Handler.ResidentBytes = {0, 32};
+        auto settings = rig.System.GetSettings();
+        settings.Ring.ActiveRadius = 110.0f;
+        settings.Ring.DormantRadius = 150.0f;
+        settings.Ring.UnloadRadius = 200.0f;
+        settings.MaxInFlightPrepares = 3;
+        settings.Budget.MaxResidentCells = 3;
+        settings.Budget.MaxCpuBytes = 0;
+        settings.Budget.MaxGpuBytes = 192;
+        settings.Budget.PerFrameCommitMs = 100.0;
+        settings.Budget.PerFrameCommitBytes = 4096;
+        if (!Check(rig.System.SetSettings(settings), u8"常駐 GPU バイト数の試験設定を受け付けません"))
+        {
+            return;
+        }
+        rig.System.SetFocus({Math::Vector3::Zero, Math::Vector3::Zero});
+        rig.System.SetRecordTransitions(true);
+        for (uint32_t frame = 0; frame < 10; ++frame)
+        {
+            rig.Advance();
+        }
+        if (!Check(rig.System.GetCellState(11) == S::Active && rig.System.GetCellState(12) == S::Active &&
+                   rig.System.GetCellState(13) == S::Active &&
+                   rig.System.GetLastFrameStats().ResidentGpuBytes == 192,
+                   u8"上限引き下げ前に三セルが Active になりません"))
+        {
+            return;
+        }
+
+        settings.Budget.MaxGpuBytes = 64;
+        if (!Check(rig.System.SetSettings(settings), u8"常駐 GPU バイト数の上限を引き下げられません"))
+        {
+            return;
+        }
+        rig.System.ClearTransitions();
+        rig.Advance();
+        StreamingCellId evicted[2] = {kInvalidStreamingCellId, kInvalidStreamingCellId};
+        uint32_t evictedCount = 0;
+        for (const auto& transition : rig.System.GetTransitions())
+        {
+            if (transition.From == S::Active && transition.To == S::Unloading)
+            {
+                if (evictedCount < 2)
+                {
+                    evicted[evictedCount] = transition.Cell;
+                }
+                ++evictedCount;
+            }
+        }
+        const auto& stats = rig.System.GetLastFrameStats();
+        Check(evictedCount == 2 && evicted[0] == 13 && evicted[1] == 12 && stats.Evictions == 2,
+              u8"一度の Update で遠いセルから順に二セルを追い出しません");
+        Check(rig.System.GetCellState(11) == S::Active && stats.ResidentGpuBytes <= settings.Budget.MaxGpuBytes,
+              u8"最も近いセルを残して GPU バイト数を上限以内にできません");
+    }
+
     void TestHitchCounting()
     {
         StreamingHitchCounter warmup;
@@ -348,6 +497,8 @@ int main()
     TestHitchCounting();
     TestSnapReadyAfterAllActive();
     TestSnapSupersededIsCancelledOnce();
+    TestPrefetchStopsAtDormant();
+    TestByteBudgetEvictsLowestPriorityFirst();
     if (g_Failures != 0)
     {
         std::cerr << Utf8(u8"検査失敗数: ") << g_Failures << "\n";

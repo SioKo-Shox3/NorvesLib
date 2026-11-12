@@ -239,6 +239,31 @@ namespace NorvesLib::Core::Streaming
         m_Focus = focus;
     }
 
+    bool StreamingSystem::PrefetchHint(const Math::Vector3& position)
+    {
+        if (!m_bHasManifest || !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitX)) ||
+            !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitY)) ||
+            !std::isfinite(Math::Vector3::Dot(position, Math::Vector3::UnitZ)))
+        {
+            return false;
+        }
+
+        for (auto& entry : m_Cells)
+        {
+            entry.bPrefetch = ComputeHorizontalDistance(entry.Cell.GetDesc().Bounds, position) <=
+                m_Settings.Ring.ActiveRadius;
+        }
+        return true;
+    }
+
+    void StreamingSystem::ClearPrefetchHint()
+    {
+        for (auto& entry : m_Cells)
+        {
+            entry.bPrefetch = false;
+        }
+    }
+
     StreamingSnapCallback StreamingSystem::DetachSnapCallback(EStreamingSnapStatus status, StreamingSnapResult& result)
     {
         result = {status, m_SnapCells, m_Clock->NowMs() - m_SnapRequestMs};
@@ -563,7 +588,20 @@ namespace NorvesLib::Core::Streaming
             const float distance = ComputeHorizontalDistance(bounds, m_Focus.Position);
             entry.Priority = ComputePriority(bounds, m_Focus, m_Settings.Ring);
             const float loadRadius = ComputeLoadRadius(m_Manifest.GetCellSize(), m_Focus, m_Settings.Ring);
-            const auto decision = DecideRing(entry.Cell.GetState(), distance, loadRadius, m_Settings.Ring);
+            auto decision = DecideRing(entry.Cell.GetState(), distance, loadRadius, m_Settings.Ring);
+            if (entry.bPrefetch)
+            {
+                if (decision == EStreamingRingDecision::Unload)
+                {
+                    decision = entry.Cell.GetState() == EStreamingCellState::Active ?
+                        EStreamingRingDecision::MakeDormant : EStreamingRingDecision::None;
+                }
+                else if (decision == EStreamingRingDecision::None &&
+                         entry.Cell.GetState() == EStreamingCellState::Unloaded)
+                {
+                    decision = EStreamingRingDecision::Load;
+                }
+            }
             switch (decision)
             {
             case EStreamingRingDecision::Unload:
@@ -612,15 +650,16 @@ namespace NorvesLib::Core::Streaming
             // Preparing の取り消しは非同期なので、解放を依頼した分をここでは差し引く。
             --liveCount;
         }
-        if (IsOverByteBudget())
+        while (IsOverByteBudget())
         {
             auto* pWorst = FindWorstLive(true);
-            if (pWorst != nullptr)
+            if (pWorst == nullptr)
             {
-                RequestUnload(*pWorst);
-                pWorst->bEvicted = true;
-                ++m_LastFrameStats.Evictions;
+                break;
             }
+            RequestUnload(*pWorst);
+            pWorst->bEvicted = true;
+            ++m_LastFrameStats.Evictions;
         }
 
         SortCells(candidates, false);

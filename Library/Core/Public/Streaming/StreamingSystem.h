@@ -114,6 +114,11 @@ namespace NorvesLib::Core::Streaming
                                   StreamingScopeId scopeId = kDefaultStreamingScopeId);
         bool HasManifest() const;
         void SetFocus(const StreamingFocus& focus);
+        // 目的地から水平距離 ActiveRadius 以内のセルを通常の予算で読み、遠い間は Dormant に保つ。
+        // 前のヒントを置き換える。マニフェストが無いか位置が非有限なら false で何もしない。
+        bool PrefetchHint(const Math::Vector3& position);
+        // ヒントを外し、次の Update から通常の輪で扱う。
+        void ClearPrefetchHint();
         void Update();
         // position から水平距離 radius 以内のセルを、輪と予算によらず最優先で読む。
         // 全対象が Active で全ペイロードが IsPayloadReady になった Update の終わりに Ready を一度通知する。
@@ -162,6 +167,7 @@ namespace NorvesLib::Core::Streaming
             float Priority = 0.0f;
             bool bEvicted = false;
             bool bSnapTarget = false;
+            bool bPrefetch = false;
         };
 
         // 通知先を取り出し、呼び直しに備えて先に要求状態を整える。
