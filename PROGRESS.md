@@ -10970,3 +10970,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U10 cook state に generator の記録を任意欄で持たせる(U2 の切り直し): 着地(直し 0 回)
 - U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
 - U5 generator の実行器(hash・CreateProcessW)を新設する: 着地(直し 0 回)
+- U6 --run-generators を CLI と asset-set の cook に接続する: 着地(直し 0 回)
