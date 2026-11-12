@@ -11043,3 +11043,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `CookManagedBootstrapRequest` は `CookManagedBootstrap.h` にあるので、記録を渡す 1 欄をこのヘッダに足した。実行器は新しいファイル `Tools/AssetCook/TextureAssetSetGenerators.{h,cpp}` に置いた（どちらも paths の外の同じモジュール）。
 - Notes: コードを読んだ範囲の制約（試験では確かめていない）: spec v2・`--prune` なしで spec から外した asset を保持している root では、generator の記録だけが変わった更新が intent の `live_count` の検査で通らない見込み。保持した記録がある manifest のみの更新と同じ形の既存の制約。
 - Notes: generator は管理 store のボリューム lock の外で走るので、同じ spec の generator を 2 つの cook が同時に走らせることは防がない（文書に記載）。AssetCook の CLI だけの変更で、シーンの見た目は変わらない。撮影・計測の確かめは回さない決まり。
+
+## G12-GR39-FAR-RING: 統合ブランチの取り込み（2026-11-12）
+- Done: `feature/scene-launcher` を取り込み、`TerrainComponent.cpp` の衝突を解いた。区画を 1 つずつ出し入れする流し込み（`PlaceTileAt`・`RemoveTileAt`・site）と外周の区画を同じ配置の記録に収め、記録は区画の一覧と同じ並び（近景は行優先の番号、外周はその後ろ）に持つ。外周の区画は外周の印（遠景の 1 色の材質・`outer_` の区画メッシュ）を保ったまま置く。流し込みのときは近景を流し込みに任せ、外周の遠景だけを予算で置く（外周の無い地形の流し込みは取り込み前と同じ動き）。
+- 証拠: verify 3 行。ビルド EXIT=0（`.harness/runs/20261112-140346/merge-verify-build.txt`）、ctest 5 件 100% Passed（コードページ 932 のコンソール。`merge-verify-ctest-cp932.txt`）、CookAssets の Grassland EXIT=0（cooked=17 skipped=64。`merge-verify-cook.txt`）。
+- 見どころ（人が見るとき）: `--scene=grassland` で外周の山並みが出ること。流し込みを有効にした起動でも、近景の区画の出し入れと別に外周が置かれること。
+- Notes: 要起票: `AssetCookTerrainSmoke` の `outer_hole` は、ctest を UTF-8（コードページ 65001）のコンソールで回すと「拒否理由が想定と違います」で落ちる（AssetCook は /utf-8 なしでビルドされ、日本語の拒否理由を ANSI のバイトで出すため、期待の「穴の中」と食い違う。`merge-verify-ctest.txt`）。コードページ 932 では通る。
