@@ -11108,3 +11108,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 実物の BVH を環境変数の指定のときだけ読む RealBvhAcceptanceTest を足す: 着地(直し 0 回)
 - U2 role-file の CLI に --dump-fk を足す: 着地(直し 0 回)
 - U3 Blender の FK を書き出す台本と、2 つの JSON を突き合わせる台本を足す: 着地(直し 0 回)
+- U4 使い方と試験の理由を文書に書き、タスクの verify を通す: 着地(直し 0 回)
