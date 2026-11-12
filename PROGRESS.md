@@ -11009,3 +11009,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-115209/verify-G5-GR27-MASKED-GBUFFER-U13.txt`（glslc と spirv-dis の結果。変更前の `gbuffer_alphaclip.frag` は VT ありで EarlyFragmentTests 1・discard 1、変更後は 0・1。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` は VT ありで 1 のまま。計算の解決 4 本はコンパイルが通る）。`.harness/runs/20261112-115209/verify-G5-GR27-MASKED-GBUFFER-U14.txt`（verify のビルドの行 EXIT_CODE 0・エラーの行 0。新しい試しのシェーダー 2 本は glslc が 0。ctest は決まりどおり `-E "Golden|PathTracingReference|Vulkan" -LE "GPU|Reference"` を付けて GBufferPipelineKeyTest・MaterialResourcesTest・ImportedOpaqueRuntimeTest の 3/3 Passed、Total 0.17 秒・EXIT_CODE 0。numstat の 2 通りが一致し、新しいファイルは BOM + CRLF）。
 - Next: ランナーの評価者の反証（差し戻しへの対応差分）。人が GPU の試験を回すとき（`ctest -R "^RenderingAlphaClipVulkanTest$"`、約 15 分）は、on と off の両方のログの `ALPHA_CLIP_RESULT scenario=test` の行で `result=PASS`・`depth_filled` が 0.48〜0.52・`invalid_pixels=0`・`plate_depth` < `probe_depth` を見る。見た目の見どころ: 切り抜きの材質を使う既定のシーンは無いので、Rendering3DTest（天球・地面・球・岩）と荒野は変わらない想定。
 - Notes: 既知の限界: 切り抜きの FS は早期の深度試験を失う（Masked の材質だけ）。VT のフィードバックは discard の前で書くので、隠れた画素と切り抜いた画素も要求を出しうる（アルベドのタイルは被覆率を決めるのに要る）。評価者の non-blocking として残したもの: `MegaGeometryPass::CreateDrawPipeline` と `VisibilityRasterPass::CreatePipelines` が cull None のパイプラインを常に先に作るので、不透明だけのシーンでもパイプラインが 2 本増える（GPU の試験が数えるのは `GBufferPipelineCreated` だけ）。`VisibilityResolve.glsl` の両面の法線の反転は視線に `cameraPosition - position[0]` を使い、正射影の主の視点では表裏を誤りうる。`ModelStaging.cpp` の `std::clamp` は NaN を通す（MegaGeometry は値を使わないので今は害が無い）。`RenderingAlphaClipVulkanTest` の深度の試しは盤面のワーカーでは回せず（Vulkan のドライバが隠されている）、GPU の上では未実行。
+
+- U11 cook_report に generator の行を出す(U3 の切り直し): 着地(直し 0 回)
+- U9 spec v2 の generators を解析・検査する(U1 の切り直し): 着地(直し 0 回)
+- U10 cook state に generator の記録を任意欄で持たせる(U2 の切り直し): 着地(直し 0 回)
+- U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
+- U5 generator の実行器(hash・CreateProcessW)を新設する: 着地(直し 0 回)
+- U6 --run-generators を CLI と asset-set の cook に接続する: 着地(直し 0 回)
+- U7 TextureManagedCliTest に generator の試験を足す: 着地(直し 1 回)
+- U8 文書に書き、タスクの verify を通す: 着地(直し 0 回)
+
+## G2-GR96-GENERATORS（2026-11-12、完了）
+- Done: asset-set の spec v2 の最上位に任意の `generators`（`name`・`command`・`inputs`・`outputs`・`cwd`）を受け、名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・asset の source を 2 つの generator が出すこと・未知のキーを spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う（または宣言した outputs が欠けた）generator を宣言順に shell を通さず `CreateProcessW` で走らせ、全部成功してから今までどおり cook する。失敗は名前と終了コードを出して cook せず 1 で終わる。前回の hash は claim の cook state の任意欄 `generators` に cook state と同じ取引で残し、cook_report と stderr に各 generator の `ran`/`skipped`/`failed`/`not_run` を出す。`--recover` とは併用できない。付けないときは generator を走らせず前回の記録を引き継ぐ（既存の spec と CLI の出力は byte 一致）。試験は `TextureManagedCliTest` に試験の exe 自身を `--generator-child` で子にする場合を足し、文書は `TextureAssetSetSpec.md`・`ManagedTextureAssetSetCli.md`・`Testing.md` に書いた。
+- 証拠: verify 3 行を、全単位の着地後と同じコードの作業ツリーで回した出力 `.harness/relay/G2-GR96-GENERATORS-U8-verify.txt`（ビルド EXIT_CODE 0、ctest 100% tests passed, 0 tests failed out of 9、`AssetCookCliParityTest.py` Ran 13 tests OK、各 EXIT_CODE 0）。
+- Next: なし。
+- Notes: 前の走行の単位 U1〜U3 は作業ツリーがほかのタスクに使い回されて差分が失われていたので、同じブリーフで U9〜U11 として切り直した。
+- Notes: `CookManagedBootstrapRequest` は `CookManagedBootstrap.h` にあるので、記録を渡す 1 欄をこのヘッダに足した。実行器は新しいファイル `Tools/AssetCook/TextureAssetSetGenerators.{h,cpp}` に置いた（どちらも paths の外の同じモジュール）。
+- Notes: コードを読んだ範囲の制約（試験では確かめていない）: spec v2・`--prune` なしで spec から外した asset を保持している root では、generator の記録だけが変わった更新が intent の `live_count` の検査で通らない見込み。保持した記録がある manifest のみの更新と同じ形の既存の制約。
+- Notes: generator は管理 store のボリューム lock の外で走るので、同じ spec の generator を 2 つの cook が同時に走らせることは防がない（文書に記載）。AssetCook の CLI だけの変更で、シーンの見た目は変わらない。撮影・計測の確かめは回さない決まり。
