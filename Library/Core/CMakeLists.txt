@@ -625,6 +625,7 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Streaming/StreamingTypes.h
+    Public/Streaming/ITerrainTileSite.h
     Public/Streaming/StreamingBudget.h
     Public/Streaming/IStreamingPayloadHandler.h
     Public/Streaming/IStreamingEnvironment.h
