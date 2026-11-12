@@ -47,6 +47,8 @@ namespace NorvesLib::Tools::AssetCook
             case CookedTerrainWriteStatus::HeightSizeMismatch: return "HeightSizeMismatch";
             case CookedTerrainWriteStatus::EmbeddedTextureInvalid: return "EmbeddedTextureInvalid";
             case CookedTerrainWriteStatus::IntegerOverflow: return "IntegerOverflow";
+            case CookedTerrainWriteStatus::InvalidOuterRing: return "InvalidOuterRing";
+            case CookedTerrainWriteStatus::OuterEdgeMismatch: return "OuterEdgeMismatch";
             }
             return "Unknown";
         }
@@ -107,6 +109,146 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
             return static_cast<float>(maxError);
+        }
+
+        double SampleGrid(const TerrainHeightGrid& grid, double x, double z)
+        {
+            const uint32_t x0 = static_cast<uint32_t>(x);
+            const uint32_t z0 = static_cast<uint32_t>(z);
+            const uint32_t x1 = std::min(x0 + 1, grid.Width - 1);
+            const uint32_t z1 = std::min(z0 + 1, grid.Height - 1);
+            const double a = std::lerp(grid.HeightsM[size_t(z0) * grid.Width + x0], grid.HeightsM[size_t(z0) * grid.Width + x1], x - x0);
+            const double b = std::lerp(grid.HeightsM[size_t(z1) * grid.Width + x0], grid.HeightsM[size_t(z1) * grid.Width + x1], x - x0);
+            return std::lerp(a, b, z - z0);
+        }
+
+        bool ReadCellMultiple(double value, uint32_t& result)
+        {
+            const double rounded = std::round(value);
+            if (!std::isfinite(value) || rounded < 1.0 || rounded > UINT32_MAX ||
+                std::abs(value - rounded) > 1e-6 * rounded)
+            {
+                return false;
+            }
+            result = static_cast<uint32_t>(rounded);
+            return true;
+        }
+
+        bool PrepareOuterGrid(const TerrainHeightGrid& nearGrid, double nearCell, const TerrainOuterRingInput& input,
+                              Core::Asset::CookedTerrainOuterRing& ring, TerrainHeightGrid& heights,
+                              uint32_t& ratio, double& minD, double& maxD, AnsiString& error)
+        {
+            uint32_t border = 0, nearX = 0, nearZ = 0;
+            if (!std::isfinite(input.CellSizeM) || input.CellSizeM < 8.0 || input.CellSizeM > 32.0 ||
+                !std::isfinite(input.WidthM) || input.WidthM <= 0.0 ||
+                !std::isfinite(input.BlendM) || input.BlendM < 0.0 || input.BlendM > input.WidthM ||
+                !ReadCellMultiple(input.CellSizeM / nearCell, ratio) ||
+                !ReadCellMultiple(input.WidthM / input.CellSizeM, border) ||
+                !ReadCellMultiple(double(nearGrid.Width - 1) / ratio, nearX) ||
+                !ReadCellMultiple(double(nearGrid.Height - 1) / ratio, nearZ) ||
+                uint64_t(nearX) * ratio != nearGrid.Width - 1 || uint64_t(nearZ) * ratio != nearGrid.Height - 1)
+            {
+                return Fail(error, "outer_ring のセル寸法・幅・帯が不正です。セルは 8..32 m の近景の整数倍、近景の幅と外周の幅は外周セルの整数倍、帯は 0..width_m にしてください。");
+            }
+            uint32_t tileCells = 64;
+            while (tileCells >= 2 && (nearX % tileCells != 0 || nearZ % tileCells != 0 || border % tileCells != 0))
+            {
+                tileCells /= 2;
+            }
+            if (tileCells < 2)
+            {
+                return Fail(error, "outer_ring の TileCells が 2 未満です。近景の幅 X/Z と width_m の外周セル数が共通の 2 の冪で割り切れるようにしてください。");
+            }
+            const uint64_t cellsX = uint64_t(nearX) + 2ull * border;
+            const uint64_t cellsZ = uint64_t(nearZ) + 2ull * border;
+            const auto& source = input.Grid;
+            if (cellsX >= UINT32_MAX || cellsZ >= UINT32_MAX ||
+                source.Width < 2 || source.Height < 2 || uint64_t(source.Width) * source.Height != source.HeightsM.size() ||
+                (cellsX + 1) * (cellsZ + 1) > heights.HeightsM.max_size())
+            {
+                return Fail(error, "outer_ring の入力標本数または格子寸法が不正です。画像を 2×2 以上にし、格子を格納可能な寸法にしてください。");
+            }
+            ring.CellCountX = static_cast<uint32_t>(cellsX);
+            ring.CellCountZ = static_cast<uint32_t>(cellsZ);
+            ring.TileCells = tileCells;
+            ring.TileCountX = ring.CellCountX / tileCells;
+            ring.TileCountZ = ring.CellCountZ / tileCells;
+            ring.HoleTileMinX = border / tileCells;
+            ring.HoleTileMinZ = border / tileCells;
+            ring.HoleTileCountX = nearX / tileCells;
+            ring.HoleTileCountZ = nearZ / tileCells;
+            ring.CellSizeM = static_cast<float>(input.CellSizeM);
+            ring.OriginX = -input.WidthM;
+            ring.OriginZ = -input.WidthM;
+            heights.Width = ring.CellCountX + 1;
+            heights.Height = ring.CellCountZ + 1;
+            try
+            {
+                heights.HeightsM.resize(size_t(heights.Width) * heights.Height);
+                for (uint32_t z = 0; z < heights.Height; ++z)
+                {
+                    for (uint32_t x = 0; x < heights.Width; ++x)
+                    {
+                        // 穴の内部と縁の入力画像は参照しない。縁は量子化後に近景から写す。
+                        if (x >= border && x <= border + nearX && z >= border && z <= border + nearZ)
+                        {
+                            continue;
+                        }
+                        const double wx = ring.OriginX + double(x) * input.CellSizeM;
+                        const double wz = ring.OriginZ + double(z) * input.CellSizeM;
+                        const double px = std::clamp(wx, 0.0, double(nearGrid.Width - 1) * nearCell);
+                        const double pz = std::clamp(wz, 0.0, double(nearGrid.Height - 1) * nearCell);
+                        const double distance = std::hypot(wx - px, wz - pz);
+                        const double t = input.BlendM == 0.0 ? 1.0 : std::clamp(distance / input.BlendM, 0.0, 1.0);
+                        const double weight = t * t * (3.0 - 2.0 * t);
+                        const double edge = SampleGrid(nearGrid, std::clamp(px / nearCell, 0.0, double(nearGrid.Width - 1)),
+                                                       std::clamp(pz / nearCell, 0.0, double(nearGrid.Height - 1)));
+                        const double sx = double(x) * (source.Width - 1) / ring.CellCountX;
+                        const double sz = double(z) * (source.Height - 1) / ring.CellCountZ;
+                        const double height = std::lerp(edge, SampleGrid(source, sx, sz), weight);
+                        if (!std::isfinite(height))
+                        {
+                            return Fail(error, "outer_ring の標本 (%u, %u) の高さが非有限です。入力と高さ写像を確認してください。", x, z);
+                        }
+                        heights.HeightsM[size_t(z) * heights.Width + x] = height;
+                        minD = std::min(minD, height);
+                        maxD = std::max(maxD, height);
+                    }
+                }
+                return true;
+            }
+            catch (const std::bad_alloc&)
+            {
+                return Fail(error, "outer_ring の格子用メモリを確保できません。外周の寸法を小さくしてください。");
+            }
+            catch (const std::length_error&)
+            {
+                return Fail(error, "outer_ring の格子用配列が格納上限を超えます。外周の寸法を小さくしてください。");
+            }
+        }
+
+        template <typename Tile>
+        void FinalizeTile(Tile& tile, const VariableArray<float>& heights, uint32_t tileCells, double cell,
+                          double originX, double originZ, uint32_t lodCount)
+        {
+            tile.HeightMinM = std::numeric_limits<float>::max();
+            tile.HeightMaxM = std::numeric_limits<float>::lowest();
+            for (const float height : heights)
+            {
+                tile.HeightMinM = std::min(tile.HeightMinM, height);
+                tile.HeightMaxM = std::max(tile.HeightMaxM, height);
+            }
+            tile.AabbMin[0] = static_cast<float>(originX + double(tile.TileX) * tileCells * cell);
+            tile.AabbMin[1] = tile.HeightMinM;
+            tile.AabbMin[2] = static_cast<float>(originZ + double(tile.TileZ) * tileCells * cell);
+            tile.AabbMax[0] = static_cast<float>(originX + double(tile.TileX + 1) * tileCells * cell);
+            tile.AabbMax[1] = tile.HeightMaxM;
+            tile.AabbMax[2] = static_cast<float>(originZ + double(tile.TileZ + 1) * tileCells * cell);
+            for (uint32_t lod = 1; lod < lodCount; ++lod)
+            {
+                // 小さい外周タイルでは最も粗い格子を、それ以降の LOD にも使う。
+                tile.LodMaxErrorM[lod] = ComputeLodError(heights, tileCells, std::min(tileCells, 1u << lod));
+            }
         }
     } // namespace
 
@@ -181,6 +323,14 @@ namespace NorvesLib::Tools::AssetCook
             }
             minD = std::min(minD, height);
             maxD = std::max(maxD, height);
+        }
+        CookedTerrainOuterRing outerRing;
+        TerrainHeightGrid outerHeights;
+        uint32_t outerRatio = 0;
+        if (settings.OuterRing != nullptr &&
+            !PrepareOuterGrid(grid, cell, *settings.OuterRing, outerRing, outerHeights, outerRatio, minD, maxD, outError))
+        {
+            return false;
         }
         const float heightMin = static_cast<float>(minD);
         const float heightMax = static_cast<float>(maxD);
@@ -319,8 +469,6 @@ namespace NorvesLib::Tools::AssetCook
                     auto& data = buffers[tileIndex];
                     tile.TileX = tx;
                     tile.TileZ = tz;
-                    tile.HeightMinM = std::numeric_limits<float>::max();
-                    tile.HeightMaxM = std::numeric_limits<float>::lowest();
                     data.HeightBytes.resize(tileSamples * 2);
                     for (uint32_t sz = 0; sz < side; ++sz)
                     {
@@ -335,8 +483,6 @@ namespace NorvesLib::Tools::AssetCook
                             const double fraction = static_cast<double>(value) / 65535.0;
                             const float hq = static_cast<float>(lo * (1.0 - fraction) + hi * fraction);
                             tileHeights[localIndex] = hq;
-                            tile.HeightMinM = std::min(tile.HeightMinM, hq);
-                            tile.HeightMaxM = std::max(tile.HeightMaxM, hq);
                             rgba[localIndex * 4] = normals[globalIndex].R;
                             rgba[localIndex * 4 + 1] = normals[globalIndex].G;
                             rgba[localIndex * 4 + 2] = 0;
@@ -369,16 +515,7 @@ namespace NorvesLib::Tools::AssetCook
                             }
                         }
                     }
-                    tile.AabbMin[0] = static_cast<float>(static_cast<double>(tx) * tileCells * cell);
-                    tile.AabbMin[1] = tile.HeightMinM;
-                    tile.AabbMin[2] = static_cast<float>(static_cast<double>(tz) * tileCells * cell);
-                    tile.AabbMax[0] = static_cast<float>(static_cast<double>(tx + 1) * tileCells * cell);
-                    tile.AabbMax[1] = tile.HeightMaxM;
-                    tile.AabbMax[2] = static_cast<float>(static_cast<double>(tz + 1) * tileCells * cell);
-                    for (uint32_t lod = 1; lod < desc.LodCount; ++lod)
-                    {
-                        tile.LodMaxErrorM[lod] = ComputeLodError(tileHeights, tileCells, 1u << lod);
-                    }
+                    FinalizeTile(tile, tileHeights, tileCells, cell, 0.0, 0.0, desc.LodCount);
                     // RGBA8 の R・G を線形 RG8 に焼く。ミップは領域平均で、法線の再正規化は行わない。
                     TextureCookResult normalTexture;
                     AnsiString textureError;
@@ -416,6 +553,68 @@ namespace NorvesLib::Tools::AssetCook
                         {
                             return false;
                         }
+                    }
+                }
+            }
+
+            VariableArray<VariableArray<uint8_t>> outerBuffers;
+            if (settings.OuterRing != nullptr)
+            {
+                desc.bHasOuterRing = true;
+                desc.OuterRing = outerRing;
+                const auto& ring = outerRing;
+                const size_t count = size_t(ring.TileCountX) * ring.TileCountZ - size_t(ring.HoleTileCountX) * ring.HoleTileCountZ;
+                outerBuffers.resize(count);
+                desc.OuterTiles.resize(count);
+                const uint32_t outerSide = ring.TileCells + 1;
+                VariableArray<float> decoded(size_t(outerSide) * outerSide);
+                const uint32_t holeX = ring.HoleTileMinX * ring.TileCells;
+                const uint32_t holeZ = ring.HoleTileMinZ * ring.TileCells;
+                const uint32_t holeEndX = holeX + ring.HoleTileCountX * ring.TileCells;
+                const uint32_t holeEndZ = holeZ + ring.HoleTileCountZ * ring.TileCells;
+                size_t index = 0;
+                for (uint32_t tz = 0; tz < ring.TileCountZ; ++tz)
+                {
+                    for (uint32_t tx = 0; tx < ring.TileCountX; ++tx)
+                    {
+                        if (tx >= ring.HoleTileMinX && tx < ring.HoleTileMinX + ring.HoleTileCountX &&
+                            tz >= ring.HoleTileMinZ && tz < ring.HoleTileMinZ + ring.HoleTileCountZ)
+                        {
+                            continue;
+                        }
+                        auto& tile = desc.OuterTiles[index];
+                        auto& bytes = outerBuffers[index++];
+                        bytes.resize(decoded.size() * 2);
+                        tile.TileX = tx;
+                        tile.TileZ = tz;
+                        for (uint32_t z = 0; z < outerSide; ++z)
+                        {
+                            for (uint32_t x = 0; x < outerSide; ++x)
+                            {
+                                const uint32_t gx = tx * ring.TileCells + x;
+                                const uint32_t gz = tz * ring.TileCells + z;
+                                const bool bEdge = gx >= holeX && gx <= holeEndX && gz >= holeZ && gz <= holeEndZ &&
+                                                   (gx == holeX || gx == holeEndX || gz == holeZ || gz == holeEndZ);
+                                uint16_t value = 0;
+                                if (bEdge)
+                                {
+                                    // 点だけ接する角も含め、近景と同じ uint16 をそのまま使う。
+                                    value = quantized[size_t((gz - holeZ) * outerRatio) * grid.Width + (gx - holeX) * outerRatio];
+                                }
+                                else if (range > 0.0)
+                                {
+                                    const double height = outerHeights.HeightsM[size_t(gz) * outerHeights.Width + gx];
+                                    value = static_cast<uint16_t>(std::clamp(std::round((height - lo) / range * 65535.0), 0.0, 65535.0));
+                                }
+                                const size_t local = size_t(z) * outerSide + x;
+                                bytes[local * 2] = static_cast<uint8_t>(value & 0xffu);
+                                bytes[local * 2 + 1] = static_cast<uint8_t>(value >> 8);
+                                const double fraction = double(value) / 65535.0;
+                                decoded[local] = static_cast<float>(lo * (1.0 - fraction) + hi * fraction);
+                            }
+                        }
+                        FinalizeTile(tile, decoded, ring.TileCells, ring.CellSizeM, ring.OriginX, ring.OriginZ, desc.LodCount);
+                        tile.HeightBytes = {bytes.data(), bytes.size()};
                     }
                 }
             }

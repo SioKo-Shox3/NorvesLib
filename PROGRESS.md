@@ -10938,3 +10938,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next（反復 2）: 人が見るときの見どころに、grassland の原点から離れた平地（地形の端に近い所）で土・苔・草地の地肌の模様が潰れず、近くと同じ細かさに見えること、段の変わり目（数 m の幅）で模様が二重に見えすぎないことを足す。
 - U1 NVTRN v0.1 の外周の区画表を読み書きする: 着地(直し 0 回)
 - U3 NVTRN の外周から照会用の高さ場（全格子と 4 本の帯）を作る: 着地(直し 0 回)
+- U2 地形 spec の outer_ring を cook して外周のタイルを NVTRN に書く: 着地(直し 1 回)

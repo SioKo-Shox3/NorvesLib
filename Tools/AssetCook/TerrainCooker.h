@@ -13,11 +13,21 @@ namespace NorvesLib::Tools::AssetCook
     inline constexpr const char* TerrainHeightSemantic = "height";
     inline constexpr const char* TerrainNormalSemantic = "normal.world.xz";
 
+    // 入力画像の全矩形を外周の矩形へ対応させる。格子寸法が違う場合は双線形補間する。
+    struct TerrainOuterRingInput
+    {
+        TerrainHeightGrid Grid;
+        double CellSizeM = 16.0;
+        double WidthM = 0.0;
+        double BlendM = 256.0;
+    };
+
     struct TerrainBuildSettings
     {
         double CellSizeM = 1.0;    // 有限で正。
         uint32_t TileCells = 128;  // 2 の冪で 8..1024。grid の幅・高さは TileCells*N+1。
         const TerrainMaskFields* Masks = nullptr; // null なら HGT0・NRM0 だけ。
+        const TerrainOuterRingInput* OuterRing = nullptr; // null なら従来の v0.0 経路。
     };
 
     struct TerrainBuildResult
