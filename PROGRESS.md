@@ -11085,3 +11085,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: paths の外の `Tools/AssetCook/SkeletalImportReport.h`（記録の型と入力欄）・`RigSplitFileCook.cpp`・`RigSingleCook.cpp`（import_report を出す呼び出し各 1 行）を触った。`--rig-split` と asset-set の骨格経路はこれまで import_report を出していなかったため、焼いた材質があるときだけ出す形にした。既知の限界: 焼いたアルベドは raw RGBA8 で元の PNG/JPEG より出力が大きく、画素の予算（`ReserveDerived`）を消費するので、大きなアルベドで factor≠1 の材質が多いと `split_albedo_output_limit` で止まることがある。
 - U5 保存した差分を当て、管理 store の asset ごとの版を入れ直す: 着地(直し 0 回)
 - U4 保存した差分を当て、種別の版の表と基準表の検査を仕上げる: 着地(直し 2 回)
+- U3 asset-set の cook が種別ごとの版を使うようにし、版の決まりを文書にする: 着地(直し 1 回)

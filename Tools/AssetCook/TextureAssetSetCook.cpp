@@ -2,6 +2,7 @@
 #include "TextureAssetSetCook.h"
 #include "TextureAssetSetSpec.h"
 #include "TextureAssetSetGenerators.h"
+#include "CookerRevisions.h"
 #include "CookStateFile.h"
 #include "CookManagedTransactionController.h"
 #include "CookManagedStoreInitialization.h"
@@ -166,9 +167,15 @@ namespace NorvesLib::Tools::AssetCook
             }
             Core::Container::VariableArray<CookAssetBudget> budgets;
             Core::Container::VariableArray<SingleAssetCookRequest> assets;
+            Core::Container::VariableArray<uint64_t> revisions;
             Core::Container::VariableArray<CookPreparedPlan> plans;
             for (const auto& entry : spec.Textures)
             {
+                const uint64_t revision = CookerRevisionForKind(entry.Kind);
+                if (revision == 0)
+                {
+                    return Fail(error, "unknown_cooker_kind");
+                }
                 SingleAssetCookRequest single;
                 const auto rawSource = std::filesystem::u8path(entry.SourcePath.begin(), entry.SourcePath.end());
                 if (!Detail::ResolveTextureCliPath(rawSource, sourceRoot, single.InputPath, error))
@@ -208,12 +215,13 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 single.AssetSetEmission = spec.Emission;
                 CookPreparedPlan plan;
-                if (!PrepareCookOutputPlan(single, spec.Version, nullptr, plan, error))
+                if (!PrepareCookOutputPlan(single, revision, nullptr, plan, error))
                 {
                     return Result::Error;
                 }
                 plans.push_back(std::move(plan));
                 assets.push_back(std::move(single));
+                revisions.push_back(revision);
             }
             if (!ValidateCookOutputSet(plans, {&specPath, 1}, error))
             {
@@ -244,7 +252,9 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return ObservationFailure(observed);
             }
-            CookManagedBootstrapRequest managed{owner, assets, bytes, spec.Version, spec.Version == 1};
+            CookManagedBootstrapRequest managed{owner, assets, bytes};
+            managed.bLegacyTextureManifest = spec.Version == 1;
+            managed.CookerRevisions = revisions;
             managed.Jobs = request.Jobs;
             managed.bForce = request.bForce;
             managed.bPrune = request.bPrune;
