@@ -10940,3 +10940,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 ScatterSystem にセルから常駐を指定する口を足す: 着地(直し 0 回)
 - U3 TerrainComponent に区画単位で置く・外す口と ITerrainTileSite の実装を足す: 着地(直し 0 回)
 - U4 Core の payload handler 3 種（terrain-tile・scatter-chunk・placement）を足す: 着地(直し 0 回)
+- U5 Physics に static-colliders の handler を足し、Install で登録する: 着地(直し 0 回)
