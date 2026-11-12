@@ -370,6 +370,12 @@ namespace NorvesLib::Thread
         return true;
     }
 
+    bool JobSystem::IsAcceptingTasks() const
+    {
+        ScopedLock lock(m_queueMutex);
+        return m_bAcceptingTasks && m_lifecycleState == LifecycleState::Running;
+    }
+
     void JobSystem::StopAcceptingTasks()
     {
         ScopedLock resizeLock(m_resizeMutex);

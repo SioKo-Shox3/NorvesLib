@@ -1693,7 +1693,7 @@ namespace NorvesLib::Core::Rendering
             instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
         }
         instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
-        // 地形の 3 層の混ぜ合わせ: RTGI が当たりの点の分類と層の平均の色から当たりの色を決める（値はシーンで 1 組）
+        // 地形の混ぜ合わせ: RTGI が当たりの点の重みと層の平均の色から当たりの色を決める（値はシーンで 1 組）
         const MegaGeometry::MegaTerrainBlend& terrain = material.TerrainBlend;
         if (terrain.bEnabled)
         {
@@ -1714,6 +1714,16 @@ namespace NorvesLib::Core::Rendering
                 std::memcpy(snapshot.RockSlopeDegrees, terrain.RockSlopeDegrees, sizeof(snapshot.RockSlopeDegrees));
                 std::memcpy(snapshot.DirtHeightRange, terrain.DirtHeightRange, sizeof(snapshot.DirtHeightRange));
                 snapshot.DirtHeightBiasDegrees = terrain.DirtHeightBiasDegrees;
+            }
+        }
+        else if (terrain.IsSplatEnabled())
+        {
+            instance.bTerrainBlend = true;
+            RayTracingTerrainBlendSnapshot& snapshot = packet.RayTracingScene.TerrainBlend;
+            if (!snapshot.bValid && !snapshot.bSplatValid)
+            {
+                snapshot.bSplatValid = true;
+                snapshot.Splat = terrain.Splat;
             }
         }
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
@@ -4589,7 +4599,9 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.SetPaleFlatParameters(m_PaleFlat);
         packet.Scene.SetWindParameters(m_Wind);
+        packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
         packet.Scene.SkyOccluders.clear();
@@ -5854,6 +5866,7 @@ namespace NorvesLib::Core::Rendering
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.ExtensionFrame = RenderExtensionFrameInfo{packet->FrameNumber, packet->TotalTime, packet->DeltaTime, renderedObjectHistory.PreviousRenderedTotalTime};
+        viewContext.bVertexAnimationTestDisplacement = packet->bVertexAnimationTestDisplacement;
         viewContext.Wind = packet->Scene.Wind;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
@@ -6143,6 +6156,35 @@ namespace NorvesLib::Core::Rendering
                 presentationEncodePath == RHI::PresentationEncodePath::HardwareSRGB;
             backBufferSource.bShaderSrgbEncode =
                 presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
+        }
+
+        // 全ビューはこの描画の ExtensionFrame を共有する。今回描いた撮影元だけに、その時刻を値で固定する。
+        FrameCaptureSource* captureSources[] =
+        {
+            &executionResult.CaptureSources.PresentationColor,
+            &executionResult.CaptureSources.SceneColor,
+            &executionResult.CaptureSources.BackBuffer,
+            &executionResult.CaptureSources.GBufferVelocity,
+            &executionResult.CaptureSources.RTGIDiffuseIndirect,
+            &executionResult.CaptureSources.RTGIHistoryAge,
+            &executionResult.CaptureSources.GBufferNormal,
+            &executionResult.CaptureSources.GBufferMaterial,
+            &executionResult.CaptureSources.GBufferEmissive,
+            &executionResult.CaptureSources.AovSurface,
+            &executionResult.CaptureSources.AovGeometry,
+            &executionResult.CaptureSources.AovLighting,
+            &executionResult.CaptureSources.AovIds,
+            &executionResult.CaptureSources.AtmosphereProbe,
+            &executionResult.CaptureSources.CloudProbe,
+            &executionResult.CaptureSources.CloudOpacity
+        };
+        for (FrameCaptureSource* source : captureSources)
+        {
+            if (source->Texture && source->FrameNumber == viewContext.ExtensionFrame.FrameNumber)
+            {
+                source->GameTotalTime = viewContext.ExtensionFrame.GameTotalTime;
+                source->PreviousRenderedTotalTime = viewContext.ExtensionFrame.PreviousRenderedTotalTime;
+            }
         }
 
         if (m_FrameCaptureReadbackHelper)
@@ -6642,9 +6684,19 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetPaleFlatParameters(const PaleFlatParameters& parameters)
+    {
+        m_PaleFlat = SanitizePaleFlatParameters(parameters);
+    }
+
     void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
     {
         m_Wind = SanitizeWindParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
+    {
+        m_bVertexAnimationTestDisplacement = bEnabled;
     }
 
     void RenderingCoordinator::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)

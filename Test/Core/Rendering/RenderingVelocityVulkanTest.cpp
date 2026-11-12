@@ -8,14 +8,17 @@
 #include "Math/Vector3.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/VertexAnimation.h"
 #include "RHI/RHITypes.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numbers>
 
 namespace
 {
@@ -33,7 +36,9 @@ namespace
         FirstFrameInvalidHistory,
         MoveThenStop,
         // 骨のアニメーションだけで動く骨付きの四角形（物体の変換とカメラは止まったまま）
-        SkinnedMotion
+        SkinnedMotion,
+        VertexAnimation,
+        VertexAnimationDrop
     };
 
     enum class CaptureStage : uint8_t
@@ -62,6 +67,8 @@ namespace
 
     // 骨付きの四角形の場面で、動いた後に置くアニメーションの時刻（秒）。骨は (0.5, 0, 0) m 動く。
     constexpr float SkinnedMovedTimeSeconds = 0.5f;
+    constexpr uint32_t VertexAnimationMaximumCaptures = 96u;
+    constexpr double VertexAnimationFrameSeconds = 1.0 / 60.0;
 
     uint16_t ReadHalf(const Core::Container::VariableArray<uint8_t>& pixels, size_t offset)
     {
@@ -248,6 +255,75 @@ namespace
         return CheckExpectedVelocitySample(frame, expected, label, outFailureReason);
     }
 
+    // 板の中心を含む5×5画素を検査し、動く板は期待ベクトルに対する誤差を各画素で5%以内にする。
+    bool CheckVertexAnimationRegion(
+        const CapturedFrame& frame,
+        const ExpectedVelocitySample& expected,
+        const char* label,
+        bool bIdentity,
+        float time,
+        float previousTime,
+        Core::Container::String& outFailureReason)
+    {
+        float totalX = 0.0f;
+        float totalY = 0.0f;
+        float maximumError = 0.0f;
+        const float expectedMagnitude = std::hypot(expected.ExpectedX, expected.ExpectedY);
+        for (int32_t dy = -2; dy <= 2; ++dy)
+        {
+            for (int32_t dx = -2; dx <= 2; ++dx)
+            {
+                const int32_t x = static_cast<int32_t>(expected.PixelX) + dx;
+                const int32_t y = static_cast<int32_t>(expected.PixelY) + dy;
+                if (x < 0 || y < 0 || x >= static_cast<int32_t>(frame.Width) ||
+                    y >= static_cast<int32_t>(frame.Height))
+                {
+                    outFailureReason = TEXT("頂点アニメのROIが画像の範囲外です");
+                    return false;
+                }
+                ExpectedVelocitySample pixel = expected;
+                pixel.PixelX = static_cast<uint32_t>(x);
+                pixel.PixelY = static_cast<uint32_t>(y);
+                float actualX = 0.0f;
+                float actualY = 0.0f;
+                if (!ReadVelocitySample(frame, pixel, actualX, actualY))
+                {
+                    outFailureReason = TEXT("頂点アニメのROIを読み取れません");
+                    return false;
+                }
+                totalX += actualX;
+                totalY += actualY;
+                const float absoluteError = std::hypot(actualX - expected.ExpectedX, actualY - expected.ExpectedY);
+                maximumError = std::max(maximumError, bIdentity ? absoluteError : absoluteError / expectedMagnitude);
+            }
+        }
+
+        std::cout << std::setprecision(9) << "頂点アニメ ROI=" << label
+                  << " 中心=(" << expected.PixelX << "," << expected.PixelY << ")"
+                  << " 期待=(" << expected.ExpectedX << "," << expected.ExpectedY << ")"
+                  << " 実測平均=(" << totalX / 25.0f << "," << totalY / 25.0f << ")";
+        if (bIdentity)
+        {
+            std::cout << " 相対誤差=適用外 最大絶対誤差=" << maximumError;
+        }
+        else
+        {
+            std::cout << " 最大相対誤差=" << maximumError;
+        }
+        std::cout << " t=" << time << " tPrev=" << previousTime
+                  << " GameTotalTime=" << frame.GameTotalTime
+                  << " PreviousRenderedTotalTime=" << frame.PreviousRenderedTotalTime << "\n";
+
+        if ((bIdentity && maximumError > 1.0e-4f) || (!bIdentity && maximumError > 0.05f))
+        {
+            outFailureReason = bIdentity
+                ? TEXT("恒等の板のROIにゼロでないvelocityがあります")
+                : TEXT("頂点アニメのROIのvelocityが解析解から5%を超えてずれました");
+            return false;
+        }
+        return true;
+    }
+
     class VelocityHandler final : public RenderingValidationApplicationHandler
     {
     public:
@@ -282,7 +358,9 @@ namespace
                 if (GetRunConfig().Scene != SceneKind::Outdoor ||
                     !GetFixture().ApplyR5RayTracingShadowFixture())
                 {
-                    std::cerr << "RenderingVelocityVulkanTest: motion fixture setup failed\n";
+                    std::cerr << (IsVertexAnimationScenario()
+                        ? "RenderingVelocityVulkanTest: 頂点アニメの場面を用意できません\n"
+                        : "RenderingVelocityVulkanTest: motion fixture setup failed\n");
                     return false;
                 }
                 if (m_Scenario == Scenario::SkinnedMotion && !GetFixture().AddR5SkinnedQuad())
@@ -290,13 +368,22 @@ namespace
                     std::cerr << "RenderingVelocityVulkanTest: 骨付きの四角形を置けなかった\n";
                     return false;
                 }
+                if (IsVertexAnimationScenario())
+                {
+                    if (!GetFixture().ApplyR5VertexAnimationFixture())
+                    {
+                        std::cerr << "RenderingVelocityVulkanTest: 頂点アニメの板を用意できません\n";
+                        return false;
+                    }
+                    Core::Engine::GEngine->GetRenderWorld().SetVertexAnimationTestDisplacementEnabled(true);
+                }
             }
             return true;
         }
 
         bool ShouldAdvanceSimulation() const override
         {
-            return !m_bCaptureRequested;
+            return IsVertexAnimationScenario() || !m_bCaptureRequested;
         }
 
         void OnPreRender() override
@@ -308,9 +395,15 @@ namespace
 
             Core::Rendering::RenderWorld& renderWorld = Core::Engine::GEngine->GetRenderWorld();
             ApplyStageState(renderWorld);
+            // 最初の履歴が揃うまで、頂点アニメの試験だけ要求を待つ。
+            if (IsVertexAnimationScenario() && !m_bCaptureRequested && renderWorld.GetRenderedFrameCount() < 6u)
+            {
+                return;
+            }
             if (!m_bCaptureRequested && !RequestVelocityCapture(renderWorld))
             {
-                Fail("velocity capture request was rejected");
+                Fail(IsVertexAnimationScenario() ? "頂点アニメのvelocity取得要求が拒否されました"
+                                                 : "velocity capture request was rejected");
                 return;
             }
         }
@@ -333,9 +426,17 @@ namespace
                     Core::Container::String reason;
                     if (!EvaluateVelocityFrame(frame, reason))
                     {
-                        std::cerr << "RenderingVelocityVulkanTest failed: "
+                        std::cerr << (IsVertexAnimationScenario() ? "RenderingVelocityVulkanTest 失敗: "
+                                                                   : "RenderingVelocityVulkanTest failed: ")
                                   << reason.c_str() << "\n";
-                        Fail("velocity capture evaluation failed");
+                        Fail(IsVertexAnimationScenario() ? "頂点アニメのvelocity評価に失敗しました"
+                                                         : "velocity capture evaluation failed");
+                        return;
+                    }
+
+                    if (IsVertexAnimationScenario() && m_bRetryVertexAnimationCapture)
+                    {
+                        m_bRetryVertexAnimationCapture = false;
                         return;
                     }
 
@@ -378,8 +479,11 @@ namespace
                     Core::Container::String pathReason;
                     if (!VerifyVisibilityBufferPath(pathReason))
                     {
-                        std::cerr << "RenderingVelocityVulkanTest failed: " << pathReason.c_str() << "\n";
-                        Fail("visibility buffer path check failed");
+                        std::cerr << (IsVertexAnimationScenario() ? "RenderingVelocityVulkanTest 失敗: "
+                                                                   : "RenderingVelocityVulkanTest failed: ")
+                                  << pathReason.c_str() << "\n";
+                        Fail(IsVertexAnimationScenario() ? "ビジビリティバッファ経路の検査に失敗しました"
+                                                         : "visibility buffer path check failed");
                         return;
                     }
 
@@ -391,7 +495,8 @@ namespace
 
                 if (renderedFrames >= m_CaptureRequestRenderedFrame + 32u)
                 {
-                    Fail("velocity capture did not complete within 32 frames");
+                    Fail(IsVertexAnimationScenario() ? "頂点アニメのvelocityを32フレーム以内に取得できませんでした"
+                                                     : "velocity capture did not complete within 32 frames");
                 }
             }
         }
@@ -453,6 +558,21 @@ namespace
                 m_Scenario = Scenario::SkinnedMotion;
                 return true;
             }
+            if (argument == TEXT("--scenario=vertex-anim"))
+            {
+                m_Scenario = Scenario::VertexAnimation;
+                return true;
+            }
+            if (argument == TEXT("--scenario=vertex-anim-drop"))
+            {
+                m_Scenario = Scenario::VertexAnimationDrop;
+                return true;
+            }
+            // この2つのシナリオで内部的に追加する固定刻みをエンジンが読む。
+            if (argument == TEXT("--fixed-frame-dt=1/60"))
+            {
+                return true;
+            }
             outFailureReason = TEXT("unsupported velocity scenario");
             return false;
         }
@@ -480,10 +600,16 @@ namespace
                    m_Scenario == Scenario::MoveThenStop;
         }
 
+        bool IsVertexAnimationScenario() const
+        {
+            return m_Scenario == Scenario::VertexAnimation || m_Scenario == Scenario::VertexAnimationDrop;
+        }
+
         bool IsMotionScenario() const
         {
             return IsCameraMotionScenario() || m_Scenario == Scenario::ObjectMotion ||
-                   m_Scenario == Scenario::AlphaClip || m_Scenario == Scenario::SkinnedMotion;
+                   m_Scenario == Scenario::AlphaClip || m_Scenario == Scenario::SkinnedMotion ||
+                   IsVertexAnimationScenario();
         }
 
         bool IsObjectMotionScenario() const
@@ -523,6 +649,12 @@ namespace
             if (!IsMotionScenario())
             {
                 GetFixture().ApplyCamera(renderWorld);
+                return;
+            }
+
+            if (IsVertexAnimationScenario())
+            {
+                renderWorld.SetMainCamera(GetFixture().GetR5RayTracingShadowCamera());
                 return;
             }
 
@@ -780,6 +912,79 @@ namespace
             return true;
         }
 
+        bool EvaluateVertexAnimation(
+            const CapturedFrame& frame,
+            Core::Container::String& outFailureReason)
+        {
+            ++m_VertexAnimationCaptures;
+            RenderExtensionFrameInfo frameInfo{};
+            frameInfo.GameTotalTime = frame.GameTotalTime;
+            frameInfo.PreviousRenderedTotalTime = frame.PreviousRenderedTotalTime;
+            float times[4]{};
+            MakeVertexAnimationTimeConstants(frameInfo, true, times);
+            const double delta = frame.GameTotalTime - frame.PreviousRenderedTotalTime;
+            if (!std::isfinite(delta) || !std::isfinite(times[0]) || !std::isfinite(times[1]))
+            {
+                outFailureReason = TEXT("頂点アニメの時刻が有限値ではありません");
+                return false;
+            }
+
+            auto retry = [&](const char* reason) -> bool
+            {
+                std::cout << std::setprecision(9) << "頂点アニメの画を取り直します: " << reason
+                          << " 試行=" << m_VertexAnimationCaptures << " t=" << times[0]
+                          << " tPrev=" << times[1] << " 差=" << delta << "\n";
+                if (m_VertexAnimationCaptures >= VertexAnimationMaximumCaptures)
+                {
+                    outFailureReason = TEXT("頂点アニメの有効な画を上限回数内に取得できませんでした");
+                    return false;
+                }
+                m_bRetryVertexAnimationCapture = true;
+                return true;
+            };
+            if (delta <= 0.0 || times[0] <= times[1])
+            {
+                return retry("時刻が進んでいません");
+            }
+            if (m_Scenario == Scenario::VertexAnimationDrop && delta <= 1.5 * VertexAnimationFrameSeconds)
+            {
+                return retry("フレームの欠落を跨いでいません");
+            }
+
+            const auto device = Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetDevice();
+            if (!device)
+            {
+                outFailureReason = TEXT("頂点アニメの解析解に必要なRHIデバイスがありません");
+                return false;
+            }
+            const CameraProxy& camera = GetFixture().GetR5RayTracingShadowCamera();
+            constexpr float angularFrequency = 2.0f * std::numbers::pi_v<float> * VertexAnimationTestSineFrequencyHz;
+            const float currentOffset = VertexAnimationTestSineAmplitudeMeters * std::sin(angularFrequency * times[0]);
+            const float previousOffset = VertexAnimationTestSineAmplitudeMeters * std::sin(angularFrequency * times[1]);
+            ExpectedVelocitySample staticSample;
+            ExpectedVelocitySample skinnedSample;
+            ExpectedVelocitySample identitySample;
+            if (!BuildExpectedVelocitySample(camera, camera, Math::Vector3(previousOffset, 0.0f, 8.0f),
+                                             Math::Vector3(currentOffset, 0.0f, 8.0f), device.get(), staticSample) ||
+                !BuildExpectedVelocitySample(camera, camera, Math::Vector3(-3.0f + previousOffset, 0.0f, 8.0f),
+                                             Math::Vector3(-3.0f + currentOffset, 0.0f, 8.0f), device.get(), skinnedSample) ||
+                !BuildExpectedVelocitySample(camera, camera, Math::Vector3(3.0f, 0.0f, 8.0f),
+                                             Math::Vector3(3.0f, 0.0f, 8.0f), device.get(), identitySample))
+            {
+                outFailureReason = TEXT("頂点アニメの板の解析解を画像へ投影できません");
+                return false;
+            }
+            const float expectedPixels = std::hypot(staticSample.ExpectedX * static_cast<float>(ValidationWidth),
+                                                    staticSample.ExpectedY * static_cast<float>(ValidationHeight));
+            if (expectedPixels < 2.0f)
+            {
+                return retry("期待される移動が2画素未満です");
+            }
+            return CheckVertexAnimationRegion(frame, staticSample, "static", false, times[0], times[1], outFailureReason) &&
+                   CheckVertexAnimationRegion(frame, skinnedSample, "skinned", false, times[0], times[1], outFailureReason) &&
+                   CheckVertexAnimationRegion(frame, identitySample, "identity", true, times[0], times[1], outFailureReason);
+        }
+
         bool EvaluateVelocityFrame(
             const CapturedFrame& frame,
             Core::Container::String& outFailureReason)
@@ -787,7 +992,9 @@ namespace
             VelocityStats stats;
             if (!AnalyzeVelocity(frame, stats))
             {
-                outFailureReason = TEXT("captured velocity storage is not R16G16_FLOAT 256x256");
+                outFailureReason = IsVertexAnimationScenario()
+                    ? TEXT("取得したvelocityがR16G16_FLOATの256×256画像ではありません")
+                    : TEXT("captured velocity storage is not R16G16_FLOAT 256x256");
                 return false;
             }
             std::cout << "velocity_stage="
@@ -800,8 +1007,15 @@ namespace
 
             if (stats.NonFiniteCount != 0u)
             {
-                outFailureReason = TEXT("velocity readback contains non-finite values");
+                outFailureReason = IsVertexAnimationScenario()
+                    ? TEXT("取得したvelocityに有限値でない値があります")
+                    : TEXT("velocity readback contains non-finite values");
                 return false;
+            }
+
+            if (IsVertexAnimationScenario())
+            {
+                return EvaluateVertexAnimation(frame, outFailureReason);
             }
 
             if (IsMotionScenario() && m_Stage == CaptureStage::Moved)
@@ -854,6 +1068,8 @@ namespace
         CaptureStage m_Stage = CaptureStage::Initial;
         bool m_bCaptureRequested = false;
         bool m_bExitRequested = false;
+        bool m_bRetryVertexAnimationCapture = false;
+        uint32_t m_VertexAnimationCaptures = 0u;
         uint64_t m_CaptureRequestRenderedFrame = 0;
         uint64_t m_LastRequestId = 0;
     };
@@ -891,9 +1107,20 @@ int main(int argc, char** argv)
     config.Api = RHI::GraphicsAPI::Vulkan;
     config.LogFileName = TEXT("RenderingVelocity.log");
     config.CreateHandler = &CreateHandler;
+    bool bVertexAnimation = false;
+    bool bVertexAnimationDrop = false;
     for (int index = 1; index < argc; ++index)
     {
-        config.Arguments.push_back(Core::Container::String(argv[index]));
+        const Core::Container::String argument(argv[index]);
+        bVertexAnimation = bVertexAnimation || argument == TEXT("--scenario=vertex-anim");
+        bVertexAnimationDrop = bVertexAnimationDrop || argument == TEXT("--scenario=vertex-anim-drop");
+        config.Arguments.push_back(argument);
+    }
+    if (bVertexAnimation || bVertexAnimationDrop)
+    {
+        // 1フレームの長さを固定し、欠落の判定と解析解を同じ時刻基準で行う。
+        config.Arguments.push_back(TEXT("--fixed-frame-dt=1/60"));
+        config.bEnableMultiThreadedRendering = bVertexAnimationDrop;
     }
     return Core::Boot::LaunchApplication(config);
 }

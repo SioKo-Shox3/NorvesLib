@@ -82,6 +82,26 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - ほかの手段で気づけるか: 気づけない。assert が失敗したときだけ対話窓で止まり、ctest の打ち切りまで待つだけになり、ログにも出ない。
 - 失敗が黙って起きるか: 起きる。一括リンクが外れても assert が失敗するまで何も変わらない。
 
+`SkeletalAssetLoaderTest` の許可なし・manifest 欠落の試験を足す理由:
+- 反証する契約: 既定では loose が存在しても資産として採用せず、CPU 結果や Registry に資源を残さず、解決ログは source=none の失敗になる。
+- ほかの手段で気づけるか: 気づけない。既存資源や起動の成否だけでは CPU 結果と Registry が空のままか分からない。
+- 失敗が黙って起きるか: 起きる。cooked がない環境でも意図せず loose が採用されると、成功したように見える。
+
+`SkeletalAssetLoaderTest` の許可あり loose 読み込みの試験を足す理由:
+- 反証する契約: 外部バッファと import 設定を含む同じ骨格資産の loose と cooked の関節・頂点・クリップ・サブメッシュが一致し、組立までの各段が source=loose を記録する。
+- ほかの手段で気づけるか: 気づけない。頂点や関節の値、外部ファイルの解決先や各段の出所は通常の撮影だけでは比較できない。
+- 失敗が黙って起きるか: 起きる。読み込みが成功しても異なる姿勢や範囲を使う可能性がある。
+
+`SkeletalAssetLoaderTest` の許可あり・cooked 破損の試験を足す理由:
+- 反証する契約: 同じパスの loose があっても、cooked のハッシュ不一致を検出して拒否し、資源を残さない。
+- ほかの手段で気づけるか: 気づけない。loose が代わりに読まれると画面上は正常に見える。
+- 失敗が黙って起きるか: 起きる。壊れた cooked を隠して実行が続く可能性がある。
+
+`AssetLoadProfileSummaryContract.cmake.in`（`AssetLoadProfileSummaryContractTest`）の骨格 cooked 要約の 3 ケースを足す理由:
+- 反証する契約: `-RequireCompleteCookedSkeletal` は解決・解析・資源生成の 3 段がすべて `source=cooked`・`success=1` なら合格し、1 段だけ `source=loose` の場合と 1 段が欠ける場合は不合格にする。
+- ほかの手段で気づけるか: ログを直接照合すれば気づけるが、撮影や読み込みの成否だけでは要約の誤判定は分からない。要約自体が不完全な記録を拒否することを確かめる必要がある。
+- 失敗が黙って起きるか: 起きる。loose が混じった記録や資源生成の段が欠けた記録を cooked 完了として扱っても、画面や読み込み結果は正常に見える可能性がある。
+
 `AnimEventPropertyTest`（`SkeletalAnimationSamplingTest` の中）を足す理由:
 - 反証する契約: アニメーションのイベントの集合・順序が dt の刻みに依らない・(prev, cur] の境界・minWeight の閾値と配送領域の溢れの扱い・metadata の拒否・ルートモーションのブレンドの重み。
 - ほかの手段で気づけるか: 気づけない。フレームレートで足音や攻撃の窓が 1 回増減しても絵にもログにも出ない。溢れの警告だけはログに出るが、どの窓が落ちたかは分からない。
@@ -531,4 +551,36 @@ Vulkan の 2 シナリオは次のように回す。
 ```powershell
 cmake --build build --config Debug --target RenderingHdrSceneCaptureTest
 ctest --test-dir build -C Debug -R "^RenderingSkinnedCull(VulkanTest|GBufferFallbackVulkanTest)$" --output-on-failure
+```
+
+## PaleFlat の照明の式の試験（MaterialResourcesTest の中の PaleFlatShadingContractTest）
+
+- 反証する契約: Flatness が 1 のとき直接光の係数は N・L と影に依らず [WrapMin, 1] に収まり、Flatness が 0 のとき Lambert と一致する。一定の放射輝度 L に対する全球の平均照度は πL となり、不正な設定値は Sanitize で補正される。
+- 撮影・ログでは気づけない理由: 撮影は回さない決まりで、式がずれても少し明暗のある白のまま動くため、通常のログでも気づけない。
+- 失敗は黙って起きる。例外もログも出ず、白の明るさと明暗比がずれる。
+
+テストを有効にした構成で、CPU の試験は次のように回す。
+
+```powershell
+cmake --build build --config Debug --target MaterialResourcesTest -- /m:1
+ctest --test-dir build -C Debug -R "^(PaleFlatShadingContractTest|MaterialResourcesTest|ShadingModelContractTest)$" --no-tests=error --output-on-failure --timeout 300
+```
+
+GPU の試験は `RenderingPaleFlatVulkanTest`（Visibility Buffer 有効）と
+`RenderingPaleFlatGBufferFallbackVulkanTest`（無効）で、同じ固定カメラ・手動露出の HDR を検査する。
+
+- 反証する契約: PaleFlat の明暗比の上限、DefaultLit の対照、静的とスキンの一致、太陽の照度を 4 倍にしたときの線形性と灰色の球との比（相対差 3% 以内）、高さフォグの透過率の合成（絶対差 0.01 以内）、光源の回転時に鏡面が出ないこと（直接光の係数で割った輝度の変動係数 0.1% 以下、200 画素以上）。
+- 撮影・ログでは気づけない理由: 撮影は回さない決まりで、白の明暗・露出・霧への追従が崩れても動き続けるため、通常のログでは気づけない。
+- 失敗は黙って起きる。例外を出さず、照度に対する白の明るさや霧の混ざり方、視線に依る光沢がずれる。
+
+霧は密度 0.03 / 0.08、基準高さ 0、高さ減衰 0.01、光源へ向かう向き (0, 0.6, 0.8) を使う。
+左右対称の球の ROI の差で共通の霧の光を消し、球面の法線から求めた表面位置までの
+`ComputeHeightFogTransmittance` と比較する。光源の X 成分が 0 なので左右の視線の位相角が等しい。
+回転は照度 16000 lux、方位 −40°・0°・+40°とし、GBufferNormal で球の内側かつ N・L > 0.2 の画素を選ぶ。
+回転段は直接光を強めて環境光の寄与を抑え、粗さ 1 の鏡面の変動を検出する。
+各段は適用から 16 描画フレーム待ち、`PALE_FLAT_CHECK` に状態・判定値・許容値・結果を出力する。
+
+```powershell
+cmake --build build --config Debug --target RenderingHdrSceneCaptureTest -- /m:1
+ctest --test-dir build -C Debug -R "^(RenderingPaleFlatVulkanTest|RenderingPaleFlatGBufferFallbackVulkanTest)$" --no-tests=error --output-on-failure --timeout 300
 ```

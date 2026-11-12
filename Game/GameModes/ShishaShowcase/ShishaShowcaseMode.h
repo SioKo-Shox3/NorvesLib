@@ -20,6 +20,10 @@ namespace Game::GameModes
         NorvesLib::Core::Container::String m_SceneName = TEXT("base");
         float m_OrbitDegreesPerSecond = 0.0f;
         float m_StandinScale = 1.0f;
+        /// 空の太陽の高度（度）。
+        float m_SunElevationDegrees = 40.0f;
+        /// 雲を出し、太陽光を弱めるか。
+        bool m_bOvercast = false;
         /// 場面固有の所有状態。共通の土台とは別に保持できる。
         NorvesLib::Core::Container::TSharedPtr<void> m_SceneState;
         NorvesLib::Core::Container::TSharedPtr<ShishaShowcaseStageState> m_StageState;

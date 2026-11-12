@@ -330,9 +330,19 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetPaleFlatParameters(const PaleFlatParameters& parameters)
+    {
+        m_RenderingCoordinator.SetPaleFlatParameters(parameters);
+    }
+
     void RenderWorld::SetWindParameters(const WindParameters& parameters)
     {
         m_RenderingCoordinator.SetWindParameters(parameters);
+    }
+
+    void RenderWorld::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
+    {
+        m_RenderingCoordinator.SetVertexAnimationTestDisplacementEnabled(bEnabled);
     }
 
     void RenderWorld::SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)

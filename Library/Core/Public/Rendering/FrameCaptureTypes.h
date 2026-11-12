@@ -132,6 +132,10 @@ namespace NorvesLib::Core::Rendering
         RHI::ResourceState CurrentState = RHI::ResourceState::ShaderResource;
         RHI::ResourceState RestoreState = RHI::ResourceState::ShaderResource;
         uint64_t FrameNumber = 0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::GameTotalTime（秒）。 */
+        double GameTotalTime = 0.0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::PreviousRenderedTotalTime（秒）。 */
+        double PreviousRenderedTotalTime = 0.0;
         RHI::PresentationColorSpace ColorSpace = RHI::PresentationColorSpace::Unknown;
         RHI::PresentationTransfer Transfer = RHI::PresentationTransfer::Unknown;
         bool bHardwareSrgbEncode = false;
@@ -549,6 +553,10 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureResultStatus Status = FrameCaptureResultStatus::SourceUnavailable;
         uint64_t RequestId = 0;
         uint64_t FrameNumber = 0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::GameTotalTime（秒）。 */
+        double GameTotalTime = 0.0;
+        /** @brief その画を描いたときの RenderExtensionFrameInfo::PreviousRenderedTotalTime（秒）。 */
+        double PreviousRenderedTotalTime = 0.0;
         uint32_t Width = 0;
         uint32_t Height = 0;
         RHI::Format Format = RHI::Format::UNKNOWN;

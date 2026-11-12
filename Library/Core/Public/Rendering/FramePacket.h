@@ -7,6 +7,7 @@
 #include "ViewportSnapshot.h"
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/GrassFieldRenderData.h"
 #include "Rendering/WorldFieldTypes.h"
 #include "Rendering/PointShadowSnapshot.h"
@@ -120,12 +121,12 @@ namespace NorvesLib::Core::Rendering
          * RTGI は 1 次面から出す光線がこの高さより低い所で当てた面を、形のずれによる自分の面への当たりとして読み飛ばす。
          */
         float RayProxyErrorMeters = 0.0f;
-        /** @brief 地形の 3 層の混ぜ合わせの材質か。RTGI は当たりの色を RayTracingSceneSnapshot::TerrainBlend から決める */
+        /** @brief 地形の混ぜ合わせの材質か。RTGI は当たりの色を RayTracingSceneSnapshot::TerrainBlend から決める */
         bool bTerrainBlend = false;
     };
 
     /**
-     * @brief 光線の当たりで地形の色を決めるための、地形の 3 層の混ぜ合わせの値（MegaGeometry::MegaTerrainBlend の一部）
+     * @brief 光線の当たりで地形の色を決めるための、地形の混ぜ合わせの値（MegaGeometry::MegaTerrainBlend の一部）
      *
      * RTGI は当たりの点の地表の分類の地図の重みと、3 層のアルベドの平均の色（最も粗いミップ）を混ぜて当たりの色にする。
      * シーンに混ぜ合わせの材質が複数あるときは、最初に光線のシーンへ入った材質の値を使う。
@@ -145,6 +146,9 @@ namespace NorvesLib::Core::Rendering
         float RockSlopeDegrees[2] = {30.0f, 42.0f};
         float DirtHeightRange[2] = {10.0f, 60.0f};
         float DirtHeightBiasDegrees = 8.0f;
+        /// スプラットの形の材質の値。3 層の bValid が立っていれば 3 層を使う。
+        bool bSplatValid = false;
+        MegaGeometry::MegaTerrainSplat Splat;
     };
 
     struct RayTracingSceneSnapshot
@@ -282,6 +286,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 決定的な撮影（--capture-deterministic）のフレームか。経過時間は 1/60 秒の固定刻み。 */
         bool bDeterministicCapture = false;
+
+        /** @brief 試験だけで使う頂点アニメの正弦の揺れを許可する。 */
+        bool bVertexAnimationTestDisplacement = false;
 
         /** @brief 決定的な撮影のエポックの最初のフレームか。時間的な状態を捨てて数え直す合図。 */
         bool bTemporalEpochStart = false;
@@ -435,6 +442,7 @@ namespace NorvesLib::Core::Rendering
             DeltaTime = 0.0f;
             TotalTime = 0.0;
             bDeterministicCapture = false;
+            bVertexAnimationTestDisplacement = false;
             bTemporalEpochStart = false;
             EpochFrameIndex = 0;
             bRTGIEnabled = true;

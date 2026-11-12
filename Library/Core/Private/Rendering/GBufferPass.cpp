@@ -1,6 +1,7 @@
 ﻿#include "Rendering/GBufferPass.h"
 #include "Rendering/MaterialDescriptorCache.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VertexAnimation.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
@@ -25,6 +26,8 @@
 #include "RHI/TransientResourcePool.h"
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
+
+#include <cstddef>
 
 #include <Windows.h>
 
@@ -105,8 +108,9 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         {
             // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
-            // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）= 368 バイト
-            constexpr uint32_t UBO_SIZE = 368;
+            // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）
+            // + 頂点アニメのインスタンス値・時刻（32）= 400 バイト
+            constexpr uint32_t UBO_SIZE = 400;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -813,8 +817,12 @@ namespace NorvesLib::Core::Rendering
             float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0。gbuffer.frag が > 0.5 を判定し、Normal.w の DIFFUSE_ONLY の受け手の印へ変換）
             float shadingParams[4]; // 材質の値。スキンではインスタンスの値を重ねる。負は未指定。
             float shadingModel[4]; // x=GBuffer の ID、y=cutoff、z=切り抜き方式（0/1/2）、w=Hash の位相
+            float vertexAnimInstanceParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+            float vertexAnimTime[4];
         };
-        static_assert(sizeof(PerObjectUBO) == 368u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(offsetof(PerObjectUBO, vertexAnimInstanceParams) == 368u);
+        static_assert(offsetof(PerObjectUBO, vertexAnimTime) == 384u);
+        static_assert(sizeof(PerObjectUBO) == 400u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -827,6 +835,8 @@ namespace NorvesLib::Core::Rendering
         previousCameraConstants.CopyShaderProjection(previousProjData);
 
         PerObjectUBO frameTemplate{};
+        MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
+                                         frameTemplate.vertexAnimTime);
         std::memcpy(frameTemplate.view, viewData, sizeof(viewData));
         std::memcpy(frameTemplate.projection, projData, sizeof(projData));
         std::memcpy(frameTemplate.previousView, previousViewData, sizeof(previousViewData));
@@ -933,6 +943,7 @@ namespace NorvesLib::Core::Rendering
             {
                 for (uint32_t i = 0; i < ShadingParamCount; ++i)
                 {
+                    uboData.vertexAnimInstanceParams[i] = command.Draw.ShadingParams[i];
                     if (command.Draw.ShadingParams[i] >= 0.0f)
                     {
                         uboData.shadingParams[i] = command.Draw.ShadingParams[i];

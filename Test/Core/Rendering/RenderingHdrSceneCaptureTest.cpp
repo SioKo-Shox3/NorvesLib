@@ -4,6 +4,7 @@
 #include "RenderExtensionStageScenario.h"
 #include "GBufferProgramScenario.h"
 #include "AlphaClipScenario.h"
+#include "PaleFlatScenario.h"
 #include "SkinnedCullScenario.h"
 #include "TemporalAAReactiveScenario.h"
 
@@ -1711,6 +1712,7 @@ namespace
         RenderExtensionStageScenario m_ExtensionStageScenario;
         GBufferProgramScenario m_GBufferProgramScenario;
         AlphaClipScenario m_AlphaClipScenario;
+        PaleFlatScenario m_PaleFlatScenario;
         SkinnedCullScenario m_SkinnedCullScenario;
         TemporalAAReactiveScenario m_TemporalAAReactiveScenario;
 
@@ -1794,7 +1796,7 @@ namespace
                 if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
                     GetRunConfig().CaptureSource != m_AlphaClipScenario.GetCaptureSource() ||
                     m_GBufferProgramScenario.IsEnabled() || m_bShadingModelScenario || m_bShadingModelLightingScenario ||
-                    m_ExtensionStageScenario.IsEnabled() || m_SkinnedCullScenario.IsEnabled() ||
+                    m_ExtensionStageScenario.IsEnabled() || m_SkinnedCullScenario.IsEnabled() || m_PaleFlatScenario.IsEnabled() ||
                     m_TemporalAAReactiveScenario.IsEnabled() || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
                     m_bKnownCdScenario || m_bP4Scenario || m_bAllNumericalScenario ||
                     m_bTransparentPhysicalLightingScenario || m_bEmissiveDaylightScenario)
@@ -1803,6 +1805,25 @@ namespace
                     return false;
                 }
                 RequireVisibilityBufferPath();
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor || GetRunConfig().bPathTracing ||
+                    GetRunConfig().CaptureSource != FrameCaptureSourceKind::SceneColor ||
+                    m_bShadingModelScenario || m_bShadingModelLightingScenario ||
+                    m_GBufferProgramScenario.IsEnabled() || m_ExtensionStageScenario.IsEnabled() ||
+                    m_SkinnedCullScenario.IsEnabled() || m_TemporalAAReactiveScenario.IsEnabled() || m_AlphaClipScenario.IsEnabled() ||
+                    m_bR1Scenario || m_bR2Scenario || m_bR3Scenario || m_bKnownCdScenario ||
+                    m_bP4Scenario || m_bAllNumericalScenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bEmissiveDaylightScenario)
+                {
+                    LOG_ERROR("PaleFlat の検証には indoor と scene-color を単独で指定してください");
+                    return false;
+                }
+                if (!GetRunConfig().bVisibilityBufferOff)
+                {
+                    RequireVisibilityBufferPath();
+                }
             }
             if (m_GBufferProgramScenario.IsEnabled())
             {
@@ -2094,6 +2115,10 @@ namespace
             if (m_AlphaClipScenario.IsEnabled())
             {
                 return m_AlphaClipScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.Initialize(Core::Engine::GEngine->GetRenderWorld(), GetFixture());
             }
             if (m_GBufferProgramScenario.IsEnabled())
             {
@@ -2416,6 +2441,10 @@ namespace
             {
                 return m_AlphaClipScenario.ParseArgument(argument, outFailureReason);
             }
+            if (argument.find(TEXT("--pale-flat-scenario=")) == 0)
+            {
+                return m_PaleFlatScenario.ParseArgument(argument, outFailureReason);
+            }
             if (argument.find(TEXT("--gbuffer-program-scenario=")) == 0)
             {
                 return m_GBufferProgramScenario.ParseArgument(argument, outFailureReason);
@@ -2634,6 +2663,10 @@ namespace
             {
                 return m_AlphaClipScenario.Evaluate(frame, reason);
             }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.Evaluate(frame, reason);
+            }
             if (m_GBufferProgramScenario.IsEnabled())
             {
                 return m_GBufferProgramScenario.Evaluate(frame, reason);
@@ -2794,6 +2827,11 @@ namespace
             if (m_AlphaClipScenario.IsEnabled())
             {
                 m_AlphaClipScenario.ApplyState(renderWorld);
+                return;
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                m_PaleFlatScenario.ApplyState(renderWorld);
                 return;
             }
             if (m_GBufferProgramScenario.IsEnabled())
@@ -3130,6 +3168,11 @@ namespace
                 m_AlphaClipScenario.Advance();
                 return;
             }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                m_PaleFlatScenario.Advance();
+                return;
+            }
             if (m_SkinnedCullScenario.IsEnabled())
             {
                 m_SkinnedCullScenario.Advance();
@@ -3256,6 +3299,10 @@ namespace
             if (m_AlphaClipScenario.IsEnabled())
             {
                 return m_AlphaClipScenario.RequestFollowup(outRequest);
+            }
+            if (m_PaleFlatScenario.IsEnabled())
+            {
+                return m_PaleFlatScenario.RequestFollowup(outRequest);
             }
             if (m_SkinnedCullScenario.IsEnabled())
             {
@@ -7818,13 +7865,13 @@ namespace
                     return false;
                 }
             }
-            constexpr double paleMaximumDelta = 2.0;
             constexpr double defaultMinimumDelta = 20.0;
             const double paleDelta = std::abs(bright[1].Luma - shadow[1].Luma);
             const double defaultDelta = bright[0].Luma - shadow[0].Luma;
-            const bool bPalePassed = paleDelta <= paleMaximumDelta &&
-                bright[1].Luma > paleMaximumDelta && bright[1].Luma < 253.0 &&
-                shadow[1].Luma > paleMaximumDelta && shadow[1].Luma < 253.0;
+            // PaleFlat の明暗比の正式な判定は、専用の HDR 試験で行う。
+            const bool bPalePassed = paleDelta < 0.5 * defaultDelta &&
+                bright[1].Luma > 2.0 && bright[1].Luma < 253.0 &&
+                shadow[1].Luma > 2.0 && shadow[1].Luma < 253.0;
             const bool bDefaultPassed = defaultDelta >= defaultMinimumDelta;
             const bool bFurPassed = boundary[1].Luma > boundary[0].Luma;
             const bool bEyePassed = eye[0].Luma < eye[1].Luma && eye[1].Luma < eye[2].Luma;
@@ -7845,7 +7892,7 @@ namespace
             printRoi("Eye-P0=0.5", "specular", eye[1], bEyePassed);
             printRoi("Eye-P0=1", "specular", eye[2], bEyePassed);
             std::cout << "シェーディングモデル照明判定 object=PaleFlat delta=" << paleDelta
-                      << " maximum=" << paleMaximumDelta << " range=(2,253) result=" << (bPalePassed ? "PASS" : "FAIL") << "\n";
+                      << " 明暗差の上限（未満）=" << 0.5 * defaultDelta << " range=(2,253) result=" << (bPalePassed ? "PASS" : "FAIL") << "\n";
             std::cout << "シェーディングモデル照明判定 object=DefaultLit delta=" << defaultDelta
                       << " minimum=" << defaultMinimumDelta << " result=" << (bDefaultPassed ? "PASS" : "FAIL") << "\n";
             std::cout << "シェーディングモデル照明判定 object=Fur boundary_gain=" << boundary[1].Luma - boundary[0].Luma
@@ -7855,7 +7902,7 @@ namespace
                       << " minimum_exclusive=0 result=" << (bEyePassed ? "PASS" : "FAIL") << "\n";
             if (!(bPalePassed && bDefaultPassed && bFurPassed && bEyePassed))
             {
-                reason = TEXT("シェーディングモデル照明の明暗差・境目の拡散・鏡面の狭義単調増加の契約を満たしません");
+                reason = TEXT("シェーディングモデル照明の PaleFlat の明暗差が DefaultLit の半分未満かつ輝度が (2,253) 内・DefaultLit の明暗差・境目の拡散・鏡面の狭義単調増加の契約を満たしません");
                 return false;
             }
             return true;

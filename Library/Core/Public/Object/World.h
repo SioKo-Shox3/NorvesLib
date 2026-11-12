@@ -9,6 +9,7 @@
 #include "Container/Containers.h"
 #include "Ecs/EcsCommandBuffer.h"
 #include "Ecs/EcsRenderSync.h"
+#include "Thread/FrameAsyncQueue.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -27,6 +28,12 @@ namespace NorvesLib::Core::Ecs
     class SystemScheduler;
     class EcsTransformSystem;
     struct EcsSystemContext;
+}
+
+namespace NorvesLib::Core::Component
+{
+    class AnimatorComponent;
+    class SkinnedMeshComponent;
 }
 
 namespace NorvesLib::Core
@@ -72,6 +79,37 @@ namespace NorvesLib::Core
         REFLECTION_CLASS(World, Object)
 
     public:
+        /// PoseFinalize の独立した評価を 2 つの波に束ねる設定。
+        struct PoseEvaluationParallelSettings
+        {
+            /// 既定は直列。G12-GR108-PERF-CHECK の計測で既定値を決める。
+            bool bEnabled = false;
+            /// 区間の Animator とメッシュの評価数がこれ未満なら既存の直列経路を使う。
+            uint32_t MinBatchCount = 32;
+            /// ParallelFor の取り出し数。0 は 1 として扱う。
+            uint32_t Grain = 4;
+        };
+
+        /// 2 つの波で評価した区間と仕事の累計。
+        struct PoseEvaluationParallelStats
+        {
+            /// 2 つの波で回した区間の数。
+            uint64_t BatchedSegments = 0;
+            /// 波 1 で評価した Animator の数の累計。
+            uint64_t AnimatorJobs = 0;
+            /// 波 2 で計算したメッシュの数の累計。
+            uint64_t MeshJobs = 0;
+            /// 最後に束ねた区間の呼び先の数。
+            uint32_t LastSegmentEntries = 0;
+        };
+
+        /// 姿勢の並列評価の設定を GameThread から変更する。
+        void SetPoseEvaluationParallelSettings(const PoseEvaluationParallelSettings& settings);
+        /// 現在の姿勢の並列評価の設定を取得する。
+        const PoseEvaluationParallelSettings& GetPoseEvaluationParallelSettings() const;
+        /// 姿勢の並列評価の累計を取得する。
+        const PoseEvaluationParallelStats& GetPoseEvaluationParallelStats() const;
+
         World();
         explicit World(const FieldInitializer *initializer);
         explicit World(const IUnknown *sourceObject);
@@ -79,6 +117,35 @@ namespace NorvesLib::Core
 
         virtual void Initialize() override;
         virtual void Finalize() override;
+
+        /**
+         * @brief Component を持ち主として非同期の仕事を受け付ける。全操作は GameThread で呼ぶ。
+         * 結果の配送は World の段 Tick の先頭だけで行う。Component とその祖先が破棄予約中、
+         * または持ち主がこの World にいない場合は Rejected で破棄する。列が無いときも拒否する。
+         * Component を同じ World 内で別の Entity に付け替えた場合も、外した時点で要求を取り消す。
+         * 要求の識別子と持ち主の世代は World の初期化から終了まで有効。
+         */
+        Thread::FrameAsyncRequestId SubmitFrameAsync(Component::Component& owner,
+            Container::TUniquePtr<Thread::IFrameAsyncJob> job, int32_t priority, uint32_t ownerGeneration = 0);
+        /// Component 以外を持ち主として受け付ける。結果の配送は段 Tick の先頭だけで行い、列が無ければ Rejected で破棄する。
+        Thread::FrameAsyncRequestId SubmitFrameAsync(Thread::FrameAsyncOwner owner,
+            Container::TUniquePtr<Thread::IFrameAsyncJob> job, int32_t priority);
+        /// 要求を取り消す。通知は次の配送の点で行い、列が無ければ false を返す。
+        bool CancelFrameAsync(Thread::FrameAsyncRequestId id);
+        /// 待機中の要求の優先度を変更する。列が無ければ false を返す。
+        bool SetFrameAsyncPriority(Thread::FrameAsyncRequestId id, int32_t priority);
+        /// 持ち主の世代を登録し、古い世代の結果を無効にする。列が無ければ何もしない。
+        void SetFrameAsyncOwnerGeneration(uint64_t ownerKey, uint32_t generation);
+        /// Component 固有の持ち主の鍵を返す。
+        static uint64_t FrameAsyncOwnerKeyOf(const Component::Component& component);
+        /// Component 以外の持ち主の鍵を発行する。列が無ければ 0 を返す。鍵は World の初期化から終了まで有効。
+        uint64_t AllocateFrameAsyncOwnerKey();
+        /// GameMode の Leave にある IGameModeAsyncWork::CancelAndJoin 向けに、持ち主の要求を取り消して終了を待つ。列が無ければ何もしない。
+        void CancelFrameAsyncOwnerAndJoin(uint64_t ownerKey);
+        /// ワーカー上で同時に走る要求数の上限を設定する。0 は 1 とし、列が無いときも設定を保持する。
+        void SetFrameAsyncMaxConcurrent(uint32_t maxConcurrent);
+        /// 非同期の列の統計を返す。列が無ければ既定の値を返す。
+        Thread::FrameAsyncQueueStats GetFrameAsyncStats() const;
 
         /**
          * @brief World管理下のEntityを新規生成します
@@ -483,6 +550,9 @@ namespace NorvesLib::Core
         {
             return m_bDispatchingTicks || m_bCleaningObjects;
         }
+        Container::TUniquePtr<Thread::FrameAsyncQueue> m_FrameAsyncQueue;
+        uint32_t m_FrameAsyncMaxConcurrent = Thread::FrameAsyncQueueSettings{}.MaxConcurrent;
+        bool m_bClosingFrameAsyncQueue = false;
         uint64_t m_TickSerial = 0;
         float m_RenderInterpolationAlpha = 1;
         bool m_bRenderInterpolationAllowed = true;
@@ -549,7 +619,39 @@ namespace NorvesLib::Core
         void RemoveOrderedTicks(const Component::Component& component);
         void ClearOrderedTicks();
         static void RunOrderedTick(void* user, const Ecs::EcsSystemContext& context);
+        bool PrepareOrderedTick(const OrderedTickRecord& record, float& outDelta) const;
         void ExecuteOrderedTick(OrderedTickRecord& record);
+        /// ゲームコードを呼ばずに束ねられる区間を集め、区間の終端の番号を返す。
+        uint32_t CollectPoseEvaluationSegment(uint32_t system, uint32_t first, uint32_t count,
+                                              uint32_t& outEvaluationCount);
+        void ExecutePoseEvaluationSegment(uint32_t system);
+
+        PoseEvaluationParallelSettings m_PoseEvaluationParallelSettings;
+        PoseEvaluationParallelStats m_PoseEvaluationParallelStats;
+        Component::ComponentTickFn m_AnimatorPoseFinalizeBody = nullptr;
+        Component::ComponentTickFn m_SkinnedPoseFinalizeBody = nullptr;
+        struct PoseEvaluationEntry
+        {
+            uint32_t OrderedIndex = 0;
+            const OrderedTickRecord* RecordIdentity = nullptr;
+            Component::Component* Target = nullptr;
+            Component::AnimatorComponent* Animator = nullptr;
+            Component::SkinnedMeshComponent* Mesh = nullptr;
+            bool bEvaluate = false;
+        };
+        /// 作業の一覧は容量を保って次の区間・フレームで使い回す。
+        Container::VariableArray<PoseEvaluationEntry> m_PoseEvaluationEntries;
+        Container::VariableArray<Component::AnimatorComponent*> m_PoseAnimatorJobs;
+        Container::VariableArray<Component::SkinnedMeshComponent*> m_PoseMeshJobs;
+        Container::VariableArray<Component::SkinnedMeshComponent*> m_PoseMeshesToFinish;
+        /// 区間内のメッシュの重複を、毎回の割り当てなしに検出する世代付きの表。
+        struct PoseMeshVisit
+        {
+            Component::SkinnedMeshComponent* Mesh = nullptr;
+            uint64_t Segment = 0;
+        };
+        Container::VariableArray<PoseMeshVisit> m_PoseMeshVisits;
+        uint64_t m_PoseMeshVisitSegment = 0;
         void TickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,

@@ -28,6 +28,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/VertexAnimation.h"
 #include "Resource/SkinnedMeshResource.h"
 
 #include <algorithm>
@@ -1058,6 +1059,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR1OccluderMesh = nullptr;
         m_pR1PointLightEntity = nullptr;
         m_pR1DirectionalLightEntity = nullptr;
+        m_pPaleFlatLightEntity = nullptr;
         m_R1ScreenPlaneHandle = MeshDataHandle::Invalid();
         m_R1Textures.fill(TextureHandle::Invalid());
         m_R1TargetMaterials.fill(MaterialHandle::Invalid());
@@ -1143,6 +1145,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR1OccluderMesh = nullptr;
         m_pR1PointLightEntity = nullptr;
         m_pR1DirectionalLightEntity = nullptr;
+        m_pPaleFlatLightEntity = nullptr;
         m_R1ScreenPlaneHandle = MeshDataHandle::Invalid();
         m_R1Textures.fill(TextureHandle::Invalid());
         m_R1TargetMaterials.fill(MaterialHandle::Invalid());
@@ -1494,6 +1497,23 @@ namespace NorvesLib::Test::RenderingValidation
 
     void RenderingValidationSceneFixture::Shutdown(Core::Rendering::RenderResources&)
     {
+        if (m_pSkyOcclusionCanopyWorld != nullptr)
+        {
+            for (uint32_t handle : m_SkyOcclusionCanopyHandles)
+            {
+                if (handle != 0u)
+                {
+                    m_pSkyOcclusionCanopyWorld->UnregisterSkyOccluder(handle);
+                }
+            }
+            m_pSkyOcclusionCanopyWorld->SetStaticEnvironmentUniformRadiance(false, Math::Vector3::Zero);
+            m_pSkyOcclusionCanopyWorld->SetSkyOcclusionParameters(
+                Core::Rendering::MakeDefaultSkyOcclusionParameters());
+        }
+        m_SkyOcclusionCanopyHandles.fill(0u);
+        m_pSkyOcclusionCanopyWorld = nullptr;
+        m_bSkyOcclusionCanopyPrepared = false;
+        m_SkyOcclusionCanopyCamera = {};
         RenderingValidationResourceReleaser releaser(m_pResources);
         ShutdownPublishedInitialization(&releaser);
     }
@@ -2827,6 +2847,201 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::ApplySkyOcclusionCanopyFixture() const
+    {
+        if (m_bSkyOcclusionCanopyPrepared)
+        {
+            return true;
+        }
+        if (m_SceneKind != SceneKind::Outdoor || m_pWorld == nullptr || m_pResources == nullptr ||
+            Core::Engine::GEngine == nullptr || m_pP4LightEntity == nullptr)
+        {
+            return false;
+        }
+        for (Core::Entity* entity : m_Objects)
+        {
+            if (entity == nullptr)
+            {
+                continue;
+            }
+            if (auto* mesh = entity->GetComponent<Core::Component::MeshComponent>())
+            {
+                mesh->SetVisible(false);
+            }
+            if (auto* light = entity->GetComponent<Core::Component::LightComponent>())
+            {
+                light->SetLightVisible(false);
+                entity->SetActive(false);
+            }
+        }
+        if (!SetBaseLightActive(false))
+        {
+            return false;
+        }
+        const TextureHandle normal = CreateR1FlatNormalTexture(*m_pResources);
+        if (!normal.IsValid())
+        {
+            return false;
+        }
+        m_Lease.TrackTexture(normal);
+        auto makeMaterial = [this, normal](float color, float metallic, float roughness,
+                                           bool bDiffuseOnly, const TCHAR* name) -> MaterialHandle
+        {
+            Core::Rendering::MaterialCreateData data;
+            data.NormalTexture = normal;
+            data.BaseColor[0] = color;
+            data.BaseColor[1] = color;
+            data.BaseColor[2] = color;
+            data.Metallic = metallic;
+            data.Roughness = roughness;
+            data.bDiffuseOnly = bDiffuseOnly;
+            data.bTwoSided = true;
+            data.bCastShadows = false;
+            data.DebugName = name;
+            const MaterialHandle material = m_pResources->Materials().Create(data);
+            if (material.IsValid())
+            {
+                m_Lease.TrackMaterial(material);
+            }
+            return material;
+        };
+        const MaterialHandle ground = makeMaterial(0.55f, 0.0f, 1.0f, true, TEXT("CanopyGround"));
+        const MaterialHandle mirror = makeMaterial(0.9f, 1.0f, 0.1f, false, TEXT("CanopyMirror"));
+        const MaterialHandle rock = makeMaterial(0.4f, 0.0f, 1.0f, true, TEXT("CanopyRock"));
+        if (!ground.IsValid() || !mirror.IsValid() || !rock.IsValid())
+        {
+            return false;
+        }
+
+        // 各面に別の法線を持つ 2 m 四方の箱を作る。
+        constexpr float faces[6][4][3] = {
+            {{-1,1,-1}, {-1,1,1}, {1,1,1}, {1,1,-1}},
+            {{-1,-1,1}, {-1,-1,-1}, {1,-1,-1}, {1,-1,1}},
+            {{1,-1,-1}, {1,1,-1}, {1,1,1}, {1,-1,1}},
+            {{-1,-1,1}, {-1,1,1}, {-1,1,-1}, {-1,-1,-1}},
+            {{1,-1,1}, {1,1,1}, {-1,1,1}, {-1,-1,1}},
+            {{-1,-1,-1}, {-1,1,-1}, {1,1,-1}, {1,-1,-1}}};
+        constexpr float normals[6][3] = {
+            {0,1,0}, {0,-1,0}, {1,0,0}, {-1,0,0}, {0,0,1}, {0,0,-1}};
+        constexpr uint32_t triangles[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> vertices;
+        Core::Container::VariableArray<uint32_t> indices;
+        for (uint32_t face = 0u; face < 6u; ++face)
+        {
+            for (uint32_t corner = 0u; corner < 4u; ++corner)
+            {
+                Core::Rendering::Mesh3DVertex vertex{};
+                for (uint32_t axis = 0u; axis < 3u; ++axis)
+                {
+                    vertex.Position[axis] = faces[face][corner][axis];
+                    vertex.Normal[axis] = normals[face][axis];
+                }
+                vertex.TexCoord[0] = corner == 2u || corner == 3u ? 1.0f : 0.0f;
+                vertex.TexCoord[1] = corner == 1u || corner == 2u ? 1.0f : 0.0f;
+                vertices.push_back(vertex);
+            }
+            for (uint32_t index : triangles)
+            {
+                indices.push_back(face * 4u + index);
+            }
+        }
+        constexpr MeshDataHandle rockMesh{0x52300006u};
+        if (!m_pResources->Meshes().Register(rockMesh, vertices.data(),
+                vertices.size() * sizeof(Core::Rendering::Mesh3DVertex), indices.data(),
+                static_cast<uint32_t>(indices.size())))
+        {
+            return false;
+        }
+        m_Lease.TrackMesh(rockMesh);
+        auto spawn = [this](MeshDataHandle meshHandle, MaterialHandle material,
+                            const Math::Vector3& position, const Math::Vector3& scale) -> bool
+        {
+            Core::Entity* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(position.x, position.y, position.z);
+            entity->SetScale(scale.x, scale.y, scale.z);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(meshHandle);
+            mesh->SetMaterial(0u, material);
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                mesh->SetCustomData(channel, 1.0f);
+            }
+            mesh->SetCastShadow(false);
+            mesh->SetReceiveShadow(true);
+            mesh->SetVisible(true);
+            return true;
+        };
+        const SkyOcclusionCanopyPoints points = GetSkyOcclusionCanopyPoints();
+        if (!spawn(PlaneHandle, ground, Math::Vector3(0.0f, -1.0f, 0.0f), Math::Vector3(6.4f, 1.0f, 6.4f)) ||
+            !spawn(SphereHandle, mirror, points.SphereUnder, Math::Vector3(points.SphereRadius)) ||
+            !spawn(SphereHandle, mirror, points.SphereOpen, Math::Vector3(points.SphereRadius)) ||
+            !spawn(rockMesh, rock, Math::Vector3(8.0f, 0.0f, -7.0f), Math::Vector3::One))
+        {
+            return false;
+        }
+        auto& world = Core::Engine::GEngine->GetRenderWorld();
+        m_pSkyOcclusionCanopyWorld = &world;
+        const float trees[3][7] = {
+            {-2.0f, 3.5f, 0.0f, 4.0f, 2.0f, 4.0f, 0.9f},
+            {0.0f, 3.5f, 0.0f, 4.0f, 2.0f, 4.0f, 0.9f},
+            {2.0f, 3.5f, 0.0f, 4.0f, 2.0f, 4.0f, 0.9f}};
+        for (uint32_t i = 0u; i < 4u; ++i)
+        {
+            Core::Rendering::SkyOccluderProxy proxy = Core::Rendering::MakeDefaultSkyOccluderProxy();
+            if (i < 3u)
+            {
+                proxy.CenterX = trees[i][0]; proxy.CenterY = trees[i][1]; proxy.CenterZ = trees[i][2];
+                proxy.HalfExtentX = trees[i][3]; proxy.HalfExtentY = trees[i][4]; proxy.HalfExtentZ = trees[i][5];
+                proxy.Opacity = trees[i][6];
+                Core::Rendering::SetSkyOccluderShape(proxy, Core::Rendering::SkyOccluderShape::Ellipsoid);
+                Core::Rendering::SetSkyOccluderClass(proxy, Core::Rendering::SkyOccluderClass::Canopy);
+            }
+            else
+            {
+                proxy.CenterX = 8.0f; proxy.CenterY = 0.0f; proxy.CenterZ = -7.0f;
+                proxy.HalfExtentX = 1.0f; proxy.HalfExtentY = 1.0f; proxy.HalfExtentZ = 1.0f;
+                Core::Rendering::SetSkyOccluderShape(proxy, Core::Rendering::SkyOccluderShape::Box);
+                Core::Rendering::SetSkyOccluderClass(proxy, Core::Rendering::SkyOccluderClass::Solid);
+            }
+            m_SkyOcclusionCanopyHandles[i] = world.RegisterSkyOccluder(proxy);
+            if (m_SkyOcclusionCanopyHandles[i] == 0u)
+            {
+                return false;
+            }
+        }
+        // 大気の既定を保ち、方向光なしで IBL に均一な空の放射輝度を与える。
+        world.SetStaticEnvironmentUniformRadiance(true, Math::Vector3(200.0f, 200.0f, 200.0f));
+        m_SkyOcclusionCanopyCamera = BuildLookAtCamera(
+            Math::Vector3(4.25f, 24.0f, 0.6f), Math::Vector3(4.25f, -1.0f, 0.0f),
+            ValidationWidth, ValidationHeight);
+        if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                4.0f, 1.0f / 60.0f, 100.0f, 0.0f, m_SkyOcclusionCanopyCamera))
+        {
+            return false;
+        }
+        m_bSkyOcclusionCanopyPrepared = true;
+        return true;
+    }
+
+    const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetSkyOcclusionCanopyCamera() const
+    {
+        return m_SkyOcclusionCanopyCamera;
+    }
+
+    SkyOcclusionCanopyPoints RenderingValidationSceneFixture::GetSkyOcclusionCanopyPoints() const
+    {
+        return {};
+    }
+
     bool RenderingValidationSceneFixture::ApplyR4CornellFixture() const
     {
         if (m_bR4CornellFixturePrepared)
@@ -3651,6 +3866,181 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::ApplyPaleFlatFixture() const
+    {
+        using namespace Core::Rendering;
+        if (m_pWorld == nullptr || m_pResources == nullptr || m_pPaleFlatLightEntity != nullptr)
+        {
+            return false;
+        }
+        // 見張り役以外の既存の物と光源を止める。
+        for (Core::Entity* entity : m_Objects)
+        {
+            entity->SetActive(entity->GetComponent<FixedStepSentinelComponent>() != nullptr);
+        }
+        m_pPaleFlatLightEntity = m_pWorld->SpawnEntity();
+        if (m_pPaleFlatLightEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(m_pPaleFlatLightEntity);
+        auto* light = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(m_pPaleFlatLightEntity);
+        if (light == nullptr || !light->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+        {
+            return false;
+        }
+        light->SetLightColor(1.0f, 1.0f, 1.0f);
+        light->SetCastShadows(true);
+        if (!SetPaleFlatLightState(1000.0f, 0.8f, 0.0f, 0.6f))
+        {
+            return false;
+        }
+        MaterialCreateData paleData;
+        paleData.Shading = ShadingModel::PaleFlat;
+        paleData.Metallic = 0.0f;
+        paleData.Roughness = 1.0f;
+        const auto pale = m_pResources->Materials().Create(paleData);
+        MaterialCreateData grayData;
+        grayData.Shading = ShadingModel::DefaultLit;
+        grayData.Metallic = 0.0f;
+        grayData.Roughness = 1.0f;
+        grayData.BaseColor[0] = grayData.BaseColor[1] = grayData.BaseColor[2] = 0.18f;
+        const auto gray = m_pResources->Materials().Create(grayData);
+        if (pale.IsValid())
+        {
+            m_Lease.TrackMaterial(pale);
+        }
+        if (gray.IsValid())
+        {
+            m_Lease.TrackMaterial(gray);
+        }
+        if (!pale.IsValid() || !gray.IsValid())
+        {
+            return false;
+        }
+        for (uint32_t index = 0u; index < 2u; ++index)
+        {
+            auto* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(PaleFlatSpherePositions[index][0], PaleFlatSpherePositions[index][1], 0.0f);
+            entity->SetScale(PaleFlatSphereRadius, PaleFlatSphereRadius, PaleFlatSphereRadius);
+            auto* mesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(SphereHandle);
+            mesh->SetMaterial(0u, index == 0u ? pale : gray);
+            const float color = index == 0u ? 1.0f : 0.18f;
+            mesh->SetCustomData(0u, color);
+            mesh->SetCustomData(1u, color);
+            mesh->SetCustomData(2u, color);
+            mesh->SetCustomData(3u, 1.0f);
+            mesh->SetCastShadow(true);
+        }
+        // M9 の GLTF は外部の fixture.bin を参照する。解析試験と同じ内容を生成し、原本には書かない。
+        const auto inputDirectory = std::filesystem::current_path() / "RenderingValidation" / "PaleFlatInputs";
+        std::filesystem::create_directories(inputDirectory);
+        const auto sourcePath = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path()
+                                    .parent_path().parent_path() / "Assets" / "Models" / "M9Skinned" / "ValidU8Float.gltf";
+        const auto gltfPath = inputDirectory / "ValidU8Float.gltf";
+        std::filesystem::copy_file(sourcePath, gltfPath, std::filesystem::copy_options::overwrite_existing);
+        const auto bytes = BuildFixtureBuffer();
+        {
+            auto output = FileStream::FileStream::Create(
+                ToShadingModelFixturePath(inputDirectory / "fixture.bin"), FileStream::FileMode::Write,
+                FileStream::FileAccess::Write, FileStream::FileShare::None);
+            if (!output || !output->IsOpen() || output->Write(bytes.data(), bytes.size()) != bytes.size())
+            {
+                return false;
+            }
+            output->Close();
+        }
+        auto decoded = Core::ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(ToShadingModelFixturePath(gltfPath));
+        if (!decoded.Succeeded() || decoded.Data.Clips.empty())
+        {
+            return false;
+        }
+        auto& registry = Core::GEngine.GetResourceRegistry();
+        auto skinMesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("PaleFlatM9Mesh"));
+        auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("PaleFlatM9Skeleton"));
+        auto clip = registry.CreateTransient<Core::AnimationClipResource>(TEXT("PaleFlatM9Clip"));
+        auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("PaleFlatM9Asset"));
+        if (!skinMesh || !skeleton || !clip || !asset)
+        {
+            return false;
+        }
+        skinMesh->SetVertices(std::move(decoded.Data.Vertices));
+        skinMesh->SetIndices(std::move(decoded.Data.Indices));
+        skinMesh->SetMeshNodeGlobalTransform(decoded.Data.MeshNodeGlobalTransform);
+        skinMesh->SetSubmeshTables(std::move(decoded.Data.SubMeshes), std::move(decoded.Data.MaterialSlots));
+        skeleton->SetJoints(std::move(decoded.Data.Joints));
+        clip->SetClip(std::move(decoded.Data.Clips[0]));
+        if (!skinMesh->Load() || !skeleton->Load() || !clip->Load())
+        {
+            return false;
+        }
+        asset->SetResources(skinMesh, skeleton, clip);
+        if (!asset->IsLoaded())
+        {
+            return false;
+        }
+        m_ShadingModelSkinAsset = asset;
+        auto* skinEntity = m_pWorld->SpawnEntity();
+        if (skinEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(skinEntity);
+        // 三角形の重心を下段の固定位置に置く。
+        skinEntity->SetPosition(PaleFlatSkinPosition[0] - 2.0f / 3.0f,
+                                PaleFlatSkinPosition[1] - 2.0f / 3.0f, 0.0f);
+        skinEntity->SetScale(2.0f, 2.0f, 2.0f);
+        auto* skin = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(skinEntity);
+        if (skin == nullptr)
+        {
+            return false;
+        }
+        skin->SetSkeletalAsset(asset);
+        // M9 のノードの平行移動を外し、骨の基準空間をこの場面の配置に合わせる。
+        skin->SetMeshNodeGlobalTransform(Math::Matrix4x4::Identity);
+        skin->SetMaterial(pale);
+        skin->SetPlaying(false);
+        skin->SetAnimationTimeSeconds(0.0f);
+        skin->SetCastShadow(false);
+        skin->SetVisible(true);
+
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetPaleFlatLightState(
+        float lux, float toLightX, float toLightY, float toLightZ) const
+    {
+        auto* light = m_pPaleFlatLightEntity != nullptr
+            ? m_pPaleFlatLightEntity->GetComponent<Core::Component::DirectionalLightComponent>() : nullptr;
+        if (light == nullptr)
+        {
+            return false;
+        }
+        light->SetIntensity(lux);
+        light->SetLightDirection(-toLightX, -toLightY, -toLightZ);
+        return true;
+    }
+
+    Core::Rendering::CameraProxy RenderingValidationSceneFixture::GetPaleFlatCamera() const
+    {
+        auto camera = GetShadingModelGBufferCamera();
+        camera.ExposureMode = Core::Rendering::CameraExposureMode::Manual;
+        // 全段で同じ物理露出を使い、照度と霧の比を自動露出から独立させる。
+        Core::Component::CameraComponent::TryBuildExposureSnapshot(
+            4.0f, 1.0f / 60.0f, 100.0f, 0.0f, camera);
+        return camera;
+    }
+
     bool RenderingValidationSceneFixture::ApplyShadingModelLightingFixture() const
     {
         using namespace Core::Rendering;
@@ -4024,6 +4414,33 @@ namespace NorvesLib::Test::RenderingValidation
         skinned->SetVisible(true);
         m_R5SkinnedQuadAsset = asset;
         m_pR5SkinnedQuadEntity = entity;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyR5VertexAnimationFixture() const
+    {
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pR5ShadowReceiverEntity == nullptr ||
+            m_pR5ShadowOccluderEntity == nullptr || m_pR5ShadowReceiverMesh == nullptr ||
+            m_pR5ShadowOccluderMesh == nullptr || !AddR5SkinnedQuad())
+        {
+            return false;
+        }
+        auto* skinned = m_pR5SkinnedQuadEntity->GetComponent<Core::Component::SkinnedMeshComponent>();
+        if (skinned == nullptr)
+        {
+            return false;
+        }
+
+        // 同じ深さに横一列で置く。動く2枚は同位相なので常に離れ、恒等の板とも重ならない。
+        m_pR5SkinnedQuadEntity->SetPosition(-3.0f, 0.0f, 8.0f);
+        skinned->SetShadingParams(2, Core::Rendering::VertexAnimationKindTestSineParam);
+        m_pR5ShadowOccluderEntity->SetPosition(0.0f, 0.0f, 8.0f);
+        m_pR5ShadowOccluderEntity->SetScale(1.0f, 1.0f, 1.0f);
+        m_pR5ShadowOccluderMesh->SetShadingParams(2, Core::Rendering::VertexAnimationKindTestSineParam);
+        m_pR5ShadowOccluderMesh->SetCastShadow(false);
+        m_pR5ShadowReceiverEntity->SetPosition(3.0f, 0.0f, 8.0f);
+        m_pR5ShadowReceiverEntity->SetScale(1.0f, 1.0f, 1.0f);
+        m_pR5ShadowReceiverMesh->SetShadingParams(2, 0.0f);
         return true;
     }
 

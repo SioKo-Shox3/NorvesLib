@@ -15,9 +15,15 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=ORMの1枚を張ったか（フラグメント側で使用）, w=法線が2チャンネルか（同）
     vec4 frameParams;     // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
+    vec4 vtFeedbackParams;
+    vec4 shadingParams;
+    vec4 shadingModel;
+    vec4 vertexAnimInstanceParams;
+    vec4 vertexAnimTime;
 } mvp;
 
 #include "Common/SceneInstanceData.glsl"
+#include "Common/VertexAnimation.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {
@@ -36,7 +42,9 @@ layout(location = 8) flat out vec4 fragInstanceShadingParams;
 
 void main()
 {
+    vec4 params = VertexAnimationParamsForFrame(instances[gl_InstanceIndex].shadingParams, mvp.vertexAnimTime);
     vec4 worldPos = instances[gl_InstanceIndex].world * vec4(inPosition, 1.0);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, mvp.vertexAnimTime.x);
     fragWorldPos = worldPos.xyz;
 
     vec3 normal = instances[gl_InstanceIndex].normalRows[0].xyz * inNormal.x +
@@ -51,7 +59,17 @@ void main()
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
 
     fragCurrentClip = mvp.projection * mvp.view * worldPos;
-    fragPreviousClip = mvp.previousProjection * mvp.previousView *
-                       instances[gl_InstanceIndex].previousWorld * vec4(inPosition, 1.0);
+    vec4 previousWorldPos = instances[gl_InstanceIndex].previousWorld * vec4(inPosition, 1.0);
+    previousWorldPos.xyz = ApplyVertexAnimation(previousWorldPos.xyz, inPosition, params, mvp.vertexAnimTime.y);
+    if (VertexAnimationKind(params) == VERTEX_ANIMATION_KIND_NONE)
+    {
+        // 恒等のときは従来の行列の乗算順を保ち、丸めの差を出さない。
+        fragPreviousClip = mvp.previousProjection * mvp.previousView *
+                           instances[gl_InstanceIndex].previousWorld * vec4(inPosition, 1.0);
+    }
+    else
+    {
+        fragPreviousClip = mvp.previousProjection * mvp.previousView * previousWorldPos;
+    }
     gl_Position = fragCurrentClip;
 }

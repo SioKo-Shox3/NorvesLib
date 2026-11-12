@@ -160,4 +160,29 @@ set(legacy_complete [=[
 ]=])
 run_summary_case(legacy_complete "${legacy_complete}" 0 "## glTF / Model" -RequireCompleteModelFlush)
 
-message(STATUS "AssetLoadProfile summary contract passed 16 invocations across 14 cases")
+# 骨格の3段が cooked で読み終わり、同じ論理パスを示す。
+set(complete_cooked_skeletal [=[
+[AssetLoadProfile] stage=skeletal_asset_resolve role=worker source=cooked normalized_path="Skeletons/Fixture.nvskel" status=0 resolve_status=0 parse_status=0 success=1
+[AssetLoadProfile] stage=skeletal_cooked_parse role=worker source=cooked normalized_path="Skeletons/Fixture.nvskel" status=0 resolve_status=0 parse_status=0 success=1
+[AssetLoadProfile] stage=skeletal_resource_create role=owner source=cooked normalized_path="Skeletons/Fixture.nvskel" status=0 resolve_status=0 parse_status=0 success=1
+]=])
+run_summary_case(skeletal_complete "${complete_cooked_skeletal}" 0 "Skeletal cooked contract: PASS"
+    -RequireCompleteCookedSkeletal -ExpectedCookedSkeletalLogicalPath "Skeletons/Fixture.nvskel")
+
+# 1段だけでも loose なら cooked の契約を満たさない。
+string(REPLACE "stage=skeletal_cooked_parse role=worker source=cooked"
+    "stage=skeletal_cooked_parse role=worker source=loose"
+    skeletal_loose "${complete_cooked_skeletal}")
+run_summary_case(skeletal_loose "${skeletal_loose}" 2
+    "Skeletal cooked contract failed: stage=skeletal_cooked_parse source must be cooked"
+    -RequireCompleteCookedSkeletal)
+
+# 資源を作る段が欠けたら、その段を理由として報告する。
+string(REPLACE
+    "[AssetLoadProfile] stage=skeletal_resource_create role=owner source=cooked normalized_path=\"Skeletons/Fixture.nvskel\" status=0 resolve_status=0 parse_status=0 success=1\n"
+    "" skeletal_missing "${complete_cooked_skeletal}")
+run_summary_case(skeletal_missing "${skeletal_missing}" 2
+    "Skeletal cooked contract failed: missing required stage=skeletal_resource_create"
+    -RequireCompleteCookedSkeletal)
+
+message(STATUS "AssetLoadProfile summary contract passed 19 invocations across 17 cases")

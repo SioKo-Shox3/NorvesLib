@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // 展開は先頭 112 バイトを読み、株の描画だけが末尾のフィールドを読む。
+        // 展開は先頭 112 バイトを読み、描画が頂点アニメの時刻と末尾の世界フィールド（株だけ）を読む。
         using GPURasterParams = VirtualShadowMapRasterParams;
 
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
@@ -629,6 +629,7 @@ namespace NorvesLib::Core::Rendering
                                                                                     : static_cast<uint32_t>(instanceCapacity);
         std::copy(dispatch.FoliageWind, dispatch.FoliageWind + 4, params.foliageWind);
         std::copy(dispatch.FoliageWindParams, dispatch.FoliageWindParams + 4, params.foliageWindParams);
+        std::copy(dispatch.VertexAnimTime, dispatch.VertexAnimTime + 4, params.vertexAnimTime);
         const bool bHasWorldField = dispatch.WorldFieldCurrent && dispatch.WorldField.bEnabled != 0u;
         const RHI::TexturePtr& currentField = bHasWorldField ? dispatch.WorldFieldCurrent : m_NeutralWorldField;
         params.worldField = bHasWorldField ? dispatch.WorldField : WorldFieldSampleConstants{};

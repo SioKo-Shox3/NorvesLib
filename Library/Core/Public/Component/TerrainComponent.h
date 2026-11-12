@@ -1,10 +1,11 @@
-﻿// クック済み地形の高さ場と区画メッシュを所有し、フレームごとに区画を配置する。
+﻿// クック済み地形の高さ場と区画メッシュを所有し、層の表からスプラット材質を作って区画を配置する。
 // 地形は BeginPlay ではなくパス設定後の最初の Tick で読むため、作成してから値を設定できる。
 // EndPlay でモデルと高さ場の登録を返し、配置途中でも保持した資源を残さない。
 // 所有者の破棄では子 Entity を Inner の連鎖に任せ、所有者が残る場合だけ明示的に外す。
 #pragma once
 
 #include "Component.h"
+#include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/Terrain/TerrainSystem.h"
@@ -26,6 +27,8 @@ namespace NorvesLib::Core::Component
 
         void SetTerrainPath(const Container::String& path) { getTerrainPath() = path; }
         Container::String GetTerrainPath() { return getTerrainPath(); }
+        void SetLayerTablePath(const Container::String& path) { getLayerTablePath() = path; }
+        Container::String GetLayerTablePath() { return getLayerTablePath(); }
         void SetTilePathPrefix(const Container::String& prefix) { getTilePathPrefix() = prefix; }
         Container::String GetTilePathPrefix() { return getTilePathPrefix(); }
         void SetBaseColor(float r, float g, float b)
@@ -54,6 +57,8 @@ namespace NorvesLib::Core::Component
         bool IsFullyPlaced() const { return m_TerrainHandle.IsValid() && m_NextTile == GetTileCount(); }
 
         PROPERTY(Container::String, TerrainPath)
+        /// アセットの根 Assets/ からの層の表の道。
+        PROPERTY(Container::String, LayerTablePath)
         PROPERTY(Container::String, TilePathPrefix)
         PROPERTY(float, BaseColorR)
         PROPERTY(float, BaseColorG)
@@ -71,6 +76,8 @@ namespace NorvesLib::Core::Component
 
         void SetDefaults();
         bool LoadTerrain();
+        void LoadSplatMaterial(const Rendering::Terrain::TerrainHeightField& heightField);
+        void ReleaseSplatTextures();
         void PlacePendingTiles();
         bool PlaceTile(const TileCoordinate& tile);
 
@@ -89,6 +96,7 @@ namespace NorvesLib::Core::Component
         // Tick 内の生成では ECS の行が未作成なので、即座に発行される ObjectId で子を記録する。
         Container::VariableArray<uint64_t> m_ChildEntityIds;
         Container::VariableArray<Rendering::ModelHandle> m_Models;
+        Rendering::MegaGeometry::MegaTerrainSplat m_Splat;
         uint32_t m_NextTile = 0;
         uint32_t m_PlacedTileCount = 0;
     };

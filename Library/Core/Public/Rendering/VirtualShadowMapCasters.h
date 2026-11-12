@@ -24,6 +24,7 @@
 #include "Rendering/VirtualShadowMapRaster.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -718,6 +719,17 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /** @brief 影の記録で使わない前フレームの 4 語に、描画の生の頂点アニメの値を格納する */
+        inline void SetChunkVertexAnimationParams(VsmShadowChunk& chunk, const float* params)
+        {
+            const float unspecified[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+            const float* values = params ? params : unspecified;
+            chunk.Record.PreviousVertexAddress = static_cast<uint64_t>(std::bit_cast<uint32_t>(values[0])) |
+                                                 (static_cast<uint64_t>(std::bit_cast<uint32_t>(values[1])) << 32u);
+            chunk.Record.LodPayload = std::bit_cast<uint32_t>(values[2]);
+            chunk.Record.Reserved = std::bit_cast<uint32_t>(values[3]);
+        }
+
         /**
          * @brief 手続きメッシュの 1 インスタンスぶんの塊を記録に足す。どの段の範囲にも入らない塊は省き、上限を超えたら書かずに数える
          *
@@ -731,7 +743,8 @@ namespace NorvesLib::Core::Rendering
                                              const VirtualShadowMapClipmap& clipmap,
                                              Container::VariableArray<VsmShadowChunk>& inOutChunks,
                                              CasterStats& inOutStats,
-                                             const CasterSliceTable* slices = nullptr)
+                                             const CasterSliceTable* slices = nullptr,
+                                             const float* vertexAnimationParams = nullptr)
         {
             if (plan.empty() || draw.MeshBounds == nullptr)
             {
@@ -761,6 +774,7 @@ namespace NorvesLib::Core::Rendering
                 chunk.Record.VertexBase = draw.VertexOffset;
                 chunk.Record.VertexAddress = draw.VertexAddress;
                 chunk.Record.IndexAddress = draw.IndexAddress;
+                SetChunkVertexAnimationParams(chunk, vertexAnimationParams);
                 for (uint32_t axis = 0; axis < 3u; ++axis)
                 {
                     chunk.BoundsMin[axis] = bounds.Min[axis];
@@ -787,7 +801,8 @@ namespace NorvesLib::Core::Rendering
                                           const VirtualShadowMapClipmap& clipmap,
                                           Container::VariableArray<VsmShadowChunk>& inOutChunks,
                                           CasterStats& inOutStats,
-                                          const CasterSliceTable* slices = nullptr)
+                                          const CasterSliceTable* slices = nullptr,
+                                          const float* vertexAnimationParams = nullptr)
         {
             if (chunks.empty())
             {
@@ -809,6 +824,7 @@ namespace NorvesLib::Core::Rendering
                 chunk.Record.VertexBase = 0u;
                 chunk.Record.VertexAddress = vertexAddress;
                 chunk.Record.IndexAddress = indexAddress;
+                SetChunkVertexAnimationParams(chunk, vertexAnimationParams);
                 for (uint32_t axis = 0; axis < 3u; ++axis)
                 {
                     chunk.BoundsMin[axis] = worldBounds.Min[axis];

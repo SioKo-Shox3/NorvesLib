@@ -368,6 +368,7 @@ norves_add_test_bundle(RHIRayTracingApiContractTest
     MEMBER RHIIndirectApiContractTest RHIIndirectApiContractTest.cpp
     MEMBER RHIRayTracingShaderStageCompileTest RHIRayTracingShaderStageCompileTest.cpp
     MEMBER GrassShaderCompileTest GrassShaderCompileTest.cpp
+    MEMBER TerrainShaderCompileTest TerrainShaderCompileTest.cpp
     MEMBER ViewClearanceShaderCompileTest ViewClearanceShaderCompileTest.cpp
     MEMBER WindShaderCompileTest WindShaderCompileTest.cpp
     MEMBER WorldFieldShaderCompileTest WorldFieldShaderCompileTest.cpp
@@ -389,6 +390,8 @@ add_test(NAME RHIIndirectApiContractTest COMMAND RHIRayTracingApiContractTest --
 add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingApiContractTest --test=RHIRayTracingShaderStageCompileTest)
 # 草の compute シェーダーを CPU でコンパイルし、実行モデルを確かめる。
 add_test(NAME GrassShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=GrassShaderCompileTest)
+# 地形のシェーダーを CPU でコンパイルし、実行モデル・束縛・画像型・定数ブロックの大きさを確かめる。
+add_test(NAME TerrainShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=TerrainShaderCompileTest)
 add_test(NAME ViewClearanceShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=ViewClearanceShaderCompileTest)
 add_test(NAME WindShaderCompileTest COMMAND RHIRayTracingApiContractTest --test=WindShaderCompileTest)
 # 世界フィールドの更新を CPU でコンパイルし、GLCompute と作業グループ 8x8x1 を確かめる。
@@ -415,6 +418,15 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
 # BC1・BC3・BC4・BC5・BC6H・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
 add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
 set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 地形スプラットの象限ごとの色、斜面での崖の細かさ、濡れの恒等性と暗化・粗さの減少を GPU から読み戻す。
+add_test(NAME TerrainLayerBlendVulkanTest COMMAND RHITextureUpdateVulkanTest --test=TerrainLayerBlendVulkanTest)
+set_tests_properties(TerrainLayerBlendVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
@@ -704,6 +716,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
     MEMBER RHIFormatReadbackVulkanTest RHIFormatReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
+    MEMBER TerrainLayerBlendVulkanTest TerrainLayerBlendVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
@@ -841,6 +854,28 @@ register_rendering_gpu_test(
     --scenario=skinned-motion
     --visibility-buffer=off)
 
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityVertexAnimDropVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=vertex-anim-drop)
+set_tests_properties(RenderingVelocityVertexAnimDropVulkanTest PROPERTIES
+    ENVIRONMENT "NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL=3")
+
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
 )
@@ -928,6 +963,7 @@ add_executable(RenderingHdrSceneCaptureTest
     RenderExtensionStageScenario.cpp
     GBufferProgramScenario.cpp
     AlphaClipScenario.cpp
+    PaleFlatScenario.cpp
     SkinnedCullScenario.cpp
     TemporalAAReactiveScenario.cpp
 )
@@ -1191,6 +1227,12 @@ set_tests_properties(RenderingAlphaClipVulkanTest PROPERTIES
 # PaleFlat の明暗差、Fur の境目の拡散、Eye の P0 に対する鏡面の増加を BackBuffer で確かめる。
 register_rendering_gpu_test(RenderingShadingModelLightingVulkanTest RenderingHdrSceneCaptureTest
     --scene=indoor --capture-source=back-buffer --shading-model-scenario=lighting)
+# HDR の明暗比と静的・スキンの一致を、可視バッファと従来の GBuffer の両経路で確かめる。
+register_rendering_gpu_test(RenderingPaleFlatVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks)
+register_rendering_gpu_test(RenderingPaleFlatGBufferFallbackVulkanTest RenderingHdrSceneCaptureTest
+    --scene=indoor --capture-source=scene-color --pale-flat-scenario=checks --visibility-buffer=off)
+
 target_compile_definitions(RenderingHdrSceneCaptureTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 # 半透明の板の残像がリアクティブ入力で減ることを連続 HDR フレームで確かめる。
@@ -1713,6 +1755,13 @@ register_rendering_gpu_test(
     --scene=indoor
     --capture-source=back-buffer
     --ao-scenario=cornell-room)
+# 樹冠の下の空の遮蔽と無効時の画像を確かめる。
+register_rendering_gpu_test(
+    RenderingSkyOcclusionCanopyVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --sky-occlusion-scenario=canopy)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 
@@ -1759,6 +1808,7 @@ add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND MaterialResourcesTest --test=GBufferMaterialDescriptorCacheTest)
 add_test(NAME GBufferPipelineKeyTest COMMAND MaterialResourcesTest --test=GBufferPipelineKeyTest)
 add_test(NAME ShadingModelContractTest COMMAND MaterialResourcesTest --test=ShadingModelContractTest)
+add_test(NAME PaleFlatShadingContractTest COMMAND MaterialResourcesTest --test=PaleFlatShadingContractTest)
 
 add_test(NAME ViewScreenTopologyTest COMMAND ViewportCameraIdRenderPlanTest --test=ViewScreenTopologyTest)
 
@@ -1994,6 +2044,7 @@ add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWirin
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND ViewportSnapshotDebugWiringTest --test=MegaGeometryFrameCommandDebugModeTest)
 
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyLookupTest --test=SceneViewProxyReconcileTest)
+add_test(NAME CullProxiesParallelEquivalenceTest COMMAND SceneViewProxyLookupTest --test=CullProxiesParallelEquivalenceTest)
 add_test(NAME RenderExtensionRegistryTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionRegistryTest)
 add_test(NAME RenderExtensionDataTest COMMAND SceneViewProxyLookupTest --test=RenderExtensionDataTest)
 
@@ -2002,6 +2053,7 @@ norves_add_test_bundle(SceneViewProxyLookupTest
     FOLDER "Test/Core/Rendering"
     MEMBER SceneViewProxyLookupTest SceneViewProxyLookupTest.cpp
     MEMBER SceneViewProxyReconcileTest SceneViewProxyReconcileTest.cpp
+    MEMBER CullProxiesParallelEquivalenceTest CullProxiesParallelEquivalenceTest.cpp
     MEMBER RenderExtensionRegistryTest RenderExtensionRegistryTest.cpp
     MEMBER RenderExtensionDataTest RenderExtensionDataTest.cpp
 )
@@ -2009,6 +2061,9 @@ target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
 target_include_directories(SceneViewProxyLookupTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+# CullProxiesParallelEquivalenceTest は JobSystem::ParallelFor の上の試験なので、
+# この束のビルドで JobParallelForTest を含む JobSystemShutdownTest の実行ファイルもそろえる。
+add_dependencies(SceneViewProxyLookupTest JobSystemShutdownTest)
 add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
 
 add_executable(ComponentDirtyTrackingTest
@@ -2498,6 +2553,7 @@ norves_add_test_bundle(MaterialResourcesTest
     MEMBER GBufferMaterialDescriptorCacheTest GBufferMaterialDescriptorCacheTest.cpp
     MEMBER GBufferPipelineKeyTest GBufferPipelineKeyTest.cpp
     MEMBER ShadingModelContractTest ShadingModelContractTest.cpp NORVES_SOURCE_ROOT=\"${CMAKE_SOURCE_DIR}\"
+    MEMBER PaleFlatShadingContractTest PaleFlatShadingContractTest.cpp
 )
 target_link_libraries(MaterialResourcesTest PRIVATE Core)
 target_include_directories(MaterialResourcesTest PRIVATE
@@ -2657,6 +2713,7 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
+    SkeletalAnimationParallelTest.cpp
     SocketOracleTest.cpp
     SkeletalSamplerBaseline.cpp
     AnimPoseOpsTest.cpp
@@ -2681,6 +2738,9 @@ target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
 target_include_directories(SkeletalAnimationSamplingTest PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Library/Core/Private)
 set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
+# 並列姿勢試験は JobSystem の ParallelFor 契約を前提とするため、
+# JobParallelForTest を含む JobSystemShutdownTest の試験群を同じビルドでそろえる。
+add_dependencies(SkeletalAnimationSamplingTest JobSystemShutdownTest)
 
 add_executable(SkeletalFramePacketSnapshotTest
     SkeletalFramePacketSnapshotTest.cpp

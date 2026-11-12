@@ -1310,6 +1310,15 @@ namespace NorvesLib::Core::Rendering::Terrain
         return Container::AnsiStringView(name.data(), name.size());
     }
 
+    Container::Span<const uint8_t> TerrainHeightField::GetSplatWeights() const
+    {
+        if (!m_Grid || m_Grid->SplatWeights.empty())
+        {
+            return {};
+        }
+        return {m_Grid->SplatWeights.data(), m_Grid->SplatWeights.size()};
+    }
+
     uint32_t TerrainHeightField::GetTileId(float x, float z) const
     {
         if (!m_Grid || m_Grid->TileCells == 0 || !Contains(x, z))

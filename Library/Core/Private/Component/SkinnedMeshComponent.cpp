@@ -558,18 +558,40 @@ namespace NorvesLib::Core::Component
     }
     bool SkinnedMeshComponent::SubmitLocalPose(const Animation::LocalPose& pose)
     {
-        if(!m_bExternalAnimationDriven||!HasValidPoseResources())return false;
-        if(!m_bMeshNodeTransformOverridden)
-            m_MeshNodeGlobalTransform=LoadMeshNodeGlobalTransform(m_SkeletalAsset->GetMesh()->GetMeshNodeGlobalTransform());
-        const auto& skeleton=*m_SkeletalAsset->GetSkeleton();
-        const auto& clip=*GetAnimationClip();
-        const auto& mesh=*m_SkeletalAsset->GetMesh();
-        m_bPoseDirty=true;m_Pose.Clear();MarkRenderStateDirty();
-        if(!Animation::SkeletalPoseBuilder::IsPreparedFor(m_PoseContext,skeleton,clip,mesh,m_MeshNodeGlobalTransform)&&
-           !Animation::SkeletalPoseBuilder::Prepare(skeleton,clip,mesh,m_MeshNodeGlobalTransform,m_PoseContext,m_PoseBoundsSettings))return false;
-        if(!Animation::SkeletalPoseBuilder::BuildPose(m_PoseContext,pose,m_PoseScratch,m_Pose))return false;
-        m_EvaluatedMesh=m_SkeletalAsset->GetMesh();m_EvaluatedSkeleton=m_SkeletalAsset->GetSkeleton();
-        m_EvaluatedClip=GetAnimationClip();m_bPoseDirty=false;++m_PoseSerial;StorePoseVersion();return true;
+        if (BeginSubmitLocalPose(pose))
+        {
+            RunPoseEvaluation();
+        }
+        return FinishPoseEvaluation();
+    }
+
+    bool SkinnedMeshComponent::BeginSubmitLocalPose(const Animation::LocalPose& pose)
+    {
+        m_PendingClip = nullptr;
+        m_PendingLocalPose = nullptr;
+        m_bPoseEvaluationSucceeded = false;
+        if (!m_bExternalAnimationDriven || !HasValidPoseResources())
+        {
+            return false;
+        }
+        if (!m_bMeshNodeTransformOverridden)
+        {
+            m_MeshNodeGlobalTransform = LoadMeshNodeGlobalTransform(m_SkeletalAsset->GetMesh()->GetMeshNodeGlobalTransform());
+        }
+        const auto& skeleton = *m_SkeletalAsset->GetSkeleton();
+        const auto& clip = *GetAnimationClip();
+        const auto& mesh = *m_SkeletalAsset->GetMesh();
+        m_bPoseDirty = true;
+        m_Pose.Clear();
+        MarkRenderStateDirty();
+        if (!Animation::SkeletalPoseBuilder::IsPreparedFor(m_PoseContext, skeleton, clip, mesh, m_MeshNodeGlobalTransform) &&
+            !Animation::SkeletalPoseBuilder::Prepare(skeleton, clip, mesh, m_MeshNodeGlobalTransform, m_PoseContext, m_PoseBoundsSettings))
+        {
+            return false;
+        }
+        ReservePoseEvaluationBuffers(skeleton.GetPoseRuntime().Parents.size());
+        m_PendingLocalPose = &pose;
+        return true;
     }
 
     bool SkinnedMeshComponent::SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings)
@@ -584,6 +606,18 @@ namespace NorvesLib::Core::Component
 
     bool SkinnedMeshComponent::EvaluatePose()
     {
+        if (BeginPoseEvaluation())
+        {
+            RunPoseEvaluation();
+        }
+        return FinishPoseEvaluation();
+    }
+
+    bool SkinnedMeshComponent::BeginPoseEvaluation()
+    {
+        m_PendingClip = nullptr;
+        m_PendingLocalPose = nullptr;
+        m_bPoseEvaluationSucceeded = false;
         if (!HasValidPoseResources())
         {
             m_PoseContext = {};
@@ -594,7 +628,8 @@ namespace NorvesLib::Core::Component
         }
         if (HasCurrentPose())
         {
-            return true;
+            m_bPoseEvaluationSucceeded = true;
+            return false;
         }
         if (m_bExternalAnimationDriven)
         {
@@ -617,18 +652,57 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
-        const bool bSampled = Animation::SkeletalPoseBuilder::Sample(
-            m_PoseContext, clip, m_AnimationTimeSeconds, m_PoseScratch, m_Pose);
-        if (bSampled)
+        ReservePoseEvaluationBuffers(skeleton.GetPoseRuntime().Parents.size());
+        m_PendingClip = &clip;
+        m_PendingPoseTimeSeconds = m_AnimationTimeSeconds;
+        return true;
+    }
+
+    void SkinnedMeshComponent::ReservePoseEvaluationBuffers(size_t jointCount)
+    {
+        m_PoseScratch.Local.reserve(jointCount);
+        m_PoseScratch.LocalMatrices.reserve(jointCount);
+        m_PoseScratch.GlobalMatrices.reserve(jointCount);
+        m_Pose.BonePalette.reserve(jointCount);
+        m_Pose.JointModelMatrices.reserve(jointCount);
+    }
+
+    void SkinnedMeshComponent::RunPoseEvaluation()
+    {
+        if (m_PendingLocalPose)
         {
-            m_bPoseDirty = false;
+            m_bPoseEvaluationSucceeded = Animation::SkeletalPoseBuilder::BuildPose(
+                m_PoseContext, *m_PendingLocalPose, m_PoseScratch, m_Pose);
+        }
+        else if (m_PendingClip)
+        {
+            m_bPoseEvaluationSucceeded = Animation::SkeletalPoseBuilder::Sample(
+                m_PoseContext, *m_PendingClip, m_PendingPoseTimeSeconds, m_PoseScratch, m_Pose);
+        }
+    }
+
+    bool SkinnedMeshComponent::FinishPoseEvaluation()
+    {
+        if (HasPendingPoseEvaluation() && m_bPoseEvaluationSucceeded)
+        {
+            // 直列経路の従来の書き込み順を、外部姿勢の提出と通常の評価それぞれで保つ。
+            if (!m_PendingLocalPose)
+            {
+                m_bPoseDirty = false;
+            }
             m_EvaluatedMesh = m_SkeletalAsset->GetMesh();
             m_EvaluatedSkeleton = m_SkeletalAsset->GetSkeleton();
             m_EvaluatedClip = GetAnimationClip();
+            if (m_PendingLocalPose)
+            {
+                m_bPoseDirty = false;
+            }
             ++m_PoseSerial;
             StorePoseVersion();
         }
-        return bSampled;
+        m_PendingClip = nullptr;
+        m_PendingLocalPose = nullptr;
+        return m_bPoseEvaluationSucceeded;
     }
 
     bool SkinnedMeshComponent::HasValidPoseResources() const

@@ -486,6 +486,7 @@ set(PRIVATE_SOURCES
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
+    Private/Thread/FrameAsyncQueue.cpp
     Private/Thread/JobSystem.cpp
     Private/Thread/Mutex.cpp
     Private/Thread/ReadWriteLock.cpp
@@ -932,6 +933,7 @@ set(PUBLIC_HEADERS
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
     Public/Thread/Fiber.h
+    Public/Thread/FrameAsyncQueue.h
     Public/Thread/JobSystem.h
     Public/Thread/Mutex.h
     Public/Thread/ReadWriteLock.h
