@@ -6862,7 +6862,7 @@
 - notes: 確かめ直し (c)。GR96 の一括 cook の本体(spec v2 の 6 種・増分・統合 manifest・`--jobs` の同値・予算と終了コード 2・`--warn-budget`・`--prune`)は実装と試験がある(`TextureManagedCliTest.cpp:308-400` の MixedBatch、`RigSplitCookTest.cpp:295-400` の skeletal・animation・texture・raw・audio の混在)が、レポートの行は `CookAssetMetrics`(`CookBatchReport.h:9-12`)の三角形・関節・テクスチャ容量・cooked のバイトだけで、異常の検出は無い(`ModelAnalysis` も `anomal` もリポジトリに無い。PROGRESS.md 冒頭の「詳細異常検出は後段」)。`GeometryInspection.h` の `--inspect` 用の数(長さ 0 法線・溶接・閉鎖)は再利用してよいが、`--inspect` の出力は変えない。閾値(1e-3・1024²)は要件の設計案の値で、企画の決定ではないので定数にして AssetCookWorkflow.md に仮と書く。`CMakeLists.txt` の試験の束は共有のファイルなので差分を小さくする。要件 `#### GR96` の設計案【6】と受け入れ確認「異常検出(ModelAnalysisTest)」、ロードマップ 178・189 行。
 
 ## G2-GR96-GENERATORS: asset-set の spec に外部コマンド(generators)を宣言でき、明示したときだけ、入力が変わったものだけを cook の前に走らせる
-- status: todo
+- status: done
 - gr: GR96
 - done-when: spec v2 の最上位に任意の `generators`(各要素は `name`・`command`(文字列の配列)・`inputs`・`outputs`(source root からの相対パスの配列)・`cwd`)を受ける。名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・assets の source を 2 つの generator が出すこと・未知のキーは spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う generator を宣言順に走らせ、すべて成功してから今までどおりの cook に進む。付けないときは generator を 1 つも走らせず、今の cook の結果とバイト一致する(既存の spec と CLI の出力は変えない)。
   失敗(終了コードが 0 でない・宣言した outputs が出ていない)なら、その名前と終了コードを出して cook せずに 1 で終わる。前回の hash は store の制御領域の中の generator の状態に、cook の状態と同じ原子的な書き方で残す。`--run-generators` は `--recover` と一緒に使えない。cook_report に各 generator の `ran`/`skipped`/`failed` を出す。
