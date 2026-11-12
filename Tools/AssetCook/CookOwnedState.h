@@ -18,12 +18,19 @@ namespace NorvesLib::Tools::AssetCook
         CookStateKey PrimaryKey;
         CookOutputRecord Record;
     };
+    // asset-set の generator を前回走らせたときの印。hash は SHA-256 の 64 桁小文字 hex。
+    struct CookGeneratorRecord
+    {
+        Core::Container::AnsiString Name, InputsHash, CommandHash;
+    };
+    inline constexpr size_t MaximumCookStateGenerators = 64;
     struct CookOwnedState
     {
         uint32_t SchemaVersion = 1;
         CookStateBinding Binding;
         uint64_t Generation = 1;
         Core::Container::VariableArray<CookOwnedRecord> Records;
+        Core::Container::VariableArray<CookGeneratorRecord> Generators;
     };
     inline constexpr size_t MaximumCookStateBytes = 16 * 1024 * 1024;
     inline constexpr size_t MaximumCookStateRecords = 4096;

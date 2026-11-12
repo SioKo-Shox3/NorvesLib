@@ -11025,3 +11025,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-115210/G12-GR40-WORLD-PAYLOADS-final-verify.txt`（verify のビルド `EntityTreeTest`・`PhysicsDynamicsTest`・`Game` が exit 0。ctest は StreamingPayloadTest・StreamingColliderPayloadTest・StreamingCellStateMachineTest・StreamingBudgetTest・ScatterSystemResidencyTest・EntityActiveInHierarchyTest・PhysicsParentDormancyTest・PhysicsDetachedColliderTest・EntityTreeTest・PhysicsDynamicsTest の 10/10 合格。2 つの JSON の読み込みも通る）。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next: ランナーの評価者の反証（Object の寿命・アセットロード・物理の危険地帯）。人が見るときの見どころ: 開発ビルドで `--scene=grassland --grassland-streaming` を付けて起動し、near の視点から地形の反対の隅へ自由飛行で移ると、離れたセルの散布（岩・倒木・低木・草の塊）が休眠で消え、岩の当たりが外れ、さらに離れると地形の区画が外れる。戻ると再び読まれる。休眠中の地形は描画が残る。引数なしの grassland（ランチャーから・`--scene=grassland`）は今までと同じ見た目と流れのはず。
 - Notes: 起動引数を足すため、paths の外の `Game/GameApplicationHandler.h`・`.cpp` を数行だけ変えた（既存の `--grassland-scatter-stress` と同じ形）。`--grassland-streaming` では Unload の輪 448 m が地形の対角（約 724 m）より短いので、隅にいると反対の隅の区画が外れて地形に穴が見える（開発の引数だけの挙動）。散布は距離の常駐を切るので、岩以外の種もセルで出し入れされる。セルのシーンの JSON の部分木は G12-GR40-SCENE-PAYLOAD。
+
+- U11 cook_report に generator の行を出す(U3 の切り直し): 着地(直し 0 回)
+- U9 spec v2 の generators を解析・検査する(U1 の切り直し): 着地(直し 0 回)
+- U10 cook state に generator の記録を任意欄で持たせる(U2 の切り直し): 着地(直し 0 回)
+- U4 controller に generator の記録を渡す口を足す: 着地(直し 0 回)
+- U5 generator の実行器(hash・CreateProcessW)を新設する: 着地(直し 0 回)
+- U6 --run-generators を CLI と asset-set の cook に接続する: 着地(直し 0 回)
+- U7 TextureManagedCliTest に generator の試験を足す: 着地(直し 1 回)
+- U8 文書に書き、タスクの verify を通す: 着地(直し 0 回)
+
+## G2-GR96-GENERATORS（2026-11-12、完了）
+- Done: asset-set の spec v2 の最上位に任意の `generators`（`name`・`command`・`inputs`・`outputs`・`cwd`）を受け、名前の重複・空の command・source root の外へ出る inputs/outputs/cwd・outputs の重なり・asset の source を 2 つの generator が出すこと・未知のキーを spec の拒否にする。`--run-generators` を付けたときだけ、inputs の内容の hash と command の正準形の hash が前回と違う（または宣言した outputs が欠けた）generator を宣言順に shell を通さず `CreateProcessW` で走らせ、全部成功してから今までどおり cook する。失敗は名前と終了コードを出して cook せず 1 で終わる。前回の hash は claim の cook state の任意欄 `generators` に cook state と同じ取引で残し、cook_report と stderr に各 generator の `ran`/`skipped`/`failed`/`not_run` を出す。`--recover` とは併用できない。付けないときは generator を走らせず前回の記録を引き継ぐ（既存の spec と CLI の出力は byte 一致）。試験は `TextureManagedCliTest` に試験の exe 自身を `--generator-child` で子にする場合を足し、文書は `TextureAssetSetSpec.md`・`ManagedTextureAssetSetCli.md`・`Testing.md` に書いた。
+- 証拠: verify 3 行を、全単位の着地後と同じコードの作業ツリーで回した出力 `.harness/relay/G2-GR96-GENERATORS-U8-verify.txt`（ビルド EXIT_CODE 0、ctest 100% tests passed, 0 tests failed out of 9、`AssetCookCliParityTest.py` Ran 13 tests OK、各 EXIT_CODE 0）。
+- Next: なし。
+- Notes: 前の走行の単位 U1〜U3 は作業ツリーがほかのタスクに使い回されて差分が失われていたので、同じブリーフで U9〜U11 として切り直した。
+- Notes: `CookManagedBootstrapRequest` は `CookManagedBootstrap.h` にあるので、記録を渡す 1 欄をこのヘッダに足した。実行器は新しいファイル `Tools/AssetCook/TextureAssetSetGenerators.{h,cpp}` に置いた（どちらも paths の外の同じモジュール）。
+- Notes: コードを読んだ範囲の制約（試験では確かめていない）: spec v2・`--prune` なしで spec から外した asset を保持している root では、generator の記録だけが変わった更新が intent の `live_count` の検査で通らない見込み。保持した記録がある manifest のみの更新と同じ形の既存の制約。
+- Notes: generator は管理 store のボリューム lock の外で走るので、同じ spec の generator を 2 つの cook が同時に走らせることは防がない（文書に記載）。AssetCook の CLI だけの変更で、シーンの見た目は変わらない。撮影・計測の確かめは回さない決まり。

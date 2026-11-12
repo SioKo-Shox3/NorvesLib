@@ -75,6 +75,19 @@ namespace NorvesLib::Tools::AssetCook
                     // 現行の所有cacheは常にpayload hashも検証する。--verifyで弱い経路へ切り替えない。
                     continue;
                 }
+                if (Option(arg, "--run-generators"))
+                {
+                    if (std::strcmp(arg, "--run-generators") != 0)
+                    {
+                        return reject("valued --run-generators");
+                    }
+                    if (request.bRunGenerators)
+                    {
+                        return reject("duplicate flag");
+                    }
+                    request.bRunGenerators = true;
+                    continue;
+                }
                 if (Option(arg, "--jobs"))
                 {
                     if (bJobsSeen)
@@ -150,6 +163,10 @@ namespace NorvesLib::Tools::AssetCook
             }
             Core::Container::AnsiString error;
             CookManagedBootstrapOutcome out;
+            if (bRecover && request.bRunGenerators)
+            {
+                return reject("--run-generators cannot be combined with --recover");
+            }
             if (bRecover)
             {
                 if (!bSeen[2] || bSeen[0] || bSeen[1] || bSeen[3] || bJobsSeen || request.bWarnBudget ||
@@ -203,6 +220,11 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     std::fprintf(stderr, "cook_report_directory=%s\n", location.c_str());
                 }
+            }
+            for (const auto& generator : report.Generators)
+            {
+                std::fprintf(stderr, "AssetCook generator name=%s status=%s\n", generator.Name.c_str(),
+                             generator.Status.c_str());
             }
             const char* status = nullptr;
             switch (cooked)
