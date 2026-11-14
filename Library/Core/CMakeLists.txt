@@ -337,6 +337,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/Wind.cpp
+    Private/Rendering/EnvironmentParameters.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -353,6 +354,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
+    Private/Rendering/WetSurface.cpp
     Private/Rendering/DfgLut.cpp
     Private/Rendering/EnvironmentMapSource.cpp
     Private/Rendering/RayTracingShadowPass.cpp
@@ -742,6 +744,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
     Public/Rendering/Wind.h
+    Public/Rendering/EnvironmentParameters.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h
@@ -810,6 +813,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SharedResourceRegistry.h
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
+    Public/Rendering/WetSurface.h
     Public/Rendering/SkyAtmospherePass.h
     Public/Rendering/DDGIProbePass.h
     Public/Rendering/ShadowMapPass.h
