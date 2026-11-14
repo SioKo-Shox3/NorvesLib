@@ -41,7 +41,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## TEST-REMOVE-1114: 試験をすべて消す(このライブラリでは試験を作らない・回さない)
-- status: todo
+- status: done
 - weight: standard
 - done-when: `Test/` の下の試験をすべて(CPU の試験・GPU の試験・ゲームを起動する受入れ)、ソース・CMake の登録・試験の実行ファイルのターゲット・試験専用の補助(`Test/TestSupport`・`Test/TestBundle`・しきい値の TSV・基準画像・試験用の fixture)ごと消し、`Test/` を無くす。最上位の `CMakeLists.txt` から `enable_testing()`・`NORVES_BUILD_TESTS`・`add_subdirectory(Test)` と試験用の CMake の補助(`NorvesTestNoDialog` など)を外す。試験だけが使うスクリプト(`Scripts/` の基準画像の更新・しきい値の調整・試験の連番の書き出しなど)・`Tools/` の煙試験の雛形(`*.cmake.in`)・`.github/workflows/` の試験を回す段(試験しか回さないワークフローはファイルごと)も消す。エンジン本体(`Library`・`Game`)と道具(`Tools`)のソースは変えない(試験のためだけの入口が本体に残っていても触らず、見つけたものを `PROGRESS.md` に書く)。`Docs/Testing.md` は「試験は作らない(このライブラリは作っている途中で、守る利用者も本番も無い。確かめはビルドと人のプレイ)」の短い文書に書き換え、ほかの文書(`Docs/`)から消した試験・試験のコマンドへの案内を外す。消したファイルの数と行数を `PROGRESS.md` に書く。Debug の構成とビルド(Game・Tools を含む全体)が通る。試験は走らせない。
 - verify: `cmake -B build -S .`
