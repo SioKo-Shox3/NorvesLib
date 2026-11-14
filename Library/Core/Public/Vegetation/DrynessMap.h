@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Span.h"
+#include "Container/String.h"
 #include "Container/VariableArray.h"
 
 #include <cstddef>
@@ -66,6 +67,15 @@ namespace NorvesLib::Core::Vegetation
         float RemainingSeconds = 0;      // 目標到達までの残り秒数。
     };
 
+    /** @brief 鍵ごとに保存する源の値。実行時の SourceId は含めない。 */
+    struct DrynessKeyedState
+    {
+        Container::String Key;
+        float CurrentLevel = 0;
+        float TargetLevel = 0;
+        float RemainingSeconds = 0;
+    };
+
     /**
      * @brief 円と楕円の源を正本として保持する枯れ度マップ。
      *
@@ -78,6 +88,10 @@ namespace NorvesLib::Core::Vegetation
      * Falloff == 0 なら減衰値は 0、そうでなければ t = clamp(e / Falloff, 0, 1)、
      * 減衰値は 1 - t * t * (3 - 2 * t)。寄与は CurrentLevel と減衰値の積。
      * Sample はすべての寄与の最大値を返し、源がなければ 0 を返す。
+     * 登録時に鍵を結び、源を除くと値を保持し、同じ鍵が結ばれると値を移す。
+     * 読み込んだ値は次の有効な Tick まで保留し、結ばれなければ未知の鍵として捨てる。
+     * セーブには CaptureKeyedStates / RestoreKeyedStates を使い、SourceId は保存しない。
+     * GameThread 専用であり、排他制御は行わない。
      */
     class DrynessMap
     {
@@ -110,10 +124,46 @@ namespace NorvesLib::Core::Vegetation
         /** @brief 有限の中心を既存の源に設定する。不正な入力または不在 ID なら変更せず false。 */
         bool SetSourceCenter(DrynessSourceId id, float centerX, float centerZ);
 
-        /** @brief ID が一致する源を除き、残りの順序を保つ。不在 ID なら false。 */
+        /**
+         * @brief 源に鍵を結ぶ。空または内部に終端文字を含む鍵は警告して false。
+         * 不在 ID、結合済みの源、手放されていない源と重複する鍵は false（重複は警告）。
+         * 手放された源または保持から現在値・目標値・残り秒数を移し、遷移秒数を残り秒数にする。
+         * 古い源と保持は消し、移す前の新しい源の現在値を復元時の既定値として覚える。
+         */
+        bool BindKey(DrynessSourceId id, const Container::String& key);
+
+        /**
+         * @brief 所有者が源を手放す。不在 ID は false。
+         * 鍵を結んで遷移中なら到達まで源を残し、それ以外は Remove と同様に除く。
+         */
+        bool Release(DrynessSourceId id);
+
+        /** @brief 鍵を結んだ生きた源（手放した源を含む）の ID を返す。不在なら無効 ID。 */
+        DrynessSourceId FindByKey(const Container::String& key) const;
+
+        /** @brief 鍵で見つかる源に SetTarget を行う。不在なら false。 */
+        bool SetTargetByKey(const Container::String& key, float level, float seconds);
+
+        /**
+         * @brief out を空にし、鍵ごとに生きた源の現在値・目標値・残り秒数、または保持の値を写す。
+         * 保留中の保持も含み、鍵の昇順（String の比較順）に並べる。
+         */
+        void CaptureKeyedStates(Container::VariableArray<DrynessKeyedState>& out) const;
+
+        /**
+         * @brief 鍵ごとの値を置き換える。鍵は空でなく内部に終端文字を含まないものに限る。
+         * 現在値・目標値は有限の [0, 1]、残り秒数は有限の 0 以上とし、不正な項目は警告して飛ばす。
+         * 重複する鍵は警告して最初の有効な項目を使い、他の項目は読み続ける。
+         * 手放した源と生きた源の無い鍵を消し、残る源は入力の値へ、入力に無ければ既定値へ戻す。
+         * 入力の残りは次の有効な Tick まで保留し、結ばれれば移し、結ばれなければ警告して捨てる。
+         * 値を移す際は遷移秒数を残り秒数とし、既定値へ戻す際は目標も同じ値で秒数は 0 とする。
+         */
+        void RestoreKeyedStates(Container::Span<const DrynessKeyedState> states);
+
+        /** @brief ID が一致する源を除き、鍵の値を保持して残りの順序を保つ。不在 ID なら false。 */
         bool Remove(DrynessSourceId id);
 
-        /** @brief すべての源を除く。発行済み ID と GPU 上限はリセットしない。 */
+        /** @brief すべての源と鍵の表を除く。発行済み ID と GPU 上限はリセットしない。 */
         void Clear();
 
         /**
@@ -121,6 +171,7 @@ namespace NorvesLib::Core::Vegetation
          * 残り秒数以上なら現在値を目標値に合わせ、残りを 0 にする。
          * それ以外では現在値に (目標値 - 現在値) * (経過秒数 / 残り秒数) を足し、
          * 残り秒数から経過秒数を引く。これにより一定の速さで指定秒数に到達する。
+         * 到達した手放された源を除いて値を保持し、結ばれなかった保留値は警告して捨てる。
          */
         void Tick(float deltaSeconds);
 
@@ -130,7 +181,7 @@ namespace NorvesLib::Core::Vegetation
         /** @brief key が null なら値のオブジェクトだけを書き、それ以外なら指定したキーで書く。 */
         void Serialize(JsonWriter& writer, const char* key = nullptr) const;
 
-        /** @brief 全検証の成功時だけ源と次の ID を置き換える。失敗時は何も変えず、GPU 上限は保持する。 */
+        /** @brief 全検証の成功時だけ源と次の ID を置き換え、鍵の表を空にする。失敗時は何も変えず、GPU 上限は保持する。 */
         DrynessRestoreResult Restore(const JsonValue& value);
 
         /** @brief ID が一致する源を借用し、不在なら null を返す。配列の変更で参照は無効になり得る。 */
@@ -152,7 +203,20 @@ namespace NorvesLib::Core::Vegetation
         void CollectGpuSources(float focusX, float focusZ, Container::VariableArray<DrynessSource>& out) const;
 
     private:
+        /** @brief 生きた源との結合、登録時の既定値、未結合時の保持と読み込み保留を管理する。 */
+        struct KeyEntry
+        {
+            Container::String Key;
+            DrynessSourceId LiveId = InvalidDrynessSourceId;
+            float DefaultLevel = 0;
+            DrynessKeyedState Held;
+            bool bHasHeld = false;
+            bool bReleased = false;
+            bool bPendingRestore = false;
+        };
+
         Container::VariableArray<DrynessSource> m_Sources;
+        Container::VariableArray<KeyEntry> m_Keys;
         DrynessSourceId m_NextId = 1;
         uint32_t m_GpuSourceLimit = DefaultGpuSourceLimit;
     };
