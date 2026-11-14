@@ -11199,3 +11199,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（アセットロードの危険地帯）。実物の Blender での書き出しと fixture の形の照合、実犬の cook は `G2-GR82-REAL-RIG-CHECK`。撮影・計測の確かめは回さない決まり（見た目は変わらない）。
 - Notes: 段階をまたぐ注意の「求めた根が関節でなければ子の関節 1 つを根にする」は、profile1 の「関節の親は関節だけ」の契約に合わないので旧経路には入れず、v1 の経路（Armature を作者 frame に入れる）で満たす。
 - U2 高さフォグの std140 定数と、ViewRenderContext から詰める関数を足す: 着地(直し 0 回)
+- U1 記述子を持たない高さフォグの GLSL を切り出し、VolumetricsCommon から同じ関数を呼ぶ: 着地(直し 1 回)
