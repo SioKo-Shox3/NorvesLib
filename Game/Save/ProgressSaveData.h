@@ -54,6 +54,19 @@ namespace Game::Save
             Container::Map<Container::String, int64_t> Ints;
             Container::Map<Container::String, double> Reals;
         } Progress;
+
+        struct DrynessSaveEntry
+        {
+            Container::String Key;
+            float CurrentLevel = 0.0f;
+            float TargetLevel = 0.0f;
+            float RemainingSeconds = 0.0f;
+        };
+
+        struct VegetationData
+        {
+            Container::VariableArray<DrynessSaveEntry> Dryness;
+        } Vegetation;
     };
 
     // BOM の無い UTF-8 JSON を返す。非有限数などを書けない場合は空文字列を返す。

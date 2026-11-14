@@ -11216,3 +11216,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: done-when の試験の部分（`SkyAtmosphereModelTest` のケース、`R7OutdoorPathTracingReferenceVulkanTest` の c=1 のケース）は、試験を作らない・回さない決まりで足していない。既存の試験の実行ファイルはそのままビルドが通る。数値の既定（F・k・円盤の区間・Tint）は仮の値で、データで替えられる。霧の色の寄せは G7-GR50-FOG-TINT。
 - U1 DrynessMap に鍵ごとの状態（結ぶ・手放す・鍵で目標を設定・写す・戻す・保留）を足す: 着地(直し 0 回)
 - U2 WitherSourceComponent に鍵の PROPERTY を足し、登録で鍵を結び、EndPlay で手放す: 着地(直し 0 回)
+- U3 ProgressSaveData に節 vegetation.dryness を足し、保存で写し・読み込みで戻す結線をする: 着地(直し 0 回)
