@@ -57,7 +57,7 @@ BvhDecodeLimitsの既定は入力64MiB、joint 1024、joint深さ256、frame 1,0
 
 2026-11-12 の実測（上記の実物を指定して Passed）では、`duration_seconds=4.125`、rest の誤差は `rest_error_before_max_degrees=1.70754729e-06`、`rest_error_after_max_degrees=1.70754729e-06`、`rest_error_after_mean_degrees=3.30799745e-07`、`rest_direction_missing=0` だった。ループは `loop_detected=1`、`period_seconds=0.78102891`、`period_frames=12.4964626`、継ぎ目は処理前 `3.02008852` 度、処理後 `0` 度。`planar_distance_m=0`、`estimated_speed_m_s=0`、`source_root_distance_m=0`、未対応関節は入力・出力とも 0 だった。
 
-この計測の target は BVH の OFFSET から作った恒等写像であり、rest の方向差は別の骨格への写像の補正の精度を示す値ではない。実物のルートの位置は全 67 フレームで一定なので推定速度も 0 になる。出力の回転差は `rotation_error_measured=1`、`rotation_error_max_degrees=15.3357514` と報告された。rest の方向差とは別の観測値であり、受け入れ試験の Passed は回転誤差が小さいことを保証しない。
+この計測の target は BVH の OFFSET から作った恒等写像であり、rest の方向差は別の骨格への写像の補正の精度を示す値ではない。実物のルートの位置は全 67 フレームで一定なので推定速度も 0 になる。出力の回転差は `rotation_error_measured=1`、`rotation_error_max_degrees=15.3357514` と報告された。rest の方向差とは別の観測値であり、2026-11-12 の受入れで記録された Passed は回転誤差が小さいことを保証しない。
 
 ### FK の書き出しと位置の規約
 

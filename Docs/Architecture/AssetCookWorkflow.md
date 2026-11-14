@@ -43,7 +43,7 @@ The direct Rendering3DTest Silver asset set cooks these five textures from
 | `Assets/Textures/Silver/silver_roughness.png` | `nvtex.v0.r8.linear` |
 | `Assets/Textures/Silver/silver_ao.png` | `nvtex.v0.r8.linear` |
 
-`stb_image` is still used at cook time by `AssetCook` to decode source images. Runtime smoke validation expects cooked `nvtex` loads and rejects loose `stb_image` fallback for these paths.
+`AssetCook` は cook 時の入力画像の復号に `stb_image` を使う。
 
 ## NVTEX v0.1（ブロック圧縮と R16）
 
@@ -125,7 +125,7 @@ The direct Silver workflow loads texture assets through the runtime manifest and
 - `texture_cooked_parse`
 - `texture_cooked_upload`
 
-The direct smoke rejects `source=loose_stbi` for the cooked Silver logical paths. Loose `stb_image` loads remain valid only when no manifest is loaded, a requested variant is missing, or explicit debug fallback mode permits a cooked failure fallback.
+実行時の loose `stb_image` 読み込みは、manifest 未読込、要求 variant 不在、または明示した debug fallback による cooked 読み込み失敗時に限る。
 
 ## glTF Prepared Texture Workflow
 

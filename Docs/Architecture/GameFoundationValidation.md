@@ -27,7 +27,7 @@ C++23、g++ -O2、assertを有効にした実ソースへの直接リンクで34
 - 共通（1件）：CurvesTest
 - GR08（8件）：GeometrySeparationTest、GeometrySweepTest、PhysicsQueryTypesTest、PhysicsProxyQueryTest、PhysicsProxyVisitorTest、PhysicsRayPrecisionTest、PhysicsQueryPruningTest、PhysicsLegacyQueryTest
 
-Windowsという名称を含む純state試験も、OSから実入力を受けた検証ではない。MEMBER名変更によるobject compileは成功したが、完全な既存bundleリンクの合格を意味しない。
+Windowsという名称を含む当時の純state試験も、OSから実入力を受けた検証ではなかった。MEMBER名変更によるobject compileは成功したが、完全なbundleリンクの合格を意味しなかった。
 
 ### 重点的に確認した数値と境界
 
@@ -40,19 +40,19 @@ Windowsという名称を含む純state試験も、OSから実入力を受けた
 
 ## 未実行・未確認
 
-以前はThread/Containers経由のWindows.h欠如でcompileが停止していたが、2026-11-03にはWindows・Debug（MSVC、Visual Studio 17 2022）で下表の対象試験をcompile・実行できた。基準はHEADのコミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96。指定した5つの試験bundleのビルドは終了コード0、CTestは更新群・Engine等の13件中13件、入力・振動の36件中36件がpassした。FixedStepSchedulerTestはbundle内でcompileされたが、今回のCTestでは実行していない。
+以前はThread/Containers経由のWindows.h欠如でcompileが停止していたが、2026-11-03にはWindows・Debug（MSVC、Visual Studio 17 2022）で下表の対象試験をcompile・実行できた。基準はコミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96。指定した5つの試験bundleのビルドは終了コード0、CTestは更新群・Engine等の13件中13件、入力・振動の36件中36件がpassした。FixedStepSchedulerTestはbundle内でcompileされたが、このCTestでは実行しなかった。
 
-| GR | 今回の統合試験結果と未確認の範囲 |
+| GR | 2026-11-03の統合試験結果と未確認の範囲 |
 |---|---|
 | GR01 | TickGroupConfigurationTest、WorldTickGroupTest（追加の全8群・親子孫/疎な群/空Lateを含む）、ApplicationFixedStepPipelineTest、SkeletalAnimationSamplingTest、SpringArmComponentTest、TickContractTableTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。群の契約は`Docs/Architecture/TickStages.md`を正とする。詳細実行でも`TICK_CONTRACT_TABLE result=pass types=20`を確認（1件中1件pass） |
 | GR03 | 実Mapper/Router（InputRouterTest、InputRoutingExtensionTest、InputActionMapTest）、binding所有/JSON/保存（InputBindingSetTest、InputBindingJsonTest、InputBindingPersistenceTest、WorkingDirectoryInputBindingStoreTest）、Game設定（GameInputSettingsTest）、focus/frame（InputFocusPipelineTest、InputFramePipelineTest、RawMouseMotionTrackerTest、WindowsKeyRepeatGateTest）、capture（InputRebindCaptureStateTest、InputRebindCaptureManagerTest、GameInputRebindTypesTest）、overlay統合（InputDebugOverlayStateTest、InputDebugOverlayControllerTest）がWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。Game起動時の設定ロード・OS入力との実接続、実ユーザーの保存先でのfile IO成功や性能の実測は未確認 |
-| GR04 | XInputDevicePollingTest、XInputDeviceIntegrationTest、GamepadStateNormalizeTest、InputDeviceLifecycleTest、HapticsMixerTest、XInputVibrationStateTest、HapticsPlaybackTimeTest、HapticsServiceTest、HapticsJsonTest、HapticsFramePipelineTest、ActiveDeviceKindTest、ActiveDeviceKindIntegrationTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。device/API/providerのfakeを使う統合試験であり、実pad接続/振動は未確認 |
-| GR08 | `Docs/Architecture/PhysicsQueries.md`を正とする。GR08の試験は今回のverifyに含めていない |
+| GR04 | XInputDevicePollingTest、XInputDeviceIntegrationTest、GamepadStateNormalizeTest、InputDeviceLifecycleTest、HapticsMixerTest、XInputVibrationStateTest、HapticsPlaybackTimeTest、HapticsServiceTest、HapticsJsonTest、HapticsFramePipelineTest、ActiveDeviceKindTest、ActiveDeviceKindIntegrationTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。device/API/providerのfakeを使う統合試験だったため、実pad接続/振動は未確認 |
+| GR08 | `Docs/Architecture/PhysicsQueries.md`を正とする。GR08は2026-11-03の検証に含めなかった |
 
-以下も未確認として残す。
+2026-11-03時点では以下も未確認だった。
 
-- Gameフルビルドと完全bundle/CTest
-- 着手前の既存失敗baseline再現、M9スモーク、TICK_STAGE_SMOKEの実ログ、起動画面3視点の画像確認
+- Gameフルビルド
+- 起動画面3視点の画像確認
 - 実WindowsのAlt+Tab、Raw mouseの画面端越え、cursor固定/解除、実pad接続/振動
 - 群境界の追加階層走査コスト、実規模の物理query性能
 - GitHubの対象コミットでstatus一覧が空の場合、CI合格とは扱わない

@@ -37,8 +37,7 @@ case-foldやUnicode正規化をhash前に行わない。既存8.3/SUBSTはGUID f
 
 同じ物理rootのaliasでOwnerIdが一致しても、lexical RuntimeRootIdentityが違う旧stateはloadを拒否する。安全側の互換制限であり、自動移行は行わない。SourceRootはresolverの入力に含めず、解決済みsource locatorの変更は共通CookDependencySnapshotが検出する。
 
-## 検証と後段
+## 後段との境界
 
-CookOwnerResolverTestは通常の新規leafの作成前後照合、spec同名置換、Unicode、8.3、独立state保存/読戻し、型・raw名・上限・失敗保持を扱う。SUBST、ASCII alias経由のUnicode物理親、case-sensitive directoryはrunner capabilityに依存する。receiptの各flagが0なら未実行であり合格実証として数えない。shareなしspecの属性観測結果は別flagで示す。
 
 lock、journal、state配置、既存root採用、production公開は未接続。この観測はatomic namespace snapshotでも認証でもなく、協調writerのlockと公開前の再照合を置き換えない。
