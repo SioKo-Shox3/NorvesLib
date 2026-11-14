@@ -38,6 +38,16 @@
 
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
+## GPU-TEST-REMOVE-1114: ウィンドウを開く試験とゲームを起動する試験をすべて消す
+- status: todo
+- weight: standard
+- done-when: GPU のラベルの試験(Vulkan のデバイスを作りウィンドウを開く試験。いま 117 件)と、Game.exe を起動する `M9WorldAcceptanceTest` を、CMake の登録・試験の実行ファイルのターゲット・ソースごと消す。値を確かめているかどうかに関わらず消す。1 つの実行ファイルに GPU のラベルの無い CPU の試験(MEMBER)が同居しているときは、CPU の試験は残して GPU の試験だけを外す。消して使われなくなった試験専用の補助(`Test/Core/Rendering/RenderingValidation/` の起動の枠組み・しきい値の TSV・基準画像・試験の撮影のスクリプトなど)も消す。エンジン本体(`Library`・`Game`・`Tools`)のコードは変えない。残る試験に、本物のウィンドウ(`WindowsWindow`)や Vulkan のデバイスを作るものが無いことをコードを読んで確かめ、あれば同じく消す。`Docs/Testing.md` から消した試験の記述を消し、「ウィンドウを開く試験・ゲームを起動する試験は作らない(見た目と起動は人が確かめる)」と書く。消した試験の数と、同居していて残した CPU の試験の名前を `PROGRESS.md` に書く。Debug の構成(テスト有効)とビルドが通る。試験は走らせない(確かめはビルドと登録の照合だけ)。
+- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug -- -m:1`
+- verify: `git grep -q -E "GPU;RenderingValidation|VulkanTest|M9WorldAcceptanceTest" -- Test CMakeLists.txt && exit 1 || exit 0`
+- paths: Test/**, CMakeLists.txt, Docs/Testing.md, Scripts/**
+- notes: 人の決定: ウィンドウを開く試験・ゲームを起動する試験は要らない。見た目と起動は人が確かめる範囲で、AI が起動できたかや画素の値を見ても意味が無い。二度と足さない。盤面では一度も回していない(ウィンドウが開いて利用者の邪魔になるので外していた)。試験を走らせて決めない。
+
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
 - status: done
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)とビルドが通る。消した試験(`RHIGPUTimestampVulkanSkipContractTest`)の名前が `Test` と最上位の `CMakeLists.txt` に残らず、残す `RHIGPUTimestampVulkanTest` が ctest の一覧(`-N`、実行しない)に出る。統合ブランチ全体の ctest と前からの落ちの直しは BUILD-HEALTH-1109 が 17 行の verify で受け持つので、このタスクでは回さない。
@@ -50,27 +60,12 @@
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
 - status: todo
-- after: GFX-TEST-PRUNE-1112
-- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 17 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。17 行の和集合が除外の後の全部と一致し重なりが無いことを `ctest -N` で確かめ、行ごとの本数と時間を `PROGRESS.md` に書く。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- after: GPU-TEST-REMOVE-1114
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通り、ctest の全部(GPU-TEST-REMOVE-1114 でウィンドウを開く試験を消した後に残る CPU の試験。直列で 7 分ほど)が 2 行の verify ですべて通る。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。落ちる試験を消して通すことはしない(ウィンドウを開く・ゲームを起動する試験が残っていたら、それは消してよい)。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracingLighting" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingHdr" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingRayTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingShadingModel" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(DDGI|TemporalAA)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing|ShadingModel|DDGI|TemporalAA)"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^CookManaged" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^CookManaged"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[M-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600 -I 1,,2`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600 -I 2,,2`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
 - notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
 
