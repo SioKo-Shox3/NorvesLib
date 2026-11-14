@@ -122,4 +122,4 @@ Silver の数値は参考であり、前述の単色に近い素材から圧縮�
 
 BC6H の符号化は `Library/ThirdParty/DirectXTex/UPSTREAM.json` に固定された DirectXTex `may2026`、commit `4feb3e11a020f35b796fc769a74216a555d4f5ef` による。
 
-この文書の画質は CPU の符号化・復号によるもので、GPU 上の標本値を測るものではない。GPU の BC6H・BC3 の標本は `RHIBlockCompressedTextureVulkanTest` が手組みの単色ブロックをアップロードして読み戻す形式の試験で確かめる。AssetCook が符号化したブロックの GPU 上での画質は、このスモークでは測っていない。
+この文書の画質は CPU の符号化・復号によるもので、GPU 上の標本値を測るものではない。AssetCook が符号化したブロックの GPU 上での画質は、この記録では測っていない。

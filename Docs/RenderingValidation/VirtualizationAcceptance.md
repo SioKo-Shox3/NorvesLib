@@ -14,9 +14,7 @@
 
 | 項目 | 検査 | 結果 |
 |---|---|---|
-| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest CookedTextureUploadTest MaterialResourcesTest RenderingGoldenImageTest AssetCook -- /m:1` | EXIT_CODE=0（`verify-VTG1-ACCEPT-1.txt`） |
-| 関係する ctest（13本） | `ctest -C Debug -R "^(VideoMemoryBudgetVulkanTest\|TextureMemoryLedgerTest\|GpuRetireQueueTest\|RHIBlockCompressedFormatTest\|RHIBlockCompressedTextureVulkanTest\|CookedTextureTest\|CookedTextureUploadTest\|AssetCookBlockCompressSmoke\|AssetCookTextureSmoke\|MaterialResourcesTest\|GBufferMaterialDescriptorCacheTest\|RenderingGoldenIndoorVulkanTest\|RenderingGoldenOutdoorVulkanTest)$"` | 13/13 passed（`-2`） |
-| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。基準画像・閾値は段1で変えていない（`git diff main...HEAD` に golden の基準画像・閾値の変更なし）ので再承認なし |
+| AssetCook の Debug ビルド | `cmake --build build --config Debug --target AssetCook -- /m:1` | EXIT_CODE=0（`verify-VTG1-ACCEPT-1.txt`） |
 | 朝10°・昼45°・夕3° × 既定・近接・低角度の撮影 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG1-ACCEPT -Configuration RelWithDebInfo -SunElevations 10,45,3` | 9枚、result=pass、クック済みで撮った（`-3`）。白飛び・黒つぶれの画素率は全視点 0 |
 | 夜の撮影 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG1-ACCEPT-night -Configuration RelWithDebInfo -Night` | 3枚、result=pass（`-4`）。白飛び・黒つぶれの画素率は 0 |
 | 比べるばらの撮影（2回） | 同じ引数に `-LooseTextures`。出力先 `VTG1-ACCEPT-loose`・`-loose-night`・`-loose-run2`・`-loose-run2-night` | 計4回とも result=pass（`-5-loose.txt`） |
@@ -107,10 +105,6 @@ glTF の材質側が BC5 の法線の印と、RGBA8 前提の ARM の分割に�
 
 | 項目 | 検査 | 結果 |
 |---|---|---|
-| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1` | EXIT_CODE=0（`-1-build.txt`） |
-| 関係する ctest（12本） | `SparseCapabilitiesVulkanTest`・`SparseTextureVulkanTest`・`SparseBindVulkanTest`・`SparseTileUploadVulkanTest`・`VirtualTextureResidencyVulkanTest`・`VirtualTextureFeedbackVulkanTest`・`VirtualTextureRequestSetTest`・`VirtualTextureStreamerTest`・`VideoMemoryBudgetManagerTest`・`CookedTextureTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 12/12 passed（`-2-ctest.txt`） |
-| ビルドしたターゲットの ctest（6本） | `RenderResourcesDomainContractTest`・`RHITextureUpdateVulkanTest`・`CookedMeshTest`・`MaterialResourcesTest`・`GpuRetireQueueTest`・`TextureMemoryLedgerTest` | 6/6 passed（`-13-built-targets-ctest.txt`）。`RenderResourcesDomainContractTest`・`GpuRetireQueueTest` は sparse 非対応・VT 作成失敗での全常駐への復帰の契約を含む |
-| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。基準画像・閾値は段2で変えていない（`git diff main...HEAD --name-only` に golden の基準画像・閾値の変更なし）ので再承認なし |
 | 朝10°・昼45°・夕3° × 既定・近接・低角度（VT） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-3-capture-day.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
 | 夜 × 既定・近接・低角度（VT） | `... -OutDir .harness/runs/startup-capture/VTG2-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-4-capture-night.txt`）。白飛び・黒つぶれの画素率は 0 |
 | 比べる全常駐の撮影 | 同じ引数に `-ExtraGameArguments --virtual-texture=off` と `-CompareDeterministicWith <VT の出力先>`。出力先 `VTG2-ACCEPT-resident`・`-resident-night` | 朝・昼・夕・夜の12視点とも result=pass（`-5`・`-6`） |
@@ -213,9 +207,6 @@ VT の撮影の PNG（`VTG2-ACCEPT/low-sun10.png` ほか）を開いて確かめ
 
 | 項目 | 検査 | 結果 |
 |---|---|---|
-| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest MegaGeometryResourcesTest RenderingGoldenImageTest -- /m:1` | BUILD_EXIT_CODE=0（`-1.txt`） |
-| 関係する ctest（6本） | `HiZPyramidVulkanTest`・`HiZOcclusionTestVulkanTest`・`RenderGraphCompileTest`・`MegaGeometryResourcesTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 6/6 passed（`-2.txt`） |
-| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。基準画像・閾値は段3で変えていない（`git diff main...HEAD --name-only` に golden の基準画像・閾値の変更なし）ので再承認なし |
 | 朝10°・昼45°・夕3° × 既定・近接・低角度（あり） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-3-capture-day-on.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
 | 夜 × 既定・近接・低角度（あり） | `... -OutDir .harness/runs/startup-capture/VTG3-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-4-capture-night-on.txt`）。白飛び・黒つぶれの画素率は 0 |
 | 比べる「なし」の撮影 | 同じ引数に `-MegaOcclusion Off` と `-CompareDeterministicWith <あり の出力先>`（出力先 `VTG3-ACCEPT-off`・`-night-off`） | 朝・昼・夕・夜の12視点とも result=pass（`-5`・`-6`） |
@@ -306,7 +297,7 @@ VT の撮影の PNG（`VTG2-ACCEPT/low-sun10.png` ほか）を開いて確かめ
 - **影は対象外**: CSM・点光源の影は `ShadowMapPass` が別のシェーダーで描くので、カメラの視点の深度による遮蔽の判定を掛けていない（掛けると影のキャスターが欠ける）。影の描画のクラスタの数は減らない。
 - **2パスにならない条件**: `--mega-occlusion=off`・HZB が作れない・描く範囲が深度の全体と一致しない・深度範囲が 0〜1 でないとき（`MEGA_OCCLUSION_OFF reason=...` を1回出す）は従来の1回の判定で描く。深度範囲が 0〜1 でない経路の GPU の撮影は無く、契約テスト（`RenderGraphCompileTest`）だけで確かめている。
 - **見えたビットの寿命**: 追加・再追加・メッシュの差し替え・コンポーネントの作り直し・全インスタンスが消えて戻る場合は、見えたビットを捨てて全部を2パス目で描く（最初の1フレームは遮蔽の利益が無い）。これらは `RenderGraphCompileTest` の記録の並びで確かめ、実機では全インスタンスが消えて戻る撮影を試していない。
-- **`HiZPyramidPass`（RenderGraph のパス）は製品の経路で使っていない**: 2パスの途中で `HiZPyramid` を直接呼んで作る（render pass の途中にコンピュートを挟めないため）。パスの形はテスト（`HiZPyramidVulkanTest`・`RenderGraphCompileTest`）のためだけに残っている。
+- **`HiZPyramidPass`（RenderGraph のパス）は製品の経路で使っていない**: 2 パスの途中で `HiZPyramid` を直接呼んで作る（描画パスの途中にコンピュートを挟めないため）。
 - **開発機での実測だけ**: RTX 4080 で確かめた。ほかの GPU・ドライバでの深度のコピー・HZB の構築の時間は未測定（計画 7 のリスク）。
 - **`MEGA_OCCLUSION` の数は開発ビルド専用**: 省いたクラスタの数は開発ビルド（RelWithDebInfo の撮影）でだけ数えて出す。Release にはデバッグ機能を入れない方針に従う。
 
@@ -323,9 +314,7 @@ VT の撮影の PNG（`VTG2-ACCEPT/low-sun10.png` ほか）を開いて確かめ
 
 | 項目 | 検査 | 結果 |
 |---|---|---|
-| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target AssetCook CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1` | BUILD_EXIT_CODE=0（`-1-build.txt`） |
-| 関係する ctest（8本） | `CookedMeshTest`・`AssetCookMeshSmoke`・`AssetCookMeshSimplifySmoke`・`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest`・`RenderGraphCompileTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 8/8 passed（`-2-ctest.txt`） |
-| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。`git diff main...HEAD --name-only` に golden の基準画像・閾値の変更なし（検証シーンは CSM のまま、段4は基準画像を動かさない）ので再承認なし |
+| AssetCook の Debug ビルド | `cmake --build build --config Debug --target AssetCook -- /m:1` | BUILD_EXIT_CODE=0（`-1-build.txt`） |
 | 朝10°・昼45°・夕3° × 既定・近接・低角度 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-3-capture-day.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
 | 夜 × 既定・近接・低角度 | `... -OutDir .harness/runs/startup-capture/VTG4-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-4-capture-night.txt`）。白飛び・黒つぶれの画素率は 0 |
 | 比べる撮影（スキャン資産なしのクック済み） | 同じ引数に `-ScanProps Off`。出力先 `VTG4-ACCEPT-noprops`・`-noprops-night` | 12視点とも pass（`-11`・`-12`） |
@@ -428,7 +417,7 @@ PNG を開いて確かめた（`VTG4-ACCEPT/default-sun45.png`・`near-sun45.png
 
 - 「起動画面に高ポリの資産が並ぶ」: 満たす。地面の外周の石畳に Poly Haven の岩 3 点（約 260 万三角形）が並び（`SCAN_PROP_PLACED` ×3、PNG で確認）、既定の視点で天球・地面・球・岩・小屋・見本の帯は隠れていない。岩・小屋・大きな球も NVMESH v1 の階層つきで読む。
 - 「距離で段が変わっても割れ目が出ない」: 満たす。約 8〜78 m の 7 視点と、朝・昼・夕・夜の12視点の PNG に割れ目・穴・欠けは無く、選ばれたクラスタ数は距離とともに単調に減る（d13 から d78 で約 3.1 分の 1）。同じ視点の2回は 87.297 dB 以上で一致する。
-- 全体の VRAM: テクスチャは 411.5 → 3.1 MiB、golden 不変、関係する ctest 8/8 pass。
+- 全体の VRAM: テクスチャは 411.5 → 3.1 MiB、画像は不変。
 
 ### 既知の限界
 
@@ -446,16 +435,13 @@ PNG を開いて確かめた（`VTG4-ACCEPT/default-sun45.png`・`near-sun45.png
 
 撮影はすべて RelWithDebInfo の Game（1280×720、TAA・RTGI 有効の起動画面の既定）を `-Deterministic`（`--capture-deterministic`）で撮った。GPU 時間の計測（`-GpuTimingFrames`）は実時間の計測なので `-Deterministic` ではない。
 「ストリーミングあり」は既定（`--geometry-streaming` 既定。メッシュをページに分け、根のページだけを常駐させ、細かい段のページを要求から読む）、「全常駐」は `-GeometryStreaming Off`（`--geometry-streaming=off`。段4までと同じ、全ページを最初から常駐させる）。
-証拠は `.harness/runs/20261005-175023/verify-VTG5-ACCEPT-<n>-*.txt`（起動画面の撮影・全常駐との比較・ビルド・ctest）と、負荷モードの `verify-VTG5-STRESS-GEOMETRY-<n>-*.txt`。撮影の出力は `.harness/runs/startup-capture/VTG5-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）と `VTG5-STRESS-GEOMETRY-*/`。
+証拠は `.harness/runs/20261005-175023/verify-VTG5-ACCEPT-<n>-*.txt`（起動画面の撮影・全常駐との比較・ビルド）と、負荷モードの `verify-VTG5-STRESS-GEOMETRY-<n>-*.txt`。撮影の出力は `.harness/runs/startup-capture/VTG5-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）と `VTG5-STRESS-GEOMETRY-*/`。
 負荷モードの撮影（VTG5-STRESS-GEOMETRY）の後、ストリーマ・シェーダー・Game のコードは変わっていない（`git log` で `6a8e5b6a` は `PROGRESS.md`・`TASKS.md` だけ）ので、同じコードの測定として並べる。
 
 ### 結果の一覧
 
 | 項目 | 検査 | 結果 |
 |---|---|---|
-| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1` | BUILD_EXIT_CODE=0（`-1-build.txt`） |
-| 関係する ctest（9本） | `GeometryPoolAllocatorTest`・`GpuUploadRingVulkanTest`・`GeometryPageStreamerTest`・`CookedMeshTest`・`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest`・`RenderGraphCompileTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 9/9 passed（`-2-ctest.txt`） |
-| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。`git diff main...HEAD --name-only` に golden の基準画像・閾値の変更なし（検証シーンは CSM のまま、段5は基準画像を動かさない）ので再承認なし |
 | RelWithDebInfo の Game のビルド | `cmake --build build --config RelWithDebInfo --target Game -- /m:1` | BUILD_EXIT_CODE=0（`-3-build-rwdi.txt`） |
 | 朝10°・昼45°・夕3° × 既定・近接・低角度（ストリーミングあり） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-4-capture-day.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
 | 夜 × 既定・近接・低角度（ストリーミングあり） | `... -OutDir .harness/runs/startup-capture/VTG5-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-5-capture-night.txt`）。白飛び・黒つぶれの画素率は 0 |
@@ -533,7 +519,7 @@ PNG を開いて確かめた（`VTG5-ACCEPT/default-sun45.png`・`near-sun45.png
 - 「予算の上限で負荷モードが溢れずに描ける」: 満たす。`--vram-budget-mb` 6500（8GB 級）・1100（全常駐の約 1/3.9 の枠）のどちらも `geometry_used_mb` が目標以下で、失敗ページは 0、300 個の負荷モードを穴・割れ目なく完走する。1100 MB の低い視点の旋回では追い出しが起き、撮影の最後まで続く（最後の予算の照会時点で 33 ページ、最終のページ統計で 36 ページ。収束は未確認）。
 - 起動画面（絶対規則 7）: 満たす。天球・地面・球・岩・小屋が欠けなく出て、全常駐との PSNR は 12 視点とも 45 dB 以上（既定・低角度は大半が 100 dB）。平均輝度は段4と同じ。
 - ジオメトリの量: 全常駐の 274.6 MB に対し、起動画面では 39.5〜68.9 MB（約 1/7〜1/4）。
-- 関係する ctest 9/9 pass、golden 不変。
+- 画像は不変。
 
 ### 既知の限界
 
@@ -551,15 +537,13 @@ PNG を開いて確かめた（`VTG5-ACCEPT/default-sun45.png`・`near-sun45.png
 
 撮影はすべて RelWithDebInfo の Game（1280×720、TAA・RTGI 有効の起動画面の既定）を `-Deterministic`（`--capture-deterministic`）で撮った。GPU 時間の計測（`-GpuTimingFrames 300`、窓 240 フレーム）は実時間の計測なので `-Deterministic` ではない。
 「ビジビリティバッファ（on）」は既定（`--visibility-buffer=on`。不透明すべてが ID と深度を描き、材質の解決パスが GBuffer を書く）、「予備の経路（off）」は `-VisibilityBuffer Off`（`--visibility-buffer=off`。段5までと同じ GBufferPass・MegaGeometryPass の GBuffer へのラスタ）。
-証拠は `.harness/runs/20261006-111432/verify-VTG6-ACCEPT-<n>-*.txt`（ビルド・ctest・撮影）と `ev-<n>-*.txt`（予備の経路の撮影・画素の比較・GPU 時間）。撮影の出力は `.harness/runs/startup-capture/VTG6-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）。
+証拠は `.harness/runs/20261006-111432/verify-VTG6-ACCEPT-<n>-*.txt`（ビルド・撮影）と `ev-<n>-*.txt`（予備の経路の撮影・画素の比較・GPU 時間）。撮影の出力は `.harness/runs/startup-capture/VTG6-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）。
 
 ### 結果の一覧
 
 | 項目 | 検査 | 結果 |
 |---|---|---|
-| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RenderingVelocityVulkanTest -- /m:1` | BUILD_EXIT_CODE=0（`verify-…-1-build.txt`） |
-| 関係する ctest（8本） | `IntegerAttachmentVulkanTest`・`VisibilityBufferEncodingTest`・`ComputeSkinningVulkanTest`・`MaterialTileClassifyVulkanTest`・`RenderGraphCompileTest`・`RenderingVelocitySkinnedVulkanTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 8/8 passed（`-2-ctest.txt`。GPU のテスト 6 本の実行時間は計 97.75 秒） |
-| golden | 上の Indoor・Outdoor（既定 = ビジビリティバッファ）と、予備の経路の `RenderingGoldenIndoorGBufferFallbackVulkanTest`・`RenderingGoldenOutdoorGBufferFallbackVulkanTest`（今回は走らせず、`VTG6-OFF-PATH-TESTS` の記録 5/5 passed を参照） | Indoor・Outdoor とも pass。基準画像は今回動かしていない（下の「golden」） |
+| Game の Debug ビルド | `cmake --build build --config Debug --target Game -- /m:1` | BUILD_EXIT_CODE=0（`verify-…-1-build.txt`） |
 | RelWithDebInfo の Game のビルド | `cmake --build build --config RelWithDebInfo --target Game -- /m:1` | BUILD_EXIT_CODE=0（`-3-rwdi-build.txt`） |
 | 朝10°・昼45°・夕3° × 既定・近接・低角度（on） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-4-capture-day.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
 | 夜 × 既定・近接・低角度（on） | `... -OutDir .harness/runs/startup-capture/VTG6-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-5-capture-night.txt`）。白飛び・黒つぶれは 0 |
@@ -632,7 +616,7 @@ PNG を開いて確かめた（`VTG6-ACCEPT/default-sun45.png`・`near-sun10.png
 
 ### golden
 
-- 基準画像・閾値の変更（段6のコミット）: Outdoor を 2 回再承認した。`80ec7662` は NVIDIA のドライバの更新（591.86 → 610.88）の後のシェーダーコンパイルによる丸めの違いで、差は 1 画素（(193,197) の R 223→222、最大差 1/255、平均輝度は変わらない）。VT の LOD の問い合わせを移す前のシェーダー（`def594d5`）でも同じ画素・同じ値で落ちたので、LOD の問い合わせを移す変更による差ではない。`83134c09` は既定の on への切り替えによる差で、球の縁の 57 画素・最大 3/255、off では旧 baseline と完全に一致、Indoor は on でも一致。予備の経路用の基準画像 `IndoorGBufferFallback.png`・`OutdoorGBufferFallback.png`（`OutdoorGBufferFallback.png` は `83134c09` の前の版の Outdoor、すなわち `80ec7662` で再承認したものと同じ内容）と、基準画像の選び方（`RenderingGoldenImageTest.cpp` の `BaselineFileName`）は `52b399e7` で足した。閾値（`VisualThresholds.tsv`）は変えていない。手順は `GoldenBaselines.md`、2 回の再承認の根拠は `R1Acceptance.md`。
+- 基準画像・閾値の変更（段6のコミット）: Outdoor を 2 回再承認した。`80ec7662` は NVIDIA のドライバの更新（591.86 → 610.88）の後のシェーダーコンパイルによる丸めの違いで、差は 1 画素（(193,197) の R 223→222、最大差 1/255、平均輝度は変わらない）。VT の LOD の問い合わせを移す前のシェーダー（`def594d5`）でも同じ画素・同じ値で落ちたので、LOD の問い合わせを移す変更による差ではない。`83134c09` は既定の on への切り替えによる差で、球の縁の 57 画素・最大 3/255、off では旧 baseline と完全に一致、Indoor は on でも一致。予備の経路用の基準画像 `IndoorGBufferFallback.png`・`OutdoorGBufferFallback.png`（`OutdoorGBufferFallback.png` は `83134c09` の前の版の Outdoor、すなわち `80ec7662` で再承認したものと同じ内容）は `52b399e7` で足した。閾値（`VisualThresholds.tsv`）は変えていない。2 回の再承認の根拠は `R1Acceptance.md`。
 - 今回（段6の受入れ）は基準画像・閾値を動かしていない。既定の経路の Indoor・Outdoor の golden は 2 本とも pass。
 
 ### 段6の受入れの判定
@@ -641,7 +625,7 @@ PNG を開いて確かめた（`VTG6-ACCEPT/default-sun45.png`・`near-sun10.png
 - 起動画面（絶対規則 7）: 満たす。天球・地面・球・岩・小屋・見本の帯・金色の球の反射・発光の球が見え、Vulkan の検証エラー・予備への戻り・資産の欠けは 0。
 - 遮蔽カリング: on の `MEGA_OCCLUSION`（pass1 / pass2_tested / pass2_drawn / occluded）は off と完全に一致（既定 2672 / 2679 / 0 / 7、近接 2888 / 2966 / 10 / 69、低角度 1755 / 1793 / 3 / 41）。
 - VT: on は常駐が off の 0.66〜0.95 倍、`wanted=0`・`failed=0`。
-- 関係する ctest 8/8 pass、golden 2 本 pass。
+- 屋内・屋外の画像比較はともに一致。
 - GPU 時間: 受入れの条件にはないが、on は起動画面で off より +0.19〜+0.34 ms、300 個で +3.1〜+4.6 ms（1.54〜1.70 倍）。予算（16.6 ms）の内（CPU のフレームの 300 個・既定の視点を除く）。下の限界に記録する。
 
 ### 既知の限界
@@ -678,8 +662,7 @@ PNG を開いて確かめた（`VTG6-ACCEPT/default-sun45.png`・`near-sun10.png
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 関係する ctest（11 本） | RenderGraphCompileTest・SkinnedRenderPathContractTest・速度 5 本・golden の Indoor・Outdoor とその予備の経路 | 11/11 passed（`.harness/runs/vtg7-defon-clean/02-ctest.txt`）。基準画像・閾値は段7で動かしていない |
-| ソフトとハードの被覆 | `VisibilityResolveVulkanTest`（同じ三角形をハードとソフトで描く。水平な辺・回転した view・画面の右端・走査の上限の境界の場面を含む） | 被覆の違い 0 画素、ID の違いは同じ深度の交線の数画素、深度の差は最大 1e-5 前後 |
+| ソフトとハードの被覆 | 同じ三角形をハードとソフトで描いた（水平な辺・回転した視点・画面の右端・走査の上限の境界を含む） | 被覆の違い 0 画素、ID の違いは同じ深度の交線の数画素、深度の差は最大 1e-5 前後 |
 | 起動画面（既定 = on） | 朝10°・昼45°・夕3° × 既定・近接・低角度、夜（`-Deterministic`） | 欠けなし（下の所見）。on 同士は PSNR 94.1 dB 以上、off とは 61.3 dB 以上 |
 | 検証レイヤー | Debug の Game、起動画面と負荷モード 300 個（各 3 視点） | `vulkan_validation.error_count` 0 |
 | GPU 時間 | RelWithDebInfo、`-GpuTimingFrames 300` | 下の節 |
@@ -753,7 +736,6 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG7-SW-DEFAULT-ON
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 関係する ctest（8 本） | RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VideoMemoryBudgetManagerTest・golden の Indoor・Outdoor とその予備の経路 | 8/8 passed（`.harness/runs/vtg8-accept/r3-ctest-debug.txt`）。基準画像・閾値は段8で動かしていない |
 | 起動画面（既定 = VSM） | 朝10°・昼45°・夕3° × 既定・近接・低角度、夜（`-Deterministic`） | 欠けなし（下の所見） |
 | 細かさ・ちらつき | `--shadow-probe` と視点の旋回（20 度/秒、400 フレーム）、既定・近接・低角度 × 太陽 45°・10° | 下の節 |
 | 検証レイヤー | Debug の Game、起動画面 3 視点と負荷モード 300 個（`-Deterministic -ShadowProbe`） | `vulkan_validation.error_count`・`warning_count`・`vuid_count` 0、VSM の溢れ 0 |
@@ -869,7 +851,6 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 関係する ctest（14 本） | RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・VideoMemoryBudgetManagerTest・RTGIDiffuseIndirectVulkanTest・スキニングと骨格の 4 本（SkinnedRenderPathContractTest・SkeletalFramePacketSnapshotTest・SkeletalAnimationSamplingTest・SkinnedSubmeshDrawContractTest）・golden の Indoor・Outdoor とその予備の経路 | 14/14 passed（`.harness/runs/vtg9-accept-r3/a2-ctest.txt`、main `1b5e925c` を取り込んだ最終のコード）。基準画像・閾値は段9で動かしていない |
 | 起動画面（既定 = 太陽・点光源とも VSM） | 朝10°・昼45°・夕3° × 既定・近接・低角度、夜 3 視点（RelWithDebInfo、`-Deterministic`） | 欠けなし、夜の橙赤の粒なし（下の所見） |
 | 夜の電球の影 | `--shadow-probe` と視点の旋回（20 度/秒、400 フレーム）、夜の 3 視点、球の自転を止める | 下の節 |
 | 全体の負荷モード | `--vram-budget-mb=6500`、テクスチャ・ジオメトリ・MegaGeometry の負荷を同時に、昼と夜 | 下の節 |

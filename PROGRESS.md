@@ -11201,3 +11201,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Tools の煙試験の登録・雛形・fixture を消す: 着地(直し 0 回)
 - U2 試験だけが使うスクリプトと試験のワークフローを消す: 着地(直し 0 回)
 - U3 試験の文書を書き換え、Architecture などの文書から試験への案内を外す: 着地(直し 0 回)
+- U4 RenderingValidation の文書から試験への案内を外す: 着地(直し 0 回)

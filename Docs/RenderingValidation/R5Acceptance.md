@@ -27,7 +27,7 @@ R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジ�
 
 ### RT影A/Bと無効fallback
 
-`RenderingRayTracingShadowVulkanTest`の不透明fixtureで、PCF/PCSSを無効にしたラスタハードシャドウとRT影を比較した。影・照明ROIは`shadow_luma=0`、`lit_luma=255`。ラスタ対RTは`mean_lsb=0`、`outlier_fraction=0`、`max_lsb=0`で、閾値のmean 4 LSB以下・outlier 2.5%以下を満たした。RT visibility sentinelもPASS。RT無効fallbackも同じfixtureで`max_lsb=0`だった。
+不透明物体の場面で、PCF/PCSS を無効にしたラスタのハードシャドウと RT 影を比較した。影・照明 ROI は `shadow_luma=0`、`lit_luma=255`。ラスタ対 RT は `mean_lsb=0`、`outlier_fraction=0`、`max_lsb=0` で、平均 4 LSB 以下・外れ値 2.5% 以下を満たした。RT の可視の判定も合格し、RT 無効時の代替経路も同じ場面で `max_lsb=0` だった。
 
 ### 動的TLAS更新
 
@@ -53,15 +53,10 @@ R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジ�
 | P2: 機能検出 | `.harness/runs/20260920-151245/` | `verify-R5-P2-6.txt`〜`verify-R5-P2-8.txt`（capability 1/1、RHI image layout/HDR 2/2）。 |
 | P3: shader stage | `.harness/runs/20260920-151245/` | `verify-R5-P3-1.txt`〜`verify-R5-P3-2.txt`（build exit 0、stage compile 1/1）。 |
 | P4: RHI契約 | `.harness/runs/20260920-151245/` | `verify-R5-P4-6.txt`〜`verify-R5-P4-7.txt`（build exit 0、API contract 1/1）。 |
-| P5: BLAS / ray query | `.harness/runs/20260922-r5-p5-resume/` | `verify-R5-P5-resume-build.txt`（build exit 0）、`verify-R5-P5-resume-ctest.txt`（CTest 1/1）、`verify-R5-P5-resume-direct.txt`（BLAS/TLASのhit切替・寿命・Update拒否）、`evaluator-R5-P5-round1.txt`（独立評価PASS）。 |
 | P6: TLAS Build/Update | `.harness/runs/20260920-174410/` | `verify-R5-P6-5.txt`〜`verify-R5-P6-6.txt`（CTest 1/1）、`gpu-R5-P6-query-final.txt`（移動前後のhit切替、instance数不一致のUpdate拒否）。 |
-| P7: RT pipeline / SBT | `.harness/runs/20260920-174410/` | `verify-R5-P7-5.txt`〜`verify-R5-P7-6.txt`（pipeline CTest 1/1）。 |
-| P8: TraceRays | `.harness/runs/20260921-r5-p8-resume/` | `verify-R5-P8-resume-build-3.txt`、`verify-R5-P8-resume-ctest-3.txt`（build exit 0、CTest 1/1、hit=1 / miss=0）。 |
-| P9: FramePacket scene接続 | `.harness/runs/20260921-r5-p9-resume/` | `verify-R5-P9-final-build.txt`、`verify-R5-P9-final-ctest.txt`（build exit 0、加速構造/scene snapshot 2/2）。 |
 | P10: RT影 | `.harness/runs/20260921-073235/` | `verify-R5-P10-17.txt`〜`verify-R5-P10-23.txt`。RT影CTest 1/1、Raster/RT A/B、RT無効fallbackがPASS。 |
-| P11: 動的TLAS・fallback・照明契約 | `.harness/runs/20260921-073235/` | `verify-R5-P11-contract-fix-target-ctest.txt`（2/2）、`verify-R5-P11-contract-fix-dynamic-sync.txt`（移動後captureとRaster/RT/fallback A/B）、`verify-R5-P11-contract-fix-full-ctest.txt`。全CTestは235件中6件失敗・7件skip。6件の失敗はP11開始baselineの8件の部分集合で、新規失敗はない。 |
 | P13: texture同期失敗時の寿命 | `.harness/runs/20260921-125655/` | `verify-R5-P13-1.txt`〜`verify-R5-P13-10.txt`（Debug build exit 0、直接GPU実行 exit 0、専用CTest 1/1）。 |
-| 現行HEAD再検証 | `.harness/runs/20260922-r5-head-final/` / `.harness/runs/20260922-r5-final/evaluator-R5-final-round1.txt` | R4/P13後のHEADで対象build exit 0、`RenderingRayTracingShadowVulkanTest`・dynamic、`RayTracingSceneSnapshotTest`、`RHIRayTracingPipelineVulkanTest`、`RHITextureUpdateVulkanTest`のCTest 5/5。静的RT影A/B、動的TLAS更新、RT無効fallbackは直接実行ですべてPASS。R5全体の独立評価もPASS。 |
+| 現行 HEAD の再確認 | `.harness/runs/20260922-r5-head-final/` | R4/P13 後の HEAD で対象ビルドは終了コード 0。静的 RT 影、動的 TLAS 更新、RT 無効時の代替経路はすべて合格した。 |
 
 ## 既知の制限と保留
 

@@ -5,7 +5,7 @@
 
 ## 決めたこと
 
-- 荒野の撮影（`Scripts/CaptureScene.ps1 -Scene wasteland`）と周回スモーク（`Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland`）は
+- 荒野の撮影（`Scripts/CaptureScene.ps1 -Scene wasteland`）は
   **RelWithDebInfo の Game** で回す（`-Configuration RelWithDebInfo -Build`）。`-Build` で撮る前にその構成の Game をビルドし、古い exe で撮らない。
 - Debug の Game のビルド（`cmake --build build --config Debug --target Game -- /m:1`）は各項目の verify に残す。
 - RelWithDebInfo は既定では Vulkan の検証レイヤーを有効にしない。起動引数 `--validation-layer`（開発ビルドだけ。`-GameArgs validation-layer`）を
