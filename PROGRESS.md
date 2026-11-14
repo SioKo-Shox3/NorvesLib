@@ -11150,3 +11150,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 回さなかったもの: GPU の A/B の試験 `RenderingSpecularAAVulkanTest` は作らず、golden 4 本の比較と再承認もしていない（絶対規則 10。判断役が done-when から外した）。鏡面の AA が実際にちらつきを減らすかは測っていない。golden の画像は更新していないので、Vulkan の golden の試験を人が回すと DefaultLit の差が出る見込み。
 - Next: ランナーの評価者の反証（GBuffer・可視バッファの解決の危険地帯）。人が見るときの見どころ: Rendering3DTest の岩と球の縁のハイライトが、高周波の法線でちらつかないか、全体が粗く見えすぎないか。全シーンの見た目の確かめは G5-GR30-TAA-SCENES-CHECK。
 - Notes: 要起票: ctest の行が名前に Vulkan を含む試験だけで盤面の除外により必ず 0 本になる todo の項目(G5-GR27-MASKED-SHADOW・G10-GR63-VELOCITY-GUARD・G19-GR125-HDR-PRESENT など約 11 件)の verify を、項目ごとに CPU の検査へ差し替える
+
+### G5-GR30-THIN-SPECULAR-AA の完了の戻し（2026-11-14、run 20261114-143012、完了）
+- Done: 前回の完了（15f4cc38）の後、ランナーの評価者が枠切れ（429）で評価を回せず、status が doing に戻っていた。作業の単位は全部 done か dropped で、d462ee25 から今の HEAD までの差は TASKS.md と PROGRESS.md だけ（コードの変更は無い）なので、d462ee25 の木で回した verify の証拠をそのまま使って status を done に戻した。
+- 証拠: `.harness/runs/20261114-143012/verify-G5-GR30-THIN-SPECULAR-AA-d462ee25.txt`（前回の `verify-G5-GR30-THIN-SPECULAR-AA-U9.txt` の写し。verify のビルドの行 EXIT_CODE=0・エラーの行 0。verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて 4/4 Passed。TerrainShaderCompileTest の詳細で gbuffer.frag・gbuffer_alphaclip.frag・megageometry.frag・visbuffer_resolve.comp・visbuffer_resolve_tiles.comp がマクロの全部無効・全部有効の両方の組で `[成功]`）。
+- Next: ランナーの評価者の反証（GBuffer・可視バッファの解決の危険地帯）。人が見るときの見どころは前回の節と同じ（Rendering3DTest の岩と球の縁のハイライトが、高周波の法線でちらつかないか、全体が粗く見えすぎないか）。
+- Notes: 撮影・GPU の計測・golden の比較は回さない決まりなので回していない。鏡面の AA が実際にちらつきを減らすかは測っていない。
