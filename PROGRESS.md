@@ -11211,3 +11211,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 源を RenderWorld → RenderingCoordinator → FramePacket → ViewRenderContext へ値で通す: 着地(直し 0 回)
 - U3 Vegetation が毎フレーム焦点に近い源を選んで RenderWorld へ渡す: 着地(直し 0 回)
 - U5 WorldFieldPass に近傍・遠景の枯れ度の層を足し、毎フレーム源から評価して公開する: 着地(直し 0 回)
+- U6 GPU の割り当て表に枯れ度の層を登録し、タスクの verify のビルドを通す: 着地(直し 0 回)
