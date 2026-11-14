@@ -11224,3 +11224,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261114-145336/verify-G7-GR49-ENV-PARAMS-U3.txt`（verify のビルドの行 `cmake --build build --config Debug --target CameraViewConstantsTest VolumetricFogModelTest SkyAtmosphereModelTest SceneViewProxyLookupTest RenderingGoldenImageTest Game -- /m:1` が exit code 0、6 ターゲットとも生成。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致）。verify の ctest の行は回さない決まり。
 - 作らなかったもの: done-when の CPU の `EnvironmentParametersTest` と、R3 の霧の密度の sweep の ctest 登録（`R3FogDensitySweepVulkanTest`）は、試験を作らない・足さない決まり（絶対規則 11）で作っていない。型の性質の static_assert はヘッダにある。
 - Next: ランナーの評価者の反証（Public API・FramePacket・RenderThread へ渡す値の危険地帯）。GPU の UBO（`GPUEnvironmentParams`）は G7-GR53-WET-WRITERS、時刻・雨量の値は G7-GR49-ENV-SYSTEM。見た目は変わらない（既定の値は 0 で、まだ読み手が無い）。撮影・計測の確かめは回さない決まり。
+- U1 C++ の環境の UBO の型・詰め方とフレームに 1 つの確保: 着地(直し 0 回)
