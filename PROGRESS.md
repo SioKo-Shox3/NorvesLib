@@ -11218,3 +11218,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 WitherSourceComponent に鍵の PROPERTY を足し、登録で鍵を結び、EndPlay で手放す: 着地(直し 0 回)
 - U3 ProgressSaveData に節 vegetation.dryness を足し、保存で写し・読み込みで戻す結線をする: 着地(直し 0 回)
 - U4 シ者の撃破の応答の表に wither.recover を足し、敵の定義に載せ、全体をビルドする: 着地(直し 0 回)
+- U5 リスタートで進行を空にする時に枯れ度の鍵の状態も既定へ戻す（セーブが無い・読めない時の持ち越しを防ぐ）: 着地(直し 0 回)

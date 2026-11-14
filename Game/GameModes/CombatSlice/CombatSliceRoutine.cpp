@@ -2,6 +2,7 @@
 
 #include "GameModes/GameModeIds.h"
 #include "Save/ProgressionSaveBridge.h"
+#include "Save/VegetationSaveBridge.h"
 #include "Asset/AssetFileReader.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
@@ -193,6 +194,8 @@ namespace Game::GameModes
             {
                 return GameModeEnterResult::Failed;
             }
+            // 進行と同じく枯れ度も既定へ戻し、セーブが無い時に前の回の値を持ち越さない。
+            Game::Save::ResetDryness(ctx.EngineRef.GetVegetation().GetDrynessMap());
             const auto result = NorvesLib::Core::GEngine.GetSaveService().Load(0);
             NORVES_LOG_INFO("CombatSlice", "GAME_RESET stage=restore load=%u reset=%u defeated=%d",
                             static_cast<unsigned>(result.Status), data.ResetState->ResetCount,

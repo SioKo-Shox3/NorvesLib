@@ -14,4 +14,6 @@ namespace Game::Save
     void CaptureDryness(const NorvesLib::Core::Vegetation::DrynessMap& map, ProgressSaveData& out);
     // 保存の値で復元する。節が無いセーブでは空の一覧で呼び、全部の源を既定の値へ戻す。
     void ApplyDryness(const ProgressSaveData& data, NorvesLib::Core::Vegetation::DrynessMap& map);
+    // 進行を空にする時に呼ぶ。生きた源は既定の値へ戻し、源の無い鍵の保持値と手放した源は捨てる。
+    void ResetDryness(NorvesLib::Core::Vegetation::DrynessMap& map);
 } // namespace Game::Save

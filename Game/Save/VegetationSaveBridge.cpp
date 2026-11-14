@@ -31,4 +31,9 @@ namespace Game::Save
         }
         map.RestoreKeyedStates(states);
     }
+
+    void ResetDryness(DrynessMap& map)
+    {
+        map.RestoreKeyedStates({});
+    }
 } // namespace Game::Save
