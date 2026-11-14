@@ -68,6 +68,7 @@ namespace NorvesLib::Core::Rendering
      *
      * FramePacketが所有する全MeshProxy/SkinnedMeshProxyと材質・環境設定だけを
      * 入力にし、カメラ依存の描画結果や物体の変換履歴は入力にしません。
+     * 霧の値は含めません。将来、霧を GI の入力にするときは含め直します。
      */
     uint64_t ComputeSceneRevisionHash(const FramePacket& packet);
 
