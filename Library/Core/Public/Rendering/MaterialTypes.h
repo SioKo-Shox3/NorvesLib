@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "Rendering/FurTypes.h"
 #include "Rendering/ShadingModelIds.h"
 #include "Container/Containers.h"
 #include <cmath>
@@ -404,6 +405,10 @@ namespace NorvesLib::Core::Rendering
         Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
+        /// Shading が ShadingModel::Fur のときだけ効く。ほかでは店が既定値にして無効のままにする。
+        FurMaterialData Fur;
+        /// 店は読まない。GetData の値から作り直した CreateData でも店が採番し直す。
+        uint64_t Revision = 0;
     };
 
     /**
@@ -449,6 +454,10 @@ namespace NorvesLib::Core::Rendering
         Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
+        /// Shading が ShadingModel::Fur のときだけ効く。ほかでは店が既定値にして無効のままにする。
+        FurMaterialData Fur;
+        /// 店が採番する版。Create で 1、Update の成功ごとに 1 進み、写した側が古さを見分ける。
+        uint64_t Revision = 0;
     };
 
     /**

@@ -319,6 +319,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
+    Private/Rendering/FurMaterialGpu.cpp
     Private/Rendering/GpuResourceStore.cpp
     Private/Rendering/TextureAsyncLoadQueue.cpp
     Private/Rendering/TextureAssetLoader.cpp
@@ -335,7 +336,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
+    Private/Rendering/EnvironmentParameters.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -732,6 +735,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
     Public/Rendering/SkinnedMeshTypes.h
+    Public/Rendering/FurTypes.h
     Public/Rendering/MaterialTypes.h
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
@@ -740,7 +744,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
+    Public/Rendering/EnvironmentParameters.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h

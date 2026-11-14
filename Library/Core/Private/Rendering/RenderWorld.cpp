@@ -340,6 +340,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetWindParameters(parameters);
     }
 
+    void RenderWorld::SetEnvironmentParameters(const EnvironmentParameters& parameters)
+    {
+        m_RenderingCoordinator.SetEnvironmentParameters(parameters);
+    }
+
     void RenderWorld::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
     {
         m_RenderingCoordinator.SetVertexAnimationTestDisplacementEnabled(bEnabled);

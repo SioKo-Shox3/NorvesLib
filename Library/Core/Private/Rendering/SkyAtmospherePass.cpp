@@ -381,6 +381,8 @@ namespace NorvesLib::Core::Rendering
         const Math::Vector3 sunDirection =
             MakeSunDirectionFromAltitudeAzimuth(parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees);
         const double sunIrradiance = model.GetSunDiskIrradiance();
+        // 雲の下の霞を照らす直達の太陽は、方向光と同じ係数で弱める。
+        const float cloudDirectFactor = ComputeCloudDirectFactor(parameters);
         outProfile.SunCosine = sunDirection.y;
         for (uint32_t index = 0u; index < SkyAerialProfileSize; ++index)
         {
@@ -393,7 +395,7 @@ namespace NorvesLib::Core::Rendering
             const float psi[3] = {multipleScattering.x, multipleScattering.y, multipleScattering.z};
             for (uint32_t channel = 0u; channel < 3u; ++channel)
             {
-                outProfile.SunIlluminance[index][channel] = static_cast<float>(sunIrradiance * sun[channel]);
+                outProfile.SunIlluminance[index][channel] = static_cast<float>(sunIrradiance * sun[channel]) * cloudDirectFactor;
                 outProfile.MultipleScattering[index][channel] = static_cast<float>(sunIrradiance * psi[channel]);
             }
             outProfile.SunIlluminance[index][3] = 1.0f;
@@ -458,12 +460,13 @@ namespace NorvesLib::Core::Rendering
         const float safeValue = std::isfinite(requested)
                                     ? std::clamp(requested, 0.0f, safetyLimit)
                                     : requested > 0.0f ? safetyLimit : 0.0f;
-        // 表示する円盤は、空の太陽の方向光と同じ地表の透過率で減光・着色する。
+        // 空の太陽の方向光と同じ地表の透過率で減光・着色し、曇り度に応じて円盤を薄める（ComputeSunDiskVisibility）。
         const Math::Vector3& transmittance = m_LutSunGroundTransmittance;
+        const float sunDiskVisibility = ComputeSunDiskVisibility(parameters);
         const uint16_t pixel[4] = {
-            FloatToHalfRne(safeValue * std::clamp(transmittance.x, 0.0f, 1.0f)),
-            FloatToHalfRne(safeValue * std::clamp(transmittance.y, 0.0f, 1.0f)),
-            FloatToHalfRne(safeValue * std::clamp(transmittance.z, 0.0f, 1.0f)),
+            FloatToHalfRne(safeValue * std::clamp(transmittance.x, 0.0f, 1.0f) * sunDiskVisibility),
+            FloatToHalfRne(safeValue * std::clamp(transmittance.y, 0.0f, 1.0f) * sunDiskVisibility),
+            FloatToHalfRne(safeValue * std::clamp(transmittance.z, 0.0f, 1.0f) * sunDiskVisibility),
             FloatToHalfRne(1.0f)};
         if (m_bSunDiskTextureInitialized && frameResources != nullptr)
         {

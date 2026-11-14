@@ -4,6 +4,7 @@
 
 #ifndef VOLUMETRICS_COMMON_GLSL
 #define VOLUMETRICS_COMMON_GLSL
+#include "Common/HeightFog.glsl"
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
@@ -66,69 +67,15 @@ bool IsFiniteFloat(float value)
 
 vec2 EquirectangularUV(vec3 direction)
 {
-    vec2 uv = vec2(atan(direction.z, direction.x),
-                   asin(clamp(-direction.y, -1.0, 1.0)));
-    uv *= vec2(0.15915494, 0.31830989);
-    uv += 0.5;
-    return uv;
+    return HeightFogEquirectUV(direction);
 }
 
 float ComputeAnalyticTransmittance(float originHeight,
                                    float rayDirectionY,
                                    float rayDistance)
 {
-    float density = max(params.fogParameters.x, 0.0);
-    float baseHeight = params.fogParameters.y;
-    float falloff = max(params.fogParameters.z, 0.0);
-    if (density <= 0.0 || rayDistance <= 0.0 ||
-        !IsFiniteFloat(originHeight) || !IsFiniteFloat(rayDirectionY) ||
-        !IsFiniteFloat(rayDistance))
-    {
-        return 1.0;
-    }
-
-    float originExponent = -falloff * (originHeight - baseHeight);
-    float verticalRate = falloff * clamp(rayDirectionY, -1.0, 1.0);
-    float exponentChange = verticalRate * rayDistance;
-    float logIntegral;
-    if (abs(verticalRate) < 1.0e-8 || abs(exponentChange) < 1.0e-4)
-    {
-        logIntegral = log(rayDistance);
-    }
-    else
-    {
-        float logNumerator;
-        if (exponentChange > 80.0)
-        {
-            logNumerator = 0.0;
-        }
-        else if (exponentChange > 0.0)
-        {
-            logNumerator = log(max(1.0 - exp(-exponentChange), 1.0e-35));
-        }
-        else if (exponentChange < -80.0)
-        {
-            logNumerator = -exponentChange;
-        }
-        else
-        {
-            logNumerator = log(max(exp(-exponentChange) - 1.0, 1.0e-35));
-        }
-        logIntegral = logNumerator - log(abs(verticalRate));
-    }
-
-    float logOpticalDepth = log(density) + originExponent + logIntegral;
-    if (!IsFiniteFloat(logOpticalDepth))
-    {
-        return logOpticalDepth > 0.0 ? exp(-80.0) : 1.0;
-    }
-    if (logOpticalDepth >= log(80.0))
-    {
-        return exp(-80.0);
-    }
-
-    float opticalDepth = clamp(exp(logOpticalDepth), 0.0, 80.0);
-    return exp(-opticalDepth);
+    return HeightFogTransmittance(params.fogParameters.x, params.fogParameters.y,
+                                  params.fogParameters.z, originHeight, rayDirectionY, rayDistance);
 }
 
 float GetCascadeSplitDistance(uint splitIndex)
@@ -443,13 +390,9 @@ VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance
     result.AerialMultiple = vec3(0.0);
     if (result.FogOpacity > 0.0)
     {
-        vec3 fogRadiance = params.fallbackFogColor.rgb;
-        if (params.fogParameters.w > 0.5)
-        {
-            fogRadiance = texture(skyAtmosphereRadiance,
-                                  EquirectangularUV(rayDirection)).rgb;
-        }
-        result.FogRadiance = max(fogRadiance, vec3(0.0));
+        result.FogRadiance = HeightFogRadiance(skyAtmosphereRadiance, params.fogParameters.w > 0.5,
+                                                params.fallbackFogColor.rgb, rayDirection,
+                                                vec4(1.0, 1.0, 1.0, 0.0));
     }
     if (params.aerialPerspective.x > 0.5 && rayDistance > 0.0)
     {

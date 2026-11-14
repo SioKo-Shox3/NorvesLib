@@ -348,7 +348,7 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 
 1. 変更する枠・型・オフセット・量子化・既定値を先に本表へ登録する。使用中・予約の枠を空きと見なさない。
 2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` を同時に直し、全書き手・読み手を同じ関数の契約へ揃える。`ShadingModelContractTest` が定数表と直接の読み書きを検査する。デカールの保持は `DecalGBufferVulkanTest`、可視バッファの書き出しは `VisibilityResolveVulkanTest` の対象。
-3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。`InstanceDataFlattenTest` / `InstanceBufferRingTest` はこの構造体の値の転送・配置・容量を扱う。
+3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。`InstanceDataFlattenTest` / `InstanceBufferRingTest` はこの構造体の値の転送・配置・容量を扱う。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。
 4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。この一覧全体を専用に照合する試験の存在は未確認。
 
 ## 6. 照合上の未確認事項と注意
@@ -489,7 +489,63 @@ C++ は `ShadowMapPass.cpp::ShadowPerObjectUBO`、GLSL は `shadow.vert::ShadowM
 
 `FoliagePass.cpp::FoliageUniform` / `Common/FoliageData.glsl::FoliageData` の UBO は **384 バイト**のまま（`static_assert` あり）。`vertexAnimTime` は追加していない。`std140` の `wind: float[4]` / `vec4` は位置 272、大きさ 16 バイトで、xy = 風向、z = 現在の風の時刻、w = 前の風の時刻。`wind[3]`（284 バイト）は両方の風の経路で `windTime - VertexAnimationPreviousDeltaSeconds(context.ExtensionFrame)` とし、最後に描いたフレームの時刻を基準にする。
 
-## 11. 世界フィールドの枯れ度の層
+## 11. ファーの材質の定数とマップ
+
+`ShadingModel::Fur` のときだけ有効な `MaterialResourceData::Fur` を、`FurMaterialGpu.cpp` の `PackFurMaterialGpuParams(fur, wetness)` が std140 の定数にする。
+RenderThread へは `SkinnedMeshProxy::FurSlots` の値の写しで渡し、RenderThread は材質の店の要素を読まない。
+この定数を束ねるパス・binding はまだなく、シェル描画の項目で登録する。
+各行は 16 バイトで、C++ の並びと std140 が一致する。全体は **496 バイト**（112 + 48 × 8）。
+
+### FurMaterialGpuParams
+
+C++ は `Library/Core/Public/Rendering/FurTypes.h::FurMaterialGpuParams`、GLSL は `Assets/Shaders/Common/FurMaterialParams.glsl::FurMaterialParams`。オフセットは構造体の先頭からのバイト数。
+
+| オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
+|---|---|---|---|
+| 0 | `Counts: uint32_t[4]` | `uvec4 counts` | x = 殻数（`LayerCount`）、y = 領域数（1〜8。表なしは 1 で既定の領域）、z = マップの印、w = 空き（0） |
+| 16 | `Growth: float[4]` | `vec4 growth` | `MaxLengthMeters × LengthScale`（m）/ `StrandDensity` / `ClumpSize` / `ClumpStrength` |
+| 32 | `Strand: float[4]` | `vec4 strand` | `RootRadius` / `TipRadius` / `ThicknessExponent` / `Tilt` |
+| 48 | `Undercoat: float[4]` | `vec4 undercoat` | rgb = 下毛の線形色、a = `UndercoatAlbedoMix` |
+| 64 | `Occlusion: float[4]` | `vec4 occlusion` | x = `AoRoot`、y = `AoExponent`、zw = 空き（0） |
+| 80 | `WetGeometry: float[4]` | `vec4 wetGeometry` | `WetLengthCollapse` / `WetThicken` / `WetClump` / `WetSag`。各応答 × 濡れ度 |
+| 96 | `WetShading: float[4]` | `vec4 wetShading` | `WetDarken` / `WetDesaturate` / `WetRoughness` / `WetGloss`。各応答 × 濡れ度 |
+| 112 + 48 i（i = 0〜7） | `Regions[i]: FurMaterialGpuRegion` | `FurMaterialRegion regions[FUR_MAX_REGION_COUNT]`（8 要素） | 領域 i |
+
+領域 1 つは **48 バイト**。次のオフセットは各領域の先頭からの相対位置。
+
+| オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
+|---|---|---|---|
+| +0 | `Shading: float[4]` | `vec4 shading` | `RootDarkness` / `TipBrightness` / `LengthScale` / `ThicknessScale` |
+| +16 | `Lobes: float[4]` | `vec4 lobes` | `PrimaryShift` / `SecondaryShift` / `PrimaryExponent` / `SecondaryExponent` |
+| +32 | `Wet: float[4]` | `vec4 wet` | x = `WetSusceptibility`、yzw = 空き（0） |
+
+濡れ度はインスタンスの `ShadingParams` の P0（1 節の ID 1）。Pack は `[0, 1]` に収め（負・非有限は 0）、応答 × 濡れ度だけを書き、生の濡れ度は書かない。
+濡れの応答がすべて 0 なら濡れ度に依らず定数は同じで、シェーダーは領域の `wet.x`（C++ の `Wet[0]`）を掛けて使う。
+領域数が 0 の材質は 1 にして既定の領域を書き、使わない領域の枠も `FurRegion` の既定値で埋める。
+
+### マップの印
+
+`Counts.z`（C++ の `Counts[2]`）は有効なマップのハンドルに対応するビットマスク。立っていない枠は描画が既定の値を使う。
+
+| ビット | 値 | C++ 定数 | GLSL 定数 | マップ |
+|---|---|---|---|---|
+| bit 0 | 1 | `FurMapMaskLength` | `FUR_MAP_MASK_LENGTH` | 長さ |
+| bit 1 | 2 | `FurMapMaskFlow` | `FUR_MAP_MASK_FLOW` | 流れ |
+| bit 2 | 4 | `FurMapMaskDensityClump` | `FUR_MAP_MASK_DENSITY_CLUMP` | 密度と束 |
+| bit 3 | 8 | `FurMapMaskRegion` | `FUR_MAP_MASK_REGION` | 領域 |
+
+### ファーのマップ
+
+4 枚とも UV0 空間・線形・ミラーなしで扱う。C++ のハンドルは `FurMapTextures` に保持する。
+
+| 名前 | 形式 | R | G | 読み方 |
+|---|---|---|---|---|
+| Length | R8 | 長さの割合 | 成分なし | 値 × `MaxLengthMeters` が実長。0 は毛なし |
+| Flow | RG8 | UV 空間の方向の X の符号化値 | UV 空間の方向の Y の符号化値 | `v = 2 * rg - 1` が UV 空間の向き。ベクトルの長さは整い度で、ミップで縮む。正規化せず長さを強さとして読む |
+| DensityClump | RG8 | 密度の倍率（0 は素肌） | 束の強さの倍率 | 各値を密度・束の強さに掛ける |
+| Region | R8 | 領域 ID の符号化値 | 成分なし | `ID = round(r * 255)`。補間すると別の領域の値になるため `texelFetch` で読み、`FurRegionIndex` で表の外を最後の領域に寄せる |
+
+## 12. 世界フィールドの枯れ度の層
 
 ### 名前付き資源と座標
 

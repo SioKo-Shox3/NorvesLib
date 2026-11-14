@@ -12,6 +12,7 @@
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
 #include "Wind.h"
+#include "EnvironmentParameters.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
@@ -585,6 +586,8 @@ namespace NorvesLib::Core::Rendering
         PaleFlatParameters PaleFlat = MakeDefaultPaleFlatParameters();
         // 世界で共通の風。SceneRevision には含めない。
         WindParameters Wind = MakeDefaultWindParameters();
+        // 天気と時刻の環境の値。SceneRevision には DiscontinuityId だけを含める。
+        EnvironmentParameters Environment = MakeDefaultEnvironmentParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         Container::VariableArray<SkyOccluderProxy> SkyOccluders;
         // 遮蔽物と値が変わったときだけ進む版。SceneRevision とは別で、RTGI の履歴を捨てない。
@@ -642,6 +645,7 @@ namespace NorvesLib::Core::Rendering
             VolumetricFog = MakeDefaultVolumetricFogParameters();
             PaleFlat = MakeDefaultPaleFlatParameters();
             Wind = MakeDefaultWindParameters();
+            Environment = MakeDefaultEnvironmentParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
             SkyOcclusionRevision = 0;
@@ -678,6 +682,11 @@ namespace NorvesLib::Core::Rendering
         void SetWindParameters(const WindParameters& parameters)
         {
             Wind = SanitizeWindParameters(parameters);
+        }
+
+        void SetEnvironmentParameters(const EnvironmentParameters& parameters)
+        {
+            Environment = SanitizeEnvironmentParameters(parameters);
         }
 
         void SetSkyOcclusionParameters(const SkyOcclusionParameters& parameters)
