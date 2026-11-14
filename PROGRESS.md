@@ -11244,3 +11244,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261114-145333/verify-G6-GR91-FUR-MATERIAL-DATA-U4.txt`（verify のビルドの行 `cmake --build build --config Debug --target MaterialResourcesTest SkeletalFramePacketSnapshotTest Game -- /m:1` が EXIT=0、3 つの実行ファイルの出力あり）。試験は作らない・回さない決まりなので、done-when の試験（MaterialResourcesTest のケース・FurMaterialLayoutContractTest・SkeletalFramePacketSnapshotTest のケース）は足しておらず、verify の ctest の行は回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next: ランナーの評価者の反証（Public API の MaterialTypes.h・SkinnedMeshTypes.h と RenderThread への受け渡しの危険地帯）。この定数を束ねるパス・binding はまだ無く、シェル描画の項目が使う。人が見るときの見どころ: 今は描画に出ないので見た目は変わらない（ファーのシェル描画がつながった後、ImGui などで材質の値を変えると次のフレームで毛の見た目が追従すること）。
 - Notes: `SceneProxyHash.h` の `HashProxy(SkinnedMeshProxy)` は `FurSlots` を含まない（paths の外）。RenderThread への差分は SceneView が書き込んだ位置で送るので値は届くが、検査 ECS_RENDER_INVALIDATION は写しの中身だけの違いを見分けない。
+- U1 霧の値に色味・空への寄せ・基準の仰角を足し、安全化と正弦・余弦の関数を置く: 着地(直し 0 回)
