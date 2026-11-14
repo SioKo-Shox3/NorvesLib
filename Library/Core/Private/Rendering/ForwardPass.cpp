@@ -39,6 +39,9 @@ namespace NorvesLib::Core::Rendering
         // 半透明の空の放射輝度 LUT の binding。空の遮蔽 16・17 の次。forward_transparent.frag と同じ。
         constexpr uint32_t TransparentHeightFogSkyBindingIndex = 18;
 
+        // 板・インポスターの空の放射輝度 LUT の binding。world_board.frag・impostor.frag と同じ。
+        constexpr uint32_t WorldBoardHeightFogSkyBindingIndex = 2;
+
         static void AddSkyOcclusionBindings(RHI::DescriptorSetDesc& descriptorSetDesc)
         {
             for (uint32_t binding = 16u; binding <= 17u; ++binding)
@@ -153,7 +156,7 @@ namespace NorvesLib::Core::Rendering
             ubo.cascadeCount = 0u;
         }
 
-        struct WorldBoardForwardUBO
+        struct alignas(16) WorldBoardForwardUBO
         {
             float view[16];
             float projection[16];
@@ -161,7 +164,12 @@ namespace NorvesLib::Core::Rendering
             float cameraRight[4];
             float cameraUp[4];
             float sceneColorParams[4];
+            GPUHeightFogParams heightFog; // 高さフォグ（Common/HeightFog.glsl の HeightFogParams）
         };
+
+        static_assert(offsetof(WorldBoardForwardUBO, sceneColorParams) == 176);
+        static_assert(offsetof(WorldBoardForwardUBO, heightFog) == 192);
+        static_assert(sizeof(WorldBoardForwardUBO) == 272);
     } // namespace
 
     ForwardPass::ForwardPass(SceneView* sceneView, SceneRenderer* sceneRenderer)
@@ -327,6 +335,7 @@ namespace NorvesLib::Core::Rendering
             boardInstanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
             boardInstanceBinding.stages = RHI::ShaderStage::Vertex;
             boardDescriptorSetDesc.bindings.push_back(boardInstanceBinding);
+            AddHeightFogSkyBinding(boardDescriptorSetDesc, WorldBoardHeightFogSkyBindingIndex);
 
             constexpr uint32_t WORLD_BOARD_UBO_SIZE = sizeof(WorldBoardForwardUBO);
             if (!m_WorldBoardUniformAllocator.Initialize(m_Device,
@@ -1077,6 +1086,7 @@ namespace NorvesLib::Core::Rendering
         boardInstanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
         boardInstanceBinding.stages = RHI::ShaderStage::Vertex;
         boardDescriptorSetDesc.bindings.push_back(boardInstanceBinding);
+        AddHeightFogSkyBinding(boardDescriptorSetDesc, WorldBoardHeightFogSkyBindingIndex);
 
         boardPipelineDesc.renderPass = m_ForwardRenderPass;
         boardPipelineDesc.descriptorSetLayouts.push_back(boardDescriptorSetDesc);
@@ -1407,6 +1417,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(worldBoardFrameUBO.cameraRight, cameraRight, sizeof(cameraRight));
         std::memcpy(worldBoardFrameUBO.cameraUp, cameraUp, sizeof(cameraUp));
         worldBoardFrameUBO.sceneColorParams[0] = sceneColorPreExposure;
+        worldBoardFrameUBO.heightFog = heightFogParams;
 
         TransparentForwardUBO transparentFrameTemplate{};
         InitializeSafeTransparentShadowParams(transparentFrameTemplate);
@@ -1493,6 +1504,8 @@ namespace NorvesLib::Core::Rendering
                                                             context.InstanceDataBuffer,
                                                             0,
                                                             instanceDataSize);
+                allocation.DescriptorSet->BindTexture(WorldBoardHeightFogSkyBindingIndex, heightFogSkyTexture);
+                allocation.DescriptorSet->BindSampler(WorldBoardHeightFogSkyBindingIndex, m_SkyRadianceSampler);
                 allocation.DescriptorSet->Update();
 
                 DrawCommand drawCommand = cmd;
@@ -1721,9 +1734,10 @@ namespace NorvesLib::Core::Rendering
             context.CommandList->BeginRenderPass(m_RibbonTrailRenderPass, m_ForwardFramebuffer);
             context.CommandList->SetViewport(context.GetActiveLocalViewport());
             context.CommandList->SetScissor(context.GetActiveLocalScissor());
+            const RibbonTrailHeightFog ribbonHeightFog{heightFogParams, heightFogSkyTexture, m_SkyRadianceSampler};
             if (!m_RibbonTrailRenderer.Record(context.CommandList, context.FrameResources,
                                              *context.SnapshotRibbonTrails, viewData, projectionData,
-                                             sceneColorPreExposure))
+                                             sceneColorPreExposure, &ribbonHeightFog))
             {
                 NORVES_LOG_WARNING("ForwardPass", "帯の描画に必要なフレームの資源または頂点を準備できませんでした");
             }
