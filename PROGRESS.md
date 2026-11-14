@@ -11245,3 +11245,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API の MaterialTypes.h・SkinnedMeshTypes.h と RenderThread への受け渡しの危険地帯）。この定数を束ねるパス・binding はまだ無く、シェル描画の項目が使う。人が見るときの見どころ: 今は描画に出ないので見た目は変わらない（ファーのシェル描画がつながった後、ImGui などで材質の値を変えると次のフレームで毛の見た目が追従すること）。
 - Notes: `SceneProxyHash.h` の `HashProxy(SkinnedMeshProxy)` は `FurSlots` を含まない（paths の外）。RenderThread への差分は SceneView が書き込んだ位置で送るので値は届くが、検査 ECS_RENDER_INVALIDATION は写しの中身だけの違いを見分けない。
 - U1 霧の値に色味・空への寄せ・基準の仰角を足し、安全化と正弦・余弦の関数を置く: 着地(直し 0 回)
+- U2 高さフォグの定数と体積の霧に色味・空への寄せを通し、共通の霧の色の式で混ぜて掛ける: 着地(直し 0 回)

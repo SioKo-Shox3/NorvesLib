@@ -52,9 +52,11 @@ namespace NorvesLib::Core::Rendering
             float AerialProfile[2u * SkyAerialProfileSize][4];
             // x=霧の距離の上限（m、0 で視線全体）、y=周りの光の倍率、zw=未使用
             float FogRange[4];
+            float FogTintAndSkyBlend[4];    // rgb=霧の色味, w=空への寄せ（0..1）
+            float FogReferenceElevation[4]; // x=基準の仰角の正弦, y=余弦, zw=未使用
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 800u + 2u * SkyAerialProfileSize * 16u);
+        static_assert(sizeof(GPUVolumetricsParams) == 832u + 2u * SkyAerialProfileSize * 16u);
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc(bool bUseVsm)
         {
@@ -285,6 +287,11 @@ namespace NorvesLib::Core::Rendering
             outParams.FogParameters[3] = heightFog.DensityBaseHeightFalloffSkyAvailable[3];
             outParams.FogRange[0] = heightFog.MaxDistanceAndReserved[0];
             outParams.FogRange[1] = heightFog.FallbackColorAndAmbientScale[3];
+            for (uint32_t component = 0u; component < 4u; ++component)
+            {
+                outParams.FogTintAndSkyBlend[component] = heightFog.TintAndSkyBlend[component];
+                outParams.FogReferenceElevation[component] = heightFog.ReferenceElevationSinCos[component];
+            }
 
             outParams.FallbackFogColor[0] = heightFog.FallbackColorAndAmbientScale[0];
             outParams.FallbackFogColor[1] = heightFog.FallbackColorAndAmbientScale[1];
