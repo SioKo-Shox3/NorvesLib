@@ -62,7 +62,7 @@ R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジ�
 
 - RT無効fallbackはRT対応GPU上でRTを無効化して検証した。非対応deviceそのものでは実行せず、能力契約と機能無効時の経路を検証した。
 - R5-P3のstage compile検証はshaderc fixtureの6 stageを対象とする。SlangのRT stage compile結果はこの証拠に含めない。
-- `VK_LAYER_VALIDATE_SYNC=1`をRenderingValidation全体へ適用した診断で、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`のswapchain画像に`SYNC-HAZARD-WRITE-AFTER-READ`が報告された。RT影専用テストは同期validation下で成功しており、swapchain acquire/present経路は別件として追跡する。
+- 2026-09-22 の受入れの診断で `VK_LAYER_VALIDATE_SYNC=1` を RenderingValidation 全体へ適用したところ、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`のswapchain画像に`SYNC-HAZARD-WRITE-AFTER-READ`が報告された。RT 影専用の試験は同期 validation 下で成功した。swapchain acquire/present 経路は別件として追跡対象にした。
 - R5-P5の容量再問い合わせ、build-input usageの追加検証、VulkanDevice.cppの行末整理はNEXT_FINDINGS.mdへ追跡する。
 - R5全体の現行HEAD再検証は`.harness/runs/20260922-r5-head-final/`へ保存した。既知のOutdoor golden差分、swapchain同期診断、性能gateは別追跡とする。
 - R5-P13では`VulkanTexture::Update`の終了・送信・待機失敗時にstaging資源と転送先texture資源をGPU完了まで保持し、非device-lostのteardown待機失敗ではdevice資源を破棄しない。

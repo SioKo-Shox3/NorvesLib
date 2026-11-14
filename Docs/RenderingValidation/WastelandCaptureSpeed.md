@@ -47,7 +47,7 @@ RelWithDebInfo で初めに撮ると、ref_cliff_01 だけが Debug と違った
   Debug はフレームが遅く、300 フレームのうちに読み込みが終わっていたので表に出なかった。
 - 直し（`Library/Core/Private/Rendering/GeometryPageStreamer.h`）: 追い出しが続いていても、常駐の量（書き込み中を含む）がその間の最大を
   超えて増えたら、読み込みが進んでいるとして入れ替わりの長さを数え直す。作業集合が目標に頭打ちになって入れ替わる場合は量が増えないので、
-  これまでどおり待ちに数えない（`GeometryPageStreamerTest` の `TestChurnIsNotPendingWork` が通る）。
+  これまでどおり待ちに数えない。
 - 直した後は、6 視点とも Debug の撮影と平均輝度の差が 0.01 以内、PSNR 53.0〜62.5 dB、差が 8 を超える画素 0.02 % 以下。
   視点ごとの待ちは 5 秒から 14 秒に延びたが、全体は Debug の 0.32 倍。
 

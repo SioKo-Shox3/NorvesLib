@@ -13,7 +13,7 @@
 
 G04／G05／G07のfocused GPU／10回連続は実走HEADで取得した。2026-08-12にユーザー／gate ownerが承認した限定evidence-transfer契約に基づき、保護対象のsource／dependency／assetのGit object identity一致、独立したsource-text contract test 1pathだけの差分、採用HEADのnormal full suite exit 0を条件として採用HEADへ適用する。保証範囲は後述のGit object identityであり、それを超える同一性は主張しない。
 
-通常GPU acceptanceでは実GPU testのexit 125または`Skipped`を受入れない。normal full suiteの7件の`Skipped`は実GPU testではなく、skip挙動を検査する専用contract testである。
+2026-08-12 の通常 GPU の受入れでは、実 GPU の試験の終了コード 125 または `Skipped` を受入れなかった。当日の通常全体実行の7件の `Skipped` は、スキップの挙動を確認する専用の試験の結果だった。
 
 | Evidence ID | ゲート | ステータス | command／結果の要約 |
 |---|---|---|---|
