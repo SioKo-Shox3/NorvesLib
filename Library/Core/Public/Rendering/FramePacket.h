@@ -392,6 +392,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 最大32件の値の配列。SceneRevision に入れない（毎フレーム変わり RTGI の履歴を捨てるため）。 */
         Container::VariableArray<WorldFieldInteractor> WorldFieldInteractors;
 
+        /** @brief 枯れ度の源（最大 WorldFieldDrynessMaxSources 件の値の配列）。SceneRevision に入れない（源の変化で RTGI の履歴を捨てないため）。 */
+        Container::VariableArray<WorldFieldDrynessSource> WorldFieldDrynessSources;
+
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
@@ -468,6 +471,7 @@ namespace NorvesLib::Core::Rendering
             SkinnedMeshFrameLeases.clear();
             GrassField.reset();
             WorldFieldInteractors.clear();
+            WorldFieldDrynessSources.clear();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();

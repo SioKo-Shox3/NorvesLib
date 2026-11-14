@@ -11208,3 +11208,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 統合ブランチに G6 GR35 の `Common/SurfaceWetness.glsl` は無かったので、新しく `Common/WetSurface.glsl` を作った。G7-S6 は (A)：Material.a は GR26 の材質の値 P0 のまま、濡れは GBuffer へ書く前に適用し済みにし、最終の w は書き戻さない。共通の GLSL は既存と同じく BOM 付きで、glslc に直に読ませると字句エラーになるが、エンジンはインクルードの読み込み（`ShaderManager.cpp` の `ReadShaderText`）で BOM を除く。
 - U1 枯れ度の層の型・定数・無害化・消費側の定数・設定・描画グラフの名前を足す: 着地(直し 0 回)
 - U4 枯れ度を評価する計算シェーダーと、消費側の読み取り関数を足す: 着地(直し 1 回)
+- U2 源を RenderWorld → RenderingCoordinator → FramePacket → ViewRenderContext へ値で通す: 着地(直し 0 回)

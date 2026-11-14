@@ -494,6 +494,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief このフレームの世界フィールド入力を無害化し、直前の入力を置き換える（GameThread） */
         void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
 
+        /** @brief このフレームの枯れ度の源を無害化して置き換える（GameThread）。呼ばれなければ前の源を保つ。 */
+        void SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources);
+
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          * @param trails 描画コマンド生成前に設定し、FramePacket へ値コピーした後は保持を空にする
@@ -762,6 +765,7 @@ namespace NorvesLib::Core::Rendering
         FoliageScene m_Foliage;
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;
+        Container::VariableArray<WorldFieldDrynessSource> m_WorldFieldDrynessSources;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         RenderExtensionDataStore m_ExtensionData;
