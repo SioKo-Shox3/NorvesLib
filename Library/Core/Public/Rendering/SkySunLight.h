@@ -26,6 +26,9 @@ namespace NorvesLib::Core::Rendering
      * （ComputeSunGroundIlluminance）の輝度（lux）で、影を落とす。ラスタはこの灯を
      * 他の方向光と同じく照らし、CSMとRT影はこの灯を優先して影を掛ける。PTは同じ太陽を
      * 空の円盤の光源標本で数えるため、点・spot・方向光の評価からこの灯を除く。
+     * 地表照度には雲の直達の係数（ComputeCloudDirectFactor）を掛ける。係数には下限
+     * （CloudDirectFactorFloor）があるので、曇り度 c=1 でも光源表から消えず、
+     * 光源の出入りによって LightRevision が跳ばない。
      * @return 空が無効、または地表照度が0のときfalse
      */
     bool MakeSkySunLightProxy(const SkyAtmosphereParameters& parameters, LightProxy& outLight);
