@@ -11198,3 +11198,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261112-175835/verify-G2-GR82-SKELETON-HINT-LEGACY-U5.txt`（verify のビルドの行 exit code 0、verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて 9/9 Passed、`fixture NoSkeletonHint.gltf passed` と `ROOT_FRAME_IMPORT_CASE result=pass blender_layout_profile3_armature_author_frame` の出力あり）。
 - Next: ランナーの評価者の反証（アセットロードの危険地帯）。実物の Blender での書き出しと fixture の形の照合、実犬の cook は `G2-GR82-REAL-RIG-CHECK`。撮影・計測の確かめは回さない決まり（見た目は変わらない）。
 - Notes: 段階をまたぐ注意の「求めた根が関節でなければ子の関節 1 つを根にする」は、profile1 の「関節の親は関節だけ」の契約に合わないので旧経路には入れず、v1 の経路（Armature を作者 frame に入れる）で満たす。
+- U2 高さフォグの std140 定数と、ViewRenderContext から詰める関数を足す: 着地(直し 0 回)
