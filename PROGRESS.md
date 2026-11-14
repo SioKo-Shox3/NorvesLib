@@ -11209,3 +11209,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 枯れ度の層の型・定数・無害化・消費側の定数・設定・描画グラフの名前を足す: 着地(直し 0 回)
 - U4 枯れ度を評価する計算シェーダーと、消費側の読み取り関数を足す: 着地(直し 1 回)
 - U2 源を RenderWorld → RenderingCoordinator → FramePacket → ViewRenderContext へ値で通す: 着地(直し 0 回)
+- U3 Vegetation が毎フレーム焦点に近い源を選んで RenderWorld へ渡す: 着地(直し 0 回)

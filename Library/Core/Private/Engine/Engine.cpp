@@ -62,6 +62,9 @@ namespace NorvesLib::Core::Engine
         m_WorldFieldInteractorGatherer.Gather(
             Math::Vector3(camera.PositionX, camera.PositionY, camera.PositionZ), interactors);
         m_RenderWorld.SetWorldFieldInteractors({interactors.data(), interactors.size()});
+        // 枯れ度の源も毎フレーム渡す。
+        m_Vegetation.PublishDrynessSources(m_RenderWorld,
+            static_cast<float>(camera.PositionX), static_cast<float>(camera.PositionZ));
     }
 
     Engine::~Engine()
