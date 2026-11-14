@@ -41,6 +41,25 @@ namespace NorvesLib::Core::Rendering
         // 空の放射輝度の観測点はこの高度から SkyAtmosphereModel::ObserverAltitudeMeters 上で求める。惑星の球（地平線より下の
         // 視線が当たる地面）と媒質の密度の高度は海面から数える。0 で地表を海面とみなす
         float GroundAltitudeMeters = 0.0f;
+
+        // 曇り度と曇天の設定が変わると、空の LUT（Debug で 108〜140 ms の記録）と空由来の IBL を CPU で作り直す。
+        // 連続に変える仕組み（GR54）が入るまでは場面ごとの固定値とし、毎フレーム動かさない。
+        // シーンの revision（HashSceneEnvironmentRevision）には入れず、光の変化は空の太陽の方向光の強さの LightRevision で伝える。
+        // 体積の雲（CloudLayerParameters）とは別物で、雲の層の見た目は変えない（CloudCover = 0 では層の照りも不変）。
+        // 曇り度（無次元、0〜1）。0 で晴天、1 で均一な曇天。
+        float CloudCover = 0.0f;
+        // 曇天の水平面の全天照度の、晴天の水平面の全天照度（直達＋空）に対する割合 F（無次元、仮の値）。
+        float OvercastIlluminanceFraction = 0.25f;
+        // 曇天の天頂と地平線の輝度比 r（無次元）。3 で CIE の標準曇天。
+        float OvercastZenithToHorizonRatio = 3.0f;
+        // 直達光の係数 (1-c)^k の指数 k（無次元、仮の値）。
+        float DirectLightExponent = 2.0f;
+        // 太陽円盤が薄れ始める曇り度（無次元、仮の値）。
+        float SunDiskVisibleBelowCover = 0.55f;
+        // 太陽円盤が見えなくなる曇り度（無次元、仮の値）。
+        float SunDiskHiddenAboveCover = 0.9f;
+        // 曇天の空の色味（RGB の倍率、無次元）。
+        Math::Vector3 OvercastTint = Math::Vector3(1.0f, 1.0f, 1.0f);
     };
 
     /**
@@ -178,6 +197,10 @@ namespace NorvesLib::Core::Rendering
      * 地面（GroundAlbedoのランバート面を透過した太陽と空の照度で照らしたもの）に、そこまでの
      * 透過率を掛けた値と、そこまでの散乱を返す。
      *
+     * CloudCover > 0 では晴天の放射輝度と、一般化した CIE の曇天（天頂と地平線の比 r、
+     * 水平面の全天照度 E_oc = F・E_clear）を曇り度 c で線形に混ぜる。
+     * 地平線より下で地面に当たる視線には、E_oc で照らした地面を使う。
+     *
      * 前計算（太陽への透過率の表・多重散乱の表・地表の空の照度）は構築時に1回だけ行う。
      * LUT・空由来のIBLのように多くの方向を評価する側は、1つ作って使い回す。
      */
@@ -246,8 +269,14 @@ namespace NorvesLib::Core::Rendering
                                                          Math::Vector3& outSunTransmittance,
                                                          Math::Vector3& outMultipleScattering) const;
 
-        /** 地表（GroundAltitudeMeters）の水平面に届く空の照度（太陽円盤を除く、lux、RGB） */
+        /**
+         * 地表（GroundAltitudeMeters）の水平面に届く空の照度（太陽円盤を除く、lux、RGB）。
+         * CloudCover > 0 では曇天の空の照度と混ぜた値。
+         */
         Math::Vector3 GetGroundSkyIlluminance() const;
+
+        /** 曇天の水平面の全天照度 E_oc（lux、RGB）。Tint を掛ける前。 */
+        const Math::Vector3& GetOvercastIlluminance() const { return m_OvercastIlluminance; }
 
         /** 空の放射輝度を評価する観測点の、地表（GroundAltitudeMeters）からの高さ（m） */
         static constexpr float ObserverAltitudeMeters = 100.0f;
@@ -331,6 +360,10 @@ namespace NorvesLib::Core::Rendering
         float m_SunDiskIrradiance = 0.0f;
         Math::Vector3 m_SunGroundTransmittance = Math::Vector3::Zero;
         Rgb m_GroundSkyIrradiance;
+        // 曇天の水平面の全天照度 E_oc（lux、RGB）。Tint を掛ける前。
+        Math::Vector3 m_OvercastIlluminance = Math::Vector3::Zero;
+        // 曇天の天頂の放射輝度 Lz（cd/m²、RGB）。Tint を掛ける前。
+        Math::Vector3 m_OvercastZenithRadiance = Math::Vector3::Zero;
         Container::VariableArray<float> m_TransmittanceTable;
         Container::VariableArray<float> m_MultipleScatteringTable;
         Container::VariableArray<float> m_SkyViewTable;
@@ -381,10 +414,49 @@ namespace NorvesLib::Core::Rendering
     Math::Vector3 ComputeSunGroundTransmittance(
         const SkyAtmosphereParameters& parameters);
 
+    // c=1 でも空の太陽の方向光の強さを 0 にしない。光源表から出入りせず、LightRevision が光源の数の変化で跳ばない。
+    inline constexpr float CloudDirectFactorFloor = 1.0e-3f;
+
+    /**
+     * 雲を通る直達光の係数 max((1-c)^k, CloudDirectFactorFloor)（無次元）。
+     * c は [0,1] へ丸め、非有限なら 0。非有限・0 以下の k は既定の 2 とし、c <= 0 は厳密に 1.0f を返す。
+     */
+    float ComputeCloudDirectFactor(float cloudCover, float directLightExponent);
+
+    /** パラメータを sanitize してから雲を通る直達光の係数を求める。 */
+    float ComputeCloudDirectFactor(const SkyAtmosphereParameters& parameters);
+
+    /**
+     * 太陽円盤の見え方 1 - smoothstep(visibleBelowCover, hiddenAboveCover, c)（無次元）。
+     * c は [0,1] へ丸め、非有限なら 0。c <= 0 は厳密に 1.0f を返す。
+     * hiddenAboveCover <= visibleBelowCover なら段差とし、c <= visibleBelowCover で 1、それより上で 0。
+     */
+    float ComputeSunDiskVisibility(float cloudCover, float visibleBelowCover, float hiddenAboveCover);
+
+    /** パラメータを sanitize してから太陽円盤の見え方を求める。 */
+    float ComputeSunDiskVisibility(const SkyAtmosphereParameters& parameters);
+
+    /**
+     * 曇天の天頂の放射輝度 Lz = 3r・E / (π(2r+1))（cd/m²、RGB）。E は水平面の全天照度（lux、RGB）。
+     * L(γ) = Lz・(1+(r-1)・sinγ)/r を上半球で余弦の重み付きで積分すると E に戻る。非有限・1 未満の r は 1 とする。
+     */
+    Math::Vector3 ComputeOvercastZenithRadiance(const Math::Vector3& horizontalIlluminance,
+                                               float zenithToHorizonRatio);
+
+    /**
+     * 曇天の空の放射輝度 Lz・(1+(r-1)・s)/r・tint（cd/m²、RGB）。
+     * s は仰角の正弦を [0,1] へ丸めた値で、地平線より下は地平線の値。非有限・1 未満の r は 1 とする。
+     */
+    Math::Vector3 ComputeOvercastRadiance(const Math::Vector3& zenithRadiance,
+                                         float zenithToHorizonRatio,
+                                         const Math::Vector3& tint,
+                                         float sinElevation);
+
     /**
      * @brief 地表（GroundAltitudeMeters）での太陽の照度（lux、RGB）。太陽円盤の照度×地表の透過率。
      *
-     * ラスタの空の太陽の方向光とPTの太陽円盤の光源標本は、この値を共有する。
+     * 雲の直達の係数（ComputeCloudDirectFactor）を掛けた値。ラスタの空の太陽の方向光・CSM・PT の太陽・
+     * 雲の層の照りはこの値を共有する。
      * 空が無効なら0。
      */
     Math::Vector3 ComputeSunGroundIlluminance(
