@@ -11200,3 +11200,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 段階をまたぐ注意の「求めた根が関節でなければ子の関節 1 つを根にする」は、profile1 の「関節の親は関節だけ」の契約に合わないので旧経路には入れず、v1 の経路（Armature を作者 frame に入れる）で満たす。
 - U1 描画へ渡す環境の値の型 EnvironmentParameters と既定・整えの関数を足す: 着地(直し 0 回)
 - U2 霧の値をシーンの revision のハッシュから外し、外した理由と入れ直す条件を注釈に書く: 着地(直し 0 回)
+- U3 EnvironmentParameters を RenderWorld から FramePacket まで値で通し、不連続の印だけを revision に足す: 着地(直し 0 回)

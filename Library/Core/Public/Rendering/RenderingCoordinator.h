@@ -16,6 +16,7 @@
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/Wind.h"
+#include "Rendering/EnvironmentParameters.h"
 #include "Rendering/SkyOcclusion.h"
 #include "Rendering/SunShadowParameters.h"
 #include "Rendering/WorldFieldTypes.h"
@@ -415,6 +416,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /** @brief 天気と時刻の環境の値を GameThread で保持し、次の FramePacket へ値で渡す。 */
+        void SetEnvironmentParameters(const EnvironmentParameters& parameters);
+
         /** @brief 試験だけで使う頂点アニメの正弦の揺れ(shadingParams.z が 0.5 以上の描画)を有効にする（GameThread）。 */
         void SetVertexAnimationTestDisplacementEnabled(bool bEnabled);
         bool IsVertexAnimationTestDisplacementEnabled() const { return m_bVertexAnimationTestDisplacement; }
@@ -741,6 +745,7 @@ namespace NorvesLib::Core::Rendering
         VolumetricFogParameters m_VolumetricFog;
         PaleFlatParameters m_PaleFlat = MakeDefaultPaleFlatParameters();
         WindParameters m_Wind = MakeDefaultWindParameters();
+        EnvironmentParameters m_Environment = MakeDefaultEnvironmentParameters();
         bool m_bVertexAnimationTestDisplacement = false;
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         struct SkyOccluderEntry

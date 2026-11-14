@@ -211,7 +211,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 構成 revision のハッシュに、proxy 集合の後に続く環境の値を加える
          *
-         * 環境光・静的環境・SunShadow・空気遠近・雲の層・空・DDGI を含めます。
+         * 環境光・静的環境・SunShadow・空気遠近・雲の層・空・DDGI・環境の不連続の印を含めます。
          * 霧の値（高さフォグと Scene の霧の欄）は含めません。RTGI・DDGI は霧を入力に使わず、
          * パストレーサーは霧の署名（HashPathFog）で累積を別に切るためです。
          * 霧が変わるたびに RTGI の履歴を捨てないようにします。
@@ -273,6 +273,10 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, ddgi.ProbeCountX);
             hash = HashRevisionValue(hash, ddgi.ProbeCountY);
             hash = HashRevisionValue(hash, ddgi.ProbeCountZ);
+
+            // 環境の値は不連続の印だけを入れる。雨量・濡れ・雲量・時刻は連続に変わり、
+            // 入れると RTGI の履歴が毎フレーム捨てられる。
+            hash = HashRevisionValue(hash, packet.Scene.Environment.DiscontinuityId);
 
             return hash;
         }
@@ -4597,6 +4601,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
         packet.Scene.SetPaleFlatParameters(m_PaleFlat);
         packet.Scene.SetWindParameters(m_Wind);
+        packet.Scene.SetEnvironmentParameters(m_Environment);
         packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
@@ -6688,6 +6693,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
     {
         m_Wind = SanitizeWindParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetEnvironmentParameters(const EnvironmentParameters& parameters)
+    {
+        m_Environment = SanitizeEnvironmentParameters(parameters);
     }
 
     void RenderingCoordinator::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
