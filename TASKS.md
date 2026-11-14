@@ -7208,7 +7208,7 @@
 - notes: GPU の試験は利用者のほかのアプリに影響を出しうるので、実装の項目（G12-GR31-CULL-CONTRACT）では回さず、この項目で GPU を占有して回す（G5 の GPU の試験と同じ扱い）。100 万本の GPU 時間の記録は SCN-MEGA-ACCEPT-1M（todo）が行う。
 
 ## G12-GR45-DRYNESS-FIELD: 世界空間のフィールドに枯れ度の層（近傍の高解像度と遠景の低解像度の 2 枚）を足し、毎フレーム源から GPU で評価する
-- status: todo
+- status: done
 - after: G5-GR44-WORLD-FIELD, G12-GR45-DRYNESS-CPU, G5-GR44-TRAMPLE
 - gr: GR45
 - needs-gr: GR44

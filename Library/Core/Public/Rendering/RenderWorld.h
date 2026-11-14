@@ -310,6 +310,12 @@ namespace NorvesLib::Core::Rendering
         void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
 
         /**
+         * @brief このフレームの枯れ度の源を設定する（GameThread）。
+         * Vegetation が毎フレーム呼ぶ。呼ばれなければ前の源を保つ。
+         */
+        void SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources);
+
+        /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          *
          * 描画コマンド生成前に呼び、FramePacket へコピーした後は保持を空にする。

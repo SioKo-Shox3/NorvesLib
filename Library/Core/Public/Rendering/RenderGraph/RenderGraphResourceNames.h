@@ -64,6 +64,10 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         Identity::Literal("WorldField.Current", sizeof("WorldField.Current") - 1);
     inline constexpr Identity WorldFieldPrevious =
         Identity::Literal("WorldField.Previous", sizeof("WorldField.Previous") - 1);
+    inline constexpr Identity WorldFieldDrynessNear =
+        Identity::Literal("WorldField.DrynessNear", sizeof("WorldField.DrynessNear") - 1);
+    inline constexpr Identity WorldFieldDrynessFar =
+        Identity::Literal("WorldField.DrynessFar", sizeof("WorldField.DrynessFar") - 1);
     inline constexpr Identity SkyAtmosphereTransmittance =
         Identity::Literal("SkyAtmosphere.Transmittance", sizeof("SkyAtmosphere.Transmittance") - 1);
     inline constexpr Identity SkyAtmosphereRadiance =
