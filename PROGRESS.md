@@ -11215,3 +11215,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（空・ライティングの危険地帯）。人が見るときの見どころ: 今はどのシーンも CloudCover を設定していないので、ランチャーの各シーンと Rendering3DTest の見た目は変わらない。シーンの空のパラメータで CloudCover を 1 にすると、太陽円盤が消え、日向と影の差がほぼ無くなり、空は天頂が地平線の約 3 倍明るい灰色の一様な曇天になる。0.55 より上で円盤が薄れ始め、0.9 で消える。日向と影の輝度比・空が最も明るいことの確かめは G7-GR50-CHECK。撮影・計測の確かめは回さない決まり。
 - Notes: done-when の試験の部分（`SkyAtmosphereModelTest` のケース、`R7OutdoorPathTracingReferenceVulkanTest` の c=1 のケース）は、試験を作らない・回さない決まりで足していない。既存の試験の実行ファイルはそのままビルドが通る。数値の既定（F・k・円盤の区間・Tint）は仮の値で、データで替えられる。霧の色の寄せは G7-GR50-FOG-TINT。
 - U1 DrynessMap に鍵ごとの状態（結ぶ・手放す・鍵で目標を設定・写す・戻す・保留）を足す: 着地(直し 0 回)
+- U2 WitherSourceComponent に鍵の PROPERTY を足し、登録で鍵を結び、EndPlay で手放す: 着地(直し 0 回)
