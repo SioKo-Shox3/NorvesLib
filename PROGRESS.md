@@ -11202,3 +11202,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 試験だけが使うスクリプトと試験のワークフローを消す: 着地(直し 0 回)
 - U3 試験の文書を書き換え、Architecture などの文書から試験への案内を外す: 着地(直し 0 回)
 - U4 RenderingValidation の文書から試験への案内を外す: 着地(直し 0 回)
+- U5 Test/ を消して最上位の CMake から試験を外し、全体をビルドする: 着地(直し 0 回)
