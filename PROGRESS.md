@@ -11234,3 +11234,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 試験: 試験を作らない決まりにより、done-when の `HeightFogShaderCompileTest`・`HeightFogParityVulkanTest` は作っていない。verify の ctest の行は回していない。
 - Next: ランナーの評価者の反証（ライティングに近い霧のパス）。前向きの物への適用は G7-GR51-FORWARD-FOG、色味と空への寄せは G7-GR50-FOG-TINT。
 - Notes: done-when の `EvaluateHeightFogForward(params, worldPos)` は、HeightFog.glsl が記述子を持たないので空の放射輝度 LUT を引数で受ける `EvaluateHeightFogForward(params, skyRadiance, worldPos)` にした。`BuildHeightFogGpuParams` は大気の書き出しの試しの霧も同じ関数で詰められるよう、Sanitize 済みの霧を渡す任意の `fogOverride` を持つ（無ければスナップショットの霧を Sanitize して使う）。glslc の CLI は UTF-8 の BOM を読めないので、確かめは BOM を外した写しで回した（エンジンは実行時に BOM を飛ばす）。前向きと体積の霧の方式差（前向きは空気遠近・太陽の単一散乱を掛けない、空気遠近が有効なとき体積の霧の周りの光は Ψ_ms から積む）は G7 の受入れの記録に書く。人が見るときの見どころ: 起動画面の Rendering3DTest と荒野で、霧の濃さ・色が前と変わらないこと。
+- U1 半透明のメッシュに高さフォグを掛け、ForwardPass で空の LUT・霧の定数・標本化器を用意する: 着地(直し 0 回)

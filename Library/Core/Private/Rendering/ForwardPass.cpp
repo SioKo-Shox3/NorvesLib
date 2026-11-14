@@ -1,6 +1,7 @@
 ﻿#include "Rendering/ForwardPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/HeightFogGpuParams.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -35,6 +36,9 @@ namespace NorvesLib::Core::Rendering
         // VT の要求のバッファの binding（forward_transparent.frag の VT_FEEDBACK_BINDING と同じ。点光源のキューブシャドウ 14 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 15;
 
+        // 半透明の空の放射輝度 LUT の binding。空の遮蔽 16・17 の次。forward_transparent.frag と同じ。
+        constexpr uint32_t TransparentHeightFogSkyBindingIndex = 18;
+
         static void AddSkyOcclusionBindings(RHI::DescriptorSetDesc& descriptorSetDesc)
         {
             for (uint32_t binding = 16u; binding <= 17u; ++binding)
@@ -45,6 +49,15 @@ namespace NorvesLib::Core::Rendering
                 textureBinding.stages = RHI::ShaderStage::Pixel;
                 descriptorSetDesc.bindings.push_back(textureBinding);
             }
+        }
+
+        static void AddHeightFogSkyBinding(RHI::DescriptorSetDesc& descriptorSetDesc, uint32_t binding)
+        {
+            RHI::DescriptorBinding textureBinding;
+            textureBinding.binding = binding;
+            textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            textureBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(textureBinding);
         }
 
         struct alignas(16) TransparentForwardUBO
@@ -75,6 +88,7 @@ namespace NorvesLib::Core::Rendering
             float skyOcclusionParams[4];
             int32_t skyOcclusionWindowOrigin[4][4];
             float skyOcclusionTexelMeters[4];
+            GPUHeightFogParams heightFog; // 高さフォグ（Common/HeightFog.glsl の HeightFogParams）
         };
 
         static_assert(alignof(TransparentForwardUBO) == 16);
@@ -104,7 +118,8 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionParams) == 816);
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionWindowOrigin) == 832);
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionTexelMeters) == 896);
-        static_assert(sizeof(TransparentForwardUBO) == 912);
+        static_assert(offsetof(TransparentForwardUBO, heightFog) == 912);
+        static_assert(sizeof(TransparentForwardUBO) == 992);
         static_assert(PhysicalLightingShadowCascadeCount >= 2u);
 
         static void InitializeSafeTransparentShadowParams(TransparentForwardUBO& ubo)
@@ -284,6 +299,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             AddSkyOcclusionBindings(descriptorSetDesc);
+            AddHeightFogSkyBinding(descriptorSetDesc, TransparentHeightFogSkyBindingIndex);
 
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, descriptorSetDesc))
@@ -429,6 +445,20 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward sampler");
                 return false;
             }
+
+            RHI::SamplerDesc skyRadianceSamplerDesc;
+            skyRadianceSamplerDesc.filterMin = RHI::FilterMode::Linear;
+            skyRadianceSamplerDesc.filterMag = RHI::FilterMode::Linear;
+            skyRadianceSamplerDesc.filterMip = RHI::FilterMode::Linear;
+            skyRadianceSamplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            skyRadianceSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+            skyRadianceSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+            m_SkyRadianceSampler = m_Device->CreateSampler(skyRadianceSamplerDesc);
+            if (!m_SkyRadianceSampler)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "高さフォグの空の放射輝度 LUT 用サンプラーを作れませんでした");
+                return false;
+            }
         }
 
         m_bInitialized = true;
@@ -471,6 +501,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultPointShadowCubeTexture.reset();
         m_DefaultMidGrayTexture.reset();
         m_DefaultLinearSampler.reset();
+        m_SkyRadianceSampler.reset();
         m_UniformAllocator.Shutdown();
         m_WorldBoardUniformAllocator.Shutdown();
         m_Device = nullptr;
@@ -550,6 +581,7 @@ namespace NorvesLib::Core::Rendering
         m_bReactiveDeclared = false;
         m_RenderGraphSceneColorHandle = {};
         m_RenderGraphDepthHandle = {};
+        m_SkyAtmosphereRadianceHandle = {};
 
         if (m_bTransparentOnly)
         {
@@ -600,6 +632,14 @@ namespace NorvesLib::Core::Rendering
                                    skyOcclusionHandle, RHI::ResourceState::ShaderResource);
             builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionAux,
                                    skyOcclusionHandle, RHI::ResourceState::ShaderResource);
+
+            // 半透明の霧の色を体積の霧と同じ空の LUT から引く。
+            RGTextureHandle skyRadianceHandle;
+            if (builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereRadiance,
+                                       skyRadianceHandle, RHI::ResourceState::ShaderResource))
+            {
+                m_SkyAtmosphereRadianceHandle = skyRadianceHandle.ToResourceHandle();
+            }
 
             // このビューの半透明一覧だけを調べ、板・impostor はリアクティブの対象にしない。
             const ViewRenderContext* context = builder.GetContext();
@@ -725,7 +765,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         RegisterTransparentBridge(context, sceneColorTexture, gbufferDepthTexture);
-        ExecuteTransparentCommands(context, true, reactiveCommands);
+        ExecuteTransparentCommands(context, true,
+                                   m_SkyAtmosphereRadianceHandle.IsValid()
+                                       ? resources.GetTexture(m_SkyAtmosphereRadianceHandle) : RHI::TexturePtr{},
+                                   reactiveCommands);
         if (reactiveCommands)
         {
             context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(
@@ -748,7 +791,7 @@ namespace NorvesLib::Core::Rendering
         if (m_bTransparentOnly)
         {
             RegisterTransparentBridge(context, m_SceneColorTexture, m_GBufferDepthTexture);
-            ExecuteTransparentCommands(context, false);
+            ExecuteTransparentCommands(context, false, RHI::TexturePtr{});
             return;
         }
 
@@ -974,6 +1017,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         AddSkyOcclusionBindings(descriptorSetDesc);
+        AddHeightFogSkyBinding(descriptorSetDesc, TransparentHeightFogSkyBindingIndex);
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -1165,6 +1209,7 @@ namespace NorvesLib::Core::Rendering
     void ForwardPass::ExecuteTransparentCommands(
         ViewRenderContext& context,
         bool bUseRenderGraphManagedStates,
+        const RHI::TexturePtr& skyRadianceTexture,
         const Container::TSharedPtr<Container::VariableArray<DrawCommand>>& reactiveCommands)
     {
         const DrawCommandView activeTransparentCommands = context.GetActiveTransparentCommands();
@@ -1344,6 +1389,17 @@ namespace NorvesLib::Core::Rendering
         const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
             textures ? textures->GetVirtualTextureFeedbackTarget() : TextureResources::VirtualTextureFeedbackTarget{};
 
+        // 高さフォグ（体積の霧と同じ式）。空の LUT が無いときは黒の 1×1 を結び、シェーダーは予備の霧の色を使う。
+        // 通常の表示（プリエクスポージャを掛ける表示）だけで掛け、ほかのデバッグ表示では密度 0 で今と同じ色にする。
+        const bool bHeightFogSkyRadianceAvailable = static_cast<bool>(skyRadianceTexture);
+        const RHI::TexturePtr heightFogSkyTexture =
+            bHeightFogSkyRadianceAvailable ? skyRadianceTexture : m_DefaultBlackTexture;
+        GPUHeightFogParams heightFogParams{};
+        if (activeCamera && bApplySceneColorPreExposure)
+        {
+            heightFogParams = BuildHeightFogGpuParams(context, *activeCamera, bHeightFogSkyRadianceAvailable);
+        }
+
         WorldBoardForwardUBO worldBoardFrameUBO{};
         std::memcpy(worldBoardFrameUBO.view, viewData, sizeof(viewData));
         std::memcpy(worldBoardFrameUBO.projection, projectionData, sizeof(projectionData));
@@ -1359,6 +1415,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
         std::memcpy(transparentFrameTemplate.cameraForward, cameraForward, sizeof(cameraForward));
         transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
+        transparentFrameTemplate.heightFog = heightFogParams;
         std::memcpy(transparentFrameTemplate.lightView,
                     physicalLighting.CascadedShadow.View,
                     sizeof(transparentFrameTemplate.lightView));
@@ -1600,6 +1657,8 @@ namespace NorvesLib::Core::Rendering
                     ? skyOcclusion.AuxTexture : m_DefaultShadowMapArrayTexture);
                 descriptorSet->BindSampler(16, skyOcclusionSampler);
                 descriptorSet->BindSampler(17, skyOcclusionSampler);
+                descriptorSet->BindTexture(TransparentHeightFogSkyBindingIndex, heightFogSkyTexture);
+                descriptorSet->BindSampler(TransparentHeightFogSkyBindingIndex, m_SkyRadianceSampler);
                 descriptorSet->Update();
             };
             bindDescriptorSet(allocation.DescriptorSet);
