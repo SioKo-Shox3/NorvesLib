@@ -58,14 +58,6 @@ typed値ではfit未使用時のFitMetersは1、fit使用時のScaleは1に固�
 sidecar無しと明示的な恒等設定は呼出側で区別する。無しなら従来source_hashへ何も連結しない。
 cook algorithm versionと長さ前置きのhash連結は後続の接続層で行う。
 
-## 検証範囲
-
-ImportSettingsValueTestは固定bytesの既知値、全軸組合せ、非有限/非正値、列挙範囲外、矛盾、-0と各field変更を検査する。
-通常・最適化・ASan/UBSan（LeakSanitizer除外）およびMEMBERのWerror compileを実行済み。
-ImportSettingsJsonTestは44のJSON fixtureを登録。fixture自体のJSON文法は別途確認した。
-実JsonDocumentを含むsource/testはWindows.h依存でcompile停止しており、native解析試験は未実行。
-この設定単体の試験だけでfile I/Oやcook/loose統合が通ったという意味ではない。
-
 ## 共有geometry変換（GR78）
 
 ImportTransformはinterleaved頂点の位置float3・法線float3・UV float2とuint32 indexを受けるprivateな無確保処理。
@@ -81,9 +73,6 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 - 全layout/index/位置/変換後のfloat表現可能性を検証してから書込passへ進む。失敗時は頂点もindexも非変更。位置の非ゼロ値が乗算またはfloat変換で0へunderflowする場合も拒否する
 - 非整列byte storageはmemcpyで読み書きする
 
-実ImportTransformTestは48の軸/鏡像組合せの体積符号、3種類fit、bounds/足元原点、custom移動、
-法線/UV、layout・index・NaN/inf/overflow/underflowと失敗時非変更、非整列storageと未指定field保持を確認する。
-通常・最適化・ASan/UBSan（LeakSanitizer除外）を実行済み。
 骨格のIBM/animation等の一様scaleと静的cooker/looseへの挿入は、下記の接続契約に従う。
 
 表面重心は静的メッシュのcookとlooseで有効。骨格ではSupportsSkeletalScaleImportがOrigin == Keepを要求するため拒否する。
@@ -107,9 +96,8 @@ P' = (R×P − Pivot) × Scale + Offset とする。ImportTransformOutcome::Surf
 各面の重みの相対誤差をε（数ulp）とすると、原点の移動は高々ε × max|v − 原点| ≲ ε × 2·max|座標|。
 したがって絶対誤差の上限の目安は「最大の座標の大きさ × 数ulp」となる。
 
-ImportTransformTestで確認する組は、2^100/2^-100の等面積2面（原点(1/3, 2^-100/3, 0)・総面積1のビット一致）、
-±1e20の座標の相殺（原点の成分1/3など）、3面の6通りの面順 × 3通りの巡回 × 巻きの反転による
-原点・総面積・変換後の頂点のビット一致、および総面積0での頂点/index非変更の失敗。
+表面重心は、面順・巡回・巻きの反転で原点・総面積・変換後頂点のビットを変えない。
+総面積0では失敗し、頂点/indexを変更しない。
 
 ## 設定file選択とsource_hash連結の基盤
 
@@ -128,17 +116,11 @@ AppendImportSettingsHashは既存FNV-1a64のstateへ、u64LEの長さ52、正規
 sidecar無しでは設定やalgorithm versionに依らず既存hashをそのまま返す。
 有りの不正typed設定は失敗する。将来algorithmの意味が変わるときはversionを更新する。
 
-ImportSettingsHashTestの3つの既知state/期待値、無し不変、値・algorithm変更、-0、無効設定を通常・最適化・sanitizerで確認した。
-hash試験とfile試験のMEMBER compileはWerrorで成功。
-実file loaderはJsonDocument→Windows.hに依存しており、本体compile/実file試験は未実行。
-file/hash API単体の実行確認範囲と、下記の静的cook/loose接続の未実行試験を区別する。
-
 Windowsの自動不在判定はraw system errorのFILE_NOT_FOUND/PATH_NOT_FOUNDだけを許可する。
 MSVCのfile_type::not_found/errc写像は不正名やnetwork path障害も含むため、それだけでは設定無しと判断しない。
 根拠: Microsoft STLのfilesystem（symlink_statusはraw errorを保持）とxfilesystem_abi.hの不在分類。
 https://github.com/microsoft/STL/blob/main/stl/inc/filesystem
 https://github.com/microsoft/STL/blob/main/stl/inc/xfilesystem_abi.h
-Windows不正名の実I/O回帰は登録のみで未実行。raw error判定のconstexpr境界は実file-test MEMBER compileで検証する。
 
 
 ## 静的cook/looseへの接続
@@ -157,11 +139,8 @@ geometryだけの設定では埋込み画像bytesとtexture source_hashは変え
 NVMESH形式と既存材質は変更しない。失敗時はcandidateを公開しない。
 設定適用後に既存float演算でbounds/coneが非有限になる場合も、looseは公開前に拒否する。
 
-ImportStaticIntegrationTestを既存束へ登録した。glTF/GLB、無し/恒等/disabledのpayload同値、
-scale/fit/axes/原点/UV/windingのcook-loose頂点・index・bounds一致、meta/書式のhash不変、
-値変更・override/required・表面重心/不正scale/fit退化/巨大scale拒否と既存出力保持を検査する。
-実cooker/loose/新統合試験はWindows.hでcompile停止しており、登録試験は未実行。
-純粋な共有変換・hashの成功をnative統合の成功として扱わない。
+glTF/GLBとも、設定無し/恒等/disabledではpayloadを維持する。cookとlooseで設定適用後の頂点・index・boundsを揃え、
+metaや書式だけの変更ではhashを変えない。不正scale・fit退化・巨大scaleの拒否時は既存出力を保持する。
 
 自己完結GLB/data URIのcook APIはsource locatorが空でも従来どおり使用できる。
 その場合auto探索は設定無しとし、旧payload/hashを保つ。requiredは失敗し、明示overrideは読み込む。
@@ -172,9 +151,6 @@ scale/fit/axes/原点/UV/windingのcook-loose頂点・index・bounds一致、met
 静的モデルcookは、採用したsidecarとmodel package/manifest/派生texture packageが同じfileを指す出力を拒否する。
 書込開始前にweakly_canonicalによるpath一致、Windowsの通常case比較、filesystem::equivalentによるhardlink一致を検査する。
 安定したfilesystem上の誤指定防止であり、競合したpath差替えを完全に防ぐsandboxではない。
-
-実Mainから同じpath判定関数のtextを切り出し、Linux上の実filesystemで通常・最適化・ASan/UBSanを実行した。
-これはMain全体やWindows CLIの実行ではない。
 
 ## 静的モデルの最小設定例
 
@@ -214,11 +190,9 @@ Core decoderは呼出中のみ借用し、結果へ設定pointerを保持しな�
 空source locatorの自己完結入力はauto設定無し、cookerのrequiredは失敗、明示overrideは採用する。
 設定無し/disabledは旧payload/hashを維持する。Mainの骨格出力も採用sidecarへのaliasを事前に拒否する。
 
-CookedSkeletalAssetTestにM9のraw/legacy/loose/GLB/cooker同値、恒等/disabled、meta hash不変、
-fit（mesh-node scaleありを含む）、不変field、拒否時出力保持を追加した。
-実SkeletalAnimationSamplerとSkinVertexで3時刻の変形結果がs倍・法線不変になる検査も登録した。
-CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通常cookを追加した。
-共有primitiveは通常・最適化・sanitizerで実行成功、MEMBERではcompile成功。実decoder/pose/CLI/nativeはWindows.h等により未実行。
+raw/legacy/loose/GLB/cookerで設定の意味を揃え、恒等/disabledやmetaのみの変更ではpayload/hashを変えない。
+fitではmesh-node scaleを考慮し、対象外のfieldと拒否時の既存出力を保持する。
+一様scaleは各時刻の変形結果へ1回適用し、法線を変えない。CLIは設定正本をpackage/manifestで上書きする要求を拒否する。
 
 ## CLIの設定選択
 
@@ -256,8 +230,6 @@ geometry cook/cluster/画像decode/package書込/manifest書込は行わず、�
 miss時の既存manifest保護や出力path衝突規約は従来のcookへ引き継ぐ。
 FNV64と安定したfilesystemを前提とするcache照合であり、競合変更/攻撃的hash衝突への認証機構ではない。
 
-実引数parserのskip flagを通常/O2-NDEBUG/ASan・UBSanで確認。native smokeへ非更新、metaのみ変更、
-設定値変更、model/画像欠損・破損、manifest hash/format/出力先/entry/variant変更と骨格外部buffer変更を登録。
 cache本体とCLIはWindows依存により未実行。
 
 ## 幾何診断の計測契約
@@ -269,8 +241,7 @@ cache本体とCLIはWindows依存により未実行。
 sourceは不変で、独立workspaceを用いてsort/union-by-rankとpath compressionを行う。
 非有限値、不正index、workspace不足/重複は拒否し、失敗時の計測結果を保持する。
 
-小型既知形状と分離/継ぎ目/孤立/縮退、面順序、微小値、float両極端、無効入力を
-通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）の実kernelで確認。下記CLIから共有する。
+診断kernelは下記CLIから共有する。
 
 ## 画像診断の計測契約
 
@@ -281,9 +252,6 @@ sourceは不変で、独立workspaceを用いてsort/union-by-rankとpath compre
 総メモリの制限や敵対入力のsandboxではない。decoded storageは呼出中だけ所有し、
 失敗時の出力は保持する。対応外形式は明示拒否し、source画像に書き込まない。
 
-実stbをリンクして2x2 RGBA PNGの既知値、16bit grayの0/65535、定色JPEG、破損PNG/JPEG、
-巨大dimensions/不正入力/入出力aliasを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行する。
-MEMBER compileも確認し、native CLIへの接続と実物4本の照合は別の受入れとする。
 
 ## --inspect の使用と範囲
 
@@ -306,6 +274,4 @@ alphaCutoffは1超も受理し、normal scaleは有限の負値もそのまま�
 +Yを仮のupとした水平X/Zのforward候補を軸長順で2つ示すが、符号はmanualと明記する。
 stdoutのimport.json叩き台は恒等設定のみで、実寸と向きは作者の目視/指定で埋める。source隣へ自動保存しない。
 
-実引数parserの独立mode/equals/混在・空値拒否は通常/O2-NDEBUG/ASan・UBSanとMEMBER compileで確認する。
-native束へ幾何/画像の既知値、材質規定値/明示係数/無効値/出力保持/外部画像を登録し、CLI smokeへ診断値と
-source/sidecar非変更・出力file非生成を登録する。native統合はWindows.hにより未実行、実物4本も未配置のため未照合。
+native統合はWindows.hにより未確認、実物4本も未配置のため未照合。

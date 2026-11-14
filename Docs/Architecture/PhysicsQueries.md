@@ -7,40 +7,38 @@
 - 新PhysicsQueryHitに加えて旧PhysicsRaycastHit/PhysicsOverlapHitの末尾にUserDataを追加する。既存の法線方向、最近接の同距離順序、triggerを含む既定のqueryを維持する
 - metadata供給とqueryの統合・solverのmask適用は段階を分ける。P2D時点ではmetadataの格納/コピー/旧hit伝搬までで、maskによるsolver制御は後続
 
-## 検証範囲
-- query値型と実proxy集約コードはクラウド上で直接g++により通常/最適化/sanitizerを検証する。独自allocatorやOSをmockに差し替えない
-- 実Collider/Module/snapshot/旧hitの既定・高bit/0/複数bit・全uint64・全形状・反映時点・wrong thread/未登録拒否をPhysicsBroadphaseQueryTestに追加する。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
+## 過去の検証記録
+- 2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 統合クエリの公開入口（P4A）
 - SceneQuery::ExecuteQueryはPhysicsQueryDescでRaycastClosest/All、OverlapSphere/Box/Capsule、SweepSphere/Capsuleを公開する。LayerMask、trigger方針、世代付きignore、MaxHitsなどはdescriptorのままproviderへ渡す
 - CoreのIPhysicsSceneQueryProviderに非pure virtualの既定入口を追加する。未対応providerは出力を空にしてUnavailableを返し、既存実装のsource互換を維持する。SceneQueryはowner thread/接続を確認し、非Successとprovider例外では出力を空にする。例外は握り潰さず再送出する
 - PhysicsModuleはreadinessを確認して公開済みBroadphaseの実ExecuteQueryへ委譲する。呼出しだけでsnapshotを更新しない。UserDataは同じsnapshotの値。旧ray/overlap入口の数値契約をこの段で変更しない
-- fake providerの全descriptor伝搬/未対応/成功/各失敗/例外/wrong thread、実Moduleの7種とmetadata/filterの試験を既存bundleへ追加する。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った。バッチ、solver mask、明示refreshは後続
+- 2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った。バッチ、solver mask、明示refreshは後続
 
 ## 同じsnapshotへのbatch（P4B）
 - ExecuteBatchは要求spanと連続hit、要求順のPhysicsQueryBatchResultを受け渡す。戻り値Successはbatch全体を処理できた意味で、個別のSuccess/NoHit/InvalidArgument/IterationLimit等はResultを見る。個別失敗はHitCount=0、FirstHitはその時点のhit末尾とし、後続の要求を継続する
 - SceneQueryはowner thread/接続/非空null spanを確認しproviderへ1回委譲する。未対応providerの既定はUnavailable。全体の非Successと例外は両出力を空にし、例外は再送出する。入力/両出力は非aliasで、同期実行中に有効なこと
 - PhysicsModuleはreadinessを1回確認して同じ公開Broadphaseを逐次問い合わせ、ローカル候補へ詰める。全処理成功後にnoexcept swapで両出力を公開する。hitサイズの加算上限を確認し、確保例外で部分出力を公開しない。準備済み空batchはSuccess/空。暗黙refreshやsnapshotsequence変更はない
-- fake providerの1回委譲/各全体失敗/例外/不正span/wrong threadと実Moduleの混在結果/offset/MaxHits/単発一致/空/未準備/sequence不変の試験を追加。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
+- 2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 相互作用Layer/Mask（P5A）
 - broadphaseのSweepEndpointに所属Layer/Maskを値コピーし、候補ペア追加前に双方の許可を要求する。端点同位置のmin優先、canonical handle順、重複除去は維持する。既定Layer1/Mask全bitなら従来と同じ候補になる
 - ResolveContactsもworking proxyの同じ対称規則を接触計算より前に確認する。拒否pairはsolid押出し/Hit/trigger Beginを作らない。既存triggerの許可を撤回した場合、次stepで既存経路のEndを出す。callback中の変更は次stepのsnapshotに反映する
 - クエリのLayerMaskは検索対象の所属Layerを選ぶもので、相互作用Maskではない。衝突を無効化してもLayerが検索対象なら空間クエリに返る
-- 全32bitの両方向/片側拒否と4096真理値表をCPU実行する。実候補の高bit/0/複数bit/接触端点と実Worldの通知/押出しの試験は既存Physics bundleへ追加し、2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
+- 2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 明示snapshot更新（P5B、S9=a）
 - SceneQuery::RefreshDynamicSnapshotはGameThreadでproviderへ明示依頼する。未対応providerはUnavailable、初回固定更新前はNotReady。Physicsの固定更新中（通知配送中も含む）はNotReadyとして再入更新しない
 - 現時点では全proxyを候補Broadphaseへ再構築し、完成後にnoexcept moveで公開queryだけ置換する。GR09で静的/動的分離を最適化するまで、呼出しコストは全再構築であり、自動毎frame実行はしない。構築例外で旧公開snapshotを壊さない
 - freshなTransform/shape/metadataと現在の有効性をquery用に評価する。新規/無効化されたcolliderと対応Bodyも反映するが、simulation側のactive cache、working Broadphase、速度、保留impulse、PreFixedの準備位置、接触履歴、通知状態を変更しない
 - GetPublishedSnapshotSequenceは最後の固定更新による公開回数を維持し、明示refreshでは増加しない。同sequence内でquery内容が変わるため、明示呼出し側は自分の検索結果cacheを無効化する。次の通常FixedTickは通常通り進行しsequenceが増える
-- 実Moduleの移動前後/metadata/Body対応/新規・無効化/impulse・準備位置保持/通知中拒否とfake providerの委譲を試験へ追加。Broadphaseの実型がnoexcept move可能であることは独立syntaxで確認。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
+- Broadphaseの実型がnoexcept move可能であることは独立syntaxで確認した。2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
 ## 空間候補の訪問境界（P4C）
 - PhysicsBroadphase::VisitProxiesInAabb / VisitProxiesAlongRayはproxy spanを入力順で同期訪問する。visitorはSuccess/NoHitで継続、その他のResultで中断する。訪問API自体のSuccessは走査完了であり幾何hitを意味しない。任意precheckは空間除外より先に呼び、NoHitで除外、その他の非Successで中断する
 - context/proxy/input spanの借用を保持せず、callback中に入力領域を書き換えない。空間boundsはproxy実形状から求め、不正geometryや計算不能boundsは黙って落とさずvisitor側へ渡す。要求側の不正bounds/ray/非空null span/visitor欠落はInvalidArgument
 - AABBはfloat丸めとsweepのworld相対許容より広い保守的余裕で比較する。rayは正規化しdouble slabを使い、軸ごとの丸め余裕を取る。directionの厳密0だけを平行扱いし、短い成分をepsilonで捨てない。有限長・距離0を扱う
-- 実Broadphase.cppの訪問処理をstack proxy/実Mathと直接リンクして検証する。allocator/OSの代用品は使わない。遠方除外/接触/OBB/capsule/極端direction/長い微小軸ray/失敗順序/不正値を通常・最適化・sanitizer・MEMBERで確認。クエリ集約への接続と全探索比較はP4D
 
 - OBBは受理可能な軸のGram誤差1e-4によりdot判定領域と前向きboundsがずれるため、最大半径長の1e-3を候補boundsへ加算する。狭いray/AABBの境界で既存の確定hitを取り落とさない
 
@@ -48,7 +46,6 @@
 - 既存のfloat二次式で、radius1の球と円筒を2だけ外したrayが距離10000から誤hitする事例を実再現した。物理query内の球・カプセルをdoubleの直線距離と断面計算に変更し、大きな二次項同士の減算を避ける。共有Math/描画側には変更しない
 - カプセルは有限円筒と両端球の候補から最小の正根を取り、内部始点は0。非zeroの微小線分を端球へ潰さず、ほぼ平行なrayにも円筒判定を残す。微小なdouble丸めだけ断面0へ丸め、明確なmissは拒否する
 - 根を点の再構成までdoubleで保持し、距離を先にfloatへ丸めたことで小さい形状の中心へhit点がずれる問題も抑える。距離/点/法線の外部型はfloatのままで、最終表現の丸めは残る。同距離の選択規則は外部float距離で維持する
-- 解析的な軸方向の球/円筒/端球、遠方のhit/miss/tangent、内部/逆向き/上限、縮退/極小/ほぼ平行/端点反転/方向倍率を実コードで確認する。G1の未実行facade試験に見つかったVector3単項minus（APIなし）も明示の負方向Vector3へ修正した
 
 - Sphere/Capsuleの法線は最終float Pointから再計算せず、形状基準の局所double hitオフセットから求める。大きいworld座標で微小形状のPointが中心へ丸まっても法線を保持する。新queryの従来の保守的な尺度上限はこの修正では広げない
 
@@ -65,9 +62,9 @@
 - 旧RaycastHitは同じdistance/point/normal/識別値を返す。同距離は大きいhandleを選ぶ。旧OverlapHitはhandle昇順、Point/Depth/識別値を保持し、Contact.Normalだけ新APIから反転して従来のquery→対象向きへ戻す
 - 新旧で形状の有効条件・数値安全域を統一する。非正規直交のOBBやfloat計算の保証外の巨大形状はInvalidArgumentとして扱う。従来の有限チェックを通ったことだけで、そのような入力の数学的な結果までは保証しない
 - Module/Sceneの失敗出力は空。直接BroadphaseのOverlapは従来どおり成功時だけ追記し、既存要素を消さない。互換変換用のscratch/変換配列を使うため、新規利用では直接ExecuteQueryを推奨する
-- productionで使うspan版adapterをstack bufferで実行し、混在4,000件を新旧4種類の全field/順序で比較する。旧Overlapの符号・同距離・不足buffer/失敗clearも確認する。実Module/所有配列の統合試験を追加し、2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
+- 2026-11-03にWindowsのDebugでPhysicsBroadphaseQueryTestの12ケース（ケースごとの子プロセス）を実行し、全ケースが通った
 
-- 旧4入口は従来の無filter検索を維持し、Layer=0も返す。新APIのLayerMaskはbit集合を選ぶためLayer=0を除外する。この差は既定Layerでの新旧一致試験と分けて4種の回帰に固定する。内部kernelのfilter適用だけを切り替え、形状やproxy値は書き換えない
+- 旧4入口は従来の無filter検索を維持し、Layer=0も返す。新APIのLayerMaskはbit集合を選ぶためLayer=0を除外する。内部kernelのfilter適用だけを切り替え、形状やproxy値は書き換えない
 
 ## G1のCapsule受入れと押出しの値契約
 - SweepCapsuleは姿勢を変えずに線分＋半径を平行移動する。Boxの面・辺・角、横向きCapsule、Capsule同士の距離と外向き法線を解析値で検証する。回転中の連続衝突判定ではない
@@ -75,7 +72,6 @@
 - Sweepの初期接触/重なりを報告するときはDistance=0、bStartPenetrating=true、Depthはその時点の接触深さ。接触だけならDepth=0でもflagはtrueになる。bReportStartOverlap=falseはその対象の初期重なりをNoHitにする。OverlapのbStartPenetratingは掃引専用flagなので設定しない
 - 垂直Capsule対Boxの面への0.25侵入、接触0、対称な内部配置1.5、および対Sphere/Capsuleの0.25侵入で深さと法線符号を固定する。対称配置は複数の押出し方向が成立し、既存規則で-Xを選ぶ
 - 特に線分がBox内部を横切る深い重なりのDepthは既存接触計算の近似を引き継ぐ。任意の姿勢/複合接触に対しNormal*Depthの一度の適用で完全分離する最小並進ベクトルは保証しない。後続GR07の移動処理は複数接触と反復補正を扱い、未収束を確定hitへ変えない
-- 純Mathと実Physics query kernelのCPU試験でこの契約を確認する。実World/Module/Windows統合の受入れとは区別する
 
 ## レイヤーの名前の表（GR08-LAYER-TABLE）
 - 名前とbit割当はAssets/Config/CollisionLayers.jsonに置く。JSONのschemaはcollision-layers.v1、layersはname（文字列）とbit（整数のビット位置）を持つ要素の配列。現在の仮の12名はDefault=0、Terrain=1、Platform=2、Player=3、Hurtbox=4、Hitbox=5、Prop=6、Animal=7、GrassInteract=8、CameraBlock=9、Trigger=10、Perception=11（数値はbit位置）
@@ -97,7 +93,7 @@
 - `PhysicsGroundQuery` は参照する `SceneQuery` の寿命を所有しない。`SceneQuery` と、それを所有する Engine / World より長く生かさない。利用は GameThread 専用とする
 - 姿勢は PoseFinalize の群で確定し、その後に固定ステップが回る（群の順序は `Docs/Architecture/TickStages.md`）。足 IK が読むのは前の固定ステップで公開されたスナップショットで、最大1固定ステップ古い。同じフレームで動いた物体は次の固定ステップまで反映されない
 - 地形（G5 の GR38）は同じ `IGroundQuery` の別実装として差し込む。物理の実装は地形を知らない
-- `PhysicsGroundQueryIntegrationTest`（`PhysicsDynamicsTest` の束の中）で、実 World に Box の20度の斜面と3段の階段を置き、高さを 1e-3 m・法線を0.5度の許容誤差で解析値と照合する。別レイヤーの Box（草の代わり）を `LayerMask` で除き、トリガー・自分の Body の除外も確かめる。固定ステップ前の `NotReady`・別スレッドの `WrongThread`・地面の外の `NoHit`・急な面の `TooSteep` を区別する
+- Box の20度の斜面と3段の階段に対する接地の問い合わせは、高さの許容誤差は 1e-3 m、法線方向は0.5度を目安とする。`LayerMask` で別レイヤーを除き、トリガー・自分の Body も除外する。固定ステップ前の `NotReady`・別スレッドの `WrongThread`・地面の外の `NoHit`・急な面の `TooSteep` を区別する
 
 ## 親の休眠と物理の寿命（GR41）
 コライダー・RigidBody の有効性は所有者の `Entity::IsActiveInHierarchy()` で決まり、祖先のどれかを `SetActive(false)` にするか破棄予約すると、次の固定ステップで作業用・公開のブロードフェーズ、クエリ、接触から外れる。

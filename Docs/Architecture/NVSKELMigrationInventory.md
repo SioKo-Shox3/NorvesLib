@@ -2,7 +2,7 @@
 
 ## 目的と決定状態
 
-これは実装前の変更箇所と受入れ試験の棚卸しであり、wire/APIの確定仕様ではない。
+これは実装前の変更箇所と受入れ条件の棚卸しであり、wire/APIの確定仕様ではない。
 基準は [b2aa6ff](https://github.com/SioKo-Shox3/NorvesLib/commit/b2aa6ff708898522809f1ab9d861d81f69fdb679) のソース。
 作者が確定した事項は [G2ImportDecisions.md](G2ImportDecisions.md) を正とする。
 
@@ -128,13 +128,13 @@ morphはprimitiveごとのdelta数を各primitiveのvertex数で検査し、mesh
 対象を持たないprimitiveはゼロdelta相当として許す。DroppedMorphTargetCountは全primitiveの除去target総数、
 MorphTargetWidth（JSONのmesh_target_width）はmesh/node初期weightsおよびweight animationの幅であり、別に報告する。
 
-純JSON/範囲検査は実行済み。native回帰は次のとおり。
+以下は当時のnative検証記録である。
 - `CookedSkeletalAssetTest`: 2026-11-02のWindows Debugでビルドが終了コード0。
   コードページ932・65001のそれぞれでPassed（終了コード0）。
   記録は`PROGRESS.md`のG2-GR78-SURFACE-CENTROID-CHECK-P1（run 20261102-095825）。
 - `SkeletalImportReportTest`（mesh_target_width・dropped_targetsの報告）: 2026-10-11のWindows Debugで、隣接69件をまとめた実行の中でPassed。
-  69件中の失敗は無関係の`BoardComponentRoutingTest`のTimeout 1件（単体の再実行で通過）で、試験のソースはこの実行の後に変わっていない。記録は`PROGRESS.md`のSCN-ECS-RENDER-SYNC-SWITCH（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）。
-- `GLTFSkeletalAnalyzerTest`（2primitiveの連結）: 未実行（ビルドのみ）。2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0
+  69件中の失敗は無関係の`BoardComponentRoutingTest`のTimeout 1件（単体の再実行で通過）で、当該実行時点では試験のソースに変更はなかった。記録は`PROGRESS.md`のSCN-ECS-RENDER-SYNC-SWITCH（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）。
+- `GLTFSkeletalAnalyzerTest`（2primitiveの連結）: 2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0。この時点では実行せず、ビルドのみ確認した。
   （`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
 
 ## 0.2 readerの段階接続
@@ -158,7 +158,7 @@ GetMemorySizeにはresource側の表とslot名の所有サイズを加える。
 
 FrameLeaseは生成時検証済みのimmutable表を受理する。旧3引数AssetLeaseと空表FrameLeaseも保持する。
 範囲drawのコード接続は済んでも、palette共有とWindows/GPU受入れが済むまでGR32描画完了とは扱わない。
-純layout/実index/頂点範囲/有限bounds検査を実行し、Resourceの1/2/8表・不正名/範囲・世代・Unload寿命はnative回帰へ登録する。
+Resourceは1/2/8表、不正名/範囲、世代、Unload寿命の契約を維持する。
 Resourceのnative回帰の`SkeletalResourceLifetimeTest`・`SkeletalSubmeshLayoutTest`（純layout検査）は、2026-11-02のWindows Debug（HEAD `123f1b98`）で、
 上記readerと同じ検証でビルドが終了コード0、両試験がPassed（それぞれ0.03秒）。
 記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401）。
@@ -178,17 +178,16 @@ SkinnedMeshProxyは解決済みMaterials[8]/MaterialCountを値コピーし、�
 FramePacket/SceneViewの値所有コピーで後続のcomponent設定変更から独立する。SceneRevisionはslot数/各material idも含める。
 FrameLeaseは検証済み表を範囲drawへ渡すが、ここだけで複数材質のGPU表示を検証済みとは扱わない。
 
-- Component API・snapshotの`SkeletalFramePacketSnapshotTest`（`TestMaterialSlots`等でslot APIとpacketの値コピーを検証）は、
+- Component API・snapshotの`SkeletalFramePacketSnapshotTest`（`TestMaterialSlots`等でslot APIとpacketの値コピーを検証した）は、
   2026-11-02のWindows Debug（HEAD `297ededc`）でビルドが終了コード0、本試験がPassed（終了コード0）。
   記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE（run 20261102-101626、`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U1.txt`）。
   2026-10-11のWindows Debugでも`FramePacketManagerTest`・`RenderThreadFrameCompletionTest`・`SkeletalFramePacketSnapshotTest`の3件をビルド（EXIT=0）し、3件すべてPassed（EXIT=0、`100% tests passed, 0 tests failed out of 3`）。記録は`PROGRESS.md`のSCN-MEGA-SCENE-CONFIRM（run 20261010-223034）。
-- SceneRevisionの`RenderingDDGILightingContractTest`（slot数・各material idによる`ComputeSceneRevisionHash`の変化を検証）は未実行（ビルドのみ）。
-  2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0（`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
+- SceneRevisionの`RenderingDDGILightingContractTest`（slot数・各material idによる`ComputeSceneRevisionHash`の変化）は、
+  2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0。この時点では実行せず、ビルドのみ確認した（`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
 
-packetのnative回帰はSceneViewから実GenerateDrawCommandsへ通し、component再設定・再同期・mesh世代変更・破棄後の保持を確認する。
+SceneViewからGenerateDrawCommandsへ渡したpacketは、component再設定・再同期・mesh世代変更・破棄後も取得済みの値を保持する。
 CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し、本番入口は実deviceから渡す。
-試験は実capability値を渡すため、未設定deviceのnull参照やFakeDevice/Core差し替えを検証経路に使わない。
-packetのnative回帰は`SkeletalFramePacketSnapshotTest`。上記Component API・snapshotの2026-11-02のWindows Debug（HEAD `297ededc`）のPassed記録を参照する（`PROGRESS.md`のTEST-FULL-CTEST-BASELINE、run 20261102-101626）。今回は再実行せず、GPU描画の証拠にはしない。
+packetのnative検証は、`SkeletalFramePacketSnapshotTest`の2026-11-02のWindows Debug（HEAD `297ededc`）のPassed記録を参照する（`PROGRESS.md`のTEST-FULL-CTEST-BASELINE、run 20261102-101626）。この過去のCPU結果はGPU描画の証拠にはしない。
 
 ## 範囲drawの接続
 
@@ -209,8 +208,8 @@ packetのnative回帰は`SkeletalFramePacketSnapshotTest`。上記Component API�
 `MeshIndexChunks.h` の `BuildSkinnedMeshIndexChunks` でスキンのサブメッシュのインデックス範囲を塊に分け、
 `VirtualShadowMapPass` とビジビリティバッファの ID ラスタを集める `VisibilityRasterPass::CollectSkinnedChunks` が同じ規則を使う。
 旧形式の空表は従来どおりメッシュ全体として扱う。
-`SkinnedSubmeshDrawContractTest` は実 Core と CPU 用 RHI test double でコマンド・記録・不正入力を検査し、
-全体・部分・3 の倍数でない範囲・はみ出す範囲の検査も含む。2026-11-02 の Windows Debug で同テストは PASS、終了コード 0。
+2026-11-02 の Windows Debug では、`SkinnedSubmeshDrawContractTest` が実 Core と CPU 用 RHI test double でコマンド・記録・不正入力を検査し、
+全体・部分・3 の倍数でない範囲・はみ出す範囲も確認した。同テストは PASS、終了コード 0 だった。
 `Game`・`AssetCook`・`SkinnedSubmeshDrawContractTest` の Debug ビルドも終了コード 0。出力は `.harness/unit-verify.txt` に記録した。
 
 `--startup-skinned-probe-materials=2` で、2 サブメッシュ・2 材質 slot の骨付きパネルを使える。

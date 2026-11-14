@@ -11210,3 +11210,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証。本体（Library・Game・Tools のソース）は変えていないので、見た目と動きは変わらない（撮影・計測の確かめは回さない決まり）。
 - Notes: 本体に残る試験のための入口（触っていない）: `*TestAccess.h` が `Library/Core/Private` に 7（ClipBankBinding・RigSplitBinding・RigSplitAllocation（`.cpp` も）・SkeletalAssetSession・SkeletalAssetLoader・SkeletalAssetPublication・SkeletalAssetRuntime）、`Tools/AssetCook` に 10（CookCacheDecision・CookDestinationLock・CookManagedBootstrap・CookManagedStoreInitialization・CookManagedUpdate・CookOutputSetGuard・CookStateFile・SkeletalRoleFileCli・SkeletalRoleFileCook・SkeletalRoleFileInput）。識別子 `TestAccess` を含むファイルは Library・Game・Tools で 54、`ForTesting` は 20、`TestHook` は 2。`Docs/History/**` と、`PROGRESS.md`・`TASKS.md` の過去の記録と未着手の項目の中の試験への言及は残した。
 - U6 Architecture の文書(A〜G)から消した試験の現在形の説明を外す: 着地(直し 0 回)
+- U7 Architecture の文書(H〜Z)・ThirdParty から外し、凍結の基準の JSON を消す: 着地(直し 0 回)

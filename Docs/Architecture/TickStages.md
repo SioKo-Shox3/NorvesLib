@@ -134,7 +134,3 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 `World::Tick` と `World::LateTick` の入口で `UpdateWorldTransforms` を実行する。同じ順序付きの系の中では、呼び先が次の群へ移る境界で変換を更新する。同群内の setter 直後には暗黙同期しない。Late の PostPhysics 後は `UpdateRenderTransforms` が `UpdateWorldTransforms` を呼び、Camera〜PreRender の前に World と描画の変換を確定する。これらの入口と PostPhysics 後の確定は、対象が空の場合も維持する。
 
 前の群で変更した親の姿勢は次の群から子が読める。群ごとの一括確定を保ち、同群内の遅い observer に setter 直後の伝播を保証しない。固定ステップの前後にも変換を確定する。
-
-## 検証範囲
-
-群・設定・順序・破棄、固定ステップ、時間 channel、姿勢および camera 後段の試験結果は `Docs/Architecture/GameFoundationValidation.md` に記録する。
