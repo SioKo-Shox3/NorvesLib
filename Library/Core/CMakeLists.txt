@@ -353,6 +353,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
+    Private/Rendering/WetSurface.cpp
     Private/Rendering/DfgLut.cpp
     Private/Rendering/EnvironmentMapSource.cpp
     Private/Rendering/RayTracingShadowPass.cpp
@@ -810,6 +811,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SharedResourceRegistry.h
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
+    Public/Rendering/WetSurface.h
     Public/Rendering/SkyAtmospherePass.h
     Public/Rendering/DDGIProbePass.h
     Public/Rendering/ShadowMapPass.h
