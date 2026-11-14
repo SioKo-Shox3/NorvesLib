@@ -731,6 +731,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
     Public/Rendering/SkinnedMeshTypes.h
+    Public/Rendering/FurTypes.h
     Public/Rendering/MaterialTypes.h
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
