@@ -11210,3 +11210,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 枯れ度を評価する計算シェーダーと、消費側の読み取り関数を足す: 着地(直し 1 回)
 - U2 源を RenderWorld → RenderingCoordinator → FramePacket → ViewRenderContext へ値で通す: 着地(直し 0 回)
 - U3 Vegetation が毎フレーム焦点に近い源を選んで RenderWorld へ渡す: 着地(直し 0 回)
+- U5 WorldFieldPass に近傍・遠景の枯れ度の層を足し、毎フレーム源から評価して公開する: 着地(直し 0 回)
