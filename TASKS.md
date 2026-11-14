@@ -12,6 +12,8 @@
 
 2026-10-13 試験の扱い（ユーザー指示「邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が微妙」）: ctest で無効にした試験（`set_tests_properties(... DISABLED TRUE)`。今は `RenderGraphCompileTest`）は合否に使わない。無効の試験が通らなくなるという指摘は差し戻しの理由にせず、直すためだけに偽デバイスや期待値を書き換えない。新しい試験は `Docs/Testing.md` の「技術的負債」の節の 3 点が書けるときだけ足す。
 
+2026-11-14 試験の扱い(ユーザー決定。上の 2026-10-13 の段落より優先): このライブラリは機能を作っている途中で、外の利用者も、それに頼って動く本番も無い。試験は守るものが無く、作り直しのたびに直す手間だけがかかるので、作らない・足さない・直さない・回さない。既存の試験は TEST-REMOVE-1114 で消す。各項目の done-when・verify にある試験(試験を足す・ctest を回す)は無いものとして扱い、確かめはビルドが通ることと人のプレイにする。それまでに実装の変更で既存の試験がビルドできなくなったら、直さずに消す。
+
 2026-10-14 荒野の作り直し（ユーザーの評価と決定）: ユーザーは今の荒野を「PS3 の水準で、現実の荒野と比べられる水準に無い」と評価した。地形の大きな形は実在の地形データ（USGS 3DEP の 1 m DEM、パブリックドメイン）から作り、手本は米南西部のメサと砂岩（Valley of the Gods、ユタ州）にする。ダウンロード（DEM の 1 m タイル `x60y413` 約 268 MB・Python のパッケージ・手本の写真・Poly Haven の素材）はユーザーが許可済み。それ以外のダウンロードは、ファイル名とサイズを書いて BLOCKED にする。項目は `SCN-WL-`。判定は、技術と見た目の条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき）を評価者が見て、実写と並べて成立するかの最終の判断はユーザーがする（SCN-WASTELAND-POLISH の後）。目標の個数（数十万個など）は置かず、手本の写真の大きさ・被覆・疎密に合わせる。
 
 2026-10-15 荒野と室内の光の目的（ユーザー）: このプロジェクトは現代の CG の水準の描画を目指してきた。荒野（wasteland）と室内の光（interior-light）は、それを確かめる「ほぼ実写」の美しさを見るシーンで、速さ・最適化は他のシーンで見る。この 2 つでは 60 fps の条件を外す（リアルタイムで、操作できる程度＝1080p で 20〜30 fps 以上ならよい）。品質を見る撮影は 1920×1080 以上。判断は手本の実写との比較画像・実在の材質の明るさの範囲・同じ視点のパストレースの正解（光の誤りを分ける）で行い、節目（SCN-WL-REVIEW-1・REVIEW-2・SCN-WASTELAND-POLISH）でユーザーが見る。ambientCG（CC0）の素材のダウンロードも許可済み。
@@ -38,15 +40,16 @@
 
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
-## GPU-TEST-REMOVE-1114: ウィンドウを開く試験とゲームを起動する試験をすべて消す
+## TEST-REMOVE-1114: 試験をすべて消す(このライブラリでは試験を作らない・回さない)
 - status: todo
 - weight: standard
-- done-when: GPU のラベルの試験(Vulkan のデバイスを作りウィンドウを開く試験。いま 117 件)と、Game.exe を起動する `M9WorldAcceptanceTest` を、CMake の登録・試験の実行ファイルのターゲット・ソースごと消す。値を確かめているかどうかに関わらず消す。1 つの実行ファイルに GPU のラベルの無い CPU の試験(MEMBER)が同居しているときは、CPU の試験は残して GPU の試験だけを外す。消して使われなくなった試験専用の補助(`Test/Core/Rendering/RenderingValidation/` の起動の枠組み・しきい値の TSV・基準画像・試験の撮影のスクリプトなど)も消す。エンジン本体(`Library`・`Game`・`Tools`)のコードは変えない。残る試験に、本物のウィンドウ(`WindowsWindow`)や Vulkan のデバイスを作るものが無いことをコードを読んで確かめ、あれば同じく消す。`Docs/Testing.md` から消した試験の記述を消し、「ウィンドウを開く試験・ゲームを起動する試験は作らない(見た目と起動は人が確かめる)」と書く。消した試験の数と、同居していて残した CPU の試験の名前を `PROGRESS.md` に書く。Debug の構成(テスト有効)とビルドが通る。試験は走らせない(確かめはビルドと登録の照合だけ)。
-- verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
+- done-when: `Test/` の下の試験をすべて(CPU の試験・GPU の試験・ゲームを起動する受入れ)、ソース・CMake の登録・試験の実行ファイルのターゲット・試験専用の補助(`Test/TestSupport`・`Test/TestBundle`・しきい値の TSV・基準画像・試験用の fixture)ごと消し、`Test/` を無くす。最上位の `CMakeLists.txt` から `enable_testing()`・`NORVES_BUILD_TESTS`・`add_subdirectory(Test)` と試験用の CMake の補助(`NorvesTestNoDialog` など)を外す。試験だけが使うスクリプト(`Scripts/` の基準画像の更新・しきい値の調整・試験の連番の書き出しなど)・`Tools/` の煙試験の雛形(`*.cmake.in`)・`.github/workflows/` の試験を回す段(試験しか回さないワークフローはファイルごと)も消す。エンジン本体(`Library`・`Game`)と道具(`Tools`)のソースは変えない(試験のためだけの入口が本体に残っていても触らず、見つけたものを `PROGRESS.md` に書く)。`Docs/Testing.md` は「試験は作らない(このライブラリは作っている途中で、守る利用者も本番も無い。確かめはビルドと人のプレイ)」の短い文書に書き換え、ほかの文書(`Docs/`)から消した試験・試験のコマンドへの案内を外す。消したファイルの数と行数を `PROGRESS.md` に書く。Debug の構成とビルド(Game・Tools を含む全体)が通る。試験は走らせない。
+- verify: `cmake -B build -S .`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `git grep -q -E "GPU;RenderingValidation|VulkanTest|M9WorldAcceptanceTest" -- Test CMakeLists.txt && exit 1 || exit 0`
-- paths: Test/**, CMakeLists.txt, Docs/Testing.md, Scripts/**
-- notes: 人の決定: ウィンドウを開く試験・ゲームを起動する試験は要らない。見た目と起動は人が確かめる範囲で、AI が起動できたかや画素の値を見ても意味が無い。二度と足さない。盤面では一度も回していない(ウィンドウが開いて利用者の邪魔になるので外していた)。試験を走らせて決めない。
+- verify: `node -e "process.exit(require('fs').existsSync('Test') ? 1 : 0)"`
+- verify: `git grep -q -E "enable_testing|NORVES_BUILD_TESTS|add_subdirectory\(Test" -- CMakeLists.txt cmake && exit 1 || exit 0`
+- paths: Test/**, CMakeLists.txt, cmake/**, Docs/**, Scripts/**, Tools/**, .github/workflows/**
+- notes: 人の決定: このライブラリは機能を作っている途中で、外の利用者も、それに頼って動く本番も無い。試験は守るものが無く、作り直しのたびに直す手間だけがかかるので、作らない・回さない・残さない。見た目と動きは人がゲームで確かめる。試験を走らせて決めない(消すだけ)。
 
 ## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
 - status: done
@@ -59,15 +62,15 @@
 - notes: 人の決定: 実行できたか以外を見ていないグラフィックの試験は要らない。試験を走らせて決めない(ウィンドウが開いて利用者の邪魔になる)。試験のコードを読んで決める。
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
-- status: todo
-- after: GPU-TEST-REMOVE-1114
+- status: backlog
+- after: TEST-REMOVE-1114
 - done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通り、ctest の全部(GPU-TEST-REMOVE-1114 でウィンドウを開く試験を消した後に残る CPU の試験。直列で 7 分ほど)が 2 行の verify ですべて通る。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。落ちる試験を消して通すことはしない(ウィンドウを開く・ゲームを起動する試験が残っていたら、それは消してよい)。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600 -I 1,,2`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600 -I 2,,2`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
-- notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
+- notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。 2026-11-14: 試験を作らない決まりになり、全体のビルドは TEST-REMOVE-1114 が確かめるので外した(backlog)。
 
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
 - status: done
