@@ -11199,3 +11199,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（アセットロードの危険地帯）。実物の Blender での書き出しと fixture の形の照合、実犬の cook は `G2-GR82-REAL-RIG-CHECK`。撮影・計測の確かめは回さない決まり（見た目は変わらない）。
 - Notes: 段階をまたぐ注意の「求めた根が関節でなければ子の関節 1 つを根にする」は、profile1 の「関節の親は関節だけ」の契約に合わないので旧経路には入れず、v1 の経路（Armature を作者 frame に入れる）で満たす。
 - U1 Fur の材質データの型と、材質の店の検査・Revision: 着地(直し 0 回)
+- U3 SkinnedMeshProxy へ Fur の slot の値の写しを載せ、World から材質の店を渡す: 着地(直し 0 回)

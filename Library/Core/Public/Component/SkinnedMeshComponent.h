@@ -9,6 +9,11 @@
 #include "Rendering/SkinnedMeshTypes.h"
 #include "Resource/SkeletalMaterialBindings.h"
 
+namespace NorvesLib::Core::Rendering
+{
+    class MaterialResources;
+} // namespace NorvesLib::Core::Rendering
+
 namespace NorvesLib::Core::Component
 {
     class SkinnedMeshComponent : public Component
@@ -80,7 +85,8 @@ namespace NorvesLib::Core::Component
         void SetVisible(bool bVisible);
         bool IsVisible() const;
 
-        [[nodiscard]] bool BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy);
+        /// materials を渡すと、Fur の材質の slot の値を proxy の FurSlots へ写す。nullptr なら FurSlots は空。
+        [[nodiscard]] bool BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy, const Rendering::MaterialResources* materials = nullptr);
 
         // 姿勢が最新か（評価し直す必要が無いか）。描画の同期の検査が、副作用なしに proxy を作れるかの判定に使う
         [[nodiscard]] bool IsPoseCurrent() const { return HasCurrentPose(); }

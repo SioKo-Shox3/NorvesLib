@@ -172,6 +172,15 @@ namespace NorvesLib::Core::Rendering
         bool bAssetLeaseActive = false;
     };
 
+    // ファーの材質を付けた slot 1 つ分の値の写し。RenderThread は材質の店を読まず、これを読む。
+    struct SkinnedMeshFurSlot
+    {
+        uint32_t Slot = 0;        // 材質の slot の番号
+        MaterialHandle Material; // 写した元の材質
+        uint64_t Revision = 0;    // 写したときの MaterialResourceData::Revision
+        FurMaterialData Fur;     // 値・領域の表・4 枚のマップの handle の写し
+    };
+
     struct SkinnedMeshProxy
     {
         SkinnedMeshHandle MeshHandle;
@@ -180,6 +189,8 @@ namespace NorvesLib::Core::Rendering
         // componentから値コピーしたslot材質。未設定はslot0を解決済み。
         MaterialHandle Materials[MAX_MATERIAL_SLOTS]{};
         uint32_t MaterialCount = 0;
+        // Shading が Fur の材質を付けた slot だけ、slot の昇順。ファーの材質が無ければ空。
+        Container::VariableArray<SkinnedMeshFurSlot> FurSlots;
         Container::TWeakPtr<const SkinnedMeshAssetLease> AssetLease;
         uint64_t ObjectId = 0;
         uint64_t ComponentId = 0;
