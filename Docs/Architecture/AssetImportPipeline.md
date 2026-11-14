@@ -24,7 +24,6 @@ Resource/GltfContainer.hのParseContainerは、独自Spanだけを使う無割�
 
 ## 検証範囲
 
-GltfContainerTestは既存CookedMeshTest束のMEMBERとし、新しい実行ファイルをCMakeへ増やさない。同じTest.cppと実GltfContainer.cppをLinuxで直接compileして、借用pointer/length、既知chunkの順序/重複、未知chunk、切断/巨大length、非整列アドレス、失敗時clear、4,000固定seed破損入力での境界と非変更を確認する。
 
 この部品だけではcooker/loose/skeletalの既存入口は変わらない。3経路への配線、JSON/buffer/image解決、GLBからの実資産取り込みは後続タスクで検証する。WindowsではDebugのGltfContainerTestを含む既存束のCPU試験が合格した（2026-11-02、GR77: native受入れ）。Core全体や表示の受入れとは区別する。
 
@@ -36,7 +35,6 @@ Text/Base64.hは独自Spanだけを使う無割当の下層部品。GetBase64Dec
 
 data URIのscheme/media type/parameters、percent-decoding、JSONの文字列型はこのprimitiveに渡す前の上位層が扱う。2つの固定prefixだけの判定を汎用[RFC 2397](https://www.rfc-editor.org/rfc/rfc2397.html)準拠のURI parserと呼ばない。
 
-Base64DecodeTestは既存CookedMeshTest束のMEMBER。RFC例、1byte全256通り、2byte全65,536通り、固定seedの3byte4,096件、異常padding/容量/alias/失敗時非変更を同じ実装へ直接リンクして検証する。data URIやGLBの消費経路への接続完了を意味しない。
 
 ## GR77: data URIとBINの意味境界
 
@@ -63,7 +61,7 @@ BufferSetはJSONから独立したBufferRequest列を受け取り、外部ファ
 - filesystemが読込中に悪意をもって差し替えられない通常のローカル資産運用を前提とする。canonical確認とopenをOSレベルで不可分にしたsandboxではない
 - 候補を組み立てた後にswapして公開する。失敗/例外は出力setを空にし、allocation/reader例外は再送出する。旧setから取得したviewはReset/再解決/破棄後に利用しない。読込元GLBを出力set自身の破棄対象storageへ置かない
 
-実BufferSet/FileReader/Test sourceはg++のsyntax/Werror確認とMEMBER object compileが可能。所有/コピー/例外/実ファイル・symlinkの試験は既存CookedMeshTest束へ登録するが、実allocatorを含むLinux実行は未確認。Linuxの実allocator接続のcompile試行では既存MemoryOverrides.hのutility不足、MemorySystem.cppではWindows.h依存で停止した。WindowsのDebugではGltfBufferSetTestを実行し合格した（2026-11-02、GR77: native受入れ）。代替allocatorは作らない。GltfBufferUriTestは実BufferSet.cppから相対path検証だけをsection GCで直接リンクし、通常/O2/ASan・UBSanで実行する。純predicateの成功を所有/ファイルI/O試験の成功と扱わない。
+実allocatorを含むLinux実行は未確認。Linuxの実allocator接続のcompile試行では既存MemoryOverrides.hのutility不足、MemorySystem.cppではWindows.h依存で停止した。WindowsのDebugではGltfBufferSetTestを実行し合格した（2026-11-02、GR77: native受入れ）。代替allocatorは作らない。純predicateの成功を所有/ファイルI/O試験の成功と扱わない。
 
 JSONからのdescriptor構築とcooker/loose/skeletalへの接続は後続。looseの旧accessor計算にはunchecked加算/乗算があるため、共通bufferの宣言境界を導入する際に別途修正する。
 
@@ -84,9 +82,8 @@ CookGltfToNvmeshは共有containerでJSONとBINを分離し、JSON部分だけ�
 - source hashは元source全量をBOM込み・LE64長prefix付きでhashし、外部bufferだけをJSON順に全実bytesと長prefixで追記する。外部bufferの宣言長を超える余剰も保持する。GLB/data URIは元sourceに既に含まれるため二重に加えない。GLBに追加の外部bufferがある場合はその外部bytesを追記する
 - 従来の一mesh/一primitive・mesh-local頂点・cluster・material path・既定値・NVMESH形式を保持する。外部imageは参照pathを作るだけで、この段階で画像ファイルを新たに読まない。embedded imageのpackage生成、looseとskeletalの接続はまだ含まない
 - data URI bufferは対応application MIMEの正規Base64を受理する。旧smokeのAA==は宣言長に足りないため、非対応ではなく短いbufferとして失敗する。重複field・非正整数・危険な外部pathなど共有resolverの拒否規則が適用される
-- StaticGltfBufferCookTestを既存CookedMeshTest束に追加し、AssetCookLibをリンクする。102byte三角形の外部/GLB/data URIのpayload一致、BOM/外部余剰/混在GLBのhash、percent path、短さ/不正padding/壊れたGLBと失敗時出力保持を検査する
 
-Linuxでの実cookerと新試験のcompileは既存String.hのWindows.h依存で停止した。WindowsのVisual Studio構成ではDebugでStaticGltfBufferCookTest・AssetCookMeshSmoke・AssetCookGlbSmokeを実行し合格した（2026-11-02、GR77: native受入れ）。GLB containerとbuffer意味helperの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER回帰は実行成功。fixture JSON/既知binaryの文法・整合性照合と、skeletal/material/cluster部のsource不変確認は統合実行と区別する。
+Linuxでの実cookerと新試験のcompileは既存String.hのWindows.h依存で停止した。WindowsのVisual Studio構成ではDebugで静的glTF buffer・メッシュcook・GLB cookの検証を実行し合格した（2026-11-02、GR77: native受入れ）。GLB containerとbuffer意味helperの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER回帰は実行成功。fixture JSON/既知binaryの文法・整合性照合と、skeletal/material/cluster部のsource不変確認は統合実行と区別する。
 
 ## GR77: 共有画像source
 
@@ -107,9 +104,9 @@ MeshCookResult.EmbeddedImagesは参照された埋込み画像をimageIndex順�
 - 元GLBのBIN内画像だけはsourceBytesへ借用する。呼出側はEmbeddedImagesを利用する間、元GLBの寿命とアドレスを維持する。成功時の結果置換が借用元を解放しないよう、GLB入力はoutResult自身の所有storageに置かない。外部buffer/data URI由来の画像は、cookerローカルBufferSet/ImageSourceが破棄されても有効なよう画像部分だけを結果へ所有コピーする
 - MeshEmbeddedImageの所有copyは独立bytes、借用copyは同じ元GLBへの参照。copy代入は候補copy→swap。SetBytesは空/nullや所有storageを解放して自己借用する操作を拒否し、所有切替時の確保失敗では既存bytesを維持する
 - 外部画像URIは従来どおり材質pathだけを保存し、画像fileの実読込やEmbeddedImagesへの追加はしない。occlusion/emissive等の新しい材質処理は追加しない
-- StaticGltfBufferCookTestに1px PNGを加え、外部参照とのNVMESH bytes一致、3roleのpath/format/hash、GLB借用、外部buffer/data URI所有、copy/move、同format共有、衝突時出力保持を登録する。画像bytes変更はmodel source hashへ反映し、画像内容のdecodeは後続texture cookerへ委ねる
+- 画像bytesの変更はmodel source hashへ反映し、画像内容のdecodeは後続texture cookerへ委ねる
 
-Mainのmodel単独出力ガードは、後述のmodel+N texture一括出力へ置き換えた。WindowsのDebugでStaticGltfBufferCookTest・AssetCookGlbSmokeを実行し合格した（2026-11-02、GR77: native受入れ）。Linuxの実cooker/新画像fixtureはWindows.h依存でcompile/実行未検証。実物の画像decodeとpackage出力はnative受入れ節に記す。
+Mainのmodel単独出力ガードは、後述のmodel+N texture一括出力へ置き換えた。WindowsのDebugで静的glTF buffer・GLB cookの検証を実行し合格した（2026-11-02、GR77: native受入れ）。Linuxの実cooker/新画像fixtureはWindows.h依存でcompile/実行未検証。実物の画像decodeとpackage出力はnative受入れ節に記す。
 
 ## GR77: modelとtextureの一括package出力
 
@@ -121,9 +118,7 @@ MainはEmbeddedImagesがあるときだけ専用の一括経路を使う。全�
 - package群を書き、候補manifestからAssetSystemでincoming全件をSuccessCookedとして解決し、bytes一致を確認した後、manifestを1回だけ書く。Core配列用のbinary/text writerはflush結果も確認する
 - 複数fileのatomic transactionではない。途中のI/O失敗時には既に書かれたpackageが残り、既存packageが置換されている可能性もある。manifest書込み自体のI/O失敗もロールバックしない。この限界を「失敗時すべて無変更」とは表現しない
 
-AssetCookGlbSmokeはCMake3.14/既存PowerShell方式で、小GLBのmodel+texture3、role format/default variant、全新規entryの実package解決（Mainの自己検証）、既存骨格metadata保持、再cookのmanifest bytes一致、画像差替えhash、不正画像/重複manifestの拒否、Windows未作成pathのcase alias拒否、実audio packageへの暗黙texture出力衝突で既存package/manifestを保持する回帰を登録する。保持用の骨格entryはmetadata保存だけのfixtureで、実package解決の対象にはしない。
-
-実GLB3fixtureは共有container/BIN/rangeとstbi_load_from_memoryへ直接通し、正常2件の1px RGBA値と異常1件のdecode拒否を確認した。LinuxでのMain/CMake/PowerShell/CLI smokeはWindows.h依存およびCMake・PowerShell不在により未検証。Windows PowerShell 5.1とVisual Studio構成のDebugではAssetCookGlbSmokeを実行し合格した（2026-11-02、GR77: native受入れ）。fixture試験と実物GLBの受入れは区別する。
+実GLB3fixtureは共有container/BIN/rangeとstbi_load_from_memoryへ直接通し、正常2件の1px RGBA値と異常1件のdecode拒否を確認した。LinuxでのMain/CMake/PowerShell/CLI smokeはWindows.h依存およびCMake・PowerShell不在により未検証。Windows PowerShell 5.1とVisual Studio構成のDebugではGLB cookの検証を実行し合格した（2026-11-02、GR77: native受入れ）。fixture試験と実物GLBの受入れは区別する。
 
 ## GR77: 骨格の共有buffer接続
 
@@ -211,13 +206,13 @@ signature一致は画像全体の完全性の証明ではなく、最後のdecod
 
 純粋判定は通常・最適化・ASan/UBSan（LeakSanitizer除外）で実行し、MEMBERはcompileを確認。
 PNGをJPEGと宣言したGLBをCLI smokeへ足し、失敗時に既存manifest/modelが変わらないことを登録した。
-cookerとlooseの不一致・出力保持はWindowsのDebugでStaticGltfBufferCookTest・GltfLooseSourceTest・AssetCookGlbSmokeを実行し合格した（2026-11-02、GR77: native受入れ）。Linuxのnative実行はWindows.h依存で未確認。
+cookerとlooseの不一致・出力保持はWindowsのDebugで静的glTF buffer・loose source・GLB cookの検証を実行し合格した（2026-11-02、GR77: native受入れ）。Linuxのnative実行はWindows.h依存で未確認。
 
 ## GR77: native受入れ
 
 ### CPUの試験
 
-2026-11-02、Windows PowerShell 5.1.22621・CMake Visual Studio構成。DebugのCookedMeshTest/AssetCookビルドはEXIT=0。CPUだけのctestはcode page 65001で19/19 Passed、既定932では18/19。CookedSkeletalAssetTestだけが警告文のUTF-8/cp932照合で失敗する既存のGR77範囲外の問題で、未修正。AssetCookMeshSmoke 24.4 s、AssetCookGlbSmoke 2.1 s、CookedSkeletalAssetTest 12.4 s、ほかは各0.1 s未満。AssetCookGlbSmokeのmanifest SHA-256計算は、PowerShell 7側のモジュール誤読込を避けるため.NETに変更済み。 この19件はfixtureを含むCPUの試験であり、実物GLBやGPU表示の受入れとは区別する。
+2026-11-02、Windows PowerShell 5.1.22621・CMake Visual Studio構成。DebugのCPU検証用コードとAssetCookのビルドはEXIT=0。CPU検証はcode page 65001で19/19 Passed、既定932では18/19。骨格資産の検証だけが警告文のUTF-8/cp932照合で失敗する既存のGR77範囲外の問題で、未修正。メッシュcookは24.4 s、GLB cookは2.1 s、骨格資産の検証は12.4 s、ほかは各0.1 s未満。この19件はfixtureを含むCPUの検証であり、実物GLBやGPU表示の受入れとは区別する。
 
 ### cooked
 

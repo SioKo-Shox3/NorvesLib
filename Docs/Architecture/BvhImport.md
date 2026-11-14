@@ -28,33 +28,17 @@ DecodeBvhは全成功時だけoutを置換する。入力の寿命から独立�
 
 BvhDecodeLimitsの既定は入力64MiB、joint 1024、joint深さ256、frame 1,000,000、double値2^23個、名前512byte、数値token128byte。count/積/byte量を確保前に検査し、階層は明示stackで辿る。呼出側は上限を調整できるが、保存型の32bit上限とsize_tの積の検査は常に行う。NVSKELの128/256関節制限はここへ持ち込まず、骨格へ変換する境界で別に検証する。
 
-## 検証
-
-BvhDecodeTestは6回転順、位置/回転の混在順、JOINT位置、静止関節、分岐、End Site、UTF8/BOM/CRLF/tab、指数、所有、失敗時保持、257関節/深い階層、各上限の境界と超過、数値/構文/行幅/末尾の拒否をliteral期待値で検証する。CookedMeshTestのMEMBERで、新規exeは作らない。nativeの受入れcommit/runはPROGRESS.mdに記録する。
-
-宣言順を保持する試験だけでは回転行列の正しさを証明しない。GR84 の ZYX/XYZ 行列の 1e-9 精度と FK は `BvhEvaluateTest`、retarget と fps 補正は `SkeletalBvhClipImportTest`、cook と CLI の反復時のバイト一致は `SkeletalBvhCookBridgeTest` で確かめる。Blender との実物照合は書き出し・比較の道具を用意してあり、照合の実行は後の確かめのタスクで行う。
-
-参考の[公式Blender importer](https://raw.githubusercontent.com/blender/blender/main/scripts/addons_core/io_anim_bvh/import_bvh.py)でchannelの宣言順、frame行、秒、degree、End Siteを確認した。実装コードは再利用せず、寛容な自動改名や末端補完も採用しない。ライセンス制限付きの実BVHを公開fixtureへ含めず、試験データは手書きの合成値とする。
+参考の[公式Blender importer](https://raw.githubusercontent.com/blender/blender/main/scripts/addons_core/io_anim_bvh/import_bvh.py)でchannelの宣言順、frame行、秒、degree、End Siteを確認した。実装コードは再利用せず、寛容な自動改名や末端補完も採用しない。ライセンス制限付きの実BVHはリポジトリへ含めない。
 
 確保故障の注入は未実施。解析中の確保は局所documentだけに行い、成功時の置換がnothrow moveであることをstatic_assertで固定する。
 
-## 実データの受け入れと Blender との照合
+## 実データの計測と FK の書き出し
 
-### 実データの受け入れ
+### 実データの計測記録
 
-`RealBvhAcceptanceTest` は `CookedMeshTest` の MEMBER として実物の BVH を読み込む。環境変数は G4 の `MotionSampleRegressionTest` と共通の `NORVES_MOTION_SAMPLE_DIR` を使い、要件の文面の `NORVES_REAL_BVH` はこの名前に読み替える。未設定または空なら終了コード 125 を返し、ctest では Skipped となる。設定されたディレクトリにファイルが無い場合は失敗する。実物は研究用ライセンスのためリポジトリに入れない。
+計測時の入力は `Dog#V01full/Dog_Dog_rot6d_pred.bvh`。関節 53、End Site 11、1 フレームの値 162（全値 10854）、フレーム 67、`Frame Time` 0.033333 秒。ヘッダの時間とは別に `override_fps` の `source_fps: 16` を適用し、ループ処理前の clip の `Duration` は `(67 - 1) / 16 = 4.125` 秒だった。
 
-作業ツリーのルートで次を実行する。
-
-```powershell
-cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1
-$env:NORVES_MOTION_SAMPLE_DIR = 'Y:/AI/MoCapAnything/outputs_doggame/doggame_v01/doggame'
-ctest --test-dir build -C Debug -R "^RealBvhAcceptanceTest$" --no-tests=error --output-on-failure --timeout 300 -V
-```
-
-入力は `<dir>/Dog#V01full/Dog_Dog_rot6d_pred.bvh`。関節 53、End Site 11、1 フレームの値 162（全値 10854）、フレーム 67、`Frame Time` 0.033333 秒を固定値と照合する。ヘッダの時間とは別に `override_fps` の `source_fps: 16` を適用し、ループ処理前の clip の `Duration` が `(67 - 1) / 16 = 4.125` 秒であることを確かめる。
-
-stdout の `REAL_BVH` 行のキーは次の意味を持つ。誤差・周期・速度は観測値の報告であり、これらの値に閾値を設けた合否判定はしない。
+計測記録の `REAL_BVH` 行のキーは次の意味を持つ。誤差・周期・速度は観測値の報告であり、これらの値に閾値を設けた合否判定はしていない。
 
 | キー | 意味 |
 |---|---|
@@ -85,24 +69,4 @@ JSON の形は次のとおり（位置は一件だけを示す）。`positions` 
 {"format":"norves-bvh-fk","version":1,"producer":"AssetCook","position_convention":"absolute","frames":[0],"positions":[{"joint":"Hips","frame":0,"x":0,"y":0,"z":0}]}
 ```
 
-`--position-convention absolute|additive` は省略時 `absolute`。`absolute` は Blender の公式 importer と同じく、位置チャンネルが対応する OFFSET 成分を置き換える解釈である。`additive` は role profile の `position_convention: additive` と同じく OFFSET に位置チャンネルを加える。Blender と比べるときは既定の `absolute` のまま使う。受け入れ試験の role profile は `additive` を使うため、その clip の位置とこの書き出しを混同しない。
-
-### Blender との照合手順
-
-次の手順は手動クロスチェック用であり、Blender との実物照合の実行は後の確かめのタスクで行う。作業ツリーのルートから、同じ BVH とフレームを両方の道具へ渡す。一時 JSON は作業ツリーの外へ保存する。
-
-```powershell
-$bvh = Join-Path $env:NORVES_MOTION_SAMPLE_DIR 'Dog#V01full/Dog_Dog_rot6d_pred.bvh'
-$assetCook = '.\build\Tools\AssetCook\Debug\AssetCook.exe'
-$work = Join-Path $env:TEMP 'norves-bvh-fk'
-New-Item -ItemType Directory -Force $work | Out-Null
-$assetFk = Join-Path $work 'assetcook-fk.json'
-$blenderFk = Join-Path $work 'blender-fk.json'
-& $assetCook --bvh $bvh --dump-fk 0,17,33 | Set-Content -Encoding utf8 $assetFk
-blender --background --factory-startup --python Test/Tools/BlenderBvhFk.py -- --bvh $bvh --frames 0,17,33 --out $blenderFk
-python -B Test/Tools/CompareBvhFk.py $assetFk $blenderFk --tolerance 0.001
-```
-
-`BlenderBvhFk.py` は公式 importer を `axis_forward='Y', axis_up='Z'`、`global_scale=1.0` で呼ぶ。軸変換を恒等にして、軸の変換や単位の補正による差を混ぜずに FK を比べるためである。`frame_start=1`、`use_fps_scale=False` とし、BVH のフレーム `f` は場面のフレーム `1+f` に対応する。各 bone の head のワールド位置を出し、JSON の `producer` は Blender の版を含み、`position_convention` は `blender_importer` となる。Blender の bone 名は 63 バイトで切られるので、長い関節名による不一致に注意する。
-
-`CompareBvhFk.py` は関節名とフレームをキーに、位置のユークリッド距離を比較する。許容差は 1e-3 m とし、出力座標と `--tolerance` はどちらも BVH の元の単位を使う。元の単位が m なら上の `0.001` を使い、異なる単位なら 1e-3 m に相当する値へ換算する。許容差を超える差、関節・フレームの欠落は終了コード 1、不正な JSON は 2、一致は 0。最大差とその関節・フレーム、超過した関節、片方だけにある項目を報告する。`python -B Test/Tools/CompareBvhFk.py --self-test` で比較処理を単独で確かめられる。
+`--position-convention absolute|additive` は省略時 `absolute`。`absolute` は Blender の公式 importer と同じく、位置チャンネルが対応する OFFSET 成分を置き換える解釈である。`additive` は role profile の `position_convention: additive` と同じく OFFSET に位置チャンネルを加える。Blender と比べるときは既定の `absolute` のまま使う。上記の計測に用いた role profile は `additive` のため、その clip の位置とこの書き出しを混同しない。

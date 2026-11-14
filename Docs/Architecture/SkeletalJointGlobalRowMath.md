@@ -15,9 +15,3 @@ BuildJointGlobalRowは関節番号、非throwでint32親番号を返す借用get
 - 再帰深さは親chain長。callerは資産で定めたjoint数上限を守る。helperのuint32容量検査を巨大入力の安全な再帰上限とは扱わない
 
 結果は現Sampler内部のjointGlobals。JointModelMatricesやEntity所有のworld transformではない。Sampleの既存の親/IBM/clip検査、確保、外側の関節順ループ、false時Clear、Palette/JointModel/skin/boundsはそのまま使う。
-
-## 検証
-
-既存Asset bundleの独立試験でroot signed zeroのbit保持、非可換literal、親後置/逆順3段/配列並べ替え/分岐/複数root、cache再訪、cycle/親範囲/不正scratch/span、NaN/Inf/積overflow、有限singular/shear/反射、失敗後のscratchリセットを確認する。
-
-実Samplerは既存30caseの凍結harnessを変更せず、Debug/Release各2回を成功run37373318284の各6095byteと比較する。compiler/SDK/生成option/source-build結合の既存比較器を維持し、実47CPU・旧89byte/managed gateを通す。host GCCは既存MatrixUtils.hのQuaternion scalar operator問題があるため、hostでこのhelperが実行できたとは扱わない。

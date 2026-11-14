@@ -80,8 +80,7 @@ set番号/joint→weight順へ正準化する。0始まり連続・各setのjoin
 
 ここではaccessorの存在/型/count/bufferやweight数値は検査しない。decode側がそれらを検査する。
 既定Strictは引き続き専用gateで追加セット自体を拒否し、このcollectorを使って受理へ緩めない。
-正準pair検査と既存属性名分類を通常/O2-NDEBUG/ASan・UBSanで実行し、JsonDocument経由の収集/失敗保持試験は
-native束へ登録する。実JSON試験はWindows.h依存で未実行として区別する。
+正準pair検査と既存属性名分類を通常/O2-NDEBUG/ASan・UBSanで実行した。JsonDocument経由の収集・失敗時保持の検証はWindows.h依存で未実行。
 
 ## 明示Reduceのdecode入口
 
@@ -98,10 +97,7 @@ statusは既存0〜15を保ち、InvalidImportOptions=16、InfluenceReductionExc
 bInfluenceScanCompleteは影響走査の完了だけを表し、後段のindex/骨格/clip/import失敗とは別である。
 Strictのreportは既定値。失敗Dataは空、source buffer出力も空のままで、部分decode結果を公開しない。
 
-FiveInfluences.gltfは3頂点中1頂点だけ5本の影響を持つ検証用fixtureで、binはnative試験が生成する。
-raw/GLB/String/fileの同値、5→4の値と測定、閾値超過、追加slotの不正joint/ゼロweight/負値、
-UNORM16のraw総和1不足とoptions不正をnative試験へ登録する。LinuxではCoreのWindows.h依存により
-この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。CLIは既定Strict、明示Reduceを下記で指定する。
+CLIは既定Strict、明示Reduceを下記で指定する。
 
 ## 骨格cookと事前hash照合
 
@@ -302,9 +298,6 @@ morph検査後にTRS等の別段階で失敗しても、検査済み数量はout
 Reject時の既存JSONは不変。Reduce/Bake/Dropは同じskinにそれぞれの単位と診断を持つ。
 現profileは1mesh/1〜8primitive/1mesh-node。初期weight数は0またはmesh-level target幅、weight channelは各clipで0または1、全clip合計はu32以内として検査する。
 
-純parser/JSON試験とは別にnative smokeへ、明示成功/既定拒否/不正入力で出力保持、設定同値cache hit/差分miss、
-除去警告と未測定null/実測0件を登録する。native unitはLINEAR/STEP weight、複数target、weightだけのclip拒否、
-morph検査後のTRS失敗の数量保持も補強する。Windows.h/CMake/PowerShellに依存する実行は未確認。
 
 GR32のNprimitive decode接続以降、morph_scanへmesh_target_widthを追加する。
 dropped_targetsは対象を持つ全primitiveのtarget配列数の合計であり、mesh_target_widthとは異なる。
@@ -332,7 +325,6 @@ GetClipCountは格納エントリ数。GetClip(index)は範囲外で空、GetCli
 空名・不在・重複は名前引きで空を返し、自動改名しない。空/重複名のclip自体はindexで取得できる。
 子資産の内容を新たに検証するのではなく、従来どおりmesh/skeleton/全clipのLoaded/Valid状態で束の成否を決める。
 空配列/null/未load子はFailed。Unloadは全強参照を外す。GetMemorySizeは保持した配列capacityを含め、子資産本体を二重計上しない。
-実ResourceRegistryの複数保持/名前/単数互換/子状態/GC/メモリ計上をMEMBER+CTestへ登録。Windows依存でnative未実行。
 
 ## 分離v1の256関節（GR86）
 
@@ -349,4 +341,3 @@ NVSKEL v1 の profile2/3（`StaticRootFrame128`・`StaticRootFrame256`）では�
 Blender の書き出し（`io_scene_gltf2`）は `skeleton` を書かず、根の bone と skinned mesh を非関節の `Armature` node の下に置く。このため Blender の資産は旧経路では拒否され、AssetCook の失敗の文に `--rig-split` への案内が出る。Blender の資産は `--rig-split`（NVSKEL v1）で cook する。
 
 形を写した fixture は `Assets/Models/M9Skinned/NoSkeletonHint.gltf`（Armature 無し。旧経路と v1 の両方で受ける）と `Assets/Models/M9Skinned/BlenderArmature.gltf`（Armature の親。旧経路は拒否、profile3 は受ける）。中身は同じディレクトリの `README.md` を参照。
-実物の書き出しは `Test/Tools/BlenderExportMinimalRig.py` を Blender の中で `--background --python` で走らせて作れる。

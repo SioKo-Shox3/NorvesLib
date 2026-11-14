@@ -173,12 +173,8 @@ scale/fit/axes/原点/UV/windingのcook-loose頂点・index・bounds一致、met
 書込開始前にweakly_canonicalによるpath一致、Windowsの通常case比較、filesystem::equivalentによるhardlink一致を検査する。
 安定したfilesystem上の誤指定防止であり、競合したpath差替えを完全に防ぐsandboxではない。
 
-AssetCookGlbSmokeへsidecarをpackage/manifestにした拒否とJSON bytes保持、通常出力成功、
-派生image0 packageからsidecarへのhardlink（対応filesystemのみ）を登録する。
 実Mainから同じpath判定関数のtextを切り出し、Linux上の実filesystemで通常・最適化・ASan/UBSanを実行した。
-これはMain全体やWindows CLIの実行ではない。native smokeはCMake/Windows環境未整備のため未実行。
-CMake CREATE_LINKは3.14以降の公式機能を使い、hardlink不能の場合はそのcaseだけを明示skipする。
-https://cmake.org/cmake/help/latest/command/file.html#create-link
+これはMain全体やWindows CLIの実行ではない。
 
 ## 静的モデルの最小設定例
 
@@ -231,8 +227,6 @@ CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通�
 - `--no-sidecar` は設定fileを一切読まず、従来のbytes/hashを使用する。override/requireとは相互排他。
 - 重複指定、空path、値付きboolean flag、model以外のkindでは拒否する。static/skeletalとも同じ共有loaderへ渡す。
 - 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` は下記のcook前照合を使用する。`--inspect <file>` は独立した無書込診断modeで、cook用引数とは混在させない。
-
-ImportCliOptionsTestは共有の実引数parserを独立実行する。AssetCookImportSmokeはGLBの設定優先順位、disabledのbytes/hash回帰、失敗時出力保持と明示設定の上書き拒否をnative CLIで確認する登録であり、Windows依存環境での実行は別途必要。
 
 ## cook前の入力照合
 

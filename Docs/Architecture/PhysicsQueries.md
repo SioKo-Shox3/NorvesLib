@@ -84,7 +84,7 @@
 - TryGetLayerMaskは名前から1ビット（1u << bit）を取得し、TryBuildMaskは名前の列を論理和する。未知の名前があればfalseを返して出力を変えず、0や全bitへ黙って置き換えない。空の列は有効なマスク0として成功する
 - GameApplicationHandlerはOnInitializeでGamePhysicsLayers経由で表を読み、m_PhysicsLayersに保持する。読み込みに失敗した場合は警告を出し、Defaultだけの表で起動を続ける
 - 既存コライダーの既定Layer=1・Mask=全bitとクエリの結果は変えない。使う側のカメラの遮蔽・攻撃判定・知覚・取り込み設定の書き換えは各段階で行う
-- 2026-11-03にWindowsのDebugでPhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTestをctestで実行し、4本すべてが通った（終了コード0）
+- 2026-11-03にWindowsのDebugでPhysicsLayerTableTest・PhysicsQueryTypesTest・SceneQueryPhysicsFacadeTest・SceneQueryRaycastTestを実行し、4本すべてが通った（終了コード0）
 
 ## 足の接地の問い合わせ（GR14）
 - 公開ヘッダは `Library/Core/Public/Animation/GroundQuery.h`、名前空間は `NorvesLib::Core::Animation`。`EGroundQueryStatus` は `Hit`・`NoHit`・`NotReady`・`WrongThread`・`Unavailable`・`TooSteep` を持つ。`GroundHit` は `Point`・`Normal`・`Distance`・`Status`、`GroundProbe` は `OriginAbove`・`MaxDown`・`Result` を持つ

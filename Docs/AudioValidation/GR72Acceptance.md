@@ -10,7 +10,6 @@
 
 - 論理サウンド層は GameThread 専用とし、フェード、同時発音と奪取、重複の抑制、名前で呼ぶバンクを扱う。
 - 物理の voice の寿命は既存の `IAudioService`（世代付き `VoiceHandle`・メールボックス・隔離）が持つ。論理層はその上で `SoundInstance`（世代付きの `SoundInstanceHandle`、包絡、物理の `VoiceHandle`、OwnerKey、年齢）を管理する。
-- 検証は `FakeAudioBackend` だけをリンクする `AudioPlaybackTest`（`AudioBackendLifetimeTest` の束の中）と、cook の ctest `AssetCookSoundBankSmoke` を対象とする。
 - 実機の XAudio2 の鳴り方・聴感（クリック・ループの継ぎ目・フェードの滑らかさ）はこの記録の範囲外とし、後の実機の確かめに回す。
 - 3D 定位（GR73）・virtual voice（GR75）・voice のプール（GR109）は範囲外とする。`noise_radius` は値を持つだけとする。
 
@@ -103,7 +102,7 @@ clips が 2 つ以上なら、直前に選んだ clip を除いた中から一�
 | 重複の抑制 | `AudioPlaybackTest` は cooldown の 10 要求と、同じフレーム内の半径内・半径外および次フレームの `PlayAt` を確認する。時刻と距離の境界値、`PlayGlobal` 同士は試験していない | 合格: cooldown は再生 3・抑制 7、dedupe は同一フレームで再生 2・抑制 1 |
 | バリエーション | `AudioPlaybackTest` は固定シードで 10,000 回選び、連続の不一致と各 clip の出現数を確認する。同一シードによる選択列の再現性と音量・ピッチの揺らぎの範囲は試験していない | 合格: 連続なし、出現数 3346 / 3341 / 3313 |
 | 世代と終了 | `AudioPlaybackTest` は UINT32_MAX を使い切ったスロットの解放後に、そのスロットを再利用せず、世代 0 を使わず、古い handle が `StaleHandle` になることを確認する。フェードアウト中の Shutdown の戻り値と fake の操作の末尾も確認する | 合格: 古い handle は `StaleHandle`、Shutdown は `Success` |
-| バンクの cook と解決 | `AssetCookSoundBankSmoke` は kind=raw の cook と `AssetSystem` による論理パスの解決を確認する。`AudioPlaybackTest` は試験用の解決関数を使い、不正な各定義の拒否理由・名前と正常な定義の登録・再生・解除を確認する。本番の `SoundSystem::LoadBank` を通した clip の解決・デコード経路は試験していない | 合格: `AudioPlaybackTest` は読込 1・拒否 3、`AssetCookSoundBankSmoke` は raw の cook と解決に成功 |
+| バンクの cook と解決 | kind=raw の cook と `AssetSystem` による論理パスの解決を確認した。バンクは試験用の解決関数を使い、不正な各定義の拒否理由・名前と正常な定義の登録・再生・解除を確認した。本番の `SoundSystem::LoadBank` を通した clip の解決・デコード経路は試験していない | 合格: バンクは読込 1・拒否 3、raw の cook と解決に成功 |
 
 ## 負の対照
 

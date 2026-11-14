@@ -208,25 +208,6 @@ Cook the Silver set into a standalone runtime root:
   -RuntimeRoot .\build\CookedAssetSets\Debug\Silver\RuntimeRoot
 ```
 
-Run the game smoke:
-
-```powershell
-.\Scripts\RunCookedTextureGameSmoke.ps1 `
-  -AssetCookExe .\build\Tools\AssetCook\Debug\AssetCook.exe `
-  -GameExe .\build\Game\Debug\Game.exe
-```
-
-Run the glTF prepared smoke:
-
-```powershell
-.\Scripts\RunCookedTextureGameSmoke.ps1 `
-  -AssetCookExe .\build\Tools\AssetCook\Debug\AssetCook.exe `
-  -GameExe .\build\Game\Debug\Game.exe `
-  -SpecPath .\Assets\AssetSets\Rendering3DTestSilverGltfTextures.json `
-  -ModelPath Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf `
-  -ExpectedLoadMode GltfPrepared
-```
-
 Run the alternating three-pair real-Game model profile:
 
 ```powershell
@@ -243,7 +224,7 @@ untracked hashes, input/output paths, configuration, order, timestamps, OS, and 
 The runner treats missing logs/markers, skips, timeouts, nonzero exits, contract
 failures, or a non-shorter cooked median as failures and retains the evidence.
 
-Generated packages, manifests, and smoke logs are build outputs. Keep them under `build/` or other ignored output locations and do not commit them.
+生成したパッケージ・manifest・ログはビルド出力として `build/` などの管理外の場所に置き、コミットしない。
 
 ## モデルの取込設定（GR78）
 

@@ -44,12 +44,7 @@ v0は旧magic/version、Material64/Cluster80、submesh/material各1の外枠を�
 旧v0読込の受理条件は維持し、成功値だけ共有材質へ昇格する。純cluster部品も旧版の0件range/未指定VertexCountを勝手に新規則へ狭めない。
 旧v0を将来の共通値へ昇格するときは、従来の見えを維持する値を別途明記する。
 
-## 検証と残作業
-
-独立Python struct.packで作った580B(v0)/692B(v1)/1120B(v1・2材質)をgoldenとして使う。
-型/版/サイズ、予約、overflow、範囲、整列/packing、padding、hash、浮動小数、LOD0の拒否、失敗時出力保持と領域重複を検査する。
-通常/O2-NDEBUG/ASan・UBSan（LSan除外）とMEMBER wrapperを実行し、CTestへ登録する。
-Windows/Core全体・full v1 reader/writer・runtime/GPUはこの検査の対象外。
+## 残作業
 
 v0/v1 reader・4参照・表所有・v0昇格・明示v1 writer/cookを接続する。単材質runtimeの対応subsetはImportedOpaqueRuntime.mdで定義する。
 

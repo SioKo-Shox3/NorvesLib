@@ -138,15 +138,6 @@ RenderGraph 対応済み view では pass chain を登録して graph 経路を�
 
 `NORVES_ENABLE_RENDERGRAPH_DUMP` が無効な build では dump 文字列と file write は無効化されるが、`RenderGraphDebugStats` は compile / execute / barrier / transient acquire の確認に使える。
 
-CI / regression 確認では以下を使う。
-
-```powershell
-cmake --build build --config Debug --target RenderGraphDumpTest
-ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
-```
-
-描画経路を変更した場合は、必要に応じて `RenderGraphCompileTest` / `RenderFrameExecutorPlanTest` / `RenderGraphPresentationPassTest` も併走し、named resource の version、barrier、presentation handled/fallback の期待を確認する。
-
 ## Resize と Shutdown
 
 - Resize は `RenderWorld::Resize()` で保留し、次の `BeginFrame()` で `WaitForRender()` 後に適用する。

@@ -11200,3 +11200,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 段階をまたぐ注意の「求めた根が関節でなければ子の関節 1 つを根にする」は、profile1 の「関節の親は関節だけ」の契約に合わないので旧経路には入れず、v1 の経路（Armature を作者 frame に入れる）で満たす。
 - U1 Tools の煙試験の登録・雛形・fixture を消す: 着地(直し 0 回)
 - U2 試験だけが使うスクリプトと試験のワークフローを消す: 着地(直し 0 回)
+- U3 試験の文書を書き換え、Architecture などの文書から試験への案内を外す: 着地(直し 0 回)

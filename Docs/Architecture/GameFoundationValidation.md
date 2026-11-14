@@ -44,7 +44,7 @@ Windowsという名称を含む純state試験も、OSから実入力を受けた
 
 | GR | 今回の統合試験結果と未確認の範囲 |
 |---|---|
-| GR01 | TickGroupConfigurationTest、WorldTickGroupTest（追加の全8群・親子孫/疎な群/空Lateを含む）、ApplicationFixedStepPipelineTest、SkeletalAnimationSamplingTest、SpringArmComponentTest、TickContractTableTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。群の契約は`Docs/Architecture/TickStages.md`を正とし、表の漏れはTickContractTableTestが止める。詳細実行でも`TICK_CONTRACT_TABLE result=pass types=20`を確認（1件中1件pass） |
+| GR01 | TickGroupConfigurationTest、WorldTickGroupTest（追加の全8群・親子孫/疎な群/空Lateを含む）、ApplicationFixedStepPipelineTest、SkeletalAnimationSamplingTest、SpringArmComponentTest、TickContractTableTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。群の契約は`Docs/Architecture/TickStages.md`を正とする。詳細実行でも`TICK_CONTRACT_TABLE result=pass types=20`を確認（1件中1件pass） |
 | GR03 | 実Mapper/Router（InputRouterTest、InputRoutingExtensionTest、InputActionMapTest）、binding所有/JSON/保存（InputBindingSetTest、InputBindingJsonTest、InputBindingPersistenceTest、WorkingDirectoryInputBindingStoreTest）、Game設定（GameInputSettingsTest）、focus/frame（InputFocusPipelineTest、InputFramePipelineTest、RawMouseMotionTrackerTest、WindowsKeyRepeatGateTest）、capture（InputRebindCaptureStateTest、InputRebindCaptureManagerTest、GameInputRebindTypesTest）、overlay統合（InputDebugOverlayStateTest、InputDebugOverlayControllerTest）がWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。Game起動時の設定ロード・OS入力との実接続、実ユーザーの保存先でのfile IO成功や性能の実測は未確認 |
 | GR04 | XInputDevicePollingTest、XInputDeviceIntegrationTest、GamepadStateNormalizeTest、InputDeviceLifecycleTest、HapticsMixerTest、XInputVibrationStateTest、HapticsPlaybackTimeTest、HapticsServiceTest、HapticsJsonTest、HapticsFramePipelineTest、ActiveDeviceKindTest、ActiveDeviceKindIntegrationTestがWindows Debugで2026-11-03にpass（コミット 09b4fb9b464330c5a0cf64cb306168c1fe24fd96）。device/API/providerのfakeを使う統合試験であり、実pad接続/振動は未確認 |
 | GR08 | `Docs/Architecture/PhysicsQueries.md`を正とする。GR08の試験は今回のverifyに含めていない |
@@ -58,17 +58,3 @@ Windowsという名称を含む純state試験も、OSから実入力を受けた
 - GitHubの対象コミットでstatus一覧が空の場合、CI合格とは扱わない
 
 これらの未実行事項を非描画G2の開始条件へ戻さない。一方、将来GPU/描画変更や実機の保証をする際は該当する確認を別途実行する。
-
-## 代表的なportable再現コマンド
-
-リポジトリルートで実行する。実行ファイルは一時領域へ出し、既存CMakeのbundle登録は増やさない。
-
-```sh
-g++ -std=c++23 -O2 -UNDEBUG -I Library/Core/Public Test/Core/Input/InputActionRuntimeTest.cpp Library/Core/Private/Input/InputState.cpp -o /tmp/g1-runtime && /tmp/g1-runtime
-
-g++ -std=c++23 -O2 -UNDEBUG -I Library/Core/Public Test/Core/Math/CurvesTest.cpp -o /tmp/g1-curves && /tmp/g1-curves
-
-g++ -std=c++23 -O2 -UNDEBUG -I Library/Core/Public Test/Core/Math/GeometrySweepTest.cpp Library/Core/Private/Math/GeometryIntersection.cpp -o /tmp/g1-sweep && /tmp/g1-sweep
-
-g++ -std=c++23 -O2 -UNDEBUG -ffunction-sections -fdata-sections -I Library/Core/Public -I Library/Modules/Physics/Private Test/Modules/Physics/PhysicsLegacyQueryTest.cpp Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp Library/Core/Private/Math/GeometryIntersection.cpp -Wl,--gc-sections -o /tmp/g1-legacy && /tmp/g1-legacy
-```
