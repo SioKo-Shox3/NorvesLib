@@ -176,4 +176,40 @@ namespace NorvesLib::Core::Rendering
         }
         return layerCount;
     }
+
+    inline constexpr uint32_t FurMapMaskLength = 1u << 0;
+    inline constexpr uint32_t FurMapMaskFlow = 1u << 1;
+    inline constexpr uint32_t FurMapMaskDensityClump = 1u << 2;
+    inline constexpr uint32_t FurMapMaskRegion = 1u << 3;
+
+    /** @brief ファーの領域ごとの std140 描画定数。 */
+    struct FurMaterialGpuRegion
+    {
+        float Shading[4]; ///< x: 根元の暗さ、y: 毛先の明るさ、z: 長さの倍率、w: 太さの倍率。
+        float Lobes[4]; ///< x: 一つ目のローブのずれ、y: 二つ目のずれ、z: 一つ目の指数、w: 二つ目の指数。
+        float Wet[4]; ///< x: 濡れの応答への倍率、yzw: 空き（0）。
+    };
+
+    /** @brief ファーの材質の std140 描画定数。 */
+    struct FurMaterialGpuParams
+    {
+        uint32_t Counts[4]; ///< x: 殻数、y: 領域数（1〜8）、z: マップの有無の印、w: 空き（0）。
+        float Growth[4]; ///< x: 毛の最大長×長さの倍率（m）、y: 密度、z: 束の幅、w: 束の強さ。
+        float Strand[4]; ///< x: 根元の半径、y: 毛先の半径、z: 細りの指数、w: 毛の傾き。
+        float Undercoat[4]; ///< rgb: 下毛の線形色、a: アルベドとの混合量。
+        float Occlusion[4]; ///< x: 根元の遮蔽の明るさ、y: 遮蔽の指数、zw: 空き（0）。
+        float WetGeometry[4]; ///< x: 長さの縮み、y: 半径の増し分、z: 束の強さ、w: 垂れ。各値は濡れ度を乗算済み。
+        float WetShading[4]; ///< x: 暗化、y: 彩度低下、z: 粗さの減少、w: 鏡面の強まり。各値は濡れ度を乗算済み。
+        FurMaterialGpuRegion Regions[FurMaxRegionCount]; ///< 使用領域と未使用枠の既定値。
+    };
+
+    /**
+     * @brief 検査済みのファーの材質を std140 の描画定数に詰める。
+     * @param fur IsValidFurMaterialData で検査済みの材質。殻数は距離による選択をせず材質の値を使う。
+     * @param wetness 濡れ度。有限値は 0〜1 に収め、非有限値は 0 とする。
+     * @return 濡れ度をそのまま保存せず、濡れの各応答に乗算した定数。
+     * 領域数が 0 のときは既定の領域を一つ使い、8 を超えるときは 8 に収める。
+     * 未使用の領域には既定値、空き成分には 0 を入れ、マップの有効性を印にする。
+     */
+    FurMaterialGpuParams PackFurMaterialGpuParams(const FurMaterialData& fur, float wetness);
 } // namespace NorvesLib::Core::Rendering

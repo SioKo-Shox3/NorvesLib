@@ -319,6 +319,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
+    Private/Rendering/FurMaterialGpu.cpp
     Private/Rendering/GpuResourceStore.cpp
     Private/Rendering/TextureAsyncLoadQueue.cpp
     Private/Rendering/TextureAssetLoader.cpp
