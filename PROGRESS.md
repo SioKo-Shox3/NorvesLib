@@ -11201,3 +11201,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 Fur の材質データの型と、材質の店の検査・Revision: 着地(直し 0 回)
 - U3 SkinnedMeshProxy へ Fur の slot の値の写しを載せ、World から材質の店を渡す: 着地(直し 0 回)
 - U2 FurMaterialGpuParams と PackFurMaterialGpuParams、GLSL の写し: 着地(直し 1 回)
+- U4 GpuLayoutRegistry.md へ FurMaterialGpuParams を登録し、タスクの verify を回す: 着地(直し 0 回)
