@@ -122,7 +122,7 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionWindowOrigin) == 832);
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionTexelMeters) == 896);
         static_assert(offsetof(TransparentForwardUBO, heightFog) == 912);
-        static_assert(sizeof(TransparentForwardUBO) == 992);
+        static_assert(sizeof(TransparentForwardUBO) == 1008);
         static_assert(PhysicalLightingShadowCascadeCount >= 2u);
 
         static void InitializeSafeTransparentShadowParams(TransparentForwardUBO& ubo)
@@ -169,7 +169,7 @@ namespace NorvesLib::Core::Rendering
 
         static_assert(offsetof(WorldBoardForwardUBO, sceneColorParams) == 176);
         static_assert(offsetof(WorldBoardForwardUBO, heightFog) == 192);
-        static_assert(sizeof(WorldBoardForwardUBO) == 272);
+        static_assert(sizeof(WorldBoardForwardUBO) == 288);
     } // namespace
 
     ForwardPass::ForwardPass(SceneView* sceneView, SceneRenderer* sceneRenderer)

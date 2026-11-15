@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(RibbonTrailUBO, projection) == 64);
         static_assert(offsetof(RibbonTrailUBO, sceneColorParams) == 128);
         static_assert(offsetof(RibbonTrailUBO, heightFog) == 144);
-        static_assert(sizeof(RibbonTrailUBO) == 224);
+        static_assert(sizeof(RibbonTrailUBO) == 240);
 
         RHI::DescriptorSetDesc CreateDescriptorSetDesc()
         {
