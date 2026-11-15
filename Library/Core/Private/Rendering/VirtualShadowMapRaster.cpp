@@ -147,6 +147,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DrawBindSlices = 5;
         constexpr uint32_t DrawBindWorldField = 6;
         constexpr uint32_t DrawBindAlbedo = 7;
+        constexpr uint32_t DrawBindVertexAnim = 8;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type, RHI::ShaderStage stages)
         {
@@ -180,6 +181,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(DrawBindMegaChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Vertex));
             desc.bindings.push_back(MakeBinding(DrawBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex));
             desc.bindings.push_back(MakeBinding(DrawBindWorldField, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Vertex));
+            desc.bindings.push_back(MakeBinding(DrawBindVertexAnim, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex));
             return desc;
         }
 
@@ -642,7 +644,8 @@ namespace NorvesLib::Core::Rendering
         m_LastMaskedFallbackCount = 0;
         m_bLastMegaDraw = false;
         if (!IsReady() || !commandList || dispatch.PoolPages == 0 || dispatch.PoolPages > VirtualShadowMap::MAX_POOL_PAGES ||
-            !dispatch.Pool || !dispatch.PageTable || !dispatch.Stats || !dispatch.Chunks || !dispatch.Instances || !dispatch.Draws)
+            !dispatch.Pool || !dispatch.PageTable || !dispatch.Stats || !dispatch.Chunks || !dispatch.ChunkVertexAnim ||
+            !dispatch.Instances || !dispatch.Draws)
         {
             return false;
         }
@@ -662,6 +665,7 @@ namespace NorvesLib::Core::Rendering
             dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
             dispatch.Chunks->GetSize() < VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount) ||
+            dispatch.ChunkVertexAnim->GetSize() < VirtualShadowMap::RasterChunkVertexAnimBytes(dispatch.ChunkCount) ||
             dispatch.Draws->GetSize() < VirtualShadowMap::RasterDrawBytes(chunkTotal) ||
             dispatch.Instances->GetSize() < VirtualShadowMap::RasterInstanceBytes(1u))
         {
@@ -681,6 +685,8 @@ namespace NorvesLib::Core::Rendering
         std::copy(dispatch.FoliageWind, dispatch.FoliageWind + 4, params.foliageWind);
         std::copy(dispatch.FoliageWindParams, dispatch.FoliageWindParams + 4, params.foliageWindParams);
         std::copy(dispatch.VertexAnimTime, dispatch.VertexAnimTime + 4, params.vertexAnimTime);
+        std::copy(dispatch.VertexAnimWindA, dispatch.VertexAnimWindA + 4, params.vertexAnimWindA);
+        std::copy(dispatch.VertexAnimWindB, dispatch.VertexAnimWindB + 4, params.vertexAnimWindB);
         const bool bHasWorldField = dispatch.WorldFieldCurrent && dispatch.WorldField.bEnabled != 0u;
         const RHI::TexturePtr& currentField = bHasWorldField ? dispatch.WorldFieldCurrent : m_NeutralWorldField;
         params.worldField = bHasWorldField ? dispatch.WorldField : WorldFieldSampleConstants{};
@@ -815,8 +821,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 展開の書き込みを、間接描画の引数・頂点シェーダーの読み取りへ見せる。物理ページは消去（計算）の書き込みを断片シェーダーへ見せる
-        RHI::BufferPtr readBuffers[5] = {dispatch.Draws, dispatch.Instances, dispatch.Chunks};
-        uint32_t readBufferCount = 3;
+        RHI::BufferPtr readBuffers[6] = {dispatch.Draws, dispatch.Instances, dispatch.Chunks, dispatch.ChunkVertexAnim};
+        uint32_t readBufferCount = 4;
         if (bMega)
         {
             readBuffers[readBufferCount++] = dispatch.MegaChunks;
@@ -838,6 +844,8 @@ namespace NorvesLib::Core::Rendering
                 set->BindStorageBuffer(DrawBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
                 set->BindStorageBuffer(DrawBindChunks, dispatch.Chunks, 0,
                                        ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
+                set->BindStorageBuffer(DrawBindVertexAnim, dispatch.ChunkVertexAnim, 0,
+                                       ClampBindSize(VirtualShadowMap::RasterChunkVertexAnimBytes(dispatch.ChunkCount)));
                 set->BindStorageBuffer(DrawBindPool, dispatch.Pool, 0,
                                        ClampBindSize(VirtualShadowMap::PoolBytes(dispatch.PoolPages)));
                 set->BindStorageBuffer(DrawBindMegaChunks, bMega ? dispatch.MegaChunks : dispatch.Chunks, 0,

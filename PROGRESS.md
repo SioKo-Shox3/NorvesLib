@@ -11430,3 +11430,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 材質の VertexAnimationParams と、材質・風の値を GPU の 8 個の float に詰める口: 着地(直し 0 回)
 - U2 Common/VertexAnimation.glsl に風の頂点アニメ（草・樹木）を実装する: 着地(直し 0 回)
 - U4 方向光（CSM）と点光源の影に同じ変位を入れる: 着地(直し 0 回)
+- U5 太陽の VSM の影に同じ変位を入れる: 着地(直し 0 回)
