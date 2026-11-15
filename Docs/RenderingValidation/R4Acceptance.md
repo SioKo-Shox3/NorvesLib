@@ -13,11 +13,11 @@ RenderWorldのvolume設定と材質値はSceneProxyを経てFramePacketへ値コ
 | R4-P1〜P4、P3A | done |
 | R4-P5 | done。完了コミット 0116e8f |
 | R4-P6 | done。HDR Cornell static/dynamic capture、disabled A/B、VUIDを確認 |
-| R4-P7 | done。受入れ記録、指定CTest、独立評価所見の処理を確定 |
+| R4-P7 | done。受入れ記録と指摘への対応を確定 |
 
 ## Cornell参照・ローカルアセット・閾値
 
-参照元は[Cornell Computer Graphics Data](https://bowers.cornell.edu/computer-graphics/data)。公開ページのgeometry・reflectance・合成RGBEを参照する。ローカルアセットは Test/Core/Rendering/Baselines/RenderingValidation/R4CornellReference.rgbe、解像度は512x512、SHA-256は D94EF786F6BBC70AF81CE700765A598F8AFF73157234B2F50EE5A42C3F9C9F22 である。
+参照元は [Cornell Computer Graphics Data](https://bowers.cornell.edu/computer-graphics/data)。公開ページの形状・反射率・合成 RGBE を参照した。記録時の画像は 512×512、SHA-256 は `D94EF786F6BBC70AF81CE700765A598F8AFF73157234B2F50EE5A42C3F9C9F22`。
 
 ROI座標は左上を原点とし、right/bottomは含まない。direct white ROIから露出scaleを一度だけ決定する。R4の実GPU受入れはHDR captureを要求する。
 
@@ -31,15 +31,13 @@ ROI座標は左上を原点とし、right/bottomは含まない。direct white R
 
 動的更新はlight X offset 0.55を適用し、間接光ROIの最終変化量0.002以上、8実frame以内に最終変化の80%以上へ単調に収束することを条件とする。最初の4 sampleをwarmupとして基準値を安定化し、その後のupdate sampleは10件以上、進捗step上限は1.02とする。captureが2 frame間隔でも、期限は実際のFrameNumber差で判定する。
 
-## build・CTest・GPU captureの読戻し
+## ビルド・GPU 取得結果
 
 | 検証 | 読戻しログ/成果物 | 結果 |
 |---|---|---|
-| 対象Debug build | .harness/runs/20260922-r4-p7-final3/build.txt | RenderingDDGIVulkanTest、RenderingGoldenImageComparatorTest、DDGIProbeUpdateVulkanTest、RenderingDDGILightingContractTestのbuildは EXIT_CODE=0。MSBuildの既存third-party PDB warningは出力に残る |
 | Cornell scene-color capture | .harness/runs/20260922-r4-p7-final3/cornell-reference.log | EXIT_CODE=0、HDR format=9。direct/shadow/red/green Yは0.393677/0.15236/0.0687421/0.0951394。露出補正後のshadow/red/green相対誤差は0.147881/0.152345/0.106696、chroma差は0.0194377/0.0229986。R4_CORNELL_REFERENCE=PASS、DDGI有効A/Bはmean/max delta=0.168949/6.5625、無効A/Bはmean/max delta=0/0、VUID_COUNT=0 |
 | dynamic scene-color capture | .harness/runs/20260922-r4-p7-final3/dynamic-update.log | EXIT_CODE=0。4 warmup sample後の初期red/green Yは0.0688291/0.0951506、10 update sample後は0.0846982/0.0747947。FrameNumber差8のred/green進捗は0.971325/0.820146、R4_DYNAMIC_CONVERGENCE=PASS、VUID_COUNT=0 |
 | P4期待値の再基準化と再確認 | .harness/runs/20260922-r4-p7-final3/ddgi-probe-update-direct.log | EXIT_CODE=0。現行のwrap重み床とhysteresis=0.6に合わせ、visibility-weighted one-bounce radiance 1.96391/0.981954/0.490977、unweighted 1.30247/0.651237/0.325619、VUID_COUNT=0 |
-| focused 9件 CTest | .harness/runs/20260922-r4-p7-final3/ctest-r4-9.log | EXIT_CODE=0、9/9 passed。DDGIProbeRayQuery、DDGIProbeUpdate、RenderingDDGI、RenderingDDGI dynamic、LightingParamsLayout、DDGIVolume、DDGISnapshot、Golden comparator、atlas公開契約を含む |
 | 差分衛生 | .harness/runs/20260922-r4-p7-final3/diff-check.txt | EXIT_CODE=0。`git diff --check`、行末差分比較、ignored-tracked確認を保存して読み戻す |
 
 VUID_COUNT=0は各captureログに記録した。validation errorの陽性対照とGPU性能計測はこの受入れの対象外である。Slang SDK未導入によりneural material decoderが無効化される既存warningはcaptureログに残る。
@@ -57,7 +55,7 @@ P4から引き継いだRG16F storage、distance 2次モーメントのhalf範囲
 
 ## 自前PTとの再照合と修正（2026-09-25、R4-REOPEN）
 
-R7完了時の再照合（Roadmap更新ルール5）で、同じCornell状態のラスタを4096 sppの自前PT（全輸送）と同じ指標で比べ、赤ROIの相対輝度誤差0.257が上限0.25を超えた（`R4DDGIPathTracingReferenceVulkanTest`、`R7CoreAcceptance.md`）。画像にはprobe格子の位置の斑点、壁の角の暗い帯、縁の鋸歯があった。閾値・指標・承認済みgoldenは変えずに、次の原因を直した。
+R7 完了時の再照合で、同じ Cornell 状態のラスタを 4096 spp の自前 PT（全輸送）と同じ指標で比べ、赤 ROI の相対輝度誤差 0.257 が上限 0.25 を超えた（`R7CoreAcceptance.md`）。画像にはプローブ格子の位置の斑点、壁の角の暗い帯、縁の鋸歯があった。しきい値・指標を変えずに、次の原因を直した。
 
 1. **壁の外と物体の内側のprobe**: probe格子（原点-0.1、間隔0.82、8×8×8）の外側の層は壁の4.8〜11 cm外にあり、ブロックの内側のprobeもある。これらが面の裏を見た照度・距離を持ち、面へ漏れていた。probe rayが面の裏に当たった割合が0.25を超えるprobeを無効とし（RTXGIのprobe分類）、補間から外す。面の表は、頂点順の外積の逆側を法線の変換（逆転置）でworldへ移した向きとする（鏡映のない変換ではラスタの裏面カリングと一致し、鏡映の変換でも閉じた物体の外向きを保つ）。
 2. **発光面の直接光の粗さ**: Cornellのラスタには面光源の直接光がなく、発光面の直接光もDDGIが運ぶ。64本の固定rayでは小さな発光面に当たるrayが0〜2本で、probeごとの直接照度が全か無かになっていた。probeでの発光面の直接照度を、受け手の半球で切り取った三角形からLambertの式で厳密に求め、影は三角形を16個に分けた小三角形の重心への影のrayの重み付きの可視率で掛ける。rayが発光面に当たった放射は照度から除く。
@@ -84,9 +82,6 @@ R7完了時の再照合（Roadmap更新ルール5）で、同じCornell状態の
 
 | ログ | 内容 |
 |---|---|
-| `.harness/runs/20260925-r4-reopen/ctest-renderingvalidation.txt` | `3b1f3f4`の全target Debug build（`build-all-2.txt`、BUILD_EXIT=0）後のRenderingValidationラベル。57件中0件失敗（GPUのskip契約8件は非実行）。R4・R6・R7のPT参照比較を含む |
-| `.harness/runs/20260925-r4-reopen/ctest-ddgi-final2.txt` | `ce9d10f`の`R4DDGIPathTracingReferenceVulkanTest`とDDGI系9件、9/9 passed、上の数値 |
-| `.harness/runs/20260925-r4-reopen/probe-update-8.txt` | `DDGIProbeUpdateVulkanTest`。発光面の直接照度（遮蔽込み）・2組のlayer・probeの状態・面の裏を見る無効なprobe・鏡映した発光面・1 cm上の発光面（直接照度24.39、上限π×8=25.13）・頂点法線が面に垂直でない発光面とその頂点の順の巡回をCPUの参照計算と照合。VUID_COUNT=0。修正前のshaderでは巡回させた場面が不一致になる（`probe-update-8-negative.txt`） |
 | `.harness/runs/20260925-r4-reopen/bias-sweep.txt` | 表面のずらし量の感度 |
 
 ### 残る制限

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/IViewPass.h"
+#include "Rendering/RenderExtension/RenderExtensionShadowCaster.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
 
@@ -35,7 +36,7 @@ namespace NorvesLib::Core::Rendering
         void* Context = nullptr;
     };
 
-    /** @brief 拡張の登録と、描画スレッドでの反映を管理する。パスの所有者は View。 */
+    /** @brief 拡張の登録と描画スレッドでの反映を管理する。通常のパスの所有者は View。 */
     class RenderExtensionRegistry
     {
     public:
@@ -64,6 +65,19 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief パストレーシングでは挿入を止め、登録があれば一度だけ通知する。 */
         void NotePathTracingPipeline();
+
+        /**
+         * @brief 描画スレッドで影の束を集める。ゲームスレッドの操作は保留の列に積み、席の列には触れない。
+         *
+         * 席の列には mutex を取らずにアクセスする。ApplyPending の後、同じ View の描画前に呼ぶ。
+         */
+        void CollectShadowCasters(ViewRenderContext& context);
+
+        /** @brief 同じ View の描画中は変わらない影の束を取得する。 */
+        const RenderExtensionShadowCasterFrame& GetShadowCasters() const;
+
+        /** @brief 描画スレッドまたは描画停止中に影の拡張を終了し、席と登録を残す。 */
+        void ShutdownShadowCasters();
 
         /** @brief 保留中の登録も含む件数。解除は反映した時点で件数から除く。 */
         uint32_t GetRegisteredCount() const;

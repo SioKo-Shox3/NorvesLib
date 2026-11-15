@@ -51,11 +51,6 @@ Updateの復旧は変更対象だけを検査する。Bootstrapの新規root用t
 
 既存4096資産、16384出力、32MiB intent/metadata、16MiB state/manifest等の制限を維持する。個々のpackage読取は512MiBまで。packageの全payloadは分類後に解放し、全変更資産分を保持しない。ただしdirectoryの反復列挙費用は最大inventoryで未計測であり、今回の小規模fixtureを大規模性能保証としない。
 
-## 検証予定
-
-3資産の2Cook＋1Skipで、16公開境界・12rollback境界・abandonedの合計29実child終了とsource/spec不在復旧を検証する。NoChangeの無変更/世代上限、manifest-only、欠落/破損package/manifest、親不在、途中入力変更、別ID/未知entry/親置換/side document破損、Busy、解除故障、root/Skip/unlisted/sibling/orphanのID・bytes保持を確認する。
-
-既存Bootstrapの17実中断と34CPUを維持し、専用試験を追加した35CPU、7単体CLI、79＋10 frozen出力の直接byte一致、5診断を受入条件にする。本文作成時点では新しい実Windows gateは未実行。
 
 ## 実行受入れ（2026-10-05）
 

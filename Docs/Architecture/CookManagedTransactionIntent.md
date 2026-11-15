@@ -45,9 +45,8 @@ before state/indexの意味検査に再serializeしたbytesを代用しない。
 - string4096byte、root leaf255byte、JSON深さ8・事前token200万
 - これらは全heap上限ではない。side bytesをwireへinlineしない
 
-共有index codecは従来observerの全祖先合計4096claim予算を保持する。initializerの空index bytesは専用fixtureで固定する。共通reference/fixed-key比較をcacheとinventoryから抽出して同じ意味を再利用する。
+共有index codecは従来observerの全祖先合計4096claim予算を保持する。initializerの空index bytesは固定する。共通reference/fixed-key比較をcacheとinventoryから抽出して同じ意味を再利用する。
 
-純値試験はbootstrap/update、固定集合、Cook/Skip、世代、同bytes別ID、型/未知field、失敗時out保持、入力寿命を反証する。全kindの実cook/capture試験では実native ID・生side bytes・source不在での読込を接続する。公開・rollback・実process中断・powerloss・GPUはこの値単位の合格範囲に含めない。
 
 ## 実Windows受入れ
 

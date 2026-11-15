@@ -266,6 +266,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
+    Private/Rendering/RenderExtension/RenderExtensionShadowCaster.cpp
     Private/Rendering/RenderExtension/RenderExtensionData.cpp
     Private/Rendering/RenderExtension/RenderExtensionHelpers.cpp
     Private/Rendering/InstanceBufferRing.cpp
@@ -775,6 +776,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/RenderExtension/RenderExtension.h
+    Public/Rendering/RenderExtension/RenderExtensionShadowCaster.h
     Public/Rendering/RenderExtension/RenderExtensionData.h
     Public/Rendering/RenderExtension/RenderExtensionHelpers.h
     Public/Rendering/InstanceBufferRing.h

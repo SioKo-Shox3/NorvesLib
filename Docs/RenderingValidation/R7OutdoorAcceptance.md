@@ -1,6 +1,6 @@
 ﻿# R7屋外受入れ判定
 
-判定日: 2026-09-25。R7-O3（空・霧込みの屋外シーンのPT/raster相互比較）を受入れる。`R7OutdoorPathTracingReferenceVulkanTest`は朝・昼・夕の3時刻すべてで知覚差（LDR-FLIP）の閾値内にあり、閾値の物差しの単調性と2つの負の対照も満たす。全輸送との差は既知差として量を記録する。
+判定日: 2026-09-25。R7-O3（空・霧込みの屋外シーンのPT/raster相互比較）を受入れる。比較結果は朝・昼・夕の3時刻すべてで知覚差（LDR-FLIP）の閾値内にあり、閾値の物差しの単調性と2つの負の対照も満たす。全輸送との差は既知差として量を記録する。
 
 ## 比較の方法
 
@@ -67,8 +67,7 @@ PTと比較: 拡散バウンスの輸送範囲（`4715a20`・`da89a5c`・`9c88e0
 |---|---|
 | `.harness/runs/20261001-193759/verify-SS-SKY-MODEL-P2-6.txt`・`-7.txt` | 新しい空でのR7屋外の参照比較とその数値 |
 | `.harness/runs/20261002-084328/verify-SS-SKY-MODEL-P2-7.txt` | 起動画面の変更の後の Core でのR7屋外の参照比較（合格） |
-| `.harness/runs/20260925-r7-final/` | 中央値の同値の修正後のR6・R7の比較（取得画像は下の実行と同じ） |
-| `.harness/runs/20260925-r7o3-median/ctest.txt` | R6・R7参照比較、PathTracingVulkan・PathTracingOutdoor、Indoor/Outdoor golden（6/6 passed） |
+| `.harness/runs/20260925-r7-final/` | 中央値の同値の修正後の R6・R7 の比較 |
 | `.harness/runs/20260925-r7o3-transport/` | 参照の輸送範囲を揃える前後の比較、太陽の可視の許容差の決定（最初0.5で夕の明暗境界の3画素が超過し、PTの試料の揺らぎから0.2へ） |
 | `.harness/runs/20260925-rtgi-2bounce/` | RTGIの拡散2バウンス化の前後、影の縁・3回目以降・命中点の鏡面の画素の分類、命中点をLambertにしたPTとの比較 |
 | `.harness/runs/20260925-shadow-3/` | CSMの深度範囲の修正、命中面の反射率、直接光のAOの比較とgoldenの比較画像 |

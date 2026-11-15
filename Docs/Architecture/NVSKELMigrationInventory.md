@@ -2,7 +2,7 @@
 
 ## 目的と決定状態
 
-これは実装前の変更箇所と受入れ試験の棚卸しであり、wire/APIの確定仕様ではない。
+これは実装前の変更箇所と受入れ条件の棚卸しであり、wire/APIの確定仕様ではない。
 基準は [b2aa6ff](https://github.com/SioKo-Shox3/NorvesLib/commit/b2aa6ff708898522809f1ab9d861d81f69fdb679) のソース。
 作者が確定した事項は [G2ImportDecisions.md](G2ImportDecisions.md) を正とする。
 
@@ -40,20 +40,16 @@
 GR32とGR82はdecoder/cooker/loaderを共有する。GR32でprimitive受理だけを先行する中間状態と、
 Stage Aで複数clipまで到達した状態を区別する。GR79の材質方針を飛ばして、v1のMATS等を先に実装しない。
 
-## 版と受理条件の試験マトリクス
+## 版と受理条件
 
 - 旧0.0/0.1: 従来のgolden/hash/256B headerと既存資産を読める。旧形式の複数clipや壊れた範囲を、新形式の緩和で通さない
 - 新0.2: 320B header、submesh/index/slot/clip/channel/sample/stringの範囲・整列・所有関係を検査する
 - GR32中間段階: 複数primitiveの成功/不正slot/壊れたindex範囲を追加し、まだ未接続ならTwoClips拒否を維持する
 - Stage A到達段階: 複数clipの読込/cook/parse/resource選択を成功ケースへ変え、clip間の範囲混入・重複/欠落名・空clipを検査する
 - S7 Aに従い、複数meshの拒否を維持する
-- 128の境界と129の拒否は0.2でも維持し、v1の256試験と混ぜない
+- 128の境界と129の拒否は0.2でも維持し、v1の256関節上限と混ぜない
 - Reduce/Bake/Dropの数量・予算・失敗診断を、primitive/clipの集計拡張でも維持する。現在1clip/1mesh前提のJSON検証も同時に見直す
 - 失敗時は部分的な資産/出力を成功として返さない。cache鍵には形式・policy・変更後の設定を含める
-
-`Test/Core/Rendering/GLTFSkeletalAnalyzerTest.cpp` は現在TwoSkins/TwoPrimitives/TwoClipsを拒否している。
-将来の段階に応じて期待値を分ける。すべてを一律成功へ変えることも、Stage A後に古いTwoClips拒否を残すこともしない。
-`Test/Core/Asset/CookedSkeletalAssetTest.cpp` の往復/破損/CLI出力保持を同じ段階へ揃える。
 
 ## GR82 Stage B: 作成時restが現在どこで失われるか
 
@@ -78,7 +74,7 @@ snapshotのwire配置、共有方法、比較空間、閾値の既定はStage B�
 この棚卸しでは具体的なrecordやAPIを先に作らない。現在のinverse-bindだけから作者時点restが揃ったと仮定しない。
 G3のイベント・マーカー・ソケットの置き場を確保することはv1化の理由として残る。
 
-## v1 rest安全契約の必須試験
+## v1 rest安全契約の期待結果
 
 | 入力/操作 | 必須の期待結果 |
 |---|---|
@@ -96,7 +92,7 @@ G3のイベント・マーカー・ソケットの置き場を確保すること
 ## 次の適用条件
 
 S3(a)/S7は2026-10-04に承認済み。まずGR32の受理profileと共通材質/0.2の変更表を確定し、関連taskの完了条件へ展開する。
-この棚卸し自体はwire/API確定仕様ではなく、後続の実装仕様と試験で具体化する。
+この棚卸し自体はwire/API確定仕様ではなく、後続の実装仕様で具体化する。
 
 ## GR32最初のCPU契約
 
@@ -132,25 +128,21 @@ morphはprimitiveごとのdelta数を各primitiveのvertex数で検査し、mesh
 対象を持たないprimitiveはゼロdelta相当として許す。DroppedMorphTargetCountは全primitiveの除去target総数、
 MorphTargetWidth（JSONのmesh_target_width）はmesh/node初期weightsおよびweight animationの幅であり、別に報告する。
 
-raw/legacy/file/GLB、2/8primitive、名前衝突/順序/省略、local index越境、全体Reduce prefix、全体fit、
-morphの総数/幅/対象なしprimitiveと幅不一致、および旧writerの出力保持をnative試験へ登録する。
-純JSON/範囲検査は実行済み。native回帰は次のとおり。
-- `CookedSkeletalAssetTest`: 2026-11-02のWindows Debugで`cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1`が終了コード0。
-  コードページ932・65001のそれぞれで`ctest --test-dir build -C Debug --output-on-failure --timeout 180 -R CookedSkeletalAssetTest`がPassed（終了コード0）。
+以下は当時のnative検証記録である。
+- `CookedSkeletalAssetTest`: 2026-11-02のWindows Debugでビルドが終了コード0。
+  コードページ932・65001のそれぞれでPassed（終了コード0）。
   記録は`PROGRESS.md`のG2-GR78-SURFACE-CENTROID-CHECK-P1（run 20261102-095825）。
-- `SkeletalImportReportTest`（`CookedMeshTest --test=SkeletalImportReportTest`、mesh_target_width・dropped_targetsの報告）: 2026-10-11のWindows Debugで、隣接69件をまとめた`ctest --test-dir build -C Debug -R <隣接69件> --no-tests=error --output-on-failure`の中でPassed。
-  69件中の失敗は無関係の`BoardComponentRoutingTest`のTimeout 1件（単体の再実行で通過）で、試験のソースはこの実行の後に変わっていない。記録は`PROGRESS.md`のSCN-ECS-RENDER-SYNC-SWITCH（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）。
-- `GLTFSkeletalAnalyzerTest`（2primitiveの連結）: 未実行（ビルドのみ）。2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0
-  （`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。TEST-FULL-CTEST-BASELINE-CHECKの全体CTestで回す。
+- `SkeletalImportReportTest`（mesh_target_width・dropped_targetsの報告）: 2026-10-11のWindows Debugで、隣接69件をまとめた実行の中でPassed。
+  69件中の失敗は無関係の`BoardComponentRoutingTest`のTimeout 1件（単体の再実行で通過）で、当該実行時点では試験のソースに変更はなかった。記録は`PROGRESS.md`のSCN-ECS-RENDER-SYNC-SWITCH（run 20261010-223034、`verify-SCN-ECS-RENDER-SYNC-SWITCH-3-neighbors.txt`）。
+- `GLTFSkeletalAnalyzerTest`（2primitiveの連結）: 2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0。この時点では実行せず、ビルドのみ確認した。
+  （`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
 
 ## 0.2 readerの段階接続
 
 旧0.0/0.1を維持して320B/表/UTF-8とclip別所有検査を接続する。
 submeshのflags/bounds/任意VertexCountを所有型へ残す。M9は現在Resourceへ表を渡し、複数clip選択だけ明示拒否する。
 writerは統一0.2へ切替え、単一primitiveのslot名も保存する。cacheはminor2を要求し、旧版は通常loadのみ維持する。
-readerのnative回帰の`CookedSkeletalAssetTest`・`CookedSkeletalWireContractTest`は、2026-11-02のWindows Debug（HEAD `123f1b98`）で次のビルドが終了コード0、ctestで両試験がPassed（終了コード0）。
-- ビルド: `cmake --build build --config Debug --target CookedMeshTest ResourceRegistryTest -- /m:1 /nodeReuse:false`。
-- ctest: `ctest --test-dir build -C Debug -R "^(CookedSkeletalAssetTest|CookedSkeletalWireContractTest|SkeletalSubmeshLayoutTest|SkeletalResourceLifetimeTest)$" --no-tests=error --output-on-failure --timeout 180`。
+readerのnative回帰の`CookedSkeletalAssetTest`・`CookedSkeletalWireContractTest`は、2026-11-02のWindows Debug（HEAD `123f1b98`）でビルドが終了コード0、両試験がPassed（終了コード0）。
   `CookedSkeletalAssetTest`は12.25秒、`CookedSkeletalWireContractTest`は0.03秒。
   記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401）。描画受入れも未完。
 
@@ -166,12 +158,11 @@ GetMemorySizeにはresource側の表とslot名の所有サイズを加える。
 
 FrameLeaseは生成時検証済みのimmutable表を受理する。旧3引数AssetLeaseと空表FrameLeaseも保持する。
 範囲drawのコード接続は済んでも、palette共有とWindows/GPU受入れが済むまでGR32描画完了とは扱わない。
-純layout/実index/頂点範囲/有限bounds検査を実行し、Resourceの1/2/8表・不正名/範囲・世代・Unload寿命はnative回帰へ登録する。
+Resourceは1/2/8表、不正名/範囲、世代、Unload寿命の契約を維持する。
 Resourceのnative回帰の`SkeletalResourceLifetimeTest`・`SkeletalSubmeshLayoutTest`（純layout検査）は、2026-11-02のWindows Debug（HEAD `123f1b98`）で、
-上記readerと同じビルド・ctestがともに終了コード0、両試験がPassed（それぞれ0.03秒）。
+上記readerと同じ検証でビルドが終了コード0、両試験がPassed（それぞれ0.03秒）。
 記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE-CHECK-P1（run 20261102-194401）。
 描画（GPU）のWindows実行は、GPUとアプリの起動が必要で、当分アプリを起動しない方針のため未実行。
-TEST-FULL-CTEST-BASELINE-CHECKの全体CTestとGR32描画の受入れで回す。
 
 ## Componentの材質slot API
 
@@ -187,21 +178,16 @@ SkinnedMeshProxyは解決済みMaterials[8]/MaterialCountを値コピーし、�
 FramePacket/SceneViewの値所有コピーで後続のcomponent設定変更から独立する。SceneRevisionはslot数/各material idも含める。
 FrameLeaseは検証済み表を範囲drawへ渡すが、ここだけで複数材質のGPU表示を検証済みとは扱わない。
 
-世代/fallback/無効入力/曖昧名の純binding試験を通常/最適化/sanitizerで実行する。
-- Component API・snapshotの`SkeletalFramePacketSnapshotTest`（`TestMaterialSlots`等でslot APIとpacketの値コピーを検証）は、
-  2026-11-02のWindows Debug（HEAD `297ededc`）で次のビルドが終了コード0、ctestで本試験がPassed（終了コード0）。
-  ビルド: `cmake --build build --config Debug --target RenderResourcesDomainContractTest ViewportCameraIdRenderPlanTest BoardComponentRoutingTest SkeletalFramePacketSnapshotTest FrameCaptureReadbackHelperTest WorldSyncDifferentialTest CanvasViewRenderTest -- /m:1`。
-  ctest: `ctest --test-dir build -C Debug -R "^(RenderResourcesDomainContractTest|ViewportCameraIdRenderPlanTest|BoardComponentRoutingTest|SkeletalFramePacketSnapshotTest|FrameCaptureReadbackHelperTest|WorldSyncDifferentialTest|CanvasViewRenderTest)$" --no-tests=error --output-on-failure --timeout 180`。
+- Component API・snapshotの`SkeletalFramePacketSnapshotTest`（`TestMaterialSlots`等でslot APIとpacketの値コピーを検証した）は、
+  2026-11-02のWindows Debug（HEAD `297ededc`）でビルドが終了コード0、本試験がPassed（終了コード0）。
   記録は`PROGRESS.md`のTEST-FULL-CTEST-BASELINE（run 20261102-101626、`.harness/runs/20261102-101626/verify-TEST-FULL-CTEST-BASELINE-U1.txt`）。
-  2026-10-11のWindows Debugでも`FramePacketManagerTest`・`RenderThreadFrameCompletionTest`・`SkeletalFramePacketSnapshotTest`の3件をビルド（EXIT=0）し、ctestで3件すべてPassed（EXIT=0、`100% tests passed, 0 tests failed out of 3`）。記録は`PROGRESS.md`のSCN-MEGA-SCENE-CONFIRM（run 20261010-223034、`verify-SCN-MEGA-SCENE-CONFIRM-4-build.txt`・`verify-SCN-MEGA-SCENE-CONFIRM-4-ctest.txt`）。
-- SceneRevisionの`RenderingDDGILightingContractTest`（slot数・各material idによる`ComputeSceneRevisionHash`の変化を検証）は未実行（ビルドのみ）。
-  2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0（`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
-  TEST-FULL-CTEST-BASELINE-CHECKの全体CTest（`ctest --test-dir build -C Debug --output-on-failure --timeout 600`）で回す。
+  2026-10-11のWindows Debugでも`FramePacketManagerTest`・`RenderThreadFrameCompletionTest`・`SkeletalFramePacketSnapshotTest`の3件をビルド（EXIT=0）し、3件すべてPassed（EXIT=0、`100% tests passed, 0 tests failed out of 3`）。記録は`PROGRESS.md`のSCN-MEGA-SCENE-CONFIRM（run 20261010-223034）。
+- SceneRevisionの`RenderingDDGILightingContractTest`（slot数・各material idによる`ComputeSceneRevisionHash`の変化）は、
+  2026-10-29のWindows Debugで`cmake --build build --config Debug -- /m:1`が終了コード0。この時点では実行せず、ビルドのみ確認した（`PROGRESS.md`のSCN-BUILD-ALL-TESTS、run 20261029-040919）。
 
-packetのnative回帰はSceneViewから実GenerateDrawCommandsへ通し、component再設定・再同期・mesh世代変更・破棄後の保持を確認する。
+SceneViewからGenerateDrawCommandsへ渡したpacketは、component再設定・再同期・mesh世代変更・破棄後も取得済みの値を保持する。
 CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し、本番入口は実deviceから渡す。
-試験は実capability値を渡すため、未設定deviceのnull参照やFakeDevice/Core差し替えを検証経路に使わない。
-packetのnative回帰は`SkeletalFramePacketSnapshotTest`。上記Component API・snapshotの2026-11-02のWindows Debug（HEAD `297ededc`）のPassed記録を参照する（`PROGRESS.md`のTEST-FULL-CTEST-BASELINE、run 20261102-101626）。今回は再実行せず、GPU描画の証拠にはしない。
+packetのnative検証は、`SkeletalFramePacketSnapshotTest`の2026-11-02のWindows Debug（HEAD `297ededc`）のPassed記録を参照する（`PROGRESS.md`のTEST-FULL-CTEST-BASELINE、run 20261102-101626）。この過去のCPU結果はGPU描画の証拠にはしない。
 
 ## 範囲drawの接続
 
@@ -222,8 +208,8 @@ packetのnative回帰は`SkeletalFramePacketSnapshotTest`。上記Component API�
 `MeshIndexChunks.h` の `BuildSkinnedMeshIndexChunks` でスキンのサブメッシュのインデックス範囲を塊に分け、
 `VirtualShadowMapPass` とビジビリティバッファの ID ラスタを集める `VisibilityRasterPass::CollectSkinnedChunks` が同じ規則を使う。
 旧形式の空表は従来どおりメッシュ全体として扱う。
-`SkinnedSubmeshDrawContractTest` は実 Core と CPU 用 RHI test double でコマンド・記録・不正入力を検査し、
-全体・部分・3 の倍数でない範囲・はみ出す範囲の検査も含む。2026-11-02 の Windows Debug で同テストは PASS、終了コード 0。
+2026-11-02 の Windows Debug では、`SkinnedSubmeshDrawContractTest` が実 Core と CPU 用 RHI test double でコマンド・記録・不正入力を検査し、
+全体・部分・3 の倍数でない範囲・はみ出す範囲も確認した。同テストは PASS、終了コード 0 だった。
 `Game`・`AssetCook`・`SkinnedSubmeshDrawContractTest` の Debug ビルドも終了コード 0。出力は `.harness/unit-verify.txt` に記録した。
 
 `--startup-skinned-probe-materials=2` で、2 サブメッシュ・2 材質 slot の骨付きパネルを使える。
@@ -231,8 +217,7 @@ packetのnative回帰は`SkeletalFramePacketSnapshotTest`。上記Component API�
 各パネルの各半分の中心に投影した座標の周辺（最大 5×5 画素）の平均色を、その slot の期待色と照合する。
 スキン描画は材質の基本色を使わないため、材質の色は 4×4 の単色アルベドテクスチャで持たせている。
 
-`Test/Tools/NvskelLegacyV01Oracle.py` は 0.2 の出力から試験用の旧 NVSKEL 0.1 を作る。製品の `AssetCook` は 0.1 を書き出さない。
-`Test-M9World.ps1 -LegacyNvskelCompare -EvidenceDir` は、同じ `ValidU8Float` から作った 0.1 と 0.2 を比較し、画像と判定を指定先へ残す。
+製品の `AssetCook` は旧 NVSKEL 0.1 を書き出さない。
 
 ### 実 GPU で未検証の受入れ
 
@@ -244,12 +229,6 @@ CPU の test double やソースの確認は実 GPU の合格と扱わない。
   ```powershell
   powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer On -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-vb
   powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -SkinnedProbeMaterials 2 -VisibilityBuffer Off -OutDir .harness/runs/startup-capture/G2-GR32-GPU-ACCEPTANCE-2mat-gbuffer
-  ```
-
-- `--m9-world-compare` で止めた姿勢を `--capture-aov --capture-deterministic` で撮り、旧 0.1 と 0.2 の GBuffer の AOV を面ごとに全画素一致で比較する。
-
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -Configuration Debug -LegacyNvskelCompare -EvidenceDir .harness/runs/scene-capture/G2-GR32-GPU-ACCEPTANCE-legacy
   ```
 
 - 既定の `Rendering3DTest` の起動画面を撮り、`result=pass` と PNG を確認する。

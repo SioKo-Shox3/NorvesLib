@@ -19,12 +19,6 @@ general engine benchmark or a release-build performance target.
 
 ## Direct Cooked Silver Texture Path
 
-Command:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File Scripts/RunCookedTextureGameSmoke.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -GameExe build/Game/Debug/Game.exe
-```
-
 Observed smoke result:
 
 | item | value |
@@ -49,12 +43,6 @@ This direct texture smoke still uses the normal startup model path unless the de
 cooked-model opt-in is supplied.
 
 ## glTF Prepared Texture Path
-
-Command:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File Scripts/RunCookedTextureGameSmoke.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -GameExe build/Game/Debug/Game.exe -SpecPath Assets/AssetSets/Rendering3DTestSilverGltfTextures.json -ModelPath Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf -ExpectedLoadMode GltfPrepared
-```
 
 Observed smoke result:
 

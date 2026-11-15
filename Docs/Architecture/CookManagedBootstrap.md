@@ -63,15 +63,8 @@ commit済みは全final後像を照合して確定する。完全commitまたは
 
 before/after imageとreceiptの保存IDは当該transactionの条件付き復旧用で、恒久的file lineageではない。intent.json/header.json自身の自己IDをwireへ循環して埋め込まない。同じ意味のintent bytesを別IDのfileへ置いた場合、それだけを拒否する永続sealはない。検証済み固定store/pending内で今回読んだintent IDを、そのprocess内の清掃前に再照合する。
 
-stable namespaceと協調writerが前提。認証・悪意あるfilesystem writer対策・powerloss耐久性・atomic-reader可視性は保証しない。flushと実process終了は電源断試験の代わりではない。
+stable namespaceと協調writerが前提。認証・悪意あるfilesystem writer対策・powerloss耐久性・atomic-reader可視性は保証しない。flushと実process終了だけでは電源断の耐久性を証明できない。
 
-## 検証
-
-実textureの新規公開、共通cacheのSkip、sibling claim保持、未知root/child/親差替え/同bytes別ID/壊れたside document、spec/source変更、Busyとout保持を確認する。
-
-公開・receipt・rollback・退役の16境界の実child process終了に、keepalive mutexを残すabandoned再開を追加する。source/spec不在で原indexのbytes/IDを保ってrollbackまたはcommit確定する。Prepared/Retired残物と未知prefix directoryのID/bytes不変も検査する。Release/Close故障注入は実cleanup後の失敗報告であり、実OS故障の再現ではない。
-
-short alias、Unicode物理親のASCII alias、SUBSTは条件flagを残す。0は未実測として扱う。既存32CPU、単体7CLI/79出力byte、texture v1の固定10出力byteと5診断byteを維持し、新しいexecutor試験を含む33CPUを受入条件とする。
 
 ## stage集合の検査契約
 

@@ -1,5 +1,6 @@
 ﻿#include "Rendering/GBufferProgramRegistry.h"
 
+#include "Rendering/SkinnedMeshTypes.h"
 #include "Logging/LogMacros.h"
 #include "Text/IdentityPool.h"
 #include "Thread/Mutex.h"
@@ -30,20 +31,24 @@ namespace NorvesLib::Core::Rendering
         return id == kStandardGBufferProgramId ? 1u : id;
     }
 
-    GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe)
+    GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe, float opacity)
     {
         GBufferPipelineKey key;
         key.Program = material ? material->ProgramId : kStandardGBufferProgramId;
-        // 両面の材質はカリングせず、Masked の材質は切り抜きを有効にする。
+        // 両面の材質はカリングせず、Masked の材質と残像は切り抜きを有効にする。
         key.Cull = material && material->bTwoSided ? RHI::CullMode::None : RHI::CullMode::Back;
-        key.bAlphaClip = material && material->Blend == BlendMode::Masked;
+        key.bAlphaClip = (material && material->Blend == BlendMode::Masked) || IsSkinnedGhostOpacity(opacity);
         key.Polygon = bWireframe ? RHI::PolygonMode::Line : RHI::PolygonMode::Fill;
         key.bSkinned = bSkinned;
         return key;
     }
 
-    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied)
+    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied, float opacity)
     {
+        if (IsSkinnedGhostOpacity(opacity))
+        {
+            return bTemporalAAApplied ? GBufferAlphaClip::Hash : GBufferAlphaClip::Test;
+        }
         if (!material || material->Blend != BlendMode::Masked)
         {
             return GBufferAlphaClip::None;
@@ -53,10 +58,11 @@ namespace NorvesLib::Core::Rendering
                    : GBufferAlphaClip::Test;
     }
 
-    bool RequiresGBufferOverlay(const MaterialResourceData* material)
+    bool RequiresGBufferOverlay(const MaterialResourceData* material, float opacity)
     {
-        return material && (material->ProgramId != kStandardGBufferProgramId ||
-                            material->Blend == BlendMode::Masked || material->bTwoSided);
+        return IsSkinnedGhostOpacity(opacity) ||
+               (material && (material->ProgramId != kStandardGBufferProgramId ||
+                             material->Blend == BlendMode::Masked || material->bTwoSided));
     }
 
     struct GBufferProgramRegistry::State

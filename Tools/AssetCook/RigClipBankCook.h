@@ -18,5 +18,6 @@ namespace NorvesLib::Tools::AssetCook
         Core::Skeletal::RigImportProfile profile = Core::Skeletal::RigImportProfile::DirectTrs128,
         const Core::Skeletal::RigClipSourceSelection* clipSource = nullptr,
         const Core::Skeletal::RigClipAnalysisOptions* analysisOptions = nullptr,
-        Core::Skeletal::RigGltfImportCapture* capture = nullptr);
+        Core::Skeletal::RigGltfImportCapture* capture = nullptr,
+        Core::Container::AnsiStringView analysisRootJoint = {}, bool* outRootJointMissing = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

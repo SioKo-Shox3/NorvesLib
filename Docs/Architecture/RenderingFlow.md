@@ -138,15 +138,6 @@ RenderGraph 対応済み view では pass chain を登録して graph 経路を�
 
 `NORVES_ENABLE_RENDERGRAPH_DUMP` が無効な build では dump 文字列と file write は無効化されるが、`RenderGraphDebugStats` は compile / execute / barrier / transient acquire の確認に使える。
 
-CI / regression 確認では以下を使う。
-
-```powershell
-cmake --build build --config Debug --target RenderGraphDumpTest
-ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
-```
-
-描画経路を変更した場合は、必要に応じて `RenderGraphCompileTest` / `RenderFrameExecutorPlanTest` / `RenderGraphPresentationPassTest` も併走し、named resource の version、barrier、presentation handled/fallback の期待を確認する。
-
 ## Resize と Shutdown
 
 - Resize は `RenderWorld::Resize()` で保留し、次の `BeginFrame()` で `WaitForRender()` 後に適用する。
@@ -155,7 +146,7 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 
 ## 描画の拡張の段（GR25）
 
-ゲーム側は `RenderExtensionDesc` の `Name`・`Stage`・`Order` と `RenderExtensionFactory` を指定してパスを登録する。`Stage` が決める差し込み位置と書き込み先の例は次のとおり。パスは `Declare` で RenderGraph 資源の読み書きを宣言し、後続が参照する名前へ接続する。
+ゲーム側は `RenderExtensionDesc` の `Name`・`Stage`・`Order` と `RenderExtensionFactory` を指定してパスを登録する。`Stage` が決める差し込み位置と書き込み先の例は次のとおり。`ShadowCaster` 以外のパスは `Declare` で RenderGraph 資源の読み書きを宣言し、後続が参照する名前へ接続する。
 
 | `RenderExtensionStage` | 差し込む位置 | 書き込む対象の例 |
 |---|---|---|
@@ -164,11 +155,11 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 | `Transparent` | 半透明の `ForwardPass` の後、`DistortionPass` の前 | 半透明合成後の HDR シーンカラー `SSR.SceneColor` または `Scene.Color` |
 | `PostTemporalAA` | 後段スタックの `TemporalAAPass` の後 | TAA が有効なら TAA 適用後の HDR シーンカラー |
 | `PostTonemap` | 後段スタックの `VignettePass` の後 | トーンマップ・Vignette 適用後の `ToneMappedColor` |
-| `ShadowCaster` | 予約。現在は登録を拒否する | 影を落とす段は別の項目で追加する |
+| `ShadowCaster` | RenderGraph のパスとして差し込まず、`View::Render` の直前に RenderThread で束を集める | 太陽の CSM のカスケードと VSM、印のある束は点光源のキューブまたは VSM の面 |
 
 `GBuffer` は、GBuffer を書く最後のパスの後に当たり、`--visibility-buffer` の on / off で位置は変わらない。同じ段の拡張は `Order` の小さい順に並び、同じ `Order` なら登録順に並ぶ。
 
-パス名の規約は `Ext.<Game>.<Name>` とする。`Ext.` で始まらない名前と、登録済みまたは保留中の同名パスは拒否される。`IViewPass` と `IRenderGraphPass` の両方を実装したパスだけを登録でき、レガシー経路のパスは拒否される。ファクトリは生成関数ポインタと `context` の組であり、登録時に一度呼んで返された実体の型を検査し、初期化せず破棄する。実際の差し込みや再構築でも呼ばれるため、`context` は登録解除の反映まで有効に保ち、ファクトリから登録表へ再入しない。
+パス名の規約は `Ext.<Game>.<Name>` とする。`Ext.` で始まらない名前と、登録済みまたは保留中の同名パスは拒否される。`ShadowCaster` 以外の段は `IViewPass` と `IRenderGraphPass` の両方を実装したパスだけを登録でき、レガシー経路のパスは拒否される。ファクトリは生成関数ポインタと `context` の組であり、登録時に一度呼んで返された実体の型を検査し、初期化せず破棄する。実際の差し込みや再構築でも呼ばれるため、`context` は登録解除の反映まで有効に保ち、ファクトリから登録表へ再入しない。
 
 登録・解除・有効状態の変更は GameThread から `Register`・`Unregister`・`SetEnabled` で行い、mutex で守られた保留の列に積む。初期化の窓では即時に反映され、モジュールの登録と `OnPostInitialize` の後、ゲームスレッドが走り出す前に `CloseInitializationWindow` で窓を閉じる。呼ばれない場合は最初の `ApplyPending` で閉じる。以後、通常の登録操作による `m_Passes` と後段スタックの変更は RenderThread の `SceneView::Render(ViewRenderContext&)` 冒頭の `ApplyPending` で行う。`SetupDeferredPipeline` で組み直す場合は末尾の `ReinsertAll` が登録済みの拡張を入れ直し、既にある実体は重複して挿入しない。
 
@@ -179,6 +170,21 @@ ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
 `SetupPathTracingPipeline` の経路には拡張を挿入しない。セットアップ時に登録があればその時点で、なければ後から初めて登録された時点で、登録表につき一度だけ警告を出す。
 
 被写界深度の `DepthOfFieldPass` と動きぼけの `MotionBlurPass` は `SetupDeferredPipeline` で、検証用パスの後・後段スタックの前に、この順で追加される。パイプラインの組み直し時にも追加される。
+
+### 影を落とす物の段（ShadowCaster）
+
+- 登録する `Stage = ShadowCaster` の `IViewPass` は `IRenderExtensionShadowCaster` も実装する。実装していなければ登録を拒否する。RenderGraph にパスを差し込まず、`Order` の小さい順、同値なら登録順に集める。
+- RenderThread の `SceneView::Render` は、パスがある場合に毎フレーム Viewport ごとに `View::Render` の直前で一覧を空にし、有効な拡張に `SubmitShadowCasters(context, sink)` を呼ぶ。初期化の失敗や提出中の例外はその拡張だけを無効にし、提出中に例外が起きた場合はその拡張が途中まで追加した束とインスタンスを取り除く。登録解除や終了時には初期化を試みた拡張の `Shutdown` を呼ぶ。パストレーシングの経路では集めない。
+- `RenderExtensionShadowCasterBatch` の頂点は `Mesh3DVertex`（位置 3・法線 3・UV 2 の 32 バイト）、インデックスは 32 bit。`FirstIndex` と `IndexCount` はインデックス単位で、`IndexCount` は 0 より大きい 3 の倍数。`VertexOffset` は頂点単位の開始位置で、`LocalBounds` は全頂点を含むローカルの境界とする。
+- `Instances` は `MeshProxy::WorldTransform` と同じワールド行列の配列で、`Submit` の呼び出し中だけ有効ならよい。`Material` が無効なら不透明、Masked なら切り抜きに使う。`CoverageMultiplier` が負なら材質の値を使い、`bPointLightShadow` は既定で false。`Key` は拡張内で束ごとに異なる安定した値とし、0 なら提出順を使う。`ContentRevision` は頂点やインデックスの中身を変えるたびに増やす。鍵と版は VSM のキャッシュの無効化に使う。
+- 受理した束は View の描画中、頂点・インデックスの `RHI::BufferPtr` を保持するため、拡張は自分の参照を手放せる。参照がなくなった資源の破棄時期は RHI が管理する。頂点・インデックスのバッファにはそれぞれ `VertexBuffer`・`IndexBuffer` と `StorageBuffer` の用途を付け、VSM 用に装置のアドレスを取れるようにする。アドレスを取れない束は VSM では省かれる。
+- `Submit` はバッファの有無、インデックス数、インデックス範囲、開始位置の頂点 1 個が頂点バッファに収まること、境界の妥当性と有限性、空でないインスタンス、束とインスタンスの上限、ワールド行列の有限性を順に検査する。GPU 内のインデックス値までは検査しない。不正な束は捨て、ログ有効時は理由ごとに拡張につき 1 回だけ警告する。上限は一覧全体で `RENDER_EXTENSION_SHADOW_CASTER_MAX_DRAWS` の 4096 束と `RENDER_EXTENSION_SHADOW_CASTER_MAX_INSTANCES` の 65536 インスタンス。
+- CSM の `ShadowMapPass::PlanShadowFrame` は各インスタンスの境界球をカスケードの深度範囲の入力に足す。各カスケードにかかるインスタンスを、UBO の `world` と `worldSource` を使い 1 インスタンスにつき 1 描画で描く。Masked は G5-GR27 の切り抜きパイプラインを使い、必要な資源が使えなければ不透明で描く。ログ有効時、件数が変わると `CSM_EXTENSION_CASTERS c0 c1 c2 c3 masked fallback omitted` を出す。
+- 点光源のキューブでは `bPointLightShadow` が true の束だけを対象とし、光源と各面の境界判定を通ったインスタンスを同じ形で描く。ログ有効時、件数が変わると `POINT_SHADOW_EXTENSION_CASTERS draws masked fallback omitted` を出す。
+- VSM の `VirtualShadowMapPass::CollectCasters` はスキニングの後・草の前で、`PlanProceduralChunks` と `AppendProceduralInstance` により束を三角形 128 個以下の手続きメッシュの塊にする。新しい `RecordKind` は追加していない。Masked は `AppendMaskedCasterDraw` で切り抜きの範囲を作るが、材質の資源が使えない場合や範囲の上限を超えた場合は不透明になる。印のない束は太陽の段だけ、印のある束は点光源 VSM が有効なら点光源の面にも写る。鍵・版・行列などをキャッシュの無効化の入力にする。ログ有効時、件数が変わると `VSM_EXTENSION_CASTERS draws instances chunks masked_chunks skipped point_draws` を出す。草などと共有する `MAX_CASTER_CHUNKS`（32768）の上限を超えた塊は捨て、`VSM_CASTERS` の `dropped` に数える。
+- 最初から拡張の束が 0 件なら、境界・記録・描画・拡張のログは増えない。一度束があった後に 0 件になった場合は、件数の変化を知らせるログが出ることがある。
+- 拡張は影のマップに直接描かない。CSM とキューブのレンダーパスは消去を前提とし、描画は `FrameCommand` 経由で記録される。VSM の物理ページも塊の展開と `atomicMin` による専用の流れで描く。
+- この束は RT の影・DDGI・RTGI・パストレーサーには渡らない。MegaGeometry と草の株の専用経路も変わらない。CSM とキューブでは描画ごとに UBO の枠と記述子を使い、枠が足りない場合などは描画が省かれる。
 
 ### 拡張データ枠
 

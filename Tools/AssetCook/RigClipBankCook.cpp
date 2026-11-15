@@ -7,9 +7,14 @@ namespace NorvesLib::Tools::AssetCook
         const Core::Skeletal::RigV1Limits& limits, const Core::AssetImport::LoadedImportSettings* settings,
         const Core::Skeletal::SkeletalGltfDecodeOptions* options, Core::Skeletal::RigImportProfile profile,
         const Core::Skeletal::RigClipSourceSelection* clipSource,
-        const Core::Skeletal::RigClipAnalysisOptions* analysisOptions, Core::Skeletal::RigGltfImportCapture* capture)
+        const Core::Skeletal::RigClipAnalysisOptions* analysisOptions, Core::Skeletal::RigGltfImportCapture* capture,
+        Core::Container::AnsiStringView analysisRootJoint, bool* outRootJointMissing)
     {
         report = {};
+        if (outRootJointMissing)
+        {
+            *outRootJointMissing = false;
+        }
         try
         {
             if (format != Core::Container::AnsiStringView("nvskel.v1.clips"))
@@ -22,6 +27,32 @@ namespace NorvesLib::Tools::AssetCook
                     source, sourcePath, profile, sourceRig, report, limits, settings, options, capture, clipSource))
             {
                 return false;
+            }
+            Core::Skeletal::RigClipAnalysisOptions resolvedAnalysis;
+            if (analysisOptions && !analysisRootJoint.empty())
+            {
+                resolvedAnalysis = *analysisOptions;
+                const auto& topology = sourceRig.GetData()->Topology;
+                bool bFound = false;
+                for (size_t i = 0; i < topology.Joints.size(); ++i)
+                {
+                    if (Core::Container::AnsiStringView(topology.Joints[i].Name) == analysisRootJoint)
+                    {
+                        resolvedAnalysis.RootJoint = topology.CanonicalToSource[i];
+                        bFound = true;
+                        break;
+                    }
+                }
+                if (!bFound)
+                {
+                    if (outRootJointMissing)
+                    {
+                        *outRootJointMissing = true;
+                    }
+                    report.Status = Core::Skeletal::RigV1Status::InvalidName;
+                    return false;
+                }
+                analysisOptions = &resolvedAnalysis;
             }
             Core::Skeletal::ClipBankV1 bank;
             if (!Core::Skeletal::BuildClipBankV1({&sourceRig, 1}, bank, report, limits, profile, analysisOptions))

@@ -32,8 +32,6 @@ M9のみがaccepted immutable snapshotをsessionへBindする。骨格snapshot p
 
 asset-settleは従来renderer pendingにruntime pendingとhandlerの未consume eventを加える。Flush前にもpendingを観測し、即完了が最初のTickでconsumeされても観測を失わない。Pause中の未attach eventでsettleを早抜けしない。
 
-## 検証境界
+## 未確認の範囲
 
-CPU試験は実session/owner helper、M9準備helper、World/Scopeの実attach、SkinnedMeshComponentの明示clipを使う。所有/借用Registry、準備例外、pause配送、複数session、取消、typed failure、Deferred、clip差し替えと既存先頭互換を常時CHECKでDebug/Release検証する。
-
-Pythonの8 source契約と既存M9 ContractOnlyは実App/handler/routineへの配線位置・順序を検査する。Game Debug/Releaseをcompileしhashを記録するが、Gameの起動・GPU描画・XAudio2再生ではない。Windows native実行はCPU helperに限る。M9のt0/t1・negative control・音声drain・既定Rendering3DTest撮影・実犬/Blender品質は未検証として残す。境界注入は実allocator全域OOMの証明ではない。
+Gameの起動・GPU描画・XAudio2再生、M9のt0/t1・negative control・音声drain・既定Rendering3DTestの撮影・実犬/Blender品質は未確認。実allocator全域のOOMも保証しない。

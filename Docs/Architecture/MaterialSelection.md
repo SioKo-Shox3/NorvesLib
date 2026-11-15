@@ -23,11 +23,10 @@ scratch は N + 2S 個の uint32_t。入力名を含む全借用領域と書込�
 
 計算量は catalog の名前順ソート、名前の二分探索、選択結果のソートを含む。番号から行への表は同じ scratch を再利用する。選択0件でも catalog と重複名を検査する。元材質0件を仮想 material 0 と扱わない。
 
-## 検証範囲
+## 守る振る舞い
 
-MaterialSelectionTest を standalone と Core test bundle に登録。Linux の実共通核・実名前 codec による通常/O2 NDEBUG/ASan+UBSan（LSan除外）は検証対象。MaterialImportDocumentTest・SkeletalMaterialBindingsTest は import-plan と runtime slot の接続を検証する。CookCacheDecisionTest は静的 mesh・skinmesh・clips の増分 preflight における selector の未一致・二重指定・surface の拒否を検証する。
-
-独立の総当たり型参照実装とのランダム比較で、成功判定・行出力・二重指定・失敗保持を確認。範囲外指定で直前の成功行が診断へ残る問題を修正し、未一致の CatalogRow は UINT32_MAX とする回帰を追加した。
+静的 mesh・skinmesh・clips の増分 preflight でも selector の未一致・二重指定・未対応のsurfaceを拒否する。
+未一致の CatalogRow は UINT32_MAX とし、直前の成功行を診断へ残さない。
 
 ## GR32 の slot 名 adapter
 

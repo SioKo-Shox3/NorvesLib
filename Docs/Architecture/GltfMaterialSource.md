@@ -36,5 +36,5 @@ textureInfo.extensionsは空objectも含め、存在した時点で旧cookerと�
 ## 検証境界
 
 純source値の既定・範囲・参照index・double精度からの発光換算を通常/O2/ASan+UBSanで検証した（LSan除外）。
-実JsonDocumentを使う読込・重複・不正入力・失敗保持の契約はMEMBER/CTest登録済みだが、Windows.h依存で未実行。
+実JsonDocumentを使う読込・重複・不正入力・失敗保持の検証は、Windows.h依存で未実行。
 既存cook、manifest、runtime、GPUの動作は未変更であり、GR79の取り込み全体が完了したものではない。

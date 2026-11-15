@@ -17,6 +17,13 @@ AssetCook --retarget-clip --input run.bvh --skeleton dog.gltf --role-profile rol
 
 出力formatは`nvskel.v1.clips`。対象骨格とprofile、source/targetの外部bufferとsidecarのbytes・有無を既存の中央増分判定に含める。
 
+## 取り込み設定の clip 節との関係
+
+通常のクリップ取り込み（`--rig-split`、asset-set の model/animation）では、根の関節・ループの自動判定・fps・時刻の倍率・解析の有無を import.json の `clip` 節で指定できる。
+キーと規則は [ImportSettings.md の clip 節](ImportSettings.md#clip-節gr78gr82) を参照する。
+リターゲットは Role Profile v1 の `output_fps`・`loop_mode` などで補正を持つため、ソースの import.json の非空の `clip` を `retarget_clip_settings` で拒否する。
+ループの範囲・ルート移動の正本は実行時 sidecar（GR11）であり、`clip` 節は cook 時の下書きだけを扱う。
+
 ## Role Profile v1の任意設定
 
 既存の明示C方式を保持し、次を追加する。`match`/`align_bones`ではtarget roleの`C`を省略する。
@@ -55,10 +62,6 @@ v1 bankはターゲットの作者rest/frameを保持するため、既存の束
 profile 2/3だけで使用する。旧クリップは節を出さず既存wireを保持する。各40byte recordはclip index u32、root joint u32、time f32、reserved u32=0、XZ/yawの各f64。先頭time/変位/yawは0、末尾timeはclip duration、時刻は厳密増加。root indexはcanonical化・束縛で対応付ける。sample数は共通予算へ計上する。ANLYは軌跡の要約であり、軌跡そのものの代用ではない。
 
 この段階は抽出・保存まで。再生時の経路差分適用・ループ跨ぎ・controllerへの受渡しはG3/G4で行う。
-
-## 検証
-
-既存SkeletalBvhClipImportTestに16→30fps・11.6frame周期・非周期・端点・巨大frame原点・yawのケース、RigStaticRootFrameWireTestにRMTN往復/拒否、RigSplitCookTestにBVH/glTF共通変換とasset-set→CPUロード、AssetCookRigSplitSmoke.pyに実CLIの新規公開/拒否を追加した。native実行結果はPROGRESS.mdに記録する。GPU/DCC/実犬での見た目はこの合成CPU検証に含めない。
 
 ## GR87: クリップのキーの削減（cook 時）
 
