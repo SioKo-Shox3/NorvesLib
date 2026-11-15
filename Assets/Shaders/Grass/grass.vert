@@ -25,6 +25,7 @@ layout(location = 5) flat out uint fragSpecies;
 layout(location = 6) out float fragCameraDistance;
 layout(location = 7) out vec4 fragCurrentClip;
 layout(location = 8) out vec4 fragPreviousClip;
+layout(location = 9) flat out float fragDryColorAmount;
 
 // 以下の G1〜G6 は CPU の同名段階と演算順をそろえる。退化時も有限の位置と法線を保つ。
 float GrassLength(vec3 value)
@@ -71,7 +72,7 @@ float GrassWetness(vec3 root)
 }
 
 vec3 EvaluateGrassBladeVertex(GrassBladeRecord blade, GrassSpeciesGpuData species, uint lod,
-    uint index, bool bPrevious, float wetness, out vec3 normal)
+    uint index, bool bPrevious, float wetness, float dryness, out vec3 normal)
 {
     // G1: パックの復号、セルの再導出、塩 4/5/7 による向き・位相・傾き。
     precise vec3 root = vec3(blade.PositionX, blade.PositionY, blade.PositionZ);
@@ -98,9 +99,15 @@ vec3 EvaluateGrassBladeVertex(GrassBladeRecord blade, GrassSpeciesGpuData specie
     w = w * fade;
 
     // G3: 傾きは高さ × Bend × 0.4〜1 倍、風は 0.04 秒相当、個体の揺れは 0.9〜1.1 倍。
+    // 枯れ度が正なら種別の曲がりの追加量を加える。
     precise float leanSigned = 2.0 * lean - 1.0;
     precise vec3 leanDirection = GrassNormalize(facing * leanSigned + side * (1.0 - abs(leanSigned)), side);
-    precise vec3 offset = leanDirection * ((h * species.Bend) * (0.4 + 0.6 * lean));
+    precise float bend = species.Bend;
+    if (dryness > 0.0)
+    {
+        bend = bend + species.DrynessScales.z * dryness;
+    }
+    precise vec3 offset = leanDirection * ((h * bend) * (0.4 + 0.6 * lean));
     if ((draw.Flags.x & kGrassDrawFlagWind) != 0u)
     {
         precise vec3 velocity = WindVelocity(root, time, draw.Wind.xy, draw.WindParams.x, draw.WindParams.y,
@@ -182,15 +189,19 @@ vec3 EvaluateGrassBladeVertex(GrassBladeRecord blade, GrassSpeciesGpuData specie
 void main()
 {
     GrassBladeRecord blade = blades.Blades[gl_InstanceIndex];
+    uint drynessPacked = blade.DrynessPacked;
+    precise float dryness = float(drynessPacked & 0xffffu) / 65535.0;
+    precise float colorAmount = float(drynessPacked >> 16) / 65535.0;
+    fragDryColorAmount = colorAmount;
     uint index = uint(gl_VertexIndex);
     uint lod = GrassBladeIndexLod(index);
     fragSpecies = (blade.Packed >> 18) & 63u;
     GrassSpeciesGpuData species = speciesTable.Species[fragSpecies];
     precise vec3 root = vec3(blade.PositionX, blade.PositionY, blade.PositionZ);
     fragWetness = GrassWetness(root);
-    fragWorldPos = EvaluateGrassBladeVertex(blade, species, lod, index, false, fragWetness, fragNormal);
+    fragWorldPos = EvaluateGrassBladeVertex(blade, species, lod, index, false, fragWetness, dryness, fragNormal);
     vec3 previousNormal;
-    precise vec3 previousWorld = EvaluateGrassBladeVertex(blade, species, lod, index, true, fragWetness, previousNormal);
+    precise vec3 previousWorld = EvaluateGrassBladeVertex(blade, species, lod, index, true, fragWetness, dryness, previousNormal);
     fragV = float(GrassBladeIndexRow(index)) / float(draw.LodSegments[lod]);
     uvec2 cell = uvec2(ivec2(floor(root.xz / draw.BandSpacingMeters[lod])));
     fragColorVariation = 0.85 + 0.3 * GrassHashToUnit(GrassHash(cell.x, cell.y, lod * 8u + kGrassHashSaltColor));
