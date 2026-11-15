@@ -6,6 +6,8 @@ NVSKEL v1のprofile2（StaticRootFrame128）は明示選択でのみ使う。既
 
 明示importはmesh付き1mesh/1skinを対象にする。skin.skeletonの省略はjoint集合とnode graphから唯一のroot jointを決める。指定時はroot jointまたはその祖先である必要がある。名前Armatureによる特例は無い。joint間の非joint中間親、複数joint root、cycle、重複親、選択sceneから到達しないjointは拒否する。
 
+profile1（と旧 NVSKEL 0.2）も `skin.skeleton` の省略を受け、同じ規則で唯一の根の関節を求める。ただし profile1 は根の上に非関節の祖先を持つ資産を拒否する。
+
 root上の非joint祖先は静的な直接TRSで、正の一様scaleのみ。祖先matrix、非一様/負/ゼロscale、祖先へのanimation、計算不能なquaternionや行列は拒否する。joint自体は既存v1と同じ正TRS。mesh無しclip-onlyや256関節は別profile/入力境界であり、この選択では受けない。
 
 ## ROOTと作者frame

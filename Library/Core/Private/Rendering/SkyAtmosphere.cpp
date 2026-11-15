@@ -328,6 +328,24 @@ namespace NorvesLib::Core::Rendering
                                                   0.0f,
                                                   std::min(1.0e4f, 0.5f * result.AtmosphereHeightMeters),
                                                   result.GroundAltitudeMeters);
+        result.CloudCover = ClampFinite(parameters.CloudCover, 0.0f, 1.0f, result.CloudCover);
+        result.OvercastIlluminanceFraction = ClampFinite(parameters.OvercastIlluminanceFraction,
+                                                        0.0f, 1.0f, result.OvercastIlluminanceFraction);
+        result.OvercastZenithToHorizonRatio = ClampFinite(parameters.OvercastZenithToHorizonRatio,
+                                                         1.0f, 10.0f, result.OvercastZenithToHorizonRatio);
+        result.DirectLightExponent = ClampFinite(parameters.DirectLightExponent,
+                                                 0.1f, 10.0f, result.DirectLightExponent);
+        result.SunDiskVisibleBelowCover = ClampFinite(parameters.SunDiskVisibleBelowCover,
+                                                      0.0f, 1.0f, result.SunDiskVisibleBelowCover);
+        result.SunDiskHiddenAboveCover = ClampFinite(parameters.SunDiskHiddenAboveCover,
+                                                     0.0f, 1.0f, result.SunDiskHiddenAboveCover);
+        if (result.SunDiskHiddenAboveCover < result.SunDiskVisibleBelowCover)
+        {
+            result.SunDiskHiddenAboveCover = result.SunDiskVisibleBelowCover;
+        }
+        result.OvercastTint.x = ClampFinite(parameters.OvercastTint.x, 0.0f, 4.0f, result.OvercastTint.x);
+        result.OvercastTint.y = ClampFinite(parameters.OvercastTint.y, 0.0f, 4.0f, result.OvercastTint.y);
+        result.OvercastTint.z = ClampFinite(parameters.OvercastTint.z, 0.0f, 4.0f, result.OvercastTint.z);
         return result;
     }
 
@@ -356,7 +374,16 @@ namespace NorvesLib::Core::Rendering
                lhs.GroundAlbedo.x == rhs.GroundAlbedo.x &&
                lhs.GroundAlbedo.y == rhs.GroundAlbedo.y &&
                lhs.GroundAlbedo.z == rhs.GroundAlbedo.z &&
-               lhs.GroundAltitudeMeters == rhs.GroundAltitudeMeters;
+               lhs.GroundAltitudeMeters == rhs.GroundAltitudeMeters &&
+               lhs.CloudCover == rhs.CloudCover &&
+               lhs.OvercastIlluminanceFraction == rhs.OvercastIlluminanceFraction &&
+               lhs.OvercastZenithToHorizonRatio == rhs.OvercastZenithToHorizonRatio &&
+               lhs.DirectLightExponent == rhs.DirectLightExponent &&
+               lhs.SunDiskVisibleBelowCover == rhs.SunDiskVisibleBelowCover &&
+               lhs.SunDiskHiddenAboveCover == rhs.SunDiskHiddenAboveCover &&
+               lhs.OvercastTint.x == rhs.OvercastTint.x &&
+               lhs.OvercastTint.y == rhs.OvercastTint.y &&
+               lhs.OvercastTint.z == rhs.OvercastTint.z;
     }
 
     SkyAtmosphereModel::SkyAtmosphereModel(const SkyAtmosphereParameters& parameters)
@@ -412,6 +439,17 @@ namespace NorvesLib::Core::Rendering
             BuildMultipleScatteringTable();
         }
         BuildGroundSkyIrradiance();
+
+        // 曇天の基準は、雲の直達の係数を掛ける前の晴天の水平面の全天照度から求める。
+        const double directCosine = std::max(m_SunDirection[1], 0.0);
+        const double overcastScale = static_cast<double>(m_SunDiskIrradiance) *
+                                     m_Parameters.OvercastIlluminanceFraction;
+        m_OvercastIlluminance = Math::Vector3(
+            static_cast<float>(overcastScale * (m_SunGroundTransmittance.x * directCosine + m_GroundSkyIrradiance.r)),
+            static_cast<float>(overcastScale * (m_SunGroundTransmittance.y * directCosine + m_GroundSkyIrradiance.g)),
+            static_cast<float>(overcastScale * (m_SunGroundTransmittance.z * directCosine + m_GroundSkyIrradiance.b)));
+        m_OvercastZenithRadiance = ComputeOvercastZenithRadiance(
+            m_OvercastIlluminance, m_Parameters.OvercastZenithToHorizonRatio);
     }
 
     void SkyAtmosphereModel::BuildTransmittanceTable()
@@ -891,6 +929,17 @@ namespace NorvesLib::Core::Rendering
 
     Math::Vector3 SkyAtmosphereModel::GetGroundSkyIlluminance() const
     {
+        if (m_Parameters.CloudCover > 0.0f)
+        {
+            const Math::Vector3 clearIlluminance(m_GroundSkyIrradiance.r * m_SunDiskIrradiance,
+                                                 m_GroundSkyIrradiance.g * m_SunDiskIrradiance,
+                                                 m_GroundSkyIrradiance.b * m_SunDiskIrradiance);
+            const Math::Vector3 overcastIlluminance(m_OvercastIlluminance.x * m_Parameters.OvercastTint.x,
+                                                    m_OvercastIlluminance.y * m_Parameters.OvercastTint.y,
+                                                    m_OvercastIlluminance.z * m_Parameters.OvercastTint.z);
+            return clearIlluminance * (1.0f - m_Parameters.CloudCover) +
+                   overcastIlluminance * m_Parameters.CloudCover;
+        }
         return Math::Vector3(m_GroundSkyIrradiance.r * m_SunDiskIrradiance,
                              m_GroundSkyIrradiance.g * m_SunDiskIrradiance,
                              m_GroundSkyIrradiance.b * m_SunDiskIrradiance);
@@ -936,6 +985,26 @@ namespace NorvesLib::Core::Rendering
         result.Radiance = Math::Vector3(static_cast<float>(radiance[0] * m_SunDiskIrradiance),
                                         static_cast<float>(radiance[1] * m_SunDiskIrradiance),
                                         static_cast<float>(radiance[2] * m_SunDiskIrradiance));
+        if (m_Parameters.CloudCover > 0.0f)
+        {
+            Math::Vector3 overcastRadiance;
+            if (march.bHitGround)
+            {
+                // 曇天の地面は、Tint を掛けた水平面の全天照度で照らすランバート面。
+                overcastRadiance = Math::Vector3(
+                    m_Parameters.GroundAlbedo.x * m_OvercastIlluminance.x * m_Parameters.OvercastTint.x / kPi,
+                    m_Parameters.GroundAlbedo.y * m_OvercastIlluminance.y * m_Parameters.OvercastTint.y / kPi,
+                    m_Parameters.GroundAlbedo.z * m_OvercastIlluminance.z * m_Parameters.OvercastTint.z / kPi);
+            }
+            else
+            {
+                overcastRadiance = ComputeOvercastRadiance(m_OvercastZenithRadiance,
+                                                           m_Parameters.OvercastZenithToHorizonRatio,
+                                                           m_Parameters.OvercastTint, view.y);
+            }
+            result.Radiance = result.Radiance * (1.0f - m_Parameters.CloudCover) +
+                              overcastRadiance * m_Parameters.CloudCover;
+        }
         result.MeanSunTransmittance = (m_SunGroundTransmittance.x +
                                        m_SunGroundTransmittance.y +
                                        m_SunGroundTransmittance.z) / 3.0f;
@@ -1084,6 +1153,70 @@ namespace NorvesLib::Core::Rendering
             sanitized, GroundAltitudeFraction(sanitized), MakeSunDirection(sanitized).y);
     }
 
+    float ComputeCloudDirectFactor(float cloudCover, float directLightExponent)
+    {
+        const float cover = ClampFinite(cloudCover, 0.0f, 1.0f, 0.0f);
+        if (cover <= 0.0f)
+        {
+            return 1.0f;
+        }
+        const float exponent = std::isfinite(directLightExponent) && directLightExponent > 0.0f
+                                   ? directLightExponent : 2.0f;
+        return std::max(std::pow(1.0f - cover, exponent), CloudDirectFactorFloor);
+    }
+
+    float ComputeCloudDirectFactor(const SkyAtmosphereParameters& parameters)
+    {
+        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
+        return ComputeCloudDirectFactor(sanitized.CloudCover, sanitized.DirectLightExponent);
+    }
+
+    float ComputeSunDiskVisibility(float cloudCover, float visibleBelowCover, float hiddenAboveCover)
+    {
+        const float cover = ClampFinite(cloudCover, 0.0f, 1.0f, 0.0f);
+        if (cover <= 0.0f)
+        {
+            return 1.0f;
+        }
+        if (hiddenAboveCover <= visibleBelowCover)
+        {
+            return cover <= visibleBelowCover ? 1.0f : 0.0f;
+        }
+        const float t = std::clamp((cover - visibleBelowCover) / (hiddenAboveCover - visibleBelowCover),
+                                    0.0f, 1.0f);
+        return 1.0f - t * t * (3.0f - 2.0f * t);
+    }
+
+    float ComputeSunDiskVisibility(const SkyAtmosphereParameters& parameters)
+    {
+        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
+        return ComputeSunDiskVisibility(sanitized.CloudCover, sanitized.SunDiskVisibleBelowCover,
+                                        sanitized.SunDiskHiddenAboveCover);
+    }
+
+    Math::Vector3 ComputeOvercastZenithRadiance(const Math::Vector3& horizontalIlluminance,
+                                               float zenithToHorizonRatio)
+    {
+        const double ratio = std::isfinite(zenithToHorizonRatio) && zenithToHorizonRatio >= 1.0f
+                                 ? zenithToHorizonRatio : 1.0;
+        const float scale = static_cast<float>(3.0 * ratio / (kPi * (2.0 * ratio + 1.0)));
+        return horizontalIlluminance * scale;
+    }
+
+    Math::Vector3 ComputeOvercastRadiance(const Math::Vector3& zenithRadiance,
+                                         float zenithToHorizonRatio,
+                                         const Math::Vector3& tint,
+                                         float sinElevation)
+    {
+        const double ratio = std::isfinite(zenithToHorizonRatio) && zenithToHorizonRatio >= 1.0f
+                                 ? zenithToHorizonRatio : 1.0;
+        const float sine = ClampFinite(sinElevation, 0.0f, 1.0f, 0.0f);
+        const float scale = static_cast<float>((1.0 + (ratio - 1.0) * sine) / ratio);
+        return Math::Vector3(zenithRadiance.x * scale * tint.x,
+                             zenithRadiance.y * scale * tint.y,
+                             zenithRadiance.z * scale * tint.z);
+    }
+
     Math::Vector3 ComputeSunGroundIlluminance(
         const SkyAtmosphereParameters& parameters)
     {
@@ -1096,6 +1229,14 @@ namespace NorvesLib::Core::Rendering
         const Math::Vector3 transmittance = ComputeAtmosphereTransmittanceFromSanitized(
             sanitized, GroundAltitudeFraction(sanitized), MakeSunDirection(sanitized).y);
         const float irradiance = ComputeSunDiskIrradianceFromSanitized(sanitized);
+        if (sanitized.CloudCover > 0.0f)
+        {
+            const float directFactor = ComputeCloudDirectFactor(sanitized.CloudCover,
+                                                                sanitized.DirectLightExponent);
+            return Math::Vector3(transmittance.x * irradiance * directFactor,
+                                 transmittance.y * irradiance * directFactor,
+                                 transmittance.z * irradiance * directFactor);
+        }
         return Math::Vector3(transmittance.x * irradiance,
                              transmittance.y * irradiance,
                              transmittance.z * irradiance);

@@ -319,6 +319,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
+    Private/Rendering/FurMaterialGpu.cpp
     Private/Rendering/GpuResourceStore.cpp
     Private/Rendering/TextureAsyncLoadQueue.cpp
     Private/Rendering/TextureAssetLoader.cpp
@@ -335,7 +336,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
+    Private/Rendering/EnvironmentParameters.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -352,6 +355,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
+    Private/Rendering/WetSurface.cpp
     Private/Rendering/DfgLut.cpp
     Private/Rendering/EnvironmentMapSource.cpp
     Private/Rendering/RayTracingShadowPass.cpp
@@ -463,6 +467,8 @@ set(PRIVATE_SOURCES
     Private/Resource/ModelAssetResolver.cpp
     Private/Rendering/ConstantMaterialTextureCache.cpp
     Private/Resource/ImportedOpaqueRuntime.cpp
+    Private/Resource/SkinnedMaterialBuilder.h
+    Private/Resource/SkinnedMaterialBuilder.cpp
     Private/Resource/ModelMaterialStaging.cpp
     Private/Resource/ModelStaging.cpp
     # Component
@@ -729,6 +735,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
     Public/Rendering/SkinnedMeshTypes.h
+    Public/Rendering/FurTypes.h
     Public/Rendering/MaterialTypes.h
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
@@ -737,7 +744,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewClearance.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
+    Public/Rendering/EnvironmentParameters.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h
@@ -806,6 +815,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SharedResourceRegistry.h
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
+    Public/Rendering/WetSurface.h
     Public/Rendering/SkyAtmospherePass.h
     Public/Rendering/DDGIProbePass.h
     Public/Rendering/ShadowMapPass.h

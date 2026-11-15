@@ -1,0 +1,269 @@
+{
+  "asset": {
+    "generator": "NorvesLib hand-written fixture (Blender glTF exporter layout)",
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Bone.001",
+      "translation": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "Bone"
+    },
+    {
+      "mesh": 0,
+      "name": "Triangle",
+      "skin": 0
+    }
+  ],
+  "animations": [
+    {
+      "channels": [
+        {
+          "sampler": 0,
+          "target": {
+            "node": 0,
+            "path": "translation"
+          }
+        },
+        {
+          "sampler": 1,
+          "target": {
+            "node": 1,
+            "path": "rotation"
+          }
+        }
+      ],
+      "name": "ArmatureAction",
+      "samplers": [
+        {
+          "input": 10,
+          "interpolation": "LINEAR",
+          "output": 11
+        },
+        {
+          "input": 10,
+          "interpolation": "LINEAR",
+          "output": 12
+        }
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Triangle",
+      "primitives": [
+        {
+          "attributes": {
+            "JOINTS_0": 3,
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TEXCOORD_0": 2,
+            "WEIGHTS_0": 5
+          },
+          "indices": 8,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "skins": [
+    {
+      "inverseBindMatrices": 9,
+      "joints": [
+        1,
+        0
+      ],
+      "name": "Armature"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 3,
+      "max": [
+        1,
+        1,
+        0
+      ],
+      "min": [
+        0,
+        0,
+        0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5121,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5123,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5121,
+      "count": 3,
+      "normalized": true,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5123,
+      "count": 3,
+      "normalized": true,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5123,
+      "count": 3,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 2,
+      "type": "MAT4"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 2,
+      "max": [
+        2
+      ],
+      "min": [
+        0
+      ],
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5126,
+      "count": 2,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 2,
+      "type": "VEC4"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 36,
+      "byteOffset": 0
+    },
+    {
+      "buffer": 0,
+      "byteLength": 36,
+      "byteOffset": 36
+    },
+    {
+      "buffer": 0,
+      "byteLength": 24,
+      "byteOffset": 72
+    },
+    {
+      "buffer": 0,
+      "byteLength": 12,
+      "byteOffset": 96
+    },
+    {
+      "buffer": 0,
+      "byteLength": 24,
+      "byteOffset": 108
+    },
+    {
+      "buffer": 0,
+      "byteLength": 48,
+      "byteOffset": 132
+    },
+    {
+      "buffer": 0,
+      "byteLength": 12,
+      "byteOffset": 180
+    },
+    {
+      "buffer": 0,
+      "byteLength": 24,
+      "byteOffset": 192
+    },
+    {
+      "buffer": 0,
+      "byteLength": 6,
+      "byteOffset": 216
+    },
+    {
+      "buffer": 0,
+      "byteLength": 128,
+      "byteOffset": 224
+    },
+    {
+      "buffer": 0,
+      "byteLength": 8,
+      "byteOffset": 352
+    },
+    {
+      "buffer": 0,
+      "byteLength": 24,
+      "byteOffset": 360
+    },
+    {
+      "buffer": 0,
+      "byteLength": 32,
+      "byteOffset": 384
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 416,
+      "uri": "fixture.bin"
+    }
+  ]
+}

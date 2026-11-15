@@ -3,6 +3,8 @@
 #include "Vegetation/GrassField.h"
 #include "Rendering/RenderWorld.h"
 
+#include <cmath>
+
 namespace NorvesLib::Core::Vegetation
 {
     bool Vegetation::RegisterGrassField(GrassField* pField)
@@ -53,6 +55,27 @@ namespace NorvesLib::Core::Vegetation
     void Vegetation::Tick(float worldDeltaSeconds)
     {
         m_DrynessMap.Tick(worldDeltaSeconds);
+    }
+
+    void Vegetation::PublishDrynessSources(Rendering::RenderWorld& renderWorld, float focusX, float focusZ)
+    {
+        m_DrynessMap.CollectGpuSources(focusX, focusZ, m_GpuDrynessSources);
+        m_RenderDrynessSources.clear();
+        for (size_t i = 0; i < m_GpuDrynessSources.size() && i < Rendering::WorldFieldDrynessMaxSources; ++i)
+        {
+            const auto& source = m_GpuDrynessSources[i];
+            Rendering::WorldFieldDrynessSource renderSource{};
+            renderSource.CenterXZ[0] = source.CenterX;
+            renderSource.CenterXZ[1] = source.CenterZ;
+            renderSource.RadiusA = source.RadiusA;
+            renderSource.RadiusB = source.RadiusB;
+            renderSource.CosYaw = std::cos(source.Yaw);
+            renderSource.SinYaw = std::sin(source.Yaw);
+            renderSource.Falloff = source.Falloff;
+            renderSource.Level = source.CurrentLevel;
+            m_RenderDrynessSources.push_back(renderSource);
+        }
+        renderWorld.SetWorldFieldDryness({m_RenderDrynessSources.data(), m_RenderDrynessSources.size()});
     }
 
     void Vegetation::PublishRenderData(Rendering::RenderWorld& renderWorld)

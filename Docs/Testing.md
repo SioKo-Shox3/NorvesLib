@@ -33,6 +33,8 @@ cmake -S . -B build -DNORVES_BUILD_TESTS=ON
 
 `ClipOptimizerTest`（`CookedMeshTest` の中）は、定数・既定姿勢チャンネル、位置・回転・スキニングの削減誤差、端点と STEP の保持、再適用と決定性、無効入力の拒否、最適化を無効にした旧形式・v1 cook のバイト列と `SourceHash` の一致を検査する。誤差やバイト差は cook の成功・ログだけでは分からず、失敗は黙って起きる。
 
+`SkeletalSplitRuntimeTest`（`CookedMeshTest` の中）の `materials` は、2 材質の rig の cook・読込と FakeDevice を使い、slot 数・名前・`MaterialCreateData` の値、MASK・texture 解決の失敗の slot ごとの分離、資産解放後の `Collect` による材質回収を反証する。
+
 ## 1つだけ回す
 
 テスト名と実行ファイル（ビルドのターゲット）が違うことがあるので、先にコマンドを確かめる。
@@ -97,6 +99,21 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - ほかの手段で気づけるか: 気づけない。loose が代わりに読まれると画面上は正常に見える。
 - 失敗が黙って起きるか: 起きる。壊れた cooked を隠して実行が続く可能性がある。
 
+`GLTFSkeletalAnalyzerTest` の `NoSkeletonHint.gltf` の試験を足す理由:
+- 反証する契約: 旧経路が `skin.skeleton` の無い資産を受け、`skeleton` を足した同じ資産と関節（名前・親・逆バインド行列）・頂点・索引・clip が一致する。根の求め方が hint と同じ結果になる。
+- ほかの手段で気づけるか: 気づけない。Blender の資産を旧経路で cook しなければ出ず、間違った根でも cook は成功しうる。
+- 失敗が黙って起きるか: 起きる。別の関節を根にすると姿勢が崩れるだけで失敗にならない。
+
+`GLTFSkeletalAnalyzerTest` の `BlenderArmature.gltf` の試験を足す理由:
+- 反証する契約: 旧経路は根の上の非関節の親（Armature）を今までどおり `InvalidSkeleton` で拒否し、hint の省略を受けることで黙って Armature の変換を落として受けることがない。
+- ほかの手段で気づけるか: 気づけない。受けてしまうと Armature の回転と scale が消えた姿勢で描かれ、撮影しない限り分からない。
+- 失敗が黙って起きるか: 起きる。
+
+`RigStaticRootFrameImportTest` の Blender の形の試験を足す理由:
+- 反証する契約: Blender の書き出しの形（`skeleton` 無し・Armature の下に根の bone と mesh・深さ優先の joints）を profile3 が受け、Armature の TRS が作者 frame に入る。
+- ほかの手段で気づけるか: 気づけない。実物の Blender の資産の確かめは別にするが、合成の Armature の fixture は node の並びが Blender と違う。
+- 失敗が黙って起きるか: 起きる。frame を落としても cook は成功する。
+
 `AssetLoadProfileSummaryContract.cmake.in`（`AssetLoadProfileSummaryContractTest`）の骨格 cooked 要約の 3 ケースを足す理由:
 - 反証する契約: `-RequireCompleteCookedSkeletal` は解決・解析・資源生成の 3 段がすべて `source=cooked`・`success=1` なら合格し、1 段だけ `source=loose` の場合と 1 段が欠ける場合は不合格にする。
 - ほかの手段で気づけるか: ログを直接照合すれば気づけるが、撮影や読み込みの成否だけでは要約の誤判定は分からない。要約自体が不完全な記録を拒否することを確かめる必要がある。
@@ -112,6 +129,15 @@ Game を起動して GPU を使う重い確認なので、PC を使ってよい�
 - 反証する契約: markerからのイベント配送はclipノードの `markerEvents` によるopt-inであり、既定では配送しない。有効時は同名の点イベントを `(prev, cur]` で1回だけ出し、既定minWeight 0.3・周回・同期グループ内の同名の重複除去に従う。EventIndexはeventsの件数 + markerの添字、Value・IntValueは0。真偽値以外のmarkerEventsは拒否する。
 - ほかの手段で気づけるか: 気づけない。配送の欠落や重複、名前や時刻の食い違いは足音や同期が鳴らない・ずれるだけで、撮影やログには出ない。
 - 失敗が黙って起きるか: 起きる。イベントの配送が変わっても落ちない。
+
+`SkeletalBvhClipImportTest` に自動の rest 補正の場合を置く理由:
+
+分岐・End Site を持ち全フレームで回る手書きの多関節 BVH と、rest の振りと捻りが ±20° ずれた対象を使う。期待値は試験内で BVH の FK を別に計算して求め、補正の実装式をそのまま期待値にしない。
+
+- 反証する契約: `align_bones` は全フレームで元と出力の骨方向誤差を 0.1° 以内（要件の暫定値）に保ち、共通の `up_hint` を変えても捻りだけが変わり骨方向は変わらない。RootFrame・メッシュの node の変換・bind の scale を持つ対象でも成り立ち、同じ入力を 2 回変換した clip と報告はビット一致する。
+- 反証する契約: `match` は許容内なら C = I と補正前後で同じ角度を報告し、許容超過なら `rest_direction_mismatch` で拒否して出力の clip と報告を保つ。末端は親からの方向を使う。`align_bones` は向きが正反対（180°）の骨も補正後に元の骨方向と一致させる（`match` では `rest_direction_mismatch`）。`up_hint` が骨方向と平行なら捻りを加えず最小回転だけを使う。向きの決まらない root は `match`・`align_bones` では `rest_bone_direction_missing` で拒否し、`explicit` では方向を理由に拒否しない。未写像の対象関節にはチャンネルを出さず bind のローカル姿勢を保つ。
+- ほかの手段で気づけるか: 気づけない。式の取り違えは見た目では数度のずれにしか出ず、cook の成功や通常のログでは、全フレームの骨方向、捻りとの分離、変換を持つ対象、拒否時の出力保持、2 回のビット一致まで確かめられない。
+- 失敗が黙って起きるか: 起きる。式や退化時の扱いが誤っていても cook は黙って通り、誤った向きの clip や非決定的な出力を作りうる。
 
 `RetargetCookTest`（`CookedMeshTest` の中）を置く理由:
 
@@ -513,6 +539,15 @@ Look（`TestLookAt`）:
 - 反証する契約: `NORVES_MOTION_SAMPLE_DIR` が設定されたときに実物の BVH を使い、動画由来の動きの処理が合成入力以外でも成立することを確かめる。サンプルを外部に置き、環境変数がある場合だけ実行する回帰試験とする。
 - ほかの手段で気づけるか: 気づけない。合成入力だけでは実データ特有の雑音・周期・関節の組合せを網羅できず、起動画面や通常の cook の成功ログでも処理結果の退行を区別できない。
 - 失敗が黙って起きるか: 起きる。読み込みと cook が成功しても、雑音や継ぎ目の不整合が出力に残りうる。
+
+`RealBvhAcceptanceTest` を足す理由:
+- 反証する契約: 実物の BVH のヘッダが関節 53・End Site 11・1 フレームの値 162・フレーム 67・Frame Time 0.033333 秒という観測どおりで、16 fps への上書き後の長さが 4.125 秒となり、実データの取り込みと写像が通ること。
+- ほかの手段で気づけるか: 気づけない。合成入力だけでは実物の値を確認できず、撮影や通常の cook の成功ログではヘッダと時間の上書きの取り違えを区別できない。
+- 失敗が黙って起きるか: 起きる。取り込みが成功したまま長さを誤りうる。`NORVES_MOTION_SAMPLE_DIR` が無ければ終了コード 125 で Skipped とし、実物を置かない環境では未検証であることを残す。
+
+`--dump-fk` の試験（`SkeletalBvhCookBridgeTest` の `DumpFkPositions`・`DumpFkRejects`）を足す理由:
+- 反証する契約: 手書きの BVH の位置を直書きの期待値と 1e-9 の許容差で比べ、回転の順と `absolute` / `additive` の取り違えを見つける。不正フレーム・必須引数の欠落・出力先の衝突を拒否することも確かめる。
+- ほかの手段で気づけるか／失敗が黙って起きるか: 撮影や通常のログでは分からず、JSON が有効なまま位置が狂いうる。Blender との照合の基準になる出力の誤りを検出する。
 
 ## セーブの保存先・入れ物・移行・スロットの試験(AtomicFileWriteTest・SaveContainerTest・SaveMigrationTest・SaveSlotFallbackTest)
 

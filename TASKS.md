@@ -12,6 +12,8 @@
 
 2026-10-13 試験の扱い（ユーザー指示「邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が微妙」）: ctest で無効にした試験（`set_tests_properties(... DISABLED TRUE)`。今は `RenderGraphCompileTest`）は合否に使わない。無効の試験が通らなくなるという指摘は差し戻しの理由にせず、直すためだけに偽デバイスや期待値を書き換えない。新しい試験は `Docs/Testing.md` の「技術的負債」の節の 3 点が書けるときだけ足す。
 
+2026-11-14 試験の扱い(ユーザー決定。上の 2026-10-13 の段落より優先): このライブラリは機能を作っている途中で、外の利用者も、それに頼って動く本番も無い。試験は守るものが無く、作り直しのたびに直す手間だけがかかるので、作らない・足さない・直さない・回さない。既存の試験は TEST-REMOVE-1114 で消す。各項目の done-when・verify にある試験(試験を足す・ctest を回す)は無いものとして扱い、確かめはビルドが通ることと人のプレイにする。それまでに実装の変更で既存の試験がビルドできなくなったら、直さずに消す。
+
 2026-10-14 荒野の作り直し（ユーザーの評価と決定）: ユーザーは今の荒野を「PS3 の水準で、現実の荒野と比べられる水準に無い」と評価した。地形の大きな形は実在の地形データ（USGS 3DEP の 1 m DEM、パブリックドメイン）から作り、手本は米南西部のメサと砂岩（Valley of the Gods、ユタ州）にする。ダウンロード（DEM の 1 m タイル `x60y413` 約 268 MB・Python のパッケージ・手本の写真・Poly Haven の素材）はユーザーが許可済み。それ以外のダウンロードは、ファイル名とサイズを書いて BLOCKED にする。項目は `SCN-WL-`。判定は、技術と見た目の条件（浮き・継ぎ目・繰り返し・形の対応・移動中のちらつき）を評価者が見て、実写と並べて成立するかの最終の判断はユーザーがする（SCN-WASTELAND-POLISH の後）。目標の個数（数十万個など）は置かず、手本の写真の大きさ・被覆・疎密に合わせる。
 
 2026-10-15 荒野と室内の光の目的（ユーザー）: このプロジェクトは現代の CG の水準の描画を目指してきた。荒野（wasteland）と室内の光（interior-light）は、それを確かめる「ほぼ実写」の美しさを見るシーンで、速さ・最適化は他のシーンで見る。この 2 つでは 60 fps の条件を外す（リアルタイムで、操作できる程度＝1080p で 20〜30 fps 以上ならよい）。品質を見る撮影は 1920×1080 以上。判断は手本の実写との比較画像・実在の材質の明るさの範囲・同じ視点のパストレースの正解（光の誤りを分ける）で行い、節目（SCN-WL-REVIEW-1・REVIEW-2・SCN-WASTELAND-POLISH）でユーザーが見る。ambientCG（CC0）の素材のダウンロードも許可済み。
@@ -38,8 +40,19 @@
 
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
-## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
+## TEST-REMOVE-1114: 試験をすべて消す(このライブラリでは試験を作らない・回さない)
 - status: todo
+- weight: standard
+- done-when: `Test/` の下の試験をすべて(CPU の試験・GPU の試験・ゲームを起動する受入れ)、ソース・CMake の登録・試験の実行ファイルのターゲット・試験専用の補助(`Test/TestSupport`・`Test/TestBundle`・しきい値の TSV・基準画像・試験用の fixture)ごと消し、`Test/` を無くす。最上位の `CMakeLists.txt` から `enable_testing()`・`NORVES_BUILD_TESTS`・`add_subdirectory(Test)` と試験用の CMake の補助(`NorvesTestNoDialog` など)を外す。試験だけが使うスクリプト(`Scripts/` の基準画像の更新・しきい値の調整・試験の連番の書き出しなど)・`Tools/` の煙試験の雛形(`*.cmake.in`)・`.github/workflows/` の試験を回す段(試験しか回さないワークフローはファイルごと)も消す。エンジン本体(`Library`・`Game`)と道具(`Tools`)のソースは変えない(試験のためだけの入口が本体に残っていても触らず、見つけたものを `PROGRESS.md` に書く)。`Docs/Testing.md` は「試験は作らない(このライブラリは作っている途中で、守る利用者も本番も無い。確かめはビルドと人のプレイ)」の短い文書に書き換え、ほかの文書(`Docs/`)から消した試験・試験のコマンドへの案内を外す。消したファイルの数と行数を `PROGRESS.md` に書く。Debug の構成とビルド(Game・Tools を含む全体)が通る。試験は走らせない。
+- verify: `cmake -B build -S .`
+- verify: `cmake --build build --config Debug -- -m:1`
+- verify: `node -e "process.exit(require('fs').existsSync('Test') ? 1 : 0)"`
+- verify: `git grep -q -E "enable_testing|NORVES_BUILD_TESTS|add_subdirectory\(Test" -- CMakeLists.txt cmake && exit 1 || exit 0`
+- paths: Test/**, CMakeLists.txt, cmake/**, Docs/**, Scripts/**, Tools/**, .github/workflows/**
+- notes: 人の決定: このライブラリは機能を作っている途中で、外の利用者も、それに頼って動く本番も無い。試験は守るものが無く、作り直しのたびに直す手間だけがかかるので、作らない・回さない・残さない。見た目と動きは人がゲームで確かめる。試験を走らせて決めない(消すだけ)。
+
+## GFX-TEST-PRUNE-1112: 実行できたかしか見ていない描画・GPU の試験を消す
+- status: done
 - done-when: GPU・Reference のラベルの試験と、名前に Vulkan を含む試験のうち、描いた結果の値(画素・数値・契約)を確かめず、実行できたか(終了コード・例外が出ない・ファイルが出る)しか見ていないものを、ソースと CMake の登録ごと消す。消して使われなくなった試験専用の補助コードも消す。値を確かめている試験は残し、残した試験の名前と理由の一覧を PROGRESS.md に書く。Debug の構成(テスト有効)とビルドが通る。消した試験(`RHIGPUTimestampVulkanSkipContractTest`)の名前が `Test` と最上位の `CMakeLists.txt` に残らず、残す `RHIGPUTimestampVulkanTest` が ctest の一覧(`-N`、実行しない)に出る。統合ブランチ全体の ctest と前からの落ちの直しは BUILD-HEALTH-1109 が 17 行の verify で受け持つので、このタスクでは回さない。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
@@ -49,30 +62,15 @@
 - notes: 人の決定: 実行できたか以外を見ていないグラフィックの試験は要らない。試験を走らせて決めない(ウィンドウが開いて利用者の邪魔になる)。試験のコードを読んで決める。
 
 ## BUILD-HEALTH-1109: 統合ブランチのビルドと自動の試験を通す
-- status: todo
-- after: GFX-TEST-PRUNE-1112
-- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通る。`Golden`・`PathTracingReference`・`M9WorldAcceptanceTest`(Game.exe を起動する)を外した ctest を、名前で分けた 17 行の verify ですべて通す(Vulkan を使えない試験の skip は可)。17 行の和集合が除外の後の全部と一致し重なりが無いことを `ctest -N` で確かめ、行ごとの本数と時間を `PROGRESS.md` に書く。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。
+- status: backlog
+- after: TEST-REMOVE-1114
+- done-when: 統合ブランチ(今の HEAD を取り込んだ task ブランチ)で、Debug の構成(テスト有効)のビルドが通り、ctest の全部(GPU-TEST-REMOVE-1114 でウィンドウを開く試験を消した後に残る CPU の試験。直列で 7 分ほど)が 2 行の verify ですべて通る。落ちる所は直す。直せない落ちは原因と試験名を `PROGRESS.md` に書き、直す仕事を要起票に出す。落ちる試験を消して通すことはしない(ウィンドウを開く・ゲームを起動する試験が残っていたら、それは消してよい)。
 - verify: `cmake -B build -S . -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug -- -m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^ScriptApplicationLifecycleContractTest$" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracingLighting" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^PathTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracingLighting"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity(Static|Motion|Camera)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingVelocity" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity(Static|Motion|Camera)"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingHdr" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingRayTracing" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RenderingShadingModel" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering(DDGI|TemporalAA)" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Rendering" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^RenderingVelocity|^Rendering(Hdr|RayTracing|ShadingModel|DDGI|TemporalAA)"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^RHI" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^(RTGI|R[0-9])" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^CookManaged" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^Cook" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^CookManaged"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[A-L]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^Cook"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[M-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^PathTracing|^Rendering|^RHI|^RTGI|^R[0-9]"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 1800 -R "^[^A-R]" -E "Golden|PathTracingReference|^M9WorldAcceptanceTest$|^ScriptApplicationLifecycleContractTest$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600 -I 1,,2`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600 -I 2,,2`
 - paths: Library/**, Game/**, Test/**, Tools/**, Scripts/**, CMakeLists.txt
-- notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。
+- notes: しばらくの間、ランナーの確かめがビルドと GPU を使う単体試験の行を飛ばしていた(起動の確かめと取り違えていた)。その間に入った変更をまとめて確かめる。 2026-11-14: 試験を作らない決まりになり、全体のビルドは TEST-REMOVE-1114 が確かめるので外した(backlog)。
 
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
 - status: done
@@ -6898,7 +6896,7 @@
 - notes: 確かめ直し (c)。スキンの GBuffer の頂点シェーダーは物体色を固定する(`Assets/Shaders/skinned_gbuffer.vert:136` の `fragObjectColor = vec3(1.0)`)ので、cook が MATS に入れた BaseColor(`RigSplitCook.cpp:470-480` で record をそのまま写す)は描画に効かない。2 材質のパネルも「スキン描画は材質の基本色を使わないため」単色のアルベドで色を持たせている(`NVSKELMigrationInventory.md` の「範囲drawの接続」)。ロードマップの軟い依存(193 行)と要件 GR79 の設計案 (8) は「factor≠1 のときだけ cook でアルベドへ焼いて代える」としている。G5 の `G5-GR26-MATERIAL-PARAMS` はスキンの物体色を扱わないので重ならない。シェーダーは変えない(GBuffer の危険地帯に入らない)。スキンのシェーダーが材質の色を読むようになったら、この焼き込みを外す(そのときは MATS の BaseColor をそのまま使う)と CookedMaterialV1.md に書く。要件 `#### GR79` の設計案 (8)。
 
 ## G2-GR79-SKINNED-MATERIAL-BUILDER: cooked のスキンメッシュの材質の表から slot ごとの材質を作り、骨格つきの資産を読むだけで材質つきで描けるようにする
-- status: todo
+- status: done
 - after: G2-GR83-LOOSE-SKELETAL
 - gr: GR79
 - done-when: 3 資産の経路で読んだ SkinnedMesh の MATS(材質 record と 4 つの texture の論理パス)を、公開する CPU の資産(`SkinnedMeshResource` か 3 資産の束)に slot の名前と並べて保持する。`SkinnedMaterialBuilder`(GR83 のローダの配下)が、GameThread で、slot ごとに texture を cooked の経路で解決し(静的モデルの v1 材質と同じ `BuildImportedMaterialStaging`・`ValidateImportedTexture`・`SplitImportedArmChannels` を使い、アルベドは sRGB、normal と ARM は linear を検査する)、`MaterialCreateData` を組んで `RenderMaterialStore` で作り、`SkinnedMeshComponent::SetSlotMaterial(slot, handle)` で付ける。
@@ -6910,7 +6908,7 @@
 - notes: 確かめ直し (c)。cook は MATS に材質 record と texture を書く(`RigSplitCook.cpp:463-483`)が、ランタイムは件数を照合するだけで(`RigSplitAssetLoader.cpp:147-150`)、`SkinnedMeshResource` には slot の名前しか残らない(`SkinnedMeshResource.h:41-43`。`SkeletalMaterialSlot` は Name だけ)。cooked の record から `MaterialCreateData` を組む処理はリポジトリに無く(`SkinnedMaterialBuilder` も `CookedMaterialToMaterialCreateData` も無い)、`DogMovementSmoke` などは材質を手で組んでいる。要件 GR79 の設計案 (8) の「GR83 のローダ側の SkinnedMaterialBuilder が 論理パス→TextureResources→RenderMaterialStore::CreateMaterial→SkinnedMeshComponent::SetMaterial へつなぐ」部分。スキンでは BaseColor が描画に効かないので、色は `G2-GR79-SKIN-BASECOLOR-BAKE` の焼き込みに頼る(この項目では BaseColor をそのまま `MaterialCreateData` に入れるだけ)。Resource・材質の生成は GameThread だけ。危険地帯(アセットロード・Public API)なので評価者を通す。新しいソースは `Library/Core/CMakeLists.txt` の明示のリストへ足す。要件 `#### GR79`、ロードマップ 172 行。
 
 ## G2-GR84-REST-ALIGN-CASES: BVH を rest の向きが違う骨格へ移すときの自動の補正(match・align_bones)を、多関節の骨格と全フレームの骨の向きで試験に固定する
-- status: todo
+- status: done
 - gr: GR84
 - done-when: `SkeletalBvhClipImportTest` に、手書きの BVH(分岐を含む 5 関節以上・End Site・6 フレーム以上で各関節が回る)と、同じ関節名で各骨の rest を ±20°(振りと捻りの両方)ずらした target 骨格の組を足し、`RetargetSkeletalClip` の結果を `SkeletalAnimationSampler` で全フレーム評価して次を確かめる。期待値は BVH の FK を試験の中で別に計算した値で、実装を写さない。
   (1) `rest_pose.mode=align_bones`: 各骨のワールドの向き(関節から写像済みの子の平均へ)が BVH の骨の向きと全フレームで 0.1° 以内。`up_hint` を変えると捻りだけが変わり、骨の向きは変わらない。同じ入力で 2 回の結果がビット一致する。(2) 非恒等の `MeshNodeGlobalTransform` と bind の scale を持つ target でも (1) が成り立つ(行と列の規約の取り違えを検出する)。(3) `match`: ずれが `maximum_error_degrees` 以内なら成功して補正前後の角度を report に出し、超えたら `rest_direction_mismatch` で失敗し出力を変えない。(4) 子の無い末端・向きが反対(180°)の骨・`up_hint` が骨の向きと平行のときの扱い(拒否の理由の名前)を固定する。(5) 未写像の target 関節はチャンネルを出さず bind のローカルのまま。
@@ -6921,7 +6919,7 @@
 - notes: 確かめ直し (b)。自動の補正は実装がある(`SkeletalRoleProfile.cpp:256-316` が `rest_pose.mode` の explicit・match・align_bones と `up_hint`・`maximum_error_degrees` を読み、`SkeletalClipRetarget.cpp:603-640` が向きの差から補正を作る)が、試験は 2 関節で骨の向きを 90° 変えた 1 件だけで、補正の角度(`AfterRadians < 1e-6`)を見るだけ(`RigSplitCookTest.cpp:209-222`)。要件の受け入れ確認 (b)「骨ごとに rest を ±20° 捻ったエンジン骨格(C≠I)でも、変換後の各骨のワールド方向が BVH の骨方向と 0.1° 以内」と (c) を、変換した clip の全フレームで確かめるものが無い。文書も「自動Cの意味…は後続で定義する」のまま(`SkeletalBvhClipImport.md:80-85`)。0.1° は要件の暫定値。研究用ライセンスの実 BVH は fixture にしない(手書きの合成値だけ)。要件 `#### GR84` の設計案 c と受け入れ確認【SkeletalClipRetargetTest】。
 
 ## G2-GR84-REAL-BVH-GATE: 実物の BVH を環境変数の指定のときだけ読む試験と、関節のワールド位置を出す `--dump-fk` と、Blender と突き合わせる台本を足す
-- status: todo
+- status: done
 - gr: GR84
 - done-when: (1) `CookedMeshTest` の束に MEMBER `RealBvhAcceptanceTest` を足し(新しい exe は作らない)、`add_test` に `SKIP_RETURN_CODE 125` を付ける。環境変数 `NORVES_MOTION_SAMPLE_DIR` が無ければ 125 で終わる。あれば `<dir>/Dog#V01full/Dog_Dog_rot6d_pred.bvh` を読み、関節 53・End Site 11・1 フレームの値 162・フレーム 67・Frame Time 0.033333 を確かめ、`--source-fps 16` 相当の設定で clip にして Duration=(67-1)/16 秒、rest の誤差・ループの検出・推定の速さを stdout に出す。ファイルが無い・値が違えば失敗する。
   (2) role-file の CLI(`SkeletalRoleFileCli.cpp`)に `--dump-fk <frames>`(例 `0,17,33`)を足し、`--bvh` の入力の各関節のワールド位置を、指定のフレームごとに JSON(関節名・フレーム・x y z。BVH の元の座標と単位のまま)で stdout に出して cook せずに終わる。`--dump-fk` は出力先の引数と一緒に使えない。`SkeletalRoleFileCliTest` 相当の既存の CLI の試験(`SkeletalBvhCookBridgeTest` か `SkeletalCliOptionsTest`)に、手書きの BVH で位置が試験に直に書いた期待値と 1e-9 で一致すること、不正なフレームの指定の拒否を足す。
@@ -6933,7 +6931,7 @@
 - notes: 確かめ直し (c)。BVH の取り込みの本体(回転順・Frame Time の上書き・写像・周期 11.6 コマ・ルート移動・2 回の cook のバイト一致)は試験がある(`BvhDecodeTest`・`BvhEvaluateTest`・`SkeletalBvhClipImportTest`・`SkeletalBvhCookBridgeTest.cpp:437` の繰り返しの一致)が、要件の受け入れ確認の【実データ】と【手動クロスチェック】の受け皿が無い: 環境変数の名前も `--dump-fk` もリポジトリに無く、`BvhImport.md:35` は「Blenderとの実物照合…は別の未完条件」と書く。環境変数は、段階をまたぐ注意(ロードマップ 4423 行)の食い違いを解くため、G4 の GR128 と同じ `NORVES_MOTION_SAMPLE_DIR`(無ければ 125)にそろえた。要件の `NORVES_REAL_BVH` は使わない(BvhImport.md に読み替えを書く)。実 BVH は研究用ライセンスなのでリポジトリに入れない。値(53・11・162・67)は要件の 2026-09 の観測で、違ったら作者の手元の版を PROGRESS.md に書いて止める。要件 `#### GR84` の受け入れ確認【実データ】【手動クロスチェック】。
 
 ## G2-GR82-SKELETON-HINT-LEGACY: `skin.skeleton` の無い glTF を旧 NVSKEL の経路でも受け、Blender の書き出しと同じ形の fixture で両方の経路を固定する
-- status: todo
+- status: done
 - gr: GR82, GR86
 - done-when: `SkeletalGltfDecode.cpp` の profile1・旧 NVSKEL 0.2 の骨格の抽出(1651〜1655 行の `TryReadRequiredUInt32(skin, "skeleton", ...)`)を、`skeleton` があれば今と同じ検査、無ければ関節の集合と node の親子から唯一の根の関節を求める形にする(profile2/3 の `ExtractStaticRootFrame` と同じ規則: 根が 2 つ以上・循環・選んだ scene から届かない関節は拒否)。profile1 の「関節の親は関節だけ」(非関節の親を拒否)は変えない。`skeleton` のある既存の資産の出力はバイト一致する。
   `Assets/Models/M9Skinned/` に Blender 5.2.2 の glTF の書き出しと同じ形の手書きの fixture を 2 つ足す: `NoSkeletonHint.gltf`(`skin.skeleton` 無し・Armature の node 無し・2 関節・clip 1)と `BlenderArmature.gltf`(`skin.skeleton` 無し・回転と一様 scale を持つ非関節の親 `Armature` の下に根の関節・`joints` の並びは Blender と同じ深さ優先・clip 名は Blender の `<Armature>Action` の形)。形は `io_scene_gltf2` の書き出し(skins.py の `__gather_skeleton` が None を返す)に合わせ、fixture の頭のコメント相当の別ファイル `Assets/Models/M9Skinned/README.md` に、どの書き出しの形を写したかを書く。
@@ -6978,7 +6976,7 @@
 - notes: 確かめ直し (c)。選定課題 G2-S2 は作者の承認済み(`G2ImportDecisions.md`「S2とS8のGLB部分は先に承認済み」: サイドカーが一次の置き場)。ところが clip の取り込みの補正は `--rig-split` の CLI からしか渡せず(`RigSplitFileCli.cpp:31-36` の help)、asset-set の skeletal(`RigSingleCook.cpp:130-150`)では指定の手段が無い。段階をまたぐ注意(ロードマップ 4445 行)の「import.json に置いてよい節を規範として一覧にする」「audio 節をここで予約する」と、G3-S8(推奨 A: import.json の clip 節は取り込み時の補正、実行時のメタデータは *.animmeta.json)に合わせる。G3-S8 の決定は G3 の計画役が持つが、clip 節の実装の持ち主はほかに無い(TASKS.md と G3/G4/G9 の計画に無い)ので G2 で作る。ループの範囲・ルート移動の正本は実行時のサイドカー(GR11)のままにし、ここでは cook 時の自動判定の下書き(`loop`・`analysis`)だけを扱う。要件 `#### GR78`・`#### GR82`。
 
 ## G6-GR91-FUR-MATERIAL-DATA: 材質にファーの値の塊（層数・長さ・密度・束・下毛の色・領域の表・濡れの応答）と 4 枚のマップの枠を足し、検査して、スキンの proxy へ値で写して描画へ渡す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR91
 - needs-gr: GR26
@@ -6989,7 +6987,7 @@
 - notes: 決定 G6-S4（マップの組）: 要件 GR91 の 3 枚（長さ R8・流れ RG8・密度と束 R8）とロードマップ GR34 の 2 枚（RGBA8 の長さ・密度・束・領域 ID と RG8 の流れ）が食い違うので、4 枚（Length R8・Flow RG8・DensityClump RG8・Region R8）にする。理由: 領域の表（背が暗く腹と顔が白い体色の領域別の値。要件 GR34）には領域 ID が要り、ID は補間すると別の領域の値になるので、ほかの量と同じテクスチャに入れず、シェーダーが補間しない texelFetch で読む別の R8 にする。束を密度の G に入れるのはロードマップ GR91 の「密度マップを RG8（G = 束）へ広げる余地」（1398 行）に沿う。ShadingModel は `Hair` でなく G5-GR26-MATERIAL-PARAMS が足す `Fur` を判別子にする（ロードマップ 1400 行の Hair の流用は GR26 の後では採らない）。決定 G6-S5（RenderThread への渡し方）: 値の写しを proxy に載せる（ロードマップ 1400 行の案）。今の GBuffer のパスは材質の店の要素の生ポインタを RenderThread で読み（GBufferPass.cpp:748）、UpdateMaterial は同じ要素へ代入する（ロードマップ 1513 行のリスク）。ImGui で毎フレーム値を変えるファーをこの経路に載せると読み書きがぶつかるので、ファーだけは写しで渡す（既存の材質の経路は変えない。直すのはこの項目の範囲外）。濡れ度などインスタンスの値は G5-GR26-MATERIAL-PARAMS の ShadingParams の枠を使い、この項目では足さない。GPU の定数の大きさは決め打ちで試験しない（Docs/Testing.md の約束。C++ と GLSL の両側を突き合わせる）。`Docs/Architecture/GpuLayoutRegistry.md`（G5-GR26-GBUFFER-CONTRACT が作る）に FurMaterialGpuParams を登録する。試験を足す理由: C++ と GLSL の定数の位置のずれと、写しが古いまま残ることは、どちらもエラーを出さず見た目が少し変わるだけで、黙って起きる。危険地帯（Public API の MaterialTypes.h・SkinnedMeshTypes.h、RenderThread との受け渡し）なので評価者を通す。ロードマップ 1384〜1400・1480・1483・1484 行、要件 `#### GR91`。
 
 ## G7-GR49-ENV-PARAMS: 描画へ渡す環境の値 EnvironmentParameters を FramePacket まで通し、霧の値を SceneRevision から外して不連続の印だけで履歴を切る
-- status: todo
+- status: done
 - gr: GR49
 - done-when: `Library/Core/Public/Rendering/EnvironmentParameters.h` と `Library/Core/Private/Rendering/EnvironmentParameters.cpp` に、trivially copyable・standard layout の `EnvironmentParameters`（bEnabled・RainIntensity 0..1・Wetness 0..1・CloudCover 0..1・GameTimeSeconds〈double〉・Seed〈uint32〉・DiscontinuityId〈uint32〉）と `MakeDefaultEnvironmentParameters`・`SanitizeEnvironmentParameters` を置く（風の値は持たない。風の正本は GR46 の `WindParameters`）。`RenderWorld::SetEnvironmentParameters` → `RenderingCoordinator::SetEnvironmentParameters`（m_Environment に保持）→ `SnapshotSceneParameters` で `packet.Scene.Environment` へ値で写し、`SceneProxy::Clear()` で既定へ戻す（`SetVolumetricFogParameters` と同じ型）。シーンの revision（`HashSceneEnvironmentRevision`）には `Environment.DiscontinuityId` だけを足し、雨量・濡れ・雲量・時刻は入れない。選定課題 G7-S3 の (A) として、霧の値（`VolumetricFog` の bEnabled・DensityAtBaseHeight・BaseHeight・HeightFalloffPerUnit と、`Scene.bFogEnabled`・FogColorR/G/B・FogDensity・FogStart・FogEnd）を同じハッシュから外す。R3 の霧の密度の sweep（`RenderingGoldenImageTest` の `--r3-scenario=density-sweep`。今は ctest に登録が無い）を `register_rendering_gpu_test(R3FogDensitySweepVulkanTest RenderingGoldenImageTest --scene=outdoor --capture-source=back-buffer --r3-scenario=density-sweep)` で登録する（実行は G7-GR49-CHECK）。CPU の `EnvironmentParametersTest`（`CameraViewConstantsTest` の束の MEMBER）が、NaN・Inf・範囲外が Sanitize で既定かクランプになる、`FramePacketManager` の Write→Read→Clear で既定へ戻る、写した後に GameThread の値を変えてもパケットが変わらない、雨量・濡れ・雲量・時刻・霧の密度だけが違う 2 つのパケットの `ComputeSceneRevisionHash` が等しく、DiscontinuityId だけが違うと異なる、を確かめる（型の性質は static_assert）。既存の `VolumetricFogModelTest`・`SkyAtmosphereModelTest`・`SceneViewProxyLookupTest`・`SceneViewProxyReconcileTest` が試験を変えずに通る。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest VolumetricFogModelTest SkyAtmosphereModelTest SceneViewProxyLookupTest RenderingGoldenImageTest Game -- /m:1`
@@ -7009,7 +7007,7 @@
 - notes: 選定課題 G7-S1（ロードマップ 4528 行）は推奨の (A) を採る（G5-GR46-WIND-FIELD の notes で同じ決定を採っている）: 風の式の正本は GR46 の `WindParameters` と `Common/Wind.glsl`。EnvironmentState は風の値だけを持ち `RenderWorld::SetWindParameters` へ書く。GameThread の読み手（音・ゲームロジック）は GR46 の CPU の `EvaluateWind` へ解決後の WindParameters を渡して読む。`WindField.h`・`EnvironmentWind.glsl` は作らない（G16 の GR75 が書く `WindField::SampleWind` は採らない案の名前。段階をまたぐ注意 4405・4486 行）。理由: 式が 1 つで、草・雨筋・粒子・霧が同じ関数を引き、草と雨筋の風がずれない。時計（段階をまたぐ注意 4460 行の直す点を採る）: 時刻は TimeSystem の World のチャンネルの dt の積算で、ポーズの門の中で進む（ヒットストップで World の倍率が下がれば遷移・濡れ・雨も遅くなる）。`PostTick` の群は粒子の dt で回る（ApplicationProcessor.cpp:2723）ので、World の dt は `GEngine->GetTimeSystem().GetFrameTimes().World`（TimeChannels.h:26）から読む。`FramePacket::TotalTime`（RenderingCoordinator.cpp:4470-4519。壁時計か、決定的な撮影の 1/60 の積算）は位相の源に使わない。時計を 2 本にしない: G5-GR25-EXTENSION-DATA の `RenderExtensionFrameInfo::GameTotalTime` が統合ブランチにあれば、その源と GameTimeSeconds が同じ値になることを試験で確かめ、別々に積まない（UNCERTAIN: GR25 の GameTotalTime の源が World のチャンネルの積算かは、GR25 の実装を読んで確かめる。違えば PROGRESS.md に書き、どちらに揃えるかを親に回す）。雲量は状態と EnvironmentParameters に持つだけで、SkyAtmosphere の `CloudCover` への解決は G7-GR49-ENV-INTERFACES で足す（GR50 の欄の後）。雲量（均一な曇天。GR50）と雲の層の被覆（体積の雲。SkyAtmosphere.h:101）は別の値として両方を持つ。入れる基準は「2 つ以上の系が参照する値だけ」（毛の濡れ・局所の雨遮蔽は入れない）。各シーンの直接の書き込み（Rendering3DTestRoutine.cpp:2747・2787・3498・4195、WastelandRoutine.cpp:400〜597 など）はこの項目では変えない。ApplicationProcessor.cpp は共有のファイルなので、差分は段の登録 1 つと初期化・破棄に絞る。試験を足す理由: 刻み方で結果が変わる・ポーズ中に雨が進むのは撮影 1 枚で気づけず、黙って起きる。危険地帯（Public API の Engine・RenderWorld へ書く値）なので評価者を通す。要件 `#### GR49` の設計案【2】〜【5】と【未定の提案】、ロードマップ 1535・1548・1563・1564 行。
 
 ## G7-GR50-OVERCAST-SKY: 空のモデルに曇り度 CloudCover を足し、直達光・太陽円盤・空の放射輝度を均一な曇天へ寄せる（既定の 0 で今と同じ）
-- status: todo
+- status: done
 - gr: GR50
 - done-when: `SkyAtmosphereParameters`（SkyAtmosphere.h:24）の末尾に CloudCover（0..1、既定 0）・OvercastIlluminanceFraction（仮 0.25）・OvercastZenithToHorizonRatio（既定 3 = CIE の曇天）・DirectLightExponent（仮 2）・SunDiskVisibleBelowCover・SunDiskHiddenAboveCover（仮 0.55・0.9）・OvercastTint（既定 1,1,1）を足し、`SanitizeSkyAtmosphereParameters`（SkyAtmosphere.cpp:273）に範囲、`AreSkyAtmosphereParametersEqual`（:343。LUT と空由来の IBL の作り直しの鍵）と PT の `HashPathSky`（PathTracingPass.inl:167）に全欄を足す。純関数 `ComputeCloudDirectFactor(c)`（(1−c)^k に下限）・`ComputeSunDiskVisibility(c)`（1 − smoothstep(下, 上, c)）・`ComputeOvercastRadiance` を置く。`ComputeSunGroundIlluminance`（SkyAtmosphere.h:390）の戻りに直達の係数を掛け（`MakeSkySunLightProxy`〈SkySunLight.cpp:9〉・CSM・PT の太陽・`CloudLayerPass` の照り〈CloudLayerPass.inl:656・1287〉が同じ値を受ける）、`MakeSkySunLightProxy` は下限で光源が出入りしない（LightRevision が跳ばない）ようにする。`SkyAtmospherePass::GenerateSunDiskTexture` の透過率に円盤の見え方を掛ける。`SkyAtmosphereModel` のコンストラクタで曇天の項（E_oc = F·E_clear_h、Lz = 3r·E_oc/(π(2r+1))）を前計算し、`EvaluateViewRadiance`（SkyAtmosphere.cpp:899）の最後で L = lerp(L_clear, L_oc, c)（L_oc = Lz·(1+(r−1)·sinγ)/r·Tint、地面に当たる視線は ρ·E_oc/π）にする。シーンの revision（`HashSceneEnvironmentRevision`）には入れない。CPU の `SkyAtmosphereModelTest` にケースを足す: c=0 で既存のアンカー（天頂約 2103 nits・空の照度の割合 23.8%）と既存のケースが変えずに通る、c=1 の水平面の全天照度が F·E_clear の ±3%（試験の側の独立な半球積分）、天頂と仰角 0.5° の比が CIE の式の ±5%、c に対して直達光が単調に減り空の輝度が連続、NaN・範囲外の c の Sanitize、c=1 でも `MakeSkySunLightProxy` の値が有限、`AreSkyAtmosphereParametersEqual` と `HashPathSky` が CloudCover だけが違う 2 つを区別する。`R2SkyGoldenCurrentModelTest`（R2 の空の golden と今のモデルの画素の一致）が変えずに通る。R7 の屋外のパストレーサーとラスタの比較（`R7OutdoorPathTracingReferenceVulkanTest`。参照比較の段）に c=1 のケースを足してビルドできる（実行は G7-GR50-CHECK）。
 - verify: `cmake --build build --config Debug --target SkyAtmosphereModelTest RenderingGoldenImageComparatorTest R7OutdoorPathTracingReferenceVulkanTest Game -- /m:1`
@@ -7028,7 +7026,7 @@
 - notes: 要件 `#### GR49` の設計案【スクリプト】・データ形式の JSON v1・【未定の提案】（寝床の時間の飛ばしは G11 の GR55 が SkipTime を呼ぶ。カットシーンは G14 の GR66 が上書きの層を呼ぶ。どちらもここでは口だけ）。撮影の台本の `-GameArgs` は先頭の `--` を除いたカンマ区切りで、カンマの次が数字なら分けない（CaptureStartupScene.ps1:108-109・324）ので、`-GameArgs rain=0.8,wind=40,6,0.4` の形でも渡せる。専用の `-Rains` などは値ごとに撮るために足す。Game の見た目は、GR50・GR53 が入るまでは引数を与えても空の雲量以外は変わらない。共有のファイル（ApplicationProcessor.cpp・GameApplicationHandler.cpp・Rendering3DTestRoutine.cpp・撮影の台本）は差分を小さくし、Rendering3DTest は環境の引数が無いとき今と同じ道を通る（起動画面を保つ。絶対規則 7）。ScriptRuntime に GR98 の登録の基盤が先に入っていれば、そちらへ寄せる。試験を足す理由: 保存の読み戻しの欠け・スクリプトの値が届かないことは撮影で気づけず、黙って起きる。危険地帯（Public API の ScriptRuntime）なので評価者を通す。起動しての確かめは G7-GR49-CHECK。
 
 ## G7-GR51-HEIGHTFOG-INCLUDE: 高さフォグの解析の透過率と霧の色を、記述子を持たない共通の GLSL に切り出し、体積の霧のパスも同じ関数を使う（見た目は変えない）
-- status: todo
+- status: done
 - gr: GR51
 - done-when: `Assets/Shaders/Common/HeightFog.glsl`（記述子・UBO を宣言しない純関数だけ）に、`HeightFogTransmittance(density, baseHeight, falloff, originHeight, rayDirY, rayDistance)`（今の `ComputeAnalyticTransmittance`。Common/VolumetricsCommon.glsl:76-132 を移す）、`HeightFogEquirectUV`（:67 の EquirectangularUV）、霧の色 `HeightFogRadiance(skyRadiance〈sampler2D〉, bSkyAvailable, fallbackColor, rayDir, tintBlend)`（今の :444-453 の式。tintBlend は G7-GR50-FOG-TINT が使う Tint・SkyBlend の引数で、既定 (1,1,1,0) が今と同じ）、前向きの物に掛ける評価 `EvaluateHeightFogForward(params, worldPos)`（距離の上限 MaxDistanceMeters と周りの光の倍率 AmbientScale を今の VolumetricsPass と同じ意味で使い、透過率 T と霧の光 S を返す）、合成の 3 種 `ApplyHeightFogStraightAlpha`（rgb' = rgb·T + S、α は不変）・`ApplyHeightFogPremultiplied`（rgb' = rgb·T + α·S）・`ApplyHeightFogAdditive`（rgb' = rgb·T。加算の粒子用）を置く。`VolumetricsCommon.glsl` は HeightFog.glsl を include して同じ関数を呼ぶ（挙動は変えない。`volumetrics.frag`・`volumetrics_probe.frag`・`Common/CloudLayerCommon.glsl` を使う雲のシェーダーがそのまま通る）。C++: `Library/Core/Public/Rendering/HeightFogGpuParams.h`（と Private の .cpp）に std140 の `GPUHeightFogParams`（vec4 density・baseHeight・falloff・skyAvailable、vec4 tint.rgb・skyBlend、vec4 fallbackColor.rgb・ambientScale、vec4 cameraPos.xyz・preExposure、vec4 maxDistance・予約。static_assert でサイズとオフセットを固定）と、`ViewRenderContext` のスナップショット（`VolumetricFog`・`FogColorR/G/B`・空の LUT の有無・カメラ・プリエクスポージャ）から詰める `BuildHeightFogGpuParams` を 1 つだけ置き、VolumetricsPass の詰め（VolumetricsPass.cpp:261 付近）の同じ欄もこの関数の値から取る。CPU の `HeightFogShaderCompileTest`（`RHIRayTracingApiContractTest` の束の MEMBER）が、HeightFog.glsl を含む試験用の compute と、`volumetrics.frag`・`volumetrics_probe.frag`・`cloud_layer.frag`・`cloud_layer_probe.frag` を CPU でコンパイルできることを確かめる。GPU の `HeightFogParityVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。compute で出発の高さ・dirY・距離の格子の透過率を求めて読み戻し、`ComputeHeightFogTransmittance`〈VolumetricFog.h:34〉と相対 1e-4 以内）をビルドできる（実行は G7-GR51-CHECK）。
 - verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RHITextureUpdateVulkanTest VolumetricFogModelTest Game -- /m:1`
@@ -7057,7 +7055,7 @@
 - notes: 要件 `#### GR50` の設計案（4）霧(d)。目的は曇天で遠景の地面と地平線の空の継ぎ目を消す調整の口で、値は仮（色と明度のルールは企画で未定の提案なので、合否の比は置かず調整の目安にとどめる）。EnvironmentState の霧に Tint・SkyBlend を持たせて解決し JSON v1 の fog に並べるのは G7-GR49-ENV-INTERFACES（この項目の後）で、ここでは環境の側を触らない。霧の値は SceneRevision に入れない（G7-S3 の (A)。G7-GR49-ENV-PARAMS）。G7-GR51-FORWARD-FOG と同時に走るときは HeightFog.glsl の衝突に注意し、関数の引数（tintBlend）は G7-GR51-HEIGHTFOG-INCLUDE で決めた形を使う。試験を足す理由: PT の霧のハッシュの漏れは古い累積が残るだけで黙って起きる。危険地帯（霧・パストレーサー）なので評価者を通す。撮影の確かめは G7-GR50-CHECK。
 
 ## G7-GR53-WET-MODEL: 濡れの共通の式 ApplyWetSurface（アルベドの暗化・粗さの低下・凹んだ上向きの面の水膜）を GLSL と C++ の同じ式で作る
-- status: todo
+- status: done
 - gr: GR53
 - done-when: `Assets/Shaders/Common/WetSurface.glsl` に `ApplyWetSurface(inout albedo, inout roughness, inout metallic, inout N, geomN, cavity, wetness, exposure, response)` を置く。w = saturate(wetness·exposure·response)。(1) 暗化 albedo *= mix(1, mix(0.55, 0.9, metallic), w)。(2) 粗さ roughness = mix(roughness, roughness·0.45, w)。(3) 水膜 pool = smoothstep(0.55, 0.95, w·(0.6 + 0.4·cavity))·saturate(geomN.y·4 − 3)、roughness = mix(roughness, 0.04, pool)、N = normalize(mix(N, geomN, pool))、metallic *= 1 − pool。係数（0.55・0.9・0.45・0.04・水膜の区間）は 1 つの定数の塊（`WetSurfaceTuning`）にまとめ、既定は仮。w=0 で全出力が入力とビット一致する分岐を持つ。C++ の同じ式 `Library/Core/Public/Rendering/WetSurface.h`（純関数 `ApplyWetSurface` と `WetSurfaceTuning`。GLSL と同じ演算の順）を置く。CPU の `WetSurfaceModelTest`（`CameraViewConstantsTest` の束の MEMBER）が、w=0 で入力と完全一致、w の増加でアルベドの輝度と粗さが単調に減る、水膜は上向きで濡れの強い面にだけ出る（geomN.y が 0.75 以下で 0）、response=0 と exposure=0 で乾いたまま、NaN の入力で NaN を出さない、を確かめる。CPU の `WetSurfaceShaderCompileTest`（`RHIRayTracingApiContractTest` の束の MEMBER）が WetSurface.glsl を含む試験用の compute をコンパイルできる。GPU の `WetSurfaceParityVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。入力の格子を compute に流して読み戻し、C++ の式と差 1e-4 以内）をビルドできる（実行は G7-GR53-CHECK）。
 - verify: `cmake --build build --config Debug --target CameraViewConstantsTest RHIRayTracingApiContractTest RHITextureUpdateVulkanTest -- /m:1`
@@ -7210,7 +7208,7 @@
 - notes: GPU の試験は利用者のほかのアプリに影響を出しうるので、実装の項目（G12-GR31-CULL-CONTRACT）では回さず、この項目で GPU を占有して回す（G5 の GPU の試験と同じ扱い）。100 万本の GPU 時間の記録は SCN-MEGA-ACCEPT-1M（todo）が行う。
 
 ## G12-GR45-DRYNESS-FIELD: 世界空間のフィールドに枯れ度の層（近傍の高解像度と遠景の低解像度の 2 枚）を足し、毎フレーム源から GPU で評価する
-- status: todo
+- status: done
 - after: G5-GR44-WORLD-FIELD, G12-GR45-DRYNESS-CPU, G5-GR44-TRAMPLE
 - gr: GR45
 - needs-gr: GR44
@@ -7234,7 +7232,7 @@
 - notes: 設計はロードマップ 2217・2221・2223 行（GR45 の消費側と遠景の見せ方）、完了条件は 2614 行。遠景の見せ方は企画で未決なので、草丈を潰すか（遠くから分かるが高い草の遮りが弱まる）・潰さないか（遮りは保つが遠くから分からない）を値の調整で選べるようにし、既定は「色だけ寄せて草丈は潰さない」（仮。高い草の遮りは G5 の GR113 などが前提にしているため）。地表・低木のシェーダーは今は無い（GR37 の層の材質・GR47 の低木）ので、`Common/WorldField.glsl` の `SampleDryness` を渡すだけにし、ここでは使わない。草のシェーダーは G5 の項目と共有なので差分を小さくする。試験を足す理由: 反証する契約は「枯れ度 0 では草が今とビット一致し、枯れ度に応じて決まった倍率で変わる」こと。漏れは草原全体の色や密度がわずかに変わるだけで撮影では気づきにくく、黙って起きる。危険地帯（RenderThread・GBuffer の経路）なので評価者を通す。
 
 ## G12-GR45-WITHER-GAMEPLAY: シ者の撃破で周りの草が戻る応答と、枯れ度の状態のセーブ・リスタートでの再現をつなぐ
-- status: todo
+- status: done
 - after: G12-GR45-DRYNESS-CPU, G8-GR17-ENEMY-COMPONENT, G8-GR76-STATE-AUTOSAVE, G8-GR76-RESET-LIFETIME, G8-GR17-HEALTH-PROGRESSION, G8-GR17-SLICE-SMOKE, G8-GR76-SAVE-STORAGE, G8-GR76-SETTINGS
 - gr: GR45
 - needs-gr: GR17, GR76
@@ -10819,3 +10817,27 @@
 - paths: Tools/AssetCook/AssetCookTerrainSmoke.cmake.in, Tools/AssetCook/MeshCooker.cpp, TASKS.md, PROGRESS.md
 - effort: medium
 - from: G12-GR39-FAR-RING
+
+## G2-GR79-SKINNED-MATERIAL-BUILDER-P1: 3 資産の split で読んだ SkinnedMesh に描画 lease を出し、SkinnedMaterialBuilder で付けた材質で骨格つきの資産を描けるようにする
+- status: todo
+- after: G2-GR79-SKINNED-MATERIAL-BUILDER
+- gr: GR79, GR83
+- done-when: split の 3 資産の経路で読んだ `SkinnedMeshResource` が、`Load` で描画 lease(`Rendering::SkinnedMeshAssetLease`)を出す。頂点・索引・submesh は split の mesh(`GetVertices`・`GetIndices`・`GetSubMeshes`)から取る。slot の名前は `m_MaterialSlots` から MATS の順で並べる。handle は ResourceId と描画の世代で作る。`Unload` と split の世代を更新したときは `ReleaseAssetLease` で lease を離す。split でない経路の lease の振る舞いは変えない。
+  `RigSplitAssetAccess::Matches`(`RigSplitPublicationIdentity.cpp:575`)は今「lease が無いこと」を条件にしている。これを、lease があっても cache hit が今と同じに成り立つ照合に替える。`SkeletalSplitPublicationTest` と `SkeletalSplitAssetLoaderTest` が通ればよい。
+  CPU の試験として `SkeletalSplitRuntimeTest` に次を足す。RigSplitCookTest の 2 材質の rig を cook して読み、GPU を使わずに確かめる。
+  (1) `GetRenderAssetLease()` があり、slot の名前が 2 つで、順が MATS どおり。
+  (2) `SkinnedMaterialBuilder::Build` の後の `Bind` が、作れた slot をすべて `Bound` にする(`Rejected` が 0)。`TryGetSlotMaterial` が作った handle を返す。
+  (3) World に置いた component で `EvaluatePose` と `BuildSkinnedMeshProxy` が成功し、`MaterialCount == 2` で、各 slot が builder の handle になる(`SkeletalAssetSessionTest` の proxy の確かめ方に合わせる)。
+  (4) 資産を解放すると lease が離れ、component が古い handle の slot 材質を返さない。
+  `Docs/Architecture/RigSplitV1Wire.md:49` の「render lease は発行しない」と、`Docs/Architecture/SkeletalAssetRuntime.md:63` の「split は `SetSlotMaterial` が失敗し `Rejected`/描画は境界の外」を、今の振る舞いに書き直す。
+- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook ResourceRegistryTest SkeletalFramePacketSnapshotTest Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(SkeletalSplitRuntimeTest|SkeletalSplitPublicationTest|SkeletalSplitAssetLoaderTest|SkeletalAssetRuntimeTest|SkeletalAssetSessionTest|SkeletalMaterialBindingsTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|SkeletalFramePacketSnapshotTest|MaterialResourcesTest)$" --no-tests=error --output-on-failure --timeout 300`
+- paths: Library/Core/Private/Resource/SkinnedMeshResource.cpp, Library/Core/Public/Resource/SkinnedMeshResource.h, Library/Core/Private/Resource/RigSplitPublicationIdentity.cpp, Library/Core/Private/Animation/RigSplitBinding.cpp, Test/Core/Asset/SkeletalSplitRuntimeTest.cpp, Docs/Architecture/RigSplitV1Wire.md, Docs/Architecture/SkeletalAssetRuntime.md, TASKS.md, PROGRESS.md
+- from: G2-GR79-SKINNED-MATERIAL-BUILDER
+- notes: 根拠を以下に挙げる。
+  - `SkinnedMeshResource::Load` の split の分岐(`SkinnedMeshResource.cpp:43-47`)と `RefreshRenderAssetLease`(同 262-265 行)は、split のとき lease を作らない。
+  - `SkinnedMeshComponent::SetSlotMaterial`(`SkinnedMeshComponent.cpp:442-448`)と `GetMaterialSlotCount`(同 379-386 行)は lease が要る。そのため `BuildSkinnedMeshProxy`(同 515-519 行)は slot 数 0 で false を返す。
+  - 一方で `SkinnedMaterialBuilder::Build` は split でない mesh を `NotSplitMesh` で断る(`SkinnedMaterialBuilder.cpp:215-218`)。結果として、builder の `Bind` は常に `Rejected` になる。`SkeletalAssetRuntime.md:63` もこれを「描画は境界の外」と認めている。
+  - todo の `G2-GR83-ASSET-PREVIEW-SCENE` は「骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける」を前提にしている。`G10-GR63-LOD-RUNTIME` も lease を「RigSplit の読み込みから」作る前提にしている。それなのに、split に lease を出す作業はどのタスクにも無い。
+  - BonePalette は split でも split の InverseBind と InverseMesh で作られる(`SkeletalPoseBuilder.cpp:68-71, 290`)。なので lease の頂点は split の mesh の頂点のままでよい。
+  - 危険地帯(アセットロード・Resource の寿命・Public API)なので、評価者を通す。

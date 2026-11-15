@@ -77,9 +77,29 @@ workはwall-clock保証ではない。所有byteもRSSの保証ではなく、al
 既存native入口を反復するため、全importが線形/無確保とは称さない。前計算の広いAPI組替えより先に、検証済み経路でclipを通す有限段階である。
 legacy cookerの128関節制限は別の書出し境界。ここではin-memory clipの数学的上限と混同しない。
 
-## 未解決の自動rest補正
+## 自動のrest補正（match・align_bones）
 
-Cがsource rest方向をtarget rest方向へ運ぶとき、W=C D C^T Bは元のsource方向ではなくCで運んだ動きを作る。
-D=IならW=Bであり、異なるtarget bind方向を保ったまま元source方向と無条件一致させることはできない。
-この入口は既存式と明示Cを守り、旧文書の方向一致条件を自動補正済みの受入れとして扱わない。
-自動Cの意味、leaf/平均方向/anti-parallel/up_hint、role語彙、実資産の採用は後続で定義する。
+`rest_pose.mode` の自動補正では、関節から、途中の未写像関節を越えた直近の写像済み子孫それぞれへの単位ベクトルを足し、その和を正規化して rest の骨方向とする。
+写像済みの子孫がない末端は親から関節への方向を使う。元は `axes`・`position_scale` による座標・単位変換後の正準空間、対象は RootFrame を含む作者 rest のワールドで求める。
+元・対象の単位骨方向を a・b、元の rest からのワールド回転差分を D、対象の rest のワールド回転を B、出力のワールド回転を W とする。
+
+- `explicit`: 指定の C を使い、式は従来どおり W = C·D·Cᵀ·B。骨方向が決まらなくても、その理由では拒否しない。
+- `match`: C = I、W = D·B。各対応の rest の骨方向の角度が `maximum_error_degrees`（既定 5°）を超えたら `rest_direction_mismatch` で拒否し、出力の clip と報告を変えない。成功時は対応ごとの補正前後の角度 `BeforeRadians`・`AfterRadians`（match では同じ値）と C を報告する。
+- `align_bones`: 最小回転 S(a→b) と `up_hint` による骨軸まわりの捻り θ から C = R_b(θ)·S を求める。式は W = D·Cᵀ·B。対象の bind を Cᵀ·B（rest の骨を元の向きへ合わせた bind）に置き換えてから元の差分 D を掛けるため、変換後の骨方向は全フレームで元の骨方向 D·a と浮動小数の誤差の範囲内で一致する。
+
+`up_hint` は骨軸まわりの捻りだけを決め、骨方向を変えない。それぞれの骨方向に垂直な面へ投影した対象側の上向きが、Cᵀ によって元側の上向きへ写るように捻りを決める。
+S と θ の式の詳細は [Retarget.md の「rest の向きとねじれ」](Retarget.md#rest-の向きとねじれ) を参照する。
+向きが正反対（a·b < −1 + 1e-10）の場合は、`up_hint` を a に垂直な面へ投影した軸で半回転する。その軸も退化すれば、|a_x| < 0.7 なら (1,0,0)、それ以外なら (0,0,1) を補助軸 e とし、a×e を正規化した軸を使う。
+`up_hint` がどちらかの骨方向と平行な場合は捻りを推測せず最小回転 S だけを使う。正反対や平行であることだけでは拒否しない。
+
+拒否の条件と理由は次のとおり。
+
+- `match`・`align_bones` で方向の和の長さが 1e-10 未満など、骨方向が決まらない場合は `rest_bone_direction_missing`。写像済みの子孫も親もない root を含み、明示 C への切り替えはしない。
+- `match` で rest の方向角が許容値を超えた場合は `rest_direction_mismatch`。
+- 共通またはロール別の `up_hint` が非有限、または長さ 1e-10 未満なら `retarget_input`。
+- `rest_up_hint` は捻りの補助軸も作れない場合の守りであり、単位の骨方向では起きない。
+
+未写像の対象関節にはチャンネルを出さず、bind のローカル姿勢を保つ。
+
+`SkeletalBvhClipImportTest` は、分岐・End Site を持ち全フレームで回る手書きの多関節 BVH と、rest に ±20° の振りと捻りのずれを持つ対象（RootFrame・メッシュの node の変換・bind の scale を持つ対象を含む）で、全フレームの骨方向誤差 0.1° 以内などを確かめる。
+0.1° は要件の暫定値である。

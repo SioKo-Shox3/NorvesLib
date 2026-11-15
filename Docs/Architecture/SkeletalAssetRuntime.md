@@ -39,3 +39,31 @@ group/subscriber/path/key/clip/Registry cloneメタデータに有限上限を�
 反証ではSubmit返答より前にworker/handler完了を固定し、Closeしない正常経路でも受理確定後のready1・公開/通知各1を確認する。commit内で停止して別threadからState mutexを試行し取得不能、commit外では取得可能であることを確認する。これはnative同期操作と実装を結び付ける検査で、Registryの読取待機だけでState gateを代用しない。
 
 既知の入口制約: 現AssetManifestのJSON文字列取得はASCII限定で、非ASCIIのlogical_pathを拒否する。runtimeはUTF-8の構文を厳密検証するが、非ASCII論理pathのcooked読込成功までは保証しない。現統合試験はASCII manifestで正常読込し、合法UTF-8の未登録pathはResolveRejectedとして一度通知する。GR84のUnicode物理locatorの検証とは別の境界である。manifestのUTF-8化は、旧拒否契約/lookup/cook互換を扱う独立変更として残す。
+
+## slot ごとの材質の組み立て
+
+3 資産の split の `SkinnedMeshResource` は、MATS の材質 record と 4 つの論理パス（albedo・normal・arm・emissive）を slot の名前と並べて保持する。`GetSlotMaterialSources` は `GetMaterialSlots` と同じ slot 順で返し、旧経路と `Unload` 後は空になる。`GetSplitMeshGeneration` は `SetSplitMesh` の成功と `Unload` ごとに進む資産の世代である。
+
+`ResourceIO::SkinnedMaterialBuilder` は `RenderResources` を借用し、構築時に明示した owner thread（GameThread）だけで `Build`・`Bind`・`Collect`・`Clear` を受ける。破棄も owner thread で行い、`RenderResources` は builder より長く生かす。
+
+`Build` は slot ごとに、record と 4 つの論理パスを受ける skin 用の `BuildImportedMaterialStaging` の多重定義を使い、静的と同じ `ValidateImportedOpaqueMaterial` で検査する。続いてスキンで表せない Mask・両面・AO texture を使う場合の恒等でない `occlusionStrength` を拒否する。
+
+次に cooked の texture を解決して検査する。アルベドは sRGB で全 mip の alpha が不透明、normal と ARM は linear を要求し、単層 RGBA8 と完全な mip 列も検査する。ARM は使う channel だけを R8 に分ける。全 CPU 検査と texture の世代の再確認を終えてから GPU の texture を作り、`MaterialCreateData` に handle と材質値を揃えて `Materials().Create` に渡す。正の nits の発光画像は検査で拒否し、0 nits の発光画像は読み込まない。
+
+失敗はその slot の状態と理由で返し、ほかの slot の作成を続ける。slot の状態は `Created`・`InvalidMaterial`・`Unsupported`・`TextureFailed`・`CreateFailed` で、1 つでも失敗すれば全体は `PartialFailure` になる。slot 0 の既定の材質には落とさない。
+
+理由は `imported_opaque: ` に名前を続ける。静的と共通の材質検査には `layout`・`shading_model`・`invalid_material_values`・`logical_path`・`alphaMode_blend_unsupported`・`normalScale_requires_shader_support`・`emissiveTexture_requires_shader_support` がある。texture の解決・検査には `cooked_texture_required role=albedo|normal|arm`、`texture_profile`・`texture_mip_count`・`texture_mip_dimensions`・`texture_mip_bytes`・`texture_incomplete_mip_chain`・`opaque_albedo_alpha_requires_shader_support` などがあり、texture 検査の理由には ` role=albedo|normal|arm` が付く（`|` は候補の区切り）。
+
+スキン側で追加する理由は `alphaMode_mask_unsupported`・`doubleSided_unsupported`・`occlusionStrength_requires_shader_support`・`texture_exception`・`material_create`。texture の作成時には `texture_generation_changed`・`texture_finalize role=albedo|normal`・`arm_channel_finalize`・`arm_channel_owner`・`arm_channel_pointer` も返す。
+
+builder の項目は mesh の弱参照と世代、作った材質と ARM の R8 texture の所有を持つ。同じ mesh・同じ世代の 2 回目の `Build` は以前の結果を返し、作り直さない。アルベドと normal は texture のキャッシュの handle であり、builder は所有しない。
+
+`Collect` は mesh が破棄された・読み込み済みでない・世代が変わった項目を離す。項目は材質を先に解放してから texture の所有を離す。`Clear` と builder の破棄では全項目を離す。
+
+`Bind` は component の mesh と結果の資産 ID・世代を照合し、作れた slot だけ `SkinnedMeshComponent::SetSlotMaterial` する。split の mesh は描画 lease を出さないので、現在は `SetSlotMaterial` が失敗し `Rejected` になる。split の描画はこの境界の外である。
+
+スキンの GBuffer は材質の BaseColor を読まないため、色は cook の焼き込みに頼る（[CookedMaterialV1.md](CookedMaterialV1.md)）。`MaterialCreateData` には staging の BaseColor をそのまま入れる。
+
+取り込みの既定の `doubleSided` Auto は開いた形に両面を付けるため、その slot は `doubleSided_unsupported` で失敗する。スキンの資産は取り込み設定に `"material":{"doubleSided":"force_false"}` を置く。`materials` の試験もこの設定で cook する。
+
+`SkeletalSplitRuntimeTest` の `materials` の事例は、2 材質の rig を cook して読み、FakeDevice の上で slot の数・名前・`MaterialCreateData` の値、MASK と texture の解決の失敗が該当 slot だけを失敗させること、資産の解放と `Collect` による材質の回収を確かめる。GPU の描画・実物の見た目は確かめていない。
