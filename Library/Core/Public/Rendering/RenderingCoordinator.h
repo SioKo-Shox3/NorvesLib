@@ -16,6 +16,7 @@
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/Wind.h"
+#include "Rendering/EnvironmentParameters.h"
 #include "Rendering/SkyOcclusion.h"
 #include "Rendering/SunShadowParameters.h"
 #include "Rendering/WorldFieldTypes.h"
@@ -68,6 +69,7 @@ namespace NorvesLib::Core::Rendering
      *
      * FramePacketが所有する全MeshProxy/SkinnedMeshProxyと材質・環境設定だけを
      * 入力にし、カメラ依存の描画結果や物体の変換履歴は入力にしません。
+     * 霧の値は含めません。将来、霧を GI の入力にするときは含め直します。
      */
     uint64_t ComputeSceneRevisionHash(const FramePacket& packet);
 
@@ -414,6 +416,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /** @brief 天気と時刻の環境の値を GameThread で保持し、次の FramePacket へ値で渡す。 */
+        void SetEnvironmentParameters(const EnvironmentParameters& parameters);
+
         /** @brief 試験だけで使う頂点アニメの正弦の揺れ(shadingParams.z が 0.5 以上の描画)を有効にする（GameThread）。 */
         void SetVertexAnimationTestDisplacementEnabled(bool bEnabled);
         bool IsVertexAnimationTestDisplacementEnabled() const { return m_bVertexAnimationTestDisplacement; }
@@ -493,6 +498,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief このフレームの世界フィールド入力を無害化し、直前の入力を置き換える（GameThread） */
         void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
+
+        /** @brief このフレームの枯れ度の源を無害化して置き換える（GameThread）。呼ばれなければ前の源を保つ。 */
+        void SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources);
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
@@ -740,6 +748,7 @@ namespace NorvesLib::Core::Rendering
         VolumetricFogParameters m_VolumetricFog;
         PaleFlatParameters m_PaleFlat = MakeDefaultPaleFlatParameters();
         WindParameters m_Wind = MakeDefaultWindParameters();
+        EnvironmentParameters m_Environment = MakeDefaultEnvironmentParameters();
         bool m_bVertexAnimationTestDisplacement = false;
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         struct SkyOccluderEntry
@@ -762,6 +771,7 @@ namespace NorvesLib::Core::Rendering
         FoliageScene m_Foliage;
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;
+        Container::VariableArray<WorldFieldDrynessSource> m_WorldFieldDrynessSources;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         RenderExtensionDataStore m_ExtensionData;

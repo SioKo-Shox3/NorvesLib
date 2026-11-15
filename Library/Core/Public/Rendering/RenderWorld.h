@@ -209,6 +209,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /** @brief 天気と時刻の環境の値を次の FramePacket へ値で公開する（GameThread）。 */
+        void SetEnvironmentParameters(const EnvironmentParameters& parameters);
+
         /** @brief 試験だけで使う頂点アニメの正弦の揺れ(shadingParams.z が 0.5 以上の描画)を有効にする（GameThread）。 */
         void SetVertexAnimationTestDisplacementEnabled(bool bEnabled);
         bool IsVertexAnimationTestDisplacementEnabled() const
@@ -305,6 +308,12 @@ namespace NorvesLib::Core::Rendering
          * フィールドへの書き込みは止まる。
          */
         void SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors);
+
+        /**
+         * @brief このフレームの枯れ度の源を設定する（GameThread）。
+         * Vegetation が毎フレーム呼ぶ。呼ばれなければ前の源を保つ。
+         */
+        void SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources);
 
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）

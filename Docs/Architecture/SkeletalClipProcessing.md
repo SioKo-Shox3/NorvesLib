@@ -33,7 +33,8 @@ AssetCook --retarget-clip --input run.bvh --skeleton dog.gltf --role-profile rol
 }
 ```
 
-- rest mode: `explicit`は既存C、`match`は骨方向の許容差超過を拒否、`align_bones`は最小swingと定義できるup-hint twistからCを求める。方向が作れない場合は明示Cを使う
+- rest mode: `explicit` は指定 C で W = C·D·Cᵀ·B、`match` は C = I で骨方向の許容差超過を拒否、`align_bones` は最小回転と up_hint による捻りから C を求め、W = D·Cᵀ·B で骨方向を元に合わせる。
+  `match`・`align_bones` で方向が作れない場合は `rest_bone_direction_missing` で拒否する。詳細は [SkeletalBvhClipImport.md の「自動のrest補正（match・align_bones）」](SkeletalBvhClipImport.md#自動のrest補正matchalign_bones) を参照する。
 - root scale: 正の倍率、または`auto_height`。後者はmapped pelvis（未指定時root）とpawの高さ比を使い、pawがなければ拒否する
 - loop mode: `none`は全期間、`range`は`start_seconds`/`end_seconds`、`auto`は十分な反復がある場合に周期を検出する。検出できない場合は全期間を保持する
 - glTFの時刻は作者の秒を使う。BVHのfps上書きをglTFに指定すると拒否する
@@ -54,10 +55,6 @@ v1 bankはターゲットの作者rest/frameを保持するため、既存の束
 profile 2/3だけで使用する。旧クリップは節を出さず既存wireを保持する。各40byte recordはclip index u32、root joint u32、time f32、reserved u32=0、XZ/yawの各f64。先頭time/変位/yawは0、末尾timeはclip duration、時刻は厳密増加。root indexはcanonical化・束縛で対応付ける。sample数は共通予算へ計上する。ANLYは軌跡の要約であり、軌跡そのものの代用ではない。
 
 この段階は抽出・保存まで。再生時の経路差分適用・ループ跨ぎ・controllerへの受渡しはG3/G4で行う。
-
-## 検証
-
-既存SkeletalBvhClipImportTestに16→30fps・11.6frame周期・非周期・端点・巨大frame原点・yawのケース、RigStaticRootFrameWireTestにRMTN往復/拒否、RigSplitCookTestにBVH/glTF共通変換とasset-set→CPUロード、AssetCookRigSplitSmoke.pyに実CLIの新規公開/拒否を追加した。native実行結果はPROGRESS.mdに記録する。GPU/DCC/実犬での見た目はこの合成CPU検証に含めない。
 
 ## GR87: クリップのキーの削減（cook 時）
 

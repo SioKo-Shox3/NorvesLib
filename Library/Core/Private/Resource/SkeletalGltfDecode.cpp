@@ -523,10 +523,10 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             outContract.MeshNodeGlobal = globals[outContract.MeshNodeIndex];
+            outContract.Reachable = std::move(reachable);
             if (bRetainFrames)
             {
                 outContract.Globals = std::move(globals);
-                outContract.Reachable = std::move(reachable);
             }
             return IsInvertibleMatrix(outContract.MeshNodeGlobal);
         }
@@ -1649,8 +1649,10 @@ namespace NorvesLib::Core::Skeletal
                 return outFrame && ExtractStaticRootFrame(root, skin, nodeContract, outNodeToJoint, outData, *outFrame);
             }
             uint32_t skeletonNodeIndex = InvalidIndex;
-            if (!TryReadRequiredUInt32(skin, "skeleton", skeletonNodeIndex) ||
-                skeletonNodeIndex >= nodes.GetArraySize() || outNodeToJoint[skeletonNodeIndex] < 0)
+            const bool bHasSkeletonHint = skin.HasMember("skeleton");
+            if (bHasSkeletonHint &&
+                (!TryReadRequiredUInt32(skin, "skeleton", skeletonNodeIndex) ||
+                 skeletonNodeIndex >= nodes.GetArraySize() || outNodeToJoint[skeletonNodeIndex] < 0))
             {
                 return false;
             }
@@ -1672,6 +1674,23 @@ namespace NorvesLib::Core::Skeletal
                     {
                         outData.Joints[static_cast<size_t>(outNodeToJoint[nodeIndex])].ParentIndex = parentJointIndex;
                     }
+                }
+            }
+            if (!bHasSkeletonHint)
+            {
+                size_t rootCount = 0;
+                for (size_t nodeIndex = 0; nodeIndex < nodes.GetArraySize(); ++nodeIndex)
+                {
+                    const int32_t jointIndex = outNodeToJoint[nodeIndex];
+                    if (jointIndex >= 0 && outData.Joints[static_cast<size_t>(jointIndex)].ParentIndex < 0)
+                    {
+                        ++rootCount;
+                        skeletonNodeIndex = static_cast<uint32_t>(nodeIndex);
+                    }
+                }
+                if (rootCount != 1 || nodeContract.Reachable[skeletonNodeIndex] == 0)
+                {
+                    return false;
                 }
             }
             if (outData.Joints[static_cast<size_t>(outNodeToJoint[skeletonNodeIndex])].ParentIndex >= 0)

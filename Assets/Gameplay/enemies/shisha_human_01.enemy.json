@@ -89,5 +89,5 @@
   "defeat": {
     "holdSeconds": 2.0
   },
-  "defeatResponses": []
+  "defeatResponses": ["wither.recover"]
 }

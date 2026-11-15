@@ -30,7 +30,3 @@ AI生成profileはsidecarのmaterial.profile: ai_generatedを明示したとき�
 骨格の分割cookも同じresolverで設定を解決し、骨格単体requestではasset-setの不正値を拒否する。分割cookは保存先ができるまでsurfaceをsurface_requires_GR81で拒否する。クリップ/リターゲットのcookも同じ計画で材質設定を照合するが、設定は適用しない。NVSKELの材質はslot名のみを保存し、発光の換算値は保存しない。v0 cookは換算を使わず、発光sourceも従来どおり受理する。
 
 SurfaceNameの正式保存・適用先はGR81のColliderComponent/PhysicsShapeProxy。保存先ができる前にCLI surface指定を受理して捨てたり、診断reportだけでruntime対応と扱ったりしない。Material128/NVSKEL予約を転用しない。
-
-## 検証
-
-MaterialImportDocumentTestは元名無し/Material_0、名前・index混在の二重target、曖昧/未一致/期待名不一致、Unicode raw/escape、catalog行入替、JSON寿命後の所有、layer優先順位、surface所有、失敗保持、sidecarのBOMと旧loader拒否を実JsonDocumentで検証する。Windows CIでの実行前にnative合格とはしない。

@@ -340,6 +340,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetWindParameters(parameters);
     }
 
+    void RenderWorld::SetEnvironmentParameters(const EnvironmentParameters& parameters)
+    {
+        m_RenderingCoordinator.SetEnvironmentParameters(parameters);
+    }
+
     void RenderWorld::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
     {
         m_RenderingCoordinator.SetVertexAnimationTestDisplacementEnabled(bEnabled);
@@ -432,6 +437,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
     {
         m_RenderingCoordinator.SetWorldFieldInteractors(interactors);
+    }
+
+    void RenderWorld::SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources)
+    {
+        m_RenderingCoordinator.SetWorldFieldDryness(sources);
     }
 
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)

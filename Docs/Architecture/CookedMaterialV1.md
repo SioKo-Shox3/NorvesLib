@@ -83,11 +83,7 @@ MATSのBaseColorはスキン描画に効かない。シェーダーは変えず�
 
 スキンのシェーダーが材質の色を読むようになったら、この焼き込みを外し、MATSのBaseColorをそのまま使う。
 
-## 検証と残作業
-
-CookedMaterialFormatTestに独立Python struct.pack由来の128B golden、値/flags/予約/参照境界、
-負の未指定値・1超過cutoff・負normalScale・NaN/Inf・発光の正規化/上限・失敗保持・alias拒否を登録する。
-通常/O2-NDEBUG/ASan・UBSan（LSan除外）と実MEMBER wrapperを検証し、CTestにも登録する。
+## 残作業
 
 NVMESH v1 container/cluster128B、v0昇格、glTF→値の写像、ARM処理、runtime材質への変換、NVSKEL v1への接続は残る。
 この純codecの合格は、Windows/Core全体・既定画面・実物GLB・GPUの受入れを意味しない。

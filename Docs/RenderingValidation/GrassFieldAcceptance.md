@@ -127,27 +127,14 @@ Debug または RelWithDebInfo の Game を `--scene=grassland --window-backgrou
 `GRASS_FIELD_COMPONENT_SKIPPED` 等の失敗ログがないことだけで成功とは判定しない。
 成功を観測できる記録を用意したうえで、登録・解除の実動作を確認する必要がある。
 
-## ビルド・CPU テストの確認
+## ビルド・CPU 検証の記録
 
-2026-11-05 に Debug で実行した。既存の build はこの作業ツリーを参照し、
-NORVES_BUILD_TESTS=ON だったため、追加の configure は行っていない。
-ビルドは各ターゲットを `cmake --build build --config Debug --target <target> -- /m:1` で実行した。
+2026-11-05 の Debug ビルドの結果。
 
 | ターゲット | 終了コード |
 | --- | ---: |
 | AssetCook | 0 |
-| CookedMeshTest | 0 |
-| SceneSerializerTest | 0 |
 | Game | 0 |
-| AssetSystemTest | 0 |
-| MathGeometryTest | 0 |
-
-AssetManifestTest と GrassFieldQueryTest の実行ファイルが未生成だったため、
-それぞれの所属先である AssetSystemTest と MathGeometryTest もビルドした。
-
-```powershell
-ctest --test-dir build -C Debug -R "^(CookedGrassFieldTest|AssetCookGrassFieldSmoke|SceneFileRoundTripTest|GrassFieldQueryTest|CookedTerrainTest|AssetManifestTest)$" --no-tests=error --output-on-failure --timeout 600
-```
 
 ```text
 100% tests passed, 0 tests failed out of 6
@@ -156,4 +143,4 @@ EXIT_CODE: 0
 ```
 
 6 件とも Passed。
-この結果はビルドと CPU テストの成功を示し、上記の起動確認・見た目・メモリ使用量の実測は含まない。
+この結果はビルドと CPU 検証の成功を示し、上記の起動確認・見た目・メモリ使用量の実測は含まない。

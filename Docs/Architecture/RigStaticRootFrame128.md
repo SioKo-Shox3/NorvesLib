@@ -6,6 +6,8 @@ NVSKEL v1のprofile2（StaticRootFrame128）は明示選択でのみ使う。既
 
 明示importはmesh付き1mesh/1skinを対象にする。skin.skeletonの省略はjoint集合とnode graphから唯一のroot jointを決める。指定時はroot jointまたはその祖先である必要がある。名前Armatureによる特例は無い。joint間の非joint中間親、複数joint root、cycle、重複親、選択sceneから到達しないjointは拒否する。
 
+profile1（と旧 NVSKEL 0.2）も `skin.skeleton` の省略を受け、同じ規則で唯一の根の関節を求める。ただし profile1 は根の上に非関節の祖先を持つ資産を拒否する。
+
 root上の非joint祖先は静的な直接TRSで、正の一様scaleのみ。祖先matrix、非一様/負/ゼロscale、祖先へのanimation、計算不能なquaternionや行列は拒否する。joint自体は既存v1と同じ正TRS。mesh無しclip-onlyや256関節は別profile/入力境界であり、この選択では受けない。
 
 ## ROOTと作者frame
@@ -32,10 +34,6 @@ profile2のAnimationClipResourceはvalidated CPU束縛結果からだけ発行�
 
 SetClip/Unloadでproofを失効させ、Loadだけでは復元しない。無証明・別target・setter後のprofile2 Sampleはfalse/空out。profile1/legacyの手作りclip APIは変更しない。cache取得もproofを確認し、全clip本文一致だけで証明を失ったclipを成功扱いしない。
 
-## 検証と範囲
+## 範囲
 
-合成祖先は非可換な行列積から独立に期待値を固定する。三roleの実byte列と全jointのpalette/model行列・頂点・診断をPythonの独立literal/行列へ照合し、既存profile1の704/1360/992byteと旧Sampler/cook/CLIを保持する。新profileのnative結果はTASKS/PROGRESSに別途記録する。
-
-CPU合成試験をBlender/実犬/GPU/Game実行の受入とみなさない。描画lease、file公開、任意frame間のrebase/retarget、clip-only、256関節、loop/root-motion要約はこの境界の対象外。有限数量/事前検査は一般allocator OOM、process RSS、任意入力時間の保証ではない。
-
-非対角の静的Gに対し、rootのT/R/Sチャンネルを同時に評価する独立行列ケースも保持する。主wire literalの正確な全byte照合と、非対角ケースのf32算術をdouble期待へ1e-4以内で照合する検証は別物として扱う。
+描画lease、file公開、任意frame間のrebase/retarget、clip-only、256関節、loop/root-motion要約はこの境界の対象外。有限数量/事前検査は一般allocator OOM、process RSS、任意入力時間の保証ではない。

@@ -1,0 +1,90 @@
+﻿#version 460
+
+// binding 2 の uniform バッファ、std140。NearOriginXZ は 0、NearTexelSize は 8、SourceCount は 12、
+// FarOriginXZ は 16、FarTexelSize は 24、Resolution は 28 バイト目。全体は 32 バイト。
+// binding 3 の源は 1 個 64 バイト。CenterRadii は 0、RotationFalloffLevel は 16、
+// Reserved0 は 32、Reserved1 は 48 バイト目。配列全体は 4096 バイト。
+// 式は DrynessMap::Sample と同じ。源の上限は C++ の WorldFieldDrynessMaxSources と同じ。
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#define WORLD_FIELD_DRYNESS_MAX_SOURCES 64
+
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2D uDrynessNear;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D uDrynessFar;
+
+layout(std140, set = 0, binding = 2) uniform WorldFieldDrynessParams
+{
+    vec2 NearOriginXZ;
+    float NearTexelSize;
+    uint SourceCount;
+    vec2 FarOriginXZ;
+    float FarTexelSize;
+    uint Resolution;
+} uParams;
+
+struct WorldFieldDrynessSourceGpu
+{
+    vec4 CenterRadii;
+    vec4 RotationFalloffLevel;
+    vec4 Reserved0;
+    vec4 Reserved1;
+};
+
+layout(std140, set = 0, binding = 3) uniform WorldFieldDrynessSourceBlock
+{
+    WorldFieldDrynessSourceGpu Sources[WORLD_FIELD_DRYNESS_MAX_SOURCES];
+};
+
+void main()
+{
+    uvec2 globalPixel = gl_GlobalInvocationID.xy;
+    uint layer = gl_WorkGroupID.z;
+    if (layer >= 2u || any(greaterThanEqual(globalPixel, uvec2(uParams.Resolution))))
+    {
+        return;
+    }
+
+    ivec2 pixel = ivec2(globalPixel);
+    vec2 origin = layer == 0u ? uParams.NearOriginXZ : uParams.FarOriginXZ;
+    float texel = layer == 0u ? uParams.NearTexelSize : uParams.FarTexelSize;
+    vec2 local = (vec2(pixel) + vec2(0.5)) * texel;
+    float result = 0.0;
+    uint sourceCount = min(uParams.SourceCount, uint(WORLD_FIELD_DRYNESS_MAX_SOURCES));
+    for (uint index = 0u; index < sourceCount; ++index)
+    {
+        WorldFieldDrynessSourceGpu source = Sources[index];
+        vec2 d = (origin - source.CenterRadii.xy) + local;
+        float cosine = source.RotationFalloffLevel.x;
+        float sine = source.RotationFalloffLevel.y;
+        float lx = d.x * cosine + d.y * sine;
+        float lz = -d.x * sine + d.y * cosine;
+        float dist = length(vec2(lx, lz));
+        float rho = length(vec2(lx / source.CenterRadii.z, lz / source.CenterRadii.w));
+        float falloff = source.RotationFalloffLevel.z;
+        float attenuation = 1.0;
+        if (rho > 1.0)
+        {
+            if (falloff == 0.0)
+            {
+                attenuation = 0.0;
+            }
+            else
+            {
+                float edgeDistance = dist * (1.0 - 1.0 / rho);
+                float t = clamp(edgeDistance / falloff, 0.0, 1.0);
+                attenuation = 1.0 - t * t * (3.0 - 2.0 * t);
+            }
+        }
+        result = max(result, source.RotationFalloffLevel.w * attenuation);
+    }
+
+    vec4 value = vec4(clamp(result, 0.0, 1.0), 0.0, 0.0, 0.0);
+    if (layer == 0u)
+    {
+        imageStore(uDrynessNear, pixel, value);
+    }
+    else
+    {
+        imageStore(uDrynessFar, pixel, value);
+    }
+}

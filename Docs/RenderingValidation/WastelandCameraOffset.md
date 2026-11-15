@@ -119,9 +119,9 @@ ref_cliff_02 0.032 画素で前と同じ。
 形・位置・明るさの変化は無い。Indoor は差 0。予備の経路の OutdoorGBufferFallback も同じ場所に同じ画素数の差を持つ
 （古い視線行列での撮影は Outdoor だけで確かめた）。
 
-確かめ方（2026-10-21、NVIDIA 610.88。golden が最後に通った 10-09 の f919b5f3 と同じドライバ）:
+比較の記録（2026-10-21、NVIDIA 610.88。最後に一致した 10-09 の f919b5f3 と同じドライバ）:
 
-| 撮影（`RenderingGoldenImageTest.exe --scene=outdoor --capture-source=back-buffer --write-baseline-staging`） | `Outdoor.png` との差 |
+| 撮影時のコード・構成 | `Outdoor.png` との差 |
 |---|---|
 | 今のコード（照明の 2 本のシェーダーだけ、後の AO の直しの前の 84bc0b53 の版） | 712 画素（raw 最大 4） |
 | 上と同じで `NORVES_FRAMES_IN_FLIGHT=1` / `=2` | 712 画素（同じ画素） |

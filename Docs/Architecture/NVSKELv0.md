@@ -139,8 +139,6 @@ UTF-8は[RFC 3629](https://www.rfc-editor.org/rfc/rfc3629)のscalar範囲/最短
 - 入力とout全領域（未使用末尾を含む）の重複、pointer/サイズのoverflow、不正alignmentを拒否する
 - 借用viewは元stringTableの寿命に従う。loaderは必要なCore Stringへ変換して所有する
 
-純試験ではUTF-8/UTF-16/UTF-32とホストwchar_tを照合し、NULとsurrogateを除く全1,112,063 scalarを往復する。
-保存byte列4,382,591BのFNV値をPython標準UTF-8で独立生成した固定値と照合する。
 このcodec追加だけでは実reader/writerを切り替えず、Windows/Core全体やWindows TCHAR経路の実行済みを意味しない。
 
 ## 0.2 readerの接続状態
@@ -155,10 +153,6 @@ clip名/slot名の空や重複はwireでは表現できる。名前選択・一�
 エラー時は部分的なSkeletalやSourceBlobを公開しない。
 M9は表をResourceへ渡して範囲drawへ接続する。複数clipの選択は未対応なので明示拒否する。
 範囲drawのコード接続後もpalette共有/GPU受入れは未完で、reader/writerの受理だけを描画検証済みと扱わない。
-
-検証は純wire/submesh recordの通常・最適化・sanitizer試験と、手書き0.2のnative回帰登録を分ける。
-native回帰には2clip/2submesh/UTF-8、旧golden、範囲/予約/padding/hash/clip跨ぎと失敗出力を含めるが、
-このLinux環境ではWindows.h依存により実readerを含むCore全体の試験は未実行。
 
 ## 0.2 writerとcache移行
 
@@ -175,14 +169,11 @@ cacheは通常parse成功に加えてminor=2を要求する。source hashやmani
 minor0/1 payloadを最新出力としてskipしない。通常loadでは旧版を引き続き読める。
 GR82 Stage AのDecodeRigGltf/cookは複数clipをこの0.2へ保存する。旧DecodeSkeletalGltf/Analyzerはraw TwoClipsの拒否を維持する。
 
-純bounds/layoutの通常・最適化・sanitizerと名前/wire回帰を実行する。
-raw/GLB→cook→parseの表/Unicode保持・失敗出力保持、旧0.0/0.1 cache missと0.2 hitはnative回帰へ登録する。
 Windows依存のwriter/loader/cache/CLI統合は未実行で、GPU描画受入れも未完。
 
 名前をJSONの\u escapeで渡す経路では、high/low surrogateを一つのscalarへ結合する。
 孤立surrogate・途中切れ・不正な組合せはJsonDocumentで拒否し、有効な非BMP文字は4byte UTF-8になる。
-この修正は共通JSON parserにも適用する。純試験は全scalarのescape読取・UTF-8黄金hashとUTF-16/32出力を照合し、
-JsonDocument本体とAssetCookでのescape名の往復はnative回帰へ登録する（この環境では未実行）。
+この修正は共通JSON parserにも適用する。
 
 ## manifestの表数量metadata
 
@@ -191,5 +182,4 @@ JsonDocument本体とAssetCookでのescape名の往復はnative回帰へ登録�
 旧manifestの省略はbHasSubmeshCounts=false/数量0の「未知」として保持し、1件と推測して表示しない。
 他資産の追記mergeでも、既知の数量は保持し、旧省略は省略のまま残す。
 source hashや通常loadの互換は変更しない。既存0.2 cacheのmanifestに数量がない場合も、未知として扱い勝手に補完しない。
-純数量条件と既存layoutを検査し、manifest解析/1・2・8primitive cook/CLI/merge回帰を登録する。
 Windows依存のnative/CLI/CMake/PowerShell実行はこの環境では未実行。

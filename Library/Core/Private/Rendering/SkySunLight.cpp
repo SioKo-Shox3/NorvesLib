@@ -16,6 +16,7 @@ namespace NorvesLib::Core::Rendering
         const Math::Vector3 illuminance = ComputeSunGroundIlluminance(sanitized);
         const float luminance = 0.2126f * illuminance.x + 0.7152f * illuminance.y +
                                 0.0722f * illuminance.z;
+        // 雲の直達の係数には下限があるので、曇り度では 0 にならない（0 になるのは透過率が 0 のときだけ）。
         if (!std::isfinite(luminance) || luminance <= 0.0f)
         {
             return false;

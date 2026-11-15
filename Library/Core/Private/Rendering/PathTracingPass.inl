@@ -54,6 +54,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t SampleState[4] = {};
             /** @brief rgb=地表での太陽の事前露出照度（大気の透過率込み） */
             float SkySunIlluminance[4] = {};
+            /** @brief rgb=霧の色味、w=空への寄せ（0..1） */
+            float FogTintAndSkyBlend[4] = {};
+            /** @brief x=基準の仰角の正弦、y=余弦、zw=0 */
+            float FogReferenceElevation[4] = {};
         };
 
         struct PathTracingInstance
@@ -85,7 +89,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t Reserved = 0u;
         };
 
-        static_assert(sizeof(PathTracingParameters) == 272u);
+        static_assert(sizeof(PathTracingParameters) == 304u);
         static_assert(sizeof(PathTracingInstance) == 144u);
         static_assert(sizeof(PathTracingEmissiveInstance) == 16u);
         static_assert(sizeof(GPULightData) == 64u);
@@ -184,6 +188,16 @@ namespace NorvesLib::Core::Rendering
             hash = HashPathBytes(hash, &sky.GroundAlbedo.x, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.y, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.z, sizeof(float));
+            hash = HashPathBytes(hash, &sky.GroundAltitudeMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.CloudCover, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastIlluminanceFraction, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastZenithToHorizonRatio, sizeof(float));
+            hash = HashPathBytes(hash, &sky.DirectLightExponent, sizeof(float));
+            hash = HashPathBytes(hash, &sky.SunDiskVisibleBelowCover, sizeof(float));
+            hash = HashPathBytes(hash, &sky.SunDiskHiddenAboveCover, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastTint.x, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastTint.y, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastTint.z, sizeof(float));
             return HashPathBytes(hash, &preExposure, sizeof(preExposure));
         }
 
@@ -213,6 +227,17 @@ namespace NorvesLib::Core::Rendering
             parameters.FogDensityHeightFalloffAndEnabled[2] =
                 fog.HeightFalloffPerUnit;
             parameters.FogDensityHeightFalloffAndEnabled[3] = 1.0f;
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                parameters.FogTintAndSkyBlend[channel] = fog.Tint[channel];
+            }
+            parameters.FogTintAndSkyBlend[3] = fog.SkyBlend;
+            const FogReferenceElevationSinCos referenceElevation =
+                ComputeFogReferenceElevationSinCos(fog);
+            parameters.FogReferenceElevation[0] = referenceElevation.Sin;
+            parameters.FogReferenceElevation[1] = referenceElevation.Cos;
+            parameters.FogReferenceElevation[2] = 0.0f;
+            parameters.FogReferenceElevation[3] = 0.0f;
             const float color[] = {
                 scene->FogColorR, scene->FogColorG, scene->FogColorB};
             for (uint32_t channel = 0u; channel < 3u; ++channel)
@@ -302,8 +327,12 @@ namespace NorvesLib::Core::Rendering
                                  sizeof(parameters.FogColorAndPreExposure));
             hash = HashPathBytes(hash, parameters.FogLightDirectionAndAnisotropy,
                                  sizeof(parameters.FogLightDirectionAndAnisotropy));
-            return HashPathBytes(hash, parameters.FogLightRadianceAndEnabled,
+            hash = HashPathBytes(hash, parameters.FogLightRadianceAndEnabled,
                                  sizeof(parameters.FogLightRadianceAndEnabled));
+            hash = HashPathBytes(hash, parameters.FogTintAndSkyBlend,
+                                 sizeof(parameters.FogTintAndSkyBlend));
+            return HashPathBytes(hash, parameters.FogReferenceElevation,
+                                 sizeof(parameters.FogReferenceElevation));
         }
 
         RHI::DescriptorSetDesc CreatePathTracingDescriptorSetDesc()

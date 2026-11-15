@@ -94,11 +94,11 @@ linear = encoded <= 0.04045
 - `MaxFlipError`: error mapの最大値。診断記録用で、R0の単独gateにはしない。
 - `MaxChannelDelta` とそのX/Y/channel座標: Task 2のraw hard gate値と診断記録。
 
-【決定】mean FLIP thresholdとraw hard thresholdは独立して評価し、どちらか一方のfailureを他方の良好値で相殺しない。【決定】初回校正は固定条件のindoor/outdoor baseline、無変更の通常実行10回で得るnoise、選定指標で検出すべき人工差を収集し、「無変更で緑」と「人工差で赤」を分離できる値をテストコード内定数として固定する。実測分布、算出方法、採用値をTask 6の検証記録へ残す。分離できない場合はthresholdを都合よく緩めず、S1を再オープンする。
+【決定】mean FLIP thresholdとraw hard thresholdは独立して評価し、どちらか一方のfailureを他方の良好値で相殺しない。【決定】初回校正は固定条件のindoor/outdoor baseline、無変更の通常実行10回で得るnoise、選定指標で検出すべき人工差を収集し、「無変更で緑」と「人工差で赤」を分離できる値を校正結果として固定する。実測分布、算出方法、採用値をTask 6の検証記録へ残す。分離できない場合はthresholdを都合よく緩めず、S1を再オープンする。
 
 ## プロトタイプコスト
 
-- 本命候補を安く検証する方法と判定基準: 【決定】Task 6 Step 1–6を低コストprototypeとする。2 vendor fileのidentity検査、CPU-only adapter、sRGB EOTF、LDR-FLIP metrics、raw hard gate併用、最小unit testまでに限定する。
+- 本命候補を安く検証する方法と判定基準: 【決定】Task 6 Step 1–6を低コストprototypeとする。2 vendor fileのidentity検査、CPU-only adapter、sRGB EOTF、LDR-FLIP metrics、raw hard gate の併用までに限定する。
 - 合格: 【決定】identical imageの`MeanFlipError`と`MaxFlipError`が`0`、人工差が`>0`、raw hard gateが同じ人工差を独立検出し、upstream STL型がNorvesLib header/Coreへ露出しない。
 - 不合格: 【決定】上記のいずれかを満たさない、CPU buildでCUDA closureを要求する、pinned APIがlinear RGB境界へ安全にadapterできない場合。S1を再オープンし、A/B/Cを再提示する。
 
