@@ -11226,3 +11226,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API・FramePacket・RenderThread へ渡す値の危険地帯）。GPU の UBO（`GPUEnvironmentParams`）は G7-GR53-WET-WRITERS、時刻・雨量の値は G7-GR49-ENV-SYSTEM。見た目は変わらない（既定の値は 0 で、まだ読み手が無い）。撮影・計測の確かめは回さない決まり。
 - U1 C++ の環境の UBO の型・詰め方とフレームに 1 つの確保: 着地(直し 0 回)
 - U2 GLSL の環境の UBO の構造体・宣言の型・濡れの感度の読み方: 着地(直し 0 回)
+- U11 GBufferPass の書き手の濡れ（保存した差分を当てて確かめ直す）: 着地(直し 0 回)

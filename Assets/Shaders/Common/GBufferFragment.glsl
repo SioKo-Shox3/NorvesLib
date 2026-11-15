@@ -1,5 +1,7 @@
 ﻿// GBuffer の標準の断片シェーダーの本体。材質ごとのプログラムの FS は、この本体か
 // Common/GBufferEncoding.glsl の GBufferEncodeNormal・GBufferEncodeMaterial・GBufferEncodeEmissive を通して 5 枚へ書く約束。
+// 材質ごとのプログラムの FS も、環境の UBO（set 0 / binding 12）を読み、GBuffer へ書く前に
+// ApplyWetSurfaceFromEnvironment を呼ぶ。濡れの感度は DefaultLit の P0、未指定は 1。
 // GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質だけに使う。
 // discard で深度の書き込みも止めるため、切り抜きの FS では早期の深度テストを宣言しない。
 // 通常の FS の早期深度テストを保つため、切り抜きを分ける。
@@ -47,6 +49,8 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 #endif
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
+#include "Common/WetSurface.glsl"
+NORVES_DECLARE_ENVIRONMENT_UBO(0, 12)
 #define VT_FEEDBACK_BINDING 11
 #ifdef GBUFFER_ALPHA_CLIP
 // 切り抜いた画素の深度への書き込みを discard で止めるため、早期の深度テストを宣言しない。
@@ -126,21 +130,29 @@ void main()
     }
 #endif
 
-    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
-                     textureSamples.Albedo.a);
+    uint id = uint(mvp.shadingModel.x + 0.5) & GBUFFER_SHADING_MODEL_ID_MASK;
+    vec3 albedo = ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples);
+    float metallic = textureSamples.Material.x;
+    float roughness = textureSamples.Material.y;
+    // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
+    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
+    float wetResponse = ResolveWetSurfaceResponse(fragInstanceShadingParams.x, mvp.shadingParams.x,
+                                                  id == GBUFFER_SHADING_MODEL_DEFAULT_LIT);
+    ApplyWetSurfaceFromEnvironment(albedo, roughness, metallic, normal, normalize(geometricNormal),
+                                    u_Environment.params, wetResponse);
+
+    outAlbedo = vec4(albedo, textureSamples.Albedo.a);
 #ifdef GBUFFER_ALPHA_CLIP
     // 残った画素が天球と判定されないよう、不透明として書く。
     outAlbedo.a = 1.0;
 #endif
 
-    uint id = uint(mvp.shadingModel.x + 0.5) & GBUFFER_SHADING_MODEL_ID_MASK;
-
-    // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
-    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
     const uint receiverFlags = mvp.vtFeedbackParams.w > 0.5 ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u;
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
     // シェーディングモデルに応じた材質値と P0 を書く。
+    textureSamples.Material.x = metallic;
+    textureSamples.Material.y = roughness;
     outMaterial = GBufferEncodeMaterialForShadingModel(textureSamples.Material, params.x, id);
 
     // 発光のプリエクスポージャ後の値とシェーディングパラメータ P1 を書く。

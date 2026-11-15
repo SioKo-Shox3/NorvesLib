@@ -370,6 +370,8 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+        // フレームの環境定数を借りられない文脈用。初期化時に一度だけ書く。
+        RHI::BufferPtr m_DefaultEnvironmentBuffer;
         int8_t m_MaterialDescriptorCacheState = -1;
 
         // デフォルトテクスチャ・サンプラー（テクスチャ未設定オブジェクト用）
