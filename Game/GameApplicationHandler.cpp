@@ -28,6 +28,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
+#include "GameModes/AssetPreview/AssetPreviewMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
 #endif
@@ -930,6 +931,7 @@ namespace Game
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
+        m_AssetPreviewArguments = {};
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
@@ -1034,6 +1036,13 @@ namespace Game
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
         ParseBridgePortOption(args);
+
+        String assetPreviewError;
+        if (!Game::GameModes::ParseAssetPreviewArguments(args, m_AssetPreviewArguments, assetPreviewError))
+        {
+            LOG_ERROR_F("ASSET_PREVIEW_ARGS_INVALID %s", assetPreviewError.c_str());
+            return false;
+        }
 
         // コマンドライン引数の処理
         for (size_t i = 0; i < args.size(); ++i)
@@ -5127,6 +5136,10 @@ namespace Game
             return false;
         }
         m_StartupSceneId = String(scene->Id);
+        if (m_AssetPreviewArguments.HasAny() && !Scenes::SceneTextEquals(scene->Id, Scenes::kAssetPreviewSceneId))
+        {
+            LOG_WARNING_F("ASSET_PREVIEW_ARGS_IGNORED scene=%s --asset-preview-* は asset-preview のシーンだけで使います", scene->Id);
+        }
 
         // 視点の一覧。先頭が既定の視点。撮影スクリプトが -Views を省いたときに、全視点を撮るのに読む。
         {
@@ -5274,7 +5287,7 @@ namespace Game
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
                                  mode == Game::GameModes::Grassland ||
                                  mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
-                                 mode == Game::GameModes::InteriorLight;
+                                 mode == Game::GameModes::InteriorLight || mode == Game::GameModes::AssetPreview;
         if (viewNames.size() > 1 && !bSwitchable)
         {
             LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
@@ -5671,6 +5684,41 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
+            });
+        // 資産の確認用シーン asset-preview も開発ビルドだけ。資産・クリップ・時刻・視点・台本は起動引数から渡す。
+        registerMode(
+            AssetPreview,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime, bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             viewSwitch = &m_SceneViewSwitch, arguments = m_AssetPreviewArguments, reportPath = m_SceneReportPath,
+             getSkeletalRuntime = [this]() -> SkeletalAssetRuntime*
+             {
+                 if (!m_AssetSystemSnapshot || !NorvesLib::Core::Engine::GEngine)
+                 {
+                     return nullptr;
+                 }
+                 auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+                 const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
+                 if (bound != SkeletalRuntimeStatus::Success && bound != SkeletalRuntimeStatus::Unchanged)
+                 {
+                     LOG_WARNING_F("ASSET_PREVIEW_SKELETAL_BIND_FAILED status=%u", static_cast<uint32_t>(bound));
+                     return nullptr;
+                 }
+                 return session.GetRuntime();
+             }](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<AssetPreviewMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                mode->GetData().m_Arguments = arguments;
+                mode->GetData().m_SceneReportPath = reportPath;
+                mode->GetData().m_GetSkeletalRuntime = getSkeletalRuntime;
                 return mode;
             });
 #endif
