@@ -356,6 +356,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
+    Private/Rendering/ShadowCasterCollection.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/WetSurface.cpp
     Private/Rendering/DfgLut.cpp
@@ -430,6 +431,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
+    Private/Resource/GltfNodeTransform.h
+    Private/Resource/GltfNodeTransform.cpp
     Private/Resource/ImportSettingsFile.h
     Private/Resource/ImportSettingsFile.cpp
     Private/Resource/ImportSettingsHash.h
@@ -771,6 +774,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/IBoardProxySink.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
+    Public/Rendering/DepthConvention.h
     Public/Rendering/CameraPicking.h
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h

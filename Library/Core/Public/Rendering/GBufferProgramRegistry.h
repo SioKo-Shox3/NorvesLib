@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/MaterialTypes.h"
+#include "Rendering/TemporalAA.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedMap.h"
 #include "RHI/RHITypes.h"
@@ -65,23 +66,29 @@ namespace NorvesLib::Core::Rendering
         Hash = 2
     };
 
+    /** @brief Hash の位相の周期。GLSL の ALPHA_CLIP_HASH_PHASE_COUNT と同じ値に保ち、TAA のジッタの周期と一致させる。 */
+    inline constexpr uint32_t GBufferAlphaHashPhaseCount = 8u;
+    static_assert(GBufferAlphaHashPhaseCount == TemporalAAJitterSampleCount,
+                  "GBuffer alpha hash phase count must match the TAA jitter sample count");
+
     /**
-     * @brief Masked の切り抜き方式を求める。TAA が掛からないビューでは Hash を Test に落とす。
+     * @brief Masked の切り抜き方式を求める。不透明度が 1 未満なら残像として Hash で切り抜き、TAA が掛からないビューでは Test に落とす。
      * 視界確保の印だけが付いた不透明の材質は None のままにする。
      */
-    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied);
+    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied, float opacity = 1.0f);
 
     /**
      * @brief 標準の不透明の経路に載せず、別に描く材質かを求める。
      *
      * 独自プログラム・Masked・両面・視界確保の遮蔽物を対象とする。
      * 可視バッファが on のときは ID のラスタから外して解決の後に重ね、fallback では標準の後に分けて描く。
+     * 不透明度が 1 未満なら残像として Hash で切り抜くため、重ねの経路へ送る。
      * 早期の深度の恩恵を標準の不透明の材質に残す。
      */
-    bool RequiresGBufferOverlay(const MaterialResourceData* material);
+    bool RequiresGBufferOverlay(const MaterialResourceData* material, float opacity = 1.0f);
 
-    /** @brief 材質と描画の種類からパイプラインの鍵を作る。 */
-    GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe);
+    /** @brief 材質と描画の種類から鍵を作る。不透明度が 1 未満なら残像として Hash で切り抜くパイプラインを選ぶ。 */
+    GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe, float opacity = 1.0f);
 
     /** @brief 描画スレッド専用のパイプライン表。失敗も Clear まで記憶し、ロックは行わない。 */
     template <typename Pipeline>

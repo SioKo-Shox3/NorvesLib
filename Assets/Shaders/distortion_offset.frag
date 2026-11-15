@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+
 // 手前の物に隠れない円盤から、画面の高さを単位とする歪みを出力する。
 // 独立した二つの値ノイズで方向を作り、円盤の縁で滑らかに弱める。
 
@@ -47,7 +49,7 @@ float valueNoise(vec2 p, uint noiseSeed)
 
 void main()
 {
-    if (texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r < gl_FragCoord.z)
+    if (IsCloserDepth(texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r, gl_FragCoord.z))
     {
         discard;
     }

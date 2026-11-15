@@ -1707,6 +1707,11 @@ namespace NorvesLib::Tools::AssetCook
         bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
                                        Core::Container::AnsiString& outError)
         {
+            if ((request.Kind == "model" || request.Kind == "animation") &&
+                RejectFbxModelSourceFile(request.InputPath, outError))
+            {
+                return false;
+            }
             std::string clipError;
             if (!ValidateClipOptimizeOptions(request.ClipOptimize, clipError))
             {
@@ -2052,6 +2057,11 @@ namespace NorvesLib::Tools::AssetCook
     }
     bool CookSingleAsset(const SingleAssetCookRequest& request, Core::Container::AnsiString& outError)
     {
+        if ((request.Kind == "model" || request.Kind == "animation") &&
+            RejectFbxModelSourceFile(request.InputPath, outError))
+        {
+            return false;
+        }
         std::string clipError;
         const bool bRetargetClip = Detail::HasRigRetarget(request) && request.Kind == "animation" &&
                                    request.Format == "nvskel.v1.clips";

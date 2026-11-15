@@ -6271,7 +6271,7 @@
 - notes: GR63 の Phase 0（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-2)〜(0-5)）。パレットの 1 フレーム 1 回の共有は GR32 で済んでいる（`Docs/Architecture/SkinnedPaletteSharing.md`。component ごとに 1 回作り GBuffer・影・点光源の影で共有）ので、ここではやらない（「段階をまたぐ注意」4468 行）。10-02 の後に既定の描画が可視バッファ（`VisibilityBufferMode.h`。スキンは `SkinningComputePass` が計算で変形して ID を描く）と太陽の VSM（Game の既定。検証アプリは CSM。`ApplicationProcessor.cpp:1209`）になったので、絞り込みは可視バッファ・fallback・CSM の 3 つに入れる（ロードマップは GBufferPass と CSM だけを書いている）。VSM は塊ごとのスライスの絞り込みが既にある（`VirtualShadowMapCasters.h`）ので、部位の境界を入れる G10-GR63-PART-CULL で塊の境界を細かくする。影の調整口とカスケードの絞り込みは「段階をまたぐ注意」4471 行のとおり共通の部品として G10 で作り、G11 の GR114 はこれを拡張する。名前は G10 の ShadowParameters と G11 の DirectionalShadowParameters を 1 つにし、既にある `SunShadowMaxDistance` に合わせて `SunShadowParameters` にした。選定課題 G10-S2（巨大シ者の遠距離の影）は推奨どおり、(B) に調整口を付けた形と決めた: 最大距離と分割は `SunShadowParameters` で変えられ、既定（80 m）は据え置く。距離を伸ばしたときの近いカスケードのテクセルと犬の影の解像度は G10-GR63-GIANT-CHECK で測って記録する。理由: 伸ばすと主役の犬の影が劣化し（要件 GR63 の (b)）、PaleFlat（GR65）で影欠けが目立ちにくく、専用の影（C）は計測の前に作る根拠が無い。計測は G10-GR63-GIANT-CHECK（RelWithDebInfo）で行い、この項目では測らない。危険地帯（RenderThread・影・可視バッファ）なので評価者を通す。絞り込みは見えない描画を省くだけなので、起動画面の見た目（絶対規則 7）は golden で守る。回帰の足場の既存の赤（ロードマップ 1974 行）: `SkinnedRenderPathContractTest` は止まっている（`Test/Core/Rendering/CMakeLists.txt:2291` の注釈。TEST-SKINNED）ので verify に入れず、着手の前に `SkeletalFramePacketSnapshotTest` の今の結果を PROGRESS.md に記録して、増えた失敗だけを回帰とみなす。やらないこと: LOD（G10-GR63-LOD-BUILDER・G10-GR63-LOD-RUNTIME）、部位の境界（G10-GR63-PART-CULL）、velocity の印（G10-GR63-VELOCITY-GUARD）、GPU 時間の計測。
 
 ## G10-GR63-VELOCITY-GUARD: 前のフレームでカメラの背後・near 面の近くだった頂点の画素に「履歴なし」の印を書き、TAA と動きぼけがそれを読んで大きなにじみを出さないようにする
-- status: todo
+- status: done
 - after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR63
 - needs-gr: GR30
@@ -6319,7 +6319,7 @@
 - notes: 要件 `#### GR65` の受け入れ確認「校正の記録」と、ロードマップ 1958 行の基準の条件。GR100（G18 の指標）はまだ無いので、PNG の ROI の値で代える（ロードマップ 1967 行の「校正を PNG と metrics.json で代える」）。±4/255 は要件の仮の値で、作者が決めた値ではない（根拠なし）。文書の名前は R0〜R8 と衝突しない `PaleFlatAcceptance.md`（要件の規約）。
 
 ## G10-GR64-GHOST-RENDER: スキンに不透明度を持たせ、アルファハッシュと TAA で半透明の残像として GBuffer へ描き、影は落とさない
-- status: todo
+- status: done
 - after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR64
 - needs-gr: GR27, GR30
@@ -6361,7 +6361,7 @@
 - notes: ロードマップ 1949・1961 行、要件 `#### GR20` の設計案 (1)(2)・時刻の扱い・実装順 1)。選定課題 G10-S7（しがみつきの範囲）は推奨どおり (A) ぶら下がるだけ（拘束・張力・ゲージ・解除）と決めた。理由: 企画の「柄をくわえてしがみつく」は表面を歩く・登ることに触れておらず、(B) の `SurfaceWalker` は半辺の構造と頂点の溶接が要って規模が XL に近づく（ロードマップの非ゴール）。採るなら作者が決めて別の項目にする。選定課題 G10-S8（物理の方式）は推奨どおり (A) Gameplay の Grip のサブシステムの自前の位置ベースの拘束（1 拘束・1 質点。Physics は変えない）と決めた。理由: 外部の物理の導入は作者の判断で、複数の拘束・多体・回転が要ると分かった時点で (B) を再評価する（`m8-minimal-physics-plan.md` の方針）。手応えの調整は `GripTuning` の JSON で行う。時刻: ソルバは可変のフレームで回す（固定ステップで回すと 1 フレームに 0〜8 回走るうえ姿勢が同じで、張力が 1 回目に集中する。要件の「時刻の扱い」）。G10 の他の項目と触るファイルが交わらないので、G8 の Gameplay の骨組みができたら並列に走れる。JSON の読み込みはアセットの読み込みの危険地帯に当たるので評価者を通す（G8-GR16-JOINT-DATA-RESPONSE と同じ扱い）。やらないこと: Component・犬のルートの駆動・接触（G10-GR20-GRIP-COMPONENTS）、足の暴れ（G10-GR20-LEG-FLAIL）。
 
 ## G11-GR114-SHADOW-PARAMS: 太陽の影の値の型 SunShadowParameters に有効・弱い日差しでの停止・投影物の三角形の上限を足し、MegaGeometry の投影物の上限の守りを入れる
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G10-GR63-SKIN-CULL
 - gr: GR114
 - needs-gr: GR25, GR27
@@ -6505,7 +6505,7 @@
 - notes: 選定課題 G12A-S2（GR31 の経路。G12 の節には選定課題の一覧が無い〔ロードマップ 4597 行〕ので、前半の計画役が G12A-S<n> の番号で決めた）: (A) ロードマップの案（Entity を持たない新しい `GpuInstanceSet`・`chunk_cull.comp`・`instance_cull.comp`・`instanced_gpu.vert` と自前の Hi-Z。ロードマップ 2091〜2118 行）、(B) 今の MegaGeometry の経路をそのまま GR31 の実装とし、足りない契約の試験だけを足す、のうち (B) を採る。理由: (A) の前提（MegaGeometry はインスタンスごとに dispatch・UBO・間接のバッファを持ち、Hi-Z は無効。ロードマップ 2079・2083 行）は今は崩れている。範囲→席の 1 席 1 スレッドのカリング（SCN-MEGA-INSTANCE-CULL）、BVH の段の間接 dispatch（SCN-MEGA-BVH-INDIRECT）、前フレームの HZB の 2 パスの遮蔽（SCN-MEGA-PREV-HIZ・SCN-MEGA-TWOPASS-INSTANCES・SCN-MEGA-TWOPASS-CLUSTERS）、クラスタの LOD、可視バッファの材質の解決（材質ごとの描画を要らなくする）、太陽・点光源の VSM の BVH のカリング（画面外の投影物を含む。SCN-MEGA-VSM-BVH-SUN）、席ごとの TLAS の選択（SCN-MEGA-RT-SELECT）が done で、要件の内容（インスタンス単位の GPU のカリングと LOD を 1 回のディスパッチに、Hi-Z の再有効化）を満たす。3 つ目のインスタンスの経路を作ると影・RT・可視バッファを二重に持つ（G5B-S9 と同じ理由）。足りないのは、これらが撮影の比較（起動画面・バナナ・旋回の「遮蔽 Off との一致」）でしか確かめられていない点で、取りこぼし（偽のカリング）は端の数本が 1 枚の絵から消えるだけなので撮影では見分けにくく、ログにも出ず黙って起きる（Docs/Testing.md の 3 点）。この試験で縛る。試験の束縛は GeometryPageRequestVulkanTest が外された理由（シェーダーの束縛を手で写した。Docs/Testing.md 62 行）を繰り返さないよう、パスの側の定義を使う。UNCERTAIN: 範囲・席の段だけを単独で dispatch できるかは未確認（`MegaGeometryPass.cpp` は 7861 行で、段の記述子は 680 行付近で作る）。単独で回せない場合は、パスに試験用の入口（段の資源を外から与える）を足す形にし、パスの既定の動きは変えない。100 万本のカリングの GPU 時間の記録（ロードマップ 2584 行）は SCN-MEGA-ACCEPT-1M（todo）が行うので、ここでは測らない。通常のメッシュ（MeshComponent）の LOD の選択（ロードマップ 2093 行の L0）は GR48（G12 の後半の MeshLODSelectionTest）に任せる。G12-GR39-REVERSE-Z が HZB の向き（max → min）を変えるので、この試験を先に入れて安全網にする。危険地帯（RenderThread・RHI の使い方）なので評価者を通す。
 
 ## G12-GR39-DEPTH-CONVENTION: 深度の規約（クリア値・比較・背景の判定・線形化）を C++ と GLSL の 1 か所に集め、深度の決め打ちのしきい値をなくす
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR39
 - needs-gr: GR25, GR27, GR30, GR43
@@ -6940,7 +6940,7 @@
 - notes: 確かめ直し (b)(c)。Handoff 6 節の件の今: NVSKEL v1 の profile2/3 は `skin.skeleton` の省略を受け、関節の集合から唯一の根を求める(`SkeletalGltfDecode.cpp:1501-1517`、`RigStaticRootFrame128.md` の「選択と互換」)。`--rig-split` と asset-set の skeletal は profile3 が既定(`RigSplitFileCli.cpp:46`、`RigSingleCook.cpp:142`)なので、Blender の資産は v1 の経路では入る。試験は合成の Armature の fixture(`RigStaticRootFrameImportTest.cpp:65-160`)で、省略と hint の両方を確かめている。残り: 旧 NVSKEL 0.2(`--kind model --entry-type Skl0` と `DecodeSkeletalGltf`)は今も `skeleton` を必須にしていて(1651〜1655 行)、glTF の仕様で省略してよい値を拒否する。Blender の書き出しの形をそのまま写した fixture も無い(既存の M9Skinned の fixture はどれも `"skeleton": 0` を持つ。`GLTFSkeletalAnalyzerTest.cpp:233`)。段階をまたぐ注意(ロードマップ 4449 行)の「求めた根が関節でない場合は子の関節が 1 つならそれを根にする」は、profile1 が非関節の親を拒否する契約なので旧経路には入れず、v1 の経路(Armature を作者 frame に入れる)で満たす。実物の Blender での書き出しと実犬の cook は `G2-GR82-REAL-RIG-CHECK` で行う。
 
 ## G2-GR83-ASSET-PREVIEW-SCENE: 取り込んだ静的モデルと骨格つきの資産を論理パスで並べて置き、クリップ名を指定して再生する確認用のシーンを足す
-- status: todo
+- status: done
 - after: G2-GR83-LOOSE-SKELETAL, G2-GR79-SKINNED-MATERIAL-BUILDER
 - gr: GR83, GR79, GR78
 - done-when: 開発ビルドだけのシーン `asset-preview`(`Game/Scenes/SceneCatalog.h` に id・視点 `front`・`side`・`close`・`top` を足す)を作る。引数は `--asset-preview-model=<論理パス>`(静的モデル。繰り返し可)、`--asset-preview-skeletal=<論理パス>`(骨格つき。繰り返し可)、`--asset-preview-clip=<クリップ名>`(骨格つきの全部に同じ名前を指定。無ければ bind の姿勢)、`--asset-preview-time=<秒>`(決定的な撮影のときにクリップを止める時刻)。静的モデルは `ModelAssetRuntime`、骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける。資産は各々の AABB で横に間隔を空けて床(Y=0)の上に並べ、各資産の原点の印と 1 m の格子を描く。
@@ -6952,7 +6952,7 @@
 - notes: 確かめ直し (c)。要件の実物の受入れ(GR78 の 2 体の犬を同じ実寸で並べる、GR79 の ARM を畳んだ犬の撮影、GR83 の実キャラをクリップ名で再生)は「犬は別シーンか別引数で出し、既定の起動画面は変えない」(要件 GR79 の受け入れ確認、AGENTS.md の絶対規則 7)を求めるが、論理パスで任意の資産を置くシーンが無い(`Game/GameModes/` は Rendering3DTest・Sandbox・MegaBananas などで、M9 の受入れは `M9WorldAcceptance.h:30-31` の固定のパスとクリップ名)。ロードマップは確認ビューア(GR101、G18)を G2 の非ゴールにしている(179 行)ので、ここでは撮影に要る最小のシーンだけを作り、ホットリロード・UI の操作・比較表示は GR101 に残す(GR101 はこのシーンを広げてよい)。`GameApplicationHandler.cpp` と `SceneCatalog.h` は共有のファイルなので差分を小さくする。起動しての確かめは後のタスク(`G2-REAL-DOG-ASSETS-CHECK`・`G2-GR82-REAL-RIG-CHECK`)で行う。
 
 ## G2-GR77-NODE-TRANSFORM: 静的モデルの取り込みで、mesh を持つ node の変換(親の鎖を含む)を頂点へ焼き込み、黙って捨てないようにする
-- status: todo
+- status: done
 - gr: GR77, GR78
 - done-when: 静的モデルの cook(`MeshCooker.cpp` の NVMESH v0/v1)と loose(`GLTFAnalyzer.cpp` の静的の経路)が、既定の scene から mesh 0 を参照する node を 1 つ求め、その node と祖先の TRS または `matrix` の積(double)を、`ExtractMesh` の直後・GR78 の取り込み設定の変換の前に、位置・法線(逆転置で掛けて正規化)・接線(あれば。w の符号も保つ)へ焼き込む。行列式が負なら三角形の巡回を反転して外向きを保つ。mesh を参照する node が 2 つ以上・skin つきの node・非有限・行列式 0 の変換は理由の名前つきで拒否する。変換が恒等(node が無い・TRS が既定)なら、cooked の出力と manifest は今とバイト一致する。
   試験は既存の `ImportStaticIntegrationTest`・`StaticGltfBufferCookTest` にケースとして足す(新しい exe は作らない): node に scale (2,2,2) と Y 軸 90° の回転、その親に平行移動を持つ 2 primitive の GLB で、焼き込み後の全頂点が試験に直に書いた手計算の値と 1e-6 で一致する。鏡像(scale の X が -1)で signed volume が正のまま。v0 で材質の違う 2 primitive は材質名つきで拒否される。node が 2 つの mesh 参照・skin つきの拒否。cook と loose で同じ頂点になる。既存の `AssetCookMeshSmoke`・`AssetCookGlbSmoke`・`ModelResourcesAssetCookSmoke` が無改造で通る。`Docs/Architecture/AssetImportPipeline.md` に順序(node の焼き込み → 取り込み設定)を書く。

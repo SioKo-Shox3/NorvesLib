@@ -28,6 +28,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
+#include "GameModes/AssetPreview/AssetPreviewMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
 #endif
@@ -133,6 +134,10 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
         // --sky-occlusion: すべてのシーンで空の遮蔽を有効にする。
         constexpr const TCHAR *kSkyOcclusionOption = TEXT("--sky-occlusion");
+#if NORVES_BUILD_DEVELOPMENT
+        // --sun-shadow-auto-disable-lux=<lux>: 太陽の地表照度が指定値を下回ると太陽の影を省く（0 は省かない）。
+        constexpr const TCHAR *kSunShadowAutoDisableLuxOption = TEXT("--sun-shadow-auto-disable-lux=");
+#endif
         // --sky-occluder-demo: Rendering3DTest に空の遮蔽物を配置する。
         constexpr const TCHAR *kSkyOccluderDemoOption = TEXT("--sky-occluder-demo");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
@@ -164,6 +169,9 @@ namespace Game
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
         bool s_bSkyOcclusion = false;
+#if NORVES_BUILD_DEVELOPMENT
+        float s_SunShadowAutoDisableLux = -1.0f;
+#endif
         bool s_bSkyOccluderDemo = false;
         // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
@@ -930,6 +938,7 @@ namespace Game
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
+        m_AssetPreviewArguments = {};
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
@@ -997,6 +1006,9 @@ namespace Game
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
         s_bSkyOcclusion = false;
+#if NORVES_BUILD_DEVELOPMENT
+        s_SunShadowAutoDisableLux = -1.0f;
+#endif
         s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
         s_bRendering3DTestHasSunElevation = false;
@@ -1034,6 +1046,13 @@ namespace Game
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
         ParseBridgePortOption(args);
+
+        String assetPreviewError;
+        if (!Game::GameModes::ParseAssetPreviewArguments(args, m_AssetPreviewArguments, assetPreviewError))
+        {
+            LOG_ERROR_F("ASSET_PREVIEW_ARGS_INVALID %s", assetPreviewError.c_str());
+            return false;
+        }
 
         // コマンドライン引数の処理
         for (size_t i = 0; i < args.size(); ++i)
@@ -1988,6 +2007,22 @@ namespace Game
                 continue;
             }
 #if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kSunShadowAutoDisableLuxOption, sceneValue))
+            {
+                if (s_SunShadowAutoDisableLux >= 0.0f)
+                {
+                    LOG_ERROR("--sun-shadow-auto-disable-lux が重複しています");
+                    return false;
+                }
+                float lux = 0.0f;
+                if (!TryParseBoundedFloat(sceneValue, 0.0f, 1.0e9f, lux))
+                {
+                    LOG_ERROR("--sun-shadow-auto-disable-lux は 0 以上の数（lux）で指定してください");
+                    return false;
+                }
+                s_SunShadowAutoDisableLux = lux;
+                continue;
+            }
             if (TryStripPrefix(args[i], kMegaLodErrorPxOption, sceneValue))
             {
                 // 画素の閾値は正の有限な数。MegaGeometryPass が最初に作られる前に環境変数へ渡す。
@@ -3805,6 +3840,15 @@ namespace Game
                 parameters.bEnabled = true;
                 renderWorld.SetSkyOcclusionParameters(parameters);
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_SunShadowAutoDisableLux >= 0.0f)
+            {
+                auto& renderWorld = engine->GetRenderWorld();
+                auto parameters = renderWorld.GetRenderingCoordinator().GetSunShadowParameters();
+                parameters.AutoDisableBelowSunIlluminanceLux = s_SunShadowAutoDisableLux;
+                renderWorld.SetSunShadowParameters(parameters);
+            }
+#endif
 
             // Game の Component の毎フレームの処理を World の順序付きの系へ登録する（シーンが作る前に済ませる）
             Game::Gameplay::FollowCameraComponent::RegisterTick(engine->GetWorld());
@@ -5127,6 +5171,10 @@ namespace Game
             return false;
         }
         m_StartupSceneId = String(scene->Id);
+        if (m_AssetPreviewArguments.HasAny() && !Scenes::SceneTextEquals(scene->Id, Scenes::kAssetPreviewSceneId))
+        {
+            LOG_WARNING_F("ASSET_PREVIEW_ARGS_IGNORED scene=%s --asset-preview-* は asset-preview のシーンだけで使います", scene->Id);
+        }
 
         // 視点の一覧。先頭が既定の視点。撮影スクリプトが -Views を省いたときに、全視点を撮るのに読む。
         {
@@ -5274,7 +5322,7 @@ namespace Game
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
                                  mode == Game::GameModes::Grassland ||
                                  mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
-                                 mode == Game::GameModes::InteriorLight;
+                                 mode == Game::GameModes::InteriorLight || mode == Game::GameModes::AssetPreview;
         if (viewNames.size() > 1 && !bSwitchable)
         {
             LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
@@ -5671,6 +5719,41 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
+            });
+        // 資産の確認用シーン asset-preview も開発ビルドだけ。資産・クリップ・時刻・視点・台本は起動引数から渡す。
+        registerMode(
+            AssetPreview,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime, bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             viewSwitch = &m_SceneViewSwitch, arguments = m_AssetPreviewArguments, reportPath = m_SceneReportPath,
+             getSkeletalRuntime = [this]() -> SkeletalAssetRuntime*
+             {
+                 if (!m_AssetSystemSnapshot || !NorvesLib::Core::Engine::GEngine)
+                 {
+                     return nullptr;
+                 }
+                 auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+                 const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
+                 if (bound != SkeletalRuntimeStatus::Success && bound != SkeletalRuntimeStatus::Unchanged)
+                 {
+                     LOG_WARNING_F("ASSET_PREVIEW_SKELETAL_BIND_FAILED status=%u", static_cast<uint32_t>(bound));
+                     return nullptr;
+                 }
+                 return session.GetRuntime();
+             }](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<AssetPreviewMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                mode->GetData().m_Arguments = arguments;
+                mode->GetData().m_SceneReportPath = reportPath;
+                mode->GetData().m_GetSkeletalRuntime = getSkeletalRuntime;
                 return mode;
             });
 #endif

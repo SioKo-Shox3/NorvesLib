@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+
 // ========================================
 // Screen-Space Reflections (SSR)
 // Hi-Z Raymarching with binary refinement
@@ -141,8 +143,8 @@ void main()
     // GBufferデータ取得
     float depth = texture(gbufferDepth, fragUV).r;
 
-    // 背景（深度=1.0）はスキップ
-    if (depth >= 0.999)
+    // 背景（クリア値と等しい深度）はスキップし、距離では切らない
+    if (IsBackgroundDepth(depth))
     {
         outColor = sceneColorSample;
         return;

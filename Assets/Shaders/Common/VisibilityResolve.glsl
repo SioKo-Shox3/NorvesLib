@@ -70,6 +70,7 @@
 #define VIS_VERTEX_ANIM_PARAMS_TABLE_SET 0
 #define VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING 32
 #include "Common/GBufferEncoding.glsl"
+#include "Common/VelocityEncoding.glsl"
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VertexAnimation.glsl"
@@ -567,21 +568,15 @@ VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter, bool
     return result;
 }
 
-// ラスタの経路（gbuffer.frag）と同じ式・同じ無効の扱いの速度（現在の NDC - 前の NDC の半分）
+// ラスタの経路（gbuffer.frag）と同じ UV 差と無効時の 0 を返し、前のフレームの w が閾値以下なら履歴なしの印を返す。
 vec2 VisComputeVelocity(vec2 pixelCenter, vec4 previousClip)
 {
-    if ((params.screen.z & RESOLVE_FLAG_PREVIOUS_VALID) == 0u || abs(previousClip.w) <= 1.0e-6)
+    if ((params.screen.z & RESOLVE_FLAG_PREVIOUS_VALID) == 0u)
     {
         return vec2(0.0);
     }
     const vec2 currentNdc = (pixelCenter - params.viewport.xy) / params.viewport.zw * 2.0 - 1.0;
-    const vec2 previousNdc = previousClip.xy / previousClip.w;
-    const vec2 velocity = (currentNdc - previousNdc) * 0.5;
-    if (any(notEqual(velocity, velocity)) || dot(velocity, velocity) >= 1.0e6)
-    {
-        return vec2(0.0);
-    }
-    return velocity;
+    return VelocityFromClip(currentNdc, previousClip);
 }
 
 // ========================================

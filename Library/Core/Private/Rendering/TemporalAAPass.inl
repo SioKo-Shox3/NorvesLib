@@ -366,6 +366,7 @@ namespace NorvesLib::Core::Rendering
             outJitter = m_FrameJitter;
             return true;
         }
+        m_FrameJitterIndex = m_JitterIndex;
         m_FrameJitter = ComputeTemporalAAJitter(m_JitterIndex, width, height);
         // 開発ビルドの --taa-jitter-scale（既定 1）。解決の段もこのずらし量を読むので、ここで一緒に縮める
         const float jitterScale = GetTemporalAABlendParams().JitterScale;
