@@ -62,4 +62,7 @@ namespace Game::GameModes
     /// 仮想化ジオメトリの負荷シーン（開発ビルドだけランチャーに出る）。多種のメッシュの個別 Entity を置く
     inline constexpr NorvesLib::Core::GameMode::GameModeId MegaStress = "MegaStress"_id;
 
+    /// 取り込んだ資産を論理パスで並べてクリップを再生する確認用シーン（開発ビルドだけランチャーに出る）
+    inline constexpr NorvesLib::Core::GameMode::GameModeId AssetPreview = "AssetPreview"_id;
+
 } // namespace Game::GameModes
