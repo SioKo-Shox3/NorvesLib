@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/FrameReadback.h"
+#include "Rendering/FrameUploadArena.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
@@ -936,6 +937,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t InFlightIndex = 0;
             FrameSlot *Slot = nullptr;
             float TerrainWetness = 0.0f; // 同じフレームの写しから読んだ地形の濡れ度
+            FrameUploadAllocation EnvironmentConstants; // 同じフレームの記録へ渡す環境の定数
         };
 
         /**
@@ -1421,6 +1423,7 @@ namespace NorvesLib::Core::Rendering
 
         // デフォルトPBRテクスチャ（マテリアル未設定時のフォールバック）
         Container::TUniquePtr<ConstantMaterialTextureCache> m_ConstantMaterialTextures;
+        RHI::BufferPtr m_DefaultEnvironmentBuffer; // 環境を借りられないときの不変な既定値
         RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 — Albedo/AO/Roughnessデフォルト
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
