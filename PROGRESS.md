@@ -11258,3 +11258,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（RenderThread のデータ契約・危険地帯）。消費側（草・地表・低木）の配線は G12-GR45-GRASS-DRYNESS など。今はどの消費側も `SampleDryness` を呼ばず、源を置くシーンも無いので見た目は変わらない。撮影・計測の確かめは回さない決まり。配線の後に人が見るときの見どころは、`WitherSourceComponent` で枯れ源を置いた草地の、主カメラから 32 m 前後（近傍の縁、4 m の寄せ幅）で枯れ地の境が段や継ぎ目なく続くか。
 - Notes: paths の外で 2 ファイルに最小の配線を足した: `ViewRenderContext.h`（パスがパケットの源を読む欄 1 つ）、`Engine.cpp`（毎フレームの `UpdateWorldFieldInteractors()` で Vegetation の源を渡す 1 行）。源は状態なので coordinator の保持はパケットへ写した後も消さない（interactors は毎フレーム空にする）。`DrynessMap::DefaultGpuSourceLimit` は `Rendering::WorldFieldDrynessMaxSources` を指すようにした（値は 64 のまま）。
 - U1 種別ごとの枯れ度の設定を JSON から読み、GPU の種別表へ写す: 着地(直し 0 回)
+- U2 草の場の cook で NVTRN の枯れ草の層を LayerB の A へ写す: 着地(直し 0 回)
