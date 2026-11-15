@@ -14,6 +14,11 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t WorldFieldChannelAll = 0x7u;
     inline constexpr uint32_t WorldFieldMaxInteractors = 32u;
     inline constexpr uint32_t WorldFieldResolution = 256u;
+    inline constexpr uint32_t WorldFieldDrynessMaxSources = 64u;
+    inline constexpr uint32_t WorldFieldDrynessResolution = 256u;
+    inline constexpr float WorldFieldDrynessDefaultNearTexelMeters = 0.25f;
+    inline constexpr float WorldFieldDrynessDefaultFarTexelMeters = 2.0f;
+    inline constexpr float WorldFieldDrynessDefaultNearBlendMeters = 4.0f;
 
     /** @brief 世界座標 m のカプセル。std430 の配列へそのまま転送できる並び。 */
     struct alignas(16) WorldFieldInteractor
@@ -37,6 +42,31 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(WorldFieldInteractor, PrevP1) == 48);
     static_assert(offsetof(WorldFieldInteractor, ChannelMask) == 60);
 
+    /** @brief std140 の UBO の配列へそのまま写す並び。式は Vegetation::DrynessMap::Sample と同じ。 */
+    struct alignas(16) WorldFieldDrynessSource
+    {
+        float CenterXZ[2] = {};
+        float RadiusA = 0.0f;
+        float RadiusB = 0.0f;
+        float CosYaw = 1.0f;
+        float SinYaw = 0.0f;
+        float Falloff = 0.0f;
+        float Level = 0.0f;
+        float Reserved0[4] = {};
+        float Reserved1[4] = {};
+    };
+    static_assert(alignof(WorldFieldDrynessSource) == 16);
+    static_assert(sizeof(WorldFieldDrynessSource) == 64);
+    static_assert(offsetof(WorldFieldDrynessSource, CenterXZ) == 0);
+    static_assert(offsetof(WorldFieldDrynessSource, RadiusA) == 8);
+    static_assert(offsetof(WorldFieldDrynessSource, RadiusB) == 12);
+    static_assert(offsetof(WorldFieldDrynessSource, CosYaw) == 16);
+    static_assert(offsetof(WorldFieldDrynessSource, SinYaw) == 20);
+    static_assert(offsetof(WorldFieldDrynessSource, Falloff) == 24);
+    static_assert(offsetof(WorldFieldDrynessSource, Level) == 28);
+    static_assert(offsetof(WorldFieldDrynessSource, Reserved0) == 32);
+    static_assert(offsetof(WorldFieldDrynessSource, Reserved1) == 48);
+
     /** @brief 画像を記録した世界座標。uv = (worldXZ - OriginXZ) / ExtentMeters。 */
     struct WorldFieldState
     {
@@ -51,6 +81,9 @@ namespace NorvesLib::Core::Rendering
     {
         WorldFieldState Current;
         WorldFieldState Previous;
+        WorldFieldState DrynessNear;
+        WorldFieldState DrynessFar;
+        float DrynessNearBlendMeters = 0.0f;
     };
 
     inline constexpr float WorldFieldDefaultBendScale = 0.7f;
@@ -87,6 +120,28 @@ namespace NorvesLib::Core::Rendering
     /** @brief 両方の座標が有効なら係数を設定し、無効なら詰め物も含めてすべて 0 を返す。 */
     WorldFieldSampleConstants BuildWorldFieldSampleConstants(const WorldFieldFrameState& state);
 
+    /** @brief 近傍・遠景の枯れ度を参照する std140 UBO の定数。 */
+    struct alignas(16) WorldFieldDrynessSampleConstants
+    {
+        float NearOriginXZ[2] = {};
+        float NearInvExtent = 0.0f;
+        uint32_t bEnabled = 0u;
+        float FarOriginXZ[2] = {};
+        float FarInvExtent = 0.0f;
+        float NearBlendMeters = 0.0f;
+    };
+    static_assert(alignof(WorldFieldDrynessSampleConstants) == 16);
+    static_assert(sizeof(WorldFieldDrynessSampleConstants) == 32);
+    static_assert(offsetof(WorldFieldDrynessSampleConstants, NearOriginXZ) == 0);
+    static_assert(offsetof(WorldFieldDrynessSampleConstants, NearInvExtent) == 8);
+    static_assert(offsetof(WorldFieldDrynessSampleConstants, bEnabled) == 12);
+    static_assert(offsetof(WorldFieldDrynessSampleConstants, FarOriginXZ) == 16);
+    static_assert(offsetof(WorldFieldDrynessSampleConstants, FarInvExtent) == 24);
+    static_assert(offsetof(WorldFieldDrynessSampleConstants, NearBlendMeters) == 28);
+
+    /** @brief 両方の座標が有効なら係数を設定し、無効ならすべて 0 を返す。 */
+    WorldFieldDrynessSampleConstants BuildWorldFieldDrynessSampleConstants(const WorldFieldFrameState& state);
+
     /** @brief 根元で引いた RGBA から世界空間のずれを返す。GLSL の WorldFieldDisplacement と同じ式。
      * h=max(height,0)、s=clamp(t,0,1)、水平のずれ=RG*h*bendScale*s*s、
      * 高さのずれ=-h*s*flattenScale*clamp(B,0,1)。A は変形に使わない。
@@ -116,6 +171,10 @@ namespace NorvesLib::Core::Rendering
         WorldFieldCenterMode CenterMode = WorldFieldCenterMode::Camera;
         float ForwardOffsetMeters = 10.0f;
         float DecayTimeConstantSeconds = 1.5f;
+        bool bDrynessEnabled = true;
+        float DrynessNearTexelMeters = WorldFieldDrynessDefaultNearTexelMeters;
+        float DrynessFarTexelMeters = WorldFieldDrynessDefaultFarTexelMeters;
+        float DrynessNearBlendMeters = WorldFieldDrynessDefaultNearBlendMeters;
     };
 
     float GetWorldFieldExtentMeters(WorldFieldRange range);
@@ -127,6 +186,12 @@ namespace NorvesLib::Core::Rendering
      */
     uint32_t SanitizeWorldFieldInteractors(Container::Span<const WorldFieldInteractor> input,
         Container::VariableArray<WorldFieldInteractor>& output);
+
+    /** @brief 先頭 WorldFieldDrynessMaxSources 件だけを検査して出力を置換し、残した数を返す。
+     * 入力が出力自身を参照していても使用できる。
+     */
+    uint32_t SanitizeWorldFieldDrynessSources(Container::Span<const WorldFieldDrynessSource> input,
+        Container::VariableArray<WorldFieldDrynessSource>& output);
 
     /** @brief フィールド左下の原点を表す整数画素座標（XZ）。初回は無効にする。 */
     struct WorldFieldOrigin

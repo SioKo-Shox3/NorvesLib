@@ -2,6 +2,7 @@
 
 #include "Container/Span.h"
 #include "Container/VariableArray.h"
+#include "Rendering/WorldFieldTypes.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -82,7 +83,8 @@ namespace NorvesLib::Core::Vegetation
     class DrynessMap
     {
     public:
-        static constexpr uint32_t DefaultGpuSourceLimit = 64;
+        /** @brief GPU の UBO の上限と同じ定数を使う。 */
+        static constexpr uint32_t DefaultGpuSourceLimit = Rendering::WorldFieldDrynessMaxSources;
 
         /**
          * @brief 円形の源を追加する。中心・半径・幅・値は有限、半径は正、

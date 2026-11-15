@@ -184,6 +184,16 @@ namespace NorvesLib::Core::Rendering
             hash = HashPathBytes(hash, &sky.GroundAlbedo.x, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.y, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.z, sizeof(float));
+            hash = HashPathBytes(hash, &sky.GroundAltitudeMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.CloudCover, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastIlluminanceFraction, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastZenithToHorizonRatio, sizeof(float));
+            hash = HashPathBytes(hash, &sky.DirectLightExponent, sizeof(float));
+            hash = HashPathBytes(hash, &sky.SunDiskVisibleBelowCover, sizeof(float));
+            hash = HashPathBytes(hash, &sky.SunDiskHiddenAboveCover, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastTint.x, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastTint.y, sizeof(float));
+            hash = HashPathBytes(hash, &sky.OvercastTint.z, sizeof(float));
             return HashPathBytes(hash, &preExposure, sizeof(preExposure));
         }
 

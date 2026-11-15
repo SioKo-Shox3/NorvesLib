@@ -208,7 +208,15 @@ namespace NorvesLib::Core::Rendering
             return HashRevisionValue(hash, proxy.bVisible);
         }
 
-        /** @brief 構成revisionのhashのうち、proxy集合の後に続く環境の値（環境光・空・DDGI・フォグ） */
+        /**
+         * @brief 構成 revision のハッシュに、proxy 集合の後に続く環境の値を加える
+         *
+         * 環境光・静的環境・SunShadow・空気遠近・雲の層・空・DDGI・環境の不連続の印を含めます。
+         * 霧の値（高さフォグと Scene の霧の欄）は含めません。RTGI・DDGI は霧を入力に使わず、
+         * パストレーサーは霧の署名（HashPathFog）で累積を別に切るためです。
+         * 霧が変わるたびに RTGI の履歴を捨てないようにします。
+         * 将来、霧を GI の入力にするときはここへ入れ直します。
+         */
         uint64_t HashSceneEnvironmentRevision(uint64_t hash, const FramePacket& packet)
         {
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorR);
@@ -266,18 +274,10 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, ddgi.ProbeCountY);
             hash = HashRevisionValue(hash, ddgi.ProbeCountZ);
 
-            const VolumetricFogParameters& fog = packet.Scene.VolumetricFog;
-            hash = HashRevisionValue(hash, fog.bEnabled);
-            hash = HashRevisionValue(hash, fog.DensityAtBaseHeight);
-            hash = HashRevisionValue(hash, fog.BaseHeight);
-            hash = HashRevisionValue(hash, fog.HeightFalloffPerUnit);
-            hash = HashRevisionValue(hash, packet.Scene.bFogEnabled);
-            hash = HashRevisionValue(hash, packet.Scene.FogColorR);
-            hash = HashRevisionValue(hash, packet.Scene.FogColorG);
-            hash = HashRevisionValue(hash, packet.Scene.FogColorB);
-            hash = HashRevisionValue(hash, packet.Scene.FogDensity);
-            hash = HashRevisionValue(hash, packet.Scene.FogStart);
-            hash = HashRevisionValue(hash, packet.Scene.FogEnd);
+            // 環境の値は不連続の印だけを入れる。雨量・濡れ・雲量・時刻は連続に変わり、
+            // 入れると RTGI の履歴が毎フレーム捨てられる。
+            hash = HashRevisionValue(hash, packet.Scene.Environment.DiscontinuityId);
+
             return hash;
         }
 
@@ -4601,6 +4601,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
         packet.Scene.SetPaleFlatParameters(m_PaleFlat);
         packet.Scene.SetWindParameters(m_Wind);
+        packet.Scene.SetEnvironmentParameters(m_Environment);
         packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
         // 容量を保ったまま、登録順に値を写す。
@@ -4624,6 +4625,10 @@ namespace NorvesLib::Core::Rendering
         packet.WorldFieldInteractors.clear();
         packet.WorldFieldInteractors.insert(packet.WorldFieldInteractors.end(),
                                             m_WorldFieldInteractors.begin(), m_WorldFieldInteractors.end());
+        // 枯れ度の源は状態として次に設定されるまで保持する。
+        packet.WorldFieldDrynessSources.clear();
+        packet.WorldFieldDrynessSources.insert(packet.WorldFieldDrynessSources.end(),
+                                               m_WorldFieldDrynessSources.begin(), m_WorldFieldDrynessSources.end());
         // このフレームの入力を写し終えたら、容量を保ったまま空にする。
         m_WorldFieldInteractors.clear();
         packet.Scene.RibbonTrails = m_RibbonTrails;
@@ -5883,6 +5888,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
         viewContext.SnapshotGrassField = packet->GrassField.get();
         viewContext.SnapshotWorldFieldInteractors = &packet->WorldFieldInteractors;
+        viewContext.SnapshotWorldFieldDrynessSources = &packet->WorldFieldDrynessSources;
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;
@@ -6694,6 +6700,11 @@ namespace NorvesLib::Core::Rendering
         m_Wind = SanitizeWindParameters(parameters);
     }
 
+    void RenderingCoordinator::SetEnvironmentParameters(const EnvironmentParameters& parameters)
+    {
+        m_Environment = SanitizeEnvironmentParameters(parameters);
+    }
+
     void RenderingCoordinator::SetVertexAnimationTestDisplacementEnabled(bool bEnabled)
     {
         m_bVertexAnimationTestDisplacement = bEnabled;
@@ -6819,6 +6830,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
     {
         SanitizeWorldFieldInteractors(interactors, m_WorldFieldInteractors);
+    }
+
+    void RenderingCoordinator::SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources)
+    {
+        SanitizeWorldFieldDrynessSources(sources, m_WorldFieldDrynessSources);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)
