@@ -1,5 +1,6 @@
 ﻿#include "Rendering/ForwardPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/LightingPassGpuTypes.h"
@@ -34,6 +35,7 @@ namespace NorvesLib::Core::Rendering
     {
         // VT の要求のバッファの binding（forward_transparent.frag の VT_FEEDBACK_BINDING と同じ。点光源のキューブシャドウ 14 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 15;
+        constexpr uint32_t EnvironmentBindingIndex = 18;
 
         static void AddSkyOcclusionBindings(RHI::DescriptorSetDesc& descriptorSetDesc)
         {
@@ -45,6 +47,15 @@ namespace NorvesLib::Core::Rendering
                 textureBinding.stages = RHI::ShaderStage::Pixel;
                 descriptorSetDesc.bindings.push_back(textureBinding);
             }
+        }
+
+        static void AddEnvironmentBinding(RHI::DescriptorSetDesc& descriptorSetDesc)
+        {
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = EnvironmentBindingIndex;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(environmentBinding);
         }
 
         struct alignas(16) TransparentForwardUBO
@@ -238,6 +249,17 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
+            const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+            RHI::BufferDesc environmentDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer,
+                                            true, "ForwardDefaultEnvironment");
+            m_DefaultEnvironmentBuffer = m_Device->CreateBuffer(environmentDesc);
+            if (!m_DefaultEnvironmentBuffer)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "既定の環境定数バッファを作れませんでした");
+                return false;
+            }
+            m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
             RHI::DescriptorSetDesc descriptorSetDesc;
 
             RHI::DescriptorBinding uboBinding;
@@ -284,6 +306,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             AddSkyOcclusionBindings(descriptorSetDesc);
+            AddEnvironmentBinding(descriptorSetDesc);
 
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, descriptorSetDesc))
@@ -471,6 +494,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultPointShadowCubeTexture.reset();
         m_DefaultMidGrayTexture.reset();
         m_DefaultLinearSampler.reset();
+        m_DefaultEnvironmentBuffer.reset();
         m_UniformAllocator.Shutdown();
         m_WorldBoardUniformAllocator.Shutdown();
         m_Device = nullptr;
@@ -974,6 +998,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         AddSkyOcclusionBindings(descriptorSetDesc);
+        AddEnvironmentBinding(descriptorSetDesc);
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -1403,6 +1428,8 @@ namespace NorvesLib::Core::Rendering
         const RHI::SamplerPtr skyOcclusionSampler = bSkyOcclusionPublished && skyOcclusion.Sampler
             ? skyOcclusion.Sampler : m_DefaultLinearSampler;
 
+        const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
+
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
 
@@ -1600,6 +1627,16 @@ namespace NorvesLib::Core::Rendering
                     ? skyOcclusion.AuxTexture : m_DefaultShadowMapArrayTexture);
                 descriptorSet->BindSampler(16, skyOcclusionSampler);
                 descriptorSet->BindSampler(17, skyOcclusionSampler);
+                if (environmentConstants.IsValid())
+                {
+                    descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, environmentConstants.Buffer,
+                                                      environmentConstants.GetOffset32(), environmentConstants.GetSize32());
+                }
+                else
+                {
+                    descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer,
+                                                      0, sizeof(GPUEnvironmentParams));
+                }
                 descriptorSet->Update();
             };
             bindDescriptorSet(allocation.DescriptorSet);
