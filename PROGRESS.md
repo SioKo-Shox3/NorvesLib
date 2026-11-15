@@ -11554,3 +11554,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 ディゾルブの材質の値・閾値の入口・組み込みのプログラムの登録: 着地(直し 1 回)
 - U8 Dissolve.glsl と GBuffer のディゾルブのシェーダー: 着地(直し 1 回)
 - U3 GBufferPass の per-object の UBO にディゾルブの値を通す: 着地(直し 0 回)
+- U4 CSM と点光源の影（静的・スキン）の C++ でディゾルブの値を渡す: 着地(直し 0 回)
