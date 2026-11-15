@@ -124,6 +124,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
     uint values[];
 };
 
+#include "Common/DepthConvention.glsl"
 #include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
@@ -778,7 +779,7 @@ void ComputeLocalSurfaceSpread(vec2 uv,
         vec3 neighborNormal = texture(gbufferNormal, neighborUV).xyz;
         vec3 neighborMaterial = texture(gbufferMaterial, neighborUV).rgb;
         float neighborNormalLengthSquared = dot(neighborNormal, neighborNormal);
-        if (!IsFiniteScalar(neighborDepth) || neighborDepth >= 0.999999 ||
+        if (!IsFiniteScalar(neighborDepth) || IsBackgroundDepth(neighborDepth) ||
             !IsFiniteVector(neighborNormal) || !IsFiniteVector(neighborMaterial) ||
             !IsFiniteScalar(neighborNormalLengthSquared) || neighborNormalLengthSquared <= 1.0e-8)
         {
@@ -1469,7 +1470,7 @@ bool TryReadScreenIndirect(vec3 hitPosition, out vec3 radiance)
         return false;
     }
     float visibleDepth = textureLod(gbufferDepth, uv, 0.0).r;
-    if (!IsFiniteScalar(visibleDepth) || visibleDepth >= 0.999999)
+    if (!IsFiniteScalar(visibleDepth) || IsBackgroundDepth(visibleDepth))
     {
         return false;
     }
@@ -1627,7 +1628,7 @@ void ShadeDiffuseIndirect(uvec2 pixel, out bool bRayTraced, out uint firstHitCus
     vec3 normal = normalData.normal;
     float normalLengthSquared = dot(normal, normal);
     bool bSurfaceValid = IsFiniteScalar(sampledDepth) &&
-        sampledDepth < 0.999999 && IsFiniteVector(surfaceAlbedo) &&
+        !IsBackgroundDepth(sampledDepth) && IsFiniteVector(surfaceAlbedo) &&
         IsFiniteVector(sampledMaterial.rgb) && IsFiniteVector(normal) &&
         IsFiniteScalar(normalLengthSquared) && normalLengthSquared > 1.0e-8;
 

@@ -31,7 +31,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0）
     vec4 shadingParams; // 材質の値。スキンだけインスタンスの値を重ねた値。負は未指定。
-    vec4 shadingModel; // x=GBuffer のシェーディングモデル ID, y=切り抜き閾値 cutoff（0〜1）, z=切り抜き方式（0=なし、1=Test、2=Hash）, w=Hash の位相（0〜63、フレームごとに変化）
+    vec4 shadingModel; // x=GBuffer のシェーディングモデル ID, y=切り抜き閾値 cutoff（0〜1）, z=切り抜き方式（0=なし、1=Test、2=Hash）, w=Hash の位相（0〜7、TAA のジッタの番号）
     vec4 vertexAnimInstanceParams; // FS では読まない。
     vec4 vertexAnimTime; // FS では読まない。
     vec4 specularAAParams; // x=鏡面の AA の強さ, yzw=0
@@ -46,6 +46,7 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/GBufferEncoding.glsl"
+#include "Common/VelocityEncoding.glsl"
 #include "Common/SpecularAntiAliasing.glsl"
 #ifdef GBUFFER_ALPHA_CLIP
 #include "Common/AlphaClip.glsl"
@@ -160,18 +161,10 @@ void main()
                                                                 mvp.frameParams.y),
                                        params.y);
 
+    // 前のフレームの w が閾値以下なら履歴なしの印を書く。
     outVelocity = vec2(0.0);
-    if (mvp.frameParams.x > 0.5 &&
-        abs(fragCurrentClip.w) > 1e-6 &&
-        abs(fragPreviousClip.w) > 1e-6)
+    if (mvp.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) &&
-            dot(velocity, velocity) < 1.0e6)
-        {
-            outVelocity = velocity;
-        }
+        outVelocity = VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
 }

@@ -133,6 +133,10 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
         // --sky-occlusion: すべてのシーンで空の遮蔽を有効にする。
         constexpr const TCHAR *kSkyOcclusionOption = TEXT("--sky-occlusion");
+#if NORVES_BUILD_DEVELOPMENT
+        // --sun-shadow-auto-disable-lux=<lux>: 太陽の地表照度が指定値を下回ると太陽の影を省く（0 は省かない）。
+        constexpr const TCHAR *kSunShadowAutoDisableLuxOption = TEXT("--sun-shadow-auto-disable-lux=");
+#endif
         // --sky-occluder-demo: Rendering3DTest に空の遮蔽物を配置する。
         constexpr const TCHAR *kSkyOccluderDemoOption = TEXT("--sky-occluder-demo");
         constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
@@ -164,6 +168,9 @@ namespace Game
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
         bool s_bSkyOcclusion = false;
+#if NORVES_BUILD_DEVELOPMENT
+        float s_SunShadowAutoDisableLux = -1.0f;
+#endif
         bool s_bSkyOccluderDemo = false;
         // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
@@ -1002,6 +1009,9 @@ namespace Game
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
         s_bSkyOcclusion = false;
+#if NORVES_BUILD_DEVELOPMENT
+        s_SunShadowAutoDisableLux = -1.0f;
+#endif
         s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
         s_bRendering3DTestHasSunElevation = false;
@@ -2045,6 +2055,22 @@ namespace Game
                 continue;
             }
 #if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kSunShadowAutoDisableLuxOption, sceneValue))
+            {
+                if (s_SunShadowAutoDisableLux >= 0.0f)
+                {
+                    LOG_ERROR("--sun-shadow-auto-disable-lux が重複しています");
+                    return false;
+                }
+                float lux = 0.0f;
+                if (!TryParseBoundedFloat(sceneValue, 0.0f, 1.0e9f, lux))
+                {
+                    LOG_ERROR("--sun-shadow-auto-disable-lux は 0 以上の数（lux）で指定してください");
+                    return false;
+                }
+                s_SunShadowAutoDisableLux = lux;
+                continue;
+            }
             if (TryStripPrefix(args[i], kMegaLodErrorPxOption, sceneValue))
             {
                 // 画素の閾値は正の有限な数。MegaGeometryPass が最初に作られる前に環境変数へ渡す。
@@ -3862,6 +3888,15 @@ namespace Game
                 parameters.bEnabled = true;
                 renderWorld.SetSkyOcclusionParameters(parameters);
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_SunShadowAutoDisableLux >= 0.0f)
+            {
+                auto& renderWorld = engine->GetRenderWorld();
+                auto parameters = renderWorld.GetRenderingCoordinator().GetSunShadowParameters();
+                parameters.AutoDisableBelowSunIlluminanceLux = s_SunShadowAutoDisableLux;
+                renderWorld.SetSunShadowParameters(parameters);
+            }
+#endif
 
             // Game の Component の毎フレームの処理を World の順序付きの系へ登録する（シーンが作る前に済ませる）
             Game::Gameplay::FollowCameraComponent::RegisterTick(engine->GetWorld());

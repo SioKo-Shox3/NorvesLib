@@ -3,6 +3,7 @@
 // 二次ベジエの草の帯を両面で GBuffer 5 枚へ書く。
 #include "Grass/GrassDraw.glsl"
 #include "Common/GBufferEncoding.glsl"
+#include "Common/VelocityEncoding.glsl"
 
 layout(std430, set = 0, binding = 2) readonly buffer GrassSpecies
 {
@@ -62,17 +63,11 @@ void main()
     outMaterial = GBufferEncodeMaterial(vec3(0.0, roughness, mix(0.35, 1.0, fragV)), 0.0);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
 
-    // gbuffer.frag と同じ UV 差。履歴無し・退化した clip・非有限値では 0 を保つ。
+    // 前のフレームの w が閾値以下なら履歴なしの印を書く。
     outVelocity = vec2(0.0);
     if ((draw.Flags.x & kGrassDrawFlagPreviousCamera) != 0u &&
-        abs(fragCurrentClip.w) > 1.0e-6 && abs(fragPreviousClip.w) > 1.0e-6)
+        abs(fragCurrentClip.w) > 1.0e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) && dot(velocity, velocity) < 1.0e6)
-        {
-            outVelocity = velocity;
-        }
+        outVelocity = VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
 }

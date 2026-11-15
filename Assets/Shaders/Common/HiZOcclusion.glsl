@@ -16,6 +16,8 @@
 #ifndef NORVES_HIZ_OCCLUSION_GLSL
 #define NORVES_HIZ_OCCLUSION_GLSL
 
+#include "Common/DepthConvention.glsl"
+
 // 浮動小数点の誤差（投影の計算と描画の深度の差）で、接して見えているものを隠さないための余裕
 #ifndef HIZ_OCCLUSION_DEPTH_BIAS
 #define HIZ_OCCLUSION_DEPTH_BIAS 1.0e-5
@@ -67,7 +69,7 @@ bool HiZIsSphereOccluded(sampler2D hiZ,
         vec3 ndc = clip.xyz / clip.w;
         ndcMin = min(ndcMin, ndc.xy);
         ndcMax = max(ndcMax, ndc.xy);
-        nearestDepth = min(nearestDepth, ndc.z);
+        nearestDepth = ClosestDepth(nearestDepth, ndc.z);
     }
 
     // NDC [-1,1] → UV [0,1]。画面の外なら遮蔽の判定をしない（視錐台の判定の仕事）。画面にかかる部分だけを見る。
@@ -93,16 +95,16 @@ bool HiZIsSphereOccluded(sampler2D hiZ,
     ivec2 texelBegin = min(pixelBegin >> (mip + 1), mipSize - ivec2(1));
     ivec2 texelEnd = min(pixelEnd >> (mip + 1), mipSize - ivec2(1));
 
-    float farthestDepth = 0.0;
+    float farthestDepth = kDepthNearest;
     for (int y = texelBegin.y; y <= texelEnd.y; ++y)
     {
         for (int x = texelBegin.x; x <= texelEnd.x; ++x)
         {
-            farthestDepth = max(farthestDepth, texelFetch(hiZ, ivec2(x, y), mip).r);
+            farthestDepth = FarthestDepth(farthestDepth, texelFetch(hiZ, ivec2(x, y), mip).r);
         }
     }
 
-    return nearestDepth - HIZ_OCCLUSION_DEPTH_BIAS > farthestDepth;
+    return IsCloserDepth(farthestDepth, DepthTowardNear(nearestDepth, HIZ_OCCLUSION_DEPTH_BIAS));
 }
 
 #endif // NORVES_HIZ_OCCLUSION_GLSL

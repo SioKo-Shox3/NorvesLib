@@ -2,6 +2,7 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 
+#include "Common/DepthConvention.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
@@ -31,7 +32,7 @@ void main()
     }
 
     float depth = texelFetch(gbufferDepth, pixel, 0).r;
-    if (depth >= 0.999999)
+    if (IsBackgroundDepth(depth))
     {
         StoreVisibility(pixel, 1.0);
         return;

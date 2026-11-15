@@ -1,4 +1,5 @@
 ﻿#include "RigSplitFileCook.h"
+#include "MeshCooker.h"
 #include "NativeCookArguments.h"
 #include "SkeletalCliOptions.h"
 #include <charconv>
@@ -10,6 +11,7 @@ namespace NorvesLib::Tools::AssetCook
 {
     namespace C = Core::Container;
     namespace S = Core::Skeletal;
+    namespace I = Core::AssetImport;
     bool RunRigSplitFileCommand(int argc, const char* const* argv, int& exitCode)
     {
         // 先頭の明示modeだけを扱い、旧modeの値に同じ文字列が含まれても奪わない。
@@ -107,6 +109,7 @@ namespace NorvesLib::Tools::AssetCook
                     if (key == C::AnsiStringView("--no-analysis"))
                     {
                         request.bAnalyzeClips = false;
+                        request.ClipExplicitKeys |= I::ClipKeyAnalysis;
                     }
                     if (key == C::AnsiStringView("--no-sidecar"))
                     {
@@ -173,10 +176,12 @@ namespace NorvesLib::Tools::AssetCook
                 else if (key == C::AnsiStringView("--root-joint"))
                 {
                     request.ClipRootJoint = C::AnsiString(value);
+                    request.ClipExplicitKeys |= I::ClipKeyRootJoint;
                     bAnalysisOption = true;
                 }
                 else if (key == C::AnsiStringView("--loop"))
                 {
+                    request.ClipExplicitKeys |= I::ClipKeyLoop;
                     bAnalysisOption = true;
                     if (value == C::AnsiStringView("auto"))
                     {
@@ -198,16 +203,19 @@ namespace NorvesLib::Tools::AssetCook
                 else if (key == C::AnsiStringView("--time-scale"))
                 {
                     request.ClipAnalysis.TimeScale = number();
+                    request.ClipExplicitKeys |= I::ClipKeyTimeScale;
                     bAnalysisOption = true;
                 }
                 else if (key == C::AnsiStringView("--source-fps"))
                 {
                     request.ClipAnalysis.SourceFps = number();
+                    request.ClipExplicitKeys |= I::ClipKeySourceFps;
                     bAnalysisOption = true;
                 }
                 else if (key == C::AnsiStringView("--authored-fps"))
                 {
                     request.ClipAnalysis.AuthoredFps = number();
+                    request.ClipExplicitKeys |= I::ClipKeyAuthoredFps;
                     bAnalysisOption = true;
                 }
                 else
@@ -237,6 +245,10 @@ namespace NorvesLib::Tools::AssetCook
             request.SkeletonPath = logical + ".skeleton";
             request.MeshPath = logical + ".skinmesh";
             request.BankPath = logical + ".clips";
+            if (RejectFbxModelSourceFile(request.SourcePath, error))
+            {
+                throw std::runtime_error(error.c_str());
+            }
             RigSplitFileCookResult result;
             if (!CookRigSplitFile(request, destination, result, error))
             {

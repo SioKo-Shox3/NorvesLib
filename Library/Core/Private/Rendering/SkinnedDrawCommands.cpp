@@ -62,10 +62,11 @@ namespace NorvesLib::Core::Rendering
                 {
                     command.Draw.ShadingParams[i] = proxy.ShadingParams[i];
                 }
+                command.Skinned.Opacity = proxy.Opacity;
                 command.Draw.InstanceCount = 1;
                 command.Draw.FirstInstance = 0;
                 command.Draw.bInstanced = false;
-                command.Draw.bCastShadow = proxy.bCastShadow && !submesh.bNoShadow;
+                command.Draw.bCastShadow = proxy.bCastShadow && !submesh.bNoShadow && !IsSkinnedGhostOpacity(proxy.Opacity);
                 command.Skinned.FrameLeaseIndex = frameIndex;
                 command.Skinned.BonePalette = proxy.BonePalette;
                 command.Skinned.LocalBounds = proxy.AnimatedBounds;
