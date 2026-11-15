@@ -18,6 +18,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
+#include "Rendering/SpecularAntiAliasing.h"
 #include "Rendering/TerrainBlendShading.h"
 #include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/TerrainSamplerOverride.h"
@@ -1416,6 +1417,7 @@ namespace NorvesLib::Core::Rendering
         // MegaGeometry のデバッグの表示（クラスタの色・LOD の段）は、描画の記録の payload から色を作る（MegaGeometryPass が
         // 同じ表示の選択でカリングの payload をクラスタの番号・LOD の段に切り替える）
         dispatch.Params.Frame[1] = VisibilityResolveGeometry::ResolveDebugViewCode(context.GetActiveDebugMode());
+        dispatch.Params.Frame[3] = SpecularAAStrength;
 
         // 材質ごとの形で解決できるかを決める。使えない理由があれば、画面全体の直接 dispatch へ戻す（画面を空にしない）
         const uint32_t materialCount = m_RasterPass->GetMaterialTableCount();

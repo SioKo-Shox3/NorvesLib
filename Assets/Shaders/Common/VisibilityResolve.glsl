@@ -28,6 +28,7 @@
 //      隣の画素（x+1、y+1）の光線でも同じ三角形の平面と交わらせ、位置・UV の解析的な微分（前進差分）を得る。
 //   4. 法線（補間して正規化）・接線の基底（三角形の辺と UV。ラスタの CalculateCotangentFrame と同じ向きの規約）・
 //      速度（前のフレームの頂点から求めた前のクリップ座標）を求め、GBuffer へ書く。
+//      隣の画素の重心座標と法線マップの追加の標本から法線の画素あたりの変化を求め、鏡面の AA で粗さを広げる。
 //   5. （材質ごとの形だけ）材質のテクスチャを、画面微分の代わりに三角形から求めた解析的な微分（textureGrad）で標本する。
 //      視差オクルージョンマッピング（POM）は三角形の接線の基底と解析的な UV の微分で行い、法線マップは POM の後の UV で標本して
 //      元の UV の接線の基底で変換する（ラスタの gbuffer.frag と同じ順序）。VT（sparse）の材質は、非常駐のタイルを読まず
@@ -73,6 +74,7 @@
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VertexAnimation.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SpecularAntiAliasing.glsl"
 #include "Common/PreExposedEmissive.glsl"
 #include "Common/MegaGeometryDebugColor.glsl"
 
@@ -87,7 +89,8 @@ layout(std140, set = 0, binding = 0) uniform ResolveParams
     vec4 viewport;         // x, y, 幅, 高さ（画素。ラスタの描画範囲）
     uvec4 screen;          // x = 画面の幅, y = 画面の高さ, z = フラグ, w = 材質の表の件数
     vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）, y = MegaGeometry のデバッグの表示（RESOLVE_DEBUG_*）,
-                           // z = 幾何の法線の印（RESOLVE_FLAG_GEOMETRIC_NORMAL のときだけ。w へそのまま書く）
+                           // z = 幾何の法線の印（RESOLVE_FLAG_GEOMETRIC_NORMAL のときだけ。w へそのまま書く）、
+                           // w = 鏡面の AA の強さ（SpecularAAStrength。0 で無効。BuildParams の既定は 0）
     vec4 vertexAnimTime;   // x = 今の時刻、y = 前の時刻、z = 試験の揺れの許可、w = 0
 } params;
 
@@ -483,6 +486,8 @@ struct VisResolvedPixel
     vec3 dposdx;
     vec3 dposdy;
     vec3 normal;         // 補間して正規化したワールド法線
+    vec3 normalDx;       // 同じ三角形の平面上の x+1 の正規化した法線との差（両面の反転も共通）
+    vec3 normalDy;       // 同じ三角形の平面上の y+1 の正規化した法線との差
     mat3 tangentFrame;   // T, B, N（CalculateCotangentFrame と同じ規約）
     vec4 previousClip;   // 前のフレームのカメラの、同じ点のクリップ座標
     vec3 viewDir;        // 表面からカメラへ向かう単位のワールド方向（ラスタの fragViewDir と同じ作り方）
@@ -516,6 +521,7 @@ VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter, bool
 
     vec3 interpolatedNormal =
         VisInterpolate(triangle.normal[0], triangle.normal[1], triangle.normal[2], baryCenter);
+    float normalSign = 1.0;
     // 両面の材質は裏の面も描くので、カメラから見て表の向きの反対側にある三角形の法線を反転する。
     // 表の向きは頂点の法線の側で決め、巻きの符号には依らない。
     // 頂点の法線と巻きが不揃いなメッシュでは、ラスタの経路（gl_FrontFacing）と反転の判定が違いうる。
@@ -531,11 +537,22 @@ VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter, bool
             }
             if (dot(faceCross, cameraPosition - triangle.position[0]) < 0.0)
             {
-                interpolatedNormal = -interpolatedNormal;
+                normalSign = -1.0;
             }
         }
     }
+    interpolatedNormal *= normalSign;
     result.normal = normalize(interpolatedNormal);
+    const vec3 interpolatedNormalX =
+        VisInterpolate(triangle.normal[0], triangle.normal[1], triangle.normal[2], baryX) * normalSign;
+    const vec3 interpolatedNormalY =
+        VisInterpolate(triangle.normal[0], triangle.normal[1], triangle.normal[2], baryY) * normalSign;
+    // 中心か隣の法線が退化した方向は差を 0 にし、正規化で不定な差を作らない。
+    const bool bValidNormal = dot(interpolatedNormal, interpolatedNormal) > 1.0e-12;
+    result.normalDx = bValidNormal && dot(interpolatedNormalX, interpolatedNormalX) > 1.0e-12
+                          ? normalize(interpolatedNormalX) - result.normal : vec3(0.0);
+    result.normalDy = bValidNormal && dot(interpolatedNormalY, interpolatedNormalY) > 1.0e-12
+                          ? normalize(interpolatedNormalY) - result.normal : vec3(0.0);
     result.tangentFrame = VisCotangentFrame(interpolatedNormal, result.dposdx, result.dposdy, result.duvdx, result.duvdy);
 
     const vec3 previousPosition =
@@ -620,6 +637,8 @@ struct VisMaterialSurface
 {
     vec4 albedo;     // rgb = インスタンスの色 × アルベド、a = アルベドのテクスチャの α
     vec3 normal;     // 法線マップを適用したワールド法線
+    vec3 normalDx;   // 書く法線の画素あたりの変化（x+1）
+    vec3 normalDy;   // 書く法線の画素あたりの変化（y+1）
     vec3 material;   // 金属度・粗さ・AO
     uint receiverFlags; // 地形などの受け手の印（材質 ID と合わせて法線の A に書く）
 };
@@ -637,6 +656,8 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
     VisMaterialSurface surface;
     surface.albedo = vec4(objectColor, 1.0);
     surface.normal = resolved.normal;
+    surface.normalDx = resolved.normalDx;
+    surface.normalDy = resolved.normalDy;
     surface.receiverFlags = 0u;
     const float metallic = (bHasMaterial && entry.scalars.x >= 0.0) ? VisQuantize8(entry.scalars.x) : 0.0;
     // 粗さの既定は、手続き・スキニング（GBufferPass）が中間灰、MegaGeometry（MegaGeometryPass）が白
@@ -702,20 +723,24 @@ MaterialTextureFootprint VisMakeFootprint(vec2 uvDx, vec2 uvDy, bool bHasORM, bo
     return footprint;
 }
 
-// 高さの場で変位させたメッシュ（MegaGeometry）の法線マップの補正（megageometry.frag の RemoveDisplacedNormalSlope と同じ式）。
+// 高さの場で変位させたメッシュ（MegaGeometry）の粗い法線を一度だけ標本し、中心と隣の画素の傾きの補正で共用する。
 // lodLevel は描いているクラスタの LOD の段
-vec3 VisRemoveDisplacedNormalSlope(vec3 tangentNormal,
-                                   vec2 texCoord,
-                                   float displacementUVSpacing,
-                                   float normalLod,
-                                   float lodLevel,
-                                   bool bNormalTwoChannel,
-                                   bool bVirtualTexture)
+vec3 VisSampleDisplacedCoarseNormal(vec2 texCoord,
+                                  float displacementUVSpacing,
+                                  float normalLod,
+                                  float lodLevel,
+                                  bool bNormalTwoChannel,
+                                  bool bVirtualTexture)
 {
     const float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
     const float coarseMip = max(vertexMip, normalLod);
-    const vec3 coarseNormal = DecodePbrTangentNormal(
+    return DecodePbrTangentNormal(
         SampleMaterialTextureLod(normalTexture, texCoord, coarseMip, bVirtualTexture), bNormalTwoChannel);
+}
+
+// 標本済みの粗い法線で傾きを除く（megageometry.frag の RemoveDisplacedNormalSlope と同じ式）。
+vec3 VisRemoveDisplacedNormalSlope(vec3 tangentNormal, vec3 coarseNormal)
+{
     const vec2 detailSlope = tangentNormal.xy / max(tangentNormal.z, 0.1) - coarseNormal.xy / max(coarseNormal.z, 0.1);
     return normalize(vec3(detailSlope, 1.0));
 }
@@ -804,12 +829,14 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     }
 
     vec3 tangentNormal = samples.TangentNormal;
+    vec3 coarseNormal = vec3(0.0, 0.0, 1.0);
     if (bDisplaced)
     {
         // 描画番号の payload が LOD の段でない（デバッグの表示用の番号を求められている）ときの大きな値は 31 で頭打ちにする
         const float lodLevel = float(min(VisRecordLodPayload(record), 31u));
-        tangentNormal = VisRemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod,
+        coarseNormal = VisSampleDisplacedCoarseNormal(texCoord, displacementUVSpacing, footprint.NormalLod,
                                                       lodLevel, bNormalTwoChannel, bVirtualTexture);
+        tangentNormal = VisRemoveDisplacedNormalSlope(tangentNormal, coarseNormal);
     }
 
     VisMaterialSurface surface;
@@ -817,6 +844,35 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples),
                           bOpaqueAlbedoAlpha ? 1.0 : samples.Albedo.a);
     surface.normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
+    // 地形・スプラットは補間法線の変化だけを使い、層の法線マップの変化は含めない。
+    // 予備のラスタの経路は画面微分なので層の法線の変化も含む。
+    surface.normalDx = resolved.normalDx;
+    surface.normalDy = resolved.normalDy;
+    if (!bTerrain && !bTerrainSplat && params.frame.w > 0.0)
+    {
+        // POM の後の UV に元の UV の微分を足す。POM のずれの画素間の変化は含めない。
+        // 中心と同じ勾配・標本ミップ・VT の扱いを使い、追加の標本から VT の要求は書かない。
+        bool bUnusedEscaped;
+        vec3 tangentNormalX = DecodePbrTangentNormal(
+            SampleMaterialTextureTracked(normalTexture, texCoord + resolved.duvdx, footprint, footprint.NormalLod,
+                                         bVirtualTexture, bUnusedEscaped), bNormalTwoChannel);
+        vec3 tangentNormalY = DecodePbrTangentNormal(
+            SampleMaterialTextureTracked(normalTexture, texCoord + resolved.duvdy, footprint, footprint.NormalLod,
+                                         bVirtualTexture, bUnusedEscaped), bNormalTwoChannel);
+        if (bDisplaced)
+        {
+            tangentNormalX = VisRemoveDisplacedNormalSlope(tangentNormalX, coarseNormal);
+            tangentNormalY = VisRemoveDisplacedNormalSlope(tangentNormalY, coarseNormal);
+        }
+        const vec3 normalX = ApplyTangentSpaceNormal(
+            mat3(resolved.tangentFrame[0], resolved.tangentFrame[1], normalize(resolved.normal + resolved.normalDx)),
+            tangentNormalX);
+        const vec3 normalY = ApplyTangentSpaceNormal(
+            mat3(resolved.tangentFrame[0], resolved.tangentFrame[1], normalize(resolved.normal + resolved.normalDy)),
+            tangentNormalY);
+        surface.normalDx = normalX - surface.normal;
+        surface.normalDy = normalY - surface.normal;
+    }
     surface.material = samples.Material;
     surface.receiverFlags = bTerrain || bTerrainSplat || (tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SURFACE) != 0u
                                 ? GBUFFER_RECEIVER_FLAG_TERRAIN
@@ -897,6 +953,8 @@ void main()
         const uint payload = VisRecordLodPayload(record);
         surface.albedo = vec4(debugView == RESOLVE_DEBUG_CLUSTERS ? ClusterDebugColor(payload) : LODLevelDebugColor(payload), 1.0);
         surface.normal = resolved.normal;
+        surface.normalDx = vec3(0.0);
+        surface.normalDy = vec3(0.0);
         surface.material = vec3(0.0, 1.0, 1.0);
         surface.receiverFlags = 0u;
     }
@@ -923,6 +981,10 @@ void main()
         shadingParams = ResolveShadingParams(VisShadingParamsForRecord(record), materialEntry.shadingParams);
     }
     imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, shadingModelId, receiverFlags));
+    if (!bDebugView)
+    {
+        surface.material = SpecularAAFilterMaterial(surface.material, surface.normalDx, surface.normalDy, params.frame.w);
+    }
     // シェーディングモデルに応じた材質値と P0 を書く。
     imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterialForShadingModel(surface.material, shadingParams.x, shadingModelId));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
