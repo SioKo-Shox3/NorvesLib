@@ -912,6 +912,7 @@ namespace NorvesLib::Core::Rendering
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
         context.bTemporalAAApplied = false;
+        context.TemporalAAJitterIndex = 0u;
         context.OverheadHeightMap.Invalidate();
         struct PhysicalLightingScope final
         {
@@ -998,6 +999,8 @@ namespace NorvesLib::Core::Rendering
                                                           jitter);
             if (bApplyTemporalAA)
             {
+                context.TemporalAAJitterIndex = static_cast<uint32_t>(
+                    temporalAAPass->GetFrameJitterIndex() % GBufferAlphaHashPhaseCount);
                 // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
                 // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
                 const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(

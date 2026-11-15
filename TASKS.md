@@ -6319,7 +6319,7 @@
 - notes: 要件 `#### GR65` の受け入れ確認「校正の記録」と、ロードマップ 1958 行の基準の条件。GR100（G18 の指標）はまだ無いので、PNG の ROI の値で代える（ロードマップ 1967 行の「校正を PNG と metrics.json で代える」）。±4/255 は要件の仮の値で、作者が決めた値ではない（根拠なし）。文書の名前は R0〜R8 と衝突しない `PaleFlatAcceptance.md`（要件の規約）。
 
 ## G10-GR64-GHOST-RENDER: スキンに不透明度を持たせ、アルファハッシュと TAA で半透明の残像として GBuffer へ描き、影は落とさない
-- status: todo
+- status: done
 - after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR64
 - needs-gr: GR27, GR30

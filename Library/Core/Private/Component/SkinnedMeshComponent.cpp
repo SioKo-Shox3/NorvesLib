@@ -368,6 +368,21 @@ namespace NorvesLib::Core::Component
         return index < Rendering::ShadingParamCount ? m_ShadingParams[index] : -1.0f;
     }
 
+    void SkinnedMeshComponent::SetOpacity(float opacity)
+    {
+        const float sanitized = std::isnan(opacity) ? 1.0f : std::fmax(0.0f, std::fmin(opacity, 1.0f));
+        if (m_Opacity != sanitized)
+        {
+            m_Opacity = sanitized;
+            MarkRenderStateDirty();
+        }
+    }
+
+    float SkinnedMeshComponent::GetOpacity() const
+    {
+        return m_Opacity;
+    }
+
     Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> SkinnedMeshComponent::GetMaterialBindingLease() const
     {
         if (!m_SkeletalAsset || !m_SkeletalAsset->GetMesh() || !m_SkeletalAsset->GetMesh()->IsLoaded())
@@ -507,6 +522,7 @@ namespace NorvesLib::Core::Component
         {
             outProxy.ShadingParams[i] = m_ShadingParams[i];
         }
+        outProxy.Opacity = m_Opacity;
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = GetComponentId();
         const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
