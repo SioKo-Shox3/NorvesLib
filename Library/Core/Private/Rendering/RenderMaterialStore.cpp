@@ -85,6 +85,7 @@ namespace NorvesLib::Core::Rendering
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;
             data.bDiffuseOnly = createInfo.bDiffuseOnly;
+            data.bViewClearanceOccluder = createInfo.bViewClearanceOccluder;
             data.RefCount = 1;
             data.DebugName = createInfo.DebugName;
             outData = std::move(data);
