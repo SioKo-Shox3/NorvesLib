@@ -8,6 +8,7 @@
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
+#include "Common/DepthConvention.glsl"
 #include "Common/CloudLayerCommon.glsl"
 
 const uint kCloudProbeMaxRays = 256u;
@@ -33,7 +34,7 @@ void main()
     uint diagnosticFlags = uint(probe.pixels[rayIndex].z + 0.5);
     vec2 uv = pixel / probe.targetSize.xy;
     float depth = textureLod(sceneDepthTexture, uv, 0.0).r;
-    bool bSkyPixel = !(IsFiniteFloat(depth) && depth < 0.999999);
+    bool bSkyPixel = !(IsFiniteFloat(depth) && !IsBackgroundDepth(depth));
 
     vec3 rayDirection;
     bool bDirection = ComputeCloudRayDirection(uv, rayDirection);

@@ -21,6 +21,7 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
@@ -2478,7 +2479,7 @@ namespace NorvesLib::Core::Rendering
         depthAttachment.format = RHI::Format::D32_FLOAT;
         depthAttachment.isDepthStencil = true;
         depthAttachment.clear = true;
-        depthAttachment.clearDepth = 1.0f;
+        depthAttachment.clearDepth = DepthConvention::ClearDepth;
         depthAttachment.clearStencil = 0;
         depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;
@@ -7140,7 +7141,7 @@ namespace NorvesLib::Core::Rendering
         depthAttachment.format = RHI::Format::D32_FLOAT;
         depthAttachment.isDepthStencil = true;
         depthAttachment.clear = true;
-        depthAttachment.clearDepth = 1.0f;
+        depthAttachment.clearDepth = DepthConvention::ClearDepth;
         depthAttachment.clearStencil = 0;
         depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;

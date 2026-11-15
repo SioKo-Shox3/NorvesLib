@@ -3,11 +3,13 @@
 // ========================================
 // HZB（階層的な深度ピラミッド）のミップ0を作るコンピュートシェーダー
 //
-// 今のフレームの深度（Less の標準の向き: 手前ほど小さい）を 2x2 の最大で縮め、半分の解像度のミップ0へ書く。
-// 最大（遠い方）を残すので、縮めた 1 texel はそれが覆う深度のどれよりも遠いか等しい（遮蔽の判定が保守的になる）。
+// 今のフレームの深度を 2x2 の最も奥（規約の FarthestDepth）で縮め、半分の解像度のミップ0へ書く。
+// 最も奥を残すので、縮めた 1 texel はそれが覆う深度のどれよりも遠いか等しい（遮蔽の判定が保守的になる）。
 // 深度の幅・高さが奇数のとき、ミップ0 は切り上げた大きさなので、はみ出す行・列は端の texel を繰り返して読む。
 // 以降のミップは hiz_downsample.comp が作る。
 // ========================================
+
+#include "Common/DepthConvention.glsl"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -34,13 +36,13 @@ void main()
     ivec2 srcMax = max(params.srcSize - ivec2(1), ivec2(0));
     ivec2 srcBase = destCoord * 2;
 
-    float maxDepth = 0.0;
+    float maxDepth = kDepthNearest;
     for (int dy = 0; dy < 2; ++dy)
     {
         for (int dx = 0; dx < 2; ++dx)
         {
             ivec2 srcCoord = min(srcBase + ivec2(dx, dy), srcMax);
-            maxDepth = max(maxDepth, texelFetch(u_Depth, srcCoord, 0).r);
+            maxDepth = FarthestDepth(maxDepth, texelFetch(u_Depth, srcCoord, 0).r);
         }
     }
 
