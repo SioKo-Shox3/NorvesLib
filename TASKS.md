@@ -6361,7 +6361,7 @@
 - notes: ロードマップ 1949・1961 行、要件 `#### GR20` の設計案 (1)(2)・時刻の扱い・実装順 1)。選定課題 G10-S7（しがみつきの範囲）は推奨どおり (A) ぶら下がるだけ（拘束・張力・ゲージ・解除）と決めた。理由: 企画の「柄をくわえてしがみつく」は表面を歩く・登ることに触れておらず、(B) の `SurfaceWalker` は半辺の構造と頂点の溶接が要って規模が XL に近づく（ロードマップの非ゴール）。採るなら作者が決めて別の項目にする。選定課題 G10-S8（物理の方式）は推奨どおり (A) Gameplay の Grip のサブシステムの自前の位置ベースの拘束（1 拘束・1 質点。Physics は変えない）と決めた。理由: 外部の物理の導入は作者の判断で、複数の拘束・多体・回転が要ると分かった時点で (B) を再評価する（`m8-minimal-physics-plan.md` の方針）。手応えの調整は `GripTuning` の JSON で行う。時刻: ソルバは可変のフレームで回す（固定ステップで回すと 1 フレームに 0〜8 回走るうえ姿勢が同じで、張力が 1 回目に集中する。要件の「時刻の扱い」）。G10 の他の項目と触るファイルが交わらないので、G8 の Gameplay の骨組みができたら並列に走れる。JSON の読み込みはアセットの読み込みの危険地帯に当たるので評価者を通す（G8-GR16-JOINT-DATA-RESPONSE と同じ扱い）。やらないこと: Component・犬のルートの駆動・接触（G10-GR20-GRIP-COMPONENTS）、足の暴れ（G10-GR20-LEG-FLAIL）。
 
 ## G11-GR114-SHADOW-PARAMS: 太陽の影の値の型 SunShadowParameters に有効・弱い日差しでの停止・投影物の三角形の上限を足し、MegaGeometry の投影物の上限の守りを入れる
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G10-GR63-SKIN-CULL
 - gr: GR114
 - needs-gr: GR25, GR27
