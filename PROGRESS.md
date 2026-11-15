@@ -11156,3 +11156,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261114-143012/verify-G5-GR30-THIN-SPECULAR-AA-d462ee25.txt`（前回の `verify-G5-GR30-THIN-SPECULAR-AA-U9.txt` の写し。verify のビルドの行 EXIT_CODE=0・エラーの行 0。verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて 4/4 Passed。TerrainShaderCompileTest の詳細で gbuffer.frag・gbuffer_alphaclip.frag・megageometry.frag・visbuffer_resolve.comp・visbuffer_resolve_tiles.comp がマクロの全部無効・全部有効の両方の組で `[成功]`）。
 - Next: ランナーの評価者の反証（GBuffer・可視バッファの解決の危険地帯）。人が見るときの見どころは前回の節と同じ（Rendering3DTest の岩と球の縁のハイライトが、高周波の法線でちらつかないか、全体が粗く見えすぎないか）。
 - Notes: 撮影・GPU の計測・golden の比較は回さない決まりなので回していない。鏡面の AA が実際にちらつきを減らすかは測っていない。
+
+### G5-GR30-THIN-SPECULAR-AA の完了の戻し（2026-11-15、run 20261115-170830、完了）
+- Done: 前回の完了（c682271c）の後、ランナーの評価者が停止の依頼で中断され、status が doing に戻っていた。作業の単位は全部 done か dropped で、d462ee25 から今の HEAD までの差は TASKS.md と PROGRESS.md だけ（コードの変更は無い）なので、d462ee25 の木で回した verify の証拠をそのまま使って status を done に戻した。
+- 証拠: `.harness/runs/20261115-170830/verify-G5-GR30-THIN-SPECULAR-AA-d462ee25.txt`（`verify-G5-GR30-THIN-SPECULAR-AA-U9.txt` の写し。verify のビルドの行 EXIT_CODE=0・エラーの行 0。verify の ctest の行に `-LE "GPU|Reference" -E "Golden|PathTracingReference|Vulkan"` を付けて TerrainShaderCompileTest・ShadingModelContractTest・GBufferMaterialDescriptorCacheTest・GBufferPipelineKeyTest の 4/4 Passed）。
+- Next: ランナーの評価者の反証（GBuffer・可視バッファの解決の危険地帯。実装の差分は d462ee25 までのコミットにあり、その後は帳簿だけ）。人が見るときの見どころは前の節と同じ（Rendering3DTest の岩と球の縁のハイライトが、高周波の法線でちらつかないか、全体が粗く見えすぎないか）。
+- Notes: 撮影・GPU の計測・golden の比較は回さない決まりなので回していない。鏡面の AA が実際にちらつきを減らすかは測っていない。
