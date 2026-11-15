@@ -7220,7 +7220,7 @@
 - notes: 設計はロードマップ 2219 行（GR45 の GPU）、完了条件は 2613 行。層の大きさ・画素の大きさは仮の値（設定で替えられる）。遠景の見せ方は企画で未決（『高い草で視界が遮られる』と『遠くの枯れ草が見える』は犬の目線で両立しにくい。ロードマップ 2212・2223 行）なので、遠景の層は常に作り、消費する側の重みを設定値にする（G12-GR45-GRASS-DRYNESS）。`RenderWorld.cpp`・`RenderingCoordinator.cpp`・`FramePacket.h` は共有のファイルなので差分を小さくする。GPU の試験の実行は利用者のほかのアプリへの影響を避けて check の項目で行う。試験を足す理由: 反証する契約は「GPU の枯れ度の層が CPU の `Sample` と同じ場所・同じ値になる」こと。ずれは草の枯れ地の境がずれるだけで撮影では気づきにくく、ログにも出ず黙って起きる。SceneRevision に入れると RTGI の履歴が源の変化で捨てられ、絵では気づきにくい。危険地帯（RenderThread のデータ契約）なので評価者を通す。
 
 ## G12-GR45-GRASS-DRYNESS: 草が枯れ度で色・密度・高さ・倒れ方を切り替え、遠景の帯は遠景の層を引いて遠くから枯れ地が分かるようにする
-- status: doing
+- status: done
 - after: G12-GR45-DRYNESS-FIELD, G5-GR43-GRASS-DRAW, G5-GR42-GRASS-FIELD-ASSET, G5-GR42-GRASS-FIELD-CORE, G5-GR43-GRASS-GENERATE
 - gr: GR45
 - needs-gr: GR42, GR43
