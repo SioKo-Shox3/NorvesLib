@@ -836,9 +836,12 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapFramePlan
     {
         CascadedShadowMatrixResult Cascades;
+        ShadowCasterBudgetWarnings MegaBudgetWarnings;
         // 最後に記録した分割の λ。フレームをまたいで保持し、変わったときだけ記録する。
         float LoggedSplitLambda = -1.0f;
 #if NORVES_ENABLE_LOGGING
+        uint32_t LoggedVsmOverBudgetMeshes = 0;
+        uint32_t LoggedVsmBudget = 0;
         // パスが所有する計画に前回の描画数と候補数を保ち、変わったときだけ記録する。
         uint32_t LoggedCasterDraws[PhysicalLightingShadowCascadeCount] = {~0u, ~0u, ~0u, ~0u};
         uint32_t LoggedCasterCandidates = ~0u;
@@ -1384,6 +1387,9 @@ namespace NorvesLib::Core::Rendering
         {
             PlanShadowFrame(context);
         }
+        const uint32_t budget = context.SnapshotScene != nullptr
+                                    ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                    : SunShadowParameters{}.MaxShadowCasterTriangles;
         const ShadowMapFramePlan& plan = *m_FramePlan;
         m_FramePlan->bPlanned = false;
         const CascadedShadowMatrixResult& cascadedShadowMatrices = plan.Cascades;
@@ -1768,6 +1774,10 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, cascade.TexelSize);
+                    if (!AdmitMegaShadowCasterDraw(megaCaster, range, budget, m_FramePlan->MegaBudgetWarnings))
+                    {
+                        continue;
+                    }
                     auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
                     if (!allocation.UniformBuffer)
                     {
@@ -1960,11 +1970,37 @@ namespace NorvesLib::Core::Rendering
                                               : static_cast<uint32_t>(instanceDataSize64);
 
         // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
-        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
-        // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
+        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは上限を超える物も残し、
+        // 粗いカスケードで上限内の段を描くときにnear面で切らない。
         // MegaGeometry は RenderThread の写しの変わった席だけを直した席ごとの写しから、範囲（格子）ごとの AABB を含める
         // （物の数ではなく範囲の数だけを見る。範囲に物が 1 つなら、その物の境界球そのもの）
         const uint32_t megaCasterCount = SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize);
+#if NORVES_ENABLE_LOGGING
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            const uint32_t budget = context.SnapshotScene != nullptr
+                                        ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                        : SunShadowParameters{}.MaxShadowCasterTriangles;
+            uint32_t overBudgetMeshes = 0;
+            if (m_MegaCasters)
+            {
+                for (const auto& [meshId, state] : m_MegaCasters->Meshes)
+                {
+                    if (IsMegaShadowMeshOverTriangleBudget(state.GpuData, budget))
+                    {
+                        ++overBudgetMeshes;
+                    }
+                }
+            }
+            if (overBudgetMeshes != plan.LoggedVsmOverBudgetMeshes || budget != plan.LoggedVsmBudget)
+            {
+                plan.LoggedVsmOverBudgetMeshes = overBudgetMeshes;
+                plan.LoggedVsmBudget = budget;
+                NORVES_LOG_INFO("ShadowMapPass", "VSM_SHADOW_CASTER_BUDGET over_budget_meshes=%u budget=%u kept_in_vsm=1",
+                                overBudgetMeshes, budget);
+            }
+        }
+#endif
         Container::VariableArray<BoundingSphere> casterBounds;
         CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
                                              context.SnapshotSkinnedMeshProxies,
@@ -2349,6 +2385,9 @@ namespace NorvesLib::Core::Rendering
 
     void ShadowMapPass::ExecutePointShadows(ViewRenderContext& context)
     {
+        const uint32_t budget = context.SnapshotScene != nullptr
+                                    ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                    : SunShadowParameters{}.MaxShadowCasterTriangles;
         const PointShadowSnapshot* snapshot = context.SnapshotPointShadows;
         const uint32_t lightCount =
             snapshot != nullptr ? std::min(snapshot->LightCount, PointShadowMaxLights) : 0u;
@@ -2804,6 +2843,12 @@ namespace NorvesLib::Core::Rendering
                                                           static_cast<float>(m_Settings.PointShadowResolution)
                                                     : 0.0f;
                         const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, texelSize);
+                        if (m_FramePlan
+                                ? !AdmitMegaShadowCasterDraw(megaCaster, range, budget, m_FramePlan->MegaBudgetWarnings)
+                                : ExceedsShadowCasterTriangleBudget(range.IndexCount / 3u, budget))
+                        {
+                            continue;
+                        }
                         auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
                         if (!allocation.UniformBuffer)
                         {

@@ -1,7 +1,8 @@
-﻿// CSM と点光源のキューブで共有する MegaGeometry の投影物の選別の純関数。
+﻿// CSM と点光源のキューブで共有する MegaGeometry の投影物の選別と警告の記録。
 #pragma once
 
 #include "Container/String.h"
+#include "Container/UnorderedSet.h"
 #include "RHI/RHITypes.h"
 #include "Rendering/RenderTypes.h"
 
@@ -15,7 +16,7 @@ namespace NorvesLib::Core::Rendering
     }
 
     // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
-    // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
+    // CSMの深度範囲には上限を超える物の境界球も残す。粗いカスケードで上限内の段を描くとき、near面で切れるのを防ぐ。
     // 粗い段を1回の範囲で持つメッシュは、影の地図のテクセルに見合う段を描くごとに選ぶ（ResolveMegaShadowRange）。
     struct MegaShadowCaster
     {
@@ -47,6 +48,27 @@ namespace NorvesLib::Core::Rendering
 
     // 影の地図の1テクセルのワールドでの大きさに見合う段を選ぶ（影に指定された段より細かくはしない）。
     MegaShadowRange ResolveMegaShadowRange(const MegaShadowCaster& caster, float texelSize);
+
+    // 三角形数が上限を超えるか（上限 0 は上限なし）
+    bool ExceedsShadowCasterTriangleBudget(uint32_t triangleCount, uint32_t budget);
+
+    // 影に使う段の三角形数が上限を超えるメッシュか（gpuData が null なら false）
+    bool IsMegaShadowMeshOverTriangleBudget(const MegaGeometry::MegaMeshGPUData* gpuData, uint32_t budget);
+
+    // 上限を超えたメッシュを、MeshId ごとに 1 回だけ警告するための記録
+    class ShadowCasterBudgetWarnings
+    {
+    public:
+        // 初めてのメッシュなら記録して true（ログ無効時は記録せず false）
+        bool MarkFirstWarning(uint64_t meshId);
+
+    private:
+        Container::UnorderedSet<uint64_t> m_WarnedMeshIds;
+    };
+
+    // 描く段の三角形数が上限内なら true。超えたら false を返し、メッシュごとに 1 回だけ警告する。
+    bool AdmitMegaShadowCasterDraw(const MegaShadowCaster& caster, const MegaShadowRange& range, uint32_t budget,
+                                  ShadowCasterBudgetWarnings& warnings);
 
     // 記録用に「メッシュ名:段/三角形数」を足す
     void AppendMegaShadowLevel(Container::String& out, const MegaShadowCaster& caster, const MegaShadowRange& range);

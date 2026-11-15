@@ -1,5 +1,6 @@
-﻿// CSM と点光源のキューブで共有する MegaGeometry の投影物の選別の純関数。
+﻿// CSM と点光源のキューブで共有する MegaGeometry の投影物の選別と警告の記録。
 #include "Rendering/ShadowCasterCollection.h"
+#include "Logging/LogMacros.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 
 #include <algorithm>
@@ -32,6 +33,48 @@ namespace NorvesLib::Core::Rendering
             range.IndexCount = caster.GpuData->LevelRanges[level].IndexCount;
         }
         return range;
+    }
+
+    bool ExceedsShadowCasterTriangleBudget(uint32_t triangleCount, uint32_t budget)
+    {
+        return budget != 0u && triangleCount > budget;
+    }
+
+    bool IsMegaShadowMeshOverTriangleBudget(const MegaGeometry::MegaMeshGPUData* gpuData, uint32_t budget)
+    {
+        return gpuData && ExceedsShadowCasterTriangleBudget(gpuData->ShadowIndexCount / 3u, budget);
+    }
+
+    bool ShadowCasterBudgetWarnings::MarkFirstWarning(uint64_t meshId)
+    {
+#if NORVES_ENABLE_LOGGING
+        return m_WarnedMeshIds.insert(meshId).second;
+#else
+        (void)meshId;
+        return false;
+#endif
+    }
+
+    bool AdmitMegaShadowCasterDraw(const MegaShadowCaster& caster, const MegaShadowRange& range, uint32_t budget,
+                                  ShadowCasterBudgetWarnings& warnings)
+    {
+        const uint32_t triangleCount = range.IndexCount / 3u;
+        if (!ExceedsShadowCasterTriangleBudget(triangleCount, budget))
+        {
+            return true;
+        }
+#if NORVES_ENABLE_LOGGING
+        if (warnings.MarkFirstWarning(caster.MeshId))
+        {
+            NORVES_LOG_WARNING("ShadowMapPass", "SHADOW_CASTER_BUDGET_EXCEEDED mesh=%s triangles=%u budget=%u",
+                               caster.GpuData && !caster.GpuData->DebugName.empty() ? caster.GpuData->DebugName.c_str() : "?",
+                               triangleCount, budget);
+        }
+#else
+        (void)caster;
+        (void)warnings;
+#endif
+        return false;
     }
 
     // 記録用に「メッシュ名:段/三角形数」を足す

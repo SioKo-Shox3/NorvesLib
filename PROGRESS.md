@@ -11429,3 +11429,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 追記（反復 5）: 統合ブランチの取り込みで verify が元の 2 行に戻っていたため、判断役の決定（案 A）に従って `TASKS.md` の verify を `cmake --build build --config Debug --target AssetCook Game -- /m:1` の 1 行にそろえ直し、消えた試験を選ぶ ctest の行を外した。今の HEAD でこのビルドが終了コード 0・エラー 0 件で `AssetCook.exe` と `Game.exe` を生成した（`.harness/runs/20261115-173337/aux-G2-GR78-SIDECAR-CLIP-SECTION-iter5-build.txt`）。実装の追加の変更は無い。
 - U1 SunShadowParameters に有効・自動停止の照度・投影物の三角形の上限を足し、Sanitize とフレームの判定関数を作る: 着地(直し 0 回)
 - U2 MegaGeometry の投影物の選別を ShadowCasterCollection へ純関数として出す(振る舞いは変えない): 着地(直し 0 回)
+- U3 投影物の三角形の上限で CSM と点光源のキューブから外し、メッシュごとに 1 回だけ警告し、VSM には超えた数をログに出す: 着地(直し 0 回)
