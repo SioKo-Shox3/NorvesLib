@@ -11430,3 +11430,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 「履歴なし」の印の契約（GLSL の include と C++ の定数）を置く: 着地(直し 0 回)
 - U2 velocity の書き手 5 つを VelocityFromClip に揃え、前の w が閾値以下なら印を書く: 着地(直し 0 回)
 - U3 TAA と動きぼけの読み手が印を読む: 着地(直し 0 回)
+- U4 印の契約を割り当て表と velocity の受入れ文書に登録し、タスクのビルドとシェーダーのコンパイルを通す: 着地(直し 0 回)
