@@ -23,6 +23,7 @@ layout(location = 1) out vec2 fragQuadUV;
 layout(location = 2) flat out vec3 fragViewDirection;
 layout(location = 3) flat out vec4 fragAtlasInfo0;
 layout(location = 4) flat out vec4 fragAtlasInfo1;
+layout(location = 5) out vec3 fragWorldPos;
 
 void main()
 {
@@ -58,6 +59,7 @@ void main()
                     worldBoard.cameraUp.xyz * (local.y * sizeWorld.y);
 
     gl_Position = worldBoard.projection * worldBoard.view * vec4(worldPos, 1.0);
+    fragWorldPos = worldPos;
     fragColor = instanceData.objectColor;
     fragQuadUV = sampleUV;
     fragViewDirection = worldBoard.cameraPosition.xyz - origin;
