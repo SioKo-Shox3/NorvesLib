@@ -68,7 +68,7 @@
 - 優先度は `FollowCameraComponent` が -100、`CharacterBodyComponent` が 10、そのほかは既定の 0。型の初期設定は、前者 2 型と `QuadrupedLocomotionComponent` が `Initialize`、Animation 系と SpringArm・HoldSlot・SocketAttachment がコンストラクタで行う。
 - `ColliderComponent` と `RigidBodyComponent` は毎フレーム処理の登録がない。物理は `PhysicsModule` が登録した World の固定ステップの段で動き、`FixedBegin` の `Physics.FixedPre` が `StepPreFixed`、`FixedTick` の `Physics.FixedStep` が `StepFixed` を呼ぶ。Module の `PreFixedTick` と `FixedTick` は、それぞれ `FixedModulePre` と `FixedModulePost` で別に呼ばれる。
 - PostAnimation という群はない。アニメの姿勢を読んで付ける処理は `SocketAttachmentComponent`・`HoldSlotComponent` と同じ PostPhysics に置く。
-- 新しく `RegisterComponentTick` で登録する型は、同じ変更でこの表に足す。漏れは ctest `TickContractTableTest`(`Scripts/CheckTickContractTable.ps1`)が止める。台本は `Library` と `Game` の `.cpp` から `RegisterComponentTick(<型>::StaticClass()` と `RegisterComponentTick(StaticClass()`(後者はファイル名の型)を集め、この表の 1 列目(バッククォートで囲んだ型名)に無い型、または文書に消えた API の名前があれば失敗する。表の 1 列目は型名をバッククォートで囲んだもの 1 つだけにする。
+- 新しく `RegisterComponentTick` で登録する型は、同じ変更でこの表に足す。表の 1 列目は型名をバッククォートで囲んだもの 1 つだけにする。
 - 敵の Tick は Default 群で Animation 群より前に動き、アニメの要求を同じフレームに渡す。時計は World channel を使い、ヒットストップに追従する。
 - HealthComponentは可変Tickを持たず、ApplyDamageを呼んだ側のTickの中でOnDamaged・OnStaggerBroken・OnDefeatedを通知する。
 - `HitboxComponent`・`HurtboxSetComponent` は `RegisterComponentTick` で群に登録せず、Module Late と同じ進行 gate に従う。判定窓は `BeginAttack` / `EndAttack` の直接呼び出し、または同じ Entity の `AnimatorComponent::OnEvent` の Begin（Name が窓のイベント名と一致）と対応する WindowToken の End で開閉する。
@@ -88,7 +88,7 @@
 | 非ポーズ時のsimulation | World 全群、Particle、固定ステップ、Module Late、Handler Late も同じ gate で更新 | Bridge 進行 AND ゲーム内非 pause の条件で実行 |
 | ポーズ中も更新する印付き対象 | 未実装、該当する印付き Component なし | `bTickWhenPaused` 等の明示指定を持つ対象だけ実時間 delta で更新し、割り当て表へ登録 |
 
-時間の channel はシミュレーションが進むフレームの中で delta の取り方を決めるものであり、進行 gate を越える指定ではない。World / Animation は owner の時間倍率も適用し、Unscaled には適用しない。時間倍率による hit stop で World / Animation / Physics が 0 でも進行 gate が開いていれば Unscaled の呼び先は実行される。一方、シミュレーションの進行が停止中は Unscaled の型も呼ばれない。`Test/Core/Engine/ApplicationFixedStepPipelineTest.cpp` の `TestHitStopTimeChannels` は両方の条件を区別している。
+時間の channel はシミュレーションが進むフレームの中で delta の取り方を決めるものであり、進行 gate を越える指定ではない。World / Animation は owner の時間倍率も適用し、Unscaled には適用しない。時間倍率による hit stop で World / Animation / Physics が 0 でも進行 gate が開いていれば Unscaled の呼び先は実行される。一方、シミュレーションの進行が停止中は Unscaled の型も呼ばれない。
 
 Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテナンス、描画同期後の通常 Module `TickAll`、`OnPreRender` は simulation gate の外にある。停止中は fixed scheduler の累積値を保持する。振動は既存の simulation / focus 通知で voice を取り消し、自動再開しない。
 
@@ -134,7 +134,3 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 `World::Tick` と `World::LateTick` の入口で `UpdateWorldTransforms` を実行する。同じ順序付きの系の中では、呼び先が次の群へ移る境界で変換を更新する。同群内の setter 直後には暗黙同期しない。Late の PostPhysics 後は `UpdateRenderTransforms` が `UpdateWorldTransforms` を呼び、Camera〜PreRender の前に World と描画の変換を確定する。これらの入口と PostPhysics 後の確定は、対象が空の場合も維持する。
 
 前の群で変更した親の姿勢は次の群から子が読める。群ごとの一括確定を保ち、同群内の遅い observer に setter 直後の伝播を保証しない。固定ステップの前後にも変換を確定する。
-
-## 検証範囲
-
-群・設定・順序・破棄、固定ステップ、時間 channel、姿勢および camera 後段の試験結果は `Docs/Architecture/GameFoundationValidation.md` に記録する。

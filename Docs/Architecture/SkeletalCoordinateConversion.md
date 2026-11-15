@@ -27,8 +27,7 @@ Buildと各変換はcandidateで完了してからoutへ反映する。失敗時
 
 root OFFSETの減算/target bindの加算/root_scale、nonroot位置channelの無視とreport、fps/Quaternion補間/rest補正、JSON/role語彙、CLI、StageB作者時rest snapshotは非対象。generic BvhEvaluateはそのまま維持する。import profileがnonroot位置を無視するときは、後続adapterで位置参照もOFFSETへ戻す必要がある。
 
-## 検証
+## 守る振る舞い
 
-独立literalでidentity/proper/improper基底、非可換Rz90、一般3x3、translation、parent-child FK covarianceを検証する。全48signed up/forward/handedness組合せでup/forward写像・determinant・直交・一意性・往復を確認。未知enum/軸衝突/不正scale、全成分NaN/Inf、DBL_MAX、subnormal境界、非nearestの3modeとx86のFTZ/DAZとMXCSRだけを変更した丸め、aliasとlate failureのbit保持も試験する。
-
-実helper cppと値型だけのtestをLinuxで通常/O2-NDEBUG/ASan・UBSan（LSan除外）実行する。BvhDocument/動的コンテナを作らず、Core/Windows shim/allocator stub/BvhEvaluate.cppはリンクしない。このhost試験は全CoreやGPUの受入れではない。実Windows49CPU、凍結Sampler4capture、旧89byte/managed gateは別の受入れ条件。
+全48通りのsigned up/forward/handednessで軸の写像・直交性・往復を保つ。
+未知enum・軸衝突・不正scale・非有限成分・対応外の丸め環境を拒否し、aliasや途中の失敗でも出力のビットを保持する。

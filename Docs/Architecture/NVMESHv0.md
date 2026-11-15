@@ -22,8 +22,6 @@ uses `AGENTS.md`, `Docs/Architecture/AssetCookWorkflow.md`,
 - Magic size: 8 bytes.
 - The magic has no trailing NUL byte.
 - Package FourCC: `Msh0`.
-- `Mod0` in `Test/Core/Asset/PackageFormatTest.cpp` is a placeholder/test value and is
-  not normative for cooked mesh packages.
 - Runtime manifest fields for this format:
   - `kind`: `model`
   - `format`: `nvmesh.v0.mesh3d.pnt.u32.clustered`
@@ -388,29 +386,6 @@ For v0:
 
 Changing any of those fields for produced content requires either a new format string,
 a `cooked_version` bump, or both, depending on whether the wire schema itself changed.
-
-## Implemented Tests and Acceptance Gates
-
-Focused coverage includes:
-
-- `CookedMeshTest` parser validation.
-- `AssetCookMeshSmoke` for glTF -> `.nvmesh` -> `Msh0` package/manifest output.
-- `ModelResourcesAssetRuntimeTest`, `ModelAsyncLoadQueueTest`, and
-  `MegaGeometryResourcesTest` for cooked model resolution, runtime finalization, and
-  cancellation/drain behavior.
-- `ModelResourcesAssetLoadProfileContractTest` for the cooked-ready profile contract.
-- `AssetManifestReloadBridgeLoopbackTest` for manifest snapshot/Bridge reload.
-
-Helpful focused commands:
-
-```powershell
-cmake --build build --config Debug --target CookedMeshTest
-ctest --test-dir build -C Debug -R CookedMeshTest
-cmake --build build --config Debug --target AssetCook
-ctest --test-dir build -C Debug -R AssetCookMeshSmoke
-cmake --build build --config Debug --target MegaGeometryResourcesTest
-ctest --test-dir build -C Debug -R MegaGeometryResourcesTest
-```
 
 The strict real-Game profile proves that cooked-ready model loading uses cooked mesh
 parse/finalize stages and does not fall back to loose glTF parsing or clustering.

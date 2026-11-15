@@ -2,7 +2,7 @@
 
 GPU に渡す構造体・GBuffer のチャネル・binding を追加する、または意味を変えるときは、先にこの表へ登録してから使う。決め打ちの値（`0.25` の閾値など）でチャネルに意味を足さない。GR27 以降の材質・シェーディングモデルもこの約束に従う。
 
-GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/ShadingModelIds.h` と `Assets/Shaders/Common/GBufferEncoding.glsl` の定数表・関数が正本である。`ShadingModelContractTest` は両者の一致と、`Assets/Shaders` 内の直接の読み書きが符号化・復号関数を通ることを確かめる契約を担う。
+GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/ShadingModelIds.h` と `Assets/Shaders/Common/GBufferEncoding.glsl` の定数表・関数が正本である。両者の定数を一致させ、`Assets/Shaders` 内の該当チャネルの読み書きは符号化・復号関数を通す。
 
 オフセットは先頭からのバイト数、範囲の両端は含む。`float` は 4 バイト、`vec4` は 16 バイト、`mat4` は 64 バイトとして、C++ の配列宣言と GLSL の並びを照合している。「空き」は当該経路で意味を割り当てていない成分であり、登録なしで転用してよいという意味ではない。
 
@@ -347,9 +347,9 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 ## 5. 表の更新手順
 
 1. 変更する枠・型・オフセット・量子化・既定値を先に本表へ登録する。使用中・予約の枠を空きと見なさない。
-2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` を同時に直し、全書き手・読み手を同じ関数の契約へ揃える。`ShadingModelContractTest` が定数表と直接の読み書きを検査する。デカールの保持は `DecalGBufferVulkanTest`、可視バッファの書き出しは `VisibilityResolveVulkanTest` の対象。
-3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。`InstanceDataFlattenTest` / `InstanceBufferRingTest` はこの構造体の値の転送・配置・容量を扱う。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。
-4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。この一覧全体を専用に照合する試験の存在は未確認。
+2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` の定数表・関数を同時に直し、シェーダーと C++ の全書き手・読み手を同じ契約へ揃える。デカールでの値の保持と可視バッファへの書き出しも揃える。
+3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。
+4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。
 
 ## 6. 照合上の未確認事項と注意
 
@@ -442,7 +442,7 @@ C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`a
 
 ### VSM の VsmRasterParams
 
-C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShadowMapRaster.cpp` の `GPURasterParams` はその別名）、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **176 バイト**。`static_assert` が各フィールドの位置と大きさ 176（`vertexAnimTime` の位置 112、`worldField` の位置 128）を検査する。`worldField` は末尾に置く（`WindShaderCompileTest` が UBO の末尾のメンバの位置と大きさを照合する）。
+C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShadowMapRaster.cpp` の `GPURasterParams` はその別名）、GLSL は `vsm_draw.vert::VsmRasterParams`。`std140`、set 0 / binding 0、合計 **176 バイト**。`static_assert` が各フィールドの位置と大きさ 176（`vertexAnimTime` の位置 112、`worldField` の位置 128）を検査する。`worldField` は末尾に置く。
 
 | オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
 |---|---|---|---|---|

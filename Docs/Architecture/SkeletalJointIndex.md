@@ -16,8 +16,6 @@ BVH側は既存UTF8名からSkeletalJointNameViewを渡す。target側はBuildSk
 
 コピーした索引は名前のsnapshotであり、元骨格の変更を自動追従しない。元の順序が変わるならcallerが索引を再構築する。新しい骨格やrest poseへの適合性は別途検証する。
 
-## 検証
+## 制限
 
-SkeletalJointIndexTestは元配列順、UTF8/UTF16/UTF32/native TCHARと非BMP、case/prefix/colon/正規化差、空白/改行、空/NUL/不正encoding/重複/未知名、各上限の境界・超過、不正span、入力の破棄、copy/move/self-assignment、失敗時保持をliteralで検証する。CookedMeshTestのMEMBERで、実Windowsの結果はPROGRESS.mdに記録する。
-
-既存runtimeを変更しないことはsource byte保全と既存89出力の直接比較で維持する。この単位でSamplerを新しく実行したとの主張はしない。Samplerのplain API共有・pose同値確認、BoneMap、retarget、Stage Bの作者時rest snapshotは残件である。確保故障注入は未実施で、局所構築とnothrow swapによる保持を静的に固定する。
+Samplerのplain API共有・pose同値確認、BoneMap、retarget、Stage Bの作者時rest snapshotは残件である。確保故障時の実測は未実施で、構築失敗時の出力保持は局所構築とnothrow swapに基づく。

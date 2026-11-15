@@ -56,10 +56,6 @@ profile 2/3だけで使用する。旧クリップは節を出さず既存wire�
 
 この段階は抽出・保存まで。再生時の経路差分適用・ループ跨ぎ・controllerへの受渡しはG3/G4で行う。
 
-## 検証
-
-既存SkeletalBvhClipImportTestに16→30fps・11.6frame周期・非周期・端点・巨大frame原点・yawのケース、RigStaticRootFrameWireTestにRMTN往復/拒否、RigSplitCookTestにBVH/glTF共通変換とasset-set→CPUロード、AssetCookRigSplitSmoke.pyに実CLIの新規公開/拒否を追加した。native実行結果はPROGRESS.mdに記録する。GPU/DCC/実犬での見た目はこの合成CPU検証に含めない。
-
 ## GR87: クリップのキーの削減（cook 時）
 
 `--clip-optimize` を指定したときだけ、cook 中にクリップを削減する。旧形式は glTF の decode の後、`--bvh` によるクリップの追加・置換を行う場合はその適用後、NVSKEL の書き出し前に実行する。`--bvh` は Role Profile を使い、入力 BVH を旧形式のスキンに適用する。v1 の `--rig-split` は glTF/GLB から Skeleton・SkinMesh・ClipBank を分割して出力し、`--retarget-clip` は BVH または glTF の動きを対象骨格へ変換して ClipBank を出力する。どちらも `BuildClipBankV1` の前に削減する。

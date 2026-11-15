@@ -9,20 +9,20 @@ R6を受入れる（2026-09-25）。Roadmapの完了条件をすべて満たし�
 | 完了条件（Roadmap R6） | 結果 | 根拠 |
 |---|---|---|
 | R6-a単独ゲート（velocity readbackが解析値と規定誤差内） | 合格（`c4d1ea4`、`RenderingRoadmap: R6-a complete`） | `R6aVelocityAcceptance.md` |
-| 動的ライト移動でGIが追従する（追従ラグの許容フレーム数を明記した複数フレーム判定） | 合格。移動が描画に届いてから4描画フレーム以内に、収束後の変化量の80%以上へ到達する（到達率はR6-P5時点の4回で0.87〜0.98、その後のRenderingValidation実行で0.826・0.845）。最終変化量は静止時の揺らぎの5倍以上 | `R6RTGIAcceptanceVulkanTest`（下の経緯の2） |
+| 動的ライト移動でGIが追従する（追従ラグの許容フレーム数を明記した複数フレーム判定） | 合格。移動が描画に届いてから4描画フレーム以内に、収束後の変化量の80%以上へ到達する（到達率はR6-P5時点の4回で0.87〜0.98、その後のRenderingValidation実行で0.826・0.845）。最終変化量は静止時の揺らぎの5倍以上 | 下の「受入れまでの経緯」の 2 |
 | 静止カメラで収束させた画像がR7参照と知覚diff閾値内で一致 | 合格。R7の自前PT（拡散1バウンス）とのLDR-FLIPで、平均0.0466、幾何一致画素の画素単位最大0.150、8×8区画最大0.100（閾値0.0819/0.186/0.167） | 「R6-P7の完了」 |
 | 性能回帰（別gate） | Deferred | 「性能gateと完了条件」 |
 
-静止収束の比較は、初めから暫定外部リファレンスではなくR7の自前PTを参照にした。このため更新ルール5の再照合は、R6-P5-REFとR6-P7の比較そのものにあたる。R7-P7ではこのテストを同じ閾値で再実行して記録する。
+静止収束の比較は、初めから暫定外部リファレンスではなくR7の自前PTを参照にした。このため更新ルール5の再照合は、R6-P5-REFとR6-P7の比較そのものにあたる。R7-P7 での再照合は同じ閾値に従う。
 
-全体gate（`.harness/runs/20260925-r6-p6/`）: targetless Debug buildはBUILD_EXIT=0。`ctest -L RenderingValidation`は56件中47件合格、8件は意図したskip契約、失敗1件で、失敗は再オープン中のR4の再照合（`R4DDGIPathTracingReferenceVulkanTest`、R4-REOPEN）だけである。R6のテスト（`R6RTGIAcceptanceVulkanTest`、`R6RTGIPathTracingReferenceVulkanTest`、`RTGIDiffuseIndirectVulkanTest`、velocity、fallback）はすべて合格した。
+2026-09-25 の全体結果（`.harness/runs/20260925-r6-p6/`）: Debug ビルドは BUILD_EXIT=0。56 件中 47 件合格、8 件は意図したスキップ契約、失敗 1 件。失敗は再オープン中の R4 の再照合だけで、R6 の動的 GI・参照比較・速度・代替経路はすべて合格した。
 
 ### 受入れまでの経緯
 
 全体gateを阻んでいた2件は解消し、P5指定の全体`RenderingValidation`は49件中41件合格・8件は意図したskip契約・失敗0件になった。
 
-- `DDGIProbeRadianceVulkanTest`: 1 pass内で非遮蔽→遮蔽を連続実行し、前ケースのprobe irradianceが後者の直接照明期待値へ混入していた。遮蔽ケースを独立passへ分離し（`d96d6fe`）、rendererの放射輝度計算・期待値・閾値は変更していない。
-- `RenderingGoldenOutdoorVulkanTest`: R2の4カスケードCSM導入で球の自己影境界と接地影の輪郭459画素が変わっていた。正式な候補生成・承認・publish手順でOutdoor.pngだけを現行出力（SHA256=`9933B558…F3B954`）へ置き換えた（`c1474fc`、根拠は`R1Acceptance.md`の「R2 CSM後のOutdoor再承認」）。Indoor画像と閾値は変更していない。
+- DDGI の放射輝度の比較: 1 pass内で非遮蔽→遮蔽を連続実行し、前ケースのprobe irradianceが後者の直接照明期待値へ混入していた。遮蔽ケースを独立passへ分離し（`d96d6fe`）、rendererの放射輝度計算・期待値・閾値は変更していない。
+- 屋外の画像比較: R2の4カスケードCSM導入で球の自己影境界と接地影の輪郭459画素が変わっていた。正式な候補生成・承認・publish手順でOutdoor.pngだけを現行出力（SHA256=`9933B558…F3B954`）へ置き換えた（`c1474fc`、根拠は`R1Acceptance.md`の「R2 CSM後のOutdoor再承認」）。Indoor画像と閾値は変更していない。
 
 一方、2026-09-23の独立評価で、完了条件の検証方法と実装に次の不足が見つかった。判定2〜5は2026-09-24に、判定1はR6-P7で解消した。
 
@@ -72,23 +72,16 @@ R6を受入れる（2026-09-25）。Roadmapの完了条件をすべて満たし�
 | R6-P1 / revision契約 | `.harness/runs/20260922-200402/verify-R6-P1-1.txt`, `verify-R6-P1-2.txt`, `verify-R6-P1-FIX-1.txt`, `verify-R6-P1-FIX-2-1.txt`, `verify-R6-P1-FIX-2-2.txt` | Game buildと指定契約/GPUテストを通過。履歴側revision差は即時fallbackに使わず、構成変更だけを不採用条件にした。 |
 | R6-P2 / RTGI陽性経路 | `.harness/runs/20260922-200402/verify-R6-P2-FIX-5.txt`〜`verify-R6-P2-FIX-7.txt` | Game build、指定GPU 3件、Vulkan 1.2 shader compileを通過。finite hit、miss zero、RTGI公開、disabled/incomplete fallbackを確認。 |
 | R6-P3 | `.harness/runs/20260923-033012/verify-R6-P3-1.txt`, `verify-R6-P3-2.txt` | Game buildとcamera/object velocity・RenderGraphCompileTestの3/3を通過。 |
-| R6-P4 | `.harness/runs/20260923-r6-p4-review2/verify-build.txt`, `verify-ctest.txt`, `verify-ctest-LastTest.txt` | Game/対象テストbuild、指定CTest、shader/denoise接続の読戻しを通過。 |
-| R6-P5専用 | `.harness/runs/20260923-050747/verify-R6-P5-1.txt`, `verify-R6-P5-3.txt`, `verify-R6-P5-4.txt` | Game build、受入れfixture build、`R6RTGIAcceptanceVulkanTest` 1/1は通過。 |
 | R6-P5全体gate（初回） | `.harness/runs/20260923-050747/verify-R6-P5-2.txt` | 44件中26 passed・8 skipped・10 failed、EXIT_CODE=8。その後の再実行で2 failedまで縮小した。 |
-| R6-GATE-DDGI-ORACLE | `.harness/runs/20260923-r6-gate-ddgi/verify-build.txt`, `verify-ctest.txt`, `verify-ctest-LastTest.log` | 非遮蔽と点/スポット遮蔽を独立passで検証し、後者の期待値・実測値が全RGB channelで一致。対象CTest 1/1 passed。 |
-| R6-GATE-OUTDOOR | `.harness/runs/20260923-resume/baseline-generate.txt`, `baseline-publish.txt`, `outdoor-ctest.txt` | 候補生成のIndoor/Outdoor hashは承認値と一致し、publishは`baseline_publish=PASS`、置換後のOutdoor golden CTestは1/1 passed。 |
-| R6-P5全体gate（Outdoor再承認後） | `.harness/runs/20260923-resume/start-allbuild-2.txt`, `rv-full.txt` | targetless Debug buildはEXIT_CODE=0。`ctest -L RenderingValidation --timeout 180`は49件中41 passed・8 skipped・0 failed、EXIT_CODE=0。skipの8件はGPU skip契約テストである。 |
 | R6-P5再開 | `.harness/runs/20260924-r6-p5/verify-allbuild-2.txt`, `verify-rv-2.txt`, `verify-r6-acceptance.txt`, `stability-1.txt`〜`-3.txt` | 全buildはEXIT_CODE=0。RenderingValidation 50件は失敗0件。R6受入れを計4回実行し、すべてEXIT_CODE=0。 |
 | R6-P5-REF | `.harness/runs/20260924-r6-p5-ref/` | 比較前に閾値を固定し、R6 RTGI対`pt-single`は平均0.699で超過（EXIT_CODE=8）。R6を再オープン。 |
-| R6-P7 | `.harness/runs/20260924-r6-p7-static/ctest-r6-reference-2.txt`, `ctest-rtgi-3.txt`, `ctest-r6-reference-3.txt` | `r6_reference_comparison=PASS`（平均0.0466/0.0468、一致画素の最大0.150/0.151、区画0.100）。RTGIの静止延長・材質とpre-exposureの変更での解除を確認。 |
 | 停止残留の安定 | `.harness/runs/20260924-test-r6-residual/label-run-1.log`〜`-3.log`, `run-1.txt`, `run-2.txt` | RenderingValidation全件の3回連続実行でR6の停止残留は毎回合格（物体影響0.0267〜0.0289、単体実行0.0251〜0.0280）。 |
 | R6受入れの全体gate | `.harness/runs/20260925-r6-p6/allbuild.txt`, `rv.txt` | targetless Debug build BUILD_EXIT=0。RenderingValidation 56件中47 passed・8 skipped・1 failed（R4の再照合のみ、R4-REOPEN）。 |
-| R6-P5再開（2周目対応） | `.harness/runs/20260924-r6-p5b/verify-allbuild.txt`, `verify-rv.txt`, `verify-r6-acceptance.txt`, `ctest-noemit-1.txt`〜`-3.txt`, `negative-distance-baseline.txt` | 全buildはEXIT_CODE=0。RenderingValidation 50件は失敗0件。R6受入れは4回ともEXIT_CODE=0。距離基準を戻した負の対照はカメラ移動の保持率0でEXIT_CODE=8。 |
 
 ## fallbackと既知の制限
 
 - P5専用fixtureの`R6_FALLBACK_RT_DISABLED=PASS`はIBL、`R6_FALLBACK_R4=PASS`はR4 DDGIを確認した。RT capability不在、RT無効、TLAS不完全、resource/dispatch失敗時も、R6の不完全な結果を公開せず既存間接光へ戻す契約をP2/P2-FIXで固定している。
-- 最新の全体gateログにも、Slang SDK未導入によるneural material decoder無効化のwarning/errorログが出る。既存の無効化fallbackであり、テストの終了コードには影響しない。
+- 最新の全体gateログにも、Slang SDK未導入によるneural material decoder無効化のwarning/errorログが出る。既存の無効化 fallback であり、2026-09-25 の記録では試験の終了コードには影響しなかった。
 - デノイズ後間接光の直接readback（検証captureの`RTGIDiffuseIndirect`）と、遠景の非線形depth閾値（線形距離による棄却へ変更）は2026-09-24に解消した。複数frame slotへ拡張した場合のsame-slot履歴境界は、R6の機能受入れを阻害しない追跡事項として`NEXT_FINDINGS.md`に残す。
 - R6は1 bounce diffuseまでであり、2 bounce、specular GI、反射・透過、path tracing、ReSTIR、SSR/TAA、外部NRDは実装していない。
 - 静止時の履歴延長は、視点・光源のrevision・instanceの変換と形状・材質スナップショット（色・発光・textureハンドル）の署名で静止を判定する。同じtextureハンドルのまま内容を書き換えた変更は署名に入らない（`RTGIContract.h`）。
@@ -97,7 +90,7 @@ R6を受入れる（2026-09-25）。Roadmapの完了条件をすべて満たし�
 
 ## R7参照との再照合の結果（R6-P5-REF、2026-09-24）
 
-`R6RTGIPathTracingReferenceVulkanTest`は、R6受入れの静止段階と同じCornell fixture（camera、壁と箱、動的物体、点光源1200 lm、天井の面光源45000 nits、RTGI有効・DDGI無効、同じ環境マップとプリエクスポージャ）で次の4枚を256×256のSceneColorとして取得し、LDR-FLIP（x/(1+x)でトーンマップしたsRGB 8bit、PPD 67）で比べる。
+R6 受入れの静止段階と同じ Cornell の場面（カメラ、壁と箱、動的物体、点光源 1200 lm、天井の面光源 45000 nits、RTGI 有効・DDGI 無効、同じ環境マップとプリエクスポージャ）で次の 4 枚を 256×256 の SceneColor として取得し、LDR-FLIP（x/(1+x) でトーンマップした sRGB 8 bit、PPD 67）で比較した。
 
 | 画像 | 内容 | 平均輝度 |
 |---|---|---|
@@ -106,7 +99,7 @@ R6を受入れる（2026-09-25）。Roadmapの完了条件をすべて満たし�
 | pt-single | PT（`single-diffuse-bounce`）。R6の申告範囲（拡散1バウンス）に合わせた参照 | 0.3842 |
 | pt-full | PT（`full`）。多重散乱をすべて追う参照 | 0.4371 |
 
-判定の参照はR6の申告範囲に合わせた`pt-single`とする。閾値の物差しは比較の実行前に`6a03e1b`で固定した: 参照の間接光成分（`pt-single`−`pt-direct`）を一様に±20%変えた画像と参照との知覚差のうち小さい方を上限とする。間接光の一様な20%の誤差を、R6の近似（1試料/frame・8 frameの履歴・3×3 filter）の残留誤差として許容できる上限とみなした。判定は原寸の全画素FLIP平均（pool）と原寸の画素単位FLIP最大の二段で、8×8区画平均画像のFLIP最大を補助の判定に加える（原寸の画素単位最大は評価の指摘を受けて`R6RTGIPathTracingReferenceVulkanTest`へ追加した判定で、閾値を緩める変更ではない）。±40%の変化が3つの判定のすべてで閾値の外にあること、参照の最も暗い3×3画素へ光漏れを加えた局所欠陥が、全体平均では閾値内でも原寸の画素単位最大で閾値の外に出ることを、比較のたびに確かめる。
+判定の参照はR6の申告範囲に合わせた`pt-single`とする。閾値の物差しは比較の実行前に`6a03e1b`で固定した: 参照の間接光成分（`pt-single`−`pt-direct`）を一様に±20%変えた画像と参照との知覚差のうち小さい方を上限とする。間接光の一様な20%の誤差を、R6の近似（1試料/frame・8 frameの履歴・3×3 filter）の残留誤差として許容できる上限とみなした。判定は原寸の全画素FLIP平均（pool）と原寸の画素単位FLIP最大の二段で、8×8区画平均画像のFLIP最大を補助の判定に加える。±40%の変化が3つの判定のすべてで閾値の外にあること、参照の最も暗い3×3画素へ光漏れを加えた局所欠陥が、全体平均では閾値内でも原寸の画素単位最大で閾値の外に出ることを、比較のたびに確かめる。
 
 | 比較 | FLIP平均 | 画素単位FLIP最大 | 8×8区画FLIP最大 | 判定 |
 |---|---|---|---|---|
@@ -120,14 +113,11 @@ R6を受入れる（2026-09-25）。Roadmapの完了条件をすべて満たし�
 
 R6の画像の平均輝度はPTの直接光だけの画像より低い（間接光に当たる差が−0.0729）。ラスタのLightingPassは発光三角形を光源として扱わず、天井の面光源の直接光はRTGIのコサイン標本が偶然面光源へ当たったときだけ入る。面光源は小さく非常に明るいため、1試料/frame・8 frameの履歴・3×3 filterでは斑点状の雑音として残り、壁と箱の照明がほぼ欠ける（`.harness/runs/20260924-r6-p5-ref/r6-reference-images.png`）。RTGIの命中点の直接光も点・spot・方向光だけで、面光源に照らされた面からの1バウンスも入らない。これはPT方式との正当な輸送差（多重散乱）ではなく、R6の申告範囲内の欠落である。
 
-Roadmap更新ルール5に従いR6をステータス表で「再オープン」とし、閾値とgoldenは緩めない。修正はR6-P7（RTGIで発光三角形を光源標本する）で行い、同じテストを同じ閾値で再実行する。
+Roadmap更新ルール5に従いR6をステータス表で「再オープン」とし、閾値とgoldenは緩めない。修正は R6-P7（RTGI で発光三角形を光源標本する）で行い、再照合には同じ閾値を使う方針とした。
 
 | 記録 | 内容 |
 |---|---|
-| `.harness/runs/20260924-r6-p5-ref/ctest-r1.txt` | 画素単位最大と局所欠陥の対照を加えた後の取得4回と比較の全出力、およびPT照明テスト。R6の比較はEXIT_CODE=8（閾値超過） |
-| `.harness/runs/20260924-r6-p5-ref/ctest-r6-reference-1.txt` | 初回（平均と区画最大の判定）の比較出力 |
 | `.harness/runs/20260924-r6-p5-ref/positive-control-pt-low-spp.txt` | 陽性対照の比較出力 |
-| `.harness/runs/20260924-r6-p5-ref/ctest-lighting-transport.txt`、`ctest-r1.txt` | PTの輸送範囲の解析確認（平面1枚で直接光のみ=点光源の解析値、拡散1バウンス−直接光=反射率×環境で誤差5e-6。面光源と平面では直接光のみと拡散1バウンスが一致し、多角形光源の解析照度との差0.29%） |
 | `.harness/runs/20260924-r6-p5-ref/*.nlrgba` | 比較に使った4枚のfloat画像 |
 
 ## R6-P7の修正後の再照合（2026-09-24）
@@ -168,7 +158,7 @@ R6の平均輝度0.385は参照0.384とほぼ等しく、R6の間接光は参照
 | ＋静止時の履歴延長 | 0.0466885 | 0.215286（画素(125,235)、超過） | 0.0992997 | 4 |
 | ＋年齢に応じたデノイズ | **0.0466159** | **0.149767**（画素(121,186)） | **0.0999677** | **0** |
 
-最後の行は`r6_reference_comparison=PASS sanity=PASS`（`.harness/runs/20260924-r6-p7-static/ctest-r6-reference-2.txt`）。1画素の光漏れの負の対照は一致画素で平均・区画では閾値内、画素単位最大だけで閾値外になる。RTGIのGPUテストで、連続27静止フレームで年齢の上限と画素の年齢が18、instanceを動かすと8へ戻ること、デノイズ結果が同じ面の近傍へ寄る割合が年齢8の0.249から年齢18の0.176へ下がることを確かめ、年齢による近傍の重みやシェーダーの年齢上限を戻すとテストが失敗することを負の対照で確かめた。
+最後の行は`r6_reference_comparison=PASS sanity=PASS`。1画素の光漏れの負の対照は一致画素で平均・区画では閾値内、画素単位最大だけで閾値外になる。RTGIのGPUテストで、連続27静止フレームで年齢の上限と画素の年齢が18、instanceを動かすと8へ戻ること、デノイズ結果が同じ面の近傍へ寄る割合が年齢8の0.249から年齢18の0.176へ下がることを確かめ、年齢による近傍の重みやシェーダーの年齢上限を戻すとテストが失敗することを負の対照で確かめた。
 
 ## R7参照との再照合条件
 
@@ -198,7 +188,7 @@ R7屋外比較（`R7OutdoorAcceptance.md`）でラスタの輸送範囲を詰め
 | 閾値 | 0.0975352 | 0.188942 | 0.171465 | — |
 | R6 RTGI | **0.0440556** | **0.145114**（画素(73,219)） | **0.0932066** | **0** |
 
-間接光の平均輝度は拡散1バウンス0.0495、拡散2バウンス0.0737、R6 RTGI 0.0696（0.945倍）、多重散乱0.1031。3組の同一画素は6.6%（背景）だけで、近傍の3倍を超える孤立した外れ値は各組・中央値とも0（取得は`.harness/runs/20260925-r7o3-median/ctest.txt`、中央値の同値の修正`e267cb6`の後の比較は`.harness/runs/20260925-r7-final/r6-compare.txt`）。
+間接光の平均輝度は拡散1バウンス0.0495、拡散2バウンス0.0737、R6 RTGI 0.0696（0.945倍）、多重散乱0.1031。3組の同一画素は6.6%（背景）だけで、近傍の3倍を超える孤立した外れ値は各組・中央値とも0（中央値の同値の修正 `e267cb6` 後の比較は `.harness/runs/20260925-r7-final/r6-compare.txt`）。
 
 ## 性能gateと完了条件
 

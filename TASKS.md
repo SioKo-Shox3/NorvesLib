@@ -41,7 +41,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## TEST-REMOVE-1114: 試験をすべて消す(このライブラリでは試験を作らない・回さない)
-- status: todo
+- status: done
 - weight: standard
 - done-when: `Test/` の下の試験をすべて(CPU の試験・GPU の試験・ゲームを起動する受入れ)、ソース・CMake の登録・試験の実行ファイルのターゲット・試験専用の補助(`Test/TestSupport`・`Test/TestBundle`・しきい値の TSV・基準画像・試験用の fixture)ごと消し、`Test/` を無くす。最上位の `CMakeLists.txt` から `enable_testing()`・`NORVES_BUILD_TESTS`・`add_subdirectory(Test)` と試験用の CMake の補助(`NorvesTestNoDialog` など)を外す。試験だけが使うスクリプト(`Scripts/` の基準画像の更新・しきい値の調整・試験の連番の書き出しなど)・`Tools/` の煙試験の雛形(`*.cmake.in`)・`.github/workflows/` の試験を回す段(試験しか回さないワークフローはファイルごと)も消す。エンジン本体(`Library`・`Game`)と道具(`Tools`)のソースは変えない(試験のためだけの入口が本体に残っていても触らず、見つけたものを `PROGRESS.md` に書く)。`Docs/Testing.md` は「試験は作らない(このライブラリは作っている途中で、守る利用者も本番も無い。確かめはビルドと人のプレイ)」の短い文書に書き換え、ほかの文書(`Docs/`)から消した試験・試験のコマンドへの案内を外す。消したファイルの数と行数を `PROGRESS.md` に書く。Debug の構成とビルド(Game・Tools を含む全体)が通る。試験は走らせない。
 - verify: `cmake -B build -S .`
@@ -7045,7 +7045,7 @@
 - notes: 方式は要件 `#### GR51` の設計案 3・4。半透明を霧の前に描く並べ替えは採らない（霧の距離が背後の不透明の深度で決まり誤る。ロードマップ 1537 行）。ソフトにはしない（G7-S4 の (A)。G7-GR51-HEIGHTFOG-INCLUDE の notes）。空気遠近と光条は前向きに掛けない近似（同じ notes）。GR136 の CPU の VFX がワールドの空間に出す板（GAME-GR131-VFX-P1 で 3D の view へ渡るようになった `BoardProxy`）は world_board の経路を通るので同じ霧を受ける。`mesh_particle_dissolve.frag` は試験のパイプラインだけで使う（ロードマップ 4291 行）ので対象外。帯の合成の式（ブレンドの係数）は RibbonTrailRenderer.cpp を読んで、合う合成の関数を選ぶ（`ribbon_trail.vert`・`.frag` は Assets/Shaders にある）。半透明の霧の色は IBL の源（`ClampSkyRadianceForFp16` を通る）でなく空の LUT を引いて VolumetricsPass と揃える（要件のリスク）。共有の ForwardPass.cpp と試験の束の CMakeLists.txt は差分を小さくする。試験を足す理由: 半透明だけ霧が掛からない・掛かり過ぎるのは場面によって見落とし、黙って起きる。危険地帯（ForwardPass の記述子・RenderThread）なので評価者を通す。ロードマップ 1537・1551 行。
 
 ## G7-GR50-FOG-TINT: 霧の色の寄せ（色味・空への寄せ・基準の仰角）を霧の値に足し、体積の霧・前向きの霧・パストレーサーの霧へ同じ式で掛ける
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE
 - gr: GR50
 - done-when: `VolumetricFogParameters`（VolumetricFog.h:11）の末尾に Tint（float×3、既定 1）・SkyBlend（0..1、既定 0）・ReferenceElevationDegrees（仮 10）を足し、Sanitize と既定を揃える（`VolumetricFogModelTest` の static_assert を保つ）。`GPUVolumetricsParams`（VolumetricsPass.cpp:27。static_assert :56）と `GPUHeightFogParams` に vec4（tint.rgb・skyBlend）と vec4（sin・cos の基準仰角）を足す。`Common/HeightFog.glsl` の `HeightFogRadiance` が「視線の向きの空の LUT」と「視線の方位のまま仰角を基準の仰角へ傾けた向きの LUT」を SkyBlend で混ぜて Tint を掛け、VolumetricsCommon の霧の色（:444-453）と、空気遠近が有効なときの霧の周りの光（`MarchFogAndAerial` の fogAmbient :400）にも Tint を掛ける（SkyBlend は LUT を引く経路だけ）。パストレーサー: `PathTracingParameters`（PathTracingPass.inl:37）の霧の欄、`FillPathFogParameters`（:197）、`HashPathFog`（:296）、`PathTracing/PathTracingRayGen.glsl`・`PathTracingCommon.glsl` の霧の色の式に同じものを足す。既定（Tint 1・SkyBlend 0）で全経路が今と同じ値を出す。CPU: `VolumetricFogModelTest` に新しい欄の既定・範囲・NaN の Sanitize と、`HashPathFog` が Tint・SkyBlend の違いを区別することを足す（PT の関数が試験から引けなければ、引ける純関数へ切り出す）。`HeightFogShaderCompileTest` に PT の rgen と volumetrics のコンパイルが通ることを足す。
