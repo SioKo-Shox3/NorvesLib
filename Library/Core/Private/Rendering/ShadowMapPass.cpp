@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ShadowMapPass.h"
+#include "Rendering/ShadowCasterCollection.h"
 #include "Rendering/SkinnedShadowComponentBindings.h"
 #include "Rendering/SkinnedShadowStorage.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
@@ -163,78 +164,9 @@ namespace NorvesLib::Core::Rendering
                    lhs.Coverage == rhs.Coverage && lhs.bSparse == rhs.bSparse;
         }
 
-        // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
-        // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
-        // 粗い段を1回の範囲で持つメッシュは、影の地図のテクセルに見合う段を描くごとに選ぶ（ResolveMegaShadowRange）。
-        struct MegaShadowCaster
-        {
-            RHI::BufferPtr VertexBuffer;
-            RHI::BufferPtr IndexBuffer;
-            // ジオメトリのプールの区画の、頂点・インデックスの先頭（塊のバッファの先頭からのバイト）
-            uint64_t VertexBufferOffsetBytes = 0;
-            uint64_t IndexBufferOffsetBytes = 0;
-            uint32_t FirstIndex = 0;
-            uint32_t IndexCount = 0;
-            float World[16] = {};
-            BoundingSphere Bounds;
-            const MegaGeometry::MegaMeshGPUData* GpuData = nullptr;
-            // ローカルの長さ（LODの誤差）をワールドへ直す倍率（行列の最大の軸の伸び）
-            float WorldScale = 1.0f;
-        };
-
-        // MegaGeometryの段の誤差が、影の地図の何テクセル以下なら粗い段を使うか
-        constexpr float MegaShadowLODErrorTexels = 1.0f;
-
         // CSM を読むのがボリュームのフォグだけのときに描く MegaGeometry の投影物の上限（境界の半径の大きい順）。
         // 荒野の地形の区画・遠景・建物・大岩（約 300）が入り、崖錐の小片（27 万）は入らない
         constexpr uint32_t CsmFogMegaCasterBudget = 384;
-
-        // 1回の描画の段と範囲
-        struct MegaShadowRange
-        {
-            uint32_t Level = 0;
-            uint32_t FirstIndex = 0;
-            uint32_t IndexCount = 0;
-        };
-
-        // 影の地図の1テクセルのワールドでの大きさに見合う段を選ぶ（影に指定された段より細かくはしない）。
-        MegaShadowRange ResolveMegaShadowRange(const MegaShadowCaster& caster, float texelSize)
-        {
-            MegaShadowRange range;
-            range.FirstIndex = caster.FirstIndex;
-            range.IndexCount = caster.IndexCount;
-            if (!caster.GpuData)
-            {
-                return range;
-            }
-            range.Level = caster.GpuData->ShadowLODLevel;
-            const uint32_t level = MegaGeometry::SelectShadowLODLevel(*caster.GpuData,
-                                                                      caster.WorldScale,
-                                                                      texelSize,
-                                                                      MegaShadowLODErrorTexels);
-            if (level != range.Level && level < caster.GpuData->LevelRanges.size() &&
-                caster.GpuData->LevelRanges[level].IndexCount > 0u)
-            {
-                range.Level = level;
-                range.FirstIndex = caster.GpuData->LevelRanges[level].FirstIndex;
-                range.IndexCount = caster.GpuData->LevelRanges[level].IndexCount;
-            }
-            return range;
-        }
-
-        // 記録用に「メッシュ名:段/三角形数」を足す
-        void AppendMegaShadowLevel(Container::String& out, const MegaShadowCaster& caster, const MegaShadowRange& range)
-        {
-            char text[160] = {};
-            std::snprintf(text,
-                          sizeof(text),
-                          "%s%s:%u/%u",
-                          out.empty() ? "" : ",",
-                          caster.GpuData && !caster.GpuData->DebugName.empty() ? caster.GpuData->DebugName.c_str() : "?",
-                          range.Level,
-                          range.IndexCount / 3u);
-            out += text;
-        }
 
         // 点光源のキューブの1面（90°の正方形の視錐台）に境界球がかかるか。かからない面へは描かない。
         bool PointShadowFaceMayContainSphere(const PointShadowLightSnapshot& light,
@@ -262,46 +194,18 @@ namespace NorvesLib::Core::Rendering
                    forward - right >= -margin && forward + right >= -margin;
         }
 
-        // ローカルの境界球をワールド行列（行ベクトル規約、並進は行3）で写す。半径は最大の軸の伸びで広げる。
-        BoundingSphere TransformMegaBounds(const BoundingSphere& local, const float* world)
-        {
-            BoundingSphere result;
-            result.CenterX = local.CenterX * world[0] + local.CenterY * world[4] +
-                             local.CenterZ * world[8] + world[12];
-            result.CenterY = local.CenterX * world[1] + local.CenterY * world[5] +
-                             local.CenterZ * world[9] + world[13];
-            result.CenterZ = local.CenterX * world[2] + local.CenterY * world[6] +
-                             local.CenterZ * world[10] + world[14];
-            float maxScaleSquared = 0.0f;
-            for (uint32_t row = 0; row < 3; ++row)
-            {
-                const float lengthSquared = world[row * 4 + 0] * world[row * 4 + 0] +
-                                            world[row * 4 + 1] * world[row * 4 + 1] +
-                                            world[row * 4 + 2] * world[row * 4 + 2];
-                maxScaleSquared = std::max(maxScaleSquared, lengthSquared);
-            }
-            result.Radius = local.Radius * std::sqrt(maxScaleSquared);
-            return result;
-        }
-
         // MegaGeometry の投影物になれるメッシュの GPU データ（区画へのコピーが GPU で完了し、影に使う段を持つ）。無ければ null
         const MegaGeometry::MegaMeshGPUData* FindMegaShadowMesh(const MegaGeometryResources& resources,
                                                                MegaGeometry::MegaMeshHandle handle)
         {
             const MegaGeometry::MegaMeshGPUData* gpuData = resources.GetReadyMegaMeshGPUData(handle);
-            if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer || gpuData->ShadowIndexCount == 0u)
+            if (!IsMegaShadowMeshUsable(gpuData))
             {
                 return nullptr;
             }
             return gpuData;
         }
 
-        // ワールドの境界球が描ける大きさか（有限で半径が正）
-        bool IsDrawableMegaBounds(const BoundingSphere& bounds)
-        {
-            return std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) && std::isfinite(bounds.CenterZ) &&
-                   std::isfinite(bounds.Radius) && bounds.Radius > 0.0f;
-        }
         // MegaGeometryの影に使う段の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
         DrawCommand MakeMegaShadowDrawCommand(const MegaShadowCaster& caster,
                                               const MegaShadowRange& range,
@@ -898,34 +802,13 @@ namespace NorvesLib::Core::Rendering
             outCasters.reserve(ids != nullptr ? ids->size() : cache.Ranges.GetCount());
             const auto append = [&](const ShadowMapMegaCasterCache::Entry& entry)
             {
-                if (!entry.bCastShadow)
-                {
-                    return;
-                }
-                const auto mesh = cache.Meshes.find(entry.Handle.Id);
+                const auto mesh = entry.bCastShadow ? cache.Meshes.find(entry.Handle.Id) : cache.Meshes.end();
                 const MegaGeometry::MegaMeshGPUData* gpuData = mesh != cache.Meshes.end() ? mesh->second.GpuData : nullptr;
-                if (!gpuData)
-                {
-                    return;
-                }
                 MegaShadowCaster caster;
-                caster.VertexBuffer = gpuData->VertexBuffer;
-                caster.IndexBuffer = gpuData->IndexBuffer;
-                caster.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
-                caster.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
-                caster.FirstIndex = gpuData->ShadowFirstIndex;
-                caster.IndexCount = gpuData->ShadowIndexCount;
-                caster.GpuData = gpuData;
-                std::memcpy(caster.World, entry.World, sizeof(caster.World));
-                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
-                caster.WorldScale = gpuData->TotalBounds.Radius > 0.0f
-                                        ? caster.Bounds.Radius / gpuData->TotalBounds.Radius
-                                        : 1.0f;
-                if (!IsDrawableMegaBounds(caster.Bounds))
+                if (TryMakeMegaShadowCaster(entry.World, entry.bCastShadow, gpuData, entry.Handle.Id, caster))
                 {
-                    return;
+                    outCasters.push_back(caster);
                 }
-                outCasters.push_back(caster);
             };
             if (ids != nullptr)
             {

@@ -355,6 +355,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
+    Private/Rendering/ShadowCasterCollection.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/WetSurface.cpp
     Private/Rendering/DfgLut.cpp
