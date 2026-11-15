@@ -11227,3 +11227,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 C++ の環境の UBO の型・詰め方とフレームに 1 つの確保: 着地(直し 0 回)
 - U2 GLSL の環境の UBO の構造体・宣言の型・濡れの感度の読み方: 着地(直し 0 回)
 - U11 GBufferPass の書き手の濡れ（保存した差分を当てて確かめ直す）: 着地(直し 0 回)
+- U12 MegaGeometry の書き手の濡れ（保存した差分を当てて確かめ直す）: 着地(直し 0 回)
