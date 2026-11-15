@@ -20,6 +20,7 @@
 #include "Debug/MapCapture.h"
 #include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
+#include "GameModes/AssetPreview/AssetPreviewLayout.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Pause/PauseMenu.h"
 #include "Save/ProgressSaveData.h"
@@ -328,6 +329,8 @@ namespace Game
         float m_CameraPathTime = -1.0f;
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
+        /// asset-preview で使うモデル・骨格・クリップ・時刻の指定。
+        Game::GameModes::AssetPreviewArguments m_AssetPreviewArguments;
 #if NORVES_BUILD_DEVELOPMENT
         /// sandbox の合成スキンの体数（0 は配置しない）
         uint32_t m_SkinnedCrowdCount = 0;

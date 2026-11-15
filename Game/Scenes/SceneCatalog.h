@@ -280,6 +280,9 @@ namespace Game::Scenes
     /// 負荷シーン mega-stress の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kMegaStressSceneId = "mega-stress";
 
+    /// 資産の確認用シーンの id。シーンの一覧に載るのは開発ビルドだけ
+    inline constexpr const char *kAssetPreviewSceneId = "asset-preview";
+
 #if NORVES_BUILD_DEVELOPMENT
     /// 512 m 四方、原点 (0,0,0) の草原。生成式の谷は z/512 = 0.52 + 0.085 t (1.5 - 0.5 t²)、t = 2x/512 - 1。
     /// 尾根は谷から -Z へ約 102 m。高さは seed 89021 の生成式と 16bit 量子化から求めた固定値[m]。
@@ -339,6 +342,17 @@ namespace Game::Scenes
         "Assets/AssetSets/MegaStressMeshes.json",
         "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
         "Assets/Models/Cottage_Clean/Cottage_Clean.gltf",
+    };
+
+    inline constexpr SceneViewDescriptor kAssetPreviewViews[] = {
+        // +Z 側から資産の正面を見る既定の視点（画面の右が +X）
+        {"front", SceneViewKind::FreePose, 180.0f, -8.0f, 0.0f, {0.0f, 1.4f, 6.0f}},
+        // +X 側から列の端と資産の横顔を見る視点
+        {"side", SceneViewKind::FreePose, 90.0f, -8.0f, 0.0f, {6.0f, 1.4f, 0.0f}},
+        // 列の中央の資産へ寄って見る視点
+        {"close", SceneViewKind::FreePose, 180.0f, -12.0f, 0.0f, {0.0f, 1.0f, 2.5f}},
+        // 真上から格子と並びを見下ろす視点（画面の右が +X、上が -Z）
+        {"top", SceneViewKind::FreePose, 180.0f, -89.0f, 0.0f, {0.0f, 12.0f, 0.0f}},
     };
 #endif
 
@@ -471,6 +485,20 @@ namespace Game::Scenes
             sizeof(kMegaStressViews) / sizeof(kMegaStressViews[0]),
             kMegaStressRequiredAssets,
             sizeof(kMegaStressRequiredAssets) / sizeof(kMegaStressRequiredAssets[0]),
+            nullptr,
+            nullptr,
+        },
+        {
+            kAssetPreviewSceneId,
+            "資産の確認",
+            "取り込んだ静的モデルと骨格つきの資産を論理パスで床に並べ、クリップ名を指定して再生する確認用シーン。--asset-preview-model・--asset-preview-skeletal・--asset-preview-clip・--asset-preview-time で選ぶ。開発ビルドだけ。",
+            "Assets/Textures/Launcher/sandbox.png",
+            "front",
+            Game::GameModes::AssetPreview,
+            kAssetPreviewViews,
+            sizeof(kAssetPreviewViews) / sizeof(kAssetPreviewViews[0]),
+            nullptr,
+            0,
             nullptr,
             nullptr,
         },
