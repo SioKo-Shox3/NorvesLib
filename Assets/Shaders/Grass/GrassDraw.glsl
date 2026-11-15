@@ -31,6 +31,7 @@ struct GrassBladeRecord
     float PositionY;
     float PositionZ;
     uint Packed;
+    uint DrynessPacked;
 };
 
 struct GrassSpeciesGpuData
@@ -52,6 +53,9 @@ struct GrassSpeciesGpuData
     float BladesPerSquareMeter;
     vec4 LodDistanceMeters;
     vec4 LodKeepFraction;
+    vec4 DryColor; // 枯れた色と近景で寄せる重み。
+    vec4 DrynessScales; // 枯れ度 1 での密度・高さ・曲がり・遠景の色の応答。
+    vec4 DrynessFar; // 遠景で草丈を潰す重み。yzw は予約の 0。
 };
 
 // CPU の GrassDrawWorldFieldConstants と同じ 512 バイトの std140 配置。
