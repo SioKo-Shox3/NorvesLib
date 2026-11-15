@@ -34,9 +34,9 @@ namespace NorvesLib::Core::Rendering
     {
         GBufferPipelineKey key;
         key.Program = material ? material->ProgramId : kStandardGBufferProgramId;
-        // 両面の材質はカリングせず、Masked の材質は切り抜きを有効にする。
+        // 両面はカリングせず、Masked と視界確保の遮蔽物は切り抜きの変種で描く。
         key.Cull = material && material->bTwoSided ? RHI::CullMode::None : RHI::CullMode::Back;
-        key.bAlphaClip = material && material->Blend == BlendMode::Masked;
+        key.bAlphaClip = material && (material->Blend == BlendMode::Masked || material->bViewClearanceOccluder);
         key.Polygon = bWireframe ? RHI::PolygonMode::Line : RHI::PolygonMode::Fill;
         key.bSkinned = bSkinned;
         return key;
@@ -55,8 +55,9 @@ namespace NorvesLib::Core::Rendering
 
     bool RequiresGBufferOverlay(const MaterialResourceData* material)
     {
+        // 視界確保の遮蔽物も ID のラスタから外し、解決の後にディザで重ねる。
         return material && (material->ProgramId != kStandardGBufferProgramId ||
-                            material->Blend == BlendMode::Masked || material->bTwoSided);
+                            material->Blend == BlendMode::Masked || material->bTwoSided || material->bViewClearanceOccluder);
     }
 
     struct GBufferProgramRegistry::State
