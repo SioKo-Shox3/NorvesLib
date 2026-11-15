@@ -94,6 +94,10 @@ namespace Game::GameModes
         /// 入場時の視点から決め、カメラを動かしても変わらない周回路
         NorvesLib::Math::Vector3 m_RunCenter;
         float m_RunAngle = 0.0f;
+        /// 風の確認用の木（非所有）。地形の高さを読めたものから一度だけ配置する
+        static constexpr uint32_t kWindTreeCount = 4;
+        NorvesLib::Core::Entity* m_pWindTrees[kWindTreeCount] = {};
+        bool m_bWindTreePending[kWindTreeCount] = {};
         uint32_t m_TickCount = 0;
 #if NORVES_BUILD_DEVELOPMENT
         /// セル単位の流し込みを有効にする起動引数。
