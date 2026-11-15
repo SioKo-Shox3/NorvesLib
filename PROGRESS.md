@@ -11431,3 +11431,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 主人公のシルエットの段（HeroSilhouettePass）とスキンの Overlay の種類: 着地(直し 1 回)
 - U2 GBuffer の切り抜きの変種で印の付いた材質をディザで抜く: 着地(直し 0 回)
 - U3 MegaGeometry に印の付いた区間のディザの変種を足す: 着地(直し 0 回)
+- U5 草原の主人公視点に印の付いた遮蔽物の代役を置き、シルエットの段を登録する: 着地(直し 0 回)

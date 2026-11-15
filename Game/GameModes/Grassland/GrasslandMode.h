@@ -126,6 +126,8 @@ namespace Game::GameModes
         GrasslandViewInputCollector m_ViewInput;
         /// 入力ルーターへの登録を Leave で返すための印
         bool m_bViewInputRegistered = false;
+        /// このモードが登録したシルエットの描画拡張を Leave で返すための印
+        bool m_bHeroSilhouetteRegistered = false;
         /// 主人公視点を描画側へ渡しているか（既定は自由飛行）
         bool m_bHeroView = false;
         /// 生成に失敗したとき、同じ滞在中の資源の再生成を防ぐ印
@@ -134,6 +136,10 @@ namespace Game::GameModes
         NorvesLib::Core::Entity* m_pHero = nullptr;
         /// 自由飛行へ戻るときに代役を隠すための参照（非所有）
         NorvesLib::Core::Component::MeshComponent* m_pHeroMesh = nullptr;
+        /// カメラと主人公の間に置く細い幹（非所有。スコープが寿命を持つ）
+        NorvesLib::Core::Entity* m_pHeroOccluder = nullptr;
+        /// 主人公視点を出るときに幹を隠すための参照（非所有）
+        NorvesLib::Core::Component::MeshComponent* m_pHeroOccluderMesh = nullptr;
         /// 主人公を追うカメラ（非所有。所有する Entity はスコープが追跡する）
         NorvesLib::Core::Component::CameraComponent* m_pHeroCamera = nullptr;
         /// カメラの公開直前に姿勢を更新するアーム（非所有）
