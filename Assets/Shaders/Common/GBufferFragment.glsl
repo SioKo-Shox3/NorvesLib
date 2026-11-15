@@ -46,6 +46,7 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/GBufferEncoding.glsl"
+#include "Common/VelocityEncoding.glsl"
 #include "Common/SpecularAntiAliasing.glsl"
 #ifdef GBUFFER_ALPHA_CLIP
 #include "Common/AlphaClip.glsl"
@@ -160,18 +161,10 @@ void main()
                                                                 mvp.frameParams.y),
                                        params.y);
 
+    // 前のフレームの w が閾値以下なら履歴なしの印を書く。
     outVelocity = vec2(0.0);
-    if (mvp.frameParams.x > 0.5 &&
-        abs(fragCurrentClip.w) > 1e-6 &&
-        abs(fragPreviousClip.w) > 1e-6)
+    if (mvp.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) &&
-            dot(velocity, velocity) < 1.0e6)
-        {
-            outVelocity = velocity;
-        }
+        outVelocity = VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
 }
