@@ -11133,3 +11133,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 影を落とす物の束の型・拡張の受け口・登録の表での集め（RenderThread）: 着地(直し 0 回)
 - U2 CSM（太陽のカスケード）と点光源のキューブの影へ拡張の束を描く: 着地(直し 0 回)
 - U3 VSM（太陽の段・点光源の面）へ拡張の束を手続きの塊の記録として渡す: 着地(直し 0 回)
+- U4 RenderingFlow.md に ShadowCaster の段の約束を書き、タスクの verify を回す: 着地(直し 0 回)

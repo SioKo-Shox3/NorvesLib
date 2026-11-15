@@ -93,9 +93,9 @@ namespace NorvesLib::Core::Rendering
         {
             return Reject(IndexRange, "インデックスの範囲がバッファを超えています");
         }
-        if (batch.VertexBuffer->GetSize() < sizeof(Mesh3DVertex))
+        if ((static_cast<uint64_t>(batch.VertexOffset) + 1) * sizeof(Mesh3DVertex) > batch.VertexBuffer->GetSize())
         {
-            return Reject(VertexSize, "頂点バッファが頂点 1 個より小さいです");
+            return Reject(VertexSize, "頂点の開始位置が頂点バッファの外です");
         }
         if (!IsFiniteBounds(batch.LocalBounds))
         {
