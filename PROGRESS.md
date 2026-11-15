@@ -11628,3 +11628,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261116-053226/verify-G7-GR53-WET-WRITERS-build.txt`（新しい枠で `cmake -B build -S . -G "Visual Studio 17 2022"` が CONFIGURE_EXIT=0、試験のターゲットを外した verify のビルドの行 `cmake --build build --config Debug --target Game -- -m:1` が BUILD_EXIT=0・エラーの行 0、`Core.lib` と `Game.exe` を生成。警告は shaderc の PDB が無い LNK4099）。verify の ctest の行は試験を回さない決まりで回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next: 統合ブランチの取り込み（GR46 の風の頂点アニメが GBufferPass の記述子の配置と GPU の配置の表に足したものと、環境の UBO の binding の両方を残す）。人が見るときの見どころは前の節と同じ。
 - Notes: この枠には `build/` が無く freetype のサブモジュールも未取得だったので、`git submodule update --init Library/ThirdParty/freetype` の後に構成した。
+
+## G5-GR113-OCCLUDER-DITHER（統合ブランチの 3 回目の取り込み）
+
+- Done: 統合ブランチ `feature/scene-launcher` を取り込んだ。衝突は `Assets/Shaders/megageometry.frag` だけで、この項目で本体を `Common/MegaGeometryFragment.glsl` へ共通化した後に、統合ブランチ側が megageometry.frag へ濡れの書き込み（環境の UBO set 0 / binding 24 と `ApplyWetSurfaceFromEnvironment`）を足していたため。濡れの書き込みを共通の本体へ移し、megageometry.frag は共通の本体を読むだけの薄い形のまま残した。通常の MegaGeometry と視界の確保の変種（`megageometry_clearance.frag`）の両方が同じ濡れ方で書く。視界の確保の欄は UBO の中にあり新しい binding を足していないので、binding 24（MegaGeometry）・13（GBuffer）とは重ならない。
+- 検証: Debug の全体のビルド EXIT=0（`.harness/runs/20261116-053218/merge3-build-debug.txt`）。glslc（vulkan1.3、BOM を除いた写し）で megageometry.frag・megageometry_clearance.frag（`NORVES_SPARSE_RESIDENCY_SHADING` あり/なし）・gbuffer.frag・gbuffer_alphaclip.frag・hero_silhouette.frag/.vert・visbuffer_resolve.comp・visbuffer_resolve_tiles.comp がすべて EXIT=0（`merge3-shader-compile.txt`）。試験は作らない・回さない決まりで ctest は回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- 人が見るときの見どころ: 雨・濡れのある場面で MegaGeometry の遮蔽物（印の付いた区間）が、ディザで抜けた残りの画素も周りと同じ濡れ方になっているか。
