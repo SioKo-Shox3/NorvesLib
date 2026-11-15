@@ -2479,7 +2479,7 @@ namespace NorvesLib::Core::Rendering
         depthAttachment.format = RHI::Format::D32_FLOAT;
         depthAttachment.isDepthStencil = true;
         depthAttachment.clear = true;
-        depthAttachment.clearDepth = DepthConvention::ClearDepth;
+        depthAttachment.clearDepth = DepthConvention::ClearDepth();
         depthAttachment.clearStencil = 0;
         depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;
@@ -7141,7 +7141,7 @@ namespace NorvesLib::Core::Rendering
         depthAttachment.format = RHI::Format::D32_FLOAT;
         depthAttachment.isDepthStencil = true;
         depthAttachment.clear = true;
-        depthAttachment.clearDepth = DepthConvention::ClearDepth;
+        depthAttachment.clearDepth = DepthConvention::ClearDepth();
         depthAttachment.clearStencil = 0;
         depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;

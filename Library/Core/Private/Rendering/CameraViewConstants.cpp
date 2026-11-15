@@ -1,4 +1,6 @@
 ﻿#include "Rendering/CameraViewConstants.h"
+#include "Engine/NorvesEngine.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/TemporalAA.h"
 #include "RHI/IDevice.h"
 #include "Math/MatrixUtils.h"
@@ -7,6 +9,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    DepthConventionMode DepthConvention::GetMode()
+    {
+        return GEngine.GetDepthConventionMode();
+    }
+
     namespace
     {
         constexpr float PI = 3.14159265f;
@@ -55,6 +62,13 @@ namespace NorvesLib::Core::Rendering
         if (device)
         {
             constants.ProjectionMatrix = device->AdjustProjectionForClipSpace(constants.ProjectionMatrix, bApplyYFlip);
+            if (DepthConvention::IsReversed())
+            {
+                // 列ベクトル規約で z を反転してから w を足し、ZeroToOne の深度を z' = w - z にする。
+                const Math::Matrix4x4 reverseDepth = Math::MatrixUtils::CreateTranslation(0.0f, 0.0f, 1.0f) *
+                                                     Math::MatrixUtils::CreateScale(1.0f, 1.0f, -1.0f);
+                constants.ProjectionMatrix = reverseDepth * constants.ProjectionMatrix;
+            }
             constants.ViewProjectionMatrix = constants.ProjectionMatrix * constants.ViewMatrix;
             constants.InverseProjectionMatrix = Math::MatrixUtils::Inverse(constants.ProjectionMatrix);
             constants.InverseViewProjectionMatrix = Math::MatrixUtils::Inverse(constants.ViewProjectionMatrix);

@@ -181,6 +181,16 @@ namespace NorvesLib::Core
         return m_SaveService;
     }
 
+    Rendering::DepthConventionMode NorvesEngine::GetDepthConventionMode() const
+    {
+        return m_DepthConventionMode;
+    }
+
+    void NorvesEngine::SetDepthConventionMode(Rendering::DepthConventionMode mode)
+    {
+        m_DepthConventionMode = mode;
+    }
+
     ScriptRuntime& NorvesEngine::GetScriptRuntime()
     {
         return m_ScriptRuntime;
