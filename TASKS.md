@@ -6940,7 +6940,7 @@
 - notes: 確かめ直し (b)(c)。Handoff 6 節の件の今: NVSKEL v1 の profile2/3 は `skin.skeleton` の省略を受け、関節の集合から唯一の根を求める(`SkeletalGltfDecode.cpp:1501-1517`、`RigStaticRootFrame128.md` の「選択と互換」)。`--rig-split` と asset-set の skeletal は profile3 が既定(`RigSplitFileCli.cpp:46`、`RigSingleCook.cpp:142`)なので、Blender の資産は v1 の経路では入る。試験は合成の Armature の fixture(`RigStaticRootFrameImportTest.cpp:65-160`)で、省略と hint の両方を確かめている。残り: 旧 NVSKEL 0.2(`--kind model --entry-type Skl0` と `DecodeSkeletalGltf`)は今も `skeleton` を必須にしていて(1651〜1655 行)、glTF の仕様で省略してよい値を拒否する。Blender の書き出しの形をそのまま写した fixture も無い(既存の M9Skinned の fixture はどれも `"skeleton": 0` を持つ。`GLTFSkeletalAnalyzerTest.cpp:233`)。段階をまたぐ注意(ロードマップ 4449 行)の「求めた根が関節でない場合は子の関節が 1 つならそれを根にする」は、profile1 が非関節の親を拒否する契約なので旧経路には入れず、v1 の経路(Armature を作者 frame に入れる)で満たす。実物の Blender での書き出しと実犬の cook は `G2-GR82-REAL-RIG-CHECK` で行う。
 
 ## G2-GR83-ASSET-PREVIEW-SCENE: 取り込んだ静的モデルと骨格つきの資産を論理パスで並べて置き、クリップ名を指定して再生する確認用のシーンを足す
-- status: todo
+- status: done
 - after: G2-GR83-LOOSE-SKELETAL, G2-GR79-SKINNED-MATERIAL-BUILDER
 - gr: GR83, GR79, GR78
 - done-when: 開発ビルドだけのシーン `asset-preview`(`Game/Scenes/SceneCatalog.h` に id・視点 `front`・`side`・`close`・`top` を足す)を作る。引数は `--asset-preview-model=<論理パス>`(静的モデル。繰り返し可)、`--asset-preview-skeletal=<論理パス>`(骨格つき。繰り返し可)、`--asset-preview-clip=<クリップ名>`(骨格つきの全部に同じ名前を指定。無ければ bind の姿勢)、`--asset-preview-time=<秒>`(決定的な撮影のときにクリップを止める時刻)。静的モデルは `ModelAssetRuntime`、骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける。資産は各々の AABB で横に間隔を空けて床(Y=0)の上に並べ、各資産の原点の印と 1 m の格子を描く。
@@ -7216,7 +7216,7 @@
 - notes: 設計はロードマップ 2219 行（GR45 の GPU）、完了条件は 2613 行。層の大きさ・画素の大きさは仮の値（設定で替えられる）。遠景の見せ方は企画で未決（『高い草で視界が遮られる』と『遠くの枯れ草が見える』は犬の目線で両立しにくい。ロードマップ 2212・2223 行）なので、遠景の層は常に作り、消費する側の重みを設定値にする（G12-GR45-GRASS-DRYNESS）。`RenderWorld.cpp`・`RenderingCoordinator.cpp`・`FramePacket.h` は共有のファイルなので差分を小さくする。GPU の試験の実行は利用者のほかのアプリへの影響を避けて check の項目で行う。試験を足す理由: 反証する契約は「GPU の枯れ度の層が CPU の `Sample` と同じ場所・同じ値になる」こと。ずれは草の枯れ地の境がずれるだけで撮影では気づきにくく、ログにも出ず黙って起きる。SceneRevision に入れると RTGI の履歴が源の変化で捨てられ、絵では気づきにくい。危険地帯（RenderThread のデータ契約）なので評価者を通す。
 
 ## G12-GR45-GRASS-DRYNESS: 草が枯れ度で色・密度・高さ・倒れ方を切り替え、遠景の帯は遠景の層を引いて遠くから枯れ地が分かるようにする
-- status: todo
+- status: done
 - after: G12-GR45-DRYNESS-FIELD, G5-GR43-GRASS-DRAW, G5-GR42-GRASS-FIELD-ASSET, G5-GR42-GRASS-FIELD-CORE, G5-GR43-GRASS-GENERATE
 - gr: GR45
 - needs-gr: GR42, GR43

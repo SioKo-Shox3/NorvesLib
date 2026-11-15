@@ -3,6 +3,8 @@
 // 開発ビルドでは H キーで犬大の代役を追う視点へ切り替え、主人公との間の草の間引きを確認する。
 // --grassland-streaming では地形の区画・散布・岩の当たりをセル単位で出し入れする。
 // --streaming-snap-test=<x>,<z> では組み立て後にスナップロードし、自由飛行カメラを目的地へ一度移す。
+// --grassland-wither=<x>,<z>,<半径> では指定位置に枯れ度 1 の円形の源を置く（開発ビルドだけ）。
+// --grassland-wither-roundtrip では描画前に枯れ度マップを保存して復元する（開発ビルドだけ）。
 // 地形は Assets/TerrainSpecs/Grassland/GrasslandTerrain.json と Scripts/Terrain/GenerateGrasslandHeight.py から
 // クックした Assets/Terrain/Grassland/Grassland.nvtrn と近景の Tiles/GrasslandTile_<x>_<z>.generated、
 // 外周の Tiles/GrasslandTile_outer_<x>_<z>.generated を使う。
@@ -17,6 +19,7 @@
 #if NORVES_BUILD_DEVELOPMENT
 #include "Core/Public/Streaming/StreamingSystem.h"
 #include "Core/Public/Streaming/WorldPayloadHandlers.h"
+#include "Core/Public/Vegetation/DrynessMap.h"
 #endif
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
@@ -107,6 +110,18 @@ namespace Game::GameModes
         /// 目的地のワールド X・Z 座標[m]。
         float m_StreamingSnapTestX = 0.0f;
         float m_StreamingSnapTestZ = 0.0f;
+        /// --grassland-wither で円形の枯れ源を配置する。
+        bool m_bGrasslandWither = false;
+        /// 枯れ源の中心のワールド X 座標[m]。
+        float m_GrasslandWitherX = 0.0f;
+        /// 枯れ源の中心のワールド Z 座標[m]。
+        float m_GrasslandWitherZ = 0.0f;
+        /// 枯れ源の内側の半径[m]。
+        float m_GrasslandWitherRadius = 0.0f;
+        /// --grassland-wither-roundtrip で入場時に枯れ度マップを保存して復元する。
+        bool m_bGrasslandWitherRoundtrip = false;
+        /// このシーンで配置した枯れ源。退場時に取り除く。
+        NorvesLib::Core::Vegetation::DrynessSourceId m_GrasslandWitherSourceId = NorvesLib::Core::Vegetation::InvalidDrynessSourceId;
         /// 要求を一度試したか。受理されなかった場合も再試行しない。
         bool m_bStreamingSnapRequested = false;
         /// PostTick または取り消し時に通知を受けたか。

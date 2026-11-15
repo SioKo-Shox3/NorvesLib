@@ -6,6 +6,9 @@
 
 #if NORVES_BUILD_DEVELOPMENT
 #include "Core/Public/Asset/AssetFileReader.h"
+#include "Core/Public/Text/JsonDocument.h"
+#include "Core/Public/Text/JsonWriter.h"
+#include "Core/Public/Vegetation/Vegetation.h"
 #endif
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/GrassFieldComponent.h"
@@ -869,6 +872,54 @@ namespace Game::GameModes
         data.m_ViewInput.OnInputReset();
         ctx.EngineRef.GetInputRouter().RegisterController(&data.m_ViewInput, I::InputRouter::PriorityGame);
         data.m_bViewInputRegistered = true;
+        auto& drynessMap = ctx.EngineRef.GetVegetation().GetDrynessMap();
+        if (data.m_bGrasslandWither)
+        {
+            // 減衰の幅は見え方を確かめるため、仮に半径の 1/4 とする。
+            data.m_GrasslandWitherSourceId = drynessMap.AddCircle(data.m_GrasslandWitherX, data.m_GrasslandWitherZ,
+                data.m_GrasslandWitherRadius, data.m_GrasslandWitherRadius * 0.25f, 1.0f);
+            if (data.m_GrasslandWitherSourceId != Vegetation::InvalidDrynessSourceId)
+            {
+                LOG_INFO("GRASSLAND_WITHER id=%u x=%.9g z=%.9g radius=%.9g 枯れ度 1 の円形の源を配置しました",
+                    data.m_GrasslandWitherSourceId, static_cast<double>(data.m_GrasslandWitherX),
+                    static_cast<double>(data.m_GrasslandWitherZ), static_cast<double>(data.m_GrasslandWitherRadius));
+            }
+            else
+            {
+                LOG_WARNING("GRASSLAND_WITHER status=AddFailed 枯れ源を配置できませんでした");
+            }
+        }
+        if (data.m_bGrasslandWitherRoundtrip)
+        {
+            JsonWriter writer;
+            drynessMap.Serialize(writer);
+            JsonDocument document;
+            if (!writer.IsComplete())
+            {
+                LOG_WARNING("GRASSLAND_WITHER_ROUNDTRIP status=SerializeFailed sources=%zu 枯れ度マップを書き出せませんでした",
+                    drynessMap.GetSourceCount());
+            }
+            else if (!JsonDocument::TryParse(writer.ToString(), document))
+            {
+                LOG_WARNING("GRASSLAND_WITHER_ROUNDTRIP status=ParseFailed sources=%zu 枯れ度マップの保存文字列を読み直せませんでした",
+                    drynessMap.GetSourceCount());
+            }
+            else
+            {
+                // 保存形式が源の ID を保持するため、退場時にも同じ ID で取り除ける。
+                const auto result = drynessMap.Restore(document.GetRoot());
+                if (result.Succeeded())
+                {
+                    LOG_INFO("GRASSLAND_WITHER_ROUNDTRIP status=Succeeded sources=%zu 枯れ度マップを保存して復元しました",
+                        drynessMap.GetSourceCount());
+                }
+                else
+                {
+                    LOG_WARNING("GRASSLAND_WITHER_ROUNDTRIP status=RestoreFailed error=%s sources=%zu 枯れ度マップを復元できませんでした",
+                        Vegetation::GetDrynessRestoreErrorName(result.Error), drynessMap.GetSourceCount());
+                }
+            }
+        }
 #endif
         if (!CreateWindTrees(ctx, data, pose))
         {
@@ -1080,6 +1131,11 @@ namespace Game::GameModes
     {
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
 #if NORVES_BUILD_DEVELOPMENT
+        if (data.m_GrasslandWitherSourceId != Vegetation::InvalidDrynessSourceId)
+        {
+            ctx.EngineRef.GetVegetation().GetDrynessMap().Remove(data.m_GrasslandWitherSourceId);
+            data.m_GrasslandWitherSourceId = Vegetation::InvalidDrynessSourceId;
+        }
         if (data.m_bStreaming)
         {
             StopGrasslandStreaming(ctx, data);

@@ -20,6 +20,7 @@
 #include "Debug/MapCapture.h"
 #include "Debug/MultiViewCapture.h"
 #include "Debug/SequenceFrameCapture.h"
+#include "GameModes/AssetPreview/AssetPreviewLayout.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "Pause/PauseMenu.h"
 #include "Save/ProgressSaveData.h"
@@ -328,6 +329,8 @@ namespace Game
         float m_CameraPathTime = -1.0f;
         /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
         bool m_bCameraPathPlay = false;
+        /// asset-preview で使うモデル・骨格・クリップ・時刻の指定。
+        Game::GameModes::AssetPreviewArguments m_AssetPreviewArguments;
 #if NORVES_BUILD_DEVELOPMENT
         /// sandbox の合成スキンの体数（0 は配置しない）
         uint32_t m_SkinnedCrowdCount = 0;
@@ -345,6 +348,16 @@ namespace Game
         /// スナップロードの目的地のワールド X・Z 座標[m]。
         float m_StreamingSnapTestX = 0.0f;
         float m_StreamingSnapTestZ = 0.0f;
+        /// --grassland-wither で円形の枯れ源を配置する。
+        bool m_bGrasslandWither = false;
+        /// 枯れ源の中心のワールド X 座標[m]。
+        float m_GrasslandWitherX = 0.0f;
+        /// 枯れ源の中心のワールド Z 座標[m]。
+        float m_GrasslandWitherZ = 0.0f;
+        /// 枯れ源の内側の半径[m]。
+        float m_GrasslandWitherRadius = 0.0f;
+        /// --grassland-wither-roundtrip で入場時に枯れ度マップを保存して復元する。
+        bool m_bGrasslandWitherRoundtrip = false;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;

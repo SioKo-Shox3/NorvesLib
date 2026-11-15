@@ -28,6 +28,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
+#include "GameModes/AssetPreview/AssetPreviewMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
 #endif
@@ -937,6 +938,7 @@ namespace Game
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
+        m_AssetPreviewArguments = {};
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
         m_bCameraPathPlay = false;
@@ -950,6 +952,11 @@ namespace Game
         m_bStreamingSnapTest = false;
         m_StreamingSnapTestX = 0.0f;
         m_StreamingSnapTestZ = 0.0f;
+        m_bGrasslandWither = false;
+        m_GrasslandWitherX = 0.0f;
+        m_GrasslandWitherZ = 0.0f;
+        m_GrasslandWitherRadius = 0.0f;
+        m_bGrasslandWitherRoundtrip = false;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1044,6 +1051,13 @@ namespace Game
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
         ParseBridgePortOption(args);
+
+        String assetPreviewError;
+        if (!Game::GameModes::ParseAssetPreviewArguments(args, m_AssetPreviewArguments, assetPreviewError))
+        {
+            LOG_ERROR_F("ASSET_PREVIEW_ARGS_INVALID %s", assetPreviewError.c_str());
+            return false;
+        }
 
         // コマンドライン引数の処理
         for (size_t i = 0; i < args.size(); ++i)
@@ -1940,6 +1954,58 @@ namespace Game
                 m_bStreamingSnapTest = true;
                 m_StreamingSnapTestX = x;
                 m_StreamingSnapTestZ = z;
+                continue;
+            }
+            if (TryStripPrefix(args[i], TEXT("--grassland-wither="), sceneValue) ||
+                args[i] == TEXT("--grassland-wither"))
+            {
+                if (m_bGrasslandWither)
+                {
+                    LOG_ERROR("--grassland-wither が重複しています");
+                    return false;
+                }
+                size_t firstComma = 0;
+                while (firstComma < sceneValue.size() && sceneValue[firstComma] != TEXT(','))
+                {
+                    ++firstComma;
+                }
+                size_t secondComma = firstComma < sceneValue.size() ? firstComma + 1 : sceneValue.size();
+                while (secondComma < sceneValue.size() && sceneValue[secondComma] != TEXT(','))
+                {
+                    ++secondComma;
+                }
+                float x = 0.0f;
+                float z = 0.0f;
+                float radius = 0.0f;
+                constexpr float maxValue = std::numeric_limits<float>::max();
+                if (args[i] == TEXT("--grassland-wither") || secondComma == sceneValue.size() ||
+                    !TryParseBoundedFloat(sceneValue.substr(0, firstComma), -maxValue, maxValue, x) ||
+                    !TryParseBoundedFloat(sceneValue.substr(firstComma + 1, secondComma - firstComma - 1), -maxValue, maxValue, z) ||
+                    !TryParseBoundedFloat(sceneValue.substr(secondComma + 1), 0.0f, maxValue, radius) || radius <= 0.0f)
+                {
+                    LOG_ERROR("--grassland-wither は <x>,<z>,<半径> の形で有限の小数を3つ指定し、半径は正にしてください");
+                    return false;
+                }
+                m_bGrasslandWither = true;
+                m_GrasslandWitherX = x;
+                m_GrasslandWitherZ = z;
+                m_GrasslandWitherRadius = radius;
+                continue;
+            }
+            if (args[i] == TEXT("--grassland-wither-roundtrip") ||
+                TryStripPrefix(args[i], TEXT("--grassland-wither-roundtrip="), sceneValue))
+            {
+                if (m_bGrasslandWitherRoundtrip)
+                {
+                    LOG_ERROR("--grassland-wither-roundtrip が重複しています");
+                    return false;
+                }
+                if (args[i] != TEXT("--grassland-wither-roundtrip"))
+                {
+                    LOG_ERROR("--grassland-wither-roundtrip は値を付けずに指定してください");
+                    return false;
+                }
+                m_bGrasslandWitherRoundtrip = true;
                 continue;
             }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
@@ -5162,6 +5228,10 @@ namespace Game
             return false;
         }
         m_StartupSceneId = String(scene->Id);
+        if (m_AssetPreviewArguments.HasAny() && !Scenes::SceneTextEquals(scene->Id, Scenes::kAssetPreviewSceneId))
+        {
+            LOG_WARNING_F("ASSET_PREVIEW_ARGS_IGNORED scene=%s --asset-preview-* は asset-preview のシーンだけで使います", scene->Id);
+        }
 
         // 視点の一覧。先頭が既定の視点。撮影スクリプトが -Views を省いたときに、全視点を撮るのに読む。
         {
@@ -5309,7 +5379,7 @@ namespace Game
                                  mode == Game::GameModes::MegaBananas || mode == Game::GameModes::Sandbox ||
                                  mode == Game::GameModes::Grassland ||
                                  mode == Game::GameModes::MegaStress || mode == Game::GameModes::MaterialGallery ||
-                                 mode == Game::GameModes::InteriorLight;
+                                 mode == Game::GameModes::InteriorLight || mode == Game::GameModes::AssetPreview;
         if (viewNames.size() > 1 && !bSwitchable)
         {
             LOG_ERROR_F("CAPTURE_VIEWS_UNSUPPORTED scene=%s 実行中に視点を置き直せないシーンです（視点ごとに起動して撮る）",
@@ -5657,6 +5727,8 @@ namespace Game
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
              scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
              bSnapTest = m_bStreamingSnapTest, snapTestX = m_StreamingSnapTestX, snapTestZ = m_StreamingSnapTestZ,
+             bWither = m_bGrasslandWither, witherX = m_GrasslandWitherX, witherZ = m_GrasslandWitherZ,
+             witherRadius = m_GrasslandWitherRadius, bWitherRoundtrip = m_bGrasslandWitherRoundtrip,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
@@ -5666,6 +5738,11 @@ namespace Game
                 mode->GetData().m_bStreamingSnapTest = bSnapTest;
                 mode->GetData().m_StreamingSnapTestX = snapTestX;
                 mode->GetData().m_StreamingSnapTestZ = snapTestZ;
+                mode->GetData().m_bGrasslandWither = bWither;
+                mode->GetData().m_GrasslandWitherX = witherX;
+                mode->GetData().m_GrasslandWitherZ = witherZ;
+                mode->GetData().m_GrasslandWitherRadius = witherRadius;
+                mode->GetData().m_bGrasslandWitherRoundtrip = bWitherRoundtrip;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
@@ -5706,6 +5783,41 @@ namespace Game
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_pViewSwitch = viewSwitch;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
+            });
+        // 資産の確認用シーン asset-preview も開発ビルドだけ。資産・クリップ・時刻・視点・台本は起動引数から渡す。
+        registerMode(
+            AssetPreview,
+            [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pathTime = m_CameraPathTime, bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
+             viewSwitch = &m_SceneViewSwitch, arguments = m_AssetPreviewArguments, reportPath = m_SceneReportPath,
+             getSkeletalRuntime = [this]() -> SkeletalAssetRuntime*
+             {
+                 if (!m_AssetSystemSnapshot || !NorvesLib::Core::Engine::GEngine)
+                 {
+                     return nullptr;
+                 }
+                 auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+                 const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
+                 if (bound != SkeletalRuntimeStatus::Success && bound != SkeletalRuntimeStatus::Unchanged)
+                 {
+                     LOG_WARNING_F("ASSET_PREVIEW_SKELETAL_BIND_FAILED status=%u", static_cast<uint32_t>(bound));
+                     return nullptr;
+                 }
+                 return session.GetRuntime();
+             }](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<AssetPreviewMode>();
+                mode->GetData().m_Rig.SetMapCapture(mapCapture);
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_pViewSwitch = viewSwitch;
+                mode->GetData().m_Arguments = arguments;
+                mode->GetData().m_SceneReportPath = reportPath;
+                mode->GetData().m_GetSkeletalRuntime = getSkeletalRuntime;
                 return mode;
             });
 #endif
