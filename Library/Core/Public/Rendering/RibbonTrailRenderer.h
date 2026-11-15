@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Rendering/HeightFogGpuParams.h"
 #include "Rendering/RibbonTrailTypes.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
@@ -14,6 +15,14 @@ namespace NorvesLib::Core::Rendering
 {
     class FrameResourceLane;
     class ShaderManager;
+
+    /** @brief 帯に掛ける高さフォグ。値は BuildHeightFogGpuParams、空の放射輝度 LUT は体積の霧と同じもの。 */
+    struct RibbonTrailHeightFog
+    {
+        GPUHeightFogParams Params{};        // 全部 0 なら霧を掛けない
+        RHI::TexturePtr SkyRadiance;        // 空の放射輝度 LUT（無ければ黒の 1×1 を結ぶ）
+        RHI::SamplerPtr SkyRadianceSampler; // LUT の標本化器（無ければ自前のものを使う）
+    };
 
     /** @brief フレームの頂点を借りて、ワールド座標の帯を三角形ストリップとして描く。 */
     class RibbonTrailRenderer
@@ -36,11 +45,13 @@ namespace NorvesLib::Core::Rendering
          * @brief 開始済みのレンダーパスへ帯を記録する。ビューポートとシザーは呼び出し側で設定する。
          * @param view CopyShaderView が出力する 16 要素の行列。
          * @param projection CopyShaderProjection が出力する 16 要素の行列。
+         * @param heightFog 高さフォグの定数と空の放射輝度 LUT。無ければ霧を掛けない。
          * 空の帯は確保も束縛も行わず成功する。頂点・定数・記述子は frameResources から借りる。
          */
         bool Record(RHI::ICommandList* commandList, FrameResourceLane* frameResources,
                     const RibbonTrailScene& scene, const float (&view)[16],
-                    const float (&projection)[16], float preExposure) const;
+                    const float (&projection)[16], float preExposure,
+                    const RibbonTrailHeightFog* heightFog = nullptr) const;
 
     private:
         RHI::ShaderPtr m_VertexShader;
@@ -48,5 +59,7 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_AdditivePipeline;
         RHI::PipelinePtr m_AlphaPipeline;
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
+        RHI::TexturePtr m_FallbackSkyRadiance;
+        RHI::SamplerPtr m_SkyRadianceSampler;
     };
 } // 名前空間 NorvesLib::Core::Rendering
