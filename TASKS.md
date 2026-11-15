@@ -6361,7 +6361,7 @@
 - notes: ロードマップ 1949・1961 行、要件 `#### GR20` の設計案 (1)(2)・時刻の扱い・実装順 1)。選定課題 G10-S7（しがみつきの範囲）は推奨どおり (A) ぶら下がるだけ（拘束・張力・ゲージ・解除）と決めた。理由: 企画の「柄をくわえてしがみつく」は表面を歩く・登ることに触れておらず、(B) の `SurfaceWalker` は半辺の構造と頂点の溶接が要って規模が XL に近づく（ロードマップの非ゴール）。採るなら作者が決めて別の項目にする。選定課題 G10-S8（物理の方式）は推奨どおり (A) Gameplay の Grip のサブシステムの自前の位置ベースの拘束（1 拘束・1 質点。Physics は変えない）と決めた。理由: 外部の物理の導入は作者の判断で、複数の拘束・多体・回転が要ると分かった時点で (B) を再評価する（`m8-minimal-physics-plan.md` の方針）。手応えの調整は `GripTuning` の JSON で行う。時刻: ソルバは可変のフレームで回す（固定ステップで回すと 1 フレームに 0〜8 回走るうえ姿勢が同じで、張力が 1 回目に集中する。要件の「時刻の扱い」）。G10 の他の項目と触るファイルが交わらないので、G8 の Gameplay の骨組みができたら並列に走れる。JSON の読み込みはアセットの読み込みの危険地帯に当たるので評価者を通す（G8-GR16-JOINT-DATA-RESPONSE と同じ扱い）。やらないこと: Component・犬のルートの駆動・接触（G10-GR20-GRIP-COMPONENTS）、足の暴れ（G10-GR20-LEG-FLAIL）。
 
 ## G11-GR114-SHADOW-PARAMS: 太陽の影の値の型 SunShadowParameters に有効・弱い日差しでの停止・投影物の三角形の上限を足し、MegaGeometry の投影物の上限の守りを入れる
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G10-GR63-SKIN-CULL
 - gr: GR114
 - needs-gr: GR25, GR27
@@ -6952,7 +6952,7 @@
 - notes: 確かめ直し (c)。要件の実物の受入れ(GR78 の 2 体の犬を同じ実寸で並べる、GR79 の ARM を畳んだ犬の撮影、GR83 の実キャラをクリップ名で再生)は「犬は別シーンか別引数で出し、既定の起動画面は変えない」(要件 GR79 の受け入れ確認、AGENTS.md の絶対規則 7)を求めるが、論理パスで任意の資産を置くシーンが無い(`Game/GameModes/` は Rendering3DTest・Sandbox・MegaBananas などで、M9 の受入れは `M9WorldAcceptance.h:30-31` の固定のパスとクリップ名)。ロードマップは確認ビューア(GR101、G18)を G2 の非ゴールにしている(179 行)ので、ここでは撮影に要る最小のシーンだけを作り、ホットリロード・UI の操作・比較表示は GR101 に残す(GR101 はこのシーンを広げてよい)。`GameApplicationHandler.cpp` と `SceneCatalog.h` は共有のファイルなので差分を小さくする。起動しての確かめは後のタスク(`G2-REAL-DOG-ASSETS-CHECK`・`G2-GR82-REAL-RIG-CHECK`)で行う。
 
 ## G2-GR77-NODE-TRANSFORM: 静的モデルの取り込みで、mesh を持つ node の変換(親の鎖を含む)を頂点へ焼き込み、黙って捨てないようにする
-- status: todo
+- status: done
 - gr: GR77, GR78
 - done-when: 静的モデルの cook(`MeshCooker.cpp` の NVMESH v0/v1)と loose(`GLTFAnalyzer.cpp` の静的の経路)が、既定の scene から mesh 0 を参照する node を 1 つ求め、その node と祖先の TRS または `matrix` の積(double)を、`ExtractMesh` の直後・GR78 の取り込み設定の変換の前に、位置・法線(逆転置で掛けて正規化)・接線(あれば。w の符号も保つ)へ焼き込む。行列式が負なら三角形の巡回を反転して外向きを保つ。mesh を参照する node が 2 つ以上・skin つきの node・非有限・行列式 0 の変換は理由の名前つきで拒否する。変換が恒等(node が無い・TRS が既定)なら、cooked の出力と manifest は今とバイト一致する。
   試験は既存の `ImportStaticIntegrationTest`・`StaticGltfBufferCookTest` にケースとして足す(新しい exe は作らない): node に scale (2,2,2) と Y 軸 90° の回転、その親に平行移動を持つ 2 primitive の GLB で、焼き込み後の全頂点が試験に直に書いた手計算の値と 1e-6 で一致する。鏡像(scale の X が -1)で signed volume が正のまま。v0 で材質の違う 2 primitive は材質名つきで拒否される。node が 2 つの mesh 参照・skin つきの拒否。cook と loose で同じ頂点になる。既存の `AssetCookMeshSmoke`・`AssetCookGlbSmoke`・`ModelResourcesAssetCookSmoke` が無改造で通る。`Docs/Architecture/AssetImportPipeline.md` に順序(node の焼き込み → 取り込み設定)を書く。
