@@ -43,6 +43,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -74,6 +75,9 @@ namespace NorvesLib::Tools::AssetCook
         namespace StringRefRecordOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::StringRefRecordOffset;
         namespace SubmeshRecordOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::SubmeshRecordOffset;
         namespace VertexRecordOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::VertexRecordOffset;
+
+        constexpr auto UnsupportedFbxSourceReason =
+            u8"unsupported_source_format: fbx（FBX は直接取り込まない。Blender で glTF/GLB に書き出してから渡す）";
 
         constexpr uint32_t GltfFloatComponent = 5126;
         constexpr uint32_t GltfUInt16Component = 5123;
@@ -4463,6 +4467,50 @@ namespace NorvesLib::Tools::AssetCook
         }
     } // namespace
 
+    bool IsFbxModelSource(const std::filesystem::path& path,
+                          Core::Container::Span<const uint8_t> head) noexcept
+    {
+        // 拡張子を取り出すための確保を避け、隠しファイル名そのものの .fbx は除く。
+        const auto& native = path.native();
+        const size_t size = native.size();
+        if (size > 4 && native[size - 4] == '.' &&
+            (native[size - 3] == 'f' || native[size - 3] == 'F') &&
+            (native[size - 2] == 'b' || native[size - 2] == 'B') &&
+            (native[size - 1] == 'x' || native[size - 1] == 'X') &&
+            native[size - 5] != '/' && native[size - 5] != '\\' && native[size - 5] != ':')
+        {
+            return true;
+        }
+        constexpr char binarySignature[] = "Kaydara FBX Binary";
+        constexpr char asciiSignature[] = "; FBX";
+        return head.data() != nullptr &&
+               ((head.size() >= sizeof(binarySignature) - 1 &&
+                 std::memcmp(head.data(), binarySignature, sizeof(binarySignature) - 1) == 0) ||
+                (head.size() >= sizeof(asciiSignature) - 1 &&
+                 std::memcmp(head.data(), asciiSignature, sizeof(asciiSignature) - 1) == 0));
+    }
+
+    bool RejectFbxModelSourceFile(const std::filesystem::path& path, Core::Container::AnsiString& error)
+    {
+        uint8_t head[18] = {};
+        size_t size = 0;
+        if (!IsFbxModelSource(path, {}))
+        {
+            std::ifstream file(path, std::ios::binary);
+            if (file.is_open())
+            {
+                file.read(reinterpret_cast<char*>(head), sizeof(head));
+                size = static_cast<size_t>(file.gcount());
+            }
+            if (!IsFbxModelSource(path, {head, size}))
+            {
+                return false;
+            }
+        }
+        error = reinterpret_cast<const char*>(UnsupportedFbxSourceReason);
+        return true;
+    }
+
     MeshEmbeddedImage& MeshEmbeddedImage::operator=(const MeshEmbeddedImage& other)
     {
         if (this != &other)
@@ -4541,6 +4589,11 @@ namespace NorvesLib::Tools::AssetCook
                                     const std::filesystem::path& sourcePath, ModelInspection& outInspection,
                                     Core::Container::AnsiString& error)
     {
+        if (IsFbxModelSource(sourcePath, {sourceBytes, sourceSize}))
+        {
+            error = reinterpret_cast<const char*>(UnsupportedFbxSourceReason);
+            return false;
+        }
         if (!ValidateNativeCookPaths(sourcePath, nullptr, error))
         {
             return false;
