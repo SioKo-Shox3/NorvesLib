@@ -3,10 +3,12 @@
 // ========================================
 // HZB のミップ1以降を作るコンピュートシェーダー
 //
-// 1つ前のミップの 2x2 の最大で次のミップを作る。前のミップの幅・高さが奇数のとき、最後の列・行の texel は
-// はみ出す列・行も最大に含める（縮めた 1 texel が、それの覆う深度の最大以上になる）。
+// 1つ前のミップの 2x2 の最も奥（規約の FarthestDepth）で次のミップを作る。前のミップの幅・高さが奇数のとき、最後の列・行の texel は
+// はみ出す列・行も含める（縮めた 1 texel が、それの覆う深度のどれよりも奥か等しくなる）。
 // 前のミップはストレージ画像として読む（ミップごとに別のレイアウトにならず、全ミップを GENERAL のまま作れる）。
 // ========================================
+
+#include "Common/DepthConvention.glsl"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -44,12 +46,12 @@ void main()
     }
     srcEnd = min(srcEnd, srcMax);
 
-    float maxDepth = 0.0;
+    float maxDepth = kDepthNearest;
     for (int y = srcBegin.y; y <= srcEnd.y; ++y)
     {
         for (int x = srcBegin.x; x <= srcEnd.x; ++x)
         {
-            maxDepth = max(maxDepth, imageLoad(u_SourceMip, ivec2(x, y)).r);
+            maxDepth = FarthestDepth(maxDepth, imageLoad(u_SourceMip, ivec2(x, y)).r);
         }
     }
 
