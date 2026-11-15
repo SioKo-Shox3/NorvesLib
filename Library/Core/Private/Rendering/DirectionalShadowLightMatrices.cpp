@@ -41,7 +41,7 @@ namespace NorvesLib::Core::Rendering
         bool BuildSkinnedCasterWorldBounds(const SkinnedMeshProxy& proxy, BoundingSphere& outBounds)
         {
             if (!proxy.MeshHandle.IsValid() || proxy.ComponentId == 0 || !proxy.bVisible ||
-                !proxy.bCastShadow || !proxy.bHasAnimatedBounds)
+                !proxy.bCastShadow || IsSkinnedGhostOpacity(proxy.Opacity) || !proxy.bHasAnimatedBounds)
             {
                 return false;
             }

@@ -6271,7 +6271,7 @@
 - notes: GR63 の Phase 0（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-2)〜(0-5)）。パレットの 1 フレーム 1 回の共有は GR32 で済んでいる（`Docs/Architecture/SkinnedPaletteSharing.md`。component ごとに 1 回作り GBuffer・影・点光源の影で共有）ので、ここではやらない（「段階をまたぐ注意」4468 行）。10-02 の後に既定の描画が可視バッファ（`VisibilityBufferMode.h`。スキンは `SkinningComputePass` が計算で変形して ID を描く）と太陽の VSM（Game の既定。検証アプリは CSM。`ApplicationProcessor.cpp:1209`）になったので、絞り込みは可視バッファ・fallback・CSM の 3 つに入れる（ロードマップは GBufferPass と CSM だけを書いている）。VSM は塊ごとのスライスの絞り込みが既にある（`VirtualShadowMapCasters.h`）ので、部位の境界を入れる G10-GR63-PART-CULL で塊の境界を細かくする。影の調整口とカスケードの絞り込みは「段階をまたぐ注意」4471 行のとおり共通の部品として G10 で作り、G11 の GR114 はこれを拡張する。名前は G10 の ShadowParameters と G11 の DirectionalShadowParameters を 1 つにし、既にある `SunShadowMaxDistance` に合わせて `SunShadowParameters` にした。選定課題 G10-S2（巨大シ者の遠距離の影）は推奨どおり、(B) に調整口を付けた形と決めた: 最大距離と分割は `SunShadowParameters` で変えられ、既定（80 m）は据え置く。距離を伸ばしたときの近いカスケードのテクセルと犬の影の解像度は G10-GR63-GIANT-CHECK で測って記録する。理由: 伸ばすと主役の犬の影が劣化し（要件 GR63 の (b)）、PaleFlat（GR65）で影欠けが目立ちにくく、専用の影（C）は計測の前に作る根拠が無い。計測は G10-GR63-GIANT-CHECK（RelWithDebInfo）で行い、この項目では測らない。危険地帯（RenderThread・影・可視バッファ）なので評価者を通す。絞り込みは見えない描画を省くだけなので、起動画面の見た目（絶対規則 7）は golden で守る。回帰の足場の既存の赤（ロードマップ 1974 行）: `SkinnedRenderPathContractTest` は止まっている（`Test/Core/Rendering/CMakeLists.txt:2291` の注釈。TEST-SKINNED）ので verify に入れず、着手の前に `SkeletalFramePacketSnapshotTest` の今の結果を PROGRESS.md に記録して、増えた失敗だけを回帰とみなす。やらないこと: LOD（G10-GR63-LOD-BUILDER・G10-GR63-LOD-RUNTIME）、部位の境界（G10-GR63-PART-CULL）、velocity の印（G10-GR63-VELOCITY-GUARD）、GPU 時間の計測。
 
 ## G10-GR63-VELOCITY-GUARD: 前のフレームでカメラの背後・near 面の近くだった頂点の画素に「履歴なし」の印を書き、TAA と動きぼけがそれを読んで大きなにじみを出さないようにする
-- status: todo
+- status: done
 - after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR63
 - needs-gr: GR30
@@ -6319,7 +6319,7 @@
 - notes: 要件 `#### GR65` の受け入れ確認「校正の記録」と、ロードマップ 1958 行の基準の条件。GR100（G18 の指標）はまだ無いので、PNG の ROI の値で代える（ロードマップ 1967 行の「校正を PNG と metrics.json で代える」）。±4/255 は要件の仮の値で、作者が決めた値ではない（根拠なし）。文書の名前は R0〜R8 と衝突しない `PaleFlatAcceptance.md`（要件の規約）。
 
 ## G10-GR64-GHOST-RENDER: スキンに不透明度を持たせ、アルファハッシュと TAA で半透明の残像として GBuffer へ描き、影は落とさない
-- status: todo
+- status: done
 - after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR64
 - needs-gr: GR27, GR30

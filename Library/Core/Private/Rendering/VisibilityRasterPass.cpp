@@ -1203,7 +1203,8 @@ namespace NorvesLib::Core::Rendering
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
             // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
-            if (RequiresGBufferOverlay(materialData))
+            // 残像は ID のラスタに載せず、解決後に GBuffer へ重ねる。
+            if (RequiresGBufferOverlay(materialData) || IsSkinnedGhostOpacity(instance.Opacity))
             {
                 continue;
             }

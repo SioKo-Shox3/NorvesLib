@@ -220,6 +220,8 @@ namespace NorvesLib::Core::Rendering
         MaterialHandle Material;
         /** @brief 元の描画のシェーディングの値。負の成分は材質の値を使う */
         float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+        /** @brief 元の描画の不透明度。1 未満は残像 */
+        float Opacity = 1.0f;
         /** @brief 元の描画が不透明の一覧にあったか。ビジビリティバッファのラスタは不透明の描画だけを描く（半透明の一覧のものは影のためだけ） */
         bool bOpaque = true;
         /** @brief 主カメラの視錐台に入るか（判定できないときは true） */

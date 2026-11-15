@@ -1,6 +1,7 @@
 ﻿#version 450
 
 #include "Common/DepthConvention.glsl"
+#include "Common/VelocityEncoding.glsl"
 
 // 動きぼけのtileごとの最も長い動き。tileの全画素のシャッターの間の動き（画素）を求め、長さが最大のものを
 // xyへ、その長さをzへ書く。
@@ -26,6 +27,11 @@ vec2 ShutterMotion(ivec2 texel)
 {
     vec2 size = params.imageSizeAndShutter.xy;
     vec2 velocity = texelFetch(velocityTexture, texel, 0).xy;
+    // 履歴なしの印の画素は動き 0 として扱い、上限まで引き伸ばさない。
+    if (VelocityIsNoHistory(velocity))
+    {
+        return vec2(0.0);
+    }
     float depth = texelFetch(sceneDepthTexture, texel, 0).r;
     if (IsBackgroundDepth(depth) && params.cameraPositionAndHistory.w > 0.5)
     {
