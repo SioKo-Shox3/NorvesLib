@@ -410,6 +410,16 @@ namespace NorvesLib::Core::Vegetation
                 gpu.LodDistanceMeters[index] = species.Lod[index].DistanceMeters;
                 gpu.LodKeepFraction[index] = species.Lod[index].KeepFraction;
             }
+            CopyColor(species.Dryness.Color, gpu.DryColor);
+            gpu.DryColor[3] = species.Dryness.ColorWeight;
+            gpu.DrynessScales[0] = species.Dryness.DensityScale;
+            gpu.DrynessScales[1] = species.Dryness.HeightScale;
+            gpu.DrynessScales[2] = species.Dryness.BendAdd;
+            gpu.DrynessScales[3] = species.Dryness.FarColorWeight;
+            gpu.DrynessFar[0] = species.Dryness.FarHeightFlatten;
+            gpu.DrynessFar[1] = 0.0f;
+            gpu.DrynessFar[2] = 0.0f;
+            gpu.DrynessFar[3] = 0.0f;
             data->Species.push_back(gpu);
         }
         return data;

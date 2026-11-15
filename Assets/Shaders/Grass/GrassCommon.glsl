@@ -54,6 +54,9 @@ struct GrassSpeciesGpuData
     float BladesPerSquareMeter;
     vec4 LodDistanceMeters;
     vec4 LodKeepFraction;
+    vec4 DryColor; // 枯れた色と近景で寄せる重み。
+    vec4 DrynessScales; // 枯れ度 1 での密度・高さ・曲がり・遠景の色の応答。
+    vec4 DrynessFar; // 遠景で草丈を潰す重み。yzw は予約の 0。
 };
 
 // GrassGenerateConstants と同じ 544 バイトの std140 配置。
