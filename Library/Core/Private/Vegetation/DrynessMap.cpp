@@ -1,6 +1,7 @@
 ﻿#include "Vegetation/DrynessMap.h"
 
 #include "Container/UnorderedSet.h"
+#include "Logging/LogMacros.h"
 #include "Text/JsonDocument.h"
 #include "Text/JsonWriter.h"
 
@@ -56,6 +57,38 @@ namespace NorvesLib::Core::Vegetation
         bool IsValidLevel(float level)
         {
             return std::isfinite(level) && level >= 0.0f && level <= 1.0f;
+        }
+
+        /** @brief 空でも内部に終端文字を含んでもいない鍵かを返す。 */
+        bool IsValidKey(const Container::String& key)
+        {
+            if (key.empty())
+            {
+                return false;
+            }
+            for (size_t index = 0; index < key.size(); ++index)
+            {
+                if (key[index] == '\0')
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** @brief 源の値を鍵付きの保存値へ写す。 */
+        DrynessKeyedState CaptureKeyedState(const Container::String& key, const DrynessSource& source)
+        {
+            return {key, source.CurrentLevel, source.TargetLevel, source.RemainingSeconds};
+        }
+
+        /** @brief 保存値を源へ写し、残り秒数を新しい遷移秒数とする。 */
+        void ApplyKeyedState(DrynessSource& source, const DrynessKeyedState& state)
+        {
+            source.CurrentLevel = state.CurrentLevel;
+            source.TargetLevel = state.TargetLevel;
+            source.RemainingSeconds = state.RemainingSeconds;
+            source.TransitionSeconds = state.RemainingSeconds;
         }
 
         /** @brief 源の中心から焦点までの距離の二乗を求める。 */
@@ -166,12 +199,226 @@ namespace NorvesLib::Core::Vegetation
         return false;
     }
 
+    bool DrynessMap::BindKey(DrynessSourceId id, const Container::String& key)
+    {
+        if (!IsValidKey(key))
+        {
+            LOG_WARNING("DRYNESS_KEY_REJECTED reason=InvalidKey 鍵が空か内部に終端文字を含んでいます");
+            return false;
+        }
+        auto source = std::find_if(m_Sources.begin(), m_Sources.end(),
+            [id](const DrynessSource& candidate)
+            {
+                return candidate.Id == id;
+            });
+        if (source == m_Sources.end())
+        {
+            return false;
+        }
+        for (const KeyEntry& entry : m_Keys)
+        {
+            if (entry.LiveId == id)
+            {
+                return false;
+            }
+        }
+
+        const float defaultLevel = source->CurrentLevel;
+        for (KeyEntry& entry : m_Keys)
+        {
+            if (entry.Key != key)
+            {
+                continue;
+            }
+            if (entry.LiveId != InvalidDrynessSourceId)
+            {
+                if (!entry.bReleased)
+                {
+                    LOG_WARNING("DRYNESS_KEY_REJECTED reason=DuplicateKey key=%s 同じ鍵の源が既にあります", key.c_str());
+                    return false;
+                }
+                const DrynessSource* previous = Find(entry.LiveId);
+                ApplyKeyedState(*source, CaptureKeyedState(key, *previous));
+                // 除去によって源の参照は無効になり得るので、この後は鍵の表だけを更新する。
+                Remove(entry.LiveId);
+            }
+            else if (entry.bHasHeld)
+            {
+                ApplyKeyedState(*source, entry.Held);
+            }
+            entry.LiveId = id;
+            entry.DefaultLevel = defaultLevel;
+            entry.Held = {};
+            entry.bHasHeld = false;
+            entry.bReleased = false;
+            entry.bPendingRestore = false;
+            return true;
+        }
+
+        KeyEntry entry;
+        entry.Key = key;
+        entry.LiveId = id;
+        entry.DefaultLevel = defaultLevel;
+        m_Keys.push_back(std::move(entry));
+        return true;
+    }
+
+    bool DrynessMap::Release(DrynessSourceId id)
+    {
+        const DrynessSource* source = Find(id);
+        if (source == nullptr)
+        {
+            return false;
+        }
+        if (source->RemainingSeconds > 0.0f)
+        {
+            for (KeyEntry& entry : m_Keys)
+            {
+                if (entry.LiveId == id)
+                {
+                    entry.bReleased = true;
+                    return true;
+                }
+            }
+        }
+        return Remove(id);
+    }
+
+    DrynessSourceId DrynessMap::FindByKey(const Container::String& key) const
+    {
+        for (const KeyEntry& entry : m_Keys)
+        {
+            if (entry.Key == key)
+            {
+                return entry.LiveId;
+            }
+        }
+        return InvalidDrynessSourceId;
+    }
+
+    bool DrynessMap::SetTargetByKey(const Container::String& key, float level, float seconds)
+    {
+        return SetTarget(FindByKey(key), level, seconds);
+    }
+
+    void DrynessMap::CaptureKeyedStates(Container::VariableArray<DrynessKeyedState>& out) const
+    {
+        out.clear();
+        for (const KeyEntry& entry : m_Keys)
+        {
+            const DrynessSource* source = Find(entry.LiveId);
+            if (source != nullptr)
+            {
+                out.push_back(CaptureKeyedState(entry.Key, *source));
+            }
+            else if (entry.bHasHeld)
+            {
+                out.push_back(entry.Held);
+            }
+        }
+        std::sort(out.begin(), out.end(), [](const DrynessKeyedState& left, const DrynessKeyedState& right)
+            {
+                return left.Key < right.Key;
+            });
+    }
+
+    void DrynessMap::RestoreKeyedStates(Container::Span<const DrynessKeyedState> states)
+    {
+        Container::VariableArray<DrynessKeyedState> validStates;
+        validStates.reserve(states.size());
+        for (size_t index = 0; index < states.size(); ++index)
+        {
+            const DrynessKeyedState& state = states[index];
+            if (!IsValidKey(state.Key) || !IsValidLevel(state.CurrentLevel) || !IsValidLevel(state.TargetLevel) ||
+                !std::isfinite(state.RemainingSeconds) || state.RemainingSeconds < 0.0f)
+            {
+                LOG_WARNING("DRYNESS_RESTORE_SKIPPED reason=InvalidEntry index=%zu 鍵または枯れ度の値が不正です", index);
+                continue;
+            }
+            const auto duplicate = std::find_if(validStates.begin(), validStates.end(),
+                [&state](const DrynessKeyedState& candidate)
+                {
+                    return candidate.Key == state.Key;
+                });
+            if (duplicate != validStates.end())
+            {
+                LOG_WARNING("DRYNESS_RESTORE_SKIPPED reason=DuplicateKey key=%s 同じ鍵の値が既にあります", state.Key.c_str());
+                continue;
+            }
+            validStates.push_back(state);
+        }
+
+        for (KeyEntry& entry : m_Keys)
+        {
+            if (entry.bReleased)
+            {
+                Remove(entry.LiveId);
+            }
+        }
+        for (auto entry = m_Keys.begin(); entry != m_Keys.end();)
+        {
+            if (entry->LiveId == InvalidDrynessSourceId)
+            {
+                entry = m_Keys.erase(entry);
+                continue;
+            }
+            const auto state = std::find_if(validStates.begin(), validStates.end(),
+                [&entry](const DrynessKeyedState& candidate)
+                {
+                    return candidate.Key == entry->Key;
+                });
+            for (DrynessSource& source : m_Sources)
+            {
+                if (source.Id == entry->LiveId)
+                {
+                    if (state != validStates.end())
+                    {
+                        ApplyKeyedState(source, *state);
+                    }
+                    else
+                    {
+                        source.CurrentLevel = entry->DefaultLevel;
+                        source.TargetLevel = entry->DefaultLevel;
+                        source.RemainingSeconds = 0.0f;
+                        source.TransitionSeconds = 0.0f;
+                    }
+                    break;
+                }
+            }
+            ++entry;
+        }
+        for (const DrynessKeyedState& state : validStates)
+        {
+            if (FindByKey(state.Key) == InvalidDrynessSourceId)
+            {
+                KeyEntry entry;
+                entry.Key = state.Key;
+                entry.Held = state;
+                entry.bHasHeld = true;
+                entry.bPendingRestore = true;
+                m_Keys.push_back(std::move(entry));
+            }
+        }
+    }
+
     bool DrynessMap::Remove(DrynessSourceId id)
     {
         for (auto it = m_Sources.begin(); it != m_Sources.end(); ++it)
         {
             if (it->Id == id)
             {
+                for (KeyEntry& entry : m_Keys)
+                {
+                    if (entry.LiveId == id)
+                    {
+                        entry.Held = CaptureKeyedState(entry.Key, *it);
+                        entry.bHasHeld = true;
+                        entry.LiveId = InvalidDrynessSourceId;
+                        entry.bReleased = false;
+                        entry.bPendingRestore = false;
+                        break;
+                    }
+                }
                 m_Sources.erase(it);
                 return true;
             }
@@ -182,6 +429,7 @@ namespace NorvesLib::Core::Vegetation
     void DrynessMap::Clear()
     {
         m_Sources.clear();
+        m_Keys.clear();
     }
 
     void DrynessMap::Tick(float deltaSeconds)
@@ -206,6 +454,29 @@ namespace NorvesLib::Core::Vegetation
                         (deltaSeconds / source.RemainingSeconds);
                     source.RemainingSeconds -= deltaSeconds;
                 }
+            }
+        }
+        for (KeyEntry& entry : m_Keys)
+        {
+            if (entry.bReleased)
+            {
+                const DrynessSource* source = Find(entry.LiveId);
+                if (source != nullptr && source->RemainingSeconds == 0.0f)
+                {
+                    Remove(entry.LiveId);
+                }
+            }
+        }
+        for (auto entry = m_Keys.begin(); entry != m_Keys.end();)
+        {
+            if (entry->bPendingRestore && entry->LiveId == InvalidDrynessSourceId)
+            {
+                LOG_WARNING("DRYNESS_RESTORE_UNKNOWN_KEY key=%s 結ばれる源が無い鍵の枯れ度を読み飛ばします", entry->Key.c_str());
+                entry = m_Keys.erase(entry);
+            }
+            else
+            {
+                ++entry;
             }
         }
     }
@@ -438,6 +709,7 @@ namespace NorvesLib::Core::Vegetation
             return {DrynessRestoreError::InvalidId};
         }
         m_Sources = std::move(sources);
+        m_Keys.clear();
         m_NextId = static_cast<DrynessSourceId>(nextId);
         return {};
     }
