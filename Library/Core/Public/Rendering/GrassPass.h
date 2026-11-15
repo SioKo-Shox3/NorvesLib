@@ -138,7 +138,7 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 3 つの LOD の間接描画を記録する。記述子セットは互いに異なるものを渡す。
-         * 各 LodCapacity は正数、LodBase * 16 はデバイスのストレージの整列を満たすこと。
+         * 各 LodCapacity は正数、LodBase * sizeof(GrassBladeRecord)（20 バイト）はデバイスのストレージの整列を満たすこと。
          * 記録バッファは ShaderResource で渡し、戻ったときも ShaderResource である。
          * 引数は IndirectArgument、LayerA と世界フィールドの画像は ShaderResource とする。
          * 描き先は RenderTarget / DepthWrite で渡し、終了時に ShaderResource へ移る。

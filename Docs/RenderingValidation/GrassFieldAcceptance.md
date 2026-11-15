@@ -76,7 +76,7 @@ BeginPlay の終わりには resolved と parsed が破棄されるため、こ�
 [BuildGrassFieldFromCooked](../../Library/Core/Private/Vegetation/GrassFieldAsset.cpp) と
 [GrassField::SetChunk / BuildRenderData](../../Library/Core/Private/Vegetation/GrassField.cpp) によると、
 RGBA8 は圧縮解除して浮動小数点画素へ変換するのではなく、そのまま実行時配列へコピーされる。
-LayerB.A はコピー先で 0 にする。種別表は cook 済み種別名の順に複製し、見つからない種別には既定値を補う。
+LayerB.A は基礎の枯れ度（地形の源では cook が MSK0 の G を写す）で、そのままコピーする。種別表は cook 済み種別名の順に複製し、見つからない種別には既定値を補う。
 地面は TerrainSystem を借用するアダプタで、草の場のために地形全体を複製しない。
 
 [Vegetation::PublishRenderData](../../Library/Core/Private/Vegetation/Vegetation.cpp) が公開した描画データは、

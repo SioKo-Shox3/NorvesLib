@@ -182,12 +182,7 @@ namespace NorvesLib::Core::Asset
             layerOffset += layerASize;
             WriteLe64(data, record + ChunkRecordOffset::LayerBOffset, layerOffset);
             WriteLe64(data, record + ChunkRecordOffset::LayerBSize, layerBSize);
-            uint8_t* layerB = data + static_cast<size_t>(payloadOffset + layerOffset);
-            std::memcpy(layerB, chunk.LayerB.data(), chunk.LayerB.size());
-            for (size_t offset = 3; offset < chunk.LayerB.size(); offset += 4)
-            {
-                layerB[offset] = 0;
-            }
+            std::memcpy(data + static_cast<size_t>(payloadOffset + layerOffset), chunk.LayerB.data(), chunk.LayerB.size());
             layerOffset += layerBSize;
         }
         WriteLe64(data, HeaderOffset::PayloadHash,

@@ -109,11 +109,8 @@ namespace NorvesLib::Core::Vegetation
             Chunk chunk;
             chunk.Coord = coord;
             chunk.LayerA.assign(layerA.begin(), layerA.end());
+            // LayerB の A は基礎の枯れ度（cook が地形の枯れ草を写す）なのでそのまま保つ。
             chunk.LayerB.assign(layerB.begin(), layerB.end());
-            for (uint64_t offset = 3; offset < layerBBytes; offset += 4)
-            {
-                chunk.LayerB[offset] = 0;
-            }
             m_Chunks.insert_or_assign(MakeChunkKey(coord), std::move(chunk));
         }
         ++m_Revision;
