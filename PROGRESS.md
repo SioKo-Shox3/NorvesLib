@@ -11554,3 +11554,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 GLSL の深度の規約を逆 Z の既定と NORVES_DEPTH_STANDARD の分岐にし、Hi-Z の番兵・近方面の判定・RTGI の許容を規約で書く: 着地(直し 0 回)
 - U1 C++ の深度の規約を起動時に選べる形にして既定を逆 Z にし、カメラの射影に z'=w−z を掛ける: 着地(直し 0 回)
 - U3 ShaderManager が標準 Z の選択のときだけ展開した本文へ NORVES_DEPTH_STANDARD を定義する: 着地(直し 0 回)
+- U5 深度 0・1 を近方面・遠方面と決め打ちして視線や光線を作るシェーダーを規約の定数で書く: 着地(直し 0 回)
