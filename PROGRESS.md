@@ -9867,7 +9867,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261105-093026/verify-G8-GR16-JOINT-DATA-RESPONSE-U5.txt`（Game・PhysicsDynamicsTest・HitEffectEmissionTest・SwordTrailRibbonTest の Debug ビルド終了コード 0、ctest で Combat 系 8 本・HitEffectEmissionTest・SwordTrailRibbonTest の 10 件 100% Passed、numstat 2 通り一致）。
 - 決定: 設定の有限でない・負の数値は、その項目だけ既定値へ戻す（拒否はしない）。ヒットストップは World の倍率 0・Tag `CombatHitStop`。
 - Next: ランナーの評価者の反証（アセットの読み込み・Object の寿命の危険地帯）。
-- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
+- Notes: 起動の確かめは後回し（判定の形の表示を Game で `bDebugDraw` を入れて見る確かめと、火花・ヒットストップの見た目は未確認。Game 側から `bDebugDraw` を入れる口はまだ無い）。Release ビルドは回していない（表示は `#if NORVES_ENABLE_DEBUG_OUTPUT` で囲んだことをコードで確認）。
 
 - U1 NVGFLD v0 の形式・読み込み・書き出しを Library に足す: 着地(直し 0 回)
 - U2 CookedGrassFieldTest を CookedMeshTest の束に足す: 着地(直し 0 回)
@@ -11327,3 +11327,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で Game.exe を生成（`.harness/runs/20261115-162934/merge-verify-build.txt`）。`forward_transparent.frag` は glslc（vulkan1.2）で define なし・`NORVES_SPARSE_RESIDENCY_SHADING`・`NORVES_VT_FEEDBACK`・両方の 4 通りが終了コード 0（`merge-verify-glslc.txt`）。
 - verify のビルドの行: 名指しする `RHIRayTracingApiContractTest`・`RenderingHdrSceneCaptureTest`・`MaterialResourcesTest` は TEST-REMOVE-1114 で `Test/` ごと消えたので、残る `Game` のターゲットだけを回した。ctest の行が選ぶ試験も同じく存在しない。
 - 人が見るときの見どころ: 半透明の面（ガラス・水面）が雨の濡れで暗く・滑らかになり、同時に遠くでは高さフォグに沈むこと。濡れ 0 では見た目が取り込み前と変わらないこと。
+
+### G7-GR53-WET-WRITERS 完了の確認（2026-11-15、run 20261115-224707）
+- Done: 前回は verify のビルドの行をそのまま再実行して、消えた試験のターゲットで MSBuild が MSB1009 で落ちていた。コードは前の反復から変わっていない。verify のビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で回し、ctest の行は選ぶ試験が `Test/` ごと消えているので回していない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で Core.lib と Game.exe を生成（`.harness/runs/20261115-224707/verify-G7-GR53-WET-WRITERS-build.txt`。CMake の再構成を含む。警告は shaderc の PDB が無い LNK4099）。濡れを掛ける書き手のシェーダー 9 本（`gbuffer.frag`・`gbuffer_alphaclip.frag`・`megageometry.frag`・`visbuffer_resolve.comp`・`visbuffer_resolve_tiles.comp`・`foliage.frag`・`Grass/grass.frag`・`decal.frag`・`forward_transparent.frag`）を、BOM を外した写しから glslc（vulkan1.2）で define なし・`NORVES_VT_FEEDBACK`・`NORVES_SPARSE_RESIDENCY_SHADING`・`NORVES_VSM_STATS` の 4 通りずつコンパイルし、36 回とも終了コード 0（`verify-G7-GR53-WET-WRITERS-glslc.txt`）。
+- 作らなかったもの: done-when の `WetSurfaceShaderCompileTest` への追加と `GBufferWetnessPathsVulkanTest`（scenario=wetness-paths）は、試験を作らない決まり（絶対規則 11）で作っていない。撮影・計測の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（GBuffer・可視バッファ・RenderThread の危険地帯）。人が見るときの見どころは上の節と前の完了の節と同じ（雨のある屋外で、通常のメッシュ・スキン・MegaGeometry の地形・草・株・半透明が同じ濡れ方で暗く滑らかになること。濡れ 0 では見た目が変わらないこと）。受入れの記録と RTGI・PT の命中面が濡れない方式差は G7-GR53-CHECK。
