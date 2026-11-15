@@ -11325,3 +11325,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 MeshComponent に LOD の鎖を設定する口を足し、proxy へ段ごとのメッシュとサブメッシュの範囲を詰める(切り直し): 着地(直し 0 回)
 - U8 ImpostorComponent に画面の大きさのしきい値を足し、BoardProxy へ渡す(切り直し): 着地(直し 0 回)
 - U9 SceneView のカリングで画面の大きさとヒステリシスからメッシュの段を選び、選んだ段のメッシュとサブメッシュの範囲へ差し替えてバッチへ渡す(切り直し): 着地(直し 1 回)
+- U5 インポスターへの切り替えを同じ画面の大きさの判定の最後の段にし、元が静的メッシュでも MegaGeometry でも同じ規則で抑える: 着地(直し 1 回)
