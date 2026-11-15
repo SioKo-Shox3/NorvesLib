@@ -4,6 +4,7 @@
 
 #ifndef VOLUMETRICS_COMMON_GLSL
 #define VOLUMETRICS_COMMON_GLSL
+#include "Common/HeightFog.glsl"
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
@@ -57,6 +58,8 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     // 高度ごとの表: [i] = 太陽の照度 × 透過率(lux), [kAerialProfileSize + i] = 太陽の照度 × 多重散乱の表 Ψ_ms(cd/m²)
     vec4 aerialProfile[2u * kAerialProfileSize];
     vec4 fogRange; // x=霧の距離の上限(m、0 で視線全体), y=周りの光の倍率, zw=未使用
+    vec4 fogTintAndSkyBlend;    // rgb=霧の色味, w=空への寄せ（0..1）
+    vec4 fogReferenceElevation; // x=基準の仰角の正弦, y=余弦, zw=未使用
 } params;
 
 bool IsFiniteFloat(float value)
@@ -66,69 +69,15 @@ bool IsFiniteFloat(float value)
 
 vec2 EquirectangularUV(vec3 direction)
 {
-    vec2 uv = vec2(atan(direction.z, direction.x),
-                   asin(clamp(-direction.y, -1.0, 1.0)));
-    uv *= vec2(0.15915494, 0.31830989);
-    uv += 0.5;
-    return uv;
+    return HeightFogEquirectUV(direction);
 }
 
 float ComputeAnalyticTransmittance(float originHeight,
                                    float rayDirectionY,
                                    float rayDistance)
 {
-    float density = max(params.fogParameters.x, 0.0);
-    float baseHeight = params.fogParameters.y;
-    float falloff = max(params.fogParameters.z, 0.0);
-    if (density <= 0.0 || rayDistance <= 0.0 ||
-        !IsFiniteFloat(originHeight) || !IsFiniteFloat(rayDirectionY) ||
-        !IsFiniteFloat(rayDistance))
-    {
-        return 1.0;
-    }
-
-    float originExponent = -falloff * (originHeight - baseHeight);
-    float verticalRate = falloff * clamp(rayDirectionY, -1.0, 1.0);
-    float exponentChange = verticalRate * rayDistance;
-    float logIntegral;
-    if (abs(verticalRate) < 1.0e-8 || abs(exponentChange) < 1.0e-4)
-    {
-        logIntegral = log(rayDistance);
-    }
-    else
-    {
-        float logNumerator;
-        if (exponentChange > 80.0)
-        {
-            logNumerator = 0.0;
-        }
-        else if (exponentChange > 0.0)
-        {
-            logNumerator = log(max(1.0 - exp(-exponentChange), 1.0e-35));
-        }
-        else if (exponentChange < -80.0)
-        {
-            logNumerator = -exponentChange;
-        }
-        else
-        {
-            logNumerator = log(max(exp(-exponentChange) - 1.0, 1.0e-35));
-        }
-        logIntegral = logNumerator - log(abs(verticalRate));
-    }
-
-    float logOpticalDepth = log(density) + originExponent + logIntegral;
-    if (!IsFiniteFloat(logOpticalDepth))
-    {
-        return logOpticalDepth > 0.0 ? exp(-80.0) : 1.0;
-    }
-    if (logOpticalDepth >= log(80.0))
-    {
-        return exp(-80.0);
-    }
-
-    float opticalDepth = clamp(exp(logOpticalDepth), 0.0, 80.0);
-    return exp(-opticalDepth);
+    return HeightFogTransmittance(params.fogParameters.x, params.fogParameters.y,
+                                  params.fogParameters.z, originHeight, rayDirectionY, rayDistance);
 }
 
 float GetCascadeSplitDistance(uint splitIndex)
@@ -319,10 +268,12 @@ struct VolumetricsRayResult
     // 高さフォグの透過率と不透明度（1 - 透過率）
     float FogTransmittance;
     float FogOpacity;
-    // 高さフォグの周りの光の色（空の放射輝度 LUT の視線の向きの値か、LUT が無いときの既定の色。負は 0）
+    // 高さフォグの周りの光の色。空の放射輝度 LUT では視線の向きと基準の仰角の値を空への寄せで混ぜ、
+    // LUT が無いときは既定の色を使う。どちらも色味を掛け、負は 0
     vec3 FogRadiance;
     // 高さフォグの周りの光。空気遠近が有効なら、各点の空の多重散乱の表 Ψ_ms（高度ごとの表）× 霧の散乱係数 × 透過率を
-    // 視線で積んだ値。無効なら FogRadiance × 不透明度。どちらも周りの光の倍率を掛ける
+    // 視線で積んだ値に色味を掛ける。無効なら空への寄せと色味を反映した FogRadiance × 不透明度。
+    // 空への寄せは LUT の経路だけで混ぜ、どちらも周りの光の倍率を掛ける
     vec3 FogAmbient;
     // 高さフォグの太陽の単一散乱（影つき）。不透明度が 0 のときは数えない
     vec3 FogDirectional;
@@ -419,7 +370,7 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, float fogDistance,
     result.AerialScattering = result.AerialSingle + result.AerialMultiple;
     if (result.FogOpacity > 0.0)
     {
-        result.FogAmbient = fogAmbient * params.fogRange.y;
+        result.FogAmbient = fogAmbient * (params.fogRange.y * params.fogTintAndSkyBlend.rgb);
         result.FogDirectional = fogDirectional;
     }
 }
@@ -443,13 +394,9 @@ VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance
     result.AerialMultiple = vec3(0.0);
     if (result.FogOpacity > 0.0)
     {
-        vec3 fogRadiance = params.fallbackFogColor.rgb;
-        if (params.fogParameters.w > 0.5)
-        {
-            fogRadiance = texture(skyAtmosphereRadiance,
-                                  EquirectangularUV(rayDirection)).rgb;
-        }
-        result.FogRadiance = max(fogRadiance, vec3(0.0));
+        result.FogRadiance = HeightFogRadiance(skyAtmosphereRadiance, params.fogParameters.w > 0.5,
+                                                params.fallbackFogColor.rgb, rayDirection,
+                                                params.fogTintAndSkyBlend, params.fogReferenceElevation);
     }
     if (params.aerialPerspective.x > 0.5 && rayDistance > 0.0)
     {

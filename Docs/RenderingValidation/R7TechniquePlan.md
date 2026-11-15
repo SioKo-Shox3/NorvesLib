@@ -19,7 +19,7 @@ R5 RT pipelineとR1のリニア作業色空間を使う、オフライン参照�
 
 1. **R7-P1: BRDF・texture評価の共有** — raster opaque/transparentで既存契約を保ったまま共通include化し、RT shaderから同一コードを参照する。shader compileとIndoor/Outdoor goldenを確認する。
 2. **R7-P2: 独立PT pipelineとprogressive accumulation** — R5 RT pipeline、FramePacket geometry/material snapshot、sample count、revision reset、1-sample/frame accumulationを接続する。camera/scene変更時のresetと静止時の累積をGPU検証する。
-3. **R7-P3: NEE/MISと光輸送** — diffuse/GGX BSDF、point/directional/area light、emissive area sample、visibility、PDF/MIS weightを実装する。R1 white-furnaceと解析照明テストをPT modeで通し、同じmaterial/lightのraster/PT結果を比較する。
+3. **R7-P3: NEE/MISと光輸送** — diffuse/GGX BSDF、point/directional/area light、emissive area sample、visibility、PDF/MIS weightを実装する。R1 の白炉と解析照明の振る舞いを PT mode でも保ち、同じ material/light の raster/PT 結果を比較する。
 4. **R7-P4: SPP収束とCornell参照** — nested sample prefix 16/64/256 sppを固定seedで出力し、256 spp self-convergence imageに対するMSEが単調減少することをassertする。Cornell boxを公開参照renderと規定誤差内で比較する。
 5. **R7-P5: thin-lensとshutter sampling** — aperture diskとshutter intervalをサンプルし、既知距離・焦点・絞りのCoC数値、deterministic golden、translation motion referenceを検証する。
 6. **R7-P6: 決定論的EXR sequence** — TinyEXR writer、linear RGB float、seed/frame naming、有限値、atomic completionを実装し、2回のsequenceをbyte一致または選定閾値内で比較する。
@@ -31,7 +31,7 @@ R5 RT pipelineとR1のリニア作業色空間を使う、オフライン参照�
 ## 検証ゲート
 
 - BRDF共通化後: `Game` build、shader compile、承認済みIndoor/Outdoor golden。
-- PT pipeline/light transport: `Game`とR7 GPU tests build、PT contract tests、R1 white-furnace/analytical-light、Cornell capture、16/64/256 spp convergence。
-- Camera/output: CoC解析test、fixed-seed double-run、EXR independent readback、NaN/Inf scan。
-- Outdoor: 朝/昼/夕PT captures、Raster/PT FLIP + pixel max thresholds、fog/sky disabled fallback、R7 full relevant CTest。
+- PT pipeline/light transport: `Game` のビルド、R1 の白炉・解析照明の振る舞い、Cornell の撮影、16/64/256 spp の収束。
+- Camera/output: CoC の解析値、固定 seed での再現性、EXR の読み戻し、NaN/Inf がないこと。
+- Outdoor: 朝・昼・夕の PT の撮影、Raster/PT の FLIP と画素単位最大のしきい値、fog/sky 無効時の代替経路。
 - 危険地帯に触れる差分は別文脈の評価者を通す。既定シーン・R1 baselines・ignored `Docs/Plans/`は変更しない。

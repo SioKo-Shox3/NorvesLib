@@ -34,7 +34,3 @@ CookPathIdentityはWindowsのlocal drive絶対パスを扱う。Unicodeをnarrow
 32 MiBは処理全体のメモリ上限ではない。元plan、Prepareの一時メモリ、source bytes、索引等は別である。上限超過はエラーとなり、部分的な成功にしない。
 
 集合検査では同じ正規化locatorをまとめてidentityを1回観測し、キー・component列・file IDをsortして判定する。prefixは祖先stackで検査し、a / a! / a/xの順番で見落とさない。統計は集約passだけを数え、既存PrepareとStableによる読込・queryは含めない。現行profileは1assetあたり最大4出力（static primaryと画像3件）、他は1出力である。将来この上限を拡張するときは既存の個別guardも含めて計算量を再評価する。
-
-## 検証境界
-
-CookOutputSetGuardTestは重複key、primary/derived、prefixの全順列、source/spec/control、外部buffer/imageと不在・存在sidecar、8.3、hardlink、Unicode、reparse、lock、観測後変更、4096planとprotected count上限、metadata予算を扱う。CookCacheDecisionTestの各実profileでも集合検査を呼ぶ。実行結果と未実行の項目はPROGRESS.mdに記録する。

@@ -3,6 +3,7 @@
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
+#include "Rendering/RenderResources.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 
 #include <cmath>
@@ -495,7 +496,7 @@ namespace NorvesLib::Core::Component
         return getbCastShadow().Get();
     }
 
-    bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy)
+    bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy, const Rendering::MaterialResources* materials)
     {
         if (!IsVisible() || !EvaluatePose())
         {
@@ -531,6 +532,22 @@ namespace NorvesLib::Core::Component
         if (slotCount != 0)
         {
             outProxy.Material = outProxy.Materials[0];
+        }
+        if (materials != nullptr)
+        {
+            for (uint32_t slot = 0; slot < slotCount; ++slot)
+            {
+                const Rendering::MaterialHandle handle = outProxy.Materials[slot];
+                if (!handle.IsValid())
+                {
+                    continue;
+                }
+                const Rendering::MaterialResourceData* data = materials->GetData(handle);
+                if (data != nullptr && data->Shading == Rendering::ShadingModel::Fur)
+                {
+                    outProxy.FurSlots.push_back(Rendering::SkinnedMeshFurSlot{slot, handle, data->Revision, data->Fur});
+                }
+            }
         }
         outProxy.AssetLease = mesh->GetRenderAssetLease();
         outProxy.WorldTransform = Math::Matrix4x4::Identity;

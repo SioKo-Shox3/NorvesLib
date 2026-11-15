@@ -4,13 +4,6 @@
 
 R3-P4では、outdoor scene の実GPU BackBufferを使い、3段階のフォグ密度、CSM遮蔽のA/B、遠景の空・地平線と大気のブレンドを固定した。数値閾値とgoldenはR3専用とし、R1/R2の承認済み基準から分離する。
 
-## R3専用基準資産
-
-- 密度golden: `Test/Core/Rendering/Baselines/RenderingValidation/R3FogDensityLow.png`、`R3FogDensityMedium.png`、`R3FogDensityHigh.png`
-- 密度閾値: `Test/Core/Rendering/Thresholds/RenderingValidation/R3DensitySweep.tsv`
-- CSM遮蔽A/B閾値: `Test/Core/Rendering/Thresholds/RenderingValidation/R3OccluderAb.tsv`
-- 遠景大気ブレンド閾値: `Test/Core/Rendering/Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv`
-
 密度は `0.0025`、`0.005`、`0.01` の3値とし、各段階のBackBuffer luma上限を245、飽和RGB画素数を0に固定する。密度増加にともなう側ROIの最小luma差は各段階0.25、lowからhighまでの最大差は64とする。golden比較はmean FLIP `0.02` 以下、最大チャンネル差8以下とする。
 
 ## GPU受入れ結果

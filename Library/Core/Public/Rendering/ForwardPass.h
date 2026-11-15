@@ -132,6 +132,7 @@ namespace NorvesLib::Core::Rendering
         void ExecuteTransparentCommands(
             ViewRenderContext& context,
             bool bUseRenderGraphManagedStates,
+            const RHI::TexturePtr& skyRadianceTexture,
             const Container::TSharedPtr<Container::VariableArray<DrawCommand>>& reactiveCommands = {});
         void EnqueueEmptyTransparentPass(ViewRenderContext& context) const;
         void RegisterTransparentBridge(ViewRenderContext& context,
@@ -155,6 +156,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_GBufferDepthTexture;
         RGResourceHandle m_RenderGraphSceneColorHandle;
         RGResourceHandle m_RenderGraphDepthHandle;
+        RGResourceHandle m_SkyAtmosphereRadianceHandle;
 
         // フォワード用リソース
         RHI::RenderPassPtr m_ForwardRenderPass;
@@ -189,6 +191,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultPointShadowCubeTexture;
         RHI::TexturePtr m_DefaultMidGrayTexture;
         RHI::SamplerPtr m_DefaultLinearSampler;
+        // 高さフォグの空の放射輝度 LUT 用。VolumetricsPass と同じ設定。
+        RHI::SamplerPtr m_SkyRadianceSampler;
 
         // 設定
         bool m_bTransparentOnly = false;

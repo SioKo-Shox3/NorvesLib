@@ -50,15 +50,10 @@ local/global と、Sampler と同じ順の jointModel/palette がすべて有限
 各 translation unit の fast-math 条件を検査できるよう内部 linkage とする。kernel の float 出力には IEEE binary32 も要求する。
 caller の設定を変更しない。通常の非 trapping 算術を前提とし、演算が sticky exception flags を立てる可能性はある。
 
-## 検証の分離
+## 範囲
 
-純粋 kernel は実ソースだけを host で実行する。native adapter/Resource/Sampler は Windows Core で検証する。
-合成 BVH→既存 FK→明示 basis→回転対応→1key clip→実 Sampler を照合する。
-非恒等 mesh と scale2 の fixture は、local 末端長を1/2にして比較する world 長を一致させる。
-C≠I の fixture は明示補正式の独立 literal を比較する。補正後姿勢を補正前の source 骨方向と無条件には同一視しない。
-未写像の中間親・別root、非可換回転、半回転、位置 overflow による late refusal を含める。
-既存 Sampler の凍結 Debug/Release 6095byte と4採取、および旧 cook/managed gate は別途維持する。
-Windows/実GPU/実Blender の未実行結果を host テストで代用しない。
+非恒等meshとscaleを含む変換では、比較するworld長を揃える。C≠Iの補正後姿勢を、補正前のsource骨方向と無条件には同一視しない。
+Windows/実GPU/実Blenderの動作は未確認。
 
 ## 動画由来モーションの調整
 

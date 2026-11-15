@@ -30,9 +30,6 @@ IAudioBackend → XAudio2Backend または NullAudioBackend
 
 ばらの WAV を正常に読んだときは `AUDIO_COOKED_MISSING` を出す。
 PCM16 の対応形式は 44.1 / 48 kHz、モノラル / ステレオ。
-`Test/Modules/Audio/CMakeLists.txt` はドメインのリンク先を検査し、
-指定された中立ソースへの Windows / XAudio2 依存の混入を検出する。
-同じ CMake ファイルは `AudioBackendLifetimeTest` が fake のみでリンクされることも確かめる。
 
 ## Game の既定の組み立て
 
@@ -43,8 +40,7 @@ XAudio2 の生成または初期化に失敗すると `NullAudioBackend` へ切�
 `IAudioModule::GetBackendStatus()` から種類・フォールバックの有無・理由を取得できる。
 
 `--m9-world-smoke` と `--audio-smoke` はフォールバックを許可しない。
-実出力のスモーク試験は `--audio-smoke` と `Scripts/Test-AudioSmoke.ps1` を使い、
-雨と足音を鳴らし、終了時に次の印を確かめる。
+`--audio-smoke` は雨と足音を鳴らし、終了時に次の印を出す。
 
 ```text
 AUDIO_SMOKE stage=shutdown voices=0 callbacks=0 shutdown_complete=1
@@ -92,18 +88,6 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 イベント処理は `Library/Modules/Audio/Private/Audio/AudioDomain.cpp` にある。
 `AudioComponent` 自身は毎フレームの Tick を登録しない。
 [Docs/Architecture/TickStages.md の AudioComponent の行](TickStages.md#component-の割り当て表)も参照。
-
-## 試験
-
-`AudioBackendLifetimeTest` の束は fake バックエンドを使い、次の契約を確かめる。
-
-- `AudioBackendLifetimeTest`: PCM の寿命、callback の保留・重複・古い通知の扱い、終了時の静止と破棄。
-- `AudioModuleLifecycleTest`: voice の状態遷移、世代付きハンドル、初期化・作成・停止の失敗時の後始末と隔離。
-- `AudioModuleRegistryTest`: ModuleRegistry 経由の初期化・Tick・終了と、初期化失敗時のロールバック。
-- `AudioPlaybackTest`: ループ・一時停止・パン、フェード、発音制限と奪取、cooldown・dedupe、バンクと WAV の読み込み。
-- `AudioComponentTest`: 持ち主ごとの停止と破棄、モジュール不在時の処理、Component の設定の保存・復元。
-
-試験の理由は [Docs/Testing.md](../Testing.md) を参照。
 
 ## 現在の再生範囲
 

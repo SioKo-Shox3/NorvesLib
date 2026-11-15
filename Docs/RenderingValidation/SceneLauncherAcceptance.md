@@ -450,7 +450,7 @@ RelWithDebInfo の Game ビルドと、再生・静止 9.27 秒・時刻を合�
 
 #### Golden の照合
 
-`cmake --build build --config Debug --target RenderingGoldenImageTest -- /m:1` は終了コード 0。続く `ctest --test-dir build -C Debug --output-on-failure -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"` は終了コード 0、`100% tests passed, 0 tests failed out of 2`（113.22 秒）。`LastTest.log` でも Indoor・Outdoor とも `mean_flip=0.000000000 max_flip=0.000000000 raw_max=0`、`mode=on resolve_logs=1 fallback_logs=0` を確認した。静止の既存基準画像に完全一致したため、golden の再承認と基準画像の更新は行っていない。
+記録時の屋内・屋外の画像比較は終了コード 0、2 件とも一致（113.22 秒）。両方とも `mean_flip=0.000000000 max_flip=0.000000000 raw_max=0`、`mode=on resolve_logs=1 fallback_logs=0` で、静止の既存画像に完全一致した。
 
 指定のビルド・撮影・粒の判定・計測チェック・回帰・golden は全て成功した。同じ視点の診断と保存画像の目視で、近景のバナナ周囲と床の粗い粒状の暈の抑制を確認した。コマンドの終了値、保存時刻 T、目視の記録は `.harness/unit-verify.txt`。全撮影は開始 04:20:08 から 50 分以内に始めており、時間制限による未撮影はない。
 

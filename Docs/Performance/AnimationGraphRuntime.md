@@ -5,7 +5,7 @@
 - 対象commit: `4ae627f4b75e51772a54fbf13dc7b8cba10b7dd6`
 - [Windows CPU検証run](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37714129004)、pose job `113106590900`
 - GitHub-hosted Windows 2022、Visual Studio 2022、x64 Release
-- `NORVES_POSE_BENCHMARK=1`、`AnimGraphRuntimeTest.cpp::BenchmarkAnimGraph`
+- 当該 run では `NORVES_POSE_BENCHMARK=1` の `AnimGraphRuntimeTest.cpp::BenchmarkAnimGraph` で計測した
 - 合成52関節。根に並進、残り51関節に2キーの回転チャンネルを持つ2資源を使用
 - 各条件で100回Update/Evaluateした後、Updateを5000回、続いてEvaluateを5000回計測
 - dt=1/60秒。4クリップ条件は1000秒の遷移を開始し、計測中も4ノードが寄与
@@ -21,4 +21,4 @@
 
 各条件1回の測定で、ホスト個体・CPU周波数・同居負荷は固定していない。条件間の速さの序列を一般化するには、同一環境で反復し分布を確認する必要がある。
 
-このfixtureのroot設定はNoneで、同期groupも指定しない。イベント・ルート抽出・位相同期は同じCPU bundleの機能回帰で検査するが、上表はその負荷の計測値ではない。実アセット、実ゲームの全フレーム時間、GPU表示品質は未測定。
+このfixtureのroot設定はNoneで、同期groupも指定しない。上表はイベント・ルート抽出・位相同期の負荷を含まない。実アセット、実ゲームの全フレーム時間、GPU表示品質は未測定。

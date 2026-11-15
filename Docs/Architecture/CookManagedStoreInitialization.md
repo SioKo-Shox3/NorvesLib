@@ -29,17 +29,10 @@ Createdだけoutを更新する。StoreExists／NeedsRecovery／Conflict／Busy�
 
 この初期profileでは、一度閉じたchildをcleanupのために再openしない。child close後の失敗ではcomplete stageをorphanとして残す。CreateDirectory後にhandle/IDを得られなかったstage、未知child、cleanup/close失敗も診断して残す。次回はそのorphanを採用・掃除せず、新しいstageを用意する。正常終了ではorphanは残らない。失敗時の残物は小さいcontrol fileだけで、package payloadではない。
 
-rename後はidentity検査、close、再観測、例外、mutex解除のどこで失敗してもPublishedButErrorでstoreを保持する。faultのChildClose/AfterPublishClose/MutexReleaseは実cleanupを行った後の失敗報告注入であり、OSが本当にclose/releaseに失敗した実験とは区別する。
+rename後はidentity検査、close、再観測、例外、mutex解除のどこで失敗してもPublishedButErrorでstoreを保持する。
 
-stable namespaceと協調writerが前提。既定ACLの継承以外にACL/privilege/system設定を変更しない。file flushとprocess終了試験はpowerloss耐久性やatomic reader可視性の保証ではない。
+stable namespaceと協調writerが前提。既定ACLの継承以外にACL/privilege/system設定を変更しない。file flushやprocess終了の確認だけではpowerloss耐久性やatomic reader可視性を保証できない。
 
-## 検証
-
-専用Windows試験で独立native IDとheader byteを照合し、stage→storeのID維持、gen1/空index、runtime/state/package/pending不生成、既存store無変更、unknown root/ancestor/pending拒否、既存stage衝突、未知child保持、各故障とPublishedButErrorを確認する。
-
-専用子processをstage作成、header完了、index完了、child close、rename直前、rename直後に終了させる。公開前はorphan不採用、公開後は完全storeが通常観測されることを検査する。8.3/SUBST/Unicode物理親/case-sensitive/reparseと、stage/fixed-storeによる新aliasは条件flagを残し、0は未実測とする。alias割当てそのものは仮定しない。
-
-既存observerの30CPUと79＋10固定出力byte、5診断byteを維持し、initializerを含む31CPUを受入条件とする。production更新、journal/rollback、既存root管理付き更新の受入れではない。
 
 ## API根拠
 

@@ -8,6 +8,3 @@ TextureAssetRuntime::CreateTexture(info,data,size)では、handleを作成した
 - upload内容、mip生成、shader、既定の色空間・表示は変更しない
 - 通常のupload失敗時の戻り値仕様は変更しない。今回のRAIIは例外でcallerへ返っていないhandleを対象とする
 - registryのTextureCountは登録所有を数える。modelへ移管後のRHI textureはmodelが保持しており、TextureCount減少だけをGPU解放の証拠にはしない
-
-ImportedOpaqueRuntimeTest内のLegacyLifetimeで、v0をparseしたstagingへ各roleの有限pixel fixtureを渡す。5role単独/併用、モデル解放、後半作成失敗、upload例外、geometry失敗について、registry基線とweak参照の寿命を確認する。public APIの通常/空data戻り、named prepared cacheの保持も確認する。
-これはCPU/FakeDeviceの有限検証であり、実GPUメモリ常駐量や実物の描画の受入れを代替しない。

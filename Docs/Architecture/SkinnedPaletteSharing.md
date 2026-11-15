@@ -20,10 +20,9 @@ preparedのcomponent/epoch・使用有無・buffer組とVB/IB/count/asset実体�
 Begin/Commit/Abortで準備表を破棄しても、全frame lease消滅と最後のsubmitted serial完了の両方までGPU資源を保持する。
 Abortはsubmitted serialを進めない。ForceClearAfterWaitIdleでもepochを巻き戻さない。
 
-## 検証範囲
+## 未確認の範囲
 
-独立SkinnedSubmeshDrawContractTestへ、両パス順序・1/2/8範囲・複数viewport・別component・pose/世代衝突・失敗時作成回数・epoch失効・全leaseとGPU serialの寿命・旧匿名互換を登録する。
-このクラウドではCoreのWindows.h依存によりnative実行は未検証。CPU RHI doubleはGPU表示・readbackの代用にはしない。
+CoreのWindows.h依存により、このクラウドではnative実行とGPU表示・readbackは未確認。
 前姿勢の世代照合は下記の共通履歴で扱う。
 
 ## 点光源影のcomponent枠
@@ -34,8 +33,7 @@ light/faceごとに16component枠を持ち、同componentの全submeshが1個の
 匿名の旧preparedはpalette実体で区別し、ComponentId=0を一括共有しない。
 faceを跨いで表は再利用せず、descriptorの行列を後から別faceへ上書きしない。
 影用storage設定はbinding8=current、9=VBのみ。previous使用preparedは設定前に拒否する。
-純共有表は16component×8submesh×6face、容量超過、失敗固定、identity/旧匿名を通常・最適化・ASan/UBSan（LSan除外）で検証。
-実Coreの独立契約へ6face×128 DrawIndexed・descriptor16/face・binding10無しも登録するが、Windows依存でnative/GPUは未実行。
+native/GPUの動作は未確認。
 
 ## 前姿勢と資産世代
 
@@ -45,4 +43,4 @@ componentIdだけでなくasset handle/generation・不変asset lease実体・�
 同componentのsubmesh/viewportは最初の姿勢を1回保存し、残りは一致だけを確認する。不一致が混在した履歴は次frameで使わない。
 履歴はassetをweak参照し、Resourceやpacketの寿命を延長しない。
 GameThreadは従来どおり直前frameのみ、RenderThreadは従来どおり描画gapのときだけ付け替える。velocityの時間基準は変えない。
-実Core契約へ同骨数世代変更・別資産/実体・2viewport×8submesh・衝突・不正frame・gap・weak寿命を登録。native/GPU未実行。
+native/GPUの動作は未確認。

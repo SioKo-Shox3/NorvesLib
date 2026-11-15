@@ -84,6 +84,35 @@ namespace NorvesLib::Core::Rendering
         return constants;
     }
 
+    WorldFieldDrynessSampleConstants BuildWorldFieldDrynessSampleConstants(const WorldFieldFrameState& state)
+    {
+        WorldFieldDrynessSampleConstants constants;
+        const auto isUsable = [](const WorldFieldState& image)
+        {
+            return image.bValid && std::isfinite(image.OriginXZ[0]) && std::isfinite(image.OriginXZ[1]) &&
+                std::isfinite(image.ExtentMeters) && image.ExtentMeters > 0.0f;
+        };
+        if (!isUsable(state.DrynessNear) || !isUsable(state.DrynessFar))
+        {
+            return constants;
+        }
+        constants.NearOriginXZ[0] = static_cast<float>(state.DrynessNear.OriginXZ[0]);
+        constants.NearOriginXZ[1] = static_cast<float>(state.DrynessNear.OriginXZ[1]);
+        constants.NearInvExtent = 1.0f / state.DrynessNear.ExtentMeters;
+        constants.FarOriginXZ[0] = static_cast<float>(state.DrynessFar.OriginXZ[0]);
+        constants.FarOriginXZ[1] = static_cast<float>(state.DrynessFar.OriginXZ[1]);
+        constants.FarInvExtent = 1.0f / state.DrynessFar.ExtentMeters;
+        constants.NearBlendMeters = state.DrynessNearBlendMeters;
+        if (!std::isfinite(constants.NearOriginXZ[0]) || !std::isfinite(constants.NearOriginXZ[1]) ||
+            !std::isfinite(constants.FarOriginXZ[0]) || !std::isfinite(constants.FarOriginXZ[1]) ||
+            !std::isfinite(constants.NearInvExtent) || !std::isfinite(constants.FarInvExtent))
+        {
+            return {};
+        }
+        constants.bEnabled = 1u;
+        return constants;
+    }
+
     void WorldFieldDisplacement(const float field[4], float height, float t, float displacement[3],
         float bendScale, float flattenScale)
     {
@@ -122,6 +151,13 @@ namespace NorvesLib::Core::Rendering
             defaults.ForwardOffsetMeters, 0.0f, 100.0f);
         result.DecayTimeConstantSeconds = SanitizeScalar(result.DecayTimeConstantSeconds,
             defaults.DecayTimeConstantSeconds, 0.05f, 60.0f);
+        result.DrynessNearTexelMeters = SanitizeScalar(result.DrynessNearTexelMeters,
+            defaults.DrynessNearTexelMeters, 1.0f / 64.0f, 4.0f);
+        result.DrynessFarTexelMeters = SanitizeScalar(result.DrynessFarTexelMeters,
+            defaults.DrynessFarTexelMeters, result.DrynessNearTexelMeters, 64.0f);
+        result.DrynessNearBlendMeters = SanitizeScalar(result.DrynessNearBlendMeters,
+            defaults.DrynessNearBlendMeters, 0.0f,
+            result.DrynessNearTexelMeters * static_cast<float>(WorldFieldDrynessResolution) * 0.5f);
         return result;
     }
 
@@ -149,6 +185,41 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             sanitized[count++] = interactor;
+        }
+        output.assign(sanitized, sanitized + count);
+        return count;
+    }
+
+    uint32_t SanitizeWorldFieldDrynessSources(Container::Span<const WorldFieldDrynessSource> input,
+        Container::VariableArray<WorldFieldDrynessSource>& output)
+    {
+        // 出力自身を入力にした場合も参照を失わないよう、先に固定配列へ詰める。
+        WorldFieldDrynessSource sanitized[WorldFieldDrynessMaxSources];
+        uint32_t count = 0;
+        const auto inputCount = std::min(input.size(), static_cast<size_t>(WorldFieldDrynessMaxSources));
+        for (size_t index = 0; index < inputCount; ++index)
+        {
+            WorldFieldDrynessSource source = input[index];
+            if (!std::isfinite(source.CenterXZ[0]) || !std::isfinite(source.CenterXZ[1]) ||
+                !std::isfinite(source.RadiusA) || !std::isfinite(source.RadiusB) ||
+                !std::isfinite(source.CosYaw) || !std::isfinite(source.SinYaw) ||
+                !std::isfinite(source.Falloff) || !std::isfinite(source.Level) ||
+                source.RadiusA <= 0.0f || source.RadiusB <= 0.0f || source.Falloff < 0.0f ||
+                source.CosYaw * source.CosYaw + source.SinYaw * source.SinYaw < 0.25f)
+            {
+                continue;
+            }
+            source.Level = std::clamp(source.Level, 0.0f, 1.0f);
+            if (source.Level == 0.0f)
+            {
+                continue;
+            }
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                source.Reserved0[component] = 0.0f;
+                source.Reserved1[component] = 0.0f;
+            }
+            sanitized[count++] = source;
         }
         output.assign(sanitized, sanitized + count);
         return count;

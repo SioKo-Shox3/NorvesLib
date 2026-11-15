@@ -41,13 +41,6 @@ asset-set spec v2のtop-level emissiveNitsPerUnitは正の有限numberだけを�
 明示NVMESH v1の発光材質で換算が未設定なら、`mesh_material_v1: asset=<logical> material="<名前>" index=<n> setting=emissiveNitsPerUnit`の形で拒否する。非発光材質は換算未設定でも通る。
 v0 cookは換算を使わず、発光sourceも従来どおり受理する。
 
-## 検証
-
-MaterialImportPolicyTestはTRELLIS型の広いBとAI既定ignore、Pixal型Gの外れ値、百分位補間/幅、巨大count、
-texture override/256byteの恒等性、AOの式、発光textureのみ・strength0・換算欠落/優先順位・非有限・保存上限を検証する。
-通常/O2-NDEBUG/ASan・UBSan（LSan除外）を実行し、MEMBER/CTestへ登録する。
-実画像・CLI・runtime・撮影の確認はこれに含めない。
-
 ## 設定の階層解決と正規形
 
 MaterialImportSettings は生成元profileを明示で受け取り、資産の設定に素材の指定を上書きする。
@@ -83,7 +76,7 @@ constant値はASCII浮動小数（指数表記も可）として全消費し、�
 解析が最後まで成功するまで出力profile/layerを変更しない。
 
 素材の対象指定とsidecar全体はLoadImportSettingsDocumentで受理する（MaterialImportDocument.mdを参照）。旧ParseSettings/LoadImportSettingsFileは幾何だけを受理し、非空material blockは黙って捨てずに拒否する。
-MaterialImportSettingsJsonTestはWindowsのDebugのctestで実行し、合格している。
+材質取り込み設定のJSON検証は、WindowsのDebugで実行し、合格している。
 
 ## RGBA8の判定・焼込
 

@@ -8,6 +8,7 @@
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
 #include "PathTracing/PathTracingCommon.glsl"
+#include "Common/HeightFog.glsl"
 #include "PathTracing/PathTracingScene.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "PathTracing/PathTracingBsdf.glsl"
@@ -278,13 +279,11 @@ void ApplyFogSegment(vec3 origin, vec3 direction, vec3 surfacePosition,
         return;
     }
     float transmittance = FogTransmittance(origin.y, direction.y, distance);
-    vec3 fogColor = parameters.fogColorAndPreExposure.rgb;
-    if (parameters.skyState.z > 0.5)
-    {
-        fogColor = textureLod(skyRadiance, EquirectangularUV(direction), 0.0).rgb;
-    }
-    fogColor = max(fogColor, vec3(0.0)) *
-               parameters.fogColorAndPreExposure.w;
+    // 体積の霧・前向きの霧と同じ式で、色味と空への寄せを掛ける。
+    vec3 fogColor = HeightFogRadiance(skyRadiance, parameters.skyState.z > 0.5,
+                                      parameters.fogColorAndPreExposure.rgb, direction,
+                                      parameters.fogTintAndSkyBlend, parameters.fogReferenceElevation) *
+                    parameters.fogColorAndPreExposure.w;
     vec3 scattering = FogSingleScattering(origin, direction, distance);
     radiance += throughput *
         (fogColor * clamp(1.0 - transmittance, 0.0, 1.0) + scattering);
