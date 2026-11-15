@@ -20,7 +20,7 @@ R6-a の独立ゲートを受入れ完了とする。通常の遅延不透明 `M
 
 ## 検証結果
 
-### ビルドと契約テスト
+### ビルドの記録
 
 実行したコマンド:
 
@@ -30,21 +30,11 @@ cmake --build build --config Debug --target Game -- /m:1
 
 結果: `Game.vcxproj -> ...\build\Game\Debug\Game.exe`、exit 0。
 
-関連するCPU/RenderGraph/FramePacket契約CTest:
-
-```text
-ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(FrameCaptureReadbackHelperTest|FramePacketManagerTest|RenderFrameExecutorPlanTest|MeshBatcherTest|MeshBatcherInstancingTest|InstanceDataFlattenTest|GBufferMaterialDescriptorCacheTest|SceneViewViewportCommandTest|BoardTransformTest|CanvasViewRenderTest|RenderGraphTextureUsageContractTest|RenderGraphCompileTest|RenderGraphNamedResourceTest|RenderGraphAttachmentStateTest|WorldCameraSyncTest|PhysicsArchitectureContractTest|PhysicsFixedStepPipelineTest)$"
-```
-
-結果: `100% tests passed, 0 tests failed out of 17`。
+CPU・RenderGraph・FramePacket の契約の確認は 17 件とも合格した。
 
 ### GPU velocity readback
 
-```text
-ctest --test-dir build -C Debug --output-on-failure -V --no-tests=error -R "^RenderingVelocity(Static|Motion|Camera|Object|FirstFrame|MoveThenStop)VulkanTest$"
-```
-
-結果: `100% tests passed, 0 tests failed out of 6`。
+GPU の速度の読み戻しは 6 件とも合格した。
 
 readback結果:
 

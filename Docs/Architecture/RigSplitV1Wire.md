@@ -44,7 +44,7 @@ Meshの束縛は完全topologyとSkeleton blob/rest/ROOT hashの全てを検査�
 
 SkeletonResource/SkinnedMeshResourceにはvalidated値をLoad前に設定する専用入口を用意する。split modeに入った後は旧setterを拒否し、Unload後もlegacyへ戻さない。新Sampler枝だけがSkeletonのrest/FKとMeshのIBM/Mを読む。旧0.x/B1枝はそのまま残す。
 
-palette = IBM * jointGlobal * ROOT * inverse(M)。JointModelMatricesはIBMを含まない。SamplerのM引数はcomponent overrideを許すので保存Mとの一致を強制しない。cold-load試験は保存Mを使用する。
+palette = IBM * jointGlobal * ROOT * inverse(M)。JointModelMatricesはIBMを含まない。SamplerのM引数はcomponent overrideを許すので保存Mとの一致を強制しない。cold-loadでは保存Mを使用する。
 
 完全MATSはCPUで保持する。split MeshのLoadはCPU所有の成立であり、render leaseは発行しない。既定Opaqueへ潰して描画しない。renderer material staging、GPUと実物の見た目は未受入。
 

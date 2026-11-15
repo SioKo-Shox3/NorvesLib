@@ -34,8 +34,7 @@ planは公開permitではない。final manifest / 所有state / namespaceが準
 
 asset集合を跨ぐkey・physical alias・依存/spec/control locatorの衝突検査はOUTPUT-SET-GUARDで別途扱う。両者とjournal / before-image / rollbackが揃うまでproduction batchの既存root受理や書込経路は変更しない。旧standalone ModelCookCacheの移行も未実施。
 
-## 検証
+## 実Windows受入れ
 
-CookOutputPlanTestは不在/既存final、非包含・空stage・8.3別表記・reparse拒否、別の有効要求やrevision、入力を変更して正常recookした場合、外部依存、意味が同じraw sidecarの差、余分なfragmentと失敗保持を検証する。CookCacheDecisionTestの全kind実cookに同じplan→stage cook→captureを追加し、一覧とpackage印の一致を照合する。Windows CPUと固定79+10byte gateの結果は受入れ時に記録する。
 
 62e8c81ea0b61a3d367bddc6538a5deed8cde998の[Windows run37238379793](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37238379793)で24 CPU契約と固定79+10出力・5診断のbyte互換が成功。元snapshotと異なる入力を正常recookした場合、意味が同じsidecarの生byte差、外部依存変更、余分fragmentも拒否できた。8.3の異なる表記を使った包含拒否も実行済み。集合横断guardや公開transactionの受入れとは区別する。

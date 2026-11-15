@@ -9,6 +9,6 @@ NorvesLib vendors the AngelScript 2.38.0 core as an offline static dependency.
 - Commit archive SHA-256: `0c2ed8bfa0bb3ace32efa842ac96ed605d6ad96bb35d8952a4e4c3acae8004bc`
 - License: zlib; the original license text is retained in `Library/ThirdParty/angelscript/LICENSE`.
 
-Only AngelScript core headers and sources are retained under `Library/ThirdParty/angelscript/upstream/`. SDK add-ons are neither copied nor built. `UPSTREAM.json` records a per-file byte-size and SHA-256 manifest, which `AngelScriptVendorContractTest` verifies without network access.
+`Library/ThirdParty/angelscript/upstream/` には AngelScript core のヘッダとソースだけを保持し、SDK add-on は取り込みもビルドも行わない。`UPSTREAM.json` は各ファイルの byte size と SHA-256 の一覧を記録する。
 
 The Norves wrapper target is `NorvesThirdParty_AngelScript`. It builds statically and enables MASM for the official x64 MSVC call-function assembly source. Normal CMake configure and build never fetch AngelScript from the network.

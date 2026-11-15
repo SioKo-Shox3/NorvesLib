@@ -29,8 +29,8 @@ resolve は `FailOnCookedFailure` を維持し、cooked の読み・parse・entr
 
 ## 検証と制限
 
-独立MEMBER試験は旧minorと0.2複数clip、論理パス正規化、外側hashと有効外側内の破損payload、metadata、owner不一致、未初期化Registry、作成途中の拒否/例外/Load失敗、候補weak参照・lease寿命と実Samplerを検証する。元CPU結果・出力・既存登録資源の保持を区別して確認する。
+読込失敗時は元CPU結果・出力・既存登録資源を保持する。候補のweak参照とleaseはそれぞれの所有契約に従う。
 
-AssetLoadProfileのskeletal_asset_resolve / skeletal_cooked_parse / skeletal_resource_createはsource・status・成功/失敗を分ける。Releaseは既存設定でlogging無効のため、ログ配送の試験はDebug実行で検証する。これはCPU-only試験でありGPUの画像受入れではない。
+AssetLoadProfileのskeletal_asset_resolve / skeletal_cooked_parse / skeletal_resource_createはsource・status・成功/失敗を分ける。Releaseは既存設定でlogging無効とする。
 
 128関節、現在のmesh必須・単一root・wireの旧minor契約はparserのまま。作者時rest snapshot、安全な別骨格束縛、3資産split、256関節、auto C、root motion、async/cache/delegate配線、M9移行は別の作業。オオカミとシ者の骨格構成は未定のまま扱う。

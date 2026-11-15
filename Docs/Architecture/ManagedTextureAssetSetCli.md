@@ -35,23 +35,17 @@ NeedsRecoveryはpendingを残し、明示復旧コマンドを案内する。Com
 
 新規store初期化後に画像のcook等が失敗した場合、初期化済みstoreと未公開stageが残ることがある。runtimeは未公開のままで、原index/既存claimを保持する。これを投機的にremove_allで消さない。
 
-## 互換と検証
+## 互換
 
-- 固定単体CLIの79出力byteと5診断を変えない
-- texture v1はorigin/mainのCookTextureAssetSet.ps1から凍結したRendering3DTestSilverTextures / Rendering3DTestSilverGltfTexturesの10出力byteと直接比較する
-- 元の25呼出し（9成功・16拒否）を別群としてそのまま維持する。既存rootの拒否fixtureは全て未所有なので、新しい所有rootの反復成功とは矛盾しない
-- managed CLIの実呼出しは別receipt群。作成、NoChangeの原ID/bytes/write-time不変、1Cook/1Skip、SourceRoot表記、inventory/owner拒否、source/spec不在NoPending、復旧引数拒否を追加する
-- native CPUのadapter試験はtest-only probeで中断を作り、通常pending停止、source/spec不在のcommit/rollback、兄弟locatorのworkspaceスコープ、再cookしないこと、未知pending保持を反証する。production故障注入flagは追加しない
+単体CLIの出力形式と診断を維持する。管理済みrootのNoChangeでは原ID・bytes・更新時刻を変えない。
+所有者やinventoryが不正な要求を拒否し、通常実行ではpendingを残して停止する。
 
-## 管理metadataの証拠
+## 管理metadata
 
-runtimeのgolden payload比較は従来の有限一覧のまま。artifactはruntime2ディレクトリを明示選択し、管理証拠を可視のmanaged/配下へ別保存する。hidden-fileの既定除外や一括ignoreに依存しない。
+ownerは実spec/root canonical identityとmanifestから独立にSHA-256 tupleで算出する。
+claim/stateの対応、manifestとのrecord対応、packageのbytesとhash/sizeの整合を保つ。
 
-各baseline workspaceはheader、generation3のroots、generation1のstate2本という4fileだけを持つことを確認する。元workspace/store/root/fileのnative IDと時刻、physical GUID path、raw SHA/sizeをreceiptへ保存し、別コピーのbytesを照合する。元IDがコピー先にも保持されるとは扱わない。
-
-ownerは実spec/root canonical identityとmanifestから独立にSHA-256 tupleで算出する。strict JSON/有限shape、claim/stateの対応、golden manifestとのrecord対応、package全bytesのFNVとSHA/sizeを照合する。baseline2回分の各4file＋receipt、CLI receipt、summaryを有限の別inventoryとして受け入れる。79/10 fileの直接byte比較器は変更しない。
-
-textureのproduction callerは `CookTextureAssetSet.ps1` が `AssetCook --asset-set` へ委譲する形で接続済み。`--asset-set` はspec v2のmodel/skeletalを受け付ける（`Tools/AssetCook/TextureAssetSetCook.cpp:106`、`Tools/AssetCook/TextureAssetSetSpec.cpp:270`）。所属資産の追加・除去は `Test/Core/Asset/TextureManagedCliTest.cpp:312` で検証し、budget・`--jobs`・reportsはコミット `d9c2f019` で導入済み。依存の印（`CaptureCookDependencySnapshot`、`CookDependencySnapshot.md`）には、glTF/GLBの全外部buffer・外部imageと選択sidecarのraw byteが既に含まれ、共通の増分判断 `CookCacheDecision` がそれを使う。model資産もこの印による増分cookの対象である。G2-S6全体や全kindの増分統合完了とはしない。texture以外のproduction callers、旧standalone ModelCookCache移行、cross-session実測、最大規模性能、電源断保証は後続。
+textureのproduction callerは `CookTextureAssetSet.ps1` が `AssetCook --asset-set` へ委譲する形で接続済み。`--asset-set` はspec v2のmodel/skeletalを受け付ける（`Tools/AssetCook/TextureAssetSetCook.cpp:106`、`Tools/AssetCook/TextureAssetSetSpec.cpp:270`）。budget・`--jobs`・reportsはコミット `d9c2f019` で導入済み。依存の印（`CaptureCookDependencySnapshot`、`CookDependencySnapshot.md`）には、glTF/GLBの全外部buffer・外部imageと選択sidecarのraw byteが既に含まれ、共通の増分判断 `CookCacheDecision` がそれを使う。model資産もこの印による増分cookの対象である。G2-S6全体や全kindの増分統合完了とはしない。texture以外のproduction callers、旧standalone ModelCookCache移行、cross-session実測、最大規模性能、電源断保証は後続。
 
 ## 実行受入れ（2026-10-05）
 
@@ -61,20 +55,20 @@ textureのproduction callerは `CookTextureAssetSet.ps1` が `AssetCook --asset-
 
 ## 実行受入れ（2026-11-02、ローカル Windows）
 
-Windows 11 10.0.22631、Windows PowerShell 5.1.22621.6133で実行した。使用したDebug構成の `AssetCook.exe` のSHA-256は `430a20c25bf2ad58a8422385a2618ebe6414147bc469cba3af500305b2b080bb`、`CookedMeshTest.exe` は `c70158994cc512d0c8b13248018573a4e4964febf2d5cbf2fdf75aebf01ce8bb`。凍結基準を作ったRelease構成の `AssetCook.exe` は `7ac890ce40434bf9e1c062ca0fe0ee0f5f2b49d79fbf40ca7b81662a01b50079`、`CookedMeshTest.exe` は `93b8d1dfc012bcb4afeffdefd4eca356bf2d709dead2bd76cf6ab4bbbeaf0c48`。
+Windows 11 10.0.22631、Windows PowerShell 5.1.22621.6133で実行した。使用したDebug構成の `AssetCook.exe` のSHA-256は `430a20c25bf2ad58a8422385a2618ebe6414147bc469cba3af500305b2b080bb`。凍結基準を作ったRelease構成の `AssetCook.exe` は `7ac890ce40434bf9e1c062ca0fe0ee0f5f2b49d79fbf40ca7b81662a01b50079`。
 
 - texture旧基準（run 37205025949、artifact 11303728946）の `snapshot.json` はSHA-256 `9e20e823c0c518c5b6dc34f5d561472ebcf10ac4dc5acd0042627d8e5bfe96e2` に一致。Debugの `AssetCook --asset-set` と `CookTextureAssetSet.ps1` の両方で、2 specの各10出力（6＋4）がそれぞれ基準と生byte一致した。各経路の同一root再実行でも10出力のbytesと更新時刻が不変で、管理情報のbytesと更新時刻も不変だった。直接呼び出しは `unchanged` を表示し、包みの再実行後に同じrootを直接呼んだときも `unchanged` を表示した。
-- 標準の `Scripts/VerifyTextureAssetSet.py` は当初、凍結時との入力hash差3件で停止した。うち `Scripts/CookTextureAssetSet.ps1` の不一致は旧PSから包みへの変更によるもので、CIの `texture_parity` も必ず停止する原因だったため、checkout入力の初回と終了時の照合対象から外した。native検証はこのPS1を読まず、旧出力の正しさはreceiptのsnapshot SHAとpayload hashで保つ。残る2 specはこの機のcheckoutがLFのため凍結値と異なり、CIのWindows checkout（CRLF）に相当するHEADのCRLF化では凍結値と一致した。8 PNGはrawで一致した。照合変更後のローカル実行もspec 2件を名指しして入口で停止した。この機の `powershell.exe` のbinary SHA-256は `3247bcfd60f6dd25f34cb74b5889ab10ef1b3ec72b4d4b3d95b5b25b534560b8` で、receiptの `38f4384643b3fa0de714d2367b712c2e0fa1c89e2cfd131ae6b831ad962b1033` と異なるため、specの行末を直してもローカルの完走は `powershell.exe` のbinary照合で止まる。スクリプトの失敗時検査（既存のdirectory・empty・file・junctionの拒否、source-reparseの拒否、prefix・manifestの衝突の拒否、失敗したrootを公開しないこと・stageを残さないこと）と末尾の `VerifyManagedTextureCli.py` に対するローカルの根拠は、通過済みの `TextureManagedCliTest` と `TextureAssetSetOutputTest` である。スクリプト全体の完走には `windows-assetcook.yml` のCI手動起動による確認が必要で、まだ実行していない。上記のbyte比較には固定snapshotを検証したうえで比較器の `load_reference`・`files`・`compare` を使用した。
-- 指定のDebugビルドは成功し、`TextureAssetSetSpecTest`、`TextureAssetSetOutputTest`、`CookDependencySnapshotTest`、`CookCacheDecisionTest`、`CookOutputPackageTest`、`SingleAssetCookServiceTest`、`AssetCookTextureSmoke`、`AssetCookGlbSmoke` は8/8成功。`CookDependencySnapshotTest` と `CookCacheDecisionTest` は、外部buffer・画像の変更・不在・復帰、sidecarの追加・変更・不正・必須不在、出力packageの破損に対する依存記録・再cook判定・拒否を受け持つ。依存記録の段では画像を完全decodeしない。
-- 追加の管理試験は `CookManagedUpdateTest` と `TextureManagedCliTest` が成功し、`CookManagedBootstrapTest` は180秒でタイムアウトした。出力には復旧で `RolledBack` を期待した箇所の `rename_no_replace; win32_hex=5` と `Error` が残ったため、Bootstrapの失敗時の保持・復旧をこの実行で合格とは扱わない。比較と並行しない単独の再実行（`ctest -R "^CookManagedBootstrapTest$" --timeout 300`）でも300秒でタイムアウトし、最後の出力は `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created` だった。今回の変更ではC++と試験を変更していない。
-- 旧 `CHECK` は失敗時に `std::abort()` を呼び、当時の版には試験共通の対話窓抑止がなかったため、Debug CRTのabort対話窓とWERが入力を待ち、ctestのtimeoutまで停止した。現行版には共通の対話窓抑止があり、`CHECK` もstderrをflushして `std::_Exit(EXIT_FAILURE)` で終了する。強制した失敗では親が0.070秒、`--bootstrap-child` の子が0.030秒で、ともに終了コード1だった。旧182行の初期化失敗は、約13.3万項目の共有TEMP配下にfixtureを置き、管理ストアがRuntimeRootの祖先からボリュームの根まで列挙する際に1ディレクトリ16384項目の上限を超えたことが原因で、修正前の排他競合がない実行では `STORE_INITIALIZATION result=5 error=cook_managed_store: entry_limit` で0.6秒で終了した。fixtureをctestの作業ディレクトリ配下へ移し、製品コードと期待値は変えていない。timeoutは180秒のまま。`rename_no_replace; win32_hex=5` は置き場の変更後に再現せず、原因は未特定。`cook_store_initialization: volume_busy` はボリューム単位・機械全体の名前付きmutex `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<ボリューム GUID>` を取得できないと待たずに返る結果で、別枠の管理ストア試験との並行時に発生する。修正後、既定のTEMPでBootstrapは24.40秒で成功した。今回の検証でもBootstrapは24.35秒で成功し、既定のTEMPでは `CookManagedStoreInitializationTest`、`CookManagedUpdateTest`、`TextureManagedCliTest` が0.26秒・0.11秒・0.11秒で失敗した。StoreInitializationの出力は `cook_managed_store: entry_limit` だった。TEMP/TMPを空のディレクトリへ向けた再実行(TEMP の置き場のパスが長いと取引の段のディレクトリ作成がパス長の上限で失敗するため、短いパスの空のディレクトリを使った)では3本がそれぞれ1.68秒・84.37秒・12.63秒で成功した。今回ビルドしたDebugの `CookedMeshTest.exe` のSHA-256は `99cd12d9b09a3e7f861bb00cc12cd6971da5a5ee44cd403e7b5d058dacda159b`。
-- 再実行では、別の作業ツリーの管理ストア試験と重なったBootstrapが `STORE_INITIALIZATION result=4 error=cook_store_initialization: volume_busy` で0.03秒で失敗した。製品はボリューム単位のmutex `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<GUID>` を待たずに返す設計で、製品コードは変更していない。試験側で別プロセスによる `Busy` だけを1プロセス累計90秒まで待ち直すようにした。試験自身がロックを握って `Busy` を期待する箇所は待ち直さず、期待値は弱めていない。timeoutは180秒のまま。近くの `CookManagedUpdateTest`、`TextureManagedCliTest`、`CookManagedStoreInitializationTest` も、既定のTEMP配下では `entry_limit` で失敗していたため、fixtureの置き場をctestの作業ディレクトリ配下へ移し、同じ待ち直しを入れた。TEMP/TMPを既定のままにした検証では、`CookManagedBootstrapTest` は22.10秒、`CookManagedUpdateTest` は88.89秒、`TextureManagedCliTest` は14.84秒、`CookManagedStoreInitializationTest` は1.89秒で、4本ともPassedだった。
+- 凍結時との入力hash差3件により、当初の照合は停止した。うち `Scripts/CookTextureAssetSet.ps1` の不一致は旧PSから包みへの変更によるものだった。残る2 specはこの機のcheckoutがLFのため凍結値と異なり、Windows checkout（CRLF）に相当するHEADのCRLF化では凍結値と一致した。8 PNGはrawで一致した。この機の `powershell.exe` のbinary SHA-256は `3247bcfd60f6dd25f34cb74b5889ab10ef1b3ec72b4d4b3d95b5b25b534560b8` で、receiptの `38f4384643b3fa0de714d2367b712c2e0fa1c89e2cfd131ae6b831ad962b1033` と異なった。照合全体の完走はこの実行で確認していない。
+- 指定のDebugビルドは成功し、資産一覧・出力・依存記録・増分判断・出力package・単一資産サービス・texture cook・GLB cookの検証は8/8成功。外部buffer・画像の変更・不在・復帰、sidecarの追加・変更・不正・必須不在、出力packageの破損に対する依存記録・再cook判定・拒否を確認した。依存記録の段では画像を完全decodeしない。
+- 追加の管理試験は `CookManagedUpdateTest` と `TextureManagedCliTest` が成功し、`CookManagedBootstrapTest` は180秒でタイムアウトした。出力には復旧で `RolledBack` を期待した箇所の `rename_no_replace; win32_hex=5` と `Error` が残ったため、Bootstrapの失敗時の保持・復旧をこの実行で合格とは扱わない。比較と並行しない単独の再実行でも300秒でタイムアウトし、最後の出力は `line 182: InitializeNewCookManagedStore(Owner, out, error) == CookManagedStoreInitializationResult::Created` だった。
+- 旧 `CHECK` は失敗時に `std::abort()` を呼び、当時の版には試験共通の対話窓抑止がなかったため、Debug CRTのabort対話窓とWERが入力を待ち、設定されたtimeoutまで停止した。当時の修正版には共通の対話窓抑止があり、`CHECK` もstderrをflushして `std::_Exit(EXIT_FAILURE)` で終了した。強制した失敗では親が0.070秒、`--bootstrap-child` の子が0.030秒で、ともに終了コード1だった。旧182行の初期化失敗は、約13.3万項目の共有TEMP配下にfixtureを置き、管理ストアがRuntimeRootの祖先からボリュームの根まで列挙する際に1ディレクトリ16384項目の上限を超えたことが原因で、修正前の排他競合がない実行では `STORE_INITIALIZATION result=5 error=cook_managed_store: entry_limit` で0.6秒で終了した。fixtureを専用の作業ディレクトリ配下へ移し、製品コードと期待値は変えていない。timeoutは180秒のまま。`rename_no_replace; win32_hex=5` は置き場の変更後に再現せず、原因は未特定。`cook_store_initialization: volume_busy` はボリューム単位・機械全体の名前付きmutex `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<ボリューム GUID>` を取得できないと待たずに返る結果で、別枠の管理ストア試験との並行時に発生する。修正後、既定のTEMPでBootstrapは24.40秒で成功した。今回の検証でもBootstrapは24.35秒で成功し、既定のTEMPでは `CookManagedStoreInitializationTest`、`CookManagedUpdateTest`、`TextureManagedCliTest` が0.26秒・0.11秒・0.11秒で失敗した。StoreInitializationの出力は `cook_managed_store: entry_limit` だった。TEMP/TMPを空のディレクトリへ向けた再実行(TEMP の置き場のパスが長いと取引の段のディレクトリ作成がパス長の上限で失敗するため、短いパスの空のディレクトリを使った)では3本がそれぞれ1.68秒・84.37秒・12.63秒で成功した。
+- 再実行では、別の作業ツリーの管理ストア試験と重なったBootstrapが `STORE_INITIALIZATION result=4 error=cook_store_initialization: volume_busy` で0.03秒で失敗した。製品はボリューム単位のmutex `Global\NorvesLib.AssetCook.DestinationVolumeLock.v1.<GUID>` を待たずに返す設計で、製品コードは変更していない。試験側で別プロセスによる `Busy` だけを1プロセス累計90秒まで待ち直すようにした。試験自身がロックを握って `Busy` を期待する箇所は待ち直さず、期待値は弱めていない。timeoutは180秒のまま。近くの `CookManagedUpdateTest`、`TextureManagedCliTest`、`CookManagedStoreInitializationTest` も、既定のTEMP配下では `entry_limit` で失敗していたため、fixtureの置き場を専用の作業ディレクトリ配下へ移し、同じ待ち直しを入れた。TEMP/TMPを既定のままにした検証では、`CookManagedBootstrapTest` は22.10秒、`CookManagedUpdateTest` は88.89秒、`TextureManagedCliTest` は14.84秒、`CookManagedStoreInitializationTest` は1.89秒で、4本ともPassedだった。
 
-### 単体 CLI の凍結基準との比較
+### 単体 CLI の比較記録（2026-11-02）
 
-比較対象 HEAD は `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`。今回の実行環境は Windows 11 10.0.22631、PowerShell 7.6.9、Python 3.14.3、CMake 3.31.6。Debug の `AssetCook.exe` は SHA-256 `ba17bc55a585f9f209bdf9852e5d877008c0988396b53e1b7adf32f347fc67cc`、`CookedMeshTest.exe` は `98f3bbc8f3a1bf3f15406f033823624c5d96a56736661545d3891e8accb2aaff`。上の別ゲートで使った Debug バイナリとは区別する。
+比較対象 HEAD は `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`。今回の実行環境は Windows 11 10.0.22631、PowerShell 7.6.9、Python 3.14.3、CMake 3.31.6。Debug の `AssetCook.exe` は SHA-256 `ba17bc55a585f9f209bdf9852e5d877008c0988396b53e1b7adf32f347fc67cc`。上の別ゲートで使った Debug バイナリとは区別する。
 
-A は run `37200047966`、artifact `11302304928`、commit `d1307c32ec86ec187c7cfb3959d5452760059543`、Release の凍結基準。取得先は `%TEMP%/NorvesCliP2/frozen`。`snapshot/snapshot.json` の SHA-256 `09af3262f55ce75cf512cfb9086c0dbf3b81cd8344233b5f10ebda8e87f36c85` と79出力、および凍結 exe 2本の上記 SHA-256 が `Docs/AssetCookCliFrozenBaseline.json` と一致した。snapshot の各出力もサイズ・SHA-256・有限一覧を検証した。
+A は当時のコミット `d1307c32ec86ec187c7cfb3959d5452760059543` のReleaseによる79出力である。比較時に `snapshot/snapshot.json` の SHA-256 `09af3262f55ce75cf512cfb9086c0dbf3b81cd8344233b5f10ebda8e87f36c85`、各出力のサイズ・SHA-256・有限一覧、および exe の上記 SHA-256 を照合した。
 
 | 記号 | exe・source | capture の結果 |
 |---|---|---|
@@ -83,7 +77,7 @@ A は run `37200047966`、artifact `11302304928`、commit `d1307c32ec86ec187c7cf
 | D | 凍結 Release・checkout（LF） | `%TEMP%/NorvesCliP2/D`。Raw 成功、Texture の `--usage albedo` で終了コード1。6出力、snapshot なし |
 | E | 凍結 Release・HEAD の CRLF 写し | `%TEMP%/NorvesCliP2/E`。D と同じ箇所で終了コード1。6出力、snapshot なし |
 
-D/E とも `logs/Texture.log:15` に `AssetCook error: unknown argument: --usage`、同17–18行に `AssetCookTextureSmoke.cmake.in:148` と `AssetCook --usage albedo が exit code 1 で失敗した` がある。これは `bb53b109` で増えた呼び出しに凍結 exe が対応しないため。Audio 以降の73出力は capture では未生成であり、不一致とは数えない。D/E の生出力は driver の `artifacts()` で選び、A の `files/` と比較した。
+D/E とも `logs/Texture.log:15` に `AssetCook error: unknown argument: --usage`、同17–18行に `AssetCook --usage albedo が exit code 1 で失敗した` がある。これは `bb53b109` で増えた呼び出しに凍結 exe が対応しないため。Audio 以降の73出力は capture では未生成であり、不一致とは数えない。D/E の生出力は driver の `artifacts()` で選び、A の `files/` と比較した。
 
 A 対 B/C の正式な `compare` はいずれも終了コード1。両方とも recipe 差の警告と追加12件を含み、旧出力の不一致は B が22件、C が20件だった。原因別の排他的な件数は **(a) クラスタ化20件（11 package＋9 JSON）、(b) 行末2件（1 package＋1 JSON）、(c) その他0件**。B で一致する旧出力は57件、C では59件。欠落は B/C とも0件。
 
@@ -183,9 +177,9 @@ A 対 B/C の正式な `compare` はいずれも終了コード1。両方とも 
 
 #### クラスタ化と行末の切り分け
 
-D/E の capture 後、凍結コミットの `Tools/AssetCook/AssetCookMeshSmoke.cmake.in` を `git show d1307c32:Tools/AssetCook/AssetCookMeshSmoke.cmake.in` で `%TEMP%/NorvesCliP2/tools/AssetCookMeshSmoke-frozen.cmake.in` に取り出し、凍結 `AssetCook.exe` とそれぞれの source で独立実行した。出力先は `D-mesh-proof/Mesh` と `E-mesh-proof/Mesh`。両方終了コード0、各26出力。E の補助出力は26/26が A と生 byte 一致し、D は21/26一致、残る5 manifest だけ `source_hash` が異なった。補助出力は上表の D/E capture の未生成欄とは混ぜない。
+D/E の capture 後、凍結 `AssetCook.exe` とそれぞれの source でメッシュcookを独立実行した。出力先は `D-mesh-proof/Mesh` と `E-mesh-proof/Mesh`。両方終了コード0、各26出力。E の補助出力は26/26が A と生 byte 一致し、D は21/26一致、残る5 manifest だけ `source_hash` が異なった。補助出力は上表の D/E capture の未生成欄とは混ぜない。
 
-現行 Mesh smoke の凍結時との差はクラスタ数の期待値 `25562 → 1029` と、`DAG_SMOKE_EXE` 指定時だけ走る LOD 階層の追加ブロック。capture はその変数を渡さないため、今回の11 package はすべて **`NVMESHv0`、version 0.0、header 256 byte、cluster record 80 byte** のまま。LOD 階層・NVMESH v1/v1.1 の追加は今回の差を直接作っていない。
+当時の Mesh smoke の凍結時との差はクラスタ数の期待値 `25562 → 1029` と、`DAG_SMOKE_EXE` 指定時だけ走る LOD 階層の追加ブロックだった。capture はその変数を渡さなかったため、この実行の11 package はすべて **`NVMESHv0`、version 0.0、header 256 byte、cluster record 80 byte** のままだった。LOD 階層・NVMESH v1/v1.1 の追加はこの差を直接作っていなかった。
 
 `Tools/AssetCook/MeshCooker.cpp` の `BuildNvmeshBytes` と `Library/Core/Public/Asset/CookedMeshWireFormat.h` を読み、節を header → submesh → material → cluster → string → vertex → index の順に分けて照合した。代表の `Mesh/Cooked/Rendering3DTestSilverGltf.nvpkg` は次のとおり（位置は NVMESH 先頭から、package 内の NVMESH 先頭は232）。
 
@@ -228,7 +222,7 @@ D/E の capture 後、凍結コミットの `Tools/AssetCook/AssetCookMeshSmoke.
 | `Texture/usage_orm_manifest.json` | 407 | `bb53b109`（用途別5種類） |
 | `Texture/usage_single_manifest.json` | 416 | `bb53b109`（用途別5種類） |
 
-recipe は両方31項目。B は18一致、行末だけ8件、smoke 変更4件（うち3件は行末も異なる）、driver 変更1件。C は26一致、smoke 変更4件、driver 変更1件。旧31項目のうち d1307c32 から git blob が変わっていない26項目は、CRLF 写しの hash がすべて凍結 recipe と一致した。属性は全30ファイルで `text/eol: unspecified`。NUL のあるバイナリを除き、recipe 対象だけ LF→CRLF とし、実際に byte が変わったのは11件。driver は呼び出し元の実ファイルを記録するため、写しの Scripts へ置き換えない。項目別の分類は次のとおり。
+recipe は両方31項目。B は18一致、行末だけ8件、smoke 変更4件（うち3件は行末も異なる）、driver 変更1件。C は26一致、smoke 変更4件、driver 変更1件。旧31項目のうち d1307c32 から git blob が変わっていない26項目は、CRLF 写しの hash がすべて凍結 recipe と一致した。属性は全30ファイルで `text/eol: unspecified`。NUL のあるバイナリを除き、recipe 対象だけ LF→CRLF とし、実際に byte が変わったのは11件。driver は呼び出し元の実ファイルを記録していたため、写しの Scripts へ置き換えなかった。項目別の分類は次のとおり。
 
 | recipe 項目 | A 対 B | A 対 C | 原因・コミット |
 |---|---|---|---|
@@ -251,44 +245,13 @@ recipe は両方31項目。B は18一致、行末だけ8件、smoke 変更4件�
 | `Assets/Models/Rendering3DTestSilverGltf/textures/silver_albedo.png` | 一致 | 一致 | 変更なし（git blob 同一） |
 | `Assets/Models/Rendering3DTestSilverGltf/textures/silver_arm.png` | 一致 | 一致 | 変更なし（git blob 同一） |
 | `Assets/Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png` | 一致 | 一致 | 変更なし（git blob 同一） |
-| `Test/Core/Asset/CookedSkeletalAssetTest.cmake.in` | smoke の変更 | smoke の変更 | `2707ab89`：出力の `ENCODING UTF-8` |
-| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
-| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri_changed.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
-| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri_invalid_image.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
-| `Test/Core/Asset/Fixtures/AssetCook/embedded_tri_mismatched_mime.glb` | 一致 | 一致 | 変更なし（git blob 同一） |
-| `Test/Core/Asset/Fixtures/AssetCook/raw_sample.bin` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
-| `Tools/AssetCook/AssetCookAudioSmoke.cmake.in` | 一致 | 一致 | 変更なし（git blob 同一） |
-| `Tools/AssetCook/AssetCookGlbSmoke.cmake.in` | smoke の変更＋行末 | smoke の変更 | `619e16eb`：manifest の hash 計算を .NET へ変更 |
-| `Tools/AssetCook/AssetCookImportSmoke.cmake.in` | (b) 行末 | 一致 | 変更なし（git blob 同一） |
-| `Tools/AssetCook/AssetCookMeshSmoke.cmake.in` | smoke の変更＋行末 | smoke の変更 | `13ba56a7`：クラスタ数の期待値、`4bc840da`・`585ebd09`：任意の LOD smoke |
-| `Tools/AssetCook/AssetCookTextureSmoke.cmake.in` | smoke の変更＋行末 | smoke の変更 | `bb53b109`・`38110fef`・`e4a71feb`：用途別・タイルの smoke |
 | `driver` | driver の変更 | driver の変更 | `b9d7468e`：source 配下出力の拒否文言と既存出力の判定 |
 
 #### 基準の保存と適用範囲
 
-(c) は0件で、未説明の旧出力差は残らなかった。C の `snapshot/` をそのまま `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` へ新規保存した。保存後に snapshot の有限一覧・全出力 byte と元 C の一致を確認した。91出力（56 package＋35 JSON）、`snapshot.json` の SHA-256 は `e58a03535cd8c52f0121d7acb1d616be019fba64e632592d971a5f71fdfe6a52`。採取コミットは `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`、exe hash はこの節の現行 Debug の2本、source は `%TEMP%/NorvesCliP2/src-crlf`。参考として B の snapshot SHA-256 は `a7b76d2dd924e3d776375b5437af661ad654c742298da646ea7610d1fb6aa6ff`。再現手順は [単体 CLI 比較手順](../TestingAssetCookCliParity.md#クラスタ化の後の基準) に記す。
+(c) は0件で、未説明の旧出力差は残らなかった。C の `snapshot/` をそのまま `%LOCALAPPDATA%/NorvesLib/AssetCookCliBaseline/b9d7468e3f0c-crlf/snapshot` へ新規保存した。保存後に snapshot の有限一覧・全出力 byte と元 C の一致を確認した。91出力（56 package＋35 JSON）、`snapshot.json` の SHA-256 は `e58a03535cd8c52f0121d7acb1d616be019fba64e632592d971a5f71fdfe6a52`。採取コミットは `b9d7468e3f0c739a1b51b8a42a0fdca329d1622d`、exe hash はこの節の現行 Debug の AssetCook、source は `%TEMP%/NorvesCliP2/src-crlf`。参考として B の snapshot SHA-256 は `a7b76d2dd924e3d776375b5437af661ad654c742298da646ea7610d1fb6aa6ff`。
 
-CI の `windows-assetcook.yml` はまだ旧 artifact `11302304928` を参照し、この新しいローカル基準は artifact として公開していない。A 対 C の `compare` が成功したという意味ではなく、recipe・追加・クラスタ化を説明したうえで保存した別基準である。凍結 Release と現行 Debug の比較であり、現行 Release の実行結果はこの比較に含まない。
-
-## CI の手動起動で検証するもの
-
-`windows-assetcook.yml` を既定の引数で手動起動すると、`NORVES_MERGE_VALIDATION=true` となり、`[validate-merge]` と同じ範囲を検証する。
-
-```powershell
-gh workflow run windows-assetcook.yml --ref <branch>
-```
-
-段4・5の凍結基準の取得と固定hashの照合、段6の在庫79件の照合は実行する。段6のrecipe照合は行わず、段17・18の `capture` と `parity`、それに続く候補のartifact保存は skipped になる。`texture_parity`（`VerifyTextureAssetSet.py`）・CPU契約・Role Profile・Sampler・骨格ローダなど、ほかの段は実行する。段の番号は GitHub の画面で「Set up job」を1とした番号である。
-
-凍結時点の出力を確かめ直す場合は、`-f frozen_parity=true` を指定する。
-
-```powershell
-gh workflow run windows-assetcook.yml --ref <branch> -f frozen_parity=true
-```
-
-この指定では従来どおりrecipe照合と全出力のbyte比較を実行する。mainのクラスタ化（`13ba56a7`）以後の出力は旧基準と一致しないため、凍結時点の出力を確かめ直すときだけ使う。
-
-push時の `[validate-assets]` / `[validate-merge]` の起動条件と検証範囲は変わらない。
+この新しいローカル基準は artifact として公開していない。A 対 C の `compare` が成功したという意味ではなく、recipe・追加・クラスタ化を説明したうえで保存した別基準である。凍結 Release と現行 Debug の比較であり、現行 Release の実行結果はこの比較に含まない。
 
 ## cook の前の generator（--run-generators）
 

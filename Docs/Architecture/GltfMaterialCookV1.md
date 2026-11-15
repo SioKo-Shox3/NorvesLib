@@ -28,24 +28,17 @@ JSONの順序ではなく解決済みの設定のcanonical（67B）を材質のs
 出力前に共通の依存・集合guardを使い、入力、sidecar、外部画像への出力aliasを拒否する。出力の版とmanifestのcooked_versionは厳密に合わせる。
 可変inventoryのmanaged update、spec v2、並列jobs、runtime描画接続はこの単体cook変更に含めない。
 
-## 検証
+## 発光換算とcacheの契約
 
-GltfMaterialCookV1Testはreleaseでも有効なCHECKで実glTF/GLB、PNG decode、既存encoded/raw texture byte一致、材質codec往復、ARM、発光、selector、閉鎖判定、単体package/manifest、cache、入力alias拒否を検証する。
-既存の79 standalone出力と10 texture出力は凍結基準と別途byte比較する。managed CLI、中断復旧、CNGの既存gateも維持する。
-発光換算とcacheについて、次の検査を含む。
+- asset-set換算による保存値を、資産sidecar・素材の明示指定が上書きする。上位の不正値や不正なasset-set値を拒否し、換算未設定時は資産名・材質名・設定名を診断する。strength=0またはfactor=0の非発光材質は受理する。
+- 換算の差をfingerprintに反映し、cookのhashと一致させる。換算の追加・変更・削除はcacheを失効させ、他の依存も変わらず同じ換算ならskipを維持する。
+- 発光sourceのv0 cook互換を維持する。
 
-- GltfMaterialCookV1Test: asset-set換算による保存値、資産sidecar・素材の上書き、上位の不正値と不正なasset-set値の拒否、換算未設定時の資産名・材質名・設定名付き診断、strength=0・factor=0の非発光材質の受理、換算差によるfingerprintの変化とcookとのhash一致、発光sourceのv0 cook互換
-- CookCacheDecisionTest: asset-set換算の追加・変更・削除でcacheを失効させ、同じ換算ならskipを維持すること
 
-Docs/Testing.mdの試験規律に沿い、反証する契約は換算の優先順位、上位不正値の非fallback、未設定拒否の診断名、非発光の非拒否、設定差によるcache失効、v0互換である。cookが成功して明るさの値だけが違う不具合は撮影・ログでは見分けられず、失敗が黙って起きるため、保存値とfingerprint/cache判定を直接検査する。
-実Windows CIの受入れ結果はPROGRESS.mdに記録する。実物の資産の撮影・見た目の受入れは未実施であり、これらの検査では代えない。
-
-後続のruntime対応subsetはImportedOpaqueRuntime.mdに記載する。この文書のcook単体受入れと、描画接続/GPU画像の受入れは別である。
+後続のruntime対応subsetはImportedOpaqueRuntime.mdに記載する。実物の資産の撮影・見た目の受入れは未実施であり、この文書のcook単体受入れと描画接続/GPU画像の受入れは別である。
 
 ## 複数primitiveの所有範囲
 
 primitiveの元順序をsubmesh順に保ち、局所indexを検査してから頂点列へbaseVertexを加えて連結する。importのscale/fit/pivotは全meshへ一度適用する。cluster化は各primitiveの局所頂点/局所indexで行い、出力indexだけglobalへ戻す。clusterは材質境界を越えない。VertexOffsetは0、VertexCountはglobal上限を表す。材質表は参照元番号の昇順で共有し、暗黙defaultは番号0と区別した末尾slotにする。骨格の8slot制限は静的meshへ適用しない。
 
 画像のtool内IDは64bitでありNVMESH wireのフィールドではない。source画像は元番号、既存単primitiveの派生ARMはUINT32_MAXと旧pathを保つ。multi派生ARMはUINT32_MAX+1+元材質番号、暗黙defaultは2^33とし、論理pathを `.mat<番号>.arm.rgba8` / `.matdefault.arm.rgba8` に分ける。共有source画像はID・path・format・payload・bytesが一致する場合だけ統合し、材質をまたぐsRGB/linear衝突は拒否する。cook/fingerprintは統合後のID順inventoryを共有する。
-
-GltfMaterialCookV1Testのmulti検証は、反復byte・2材質/再利用/逆順/default/9primitive・GLB・後半不正属性/index・別形状primitiveの全体fit/pivot・材質境界をまたぐ閉曲面・force優先・2種類ARM/共有画像/色空間衝突・package破損と後半画像/設定のcache invalidation・N>1 runtime拒否を対象とする。大規模meshの性能やGPU表示の合格は含まない。

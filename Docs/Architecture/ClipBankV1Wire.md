@@ -51,7 +51,7 @@ Required sections:
 
 TJNTは名前順の正準表。RSETのrest範囲は全jointを正準順に持つ。RSET/CLIP/CHANの所有範囲は重複や穴を許さず各表を尽くす（minor 1でCMPRに保存するCHANはSAMPの範囲を所有しない）。restHashはARSTのT/Q/Sの40 bytes×jointCountだけのFNV（paddingなし）。ラベルは作者入力の識別用で、出自の証明や暗号学的IDではない。CHANはnameHashだけでなく完全名をTJNTへ解決する。壊れたhash、重複joint/path、不正時刻・非有限値・不正snapshotを拒否する。
 
-上限はjoint128/clip256/snapshot256/channel32768/sample1048576/name4096 bytes/STRS1MiB/wire64MiB。呼出し側はより小さく制限できる。section数/recordSize×count/offset+sizeを割当前に検査する。importにも別途source64MiB、全buffer実bytes64MiB、node1024/accessorとview各65536/buffer256/vertex1048576/index3145728/primitive属性128を設け、joint/clip/channelと累積LINEAR・STEP・Bake sampleを確保前に検査する。共有accessorはchannelごとの複製数を数え、data URIの実復号量とGLB借用分を先に予約し、外部fileは同じopened streamの実sizeを累積残量と比較してから確保する。これは全processのRSS/実行時間上限の保証ではない。writer自身の2回一致と、独立literal/oracleを別に確かめる。
+上限はjoint128/clip256/snapshot256/channel32768/sample1048576/name4096 bytes/STRS1MiB/wire64MiB。呼出し側はより小さく制限できる。section数/recordSize×count/offset+sizeを割当前に検査する。importにも別途source64MiB、全buffer実bytes64MiB、node1024/accessorとview各65536/buffer256/vertex1048576/index3145728/primitive属性128を設け、joint/clip/channelと累積LINEAR・STEP・Bake sampleを確保前に検査する。共有accessorはchannelごとの複製数を数え、data URIの実復号量とGLB借用分を先に予約し、外部fileは同じopened streamの実sizeを累積残量と比較してから確保する。これは全processのRSS/実行時間上限の保証ではない。
 
 ## 量子化（CMPR、minor 1）
 
@@ -75,12 +75,12 @@ smallest-threeは正規化した四元数の絶対値最大成分を省略し、
 
 書き手はまず全キーのfloat4がbit単位で同じならConstを選ぶ。それ以外のRotationは、各キーを32 bitで往復した回転角 `2*acos(abs(q・q'))` が1つでも0.1°を超えればチャンネル全体を48 bit、そうでなければ32 bitにする。TranslationはTransQuant16を選び、各軸の全キーの最小値をmin、`float(max−min)` をextentとする。min/extentまたは往復後のXYZが非有限になる場合はF32に戻す。各軸の符号は `round((value−min)/extent*65535)` を0〜65535に収める。ScaleはConst以外F32。時刻はキー2個以上で `step=float((double(last)−double(start))/(count−1))` を求め、有限・正のstepから復元した全時刻が有限、0〜duration内で厳密増加し、それぞれ元時刻から `step*1e-3` 以内ならUniform、それ以外はExplicitにする。したがってUniform化で時刻も変わり得る。
 
-誤差の尺度を分ける。32 bit単体の固定種による単位四元数10万個の試験は、正規化した4次元角 `acos(abs(q・q'))` が0.1°以下かを検査する。その2倍の回転角の最大は約0.15°が目安で、全入力の上限を証明する値ではない。48 bitの成分の量子化刻みは32 bitの約1/32で、回転角の誤差もその程度に小さくなる目安だが、個々の誤差比を保証するものではない。TransQuant16はXYZの各成分について範囲/65535以下の誤差を試験する。smallest-threeはqと−qを同一視して元の符号や長さを保持しないが、Slerpは最短経路を取るため、符号の違い自体は通常は補間する回転を変えない。ただし両端の内積が0のときは最短経路が2つあり、符号で選択が変わり得る。量子化は作者のキー値を変えるため明示時だけ行い、ARSTを量子化しない規則は変えない。
+誤差の尺度を分ける。正規化した4次元角 `acos(abs(q・q'))` とその2倍の回転角は異なる。32 bitで観測された回転角の最大約0.15°は目安であり、全入力の上限を証明する値ではない。48 bitの成分の量子化刻みは32 bitの約1/32で、回転角の誤差もその程度に小さくなる目安だが、個々の誤差比を保証するものではない。TransQuant16のXYZ各成分の誤差は範囲/65535を尺度とする。smallest-threeはqと−qを同一視して元の符号や長さを保持しないが、Slerpは最短経路を取るため、符号の違い自体は通常は補間する回転を変えない。ただし両端の内積が0のときは最短経路が2つあり、符号で選択が変わり得る。量子化は作者のキー値を変えるため明示時だけ行い、ARSTを量子化しない規則は変えない。
 
 読み手はCMPRを `SkeletalAnimationChannel` のキー列へ展開し、実行時の値の評価は既存のまま行う。Uniformでは `UniformStartSeconds`・`UniformStepSeconds` を印として残し、`ClipChannelSampler` が時刻から添字を求め、前後のキー時刻と比較して補正する。補正で決まらない場合は二分探索へ戻るため、通常の二分探索と同じキーを選ぶ。
 
 展開先のキー列を確保する前に、directoryの重複・範囲・recordSize×count、payloadHash、CMPRのversion・channelCount・dataHash、entryとCHANのcount・encodingおよびRotation/Translation専用encodingのpath、ブロックの順序・サイズ・境界・詰め物・SAMP範囲を検査する。Uniformのstart/step、48 bitの予約bit、Translationの有限なminと非負・有限なextentも検査する。MaxSamplesはSAMPの実格納数だけでなく、CMPRで省略されたキーを含む全チャンネルの論理キー数とroot motionのキー数の合計で数え、既定1048576を超えたら拒否する。展開後も時刻の厳密増加・duration内・有限値など既存の検証を行う。
 
-## 検証の分離
+## 公開の境界
 
-旧fixed sampler/cook/CLI bytesを再採取しない。新v1のrest既定分岐・topology・拒否/override・姿勢は別oracleで確認する。Game/GPU/DCC/実犬の品質はこのCPU codec/bindingの成功から推測しない。公開Resourceを生成する前に全bindingを完成させ、明示owner上の未登録候補を全成功時だけ公開する。
+公開Resourceを生成する前に全bindingを完成させ、明示owner上の未登録候補を全成功時だけ公開する。

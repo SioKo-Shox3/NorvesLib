@@ -26,8 +26,7 @@ root/nonrootに同じ規則を適用する。AbsoluteLocalは親座標系内の�
 
 出力は値を独立所有し、成功時だけnothrow moveで置換する。失敗・確保例外では旧outを保持する。確保故障注入はこの単位では行わない。
 
-## 検証と残件
+## 対象範囲と残件
 
-BvhEvaluateTestは6順の90度行列、単軸±90度/450度、45度、両位置規約の非零root/nonroot/末端/静止branch/複数frameをliteralで確認する。行列許容は1e-9。raw解析で受理されるが評価profile外のchannel列、親/範囲/enum/非有限/overflowでの拒否とout保持を固定する。CookedMeshTestのMEMBERで、既存Samplerは無変更。
 
-これはBVH source座標での数値評価の受入れである。実Blender照合、target骨格への対応づけ/rest補正、既存Samplerとの照合、フレーム時間補正、root motion、loop、cook/CLI、NVSKEL Stage Bは別の残件として扱う。
+対象はBVH source座標での数値評価である。実Blender照合、target骨格への対応づけ/rest補正、既存Samplerとの照合、フレーム時間補正、root motion、loop、cook/CLI、NVSKEL Stage Bは別の残件として扱う。

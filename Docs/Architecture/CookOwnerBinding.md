@@ -37,7 +37,3 @@ spec identity、FINAL root identity、manifestが変われば別ownerとなる�
 filesystemを観測する完全なbinding resolverは未接続。spec/rootの物理canonical identity、case-sensitive directory、不在rootから作成後へのidentityの維持を別途検証する必要がある。現CookOwnedStateはASCII drive-formのRuntimeRootIdentityを保存し、CookStateFileはcallerのRuntimeRootとその表記を照合する。物理volume-GUID identityをこのfieldへそのまま代入してはならない。
 
 stateの配置、destination lock、journal、既存rootの更新、rootの移設はこの値層の成功では許可されない。
-
-## 検証
-
-CookOwnerBindingTestはPython hashlibで独立算出した固定vector、曖昧なfield連結、caseとUnicode正規形の区別、日本語/非BMP、各fieldの上限、不正UTF8/NUL、不正manifest、失敗保持、codecの独立expected binding照合を検査する。実Windows結果と既存79+10byte互換はPROGRESS.mdへ記録する。
