@@ -11257,3 +11257,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261114-152817/verify-G12-GR45-DRYNESS-FIELD-build.txt`（verify のビルドの行 `CameraViewConstantsTest RHIRayTracingApiContractTest RHITextureUpdateVulkanTest Game` が BUILD_EXIT_CODE=0、numstat の 2 通りが一致）。verify の ctest の 2 行は回していない。
 - Next: ランナーの評価者の反証（RenderThread のデータ契約・危険地帯）。消費側（草・地表・低木）の配線は G12-GR45-GRASS-DRYNESS など。今はどの消費側も `SampleDryness` を呼ばず、源を置くシーンも無いので見た目は変わらない。撮影・計測の確かめは回さない決まり。配線の後に人が見るときの見どころは、`WitherSourceComponent` で枯れ源を置いた草地の、主カメラから 32 m 前後（近傍の縁、4 m の寄せ幅）で枯れ地の境が段や継ぎ目なく続くか。
 - Notes: paths の外で 2 ファイルに最小の配線を足した: `ViewRenderContext.h`（パスがパケットの源を読む欄 1 つ）、`Engine.cpp`（毎フレームの `UpdateWorldFieldInteractors()` で Vegetation の源を渡す 1 行）。源は状態なので coordinator の保持はパケットへ写した後も消さない（interactors は毎フレーム空にする）。`DrynessMap::DefaultGpuSourceLimit` は `Rendering::WorldFieldDrynessMaxSources` を指すようにした（値は 64 のまま）。
+
+- U1 DrynessMap に鍵ごとの状態（結ぶ・手放す・鍵で目標を設定・写す・戻す・保留）を足す: 着地(直し 0 回)
+- U2 WitherSourceComponent に鍵の PROPERTY を足し、登録で鍵を結び、EndPlay で手放す: 着地(直し 0 回)
+- U3 ProgressSaveData に節 vegetation.dryness を足し、保存で写し・読み込みで戻す結線をする: 着地(直し 0 回)
+- U4 シ者の撃破の応答の表に wither.recover を足し、敵の定義に載せ、全体をビルドする: 着地(直し 0 回)
+- U5 リスタートで進行を空にする時に枯れ度の鍵の状態も既定へ戻す（セーブが無い・読めない時の持ち越しを防ぐ）: 着地(直し 0 回)
