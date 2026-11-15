@@ -322,10 +322,6 @@ namespace NorvesLib::Core::Environment
         }
         else if (m_bRestorePending)
         {
-            renderWorld.SetSkyAtmosphere(m_SceneBase.Sky);
-            renderWorld.SetVolumetricFogParameters(m_SceneBase.Fog);
-            renderWorld.SetCloudLayer(m_SceneBase.CloudLayer);
-            renderWorld.SetWindParameters(m_SceneBase.Wind);
             renderWorld.SetEnvironmentParameters(Rendering::MakeDefaultEnvironmentParameters());
             m_bRestorePending = false;
         }
@@ -367,8 +363,15 @@ namespace NorvesLib::Core::Environment
         const double period = FieldPeriod(field);
         if (period > 0.0)
         {
-            const double difference = std::fmod(static_cast<double>(transition.To) - transition.From +
-                                                1.5 * period, period) - 0.5 * period;
+            double difference = std::fmod(static_cast<double>(transition.To) - transition.From, period);
+            if (difference > 0.5 * period)
+            {
+                difference -= period;
+            }
+            else if (difference < -0.5 * period)
+            {
+                difference += period;
+            }
             double wrapped = std::fmod(static_cast<double>(transition.From) + difference * curve, period);
             if (wrapped < 0.0)
             {

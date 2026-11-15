@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Environment
 
         /// 手動で指定する太陽の高度（度、[-90, 90]）。
         float SunAltitudeDegrees = 45.0f;
-        /// 手動で指定する太陽の方位（度、[0, 360)）。
+        /// 手動で指定する太陽の方位（度、[-360, 360]。空の SkyAtmosphereParameters と同じ範囲）。
         float SunAzimuthDegrees = 0.0f;
         /// 保持する時刻（時、[0, 24)）。自動では進めない。
         float TimeOfDayHours = 12.0f;

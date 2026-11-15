@@ -32,11 +32,12 @@ namespace NorvesLib::Core::Environment
     /**
      * @brief GameThread 専用の気象の正本。
      *
-     * 既定では無効で、無効の間は PublishTo が RenderWorld に書き込まず、シーンの直接設定が効く。
+     * 既定では無効で、無効の間は空・霧・雲の層・風を書き込まず、シーンの直接設定が効く。
      * Enable 後はポーズ中も毎フレーム、空・霧・雲の層・風・環境を書き出すため、シーンの直接設定は
      * 次のフレームで上書きされる。有効中の天気と太陽は SetTarget または SetImmediate で変える。
      * 解決には Enable で受けた場面の土台を使い、状態にある欄だけを重ねて大気定数などを保持する。
-     * Disable 後の最初の PublishTo は土台の空・霧・雲の層・風と環境の既定値を一度だけ戻す。
+     * Disable 後の最初の PublishTo は環境の値（EnvironmentParameters）だけを既定値へ一度戻す。
+     * 空・霧・雲の層・風は書き戻さず、同じフレームで次のシーンが書いた値を残す。
      *
      * Tick には TimeSystem の World チャンネルの dt を渡し、ポーズの門の中でのみ呼ぶ。
      * World の倍率は遷移と濡れにも適用され、FramePacket::TotalTime の壁時計は使わない。

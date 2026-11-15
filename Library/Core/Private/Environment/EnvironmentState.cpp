@@ -99,7 +99,7 @@ namespace NorvesLib::Core::Environment
         result.FogAmbientScale = ClampMinimumFinite(in.FogAmbientScale, defaults.FogAmbientScale, 0.0f);
         result.CloudLayerCoverage = ClampFinite(in.CloudLayerCoverage, defaults.CloudLayerCoverage, 0.0f, 1.0f);
         result.SunAltitudeDegrees = ClampFinite(in.SunAltitudeDegrees, defaults.SunAltitudeDegrees, -90.0f, 90.0f);
-        result.SunAzimuthDegrees = WrapFinite(in.SunAzimuthDegrees, defaults.SunAzimuthDegrees, 360.0f);
+        result.SunAzimuthDegrees = ClampFinite(in.SunAzimuthDegrees, defaults.SunAzimuthDegrees, -360.0f, 360.0f);
         result.TimeOfDayHours = WrapFinite(in.TimeOfDayHours, defaults.TimeOfDayHours, 24.0f);
         result.WetTimeConstantSeconds = ClampMinimumFinite(in.WetTimeConstantSeconds, defaults.WetTimeConstantSeconds, 0.001f);
         result.DryTimeConstantSeconds = ClampMinimumFinite(in.DryTimeConstantSeconds, defaults.DryTimeConstantSeconds, 0.001f);
