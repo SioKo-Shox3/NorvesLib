@@ -11261,3 +11261,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 草の場の cook で NVTRN の枯れ草の層を LayerB の A へ写す: 着地(直し 0 回)
 - U3 grassland に枯れ源を置く引数と Serialize → Restore の往復の引数を足す: 着地(直し 0 回)
 - U4 生成の CPU の参照と GLSL に有効な枯れ度の式を足す（基礎の枯れ度まで）: 着地(直し 0 回)
+- U5 生成のパスに枯れ度の近傍・遠景の層を束ね、GPU でフィールドの枯れ度を引く: 着地(直し 0 回)

@@ -1,7 +1,7 @@
 ﻿#version 460
 
 // set 0: 0 = 生成定数、1 = タイル、2 = 種別、3 = LayerA、4 = LayerB、
-//        5 = ブレードの記録、6 = 間接描画の引数とカウンタ、7 = HZB。
+//        5 = ブレードの記録、6 = 間接描画の引数とカウンタ、7 = HZB、8 = 近傍の枯れ度、9 = 遠景の枯れ度。
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 #include "Grass/GrassCommon.glsl"
@@ -27,6 +27,8 @@ layout(std430, set = 0, binding = 5) writeonly buffer GrassRecords
 } records;
 
 layout(set = 0, binding = 7) uniform sampler2D hiZ;
+layout(set = 0, binding = 8) uniform sampler2D drynessNear;
+layout(set = 0, binding = 9) uniform sampler2D drynessFar;
 
 int ClampPixel(int value, uint resolution)
 {
@@ -123,6 +125,12 @@ void main()
     uint resolution = constants.LayerResolutions[0];
     float invPixelWidth = constants.SamplingAndFacing[0];
     float baseCellArea = constants.SamplingAndFacing[1];
+    WorldFieldDrynessSampleConstants drynessConstants = constants.Dryness;
+    // CPU の SampleGrassDrynessLayersReference と同じく、帯 2 は遠景だけを引く。
+    if (band == 2u)
+    {
+        drynessConstants.NearInvExtent = 0.0;
+    }
 
     for (uint cell = gl_LocalInvocationID.x; cell < n * n; cell += 64u)
     {
@@ -162,7 +170,7 @@ void main()
         GrassSpeciesGpuData species = speciesTable.Species[speciesId];
         precise float baseDryness = SampleLayerB(constants.LayerResolutions[1], constants.DrynessParams[2],
                                                  localX, localZ, tile.LayerIndex);
-        precise float fieldDryness = 0.0;
+        precise float fieldDryness = SampleDrynessLayers(drynessNear, drynessFar, drynessConstants, vec2(x, z));
         precise float dryness = GrassEffectiveDryness(fieldDryness, baseDryness);
         precise float farWeight = GrassDrynessFarWeight(distanceSquared);
         precise float speciesDensity = species.BladesPerSquareMeter * baseCellArea;
