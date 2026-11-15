@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "Resource/ImportSettings.h"
+#include "Resource/ClipImportSettings.h"
 #include "Resource/MaterialImportSettings.h"
 #include "Resource/MaterialSelection.h"
 #include "Container/VariableArray.h"
@@ -20,6 +21,7 @@ namespace NorvesLib::Core::AssetImport
     struct ImportSettingsDocument
     {
         ImportSettings Geometry;
+        ClipImportSettings Clip;
         MaterialSourceProfile Profile = MaterialSourceProfile::Source;
         MaterialSettingsLayer AssetMaterial;
         bool bAssetMaterialSpecified = false;

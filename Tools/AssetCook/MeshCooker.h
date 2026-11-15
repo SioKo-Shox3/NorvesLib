@@ -23,6 +23,13 @@ namespace NorvesLib::Core::AssetImport
 
 namespace NorvesLib::Tools::AssetCook
 {
+    // 拡張子（大文字小文字を問わない）または先頭の識別文字列で FBX を判定する。
+    [[nodiscard]] bool IsFbxModelSource(const std::filesystem::path& path,
+                                      Core::Container::Span<const uint8_t> head) noexcept;
+    // 開ける場合は先頭も調べ、FBX なら理由を設定する。開けなければ拡張子だけで判定する。
+    [[nodiscard]] bool RejectFbxModelSourceFile(const std::filesystem::path& path,
+                                              Core::Container::AnsiString& error);
+
     struct ClipOptimizeCookOptions;
     struct SkeletalBvhCookRequest;
     struct SkeletalBvhCookResult;

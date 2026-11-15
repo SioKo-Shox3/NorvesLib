@@ -5,6 +5,7 @@
 #include "Common/FoliageData.glsl"
 #include "Common/GBufferEncoding.glsl"
 #include "Common/WetSurface.glsl"
+#include "Common/VelocityEncoding.glsl"
 
 NORVES_DECLARE_ENVIRONMENT_UBO(0, 3)
 
@@ -58,15 +59,10 @@ void main()
     outMaterial = GBufferEncodeMaterial(vec3(metallic, roughness, fragOcclusion), 0.0);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
 
+    // 前のフレームの w が閾値以下なら履歴なしの印を書く。
     outVelocity = vec2(0.0);
-    if (foliage.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6 && abs(fragPreviousClip.w) > 1e-6)
+    if (foliage.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) && dot(velocity, velocity) < 1.0e6)
-        {
-            outVelocity = velocity;
-        }
+        outVelocity = VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
 }

@@ -23,13 +23,13 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 `Material.a` と `Emissive.a` は意味のない余白ではなく、登録済みの `P0` / `P1` の枠である。`P0` は UNORM 8 bit、`P1` は半精度 float の制約を受ける。
 
-書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求め、履歴が使えない場合は `0` とする。
+書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求める。前フレームが無効なら `0`、有効でも前フレームのクリップ座標の w が閾値以下なら「履歴なし」の印を書く。ラスタ経路で現在の w が無効な場合や、通常の速度が NaN または長さの 2 乗が `1e6` 以上の場合も `0` とする。値・条件と読み手の扱いは 13 節に従う。
 
 ### 材質ごとの GBuffer プログラムのシェーダー契約
 
 プログラムの FS は上の表の 5 枚へ同じ location・形式・意味で出力し、Normal・Material・Emissive は `Common/GBufferEncoding.glsl` の `GBufferEncodeNormal`・`GBufferEncodeMaterial`・`GBufferEncodeEmissive` を通す。標準 FS の本体は `Common/GBufferFragment.glsl` である。
 
-VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は環境の UBO（13 節）である。FS は GBuffer へ書く前に `ApplyWetSurfaceFromEnvironment` を呼ぶ。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
+VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は環境の UBO（14 節）である。FS は GBuffer へ書く前に `ApplyWetSurfaceFromEnvironment` を呼ぶ。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
 
 ### 材質値の優先と ID
 
@@ -91,9 +91,9 @@ PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係�
 
 ### GBuffer
 
-C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 400u)` と初期化時の `UBO_SIZE = 400` がある。頂点アニメの 2 欄は `offsetof` で 368・384 バイトを検査する。空きの末尾領域はない。
+C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 416u)` と初期化時の `UBO_SIZE = 416` がある。頂点アニメの 2 欄と鏡面の AA の欄は `offsetof` で 368・384・400 バイトを検査する。空きの末尾領域はない。
 
-GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` が全 400 バイト。`Assets/Shaders/gbuffer.frag` は先頭 368 バイト（`shadingModel` まで）を宣言し、末尾 32 バイトは読まない。
+GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` が先頭 400 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は全 416 バイトを宣言する。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（ベクトルは x / y / z / w 順） |
 |---|---|---|---|
@@ -110,6 +110,7 @@ GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert`
 | 352 | `shadingModel: float[4]` | `shadingModel: vec4` | x = GBuffer のシェーディングモデル ID、yzw = 0 |
 | 368 | `vertexAnimInstanceParams: float[4]` | `vertexAnimInstanceParams: vec4`（頂点側のみ） | 16 バイト。スキンの描画の生の `ShadingParams`（負は未指定のまま）。静的メッシュでは全成分 -1 で、頂点側はインスタンス表を読む |
 | 384 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
+| 400 | `specularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、yzw = 0 |
 
 `vtFeedbackParams.w`（332 バイト）は `gbuffer.frag` が `> 0.5` を判定し、`Normal.w` の `DIFFUSE_ONLY` の印へ変換する。`Material.a` の意味には使わない。
 
@@ -117,9 +118,9 @@ VT パラメータの `0` は要求を書かない指定。整数を float に�
 
 ### MegaGeometry
 
-C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 140 float = **560 バイト**。`static_assert` は `VertexAnimTime` の位置 544・大きさ 560・上限 768 バイトを検査する。確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 560〜767 バイト（208 バイト）は空きで、現在の UBO 宣言には含まれない。
+C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 144 float = **576 バイト**。`static_assert` は `VertexAnimTime` の位置 544・`SpecularAAParams` の位置 560・大きさ 576・上限 768 バイトを検査する。確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 576〜767 バイト（192 バイト）は空きで、現在の UBO 宣言には含まれない。
 
-GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が全 560 バイト、`Assets/Shaders/megageometry.frag` は先頭 544 バイト（`shadingParams` まで）を宣言する。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
+GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が先頭 560 バイト、`Assets/Shaders/megageometry.frag` は全 576 バイトを宣言する。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
 |---|---|---|---|
@@ -137,6 +138,7 @@ GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が全 560 バイト�
 | 368 | `TerrainParams: float[40]` | `terrainParams: vec4[10]` | 下表の地形 3 層のパラメータ |
 | 528 | `ShadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数 |
 | 544 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
+| 560 | `SpecularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、yzw = 0 |
 
 MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変換した ID であり、GBuffer の同名成分の `DIFFUSE_ONLY` 入力とは異なる。`ShadingParams` には `MegaMeshMaterial::ShadingParams` を写す。`megageometry.frag` は地形の場合に `TERRAIN` の印を書く。
 
@@ -352,12 +354,13 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` の定数表・関数を同時に直し、シェーダーと C++ の全書き手・読み手を同じ契約へ揃える。デカールでの値の保持と可視バッファへの書き出しも揃える。
 3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。
 4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。
-5. 環境の UBO を変更するときは `EnvironmentGpuParams.h` の C++ 構造体と `static_assert`、`Common/WetSurface.glsl` の構造体、13 節に記載した全書き手の宣言・binding を揃える。
+5. 環境の UBO を変更するときは `EnvironmentGpuParams.h` の C++ 構造体と `static_assert`、`Common/WetSurface.glsl` の構造体、14 節に記載した全書き手の宣言・binding を揃える。
+6. Velocity の「履歴なし」の印の値・判定の境・前フレームの w の閾値を変更するときは、`VelocityContract.h` と `Common/VelocityEncoding.glsl` を同時に直し、全書き手・読み手を 13 節の契約へ揃える。
 
 ## 6. 照合上の未確認事項と注意
 
 - `megageometry.vert` の `emissiveColor` のコメントはカラー・強度と表記しているが、C++ の入力と `megageometry.frag` の演算は色度・輝度（nits）である。
-- UBO の各フィールドのオフセットは配列宣言から積算した。頂点アニメの欄の `offsetof` 検査は `PerObjectUBO` の 368・384、`SectionUniformData` の 544、`GPURasterParams` の 112、`ShadowPerObjectUBO` の 208 にある。`VisFrameConstants` と `ResolveParams` は大きさの検査だけで、フィールドごとの `offsetof` 検査はない。
+- UBO の各フィールドのオフセットは配列宣言から積算した。頂点アニメと鏡面の AA の欄の `offsetof` 検査は `PerObjectUBO` の 368・384・400、`SectionUniformData` の 544・560、`GPURasterParams` の 112、`ShadowPerObjectUBO` の 208 にある。`VisFrameConstants` と `ResolveParams` は大きさの検査だけで、フィールドごとの `offsetof` 検査はない。
 - `SceneInstanceData.glsl` の `shadingParams.z` のコメントは予約のままだが、実際の頂点アニメの読み手は 1・3 節の種類として使う。`VisibilityBuffer.h` の `DrawRecord::LodPayload` のコメントも他の種類を 0 としているが、VSM の影の記録では 9 節の float ビット列を格納する。
 
 ## 7. 可視バッファの材質表
@@ -419,7 +422,7 @@ C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`a
 | 192 | 16 | `CameraPosition: float[4]` | `cameraPosition: vec4` | xyz = カメラのワールド位置 |
 | 208 | 16 | `Viewport: float[4]` | `viewport: vec4` | x / y / 幅 / 高さ（画素） |
 | 224 | 16 | `Screen: uint32_t[4]` | `screen: uvec4` | 画面幅 / 画面高さ / フラグ / 材質表の件数 |
-| 240 | 16 | `Frame: float[4]` | `frame: vec4` | プリエクスポージャ / MegaGeometry のデバッグ表示 / 幾何法線の印 / 予約 |
+| 240 | 16 | `Frame: float[4]` | `frame: vec4` | プリエクスポージャ / MegaGeometry のデバッグ表示 / 幾何法線の印 / w = 鏡面の AA の強さ（製品の経路は `SpecularAAStrength`、0 で無効、`BuildParams` の既定は 0） |
 | 256 | 16 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4` | `t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。2 節の時刻欄の注記に従う |
 
 ### スキンの記録と生の ShadingParams の表
@@ -622,7 +625,42 @@ C++ は `WorldFieldTypes.h::WorldFieldDrynessSampleConstants`（`alignas(16)`）
 
 `RenderWorld::SetWorldFieldDryness` は源を `RenderingCoordinator::SetWorldFieldDryness` へ渡す。coordinator は入力を無害化し、次の設定まで状態として保持して、`FramePacket::WorldFieldDrynessSources` へ値を写す。この配列は `ComputeSceneRevisionHash` に含めない。描画側は `ViewRenderContext::SnapshotWorldFieldDrynessSources` を通してパケットの配列を参照する。
 
-## 13. 環境の UBO（GPUEnvironmentParams）
+## 13. Velocity の「履歴なし」の印
+
+GBuffer の Velocity（RT4、`R16G16_FLOAT`）は通常の UV 差に加え、前フレームへ再投影できる履歴がない画素の印を格納する。正本は `Library/Core/Public/Rendering/VelocityContract.h`（`VelocityContract`）と `Assets/Shaders/Common/VelocityEncoding.glsl`。両者の定数を一致させ、シェーダーの符号化は `VelocityFromClip` / `VelocityNoHistory`、判定は `VelocityIsNoHistory` を通す。C++ の判定は `VelocityContract::IsNoHistory` を使う。
+
+| 意味 | C++ 定数 | GLSL 定数 | 値 |
+|---|---|---|---|
+| 印の値（両成分） | `NoHistoryValue` | `VELOCITY_NO_HISTORY_VALUE` | `-32768.0` |
+| 印の判定の境（両成分がこの値以下） | `NoHistoryDetectBelow` | `VELOCITY_NO_HISTORY_DETECT_BELOW` | `-16384.0` |
+| 前フレームのクリップ座標の w の閾値 | `PreviousClipWMin` | `VELOCITY_PREVIOUS_CLIP_W_MIN` | `0.1` |
+| 印の半精度ビット列（各成分） | `NoHistoryValueHalfBits` | `VelocityNoHistory()` の格納値 | `0xF800` |
+
+前フレームが有効で、`previousClip.w <= VELOCITY_PREVIOUS_CLIP_W_MIN` なら印を書く。閾値の `0.1` は既定のカメラの `NearPlane` に合わせた仮の値で、カメラから動的に受け取る値ではない。正射影では w = `1` のため、この条件で印にならない。前フレームが無効なら `0` とする。ラスタ経路は `abs(fragCurrentClip.w) > 1e-6` も満たす場合だけ符号化し、それ以外は `0` とする。
+
+印の条件に当たらない場合、`VelocityFromClip` は `(currentNdc - previousClip.xy / previousClip.w) * 0.5` を返す。ただし成分に NaN がある、または長さの 2 乗が `1e6` 以上なら `0` を返す。印の値は半精度で正確に表せ、通常の速度を無効化する処理より先に返す。
+
+シェーダーのパスは `Assets/Shaders/` からの相対パス。
+
+| 書き手 | 符号化の呼び出しと履歴の条件 |
+|---|---|
+| `Common/VisibilityResolve.glsl` | `VisComputeVelocity` が `RESOLVE_FLAG_PREVIOUS_VALID` を確認し、画素中心から求めた現在の NDC と前のクリップ座標を `VelocityFromClip` へ渡す |
+| `Common/GBufferFragment.glsl` | `gbuffer.frag`・`gbuffer_alphaclip.frag` の本体。`mvp.frameParams.x > 0.5` と現在の w を確認して `VelocityFromClip` を呼ぶ |
+| `megageometry.frag` | `ComputeVelocity` が `mvp.frameParams.x > 0.5` と現在の w を確認して `VelocityFromClip` を呼ぶ。デバッグ出力も同じ関数を使う |
+| `foliage.frag` | `foliage.frameParams.x > 0.5` と現在の w を確認して `VelocityFromClip` を呼ぶ |
+| `Grass/grass.frag` | `kGrassDrawFlagPreviousCamera` と現在の w を確認して `VelocityFromClip` を呼ぶ |
+
+| 読み手 | 印の扱い |
+|---|---|
+| `temporal_aa.frag` | 動きに使う近傍の最も手前の画素か中心画素について、深度が `1` 未満かつ `VelocityIsNoHistory` が真なら履歴を捨て、今の色だけを使う。リアクティブも今の値を出す |
+| `MotionBlurTileMax.frag` | `ShutterMotion` で印を判定し、動き `0` としてタイルの最大を求める |
+| `MotionBlur.frag` | `ShutterMotion` で印を判定し、動き `0` として扱う |
+| `RTGI/DiffuseIndirect.comp` | 再投影の 2 か所は印を知らず、`previousUV = currentUV - velocity`（もう一方は `uv - velocity`）を求める。印では `previousUV` が `[0, 1)` の外になるため履歴を捨てる |
+| `gbuffer_debug.frag` | 印専用の判定はない。velocity 表示は `vec3(vec2(0.5) + velocity * debugParams.params.y, 0.5)`。通常の正の倍率では印の R・G が負となり、表示時のクランプで暗い色になる（B は `0.5`） |
+
+新しい velocity の読み手を追加するときは、通常の速度として使う前に `VelocityIsNoHistory` を通し、履歴を捨てるか動き `0` とする扱いを登録する。
+
+## 14. 環境の UBO（GPUEnvironmentParams）
 
 C++ は `Library/Core/Public/Rendering/EnvironmentGpuParams.h::GPUEnvironmentParams`、GLSL は `Assets/Shaders/Common/WetSurface.glsl::EnvironmentGpuParams`。`std140`、16 バイト整列、合計 **48 バイト**。C++ の `static_assert` は大きさ・整列、`Wetness`・`GameTimeWrapped`・`CavityUniform`・`ExposureDefault`・`Discontinuity`・`Reserved` のオフセット、型の自明コピーと標準レイアウトを検査する。残りのオフセットは宣言順に 4 バイトずつ積算する。
 

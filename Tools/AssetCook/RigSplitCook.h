@@ -6,6 +6,7 @@
 #include "Asset/CookedSkinMeshV1.h"
 #include "Asset/AssetManifest.h"
 #include "Resource/ImportSettingsFile.h"
+#include "Resource/ClipImportSettings.h"
 namespace NorvesLib::Tools::AssetCook
 {
     struct RigSplitCookRequest
@@ -13,6 +14,8 @@ namespace NorvesLib::Tools::AssetCook
         // inventory観測ではpayload/packageを作らず、同じ入力解析とsource hashを使う。
         bool bInventoryOnly = false;
         bool bAnalyzeClips = false;
+        // 呼出側が明示したClipImportKeyのビット。
+        uint32_t ClipExplicitKeys = 0;
         Core::Skeletal::RigClipAnalysisOptions ClipAnalysis;
         ClipOptimizeCookOptions ClipOptimize;
         Core::Container::AnsiString ClipRootJoint;
@@ -48,6 +51,11 @@ namespace NorvesLib::Tools::AssetCook
         // CPU記録だけ。texture package/renderer materialが揃ったことを意味しない。
         bool bMaterialsRenderStaged = false;
     };
+    // sidecarのclip節を呼出側の解析設定へ重ねる。explicitKeysは呼出側が明示したClipImportKeyのビット。
+    // 両方にあるキーの値が違えば、errorへ理由の名前を入れてfalseを返し、引数を書き換えない。
+    [[nodiscard]] bool ApplyClipImportSettings(const Core::AssetImport::ClipImportSettings& sidecar, uint32_t explicitKeys,
+                                               bool& bAnalyzeClips, Core::Skeletal::RigClipAnalysisOptions& analysis,
+                                               Core::Container::AnsiString& rootJoint, Core::Container::AnsiString& error);
     [[nodiscard]] bool SerializeRigSplitManifest(
         Core::Container::Span<const Core::Asset::AssetCookedReference> references, Core::Container::AnsiString& out,
         Core::Container::AnsiString& error);

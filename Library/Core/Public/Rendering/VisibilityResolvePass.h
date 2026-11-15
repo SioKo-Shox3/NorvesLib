@@ -138,7 +138,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t Screen[4] = {};
             /** @brief x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y
              * と同じ値。既定は 1）、 y = MegaGeometry
-             * のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決） */
+             * のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決）、
+             * w = 鏡面の AA の強さ（SpecularAAStrength。0 で無効。BuildParams の既定は 0） */
             float Frame[4] = {1.0f, 0.0f, 0.0f, 0.0f};
             /** @brief 今の時刻、前の時刻、試験の揺れの許可、0 */
             float VertexAnimTime[4] = {};

@@ -194,6 +194,7 @@ namespace NorvesLib::Core::Rendering
         {
             uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
             hash = HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
+            hash = HashRevisionValue(hash, proxy.Opacity);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);

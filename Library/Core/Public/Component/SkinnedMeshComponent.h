@@ -75,6 +75,11 @@ namespace NorvesLib::Core::Component
          */
         float GetShadingParams(uint32_t index) const;
 
+        /** @brief 不透明度を 0〜1 に収めて設定する。NaN は 1 とする */
+        void SetOpacity(float opacity);
+        /** @brief スキンの不透明度を取得する */
+        float GetOpacity() const;
+
         uint32_t GetMaterialSlotCount() const;
         int32_t FindMaterialSlot(Container::StringView name) const;
         [[nodiscard]] bool SetSlotMaterial(uint32_t slot, Rendering::MaterialHandle material);
@@ -171,6 +176,7 @@ namespace NorvesLib::Core::Component
         Container::TWeakPtr<AnimationClipResource> m_EvaluatedClip;
         Rendering::MaterialHandle m_Material;
         float m_ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+        float m_Opacity = 1.0f;
         Skeletal::SkeletalMaterialBindings m_SlotMaterials;
         float m_AnimationTimeSeconds = 0.0f;
         float m_PlaybackRate = 1.0f;

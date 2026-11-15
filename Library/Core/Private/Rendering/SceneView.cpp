@@ -261,6 +261,7 @@ namespace NorvesLib::Core::Rendering
         // Batcherをクリア
         m_Batcher.Clear();
 
+        m_RenderExtensions.ShutdownShadowCasters();
         View::Shutdown();
     }
 
@@ -911,6 +912,7 @@ namespace NorvesLib::Core::Rendering
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
         context.bTemporalAAApplied = false;
+        context.TemporalAAJitterIndex = 0u;
         context.OverheadHeightMap.Invalidate();
         struct PhysicalLightingScope final
         {
@@ -997,6 +999,8 @@ namespace NorvesLib::Core::Rendering
                                                           jitter);
             if (bApplyTemporalAA)
             {
+                context.TemporalAAJitterIndex = static_cast<uint32_t>(
+                    temporalAAPass->GetFrameJitterIndex() % GBufferAlphaHashPhaseCount);
                 // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
                 // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
                 const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(
@@ -1033,6 +1037,7 @@ namespace NorvesLib::Core::Rendering
         {
             // DrawCommandはGameThreadのGenerateDrawCommands()でスナップショット済み
             // context.SnapshotDrawCommands等から各パスが参照する
+            m_RenderExtensions.CollectShadowCasters(context);
             View::Render(context);
         }
         else
@@ -1247,6 +1252,7 @@ namespace NorvesLib::Core::Rendering
         {
             auto virtualShadowMapPass = MakeUnique<VirtualShadowMapPass>(m_VsmPoolPages);
             virtualShadowMapPass->SetSkinningComputePass(skinningComputePassPtr);
+            virtualShadowMapPass->SetRenderExtensionRegistry(&m_RenderExtensions);
             // MegaGeometry の投影物（bCastShadow のインスタンス）を、展開の前に段ごとにカリングする（主の経路の入力を読み取りだけで使う）
             virtualShadowMapPass->SetMegaGeometryPass(megaGeometryPassPtr);
             virtualShadowMapPass->SetPointShadowMethod(m_PointShadowMethod);

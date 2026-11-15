@@ -30,6 +30,8 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=GBuffer のシェーディングモデル ID
     vec4 terrainParams[10]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
     vec4 shadingParams; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
+    vec4 vertexAnimTime; // FS では読まない
+    vec4 specularAAParams; // x=鏡面の AA の強さ、yzw=0
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -66,8 +68,10 @@ layout(std140, set = 0, binding = 23) uniform TerrainSplatBlock
 
 #include "Common/GBufferEncoding.glsl"
 #include "Common/WetSurface.glsl"
+#include "Common/VelocityEncoding.glsl"
 NORVES_DECLARE_ENVIRONMENT_UBO(0, 24)
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SpecularAntiAliasing.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 7
 #include "Common/VirtualTextureFeedback.glsl"
@@ -87,21 +91,12 @@ layout(location = 4) out vec2 outVelocity;  // RT4: 現在の UV - 前の UV（g
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
 const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
 
-// gbuffer.frag と同じ式で、現在と直前のフレームのクリップ座標から画面上の動きを求める。
+// gbuffer.frag と同じ UV 差を求め、前のフレームの w が閾値以下なら履歴なしの印を返す。
 vec2 ComputeVelocity()
 {
-    if (mvp.frameParams.x > 0.5 &&
-        abs(fragCurrentClip.w) > 1e-6 &&
-        abs(fragPreviousClip.w) > 1e-6)
+    if (mvp.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) &&
-            dot(velocity, velocity) < 1.0e6)
-        {
-            return velocity;
-        }
+        return VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
     return vec2(0.0);
 }
@@ -250,6 +245,9 @@ void main()
         tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
     }
     vec3 normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(TBN, tangentNormal);
+    // ここまでの分岐は UBO の値で決まり、描画中は一様。
+    vec3 normalDx = dFdxFine(normal);
+    vec3 normalDy = dFdyFine(normal);
     const uint receiverFlags = (bTerrain || bTerrainSplat) ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
     vec4 params = ResolveShadingParams(vec4(-1.0), mvp.shadingParams);
     uint id = uint(mvp.vtFeedbackParams.w + 0.5);
@@ -262,7 +260,9 @@ void main()
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
     // 視差補正済みの UV で標本した材質値をシェーディングモデルに応じて P0 と書く。
-    outMaterial = GBufferEncodeMaterialForShadingModel(material, params.x, id);
+    outMaterial = GBufferEncodeMaterialForShadingModel(
+        SpecularAAFilterMaterial(material, normalDx, normalDy, mvp.specularAAParams.x),
+        params.x, id);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveColor.rgb,

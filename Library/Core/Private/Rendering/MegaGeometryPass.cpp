@@ -33,6 +33,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/SpecularAntiAliasing.h"
 #include "Rendering/TerrainBlendShading.h"
 #include "Rendering/TemporalAAParamOverride.h"
 #include "Rendering/TerrainSamplerOverride.h"
@@ -1994,9 +1995,11 @@ namespace NorvesLib::Core::Rendering
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
             float ShadingParams[4]; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
             float VertexAnimTime[4];
+            float SpecularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
         };
         static_assert(offsetof(SectionUniformData, VertexAnimTime) == 544u);
-        static_assert(sizeof(SectionUniformData) == 560u);
+        static_assert(offsetof(SectionUniformData, SpecularAAParams) == 560u);
+        static_assert(sizeof(SectionUniformData) == 576u);
         static_assert(sizeof(SectionUniformData) <= 768u);
 
         constexpr uint32_t SectionUniformBufferBytes = 768;
@@ -4174,6 +4177,7 @@ namespace NorvesLib::Core::Rendering
             SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
 
             SectionUniformData uniform{};
+            MakeSpecularAAConstants(uniform.SpecularAAParams);
             std::memcpy(uniform.VertexAnimTime, m_VertexAnimTime, sizeof(uniform.VertexAnimTime));
             cameraConstants.CopyShaderView(uniform.View);
             cameraConstants.CopyShaderProjection(uniform.Projection);

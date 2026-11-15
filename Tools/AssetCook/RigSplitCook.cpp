@@ -203,6 +203,131 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
     } // namespace
+    bool ApplyClipImportSettings(const I::ClipImportSettings& sidecar, uint32_t explicitKeys,
+                                 bool& bAnalyzeClips, S::RigClipAnalysisOptions& analysis,
+                                 Text& rootJoint, Text& error)
+    {
+        uint32_t callerKeys = explicitKeys;
+        if (!rootJoint.empty())
+        {
+            callerKeys |= I::ClipKeyRootJoint;
+        }
+        if (analysis.Loop != S::RigClipLoopMode::Auto)
+        {
+            callerKeys |= I::ClipKeyLoop;
+        }
+        if (analysis.LoopThreshold != 0.01)
+        {
+            callerKeys |= I::ClipKeyLoopThreshold;
+        }
+        if (analysis.AuthoredFps != 0)
+        {
+            callerKeys |= I::ClipKeyAuthoredFps;
+        }
+        if (analysis.SourceFps != 0)
+        {
+            callerKeys |= I::ClipKeySourceFps;
+        }
+        if (analysis.TimeScale != 1)
+        {
+            callerKeys |= I::ClipKeyTimeScale;
+        }
+
+        bool bMergedAnalysis = bAnalyzeClips;
+        auto merged = analysis;
+        Text mergedRoot(rootJoint.size(), '\0');
+        if (!rootJoint.empty())
+        {
+            std::copy(rootJoint.begin(), rootJoint.end(), mergedRoot.begin());
+        }
+        const auto fail = [&](const char* reason)
+        {
+            error = reason;
+            return false;
+        };
+        if (sidecar.Keys & I::ClipKeyRootJoint)
+        {
+            if ((callerKeys & I::ClipKeyRootJoint) &&
+                (rootJoint.size() != sidecar.RootJoint.size() ||
+                 (!rootJoint.empty() && !std::equal(rootJoint.begin(), rootJoint.end(), sidecar.RootJoint.begin()))))
+            {
+                return fail("clip_conflict_root_joint");
+            }
+            mergedRoot = Text(sidecar.RootJoint.size(), '\0');
+            if (!sidecar.RootJoint.empty())
+            {
+                std::copy(sidecar.RootJoint.begin(), sidecar.RootJoint.end(), mergedRoot.begin());
+            }
+        }
+        if (sidecar.Keys & I::ClipKeyLoop)
+        {
+            S::RigClipLoopMode loop;
+            switch (sidecar.Loop)
+            {
+            case I::ClipLoopSetting::Auto:
+                loop = S::RigClipLoopMode::Auto;
+                break;
+            case I::ClipLoopSetting::Loop:
+                loop = S::RigClipLoopMode::Loop;
+                break;
+            case I::ClipLoopSetting::Once:
+                loop = S::RigClipLoopMode::Once;
+                break;
+            default:
+                return fail("clip_conflict_loop");
+            }
+            if ((callerKeys & I::ClipKeyLoop) && merged.Loop != loop)
+            {
+                return fail("clip_conflict_loop");
+            }
+            merged.Loop = loop;
+        }
+        const auto applyNumber = [&](uint32_t key, double value, double& target, const char* reason)
+        {
+            if (sidecar.Keys & key)
+            {
+                if ((callerKeys & key) && !(target == value))
+                {
+                    return fail(reason);
+                }
+                target = value;
+            }
+            return true;
+        };
+        if (!applyNumber(I::ClipKeyLoopThreshold, sidecar.LoopThreshold, merged.LoopThreshold,
+                         "clip_conflict_loop_threshold") ||
+            !applyNumber(I::ClipKeyAuthoredFps, sidecar.AuthoredFps, merged.AuthoredFps,
+                         "clip_conflict_authored_fps") ||
+            !applyNumber(I::ClipKeySourceFps, sidecar.SourceFps, merged.SourceFps,
+                         "clip_conflict_source_fps") ||
+            !applyNumber(I::ClipKeyTimeScale, sidecar.TimeScale, merged.TimeScale,
+                         "clip_conflict_time_scale"))
+        {
+            return false;
+        }
+        if (sidecar.Keys & I::ClipKeyAnalysis)
+        {
+            if ((callerKeys & I::ClipKeyAnalysis) && bMergedAnalysis != sidecar.bAnalysis)
+            {
+                return fail("clip_conflict_analysis");
+            }
+            bMergedAnalysis = sidecar.bAnalysis;
+        }
+        constexpr uint32_t analysisKeys = I::ClipKeyRootJoint | I::ClipKeyLoop | I::ClipKeyLoopThreshold |
+                                          I::ClipKeyAuthoredFps | I::ClipKeySourceFps | I::ClipKeyTimeScale;
+        if (!bMergedAnalysis && ((sidecar.Keys | callerKeys) & analysisKeys))
+        {
+            return fail("clip_analysis_disabled");
+        }
+        if ((merged.AuthoredFps == 0) != (merged.SourceFps == 0))
+        {
+            return fail("clip_fps_pair");
+        }
+        bAnalyzeClips = bMergedAnalysis;
+        analysis = merged;
+        rootJoint = std::move(mergedRoot);
+        return true;
+    }
     bool SerializeRigSplitManifest(C::Span<const A::AssetCookedReference> references, Text& out, Text& error)
     {
         Text candidate = "{\"version\":1,\"assets\":[";
@@ -272,6 +397,19 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return fail("split_import_settings");
             }
+            bool bAnalyzeClips = request.bAnalyzeClips;
+            auto analysisOptions = request.ClipAnalysis;
+            Text rootJoint(request.ClipRootJoint.size(), '\0');
+            if (!request.ClipRootJoint.empty())
+            {
+                std::copy(request.ClipRootJoint.begin(), request.ClipRootJoint.end(), rootJoint.begin());
+            }
+            Text clipError;
+            if (!ApplyClipImportSettings(candidate.Import.Settings.Clip, request.ClipExplicitKeys, bAnalyzeClips,
+                                         analysisOptions, rootJoint, clipError))
+            {
+                return fail(clipError.c_str());
+            }
             I::LoadedImportSettings geometrySettings;
             geometrySettings.Settings = candidate.Import.Settings.Geometry;
             geometrySettings.Path = candidate.Import.Path;
@@ -285,10 +423,9 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return fail("split_author_import");
             }
-            auto analysisOptions = request.ClipAnalysis;
-            if (!request.ClipRootJoint.empty())
+            if (!rootJoint.empty())
             {
-                if (!request.bAnalyzeClips || analysisOptions.RootJoint != UINT32_MAX)
+                if (!bAnalyzeClips || analysisOptions.RootJoint != UINT32_MAX)
                 {
                     return fail("split_clip_root_ambiguous");
                 }
@@ -296,7 +433,7 @@ namespace NorvesLib::Tools::AssetCook
                 bool found = false;
                 for (size_t i = 0; i < topology.Joints.size(); ++i)
                 {
-                    if (topology.Joints[i].Name == request.ClipRootJoint)
+                    if (topology.Joints[i].Name == rootJoint)
                     {
                         analysisOptions.RootJoint = topology.CanonicalToSource[i];
                         found = true;
@@ -398,7 +535,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 hash.Number(uint32_t(request.Profile));
             }
-            if (request.bAnalyzeClips)
+            if (bAnalyzeClips)
             {
                 hash.String("RigClipAnalysis.v1");
                 const auto& a = analysisOptions;
@@ -411,6 +548,7 @@ namespace NorvesLib::Tools::AssetCook
                     hash.Number(std::bit_cast<uint64_t>(value));
                 }
             }
+            hash.Value = I::AppendClipImportSettingsHash(hash.Value, candidate.Import.Settings.Clip);
             hash.Number(GeometryClosureAlgorithmRevision);
             hash.Data(source);
             hash.Number(capture.Buffers.GetCount());
@@ -628,7 +766,7 @@ namespace NorvesLib::Tools::AssetCook
                 !S::BuildSkinMeshV1(rig, skeleton, request.SkeletonPath, slots, mesh, report, request.Limits,
                                     request.Profile) ||
                 !S::BuildClipBankV1({&rig, 1}, bank, report, request.Limits, request.Profile,
-                                    request.bAnalyzeClips ? &analysisOptions : nullptr, optimizedClips) ||
+                                    bAnalyzeClips ? &analysisOptions : nullptr, optimizedClips) ||
                 !S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile,

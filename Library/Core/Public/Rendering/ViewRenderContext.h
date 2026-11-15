@@ -1223,6 +1223,13 @@ namespace NorvesLib::Core::Rendering
         bool bTemporalAAApplied = false;
 
         /**
+         * @brief TAA が掛かったフレームのジッタの番号を位相の周期で割った余り。
+         *
+         * 切り抜きの Hash の位相に使う。TAA が掛からないビューでは 0。
+         */
+        uint32_t TemporalAAJitterIndex = 0;
+
+        /**
          * @brief RenderThread が記録したフレームごとに 1 ずつ増える通し番号（同じフレームの全ビューポートで同じ値）
          *
          * 1 フレームに同じパスが何回も Execute される（複数のビューポート）ので、UBO・ディスクリプタセットなどの
