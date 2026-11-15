@@ -13,7 +13,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DepthConvention.h"
 #include "Rendering/FrameCommand.h"
-#include "Rendering/GBufferProgramRegistry.h"
+#include "Rendering/GBufferPass.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -1116,8 +1116,8 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
-            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
-            if (RequiresGBufferOverlay(materialData))
+            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlayDraw(materialData))
             {
                 continue;
             }
@@ -1202,9 +1202,8 @@ namespace NorvesLib::Core::Rendering
                 (instance.Material.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
-            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
-            // 残像は ID のラスタに載せず、解決後に GBuffer へ重ねる。
-            if (RequiresGBufferOverlay(materialData) || IsSkinnedGhostOpacity(instance.Opacity))
+            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）と残像は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlayDraw(materialData, instance.Opacity))
             {
                 continue;
             }

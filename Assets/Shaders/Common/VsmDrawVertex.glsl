@@ -5,6 +5,7 @@
 // インスタンスの番号（展開が書いた範囲の中の位置）から（スライス・絶対のページ・物理ページ）を引く。インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
 // 頂点の読み方は VisLoadTrianglePositions と同じ（記録の BDA。位置だけを読む）。草・低木の株の塊（VIS_KIND_FOLIAGE_CHUNK）は
 // 頂点が FoliageVertex で、World に置いた株の置き方と params の風で foliage.vert と同じ式で置く（VsmPlaceFoliageVertex）。
+// 手続きメッシュの風の頂点アニメは、塊ごとの材質の 2 つの vec4（binding 8）と params の風の 2 つの vec4 で計算する。
 //
 // ライト空間の位置（lx, ly）を、そのページの局所の texel 座標 ((lx - ページの x × ページの幅) / texel の一辺) へ写し、
 // 128 texel = NDC の [-1, 1] とする。ページの外はビューポートの外になり、ラスタライザが捨てる。
@@ -29,7 +30,7 @@
 #define VSM_SLICE_BINDING 5
 #include "Common/VirtualShadowMapSlice.glsl"
 
-// std140。VirtualShadowMapRaster.h の VirtualShadowMapRasterParams と同じ並び（全 176 バイト）
+// std140。VirtualShadowMapRaster.h の VirtualShadowMapRasterParams と同じ並び（全 208 バイト）
 layout(std140, set = 0, binding = 0) uniform VsmRasterParams
 {
     vec4 lightRight;
@@ -45,6 +46,8 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 foliageWindParams;
     vec4 vertexAnimTime;
     WorldFieldSampleConstants worldField;
+    vec4 vertexAnimWindA;
+    vec4 vertexAnimWindB;
 } params;
 layout(set = 0, binding = 6) uniform sampler2D foliageWorldFieldCurrent;
 
@@ -62,6 +65,12 @@ layout(std430, set = 0, binding = 2) readonly buffer VsmChunks
 layout(std430, set = 0, binding = 4) readonly buffer VsmMegaChunks
 {
     VsmShadowChunk megaChunks[];
+};
+
+// 塊ごとに材質の頂点アニメを 2 つの vec4 で持つ（MegaGeometry は参照しない）
+layout(std430, set = 0, binding = 8) readonly buffer VsmChunkVertexAnim
+{
+    vec4 chunkVertexAnim[];
 };
 
 // 草・低木の株の頂点（FoliageVertex の 13 個の float: 位置 3・法線 3・横 3・しなりの重み・色の混ぜ・遮蔽・揺れの位相）
@@ -172,9 +181,19 @@ void main()
         // 手続きとスキンの塊は、影の記録が前フレーム用の欄に生の値を持つ。MegaGeometry は未指定。
         const vec4 instanceParams = bMega ? vec4(-1.0) : uintBitsToFloat(record.previous);
         const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
-        if (VertexAnimationKind(animParams) != VERTEX_ANIMATION_KIND_NONE)
+        vec4 material0 = vec4(0.0);
+        vec4 material1 = vec4(0.0);
+        if (!bMega)
         {
-            world = ApplyVertexAnimation(world, local.xyz, animParams, params.vertexAnimTime.x);
+            material0 = chunkVertexAnim[2u * instance.x];
+            material1 = chunkVertexAnim[2u * instance.x + 1u];
+        }
+        const VertexAnimationMaterial material = MakeVertexAnimationMaterial(material0, material1);
+        const VertexAnimationWind wind = MakeVertexAnimationWind(params.vertexAnimWindA, params.vertexAnimWindB);
+        if (!VertexAnimationIsIdentity(animParams, material, wind))
+        {
+            const vec3 origin = vec3(world0.w, world1.w, world2.w);
+            world = ApplyVertexAnimation(world, local.xyz, animParams, material, wind, origin, params.vertexAnimTime.x);
         }
     }
 
