@@ -11321,3 +11321,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で Core.lib と Game.exe を生成（`.harness/runs/20261115-173344/verify-G7-GR51-FORWARD-FOG-2.txt`。警告は前からの MSB8065 の 1 件と LNK4099）。シェーダーは前の反復から変わっておらず、4 経路の vert・frag と sparse の変種の glslc は 9 本とも終了コード 0（`shader-compile.txt`）。
 - 作らなかったもの: done-when の `HeightFogShaderCompileTest` への追加・`ForwardFogConsistencyVulkanTest`・閾値の TSV は、試験を作らない決まり（絶対規則 11）で作っていない。撮影・計測の確かめは回さない決まり。
 - Next: ランナーの評価者の反証（ForwardPass の記述子・RenderThread の危険地帯）。人が見るときの見どころは上の節と同じ（霧のある荒野で、遠くの半透明・ワールドの板・インポスター・剣のトレイルが不透明と同じように霧に沈むこと。霧の無い Rendering3DTest とランチャーの各シーンは変わらないこと）。
+- U6 画面の大きさの式と LOD の段の選び方を MeshTypes.h にまとめ、proxy に LOD の鎖・インポスターの画面の大きさ・抑制の印を足す(切り直し): 着地(直し 0 回)
