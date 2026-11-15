@@ -66,6 +66,17 @@ namespace NorvesLib::Core::Rendering
             data.AlphaClip = createInfo.AlphaClip == AlphaClipMode::Hash ? AlphaClipMode::Hash : AlphaClipMode::Test;
             data.bWritesReactive = createInfo.bWritesReactive;
             data.Shading = createInfo.Shading;
+            if (createInfo.Shading == ShadingModel::Fur)
+            {
+                if (!IsValidFurMaterialData(createInfo.Fur))
+                {
+                    NORVES_LOG_WARNING("RenderMaterialStore", "ファーの値が範囲外か非有限のため材質を作れない: %s",
+                                       createInfo.DebugName.c_str());
+                    return false;
+                }
+                data.Fur = createInfo.Fur;
+            }
+            data.Revision = 1;
             for (uint32_t index = 0; index < ShadingParamCount; ++index)
             {
                 data.ShadingParams[index] = SanitizeShadingParam(createInfo.ShadingParams[index]);
@@ -171,6 +182,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         data.RefCount = it->second.RefCount;
+        data.Revision = it->second.Revision + 1;
         it->second = std::move(data);
         return true;
     }

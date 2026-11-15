@@ -3527,7 +3527,8 @@ namespace NorvesLib::Core
                 return;
             }
             Rendering::SkinnedMeshProxy skinnedMeshProxy;
-            if (skinnedMeshComp->BuildSkinnedMeshProxy(skinnedMeshProxy))
+            // 材質の Update は変更の通知で行を dirty にし、ここで値を写し直す。
+            if (skinnedMeshComp->BuildSkinnedMeshProxy(skinnedMeshProxy, materials))
             {
                 skinnedMeshProxy.ObjectId = entity.GetObjectId();
                 skinnedMeshProxy.ComponentId = skinnedMeshComp->GetComponentId();
@@ -3804,7 +3805,7 @@ namespace NorvesLib::Core
                     }
                     ++examined;
                     Rendering::SkinnedMeshProxy probe;
-                    const bool bBuilt = skinned->BuildSkinnedMeshProxy(probe);
+                    const bool bBuilt = skinned->BuildSkinnedMeshProxy(probe, materials);
                     const bool bPresent = viewSkinned.find(skinned->GetComponentId()) != viewSkinned.end();
                     if (bBuilt)
                     {

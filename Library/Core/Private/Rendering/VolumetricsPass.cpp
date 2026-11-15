@@ -3,6 +3,7 @@
 
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameResourceOwner.h"
+#include "Rendering/HeightFogGpuParams.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -103,20 +104,6 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             return desc;
-        }
-
-        float SafePreExposure(const CameraProxy* camera)
-        {
-            if (!camera || !std::isfinite(camera->PreExposure) || camera->PreExposure <= 0.0f)
-            {
-                return 1.0f;
-            }
-            return std::clamp(camera->PreExposure, 1.0e-6f, 1.0e6f);
-        }
-
-        float SafeFogColorChannel(float value)
-        {
-            return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
         }
 
         bool IsValidCascadedShadowMapTexture(const RHI::TexturePtr& texture)
@@ -269,10 +256,12 @@ namespace NorvesLib::Core::Rendering
                                                     context.GetActiveAspectRatio(),
                                                     context.Device);
             cameraConstants.CopyShaderInverseViewProjection(outParams.InverseViewProjection);
-            outParams.CameraPositionAndPreExposure[0] = camera.PositionX;
-            outParams.CameraPositionAndPreExposure[1] = camera.PositionY;
-            outParams.CameraPositionAndPreExposure[2] = camera.PositionZ;
-            outParams.CameraPositionAndPreExposure[3] = SafePreExposure(&camera);
+            const GPUHeightFogParams heightFog =
+                BuildHeightFogGpuParams(context, camera, static_cast<bool>(skyRadianceTexture), &fog);
+            outParams.CameraPositionAndPreExposure[0] = heightFog.CameraPositionAndPreExposure[0];
+            outParams.CameraPositionAndPreExposure[1] = heightFog.CameraPositionAndPreExposure[1];
+            outParams.CameraPositionAndPreExposure[2] = heightFog.CameraPositionAndPreExposure[2];
+            outParams.CameraPositionAndPreExposure[3] = heightFog.CameraPositionAndPreExposure[3];
 
             const double cameraForwardLength = std::sqrt(
                 static_cast<double>(camera.ForwardX) * camera.ForwardX +
@@ -290,17 +279,16 @@ namespace NorvesLib::Core::Rendering
                     static_cast<float>(camera.ForwardZ * inverseForwardLength);
             }
             // 霧が無効で空気遠近だけ掛けるときは、霧の密度を 0 にして霧の分を消す
-            outParams.FogParameters[0] = fog.bEnabled ? fog.DensityAtBaseHeight : 0.0f;
-            outParams.FogParameters[1] = fog.BaseHeight;
-            outParams.FogParameters[2] = fog.HeightFalloffPerUnit;
-            outParams.FogParameters[3] = skyRadianceTexture ? 1.0f : 0.0f;
-            outParams.FogRange[0] = fog.MaxDistanceMeters;
-            outParams.FogRange[1] = fog.AmbientScale;
+            outParams.FogParameters[0] = heightFog.DensityBaseHeightFalloffSkyAvailable[0];
+            outParams.FogParameters[1] = heightFog.DensityBaseHeightFalloffSkyAvailable[1];
+            outParams.FogParameters[2] = heightFog.DensityBaseHeightFalloffSkyAvailable[2];
+            outParams.FogParameters[3] = heightFog.DensityBaseHeightFalloffSkyAvailable[3];
+            outParams.FogRange[0] = heightFog.MaxDistanceAndReserved[0];
+            outParams.FogRange[1] = heightFog.FallbackColorAndAmbientScale[3];
 
-            const SceneProxy* scene = context.SnapshotScene;
-            outParams.FallbackFogColor[0] = scene ? SafeFogColorChannel(scene->FogColorR) : 0.0f;
-            outParams.FallbackFogColor[1] = scene ? SafeFogColorChannel(scene->FogColorG) : 0.0f;
-            outParams.FallbackFogColor[2] = scene ? SafeFogColorChannel(scene->FogColorB) : 0.0f;
+            outParams.FallbackFogColor[0] = heightFog.FallbackColorAndAmbientScale[0];
+            outParams.FallbackFogColor[1] = heightFog.FallbackColorAndAmbientScale[1];
+            outParams.FallbackFogColor[2] = heightFog.FallbackColorAndAmbientScale[2];
             outParams.FallbackFogColor[3] = 1.0f;
 
             // 空気遠近は空の放射輝度 LUT・透過率 LUT と、同じ空の高度ごとの表があるときだけ掛ける
