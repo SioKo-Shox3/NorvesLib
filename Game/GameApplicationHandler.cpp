@@ -942,6 +942,11 @@ namespace Game
         m_bStreamingSnapTest = false;
         m_StreamingSnapTestX = 0.0f;
         m_StreamingSnapTestZ = 0.0f;
+        m_bGrasslandWither = false;
+        m_GrasslandWitherX = 0.0f;
+        m_GrasslandWitherZ = 0.0f;
+        m_GrasslandWitherRadius = 0.0f;
+        m_bGrasslandWitherRoundtrip = false;
         m_CameraPathCaptureTime = -1.0;
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
@@ -1929,6 +1934,58 @@ namespace Game
                 m_bStreamingSnapTest = true;
                 m_StreamingSnapTestX = x;
                 m_StreamingSnapTestZ = z;
+                continue;
+            }
+            if (TryStripPrefix(args[i], TEXT("--grassland-wither="), sceneValue) ||
+                args[i] == TEXT("--grassland-wither"))
+            {
+                if (m_bGrasslandWither)
+                {
+                    LOG_ERROR("--grassland-wither が重複しています");
+                    return false;
+                }
+                size_t firstComma = 0;
+                while (firstComma < sceneValue.size() && sceneValue[firstComma] != TEXT(','))
+                {
+                    ++firstComma;
+                }
+                size_t secondComma = firstComma < sceneValue.size() ? firstComma + 1 : sceneValue.size();
+                while (secondComma < sceneValue.size() && sceneValue[secondComma] != TEXT(','))
+                {
+                    ++secondComma;
+                }
+                float x = 0.0f;
+                float z = 0.0f;
+                float radius = 0.0f;
+                constexpr float maxValue = std::numeric_limits<float>::max();
+                if (args[i] == TEXT("--grassland-wither") || secondComma == sceneValue.size() ||
+                    !TryParseBoundedFloat(sceneValue.substr(0, firstComma), -maxValue, maxValue, x) ||
+                    !TryParseBoundedFloat(sceneValue.substr(firstComma + 1, secondComma - firstComma - 1), -maxValue, maxValue, z) ||
+                    !TryParseBoundedFloat(sceneValue.substr(secondComma + 1), 0.0f, maxValue, radius) || radius <= 0.0f)
+                {
+                    LOG_ERROR("--grassland-wither は <x>,<z>,<半径> の形で有限の小数を3つ指定し、半径は正にしてください");
+                    return false;
+                }
+                m_bGrasslandWither = true;
+                m_GrasslandWitherX = x;
+                m_GrasslandWitherZ = z;
+                m_GrasslandWitherRadius = radius;
+                continue;
+            }
+            if (args[i] == TEXT("--grassland-wither-roundtrip") ||
+                TryStripPrefix(args[i], TEXT("--grassland-wither-roundtrip="), sceneValue))
+            {
+                if (m_bGrasslandWitherRoundtrip)
+                {
+                    LOG_ERROR("--grassland-wither-roundtrip が重複しています");
+                    return false;
+                }
+                if (args[i] != TEXT("--grassland-wither-roundtrip"))
+                {
+                    LOG_ERROR("--grassland-wither-roundtrip は値を付けずに指定してください");
+                    return false;
+                }
+                m_bGrasslandWitherRoundtrip = true;
                 continue;
             }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
@@ -5613,6 +5670,8 @@ namespace Game
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
              scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
              bSnapTest = m_bStreamingSnapTest, snapTestX = m_StreamingSnapTestX, snapTestZ = m_StreamingSnapTestZ,
+             bWither = m_bGrasslandWither, witherX = m_GrasslandWitherX, witherZ = m_GrasslandWitherZ,
+             witherRadius = m_GrasslandWitherRadius, bWitherRoundtrip = m_bGrasslandWitherRoundtrip,
              viewSwitch = &m_SceneViewSwitch](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<GrasslandMode>();
@@ -5622,6 +5681,11 @@ namespace Game
                 mode->GetData().m_bStreamingSnapTest = bSnapTest;
                 mode->GetData().m_StreamingSnapTestX = snapTestX;
                 mode->GetData().m_StreamingSnapTestZ = snapTestZ;
+                mode->GetData().m_bGrasslandWither = bWither;
+                mode->GetData().m_GrasslandWitherX = witherX;
+                mode->GetData().m_GrasslandWitherZ = witherZ;
+                mode->GetData().m_GrasslandWitherRadius = witherRadius;
+                mode->GetData().m_bGrasslandWitherRoundtrip = bWitherRoundtrip;
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;

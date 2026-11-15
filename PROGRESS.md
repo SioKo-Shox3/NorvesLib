@@ -11259,3 +11259,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: paths の外で 2 ファイルに最小の配線を足した: `ViewRenderContext.h`（パスがパケットの源を読む欄 1 つ）、`Engine.cpp`（毎フレームの `UpdateWorldFieldInteractors()` で Vegetation の源を渡す 1 行）。源は状態なので coordinator の保持はパケットへ写した後も消さない（interactors は毎フレーム空にする）。`DrynessMap::DefaultGpuSourceLimit` は `Rendering::WorldFieldDrynessMaxSources` を指すようにした（値は 64 のまま）。
 - U1 種別ごとの枯れ度の設定を JSON から読み、GPU の種別表へ写す: 着地(直し 0 回)
 - U2 草の場の cook で NVTRN の枯れ草の層を LayerB の A へ写す: 着地(直し 0 回)
+- U3 grassland に枯れ源を置く引数と Serialize → Restore の往復の引数を足す: 着地(直し 0 回)
