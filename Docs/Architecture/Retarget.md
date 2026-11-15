@@ -4,7 +4,7 @@
 
 GR84 の [回転の写し](SkeletalRotationRetarget.md) はロールで対応づけた関節に `W = C D C^T B` を適用する。GR85 では、rest の骨方向に基づく補正 C のねじれをロールごとの上向き方向で決め、脚長の比によるルート並進の拡縮と、誤差・移動距離の報告および上限判定を加える。設定は [SkeletalRoleProfile.md](SkeletalRoleProfile.md) の version 2 に置く。
 
-対象は四足の `quadruped_v1` と人型の `humanoid_v1` である。profile の `foot_planting.enabled` を有効にすると、リターゲット後の足を平らな地面へ再接地し、足滑り・めり込み・IK の失敗コマ数を測って上限を判定する。実在の骨格（Mixamo・Rigify など）のプリセットは置いていない。人型の試験には合成の骨格と歩行を使う。
+対象は四足の `quadruped_v1` と人型の `humanoid_v1` である。profile の `foot_planting.enabled` を有効にすると、リターゲット後の足を平らな地面へ再接地し、足滑り・めり込み・IK の失敗コマ数を測って上限を判定する。実在の骨格（Mixamo・Rigify など）のプリセットは置いていない。
 
 ## ロール表
 

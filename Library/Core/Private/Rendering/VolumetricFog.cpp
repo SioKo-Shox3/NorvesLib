@@ -15,6 +15,10 @@ namespace NorvesLib::Core::Rendering
         constexpr float kMaximumHeightFalloffPerUnit = 1.0f;
         constexpr float kMaximumFogDistanceMeters = 1.0e6f;
         constexpr float kMaximumFogAmbientScale = 16.0f;
+        constexpr float kMaximumFogTint = 16.0f;
+        constexpr float kDefaultFogReferenceElevationDegrees = 10.0f;
+        constexpr float kMaximumFogReferenceElevationDegrees = 90.0f;
+        constexpr double kDegreesToRadians = 3.14159265358979323846 / 180.0;
         constexpr double kMaximumOpticalDepth = 80.0;
 
         float ClampFinite(float value, float minimum, float maximum, float fallback)
@@ -66,7 +70,27 @@ namespace NorvesLib::Core::Rendering
             parameters.AmbientScale,
             kMaximumFogAmbientScale,
             1.0f);
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            result.Tint[channel] = ClampNonNegativeFinite(
+                parameters.Tint[channel],
+                kMaximumFogTint,
+                1.0f);
+        }
+        result.SkyBlend = ClampFinite(parameters.SkyBlend, 0.0f, 1.0f, 0.0f);
+        result.ReferenceElevationDegrees = ClampFinite(
+            parameters.ReferenceElevationDegrees,
+            0.0f,
+            kMaximumFogReferenceElevationDegrees,
+            kDefaultFogReferenceElevationDegrees);
         return result;
+    }
+
+    FogReferenceElevationSinCos ComputeFogReferenceElevationSinCos(const VolumetricFogParameters& parameters)
+    {
+        const double radians = static_cast<double>(
+            SanitizeVolumetricFogParameters(parameters).ReferenceElevationDegrees) * kDegreesToRadians;
+        return {static_cast<float>(std::sin(radians)), static_cast<float>(std::cos(radians))};
     }
 
     float ComputeHeightFogTransmittance(

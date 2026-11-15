@@ -1,4 +1,5 @@
 ﻿#version 450
+#extension GL_GOOGLE_include_directive : require
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 #extension GL_ARB_sparse_texture2 : require
 #endif
@@ -7,6 +8,8 @@ layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec2 fragTexCoord;
 layout(location = 3) in vec4 fragObjectColor;
+
+#include "Common/HeightFog.glsl"
 
 layout(set = 0, binding = 0) uniform MVPData
 {
@@ -36,6 +39,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 skyOcclusionParams;
     ivec4 skyOcclusionWindowOrigin[4];
     vec4 skyOcclusionTexelMeters;
+    HeightFogParams heightFog; // 高さフォグ（C++ の GPUHeightFogParams。offset 912）
 } mvp;
 
 layout(set = 0, binding = 1) uniform sampler2D albedoTexture;
@@ -67,6 +71,8 @@ layout(set = 0, binding = 13) uniform sampler2D dfgLut;
 layout(set = 0, binding = 14) uniform samplerCubeArray pointShadowCubes;
 layout(set = 0, binding = 16) uniform sampler2DArray skyOcclusionVisibility;
 layout(set = 0, binding = 17) uniform sampler2DArray skyOcclusionAux;
+// 空の放射輝度 LUT。無いときは黒の 1×1。
+layout(set = 0, binding = 18) uniform sampler2D heightFogSkyRadiance;
 
 layout(location = 0) out vec4 outColor;
 
@@ -382,5 +388,8 @@ void main()
         outColor = vec4(1.0, 0.0, 0.0, alpha);
         return;
     }
-    outColor = vec4((direct + ambient + emissive) * mvp.sceneColorParams.x, alpha);
+    vec4 litColor = vec4((direct + ambient + emissive) * mvp.sceneColorParams.x, alpha);
+    // 背後の不透明は霧の後の色なので、straight alpha の混合で霧を掛けた色を重ねる。
+    outColor = ApplyHeightFogStraightAlpha(litColor,
+                                         EvaluateHeightFogForward(mvp.heightFog, heightFogSkyRadiance, fragWorldPos));
 }

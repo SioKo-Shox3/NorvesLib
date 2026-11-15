@@ -37,6 +37,7 @@
 #include "Input/GameHapticsSettings.h"
 #include "Input/GameInputActions.h"
 #include "Save/ProgressionSaveBridge.h"
+#include "Save/VegetationSaveBridge.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -4020,6 +4021,10 @@ namespace Game
         snapshot.AppVersion = NorvesLib::Core::GEngine.GetVersion();
         snapshot.SavedAtUnix = static_cast<int64_t>(std::time(nullptr));
         Game::Save::CaptureStateStore(NorvesLib::Core::GEngine.GetGameStateStore(), snapshot);
+        if (auto* engine = NorvesLib::Core::Engine::GEngine)
+        {
+            Game::Save::CaptureDryness(engine->GetVegetation().GetDrynessMap(), snapshot);
+        }
         if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(Module::GetModuleRegistry()))
         {
             if (!Game::Save::CaptureProgression(gameplay->GetProgressionState(), snapshot))
@@ -4042,6 +4047,10 @@ namespace Game
         }
         m_ProgressSaveData = std::move(loaded);
         Game::Save::ApplyToStateStore(m_ProgressSaveData, NorvesLib::Core::GEngine.GetGameStateStore());
+        if (auto* engine = NorvesLib::Core::Engine::GEngine)
+        {
+            Game::Save::ApplyDryness(m_ProgressSaveData, engine->GetVegetation().GetDrynessMap());
+        }
         if (auto* gameplay = NorvesLib::Modules::Gameplay::FindGameplayModule(Module::GetModuleRegistry()))
         {
             if (!Game::Save::ApplyProgression(m_ProgressSaveData, gameplay->GetProgressionState()))

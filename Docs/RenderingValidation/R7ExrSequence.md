@@ -8,4 +8,4 @@
 
 TinyEXRは [v3.2.0 の commit `6f470c9ab24bf3992bc512ce07e8ecb00d9bf105`](https://github.com/syoyo/tinyexr/releases/tag/v3.2.0) の C11 ソースを固定した。MSVC では `/experimental:c11atomics` を指定する。付属の JPH SIMD ソースの `__builtin_clz` 1箇所だけ、MSVC向けに `_BitScanReverse` を使う。TinyEXRの型は Core の公開APIへ出さない。
 
-`PathTracingExrOutputTest` は同一 scene・seed・32 SPP・frame の実GPU PT画像を2回保存してファイル全体の byte 一致を検査する。TinyEXRを呼ばない Python 標準ライブラリの読取器が、EXR header、RGB float channel、data/display window、ZIP block、全画素の有限性と既知の linear RGB 値を検査する。17行の画像で最終blockも確認する。NaN/Inf入力による既存ファイルの上書きも拒否する。OpenCV の OpenEXR decoderでも同じ3×17画像と32×32画像を別途読めることを確認した。scanlineの配置は [OpenEXR File Layout](https://openexr.com/en/latest/OpenEXRFileLayout.html) に従う。
+2026-09-23 の受入れ（`R7CoreAcceptance.md` の初回判定のログ）では、`PathTracingExrOutputTest` で同一 scene・seed・32 SPP・frame の実 GPU PT 画像を2回保存し、ファイル全体の byte 一致を確認した。当日は TinyEXR を呼ばない Python 標準ライブラリの読取器で、EXR header、RGB float channel、data/display window、ZIP block、全画素の有限性と既知の linear RGB 値を確認した。17行の画像で最終 block も確認し、NaN/Inf 入力による既存ファイルの上書きが拒否されることも確かめた。OpenCV の OpenEXR decoderでも同じ3×17画像と32×32画像を別途読めることを確認した。scanlineの配置は [OpenEXR File Layout](https://openexr.com/en/latest/OpenEXRFileLayout.html) に従う。

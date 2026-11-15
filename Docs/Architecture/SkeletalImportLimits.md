@@ -15,7 +15,7 @@
 負値・不正なjoint index・仕様外の重み総和を縮約で正当化しない。
 脱落量/再正規化数と最大・平均を報告し、許容超過では結果を公開しない。
 WarnDroppedWeight=0.01 / FailDroppedWeight=0.25を計画上の初期値としてパラメータ化し、
-境界条件は実装時の試験で固定する。CUBICSPLINEの並進/回転/scale誤差も別パラメータとする。
+CUBICSPLINEの並進/回転/scale誤差も別パラメータとする。
 
 実装順: Strict追加セット検出 → options/reportと縮約kernel → decode/cook接続 → morph drop → cubic焼込。
 関節256化はNVSKEL v1の形式とloader変更まで行わない。未実装のoptionは受け付けない。
@@ -29,9 +29,6 @@ JOINTS_n / WEIGHTS_nのn>=1は、片方だけ・値がnull・追加重みが全�
 
 実decodeとcook前fingerprintが同じStrict gateを使う。古いcooked cacheのsource hashが一致しても、
 追加セット入力を新Strict経路がskipで受理することはない。NVSKEL形式・64B頂点・関節128上限は変更しない。
-
-属性名分類の実コードは通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行する。
-Json bridge/decode/legacy/cooker/preflightとCLI出力保持の回帰はnative束へ登録し、Windows.h制約で未実行として区別する。
 
 ## 上位4本縮約kernel（decode未接続）
 
@@ -68,8 +65,7 @@ canonicalはSRED(4byte)、schema=1(u32LE)、policy=1(u8)、warn/fail(binary64LE�
 struct paddingや文字列表現を使わず、-0を+0へ統一する。algorithm初期値は1で、縮約処理の意味を変えるときに更新する。
 警告閾値の変更もhashに含み、同じ入力の別policyを旧cacheと混同しない。
 
-固定bytesと独立3初期stateのFNV既知値、Strict不変、閾値/algorithm差、invalid enum/数値、ゼロの正規化を
-通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。cook/preflightのhashとdecode入口は下記の明示指定に対応する。CLI指定は下記を参照。
+cook/preflightのhashとdecode入口は下記の明示指定に対応する。CLI指定は下記を参照。
 
 ## 複数セット記述の収集
 
@@ -80,8 +76,6 @@ set番号/joint→weight順へ正準化する。0始まり連続・各setのjoin
 
 ここではaccessorの存在/型/count/bufferやweight数値は検査しない。decode側がそれらを検査する。
 既定Strictは引き続き専用gateで追加セット自体を拒否し、このcollectorを使って受理へ緩めない。
-正準pair検査と既存属性名分類を通常/O2-NDEBUG/ASan・UBSanで実行し、JsonDocument経由の収集/失敗保持試験は
-native束へ登録する。実JSON試験はWindows.h依存で未実行として区別する。
 
 ## 明示Reduceのdecode入口
 
@@ -98,10 +92,7 @@ statusは既存0〜15を保ち、InvalidImportOptions=16、InfluenceReductionExc
 bInfluenceScanCompleteは影響走査の完了だけを表し、後段のindex/骨格/clip/import失敗とは別である。
 Strictのreportは既定値。失敗Dataは空、source buffer出力も空のままで、部分decode結果を公開しない。
 
-FiveInfluences.gltfは3頂点中1頂点だけ5本の影響を持つ検証用fixtureで、binはnative試験が生成する。
-raw/GLB/String/fileの同値、5→4の値と測定、閾値超過、追加slotの不正joint/ゼロweight/負値、
-UNORM16のraw総和1不足とoptions不正をnative試験へ登録する。LinuxではCoreのWindows.h依存により
-この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。CLIは既定Strict、明示Reduceを下記で指定する。
+CLIは既定Strict、明示Reduceを下記で指定する。
 
 ## 骨格cookと事前hash照合
 
@@ -116,10 +107,7 @@ preflightはStrict追加set拒否を維持し、Reduceなら連続pair記述を�
 よってpreflight成功はcook成功を意味せず、閾値超過や不正weightは本cookで拒否する。
 静的meshのfingerprintへdecodeOptionsを指定した場合は、既定値でも指定自体を拒否する。
 
-native回帰にraw/GLBのcook/preflight hash一致、cooked再読込値、warn/failのhash差、
-sidecarとの連結順、Strict明示値と省略値の旧hash一致、失敗out保持と診断を登録する。
-decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久回帰へ加える。
-これらの統合試験はWindows.h依存で未実行。CLI flag/skipは下記のpolicyを同一経路へ渡す。
+CLI flag/skipは下記のpolicyを同一経路へ渡す。
 
 ## AssetCookの明示縮約指定
 
@@ -133,10 +121,6 @@ decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久
 閾値変更時のcache誤使用を防ぐ。cache hitは縮約を再実行せず既存のskip通知を返す。
 実際にcookしたReduce資産はstderrへ処理頂点数/縮約/合算/再正規化/警告数と最大/平均脱落比率を出し、
 警告閾値超過を明示する。共有JSON ImportReportへの格納は下記のversion 1を用いる。
-
-pure parserを通常/O2-NDEBUG/ASan・UBSanとMEMBERで検査する。native CLI smokeには5影響fixture、
-既定拒否/縮約成功/閾値超過と出力保持/同policy cache hit/閾値変更cache missを登録する。
-Main/native CLI smokeはWindows.h・PowerShell/CMake依存によりこのLinux環境では未実行。
 
 ## ImportReport JSON version 1
 
@@ -159,9 +143,6 @@ Reduceの測定はprocessed prefixの最大/平均と失敗頂点脱落量を分
 
 CUBICSPLINEは後述のskin拡張へ追加し、morphは後述のDrop拡張へ追加する。GR84のBVH/retarget測定はまだ存在せず、
 将来はこの版付きenvelopeへ別セクションを足す。BVH受理やretargetの実装済みを意味しない。
-pure serializerの3mode/MEMBERとPython独立JSON解析で構文/数値/状態を検査する。
-native回帰には成功/閾値失敗/古い診断の消去・CLI JSON/警告有無/cache未測定を登録し、
-CoreとMainのWindows.h依存のため未実行として区別する。
 
 ## CUBICSPLINE policy/hash定義
 
@@ -203,11 +184,7 @@ Translation/Rotation/Scaleごとの焼込channel数も分け、未処理の種�
 1channel途中の未認証キー列を公開しない。失敗Data/sourceは空で、cook resultは以前の成功値を保持する。
 channel/asset双方のsample予算を割当前に適用し、全clipに含まれるCubic出力の合計を制限する。
 
-CubicChannels.gltfはTranslation/Rotation/Scaleの正しいtripletを持つfixture（binaryはnative試験で生成）。
-raw/legacy/file/GLB/cook再parse、明示Bakeでも通常LINEAR/STEP不変、設定scale/fitで二重scaleなし、
-既定拒否・channel/asset予算・内部zero回転・非有限tangent・triplet count不正とprefix診断をnativeへ登録する。
-独立Hermite式と実共有sampler helperでbaked channel値も確認する試験だが、Core/decoder/cookの実行は
-Windows.h依存によりこの環境では未確認。純baker/policyの実行とは区別する。CLI引数とJSONのCubic項目は下記で接続する。
+CLI引数とJSONのCubic項目は下記で接続する。
 
 ## CUBICSPLINEのCLI・JSON診断
 
@@ -238,9 +215,6 @@ ImportReport version 1はBake時だけskin内へ以下を追加する。Reject�
 failure_statusは0=成功以外を報告する。1入力不正/2設定不正/3算術未対応/4容量不足/5領域重複/6短区間/
 7時刻衝突/8深さ超過/9sample予算超過/10保存値表現不可/11quaternion不正/12数値予算不足/13認証不能。
 Bakeを指定しても通常補間だけならbaked_channels=0、各誤差=nullで、変換警告も出ない。
-
-純parser/JSON検査とnative CLI smokeを分ける。後者はglTFの3種Cubic、既定拒否・予算超過・出力保持、
-同設定cache hit・設定差cache miss、JSON単位と未測定nullを登録。Windows.h/PowerShell/CMakeが必要な統合実行は未確認。
 
 ## morph Dropのpolicy/hash定義
 
@@ -281,10 +255,6 @@ Morphの数量は全除去対象を検証できた時だけbMorphScanCompleteと
 その後のTRS/geometry等で失敗した場合も、この検証済み数量とasset全体の失敗を区別する。
 Bake併用時のtotal/processed animation channelsは元のchannel順を数え、除去済みweight channelも処理済みに含む。
 
-native回帰にはraw/legacy/file/GLB/cook再parseの同値、base/TRS不変、3種類target、Cubic weight除去、
-縮約/Bake併用、数量、cache Strict gate、12種の不正metadata/重複/sparse/非有限/時刻と失敗出力保持を登録する。
-JsonDocument/decoder/cookはWindows.h依存のためこのLinux環境で実行できず、登録と静的確認に留まる。
-
 既知の検証限界: POSITION boundsのfloat32範囲/実値との一致とweight入力accessorのmin/maxまでは検査しない。
 Morph metadata/weight animationの不正は現状InvalidAccessorへまとめるため、原因分類は粗い。
 
@@ -302,9 +272,6 @@ morph検査後にTRS等の別段階で失敗しても、検査済み数量はout
 Reject時の既存JSONは不変。Reduce/Bake/Dropは同じskinにそれぞれの単位と診断を持つ。
 現profileは1mesh/1〜8primitive/1mesh-node。初期weight数は0またはmesh-level target幅、weight channelは各clipで0または1、全clip合計はu32以内として検査する。
 
-純parser/JSON試験とは別にnative smokeへ、明示成功/既定拒否/不正入力で出力保持、設定同値cache hit/差分miss、
-除去警告と未測定null/実測0件を登録する。native unitはLINEAR/STEP weight、複数target、weightだけのclip拒否、
-morph検査後のTRS失敗の数量保持も補強する。Windows.h/CMake/PowerShellに依存する実行は未確認。
 
 GR32のNprimitive decode接続以降、morph_scanへmesh_target_widthを追加する。
 dropped_targetsは対象を持つ全primitiveのtarget配列数の合計であり、mesh_target_widthとは異なる。
@@ -320,7 +287,6 @@ Cubicのtotal/processed/failed_channelは全clipのchannelを配列順に連結�
 Morphのgeometry/初期weightは1回検証し、weight animationは全clipを検査して合計する。途中失敗時はmorph_scan未確定のままにし、root target数をclip数倍にしない。
 scale/fitはgeometryとclip translationへ各1回だけ適用する。失敗Dataとsource bufferは公開せず、cookの呼び出し側結果は保持する。
 JSON report v1のanimation_channelsは全clipの合計へ広がる。既存の単一clipの値・キー・canonical設定/hashは変えない。
-純report検証3mode/各19JSONは実行。3clipのraw/GLB・cook/parse・失敗prefix・Cubic全体予算・Morph集計・scale回帰をnativeへ登録するがWindows依存で未実行。
 M9の複数clip拒否はGR83まで維持する。
 
 ## Stage Aのclip Resource束
@@ -332,7 +298,6 @@ GetClipCountは格納エントリ数。GetClip(index)は範囲外で空、GetCli
 空名・不在・重複は名前引きで空を返し、自動改名しない。空/重複名のclip自体はindexで取得できる。
 子資産の内容を新たに検証するのではなく、従来どおりmesh/skeleton/全clipのLoaded/Valid状態で束の成否を決める。
 空配列/null/未load子はFailed。Unloadは全強参照を外す。GetMemorySizeは保持した配列capacityを含め、子資産本体を二重計上しない。
-実ResourceRegistryの複数保持/名前/単数互換/子状態/GC/メモリ計上をMEMBER+CTestへ登録。Windows依存でnative未実行。
 
 ## 分離v1の256関節（GR86）
 
@@ -349,4 +314,3 @@ NVSKEL v1 の profile2/3（`StaticRootFrame128`・`StaticRootFrame256`）では�
 Blender の書き出し（`io_scene_gltf2`）は `skeleton` を書かず、根の bone と skinned mesh を非関節の `Armature` node の下に置く。このため Blender の資産は旧経路では拒否され、AssetCook の失敗の文に `--rig-split` への案内が出る。Blender の資産は `--rig-split`（NVSKEL v1）で cook する。
 
 形を写した fixture は `Assets/Models/M9Skinned/NoSkeletonHint.gltf`（Armature 無し。旧経路と v1 の両方で受ける）と `Assets/Models/M9Skinned/BlenderArmature.gltf`（Armature の親。旧経路は拒否、profile3 は受ける）。中身は同じディレクトリの `README.md` を参照。
-実物の書き出しは `Test/Tools/BlenderExportMinimalRig.py` を Blender の中で `--background --python` で走らせて作れる。

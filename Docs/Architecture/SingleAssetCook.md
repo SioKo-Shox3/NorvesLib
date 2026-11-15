@@ -1,6 +1,6 @@
 # 単体cookサービスとCLI境界（G2-S6）
 
-分割前の実Windows基準はDocs/AssetCookCliFrozenBaseline.jsonに固定する。Mainはargv/help/inspect/終了コードの外殻を持ち、CookSingleAssetがraw/texture/model/skeletal/audioの既存cook・出力検証・manifest/cache処理を呼ぶ。AssetCookOutputは従来のpackage/manifest/IOを持つ。
+Mainはargv/help/inspect/終了コードの外殻を持ち、CookSingleAssetがraw/texture/model/skeletal/audioの既存cook・出力検証・manifest/cache処理を呼ぶ。AssetCookOutputは従来のpackage/manifest/IOを持つ。
 
 ## 型の境界
 
@@ -18,12 +18,8 @@
 - sidecar保護・alias検査・書込前後validation・診断streamを維持する
 - --asset-set、一括manifest serialization、新しい増分判定は別工程
 
-## 実検証
+## 診断とmetadata
 
-固定run37200047966/artifact11302304928を取得し、receiptのsnapshot/2exe hashを必須照合する。既存比較器が79payloadの一覧/size/hashと、Windows checkoutのrecipeを確認する。新しい実7smokeの後、同じdriverで全package/manifestをbyte比較する。driver・smoke・fixtureは変更しない。
-
-比較失敗もjob失敗にする。7smoke採取が成功したcandidateは、比較結果（success/failure）をartifact名へ含め14日保存する。failureのcandidateは診断用であり、採用基準に昇格させない。固定基準の取得不可/期限切れをskipで通さない。Main分割後の実比較成功まではtaskをdoingに保つ。
-
-旧Mainの日本語診断5件は、BOM追加でMSVCの文字集合変換が変わらないよう既存UTF-8 byteをASCII escapeで固定する。新旧exe内の同じ終端付きliteralを照合し、診断文字列の消失・置換もCIで拒否する。共有metadata構造体はprivate headerに完全定義を置く。
+旧Mainの日本語診断5件は、BOM追加でMSVCの文字集合変換が変わらないよう既存UTF-8 byteをASCII escapeで固定する。共有metadata構造体はprivate headerに完全定義を置く。
 
 2026-10-04受入: commit e8ac121ce8d2e9b92a5469ec321adb00b8a92ff3 / run37203280358で実Windows Release build、11CPU、7CLI、79生成物の全byte一致と診断5literal一致を確認した。candidate artifact11304570033のZIP SHA256は6c3e6c53e058c4c50c6a9dda4d4319d54730a2fb3912322789e9cab6974443a3。--asset-setと増分依存はこの受入に含まない。

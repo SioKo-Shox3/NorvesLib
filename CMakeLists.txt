@@ -5,8 +5,6 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-enable_testing()
-
 # Windows環境でのmin/maxマクロを無効化
 if(WIN32)
     add_definitions(-DNOMINMAX)
@@ -31,10 +29,3 @@ endif()
 
 # Gameアプリケーション
 add_subdirectory(Game)
-
-# テスト。既定ではビルドしない（エンジンとゲームだけ）。テストを回すときは -DNORVES_BUILD_TESTS=ON で構成する。
-# 段の分け方と回し方は Docs/Testing.md。
-option(NORVES_BUILD_TESTS "Build the test executables and register the CTest tests" OFF)
-if(NORVES_BUILD_TESTS)
-    add_subdirectory(Test)
-endif()

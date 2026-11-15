@@ -32,11 +32,6 @@
 | ファイル | 内容 | SHA-256 |
 |---|---|---|
 | `Assets/ColorManagement/Aces20SdrRec709.lut3d` | 32 byteの見出し（`NLUT3D01`、size、channels、format=1、予約、shaperOffset、shaperMax）＋LUT本体 | `616DC53D5E23CDC146E989AE468C2844891F7440476228443D95EB2A81325F24` |
-| `Test/Core/Rendering/Baselines/RenderingValidation/R8AcesChart.rgba16f` | HDR試験チャート（`NRGBA16F`、256×240、scene-linear、half） | `54D5E5510095B0275909F32DCD1CF99B47CA3771862580A89114B714A471E1EF` |
-| `Test/Core/Rendering/Baselines/RenderingValidation/R8AcesReference.rgba32f` | チャートのOCIO厳密変換（`NRGBA32F`、display-linear、float32） | `E87179F2D22BA48E3031CB93C119E8821D8F569D50C6810C00AEB9B89970E2A0` |
-| `Test/Core/Rendering/Baselines/RenderingValidation/R8AcesReference.png` | 基準画像の確認用プレビュー（sRGB 8 bit） | `E01A199CE5F9DFF77032A636F55184F2BB218FADE3185B580AF563C2728897CF` |
-
-画像の見出しは magic(8)・width(u32)・height(u32) で、上の行からRGBAを並べる（すべてlittle-endian）。
 
 ## 試験チャート
 

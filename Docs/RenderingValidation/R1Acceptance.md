@@ -18,10 +18,6 @@ R1 baseline candidate Indoor=C3FBC0EAC010F80FD75D4B1D17FFAE5A9FE2FA51E71ACEE480A
 R1 baseline candidate Indoor=9203FB88ED51B25777131585F9D502BFE5EB3B43A3528BF6E0D745E223686E8F Outdoor=DCBA9DA2D481F813A7FD53BBCBA6D569147ECF44857CAF76989ABDA603E1B23F CodeHead=2a687351599354ee0b1163166b673dffa43cc351 を承認する。
 R1 baseline candidate Indoor=310A6DEED940CA3E42C3A6729B1856DFDA6A3718B2D87CC79B4FC71237C226C1 Outdoor=95FFE2DC8674DD025A4FD635C86089AA0239286749257A62C27440EFE21888F8 CodeHead=19118ef1998eff9a1547ce27da201d6b9a2b01ac を承認する。
 
-## P6b plan and procedure approval
-P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
-R1 P6b条件付き実装計画 task-6b-conditional-implementation-plan-v3.md（SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3）と、RunRenderingValidation.ps1を変更せずRenderingGoldenImageTest.exeを--capture-source=back-buffer付きでIndoor/Outdoor各10回、indoor1→outdoor1からindoor10→outdoor10の順に直接実行するGate D procedure substitutionを承認します。
-
 ## Phase provenance
 - R1 base: `052a7dcbcedfd21764b7b9c0c5151d5108b51343`
 - P1: `c67dfde1f95fe3c2a4d8924533a181b01ec03b7a` — Camera露出と物理ライト単位をScene v2へ接続する
@@ -76,14 +72,14 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 ## R2 CSM後のOutdoor再承認
 - 2026-09-23、ユーザーはR2の4カスケードCSM導入後のOutdoor出力（SHA256=`9933B55851574870C9AC8586B6C0F38FDFFB5E26B925547C37E92ECFBAF3B954`）を新しいOutdoor baselineとして承認した。上の3行目の承認行は置換前の履歴として残す。
 - 差分の範囲: 旧baselineとの比較は平均FLIP `0.002326954`、最大FLIP `0.529430032`、459画素で、差は球の自己影の境界と接地影の輪郭に限られる。地面・空・非影領域は一致する。R2-P5で単一directional shadow matrixを4層CSMへ置き換えた意図した変化であり、CSMの境界欠落・二重化・シミー抑制はR2受入れ（`R2Acceptance.md`）で別に検証済みである。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead a41190e716ff98b3d4f52344996ff50e258086ff`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立した2回のstaging captureと同じ`9933B558…F3B954`である。
+- 候補の記録: 屋内は既存画像 `3845F867…D9D4EF` と一致し、屋外は独立した 2 回の撮影と同じ `9933B558…F3B954` だった。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## 低い太陽の影の修正後のOutdoor再承認
 - 2026-09-25、ユーザーは方向光の影の修正（`fdbc5dc`）後のOutdoor出力（SHA256=`5F62BB87A2AAB054E8CFEF17A0B2AD5A50491459D99780B3DF60972F54634240`）を新しいOutdoor baselineとして承認した。上の「R2 CSM後のOutdoor再承認」の承認行は置換前の履歴として残す。
 - 修正の内容: 影の深度の比較に受け側の面の傾き（receiver plane depth bias）を入れ、方向光の半影の幅を遮蔽物と受け側の深度差×tan(太陽の角半径)から求める。空の太陽の方向光で朝夕を描いたとき、平らな地面が自分自身を遮蔽物と数えて約3割暗くなり、長い影が消えていた（R7-O3のラスタ対PT比較で発見）。
 - 差分の範囲: 旧baselineとの差は449画素（raw差2超は367画素、最大raw差202）で、球の自己影の境界と接地影の輪郭に限られる。影が鋭くなり、PTの太陽の半影に近づく。地面・空・非影領域は一致する。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 6d7628f3da885c09de8be7a5b2e384672fd392f4`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立したstaging captureと同じ`5F62BB87…634240`である。
+- 候補の記録: 屋内は既存画像 `3845F867…D9D4EF` と一致し、屋外は独立した撮影と同じ `5F62BB87…634240` だった。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## 影の深度比較の余裕と直接光のAOの修正後のOutdoor再承認
@@ -91,15 +87,15 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 修正の内容（1）: 影の深度比較の余裕の一定分を、正規化深度の0.005から影の地図の1.5 texel分の世界の長さへ換える（`d3f254a`）。深度範囲の広いカスケードで影が遮蔽物から離れて始まっていた。単独の差は球の接地部の影の縁の69画素。
 - 修正の内容（2）: 直接光のマイクロシャドウ近似に画面空間AOを掛けず、材質のAOだけを掛ける（`49116c3`）。直接光の遮蔽は影が解くため、画面空間AOを掛けると日向の地面に縞が出て接地部が暗くなりすぎていた（R7-O3のラスタ対PT比較で発見）。
 - 差分の範囲: 旧baselineとの差は33101画素（raw差2超は7383画素、最大raw差89）。日向の地面が画面空間AOの縞のない一様な明るさになり、球の周りの地面の暗さが弱まる。影の縁の差は（1）による。Indoorは変わらない。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 49116c3975d179db49e9f69a4b6b0b8f45e8486f`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立したstaging capture、およびユーザーに提示した比較画像の候補と同じ`2988A805…275FD4`である。
+- 候補の記録: 屋内は既存画像 `3845F867…D9D4EF` と一致し、屋外は独立した撮影および提示した比較画像の候補と同じ `2988A805…275FD4` だった。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## GTAOへの置き換え後のOutdoor再承認
 - 2026-10-02、上の承認行のOutdoor出力（SHA256=`F6ABAD4BEB4DD778BF9F55FFEB1665ACA20FB3764584112A89DECF45CDBEDB5F`）を新しいOutdoor baselineとして承認した。承認はTASKS.mdの基準画像の再承認の扱い（差がその変更だけによるときは任される）による。
 - 修正の内容: 旧SSAOはワールド空間の法線をビュー空間の標本へそのまま使っており、カメラの向きによって開けた面も遮蔽として数えていた（Cornellの部屋の壁でほぼ全遮蔽）。GTAOはビュー空間の法線と地平線の角度から余弦重みの可視率を解析的に求め、半径1 mの外の面を遮蔽に数えないので、開けた地面の可視率は1に近づく。
 - 差分の範囲: 旧baselineとの差は151画素、最大raw差1、平均FLIP `0.000252279`。差は球の周りと地面に散らばった1 LSBの丸めの違いで、145画素が明るい側（遮蔽が弱まった側）。形・影の輪郭は変わらない。Indoorは正射影で平らな面だけなので可視率1のまま一致する。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead ea1318e979edc603d93086e15d6080ef7ab81113`。Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致する。
-- 部屋の大きさの確認: `RenderingGTAOCornellRoomVulkanTest`（Cornellの部屋をAOの表示で撮る）で、奥・左右の壁・天井・手前の床の中ほどの可視率が0.97〜1.00、壁の境目と箱の接地部が0.77〜0.81。
+- 候補の記録: 屋内は既存画像 `D0D34A5F…5E05E7` と一致した。
+- 部屋の大きさの確認: Cornell の部屋を AO の表示で撮った結果、奥・左右の壁・天井・手前の床の中ほどの可視率は 0.97〜1.00、壁の境目と箱の接地部は 0.77〜0.81 だった。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## 接触影の追加後のOutdoor再承認
@@ -107,7 +103,7 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 修正の内容: 影を掛ける方向光とキューブシャドウを持つ点光源へ、画面空間の接触影（`LightingPassSettings::ContactShadowLength`、既定0.3 m、12段）を掛ける。段の点が深度の面より奥（厚さの下限0.3 m）で、かつその画素の位置と法線の平面の内側（半画素の余裕）にあるときだけ遮りとし、CSMの結果へ掛ける。検証表示（245〜255）では掛けない。
 - 差分の範囲: 旧baselineとの差は4画素で、橙の球の影の縁の1列だけ。(112,152)が暗くなり、上下の2画素はFXAAの結果が変わって少し明るくなった。平均輝度124.404→124.402。Indoorは一致する。
 - 物理的な妥当性: 場面の配置（seed `0x4E525630`の5つの球、地面y=-1、太陽の方向(-0.4,-1,-0.25)、カメラ(7,5,9)→原点・縦60°）から各画素の地面の点が太陽から遮られるかを解析的に求めた。(112,152)の画素は4×4の部分画素の50%が真の影の中にあり、旧baselineは日向の明るさだった。画素中心の点からの光線は球の3 mm外を通るので、画素中心の判定では境目にあたる。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 0af69587869dbe67c7656e1ccd4779aa815d84b5`を2回走らせ、Outdoor候補はどちらも`760DAEF7…064A92`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
+- 候補の記録: 2 回の撮影で屋外はどちらも `760DAEF7…064A92`、屋内は既存画像 `D0D34A5F…5E05E7` と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## SSRの粗さのフェードと法線の読み方の修正後のOutdoor再承認
@@ -115,7 +111,7 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 修正の内容: SSRを粗さのしきい値0.5で打ち切る代わりに、粗さ0.3〜0.7の間でsmoothstepで0へ弱める（`SSRSettings::RoughnessFadeStart`・`RoughnessFadeEnd`）。斜めのフレネルの上限を粗さで下げる（`max(1 - roughness, F0)`）。GBufferの法線は符号付きのワールド法線（RGBA16F）をそのまま持つのに、SSRだけが`*2-1`で戻していたため、反射の向きが誤っていたのを直した（Lightingと同じ読み方）。当たった面が光線の方を向いていないヒットと、画面上で1画素も進まないヒットを棄却する（凸な面の輪郭で自分の隣の画素に当たる誤り）。
 - 差分の範囲: 検証シーンの粗さは`R1ScalarHalf`の128/255（0.502）で、旧しきい値0.5をわずかに超えてSSRが掛からなかった。新しいフェードでは約0.49の重みで掛かる。旧baselineとの差は282画素（8/255超は60）で、すべて球の陰になった下半分と輪郭に集まり、日の当たる緑の地面を映して明るくなった（最大差は(206,139)の(0,0,0)→(95,123,61)）。平均輝度124.402→124.424。Indoorは一致する。
 - 物理的な妥当性: 粗さ0.5の光沢のある球の下半分は、法線が地面を向くため反射方向が明るい地面に当たり、斜めの輪郭ほどフレネルで強く映る。差の色は地面の緑みの色で、球自身の色（棄却する前の候補では黄色の球の下に黄色が出た自己ヒット）ではない。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead a2811db8ff6e47fafc2ebae9a252507871135cd5`を2回走らせ、Outdoor候補はどちらも`369C71AB…5D0217`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
+- 候補の記録: 2 回の撮影で屋外はどちらも `369C71AB…5D0217`、屋内は既存画像 `D0D34A5F…5E05E7` と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## SSRを環境光の鏡面反射の置き換えにした後のOutdoor再承認
@@ -123,15 +119,15 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 修正の内容（`1129bfd`・`06fb327`）: SSRは当たった画素で照明済みの色を `mix(scene, L_hit, alpha)`（alphaは斜めで粗さから決めた上限 `1 - roughness` まで上がる）で置き換えていた。LightingPassが環境光の鏡面反射として足した値と、その反射率（split-sumのDFGに多重散乱の補償と鏡面の遮蔽を掛けたもの）を出力し、SSRは `scene + a・(反射率・L_hit − 足した値)` で環境光の鏡面反射だけを置き換える。SSRはLightingPassの直後（フォグ・半透明の前）へ移し、減衰していない照明の色の上で置き換える。
 - 差分の範囲: 旧baselineとの差は266画素（8/255超は35）で、すべて球の輪郭と接地部の陰（x 81〜211、y 123〜172）に集まる。明るくなった画素132、暗くなった画素119で、平均輝度は129.395→129.382。最大差は緑の球の下の陰の輪郭(153,136)の(54,83,21)→(0,2,0)。SSRをフォグの前へ移す前の候補（`1129bfd`の出力）との差は5画素・最大2/255。Indoorは一致する。
 - 物理的な妥当性: 粗さ0.5の誘電体の球の陰の下半分では、映り込みの強さは環境光の鏡面反射と同じDFGの反射率（輪郭の斜めでも数割に届かない）と、接地部で強くなる鏡面の遮蔽で決まる。旧式は粗さだけで決めた上限まで地面の色を混ぜていたため、接地部の陰の輪郭に地面の緑が強く出ていた。差の画素の平均の色は旧(189.6,175.1,143.8)→新(187.3,171.7,141.7)で、色相は変わらない。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 06fb327cee94cdf7478810beae34e5e37b89dcaa`を2回走らせ、Outdoor候補はどちらも`33B8B94C…FEAC91`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
+- 候補の記録: 2 回の撮影で屋外はどちらも `33B8B94C…FEAC91`、屋内は既存画像 `D0D34A5F…5E05E7` と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## NVIDIA ドライバ 610.88 への更新後のOutdoor再承認
 - 2026-10-06、上の承認行のOutdoor出力（SHA256=`18A44AE8E1408EF8EF0F13FFB1009750F748FB591349AACCEEEFC06EA4B5B857`）を新しいOutdoor baselineとして承認した。承認はVTG6-VT-LOD-UNIFORMの完了条件（ドライバの更新による差の再承認）による。
-- 原因: 2026-10-06 0:17にWindows UpdateがNVIDIAのドライバを591.86（32.0.15.9186）から610.88（32.0.16.1088）へ入れ替えた。その後、`RenderingGoldenOutdoorVulkanTest`だけが`mean_flip=0.000001823`（上限`0.000001`）・差のある画素1・raw最大差1で落ちた。前日（2026-10-05 19:02）までは通っていた。
+- 原因: 2026-10-06 0:17にWindows UpdateがNVIDIAのドライバを591.86（32.0.15.9186）から610.88（32.0.16.1088）へ入れ替えた。その後、屋外の画像比較だけが`mean_flip=0.000001823`（上限`0.000001`）・差のある画素1・raw最大差1で落ちた。前日（2026-10-05 19:02）までは通っていた。
 - 切り分け: VT のLODの問い合わせを移す変更の前（`def594d5`）のシェーダーに戻しても、同じ画素（193,197）・同じ`mean_flip=0.000001823`で落ちる。この変更は差を生まない。Indoorは変更前後で一致する。
 - 差分の範囲: 旧baselineとの差は1画素（193,197）のRチャンネル223→222（最大差1/255、8/255超は0）。平均輝度は124.413のまま変わらない。ドライバのシェーダーコンパイルによる丸めの違いで、描画の意図は変わらない。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 6d3283227a4bef802a9d5a1cf8aa58b247e846b7`を2回走らせ、Outdoor候補はどちらも`18A44AE8…B5B857`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
+- 候補の記録: 2 回の撮影で屋外はどちらも `18A44AE8…B5B857`、屋内は既存画像 `D0D34A5F…5E05E7` と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## ビジビリティバッファを既定にした後のOutdoor再承認
@@ -140,7 +136,7 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 切り分け: `--visibility-buffer=off`を渡すと、旧baselineと完全に一致する（`mean_flip=0.000000000`・raw最大差0）。Indoorはonでも一致する（offの確認は、onとdebugの側だけを編集した途中のビルドで走らせた。offの経路のコードは承認したコードと同じ）。差の原因はonの経路だけで、他の変更は混ざっていない。
 - 差分の範囲: 旧baselineとの差は57画素で、最大差は3/255の1画素で、残り56画素は1/255。x 98〜206・y 126〜158に収まり、球の周りだけ（57画素のうち53が物体の縁。箱のx 18〜94には無い）。符号付きの差の総和はR -8・G -4・B -2、平均輝度は129.3822→129.3821で変わらない。
 - 物理的な妥当性: 差は球の縁の画素に限られる。原因は、微分を有限差分から解析的な値へ替えた分（物体の縁でクアッドの隣の画素が別の面の値になる影響がなくなる）か、深度の比較の違い（IDのラスタはLessOrEqual、GBufferの描画はLess）による縁の画素の勝ち方の違いと推定する（どちらかは確かめていない）。解析的な微分が正しい値で、明るさの総和が変わらず最大差が3/255なので、色相・露出には影響しない。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead f4c5266983dcc985b05caed4a26012ff3635a48f`を2回走らせ、どちらも成功した。候補はOutdoor `052BA219…713268`、Indoorは既存baseline `D0D34A5F…5E05E7`と一致した。
+- 候補の記録: 2 回とも生成に成功した。屋外は `052BA219…713268`、屋内は既存画像 `D0D34A5F…5E05E7` と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## 直接光の鏡面の遮蔽項と視線行列の作り方の直し後のIndoor・Outdoor再承認
@@ -152,7 +148,7 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 差分の範囲: Indoorは11画素（raw最大1、x 20〜53・y 112〜147）、平均輝度9.6853→9.6854。Outdoorは16152画素（raw最大10、2/255以上は2544画素、y 88〜255）、平均輝度129.3821→129.5437。Outdoorの差は鏡面だけで見える黒いR1の板が最大10段明るくなる分と、地面の1〜2段の等高線、球の際である。符号付きの差の総和はR +11232・G +9358・B +20905で、どの成分も明るくなる向きだけである。旧baseline｜候補｜差×20を並べて開き、形・位置・色相の変化が無いことを確かめた。
 - 物理的な妥当性: 高さ相関のSmith GGXは1/(1+Λv+Λl)で、分けて掛けるG1·G1の1/((1+Λv)(1+Λl))より常に大きいか等しい（ΛvΛl≥0）。差がすべて鏡面が強まる向きなのはこの式どおりで、Cyclesの式に一致させる直しである。荒野のCyclesとの比較では、日なたの地面のエンジン÷Cyclesがref_ground_01で0.952→0.973、ref_cliff_02で0.858→0.925と1へ近づいた（SCN-WL-MATERIAL-AO-SHADING）。
 - 予備の経路（`--visibility-buffer=off`）: `IndoorGBufferFallback.png`は新しい`Indoor.png`と同じ（SHA256=`C3FBC0EA…78D8D7`）。`OutdoorGBufferFallback.png`は`4C8653857B499ADDFB2F503D4241C55FDB2364E7A9A9341285911BF47B172129`へ置き換えた。旧baselineとの差は既定の経路と同じ16152画素（raw最大10）、新しい`Outdoor.png`との差は球の縁の50画素（raw最大3）で、ビジビリティバッファを既定にしたときのonとoffの差（57画素・raw最大3）と同じ形である。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 9848f86eed0a65891e773ea456dc38f00e130e51`を走らせ、候補はIndoor `C3FBC0EA…78D8D7`・Outdoor `7C7405EF…8C8CA6`。描画のコードが同じ`deccd8bc`での別の撮影と差0で、撮影は決定的である。
+- 候補の記録: 屋内 `C3FBC0EA…78D8D7`・屋外 `7C7405EF…8C8CA6`。描画のコードが同じ `deccd8bc` の別の撮影と差 0 で、撮影は決定的だった。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## 表示の8 bitの丸めのディザと深度からの位置の復元の直し後のIndoor・Outdoor再承認
@@ -160,11 +156,11 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 差の原因は2つで、どちらも意図した描画の変更である。
   1. 表示のBlitで8 bitへ丸める前に、sRGBの符号化値へ画素の位置だけで決まる±0.5段の一様な雑音を足すようにした（`c12ee89b`、`blit.frag`）。雲や空の緩い階調が1段ずつの平らな帯になって等高線のように並ぶのを消す変更で、雑音はフレームで変えないので撮影は決定的なままである。IndoorとOutdoorのほぼすべての差はこの分である。
   2. 照明とVSMの印付けで深度から位置を復元する式を、カメラ基準の向きと深度から求めた前方への距離にした（`585d1fe4`、`CameraViewConstants`・`LightingPass`・`lighting.frag`・`vsm_mark.comp`）。数式では同じ位置で、丸めの境目の画素の影の判定が動く。Outdoorだけに効く。
-- 切り分け: `blit.frag`だけを`c12ee89b^`の版にした撮影は、Indoorが旧baselineと差0、Outdoorは6画素（raw最大4）だけ残る。シェーダーをすべて`2ae72946`の版にしても同じ6画素が残る（Library側の差）。さらに`585d1fe4`をLibraryとシェーダーごと戻したビルドのOutdoorの撮影は旧baselineと差0である。戻しは作業ツリーで一時的に行い、撮影の後に元へ戻して建て直した。2ae72946の時点の合格の記録はビルドを含まないctestのログで、そのときの検査の実行ファイルが`585d1fe4`を含んでいたかは確かめられない。描画のコードが同じ版での2回の撮影（候補の生成とその前の撮影）はバイト単位で一致し、撮影は決定的である。
+- 切り分け: `blit.frag`だけを`c12ee89b^`の版にした撮影は、Indoorが旧baselineと差0、Outdoorは6画素（raw最大4）だけ残る。シェーダーをすべて`2ae72946`の版にしても同じ6画素が残る（Library側の差）。さらに`585d1fe4`をLibraryとシェーダーごと戻したビルドのOutdoorの撮影は旧baselineと差0である。戻しは作業ツリーで一時的に行い、撮影の後に元へ戻して建て直した。2ae72946の時点の合格の記録はビルドを含まない検証のログで、そのときの検査の実行ファイルが`585d1fe4`を含んでいたかは確かめられない。描画のコードが同じ版での2回の撮影（候補の生成とその前の撮影）はバイト単位で一致し、撮影は決定的である。
 - 差分の範囲: Indoorは8929画素（すべて1/255、画面全体）、平均輝度9.6854→9.7784。Outdoorは20356画素（1/255が20353、3/255が2、4/255が1）、平均輝度129.5437→129.5860。2/255以上の3画素はx 168〜176・y 137〜142の黄色と桃色の球の接地の影の縁で、`585d1fe4`の分である（その分の6画素は符号付きの差の総和R -9・G -7・B -13）。旧baseline｜候補｜差×40を並べて開き、差が画面全体に均一な1段の粒と、Outdoorの地面の階調に沿った旧来の段の境目の輪だけで、形・位置・色相の変化が無いことを確かめた。
 - 物理的な妥当性: ディザの出力の期待値は丸める前の符号化値に等しく、最も近い段への丸めが平らな面で同じ向きへ偏らせていた分（Indoorの暗い面の端数など）が元の値へ戻る。平均輝度の差（Indoor +0.093段、Outdoor +0.042段）はこの偏りの解消で、どの画素も元の段から1段以内である。位置の復元の直しは同じ位置を桁落ちの少ない形で求めるもので、変わるのは影の境目の数画素だけである。
 - 予備の経路（`--visibility-buffer=off`）: `IndoorGBufferFallback.png`は新しい`Indoor.png`と同じ（SHA256=`9203FB88…686E8F`）。`OutdoorGBufferFallback.png`は`A9ED378DA3146F190171451710A8334F0C74E9AA73642AEC00D7F6C031F0032E`へ置き換えた。旧baselineとの差は既定の経路と同じ形の20359画素（raw最大4）、新しい`Outdoor.png`との差は球の縁の52画素（raw最大3）で、ビジビリティバッファを既定にしたときのonとoffの差と同じ形である。置き換えの後に予備の経路の検査2本もPassedになった。
-- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 2a687351599354ee0b1163166b673dffa43cc351`を走らせ、候補はIndoor `9203FB88…686E8F`・Outdoor `DCBA9DA2…B1E23F`。`-PublishApprovedCandidate`でsourceへ置き、Indoor・Outdoorの検査がPassedになった。
+- 候補の記録: 屋内 `9203FB88…686E8F`・屋外 `DCBA9DA2…B1E23F`。屋内・屋外の画像比較は合格した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 
 ## 表示のディザを格子の雑音にした後のIndoor・Outdoor再承認
@@ -175,8 +171,7 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 旧baseline｜候補｜差×40の並列画像を開き、表示寸法では形・位置・色相に目立つ変化がないことを確かめた。拡大差分には画面全体の細かな粒と、面の階調に沿った色付きの輪郭が見える。2段差の全座標とRGBA値は`.harness/relay/SCN-FIX-SKY-BANDING-U8-verify.txt`に記録した。
 - 物理的な妥当性: 一様な対称雑音による丸めの出力の期待値は、丸める前の符号化値に等しい。`DitherNoise`の本体だけを`return 0.0;`にしたIndoor・Outdoorの撮影と比べ、候補も旧baselineも全画素でraw最大1だった。全画素・RGBの符号付き平均差は候補がIndoor +0.090916951段、Outdoor +0.041931152段、旧baselineがIndoor +0.092035929段、Outdoor +0.041697184段である。ディザ無しの画像は最も近い段へ丸めた値なので、この有限画素の平均差は丸め前の値に対する期待値そのものではなく、最寄丸めの偏りを含む。候補と旧baselineの平均は同程度で、格子への変更による平均の移動は上記の小さい値に収まる。
 - 旧baselineと候補が2段違うIndoorの2画素・Outdoorの25画素では、ディザ無しのRGBA値がすべて両者の間にあり、双方から1段以内だった。例えばOutdoor (204,150)のBは旧208・ディザ無し209・候補210で、丸め前の値の両側の段を選んだ差である。「元の段から1段以内」の比較対象はディザ無しの最寄丸め画像であり、ディザを含む旧baselineではない。撮影後はシェーダーをHEADへ戻した。
-- 再生成: `pwsh -NoProfile -ExecutionPolicy Bypass -File Scripts/UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 19118ef1998eff9a1547ce27da201d6b9a2b01ac`で生成した候補を使用した。候補はIndoor `310A6DEED940CA3E42C3A6729B1856DFDA6A3718B2D87CC79B4FC71237C226C1`・Outdoor `95FFE2DC8674DD025A4FD635C86089AA0239286749257A62C27440EFE21888F8`で、fixed staging validationはSuccessだった。
+- 候補の記録: 屋内 `310A6DEED940CA3E42C3A6729B1856DFDA6A3718B2D87CC79B4FC71237C226C1`・屋外 `95FFE2DC8674DD025A4FD635C86089AA0239286749257A62C27440EFE21888F8`。公開前の候補画像の確認は成功した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
 - 予備の経路（`--visibility-buffer=off`）: `IndoorGBufferFallback.png`は新しい`Indoor.png`とバイト単位で同一（SHA256=`310A6DEED940CA3E42C3A6729B1856DFDA6A3718B2D87CC79B4FC71237C226C1`）だった。旧予備baselineとの差は13923画素（1/255が13921、2/255が2）、raw最大2、全画素・RGBの符号付き平均差−0.001118978段で、平均輝度は9.778415872→9.777320160。`OutdoorGBufferFallback.png`のSHA256は`2331D685558F5CE92D5E4188925FFC99BCCCBAC4BF943D5DA467542B22643F57`。旧予備baselineとの差は25881画素（1/255が25856、2/255が25）、raw最大2、符号付き平均差+0.000213623段、平均輝度129.585975034→129.586633463だった。新しい`Outdoor.png`との差は球の縁の47画素（1/255が46、3/255が1、x 98〜206・y 119〜158）で、raw最大3。最大の座標は(154,130)であり、既知の既定・予備の経路間の差と同じ範囲である。
-- 公開: `UpdateRenderingGoldenBaselines.ps1 -PublishApprovedCandidate`へ上のCodeHead・候補のSHA256・`-DecisionPath Docs/RenderingValidation/R1Acceptance.md -DecisionSection 'R1 visual approval'`を渡し、`baseline_publish=PASS`となった。予備の2枚は`RenderingGoldenImageTest.exe --scene=<indoor|outdoor> --capture-source=back-buffer --visibility-buffer=off --write-baseline-staging`で生成し、対応する`build/RenderingValidation/BaselineStaging/<Scene>GBufferFallback.png.tmp`から写した。両方の基準画像とstagingのバイト一致を確認した。
-- 公開後の検査: Debugの`ctest --test-dir build -C Debug --output-on-failure -R "^RenderingGolden(Indoor|Outdoor)(GBufferFallback)?VulkanTest$"`は4本ともPassed（終了コード0）。全件でmean FLIP 0・raw最大0・差の画素数0だった。既定の2本は`mode=on resolve_logs=1 fallback_logs=0`、予備の2本は`mode=off resolve_logs=0 fallback_logs=0`で、各経路を確認した。Indoorの予備経路の公開前の再検査は旧baselineに対する画像差（mean FLIP 0.004045014、13923画素、raw最大2）で終了し、Vulkanのアサーションは再現しなかった。
+- 公開後の比較: 屋内・屋外と各予備経路の 4 件とも終了コード 0。全件で mean FLIP 0・raw 最大 0・差の画素数 0 だった。既定の 2 件は `mode=on resolve_logs=1 fallback_logs=0`、予備の 2 件は `mode=off resolve_logs=0 fallback_logs=0` で、各経路を確認した。Indoor の予備経路の公開前の比較は旧画像との差（mean FLIP 0.004045014、13923 画素、raw 最大 2）を記録し、Vulkan のアサーションは再現しなかった。

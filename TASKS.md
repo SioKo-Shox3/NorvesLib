@@ -41,7 +41,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## TEST-REMOVE-1114: 試験をすべて消す(このライブラリでは試験を作らない・回さない)
-- status: todo
+- status: done
 - weight: standard
 - done-when: `Test/` の下の試験をすべて(CPU の試験・GPU の試験・ゲームを起動する受入れ)、ソース・CMake の登録・試験の実行ファイルのターゲット・試験専用の補助(`Test/TestSupport`・`Test/TestBundle`・しきい値の TSV・基準画像・試験用の fixture)ごと消し、`Test/` を無くす。最上位の `CMakeLists.txt` から `enable_testing()`・`NORVES_BUILD_TESTS`・`add_subdirectory(Test)` と試験用の CMake の補助(`NorvesTestNoDialog` など)を外す。試験だけが使うスクリプト(`Scripts/` の基準画像の更新・しきい値の調整・試験の連番の書き出しなど)・`Tools/` の煙試験の雛形(`*.cmake.in`)・`.github/workflows/` の試験を回す段(試験しか回さないワークフローはファイルごと)も消す。エンジン本体(`Library`・`Game`)と道具(`Tools`)のソースは変えない(試験のためだけの入口が本体に残っていても触らず、見つけたものを `PROGRESS.md` に書く)。`Docs/Testing.md` は「試験は作らない(このライブラリは作っている途中で、守る利用者も本番も無い。確かめはビルドと人のプレイ)」の短い文書に書き換え、ほかの文書(`Docs/`)から消した試験・試験のコマンドへの案内を外す。消したファイルの数と行数を `PROGRESS.md` に書く。Debug の構成とビルド(Game・Tools を含む全体)が通る。試験は走らせない。
 - verify: `cmake -B build -S .`
@@ -7035,17 +7035,16 @@
 - notes: 10-02 の設計案の後に霧は大きく変わった: 霧の本体は `Common/VolumetricsCommon.glsl`（479 行。volumetrics.frag は 60 行で include するだけ）に移り、空気遠近の視線の積分（`MarchFogAndAerial` :342。32 歩・高度ごとの表 2×128 の vec4）、霧の距離の上限（fogRange.x）、周りの光の倍率（fogRange.y）、影つきの太陽の単一散乱が入った。VolumetricsCommon は先頭で記述子と UBO を宣言する（:8-60）ので前向きのシェーダーから include できない。そのため HeightFog.glsl は記述子を持たない関数だけにする。前向きの物（G7-GR51-FORWARD-FOG・GR57 の粒子・GR58 の雨）に掛けるのは高さフォグの透過率と周りの光（空の LUT の視線の向きの色 × AmbientScale）までで、空気遠近と太陽の単一散乱（光条）は前向きに掛けない（1 画素ごとに 32 歩の積分と 4 KB の表が要るため。差は既知の方式差として G7 の受入れの記録に書き、G11 の GR52 で見直す）。空気遠近が有効なとき、体積の霧の周りの光は空の多重散乱の表 Ψ_ms から積む（:400）ので、前向きの LUT の色とは少し違う。この差も記録する。選定課題 G7-S4（ソフトパーティクル）は推奨の (A): 深度を読むのは GR57 の描画パス（color-only のレンダーパスで SceneDepth をシェーダー資源として読む。VolumetricsPass と同じ読み方）だけで、Forward の半透明・板はソフトにしない。理由: RHI（VulkanDescriptorSet.cpp の ResolveDescriptorImageLayout）を触らずに済み、G7 でソフトが要るのは粒子だけ。SceneDepth を R32F へ写すパス（(B)）は作らない。試験を足す理由: GLSL と C++ の透過率の式のずれは撮影で霧の色に紛れて気づきにくく、黙って起きる。共有の束の `Test/Core/Rendering/CMakeLists.txt` は MEMBER の 2 行だけ足す。危険地帯（ライティングに近い霧のパス）なので評価者を通す。golden 4 本・R3 の sweep の不変は G7-GR51-CHECK。要件 `#### GR51` の設計案 1・2、ロードマップ 1537・1551 行。
 
 ## G7-GR51-FORWARD-FOG: 半透明・ワールドの板・インポスター・剣のトレイルにも高さフォグを掛け、遠くの半透明が霧に沈むようにする
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE
 - gr: GR51
 - done-when: ForwardPass が描く 4 経路のシェーダー `forward_transparent.frag`（SrcAlpha・InvSrcAlpha → `ApplyHeightFogStraightAlpha`）、`world_board.frag` と `impostor.frag`（One・InvSrcAlpha → `ApplyHeightFogPremultiplied`）、`ribbon_trail.frag`（RibbonTrailRenderer の帯。合成の式に合う関数）が `Common/HeightFog.glsl` の `EvaluateHeightFogForward` で霧を掛ける。距離は画素の世界位置とカメラから取る（`world_board.vert`・`impostor.vert` は世界位置を varying で渡す。インポスターの今の flat の location と衝突しない番号を選ぶ）。値は `GPUHeightFogParams`（`BuildHeightFogGpuParams`）を各経路の UBO の末尾へ足すか、ForwardPass が 1 フレームに 1 つ持つ霧の UBO を新しい binding に結ぶ（どちらにしたかと理由を PROGRESS.md に書く。`TransparentForwardUBO` は static_assert で 800 バイト〈ForwardPass.cpp:86〉）。霧の色の空の LUT は `RenderGraphResourceNames::SkyAtmosphereRadiance` を ForwardPass の Declare で読みとして宣言して結ぶ（空が無ければ黒の 1×1 と fallback の色。VolumetricsPass と同じ）。記述子の定義が Initialize とパイプラインの作り直しの 2 か所にある所（半透明・板）は両方を同じに直す。霧が無効（密度 0）なら 4 経路とも今と同じ色を出す（T=1・S=0 で式が恒等）。CPU の `HeightFogShaderCompileTest` に 4 経路の vert・frag のコンパイルを足し、通る。GPU の `ForwardFogConsistencyVulkanTest`（既存の実行ファイル `RenderingHdrSceneCaptureTest` に scenario=forward-fog を足して登録）をビルドできる: 屋外の固定の場面で、同じ色・同じ距離の不透明の発光の球と半透明（α=1）の球の ROI の輝度差が霧の密度 0.0025・0.005・0.01 で 2% 以内、一定色のワールドの板とインポスターを 3 つの距離に置いた ROI が mix の解析値（F は空の LUT の ROI、T は C++ の `ComputeHeightFogTransmittance`）と 3% 以内、霧 0 で 4 経路の画素が導入前と同じ（閾値は `Test/Core/Rendering/Thresholds/RenderingValidation/` の R3 と同じ TSV の形式）。実行は G7-GR51-CHECK。
-- verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest RenderingHdrSceneCaptureTest SceneViewWorldBoardDrawCommandTest ImpostorLODSwitchTest SwordTrailRibbonTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(HeightFogShaderCompileTest|SceneViewWorldBoardDrawCommandTest|ImpostorLODSwitchTest|SwordTrailRibbonTest)$" --no-tests=error --output-on-failure --timeout 300`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Assets/Shaders/forward_transparent.frag, Assets/Shaders/forward_transparent.vert, Assets/Shaders/world_board.vert, Assets/Shaders/world_board.frag, Assets/Shaders/impostor.vert, Assets/Shaders/impostor.frag, Assets/Shaders/ribbon_trail.vert, Assets/Shaders/ribbon_trail.frag, Assets/Shaders/Common/HeightFog.glsl, Library/Core/Public/Rendering/ForwardPass.h, Library/Core/Private/Rendering/ForwardPass.cpp, Library/Core/Public/Rendering/RibbonTrailRenderer.h, Library/Core/Private/Rendering/RibbonTrailRenderer.cpp, Library/Core/Private/Rendering/HeightFogGpuParams.cpp, Test/Core/Rendering/HeightFogShaderCompileTest.cpp, Test/Core/Rendering/RenderingHdrSceneCaptureTest.cpp, Test/Core/Rendering/Thresholds/RenderingValidation, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 方式は要件 `#### GR51` の設計案 3・4。半透明を霧の前に描く並べ替えは採らない（霧の距離が背後の不透明の深度で決まり誤る。ロードマップ 1537 行）。ソフトにはしない（G7-S4 の (A)。G7-GR51-HEIGHTFOG-INCLUDE の notes）。空気遠近と光条は前向きに掛けない近似（同じ notes）。GR136 の CPU の VFX がワールドの空間に出す板（GAME-GR131-VFX-P1 で 3D の view へ渡るようになった `BoardProxy`）は world_board の経路を通るので同じ霧を受ける。`mesh_particle_dissolve.frag` は試験のパイプラインだけで使う（ロードマップ 4291 行）ので対象外。帯の合成の式（ブレンドの係数）は RibbonTrailRenderer.cpp を読んで、合う合成の関数を選ぶ（`ribbon_trail.vert`・`.frag` は Assets/Shaders にある）。半透明の霧の色は IBL の源（`ClampSkyRadianceForFp16` を通る）でなく空の LUT を引いて VolumetricsPass と揃える（要件のリスク）。共有の ForwardPass.cpp と試験の束の CMakeLists.txt は差分を小さくする。試験を足す理由: 半透明だけ霧が掛からない・掛かり過ぎるのは場面によって見落とし、黙って起きる。危険地帯（ForwardPass の記述子・RenderThread）なので評価者を通す。ロードマップ 1537・1551 行。
 
 ## G7-GR50-FOG-TINT: 霧の色の寄せ（色味・空への寄せ・基準の仰角）を霧の値に足し、体積の霧・前向きの霧・パストレーサーの霧へ同じ式で掛ける
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE
 - gr: GR50
 - done-when: `VolumetricFogParameters`（VolumetricFog.h:11）の末尾に Tint（float×3、既定 1）・SkyBlend（0..1、既定 0）・ReferenceElevationDegrees（仮 10）を足し、Sanitize と既定を揃える（`VolumetricFogModelTest` の static_assert を保つ）。`GPUVolumetricsParams`（VolumetricsPass.cpp:27。static_assert :56）と `GPUHeightFogParams` に vec4（tint.rgb・skyBlend）と vec4（sin・cos の基準仰角）を足す。`Common/HeightFog.glsl` の `HeightFogRadiance` が「視線の向きの空の LUT」と「視線の方位のまま仰角を基準の仰角へ傾けた向きの LUT」を SkyBlend で混ぜて Tint を掛け、VolumetricsCommon の霧の色（:444-453）と、空気遠近が有効なときの霧の周りの光（`MarchFogAndAerial` の fogAmbient :400）にも Tint を掛ける（SkyBlend は LUT を引く経路だけ）。パストレーサー: `PathTracingParameters`（PathTracingPass.inl:37）の霧の欄、`FillPathFogParameters`（:197）、`HashPathFog`（:296）、`PathTracing/PathTracingRayGen.glsl`・`PathTracingCommon.glsl` の霧の色の式に同じものを足す。既定（Tint 1・SkyBlend 0）で全経路が今と同じ値を出す。CPU: `VolumetricFogModelTest` に新しい欄の既定・範囲・NaN の Sanitize と、`HashPathFog` が Tint・SkyBlend の違いを区別することを足す（PT の関数が試験から引けなければ、引ける純関数へ切り出す）。`HeightFogShaderCompileTest` に PT の rgen と volumetrics のコンパイルが通ることを足す。
@@ -7232,7 +7231,7 @@
 - notes: 設計はロードマップ 2217・2221・2223 行（GR45 の消費側と遠景の見せ方）、完了条件は 2614 行。遠景の見せ方は企画で未決なので、草丈を潰すか（遠くから分かるが高い草の遮りが弱まる）・潰さないか（遮りは保つが遠くから分からない）を値の調整で選べるようにし、既定は「色だけ寄せて草丈は潰さない」（仮。高い草の遮りは G5 の GR113 などが前提にしているため）。地表・低木のシェーダーは今は無い（GR37 の層の材質・GR47 の低木）ので、`Common/WorldField.glsl` の `SampleDryness` を渡すだけにし、ここでは使わない。草のシェーダーは G5 の項目と共有なので差分を小さくする。試験を足す理由: 反証する契約は「枯れ度 0 では草が今とビット一致し、枯れ度に応じて決まった倍率で変わる」こと。漏れは草原全体の色や密度がわずかに変わるだけで撮影では気づきにくく、黙って起きる。危険地帯（RenderThread・GBuffer の経路）なので評価者を通す。
 
 ## G12-GR45-WITHER-GAMEPLAY: シ者の撃破で周りの草が戻る応答と、枯れ度の状態のセーブ・リスタートでの再現をつなぐ
-- status: todo
+- status: done
 - after: G12-GR45-DRYNESS-CPU, G8-GR17-ENEMY-COMPONENT, G8-GR76-STATE-AUTOSAVE, G8-GR76-RESET-LIFETIME, G8-GR17-HEALTH-PROGRESSION, G8-GR17-SLICE-SMOKE, G8-GR76-SAVE-STORAGE, G8-GR76-SETTINGS
 - gr: GR45
 - needs-gr: GR17, GR76

@@ -34,27 +34,17 @@ inspectは現行static profileの単一mesh/primitiveが対象。材質係数の
 | ImageInspectionTest | 実stbによる既知PNG8/PNG16/JPEG、統計・不正入力・alias・最終pixel寸法上限 |
 
 上記6件は既存bundleのMEMBER相当（mainの名前変更）のobject compileも成功。
-ImportSettingsFileTestもMEMBER compileは成功したが、設定file I/Oと実JsonDocumentのruntime実行を意味しない。
-実stb診断では通常の8/16bitとdecode失敗を検査している。最終pixel payloadの512MiB上限は、
+ImportSettingsFileTestもMEMBER compileは成功したが、設定file I/Oと実JsonDocumentのruntime実行を意味しなかった。
+実stb診断では通常の8/16bitとdecode失敗を検査した。最終pixel payloadの512MiB上限は、
 stb内部作業領域や過剰IDAT inflateを含む総メモリ制限ではない。
 
 ## 未実行・保留
 
-- Windows.hを使うCoreのため、現クラウドではMain/実cooker/loose/実JsonDocument/実skinningのnative build・統合試験は未実行
-- ImportSettingsJsonTest、ImportSettingsFileTest、ImportStaticIntegrationTest、StaticGltfBufferCookTest、CookedSkeletalAssetTest、AssetCookImportSmoke、AssetCookInspectSmoke等は登録・ソース確認の状態。全体成功とは扱わない
+- 記録当時はWindows.hを使うCoreのため、Main/実cooker/loose/実JsonDocument/実skinningのnative buildを実行できなかった
 - Windows/GPU描画、実際の犬GLB 4本との寸法・画像・見た目照合は未実行。実物がまだ配置されていない
 - `surface_centroid`は作者合意により明示拒否を維持。精度確認と再有効化は別保留
 - GitHubのcombined statusは返却されたチェックが空で、CI合格という証拠ではない
-- 非blockingの追補候補: required不在時preflight単独assert、inspectの必須拡張に対する詳細理由保持、CLI入力変更時の再診断回帰、geometryの追加alias/全出力保持境界
-
-### 対応環境での後続確認例
-
-Windows検証は現在の継続条件ではない。以下は対応環境で検証する際の例。
-
-```powershell
-cmake --build build --config Debug --target CookedMeshTest AssetCook -- /m:1
-ctest --test-dir build -C Debug --output-on-failure -R "^(ImportSettingsValueTest|ImportSettingsJsonTest|ImportSettingsFileTest|ImportSettingsHashTest|ImportTransformTest|ImportStaticIntegrationTest|ImportCliOptionsTest|GeometryInspectionTest|ImageInspectionTest|StaticGltfBufferCookTest|CookedSkeletalAssetTest|AssetCookImportSmoke|AssetCookInspectSmoke|AssetCookGlbSmoke|AssetCookMeshSmoke)$"
-```
+- 非blockingの追補候補: inspectの必須拡張に対する詳細理由保持、CLI入力変更時の再診断、geometryの追加alias/全出力保持境界
 
 ## 次の選定
 

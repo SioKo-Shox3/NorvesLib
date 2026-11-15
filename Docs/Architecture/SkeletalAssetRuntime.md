@@ -34,11 +34,11 @@ SetSnapshotはownerかつ完全idle限定。同pointerは無変更、別pointer�
 
 group/subscriber/path/key/clip/Registry cloneメタデータに有限上限を置く。P2aのshadow copyは追加ごとO(既存pool)であり高スループット/RSS/時間上限を保証しない。Closeの既存list再走査も件数依存である。
 
-試験は実simple/work-stealing Taskと3clip cooked fixture、実P1/P2a/Resource/Samplerを使い、常時有効CHECKと子process watchdogでDebug/Releaseを反証する。private hookのbad_allocは境界制御フローの証拠で、実allocator全OOMの証明ではない。一般Taskの任意worker/先行handler例外、OS同期障害、異常capture destructor、任意Registry並行破棄は契約外。製品GameThread配送とGPU/実キャラ品質は別途検証する。
+一般Taskの任意worker/先行handler例外、OS同期障害、異常capture destructor、任意Registry並行破棄は契約外。実allocator全域のOOMやGPU/実キャラ品質も保証しない。
 
-反証ではSubmit返答より前にworker/handler完了を固定し、Closeしない正常経路でも受理確定後のready1・公開/通知各1を確認する。commit内で停止して別threadからState mutexを試行し取得不能、commit外では取得可能であることを確認する。これはnative同期操作と実装を結び付ける検査で、Registryの読取待機だけでState gateを代用しない。
+worker/handlerがSubmit返答より前に完了しても、受理確定後の公開と通知は各1回とする。commit中はState mutexを保持し、Registryの読取待機でState gateを代用しない。
 
-既知の入口制約: 現AssetManifestのJSON文字列取得はASCII限定で、非ASCIIのlogical_pathを拒否する。runtimeはUTF-8の構文を厳密検証するが、非ASCII論理pathのcooked読込成功までは保証しない。現統合試験はASCII manifestで正常読込し、合法UTF-8の未登録pathはResolveRejectedとして一度通知する。GR84のUnicode物理locatorの検証とは別の境界である。manifestのUTF-8化は、旧拒否契約/lookup/cook互換を扱う独立変更として残す。
+既知の入口制約: 現AssetManifestのJSON文字列取得はASCII限定で、非ASCIIのlogical_pathを拒否する。runtimeはUTF-8の構文を厳密検証するが、非ASCII論理pathのcooked読込成功までは保証しない。ASCII manifestを読み込み、合法UTF-8の未登録pathはResolveRejectedとして一度通知する。GR84のUnicode物理locatorの検証とは別の境界である。manifestのUTF-8化は、旧拒否契約/lookup/cook互換を扱う独立変更として残す。
 
 ## slot ごとの材質の組み立て
 
@@ -64,6 +64,6 @@ builder の項目は mesh の弱参照と世代、作った材質と ARM の R8 
 
 スキンの GBuffer は材質の BaseColor を読まないため、色は cook の焼き込みに頼る（[CookedMaterialV1.md](CookedMaterialV1.md)）。`MaterialCreateData` には staging の BaseColor をそのまま入れる。
 
-取り込みの既定の `doubleSided` Auto は開いた形に両面を付けるため、その slot は `doubleSided_unsupported` で失敗する。スキンの資産は取り込み設定に `"material":{"doubleSided":"force_false"}` を置く。`materials` の試験もこの設定で cook する。
+取り込みの既定の `doubleSided` Auto は開いた形に両面を付けるため、その slot は `doubleSided_unsupported` で失敗する。スキンの資産は取り込み設定に `"material":{"doubleSided":"force_false"}` を置く。
 
-`SkeletalSplitRuntimeTest` の `materials` の事例は、2 材質の rig を cook して読み、FakeDevice の上で slot の数・名前・`MaterialCreateData` の値、MASK と texture の解決の失敗が該当 slot だけを失敗させること、資産の解放と `Collect` による材質の回収を確かめる。GPU の描画・実物の見た目は確かめていない。
+複数材質でもslotの数・名前・`MaterialCreateData` の値を保持し、MASK と texture の解決の失敗は該当 slot だけを失敗させる。資産の解放後は `Collect` で材質を回収する。GPU の描画・実物の見た目は未確認。
