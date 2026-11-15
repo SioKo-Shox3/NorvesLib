@@ -1,5 +1,6 @@
 ﻿#include "Rendering/FoliagePass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/FrameResourceOwner.h"
@@ -201,7 +202,7 @@ namespace NorvesLib::Core::Rendering
 
             desc.descriptorSetLayouts.push_back(CreateFoliageDescriptorSetDesc());
             // 葉の帯は両面を描き、ビジビリティバッファと同じ深度の比較を使う
-            desc.depthCompareOp = RHI::CompareOp::LessOrEqual;
+            desc.depthCompareOp = DepthConvention::DepthCompareOpOrEqual;
             desc.cullMode = RHI::CullMode::None;
             desc.debugName = "FoliagePass";
             desc.failureLogPrefix = "FOLIAGE";

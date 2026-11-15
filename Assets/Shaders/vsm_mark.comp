@@ -69,6 +69,7 @@ layout(std430, set = 0, binding = 2) coherent buffer VsmRequestBits
 
 // スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭・基底）
 #define VSM_SLICE_BINDING 8
+#include "Common/DepthConvention.glsl"
 #include "Common/VirtualShadowMapSlice.glsl"
 
 void MarkPage(VsmSlice slice, int pageX, int pageY)
@@ -317,9 +318,9 @@ void main()
         return;
     }
 
-    // 空（深度 1.0）と不正な深度は印を付けない
+    // 空（クリア値の深度）と不正な深度は印を付けない
     const float depth = texelFetch(gbufferDepth, ivec2(pixel), 0).r;
-    if (!(depth < 1.0))
+    if (IsBackgroundDepth(depth))
     {
         return;
     }
@@ -330,12 +331,12 @@ void main()
     const vec2 uv = (vec2(pixel) + 0.5) / vec2(params.screen.xy);
     const vec4 ray4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
     const float nearOverFar = params.cameraPosition.w;
-    const float denominator = (1.0 - depth) + depth * nearOverFar;
+    const float denominator = LinearDepthDenominator(depth, nearOverFar);
     if (!(nearOverFar > 0.0) || !(denominator > 0.0) || ray4.w == 0.0)
     {
         return;
     }
-    const vec3 world = params.cameraPosition.xyz + (ray4.xyz / ray4.w) * ((0.5 + 0.5 * nearOverFar) / denominator);
+    const vec3 world = params.cameraPosition.xyz + (ray4.xyz / ray4.w) * (LinearDepthDenominator(0.5, nearOverFar) / denominator);
 
     // 太陽の段の数が 0 のとき（夜など太陽のクリップマップが無効）は太陽の印付けを飛ばす。点光源だけが印を付ける
     if (params.control.w != 0u)

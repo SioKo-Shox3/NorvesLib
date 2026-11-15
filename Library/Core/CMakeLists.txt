@@ -774,6 +774,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/IBoardProxySink.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
+    Public/Rendering/DepthConvention.h
     Public/Rendering/CameraPicking.h
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h

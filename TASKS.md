@@ -6505,7 +6505,7 @@
 - notes: 選定課題 G12A-S2（GR31 の経路。G12 の節には選定課題の一覧が無い〔ロードマップ 4597 行〕ので、前半の計画役が G12A-S<n> の番号で決めた）: (A) ロードマップの案（Entity を持たない新しい `GpuInstanceSet`・`chunk_cull.comp`・`instance_cull.comp`・`instanced_gpu.vert` と自前の Hi-Z。ロードマップ 2091〜2118 行）、(B) 今の MegaGeometry の経路をそのまま GR31 の実装とし、足りない契約の試験だけを足す、のうち (B) を採る。理由: (A) の前提（MegaGeometry はインスタンスごとに dispatch・UBO・間接のバッファを持ち、Hi-Z は無効。ロードマップ 2079・2083 行）は今は崩れている。範囲→席の 1 席 1 スレッドのカリング（SCN-MEGA-INSTANCE-CULL）、BVH の段の間接 dispatch（SCN-MEGA-BVH-INDIRECT）、前フレームの HZB の 2 パスの遮蔽（SCN-MEGA-PREV-HIZ・SCN-MEGA-TWOPASS-INSTANCES・SCN-MEGA-TWOPASS-CLUSTERS）、クラスタの LOD、可視バッファの材質の解決（材質ごとの描画を要らなくする）、太陽・点光源の VSM の BVH のカリング（画面外の投影物を含む。SCN-MEGA-VSM-BVH-SUN）、席ごとの TLAS の選択（SCN-MEGA-RT-SELECT）が done で、要件の内容（インスタンス単位の GPU のカリングと LOD を 1 回のディスパッチに、Hi-Z の再有効化）を満たす。3 つ目のインスタンスの経路を作ると影・RT・可視バッファを二重に持つ（G5B-S9 と同じ理由）。足りないのは、これらが撮影の比較（起動画面・バナナ・旋回の「遮蔽 Off との一致」）でしか確かめられていない点で、取りこぼし（偽のカリング）は端の数本が 1 枚の絵から消えるだけなので撮影では見分けにくく、ログにも出ず黙って起きる（Docs/Testing.md の 3 点）。この試験で縛る。試験の束縛は GeometryPageRequestVulkanTest が外された理由（シェーダーの束縛を手で写した。Docs/Testing.md 62 行）を繰り返さないよう、パスの側の定義を使う。UNCERTAIN: 範囲・席の段だけを単独で dispatch できるかは未確認（`MegaGeometryPass.cpp` は 7861 行で、段の記述子は 680 行付近で作る）。単独で回せない場合は、パスに試験用の入口（段の資源を外から与える）を足す形にし、パスの既定の動きは変えない。100 万本のカリングの GPU 時間の記録（ロードマップ 2584 行）は SCN-MEGA-ACCEPT-1M（todo）が行うので、ここでは測らない。通常のメッシュ（MeshComponent）の LOD の選択（ロードマップ 2093 行の L0）は GR48（G12 の後半の MeshLODSelectionTest）に任せる。G12-GR39-REVERSE-Z が HZB の向き（max → min）を変えるので、この試験を先に入れて安全網にする。危険地帯（RenderThread・RHI の使い方）なので評価者を通す。
 
 ## G12-GR39-DEPTH-CONVENTION: 深度の規約（クリア値・比較・背景の判定・線形化）を C++ と GLSL の 1 か所に集め、深度の決め打ちのしきい値をなくす
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR39
 - needs-gr: GR25, GR27, GR30, GR43
@@ -6940,7 +6940,7 @@
 - notes: 確かめ直し (b)(c)。Handoff 6 節の件の今: NVSKEL v1 の profile2/3 は `skin.skeleton` の省略を受け、関節の集合から唯一の根を求める(`SkeletalGltfDecode.cpp:1501-1517`、`RigStaticRootFrame128.md` の「選択と互換」)。`--rig-split` と asset-set の skeletal は profile3 が既定(`RigSplitFileCli.cpp:46`、`RigSingleCook.cpp:142`)なので、Blender の資産は v1 の経路では入る。試験は合成の Armature の fixture(`RigStaticRootFrameImportTest.cpp:65-160`)で、省略と hint の両方を確かめている。残り: 旧 NVSKEL 0.2(`--kind model --entry-type Skl0` と `DecodeSkeletalGltf`)は今も `skeleton` を必須にしていて(1651〜1655 行)、glTF の仕様で省略してよい値を拒否する。Blender の書き出しの形をそのまま写した fixture も無い(既存の M9Skinned の fixture はどれも `"skeleton": 0` を持つ。`GLTFSkeletalAnalyzerTest.cpp:233`)。段階をまたぐ注意(ロードマップ 4449 行)の「求めた根が関節でない場合は子の関節が 1 つならそれを根にする」は、profile1 が非関節の親を拒否する契約なので旧経路には入れず、v1 の経路(Armature を作者 frame に入れる)で満たす。実物の Blender での書き出しと実犬の cook は `G2-GR82-REAL-RIG-CHECK` で行う。
 
 ## G2-GR83-ASSET-PREVIEW-SCENE: 取り込んだ静的モデルと骨格つきの資産を論理パスで並べて置き、クリップ名を指定して再生する確認用のシーンを足す
-- status: todo
+- status: done
 - after: G2-GR83-LOOSE-SKELETAL, G2-GR79-SKINNED-MATERIAL-BUILDER
 - gr: GR83, GR79, GR78
 - done-when: 開発ビルドだけのシーン `asset-preview`(`Game/Scenes/SceneCatalog.h` に id・視点 `front`・`side`・`close`・`top` を足す)を作る。引数は `--asset-preview-model=<論理パス>`(静的モデル。繰り返し可)、`--asset-preview-skeletal=<論理パス>`(骨格つき。繰り返し可)、`--asset-preview-clip=<クリップ名>`(骨格つきの全部に同じ名前を指定。無ければ bind の姿勢)、`--asset-preview-time=<秒>`(決定的な撮影のときにクリップを止める時刻)。静的モデルは `ModelAssetRuntime`、骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける。資産は各々の AABB で横に間隔を空けて床(Y=0)の上に並べ、各資産の原点の印と 1 m の格子を描く。

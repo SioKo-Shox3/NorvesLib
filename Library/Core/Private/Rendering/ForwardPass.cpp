@@ -1,5 +1,6 @@
 ﻿#include "Rendering/ForwardPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/HeightFogGpuParams.h"
@@ -993,7 +994,7 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = false;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
 
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = true;
@@ -1081,7 +1082,7 @@ namespace NorvesLib::Core::Rendering
 
         boardPipelineDesc.depthStencilState.depthTestEnable = true;
         boardPipelineDesc.depthStencilState.depthWriteEnable = false;
-        boardPipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        boardPipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
 
         RHI::BlendAttachmentDesc boardBlendAttachment;
         boardBlendAttachment.blendEnable = true;
