@@ -11274,3 +11274,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: done-when の試験の部分（`VolumetricFogModelTest` の新しい欄の安全化・`HashPathFog` の区別、`HeightFogShaderCompileTest` の PT の rgen と volumetrics）は、試験を作らない・回さない決まりで足していない。既存の `VolumetricFogModelTest` はそのままビルドが通る。数値の既定（Tint・SkyBlend・基準の仰角 10 度・Tint の上限 16）は仮の値。真上・真下の視線は方位が決まらないので +X の方位で基準の向きを作る。
 - U9 FBX の入力を cook・--inspect・--rig-split で明示の理由で拒否する(保存したパッチの製品コードの部分だけ入れる): 着地(直し 0 回)
 - U8 glTF の mesh node の変換を解いて頂点へ焼き込む共有の部品(保存した版を素直な double の計算に直して入れる): 着地(直し 0 回)
+- U3 静的の cook(NVMESH v0/v1)で node の変換を焼き込み、v0 の複数 primitive を材質名つきで拒否し、model の cooker の版を上げる: 着地(直し 0 回)

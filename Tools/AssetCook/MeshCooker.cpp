@@ -20,6 +20,7 @@
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
 #include "Resource/GltfImageSource.h"
+#include "Resource/GltfNodeTransform.h"
 #include "Resource/ImportSettingsFile.h"
 #include "Resource/ImportSettingsHash.h"
 #include "Resource/ImportTransform.h"
@@ -580,6 +581,43 @@ namespace NorvesLib::Tools::AssetCook
                 (!bMultiple && primitives.GetArraySize() != 1))
             {
                 error = "NVMESH v0 requires exactly one glTF primitive";
+                if (!bMultiple && primitives.IsArray() && primitives.GetArraySize() > 1)
+                {
+                    error += ": materials=";
+                    const JsonValue materials = root.FindMember("materials");
+                    for (size_t index = 0; index < primitives.GetArraySize(); ++index)
+                    {
+                        if (index != 0)
+                        {
+                            error += ",";
+                        }
+                        uint32_t materialIndex = 0;
+                        AnsiString materialName = "(none)";
+                        if (TryReadRequiredUInt32(primitives.GetArrayElement(index), "material", materialIndex))
+                        {
+                            materialName = AnsiString("#") + FormatInteger(materialIndex);
+                            const JsonValue name = materials.GetArrayElement(materialIndex).FindMember("name");
+                            if (name.IsString() && !name.AsString().empty())
+                            {
+                                const String& text = name.AsString();
+                                const auto measured = Core::Asset::MeasureSkeletalNameEncoding<String::value_type>(
+                                    2, {text.data(), text.size()});
+                                if (measured.Succeeded())
+                                {
+                                    VariableArray<uint8_t> encoded(measured.ByteCount);
+                                    if (Core::Asset::EncodeSkeletalWireName<String::value_type>(
+                                            2, {text.data(), text.size()}, {encoded.data(), encoded.size()}).Succeeded())
+                                    {
+                                        materialName = AnsiString(AnsiStringView(
+                                            reinterpret_cast<const char*>(encoded.data()), encoded.size()));
+                                    }
+                                }
+                            }
+                        }
+                        error += AnsiString("\"") + materialName + "\"";
+                    }
+                    error += "（材質の違う primitive は nvmesh.v1.mesh3d.pnt.u32.clustered で焼く）";
+                }
                 return false;
             }
 
@@ -2047,11 +2085,20 @@ namespace NorvesLib::Tools::AssetCook
                 error = "NVMESH v1 vertex byte size overflow";
                 return false;
             }
+            const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt), offsetof(MeshVertexPnt, Position),
+                                                         offsetof(MeshVertexPnt, Normal),
+                                                         offsetof(MeshVertexPnt, TexCoord)};
+            const auto nodeTransform = Gltf::ResolveMeshNodeTransform(root, 0);
+            const auto nodeResult = Gltf::BakeMeshNodeTransform(nodeTransform,
+                {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
+                vertices.size(), layout, indices);
+            if (nodeResult != Gltf::NodeTransformResult::Success)
+            {
+                error = AnsiString("glTF node transform rejected: ") + Gltf::NodeTransformResultName(nodeResult);
+                return false;
+            }
             if (materials.Import.bPresent)
             {
-                const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt), offsetof(MeshVertexPnt, Position),
-                                                             offsetof(MeshVertexPnt, Normal),
-                                                             offsetof(MeshVertexPnt, TexCoord)};
                 const auto transformed = AssetImport::ApplyImportTransform(
                     {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
                     vertices.size(), layout, indices, materials.Import.Settings.Geometry);
@@ -2565,6 +2612,22 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
+            if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(MeshVertexPnt))
+            {
+                error = "import vertex byte size overflow";
+                return false;
+            }
+            const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt),
+                offsetof(MeshVertexPnt, Position), offsetof(MeshVertexPnt, Normal), offsetof(MeshVertexPnt, TexCoord)};
+            const auto nodeTransform = Gltf::ResolveMeshNodeTransform(root, 0);
+            const auto nodeResult = Gltf::BakeMeshNodeTransform(nodeTransform,
+                {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
+                vertices.size(), layout, indices);
+            if (nodeResult != Gltf::NodeTransformResult::Success)
+            {
+                error = AnsiString("glTF node transform rejected: ") + Gltf::NodeTransformResultName(nodeResult);
+                return false;
+            }
 
             const bool bV1 = format == SupportedMeshFormatV1;
             MeshMaterialV1Plan materialV1;
@@ -2587,13 +2650,6 @@ namespace NorvesLib::Tools::AssetCook
             }
             if (loadedImport.bPresent)
             {
-                if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(MeshVertexPnt))
-                {
-                    error = "import vertex byte size overflow";
-                    return false;
-                }
-                const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt),
-                    offsetof(MeshVertexPnt, Position), offsetof(MeshVertexPnt, Normal), offsetof(MeshVertexPnt, TexCoord)};
                 const auto transformed = AssetImport::ApplyImportTransform(
                     {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
                     vertices.size(), layout, indices, loadedImport.Settings);
