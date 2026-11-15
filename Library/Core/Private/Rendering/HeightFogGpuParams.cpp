@@ -37,18 +37,20 @@ namespace NorvesLib::Core::Rendering
             : (scene ? SanitizeVolumetricFogParameters(scene->VolumetricFog)
                      : MakeDefaultVolumetricFogParameters());
 
+        const FogReferenceElevationSinCos referenceElevation = ComputeFogReferenceElevationSinCos(fog);
         return GPUHeightFogParams{
             {fog.bEnabled ? fog.DensityAtBaseHeight : 0.0f,
              fog.BaseHeight,
              fog.HeightFalloffPerUnit,
              bSkyRadianceAvailable ? 1.0f : 0.0f},
-            {1.0f, 1.0f, 1.0f, 0.0f},
+            {fog.Tint[0], fog.Tint[1], fog.Tint[2], fog.SkyBlend},
             {scene ? SafeFogColorChannel(scene->FogColorR) : 0.0f,
              scene ? SafeFogColorChannel(scene->FogColorG) : 0.0f,
              scene ? SafeFogColorChannel(scene->FogColorB) : 0.0f,
              fog.AmbientScale},
             {camera.PositionX, camera.PositionY, camera.PositionZ, SafePreExposure(camera)},
-            {fog.MaxDistanceMeters, 0.0f, 0.0f, 0.0f}};
+            {fog.MaxDistanceMeters, 0.0f, 0.0f, 0.0f},
+            {referenceElevation.Sin, referenceElevation.Cos, 0.0f, 0.0f}};
     }
 
 } // namespace NorvesLib::Core::Rendering

@@ -3,7 +3,7 @@
 #ifndef HEIGHT_FOG_GLSL
 #define HEIGHT_FOG_GLSL
 
-// GPUHeightFogParams と同じ並びの std140 の 5 × vec4（80 バイト）。
+// GPUHeightFogParams と同じ並びの std140 の 6 × vec4（96 バイト）。
 struct HeightFogParams
 {
     vec4 densityBaseHeightFalloffSkyAvailable; // x=基準の高さの密度（無効なら 0）, y=基準の高さ, z=高さの減衰, w=空の放射輝度 LUT が使えれば 1
@@ -11,6 +11,7 @@ struct HeightFogParams
     vec4 fallbackColorAndAmbientScale;         // rgb=LUT が無いときの霧の色, w=周りの光の倍率
     vec4 cameraPositionAndPreExposure;         // xyz=カメラの位置（ワールド）, w=プリエクスポージャ
     vec4 maxDistanceAndReserved;               // x=霧を積む距離の上限（m、0 以下で視線全体）, yzw=予約
+    vec4 referenceElevationSinCos;             // x=基準の仰角の正弦, y=余弦, zw=予約
 };
 
 // 前向きの物 1 点に掛ける高さフォグの結果。
@@ -90,15 +91,34 @@ float HeightFogTransmittance(float density, float baseHeight, float falloff,
     return exp(-opticalDepth);
 }
 
+// 視線の方位のまま、仰角を基準の仰角へ傾けた単位ベクトル。真上・真下の視線は方位が決まらないので +X の方位を使う。
+vec3 HeightFogReferenceDirection(vec3 rayDir, vec4 referenceElevationSinCos)
+{
+    vec2 horizontal = rayDir.xz;
+    float horizontalLength = length(horizontal);
+    horizontal = horizontalLength > 1.0e-6 ? horizontal / horizontalLength : vec2(1.0, 0.0);
+    return vec3(horizontal.x * referenceElevationSinCos.y,
+                referenceElevationSinCos.x,
+                horizontal.y * referenceElevationSinCos.y);
+}
+
+// 視線方向と基準の仰角方向の空の放射輝度を SkyBlend で混ぜ、Tint を掛けて負を 0 にする。
+// LUT が無いときは既定の色に Tint だけを掛け、SkyBlend が 0 なら基準方向の LUT を引かない。
 vec3 HeightFogRadiance(sampler2D skyRadiance, bool bSkyAvailable, vec3 fallbackColor,
-                       vec3 rayDir, vec4 tintBlend)
+                       vec3 rayDir, vec4 tintBlend, vec4 referenceElevationSinCos)
 {
     vec3 radiance = fallbackColor;
     if (bSkyAvailable)
     {
         radiance = texture(skyRadiance, HeightFogEquirectUV(rayDir)).rgb;
+        float skyBlend = clamp(tintBlend.w, 0.0, 1.0);
+        if (skyBlend > 0.0)
+        {
+            vec3 referenceRadiance = texture(skyRadiance,
+                HeightFogEquirectUV(HeightFogReferenceDirection(rayDir, referenceElevationSinCos))).rgb;
+            radiance = mix(radiance, referenceRadiance, skyBlend);
+        }
     }
-    // tintBlend.w は G7-GR50-FOG-TINT が基準の仰角の LUT と混ぜる際に使う。
     return max(radiance * tintBlend.rgb, vec3(0.0));
 }
 
@@ -128,7 +148,7 @@ HeightFogForwardResult EvaluateHeightFogForward(HeightFogParams params, sampler2
     {
         result.Radiance = HeightFogRadiance(skyRadiance, p.w > 0.5,
                                             params.fallbackColorAndAmbientScale.rgb,
-                                            rayDir, params.tintAndSkyBlend) *
+                                            rayDir, params.tintAndSkyBlend, params.referenceElevationSinCos) *
                           (opacity * params.fallbackColorAndAmbientScale.w *
                            params.cameraPositionAndPreExposure.w);
     }

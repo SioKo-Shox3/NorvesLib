@@ -16,6 +16,8 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     vec4 environmentRadiance; // rgb=一様環境の放射輝度または環境textureの倍率、w=環境光の種類
     uvec4 sampleState; // x=このdispatchの試料数、y=bit0正射影・bit1画素中心・bit8-15試料の組、z=検証mode 252、w=輸送範囲 // x=このdispatchの試料数、y=正射影(1)、z=検証mode 252の被覆alpha(1)
     vec4 skySunIlluminance; // rgb=地表での太陽の事前露出照度（大気の透過率込み。ラスタの空の太陽の方向光と同じ値）
+    vec4 fogTintAndSkyBlend; // rgb=霧の色味、w=空への寄せ（0..1）
+    vec4 fogReferenceElevation; // x=基準の仰角の正弦、y=余弦、zw=0
 } parameters;
 
 // 表面BSDF（PathTracingBsdfModeと同じ値）。
