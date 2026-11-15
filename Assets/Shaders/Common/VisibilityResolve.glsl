@@ -75,6 +75,10 @@
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/PreExposedEmissive.glsl"
 #include "Common/MegaGeometryDebugColor.glsl"
+#include "Common/WetSurface.glsl"
+
+// VisibilityResolvePass.cpp の EnvironmentBindingIndex と同じ、全変種で空いている束縛。
+NORVES_DECLARE_ENVIRONMENT_UBO(0, 37)
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -912,7 +916,6 @@ void main()
         surface = VisFlatMaterialSurface(objectColor, materialEntry, bHasMaterial, resolved);
     }
 
-    imageStore(albedoImage, ivec2(pixel), surface.albedo);
     const bool bDiffuseOnly = bHasMaterial && !bDebugView && (materialEntry.header.x & VIS_MATERIAL_FLAG_DIFFUSE_ONLY) != 0u;
     const uint receiverFlags = surface.receiverFlags | (bDiffuseOnly ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u);
     uint shadingModelId = GBUFFER_SHADING_MODEL_DEFAULT_LIT;
@@ -922,6 +925,18 @@ void main()
         shadingModelId = materialEntry.header.y & GBUFFER_SHADING_MODEL_ID_MASK;
         shadingParams = ResolveShadingParams(VisShadingParamsForRecord(record), materialEntry.shadingParams);
     }
+    if (!bDebugView)
+    {
+        const float rawInstanceP0 = bHasMaterial ? VisShadingParamsForRecord(record).x : -1.0;
+        const float rawMaterialP0 = bHasMaterial ? materialEntry.shadingParams.x : -1.0;
+        // 材質は x が金属度、y が粗さ。値をそのまま渡し、濡れ 0 では既存の値と法線を保つ。
+        // 幾何法線はラスタの経路と同じ補間の頂点の法線（両面は反転済み）。
+        ApplyWetSurfaceFromEnvironment(surface.albedo.rgb, surface.material.y, surface.material.x, surface.normal,
+                                       resolved.normal, u_Environment.params,
+                                       ResolveWetSurfaceResponse(rawInstanceP0, rawMaterialP0,
+                                                                 shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT));
+    }
+    imageStore(albedoImage, ivec2(pixel), surface.albedo);
     imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, shadingModelId, receiverFlags));
     // シェーディングモデルに応じた材質値と P0 を書く。
     imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterialForShadingModel(surface.material, shadingParams.x, shadingModelId));

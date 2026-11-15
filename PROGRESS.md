@@ -11228,3 +11228,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 GLSL の環境の UBO の構造体・宣言の型・濡れの感度の読み方: 着地(直し 0 回)
 - U11 GBufferPass の書き手の濡れ（保存した差分を当てて確かめ直す）: 着地(直し 0 回)
 - U12 MegaGeometry の書き手の濡れ（保存した差分を当てて確かめ直す）: 着地(直し 0 回)
+- U13 可視バッファの解決の書き手の濡れ（保存した差分を当て、幾何法線を直す）: 着地(直し 0 回)
