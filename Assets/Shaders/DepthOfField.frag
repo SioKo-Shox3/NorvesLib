@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+
 // ラスタの被写界深度のgather。深度からPTと同じ薄レンズの式でCoCを求め、各画素が直径CoCの円板へ
 // 一様に散らした寄与を中心の画素で集める（scatter-as-gather）。
 // 前景と背景の層: 中心へ届く標本のうち最も手前のCoCを求め、それに近い標本を前景、残りを背景に分ける
@@ -32,14 +34,14 @@ const float ForegroundBand = 0.25;
 // あるため、ピントの合った物体の縁にも奥の面が半画素ほど回り込む。
 const float BehindSpreadSlack = 0.35;
 
-// 符号付きのCoCの半径（入力画像の画素）。負はピント面より手前。空（深度1）は無限遠の値。
+// 符号付きのCoCの半径（入力画像の画素）。負はピント面より手前。空（クリア値の深度）は無限遠の値。
 float SignedCocRadius(ivec2 texel, ivec2 size)
 {
     float depth = texelFetch(sceneDepthTexture, texel, 0).r;
     float focusDistance = params.cameraPositionAndFocusDistance.w;
     float cocScale = params.cameraForwardAndCocScale.w;
     float maxRadius = params.imageSizeAndLimits.z;
-    if (isnan(depth) || isinf(depth) || depth >= 0.999999)
+    if (isnan(depth) || isinf(depth) || IsBackgroundDepth(depth))
     {
         return min(0.5 * cocScale, maxRadius);
     }

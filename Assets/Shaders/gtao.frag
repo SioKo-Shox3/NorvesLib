@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+
 // ========================================
 // GTAO（Ground Truth Ambient Occlusion。Jimenez et al. 2016「Practical Realtime Strategies for
 // Accurate Indirect Occlusion」）
@@ -103,8 +105,8 @@ void main()
     ivec2 centerTexel = clamp(ivec2(fragUV * vec2(depthSize)), ivec2(0), depthSize - 1);
     float depth = texelFetch(gbufferDepth, centerTexel, 0).r;
 
-    // 空（深度=1.0）は遮蔽なし
-    if (depth >= 0.9999)
+    // 背景（クリア値と等しい深度）は遮蔽なしとし、距離では切らない
+    if (IsBackgroundDepth(depth))
     {
         outVisibility = 1.0;
         return;

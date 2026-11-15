@@ -32,6 +32,7 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
+#include "Common/DepthConvention.glsl"
 #include "Common/VirtualShadowMapParams.glsl"
 
 layout(std140, set = 0, binding = 0) uniform ProbeParams
@@ -193,7 +194,7 @@ void main()
         prevVisibility[probeCount + index] = -1.0;
         prevVisibility[2u * probeCount + index] = -1.0;
         prevVisibility[3u * probeCount + index] = -1.0;
-        if (depth > 0.0 && depth < 1.0 && normalLength > 0.5)
+        if (IsCloserDepth(kDepthNearest, depth) && !IsBackgroundDepth(depth) && normalLength > 0.5)
         {
             const vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
             points[index].position = vec4(ReconstructWorldPosition(uv, depth), 1.0);
@@ -233,7 +234,7 @@ void main()
             {
                 const ivec2 pixel = min(ivec2(uv * vec2(size)), size - 1);
                 const float depth = texelFetch(gbufferDepth, pixel, 0).r;
-                if (depth > 0.0 && depth < 1.0)
+                if (IsCloserDepth(kDepthNearest, depth) && !IsBackgroundDepth(depth))
                 {
                     // 線形の深度（カメラ前方への距離）で、標本点とその画素に写っている点を比べる
                     const vec3 seen = ReconstructWorldPosition((vec2(pixel) + 0.5) / vec2(size), depth);

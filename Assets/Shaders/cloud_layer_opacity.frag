@@ -12,12 +12,13 @@
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
+#include "Common/DepthConvention.glsl"
 #include "Common/CloudLayerCommon.glsl"
 
 void main()
 {
     float depth = textureLod(sceneDepthTexture, fragUV, 0.0).r;
-    if (IsFiniteFloat(depth) && depth < 0.999999)
+    if (IsFiniteFloat(depth) && !IsBackgroundDepth(depth))
     {
         // 不透明物の画素。cloud_layer.frag はここへ何も重ねない
         outColor = vec4(0.0, 0.0, 1.0, 1.0);

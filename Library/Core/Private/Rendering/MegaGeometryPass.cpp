@@ -16,6 +16,7 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ConstantMaterialTextureCache.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
@@ -7539,7 +7540,7 @@ namespace NorvesLib::Core::Rendering
         // デプステスト有効
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
 
         // MRT用ブレンドステート（Albedo・Normal・Material・Emissive・Velocity の5カラーアタッチメント分）
         for (int i = 0; i < 5; ++i)
