@@ -76,6 +76,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 data.Fur = createInfo.Fur;
             }
+            data.VertexAnimation = SanitizeVertexAnimationParams(createInfo.VertexAnimation);
             data.Revision = 1;
             for (uint32_t index = 0; index < ShadingParamCount; ++index)
             {

@@ -74,6 +74,27 @@ namespace NorvesLib::Core::Rendering
         outZ = std::sin(radians);
     }
 
+    void PackVertexAnimationWindConstants(const WindParameters& p, float outWindA[4], float outWindB[4])
+    {
+        if (!p.bEnabled)
+        {
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                outWindA[index] = 0.0f;
+                outWindB[index] = 0.0f;
+            }
+            return;
+        }
+
+        WindDirectionXZ(p, outWindA[0], outWindA[1]);
+        outWindA[2] = p.BaseSpeed;
+        outWindA[3] = p.GustStrength;
+        outWindB[0] = p.GustFrequencyHz;
+        outWindB[1] = p.GustScaleMeters;
+        outWindB[2] = p.Turbulence;
+        outWindB[3] = 1.0f;
+    }
+
     uint32_t WindHash(uint32_t x)
     {
         x ^= x >> 16;
