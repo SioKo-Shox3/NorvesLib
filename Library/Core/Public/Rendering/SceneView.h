@@ -54,6 +54,14 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    // カリングで LOD の段とインポスターの切り替えを決めるためのカメラの値
+    struct SceneViewScreenSizeContext
+    {
+        bool bOrthographic = false;
+        float TanHalfFovY = 0.0f; // 透視のときの tan(縦の視野角/2)
+        float OrthoHeight = 0.0f; // 正射影のときの画面の縦の世界の長さ
+    };
+
     /**
      * @brief SceneView
      *
@@ -602,8 +610,13 @@ namespace NorvesLib::Core::Rendering
         void CullMeshProxyRange(size_t begin, size_t end,
                                 const Math::Matrix4x4& viewProjection,
                                 const Math::Vector3& cameraPosition,
-                                Container::VariableArray<MeshProxy*>& outVisible);
-        void CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition);
+                                const SceneViewScreenSizeContext& context,
+                                Container::VariableArray<MeshProxy*>& outVisible,
+                                Container::VariableArray<MeshProxy>& outLODCopies);
+        void CullMeshProxies(const Math::Matrix4x4& viewProjection,
+                             const Math::Vector3& cameraPosition,
+                             const SceneViewScreenSizeContext& context,
+                             Container::VariableArray<MeshProxy>& outLODCopies);
 
         void AppendWorldBoardDrawCommands();
 
@@ -636,9 +649,12 @@ namespace NorvesLib::Core::Rendering
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;
+        // 選んだ段の写しは、次のカリングまで可視一覧の参照先として保持する
+        Container::VariableArray<MeshProxy> m_LODProxyCopies;
         Container::UnorderedSet<uint64_t> m_SuppressedMeshComponentIds;
         // チャンクごとの可視一覧の確保をフレーム間で使い回す
         Container::VariableArray<Container::VariableArray<MeshProxy*>> m_CullChunkVisible;
+        Container::VariableArray<Container::VariableArray<MeshProxy>> m_CullChunkLODCopies;
         Container::VariableArray<BoardProxy *> m_VisibleBoardProxies;
 
         // バッチャー
