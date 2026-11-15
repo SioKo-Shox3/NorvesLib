@@ -142,7 +142,8 @@ void main()
             sampleConfidence = clamp(sampleConfidence, 0.0, 1.0);
             float depthDifference = abs(centerDepth - sampleDepth);
             float depthThreshold = max(DEPTH_REJECTION_THRESHOLD,
-                                       0.05 * FarthestDepth(centerDepth, sampleDepth));
+                                       // NDC の深度の大きさに比例した許容。前後の判定ではないので深度の規約の関数を使わない
+                                       0.05 * max(centerDepth, sampleDepth));
             float normalDot = dot(centerNormal, sampleNormal);
             vec3 materialDelta = abs(centerMaterial - sampleMaterial);
             float materialDifference = max(materialDelta.x,
