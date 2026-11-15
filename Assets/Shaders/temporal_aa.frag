@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/VelocityEncoding.glsl"
+
 // TAA の解決。ジッタを掛けて描いた SceneColor の画素に、前のフレームの履歴を混ぜる。
 // 1. 3×3 の近傍の色（YCoCg）から平均と標準偏差を求め、最も手前の画素を探す。
 // 2. その画素の動きで履歴を再投影し、平均 ± gamma × 標準偏差の箱の中心へ向けてクリップする
@@ -9,6 +11,7 @@
 // 3. 現在の色と履歴を 1/(1 + 輝度) の重みで混ぜ、明るい画素のちらつきを抑える。
 //    再投影が画素の間に落ちる（動きの端数がある）ほど、補間で落ちる細部が積もるので現在の色の割合を上げる。
 // 履歴が無いときと、再投影が画面の外に出たときは現在の色をそのまま使う。
+// 近傍で選んだ画素または中心画素が履歴なしの印を持つときも、現在の色をそのまま使う。
 // ジッタは前のカメラにも同じ量を掛けてあるので、velocity と再投影にはジッタが入らない。
 // 現在のリアクティブでクリップの箱を広げ、減衰させた履歴のリアクティブとともに現在の色の割合を上げる。
 // R8 の専用の履歴にリアクティブを持ち越し、半透明・粒子が去った後の残像も抑える。
@@ -175,6 +178,16 @@ void main()
     float currentAlpha = texelFetch(sceneColorTexture, center, 0).a;
     float rCur = texelFetch(reactiveTexture, min(center, textureSize(reactiveTexture, 0) - 1), 0).r;
     if (params.cameraPositionAndHistory.w < 0.5)
+    {
+        outColor = vec4(current, currentAlpha);
+        outReactive = vec4(rCur, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    // 前のフレームでカメラの背後・near 面の近くだった画素は再投影できる履歴が無いので、今の色だけを使う。
+    float centerDepth = texelFetch(sceneDepthTexture, center, 0).r;
+    if ((closestDepth < 1.0 && VelocityIsNoHistory(texelFetch(velocityTexture, closestTexel, 0).xy)) ||
+        (centerDepth < 1.0 && VelocityIsNoHistory(texelFetch(velocityTexture, center, 0).xy)))
     {
         outColor = vec4(current, currentAlpha);
         outReactive = vec4(rCur, 0.0, 0.0, 0.0);
