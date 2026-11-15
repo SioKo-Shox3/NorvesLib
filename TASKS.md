@@ -6215,7 +6215,7 @@
 - notes: before の撮影が無ければ G5-GR37-TERRAIN-CHECK の notes の手順で撮る（`-Item G5-GR46-WIND-CHECK -Phase before` と G5-BASE の wasteland）。2 枚目の風の時計のずらしは、荒野の `grass_gust` と同じく視点の名前で決める仕組み（`WastelandFoliage.h` 165 行付近）に倣って grassland に足す（無ければこの項目で足す）。velocity の許容は R6a の受け入れの値（0.002）に合わせる。
 
 ## G5-GR113-OCCLUDER-DITHER: カメラと主人公の間の薄い遮蔽物（幹・低木・廃墟の欠片）を印の付いた材質だけディザで抜き、隠れた主人公のシルエットを選べるようにする
-- status: done
+- status: doing
 - after: G5-GR113-CLEARANCE-CPU, G1-GR01-TICK-CONTRACT-DOC, G4-GR06-FOLLOW-CASES, G4-GR06-CLING-LOCKON, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW
 - gr: GR113
 - needs-gr: GR01, GR12, GR06, GR25, GR26, GR27
