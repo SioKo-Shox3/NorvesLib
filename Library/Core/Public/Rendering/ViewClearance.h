@@ -2,6 +2,7 @@
 
 #include "Math/Vector3.h"
 #include <cstddef>
+#include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -29,6 +30,8 @@ namespace NorvesLib::Core::Rendering
         bool bAffectGrass = true;
         bool bAffectOccluders = true;
         bool bHeroSilhouette = false;
+        // 隠れた主人公として描くスキンの持ち主の Object 番号。0 は無し。カメラのスプリングアームの pivot から埋める。
+        uint64_t HeroObjectId = 0;
     };
 
     // std140 の vec4 4 本。Common/ViewClearance.glsl と同じ並び。

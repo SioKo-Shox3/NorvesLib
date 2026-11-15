@@ -331,6 +331,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/HeroSilhouettePass.cpp
     Private/Rendering/GBufferProgramOverlayPass.cpp
     Private/Rendering/GBufferProgramRegistry.cpp
     Private/Rendering/SkyAtmosphere.cpp
@@ -743,6 +744,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
     Public/Rendering/ViewClearance.h
+    Public/Rendering/HeroSilhouettePass.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
     Public/Rendering/HeightFogGpuParams.h
