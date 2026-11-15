@@ -17,6 +17,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ConstantMaterialTextureCache.h"
 #include "Rendering/DepthConvention.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
@@ -72,6 +73,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainSurfaceMaskBindingIndex = 16;
         // 地形の遠景の地図の binding（megageometry.frag の terrainFarMapTexture。地表の分類の地図の次）
         constexpr uint32_t TerrainFarMapBindingIndex = 17;
+        // megageometry.frag の環境 UBO。頂点の表と地形の枠に重ならない。
+        constexpr uint32_t EnvironmentBindingIndex = 24;
         // スプラットの配列 4 枚（18〜21）は TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_*_BINDING を使う
         // スプラットの並びの UBO（23）は同じヘッダの TERRAIN_SPLAT_MEGA_PARAMS_BINDING を使う
 
@@ -680,6 +683,20 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // フレームの環境を借りられないときは、変更しない既定値を使う。
+        RHI::BufferDesc defaultEnvironmentDesc(sizeof(GPUEnvironmentParams),
+                                               RHI::ResourceUsage::ConstantBuffer,
+                                               true,
+                                               "MegaGeometry_DefaultEnvironmentUBO");
+        m_DefaultEnvironmentBuffer = m_Device->CreateBuffer(defaultEnvironmentDesc);
+        if (!m_DefaultEnvironmentBuffer)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "既定の環境 UBO の作成に失敗しました");
+            return false;
+        }
+        const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+        m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
         // デフォルトPBRテクスチャの作成
         auto createDefault1x1 = [this](const char *debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
         {
@@ -937,6 +954,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferDepthHandle = {};
         m_GBufferVelocityHandle = {};
 
+        m_DefaultEnvironmentBuffer.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -1863,6 +1881,7 @@ namespace NorvesLib::Core::Rendering
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
                                          m_VertexAnimTime);
         m_bFrameRecordDeferred = false;
+        m_PreparedSceneTables.EnvironmentConstants = {};
 
         const bool bCanEnqueueEmptyTransitionPass =
             m_bPreferRenderGraphGBufferResources &&
@@ -1901,6 +1920,8 @@ namespace NorvesLib::Core::Rendering
         // 読み手のパスの記録より前に並ぶ）
         const FrameCommand drawCommand = context.BuildMegaGeometryPassCommand(this);
         PrepareSceneTables(drawCommand.MegaGeometry, context.CommandList);
+        // 記録の間だけ、フレームの持ち主から借りた環境の定数を渡す。
+        m_PreparedSceneTables.EnvironmentConstants = AcquireEnvironmentConstants(context);
         // 記録のコマンドには描画コンテキストがないため、同じフレームの準備結果へ濡れ度を写す
         const auto *wetness = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
         m_PreparedSceneTables.TerrainWetness = wetness ? wetness->Wetness : 0.0f;
@@ -3686,6 +3707,10 @@ namespace NorvesLib::Core::Rendering
         const float terrainWetness = m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
                                      m_PreparedSceneTables.InFlightIndex == command.InFlightIndex
                                          ? m_PreparedSceneTables.TerrainWetness : 0.0f;
+        const FrameUploadAllocation environmentConstants =
+            m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
+            m_PreparedSceneTables.InFlightIndex == command.InFlightIndex
+                ? m_PreparedSceneTables.EnvironmentConstants : FrameUploadAllocation{};
         m_PreparedSceneTables = PreparedSceneTables{};
         if (!bPreparedTables)
         {
@@ -4351,6 +4376,16 @@ namespace NorvesLib::Core::Rendering
             const RHI::DescriptorSetPtr &descriptorSet = sectionDraw.DescriptorSet;
             descriptorSet->BindConstantBuffer(0, sectionDraw.Uniform, 0,
                                               static_cast<uint32_t>(sizeof(SectionUniformData)));
+            if (environmentConstants.IsValid())
+            {
+                descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, environmentConstants.Buffer,
+                                                  environmentConstants.GetOffset32(), environmentConstants.GetSize32());
+            }
+            else
+            {
+                descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(GPUEnvironmentParams)));
+            }
             descriptorSet->BindConstantBuffer(TERRAIN_SPLAT_MEGA_PARAMS_BINDING, sectionDraw.TerrainSplatUniform, 0,
                                               static_cast<uint32_t>(sizeof(splatParams)));
 
@@ -6119,6 +6154,11 @@ namespace NorvesLib::Core::Rendering
         splatParamsBinding.type = RHI::ResourceBindType::ConstantBuffer;
         splatParamsBinding.stages = RHI::ShaderStage::Pixel;
         desc.bindings.push_back(splatParamsBinding);
+        RHI::DescriptorBinding environmentBinding;
+        environmentBinding.binding = EnvironmentBindingIndex;
+        environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        environmentBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(environmentBinding);
         if (UsesVirtualTextureFeedbackBinding(m_Device))
         {
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);

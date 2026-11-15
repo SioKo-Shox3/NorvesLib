@@ -11,7 +11,6 @@ const uint kGrassHashSaltColor = 6u;
 const uint kGrassHashSaltLean = 7u;
 const float kGrassNearFadeStartMeters = 1.2;
 const float kGrassNearFadeDiscardMeters = 0.35;
-const float kGrassDefaultGlobalWetness = 0.0;
 const float kGrassDefaultTrample = 0.0;
 const uint kGrassDrawFlagPreviousCamera = 1u;
 const uint kGrassDrawFlagWind = 2u;
@@ -21,6 +20,7 @@ const uint kGrassDrawFlagWorldField = 4u;
 // 1 は LOD ごとの範囲をバイトオフセット付きで束ね、Blades[0] がその LOD の先頭。
 // 2 = 種別 SSBO（GrassSpeciesGpuData Species[]）、3 = LayerA の RGBA8 2D 配列。
 // 4 = 今の世界フィールド、5 = 前の世界フィールド（線形補間・Clamp）。
+// 6 = フラグメント段の環境 UBO。全体の濡れ度は CPU が Surface.x に詰める。
 // LayerA は texelFetch で読む。正規化後の B（バイト値 / 255）が moistureBias、層は (cz mod N) * N + (cx mod N)。
 // 負座標の mod は正の剰余に直す。有効な濡れ度は clamp(global * (0.6 + 0.8 * B), 0, 1)。
 // 生成側の定数も binding 0 を使うため、構造体とハッシュだけをここで定義する。
