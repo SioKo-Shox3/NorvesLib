@@ -11433,3 +11433,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 太陽の VSM の影に同じ変位を入れる: 着地(直し 0 回)
 - U3 GBuffer の経路に風の頂点アニメを入れ、可視バッファ On では頂点アニメの材質を重ね描きに回す: 着地(直し 0 回)
 - U6 grassland に風で揺れる仮の木を数本置く: 着地(直し 0 回)
+- U7 GPU の配置の割り当て表と風の受入れの文書を書き、タスクの verify を通す: 着地(直し 0 回)
