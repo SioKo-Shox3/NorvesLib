@@ -66,6 +66,7 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t FrameLeaseIndex = InvalidFrameLeaseIndex;
         SkinnedMeshPassKind PassKind = SkinnedMeshPassKind::None;
+        float Opacity = 1.0f; // 部品の不透明度。1 未満は残像
         Container::TSharedPtr<const SkinnedMeshFrameLease> FrameLease;
         Container::VariableArray<Math::Matrix4x4> BonePalette;
         // 姿勢から求めた AnimatedBounds。WorldMatrix を掛けると世界の境界になる。
