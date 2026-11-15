@@ -11430,3 +11430,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 材質の印と、印の付いた材質を切り抜きの経路へ振る判定・ディザの GLSL 関数: 着地(直し 0 回)
 - U4 主人公のシルエットの段（HeroSilhouettePass）とスキンの Overlay の種類: 着地(直し 1 回)
 - U2 GBuffer の切り抜きの変種で印の付いた材質をディザで抜く: 着地(直し 0 回)
+- U3 MegaGeometry に印の付いた区間のディザの変種を足す: 着地(直し 0 回)

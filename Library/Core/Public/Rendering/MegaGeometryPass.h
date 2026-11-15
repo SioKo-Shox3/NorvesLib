@@ -786,7 +786,8 @@ namespace NorvesLib::Core::Rendering
         bool CreateDrawPipeline(ViewRenderContext &context,
                                 bool bRequireDrawPipeline = true,
                                 bool bUseRenderGraphAttachmentStates = false);
-        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::CullMode cullMode, RHI::PipelinePtr &outPipeline);
+        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::CullMode cullMode,
+                                       RHI::PipelinePtr &outPipeline, const RHI::ShaderPtr &fragmentShader);
         RHI::PipelinePtr SelectDrawPipeline(DebugViewMode mode) const;
 
         /**
@@ -1286,10 +1287,14 @@ namespace NorvesLib::Core::Rendering
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;
         RHI::PipelinePtr m_DrawTwoSidedPipeline;
+        RHI::PipelinePtr m_DrawClearancePipeline;
+        RHI::PipelinePtr m_DrawClearanceTwoSidedPipeline;
         RHI::PipelinePtr m_DrawWireframePipeline;
         bool m_bTwoSidedPipelineWarningLogged = false;
+        bool m_bClearancePipelineWarningLogged = false;
         RHI::ShaderPtr m_DrawVertexShader;
         RHI::ShaderPtr m_DrawFragmentShader;
+        RHI::ShaderPtr m_DrawClearanceFragmentShader;
 
         // GBuffer描画用レンダーパス・フレームバッファ（GBufferPassから共有）
         RHI::RenderPassPtr m_GBufferRenderPass;
