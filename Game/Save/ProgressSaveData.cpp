@@ -1,5 +1,7 @@
 ﻿#include "ProgressSaveData.h"
 
+#include "Core/Public/Container/Set.h"
+#include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Save/GameStateStore.h"
 #include "Core/Public/Text/JsonDocument.h"
 #include "Core/Public/Text/JsonWriter.h"
@@ -320,6 +322,59 @@ namespace Game::Save
                    ReadMap(progress.FindMember("ints"), out.Ints, "progress.ints", pOutError, ReadInt) &&
                    ReadMap(progress.FindMember("reals"), out.Reals, "progress.reals", pOutError, ReadReal);
         }
+        // vegetation は v2 の任意の節で、SaveMigration は未知の欄を保持する。
+        // 節の無い旧いセーブは既定値で始まるため、版は上げない。
+        bool ReadVegetation(JsonValue vegetation, ProgressSaveData::VegetationData& out,
+                            Container::String* pOutError)
+        {
+            if (!CheckType(vegetation, JsonType::Object, "vegetation", pOutError))
+            {
+                return false;
+            }
+            const JsonValue dryness = vegetation.FindMember("dryness");
+            if (!CheckType(dryness, JsonType::Array, "vegetation.dryness", pOutError))
+            {
+                return false;
+            }
+
+            Container::Set<Container::String> keys;
+            out.Dryness.reserve(dryness.GetArraySize());
+            for (size_t index = 0; index < dryness.GetArraySize(); ++index)
+            {
+                const JsonValue item = dryness.GetArrayElement(index);
+                const JsonValue key = item.FindMember("key");
+                const JsonValue current = item.FindMember("current");
+                const JsonValue target = item.FindMember("target");
+                const JsonValue remaining = item.FindMember("remaining");
+                if (!item.IsObject() || !key.IsString() || !current.IsNumber() || !target.IsNumber() ||
+                    !remaining.IsNumber() || key.AsString().empty() ||
+                    key.AsString().find('\0') != Container::String::npos)
+                {
+                    LOG_WARNING("SAVE_DRYNESS_ENTRY_SKIPPED reason=InvalidEntry index=%zu 不正な枯れ度の項目を読み飛ばします", index);
+                    continue;
+                }
+
+                ProgressSaveData::DrynessSaveEntry entry;
+                entry.Key = key.AsString();
+                entry.CurrentLevel = static_cast<float>(current.AsNumber());
+                entry.TargetLevel = static_cast<float>(target.AsNumber());
+                entry.RemainingSeconds = static_cast<float>(remaining.AsNumber());
+                if (!std::isfinite(entry.CurrentLevel) || entry.CurrentLevel < 0.0f || entry.CurrentLevel > 1.0f ||
+                    !std::isfinite(entry.TargetLevel) || entry.TargetLevel < 0.0f || entry.TargetLevel > 1.0f ||
+                    !std::isfinite(entry.RemainingSeconds) || entry.RemainingSeconds < 0.0f)
+                {
+                    LOG_WARNING("SAVE_DRYNESS_ENTRY_SKIPPED reason=InvalidEntry index=%zu 不正な枯れ度の項目を読み飛ばします", index);
+                    continue;
+                }
+                if (!keys.emplace(entry.Key).second)
+                {
+                    LOG_WARNING("SAVE_DRYNESS_ENTRY_SKIPPED reason=DuplicateKey key=%s 重複した鍵の枯れ度を読み飛ばします", entry.Key.c_str());
+                    continue;
+                }
+                out.Dryness.push_back(std::move(entry));
+            }
+            return true;
+        }
     } // namespace
 
     Container::String ToJson(const ProgressSaveData& data)
@@ -407,6 +462,23 @@ namespace Game::Save
         }
         writer.EndObject();
         writer.EndObject();
+        writer.BeginObject("vegetation");
+        writer.BeginArray("dryness");
+        for (const auto& entry : data.Vegetation.Dryness)
+        {
+            if (entry.Key.find('\0') != Container::String::npos)
+            {
+                return {};
+            }
+            writer.BeginObject();
+            writer.WriteString("key", entry.Key);
+            writer.WriteNumber("current", static_cast<double>(entry.CurrentLevel));
+            writer.WriteNumber("target", static_cast<double>(entry.TargetLevel));
+            writer.WriteNumber("remaining", static_cast<double>(entry.RemainingSeconds));
+            writer.EndObject();
+        }
+        writer.EndArray();
+        writer.EndObject();
         writer.EndObject();
         return writer.IsComplete() ? writer.ToString() : Container::String{};
     }
@@ -448,7 +520,8 @@ namespace Game::Save
             !ReadReal(world.FindMember("timeOfDay"), candidate.World.TimeOfDay, "world.timeOfDay", pOutError) ||
             !ReadInt(world.FindMember("day"), candidate.World.Day, "world.day", pOutError) ||
             !ReadString(world.FindMember("weather"), candidate.World.Weather, "world.weather", pOutError) ||
-            !ReadProgress(root.FindMember("progress"), candidate.Progress, pOutError))
+            !ReadProgress(root.FindMember("progress"), candidate.Progress, pOutError) ||
+            !ReadVegetation(root.FindMember("vegetation"), candidate.Vegetation, pOutError))
         {
             return false;
         }

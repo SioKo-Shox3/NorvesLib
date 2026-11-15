@@ -1,8 +1,10 @@
-﻿// 枯れ度の源の形と値を保存し、再生中だけ所有者に追従する源を登録する。
-// 源の ID と現在値は実行時だけ保持し、シーンファイルには保存しない。
+﻿// 形・半径・減衰・既定の値・鍵を PROPERTY でシーンに保存し、再生中だけ源を登録して所有者に追従させる。
+// 現在値はシーンには保存せず、セーブが鍵ごとに持つ。
+// EndPlay では源を手放し、遷移中なら目標に届くまで残る。
 #pragma once
 
 #include "Component.h"
+#include "Container/String.h"
 #include "Vegetation/DrynessMap.h"
 
 namespace NorvesLib::Core::Engine
@@ -39,6 +41,9 @@ namespace NorvesLib::Core::Component
         void SetRecoverySeconds(float seconds) { getRecoverySeconds() = seconds; }
         float GetRecoverySeconds() const { return RecoverySeconds; }
 
+        void SetKey(const Container::String& key) { getKey() = key; }
+        const Container::String& GetKey() const { return Key; }
+
         Vegetation::DrynessSourceId GetSourceId() const { return m_SourceId; }
         bool Recover();
         bool SetLevel(float level, float seconds);
@@ -50,6 +55,7 @@ namespace NorvesLib::Core::Component
         PROPERTY(float, Falloff)
         PROPERTY(float, DefaultLevel)
         PROPERTY(float, RecoverySeconds)
+        PROPERTY(Container::String, Key)
 
     private:
         void SetDefaults();

@@ -39,5 +39,5 @@
   ],
   "collapse": { "condition": "stagger", "recoverSeconds": 1.0 },
   "defeat": { "holdSeconds": 1.5 },
-  "defeatResponses": []
+  "defeatResponses": ["wither.recover"]
 }

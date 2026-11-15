@@ -6976,7 +6976,7 @@
 - notes: 確かめ直し (c)。選定課題 G2-S2 は作者の承認済み(`G2ImportDecisions.md`「S2とS8のGLB部分は先に承認済み」: サイドカーが一次の置き場)。ところが clip の取り込みの補正は `--rig-split` の CLI からしか渡せず(`RigSplitFileCli.cpp:31-36` の help)、asset-set の skeletal(`RigSingleCook.cpp:130-150`)では指定の手段が無い。段階をまたぐ注意(ロードマップ 4445 行)の「import.json に置いてよい節を規範として一覧にする」「audio 節をここで予約する」と、G3-S8(推奨 A: import.json の clip 節は取り込み時の補正、実行時のメタデータは *.animmeta.json)に合わせる。G3-S8 の決定は G3 の計画役が持つが、clip 節の実装の持ち主はほかに無い(TASKS.md と G3/G4/G9 の計画に無い)ので G2 で作る。ループの範囲・ルート移動の正本は実行時のサイドカー(GR11)のままにし、ここでは cook 時の自動判定の下書き(`loop`・`analysis`)だけを扱う。要件 `#### GR78`・`#### GR82`。
 
 ## G6-GR91-FUR-MATERIAL-DATA: 材質にファーの値の塊（層数・長さ・密度・束・下毛の色・領域の表・濡れの応答）と 4 枚のマップの枠を足し、検査して、スキンの proxy へ値で写して描画へ渡す
-- status: todo
+- status: done
 - after: G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR91
 - needs-gr: GR26
@@ -7208,7 +7208,7 @@
 - notes: GPU の試験は利用者のほかのアプリに影響を出しうるので、実装の項目（G12-GR31-CULL-CONTRACT）では回さず、この項目で GPU を占有して回す（G5 の GPU の試験と同じ扱い）。100 万本の GPU 時間の記録は SCN-MEGA-ACCEPT-1M（todo）が行う。
 
 ## G12-GR45-DRYNESS-FIELD: 世界空間のフィールドに枯れ度の層（近傍の高解像度と遠景の低解像度の 2 枚）を足し、毎フレーム源から GPU で評価する
-- status: todo
+- status: done
 - after: G5-GR44-WORLD-FIELD, G12-GR45-DRYNESS-CPU, G5-GR44-TRAMPLE
 - gr: GR45
 - needs-gr: GR44
@@ -7232,7 +7232,7 @@
 - notes: 設計はロードマップ 2217・2221・2223 行（GR45 の消費側と遠景の見せ方）、完了条件は 2614 行。遠景の見せ方は企画で未決なので、草丈を潰すか（遠くから分かるが高い草の遮りが弱まる）・潰さないか（遮りは保つが遠くから分からない）を値の調整で選べるようにし、既定は「色だけ寄せて草丈は潰さない」（仮。高い草の遮りは G5 の GR113 などが前提にしているため）。地表・低木のシェーダーは今は無い（GR37 の層の材質・GR47 の低木）ので、`Common/WorldField.glsl` の `SampleDryness` を渡すだけにし、ここでは使わない。草のシェーダーは G5 の項目と共有なので差分を小さくする。試験を足す理由: 反証する契約は「枯れ度 0 では草が今とビット一致し、枯れ度に応じて決まった倍率で変わる」こと。漏れは草原全体の色や密度がわずかに変わるだけで撮影では気づきにくく、黙って起きる。危険地帯（RenderThread・GBuffer の経路）なので評価者を通す。
 
 ## G12-GR45-WITHER-GAMEPLAY: シ者の撃破で周りの草が戻る応答と、枯れ度の状態のセーブ・リスタートでの再現をつなぐ
-- status: todo
+- status: done
 - after: G12-GR45-DRYNESS-CPU, G8-GR17-ENEMY-COMPONENT, G8-GR76-STATE-AUTOSAVE, G8-GR76-RESET-LIFETIME, G8-GR17-HEALTH-PROGRESSION, G8-GR17-SLICE-SMOKE, G8-GR76-SAVE-STORAGE, G8-GR76-SETTINGS
 - gr: GR45
 - needs-gr: GR17, GR76

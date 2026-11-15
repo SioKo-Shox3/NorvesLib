@@ -4625,6 +4625,10 @@ namespace NorvesLib::Core::Rendering
         packet.WorldFieldInteractors.clear();
         packet.WorldFieldInteractors.insert(packet.WorldFieldInteractors.end(),
                                             m_WorldFieldInteractors.begin(), m_WorldFieldInteractors.end());
+        // 枯れ度の源は状態として次に設定されるまで保持する。
+        packet.WorldFieldDrynessSources.clear();
+        packet.WorldFieldDrynessSources.insert(packet.WorldFieldDrynessSources.end(),
+                                               m_WorldFieldDrynessSources.begin(), m_WorldFieldDrynessSources.end());
         // このフレームの入力を写し終えたら、容量を保ったまま空にする。
         m_WorldFieldInteractors.clear();
         packet.Scene.RibbonTrails = m_RibbonTrails;
@@ -5884,6 +5888,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotFoliage = &packet->Scene.Foliage;
         viewContext.SnapshotGrassField = packet->GrassField.get();
         viewContext.SnapshotWorldFieldInteractors = &packet->WorldFieldInteractors;
+        viewContext.SnapshotWorldFieldDrynessSources = &packet->WorldFieldDrynessSources;
         viewContext.SnapshotRibbonTrails = &packet->Scene.RibbonTrails;
         viewContext.SnapshotDecals = &packet->Scene.Decals;
         viewContext.SnapshotDistortions = &packet->Scene.Distortions;
@@ -6825,6 +6830,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetWorldFieldInteractors(Container::Span<const WorldFieldInteractor> interactors)
     {
         SanitizeWorldFieldInteractors(interactors, m_WorldFieldInteractors);
+    }
+
+    void RenderingCoordinator::SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources)
+    {
+        SanitizeWorldFieldDrynessSources(sources, m_WorldFieldDrynessSources);
     }
 
     void RenderingCoordinator::SetRibbonTrails(const RibbonTrailScene& trails)
