@@ -16,9 +16,16 @@ layout(set = 0, binding = 0) uniform PointShadowFace
     vec4 lightPositionAndInvRange;
     mat4 world;
     vec4 worldSource;
+    vec4 reservedAlphaClip;
+    vec4 vertexAnimTime;
+    vec4 vertexAnimMaterial0;
+    vec4 vertexAnimMaterial1;
+    vec4 windA;
+    vec4 windB;
 } pointShadowFace;
 
 #include "Common/SceneInstanceData.glsl"
+#include "Common/VertexAnimation.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {
@@ -32,6 +39,21 @@ void main()
     mat4 world = pointShadowFace.worldSource.x > 0.5 ? pointShadowFace.world
                                                      : instances[gl_InstanceIndex].world;
     vec4 worldPosition = world * vec4(inPosition, 1.0);
-    outWorldPosition = worldPosition.xyz;
-    gl_Position = pointShadowFace.lightProjection * pointShadowFace.lightView * worldPosition;
+    const vec4 instanceParams = pointShadowFace.worldSource.x > 0.5 ? vec4(-1.0)
+                                                                  : instances[gl_InstanceIndex].shadingParams;
+    const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, pointShadowFace.vertexAnimTime);
+    const VertexAnimationMaterial material = MakeVertexAnimationMaterial(pointShadowFace.vertexAnimMaterial0, pointShadowFace.vertexAnimMaterial1);
+    const VertexAnimationWind wind = MakeVertexAnimationWind(pointShadowFace.windA, pointShadowFace.windB);
+    const vec3 origin = world[3].xyz;
+    if (VertexAnimationIsIdentity(animParams, material, wind))
+    {
+        outWorldPosition = worldPosition.xyz;
+        gl_Position = pointShadowFace.lightProjection * pointShadowFace.lightView * worldPosition;
+    }
+    else
+    {
+        worldPosition.xyz = ApplyVertexAnimation(worldPosition.xyz, inPosition, animParams, material, wind, origin, pointShadowFace.vertexAnimTime.x);
+        outWorldPosition = worldPosition.xyz;
+        gl_Position = pointShadowFace.lightProjection * pointShadowFace.lightView * worldPosition;
+    }
 }

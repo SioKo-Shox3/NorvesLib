@@ -6182,7 +6182,7 @@
 - notes: 比べる前の撮影（before）が無ければ先に撮る: G5 の最初の実装のコミット（`git log --reverse --format=%H --grep="G5-GR" | head -1`）の親を別の作業ツリーに取り出して RelWithDebInfo でビルドし、そこから `CaptureRegression.ps1 -Item G5-GR37-TERRAIN-CHECK -Phase before` と、wasteland の grass・ground の撮影を `.harness/runs/scene-capture/G5-BASE/wasteland` へ撮る（G5-BASE は G5 のほかの確かめと共用。既にあれば撮り直さない）。`grassland-terrain-no-shadow`（地形の区画の bCastShadow を切る開発ビルドだけの引数）が無ければこの項目で足す。`ReferenceCheck.py --rt-scene` は荒野の撮影のログ（`RT_SCENE instances=...`）を読む検査（SCN-WL-RT-TLAS-TERRAIN で作った）で、grassland で動かなければ同じ判定を読めるように直す。画面外の区画が影を落とさない既知の限界（ロードマップ 1251 行）が出たら、A/B の差と一緒に `Docs/RenderingValidation/TerrainAcceptance.md` に記録する（合否にしない）。GPU の時間は記録だけでゲートにしない。
 
 ## G5-GR46-VERTEX-ANIM: 通常のメッシュの材質に風の頂点アニメを足し、GBuffer・影（方向光・点光源・VSM）・velocity に同じ変位を入れる
-- status: todo
+- status: done
 - after: G5-GR46-WIND-FIELD, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR46
 - needs-gr: GR26, GR30
@@ -7216,7 +7216,7 @@
 - notes: 設計はロードマップ 2219 行（GR45 の GPU）、完了条件は 2613 行。層の大きさ・画素の大きさは仮の値（設定で替えられる）。遠景の見せ方は企画で未決（『高い草で視界が遮られる』と『遠くの枯れ草が見える』は犬の目線で両立しにくい。ロードマップ 2212・2223 行）なので、遠景の層は常に作り、消費する側の重みを設定値にする（G12-GR45-GRASS-DRYNESS）。`RenderWorld.cpp`・`RenderingCoordinator.cpp`・`FramePacket.h` は共有のファイルなので差分を小さくする。GPU の試験の実行は利用者のほかのアプリへの影響を避けて check の項目で行う。試験を足す理由: 反証する契約は「GPU の枯れ度の層が CPU の `Sample` と同じ場所・同じ値になる」こと。ずれは草の枯れ地の境がずれるだけで撮影では気づきにくく、ログにも出ず黙って起きる。SceneRevision に入れると RTGI の履歴が源の変化で捨てられ、絵では気づきにくい。危険地帯（RenderThread のデータ契約）なので評価者を通す。
 
 ## G12-GR45-GRASS-DRYNESS: 草が枯れ度で色・密度・高さ・倒れ方を切り替え、遠景の帯は遠景の層を引いて遠くから枯れ地が分かるようにする
-- status: todo
+- status: done
 - after: G12-GR45-DRYNESS-FIELD, G5-GR43-GRASS-DRAW, G5-GR42-GRASS-FIELD-ASSET, G5-GR42-GRASS-FIELD-CORE, G5-GR43-GRASS-GENERATE
 - gr: GR45
 - needs-gr: GR42, GR43

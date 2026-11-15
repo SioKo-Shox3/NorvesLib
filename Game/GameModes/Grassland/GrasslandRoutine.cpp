@@ -7,6 +7,9 @@
 #if NORVES_BUILD_DEVELOPMENT
 #include "Core/Public/Asset/AssetFileReader.h"
 #include "Core/Public/Rendering/HeroSilhouettePass.h"
+#include "Core/Public/Text/JsonDocument.h"
+#include "Core/Public/Text/JsonWriter.h"
+#include "Core/Public/Vegetation/Vegetation.h"
 #endif
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/GrassFieldComponent.h"
@@ -169,6 +172,221 @@ namespace Game::GameModes
             data.m_RunAngle = std::atan2(-forward.z, -forward.x);
             UpdateRunningBody(data, 0.0f);
             return true;
+        }
+
+        // 風の頂点アニメ（GR46）を見るための仮の木。実際の木の資産（GR47/GR48）に置き換える。
+        void GenerateWindTreeMesh(Container::VariableArray<Mesh3DVertex>& vertices,
+                                  Container::VariableArray<uint32_t>& indices)
+        {
+            vertices.reserve(384);
+            indices.reserve(552);
+            const auto appendQuad = [&](const Math::Vector3 (&points)[4], const Math::Vector3& normal)
+            {
+                const uint32_t base = static_cast<uint32_t>(vertices.size());
+                for (uint32_t corner = 0; corner < 4; ++corner)
+                {
+                    const auto& point = points[corner];
+                    vertices.push_back({{point.x, point.y, point.z}, {normal.x, normal.y, normal.z},
+                                        {corner == 1 || corner == 2 ? 1.0f : 0.0f,
+                                         corner >= 2 ? 1.0f : 0.0f}});
+                }
+                constexpr uint32_t kFaceIndices[] = {0, 1, 2, 0, 2, 3};
+                for (const uint32_t index : kFaceIndices)
+                {
+                    indices.push_back(base + index);
+                }
+            };
+
+            constexpr uint32_t kSides = 8;
+            constexpr float kTrunkHeight = 5.0f;
+            constexpr float kBottomRadius = 0.18f;
+            constexpr float kTopRadius = 0.10f;
+            constexpr float kHeights[] = {0.0f, 0.5f, 1.5f, 2.5f, 3.5f, 4.25f, kTrunkHeight};
+            const float slope = (kBottomRadius - kTopRadius) / kTrunkHeight * std::cos(kTwoPi / (2.0f * kSides));
+            const float normalScale = 1.0f / std::sqrt(1.0f + slope * slope);
+            // 高さ方向にも分割し、幹の曲がりを頂点の高さマスクに沿わせる。
+            for (uint32_t side = 0; side < kSides; ++side)
+            {
+                const float angle0 = kTwoPi * static_cast<float>(side) / kSides;
+                const float angle1 = kTwoPi * static_cast<float>(side + 1) / kSides;
+                const float cosine0 = std::cos(angle0);
+                const float sine0 = std::sin(angle0);
+                const float cosine1 = std::cos(angle1);
+                const float sine1 = std::sin(angle1);
+                const float middle = (angle0 + angle1) * 0.5f;
+                const Math::Vector3 normal(std::cos(middle) * normalScale, slope * normalScale,
+                                           std::sin(middle) * normalScale);
+                for (uint32_t level = 0; level + 1 < sizeof(kHeights) / sizeof(kHeights[0]); ++level)
+                {
+                    const float y0 = kHeights[level];
+                    const float y1 = kHeights[level + 1];
+                    const float radius0 = kBottomRadius + (kTopRadius - kBottomRadius) * y0 / kTrunkHeight;
+                    const float radius1 = kBottomRadius + (kTopRadius - kBottomRadius) * y1 / kTrunkHeight;
+                    const Math::Vector3 points[] = {
+                        {radius0 * cosine0, y0, radius0 * sine0},
+                        {radius1 * cosine0, y1, radius1 * sine0},
+                        {radius1 * cosine1, y1, radius1 * sine1},
+                        {radius0 * cosine1, y0, radius0 * sine1}};
+                    appendQuad(points, normal);
+                }
+
+                // 上下面の三角形も外から見て反時計回りにする。
+                for (uint32_t cap = 0; cap < 2; ++cap)
+                {
+                    const bool bTop = cap == 1;
+                    const float y = bTop ? kTrunkHeight : 0.0f;
+                    const float radius = bTop ? kTopRadius : kBottomRadius;
+                    const float normalY = bTop ? 1.0f : -1.0f;
+                    const uint32_t base = static_cast<uint32_t>(vertices.size());
+                    vertices.push_back({{0.0f, y, 0.0f}, {0.0f, normalY, 0.0f}, {0.5f, 0.5f}});
+                    const float firstCosine = bTop ? cosine1 : cosine0;
+                    const float firstSine = bTop ? sine1 : sine0;
+                    const float secondCosine = bTop ? cosine0 : cosine1;
+                    const float secondSine = bTop ? sine0 : sine1;
+                    vertices.push_back({{radius * firstCosine, y, radius * firstSine}, {0.0f, normalY, 0.0f},
+                                        {0.5f + 0.5f * firstCosine, 0.5f + 0.5f * firstSine}});
+                    vertices.push_back({{radius * secondCosine, y, radius * secondSine}, {0.0f, normalY, 0.0f},
+                                        {0.5f + 0.5f * secondCosine, 0.5f + 0.5f * secondSine}});
+                    indices.push_back(base);
+                    indices.push_back(base + 1);
+                    indices.push_back(base + 2);
+                }
+            }
+
+            struct TreeBox
+            {
+                Math::Vector3 Center;
+                Math::Vector3 HalfExtent;
+            };
+            const TreeBox branches[] = {
+                {{0.80f, 3.00f, 0.0f}, {0.80f, 0.45f, 0.50f}},
+                {{-0.80f, 3.50f, 0.0f}, {0.80f, 0.40f, 0.50f}},
+                {{0.0f, 3.35f, 0.80f}, {0.50f, 0.45f, 0.80f}},
+                {{0.0f, 3.95f, -0.80f}, {0.50f, 0.45f, 0.80f}},
+                {{0.55f, 4.55f, 0.55f}, {0.55f, 0.45f, 0.55f}},
+                {{-0.55f, 4.95f, -0.55f}, {0.55f, 0.45f, 0.55f}}};
+            const Math::Vector3 normals[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+                                              {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            const Math::Vector3 corners[6][4] = {
+                {{1,-1,-1},{1,1,-1},{1,1,1},{1,-1,1}},
+                {{-1,-1,1},{-1,1,1},{-1,1,-1},{-1,-1,-1}},
+                {{-1,1,-1},{-1,1,1},{1,1,1},{1,1,-1}},
+                {{-1,-1,1},{-1,-1,-1},{1,-1,-1},{1,-1,1}},
+                {{1,-1,1},{1,1,1},{-1,1,1},{-1,-1,1}},
+                {{-1,-1,-1},{-1,1,-1},{1,1,-1},{1,-1,-1}}};
+            for (const TreeBox& branch : branches)
+            {
+                for (uint32_t face = 0; face < 6; ++face)
+                {
+                    Math::Vector3 points[4];
+                    for (uint32_t corner = 0; corner < 4; ++corner)
+                    {
+                        const auto& point = corners[face][corner];
+                        points[corner] = {branch.Center.x + point.x * branch.HalfExtent.x,
+                                          branch.Center.y + point.y * branch.HalfExtent.y,
+                                          branch.Center.z + point.z * branch.HalfExtent.z};
+                    }
+                    appendQuad(points, normals[face]);
+                }
+            }
+        }
+
+        bool CreateWindTrees(GameModeContext& ctx, GrasslandData& data, const Game::Scenes::FreeCameraPose& pose)
+        {
+            constexpr uint8_t kTreeColor[] = {88, 104, 56, 255};
+            TextureCreateInfo textureInfo;
+            textureInfo.Width = 1;
+            textureInfo.Height = 1;
+            textureInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            textureInfo.DebugName = "GrasslandWindTree";
+            const auto texture = ctx.RenderResourcesRef.Textures().CreateTexture(textureInfo, kTreeColor, sizeof(kTreeColor));
+            if (!texture.IsValid())
+            {
+                return false;
+            }
+            ctx.ScopeRef.TrackTexture(texture);
+
+            MaterialCreateData materialInfo;
+            materialInfo.DebugName = "GrasslandWindTree";
+            materialInfo.AlbedoTexture = texture;
+            materialInfo.Roughness = 0.8f;
+            materialInfo.Metallic = 0.0f;
+            materialInfo.VertexAnimation = {VertexAnimationMode::Tree, 0.25f, 0.5f, 5.5f, 1.0f, 0.4f, 1.0f, 0.4f};
+            const auto material = ctx.RenderResourcesRef.Materials().Create(materialInfo);
+            if (!material.IsValid())
+            {
+                return false;
+            }
+            ctx.ScopeRef.TrackMaterial(material);
+
+            Container::VariableArray<Mesh3DVertex> vertices;
+            Container::VariableArray<uint32_t> indices;
+            GenerateWindTreeMesh(vertices, indices);
+            const MeshDataHandle mesh{961};
+            if (ctx.RenderResourcesRef.Meshes().GetGPUData(mesh) != nullptr ||
+                !ctx.RenderResourcesRef.Meshes().Register(mesh, vertices.data(), vertices.size() * sizeof(Mesh3DVertex),
+                                                          indices.data(), static_cast<uint32_t>(indices.size())))
+            {
+                return false;
+            }
+            ctx.ScopeRef.TrackMesh(mesh);
+
+            const Math::Vector3 forward = I::FreeFlyCameraController::ForwardFromAngles(pose.Yaw, 0.0f);
+            const Math::Vector3 right(-forward.z, 0.0f, forward.x);
+            const Math::Vector3 origin(pose.Position[0], 0.0f, pose.Position[2]);
+            constexpr float kForwardDistances[] = {18.0f, 21.0f, 16.0f, 20.0f};
+            constexpr float kRightDistances[] = {-9.0f, -3.0f, 3.0f, 9.0f};
+            Entity* trees[GrasslandData::kWindTreeCount] = {};
+            for (uint32_t i = 0; i < GrasslandData::kWindTreeCount; ++i)
+            {
+                trees[i] = ctx.ScopeRef.SpawnObject<Entity>();
+                if (trees[i] == nullptr)
+                {
+                    return false;
+                }
+                trees[i]->SetActive(false);
+                const Math::Vector3 position = origin + forward * kForwardDistances[i] + right * kRightDistances[i];
+                trees[i]->SetPosition(position);
+                auto* component = ctx.WorldRef.CreateComponent<Component::MeshComponent>(trees[i]);
+                if (component == nullptr)
+                {
+                    return false;
+                }
+                component->SetMeshHandle(mesh);
+                component->SetMaterial(0, material);
+            }
+            for (uint32_t i = 0; i < GrasslandData::kWindTreeCount; ++i)
+            {
+                data.m_pWindTrees[i] = trees[i];
+                data.m_bWindTreePending[i] = true;
+            }
+            return true;
+        }
+
+        void PlaceWindTrees(GrasslandData& data)
+        {
+            const auto heightField = data.m_pTerrain != nullptr ? data.m_pTerrain->GetHeightField() : nullptr;
+            if (heightField == nullptr)
+            {
+                return;
+            }
+            for (uint32_t i = 0; i < GrasslandData::kWindTreeCount; ++i)
+            {
+                Entity* tree = data.m_pWindTrees[i];
+                if (tree == nullptr || !data.m_bWindTreePending[i])
+                {
+                    continue;
+                }
+                const Math::Vector3 position = tree->GetPosition();
+                const float height = heightField->SampleHeight(position.x, position.z);
+                if (!std::isfinite(height))
+                {
+                    continue;
+                }
+                tree->SetPosition(position.x, height, position.z);
+                tree->SetActive(true);
+                data.m_bWindTreePending[i] = false;
+            }
         }
 
 #if NORVES_BUILD_DEVELOPMENT
@@ -669,6 +887,11 @@ namespace Game::GameModes
 #endif
         data.m_pRunningBody = nullptr;
         data.m_RunAngle = 0.0f;
+        for (uint32_t i = 0; i < GrasslandData::kWindTreeCount; ++i)
+        {
+            data.m_pWindTrees[i] = nullptr;
+            data.m_bWindTreePending[i] = false;
+        }
         data.m_pTerrain = nullptr;
         data.m_TerrainFarPlane = 0.0f;
         data.m_Scatter = Scatter::kInvalidScatterHandle;
@@ -735,7 +958,59 @@ namespace Game::GameModes
         {
             LOG_WARNING("grassland: 主人公シルエットの描画拡張を登録できませんでした");
         }
+        auto& drynessMap = ctx.EngineRef.GetVegetation().GetDrynessMap();
+        if (data.m_bGrasslandWither)
+        {
+            // 減衰の幅は見え方を確かめるため、仮に半径の 1/4 とする。
+            data.m_GrasslandWitherSourceId = drynessMap.AddCircle(data.m_GrasslandWitherX, data.m_GrasslandWitherZ,
+                data.m_GrasslandWitherRadius, data.m_GrasslandWitherRadius * 0.25f, 1.0f);
+            if (data.m_GrasslandWitherSourceId != Vegetation::InvalidDrynessSourceId)
+            {
+                LOG_INFO("GRASSLAND_WITHER id=%u x=%.9g z=%.9g radius=%.9g 枯れ度 1 の円形の源を配置しました",
+                    data.m_GrasslandWitherSourceId, static_cast<double>(data.m_GrasslandWitherX),
+                    static_cast<double>(data.m_GrasslandWitherZ), static_cast<double>(data.m_GrasslandWitherRadius));
+            }
+            else
+            {
+                LOG_WARNING("GRASSLAND_WITHER status=AddFailed 枯れ源を配置できませんでした");
+            }
+        }
+        if (data.m_bGrasslandWitherRoundtrip)
+        {
+            JsonWriter writer;
+            drynessMap.Serialize(writer);
+            JsonDocument document;
+            if (!writer.IsComplete())
+            {
+                LOG_WARNING("GRASSLAND_WITHER_ROUNDTRIP status=SerializeFailed sources=%zu 枯れ度マップを書き出せませんでした",
+                    drynessMap.GetSourceCount());
+            }
+            else if (!JsonDocument::TryParse(writer.ToString(), document))
+            {
+                LOG_WARNING("GRASSLAND_WITHER_ROUNDTRIP status=ParseFailed sources=%zu 枯れ度マップの保存文字列を読み直せませんでした",
+                    drynessMap.GetSourceCount());
+            }
+            else
+            {
+                // 保存形式が源の ID を保持するため、退場時にも同じ ID で取り除ける。
+                const auto result = drynessMap.Restore(document.GetRoot());
+                if (result.Succeeded())
+                {
+                    LOG_INFO("GRASSLAND_WITHER_ROUNDTRIP status=Succeeded sources=%zu 枯れ度マップを保存して復元しました",
+                        drynessMap.GetSourceCount());
+                }
+                else
+                {
+                    LOG_WARNING("GRASSLAND_WITHER_ROUNDTRIP status=RestoreFailed error=%s sources=%zu 枯れ度マップを復元できませんでした",
+                        Vegetation::GetDrynessRestoreErrorName(result.Error), drynessMap.GetSourceCount());
+                }
+            }
+        }
 #endif
+        if (!CreateWindTrees(ctx, data, pose))
+        {
+            LOG_ERROR("grassland: 風の確認用の木を作れませんでした");
+        }
         return GameModeEnterResult::Succeeded;
     }
 
@@ -806,6 +1081,7 @@ namespace Game::GameModes
         data.m_Rig.Tick(ctx, deltaTime, bSuspended);
 #endif
         UpdateRunningBody(data, bSuspended ? 0.0f : deltaTime);
+        PlaceWindTrees(data);
 #if NORVES_BUILD_DEVELOPMENT
         bool bTeleportedThisTick = false;
         if (data.m_bStreamingSnapReceived && !data.m_bStreamingSnapHandled)
@@ -941,6 +1217,11 @@ namespace Game::GameModes
     {
         Game::Scenes::EndSceneAssembly(ctx.EngineRef);
 #if NORVES_BUILD_DEVELOPMENT
+        if (data.m_GrasslandWitherSourceId != Vegetation::InvalidDrynessSourceId)
+        {
+            ctx.EngineRef.GetVegetation().GetDrynessMap().Remove(data.m_GrasslandWitherSourceId);
+            data.m_GrasslandWitherSourceId = Vegetation::InvalidDrynessSourceId;
+        }
         if (data.m_bStreaming)
         {
             StopGrasslandStreaming(ctx, data);
@@ -983,6 +1264,11 @@ namespace Game::GameModes
             data.m_pRunningBody = nullptr;
         }
         data.m_RunAngle = 0.0f;
+        for (uint32_t i = 0; i < GrasslandData::kWindTreeCount; ++i)
+        {
+            data.m_pWindTrees[i] = nullptr;
+            data.m_bWindTreePending[i] = false;
+        }
         data.m_pTerrain = nullptr;
         data.m_TerrainFarPlane = 0.0f;
         data.m_pTerrainCollider = nullptr;

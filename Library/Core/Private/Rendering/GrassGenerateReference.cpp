@@ -186,6 +186,50 @@ namespace NorvesLib::Core::Rendering
             speciesId = ReadPixel(pixels, nearestX, nearestZ, resolution)[3] & 63u;
         }
 
+        float SampleLayerB(const uint8_t* pixels, uint32_t resolution, float invPixelWidth,
+                           float localX, float localZ)
+        {
+            if (pixels == nullptr || resolution == 0)
+            {
+                return 0.0f;
+            }
+            const float u = localX * invPixelWidth - 0.5f;
+            const float v = localZ * invPixelWidth - 0.5f;
+            const int32_t i = static_cast<int32_t>(std::floor(u));
+            const int32_t j = static_cast<int32_t>(std::floor(v));
+            const float fractionX = u - static_cast<float>(i);
+            const float fractionZ = v - static_cast<float>(j);
+            const uint8_t* p00 = ReadPixel(pixels, i, j, resolution);
+            const uint8_t* p10 = ReadPixel(pixels, i + 1, j, resolution);
+            const uint8_t* p01 = ReadPixel(pixels, i, j + 1, resolution);
+            const uint8_t* p11 = ReadPixel(pixels, i + 1, j + 1, resolution);
+            const float row0 = GrassLerp(static_cast<float>(p00[3]), static_cast<float>(p10[3]), fractionX);
+            const float row1 = GrassLerp(static_cast<float>(p01[3]), static_cast<float>(p11[3]), fractionX);
+            return GrassLerp(row0, row1, fractionZ) * kGrassInv255;
+        }
+
+        float SampleDrynessReferenceLayer(const float* values, uint32_t resolution, float u, float v)
+        {
+            if (values == nullptr || resolution == 0)
+            {
+                return 0.0f;
+            }
+            // 正規化座標の画素中心と ClampToEdge を、明示的な四点補間で再現する。
+            const float texelX = u * static_cast<float>(resolution) - 0.5f;
+            const float texelZ = v * static_cast<float>(resolution) - 0.5f;
+            const int32_t i = static_cast<int32_t>(std::floor(texelX));
+            const int32_t j = static_cast<int32_t>(std::floor(texelZ));
+            const float fractionX = texelX - static_cast<float>(i);
+            const float fractionZ = texelZ - static_cast<float>(j);
+            const size_t x0 = static_cast<size_t>(ClampPixel(i, resolution));
+            const size_t x1 = static_cast<size_t>(ClampPixel(i + 1, resolution));
+            const size_t z0 = static_cast<size_t>(ClampPixel(j, resolution));
+            const size_t z1 = static_cast<size_t>(ClampPixel(j + 1, resolution));
+            const float row0 = GrassLerp(values[z0 * resolution + x0], values[z0 * resolution + x1], fractionX);
+            const float row1 = GrassLerp(values[z1 * resolution + x0], values[z1 * resolution + x1], fractionX);
+            return GrassLerp(row0, row1, fractionZ);
+        }
+
         float ComputeKeepFraction(float distanceSquared, const GrassGenerateConstants& constants)
         {
             if (distanceSquared > constants.BandMaxDistanceSquared[2] || distanceSquared > constants.KeepDistanceSquared[3])
@@ -219,6 +263,43 @@ namespace NorvesLib::Core::Rendering
             return 1.0f - smooth;
         }
     } // namespace
+
+    float SampleGrassDrynessLayersReference(const GrassDrynessReferenceLayers& layers,
+        const WorldFieldDrynessSampleConstants& constants, float x, float z, bool bFarOnly)
+    {
+        if (constants.bEnabled == 0)
+        {
+            return 0.0f;
+        }
+
+        const float farU = (x - constants.FarOriginXZ[0]) * constants.FarInvExtent;
+        const float farV = (z - constants.FarOriginXZ[1]) * constants.FarInvExtent;
+        float farValue = 0.0f;
+        if (constants.FarInvExtent > 0.0f && farU >= 0.0f && farV >= 0.0f &&
+            farU < 1.0f && farV < 1.0f)
+        {
+            farValue = SampleDrynessReferenceLayer(layers.FarValues, layers.Resolution, farU, farV);
+        }
+        if (bFarOnly)
+        {
+            return farValue;
+        }
+
+        const float nearU = (x - constants.NearOriginXZ[0]) * constants.NearInvExtent;
+        const float nearV = (z - constants.NearOriginXZ[1]) * constants.NearInvExtent;
+        if (constants.NearInvExtent <= 0.0f || nearU < 0.0f || nearV < 0.0f ||
+            nearU >= 1.0f || nearV >= 1.0f)
+        {
+            return farValue;
+        }
+
+        const float nearValue = SampleDrynessReferenceLayer(layers.NearValues, layers.Resolution, nearU, nearV);
+        const float edgeMeters = std::min(std::min(nearU, 1.0f - nearU), std::min(nearV, 1.0f - nearV)) /
+            constants.NearInvExtent;
+        const float weight = constants.NearBlendMeters > 0.0f ?
+            GrassSaturate(edgeMeters / constants.NearBlendMeters) : 1.0f;
+        return GrassLerp(farValue, nearValue, weight);
+    }
 
     GrassGenerateConstants BuildGrassGenerateConstants(const GrassGenerateSettings& settings,
         const Math::Vector3& cameraPos, const Math::Vector4 frustumPlanes[6], uint32_t layerARes,
@@ -277,6 +358,11 @@ namespace NorvesLib::Core::Rendering
         constants.SamplingAndFacing[3] = 1.0f / (fadeEnd - fadeStart);
         constants.BladeQuantMaxMeters[0] = settings.HeightQuantMaxMeters;
         constants.BladeQuantMaxMeters[1] = settings.WidthQuantMaxMeters;
+        constants.DrynessParams[0] = constants.BandMaxDistanceSquared[0];
+        const float drynessDistanceSpan = constants.BandMaxDistanceSquared[1] - constants.BandMaxDistanceSquared[0];
+        constants.DrynessParams[1] = drynessDistanceSpan > 0.0f ? 1.0f / drynessDistanceSpan : 0.0f;
+        constants.DrynessParams[2] = static_cast<float>(layerBRes) / chunkSize;
+        // Dryness は初期値の 0 のまま返し、GPU のフィールドを束縛するときに呼び出し側が設定する。
 
         float shaderMatrix[16];
         Math::MatrixUtils::TransposeToShaderData(hizOrNull != nullptr ? hizOrNull->ViewProjection :
@@ -308,7 +394,7 @@ namespace NorvesLib::Core::Rendering
 
     GrassGenerateCounts RunGrassGenerateReference(const GrassFieldRenderData& field,
         const GrassGenerateConstants& constants, const GrassTileInfo* tiles, uint32_t tileCount,
-        Container::VariableArray<GrassBladeRecord>* outRecords)
+        Container::VariableArray<GrassBladeRecord>* outRecords, const GrassDrynessReferenceLayers* drynessLayers)
     {
         assert((constants.Flags[0] & kGrassGenerateFlagHiZ) == 0);
         GrassGenerateCounts counts;
@@ -318,7 +404,9 @@ namespace NorvesLib::Core::Rendering
         }
         const float chunkSize = constants.TileChunkFadeFacing[1];
         const uint32_t resolution = constants.LayerResolutions[0];
-        assert(resolution == field.LayerAResolution && chunkSize == field.ChunkSizeMeters);
+        assert(resolution == field.LayerAResolution && constants.LayerResolutions[1] == field.LayerBResolution &&
+               chunkSize == field.ChunkSizeMeters);
+        const uint32_t layerBResolution = field.LayerBResolution;
         const float invPixelWidth = constants.SamplingAndFacing[0];
         const float baseCellArea = constants.SamplingAndFacing[1];
 
@@ -347,6 +435,10 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const uint8_t* pixels = field.LayerAPixels.data() + pChunk->LayerAByteOffset;
+            const uint64_t layerBPixelEnd = static_cast<uint64_t>(pChunk->LayerBByteOffset) +
+                static_cast<uint64_t>(layerBResolution) * layerBResolution * 4;
+            const uint8_t* layerBPixels = layerBResolution != 0 && layerBPixelEnd <= field.LayerBPixels.size() ?
+                field.LayerBPixels.data() + pChunk->LayerBByteOffset : nullptr;
             const float chunkOriginX = static_cast<float>(cx) * chunkSize;
             const float chunkOriginZ = static_cast<float>(cz) * chunkSize;
             for (uint32_t j = 0; j < n; ++j)
@@ -380,18 +472,31 @@ namespace NorvesLib::Core::Rendering
                     float green;
                     uint32_t speciesId;
                     // GLSL へ写すため差と積も float で行う。画素の中心と番地は GrassField と同じ。
-                    SampleLayerA(pixels, resolution, invPixelWidth, x - chunkOriginX, z - chunkOriginZ,
-                                 red, green, speciesId);
+                    const float localX = x - chunkOriginX;
+                    const float localZ = z - chunkOriginZ;
+                    SampleLayerA(pixels, resolution, invPixelWidth, localX, localZ, red, green, speciesId);
                     if (speciesId >= field.Species.size())
                     {
                         speciesId = 0;
                     }
                     const GrassSpeciesGpuData& species = field.Species[speciesId];
+                    const float baseDryness = SampleLayerB(layerBPixels, layerBResolution, constants.DrynessParams[2],
+                                                           localX, localZ);
+                    const float fieldDryness = drynessLayers != nullptr && constants.Dryness.bEnabled != 0 ?
+                        SampleGrassDrynessLayersReference(*drynessLayers, constants.Dryness, x, z, band == 2u) : 0.0f;
+                    const float dryness = GrassEffectiveDryness(fieldDryness, baseDryness);
+                    const float farWeight = GrassDrynessFarWeight(distanceSquared, constants);
                     const float speciesDensity = species.BladesPerSquareMeter * baseCellArea;
                     const float densityScale = speciesDensity < 1.0f ? speciesDensity : 1.0f;
-                    const float density = (red * kGrassInv255) * densityScale;
+                    float density = (red * kGrassInv255) * densityScale;
                     const float heightScale = green * kGrassInv255;
                     const float hash2 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltKeep));
+                    float colorAmount = 0.0f;
+                    if (dryness > 0.0f)
+                    {
+                        density *= GrassLerp(1.0f, species.DrynessScales[0], dryness);
+                        colorAmount = dryness * GrassLerp(species.DryColor[3], species.DrynessScales[3], farWeight);
+                    }
                     // 手順 4。厳密な > の比較を保つ。シェーダーは precise を付ける。
                     const float keepProbability = density * keepBand;
                     if (!(keepProbability > hash2))
@@ -400,7 +505,12 @@ namespace NorvesLib::Core::Rendering
                     }
 
                     const float heightRandom = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltHeight));
-                    const float height = Lerp(species.HeightMinMeters, species.HeightMaxMeters, heightRandom) * heightScale;
+                    float height = Lerp(species.HeightMinMeters, species.HeightMaxMeters, heightRandom) * heightScale;
+                    if (dryness > 0.0f)
+                    {
+                        height *= GrassLerp(1.0f, species.DrynessScales[1], dryness) *
+                            (1.0f - (species.DrynessFar[0] * farWeight) * dryness);
+                    }
                     if (height <= 0.0f)
                     {
                         continue;
@@ -480,6 +590,7 @@ namespace NorvesLib::Core::Rendering
                         }
                         record.Packed = PackGrassBlade(recordHeight, width, speciesId, fade,
                             constants.BladeQuantMaxMeters[0], constants.BladeQuantMaxMeters[1]);
+                        record.DrynessPacked = dryness > 0.0f ? PackGrassDryness(dryness, colorAmount) : 0u;
                         outRecords->push_back(record);
                     }
                 }

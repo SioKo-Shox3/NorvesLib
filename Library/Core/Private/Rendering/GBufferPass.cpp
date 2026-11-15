@@ -1,4 +1,5 @@
 ﻿#include "Rendering/GBufferPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MaterialDescriptorCache.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
@@ -40,6 +41,8 @@ namespace NorvesLib::Core::Rendering
     {
         // VT の要求のバッファの binding（gbuffer.frag の VT_FEEDBACK_BINDING と同じ。スキニングの binding 8-10 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
+        // 頂点アニメに渡す世界の風の定数の binding
+        constexpr uint32_t VertexAnimationWindBindingIndex = 12;
 
         float ResolveGBufferDrawOpacity(const DrawCommand& command)
         {
@@ -117,8 +120,9 @@ namespace NorvesLib::Core::Rendering
         {
             // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
             // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）
-            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 視界の確保（64）= 480 バイト
-            constexpr uint32_t UBO_SIZE = 480;
+            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 頂点アニメの材質（32）
+            // + 視界の確保（64）= 512 バイト
+            constexpr uint32_t UBO_SIZE = 512;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -167,6 +171,12 @@ namespace NorvesLib::Core::Rendering
             {
                 AddVirtualTextureFeedbackBinding(uboDescSetDesc, VirtualTextureFeedbackBindingIndex);
             }
+
+            RHI::DescriptorBinding windBinding;
+            windBinding.binding = VertexAnimationWindBindingIndex;
+            windBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            windBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(windBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
@@ -368,7 +378,7 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (RequiresGBufferOverlay(material, ResolveGBufferDrawOpacity(command)))
+            if (RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command)))
             {
                 return true;
             }
@@ -630,7 +640,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const auto* matData = materials->GetData(materialHandle);
-            if (!matData || (bOverlayOnly && !RequiresGBufferOverlay(matData, ResolveGBufferDrawOpacity(command))))
+            if (!matData || (bOverlayOnly && !RequiresGBufferOverlayDraw(matData, ResolveGBufferDrawOpacity(command))))
             {
                 continue;
             }
@@ -737,7 +747,7 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (RequiresGBufferOverlay(material, ResolveGBufferDrawOpacity(command)))
+            if (RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command)))
             {
                 GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
                                    ResolveGBufferDrawOpacity(command));
@@ -830,13 +840,17 @@ namespace NorvesLib::Core::Rendering
             float vertexAnimInstanceParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
             float vertexAnimTime[4];
             float specularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
+            float vertexAnimMaterial0[4];
+            float vertexAnimMaterial1[4];
             ViewClearanceGpuData viewClearance;
         };
         static_assert(offsetof(PerObjectUBO, vertexAnimInstanceParams) == 368u);
         static_assert(offsetof(PerObjectUBO, vertexAnimTime) == 384u);
         static_assert(offsetof(PerObjectUBO, specularAAParams) == 400u);
-        static_assert(offsetof(PerObjectUBO, viewClearance) == 416u);
-        static_assert(sizeof(PerObjectUBO) == 480u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(offsetof(PerObjectUBO, vertexAnimMaterial0) == 416u);
+        static_assert(offsetof(PerObjectUBO, vertexAnimMaterial1) == 432u);
+        static_assert(offsetof(PerObjectUBO, viewClearance) == 448u);
+        static_assert(sizeof(PerObjectUBO) == 512u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -871,6 +885,26 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.frameParams[0] = bHasPreviousCamera ? 1.0f : 0.0f;
         // 発光はプリエクスポージャ後の値で GBuffer_Emissive（RGBA16F）へ書く。LightingPass は同じ値を使う。
         frameTemplate.frameParams[1] = ResolveSceneColorPreExposure(activeCamera);
+
+        // 風の定数を記録ごとに一度借り、すべての材質の記述子で共有する。
+        struct VertexAnimationWindFrame
+        {
+            float windA[4];
+            float windB[4];
+        };
+        static_assert(sizeof(VertexAnimationWindFrame) == 32u);
+        // フレームの持ち主が無いときや借りられないときは、未束縛のまま描かない。
+        if (!context.FrameResources)
+        {
+            return;
+        }
+        VertexAnimationWindFrame windFrame{};
+        PackVertexAnimationWindConstants(context.Wind, windFrame.windA, windFrame.windB);
+        const FrameUploadAllocation windAllocation = context.FrameResources->AllocateConstants(windFrame);
+        if (!windAllocation.IsValid())
+        {
+            return;
+        }
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
@@ -940,6 +974,8 @@ namespace NorvesLib::Core::Rendering
                 if (matData)
                 {
                     matAlbedo = matData->AlbedoTexture;
+                    PackVertexAnimationMaterialConstants(matData->VertexAnimation,
+                                                         uboData.vertexAnimMaterial0, uboData.vertexAnimMaterial1);
                     matNormal = matData->NormalTexture;
                     matMetallic = matData->MetallicTexture;
                     matRoughness = matData->RoughnessTexture;
@@ -1096,12 +1132,16 @@ namespace NorvesLib::Core::Rendering
                 return nullptr;
             }
             BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
+            allocation.DescriptorSet->BindConstantBuffer(VertexAnimationWindBindingIndex,
+                                                         windAllocation.Buffer,
+                                                         windAllocation.GetOffset32(),
+                                                         windAllocation.GetSize32());
             allocation.DescriptorSet->Update();
 
             return allocation.DescriptorSet;
         };
 
-        // 同じ種類の並びを保ち、標準の後に標準でない材質（プログラム・Masked・両面）を積む。
+        // 同じ種類の並びを保ち、標準の後に重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）を積む。
         bool bAllocationFailed = false;
         for (uint32_t overlayPass = 0; overlayPass < 2 && !bAllocationFailed; ++overlayPass)
         {
@@ -1117,7 +1157,7 @@ namespace NorvesLib::Core::Rendering
                 const float opacity = ResolveGBufferDrawOpacity(cmd);
                 const bool bOverlayMaterial =
                     (m_SceneView || selection == DrawSelection::OverlayOnly || IsSkinnedGhostOpacity(opacity)) &&
-                    RequiresGBufferOverlay(materialData, opacity);
+                    RequiresGBufferOverlayDraw(materialData, opacity);
                 if (bOverlayMaterial != (overlayPass == 1))
                 {
                     continue;
@@ -1927,7 +1967,7 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.renderPass = m_GBufferRenderPass;
 
-        // ディスクリプタセットレイアウト（set=0: MVP UBO + PBRテクスチャ x6）
+        // ディスクリプタセットレイアウト（set=0: MVP・風の UBO、PBR テクスチャ、インスタンス等）
         RHI::DescriptorSetDesc dsDesc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
@@ -1964,6 +2004,11 @@ namespace NorvesLib::Core::Rendering
         {
             AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
         }
+        RHI::DescriptorBinding windBinding;
+        windBinding.binding = VertexAnimationWindBindingIndex;
+        windBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        windBinding.stages = RHI::ShaderStage::Vertex;
+        dsDesc.bindings.push_back(windBinding);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);

@@ -19,6 +19,7 @@ layout(location = 5) flat in uint fragSpecies;
 layout(location = 6) in float fragCameraDistance;
 layout(location = 7) in vec4 fragCurrentClip;
 layout(location = 8) in vec4 fragPreviousClip;
+layout(location = 9) flat in float fragDryColorAmount;
 
 layout(location = 0) out vec4 outAlbedo;
 layout(location = 1) out vec4 outNormal;
@@ -50,6 +51,11 @@ void main()
     // 両面とも上向きを 0.35 混ぜ、薄い帯の照明を安定させる。
     normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), 0.35));
     vec3 albedo = mix(species.RootColor.rgb, species.TipColor.rgb, fragV) * fragColorVariation;
+    // 枯れた色へ寄せても個体の色のばらつきを残す。
+    if (fragDryColorAmount > 0.0)
+    {
+        albedo = mix(albedo, species.DryColor.rgb * fragColorVariation, fragDryColorAmount);
+    }
     albedo *= mix(vec3(1.0), species.WetColor.rgb, fragWetness);
     outAlbedo = vec4(albedo, 1.0);
     outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);

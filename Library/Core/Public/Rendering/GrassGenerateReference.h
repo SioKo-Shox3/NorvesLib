@@ -3,6 +3,7 @@
 #include "Rendering/GrassFieldRenderData.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/ViewClearance.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "Math/Vector3.h"
 #include "Math/Vector4.h"
 #include <cstddef>
@@ -91,23 +92,56 @@ namespace NorvesLib::Core::Rendering
         return z * n + x;
     }
 
-    /** @brief std430 のブレード。Packed は下から高さ 10、幅 8、種別 6、fade 8 ビット。 */
+    /** @brief std430 のブレード。Packed は下から高さ 10、幅 8、種別 6、fade 8 ビット。
+     * DrynessPacked は下位 16 ビットが枯れ度、上位 16 ビットが色の寄せ量（ともに unorm16）。
+     */
     struct GrassBladeRecord
     {
         float PositionX = 0.0f;
         float PositionY = 0.0f;
         float PositionZ = 0.0f;
         uint32_t Packed = 0;
+        uint32_t DrynessPacked = 0;
     };
-    static_assert(sizeof(GrassBladeRecord) == 16);
+    static_assert(sizeof(GrassBladeRecord) == 20);
     static_assert(offsetof(GrassBladeRecord, PositionX) == 0);
     static_assert(offsetof(GrassBladeRecord, PositionY) == 4);
     static_assert(offsetof(GrassBladeRecord, PositionZ) == 8);
     static_assert(offsetof(GrassBladeRecord, Packed) == 12);
+    static_assert(offsetof(GrassBladeRecord, DrynessPacked) == 16);
 
     inline float GrassSaturate(float value)
     {
         return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+    }
+
+    inline float GrassLerp(float a, float b, float fraction)
+    {
+        return a + (b - a) * fraction;
+    }
+
+    /** @brief フィールドと基礎の大きい方から有効な枯れ度を求める。 */
+    inline float GrassEffectiveDryness(float fieldDryness, float baseDryness)
+    {
+        const float larger = fieldDryness > baseDryness ? fieldDryness : baseDryness;
+        return GrassSaturate(larger);
+    }
+
+    /** @brief 枯れ度と色の寄せ量をそれぞれ unorm16 で記録する。 */
+    inline uint32_t PackGrassDryness(float dryness, float colorAmount)
+    {
+        const float drynessValue = GrassSaturate(dryness) * 65535.0f + 0.5f;
+        const float colorValue = GrassSaturate(colorAmount) * 65535.0f + 0.5f;
+        const uint32_t dryness16 = static_cast<uint32_t>(drynessValue);
+        const uint32_t color16 = static_cast<uint32_t>(colorValue);
+        return dryness16 | (color16 << 16);
+    }
+
+    /** @brief unorm16 の枯れ度と色の寄せ量を取り出す。 */
+    inline void UnpackGrassDryness(uint32_t packed, float& dryness, float& colorAmount)
+    {
+        dryness = static_cast<float>(packed & 65535u) / 65535.0f;
+        colorAmount = static_cast<float>((packed >> 16) & 65535u) / 65535.0f;
     }
 
     /** @brief 量子化の最大値は生成定数と同じ有限の正数を渡す。シェーダーも演算順を保つ。 */
@@ -203,9 +237,12 @@ namespace NorvesLib::Core::Rendering
         float HiZViewProjection[4][4] = {};            // GLSL mat4 の列を順に格納（CPU の VP を転置）
         uint32_t HiZDimensions[4] = {};                // 元の深度の幅、高さ、HZB の mip 数、予約
         ViewClearanceGpuData ViewClearance;
+        WorldFieldDrynessSampleConstants Dryness;       // GPU のフィールドを束縛するときに呼び出し側が設定する。
+        float DrynessParams[4] = {};                   // x: 近景の最大二乗距離、y: 近景から遠景への二乗距離幅の逆数
+                                                       // z: LayerB の画素幅の逆数、w: 予約の 0
     };
     static_assert(alignof(GrassGenerateConstants) == 16);
-    static_assert(sizeof(GrassGenerateConstants) == 544);
+    static_assert(sizeof(GrassGenerateConstants) == 592);
     static_assert(sizeof(GrassGenerateConstants) % 16 == 0);
     static_assert(offsetof(GrassGenerateConstants, CameraPosition) == 0);
     static_assert(offsetof(GrassGenerateConstants, FrustumPlanes) == 16);
@@ -230,6 +267,14 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GrassGenerateConstants, HiZViewProjection) == 400);
     static_assert(offsetof(GrassGenerateConstants, HiZDimensions) == 464);
     static_assert(offsetof(GrassGenerateConstants, ViewClearance) == 480);
+    static_assert(offsetof(GrassGenerateConstants, Dryness) == 544);
+    static_assert(offsetof(GrassGenerateConstants, DrynessParams) == 576);
+
+    /** @brief 二乗距離から近景 0、遠景 1 の重みを求める。 */
+    inline float GrassDrynessFarWeight(float distanceSquared, const GrassGenerateConstants& constants)
+    {
+        return GrassSaturate((distanceSquared - constants.DrynessParams[0]) * constants.DrynessParams[1]);
+    }
 
     /**
      * @brief 平面は MatrixUtils::ExtractClipSpaceFrustumPlanes の Planes を渡す。
@@ -266,6 +311,22 @@ namespace NorvesLib::Core::Rendering
         uint32_t PerLod[3] = {};  // 容量を超えた分も含めた、判定を通った本数。
     };
 
+    /** @brief CPU の参照に渡す枯れ度の近傍・遠景の層（R の値 0..1、行は +Z、列は +X、Resolution * Resolution 個）。
+     * 層のポインタが null または解像度が 0 の場合、その層の値は 0 とする。
+     */
+    struct GrassDrynessReferenceLayers
+    {
+        const float* NearValues = nullptr;
+        const float* FarValues = nullptr;
+        uint32_t Resolution = 0;
+    };
+
+    /** @brief Common/WorldField.glsl の SampleDrynessLayers の写し（双線形・ClampToEdge）。
+     * bFarOnly なら近傍を使わず遠景だけを引く。
+     */
+    float SampleGrassDrynessLayersReference(const GrassDrynessReferenceLayers& layers,
+        const WorldFieldDrynessSampleConstants& constants, float x, float z, bool bFarOnly);
+
     /**
      * @brief HZB の bit0 が 0 の定数を使う CPU の写し。LayerIndex は参照しない。
      * outRecords は消去せず、容量内の記録をタイル順、セルの j、i 順に末尾へ追加する。
@@ -274,5 +335,6 @@ namespace NorvesLib::Core::Rendering
      */
     GrassGenerateCounts RunGrassGenerateReference(const GrassFieldRenderData& field,
         const GrassGenerateConstants& constants, const GrassTileInfo* tiles, uint32_t tileCount,
-        Container::VariableArray<GrassBladeRecord>* outRecords = nullptr);
+        Container::VariableArray<GrassBladeRecord>* outRecords = nullptr,
+        const GrassDrynessReferenceLayers* drynessLayers = nullptr);
 } // namespace NorvesLib::Core::Rendering

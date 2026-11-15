@@ -20,6 +20,9 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 shadingModel;
     vec4 vertexAnimInstanceParams;
     vec4 vertexAnimTime;
+    vec4 specularAAParams;
+    vec4 vertexAnimMaterial0;
+    vec4 vertexAnimMaterial1;
 } mvp;
 
 #include "Common/VertexAnimation.glsl"

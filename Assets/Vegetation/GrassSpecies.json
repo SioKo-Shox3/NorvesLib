@@ -1,5 +1,14 @@
 ﻿{
   "version": 0,
+  "dryness": {
+    "color": "#6D6A5C",
+    "colorWeight": 1.0,
+    "densityScale": 0.6,
+    "heightScale": 0.7,
+    "bendAdd": 0.3,
+    "farColorWeight": 1.0,
+    "farHeightFlatten": 0.0
+  },
   "species": [
     {
       "name": "wet_grass",

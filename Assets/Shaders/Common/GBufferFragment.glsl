@@ -38,6 +38,8 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 vertexAnimInstanceParams; // FS では読まない。
     vec4 vertexAnimTime; // FS では読まない。
     vec4 specularAAParams; // x=鏡面の AA の強さ, yzw=0
+    vec4 vertexAnimMaterial0; // FS では読まない。
+    vec4 vertexAnimMaterial1; // FS では読まない。
     ViewClearanceData viewClearance; // 視界の確保の遮蔽物のディザ（印の付いた材質だけ値が入る。印の無い材質は全 0）
 } mvp;
 

@@ -40,45 +40,93 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // 点光源のキューブシャドウの1面のUBO（point_shadow.vert/.fragのPointShadowFaceに対応）
-        struct PointShadowFaceUBO
+        // 点光源の既存の224バイトは不透明・切り抜き・スキンで共通の配置を保つ。
+        struct PointShadowBaseUBO
         {
             float lightView[16];
             float lightProjection[16];
             float lightPositionAndInvRange[4];
-            // worldSource[0]=1 の描画はインスタンスではなくこの行列で置く
+            // worldSource[0]=1 の描画はインスタンスではなくこの行列で置く。
             float world[16];
             float worldSource[4];
         };
-        static_assert(sizeof(PointShadowFaceUBO) == 224);
+        static_assert(sizeof(PointShadowBaseUBO) == 224);
+        static_assert(offsetof(PointShadowBaseUBO, lightView) == 0 && sizeof(PointShadowBaseUBO::lightView) == 64);
+        static_assert(offsetof(PointShadowBaseUBO, lightProjection) == 64 && sizeof(PointShadowBaseUBO::lightProjection) == 64);
+        static_assert(offsetof(PointShadowBaseUBO, lightPositionAndInvRange) == 128 && sizeof(PointShadowBaseUBO::lightPositionAndInvRange) == 16);
+        static_assert(offsetof(PointShadowBaseUBO, world) == 144 && sizeof(PointShadowBaseUBO::world) == 64);
+        static_assert(offsetof(PointShadowBaseUBO, worldSource) == 208 && sizeof(PointShadowBaseUBO::worldSource) == 16);
 
-        // 点光源の面の定数の後ろにマスクの閾値・被覆率・sparse の有無を渡す。
+        // 不透明の点光源の影には切り抜きの予約欄の後ろへ頂点アニメと風を渡す。
+        struct PointShadowFaceUBO
+        {
+            PointShadowBaseUBO Base;
+            float reservedAlphaClip[4];
+            float vertexAnimTime[4];
+            float vertexAnimMaterial0[4];
+            float vertexAnimMaterial1[4];
+            float windA[4];
+            float windB[4];
+        };
+        static_assert(sizeof(PointShadowFaceUBO) == 320 && offsetof(PointShadowFaceUBO, Base) == 0);
+        static_assert(offsetof(PointShadowFaceUBO, reservedAlphaClip) == 224 && sizeof(PointShadowFaceUBO::reservedAlphaClip) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, vertexAnimTime) == 240 && sizeof(PointShadowFaceUBO::vertexAnimTime) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, vertexAnimMaterial0) == 256 && sizeof(PointShadowFaceUBO::vertexAnimMaterial0) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, vertexAnimMaterial1) == 272 && sizeof(PointShadowFaceUBO::vertexAnimMaterial1) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, windA) == 288 && sizeof(PointShadowFaceUBO::windA) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, windB) == 304 && sizeof(PointShadowFaceUBO::windB) == 16);
+
+        // 点光源の切り抜きの配置は240バイトのまま保つ。
         struct PointShadowAlphaClipUBO
         {
-            PointShadowFaceUBO Base;
+            PointShadowBaseUBO Base;
             float alphaClip[4];
         };
-        static_assert(sizeof(PointShadowAlphaClipUBO) == 240 && offsetof(PointShadowAlphaClipUBO, alphaClip) == 224);
+        static_assert(sizeof(PointShadowAlphaClipUBO) == 240 && offsetof(PointShadowAlphaClipUBO, Base) == 0);
+        static_assert(offsetof(PointShadowAlphaClipUBO, alphaClip) == 224 && sizeof(PointShadowAlphaClipUBO::alphaClip) == 16);
 
-        // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
-        struct ShadowPerObjectUBO
+        // CSMの既存の224バイトは不透明・切り抜きで共通の配置を保つ。
+        struct ShadowBaseUBO
         {
             float lightView[16];
             float lightProjection[16];
-            // worldSource[0]=1 の描画はインスタンスではなくこの行列で置く
+            // worldSource[0]=1 の描画はインスタンスではなくこの行列で置く。
             float world[16];
             float worldSource[4];
             float vertexAnimTime[4];
         };
-        static_assert(sizeof(ShadowPerObjectUBO) == 224 && offsetof(ShadowPerObjectUBO, vertexAnimTime) == 208);
+        static_assert(sizeof(ShadowBaseUBO) == 224);
+        static_assert(offsetof(ShadowBaseUBO, lightView) == 0 && sizeof(ShadowBaseUBO::lightView) == 64);
+        static_assert(offsetof(ShadowBaseUBO, lightProjection) == 64 && sizeof(ShadowBaseUBO::lightProjection) == 64);
+        static_assert(offsetof(ShadowBaseUBO, world) == 128 && sizeof(ShadowBaseUBO::world) == 64);
+        static_assert(offsetof(ShadowBaseUBO, worldSource) == 192 && sizeof(ShadowBaseUBO::worldSource) == 16);
+        static_assert(offsetof(ShadowBaseUBO, vertexAnimTime) == 208 && sizeof(ShadowBaseUBO::vertexAnimTime) == 16);
 
-        // マスクの閾値・被覆率と sparse の有無を既存の CSM 定数の後ろに渡す。
+        // 不透明のCSMには切り抜きの予約欄の後ろへ材質と風を渡す。
+        struct ShadowPerObjectUBO
+        {
+            ShadowBaseUBO Base;
+            float reservedAlphaClip[4];
+            float vertexAnimMaterial0[4];
+            float vertexAnimMaterial1[4];
+            float windA[4];
+            float windB[4];
+        };
+        static_assert(sizeof(ShadowPerObjectUBO) == 304 && offsetof(ShadowPerObjectUBO, Base) == 0);
+        static_assert(offsetof(ShadowPerObjectUBO, reservedAlphaClip) == 224 && sizeof(ShadowPerObjectUBO::reservedAlphaClip) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, vertexAnimMaterial0) == 240 && sizeof(ShadowPerObjectUBO::vertexAnimMaterial0) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, vertexAnimMaterial1) == 256 && sizeof(ShadowPerObjectUBO::vertexAnimMaterial1) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, windA) == 272 && sizeof(ShadowPerObjectUBO::windA) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, windB) == 288 && sizeof(ShadowPerObjectUBO::windB) == 16);
+
+        // CSMの切り抜きの配置は240バイトのまま保つ。
         struct ShadowAlphaClipUBO
         {
-            ShadowPerObjectUBO Base;
+            ShadowBaseUBO Base;
             float alphaClip[4];
         };
-        static_assert(sizeof(ShadowAlphaClipUBO) == 240 && offsetof(ShadowAlphaClipUBO, alphaClip) == 224);
+        static_assert(sizeof(ShadowAlphaClipUBO) == 240 && offsetof(ShadowAlphaClipUBO, Base) == 0);
+        static_assert(offsetof(ShadowAlphaClipUBO, alphaClip) == 224 && sizeof(ShadowAlphaClipUBO::alphaClip) == 16);
 
         // 材質の解決結果をカスケードと点光源の面の間で共有する。
         struct ShadowAlphaClipMaterial
@@ -862,6 +910,10 @@ namespace NorvesLib::Core::Rendering
 #endif
         // 同じ束の材質を CSM と点光源で共有する。描画が終わったら参照を手放す。
         Container::VariableArray<ShadowAlphaClipMaterial> ExtensionMaterials;
+        // 1回の記録で詰めた時刻と風をCSM・点光源の全描画へ渡す。
+        float VertexAnimTime[4] = {};
+        float WindA[4] = {};
+        float WindB[4] = {};
         float LightView[PhysicalLightingShadowCascadeCount][16] = {};
         float LightProjection[PhysicalLightingShadowCascadeCount][16] = {};
         uint32_t MegaCasterCount = 0u;
@@ -1010,7 +1062,7 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) + vertexAnimTime(16) = 224 bytes
+            // 既存の224バイト・切り抜きの予約16バイト・材質と風64バイトの計304バイト。
             // 定数と記述子セットは描画ごと・カスケードごとに FrameResources から借りる（数の上限は無い）
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
 
@@ -1415,8 +1467,9 @@ namespace NorvesLib::Core::Rendering
                 extensionMaterials.push_back(material);
             }
         }
-        float vertexAnimTime[4] = {};
+        auto& vertexAnimTime = m_FramePlan->VertexAnimTime;
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement, vertexAnimTime);
+        PackVertexAnimationWindConstants(context.Wind, m_FramePlan->WindA, m_FramePlan->WindB);
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -1593,20 +1646,32 @@ namespace NorvesLib::Core::Rendering
 
                     // UBOデータ構築（worldSourceは0のままにしてインスタンスの行列で置く）
                     ShadowPerObjectUBO uboData = {};
-                    std::memcpy(uboData.lightView,
+                    std::memcpy(uboData.Base.lightView,
                                 lightViewData[cascadeIndex],
-                                sizeof(uboData.lightView));
-                    std::memcpy(uboData.lightProjection,
+                                sizeof(uboData.Base.lightView));
+                    std::memcpy(uboData.Base.lightProjection,
                                 lightProjData[cascadeIndex],
-                                sizeof(uboData.lightProjection));
+                                sizeof(uboData.Base.lightProjection));
 
-                    std::memcpy(uboData.vertexAnimTime, vertexAnimTime, sizeof(uboData.vertexAnimTime));
+                    std::memcpy(uboData.Base.vertexAnimTime, vertexAnimTime, sizeof(uboData.Base.vertexAnimTime));
+                    if (!bSkinned && !material.bMasked)
+                    {
+                        const MaterialResourceData* materialData = context.Resources.Materials && cmd.Draw.MaterialHandle.IsValid()
+                            ? context.Resources.Materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
+                        if (materialData)
+                        {
+                            PackVertexAnimationMaterialConstants(materialData->VertexAnimation,
+                                uboData.vertexAnimMaterial0, uboData.vertexAnimMaterial1);
+                        }
+                        std::memcpy(uboData.windA, plan.WindA, sizeof(uboData.windA));
+                        std::memcpy(uboData.windB, plan.WindB, sizeof(uboData.windB));
+                    }
 
                     // UBO更新
                     if (bAlphaClip)
                     {
                         ShadowAlphaClipUBO alphaUbo = {};
-                        alphaUbo.Base = uboData;
+                        alphaUbo.Base = uboData.Base;
                         alphaUbo.alphaClip[0] = material.Cutoff;
                         alphaUbo.alphaClip[1] = bSkinned && cmd.Draw.ShadingParams[3] >= 0.0f
                                                     ? cmd.Draw.ShadingParams[3]
@@ -1717,15 +1782,15 @@ namespace NorvesLib::Core::Rendering
                         }
 
                         ShadowPerObjectUBO ubo = {};
-                        std::memcpy(ubo.lightView, lightViewData[cascadeIndex], sizeof(ubo.lightView));
-                        std::memcpy(ubo.lightProjection, lightProjData[cascadeIndex], sizeof(ubo.lightProjection));
-                        std::memcpy(ubo.world, instance.World, sizeof(ubo.world));
-                        ubo.worldSource[0] = 1.0f;
-                        std::memcpy(ubo.vertexAnimTime, vertexAnimTime, sizeof(ubo.vertexAnimTime));
+                        std::memcpy(ubo.Base.lightView, lightViewData[cascadeIndex], sizeof(ubo.Base.lightView));
+                        std::memcpy(ubo.Base.lightProjection, lightProjData[cascadeIndex], sizeof(ubo.Base.lightProjection));
+                        std::memcpy(ubo.Base.world, instance.World, sizeof(ubo.Base.world));
+                        ubo.Base.worldSource[0] = 1.0f;
+                        std::memcpy(ubo.Base.vertexAnimTime, vertexAnimTime, sizeof(ubo.Base.vertexAnimTime));
                         if (bAlphaClip)
                         {
                             ShadowAlphaClipUBO alphaUbo = {};
-                            alphaUbo.Base = ubo;
+                            alphaUbo.Base = ubo.Base;
                             alphaUbo.alphaClip[0] = material.Cutoff;
                             alphaUbo.alphaClip[1] = material.Coverage;
                             alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
@@ -1793,15 +1858,15 @@ namespace NorvesLib::Core::Rendering
                         break;
                     }
                     ShadowPerObjectUBO megaUboData = {};
-                    std::memcpy(megaUboData.lightView,
+                    std::memcpy(megaUboData.Base.lightView,
                                 lightViewData[cascadeIndex],
-                                sizeof(megaUboData.lightView));
-                    std::memcpy(megaUboData.lightProjection,
+                                sizeof(megaUboData.Base.lightView));
+                    std::memcpy(megaUboData.Base.lightProjection,
                                 lightProjData[cascadeIndex],
-                                sizeof(megaUboData.lightProjection));
-                    std::memcpy(megaUboData.world, megaCaster.World, sizeof(megaUboData.world));
-                    megaUboData.worldSource[0] = 1.0f;
-                    std::memcpy(megaUboData.vertexAnimTime, vertexAnimTime, sizeof(megaUboData.vertexAnimTime));
+                                sizeof(megaUboData.Base.lightProjection));
+                    std::memcpy(megaUboData.Base.world, megaCaster.World, sizeof(megaUboData.Base.world));
+                    megaUboData.Base.worldSource[0] = 1.0f;
+                    std::memcpy(megaUboData.Base.vertexAnimTime, vertexAnimTime, sizeof(megaUboData.Base.vertexAnimTime));
                     allocation.Write(&megaUboData, sizeof(megaUboData));
                     // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                     allocation.DescriptorSet->BindStorageBuffer(7,
@@ -2479,6 +2544,9 @@ namespace NorvesLib::Core::Rendering
         {
             DrawCommand Command;
             ShadowAlphaClipMaterial Material;
+            float VertexAnimMaterial0[4] = {};
+            float VertexAnimMaterial1[4] = {};
+            bool bVertexAnimated = false;
             BoundingSphere Bounds;
             bool bHasBounds = false;
             bool bSkinned = false;
@@ -2514,6 +2582,17 @@ namespace NorvesLib::Core::Rendering
                     caster.Command.Pipeline = m_PointShadowPipeline;
                 }
                 caster.Material = ResolveShadowAlphaClipMaterial(context, command);
+                if (!caster.bSkinned && !caster.Material.bMasked)
+                {
+                    const MaterialResourceData* materialData = context.Resources.Materials && command.Draw.MaterialHandle.IsValid()
+                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle) : nullptr;
+                    caster.bVertexAnimated = MaterialHasVertexAnimation(materialData);
+                    if (caster.bVertexAnimated)
+                    {
+                        PackVertexAnimationMaterialConstants(materialData->VertexAnimation,
+                            caster.VertexAnimMaterial0, caster.VertexAnimMaterial1);
+                    }
+                }
                 if (caster.bSkinned && command.Draw.ShadingParams[3] >= 0.0f)
                 {
                     caster.Material.Coverage = command.Draw.ShadingParams[3];
@@ -2581,15 +2660,25 @@ namespace NorvesLib::Core::Rendering
                 if (bActiveLight && (!casters.empty() || !megaCasters.empty() || bPointExtensionCasters))
                 {
                     PointShadowFaceUBO faceData = {};
-                    CopyShadowMatrixToShaderData(light->Faces.Views[faceIndex], faceData.lightView);
-                    CopyShadowMatrixToShaderData(projection, faceData.lightProjection);
-                    faceData.lightPositionAndInvRange[0] = light->Position.x;
-                    faceData.lightPositionAndInvRange[1] = light->Position.y;
-                    faceData.lightPositionAndInvRange[2] = light->Position.z;
-                    faceData.lightPositionAndInvRange[3] = 1.0f / light->Range;
+                    CopyShadowMatrixToShaderData(light->Faces.Views[faceIndex], faceData.Base.lightView);
+                    CopyShadowMatrixToShaderData(projection, faceData.Base.lightProjection);
+                    faceData.Base.lightPositionAndInvRange[0] = light->Position.x;
+                    faceData.Base.lightPositionAndInvRange[1] = light->Position.y;
+                    faceData.Base.lightPositionAndInvRange[2] = light->Position.z;
+                    faceData.Base.lightPositionAndInvRange[3] = 1.0f / light->Range;
+                    std::memcpy(faceData.vertexAnimTime, m_FramePlan->VertexAnimTime, sizeof(faceData.vertexAnimTime));
+                    std::memcpy(faceData.windA, m_FramePlan->WindA, sizeof(faceData.windA));
+                    std::memcpy(faceData.windB, m_FramePlan->WindB, sizeof(faceData.windB));
 
-                    // 非スキンの描画はこの面のUBOとインスタンスを1つの記述子セットで共有する。
+                    // 頂点アニメの無い非スキンの描画は、この面の定数と記述子セットを共有する。
                     RHI::DescriptorSetPtr sharedFaceSet;
+                    // 頂点アニメのある不透明材質は、面の中で材質ごとに定数と記述子セットを共有する。
+                    struct AnimatedFaceBinding
+                    {
+                        MaterialHandle Handle;
+                        RHI::DescriptorSetPtr Set;
+                    };
+                    Container::VariableArray<AnimatedFaceBinding> animatedFaceSets;
                     SkinnedShadowComponentBindings<RHI::DescriptorSetPtr> skinnedFaceSets;
                     // 静的は解決済みの値で共有し、スキンは材質ごとに部品の共有を分ける。
                     struct AlphaClipFaceBindings
@@ -2625,7 +2714,7 @@ namespace NorvesLib::Core::Rendering
                                     return {};
                                 }
                                 PointShadowAlphaClipUBO alphaUbo = {};
-                                alphaUbo.Base = faceData;
+                                alphaUbo.Base = faceData.Base;
                                 alphaUbo.alphaClip[0] = material.Cutoff;
                                 alphaUbo.alphaClip[1] = material.Coverage;
                                 alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
@@ -2711,6 +2800,46 @@ namespace NorvesLib::Core::Rendering
                                 return allocation.DescriptorSet;
                             };
                             if (!skinnedFaceSets.TryGet(key,createSet,drawCommand.DescriptorSet))
+                            {
+                                continue;
+                            }
+                        }
+                        else if (caster.bVertexAnimated)
+                        {
+                            size_t bindingIndex = 0;
+                            for (; bindingIndex < animatedFaceSets.size(); ++bindingIndex)
+                            {
+                                if (animatedFaceSets[bindingIndex].Handle == drawCommand.Draw.MaterialHandle)
+                                {
+                                    break;
+                                }
+                            }
+                            if (bindingIndex == animatedFaceSets.size())
+                            {
+                                AnimatedFaceBinding binding;
+                                binding.Handle = drawCommand.Draw.MaterialHandle;
+                                auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
+                                if (allocation.IsValid())
+                                {
+                                    PointShadowFaceUBO animatedFaceData = faceData;
+                                    std::memcpy(animatedFaceData.vertexAnimMaterial0, caster.VertexAnimMaterial0,
+                                                sizeof(animatedFaceData.vertexAnimMaterial0));
+                                    std::memcpy(animatedFaceData.vertexAnimMaterial1, caster.VertexAnimMaterial1,
+                                                sizeof(animatedFaceData.vertexAnimMaterial1));
+                                    allocation.Write(&animatedFaceData, sizeof(animatedFaceData));
+                                    allocation.DescriptorSet->BindStorageBuffer(7, context.InstanceDataBuffer, 0, instanceDataSize);
+                                    allocation.DescriptorSet->Update();
+                                    binding.Set = allocation.DescriptorSet;
+                                }
+                                else
+                                {
+                                    NORVES_LOG_WARNING("ShadowMapPass",
+                                        "点光源の影のUBOが足りないため、この面の頂点アニメ材質の描画を省きます");
+                                }
+                                animatedFaceSets.push_back(binding);
+                            }
+                            drawCommand.DescriptorSet = animatedFaceSets[bindingIndex].Set;
+                            if (!drawCommand.DescriptorSet)
                             {
                                 continue;
                             }
@@ -2804,12 +2933,12 @@ namespace NorvesLib::Core::Rendering
                                 }
 
                                 PointShadowFaceUBO ubo = faceData;
-                                std::memcpy(ubo.world, instance.World, sizeof(ubo.world));
-                                ubo.worldSource[0] = 1.0f;
+                                std::memcpy(ubo.Base.world, instance.World, sizeof(ubo.Base.world));
+                                ubo.Base.worldSource[0] = 1.0f;
                                 if (bAlphaClip)
                                 {
                                     PointShadowAlphaClipUBO alphaUbo = {};
-                                    alphaUbo.Base = ubo;
+                                    alphaUbo.Base = ubo.Base;
                                     alphaUbo.alphaClip[0] = material.Cutoff;
                                     alphaUbo.alphaClip[1] = material.Coverage;
                                     alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
@@ -2876,8 +3005,8 @@ namespace NorvesLib::Core::Rendering
                             break;
                         }
                         PointShadowFaceUBO megaFaceData = faceData;
-                        std::memcpy(megaFaceData.world, megaCaster.World, sizeof(megaFaceData.world));
-                        megaFaceData.worldSource[0] = 1.0f;
+                        std::memcpy(megaFaceData.Base.world, megaCaster.World, sizeof(megaFaceData.Base.world));
+                        megaFaceData.Base.worldSource[0] = 1.0f;
                         allocation.Write(&megaFaceData, sizeof(megaFaceData));
                         // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                         allocation.DescriptorSet->BindStorageBuffer(7,
