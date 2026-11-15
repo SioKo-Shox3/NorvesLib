@@ -67,7 +67,9 @@ layout(std140, set = 0, binding = 23) uniform TerrainSplatBlock
 } splatBlock;
 
 #include "Common/GBufferEncoding.glsl"
+#include "Common/WetSurface.glsl"
 #include "Common/VelocityEncoding.glsl"
+NORVES_DECLARE_ENVIRONMENT_UBO(0, 24)
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SpecularAntiAliasing.glsl"
 #include "Common/SparseResidencySampling.glsl"
@@ -234,8 +236,7 @@ void main()
         WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
                                           DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z), heightLod);
     }
-    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
-                     mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a);
+    vec3 albedo = ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 tangentNormal = textureSamples.TangentNormal;
@@ -250,11 +251,17 @@ void main()
     const uint receiverFlags = (bTerrain || bTerrainSplat) ? GBUFFER_RECEIVER_FLAG_TERRAIN : 0u;
     vec4 params = ResolveShadingParams(vec4(-1.0), mvp.shadingParams);
     uint id = uint(mvp.vtFeedbackParams.w + 0.5);
+    vec3 material = textureSamples.Material;
+    ApplyWetSurfaceFromEnvironment(albedo, material.y, material.x, normal, normalize(geometricNormal),
+                                   u_Environment.params,
+                                   ResolveWetSurfaceResponse(-1.0, mvp.shadingParams.x,
+                                                             id == GBUFFER_SHADING_MODEL_DEFAULT_LIT));
+    outAlbedo = vec4(albedo, mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a);
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
     // 視差補正済みの UV で標本した材質値をシェーディングモデルに応じて P0 と書く。
     outMaterial = GBufferEncodeMaterialForShadingModel(
-        SpecularAAFilterMaterial(textureSamples.Material, normalDx, normalDy, mvp.specularAAParams.x),
+        SpecularAAFilterMaterial(material, normalDx, normalDy, mvp.specularAAParams.x),
         params.x, id);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）

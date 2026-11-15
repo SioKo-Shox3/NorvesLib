@@ -1,6 +1,7 @@
 ﻿#include "Rendering/GBufferPass.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MaterialDescriptorCache.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
 #include "Rendering/SharedResourceRegistry.h"
@@ -42,6 +43,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
         // 頂点アニメに渡す世界の風の定数の binding
         constexpr uint32_t VertexAnimationWindBindingIndex = 12;
+        // 濡れに使う環境の定数の binding（Common/GBufferFragment.glsl の NORVES_DECLARE_ENVIRONMENT_UBO と同じ）
+        constexpr uint32_t EnvironmentBindingIndex = 13;
 
         float ResolveGBufferDrawOpacity(const DrawCommand& command)
         {
@@ -113,6 +116,18 @@ namespace NorvesLib::Core::Rendering
 
         m_bInitialized = true;
 
+        // フレームの持ち主が無い文脈でも、濡れの無い環境定数を常に束縛する。初期化後は書き換えない。
+        const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+        RHI::BufferDesc environmentDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer,
+                                        true, "GBufferDefaultEnvironment");
+        m_DefaultEnvironmentBuffer = m_Device->CreateBuffer(environmentDesc);
+        if (!m_DefaultEnvironmentBuffer)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "既定の環境定数バッファを作れませんでした");
+            return false;
+        }
+        m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
         // ========================================
         // DynamicUniformAllocator初期化
         // ========================================
@@ -175,6 +190,11 @@ namespace NorvesLib::Core::Rendering
             windBinding.type = RHI::ResourceBindType::ConstantBuffer;
             windBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(windBinding);
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = EnvironmentBindingIndex;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            uboDescSetDesc.bindings.push_back(environmentBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
@@ -299,6 +319,7 @@ namespace NorvesLib::Core::Rendering
         m_ConstantGrayTextures.clear();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
+        m_DefaultEnvironmentBuffer.reset();
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
         m_Device = nullptr;
@@ -898,6 +919,8 @@ namespace NorvesLib::Core::Rendering
 
         // この記録の中だけで使う（記述子はビュー・フレームの定数と Hash の位相を含み、次の記録へ持ち越さない）
         Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
+        // 共有の切れ端は読み取りだけ。無いときも現在の記録の口から借り、パスの共有状態へ保存しない。
+        const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
 
         auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
@@ -1111,6 +1134,16 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 return nullptr;
+            }
+            if (environmentConstants.IsValid())
+            {
+                allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, environmentConstants.Buffer,
+                                                              environmentConstants.GetOffset32(), environmentConstants.GetSize32());
+            }
+            else
+            {
+                allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer,
+                                                              0, sizeof(GPUEnvironmentParams));
             }
             BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->BindConstantBuffer(VertexAnimationWindBindingIndex,
@@ -1990,6 +2023,12 @@ namespace NorvesLib::Core::Rendering
         windBinding.type = RHI::ResourceBindType::ConstantBuffer;
         windBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(windBinding);
+        // アロケータと同じ set 0 の環境定数の配置を使う。
+        RHI::DescriptorBinding environmentBinding;
+        environmentBinding.binding = EnvironmentBindingIndex;
+        environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        environmentBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(environmentBinding);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);

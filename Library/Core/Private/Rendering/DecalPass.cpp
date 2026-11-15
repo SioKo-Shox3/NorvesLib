@@ -1,6 +1,7 @@
 ﻿#include "Rendering/DecalPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DecalTypes.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -20,6 +21,8 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        constexpr uint32_t kEnvironmentBinding = 3;
+
         // 両シェーダーの定数と同じ std140 の並び
         struct DecalUniform
         {
@@ -54,6 +57,11 @@ namespace NorvesLib::Core::Rendering
                 texture.stages = RHI::ShaderStage::Pixel;
                 desc.bindings.push_back(texture);
             }
+            RHI::DescriptorBinding environment;
+            environment.binding = kEnvironmentBinding;
+            environment.type = RHI::ResourceBindType::ConstantBuffer;
+            environment.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(environment);
             return desc;
         }
     } // namespace
@@ -195,15 +203,17 @@ namespace NorvesLib::Core::Rendering
         }
         const CameraViewConstants cameraConstants =
             CameraViewConstants::BuildForDevice(*camera, context.GetActiveAspectRatio(), context.Device);
+        const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
         RecordDecals(resources.GetTexture(m_ColorHandles[0]), resources.GetTexture(m_ColorHandles[1]),
                      resources.GetTexture(m_DepthHandle), *context.CommandList,
-                     *context.FrameResources, *scene, cameraConstants);
+                     *context.FrameResources, *scene, cameraConstants, &environmentConstants);
     }
 
     bool DecalPass::RecordDecals(const RHI::TexturePtr &albedoTarget, const RHI::TexturePtr &normalTarget,
                                  const RHI::TexturePtr &depthTexture,
                                  RHI::ICommandList &commandList, FrameResourceLane &frameResources,
-                                 const DecalScene &scene, const CameraViewConstants &cameraConstants)
+                                 const DecalScene &scene, const CameraViewConstants &cameraConstants,
+                                 const FrameUploadAllocation *environmentConstants)
     {
         if (!m_bInitialized)
         {
@@ -257,10 +267,13 @@ namespace NorvesLib::Core::Rendering
         uniform.TargetSize[0] = static_cast<float>(width);
         uniform.TargetSize[1] = static_cast<float>(height);
         const FrameUploadAllocation constants = frameResources.AllocateConstants(uniform);
+        const FrameUploadAllocation environment = environmentConstants
+            ? *environmentConstants
+            : frameResources.AllocateConstants(MakeDefaultEnvironmentGpuParams());
         const uint64_t bytes = static_cast<uint64_t>(scene.Decals->size()) * sizeof(DecalInstance);
         const FrameUploadAllocation instances = frameResources.AllocateUploadData(scene.Decals->data(), bytes, FrameUploadUsage::Vertex);
         const FrameDescriptorAllocation descriptor = frameResources.AllocateDescriptorSet(m_DescriptorSetLayout);
-        if (!constants.IsValid() || !instances.IsValid() || !descriptor.IsValid())
+        if (!constants.IsValid() || !environment.IsValid() || !instances.IsValid() || !descriptor.IsValid())
         {
             return false;
         }
@@ -276,6 +289,7 @@ namespace NorvesLib::Core::Rendering
         descriptor.Set->BindSampler(1, m_PointSampler);
         descriptor.Set->BindTexture(2, depthTexture);
         descriptor.Set->BindSampler(2, m_PointSampler);
+        descriptor.Set->BindConstantBuffer(kEnvironmentBinding, environment.Buffer, environment.GetOffset32(), environment.GetSize32());
         descriptor.Set->Update();
 
         RHI::Viewport viewport;

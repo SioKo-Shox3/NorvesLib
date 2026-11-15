@@ -23,6 +23,7 @@
 #include "Rendering/CompositePass.h"
 #include "Rendering/DepthConvention.h"
 #include "Rendering/DrawCommand.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
 #include "Rendering/FramePacket.h"
@@ -5830,6 +5831,11 @@ namespace NorvesLib::Core::Rendering
         viewContext.RenderFrameSerial = ++m_RenderFrameSerial;
         viewContext.CompletedRenderFrameSerial = m_CompletedRenderFrameSerial;
         viewContext.FrameResources = frameResources;
+        viewContext.EnvironmentGpu = PackEnvironmentGpuParams(packet->Scene.Environment);
+        if (frameResources && frameResources->IsRecording())
+        {
+            viewContext.EnvironmentConstants = frameResources->AllocateConstants(viewContext.EnvironmentGpu);
+        }
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;

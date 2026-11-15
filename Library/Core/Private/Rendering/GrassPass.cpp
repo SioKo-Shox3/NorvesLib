@@ -1,6 +1,7 @@
 ﻿#include "Rendering/GrassPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DepthConvention.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/GrassBladeMesh.h"
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/FrameResourceOwner.h"
@@ -23,6 +24,8 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        constexpr uint32_t kGrassEnvironmentBinding = 6;
+
         RHI::DescriptorSetDesc MakeGrassDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -78,6 +81,11 @@ namespace NorvesLib::Core::Rendering
                     RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
                 desc.bindings.push_back(entry);
             }
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = kGrassEnvironmentBinding;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(environmentBinding);
             return desc;
         }
 
@@ -408,6 +416,7 @@ namespace NorvesLib::Core::Rendering
             !inputs.LayerA || !inputs.Sampler || !inputs.RecordBuffer || !inputs.ArgsBuffer ||
             inputs.ArgsBuffer->GetSize() < kGrassLodCount * kGrassArgsStride ||
             !HasRange(inputs.Constants, sizeof(GrassDrawConstants)) ||
+            !HasRange(inputs.EnvironmentConstants, sizeof(GPUEnvironmentParams)) ||
             !HasRange(inputs.Species, sizeof(GrassSpeciesGpuData)))
         {
             return false;
@@ -460,6 +469,8 @@ namespace NorvesLib::Core::Rendering
         {
             const RHI::DescriptorSetPtr& set = inputs.DescriptorSets[lod];
             set->BindConstantBuffer(0, inputs.Constants.Buffer, inputs.Constants.Offset, inputs.Constants.Size);
+            set->BindConstantBuffer(kGrassEnvironmentBinding, inputs.EnvironmentConstants.Buffer,
+                                    inputs.EnvironmentConstants.Offset, inputs.EnvironmentConstants.Size);
             set->BindStorageBuffer(1, inputs.RecordBuffer, inputs.LodBase[lod] * sizeof(GrassBladeRecord),
                                    inputs.LodCapacity[lod] * sizeof(GrassBladeRecord));
             set->BindStorageBuffer(2, inputs.Species.Buffer, inputs.Species.Offset, inputs.Species.Size);
@@ -477,6 +488,7 @@ namespace NorvesLib::Core::Rendering
         fieldBarrier.AfterState = RHI::ResourceState::GenericRead;
         fieldBarrier.OldLayout = RHI::TextureLayout::ShaderReadOnly;
         fieldBarrier.NewLayout = RHI::TextureLayout::ShaderReadOnly;
+        commandList->TextureBarrierExplicit(inputs.LayerA, fieldBarrier);
         commandList->TextureBarrierExplicit(currentField, fieldBarrier);
         if (previousField != currentField)
         {
@@ -504,6 +516,10 @@ namespace NorvesLib::Core::Rendering
             commandList->DrawIndexedIndirect(inputs.ArgsBuffer, lod * kGrassArgsStride, 1, kGrassArgsStride);
         }
         commandList->EndRenderPass();
+        // 次回の窓の更新が、今回の頂点段の読み取りを待てる同期状態へ戻す。
+        fieldBarrier.BeforeState = RHI::ResourceState::GenericRead;
+        fieldBarrier.AfterState = RHI::ResourceState::ShaderResource;
+        commandList->TextureBarrierExplicit(inputs.LayerA, fieldBarrier);
         commandList->BufferBarrier(inputs.RecordBuffer, RHI::ResourceState::GenericRead,
                                    RHI::ResourceState::ShaderResource, 0, inputs.RecordBuffer->GetSize());
         return true;
@@ -898,6 +914,7 @@ namespace NorvesLib::Core::Rendering
             drawConstants.WindParams[3] = context.Wind.GustScaleMeters;
             drawConstants.WindExtra[0] = context.Wind.Turbulence;
         }
+        drawConstants.Surface[0] = context.EnvironmentGpu.Wetness;
         const FoliageBatch foliageDefaults;
         drawConstants.Surface[1] = foliageDefaults.MinPixelWidth;
         drawConstants.Surface[2] = foliageDefaults.MaxWidenRatio;
@@ -920,11 +937,13 @@ namespace NorvesLib::Core::Rendering
         drawConstants.LayerWindow[1] = static_cast<float>(m_FieldWindow.GetWindowSize());
         drawConstants.LayerWindow[2] = static_cast<float>(field->LayerAResolution);
         const FrameUploadAllocation drawConstantAllocation = frameResources->AllocateConstants(extendedConstants);
-        if (!drawConstantAllocation.IsValid())
+        const FrameUploadAllocation environmentAllocation = AcquireEnvironmentConstants(context);
+        if (!drawConstantAllocation.IsValid() || !environmentAllocation.IsValid())
         {
             return;
         }
         drawInputs.Constants = ToBufferRange(drawConstantAllocation);
+        drawInputs.EnvironmentConstants = ToBufferRange(environmentAllocation);
         drawInputs.Species = ToBufferRange(speciesAllocation);
         drawInputs.RecordBuffer = m_Generator.GetRecordBuffer();
         drawInputs.ArgsBuffer = m_Generator.GetArgsBuffer();
