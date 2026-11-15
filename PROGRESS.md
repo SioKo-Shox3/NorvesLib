@@ -11267,3 +11267,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 シーンの一覧に asset-preview と GameMode の ID を足す: 着地(直し 0 回)
 - U3 骨格つき資産の読み込みと材質の付け方の補助 AssetPreviewSkeletal: 着地(直し 1 回)
 - U5 SkeletalAssetRuntime.md に asset-preview の使い方と撮影のコマンドを書く: 着地(直し 0 回)
+- U4 asset-preview の GameMode(床の格子・原点の印・読み込み・配置・欠けの報告・SCENE_READY): 着地(直し 0 回)
