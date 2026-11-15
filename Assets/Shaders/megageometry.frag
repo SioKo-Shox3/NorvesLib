@@ -67,6 +67,7 @@ layout(std140, set = 0, binding = 23) uniform TerrainSplatBlock
 } splatBlock;
 
 #include "Common/GBufferEncoding.glsl"
+#include "Common/VelocityEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SpecularAntiAliasing.glsl"
 #include "Common/SparseResidencySampling.glsl"
@@ -88,21 +89,12 @@ layout(location = 4) out vec2 outVelocity;  // RT4: 現在の UV - 前の UV（g
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
 const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
 
-// gbuffer.frag と同じ式で、現在と直前のフレームのクリップ座標から画面上の動きを求める。
+// gbuffer.frag と同じ UV 差を求め、前のフレームの w が閾値以下なら履歴なしの印を返す。
 vec2 ComputeVelocity()
 {
-    if (mvp.frameParams.x > 0.5 &&
-        abs(fragCurrentClip.w) > 1e-6 &&
-        abs(fragPreviousClip.w) > 1e-6)
+    if (mvp.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) &&
-            dot(velocity, velocity) < 1.0e6)
-        {
-            return velocity;
-        }
+        return VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
     return vec2(0.0);
 }
