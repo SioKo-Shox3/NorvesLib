@@ -11276,3 +11276,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 glTF の mesh node の変換を解いて頂点へ焼き込む共有の部品(保存した版を素直な double の計算に直して入れる): 着地(直し 0 回)
 - U3 静的の cook(NVMESH v0/v1)で node の変換を焼き込み、v0 の複数 primitive を材質名つきで拒否し、model の cooker の版を上げる: 着地(直し 0 回)
 - U4 loose の静的の経路(GLTFAnalyzer)で node の変換を焼き込む: 着地(直し 0 回)
+- U5 文書(node の焼き込みの順序と拒否の理由、FBX の拒否)とタスクの verify のビルド: 着地(直し 0 回)
