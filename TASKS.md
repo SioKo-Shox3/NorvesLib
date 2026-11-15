@@ -6954,7 +6954,7 @@
 - notes: 確かめ直し (c)。要件の実物の受入れ(GR78 の 2 体の犬を同じ実寸で並べる、GR79 の ARM を畳んだ犬の撮影、GR83 の実キャラをクリップ名で再生)は「犬は別シーンか別引数で出し、既定の起動画面は変えない」(要件 GR79 の受け入れ確認、AGENTS.md の絶対規則 7)を求めるが、論理パスで任意の資産を置くシーンが無い(`Game/GameModes/` は Rendering3DTest・Sandbox・MegaBananas などで、M9 の受入れは `M9WorldAcceptance.h:30-31` の固定のパスとクリップ名)。ロードマップは確認ビューア(GR101、G18)を G2 の非ゴールにしている(179 行)ので、ここでは撮影に要る最小のシーンだけを作り、ホットリロード・UI の操作・比較表示は GR101 に残す(GR101 はこのシーンを広げてよい)。`GameApplicationHandler.cpp` と `SceneCatalog.h` は共有のファイルなので差分を小さくする。起動しての確かめは後のタスク(`G2-REAL-DOG-ASSETS-CHECK`・`G2-GR82-REAL-RIG-CHECK`)で行う。
 
 ## G2-GR77-NODE-TRANSFORM: 静的モデルの取り込みで、mesh を持つ node の変換(親の鎖を含む)を頂点へ焼き込み、黙って捨てないようにする
-- status: todo
+- status: done
 - gr: GR77, GR78
 - done-when: 静的モデルの cook(`MeshCooker.cpp` の NVMESH v0/v1)と loose(`GLTFAnalyzer.cpp` の静的の経路)が、既定の scene から mesh 0 を参照する node を 1 つ求め、その node と祖先の TRS または `matrix` の積(double)を、`ExtractMesh` の直後・GR78 の取り込み設定の変換の前に、位置・法線(逆転置で掛けて正規化)・接線(あれば。w の符号も保つ)へ焼き込む。行列式が負なら三角形の巡回を反転して外向きを保つ。mesh を参照する node が 2 つ以上・skin つきの node・非有限・行列式 0 の変換は理由の名前つきで拒否する。変換が恒等(node が無い・TRS が既定)なら、cooked の出力と manifest は今とバイト一致する。
   試験は既存の `ImportStaticIntegrationTest`・`StaticGltfBufferCookTest` にケースとして足す(新しい exe は作らない): node に scale (2,2,2) と Y 軸 90° の回転、その親に平行移動を持つ 2 primitive の GLB で、焼き込み後の全頂点が試験に直に書いた手計算の値と 1e-6 で一致する。鏡像(scale の X が -1)で signed volume が正のまま。v0 で材質の違う 2 primitive は材質名つきで拒否される。node が 2 つの mesh 参照・skin つきの拒否。cook と loose で同じ頂点になる。既存の `AssetCookMeshSmoke`・`AssetCookGlbSmoke`・`ModelResourcesAssetCookSmoke` が無改造で通る。`Docs/Architecture/AssetImportPipeline.md` に順序(node の焼き込み → 取り込み設定)を書く。
