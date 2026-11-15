@@ -58,12 +58,9 @@ ApplySkeletalImportは現在animation抽出後にtranslationをscaleするため
 前もって解決してメートル許容に合わせるか、最終値で再認証する必要がある。
 保証するのはlocal TRS channel差であり、親scale/骨長/スキニング後のワールド頂点変位ではない。
 
-## 検証oracleの精度
+## 誤差予算
 
-Linuxで拡張精度long doubleが使える場合は、独立Hermite参照値が包絡内にあることを直接検査する。
-MSVCのようにlong doubleがbinary64と同精度の場合は、参照式側の丸めを考慮した比較に切り替える。
-その版はULP級の厳密包絡検証とは呼ばず、既知の正確な値のassertと別に扱う。
-参照式の誤差予算はテストだけにあり、実装の境界や採用許容には加えない。
+実装の境界や採用許容には、参照式との比較のための誤差予算を加えない。
 
 ## 適応LINEAR生成と条件付きfloat認証
 
@@ -78,9 +75,7 @@ ValueScaleはBezier control全体へ外向き適用する。vectorのTolerance�
 translationへ最終メートル倍率を渡し、scale channelは1を渡す接続が必要で、二重scaleをしない。
 RotationはValueScale=1のみ。元quaternion/tangentの符号を変えず、保存キーだけを正規化する。
 
-実samplerのNormalizeQuaternion/Slerp/alpha式をSkeletalSamplingMath.hへ移し、
-元の式・分岐を変えずsamplerと純試験で同じ実helperを使用する。
-これはCoreのresource/pose/Windows全体を代用品で通す方法ではなく、実Math型のportable数値部分の共有。
+NormalizeQuaternion/Slerp/alpha式はSkeletalSamplingMath.hの共有helperに置き、samplerは元の式・分岐を維持する。
 
 ### float誤差予算の条件
 

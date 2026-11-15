@@ -101,5 +101,5 @@ S と θ の式の詳細は [Retarget.md の「rest の向きとねじれ」](Re
 
 未写像の対象関節にはチャンネルを出さず、bind のローカル姿勢を保つ。
 
-`SkeletalBvhClipImportTest` は、分岐・End Site を持ち全フレームで回る手書きの多関節 BVH と、rest に ±20° の振りと捻りのずれを持つ対象（RootFrame・メッシュの node の変換・bind の scale を持つ対象を含む）で、全フレームの骨方向誤差 0.1° 以内などを確かめる。
+分岐・End Site を持ち全フレームで回る多関節 BVH と、rest に ±20° の振りと捻りのずれを持つ対象（RootFrame・メッシュの node の変換・bind の scale を持つ対象を含む）では、全フレームの骨方向誤差を 0.1° 以内に収めることを目標とする。
 0.1° は要件の暫定値である。

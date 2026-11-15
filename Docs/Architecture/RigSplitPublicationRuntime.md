@@ -26,8 +26,8 @@ receiptはaggregateとともに解放され、snapshot pinやCPU証拠を永久m
 
 同じ骨格内容を持つ複数bundleでも、各bundleのSkeletonResource wrapper/IDは独立。既登録childと新childを混ぜる汎用DAG transactionやcross-bundle ID重複排除は実装しない。
 
-## 受入境界
+## 守る振る舞い
 
-新しい公開/非同期試験では、実packageから名前指定のCPU姿勢までを通し、strict/overrideの分離、全clip改変、失敗時の既存pool保持、取消、混在legacy、実Sessionのpause外配送を反証する。検証結果はTASKS/PROGRESSに別途記録する。
+実packageから名前指定のCPU姿勢までstrict/overrideを分離する。全clipの改変を検出し、失敗時は既存poolを保持する。取消と混在legacyを扱い、実Sessionはpause中も配送する。
 
 CPU成功は描画成功ではない。split Meshは全MATSをCPU所有するがrender leaseを発行しない。新CLI・複数file公開・GPU staging・Armature/clip-only/256joint・DCCの実物品質は別境界。mutable Resource一般の並行変更、全allocator OOM、任意入力のCPU時間やRSS、任意並行Registry破棄も保証しない。shadow公開はcold追加ごとに既存poolのcopyが必要で、全clip cache検査もsample数に比例する。

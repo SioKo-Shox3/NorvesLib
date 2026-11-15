@@ -13,10 +13,8 @@ GR78/GR79の元材質名をJSONから共通resolverへ渡す前提として、Js
 
 UnicodeText helperは失敗前のprefixについてcallbackを呼ぶことがあるため、TryParseUtf8は常に局所の文字列を組み立てる。入力からborrowしたviewを出力ASTに持ち越さない。
 
-## 検証
+## 文字幅の制限
 
-純helperは全Unicode scalarのUTF8/16/32往復、不正UTF8/16/32、終端overflow、JSON ASCII字句を通常/O2/ASan+UBSanで検証する。実JsonDocumentはraw/escape/nativeの骨・狼emoji・アクセント文字・下位byteがquote/改行になる文字、数値、NUL、失敗Resetをnative bundleへ登録する。
+現在の通常Windows構成はANSI TCHARであり、UTF16/32 helperの対応だけではCore全体のUNICODEビルドを保証しない。
 
-C++の実行文字コードに依存しないよう、raw UTF8 fixtureはu8 literalを使う。Linuxのpure helperやMEMBER wrapper compileだけでWindows Core/実JSON成功としない。現在の通常Windows構成はANSI TCHARであり、UTF16/32 helper成功をCore全体のUNICODEビルド成功とは扱わない。
-
-TStringの再確保はNUL終端copyを行うため、JSON文字列ごとに次のunescaped quoteまでのsource code-unit数を事前計算して確保する。これによりescapeされたNUL後の長いsuffixを再確保で失わず、各文字列がファイル残り全体の容量を持つ二次的なメモリ増加も避ける。長いNUL入り値・keyと後続node成長を回帰試験に含める。汎用TStringのコピー契約自体はこの変更の範囲外。
+TStringの再確保はNUL終端copyを行うため、JSON文字列ごとに次のunescaped quoteまでのsource code-unit数を事前計算して確保する。これによりescapeされたNUL後の長いsuffixを再確保で失わず、各文字列がファイル残り全体の容量を持つ二次的なメモリ増加も避ける。長いNUL入り値・keyと後続node成長でもこの保持を守る。汎用TStringのコピー契約自体はこの変更の範囲外。

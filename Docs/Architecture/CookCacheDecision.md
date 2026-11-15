@@ -30,16 +30,13 @@ CaptureCookOutputRecordはcook前のcontext、成功cook後のmanifestと実pack
 
 - 増分の鍵となる依存の印と記録の `revision` には、asset-set の種別（texture・model・skeletal・animation・audio・raw）ごとの定数を使う。定数は `Tools/AssetCook/CookerRevisions.h` に置き、spec の版を cooker の版の代わりに使わない。skeletal は単一の要求では model の kind で cook するが、版は spec の種別名で引く
 - 形式・既定値・処理の手順・依存ライブラリの更新など、ある種別の cooker の出力バイトが変わる変更をしたら、その種別の版を 1 上げる。他の条件が同じなら、次の cook では版を上げた種別の asset だけが記録の版違い（`RecordVersion`）で再 cook され、ほかの種別は skipped のままになる
-- `CookCacheDecisionTest` は種別ごとの小さな fixture を cook し、`Test/Core/Asset/CookerRevisionGolden.json` の `revision` と `cooked_hash` に照合する。出力が変わったのに版が同じなら「cooker の出力が変わった。<種別> の版を上げて表を更新する」で落ちる。版を上げたら試験が出す実際の値で表の行を直す。版と表を同時に直したときだけ通る
 - 以前の管理 store は記録の版に spec の版（1 か 2）を入れていた。種別の版は 3 から始め、1 と 2 を使わない（`static_assert`）ので、既存 store を読んだ最初の cook は全件を再 cook する
 - role-file の単体 cook（`CookSkeletalRoleFile`）は毎回 cook して skip せず、記録を管理 store に保存しない。`SkeletalRoleFileCookerRevision` は依存の印に入り、単体 CLI が `dependency_hash=` として出すため、表へ寄せて値を変えると単体 CLI の出力が変わる。asset-set の skeletal とは別経路なので、別の定数のまま置く
 
-## 検証
+## 実Windows受入れ
 
-実Windowsで全kindのcook→record→Skip、派生画像、外部buffer/image/未使用image、sidecar、無関係なmanifest変更、package padding、hard link・case alias・junction、危険path、判定途中の入力変更と出力保持を検証する。private probeはこの途中変更試験だけに使い、production入口はprobe無しで呼ぶ。
 
 cc9aa9e169098be51bda334cf30cb3c887f9ab78の[Windows run37222258176](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37222258176)で19 CPU契約、7 CLI、固定79出力とtexture v1の10出力のbyte互換が成功。実traceで末尾dot/spaceがabsolute化時に消えることを確認し、正規化前の拒否を検証した。保存state・既存root公開・旧CLI cache移行は引き続き別工程。
 
-ModelNativePathTestは日本語・非BMPのsource/base/overrideを静的/骨格glTF/GLBで検証し、外部buffer/image・自動/明示sidecar・共通増分record・不在/lock・不正locatorと失敗保持を確認する。新経路の実Windows結果は別途記録する。
 
 モデルnative locatorはd2556d3c2379c82a1351ab8955b1d0d4044f1dbeの[Windows run37229272949](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37229272949)で受入れ済み。21 CPU契約、単体79出力とtexture v1の10出力、診断5literalのbyte互換を確認した。

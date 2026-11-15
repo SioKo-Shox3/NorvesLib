@@ -673,29 +673,13 @@ JSON の空白や seed だけの変更もハッシュを変える。
 浮動小数点処理の決定性の保証は同じバイナリ内に限り、コンパイラ・構成・実行環境の異なるバイナリ間の
 バイト一致を前提にしない。
 
-### 実装と試験の所在
+### 実装の所在
 
 入口は [SingleAssetCook.cpp](../../Tools/AssetCook/SingleAssetCook.cpp) の `CookWorldAsset`、
 スペックと入力ハッシュは [TerrainSpec.cpp](../../Tools/AssetCook/TerrainSpec.cpp)、
 取り込みは [HeightfieldImport.cpp](../../Tools/AssetCook/HeightfieldImport.cpp)、
 マスク計算とペイントは [TerrainMasks.cpp](../../Tools/AssetCook/TerrainMasks.cpp)、
 量子化・法線・タイル生成は [TerrainCooker.cpp](../../Tools/AssetCook/TerrainCooker.cpp) にある。
-
-[CookedTerrainTest](../../Test/Core/Asset/CookedTerrainTest.cpp) は形式の検査に加え、解析面で次を検査する。
-
-| 項目 | 検査 |
-| --- | --- |
-| (a) | 高さの最大誤差が半量子化幅 + 2 ULP 以下 |
-| (b) | x/z 両方向の共有辺で HGT0・NRM0 が一致 |
-| (c) | 解析的な法線との最大角度が 0.5 度以下 |
-| (d) | AABB と stride 1/2/4/8 の LOD 誤差が独立した計算と一致 |
-| (e) | PNG16・両 endian の RAW16・RAW32F・EXR の一致と EXR の端数保持 |
-| (f) | 8bit 警告、16bit 必須指定、不正寸法の拒否 |
-| (g) | 再 cook のバイトと payload hash が一致し、入力や seed の変更で source hash が変化 |
-
-[AssetCookTerrainSmoke](../../Tools/AssetCook/AssetCookTerrainSmoke.cmake.in) は CLI から 33×33 の PNG16 を
-16 セル/タイルの 2×2 タイルへ cook し、manifest の kind・entry type・format と 16 桁のハッシュを確認する。
-`--entry-type Raw` が適切な診断で拒否されることも検査する。
 
 ### 2049×2049 合成入力の計測
 
@@ -792,7 +776,7 @@ python (Join-Path $benchDir 'generate.py') $benchDir
 ### 書き出し
 
 `WriteCookedTerrain(const CookedTerrainWriteDesc&, Container::VariableArray<uint8_t>& outBytes)`
-を Tools と試験で共用する。`CookedTerrainWriteDesc` は全体の寸法・原点・高さの写像・LOD 数と、
+を Tools で使う。`CookedTerrainWriteDesc` は全体の寸法・原点・高さの写像・LOD 数と、
 レイヤの記述 `CookedTerrainLayerDesc`、タイルの記述 `CookedTerrainTileDesc` を持つ。
 各タイルの LayerBytes はレイヤ表と同じ数・順の `Container::Span<const uint8_t>` で、データを所有しない。
 
