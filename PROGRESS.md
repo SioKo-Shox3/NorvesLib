@@ -11558,3 +11558,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 VSM（静的・スキン）の C++ でディゾルブの表を作って渡す: 着地(直し 0 回)
 - U9 CSM と点光源の影のシェーダーでディゾルブの形に切り抜く: 着地(直し 0 回)
 - U10 VSM の描画シェーダーでディゾルブの形に切り抜く: 着地(直し 0 回)
+- U6 GPU の配置の文書とタスクのビルド: 着地(直し 0 回)
