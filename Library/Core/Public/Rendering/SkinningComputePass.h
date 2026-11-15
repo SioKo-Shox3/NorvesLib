@@ -240,6 +240,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 出力バッファの先頭のアドレスを含む、このインスタンスの先頭頂点のアドレス（BDA が無いときは 0） */
         uint64_t CurrentVertexAddress = 0;
         uint64_t PreviousVertexAddress = 0;
+        /** @brief 入力の SkinnedMeshVertex の先頭アドレス（BDA が無いときは 0） */
+        uint64_t SourceVertexAddress = 0;
     };
 
     /**
