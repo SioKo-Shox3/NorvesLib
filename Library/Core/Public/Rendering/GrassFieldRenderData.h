@@ -42,8 +42,15 @@ namespace NorvesLib::Core::Rendering
         float LodDistanceMeters[4];
         /** @brief LOD ごとに残す割合 */
         float LodKeepFraction[4];
+        /** @brief 枯れた色（線形 RGB）と、A に近景で寄せる重み */
+        float DryColor[4];
+        /** @brief 枯れ度 1 での密度の倍率、高さの倍率、曲がりの増し、遠景で色を寄せる重み */
+        float DrynessScales[4];
+        /** @brief 遠景で草丈を潰す重み、yzw は予約の 0 */
+        float DrynessFar[4];
     };
     static_assert(sizeof(GrassSpeciesGpuData) % 16 == 0);
+    static_assert(sizeof(GrassSpeciesGpuData) == 176);
 
     /** @brief 草の場の 1 チャンクの描画データ */
     struct GrassFieldChunkRenderData
@@ -73,7 +80,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<GrassFieldChunkRenderData> Chunks;
         /** @brief LayerA の RGBA8 画素（R: 密度、G: 高さ係数、B: 湿りの偏り［128 が中立］、A: 種別 ID 0..63） */
         Container::VariableArray<uint8_t> LayerAPixels;
-        /** @brief LayerB の RGBA8 画素（RGB: 色味［128 が中立］、A: 予約の 0） */
+        /** @brief LayerB の RGBA8 画素（RGB: 色味［128 が中立］、A: 基礎の枯れ度（0 = 生、255 = 枯れ）） */
         Container::VariableArray<uint8_t> LayerBPixels;
         /** @brief 種別の一覧（添字が種別 ID） */
         Container::VariableArray<GrassSpeciesGpuData> Species;

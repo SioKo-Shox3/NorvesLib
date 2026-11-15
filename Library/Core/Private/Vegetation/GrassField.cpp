@@ -109,11 +109,8 @@ namespace NorvesLib::Core::Vegetation
             Chunk chunk;
             chunk.Coord = coord;
             chunk.LayerA.assign(layerA.begin(), layerA.end());
+            // LayerB の A は基礎の枯れ度（cook が地形の枯れ草を写す）なのでそのまま保つ。
             chunk.LayerB.assign(layerB.begin(), layerB.end());
-            for (uint64_t offset = 3; offset < layerBBytes; offset += 4)
-            {
-                chunk.LayerB[offset] = 0;
-            }
             m_Chunks.insert_or_assign(MakeChunkKey(coord), std::move(chunk));
         }
         ++m_Revision;
@@ -410,6 +407,16 @@ namespace NorvesLib::Core::Vegetation
                 gpu.LodDistanceMeters[index] = species.Lod[index].DistanceMeters;
                 gpu.LodKeepFraction[index] = species.Lod[index].KeepFraction;
             }
+            CopyColor(species.Dryness.Color, gpu.DryColor);
+            gpu.DryColor[3] = species.Dryness.ColorWeight;
+            gpu.DrynessScales[0] = species.Dryness.DensityScale;
+            gpu.DrynessScales[1] = species.Dryness.HeightScale;
+            gpu.DrynessScales[2] = species.Dryness.BendAdd;
+            gpu.DrynessScales[3] = species.Dryness.FarColorWeight;
+            gpu.DrynessFar[0] = species.Dryness.FarHeightFlatten;
+            gpu.DrynessFar[1] = 0.0f;
+            gpu.DrynessFar[2] = 0.0f;
+            gpu.DrynessFar[3] = 0.0f;
             data->Species.push_back(gpu);
         }
         return data;

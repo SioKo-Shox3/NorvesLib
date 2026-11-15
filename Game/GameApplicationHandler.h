@@ -348,6 +348,16 @@ namespace Game
         /// スナップロードの目的地のワールド X・Z 座標[m]。
         float m_StreamingSnapTestX = 0.0f;
         float m_StreamingSnapTestZ = 0.0f;
+        /// --grassland-wither で円形の枯れ源を配置する。
+        bool m_bGrasslandWither = false;
+        /// 枯れ源の中心のワールド X 座標[m]。
+        float m_GrasslandWitherX = 0.0f;
+        /// 枯れ源の中心のワールド Z 座標[m]。
+        float m_GrasslandWitherZ = 0.0f;
+        /// 枯れ源の内側の半径[m]。
+        float m_GrasslandWitherRadius = 0.0f;
+        /// --grassland-wither-roundtrip で入場時に枯れ度マップを保存して復元する。
+        bool m_bGrasslandWitherRoundtrip = false;
         /// 指定時刻の撮影。状態は rig と共有し、PNG は OnPostRender で保存する
         double m_CameraPathCaptureTime = -1.0;
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;
