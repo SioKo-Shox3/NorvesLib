@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ShadowMapPass.h"
+#include "Rendering/ShadowCasterCollection.h"
 #include "Rendering/SkinnedShadowComponentBindings.h"
 #include "Rendering/SkinnedShadowStorage.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
@@ -163,78 +164,9 @@ namespace NorvesLib::Core::Rendering
                    lhs.Coverage == rhs.Coverage && lhs.bSparse == rhs.bSparse;
         }
 
-        // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
-        // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
-        // 粗い段を1回の範囲で持つメッシュは、影の地図のテクセルに見合う段を描くごとに選ぶ（ResolveMegaShadowRange）。
-        struct MegaShadowCaster
-        {
-            RHI::BufferPtr VertexBuffer;
-            RHI::BufferPtr IndexBuffer;
-            // ジオメトリのプールの区画の、頂点・インデックスの先頭（塊のバッファの先頭からのバイト）
-            uint64_t VertexBufferOffsetBytes = 0;
-            uint64_t IndexBufferOffsetBytes = 0;
-            uint32_t FirstIndex = 0;
-            uint32_t IndexCount = 0;
-            float World[16] = {};
-            BoundingSphere Bounds;
-            const MegaGeometry::MegaMeshGPUData* GpuData = nullptr;
-            // ローカルの長さ（LODの誤差）をワールドへ直す倍率（行列の最大の軸の伸び）
-            float WorldScale = 1.0f;
-        };
-
-        // MegaGeometryの段の誤差が、影の地図の何テクセル以下なら粗い段を使うか
-        constexpr float MegaShadowLODErrorTexels = 1.0f;
-
         // CSM を読むのがボリュームのフォグだけのときに描く MegaGeometry の投影物の上限（境界の半径の大きい順）。
         // 荒野の地形の区画・遠景・建物・大岩（約 300）が入り、崖錐の小片（27 万）は入らない
         constexpr uint32_t CsmFogMegaCasterBudget = 384;
-
-        // 1回の描画の段と範囲
-        struct MegaShadowRange
-        {
-            uint32_t Level = 0;
-            uint32_t FirstIndex = 0;
-            uint32_t IndexCount = 0;
-        };
-
-        // 影の地図の1テクセルのワールドでの大きさに見合う段を選ぶ（影に指定された段より細かくはしない）。
-        MegaShadowRange ResolveMegaShadowRange(const MegaShadowCaster& caster, float texelSize)
-        {
-            MegaShadowRange range;
-            range.FirstIndex = caster.FirstIndex;
-            range.IndexCount = caster.IndexCount;
-            if (!caster.GpuData)
-            {
-                return range;
-            }
-            range.Level = caster.GpuData->ShadowLODLevel;
-            const uint32_t level = MegaGeometry::SelectShadowLODLevel(*caster.GpuData,
-                                                                      caster.WorldScale,
-                                                                      texelSize,
-                                                                      MegaShadowLODErrorTexels);
-            if (level != range.Level && level < caster.GpuData->LevelRanges.size() &&
-                caster.GpuData->LevelRanges[level].IndexCount > 0u)
-            {
-                range.Level = level;
-                range.FirstIndex = caster.GpuData->LevelRanges[level].FirstIndex;
-                range.IndexCount = caster.GpuData->LevelRanges[level].IndexCount;
-            }
-            return range;
-        }
-
-        // 記録用に「メッシュ名:段/三角形数」を足す
-        void AppendMegaShadowLevel(Container::String& out, const MegaShadowCaster& caster, const MegaShadowRange& range)
-        {
-            char text[160] = {};
-            std::snprintf(text,
-                          sizeof(text),
-                          "%s%s:%u/%u",
-                          out.empty() ? "" : ",",
-                          caster.GpuData && !caster.GpuData->DebugName.empty() ? caster.GpuData->DebugName.c_str() : "?",
-                          range.Level,
-                          range.IndexCount / 3u);
-            out += text;
-        }
 
         // 点光源のキューブの1面（90°の正方形の視錐台）に境界球がかかるか。かからない面へは描かない。
         bool PointShadowFaceMayContainSphere(const PointShadowLightSnapshot& light,
@@ -262,46 +194,18 @@ namespace NorvesLib::Core::Rendering
                    forward - right >= -margin && forward + right >= -margin;
         }
 
-        // ローカルの境界球をワールド行列（行ベクトル規約、並進は行3）で写す。半径は最大の軸の伸びで広げる。
-        BoundingSphere TransformMegaBounds(const BoundingSphere& local, const float* world)
-        {
-            BoundingSphere result;
-            result.CenterX = local.CenterX * world[0] + local.CenterY * world[4] +
-                             local.CenterZ * world[8] + world[12];
-            result.CenterY = local.CenterX * world[1] + local.CenterY * world[5] +
-                             local.CenterZ * world[9] + world[13];
-            result.CenterZ = local.CenterX * world[2] + local.CenterY * world[6] +
-                             local.CenterZ * world[10] + world[14];
-            float maxScaleSquared = 0.0f;
-            for (uint32_t row = 0; row < 3; ++row)
-            {
-                const float lengthSquared = world[row * 4 + 0] * world[row * 4 + 0] +
-                                            world[row * 4 + 1] * world[row * 4 + 1] +
-                                            world[row * 4 + 2] * world[row * 4 + 2];
-                maxScaleSquared = std::max(maxScaleSquared, lengthSquared);
-            }
-            result.Radius = local.Radius * std::sqrt(maxScaleSquared);
-            return result;
-        }
-
         // MegaGeometry の投影物になれるメッシュの GPU データ（区画へのコピーが GPU で完了し、影に使う段を持つ）。無ければ null
         const MegaGeometry::MegaMeshGPUData* FindMegaShadowMesh(const MegaGeometryResources& resources,
                                                                MegaGeometry::MegaMeshHandle handle)
         {
             const MegaGeometry::MegaMeshGPUData* gpuData = resources.GetReadyMegaMeshGPUData(handle);
-            if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer || gpuData->ShadowIndexCount == 0u)
+            if (!IsMegaShadowMeshUsable(gpuData))
             {
                 return nullptr;
             }
             return gpuData;
         }
 
-        // ワールドの境界球が描ける大きさか（有限で半径が正）
-        bool IsDrawableMegaBounds(const BoundingSphere& bounds)
-        {
-            return std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) && std::isfinite(bounds.CenterZ) &&
-                   std::isfinite(bounds.Radius) && bounds.Radius > 0.0f;
-        }
         // MegaGeometryの影に使う段の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
         DrawCommand MakeMegaShadowDrawCommand(const MegaShadowCaster& caster,
                                               const MegaShadowRange& range,
@@ -898,34 +802,13 @@ namespace NorvesLib::Core::Rendering
             outCasters.reserve(ids != nullptr ? ids->size() : cache.Ranges.GetCount());
             const auto append = [&](const ShadowMapMegaCasterCache::Entry& entry)
             {
-                if (!entry.bCastShadow)
-                {
-                    return;
-                }
-                const auto mesh = cache.Meshes.find(entry.Handle.Id);
+                const auto mesh = entry.bCastShadow ? cache.Meshes.find(entry.Handle.Id) : cache.Meshes.end();
                 const MegaGeometry::MegaMeshGPUData* gpuData = mesh != cache.Meshes.end() ? mesh->second.GpuData : nullptr;
-                if (!gpuData)
-                {
-                    return;
-                }
                 MegaShadowCaster caster;
-                caster.VertexBuffer = gpuData->VertexBuffer;
-                caster.IndexBuffer = gpuData->IndexBuffer;
-                caster.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
-                caster.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
-                caster.FirstIndex = gpuData->ShadowFirstIndex;
-                caster.IndexCount = gpuData->ShadowIndexCount;
-                caster.GpuData = gpuData;
-                std::memcpy(caster.World, entry.World, sizeof(caster.World));
-                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
-                caster.WorldScale = gpuData->TotalBounds.Radius > 0.0f
-                                        ? caster.Bounds.Radius / gpuData->TotalBounds.Radius
-                                        : 1.0f;
-                if (!IsDrawableMegaBounds(caster.Bounds))
+                if (TryMakeMegaShadowCaster(entry.World, entry.bCastShadow, gpuData, entry.Handle.Id, caster))
                 {
-                    return;
+                    outCasters.push_back(caster);
                 }
-                outCasters.push_back(caster);
             };
             if (ids != nullptr)
             {
@@ -953,9 +836,13 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapFramePlan
     {
         CascadedShadowMatrixResult Cascades;
+        ShadowCasterBudgetWarnings MegaBudgetWarnings;
         // 最後に記録した分割の λ。フレームをまたいで保持し、変わったときだけ記録する。
         float LoggedSplitLambda = -1.0f;
 #if NORVES_ENABLE_LOGGING
+        bool LoggedSunShadowAutoDisabled = false;
+        uint32_t LoggedVsmOverBudgetMeshes = 0;
+        uint32_t LoggedVsmBudget = 0;
         // パスが所有する計画に前回の描画数と候補数を保ち、変わったときだけ記録する。
         uint32_t LoggedCasterDraws[PhysicalLightingShadowCascadeCount] = {~0u, ~0u, ~0u, ~0u};
         uint32_t LoggedCasterCandidates = ~0u;
@@ -1501,6 +1388,9 @@ namespace NorvesLib::Core::Rendering
         {
             PlanShadowFrame(context);
         }
+        const uint32_t budget = context.SnapshotScene != nullptr
+                                    ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                    : SunShadowParameters{}.MaxShadowCasterTriangles;
         const ShadowMapFramePlan& plan = *m_FramePlan;
         m_FramePlan->bPlanned = false;
         const CascadedShadowMatrixResult& cascadedShadowMatrices = plan.Cascades;
@@ -1885,6 +1775,10 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, cascade.TexelSize);
+                    if (!AdmitMegaShadowCasterDraw(megaCaster, range, budget, m_FramePlan->MegaBudgetWarnings))
+                    {
+                        continue;
+                    }
                     auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
                     if (!allocation.UniformBuffer)
                     {
@@ -2046,6 +1940,22 @@ namespace NorvesLib::Core::Rendering
             m_FramePlan = Container::MakeUnique<ShadowMapFramePlan>();
         }
         ShadowMapFramePlan& plan = *m_FramePlan;
+        // 太陽の影の有効・自動停止は、このフレームのシーンの写しだけから決める。
+        // 停止時は無効の行列とクリップマップを公開し、VSM も太陽の段を省く。
+        const SunShadowFrameState sunShadow = context.SnapshotScene != nullptr
+            ? EvaluateSunShadowFrameState(context.SnapshotScene->SunShadow, context.SnapshotScene->SkyAtmosphere)
+            : SunShadowFrameState{};
+#if NORVES_ENABLE_LOGGING
+        if (sunShadow.bAutoDisabled != plan.LoggedSunShadowAutoDisabled)
+        {
+            plan.LoggedSunShadowAutoDisabled = sunShadow.bAutoDisabled;
+            const float threshold = context.SnapshotScene != nullptr
+                ? SanitizeSunShadowParameters(context.SnapshotScene->SunShadow).AutoDisableBelowSunIlluminanceLux
+                : SunShadowParameters{}.AutoDisableBelowSunIlluminanceLux;
+            NORVES_LOG_INFO("ShadowMapPass", "SUN_SHADOW_AUTO_DISABLED disabled=%d sun_lux=%.1f threshold=%.1f",
+                            sunShadow.bAutoDisabled ? 1 : 0, sunShadow.SunIlluminanceLux, threshold);
+        }
+#endif
         context.ActiveShadowMapSettings = &m_Settings;
         // シーンが FramePacket で影の到達距離を指定していればそれを、無ければパスの設定を使う（CSM と VSM で同じ値）
         const float maxShadowDistance =
@@ -2077,11 +1987,37 @@ namespace NorvesLib::Core::Rendering
                                               : static_cast<uint32_t>(instanceDataSize64);
 
         // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
-        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
-        // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
+        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは上限を超える物も残し、
+        // 粗いカスケードで上限内の段を描くときにnear面で切らない。
         // MegaGeometry は RenderThread の写しの変わった席だけを直した席ごとの写しから、範囲（格子）ごとの AABB を含める
         // （物の数ではなく範囲の数だけを見る。範囲に物が 1 つなら、その物の境界球そのもの）
         const uint32_t megaCasterCount = SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize);
+#if NORVES_ENABLE_LOGGING
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            const uint32_t budget = context.SnapshotScene != nullptr
+                                        ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                        : SunShadowParameters{}.MaxShadowCasterTriangles;
+            uint32_t overBudgetMeshes = 0;
+            if (m_MegaCasters)
+            {
+                for (const auto& [meshId, state] : m_MegaCasters->Meshes)
+                {
+                    if (IsMegaShadowMeshOverTriangleBudget(state.GpuData, budget))
+                    {
+                        ++overBudgetMeshes;
+                    }
+                }
+            }
+            if (overBudgetMeshes != plan.LoggedVsmOverBudgetMeshes || budget != plan.LoggedVsmBudget)
+            {
+                plan.LoggedVsmOverBudgetMeshes = overBudgetMeshes;
+                plan.LoggedVsmBudget = budget;
+                NORVES_LOG_INFO("ShadowMapPass", "VSM_SHADOW_CASTER_BUDGET over_budget_meshes=%u budget=%u kept_in_vsm=1",
+                                overBudgetMeshes, budget);
+            }
+        }
+#endif
         Container::VariableArray<BoundingSphere> casterBounds;
         CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
                                              context.SnapshotSkinnedMeshProxies,
@@ -2099,10 +2035,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
         const CascadedShadowMatrixResult cascadedShadowMatrices =
-            BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
-                                             context.GetActiveCamera(),
-                                             cascadedSettings,
-                                             &casterBounds);
+            sunShadow.bActive
+                ? BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
+                                                  context.GetActiveCamera(),
+                                                  cascadedSettings,
+                                                  &casterBounds)
+                : CascadedShadowMatrixResult{};
 
         // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
         float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};
@@ -2175,7 +2113,7 @@ namespace NorvesLib::Core::Rendering
             clipmapSettings = FitVirtualShadowMapClipmapToShadowDistance(clipmapSettings);
             const CameraProxy* activeCamera = context.GetActiveCamera();
             const VirtualShadowMapClipmap clipmap =
-                activeCamera != nullptr
+                sunShadow.bActive && activeCamera != nullptr
                     ? BuildVirtualShadowMapClipmap(context.SnapshotLightProxies, *activeCamera, clipmapSettings)
                     : VirtualShadowMapClipmap{};
             context.PhysicalLighting.PublishSunClipmap(clipmap);
@@ -2466,6 +2404,9 @@ namespace NorvesLib::Core::Rendering
 
     void ShadowMapPass::ExecutePointShadows(ViewRenderContext& context)
     {
+        const uint32_t budget = context.SnapshotScene != nullptr
+                                    ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                    : SunShadowParameters{}.MaxShadowCasterTriangles;
         const PointShadowSnapshot* snapshot = context.SnapshotPointShadows;
         const uint32_t lightCount =
             snapshot != nullptr ? std::min(snapshot->LightCount, PointShadowMaxLights) : 0u;
@@ -2921,6 +2862,12 @@ namespace NorvesLib::Core::Rendering
                                                           static_cast<float>(m_Settings.PointShadowResolution)
                                                     : 0.0f;
                         const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, texelSize);
+                        if (m_FramePlan
+                                ? !AdmitMegaShadowCasterDraw(megaCaster, range, budget, m_FramePlan->MegaBudgetWarnings)
+                                : ExceedsShadowCasterTriangleBudget(range.IndexCount / 3u, budget))
+                        {
+                            continue;
+                        }
                         auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
                         if (!allocation.UniformBuffer)
                         {

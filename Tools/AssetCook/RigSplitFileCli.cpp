@@ -1,4 +1,5 @@
 ﻿#include "RigSplitFileCook.h"
+#include "MeshCooker.h"
 #include "NativeCookArguments.h"
 #include "SkeletalCliOptions.h"
 #include <charconv>
@@ -244,6 +245,10 @@ namespace NorvesLib::Tools::AssetCook
             request.SkeletonPath = logical + ".skeleton";
             request.MeshPath = logical + ".skinmesh";
             request.BankPath = logical + ".clips";
+            if (RejectFbxModelSourceFile(request.SourcePath, error))
+            {
+                throw std::runtime_error(error.c_str());
+            }
             RigSplitFileCookResult result;
             if (!CookRigSplitFile(request, destination, result, error))
             {

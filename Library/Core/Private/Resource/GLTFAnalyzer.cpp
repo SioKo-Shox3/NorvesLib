@@ -5,6 +5,7 @@
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfImageSource.h"
+#include "Resource/GltfNodeTransform.h"
 #include "Resource/ImportSettingsFile.h"
 #include "Resource/ImportSettingsHash.h"
 #include "Resource/ImportTransform.h"
@@ -779,6 +780,24 @@ namespace NorvesLib::Core::ResourceIO
                             indices.size() * sizeof(uint32_t),
                             LoadProfileElapsedMs(meshExtractStartTime));
 
+            if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(Rendering::Mesh3DVertex))
+            {
+                return false;
+            }
+            const AssetImport::ImportVertexLayout layout{sizeof(Rendering::Mesh3DVertex),
+                offsetof(Rendering::Mesh3DVertex, Position), offsetof(Rendering::Mesh3DVertex, Normal),
+                offsetof(Rendering::Mesh3DVertex, TexCoord)};
+            const auto nodeTransform = Gltf::ResolveMeshNodeTransform(root, 0);
+            const auto nodeTransformResult = Gltf::BakeMeshNodeTransform(nodeTransform,
+                {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(Rendering::Mesh3DVertex)},
+                vertices.size(), layout, indices);
+            if (nodeTransformResult != Gltf::NodeTransformResult::Success)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "glTF node transform rejected: %s",
+                    Gltf::NodeTransformResultName(nodeTransformResult));
+                return false;
+            }
+
             AssetImport::LoadedImportSettings loadedImport;
             const AssetImport::ImportSettingsFileOptions automaticImport;
             const auto settingsResult = AssetImport::LoadImportSettingsFile(gltfFilePath,
@@ -792,13 +811,6 @@ namespace NorvesLib::Core::ResourceIO
             uint64_t settingsHash = 0;
             if (loadedImport.bPresent)
             {
-                if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(Rendering::Mesh3DVertex))
-                {
-                    return false;
-                }
-                const AssetImport::ImportVertexLayout layout{sizeof(Rendering::Mesh3DVertex),
-                    offsetof(Rendering::Mesh3DVertex, Position), offsetof(Rendering::Mesh3DVertex, Normal),
-                    offsetof(Rendering::Mesh3DVertex, TexCoord)};
                 const auto transformed = AssetImport::ApplyImportTransform(
                     {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(Rendering::Mesh3DVertex)},
                     vertices.size(), layout, indices, loadedImport.Settings);
