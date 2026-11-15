@@ -11264,3 +11264,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 シ者の撃破の応答の表に wither.recover を足し、敵の定義に載せ、全体をビルドする: 着地(直し 0 回)
 - U5 リスタートで進行を空にする時に枯れ度の鍵の状態も既定へ戻す（セーブが無い・読めない時の持ち越しを防ぐ）: 着地(直し 0 回)
 - U1 起動引数の解析と並べ方の純関数 AssetPreviewLayout: 着地(直し 0 回)
+- U2 シーンの一覧に asset-preview と GameMode の ID を足す: 着地(直し 0 回)
