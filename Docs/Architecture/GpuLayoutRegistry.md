@@ -527,9 +527,9 @@ GLSL は `NORVES_DECLARE_ENVIRONMENT_UBO(SET_INDEX, BINDING_INDEX)` をシェー
 
 GBuffer の書き手は、書き込み直前のアルベド・粗さ・金属度・シェーディング法線に `ApplyWetSurfaceFromEnvironment` を掛ける。草は後述のとおり `ApplyWetSurface` を直接使う。ワールド空間の幾何法線（Y が上）と、一様の凹み `surface.x` を使い、AO は凹みに使わない。内部の `ApplyWetSurface` は `w = wetness * exposure * response` が 0 以下または NaN なら何も変えず戻る。最終の `w` は書き戻さず、材質がある経路の `Material.a` は解決済みの `P0`、`Emissive.a` は `P1` のままにし、ID と受け手の印も保つ。株と草の `P0` / `P1` は 0。`wetness = 0` では全経路の出力を濡れ処理導入前とビット一致させる契約である。
 
-- `GBufferPass` と材質ごとのプログラムは、インスタンスの `P0`、材質の `P0`、`DefaultLit` かどうかを `ResolveWetSurfaceResponse` に渡す。MegaGeometry はインスタンスを未指定（-1）とし材質の `P0` を使う。可視バッファの解決も材質があれば GBuffer と同じ優先で解決し、材質がなければ感度 1。幾何法線はラスタと同じ補間された頂点法線。MegaGeometry と可視バッファのデバッグ表示は濡らさない。
+- `GBufferPass` と材質ごとのプログラムは、インスタンスの `P0`、材質の `P0`、`DefaultLit` かどうかを `ResolveWetSurfaceResponse` に渡す。MegaGeometry はインスタンスを未指定（-1）とし材質の `P0` を使う。半透明の前方もインスタンスを未指定（-1）とし、材質の `P0` を `TransparentForwardUBO::sceneColorParams.z` で渡す。材質がなければ -1 で感度 1 とし、ID を読まず `DefaultLit` として扱う。可視バッファの解決も材質があれば GBuffer と同じ優先で解決し、材質がなければ感度 1。幾何法線はラスタと同じ補間された頂点法線。MegaGeometry と可視バッファのデバッグ表示は濡らさない。
 - 株は材質の `P0` を持たないため感度 1、幾何法線は画面微分から求めた面の法線（退化時は元の法線）。草も感度 1 で、環境の濡れを描画定数の `Surface.x` に詰め、頂点が LayerA の moisture により場所ごとに調整した `fragWetness` を使う。種の濡れ色・濡れ粗さを適用してから `ApplyWetSurface` を直接呼ぶ。
-- デカールは感度 1、幾何法線を 0 として水膜を起こさず、濡れによるアルベドの暗化だけを書く。濡れによる粗さ・法線の変更は書かず、従来のデカール法線の合成は保つ。受け手の `P0` が 0 でもデカールだけは暗くなる。半透明の前方は材質の `P0` がシェーダーへ届かないため感度 1 で照明前に適用する。
+- デカールは感度 1、幾何法線を 0 として水膜を起こさず、濡れによるアルベドの暗化だけを書く。濡れによる粗さ・法線の変更は書かず、従来のデカール法線の合成は保つ。受け手の `P0` が 0 でもデカールだけは暗くなる。半透明の前方は上記の感度で照明前に濡れを適用する。
 
 フレームの環境 UBO を借りられないとき、`GBufferPass`・MegaGeometry・可視バッファの解決・半透明の前方は、初期化時に `MakeDefaultEnvironmentGpuParams()` を 1 回書き、以後は書き換えない 48 バイトの常駐 UBO を結ぶ。`FoliagePass` と草は対象の描画を飛ばす。デカールは呼び手から環境の割り当てが渡されなければ、フレームの持ち主から既定値を借りる。
 

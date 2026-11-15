@@ -15,7 +15,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveColor;
     vec4 pomParams; // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
-    vec4 sceneColorParams; // x=プリエクスポージャ、y=被覆率を出す印
+    vec4 sceneColorParams; // x=プリエクスポージャ、y=被覆率を出す印、z=濡れの感度（DefaultLit の材質の P0。負は未指定で 1）
     mat4 lightView[4];
     mat4 lightProjection[4];
     vec4 shadowSplitDistances[2];
@@ -282,7 +282,7 @@ void main()
     float ao = clamp(textureSamples.Material.b, 0.0, 1.0);
     ApplyWetSurfaceFromEnvironment(baseColor, roughness, metallic, normal,
                                    normalize(gl_FrontFacing ? fragNormal : -fragNormal),
-                                   u_Environment.params, ResolveWetSurfaceResponse(-1.0, -1.0, true));
+                                   u_Environment.params, ResolveWetSurfaceResponse(-1.0, mvp.sceneColorParams.z, true));
     vec3 direct = vec3(0.0);
     float NdotV = max(dot(normal, viewDirection), 0.0);
     vec3 F0d = vec3(0.04);

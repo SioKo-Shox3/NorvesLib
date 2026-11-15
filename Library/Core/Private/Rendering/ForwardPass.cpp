@@ -65,7 +65,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveColor[4];
             float pomParams[4];
-            float sceneColorParams[4]; // x=プリエクスポージャ、y=被覆率を出す印（再描画の UBO だけ 1）
+            float sceneColorParams[4]; // x=プリエクスポージャ、y=被覆率を出す印（再描画の UBO だけ 1）、z=濡れの感度（DefaultLit の材質の P0。負は未指定で 1）
             float lightView[4][16];
             float lightProjection[4][16];
             float shadowSplitDistances[8];
@@ -1384,6 +1384,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
         std::memcpy(transparentFrameTemplate.cameraForward, cameraForward, sizeof(cameraForward));
         transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
+        transparentFrameTemplate.sceneColorParams[2] = -1.0f;
         std::memcpy(transparentFrameTemplate.lightView,
                     physicalLighting.CascadedShadow.View,
                     sizeof(transparentFrameTemplate.lightView));
@@ -1519,6 +1520,7 @@ namespace NorvesLib::Core::Rendering
                     uboData.emissiveColor[2] = materialData->EmissiveColor[2];
                     uboData.emissiveColor[3] = materialData->EmissiveLuminanceNits;
                     uboData.pomParams[0] = materialData->HeightScale;
+                    uboData.sceneColorParams[2] = materialData->ShadingParams[ShadingParamP0];
                 }
             }
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
