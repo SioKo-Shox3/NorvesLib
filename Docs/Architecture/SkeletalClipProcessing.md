@@ -17,6 +17,13 @@ AssetCook --retarget-clip --input run.bvh --skeleton dog.gltf --role-profile rol
 
 出力formatは`nvskel.v1.clips`。対象骨格とprofile、source/targetの外部bufferとsidecarのbytes・有無を既存の中央増分判定に含める。
 
+## 取り込み設定の clip 節との関係
+
+通常のクリップ取り込み（`--rig-split`、asset-set の model/animation）では、根の関節・ループの自動判定・fps・時刻の倍率・解析の有無を import.json の `clip` 節で指定できる。
+キーと規則は [ImportSettings.md の clip 節](ImportSettings.md#clip-節gr78gr82) を参照する。
+リターゲットは Role Profile v1 の `output_fps`・`loop_mode` などで補正を持つため、ソースの import.json の非空の `clip` を `retarget_clip_settings` で拒否する。
+ループの範囲・ルート移動の正本は実行時 sidecar（GR11）であり、`clip` 節は cook 時の下書きだけを扱う。
+
 ## Role Profile v1の任意設定
 
 既存の明示C方式を保持し、次を追加する。`match`/`align_bones`ではtarget roleの`C`を省略する。

@@ -11298,3 +11298,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261114-145330/verify-TEST-REMOVE-1114-U9.txt`（`cmake -B build -S .`・`cmake --build build --config Debug -- -m:1`・`Test` の不在の検査・最上位の CMake の grep の 4 行がすべて終了コード 0、Game.exe まで生成）。この証拠の後に変わったのは `TASKS.md`・`PROGRESS.md` だけで、コードと文書は同じ。試験は走らせていない。
 - Next: ランナーの評価者の反証。
 - U6 clip 節の解析・正規化 bytes・hash と audio 節の予約(レビュー済みのパッチを試験を除いて当てる): 着地(直し 0 回)
+- U7 ImportSettings.md の JSON 契約と SkeletalClipProcessing.md に clip/audio 節を書く: 着地(直し 0 回)
