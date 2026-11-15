@@ -840,6 +840,7 @@ namespace NorvesLib::Core::Rendering
         // 最後に記録した分割の λ。フレームをまたいで保持し、変わったときだけ記録する。
         float LoggedSplitLambda = -1.0f;
 #if NORVES_ENABLE_LOGGING
+        bool LoggedSunShadowAutoDisabled = false;
         uint32_t LoggedVsmOverBudgetMeshes = 0;
         uint32_t LoggedVsmBudget = 0;
         // パスが所有する計画に前回の描画数と候補数を保ち、変わったときだけ記録する。
@@ -1939,6 +1940,22 @@ namespace NorvesLib::Core::Rendering
             m_FramePlan = Container::MakeUnique<ShadowMapFramePlan>();
         }
         ShadowMapFramePlan& plan = *m_FramePlan;
+        // 太陽の影の有効・自動停止は、このフレームのシーンの写しだけから決める。
+        // 停止時は無効の行列とクリップマップを公開し、VSM も太陽の段を省く。
+        const SunShadowFrameState sunShadow = context.SnapshotScene != nullptr
+            ? EvaluateSunShadowFrameState(context.SnapshotScene->SunShadow, context.SnapshotScene->SkyAtmosphere)
+            : SunShadowFrameState{};
+#if NORVES_ENABLE_LOGGING
+        if (sunShadow.bAutoDisabled != plan.LoggedSunShadowAutoDisabled)
+        {
+            plan.LoggedSunShadowAutoDisabled = sunShadow.bAutoDisabled;
+            const float threshold = context.SnapshotScene != nullptr
+                ? SanitizeSunShadowParameters(context.SnapshotScene->SunShadow).AutoDisableBelowSunIlluminanceLux
+                : SunShadowParameters{}.AutoDisableBelowSunIlluminanceLux;
+            NORVES_LOG_INFO("ShadowMapPass", "SUN_SHADOW_AUTO_DISABLED disabled=%d sun_lux=%.1f threshold=%.1f",
+                            sunShadow.bAutoDisabled ? 1 : 0, sunShadow.SunIlluminanceLux, threshold);
+        }
+#endif
         context.ActiveShadowMapSettings = &m_Settings;
         // シーンが FramePacket で影の到達距離を指定していればそれを、無ければパスの設定を使う（CSM と VSM で同じ値）
         const float maxShadowDistance =
@@ -2018,10 +2035,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
         const CascadedShadowMatrixResult cascadedShadowMatrices =
-            BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
-                                             context.GetActiveCamera(),
-                                             cascadedSettings,
-                                             &casterBounds);
+            sunShadow.bActive
+                ? BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
+                                                  context.GetActiveCamera(),
+                                                  cascadedSettings,
+                                                  &casterBounds)
+                : CascadedShadowMatrixResult{};
 
         // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
         float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};
@@ -2094,7 +2113,7 @@ namespace NorvesLib::Core::Rendering
             clipmapSettings = FitVirtualShadowMapClipmapToShadowDistance(clipmapSettings);
             const CameraProxy* activeCamera = context.GetActiveCamera();
             const VirtualShadowMapClipmap clipmap =
-                activeCamera != nullptr
+                sunShadow.bActive && activeCamera != nullptr
                     ? BuildVirtualShadowMapClipmap(context.SnapshotLightProxies, *activeCamera, clipmapSettings)
                     : VirtualShadowMapClipmap{};
             context.PhysicalLighting.PublishSunClipmap(clipmap);

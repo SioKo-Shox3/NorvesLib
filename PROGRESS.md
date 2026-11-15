@@ -11431,3 +11431,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 MegaGeometry の投影物の選別を ShadowCasterCollection へ純関数として出す(振る舞いは変えない): 着地(直し 0 回)
 - U3 投影物の三角形の上限で CSM と点光源のキューブから外し、メッシュごとに 1 回だけ警告し、VSM には超えた数をログに出す: 着地(直し 0 回)
 - U4 Game に開発用の引数 --sun-shadow-auto-disable-lux=<lux> を足す: 着地(直し 0 回)
+- U5 太陽の影の有効・弱い日差しでの自動停止を ShadowMapPass で SnapshotScene から決め、CSM と VSM の描画を省く: 着地(直し 0 回)
