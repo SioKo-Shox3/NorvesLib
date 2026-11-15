@@ -771,6 +771,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief パケット所有の世界フィールド干渉子の配列を借用する読み取り専用ポインタ。 */
         const Container::VariableArray<WorldFieldInteractor>* SnapshotWorldFieldInteractors = nullptr;
 
+        /** @brief 枯れ度の源のスナップショット（FramePacket::WorldFieldDrynessSources を指す）。 */
+        const Container::VariableArray<WorldFieldDrynessSource>* SnapshotWorldFieldDrynessSources = nullptr;
+
         /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
         const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
         /** @brief 箱で投影するデカールの一覧（FramePacket::Scene.Decals を指す） */

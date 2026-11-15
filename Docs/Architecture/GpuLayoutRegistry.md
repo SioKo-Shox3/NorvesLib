@@ -544,3 +544,77 @@ C++ は `Library/Core/Public/Rendering/FurTypes.h::FurMaterialGpuParams`、GLSL 
 | Flow | RG8 | UV 空間の方向の X の符号化値 | UV 空間の方向の Y の符号化値 | `v = 2 * rg - 1` が UV 空間の向き。ベクトルの長さは整い度で、ミップで縮む。正規化せず長さを強さとして読む |
 | DensityClump | RG8 | 密度の倍率（0 は素肌） | 束の強さの倍率 | 各値を密度・束の強さに掛ける |
 | Region | R8 | 領域 ID の符号化値 | 成分なし | `ID = round(r * 255)`。補間すると別の領域の値になるため `texelFetch` で読み、`FurRegionIndex` で表の外を最後の領域に寄せる |
+
+## 12. 世界フィールドの枯れ度の層
+
+### 名前付き資源と座標
+
+`RenderGraphResourceNames.h` の名前で描画グラフへ公開する。形式はいずれも `R8G8B8A8_UNORM`（RGBA8 UNORM）、用途は `ShaderRead | ShaderWrite`、解像度は固定の `WorldFieldDrynessResolution = 256` × 256。画素の R は枯れ度 [0, 1]、G・B・A は予約で 0。
+
+| 資源名 | C++ 定数（`RenderGraphResourceNames`） | 既定の画素の大きさ | 既定の範囲 |
+|---|---|---|---|
+| `WorldField.DrynessNear` | `WorldFieldDrynessNear` | 0.25 m/画素 | 64 m × 64 m |
+| `WorldField.DrynessFar` | `WorldFieldDrynessFar` | 2 m/画素 | 512 m × 512 m |
+
+画素の大きさは `WorldFieldSettings::DrynessNearTexelMeters` / `DrynessFarTexelMeters` で変更でき、既定値は仮の値。各範囲は画素の大きさ × 256 で決まる。両層ともアクティブカメラの XZ 位置を `CalculateWorldFieldScroll` で画素格子にスナップし、原点を求める。主カメラがあるときは同じ ID のカメラだけを使い、主カメラがないときはアクティブカメラを使う。視線方向への前寄せは使わない。
+
+履歴を使った蓄積はなく、通常は毎フレーム、現在の源から評価する。更新の準備ができず、記録済みの両層の座標が有効な場合は、最後に記録した画像と座標を再利用する。曲げの `WorldFieldSettings::bEnabled` が無効でも、枯れ度の `bDrynessEnabled` が有効なら枯れ度の層を扱う。
+
+### 書き手の binding と定数
+
+`Assets/Shaders/WorldField/WorldFieldDryness.comp` は set 0 の次の binding を使う。ワークグループは 8 × 8 × 1、dispatch は 32 × 32 × 2 で、z = 0 が近傍、z = 1 が遠景。
+
+| set | binding | GLSL 宣言 | 用途 |
+|---|---|---|---|
+| 0 | 0 | `rgba8 writeonly image2D uDrynessNear` | 近傍の層への書き込み |
+| 0 | 1 | `rgba8 writeonly image2D uDrynessFar` | 遠景の層への書き込み |
+| 0 | 2 | `WorldFieldDrynessParams` | 層の原点・画素の大きさ・源の件数・解像度を持つ `std140` UBO |
+| 0 | 3 | `WorldFieldDrynessSourceBlock` | 源の配列を持つ `std140` UBO |
+
+C++ は `WorldFieldPass.h::WorldFieldDrynessParams`（`alignas(16)`）、GLSL は同名のブロック。合計 **32 バイト**で、C++ の `static_assert` が大きさ・整列・各フィールドの位置を検査する。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 0 | 8 | `NearOriginXZ: float[2]` | `NearOriginXZ: vec2` | 近傍の原点 XZ（m） |
+| 8 | 4 | `NearTexelSize: float` | `NearTexelSize: float` | 近傍の画素の大きさ（m） |
+| 12 | 4 | `SourceCount: uint32_t` | `SourceCount: uint` | 源の件数（0〜64） |
+| 16 | 8 | `FarOriginXZ: float[2]` | `FarOriginXZ: vec2` | 遠景の原点 XZ（m） |
+| 24 | 4 | `FarTexelSize: float` | `FarTexelSize: float` | 遠景の画素の大きさ（m） |
+| 28 | 4 | `Resolution: uint32_t` | `Resolution: uint` | 各層の解像度（256） |
+
+源の UBO は `WorldFieldPass.h::WorldFieldDrynessSourceBlock` と GLSL の同名ブロックで、`WorldFieldTypes.h::WorldFieldDrynessSource` / `WorldFieldDrynessSourceGpu` を 64 個並べた **4096 バイト**。1 個は `vec4` × 4 の **64 バイト**で、C++ の `static_assert` がブロックと要素の大きさ・要素の整列・各フィールドの位置を検査する。上限は `WorldFieldDrynessMaxSources = DrynessMap::DefaultGpuSourceLimit = 64`、GLSL は `WORLD_FIELD_DRYNESS_MAX_SOURCES = 64`。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 成分 | 意味 |
+|---|---|---|---|---|
+| 0 | 8 | `CenterXZ: float[2]` | `CenterRadii.xy` | 源の中心 XZ（m） |
+| 8 | 4 | `RadiusA: float` | `CenterRadii.z` | 内側の局所 X 半径（m） |
+| 12 | 4 | `RadiusB: float` | `CenterRadii.w` | 内側の局所 Z 半径（m） |
+| 16 | 4 | `CosYaw: float` | `RotationFalloffLevel.x` | 向きの余弦 |
+| 20 | 4 | `SinYaw: float` | `RotationFalloffLevel.y` | 向きの正弦 |
+| 24 | 4 | `Falloff: float` | `RotationFalloffLevel.z` | 外縁から 0 になるまでの幅（m） |
+| 28 | 4 | `Level: float` | `RotationFalloffLevel.w` | 現在の枯れ度 [0, 1] |
+| 32 | 16 | `Reserved0: float[4]` | `Reserved0: vec4` | 予約（0） |
+| 48 | 16 | `Reserved1: float[4]` | `Reserved1: vec4` | 予約（0） |
+
+### 消費側の定数と参照
+
+C++ は `WorldFieldTypes.h::WorldFieldDrynessSampleConstants`（`alignas(16)`）、GLSL は `Assets/Shaders/Common/WorldField.glsl` の同名構造体。`std140` で合計 **32 バイト**。C++ の `static_assert` が大きさ・整列・各フィールドの位置を検査する。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 0 | 8 | `NearOriginXZ: float[2]` | `NearOriginXZ: vec2` | 近傍の原点 XZ（m） |
+| 8 | 4 | `NearInvExtent: float` | `NearInvExtent: float` | 近傍の範囲（m）の逆数 |
+| 12 | 4 | `bEnabled: uint32_t` | `bEnabled: uint` | 両層の座標定数が有効（1/0） |
+| 16 | 8 | `FarOriginXZ: float[2]` | `FarOriginXZ: vec2` | 遠景の原点 XZ（m） |
+| 24 | 4 | `FarInvExtent: float` | `FarInvExtent: float` | 遠景の範囲（m）の逆数 |
+| 28 | 4 | `NearBlendMeters: float` | `NearBlendMeters: float` | 近傍の縁から遠景へ寄せる幅（m） |
+
+`WorldFieldFrameState` は各層の原点・範囲・画素の大きさ・有効性を `DrynessNear` / `DrynessFar` に、混合幅を `DrynessNearBlendMeters` に持ち、`PhysicalLighting.PublishWorldField` で公開する。`BuildWorldFieldDrynessSampleConstants` は、両層の `bValid` が真で原点と範囲が有限、範囲が正であり、float 変換後の原点と範囲の逆数も有限なら、それらの値と混合幅を定数に写して有効にする。それ以外は全欄 0 を返す。
+
+消費側は `Common/WorldField.glsl` の `SampleDryness(worldXZ)` だけを呼ぶ。include 前に `WORLD_FIELD_DRYNESS_NEAR_LAYER`、`WORLD_FIELD_DRYNESS_FAR_LAYER`（各 `sampler2D`）、`WORLD_FIELD_DRYNESS_CONSTANTS`（上記の定数）の 3 マクロを定義する。sampler は線形補間・`ClampToEdge` を使う。
+
+無効時は 0。各層の UV は `(worldXZ - OriginXZ) * InvExtent` で、各軸の範囲は [0, 1)。近傍の外は遠景、両層の外は 0。近傍の内側では、縁からの距離を `NearBlendMeters` で割って [0, 1] に収めた重みで、遠景から近傍へ混ぜる。幅が正なら縁で遠景になり、幅の内側で連続に近傍へ寄る。幅が 0 の場合は近傍値をそのまま使う。幅は `WorldFieldSettings::DrynessNearBlendMeters` で変更でき、既定は 4 m。
+
+### 源の受け渡し
+
+`RenderWorld::SetWorldFieldDryness` は源を `RenderingCoordinator::SetWorldFieldDryness` へ渡す。coordinator は入力を無害化し、次の設定まで状態として保持して、`FramePacket::WorldFieldDrynessSources` へ値を写す。この配列は `ComputeSceneRevisionHash` に含めない。描画側は `ViewRenderContext::SnapshotWorldFieldDrynessSources` を通してパケットの配列を参照する。
