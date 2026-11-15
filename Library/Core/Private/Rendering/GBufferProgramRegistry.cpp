@@ -136,6 +136,13 @@ namespace NorvesLib::Core::Rendering
     GBufferProgramRegistry::GBufferProgramRegistry()
         : m_State(Container::MakeUnique<State>())
     {
+        // 全 SceneView の登録簿が持つ組み込みのプログラムを、初期化の窓が開いている間に登録する。
+        GBufferProgramDesc dissolve;
+        dissolve.Name = DissolveGBufferProgramName;
+        dissolve.VertexShader = "gbuffer_dissolve.vert";
+        dissolve.FragmentShader = "gbuffer_dissolve.frag";
+        dissolve.SkinnedVertexShader = "skinned_gbuffer_dissolve.vert";
+        (void)Register(dissolve);
     }
 
     GBufferProgramRegistry::~GBufferProgramRegistry() = default;
