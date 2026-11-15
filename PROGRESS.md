@@ -11629,3 +11629,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 統合ブランチの取り込み（GR46 の風の頂点アニメが GBufferPass の記述子の配置と GPU の配置の表に足したものと、環境の UBO の binding の両方を残す）。人が見るときの見どころは前の節と同じ。
 - Notes: この枠には `build/` が無く freetype のサブモジュールも未取得だったので、`git submodule update --init Library/ThirdParty/freetype` の後に構成した。
 - U1 CPU と GPU で共有する乱数・生成数・乱れの式のヘッダを足す: 着地(直し 0 回)
+- U2 効果の定義にエミッタの設定と新しいモジュールを足し、スキーマと検証に載せる: 着地(直し 0 回)

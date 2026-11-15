@@ -97,7 +97,7 @@ namespace NorvesLib::Core::Particle
     private:
         struct ModuleBinding
         {
-            uint32_t Arguments[6] = {};
+            uint32_t Arguments[16] = {};
         };
 
         struct EmitterState
