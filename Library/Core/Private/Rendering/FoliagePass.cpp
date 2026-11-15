@@ -1,5 +1,6 @@
 ﻿#include "Rendering/FoliagePass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -122,6 +123,9 @@ namespace NorvesLib::Core::Rendering
             return buffer;
         }
 
+        // foliage.frag の環境 UBO と同じ binding（set 0）。
+        constexpr uint32_t kEnvironmentBinding = 3;
+
         RHI::DescriptorSetDesc CreateFoliageDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc descriptorSetDesc;
@@ -138,6 +142,11 @@ namespace NorvesLib::Core::Rendering
                 fieldBinding.stages = RHI::ShaderStage::Vertex;
                 descriptorSetDesc.bindings.push_back(fieldBinding);
             }
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = kEnvironmentBinding;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(environmentBinding);
             return descriptorSetDesc;
         }
 
@@ -605,8 +614,9 @@ namespace NorvesLib::Core::Rendering
             uniform.frameParams[2] = batch.FadeStartDistance;
             uniform.frameParams[3] = batch.FadeEndDistance;
             const FrameUploadAllocation uniformAllocation = frameResources->AllocateConstants(uniform);
+            const FrameUploadAllocation environmentAllocation = AcquireEnvironmentConstants(context);
             const FrameDescriptorAllocation descriptorAllocation = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout);
-            if (!uniformAllocation.IsValid() || !descriptorAllocation.IsValid())
+            if (!uniformAllocation.IsValid() || !environmentAllocation.IsValid() || !descriptorAllocation.IsValid())
             {
                 drawRanges.resize(entry.FirstRange);
                 continue;
@@ -614,6 +624,8 @@ namespace NorvesLib::Core::Rendering
             entry.DescriptorSet = descriptorAllocation.Set;
             entry.DescriptorSet->BindConstantBuffer(0, uniformAllocation.Buffer, uniformAllocation.GetOffset32(),
                                                     uniformAllocation.GetSize32());
+            entry.DescriptorSet->BindConstantBuffer(kEnvironmentBinding, environmentAllocation.Buffer,
+                                                    environmentAllocation.GetOffset32(), environmentAllocation.GetSize32());
             entry.DescriptorSet->BindTexture(1, currentField);
             entry.DescriptorSet->BindSampler(1, m_WorldFieldSampler);
             entry.DescriptorSet->BindTexture(2, previousField);
