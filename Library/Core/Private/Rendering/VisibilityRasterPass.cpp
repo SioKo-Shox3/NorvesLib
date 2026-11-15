@@ -1201,8 +1201,8 @@ namespace NorvesLib::Core::Rendering
                 (instance.Material.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
-            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）は ID のラスタに載せず、解決後に重ねる。
-            if (RequiresGBufferOverlayDraw(materialData))
+            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）と残像は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlayDraw(materialData, instance.Opacity))
             {
                 continue;
             }

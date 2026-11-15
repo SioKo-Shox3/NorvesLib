@@ -20,10 +20,10 @@ namespace NorvesLib::Core::Rendering
     class SceneView;
     class VisibilityResolvePass;
 
-    /** @brief 頂点を動かす材質は解決で変位が消えるので重ねて描く。 */
-    inline bool RequiresGBufferOverlayDraw(const MaterialResourceData* material)
+    /** @brief 頂点を動かす材質は解決で変位が消えるので、残像と同じく重ねて描く。 */
+    inline bool RequiresGBufferOverlayDraw(const MaterialResourceData* material, float opacity = 1.0f)
     {
-        return RequiresGBufferOverlay(material) || MaterialHasVertexAnimation(material);
+        return RequiresGBufferOverlay(material, opacity) || MaterialHasVertexAnimation(material);
     }
 
     /**
@@ -229,7 +229,7 @@ namespace NorvesLib::Core::Rendering
         bool PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material);
         RHI::PipelinePtr GetGBufferPipeline(const ViewRenderContext& context,
                                             const MaterialResourceData* material,
-                                            bool bSkinned);
+                                            bool bSkinned, float opacity = 1.0f);
         RHI::PipelinePtr CreateGBufferPipeline(const GBufferPipelineKey& key);
         bool TryPrepareSkinnedCommand(ViewRenderContext& context,
                                       const DrawCommand& source,

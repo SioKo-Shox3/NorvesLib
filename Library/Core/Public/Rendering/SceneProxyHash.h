@@ -157,6 +157,7 @@ namespace NorvesLib::Core::Rendering
         {
             h.Add(p.ShadingParams[i]);
         }
+        h.Add(p.Opacity);
         h.Add(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p.AssetLease.lock().get())));
         h.Add(p.WorldTransform);
         h.Add(static_cast<uint64_t>(p.BonePalette.size()));

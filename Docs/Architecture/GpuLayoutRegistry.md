@@ -23,7 +23,7 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 `Material.a` と `Emissive.a` は意味のない余白ではなく、登録済みの `P0` / `P1` の枠である。`P0` は UNORM 8 bit、`P1` は半精度 float の制約を受ける。
 
-書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求め、履歴が使えない場合は `0` とする。
+書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求める。前フレームが無効なら `0`、有効でも前フレームのクリップ座標の w が閾値以下なら「履歴なし」の印を書く。ラスタ経路で現在の w が無効な場合や、通常の速度が NaN または長さの 2 乗が `1e6` 以上の場合も `0` とする。値・条件と読み手の扱いは 13 節に従う。
 
 ### 材質ごとの GBuffer プログラムのシェーダー契約
 
@@ -364,6 +364,7 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` の定数表・関数を同時に直し、シェーダーと C++ の全書き手・読み手を同じ契約へ揃える。デカールでの値の保持と可視バッファへの書き出しも揃える。
 3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。
 4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。
+5. Velocity の「履歴なし」の印の値・判定の境・前フレームの w の閾値を変更するときは、`VelocityContract.h` と `Common/VelocityEncoding.glsl` を同時に直し、全書き手・読み手を 13 節の契約へ揃える。
 
 ## 6. 照合上の未確認事項と注意
 
@@ -665,3 +666,38 @@ C++ は `WorldFieldTypes.h::WorldFieldDrynessSampleConstants`（`alignas(16)`）
 ### 源の受け渡し
 
 `RenderWorld::SetWorldFieldDryness` は源を `RenderingCoordinator::SetWorldFieldDryness` へ渡す。coordinator は入力を無害化し、次の設定まで状態として保持して、`FramePacket::WorldFieldDrynessSources` へ値を写す。この配列は `ComputeSceneRevisionHash` に含めない。描画側は `ViewRenderContext::SnapshotWorldFieldDrynessSources` を通してパケットの配列を参照する。
+
+## 13. Velocity の「履歴なし」の印
+
+GBuffer の Velocity（RT4、`R16G16_FLOAT`）は通常の UV 差に加え、前フレームへ再投影できる履歴がない画素の印を格納する。正本は `Library/Core/Public/Rendering/VelocityContract.h`（`VelocityContract`）と `Assets/Shaders/Common/VelocityEncoding.glsl`。両者の定数を一致させ、シェーダーの符号化は `VelocityFromClip` / `VelocityNoHistory`、判定は `VelocityIsNoHistory` を通す。C++ の判定は `VelocityContract::IsNoHistory` を使う。
+
+| 意味 | C++ 定数 | GLSL 定数 | 値 |
+|---|---|---|---|
+| 印の値（両成分） | `NoHistoryValue` | `VELOCITY_NO_HISTORY_VALUE` | `-32768.0` |
+| 印の判定の境（両成分がこの値以下） | `NoHistoryDetectBelow` | `VELOCITY_NO_HISTORY_DETECT_BELOW` | `-16384.0` |
+| 前フレームのクリップ座標の w の閾値 | `PreviousClipWMin` | `VELOCITY_PREVIOUS_CLIP_W_MIN` | `0.1` |
+| 印の半精度ビット列（各成分） | `NoHistoryValueHalfBits` | `VelocityNoHistory()` の格納値 | `0xF800` |
+
+前フレームが有効で、`previousClip.w <= VELOCITY_PREVIOUS_CLIP_W_MIN` なら印を書く。閾値の `0.1` は既定のカメラの `NearPlane` に合わせた仮の値で、カメラから動的に受け取る値ではない。正射影では w = `1` のため、この条件で印にならない。前フレームが無効なら `0` とする。ラスタ経路は `abs(fragCurrentClip.w) > 1e-6` も満たす場合だけ符号化し、それ以外は `0` とする。
+
+印の条件に当たらない場合、`VelocityFromClip` は `(currentNdc - previousClip.xy / previousClip.w) * 0.5` を返す。ただし成分に NaN がある、または長さの 2 乗が `1e6` 以上なら `0` を返す。印の値は半精度で正確に表せ、通常の速度を無効化する処理より先に返す。
+
+シェーダーのパスは `Assets/Shaders/` からの相対パス。
+
+| 書き手 | 符号化の呼び出しと履歴の条件 |
+|---|---|
+| `Common/VisibilityResolve.glsl` | `VisComputeVelocity` が `RESOLVE_FLAG_PREVIOUS_VALID` を確認し、画素中心から求めた現在の NDC と前のクリップ座標を `VelocityFromClip` へ渡す |
+| `Common/GBufferFragment.glsl` | `gbuffer.frag`・`gbuffer_alphaclip.frag` の本体。`mvp.frameParams.x > 0.5` と現在の w を確認して `VelocityFromClip` を呼ぶ |
+| `megageometry.frag` | `ComputeVelocity` が `mvp.frameParams.x > 0.5` と現在の w を確認して `VelocityFromClip` を呼ぶ。デバッグ出力も同じ関数を使う |
+| `foliage.frag` | `foliage.frameParams.x > 0.5` と現在の w を確認して `VelocityFromClip` を呼ぶ |
+| `Grass/grass.frag` | `kGrassDrawFlagPreviousCamera` と現在の w を確認して `VelocityFromClip` を呼ぶ |
+
+| 読み手 | 印の扱い |
+|---|---|
+| `temporal_aa.frag` | 動きに使う近傍の最も手前の画素か中心画素について、深度が `1` 未満かつ `VelocityIsNoHistory` が真なら履歴を捨て、今の色だけを使う。リアクティブも今の値を出す |
+| `MotionBlurTileMax.frag` | `ShutterMotion` で印を判定し、動き `0` としてタイルの最大を求める |
+| `MotionBlur.frag` | `ShutterMotion` で印を判定し、動き `0` として扱う |
+| `RTGI/DiffuseIndirect.comp` | 再投影の 2 か所は印を知らず、`previousUV = currentUV - velocity`（もう一方は `uv - velocity`）を求める。印では `previousUV` が `[0, 1)` の外になるため履歴を捨てる |
+| `gbuffer_debug.frag` | 印専用の判定はない。velocity 表示は `vec3(vec2(0.5) + velocity * debugParams.params.y, 0.5)`。通常の正の倍率では印の R・G が負となり、表示時のクランプで暗い色になる（B は `0.5`） |
+
+新しい velocity の読み手を追加するときは、通常の速度として使う前に `VelocityIsNoHistory` を通し、履歴を捨てるか動き `0` とする扱いを登録する。

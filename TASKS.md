@@ -6271,7 +6271,7 @@
 - notes: GR63 の Phase 0（ロードマップ 1941 行、要件 `#### GR63` の設計案 (0-2)〜(0-5)）。パレットの 1 フレーム 1 回の共有は GR32 で済んでいる（`Docs/Architecture/SkinnedPaletteSharing.md`。component ごとに 1 回作り GBuffer・影・点光源の影で共有）ので、ここではやらない（「段階をまたぐ注意」4468 行）。10-02 の後に既定の描画が可視バッファ（`VisibilityBufferMode.h`。スキンは `SkinningComputePass` が計算で変形して ID を描く）と太陽の VSM（Game の既定。検証アプリは CSM。`ApplicationProcessor.cpp:1209`）になったので、絞り込みは可視バッファ・fallback・CSM の 3 つに入れる（ロードマップは GBufferPass と CSM だけを書いている）。VSM は塊ごとのスライスの絞り込みが既にある（`VirtualShadowMapCasters.h`）ので、部位の境界を入れる G10-GR63-PART-CULL で塊の境界を細かくする。影の調整口とカスケードの絞り込みは「段階をまたぐ注意」4471 行のとおり共通の部品として G10 で作り、G11 の GR114 はこれを拡張する。名前は G10 の ShadowParameters と G11 の DirectionalShadowParameters を 1 つにし、既にある `SunShadowMaxDistance` に合わせて `SunShadowParameters` にした。選定課題 G10-S2（巨大シ者の遠距離の影）は推奨どおり、(B) に調整口を付けた形と決めた: 最大距離と分割は `SunShadowParameters` で変えられ、既定（80 m）は据え置く。距離を伸ばしたときの近いカスケードのテクセルと犬の影の解像度は G10-GR63-GIANT-CHECK で測って記録する。理由: 伸ばすと主役の犬の影が劣化し（要件 GR63 の (b)）、PaleFlat（GR65）で影欠けが目立ちにくく、専用の影（C）は計測の前に作る根拠が無い。計測は G10-GR63-GIANT-CHECK（RelWithDebInfo）で行い、この項目では測らない。危険地帯（RenderThread・影・可視バッファ）なので評価者を通す。絞り込みは見えない描画を省くだけなので、起動画面の見た目（絶対規則 7）は golden で守る。回帰の足場の既存の赤（ロードマップ 1974 行）: `SkinnedRenderPathContractTest` は止まっている（`Test/Core/Rendering/CMakeLists.txt:2291` の注釈。TEST-SKINNED）ので verify に入れず、着手の前に `SkeletalFramePacketSnapshotTest` の今の結果を PROGRESS.md に記録して、増えた失敗だけを回帰とみなす。やらないこと: LOD（G10-GR63-LOD-BUILDER・G10-GR63-LOD-RUNTIME）、部位の境界（G10-GR63-PART-CULL）、velocity の印（G10-GR63-VELOCITY-GUARD）、GPU 時間の計測。
 
 ## G10-GR63-VELOCITY-GUARD: 前のフレームでカメラの背後・near 面の近くだった頂点の画素に「履歴なし」の印を書き、TAA と動きぼけがそれを読んで大きなにじみを出さないようにする
-- status: todo
+- status: done
 - after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR63
 - needs-gr: GR30
@@ -6319,7 +6319,7 @@
 - notes: 要件 `#### GR65` の受け入れ確認「校正の記録」と、ロードマップ 1958 行の基準の条件。GR100（G18 の指標）はまだ無いので、PNG の ROI の値で代える（ロードマップ 1967 行の「校正を PNG と metrics.json で代える」）。±4/255 は要件の仮の値で、作者が決めた値ではない（根拠なし）。文書の名前は R0〜R8 と衝突しない `PaleFlatAcceptance.md`（要件の規約）。
 
 ## G10-GR64-GHOST-RENDER: スキンに不透明度を持たせ、アルファハッシュと TAA で半透明の残像として GBuffer へ描き、影は落とさない
-- status: todo
+- status: done
 - after: G5-GR27-MASKED-GBUFFER, G10-GR65-PALEFLAT, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR64
 - needs-gr: GR27, GR30
@@ -6361,7 +6361,7 @@
 - notes: ロードマップ 1949・1961 行、要件 `#### GR20` の設計案 (1)(2)・時刻の扱い・実装順 1)。選定課題 G10-S7（しがみつきの範囲）は推奨どおり (A) ぶら下がるだけ（拘束・張力・ゲージ・解除）と決めた。理由: 企画の「柄をくわえてしがみつく」は表面を歩く・登ることに触れておらず、(B) の `SurfaceWalker` は半辺の構造と頂点の溶接が要って規模が XL に近づく（ロードマップの非ゴール）。採るなら作者が決めて別の項目にする。選定課題 G10-S8（物理の方式）は推奨どおり (A) Gameplay の Grip のサブシステムの自前の位置ベースの拘束（1 拘束・1 質点。Physics は変えない）と決めた。理由: 外部の物理の導入は作者の判断で、複数の拘束・多体・回転が要ると分かった時点で (B) を再評価する（`m8-minimal-physics-plan.md` の方針）。手応えの調整は `GripTuning` の JSON で行う。時刻: ソルバは可変のフレームで回す（固定ステップで回すと 1 フレームに 0〜8 回走るうえ姿勢が同じで、張力が 1 回目に集中する。要件の「時刻の扱い」）。G10 の他の項目と触るファイルが交わらないので、G8 の Gameplay の骨組みができたら並列に走れる。JSON の読み込みはアセットの読み込みの危険地帯に当たるので評価者を通す（G8-GR16-JOINT-DATA-RESPONSE と同じ扱い）。やらないこと: Component・犬のルートの駆動・接触（G10-GR20-GRIP-COMPONENTS）、足の暴れ（G10-GR20-LEG-FLAIL）。
 
 ## G11-GR114-SHADOW-PARAMS: 太陽の影の値の型 SunShadowParameters に有効・弱い日差しでの停止・投影物の三角形の上限を足し、MegaGeometry の投影物の上限の守りを入れる
-- status: todo
+- status: done
 - after: G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G10-GR63-SKIN-CULL
 - gr: GR114
 - needs-gr: GR25, GR27
@@ -6952,7 +6952,7 @@
 - notes: 確かめ直し (c)。要件の実物の受入れ(GR78 の 2 体の犬を同じ実寸で並べる、GR79 の ARM を畳んだ犬の撮影、GR83 の実キャラをクリップ名で再生)は「犬は別シーンか別引数で出し、既定の起動画面は変えない」(要件 GR79 の受け入れ確認、AGENTS.md の絶対規則 7)を求めるが、論理パスで任意の資産を置くシーンが無い(`Game/GameModes/` は Rendering3DTest・Sandbox・MegaBananas などで、M9 の受入れは `M9WorldAcceptance.h:30-31` の固定のパスとクリップ名)。ロードマップは確認ビューア(GR101、G18)を G2 の非ゴールにしている(179 行)ので、ここでは撮影に要る最小のシーンだけを作り、ホットリロード・UI の操作・比較表示は GR101 に残す(GR101 はこのシーンを広げてよい)。`GameApplicationHandler.cpp` と `SceneCatalog.h` は共有のファイルなので差分を小さくする。起動しての確かめは後のタスク(`G2-REAL-DOG-ASSETS-CHECK`・`G2-GR82-REAL-RIG-CHECK`)で行う。
 
 ## G2-GR77-NODE-TRANSFORM: 静的モデルの取り込みで、mesh を持つ node の変換(親の鎖を含む)を頂点へ焼き込み、黙って捨てないようにする
-- status: todo
+- status: done
 - gr: GR77, GR78
 - done-when: 静的モデルの cook(`MeshCooker.cpp` の NVMESH v0/v1)と loose(`GLTFAnalyzer.cpp` の静的の経路)が、既定の scene から mesh 0 を参照する node を 1 つ求め、その node と祖先の TRS または `matrix` の積(double)を、`ExtractMesh` の直後・GR78 の取り込み設定の変換の前に、位置・法線(逆転置で掛けて正規化)・接線(あれば。w の符号も保つ)へ焼き込む。行列式が負なら三角形の巡回を反転して外向きを保つ。mesh を参照する node が 2 つ以上・skin つきの node・非有限・行列式 0 の変換は理由の名前つきで拒否する。変換が恒等(node が無い・TRS が既定)なら、cooked の出力と manifest は今とバイト一致する。
   試験は既存の `ImportStaticIntegrationTest`・`StaticGltfBufferCookTest` にケースとして足す(新しい exe は作らない): node に scale (2,2,2) と Y 軸 90° の回転、その親に平行移動を持つ 2 primitive の GLB で、焼き込み後の全頂点が試験に直に書いた手計算の値と 1e-6 で一致する。鏡像(scale の X が -1)で signed volume が正のまま。v0 で材質の違う 2 primitive は材質名つきで拒否される。node が 2 つの mesh 参照・skin つきの拒否。cook と loose で同じ頂点になる。既存の `AssetCookMeshSmoke`・`AssetCookGlbSmoke`・`ModelResourcesAssetCookSmoke` が無改造で通る。`Docs/Architecture/AssetImportPipeline.md` に順序(node の焼き込み → 取り込み設定)を書く。
