@@ -142,7 +142,8 @@ namespace NorvesLib::Core::Rendering
     {
         None,
         GBuffer,
-        Shadow
+        Shadow,
+        Overlay // SceneDepth の上に重ねる描画（主人公のシルエット）。
     };
 
     struct SkinnedMeshPreparedDraw

@@ -6,6 +6,7 @@
 
 #if NORVES_BUILD_DEVELOPMENT
 #include "Core/Public/Asset/AssetFileReader.h"
+#include "Core/Public/Rendering/HeroSilhouettePass.h"
 #include "Core/Public/Text/JsonDocument.h"
 #include "Core/Public/Text/JsonWriter.h"
 #include "Core/Public/Vegetation/Vegetation.h"
@@ -487,6 +488,62 @@ namespace Game::GameModes
             {
                 camera->SetFarPlane(std::fmax(camera->GetFarPlane(), data.m_TerrainFarPlane));
             }
+
+            // 視界の確保で抜く細い幹。主人公と同じ面構成で、断面 0.25 m・高さ 2 m にする。
+            constexpr uint8_t kBark[] = {48, 32, 24, 255};
+            textureInfo.DebugName = "GrasslandHeroOccluderBark";
+            const auto barkTexture = ctx.RenderResourcesRef.Textures().CreateTexture(textureInfo, kBark, sizeof(kBark));
+            if (!barkTexture.IsValid())
+            {
+                return false;
+            }
+            ctx.ScopeRef.TrackTexture(barkTexture);
+            MaterialCreateData barkMaterialInfo;
+            barkMaterialInfo.DebugName = "GrasslandHeroOccluder";
+            barkMaterialInfo.AlbedoTexture = barkTexture;
+            barkMaterialInfo.Metallic = 0.0f;
+            barkMaterialInfo.Roughness = 0.95f;
+            barkMaterialInfo.Blend = BlendMode::Opaque;
+            barkMaterialInfo.bViewClearanceOccluder = true;
+            const auto barkMaterial = ctx.RenderResourcesRef.Materials().Create(barkMaterialInfo);
+            if (!barkMaterial.IsValid())
+            {
+                return false;
+            }
+            ctx.ScopeRef.TrackMaterial(barkMaterial);
+            for (uint32_t face = 0; face < 6; ++face)
+            {
+                for (uint32_t corner = 0; corner < 4; ++corner)
+                {
+                    const auto& point = corners[face][corner];
+                    auto& vertex = vertices[face * 4 + corner];
+                    vertex.Position[0] = point.x * 0.125f;
+                    vertex.Position[1] = point.y;
+                    vertex.Position[2] = point.z * 0.125f;
+                }
+            }
+            const MeshDataHandle occluderMesh{961};
+            if (ctx.RenderResourcesRef.Meshes().GetGPUData(occluderMesh) != nullptr ||
+                !ctx.RenderResourcesRef.Meshes().Register(occluderMesh, vertices, sizeof(vertices), indices, 36))
+            {
+                return false;
+            }
+            ctx.ScopeRef.TrackMesh(occluderMesh);
+            auto* occluder = ctx.ScopeRef.SpawnObject<Entity>();
+            if (occluder == nullptr)
+            {
+                return false;
+            }
+            auto* occluderComponent = ctx.WorldRef.CreateComponent<Component::MeshComponent>(occluder);
+            if (occluderComponent == nullptr)
+            {
+                return false;
+            }
+            occluderComponent->SetVisible(false);
+            occluderComponent->SetMeshHandle(occluderMesh);
+            occluderComponent->SetMaterial(0, barkMaterial);
+            data.m_pHeroOccluder = occluder;
+            data.m_pHeroOccluderMesh = occluderComponent;
             data.m_pHero = hero;
             data.m_pHeroMesh = heroMesh;
             data.m_pHeroCamera = camera;
@@ -504,6 +561,10 @@ namespace Game::GameModes
             if (data.m_pHeroMesh != nullptr)
             {
                 data.m_pHeroMesh->SetVisible(bEnabled);
+            }
+            if (data.m_pHeroOccluderMesh != nullptr)
+            {
+                data.m_pHeroOccluderMesh->SetVisible(bEnabled);
             }
             if (auto* freeCamera = data.m_Rig.GetCamera())
             {
@@ -547,6 +608,25 @@ namespace Game::GameModes
             data.m_pHero->SetRotation(Math::QuaternionUtils::LookRotation(forward, Math::Vector3::Up));
             // 自由飛行のヨーは前方の角度、アームのヨーは支点からカメラへの角度なので変換する。
             data.m_pHeroSpringArm->SetYaw(180.0f - controller.GetYaw());
+            ctx.WorldRef.UpdateWorldTransforms();
+            data.m_pHeroSpringArm->RefreshOwnerTransform();
+            // アームが置いたカメラと主人公の中間の地面へ、幹の底面を合わせる。
+            Math::Vector3 occluderPosition = (position + data.m_pHeroCamera->GetOwner()->GetPosition()) * 0.5f;
+            occluderPosition.y = position.y - 0.275f;
+            if (data.m_pTerrain != nullptr)
+            {
+                const auto heightField = data.m_pTerrain->GetHeightField();
+                if (heightField)
+                {
+                    const float height = heightField->SampleHeight(occluderPosition.x, occluderPosition.z);
+                    if (std::isfinite(height))
+                    {
+                        occluderPosition.y = height;
+                    }
+                }
+            }
+            occluderPosition.y += 1.0f;
+            data.m_pHeroOccluder->SetPosition(occluderPosition);
             ctx.WorldRef.UpdateWorldTransforms();
             SetHeroView(data, true);
         }
@@ -872,6 +952,12 @@ namespace Game::GameModes
         data.m_ViewInput.OnInputReset();
         ctx.EngineRef.GetInputRouter().RegisterController(&data.m_ViewInput, I::InputRouter::PriorityGame);
         data.m_bViewInputRegistered = true;
+        // 既定は無効。代役はスキンではない箱なので、有効にしてもシルエットの描画対象にはならない。
+        data.m_bHeroSilhouetteRegistered = RegisterHeroSilhouetteExtension(ctx.EngineRef.GetRenderWorld());
+        if (!data.m_bHeroSilhouetteRegistered)
+        {
+            LOG_WARNING("grassland: 主人公シルエットの描画拡張を登録できませんでした");
+        }
         auto& drynessMap = ctx.EngineRef.GetVegetation().GetDrynessMap();
         if (data.m_bGrasslandWither)
         {
@@ -1152,8 +1238,15 @@ namespace Game::GameModes
         }
         data.m_ViewInput.OnInputReset();
         SetHeroView(data, false);
+        if (data.m_bHeroSilhouetteRegistered)
+        {
+            UnregisterHeroSilhouetteExtension(ctx.EngineRef.GetRenderWorld());
+            data.m_bHeroSilhouetteRegistered = false;
+        }
         data.m_pHero = nullptr;
         data.m_pHeroMesh = nullptr;
+        data.m_pHeroOccluder = nullptr;
+        data.m_pHeroOccluderMesh = nullptr;
         data.m_pHeroCamera = nullptr;
         data.m_pHeroSpringArm = nullptr;
         data.m_bHeroCreationAttempted = false;

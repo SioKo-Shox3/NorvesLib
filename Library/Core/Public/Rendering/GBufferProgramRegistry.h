@@ -38,7 +38,7 @@ namespace NorvesLib::Core::Rendering
     {
         GBufferProgramId Program = kStandardGBufferProgramId;
         RHI::CullMode Cull = RHI::CullMode::Back;
-        bool bAlphaClip = false;
+        bool bAlphaClip = false; ///< Masked または視界確保の遮蔽物用の切り抜きの変種。
         RHI::PolygonMode Polygon = RHI::PolygonMode::Fill;
         bool bSkinned = false;
 
@@ -73,15 +73,19 @@ namespace NorvesLib::Core::Rendering
     static_assert(GBufferAlphaHashPhaseCount == TemporalAAJitterSampleCount,
                   "GBuffer alpha hash phase count must match the TAA jitter sample count");
 
-    /** @brief Masked の切り抜き方式を求める。不透明度が 1 未満なら残像として Hash で切り抜き、TAA が掛からないビューでは Test に落とす。 */
+    /**
+     * @brief Masked の切り抜き方式を求める。不透明度が 1 未満なら残像として Hash で切り抜き、TAA が掛からないビューでは Test に落とす。
+     * 視界確保の印だけが付いた不透明の材質は None のままにする。
+     */
     GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied, float opacity = 1.0f);
 
     /**
      * @brief 標準の不透明の経路に載せず、別に描く材質かを求める。
      *
-     * 可視バッファが on のときは解決の後に重ね、fallback では標準の後に分けて描く。
+     * 独自プログラム・Masked・両面・視界確保の遮蔽物を対象とする。
+     * 可視バッファが on のときは ID のラスタから外して解決の後に重ね、fallback では標準の後に分けて描く。
      * 不透明度が 1 未満なら残像として Hash で切り抜くため、重ねの経路へ送る。
-     * 早期の深度の恩恵を不透明に残す。
+     * 早期の深度の恩恵を標準の不透明の材質に残す。
      */
     bool RequiresGBufferOverlay(const MaterialResourceData* material, float opacity = 1.0f);
 
