@@ -11273,3 +11273,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（霧・パストレーサーの危険地帯）。人が見るときの見どころ: 今はどのシーンも Tint・SkyBlend を設定していないので、ランチャーの各シーンと Rendering3DTest の見た目は変わらない。高さフォグのあるシーン（Rendering3DTest で `--height-fog-density=` を付けるなど）の霧の値で SkyBlend を 1 にすると、遠景の霧の色が視線の向きに関係なく地平線の少し上（10 度）の空の色にそろい、地面と地平線の空の継ぎ目が薄れる。Tint は霧の周りの光の色味だけを変え、太陽の単一散乱は変えない。環境の側（EnvironmentState・JSON）へ並べるのは G7-GR49-ENV-INTERFACES、撮影の確かめは G7-GR50-CHECK。撮影・計測の確かめは回さない決まり。
 - Notes: done-when の試験の部分（`VolumetricFogModelTest` の新しい欄の安全化・`HashPathFog` の区別、`HeightFogShaderCompileTest` の PT の rgen と volumetrics）は、試験を作らない・回さない決まりで足していない。既存の `VolumetricFogModelTest` はそのままビルドが通る。数値の既定（Tint・SkyBlend・基準の仰角 10 度・Tint の上限 16）は仮の値。真上・真下の視線は方位が決まらないので +X の方位で基準の向きを作る。
 - U9 FBX の入力を cook・--inspect・--rig-split で明示の理由で拒否する(保存したパッチの製品コードの部分だけ入れる): 着地(直し 0 回)
+- U8 glTF の mesh node の変換を解いて頂点へ焼き込む共有の部品(保存した版を素直な double の計算に直して入れる): 着地(直し 0 回)
