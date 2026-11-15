@@ -11299,3 +11299,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証。
 - U6 clip 節の解析・正規化 bytes・hash と audio 節の予約(レビュー済みのパッチを試験を除いて当てる): 着地(直し 0 回)
 - U7 ImportSettings.md の JSON 契約と SkeletalClipProcessing.md に clip/audio 節を書く: 着地(直し 0 回)
+- U3 rig-split と asset-set の skeletal(model)が clip 節を読み、CLI との食い違いを拒否する: 着地(直し 0 回)
