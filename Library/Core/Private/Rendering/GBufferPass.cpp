@@ -938,7 +938,8 @@ namespace NorvesLib::Core::Rendering
                     uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(matData->Shading));
                     uboData.shadingModel[1] = matData->AlphaCutoff;
                     uboData.shadingModel[2] = static_cast<float>(ResolveGBufferAlphaClip(matData, context.bTemporalAAApplied));
-                    uboData.shadingModel[3] = static_cast<float>(context.FrameNumber % 64u);
+                    // TAA が掛からないビューでは Hash は Test に落ちるため、位相は使われない。
+                    uboData.shadingModel[3] = static_cast<float>(context.bTemporalAAApplied ? context.TemporalAAJitterIndex : 0u);
                 }
             }
 

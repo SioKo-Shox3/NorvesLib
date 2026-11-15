@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/MaterialTypes.h"
+#include "Rendering/TemporalAA.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedMap.h"
 #include "RHI/RHITypes.h"
@@ -64,6 +65,11 @@ namespace NorvesLib::Core::Rendering
         Test = 1,
         Hash = 2
     };
+
+    /** @brief Hash の位相の周期。GLSL の ALPHA_CLIP_HASH_PHASE_COUNT と同じ値に保ち、TAA のジッタの周期と一致させる。 */
+    inline constexpr uint32_t GBufferAlphaHashPhaseCount = 8u;
+    static_assert(GBufferAlphaHashPhaseCount == TemporalAAJitterSampleCount,
+                  "GBuffer alpha hash phase count must match the TAA jitter sample count");
 
     /** @brief Masked の切り抜き方式を求める。TAA が掛からないビューでは Hash を Test に落とす。 */
     GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied);
