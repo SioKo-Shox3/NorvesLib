@@ -62,9 +62,8 @@ control fileはread共有だけで開き、単一linkのregular file、長名/�
 
 物理祖先256、1directoryのentry16384、全列挙entry65536、全store合計4096 roots。entry数の上限はstoreの制御領域（header.json、roots.json、pending）の列挙と、祖先の列挙で残した一致項目だけに掛かり、読み流した項目は数えない。header16KiB、index1MiB、JSON深さ8、字句区切り等の予算100000。観測する名前・祖先path・読み込むJSONの延べmetadata32MiBを上限とし、名前は制御領域の列挙と祖先の列挙で残した一致項目だけを数え、読み流した項目は数えない。32MiBはDOM/container/値コピーを含むプロセス全heap上限ではない。package payloadは読まない。
 
-## 検証と後続
+## 後続
 
-専用Windows試験は独立OS identityからschema fixtureを作り、sibling/disjoint、両順の入れ子、owner/spec/manifest変更とpending、欠落/置換claim、保存path罠、別store header、型/case/共有拒否/サイズ、4096件、alias/SUBST/Unicode親、case-sensitive/reparseの実条件を検査する。無変更確認はfixtureの全entry・file byte hash/size・native handle由来write timeとvolume/file IDの前後比較。子を作成した直後のdirectory時刻は列挙cacheが古い場合があるため、directory_entryのcached timeを使わずFileBasicInfoを照合する。条件付きtestのflagが0なら未実測として記録する。
 
 未完はfresh store初期化、root claim登録、完全intentとreceipt、before/after image、条件付きrollback、root/state/indexの一体公開。既存production new-root-only経路は変更しない。新規store作成後には将来short aliasやtunnelingを予測せず、再観測が必須となる。
 

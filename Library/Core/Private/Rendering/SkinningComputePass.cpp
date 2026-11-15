@@ -638,6 +638,7 @@ namespace NorvesLib::Core::Rendering
                 instance.bOpaque = &draw >= opaqueCommands.Data && &draw < opaqueCommands.Data + opaqueCommands.Count;
                 instance.bMainViewVisible = planned.bMainViewVisible;
                 instance.bCastShadow = draw.Draw.bCastShadow;
+                instance.Opacity = draw.Skinned.Opacity;
                 instance.SourceFirstIndex = draw.Draw.IndexOffset;
                 instance.SourceIndexCount = draw.Draw.IndexCount;
                 instance.VertexBase = component.VertexBase;

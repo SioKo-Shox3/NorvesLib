@@ -27,7 +27,6 @@ Validation commands:
 
 ```powershell
 cmake --build build --config Debug --target Game
-ctest --test-dir build -C Debug
 build\Game\Debug\Game.exe --exit-after-frames=10000
 build\Game\Debug\Game.exe --exit-after-frames=30000
 powershell -ExecutionPolicy Bypass -File .\Scripts\SummarizeAssetLoadProfile.ps1 -LogPath .\Game.log -RequireCompleteModelFlush

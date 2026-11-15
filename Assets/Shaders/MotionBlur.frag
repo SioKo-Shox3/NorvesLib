@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/VelocityEncoding.glsl"
+
 // ラスタの動きぼけのgather。シャッター区間はPTの連番の1フレームと同じく前後の間隔の終わり側にあり、
 // 現在の像で位置qにある面は、区間の終わりからτ（シャッターの間の動きを1とする割合）だけ前の時刻には
 // q - τ × 動き(q)にあった。したがって時刻τに中心の画素pを覆う面は、現在の像で p + τ × 動き(q) にある。
@@ -51,6 +53,11 @@ vec2 ShutterMotion(ivec2 texel)
 {
     vec2 size = ImageSize();
     vec2 velocity = texelFetch(velocityTexture, texel, 0).xy;
+    // 履歴なしの印の画素は動き 0 として扱い、上限まで引き伸ばさない。
+    if (VelocityIsNoHistory(velocity))
+    {
+        return vec2(0.0);
+    }
     float depth = texelFetch(sceneDepthTexture, texel, 0).r;
     if (depth >= 1.0 && params.cameraPositionAndHistory.w > 0.5)
     {

@@ -13,17 +13,19 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        struct RibbonTrailUBO
+        struct alignas(16) RibbonTrailUBO
         {
             float view[16];
             float projection[16];
             // x: シーンの事前露出、y: 加算なら 1（RGB に不透明度を掛ける）。
             float sceneColorParams[4];
+            GPUHeightFogParams heightFog; // 高さフォグ（Common/HeightFog.glsl の HeightFogParams）
         };
 
         static_assert(offsetof(RibbonTrailUBO, projection) == 64);
         static_assert(offsetof(RibbonTrailUBO, sceneColorParams) == 128);
-        static_assert(sizeof(RibbonTrailUBO) == 144);
+        static_assert(offsetof(RibbonTrailUBO, heightFog) == 144);
+        static_assert(sizeof(RibbonTrailUBO) == 240);
 
         RHI::DescriptorSetDesc CreateDescriptorSetDesc()
         {
@@ -32,6 +34,11 @@ namespace NorvesLib::Core::Rendering
             binding.binding = 0;
             binding.type = RHI::ResourceBindType::ConstantBuffer;
             binding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(binding);
+
+            binding.binding = 1;
+            binding.type = RHI::ResourceBindType::CombinedImageSampler;
+            binding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(binding);
             return desc;
         }
@@ -55,6 +62,34 @@ namespace NorvesLib::Core::Rendering
         if (!m_VertexShader || !m_FragmentShader || !m_DescriptorSetLayout)
         {
             NORVES_LOG_ERROR("RibbonTrailRenderer", "帯のシェーダーまたは記述子のレイアウトを作れませんでした");
+            Shutdown();
+            return false;
+        }
+
+        RHI::TextureDesc textureDesc;
+        textureDesc.Width = 1;
+        textureDesc.Height = 1;
+        textureDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        textureDesc.Usage = RHI::ResourceUsage::ShaderRead;
+        textureDesc.DebugName = "RibbonTrailSkyRadianceFallback1x1";
+        m_FallbackSkyRadiance = device->CreateTexture(textureDesc);
+        if (m_FallbackSkyRadiance)
+        {
+            const uint8_t pixel[4] = {0, 0, 0, 255};
+            m_FallbackSkyRadiance->Update(pixel, 4, 4);
+        }
+
+        RHI::SamplerDesc samplerDesc;
+        samplerDesc.filterMin = RHI::FilterMode::Linear;
+        samplerDesc.filterMag = RHI::FilterMode::Linear;
+        samplerDesc.filterMip = RHI::FilterMode::Linear;
+        samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+        samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_SkyRadianceSampler = device->CreateSampler(samplerDesc);
+        if (!m_FallbackSkyRadiance || !m_SkyRadianceSampler)
+        {
+            NORVES_LOG_ERROR("RibbonTrailRenderer", "帯の予備の空の放射輝度テクスチャまたは標本化器を作れませんでした");
             Shutdown();
             return false;
         }
@@ -127,6 +162,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_AdditivePipeline.reset();
         m_AlphaPipeline.reset();
+        m_FallbackSkyRadiance.reset();
+        m_SkyRadianceSampler.reset();
         m_DescriptorSetLayout.reset();
         m_VertexShader.reset();
         m_FragmentShader.reset();
@@ -134,12 +171,14 @@ namespace NorvesLib::Core::Rendering
 
     bool RibbonTrailRenderer::IsInitialized() const
     {
-        return m_AdditivePipeline && m_AlphaPipeline && m_DescriptorSetLayout;
+        return m_AdditivePipeline && m_AlphaPipeline && m_DescriptorSetLayout &&
+               m_FallbackSkyRadiance && m_SkyRadianceSampler;
     }
 
     bool RibbonTrailRenderer::Record(RHI::ICommandList* commandList, FrameResourceLane* frameResources,
                                      const RibbonTrailScene& scene, const float (&view)[16],
-                                     const float (&projection)[16], float preExposure) const
+                                     const float (&projection)[16], float preExposure,
+                                     const RibbonTrailHeightFog* heightFog) const
     {
         if (scene.IsEmpty())
         {
@@ -176,6 +215,11 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(ubo.view, view, sizeof(view));
         std::memcpy(ubo.projection, projection, sizeof(projection));
         ubo.sceneColorParams[0] = preExposure;
+        ubo.heightFog = heightFog ? heightFog->Params : GPUHeightFogParams{};
+        const RHI::TexturePtr& skyRadiance =
+            heightFog && heightFog->SkyRadiance ? heightFog->SkyRadiance : m_FallbackSkyRadiance;
+        const RHI::SamplerPtr& skyRadianceSampler =
+            heightFog && heightFog->SkyRadianceSampler ? heightFog->SkyRadianceSampler : m_SkyRadianceSampler;
         RHI::DescriptorSetPtr descriptorSets[2];
         for (uint32_t blendIndex = 0; blendIndex < 2; ++blendIndex)
         {
@@ -194,6 +238,8 @@ namespace NorvesLib::Core::Rendering
             descriptor.Set->BindConstantBuffer(0, constants.Buffer,
                                                static_cast<uint32_t>(constants.Offset),
                                                static_cast<uint32_t>(constants.Size));
+            descriptor.Set->BindTexture(1, skyRadiance);
+            descriptor.Set->BindSampler(1, skyRadianceSampler);
             descriptor.Set->Update();
             descriptorSets[blendIndex] = descriptor.Set;
         }

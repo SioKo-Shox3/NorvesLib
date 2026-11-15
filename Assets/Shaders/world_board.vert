@@ -20,6 +20,7 @@ layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec2 fragUV;
+layout(location = 2) out vec3 fragWorldPos;
 
 void main()
 {
@@ -56,6 +57,7 @@ void main()
                     worldBoard.cameraUp.xyz * (local.y * sizeWorld.y);
 
     gl_Position = worldBoard.projection * worldBoard.view * vec4(worldPos, 1.0);
+    fragWorldPos = worldPos;
     fragColor = instanceData.objectColor;
     fragUV = uvRect.xy + sampleUV * uvRect.zw;
 }

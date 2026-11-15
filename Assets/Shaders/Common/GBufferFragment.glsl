@@ -1,5 +1,6 @@
 ﻿// GBuffer の標準の断片シェーダーの本体。材質ごとのプログラムの FS は、この本体か
 // Common/GBufferEncoding.glsl の GBufferEncodeNormal・GBufferEncodeMaterial・GBufferEncodeEmissive を通して 5 枚へ書く約束。
+// 材質ごとのプログラムの FS も法線の確定直後に SpecularAAFilterMaterial を通す（強さは MVPData.specularAAParams.x）。
 // GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質だけに使う。
 // discard で深度の書き込みも止めるため、切り抜きの FS では早期の深度テストを宣言しない。
 // 通常の FS の早期深度テストを保つため、切り抜きを分ける。
@@ -30,7 +31,10 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
     vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）, w=鏡面の無い材質か（1/0）
     vec4 shadingParams; // 材質の値。スキンだけインスタンスの値を重ねた値。負は未指定。
-    vec4 shadingModel; // x=GBuffer のシェーディングモデル ID, y=切り抜き閾値 cutoff（0〜1）, z=切り抜き方式（0=なし、1=Test、2=Hash）, w=Hash の位相（0〜63、フレームごとに変化）
+    vec4 shadingModel; // x=GBuffer のシェーディングモデル ID, y=切り抜き閾値 cutoff（0〜1）, z=切り抜き方式（0=なし、1=Test、2=Hash）, w=Hash の位相（0〜7、TAA のジッタの番号）
+    vec4 vertexAnimInstanceParams; // FS では読まない。
+    vec4 vertexAnimTime; // FS では読まない。
+    vec4 specularAAParams; // x=鏡面の AA の強さ, yzw=0
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -42,6 +46,8 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/GBufferEncoding.glsl"
+#include "Common/VelocityEncoding.glsl"
+#include "Common/SpecularAntiAliasing.glsl"
 #ifdef GBUFFER_ALPHA_CLIP
 #include "Common/AlphaClip.glsl"
 #endif
@@ -116,6 +122,12 @@ void main()
     // インスタンスの指定を材質より優先し、未指定の成分には既定値を使う。
     vec4 params = ResolveShadingParams(fragInstanceShadingParams, mvp.shadingParams);
 
+    // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
+    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
+    // discard（OpKill）の後は画面微分が未定義になるため、切り抜きの判定より前に取る。
+    vec3 normalDx = dFdxFine(normal);
+    vec3 normalDy = dFdyFine(normal);
+
 #ifdef GBUFFER_ALPHA_CLIP
     float coverage = textureSamples.Albedo.a * params.w;
     uint alphaClipMode = uint(mvp.shadingModel.z + 0.5);
@@ -135,13 +147,12 @@ void main()
 
     uint id = uint(mvp.shadingModel.x + 0.5) & GBUFFER_SHADING_MODEL_ID_MASK;
 
-    // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
-    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
     const uint receiverFlags = mvp.vtFeedbackParams.w > 0.5 ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u;
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
     // シェーディングモデルに応じた材質値と P0 を書く。
-    outMaterial = GBufferEncodeMaterialForShadingModel(textureSamples.Material, params.x, id);
+    outMaterial = GBufferEncodeMaterialForShadingModel(
+        SpecularAAFilterMaterial(textureSamples.Material, normalDx, normalDy, mvp.specularAAParams.x), params.x, id);
 
     // 発光のプリエクスポージャ後の値とシェーディングパラメータ P1 を書く。
     // 発光は Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛ける（Lighting は露出を掛けずに足す）。
@@ -150,18 +161,10 @@ void main()
                                                                 mvp.frameParams.y),
                                        params.y);
 
+    // 前のフレームの w が閾値以下なら履歴なしの印を書く。
     outVelocity = vec2(0.0);
-    if (mvp.frameParams.x > 0.5 &&
-        abs(fragCurrentClip.w) > 1e-6 &&
-        abs(fragPreviousClip.w) > 1e-6)
+    if (mvp.frameParams.x > 0.5 && abs(fragCurrentClip.w) > 1e-6)
     {
-        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
-        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
-        vec2 velocity = (currentNdc - previousNdc) * 0.5;
-        if (all(equal(velocity, velocity)) &&
-            dot(velocity, velocity) < 1.0e6)
-        {
-            outVelocity = velocity;
-        }
+        outVelocity = VelocityFromClip(fragCurrentClip.xy / fragCurrentClip.w, fragPreviousClip);
     }
 }

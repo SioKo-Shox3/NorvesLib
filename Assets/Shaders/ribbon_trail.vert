@@ -12,10 +12,12 @@ layout(location = 1) in vec2 inUV;
 layout(location = 2) in vec4 inColor;
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) out vec4 fragColor;
+layout(location = 2) out vec3 fragWorldPos;
 
 void main()
 {
     gl_Position = ribbon.projection * ribbon.view * vec4(inPosition, 1.0);
     fragUV = inUV;
     fragColor = inColor;
+    fragWorldPos = inPosition;
 }
