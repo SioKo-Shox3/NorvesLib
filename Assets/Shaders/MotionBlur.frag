@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+
 // ラスタの動きぼけのgather。シャッター区間はPTの連番の1フレームと同じく前後の間隔の終わり側にあり、
 // 現在の像で位置qにある面は、区間の終わりからτ（シャッターの間の動きを1とする割合）だけ前の時刻には
 // q - τ × 動き(q)にあった。したがって時刻τに中心の画素pを覆う面は、現在の像で p + τ × 動き(q) にある。
@@ -46,13 +48,13 @@ ivec2 ClampTexel(vec2 position)
     return clamp(ivec2(floor(position)), ivec2(0), ivec2(ImageSize()) - 1);
 }
 
-// 画素のシャッターの間の動き（画素）。空（深度1）は無限遠の方向を前のカメラへ投影して求める。
+// 画素のシャッターの間の動き（画素）。空（クリア値の深度）は無限遠の方向を前のカメラへ投影して求める。
 vec2 ShutterMotion(ivec2 texel)
 {
     vec2 size = ImageSize();
     vec2 velocity = texelFetch(velocityTexture, texel, 0).xy;
     float depth = texelFetch(sceneDepthTexture, texel, 0).r;
-    if (depth >= 1.0 && params.cameraPositionAndHistory.w > 0.5)
+    if (IsBackgroundDepth(depth) && params.cameraPositionAndHistory.w > 0.5)
     {
         vec2 ndc = (vec2(texel) + 0.5) / size * 2.0 - 1.0;
         vec4 world = params.inverseViewProjection * vec4(ndc, 1.0, 1.0);
@@ -81,7 +83,7 @@ vec2 ShutterMotion(ivec2 texel)
 float ViewDistance(ivec2 texel)
 {
     float depth = texelFetch(sceneDepthTexture, texel, 0).r;
-    if (depth >= 1.0)
+    if (IsBackgroundDepth(depth))
     {
         return SkyDistance;
     }
