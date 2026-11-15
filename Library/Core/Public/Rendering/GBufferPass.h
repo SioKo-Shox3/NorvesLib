@@ -223,7 +223,7 @@ namespace NorvesLib::Core::Rendering
         bool PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material);
         RHI::PipelinePtr GetGBufferPipeline(const ViewRenderContext& context,
                                             const MaterialResourceData* material,
-                                            bool bSkinned);
+                                            bool bSkinned, float opacity = 1.0f);
         RHI::PipelinePtr CreateGBufferPipeline(const GBufferPipelineKey& key);
         bool TryPrepareSkinnedCommand(ViewRenderContext& context,
                                       const DrawCommand& source,

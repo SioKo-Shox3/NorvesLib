@@ -11429,3 +11429,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 追記（反復 5）: 統合ブランチの取り込みで verify が元の 2 行に戻っていたため、判断役の決定（案 A）に従って `TASKS.md` の verify を `cmake --build build --config Debug --target AssetCook Game -- /m:1` の 1 行にそろえ直し、消えた試験を選ぶ ctest の行を外した。今の HEAD でこのビルドが終了コード 0・エラー 0 件で `AssetCook.exe` と `Game.exe` を生成した（`.harness/runs/20261115-173337/aux-G2-GR78-SIDECAR-CLIP-SECTION-iter5-build.txt`）。実装の追加の変更は無い。
 - U1 スキンの不透明度を部品から描画コマンドへ渡し、残像を影と可視バッファの ID のラスタから外す: 着地(直し 0 回)
 - U2 Hash の閾値を TAA のジッタの番号で 8 フレームに層別化する: 着地(直し 0 回)
+- U3 不透明度が 1 未満のスキンを Hash の切り抜きとして GBuffer の重ねの経路で描く: 着地(直し 0 回)

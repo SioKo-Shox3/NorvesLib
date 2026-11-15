@@ -71,19 +71,20 @@ namespace NorvesLib::Core::Rendering
     static_assert(GBufferAlphaHashPhaseCount == TemporalAAJitterSampleCount,
                   "GBuffer alpha hash phase count must match the TAA jitter sample count");
 
-    /** @brief Masked の切り抜き方式を求める。TAA が掛からないビューでは Hash を Test に落とす。 */
-    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied);
+    /** @brief Masked の切り抜き方式を求める。不透明度が 1 未満なら残像として Hash で切り抜き、TAA が掛からないビューでは Test に落とす。 */
+    GBufferAlphaClip ResolveGBufferAlphaClip(const MaterialResourceData* material, bool bTemporalAAApplied, float opacity = 1.0f);
 
     /**
      * @brief 標準の不透明の経路に載せず、別に描く材質かを求める。
      *
      * 可視バッファが on のときは解決の後に重ね、fallback では標準の後に分けて描く。
+     * 不透明度が 1 未満なら残像として Hash で切り抜くため、重ねの経路へ送る。
      * 早期の深度の恩恵を不透明に残す。
      */
-    bool RequiresGBufferOverlay(const MaterialResourceData* material);
+    bool RequiresGBufferOverlay(const MaterialResourceData* material, float opacity = 1.0f);
 
-    /** @brief 材質と描画の種類からパイプラインの鍵を作る。 */
-    GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe);
+    /** @brief 材質と描画の種類から鍵を作る。不透明度が 1 未満なら残像として Hash で切り抜くパイプラインを選ぶ。 */
+    GBufferPipelineKey MakeGBufferPipelineKey(const MaterialResourceData* material, bool bSkinned, bool bWireframe, float opacity = 1.0f);
 
     /** @brief 描画スレッド専用のパイプライン表。失敗も Clear まで記憶し、ロックは行わない。 */
     template <typename Pipeline>
