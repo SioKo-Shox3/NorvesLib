@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ShaderManager.h"
+#include "Rendering/DepthConvention.h"
 #include "RHI/IDevice.h"
 #include "RHI/IShader.h"
 #include "RHI/IShaderCompiler.h"
@@ -179,6 +180,59 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // Common/DepthConvention.glsl と同じ定義名を使う。
+        constexpr char DepthStandardMacroName[] = "NORVES_DEPTH_STANDARD";
+
+        // 起動時に選んだ深度の規約（DepthConvention）を GLSL へ渡す。
+        // モードは起動時に 1 回決まり途中で変わらないので、m_Cache・ReloadAll・ReloadShader はそのままでよい。
+        void ApplyDepthConvention(String &source)
+        {
+            if (DepthConvention::GetMode() != DepthConventionMode::Standard)
+            {
+                return;
+            }
+
+            const String definition = String("#define ") + DepthStandardMacroName + " 1\n";
+            constexpr char VersionToken[] = "#version";
+            size_t lineStart = 0;
+            while (lineStart < source.size())
+            {
+                const size_t lineEnd = source.find('\n', lineStart);
+                const size_t contentEnd = lineEnd == String::npos ? source.size() : lineEnd;
+                size_t cursor = lineStart;
+                while (cursor < contentEnd &&
+                       (source[cursor] == ' ' || source[cursor] == '\t' ||
+                        source[cursor] == '\r' || source[cursor] == '\v' || source[cursor] == '\f'))
+                {
+                    ++cursor;
+                }
+
+                const size_t tokenEnd = cursor + sizeof(VersionToken) - 1;
+                if (source.find(VersionToken, cursor, sizeof(VersionToken) - 1) == cursor &&
+                    (tokenEnd == contentEnd || source[tokenEnd] == ' ' || source[tokenEnd] == '\t'))
+                {
+                    if (lineEnd == String::npos)
+                    {
+                        source += "\n";
+                        source += definition;
+                    }
+                    else
+                    {
+                        const size_t insertionPoint = lineEnd + 1;
+                        source = source.substr(0, insertionPoint) + definition + source.substr(insertionPoint);
+                    }
+                    return;
+                }
+
+                if (lineEnd == String::npos)
+                {
+                    break;
+                }
+                lineStart = lineEnd + 1;
+            }
+            source = definition + source;
+        }
+
         RHI::ShaderCompileResult CompileShaderFile(
             RHI::IShaderCompiler *compiler,
             const String &fullPath,
@@ -211,6 +265,8 @@ namespace NorvesLib::Core::Rendering
                 result.bSuccess = false;
                 return result;
             }
+
+            ApplyDepthConvention(expandedSource);
 
             String sourceName = filename;
             const size_t lastSlash = sourceName.FindLast('/');
