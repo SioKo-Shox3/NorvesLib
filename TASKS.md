@@ -7064,7 +7064,7 @@
 - notes: 式は要件 `#### GR53` の設計案の【式】から、Material.a へ w を書く (4) を除いたもの。選定課題 G7-S6（ロードマップ 4533 行）は推奨の (A): Material.a は GR26 の契約のまま（材質の値 P0。DefaultLit では濡れの感度）にし、ApplyWetSurface は GBuffer へ書く前にアルベド・粗さ・金属・法線へ適用し済みにする。最終の w は GBuffer に書き戻さない。理由: G5-GR26-GBUFFER-CONTRACT が Material.a = P0 と決めていて（その notes が G7-S6 の (A) を前提に挙げる）、(B) は意味が衝突する。代償として水膜の F0 を照明の側で後から足すことはできない。凹み（cavity）は一様の値（既定 0.5。AI 生成のメッシュに高さ・AO が無い）を UBO で渡す。G6 の GR35（濡れた毛）が先に `Common/SurfaceWetness.glsl` を作っていれば、それを拡張して 1 つの式にする（着手時に統合ブランチを grep して決め、PROGRESS.md に書く）。数値の既定は仮で、色と明度のルール（企画で未定）に合わせて後で調整する。試験を足す理由: GLSL と C++ の式のずれ・w=0 で値が変わることは撮影の照明に紛れて気づけず、黙って起きる。経路への配線は G7-GR53-WET-WRITERS。
 
 ## G7-GR53-WET-WRITERS: 環境の値をフレームの UBO で GBuffer の全部の書き手へ渡し、書く前に濡れを掛けて、通常・スキン・MegaGeometry・可視バッファ・草・半透明が同じ濡れ方になるようにする
-- status: doing
+- status: done
 - after: G7-GR53-WET-MODEL, G7-GR49-ENV-PARAMS, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR43-GRASS-GENERATE, G5-GR43-GRASS-DRAW
 - gr: GR53
 - needs-gr: GR26, GR43
