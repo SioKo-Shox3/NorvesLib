@@ -460,6 +460,10 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName, "import_settings");
             }
+            if (plan.Import.Settings.Clip.IsPresent())
+            {
+                return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName, "static_model_clip_settings");
+            }
         }
         if (loaded)
         {
