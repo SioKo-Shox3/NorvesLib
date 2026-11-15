@@ -3,6 +3,7 @@
 #define NORVES_GRASS_COMMON_GLSL
 
 #include "Common/ViewClearance.glsl"
+#include "Common/WorldField.glsl"
 
 const uint kGrassLodCount = 3u;
 const uint kGrassHashSaltJitterX = 0u;
@@ -33,6 +34,7 @@ struct GrassBladeRecord
     float PositionY;
     float PositionZ;
     uint Packed;
+    uint DrynessPacked;
 };
 
 struct GrassSpeciesGpuData
@@ -59,7 +61,7 @@ struct GrassSpeciesGpuData
     vec4 DrynessFar; // 遠景で草丈を潰す重み。yzw は予約の 0。
 };
 
-// GrassGenerateConstants と同じ 544 バイトの std140 配置。
+// GrassGenerateConstants と同じ 592 バイトの std140 配置。
 layout(std140, set = 0, binding = 0) uniform GrassGenerateConstants
 {
     vec4 CameraPosition;
@@ -85,6 +87,8 @@ layout(std140, set = 0, binding = 0) uniform GrassGenerateConstants
     mat4 HiZViewProjection;
     uvec4 HiZDimensions;
     ViewClearanceData ViewClearance;
+    WorldFieldDrynessSampleConstants Dryness; // GPU のフィールドを束縛するときに呼び出し側が設定する。
+    vec4 DrynessParams; // x: 近景の最大二乗距離、y: 二乗距離幅の逆数、z: LayerB の画素幅の逆数、w: 予約
 } constants;
 
 // 引数は各 5 語、カウンタはバイト位置 64 から。予約語も含めて 80 バイト。
@@ -133,6 +137,27 @@ int GrassFloorDiv(int value, uint divisor)
 float GrassSaturate(float value)
 {
     return value < 0.0 ? 0.0 : (value > 1.0 ? 1.0 : value);
+}
+
+float GrassEffectiveDryness(float fieldDryness, float baseDryness)
+{
+    precise float larger = fieldDryness > baseDryness ? fieldDryness : baseDryness;
+    return GrassSaturate(larger);
+}
+
+float GrassDrynessFarWeight(float distanceSquared)
+{
+    precise float weight = GrassSaturate((distanceSquared - constants.DrynessParams[0]) * constants.DrynessParams[1]);
+    return weight;
+}
+
+uint PackGrassDryness(float dryness, float colorAmount)
+{
+    precise float drynessValue = GrassSaturate(dryness) * 65535.0 + 0.5;
+    precise float colorValue = GrassSaturate(colorAmount) * 65535.0 + 0.5;
+    uint dryness16 = uint(drynessValue);
+    uint color16 = uint(colorValue);
+    return dryness16 | (color16 << 16);
 }
 
 float ComputeKeepFraction(float distanceSquared)

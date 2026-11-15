@@ -31,6 +31,7 @@ struct GrassBladeRecord
     float PositionY;
     float PositionZ;
     uint Packed;
+    uint DrynessPacked;
 };
 
 struct GrassSpeciesGpuData

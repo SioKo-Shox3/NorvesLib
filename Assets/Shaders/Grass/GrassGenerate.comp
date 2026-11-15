@@ -17,7 +17,7 @@ layout(std430, set = 0, binding = 2) readonly buffer GrassSpecies
     GrassSpeciesGpuData Species[];
 } speciesTable;
 
-// LayerA は RGBA8 UNORM。LayerB は束縛を固定するため宣言する。
+// LayerA と LayerB は RGBA8 UNORM。同じチャンクの層番号で引く。
 layout(set = 0, binding = 3) uniform sampler2DArray layerA;
 layout(set = 0, binding = 4) uniform sampler2DArray layerB;
 
@@ -38,11 +38,11 @@ int ClampPixel(int value, uint resolution)
     return value > last ? last : value;
 }
 
-uvec4 ReadPixel(int x, int z, uint resolution, uint layerIndex)
+uvec4 ReadPixel(sampler2DArray sourceLayer, int x, int z, uint resolution, uint layerIndex)
 {
     ivec3 coordinate = ivec3(ClampPixel(x, resolution), ClampPixel(z, resolution), int(layerIndex));
     // 正規化された画素を元の 0..255 の整数へ戻してから CPU と同じ順で補間する。
-    precise vec4 bytes = texelFetch(layerA, coordinate, 0) * 255.0 + 0.5;
+    precise vec4 bytes = texelFetch(sourceLayer, coordinate, 0) * 255.0 + 0.5;
     return uvec4(bytes);
 }
 
@@ -55,10 +55,10 @@ void SampleLayerA(uint resolution, float invPixelWidth, float localX, float loca
     int j = int(floor(v));
     precise float fractionX = u - float(i);
     precise float fractionZ = v - float(j);
-    uvec4 p00 = ReadPixel(i, j, resolution, layerIndex);
-    uvec4 p10 = ReadPixel(i + 1, j, resolution, layerIndex);
-    uvec4 p01 = ReadPixel(i, j + 1, resolution, layerIndex);
-    uvec4 p11 = ReadPixel(i + 1, j + 1, resolution, layerIndex);
+    uvec4 p00 = ReadPixel(layerA, i, j, resolution, layerIndex);
+    uvec4 p10 = ReadPixel(layerA, i + 1, j, resolution, layerIndex);
+    uvec4 p01 = ReadPixel(layerA, i, j + 1, resolution, layerIndex);
+    uvec4 p11 = ReadPixel(layerA, i + 1, j + 1, resolution, layerIndex);
     float channels[2];
     for (uint channel = 0u; channel < 2u; ++channel)
     {
@@ -74,7 +74,29 @@ void SampleLayerA(uint resolution, float invPixelWidth, float localX, float loca
     precise float nearestV = localZ * invPixelWidth;
     int nearestX = int(floor(nearestU));
     int nearestZ = int(floor(nearestV));
-    speciesId = ReadPixel(nearestX, nearestZ, resolution, layerIndex)[3] & 63u;
+    speciesId = ReadPixel(layerA, nearestX, nearestZ, resolution, layerIndex)[3] & 63u;
+}
+
+float SampleLayerB(uint resolution, float invPixelWidth, float localX, float localZ, uint layerIndex)
+{
+    if (resolution == 0u)
+    {
+        return 0.0;
+    }
+    precise float u = localX * invPixelWidth - 0.5;
+    precise float v = localZ * invPixelWidth - 0.5;
+    int i = int(floor(u));
+    int j = int(floor(v));
+    precise float fractionX = u - float(i);
+    precise float fractionZ = v - float(j);
+    uvec4 p00 = ReadPixel(layerB, i, j, resolution, layerIndex);
+    uvec4 p10 = ReadPixel(layerB, i + 1, j, resolution, layerIndex);
+    uvec4 p01 = ReadPixel(layerB, i, j + 1, resolution, layerIndex);
+    uvec4 p11 = ReadPixel(layerB, i + 1, j + 1, resolution, layerIndex);
+    precise float row0 = GrassLerp(float(p00[3]), float(p10[3]), fractionX);
+    precise float row1 = GrassLerp(float(p01[3]), float(p11[3]), fractionX);
+    precise float value = GrassLerp(row0, row1, fractionZ) * uintBitsToFloat(0x3b808081u);
+    return value;
 }
 
 void main()
@@ -138,11 +160,22 @@ void main()
             speciesId = 0u;
         }
         GrassSpeciesGpuData species = speciesTable.Species[speciesId];
+        precise float baseDryness = SampleLayerB(constants.LayerResolutions[1], constants.DrynessParams[2],
+                                                 localX, localZ, tile.LayerIndex);
+        precise float fieldDryness = 0.0;
+        precise float dryness = GrassEffectiveDryness(fieldDryness, baseDryness);
+        precise float farWeight = GrassDrynessFarWeight(distanceSquared);
         precise float speciesDensity = species.BladesPerSquareMeter * baseCellArea;
         precise float densityScale = speciesDensity < 1.0 ? speciesDensity : 1.0;
         precise float density = (red * uintBitsToFloat(0x3b808081u)) * densityScale;
         precise float heightScale = green * uintBitsToFloat(0x3b808081u);
         precise float hash2 = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltKeep));
+        precise float colorAmount = 0.0;
+        if (dryness > 0.0)
+        {
+            density *= GrassLerp(1.0, species.DrynessScales.x, dryness);
+            colorAmount = dryness * GrassLerp(species.DryColor.w, species.DrynessScales.w, farWeight);
+        }
         precise float keepProbability = density * keepBand;
         if (!(keepProbability > hash2))
         {
@@ -151,6 +184,11 @@ void main()
 
         precise float heightRandom = GrassHashToUnit(GrassHash(gx, gz, saltBase + kGrassHashSaltHeight));
         precise float height = GrassLerp(species.HeightMinMeters, species.HeightMaxMeters, heightRandom) * heightScale;
+        if (dryness > 0.0)
+        {
+            height *= GrassLerp(1.0, species.DrynessScales.y, dryness) *
+                (1.0 - (species.DrynessFar.x * farWeight) * dryness);
+        }
         if (height <= 0.0)
         {
             continue;
@@ -236,6 +274,7 @@ void main()
             }
             record.Packed = PackGrassBlade(recordHeight, width, speciesId, fade,
                                            constants.BladeQuantMaxMeters[0], constants.BladeQuantMaxMeters[1]);
+            record.DrynessPacked = dryness > 0.0 ? PackGrassDryness(dryness, colorAmount) : 0u;
             records.Records[constants.LodBase[band] + recordIndex] = record;
             atomicAdd(args.Args[band * 5u + 1u], 1u);
         }
