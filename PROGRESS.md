@@ -11233,3 +11233,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 草のブレードの書き手に濡れを掛け、全体の濡れ度を環境の値にする: 着地(直し 0 回)
 - U8 デカールが書き換えるアルベドに同じ暗化を掛ける: 着地(直し 0 回)
 - U9 半透明の面（前方の描画）に濡れを掛ける: 着地(直し 0 回)
+- U10 GPU の配置の表への登録とタスクの verify のビルド: 着地(直し 0 回)
