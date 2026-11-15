@@ -93,6 +93,11 @@ namespace NorvesLib::Core::Rendering
         {
             return static_cast<uint64_t>(chunks == 0u ? 1u : chunks) * sizeof(VsmShadowChunk);
         }
+        /** @brief 塊ごとの材質の頂点アニメの表の大きさ（vec4 2 つ、最低 1 件） */
+        constexpr uint64_t RasterChunkVertexAnimBytes(uint32_t chunks)
+        {
+            return static_cast<uint64_t>(chunks == 0u ? 1u : chunks) * 8u * sizeof(float);
+        }
         /** @brief インスタンス（塊の番号・段と物理ページ・絶対のページの x・y の uvec4）の大きさ（バイト）。instances 件ぶん（最低 1 件） */
         constexpr uint64_t RasterInstanceBytes(uint32_t instances)
         {
@@ -134,7 +139,9 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t RASTER_VIEWPORT = PAGE_RESOLUTION;
     } // namespace VirtualShadowMap
 
-    /** @brief VSM の展開・描画に渡す std140 定数。フィールドは株の頂点だけが読む。 */
+    /** @brief VSM の展開・描画に渡す std140 定数。フィールドは株の頂点だけが読む。
+     * 風の頂点アニメは末尾の 2 つの vec4 と、塊ごとの材質の表を描画へ渡す。
+     */
     struct alignas(16) VirtualShadowMapRasterParams
     {
         float lightRight[4];
@@ -147,6 +154,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 頂点アニメの今・前の時刻と試験の揺れの許可（影は x の今の時刻だけを使う） */
         float vertexAnimTime[4];
         WorldFieldSampleConstants worldField;
+        float vertexAnimWindA[4];
+        float vertexAnimWindB[4];
     };
     static_assert(offsetof(VirtualShadowMapRasterParams, lightRight) == 0u);
     static_assert(offsetof(VirtualShadowMapRasterParams, lightUp) == 16u);
@@ -157,7 +166,9 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(VirtualShadowMapRasterParams, foliageWindParams) == 96u);
     static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimTime) == 112u);
     static_assert(offsetof(VirtualShadowMapRasterParams, worldField) == 128u);
-    static_assert(sizeof(VirtualShadowMapRasterParams) == 176u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimWindA) == 176u);
+    static_assert(offsetof(VirtualShadowMapRasterParams, vertexAnimWindB) == 192u);
+    static_assert(sizeof(VirtualShadowMapRasterParams) == 208u);
 
     /** @brief 切り抜きの材質で描く、ホストが書いた塊の範囲（先頭の塊の番号の昇順・重ならない・ChunkCount の内側） */
     struct VirtualShadowMapMaskedDraw
@@ -198,6 +209,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 塊の記録（VsmShadowChunk の並び）と数 */
         RHI::BufferPtr Chunks;
         uint32_t ChunkCount = 0;
+        /** @brief 塊と同じ並びの材質の頂点アニメ（塊ごとに 2 つの vec4、最低 1 件ぶん） */
+        RHI::BufferPtr ChunkVertexAnim;
         /** @brief 切り抜きの範囲。配列の添字が Record.MaterialIndex の範囲の番号に対応する */
         const VirtualShadowMapMaskedDraw* MaskedDraws = nullptr;
         uint32_t MaskedDrawCount = 0;
@@ -225,6 +238,9 @@ namespace NorvesLib::Core::Rendering
         float FoliageWindParams[4] = {};
         /** @brief 頂点アニメの現在・前回の時刻と試験の揺れの許可 */
         float VertexAnimTime[4] = {};
+        /** @brief 材質の頂点アニメに使う風（無効ならすべて 0） */
+        float VertexAnimWindA[4] = {};
+        float VertexAnimWindB[4] = {};
         /** @brief 株の根元で引く ShaderResource 状態の画像。無ければ中立画像を使い、変形を無効にする。 */
         RHI::TexturePtr WorldFieldCurrent;
         WorldFieldSampleConstants WorldField;

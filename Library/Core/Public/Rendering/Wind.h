@@ -37,6 +37,11 @@ namespace NorvesLib::Core::Rendering
     /// 整えた設定から風の吹いていく水平単位方向 XZ（各成分 [-1, 1]）を返す。
     void WindDirectionXZ(const WindParameters& p, float& outX, float& outZ);
 
+    /// SanitizeWindParameters で整えた設定を、頂点アニメの環境 UBO の 2 つの vec4 に詰める。
+    /// outWindA = (風向 X, 風向 Z, BaseSpeed, GustStrength)、outWindB = (GustFrequencyHz, GustScaleMeters, Turbulence, 有効なら 1)。
+    /// 無効なら 8 個とも 0。Common/VertexAnimation.glsl の VertexAnimationWind と同じ並び。
+    void PackVertexAnimationWindConstants(const WindParameters& p, float outWindA[4], float outWindB[4]);
+
     /// 32 ビットの入力を 32 ビットのハッシュへ変換する。
     uint32_t WindHash(uint32_t x);
 

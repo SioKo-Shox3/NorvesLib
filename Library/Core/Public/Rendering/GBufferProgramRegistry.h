@@ -23,7 +23,7 @@ namespace NorvesLib::Core::Rendering
      * Emissive・Velocity の 5 枚へ書き込む。set 0 の UBO、PBR テクスチャ 6 枚、
      * インスタンス、スキン用 binding 8〜10、VT フィードバックと頂点入力の配置は
      * 標準の GBuffer シェーダーと同じものを受ける。
-     * FS は環境の UBO（set 0 / binding 12）を読み、GBuffer へ書く前に
+     * FS は環境の UBO（set 0 / binding 13）を読み、GBuffer へ書く前に
      * ApplyWetSurfaceFromEnvironment を呼ぶ。濡れの感度は DefaultLit の P0、未指定は 1。
      */
     struct GBufferProgramDesc
