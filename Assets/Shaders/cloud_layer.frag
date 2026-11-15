@@ -7,12 +7,13 @@
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
+#include "Common/DepthConvention.glsl"
 #include "Common/CloudLayerCommon.glsl"
 
 void main()
 {
     float depth = textureLod(sceneDepthTexture, fragUV, 0.0).r;
-    if (IsFiniteFloat(depth) && depth < 0.999999)
+    if (IsFiniteFloat(depth) && !IsBackgroundDepth(depth))
     {
         // 不透明物の画素。雲の層は地形より高いので描かない
         outColor = vec4(0.0);
