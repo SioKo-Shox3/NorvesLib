@@ -11297,3 +11297,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 前回の評価が枠切れ（429）で回らず作業中に戻っていたため、差し戻しで名指しされた文書（`GpuLayoutRegistry.md`・`VirtualizationAcceptance.md`・`ResourceIONamespace.md`・`GltfMaterialCookV1.md`・`ImportSettings.md` ほか）を、消した試験の名前 674 個（基点 `5c8d8cac` の CMake）で洗い直した。`Docs/History`・`Docs/Baselines`・`Docs/Testing.md` を除く文書で、日付・run・当時の記録を伴わない当たりは過去の検証の表（GR78・GR86・GameFoundationValidation・NVSKEL の日付つきの節の中の行）だけで、今も試験があるように読める案内・試験のコマンド・`Test/` の置き場への案内は 0。`GpuLayoutRegistry.md` の「試験の正弦」「試験の揺れ」は頂点アニメの欄の名前で試験とは関係ない。
 - 証拠: `.harness/runs/20261114-145330/verify-TEST-REMOVE-1114-U9.txt`（`cmake -B build -S .`・`cmake --build build --config Debug -- -m:1`・`Test` の不在の検査・最上位の CMake の grep の 4 行がすべて終了コード 0、Game.exe まで生成）。この証拠の後に変わったのは `TASKS.md`・`PROGRESS.md` だけで、コードと文書は同じ。試験は走らせていない。
 - Next: ランナーの評価者の反証。
+- U6 clip 節の解析・正規化 bytes・hash と audio 節の予約(レビュー済みのパッチを試験を除いて当てる): 着地(直し 0 回)
