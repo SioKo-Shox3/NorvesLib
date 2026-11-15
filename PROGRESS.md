@@ -11628,3 +11628,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261116-053226/verify-G7-GR53-WET-WRITERS-build.txt`（新しい枠で `cmake -B build -S . -G "Visual Studio 17 2022"` が CONFIGURE_EXIT=0、試験のターゲットを外した verify のビルドの行 `cmake --build build --config Debug --target Game -- -m:1` が BUILD_EXIT=0・エラーの行 0、`Core.lib` と `Game.exe` を生成。警告は shaderc の PDB が無い LNK4099）。verify の ctest の行は試験を回さない決まりで回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
 - Next: 統合ブランチの取り込み（GR46 の風の頂点アニメが GBufferPass の記述子の配置と GPU の配置の表に足したものと、環境の UBO の binding の両方を残す）。人が見るときの見どころは前の節と同じ。
 - Notes: この枠には `build/` が無く freetype のサブモジュールも未取得だったので、`git submodule update --init Library/ThirdParty/freetype` の後に構成した。
+- U1 CPU と GPU で共有する乱数・生成数・乱れの式のヘッダを足す: 着地(直し 0 回)

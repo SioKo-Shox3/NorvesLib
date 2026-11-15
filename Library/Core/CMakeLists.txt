@@ -664,6 +664,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectSerialization.h
     Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
+    Public/Particle/VfxSimulationMath.h
     Public/Particle/DefeatBloodSequence.h
     Public/Particle/DefeatBloodPresenter.h
     Public/Engine/ApplicationProcessor.h
