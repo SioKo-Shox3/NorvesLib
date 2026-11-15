@@ -11429,3 +11429,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 追記（反復 5）: 統合ブランチの取り込みで verify が元の 2 行に戻っていたため、判断役の決定（案 A）に従って `TASKS.md` の verify を `cmake --build build --config Debug --target AssetCook Game -- /m:1` の 1 行にそろえ直し、消えた試験を選ぶ ctest の行を外した。今の HEAD でこのビルドが終了コード 0・エラー 0 件で `AssetCook.exe` と `Game.exe` を生成した（`.harness/runs/20261115-173337/aux-G2-GR78-SIDECAR-CLIP-SECTION-iter5-build.txt`）。実装の追加の変更は無い。
 - U1 材質の VertexAnimationParams と、材質・風の値を GPU の 8 個の float に詰める口: 着地(直し 0 回)
 - U2 Common/VertexAnimation.glsl に風の頂点アニメ（草・樹木）を実装する: 着地(直し 0 回)
+- U4 方向光（CSM）と点光源の影に同じ変位を入れる: 着地(直し 0 回)
