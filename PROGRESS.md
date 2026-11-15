@@ -11429,3 +11429,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 追記（反復 5）: 統合ブランチの取り込みで verify が元の 2 行に戻っていたため、判断役の決定（案 A）に従って `TASKS.md` の verify を `cmake --build build --config Debug --target AssetCook Game -- /m:1` の 1 行にそろえ直し、消えた試験を選ぶ ctest の行を外した。今の HEAD でこのビルドが終了コード 0・エラー 0 件で `AssetCook.exe` と `Game.exe` を生成した（`.harness/runs/20261115-173337/aux-G2-GR78-SIDECAR-CLIP-SECTION-iter5-build.txt`）。実装の追加の変更は無い。
 - U1 材質の印と、印の付いた材質を切り抜きの経路へ振る判定・ディザの GLSL 関数: 着地(直し 0 回)
 - U4 主人公のシルエットの段（HeroSilhouettePass）とスキンの Overlay の種類: 着地(直し 1 回)
+- U2 GBuffer の切り抜きの変種で印の付いた材質をディザで抜く: 着地(直し 0 回)

@@ -1,7 +1,8 @@
 ﻿// GBuffer の標準の断片シェーダーの本体。材質ごとのプログラムの FS は、この本体か
 // Common/GBufferEncoding.glsl の GBufferEncodeNormal・GBufferEncodeMaterial・GBufferEncodeEmissive を通して 5 枚へ書く約束。
 // 材質ごとのプログラムの FS も法線の確定直後に SpecularAAFilterMaterial を通す（強さは MVPData.specularAAParams.x）。
-// GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質だけに使う。
+// GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質に使う。
+// 切り抜きの変種は、視界の確保の印の付いた材質のディザも受け持つ。
 // discard で深度の書き込みも止めるため、切り抜きの FS では早期の深度テストを宣言しない。
 // 通常の FS の早期深度テストを保つため、切り抜きを分ける。
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
@@ -17,6 +18,8 @@ layout(location = 5) in vec3 fragViewDir;
 layout(location = 6) in vec4 fragCurrentClip;
 layout(location = 7) in vec4 fragPreviousClip;
 layout(location = 8) flat in vec4 fragInstanceShadingParams;
+
+#include "Common/ViewClearance.glsl"
 
 // UBOからPOMパラメータを参照
 layout(set = 0, binding = 0) uniform MVPData
@@ -35,6 +38,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 vertexAnimInstanceParams; // FS では読まない。
     vec4 vertexAnimTime; // FS では読まない。
     vec4 specularAAParams; // x=鏡面の AA の強さ, yzw=0
+    ViewClearanceData viewClearance; // 視界の確保の遮蔽物のディザ（印の付いた材質だけ値が入る。印の無い材質は全 0）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -132,6 +136,10 @@ void main()
     uint alphaClipMode = uint(mvp.shadingModel.z + 0.5);
     uint alphaClipPhase = uint(mvp.shadingModel.w + 0.5);
     if (AlphaClipShouldDiscard(coverage, mvp.shadingModel.y, alphaClipMode, floor(gl_FragCoord.xy), alphaClipPhase))
+    {
+        discard;
+    }
+    if (ViewClearanceShouldDiscard(mvp.viewClearance, fragWorldPos, floor(gl_FragCoord.xy)))
     {
         discard;
     }
