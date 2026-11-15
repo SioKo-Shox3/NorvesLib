@@ -9,7 +9,7 @@
 namespace NorvesLib::Tools::AssetCook::CookerRevisions
 {
     inline constexpr uint64_t Texture = 3;
-    inline constexpr uint64_t Model = 3;
+    inline constexpr uint64_t Model = 4;
     inline constexpr uint64_t Skeletal = 3;
     inline constexpr uint64_t Animation = 3;
     inline constexpr uint64_t Audio = 3;

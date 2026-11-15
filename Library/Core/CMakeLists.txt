@@ -430,6 +430,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
+    Private/Resource/GltfNodeTransform.h
+    Private/Resource/GltfNodeTransform.cpp
     Private/Resource/ImportSettingsFile.h
     Private/Resource/ImportSettingsFile.cpp
     Private/Resource/ImportSettingsHash.h
