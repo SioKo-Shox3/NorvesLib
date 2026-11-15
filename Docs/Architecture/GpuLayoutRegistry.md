@@ -89,9 +89,9 @@ PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係�
 
 ### GBuffer
 
-C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 416u)` と初期化時の `UBO_SIZE = 416` がある。頂点アニメの 2 欄と鏡面の AA の欄は `offsetof` で 368・384・400 バイトを検査する。空きの末尾領域はない。
+C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 480u)` と初期化時の `UBO_SIZE = 480` がある。頂点アニメの 2 欄・鏡面の AA・視界の確保の欄は `offsetof` で 368・384・400・416 バイトを検査する。空きの末尾領域はない。
 
-GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` が先頭 400 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は全 416 バイトを宣言する。
+GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` が先頭 400 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は全 480 バイトを宣言する。`viewClearance` に値を入れるのは `bViewClearanceOccluder` の付いた材質だけで、ほかは全成分 0。読むのは `gbuffer_alphaclip.frag` の変種だけで、通常の `gbuffer.frag` は読まない。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（ベクトルは x / y / z / w 順） |
 |---|---|---|---|
@@ -109,6 +109,7 @@ GLSL は `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert`
 | 368 | `vertexAnimInstanceParams: float[4]` | `vertexAnimInstanceParams: vec4`（頂点側のみ） | 16 バイト。スキンの描画の生の `ShadingParams`（負は未指定のまま）。静的メッシュでは全成分 -1 で、頂点側はインスタンス表を読む |
 | 384 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
 | 400 | `specularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、yzw = 0 |
+| 416 | `viewClearance: ViewClearanceGpuData` | `viewClearance: ViewClearanceData`（断片側のみ） | 64 バイト（vec4 × 4）。遮蔽物のディザ。並びは下記の共通表 |
 
 `vtFeedbackParams.w`（332 バイト）は `gbuffer.frag` が `> 0.5` を判定し、`Normal.w` の `DIFFUSE_ONLY` の印へ変換する。`Material.a` の意味には使わない。
 
@@ -116,9 +117,9 @@ VT パラメータの `0` は要求を書かない指定。整数を float に�
 
 ### MegaGeometry
 
-C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列の合計は 144 float = **576 バイト**。`static_assert` は `VertexAnimTime` の位置 544・`SpecularAAParams` の位置 560・大きさ 576・上限 768 バイトを検査する。確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 576〜767 バイト（192 バイト）は空きで、現在の UBO 宣言には含まれない。
+C++ は `Library/Core/Private/Rendering/MegaGeometryPass.cpp` の `SectionUniformData`。名称は per-object 相当でも、実際の共有単位は材質の区間。`TerrainBlendShading.h` の `TERRAIN_BLEND_PARAM_FLOATS = 40u` を含め、宣言された配列と `ViewClearanceGpuData` の合計は 160 float = **640 バイト**。`static_assert` は `VertexAnimTime` の位置 544・`SpecularAAParams` の位置 560・`ViewClearance` の位置 576・大きさ 640・上限 768 バイトを検査する。確保枠は `SectionUniformBufferBytes = 768`。更新・binding の範囲は `sizeof(SectionUniformData)` であり、確保枠の末尾 640〜767 バイト（128 バイト）は空きで、現在の UBO 宣言には含まれない。
 
-GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が先頭 560 バイト、`Assets/Shaders/megageometry.frag` は全 576 バイトを宣言する。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
+GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が先頭 560 バイト、`Assets/Shaders/Common/MegaGeometryFragment.glsl` を通る `megageometry.frag`・`megageometry_clearance.frag` は全 640 バイトを宣言する。`ViewClearance` に値を入れるのは `bViewClearanceOccluder` の付いた材質の区間だけで、ほかは全成分 0。読むのは `megageometry_clearance.frag` だけで、通常の `megageometry.frag` は読まない。C++ の `EmissiveChromaticityAndLuminanceNits` に対応する GLSL 名は `emissiveColor`。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
 |---|---|---|---|
@@ -137,6 +138,7 @@ GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が先頭 560 バイ�
 | 528 | `ShadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数 |
 | 544 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
 | 560 | `SpecularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、yzw = 0 |
+| 576 | `ViewClearance: ViewClearanceGpuData` | `viewClearance: ViewClearanceData`（断片側のみ） | 64 バイト（vec4 × 4）。遮蔽物のディザ。並びは下記の共通表 |
 
 MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変換した ID であり、GBuffer の同名成分の `DIFFUSE_ONLY` 入力とは異なる。`ShadingParams` には `MegaMeshMaterial::ShadingParams` を写す。`megageometry.frag` は地形の場合に `TERRAIN` の印を書く。
 
@@ -156,6 +158,19 @@ MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変�
 | 512 | `terrainParams[9] / farMix` | 遠景の 1 画素の広さ（m） | 砂の法線の傾きの分散 | 土の同分散 | 岩の同分散 |
 
 `layers.w` の印は `DIRT_NORMAL_TWO_CHANNEL = 1`、`ROCK_NORMAL_TWO_CHANNEL = 2`、`SAND_ALBEDO_SRGB_DECODE = 4`、`DIRT_ALBEDO_SRGB_DECODE = 8`、`ROCK_ALBEDO_SRGB_DECODE = 16`（接頭辞はいずれも `TERRAIN_BLEND_`）。`layers.x = 0` は 1 層、`mask.z = 0` / `farMap.z = 0` は対応する地図なし。
+
+### 視界の確保の共通データ
+
+C++ は `Library/Core/Public/Rendering/ViewClearance.h::ViewClearanceGpuData`、GLSL は `Assets/Shaders/Common/ViewClearance.glsl::ViewClearanceData`。std140 の vec4 × 4、合計 **64 バイト**、整列は 16 バイト。C++ の `static_assert` が大きさ・整列・各フィールドの位置を検査する。次の位置は構造体の先頭からの相対オフセット。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
+|---|---|---|---|---|
+| 0 | 16 | `CameraRadius: float[4]` | `CameraRadius: vec4` | xyz = カメラのワールド位置（m）、w = カメラ側の半径（m） |
+| 16 | 16 | `TargetRadius: float[4]` | `TargetRadius: vec4` | xyz = 注視点のワールド位置（m）、w = 注視点側の半径（m） |
+| 32 | 16 | `Shape: float[4]` | `Shape: vec4` | 半径に対する切り抜きの縁の幅（`FeatherRatio`）/ 近接フェードの開始距離（m）/ 終了距離（m）/ 草の低背化の下限（`MinHeightScale`） |
+| 48 | 16 | `Control: float[4]` | `Control: vec4` | x = `Strength`、y = 有効なら 1（それ以外は 0）、z = 遮蔽物のディザの位相（0〜63）、w = 予約の 0 |
+
+`Control.z` はフレームの番号の下位 6 ビット（`FrameNumber % 64u`）。GBuffer・MegaGeometry の `bViewClearanceOccluder` の付いた材質だけが入れ、草・株は 0 のまま。遮蔽物の切り抜きは `ViewClearanceShouldDiscard` が読む。草・株の可視度と低背化は位相を使わない。
 
 ### スプラットの UBO と配列テクスチャ
 
