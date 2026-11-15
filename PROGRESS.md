@@ -11258,11 +11258,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（RenderThread のデータ契約・危険地帯）。消費側（草・地表・低木）の配線は G12-GR45-GRASS-DRYNESS など。今はどの消費側も `SampleDryness` を呼ばず、源を置くシーンも無いので見た目は変わらない。撮影・計測の確かめは回さない決まり。配線の後に人が見るときの見どころは、`WitherSourceComponent` で枯れ源を置いた草地の、主カメラから 32 m 前後（近傍の縁、4 m の寄せ幅）で枯れ地の境が段や継ぎ目なく続くか。
 - Notes: paths の外で 2 ファイルに最小の配線を足した: `ViewRenderContext.h`（パスがパケットの源を読む欄 1 つ）、`Engine.cpp`（毎フレームの `UpdateWorldFieldInteractors()` で Vegetation の源を渡す 1 行）。源は状態なので coordinator の保持はパケットへ写した後も消さない（interactors は毎フレーム空にする）。`DrynessMap::DefaultGpuSourceLimit` は `Rendering::WorldFieldDrynessMaxSources` を指すようにした（値は 64 のまま）。
 
-- U1 霧の値に色味・空への寄せ・基準の仰角を足し、安全化と正弦・余弦の関数を置く: 着地(直し 0 回)
-- U2 高さフォグの定数と体積の霧に色味・空への寄せを通し、共通の霧の色の式で混ぜて掛ける: 着地(直し 0 回)
-- U3 パストレーサーの霧に色味・空への寄せを足し、霧の署名に入れる: 着地(直し 0 回)
-### G7-GR50-FOG-TINT 霧の色の寄せ（色味・空への寄せ・基準の仰角）を霧の値に足し、体積の霧・前向きの霧・パストレーサーの霧へ同じ式で掛ける（2026-11-15、run 20261115-162933）
-- Done: `VolumetricFogParameters` の末尾に `Tint[3]`（既定 1、安全化で 0..16・NaN は 1）・`SkyBlend`（既定 0、0..1・NaN は 0）・`ReferenceElevationDegrees`（仮 10、0..90 度・NaN は 10）を足し、安全化した仰角の正弦・余弦を返す `ComputeFogReferenceElevationSinCos` を置いた。`GPUHeightFogParams` は Tint・SkyBlend を詰め、末尾に `ReferenceElevationSinCos` を足して 96 バイト（static_assert でサイズとオフセットを固定）。`Common/HeightFog.glsl` の `HeightFogRadiance` は、LUT があれば視線の向きの空の放射輝度と「視線の方位のまま仰角を基準の仰角へ傾けた向き」の放射輝度を SkyBlend で混ぜ（SkyBlend が 0 なら 2 回目の LUT を引かない）、LUT が無ければ既定の色を使い、どちらも Tint を掛ける。`GPUVolumetricsParams` の末尾に vec4 を 2 つ足し、体積の霧の色を同じ関数で求め、空気遠近が有効なときの霧の周りの光（`MarchFogAndAerial` の fogAmbient）に Tint を掛ける。パストレーサーは `PathTracingParameters` の末尾に vec4 を 2 つ足して 304 バイト、`FillPathFogParameters` で安全化した値を詰め、`HashPathFog` に 2 欄を入れ、raygen の霧の色を `HeightFog.glsl` の `HeightFogRadiance` で求める。既定（Tint 1・SkyBlend 0）では体積の霧・前向きの霧・パストレーサーの霧が前と同じ値を出す。
-- 証拠: `.harness/runs/20261115-162933/verify-G7-GR50-FOG-TINT-U3.txt`（volumetrics.frag・volumetrics_probe.frag・PathTracingRayGen（通常と sparse）・ClosestHit（通常と sparse）・Miss のコンパイルが全部 OK、verify のビルドの行 `cmake --build build --config Debug --target VolumetricFogModelTest RHIRayTracingApiContractTest Game -- /m:1` が EXIT=0・エラー行 0 で 3 つの .exe ができた）。verify の ctest の行は、試験を回さない決まりで回していない。
-- Next: ランナーの評価者の反証（霧・パストレーサーの危険地帯）。人が見るときの見どころ: 今はどのシーンも Tint・SkyBlend を設定していないので、ランチャーの各シーンと Rendering3DTest の見た目は変わらない。高さフォグのあるシーン（Rendering3DTest で `--height-fog-density=` を付けるなど）の霧の値で SkyBlend を 1 にすると、遠景の霧の色が視線の向きに関係なく地平線の少し上（10 度）の空の色にそろい、地面と地平線の空の継ぎ目が薄れる。Tint は霧の周りの光の色味だけを変え、太陽の単一散乱は変えない。環境の側（EnvironmentState・JSON）へ並べるのは G7-GR49-ENV-INTERFACES、撮影の確かめは G7-GR50-CHECK。撮影・計測の確かめは回さない決まり。
-- Notes: done-when の試験の部分（`VolumetricFogModelTest` の新しい欄の安全化・`HashPathFog` の区別、`HeightFogShaderCompileTest` の PT の rgen と volumetrics）は、試験を作らない・回さない決まりで足していない。既存の `VolumetricFogModelTest` はそのままビルドが通る。数値の既定（Tint・SkyBlend・基準の仰角 10 度・Tint の上限 16）は仮の値。真上・真下の視線は方位が決まらないので +X の方位で基準の向きを作る。
+- U1 DrynessMap に鍵ごとの状態（結ぶ・手放す・鍵で目標を設定・写す・戻す・保留）を足す: 着地(直し 0 回)
+- U2 WitherSourceComponent に鍵の PROPERTY を足し、登録で鍵を結び、EndPlay で手放す: 着地(直し 0 回)
+- U3 ProgressSaveData に節 vegetation.dryness を足し、保存で写し・読み込みで戻す結線をする: 着地(直し 0 回)
+- U4 シ者の撃破の応答の表に wither.recover を足し、敵の定義に載せ、全体をビルドする: 着地(直し 0 回)
+- U5 リスタートで進行を空にする時に枯れ度の鍵の状態も既定へ戻す（セーブが無い・読めない時の持ち越しを防ぐ）: 着地(直し 0 回)

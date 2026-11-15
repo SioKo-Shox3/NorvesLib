@@ -7232,7 +7232,7 @@
 - notes: 設計はロードマップ 2217・2221・2223 行（GR45 の消費側と遠景の見せ方）、完了条件は 2614 行。遠景の見せ方は企画で未決なので、草丈を潰すか（遠くから分かるが高い草の遮りが弱まる）・潰さないか（遮りは保つが遠くから分からない）を値の調整で選べるようにし、既定は「色だけ寄せて草丈は潰さない」（仮。高い草の遮りは G5 の GR113 などが前提にしているため）。地表・低木のシェーダーは今は無い（GR37 の層の材質・GR47 の低木）ので、`Common/WorldField.glsl` の `SampleDryness` を渡すだけにし、ここでは使わない。草のシェーダーは G5 の項目と共有なので差分を小さくする。試験を足す理由: 反証する契約は「枯れ度 0 では草が今とビット一致し、枯れ度に応じて決まった倍率で変わる」こと。漏れは草原全体の色や密度がわずかに変わるだけで撮影では気づきにくく、黙って起きる。危険地帯（RenderThread・GBuffer の経路）なので評価者を通す。
 
 ## G12-GR45-WITHER-GAMEPLAY: シ者の撃破で周りの草が戻る応答と、枯れ度の状態のセーブ・リスタートでの再現をつなぐ
-- status: todo
+- status: done
 - after: G12-GR45-DRYNESS-CPU, G8-GR17-ENEMY-COMPONENT, G8-GR76-STATE-AUTOSAVE, G8-GR76-RESET-LIFETIME, G8-GR17-HEALTH-PROGRESSION, G8-GR17-SLICE-SMOKE, G8-GR76-SAVE-STORAGE, G8-GR76-SETTINGS
 - gr: GR45
 - needs-gr: GR17, GR76

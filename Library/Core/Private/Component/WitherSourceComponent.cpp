@@ -1,4 +1,6 @@
-﻿// 枯れ度の源を再生中だけ登録し、所有者のワールド XZ 位置へ追従させる。
+﻿// 形・半径・減衰・既定の値・鍵を PROPERTY でシーンに保存し、再生中だけ源を登録して所有者に追従させる。
+// 現在値はシーンには保存せず、セーブが鍵ごとに持つ。
+// EndPlay では源を手放し、遷移中なら目標に届くまで残る。
 #include "Component/WitherSourceComponent.h"
 
 #include "Engine/Engine.h"
@@ -37,6 +39,7 @@ namespace NorvesLib::Core::Component
         SetFalloff(1.0f);
         SetDefaultLevel(1.0f);
         SetRecoverySeconds(3.0f);
+        SetKey(Container::String());
         SetTickEnabled(false);
     }
 
@@ -57,6 +60,12 @@ namespace NorvesLib::Core::Component
             return;
         }
 
+        if (GetKey().empty())
+        {
+            LOG_WARNING("WITHER_SOURCE_COMPONENT_SKIPPED status=EmptyKey 鍵が空の枯れ度の源は登録しません");
+            return;
+        }
+
         const auto position = owner->GetPosition();
         auto& drynessMap = engine->GetVegetation().GetDrynessMap();
         Vegetation::DrynessSourceId sourceId = Vegetation::InvalidDrynessSourceId;
@@ -73,6 +82,13 @@ namespace NorvesLib::Core::Component
         if (sourceId == Vegetation::InvalidDrynessSourceId)
         {
             LOG_WARNING("WITHER_SOURCE_COMPONENT_SKIPPED status=AddFailed 枯れ度の源を登録できません");
+            return;
+        }
+
+        if (!drynessMap.BindKey(sourceId, GetKey()))
+        {
+            drynessMap.Remove(sourceId);
+            LOG_WARNING("WITHER_SOURCE_COMPONENT_SKIPPED status=KeyRejected key=%s 鍵を結べないため枯れ度の源を登録しません", GetKey().c_str());
             return;
         }
 
@@ -104,7 +120,7 @@ namespace NorvesLib::Core::Component
     {
         if (m_RegisteredEngine && m_SourceId != Vegetation::InvalidDrynessSourceId)
         {
-            m_RegisteredEngine->GetVegetation().GetDrynessMap().Remove(m_SourceId);
+            m_RegisteredEngine->GetVegetation().GetDrynessMap().Release(m_SourceId);
         }
         m_RegisteredEngine = nullptr;
         m_SourceId = Vegetation::InvalidDrynessSourceId;
