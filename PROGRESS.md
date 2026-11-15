@@ -11230,3 +11230,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U12 MegaGeometry の書き手の濡れ（保存した差分を当てて確かめ直す）: 着地(直し 0 回)
 - U13 可視バッファの解決の書き手の濡れ（保存した差分を当て、幾何法線を直す）: 着地(直し 0 回)
 - U6 FoliagePass（株）の書き手に濡れを掛ける: 着地(直し 0 回)
+- U7 草のブレードの書き手に濡れを掛け、全体の濡れ度を環境の値にする: 着地(直し 0 回)

@@ -109,6 +109,8 @@ namespace NorvesLib::Core::Rendering
         RHI::ScissorRect Scissor;
         RHI::DescriptorSetPtr DescriptorSets[kGrassLodCount];
         GrassGenerateBufferRange Constants;
+        // 描画定数と同じフレームから借りた環境の UBO。
+        GrassGenerateBufferRange EnvironmentConstants;
         GrassGenerateBufferRange Species;
         RHI::BufferPtr RecordBuffer;
         uint32_t LodBase[kGrassLodCount] = {};
@@ -135,6 +137,7 @@ namespace NorvesLib::Core::Rendering
          * 各 LodCapacity は正数、LodBase * 16 はデバイスのストレージの整列を満たすこと。
          * 記録バッファは ShaderResource で渡し、戻ったときも ShaderResource である。
          * 引数は IndirectArgument、LayerA と世界フィールドの画像は ShaderResource とする。
+         * LayerA は描画中だけ頂点段へ公開し、終了時に ShaderResource の同期状態へ戻す。
          * 描き先は RenderTarget / DepthWrite で渡し、終了時に ShaderResource へ移る。
          * 分割数は Initialize の settings と生成定数で一致させる。
          */
