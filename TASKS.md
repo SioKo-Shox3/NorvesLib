@@ -5924,7 +5924,7 @@
 - notes: 設計はロードマップ 1774〜1778 行(段階 P3。1802 行)。今の `GameModeScope` は Entity・メッシュ・モデル・材質・テクスチャを追う(`GameModeScope.h:60-119`)が、非同期の読み込みは「TODO: TrackAsync」(同 40 行)のまま。Core は Audio のモジュールに依れないので、型ごとの Track〜 を増やさず汎用の AddCleanup にする。選定課題 G8-S14(起動画面の手作業の後始末を新しい経路へ移すか。1778 行は「移す」)を決めた: この段では移さない。理由: `Scripts/Test-M9World.ps1` が `CleanupM9WorldAcceptance` の中の呼び出しの語順を文字列で検査しており(`Test-M9CleanupSourceContract`。1687 行の (1)・1876 行)、起動画面(Rendering3DTest)は作業合意の絶対規則 7 で見た目を保つ対象なので、触る費用に対して得るものが小さい。新しいモード(CombatSlice と以後のモード)が AddCleanup を使う。危険地帯: Object / Resource の寿命とアセットの読み込みの取り消しなので評価者を通す。起動しての確かめ(`--soak-reset`・検証層・GPU の試験)は G8-GR76-RESET-CHECK。
 
 ## G5-GR25-SHADOW-CASTER-STAGE: 拡張が影を落とす物を出せる段を作り、太陽の VSM と CSM の両方へ描かせる
-- status: done
+- status: doing
 - after: G5-GR25-EXTENSION-DATA, G5-GR27-MASKED-SHADOW
 - gr: GR25
 - done-when: `RenderExtensionStage::ShadowCaster` に登録した拡張が、フレームごとに影を落とす物の束（頂点とインデックスのバッファ、インスタンスの置き方、任意で切り抜きの材質）を RenderThread で提出でき、太陽の VSM（`--shadow-method=vsm`。`VirtualShadowMapRaster` の手続きの塊の記録として三角形 128 個以下の塊に分けて渡す。VirtualShadowMapRaster.h:3〜30 の描画の規則）と CSM（`ShadowMapPass`）の両方が、エンジンのパイプラインでそれを描く（拡張は影のマップへ自分で描かない。影のマップのレンダーパスは消去が前提で、記録は FrameCommand 経由のため）。切り抜きの材質は G5-GR27-MASKED-SHADOW の切り抜きの影の経路を使う。点光源の影へは同じ束を描くかを束の印で選べる（既定は描かない）。GPU の `RenderExtensionShadowCasterVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足して登録）が、床の上の拡張の板が落とす影の ROI の暗さを、拡張あり・なしの A/B で VSM と CSM のそれぞれについて確かめ、拡張なしでは影が無いこと・VSM の溢れの統計（VSM_RASTER の行）が増えないことも確かめる。拡張 0 件で golden 4 本が変わらない。
