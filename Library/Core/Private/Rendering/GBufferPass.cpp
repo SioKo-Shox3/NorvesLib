@@ -10,6 +10,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/SkinnedLodSelection.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
@@ -1652,7 +1653,7 @@ namespace NorvesLib::Core::Rendering
         rpDesc.depthStencilAttachment.format = signature.Depth.Format;
         rpDesc.depthStencilAttachment.isDepthStencil = true;
         rpDesc.depthStencilAttachment.clear = true;
-        rpDesc.depthStencilAttachment.clearDepth = 1.0f;
+        rpDesc.depthStencilAttachment.clearDepth = DepthConvention::ClearDepth;
         rpDesc.depthStencilAttachment.clearStencil = 0;
         rpDesc.depthStencilAttachment.loadOp = signature.Depth.LoadOp;
         rpDesc.depthStencilAttachment.storeOp = signature.Depth.StoreOp;
@@ -1934,7 +1935,7 @@ namespace NorvesLib::Core::Rendering
         // デプステスト有効
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
 
         // MRT用ブレンドステート（5カラーアタッチメント分）
         for (int i = 0; i < 5; ++i)

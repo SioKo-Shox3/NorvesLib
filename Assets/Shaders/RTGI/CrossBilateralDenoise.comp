@@ -1,5 +1,7 @@
 ﻿#version 460
 
+#include "Common/DepthConvention.glsl"
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 // 入力と出力はテンポラル結果の放射輝度をそのまま保持し、ここでは露出変換を行わない。
@@ -87,7 +89,7 @@ void main()
     float centerConfidence = texelFetch(historyConfidence, pixel, 0).r;
     float centerNormalLengthSquared = dot(centerNormal, centerNormal);
     bool bCenterValid = IsFiniteScalar(centerDepth) &&
-        centerDepth < 0.999999 &&
+        !IsBackgroundDepth(centerDepth) &&
         IsFiniteVector(centerNormal) &&
         IsFiniteScalar(centerNormalLengthSquared) &&
         centerNormalLengthSquared > 1.0e-8 &&
@@ -126,7 +128,7 @@ void main()
             vec3 sampleMaterial = texelFetch(gbufferMaterial, samplePixel, 0).rgb;
             float sampleConfidence = texelFetch(historyConfidence, samplePixel, 0).r;
             float sampleNormalLengthSquared = dot(sampleNormal, sampleNormal);
-            if (!IsFiniteScalar(sampleDepth) || sampleDepth >= 0.999999 ||
+            if (!IsFiniteScalar(sampleDepth) || IsBackgroundDepth(sampleDepth) ||
                 !IsFiniteVector(sampleNormal) ||
                 !IsFiniteScalar(sampleNormalLengthSquared) ||
                 sampleNormalLengthSquared <= 1.0e-8 ||
@@ -140,6 +142,7 @@ void main()
             sampleConfidence = clamp(sampleConfidence, 0.0, 1.0);
             float depthDifference = abs(centerDepth - sampleDepth);
             float depthThreshold = max(DEPTH_REJECTION_THRESHOLD,
+                                       // NDC の深度の大きさに比例した許容。前後の判定ではないので深度の規約の関数を使わない
                                        0.05 * max(centerDepth, sampleDepth));
             float normalDot = dot(centerNormal, sampleNormal);
             vec3 materialDelta = abs(centerMaterial - sampleMaterial);

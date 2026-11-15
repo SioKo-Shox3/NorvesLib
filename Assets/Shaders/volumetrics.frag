@@ -4,14 +4,15 @@ layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
 #define VOLUMETRICS_USE_VSM 1
+#include "Common/DepthConvention.glsl"
 #include "Common/VolumetricsCommon.glsl"
 
 void main()
 {
     float depth = textureLod(sceneDepthTexture, fragUV, 0.0).r;
-    if (!IsFiniteFloat(depth) || depth >= 0.999999)
+    if (!IsFiniteFloat(depth) || IsBackgroundDepth(depth))
     {
-        // LightingPass already wrote the R2 sky and sun disk for clear-depth pixels.
+        // クリア値の画素には LightingPass がすでに R2 の空と太陽の円盤を書いている。
         outColor = vec4(0.0);
         return;
     }
