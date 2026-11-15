@@ -30,6 +30,7 @@
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
 #include <cstddef>
 
 #include <Windows.h>
@@ -119,8 +120,9 @@ namespace NorvesLib::Core::Rendering
         {
             // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
             // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）
-            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 頂点アニメの材質（32）= 448 バイト
-            constexpr uint32_t UBO_SIZE = 448;
+            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 頂点アニメの材質（32）
+            // + ディゾルブの材質（64）= 512 バイト
+            constexpr uint32_t UBO_SIZE = 512;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -840,13 +842,21 @@ namespace NorvesLib::Core::Rendering
             float specularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
             float vertexAnimMaterial0[4];
             float vertexAnimMaterial1[4];
+            float dissolveEdge[4]; // rgb=縁の色、a=縁の発光輝度
+            float dissolveSweep[4]; // xyz=掃引の向き、w=掃引の強さ
+            float dissolveParams[4]; // x=有効の印、y=ノイズのスケール、z=縁の幅、w=ディザの幅
+            uint32_t dissolveProtectBones[4]; // 保護する骨のビットの組
         };
         static_assert(offsetof(PerObjectUBO, vertexAnimInstanceParams) == 368u);
         static_assert(offsetof(PerObjectUBO, vertexAnimTime) == 384u);
         static_assert(offsetof(PerObjectUBO, specularAAParams) == 400u);
         static_assert(offsetof(PerObjectUBO, vertexAnimMaterial0) == 416u);
         static_assert(offsetof(PerObjectUBO, vertexAnimMaterial1) == 432u);
-        static_assert(sizeof(PerObjectUBO) == 448u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(offsetof(PerObjectUBO, dissolveEdge) == 448u);
+        static_assert(offsetof(PerObjectUBO, dissolveSweep) == 464u);
+        static_assert(offsetof(PerObjectUBO, dissolveParams) == 480u);
+        static_assert(offsetof(PerObjectUBO, dissolveProtectBones) == 496u);
+        static_assert(sizeof(PerObjectUBO) == 512u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -985,6 +995,26 @@ namespace NorvesLib::Core::Rendering
                     uboData.shadingModel[2] = static_cast<float>(ResolveGBufferAlphaClip(matData, context.bTemporalAAApplied, opacity));
                     // TAA が掛からないビューでは Hash は Test に落ちるため、位相は使われない。
                     uboData.shadingModel[3] = static_cast<float>(context.bTemporalAAApplied ? context.TemporalAAJitterIndex : 0u);
+                }
+            }
+
+            if (IsDissolveMaterial(matData))
+            {
+                const DissolveMaterialData& dissolve = matData->Dissolve;
+                for (uint32_t i = 0; i < 3u; ++i)
+                {
+                    uboData.dissolveEdge[i] = dissolve.EdgeColor[i];
+                    uboData.dissolveSweep[i] = dissolve.Direction[i];
+                }
+                uboData.dissolveEdge[3] = std::min(dissolve.EdgeEmissiveNits, DissolveEdgeEmissiveNitsMax);
+                uboData.dissolveSweep[3] = dissolve.DirectionBias;
+                uboData.dissolveParams[0] = 1.0f;
+                uboData.dissolveParams[1] = dissolve.NoiseScale;
+                uboData.dissolveParams[2] = dissolve.EdgeWidth;
+                uboData.dissolveParams[3] = context.bTemporalAAApplied ? 0.0f : DissolveNoTemporalAADitherWidth;
+                for (uint32_t i = 0; i < DissolveProtectBoneWordCount; ++i)
+                {
+                    uboData.dissolveProtectBones[i] = dissolve.ProtectBoneGroup[i];
                 }
             }
 

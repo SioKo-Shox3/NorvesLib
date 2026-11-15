@@ -11553,3 +11553,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 統合ブランチ（G11-GR114-SHADOW-PARAMS など）の取り込みで、こちらの「頂点アニメの材質は重ねて描く」判定と、統合側の「残像（不透明度 1 未満のスキン）は重ねて描く」判定を `RequiresGBufferOverlayDraw(material, opacity)` の一つにまとめた。取り込み後の `cmake --build build --config Debug -- /m:1` は終了コード 0（`.harness/runs/20261115-212209/merge-build-debug.txt`）。影のパスは統合側の投影物の上限の作り替えの上に風の定数の受け渡しがそのまま載っている
 - U7 ディゾルブの材質の値・閾値の入口・組み込みのプログラムの登録: 着地(直し 1 回)
 - U8 Dissolve.glsl と GBuffer のディゾルブのシェーダー: 着地(直し 1 回)
+- U3 GBufferPass の per-object の UBO にディゾルブの値を通す: 着地(直し 0 回)
