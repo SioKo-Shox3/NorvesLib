@@ -148,6 +148,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DrawBindWorldField = 6;
         constexpr uint32_t DrawBindAlbedo = 7;
         constexpr uint32_t DrawBindVertexAnim = 8;
+        constexpr uint32_t DrawBindDissolve = 9;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type, RHI::ShaderStage stages)
         {
@@ -189,6 +190,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::DescriptorSetDesc desc = MakeDrawLayout();
             desc.bindings.push_back(MakeBinding(DrawBindAlbedo, RHI::ResourceBindType::CombinedImageSampler, RHI::ShaderStage::Pixel));
+            desc.bindings.push_back(MakeBinding(DrawBindDissolve, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex));
             return desc;
         }
 
@@ -707,6 +709,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 表が無い、または全件を束縛できないときは切り抜き範囲を不透明で描く。
+        const uint64_t dissolveBytes = static_cast<uint64_t>(dispatch.DissolveEntryCount) * sizeof(GPUVsmDissolveEntry);
+        const bool bDissolveValid = dispatch.DissolveEntryCount != 0u && dispatch.Dissolve &&
+                                    dissolveBytes <= VirtualShadowMap::GUARANTEED_MAX_STORAGE_BUFFER_RANGE &&
+                                    dispatch.Dissolve->GetSize() >= dissolveBytes;
+
         // 不正な範囲も実在する塊へ切り詰めて残し、不透明で描いた数を重複なく数える。
         constexpr uint32_t FallbackMask = std::numeric_limits<uint32_t>::max();
         struct MaskSpan
@@ -724,7 +732,7 @@ namespace NorvesLib::Core::Rendering
                 const VirtualShadowMapMaskedDraw& draw = dispatch.MaskedDraws[index];
                 const uint64_t end = static_cast<uint64_t>(draw.FirstChunk) + draw.ChunkCount;
                 const bool bValid = draw.FirstChunk >= previousEnd && end <= dispatch.ChunkCount && draw.Albedo &&
-                                    index < VirtualShadowMap::MAX_MASKED_DRAWS && m_MaskDrawPipeline;
+                                    index < VirtualShadowMap::MAX_MASKED_DRAWS && m_MaskDrawPipeline && bDissolveValid;
                 previousEnd = std::max(previousEnd, end);
                 if (draw.ChunkCount != 0u && draw.FirstChunk < dispatch.ChunkCount)
                 {
@@ -821,8 +829,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 展開の書き込みを、間接描画の引数・頂点シェーダーの読み取りへ見せる。物理ページは消去（計算）の書き込みを断片シェーダーへ見せる
-        RHI::BufferPtr readBuffers[6] = {dispatch.Draws, dispatch.Instances, dispatch.Chunks, dispatch.ChunkVertexAnim};
+        RHI::BufferPtr readBuffers[7] = {dispatch.Draws, dispatch.Instances, dispatch.Chunks, dispatch.ChunkVertexAnim};
         uint32_t readBufferCount = 4;
+        if (bDissolveValid)
+        {
+            readBuffers[readBufferCount++] = dispatch.Dissolve;
+        }
         if (bMega)
         {
             readBuffers[readBufferCount++] = dispatch.MegaChunks;
@@ -888,6 +900,7 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     bindDrawSet(set);
+                    set->BindStorageBuffer(DrawBindDissolve, dispatch.Dissolve, 0, ClampBindSize(dissolveBytes));
                     // アルベドは GBuffer と同じ断片で標本する ShaderResource 状態。追加の遷移は不要。
                     set->BindTexture(DrawBindAlbedo, dispatch.MaskedDraws[span.MaskIndex].Albedo);
                     set->BindSampler(DrawBindAlbedo, m_AlbedoSampler);

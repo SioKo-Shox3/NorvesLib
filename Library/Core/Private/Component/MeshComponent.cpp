@@ -199,6 +199,16 @@ namespace NorvesLib::Core::Component
         return index < Rendering::ShadingParamCount ? m_ShadingParams[index] : -1.0f;
     }
 
+    void MeshComponent::SetDissolveThreshold(float threshold)
+    {
+        SetShadingParams(Rendering::ShadingParamP0, threshold);
+    }
+
+    float MeshComponent::GetDissolveThreshold() const
+    {
+        return GetShadingParams(Rendering::ShadingParamP0);
+    }
+
     // ========================================
     // バウンディング
     // ========================================

@@ -56,6 +56,22 @@ namespace NorvesLib::Core::Rendering
 {
     class ShaderManager;
 
+    /** @brief VSM のディゾルブの表の 1 件（Common/VsmDrawVertex.glsl の VsmDissolveEntry と同じ並び） */
+    struct alignas(16) GPUVsmDissolveEntry
+    {
+        float Sweep[4] = {};           // xyz = 掃引の向き、w = 掃引の強さ
+        float Params[4] = {};          // x = ノイズの尺度、y = 材質の閾値、z = 種類、w = 有効の印
+        uint32_t ProtectBones[4] = {}; // 保護する骨のビットの組
+        uint32_t Skin[4] = {};         // 入力頂点のアドレスの下位・上位 32 ビットと予約領域
+    };
+    static_assert(sizeof(GPUVsmDissolveEntry) == 64u);
+    static_assert(offsetof(GPUVsmDissolveEntry, Sweep) == 0u);
+    static_assert(offsetof(GPUVsmDissolveEntry, Params) == 16u);
+    static_assert(offsetof(GPUVsmDissolveEntry, ProtectBones) == 32u);
+    static_assert(offsetof(GPUVsmDissolveEntry, Skin) == 48u);
+    inline constexpr uint32_t VsmDissolveKindProcedural = 0u;
+    inline constexpr uint32_t VsmDissolveKindSkinned = 1u;
+
     /**
      * @brief 影の塊の記録 1 行（storage buffer の 1 要素。GLSL の VsmShadowChunk と同じ 144 バイト）
      *
@@ -211,6 +227,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t ChunkCount = 0;
         /** @brief 塊と同じ並びの材質の頂点アニメ（塊ごとに 2 つの vec4、最低 1 件ぶん） */
         RHI::BufferPtr ChunkVertexAnim;
+        /** @brief ディゾルブの表と件数（空のときも無効な 1 件を含む） */
+        RHI::BufferPtr Dissolve;
+        uint32_t DissolveEntryCount = 1u;
         /** @brief 切り抜きの範囲。配列の添字が Record.MaterialIndex の範囲の番号に対応する */
         const VirtualShadowMapMaskedDraw* MaskedDraws = nullptr;
         uint32_t MaskedDrawCount = 0;
