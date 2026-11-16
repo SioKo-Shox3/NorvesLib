@@ -7115,7 +7115,7 @@
 - notes: 要件 `#### GR57` の設計案（d）Compact とフェーズ P5。間接の描画は GR28 の非インデックスの `DrawIndirect` を使い、静的な 6 要素のインデックスの経路（設計案の DrawIndexedIndirect）は作らない（GR28 が非インデックスの口を足すので、インデックスのバッファが要らない）。atomic の順で描画の順が毎フレーム変わりうるので、premultiplied の重なりが多いエミッタはスロットの順の描画を選べる、と注釈に書く。`firstInstance` を GPU が詰める使い方はしない（GR28 の notes の `bDrawIndirectFirstInstance` の前提を避ける。スロットは詰めた列から引く）。性能の記録（5 万粒で生成・更新・詰め・描画の合計 1.5 ms 以下が目標、合否にしない）は G7-GR57-CHECK。試験を足す理由: 詰めた数と描いた数のずれは粒が少し欠けるだけで、撮影では気づけず黙って起きる。危険地帯（RHI の間接の描画・RenderThread）なので評価者を通す。
 
 ## G7-GR58-RAIN-MODEL: 雨量から雨の本数・不透明度・太さ・傾き・遠景の層・霧の増分への写像を純関数にし、調整の値をデータに置いて、雨量に応じて霧を濃くする
-- status: todo
+- status: done
 - after: G7-GR49-ENV-SYSTEM, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46
@@ -7422,7 +7422,7 @@
 - notes: 要件 `#### GR114` の受け入れ確認のうち、撮影で測る分（影の先端の幾何の検算・GPU 時間・草とファーの方針）をここに分けた。`CaptureStartupScene.ps1` の `-SunElevations` は今 0〜90 の度（GR55 で負へ広げる）。GPU A/B の新しい試験（要件の `MegaGeometryDirectionalShadowVulkanTest`）は足さない: MegaGeometry の CSM 描画は SS-CSM-MEGA-CASTERS で撮影の昼・夕の確かめと基準画像の試験が済み、欠ければ撮影と `RenderingGolden*` で気づける（Docs/Testing.md の試験を足す条件に当たらない）。GPU 時間の目標は GR109（G19）で決め、ここは記録だけ。自動停止の 2000 lux は試しの値で根拠なし（撮影で曇天の地表照度を見て決め、決めた値を記録に書く）。grassland の視点名は G5-GR43-GRASS-CHECK と同じ。ロードマップ 2002 行。
 
 ## G11-GR54-SKY-SOURCE-SHARE: 空のモデルと放射輝度の源を空の LUT と空由来 IBL で 1 回だけ作って共有し、IBL の生成を空のパスへ移して所要時間を記録する
-- status: todo
+- status: done
 - after: G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR54
 - needs-gr: GR50
@@ -7602,7 +7602,7 @@
 - notes: 要件 `#### GR59` の受け入れ確認の撮影・基準画像・計測の分（要件 6038・6040 行）。雨の強さは G7 の引数 `--rain=`（G7-GR49-ENV-INTERFACES）で決める。犬が走る場面は G4 の犬の移動の確かめの場面（`--dog-movement-smoke`。シーンの一覧には無い）か、grassland に犬が置かれていればそれを使う。`Scripts/UpdateRenderingGoldenBaselines.ps1` は Indoor・Outdoor の 2 枚専用（引数に 2 枚の SHA-256 を要する）なので、雨の場面の基準画像は GTAO の場面（`RenderingGTAOCornellRoomVulkanTest`）と同じ置き方で `Test/Core/Rendering/Baselines` に置き、承認の記録を GoldenBaselines.md に書く（UNCERTAIN: GTAO の場面の基準の置き方を読んでいない。着手時に確かめる）。目標の 0.3 ms は要件の目標値（未計測）で、合否は GR109 で決め、ここは記録。コードは基準画像と閾値の TSV 以外変えない。
 
 ## G11-GR52-FOG-STEPS: 霧と空気遠近の光線の歩を、手前を細かくする指数の配置と画素・時間のずらしにし、少ない歩で光の筋が参照に近づくようにする（既定は今のまま）
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR51

@@ -340,6 +340,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetWindParameters(parameters);
     }
 
+    void RenderWorld::SetRainTuning(const RainTuning& tuning)
+    {
+        m_RenderingCoordinator.SetRainTuning(tuning);
+    }
+
     void RenderWorld::SetEnvironmentParameters(const EnvironmentParameters& parameters)
     {
         m_RenderingCoordinator.SetEnvironmentParameters(parameters);
