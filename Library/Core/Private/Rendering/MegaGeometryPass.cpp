@@ -1006,6 +1006,8 @@ namespace NorvesLib::Core::Rendering
         instance.Handle = proxy.MegaMeshHandle;
         std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
         std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
+        instance.Tint = proxy.Tint;
+        instance.VariationSeed = proxy.VariationSeed;
         instance.bCastShadow = proxy.bCastShadow;
         instance.WorldBounds = proxy.WorldBounds;
         instance.SceneSlot = proxy.SceneSlot;
@@ -1401,7 +1403,8 @@ namespace NorvesLib::Core::Rendering
                         (m_bSceneSlotsDirty || !m_bSceneSlotsPatchable ||
                          (actual.SceneSlot != 0 && actual.TableSlot == actual.SceneSlot)) &&
                         actual.Handle.Id == expected.Handle.Id &&
-                        actual.bCastShadow == expected.bCastShadow &&
+                        actual.bCastShadow == expected.bCastShadow && actual.Tint == expected.Tint &&
+                        actual.VariationSeed == expected.VariationSeed &&
                         std::memcmp(actual.WorldMatrix, expected.WorldMatrix, sizeof(expected.WorldMatrix)) == 0 &&
                         std::memcmp(actual.PreviousWorldMatrix, expected.PreviousWorldMatrix,
                                     sizeof(expected.PreviousWorldMatrix)) == 0 &&
@@ -6487,9 +6490,11 @@ namespace NorvesLib::Core::Rendering
         const auto checkRow = [&](const MegaMeshInstance &instance) -> void
         {
             const uint32_t tableSlot = instance.TableSlot;
-            GPUMegaSlotRow row;
+            GPUMegaSlotRow row{};
             std::memcpy(row.WorldMatrix, instance.WorldMatrix, sizeof(row.WorldMatrix));
             std::memcpy(row.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(row.PreviousWorldMatrix));
+            row.Tint = instance.Tint;
+            row.VariationSeed = instance.VariationSeed;
             uint8_t &state = m_SlotRowStates[tableSlot];
             GPUMegaSlotRow &copy = m_SlotRowCopies[tableSlot];
             const bool bSame = state != 0u && std::memcmp(&copy, &row, sizeof(GPUMegaSlotRow)) == 0;
@@ -6690,12 +6695,12 @@ namespace NorvesLib::Core::Rendering
         // 4. 記録の列を staging へ書き、散在書き込みを記録する（書くものが無ければ何もしない）
         // ----------------------------------------
         constexpr uint32_t HeaderWords = 4u;
-        constexpr uint32_t RowRecordWords = 4u + 32u;    // 席の番号の uvec4 + 席の行（128 B）
+        constexpr uint32_t RowRecordWords = 4u + 36u;    // 席の番号の uvec4 + 席の行（144 B）
         constexpr uint32_t EntryRecordWords = 8u;        // 2 語の uvec4
         constexpr uint32_t ShadowRecordWords = 4u + 12u; // 描く順の番号の uvec4 + 影の表の行（48 B）
         constexpr uint32_t MeshRecordWords = 4u + 20u;   // メッシュの表の番号の uvec4 + メッシュの表の行（80 B）
         constexpr uint32_t RegionAlignWords = 64u;       // 区画の先頭を 256 B にそろえる（storage のオフセットの整列）
-        static_assert(sizeof(GPUMegaSlotRow) == 32u * sizeof(uint32_t));
+        static_assert(sizeof(GPUMegaSlotRow) == 36u * sizeof(uint32_t));
         static_assert(sizeof(MegaGeometryShadowInstance) == 12u * sizeof(uint32_t));
         static_assert(sizeof(GPUMegaMesh) == 20u * sizeof(uint32_t));
 
@@ -6953,7 +6958,9 @@ namespace NorvesLib::Core::Rendering
             if (tableSlot >= m_SlotRowStates.size() || m_SlotRowStates[tableSlot] != 1u ||
                 std::memcmp(m_SlotRowCopies[tableSlot].WorldMatrix, instance.WorldMatrix, sizeof(instance.WorldMatrix)) != 0 ||
                 std::memcmp(m_SlotRowCopies[tableSlot].PreviousWorldMatrix, instance.PreviousWorldMatrix,
-                            sizeof(instance.PreviousWorldMatrix)) != 0)
+                            sizeof(instance.PreviousWorldMatrix)) != 0 ||
+                m_SlotRowCopies[tableSlot].Tint != instance.Tint ||
+                m_SlotRowCopies[tableSlot].VariationSeed != instance.VariationSeed)
             {
                 ++mismatches;
             }
@@ -7077,7 +7084,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 期待する中身: 席の表は写し（GPU の表にある行だけ照合する）、描く順の表は写しの出所と席の行から
-        // mega_scene_scatter.comp と同じ並び（席の行 8 語 + (メッシュの表の番号, 最初のワークグループ, 0, 0)）
+        // mega_scene_scatter.comp と同じ並び。席の行 9 語の末尾 1 語の先頭 2 要素をメッシュの表の番号・
+        // 最初のワークグループで上書きし、色味・個体差の種は席の行のまま残す
         slot.SceneCheckExpected.assign(static_cast<size_t>(totalBytes), static_cast<uint8_t>(0));
         slot.SceneCheckSlotMask.assign(slotRows, static_cast<uint8_t>(0));
         uint8_t *expected = slot.SceneCheckExpected.data();

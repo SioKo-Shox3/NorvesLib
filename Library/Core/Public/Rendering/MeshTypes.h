@@ -3,8 +3,10 @@
 #include "RenderTypes.h"
 #include "VertexLayout.h"
 #include "Container/Containers.h"
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -175,13 +177,143 @@ namespace NorvesLib::Core::Rendering
     // LOD情報
     // ========================================
 
+    constexpr uint32_t MAX_MESH_LOD_LEVELS = 4;
+    constexpr float DEFAULT_LOD_HYSTERESIS = 0.1f;
+
+    /**
+     * @brief 透視投影での境界球の画面の大きさを求める。
+     * @return 半径を距離と視野角の半角の正接の積で割った値。
+     */
+    inline float ComputePerspectiveScreenSize(float radius, float distance, float tanHalfFovY)
+    {
+        if (!std::isfinite(radius) || radius <= 0.0f)
+        {
+            return 0.0f;
+        }
+        if (!std::isfinite(distance) || distance <= 0.0f ||
+            !std::isfinite(tanHalfFovY) || tanHalfFovY <= 0.0f)
+        {
+            return std::numeric_limits<float>::max();
+        }
+        return radius / (distance * tanHalfFovY);
+    }
+
+    /**
+     * @brief 正射影での境界球の画面の大きさを求める。
+     * @return 半径を正射影の高さの半分で割った値。
+     */
+    inline float ComputeOrthographicScreenSize(float radius, float orthoHeight)
+    {
+        if (!std::isfinite(radius) || radius <= 0.0f)
+        {
+            return 0.0f;
+        }
+        if (!std::isfinite(orthoHeight) || orthoHeight <= 0.0f)
+        {
+            return std::numeric_limits<float>::max();
+        }
+        return radius / (orthoHeight * 0.5f);
+    }
+
+    /**
+     * @brief 段の順にしきい値を比べ、画面の大きさに合う最初の段を返す。
+     */
+    inline uint32_t SelectLODByScreenSize(float screenSize, const float* thresholds, uint32_t count)
+    {
+        if (count == 0 || thresholds == nullptr)
+        {
+            return 0;
+        }
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (screenSize >= thresholds[i])
+            {
+                return i;
+            }
+        }
+        return count - 1;
+    }
+
+    /**
+     * @brief 前の段を保持する帯を設けて画面の大きさからLODを選ぶ。
+     */
+    inline uint32_t SelectLODByScreenSizeWithHysteresis(float screenSize, const float* thresholds,
+                                                        uint32_t count, uint32_t previousLevel,
+                                                        float hysteresis = DEFAULT_LOD_HYSTERESIS)
+    {
+        if (count <= 1 || thresholds == nullptr)
+        {
+            return 0;
+        }
+        // 非数も範囲外の値として扱い、帯の幅を0にする。
+        if (!(hysteresis >= 0.0f))
+        {
+            hysteresis = 0.0f;
+        }
+        else if (hysteresis > 0.5f)
+        {
+            hysteresis = 0.5f;
+        }
+        if (previousLevel >= count)
+        {
+            previousLevel = count - 1;
+        }
+
+        uint32_t lowered = count - 1;
+        uint32_t raised = count - 1;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (screenSize >= thresholds[i] * (1.0f - hysteresis))
+            {
+                lowered = i;
+                break;
+            }
+        }
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (screenSize >= thresholds[i] * (1.0f + hysteresis))
+            {
+                raised = i;
+                break;
+            }
+        }
+        if (previousLevel < lowered)
+        {
+            return lowered;
+        }
+        if (previousLevel > raised)
+        {
+            return raised;
+        }
+        return previousLevel;
+    }
+
+    /**
+     * @brief 固定段を優先し、指定がなければヒステリシスつきでLODを選ぶ。
+     */
+    inline uint32_t ResolveMeshLODLevel(float screenSize, const float* thresholds, uint32_t count,
+                                        int32_t forcedLevel, uint32_t previousLevel,
+                                        float hysteresis = DEFAULT_LOD_HYSTERESIS)
+    {
+        if (count == 0)
+        {
+            return 0;
+        }
+        if (forcedLevel >= 0)
+        {
+            const uint32_t level = static_cast<uint32_t>(forcedLevel);
+            return level < count ? level : count - 1;
+        }
+        return SelectLODByScreenSizeWithHysteresis(screenSize, thresholds, count, previousLevel, hysteresis);
+    }
+
     /**
      * @brief LODレベル定義
      */
     struct LODLevel
     {
         MeshDataHandle MeshHandle; // このLODレベルのメッシュ
-        float ScreenSizeThreshold; // このLODに切り替わる画面サイズしきい値
+        float ScreenSizeThreshold; // 境界球の半径を画面の縦半分に当たる世界の長さで割ったしきい値
         float TransitionWidth;     // トランジション幅（ディザリング用）
     };
 
@@ -196,11 +328,15 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 画面サイズに基づいて適切なLODレベルを取得
-         * @param screenSize 画面上のサイズ（0.0～1.0）
+         * @param screenSize 境界球の半径 ÷ (距離 × tan(fov/2))。正射影では半径 ÷ (OrthoHeight/2)
          * @return LODレベルインデックス
          */
         uint32_t GetLODLevel(float screenSize) const
         {
+            if (Levels.empty())
+            {
+                return 0;
+            }
             for (uint32_t i = 0; i < static_cast<uint32_t>(Levels.size()); ++i)
             {
                 if (screenSize >= Levels[i].ScreenSizeThreshold)

@@ -647,6 +647,8 @@ namespace NorvesLib::Core::Rendering
                 instance.IndexBuffer = prepared.IndexBuffer;
                 instance.CurrentVertexAddress = currentAddress != 0 ? currentAddress + byteOffset : 0;
                 instance.PreviousVertexAddress = previousAddress != 0 ? previousAddress + byteOffset : 0;
+                // 計算シェーダーは入力の頂点 i を出力の VertexBase + i に書くので、この 2 つの先頭からの番号は一致する。
+                instance.SourceVertexAddress = dispatch.SkinVertices->GetDeviceAddress();
                 m_Instances.push_back(instance);
             }
         }

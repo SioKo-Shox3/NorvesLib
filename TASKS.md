@@ -6339,7 +6339,7 @@
 - notes: ロードマップ 1948・1960 行、要件 `#### GR19` の設計案の実装順 1)〜3) と受け入れ確認。位置だけのスキニングは新しく作らず、G3 の GR12 が公開した `Animation::SkinPosition` を使う（「段階をまたぐ注意」4452・4466 行。要件の `SkeletalAnimationSampler::SkinPosition` の新設は採らない）。姿勢の公開点（`EvaluatePose`・`FindJointIndex`・`TryGetJointWorldMatrix`。`SkinnedMeshComponent.h:77-88`）は G1・G3 で入っているが、パレットを読む口が無いので (4) で足す。要件の試験の名前（SkinnedSurfaceAnchorTest・JointBucketSearchTest・AnchorInvalidationTest・AnchorVelocityTest の CPU の部分）は、実行ファイルを増やさないため `SkeletalAnimationSamplingTest` の中のケースにする。正本は LOD0（GR63 の (d)）で、アンカーの間 LOD0 に固定するのは Gameplay の側（G10-GR19-ANCHOR-ATTACH）。AI 由来の高密度メッシュでの探索の費用は、GR80（G17）の間引いたアンカーメッシュが無い間は描画メッシュの LOD0 のバケットで代える（ロードマップ 1967 行）。この純部品は GR57-P6（G10-GR60-SKIN-SURFACE-EMITTER）が同じスキニングの規約で使う（ロードマップ 1966 行）。危険地帯（Public API の SkinnedMeshComponent）なので評価者を通す。ほかの G10 の項目と触るファイルが交わらないので、最初から並列に走れる。やらないこと: Entity の駆動・突き立ての結線（G10-GR19-ANCHOR-ATTACH）、アンカーの保存。
 
 ## G10-GR60-DISSOLVE: バインド姿勢の 3D の位置のノイズで体を削って縁を光らせるディゾルブの材質を、スキンと静的なメッシュの GBuffer と全部の影に入れる
-- status: todo
+- status: done
 - after: G10-GR64-GHOST-RENDER, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-SHADOW, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR27-MASKED-GBUFFER
 - gr: GR60
 - needs-gr: GR26, GR27
@@ -6993,7 +6993,7 @@
 - notes: 選定課題 G7-S3（ロードマップ 4530 行）は推奨の (A) を採る。理由: RTGI・DDGI・RayTracing のシェーダーは霧を読まず（`Assets/Shaders/RTGI`・`DDGI`・`RayTracing` に fog・aerial・cloud の記述が 0 件。2026-11-03 に grep）、パストレーサーは `HashPathFog`（PathTracingPass.inl:296）で別に再累積する。今は霧が revision に入っている（RenderingCoordinator.cpp:266-277）ので、雨量に連動した霧の増分（GR58）が入ると RTGI の履歴が毎フレーム捨てられる。外す前に `ComputeSceneRevisionHash`・`HashSceneRevisionInternal`（RenderingCoordinator.cpp:1201、:288）の読み手を grep で全部読み、霧を入力に使う履歴が無いことを確かめて PROGRESS.md に書く。将来霧を GI の入力にするときは入れ直す、と関数の注釈に書く。空気遠近・雲の層・空の欄（:223-252）はハッシュに残す（GR50 の CloudCover は入れない。段階をまたぐ注意 4462 行）。入口は RenderWorld.h:178-237 の Set 群、SceneProxy.h:548-625、`SnapshotSceneParameters`（RenderingCoordinator.cpp:4560）。GPU の UBO（`GPUEnvironmentParams`）は G7-GR53-WET-WRITERS で作り、時刻・雨量の値は G7-GR49-ENV-SYSTEM が入れる（ここでは既定の 0）。UNCERTAIN: R3 の sweep の scenario が今の HEAD で通るか（10-07 の受入れの後に霧・空気遠近が変わっている）。通らなければ G7-GR49-CHECK で原因を分け、霧の変更が原因でなければ基準を撮り直さず記録する。試験を足す理由（Docs/Testing.md の 3 点）: 写し漏れと履歴の毎フレームの破棄は撮影 1 枚やログで気づけず、黙って起きる。危険地帯（Public API・FramePacket・RenderThread へ渡す値）なので評価者を通す。要件 `#### GR49` の設計案【1】【6】、ロードマップ 1535・1548・1562 行。
 
 ## G7-GR49-ENV-SYSTEM: GameThread の気象の正本 EnvironmentState と EnvironmentSystem を Engine に置き、ゲームの時間で遷移と濡れを進めて空・霧・雲・風・環境の値へ解決する
-- status: todo
+- status: done
 - after: G7-GR49-ENV-PARAMS, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR49
 - needs-gr: GR46
@@ -7255,7 +7255,7 @@
 - notes: 完了条件はロードマップ 2613〜2615 行の GPU と撮影の部分。`grassland-wither=0,20,30` の座標と半径は仮で、着手時に near の視点の前方に置き直す（CaptureScene.ps1 の -GameArgs は「カンマの次が英字で始まらない限り分けない」ので数の並びは 1 つの引数のまま渡る）。「この段階の前の撮影」は G5 の草の確かめ（G5-GR43-GRASS-CHECK）の撮影の出力を使い、無ければ前の段階のコミットで撮る。直す必要が出たら、この項目では直さずに `G12-GR45-FIX-<名前>` を足す。
 
 ## G12-GR47-INSTANCE-VARIATION: 散布の 1 本ごとに色味と個体差の種を持たせ、1 本だけを記録を書き換えずに隠せるようにする
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR47
 - needs-gr: GR26, GR30
@@ -7299,7 +7299,7 @@
 - notes: 要件 `#### GR111` の受け入れ確認の「マニフェストの規模」「起動ベンチマーク」と P0 の計測（ロードマップ 2545・2673・2675 行）。計測は RelWithDebInfo（AGENTS.md の絶対規則 8。ロードマップは Release と書く）。数千資産での実の費用は未計測（ロードマップ 2801 行）なので、閾値は測ってから決める。マニフェストの JSON の解析の時間が小さければ二値の索引は作らない（同じ行）。荒野の起動の読み込みの比べは、`SummarizeAssetLoadProfile.ps1` の使い方を `Docs/Performance/AssetLoadBaseline.md` の流儀に合わせる。
 
 ## G12-GR48-MESH-LOD-SELECT: メッシュの LOD の鎖を画面の大きさとヒステリシスで選び、インポスターへの切り替えも同じ判定で決める
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `MeshProxy`（`Library/Core/Public/Rendering/SceneProxy.h`。今は `MeshHandle` 1 つと保持だけの `LODLevel`）が LOD の鎖（最大 4 段のメッシュのハンドルと、段ごとの画面の大きさのしきい値）を持ち、`MeshComponent` に鎖を設定する口がある（今は `CurrentLODLevel` を決めるコードが無い。`MeshComponent.h:186・286`）。(2) `SceneView::CullProxies` の 2 つの版が、境界球の画面の大きさ = 半径 / (距離 × tan(fov/2))（正射影のカメラでは半径 / (OrthoHeight/2)）から段を選び、ヒステリシス（しきい値の上下の帯）で 1 フレームごとに往復しない。`ForcedLODLevel`（-1 = 自動）を優先する。選んだ段のメッシュとサブメッシュの範囲（`TryGetSubMeshRanges`。`Library/Core/Private/Rendering/ProceduralMeshGpuStore.h`）へ、バッチへ渡す前に差し替える。`LODGroup::GetLODLevel`（`MeshTypes.h:193-213`）の定義と画面の大きさの式を 1 つにそろえる。(3) インポスターへの切り替え（今は `ImpostorComponent` の `LODSwitchDistance` の距離のしきい値。`ImpostorComponent.h:31・44`）を、同じ画面の大きさの判定の最後の段として扱い、元のメッシュが静的メッシュでも MegaGeometry のインスタンスでも同じ規則で元を抑える。(4) 試験（`SceneViewProxyLookupTest` の束へ MEMBER）: `MeshLODSelectionTest`（画面の大きさ → 段の対応、しきい値のちょうど・手前・奥、ForcedLODLevel の優先、ヒステリシスで往復しない、段が 1 つだけのメッシュ、正射影の式、インポスターへの切り替えと元の抑制、距離の単調性）。既存の `SceneViewProxyLookupTest`・`SceneViewProxyReconcileTest`・`SceneViewViewportCommandTest`・`MeshBatcherTest`・`ImpostorLODSwitchTest`・`ImpostorOctahedralTest` が通る。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest SceneViewViewportCommandTest MeshBatcherInstancingTest ImpostorLODSwitchTest -- /m:1`
@@ -10837,3 +10837,10 @@
   - todo の `G2-GR83-ASSET-PREVIEW-SCENE` は「骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける」を前提にしている。`G10-GR63-LOD-RUNTIME` も lease を「RigSplit の読み込みから」作る前提にしている。それなのに、split に lease を出す作業はどのタスクにも無い。
   - BonePalette は split でも split の InverseBind と InverseMesh で作られる(`SkeletalPoseBuilder.cpp:68-71, 290`)。なので lease の頂点は split の mesh の頂点のままでよい。
   - 危険地帯(アセットロード・Resource の寿命・Public API)なので、評価者を通す。
+
+## G7-GR49-ENV-SYSTEM-P1: 拡張のパスに渡すゲームの時間 GameTotalTime を、壁時計の FramePacket::TotalTime から World のチャンネルの積算に替え、ポーズの間は風の位相と頂点の動きを止める
+- status: todo
+- done-when: (根拠) 計画の文書 `Docs/Plans/GameFeatureRoadmap.md` の 4460 行は「EnvironmentSystem の時計は GR02 の World チャンネル(ポーズの門の中)で進め、FramePacket::TotalTime(実時間)は位相の源に使わない」と決めている。1563 行には「壁時計を雨・風・雲・粒子の位相の源にすると、ポーズ中に動き、撮影が再現しない」とある。G5-GR46-WIND-FIELD の notes-board(TASKS.md 5510 行)も、風の時刻を「GR25 の GameTotalTime(World のチャンネル。ポーズで止まる)」から取る前提で書かれている。ところが実際は `RenderingCoordinator.cpp:5881` が `RenderExtensionFrameInfo::GameTotalTime` に `packet->TotalTime` を入れている。その値は `BeginFrame` が壁時計の dt で積んだもの(4497〜4526 行)なので、共通の風(GrassPass.cpp:909・FoliagePass.cpp:482・VirtualShadowMapPass.cpp:1393)と頂点の動き(VertexAnimation.h)がポーズ中も進む。源を替える作業は、一覧のどのタスクにも入っていない。(1) `FramePacket` にゲームの時間の欄 `GameTime`(double)と `GameDeltaTime`(float)を足す。ApplicationProcessor が EnvironmentSystem の Tick と同じ dt(`GEngine->GetTimeSystem().GetFrameTimes().World`)で、シミュレーションを進めるフレームのときだけ積み、パケットへ書く。`bAdvanceSimulation=false` とポーズの間は同じ値のまま `GameDeltaTime=0` にし、ヒットストップで World の倍率が下がれば遅くなる。(2) `RenderingCoordinator.cpp` の `RenderExtensionFrameInfo` の `GameTotalTime`・`GameDeltaTime` と、`RenderedObjectHistory.h` の `PreviousRenderedTotalTime`(今は `packet.TotalTime` を覚えている)を、その欄から取る。(3) 決定的な撮影では、今と同じ 1/60 の刻みを保ち、エポックの 0 番のフレームで 0 から数え直す。撮影でパスに渡る時刻の列は今と同じにする。(4) `FramePacket::TotalTime` を読むほかのパス(雲の層・WorldField・自動露出・歪みなど)と、共通の風が無効なときの従来の草・低木の時計(FoliagePass.cpp:495)は変えない。(5) `RenderExtensionData.h` の `GameTotalTime` の注釈を「World のチャンネルの dt の積算。ポーズで止まる。EnvironmentState::GameTimeSeconds と刻みは同じ源で、起点は別(Enable・SkipTime・LoadState で動くのは環境の側だけ)」に直す。(6) Debug の Game のビルドが通る
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RenderedObjectHistory.h, Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
+- from: G7-GR49-ENV-SYSTEM

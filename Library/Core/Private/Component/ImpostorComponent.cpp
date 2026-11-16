@@ -15,6 +15,7 @@ namespace NorvesLib::Core::Component
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
         LODSwitchDistance = 0.0f;
+        LODSwitchScreenSize = 0.0f;
         getSpace().Set(Rendering::BoardSpace::WorldSpace);
     }
 
@@ -24,6 +25,7 @@ namespace NorvesLib::Core::Component
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
         LODSwitchDistance = 0.0f;
+        LODSwitchScreenSize = 0.0f;
         getSpace().Set(Rendering::BoardSpace::WorldSpace);
     }
 
@@ -33,6 +35,7 @@ namespace NorvesLib::Core::Component
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
         LODSwitchDistance = 0.0f;
+        LODSwitchScreenSize = 0.0f;
         getSpace().Set(Rendering::BoardSpace::WorldSpace);
     }
 
@@ -78,6 +81,12 @@ namespace NorvesLib::Core::Component
         MarkRenderStateDirty();
     }
 
+    void ImpostorComponent::SetLODSwitchScreenSize(float screenSize)
+    {
+        LODSwitchScreenSize = std::isfinite(screenSize) && screenSize > 0.0f ? screenSize : 0.0f;
+        MarkRenderStateDirty();
+    }
+
     void ImpostorComponent::ReleaseBakedAtlas(Rendering::TextureResources &textures,
                                               Rendering::RenderWorld *renderWorld)
     {
@@ -111,6 +120,7 @@ namespace NorvesLib::Core::Component
             outProxy.Texture = BakedAtlasTextureHandle;
             outProxy.SourceMeshComponentId = m_SourceMeshComponentId;
             outProxy.LODSwitchDistance = LODSwitchDistance;
+            outProxy.LODSwitchScreenSize = LODSwitchScreenSize;
             outProxy.ImpostorCellResolution = metadata.CellResolution;
             outProxy.ImpostorAxisCellCountX = metadata.AxisCellCountX;
             outProxy.ImpostorAxisCellCountY = metadata.AxisCellCountY;

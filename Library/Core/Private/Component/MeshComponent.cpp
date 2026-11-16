@@ -159,6 +159,72 @@ namespace NorvesLib::Core::Component
     }
 
     // ========================================
+    // LOD設定
+    // ========================================
+
+    bool MeshComponent::SetLODChain(const Rendering::LODGroup& group)
+    {
+        if (group.Levels.empty() || group.Levels.size() > Rendering::MAX_MESH_LOD_LEVELS)
+        {
+            NORVES_LOG_WARNING("MeshComponent", "LODの段数は1～4段で指定してください");
+            return false;
+        }
+
+        const uint32_t levelCount = static_cast<uint32_t>(group.Levels.size());
+        for (uint32_t i = 0; i < levelCount; ++i)
+        {
+            const Rendering::LODLevel& level = group.Levels[i];
+            if (i > 0 && !level.MeshHandle.IsValid())
+            {
+                NORVES_LOG_WARNING("MeshComponent", "LODの段1以降には有効なメッシュハンドルが必要です");
+                return false;
+            }
+            if (!std::isfinite(level.ScreenSizeThreshold) || level.ScreenSizeThreshold < 0.0f)
+            {
+                NORVES_LOG_WARNING("MeshComponent", "LODのしきい値は有限かつ0以上で指定してください");
+                return false;
+            }
+            if (i > 0 && group.Levels[i - 1].ScreenSizeThreshold <= level.ScreenSizeThreshold)
+            {
+                NORVES_LOG_WARNING("MeshComponent", "LODのしきい値は段の順に狭義に小さく指定してください");
+                return false;
+            }
+        }
+
+        if (group.Levels[0].MeshHandle.IsValid())
+        {
+            getMeshHandle().Set(group.Levels[0].MeshHandle);
+        }
+        if (levelCount == 1)
+        {
+            ClearLODChain();
+            return true;
+        }
+
+        m_LODChainMeshes.fill(Rendering::MeshDataHandle::Invalid());
+        m_LODScreenSizeThresholds.fill(0.0f);
+        m_LODLevelCount = levelCount;
+        for (uint32_t i = 0; i < levelCount; ++i)
+        {
+            m_LODScreenSizeThresholds[i] = group.Levels[i].ScreenSizeThreshold;
+            if (i > 0)
+            {
+                m_LODChainMeshes[i - 1] = group.Levels[i].MeshHandle;
+            }
+        }
+        MarkRenderStateDirty();
+        return true;
+    }
+
+    void MeshComponent::ClearLODChain()
+    {
+        m_LODChainMeshes.fill(Rendering::MeshDataHandle::Invalid());
+        m_LODScreenSizeThresholds.fill(0.0f);
+        m_LODLevelCount = 1;
+        MarkRenderStateDirty();
+    }
+
+    // ========================================
     // カスタムデータ
     // ========================================
 
@@ -199,6 +265,16 @@ namespace NorvesLib::Core::Component
         return index < Rendering::ShadingParamCount ? m_ShadingParams[index] : -1.0f;
     }
 
+    void MeshComponent::SetDissolveThreshold(float threshold)
+    {
+        SetShadingParams(Rendering::ShadingParamP0, threshold);
+    }
+
+    float MeshComponent::GetDissolveThreshold() const
+    {
+        return GetShadingParams(Rendering::ShadingParamP0);
+    }
+
     // ========================================
     // バウンディング
     // ========================================
@@ -236,6 +312,14 @@ namespace NorvesLib::Core::Component
         {
             out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::Mesh, meshHandle.Id});
         }
+        for (uint32_t i = 1; i < m_LODLevelCount; ++i)
+        {
+            const Rendering::MeshDataHandle lodMeshHandle = m_LODChainMeshes[i - 1];
+            if (lodMeshHandle.IsValid())
+            {
+                out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::Mesh, lodMeshHandle.Id});
+            }
+        }
         for (const Rendering::MaterialHandle& material : m_Materials)
         {
             if (material.IsValid())
@@ -268,7 +352,9 @@ namespace NorvesLib::Core::Component
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = ComponentId;
         outProxy.MeshHandle = meshHandle;
-        outProxy.LODLevel = CurrentLODLevel;
+        outProxy.LODLevel = 0;
+        outProxy.LODLevelCount = static_cast<uint8_t>(m_LODLevelCount);
+        outProxy.LODScreenSizeThresholds = m_LODScreenSizeThresholds;
 
         // トランスフォーム
         outProxy.WorldTransform = m_WorldTransform;
@@ -306,6 +392,28 @@ namespace NorvesLib::Core::Component
         {
             meshes->TryGetSubMeshRanges(outProxy.MeshHandle, outProxy.SubMeshes, outProxy.SubMeshCount);
         }
+
+        for (uint32_t i = 1; i < m_LODLevelCount; ++i)
+        {
+            const Rendering::MeshDataHandle lodMeshHandle = m_LODChainMeshes[i - 1];
+            if (meshes != nullptr && meshes->GetGPUData(lodMeshHandle) == nullptr)
+            {
+                // 未登録の段以降は、後の段が登録済みでも使わない。
+                outProxy.LODLevelCount = static_cast<uint8_t>(i);
+                break;
+            }
+
+            Rendering::MeshLODChainLevel& level = outProxy.LODChain[i - 1];
+            level.MeshHandle = lodMeshHandle;
+            if (meshes != nullptr)
+            {
+                meshes->TryGetSubMeshRanges(lodMeshHandle, level.SubMeshes, level.SubMeshCount);
+            }
+        }
+        const int32_t maxLODLevel = static_cast<int32_t>(outProxy.LODLevelCount) - 1;
+        const int32_t forcedLODLevel = ForcedLODLevel;
+        outProxy.ForcedLODLevel = static_cast<int8_t>(
+            forcedLODLevel < -1 ? -1 : (forcedLODLevel > maxLODLevel ? maxLODLevel : forcedLODLevel));
 
         // 描画フラグ
         outProxy.bVisible = getbVisible().Get();

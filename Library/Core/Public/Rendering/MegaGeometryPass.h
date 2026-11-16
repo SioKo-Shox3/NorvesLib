@@ -652,8 +652,8 @@ namespace NorvesLib::Core::Rendering
             float PreviousWorldMatrix[16]; // 直前のフレームの変換（velocity 用）
             uint32_t MeshIndex;            // メッシュの表の番号
             uint32_t FirstGroup;           // このインスタンスの最初のワークグループの通し番号
-            uint32_t Reserved0;
-            uint32_t Reserved1;
+            uint32_t Tint;                 // 色味（RGBA8。R が下位 8 bit。白は色を変えない）
+            uint32_t VariationSeed;        // 個体差の種
         };
         static_assert(sizeof(GPUMegaInstance) == 144, "Common/MegaInstanceTable.glsl の MegaInstanceRow と大きさが一致しません");
 
@@ -707,7 +707,7 @@ namespace NorvesLib::Core::Rendering
         using CullUniformData = MegaGeometry::CullUniformData;
 
         /**
-         * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
+         * @brief 席の表の1要素（席ごと 144 B。変換・前の変換・色味・種を持ち、SceneSlotRows と一致）
          *
          * 席の番号は行の席（MegaGeometryProxy::SceneSlot）。0 は空行のために予約する。行と一緒に動き、その実体が消えるまで変わらないので、
          * 動いた席の行だけを書き直せば、描く順が変わっても行を送り直さずに済む。
@@ -716,8 +716,14 @@ namespace NorvesLib::Core::Rendering
         {
             float WorldMatrix[16];         // ワールド変換（行ベクトル規約の列優先の並びのまま）
             float PreviousWorldMatrix[16]; // 直前のフレームの変換（velocity 用）
+            uint32_t Reserved0;            // 予約（0）
+            uint32_t Reserved1;            // 予約（0）
+            uint32_t Tint;                 // 色味（RGBA8）
+            uint32_t VariationSeed;        // 個体差の種
         };
-        static_assert(sizeof(GPUMegaSlotRow) == 128, "mega_scene_scatter.comp の席の表の行と大きさが一致しません");
+        static_assert(sizeof(GPUMegaSlotRow) == 144, "mega_scene_scatter.comp の席の表の行と大きさが一致しません");
+        static_assert(offsetof(GPUMegaSlotRow, Tint) == offsetof(GPUMegaInstance, Tint), "色味の位置が一致しません");
+        static_assert(offsetof(GPUMegaSlotRow, VariationSeed) == offsetof(GPUMegaInstance, VariationSeed), "個体差の種の位置が一致しません");
 
         /** @brief 描く順の表の 1 行の出所（席・メッシュの表の番号・ワークグループ）。CPU 側の値 */
         struct GPUMegaEntry
@@ -739,6 +745,8 @@ namespace NorvesLib::Core::Rendering
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
             float PreviousWorldMatrix[16];
+            uint32_t Tint = 0xFFFFFFFFu; // プロキシの色味（RGBA8。R が下位 8 bit。白は色を変えない）
+            uint32_t VariationSeed = 0; // プロキシの個体差の種
             // 影: 影を落とすか（プロキシの bCastShadow）と、ワールドの境界（プロキシの WorldBounds。半径が 0 以下なら分からない）
             bool bCastShadow = true;
             BoundingSphere WorldBounds;
@@ -1456,7 +1464,7 @@ namespace NorvesLib::Core::Rendering
         const void *m_InstanceSourceProxies = nullptr;
 
         // 常駐の表（device-local。フレームをまたいで残り、前段が変わった行だけを staging から散在書き込みする）。
-        // 席の表（席ごと 128 B）が変換の元で、描く順の表（MegaInstanceRow）は GPU が席の表と描く順の記録から組む。
+        // 席の表（席ごと 144 B）が変換・色味・種の元で、描く順の表（MegaInstanceRow）は GPU が席の表と描く順の記録から組む。
         // 影の表は描く順の表と同じ並び・同じ容量。転送は RenderResources のリング（ジオメトリ・テクスチャのタイル）とは
         // 別の道（フレームスロットの staging）で、予算もリングの 1 フレームの上限とは別（書く量だけ staging を広げる）
         RHI::ShaderPtr m_SceneScatterShader;

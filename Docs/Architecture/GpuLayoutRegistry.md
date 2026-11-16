@@ -31,6 +31,8 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）、14 は発光テクスチャ（ピクセルのみ）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。FS は GBuffer へ書く前に `ApplyWetSurfaceFromEnvironment` を呼ぶ。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
 
+組み込みのプログラム `Dissolve` は `GBufferProgramRegistry` の構築時に登録する。通常の VS は `gbuffer_dissolve.vert`、スキンの VS は `skinned_gbuffer_dissolve.vert`、FS は `gbuffer_dissolve.frag`。標準の location 0〜8 に加え、VS から FS へ location 9 の `vec3 fragRestPosition`（変形前の局所位置。スキンはバインド姿勢）と location 10 の `float fragDissolveProtect`（保護する骨の重み。静的メッシュは 0）を渡す。ディゾルブの閾値は `P0`（`ShadingParams.x`）で、インスタンス値を優先し、未指定なら材質値を使う。PaleFlat の消滅度と同じ `P0` の欄を使い、専用の閾値欄は増やさない。`P0` が閾値なので、ディゾルブの FS は濡れの感度に `P0` を使わず 1 とする。
+
 ### 材質値の優先と ID
 
 `ShadingParams` は x = `P0`、y = `P1`、z = インスタンスの頂点アニメの種類（材質側は予約）、w = 被覆率の乗数（1 で不変）。各成分は `MeshComponent::SetShadingParams` / `SkinnedMeshComponent::SetShadingParams` のインスタンス値が 0 以上ならそれを使い、負なら `MaterialResourceData::ShadingParams` / `MegaMeshMaterial::ShadingParams` の材質値を使う。両方とも負なら `P0 = P1 = 0`、z = 0、w = 1。未指定の初期値は各成分 `-1` である。GLSL の解決は `Common/GBufferEncoding.glsl::ResolveShadingParams` に従う。スキニングのインスタンス値は CPU で材質値に重ねる。現行の MegaGeometry はインスタンス値を渡さず、材質値を使う。
@@ -101,9 +103,9 @@ PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係�
 
 ### GBuffer
 
-C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 512u)` と初期化時の `UBO_SIZE = 512` がある。頂点アニメのインスタンス値・時刻、鏡面の AA、頂点アニメの材質の 2 欄、視界の確保の欄は `offsetof` で 368・384・400・416・432・448 バイトを検査する。空きの末尾領域はない。
+C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 576u)` と初期化時の `UBO_SIZE = 576` がある。頂点アニメのインスタンス値・時刻、鏡面の AA、頂点アニメの材質の 2 欄、視界の確保の欄は `offsetof` で 368・384・400・416・432・448 バイトを、ディゾルブの欄は 512・528・544・560 バイトを検査する。空きの末尾領域はない。
 
-GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` は先頭 448 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は全 512 バイトを宣言する。風の材質値を読むのは通常メッシュの頂点シェーダーだけである。`viewClearance` に値を入れるのは `bViewClearanceOccluder` の付いた材質だけで、ほかは全成分 0。読むのは `gbuffer_alphaclip.frag` の変種だけで、通常の `gbuffer.frag` は読まない。
+GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` は先頭 448 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は先頭 512 バイトを宣言する。ディゾルブの VS（`gbuffer_dissolve.vert`・`skinned_gbuffer_dissolve.vert`）と FS（`gbuffer_dissolve.frag`）だけが末尾の 64 バイトも含む全 576 バイトを宣言する（VS は視界の確保の 64 バイトを `vec4[4]` で読み飛ばす）。風の材質値を読むのは通常メッシュの頂点シェーダーだけである。`viewClearance` に値を入れるのは `bViewClearanceOccluder` の付いた材質だけで、ほかは全成分 0。読むのは切り抜きの変種（`gbuffer_alphaclip.frag`・`gbuffer_dissolve.frag`）だけで、通常の `gbuffer.frag` は読まない。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（ベクトルは x / y / z / w 順） |
 |---|---|---|---|
@@ -124,6 +126,10 @@ GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert`
 | 416 | `vertexAnimMaterial0: float[4]` | `vertexAnimMaterial0: vec4`（頂点側のみ） | 16 バイト。材質の `mode` / `amplitude` / `heightStart` / `heightEnd` |
 | 432 | `vertexAnimMaterial1: float[4]` | `vertexAnimMaterial1: vec4`（頂点側のみ） | 16 バイト。材質の `frequencyScale` / `branchFactor` / `phaseRandom` / `stiffness` |
 | 448 | `viewClearance: ViewClearanceGpuData` | `viewClearance: ViewClearanceData`（断片側のみ） | 64 バイト（vec4 × 4）。遮蔽物のディザ。並びは下記の共通表 |
+| 512 | `dissolveEdge: float[4]` | `dissolveEdge: vec4` | rgb = 縁の色、w = 縁の発光輝度（nits） |
+| 528 | `dissolveSweep: float[4]` | `dissolveSweep: vec4` | xyz = 局所座標の掃引方向、w = 掃引の強さ（`DirectionBias`） |
+| 544 | `dissolveParams: float[4]` | `dissolveParams: vec4` | 有効の印（1/0）/ `NoiseScale` / 縁の幅（`EdgeWidth`）/ ディザの幅（TAA 適用時は 0） |
+| 560 | `dissolveProtectBones: uint32_t[4]` | `dissolveProtectBones: uvec4` | 保護する骨のビット集合 |
 
 両経路の `specularAAParams.z` は印を足し合わせた float で、1 は発光テクスチャ、2 は `NormalScale` の適用を表し、シェーダーは `uint(z + 0.5)` で戻す。発光テクスチャが有効かつ nits が正なら 1、`NormalScale != 1` なら 2 を立てる。印が 0 のときは y も 0 のままにし、既定の演算を保つ。
 
@@ -390,7 +396,7 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 ## 6. 照合上の未確認事項と注意
 
 - `megageometry.vert` の `emissiveColor` のコメントはカラー・強度と表記しているが、C++ の入力と `megageometry.frag` の演算は色度・輝度（nits）である。
-- UBO の各フィールドのオフセットは配列宣言から積算した。頂点アニメと鏡面の AA の欄の `offsetof` 検査は `PerObjectUBO` の 368・384・400・416・432、`SectionUniformData` の 544・560、`GPURasterParams` の 112・128・176・192、`ShadowBaseUBO` の 208、`ShadowPerObjectUBO` の 224・240・256・272・288、`PointShadowFaceUBO` の 224・240・256・272・288・304 にある。`VisFrameConstants` と `ResolveParams` は大きさの検査だけで、フィールドごとの `offsetof` 検査はない。
+- UBO の各フィールドのオフセットは配列宣言から積算した。頂点アニメ・鏡面の AA・視界の確保・ディゾルブの欄の `offsetof` 検査は `PerObjectUBO` の 368・384・400・416・432・448・512・528・544・560、`SectionUniformData` の 544・560、`GPURasterParams` の 112・128・176・192、`ShadowBaseUBO` の 208、`ShadowPerObjectUBO` の 224・240・256・272・288、`PointShadowFaceUBO` の 224・240・256・272・288・304、`ShadowAlphaClipUBO` と `PointShadowAlphaClipUBO` の 240・256・272 にある。VSM のディゾルブ表は `GPUVsmDissolveEntry` の 0・16・32・48 を検査する。`VisFrameConstants` と `ResolveParams` は大きさの検査だけで、フィールドごとの `offsetof` 検査はない。
 - `SceneInstanceData.glsl` の `shadingParams.z` のコメントは予約のままだが、実際の頂点アニメの読み手は 1・3 節の種類として使う。`VisibilityBuffer.h` の `DrawRecord::LodPayload` のコメントも他の種類を 0 としているが、VSM の影の記録では 9 節の float ビット列を格納する。
 
 ## 7. 可視バッファの材質表
@@ -478,7 +484,7 @@ C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`a
 | `visbuffer_skinned.vert` | 0 / 3 | `VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING = 3`、`VisibilityRasterPass.cpp` の `SkinnedSet->BindStorageBuffer(3, ...)` |
 | `Common/VisibilityResolve.glsl` | 0 / 32 | `VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING = 32`、`VisibilityResolvePass.cpp` の `VertexAnimParamsTableBindingIndex` |
 
-両者とも `Common/VisibilityBuffer.glsl::VisRecordVertexAnimParams` で読む。スキン以外の種類、または添え字が表の範囲外なら `vec4(-1.0)` を返す。解決では手続きメッシュは `InstanceData.shadingParams`、MegaGeometry は `vec4(-1.0)` を使う。
+両者とも `Common/VisibilityBuffer.glsl::VisRecordVertexAnimParams` で読む。スキン以外の種類、または添え字が表の範囲外なら `vec4(-1.0)` を返す。解決では手続きメッシュは `InstanceData.shadingParams`、MegaGeometry は `vec4(-1.0)` を使う。MegaGeometry の種から位相を取り出す方法は 15 節に記す。
 
 ## 9. 影の頂点アニメ用の定数と記録
 
@@ -505,6 +511,21 @@ C++ は `VirtualShadowMapRaster.h::VirtualShadowMapRasterParams`（`VirtualShado
 ### VSM の塊ごとの頂点アニメの表
 
 `VirtualShadowMapPass.cpp::ChunkVertexAnimation` は `Params0` と `Params1` の 2 つの `float[4]` からなる **32 バイト**で、2 欄目の位置 16 と大きさを `static_assert` で検査する。描画時の set 0 / binding 8 は `std430` の読み取り専用 storage buffer `VsmChunkVertexAnim`（`Common/VsmDrawVertex.glsl`）で、塊 i の材質値は `chunkVertexAnim[2i]` と `[2i+1]`。各成分は 1 節と同じ。手続きメッシュに材質を対応させ、スキン・草の株には 0 を入れる。MegaGeometry はこの表を参照しない。
+
+### VSM の切り抜きのディゾルブ表
+
+切り抜きの描画の set 0 / binding 9 は `std430` の読み取り専用 storage buffer `VsmDissolveTable`（`Common/VsmDrawVertex.glsl`、`vsm_draw_alphaclip.vert`）。C++ の `VirtualShadowMapRaster.h::GPUVsmDissolveEntry` と GLSL の `VsmDissolveEntry` が対応し、1 件の大きさ・要素間隔は **64 バイト**。C++ の `static_assert` は大きさと各欄の位置を検査する。
+
+| オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
+|---|---|---|---|
+| 0 | `Sweep: float[4]` | `sweep: vec4` | xyz = 局所座標の掃引方向、w = 掃引の強さ |
+| 16 | `Params: float[4]` | `params: vec4` | `NoiseScale` / 材質の閾値 / 種類（手続き 0、スキン 1）/ 有効の印（1/0） |
+| 32 | `ProtectBones: uint32_t[4]` | `protectBones: uvec4` | 保護する骨のビット集合 |
+| 48 | `Skin: uint32_t[4]` | `skin: uvec4` | 入力頂点のアドレスの下位 32 bit / 上位 32 bit / 予約 / 予約 |
+
+`VirtualShadowMapPass.cpp::AppendDissolveCasterDraw` は塊の `Record.PreviousTransformIndex`（`record.source.z`、塊の先頭から 24 バイト）へ「表の番号 + 1」を書く。0 は表の指定なし。閾値は `uintBitsToFloat(record.previous.x)`（インスタンスの `P0`）が 0 以上なら 0〜1 に補正して優先し、負なら表の `params.y` を使う。
+
+スキンは `SkinningComputeInstance::SourceVertexAddress` を `skin.xy` に詰め、スキニング前の入力頂点を読む。入力の `SkinnedMeshVertex` は 64 バイトで、変形後と同じ頂点番号からバインド姿勢の位置・骨の番号・重みを読み、保護率を求める。手続きメッシュは通常の局所頂点位置を使う。
 
 ### VSM の塊の記録
 
@@ -538,7 +559,15 @@ C++ は `ShadowMapPass.cpp::ShadowPerObjectUBO`、GLSL は `shadow.vert::ShadowM
 | 272 | 16 | `windA: float[4]` | `windA: vec4` | 風の `windA` |
 | 288 | 16 | `windB: float[4]` | `windB: vec4` | 風の `windB` |
 
-CSM の切り抜きは従来どおり `ShadowAlphaClipUBO` / `ShadowAlphaClipMVP` の **240 バイト**で、224〜239 に `alphaClip` を置く。風の追加欄はなく、切り抜きの配置は変わらない。
+CSM の切り抜きは `ShadowAlphaClipUBO` / `ShadowAlphaClipMVP` の **288 バイト**で、先頭 224 バイトは `ShadowBaseUBO` と同じ。`shadow_alphaclip.vert`・`skinned_shadow_alphaclip.vert`・`shadow_alphaclip.frag` が全体を宣言する。224〜239 の `alphaClip` に続くディゾルブの欄は下表のとおりで、風の追加欄はない。大きさと各欄の位置・16 バイトの幅を C++ の `static_assert` で検査する。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
+|---|---|---|---|---|
+| 240 | 16 | `dissolveSweep: float[4]` | `dissolveSweep: vec4` | xyz = 局所座標の掃引方向、w = 掃引の強さ |
+| 256 | 16 | `dissolveParams: float[4]` | `dissolveParams: vec4` | 有効の印（1/0）/ `NoiseScale` / 閾値の代わりの値 / 予約 |
+| 272 | 16 | `dissolveProtectBones: uint32_t[4]` | `dissolveProtectBones: uvec4` | 保護する骨のビット集合 |
+
+静的メッシュでインスタンス表を使う場合、`shadingParams.x` が 0 以上なら 0〜1 に補正して閾値に優先し、未指定なら `dissolveParams.z` を使う。スキンは CPU でインスタンスの `P0` を材質値へ重ねた閾値を `dissolveParams.z` に詰める。この閾値の優先順は点光源の切り抜きにも共通する。
 
 ### 点光源の PointShadowFace
 
@@ -558,7 +587,7 @@ C++ は `ShadowMapPass.cpp::PointShadowFaceUBO`、GLSL は `point_shadow.vert::P
 | 288 | 16 | `windA: float[4]` | `windA: vec4` | 風の `windA` |
 | 304 | 16 | `windB: float[4]` | `windB: vec4` | 風の `windB` |
 
-点光源の切り抜きは従来どおり `PointShadowAlphaClipUBO` / `PointShadowAlphaClipFace` の **240 バイト**で、224〜239 に `alphaClip` を置く。風の追加欄はなく、切り抜きの配置は変わらない。不透明で頂点アニメのある通常メッシュは面の中で材質ごとに UBO と記述子を共有し、アニメのない非スキンの描画は面ごとの記述子を共有する。切り抜き・スキンは別の記述子で扱う。
+点光源の切り抜きは `PointShadowAlphaClipUBO` / `PointShadowAlphaClipFace` の **288 バイト**で、先頭 224 バイトは `PointShadowBaseUBO` と同じ。`point_shadow_alphaclip.vert`・`skinned_point_shadow_alphaclip.vert`・`point_shadow_alphaclip.frag` が全体を宣言する。224〜239 に `alphaClip`、240 に `dissolveSweep`、256 に `dissolveParams`、272 に `dissolveProtectBones` を置く。各欄の型・成分・閾値の優先順は上の CSM の切り抜きと同じで、大きさと各欄の位置・16 バイトの幅を C++ の `static_assert` で検査する。風の追加欄はない。不透明で頂点アニメのある通常メッシュは面の中で材質ごとに UBO と記述子を共有し、アニメのない非スキンの描画は面ごとの記述子を共有する。切り抜き・スキンは別の記述子で扱う。
 
 ## 10. 草・低木の風の前時刻
 
@@ -771,3 +800,57 @@ GBuffer の書き手は、書き込み直前のアルベド・粗さ・金属度
 フレームの環境 UBO を借りられないとき、`GBufferPass`・MegaGeometry・可視バッファの解決・半透明の前方は、初期化時に `MakeDefaultEnvironmentGpuParams()` を 1 回書き、以後は書き換えない 48 バイトの常駐 UBO を結ぶ。`FoliagePass` と草は対象の描画を飛ばす。デカールは呼び手から環境の割り当てが渡されなければ、フレームの持ち主から既定値を借りる。
 
 RTGI・パストレーサーの命中面には、この環境 UBO による濡れ処理を適用しない。RTGI はインスタンスの基本色、パストレーサーはインスタンスの色と材質テクスチャから命中面を作るため、ラスタとは方式が異なる。RTGI の地形スプラットでは例外として、既存の `TerrainApplyWetAlbedo` と `TerrainSplatWetness` による別方式の濡れ色を命中面へ反映する。
+
+## 15. MegaGeometry のインスタンスの表（席の表と描く順の表）
+
+両方とも `std430`、16 バイト整列で、1 行は **144 バイト**。C++ の `MegaGeometryPass.h` にある `GPUMegaSlotRow` と `GPUMegaInstance` の大きさは `static_assert` で検査する。色味と種は両方の行の位置 136・140 に揃え、`offsetof` の `static_assert` で互いの位置が一致することを検査する。
+
+### 席の表
+
+C++ は `MegaGeometryPass::GPUMegaSlotRow`、GLSL は `mega_scene_scatter.comp::SceneSlotRows` の `slotWords: uvec4[]`。席ごとに 9 個の `uvec4` を使う。通常の席の番号は `MegaGeometryProxy::SceneSlot` で、0 は空行用。席のないインスタンスや席が重複した場合はローカルの席を割り当てる。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL の語・成分 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `WorldMatrix: float[16]` | `slotWords[slot * 9 + 0..3]` | 現在のワールド変換 |
+| 64 | 64 | `PreviousWorldMatrix: float[16]` | `slotWords[slot * 9 + 4..7]` | 前のフレームのワールド変換 |
+| 128 | 4 | `Reserved0: uint32_t` | `slotWords[slot * 9 + 8].x` | 予約（0） |
+| 132 | 4 | `Reserved1: uint32_t` | `slotWords[slot * 9 + 8].y` | 予約（0） |
+| 136 | 4 | `Tint: uint32_t` | `slotWords[slot * 9 + 8].z` | インスタンスの色味 |
+| 140 | 4 | `VariationSeed: uint32_t` | `slotWords[slot * 9 + 8].w` | 個体差の種 |
+
+### 描く順の表
+
+C++ は `MegaGeometryPass::GPUMegaInstance`、GLSL は `Common/MegaInstanceTable.glsl::MegaInstanceRow`。CPU はこの形を直接書かず、`mega_scene_scatter.comp` が席の表と描く順の記録から組み立てる。`MegaInstanceRowBuffer` の `megaInstanceRows[]` を `LoadMegaInstance` や `LoadMegaInstanceTint` で読む。ラスタの `megageometry.vert` と可視バッファ解決の `Common/VisibilityResolve.glsl` も読み手である。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 成分 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `WorldMatrix: float[16]` | `world: mat4` | 現在のワールド変換 |
+| 64 | 64 | `PreviousWorldMatrix: float[16]` | `previousWorld: mat4` | 前のフレームのワールド変換 |
+| 128 | 4 | `MeshIndex: uint32_t` | `info.x` | メッシュの表の番号 |
+| 132 | 4 | `FirstGroup: uint32_t` | `info.y` | 最初のワークグループの通し番号 |
+| 136 | 4 | `Tint: uint32_t` | `info.z` | インスタンスの色味 |
+| 140 | 4 | `VariationSeed: uint32_t` | `info.w` | 個体差の種 |
+
+### 記録の形と更新
+
+`MegaGeometryPass::UpdateResidentSceneTables` が変更分を staging の記録に書き、`mega_scene_scatter.comp` が GPU の常駐表を更新する。段 0 の記録は 1 件あたり 10 個の `uvec4` で、先頭の `.x` が席の番号、続く 9 個が席の行。段 1 の描く順の記録は 1 件あたり 2 個の `uvec4` で、先頭が `(描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ)`、次は予約。段 0 と段 1 の間にはバリアがあり、段 1 で GPU が変換・色味・種を席の行から描く順の行へ写す。
+
+### 色味と種
+
+色味は RGBA8 を詰めた `uint32_t` で、R が下位 8 bit、以降 G・B・A の順に並ぶ。`unpackUnorm4x8` と同じ並びで、A は現在使わない。既定の `0xFFFFFFFF` は白で、RGB が白（下位 24 bit がすべて 1）なら乗算せず、導入前とビット単位で同じ色を使う。白以外は `megageometry.vert` の `fragObjectColor`、または `Common/VisibilityResolve.glsl::VisObjectColor` で区間の材質の基本色に色味の RGB を掛け、その後アルベドのテクスチャと濡れを適用する。RTGI・パストレーサーの命中面にはこの色味を掛けない。
+
+種は散布入力の `VariationSeed` で、入力が 0 の場合は `MegaGeometryScatterComponent::DefaultVariationSeed(Seed, 入力の番号)` の結果を使う。1 本ずつの `MegaGeometryComponent` は 0。既定の種の式は次のとおりで、各演算は `uint32_t` で行う。
+
+```cpp
+uint32_t h = scatterSeed ^ (inputIndex * 0x9E3779B9u);
+h ^= h >> 16;
+h *= 0x85EBCA6Bu;
+h ^= h >> 13;
+h *= 0xC2B2AE35u;
+h ^= h >> 16;
+return h;
+```
+
+`Common/MegaInstanceTable.glsl::MegaVariationPhase(seed)` は `(seed >> 8) / 2^24` を返す。範囲は [0, 1) で、頂点アニメの `instanceParams` に風の位相を渡すときに使う。現在の可視バッファ解決とラスタは、MegaGeometry の `instanceParams` に引き続き `vec4(-1.0)` を渡す（8 節）。
+
+1 本の非表示は GPU の表に印を持たず、散布がその 1 本の proxy を `SceneView` から取り下げるため、描く順の表・影・RT のいずれにも入らない。

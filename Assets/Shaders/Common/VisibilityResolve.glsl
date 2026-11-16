@@ -48,7 +48,7 @@
 //     Material = 金属度・粗さ・AO、Velocity = (現在の NDC - 前の NDC) * 0.5、
 //     Emissive = 材質の表の発光（色度 × 輝度 × フレームのプリエクスポージャ。65504 で頭打ち。α = 1。表の外の材質は 0）。
 //     タイルの版は発光テクスチャ（binding 38）を掛け、直接 dispatch の版は表の定数だけで書く。
-//   - インスタンスの色は、MegaGeometry は材質の表の基本色（区間の材質の値）、手続きメッシュはインスタンスの表の色、
+//   - インスタンスの色は、MegaGeometry は区間の材質の基本色 × インスタンスの色味、手続きメッシュはインスタンスの表の色、
 //     スキニングは 1。
 //
 // デバッグの表示も、この解決が GBuffer へ書く。クラスタの色・LOD の段は MegaGeometry の画素でここが色を差し替え、
@@ -605,7 +605,7 @@ bool VisLoadMaterial(uint materialIndex, out VisMaterialEntry entry)
     return true;
 }
 
-// ラスタの頂点シェーダーが fragObjectColor へ渡す色。MegaGeometry は区間の材質の基本色（材質の表の基本色）、
+// ラスタの頂点シェーダーが fragObjectColor へ渡す色。MegaGeometry は区間の材質の基本色 × インスタンスの色味、
 // 手続きメッシュはインスタンスの表の色、スキニングは 1
 vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bHasMaterial)
 {
@@ -619,7 +619,20 @@ vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bH
     {
         return vec3(1.0);
     }
-    return bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
+    const vec3 color = bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
+    if (kind == VIS_KIND_MEGA_CLUSTER)
+    {
+        const uint instanceIndex = VisRecordInstanceIndex(record);
+        if (instanceIndex < uint(megaInstanceRows.length()))
+        {
+            const uint tint = LoadMegaInstanceTint(instanceIndex);
+            if (!MegaTintIsWhite(tint))
+            {
+                return color * MegaTintRgb(tint);
+            }
+        }
+    }
+    return color;
 }
 
 // 手続きの描画だけインスタンスの表を読む。スキニングの値は材質の表へ重ね済み
