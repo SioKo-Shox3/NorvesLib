@@ -11,6 +11,7 @@
 #include "Application/IWindow.h"
 #include "Platform/PlatformApplicationFactory.h"
 #include "Rendering/FrameCaptureHdrWriter.h"
+#include "Rendering/GpuParticle/GpuParticleSimulationPass.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
@@ -1952,6 +1953,10 @@ namespace NorvesLib::Core::Engine
 
             if (auto* registry = GEngine->GetRenderWorld().GetRenderExtensionRegistry())
             {
+                if (!Rendering::RegisterGpuParticleSimulationExtension(*registry))
+                {
+                    LOG_WARNING("GPU の粒の更新拡張を登録できませんでした");
+                }
                 for (Module::IRenderModule* renderModule : Module::GetModuleRegistry().GetRenderModules())
                 {
                     if (renderModule)

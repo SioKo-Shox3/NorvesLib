@@ -11776,3 +11776,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 VfxEffectSystem が GPU の実行先のエミッタを CPU で積分せず、フレームごとの写しを作って RenderWorld へ渡す: 着地(直し 0 回)
 - U3 Entity に付ける ParticleEmitterComponent を足す: 着地(直し 0 回)
 - U5 GPU の粒の生成と更新・衝突の compute シェーダーを足す: 着地(直し 0 回)
+- U4 GpuParticleSimulationPass を GBuffer の段の最後に登録し、常駐のプールで生成と更新を回す: 着地(直し 1 回)
