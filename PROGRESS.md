@@ -11774,3 +11774,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
 - U1 GPU の粒の写しの型を足し、RenderWorld からパケットのシーンまで運ぶ道と新しいファイルの登録を作る: 着地(直し 0 回)
 - U2 VfxEffectSystem が GPU の実行先のエミッタを CPU で積分せず、フレームごとの写しを作って RenderWorld へ渡す: 着地(直し 0 回)
+- U3 Entity に付ける ParticleEmitterComponent を足す: 着地(直し 0 回)
