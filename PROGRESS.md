@@ -11859,3 +11859,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261116-101332/verify-G7-GR49-ENV-INTERFACES-fix1.txt`（`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・`error C`／`error LNK` 0 件・Core.lib を作り直して Game.exe を生成。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。verify の ctest の行は試験を作らない・回さない決まりで回していない。Game の起動・撮影は回さない決まり。
 - Next: ランナーの評価者の反証（危険地帯: Public API の ScriptRuntime・EnvironmentState）。起動しての確かめは G7-GR49-CHECK。人が見るときの見どころ: `--scene=rendering3dtest --environment-preset=heavy_rain` で起動が打ち切られずに入り、空が曇天になって Game.log に `ENVIRONMENT_RESOLVED … cloud=…` が 1 行出ること（雨・濡れの見た目は GR53・GR58 が入るまで変わらない）。存在しない名前（`--environment-preset=nope`）は「気象のプリセットファイルが見つかりません」をログに出して起動前に拒否すること。
 - Notes: 判断: 根は exe のフォルダからの相対の探索をせず、作業ディレクトリ → ビルド時に埋めたリポジトリの Assets の親の順にした（既存の `--camera-script`・必須資産の確かめと同じ）。配布の形（exe の隣に Assets を置く）では作業ディレクトリ基準のまま読む。
+
+- U1 空の遮蔽の世界入力の型・拡張データのキー・純関数を足す: 着地(直し 0 回)
+- U2 散布の種の表に遮蔽物の欄を足し、cook と焼いた形に通す: 着地(直し 0 回)
+- U3 散布のチャンクの常駐・解放に合わせて遮蔽物の配列を作り、拡張データで公開する: 着地(直し 0 回)
+- U4 草の場から下草の層の格子を作り、拡張データで公開する: 着地(直し 0 回)
+- U5 空の遮蔽パスに地形の高さテクスチャと曇天の重みを入れる: 着地(直し 0 回)
+- U6 Grassland で空の遮蔽を有効にし、地形の高さを公開する: 着地(直し 0 回)
+- U7 空の遮蔽パスに下草の層と踏み倒しを入れる: 着地(直し 0 回)
+- U8 チャンクの遮蔽物を差分で写し、振り分けを格子の索引にする: 着地(直し 0 回)
+- U9 動く遮蔽物と踏み倒しを最細の段だけ毎フレーム写し直し、タスクの確かめを回す: 着地(直し 1 回)
+### G11-GR56-SKY-OCC-WORLD 空の遮蔽の世界の入力（地形・散布の森と岩・下草・曇天）（2026-11-16、run 20261116-115158、完了）
+- Done: (1) 地形: 入力の口は「高さの配列（`kSkyOcclusionGroundHeightsKey`）＋配置（`kSkyOcclusionGroundLayoutKey`、`SkyOcclusionFieldLayout` のワールド→UV）」の拡張データ。空の遮蔽パスが配列をテクスチャへ上げ、写し込みの地面高 G をそこから引く（配置か配列の版が変わったら全体を作り直す）。草原（`GrasslandRoutine.cpp`）は入るときに空の遮蔽を有効にし、地形の高さ場が使えるようになったら 1 回だけ配列を作って出し、出るときに既定へ戻して消す。(2) 森と岩: 散布の種の表（`Assets/Scatter/grassland.scatter.json`）に任意の `sky_occluder`（形・種別 solid/canopy・半径・高さ・底の比・κ）を足し、cook が検査して NVSCT の種の記録の予約欄（84〜95。版は据え置き、0 は遮蔽物なし）へ焼く（`Docs/Architecture/NVSCTv0.md`）。`ScatterSystem` はチャンク×種の常駐で Entity を作らずに `SkyOccluderProxy` の配列を作り、解放で消し、変化のあったフレームだけチャンクの鍵の順の範囲の表（`kSkyOcclusionChunkRangesKey`）と遮蔽物の配列を出す。空の遮蔽パスは範囲の表を前と鍵と版で突き合わせ、増えた・消えた・変わったチャンクの範囲だけを写し直し、遮蔽物ごとに覆うタイルへ配る。(3) 下草: `GrassField` の密度と草丈から 1 m の格子（最大 1024×1024）の層（底 G・頂 G＋草丈・κ ≤ 0.3）を作り、`Vegetation` が草の描画データと一緒に拡張データで出す。写し込みで世界の場の押し倒しのぶん κ を下げ、積分で層を媒質として通し、受け手が層の中なら弱める。(4) 曇天: `SkyAtmosphere.CloudCover` と `OvercastZenithToHorizonRatio` から重み w(s) = (1−c) + c·3(1+(r−1)s)/(2r+1) を積分に掛ける（雲量 0 で 1 の一様。係数が最後に全段を積分した値から 0.01 より動いたら積分だけ全段やり直す）。(5) 動く遮蔽物（`SkyOccluderDynamicFlag`）は段 0 だけに配り、前と今の範囲を毎フレーム段 0 で写し直す。押し倒しの交差体も前と今の 4 端点の外接 ± 半径を段 0 で毎フレーム写し直す。段 0 だけの変化の積分の広げ幅は段 0 の自段の到達距離（段が 1 つなら水平線の上限）。どちらも無いフレームは何も足さない。
+- 証拠: `.harness/runs/20261116-115158/verify-G11-GR56-SKY-OCC-WORLD-build.txt`（全単位を着地させた枠の木 72368fb4 で `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0、エラーの行 0、Game.exe までリンク）。`verify-G11-GR56-SKY-OCC-WORLD-unit-U9.txt`（同じ内容の単位の木で Game の Debug ビルド EXIT 0、BOM を外した写しで `SkyOcclusion/Splat.comp`・`Integrate.comp` を glslc（vulkan1.3）が EXIT 0）。AssetCook の Debug ビルドも U9 の 1 回目の確かめで EXIT 0。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread の入力・拡張データの版・空の遮蔽パス）。人が見るときの見どころ: 草原のシーン（ランチャー → Grassland）。先に AssetCook で草原の散布（`Assets/Terrain/Grassland/GrasslandScatter.nvsct`）を焼き直す（前の焼いた物は遮蔽物の欄が 0 で遮蔽物なしになる）。岩（solid、半径 1.0 m・高さ 1.3 m）と低木（canopy、κ 0.55）の根元の周りの地面が空の遮蔽で暗く、起伏の谷が地形の高さどおりに暗いこと、遠くへ歩いてチャンクが解放された後に黒い跡が残らないこと、草の中の受け手が少し暗く、主人公が踏み倒した所が明るめに戻ること。曇天にすると地平に近い遮蔽の効きが弱まること。
+- Notes: 試験は作らない・回さない決まり（絶対規則 11）なので、done-when の `SkyOcclusionWorldInputTest` は作らず、`SkyOcclusionMapVulkanTest` のケースの追加もしていない。verify の ctest の行も回していない。撮影・GPU の確かめも回さない決まり。CPU の参照（`SkyOcclusionReference`）は利用者が無いので変えていない（`SkyOcclusionHorizonReferenceTest` に関わる部分は不変）。
+- Notes: 判断: 散布の種の欄を焼いた形へ通すため、paths の外の `Library/Core/{Public,Private}/Asset/CookedScatter*` の予約欄を使った（版は据え置き）。既知の限界: 交差体の外で戻る踏み跡は、ほかの理由で写し直されるまで古い値のまま残る。動く遮蔽物は段 0 の到達距離の内側の受け手にだけ効き、粗い段の受け手には映らない。1 フレームで大きく飛ぶ交差体（瞬間移動）は、そのフレームだけ広い帯を段 0 で写し直す。
