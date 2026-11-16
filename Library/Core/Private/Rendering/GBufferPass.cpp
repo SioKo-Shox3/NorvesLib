@@ -1,8 +1,10 @@
 ﻿#include "Rendering/GBufferPass.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MaterialDescriptorCache.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
+#include "Rendering/ViewClearance.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
@@ -42,6 +44,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
         // 頂点アニメに渡す世界の風の定数の binding
         constexpr uint32_t VertexAnimationWindBindingIndex = 12;
+        // 濡れに使う環境の定数の binding（Common/GBufferFragment.glsl の NORVES_DECLARE_ENVIRONMENT_UBO と同じ）
+        constexpr uint32_t EnvironmentBindingIndex = 13;
 
         float ResolveGBufferDrawOpacity(const DrawCommand& command)
         {
@@ -113,14 +117,27 @@ namespace NorvesLib::Core::Rendering
 
         m_bInitialized = true;
 
+        // フレームの持ち主が無い文脈でも、濡れの無い環境定数を常に束縛する。初期化後は書き換えない。
+        const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+        RHI::BufferDesc environmentDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer,
+                                        true, "GBufferDefaultEnvironment");
+        m_DefaultEnvironmentBuffer = m_Device->CreateBuffer(environmentDesc);
+        if (!m_DefaultEnvironmentBuffer)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "既定の環境定数バッファを作れませんでした");
+            return false;
+        }
+        m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
         // ========================================
         // DynamicUniformAllocator初期化
         // ========================================
         {
             // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
             // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）
-            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 頂点アニメの材質（32）= 448 バイト
-            constexpr uint32_t UBO_SIZE = 448;
+            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 頂点アニメの材質（32）
+            // + 視界の確保（64）= 512 バイト
+            constexpr uint32_t UBO_SIZE = 512;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -175,6 +192,11 @@ namespace NorvesLib::Core::Rendering
             windBinding.type = RHI::ResourceBindType::ConstantBuffer;
             windBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(windBinding);
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = EnvironmentBindingIndex;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            uboDescSetDesc.bindings.push_back(environmentBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
@@ -299,6 +321,7 @@ namespace NorvesLib::Core::Rendering
         m_ConstantGrayTextures.clear();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
+        m_DefaultEnvironmentBuffer.reset();
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
         m_Device = nullptr;
@@ -840,13 +863,15 @@ namespace NorvesLib::Core::Rendering
             float specularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
             float vertexAnimMaterial0[4];
             float vertexAnimMaterial1[4];
+            ViewClearanceGpuData viewClearance;
         };
         static_assert(offsetof(PerObjectUBO, vertexAnimInstanceParams) == 368u);
         static_assert(offsetof(PerObjectUBO, vertexAnimTime) == 384u);
         static_assert(offsetof(PerObjectUBO, specularAAParams) == 400u);
         static_assert(offsetof(PerObjectUBO, vertexAnimMaterial0) == 416u);
         static_assert(offsetof(PerObjectUBO, vertexAnimMaterial1) == 432u);
-        static_assert(sizeof(PerObjectUBO) == 448u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(offsetof(PerObjectUBO, viewClearance) == 448u);
+        static_assert(sizeof(PerObjectUBO) == 512u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -857,6 +882,17 @@ namespace NorvesLib::Core::Rendering
         cameraConstants.CopyShaderProjection(projData);
         previousCameraConstants.CopyShaderView(previousViewData);
         previousCameraConstants.CopyShaderProjection(previousProjData);
+
+        ViewClearanceGpuData occluderViewClearance{};
+        if (activeCamera)
+        {
+            const bool bApply = activeCamera->ViewClearance.bAffectOccluders;
+            occluderViewClearance = MakeViewClearanceGpuData(activeCamera->ViewClearance, bApply);
+            if (occluderViewClearance.Control[1] != 0.0f)
+            {
+                occluderViewClearance.Control[2] = static_cast<float>(context.FrameNumber % 64u);
+            }
+        }
 
         PerObjectUBO frameTemplate{};
         MakeSpecularAAConstants(frameTemplate.specularAAParams);
@@ -898,6 +934,8 @@ namespace NorvesLib::Core::Rendering
 
         // この記録の中だけで使う（記述子はビュー・フレームの定数と Hash の位相を含み、次の記録へ持ち越さない）
         Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
+        // 共有の切れ端は読み取りだけ。無いときも現在の記録の口から借り、パスの共有状態へ保存しない。
+        const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
 
         auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
@@ -976,6 +1014,10 @@ namespace NorvesLib::Core::Rendering
                     matEmissiveChromaticityB = matData->EmissiveColor[2];
                     matEmissiveLuminanceNits = matData->EmissiveLuminanceNits;
                     bMatDiffuseOnly = matData->bDiffuseOnly;
+                    if (matData->bViewClearanceOccluder)
+                    {
+                        uboData.viewClearance = occluderViewClearance;
+                    }
                     for (uint32_t i = 0; i < ShadingParamCount; ++i)
                     {
                         uboData.shadingParams[i] = matData->ShadingParams[i];
@@ -1111,6 +1153,16 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 return nullptr;
+            }
+            if (environmentConstants.IsValid())
+            {
+                allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, environmentConstants.Buffer,
+                                                              environmentConstants.GetOffset32(), environmentConstants.GetSize32());
+            }
+            else
+            {
+                allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer,
+                                                              0, sizeof(GPUEnvironmentParams));
             }
             BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->BindConstantBuffer(VertexAnimationWindBindingIndex,
@@ -1990,6 +2042,12 @@ namespace NorvesLib::Core::Rendering
         windBinding.type = RHI::ResourceBindType::ConstantBuffer;
         windBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(windBinding);
+        // アロケータと同じ set 0 の環境定数の配置を使う。
+        RHI::DescriptorBinding environmentBinding;
+        environmentBinding.binding = EnvironmentBindingIndex;
+        environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        environmentBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(environmentBinding);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);

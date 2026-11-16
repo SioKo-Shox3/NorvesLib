@@ -303,6 +303,7 @@ namespace NorvesLib::Core::Component
         {
             viewClearance->BuildViewClearance(
                 worldTransform.position, springArm->GetTargetWorldPosition(), snapshot.ViewClearance);
+            snapshot.ViewClearance.HeroObjectId = springArm->GetPivotObjectId();
         }
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),

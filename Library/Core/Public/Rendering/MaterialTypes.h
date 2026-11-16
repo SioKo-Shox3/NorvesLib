@@ -486,6 +486,10 @@ namespace NorvesLib::Core::Rendering
         /// 鏡面反射を持たない純ランバートの面にする（照明の尺度の検証用の灰色の板など）。直接光・環境光とも
         /// アルベド/π の拡散だけを数え、誘電体の F0（0.04）の鏡面と、その分の拡散の減りを掛けない。GBuffer の経路だけが読む
         bool bDiffuseOnly = false;
+        /// 視界の確保でカメラと主人公の間に入ったときにディザで抜く遮蔽物（幹・低木・廃墟の欠片）。
+        /// GBuffer の切り抜きの変種で描くため早期の深度試験を失う。印は薄い遮蔽物だけに付け、大きな遮蔽物へ広げない。
+        /// 影の描画には効かない。
+        bool bViewClearanceOccluder = false;
 
         Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
@@ -535,6 +539,10 @@ namespace NorvesLib::Core::Rendering
         bool bTwoSided = false;
         bool bCastShadows = true;
         bool bDiffuseOnly = false; ///< 鏡面の無い純ランバート（MaterialCreateData::bDiffuseOnly）
+        /// 視界の確保でカメラと主人公の間に入ったときにディザで抜く遮蔽物（幹・低木・廃墟の欠片）。
+        /// GBuffer の切り抜きの変種で描くため早期の深度試験を失う。印は薄い遮蔽物だけに付け、大きな遮蔽物へ広げない。
+        /// 影の描画には効かない。
+        bool bViewClearanceOccluder = false;
 
         uint32_t RefCount = 0;
         GBufferProgramId ProgramId = kStandardGBufferProgramId; ///< Program から事前に計算した ID。

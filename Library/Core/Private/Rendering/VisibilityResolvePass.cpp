@@ -11,6 +11,7 @@
 #include "RHI/ISampler.h"
 #include "RHI/ITexture.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -67,6 +68,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t GeometricNormalBindingIndex = 31u;
         // スキンの生の ShadingParams の表（共通・dump・tiles のすべてで同じ枠）
         constexpr uint32_t VertexAnimParamsTableBindingIndex = 32u;
+        // 環境の定数。通常・dump のタイルの束（最大 21）と、表・地形・スプラット（22〜36）の後ろ。
+        constexpr uint32_t EnvironmentBindingIndex = 37u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -167,6 +170,13 @@ namespace NorvesLib::Core::Rendering
                 RHI::DescriptorBinding binding;
                 binding.binding = VertexAnimParamsTableBindingIndex;
                 binding.type = RHI::ResourceBindType::StructuredBuffer;
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
+            }
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = EnvironmentBindingIndex;
+                binding.type = RHI::ResourceBindType::ConstantBuffer;
                 binding.stages = RHI::ShaderStage::Compute;
                 desc.bindings.push_back(binding);
             }
@@ -441,6 +451,19 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 手組みの文脈にはフレームの環境定数が無いので、初期化後は書き換えない既定値を用意する。
+        const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+        m_DefaultEnvironmentUniform = device->CreateBuffer(
+            RHI::BufferDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer, true,
+                            "VisibilityResolveDefaultEnvironment"));
+        if (!m_DefaultEnvironmentUniform)
+        {
+            NORVES_LOG_WARNING("VisibilityResolve", "既定の環境定数のバッファの作成に失敗");
+            Shutdown();
+            return false;
+        }
+        m_DefaultEnvironmentUniform->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
         m_Device = device;
         m_bDump = bDump;
         m_bFeedback = UsesVirtualTextureFeedbackBinding(device);
@@ -456,6 +479,7 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_Sampler.reset();
         m_Placeholder.reset();
+        m_DefaultEnvironmentUniform.reset();
         m_DefaultWhite.reset();
         m_DefaultFlatNormal.reset();
         m_DefaultBlack.reset();
@@ -764,12 +788,21 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    // 直接版と材質ごとの版で共通の束縛（0..10 と、検証用の版の 11、メッシュの表の 22）
+    // 直接版と材質ごとの版で共通の束縛。記述子は FrameUseRing の dispatch ごとの資源で、飛行中の別フレームとは共有しない。
     void VisibilityResolve::BindCommon(RHI::IDescriptorSet& set,
                                        const RHI::BufferPtr& paramsUniform,
                                        const VisibilityResolveDispatch& dispatch) const
     {
         set.BindConstantBuffer(0, paramsUniform, 0, ParamsBytes);
+        if (dispatch.EnvironmentConstants.IsValid())
+        {
+            set.BindConstantBuffer(EnvironmentBindingIndex, dispatch.EnvironmentConstants.Buffer,
+                                   dispatch.EnvironmentConstants.GetOffset32(), dispatch.EnvironmentConstants.GetSize32());
+        }
+        else
+        {
+            set.BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentUniform, 0, sizeof(GPUEnvironmentParams));
+        }
         set.BindStorageBuffer(1, dispatch.RecordTable, 0, BindBytes(dispatch.RecordTable, dispatch.RecordTableBytes));
         // スキンの記録が無いフレームも、有効なバッファを結ぶ（記録の種類が違えば読まない）。
         const RHI::BufferPtr& vertexAnimParamsTable = dispatch.SkinnedVertexAnimParamsTable
@@ -1336,6 +1369,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         VisibilityResolveDispatch dispatch;
+        dispatch.EnvironmentConstants = AcquireEnvironmentConstants(context);
         dispatch.IdTexture = resources.GetTexture(m_IdHandle);
         dispatch.Albedo = resources.GetTexture(m_AlbedoHandle);
         dispatch.Normal = resources.GetTexture(m_NormalHandle);

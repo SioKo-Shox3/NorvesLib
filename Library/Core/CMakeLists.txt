@@ -331,6 +331,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/HeroSilhouettePass.cpp
     Private/Rendering/GBufferProgramOverlayPass.cpp
     Private/Rendering/GBufferProgramRegistry.cpp
     Private/Rendering/SkyAtmosphere.cpp
@@ -342,6 +343,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/EnvironmentParameters.cpp
     Private/Environment/EnvironmentState.cpp
     Private/Environment/EnvironmentSystem.cpp
+    Private/Rendering/EnvironmentGpuParams.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -748,6 +750,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
     Public/Rendering/ViewClearance.h
+    Public/Rendering/HeroSilhouettePass.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
     Public/Rendering/HeightFogGpuParams.h
@@ -755,6 +758,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h

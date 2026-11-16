@@ -29,6 +29,7 @@
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
 #include "Rendering/FrameUseRing.h"
+#include "Rendering/FrameUploadArena.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
@@ -322,6 +323,8 @@ namespace NorvesLib::Core::Rendering
          */
         RHI::BufferPtr Feedback;
         uint64_t FeedbackBytes = 0;
+        /** @brief フレームの持ち主から借りた環境定数。無効なら初期化時の常駐の既定値を使う */
+        FrameUploadAllocation EnvironmentConstants;
         VisibilityResolveGeometry::ResolveParams Params;
 
         /**
@@ -459,6 +462,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_Sampler;
         // 表を持たないフレームで束ねる、空の表（読まれない）
         RHI::BufferPtr m_Placeholder;
+        // フレームの環境定数を持たない文脈のための、書き換えない既定値（48 バイト）。
+        RHI::BufferPtr m_DefaultEnvironmentUniform;
         // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー。
         // m_MaterialSampler は手続き・スキニング用（GBufferPass と同じ異方性 4、Wrap）、m_MegaMaterialSampler は
         // MegaGeometry 用（MegaGeometryPass と同じ等方の Linear、maxAnisotropy 指定なし、Wrap）、m_TerrainMaterialSampler は
