@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Rendering
         constexpr float kMaximumFogTint = 16.0f;
         constexpr float kDefaultFogReferenceElevationDegrees = 10.0f;
         constexpr float kMaximumFogReferenceElevationDegrees = 90.0f;
+        constexpr float kDefaultExponentialStepRatio = 1.15f;
         constexpr double kDegreesToRadians = 3.14159265358979323846 / 180.0;
         constexpr double kMaximumOpticalDepth = 80.0;
 
@@ -83,7 +84,85 @@ namespace NorvesLib::Core::Rendering
             0.0f,
             kMaximumFogReferenceElevationDegrees,
             kDefaultFogReferenceElevationDegrees);
+        switch (parameters.StepDistribution)
+        {
+        case VolumetricFogStepDistribution::Uniform:
+        case VolumetricFogStepDistribution::Exponential:
+            result.StepDistribution = parameters.StepDistribution;
+            break;
+        default:
+            result.StepDistribution = VolumetricFogStepDistribution::Uniform;
+            break;
+        }
+        result.ExponentialStepRatio = ClampFinite(
+            parameters.ExponentialStepRatio, 1.0f, 2.0f, kDefaultExponentialStepRatio);
+        result.ScatteringCutoffMeters = ClampNonNegativeFinite(
+            parameters.ScatteringCutoffMeters, kMaximumFogDistanceMeters, 0.0f);
+        result.bPixelJitter = parameters.bPixelJitter;
+        result.bTemporalJitter = parameters.bTemporalJitter;
         return result;
+    }
+
+    VolumetricFogStep ComputeVolumetricFogStep(VolumetricFogStepDistribution distribution, float ratio,
+                                             uint32_t stepIndex, uint32_t stepCount, float spanMeters)
+    {
+        if (stepCount == 0u || stepIndex >= stepCount || !std::isfinite(spanMeters) || spanMeters <= 0.0f)
+        {
+            return {};
+        }
+
+        if (distribution == VolumetricFogStepDistribution::Uniform ||
+            !std::isfinite(ratio) || ratio < VolumetricMinimumExponentialStepRatio || stepCount == 1u)
+        {
+            const float length = spanMeters / static_cast<float>(stepCount);
+            const float start = static_cast<float>(stepIndex) * length;
+            return {start, length};
+        }
+
+        const float denominator = std::pow(ratio, static_cast<float>(stepCount)) - 1.0f;
+        const float growth = std::pow(ratio, static_cast<float>(stepIndex));
+        const float start = spanMeters * (growth - 1.0f) / denominator;
+        const float length = spanMeters * growth * (ratio - 1.0f) / denominator;
+        return {start, length};
+    }
+
+    float ComputeVolumetricFogScatteringSpan(const VolumetricFogParameters& parameters, float fogDistanceMeters)
+    {
+        const VolumetricFogParameters p = SanitizeVolumetricFogParameters(parameters);
+        if (!std::isfinite(fogDistanceMeters) || fogDistanceMeters <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        return p.ScatteringCutoffMeters > 0.0f
+                   ? std::min(fogDistanceMeters, p.ScatteringCutoffMeters)
+                   : fogDistanceMeters;
+    }
+
+    VolumetricFogStep ComputeVolumetricAtmosphereMarchStep(const VolumetricFogParameters& parameters,
+                                                        uint32_t stepIndex, uint32_t stepCount,
+                                                        float rayDistanceMeters)
+    {
+        const VolumetricFogParameters p = SanitizeVolumetricFogParameters(parameters);
+        const float cutoff = p.ScatteringCutoffMeters;
+        if (cutoff > 0.0f && rayDistanceMeters > cutoff && stepCount > VolumetricAtmosphereFarStepCount)
+        {
+            const uint32_t nearCount = stepCount - VolumetricAtmosphereFarStepCount;
+            if (stepIndex < nearCount)
+            {
+                return ComputeVolumetricFogStep(
+                    p.StepDistribution, p.ExponentialStepRatio, stepIndex, nearCount, cutoff);
+            }
+
+            VolumetricFogStep far = ComputeVolumetricFogStep(
+                VolumetricFogStepDistribution::Uniform, 1.0f, stepIndex - nearCount,
+                VolumetricAtmosphereFarStepCount, rayDistanceMeters - cutoff);
+            far.StartMeters += cutoff;
+            return far;
+        }
+
+        return ComputeVolumetricFogStep(
+            p.StepDistribution, p.ExponentialStepRatio, stepIndex, stepCount, rayDistanceMeters);
     }
 
     FogReferenceElevationSinCos ComputeFogReferenceElevationSinCos(const VolumetricFogParameters& parameters)

@@ -11735,3 +11735,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 差し戻し（枠に `build/` が無く verify が `build is not a directory` で落ちた）を直した。枠で freetype の submodule を初期化し、`cmake -B build -S . -G "Visual Studio 17 2022"` で構成し直してから verify を回した。実装の変更は無い。
 - 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で SceneView.cpp・MeshComponent.cpp・ImpostorComponent.cpp を含めてコンパイルし Game.exe を生成（`.harness/runs/20261116-053232/verify-G12-GR48-MESH-LOD-SELECT-iter3.txt`）。
 - Next: ランナーの評価者の反証（危険地帯）。
+- U1 霧のパラメータに歩の配置・比・散乱の上限・画素と時間のずらしの欄を足し、歩の配置の CPU の関数を置く: 着地(直し 0 回)
