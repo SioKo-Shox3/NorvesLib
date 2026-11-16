@@ -6339,7 +6339,7 @@
 - notes: ロードマップ 1948・1960 行、要件 `#### GR19` の設計案の実装順 1)〜3) と受け入れ確認。位置だけのスキニングは新しく作らず、G3 の GR12 が公開した `Animation::SkinPosition` を使う（「段階をまたぐ注意」4452・4466 行。要件の `SkeletalAnimationSampler::SkinPosition` の新設は採らない）。姿勢の公開点（`EvaluatePose`・`FindJointIndex`・`TryGetJointWorldMatrix`。`SkinnedMeshComponent.h:77-88`）は G1・G3 で入っているが、パレットを読む口が無いので (4) で足す。要件の試験の名前（SkinnedSurfaceAnchorTest・JointBucketSearchTest・AnchorInvalidationTest・AnchorVelocityTest の CPU の部分）は、実行ファイルを増やさないため `SkeletalAnimationSamplingTest` の中のケースにする。正本は LOD0（GR63 の (d)）で、アンカーの間 LOD0 に固定するのは Gameplay の側（G10-GR19-ANCHOR-ATTACH）。AI 由来の高密度メッシュでの探索の費用は、GR80（G17）の間引いたアンカーメッシュが無い間は描画メッシュの LOD0 のバケットで代える（ロードマップ 1967 行）。この純部品は GR57-P6（G10-GR60-SKIN-SURFACE-EMITTER）が同じスキニングの規約で使う（ロードマップ 1966 行）。危険地帯（Public API の SkinnedMeshComponent）なので評価者を通す。ほかの G10 の項目と触るファイルが交わらないので、最初から並列に走れる。やらないこと: Entity の駆動・突き立ての結線（G10-GR19-ANCHOR-ATTACH）、アンカーの保存。
 
 ## G10-GR60-DISSOLVE: バインド姿勢の 3D の位置のノイズで体を削って縁を光らせるディゾルブの材質を、スキンと静的なメッシュの GBuffer と全部の影に入れる
-- status: done
+- status: doing
 - after: G10-GR64-GHOST-RENDER, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-SHADOW, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR27-MASKED-GBUFFER
 - gr: GR60
 - needs-gr: GR26, GR27
