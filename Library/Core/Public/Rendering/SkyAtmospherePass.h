@@ -15,6 +15,8 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class FrameResourceLane;
+    class SkyAtmosphereSourceCache;
+    class GpuRetireQueue;
 
     /**
      * @brief 空の透過率 LUT の texel（RGBA の半精度。SkyAtmospherePass が GPU へ上げる値そのもの）を作る
@@ -91,6 +93,8 @@ namespace NorvesLib::Core::Rendering
             return m_LastSunDiskPreExposedLuminance;
         }
         bool WasLastSunDiskSaturated() const { return m_bLastSunDiskSaturated; }
+        /** @brief 保持体が空の model を構築した通算回数を返す。 */
+        uint64_t GetSkyModelBuildCount() const;
 
         RGResourceHandle GetTransmittanceHandle() const
         {
@@ -114,6 +118,10 @@ namespace NorvesLib::Core::Rendering
         bool GenerateLutResources(const SkyAtmosphereParameters& parameters,
                                   float preExposure,
                                   FrameResourceLane* frameResources);
+        /** @brief LUT と同じ空の model から空由来 IBL を作る。 */
+        bool GenerateSkyIbl(const SkyAtmosphereParameters& parameters);
+        /** @brief 完了したフレームまでの古い IBL を破棄し、このフレームの保持期限を設定する。 */
+        void AdvanceRetireQueue(const ViewRenderContext& context);
         bool GenerateTransmittanceLut(const SkyAtmosphereModel& model);
         bool GenerateRadianceLut(const SkyAtmosphereModel& model);
         bool GenerateSunDiskTexture(const SkyAtmosphereParameters& parameters,
@@ -143,8 +151,18 @@ namespace NorvesLib::Core::Rendering
         // LUT と同じ model から作った空気遠近の高度ごとの表（VolumetricsPass へ context で渡す）
         SkyAerialProfile m_AerialProfile;
         bool m_bLutValid = false;
-        // 最後に LUT を作った空の model。太陽だけが動いたときは、太陽に依らない表（透過率・多重散乱）をここから写す。
-        Container::TUniquePtr<SkyAtmosphereModel> m_LutModel;
+        // 空の LUT と空由来 IBL が同じ model を引く保持体。太陽だけが動いたときは太陽に依らない表を写す。
+        Container::TUniquePtr<SkyAtmosphereSourceCache> m_SourceCache;
+        // 差し替えた古い IBL の 3 枚を、読んだフレームが GPU で終わるまで預ける。
+        Container::TUniquePtr<GpuRetireQueue> m_RetireQueue;
+        // 空由来 IBL の環境・拡散照度・鏡面の前フィルタを所有する。
+        RHI::TexturePtr m_IblEnvironmentTexture;
+        RHI::TexturePtr m_IblDiffuseIrradianceTexture;
+        RHI::TexturePtr m_IblPrefilteredSpecularTexture;
+        // 強度を掛ける前の拡散照度の全球の平均照度。
+        float m_IblAverageIrradiance[3] = {};
+        // IBL の 3 枚がすべて作れた場合に真。
+        bool m_bIblValid = false;
         float m_LastSunDiskPreExposedLuminance = 0.0f;
         bool m_bLastSunDiskSaturated = false;
         // 太陽の円盤は事前露出でフレームごとに変わるので、フレームの持ち主から借りた領域に書き、

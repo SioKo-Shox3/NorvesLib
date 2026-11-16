@@ -11773,16 +11773,30 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 可視バッファの材質の表と解決で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
 - U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
 
-## G7-GR58-RAIN-MODEL 雨量の写像の純関数・調整の値のデータ・雨の霧の増分（2026-11-16、run 20261116-103702）
+- U1 CreateIblResources を IblGeneration へ出す: 着地(直し 0 回)
+- U2 空の model と放射輝度の源の保持体 SkyAtmosphereSourceCache を置く: 着地(直し 0 回)
+- U3 空由来 IBL を SkyAtmospherePass で保持体から作り、ViewRenderContext で公開する: 着地(直し 0 回)
+- U4 LightingPass を空のパスの IBL を読む側に替え、自前の空由来 IBL を消す: 着地(直し 0 回)
 
-- U1 雨の調整の値 RainTuning と写像の純関数・JSON の読み込みを置く: 着地(直し 0 回)
-- U2 RenderWorld::SetRainTuning から FramePacket の SceneProxy まで RainTuning を共有ポインタで運ぶ: 着地(直し 0 回)
-- U3 EnvironmentSystem が Enable で RainTuning.json を読み、Resolve の霧の密度に雨の増分を足す: 着地(直し 0 回)
-- U4 EnvironmentSystem::PublishTo が公開待ちの RainTuning を RenderWorld へ一度渡す(タスクの verify): 着地(直し 0 回)
-- Done: `Rendering/RainModel.h`・`.cpp` に `RainTuning`（近距離の箱・落ちる速さ 7〜9 m/s・ばらつき 10%・有効な割合と不透明度の曲線・太さ・`StreakShutterSeconds` 1/48・近距離のフェード 0.5 m で 0・色の倍率、遠景 3 層の距離 18/40/90 m・不透明度・スクロール・せん断、霧の増分の曲線）と純関数 `SanitizeRainTuning`・`EvaluateRainNear`・`EvaluateRainCurtain`・`MakeRainFogBoost`、JSON の読み込み（`TryLoadRainTuningFromJsonText`・`LoadRainTuningFile`。未知のキー・型違い・範囲外は警告して既定）を置き、`Assets/Data/Environment/RainTuning.json` に既定値を書いた。`RenderWorld::SetRainTuning` → `RenderingCoordinator`（Sanitize し、バイト列が同じなら共有の値を使い回す）→ `packet.Scene.RainTuningSnapshot`（ポインタの写しだけ。SceneRevision に入れない）。`EnvironmentSystem` は `Enable` で RainTuning.json を読み、`Resolve` で霧の `DensityAtBaseHeight` に `MakeRainFogBoost(上書き後の雨量)` を足し、`Enable` の後の最初の `PublishTo` で `SetRainTuning` を一度呼ぶ。雨の強さと風の出所は `EnvironmentParameters`（雨量）と `WindParameters` だけ（G7-S5 の (A)）
-- 証拠: `.harness/runs/20261116-103702/verify-G7-GR58-RAIN-MODEL-build.txt`（全単位を着地させた木で `cmake --build build --config Debug --target Game -- -m:1` が終了コード 0、Game.exe までリンク、行末の乖離なし）。verify の ctest の行と `RainParametersTest`・`EnvironmentStateTest` の追加は、試験を作らない・回さない決まりで行わない
-- 判断（推奨を採った）: 雨量の曲線は冪（有効な割合の指数 0.7・不透明度 0.5・遠景の層 1.0・霧 1.5）で、雨量 0 でちょうど 0、単調・連続。既定で雨量 0.50→0.51 の有効な割合の変化は 1.02^0.7 ≈ 1.4 %。落ちる速さと太さは雨量で線形、傾きは `atan2(wind.BaseSpeed, 落ちる速さ)`（4 m/s・8 m/s で 26.57°）。範囲外・非有限の欄と大小が崩れた組は丸めずに既定へ戻す。霧の増分は雨量 1 で +0.02 /m。数値の既定はすべて仮
-- 見どころ: 今は `EnvironmentSystem` を `Enable` するシーンも雨の描画（RAIN-NEAR・RAIN-CURTAIN）もまだ無く、ランチャーと各シーンの見た目は変わらない。`EnvironmentSystem` を有効にしたシーンで雨量を上げると、霧が雨量に応じて濃くなる（雨量 1 で基準高度の密度 +0.02）
-- Next: G7-GR58-RAIN-NEAR・G7-GR58-RAIN-CURTAIN が `packet.Scene.RainTuningSnapshot` と `Environment.RainIntensity`・`Wind` で `EvaluateRainNear`・`EvaluateRainCurtain` を評価して描く
-- Notes: RainTuning.json の道は作業ディレクトリ相対（`Assets/Data/state_keys.json` と同じ）。`RainTuningSnapshot` は coordinator が既定の共有の値で初期化するので読み手には常に非 null（SceneProxy を既定へ戻す所では nullptr にするが毎フレーム写し直す）
-- 反復 2（再検証の直し）: この枠に `build/` が無く freetype のサブモジュールも未取得だったため、ランナーの再検証のビルドが「build is not a directory」で落ちた。`git submodule update --init Library/ThirdParty/freetype` と `cmake -S . -B build -G "Visual Studio 17 2022"`（既定の設定。ImGui・文字描画あり）で構成し直し、枠の直下で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 件で Game.exe までリンクした（`.harness/runs/20261116-103702/verify-G7-GR58-RAIN-MODEL-build.txt` をこの出力で上書き）。コードの変更なし
+## G11-GR54-SKY-SOURCE-SHARE 空の model と放射輝度の源の共有、空由来 IBL の空のパスへの移動（2026-11-16、run 20261116-111156 の反復 1）
+- Done: `SkyAtmosphereSourceCache`（Private/Rendering）を足した。Sanitize 後の空のパラメータを鍵に `SkyAtmosphereModel`（BuildSkyViewTable 済み・読み取り専用）と空由来 IBL の放射輝度の源（正距円筒 RGBA32F）を 1 回だけ作る。鍵の比較は `AreSkyAtmosphereParametersEqual`、作り直しは前の model を渡して太陽に依らない表を写す。SkyAtmospherePass が保持体を持ち、空の LUT と空由来 IBL の両方をここから引く（太陽高度の変化 1 回で model の構築が 2 回 → 1 回）。
+- Done: `CreateIblResources` を `IblGeneration.{h,cpp}` へ出した（中身は同じ。全球の平均照度の戻りも保つ）。LightingPass に残る 4 か所の呼び手（一様な環境・検証用の環境）は同じ結果。
+- Done: 空由来 IBL の 3 枚の生成と所有を SkyAtmospherePass へ移し、`ViewRenderContext::SkyAtmosphere.Ibl`（`SkyAtmosphereIblResources`）で公開した。LightingPass は `EnsureSkyAtmosphereIbl` と自前の model・3 枚を消し、束縛・PhysicalLighting の公開・全球の平均照度の選択をそこから読む（選ぶ式・公開の名前は同じ）。差し替えた古い 3 枚は SkyAtmospherePass の `GpuRetireQueue` に預け、そのフレームの通し番号が完了してから捨てる。
+- Done: 作り直しのたびに `Sky LUT generated in ... ms` に並べて `Sky IBL generated in ... ms (environment 256x128, diffuse 64x32, specular 256x128 mips 9, sky_model_builds=N)` を出す。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（Game.exe まで。`.harness/runs/20261116-111156/verify-G11-GR54-SKY-SOURCE-SHARE-U4.txt`）。`git grep` で `MakeUnique<SkyAtmosphereModel>` は保持体の 1 か所だけ、LightingPass の空由来 IBL の名前（`EnsureSkyAtmosphereIbl`・`m_SkyAtmosphere*Texture` など）は 0 件。
+- Next: ランナーの評価者の反証（危険地帯: 照明・RenderThread・IBL の所有）。所要時間の実測は G11-GR54-SKY-MEASURE。人が見るときの見どころ: 荒野と Rendering3DTest で太陽高度を動かし、空・地面の環境光・鏡面の映り込みが前と同じに見えること。ログで、太陽を 1 回動かすごとに `Sky LUT generated`（`reused_tables=1`）と `Sky IBL generated` が 1 行ずつ出て `sky_model_builds` が 1 ずつ増えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyAtmosphereSourceCacheTest` は作っていない。`SkyAtmosphereModelTest`・golden・PT の試験も回していない（撮影・GPU・試験を回さない決まり）。
+- Notes: 判断: `GpuRetireQueue` は RenderResources の中にあってパスから届かないので、SkyAtmospherePass が自前のキューを持ち、`CompletedRenderFrameSerial` と `ResolveRenderFrameSerial()`（フレームの通し番号の系列）で回す。RenderingCoordinator を通さない手組みの文脈（完了の通し番号 0）では、預けた物は Shutdown まで残る。
+- Notes: 既知の限界: PT の経路（`SceneView::SetupPathTracingPipeline`）も SkyAtmospherePass を使うので、空が変わると読まれない空由来 IBL も作る（CPU の時間だけで絵は変わらない）。
+
+### G11-GR52-FOG-STEPS（2026-11-16、run 20261116-115917・反復 1）
+- U1 霧のパラメータに歩の配置・比・散乱の上限・画素と時間のずらしの欄を足し、歩の配置の CPU の関数を置く: 着地(直し 0 回)
+- U2 VolumetricsCommon.glsl の霧だけの経路と霧＋空気遠近のマーチに、指数の歩の配置・散乱の上限・画素と時間のずらしを入れる: 着地(直し 0 回)
+- U3 VolumetricsPass が新しい欄・TAA の時間の位相・参照の 256 歩の開発用の切り替えを定数へ詰め、Game をビルドする: 着地(直し 0 回)
+- Done: 霧と空気遠近の光線の歩を `VolumetricFogParameters` の欄で選べるようにした。`StepDistribution`（Uniform が既定 / Exponential は隣の歩の長さを `ExponentialStepRatio`（1〜2、既定 1.15）倍ずつ伸ばして手前を細かくする）、`ScatteringCutoffMeters`（影つきの散乱を歩で積む距離の上限。0 で上限なし）、`bPixelJitter`（歩の始まりを画素ごとに Interleaved Gradient Noise でずらす）、`bTemporalJitter`（TAA が掛かるフレームだけ IGN を時間方向にも動かす。TAA が無いフレームは画素ごとに固定したずらし）。霧だけの経路は上限までを 24 歩で積み、上限より奥は影を引かずに解析の透過率の差 T(上限) − T(霧の距離) で足す。霧と空気遠近の経路は、上限があり視線がそれより長ければ手前を 24 歩（選んだ配置）・奥を等間隔 8 歩、それ以外は視線全体を 32 歩で進め、歩の標本までの透過率を歩の中のずらしに合わせる。CPU の同じ式は `ComputeVolumetricFogStep`・`ComputeVolumetricFogScatteringSpan`・`ComputeVolumetricAtmosphereMarchStep`（VolumetricFog.cpp）。開発ビルドだけ、環境変数 `NORVES_VOLUMETRIC_FOG_REFERENCE_STEPS=1` で両方の経路を等間隔・ずらし無し・上限無しの 256 歩で積む（参照）。既定の欄では定数の新しい 2 つの vec4 がすべて 0 になり、シェーダーは前と同じ演算の順で評価する。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で VolumetricsPass.cpp を再コンパイルし Core.lib と Game.exe を生成。シェーダーは実行時にコンパイルされるので、BOM を外した写しを glslc で通し、`volumetrics.frag`・`volumetrics_probe.frag` がどちらも exit 0（`.harness/runs/20261116-115917/verify-G11-GR52-FOG-STEPS-U3.txt`）。
+- 作らなかったもの: done-when (3) の `VolumetricFogModelTest` のケース・`RenderingVolumetricShaftsVulkanTest`（`--fog-scenario=shafts`）と、既存の golden・パストレーサーの試験の実行は、試験を作らない・回さない決まり（絶対規則 11）と撮影・GPU の計測をしない決まり（絶対規則 10）で作っていない・回していない。
+- 人が見るときの見どころ: 既定のままなので、ランチャー・Rendering3DTest・荒野・草原の霞と霧が前と同じに見えること。新しい配置はどのシーンでもまだ有効にしていない（草原での有効化は G11-GR52-FOG-CHECK）。試すときはシーンの霧に `StepDistribution = Exponential`・`ScatteringCutoffMeters = 300`・`bTemporalJitter = true` を入れ、木や建物の影が霧に落ちる光の筋（カメラから数十 m）で、筋の縁が等間隔の歩よりはっきりし、TAA で雑音が消えることを見る。`NORVES_VOLUMETRIC_FOG_REFERENCE_STEPS=1` で起動した参照と見比べる。
+- 採った判断: 時間方向のずらしの位相は `ViewRenderContext::TemporalFrameIndex`（通常は FrameNumber と同じ。決定的な撮影ではエポックからの番号）を 64 で割った余りにした。上限より奥は 0 に打ち切らず、霧だけの経路は影なしの解析の差で足し（影の届く距離より上限が遠ければ正確）、霧と空気遠近の経路は空気遠近が視線全体を要るので等間隔 8 歩で進める。比は 1〜2、上限は 0〜1e6 m に安全化する。大気の書き出し（`--atmosphere-dump`）は参照の切り替えに従わず、ずらしも使わない。
+- 既知の限界: 上限を影の届く距離より手前に置くと、霧だけの経路では上限より奥の影の中の霧も太陽で光る。霧と空気遠近の経路でずらしを有効にすると、空気遠近の透過率も画素ごとにわずかに揺れる（TAA で均される前提）。
+- Next: ランナーの評価者の反証（volumetrics は全シーンの霞に効く危険地帯）。草原での有効化と見え方の確かめは G11-GR52-FOG-CHECK。

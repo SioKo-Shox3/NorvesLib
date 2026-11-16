@@ -408,9 +408,6 @@ namespace NorvesLib::Core::Rendering
          */
         bool LoadEnvironmentMap(const Container::String& path);
         bool GenerateValidationSnapshots();
-        bool EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
-                                    uint32_t radianceWidth,
-                                    uint32_t radianceHeight);
         /**
          * @brief シーンの指定に合わせて、静的HDR環境と一様な環境を入れ替える
          *
@@ -585,11 +582,6 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DiffuseIrradianceTexture;
         float m_AverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
         RHI::TexturePtr m_PrefilteredSpecularTexture;
-        RHI::TexturePtr m_SkyAtmosphereDiffuseIrradianceTexture;
-        float m_SkyAtmosphereAverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
-        RHI::TexturePtr m_SkyAtmospherePrefilteredSpecularTexture;
-        /** @brief 地表から見た空の環境（視線方向の透過率込み）。RTGI・DDGIの不交差へ公開する。 */
-        RHI::TexturePtr m_SkyAtmosphereEnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250EnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250DiffuseIrradianceTexture;
         float m_ValidationRaw250AverageIrradiance[3] = {}; ///< 対応する拡散照度の資源の全球の平均照度（強度を掛ける前）
@@ -614,13 +606,6 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_DDGISampler;
         uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
         bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
-        SkyAtmosphereParameters m_SkyAtmosphereIblParameters;
-        uint32_t m_SkyAtmosphereIblRadianceWidth = 0;
-        uint32_t m_SkyAtmosphereIblRadianceHeight = 0;
-        bool m_bSkyAtmosphereIblCacheValid = false;
-        // 最後に空由来の IBL を作った空の model。太陽だけが動いたときは、太陽に依らない表をここから写す。
-        Container::TUniquePtr<SkyAtmosphereModel> m_SkyAtmosphereIblModel;
-        bool m_bSkyAtmosphereIblAvailable = false;
         // 静的HDR環境の一様な差し替え（SceneProxy::bStaticEnvironmentUniform）。差し替えている間は、読み込んだ静的HDRの
         // 3 枚を退避し、一様な放射輝度から作った 3 枚を m_EnvironmentTexture などの位置に置く（選ぶ側の式は変えない）
         RHI::TexturePtr m_LoadedEnvironmentTexture;
