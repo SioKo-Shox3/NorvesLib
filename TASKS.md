@@ -10844,3 +10844,11 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RenderedObjectHistory.h, Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
 - from: G7-GR49-ENV-SYSTEM
+
+## G12-GR48-IMPOSTOR-GBUFFER-P1: GBuffer へ書くインポスターで、アトラスの方式(上半球・全球)と個体の回転を使ってセルを選び、法線をワールドへ戻す
+- status: todo
+- after: G12-GR48-IMPOSTOR-GBUFFER
+- done-when: (1) 計画の文書にある要件なのに、どのタスクにも入っていない作業(上の 3 に当たる)。ロードマップ 2275 行は、ベイクと実行時の両方で「Y-up のオブジェクトの座標へ回してから符号化する」規約にそろえると決めている。ところが今の実行時の `impostor.frag:44-46` は、個体の回転を無いものとして扱い、方式を `IMPOSTOR_LAYOUT_HEMI_OCTAHEDRAL` に決め打ちしていて、コメントにも「全球のアトラスは選べない」とある。G12-GR48-IMPOSTOR-GBUFFER の done-when にもこの点は無い。一方で `Tools/ImpostorBaker/Main.cpp:371` は `FullOctahedral` で焼けて、`ImpostorBakeMetadata::Layout`(`ImpostorBake.h:34`)に方式を残す。また、後に回る G12-GR48-LAYER-SHADOW は、GR47 の配置の層にある回った個体を `ImpostorGBufferPass` で描く。そこで次の (2)〜(5) を満たす。(2) `ImpostorBatch`(またはそのパスの束ごとの定数)が、アトラスの `ImpostorBakeMetadata::Layout` を運ぶ。`impostor_gbuffer.frag` は決め打ちの上半球をやめ、その方式を `EncodeImpostorOctahedral`(`Assets/Shaders/Common/ImpostorOctahedral.glsl`)に渡してセルを選ぶ。全球で焼いたアトラスも、ベイクと同じ関数・同じ式でセルを引く。(3) 視線の向きは、`packet.InstanceData` にある個体の世界行列の回転の逆(拡縮は除いて正規化する)で Y-up のオブジェクトの座標へ回してから符号化する。アトラスから読んだオブジェクトの空間の法線は、同じ回転でワールドへ戻す。深度のアトラスで `gl_FragDepth` を補正するときも、同じオブジェクトの空間の視線を使う。(4) 回っていない上半球の個体では、セルの選び方が変更の前と同じになる。F11 のインポスターの見本と既定の起動画面は変えない(絶対規則 7)。(5) Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/impostor_gbuffer.vert, Assets/Shaders/impostor_gbuffer.frag, Library/Core/Public/Rendering/ImpostorGBufferPass.h, Library/Core/Private/Rendering/ImpostorGBufferPass.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Component/ImpostorComponent.cpp, TASKS.md, PROGRESS.md
+- from: G12-GR48-IMPOSTOR-GBUFFER
