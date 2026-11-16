@@ -174,7 +174,7 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 `z = 1-abs(x)-abs(y)` を求め、`z < 0` なら同じ折り返しを X/Y に適用してから正規化する。
 `signNotZero(0) = +1`。`Tint` の各値 `q` は色の倍率の半分を表し、倍率は `2q / 255`。
 規則による cook の `128` はほぼ 1 倍に相当する。描画先へ渡すときは倍率を 1 で切るため、1 より明るくはできない。
-現行の `ScatterSystem` は復号した `Tint` をまだ描画入力へ渡していない。
+`ScatterSystem` は mega の描画入力の色味へ、各成分 `min(1, 2q/255)` を RGBA8 にして渡す（3 成分とも 1 以上なら白）。
 `EncodeScatterInstance` と `DecodeScatterInstance` の `ScatterInstanceValue::Tint` は倍率の半分を表し、
 復号値は `q / 255`。枯れ度の復号も `q / 255`。
 
@@ -386,3 +386,116 @@ payload_hash は NVSCT 内部ハッシュ。散布 manifest の cooked_hash は 
 - 倒木: `Assets/Models/Grassland/FallenLog/FallenLog.gltf`
 - 低木: `Assets/Models/Grassland/Shrub/Shrub.gltf`
 - 草本の株: `Assets/Models/Grassland/ForbClump/ForbClump.gltf`
+
+## 配置の一覧 JSON
+
+同じ AssetCook の入口で、最上位の `kind` が `"placement"` なら配置の一覧を読む。
+`kind` が無ければ散布 spec を読む。UTF-8（先頭 BOM 可）で、すべてのオブジェクトの未知・重複した鍵を拒否する。
+文字列は空でない有効な Unicode とし、NUL を含められない。
+
+```json
+{
+  "version": 0,
+  "kind": "placement",
+  "terrain": { "path": "../TerrainSpecs/Grassland/GrasslandTerrain.json", "cooked_hash": "3455d60b54f23a5c" },
+  "chunk_size_m": 32,
+  "seed": 47001,
+  "height_mode": "terrain",
+  "species": [{
+    "name": "conifer", "render_path": "mega",
+    "lods": ["Assets/Models/PolyHaven/dead_quiver_trunk/dead_quiver_trunk_4k.gltf"],
+    "mesh_radius_m": 3.0, "scale_range": [1.2, 2.0],
+    "slope_follow": 0.0, "brightness_variation": 0.0,
+    "cast_shadow": true, "ray_tracing": true,
+    "collision": [{ "shape": "capsule", "a": [0, 0, 0], "b": [0, 6, 0], "radius": 0.35 }],
+    "wind": { "stiffness": 1.0, "phase_seed": 0 }
+  }],
+  "instances": [
+    { "species": "conifer", "position": [12.5, -0.2, -80.25], "yaw_deg": 35.0, "scale": 1.4, "tint": [0.95, 0.95, 0.95], "seed": 1234 }
+  ]
+}
+```
+
+最上位で使える鍵は `version`・`kind`・`terrain`・`chunk_size_m`・`seed`・`height_mode`・`species`・`instances`。
+`version` は必須で 0、`kind` は必須で `"placement"`。
+`terrain`（`path`・`cooked_hash` のみ）・`chunk_size_m`・`seed` は必須で、散布 spec と同じ意味・検査を使う。
+地形の cooked_hash の照合、元の JSON バイト列・照合したハッシュ・地形入力からの source_hash の計算、
+`SCATTER_COOKED`・`SCATTER_SPECIES` の書式も同じである。
+`height_mode` は既定が `"absolute"`。`position.y` をワールド Y とし、法線は `(0,1,0)`。
+`"terrain"` では Y は地形面からの高さで、規則配置と同じ LOD0 の三角形の高さを加え、その面法線を NormalOct に記録する。
+
+### 種の表
+
+`species` は必須で1〜64件。各種で使える鍵と既定値は次のとおり。
+
+| 鍵 | 必須・既定値 | 値と意味 |
+| --- | --- | --- |
+| `name` | 必須 | 重複しない種名 |
+| `render_path` | 必須 | `mega` または `foliage` |
+| `lods` | 必須 | LOD0 から順に1〜4件のメッシュ論理パス |
+| `mesh_radius_m` | 必須 | 有限で正のメッシュ半径 |
+| `scale_range` | 必須 | 散布 spec と同じ有限で正の `[min,max]`。min <= max、float の正規化最小値以上 |
+| `slope_follow` | 0 | 有限の0〜1。種表に保存 |
+| `brightness_variation` | 0 | 有限の0〜1。種表に保存し、配置一覧の色味には乱数を加えない |
+| `cast_shadow` | true | false なら `ScatterSpeciesFlagNoCastShadow` |
+| `ray_tracing` | true | false なら `ScatterSpeciesFlagNoRayTracing` |
+| `collision` | `[]` | 0〜16件の衝突の形。空でなければ `ScatterSpeciesFlagCollision` |
+| `wind` | 下位項目の既定 | 散布 spec と同じ。`stiffness` は既定1、有限で非負。`phase_seed` は既定0、uint32 の10進整数または10進文字列 |
+
+種表の `MinSpacingMeters` は `2 * mesh_radius_m * scale_range[1]`。有限で正の float で表せる値が必要で、間隔による配置の除外には使わない。
+寸法・属性は有限の float で表せる範囲とする。
+
+衝突の形は次の3形式で、形ごとの鍵は示したものだけを許す。座標は種のローカル座標。
+
+```json
+{ "shape": "capsule", "a": [0, 0, 0], "b": [0, 6, 0], "radius": 0.35 }
+{ "shape": "sphere", "center": [0, 1, 0], "radius": 1 }
+{ "shape": "box", "center": [0, 1, 0], "half_extents": [1, 1, 1] }
+```
+
+値はすべて有限、半径と半分の寸法は正。カプセルの `a`・`b` は A・B、球と箱の `center` は A に写す。
+球の B は0、箱の `half_extents` は B、箱の Radius は0。形の配列を種の順に連結し、種の `CollisionFirst`・`CollisionCount` で参照する。
+
+### 個体とチャンク
+
+`instances` は必須で1〜4,000,000件。各個体で使える鍵は次のとおり。
+
+| 鍵 | 必須・既定値 | 値と意味 |
+| --- | --- | --- |
+| `species` | 必須 | 種表にある名前 |
+| `position` | 必須 | 有限の `[x,y,z]`。Y の意味は height_mode に従う |
+| `yaw_deg` | 0 | 有限の角度。度で巡回してからラジアンに変換 |
+| `scale` | 1 | 有限で、参照する種の scale_range 内 |
+| `tint` | `[1,1,1]` | 色の倍率。各成分が有限の0〜2。EncodeScatterInstance へ tint / 2 を渡し、`q = round(tint * 127.5)` |
+| `seed` | 未指定 | 1〜4294967295の整数 token。0・小数・指数・文字列は拒否 |
+
+地形原点を格子原点とし、格子数は規則配置と同じ
+`ceil(CellCount * CellSizeM / chunk_size_m)`。個体のチャンクは X/Z とも
+`floor((position - Origin) / chunk_size_m)` で求め、格子外は拒否する。
+個体が入るチャンクだけを Z、X の順で書く。MinY・MaxY と AABB は全種の個体位置を囲む値とし、float の丸めでも範囲を縮めない。
+
+各チャンク・各種の中は Rank 昇順、同じ Rank は入力順。入力の番号は0から始め、Rank は
+`Mix(Mix(seed + 0x9e3779b97f4a7c15) ^ SpeciesKey(name) ^ 入力の番号)` の上位8ビット。
+Mix と種名の鍵は規則配置と共通。Dry は0。量子化と個体の検査には `EncodeScatterInstance` を使う。
+どれかの個体に seed があれば、出力する個体と同じ順に全個体ぶんの VariationSeeds を書き、未指定の個体は0とする。
+どの個体にも seed が無ければ配列を書かない。
+
+### エラーの種別
+
+診断は `配置の一覧 <name>: <日本語の説明>（個体の番号や種の名前）` の形で、文脈がある場合は末尾に添える。
+個体の番号は0から始まる。
+
+| name | 意味 |
+| --- | --- |
+| `json` | 構文、未知・重複した鍵、型の違い |
+| `invalid_species` | 種表の値・件数の不正、種名の重複 |
+| `unknown_species` | 個体の種名が種表に無い |
+| `non_finite` | 個体の位置・ヨー・拡大・色味を有限値で表せない。`1e400` も含む |
+| `scale_out_of_range` / `tint_out_of_range` | 個体の拡大または色味が範囲外 |
+| `invalid_seed` | seed が整数・範囲の条件を満たさない |
+| `invalid_collision` | 衝突の形・寸法・件数の不正 |
+| `invalid_chunk_size` | チャンク寸法が非有限・非正・地形タイル寸法の約数でない、または格子を表せない |
+| `out_of_grid` | 個体が格子外、または地形位置を標本化できない |
+| `terrain_mismatch` | 地形 cooked_hash が記録と実際で異なる |
+| `quantization` | NVSCT の個体の量子化または表の書き出しに失敗 |
+| `too_many_instances` | 個体数が1〜4,000,000件の範囲外 |

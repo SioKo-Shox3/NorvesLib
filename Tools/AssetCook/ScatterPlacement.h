@@ -123,6 +123,10 @@ namespace NorvesLib::Tools::AssetCook
         bool m_bInitialized = false;
     };
 
+    // 規則配置と配置一覧で同じ混合と種名の鍵を使う。
+    [[nodiscard]] uint64_t MixScatterSeed(uint64_t value);
+    [[nodiscard]] uint64_t ScatterSpeciesKey(const Core::Container::AnsiString& name);
+
     // 明示値が 0 のときだけ、最大の拡大を含めたメッシュの直径を間隔にする。
     [[nodiscard]] double ResolveScatterMinSpacing(const ScatterSpeciesRule& rule);
 

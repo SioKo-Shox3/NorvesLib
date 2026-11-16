@@ -127,6 +127,8 @@ add_library(AssetCookLib STATIC
     ScatterBaker.h
     ScatterSpec.cpp
     ScatterSpec.h
+    ScatterPlacementList.cpp
+    ScatterPlacementList.h
     TerrainCooker.cpp
     TerrainCooker.h
     TerrainMasks.cpp

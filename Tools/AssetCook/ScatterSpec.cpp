@@ -2,6 +2,7 @@
 #include "ScatterSpec.h"
 
 #include "TerrainSpec.h"
+#include "ScatterPlacementList.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "Text/JsonDocument.h"
@@ -20,7 +21,7 @@ namespace NorvesLib::Tools::AssetCook
     using Core::Container::VariableArray;
     using Core::JsonValue;
 
-    namespace
+    namespace ScatterSpecInput
     {
         bool Fail(AnsiString& error, const char8_t* message)
         {
@@ -384,11 +385,103 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool LoadTerrain(const std::filesystem::path& path, const AnsiString& terrainPathText, uint64_t recordedHash,
+                         Asset::CookedTerrainData& terrain, uint64_t& cookedHash,
+                         VariableArray<std::filesystem::path>& inputs, AnsiString& error, bool* bMismatch)
+        {
+            if (bMismatch)
+            {
+                *bMismatch = false;
+            }
+            const auto* first = reinterpret_cast<const char8_t*>(terrainPathText.data());
+            const auto terrainPath = (path.parent_path() / std::filesystem::path(first, first + terrainPathText.size())).lexically_normal();
+            VariableArray<uint8_t> terrainBytes;
+            if (terrainPath.extension() == ".nvtrn")
+            {
+                if (!Read(terrainPath, terrainBytes, error))
+                {
+                    return false;
+                }
+                inputs.push_back(terrainPath);
+            }
+            else
+            {
+                TerrainSpecCookResult terrainResult;
+                if (!CookTerrainSpecFile(terrainPath, terrainResult, error))
+                {
+                    return false;
+                }
+                terrainBytes = std::move(terrainResult.Build.NvtrnBytes);
+                inputs = std::move(terrainResult.InputFiles);
+            }
+            // manifest の cooked_hash と同じ、NVTRN 全体に対する FNV-1a64。
+            cookedHash = Asset::ComputeAssetPackagePayloadHash(terrainBytes.data(), terrainBytes.size());
+            if (recordedHash != cookedHash)
+            {
+                if (bMismatch)
+                {
+                    *bMismatch = true;
+                }
+                error = reinterpret_cast<const char*>(u8"地形の cooked_hash が食い違います: 記録=");
+                error += Asset::FormatAssetHashHex(recordedHash);
+                error += reinterpret_cast<const char*>(u8" 実際=");
+                error += Asset::FormatAssetHashHex(cookedHash);
+                return false;
+            }
+            const auto parsed = Asset::ParseCookedTerrain(Asset::AssetBlob::CopyBytes({terrainBytes.data(), terrainBytes.size()}));
+            if (!parsed.Succeeded())
+            {
+                return Fail(error, u8"参照地形の NVTRN を解析できません");
+            }
+            terrain = parsed.Terrain;
+            return true;
+        }
+
+        bool SourceHash(Span<const uint8_t> specBytes, uint64_t cookedHash,
+                        const VariableArray<std::filesystem::path>& inputs, uint64_t& sourceHash, AnsiString& error)
+        {
+            sourceHash = Asset::CookedTextureFormatV0::Fnv1a64OffsetBasis;
+            HashFile(sourceHash, {specBytes.data(), specBytes.size()});
+            uint8_t hashBytes[8];
+            for (unsigned i = 0; i < 8; ++i)
+            {
+                hashBytes[i] = static_cast<uint8_t>(cookedHash >> (8 * i));
+            }
+            HashFile(sourceHash, {hashBytes, 8});
+            for (const auto& input : inputs)
+            {
+                VariableArray<uint8_t> bytes;
+                if (!Read(input, bytes, error))
+                {
+                    return false;
+                }
+                HashFile(sourceHash, {bytes.data(), bytes.size()});
+            }
+            return true;
+        }
+
         bool Cook(const std::filesystem::path& path, ScatterSpecCookResult& out, AnsiString& error)
         {
             VariableArray<uint8_t> specBytes;
             Core::JsonDocument document;
-            if (!Read(path, specBytes, error) || !ParseDocument({specBytes.data(), specBytes.size()}, document, error))
+            if (!Read(path, specBytes, error))
+            {
+                return false;
+            }
+            Core::JsonDocument placementDocument;
+            AnsiString marker, placementError;
+            bool bPlacement = false;
+            const bool bParsedPlacement = ParseScatterPlacementListDocument({specBytes.data(), specBytes.size()}, placementDocument, marker, bPlacement, placementError);
+            if (bPlacement)
+            {
+                if (!bParsedPlacement)
+                {
+                    error = placementError;
+                    return false;
+                }
+                return CookScatterPlacementList(path, {specBytes.data(), specBytes.size()}, placementDocument.GetRoot(), marker, out, error);
+            }
+            if (!ParseDocument({specBytes.data(), specBytes.size()}, document, error))
             {
                 return false;
             }
@@ -444,64 +537,17 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 desc.Species.push_back(std::move(rule));
             }
-            const auto* first = reinterpret_cast<const char8_t*>(terrainPathText.data());
-            const auto terrainPath = (path.parent_path() / std::filesystem::path(first, first + terrainPathText.size())).lexically_normal();
-            VariableArray<uint8_t> terrainBytes;
+            Asset::CookedTerrainData terrain;
             VariableArray<std::filesystem::path> inputs;
-            if (terrainPath.extension() == ".nvtrn")
+            ScatterSpecCookResult result;
+            if (!LoadTerrain(path, terrainPathText, recordedHash, terrain, desc.TerrainCookedHash, inputs, error) ||
+                !SourceHash({specBytes.data(), specBytes.size()}, desc.TerrainCookedHash, inputs, result.SourceHash, error))
             {
-                if (!Read(terrainPath, terrainBytes, error))
-                {
-                    return false;
-                }
-                inputs.push_back(terrainPath);
-            }
-            else
-            {
-                TerrainSpecCookResult terrainResult;
-                if (!CookTerrainSpecFile(terrainPath, terrainResult, error))
-                {
-                    return false;
-                }
-                terrainBytes = std::move(terrainResult.Build.NvtrnBytes);
-                inputs = std::move(terrainResult.InputFiles);
-            }
-            // manifest の cooked_hash と同じ、NVTRN 全体に対する FNV-1a64。
-            desc.TerrainCookedHash = Asset::ComputeAssetPackagePayloadHash(terrainBytes.data(), terrainBytes.size());
-            if (recordedHash != desc.TerrainCookedHash)
-            {
-                error = reinterpret_cast<const char*>(u8"地形の cooked_hash が食い違います: 記録=");
-                error += Asset::FormatAssetHashHex(recordedHash);
-                error += reinterpret_cast<const char*>(u8" 実際=");
-                error += Asset::FormatAssetHashHex(desc.TerrainCookedHash);
                 return false;
             }
-            const auto parsed = Asset::ParseCookedTerrain(Asset::AssetBlob::CopyBytes({terrainBytes.data(), terrainBytes.size()}));
-            if (!parsed.Succeeded())
-            {
-                return Fail(error, u8"参照地形の NVTRN を解析できません");
-            }
-            desc.Params.OriginX = parsed.Terrain.OriginX;
-            desc.Params.OriginZ = parsed.Terrain.OriginZ;
-            ScatterSpecCookResult result;
-            result.SourceHash = Asset::CookedTextureFormatV0::Fnv1a64OffsetBasis;
-            HashFile(result.SourceHash, {specBytes.data(), specBytes.size()});
-            uint8_t hashBytes[8];
-            for (unsigned i = 0; i < 8; ++i)
-            {
-                hashBytes[i] = static_cast<uint8_t>(desc.TerrainCookedHash >> (8 * i));
-            }
-            HashFile(result.SourceHash, {hashBytes, 8});
-            for (const auto& input : inputs)
-            {
-                VariableArray<uint8_t> bytes;
-                if (!Read(input, bytes, error))
-                {
-                    return false;
-                }
-                HashFile(result.SourceHash, {bytes.data(), bytes.size()});
-            }
-            if (!BakeScatter(desc, parsed.Terrain, {}, result.Bytes, &result.Stats, error))
+            desc.Params.OriginX = terrain.OriginX;
+            desc.Params.OriginZ = terrain.OriginZ;
+            if (!BakeScatter(desc, terrain, {}, result.Bytes, &result.Stats, error))
             {
                 return false;
             }
@@ -520,7 +566,7 @@ namespace NorvesLib::Tools::AssetCook
             out = std::move(result);
             return true;
         }
-    } // namespace
+    } // namespace ScatterSpecInput
 
     bool CookScatterSpecFile(const std::filesystem::path& path, ScatterSpecCookResult& out, AnsiString& error)
     {
@@ -528,11 +574,11 @@ namespace NorvesLib::Tools::AssetCook
         error.clear();
         try
         {
-            return Cook(std::filesystem::absolute(path).lexically_normal(), out, error);
+            return ScatterSpecInput::Cook(std::filesystem::absolute(path).lexically_normal(), out, error);
         }
         catch (const std::exception&)
         {
-            return Fail(error, u8"散布の構築に失敗しました。入力の寸法・パスと利用可能なメモリを確認してください");
+            return ScatterSpecInput::Fail(error, u8"散布の構築に失敗しました。入力の寸法・パスと利用可能なメモリを確認してください");
         }
     }
 } // namespace NorvesLib::Tools::AssetCook

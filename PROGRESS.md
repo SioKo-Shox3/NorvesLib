@@ -11775,3 +11775,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 NVSCT v0 に種の印・衝突の形の表・個体差の種の配列を足す: 着地(直し 0 回)
 - U2 SceneView の RT の除外の印と、TLAS の選択からの除外: 着地(直し 0 回)
 - U4 ScatterSystem が色味・個体差の種・影・RT の印を描画先へ渡す: 着地(直し 0 回)
+- U3 AssetCook に配置の一覧（JSON）の cook を足す: 着地(直し 0 回)
