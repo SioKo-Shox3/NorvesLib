@@ -11800,3 +11800,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 採った判断: 時間方向のずらしの位相は `ViewRenderContext::TemporalFrameIndex`（通常は FrameNumber と同じ。決定的な撮影ではエポックからの番号）を 64 で割った余りにした。上限より奥は 0 に打ち切らず、霧だけの経路は影なしの解析の差で足し（影の届く距離より上限が遠ければ正確）、霧と空気遠近の経路は空気遠近が視線全体を要るので等間隔 8 歩で進める。比は 1〜2、上限は 0〜1e6 m に安全化する。大気の書き出し（`--atmosphere-dump`）は参照の切り替えに従わず、ずらしも使わない。
 - 既知の限界: 上限を影の届く距離より手前に置くと、霧だけの経路では上限より奥の影の中の霧も太陽で光る。霧と空気遠近の経路でずらしを有効にすると、空気遠近の透過率も画素ごとにわずかに揺れる（TAA で均される前提）。
 - Next: ランナーの評価者の反証（volumetrics は全シーンの霞に効く危険地帯）。草原での有効化と見え方の確かめは G11-GR52-FOG-CHECK。
+- U1 資産の束縛の核（AssetBinding.h/.cpp）と Component::OnPropertyApplied の口を足す: 着地(直し 0 回)
