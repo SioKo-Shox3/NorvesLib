@@ -6993,7 +6993,7 @@
 - notes: 選定課題 G7-S3（ロードマップ 4530 行）は推奨の (A) を採る。理由: RTGI・DDGI・RayTracing のシェーダーは霧を読まず（`Assets/Shaders/RTGI`・`DDGI`・`RayTracing` に fog・aerial・cloud の記述が 0 件。2026-11-03 に grep）、パストレーサーは `HashPathFog`（PathTracingPass.inl:296）で別に再累積する。今は霧が revision に入っている（RenderingCoordinator.cpp:266-277）ので、雨量に連動した霧の増分（GR58）が入ると RTGI の履歴が毎フレーム捨てられる。外す前に `ComputeSceneRevisionHash`・`HashSceneRevisionInternal`（RenderingCoordinator.cpp:1201、:288）の読み手を grep で全部読み、霧を入力に使う履歴が無いことを確かめて PROGRESS.md に書く。将来霧を GI の入力にするときは入れ直す、と関数の注釈に書く。空気遠近・雲の層・空の欄（:223-252）はハッシュに残す（GR50 の CloudCover は入れない。段階をまたぐ注意 4462 行）。入口は RenderWorld.h:178-237 の Set 群、SceneProxy.h:548-625、`SnapshotSceneParameters`（RenderingCoordinator.cpp:4560）。GPU の UBO（`GPUEnvironmentParams`）は G7-GR53-WET-WRITERS で作り、時刻・雨量の値は G7-GR49-ENV-SYSTEM が入れる（ここでは既定の 0）。UNCERTAIN: R3 の sweep の scenario が今の HEAD で通るか（10-07 の受入れの後に霧・空気遠近が変わっている）。通らなければ G7-GR49-CHECK で原因を分け、霧の変更が原因でなければ基準を撮り直さず記録する。試験を足す理由（Docs/Testing.md の 3 点）: 写し漏れと履歴の毎フレームの破棄は撮影 1 枚やログで気づけず、黙って起きる。危険地帯（Public API・FramePacket・RenderThread へ渡す値）なので評価者を通す。要件 `#### GR49` の設計案【1】【6】、ロードマップ 1535・1548・1562 行。
 
 ## G7-GR49-ENV-SYSTEM: GameThread の気象の正本 EnvironmentState と EnvironmentSystem を Engine に置き、ゲームの時間で遷移と濡れを進めて空・霧・雲・風・環境の値へ解決する
-- status: todo
+- status: done
 - after: G7-GR49-ENV-PARAMS, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR49
 - needs-gr: GR46
