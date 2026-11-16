@@ -1,6 +1,9 @@
 ﻿#include "Rendering/SkyAtmospherePass.h"
 
 #include "Rendering/FrameResourceOwner.h"
+#include "Rendering/GpuRetireQueue.h"
+#include "Rendering/IblGeneration.h"
+#include "Rendering/SkyAtmosphereSourceCache.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -131,6 +134,8 @@ namespace NorvesLib::Core::Rendering
 
     SkyAtmospherePass::SkyAtmospherePass(const SkyAtmospherePassSettings& settings)
         : m_Settings(settings)
+        , m_SourceCache(Container::MakeUnique<SkyAtmosphereSourceCache>())
+        , m_RetireQueue(Container::MakeUnique<GpuRetireQueue>())
     {
     }
 
@@ -198,6 +203,19 @@ namespace NorvesLib::Core::Rendering
         m_TransmittanceTexture.reset();
         m_RadianceTexture.reset();
         m_SunDiskTexture.reset();
+        m_IblEnvironmentTexture.reset();
+        m_IblDiffuseIrradianceTexture.reset();
+        m_IblPrefilteredSpecularTexture.reset();
+        std::fill_n(m_IblAverageIrradiance, 3u, 0.0f);
+        m_bIblValid = false;
+        if (m_RetireQueue)
+        {
+            m_RetireQueue->Clear();
+        }
+        if (m_SourceCache)
+        {
+            m_SourceCache->Reset();
+        }
         m_Sampler.reset();
         m_FragmentShader.reset();
         m_TransmittanceHandle = {};
@@ -219,6 +237,20 @@ namespace NorvesLib::Core::Rendering
         m_bSnapshotEnabled = false;
         m_bPrepared = false;
         m_bInitialized = false;
+    }
+
+    uint64_t SkyAtmospherePass::GetSkyModelBuildCount() const
+    {
+        return m_SourceCache ? m_SourceCache->GetModelBuildCount() : 0u;
+    }
+
+    void SkyAtmospherePass::AdvanceRetireQueue(const ViewRenderContext& context)
+    {
+        // このキューはフレームの通し番号の系列で回す。完了したフレームまでに預けた物を捨て、
+        // この後に預ける物はこのフレームの通し番号が完了するまで生かす
+        // （前のフレームの記録が古い 3 枚を読んでいるかもしれない）。
+        m_RetireQueue->BeginFrame(context.CompletedRenderFrameSerial);
+        m_RetireQueue->CommitFrame(context.ResolveRenderFrameSerial());
     }
 
     void SkyAtmospherePass::Setup(ViewRenderContext& /*context*/)
@@ -505,12 +537,12 @@ namespace NorvesLib::Core::Rendering
             // LUTは空のパラメータ（太陽の向きを含む）が変わったときだけ作る。
             m_bLutValid = false;
             const auto startTime = std::chrono::steady_clock::now();
-            Container::TUniquePtr<SkyAtmosphereModel> created =
-                Container::MakeUnique<SkyAtmosphereModel>(parameters, m_LutModel.get());
-            m_LutModel = std::move(created);
-            SkyAtmosphereModel& model = *m_LutModel;
-            model.BuildSkyViewTable();
-            if (!GenerateTransmittanceLut(model) || !GenerateRadianceLut(model))
+            const SkyAtmosphereModel* model = m_SourceCache ? m_SourceCache->AcquireModel(parameters) : nullptr;
+            if (model == nullptr)
+            {
+                return false;
+            }
+            if (!GenerateTransmittanceLut(*model) || !GenerateRadianceLut(*model))
             {
                 return false;
             }
@@ -526,13 +558,72 @@ namespace NorvesLib::Core::Rendering
                             m_Settings.TransmittanceHeight,
                             parameters.SunAltitudeDegrees,
                             parameters.SunAzimuthDegrees,
-                            model.ReusedSunIndependentTables() ? 1 : 0);
+                            model->ReusedSunIndependentTables() ? 1 : 0);
             m_LutParameters = parameters;
-            m_LutSunGroundTransmittance = model.GetSunGroundTransmittance();
-            BuildSkyAerialProfile(model, m_AerialProfile);
+            m_LutSunGroundTransmittance = model->GetSunGroundTransmittance();
+            BuildSkyAerialProfile(*model, m_AerialProfile);
             m_bLutValid = true;
+            // IBL が作れなくても LUT は使う。照明のパスは IBL が無ければ空の照明を黒にする。
+            GenerateSkyIbl(parameters);
         }
         return GenerateSunDiskTexture(parameters, preExposure, frameResources);
+    }
+
+    bool SkyAtmospherePass::GenerateSkyIbl(const SkyAtmosphereParameters& parameters)
+    {
+        const auto startTime = std::chrono::steady_clock::now();
+        m_RetireQueue->Retire(std::move(m_IblEnvironmentTexture));
+        m_RetireQueue->Retire(std::move(m_IblDiffuseIrradianceTexture));
+        m_RetireQueue->Retire(std::move(m_IblPrefilteredSpecularTexture));
+        std::fill_n(m_IblAverageIrradiance, 3u, 0.0f);
+        m_bIblValid = false;
+
+        const uint32_t width = m_Settings.RadianceWidth;
+        const uint32_t height = m_Settings.RadianceHeight;
+        const Container::VariableArray<float>* source =
+            m_SourceCache->AcquireRadianceSource(parameters, width, height);
+        if (source == nullptr)
+        {
+            NORVES_LOG_WARNING("SkyAtmospherePass",
+                               "Sky atmosphere radiance source generation failed; using black IBL (sky_model_builds=%llu)",
+                               static_cast<unsigned long long>(m_SourceCache->GetModelBuildCount()));
+            return false;
+        }
+
+        RHI::TexturePtr environment;
+        RHI::TexturePtr diffuse;
+        RHI::TexturePtr prefilter;
+        float averageIrradiance[3] = {};
+        if (!CreateIblResources(m_Device, *source, width, height,
+                                "SkyAtmosphere.Environment",
+                                "SkyAtmosphere.DiffuseIrradiance",
+                                "SkyAtmosphere.PrefilteredSpecular",
+                                environment, diffuse, prefilter, averageIrradiance))
+        {
+            NORVES_LOG_WARNING("SkyAtmospherePass",
+                               "Sky atmosphere IBL generation failed; using black IBL (sky_model_builds=%llu)",
+                               static_cast<unsigned long long>(m_SourceCache->GetModelBuildCount()));
+            return false;
+        }
+
+        m_IblEnvironmentTexture = std::move(environment);
+        m_IblDiffuseIrradianceTexture = std::move(diffuse);
+        m_IblPrefilteredSpecularTexture = std::move(prefilter);
+        std::copy_n(averageIrradiance, 3u, m_IblAverageIrradiance);
+        m_bIblValid = m_IblEnvironmentTexture &&
+                      m_IblDiffuseIrradianceTexture &&
+                      m_IblPrefilteredSpecularTexture;
+
+        const double elapsedMilliseconds = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - startTime).count();
+        NORVES_LOG_INFO("SkyAtmospherePass",
+                        "Sky IBL generated in %.1f ms (environment %ux%u, diffuse %ux%u, specular %ux%u mips %u, sky_model_builds=%llu)",
+                        elapsedMilliseconds,
+                        width, height,
+                        IblDiffuseWidth, IblDiffuseHeight,
+                        IblWorkingWidth, IblWorkingHeight, IblPrefilterMipCount,
+                        static_cast<unsigned long long>(m_SourceCache->GetModelBuildCount()));
+        return m_bIblValid;
     }
 
     void SkyAtmospherePass::PublishContextResources(ViewRenderContext& context, bool bValid)
@@ -554,6 +645,18 @@ namespace NorvesLib::Core::Rendering
                                       bValid && m_bLastSunDiskSaturated,
                                       bValid);
         context.SkyAtmosphere.AerialProfile = bValid ? m_AerialProfile : SkyAerialProfile{};
+        if (bValid && m_bIblValid)
+        {
+            context.SkyAtmosphere.Ibl.EnvironmentTexture = m_IblEnvironmentTexture;
+            context.SkyAtmosphere.Ibl.DiffuseIrradianceTexture = m_IblDiffuseIrradianceTexture;
+            context.SkyAtmosphere.Ibl.PrefilteredSpecularTexture = m_IblPrefilteredSpecularTexture;
+            std::copy_n(m_IblAverageIrradiance, 3u, context.SkyAtmosphere.Ibl.AverageIrradiance);
+            context.SkyAtmosphere.Ibl.bValid = true;
+        }
+        else
+        {
+            context.SkyAtmosphere.Ibl.Reset();
+        }
     }
 
     void SkyAtmospherePass::Declare(RenderGraphBuilder& builder)
@@ -569,6 +672,7 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        AdvanceRetireQueue(*context);
 
         m_LastParameters = SanitizeSkyAtmosphereParameters(ResolveSnapshot(*context));
         m_bSnapshotEnabled = m_LastParameters.bEnabled;

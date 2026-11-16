@@ -519,10 +519,14 @@ namespace NorvesLib::Core::Rendering
         /// 別々のテクスチャとスカラー値より優先する。
         TextureHandle ORMTexture;
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+        /// sRGB の発光テクスチャ。発光 = テクスチャの rgb × EmissiveColor × EmissiveLuminanceNits。
+        TextureHandle EmissiveTexture;
 
         /// NormalTexture が2チャンネル（BC5。RG に接空間法線の XY）のとき true。Z はシェーダーが XY から戻す。
         /// false なら従来どおり RGB に接空間法線を持つ。
         bool bNormalTwoChannel = false;
+        /// 法線マップの XY に掛ける倍率（glTF の normalTexture.scale。既定 1）。
+        float NormalScale = 1.0f;
 
         float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
 
@@ -581,8 +585,12 @@ namespace NorvesLib::Core::Rendering
         TextureHandle AOTexture;
         TextureHandle ORMTexture; ///< ORMを1枚に詰めたテクスチャ（R=AO・G=粗さ・B=メタリック）。有効なら別々の枠より優先
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+        /// sRGB の発光テクスチャ。発光 = テクスチャの rgb × EmissiveColor × EmissiveLuminanceNits。
+        TextureHandle EmissiveTexture;
 
         bool bNormalTwoChannel = false; ///< NormalTexture が2チャンネル（BC5）。Zはシェーダーが戻す
+        /// 法線マップの XY に掛ける倍率（glTF の normalTexture.scale。既定 1）。
+        float NormalScale = 1.0f;
 
         float HeightScale = 0.05f; ///< POMの高さスケール
 

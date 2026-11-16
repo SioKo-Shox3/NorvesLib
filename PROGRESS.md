@@ -11759,14 +11759,32 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 決めたこと: 曲線は `VfxValueType` を増やさず（Game のエディタが型ごとに分岐するため）、CurveOverLife の KeyCount と Key0〜Key7（Vector2 = 正規化した年齢, 値）で持ち、評価は `Math::CurveKeyframe` の折れ線。WrapPolicy の Die は CameraBox の形があるときだけ箱の外の粒を消す（形が無ければ今と同じ）。通し番号は空きで切り詰めても要求数で進める（GPU の生成の計画と同じ）。SpawnChild の子は刻みの最後にまとめて生成し、その刻みでは動かさない。既存のエフェクト（新しいモジュールなし・設定が既定値）は乱数の引き方・積分の式・生成数を変えていない。
 - Next: GPU の実行先（G7-GR57-GPU-SIMULATION）がこの定義・型・生成の計画・割り当てを使う。`ParticleSystem` は CPU の実行先を今も `Tick(deltaTime)`（風なし・カメラ原点の既定の文脈）で呼ぶ。描画は変えていないので、人が見るときはヒットエフェクトと撃破の血のエフェクトが今までどおり出ることだけを見る。
 
-### G11-GR52-FOG-STEPS（2026-11-16、run 20261116-115917・反復 1）
-- U1 霧のパラメータに歩の配置・比・散乱の上限・画素と時間のずらしの欄を足し、歩の配置の CPU の関数を置く: 着地(直し 0 回)
-- U2 VolumetricsCommon.glsl の霧だけの経路と霧＋空気遠近のマーチに、指数の歩の配置・散乱の上限・画素と時間のずらしを入れる: 着地(直し 0 回)
-- U3 VolumetricsPass が新しい欄・TAA の時間の位相・参照の 256 歩の開発用の切り替えを定数へ詰め、Game をビルドする: 着地(直し 0 回)
-- Done: 霧と空気遠近の光線の歩を `VolumetricFogParameters` の欄で選べるようにした。`StepDistribution`（Uniform が既定 / Exponential は隣の歩の長さを `ExponentialStepRatio`（1〜2、既定 1.15）倍ずつ伸ばして手前を細かくする）、`ScatteringCutoffMeters`（影つきの散乱を歩で積む距離の上限。0 で上限なし）、`bPixelJitter`（歩の始まりを画素ごとに Interleaved Gradient Noise でずらす）、`bTemporalJitter`（TAA が掛かるフレームだけ IGN を時間方向にも動かす。TAA が無いフレームは画素ごとに固定したずらし）。霧だけの経路は上限までを 24 歩で積み、上限より奥は影を引かずに解析の透過率の差 T(上限) − T(霧の距離) で足す。霧と空気遠近の経路は、上限があり視線がそれより長ければ手前を 24 歩（選んだ配置）・奥を等間隔 8 歩、それ以外は視線全体を 32 歩で進め、歩の標本までの透過率を歩の中のずらしに合わせる。CPU の同じ式は `ComputeVolumetricFogStep`・`ComputeVolumetricFogScatteringSpan`・`ComputeVolumetricAtmosphereMarchStep`（VolumetricFog.cpp）。開発ビルドだけ、環境変数 `NORVES_VOLUMETRIC_FOG_REFERENCE_STEPS=1` で両方の経路を等間隔・ずらし無し・上限無しの 256 歩で積む（参照）。既定の欄では定数の新しい 2 つの vec4 がすべて 0 になり、シェーダーは前と同じ演算の順で評価する。
-- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で VolumetricsPass.cpp を再コンパイルし Core.lib と Game.exe を生成。シェーダーは実行時にコンパイルされるので、BOM を外した写しを glslc で通し、`volumetrics.frag`・`volumetrics_probe.frag` がどちらも exit 0（`.harness/runs/20261116-115917/verify-G11-GR52-FOG-STEPS-U3.txt`）。
-- 作らなかったもの: done-when (3) の `VolumetricFogModelTest` のケース・`RenderingVolumetricShaftsVulkanTest`（`--fog-scenario=shafts`）と、既存の golden・パストレーサーの試験の実行は、試験を作らない・回さない決まり（絶対規則 11）と撮影・GPU の計測をしない決まり（絶対規則 10）で作っていない・回していない。
-- 人が見るときの見どころ: 既定のままなので、ランチャー・Rendering3DTest・荒野・草原の霞と霧が前と同じに見えること。新しい配置はどのシーンでもまだ有効にしていない（草原での有効化は G11-GR52-FOG-CHECK）。試すときはシーンの霧に `StepDistribution = Exponential`・`ScatteringCutoffMeters = 300`・`bTemporalJitter = true` を入れ、木や建物の影が霧に落ちる光の筋（カメラから数十 m）で、筋の縁が等間隔の歩よりはっきりし、TAA で雑音が消えることを見る。`NORVES_VOLUMETRIC_FOG_REFERENCE_STEPS=1` で起動した参照と見比べる。
-- 採った判断: 時間方向のずらしの位相は `ViewRenderContext::TemporalFrameIndex`（通常は FrameNumber と同じ。決定的な撮影ではエポックからの番号）を 64 で割った余りにした。上限より奥は 0 に打ち切らず、霧だけの経路は影なしの解析の差で足し（影の届く距離より上限が遠ければ正確）、霧と空気遠近の経路は空気遠近が視線全体を要るので等間隔 8 歩で進める。比は 1〜2、上限は 0〜1e6 m に安全化する。大気の書き出し（`--atmosphere-dump`）は参照の切り替えに従わず、ずらしも使わない。
-- 既知の限界: 上限を影の届く距離より手前に置くと、霧だけの経路では上限より奥の影の中の霧も太陽で光る。霧と空気遠近の経路でずらしを有効にすると、空気遠近の透過率も画素ごとにわずかに揺れる（TAA で均される前提）。
-- Next: ランナーの評価者の反証（volumetrics は全シーンの霞に効く危険地帯）。草原での有効化と見え方の確かめは G11-GR52-FOG-CHECK。
+## G2-GR79-EMISSIVE-NORMALSCALE 取り込んだ材質の発光テクスチャと NormalScale を描画まで届ける（2026-11-16、run 20261116-093812）
+- Done: `MegaMeshMaterial`・`MaterialCreateData`・`MaterialResourceData` に `EmissiveTexture`（sRGB）と `NormalScale`（既定 1。非有限は 1）を足し、`ImportedOpaqueRuntime.cpp` の `normalScale_requires_shader_support`・`emissiveTexture_requires_shader_support` の拒否を外した。静的（NVMESH v1。`FinalizeImportedMaterial`）とスキン（`SkinnedMaterialBuilder`）は、正の nits かつ EmissivePath があるときだけ発光画像を sRGB で検査・作成して渡す（nits の 65504 未満の検査と `emissiveNitsPerUnit` 未設定の拒否は変えていない）。
+- Done: 描画は 4 経路で 発光 = テクスチャ × EmissiveColor × nits、法線 = 法線マップの XY × NormalScale を正規化（`PbrMaterialEvaluation.glsl` の `ApplyPbrNormalScale`）。GBuffer（通常・スキン）は binding 14、MegaGeometry は binding 25 に発光テクスチャを足し、UBO の大きさは変えずに予約の `specularAAParams.y` = NormalScale、`.z` = 印（1 = 発光テクスチャ、2 = NormalScale）にした。可視バッファの材質の表 `MaterialEntry` は `TexturesE[4]` を足して 160 バイト、印 `MATERIAL_FLAG_EMISSIVE_TEXTURE = 1024`・`MATERIAL_FLAG_NORMAL_SCALE = 2048`、材質ごとのタイルの解決は binding 38 で発光テクスチャを束ねる（直接 dispatch の版は発光の定数だけ）。印が立たない材質は今と同じ演算・同じ表の値で、地形・スプラットの法線には NormalScale を掛けない。`ImportedOpaqueRuntime.md`・`GpuLayoutRegistry.md` を合わせた。
+- 証拠: `.harness/runs/20261116-093812/verify-build-game-slot-G2-GR79.txt`（枠で `cmake --build build --config Debug --target Game -- /m:1` が EXIT CODE 0・` error ` の行 0、Game.exe までリンク）。シェーダーは gbuffer・gbuffer_alphaclip・megageometry・megageometry_clearance・visbuffer_resolve（4 種）・lighting・forward_transparent・RTGI/DiffuseIndirect を 2 通りのマクロで glslc に通して 22 件すべて OK。
+- Next: ランナーの評価者の反証（危険地帯: GBuffer・MegaGeometry・可視バッファの材質の表・Public API の `MaterialCreateData`）。人が見るときの見どころ: 発光テクスチャか normalScale≠1 を持つ glTF を取り込んだ材質（静的・スキン）を置いたシーンで、発光の模様がテクスチャどおりに光るか、法線の凹凸の強さが normalScale に従うか（0 で平ら）。既定の材質だけのシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）は見た目が変わらないこと。
+- Notes: 試験は作らない決まりにより、done-when の試験の追加（`ImportedOpaqueRuntimeTest`・`VisibilityMaterialTableTest`・`RenderingHdrSceneCaptureTest` の束の 2 場合）はしていない。verify の ctest の行は外す決まりで選ばれる試験が無いので回していない。撮影・GPU の確かめも回さない決まり。
+- Notes: 統合ブランチ feature/scene-launcher の取り込み（2026-11-16）: `GBufferFragment.glsl`（ディゾルブの変種の発光にも発光テクスチャを掛けた色度を使う）と `VisibilityResolve.glsl`（冒頭の説明に発光テクスチャとインスタンスの色味の両方を残す）の衝突を解いた。取り込みで変わったシェーダー 28 本を 2 通りのマクロで glslc に通して 56 件すべて OK、`cmake --build build --config Debug --target Game -- /m:1` は EXIT=0（証拠 `.harness/runs/20261116-093812/merge-build-Game.txt`）。ctest は回さない決まりで回していない。
+- U1 材質の型に発光テクスチャと NormalScale を足し、店のコピーと共通の GLSL 関数を用意する: 着地(直し 0 回)
+- U2 取り込みの拒否を外し、静的とスキンの両方で発光テクスチャと NormalScale を材質へ渡す: 着地(直し 0 回)
+- U3 通常とスキンの GBuffer で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U4 MegaGeometry のラスタで発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U5 可視バッファの材質の表と解決で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
+
+- U1 CreateIblResources を IblGeneration へ出す: 着地(直し 0 回)
+- U2 空の model と放射輝度の源の保持体 SkyAtmosphereSourceCache を置く: 着地(直し 0 回)
+- U3 空由来 IBL を SkyAtmospherePass で保持体から作り、ViewRenderContext で公開する: 着地(直し 0 回)
+- U4 LightingPass を空のパスの IBL を読む側に替え、自前の空由来 IBL を消す: 着地(直し 0 回)
+
+## G11-GR54-SKY-SOURCE-SHARE 空の model と放射輝度の源の共有、空由来 IBL の空のパスへの移動（2026-11-16、run 20261116-111156 の反復 1）
+- Done: `SkyAtmosphereSourceCache`（Private/Rendering）を足した。Sanitize 後の空のパラメータを鍵に `SkyAtmosphereModel`（BuildSkyViewTable 済み・読み取り専用）と空由来 IBL の放射輝度の源（正距円筒 RGBA32F）を 1 回だけ作る。鍵の比較は `AreSkyAtmosphereParametersEqual`、作り直しは前の model を渡して太陽に依らない表を写す。SkyAtmospherePass が保持体を持ち、空の LUT と空由来 IBL の両方をここから引く（太陽高度の変化 1 回で model の構築が 2 回 → 1 回）。
+- Done: `CreateIblResources` を `IblGeneration.{h,cpp}` へ出した（中身は同じ。全球の平均照度の戻りも保つ）。LightingPass に残る 4 か所の呼び手（一様な環境・検証用の環境）は同じ結果。
+- Done: 空由来 IBL の 3 枚の生成と所有を SkyAtmospherePass へ移し、`ViewRenderContext::SkyAtmosphere.Ibl`（`SkyAtmosphereIblResources`）で公開した。LightingPass は `EnsureSkyAtmosphereIbl` と自前の model・3 枚を消し、束縛・PhysicalLighting の公開・全球の平均照度の選択をそこから読む（選ぶ式・公開の名前は同じ）。差し替えた古い 3 枚は SkyAtmospherePass の `GpuRetireQueue` に預け、そのフレームの通し番号が完了してから捨てる。
+- Done: 作り直しのたびに `Sky LUT generated in ... ms` に並べて `Sky IBL generated in ... ms (environment 256x128, diffuse 64x32, specular 256x128 mips 9, sky_model_builds=N)` を出す。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（Game.exe まで。`.harness/runs/20261116-111156/verify-G11-GR54-SKY-SOURCE-SHARE-U4.txt`）。`git grep` で `MakeUnique<SkyAtmosphereModel>` は保持体の 1 か所だけ、LightingPass の空由来 IBL の名前（`EnsureSkyAtmosphereIbl`・`m_SkyAtmosphere*Texture` など）は 0 件。
+- Next: ランナーの評価者の反証（危険地帯: 照明・RenderThread・IBL の所有）。所要時間の実測は G11-GR54-SKY-MEASURE。人が見るときの見どころ: 荒野と Rendering3DTest で太陽高度を動かし、空・地面の環境光・鏡面の映り込みが前と同じに見えること。ログで、太陽を 1 回動かすごとに `Sky LUT generated`（`reused_tables=1`）と `Sky IBL generated` が 1 行ずつ出て `sky_model_builds` が 1 ずつ増えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyAtmosphereSourceCacheTest` は作っていない。`SkyAtmosphereModelTest`・golden・PT の試験も回していない（撮影・GPU・試験を回さない決まり）。
+- Notes: 判断: `GpuRetireQueue` は RenderResources の中にあってパスから届かないので、SkyAtmospherePass が自前のキューを持ち、`CompletedRenderFrameSerial` と `ResolveRenderFrameSerial()`（フレームの通し番号の系列）で回す。RenderingCoordinator を通さない手組みの文脈（完了の通し番号 0）では、預けた物は Shutdown まで残る。
+- Notes: 既知の限界: PT の経路（`SceneView::SetupPathTracingPipeline`）も SkyAtmospherePass を使うので、空が変わると読まれない空由来 IBL も作る（CPU の時間だけで絵は変わらない）。
