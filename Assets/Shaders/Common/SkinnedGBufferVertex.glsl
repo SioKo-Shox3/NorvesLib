@@ -22,6 +22,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 vertexAnimMaterial0;
     vec4 vertexAnimMaterial1;
 #ifdef GBUFFER_DISSOLVE
+    vec4 viewClearance[4]; // VS では読まない（断片側の ViewClearanceData と同じ 64 バイト）
     vec4 dissolveEdge;
     vec4 dissolveSweep;
     vec4 dissolveParams;

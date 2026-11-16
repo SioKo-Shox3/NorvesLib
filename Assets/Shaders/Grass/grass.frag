@@ -3,7 +3,10 @@
 // 二次ベジエの草の帯を両面で GBuffer 5 枚へ書く。
 #include "Grass/GrassDraw.glsl"
 #include "Common/GBufferEncoding.glsl"
+#include "Common/WetSurface.glsl"
 #include "Common/VelocityEncoding.glsl"
+
+NORVES_DECLARE_ENVIRONMENT_UBO(0, 6)
 
 layout(std430, set = 0, binding = 2) readonly buffer GrassSpecies
 {
@@ -48,6 +51,7 @@ void main()
     {
         normal = -normal;
     }
+    vec3 geometricNormal = normal;
     // 両面とも上向きを 0.35 混ぜ、薄い帯の照明を安定させる。
     normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), 0.35));
     vec3 albedo = mix(species.RootColor.rgb, species.TipColor.rgb, fragV) * fragColorVariation;
@@ -57,10 +61,13 @@ void main()
         albedo = mix(albedo, species.DryColor.rgb * fragColorVariation, fragDryColorAmount);
     }
     albedo *= mix(vec3(1.0), species.WetColor.rgb, fragWetness);
+    float roughness = mix(species.Roughness, species.WetRoughness, fragWetness);
+    float metallic = 0.0;
+    ApplyWetSurface(albedo, roughness, metallic, normal, geometricNormal,
+                    u_Environment.params.surface.x, fragWetness, u_Environment.params.surface.y, 1.0);
     outAlbedo = vec4(albedo, 1.0);
     outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
-    float roughness = mix(species.Roughness, species.WetRoughness, fragWetness);
-    outMaterial = GBufferEncodeMaterial(vec3(0.0, roughness, mix(0.35, 1.0, fragV)), 0.0);
+    outMaterial = GBufferEncodeMaterial(vec3(metallic, roughness, mix(0.35, 1.0, fragV)), 0.0);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
 
     // 前のフレームの w が閾値以下なら履歴なしの印を書く。

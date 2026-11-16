@@ -11,6 +11,7 @@ namespace NorvesLib::Core::Rendering
 {
     struct CameraViewConstants;
     struct DecalScene;
+    struct FrameUploadAllocation;
     class FrameResourceLane;
 
     /**
@@ -41,12 +42,14 @@ namespace NorvesLib::Core::Rendering
          * Initialize 後に呼ぶ。3 枚は同じ大きさで、それぞれ別のテクスチャとする。呼び出す前に Albedo と Normal を
          * RenderTarget、Depth を ShaderResource にする。Normal は TransferSrc の用途も持つ。終了後の色添付は ShaderResource になる。
          * cameraConstants は描き先の深度に使ったカメラの値とし、frameResources は記録中の口を渡す。
+         * environmentConstants は同じフレームの環境定数を渡し、省略時は濡れゼロの既定値を借りる。
          * 一覧が空なら何も記録せず true、準備に失敗したら false を返す。
          */
         bool RecordDecals(const RHI::TexturePtr &albedoTarget, const RHI::TexturePtr &normalTarget,
                           const RHI::TexturePtr &depthTexture,
                           RHI::ICommandList &commandList, FrameResourceLane &frameResources, const DecalScene &scene,
-                          const CameraViewConstants &cameraConstants);
+                          const CameraViewConstants &cameraConstants,
+                          const FrameUploadAllocation *environmentConstants = nullptr);
 
     private:
         static constexpr uint32_t kColorTargetCount = 2;

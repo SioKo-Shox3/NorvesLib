@@ -4,7 +4,10 @@
 
 #include "Common/FoliageData.glsl"
 #include "Common/GBufferEncoding.glsl"
+#include "Common/WetSurface.glsl"
 #include "Common/VelocityEncoding.glsl"
+
+NORVES_DECLARE_ENVIRONMENT_UBO(0, 3)
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -42,11 +45,18 @@ void main()
         }
     }
 
-    outAlbedo = vec4(fragAlbedo, 1.0);
+    vec3 albedo = fragAlbedo;
+    float roughness = foliage.stemColor.a;
+    float metallic = 0.0;
+    vec3 geomNormal = faceLength > 1.0e-12 ? face : normal;
+    ApplyWetSurfaceFromEnvironment(albedo, roughness, metallic, normal, geomNormal, u_Environment.params,
+                                   ResolveWetSurfaceResponse(-1.0, -1.0, true));
+
+    outAlbedo = vec4(albedo, 1.0);
     // 草・低木の株の受け手には接触影を掛けない。
     outNormal = GBufferEncodeNormal(normal, GBUFFER_SHADING_MODEL_DEFAULT_LIT, GBUFFER_RECEIVER_FLAG_FOLIAGE_CLUMP);
     // 金属度 0・粗さ・株の中の遮蔽と材質値 P0 を書く。
-    outMaterial = GBufferEncodeMaterial(vec3(0.0, foliage.stemColor.a, fragOcclusion), 0.0);
+    outMaterial = GBufferEncodeMaterial(vec3(metallic, roughness, fragOcclusion), 0.0);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), 0.0);
 
     // 前のフレームの w が閾値以下なら履歴なしの印を書く。
