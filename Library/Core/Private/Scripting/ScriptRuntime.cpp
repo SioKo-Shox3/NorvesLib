@@ -4,6 +4,7 @@
 #include "Component/ScriptComponent.h"
 #include "Component/SocketAttachmentComponent.h"
 #include "Debug/Stats.h"
+#include "Environment/EnvironmentSystem.h"
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Scripting/AngelScriptEngineOwner.h"
@@ -12,6 +13,7 @@
 
 #include <angelscript.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <new>
 
@@ -24,6 +26,11 @@ namespace NorvesLib::Core
             void* Runtime;
             uint32_t SlotIndex;
             uint32_t Generation;
+        };
+
+        struct EnvironmentRef
+        {
+            void* Runtime;
         };
 
         struct ScriptVector3
@@ -153,6 +160,7 @@ namespace NorvesLib::Core
             m_bOwnerThreadCaptured = false;
             m_OwnerThreadId = {};
             m_World = nullptr;
+            m_EnvironmentSystem = nullptr;
         }
 
         EScriptRuntimeResult Cleanup()
@@ -223,6 +231,9 @@ namespace NorvesLib::Core
             }
         }
 
+        // Tick などで self.GetEnvironment() から Runtime ごとの気象を取得する。
+        // 例: void Tick(EntityRef self, float dt) { EnvironmentRef env = self.GetEnvironment(); env.SetRain(0.8, 30.0); }
+        // 気象の系が無効の間、Set は false を返す。
         bool RegisterTypes()
         {
             asIScriptEngine* engine = m_EngineOwner.GetEngine();
@@ -243,13 +254,59 @@ namespace NorvesLib::Core
             const int vectorZ = vectorY >= 0
                 ? engine->RegisterObjectProperty("Vector3", "float z", asOFFSET(ScriptVector3, z))
                 : vectorY;
-            const int entityType = vectorZ >= 0
+            const int environmentType = vectorZ >= 0
+                ? engine->RegisterObjectType("EnvironmentRef", sizeof(EnvironmentRef),
+                                             asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<EnvironmentRef>())
+                : vectorZ;
+            const int setRain = environmentType >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "bool SetRain(float, float)",
+                                               asFUNCTION(EnvironmentRefSetRain), asCALL_CDECL_OBJLAST)
+                : environmentType;
+            const int setWind = setRain >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "bool SetWind(float, float, float, float)",
+                                               asFUNCTION(EnvironmentRefSetWind), asCALL_CDECL_OBJLAST)
+                : setRain;
+            const int setCloudCover = setWind >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "bool SetCloudCover(float, float)",
+                                               asFUNCTION(EnvironmentRefSetCloudCover), asCALL_CDECL_OBJLAST)
+                : setWind;
+            const int setFogDensity = setCloudCover >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "bool SetFogDensity(float, float)",
+                                               asFUNCTION(EnvironmentRefSetFogDensity), asCALL_CDECL_OBJLAST)
+                : setCloudCover;
+            const int getRain = setFogDensity >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "float GetRain() const",
+                                               asFUNCTION(EnvironmentRefGetRain), asCALL_CDECL_OBJLAST)
+                : setFogDensity;
+            const int getWetness = getRain >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "float GetWetness() const",
+                                               asFUNCTION(EnvironmentRefGetWetness), asCALL_CDECL_OBJLAST)
+                : getRain;
+            const int getCloudCover = getWetness >= 0
+                ? engine->RegisterObjectMethod("EnvironmentRef", "float GetCloudCover() const",
+                                               asFUNCTION(EnvironmentRefGetCloudCover), asCALL_CDECL_OBJLAST)
+                : getWetness;
+            if (getCloudCover < 0)
+            {
+                NORVES_LOG_ERROR("Scripting", "気象のスクリプト入口を登録できません: code=%d", getCloudCover);
+                return false;
+            }
+            const int entityType = getCloudCover >= 0
                 ? engine->RegisterObjectType("EntityRef", sizeof(EntityRef),
                                              asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<EntityRef>())
-                : vectorZ;
-            const int isValid = entityType >= 0
-                ? engine->RegisterObjectMethod("EntityRef", "bool IsValid() const", asFUNCTION(EntityRefIsValid), asCALL_CDECL_OBJLAST)
+                : getCloudCover;
+            const int getEnvironment = entityType >= 0
+                ? engine->RegisterObjectMethod("EntityRef", "EnvironmentRef GetEnvironment() const",
+                                               asFUNCTION(EntityRefGetEnvironment), asCALL_CDECL_OBJLAST)
                 : entityType;
+            if (getEnvironment < 0)
+            {
+                NORVES_LOG_ERROR("Scripting", "気象のスクリプト入口を登録できません: code=%d", getEnvironment);
+                return false;
+            }
+            const int isValid = getEnvironment >= 0
+                ? engine->RegisterObjectMethod("EntityRef", "bool IsValid() const", asFUNCTION(EntityRefIsValid), asCALL_CDECL_OBJLAST)
+                : getEnvironment;
             const int getPosition = isValid >= 0
                 ? engine->RegisterObjectMethod("EntityRef", "Vector3 GetPosition() const", asFUNCTION(EntityRefGetPosition), asCALL_CDECL_OBJLAST)
                 : isValid;
@@ -335,6 +392,116 @@ namespace NorvesLib::Core
                 }
             }
             return false;
+        }
+
+        static EnvironmentRef EntityRefGetEnvironment(const EntityRef* reference)
+        {
+            return EnvironmentRef{reference != nullptr ? reference->Runtime : nullptr};
+        }
+
+        static Environment::EnvironmentSystem* ResolveEnvironmentSystem(const EnvironmentRef* reference)
+        {
+            if (reference == nullptr || reference->Runtime == nullptr)
+            {
+                return nullptr;
+            }
+            return static_cast<Impl*>(reference->Runtime)->m_EnvironmentSystem;
+        }
+
+        static bool EnvironmentRefSetRain(float intensity, float seconds, const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            if (system == nullptr || !system->IsEnabled() || !std::isfinite(intensity) || !std::isfinite(seconds))
+            {
+                return false;
+            }
+
+            Environment::EnvironmentTarget target;
+            target.Values = system->GetBaseState();
+            target.Values.RainIntensity = intensity;
+            target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::RainIntensity);
+            Environment::SetEnvironmentTargetDuration(target, seconds > 0.0f ? seconds : 0.0f,
+                                                       Environment::ETransitionCurve::SmoothStep);
+            system->SetTarget(target);
+            return true;
+        }
+
+        static bool EnvironmentRefSetWind(float directionYawDegrees, float baseSpeed, float gustStrength,
+                                          float seconds, const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            if (system == nullptr || !system->IsEnabled() || !std::isfinite(directionYawDegrees) ||
+                !std::isfinite(baseSpeed) || !std::isfinite(gustStrength) || !std::isfinite(seconds))
+            {
+                return false;
+            }
+
+            Environment::EnvironmentTarget target;
+            target.Values = system->GetBaseState();
+            target.Values.WindDirectionYawDegrees = directionYawDegrees;
+            target.Values.WindBaseSpeed = baseSpeed;
+            target.Values.WindGustStrength = gustStrength;
+            target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindDirectionYaw) |
+                          Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindBaseSpeed) |
+                          Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindGustStrength);
+            Environment::SetEnvironmentTargetDuration(target, seconds > 0.0f ? seconds : 0.0f,
+                                                       Environment::ETransitionCurve::SmoothStep);
+            system->SetTarget(target);
+            return true;
+        }
+
+        static bool EnvironmentRefSetCloudCover(float cover, float seconds, const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            if (system == nullptr || !system->IsEnabled() || !std::isfinite(cover) || !std::isfinite(seconds))
+            {
+                return false;
+            }
+
+            Environment::EnvironmentTarget target;
+            target.Values = system->GetBaseState();
+            target.Values.CloudCover = cover;
+            target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+            Environment::SetEnvironmentTargetDuration(target, seconds > 0.0f ? seconds : 0.0f,
+                                                       Environment::ETransitionCurve::SmoothStep);
+            system->SetTarget(target);
+            return true;
+        }
+
+        static bool EnvironmentRefSetFogDensity(float density, float seconds, const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            if (system == nullptr || !system->IsEnabled() || !std::isfinite(density) || !std::isfinite(seconds))
+            {
+                return false;
+            }
+
+            Environment::EnvironmentTarget target;
+            target.Values = system->GetBaseState();
+            target.Values.FogDensityAtBaseHeight = density;
+            target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::FogDensityAtBaseHeight);
+            Environment::SetEnvironmentTargetDuration(target, seconds > 0.0f ? seconds : 0.0f,
+                                                       Environment::ETransitionCurve::SmoothStep);
+            system->SetTarget(target);
+            return true;
+        }
+
+        static float EnvironmentRefGetRain(const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            return system != nullptr ? system->GetState().RainIntensity : 0.0f;
+        }
+
+        static float EnvironmentRefGetWetness(const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            return system != nullptr ? system->GetState().Wetness : 0.0f;
+        }
+
+        static float EnvironmentRefGetCloudCover(const EnvironmentRef* reference)
+        {
+            Environment::EnvironmentSystem* system = ResolveEnvironmentSystem(reference);
+            return system != nullptr ? system->GetState().CloudCover : 0.0f;
         }
 
         static bool EntityRefIsValid(const EntityRef* reference)
@@ -1010,6 +1177,7 @@ namespace NorvesLib::Core
 
         Scripting::AngelScriptEngineOwner m_EngineOwner;
         World* m_World = nullptr;
+        Environment::EnvironmentSystem* m_EnvironmentSystem = nullptr;
         Container::TUniquePtr<BindingStorage> m_BindingStorage;
         Scripting::ScriptSourceTracker m_SourceTracker;
         Scripting::ScriptSourcePollBatch m_PollBatch;
@@ -1043,6 +1211,11 @@ namespace NorvesLib::Core
     }
 
     EScriptRuntimeResult ScriptRuntime::Initialize(World& world)
+    {
+        return Initialize(world, nullptr);
+    }
+
+    EScriptRuntimeResult ScriptRuntime::Initialize(World& world, Environment::EnvironmentSystem* environment)
     {
         if (m_Impl->m_bOwnerThreadCaptured && !m_Impl->IsOwnerThread())
         {
@@ -1090,6 +1263,7 @@ namespace NorvesLib::Core
             // 束ねた World の順序付きの系に ScriptComponent の本体を載せる（別の World の ScriptComponent は束ねられないので呼ばない）
             Component::ScriptComponent::RegisterTick(world);
             m_Impl->m_World = &world;
+            m_Impl->m_EnvironmentSystem = environment;
             m_Impl->m_bInitialized = true;
             m_Impl->SetResult(EScriptRuntimeResult::Success);
             return EScriptRuntimeResult::Success;

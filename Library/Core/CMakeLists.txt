@@ -343,6 +343,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
+    Private/Rendering/RainModel.cpp
     Private/Rendering/EnvironmentParameters.cpp
     Private/Environment/EnvironmentState.cpp
     Private/Environment/EnvironmentSystem.cpp
@@ -359,6 +360,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/DDGIProbePass.cpp
     Private/Rendering/VolumetricsPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
+    Private/Rendering/IblGeneration.h
+    Private/Rendering/IblGeneration.cpp
+    Private/Rendering/SkyAtmosphereSourceCache.h
+    Private/Rendering/SkyAtmosphereSourceCache.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
@@ -763,6 +768,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VolumetricFog.h
     Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
+    Public/Rendering/RainModel.h
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h

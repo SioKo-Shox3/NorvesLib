@@ -3578,7 +3578,23 @@ namespace Game::GameModes
             {
                 data.m_SkyAtmosphere.SunAltitudeDegrees = altitude;
                 data.m_SkyAtmosphere.SunAzimuthDegrees = azimuth;
-                ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+                auto& environment = ctx.EngineRef.GetEnvironment();
+                if (environment.IsEnabled())
+                {
+                    using namespace NorvesLib::Core::Environment;
+                    // 気象が有効な間は空を PublishTo が毎フレーム書くので、操作の角度は状態の Manual の太陽へ書く。
+                    // 所要 0 秒の SetTarget は即時で、描画の履歴を切る DiscontinuityId は進めない。
+                    EnvironmentTarget target;
+                    target.Mask = EnvironmentFieldBit(EEnvironmentField::SunAltitude) | EnvironmentFieldBit(EEnvironmentField::SunAzimuth);
+                    target.Values = environment.GetBaseState();
+                    target.Values.SunAltitudeDegrees = altitude;
+                    target.Values.SunAzimuthDegrees = azimuth;
+                    environment.SetTarget(target);
+                }
+                else
+                {
+                    ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+                }
             }
         }
 

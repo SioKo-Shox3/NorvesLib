@@ -16,6 +16,7 @@
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/Wind.h"
+#include "Rendering/RainModel.h"
 #include "Rendering/EnvironmentParameters.h"
 #include "Rendering/SkyOcclusion.h"
 #include "Rendering/SunShadowParameters.h"
@@ -416,6 +417,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を GameThread で保持し、次の FramePacket へ値で渡す。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /** @brief 雨の調整の値を GameThread で無害化し、変更時だけ共有の値を差し替える。SceneRevision には入れない。 */
+        void SetRainTuning(const RainTuning& tuning);
+
         /** @brief 天気と時刻の環境の値を GameThread で保持し、次の FramePacket へ値で渡す。 */
         void SetEnvironmentParameters(const EnvironmentParameters& parameters);
 
@@ -483,6 +487,10 @@ namespace NorvesLib::Core::Rendering
          */
         void SetCloudLayer(const CloudLayerParameters& parameters);
         const CloudLayerParameters& GetCloudLayer() const { return m_CloudLayer; }
+        /// GameThread が最後に SetSkyAtmosphere・SetVolumetricFogParameters・SetWindParameters で渡した値（気象を場面の値から有効にするときに読む）。
+        const SkyAtmosphereParameters& GetSkyAtmosphere() const { return m_SkyAtmosphere; }
+        const VolumetricFogParameters& GetVolumetricFogParameters() const { return m_VolumetricFog; }
+        const WindParameters& GetWindParameters() const { return m_Wind; }
 
         /**
          * @brief 草・低木の株の束と風を設定する（GameThread）
@@ -751,6 +759,8 @@ namespace NorvesLib::Core::Rendering
         VolumetricFogParameters m_VolumetricFog;
         PaleFlatParameters m_PaleFlat = MakeDefaultPaleFlatParameters();
         WindParameters m_Wind = MakeDefaultWindParameters();
+        /** @brief 次の FramePacket へポインタだけを写す、不変の雨の調整の値。既定値で初期化する。 */
+        Container::TSharedPtr<const RainTuning> m_RainTuning = Container::MakeShared<RainTuning>(MakeDefaultRainTuning());
         EnvironmentParameters m_Environment = MakeDefaultEnvironmentParameters();
         bool m_bVertexAnimationTestDisplacement = false;
         SkyOcclusionParameters m_SkyOcclusion = MakeDefaultSkyOcclusionParameters();

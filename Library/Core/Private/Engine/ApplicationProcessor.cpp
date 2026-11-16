@@ -1905,7 +1905,7 @@ namespace NorvesLib::Core::Engine
         }
 
         GApplicationLifecycleState.bScriptRuntime = true;
-        if (NorvesLib::Core::GEngine.GetScriptRuntime().Initialize(GEngine->GetWorld()) !=
+        if (NorvesLib::Core::GEngine.GetScriptRuntime().Initialize(GEngine->GetWorld(), &GEngine->GetEnvironment()) !=
             EScriptRuntimeResult::Success)
         {
             LOG_ERROR("Failed to initialize ScriptRuntime");

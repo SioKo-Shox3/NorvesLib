@@ -10,6 +10,10 @@
 #
 # -SunElevations を与えると、各視点を太陽の仰角（度）ごとに撮り、<視点>-sun<仰角>.png として保存する
 # （例: -SunElevations 10,45,3 で朝・昼・夕）。方位は -SunAzimuth（省略時は起動画面の既定）。
+# -Rains・-Wetnesses・-CloudCovers は 0〜1 の値を並べ、各視点と太陽の条件に直積で組み合わせて撮る。
+# -Wind は方位（0〜360 度）、速さ（0〜100 m/s）、突風（0〜1）を順に与える。
+# 気象の引数を与えると Game はシーンの準備後に気象を有効にして値を当てる。
+# GR50・GR53 が入るまでは空の曇り度のほかは見た目が変わらない。
 # 露出は -ExposureEV100s で仰角と同じ順に与える。省略時は仰角から晴天の目安の EV100 を選ぶ
 # （自動露出が入るまでの暫定の対応表）。
 #
@@ -271,7 +275,11 @@ param(
     # 開発ビルドの検査の名前（カンマ区切りで1つの文字列でも、配列でもよい）。pass が 1 回以上・fail が 0 でなければ失敗にする。
     [string[]]$RequireChecks = @(),
     # 撮る前に、-Configuration の Game をビルドする（失敗したら撮らずに失敗）。
-    [switch]$Build
+    [switch]$Build,
+    [string[]]$Rains = @(),
+    [string[]]$Wetnesses = @(),
+    [string[]]$CloudCovers = @(),
+    [string[]]$Wind = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -388,7 +396,8 @@ function ConvertTo-NumberList([string[]]$Values, [double]$Minimum, [double]$Maxi
     {
         $number = 0.0
         if (-not [double]::TryParse($item.Trim(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -or
-            $number -lt $Minimum -or $number -gt $Maximum)
+            $number -lt $Minimum -or $number -gt $Maximum -or
+            ($Name -in @('rain', 'wetness', 'cloud_cover') -and [double]::IsNaN($number)))
         {
             Write-Host "CAPTURE_STARTUP_SCENE result=fail reason=invalid_$Name value=$item（$Minimum〜$Maximum）"
             exit 1
@@ -501,6 +510,9 @@ if ($viewNameList.Count -gt 0)
 
 $sunElevationList = ConvertTo-NumberList $SunElevations 0.0 90.0 'sun_elevation'
 $exposureList = ConvertTo-NumberList $ExposureEV100s -6.0 24.0 'exposure_ev100'
+$rainList = ConvertTo-NumberList $Rains 0.0 1.0 'rain'
+$wetnessList = ConvertTo-NumberList $Wetnesses 0.0 1.0 'wetness'
+$cloudCoverList = ConvertTo-NumberList $CloudCovers 0.0 1.0 'cloud_cover'
 $orbitFrameList = ConvertTo-NumberList $OrbitRenderedFrames 1.0 100000.0 'orbit_rendered_frames'
 if ($orbitFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -eq 0.0)
 {
@@ -592,13 +604,43 @@ if ($exposureList.Count -gt 0 -and $exposureList.Count -ne $sunElevationList.Cou
 
 # 撮影の一覧: 視点 × 太陽の仰角。仰角の指定が無ければ視点だけを起動時の太陽で撮る。
 $invariant = [Globalization.CultureInfo]::InvariantCulture
+$windArgument = $null
+$windNumbers = $null
+if ($PSBoundParameters.ContainsKey('Wind'))
+{
+    $windInput = $Wind -join ','
+    $windParts = @($windInput.Split(','))
+    $parsedWind = @()
+    $windMaximums = @(360.0, 100.0, 1.0)
+    if ($windParts.Count -eq 3)
+    {
+        for ($windIndex = 0; $windIndex -lt 3; ++$windIndex)
+        {
+            $number = 0.0
+            if (-not [double]::TryParse($windParts[$windIndex].Trim(), [Globalization.NumberStyles]::Float, $invariant, [ref]$number) -or
+                [double]::IsNaN($number) -or [double]::IsInfinity($number) -or
+                $number -lt 0.0 -or $number -gt $windMaximums[$windIndex])
+            {
+                break
+            }
+            $parsedWind += $number
+        }
+    }
+    if ($parsedWind.Count -ne 3)
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=invalid_wind value=$windInput（方位 0〜360 度、速さ 0〜100 m/s、突風 0〜1 の3つを指定する）"
+        exit 1
+    }
+    $windNumbers = $parsedWind
+    $windArgument = ($windNumbers | ForEach-Object { $_.ToString($invariant) }) -join ','
+}
 $shots = @()
 foreach ($view in $views)
 {
     if ($sunElevationList.Count -eq 0)
     {
         $shotName = if ($Night) { "$($view.Name)-night" } else { $view.Name }
-        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; NoiseRegions = $view.NoiseRegions; SunElevation = $null; ExposureEV100 = $null }
+        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; NoiseRegions = $view.NoiseRegions; SunElevation = $null; ExposureEV100 = $null; Rain = $null; Wetness = $null; CloudCover = $null }
         continue
     }
     for ($i = 0; $i -lt $sunElevationList.Count; ++$i)
@@ -611,8 +653,50 @@ foreach ($view in $views)
             NoiseRegions = $view.NoiseRegions
             SunElevation = $elevation
             ExposureEV100 = [math]::Round($ev, 2)
+            Rain = $null
+            Wetness = $null
+            CloudCover = $null
         }
     }
+}
+
+# 指定した気象の値だけ、各撮影を直積に分ける。
+if ($rainList.Count -gt 0 -or $wetnessList.Count -gt 0 -or $cloudCoverList.Count -gt 0)
+{
+    $rainOptions = @($null)
+    $wetnessOptions = @($null)
+    $cloudCoverOptions = @($null)
+    if ($rainList.Count -gt 0) { $rainOptions = @($rainList) }
+    if ($wetnessList.Count -gt 0) { $wetnessOptions = @($wetnessList) }
+    if ($cloudCoverList.Count -gt 0) { $cloudCoverOptions = @($cloudCoverList) }
+    $weatherShots = @()
+    foreach ($shot in $shots)
+    {
+        foreach ($rain in $rainOptions)
+        {
+            foreach ($wetness in $wetnessOptions)
+            {
+                foreach ($cloudCover in $cloudCoverOptions)
+                {
+                    $shotName = $shot.Name
+                    if ($null -ne $rain) { $shotName += "-rain$($rain.ToString($invariant))" }
+                    if ($null -ne $wetness) { $shotName += "-wet$($wetness.ToString($invariant))" }
+                    if ($null -ne $cloudCover) { $shotName += "-cloud$($cloudCover.ToString($invariant))" }
+                    $weatherShots += [pscustomobject]@{
+                        Name = $shotName
+                        Camera = $shot.Camera
+                        NoiseRegions = $shot.NoiseRegions
+                        SunElevation = $shot.SunElevation
+                        ExposureEV100 = $shot.ExposureEV100
+                        Rain = $rain
+                        Wetness = $wetness
+                        CloudCover = $cloudCover
+                    }
+                }
+            }
+        }
+    }
+    $shots = $weatherShots
 }
 
 # カメラを回すときは、各撮影を1回の起動で撮り、回している途中の描画フレーム数ごとに画像を保存する
@@ -639,6 +723,9 @@ if ($sequenceFrameList.Count -gt 0)
             NoiseRegions = $shot.NoiseRegions
             SunElevation = $shot.SunElevation
             ExposureEV100 = $shot.ExposureEV100
+            Rain = $shot.Rain
+            Wetness = $shot.Wetness
+            CloudCover = $shot.CloudCover
             OrbitFrames = $sortedOrbitFrames
         }
     }
@@ -1252,6 +1339,7 @@ if ($CompareOnly)
         exit 1
     }
     $existingMetrics = Get-Content -LiteralPath $existingMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $windNumbers = $existingMetrics.wind
     $results = @($existingMetrics.views)
     $failures = @($existingMetrics.failures | Where-Object { $_ })
     $shots = @()
@@ -1320,6 +1408,10 @@ foreach ($view in $shots)
         $arguments += "--sun-elevation=$($view.SunElevation.ToString($invariant))"
         $arguments += "--exposure-ev100=$($view.ExposureEV100.ToString($invariant))"
     }
+    if ($null -ne $view.Rain) { $arguments += "--rain=$($view.Rain.ToString($invariant))" }
+    if ($null -ne $view.Wetness) { $arguments += "--wetness=$($view.Wetness.ToString($invariant))" }
+    if ($null -ne $view.CloudCover) { $arguments += "--cloud-cover=$($view.CloudCover.ToString($invariant))" }
+    if ($null -ne $windArgument) { $arguments += "--wind=$windArgument" }
     if ($null -ne $SunAzimuth)
     {
         # [Nullable[double]] の引数は値が入ると double として渡るため、.Value を経由せず変換する。
@@ -1965,6 +2057,9 @@ foreach ($view in $shots)
             view = $image.Name
             camera = $view.Camera
             sun_elevation = $view.SunElevation
+            rain = $view.Rain
+            wetness = $view.Wetness
+            cloud_cover = $view.CloudCover
             exposure_ev100 = $view.ExposureEV100
             rendered_frames = $image.RenderedFrames
             png = "$($image.Name).png"
@@ -2302,6 +2397,7 @@ if ($CompareDeterministicWith -ne '')
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    wind = $windNumbers
     gpu_driver = if ($results.Count -gt 0) { $results[0].gpu_driver } else { $null }
     vt_used_limit_mb = $vtEffectiveLimitMb
     deterministic = [bool]$Deterministic

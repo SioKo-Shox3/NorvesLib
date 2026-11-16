@@ -4604,6 +4604,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
         packet.Scene.SetPaleFlatParameters(m_PaleFlat);
         packet.Scene.SetWindParameters(m_Wind);
+        packet.Scene.RainTuningSnapshot = m_RainTuning;
         packet.Scene.SetEnvironmentParameters(m_Environment);
         packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
@@ -6709,6 +6710,17 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetWindParameters(const WindParameters& parameters)
     {
         m_Wind = SanitizeWindParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetRainTuning(const RainTuning& tuning)
+    {
+        const RainTuning sanitized = SanitizeRainTuning(tuning);
+        if (std::memcmp(m_RainTuning.get(), &sanitized, sizeof(RainTuning)) == 0)
+        {
+            return;
+        }
+
+        m_RainTuning = Container::MakeShared<RainTuning>(sanitized);
     }
 
     void RenderingCoordinator::SetEnvironmentParameters(const EnvironmentParameters& parameters)
