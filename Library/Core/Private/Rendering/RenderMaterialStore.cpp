@@ -61,6 +61,10 @@ namespace NorvesLib::Core::Rendering
             }
             data.Program = createInfo.Program;
             data.ProgramId = MakeGBufferProgramId(data.Program.c_str());
+            if (data.ProgramId == MakeGBufferProgramId(DissolveGBufferProgramName))
+            {
+                data.Dissolve = SanitizeDissolveMaterialData(createInfo.Dissolve);
+            }
             data.Blend = createInfo.Blend;
             data.AlphaCutoff = SanitizeAlphaCutoff(createInfo.AlphaCutoff);
             data.AlphaClip = createInfo.AlphaClip == AlphaClipMode::Hash ? AlphaClipMode::Hash : AlphaClipMode::Test;

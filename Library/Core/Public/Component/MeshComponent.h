@@ -171,17 +171,37 @@ namespace NorvesLib::Core::Component
         // ========================================
 
         /**
-         * @brief 強制LODレベルを設定（-1で自動）
+         * @brief 段0を含むLODの鎖を設定。有効な段0のハンドルは現在のメッシュに反映する。
+         * @param group 1～4段のメッシュと、有限・非負で段の順に狭義に小さくなるしきい値
+         * @return 設定できた場合はtrue。不正な入力では何も変更せずfalse。
+         * @details 段0のハンドルが無効なら現在のメッシュを使う。1段なら鎖を解除する。
+         */
+        bool SetLODChain(const Rendering::LODGroup& group);
+
+        /**
+         * @brief メッシュを保ったままLODの鎖としきい値を消し、段数を1に戻す。
+         */
+        void ClearLODChain();
+
+        /**
+         * @brief 段0を含むLODの段数を取得。
+         */
+        uint32_t GetLODLevelCount() const { return m_LODLevelCount; }
+
+        /**
+         * @brief 強制LODレベルを設定（-1で自動、範囲外は-1～最大段に丸める）
          */
         void SetForcedLODLevel(int32_t level)
         {
-            ForcedLODLevel = level;
+            const int32_t maxLevel = static_cast<int32_t>(Rendering::MAX_MESH_LOD_LEVELS) - 1;
+            ForcedLODLevel = level < -1 ? -1 : (level > maxLevel ? maxLevel : level);
             MarkRenderStateDirty();
         }
         int32_t GetForcedLODLevel() const { return ForcedLODLevel; }
 
         /**
-         * @brief 現在のLODレベルを取得
+         * @brief 保存の互換のために残すLODレベルを取得。
+         * @details 段の選択はビューごとにSceneViewのカリングが行い、この値は更新しない。
          */
         uint8_t GetCurrentLODLevel() const { return CurrentLODLevel; }
 
@@ -215,6 +235,16 @@ namespace NorvesLib::Core::Component
          * @param index 0 = P0、1 = P1、2 = 予約、3 = 被覆率の乗数
          */
         float GetShadingParams(uint32_t index) const;
+
+        /**
+         * @brief ディゾルブの閾値をインスタンスの P0 に設定する。0 = 全面が残る、1 = 全面が消える。
+         * 負と NaN は未指定で材質の P0 を使い、1 を超える値は 1 に収める。
+         * P0 は PaleFlat の消滅度と同じ欄を共有する。
+         */
+        void SetDissolveThreshold(float threshold);
+
+        /** @brief インスタンスの P0 のディゾルブ閾値を取得する。PaleFlat の消滅度と同じ欄を共有する。 */
+        float GetDissolveThreshold() const;
 
         // ========================================
         // バウンディング
@@ -304,6 +334,12 @@ namespace NorvesLib::Core::Component
 
         // マテリアルオーバーライド
         Container::VariableArray<Rendering::MaterialHandle> m_Materials;
+
+        // LODの鎖としきい値は保存・読み込みの対象外。段0はメッシュプロパティに持つ。
+        Container::FixedArray<Rendering::MeshDataHandle, Rendering::MAX_MESH_LOD_LEVELS - 1> m_LODChainMeshes;
+        Container::FixedArray<float, Rendering::MAX_MESH_LOD_LEVELS> m_LODScreenSizeThresholds =
+            Container::FixedArray<float, Rendering::MAX_MESH_LOD_LEVELS>(0.0f);
+        uint32_t m_LODLevelCount = 1;
 
         // カスタムシェーダーデータ
         float m_CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};

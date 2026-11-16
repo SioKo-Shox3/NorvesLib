@@ -20,6 +20,10 @@ layout(location = 5) in vec3 fragViewDir;
 layout(location = 6) in vec4 fragCurrentClip;
 layout(location = 7) in vec4 fragPreviousClip;
 layout(location = 8) flat in vec4 fragInstanceShadingParams;
+#ifdef GBUFFER_DISSOLVE
+layout(location = 9) in vec3 fragRestPosition;
+layout(location = 10) in float fragDissolveProtect;
+#endif
 
 #include "Common/ViewClearance.glsl"
 
@@ -43,6 +47,12 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 vertexAnimMaterial0; // FS では読まない。
     vec4 vertexAnimMaterial1; // FS では読まない。
     ViewClearanceData viewClearance; // 視界の確保の遮蔽物のディザ（印の付いた材質だけ値が入る。印の無い材質は全 0）
+#ifdef GBUFFER_DISSOLVE
+    vec4 dissolveEdge;
+    vec4 dissolveSweep;
+    vec4 dissolveParams;
+    uvec4 dissolveProtectBones;
+#endif
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -56,6 +66,10 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 #include "Common/GBufferEncoding.glsl"
 #include "Common/VelocityEncoding.glsl"
 #include "Common/SpecularAntiAliasing.glsl"
+#ifdef GBUFFER_DISSOLVE
+#include "Common/Dissolve.glsl"
+#include "Common/AlphaClip.glsl"
+#endif
 #ifdef GBUFFER_ALPHA_CLIP
 #include "Common/AlphaClip.glsl"
 #endif
@@ -152,14 +166,42 @@ void main()
     }
 #endif
 
+#ifdef GBUFFER_DISSOLVE
+    float e = 0.0;
+    if (mvp.dissolveParams.x > 0.5)
+    {
+        float threshold = clamp(params.x, 0.0, 1.0);
+        float m = DissolveMask(fragRestPosition, fragDissolveProtect, threshold,
+                               mvp.dissolveSweep.xyz, mvp.dissolveSweep.w, mvp.dissolveParams.y);
+        if (threshold > 0.0 && threshold < 1.0 && mvp.dissolveParams.w > 0.0)
+        {
+            m += (AlphaClipInterleavedGradientNoise(floor(gl_FragCoord.xy)) - 0.5) * mvp.dissolveParams.w;
+        }
+        if (m < 0.0)
+        {
+            discard;
+        }
+        e = DissolveEdge(m, mvp.dissolveParams.z, threshold);
+    }
+#endif
+
     uint id = uint(mvp.shadingModel.x + 0.5) & GBUFFER_SHADING_MODEL_ID_MASK;
     vec3 albedo = ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples);
     float metallic = textureSamples.Material.x;
     float roughness = textureSamples.Material.y;
+#ifdef GBUFFER_DISSOLVE
+    // ディゾルブの P0 は消滅度なので濡れの感度には使わず、既定の 1 とする。
+    float wetResponse = 1.0;
+#else
     float wetResponse = ResolveWetSurfaceResponse(fragInstanceShadingParams.x, mvp.shadingParams.x,
                                                   id == GBUFFER_SHADING_MODEL_DEFAULT_LIT);
+#endif
     ApplyWetSurfaceFromEnvironment(albedo, roughness, metallic, normal, normalize(geometricNormal),
                                     u_Environment.params, wetResponse);
+#ifdef GBUFFER_DISSOLVE
+    // 縁でアルベドを灰へ寄せる。
+    albedo = mix(albedo, vec3(dot(albedo, vec3(0.2126, 0.7152, 0.0722))), e);
+#endif
 
     outAlbedo = vec4(albedo, textureSamples.Albedo.a);
 #ifdef GBUFFER_ALPHA_CLIP
@@ -178,10 +220,20 @@ void main()
 
     // 発光のプリエクスポージャ後の値とシェーディングパラメータ P1 を書く。
     // 発光は Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛ける（Lighting は露出を掛けずに足す）。
+#ifdef GBUFFER_DISSOLVE
+    vec3 emissive = ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
+                                            fragEmissiveChromaticityAndLuminanceNits.a,
+                                            mvp.frameParams.y);
+    emissive += ComputePreExposedEmissive(mvp.dissolveEdge.rgb,
+                                         min(mvp.dissolveEdge.a, DISSOLVE_EDGE_EMISSIVE_NITS_MAX) * e,
+                                         mvp.frameParams.y);
+    outEmissive = GBufferEncodeEmissive(min(emissive, vec3(GBUFFER_PRE_EXPOSED_EMISSIVE_MAX)), params.y);
+#else
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
                                                                 fragEmissiveChromaticityAndLuminanceNits.a,
                                                                 mvp.frameParams.y),
                                        params.y);
+#endif
 
     // 前のフレームの w が閾値以下なら履歴なしの印を書く。
     outVelocity = vec2(0.0);

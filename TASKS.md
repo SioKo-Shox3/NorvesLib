@@ -6339,7 +6339,7 @@
 - notes: ロードマップ 1948・1960 行、要件 `#### GR19` の設計案の実装順 1)〜3) と受け入れ確認。位置だけのスキニングは新しく作らず、G3 の GR12 が公開した `Animation::SkinPosition` を使う（「段階をまたぐ注意」4452・4466 行。要件の `SkeletalAnimationSampler::SkinPosition` の新設は採らない）。姿勢の公開点（`EvaluatePose`・`FindJointIndex`・`TryGetJointWorldMatrix`。`SkinnedMeshComponent.h:77-88`）は G1・G3 で入っているが、パレットを読む口が無いので (4) で足す。要件の試験の名前（SkinnedSurfaceAnchorTest・JointBucketSearchTest・AnchorInvalidationTest・AnchorVelocityTest の CPU の部分）は、実行ファイルを増やさないため `SkeletalAnimationSamplingTest` の中のケースにする。正本は LOD0（GR63 の (d)）で、アンカーの間 LOD0 に固定するのは Gameplay の側（G10-GR19-ANCHOR-ATTACH）。AI 由来の高密度メッシュでの探索の費用は、GR80（G17）の間引いたアンカーメッシュが無い間は描画メッシュの LOD0 のバケットで代える（ロードマップ 1967 行）。この純部品は GR57-P6（G10-GR60-SKIN-SURFACE-EMITTER）が同じスキニングの規約で使う（ロードマップ 1966 行）。危険地帯（Public API の SkinnedMeshComponent）なので評価者を通す。ほかの G10 の項目と触るファイルが交わらないので、最初から並列に走れる。やらないこと: Entity の駆動・突き立ての結線（G10-GR19-ANCHOR-ATTACH）、アンカーの保存。
 
 ## G10-GR60-DISSOLVE: バインド姿勢の 3D の位置のノイズで体を削って縁を光らせるディゾルブの材質を、スキンと静的なメッシュの GBuffer と全部の影に入れる
-- status: todo
+- status: done
 - after: G10-GR64-GHOST-RENDER, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-SHADOW, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR27-MASKED-GBUFFER
 - gr: GR60
 - needs-gr: GR26, GR27
@@ -7299,7 +7299,7 @@
 - notes: 要件 `#### GR111` の受け入れ確認の「マニフェストの規模」「起動ベンチマーク」と P0 の計測（ロードマップ 2545・2673・2675 行）。計測は RelWithDebInfo（AGENTS.md の絶対規則 8。ロードマップは Release と書く）。数千資産での実の費用は未計測（ロードマップ 2801 行）なので、閾値は測ってから決める。マニフェストの JSON の解析の時間が小さければ二値の索引は作らない（同じ行）。荒野の起動の読み込みの比べは、`SummarizeAssetLoadProfile.ps1` の使い方を `Docs/Performance/AssetLoadBaseline.md` の流儀に合わせる。
 
 ## G12-GR48-MESH-LOD-SELECT: メッシュの LOD の鎖を画面の大きさとヒステリシスで選び、インポスターへの切り替えも同じ判定で決める
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `MeshProxy`（`Library/Core/Public/Rendering/SceneProxy.h`。今は `MeshHandle` 1 つと保持だけの `LODLevel`）が LOD の鎖（最大 4 段のメッシュのハンドルと、段ごとの画面の大きさのしきい値）を持ち、`MeshComponent` に鎖を設定する口がある（今は `CurrentLODLevel` を決めるコードが無い。`MeshComponent.h:186・286`）。(2) `SceneView::CullProxies` の 2 つの版が、境界球の画面の大きさ = 半径 / (距離 × tan(fov/2))（正射影のカメラでは半径 / (OrthoHeight/2)）から段を選び、ヒステリシス（しきい値の上下の帯）で 1 フレームごとに往復しない。`ForcedLODLevel`（-1 = 自動）を優先する。選んだ段のメッシュとサブメッシュの範囲（`TryGetSubMeshRanges`。`Library/Core/Private/Rendering/ProceduralMeshGpuStore.h`）へ、バッチへ渡す前に差し替える。`LODGroup::GetLODLevel`（`MeshTypes.h:193-213`）の定義と画面の大きさの式を 1 つにそろえる。(3) インポスターへの切り替え（今は `ImpostorComponent` の `LODSwitchDistance` の距離のしきい値。`ImpostorComponent.h:31・44`）を、同じ画面の大きさの判定の最後の段として扱い、元のメッシュが静的メッシュでも MegaGeometry のインスタンスでも同じ規則で元を抑える。(4) 試験（`SceneViewProxyLookupTest` の束へ MEMBER）: `MeshLODSelectionTest`（画面の大きさ → 段の対応、しきい値のちょうど・手前・奥、ForcedLODLevel の優先、ヒステリシスで往復しない、段が 1 つだけのメッシュ、正射影の式、インポスターへの切り替えと元の抑制、距離の単調性）。既存の `SceneViewProxyLookupTest`・`SceneViewProxyReconcileTest`・`SceneViewViewportCommandTest`・`MeshBatcherTest`・`ImpostorLODSwitchTest`・`ImpostorOctahedralTest` が通る。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest SceneViewViewportCommandTest MeshBatcherInstancingTest ImpostorLODSwitchTest -- /m:1`
