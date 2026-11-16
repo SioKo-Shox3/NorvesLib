@@ -11789,3 +11789,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: `GpuRetireQueue` は RenderResources の中にあってパスから届かないので、SkyAtmospherePass が自前のキューを持ち、`CompletedRenderFrameSerial` と `ResolveRenderFrameSerial()`（フレームの通し番号の系列）で回す。RenderingCoordinator を通さない手組みの文脈（完了の通し番号 0）では、預けた物は Shutdown まで残る。
 - Notes: 既知の限界: PT の経路（`SceneView::SetupPathTracingPipeline`）も SkyAtmospherePass を使うので、空が変わると読まれない空由来 IBL も作る（CPU の時間だけで絵は変わらない）。
 - U1 NVSKEL role2 の任意節 LODS・PART の型・符号化・検査と書式の文書: 着地(直し 0 回)
+- U2 取り込み設定の skinnedLod 節: 着地(直し 0 回)
