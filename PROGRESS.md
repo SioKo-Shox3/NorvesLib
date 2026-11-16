@@ -11718,3 +11718,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 CreateIblResources を IblGeneration へ出す: 着地(直し 0 回)
 - U2 空の model と放射輝度の源の保持体 SkyAtmosphereSourceCache を置く: 着地(直し 0 回)
 - U3 空由来 IBL を SkyAtmospherePass で保持体から作り、ViewRenderContext で公開する: 着地(直し 0 回)
+- U4 LightingPass を空のパスの IBL を読む側に替え、自前の空由来 IBL を消す: 着地(直し 0 回)

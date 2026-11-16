@@ -118,88 +118,6 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    static float ClampSkyRadianceForFp16(float value)
-    {
-        constexpr float kFp16SafeMax = 65504.0f * 0.9f;
-        return std::isfinite(value) ? std::clamp(value, 0.0f, kFp16SafeMax) : 0.0f;
-    }
-
-    static Math::Vector3 SkyDirectionFromEquirectangular(uint32_t x,
-                                                         uint32_t y,
-                                                         uint32_t width,
-                                                         uint32_t height)
-    {
-        constexpr float kPi = 3.14159265358979323846f;
-        const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
-        const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
-        const float longitude = (u - 0.5f) * 2.0f * kPi;
-        const float latitude = (v - 0.5f) * kPi;
-        const float horizontal = std::cos(latitude);
-        return Math::Vector3(horizontal * std::cos(longitude),
-                             -std::sin(latitude),
-                             horizontal * std::sin(longitude));
-    }
-
-    // previousModel は前に作った空の model（太陽に依らない表を写す。作った model をここへ戻す）。
-    static bool BuildSkyAtmosphereRadianceSource(
-        const SkyAtmosphereParameters& parameters,
-        uint32_t width,
-        uint32_t height,
-        Container::TUniquePtr<SkyAtmosphereModel>& previousModel,
-        Container::VariableArray<float>& outSource)
-    {
-        outSource.clear();
-        if (width == 0u || height == 0u ||
-            static_cast<size_t>(width) > std::numeric_limits<size_t>::max() /
-                                      static_cast<size_t>(height))
-        {
-            return false;
-        }
-
-        const size_t pixelCount = static_cast<size_t>(width) * height;
-        if (pixelCount > std::numeric_limits<size_t>::max() / 4u)
-        {
-            return false;
-        }
-
-        const SkyAtmosphereParameters sanitized =
-            SanitizeSkyAtmosphereParameters(parameters);
-        if (!sanitized.bEnabled)
-        {
-            return false;
-        }
-
-        outSource.resize(pixelCount * 4u, 0.0f);
-        Container::TUniquePtr<SkyAtmosphereModel> created =
-            Container::MakeUnique<SkyAtmosphereModel>(sanitized, previousModel.get());
-        previousModel = std::move(created);
-        SkyAtmosphereModel& model = *previousModel;
-        model.BuildSkyViewTable();
-        for (uint32_t y = 0u; y < height; ++y)
-        {
-            for (uint32_t x = 0u; x < width; ++x)
-            {
-                // 空のradiance LUTと同じ、観測点から見た空（視線の透過率と地面を含む）。
-                const SkyRadianceSample sample = model.SampleSkyView(
-                    SkyDirectionFromEquirectangular(x, y, width, height));
-                if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
-                    !std::isfinite(sample.Radiance.y) ||
-                    !std::isfinite(sample.Radiance.z))
-                {
-                    outSource.clear();
-                    return false;
-                }
-
-                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
-                outSource[offset + 0u] = ClampSkyRadianceForFp16(sample.Radiance.x);
-                outSource[offset + 1u] = ClampSkyRadianceForFp16(sample.Radiance.y);
-                outSource[offset + 2u] = ClampSkyRadianceForFp16(sample.Radiance.z);
-                outSource[offset + 3u] = 1.0f;
-            }
-        }
-        return true;
-    }
-
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
     // SSRPassへ渡す、SceneColorへ足した環境光の鏡面反射（露出後）と、その反射率（0〜1）の形式
     static constexpr RHI::Format LIGHTING_INDIRECT_SPECULAR_FORMAT = RHI::Format::R16G16B16A16_FLOAT;
@@ -1969,10 +1887,6 @@ namespace NorvesLib::Core::Rendering
         m_DiffuseIrradianceTexture.reset();
         std::fill_n(m_AverageIrradiance, 3u, 0.0f);
         m_PrefilteredSpecularTexture.reset();
-        m_SkyAtmosphereDiffuseIrradianceTexture.reset();
-        std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
-        m_SkyAtmospherePrefilteredSpecularTexture.reset();
-        m_SkyAtmosphereEnvironmentTexture.reset();
         m_ValidationRaw250EnvironmentTexture.reset();
         m_ValidationRaw250DiffuseIrradianceTexture.reset();
         std::fill_n(m_ValidationRaw250AverageIrradiance, 3u, 0.0f);
@@ -1990,11 +1904,6 @@ namespace NorvesLib::Core::Rendering
         m_DefaultDDGIDistanceAtlas.reset();
         m_DefaultRTGITerrainSplatArray.reset();
         m_bIBLAvailable = false;
-        m_SkyAtmosphereIblParameters = SkyAtmosphereParameters{};
-        m_SkyAtmosphereIblRadianceWidth = 0u;
-        m_SkyAtmosphereIblRadianceHeight = 0u;
-        m_bSkyAtmosphereIblCacheValid = false;
-        m_bSkyAtmosphereIblAvailable = false;
 
         // Neural BRDF resources
         m_NeuralBRDFWeightBuffer.reset();
@@ -4314,13 +4223,14 @@ namespace NorvesLib::Core::Rendering
         const bool bValidationRaw251 = activeDebugMode == 251u;
         const bool bValidationRaw252 = activeDebugMode == 252u;
 
+        const auto& ibl = context.SkyAtmosphere.Ibl;
         const bool bSkyAtmosphereRequested = context.SkyAtmosphere.bSnapshotEnabled;
         const bool bSkyAtmosphereAvailable =
             bSkyAtmosphereRequested && context.SkyAtmosphere.bValid &&
             context.SkyAtmosphere.RadianceTexture &&
             context.SkyAtmosphere.TransmittanceTexture &&
             context.SkyAtmosphere.SunDiskTexture &&
-            context.SkyAtmosphere.Sampler && m_bSkyAtmosphereIblAvailable;
+            context.SkyAtmosphere.Sampler && context.SkyAtmosphere.Ibl.bValid;
 
         const RHI::TexturePtr& environmentTexture =
             bValidationRaw251 ? m_DefaultBlackTexture :
@@ -4344,8 +4254,8 @@ namespace NorvesLib::Core::Rendering
                 m_ValidationRaw252DiffuseIrradianceTexture :
             bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
                 m_ValidationRaw250DiffuseIrradianceTexture :
-            bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture ?
-                m_SkyAtmosphereDiffuseIrradianceTexture :
+            bSkyAtmosphereAvailable && ibl.DiffuseIrradianceTexture ?
+                ibl.DiffuseIrradianceTexture :
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_DiffuseIrradianceTexture ?
                 m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
@@ -4357,8 +4267,8 @@ namespace NorvesLib::Core::Rendering
             bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
                 m_ValidationRaw252PrefilteredSpecularTexture :
             bValidationRaw250 && m_ValidationRaw250Texture ? m_ValidationRaw250Texture :
-            bSkyAtmosphereAvailable && m_SkyAtmospherePrefilteredSpecularTexture ?
-                m_SkyAtmospherePrefilteredSpecularTexture :
+            bSkyAtmosphereAvailable && ibl.PrefilteredSpecularTexture ?
+                ibl.PrefilteredSpecularTexture :
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
             m_DefaultBlackTexture;
@@ -4757,85 +4667,6 @@ namespace NorvesLib::Core::Rendering
                         static_cast<double>(radiance.z));
     }
 
-    bool LightingPass::EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
-                                              uint32_t radianceWidth,
-                                              uint32_t radianceHeight)
-    {
-        const SkyAtmosphereParameters sanitized =
-            SanitizeSkyAtmosphereParameters(parameters);
-        if (!m_Device || !sanitized.bEnabled || radianceWidth == 0u || radianceHeight == 0u)
-        {
-            m_SkyAtmosphereDiffuseIrradianceTexture.reset();
-            std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
-            m_SkyAtmospherePrefilteredSpecularTexture.reset();
-            m_SkyAtmosphereEnvironmentTexture.reset();
-            m_bSkyAtmosphereIblCacheValid = false;
-            m_bSkyAtmosphereIblAvailable = false;
-            return false;
-        }
-
-        if (m_bSkyAtmosphereIblCacheValid &&
-            m_SkyAtmosphereIblRadianceWidth == radianceWidth &&
-            m_SkyAtmosphereIblRadianceHeight == radianceHeight &&
-            AreSkyAtmosphereParametersEqual(m_SkyAtmosphereIblParameters, sanitized))
-        {
-            return m_bSkyAtmosphereIblAvailable;
-        }
-
-        m_SkyAtmosphereIblParameters = sanitized;
-        m_SkyAtmosphereIblRadianceWidth = radianceWidth;
-        m_SkyAtmosphereIblRadianceHeight = radianceHeight;
-        m_bSkyAtmosphereIblCacheValid = true;
-        m_bSkyAtmosphereIblAvailable = false;
-        m_SkyAtmosphereDiffuseIrradianceTexture.reset();
-        std::fill_n(m_SkyAtmosphereAverageIrradiance, 3u, 0.0f);
-        m_SkyAtmospherePrefilteredSpecularTexture.reset();
-        m_SkyAtmosphereEnvironmentTexture.reset();
-
-        Container::VariableArray<float> sourceData;
-        if (!BuildSkyAtmosphereRadianceSource(sanitized,
-                                              radianceWidth,
-                                              radianceHeight,
-                                              m_SkyAtmosphereIblModel,
-                                              sourceData))
-        {
-            NORVES_LOG_WARNING("LightingPass",
-                               "Sky atmosphere radiance source generation failed; using black IBL");
-            return false;
-        }
-
-        RHI::TexturePtr generatedEnvironment;
-        RHI::TexturePtr generatedDiffuse;
-        RHI::TexturePtr generatedPrefilter;
-        float generatedAverageIrradiance[3] = {};
-        if (!CreateIblResources(m_Device,
-                                sourceData,
-                                radianceWidth,
-                                radianceHeight,
-                                "SkyAtmosphere.Environment",
-                                "SkyAtmosphere.DiffuseIrradiance",
-                                "SkyAtmosphere.PrefilteredSpecular",
-                                generatedEnvironment,
-                                generatedDiffuse,
-                                generatedPrefilter,
-                                generatedAverageIrradiance))
-        {
-            NORVES_LOG_WARNING("LightingPass",
-                               "Sky atmosphere IBL generation failed; using black IBL");
-            return false;
-        }
-
-        m_SkyAtmosphereDiffuseIrradianceTexture = generatedDiffuse;
-        std::copy_n(generatedAverageIrradiance, 3u, m_SkyAtmosphereAverageIrradiance);
-        m_SkyAtmospherePrefilteredSpecularTexture = generatedPrefilter;
-        m_SkyAtmosphereEnvironmentTexture = generatedEnvironment;
-        m_bSkyAtmosphereIblAvailable =
-            m_SkyAtmosphereDiffuseIrradianceTexture &&
-            m_SkyAtmospherePrefilteredSpecularTexture &&
-            m_SkyAtmosphereEnvironmentTexture;
-        return m_bSkyAtmosphereIblAvailable;
-    }
-
     bool LightingPass::UpdateLightBuffer(ViewRenderContext& context,
                                          bool bShadowAvailable,
                                          bool bSSAOAvailable,
@@ -5049,6 +4880,7 @@ namespace NorvesLib::Core::Rendering
             bValidationRaw252 && m_ValidationRaw252EnvironmentTexture &&
             m_ValidationRaw252DiffuseIrradianceTexture &&
             m_ValidationRaw252PrefilteredSpecularTexture;
+        const auto& ibl = context.SkyAtmosphere.Ibl;
         const bool bSkyAtmosphereRequested = context.SkyAtmosphere.bSnapshotEnabled;
         const bool bSkyAtmosphereTexturesAvailable =
             bSkyAtmosphereRequested && context.SkyAtmosphere.bValid &&
@@ -5059,10 +4891,9 @@ namespace NorvesLib::Core::Rendering
         bool bSkyAtmosphereIblAvailable = false;
         if (bSkyAtmosphereTexturesAvailable)
         {
-            bSkyAtmosphereIblAvailable = EnsureSkyAtmosphereIbl(
-                context.SkyAtmosphere.Parameters,
-                context.SkyAtmosphere.RadianceTexture->GetWidth(),
-                context.SkyAtmosphere.RadianceTexture->GetHeight());
+            bSkyAtmosphereIblAvailable = context.SkyAtmosphere.Ibl.bValid &&
+                ibl.EnvironmentTexture && ibl.DiffuseIrradianceTexture &&
+                ibl.PrefilteredSpecularTexture;
         }
         const bool bSkyAtmosphereAvailable =
             bSkyAtmosphereTexturesAvailable && bSkyAtmosphereIblAvailable;
@@ -5176,9 +5007,9 @@ namespace NorvesLib::Core::Rendering
             {
                 return {m_ValidationRaw250DiffuseIrradianceTexture, m_ValidationRaw250AverageIrradiance};
             }
-            if (bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture)
+            if (bSkyAtmosphereAvailable && ibl.DiffuseIrradianceTexture)
             {
-                return {m_SkyAtmosphereDiffuseIrradianceTexture, m_SkyAtmosphereAverageIrradiance};
+                return {ibl.DiffuseIrradianceTexture, ibl.AverageIrradiance};
             }
             if (bSkyAtmosphereRequested)
             {
@@ -5204,7 +5035,7 @@ namespace NorvesLib::Core::Rendering
                 m_ValidationRaw252EnvironmentTexture :
             bValidationRaw250 && m_ValidationRaw250EnvironmentTexture ?
                 m_ValidationRaw250EnvironmentTexture :
-            bSkyAtmosphereAvailable ? m_SkyAtmosphereEnvironmentTexture :
+            bSkyAtmosphereAvailable ? ibl.EnvironmentTexture :
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
         const RHI::SamplerPtr& environmentRadianceSampler =
@@ -5214,8 +5045,8 @@ namespace NorvesLib::Core::Rendering
             bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
                 m_ValidationRaw252PrefilteredSpecularTexture :
             bValidationRaw250 && m_ValidationRaw250Texture ? m_ValidationRaw250Texture :
-            bSkyAtmosphereAvailable && m_SkyAtmospherePrefilteredSpecularTexture ?
-                m_SkyAtmospherePrefilteredSpecularTexture :
+            bSkyAtmosphereAvailable && ibl.PrefilteredSpecularTexture ?
+                ibl.PrefilteredSpecularTexture :
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
             m_DefaultBlackTexture;
@@ -5437,7 +5268,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 単発の提出を伴う転送（検証の像・空の IBL・DDGI の既定のアトラス）を、記録の前に RenderThread で済ませる。
+        // 単発の提出を伴う転送（検証の像・DDGI の既定のアトラス）を、記録の前に RenderThread で済ませる。
         // Execute は同じ入力で引き直すので、作り直さずに使う
         const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         if (debugViewMode == 252u &&
@@ -5447,15 +5278,6 @@ namespace NorvesLib::Core::Rendering
             !GenerateValidationSnapshots())
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create lazy raw252 validation snapshots");
-        }
-        // 空の公開は SkyAtmospherePass の準備段が先に済ませている
-        if (context.SkyAtmosphere.bSnapshotEnabled && context.SkyAtmosphere.bValid &&
-            context.SkyAtmosphere.RadianceTexture && context.SkyAtmosphere.TransmittanceTexture &&
-            context.SkyAtmosphere.SunDiskTexture && context.SkyAtmosphere.Sampler)
-        {
-            EnsureSkyAtmosphereIbl(context.SkyAtmosphere.Parameters,
-                                   context.SkyAtmosphere.RadianceTexture->GetWidth(),
-                                   context.SkyAtmosphere.RadianceTexture->GetHeight());
         }
         m_DDGIProbePass.PrepareRecord(context);
     }
