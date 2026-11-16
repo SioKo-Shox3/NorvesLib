@@ -7071,7 +7071,7 @@
 - notes: G7-S2（ロードマップ 4529 行）は推奨の (A) を採る。理由: 環境の値はフレームで 1 つの値で、物ごとに写すのは無駄。書き手が 6 経路あり、可視バッファの解決は compute で per-object の UBO を持たない。10-02 の「MegaGeometry の per-object UBO に余白が無い」は古く（今は `SectionUniformData` の 768 バイト以下。G5-GR26-MATERIAL-PARAMS の notes）、(B) の理由はもう無いが、(A) の方が書き手を増やしても形が変わらない。lighting.frag だけで濡らす (C) は採らない（SSR は GBuffer の粗さで反射を切り〈SceneView の RoughnessCutoff〉、RTGI の cross-bilateral は GBuffer の材質で棄却するので、乾いた値のまま）。濡れの感度を GR26 の P0 にするのは G7-S6 の (A)（G7-GR53-WET-MODEL の notes）。GR26 の材質の値が届く前に着手しないよう needs-gr に GR26 を置く。草（G5 の GR43）は垂直スライスの主な面なので待つ。UNCERTAIN: 草の断片シェーダーとパスの名前（`grass.frag`・`GrassPass.cpp` は G5-GR43-GRASS-DRAW の記述からの推定）は統合ブランチで確かめ、違えば paths の読み替えを PROGRESS.md に書く。GBufferPass は材質の記述子のキャッシュ（`GBufferMaterialDescriptorCacheTest`）にフレームの値を焼かない今の作りを崩さない（環境の UBO はキャッシュの鍵に入れず、別の binding で毎フレーム結ぶ）。RTGI・PT の命中面は濡れない（instance の色から作る）。これは既知の方式差として G7-GR53-CHECK で受入れの記録に書き、G18 の GR104 で扱う。共有のシェーダーと Pass は差分を小さくし、試験の束の CMakeLists.txt は登録の数行だけ。試験を足す理由: 経路ごとの式の同期の崩れ（MegaGeometry だけ濡れない等）は場面の照明に紛れ、黙って起きる。危険地帯（GBuffer・可視バッファ・ライティングの入力・RenderThread）なので評価者を通す。要件 `#### GR53` の設計案【経路】【材質】【SSR との関係】、ロードマップ 1538・1552・1565 行。
 
 ## G7-GR57-GPU-DEFINITION: GR136 の効果の定義に GPU の実行先で使うエミッタの設定とモジュールを足し、CPU の実行先を同じ式の参照にして、GPU へ詰める型・生成数の計画・プールの割り当てを CPU で作る
-- status: todo
+- status: done
 - after: G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR57
 - needs-gr: GR46
