@@ -1,1 +1,2 @@
 add_subdirectory(AssetCook)
+add_subdirectory(ImpostorBaker)

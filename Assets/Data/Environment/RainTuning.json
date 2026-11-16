@@ -1,0 +1,30 @@
+﻿{
+  "near": {
+    "boxHalfWidthMeters": 8.0,
+    "boxHeightMeters": 10.0,
+    "fallSpeedMinMetersPerSecond": 7.0,
+    "fallSpeedMaxMetersPerSecond": 9.0,
+    "fallSpeedVariation": 0.1,
+    "activeFractionMax": 1.0,
+    "activeFractionExponent": 0.7,
+    "opacityMax": 0.35,
+    "opacityExponent": 0.5,
+    "thicknessMinMeters": 0.0015,
+    "thicknessMaxMeters": 0.003,
+    "streakShutterSeconds": 0.020833333333333333,
+    "fadeZeroMeters": 0.5,
+    "fadeFullMeters": 1.5,
+    "colorScale": [1.0, 1.0, 1.0]
+  },
+  "curtain": {
+    "layerDistanceMeters": [18.0, 40.0, 90.0],
+    "layerOpacityMax": [0.25, 0.2, 0.15],
+    "opacityExponent": 1.0,
+    "layerScrollSpeed": [1.0, 0.6, 0.35],
+    "shearFactor": 1.0
+  },
+  "fog": {
+    "boostMaxDensity": 0.02,
+    "boostExponent": 1.5
+  }
+}

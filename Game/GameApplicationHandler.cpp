@@ -426,6 +426,126 @@ namespace Game
         constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
         bool s_bRendering3DTestHasStartupCamera = false;
         float s_Rendering3DTestStartupCamera[3] = {0.0f, 0.0f, 0.0f};
+        // --rain=<0〜1>: 雨の強さ。--wetness=<0〜1>: 地表の濡れ。
+        // --cloud-cover=<0〜1>: 均一な曇天の度合い。--wind=<方位>,<速さ>,<突風>: 風（0〜360 度、0〜100 m/s、0〜1）。
+        // --environment-preset=<name>: 気象のプリセット。明示の値をプリセットに重ねる。
+        // どれかがあればシーンの準備の後に気象を有効にして当てる。無ければ気象は無効のまま。
+        constexpr const TCHAR* kRainOption = TEXT("--rain=");
+        constexpr const TCHAR* kWetnessOption = TEXT("--wetness=");
+        constexpr const TCHAR* kCloudCoverOption = TEXT("--cloud-cover=");
+        constexpr const TCHAR* kWindOption = TEXT("--wind=");
+        constexpr const TCHAR* kEnvironmentPresetOption = TEXT("--environment-preset=");
+        bool s_bHasRain = false;
+        bool s_bHasWetness = false;
+        bool s_bHasCloudCover = false;
+        bool s_bHasWind = false;
+        bool s_bHasEnvironmentPreset = false;
+        float s_Rain = 0.0f;
+        float s_Wetness = 0.0f;
+        float s_CloudCover = 0.0f;
+        float s_Wind[3] = {};
+        Environment::EnvironmentTarget s_EnvironmentPresetTarget;
+        bool s_bEnvironmentApplyPending = false;
+
+        String ResolveEnvironmentPresetRoot()
+        {
+            // 作業ディレクトリは実行ファイルのディレクトリなので、資産が無ければリポジトリの根を使う。
+            std::error_code existsError;
+            if (std::filesystem::is_directory("Assets/Data/Environment", existsError) && !existsError)
+            {
+                return {};
+            }
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            return String(std::filesystem::path(NORVES_SOURCE_ASSET_DIR).parent_path().string().c_str());
+#else
+            return {};
+#endif
+        }
+
+        bool HasEnvironmentArguments()
+        {
+            return s_bHasRain || s_bHasWetness || s_bHasCloudCover || s_bHasWind || s_bHasEnvironmentPreset;
+        }
+
+        void PrepareEnvironmentForGameMode(GameModeId id)
+        {
+            if (!HasEnvironmentArguments())
+            {
+                return;
+            }
+            // 遷移は Leave → 生成 → Enter で同じフレームの PublishTo より前に行われる。
+            // 生成時に無効にし、新しいシーンが Enter で書く空・霧などを前の気象で潰さない。
+            // プッシュで重ねるモードでも無効にして準備後に当て直すため、下のモードの気象は保持しない。
+            if (NorvesLib::Core::Engine::GEngine != nullptr)
+            {
+                NorvesLib::Core::Engine::GEngine->GetEnvironment().Disable();
+            }
+            s_bEnvironmentApplyPending = (id != Game::GameModes::Launcher);
+        }
+
+        void ApplyPendingEnvironment()
+        {
+            if (!s_bEnvironmentApplyPending || NorvesLib::Core::Engine::GEngine == nullptr)
+            {
+                return;
+            }
+            auto& engine = *NorvesLib::Core::Engine::GEngine;
+            if (!engine.GetDeterministicCapture().IsSceneReady())
+            {
+                return;
+            }
+            s_bEnvironmentApplyPending = false;
+            auto& coordinator = engine.GetRenderWorld().GetRenderingCoordinator();
+            const auto& sky = coordinator.GetSkyAtmosphere();
+            const auto& fog = coordinator.GetVolumetricFogParameters();
+            const auto& cloudLayer = coordinator.GetCloudLayer();
+            const auto& wind = coordinator.GetWindParameters();
+            auto& environment = engine.GetEnvironment();
+            environment.Enable(Environment::MakeEnvironmentStateFromScene(sky, fog, cloudLayer, wind),
+                               Environment::MakeEnvironmentSceneBase(sky, fog, cloudLayer, wind));
+
+            Environment::EnvironmentTarget target;
+            if (s_bHasEnvironmentPreset)
+            {
+                target = s_EnvironmentPresetTarget;
+            }
+            else
+            {
+                target.Mask = 0;
+                target.Values = environment.GetBaseState();
+            }
+            if (s_bHasRain)
+            {
+                target.Values.RainIntensity = s_Rain;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::RainIntensity);
+            }
+            if (s_bHasWetness)
+            {
+                target.Values.Wetness = s_Wetness;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::Wetness);
+            }
+            if (s_bHasCloudCover)
+            {
+                target.Values.CloudCover = s_CloudCover;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+            }
+            if (s_bHasWind)
+            {
+                target.Values.WindDirectionYawDegrees = s_Wind[0];
+                target.Values.WindBaseSpeed = s_Wind[1];
+                target.Values.WindGustStrength = s_Wind[2];
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindDirectionYaw) |
+                               Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindBaseSpeed) |
+                               Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindGustStrength);
+            }
+            environment.SetImmediate(target);
+            const auto resolved = environment.Resolve();
+            LOG_INFO("ENVIRONMENT_RESOLVED rain=%.3f wetness=%.3f cloud=%.3f wind=%.1f,%.2f,%.2f fog=%.5f discontinuity=%u",
+                     resolved.Environment.RainIntensity, resolved.Environment.Wetness, resolved.Environment.CloudCover,
+                     resolved.Wind.DirectionYawDegrees, resolved.Wind.BaseSpeed, resolved.Wind.GustStrength,
+                     resolved.Fog.DensityAtBaseHeight, resolved.Environment.DiscontinuityId);
+        }
+
         // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（0〜90）と方位（-180〜180）。
         // --exposure-ev100=<ev>: 起動時の手動露出（EV100、-6〜24）。
         constexpr const TCHAR *kSunElevationOption = TEXT("--sun-elevation=");
@@ -1016,6 +1136,19 @@ namespace Game
 #endif
         s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
+        s_bHasRain = false;
+        s_bHasWetness = false;
+        s_bHasCloudCover = false;
+        s_bHasWind = false;
+        s_bHasEnvironmentPreset = false;
+        s_Rain = 0.0f;
+        s_Wetness = 0.0f;
+        s_CloudCover = 0.0f;
+        s_Wind[0] = 0.0f;
+        s_Wind[1] = 0.0f;
+        s_Wind[2] = 0.0f;
+        s_EnvironmentPresetTarget = {};
+        s_bEnvironmentApplyPending = false;
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
         s_bRendering3DTestHasExposureEV100 = false;
@@ -1137,6 +1270,67 @@ namespace Game
                          static_cast<double>(s_Rendering3DTestStartupCamera[0]),
                          static_cast<double>(s_Rendering3DTestStartupCamera[1]),
                          static_cast<double>(s_Rendering3DTestStartupCamera[2]));
+                continue;
+            }
+
+            String environmentValue;
+            if (TryStripPrefix(args[i], kRainOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 1.0f, s_Rain))
+                {
+                    LOG_ERROR("--rain は 0〜1 の数で指定してください");
+                    return false;
+                }
+                s_bHasRain = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWetnessOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 1.0f, s_Wetness))
+                {
+                    LOG_ERROR("--wetness は 0〜1 の数で指定してください");
+                    return false;
+                }
+                s_bHasWetness = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kCloudCoverOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 1.0f, s_CloudCover))
+                {
+                    LOG_ERROR("--cloud-cover は 0〜1 の数で指定してください");
+                    return false;
+                }
+                s_bHasCloudCover = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWindOption, environmentValue))
+            {
+                const auto firstComma = environmentValue.find(TEXT(','));
+                const auto secondComma = firstComma == String::npos ? String::npos :
+                    environmentValue.find(TEXT(','), firstComma + 1);
+                if (firstComma == String::npos || secondComma == String::npos ||
+                    environmentValue.find(TEXT(','), secondComma + 1) != String::npos ||
+                    !TryParseBoundedFloat(environmentValue.substr(0, firstComma), 0.0f, 360.0f, s_Wind[0]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(firstComma + 1, secondComma - firstComma - 1), 0.0f, 100.0f, s_Wind[1]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(secondComma + 1), 0.0f, 1.0f, s_Wind[2]))
+                {
+                    LOG_ERROR("--wind は <方位>,<速さ>,<突風>（0〜360 度、0〜100 m/s、0〜1）の 3 つの数で指定してください");
+                    return false;
+                }
+                s_bHasWind = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kEnvironmentPresetOption, environmentValue))
+            {
+                String error;
+                if (!Environment::LoadEnvironmentPreset(ResolveEnvironmentPresetRoot(), environmentValue,
+                                                        s_EnvironmentPresetTarget, &error))
+                {
+                    LOG_ERROR("--environment-preset の読み込みに失敗しました: %s", error.c_str());
+                    return false;
+                }
+                s_bHasEnvironmentPreset = true;
                 continue;
             }
 
@@ -3889,6 +4083,7 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            engine->GetEnvironment().SetPresetRoot(ResolveEnvironmentPresetRoot());
             // RenderWorld の設定はシーン切り替えを通して保持される。
             if (s_bSkyOcclusion)
             {
@@ -4751,6 +4946,7 @@ namespace Game
         }
         m_M6ScriptSmokeController.Update();
         UpdatePauseMenu();
+        ApplyPendingEnvironment();
 
 #if NORVES_BUILD_DEVELOPMENT
         if (NorvesLib::Core::Engine::GEngine != nullptr)
@@ -5415,6 +5611,14 @@ namespace Game
         auto stateMachine = MakeUnique<GameModeStateMachine>();
         const auto registerMode = [&stateMachine](GameModeId id, GameModeRegistry::Creator creator)
         {
+            if (HasEnvironmentArguments())
+            {
+                creator = [id, inner = std::move(creator)](const GameModeParams& params)
+                {
+                    PrepareEnvironmentForGameMode(id);
+                    return inner(params);
+                };
+            }
 #if defined(NORVES_GAME_AUDIO)
             creator = NorvesLib::Modules::Audio::WrapGameModeCreatorWithAudioOwner(id, std::move(creator));
 #endif
