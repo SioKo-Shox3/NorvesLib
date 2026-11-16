@@ -736,6 +736,7 @@ set(PUBLIC_HEADERS
     # Rendering
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h
+    Public/Rendering/GpuParticle/GpuParticleTypes.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
