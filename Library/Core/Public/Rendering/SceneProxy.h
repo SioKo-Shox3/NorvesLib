@@ -17,6 +17,7 @@
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
+#include "Rendering/GpuParticle/GpuParticleFrame.h"
 #include "RenderExtension/RenderExtensionData.h"
 #include "DistortionTypes.h"
 #include "AutoExposure.h"
@@ -652,6 +653,8 @@ namespace NorvesLib::Core::Rendering
         RibbonTrailScene RibbonTrails;
         // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
         DecalScene Decals;
+        // GPU の実行先のエミッタの写し。GpuParticleSimulationPass が読む。毎フレーム入れ直し、SceneRevision には含めない。
+        GpuParticleScene GpuParticles;
 
         /** @brief 拡張データの表。共有ポインタを写すだけで、変わらないフレームはデータの写しが 0。 */
         RenderExtensionDataSet Extensions;
@@ -696,6 +699,7 @@ namespace NorvesLib::Core::Rendering
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};
+            GpuParticles.Clear();
             Extensions.clear();
             Distortions = DistortionScene{};
         }
