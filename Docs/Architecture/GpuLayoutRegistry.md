@@ -469,7 +469,7 @@ C++ は `VisibilityResolvePass.h::VisibilityResolveGeometry::ResolveParams`（`a
 | `visbuffer_skinned.vert` | 0 / 3 | `VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING = 3`、`VisibilityRasterPass.cpp` の `SkinnedSet->BindStorageBuffer(3, ...)` |
 | `Common/VisibilityResolve.glsl` | 0 / 32 | `VIS_VERTEX_ANIM_PARAMS_TABLE_BINDING = 32`、`VisibilityResolvePass.cpp` の `VertexAnimParamsTableBindingIndex` |
 
-両者とも `Common/VisibilityBuffer.glsl::VisRecordVertexAnimParams` で読む。スキン以外の種類、または添え字が表の範囲外なら `vec4(-1.0)` を返す。解決では手続きメッシュは `InstanceData.shadingParams`、MegaGeometry は `vec4(-1.0)` を使う。
+両者とも `Common/VisibilityBuffer.glsl::VisRecordVertexAnimParams` で読む。スキン以外の種類、または添え字が表の範囲外なら `vec4(-1.0)` を返す。解決では手続きメッシュは `InstanceData.shadingParams`、MegaGeometry は `vec4(-1.0)` を使う。MegaGeometry の種から位相を取り出す方法は 15 節に記す。
 
 ## 9. 影の頂点アニメ用の定数と記録
 
@@ -762,3 +762,57 @@ GBuffer の書き手は、書き込み直前のアルベド・粗さ・金属度
 フレームの環境 UBO を借りられないとき、`GBufferPass`・MegaGeometry・可視バッファの解決・半透明の前方は、初期化時に `MakeDefaultEnvironmentGpuParams()` を 1 回書き、以後は書き換えない 48 バイトの常駐 UBO を結ぶ。`FoliagePass` と草は対象の描画を飛ばす。デカールは呼び手から環境の割り当てが渡されなければ、フレームの持ち主から既定値を借りる。
 
 RTGI・パストレーサーの命中面には、この環境 UBO による濡れ処理を適用しない。RTGI はインスタンスの基本色、パストレーサーはインスタンスの色と材質テクスチャから命中面を作るため、ラスタとは方式が異なる。RTGI の地形スプラットでは例外として、既存の `TerrainApplyWetAlbedo` と `TerrainSplatWetness` による別方式の濡れ色を命中面へ反映する。
+
+## 15. MegaGeometry のインスタンスの表（席の表と描く順の表）
+
+両方とも `std430`、16 バイト整列で、1 行は **144 バイト**。C++ の `MegaGeometryPass.h` にある `GPUMegaSlotRow` と `GPUMegaInstance` の大きさは `static_assert` で検査する。色味と種は両方の行の位置 136・140 に揃え、`offsetof` の `static_assert` で互いの位置が一致することを検査する。
+
+### 席の表
+
+C++ は `MegaGeometryPass::GPUMegaSlotRow`、GLSL は `mega_scene_scatter.comp::SceneSlotRows` の `slotWords: uvec4[]`。席ごとに 9 個の `uvec4` を使う。通常の席の番号は `MegaGeometryProxy::SceneSlot` で、0 は空行用。席のないインスタンスや席が重複した場合はローカルの席を割り当てる。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL の語・成分 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `WorldMatrix: float[16]` | `slotWords[slot * 9 + 0..3]` | 現在のワールド変換 |
+| 64 | 64 | `PreviousWorldMatrix: float[16]` | `slotWords[slot * 9 + 4..7]` | 前のフレームのワールド変換 |
+| 128 | 4 | `Reserved0: uint32_t` | `slotWords[slot * 9 + 8].x` | 予約（0） |
+| 132 | 4 | `Reserved1: uint32_t` | `slotWords[slot * 9 + 8].y` | 予約（0） |
+| 136 | 4 | `Tint: uint32_t` | `slotWords[slot * 9 + 8].z` | インスタンスの色味 |
+| 140 | 4 | `VariationSeed: uint32_t` | `slotWords[slot * 9 + 8].w` | 個体差の種 |
+
+### 描く順の表
+
+C++ は `MegaGeometryPass::GPUMegaInstance`、GLSL は `Common/MegaInstanceTable.glsl::MegaInstanceRow`。CPU はこの形を直接書かず、`mega_scene_scatter.comp` が席の表と描く順の記録から組み立てる。`MegaInstanceRowBuffer` の `megaInstanceRows[]` を `LoadMegaInstance` や `LoadMegaInstanceTint` で読む。ラスタの `megageometry.vert` と可視バッファ解決の `Common/VisibilityResolve.glsl` も読み手である。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 成分 | 意味 |
+|---|---|---|---|---|
+| 0 | 64 | `WorldMatrix: float[16]` | `world: mat4` | 現在のワールド変換 |
+| 64 | 64 | `PreviousWorldMatrix: float[16]` | `previousWorld: mat4` | 前のフレームのワールド変換 |
+| 128 | 4 | `MeshIndex: uint32_t` | `info.x` | メッシュの表の番号 |
+| 132 | 4 | `FirstGroup: uint32_t` | `info.y` | 最初のワークグループの通し番号 |
+| 136 | 4 | `Tint: uint32_t` | `info.z` | インスタンスの色味 |
+| 140 | 4 | `VariationSeed: uint32_t` | `info.w` | 個体差の種 |
+
+### 記録の形と更新
+
+`MegaGeometryPass::UpdateResidentSceneTables` が変更分を staging の記録に書き、`mega_scene_scatter.comp` が GPU の常駐表を更新する。段 0 の記録は 1 件あたり 10 個の `uvec4` で、先頭の `.x` が席の番号、続く 9 個が席の行。段 1 の描く順の記録は 1 件あたり 2 個の `uvec4` で、先頭が `(描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ)`、次は予約。段 0 と段 1 の間にはバリアがあり、段 1 で GPU が変換・色味・種を席の行から描く順の行へ写す。
+
+### 色味と種
+
+色味は RGBA8 を詰めた `uint32_t` で、R が下位 8 bit、以降 G・B・A の順に並ぶ。`unpackUnorm4x8` と同じ並びで、A は現在使わない。既定の `0xFFFFFFFF` は白で、RGB が白（下位 24 bit がすべて 1）なら乗算せず、導入前とビット単位で同じ色を使う。白以外は `megageometry.vert` の `fragObjectColor`、または `Common/VisibilityResolve.glsl::VisObjectColor` で区間の材質の基本色に色味の RGB を掛け、その後アルベドのテクスチャと濡れを適用する。RTGI・パストレーサーの命中面にはこの色味を掛けない。
+
+種は散布入力の `VariationSeed` で、入力が 0 の場合は `MegaGeometryScatterComponent::DefaultVariationSeed(Seed, 入力の番号)` の結果を使う。1 本ずつの `MegaGeometryComponent` は 0。既定の種の式は次のとおりで、各演算は `uint32_t` で行う。
+
+```cpp
+uint32_t h = scatterSeed ^ (inputIndex * 0x9E3779B9u);
+h ^= h >> 16;
+h *= 0x85EBCA6Bu;
+h ^= h >> 13;
+h *= 0xC2B2AE35u;
+h ^= h >> 16;
+return h;
+```
+
+`Common/MegaInstanceTable.glsl::MegaVariationPhase(seed)` は `(seed >> 8) / 2^24` を返す。範囲は [0, 1) で、頂点アニメの `instanceParams` に風の位相を渡すときに使う。現在の可視バッファ解決とラスタは、MegaGeometry の `instanceParams` に引き続き `vec4(-1.0)` を渡す（8 節）。
+
+1 本の非表示は GPU の表に印を持たず、散布がその 1 本の proxy を `SceneView` から取り下げるため、描く順の表・影・RT のいずれにも入らない。

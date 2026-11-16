@@ -1004,6 +1004,8 @@ namespace NorvesLib::Core::Rendering
         instance.Handle = proxy.MegaMeshHandle;
         std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
         std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
+        instance.Tint = proxy.Tint;
+        instance.VariationSeed = proxy.VariationSeed;
         instance.bCastShadow = proxy.bCastShadow;
         instance.WorldBounds = proxy.WorldBounds;
         instance.SceneSlot = proxy.SceneSlot;
@@ -1399,7 +1401,8 @@ namespace NorvesLib::Core::Rendering
                         (m_bSceneSlotsDirty || !m_bSceneSlotsPatchable ||
                          (actual.SceneSlot != 0 && actual.TableSlot == actual.SceneSlot)) &&
                         actual.Handle.Id == expected.Handle.Id &&
-                        actual.bCastShadow == expected.bCastShadow &&
+                        actual.bCastShadow == expected.bCastShadow && actual.Tint == expected.Tint &&
+                        actual.VariationSeed == expected.VariationSeed &&
                         std::memcmp(actual.WorldMatrix, expected.WorldMatrix, sizeof(expected.WorldMatrix)) == 0 &&
                         std::memcmp(actual.PreviousWorldMatrix, expected.PreviousWorldMatrix,
                                     sizeof(expected.PreviousWorldMatrix)) == 0 &&
