@@ -11715,3 +11715,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (4) の `DissolveMathTest` と (5) の GPU の試験（`RenderingSkinnedDissolveVulkanTest` ほか）は作っていない。golden・`MeshParticleDissolveVulkanTest`・`RenderingAlphaClipVulkanTest` も撮影・GPU の確かめを回さない決まりで回していない。
 - Notes: 既知の限界: 影の切り抜きの経路ではディゾルブの材質に風の頂点アニメを重ねない（切り抜きの材質と同じ扱い）。スキンの入力の頂点のアドレスが取れないときは、VSM の影は削らずに全体を残す。
 - 再確認（反復 3）: 枠の直下に `build/` が無く verify の再実行が落ちたので、`git submodule update --init Library/ThirdParty/freetype` と `cmake -B build -S . -G "Visual Studio 17 2022"` で枠に構成を作り、`cmake --build build --config Debug --target Game -- /m:1` を回して終了コード 0・エラーの行 0（Core.lib と Game.exe まで。`.harness/runs/20261116-053238/verify-G10-GR60-DISSOLVE-build.txt`）。コードの変更は無し。
+
+- U1 CPU と GPU で共有する乱数・生成数・乱れの式のヘッダを足す: 着地(直し 0 回)
+- U2 効果の定義にエミッタの設定と新しいモジュールを足し、スキーマと検証に載せる: 着地(直し 0 回)
+- U3 焼いた形式を版 2 にし、版 1 のエミッタの設定を既定値で補って読む: 着地(直し 0 回)
+- U4 CPU の実行先に刻みの文脈・新しい設定・位置の形・抗力・風・乱れを足す: 着地(直し 0 回)
+- U6 GPU へ詰める型と GLSL の共通の定義を足す: 着地(直し 0 回)
+- U7 生成数の計画とプールのエミッタの割り当てを Private に足す: 着地(直し 0 回)
+- U5 CPU の実行先に寿命の曲線・有効割合・衝突と応答を足す: 着地(直し 0 回)
+### G7-GR57-GPU-DEFINITION 完了（2026-11-16、run 20261116-073249）
+- Done: GR136 の効果の定義 `VfxEffectAsset` のエミッタに Executor・RandomStream・Capacity・TimeChannel・WrapPolicy を、モジュールに InitShape・Drag・WindInfluence・Turbulence・CurveOverLife・ActivationFraction・CollisionPlane・CollisionHeightField・CollisionDepth・GpuSpriteRenderer を足し、`VfxSchema` に型・範囲・単位・既定値と組み合わせの検証（Gpu は Counter と World が必要、GPU だけのモジュール、カメラの箱、子のエミッタ名など）を載せた。CPU の実行先 `VfxEffectSystem` は CollisionDepth と描画の設定を除く全部を GR136 の積分の順で回す（刻みの文脈 `VfxTickContext` に未スケールの dt・カメラの位置・風・高さ場の口）。共有の式は `Particle/VfxSimulationMath.h`（PCG の Counter 乱数・有効割合・生成数の端数・位置ハッシュの乱れ）と GLSL の `Particles/ParticleCommon.glsl`。GPU へ詰める型 `GpuParticle` 48 B・`GpuEmitterParams` 256 B・`GpuSpawnJob` 16 B・`GpuCurveKey` 8 B を `Rendering/GpuParticle/GpuParticleTypes.h` に static_assert で固定し（GLSL の std430 の並びも SPIR-V の逆アセンブルで一致を確認）、Private に `GpuParticleSpawnPlanner` と `GpuParticleEmitterAllocator` を置いた。焼いた形式は版 2 にし、版 1 はエミッタの設定の欠けた分を既定値で補って読む。
+- 証拠: `cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT 0（`.harness/runs/20261116-073249/verify-G7-GR57-GPU-DEFINITION-U8.txt`）。AssetCook の `--cook-vfx` が新しいモジュールを含む 2 エミッタの JSON を 606 バイトに焼けた。
+- 回さなかったもの: done-when の `VfxEffectSystemTest` のケースと `GpuParticleTypesTest` は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。
+- 決めたこと: 曲線は `VfxValueType` を増やさず（Game のエディタが型ごとに分岐するため）、CurveOverLife の KeyCount と Key0〜Key7（Vector2 = 正規化した年齢, 値）で持ち、評価は `Math::CurveKeyframe` の折れ線。WrapPolicy の Die は CameraBox の形があるときだけ箱の外の粒を消す（形が無ければ今と同じ）。通し番号は空きで切り詰めても要求数で進める（GPU の生成の計画と同じ）。SpawnChild の子は刻みの最後にまとめて生成し、その刻みでは動かさない。既存のエフェクト（新しいモジュールなし・設定が既定値）は乱数の引き方・積分の式・生成数を変えていない。
+- Next: GPU の実行先（G7-GR57-GPU-SIMULATION）がこの定義・型・生成の計画・割り当てを使う。`ParticleSystem` は CPU の実行先を今も `Tick(deltaTime)`（風なし・カメラ原点の既定の文脈）で呼ぶ。描画は変えていないので、人が見るときはヒットエフェクトと撃破の血のエフェクトが今までどおり出ることだけを見る。
