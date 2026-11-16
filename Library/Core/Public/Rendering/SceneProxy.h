@@ -12,6 +12,7 @@
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
 #include "Wind.h"
+#include "RainModel.h"
 #include "EnvironmentParameters.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
@@ -620,6 +621,12 @@ namespace NorvesLib::Core::Rendering
         PaleFlatParameters PaleFlat = MakeDefaultPaleFlatParameters();
         // 世界で共通の風。SceneRevision には含めない。
         WindParameters Wind = MakeDefaultWindParameters();
+        /**
+         * @brief RenderThread が雨の写像の評価に使う調整の値。
+         * 値が変わったときだけ新しい共有の値になり、パケットへはポインタだけを写す。
+         * SceneRevision に入れない。
+         */
+        Container::TSharedPtr<const RainTuning> RainTuningSnapshot;
         // 天気と時刻の環境の値。SceneRevision には DiscontinuityId だけを含める。
         EnvironmentParameters Environment = MakeDefaultEnvironmentParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
@@ -681,6 +688,7 @@ namespace NorvesLib::Core::Rendering
             VolumetricFog = MakeDefaultVolumetricFogParameters();
             PaleFlat = MakeDefaultPaleFlatParameters();
             Wind = MakeDefaultWindParameters();
+            RainTuningSnapshot = nullptr;
             Environment = MakeDefaultEnvironmentParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();

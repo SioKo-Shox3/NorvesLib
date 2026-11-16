@@ -7013,7 +7013,7 @@
 - notes: 方式は要件 `#### GR50` の設計案の Stage 1（CPU の空のモデルへ曇天を入れる）。空の LUT・空由来の IBL・霧の色・PT の不交差が同じモデルを引くので、モデルへ入れれば一度に揃う。連続の変化（Stage 2）は G11 の GR54 で、それまで雲量は場面ごとの固定値にする（CloudCover が変わると LUT〈Debug で 108〜140 ms の記録〉と IBL を CPU で作り直すため。運用の約束を SkyAtmosphere.h の注釈に書く）。CloudCover は SceneRevision に入れない（段階をまたぐ注意 4462 行の直す点。RTGI の履歴は光の変化を LightRevision が弱い再利用へ落とす今の仕組みに任せる）。既存の体積の雲 `CloudLayerParameters`（SkyAtmosphere.h:101。荒野が使う。WastelandRoutine.cpp:580）とは別物で、その見た目は変えない（c=0 の既定では雲の層の照りも不変）。霧の色の寄せ（Tint・SkyBlend）は G7-GR50-FOG-TINT。数値の既定（F・k・円盤の区間・Tint）は仮で、データで替えられる。日向と影の輝度比・空が最も明るいことの撮影の確かめは G7-GR50-CHECK。SkyAtmosphere.cpp・SkyAtmospherePass.cpp は起動画面の空の作業と同じファイルなので差分を小さくする。試験を足す理由: c=0 の既存の値がずれる・キャッシュの鍵の漏れで古い LUT・PT の累積が残るのは、撮影で気づきにくく黙って起きる。危険地帯（空・ライティング）なので評価者を通す。ロードマップ 1536・1550・1567 行。
 
 ## G7-GR49-ENV-INTERFACES: 環境の状態の JSON 保存とプリセット、AngelScript の数値の口、起動の引数と撮影の引数を足し、雲量を空の曇天へ解決する
-- status: todo
+- status: done
 - after: G7-GR49-ENV-SYSTEM, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR49
 - done-when: (1) EnvironmentSystem の Resolve が雲量を `SkyAtmosphereParameters::CloudCover`（G7-GR50-OVERCAST-SKY）へ書き、EnvironmentState の霧に Tint・SkyBlend・基準の仰角（G7-GR50-FOG-TINT の欄）を足して `VolumetricFogParameters` へ書く。(2) `ToJson`・`FromJson`（EnvironmentState JSON v1: formatVersion・gameTimeSeconds・timeOfDayHours・rain・wetness・cloudCover・wind{azimuthDeg,speed,gust}・fog{density,baseHeight,heightFalloff,maxDistance,ambientScale,tint[3],skyBlend,referenceElevationDeg}・cloudLayer{enabled,coverage}・sun{mode,altitudeDeg,azimuthDeg}・seed。部品は `Library/Core/Public/Text` の JsonWriter・JsonDocument。未知のキー・範囲外の値は警告つきで既定へ、SceneSerializer の寛容な読みと同じ方針）と、同じ形式の目標の値に遷移の秒数を持つ天候のプリセット（`Assets/Data/Environment/<name>.env.json`。晴れ・曇り・雨・豪雨の 4 つを仮の値で置く）を SetTarget へ渡す読み込みを足し、`LoadState` は DiscontinuityId を進める。(3) AngelScript: `ScriptRuntime::Initialize`（ScriptRuntime.h:61。呼び出しは ApplicationProcessor.cpp:1763）へ EnvironmentSystem を渡す口を、World だけを受ける今の呼び出しを壊さない形で足し、数値だけの関数 `SetRain(value, seconds)`・`SetWind(azimuthDeg, speed, gust, seconds)`・`SetCloudCover(value, seconds)`・`SetFogDensity(value, seconds)`・`GetRain()`・`GetWetness()`・`GetCloudCover()` を、EntityRef と同じ「Runtime のポインタを持つ値型」の流儀で登録する（グローバルの参照を持たない。文字列のアドオンは入れない）。(4) Game: `--rain=`・`--wetness=`・`--cloud-cover=`・`--wind=<方位>,<速さ>,<突風>`・`--environment-preset=<name>`（GameApplicationHandler.cpp:374-382 の `--sun-elevation=`・`--height-fog-density=` と同じ流儀。不正な値は拒否してログ）。どれかがあれば、シーンに入った後に今の場面の値から EnvironmentSystem を有効にして指定の値へ SetImmediate し、解決後の値を Game.log に 1 行（`ENVIRONMENT_RESOLVED rain=… wetness=… cloud=… wind=… fog=… discontinuity=…`）出す。引数が無ければ今までどおり無効。EnvironmentSystem が有効なときだけ、Rendering3DTest の太陽の操作（矢印キーと `--sun-elevation`。Rendering3DTestRoutine.cpp:2727-2798・3493）を EnvironmentState の Manual の太陽へ書く。(5) `Scripts/CaptureStartupScene.ps1` と `Scripts/CaptureScene.ps1` に `-Rains`・`-Wetnesses`・`-CloudCovers`（`-SunElevations` と同じく値ごとに撮り、出力の名前に値を付ける）と `-Wind` を足す。 CPU の試験: `EnvironmentStateTest` に、JSON の往復（ToJson→FromJson で全欄が一致）・未知のキーと範囲外と formatVersion の違いの扱い・4 つのプリセットの読み込みと SetTarget の値を足し、`EnvironmentScriptApiTest`（`AngelScriptBootstrapTest` の束の MEMBER）で `SetRain(0.8, 30.0)` を呼ぶスクリプトを 1/60 秒で 1800 回刻むと雨量が 0.8 へ ±1e-4 で届き途中の値が単調、ほかの Set の関数も目標へ届き Get が状態と一致する、を確かめる。
@@ -7115,7 +7115,7 @@
 - notes: 要件 `#### GR57` の設計案（d）Compact とフェーズ P5。間接の描画は GR28 の非インデックスの `DrawIndirect` を使い、静的な 6 要素のインデックスの経路（設計案の DrawIndexedIndirect）は作らない（GR28 が非インデックスの口を足すので、インデックスのバッファが要らない）。atomic の順で描画の順が毎フレーム変わりうるので、premultiplied の重なりが多いエミッタはスロットの順の描画を選べる、と注釈に書く。`firstInstance` を GPU が詰める使い方はしない（GR28 の notes の `bDrawIndirectFirstInstance` の前提を避ける。スロットは詰めた列から引く）。性能の記録（5 万粒で生成・更新・詰め・描画の合計 1.5 ms 以下が目標、合否にしない）は G7-GR57-CHECK。試験を足す理由: 詰めた数と描いた数のずれは粒が少し欠けるだけで、撮影では気づけず黙って起きる。危険地帯（RHI の間接の描画・RenderThread）なので評価者を通す。
 
 ## G7-GR58-RAIN-MODEL: 雨量から雨の本数・不透明度・太さ・傾き・遠景の層・霧の増分への写像を純関数にし、調整の値をデータに置いて、雨量に応じて霧を濃くする
-- status: todo
+- status: done
 - after: G7-GR49-ENV-SYSTEM, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46
@@ -7422,7 +7422,7 @@
 - notes: 要件 `#### GR114` の受け入れ確認のうち、撮影で測る分（影の先端の幾何の検算・GPU 時間・草とファーの方針）をここに分けた。`CaptureStartupScene.ps1` の `-SunElevations` は今 0〜90 の度（GR55 で負へ広げる）。GPU A/B の新しい試験（要件の `MegaGeometryDirectionalShadowVulkanTest`）は足さない: MegaGeometry の CSM 描画は SS-CSM-MEGA-CASTERS で撮影の昼・夕の確かめと基準画像の試験が済み、欠ければ撮影と `RenderingGolden*` で気づける（Docs/Testing.md の試験を足す条件に当たらない）。GPU 時間の目標は GR109（G19）で決め、ここは記録だけ。自動停止の 2000 lux は試しの値で根拠なし（撮影で曇天の地表照度を見て決め、決めた値を記録に書く）。grassland の視点名は G5-GR43-GRASS-CHECK と同じ。ロードマップ 2002 行。
 
 ## G11-GR54-SKY-SOURCE-SHARE: 空のモデルと放射輝度の源を空の LUT と空由来 IBL で 1 回だけ作って共有し、IBL の生成を空のパスへ移して所要時間を記録する
-- status: todo
+- status: done
 - after: G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR54
 - needs-gr: GR50
@@ -7602,7 +7602,7 @@
 - notes: 要件 `#### GR59` の受け入れ確認の撮影・基準画像・計測の分（要件 6038・6040 行）。雨の強さは G7 の引数 `--rain=`（G7-GR49-ENV-INTERFACES）で決める。犬が走る場面は G4 の犬の移動の確かめの場面（`--dog-movement-smoke`。シーンの一覧には無い）か、grassland に犬が置かれていればそれを使う。`Scripts/UpdateRenderingGoldenBaselines.ps1` は Indoor・Outdoor の 2 枚専用（引数に 2 枚の SHA-256 を要する）なので、雨の場面の基準画像は GTAO の場面（`RenderingGTAOCornellRoomVulkanTest`）と同じ置き方で `Test/Core/Rendering/Baselines` に置き、承認の記録を GoldenBaselines.md に書く（UNCERTAIN: GTAO の場面の基準の置き方を読んでいない。着手時に確かめる）。目標の 0.3 ms は要件の目標値（未計測）で、合否は GR109 で決め、ここは記録。コードは基準画像と閾値の TSV 以外変えない。
 
 ## G11-GR52-FOG-STEPS: 霧と空気遠近の光線の歩を、手前を細かくする指数の配置と画素・時間のずらしにし、少ない歩で光の筋が参照に近づくようにする（既定は今のまま）
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR51

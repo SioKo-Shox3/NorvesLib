@@ -8,6 +8,11 @@ namespace NorvesLib::Core
 {
     class World;
 
+    namespace Environment
+    {
+        class EnvironmentSystem;
+    }
+
     namespace Component
     {
         class ScriptComponent;
@@ -59,6 +64,9 @@ namespace NorvesLib::Core
         ScriptRuntime& operator=(ScriptRuntime&&) = delete;
 
         EScriptRuntimeResult Initialize(World& world);
+        /// スクリプトの天気の関数が操作する気象の正本を渡す。nullptr なら天気の Set は false、Get は 0 を返す。
+        /// 気象は GameThread 専用で、Runtime と同じスレッドで使う。
+        EScriptRuntimeResult Initialize(World& world, Environment::EnvironmentSystem* environment);
         EScriptRuntimeResult Shutdown();
         EScriptRuntimeResult BeginFrameMaintenance(float deltaSeconds);
         EScriptRuntimeResult EndFrameMaintenance();
