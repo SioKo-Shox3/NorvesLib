@@ -378,13 +378,14 @@ namespace NorvesLib::Core::Rendering
                                  ? RHI::ResourceBindType::StructuredBuffer : RHI::ResourceBindType::RWTexture;
                 desc.bindings.push_back(entry);
             }
-            if (bSplat)
+            for (uint32_t binding = 5u; binding < (bSplat ? 9u : 6u); ++binding)
             {
-                RHI::DescriptorBinding ground;
-                ground.binding = 5u;
-                ground.type = RHI::ResourceBindType::CombinedImageSampler;
-                ground.stages = RHI::ShaderStage::Compute;
-                desc.bindings.push_back(ground);
+                RHI::DescriptorBinding entry;
+                entry.binding = binding;
+                entry.type = bSplat && binding < 8u
+                    ? RHI::ResourceBindType::CombinedImageSampler : RHI::ResourceBindType::RWTexture;
+                entry.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(entry);
             }
             return desc;
         }
@@ -523,6 +524,12 @@ namespace NorvesLib::Core::Rendering
         m_LastOccluders.clear();
         m_PreparedOccluders.clear();
         m_PreparedGroundUpload = {};
+        m_PreparedUndergrowthUpload = {};
+        m_PreparedEmptyUndergrowthUpload = {};
+        m_UndergrowthInputTexture.reset();
+        m_EmptyUndergrowthTexture.reset();
+        m_PreparedUndergrowthTexture.reset();
+        m_UndergrowthTexture.reset();
         m_GroundTexture.reset();
         m_EmptyGroundTexture.reset();
         m_PreparedGroundTexture.reset();
@@ -538,6 +545,10 @@ namespace NorvesLib::Core::Rendering
         m_SplatDescriptorSetLayout.reset();
         m_IntegrateDescriptorSetLayout.reset();
         m_GroundHandle = {};
+        m_UndergrowthInputHandle = {};
+        m_EmptyUndergrowthHandle = {};
+        m_UndergrowthHandle = {};
+        m_WorldFieldHandle = {};
         m_OccludersHandle = {};
         m_VisibilityHandle = {};
         m_AuxHandle = {};
@@ -556,6 +567,15 @@ namespace NorvesLib::Core::Rendering
         m_bPreparedHasGround = false;
         m_bLastHasGround = false;
         m_bEmptyGroundInitialized = false;
+        m_PreparedUndergrowthLayout = {};
+        m_LastUndergrowthLayout = {};
+        m_PreparedUndergrowthLayoutRevision = 0u;
+        m_PreparedUndergrowthRevision = 0u;
+        m_LastUndergrowthLayoutRevision = 0u;
+        m_LastUndergrowthRevision = 0u;
+        m_bPreparedHasUndergrowth = false;
+        m_bLastHasUndergrowth = false;
+        m_bEmptyUndergrowthInitialized = false;
         m_bHasAnchor = false;
         m_bHasValidData = false;
         m_bPrepared = false;
@@ -565,7 +585,7 @@ namespace NorvesLib::Core::Rendering
     bool SkyOcclusionMapPass::EnsureTextures(const SkyOcclusionParameters& parameters)
     {
         const uint32_t arraySize = std::max(parameters.LevelCount, 2u);
-        if (m_OccludersTexture && m_VisibilityTexture && m_AuxTexture &&
+        if (m_OccludersTexture && m_UndergrowthTexture && m_VisibilityTexture && m_AuxTexture &&
             m_OccludersTexture->GetWidth() == parameters.Resolution &&
             m_OccludersTexture->GetArraySize() == arraySize)
         {
@@ -581,16 +601,19 @@ namespace NorvesLib::Core::Rendering
         desc.TextureFormat = RHI::Format::R32G32B32A32_FLOAT;
         desc.DebugName = "SkyOcclusion.Occluders";
         RHI::TexturePtr occluders = m_Device->CreateTexture(desc);
+        desc.DebugName = "SkyOcclusion.Undergrowth";
+        RHI::TexturePtr undergrowth = m_Device->CreateTexture(desc);
         desc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
         desc.DebugName = "SkyOcclusion.Visibility";
         RHI::TexturePtr visibility = m_Device->CreateTexture(desc);
         desc.DebugName = "SkyOcclusion.Aux";
         RHI::TexturePtr aux = m_Device->CreateTexture(desc);
-        if (!occluders || !visibility || !aux)
+        if (!occluders || !undergrowth || !visibility || !aux)
         {
             return false;
         }
         m_OccludersTexture = occluders;
+        m_UndergrowthTexture = undergrowth;
         m_VisibilityTexture = visibility;
         m_AuxTexture = aux;
         m_bHasValidData = false;
@@ -705,6 +728,78 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        const SkyOcclusionFieldLayout* undergrowthLayout =
+            FindRenderExtensionValue(extensions, kSkyOcclusionUndergrowthLayoutKey);
+        const Container::Span<const SkyOcclusionUndergrowthTexel> undergrowth =
+            FindRenderExtensionArray(extensions, kSkyOcclusionUndergrowthKey);
+        const RenderExtensionBlob* undergrowthLayoutBlob = FindRenderExtensionBlob(extensions,
+            kSkyOcclusionUndergrowthLayoutKey.Name, ComputeRenderExtensionLayoutHash<SkyOcclusionFieldLayout>());
+        const RenderExtensionBlob* undergrowthBlob = FindRenderExtensionBlob(extensions,
+            kSkyOcclusionUndergrowthKey.Name, ComputeRenderExtensionLayoutHash<SkyOcclusionUndergrowthTexel>());
+        m_PreparedUndergrowthLayoutRevision = undergrowthLayoutBlob ? undergrowthLayoutBlob->Revision : 0u;
+        m_PreparedUndergrowthRevision = undergrowthBlob ? undergrowthBlob->Revision : 0u;
+        m_bPreparedHasUndergrowth = undergrowthLayout && IsValidSkyOcclusionFieldLayout(*undergrowthLayout) &&
+            undergrowth.size() == static_cast<size_t>(undergrowthLayout->Width) * undergrowthLayout->Height;
+        m_PreparedUndergrowthLayout = m_bPreparedHasUndergrowth ? *undergrowthLayout : SkyOcclusionFieldLayout{};
+        const bool bUndergrowthChanged = m_bPreparedHasUndergrowth != m_bLastHasUndergrowth ||
+            m_PreparedUndergrowthLayoutRevision != m_LastUndergrowthLayoutRevision ||
+            m_PreparedUndergrowthRevision != m_LastUndergrowthRevision ||
+            !AreGroundLayoutsEqual(m_PreparedUndergrowthLayout, m_LastUndergrowthLayout);
+
+        // 下草と世界の場の未接続時に共用する。RG32 の B 成分は常に 0 になる。
+        if (!m_EmptyUndergrowthTexture)
+        {
+            RHI::TextureDesc desc;
+            desc.TextureFormat = RHI::Format::R32G32_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyOcclusion.EmptyUndergrowth";
+            m_EmptyUndergrowthTexture = m_Device->CreateTexture(desc);
+        }
+        if (!m_EmptyUndergrowthTexture)
+        {
+            return false;
+        }
+        if (!m_bEmptyUndergrowthInitialized)
+        {
+            if (!context.FrameResources)
+            {
+                return false;
+            }
+            const SkyOcclusionUndergrowthTexel empty{};
+            m_PreparedEmptyUndergrowthUpload = context.FrameResources->AllocateUploadData(
+                &empty, sizeof(empty), FrameUploadUsage::Vertex);
+            if (!m_PreparedEmptyUndergrowthUpload.IsValid())
+            {
+                return false;
+            }
+        }
+        if (m_bPreparedHasUndergrowth && (bUndergrowthChanged || !m_UndergrowthInputTexture))
+        {
+            RHI::TextureDesc desc;
+            desc.Width = undergrowthLayout->Width;
+            desc.Height = undergrowthLayout->Height;
+            desc.TextureFormat = RHI::Format::R32G32_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyOcclusion.UndergrowthInput";
+            m_PreparedUndergrowthTexture = m_Device->CreateTexture(desc);
+            if (!m_PreparedUndergrowthTexture || !context.FrameResources)
+            {
+                return false;
+            }
+            m_PreparedUndergrowthUpload = context.FrameResources->AllocateUploadData(
+                undergrowth.data(), static_cast<uint64_t>(undergrowth.size()) * sizeof(SkyOcclusionUndergrowthTexel),
+                FrameUploadUsage::Vertex);
+            if (!m_PreparedUndergrowthUpload.IsValid())
+            {
+                return false;
+            }
+        }
+        else
+        {
+            m_PreparedUndergrowthTexture = m_bPreparedHasUndergrowth
+                ? m_UndergrowthInputTexture : m_EmptyUndergrowthTexture;
+        }
+
         m_PreparedParameters = parameters;
         m_PreparedAnchorX = anchorX;
         m_PreparedAnchorZ = anchorZ;
@@ -721,6 +816,19 @@ namespace NorvesLib::Core::Rendering
             ComputeSkyOcclusionFieldWorldToUv(m_PreparedGroundLayout, constants.groundUv);
             constants.inputs[0] = 1.0f;
         }
+        if (m_bPreparedHasUndergrowth)
+        {
+            ComputeSkyOcclusionFieldWorldToUv(m_PreparedUndergrowthLayout, constants.undergrowthUv);
+            constants.inputs[1] = 1.0f;
+        }
+        if (m_WorldFieldHandle.IsValid())
+        {
+            const WorldFieldState& field = context.PhysicalLighting.WorldField.Current;
+            constants.worldField[0] = static_cast<float>(field.OriginXZ[0]);
+            constants.worldField[1] = static_cast<float>(field.OriginXZ[1]);
+            constants.worldField[2] = 1.0f / field.ExtentMeters;
+            constants.inputs[2] = 1.0f;
+        }
         ComputeSkyOcclusionSkyWeightCoefficients(scene.SkyAtmosphere.CloudCover,
             scene.SkyAtmosphere.OvercastZenithToHorizonRatio, m_PreparedSkyWeight[0], m_PreparedSkyWeight[1]);
         constants.skyWeight[0] = m_PreparedSkyWeight[0];
@@ -728,7 +836,8 @@ namespace NorvesLib::Core::Rendering
         const bool bSkyWeightChanged = std::abs(m_PreparedSkyWeight[0] - m_LastSkyWeight[0]) > 1.0e-4f ||
                                        std::abs(m_PreparedSkyWeight[1] - m_LastSkyWeight[1]) > 1.0e-4f;
         TileGrid grids[SkyOcclusionMaxLevelCount];
-        const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters) || bGroundChanged;
+        const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters) ||
+            bGroundChanged || bUndergrowthChanged;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
         {
             m_PreparedWindowOrigin[level][0] = 0;
@@ -842,6 +951,12 @@ namespace NorvesLib::Core::Rendering
                     set->BindStorageTexture(4u, m_OccludersTexture);
                     set->BindTexture(5u, m_PreparedGroundTexture);
                     set->BindSampler(5u, m_GroundSampler);
+                    set->BindTexture(6u, m_PreparedUndergrowthTexture);
+                    set->BindSampler(6u, m_GroundSampler);
+                    // 実際の世界の場はグラフの資源が揃う Execute で結び直す。
+                    set->BindTexture(7u, m_EmptyUndergrowthTexture);
+                    set->BindSampler(7u, m_GroundSampler);
+                    set->BindStorageTexture(8u, m_UndergrowthTexture);
                 }
                 else
                 {
@@ -849,6 +964,7 @@ namespace NorvesLib::Core::Rendering
                     set->BindStorageTexture(2u, m_OccludersTexture);
                     set->BindStorageTexture(3u, m_VisibilityTexture);
                     set->BindStorageTexture(4u, m_AuxTexture);
+                    set->BindStorageTexture(5u, m_UndergrowthTexture);
                 }
                 set->Update();
                 dispatches.push_back({set, count});
@@ -874,8 +990,15 @@ namespace NorvesLib::Core::Rendering
         m_SplatDispatches.clear();
         m_IntegrateDispatches.clear();
         m_PreparedGroundUpload = {};
+        m_PreparedUndergrowthUpload = {};
+        m_PreparedEmptyUndergrowthUpload = {};
         m_PreparedGroundTexture.reset();
+        m_PreparedUndergrowthTexture.reset();
         m_GroundHandle = {};
+        m_UndergrowthInputHandle = {};
+        m_EmptyUndergrowthHandle = {};
+        m_UndergrowthHandle = {};
+        m_WorldFieldHandle = {};
         m_OccludersHandle = {};
         m_VisibilityHandle = {};
         m_AuxHandle = {};
@@ -895,6 +1018,10 @@ namespace NorvesLib::Core::Rendering
             {
                 // 提出されなかった記録は layout も実行されていないため、画像ごと作り直す。
                 m_OccludersTexture.reset();
+                m_UndergrowthTexture.reset();
+                m_UndergrowthInputTexture.reset();
+                m_EmptyUndergrowthTexture.reset();
+                m_bEmptyUndergrowthInitialized = false;
                 m_VisibilityTexture.reset();
                 m_AuxTexture.reset();
                 m_GroundTexture.reset();
@@ -907,6 +1034,14 @@ namespace NorvesLib::Core::Rendering
             {
                 m_LastUpdateSubmission = {};
             }
+        }
+        const WorldFieldState& field = context->PhysicalLighting.WorldField.Current;
+        if (field.bValid && std::isfinite(field.OriginXZ[0]) && std::isfinite(field.OriginXZ[1]) &&
+            std::isfinite(field.ExtentMeters) && field.ExtentMeters > 0.0f &&
+            std::isfinite(static_cast<float>(field.OriginXZ[0])) &&
+            std::isfinite(static_cast<float>(field.OriginXZ[1])) && std::isfinite(1.0f / field.ExtentMeters))
+        {
+            builder.TryGetTexture(RenderGraphResourceNames::WorldFieldCurrent, m_WorldFieldHandle);
         }
         try
         {
@@ -923,13 +1058,23 @@ namespace NorvesLib::Core::Rendering
         }
         m_GroundHandle = builder.ImportTexture(m_PreparedGroundTexture,
             GetTextureState(*context, m_PreparedGroundTexture), "SkyOcclusion.GroundHeight");
+        m_EmptyUndergrowthHandle = builder.ImportTexture(m_EmptyUndergrowthTexture,
+            GetTextureState(*context, m_EmptyUndergrowthTexture), "SkyOcclusion.EmptyUndergrowth");
+        m_UndergrowthInputHandle = m_bPreparedHasUndergrowth
+            ? builder.ImportTexture(m_PreparedUndergrowthTexture,
+                GetTextureState(*context, m_PreparedUndergrowthTexture), "SkyOcclusion.UndergrowthInput")
+            : m_EmptyUndergrowthHandle;
+        m_UndergrowthHandle = builder.ImportTexture(m_UndergrowthTexture,
+            GetTextureState(*context, m_UndergrowthTexture), "SkyOcclusion.Undergrowth");
         const RGResourceHandle occluders = builder.ImportTexture(m_OccludersTexture,
             GetTextureState(*context, m_OccludersTexture), "SkyOcclusion.Occluders");
         const RGResourceHandle visibility = builder.ImportTexture(m_VisibilityTexture,
             GetTextureState(*context, m_VisibilityTexture), "SkyOcclusion.Visibility");
         const RGResourceHandle aux = builder.ImportTexture(m_AuxTexture,
             GetTextureState(*context, m_AuxTexture), "SkyOcclusion.Aux");
-        if (!m_GroundHandle.IsValid() || !occluders.IsValid() || !visibility.IsValid() || !aux.IsValid() ||
+        if (!m_GroundHandle.IsValid() || !m_EmptyUndergrowthHandle.IsValid() ||
+            !m_UndergrowthInputHandle.IsValid() || !m_UndergrowthHandle.IsValid() ||
+            !occluders.IsValid() || !visibility.IsValid() || !aux.IsValid() ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionOccluders, occluders) ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionVisibility, visibility) ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionAux, aux) ||
@@ -939,6 +1084,29 @@ namespace NorvesLib::Core::Rendering
         {
             m_bPrepared = false;
             return;
+        }
+        if (m_WorldFieldHandle.IsValid())
+        {
+            builder.Read(m_WorldFieldHandle.ToResourceHandle(), RHI::ResourceState::ShaderResource);
+        }
+        if (m_PreparedEmptyUndergrowthUpload.IsValid())
+        {
+            builder.Write(m_EmptyUndergrowthHandle, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+        }
+        else
+        {
+            builder.Read(m_EmptyUndergrowthHandle, RHI::ResourceState::ShaderResource);
+        }
+        if (m_bPreparedHasUndergrowth)
+        {
+            if (m_PreparedUndergrowthUpload.IsValid())
+            {
+                builder.Write(m_UndergrowthInputHandle, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+            }
+            else
+            {
+                builder.Read(m_UndergrowthInputHandle, RHI::ResourceState::ShaderResource);
+            }
         }
         if (m_PreparedGroundUpload.IsValid())
         {
@@ -951,12 +1119,14 @@ namespace NorvesLib::Core::Rendering
         if (!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
             builder.Write(occluders, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
+            builder.Write(m_UndergrowthHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
             builder.Write(visibility, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
             builder.Write(aux, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
         }
         else
         {
             builder.Read(occluders, RHI::ResourceState::ShaderResource);
+            builder.Read(m_UndergrowthHandle, RHI::ResourceState::ShaderResource);
             builder.Read(visibility, RHI::ResourceState::ShaderResource);
             builder.Read(aux, RHI::ResourceState::ShaderResource);
         }
@@ -980,14 +1150,28 @@ namespace NorvesLib::Core::Rendering
     {
         if (!m_bPrepared || !context.CommandList || !resources.GetTexture(m_GroundHandle) ||
             !resources.GetTexture(m_OccludersHandle) || !resources.GetTexture(m_VisibilityHandle) ||
-            !resources.GetTexture(m_AuxHandle) ||
-            ((m_PreparedGroundUpload.IsValid() || !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty()) &&
+            !resources.GetTexture(m_AuxHandle) || !resources.GetTexture(m_UndergrowthHandle) ||
+            !resources.GetTexture(m_UndergrowthInputHandle) || !resources.GetTexture(m_EmptyUndergrowthHandle) ||
+            ((m_PreparedGroundUpload.IsValid() || m_PreparedUndergrowthUpload.IsValid() ||
+              m_PreparedEmptyUndergrowthUpload.IsValid() || !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty()) &&
              !context.FrameResources))
         {
             return;
         }
         RHI::ICommandList& commands = *context.CommandList;
         const bool bGroundUpload = m_PreparedGroundUpload.IsValid();
+        const bool bUndergrowthUpload = m_PreparedUndergrowthUpload.IsValid();
+        const bool bEmptyUndergrowthUpload = m_PreparedEmptyUndergrowthUpload.IsValid();
+        const auto uploadUndergrowth = [&](const FrameUploadAllocation& upload, const RHI::TexturePtr& texture)
+        {
+            if (upload.IsValid())
+            {
+                commands.CopyBufferToTexture(upload.Buffer, texture, texture->GetWidth(), texture->GetHeight(), upload.Offset);
+                commands.TextureBarrier(texture, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+            }
+        };
+        uploadUndergrowth(m_PreparedEmptyUndergrowthUpload, m_EmptyUndergrowthTexture);
+        uploadUndergrowth(m_PreparedUndergrowthUpload, m_PreparedUndergrowthTexture);
         if (bGroundUpload)
         {
             // グラフが CopyDest へ移した後、写し込みより先に高さを転送して読み取り状態へ戻す。
@@ -999,15 +1183,26 @@ namespace NorvesLib::Core::Rendering
         }
         if (!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
+            const RHI::TexturePtr worldField = m_WorldFieldHandle.IsValid()
+                ? resources.GetTexture(m_WorldFieldHandle) : m_EmptyUndergrowthTexture;
+            if (!worldField)
+            {
+                return;
+            }
             commands.SetPipeline(m_SplatPipeline);
             for (const PreparedDispatch& dispatch : m_SplatDispatches)
             {
+                // このフレームの専用記述子だけを変更し、他パスの並列記録と共有しない。
+                dispatch.DescriptorSet->BindTexture(7u, worldField);
+                dispatch.DescriptorSet->Update();
                 commands.SetDescriptorSet(dispatch.DescriptorSet, 0u);
                 commands.Dispatch(dispatch.TileCount, 1u, 1u);
             }
             if (!m_SplatDispatches.empty())
             {
                 commands.TextureBarrier(m_OccludersTexture, RHI::ResourceState::UnorderedAccess,
+                                        RHI::ResourceState::UnorderedAccess);
+                commands.TextureBarrier(m_UndergrowthTexture, RHI::ResourceState::UnorderedAccess,
                                         RHI::ResourceState::UnorderedAccess);
             }
             commands.SetPipeline(m_IntegratePipeline);
@@ -1018,12 +1213,15 @@ namespace NorvesLib::Core::Rendering
             }
             commands.TextureBarrier(m_OccludersTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
+            commands.TextureBarrier(m_UndergrowthTexture, RHI::ResourceState::UnorderedAccess,
+                                    RHI::ResourceState::ShaderResource);
             commands.TextureBarrier(m_VisibilityTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
             commands.TextureBarrier(m_AuxTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
         }
-        if (bGroundUpload || !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
+        if (bGroundUpload || bUndergrowthUpload || bEmptyUndergrowthUpload ||
+            !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
             // 借りる口が提出の成否を保持し、中止された更新の再利用を防ぐ。
             m_LastUpdateSubmission = context.FrameResources->GetGeneration();
@@ -1040,7 +1238,14 @@ namespace NorvesLib::Core::Rendering
                 m_bEmptyGroundInitialized = true;
             }
         }
+        m_UndergrowthInputTexture = m_bPreparedHasUndergrowth ? m_PreparedUndergrowthTexture : RHI::TexturePtr{};
+        if (bEmptyUndergrowthUpload)
+        {
+            m_bEmptyUndergrowthInitialized = true;
+        }
         m_PreparedGroundUpload = {};
+        m_PreparedUndergrowthUpload = {};
+        m_PreparedEmptyUndergrowthUpload = {};
         m_AnchorX = m_PreparedAnchorX;
         m_AnchorZ = m_PreparedAnchorZ;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
@@ -1053,6 +1258,10 @@ namespace NorvesLib::Core::Rendering
         m_LastGroundLayout = m_PreparedGroundLayout;
         m_LastGroundLayoutRevision = m_PreparedGroundLayoutRevision;
         m_LastGroundHeightsRevision = m_PreparedGroundHeightsRevision;
+        m_LastUndergrowthLayout = m_PreparedUndergrowthLayout;
+        m_LastUndergrowthLayoutRevision = m_PreparedUndergrowthLayoutRevision;
+        m_LastUndergrowthRevision = m_PreparedUndergrowthRevision;
+        m_bLastHasUndergrowth = m_bPreparedHasUndergrowth;
         m_LastSkyWeight[0] = m_PreparedSkyWeight[0];
         m_LastSkyWeight[1] = m_PreparedSkyWeight[1];
         m_bLastHasGround = m_bPreparedHasGround;

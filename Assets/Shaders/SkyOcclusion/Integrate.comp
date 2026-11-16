@@ -13,6 +13,7 @@ layout(std430, set = 0, binding = 1) readonly buffer SkyOcclusionIntegrateTiles
 layout(rgba32f, set = 0, binding = 2) uniform readonly image2DArray occluderMap;
 layout(rgba16f, set = 0, binding = 3) uniform writeonly image2DArray visibilityMap;
 layout(rgba16f, set = 0, binding = 4) uniform writeonly image2DArray auxMap;
+layout(rgba32f, set = 0, binding = 5) uniform readonly image2DArray undergrowthMap;
 
 void main()
 {
@@ -56,8 +57,9 @@ void main()
                 float end = min(nextEnd, map.heights.z);
                 float midpoint = (start + end) * 0.5;
                 vec2 samplePosition = worldPosition + midpoint * direction;
-                vec4 column = imageLoad(occluderMap,
-                    SkyOcclusionSampleCoordinate(tile.level, midpoint, samplePosition));
+                ivec3 sampleCoordinate = SkyOcclusionSampleCoordinate(tile.level, midpoint, samplePosition);
+                vec4 column = imageLoad(occluderMap, sampleCoordinate);
+                vec2 undergrowth = imageLoad(undergrowthMap, sampleCoordinate).rg;
                 if (y0 + midpoint * tangent < column.x)
                 {
                     bOpaque = true;
@@ -77,6 +79,12 @@ void main()
                         float sigma = -log(1.0 - column.w) / max(column.z - column.y, 0.5);
                         opticalDepth += sigma * (overlap / tangent) / cosine;
                     }
+                }
+                if (undergrowth.y > 0.0 && undergrowth.x > column.x)
+                {
+                    float overlap = max(0.0, min(y0 + end * tangent, undergrowth.x) -
+                        max(y0 + start * tangent, column.x));
+                    opticalDepth += undergrowth.y * (overlap / tangent) / cosine;
                 }
                 start = end;
                 nextEnd *= SKY_OCCLUSION_HORIZON_STEP_RATIO;

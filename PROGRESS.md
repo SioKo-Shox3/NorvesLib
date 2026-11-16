@@ -11721,3 +11721,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 草の場から下草の層の格子を作り、拡張データで公開する: 着地(直し 0 回)
 - U5 空の遮蔽パスに地形の高さテクスチャと曇天の重みを入れる: 着地(直し 0 回)
 - U6 Grassland で空の遮蔽を有効にし、地形の高さを公開する: 着地(直し 0 回)
+- U7 空の遮蔽パスに下草の層と踏み倒しを入れる: 着地(直し 0 回)

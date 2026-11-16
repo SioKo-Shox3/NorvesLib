@@ -22,7 +22,7 @@ layout(std140, set = 0, binding = 0) uniform SkyOcclusionMapParams
     vec4 undergrowthUv;   // 下草の層のワールド座標から UV への尺度と加算値。
     vec4 skyWeight;       // xy: 空の重みの定数項と傾き、zw: 予約。
     vec4 inputs;          // xyz: 地面・下草・世界の場の入力の有無、w: 予約。
-    vec4 worldField;      // 世界の場の窓。
+    vec4 worldField;      // xy: 世界の場の原点 XZ、z: 幅の逆数、w: 予約。
 } map;
 
 struct SkyOcclusionWorkTile
@@ -103,6 +103,16 @@ ivec3 SkyOcclusionSampleCoordinate(uint receiverLevel, float midpoint, vec2 worl
     ivec2 origin = map.windowOrigin[level].xy;
     worldTexel = clamp(worldTexel, origin, origin + ivec2(int(map.counts.y) - 1));
     return SkyOcclusionTextureCoordinate(worldTexel, level);
+}
+
+// SkyOcclusion.h と同じ丈・被覆率から、1 m あたりの消散係数へ写す。
+float SkyOcclusionUndergrowthExtinction(float topMeters, float kappa)
+{
+    if (kappa <= 0.0 || topMeters < 0.02)
+    {
+        return 0.0;
+    }
+    return -log(1.0 - min(kappa, 0.999)) / max(topMeters, 0.05);
 }
 
 #endif

@@ -35,6 +35,9 @@ layout(std430, set = 0, binding = 3) readonly buffer SkyOcclusionIndices
 
 layout(rgba32f, set = 0, binding = 4) uniform writeonly image2DArray occluderMap;
 layout(set = 0, binding = 5) uniform sampler2D groundHeight;
+layout(set = 0, binding = 6) uniform sampler2D undergrowthInput;
+layout(set = 0, binding = 7) uniform sampler2D worldFieldInput;
+layout(rgba32f, set = 0, binding = 8) uniform writeonly image2DArray undergrowthMap;
 
 bool EvaluateSkyOccluderColumn(SkyOccluderProxy proxy, vec2 worldPosition,
     out float bottom, out float top)
@@ -104,6 +107,30 @@ void main()
             ground = textureLod(groundHeight, uv, 0.0).r;
         }
     }
+    // 不透明な遮蔽物で地面を持ち上げる前の、地形の高さを層の基準にする。
+    float terrainGround = ground;
+    vec2 layer = vec2(0.0);
+    if (map.inputs.y > 0.5)
+    {
+        vec2 uv = worldPosition * map.undergrowthUv.xy + map.undergrowthUv.zw;
+        if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
+        {
+            layer = textureLod(undergrowthInput, uv, 0.0).rg;
+            if (map.inputs.z > 0.5)
+            {
+                vec2 fieldUv = (worldPosition - map.worldField.xy) * map.worldField.z;
+                if (all(greaterThanEqual(fieldUv, vec2(0.0))) && all(lessThanEqual(fieldUv, vec2(1.0))))
+                {
+                    float flatten = textureLod(worldFieldInput, fieldUv, 0.0).b;
+                    layer.y *= 1.0 - clamp(flatten, 0.0, 1.0);
+                }
+            }
+        }
+    }
+    float sigma = SkyOcclusionUndergrowthExtinction(layer.x, layer.y);
+    // 層が無い場所も必ず上書きし、トロイダル画像の古い値を消す。
+    imageStore(undergrowthMap, SkyOcclusionTextureCoordinate(worldTexel, tile.level),
+        vec4(terrainGround + layer.x, sigma, 0.0, 0.0));
     float bottom = ground;
     float top = ground;
     float transmittance = 1.0;
