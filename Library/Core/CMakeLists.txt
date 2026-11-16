@@ -341,6 +341,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
     Private/Rendering/EnvironmentParameters.cpp
+    Private/Environment/EnvironmentState.cpp
+    Private/Environment/EnvironmentSystem.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
@@ -754,6 +756,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
     Public/Rendering/EnvironmentParameters.h
+    Public/Environment/EnvironmentState.h
+    Public/Environment/EnvironmentSystem.h
     Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h

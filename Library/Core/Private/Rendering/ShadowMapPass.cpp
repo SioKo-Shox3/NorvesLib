@@ -76,14 +76,20 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(PointShadowFaceUBO, windA) == 288 && sizeof(PointShadowFaceUBO::windA) == 16);
         static_assert(offsetof(PointShadowFaceUBO, windB) == 304 && sizeof(PointShadowFaceUBO::windB) == 16);
 
-        // 点光源の切り抜きの配置は240バイトのまま保つ。
+        // 点光源の切り抜きとディゾルブの配置を288バイトで保つ。
         struct PointShadowAlphaClipUBO
         {
             PointShadowBaseUBO Base;
             float alphaClip[4];
+            float dissolveSweep[4];
+            float dissolveParams[4];
+            uint32_t dissolveProtectBones[4];
         };
-        static_assert(sizeof(PointShadowAlphaClipUBO) == 240 && offsetof(PointShadowAlphaClipUBO, Base) == 0);
+        static_assert(sizeof(PointShadowAlphaClipUBO) == 288 && offsetof(PointShadowAlphaClipUBO, Base) == 0);
         static_assert(offsetof(PointShadowAlphaClipUBO, alphaClip) == 224 && sizeof(PointShadowAlphaClipUBO::alphaClip) == 16);
+        static_assert(offsetof(PointShadowAlphaClipUBO, dissolveSweep) == 240 && sizeof(PointShadowAlphaClipUBO::dissolveSweep) == 16);
+        static_assert(offsetof(PointShadowAlphaClipUBO, dissolveParams) == 256 && sizeof(PointShadowAlphaClipUBO::dissolveParams) == 16);
+        static_assert(offsetof(PointShadowAlphaClipUBO, dissolveProtectBones) == 272 && sizeof(PointShadowAlphaClipUBO::dissolveProtectBones) == 16);
 
         // CSMの既存の224バイトは不透明・切り抜きで共通の配置を保つ。
         struct ShadowBaseUBO
@@ -119,14 +125,20 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(ShadowPerObjectUBO, windA) == 272 && sizeof(ShadowPerObjectUBO::windA) == 16);
         static_assert(offsetof(ShadowPerObjectUBO, windB) == 288 && sizeof(ShadowPerObjectUBO::windB) == 16);
 
-        // CSMの切り抜きの配置は240バイトのまま保つ。
+        // CSMの切り抜きとディゾルブの配置を288バイトで保つ。
         struct ShadowAlphaClipUBO
         {
             ShadowBaseUBO Base;
             float alphaClip[4];
+            float dissolveSweep[4];
+            float dissolveParams[4];
+            uint32_t dissolveProtectBones[4];
         };
-        static_assert(sizeof(ShadowAlphaClipUBO) == 240 && offsetof(ShadowAlphaClipUBO, Base) == 0);
+        static_assert(sizeof(ShadowAlphaClipUBO) == 288 && offsetof(ShadowAlphaClipUBO, Base) == 0);
         static_assert(offsetof(ShadowAlphaClipUBO, alphaClip) == 224 && sizeof(ShadowAlphaClipUBO::alphaClip) == 16);
+        static_assert(offsetof(ShadowAlphaClipUBO, dissolveSweep) == 240 && sizeof(ShadowAlphaClipUBO::dissolveSweep) == 16);
+        static_assert(offsetof(ShadowAlphaClipUBO, dissolveParams) == 256 && sizeof(ShadowAlphaClipUBO::dissolveParams) == 16);
+        static_assert(offsetof(ShadowAlphaClipUBO, dissolveProtectBones) == 272 && sizeof(ShadowAlphaClipUBO::dissolveProtectBones) == 16);
 
         // 材質の解決結果をカスケードと点光源の面の間で共有する。
         struct ShadowAlphaClipMaterial
@@ -136,24 +148,53 @@ namespace NorvesLib::Core::Rendering
             float Coverage = 1.0f;
             bool bMasked = false;
             bool bSparse = false;
+            bool bDissolve = false;
+            float DissolveSweep[4] = {};
+            float DissolveNoiseScale = 0.0f;
+            float DissolveThreshold = 0.0f;
+            uint32_t DissolveProtectBones[4] = {};
+
+            bool UsesAlphaClip() const
+            {
+                return bMasked || bDissolve;
+            }
         };
 
         ShadowAlphaClipMaterial ResolveShadowAlphaClipMaterial(const ViewRenderContext& context,
-                                                              MaterialHandle handle)
+                                                              MaterialHandle handle,
+                                                              const RHI::TexturePtr& defaultWhiteTexture,
+                                                              float instanceP0 = -1.0f)
         {
             ShadowAlphaClipMaterial material;
             if (handle.IsValid() && context.Resources.Materials)
             {
                 const MaterialResourceData* data = context.Resources.Materials->GetData(handle);
+                material.bDissolve = IsDissolveMaterial(data);
                 if (data && data->Blend == BlendMode::Masked)
                 {
                     material.bMasked = true;
                     material.Cutoff = data->AlphaCutoff;
                     material.Coverage = data->ShadingParams[3] >= 0.0f ? data->ShadingParams[3] : 1.0f;
+                }
+                if (material.UsesAlphaClip())
+                {
                     if (data->AlbedoTexture.IsValid() && context.Resources.Textures)
                     {
                         material.Albedo = context.Resources.Textures->GetRHITexturePtr(data->AlbedoTexture);
                         material.bSparse = AnySparseTexture(material.Albedo);
+                    }
+                    if (material.bDissolve)
+                    {
+                        if (!material.Albedo)
+                        {
+                            material.Albedo = defaultWhiteTexture;
+                        }
+                        std::memcpy(material.DissolveSweep, data->Dissolve.Direction, sizeof(data->Dissolve.Direction));
+                        material.DissolveSweep[3] = data->Dissolve.DirectionBias;
+                        material.DissolveNoiseScale = data->Dissolve.NoiseScale;
+                        material.DissolveThreshold = ResolveDissolveThreshold(instanceP0, data);
+                        std::memcpy(material.DissolveProtectBones, data->Dissolve.ProtectBoneGroup,
+                                    sizeof(material.DissolveProtectBones));
                     }
                 }
             }
@@ -161,9 +202,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         ShadowAlphaClipMaterial ResolveShadowAlphaClipMaterial(const ViewRenderContext& context,
-                                                              const DrawCommand& command)
+                                                              const DrawCommand& command,
+                                                              const RHI::TexturePtr& defaultWhiteTexture)
         {
-            return ResolveShadowAlphaClipMaterial(context, command.Draw.MaterialHandle);
+            const float instanceP0 = command.Draw.PayloadKind == DrawPayloadKind::Skinned
+                                        ? command.Draw.ShadingParams[0] : -1.0f;
+            return ResolveShadowAlphaClipMaterial(context, command.Draw.MaterialHandle, defaultWhiteTexture, instanceP0);
         }
 
         // 同じ View の描画中は束が変わらない。空なら既存の描画経路だけを使う。
@@ -208,8 +252,22 @@ namespace NorvesLib::Core::Rendering
         bool HasSameShadowAlphaClipValues(const ShadowAlphaClipMaterial& lhs,
                                          const ShadowAlphaClipMaterial& rhs)
         {
-            return lhs.Albedo == rhs.Albedo && lhs.Cutoff == rhs.Cutoff &&
-                   lhs.Coverage == rhs.Coverage && lhs.bSparse == rhs.bSparse;
+            if (lhs.Albedo != rhs.Albedo || lhs.Cutoff != rhs.Cutoff ||
+                lhs.Coverage != rhs.Coverage || lhs.bSparse != rhs.bSparse ||
+                lhs.bDissolve != rhs.bDissolve || lhs.DissolveNoiseScale != rhs.DissolveNoiseScale ||
+                lhs.DissolveThreshold != rhs.DissolveThreshold)
+            {
+                return false;
+            }
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                if (lhs.DissolveSweep[index] != rhs.DissolveSweep[index] ||
+                    lhs.DissolveProtectBones[index] != rhs.DissolveProtectBones[index])
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         // CSM を読むのがボリュームのフォグだけのときに描く MegaGeometry の投影物の上限（境界の半径の大きい順）。
@@ -313,7 +371,7 @@ namespace NorvesLib::Core::Rendering
         {
             DynamicUniformAllocator::Allocation allocation;
             bAlphaClip = false;
-            if (material.bMasked && material.Albedo && alphaPipeline && alphaSampler &&
+            if (material.UsesAlphaClip() && material.Albedo && alphaPipeline && alphaSampler &&
                 alphaAllocator.IsInitialized())
             {
                 allocation = alphaAllocator.Allocate(context.FrameResources);
@@ -953,6 +1011,22 @@ namespace NorvesLib::Core::Rendering
 
         m_Device = context.Device;
 
+        // アルベドのないディゾルブ材質も切り抜きの経路へ渡せるよう、白を用意する。
+        RHI::TextureDesc whiteDesc;
+        whiteDesc.Width = 1;
+        whiteDesc.Height = 1;
+        whiteDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        whiteDesc.Usage = RHI::ResourceUsage::ShaderRead;
+        whiteDesc.DebugName = "ShadowDefaultWhite1x1";
+        m_DefaultWhiteTexture = m_Device->CreateTexture(whiteDesc);
+        if (!m_DefaultWhiteTexture)
+        {
+            NORVES_LOG_ERROR("ShadowMapPass", "影の既定の白テクスチャを作成できません");
+            return failInitialize();
+        }
+        uint8_t whitePixel[4] = {255, 255, 255, 255};
+        m_DefaultWhiteTexture->Update(whitePixel, 4, 4);
+
         // ========================================
         // シャドウ用シェーダーの作成
         // ========================================
@@ -1275,6 +1349,7 @@ namespace NorvesLib::Core::Rendering
         m_AlphaClipFragmentShader.reset();
         m_AlphaClipSampler.reset();
         m_AlphaClipUniformAllocator.Shutdown();
+        m_DefaultWhiteTexture.reset();
         m_ShadowMapTexture.reset();
         m_ShadowSampler.reset();
         m_ShadowMapHandle = {};
@@ -1459,8 +1534,8 @@ namespace NorvesLib::Core::Rendering
             extensionMaterials.reserve(draws.size());
             for (const RenderExtensionShadowCasterDraw& draw : draws)
             {
-                ShadowAlphaClipMaterial material = ResolveShadowAlphaClipMaterial(context, draw.Material);
-                if (draw.CoverageMultiplier >= 0.0f)
+                ShadowAlphaClipMaterial material = ResolveShadowAlphaClipMaterial(context, draw.Material, m_DefaultWhiteTexture);
+                if (material.bMasked && draw.CoverageMultiplier >= 0.0f)
                 {
                     material.Coverage = draw.CoverageMultiplier;
                 }
@@ -1566,7 +1641,7 @@ namespace NorvesLib::Core::Rendering
                                                                   bounds.Bounds);
                 // 有限な境界を求められない描画は、保守的にすべてのカスケードへ残す。
                 bounds.bHasBounds = bounds.bHasBounds && IsDrawableMegaBounds(bounds.Bounds);
-                const ShadowAlphaClipMaterial material = ResolveShadowAlphaClipMaterial(context, command);
+                const ShadowAlphaClipMaterial material = ResolveShadowAlphaClipMaterial(context, command, m_DefaultWhiteTexture);
                 casterCommands.push_back(&command);
                 casterDrawBounds.push_back(bounds);
                 casterMaterials.push_back(material);
@@ -1623,7 +1698,7 @@ namespace NorvesLib::Core::Rendering
                     const RHI::PipelinePtr& alphaPipeline = bSkinned ? m_SkinnedAlphaClipPipeline : m_AlphaClipPipeline;
                     DynamicUniformAllocator::Allocation allocation;
                     bool bAlphaClip = false;
-                    if (material.bMasked && material.Albedo && alphaPipeline && m_AlphaClipSampler &&
+                    if (material.UsesAlphaClip() && material.Albedo && alphaPipeline && m_AlphaClipSampler &&
                         m_AlphaClipUniformAllocator.IsInitialized())
                     {
                         allocation = m_AlphaClipUniformAllocator.Allocate(context.FrameResources);
@@ -1634,7 +1709,7 @@ namespace NorvesLib::Core::Rendering
                         allocation = m_UniformAllocator.Allocate(context.FrameResources);
                         if (!allocation.UniformBuffer)
                         {
-                            if (material.bMasked)
+                            if (material.UsesAlphaClip())
                             {
                                 NORVES_LOG_WARNING("ShadowMapPass", "影の定数を借りられないため、この描画を省きます");
                                 continue;
@@ -1654,7 +1729,7 @@ namespace NorvesLib::Core::Rendering
                                 sizeof(uboData.Base.lightProjection));
 
                     std::memcpy(uboData.Base.vertexAnimTime, vertexAnimTime, sizeof(uboData.Base.vertexAnimTime));
-                    if (!bSkinned && !material.bMasked)
+                    if (!bSkinned && !material.UsesAlphaClip())
                     {
                         const MaterialResourceData* materialData = context.Resources.Materials && cmd.Draw.MaterialHandle.IsValid()
                             ? context.Resources.Materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
@@ -1673,10 +1748,16 @@ namespace NorvesLib::Core::Rendering
                         ShadowAlphaClipUBO alphaUbo = {};
                         alphaUbo.Base = uboData.Base;
                         alphaUbo.alphaClip[0] = material.Cutoff;
-                        alphaUbo.alphaClip[1] = bSkinned && cmd.Draw.ShadingParams[3] >= 0.0f
+                        alphaUbo.alphaClip[1] = material.bMasked && bSkinned && cmd.Draw.ShadingParams[3] >= 0.0f
                                                     ? cmd.Draw.ShadingParams[3]
                                                     : material.Coverage;
                         alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                        std::memcpy(alphaUbo.dissolveSweep, material.DissolveSweep, sizeof(alphaUbo.dissolveSweep));
+                        alphaUbo.dissolveParams[0] = material.bDissolve ? 1.0f : 0.0f;
+                        alphaUbo.dissolveParams[1] = material.DissolveNoiseScale;
+                        alphaUbo.dissolveParams[2] = material.DissolveThreshold;
+                        std::memcpy(alphaUbo.dissolveProtectBones, material.DissolveProtectBones,
+                                    sizeof(alphaUbo.dissolveProtectBones));
                         allocation.Write(&alphaUbo, sizeof(alphaUbo));
                     }
                     else
@@ -1727,7 +1808,7 @@ namespace NorvesLib::Core::Rendering
                     {
                         ++alphaClipDrawCounts[cascadeIndex];
                     }
-                    else if (material.bMasked)
+                    else if (material.UsesAlphaClip())
                     {
                         ++alphaClipFallbackCount;
                     }
@@ -1794,6 +1875,12 @@ namespace NorvesLib::Core::Rendering
                             alphaUbo.alphaClip[0] = material.Cutoff;
                             alphaUbo.alphaClip[1] = material.Coverage;
                             alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                            std::memcpy(alphaUbo.dissolveSweep, material.DissolveSweep, sizeof(alphaUbo.dissolveSweep));
+                            alphaUbo.dissolveParams[0] = material.bDissolve ? 1.0f : 0.0f;
+                            alphaUbo.dissolveParams[1] = material.DissolveNoiseScale;
+                            alphaUbo.dissolveParams[2] = material.DissolveThreshold;
+                            std::memcpy(alphaUbo.dissolveProtectBones, material.DissolveProtectBones,
+                                        sizeof(alphaUbo.dissolveProtectBones));
                             allocation.Write(&alphaUbo, sizeof(alphaUbo));
                         }
                         else
@@ -1810,7 +1897,7 @@ namespace NorvesLib::Core::Rendering
                         {
                             ++extensionMaskedCount;
                         }
-                        else if (material.bMasked)
+                        else if (material.UsesAlphaClip())
                         {
                             ++extensionFallbackCount;
                         }
@@ -2581,8 +2668,8 @@ namespace NorvesLib::Core::Rendering
                     caster.Command = command;
                     caster.Command.Pipeline = m_PointShadowPipeline;
                 }
-                caster.Material = ResolveShadowAlphaClipMaterial(context, command);
-                if (!caster.bSkinned && !caster.Material.bMasked)
+                caster.Material = ResolveShadowAlphaClipMaterial(context, command, m_DefaultWhiteTexture);
+                if (!caster.bSkinned && !caster.Material.UsesAlphaClip())
                 {
                     const MaterialResourceData* materialData = context.Resources.Materials && command.Draw.MaterialHandle.IsValid()
                         ? context.Resources.Materials->GetData(command.Draw.MaterialHandle) : nullptr;
@@ -2593,7 +2680,7 @@ namespace NorvesLib::Core::Rendering
                             caster.VertexAnimMaterial0, caster.VertexAnimMaterial1);
                     }
                 }
-                if (caster.bSkinned && command.Draw.ShadingParams[3] >= 0.0f)
+                if (caster.Material.bMasked && caster.bSkinned && command.Draw.ShadingParams[3] >= 0.0f)
                 {
                     caster.Material.Coverage = command.Draw.ShadingParams[3];
                 }
@@ -2703,7 +2790,7 @@ namespace NorvesLib::Core::Rendering
                         const RHI::PipelinePtr& alphaPipeline = caster.bSkinned
                             ? m_SkinnedPointShadowAlphaClipPipeline : m_PointShadowAlphaClipPipeline;
                         bool bAlphaClip = false;
-                        if (material.bMasked && material.Albedo && alphaPipeline && m_AlphaClipSampler &&
+                        if (material.UsesAlphaClip() && material.Albedo && alphaPipeline && m_AlphaClipSampler &&
                             m_PointShadowAlphaClipUniformAllocator.IsInitialized())
                         {
                             const auto createAlphaSet = [&]() -> RHI::DescriptorSetPtr
@@ -2718,6 +2805,12 @@ namespace NorvesLib::Core::Rendering
                                 alphaUbo.alphaClip[0] = material.Cutoff;
                                 alphaUbo.alphaClip[1] = material.Coverage;
                                 alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                                std::memcpy(alphaUbo.dissolveSweep, material.DissolveSweep, sizeof(alphaUbo.dissolveSweep));
+                                alphaUbo.dissolveParams[0] = material.bDissolve ? 1.0f : 0.0f;
+                                alphaUbo.dissolveParams[1] = material.DissolveNoiseScale;
+                                alphaUbo.dissolveParams[2] = material.DissolveThreshold;
+                                std::memcpy(alphaUbo.dissolveProtectBones, material.DissolveProtectBones,
+                                            sizeof(alphaUbo.dissolveProtectBones));
                                 allocation.Write(&alphaUbo, sizeof(alphaUbo));
                                 allocation.DescriptorSet->BindTexture(10, material.Albedo);
                                 allocation.DescriptorSet->BindSampler(10, m_AlphaClipSampler);
@@ -2872,7 +2965,7 @@ namespace NorvesLib::Core::Rendering
                         {
                             ++alphaClipDrawCount;
                         }
-                        else if (material.bMasked)
+                        else if (material.UsesAlphaClip())
                         {
                             ++alphaClipFallbackCount;
                         }
@@ -2942,6 +3035,12 @@ namespace NorvesLib::Core::Rendering
                                     alphaUbo.alphaClip[0] = material.Cutoff;
                                     alphaUbo.alphaClip[1] = material.Coverage;
                                     alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                                    std::memcpy(alphaUbo.dissolveSweep, material.DissolveSweep, sizeof(alphaUbo.dissolveSweep));
+                                    alphaUbo.dissolveParams[0] = material.bDissolve ? 1.0f : 0.0f;
+                                    alphaUbo.dissolveParams[1] = material.DissolveNoiseScale;
+                                    alphaUbo.dissolveParams[2] = material.DissolveThreshold;
+                                    std::memcpy(alphaUbo.dissolveProtectBones, material.DissolveProtectBones,
+                                                sizeof(alphaUbo.dissolveProtectBones));
                                     allocation.Write(&alphaUbo, sizeof(alphaUbo));
                                 }
                                 else
@@ -2959,7 +3058,7 @@ namespace NorvesLib::Core::Rendering
                                 {
                                     ++extensionMaskedCount;
                                 }
-                                else if (material.bMasked)
+                                else if (material.UsesAlphaClip())
                                 {
                                     ++extensionFallbackCount;
                                 }

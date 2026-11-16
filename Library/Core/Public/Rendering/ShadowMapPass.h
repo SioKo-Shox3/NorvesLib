@@ -215,6 +215,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_SkinnedAlphaClipVertexShader;
         RHI::ShaderPtr m_AlphaClipFragmentShader;
         RHI::SamplerPtr m_AlphaClipSampler;
+        RHI::TexturePtr m_DefaultWhiteTexture;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;

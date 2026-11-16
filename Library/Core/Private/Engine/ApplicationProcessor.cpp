@@ -2907,6 +2907,8 @@ namespace NorvesLib::Core::Engine
             GEngine->GetWorld().LateTick(times);
         }
         GEngine->UpdateWorldFieldInteractors();
+        // 気象の解決値はポーズの間も毎フレーム書く（値は変わらない）。無効なら何も書かない
+        GEngine->GetEnvironment().PublishTo(GEngine->GetRenderWorld());
         if (bAdvanceSimulation)
         {
             RunFrameStage(EFrameStage::PostLateTick, times.Unscaled, handler);
@@ -3096,6 +3098,9 @@ namespace NorvesLib::Core::Engine
 
         add(EFrameStage::PostTick, "PostTick.Particles",
             [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+        // 気象は World のチャンネルの dt で進める（この段の dt は粒子の dt なので使わない）
+        add(EFrameStage::PostTick, "PostTick.Environment",
+            [](void*, const Context&) { GEngine->GetEnvironment().Tick(GEngine->GetTimeSystem().GetFrameTimes().World); });
         add(EFrameStage::PostTick, "PostTick.Streaming",
             [](void*, const Context&) { GEngine->GetStreamingSystem().Update(); });
 

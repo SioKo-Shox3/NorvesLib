@@ -236,6 +236,16 @@ namespace NorvesLib::Core::Component
          */
         float GetShadingParams(uint32_t index) const;
 
+        /**
+         * @brief ディゾルブの閾値をインスタンスの P0 に設定する。0 = 全面が残る、1 = 全面が消える。
+         * 負と NaN は未指定で材質の P0 を使い、1 を超える値は 1 に収める。
+         * P0 は PaleFlat の消滅度と同じ欄を共有する。
+         */
+        void SetDissolveThreshold(float threshold);
+
+        /** @brief インスタンスの P0 のディゾルブ閾値を取得する。PaleFlat の消滅度と同じ欄を共有する。 */
+        float GetDissolveThreshold() const;
+
         // ========================================
         // バウンディング
         // ========================================

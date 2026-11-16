@@ -497,6 +497,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bActive = false;
         VirtualShadowMap::FallbackReason m_FallbackReason = VirtualShadowMap::FallbackReason::None;
 
+        /** @brief アルベドの無いディゾルブ材質に使う白の 1×1 テクスチャ */
+        RHI::TexturePtr m_DefaultWhiteTexture;
         RHI::BufferPtr m_Pool;
         RHI::BufferPtr m_PageTable;
         RHI::BufferPtr m_RequestBits;

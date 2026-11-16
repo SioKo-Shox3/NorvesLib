@@ -441,6 +441,70 @@ namespace NorvesLib::Core::Rendering
                    : params.Amplitude * VertexAnimationMaxWindStrength * (1.0f + params.BranchFactor);
     }
 
+    /// ディゾルブの材質の GBuffer のプログラムの名前。
+    inline constexpr const char* DissolveGBufferProgramName = "Dissolve";
+    /// 縁の発光の上限[nits]。GLSL の DISSOLVE_EDGE_EMISSIVE_NITS_MAX（Common/Dissolve.glsl）と一致させる。
+    inline constexpr float DissolveEdgeEmissiveNitsMax = 20000.0f;
+    /// TAA が掛からないビューで縁に足すディザの幅（マスクの単位）。
+    inline constexpr float DissolveNoTemporalAADitherWidth = 0.02f;
+    /// 保護する骨の組のビットの語の数（骨の番号 0〜127。x = 0〜31、y = 32〜63、z = 64〜95、w = 96〜127）。
+    inline constexpr uint32_t DissolveProtectBoneWordCount = 4u;
+
+    struct DissolveMaterialData
+    {
+        float NoiseScale = 4.0f;                    ///< バインド姿勢の位置 1 m あたりのノイズの格子の数。範囲 (0, 1024]
+        float EdgeWidth = 0.05f;                    ///< 縁の幅（マスクの単位）。範囲 [0, 1]
+        float EdgeColor[3] = {1.0f, 0.45f, 0.12f};  ///< 縁の色（線形 RGB）。各成分 [0, 1]
+        float EdgeEmissiveNits = 5000.0f;           ///< 縁の発光の輝度[nits]。範囲 [0, DissolveEdgeEmissiveNitsMax]
+        float Direction[3] = {0.0f, 1.0f, 0.0f};    ///< 掃引の向き（バインド姿勢・局所の座標）。正規化して持つ。長さ 0 なら 0
+        float DirectionBias = 0.0f;                 ///< 掃引の強さ（1 m あたりのマスクの増分）。範囲 [-64, 64]
+        uint32_t ProtectBoneGroup[DissolveProtectBoneWordCount] = {0u, 0u, 0u, 0u}; ///< 最後まで残す骨のビットの組
+    };
+
+    /// 非有限値を既定値へ戻し、範囲と掃引の向きを整える。
+    inline DissolveMaterialData SanitizeDissolveMaterialData(const DissolveMaterialData& in)
+    {
+        DissolveMaterialData result;
+        if (std::isfinite(in.NoiseScale) && in.NoiseScale > 0.0f && in.NoiseScale <= 1024.0f)
+        {
+            result.NoiseScale = in.NoiseScale;
+        }
+        const auto clampOrDefault = [](float value, float maximum, float fallback)
+        {
+            return std::isfinite(value) ? std::fmax(0.0f, std::fmin(value, maximum)) : fallback;
+        };
+        result.EdgeWidth = clampOrDefault(in.EdgeWidth, 1.0f, result.EdgeWidth);
+        for (uint32_t index = 0; index < 3u; ++index)
+        {
+            result.EdgeColor[index] = clampOrDefault(in.EdgeColor[index], 1.0f, result.EdgeColor[index]);
+        }
+        result.EdgeEmissiveNits = clampOrDefault(in.EdgeEmissiveNits, DissolveEdgeEmissiveNitsMax,
+                                                result.EdgeEmissiveNits);
+        if (std::isfinite(in.Direction[0]) && std::isfinite(in.Direction[1]) && std::isfinite(in.Direction[2]))
+        {
+            // 有限の大きな成分でも長さの計算があふれないよう倍精度で求める。
+            const double x = static_cast<double>(in.Direction[0]);
+            const double y = static_cast<double>(in.Direction[1]);
+            const double z = static_cast<double>(in.Direction[2]);
+            const double length = std::sqrt(x * x + y * y + z * z);
+            for (uint32_t index = 0; index < 3u; ++index)
+            {
+                result.Direction[index] = length > 1.0e-6
+                                              ? static_cast<float>(static_cast<double>(in.Direction[index]) / length)
+                                              : 0.0f;
+            }
+        }
+        if (std::isfinite(in.DirectionBias) && in.DirectionBias >= -64.0f && in.DirectionBias <= 64.0f)
+        {
+            result.DirectionBias = in.DirectionBias;
+        }
+        for (uint32_t index = 0; index < DissolveProtectBoneWordCount; ++index)
+        {
+            result.ProtectBoneGroup[index] = in.ProtectBoneGroup[index];
+        }
+        return result;
+    }
+
     /**
      * @brief マテリアル作成情報
      */
@@ -498,6 +562,9 @@ namespace NorvesLib::Core::Rendering
         FurMaterialData Fur;
         /// GBuffer・影の頂点シェーダーが風で揺らす。MegaGeometry は対象外。
         VertexAnimationParams VertexAnimation;
+        /// Program が DissolveGBufferProgramName のときだけ効く。ほかでは店が既定値にする。
+        /// 閾値はインスタンスの P0（無ければ材質の P0）を使う。
+        DissolveMaterialData Dissolve;
         /// 店は読まない。GetData の値から作り直した CreateData でも店が採番し直す。
         uint64_t Revision = 0;
     };
@@ -553,9 +620,27 @@ namespace NorvesLib::Core::Rendering
         FurMaterialData Fur;
         /// GBuffer・影の頂点シェーダーが風で揺らす。MegaGeometry は対象外。
         VertexAnimationParams VertexAnimation;
+        /// Program が DissolveGBufferProgramName のときだけ効く。ほかでは店が既定値にする。
+        /// 閾値はインスタンスの P0（無ければ材質の P0）を使う。
+        DissolveMaterialData Dissolve;
         /// 店が採番する版。Create で 1、Update の成功ごとに 1 進み、写した側が古さを見分ける。
         uint64_t Revision = 0;
     };
+
+    /// ディゾルブのプログラムを使う材質かを返す。
+    inline bool IsDissolveMaterial(const MaterialResourceData* material)
+    {
+        static const GBufferProgramId DissolveProgramId = MakeGBufferProgramId(DissolveGBufferProgramName);
+        return material != nullptr && material->ProgramId == DissolveProgramId;
+    }
+
+    /// インスタンス、材質、0 の順で閾値を選び、0〜1 に収める。NaN は未指定として扱う。
+    inline float ResolveDissolveThreshold(float instanceP0, const MaterialResourceData* material)
+    {
+        const float materialP0 = material != nullptr ? material->ShadingParams[ShadingParamP0] : -1.0f;
+        const float value = ResolveShadingParam(instanceP0, materialP0, ShadingParamP0);
+        return std::fmax(0.0f, std::fmin(value, 1.0f));
+    }
 
     /// 有効な風の頂点アニメを持つ材質かを返す。
     inline bool MaterialHasVertexAnimation(const MaterialResourceData* material)

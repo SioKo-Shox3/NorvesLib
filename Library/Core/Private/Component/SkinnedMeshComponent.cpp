@@ -368,6 +368,16 @@ namespace NorvesLib::Core::Component
         return index < Rendering::ShadingParamCount ? m_ShadingParams[index] : -1.0f;
     }
 
+    void SkinnedMeshComponent::SetDissolveThreshold(float threshold)
+    {
+        SetShadingParams(Rendering::ShadingParamP0, threshold);
+    }
+
+    float SkinnedMeshComponent::GetDissolveThreshold() const
+    {
+        return GetShadingParams(Rendering::ShadingParamP0);
+    }
+
     void SkinnedMeshComponent::SetOpacity(float opacity)
     {
         const float sanitized = std::isnan(opacity) ? 1.0f : std::fmax(0.0f, std::fmin(opacity, 1.0f));
