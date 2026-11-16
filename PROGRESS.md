@@ -11717,3 +11717,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 再確認（反復 3）: 枠の直下に `build/` が無く verify の再実行が落ちたので、`git submodule update --init Library/ThirdParty/freetype` と `cmake -B build -S . -G "Visual Studio 17 2022"` で枠に構成を作り、`cmake --build build --config Debug --target Game -- /m:1` を回して終了コード 0・エラーの行 0（Core.lib と Game.exe まで。`.harness/runs/20261116-053238/verify-G10-GR60-DISSOLVE-build.txt`）。コードの変更は無し。
 - U1 空の遮蔽の世界入力の型・拡張データのキー・純関数を足す: 着地(直し 0 回)
 - U2 散布の種の表に遮蔽物の欄を足し、cook と焼いた形に通す: 着地(直し 0 回)
+- U3 散布のチャンクの常駐・解放に合わせて遮蔽物の配列を作り、拡張データで公開する: 着地(直し 0 回)

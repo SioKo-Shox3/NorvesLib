@@ -327,7 +327,8 @@ namespace NorvesLib::Core::Rendering
     {
         if (!desc.bEnabled || !std::isfinite(desc.RadiusMeters) || desc.RadiusMeters <= 0.0f ||
             !std::isfinite(desc.HeightMeters) || desc.HeightMeters <= 0.0f ||
-            !std::isfinite(scale) || scale <= 0.0f)
+            !std::isfinite(scale) || scale <= 0.0f ||
+            !std::isfinite(x) || !std::isfinite(groundY) || !std::isfinite(z) || !std::isfinite(yaw))
         {
             return false;
         }
