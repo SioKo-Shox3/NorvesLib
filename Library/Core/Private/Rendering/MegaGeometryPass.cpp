@@ -76,6 +76,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainFarMapBindingIndex = 17;
         // megageometry.frag の環境 UBO。頂点の表と地形の枠に重ならない。
         constexpr uint32_t EnvironmentBindingIndex = 24;
+        // 区間の発光テクスチャ（断片シェーダーだけが読む）
+        constexpr uint32_t EmissiveTextureBindingIndex = 25;
         // スプラットの配列 4 枚（18〜21）は TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_*_BINDING を使う
         // スプラットの並びの UBO（23）は同じヘッダの TERRAIN_SPLAT_MEGA_PARAMS_BINDING を使う
 
@@ -1987,6 +1989,7 @@ namespace NorvesLib::Core::Rendering
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
                    a.MetallicTexture == b.MetallicTexture && a.RoughnessTexture == b.RoughnessTexture &&
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
+                   a.EmissiveTexture == b.EmissiveTexture && a.NormalScale == b.NormalScale &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
                    a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading && a.Blend == b.Blend &&
@@ -2010,7 +2013,7 @@ namespace NorvesLib::Core::Rendering
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
             float ShadingParams[4]; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
             float VertexAnimTime[4];
-            float SpecularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
+            float SpecularAAParams[4]; // x=鏡面の AA の強さ、y=NormalScale、z=材質のテクスチャの印（1=発光テクスチャ、2=NormalScale）、w=予約の 0
             ViewClearanceGpuData ViewClearance; // 印の付いた区間だけ値が入り、ほかは全 0
         };
         static_assert(offsetof(SectionUniformData, VertexAnimTime) == 544u);
@@ -4207,6 +4210,14 @@ namespace NorvesLib::Core::Rendering
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
+            const uint32_t materialTextureFlags =
+                (mat.EmissiveTexture.IsValid() && mat.EmissiveLuminanceNits > 0.0f ? 1u : 0u) |
+                (mat.NormalScale != 1.0f ? 2u : 0u);
+            if (materialTextureFlags != 0u)
+            {
+                uniform.SpecularAAParams[1] = mat.NormalScale;
+                uniform.SpecularAAParams[2] = static_cast<float>(materialTextureFlags);
+            }
             if (mat.bViewClearanceOccluder && cam.ViewClearance.bAffectOccluders)
             {
                 uniform.ViewClearance = MakeViewClearanceGpuData(cam.ViewClearance, true);
@@ -4279,6 +4290,7 @@ namespace NorvesLib::Core::Rendering
                           : resolveTexture(mat.AOTexture, mat.OcclusionStrength == 1 ? m_DefaultWhiteTexture
                                                                                      : constant(mat.OcclusionStrength));
             auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
+            auto emissive = resolveTexture(mat.EmissiveTexture, m_DefaultWhiteTexture);
             if (!metallic || !roughness || !ao)
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "材質の定数テクスチャを準備できません");
@@ -4424,6 +4436,8 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(5, m_DefaultLinearSampler);
             descriptorSet->BindTexture(6, height);
             descriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(EmissiveTextureBindingIndex, emissive);
+            descriptorSet->BindSampler(EmissiveTextureBindingIndex, m_DefaultLinearSampler);
             for (uint32_t index = 0; index < TerrainLayerTextureCount; ++index)
             {
                 descriptorSet->BindTexture(TerrainLayerTextureBindingFirst + index, terrainTextures[index]);
@@ -6190,6 +6204,11 @@ namespace NorvesLib::Core::Rendering
         environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
         environmentBinding.stages = RHI::ShaderStage::Pixel;
         desc.bindings.push_back(environmentBinding);
+        RHI::DescriptorBinding emissiveTextureBinding;
+        emissiveTextureBinding.binding = EmissiveTextureBindingIndex;
+        emissiveTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        emissiveTextureBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(emissiveTextureBinding);
         if (UsesVirtualTextureFeedbackBinding(m_Device))
         {
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);
