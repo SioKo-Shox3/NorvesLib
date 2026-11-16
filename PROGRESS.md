@@ -11859,3 +11859,25 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261116-101332/verify-G7-GR49-ENV-INTERFACES-fix1.txt`（`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・`error C`／`error LNK` 0 件・Core.lib を作り直して Game.exe を生成。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。verify の ctest の行は試験を作らない・回さない決まりで回していない。Game の起動・撮影は回さない決まり。
 - Next: ランナーの評価者の反証（危険地帯: Public API の ScriptRuntime・EnvironmentState）。起動しての確かめは G7-GR49-CHECK。人が見るときの見どころ: `--scene=rendering3dtest --environment-preset=heavy_rain` で起動が打ち切られずに入り、空が曇天になって Game.log に `ENVIRONMENT_RESOLVED … cloud=…` が 1 行出ること（雨・濡れの見た目は GR53・GR58 が入るまで変わらない）。存在しない名前（`--environment-preset=nope`）は「気象のプリセットファイルが見つかりません」をログに出して起動前に拒否すること。
 - Notes: 判断: 根は exe のフォルダからの相対の探索をせず、作業ディレクトリ → ビルド時に埋めたリポジトリの Assets の親の順にした（既存の `--camera-script`・必須資産の確かめと同じ）。配布の形（exe の隣に Assets を置く）では作業ディレクトリ基準のまま読む。
+
+- U2 ベイクのシェーダー impostor_bake.vert/.frag を書く: 着地(直し 0 回)
+- U1 八面体の符号化を Y が極のオブジェクト空間にそろえ、上半球と全球を選べるようにする: 着地(直し 1 回)
+- U4 Tools/ImpostorBaker の骨組みと、glTF・cook 済みメッシュの読み込み: 着地(直し 1 回)
+- U3 ImpostorBakeService で各セルを GPU で描き、4 枚のアトラスを作る: 着地(直し 0 回)
+- U5 ImpostorBaker でベイクして読み戻し、PNG 4 枚・.impostor.json・NVTEX を書き出す: 着地(直し 0 回)
+
+### G12-GR48-IMPOSTOR-BAKE 仕上げ（2026-11-16、run 20261116-144356・反復 1）
+- Done: インポスターのベイクを GPU で実装した。`ImpostorBakeService::BakeProceduralAtlas` が八面体の各セル（既定 8 × 8・192px・上半球。`ImpostorBakeInput::Layout` で全球）へ正射影でメッシュを描き、1 つのレンダーパスの MRT で albedo+coverage・オブジェクト空間の法線・ORM（R=AO・G=粗さ・B=金属度）・深度（R8。見る人の側が 0）の 4 枚を作り、区間ごとの材質と境界（中心・半径・AABB）を返す。`impostor_bake.vert/.frag` は `GBufferFragment.glsl` と同じ材質の読み方（`PbrMaterialTextureSampling.glsl`・余接フレーム・NormalScale）。八面体の規約を「Y が上のオブジェクト空間で極 +Y」に統一し、`ImpostorMath`（符号化・復号・セルの向き・ベイクのカメラの基底）と `Common/ImpostorOctahedral.glsl`（`impostor.frag` が使う）が同じ式を使う。アトラスの行 0 は物体の上で、`impostor.frag` は v を反転して引く。新しい道具 `Tools/ImpostorBaker` が glTF/GLB か cook 済みの NVMESH（LOD0）を読み、ヘッドレスの Vulkan でベイクして `CopyTextureToBuffer` で読み戻し、PNG 4 枚・`.impostor.json`・NVTEX 4 枚（albedo→BC7 sRGB、法線・ORM→BC7 linear、深度→BC4）を書く。
+- 証拠: `cmake --build build --config Debug --target ImpostorBaker -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）と `--target Game` がともに終了コード 0・エラー 0（U5 の確かめの出力）。シェーダーは include の BOM を外して展開した形で glslangValidator が通る（実行時の ShaderManager も BOM を外して読む）。verify の ctest の行が選ぶ試験は TEST-REMOVE-1114 で消えたか回さない決まりの試験なので回していない。done-when の試験（ImpostorOctahedralTest・ImpostorBakeVulkanTest）は試験を作らない決まりで作っていない。
+- 人が見るときの見どころ: `ImpostorBaker --input <木の .glb> --output <dir>` で焼くと、`<name>_albedo.png` に 8 × 8 のセルが並び、中央のセルほど真上から見た絵、各セルの上端が木の上になる。`<name>_normal.png` は物体の向きの色、`<name>_depth.png` は手前ほど暗い。前方描画のインポスター（起動画面の F11 の見本。既定では出ない）は、焼いたアトラスを張ると視線に合ったセルを引く。
+- Next: ランナーの評価者の反証（RHI・GPU の資源の寿命 = 危険地帯）。実行時に GBuffer へ書く描画は G12-GR48-IMPOSTOR-GBUFFER。
+- Notes: 採った判断: (1) 上半球は y<0 を水平へ詰め、セル (cx, cy) の向きは uv = (cx/(N-1), cy/(N-1)) の格子点の復号（実行時のセルの選択と同じ格子）。(2) albedo は材質の画像を RGBA8_SRGB で上げ、アトラスも RGBA8_SRGB で描くので、PNG は sRGB の符号化の値になる。(3) ORM の画像が無い材質は MegaGeometryPass と同じく金属度・粗さ・遮蔽の定数の 1×1 のテクスチャを使う。(4) glTF はページを作らない clustered v1 で cook してから LOD0 を読む。(5) 前方描画の `impostor.frag` は個体の回転なし・上半球として引く。既知の限界: 道具の GPU での実行と出力の中身の確かめはしていない（撮影・GPU を使う道具の実行は回さない決まり）。アトラスのミップはセルの境をまたいでにじむ（cook のミップ生成はアトラスを 1 枚の画像として扱う）。
+- 要起票: 焼いたアトラスの方式（`ImpostorBakeMetadata::Layout` の上半球/全球）と個体の回転を実行時のインポスターのシェーダーへ渡す作業が、どのタスク（G12-GR48-IMPOSTOR-GBUFFER を含む）の done-when にも無い。今は全球で焼いたアトラスと回転した個体を実行時に正しく引けない（ロードマップ 2275 行・このタスクの決定の「設定で全球」）。
+- U6 ベイクのパイプラインの表の向きを時計回りにし、法線のアトラスの裏返りを直す: 着地(直し 0 回)
+
+### G12-GR48-IMPOSTOR-BAKE 差し戻しの直しと仕上げ（2026-11-16、run 20261116-144356・反復 2）
+- Done: 法線のアトラスがほぼ全画素で内向きに書かれる不具合を直した。エンジンのメッシュは時計回りが表（`GBufferPass`・`MegaGeometryPass` と同じ。glTF も cook で時計回りへ並べ替える）で、ベイクの正射影も本体のカメラと同じ画面の向きなのに、ベイクのパイプラインの表の向きが既定の反時計回りのままで、`impostor_bake.frag` の `gl_FrontFacing` が外向きの面を裏と見て法線を反転していた。`ImpostorBake.cpp` のパイプラインに `rasterState.frontFace = RHI::FrontFace::Clockwise` を足した（カリングは無しのまま、シェーダーの反転の読み方は `GBufferFragment.glsl` と同じまま）。`Tools/ImpostorBaker` の `<name>_normal.png` と法線の NVTEX も同じ経路なので一緒に直る。
+- 証拠: `cmake --build build --config Debug --target ImpostorBaker -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）と `--target Game` がともに終了コード 0・エラー 0 で、`ImpostorBake.cpp` の再コンパイルから `ImpostorBaker.exe`・`Game.exe` のリンクまで通った（単位の確かめの出力）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致（3 行の追加）。verify の ctest の行は回さない決まりで回していない。
+- 人が見るときの見どころ: `ImpostorBaker --input <球か木の .glb> --output <dir>` の `<name>_normal.png` で、各セルの中心の色が見る人の向きの法線（真上のセルなら +Y の色）になり、反転した補色になっていないこと。
+- Next: ランナーの評価者の反証（RHI・GPU の資源の寿命 = 危険地帯）。実行時に GBuffer へ書く描画は G12-GR48-IMPOSTOR-GBUFFER。
+- Notes: 評価の残課題（ORM の画像が無い材質で `OcclusionStrength` を AO の定数にする）は、`MegaGeometryPass.cpp:4293` も同じく遮蔽の定数の 1×1 を使うので近景と一致しており、そのままにした。
