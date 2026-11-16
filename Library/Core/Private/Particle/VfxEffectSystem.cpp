@@ -3,6 +3,7 @@
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Particle/VfxSchema.h"
+#include "Particle/VfxSimulationMath.h"
 #include "Rendering/SceneProxy.h"
 
 #include <cmath>
@@ -31,42 +32,194 @@ namespace NorvesLib::Core::Particle
             return Math::Vector3(value.Vector.x, value.Vector.y, value.Vector.z);
         }
 
+        enum EmitterPropertyIndex : uint32_t
+        {
+            MaxParticlesProperty,
+            SpaceProperty,
+            SeedProperty,
+            ExecutorProperty,
+            RandomStreamProperty,
+            CapacityProperty,
+            TimeChannelProperty,
+            WrapPolicyProperty,
+            EmitterPropertyCount
+        };
+
+        template <size_t N>
+        const char* ArgumentAt(const char* const (&names)[N], uint32_t index)
+        {
+            return index < N ? names[index] : nullptr;
+        }
+
         const char* ArgumentName(VfxModuleType type, uint32_t index)
         {
             switch (type)
             {
             case VfxModuleType::SpawnRate:
-                return "Rate";
+            {
+                constexpr const char* names[] = {"Rate"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::SpawnBurst:
-                return index == 0u ? "Count" : "Time";
+            {
+                constexpr const char* names[] = {"Count", "Time"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::SpawnOnEvent:
-                return index == 0u ? "EventName" : "Count";
+            {
+                constexpr const char* names[] = {"EventName", "Count"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::InitPosition:
-                return "Offset";
+            {
+                constexpr const char* names[] = {"Offset"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::InitVelocityBox:
-                return index == 0u ? "Min" : "Max";
+            {
+                constexpr const char* names[] = {"Min", "Max"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::InitLifetime:
-                return "Lifetime";
+            {
+                constexpr const char* names[] = {"Lifetime"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::InitColor:
-                return "Color";
+            {
+                constexpr const char* names[] = {"Color"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::InitSize:
-                return "Size";
+            {
+                constexpr const char* names[] = {"Size"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::InitShape:
+            {
+                constexpr const char* names[] = {"Shape", "Radius", "ConeAngle", "ConeLength", "BoxHalfExtents", "CameraBoxHalfWidth", "CameraBoxHeight"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::Acceleration:
-                return "Acceleration";
+            {
+                constexpr const char* names[] = {"Acceleration"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::Drag:
+            {
+                constexpr const char* names[] = {"Coefficient"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::WindInfluence:
+            {
+                constexpr const char* names[] = {"Coupling", "Scale"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::Turbulence:
+            {
+                constexpr const char* names[] = {"Strength", "Frequency"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::CurveOverLife:
+            {
+                constexpr const char* names[] = {"Target", "KeyCount", "Key0", "Key1", "Key2", "Key3", "Key4", "Key5", "Key6", "Key7", "Color"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::ActivationFraction:
+            {
+                constexpr const char* names[] = {"Fraction", "Ramp"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::CollisionPlane:
+            {
+                constexpr const char* names[] = {"GroundY", "KillBelowY", "Response", "Restitution", "ChildEmitter", "ChildProbability"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::CollisionHeightField:
+            {
+                constexpr const char* names[] = {"Response", "Restitution", "ChildEmitter", "ChildProbability"};
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::CollisionDepth:
+            {
+                constexpr const char* names[] = {"Thickness", "Response", "Restitution", "ChildEmitter", "ChildProbability"};
+                return ArgumentAt(names, index);
+            }
             case VfxModuleType::SpriteRenderer:
             {
                 constexpr const char* names[] = {"Layer", "Blend", "SortKey", "Flipbook"};
-                return names[index];
+                return ArgumentAt(names, index);
             }
             case VfxModuleType::MeshRenderer:
             {
                 constexpr const char* names[] = {"Mesh", "AlignToVelocity", "DissolveStart", "DissolveDuration", "EdgeWidth", "EdgeColor"};
-                return names[index];
+                return ArgumentAt(names, index);
+            }
+            case VfxModuleType::GpuSpriteRenderer:
+            {
+                constexpr const char* names[] = {"Orientation", "Blend", "Pass", "SoftDistance", "Lighting", "FogInfluence",
+                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture"};
+                return ArgumentAt(names, index);
             }
             default:
-                return "";
+                return nullptr;
             }
         }
+
+        float WrapAxis(float position, float center, float halfSize)
+        {
+            const float minimum = center - halfSize;
+            const float maximum = center + halfSize;
+            if (halfSize == 0.0f)
+            {
+                return minimum;
+            }
+            if (position >= minimum && position <= maximum)
+            {
+                return position;
+            }
+            const float size = halfSize * 2.0f;
+            const float offset = position - minimum;
+            return minimum + offset - size * std::floor(offset / size);
+        }
+
+        bool IsOutsideCameraBox(const Math::Vector3& position, const Math::Vector3& center, float halfWidth, float halfHeight)
+        {
+            return position.x < center.x - halfWidth || position.x > center.x + halfWidth ||
+                position.y < center.y - halfHeight || position.y > center.y + halfHeight ||
+                position.z < center.z - halfWidth || position.z > center.z + halfWidth;
+        }
+
+        Math::Vector3 EvaluateParticleWind(const Rendering::WindParameters& wind, const Math::Vector3& position, float time)
+        {
+            if (!wind.bEnabled)
+            {
+                return Math::Vector3(0.0f);
+            }
+            if (!IsFinite(position) || !std::isfinite(time))
+            {
+                return Math::Vector3(0.0f);
+            }
+            float dirX = 0.0f;
+            float dirZ = 0.0f;
+            Rendering::WindDirectionXZ(wind, dirX, dirZ);
+            const float argument = (position.x * dirX + position.z * dirZ) / wind.GustScaleMeters - time * wind.GustFrequencyHz;
+            const float turbulenceArgument = argument * 3.1f;
+            constexpr float gridLimit = 2147483648.0f;
+            if (!std::isfinite(argument) || !std::isfinite(turbulenceArgument) ||
+                argument < -gridLimit || argument >= gridLimit ||
+                turbulenceArgument < -gridLimit || turbulenceArgument >= gridLimit)
+            {
+                return Math::Vector3(0.0f);
+            }
+            return Rendering::EvaluateWind(wind, position, time);
+        }
+    }
+
+    bool VfxHeightFieldView::IsBound() const
+    {
+        return Heights != nullptr && Width >= 2u && Height >= 2u &&
+            std::isfinite(WorldSize.x) && std::isfinite(WorldSize.y) && WorldSize.x > 0.0f && WorldSize.y > 0.0f;
     }
 
     VfxEffectHandle VfxEffectSystem::CreateInstance(const VfxEffectAsset& asset, const VfxInstanceDesc& desc, Container::String* outError)
@@ -99,7 +252,12 @@ namespace NorvesLib::Core::Particle
         slot.Events.clear();
         slot.Emitters.clear();
         slot.Emitters.resize(asset.Emitters.size());
-        CacheBindings(slot);
+        if (!CacheBindings(slot))
+        {
+            ReleaseSlot(index);
+            Fail(outError, "エミッタまたはモジュールの引数を結び付けられません。");
+            return {};
+        }
         for (uint32_t emitterIndex = 0u; emitterIndex < slot.Emitters.size(); ++emitterIndex)
         {
             RefreshEmitter(slot, emitterIndex);
@@ -204,7 +362,9 @@ namespace NorvesLib::Core::Particle
             emitter = previous;
             return false;
         }
-        const uint32_t maxParticles = emitter.Properties[slot.PropertyIndices[0]].UInt;
+        const uint32_t capacity = emitter.Properties[slot.PropertyIndices[CapacityProperty]].UInt;
+        const uint32_t maxParticles = capacity != 0u ? capacity : emitter.Properties[slot.PropertyIndices[MaxParticlesProperty]].UInt;
+        slot.Emitters[emitterIndex].MaxParticles = maxParticles;
         if (slot.Emitters[emitterIndex].Particles.size() > maxParticles)
         {
             slot.Emitters[emitterIndex].Particles.resize(maxParticles);
@@ -261,10 +421,18 @@ namespace NorvesLib::Core::Particle
 
     void VfxEffectSystem::Tick(float deltaTime)
     {
+        Tick(deltaTime, VfxTickContext{});
+    }
+
+    void VfxEffectSystem::Tick(float deltaTime, const VfxTickContext& context)
+    {
         if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
         {
             return;
         }
+        const Rendering::WindParameters wind = Rendering::SanitizeWindParameters(context.Wind);
+        const float unscaledDeltaTime = std::isfinite(context.UnscaledDeltaTime) && context.UnscaledDeltaTime >= 0.0f ?
+            context.UnscaledDeltaTime : deltaTime;
         for (InstanceSlot& slot : m_Instances)
         {
             if (!slot.bActive)
@@ -277,14 +445,45 @@ namespace NorvesLib::Core::Particle
             {
                 RefreshEmitter(slot, emitterIndex);
                 EmitterState& emitter = slot.Emitters[emitterIndex];
+                const float emitterDeltaTime = emitter.TimeChannel == VfxTimeChannel::Unscaled ? unscaledDeltaTime : deltaTime;
                 uint32_t writeIndex = 0u;
                 for (uint32_t readIndex = 0u; readIndex < emitter.Particles.size(); ++readIndex)
                 {
                     VfxParticleState& particle = emitter.Particles[readIndex];
-                    particle.Velocity += emitter.Acceleration * deltaTime;
-                    particle.Position += particle.Velocity * deltaTime;
-                    particle.Age += deltaTime;
-                    if (particle.Age < particle.Lifetime)
+                    if (!particle.bStuck)
+                    {
+                        Math::Vector3 acceleration = emitter.Acceleration;
+                        if (emitter.bHasDrag)
+                        {
+                            acceleration -= particle.Velocity * emitter.Drag;
+                        }
+                        if (!emitter.WindInfluences.empty())
+                        {
+                            const Math::Vector3 windVelocity = EvaluateParticleWind(wind, particle.Position, context.WindTimeSeconds);
+                            for (const WindInfluenceState& influence : emitter.WindInfluences)
+                            {
+                                acceleration += (windVelocity * influence.Scale - particle.Velocity) * influence.Coupling;
+                            }
+                        }
+                        for (const TurbulenceState& turbulence : emitter.Turbulences)
+                        {
+                            acceleration += VfxTurbulenceAcceleration(particle.Position, turbulence.Frequency,
+                                turbulence.Strength, emitter.StreamSeed);
+                        }
+                        particle.Velocity += acceleration * emitterDeltaTime;
+                        particle.Position += particle.Velocity * emitterDeltaTime;
+                        if (emitter.Shape == VfxSpawnShape::CameraBox && emitter.WrapPolicy == VfxWrapPolicy::WrapInCameraBox)
+                        {
+                            const float halfHeight = emitter.CameraBoxHeight * 0.5f;
+                            particle.Position.x = WrapAxis(particle.Position.x, context.CameraPosition.x, emitter.CameraBoxHalfWidth);
+                            particle.Position.y = WrapAxis(particle.Position.y, context.CameraPosition.y, halfHeight);
+                            particle.Position.z = WrapAxis(particle.Position.z, context.CameraPosition.z, emitter.CameraBoxHalfWidth);
+                        }
+                    }
+                    const bool bOutside = emitter.Shape == VfxSpawnShape::CameraBox && emitter.WrapPolicy == VfxWrapPolicy::Die &&
+                        IsOutsideCameraBox(particle.Position, context.CameraPosition, emitter.CameraBoxHalfWidth, emitter.CameraBoxHeight * 0.5f);
+                    particle.Age += emitterDeltaTime;
+                    if (!bOutside && particle.Age < particle.Lifetime)
                     {
                         UpdateFlipbook(slot, emitter, particle);
                         if (writeIndex != readIndex)
@@ -314,15 +513,8 @@ namespace NorvesLib::Core::Particle
                         rate += module.Values[emitter.Bindings[moduleIndex].Arguments[0]].Vector.x;
                     }
                 }
-                // 通常の端数演算は既存の粒子系と同じ float 精度を保つ。
-                const float accumulated = emitter.SpawnAccumulator + rate * deltaTime;
-                const double total = std::isfinite(accumulated) ? static_cast<double>(accumulated) :
-                    static_cast<double>(emitter.SpawnAccumulator) + static_cast<double>(rate) * deltaTime;
-                const double wholeCount = std::floor(total);
-                emitter.SpawnAccumulator = static_cast<float>(total - wholeCount);
-                const uint32_t available = emitter.MaxParticles - static_cast<uint32_t>(emitter.Particles.size());
-                const uint32_t continuousCount = wholeCount >= available ? available : static_cast<uint32_t>(wholeCount);
-                SpawnParticles(slot, emitter, continuousCount, slot.Desc.Position, end, 0.0f);
+                const uint32_t continuousCount = VfxAdvanceSpawnAccumulator(emitter.SpawnAccumulator, rate, emitterDeltaTime);
+                SpawnParticles(slot, emitter, continuousCount, slot.Desc.Position, end, 0.0f, context);
 
                 for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
                 {
@@ -333,7 +525,7 @@ namespace NorvesLib::Core::Particle
                         const double time = module.Values[binding.Arguments[1]].Vector.x;
                         if (start <= time && time < end)
                         {
-                            SpawnParticles(slot, emitter, module.Values[binding.Arguments[0]].UInt, slot.Desc.Position, end, 0.0f);
+                            SpawnParticles(slot, emitter, module.Values[binding.Arguments[0]].UInt, slot.Desc.Position, end, 0.0f, context);
                         }
                     }
                 }
@@ -350,7 +542,7 @@ namespace NorvesLib::Core::Particle
                         if (module.Type == VfxModuleType::SpawnOnEvent && module.Values[binding.Arguments[0]].Name == event.Name)
                         {
                             SpawnParticles(slot, emitter, module.Values[binding.Arguments[1]].UInt,
-                                event.Position, event.Time, static_cast<float>(end - event.Time),
+                                event.Position, event.Time, static_cast<float>(end - event.Time), context,
                                 event.bOriented ? &event.Normal : nullptr);
                         }
                     }
@@ -573,12 +765,21 @@ namespace NorvesLib::Core::Particle
         return static_cast<float>(state >> 8u) / 16777216.0f;
     }
 
-    void VfxEffectSystem::CacheBindings(InstanceSlot& slot)
+    bool VfxEffectSystem::CacheBindings(InstanceSlot& slot)
     {
         const VfxObjectSchema& schema = GetVfxEmitterSchema();
-        slot.PropertyIndices[0] = static_cast<uint32_t>(FindVfxParameterIndex(schema, "MaxParticles"));
-        slot.PropertyIndices[1] = static_cast<uint32_t>(FindVfxParameterIndex(schema, "Space"));
-        slot.PropertyIndices[2] = static_cast<uint32_t>(FindVfxParameterIndex(schema, "Seed"));
+        constexpr const char* propertyNames[] = {"MaxParticles", "Space", "Seed", "Executor", "RandomStream", "Capacity", "TimeChannel", "WrapPolicy"};
+        static_assert(sizeof(propertyNames) / sizeof(propertyNames[0]) == EmitterPropertyCount);
+        static_assert(sizeof(slot.PropertyIndices) / sizeof(slot.PropertyIndices[0]) == EmitterPropertyCount);
+        for (uint32_t index = 0u; index < EmitterPropertyCount; ++index)
+        {
+            const int32_t propertyIndex = FindVfxParameterIndex(schema, propertyNames[index]);
+            if (propertyIndex < 0)
+            {
+                return false;
+            }
+            slot.PropertyIndices[index] = static_cast<uint32_t>(propertyIndex);
+        }
         for (uint32_t emitterIndex = 0u; emitterIndex < slot.Emitters.size(); ++emitterIndex)
         {
             EmitterState& emitter = slot.Emitters[emitterIndex];
@@ -587,28 +788,54 @@ namespace NorvesLib::Core::Particle
             for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
             {
                 const VfxModule& module = asset.Modules[moduleIndex];
-                const VfxObjectSchema& moduleSchema = *FindVfxModuleSchema(module.Type);
-                for (uint32_t index = 0u; index < moduleSchema.ParameterCount; ++index)
+                const VfxObjectSchema* moduleSchema = FindVfxModuleSchema(module.Type);
+                ModuleBinding& binding = emitter.Bindings[moduleIndex];
+                if (moduleSchema == nullptr || moduleSchema->ParameterCount > sizeof(binding.Arguments) / sizeof(binding.Arguments[0]))
                 {
-                    emitter.Bindings[moduleIndex].Arguments[index] =
-                        static_cast<uint32_t>(FindVfxParameterIndex(moduleSchema, ArgumentName(module.Type, index)));
+                    return false;
+                }
+                for (uint32_t index = 0u; index < moduleSchema->ParameterCount; ++index)
+                {
+                    const char* name = ArgumentName(module.Type, index);
+                    if (name == nullptr)
+                    {
+                        return false;
+                    }
+                    const int32_t argumentIndex = FindVfxParameterIndex(*moduleSchema, name);
+                    if (argumentIndex < 0)
+                    {
+                        return false;
+                    }
+                    binding.Arguments[index] = static_cast<uint32_t>(argumentIndex);
                 }
             }
         }
+        return true;
     }
 
     void VfxEffectSystem::RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex)
     {
         EmitterState& emitter = slot.Emitters[emitterIndex];
         const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
-        emitter.MaxParticles = asset.Properties[slot.PropertyIndices[0]].UInt;
-        emitter.Space = asset.Properties[slot.PropertyIndices[1]].UInt;
-        const uint32_t seed = slot.Desc.Seed ^ asset.Properties[slot.PropertyIndices[2]].UInt;
+        const uint32_t capacity = asset.Properties[slot.PropertyIndices[CapacityProperty]].UInt;
+        emitter.MaxParticles = capacity != 0u ? capacity : asset.Properties[slot.PropertyIndices[MaxParticlesProperty]].UInt;
+        emitter.Space = asset.Properties[slot.PropertyIndices[SpaceProperty]].UInt;
+        emitter.Executor = static_cast<VfxExecutor>(asset.Properties[slot.PropertyIndices[ExecutorProperty]].UInt);
+        emitter.RandomStream = static_cast<VfxRandomStream>(asset.Properties[slot.PropertyIndices[RandomStreamProperty]].UInt);
+        emitter.TimeChannel = static_cast<VfxTimeChannel>(asset.Properties[slot.PropertyIndices[TimeChannelProperty]].UInt);
+        emitter.WrapPolicy = static_cast<VfxWrapPolicy>(asset.Properties[slot.PropertyIndices[WrapPolicyProperty]].UInt);
+        const uint32_t seed = slot.Desc.Seed ^ asset.Properties[slot.PropertyIndices[SeedProperty]].UInt;
         if (emitter.RandomState == 0u || seed != emitter.Seed)
         {
             emitter.Seed = seed;
             emitter.RandomState = InitialRandomState(seed, emitterIndex);
+            emitter.StreamSeed = emitter.RandomState;
         }
+        emitter.Shape = VfxSpawnShape::Point;
+        emitter.Drag = 0.0f;
+        emitter.bHasDrag = false;
+        emitter.WindInfluences.clear();
+        emitter.Turbulences.clear();
         emitter.Offset = Math::Vector3(0.0f, 0.0f, 0.0f);
         emitter.Acceleration = Math::Vector3(0.0f, 0.0f, 0.0f);
         emitter.VelocityMin = Math::Vector3(0.0f, 0.0f, 0.0f);
@@ -644,8 +871,27 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::InitSize:
                 emitter.Size = Math::Vector2(first.Vector.x, first.Vector.y);
                 break;
+            case VfxModuleType::InitShape:
+                emitter.Shape = static_cast<VfxSpawnShape>(first.UInt);
+                emitter.ShapeRadius = module.Values[binding.Arguments[1]].Vector.x;
+                emitter.ConeAngle = module.Values[binding.Arguments[2]].Vector.x;
+                emitter.ConeLength = module.Values[binding.Arguments[3]].Vector.x;
+                emitter.BoxHalfExtents = ToVector3(module.Values[binding.Arguments[4]]);
+                emitter.CameraBoxHalfWidth = module.Values[binding.Arguments[5]].Vector.x;
+                emitter.CameraBoxHeight = module.Values[binding.Arguments[6]].Vector.x;
+                break;
             case VfxModuleType::Acceleration:
                 emitter.Acceleration += ToVector3(first);
+                break;
+            case VfxModuleType::Drag:
+                emitter.bHasDrag = true;
+                emitter.Drag += first.Vector.x;
+                break;
+            case VfxModuleType::WindInfluence:
+                emitter.WindInfluences.push_back({first.Vector.x, module.Values[binding.Arguments[1]].Vector.x});
+                break;
+            case VfxModuleType::Turbulence:
+                emitter.Turbulences.push_back({first.Vector.x, module.Values[binding.Arguments[1]].Vector.x});
                 break;
             case VfxModuleType::SpriteRenderer:
                 emitter.bHasRenderer = true;
@@ -688,8 +934,11 @@ namespace NorvesLib::Core::Particle
     }
 
     void VfxEffectSystem::SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
-        const Math::Vector3& position, double birthTime, float age, const Math::Vector3* orientationNormal)
+        const Math::Vector3& position, double birthTime, float age, const VfxTickContext& context,
+        const Math::Vector3* orientationNormal)
     {
+        const uint32_t firstSerial = emitter.NextSerial;
+        emitter.NextSerial += count;
         const uint32_t available = emitter.MaxParticles - static_cast<uint32_t>(emitter.Particles.size());
         const uint32_t spawnCount = count < available ? count : available;
         Math::Vector3 tangent;
@@ -704,21 +953,68 @@ namespace NorvesLib::Core::Particle
         for (uint32_t index = 0u; index < spawnCount; ++index)
         {
             VfxParticleState particle;
-            particle.Position = position + emitter.Offset;
+            particle.Serial = firstSerial + index;
+            particle.Position = (emitter.Shape == VfxSpawnShape::CameraBox ? context.CameraPosition : position) + emitter.Offset;
             particle.Velocity = Math::Vector3(0.0f, 0.0f, 0.0f);
+            const auto draw = [&](VfxRandomDraw kind)
+            {
+                return emitter.RandomStream == VfxRandomStream::Counter ?
+                    VfxCounterUnitFloat(emitter.StreamSeed, particle.Serial, kind) : NextUnitFloat(emitter.RandomState);
+            };
             if (emitter.bHasVelocity)
             {
-                particle.Velocity.x = emitter.VelocityMin.x + (emitter.VelocityMax.x - emitter.VelocityMin.x) * NextUnitFloat(emitter.RandomState);
-                particle.Velocity.y = emitter.VelocityMin.y + (emitter.VelocityMax.y - emitter.VelocityMin.y) * NextUnitFloat(emitter.RandomState);
-                particle.Velocity.z = emitter.VelocityMin.z + (emitter.VelocityMax.z - emitter.VelocityMin.z) * NextUnitFloat(emitter.RandomState);
+                particle.Velocity.x = emitter.VelocityMin.x + (emitter.VelocityMax.x - emitter.VelocityMin.x) * draw(VfxRandomDraw::VelocityX);
+                particle.Velocity.y = emitter.VelocityMin.y + (emitter.VelocityMax.y - emitter.VelocityMin.y) * draw(VfxRandomDraw::VelocityY);
+                particle.Velocity.z = emitter.VelocityMin.z + (emitter.VelocityMax.z - emitter.VelocityMin.z) * draw(VfxRandomDraw::VelocityZ);
                 if (orientationNormal != nullptr)
                 {
                     const Math::Vector3 localVelocity = particle.Velocity;
                     particle.Velocity = tangent * localVelocity.x + bitangent * localVelocity.y + *orientationNormal * localVelocity.z;
                 }
             }
+            if (emitter.Shape != VfxSpawnShape::Point)
+            {
+                const float a = draw(VfxRandomDraw::ShapeA);
+                const float b = draw(VfxRandomDraw::ShapeB);
+                const float c = draw(VfxRandomDraw::ShapeC);
+                Math::Vector3 sample;
+                switch (emitter.Shape)
+                {
+                case VfxSpawnShape::Sphere:
+                {
+                    const float y = 1.0f - 2.0f * a;
+                    const float horizontal = std::sqrt(std::fmax(0.0f, 1.0f - y * y));
+                    const float phi = 2.0f * Math::Constants::PI * b;
+                    const float radius = emitter.ShapeRadius * std::cbrt(c);
+                    sample = Math::Vector3(horizontal * std::cos(phi), y, horizontal * std::sin(phi)) * radius;
+                    break;
+                }
+                case VfxSpawnShape::Cone:
+                {
+                    const float height = emitter.ConeLength * std::cbrt(a);
+                    const double radians = static_cast<double>(emitter.ConeAngle) * (3.14159265358979323846 / 180.0);
+                    const float radius = height * static_cast<float>(std::tan(radians)) * std::sqrt(b);
+                    const float phi = 2.0f * Math::Constants::PI * c;
+                    sample = Math::Vector3(radius * std::cos(phi), height, radius * std::sin(phi));
+                    break;
+                }
+                case VfxSpawnShape::Box:
+                    sample = Math::Vector3((2.0f * a - 1.0f) * emitter.BoxHalfExtents.x,
+                        (2.0f * b - 1.0f) * emitter.BoxHalfExtents.y, (2.0f * c - 1.0f) * emitter.BoxHalfExtents.z);
+                    break;
+                case VfxSpawnShape::CameraBox:
+                    sample = Math::Vector3((2.0f * a - 1.0f) * emitter.CameraBoxHalfWidth,
+                        (b - 0.5f) * emitter.CameraBoxHeight, (2.0f * c - 1.0f) * emitter.CameraBoxHalfWidth);
+                    break;
+                default:
+                    break;
+                }
+                particle.Position += sample;
+            }
             particle.Color = emitter.Color;
             particle.Size = emitter.Size;
+            particle.BaseColor = particle.Color;
+            particle.BaseSize = particle.Size;
             particle.Lifetime = emitter.Lifetime;
             particle.BirthTime = birthTime;
             particle.Age = age;
