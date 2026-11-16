@@ -517,6 +517,9 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.vertexAttributes.push_back({1, 0, RHI::Format::R32G32B32_FLOAT, 12});
             pipelineDesc.vertexAttributes.push_back({2, 0, RHI::Format::R32G32_FLOAT, 24});
             pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            // GBufferPass と同様にメッシュは時計回りが表で、ベイクの正射影も本体カメラと同じ画面の向き。
+            // 外向きの面を表とし、gl_FrontFacing で法線を正しい向きにする。
+            pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
             pipelineDesc.depthStencilState.depthTestEnable = true;
             pipelineDesc.depthStencilState.depthWriteEnable = true;
             // RHI は Less をそのまま比較する。深度 0 が近く、クリア値 1 より小さい面を残す。

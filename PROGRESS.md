@@ -11785,3 +11785,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（RHI・GPU の資源の寿命 = 危険地帯）。実行時に GBuffer へ書く描画は G12-GR48-IMPOSTOR-GBUFFER。
 - Notes: 採った判断: (1) 上半球は y<0 を水平へ詰め、セル (cx, cy) の向きは uv = (cx/(N-1), cy/(N-1)) の格子点の復号（実行時のセルの選択と同じ格子）。(2) albedo は材質の画像を RGBA8_SRGB で上げ、アトラスも RGBA8_SRGB で描くので、PNG は sRGB の符号化の値になる。(3) ORM の画像が無い材質は MegaGeometryPass と同じく金属度・粗さ・遮蔽の定数の 1×1 のテクスチャを使う。(4) glTF はページを作らない clustered v1 で cook してから LOD0 を読む。(5) 前方描画の `impostor.frag` は個体の回転なし・上半球として引く。既知の限界: 道具の GPU での実行と出力の中身の確かめはしていない（撮影・GPU を使う道具の実行は回さない決まり）。アトラスのミップはセルの境をまたいでにじむ（cook のミップ生成はアトラスを 1 枚の画像として扱う）。
 - 要起票: 焼いたアトラスの方式（`ImpostorBakeMetadata::Layout` の上半球/全球）と個体の回転を実行時のインポスターのシェーダーへ渡す作業が、どのタスク（G12-GR48-IMPOSTOR-GBUFFER を含む）の done-when にも無い。今は全球で焼いたアトラスと回転した個体を実行時に正しく引けない（ロードマップ 2275 行・このタスクの決定の「設定で全球」）。
+- U6 ベイクのパイプラインの表の向きを時計回りにし、法線のアトラスの裏返りを直す: 着地(直し 0 回)
