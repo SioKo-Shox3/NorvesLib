@@ -73,9 +73,13 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
      * 材質の解決は、裏から見た三角形の法線を反転する。
      */
     constexpr uint32_t MATERIAL_FLAG_TWO_SIDED = 512u;
+    /** @brief TexturesE[0..1] の発光テクスチャを発光の色度に掛ける */
+    constexpr uint32_t MATERIAL_FLAG_EMISSIVE_TEXTURE = 1024u;
+    /** @brief TexturesE[2] の float ビット列を NormalScale として接空間の法線に掛ける */
+    constexpr uint32_t MATERIAL_FLAG_NORMAL_SCALE = 2048u;
 
     /**
-     * @brief 材質の表の 1 件（storage buffer の 1 要素。144 バイト）
+     * @brief 材質の表の 1 件（storage buffer の 1 要素。160 バイト）
      *
      * 材質の解決が引く定数（基本色・発光・金属度と粗さのスカラー・高さの係数・種類の印）と、
      * テクスチャを引き直すための識別（テクスチャのハンドルの 64bit を下位・上位の 2
@@ -105,12 +109,15 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         uint32_t TexturesD[4] = {0u, 0u, 0u, 0u};
         /** @brief x = P0、y = P1、z = 予約、w = 被覆率の乗数。負は未指定 */
         float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+        /** @brief 発光テクスチャのハンドル（下位・上位）、NormalScale の float ビット列、予約 */
+        uint32_t TexturesE[4] = {0u, 0u, 0u, 0u};
     };
 
-    static_assert(sizeof(MaterialEntry) == 144, "visbuffer_records.comp などの MaterialEntry と一致しなければならない");
+    static_assert(sizeof(MaterialEntry) == 160, "visbuffer_records.comp などの MaterialEntry と一致しなければならない");
     static_assert(alignof(MaterialEntry) == 16, "storage buffer の要素の配置は 16 バイト");
     static_assert(offsetof(MaterialEntry, Header) == 48 && offsetof(MaterialEntry, TexturesA) == 64 &&
-                      offsetof(MaterialEntry, TexturesD) == 112 && offsetof(MaterialEntry, ShadingParams) == 128,
+                      offsetof(MaterialEntry, TexturesD) == 112 && offsetof(MaterialEntry, ShadingParams) == 128 &&
+                      offsetof(MaterialEntry, TexturesE) == 144,
                   "uvec4 の並びと一致しなければならない");
 
     /** @brief 手続き・スキニングの描画が持つ材質（MaterialResourceData。null
@@ -135,10 +142,11 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         TextureHandle AO;
         TextureHandle ORM;
         TextureHandle Height;
+        TextureHandle Emissive;
     };
 
     /** @brief 表の 1
-     * 件のテクスチャの枠（TexturesA〜D）から、各用途のハンドルを読み出す */
+     * 件のテクスチャの枠（TexturesA〜E）から、各用途のハンドルを読み出す */
     MaterialTextureHandles ReadMaterialTextureHandles(const MaterialEntry &entry);
 
     /**

@@ -26,6 +26,18 @@ vec3 DecodePbrTangentNormal(vec4 normalSample, bool bNormalTwoChannel)
     return normalSample.rgb * 2.0 - 1.0;
 }
 
+// 法線マップの XY に倍率を掛けて正規化する。呼び出し側は倍率の印があるときだけ使う。
+vec3 ApplyPbrNormalScale(vec3 tangentNormal, float normalScale)
+{
+    vec3 n = vec3(tangentNormal.xy * normalScale, tangentNormal.z);
+    float lengthSquared = dot(n, n);
+    if (lengthSquared > 1.0e-12)
+    {
+        return n * inversesqrt(lengthSquared);
+    }
+    return vec3(0.0, 0.0, 1.0);
+}
+
 // 材質textureの標本値を材質値へ復号する。ラスタとパストレーサーは標本の取り方
 // （暗黙LODとLOD 0）だけが異なり、復号はこの関数を共有する。
 PbrMaterialTextureSamples DecodePbrMaterialTextureSamples(

@@ -1,5 +1,6 @@
 ﻿// ========================================
 // 太陽の仮想シャドウマップ（VSM）の描画: 影の塊 × ページのインスタンスを、物理ページ 1 枚ぶんの 128×128 のビューポートへ描く
+// 切り抜きの版はディゾルブの表（binding 9）から値を渡し、GBuffer と同じ形に影を削る。
 //
 // 展開（vsm_expand.comp）が作った間接描画の 1 回 = 1 つの塊（塊の番号が counts.x 以上なら MegaGeometry のクラスタの記録 = binding 4）。頂点の番号（0 .. 三角形の数 × 3 - 1）から塊の中の三角形とその頂点を決め、
 // インスタンスの番号（展開が書いた範囲の中の位置）から（スライス・絶対のページ・物理ページ）を引く。インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
@@ -120,9 +121,35 @@ vec3 VsmPlaceFoliageVertex(VisibilityDrawRecord record, uint vertexIndex, vec4 w
 layout(location = 0) flat out uint outPhysicalPage;
 layout(location = 1) out float outDepth;
 #ifdef VSM_ALPHA_CLIP
+#include "Common/Dissolve.glsl"
+
+// std430、64 バイト。掃引・ノイズと閾値・保護する骨・スキンの入力頂点のアドレス。
+struct VsmDissolveEntry
+{
+    vec4 sweep;
+    vec4 params;
+    uvec4 protectBones;
+    uvec4 skin;
+};
+layout(std430, set = 0, binding = 9) readonly buffer VsmDissolveTable
+{
+    VsmDissolveEntry vsmDissolve[];
+};
+
+// SkinnedMeshVertex は 64 バイト。スキニング前の位置・骨・重みを 16 語の列として読む。
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VsmDissolveSkinVertexWords
+{
+    uint words[];
+};
+
 layout(location = 2) out vec2 outTexCoord;
 // x = 閾値、y = 被覆率の乗数、z = 切り抜きの印（0 = なし、1 = 通常、3 = sparse）。
 layout(location = 3) flat out vec3 outAlphaClip;
+layout(location = 4) out vec3 outDissolvePosition;
+layout(location = 5) out float outDissolveProtect;
+layout(location = 6) flat out vec4 outDissolveSweep;
+// x = 有効の印、y = NoiseScale、z = 閾値。
+layout(location = 7) flat out vec3 outDissolveParams;
 #endif
 
 void main()
@@ -138,6 +165,10 @@ void main()
 #ifdef VSM_ALPHA_CLIP
     outTexCoord = vec2(0.0);
     outAlphaClip = vec3(0.0);
+    outDissolvePosition = vec3(0.0);
+    outDissolveProtect = 0.0;
+    outDissolveSweep = vec4(0.0);
+    outDissolveParams = vec3(0.0);
 #endif
 
     // 塊の記録。頂点・インデックスの読み方は、種類によらず記録のアドレスと基点で決まる（手続き・スキニング・MegaGeometry のクラスタで共通）
@@ -160,6 +191,35 @@ void main()
         outTexCoord = vec2(vertices.vertices[vertexIndex].u, vertices.vertices[vertexIndex].v);
         const bool bSparse = (record.header.z & 0x80000000u) != 0u;
         outAlphaClip = vec3(uintBitsToFloat(record.header.y), uintBitsToFloat(record.previous.w), bSparse ? 3.0 : 1.0);
+        const uint e = record.source.z - 1u;
+        if (e < uint(vsmDissolve.length()))
+        {
+            const VsmDissolveEntry entry = vsmDissolve[e];
+            const bool bSkinned = entry.params.z > 0.5;
+            if (entry.params.w > 0.5 && (!bSkinned || any(notEqual(entry.skin.xy, uvec2(0u)))))
+            {
+                if (bSkinned)
+                {
+                    // 出力の頂点 i は入力の頂点 i に対応する。位置はバインド姿勢から取り、骨の保護率も同じ頂点で求める。
+                    VsmDissolveSkinVertexWords skinVertices = VsmDissolveSkinVertexWords(entry.skin.xy);
+                    const uint base = vertexIndex * 16u;
+                    outDissolvePosition = uintBitsToFloat(uvec3(skinVertices.words[base], skinVertices.words[base + 1u], skinVertices.words[base + 2u]));
+                    const uvec4 boneIndices = uvec4(skinVertices.words[base + 8u], skinVertices.words[base + 9u], skinVertices.words[base + 10u], skinVertices.words[base + 11u]);
+                    const vec4 boneWeights = uintBitsToFloat(uvec4(skinVertices.words[base + 12u], skinVertices.words[base + 13u], skinVertices.words[base + 14u], skinVertices.words[base + 15u]));
+                    outDissolveProtect = DissolveProtect(boneIndices, boneWeights, entry.protectBones);
+                }
+                else
+                {
+                    outDissolvePosition = vec3(vertices.vertices[vertexIndex].px,
+                                               vertices.vertices[vertexIndex].py,
+                                               vertices.vertices[vertexIndex].pz);
+                }
+                const float p0 = uintBitsToFloat(record.previous.x);
+                const float threshold = p0 >= 0.0 ? clamp(p0, 0.0, 1.0) : entry.params.y;
+                outDissolveSweep = entry.sweep;
+                outDissolveParams = vec3(1.0, entry.params.x, threshold);
+            }
+        }
     }
 #endif
     const vec4 world0 = bMega ? megaChunks[megaIndex].world0 : chunks[instance.x].world0;

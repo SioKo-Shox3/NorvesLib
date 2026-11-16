@@ -6339,7 +6339,7 @@
 - notes: ロードマップ 1948・1960 行、要件 `#### GR19` の設計案の実装順 1)〜3) と受け入れ確認。位置だけのスキニングは新しく作らず、G3 の GR12 が公開した `Animation::SkinPosition` を使う（「段階をまたぐ注意」4452・4466 行。要件の `SkeletalAnimationSampler::SkinPosition` の新設は採らない）。姿勢の公開点（`EvaluatePose`・`FindJointIndex`・`TryGetJointWorldMatrix`。`SkinnedMeshComponent.h:77-88`）は G1・G3 で入っているが、パレットを読む口が無いので (4) で足す。要件の試験の名前（SkinnedSurfaceAnchorTest・JointBucketSearchTest・AnchorInvalidationTest・AnchorVelocityTest の CPU の部分）は、実行ファイルを増やさないため `SkeletalAnimationSamplingTest` の中のケースにする。正本は LOD0（GR63 の (d)）で、アンカーの間 LOD0 に固定するのは Gameplay の側（G10-GR19-ANCHOR-ATTACH）。AI 由来の高密度メッシュでの探索の費用は、GR80（G17）の間引いたアンカーメッシュが無い間は描画メッシュの LOD0 のバケットで代える（ロードマップ 1967 行）。この純部品は GR57-P6（G10-GR60-SKIN-SURFACE-EMITTER）が同じスキニングの規約で使う（ロードマップ 1966 行）。危険地帯（Public API の SkinnedMeshComponent）なので評価者を通す。ほかの G10 の項目と触るファイルが交わらないので、最初から並列に走れる。やらないこと: Entity の駆動・突き立ての結線（G10-GR19-ANCHOR-ATTACH）、アンカーの保存。
 
 ## G10-GR60-DISSOLVE: バインド姿勢の 3D の位置のノイズで体を削って縁を光らせるディゾルブの材質を、スキンと静的なメッシュの GBuffer と全部の影に入れる
-- status: todo
+- status: done
 - after: G10-GR64-GHOST-RENDER, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-SHADOW, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR27-MASKED-GBUFFER
 - gr: GR60
 - needs-gr: GR26, GR27
@@ -7071,7 +7071,7 @@
 - notes: G7-S2（ロードマップ 4529 行）は推奨の (A) を採る。理由: 環境の値はフレームで 1 つの値で、物ごとに写すのは無駄。書き手が 6 経路あり、可視バッファの解決は compute で per-object の UBO を持たない。10-02 の「MegaGeometry の per-object UBO に余白が無い」は古く（今は `SectionUniformData` の 768 バイト以下。G5-GR26-MATERIAL-PARAMS の notes）、(B) の理由はもう無いが、(A) の方が書き手を増やしても形が変わらない。lighting.frag だけで濡らす (C) は採らない（SSR は GBuffer の粗さで反射を切り〈SceneView の RoughnessCutoff〉、RTGI の cross-bilateral は GBuffer の材質で棄却するので、乾いた値のまま）。濡れの感度を GR26 の P0 にするのは G7-S6 の (A)（G7-GR53-WET-MODEL の notes）。GR26 の材質の値が届く前に着手しないよう needs-gr に GR26 を置く。草（G5 の GR43）は垂直スライスの主な面なので待つ。UNCERTAIN: 草の断片シェーダーとパスの名前（`grass.frag`・`GrassPass.cpp` は G5-GR43-GRASS-DRAW の記述からの推定）は統合ブランチで確かめ、違えば paths の読み替えを PROGRESS.md に書く。GBufferPass は材質の記述子のキャッシュ（`GBufferMaterialDescriptorCacheTest`）にフレームの値を焼かない今の作りを崩さない（環境の UBO はキャッシュの鍵に入れず、別の binding で毎フレーム結ぶ）。RTGI・PT の命中面は濡れない（instance の色から作る）。これは既知の方式差として G7-GR53-CHECK で受入れの記録に書き、G18 の GR104 で扱う。共有のシェーダーと Pass は差分を小さくし、試験の束の CMakeLists.txt は登録の数行だけ。試験を足す理由: 経路ごとの式の同期の崩れ（MegaGeometry だけ濡れない等）は場面の照明に紛れ、黙って起きる。危険地帯（GBuffer・可視バッファ・ライティングの入力・RenderThread）なので評価者を通す。要件 `#### GR53` の設計案【経路】【材質】【SSR との関係】、ロードマップ 1538・1552・1565 行。
 
 ## G7-GR57-GPU-DEFINITION: GR136 の効果の定義に GPU の実行先で使うエミッタの設定とモジュールを足し、CPU の実行先を同じ式の参照にして、GPU へ詰める型・生成数の計画・プールの割り当てを CPU で作る
-- status: todo
+- status: done
 - after: G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR57
 - needs-gr: GR46
@@ -7255,7 +7255,7 @@
 - notes: 完了条件はロードマップ 2613〜2615 行の GPU と撮影の部分。`grassland-wither=0,20,30` の座標と半径は仮で、着手時に near の視点の前方に置き直す（CaptureScene.ps1 の -GameArgs は「カンマの次が英字で始まらない限り分けない」ので数の並びは 1 つの引数のまま渡る）。「この段階の前の撮影」は G5 の草の確かめ（G5-GR43-GRASS-CHECK）の撮影の出力を使い、無ければ前の段階のコミットで撮る。直す必要が出たら、この項目では直さずに `G12-GR45-FIX-<名前>` を足す。
 
 ## G12-GR47-INSTANCE-VARIATION: 散布の 1 本ごとに色味と個体差の種を持たせ、1 本だけを記録を書き換えずに隠せるようにする
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR47
 - needs-gr: GR26, GR30
@@ -7299,7 +7299,7 @@
 - notes: 要件 `#### GR111` の受け入れ確認の「マニフェストの規模」「起動ベンチマーク」と P0 の計測（ロードマップ 2545・2673・2675 行）。計測は RelWithDebInfo（AGENTS.md の絶対規則 8。ロードマップは Release と書く）。数千資産での実の費用は未計測（ロードマップ 2801 行）なので、閾値は測ってから決める。マニフェストの JSON の解析の時間が小さければ二値の索引は作らない（同じ行）。荒野の起動の読み込みの比べは、`SummarizeAssetLoadProfile.ps1` の使い方を `Docs/Performance/AssetLoadBaseline.md` の流儀に合わせる。
 
 ## G12-GR48-MESH-LOD-SELECT: メッシュの LOD の鎖を画面の大きさとヒステリシスで選び、インポスターへの切り替えも同じ判定で決める
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `MeshProxy`（`Library/Core/Public/Rendering/SceneProxy.h`。今は `MeshHandle` 1 つと保持だけの `LODLevel`）が LOD の鎖（最大 4 段のメッシュのハンドルと、段ごとの画面の大きさのしきい値）を持ち、`MeshComponent` に鎖を設定する口がある（今は `CurrentLODLevel` を決めるコードが無い。`MeshComponent.h:186・286`）。(2) `SceneView::CullProxies` の 2 つの版が、境界球の画面の大きさ = 半径 / (距離 × tan(fov/2))（正射影のカメラでは半径 / (OrthoHeight/2)）から段を選び、ヒステリシス（しきい値の上下の帯）で 1 フレームごとに往復しない。`ForcedLODLevel`（-1 = 自動）を優先する。選んだ段のメッシュとサブメッシュの範囲（`TryGetSubMeshRanges`。`Library/Core/Private/Rendering/ProceduralMeshGpuStore.h`）へ、バッチへ渡す前に差し替える。`LODGroup::GetLODLevel`（`MeshTypes.h:193-213`）の定義と画面の大きさの式を 1 つにそろえる。(3) インポスターへの切り替え（今は `ImpostorComponent` の `LODSwitchDistance` の距離のしきい値。`ImpostorComponent.h:31・44`）を、同じ画面の大きさの判定の最後の段として扱い、元のメッシュが静的メッシュでも MegaGeometry のインスタンスでも同じ規則で元を抑える。(4) 試験（`SceneViewProxyLookupTest` の束へ MEMBER）: `MeshLODSelectionTest`（画面の大きさ → 段の対応、しきい値のちょうど・手前・奥、ForcedLODLevel の優先、ヒステリシスで往復しない、段が 1 つだけのメッシュ、正射影の式、インポスターへの切り替えと元の抑制、距離の単調性）。既存の `SceneViewProxyLookupTest`・`SceneViewProxyReconcileTest`・`SceneViewViewportCommandTest`・`MeshBatcherTest`・`ImpostorLODSwitchTest`・`ImpostorOctahedralTest` が通る。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest SceneViewViewportCommandTest MeshBatcherInstancingTest ImpostorLODSwitchTest -- /m:1`
@@ -7344,7 +7344,7 @@
 - notes: 確かめ直し (b) の実物と起動の部分。Handoff 6 節(Blender の glTF に `skin.skeleton` が無い)の実物での確認と、要件の実物の受入れ GR82「クリップ 10 本以上の犬のリグを cook」、GR83「実キャラを論理パスで読み、別の場面でクリップ名を指定して再生」「cooked が無いときの挙動をログで確認」、GR84「V01full を読んで…数値で記録」「Blender で読み frame 0/17/33 の関節ワールド位置と --dump-fk の差が 1e-3 m 以内」に当たる。dog_rigged は GR77 の受入れで旧経路(animation 0 で status 8)の拒否だけが記録されていて(`AssetImportPipeline.md` の「### 骨格」)、v1 の経路では誰も通していない。B4 は「実犬・DCC・GPU の受入れはこの項目に含めない」と書いて done になっている。手元の実 BVH は 2 本だけ(`Y:/AI/MoCapAnything/outputs_doggame` の下を数えた)。role の写像のファイルの中身(犬の関節名の対応)は作者の素材に依るので、作れなければ未実行として理由を書く。Blender は背景の実行で窓を出さないが重い処理なので、利用者が別のアプリを使っていないときに回す。verify の撮影の行の論理パスと clip 名は (2)(3) の cook に合わせて直してよい。
 
 ## G2-GR79-EMISSIVE-NORMALSCALE: 取り込んだ材質の発光テクスチャと normalScale を描画まで届け、今の「シェーダーが対応しない」拒否を外す
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G2-GR79-SKINNED-MATERIAL-BUILDER, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR79
 - needs-gr: GR26

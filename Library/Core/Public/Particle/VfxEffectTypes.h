@@ -50,9 +50,19 @@ namespace NorvesLib::Core::Particle
         InitLifetime = 12,
         InitColor = 13,
         InitSize = 14,
+        InitShape = 15,
         Acceleration = 20,
+        Drag = 21,
+        WindInfluence = 22,
+        Turbulence = 23,
+        CurveOverLife = 24,
+        ActivationFraction = 25,
+        CollisionPlane = 26,
+        CollisionHeightField = 27,
+        CollisionDepth = 28,
         SpriteRenderer = 30,
-        MeshRenderer = 31
+        MeshRenderer = 31,
+        GpuSpriteRenderer = 32
     };
 
     enum class VfxModuleStage : uint8_t
@@ -69,6 +79,124 @@ namespace NorvesLib::Core::Particle
         Screen = 0,
         World = 1
     };
+
+    /// @brief 効果を実行する処理先。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxExecutor : uint8_t
+    {
+        /// @brief CPU で実行する。
+        Cpu = 0,
+        /// @brief GPU で実行する。
+        Gpu = 1
+    };
+
+    /// @brief 乱数の生成方式。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxRandomStream : uint8_t
+    {
+        /// @brief 現行の xorshift32 の列を順番に使う。
+        Sequential = 0,
+        /// @brief エミッタの種・粒の通し番号・引く順を PCG ハッシュへ渡す。
+        Counter = 1
+    };
+
+    /// @brief 積分と生成の速さに使う時間。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxTimeChannel : uint8_t
+    {
+        /// @brief 粒に適用される時間を使う。
+        Particle = 0,
+        /// @brief 時間倍率の影響を受けない時間を使う。
+        Unscaled = 1
+    };
+
+    /// @brief カメラの箱を出た粒の扱い。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxWrapPolicy : uint8_t
+    {
+        /// @brief 箱の外へ出た粒を消す。
+        Die = 0,
+        /// @brief 箱の反対側へ粒を折り返す。
+        WrapInCameraBox = 1
+    };
+
+    /// @brief 初期位置の形。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxSpawnShape : uint8_t
+    {
+        /// @brief 一点から生成する。
+        Point = 0,
+        /// @brief 球の中で生成する。
+        Sphere = 1,
+        /// @brief 頂点から +Y へ延びる円錐の中で生成する。
+        Cone = 2,
+        /// @brief 箱の中で生成する。
+        Box = 3,
+        /// @brief カメラを中心にした箱の中で生成する。
+        CameraBox = 4
+    };
+
+    /// @brief 寿命の曲線を掛ける量。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxCurveTarget : uint8_t
+    {
+        /// @brief 粒の大きさに掛ける。
+        Size = 0,
+        /// @brief 粒の色に掛ける。
+        Color = 1,
+        /// @brief 粒の不透明度に掛ける。
+        Opacity = 2,
+        /// @brief 粒の伸びに掛ける。
+        Stretch = 3
+    };
+
+    /// @brief 衝突した粒の応答。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxCollisionResponse : uint8_t
+    {
+        /// @brief 衝突した粒を消す。
+        Kill = 0,
+        /// @brief 衝突面に粒を留める。
+        Stick = 1,
+        /// @brief 衝突面で粒を跳ね返す。
+        Bounce = 2,
+        /// @brief 指定した子エミッタから粒を生成する。
+        SpawnChild = 3
+    };
+
+    /// @brief GPU スプライトの向き。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxGpuSpriteOrientation : uint8_t
+    {
+        /// @brief カメラの方へ向ける。
+        Billboard = 0,
+        /// @brief 速度の向きに伸ばす。
+        VelocityStretch = 1,
+        /// @brief 表面に沿わせる。
+        SurfaceAligned = 2
+    };
+
+    /// @brief GPU スプライトの合成方式。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxGpuSpriteBlend : uint8_t
+    {
+        /// @brief 乗算済みアルファで合成する。
+        PremultipliedAlpha = 0,
+        /// @brief 加算で合成する。
+        Additive = 1
+    };
+
+    /// @brief GPU スプライトの描画段階。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxGpuSpritePass : uint8_t
+    {
+        /// @brief 時間方向のアンチエイリアスの前に描画する。
+        PreTAA = 0,
+        /// @brief 時間方向のアンチエイリアスの後に描画する。
+        PostTAA = 1
+    };
+
+    /// @brief GPU スプライトの照明方式。値は VfxValue::UInt の列挙添字と一致する。
+    enum class VfxGpuSpriteLighting : uint8_t
+    {
+        /// @brief 照明の影響を受けない。
+        Unlit = 0,
+        /// @brief 環境光の色を反映する。
+        AmbientTinted = 1
+    };
+
+    /// @brief 寿命の曲線が保持できるキーの最大数。
+    inline constexpr uint32_t kVfxMaxCurveKeys = 8u;
 
     struct VfxModule
     {

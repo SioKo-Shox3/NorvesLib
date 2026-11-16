@@ -563,9 +563,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         TextureHandle AOTexture;
         TextureHandle ORMTexture;           // ORMを1枚に詰めたテクスチャ（R=AO・G=粗さ・B=メタリック）。有効なら別々の枠より優先
         TextureHandle HeightTexture;
+        TextureHandle EmissiveTexture; // sRGB の発光テクスチャ。ほかのテクスチャと同じく強参照を持たない
 
         // NormalTexture が2チャンネル（BC5）のとき true。Zはシェーダーが XY から戻す
         bool bNormalTwoChannel = false;
+        // 法線マップの XY に掛ける倍率（glTF の normalTexture.scale。既定 1）
+        float NormalScale = 1.0f;
 
         // POMパラメータ
         float HeightScale = 0.0f;

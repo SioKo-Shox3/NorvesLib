@@ -185,6 +185,8 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.bVisible);
         h.Add(p.bCastShadow);
         h.Add(p.LayerMask);
+        h.Add(p.Tint);
+        h.Add(p.VariationSeed);
         return h.Value();
     }
 

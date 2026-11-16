@@ -131,12 +131,29 @@ namespace NorvesLib::Core::Rendering
             return std::sqrt(dx * dx + dy * dy + dz * dz);
         }
 
-        bool IsImpostorBoardEligibleForDistance(const BoardProxy &proxy,
-                                                float cameraDistance)
+        SceneViewScreenSizeContext MakeScreenSizeContext(const CameraProxy& camera)
         {
-            return proxy.RenderSubtype != BoardRenderSubtype::Impostor ||
-                   proxy.LODSwitchDistance <= 0.0f ||
-                   cameraDistance >= proxy.LODSwitchDistance;
+            SceneViewScreenSizeContext context;
+            if (camera.Projection == ProjectionType::Orthographic)
+            {
+                context.bOrthographic = true;
+                context.OrthoHeight = camera.OrthoHeight;
+            }
+            else
+            {
+                context.TanHalfFovY = std::tan(camera.FieldOfView * (Math::Constants::PI / 180.0f) * 0.5f);
+            }
+            return context;
+        }
+
+        float ComputeBoundsScreenSize(const BoundingSphere& bounds, float distance,
+                                      const SceneViewScreenSizeContext& context)
+        {
+            if (context.bOrthographic)
+            {
+                return ComputeOrthographicScreenSize(bounds.Radius, context.OrthoHeight);
+            }
+            return ComputePerspectiveScreenSize(bounds.Radius, distance, context.TanHalfFovY);
         }
 
         bool ShouldSuppressMeshForImpostor(const BoardProxy &proxy)
@@ -279,7 +296,9 @@ namespace NorvesLib::Core::Rendering
         auto indexIt = m_MeshProxyIndex.find(proxy.ComponentId);
         if (indexIt != m_MeshProxyIndex.end())
         {
+            const uint8_t previousLODSelectionState = m_MeshProxies[indexIt->second].LODSelectionState;
             m_MeshProxies[indexIt->second] = proxy;
+            m_MeshProxies[indexIt->second].LODSelectionState = previousLODSelectionState;
             NoteProxyChanged(m_MeshChangedIndices, indexIt->second, m_MeshProxies.size());
             return;
         }
@@ -353,7 +372,9 @@ namespace NorvesLib::Core::Rendering
         auto indexIt = m_BoardProxyIndex.find(proxy.ComponentId);
         if (indexIt != m_BoardProxyIndex.end())
         {
+            const uint8_t previousLODSelectionState = m_BoardProxies[indexIt->second].LODSelectionState;
             m_BoardProxies[indexIt->second] = proxy;
+            m_BoardProxies[indexIt->second].LODSelectionState = previousLODSelectionState;
             m_VisibleBoardProxies.clear();
             return;
         }
@@ -564,7 +585,14 @@ namespace NorvesLib::Core::Rendering
         auto indexIt = m_MegaGeometryProxyIndex.find(proxy.ObjectId);
         if (indexIt != m_MegaGeometryProxyIndex.end())
         {
-            m_MegaGeometryProxies[indexIt->second] = proxy;
+            MegaGeometryProxy& current = m_MegaGeometryProxies[indexIt->second];
+            if (!IsMegaScatterProxyKey(proxy.ObjectId) && current.ComponentId != proxy.ComponentId)
+            {
+                m_bMegaComponentIndexMayBeStale = true;
+            }
+            const bool bHiddenByImpostor = current.bHiddenByImpostor;
+            current = proxy;
+            current.bHiddenByImpostor = bHiddenByImpostor;
             NoteMegaChanged(indexIt->second);
             return;
         }
@@ -572,6 +600,10 @@ namespace NorvesLib::Core::Rendering
         const uint32_t index = static_cast<uint32_t>(m_MegaGeometryProxies.size());
         m_MegaGeometryProxies.push_back(proxy);
         m_MegaGeometryProxyIndex[proxy.ObjectId] = index;
+        if (!IsMegaScatterProxyKey(proxy.ObjectId))
+        {
+            m_bMegaComponentIndexMayBeStale = true;
+        }
         NoteMegaChanged(index);
     }
 
@@ -633,6 +665,10 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t removeIndex = indexIt->second;
         const uint32_t lastIndex = static_cast<uint32_t>(m_MegaGeometryProxies.size() - 1);
+        if (!IsMegaScatterProxyKey(objectId))
+        {
+            m_bMegaComponentIndexMayBeStale = true;
+        }
         m_MegaGeometryProxyIndex.erase(indexIt);
 
         if (removeIndex != lastIndex)
@@ -659,6 +695,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             const uint32_t lastIndex = static_cast<uint32_t>(m_MegaGeometryProxies.size() - 1);
+            m_bMegaComponentIndexMayBeStale = true;
             m_MegaGeometryProxyIndex.erase(objectId);
             if (index != lastIndex)
             {
@@ -675,7 +712,9 @@ namespace NorvesLib::Core::Rendering
         auto indexIt = m_MeshProxyIndex.find(proxy.ComponentId);
         if (indexIt != m_MeshProxyIndex.end())
         {
+            const uint8_t previousLODSelectionState = m_MeshProxies[indexIt->second].LODSelectionState;
             m_MeshProxies[indexIt->second] = proxy;
+            m_MeshProxies[indexIt->second].LODSelectionState = previousLODSelectionState;
             NoteProxyChanged(m_MeshChangedIndices, indexIt->second, m_MeshProxies.size());
             return;
         }
@@ -703,7 +742,14 @@ namespace NorvesLib::Core::Rendering
         auto indexIt = m_MegaGeometryProxyIndex.find(proxy.ObjectId);
         if (indexIt != m_MegaGeometryProxyIndex.end())
         {
-            m_MegaGeometryProxies[indexIt->second] = proxy;
+            MegaGeometryProxy& current = m_MegaGeometryProxies[indexIt->second];
+            if (!IsMegaScatterProxyKey(proxy.ObjectId) && current.ComponentId != proxy.ComponentId)
+            {
+                m_bMegaComponentIndexMayBeStale = true;
+            }
+            const bool bHiddenByImpostor = current.bHiddenByImpostor;
+            current = proxy;
+            current.bHiddenByImpostor = bHiddenByImpostor;
             NoteMegaChanged(indexIt->second);
             return;
         }
@@ -838,6 +884,10 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedMeshProxyIndex.clear();
         m_BoardProxyIndex.clear();
         m_MegaGeometryProxyIndex.clear();
+        m_MegaComponentObjectIds.clear();
+        m_bMegaComponentIndexMayBeStale = false;
+        m_SuppressedMegaBoardIds.clear();
+        m_NextSuppressedMegaBoardIds.clear();
         m_MegaChangedIndices.clear();
         m_MegaUnsettledObjects.clear();
         m_LightProxyIndex.clear();
@@ -853,6 +903,10 @@ namespace NorvesLib::Core::Rendering
     {
         m_MegaGeometryProxies.clear();
         m_MegaGeometryProxyIndex.clear();
+        m_MegaComponentObjectIds.clear();
+        m_bMegaComponentIndexMayBeStale = false;
+        m_SuppressedMegaBoardIds.clear();
+        m_NextSuppressedMegaBoardIds.clear();
         m_MegaChangedIndices.clear();
         m_MegaUnsettledObjects.clear();
         AdvanceSceneGeneration();
@@ -1470,15 +1524,156 @@ namespace NorvesLib::Core::Rendering
         m_RenderExtensions.NotePathTracingPipeline();
     }
 
+    const MegaGeometryProxy* SceneView::FindImpostorMegaProxy(const BoardProxy& board, bool& bRebuiltIndex)
+    {
+        const auto directIt = m_MegaGeometryProxyIndex.find(board.ObjectId);
+        if (directIt != m_MegaGeometryProxyIndex.end() && !IsMegaScatterProxyKey(board.ObjectId))
+        {
+            const MegaGeometryProxy& proxy = m_MegaGeometryProxies[directIt->second];
+            if (proxy.ComponentId == board.SourceMeshComponentId)
+            {
+                return &proxy;
+            }
+        }
+
+        const auto findCached = [this, &board]() -> const MegaGeometryProxy*
+        {
+            const auto componentIt = m_MegaComponentObjectIds.find(board.SourceMeshComponentId);
+            if (componentIt == m_MegaComponentObjectIds.end())
+            {
+                return nullptr;
+            }
+            const auto indexIt = m_MegaGeometryProxyIndex.find(componentIt->second);
+            if (indexIt == m_MegaGeometryProxyIndex.end() || IsMegaScatterProxyKey(componentIt->second))
+            {
+                return nullptr;
+            }
+            const MegaGeometryProxy& proxy = m_MegaGeometryProxies[indexIt->second];
+            return proxy.ComponentId == board.SourceMeshComponentId ? &proxy : nullptr;
+        };
+
+        if (const MegaGeometryProxy* proxy = findCached())
+        {
+            return proxy;
+        }
+
+        if (!m_bMegaComponentIndexMayBeStale || bRebuiltIndex)
+        {
+            return nullptr;
+        }
+
+        m_MegaComponentObjectIds.clear();
+        for (const MegaGeometryProxy& proxy : m_MegaGeometryProxies)
+        {
+            if (!IsMegaScatterProxyKey(proxy.ObjectId))
+            {
+                m_MegaComponentObjectIds[proxy.ComponentId] = proxy.ObjectId;
+            }
+        }
+        m_bMegaComponentIndexMayBeStale = false;
+        bRebuiltIndex = true;
+        return findCached();
+    }
+
+    void SceneView::ApplyImpostorMegaSuppression()
+    {
+        for (const auto& [objectId, boardId] : m_SuppressedMegaBoardIds)
+        {
+            if (m_NextSuppressedMegaBoardIds.find(objectId) != m_NextSuppressedMegaBoardIds.end())
+            {
+                continue;
+            }
+            const auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+            if (indexIt == m_MegaGeometryProxyIndex.end())
+            {
+                continue;
+            }
+            MegaGeometryProxy& proxy = m_MegaGeometryProxies[indexIt->second];
+            if (!proxy.bHiddenByImpostor)
+            {
+                continue;
+            }
+            proxy.bHiddenByImpostor = false;
+            NoteMegaChanged(indexIt->second);
+
+            // 元が戻る変更は次フレームのパケットで届くため、このフレームは板を残す。
+            const auto boardIt = m_BoardProxyIndex.find(boardId);
+            if (boardIt != m_BoardProxyIndex.end())
+            {
+                BoardProxy* board = &m_BoardProxies[boardIt->second];
+                if (std::find(m_VisibleBoardProxies.begin(), m_VisibleBoardProxies.end(), board) == m_VisibleBoardProxies.end())
+                {
+                    m_VisibleBoardProxies.push_back(board);
+                }
+            }
+        }
+
+        for (const auto& entry : m_NextSuppressedMegaBoardIds)
+        {
+            const auto indexIt = m_MegaGeometryProxyIndex.find(entry.first);
+            if (indexIt != m_MegaGeometryProxyIndex.end())
+            {
+                MegaGeometryProxy& proxy = m_MegaGeometryProxies[indexIt->second];
+                if (!proxy.bHiddenByImpostor)
+                {
+                    proxy.bHiddenByImpostor = true;
+                    NoteMegaChanged(indexIt->second);
+                }
+            }
+        }
+        m_SuppressedMegaBoardIds.swap(m_NextSuppressedMegaBoardIds);
+        m_NextSuppressedMegaBoardIds.clear();
+    }
+
     void SceneView::CullBoardProxy(BoardProxy& proxy,
-                                 const CameraProxy& camera,
-                                 const Math::Matrix4x4& viewProjection,
-                                 const Math::Vector3& cameraPosition,
-                                 Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds)
+                                   const CameraProxy& camera,
+                                   const Math::Matrix4x4& viewProjection,
+                                   const Math::Vector3& cameraPosition,
+                                   const SceneViewScreenSizeContext& context,
+                                   Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds,
+                                   bool& bRebuiltMegaIndex)
     {
         bool bVisible = proxy.IsValid() &&
                         proxy.Space == BoardSpace::WorldSpace &&
                         HasFlag(camera.CullingMask, proxy.LayerMask);
+
+        if (bVisible && proxy.RenderSubtype == BoardRenderSubtype::Impostor)
+        {
+            proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+            if (proxy.LODSwitchScreenSize > 0.0f)
+            {
+                const float thresholds[2] = {proxy.LODSwitchScreenSize, 0.0f};
+                const float screenSize = ComputeBoundsScreenSize(proxy.WorldBounds, proxy.SortDepth, context);
+                proxy.LODSelectionState = static_cast<uint8_t>(SelectLODByScreenSizeWithHysteresis(
+                    screenSize, thresholds, 2, proxy.LODSelectionState));
+            }
+            else if (proxy.LODSwitchDistance > 0.0f)
+            {
+                if (context.bOrthographic && proxy.SortDepth <= 0.0f)
+                {
+                    proxy.LODSelectionState = 0;
+                }
+                else
+                {
+                    const float threshold = context.bOrthographic
+                                                ? 1.0f
+                                                : ComputePerspectiveScreenSize(proxy.WorldBounds.Radius,
+                                                                               proxy.LODSwitchDistance,
+                                                                               context.TanHalfFovY);
+                    const float screenSize = context.bOrthographic
+                                                 ? proxy.LODSwitchDistance / proxy.SortDepth
+                                                 : ComputeBoundsScreenSize(proxy.WorldBounds, proxy.SortDepth, context);
+                    const float thresholds[2] = {threshold, 0.0f};
+                    proxy.LODSelectionState = static_cast<uint8_t>(SelectLODByScreenSizeWithHysteresis(
+                        screenSize, thresholds, 2, proxy.LODSelectionState));
+                }
+            }
+            else
+            {
+                proxy.LODSelectionState = 1;
+            }
+            bVisible = proxy.LODSelectionState == 1;
+        }
 
         if (m_bEnableFrustumCulling && bVisible)
         {
@@ -1492,17 +1687,21 @@ namespace NorvesLib::Core::Rendering
 
         if (bVisible)
         {
-            proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
-            bVisible = IsImpostorBoardEligibleForDistance(proxy, proxy.SortDepth);
-        }
-
-        if (bVisible)
-        {
+            if (proxy.RenderSubtype != BoardRenderSubtype::Impostor)
+            {
+                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+            }
             if (ShouldSuppressMeshForImpostor(proxy))
             {
                 suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
+                if (m_MeshProxyIndex.find(proxy.SourceMeshComponentId) == m_MeshProxyIndex.end())
+                {
+                    if (const MegaGeometryProxy* source = FindImpostorMegaProxy(proxy, bRebuiltMegaIndex))
+                    {
+                        m_NextSuppressedMegaBoardIds[source->ObjectId] = proxy.ComponentId;
+                    }
+                }
             }
-
             m_VisibleBoardProxies.push_back(&proxy);
         }
     }
@@ -1510,8 +1709,12 @@ namespace NorvesLib::Core::Rendering
     void SceneView::CullMeshProxyRange(size_t begin, size_t end,
                                       const Math::Matrix4x4& viewProjection,
                                       const Math::Vector3& cameraPosition,
-                                      Container::VariableArray<MeshProxy*>& outVisible)
+                                      const SceneViewScreenSizeContext& context,
+                                      Container::VariableArray<MeshProxy*>& outVisible,
+                                      Container::VariableArray<MeshProxy>& outLODCopies)
     {
+        outLODCopies.clear();
+        const size_t firstVisible = outVisible.size();
         const auto& suppressedMeshComponentIds = m_SuppressedMeshComponentIds;
         for (size_t index = begin; index < end; ++index)
         {
@@ -1536,12 +1739,61 @@ namespace NorvesLib::Core::Rendering
             if (bVisible)
             {
                 proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                if (proxy.LODLevelCount > 1)
+                {
+                    const float screenSize = ComputeBoundsScreenSize(proxy.WorldBounds, proxy.SortDepth, context);
+                    uint32_t level = ResolveMeshLODLevel(screenSize, &proxy.LODScreenSizeThresholds[0],
+                                                        proxy.LODLevelCount, proxy.ForcedLODLevel,
+                                                        proxy.LODSelectionState);
+                    if (level >= 1 && !proxy.LODChain[level - 1].MeshHandle.IsValid())
+                    {
+                        level = 0;
+                    }
+                    proxy.LODSelectionState = static_cast<uint8_t>(level);
+                }
+                else
+                {
+                    proxy.LODSelectionState = 0;
+                }
                 outVisible.push_back(&proxy);
             }
         }
+
+        size_t copyCount = 0;
+        for (size_t index = firstVisible; index < outVisible.size(); ++index)
+        {
+            if (outVisible[index]->LODSelectionState != 0)
+            {
+                ++copyCount;
+            }
+        }
+
+        // 全ての写しの領域を先に確保し、可視一覧へ渡すポインタの再確保による無効化を防ぐ
+        outLODCopies.reserve(copyCount);
+        for (size_t index = firstVisible; index < outVisible.size(); ++index)
+        {
+            const MeshProxy* proxy = outVisible[index];
+            const uint8_t level = proxy->LODSelectionState;
+            if (level == 0)
+            {
+                continue;
+            }
+
+            MeshProxy copy = *proxy;
+            const MeshLODChainLevel& lod = proxy->LODChain[level - 1];
+            copy.MeshHandle = lod.MeshHandle;
+            copy.SubMeshes = lod.SubMeshes;
+            copy.SubMeshCount = lod.SubMeshCount;
+            copy.LODLevel = level;
+            outLODCopies.push_back(copy);
+            outVisible[index] = &outLODCopies.back();
+        }
     }
 
-    void SceneView::CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition)
+    void SceneView::CullMeshProxies(const Math::Matrix4x4& viewProjection,
+                                    const Math::Vector3& cameraPosition,
+                                    const SceneViewScreenSizeContext& context,
+                                    Container::VariableArray<MeshProxy>& outLODCopies)
     {
         const size_t n = m_MeshProxies.size();
         const size_t chunkSize = std::max(m_CullParallelSettings.ChunkSize, size_t{1});
@@ -1549,13 +1801,17 @@ namespace NorvesLib::Core::Rendering
         const size_t chunkCount = n / chunkSize + (n % chunkSize != 0 ? 1 : 0);
         if (n < m_CullParallelSettings.MinProxyCount || chunkCount <= 1)
         {
-            CullMeshProxyRange(0, n, viewProjection, cameraPosition, m_VisibleMeshProxies);
+            CullMeshProxyRange(0, n, viewProjection, cameraPosition, context, m_VisibleMeshProxies, outLODCopies);
             return;
         }
 
         if (m_CullChunkVisible.size() < chunkCount)
         {
             m_CullChunkVisible.resize(chunkCount);
+        }
+        if (m_CullChunkLODCopies.size() < chunkCount)
+        {
+            m_CullChunkLODCopies.resize(chunkCount);
         }
 
         NorvesLib::Thread::JobSystem::Get().ParallelFor(chunkCount, 1, [&](size_t chunk)
@@ -1564,7 +1820,7 @@ namespace NorvesLib::Core::Rendering
             out.clear();
             const size_t begin = chunk * chunkSize;
             const size_t end = begin + std::min(chunkSize, n - begin);
-            CullMeshProxyRange(begin, end, viewProjection, cameraPosition, out);
+            CullMeshProxyRange(begin, end, viewProjection, cameraPosition, context, out, m_CullChunkLODCopies[chunk]);
         });
 
         size_t visibleCount = 0;
@@ -1604,16 +1860,21 @@ namespace NorvesLib::Core::Rendering
             camera.PositionY,
             camera.PositionZ);
 
+        const SceneViewScreenSizeContext screenSizeContext = MakeScreenSizeContext(camera);
+        bool bRebuiltMegaIndex = false;
         for (BoardProxy& proxy : m_BoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, screenSizeContext,
+                           m_SuppressedMeshComponentIds, bRebuiltMegaIndex);
         }
         for (BoardProxy& proxy : m_TransientBoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, screenSizeContext,
+                           m_SuppressedMeshComponentIds, bRebuiltMegaIndex);
         }
+        ApplyImpostorMegaSuppression();
 
-        CullMeshProxies(viewProjection, cameraPosition);
+        CullMeshProxies(viewProjection, cameraPosition, screenSizeContext, m_LODProxyCopies);
 
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
@@ -1662,16 +1923,21 @@ namespace NorvesLib::Core::Rendering
         const Math::Matrix4x4 viewProjection =
             CameraViewConstants::BuildCullingViewProjectionMatrix(camera, aspectRatio);
 
+        const SceneViewScreenSizeContext screenSizeContext = MakeScreenSizeContext(camera);
+        bool bRebuiltMegaIndex = false;
         for (BoardProxy& proxy : m_BoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, screenSizeContext,
+                           m_SuppressedMeshComponentIds, bRebuiltMegaIndex);
         }
         for (BoardProxy& proxy : m_TransientBoardProxies)
         {
-            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, m_SuppressedMeshComponentIds);
+            CullBoardProxy(proxy, camera, viewProjection, cameraPosition, screenSizeContext,
+                           m_SuppressedMeshComponentIds, bRebuiltMegaIndex);
         }
+        ApplyImpostorMegaSuppression();
 
-        CullMeshProxies(viewProjection, cameraPosition);
+        CullMeshProxies(viewProjection, cameraPosition, screenSizeContext, m_LODProxyCopies);
 
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;

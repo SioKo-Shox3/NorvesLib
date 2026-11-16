@@ -733,12 +733,14 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             {
                 return false;
             }
-            Rendering::PreparedTextureAsset prepared[3];
-            const AnsiString* paths[] = {&source.AlbedoPath, &source.NormalPath, &source.ArmPath};
-            const char* roles[] = {"albedo", "normal", "arm"};
-            for (size_t i = 0; i < 3; ++i)
+            Rendering::PreparedTextureAsset prepared[4];
+            const AnsiString* paths[] = {&source.AlbedoPath, &source.NormalPath, &source.ArmPath,
+                                         &source.EmissivePath};
+            const char* roles[] = {"albedo", "normal", "arm", "emissive"};
+            for (size_t i = 0; i < 4; ++i)
             {
-                if (paths[i]->empty() || (i == 2 && source.ArmMask == 0))
+                if (paths[i]->empty() || (i == 2 && source.ArmMask == 0) ||
+                    (i == 3 && !(source.EmissiveLuminanceNits > 0.0f)))
                 {
                     continue;
                 }
@@ -752,8 +754,8 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                     return false;
                 }
                 if (!ValidateImportedTexture(prepared[i].Payload->Texture,
-                                             i == 0 ? Asset::CookedTextureColorSpace::SRGB
-                                                    : Asset::CookedTextureColorSpace::Linear,
+                                             (i == 0 || i == 3) ? Asset::CookedTextureColorSpace::SRGB
+                                                                : Asset::CookedTextureColorSpace::Linear,
                                              i == 0 && source.Alpha == ImportedAlphaMode::Opaque, reason))
                 {
                     reason += " role=";
@@ -787,6 +789,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             material.EmissiveLuminanceNits = source.EmissiveLuminanceNits;
             material.Metallic = source.Metallic;
             material.Roughness = source.Roughness;
+            material.NormalScale = source.NormalScale;
             material.OcclusionStrength = source.OcclusionStrength;
             material.Blend = source.Alpha == ImportedAlphaMode::Mask ? Rendering::BlendMode::Masked
                                                                     : Rendering::BlendMode::Opaque;
@@ -807,6 +810,18 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 {
                     reason = "imported_opaque: texture_finalize role=";
                     reason += roles[i];
+                    return false;
+                }
+            }
+            if (prepared[3].Payload)
+            {
+                StagedTextureData staged;
+                staged.PreparedTexture = prepared[3];
+                staged.bHasPreparedTexture = true;
+                if (!CreateTextureFromStagedData(textures, staged, material.EmissiveTexture, role, requestId,
+                                                 material.TextureOwners))
+                {
+                    reason = "imported_opaque: texture_finalize role=emissive";
                     return false;
                 }
             }
@@ -854,7 +869,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                                  static_cast<uint32_t>(level), 0);
                 }
             }
-            // 発光画像は、正nitsならprofileで拒否済み、0nitsなら寄与0なので一切読み込まない。
+            // 発光画像は正の nits とパスがある場合に読み込み、0 nits では読み込まない。
             return true;
         }
     } // anonymous namespace
