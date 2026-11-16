@@ -10,8 +10,8 @@
 // 表（visRecords）の宣言と VisLoadRecord が使える。表を別の方法（buffer_reference など）で引くシェーダーは定義しない。
 //
 // ソフトウェアラスタの 64bit のバッファ（画面の画素ごとに uint64 を 1 つ）は、上位 32bit = 深度の「より手前が小さい」鍵（DepthCloserKey）、
-// 下位 32bit = ID と詰め、atomicMin で書く。標準の Z では鍵は floatBitsToUint(深度) で、-0.0 は +0.0 にそろえる。
-// 1 回のアトミックで「手前の深度、同じ深度なら小さい ID」が残る。空（何も書かれていない）はすべてのビットが 1。
+// 下位 32bit = ID と詰め、atomicMin で書く。鍵は標準 Z では深度のビットそのもの、逆 Z では反転したビットで、-0.0 は +0.0 にそろえる。
+// 1 回のアトミックで「手前の深度、同じ深度なら小さい ID」が残る。空はすべてのビットが 1 で、逆 Z では深度 0（クリア値）に戻る。
 // uint64 を使う関数は、64bit 整数の拡張（GL_EXT_shader_explicit_arithmetic_types_int64）を有効にしたシェーダーが、
 // 取り込む前に VIS_ENABLE_KEY64 を定義したときだけ使える（拡張を有効にしていないシェーダーでも拡張のマクロは定義されるので、
 // マクロの有無では判定できない）。
@@ -107,8 +107,8 @@ uint VisTriangleIndex(uint id) { return id & (VIS_MAX_TRIANGLES_PER_RECORD - 1u)
 #ifdef VIS_ENABLE_KEY64
 const uint64_t VIS_KEY_EMPTY = ~uint64_t(0);
 
-// 深度の「より手前が小さい」鍵（DepthCloserKey）。標準の Z では floatBitsToUint(深度) で、
-// -0.0 は +0.0 にそろえる（深度の比較で等しい +0.0 と同じ鍵にする）。
+// 深度の「より手前が小さい」鍵（DepthCloserKey）。標準 Z では深度のビットそのもの、逆 Z では反転したビット。
+// -0.0 は +0.0 にそろえる。空の全ビット 1 は逆 Z では深度 0（クリア値）に戻る。
 uint VisDepthBits(float depth)
 {
     return DepthCloserKey(depth);
