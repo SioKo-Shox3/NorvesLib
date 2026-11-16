@@ -7,6 +7,7 @@
 #include "Rendering/RenderExtension/RenderExtensionData.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
@@ -53,6 +54,8 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> Splat;
             Container::VariableArray<uint8_t> Integrate;
             Container::VariableArray<Rect> SplatRects;
+            // 動く遮蔽物と踏み倒しは段 0 だけで積分範囲を求める。
+            Container::VariableArray<Rect> FineSplatRects;
         };
 
         struct BinnedOccluder
@@ -146,12 +149,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        void AddSplatRect(TileGrid& grid, const Rect& bounds)
+        void AddSplatRect(TileGrid& grid, const Rect& bounds, bool bFineOnly = false)
         {
             const Rect clipped = Intersect(grid.Window, bounds);
             if (!IsEmpty(clipped))
             {
-                grid.SplatRects.push_back(clipped);
+                (bFineOnly ? grid.FineSplatRects : grid.SplatRects).push_back(clipped);
                 MarkTiles(grid, clipped, grid.Splat);
             }
         }
@@ -172,22 +175,55 @@ namespace NorvesLib::Core::Rendering
             return bounds;
         }
 
-        void AddOccluderBoundsRect(TileGrid& grid, const WorldBounds& bounds, float texelMeters)
+        void AddOccluderBoundsRect(TileGrid& grid, const WorldBounds& bounds, float texelMeters,
+                                   bool bFineOnly = false)
         {
             const double scale = static_cast<double>(texelMeters);
             AddSplatRect(grid, {FloorCoordinate(bounds.MinX / scale) - 1,
                                 FloorCoordinate(bounds.MinZ / scale) - 1,
                                 FloorCoordinate(bounds.MaxX / scale) + 2,
-                                FloorCoordinate(bounds.MaxZ / scale) + 2});
+                                FloorCoordinate(bounds.MaxZ / scale) + 2}, bFineOnly);
         }
 
-        void AddOccluderRect(TileGrid& grid, const SkyOccluderProxy& proxy, float texelMeters)
+        void AddOccluderRect(TileGrid& grid, const SkyOccluderProxy& proxy, float texelMeters,
+                             bool bFineOnly = false)
         {
             if (!IsValidSkyOccluderProxy(proxy))
             {
                 return;
             }
-            AddOccluderBoundsRect(grid, GetBounds(proxy), texelMeters);
+            AddOccluderBoundsRect(grid, GetBounds(proxy), texelMeters, bFineOnly);
+        }
+
+        void AddFlattenInteractorRects(TileGrid& grid, float texelMeters,
+                                       const Container::VariableArray<WorldFieldInteractor>* snapshot)
+        {
+            if (!snapshot || snapshot->empty())
+            {
+                return;
+            }
+            Container::VariableArray<WorldFieldInteractor> interactors;
+            SanitizeWorldFieldInteractors(
+                Container::Span<const WorldFieldInteractor>(snapshot->data(), snapshot->size()), interactors);
+            for (const WorldFieldInteractor& interactor : interactors)
+            {
+                if ((interactor.ChannelMask & WorldFieldChannelFlatten) == 0u)
+                {
+                    continue;
+                }
+                const double radius = std::max(interactor.Radius, interactor.PrevRadius);
+                const double minX = std::min(std::min(interactor.P0[0], interactor.P1[0]),
+                                             std::min(interactor.PrevP0[0], interactor.PrevP1[0]));
+                const double minZ = std::min(std::min(interactor.P0[2], interactor.P1[2]),
+                                             std::min(interactor.PrevP0[2], interactor.PrevP1[2]));
+                const double maxX = std::max(std::max(interactor.P0[0], interactor.P1[0]),
+                                             std::max(interactor.PrevP0[0], interactor.PrevP1[0]));
+                const double maxZ = std::max(std::max(interactor.P0[2], interactor.P1[2]),
+                                             std::max(interactor.PrevP0[2], interactor.PrevP1[2]));
+                AddOccluderBoundsRect(grid, {minX - radius, minZ - radius, maxX + radius, maxZ + radius},
+                                      texelMeters, true);
+            }
+            // 交差体の外で戻る踏み跡は、別の理由で写し直されるまで古い値が残る。
         }
 
         void AddChangedOccluders(TileGrid& grid, float texelMeters,
@@ -276,6 +312,15 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        Rect GetWrittenSplatRect(const TileGrid& grid, const Rect& rect)
+        {
+            const Rect written = {FloorDivTile(rect.MinX) * kTileSize,
+                                  FloorDivTile(rect.MinZ) * kTileSize,
+                                  (FloorDivTile(rect.MaxX - 1) + 1) * kTileSize,
+                                  (FloorDivTile(rect.MaxZ - 1) + 1) * kTileSize};
+            return Intersect(written, grid.Window);
+        }
+
         void AddIntegrationFromSplat(TileGrid* grids, const float* texelMeters,
                                      uint32_t levelCount, float maxHorizonMeters)
         {
@@ -284,11 +329,7 @@ namespace NorvesLib::Core::Rendering
                 for (const Rect& rect : grids[source].SplatRects)
                 {
                     // タイル境界まで広げた実際の書き込みを、標本し得る他の段にも反映する。
-                    const Rect written = {FloorDivTile(rect.MinX) * kTileSize,
-                                          FloorDivTile(rect.MinZ) * kTileSize,
-                                          (FloorDivTile(rect.MaxX - 1) + 1) * kTileSize,
-                                          (FloorDivTile(rect.MaxZ - 1) + 1) * kTileSize};
-                    const Rect clipped = Intersect(written, grids[source].Window);
+                    const Rect clipped = GetWrittenSplatRect(grids[source], rect);
                     for (uint32_t target = 0u; target < levelCount; ++target)
                     {
                         const double ratio = static_cast<double>(texelMeters[source]) / texelMeters[target];
@@ -301,6 +342,15 @@ namespace NorvesLib::Core::Rendering
                         MarkTiles(grids[target], Expand(projected, margin), grids[target].Integrate);
                     }
                 }
+            }
+        }
+
+        void AddFineIntegrationFromSplat(TileGrid& grid, float texelMeters, float reachMeters)
+        {
+            const int64_t margin = CeilCoordinate(static_cast<double>(reachMeters) / texelMeters) + 1;
+            for (const Rect& rect : grid.FineSplatRects)
+            {
+                MarkTiles(grid, Expand(GetWrittenSplatRect(grid, rect), margin), grid.Integrate);
             }
         }
 
@@ -379,7 +429,9 @@ namespace NorvesLib::Core::Rendering
             // 遮蔽物を従来と同じ順に配ることで、各タイルの添字列の順序も保つ。
             for (const BinnedOccluder& item : sorted)
             {
-                for (uint32_t levelIndex = 0u; levelIndex < SkyOcclusionMaxLevelCount; ++levelIndex)
+                const uint32_t levelCount = IsSkyOccluderDynamic(packed[item.PackedIndex])
+                    ? 1u : SkyOcclusionMaxLevelCount;
+                for (uint32_t levelIndex = 0u; levelIndex < levelCount; ++levelIndex)
                 {
                     const LevelTileIndex& level = levels[levelIndex];
                     if (level.Entries.empty())
@@ -629,6 +681,8 @@ namespace NorvesLib::Core::Rendering
         m_IntegrateDispatches.clear();
         m_LastOccluders.clear();
         m_PreparedOccluders.clear();
+        m_LastDynamicOccluders.clear();
+        m_PreparedDynamicOccluders.clear();
         m_LastChunkRanges.clear();
         m_PreparedChunkRanges.clear();
         m_PreparedGroundUpload = {};
@@ -671,6 +725,7 @@ namespace NorvesLib::Core::Rendering
         m_LastGroundLayoutRevision = 0u;
         m_LastGroundHeightsRevision = 0u;
         m_PreparedSkyWeight[0] = m_PreparedSkyWeight[1] = 0.0f;
+        m_bPreparedFullSkyIntegration = false;
         m_LastSkyWeight[0] = m_LastSkyWeight[1] = 0.0f;
         m_bPreparedHasGround = false;
         m_bLastHasGround = false;
@@ -927,7 +982,12 @@ namespace NorvesLib::Core::Rendering
         m_PreparedAnchorX = anchorX;
         m_PreparedAnchorZ = anchorZ;
         m_PreparedRevision = scene.SkyOcclusionRevision;
-        m_PreparedOccluders = scene.SkyOccluders;
+        m_PreparedOccluders.clear();
+        m_PreparedDynamicOccluders.clear();
+        for (const SkyOccluderProxy& proxy : scene.SkyOccluders)
+        {
+            (IsSkyOccluderDynamic(proxy) ? m_PreparedDynamicOccluders : m_PreparedOccluders).push_back(proxy);
+        }
         m_PreparedChunkRanges.clear();
         if (!chunkRanges.empty())
         {
@@ -961,11 +1021,12 @@ namespace NorvesLib::Core::Rendering
             scene.SkyAtmosphere.OvercastZenithToHorizonRatio, m_PreparedSkyWeight[0], m_PreparedSkyWeight[1]);
         constants.skyWeight[0] = m_PreparedSkyWeight[0];
         constants.skyWeight[1] = m_PreparedSkyWeight[1];
-        const bool bSkyWeightChanged = std::abs(m_PreparedSkyWeight[0] - m_LastSkyWeight[0]) > 1.0e-4f ||
-                                       std::abs(m_PreparedSkyWeight[1] - m_LastSkyWeight[1]) > 1.0e-4f;
+        const bool bSkyWeightChanged = std::abs(m_PreparedSkyWeight[0] - m_LastSkyWeight[0]) > 0.01f ||
+                                       std::abs(m_PreparedSkyWeight[1] - m_LastSkyWeight[1]) > 0.01f;
         TileGrid grids[SkyOcclusionMaxLevelCount];
         const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters) ||
             bGroundChanged || bUndergrowthChanged;
+        m_bPreparedFullSkyIntegration = bFull || bSkyWeightChanged;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
         {
             m_PreparedWindowOrigin[level][0] = 0;
@@ -1000,7 +1061,7 @@ namespace NorvesLib::Core::Rendering
             AddExposedWindow(grids[level], previous);
             if (m_LastSkyOcclusionRevision != scene.SkyOcclusionRevision)
             {
-                AddChangedOccluders(grids[level], scale, m_LastOccluders, scene.SkyOccluders);
+                AddChangedOccluders(grids[level], scale, m_LastOccluders, m_PreparedOccluders);
             }
             AddChangedChunkRanges(grids[level], scale, m_LastChunkRanges, chunkRanges);
             AddWindowBands(grids[level], previous, scale, GetSkyOcclusionOwnLevelReach(parameters, level),
@@ -1008,7 +1069,26 @@ namespace NorvesLib::Core::Rendering
         }
         if (!bFull)
         {
+            for (const SkyOccluderProxy& proxy : m_LastDynamicOccluders)
+            {
+                AddOccluderRect(grids[0], proxy, m_PreparedTexelMeters[0], true);
+            }
+            for (const SkyOccluderProxy& proxy : m_PreparedDynamicOccluders)
+            {
+                AddOccluderRect(grids[0], proxy, m_PreparedTexelMeters[0], true);
+            }
+            if (constants.inputs[2] > 0.5f)
+            {
+                AddFlattenInteractorRects(grids[0], m_PreparedTexelMeters[0], context.SnapshotWorldFieldInteractors);
+            }
             AddIntegrationFromSplat(grids, m_PreparedTexelMeters, parameters.LevelCount, parameters.MaxHorizonMeters);
+            if (!grids[0].FineSplatRects.empty())
+            {
+                // 段が一つなら最も粗い段として到達距離の先も水平線の上限まで標本される。
+                const float reachMeters = parameters.LevelCount <= 1u ? parameters.MaxHorizonMeters :
+                    std::min(GetSkyOcclusionOwnLevelReach(parameters, 0u), parameters.MaxHorizonMeters);
+                AddFineIntegrationFromSplat(grids[0], m_PreparedTexelMeters[0], reachMeters);
+            }
         }
 
         Container::VariableArray<SkyOcclusionWorkTile> splatTiles;
@@ -1397,10 +1477,15 @@ namespace NorvesLib::Core::Rendering
         m_LastUndergrowthLayoutRevision = m_PreparedUndergrowthLayoutRevision;
         m_LastUndergrowthRevision = m_PreparedUndergrowthRevision;
         m_bLastHasUndergrowth = m_bPreparedHasUndergrowth;
-        m_LastSkyWeight[0] = m_PreparedSkyWeight[0];
-        m_LastSkyWeight[1] = m_PreparedSkyWeight[1];
+        if (m_bPreparedFullSkyIntegration)
+        {
+            // 全段の積分時だけ更新し、小さな係数変化を次の全段更新まで蓄える。
+            m_LastSkyWeight[0] = m_PreparedSkyWeight[0];
+            m_LastSkyWeight[1] = m_PreparedSkyWeight[1];
+        }
         m_bLastHasGround = m_bPreparedHasGround;
         m_LastOccluders = std::move(m_PreparedOccluders);
+        m_LastDynamicOccluders = std::move(m_PreparedDynamicOccluders);
         m_LastChunkRanges = std::move(m_PreparedChunkRanges);
         m_bHasAnchor = true;
         m_bHasValidData = true;

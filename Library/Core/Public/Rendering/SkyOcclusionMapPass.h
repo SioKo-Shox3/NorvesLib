@@ -162,6 +162,8 @@ namespace NorvesLib::Core::Rendering
         int32_t m_WindowOrigin[SkyOcclusionMaxLevelCount][2] = {};
         Container::VariableArray<SkyOccluderProxy> m_LastOccluders;
         Container::VariableArray<SkyOccluderProxy> m_PreparedOccluders;
+        Container::VariableArray<SkyOccluderProxy> m_LastDynamicOccluders;
+        Container::VariableArray<SkyOccluderProxy> m_PreparedDynamicOccluders;
         Container::VariableArray<SkyOccluderChunkRange> m_LastChunkRanges;
         Container::VariableArray<SkyOccluderChunkRange> m_PreparedChunkRanges;
         Container::VariableArray<PreparedDispatch> m_SplatDispatches;
@@ -178,6 +180,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_PreparedGroundLayoutRevision = 0u;
         uint64_t m_PreparedGroundHeightsRevision = 0u;
         float m_PreparedSkyWeight[2] = {};
+        bool m_bPreparedFullSkyIntegration = false;
         bool m_bPreparedHasGround = false;
         int32_t m_PreparedWindowOrigin[SkyOcclusionMaxLevelCount][2] = {};
         float m_PreparedTexelMeters[SkyOcclusionMaxLevelCount] = {};
