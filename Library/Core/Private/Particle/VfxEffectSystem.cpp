@@ -190,6 +190,33 @@ namespace NorvesLib::Core::Particle
                 position.z < center.z - halfWidth || position.z > center.z + halfWidth;
         }
 
+        bool SampleHeightField(const VfxHeightFieldView& field, const Math::Vector3& position, float& outHeight)
+        {
+            if (!field.IsBound() || !std::isfinite(field.WorldMin.x) || !std::isfinite(field.WorldMin.y) ||
+                !std::isfinite(position.x) || !std::isfinite(position.z))
+            {
+                return false;
+            }
+            const double u = std::fmax(0.0, std::fmin(1.0,
+                (static_cast<double>(position.x) - field.WorldMin.x) / field.WorldSize.x));
+            const double v = std::fmax(0.0, std::fmin(1.0,
+                (static_cast<double>(position.z) - field.WorldMin.y) / field.WorldSize.y));
+            const double x = u * (field.Width - 1u);
+            const double z = v * (field.Height - 1u);
+            const uint32_t x0 = static_cast<uint32_t>(x);
+            const uint32_t z0 = static_cast<uint32_t>(z);
+            const uint32_t x1 = x0 < field.Width - 1u ? x0 + 1u : x0;
+            const uint32_t z1 = z0 < field.Height - 1u ? z0 + 1u : z0;
+            const size_t row0 = static_cast<size_t>(z0) * field.Width;
+            const size_t row1 = static_cast<size_t>(z1) * field.Width;
+            const float tx = static_cast<float>(x - x0);
+            const float tz = static_cast<float>(z - z0);
+            const float h0 = std::lerp(field.Heights[row0 + x0], field.Heights[row0 + x1], tx);
+            const float h1 = std::lerp(field.Heights[row1 + x0], field.Heights[row1 + x1], tx);
+            outHeight = std::lerp(h0, h1, tz);
+            return true;
+        }
+
         Math::Vector3 EvaluateParticleWind(const Rendering::WindParameters& wind, const Math::Vector3& position, float time)
         {
             if (!wind.bEnabled)
@@ -441,6 +468,7 @@ namespace NorvesLib::Core::Particle
             }
             const double start = slot.Time;
             const double end = start + static_cast<double>(deltaTime);
+            VariableArray<ChildSpawn> children;
             for (uint32_t emitterIndex = 0u; emitterIndex < slot.Emitters.size(); ++emitterIndex)
             {
                 RefreshEmitter(slot, emitterIndex);
@@ -450,6 +478,7 @@ namespace NorvesLib::Core::Particle
                 for (uint32_t readIndex = 0u; readIndex < emitter.Particles.size(); ++readIndex)
                 {
                     VfxParticleState& particle = emitter.Particles[readIndex];
+                    bool bOutside = false;
                     if (!particle.bStuck)
                     {
                         Math::Vector3 acceleration = emitter.Acceleration;
@@ -472,6 +501,10 @@ namespace NorvesLib::Core::Particle
                         }
                         particle.Velocity += acceleration * emitterDeltaTime;
                         particle.Position += particle.Velocity * emitterDeltaTime;
+                        if (!emitter.Collisions.empty() && !ResolveCollisions(emitter, particle, context.HeightField, children))
+                        {
+                            continue;
+                        }
                         if (emitter.Shape == VfxSpawnShape::CameraBox && emitter.WrapPolicy == VfxWrapPolicy::WrapInCameraBox)
                         {
                             const float halfHeight = emitter.CameraBoxHeight * 0.5f;
@@ -479,12 +512,13 @@ namespace NorvesLib::Core::Particle
                             particle.Position.y = WrapAxis(particle.Position.y, context.CameraPosition.y, halfHeight);
                             particle.Position.z = WrapAxis(particle.Position.z, context.CameraPosition.z, emitter.CameraBoxHalfWidth);
                         }
+                        bOutside = emitter.Shape == VfxSpawnShape::CameraBox && emitter.WrapPolicy == VfxWrapPolicy::Die &&
+                            IsOutsideCameraBox(particle.Position, context.CameraPosition, emitter.CameraBoxHalfWidth, emitter.CameraBoxHeight * 0.5f);
                     }
-                    const bool bOutside = emitter.Shape == VfxSpawnShape::CameraBox && emitter.WrapPolicy == VfxWrapPolicy::Die &&
-                        IsOutsideCameraBox(particle.Position, context.CameraPosition, emitter.CameraBoxHalfWidth, emitter.CameraBoxHeight * 0.5f);
                     particle.Age += emitterDeltaTime;
                     if (!bOutside && particle.Age < particle.Lifetime)
                     {
+                        UpdateOverLife(emitter, particle);
                         UpdateFlipbook(slot, emitter, particle);
                         if (writeIndex != readIndex)
                         {
@@ -548,6 +582,10 @@ namespace NorvesLib::Core::Particle
                     }
                 }
             }
+            for (const ChildSpawn& child : children)
+            {
+                SpawnParticles(slot, slot.Emitters[child.EmitterIndex], 1u, child.Position, end, 0.0f, context, nullptr, true);
+            }
             uint32_t writeIndex = 0u;
             for (uint32_t readIndex = 0u; readIndex < slot.Events.size(); ++readIndex)
             {
@@ -608,6 +646,10 @@ namespace NorvesLib::Core::Particle
                     static_cast<uint64_t>((instanceIndex << 8u | emitterIndex) + 1u);
                 for (const VfxParticleState& particle : emitter.Particles)
                 {
+                    if (particle.Activation <= 0.0f)
+                    {
+                        continue;
+                    }
                     Rendering::BoardProxy proxy;
                     proxy.ObjectId = id;
                     proxy.ComponentId = id;
@@ -622,6 +664,10 @@ namespace NorvesLib::Core::Particle
                         Rendering::BoardSpace::ScreenSpace : Rendering::BoardSpace::WorldSpace;
                     proxy.BlendModeProp = static_cast<Rendering::BlendMode>(emitter.Blend);
                     proxy.Tint = particle.Color;
+                    if (particle.Activation != 1.0f)
+                    {
+                        proxy.Tint.w *= particle.Activation;
+                    }
                     if (proxy.Space == Rendering::BoardSpace::ScreenSpace)
                     {
                         proxy.SizePx = particle.Size;
@@ -655,6 +701,10 @@ namespace NorvesLib::Core::Particle
                 for (uint32_t particleIndex = 0u; particleIndex < emitter.Particles.size(); ++particleIndex)
                 {
                     const VfxParticleState& particle = emitter.Particles[particleIndex];
+                    if (particle.Activation <= 0.0f)
+                    {
+                        continue;
+                    }
                     Math::Quaternion rotation = Math::Quaternion::Identity;
                     if (emitter.bAlignToVelocity)
                     {
@@ -683,6 +733,10 @@ namespace NorvesLib::Core::Particle
                     instance.Id = (uint64_t{1} << 62u) | emitterId | static_cast<uint64_t>(particleIndex);
                     instance.World = Math::MatrixUtils::CreateWorldRowVector(particle.Position, rotation, Math::Vector3(size, size, size));
                     instance.Color = particle.Color;
+                    if (particle.Activation != 1.0f)
+                    {
+                        instance.Color.w *= particle.Activation;
+                    }
                     instance.DissolveThreshold = ComputeDissolveThreshold(particle.Age, particle.Lifetime, emitter.DissolveStart, emitter.DissolveDuration);
                     instance.EdgeWidth = emitter.EdgeWidth;
                     instance.EdgeColor = emitter.EdgeColor;
@@ -836,6 +890,13 @@ namespace NorvesLib::Core::Particle
         emitter.bHasDrag = false;
         emitter.WindInfluences.clear();
         emitter.Turbulences.clear();
+        emitter.Collisions.clear();
+        for (LifeCurveState& curve : emitter.Curves)
+        {
+            curve.KeyCount = 0u;
+        }
+        emitter.bHasCurves = false;
+        emitter.bHasActivation = false;
         emitter.Offset = Math::Vector3(0.0f, 0.0f, 0.0f);
         emitter.Acceleration = Math::Vector3(0.0f, 0.0f, 0.0f);
         emitter.VelocityMin = Math::Vector3(0.0f, 0.0f, 0.0f);
@@ -893,6 +954,53 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::Turbulence:
                 emitter.Turbulences.push_back({first.Vector.x, module.Values[binding.Arguments[1]].Vector.x});
                 break;
+            case VfxModuleType::CurveOverLife:
+            {
+                emitter.bHasCurves = true;
+                LifeCurveState& curve = emitter.Curves[first.UInt];
+                curve.KeyCount = module.Values[binding.Arguments[1]].UInt;
+                for (uint32_t index = 0u; index < curve.KeyCount; ++index)
+                {
+                    const Math::Vector4& key = module.Values[binding.Arguments[2u + index]].Vector;
+                    curve.Keys[index] = {static_cast<double>(key.x), key.y};
+                }
+                curve.Color = module.Values[binding.Arguments[10]].Vector;
+                break;
+            }
+            case VfxModuleType::ActivationFraction:
+                emitter.bHasActivation = true;
+                emitter.ActivationFraction = first.Vector.x;
+                emitter.ActivationRamp = module.Values[binding.Arguments[1]].Vector.x;
+                break;
+            case VfxModuleType::CollisionPlane:
+            case VfxModuleType::CollisionHeightField:
+            {
+                CollisionState collision;
+                collision.Type = module.Type;
+                const uint32_t responseIndex = module.Type == VfxModuleType::CollisionPlane ? 2u : 0u;
+                if (module.Type == VfxModuleType::CollisionPlane)
+                {
+                    collision.GroundY = first.Vector.x;
+                    collision.KillBelowY = module.Values[binding.Arguments[1]].Vector.x;
+                }
+                collision.Response = static_cast<VfxCollisionResponse>(module.Values[binding.Arguments[responseIndex]].UInt);
+                collision.Restitution = module.Values[binding.Arguments[responseIndex + 1u]].Vector.x;
+                collision.ChildProbability = module.Values[binding.Arguments[responseIndex + 3u]].Vector.x;
+                if (collision.Response == VfxCollisionResponse::SpawnChild)
+                {
+                    const Container::String& name = module.Values[binding.Arguments[responseIndex + 2u]].Name;
+                    for (uint32_t index = 0u; index < slot.Asset.Emitters.size(); ++index)
+                    {
+                        if (slot.Asset.Emitters[index].Name == name)
+                        {
+                            collision.ChildEmitterIndex = index;
+                            break;
+                        }
+                    }
+                }
+                emitter.Collisions.push_back(collision);
+                break;
+            }
             case VfxModuleType::SpriteRenderer:
                 emitter.bHasRenderer = true;
                 emitter.Layer = first.UInt;
@@ -933,9 +1041,104 @@ namespace NorvesLib::Core::Particle
         }
     }
 
+    void VfxEffectSystem::UpdateOverLife(const EmitterState& emitter, VfxParticleState& particle)
+    {
+        if (emitter.bHasCurves)
+        {
+            particle.Color = particle.BaseColor;
+            particle.Size = particle.BaseSize;
+            particle.Stretch = 1.0f;
+            const float time = std::fmax(0.0f, std::fmin(1.0f, particle.Age / particle.Lifetime));
+            const auto evaluate = [time](const LifeCurveState& curve)
+            {
+                return static_cast<float>(Math::EvaluatePiecewiseLinearUnchecked(
+                    Container::Span<const Math::CurveKeyframe>(curve.Keys, curve.KeyCount), time));
+            };
+            const LifeCurveState& size = emitter.Curves[static_cast<uint32_t>(VfxCurveTarget::Size)];
+            const LifeCurveState& color = emitter.Curves[static_cast<uint32_t>(VfxCurveTarget::Color)];
+            const LifeCurveState& opacity = emitter.Curves[static_cast<uint32_t>(VfxCurveTarget::Opacity)];
+            const LifeCurveState& stretch = emitter.Curves[static_cast<uint32_t>(VfxCurveTarget::Stretch)];
+            if (size.KeyCount != 0u)
+            {
+                particle.Size = particle.BaseSize * evaluate(size);
+            }
+            if (color.KeyCount != 0u)
+            {
+                particle.Color = particle.BaseColor + (color.Color - particle.BaseColor) * evaluate(color);
+            }
+            if (opacity.KeyCount != 0u)
+            {
+                particle.Color.w *= evaluate(opacity);
+            }
+            if (stretch.KeyCount != 0u)
+            {
+                particle.Stretch = evaluate(stretch);
+            }
+        }
+        if (emitter.bHasActivation)
+        {
+            const float hash = VfxActivationHash(emitter.StreamSeed, particle.Serial);
+            particle.Activation = VfxActivationWeight(emitter.ActivationFraction, emitter.ActivationRamp, hash);
+        }
+    }
+
+    bool VfxEffectSystem::ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
+        const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children)
+    {
+        for (const CollisionState& collision : emitter.Collisions)
+        {
+            float surface = 0.0f;
+            if (collision.Type == VfxModuleType::CollisionPlane)
+            {
+                if (particle.Position.y < collision.KillBelowY)
+                {
+                    return false;
+                }
+                surface = collision.GroundY;
+            }
+            else if (!SampleHeightField(heightField, particle.Position, surface))
+            {
+                continue;
+            }
+            if (!(particle.Position.y < surface))
+            {
+                continue;
+            }
+            switch (collision.Response)
+            {
+            case VfxCollisionResponse::Kill:
+                return false;
+            case VfxCollisionResponse::Stick:
+                particle.Position.y = surface;
+                particle.Velocity = Math::Vector3(0.0f, 0.0f, 0.0f);
+                particle.bStuck = true;
+                return true;
+            case VfxCollisionResponse::Bounce:
+                particle.Position.y = surface;
+                if (particle.Velocity.y < 0.0f)
+                {
+                    particle.Velocity.y = -particle.Velocity.y * collision.Restitution;
+                }
+                break;
+            case VfxCollisionResponse::SpawnChild:
+                if (collision.ChildEmitterIndex != std::numeric_limits<uint32_t>::max() &&
+                    VfxCounterUnitFloat(emitter.StreamSeed, particle.Serial, VfxRandomDraw::ChildSpawn) < collision.ChildProbability)
+                {
+                    ChildSpawn child;
+                    child.EmitterIndex = collision.ChildEmitterIndex;
+                    child.Position = particle.Position;
+                    child.Position.y = surface;
+                    children.push_back(child);
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+
     void VfxEffectSystem::SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
         const Math::Vector3& position, double birthTime, float age, const VfxTickContext& context,
-        const Math::Vector3* orientationNormal)
+        const Math::Vector3* orientationNormal, bool bUsePositionForCameraBox)
     {
         const uint32_t firstSerial = emitter.NextSerial;
         emitter.NextSerial += count;
@@ -954,7 +1157,8 @@ namespace NorvesLib::Core::Particle
         {
             VfxParticleState particle;
             particle.Serial = firstSerial + index;
-            particle.Position = (emitter.Shape == VfxSpawnShape::CameraBox ? context.CameraPosition : position) + emitter.Offset;
+            particle.Position = (emitter.Shape == VfxSpawnShape::CameraBox && !bUsePositionForCameraBox ?
+                context.CameraPosition : position) + emitter.Offset;
             particle.Velocity = Math::Vector3(0.0f, 0.0f, 0.0f);
             const auto draw = [&](VfxRandomDraw kind)
             {
@@ -1026,6 +1230,7 @@ namespace NorvesLib::Core::Particle
             UpdateFlipbook(slot, emitter, particle);
             if (particle.Age < particle.Lifetime)
             {
+                UpdateOverLife(emitter, particle);
                 emitter.Particles.push_back(particle);
             }
         }

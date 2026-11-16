@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Math/Curves.h"
 #include "Math/Matrix4x4.h"
 #include "Particle/VfxEffectTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -29,10 +30,15 @@ namespace NorvesLib::Core::Particle
     /// 1 刻みに外から渡す値。
     struct VfxTickContext
     {
+        /// 無倍率の刻み幅。負または非有限なら deltaTime と同じ。
         float UnscaledDeltaTime = -1.0f;
+        /// カメラを中心にした生成領域と折り返しに使う位置。
         Math::Vector3 CameraPosition = Math::Vector3(0.0f, 0.0f, 0.0f);
+        /// 共通の風の設定。既定では無効。
         Rendering::WindParameters Wind;
+        /// Rendering::WindClockSeconds で作った風の時刻。
         float WindTimeSeconds = 0.0f;
+        /// 未結合なら CollisionHeightField は無効。
         VfxHeightFieldView HeightField;
     };
 
@@ -80,16 +86,22 @@ namespace NorvesLib::Core::Particle
         Math::Vector3 Velocity;
         Math::Vector4 Color;
         Math::Vector2 Size;
+        /// 寿命の曲線を適用する前の生成時の色。
         Math::Vector4 BaseColor;
+        /// 寿命の曲線を適用する前の生成時の大きさ。
         Math::Vector2 BaseSize;
         Math::Vector4 UVRect = Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
         float Age = 0.0f;
         float Lifetime = 1.0f;
         double BirthTime = 0.0;
         uint32_t Frame = 0u;
+        /// エミッタ内で生成要求ごとに割り当てる粒の通し番号。
         uint32_t Serial = 0u;
+        /// 寿命の曲線で指定する伸び。
         float Stretch = 1.0f;
+        /// 描画時の不透明度に掛ける有効の重み。
         float Activation = 1.0f;
+        /// 衝突面に留まり、年齢だけを進める粒か。
         bool bStuck = false;
     };
 
@@ -142,12 +154,38 @@ namespace NorvesLib::Core::Particle
             float Frequency = 0.0f;
         };
 
+        struct LifeCurveState
+        {
+            Math::CurveKeyframe Keys[kVfxMaxCurveKeys] = {};
+            Math::Vector4 Color;
+            uint32_t KeyCount = 0u;
+        };
+
+        struct CollisionState
+        {
+            VfxModuleType Type = VfxModuleType::CollisionPlane;
+            VfxCollisionResponse Response = VfxCollisionResponse::Kill;
+            float GroundY = 0.0f;
+            float KillBelowY = 0.0f;
+            float Restitution = 0.0f;
+            float ChildProbability = 0.0f;
+            uint32_t ChildEmitterIndex = std::numeric_limits<uint32_t>::max();
+        };
+
+        struct ChildSpawn
+        {
+            uint32_t EmitterIndex = 0u;
+            Math::Vector3 Position;
+        };
+
         struct EmitterState
         {
             VariableArray<VfxParticleState> Particles;
             VariableArray<ModuleBinding> Bindings;
             VariableArray<WindInfluenceState> WindInfluences;
             VariableArray<TurbulenceState> Turbulences;
+            VariableArray<CollisionState> Collisions;
+            LifeCurveState Curves[static_cast<uint32_t>(VfxCurveTarget::Stretch) + 1u];
             float SpawnAccumulator = 0.0f;
             uint32_t RandomState = 0u;
             uint32_t StreamSeed = 0u;
@@ -169,7 +207,11 @@ namespace NorvesLib::Core::Particle
             bool bAlignToVelocity = false;
             bool bHasVelocity = false;
             bool bHasDrag = false;
+            bool bHasCurves = false;
+            bool bHasActivation = false;
             float Drag = 0.0f;
+            float ActivationFraction = 1.0f;
+            float ActivationRamp = 0.0f;
             float ShapeRadius = 0.0f;
             float ConeAngle = 0.0f;
             float ConeLength = 0.0f;
@@ -216,9 +258,12 @@ namespace NorvesLib::Core::Particle
         static bool CacheBindings(InstanceSlot& slot);
         static void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
+        static void UpdateOverLife(const EmitterState& emitter, VfxParticleState& particle);
+        static bool ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
+            const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children);
         static void SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
             const Math::Vector3& position, double birthTime, float age, const VfxTickContext& context,
-            const Math::Vector3* orientationNormal = nullptr);
+            const Math::Vector3* orientationNormal = nullptr, bool bUsePositionForCameraBox = false);
         void ReleaseSlot(uint32_t index);
 
         VariableArray<InstanceSlot> m_Instances;

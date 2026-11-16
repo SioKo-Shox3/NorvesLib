@@ -11634,3 +11634,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 CPU の実行先に刻みの文脈・新しい設定・位置の形・抗力・風・乱れを足す: 着地(直し 0 回)
 - U6 GPU へ詰める型と GLSL の共通の定義を足す: 着地(直し 0 回)
 - U7 生成数の計画とプールのエミッタの割り当てを Private に足す: 着地(直し 0 回)
+- U5 CPU の実行先に寿命の曲線・有効割合・衝突と応答を足す: 着地(直し 0 回)
