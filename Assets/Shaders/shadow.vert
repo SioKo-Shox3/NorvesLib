@@ -13,6 +13,11 @@ layout(set = 0, binding = 0) uniform ShadowMVP
     mat4 world;
     vec4 worldSource;
     vec4 vertexAnimTime;
+    vec4 reservedAlphaClip;
+    vec4 vertexAnimMaterial0;
+    vec4 vertexAnimMaterial1;
+    vec4 windA;
+    vec4 windB;
 } shadowMVP;
 
 #include "Common/SceneInstanceData.glsl"
@@ -30,14 +35,17 @@ void main()
     const vec4 instanceParams = shadowMVP.worldSource.x > 0.5 ? vec4(-1.0)
                                                               : instances[gl_InstanceIndex].shadingParams;
     const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, shadowMVP.vertexAnimTime);
-    if (VertexAnimationKind(animParams) == VERTEX_ANIMATION_KIND_NONE)
+    const VertexAnimationMaterial material = MakeVertexAnimationMaterial(shadowMVP.vertexAnimMaterial0, shadowMVP.vertexAnimMaterial1);
+    const VertexAnimationWind wind = MakeVertexAnimationWind(shadowMVP.windA, shadowMVP.windB);
+    const vec3 origin = world[3].xyz;
+    if (VertexAnimationIsIdentity(animParams, material, wind))
     {
         gl_Position = shadowMVP.lightProjection * shadowMVP.lightView * world * vec4(inPosition, 1.0);
     }
     else
     {
         vec4 worldPos = world * vec4(inPosition, 1.0);
-        worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, animParams, shadowMVP.vertexAnimTime.x);
+        worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, animParams, material, wind, origin, shadowMVP.vertexAnimTime.x);
         gl_Position = shadowMVP.lightProjection * shadowMVP.lightView * worldPos;
     }
 }

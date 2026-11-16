@@ -221,6 +221,48 @@ namespace NorvesLib::Core::Rendering
             bool bCreationFailed = false;
         };
 
+        struct ShadowCasterSlot
+        {
+            Container::String Name;
+            int32_t Order = 0;
+            uint64_t Sequence = 0;
+            Container::TUniquePtr<IViewPass> Pass;
+            IRenderExtensionShadowCaster* Caster = nullptr;
+            bool bEnabled = true;
+            bool bInitialized = false;
+            bool bInitializationAttempted = false;
+            bool bFailed = false;
+            uint32_t LoggedReasons = 0;
+
+            void Fail(const char* operation)
+            {
+                if (!bFailed)
+                {
+                    NORVES_LOG_ERROR("RenderExtension", "拡張 '%s' の処理に失敗したため無効にしました: %s", Name.c_str(), operation);
+                }
+                bFailed = true;
+                Pass->SetEnabled(false);
+            }
+
+            void Shutdown()
+            {
+                if (bInitializationAttempted)
+                {
+                    bInitializationAttempted = false;
+                    // 初期化途中の失敗でも確保済みの資源を回収する。
+                    try
+                    {
+                        Pass->Shutdown();
+                    }
+                    catch (...)
+                    {
+                        Fail("Shutdown");
+                    }
+                }
+                bInitialized = false;
+            }
+        };
+
         enum class Operation : uint8_t { Register, Unregister, SetEnabled };
 
         struct Pending
@@ -234,6 +276,8 @@ namespace NorvesLib::Core::Rendering
         View* Owner = nullptr;
         Container::VariableArray<Entry> Entries;
         Container::VariableArray<Pending> PendingOperations;
+        Container::VariableArray<ShadowCasterSlot> ShadowCasterSlots;
+        RenderExtensionShadowCasterFrame ShadowCasterFrame;
         uint64_t NextSequence = 0;
         bool bInitializationWindow = true;
         bool bPathTracingPipeline = false;
@@ -266,7 +310,7 @@ namespace NorvesLib::Core::Rendering
 
         IViewPass* FindPass(const Entry& entry) const
         {
-            if (!Owner)
+            if (entry.Desc.Stage == RenderExtensionStage::ShadowCaster || !Owner)
             {
                 return nullptr;
             }
@@ -278,9 +322,48 @@ namespace NorvesLib::Core::Rendering
             return Owner->FindPass(entry.Desc.Name.c_str());
         }
 
+        void CreateShadowCaster(Entry& entry)
+        {
+            Container::TUniquePtr<IViewPass> pass;
+            try
+            {
+                pass = entry.Factory.Create(entry.Factory.Context);
+            }
+            catch (...)
+            {
+                entry.bCreationFailed = true;
+                Reject(entry.Desc.Name.c_str(), "ファクトリが例外を送出しました");
+                return;
+            }
+            auto* caster = pass ? dynamic_cast<IRenderExtensionShadowCaster*>(pass.get()) : nullptr;
+            if (!caster)
+            {
+                entry.bCreationFailed = true;
+                Reject(entry.Desc.Name.c_str(), "ShadowCaster の拡張は IRenderExtensionShadowCaster を実装してください");
+                return;
+            }
+
+            ShadowCasterSlot slot;
+            slot.Name = entry.Desc.Name;
+            slot.Order = entry.Desc.Order;
+            slot.Sequence = entry.Sequence;
+            slot.Pass = std::move(pass);
+            slot.Caster = caster;
+            slot.bEnabled = entry.bEnabled;
+            slot.Pass->SetEnabled(slot.bEnabled);
+            auto position = ShadowCasterSlots.begin();
+            while (position != ShadowCasterSlots.end() &&
+                   (position->Order < slot.Order || (position->Order == slot.Order && position->Sequence < slot.Sequence)))
+            {
+                ++position;
+            }
+            ShadowCasterSlots.insert(position, std::move(slot));
+        }
+
         void Insert(Entry& entry)
         {
-            if (!Owner || !entry.bApplied || entry.bCreationFailed || bPathTracingPipeline || FindPass(entry))
+            if (entry.Desc.Stage == RenderExtensionStage::ShadowCaster || !Owner || !entry.bApplied ||
+                entry.bCreationFailed || bPathTracingPipeline || FindPass(entry))
             {
                 return;
             }
@@ -372,7 +455,19 @@ namespace NorvesLib::Core::Rendering
                     }
                     if (pending.Type == Operation::Unregister)
                     {
-                        if (Owner)
+                        if (it->Desc.Stage == RenderExtensionStage::ShadowCaster)
+                        {
+                            for (auto slot = ShadowCasterSlots.begin(); slot != ShadowCasterSlots.end(); ++slot)
+                            {
+                                if (slot->Sequence == it->Sequence)
+                                {
+                                    slot->Shutdown();
+                                    ShadowCasterSlots.erase(slot);
+                                    break;
+                                }
+                            }
+                        }
+                        else if (Owner)
                         {
                             if (IsPostProcessStage(it->Desc.Stage))
                             {
@@ -391,11 +486,27 @@ namespace NorvesLib::Core::Rendering
                     else if (pending.Type == Operation::Register)
                     {
                         it->bApplied = true;
+                        if (it->Desc.Stage == RenderExtensionStage::ShadowCaster)
+                        {
+                            CreateShadowCaster(*it);
+                        }
                     }
                     else
                     {
                         it->bEnabled = pending.bEnabled;
-                        if (auto* guard = dynamic_cast<RenderExtensionGuardPass*>(FindPass(*it)))
+                        if (it->Desc.Stage == RenderExtensionStage::ShadowCaster)
+                        {
+                            for (ShadowCasterSlot& slot : ShadowCasterSlots)
+                            {
+                                if (slot.Sequence == it->Sequence)
+                                {
+                                    slot.bEnabled = pending.bEnabled;
+                                    slot.Pass->SetEnabled(slot.bEnabled && !slot.bFailed);
+                                    break;
+                                }
+                            }
+                        }
+                        else if (auto* guard = dynamic_cast<RenderExtensionGuardPass*>(FindPass(*it)))
                         {
                             guard->SetExtensionEnabled(pending.bEnabled);
                         }
@@ -417,7 +528,10 @@ namespace NorvesLib::Core::Rendering
         m_State->Owner = owner;
     }
 
-    RenderExtensionRegistry::~RenderExtensionRegistry() = default;
+    RenderExtensionRegistry::~RenderExtensionRegistry()
+    {
+        ShutdownShadowCasters();
+    }
 
     void RenderExtensionRegistry::SetOwner(View* owner)
     {
@@ -436,11 +550,7 @@ namespace NorvesLib::Core::Rendering
         {
             return Reject(name, "ファクトリが指定されていません");
         }
-        if (desc.Stage == RenderExtensionStage::ShadowCaster)
-        {
-            return Reject(name, "ShadowCaster にはまだ差し込み先がありません");
-        }
-        if (!GetAnchor(desc.Stage))
+        if (desc.Stage != RenderExtensionStage::ShadowCaster && !GetAnchor(desc.Stage))
         {
             return Reject(name, "描画の段が不正です");
         }
@@ -454,7 +564,14 @@ namespace NorvesLib::Core::Rendering
         try
         {
             auto probe = factory.Create(factory.Context);
-            if (!probe || !dynamic_cast<IRenderGraphPass*>(probe.get()))
+            if (desc.Stage == RenderExtensionStage::ShadowCaster)
+            {
+                if (!probe || !dynamic_cast<IRenderExtensionShadowCaster*>(probe.get()))
+                {
+                    return Reject(name, "ShadowCaster の拡張は IRenderExtensionShadowCaster を実装してください");
+                }
+            }
+            else if (!probe || !dynamic_cast<IRenderGraphPass*>(probe.get()))
             {
                 return Reject(name, "IViewPass と IRenderGraphPass の両方を実装してください");
             }
@@ -537,8 +654,11 @@ namespace NorvesLib::Core::Rendering
         m_State->bPathTracingPipeline = false;
         for (State::Entry& entry : m_State->Entries)
         {
-            entry.bCreationFailed = false;
-            m_State->Insert(entry);
+            if (entry.Desc.Stage != RenderExtensionStage::ShadowCaster)
+            {
+                entry.bCreationFailed = false;
+                m_State->Insert(entry);
+            }
         }
     }
 
@@ -550,6 +670,70 @@ namespace NorvesLib::Core::Rendering
         {
             m_State->NotePathTracingOnce();
         }
+    }
+
+    void RenderExtensionRegistry::CollectShadowCasters(ViewRenderContext& context)
+    {
+        RenderExtensionShadowCasterFrame& frame = m_State->ShadowCasterFrame;
+        frame.Clear();
+        if (m_State->bPathTracingPipeline)
+        {
+            return;
+        }
+
+        for (State::ShadowCasterSlot& slot : m_State->ShadowCasterSlots)
+        {
+            if (!slot.bEnabled || slot.bFailed)
+            {
+                continue;
+            }
+            if (!slot.bInitialized)
+            {
+                slot.bInitializationAttempted = true;
+                try
+                {
+                    if (!slot.Pass->Initialize(context))
+                    {
+                        slot.Fail("Initialize");
+                        continue;
+                    }
+                    slot.bInitialized = true;
+                }
+                catch (...)
+                {
+                    slot.Fail("Initialize");
+                    continue;
+                }
+            }
+
+            const auto drawCount = frame.m_Draws.size();
+            const auto instanceCount = frame.m_Instances.size();
+            RenderExtensionShadowCasterSink sink(frame, slot.Name.c_str(), slot.LoggedReasons);
+            try
+            {
+                slot.Caster->SubmitShadowCasters(context, sink);
+            }
+            catch (...)
+            {
+                frame.m_Draws.resize(drawCount);
+                frame.m_Instances.resize(instanceCount);
+                slot.Fail("SubmitShadowCasters");
+            }
+        }
+    }
+
+    const RenderExtensionShadowCasterFrame& RenderExtensionRegistry::GetShadowCasters() const
+    {
+        return m_State->ShadowCasterFrame;
+    }
+
+    void RenderExtensionRegistry::ShutdownShadowCasters()
+    {
+        for (State::ShadowCasterSlot& slot : m_State->ShadowCasterSlots)
+        {
+            slot.Shutdown();
+        }
+        m_State->ShadowCasterFrame.Clear();
     }
 
     uint32_t RenderExtensionRegistry::GetRegisteredCount() const

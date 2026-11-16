@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ShadowMapPass.h"
+#include "Rendering/ShadowCasterCollection.h"
 #include "Rendering/SkinnedShadowComponentBindings.h"
 #include "Rendering/SkinnedShadowStorage.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
@@ -10,6 +11,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
+#include "Rendering/RenderExtension/RenderExtensionShadowCaster.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -38,45 +40,93 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // 点光源のキューブシャドウの1面のUBO（point_shadow.vert/.fragのPointShadowFaceに対応）
-        struct PointShadowFaceUBO
+        // 点光源の既存の224バイトは不透明・切り抜き・スキンで共通の配置を保つ。
+        struct PointShadowBaseUBO
         {
             float lightView[16];
             float lightProjection[16];
             float lightPositionAndInvRange[4];
-            // worldSource[0]=1の描画（MegaGeometry）はインスタンスではなくこの行列で置く
+            // worldSource[0]=1 の描画はインスタンスではなくこの行列で置く。
             float world[16];
             float worldSource[4];
         };
-        static_assert(sizeof(PointShadowFaceUBO) == 224);
+        static_assert(sizeof(PointShadowBaseUBO) == 224);
+        static_assert(offsetof(PointShadowBaseUBO, lightView) == 0 && sizeof(PointShadowBaseUBO::lightView) == 64);
+        static_assert(offsetof(PointShadowBaseUBO, lightProjection) == 64 && sizeof(PointShadowBaseUBO::lightProjection) == 64);
+        static_assert(offsetof(PointShadowBaseUBO, lightPositionAndInvRange) == 128 && sizeof(PointShadowBaseUBO::lightPositionAndInvRange) == 16);
+        static_assert(offsetof(PointShadowBaseUBO, world) == 144 && sizeof(PointShadowBaseUBO::world) == 64);
+        static_assert(offsetof(PointShadowBaseUBO, worldSource) == 208 && sizeof(PointShadowBaseUBO::worldSource) == 16);
 
-        // 点光源の面の定数の後ろにマスクの閾値・被覆率・sparse の有無を渡す。
+        // 不透明の点光源の影には切り抜きの予約欄の後ろへ頂点アニメと風を渡す。
+        struct PointShadowFaceUBO
+        {
+            PointShadowBaseUBO Base;
+            float reservedAlphaClip[4];
+            float vertexAnimTime[4];
+            float vertexAnimMaterial0[4];
+            float vertexAnimMaterial1[4];
+            float windA[4];
+            float windB[4];
+        };
+        static_assert(sizeof(PointShadowFaceUBO) == 320 && offsetof(PointShadowFaceUBO, Base) == 0);
+        static_assert(offsetof(PointShadowFaceUBO, reservedAlphaClip) == 224 && sizeof(PointShadowFaceUBO::reservedAlphaClip) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, vertexAnimTime) == 240 && sizeof(PointShadowFaceUBO::vertexAnimTime) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, vertexAnimMaterial0) == 256 && sizeof(PointShadowFaceUBO::vertexAnimMaterial0) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, vertexAnimMaterial1) == 272 && sizeof(PointShadowFaceUBO::vertexAnimMaterial1) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, windA) == 288 && sizeof(PointShadowFaceUBO::windA) == 16);
+        static_assert(offsetof(PointShadowFaceUBO, windB) == 304 && sizeof(PointShadowFaceUBO::windB) == 16);
+
+        // 点光源の切り抜きの配置は240バイトのまま保つ。
         struct PointShadowAlphaClipUBO
         {
-            PointShadowFaceUBO Base;
+            PointShadowBaseUBO Base;
             float alphaClip[4];
         };
-        static_assert(sizeof(PointShadowAlphaClipUBO) == 240 && offsetof(PointShadowAlphaClipUBO, alphaClip) == 224);
+        static_assert(sizeof(PointShadowAlphaClipUBO) == 240 && offsetof(PointShadowAlphaClipUBO, Base) == 0);
+        static_assert(offsetof(PointShadowAlphaClipUBO, alphaClip) == 224 && sizeof(PointShadowAlphaClipUBO::alphaClip) == 16);
 
-        // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
-        struct ShadowPerObjectUBO
+        // CSMの既存の224バイトは不透明・切り抜きで共通の配置を保つ。
+        struct ShadowBaseUBO
         {
             float lightView[16];
             float lightProjection[16];
-            // worldSource[0]=1の描画（MegaGeometry）はインスタンスではなくこの行列で置く
+            // worldSource[0]=1 の描画はインスタンスではなくこの行列で置く。
             float world[16];
             float worldSource[4];
             float vertexAnimTime[4];
         };
-        static_assert(sizeof(ShadowPerObjectUBO) == 224 && offsetof(ShadowPerObjectUBO, vertexAnimTime) == 208);
+        static_assert(sizeof(ShadowBaseUBO) == 224);
+        static_assert(offsetof(ShadowBaseUBO, lightView) == 0 && sizeof(ShadowBaseUBO::lightView) == 64);
+        static_assert(offsetof(ShadowBaseUBO, lightProjection) == 64 && sizeof(ShadowBaseUBO::lightProjection) == 64);
+        static_assert(offsetof(ShadowBaseUBO, world) == 128 && sizeof(ShadowBaseUBO::world) == 64);
+        static_assert(offsetof(ShadowBaseUBO, worldSource) == 192 && sizeof(ShadowBaseUBO::worldSource) == 16);
+        static_assert(offsetof(ShadowBaseUBO, vertexAnimTime) == 208 && sizeof(ShadowBaseUBO::vertexAnimTime) == 16);
 
-        // マスクの閾値・被覆率と sparse の有無を既存の CSM 定数の後ろに渡す。
+        // 不透明のCSMには切り抜きの予約欄の後ろへ材質と風を渡す。
+        struct ShadowPerObjectUBO
+        {
+            ShadowBaseUBO Base;
+            float reservedAlphaClip[4];
+            float vertexAnimMaterial0[4];
+            float vertexAnimMaterial1[4];
+            float windA[4];
+            float windB[4];
+        };
+        static_assert(sizeof(ShadowPerObjectUBO) == 304 && offsetof(ShadowPerObjectUBO, Base) == 0);
+        static_assert(offsetof(ShadowPerObjectUBO, reservedAlphaClip) == 224 && sizeof(ShadowPerObjectUBO::reservedAlphaClip) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, vertexAnimMaterial0) == 240 && sizeof(ShadowPerObjectUBO::vertexAnimMaterial0) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, vertexAnimMaterial1) == 256 && sizeof(ShadowPerObjectUBO::vertexAnimMaterial1) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, windA) == 272 && sizeof(ShadowPerObjectUBO::windA) == 16);
+        static_assert(offsetof(ShadowPerObjectUBO, windB) == 288 && sizeof(ShadowPerObjectUBO::windB) == 16);
+
+        // CSMの切り抜きの配置は240バイトのまま保つ。
         struct ShadowAlphaClipUBO
         {
-            ShadowPerObjectUBO Base;
+            ShadowBaseUBO Base;
             float alphaClip[4];
         };
-        static_assert(sizeof(ShadowAlphaClipUBO) == 240 && offsetof(ShadowAlphaClipUBO, alphaClip) == 224);
+        static_assert(sizeof(ShadowAlphaClipUBO) == 240 && offsetof(ShadowAlphaClipUBO, Base) == 0);
+        static_assert(offsetof(ShadowAlphaClipUBO, alphaClip) == 224 && sizeof(ShadowAlphaClipUBO::alphaClip) == 16);
 
         // 材質の解決結果をカスケードと点光源の面の間で共有する。
         struct ShadowAlphaClipMaterial
@@ -89,12 +139,12 @@ namespace NorvesLib::Core::Rendering
         };
 
         ShadowAlphaClipMaterial ResolveShadowAlphaClipMaterial(const ViewRenderContext& context,
-                                                              const DrawCommand& command)
+                                                              MaterialHandle handle)
         {
             ShadowAlphaClipMaterial material;
-            if (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
+            if (handle.IsValid() && context.Resources.Materials)
             {
-                const MaterialResourceData* data = context.Resources.Materials->GetData(command.Draw.MaterialHandle);
+                const MaterialResourceData* data = context.Resources.Materials->GetData(handle);
                 if (data && data->Blend == BlendMode::Masked)
                 {
                     material.bMasked = true;
@@ -110,6 +160,51 @@ namespace NorvesLib::Core::Rendering
             return material;
         }
 
+        ShadowAlphaClipMaterial ResolveShadowAlphaClipMaterial(const ViewRenderContext& context,
+                                                              const DrawCommand& command)
+        {
+            return ResolveShadowAlphaClipMaterial(context, command.Draw.MaterialHandle);
+        }
+
+        // 同じ View の描画中は束が変わらない。空なら既存の描画経路だけを使う。
+        const RenderExtensionShadowCasterFrame* GetExtensionShadowCasters(const SceneView* sceneView)
+        {
+            if (!sceneView)
+            {
+                return nullptr;
+            }
+            const RenderExtensionShadowCasterFrame& frame =
+                sceneView->GetRenderExtensionRegistry().GetShadowCasters();
+            return frame.IsEmpty() ? nullptr : &frame;
+        }
+
+#if NORVES_ENABLE_LOGGING
+        // 確保できなくなった位置から、実際に描くはずだった残りだけを数える。
+        template <typename Predicate>
+        uint32_t CountRemainingExtensionCasters(const RenderExtensionShadowCasterFrame& frame,
+                                                size_t firstDrawIndex,
+                                                uint32_t firstInstanceIndex,
+                                                const Predicate& mayDraw)
+        {
+            const auto& draws = frame.GetDraws();
+            const auto& instances = frame.GetInstances();
+            uint32_t count = 0;
+            for (size_t drawIndex = firstDrawIndex; drawIndex < draws.size(); ++drawIndex)
+            {
+                const RenderExtensionShadowCasterDraw& draw = draws[drawIndex];
+                const uint32_t start = drawIndex == firstDrawIndex ? firstInstanceIndex : 0u;
+                for (uint32_t instanceIndex = start; instanceIndex < draw.InstanceCount; ++instanceIndex)
+                {
+                    if (mayDraw(draw, instances[draw.FirstInstance + instanceIndex]))
+                    {
+                        ++count;
+                    }
+                }
+            }
+            return count;
+        }
+#endif
+
         bool HasSameShadowAlphaClipValues(const ShadowAlphaClipMaterial& lhs,
                                          const ShadowAlphaClipMaterial& rhs)
         {
@@ -117,78 +212,9 @@ namespace NorvesLib::Core::Rendering
                    lhs.Coverage == rhs.Coverage && lhs.bSparse == rhs.bSparse;
         }
 
-        // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
-        // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
-        // 粗い段を1回の範囲で持つメッシュは、影の地図のテクセルに見合う段を描くごとに選ぶ（ResolveMegaShadowRange）。
-        struct MegaShadowCaster
-        {
-            RHI::BufferPtr VertexBuffer;
-            RHI::BufferPtr IndexBuffer;
-            // ジオメトリのプールの区画の、頂点・インデックスの先頭（塊のバッファの先頭からのバイト）
-            uint64_t VertexBufferOffsetBytes = 0;
-            uint64_t IndexBufferOffsetBytes = 0;
-            uint32_t FirstIndex = 0;
-            uint32_t IndexCount = 0;
-            float World[16] = {};
-            BoundingSphere Bounds;
-            const MegaGeometry::MegaMeshGPUData* GpuData = nullptr;
-            // ローカルの長さ（LODの誤差）をワールドへ直す倍率（行列の最大の軸の伸び）
-            float WorldScale = 1.0f;
-        };
-
-        // MegaGeometryの段の誤差が、影の地図の何テクセル以下なら粗い段を使うか
-        constexpr float MegaShadowLODErrorTexels = 1.0f;
-
         // CSM を読むのがボリュームのフォグだけのときに描く MegaGeometry の投影物の上限（境界の半径の大きい順）。
         // 荒野の地形の区画・遠景・建物・大岩（約 300）が入り、崖錐の小片（27 万）は入らない
         constexpr uint32_t CsmFogMegaCasterBudget = 384;
-
-        // 1回の描画の段と範囲
-        struct MegaShadowRange
-        {
-            uint32_t Level = 0;
-            uint32_t FirstIndex = 0;
-            uint32_t IndexCount = 0;
-        };
-
-        // 影の地図の1テクセルのワールドでの大きさに見合う段を選ぶ（影に指定された段より細かくはしない）。
-        MegaShadowRange ResolveMegaShadowRange(const MegaShadowCaster& caster, float texelSize)
-        {
-            MegaShadowRange range;
-            range.FirstIndex = caster.FirstIndex;
-            range.IndexCount = caster.IndexCount;
-            if (!caster.GpuData)
-            {
-                return range;
-            }
-            range.Level = caster.GpuData->ShadowLODLevel;
-            const uint32_t level = MegaGeometry::SelectShadowLODLevel(*caster.GpuData,
-                                                                      caster.WorldScale,
-                                                                      texelSize,
-                                                                      MegaShadowLODErrorTexels);
-            if (level != range.Level && level < caster.GpuData->LevelRanges.size() &&
-                caster.GpuData->LevelRanges[level].IndexCount > 0u)
-            {
-                range.Level = level;
-                range.FirstIndex = caster.GpuData->LevelRanges[level].FirstIndex;
-                range.IndexCount = caster.GpuData->LevelRanges[level].IndexCount;
-            }
-            return range;
-        }
-
-        // 記録用に「メッシュ名:段/三角形数」を足す
-        void AppendMegaShadowLevel(Container::String& out, const MegaShadowCaster& caster, const MegaShadowRange& range)
-        {
-            char text[160] = {};
-            std::snprintf(text,
-                          sizeof(text),
-                          "%s%s:%u/%u",
-                          out.empty() ? "" : ",",
-                          caster.GpuData && !caster.GpuData->DebugName.empty() ? caster.GpuData->DebugName.c_str() : "?",
-                          range.Level,
-                          range.IndexCount / 3u);
-            out += text;
-        }
 
         // 点光源のキューブの1面（90°の正方形の視錐台）に境界球がかかるか。かからない面へは描かない。
         bool PointShadowFaceMayContainSphere(const PointShadowLightSnapshot& light,
@@ -216,46 +242,18 @@ namespace NorvesLib::Core::Rendering
                    forward - right >= -margin && forward + right >= -margin;
         }
 
-        // ローカルの境界球をワールド行列（行ベクトル規約、並進は行3）で写す。半径は最大の軸の伸びで広げる。
-        BoundingSphere TransformMegaBounds(const BoundingSphere& local, const float* world)
-        {
-            BoundingSphere result;
-            result.CenterX = local.CenterX * world[0] + local.CenterY * world[4] +
-                             local.CenterZ * world[8] + world[12];
-            result.CenterY = local.CenterX * world[1] + local.CenterY * world[5] +
-                             local.CenterZ * world[9] + world[13];
-            result.CenterZ = local.CenterX * world[2] + local.CenterY * world[6] +
-                             local.CenterZ * world[10] + world[14];
-            float maxScaleSquared = 0.0f;
-            for (uint32_t row = 0; row < 3; ++row)
-            {
-                const float lengthSquared = world[row * 4 + 0] * world[row * 4 + 0] +
-                                            world[row * 4 + 1] * world[row * 4 + 1] +
-                                            world[row * 4 + 2] * world[row * 4 + 2];
-                maxScaleSquared = std::max(maxScaleSquared, lengthSquared);
-            }
-            result.Radius = local.Radius * std::sqrt(maxScaleSquared);
-            return result;
-        }
-
         // MegaGeometry の投影物になれるメッシュの GPU データ（区画へのコピーが GPU で完了し、影に使う段を持つ）。無ければ null
         const MegaGeometry::MegaMeshGPUData* FindMegaShadowMesh(const MegaGeometryResources& resources,
                                                                MegaGeometry::MegaMeshHandle handle)
         {
             const MegaGeometry::MegaMeshGPUData* gpuData = resources.GetReadyMegaMeshGPUData(handle);
-            if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer || gpuData->ShadowIndexCount == 0u)
+            if (!IsMegaShadowMeshUsable(gpuData))
             {
                 return nullptr;
             }
             return gpuData;
         }
 
-        // ワールドの境界球が描ける大きさか（有限で半径が正）
-        bool IsDrawableMegaBounds(const BoundingSphere& bounds)
-        {
-            return std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) && std::isfinite(bounds.CenterZ) &&
-                   std::isfinite(bounds.Radius) && bounds.Radius > 0.0f;
-        }
         // MegaGeometryの影に使う段の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
         DrawCommand MakeMegaShadowDrawCommand(const MegaShadowCaster& caster,
                                               const MegaShadowRange& range,
@@ -278,6 +276,71 @@ namespace NorvesLib::Core::Rendering
             command.Mesh2D.VertexOffset = 0;
             command.Mesh2D.IndexType = RHI::IndexType::Uint32;
             return command;
+        }
+
+        // 拡張の束を、影のパスで使う頂点・インデックス描画へ変える。
+        DrawCommand MakeExtensionShadowDrawCommand(const RenderExtensionShadowCasterDraw& draw,
+                                                   const RHI::PipelinePtr& pipeline,
+                                                   const RHI::DescriptorSetPtr& descriptorSet)
+        {
+            DrawCommand command;
+            command.Type = DrawCommandType::DrawIndexed;
+            command.Pipeline = pipeline;
+            command.DescriptorSet = descriptorSet;
+            command.DescriptorSetSlot = 0;
+            command.Draw.PayloadKind = DrawPayloadKind::Mesh2D;
+            command.Draw.bCastShadow = true;
+            command.Mesh2D.VertexBuffer = draw.VertexBuffer;
+            command.Mesh2D.IndexBuffer = draw.IndexBuffer;
+            command.Mesh2D.VertexBufferOffsetBytes = 0;
+            command.Mesh2D.IndexBufferOffsetBytes = 0;
+            command.Mesh2D.IndexCount = draw.IndexCount;
+            command.Mesh2D.IndexOffset = draw.FirstIndex;
+            command.Mesh2D.VertexOffset = static_cast<int32_t>(draw.VertexOffset);
+            command.Mesh2D.IndexType = RHI::IndexType::Uint32;
+            return command;
+        }
+
+        // マスク用の資源を使えなければ、不透明の定数を借りて描く。
+        DynamicUniformAllocator::Allocation AllocateExtensionShadowUniform(
+            ViewRenderContext& context,
+            const ShadowAlphaClipMaterial& material,
+            const RHI::PipelinePtr& alphaPipeline,
+            const RHI::SamplerPtr& alphaSampler,
+            const DynamicUniformAllocator& alphaAllocator,
+            const DynamicUniformAllocator& opaqueAllocator,
+            bool& bAlphaClip)
+        {
+            DynamicUniformAllocator::Allocation allocation;
+            bAlphaClip = false;
+            if (material.bMasked && material.Albedo && alphaPipeline && alphaSampler &&
+                alphaAllocator.IsInitialized())
+            {
+                allocation = alphaAllocator.Allocate(context.FrameResources);
+                bAlphaClip = allocation.IsValid();
+            }
+            if (!bAlphaClip)
+            {
+                allocation = opaqueAllocator.Allocate(context.FrameResources);
+            }
+            return allocation;
+        }
+
+        // 行列は定数から読むが、記述子のレイアウトを満たすためインスタンスも結ぶ。
+        void BindExtensionShadowResources(const DynamicUniformAllocator::Allocation& allocation,
+                                          const ViewRenderContext& context,
+                                          uint32_t instanceDataSize,
+                                          const ShadowAlphaClipMaterial& material,
+                                          const RHI::SamplerPtr& alphaSampler,
+                                          bool bAlphaClip)
+        {
+            allocation.DescriptorSet->BindStorageBuffer(7, context.InstanceDataBuffer, 0, instanceDataSize);
+            if (bAlphaClip)
+            {
+                allocation.DescriptorSet->BindTexture(10, material.Albedo);
+                allocation.DescriptorSet->BindSampler(10, alphaSampler);
+            }
+            allocation.DescriptorSet->Update();
         }
 
         // 物体IDで引くMeshProxyの境界球
@@ -787,34 +850,13 @@ namespace NorvesLib::Core::Rendering
             outCasters.reserve(ids != nullptr ? ids->size() : cache.Ranges.GetCount());
             const auto append = [&](const ShadowMapMegaCasterCache::Entry& entry)
             {
-                if (!entry.bCastShadow)
-                {
-                    return;
-                }
-                const auto mesh = cache.Meshes.find(entry.Handle.Id);
+                const auto mesh = entry.bCastShadow ? cache.Meshes.find(entry.Handle.Id) : cache.Meshes.end();
                 const MegaGeometry::MegaMeshGPUData* gpuData = mesh != cache.Meshes.end() ? mesh->second.GpuData : nullptr;
-                if (!gpuData)
-                {
-                    return;
-                }
                 MegaShadowCaster caster;
-                caster.VertexBuffer = gpuData->VertexBuffer;
-                caster.IndexBuffer = gpuData->IndexBuffer;
-                caster.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
-                caster.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
-                caster.FirstIndex = gpuData->ShadowFirstIndex;
-                caster.IndexCount = gpuData->ShadowIndexCount;
-                caster.GpuData = gpuData;
-                std::memcpy(caster.World, entry.World, sizeof(caster.World));
-                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
-                caster.WorldScale = gpuData->TotalBounds.Radius > 0.0f
-                                        ? caster.Bounds.Radius / gpuData->TotalBounds.Radius
-                                        : 1.0f;
-                if (!IsDrawableMegaBounds(caster.Bounds))
+                if (TryMakeMegaShadowCaster(entry.World, entry.bCastShadow, gpuData, entry.Handle.Id, caster))
                 {
-                    return;
+                    outCasters.push_back(caster);
                 }
-                outCasters.push_back(caster);
             };
             if (ids != nullptr)
             {
@@ -842,9 +884,13 @@ namespace NorvesLib::Core::Rendering
     struct ShadowMapFramePlan
     {
         CascadedShadowMatrixResult Cascades;
+        ShadowCasterBudgetWarnings MegaBudgetWarnings;
         // 最後に記録した分割の λ。フレームをまたいで保持し、変わったときだけ記録する。
         float LoggedSplitLambda = -1.0f;
 #if NORVES_ENABLE_LOGGING
+        bool LoggedSunShadowAutoDisabled = false;
+        uint32_t LoggedVsmOverBudgetMeshes = 0;
+        uint32_t LoggedVsmBudget = 0;
         // パスが所有する計画に前回の描画数と候補数を保ち、変わったときだけ記録する。
         uint32_t LoggedCasterDraws[PhysicalLightingShadowCascadeCount] = {~0u, ~0u, ~0u, ~0u};
         uint32_t LoggedCasterCandidates = ~0u;
@@ -852,7 +898,22 @@ namespace NorvesLib::Core::Rendering
         uint32_t LoggedAlphaClipFallback = ~0u;
         uint32_t LoggedPointAlphaClipDraws = ~0u;
         uint32_t LoggedPointAlphaClipFallback = ~0u;
+        // 拡張の束が一度も無い間はログを出さない。
+        uint32_t LoggedExtensionDraws[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t LoggedExtensionMasked = 0;
+        uint32_t LoggedExtensionFallback = 0;
+        uint32_t LoggedExtensionOmitted = 0;
+        uint32_t LoggedPointExtensionDraws = 0;
+        uint32_t LoggedPointExtensionMasked = 0;
+        uint32_t LoggedPointExtensionFallback = 0;
+        uint32_t LoggedPointExtensionOmitted = 0;
 #endif
+        // 同じ束の材質を CSM と点光源で共有する。描画が終わったら参照を手放す。
+        Container::VariableArray<ShadowAlphaClipMaterial> ExtensionMaterials;
+        // 1回の記録で詰めた時刻と風をCSM・点光源の全描画へ渡す。
+        float VertexAnimTime[4] = {};
+        float WindA[4] = {};
+        float WindB[4] = {};
         float LightView[PhysicalLightingShadowCascadeCount][16] = {};
         float LightProjection[PhysicalLightingShadowCascadeCount][16] = {};
         uint32_t MegaCasterCount = 0u;
@@ -1001,7 +1062,7 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) + vertexAnimTime(16) = 224 bytes
+            // 既存の224バイト・切り抜きの予約16バイト・材質と風64バイトの計304バイト。
             // 定数と記述子セットは描画ごと・カスケードごとに FrameResources から借りる（数の上限は無い）
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
 
@@ -1379,6 +1440,9 @@ namespace NorvesLib::Core::Rendering
         {
             PlanShadowFrame(context);
         }
+        const uint32_t budget = context.SnapshotScene != nullptr
+                                    ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                    : SunShadowParameters{}.MaxShadowCasterTriangles;
         const ShadowMapFramePlan& plan = *m_FramePlan;
         m_FramePlan->bPlanned = false;
         const CascadedShadowMatrixResult& cascadedShadowMatrices = plan.Cascades;
@@ -1386,8 +1450,26 @@ namespace NorvesLib::Core::Rendering
         const auto& lightProjData = plan.LightProjection;
         const uint32_t megaCasterCount = plan.MegaCasterCount;
         const uint32_t instanceDataSize = plan.InstanceDataSize;
-        float vertexAnimTime[4] = {};
+        const RenderExtensionShadowCasterFrame* extensionCasters = GetExtensionShadowCasters(m_SceneView);
+        auto& extensionMaterials = m_FramePlan->ExtensionMaterials;
+        extensionMaterials.clear();
+        if (extensionCasters)
+        {
+            const auto& draws = extensionCasters->GetDraws();
+            extensionMaterials.reserve(draws.size());
+            for (const RenderExtensionShadowCasterDraw& draw : draws)
+            {
+                ShadowAlphaClipMaterial material = ResolveShadowAlphaClipMaterial(context, draw.Material);
+                if (draw.CoverageMultiplier >= 0.0f)
+                {
+                    material.Coverage = draw.CoverageMultiplier;
+                }
+                extensionMaterials.push_back(material);
+            }
+        }
+        auto& vertexAnimTime = m_FramePlan->VertexAnimTime;
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement, vertexAnimTime);
+        PackVertexAnimationWindConstants(context.Wind, m_FramePlan->WindA, m_FramePlan->WindB);
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -1496,6 +1578,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t casterDrawCounts[PhysicalLightingShadowCascadeCount] = {};
         uint32_t alphaClipDrawCounts[PhysicalLightingShadowCascadeCount] = {};
         uint32_t alphaClipFallbackCount = 0;
+        uint32_t extensionDrawCounts[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t extensionMaskedCount = 0;
+        uint32_t extensionFallbackCount = 0;
+        uint32_t extensionOmittedCount = 0;
 #endif
 
         // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに別の定数と記述子セットを借りる。
@@ -1560,20 +1646,32 @@ namespace NorvesLib::Core::Rendering
 
                     // UBOデータ構築（worldSourceは0のままにしてインスタンスの行列で置く）
                     ShadowPerObjectUBO uboData = {};
-                    std::memcpy(uboData.lightView,
+                    std::memcpy(uboData.Base.lightView,
                                 lightViewData[cascadeIndex],
-                                sizeof(uboData.lightView));
-                    std::memcpy(uboData.lightProjection,
+                                sizeof(uboData.Base.lightView));
+                    std::memcpy(uboData.Base.lightProjection,
                                 lightProjData[cascadeIndex],
-                                sizeof(uboData.lightProjection));
+                                sizeof(uboData.Base.lightProjection));
 
-                    std::memcpy(uboData.vertexAnimTime, vertexAnimTime, sizeof(uboData.vertexAnimTime));
+                    std::memcpy(uboData.Base.vertexAnimTime, vertexAnimTime, sizeof(uboData.Base.vertexAnimTime));
+                    if (!bSkinned && !material.bMasked)
+                    {
+                        const MaterialResourceData* materialData = context.Resources.Materials && cmd.Draw.MaterialHandle.IsValid()
+                            ? context.Resources.Materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
+                        if (materialData)
+                        {
+                            PackVertexAnimationMaterialConstants(materialData->VertexAnimation,
+                                uboData.vertexAnimMaterial0, uboData.vertexAnimMaterial1);
+                        }
+                        std::memcpy(uboData.windA, plan.WindA, sizeof(uboData.windA));
+                        std::memcpy(uboData.windB, plan.WindB, sizeof(uboData.windB));
+                    }
 
                     // UBO更新
                     if (bAlphaClip)
                     {
                         ShadowAlphaClipUBO alphaUbo = {};
-                        alphaUbo.Base = uboData;
+                        alphaUbo.Base = uboData.Base;
                         alphaUbo.alphaClip[0] = material.Cutoff;
                         alphaUbo.alphaClip[1] = bSkinned && cmd.Draw.ShadingParams[3] >= 0.0f
                                                     ? cmd.Draw.ShadingParams[3]
@@ -1637,6 +1735,94 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            // 拡張の束は通常の投影物の後、MegaGeometry の前に描く。
+            if (cascadedShadowMatrices.bEnabled && extensionCasters)
+            {
+                const CascadedShadowCascade& cascade = cascadedShadowMatrices.Cascades[cascadeIndex];
+                const auto& draws = extensionCasters->GetDraws();
+                const auto& instances = extensionCasters->GetInstances();
+                bool bOutOfConstants = false;
+                for (size_t drawIndex = 0; drawIndex < draws.size(); ++drawIndex)
+                {
+                    const RenderExtensionShadowCasterDraw& draw = draws[drawIndex];
+                    const ShadowAlphaClipMaterial& material = extensionMaterials[drawIndex];
+                    for (uint32_t instanceIndex = 0; instanceIndex < draw.InstanceCount; ++instanceIndex)
+                    {
+                        const RenderExtensionShadowCasterInstance& instance =
+                            instances[draw.FirstInstance + instanceIndex];
+                        if (!CascadedShadowCascadeMayContainCaster(cascade, instance.WorldSphere))
+                        {
+                            continue;
+                        }
+                        if (!context.InstanceDataBuffer || instanceDataSize == 0)
+                        {
+#if NORVES_ENABLE_LOGGING
+                            ++extensionOmittedCount;
+#endif
+                            continue;
+                        }
+                        bool bAlphaClip = false;
+                        auto allocation = AllocateExtensionShadowUniform(context, material,
+                            m_AlphaClipPipeline, m_AlphaClipSampler, m_AlphaClipUniformAllocator,
+                            m_UniformAllocator, bAlphaClip);
+                        if (!allocation.IsValid())
+                        {
+                            // このカスケードの残りを数えて、拡張の描画を抜ける。
+#if NORVES_ENABLE_LOGGING
+                            extensionOmittedCount += CountRemainingExtensionCasters(
+                                *extensionCasters, drawIndex, instanceIndex,
+                                [&](const RenderExtensionShadowCasterDraw&,
+                                    const RenderExtensionShadowCasterInstance& remaining)
+                                {
+                                    return CascadedShadowCascadeMayContainCaster(cascade, remaining.WorldSphere);
+                                });
+#endif
+                            bOutOfConstants = true;
+                            break;
+                        }
+
+                        ShadowPerObjectUBO ubo = {};
+                        std::memcpy(ubo.Base.lightView, lightViewData[cascadeIndex], sizeof(ubo.Base.lightView));
+                        std::memcpy(ubo.Base.lightProjection, lightProjData[cascadeIndex], sizeof(ubo.Base.lightProjection));
+                        std::memcpy(ubo.Base.world, instance.World, sizeof(ubo.Base.world));
+                        ubo.Base.worldSource[0] = 1.0f;
+                        std::memcpy(ubo.Base.vertexAnimTime, vertexAnimTime, sizeof(ubo.Base.vertexAnimTime));
+                        if (bAlphaClip)
+                        {
+                            ShadowAlphaClipUBO alphaUbo = {};
+                            alphaUbo.Base = ubo.Base;
+                            alphaUbo.alphaClip[0] = material.Cutoff;
+                            alphaUbo.alphaClip[1] = material.Coverage;
+                            alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                            allocation.Write(&alphaUbo, sizeof(alphaUbo));
+                        }
+                        else
+                        {
+                            allocation.Write(&ubo, sizeof(ubo));
+                        }
+                        BindExtensionShadowResources(allocation, context, instanceDataSize,
+                                                     material, m_AlphaClipSampler, bAlphaClip);
+                        shadowCommands->push_back(MakeExtensionShadowDrawCommand(
+                            draw, bAlphaClip ? m_AlphaClipPipeline : m_ShadowPipeline, allocation.DescriptorSet));
+#if NORVES_ENABLE_LOGGING
+                        ++extensionDrawCounts[cascadeIndex];
+                        if (bAlphaClip)
+                        {
+                            ++extensionMaskedCount;
+                        }
+                        else if (material.bMasked)
+                        {
+                            ++extensionFallbackCount;
+                        }
+#endif
+                    }
+                    if (bOutOfConstants)
+                    {
+                        break;
+                    }
+                }
+            }
+
             // MegaGeometryはカスケードの影の地図のXYにかかる物だけを描く。段は、影に指定された段を最も細かい段とし、
             // 誤差がそのカスケードの1テクセル以下の最も粗い段を使う（遠いカスケードほどテクセルが大きく粗い段になる）。
             if (bCanDrawMegaCasters)
@@ -1654,6 +1840,10 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, cascade.TexelSize);
+                    if (!AdmitMegaShadowCasterDraw(megaCaster, range, budget, m_FramePlan->MegaBudgetWarnings))
+                    {
+                        continue;
+                    }
                     auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
                     if (!allocation.UniformBuffer)
                     {
@@ -1668,15 +1858,15 @@ namespace NorvesLib::Core::Rendering
                         break;
                     }
                     ShadowPerObjectUBO megaUboData = {};
-                    std::memcpy(megaUboData.lightView,
+                    std::memcpy(megaUboData.Base.lightView,
                                 lightViewData[cascadeIndex],
-                                sizeof(megaUboData.lightView));
-                    std::memcpy(megaUboData.lightProjection,
+                                sizeof(megaUboData.Base.lightView));
+                    std::memcpy(megaUboData.Base.lightProjection,
                                 lightProjData[cascadeIndex],
-                                sizeof(megaUboData.lightProjection));
-                    std::memcpy(megaUboData.world, megaCaster.World, sizeof(megaUboData.world));
-                    megaUboData.worldSource[0] = 1.0f;
-                    std::memcpy(megaUboData.vertexAnimTime, vertexAnimTime, sizeof(megaUboData.vertexAnimTime));
+                                sizeof(megaUboData.Base.lightProjection));
+                    std::memcpy(megaUboData.Base.world, megaCaster.World, sizeof(megaUboData.Base.world));
+                    megaUboData.Base.worldSource[0] = 1.0f;
+                    std::memcpy(megaUboData.Base.vertexAnimTime, vertexAnimTime, sizeof(megaUboData.Base.vertexAnimTime));
                     allocation.Write(&megaUboData, sizeof(megaUboData));
                     // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                     allocation.DescriptorSet->BindStorageBuffer(7,
@@ -1703,6 +1893,26 @@ namespace NorvesLib::Core::Rendering
         }
 
 #if NORVES_ENABLE_LOGGING
+        bool bExtensionCountsChanged = extensionMaskedCount != m_FramePlan->LoggedExtensionMasked ||
+            extensionFallbackCount != m_FramePlan->LoggedExtensionFallback ||
+            extensionOmittedCount != m_FramePlan->LoggedExtensionOmitted;
+        m_FramePlan->LoggedExtensionMasked = extensionMaskedCount;
+        m_FramePlan->LoggedExtensionFallback = extensionFallbackCount;
+        m_FramePlan->LoggedExtensionOmitted = extensionOmittedCount;
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            bExtensionCountsChanged = bExtensionCountsChanged ||
+                extensionDrawCounts[cascadeIndex] != m_FramePlan->LoggedExtensionDraws[cascadeIndex];
+            m_FramePlan->LoggedExtensionDraws[cascadeIndex] = extensionDrawCounts[cascadeIndex];
+        }
+        if (bExtensionCountsChanged)
+        {
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSM_EXTENSION_CASTERS c0=%u c1=%u c2=%u c3=%u masked=%u fallback=%u omitted=%u",
+                            extensionDrawCounts[0], extensionDrawCounts[1], extensionDrawCounts[2],
+                            extensionDrawCounts[3], extensionMaskedCount, extensionFallbackCount, extensionOmittedCount);
+        }
+
         bool bAlphaClipCountsChanged = alphaClipFallbackCount != m_FramePlan->LoggedAlphaClipFallback;
         m_FramePlan->LoggedAlphaClipFallback = alphaClipFallbackCount;
         for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
@@ -1779,6 +1989,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         ExecutePointShadows(context);
+        extensionMaterials.clear();
     }
 
     bool ShadowMapPass::AreShadowResourcesReady() const
@@ -1794,6 +2005,22 @@ namespace NorvesLib::Core::Rendering
             m_FramePlan = Container::MakeUnique<ShadowMapFramePlan>();
         }
         ShadowMapFramePlan& plan = *m_FramePlan;
+        // 太陽の影の有効・自動停止は、このフレームのシーンの写しだけから決める。
+        // 停止時は無効の行列とクリップマップを公開し、VSM も太陽の段を省く。
+        const SunShadowFrameState sunShadow = context.SnapshotScene != nullptr
+            ? EvaluateSunShadowFrameState(context.SnapshotScene->SunShadow, context.SnapshotScene->SkyAtmosphere)
+            : SunShadowFrameState{};
+#if NORVES_ENABLE_LOGGING
+        if (sunShadow.bAutoDisabled != plan.LoggedSunShadowAutoDisabled)
+        {
+            plan.LoggedSunShadowAutoDisabled = sunShadow.bAutoDisabled;
+            const float threshold = context.SnapshotScene != nullptr
+                ? SanitizeSunShadowParameters(context.SnapshotScene->SunShadow).AutoDisableBelowSunIlluminanceLux
+                : SunShadowParameters{}.AutoDisableBelowSunIlluminanceLux;
+            NORVES_LOG_INFO("ShadowMapPass", "SUN_SHADOW_AUTO_DISABLED disabled=%d sun_lux=%.1f threshold=%.1f",
+                            sunShadow.bAutoDisabled ? 1 : 0, sunShadow.SunIlluminanceLux, threshold);
+        }
+#endif
         context.ActiveShadowMapSettings = &m_Settings;
         // シーンが FramePacket で影の到達距離を指定していればそれを、無ければパスの設定を使う（CSM と VSM で同じ値）
         const float maxShadowDistance =
@@ -1825,11 +2052,37 @@ namespace NorvesLib::Core::Rendering
                                               : static_cast<uint32_t>(instanceDataSize64);
 
         // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
-        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
-        // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
+        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは上限を超える物も残し、
+        // 粗いカスケードで上限内の段を描くときにnear面で切らない。
         // MegaGeometry は RenderThread の写しの変わった席だけを直した席ごとの写しから、範囲（格子）ごとの AABB を含める
         // （物の数ではなく範囲の数だけを見る。範囲に物が 1 つなら、その物の境界球そのもの）
         const uint32_t megaCasterCount = SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize);
+#if NORVES_ENABLE_LOGGING
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            const uint32_t budget = context.SnapshotScene != nullptr
+                                        ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                        : SunShadowParameters{}.MaxShadowCasterTriangles;
+            uint32_t overBudgetMeshes = 0;
+            if (m_MegaCasters)
+            {
+                for (const auto& [meshId, state] : m_MegaCasters->Meshes)
+                {
+                    if (IsMegaShadowMeshOverTriangleBudget(state.GpuData, budget))
+                    {
+                        ++overBudgetMeshes;
+                    }
+                }
+            }
+            if (overBudgetMeshes != plan.LoggedVsmOverBudgetMeshes || budget != plan.LoggedVsmBudget)
+            {
+                plan.LoggedVsmOverBudgetMeshes = overBudgetMeshes;
+                plan.LoggedVsmBudget = budget;
+                NORVES_LOG_INFO("ShadowMapPass", "VSM_SHADOW_CASTER_BUDGET over_budget_meshes=%u budget=%u kept_in_vsm=1",
+                                overBudgetMeshes, budget);
+            }
+        }
+#endif
         Container::VariableArray<BoundingSphere> casterBounds;
         CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
                                              context.SnapshotSkinnedMeshProxies,
@@ -1839,11 +2092,20 @@ namespace NorvesLib::Core::Rendering
         {
             m_MegaCasters->Ranges.AppendBounds(casterBounds);
         }
+        if (const RenderExtensionShadowCasterFrame* extensionCasters = GetExtensionShadowCasters(m_SceneView))
+        {
+            for (const RenderExtensionShadowCasterInstance& instance : extensionCasters->GetInstances())
+            {
+                casterBounds.push_back(instance.WorldSphere);
+            }
+        }
         const CascadedShadowMatrixResult cascadedShadowMatrices =
-            BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
-                                             context.GetActiveCamera(),
-                                             cascadedSettings,
-                                             &casterBounds);
+            sunShadow.bActive
+                ? BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
+                                                  context.GetActiveCamera(),
+                                                  cascadedSettings,
+                                                  &casterBounds)
+                : CascadedShadowMatrixResult{};
 
         // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
         float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};
@@ -1916,7 +2178,7 @@ namespace NorvesLib::Core::Rendering
             clipmapSettings = FitVirtualShadowMapClipmapToShadowDistance(clipmapSettings);
             const CameraProxy* activeCamera = context.GetActiveCamera();
             const VirtualShadowMapClipmap clipmap =
-                activeCamera != nullptr
+                sunShadow.bActive && activeCamera != nullptr
                     ? BuildVirtualShadowMapClipmap(context.SnapshotLightProxies, *activeCamera, clipmapSettings)
                     : VirtualShadowMapClipmap{};
             context.PhysicalLighting.PublishSunClipmap(clipmap);
@@ -2207,6 +2469,9 @@ namespace NorvesLib::Core::Rendering
 
     void ShadowMapPass::ExecutePointShadows(ViewRenderContext& context)
     {
+        const uint32_t budget = context.SnapshotScene != nullptr
+                                    ? context.SnapshotScene->SunShadow.MaxShadowCasterTriangles
+                                    : SunShadowParameters{}.MaxShadowCasterTriangles;
         const PointShadowSnapshot* snapshot = context.SnapshotPointShadows;
         const uint32_t lightCount =
             snapshot != nullptr ? std::min(snapshot->LightCount, PointShadowMaxLights) : 0u;
@@ -2232,6 +2497,26 @@ namespace NorvesLib::Core::Rendering
                                 alphaClipDrawCount, alphaClipFallbackCount);
             }
         };
+        uint32_t extensionDrawCount = 0;
+        uint32_t extensionMaskedCount = 0;
+        uint32_t extensionFallbackCount = 0;
+        uint32_t extensionOmittedCount = 0;
+        const auto logExtensionCounts = [&]()
+        {
+            if (m_FramePlan && (extensionDrawCount != m_FramePlan->LoggedPointExtensionDraws ||
+                                extensionMaskedCount != m_FramePlan->LoggedPointExtensionMasked ||
+                                extensionFallbackCount != m_FramePlan->LoggedPointExtensionFallback ||
+                                extensionOmittedCount != m_FramePlan->LoggedPointExtensionOmitted))
+            {
+                m_FramePlan->LoggedPointExtensionDraws = extensionDrawCount;
+                m_FramePlan->LoggedPointExtensionMasked = extensionMaskedCount;
+                m_FramePlan->LoggedPointExtensionFallback = extensionFallbackCount;
+                m_FramePlan->LoggedPointExtensionOmitted = extensionOmittedCount;
+                NORVES_LOG_INFO("ShadowMapPass",
+                                "POINT_SHADOW_EXTENSION_CASTERS draws=%u masked=%u fallback=%u omitted=%u",
+                                extensionDrawCount, extensionMaskedCount, extensionFallbackCount, extensionOmittedCount);
+            }
+        };
 #endif
         // 影を落とす点光源が無いフレームは何も描かない（Declareも公開しない）。
         if (lightCount == 0 || !m_PointShadowCubeHandle.IsValid() ||
@@ -2239,6 +2524,7 @@ namespace NorvesLib::Core::Rendering
         {
 #if NORVES_ENABLE_LOGGING
             logAlphaClipCounts();
+            logExtensionCounts();
 #endif
             return;
         }
@@ -2258,6 +2544,9 @@ namespace NorvesLib::Core::Rendering
         {
             DrawCommand Command;
             ShadowAlphaClipMaterial Material;
+            float VertexAnimMaterial0[4] = {};
+            float VertexAnimMaterial1[4] = {};
+            bool bVertexAnimated = false;
             BoundingSphere Bounds;
             bool bHasBounds = false;
             bool bSkinned = false;
@@ -2293,6 +2582,17 @@ namespace NorvesLib::Core::Rendering
                     caster.Command.Pipeline = m_PointShadowPipeline;
                 }
                 caster.Material = ResolveShadowAlphaClipMaterial(context, command);
+                if (!caster.bSkinned && !caster.Material.bMasked)
+                {
+                    const MaterialResourceData* materialData = context.Resources.Materials && command.Draw.MaterialHandle.IsValid()
+                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle) : nullptr;
+                    caster.bVertexAnimated = MaterialHasVertexAnimation(materialData);
+                    if (caster.bVertexAnimated)
+                    {
+                        PackVertexAnimationMaterialConstants(materialData->VertexAnimation,
+                            caster.VertexAnimMaterial0, caster.VertexAnimMaterial1);
+                    }
+                }
                 if (caster.bSkinned && command.Draw.ShadingParams[3] >= 0.0f)
                 {
                     caster.Material.Coverage = command.Draw.ShadingParams[3];
@@ -2310,6 +2610,20 @@ namespace NorvesLib::Core::Rendering
         if (SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize) != 0u)
         {
             CollectMegaShadowCasters(*m_MegaCasters, megaCasters);
+        }
+
+        const RenderExtensionShadowCasterFrame* extensionCasters = GetExtensionShadowCasters(m_SceneView);
+        bool bPointExtensionCasters = false;
+        if (extensionCasters)
+        {
+            for (const RenderExtensionShadowCasterDraw& draw : extensionCasters->GetDraws())
+            {
+                if (draw.bPointLightShadow)
+                {
+                    bPointExtensionCasters = true;
+                    break;
+                }
+            }
         }
 
         RHI::Viewport viewport;
@@ -2343,18 +2657,28 @@ namespace NorvesLib::Core::Rendering
             for (uint32_t faceIndex = 0; faceIndex < PointShadowFaceCount; ++faceIndex)
             {
                 auto faceCommands = MakeShared<Container::VariableArray<DrawCommand>>();
-                if (bActiveLight && (!casters.empty() || !megaCasters.empty()))
+                if (bActiveLight && (!casters.empty() || !megaCasters.empty() || bPointExtensionCasters))
                 {
                     PointShadowFaceUBO faceData = {};
-                    CopyShadowMatrixToShaderData(light->Faces.Views[faceIndex], faceData.lightView);
-                    CopyShadowMatrixToShaderData(projection, faceData.lightProjection);
-                    faceData.lightPositionAndInvRange[0] = light->Position.x;
-                    faceData.lightPositionAndInvRange[1] = light->Position.y;
-                    faceData.lightPositionAndInvRange[2] = light->Position.z;
-                    faceData.lightPositionAndInvRange[3] = 1.0f / light->Range;
+                    CopyShadowMatrixToShaderData(light->Faces.Views[faceIndex], faceData.Base.lightView);
+                    CopyShadowMatrixToShaderData(projection, faceData.Base.lightProjection);
+                    faceData.Base.lightPositionAndInvRange[0] = light->Position.x;
+                    faceData.Base.lightPositionAndInvRange[1] = light->Position.y;
+                    faceData.Base.lightPositionAndInvRange[2] = light->Position.z;
+                    faceData.Base.lightPositionAndInvRange[3] = 1.0f / light->Range;
+                    std::memcpy(faceData.vertexAnimTime, m_FramePlan->VertexAnimTime, sizeof(faceData.vertexAnimTime));
+                    std::memcpy(faceData.windA, m_FramePlan->WindA, sizeof(faceData.windA));
+                    std::memcpy(faceData.windB, m_FramePlan->WindB, sizeof(faceData.windB));
 
-                    // 非スキンの描画はこの面のUBOとインスタンスを1つの記述子セットで共有する。
+                    // 頂点アニメの無い非スキンの描画は、この面の定数と記述子セットを共有する。
                     RHI::DescriptorSetPtr sharedFaceSet;
+                    // 頂点アニメのある不透明材質は、面の中で材質ごとに定数と記述子セットを共有する。
+                    struct AnimatedFaceBinding
+                    {
+                        MaterialHandle Handle;
+                        RHI::DescriptorSetPtr Set;
+                    };
+                    Container::VariableArray<AnimatedFaceBinding> animatedFaceSets;
                     SkinnedShadowComponentBindings<RHI::DescriptorSetPtr> skinnedFaceSets;
                     // 静的は解決済みの値で共有し、スキンは材質ごとに部品の共有を分ける。
                     struct AlphaClipFaceBindings
@@ -2390,7 +2714,7 @@ namespace NorvesLib::Core::Rendering
                                     return {};
                                 }
                                 PointShadowAlphaClipUBO alphaUbo = {};
-                                alphaUbo.Base = faceData;
+                                alphaUbo.Base = faceData.Base;
                                 alphaUbo.alphaClip[0] = material.Cutoff;
                                 alphaUbo.alphaClip[1] = material.Coverage;
                                 alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
@@ -2480,6 +2804,46 @@ namespace NorvesLib::Core::Rendering
                                 continue;
                             }
                         }
+                        else if (caster.bVertexAnimated)
+                        {
+                            size_t bindingIndex = 0;
+                            for (; bindingIndex < animatedFaceSets.size(); ++bindingIndex)
+                            {
+                                if (animatedFaceSets[bindingIndex].Handle == drawCommand.Draw.MaterialHandle)
+                                {
+                                    break;
+                                }
+                            }
+                            if (bindingIndex == animatedFaceSets.size())
+                            {
+                                AnimatedFaceBinding binding;
+                                binding.Handle = drawCommand.Draw.MaterialHandle;
+                                auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
+                                if (allocation.IsValid())
+                                {
+                                    PointShadowFaceUBO animatedFaceData = faceData;
+                                    std::memcpy(animatedFaceData.vertexAnimMaterial0, caster.VertexAnimMaterial0,
+                                                sizeof(animatedFaceData.vertexAnimMaterial0));
+                                    std::memcpy(animatedFaceData.vertexAnimMaterial1, caster.VertexAnimMaterial1,
+                                                sizeof(animatedFaceData.vertexAnimMaterial1));
+                                    allocation.Write(&animatedFaceData, sizeof(animatedFaceData));
+                                    allocation.DescriptorSet->BindStorageBuffer(7, context.InstanceDataBuffer, 0, instanceDataSize);
+                                    allocation.DescriptorSet->Update();
+                                    binding.Set = allocation.DescriptorSet;
+                                }
+                                else
+                                {
+                                    NORVES_LOG_WARNING("ShadowMapPass",
+                                        "点光源の影のUBOが足りないため、この面の頂点アニメ材質の描画を省きます");
+                                }
+                                animatedFaceSets.push_back(binding);
+                            }
+                            drawCommand.DescriptorSet = animatedFaceSets[bindingIndex].Set;
+                            if (!drawCommand.DescriptorSet)
+                            {
+                                continue;
+                            }
+                        }
                         else
                         {
                             if (!sharedFaceSet)
@@ -2515,6 +2879,99 @@ namespace NorvesLib::Core::Rendering
 #endif
                     }
 
+                    // 点光源へ描く印のある束だけを、光源とこの面にかかる場合に描く。
+                    if (bPointExtensionCasters)
+                    {
+                        const auto& draws = extensionCasters->GetDraws();
+                        const auto& instances = extensionCasters->GetInstances();
+                        const auto& materials = m_FramePlan->ExtensionMaterials;
+                        bool bOutOfConstants = false;
+                        for (size_t drawIndex = 0; drawIndex < draws.size(); ++drawIndex)
+                        {
+                            const RenderExtensionShadowCasterDraw& draw = draws[drawIndex];
+                            if (!draw.bPointLightShadow)
+                            {
+                                continue;
+                            }
+                            const ShadowAlphaClipMaterial& material = materials[drawIndex];
+                            for (uint32_t instanceIndex = 0; instanceIndex < draw.InstanceCount; ++instanceIndex)
+                            {
+                                const RenderExtensionShadowCasterInstance& instance =
+                                    instances[draw.FirstInstance + instanceIndex];
+                                if (!PointShadowCasterIntersectsLight(instance.WorldSphere, *light) ||
+                                    !PointShadowFaceMayContainSphere(*light, faceIndex, instance.WorldSphere))
+                                {
+                                    continue;
+                                }
+                                if (!context.InstanceDataBuffer || instanceDataSize == 0)
+                                {
+#if NORVES_ENABLE_LOGGING
+                                    ++extensionOmittedCount;
+#endif
+                                    continue;
+                                }
+                                bool bAlphaClip = false;
+                                auto allocation = AllocateExtensionShadowUniform(context, material,
+                                    m_PointShadowAlphaClipPipeline, m_AlphaClipSampler,
+                                    m_PointShadowAlphaClipUniformAllocator, m_PointShadowUniformAllocator, bAlphaClip);
+                                if (!allocation.IsValid())
+                                {
+                                    // この面の残りを数えて、拡張の描画を抜ける。
+#if NORVES_ENABLE_LOGGING
+                                    extensionOmittedCount += CountRemainingExtensionCasters(
+                                        *extensionCasters, drawIndex, instanceIndex,
+                                        [&](const RenderExtensionShadowCasterDraw& remainingDraw,
+                                            const RenderExtensionShadowCasterInstance& remaining)
+                                        {
+                                            return remainingDraw.bPointLightShadow &&
+                                                PointShadowCasterIntersectsLight(remaining.WorldSphere, *light) &&
+                                                PointShadowFaceMayContainSphere(*light, faceIndex, remaining.WorldSphere);
+                                        });
+#endif
+                                    bOutOfConstants = true;
+                                    break;
+                                }
+
+                                PointShadowFaceUBO ubo = faceData;
+                                std::memcpy(ubo.Base.world, instance.World, sizeof(ubo.Base.world));
+                                ubo.Base.worldSource[0] = 1.0f;
+                                if (bAlphaClip)
+                                {
+                                    PointShadowAlphaClipUBO alphaUbo = {};
+                                    alphaUbo.Base = ubo.Base;
+                                    alphaUbo.alphaClip[0] = material.Cutoff;
+                                    alphaUbo.alphaClip[1] = material.Coverage;
+                                    alphaUbo.alphaClip[2] = material.bSparse ? 1.0f : 0.0f;
+                                    allocation.Write(&alphaUbo, sizeof(alphaUbo));
+                                }
+                                else
+                                {
+                                    allocation.Write(&ubo, sizeof(ubo));
+                                }
+                                BindExtensionShadowResources(allocation, context, instanceDataSize,
+                                                             material, m_AlphaClipSampler, bAlphaClip);
+                                faceCommands->push_back(MakeExtensionShadowDrawCommand(
+                                    draw, bAlphaClip ? m_PointShadowAlphaClipPipeline : m_PointShadowPipeline,
+                                    allocation.DescriptorSet));
+#if NORVES_ENABLE_LOGGING
+                                ++extensionDrawCount;
+                                if (bAlphaClip)
+                                {
+                                    ++extensionMaskedCount;
+                                }
+                                else if (material.bMasked)
+                                {
+                                    ++extensionFallbackCount;
+                                }
+#endif
+                            }
+                            if (bOutOfConstants)
+                            {
+                                break;
+                            }
+                        }
+                    }
+
                     Container::String faceLevels;
                     for (const MegaShadowCaster& megaCaster : megaCasters)
                     {
@@ -2534,6 +2991,12 @@ namespace NorvesLib::Core::Rendering
                                                           static_cast<float>(m_Settings.PointShadowResolution)
                                                     : 0.0f;
                         const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, texelSize);
+                        if (m_FramePlan
+                                ? !AdmitMegaShadowCasterDraw(megaCaster, range, budget, m_FramePlan->MegaBudgetWarnings)
+                                : ExceedsShadowCasterTriangleBudget(range.IndexCount / 3u, budget))
+                        {
+                            continue;
+                        }
                         auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
                         if (!allocation.UniformBuffer)
                         {
@@ -2542,8 +3005,8 @@ namespace NorvesLib::Core::Rendering
                             break;
                         }
                         PointShadowFaceUBO megaFaceData = faceData;
-                        std::memcpy(megaFaceData.world, megaCaster.World, sizeof(megaFaceData.world));
-                        megaFaceData.worldSource[0] = 1.0f;
+                        std::memcpy(megaFaceData.Base.world, megaCaster.World, sizeof(megaFaceData.Base.world));
+                        megaFaceData.Base.worldSource[0] = 1.0f;
                         allocation.Write(&megaFaceData, sizeof(megaFaceData));
                         // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                         allocation.DescriptorSet->BindStorageBuffer(7,
@@ -2581,6 +3044,7 @@ namespace NorvesLib::Core::Rendering
 
 #if NORVES_ENABLE_LOGGING
         logAlphaClipCounts();
+        logExtensionCounts();
 #endif
         if (pointMegaLevels != m_LoggedPointMegaLevels)
         {

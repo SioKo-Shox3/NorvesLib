@@ -145,6 +145,7 @@ layout(location = 2) out vec4 outSpecularReflectance;
 // PBR関連関数
 // ========================================
 
+#include "Common/DepthConvention.glsl"
 #include "Common/GBufferEncoding.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/ShadingModels.glsl"
@@ -288,6 +289,7 @@ vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
 // （深度 = 遠方面 ÷ (遠方面 - 近方面) × (1 - 近方面 ÷ 前方への距離) なので、前方への距離は 1 ÷ ((1 - 深度) + 深度 × 近方面 ÷ 遠方面) に比例する）。絶対座標の逆ViewProjectionで戻すと、数 km 先では
 // 1 - 深度が小さく行列の丸めが桁落ちで m 単位の位置のずれになり、そのずれが TAA のジッタのたびに画面全体でまとまって変わる
 // （太陽の影の判定が揺れ、遠景に大きな影の斑が出る）。1 - 深度は float で丸めなく求まる
+// 深度から距離を求める式の置き場は Common/DepthConvention.glsl。
 vec3 ReconstructWorldPosition(vec2 uv, float depth)
 {
     // UV→NDC座標変換 (VulkanのY軸反転を考慮)
@@ -295,10 +297,10 @@ vec3 ReconstructWorldPosition(vec2 uv, float depth)
     if (params.depthLinearization.x > 0.0)
     {
         vec4 ray4 = params.invViewProjectionCameraRelative * vec4(clipPos.xy, 0.5, 1.0);
-        float denominator = (1.0 - depth) + depth * params.depthLinearization.y;
+        float denominator = LinearDepthDenominator(depth, params.depthLinearization.y);
         if (ray4.w != 0.0 && denominator > 0.0)
         {
-            float rayDenominator = 0.5 + 0.5 * params.depthLinearization.y;
+            float rayDenominator = LinearDepthDenominator(0.5, params.depthLinearization.y);
             return params.cameraPosition.xyz + (ray4.xyz / ray4.w) * (rayDenominator / denominator);
         }
     }
@@ -407,7 +409,7 @@ float InterleavedGradientNoise(vec2 pixel)
 vec3 ReconstructGeometricNormal(ivec2 texel, ivec2 depthSize, vec3 fallback)
 {
     float centerDepth = texelFetch(gbufferDepth, texel, 0).r;
-    if (centerDepth >= 1.0)
+    if (IsBackgroundDepth(centerDepth))
     {
         return fallback;
     }
@@ -425,7 +427,7 @@ vec3 ReconstructGeometricNormal(ivec2 texel, ivec2 depthSize, vec3 fallback)
                 continue;
             }
             float neighborDepth = texelFetch(gbufferDepth, neighbor, 0).r;
-            if (neighborDepth >= 1.0)
+            if (IsBackgroundDepth(neighborDepth))
             {
                 continue;
             }
@@ -514,7 +516,7 @@ float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, fl
         }
         ivec2 texel = clamp(ivec2(sampleUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
         float sceneDepth = texelFetch(gbufferDepth, texel, 0).r;
-        if (sceneDepth >= 1.0)
+        if (IsBackgroundDepth(sceneDepth))
         {
             continue; // 空は遮らない
         }
@@ -1105,8 +1107,8 @@ void main()
         }
         if (params.bIBLEnabled != 0u)
         {
-            // スクリーンUVからワールド方向を復元（far planeのdepth=1.0を使用）
-            vec4 clipPos = vec4(fragUV * 2.0 - 1.0, 1.0, 1.0);
+            // スクリーンUVからワールド方向を復元（遠方面（深度の規約のクリア値）の点を使う）
+            vec4 clipPos = vec4(fragUV * 2.0 - 1.0, kDepthClear, 1.0);
             vec4 worldPos4 = params.invViewProjection * clipPos;
             vec3 worldPos = worldPos4.xyz / worldPos4.w;
             vec3 rayDir = normalize(worldPos - params.cameraPosition.xyz);

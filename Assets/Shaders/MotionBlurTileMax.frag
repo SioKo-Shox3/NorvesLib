@@ -1,5 +1,8 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+#include "Common/VelocityEncoding.glsl"
+
 // 動きぼけのtileごとの最も長い動き。tileの全画素のシャッターの間の動き（画素）を求め、長さが最大のものを
 // xyへ、その長さをzへ書く。
 
@@ -19,16 +22,21 @@ layout(std140, set = 0, binding = 4) uniform MotionBlurParams
     vec4 tileInfo;                   // x: tileの一辺、yz: tileの数
 } params;
 
-// 画素のシャッターの間の動き（画素）。空（深度1）は無限遠の方向を前のカメラへ投影して求める。
+// 画素のシャッターの間の動き（画素）。空（クリア値の深度）は無限遠の方向を前のカメラへ投影して求める。
 vec2 ShutterMotion(ivec2 texel)
 {
     vec2 size = params.imageSizeAndShutter.xy;
     vec2 velocity = texelFetch(velocityTexture, texel, 0).xy;
+    // 履歴なしの印の画素は動き 0 として扱い、上限まで引き伸ばさない。
+    if (VelocityIsNoHistory(velocity))
+    {
+        return vec2(0.0);
+    }
     float depth = texelFetch(sceneDepthTexture, texel, 0).r;
-    if (depth >= 1.0 && params.cameraPositionAndHistory.w > 0.5)
+    if (IsBackgroundDepth(depth) && params.cameraPositionAndHistory.w > 0.5)
     {
         vec2 ndc = (vec2(texel) + 0.5) / size * 2.0 - 1.0;
-        vec4 world = params.inverseViewProjection * vec4(ndc, 1.0, 1.0);
+        vec4 world = params.inverseViewProjection * vec4(ndc, kDepthClear, 1.0);
         velocity = vec2(0.0);
         if (abs(world.w) > 1.0e-12)
         {

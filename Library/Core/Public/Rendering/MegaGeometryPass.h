@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/FrameReadback.h"
+#include "Rendering/FrameUploadArena.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
@@ -786,7 +787,8 @@ namespace NorvesLib::Core::Rendering
         bool CreateDrawPipeline(ViewRenderContext &context,
                                 bool bRequireDrawPipeline = true,
                                 bool bUseRenderGraphAttachmentStates = false);
-        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::CullMode cullMode, RHI::PipelinePtr &outPipeline);
+        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::CullMode cullMode,
+                                       RHI::PipelinePtr &outPipeline, const RHI::ShaderPtr &fragmentShader);
         RHI::PipelinePtr SelectDrawPipeline(DebugViewMode mode) const;
 
         /**
@@ -935,6 +937,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t InFlightIndex = 0;
             FrameSlot *Slot = nullptr;
             float TerrainWetness = 0.0f; // 同じフレームの写しから読んだ地形の濡れ度
+            FrameUploadAllocation EnvironmentConstants; // 同じフレームの記録へ渡す環境の定数
         };
 
         /**
@@ -1286,10 +1289,14 @@ namespace NorvesLib::Core::Rendering
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;
         RHI::PipelinePtr m_DrawTwoSidedPipeline;
+        RHI::PipelinePtr m_DrawClearancePipeline;
+        RHI::PipelinePtr m_DrawClearanceTwoSidedPipeline;
         RHI::PipelinePtr m_DrawWireframePipeline;
         bool m_bTwoSidedPipelineWarningLogged = false;
+        bool m_bClearancePipelineWarningLogged = false;
         RHI::ShaderPtr m_DrawVertexShader;
         RHI::ShaderPtr m_DrawFragmentShader;
+        RHI::ShaderPtr m_DrawClearanceFragmentShader;
 
         // GBuffer描画用レンダーパス・フレームバッファ（GBufferPassから共有）
         RHI::RenderPassPtr m_GBufferRenderPass;
@@ -1416,6 +1423,7 @@ namespace NorvesLib::Core::Rendering
 
         // デフォルトPBRテクスチャ（マテリアル未設定時のフォールバック）
         Container::TUniquePtr<ConstantMaterialTextureCache> m_ConstantMaterialTextures;
+        RHI::BufferPtr m_DefaultEnvironmentBuffer; // 環境を借りられないときの不変な既定値
         RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 — Albedo/AO/Roughnessデフォルト
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト

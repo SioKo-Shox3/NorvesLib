@@ -2,6 +2,7 @@
 #include "Text/JsonDocument.h"
 #include "Resource/MaterialImportDocument.h"
 #include "Resource/MaterialImportSettingsJson.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 #include <utility>
 #include <cmath>
 #include <cstring>
@@ -227,6 +228,117 @@ namespace NorvesLib::Core::AssetImport
             result = ReadBool(mesh.FindMember("flipU"), settings.bFlipU);
             return result == SettingsResult::Success ? ReadBool(mesh.FindMember("flipV"), settings.bFlipV) : result;
         }
+        SettingsResult ReadClip(const JsonValue& clip, ClipImportSettings& out)
+        {
+            ClipImportSettings candidate;
+            if (!clip.IsValid())
+            {
+                out = std::move(candidate);
+                return SettingsResult::Success;
+            }
+            constexpr const char* fields[] = {"root_joint", "loop", "loop_threshold", "authored_fps",
+                "source_fps", "time_scale", "analysis"};
+            auto result = CheckFields(clip, fields);
+            if (result != SettingsResult::Success)
+            {
+                return result;
+            }
+            const auto rootJoint = clip.FindMember("root_joint");
+            if (rootJoint.IsValid())
+            {
+                if (!rootJoint.IsString())
+                {
+                    return SettingsResult::InvalidType;
+                }
+                const auto& text = rootJoint.AsString();
+                const Container::Span<const Container::String::value_type> source{text.data(), text.size()};
+                const auto measured = Asset::MeasureSkeletalNameEncoding(2, source);
+                if (!measured.Succeeded() || measured.ByteCount == 0 || measured.ByteCount > 4096)
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                Container::VariableArray<uint8_t> bytes(measured.ByteCount);
+                if (!Asset::EncodeSkeletalWireName(2, source, {bytes.data(), bytes.size()}).Succeeded())
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                candidate.RootJoint = Container::AnsiString(
+                    Container::AnsiStringView(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+                candidate.Keys |= ClipKeyRootJoint;
+            }
+            const auto loop = clip.FindMember("loop");
+            if (loop.IsValid())
+            {
+                if (loop.IsBoolean())
+                {
+                    candidate.Loop = loop.AsBool() ? ClipLoopSetting::Loop : ClipLoopSetting::Once;
+                }
+                else if (loop.IsString())
+                {
+                    constexpr const char* modes[] = {"auto", "true", "false"};
+                    result = ReadEnum(loop, modes, candidate.Loop);
+                    if (result != SettingsResult::Success)
+                    {
+                        return result;
+                    }
+                }
+                else
+                {
+                    return SettingsResult::InvalidType;
+                }
+                candidate.Keys |= ClipKeyLoop;
+            }
+            struct NumberField
+            {
+                const char* Name;
+                uint32_t Key;
+                double* Value;
+                bool bAllowZero;
+            };
+            const NumberField numbers[] = {
+                {"loop_threshold", ClipKeyLoopThreshold, &candidate.LoopThreshold, true},
+                {"authored_fps", ClipKeyAuthoredFps, &candidate.AuthoredFps, false},
+                {"source_fps", ClipKeySourceFps, &candidate.SourceFps, false},
+                {"time_scale", ClipKeyTimeScale, &candidate.TimeScale, false},
+            };
+            for (const auto& number : numbers)
+            {
+                const auto value = clip.FindMember(number.Name);
+                if (!value.IsValid())
+                {
+                    continue;
+                }
+                result = ReadNumber(value, *number.Value);
+                if (result != SettingsResult::Success)
+                {
+                    return result;
+                }
+                if (number.bAllowZero ? *number.Value < 0 : *number.Value <= 0)
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                candidate.Keys |= number.Key;
+            }
+            const auto analysis = clip.FindMember("analysis");
+            if (analysis.IsValid())
+            {
+                result = ReadBool(analysis, candidate.bAnalysis);
+                if (result != SettingsResult::Success)
+                {
+                    return result;
+                }
+                candidate.Keys |= ClipKeyAnalysis;
+            }
+            constexpr uint32_t fpsKeys = ClipKeyAuthoredFps | ClipKeySourceFps;
+            const uint32_t specifiedFps = candidate.Keys & fpsKeys;
+            if ((specifiedFps != 0 && specifiedFps != fpsKeys) ||
+                (!candidate.bAnalysis && candidate.Keys != ClipKeyAnalysis))
+            {
+                return SettingsResult::InvalidValue;
+            }
+            out = std::move(candidate);
+            return SettingsResult::Success;
+        }
         SettingsResult CheckMeta(const JsonValue& meta)
         {
             if (!meta.IsValid())
@@ -272,8 +384,8 @@ namespace NorvesLib::Core::AssetImport
             return SettingsResult::InvalidRoot;
         }
         constexpr const char* fields[] = {"version", "meta", "units", "axes", "origin", "mesh",
-            "repair", "lod", "material", "collision", "clip", "materials"};
-        auto result = CheckFields(root, fields, allowMaterial ? 12 : 11);
+            "repair", "lod", "material", "collision", "clip", "audio", "materials"};
+        auto result = CheckFields(root, fields, allowMaterial ? 13 : 12);
         if (result != SettingsResult::Success)
         {
             return result;
@@ -309,9 +421,9 @@ namespace NorvesLib::Core::AssetImport
         {
             return result;
         }
-        for (const char* name : {"repair", "lod", "material", "collision", "clip"})
+        for (const char* name : {"repair", "lod", "material", "collision", "clip", "audio"})
         {
-            if (allowMaterial && std::strcmp(name, "material") == 0)
+            if (allowMaterial && (std::strcmp(name, "material") == 0 || std::strcmp(name, "clip") == 0))
             {
                 continue;
             }
@@ -336,6 +448,11 @@ namespace NorvesLib::Core::AssetImport
     {
         ImportSettingsDocument candidate;
         auto status = ParseGeometrySettings(root, candidate.Geometry, true);
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        status = ReadClip(root.FindMember("clip"), candidate.Clip);
         if (status != SettingsResult::Success)
         {
             return status;

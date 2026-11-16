@@ -46,6 +46,9 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr FallbackHiZ;
         RHI::SamplerPtr Sampler;
         uint32_t TileCount = 0;
+        // 両方を指定したときだけ使い、どちらかが null なら両方とも中立画像に置き換える。
+        RHI::TexturePtr DrynessNear;
+        RHI::TexturePtr DrynessFar;
     };
 
     /** @brief ブレードの生成と、LOD ごとの間接引数を記録する GPU の補助。 */
@@ -63,6 +66,7 @@ namespace NorvesLib::Core::Rendering
          * @brief 引数の初期化と生成を記録する。TileCount が 0 でも初期化する。
          * 定数の HZB フラグと HiZ の有無は呼び出し側で一致させ、HiZ と FallbackHiZ は
          * いずれも束縛するとき ShaderResource の状態にしておく。
+         * 枯れ度の近傍・遠景の画像も、呼び出し側で ShaderResource の状態にしておく。
          * 読み戻しを行う側は使用後に記録を ShaderResource、引数を IndirectArgument に戻す。
          */
         bool Record(RHI::ICommandList* commandList, const GrassGenerateRecordInputs& inputs);
@@ -82,6 +86,8 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
         RHI::BufferPtr m_RecordBuffer;
         RHI::BufferPtr m_ArgsBuffer;
+        RHI::TexturePtr m_NeutralDryness;
+        RHI::SamplerPtr m_DrynessSampler;
         uint32_t m_RecordBytes = 0;
         uint32_t m_LodBase[kGrassLodCount] = {};
         uint32_t m_LodCapacity[kGrassLodCount] = {};
@@ -109,6 +115,8 @@ namespace NorvesLib::Core::Rendering
         RHI::ScissorRect Scissor;
         RHI::DescriptorSetPtr DescriptorSets[kGrassLodCount];
         GrassGenerateBufferRange Constants;
+        // 描画定数と同じフレームから借りた環境の UBO。
+        GrassGenerateBufferRange EnvironmentConstants;
         GrassGenerateBufferRange Species;
         RHI::BufferPtr RecordBuffer;
         uint32_t LodBase[kGrassLodCount] = {};
@@ -132,9 +140,10 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 3 つの LOD の間接描画を記録する。記述子セットは互いに異なるものを渡す。
-         * 各 LodCapacity は正数、LodBase * 16 はデバイスのストレージの整列を満たすこと。
+         * 各 LodCapacity は正数、LodBase * sizeof(GrassBladeRecord)（20 バイト）はデバイスのストレージの整列を満たすこと。
          * 記録バッファは ShaderResource で渡し、戻ったときも ShaderResource である。
          * 引数は IndirectArgument、LayerA と世界フィールドの画像は ShaderResource とする。
+         * LayerA は描画中だけ頂点段へ公開し、終了時に ShaderResource の同期状態へ戻す。
          * 描き先は RenderTarget / DepthWrite で渡し、終了時に ShaderResource へ移る。
          * 分割数は Initialize の settings と生成定数で一致させる。
          */
@@ -189,6 +198,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_WorldFieldCurrentHandle;
         RGResourceHandle m_WorldFieldPreviousHandle;
         WorldFieldSampleConstants m_WorldFieldConstants;
+        RGResourceHandle m_DrynessNearHandle;
+        RGResourceHandle m_DrynessFarHandle;
+        WorldFieldDrynessSampleConstants m_DrynessConstants;
         bool m_bHasGrass = false;
 #if NORVES_BUILD_DEVELOPMENT
         uint32_t m_LastLoggedTileCount = UINT32_MAX;

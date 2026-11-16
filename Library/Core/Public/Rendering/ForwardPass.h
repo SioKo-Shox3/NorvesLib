@@ -180,6 +180,7 @@ namespace NorvesLib::Core::Rendering
         // 透明フォワード用PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
         DynamicUniformAllocator m_WorldBoardUniformAllocator;
+        RHI::BufferPtr m_DefaultEnvironmentBuffer;
 
         // マテリアル未設定時のフォールバック
         RHI::TexturePtr m_DefaultWhiteTexture;

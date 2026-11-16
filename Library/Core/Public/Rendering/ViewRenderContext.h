@@ -4,6 +4,7 @@
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
 #include "Rendering/DebugDrawQueue.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
@@ -1222,6 +1223,13 @@ namespace NorvesLib::Core::Rendering
         bool bTemporalAAApplied = false;
 
         /**
+         * @brief TAA が掛かったフレームのジッタの番号を位相の周期で割った余り。
+         *
+         * 切り抜きの Hash の位相に使う。TAA が掛からないビューでは 0。
+         */
+        uint32_t TemporalAAJitterIndex = 0;
+
+        /**
          * @brief RenderThread が記録したフレームごとに 1 ずつ増える通し番号（同じフレームの全ビューポートで同じ値）
          *
          * 1 フレームに同じパスが何回も Execute される（複数のビューポート）ので、UBO・ディスクリプタセットなどの
@@ -1250,6 +1258,16 @@ namespace NorvesLib::Core::Rendering
          * nullptr は RenderingCoordinator を通さない手組みの文脈。
          */
         FrameResourceLane* FrameResources = nullptr;
+
+        /** @brief FramePacket の環境から詰めた、このフレームの環境 UBO の中身。 */
+        GPUEnvironmentParams EnvironmentGpu = MakeDefaultEnvironmentGpuParams();
+        /**
+         * @brief フレームの持ち主から 1 回だけ借りた環境 UBO。パスは AcquireEnvironmentConstants で引く。
+         *
+         * Parallel の区間へ文脈を写しても同じ切れ端を使い、同じフレームの間は有効。
+         */
+        FrameUploadAllocation EnvironmentConstants;
+
         /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
         uint64_t ResolveRenderFrameSerial() const
         {

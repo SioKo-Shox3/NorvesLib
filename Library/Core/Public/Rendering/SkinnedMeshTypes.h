@@ -15,6 +15,9 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    /** @brief 不透明度が 1 未満のスキンを残像とし、ハッシュによる切り抜きで描画して影を落とさない */
+    inline constexpr bool IsSkinnedGhostOpacity(float opacity) { return opacity < 1.0f; }
+
     struct SkinnedMeshHandle
     {
         uint64_t Id = 0;
@@ -139,7 +142,8 @@ namespace NorvesLib::Core::Rendering
     {
         None,
         GBuffer,
-        Shadow
+        Shadow,
+        Overlay // SceneDepth の上に重ねる描画（主人公のシルエット）。
     };
 
     struct SkinnedMeshPreparedDraw
@@ -186,6 +190,7 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshHandle MeshHandle;
         MaterialHandle Material;
         float ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+        float Opacity = 1.0f; // 0〜1。1 未満は残像として描き、影を落とさない
         // componentから値コピーしたslot材質。未設定はslot0を解決済み。
         MaterialHandle Materials[MAX_MATERIAL_SLOTS]{};
         uint32_t MaterialCount = 0;

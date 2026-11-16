@@ -6,7 +6,7 @@
 
 - GR77のGLB解析は既存JsonDocumentとstbを活用し、コンテナ・バッファ・埋め込み画像の不足処理をCoreの共有部品へ追加する。新しい外部glTF parserは導入しない
 - GR78の設定はソース隣の<ソース名>.import.jsonを一次の置き場にし、cookとloose直接読込で同じ変換を使う。欠如時は恒等で既存出力を維持する
-- BVH/FBXの採否、形式のStage A/B、材質既定、制約緩和等は別の未決事項。今回の2選定から包括承認を推定しない
+- BVHの採否、形式のStage A/B、材質既定、制約緩和等は別の未決事項。FBXの直接入力は後述の契約で拒否する。今回の2選定から包括承認を推定しない
 
 ## GR77: コンテナ層
 
@@ -202,6 +202,56 @@ signature一致は画像全体の完全性の証明ではなく、最後のdecod
 
 コミットc364f4761時点の記録では、純粋判定を通常・最適化・ASan/UBSan（LeakSanitizer除外）で実行し、コンパイルも確認した。
 cookerとlooseの不一致・出力保持はWindowsのDebugで静的glTF buffer・loose source・GLB cookの検証を実行し合格した（2026-11-02、GR77: native受入れ）。Linuxのnative実行はWindows.h依存で未確認。
+
+## GR77: mesh node の変換の焼き込み
+
+静的モデルの cook と loose は `GltfNodeTransform`（`Library/Core/Private/Resource/GltfNodeTransform.h/.cpp`）を共有し、mesh 0 を参照する node と祖先の変換を頂点へ焼き込む。単一 primitive は NVMESH v0・v1・lodgraph が対象で、複数 primitive は `nvmesh.v1.mesh3d.pnt.u32.clustered` が結合した全頂点・添字に適用する。現実装の lodgraph は複数 primitive を受け入れない。loose は `GLTFAnalyzer` の静的経路が対象で、最初の mesh の最初の primitive を扱う。
+
+処理の順序は `ExtractMesh`（cook）または `ExtractMeshData`（loose）による頂点の取り出し → node の変換の焼き込み → GR78 の `.import.json` による `AssetImport::ApplyImportTransform` の変換である。複数 primitive は抽出・結合の後に焼き込む。`--inspect` は node の焼き込みと取り込み設定の変換を適用せず、mesh の局所の位置を `position_space=mesh_local_before_import` として出す。
+
+### 既定の scene と対象 node
+
+既定の scene は `scene` が指定する `scenes` の要素、未指定なら `scenes[0]` を使う。`scene` と `scenes` のどちらも無ければ、親の無い node 全部を根にする。空または不正な `scenes`、範囲外の `scene` は `node_invalid` となる。
+
+根から子をたどり、mesh 0 を参照する node を 1 つ求める。到達しない node は参照数に数えない。該当 node が無い場合は恒等として扱い、複数なら拒否する。親子構造の検証は到達しない node も対象で、不正な子の参照、複数の親、親の鎖の循環を拒否する。scene の根に親がある場合も拒否する。
+
+### 変換の積と頂点属性
+
+各 node の局所変換は列優先の `matrix`、または T×R×S で求める。`matrix` と TRS の同時指定は拒否する。TRS の既定値は平行移動 0、回転の quaternion `(0,0,0,1)`、拡大率 1 で、指定された quaternion は正規化する。根から mesh node へ順に、親を左に掛ける積を `double` で求める。
+
+位置はこの積で変換する。法線は左上 3×3 の逆転置で変換して正規化し、長さ 0 の法線は 0 のまま保つ。左上 3×3 が恒等、すなわち平行移動だけなら法線の値を触らない。行列式が負なら各三角形の 2 番目と 3 番目の添字を交換し、巡回を反転して外向きを保つ。静的の頂点属性は位置・法線・UV だけで接線を持たず、UV は触らない。
+
+### 拒否の理由
+
+`NodeTransformResultName` は成功時に `success`、拒否時に次の名前を返す。
+
+| 名前 | 拒否の理由 |
+|---|---|
+| `mesh_node_multiple` | 既定の scene から到達できる mesh 0 の参照 node が複数。instancing は G12 の配置で扱う |
+| `mesh_node_skinned` | 対象の mesh node に `skin` がある |
+| `node_transform_non_finite` | 変換の値・積の計算途中・行列式が非有限 |
+| `node_transform_singular` | 左上 3×3 の行列式が 0、または逆転置が非有限 |
+| `node_invalid` | node・scene・変換の形式や参照が不正。親子構造の不正や長さ 0 の quaternion も含む |
+| `baked_vertex_non_finite` | 焼き込み後の位置を有限な `float` で表せない、入力法線が非有限、または変換後の非零法線を正規化できない |
+| `vertex_layout_invalid` | 頂点の配置・領域または三角形の添字が不正 |
+
+cook の error は `glTF node transform rejected: <名前>` で、loose もログに同じ形を出して拒否する。焼き込みは全頂点の結果を検証してから書き換え、失敗時には頂点・添字を変更しない。
+
+NVMESH v0 に複数 primitive が来た場合は、次の形で材質名を並べて拒否する。
+
+```text
+NVMESH v0 requires exactly one glTF primitive: materials="<material0>","<material1>"（材質の違う primitive は nvmesh.v1.mesh3d.pnt.u32.clustered で焼く）
+```
+
+材質名が無い場合は `#<materialIndex>`、材質の指定が無い場合は `(none)` を使う。
+
+node が無い場合や既定の TRS など、積が恒等なら頂点・添字を書き換えない。同じ入力・取り込み設定・出力先で、node の焼き込み追加前と cooked の出力および manifest のバイト一致を保つ。node による非恒等の変換を持つ入力は出力が変わるため、model の cooker の版 `CookerRevisions::Model` は 4 とする。
+
+### FBX の拒否
+
+拡張子 `.fbx`（大文字小文字を問わない）、または先頭が `Kaydara FBX Binary` / `; FBX` の入力は、model・skeletal・animation の cook、`--inspect`、`--rig-split` で拒否する。拡張子の判定では、ファイル名そのものが `.fbx` の隠しファイルは除く。skeletal の cook は `model` の骨格形式としてこの判定を通る。
+
+理由は `unsupported_source_format: fbx` で、診断全文は `unsupported_source_format: fbx（FBX は直接取り込まない。Blender で glTF/GLB に書き出してから渡す）` となる。FBX は Blender で glTF/GLB に書き出してから渡す。FBX の読み手は `Library/ThirdParty` に入れない。
 
 ## GR77: native受入れ
 

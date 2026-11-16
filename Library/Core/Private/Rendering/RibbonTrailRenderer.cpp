@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RibbonTrailRenderer.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/ShaderManager.h"
 #include "RHI/ICommandList.h"
@@ -126,7 +127,7 @@ namespace NorvesLib::Core::Rendering
         desc.rasterState.lineWidth = 1.0f;
         desc.depthStencilState.depthTestEnable = true;
         desc.depthStencilState.depthWriteEnable = false;
-        desc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        desc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
         desc.renderPass = renderPass;
         desc.descriptorSetLayouts.push_back(descriptorDesc);
 

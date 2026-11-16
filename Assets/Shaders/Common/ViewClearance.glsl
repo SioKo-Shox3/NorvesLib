@@ -1,4 +1,4 @@
-﻿// 草と株の切り抜きに共通する配置と計算。
+﻿// 草と株の切り抜き、遮蔽物のディザに共通する配置と計算。
 #ifndef NORVES_VIEW_CLEARANCE_GLSL
 #define NORVES_VIEW_CLEARANCE_GLSL
 
@@ -104,6 +104,34 @@ bool ViewClearanceKeep(ViewClearanceData c, vec3 p, float u, float g)
         return true;
     }
     return !(g < c.Control.x);
+}
+
+// 遮蔽物を残す割合。無効なら 1 を返す。
+float ViewClearanceFade(ViewClearanceData c, vec3 p)
+{
+    return ViewClearanceVisibility(c, p);
+}
+
+float ViewClearanceInterleavedGradientNoise(vec2 pixel, uint phase)
+{
+    // アルファの Hash と相関しないよう、画素の軸を入れ替え、ずらしと位相の掛け方を変える。
+    vec2 p = pixel.yx + vec2(17.0, 43.0) + vec2(3.175, 7.813) * float(phase & 63u);
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
+// pixel には floor(gl_FragCoord.xy) を渡す。
+// Control.z には描く側がフレーム番号の下位 6 ビットを入れる（草・株は 0）。
+bool ViewClearanceShouldDiscard(ViewClearanceData c, vec3 worldPos, vec2 pixel)
+{
+    if (!ViewClearanceIsActive(c))
+    {
+        return false;
+    }
+    float fade = ViewClearanceFade(c, worldPos);
+    uint phase = uint(c.Control.z + 0.5) & 63u;
+    float threshold = ViewClearanceInterleavedGradientNoise(pixel, phase);
+    // しきい値は 0 以上 1 未満。等号を含め、fade が 0 なら必ず抜き、1 なら必ず残す。
+    return fade <= threshold;
 }
 
 #endif

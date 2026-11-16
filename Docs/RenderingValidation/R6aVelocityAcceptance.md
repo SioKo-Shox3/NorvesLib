@@ -16,6 +16,7 @@ R6-a の独立ゲートを受入れ完了とする。通常の遅延不透明 `M
 - カメラを公開しなかったフレームをまたぐ場合は、次フレームで前カメラ履歴を再利用しない。
 - GBuffer に5枚目のカラー出力として `GBuffer.Velocity` / `GBuffer_Velocity` を追加し、フォーマットを `R16G16_FLOAT`、readback用usageを `TransferSrc` とする。既存のAlbedo/Normal/Material/Emissive 4面の値契約は維持する。
 - velocity shader は device clip space を viewport UV へ変換し、`currentUV - previousUV` を出力する。カメラ履歴が初回または無効の場合、velocityはゼロとする。
+- 前フレームが有効で、前のフレームのクリップ座標の w が閾値以下の画素は、通常の velocity の代わりに「履歴なし」の印を書く（値と読み手の扱いは `Docs/Architecture/GpuLayoutRegistry.md` の 13 節）。
 - skinned mesh、MegaGeometry、Forward透明の履歴拡張は本工程の対象外とし、後続工程へ残す。
 
 ## 検証結果

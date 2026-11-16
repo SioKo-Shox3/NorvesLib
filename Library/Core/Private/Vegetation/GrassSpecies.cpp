@@ -91,6 +91,55 @@ namespace NorvesLib::Core::Vegetation
             return true;
         }
 
+        bool ReadDryness(JsonValue object, GrassDrynessResponse& outDryness, Container::String* pOutError)
+        {
+            if (!object.HasMember("dryness"))
+            {
+                return true;
+            }
+            const JsonValue dryness = object.FindMember("dryness");
+            if (!dryness.IsObject())
+            {
+                return Fail(pOutError, "dryness はオブジェクトで指定してください");
+            }
+            if (!ReadColor(dryness, "color", outDryness.Color, pOutError))
+            {
+                return false;
+            }
+
+            struct NumberField
+            {
+                const char* Name;
+                float GrassDrynessResponse::* Member;
+            };
+            const NumberField fields[] = {
+                {"colorWeight", &GrassDrynessResponse::ColorWeight},
+                {"densityScale", &GrassDrynessResponse::DensityScale},
+                {"heightScale", &GrassDrynessResponse::HeightScale},
+                {"bendAdd", &GrassDrynessResponse::BendAdd},
+                {"farColorWeight", &GrassDrynessResponse::FarColorWeight},
+                {"farHeightFlatten", &GrassDrynessResponse::FarHeightFlatten}
+            };
+            for (const NumberField& field : fields)
+            {
+                if (!dryness.HasMember(field.Name))
+                {
+                    continue;
+                }
+                // float に丸める前の値で範囲を調べ、境界の外の値を受け入れない。
+                if (!ReadNumber(dryness, field.Name, outDryness.*(field.Member), nullptr) ||
+                    dryness.FindMember(field.Name).AsNumber() < 0.0 ||
+                    dryness.FindMember(field.Name).AsNumber() > 1.0)
+                {
+                    Container::String message = "dryness.";
+                    message += field.Name;
+                    message += " は有限かつ 0 以上 1 以下の数値で指定してください";
+                    return Fail(pOutError, message.c_str());
+                }
+            }
+            return true;
+        }
+
         bool ReadSpecies(JsonValue object, GrassSpecies& outSpecies, Container::String* pOutError)
         {
             if (!object.IsObject())
@@ -169,7 +218,7 @@ namespace NorvesLib::Core::Vegetation
                     }
                 }
             }
-            return true;
+            return ReadDryness(object, outSpecies.Dryness, pOutError);
         }
     }
 
@@ -228,10 +277,16 @@ namespace NorvesLib::Core::Vegetation
         {
             return Fail(pOutError, "species は 1 個以上 64 個以下の配列で指定してください");
         }
+        GrassDrynessResponse defaultDryness;
+        if (!ReadDryness(root, defaultDryness, pOutError))
+        {
+            return false;
+        }
         GrassSpeciesTable parsedTable;
         for (size_t index = 0; index < species.GetArraySize(); ++index)
         {
             GrassSpecies entry;
+            entry.Dryness = defaultDryness;
             if (!ReadSpecies(species.GetArrayElement(index), entry, pOutError) || !parsedTable.Add(entry))
             {
                 return false;

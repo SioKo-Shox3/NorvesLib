@@ -21,7 +21,9 @@
 #include "RHI/ITexture.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/DrawCommand.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
 #include "Rendering/FramePacket.h"
@@ -193,6 +195,7 @@ namespace NorvesLib::Core::Rendering
         {
             uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
             hash = HashRevisionFloatArray(hash, proxy.ShadingParams, 4u);
+            hash = HashRevisionValue(hash, proxy.Opacity);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);
@@ -2477,7 +2480,7 @@ namespace NorvesLib::Core::Rendering
         depthAttachment.format = RHI::Format::D32_FLOAT;
         depthAttachment.isDepthStencil = true;
         depthAttachment.clear = true;
-        depthAttachment.clearDepth = 1.0f;
+        depthAttachment.clearDepth = DepthConvention::ClearDepth();
         depthAttachment.clearStencil = 0;
         depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;
@@ -5828,6 +5831,11 @@ namespace NorvesLib::Core::Rendering
         viewContext.RenderFrameSerial = ++m_RenderFrameSerial;
         viewContext.CompletedRenderFrameSerial = m_CompletedRenderFrameSerial;
         viewContext.FrameResources = frameResources;
+        viewContext.EnvironmentGpu = PackEnvironmentGpuParams(packet->Scene.Environment);
+        if (frameResources && frameResources->IsRecording())
+        {
+            viewContext.EnvironmentConstants = frameResources->AllocateConstants(viewContext.EnvironmentGpu);
+        }
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
@@ -7139,7 +7147,7 @@ namespace NorvesLib::Core::Rendering
         depthAttachment.format = RHI::Format::D32_FLOAT;
         depthAttachment.isDepthStencil = true;
         depthAttachment.clear = true;
-        depthAttachment.clearDepth = 1.0f;
+        depthAttachment.clearDepth = DepthConvention::ClearDepth();
         depthAttachment.clearStencil = 0;
         depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;

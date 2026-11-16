@@ -1,5 +1,7 @@
 ﻿#include "Rendering/GrassPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/GrassBladeMesh.h"
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/FrameResourceOwner.h"
@@ -22,6 +24,8 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        constexpr uint32_t kGrassEnvironmentBinding = 6;
+
         RHI::DescriptorSetDesc MakeGrassDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -41,6 +45,8 @@ namespace NorvesLib::Core::Rendering
             add(5, RHI::ResourceBindType::RWBuffer);
             add(6, RHI::ResourceBindType::RWBuffer);
             add(7, RHI::ResourceBindType::CombinedImageSampler);
+            add(8, RHI::ResourceBindType::CombinedImageSampler);
+            add(9, RHI::ResourceBindType::CombinedImageSampler);
             return desc;
         }
 
@@ -75,6 +81,11 @@ namespace NorvesLib::Core::Rendering
                     RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
                 desc.bindings.push_back(entry);
             }
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = kGrassEnvironmentBinding;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(environmentBinding);
             return desc;
         }
 
@@ -133,7 +144,32 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::TextureDesc neutralDesc;
+        neutralDesc.Width = 1;
+        neutralDesc.Height = 1;
+        neutralDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        neutralDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        neutralDesc.DebugName = "Grass.NeutralDryness";
+        RHI::TexturePtr neutral = device->CreateTexture(neutralDesc);
+        RHI::SamplerDesc samplerDesc;
+        samplerDesc.filterMin = RHI::FilterMode::Linear;
+        samplerDesc.filterMag = RHI::FilterMode::Linear;
+        samplerDesc.filterMip = RHI::FilterMode::Point;
+        samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        RHI::SamplerPtr sampler = device->CreateSampler(samplerDesc);
+        if (!neutral || !sampler)
+        {
+            return false;
+        }
+        // 初期化時の一度の転送で RGBA をすべて 0 にする。
+        const uint32_t zero = 0;
+        neutral->Update(&zero, sizeof(zero), sizeof(zero));
+
         m_Device = device;
+        m_NeutralDryness = neutral;
+        m_DrynessSampler = sampler;
         m_ArgsInitShader = argsShader;
         m_GenerateShader = generateShader;
         m_ArgsInitPipeline = argsPipeline;
@@ -146,6 +182,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_RecordBuffer.reset();
         m_ArgsBuffer.reset();
+        m_NeutralDryness.reset();
+        m_DrynessSampler.reset();
         m_ArgsInitPipeline.reset();
         m_GeneratePipeline.reset();
         m_ArgsInitShader.reset();
@@ -218,6 +256,7 @@ namespace NorvesLib::Core::Rendering
     {
         if (!commandList || !inputs.DescriptorSet || inputs.DescriptorSet->IsExpired() ||
             !m_ArgsInitPipeline || !m_GeneratePipeline || !m_RecordBuffer || !m_ArgsBuffer ||
+            !m_NeutralDryness || !m_DrynessSampler ||
             !HasRange(inputs.Constants, sizeof(GrassGenerateConstants)))
         {
             return false;
@@ -244,6 +283,11 @@ namespace NorvesLib::Core::Rendering
             inputs.DescriptorSet->BindStorageBuffer(5, m_RecordBuffer, 0, m_RecordBytes);
             inputs.DescriptorSet->BindTexture(7, hiZ);
             inputs.DescriptorSet->BindSampler(7, inputs.Sampler);
+            const bool bHasDryness = inputs.DrynessNear && inputs.DrynessFar;
+            inputs.DescriptorSet->BindTexture(8, bHasDryness ? inputs.DrynessNear : m_NeutralDryness);
+            inputs.DescriptorSet->BindSampler(8, m_DrynessSampler);
+            inputs.DescriptorSet->BindTexture(9, bHasDryness ? inputs.DrynessFar : m_NeutralDryness);
+            inputs.DescriptorSet->BindSampler(9, m_DrynessSampler);
         }
         inputs.DescriptorSet->Update();
 
@@ -341,7 +385,7 @@ namespace NorvesLib::Core::Rendering
         neutral->Update(&zero, sizeof(zero), sizeof(zero));
         indexBuffer->Update(indices.empty() ? &emptyIndex : indices.data(), indexBytes);
         desc.descriptorSetLayouts.push_back(layoutDesc);
-        desc.depthCompareOp = RHI::CompareOp::Less;
+        desc.depthCompareOp = DepthConvention::DepthCompareOp();
         desc.cullMode = RHI::CullMode::None;
         desc.debugName = "GrassPass";
         desc.failureLogPrefix = "GRASS_DRAW";
@@ -372,6 +416,7 @@ namespace NorvesLib::Core::Rendering
             !inputs.LayerA || !inputs.Sampler || !inputs.RecordBuffer || !inputs.ArgsBuffer ||
             inputs.ArgsBuffer->GetSize() < kGrassLodCount * kGrassArgsStride ||
             !HasRange(inputs.Constants, sizeof(GrassDrawConstants)) ||
+            !HasRange(inputs.EnvironmentConstants, sizeof(GPUEnvironmentParams)) ||
             !HasRange(inputs.Species, sizeof(GrassSpeciesGpuData)))
         {
             return false;
@@ -424,6 +469,8 @@ namespace NorvesLib::Core::Rendering
         {
             const RHI::DescriptorSetPtr& set = inputs.DescriptorSets[lod];
             set->BindConstantBuffer(0, inputs.Constants.Buffer, inputs.Constants.Offset, inputs.Constants.Size);
+            set->BindConstantBuffer(kGrassEnvironmentBinding, inputs.EnvironmentConstants.Buffer,
+                                    inputs.EnvironmentConstants.Offset, inputs.EnvironmentConstants.Size);
             set->BindStorageBuffer(1, inputs.RecordBuffer, inputs.LodBase[lod] * sizeof(GrassBladeRecord),
                                    inputs.LodCapacity[lod] * sizeof(GrassBladeRecord));
             set->BindStorageBuffer(2, inputs.Species.Buffer, inputs.Species.Offset, inputs.Species.Size);
@@ -441,6 +488,7 @@ namespace NorvesLib::Core::Rendering
         fieldBarrier.AfterState = RHI::ResourceState::GenericRead;
         fieldBarrier.OldLayout = RHI::TextureLayout::ShaderReadOnly;
         fieldBarrier.NewLayout = RHI::TextureLayout::ShaderReadOnly;
+        commandList->TextureBarrierExplicit(inputs.LayerA, fieldBarrier);
         commandList->TextureBarrierExplicit(currentField, fieldBarrier);
         if (previousField != currentField)
         {
@@ -468,6 +516,10 @@ namespace NorvesLib::Core::Rendering
             commandList->DrawIndexedIndirect(inputs.ArgsBuffer, lod * kGrassArgsStride, 1, kGrassArgsStride);
         }
         commandList->EndRenderPass();
+        // 次回の窓の更新が、今回の頂点段の読み取りを待てる同期状態へ戻す。
+        fieldBarrier.BeforeState = RHI::ResourceState::GenericRead;
+        fieldBarrier.AfterState = RHI::ResourceState::ShaderResource;
+        commandList->TextureBarrierExplicit(inputs.LayerA, fieldBarrier);
         commandList->BufferBarrier(inputs.RecordBuffer, RHI::ResourceState::GenericRead,
                                    RHI::ResourceState::ShaderResource, 0, inputs.RecordBuffer->GetSize());
         return true;
@@ -510,7 +562,7 @@ namespace NorvesLib::Core::Rendering
                 if (m_DummyHiZ && m_Sampler)
                 {
                     // 初期化時の一度の転送で ShaderResource にし、中止されたフレームにも依存させない。
-                    const float depth = 1.0f;
+                    const float depth = DepthConvention::ClearDepth();
                     m_DummyHiZ->Update(&depth, sizeof(depth), sizeof(depth));
                     bReady = true;
                 }
@@ -553,6 +605,9 @@ namespace NorvesLib::Core::Rendering
         m_WorldFieldCurrentHandle = {};
         m_WorldFieldPreviousHandle = {};
         m_WorldFieldConstants = {};
+        m_DrynessNearHandle = {};
+        m_DrynessFarHandle = {};
+        m_DrynessConstants = {};
 #if NORVES_BUILD_DEVELOPMENT
         m_LastLoggedTileCount = UINT32_MAX;
 #endif
@@ -574,6 +629,9 @@ namespace NorvesLib::Core::Rendering
         m_WorldFieldCurrentHandle = {};
         m_WorldFieldPreviousHandle = {};
         m_WorldFieldConstants = {};
+        m_DrynessNearHandle = {};
+        m_DrynessFarHandle = {};
+        m_DrynessConstants = {};
         // ネイティブの RenderGraph パスでは Setup が呼ばれないため、宣言時にも同じ条件を決める。
         const ViewRenderContext* context = builder.GetContext();
         m_bHasGrass = m_bEnabled && context && HasGrassField(*context);
@@ -595,6 +653,22 @@ namespace NorvesLib::Core::Rendering
             {
                 m_WorldFieldCurrentHandle = currentField.ToResourceHandle();
                 m_WorldFieldPreviousHandle = previousField.ToResourceHandle();
+            }
+        }
+
+        RGTextureHandle drynessNear;
+        RGTextureHandle drynessFar;
+        const bool bHasDrynessNear = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldDrynessNear,
+            drynessNear, RHI::ResourceState::ShaderResource);
+        const bool bHasDrynessFar = builder.TryReadTexture(RenderGraphResourceNames::WorldFieldDrynessFar,
+            drynessFar, RHI::ResourceState::ShaderResource);
+        if (bHasDrynessNear && bHasDrynessFar)
+        {
+            m_DrynessConstants = BuildWorldFieldDrynessSampleConstants(context->PhysicalLighting.WorldField);
+            if (m_DrynessConstants.bEnabled != 0u)
+            {
+                m_DrynessNearHandle = drynessNear.ToResourceHandle();
+                m_DrynessFarHandle = drynessFar.ToResourceHandle();
             }
         }
 
@@ -724,6 +798,18 @@ namespace NorvesLib::Core::Rendering
         GrassGenerateConstants constants = BuildGrassGenerateConstants(
             m_Settings, cameraPosition, planes.Planes, field->LayerAResolution, field->LayerBResolution,
             field->ChunkSizeMeters, bUseHiZ ? &hiZContract : nullptr);
+        GrassGenerateRecordInputs inputs;
+        if (resources && m_DrynessNearHandle.IsValid() && m_DrynessFarHandle.IsValid())
+        {
+            RHI::TexturePtr drynessNear = resources->GetTexture(m_DrynessNearHandle);
+            RHI::TexturePtr drynessFar = resources->GetTexture(m_DrynessFarHandle);
+            if (drynessNear && drynessFar)
+            {
+                constants.Dryness = m_DrynessConstants;
+                inputs.DrynessNear = drynessNear;
+                inputs.DrynessFar = drynessFar;
+            }
+        }
         // 主カメラの切り抜きを草の生成に渡し、無効なら定数は 0 で従来どおりにする。
         SetGrassViewClearance(constants, camera->ViewClearance);
         if (bUseHiZ)
@@ -749,7 +835,6 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        GrassGenerateRecordInputs inputs;
         inputs.DescriptorSet = descriptorAllocation.Set;
         inputs.Constants = ToBufferRange(constantAllocation);
         if (speciesAllocation.IsValid() && tileAllocation.IsValid())
@@ -829,6 +914,7 @@ namespace NorvesLib::Core::Rendering
             drawConstants.WindParams[3] = context.Wind.GustScaleMeters;
             drawConstants.WindExtra[0] = context.Wind.Turbulence;
         }
+        drawConstants.Surface[0] = context.EnvironmentGpu.Wetness;
         const FoliageBatch foliageDefaults;
         drawConstants.Surface[1] = foliageDefaults.MinPixelWidth;
         drawConstants.Surface[2] = foliageDefaults.MaxWidenRatio;
@@ -851,11 +937,13 @@ namespace NorvesLib::Core::Rendering
         drawConstants.LayerWindow[1] = static_cast<float>(m_FieldWindow.GetWindowSize());
         drawConstants.LayerWindow[2] = static_cast<float>(field->LayerAResolution);
         const FrameUploadAllocation drawConstantAllocation = frameResources->AllocateConstants(extendedConstants);
-        if (!drawConstantAllocation.IsValid())
+        const FrameUploadAllocation environmentAllocation = AcquireEnvironmentConstants(context);
+        if (!drawConstantAllocation.IsValid() || !environmentAllocation.IsValid())
         {
             return;
         }
         drawInputs.Constants = ToBufferRange(drawConstantAllocation);
+        drawInputs.EnvironmentConstants = ToBufferRange(environmentAllocation);
         drawInputs.Species = ToBufferRange(speciesAllocation);
         drawInputs.RecordBuffer = m_Generator.GetRecordBuffer();
         drawInputs.ArgsBuffer = m_Generator.GetArgsBuffer();

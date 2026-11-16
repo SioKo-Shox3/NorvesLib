@@ -1,7 +1,10 @@
 ﻿#include "Rendering/GBufferPass.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MaterialDescriptorCache.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
+#include "Rendering/ViewClearance.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
@@ -9,9 +12,11 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/SkinnedLodSelection.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/SpecularAntiAliasing.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -37,6 +42,15 @@ namespace NorvesLib::Core::Rendering
     {
         // VT の要求のバッファの binding（gbuffer.frag の VT_FEEDBACK_BINDING と同じ。スキニングの binding 8-10 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
+        // 頂点アニメに渡す世界の風の定数の binding
+        constexpr uint32_t VertexAnimationWindBindingIndex = 12;
+        // 濡れに使う環境の定数の binding（Common/GBufferFragment.glsl の NORVES_DECLARE_ENVIRONMENT_UBO と同じ）
+        constexpr uint32_t EnvironmentBindingIndex = 13;
+
+        float ResolveGBufferDrawOpacity(const DrawCommand& command)
+        {
+            return command.Draw.PayloadKind == DrawPayloadKind::Skinned ? command.Skinned.Opacity : 1.0f;
+        }
     } // namespace
 
     GBufferPass::GBufferPass(const GBufferPassSettings& settings)
@@ -103,14 +117,27 @@ namespace NorvesLib::Core::Rendering
 
         m_bInitialized = true;
 
+        // フレームの持ち主が無い文脈でも、濡れの無い環境定数を常に束縛する。初期化後は書き換えない。
+        const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+        RHI::BufferDesc environmentDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer,
+                                        true, "GBufferDefaultEnvironment");
+        m_DefaultEnvironmentBuffer = m_Device->CreateBuffer(environmentDesc);
+        if (!m_DefaultEnvironmentBuffer)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "既定の環境定数バッファを作れませんでした");
+            return false;
+        }
+        m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
         // ========================================
         // DynamicUniformAllocator初期化
         // ========================================
         {
             // UBO レイアウト: 現在・前回のビューと射影（256）+ カメラ・発光・POM・フレーム（64）
             // + VT のフィードバック（16）+ 材質のシェーディングパラメータ・ID（32）
-            // + 頂点アニメのインスタンス値・時刻（32）= 400 バイト
-            constexpr uint32_t UBO_SIZE = 400;
+            // + 頂点アニメのインスタンス値・時刻（32）+ 鏡面の AA（16）+ 頂点アニメの材質（32）
+            // + 視界の確保（64）= 512 バイト
+            constexpr uint32_t UBO_SIZE = 512;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -159,6 +186,17 @@ namespace NorvesLib::Core::Rendering
             {
                 AddVirtualTextureFeedbackBinding(uboDescSetDesc, VirtualTextureFeedbackBindingIndex);
             }
+
+            RHI::DescriptorBinding windBinding;
+            windBinding.binding = VertexAnimationWindBindingIndex;
+            windBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            windBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(windBinding);
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = EnvironmentBindingIndex;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            uboDescSetDesc.bindings.push_back(environmentBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
@@ -283,6 +321,7 @@ namespace NorvesLib::Core::Rendering
         m_ConstantGrayTextures.clear();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
+        m_DefaultEnvironmentBuffer.reset();
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
         m_Device = nullptr;
@@ -360,7 +399,7 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (RequiresGBufferOverlay(material))
+            if (RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command)))
             {
                 return true;
             }
@@ -595,7 +634,8 @@ namespace NorvesLib::Core::Rendering
                     context.Resources.Materials && command.Draw.MaterialHandle.IsValid()
                         ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                         : nullptr;
-                GetGBufferPipeline(context, materialData, command.Draw.PayloadKind == DrawPayloadKind::Skinned);
+                GetGBufferPipeline(context, materialData, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
+                                   ResolveGBufferDrawOpacity(command));
             }
             PrepareConstantMaterialTextures(context);
             m_bConstantTexturesPrepared = true;
@@ -621,7 +661,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const auto* matData = materials->GetData(materialHandle);
-            if (!matData || (bOverlayOnly && !RequiresGBufferOverlay(matData)))
+            if (!matData || (bOverlayOnly && !RequiresGBufferOverlayDraw(matData, ResolveGBufferDrawOpacity(command))))
             {
                 continue;
             }
@@ -728,9 +768,10 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (RequiresGBufferOverlay(material))
+            if (RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command)))
             {
-                GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned);
+                GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
+                                   ResolveGBufferDrawOpacity(command));
             }
         }
         PrepareConstantMaterialTextures(context, true);
@@ -819,10 +860,18 @@ namespace NorvesLib::Core::Rendering
             float shadingModel[4]; // x=GBuffer の ID、y=cutoff、z=切り抜き方式（0/1/2）、w=Hash の位相
             float vertexAnimInstanceParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
             float vertexAnimTime[4];
+            float specularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
+            float vertexAnimMaterial0[4];
+            float vertexAnimMaterial1[4];
+            ViewClearanceGpuData viewClearance;
         };
         static_assert(offsetof(PerObjectUBO, vertexAnimInstanceParams) == 368u);
         static_assert(offsetof(PerObjectUBO, vertexAnimTime) == 384u);
-        static_assert(sizeof(PerObjectUBO) == 400u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
+        static_assert(offsetof(PerObjectUBO, specularAAParams) == 400u);
+        static_assert(offsetof(PerObjectUBO, vertexAnimMaterial0) == 416u);
+        static_assert(offsetof(PerObjectUBO, vertexAnimMaterial1) == 432u);
+        static_assert(offsetof(PerObjectUBO, viewClearance) == 448u);
+        static_assert(sizeof(PerObjectUBO) == 512u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -834,7 +883,19 @@ namespace NorvesLib::Core::Rendering
         previousCameraConstants.CopyShaderView(previousViewData);
         previousCameraConstants.CopyShaderProjection(previousProjData);
 
+        ViewClearanceGpuData occluderViewClearance{};
+        if (activeCamera)
+        {
+            const bool bApply = activeCamera->ViewClearance.bAffectOccluders;
+            occluderViewClearance = MakeViewClearanceGpuData(activeCamera->ViewClearance, bApply);
+            if (occluderViewClearance.Control[1] != 0.0f)
+            {
+                occluderViewClearance.Control[2] = static_cast<float>(context.FrameNumber % 64u);
+            }
+        }
+
         PerObjectUBO frameTemplate{};
+        MakeSpecularAAConstants(frameTemplate.specularAAParams);
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
                                          frameTemplate.vertexAnimTime);
         std::memcpy(frameTemplate.view, viewData, sizeof(viewData));
@@ -846,6 +907,26 @@ namespace NorvesLib::Core::Rendering
         // 発光はプリエクスポージャ後の値で GBuffer_Emissive（RGBA16F）へ書く。LightingPass は同じ値を使う。
         frameTemplate.frameParams[1] = ResolveSceneColorPreExposure(activeCamera);
 
+        // 風の定数を記録ごとに一度借り、すべての材質の記述子で共有する。
+        struct VertexAnimationWindFrame
+        {
+            float windA[4];
+            float windB[4];
+        };
+        static_assert(sizeof(VertexAnimationWindFrame) == 32u);
+        // フレームの持ち主が無いときや借りられないときは、未束縛のまま描かない。
+        if (!context.FrameResources)
+        {
+            return;
+        }
+        VertexAnimationWindFrame windFrame{};
+        PackVertexAnimationWindConstants(context.Wind, windFrame.windA, windFrame.windB);
+        const FrameUploadAllocation windAllocation = context.FrameResources->AllocateConstants(windFrame);
+        if (!windAllocation.IsValid())
+        {
+            return;
+        }
+
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
         // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
@@ -853,6 +934,8 @@ namespace NorvesLib::Core::Rendering
 
         // この記録の中だけで使う（記述子はビュー・フレームの定数と Hash の位相を含み、次の記録へ持ち越さない）
         Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
+        // 共有の切れ端は読み取りだけ。無いときも現在の記録の口から借り、パスの共有状態へ保存しない。
+        const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
 
         auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
@@ -906,12 +989,16 @@ namespace NorvesLib::Core::Rendering
 
             MaterialHandle materialHandle;
             materialHandle.Id = materialKey;
+            const float opacity = ResolveGBufferDrawOpacity(command);
+            const MaterialResourceData* matData = nullptr;
             if (materialHandle.IsValid() && materials)
             {
-                const auto* matData = materials->GetData(materialHandle);
+                matData = materials->GetData(materialHandle);
                 if (matData)
                 {
                     matAlbedo = matData->AlbedoTexture;
+                    PackVertexAnimationMaterialConstants(matData->VertexAnimation,
+                                                         uboData.vertexAnimMaterial0, uboData.vertexAnimMaterial1);
                     matNormal = matData->NormalTexture;
                     matMetallic = matData->MetallicTexture;
                     matRoughness = matData->RoughnessTexture;
@@ -927,14 +1014,19 @@ namespace NorvesLib::Core::Rendering
                     matEmissiveChromaticityB = matData->EmissiveColor[2];
                     matEmissiveLuminanceNits = matData->EmissiveLuminanceNits;
                     bMatDiffuseOnly = matData->bDiffuseOnly;
+                    if (matData->bViewClearanceOccluder)
+                    {
+                        uboData.viewClearance = occluderViewClearance;
+                    }
                     for (uint32_t i = 0; i < ShadingParamCount; ++i)
                     {
                         uboData.shadingParams[i] = matData->ShadingParams[i];
                     }
                     uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(matData->Shading));
                     uboData.shadingModel[1] = matData->AlphaCutoff;
-                    uboData.shadingModel[2] = static_cast<float>(ResolveGBufferAlphaClip(matData, context.bTemporalAAApplied));
-                    uboData.shadingModel[3] = static_cast<float>(context.FrameNumber % 64u);
+                    uboData.shadingModel[2] = static_cast<float>(ResolveGBufferAlphaClip(matData, context.bTemporalAAApplied, opacity));
+                    // TAA が掛からないビューでは Hash は Test に落ちるため、位相は使われない。
+                    uboData.shadingModel[3] = static_cast<float>(context.bTemporalAAApplied ? context.TemporalAAJitterIndex : 0u);
                 }
             }
 
@@ -948,6 +1040,19 @@ namespace NorvesLib::Core::Rendering
                     {
                         uboData.shadingParams[i] = command.Draw.ShadingParams[i];
                     }
+                }
+            }
+
+            if (IsSkinnedGhostOpacity(opacity))
+            {
+                // インスタンスの指定を重ねた被覆率に残像の不透明度を掛ける。未指定は 1 とする。
+                const float coverage = uboData.shadingParams[3] >= 0.0f ? uboData.shadingParams[3] : 1.0f;
+                uboData.shadingParams[3] = coverage * opacity;
+                if (!matData)
+                {
+                    uboData.shadingModel[1] = MaterialResourceData{}.AlphaCutoff;
+                    uboData.shadingModel[2] = static_cast<float>(ResolveGBufferAlphaClip(matData, context.bTemporalAAApplied, opacity));
+                    uboData.shadingModel[3] = static_cast<float>(context.bTemporalAAApplied ? context.TemporalAAJitterIndex : 0u);
                 }
             }
 
@@ -1049,13 +1154,27 @@ namespace NorvesLib::Core::Rendering
             {
                 return nullptr;
             }
+            if (environmentConstants.IsValid())
+            {
+                allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, environmentConstants.Buffer,
+                                                              environmentConstants.GetOffset32(), environmentConstants.GetSize32());
+            }
+            else
+            {
+                allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer,
+                                                              0, sizeof(GPUEnvironmentParams));
+            }
             BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
+            allocation.DescriptorSet->BindConstantBuffer(VertexAnimationWindBindingIndex,
+                                                         windAllocation.Buffer,
+                                                         windAllocation.GetOffset32(),
+                                                         windAllocation.GetSize32());
             allocation.DescriptorSet->Update();
 
             return allocation.DescriptorSet;
         };
 
-        // 同じ種類の並びを保ち、標準の後に標準でない材質（プログラム・Masked・両面）を積む。
+        // 同じ種類の並びを保ち、標準の後に重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）を積む。
         bool bAllocationFailed = false;
         for (uint32_t overlayPass = 0; overlayPass < 2 && !bAllocationFailed; ++overlayPass)
         {
@@ -1068,8 +1187,10 @@ namespace NorvesLib::Core::Rendering
             {
                 const MaterialResourceData* materialData =
                     materials && cmd.Draw.MaterialHandle.IsValid() ? materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
+                const float opacity = ResolveGBufferDrawOpacity(cmd);
                 const bool bOverlayMaterial =
-                    (m_SceneView || selection == DrawSelection::OverlayOnly) && RequiresGBufferOverlay(materialData);
+                    (m_SceneView || selection == DrawSelection::OverlayOnly || IsSkinnedGhostOpacity(opacity)) &&
+                    RequiresGBufferOverlayDraw(materialData, opacity);
                 if (bOverlayMaterial != (overlayPass == 1))
                 {
                     continue;
@@ -1584,7 +1705,7 @@ namespace NorvesLib::Core::Rendering
         rpDesc.depthStencilAttachment.format = signature.Depth.Format;
         rpDesc.depthStencilAttachment.isDepthStencil = true;
         rpDesc.depthStencilAttachment.clear = true;
-        rpDesc.depthStencilAttachment.clearDepth = 1.0f;
+        rpDesc.depthStencilAttachment.clearDepth = DepthConvention::ClearDepth();
         rpDesc.depthStencilAttachment.clearStencil = 0;
         rpDesc.depthStencilAttachment.loadOp = signature.Depth.LoadOp;
         rpDesc.depthStencilAttachment.storeOp = signature.Depth.StoreOp;
@@ -1726,7 +1847,7 @@ namespace NorvesLib::Core::Rendering
 
     RHI::PipelinePtr GBufferPass::GetGBufferPipeline(const ViewRenderContext& context,
                                                      const MaterialResourceData* material,
-                                                     bool bSkinned)
+                                                     bool bSkinned, float opacity)
     {
         if (!AreGBufferResourcesReady())
         {
@@ -1737,7 +1858,7 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_BUILD_DEVELOPMENT
         bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe;
 #endif
-        GBufferPipelineKey key = MakeGBufferPipelineKey(m_SceneView ? material : nullptr, bSkinned, bWireframe);
+        GBufferPipelineKey key = MakeGBufferPipelineKey(m_SceneView ? material : nullptr, bSkinned, bWireframe, opacity);
         if (m_bPipelinesPrepared || m_bProgramOverlayPrepared)
         {
             RHI::PipelinePtr pipeline = m_Pipelines.Find(key);
@@ -1866,7 +1987,7 @@ namespace NorvesLib::Core::Rendering
         // デプステスト有効
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
 
         // MRT用ブレンドステート（5カラーアタッチメント分）
         for (int i = 0; i < 5; ++i)
@@ -1879,7 +2000,7 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.renderPass = m_GBufferRenderPass;
 
-        // ディスクリプタセットレイアウト（set=0: MVP UBO + PBRテクスチャ x6）
+        // ディスクリプタセットレイアウト（set=0: MVP・風の UBO、PBR テクスチャ、インスタンス等）
         RHI::DescriptorSetDesc dsDesc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
@@ -1916,6 +2037,17 @@ namespace NorvesLib::Core::Rendering
         {
             AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
         }
+        RHI::DescriptorBinding windBinding;
+        windBinding.binding = VertexAnimationWindBindingIndex;
+        windBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        windBinding.stages = RHI::ShaderStage::Vertex;
+        dsDesc.bindings.push_back(windBinding);
+        // アロケータと同じ set 0 の環境定数の配置を使う。
+        RHI::DescriptorBinding environmentBinding;
+        environmentBinding.binding = EnvironmentBindingIndex;
+        environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        environmentBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(environmentBinding);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -1972,7 +2104,7 @@ namespace NorvesLib::Core::Rendering
             context.Resources.Materials && source.Draw.MaterialHandle.IsValid()
                 ? context.Resources.Materials->GetData(source.Draw.MaterialHandle)
                 : nullptr;
-        outCommand.Pipeline = GetGBufferPipeline(context, material, true);
+        outCommand.Pipeline = GetGBufferPipeline(context, material, true, source.Skinned.Opacity);
         return true;
     }
 

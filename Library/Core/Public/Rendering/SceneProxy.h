@@ -631,7 +631,9 @@ namespace NorvesLib::Core::Rendering
         bool bStaticEnvironmentUniform = false;
         Math::Vector3 StaticEnvironmentUniformRadiance = Math::Vector3::Zero;
         // MaxDistance は太陽の影を受ける最大のカメラからの距離（m）。CSM の分割の奥と VSM のクリップマップの印付けの範囲に効く。
-        // SplitLambda は CSM の分割に効く。各値の 0 は ShadowMapPass の設定（既定 80 m・λ 0.5）のまま。
+        // SplitLambda は CSM の分割に効く。MaxDistance と SplitLambda の 0 は ShadowMapPass の設定（既定 80 m・λ 0.5）のまま。
+        // bEnabled=false は太陽の影を切り、AutoDisableBelowSunIlluminanceLux は空の太陽の地表照度が設定値未満なら影を省く（0 は自動停止しない）。
+        // MaxShadowCasterTriangles は MegaGeometry 投影物 1 つの三角形数の上限（CSM・点光源キューブ、0 は上限なし）。
         SunShadowParameters SunShadow;
         // 検証用。false ならスキンの描画を主カメラの視錐台で省かない（既定 true）。
         bool bSkinnedViewCulling = true;

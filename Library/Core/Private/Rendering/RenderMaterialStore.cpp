@@ -76,6 +76,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 data.Fur = createInfo.Fur;
             }
+            data.VertexAnimation = SanitizeVertexAnimationParams(createInfo.VertexAnimation);
             data.Revision = 1;
             for (uint32_t index = 0; index < ShadingParamCount; ++index)
             {
@@ -84,6 +85,7 @@ namespace NorvesLib::Core::Rendering
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;
             data.bDiffuseOnly = createInfo.bDiffuseOnly;
+            data.bViewClearanceOccluder = createInfo.bViewClearanceOccluder;
             data.RefCount = 1;
             data.DebugName = createInfo.DebugName;
             outData = std::move(data);

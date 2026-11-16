@@ -232,12 +232,31 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 return Fail(error, "clip_source_snapshot_mismatch");
             }
             I::LoadedImportSettingsDocument document;
-            if (!IsBvhRetargetSource(request))
+            bool bAnalyze = true;
+            S::RigClipAnalysisOptions analysis;
+            C::AnsiString rootJoint;
+            const bool bLoadDocument = !IsBvhRetargetSource(request);
+            if (bLoadDocument)
             {
                 if (I::LoadImportSettingsDocument(request.InputPath, options, document).Result !=
                     I::SettingsFileResult::Success)
                 {
                     return Fail(error, "clip_sidecar");
+                }
+                if (HasRigRetarget(request))
+                {
+                    if (document.Settings.Clip.IsPresent())
+                    {
+                        return Fail(error, "retarget_clip_settings");
+                    }
+                }
+                else
+                {
+                    C::AnsiString reason;
+                    if (!ApplyClipImportSettings(document.Settings.Clip, 0, bAnalyze, analysis, rootJoint, reason))
+                    {
+                        return Fail(error, reason.c_str());
+                    }
                 }
                 const auto sidecarPath =
                     document.Path.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(document.Path);
@@ -312,6 +331,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 }
             }
             hash = dependencies.Fingerprint;
+            if (!HasRigRetarget(request) && bLoadDocument)
+            {
+                hash = I::AppendClipImportSettingsHash(hash, document.Settings.Clip);
+            }
             RigSplitCookEntry entry;
             auto& r = entry.Reference;
             r.LogicalPath = request.LogicalPath;
@@ -342,14 +365,15 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 geometry.Path = document.Path;
                 geometry.bPresent = document.bPresent;
                 S::RigClipSourceSelection selection{request.ClipJointNodes};
-                S::RigClipAnalysisOptions analysis;
                 S::RigGltfImportCapture capture;
                 RigClipBankCookResult cooked;
+                bool bRootJointMissing = false;
                 if (!CookRigClipBankV1NativePath(source, request.InputPath, request.Format, cooked, report, limits,
-                                                 &geometry, &request.SkeletalDecode, profile, &selection, &analysis,
-                                                 &capture))
+                                                 &geometry, &request.SkeletalDecode, profile, &selection,
+                                                 bAnalyze ? &analysis : nullptr, &capture, rootJoint,
+                                                 &bRootJointMissing))
                 {
-                    return Fail(error, "clip_source_cook");
+                    return Fail(error, bRootJointMissing ? "clip_root_not_found" : "clip_source_cook");
                 }
                 for (size_t i = 0; i < capture.Buffers.GetCount(); ++i)
                 {

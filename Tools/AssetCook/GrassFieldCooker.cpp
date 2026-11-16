@@ -364,7 +364,7 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         uint8_t SampleLayer(const Asset::CookedTerrainData& terrain, const VariableArray<Asset::CookedTextureData>& textures,
-                            double gx, double gz, size_t stride)
+                            double gx, double gz, size_t stride, size_t channel)
         {
             // NVTRN の標本はセル角。TileCells+1 の末尾の辺は隣の先頭と共有する。
             // 境界は +X/+Z 側のタイルを選び、外周だけ最後のタイルへ寄せる。
@@ -378,7 +378,7 @@ namespace NorvesLib::Tools::AssetCook
             const uint32_t x1 = std::min(x0 + 1, terrain.TileCells), z1 = std::min(z0 + 1, terrain.TileCells);
             const auto pixels = textures[tileIndex].GetMipBytes(0);
             const size_t side = terrain.GetSamplesPerSide();
-            const auto at = [&](uint32_t sx, uint32_t sz) { return pixels[(sz * side + sx) * stride]; };
+            const auto at = [&](uint32_t sx, uint32_t sz) { return pixels[(sz * side + sx) * stride + channel]; };
             const double top = std::lerp(static_cast<double>(at(x0, z0)), static_cast<double>(at(x1, z0)), x - x0);
             const double bottom = std::lerp(static_cast<double>(at(x0, z1)), static_cast<double>(at(x1, z1)), x - x0);
             return static_cast<uint8_t>(std::clamp(std::lround(std::lerp(top, bottom, z - z0)), 0l, 255l));
@@ -457,9 +457,9 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
-            VariableArray<Asset::CookedTextureData> density, moisture;
+            VariableArray<Asset::CookedTextureData> density, masks;
             if (!LoadTerrainLayers(terrain, TerrainGrassLayerFourCC, Asset::CookedTexturePixelFormat::R8UNorm, density, error) ||
-                !LoadTerrainLayers(terrain, TerrainMaskLayerFourCC, Asset::CookedTexturePixelFormat::RGBA8UNorm, moisture, error))
+                !LoadTerrainLayers(terrain, TerrainMaskLayerFourCC, Asset::CookedTexturePixelFormat::RGBA8UNorm, masks, error))
             {
                 return false;
             }
@@ -478,19 +478,26 @@ namespace NorvesLib::Tools::AssetCook
                             const double gx = (x + (col + 0.5) / a) * input.Size / terrain.CellSizeM;
                             const double gz = (z + (row + 0.5) / a) * input.Size / terrain.CellSizeM;
                             const size_t dst = (row * a + col) * 4;
-                            chunk.A[dst] = SampleLayer(terrain, density, gx, gz, 1);
+                            chunk.A[dst] = SampleLayer(terrain, density, gx, gz, 1, 0);
                             chunk.A[dst + 1] = static_cast<uint8_t>(height);
-                            chunk.A[dst + 2] = SampleLayer(terrain, moisture, gx, gz, 4);
+                            chunk.A[dst + 2] = SampleLayer(terrain, masks, gx, gz, 4, 0);
                             chunk.A[dst + 3] = static_cast<uint8_t>(speciesId);
                         }
                     }
-                    for (size_t i = 0; i < b * b; ++i)
+                    for (size_t row = 0; row < b; ++row)
                     {
-                        for (size_t channel = 0; channel < 3; ++channel)
+                        for (size_t col = 0; col < b; ++col)
                         {
-                            chunk.B[i * 4 + channel] = static_cast<uint8_t>(tint[channel]);
+                            const double gx = (x + (col + 0.5) / b) * input.Size / terrain.CellSizeM;
+                            const double gz = (z + (row + 0.5) / b) * input.Size / terrain.CellSizeM;
+                            const size_t dst = (row * b + col) * 4;
+                            for (size_t channel = 0; channel < 3; ++channel)
+                            {
+                                chunk.B[dst + channel] = static_cast<uint8_t>(tint[channel]);
+                            }
+                            // LayerB の A は MSK0 の G を標本化した基礎の枯れ度。
+                            chunk.B[dst + 3] = SampleLayer(terrain, masks, gx, gz, 4, 1);
                         }
-                        chunk.B[i * 4 + 3] = 0;
                     }
                     StoreChunk(input, x, z, std::move(chunk));
                 }

@@ -29,6 +29,7 @@
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
 #include "Rendering/FrameUseRing.h"
+#include "Rendering/FrameUploadArena.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
@@ -137,7 +138,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t Screen[4] = {};
             /** @brief x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y
              * と同じ値。既定は 1）、 y = MegaGeometry
-             * のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決） */
+             * のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決）、
+             * w = 鏡面の AA の強さ（SpecularAAStrength。0 で無効。BuildParams の既定は 0） */
             float Frame[4] = {1.0f, 0.0f, 0.0f, 0.0f};
             /** @brief 今の時刻、前の時刻、試験の揺れの許可、0 */
             float VertexAnimTime[4] = {};
@@ -321,6 +323,8 @@ namespace NorvesLib::Core::Rendering
          */
         RHI::BufferPtr Feedback;
         uint64_t FeedbackBytes = 0;
+        /** @brief フレームの持ち主から借りた環境定数。無効なら初期化時の常駐の既定値を使う */
+        FrameUploadAllocation EnvironmentConstants;
         VisibilityResolveGeometry::ResolveParams Params;
 
         /**
@@ -458,6 +462,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_Sampler;
         // 表を持たないフレームで束ねる、空の表（読まれない）
         RHI::BufferPtr m_Placeholder;
+        // フレームの環境定数を持たない文脈のための、書き換えない既定値（48 バイト）。
+        RHI::BufferPtr m_DefaultEnvironmentUniform;
         // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー。
         // m_MaterialSampler は手続き・スキニング用（GBufferPass と同じ異方性 4、Wrap）、m_MegaMaterialSampler は
         // MegaGeometry 用（MegaGeometryPass と同じ等方の Linear、maxAnisotropy 指定なし、Wrap）、m_TerrainMaterialSampler は

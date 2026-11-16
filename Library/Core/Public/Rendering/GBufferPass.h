@@ -20,6 +20,12 @@ namespace NorvesLib::Core::Rendering
     class SceneView;
     class VisibilityResolvePass;
 
+    /** @brief 頂点を動かす材質は解決で変位が消えるので、残像と同じく重ねて描く。 */
+    inline bool RequiresGBufferOverlayDraw(const MaterialResourceData* material, float opacity = 1.0f)
+    {
+        return RequiresGBufferOverlay(material, opacity) || MaterialHasVertexAnimation(material);
+    }
+
     /**
      * @brief GBufferパス設定
      */
@@ -155,13 +161,13 @@ namespace NorvesLib::Core::Rendering
         void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetVisibilityResolvePass() const { return m_ResolvePass; }
 
-        /** @brief このフレームの不透明描画に標準でない材質（プログラム・Masked・両面）があるか。 */
+        /** @brief このフレームの不透明描画に重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）があるか。 */
         bool HasOverlayDraws(const ViewRenderContext& context) const;
         /** @brief 解決が GBuffer を書くため、このパスの描画を止めているか。 */
         bool IsDrawingSkippedForVisibility(const ViewRenderContext& context) const;
         /** @brief 重ね描きのパイプラインと材質テクスチャを RenderThread で準備する。 */
         void PrepareProgramOverlay(const ViewRenderContext& context);
-        /** @brief 準備済みの標準でない材質（プログラム・Masked・両面）を、指定された Load/Store の描画先へ積む。 */
+        /** @brief 準備済みの重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）を、指定された Load/Store の描画先へ積む。 */
         void RecordProgramOverlay(ViewRenderContext& context,
                                   const RHI::RenderPassPtr& renderPass,
                                   const RHI::FramebufferPtr& framebuffer);
@@ -223,7 +229,7 @@ namespace NorvesLib::Core::Rendering
         bool PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material);
         RHI::PipelinePtr GetGBufferPipeline(const ViewRenderContext& context,
                                             const MaterialResourceData* material,
-                                            bool bSkinned);
+                                            bool bSkinned, float opacity = 1.0f);
         RHI::PipelinePtr CreateGBufferPipeline(const GBufferPipelineKey& key);
         bool TryPrepareSkinnedCommand(ViewRenderContext& context,
                                       const DrawCommand& source,
@@ -370,6 +376,8 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+        // フレームの環境定数を借りられない文脈用。初期化時に一度だけ書く。
+        RHI::BufferPtr m_DefaultEnvironmentBuffer;
         int8_t m_MaterialDescriptorCacheState = -1;
 
         // デフォルトテクスチャ・サンプラー（テクスチャ未設定オブジェクト用）

@@ -3,6 +3,8 @@
 // 開発ビルドでは H キーで犬大の代役を追う視点へ切り替え、主人公との間の草の間引きを確認する。
 // --grassland-streaming では地形の区画・散布・岩の当たりをセル単位で出し入れする。
 // --streaming-snap-test=<x>,<z> では組み立て後にスナップロードし、自由飛行カメラを目的地へ一度移す。
+// --grassland-wither=<x>,<z>,<半径> では指定位置に枯れ度 1 の円形の源を置く（開発ビルドだけ）。
+// --grassland-wither-roundtrip では描画前に枯れ度マップを保存して復元する（開発ビルドだけ）。
 // 地形は Assets/TerrainSpecs/Grassland/GrasslandTerrain.json と Scripts/Terrain/GenerateGrasslandHeight.py から
 // クックした Assets/Terrain/Grassland/Grassland.nvtrn と近景の Tiles/GrasslandTile_<x>_<z>.generated、
 // 外周の Tiles/GrasslandTile_outer_<x>_<z>.generated を使う。
@@ -17,6 +19,7 @@
 #if NORVES_BUILD_DEVELOPMENT
 #include "Core/Public/Streaming/StreamingSystem.h"
 #include "Core/Public/Streaming/WorldPayloadHandlers.h"
+#include "Core/Public/Vegetation/DrynessMap.h"
 #endif
 #include "Pause/PauseMenu.h"
 #include "Scenes/FreeCameraRig.h"
@@ -94,6 +97,10 @@ namespace Game::GameModes
         /// 入場時の視点から決め、カメラを動かしても変わらない周回路
         NorvesLib::Math::Vector3 m_RunCenter;
         float m_RunAngle = 0.0f;
+        /// 風の確認用の木（非所有）。地形の高さを読めたものから一度だけ配置する
+        static constexpr uint32_t kWindTreeCount = 4;
+        NorvesLib::Core::Entity* m_pWindTrees[kWindTreeCount] = {};
+        bool m_bWindTreePending[kWindTreeCount] = {};
         uint32_t m_TickCount = 0;
 #if NORVES_BUILD_DEVELOPMENT
         /// セル単位の流し込みを有効にする起動引数。
@@ -103,6 +110,18 @@ namespace Game::GameModes
         /// 目的地のワールド X・Z 座標[m]。
         float m_StreamingSnapTestX = 0.0f;
         float m_StreamingSnapTestZ = 0.0f;
+        /// --grassland-wither で円形の枯れ源を配置する。
+        bool m_bGrasslandWither = false;
+        /// 枯れ源の中心のワールド X 座標[m]。
+        float m_GrasslandWitherX = 0.0f;
+        /// 枯れ源の中心のワールド Z 座標[m]。
+        float m_GrasslandWitherZ = 0.0f;
+        /// 枯れ源の内側の半径[m]。
+        float m_GrasslandWitherRadius = 0.0f;
+        /// --grassland-wither-roundtrip で入場時に枯れ度マップを保存して復元する。
+        bool m_bGrasslandWitherRoundtrip = false;
+        /// このシーンで配置した枯れ源。退場時に取り除く。
+        NorvesLib::Core::Vegetation::DrynessSourceId m_GrasslandWitherSourceId = NorvesLib::Core::Vegetation::InvalidDrynessSourceId;
         /// 要求を一度試したか。受理されなかった場合も再試行しない。
         bool m_bStreamingSnapRequested = false;
         /// PostTick または取り消し時に通知を受けたか。
@@ -126,6 +145,8 @@ namespace Game::GameModes
         GrasslandViewInputCollector m_ViewInput;
         /// 入力ルーターへの登録を Leave で返すための印
         bool m_bViewInputRegistered = false;
+        /// このモードが登録したシルエットの描画拡張を Leave で返すための印
+        bool m_bHeroSilhouetteRegistered = false;
         /// 主人公視点を描画側へ渡しているか（既定は自由飛行）
         bool m_bHeroView = false;
         /// 生成に失敗したとき、同じ滞在中の資源の再生成を防ぐ印
@@ -134,6 +155,10 @@ namespace Game::GameModes
         NorvesLib::Core::Entity* m_pHero = nullptr;
         /// 自由飛行へ戻るときに代役を隠すための参照（非所有）
         NorvesLib::Core::Component::MeshComponent* m_pHeroMesh = nullptr;
+        /// カメラと主人公の間に置く細い幹（非所有。スコープが寿命を持つ）
+        NorvesLib::Core::Entity* m_pHeroOccluder = nullptr;
+        /// 主人公視点を出るときに幹を隠すための参照（非所有）
+        NorvesLib::Core::Component::MeshComponent* m_pHeroOccluderMesh = nullptr;
         /// 主人公を追うカメラ（非所有。所有する Entity はスコープが追跡する）
         NorvesLib::Core::Component::CameraComponent* m_pHeroCamera = nullptr;
         /// カメラの公開直前に姿勢を更新するアーム（非所有）

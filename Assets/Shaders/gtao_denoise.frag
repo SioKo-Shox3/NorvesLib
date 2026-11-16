@@ -1,5 +1,7 @@
 ﻿#version 450
 
+#include "Common/DepthConvention.glsl"
+
 // ========================================
 // GTAOの空間の雑音除去
 // ========================================
@@ -34,7 +36,7 @@ void main()
     ivec2 size = textureSize(gtaoInput, 0);
     ivec2 centerTexel = clamp(ivec2(fragUV * vec2(size)), ivec2(0), size - 1);
     float centerDepth = texelFetch(gbufferDepth, centerTexel, 0).r;
-    if (centerDepth >= 0.9999)
+    if (IsBackgroundDepth(centerDepth))
     {
         outAO = 1.0;
         return;
@@ -50,7 +52,7 @@ void main()
         {
             ivec2 texel = clamp(centerTexel + ivec2(x, y), ivec2(0), size - 1);
             float sampleDepth = texelFetch(gbufferDepth, texel, 0).r;
-            if (sampleDepth >= 0.9999)
+            if (IsBackgroundDepth(sampleDepth))
             {
                 continue;
             }

@@ -92,6 +92,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
             {
                 return Fail(error, "retarget_sidecar");
             }
+            if (!bTarget && document.Settings.Clip.IsPresent())
+            {
+                return Fail(error, "retarget_clip_settings");
+            }
             if (!document.Path.empty() && !Matches(dependencies, document.Path, CookDependencyRole::Sidecar,
                                                    document.RawSourceBytes, document.bPresent))
             {

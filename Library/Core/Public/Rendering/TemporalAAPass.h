@@ -57,6 +57,9 @@ namespace NorvesLib::Core::Rendering
                         uint32_t height,
                         TemporalAAJitter& outJitter);
 
+        /** @brief 今のフレームのジッタの番号。切り抜きの Hash の位相に使う。 */
+        uint64_t GetFrameJitterIndex() const { return m_FrameJitterIndex; }
+
         /**
          * @brief Viewport を描く前に、その Viewport へ TAA を掛けるかを知らせる
          *
@@ -95,6 +98,7 @@ namespace NorvesLib::Core::Rendering
         void ResetForDeterministicEpoch()
         {
             m_JitterIndex = 0u;
+            m_FrameJitterIndex = 0u;
             m_History.Invalidate();
         }
 
@@ -151,6 +155,7 @@ namespace NorvesLib::Core::Rendering
 
         // BeginFrame が決めたこのフレームのジッタと、それを受け取った Viewport。
         uint64_t m_JitterIndex = 0u;
+        uint64_t m_FrameJitterIndex = 0u;
         bool m_bFrameBegun = false;
         uint64_t m_FrameNumber = 0u;
         uint32_t m_FrameViewportId = 0u;

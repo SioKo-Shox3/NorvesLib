@@ -266,6 +266,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
+    Private/Rendering/RenderExtension/RenderExtensionShadowCaster.cpp
     Private/Rendering/RenderExtension/RenderExtensionData.cpp
     Private/Rendering/RenderExtension/RenderExtensionHelpers.cpp
     Private/Rendering/InstanceBufferRing.cpp
@@ -330,6 +331,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/HeroSilhouettePass.cpp
     Private/Rendering/GBufferProgramOverlayPass.cpp
     Private/Rendering/GBufferProgramRegistry.cpp
     Private/Rendering/SkyAtmosphere.cpp
@@ -339,6 +341,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
     Private/Rendering/EnvironmentParameters.cpp
+    Private/Rendering/EnvironmentGpuParams.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -354,6 +357,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
+    Private/Rendering/ShadowCasterCollection.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/WetSurface.cpp
     Private/Rendering/DfgLut.cpp
@@ -428,6 +432,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
+    Private/Resource/GltfNodeTransform.h
+    Private/Resource/GltfNodeTransform.cpp
     Private/Resource/ImportSettingsFile.h
     Private/Resource/ImportSettingsFile.cpp
     Private/Resource/ImportSettingsHash.h
@@ -742,11 +748,13 @@ set(PUBLIC_HEADERS
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
     Public/Rendering/ViewClearance.h
+    Public/Rendering/HeroSilhouettePass.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
     Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
     Public/Rendering/EnvironmentParameters.h
+    Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h
@@ -768,11 +776,13 @@ set(PUBLIC_HEADERS
     Public/Rendering/IBoardProxySink.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
+    Public/Rendering/DepthConvention.h
     Public/Rendering/CameraPicking.h
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/RenderExtension/RenderExtension.h
+    Public/Rendering/RenderExtension/RenderExtensionShadowCaster.h
     Public/Rendering/RenderExtension/RenderExtensionData.h
     Public/Rendering/RenderExtension/RenderExtensionHelpers.h
     Public/Rendering/InstanceBufferRing.h

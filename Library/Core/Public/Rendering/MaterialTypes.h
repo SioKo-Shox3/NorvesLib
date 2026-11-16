@@ -356,6 +356,91 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    /// 風の頂点アニメの種類。値は Common/VertexAnimation.glsl の VERTEX_ANIMATION_MODE_* と一致させる。
+    enum class VertexAnimationMode : uint8_t
+    {
+        None = 0,
+        Grass = 1,
+        Tree = 2
+    };
+
+    struct VertexAnimationParams
+    {
+        VertexAnimationMode Mode = VertexAnimationMode::None;
+        float Amplitude = 0.1f;      ///< 高さマスクと風の強さが 1 のときの変位[m]。範囲 [0, 5]。
+        float HeightStart = 0.0f;    ///< マスクが 0 になるオブジェクト座標の高さ Y[m]。有限。
+        float HeightEnd = 1.0f;      ///< マスクが 1 になる高さ Y[m]。HeightStart + 0.001 以上。
+        float FrequencyScale = 1.0f; ///< 揺れの周波数の倍率。範囲 (0, 8]。
+        float BranchFactor = 0.3f;   ///< 樹木の枝先の揺れの、幹の揺れに対する比。範囲 [0, 2]。
+        float PhaseRandom = 1.0f;    ///< 個体差の位相の強さ。範囲 [0, 1]。
+        float Stiffness = 0.5f;      ///< 曲がりにくさ。0 で高さに比例し、1 で上の方だけ曲がる。範囲 [0, 1]。
+    };
+
+    /// 非有限値と範囲外の値を既定値へ戻し、高さの範囲を整える。
+    inline VertexAnimationParams SanitizeVertexAnimationParams(const VertexAnimationParams& in)
+    {
+        VertexAnimationParams result;
+        if (in.Mode == VertexAnimationMode::Grass || in.Mode == VertexAnimationMode::Tree)
+        {
+            result.Mode = in.Mode;
+        }
+
+        const auto validRangeOrDefault = [](float value, float minimum, float maximum, float fallback)
+        {
+            return std::isfinite(value) && value >= minimum && value <= maximum ? value : fallback;
+        };
+        result.Amplitude = validRangeOrDefault(in.Amplitude, 0.0f, 5.0f, result.Amplitude);
+        result.HeightStart = std::isfinite(in.HeightStart) ? in.HeightStart : result.HeightStart;
+        result.HeightEnd = std::isfinite(in.HeightEnd) ? in.HeightEnd : result.HeightStart + 1.0f;
+        if (result.HeightEnd < result.HeightStart + 0.001f)
+        {
+            result.HeightEnd = result.HeightStart + 0.001f;
+        }
+        if (std::isfinite(in.FrequencyScale) && in.FrequencyScale > 0.0f && in.FrequencyScale <= 8.0f)
+        {
+            result.FrequencyScale = in.FrequencyScale;
+        }
+        result.BranchFactor = validRangeOrDefault(in.BranchFactor, 0.0f, 2.0f, result.BranchFactor);
+        result.PhaseRandom = validRangeOrDefault(in.PhaseRandom, 0.0f, 1.0f, result.PhaseRandom);
+        result.Stiffness = validRangeOrDefault(in.Stiffness, 0.0f, 1.0f, result.Stiffness);
+        return result;
+    }
+
+    /// 整えた材質値を頂点アニメの 2 つの vec4 に詰める。無効なら 8 個とも 0。
+    inline void PackVertexAnimationMaterialConstants(const VertexAnimationParams& params,
+                                                      float outParams0[4], float outParams1[4])
+    {
+        if (params.Mode == VertexAnimationMode::None)
+        {
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                outParams0[index] = 0.0f;
+                outParams1[index] = 0.0f;
+            }
+            return;
+        }
+
+        outParams0[0] = static_cast<float>(params.Mode);
+        outParams0[1] = params.Amplitude;
+        outParams0[2] = params.HeightStart;
+        outParams0[3] = params.HeightEnd;
+        outParams1[0] = params.FrequencyScale;
+        outParams1[1] = params.BranchFactor;
+        outParams1[2] = params.PhaseRandom;
+        outParams1[3] = params.Stiffness;
+    }
+
+    /// 頂点アニメで使う風の強さの上限。GLSL 側と一致させる。
+    inline constexpr float VertexAnimationMaxWindStrength = 3.0f;
+
+    /// 整えた材質値から風による最大変位[m]を返す。
+    inline float MaxVertexAnimationDisplacementMeters(const VertexAnimationParams& params)
+    {
+        return params.Mode == VertexAnimationMode::None
+                   ? 0.0f
+                   : params.Amplitude * VertexAnimationMaxWindStrength * (1.0f + params.BranchFactor);
+    }
+
     /**
      * @brief マテリアル作成情報
      */
@@ -401,12 +486,18 @@ namespace NorvesLib::Core::Rendering
         /// 鏡面反射を持たない純ランバートの面にする（照明の尺度の検証用の灰色の板など）。直接光・環境光とも
         /// アルベド/π の拡散だけを数え、誘電体の F0（0.04）の鏡面と、その分の拡散の減りを掛けない。GBuffer の経路だけが読む
         bool bDiffuseOnly = false;
+        /// 視界の確保でカメラと主人公の間に入ったときにディザで抜く遮蔽物（幹・低木・廃墟の欠片）。
+        /// GBuffer の切り抜きの変種で描くため早期の深度試験を失う。印は薄い遮蔽物だけに付け、大きな遮蔽物へ広げない。
+        /// 影の描画には効かない。
+        bool bViewClearanceOccluder = false;
 
         Container::String Program; ///< GBuffer プログラムの名前。空は標準。
         Container::String DebugName;
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
         /// Shading が ShadingModel::Fur のときだけ効く。ほかでは店が既定値にして無効のままにする。
         FurMaterialData Fur;
+        /// GBuffer・影の頂点シェーダーが風で揺らす。MegaGeometry は対象外。
+        VertexAnimationParams VertexAnimation;
         /// 店は読まない。GetData の値から作り直した CreateData でも店が採番し直す。
         uint64_t Revision = 0;
     };
@@ -448,6 +539,10 @@ namespace NorvesLib::Core::Rendering
         bool bTwoSided = false;
         bool bCastShadows = true;
         bool bDiffuseOnly = false; ///< 鏡面の無い純ランバート（MaterialCreateData::bDiffuseOnly）
+        /// 視界の確保でカメラと主人公の間に入ったときにディザで抜く遮蔽物（幹・低木・廃墟の欠片）。
+        /// GBuffer の切り抜きの変種で描くため早期の深度試験を失う。印は薄い遮蔽物だけに付け、大きな遮蔽物へ広げない。
+        /// 影の描画には効かない。
+        bool bViewClearanceOccluder = false;
 
         uint32_t RefCount = 0;
         GBufferProgramId ProgramId = kStandardGBufferProgramId; ///< Program から事前に計算した ID。
@@ -456,9 +551,17 @@ namespace NorvesLib::Core::Rendering
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
         /// Shading が ShadingModel::Fur のときだけ効く。ほかでは店が既定値にして無効のままにする。
         FurMaterialData Fur;
+        /// GBuffer・影の頂点シェーダーが風で揺らす。MegaGeometry は対象外。
+        VertexAnimationParams VertexAnimation;
         /// 店が採番する版。Create で 1、Update の成功ごとに 1 進み、写した側が古さを見分ける。
         uint64_t Revision = 0;
     };
+
+    /// 有効な風の頂点アニメを持つ材質かを返す。
+    inline bool MaterialHasVertexAnimation(const MaterialResourceData* material)
+    {
+        return material != nullptr && material->VertexAnimation.Mode != VertexAnimationMode::None;
+    }
 
     /**
      * @brief レイ命中時に使う材質値のフレームスナップショット

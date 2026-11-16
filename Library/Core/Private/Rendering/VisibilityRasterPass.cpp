@@ -11,8 +11,9 @@
 #include "RHI/ISampler.h"
 #include "RHI/ITexture.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/FrameCommand.h"
-#include "Rendering/GBufferProgramRegistry.h"
+#include "Rendering/GBufferPass.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -255,7 +256,7 @@ namespace NorvesLib::Core::Rendering
         // ハードのラスタ（LessOrEqual）と同じ比較。同じ深度ならソフトウェアラスタの ID が残る
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOpOrEqual();
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = false;
         blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
@@ -723,7 +724,7 @@ namespace NorvesLib::Core::Rendering
             //    起動画面の差は 0〜2 階調だが、ワイヤーフレームの表示では材質の境目の線の色が入れ替わる（約 50 階調）。
             pipelineDesc.depthStencilState.depthTestEnable = true;
             pipelineDesc.depthStencilState.depthWriteEnable = true;
-            pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
+            pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOpOrEqual();
 
             // 整数の添付はブレンドしない
             RHI::BlendAttachmentDesc blendAttachment;
@@ -1115,8 +1116,8 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
-            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
-            if (RequiresGBufferOverlay(materialData))
+            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlayDraw(materialData))
             {
                 continue;
             }
@@ -1201,8 +1202,8 @@ namespace NorvesLib::Core::Rendering
                 (instance.Material.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(instance.Material)
                     : nullptr;
-            // 標準でない材質（プログラム・Masked・両面）は ID のラスタに載せず、解決後に重ねる。
-            if (RequiresGBufferOverlay(materialData))
+            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）と残像は ID のラスタに載せず、解決後に重ねる。
+            if (RequiresGBufferOverlayDraw(materialData, instance.Opacity))
             {
                 continue;
             }

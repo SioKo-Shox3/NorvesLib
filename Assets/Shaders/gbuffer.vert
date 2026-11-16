@@ -20,7 +20,16 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 shadingModel;
     vec4 vertexAnimInstanceParams;
     vec4 vertexAnimTime;
+    vec4 specularAAParams;
+    vec4 vertexAnimMaterial0;
+    vec4 vertexAnimMaterial1;
 } mvp;
+
+layout(set = 0, binding = 12) uniform VertexAnimationWindFrame
+{
+    vec4 windA;
+    vec4 windB;
+} vertexAnimWind;
 
 #include "Common/SceneInstanceData.glsl"
 #include "Common/VertexAnimation.glsl"
@@ -43,8 +52,11 @@ layout(location = 8) flat out vec4 fragInstanceShadingParams;
 void main()
 {
     vec4 params = VertexAnimationParamsForFrame(instances[gl_InstanceIndex].shadingParams, mvp.vertexAnimTime);
+    VertexAnimationMaterial material = MakeVertexAnimationMaterial(mvp.vertexAnimMaterial0, mvp.vertexAnimMaterial1);
+    VertexAnimationWind wind = MakeVertexAnimationWind(vertexAnimWind.windA, vertexAnimWind.windB);
+    vec3 origin = instances[gl_InstanceIndex].world[3].xyz;
     vec4 worldPos = instances[gl_InstanceIndex].world * vec4(inPosition, 1.0);
-    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, mvp.vertexAnimTime.x);
+    worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, material, wind, origin, mvp.vertexAnimTime.x);
     fragWorldPos = worldPos.xyz;
 
     vec3 normal = instances[gl_InstanceIndex].normalRows[0].xyz * inNormal.x +
@@ -60,8 +72,8 @@ void main()
 
     fragCurrentClip = mvp.projection * mvp.view * worldPos;
     vec4 previousWorldPos = instances[gl_InstanceIndex].previousWorld * vec4(inPosition, 1.0);
-    previousWorldPos.xyz = ApplyVertexAnimation(previousWorldPos.xyz, inPosition, params, mvp.vertexAnimTime.y);
-    if (VertexAnimationKind(params) == VERTEX_ANIMATION_KIND_NONE)
+    previousWorldPos.xyz = ApplyVertexAnimation(previousWorldPos.xyz, inPosition, params, material, wind, origin, mvp.vertexAnimTime.y);
+    if (VertexAnimationIsIdentity(params, material, wind))
     {
         // 恒等のときは従来の行列の乗算順を保ち、丸めの差を出さない。
         fragPreviousClip = mvp.previousProjection * mvp.previousView *

@@ -1,5 +1,7 @@
 ﻿#include "Rendering/ForwardPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DepthConvention.h"
+#include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/HeightFogGpuParams.h"
 #include "Rendering/LightingPass.h"
@@ -39,6 +41,9 @@ namespace NorvesLib::Core::Rendering
         // 半透明の空の放射輝度 LUT の binding。空の遮蔽 16・17 の次。forward_transparent.frag と同じ。
         constexpr uint32_t TransparentHeightFogSkyBindingIndex = 18;
 
+        // 環境の UBO の binding。空の放射輝度 LUT 18 の次。forward_transparent.frag の NORVES_DECLARE_ENVIRONMENT_UBO と同じ。
+        constexpr uint32_t EnvironmentBindingIndex = 19;
+
         // 板・インポスターの空の放射輝度 LUT の binding。world_board.frag・impostor.frag と同じ。
         constexpr uint32_t WorldBoardHeightFogSkyBindingIndex = 2;
 
@@ -63,6 +68,15 @@ namespace NorvesLib::Core::Rendering
             descriptorSetDesc.bindings.push_back(textureBinding);
         }
 
+        static void AddEnvironmentBinding(RHI::DescriptorSetDesc& descriptorSetDesc)
+        {
+            RHI::DescriptorBinding environmentBinding;
+            environmentBinding.binding = EnvironmentBindingIndex;
+            environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            environmentBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(environmentBinding);
+        }
+
         struct alignas(16) TransparentForwardUBO
         {
             float view[16];
@@ -70,7 +84,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveColor[4];
             float pomParams[4];
-            float sceneColorParams[4]; // x=プリエクスポージャ、y=被覆率を出す印（再描画の UBO だけ 1）
+            float sceneColorParams[4]; // x=プリエクスポージャ、y=被覆率を出す印（再描画の UBO だけ 1）、z=濡れの感度（DefaultLit の材質の P0。負は未指定で 1）
             float lightView[4][16];
             float lightProjection[4][16];
             float shadowSplitDistances[8];
@@ -261,6 +275,17 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
+            const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
+            RHI::BufferDesc environmentDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer,
+                                            true, "ForwardDefaultEnvironment");
+            m_DefaultEnvironmentBuffer = m_Device->CreateBuffer(environmentDesc);
+            if (!m_DefaultEnvironmentBuffer)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "既定の環境定数バッファを作れませんでした");
+                return false;
+            }
+            m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
             RHI::DescriptorSetDesc descriptorSetDesc;
 
             RHI::DescriptorBinding uboBinding;
@@ -308,6 +333,7 @@ namespace NorvesLib::Core::Rendering
 
             AddSkyOcclusionBindings(descriptorSetDesc);
             AddHeightFogSkyBinding(descriptorSetDesc, TransparentHeightFogSkyBindingIndex);
+            AddEnvironmentBinding(descriptorSetDesc);
 
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, descriptorSetDesc))
@@ -510,6 +536,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultPointShadowCubeTexture.reset();
         m_DefaultMidGrayTexture.reset();
         m_DefaultLinearSampler.reset();
+        m_DefaultEnvironmentBuffer.reset();
         m_SkyRadianceSampler.reset();
         m_UniformAllocator.Shutdown();
         m_WorldBoardUniformAllocator.Shutdown();
@@ -967,7 +994,7 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = false;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
 
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = true;
@@ -1027,6 +1054,7 @@ namespace NorvesLib::Core::Rendering
 
         AddSkyOcclusionBindings(descriptorSetDesc);
         AddHeightFogSkyBinding(descriptorSetDesc, TransparentHeightFogSkyBindingIndex);
+        AddEnvironmentBinding(descriptorSetDesc);
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -1054,7 +1082,7 @@ namespace NorvesLib::Core::Rendering
 
         boardPipelineDesc.depthStencilState.depthTestEnable = true;
         boardPipelineDesc.depthStencilState.depthWriteEnable = false;
-        boardPipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        boardPipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
 
         RHI::BlendAttachmentDesc boardBlendAttachment;
         boardBlendAttachment.blendEnable = true;
@@ -1426,6 +1454,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
         std::memcpy(transparentFrameTemplate.cameraForward, cameraForward, sizeof(cameraForward));
         transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
+        transparentFrameTemplate.sceneColorParams[2] = -1.0f;
         transparentFrameTemplate.heightFog = heightFogParams;
         std::memcpy(transparentFrameTemplate.lightView,
                     physicalLighting.CascadedShadow.View,
@@ -1470,6 +1499,8 @@ namespace NorvesLib::Core::Rendering
         }
         const RHI::SamplerPtr skyOcclusionSampler = bSkyOcclusionPublished && skyOcclusion.Sampler
             ? skyOcclusion.Sampler : m_DefaultLinearSampler;
+
+        const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
@@ -1562,6 +1593,7 @@ namespace NorvesLib::Core::Rendering
                     uboData.emissiveColor[2] = materialData->EmissiveColor[2];
                     uboData.emissiveColor[3] = materialData->EmissiveLuminanceNits;
                     uboData.pomParams[0] = materialData->HeightScale;
+                    uboData.sceneColorParams[2] = materialData->ShadingParams[ShadingParamP0];
                 }
             }
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
@@ -1672,6 +1704,16 @@ namespace NorvesLib::Core::Rendering
                 descriptorSet->BindSampler(17, skyOcclusionSampler);
                 descriptorSet->BindTexture(TransparentHeightFogSkyBindingIndex, heightFogSkyTexture);
                 descriptorSet->BindSampler(TransparentHeightFogSkyBindingIndex, m_SkyRadianceSampler);
+                if (environmentConstants.IsValid())
+                {
+                    descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, environmentConstants.Buffer,
+                                                      environmentConstants.GetOffset32(), environmentConstants.GetSize32());
+                }
+                else
+                {
+                    descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer,
+                                                      0, sizeof(GPUEnvironmentParams));
+                }
                 descriptorSet->Update();
             };
             bindDescriptorSet(allocation.DescriptorSet);

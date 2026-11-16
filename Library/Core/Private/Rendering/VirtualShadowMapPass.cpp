@@ -9,6 +9,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/RenderExtension/RenderExtension.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/SparseResidencyShading.h"
@@ -139,9 +140,19 @@ namespace NorvesLib::Core::Rendering
      */
     struct VirtualShadowMapCasterState
     {
+        /** @brief 描画の材質を塊ごとに渡す、std430 の 2 つの vec4 */
+        struct ChunkVertexAnimation
+        {
+            float Params0[4] = {};
+            float Params1[4] = {};
+        };
+        static_assert(offsetof(ChunkVertexAnimation, Params1) == 16u);
+        static_assert(sizeof(ChunkVertexAnimation) == 32u);
+
         struct Use
         {
             RHI::BufferPtr Chunks;
+            RHI::BufferPtr ChunkVertexAnim;
             uint32_t ChunkCapacity = 0;
         };
 
@@ -150,11 +161,14 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr Draws;
         /** @brief 今回の Execute が集めた塊の記録と内訳 */
         Container::VariableArray<VsmShadowChunk> Chunks;
+        Container::VariableArray<ChunkVertexAnimation> ChunkVertexAnim;
         Container::VariableArray<VirtualShadowMapMaskedDraw> MaskedDraws;
 #if NORVES_ENABLE_LOGGING
         uint32_t MaskedChunkCount = 0;
         uint32_t MaskedDroppedDrawCount = 0;
         uint32_t LoggedMaskedCounts[5] = {};
+        uint32_t LoggedExtensionCounts[6] = {};
+        bool bExtensionLogged = false;
 #endif
         VirtualShadowMap::CasterStats Stats;
         /** @brief 作業配列（毎フレーム容量を使い回す） */
@@ -216,6 +230,14 @@ namespace NorvesLib::Core::Rendering
 
     namespace
     {
+        // 直前に追加された塊の数だけ、対応する材質の値を同じ順に足す。
+        void AppendChunkVertexAnimation(VirtualShadowMapCasterState& state, size_t firstChunk,
+                                        const VirtualShadowMapCasterState::ChunkVertexAnimation& animation = {})
+        {
+            const size_t added = state.Chunks.size() - firstChunk;
+            state.ChunkVertexAnim.resize(state.ChunkVertexAnim.size() + added, animation);
+        }
+
         constexpr double BytesPerMegabyte = 1024.0 * 1024.0;
         /** @brief 投影物の内訳が変わらなくても VSM_CASTERS を出す間隔（Execute の回数） */
         constexpr uint32_t CasterLogIntervalExecutions = 60;
@@ -449,9 +471,11 @@ namespace NorvesLib::Core::Rendering
                 const bool bExpandFieldBounds = fieldConstants.bEnabled != 0u && bFieldRecentlyActive;
                 const float fieldMargin = bExpandFieldBounds ? fieldConstants.BendScale * plantHeight : 0.0f;
                 const float fieldDownwardMargin = bExpandFieldBounds ? fieldConstants.FlattenScale * plantHeight : 0.0f;
+                const size_t firstChunk = state.Chunks.size();
                 const uint32_t added = VirtualShadowMap::AppendFoliageInstance(
                     batch, mesh, instance, fadeScale, clipmap, state.Chunks, state.Stats, bounds, bHasBounds,
                     slices, bStill, fieldMargin, fieldDownwardMargin);
+                AppendChunkVertexAnimation(state, firstChunk);
                 if (added == 0u || !bHasBounds)
                 {
                     continue;
@@ -1060,6 +1084,7 @@ namespace NorvesLib::Core::Rendering
     {
         VirtualShadowMapCasterState& state = *m_Casters;
         state.Chunks.clear();
+        state.ChunkVertexAnim.clear();
         state.MaskedDraws.clear();
 #if NORVES_ENABLE_LOGGING
         state.MaskedChunkCount = 0;
@@ -1133,11 +1158,19 @@ namespace NorvesLib::Core::Rendering
                                                    proxy.SubMeshes[rangeIndex].MaterialIndex < MAX_MATERIAL_SLOTS
                                                        ? proxy.SubMeshes[rangeIndex].MaterialIndex : 0u;
                     const MaterialHandle materialHandle = proxy.Materials[materialIndex];
+                    const MaterialResourceData* materialData = context.Resources.Materials && materialHandle.IsValid()
+                                                                   ? context.Resources.Materials->GetData(materialHandle) : nullptr;
+                    VirtualShadowMapCasterState::ChunkVertexAnimation vertexAnim;
+                    if (materialData)
+                    {
+                        PackVertexAnimationMaterialConstants(materialData->VertexAnimation, vertexAnim.Params0, vertexAnim.Params1);
+                    }
                     const MaskedCasterMaterial material = ResolveMaskedCasterMaterial(context, materialHandle, proxy.ShadingParams);
                     const uint32_t firstChunk = static_cast<uint32_t>(state.Chunks.size());
                     // このプロキシの値は主描画の InstanceData.shadingParams の元で、カメラ外でも使える。
                     VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats,
                                                                 slices, proxy.ShadingParams);
+                    AppendChunkVertexAnimation(state, firstChunk, vertexAnim);
                     const bool bMasked = AppendMaskedCasterDraw(state, material, firstChunk);
 
                     // キャッシュの無効化の入力: 同じ描画が同じ変換・範囲なら動いていない
@@ -1150,7 +1183,9 @@ namespace NorvesLib::Core::Rendering
                     signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexCount);
                     signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexOffset);
                     const bool bAnimated = context.bVertexAnimationTestDisplacement && proxy.ShadingParams[2] >= 0.5f;
-                    motion.Signature = VirtualShadowMap::CasterHashCombine(signature, bAnimated ? 1u : 0u);
+                    const bool bWindAnimated = MaterialHasVertexAnimation(materialData) && context.Wind.bEnabled;
+                    // 風の有効・無効が切り替わったときも、前の境界を消去する。
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(signature, (bAnimated ? 1u : 0u) | (bWindAnimated ? 2u : 0u));
                     if (material.Albedo)
                     {
                         // 材質の編集・テクスチャの差し替え・範囲の上限による描画方式の変化も、影の再描画に反映する。
@@ -1162,7 +1197,7 @@ namespace NorvesLib::Core::Rendering
                         motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.bSparse ? 1u : 0u);
                         motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, bMasked ? 1u : 0u);
                     }
-                    motion.bAlwaysChanged = bAnimated;
+                    motion.bAlwaysChanged = bAnimated || bWindAnimated;
                     motion.bHasBounds = true;
                     motion.Bounds = VirtualShadowMap::TransformBoundsByWorld(world, *input.MeshBounds);
                     if (bAnimated)
@@ -1170,6 +1205,15 @@ namespace NorvesLib::Core::Rendering
                         // キャッシュの消去は揺れの両端を含める。投影物の選択とカリングは変えない。
                         motion.Bounds.Min[0] -= VertexAnimationTestSineAmplitudeMeters;
                         motion.Bounds.Max[0] += VertexAnimationTestSineAmplitudeMeters;
+                    }
+                    if (bWindAnimated)
+                    {
+                        const float margin = MaxVertexAnimationDisplacementMeters(materialData->VertexAnimation);
+                        for (uint32_t axis = 0; axis < 3u; ++axis)
+                        {
+                            motion.Bounds.Min[axis] -= margin;
+                            motion.Bounds.Max[axis] += margin;
+                        }
                     }
                     state.Motion.push_back(motion);
                 }
@@ -1225,6 +1269,7 @@ namespace NorvesLib::Core::Rendering
                 VirtualShadowMap::AppendSkinnedInstance(
                     instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats,
                     slices, instance.ShadingParams);
+                AppendChunkVertexAnimation(state, firstChunk);
                 AppendMaskedCasterDraw(state, material, firstChunk);
 
                 // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う（鍵はコンポーネントとサブメッシュの範囲ごと）
@@ -1242,6 +1287,103 @@ namespace NorvesLib::Core::Rendering
                 state.Motion.push_back(motion);
             }
         }
+
+        // ----- 描画の拡張の束（ShadowCaster の段） -----
+#if NORVES_ENABLE_LOGGING
+        uint32_t extensionCounts[6] = {};
+        const uint32_t extensionFirstChunk = static_cast<uint32_t>(state.Chunks.size());
+        const uint32_t extensionFirstMaskedChunk = state.MaskedChunkCount;
+        const uint32_t extensionFirstSkippedDraw = state.Stats.SkippedDraws;
+#endif
+        if (m_RenderExtensions)
+        {
+            const RenderExtensionShadowCasterFrame& frame = m_RenderExtensions->GetShadowCasters();
+#if NORVES_ENABLE_LOGGING
+            extensionCounts[0] = static_cast<uint32_t>(frame.GetDraws().size());
+            extensionCounts[1] = static_cast<uint32_t>(frame.GetInstances().size());
+#endif
+            for (const RenderExtensionShadowCasterDraw& draw : frame.GetDraws())
+            {
+                VirtualShadowMap::ProceduralDrawInput input;
+                input.VertexAddress = draw.VertexBuffer->GetDeviceAddress();
+                input.IndexAddress = draw.IndexBuffer->GetDeviceAddress();
+                if (input.VertexAddress == 0u || input.IndexAddress == 0u)
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                const bool bPoint = draw.bPointLightShadow && state.bUseSliceTable;
+                if (!bPoint && !clipmap.bEnabled)
+                {
+                    continue;
+                }
+                input.FirstIndex = draw.FirstIndex;
+                input.IndexCount = draw.IndexCount;
+                input.VertexOffset = draw.VertexOffset;
+                input.MeshBounds = &draw.LocalBounds;
+                if (!VirtualShadowMap::PlanProceduralChunks(input, state.PlanScratch, state.Plan))
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                const float params[4] = {-1.0f, -1.0f, -1.0f, draw.CoverageMultiplier};
+                const MaskedCasterMaterial material = ResolveMaskedCasterMaterial(context, draw.Material, params);
+#if NORVES_ENABLE_LOGGING
+                extensionCounts[5] += bPoint ? 1u : 0u;
+#endif
+                for (uint32_t instanceIndex = 0; instanceIndex < draw.InstanceCount; ++instanceIndex)
+                {
+                    const RenderExtensionShadowCasterInstance& instance = frame.GetInstances()[draw.FirstInstance + instanceIndex];
+                    const uint32_t firstChunk = static_cast<uint32_t>(state.Chunks.size());
+                    // 表を渡さない束は、組 0 の太陽の段だけに印を付ける。
+                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, instance.World, clipmap, state.Chunks, state.Stats,
+                                                                bPoint ? slices : nullptr, nullptr);
+                    AppendChunkVertexAnimation(state, firstChunk);
+                    const bool bMasked = AppendMaskedCasterDraw(state, material, firstChunk);
+
+                    VirtualShadowMap::CasterMotionEntry motion;
+                    motion.Key = VirtualShadowMap::CasterHashCombine(VirtualShadowMap::CasterHashCombine(0x45585453ull, draw.Key), instanceIndex);
+                    uint64_t signature = VirtualShadowMap::CasterHashFloats(1469598103934665603ull, instance.World, 16u);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexAddress);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexAddress);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.FirstIndex);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexCount);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexOffset);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, draw.ContentRevision);
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(signature, bPoint ? 1u : 0u);
+                    if (material.Albedo)
+                    {
+                        // 材質と切り抜きの範囲の変化も、ページの再描画へ反映する。
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, draw.Material.Id);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, std::bit_cast<uint32_t>(material.Cutoff));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, std::bit_cast<uint32_t>(material.Coverage));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.AlbedoId);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, reinterpret_cast<uintptr_t>(material.Albedo.get()));
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, material.bSparse ? 1u : 0u);
+                        motion.Signature = VirtualShadowMap::CasterHashCombine(motion.Signature, bMasked ? 1u : 0u);
+                    }
+                    motion.bAlwaysChanged = false;
+                    motion.bHasBounds = true;
+                    motion.Bounds = VirtualShadowMap::TransformBoundsByWorld(instance.World, draw.LocalBounds);
+                    state.Motion.push_back(motion);
+                }
+            }
+        }
+#if NORVES_ENABLE_LOGGING
+        extensionCounts[2] = static_cast<uint32_t>(state.Chunks.size()) - extensionFirstChunk;
+        extensionCounts[3] = state.MaskedChunkCount - extensionFirstMaskedChunk;
+        extensionCounts[4] = state.Stats.SkippedDraws - extensionFirstSkippedDraw;
+        if ((extensionCounts[0] != 0u || state.bExtensionLogged) &&
+            (!state.bExtensionLogged || !std::equal(extensionCounts, extensionCounts + 6u, state.LoggedExtensionCounts)))
+        {
+            std::copy(extensionCounts, extensionCounts + 6u, state.LoggedExtensionCounts);
+            state.bExtensionLogged = true;
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_EXTENSION_CASTERS draws=%u instances=%u chunks=%u masked_chunks=%u skipped=%u point_draws=%u",
+                            extensionCounts[0], extensionCounts[1], extensionCounts[2],
+                            extensionCounts[3], extensionCounts[4], extensionCounts[5]);
+        }
+#endif
 
         // ----- 草・低木の株: カメラに近い株（束の ShadowDistance 以内）を近い順に、株の塊の予算まで -----
         const CameraProxy* camera = context.GetActiveCamera();
@@ -1360,16 +1502,26 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 塊の記録は、この Execute 専用のバッファへ書く（ホストが書く。足りなければ 2 倍ずつ広げる）
+        // 数が合わないときは材質の対応を使わず、すべて無効として描く。
+        if (state.ChunkVertexAnim.size() != state.Chunks.size())
+        {
+            state.ChunkVertexAnim.clear();
+            state.ChunkVertexAnim.resize(chunkCount);
+        }
+
+        // 塊と材質の表は、この Execute 専用のバッファへ書く（足りなければ 2 倍ずつ広げる）
         VirtualShadowMapCasterState::Use& use = state.Uses.Acquire();
-        if (!use.Chunks || use.ChunkCapacity < chunkCount)
+        if (!use.Chunks || !use.ChunkVertexAnim || use.ChunkCapacity < chunkCount)
         {
             const uint32_t wanted = std::max(chunkCount, std::min(VirtualShadowMap::MAX_CASTER_CHUNKS, std::max(256u, use.ChunkCapacity * 2u)));
             RHI::FrameResourceProtectedCreationScope protectedCreation;
             use.Chunks = m_Device->CreateBuffer(
                 RHI::BufferDesc(VirtualShadowMap::RasterChunkBytes(wanted), VirtualShadowMap::RasterChunkUsage(), true, "VsmRaster_Chunks"));
-            use.ChunkCapacity = use.Chunks ? wanted : 0u;
-            if (!use.Chunks)
+            use.ChunkVertexAnim = m_Device->CreateBuffer(
+                RHI::BufferDesc(VirtualShadowMap::RasterChunkVertexAnimBytes(wanted), VirtualShadowMap::RasterChunkUsage(), true,
+                                "VsmRaster_ChunkVertexAnim"));
+            use.ChunkCapacity = use.Chunks && use.ChunkVertexAnim ? wanted : 0u;
+            if (!use.Chunks || !use.ChunkVertexAnim)
             {
                 return false;
             }
@@ -1377,11 +1529,17 @@ namespace NorvesLib::Core::Rendering
         if (chunkCount != 0u)
         {
             use.Chunks->Update(state.Chunks.data(), static_cast<uint64_t>(chunkCount) * sizeof(VsmShadowChunk));
+            use.ChunkVertexAnim->Update(state.ChunkVertexAnim.data(), VirtualShadowMap::RasterChunkVertexAnimBytes(chunkCount));
+        }
+        else
+        {
+            const VirtualShadowMapCasterState::ChunkVertexAnimation emptyAnimation;
+            use.ChunkVertexAnim->Update(&emptyAnimation, sizeof(emptyAnimation));
         }
 
         RHI::ICommandList* commandList = context.CommandList;
-        RHI::BufferPtr rasterBuffers[5] = {use.Chunks, state.Instances, state.Draws};
-        uint32_t rasterBufferCount = 3;
+        RHI::BufferPtr rasterBuffers[6] = {use.Chunks, state.Instances, state.Draws, use.ChunkVertexAnim};
+        uint32_t rasterBufferCount = 4;
         if (bMega)
         {
             // カリングの記録の後に Common へ戻した一覧とクラスタの記録を、展開・描画が読めるように UnorderedAccess へ遷移する
@@ -1407,6 +1565,7 @@ namespace NorvesLib::Core::Rendering
         rasterDispatch.Stats = m_Stats;
         rasterDispatch.Chunks = use.Chunks;
         rasterDispatch.ChunkCount = chunkCount;
+        rasterDispatch.ChunkVertexAnim = use.ChunkVertexAnim;
         rasterDispatch.MaskedDraws = state.MaskedDraws.empty() ? nullptr : state.MaskedDraws.data();
         rasterDispatch.MaskedDrawCount = static_cast<uint32_t>(state.MaskedDraws.size());
         rasterDispatch.Instances = state.Instances;
@@ -1415,6 +1574,7 @@ namespace NorvesLib::Core::Rendering
         std::copy(state.FoliageWindParams, state.FoliageWindParams + 4, rasterDispatch.FoliageWindParams);
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
                                          rasterDispatch.VertexAnimTime);
+        PackVertexAnimationWindConstants(context.Wind, rasterDispatch.VertexAnimWindA, rasterDispatch.VertexAnimWindB);
         rasterDispatch.WorldFieldCurrent = worldFieldCurrent;
         rasterDispatch.WorldField = fieldConstants;
         if (bMega)
