@@ -7694,7 +7694,7 @@
 - notes: 設計はロードマップ 2258 行（GR47 の衝突: 幹のカプセルの記録を GR09 へ渡す）、リスクは 2735 行。衝突の形の自動生成（GR81、G17）は範囲外で、形は種の表に人が書く（生成AIの木の形から幹のカプセルを作る作業は GR81 に任せる）。草は物理を持たない前提（ロードマップ 2072 行）なので、foliage の種の当たりは作らない（種の表で形を書けば付く）。共有のファイル（`Test/Modules/Physics/CMakeLists.txt`）は差分を小さくする。試験を足す理由: 反証する契約は「描いている木に当たりがあり、隠した・離れた木には当たらず、出し入れで数が戻る」こと。破れると見えない木に阻まれる・木を素通りするとして、遊んでいるときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（物理・Object の寿命）なので評価者を通す。
 
 ## G12-GR48-IMPOSTOR-BAKE: インポスターのベイクを GPU で実装し、八面体の方向からアルベドと被覆・法線・材質・深度のアトラスを焼いて、オフラインの道具が PNG と寸法の情報を書き出す
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `ImpostorBakeService::BakeProceduralAtlas`（今はテクスチャを作って空のコマンドリストを Begin/End/Submit するだけ。`Library/Core/Private/Rendering/ImpostorBake.cpp:108-160`）が、セルごとに八面体（既定は上半球の hemi-octahedral。設定で全球）の方向から正射影でメッシュを描き、1 つのレンダーパスの MRT で albedo + coverage（RGBA8）・法線（オブジェクト空間を符号化、RGBA8）・ORM（AO・粗さ・金属度）・深度（R8）を各セルのビューポートへ書く（初期値 8 × 8 セル・1 セル 192px。設定で変えられる）。`impostor_bake.vert/.frag` は `gbuffer.frag` と同じ材質の読み方（`Common/PbrMaterialTextureSampling.glsl`）にする。(2) 八面体の軸の規約を「Y-up のオブジェクトの座標へ回してから符号化する」に統一し、`ImpostorMath`（`EncodeOctahedralDirection`。`ImpostorMath.h:21`）と `impostor.frag`（`EncodeOctahedral`。今は極が +Z）とベイクが同じ関数・同じ式を使う。(3) オフラインの道具 `Tools/ImpostorBaker`（新しい CLI。`Tools/CMakeLists.txt` に足す。ヘッドレスの Vulkan）が、cook 済みのメッシュか glTF を読んでベイクし、`CopyTextureToBuffer` で読み戻して PNG 4 枚と `.impostor.json`（寸法・半径・ピボット・セルの数・方式）を書く。PNG は AssetCook のテクスチャの cook（`--usage albedo`・`orm`・`single`。法線は 3 チャンネルなので BC7 linear）で焼く。(4) 試験: `ImpostorOctahedralTest` に Y-up の規約での符号化 → 復号の往復と、ベイクと実行時のセルの選択が同じ方向で同じセルを返すケースを足す。`RHITextureUpdateVulkanTest` の束へ `ImpostorBakeVulkanTest` を MEMBER で足す（UV 球と立方体を焼き、(a) 各セルの中心で coverage が閾値以上、(b) 法線のアトラスを復号した値が解析の値と 3 度以内（球）、(c) 深度が球の形に単調、(d) セルの境に隣のセルの色がにじまない）。既存の `ImpostorBakeServiceTest` の寸法・メタデータの検証が通る。`ImpostorBaker` がビルドできる。
 - verify: `cmake --build build --config Debug --target ImpostorBaker ImpostorBakeServiceTest ImpostorLODSwitchTest RHITextureUpdateVulkanTest -- /m:1`
@@ -10844,3 +10844,11 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RenderedObjectHistory.h, Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
 - from: G7-GR49-ENV-SYSTEM
+
+## G12-GR48-IMPOSTOR-GBUFFER-P1: GBuffer へ書くインポスターで、アトラスの方式(上半球・全球)と個体の回転を使ってセルを選び、法線をワールドへ戻す
+- status: todo
+- after: G12-GR48-IMPOSTOR-GBUFFER
+- done-when: (1) 計画の文書にある要件なのに、どのタスクにも入っていない作業(上の 3 に当たる)。ロードマップ 2275 行は、ベイクと実行時の両方で「Y-up のオブジェクトの座標へ回してから符号化する」規約にそろえると決めている。ところが今の実行時の `impostor.frag:44-46` は、個体の回転を無いものとして扱い、方式を `IMPOSTOR_LAYOUT_HEMI_OCTAHEDRAL` に決め打ちしていて、コメントにも「全球のアトラスは選べない」とある。G12-GR48-IMPOSTOR-GBUFFER の done-when にもこの点は無い。一方で `Tools/ImpostorBaker/Main.cpp:371` は `FullOctahedral` で焼けて、`ImpostorBakeMetadata::Layout`(`ImpostorBake.h:34`)に方式を残す。また、後に回る G12-GR48-LAYER-SHADOW は、GR47 の配置の層にある回った個体を `ImpostorGBufferPass` で描く。そこで次の (2)〜(5) を満たす。(2) `ImpostorBatch`(またはそのパスの束ごとの定数)が、アトラスの `ImpostorBakeMetadata::Layout` を運ぶ。`impostor_gbuffer.frag` は決め打ちの上半球をやめ、その方式を `EncodeImpostorOctahedral`(`Assets/Shaders/Common/ImpostorOctahedral.glsl`)に渡してセルを選ぶ。全球で焼いたアトラスも、ベイクと同じ関数・同じ式でセルを引く。(3) 視線の向きは、`packet.InstanceData` にある個体の世界行列の回転の逆(拡縮は除いて正規化する)で Y-up のオブジェクトの座標へ回してから符号化する。アトラスから読んだオブジェクトの空間の法線は、同じ回転でワールドへ戻す。深度のアトラスで `gl_FragDepth` を補正するときも、同じオブジェクトの空間の視線を使う。(4) 回っていない上半球の個体では、セルの選び方が変更の前と同じになる。F11 のインポスターの見本と既定の起動画面は変えない(絶対規則 7)。(5) Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/impostor_gbuffer.vert, Assets/Shaders/impostor_gbuffer.frag, Library/Core/Public/Rendering/ImpostorGBufferPass.h, Library/Core/Private/Rendering/ImpostorGBufferPass.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Component/ImpostorComponent.cpp, TASKS.md, PROGRESS.md
+- from: G12-GR48-IMPOSTOR-GBUFFER
