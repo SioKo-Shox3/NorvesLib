@@ -1,6 +1,7 @@
 ﻿// GameThread の気象の正本。2 つ以上の系が参照する値だけを持ち、毛の濡れや局所の雨遮蔽などは持たない。
 #pragma once
 
+#include "Container/String.h"
 #include "Rendering/EnvironmentParameters.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/VolumetricFog.h"
@@ -147,6 +148,26 @@ namespace NorvesLib::Core::Environment
         /// 欄ごとの遷移の進み方。
         ETransitionCurve Curves[EnvironmentFieldCount] = {};
     };
+
+    inline constexpr uint32_t EnvironmentStateFormatVersion = 1;
+
+    /// 気象の状態を JSON v1 の文字列にする（整形つき）。
+    Container::String ToJson(const EnvironmentState& state);
+
+    /// JSON v1 を読む。未知のキー・型違い・範囲外は警告し、その欄を既定値にする。
+    /// 欠けたキーは警告せず既定値にする。構文・根・formatVersion が不正なら false。
+    bool FromJson(const Container::String& text, EnvironmentState& outState, Container::String* pOutError = nullptr);
+
+    /// 状態と同じ形式に transitionSeconds と curve を加えたプリセットを遷移の目標として読む。
+    bool EnvironmentPresetFromJson(const Container::String& text, EnvironmentTarget& outTarget,
+                                   Container::String* pOutError = nullptr);
+
+    /// 英数字・'_'・'-' の 1〜64 文字の名前から Assets/Data/Environment/<name>.env.json を作る。
+    bool MakeEnvironmentPresetPath(const Container::String& name, Container::String& outPath);
+
+    /// 作業ディレクトリからの相対パスで名前のプリセットを読み、遷移の目標を返す。
+    bool LoadEnvironmentPreset(const Container::String& name, EnvironmentTarget& outTarget,
+                               Container::String* pOutError = nullptr);
 
     /// 全欄に同じ遷移時間と進み方を設定する。
     void SetEnvironmentTargetDuration(EnvironmentTarget& target, float seconds, ETransitionCurve curve);

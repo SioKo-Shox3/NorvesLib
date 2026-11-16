@@ -143,6 +143,28 @@ namespace NorvesLib::Core::Environment
         Notify(EEnvironmentChange::TargetSet);
     }
 
+    bool EnvironmentSystem::ApplyPreset(const Container::String& name)
+    {
+        if (!m_bEnabled)
+        {
+            WarnDisabledCommand("ApplyPreset");
+            return false;
+        }
+        EnvironmentTarget target;
+        Container::String error;
+        if (!LoadEnvironmentPreset(name, target, &error))
+        {
+#ifdef UNICODE
+            LOG_WARNING("EnvironmentSystem のプリセットを読み込めません: %ls", error.c_str());
+#else
+            LOG_WARNING("EnvironmentSystem のプリセットを読み込めません: %s", error.c_str());
+#endif
+            return false;
+        }
+        SetTarget(target);
+        return true;
+    }
+
     void EnvironmentSystem::SetImmediate(const EnvironmentTarget& target)
     {
         if (!m_bEnabled)

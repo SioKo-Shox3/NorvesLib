@@ -11696,3 +11696,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 霧の色味・空への寄せ・太陽の方式を状態へ足し、雲量を空の曇天へ解決する: 着地(直し 0 回)
 - U3 ScriptRuntime に EnvironmentSystem を渡す口と、数値だけの天気の関数を足す: 着地(直し 0 回)
 - U4 Rendering3DTest の太陽の操作を、気象が有効な間は Manual の太陽へ書く: 着地(直し 0 回)
+- U2 気象の状態の JSON v1 の書き出しと寛容な読み込み、天候のプリセット 4 つと読み込みを足す: 着地(直し 0 回)

@@ -56,8 +56,11 @@ namespace NorvesLib::Core::Environment
         bool IsEnabled() const;
 
         void SetTarget(const EnvironmentTarget& target);
+        /// 名前のプリセットを読み、遷移の目標として SetTarget へ渡す。DiscontinuityId は進めない。
+        bool ApplyPreset(const Container::String& name);
         void SetImmediate(const EnvironmentTarget& target);
         void SnapToTarget();
+        /// JSON から読んだ状態（FromJson）を当てる口。DiscontinuityId を 1 進める。
         void LoadState(const EnvironmentState& state);
         void SkipTime(double seconds);
         void Tick(float worldDeltaSeconds);
