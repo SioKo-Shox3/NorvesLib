@@ -244,6 +244,7 @@ namespace NorvesLib::Core::Rendering
 
         bool bVisible = true;
         bool bCastShadow = true;
+        bool bRayTracing = true; // TLAS の選択に入れるか
         RenderLayer LayerMask = RenderLayer::Default;
 
         /// 散布の 1 本ごとの色味（RGBA8。白は色を変えない）。1 本ずつの MegaGeometryComponent は既定のまま
