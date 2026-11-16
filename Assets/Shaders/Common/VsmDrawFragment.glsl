@@ -1,5 +1,6 @@
 ﻿// ========================================
 // 太陽の仮想シャドウマップ（VSM）の描画: 物理ページの texel へ深度を書く
+// 切り抜きの版はディゾルブの表（binding 9）から渡された値で、GBuffer と同じ形に影を削る。
 //
 // 色・深度の添付は無い。128×128 のビューポートの画素 (x, y) が、頂点シェーダーが渡した物理ページの texel (x, y) に対応する。
 // 深度 [0, 1] は符号ビットが 0 の float なので、ビットの整数の大小が深度の大小と一致し、atomicMin で手前（小さい値）が残る。
@@ -13,6 +14,7 @@
 #include "Common/VirtualShadowMapChunk.glsl"
 #ifdef VSM_ALPHA_CLIP
 #include "Common/ShadowAlphaClip.glsl"
+#include "Common/Dissolve.glsl"
 layout(set = 0, binding = 7) uniform sampler2D maskAlbedoTexture;
 #endif
 
@@ -27,6 +29,11 @@ layout(location = 1) in float inDepth;
 layout(location = 2) in vec2 inTexCoord;
 // x = 閾値、y = 被覆率の乗数、z = 切り抜きの印（0 = なし、1 = 通常、3 = sparse）。
 layout(location = 3) flat in vec3 inAlphaClip;
+layout(location = 4) in vec3 inDissolvePosition;
+layout(location = 5) in float inDissolveProtect;
+layout(location = 6) flat in vec4 inDissolveSweep;
+// x = 有効の印、y = NoiseScale、z = 閾値。
+layout(location = 7) flat in vec3 inDissolveParams;
 #endif
 
 void main()
@@ -36,6 +43,14 @@ void main()
     if (inAlphaClip.z > 0.5)
     {
         if (ShadowAlphaClipShouldDiscard(maskAlbedoTexture, inTexCoord, inAlphaClip.y, inAlphaClip.x, inAlphaClip.z > 2.5))
+        {
+            discard;
+        }
+    }
+    if (inDissolveParams.x > 0.5)
+    {
+        if (DissolveMask(inDissolvePosition, inDissolveProtect, inDissolveParams.z,
+                         inDissolveSweep.xyz, inDissolveSweep.w, inDissolveParams.y) < 0.0)
         {
             discard;
         }

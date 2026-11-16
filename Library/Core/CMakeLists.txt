@@ -258,6 +258,8 @@ set(PRIVATE_SOURCES
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
     # Rendering
+    Private/Rendering/GpuParticle/GpuParticleSpawnPlanner.cpp
+    Private/Rendering/GpuParticle/GpuParticleEmitterAllocator.cpp
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/CanvasView.cpp
@@ -667,6 +669,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectSerialization.h
     Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
+    Public/Particle/VfxSimulationMath.h
     Public/Particle/DefeatBloodSequence.h
     Public/Particle/DefeatBloodPresenter.h
     Public/Engine/ApplicationProcessor.h
@@ -738,6 +741,7 @@ set(PUBLIC_HEADERS
     # Rendering
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h
+    Public/Rendering/GpuParticle/GpuParticleTypes.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h

@@ -1,5 +1,5 @@
 ﻿#version 450
-// 切り抜き材質の影へ位置・UV・被覆率の乗数を渡す。
+// 切り抜きとディゾルブで影を削るため、位置・UV・被覆率・判定値を渡す。
 #extension GL_GOOGLE_include_directive : require
 
 layout(location = 0) in vec3 inPosition;
@@ -17,10 +17,14 @@ layout(std140, set = 0, binding = 0) uniform ShadowAlphaClipMVP
     vec4 vertexAnimTime;
     // x = 閾値、y = 被覆率の乗数、z = sparse のアルベドなら 1、w = 予約。
     vec4 alphaClip;
+    vec4 dissolveSweep; // xyz = 局所座標の掃引方向、w = 掃引の強さ。
+    vec4 dissolveParams; // x = 有効の印、y = ノイズの拡大率、z = 既定の閾値、w = 予約。
+    uvec4 dissolveProtectBones; // 保護する骨のビット集合。
 } shadowMVP;
 
 #include "Common/SceneInstanceData.glsl"
 #include "Common/VertexAnimation.glsl"
+#include "Common/Dissolve.glsl"
 
 layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 {
@@ -29,15 +33,26 @@ layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 
 layout(location = 0) out vec2 outTexCoord;
 layout(location = 1) flat out float outCoverageMultiplier;
+layout(location = 2) out vec3 outRestPosition;
+layout(location = 3) out float outDissolveProtect;
+layout(location = 4) flat out float outDissolveThreshold;
 
 void main()
 {
     outTexCoord = inTexCoord;
     outCoverageMultiplier = shadowMVP.alphaClip.y;
+    outRestPosition = inPosition;
+    outDissolveProtect = 0.0;
+    outDissolveThreshold = shadowMVP.dissolveParams.z;
     if (shadowMVP.worldSource.x <= 0.5)
     {
         float instanceCoverage = instances[gl_InstanceIndex].shadingParams.w;
         outCoverageMultiplier = instanceCoverage >= 0.0 ? instanceCoverage : shadowMVP.alphaClip.y;
+        float instanceThreshold = instances[gl_InstanceIndex].shadingParams.x;
+        if (instanceThreshold >= 0.0)
+        {
+            outDissolveThreshold = clamp(instanceThreshold, 0.0, 1.0);
+        }
     }
     mat4 world = shadowMVP.worldSource.x > 0.5 ? shadowMVP.world
                                                : instances[gl_InstanceIndex].world;

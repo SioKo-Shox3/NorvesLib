@@ -76,6 +76,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t TerrainFarMapBindingIndex = 17;
         // megageometry.frag の環境 UBO。頂点の表と地形の枠に重ならない。
         constexpr uint32_t EnvironmentBindingIndex = 24;
+        // 区間の発光テクスチャ（断片シェーダーだけが読む）
+        constexpr uint32_t EmissiveTextureBindingIndex = 25;
         // スプラットの配列 4 枚（18〜21）は TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_*_BINDING を使う
         // スプラットの並びの UBO（23）は同じヘッダの TERRAIN_SPLAT_MEGA_PARAMS_BINDING を使う
 
@@ -1004,6 +1006,8 @@ namespace NorvesLib::Core::Rendering
         instance.Handle = proxy.MegaMeshHandle;
         std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
         std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
+        instance.Tint = proxy.Tint;
+        instance.VariationSeed = proxy.VariationSeed;
         instance.bCastShadow = proxy.bCastShadow;
         instance.WorldBounds = proxy.WorldBounds;
         instance.SceneSlot = proxy.SceneSlot;
@@ -1399,7 +1403,8 @@ namespace NorvesLib::Core::Rendering
                         (m_bSceneSlotsDirty || !m_bSceneSlotsPatchable ||
                          (actual.SceneSlot != 0 && actual.TableSlot == actual.SceneSlot)) &&
                         actual.Handle.Id == expected.Handle.Id &&
-                        actual.bCastShadow == expected.bCastShadow &&
+                        actual.bCastShadow == expected.bCastShadow && actual.Tint == expected.Tint &&
+                        actual.VariationSeed == expected.VariationSeed &&
                         std::memcmp(actual.WorldMatrix, expected.WorldMatrix, sizeof(expected.WorldMatrix)) == 0 &&
                         std::memcmp(actual.PreviousWorldMatrix, expected.PreviousWorldMatrix,
                                     sizeof(expected.PreviousWorldMatrix)) == 0 &&
@@ -1987,6 +1992,7 @@ namespace NorvesLib::Core::Rendering
                    a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
                    a.MetallicTexture == b.MetallicTexture && a.RoughnessTexture == b.RoughnessTexture &&
                    a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
+                   a.EmissiveTexture == b.EmissiveTexture && a.NormalScale == b.NormalScale &&
                    a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
                    a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing &&
                    a.TerrainBlend == b.TerrainBlend && a.Shading == b.Shading && a.Blend == b.Blend &&
@@ -2010,7 +2016,7 @@ namespace NorvesLib::Core::Rendering
             float TerrainParams[TERRAIN_BLEND_PARAM_FLOATS]; // 地形の 3 層の混ぜ合わせ（TerrainBlendShading.h の並び。layers.x が 0 なら 1 層）
             float ShadingParams[4]; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
             float VertexAnimTime[4];
-            float SpecularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
+            float SpecularAAParams[4]; // x=鏡面の AA の強さ、y=NormalScale、z=材質のテクスチャの印（1=発光テクスチャ、2=NormalScale）、w=予約の 0
             ViewClearanceGpuData ViewClearance; // 印の付いた区間だけ値が入り、ほかは全 0
         };
         static_assert(offsetof(SectionUniformData, VertexAnimTime) == 544u);
@@ -4207,6 +4213,14 @@ namespace NorvesLib::Core::Rendering
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
+            const uint32_t materialTextureFlags =
+                (mat.EmissiveTexture.IsValid() && mat.EmissiveLuminanceNits > 0.0f ? 1u : 0u) |
+                (mat.NormalScale != 1.0f ? 2u : 0u);
+            if (materialTextureFlags != 0u)
+            {
+                uniform.SpecularAAParams[1] = mat.NormalScale;
+                uniform.SpecularAAParams[2] = static_cast<float>(materialTextureFlags);
+            }
             if (mat.bViewClearanceOccluder && cam.ViewClearance.bAffectOccluders)
             {
                 uniform.ViewClearance = MakeViewClearanceGpuData(cam.ViewClearance, true);
@@ -4279,6 +4293,7 @@ namespace NorvesLib::Core::Rendering
                           : resolveTexture(mat.AOTexture, mat.OcclusionStrength == 1 ? m_DefaultWhiteTexture
                                                                                      : constant(mat.OcclusionStrength));
             auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
+            auto emissive = resolveTexture(mat.EmissiveTexture, m_DefaultWhiteTexture);
             if (!metallic || !roughness || !ao)
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "材質の定数テクスチャを準備できません");
@@ -4424,6 +4439,8 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(5, m_DefaultLinearSampler);
             descriptorSet->BindTexture(6, height);
             descriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(EmissiveTextureBindingIndex, emissive);
+            descriptorSet->BindSampler(EmissiveTextureBindingIndex, m_DefaultLinearSampler);
             for (uint32_t index = 0; index < TerrainLayerTextureCount; ++index)
             {
                 descriptorSet->BindTexture(TerrainLayerTextureBindingFirst + index, terrainTextures[index]);
@@ -6190,6 +6207,11 @@ namespace NorvesLib::Core::Rendering
         environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
         environmentBinding.stages = RHI::ShaderStage::Pixel;
         desc.bindings.push_back(environmentBinding);
+        RHI::DescriptorBinding emissiveTextureBinding;
+        emissiveTextureBinding.binding = EmissiveTextureBindingIndex;
+        emissiveTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        emissiveTextureBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(emissiveTextureBinding);
         if (UsesVirtualTextureFeedbackBinding(m_Device))
         {
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);
@@ -6468,9 +6490,11 @@ namespace NorvesLib::Core::Rendering
         const auto checkRow = [&](const MegaMeshInstance &instance) -> void
         {
             const uint32_t tableSlot = instance.TableSlot;
-            GPUMegaSlotRow row;
+            GPUMegaSlotRow row{};
             std::memcpy(row.WorldMatrix, instance.WorldMatrix, sizeof(row.WorldMatrix));
             std::memcpy(row.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(row.PreviousWorldMatrix));
+            row.Tint = instance.Tint;
+            row.VariationSeed = instance.VariationSeed;
             uint8_t &state = m_SlotRowStates[tableSlot];
             GPUMegaSlotRow &copy = m_SlotRowCopies[tableSlot];
             const bool bSame = state != 0u && std::memcmp(&copy, &row, sizeof(GPUMegaSlotRow)) == 0;
@@ -6671,12 +6695,12 @@ namespace NorvesLib::Core::Rendering
         // 4. 記録の列を staging へ書き、散在書き込みを記録する（書くものが無ければ何もしない）
         // ----------------------------------------
         constexpr uint32_t HeaderWords = 4u;
-        constexpr uint32_t RowRecordWords = 4u + 32u;    // 席の番号の uvec4 + 席の行（128 B）
+        constexpr uint32_t RowRecordWords = 4u + 36u;    // 席の番号の uvec4 + 席の行（144 B）
         constexpr uint32_t EntryRecordWords = 8u;        // 2 語の uvec4
         constexpr uint32_t ShadowRecordWords = 4u + 12u; // 描く順の番号の uvec4 + 影の表の行（48 B）
         constexpr uint32_t MeshRecordWords = 4u + 20u;   // メッシュの表の番号の uvec4 + メッシュの表の行（80 B）
         constexpr uint32_t RegionAlignWords = 64u;       // 区画の先頭を 256 B にそろえる（storage のオフセットの整列）
-        static_assert(sizeof(GPUMegaSlotRow) == 32u * sizeof(uint32_t));
+        static_assert(sizeof(GPUMegaSlotRow) == 36u * sizeof(uint32_t));
         static_assert(sizeof(MegaGeometryShadowInstance) == 12u * sizeof(uint32_t));
         static_assert(sizeof(GPUMegaMesh) == 20u * sizeof(uint32_t));
 
@@ -6934,7 +6958,9 @@ namespace NorvesLib::Core::Rendering
             if (tableSlot >= m_SlotRowStates.size() || m_SlotRowStates[tableSlot] != 1u ||
                 std::memcmp(m_SlotRowCopies[tableSlot].WorldMatrix, instance.WorldMatrix, sizeof(instance.WorldMatrix)) != 0 ||
                 std::memcmp(m_SlotRowCopies[tableSlot].PreviousWorldMatrix, instance.PreviousWorldMatrix,
-                            sizeof(instance.PreviousWorldMatrix)) != 0)
+                            sizeof(instance.PreviousWorldMatrix)) != 0 ||
+                m_SlotRowCopies[tableSlot].Tint != instance.Tint ||
+                m_SlotRowCopies[tableSlot].VariationSeed != instance.VariationSeed)
             {
                 ++mismatches;
             }
@@ -7058,7 +7084,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 期待する中身: 席の表は写し（GPU の表にある行だけ照合する）、描く順の表は写しの出所と席の行から
-        // mega_scene_scatter.comp と同じ並び（席の行 8 語 + (メッシュの表の番号, 最初のワークグループ, 0, 0)）
+        // mega_scene_scatter.comp と同じ並び。席の行 9 語の末尾 1 語の先頭 2 要素をメッシュの表の番号・
+        // 最初のワークグループで上書きし、色味・個体差の種は席の行のまま残す
         slot.SceneCheckExpected.assign(static_cast<size_t>(totalBytes), static_cast<uint8_t>(0));
         slot.SceneCheckSlotMask.assign(slotRows, static_cast<uint8_t>(0));
         uint8_t *expected = slot.SceneCheckExpected.data();

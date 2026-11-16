@@ -70,6 +70,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t VertexAnimParamsTableBindingIndex = 32u;
         // 環境の定数。通常・dump のタイルの束（最大 21）と、表・地形・スプラット（22〜36）の後ろ。
         constexpr uint32_t EnvironmentBindingIndex = 37u;
+        // 材質ごとのタイルの解決だけで使う発光テクスチャ。既存の束縛の番号は保つ。
+        constexpr uint32_t EmissiveTextureBindingIndex = 38u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -120,6 +122,13 @@ namespace NorvesLib::Core::Rendering
                 {
                     RHI::DescriptorBinding binding;
                     binding.binding = commonCount + 3u + textureBinding;
+                    binding.type = RHI::ResourceBindType::CombinedImageSampler;
+                    binding.stages = RHI::ShaderStage::Compute;
+                    desc.bindings.push_back(binding);
+                }
+                {
+                    RHI::DescriptorBinding binding;
+                    binding.binding = EmissiveTextureBindingIndex;
                     binding.type = RHI::ResourceBindType::CombinedImageSampler;
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
@@ -298,6 +307,7 @@ namespace NorvesLib::Core::Rendering
             material.AO = ResolveMaterialTexture(textures, ao);
             material.ORM = ResolveMaterialTexture(textures, orm);
             material.Height = ResolveMaterialTexture(textures, height);
+            material.Emissive = ResolveMaterialTexture(textures, handles.Emissive);
             if (material.bMegaGeometry)
             {
                 std::memcpy(&material.AOConstant, &entry.TexturesD[2], sizeof(float));
@@ -874,6 +884,7 @@ namespace NorvesLib::Core::Rendering
         struct BoundMaterial
         {
             RHI::TexturePtr Textures[VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT];
+            RHI::TexturePtr Emissive;
             RHI::TexturePtr TerrainTextures[VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT];
             float TerrainParams[VisibilityResolveGeometry::TERRAIN_PARAM_FLOATS] = {};
             RHI::TexturePtr TerrainSplatTextures[VisibilityResolveGeometry::TERRAIN_SPLAT_TEXTURE_COUNT];
@@ -934,6 +945,11 @@ namespace NorvesLib::Core::Rendering
                 bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_ORM;
             }
             bound.Textures[5] = input.Height ? input.Height : m_DefaultBlack;
+            bound.Emissive = input.Emissive ? input.Emissive : m_DefaultWhite;
+            if (!bound.Emissive)
+            {
+                return false;
+            }
             bound.Feedback[0] = input.FeedbackAlbedo;
             bound.Feedback[1] = input.FeedbackNormal;
             bound.Feedback[2] = input.FeedbackORM;
@@ -1065,6 +1081,8 @@ namespace NorvesLib::Core::Rendering
                 set.BindTexture(firstBinding + 3u + index, bound.Textures[index]);
                 set.BindSampler(firstBinding + 3u + index, materialSampler);
             }
+            set.BindTexture(EmissiveTextureBindingIndex, bound.Emissive);
+            set.BindSampler(EmissiveTextureBindingIndex, materialSampler);
             for (uint32_t index = 0; index < VisibilityResolveGeometry::TERRAIN_TEXTURE_COUNT; ++index)
             {
                 set.BindTexture(TerrainTextureBindingFirst + index, bound.TerrainTextures[index]);

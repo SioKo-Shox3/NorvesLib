@@ -48,7 +48,9 @@ namespace NorvesLib::Core::Rendering
             data.AOTexture = createInfo.AOTexture;
             data.ORMTexture = createInfo.ORMTexture;
             data.bNormalTwoChannel = createInfo.bNormalTwoChannel;
+            data.NormalScale = std::isfinite(createInfo.NormalScale) ? createInfo.NormalScale : 1.0f;
             data.HeightTexture = createInfo.HeightTexture;
+            data.EmissiveTexture = createInfo.EmissiveTexture;
             data.HeightScale = createInfo.HeightScale;
             data.Metallic = SanitizeOptionalUnitScalar(createInfo.Metallic);
             data.Roughness = SanitizeOptionalUnitScalar(createInfo.Roughness);
@@ -61,6 +63,10 @@ namespace NorvesLib::Core::Rendering
             }
             data.Program = createInfo.Program;
             data.ProgramId = MakeGBufferProgramId(data.Program.c_str());
+            if (data.ProgramId == MakeGBufferProgramId(DissolveGBufferProgramName))
+            {
+                data.Dissolve = SanitizeDissolveMaterialData(createInfo.Dissolve);
+            }
             data.Blend = createInfo.Blend;
             data.AlphaCutoff = SanitizeAlphaCutoff(createInfo.AlphaCutoff);
             data.AlphaClip = createInfo.AlphaClip == AlphaClipMode::Hash ? AlphaClipMode::Hash : AlphaClipMode::Test;

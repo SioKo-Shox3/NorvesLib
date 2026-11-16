@@ -26,6 +26,8 @@ namespace NorvesLib::Core::Component
     {
         /// 行の値の flags: 影を落とす
         constexpr uint32_t kScatterFlagCastShadow = 1u << 0;
+        /// 行ごとの非表示の印
+        constexpr uint32_t kScatterFlagHidden = 1u << 1;
         /// 検査 MASS_RANGES の名前と、仕事の無いフレームに突き合わせる間隔（列の Run の回数）
         constexpr const char *kMassRangesCheckName = "MASS_RANGES";
         constexpr uint64_t kMassRangesIdleInterval = 60;
@@ -355,6 +357,7 @@ namespace NorvesLib::Core::Component
         m_InputToRow.clear();
         m_Ranges.clear();
         m_Instances.clear();
+        m_InputHidden.clear();
         m_MeshTables.clear();
         m_pRowWorld = nullptr;
         m_bMassWorkRegistered = false;
@@ -407,6 +410,94 @@ namespace NorvesLib::Core::Component
         BumpContentVersion();
     }
 
+    void MegaGeometryScatterComponent::SetSeed(uint32_t seed)
+    {
+        if (Seed.Get() != seed)
+        {
+            Seed = seed;
+            BumpContentVersion();
+        }
+    }
+
+    uint32_t MegaGeometryScatterComponent::DefaultVariationSeed(uint32_t scatterSeed, uint32_t inputIndex)
+    {
+        uint32_t h = scatterSeed ^ (inputIndex * 0x9E3779B9u);
+        h ^= h >> 16;
+        h *= 0x85EBCA6Bu;
+        h ^= h >> 13;
+        h *= 0xC2B2AE35u;
+        h ^= h >> 16;
+        return h;
+    }
+
+    uint32_t MegaGeometryScatterComponent::GetInstanceTint(uint32_t inputIndex) const
+    {
+        return inputIndex < m_Instances.size() ? m_Instances[inputIndex].Tint : 0xFFFFFFFFu;
+    }
+
+    uint32_t MegaGeometryScatterComponent::GetInstanceVariationSeed(uint32_t inputIndex) const
+    {
+        if (inputIndex >= m_Instances.size())
+        {
+            return 0;
+        }
+        const uint32_t seed = m_Instances[inputIndex].VariationSeed;
+        return seed != 0 ? seed : DefaultVariationSeed(Seed.Get(), inputIndex);
+    }
+
+    bool MegaGeometryScatterComponent::SetInstanceHidden(uint32_t inputIndex, bool bHidden)
+    {
+        assert(!Ecs::Detail::EcsIsParallelActive());
+        if (inputIndex >= m_Instances.size())
+        {
+            return false;
+        }
+        if (IsInstanceHidden(inputIndex) == bHidden)
+        {
+            return true;
+        }
+        m_InputHidden[inputIndex] = bHidden ? 1u : 0u;
+        if (m_pRowWorld == nullptr || inputIndex >= m_InputToRow.size())
+        {
+            return true;
+        }
+        const uint32_t row = m_InputToRow[inputIndex];
+        Ecs::EcsWorld& ecs = m_pRowWorld->GetEcsWorld();
+        if (m_Rows[row].IsNull() || !ecs.IsAlive(m_Rows[row]))
+        {
+            return true;
+        }
+        const Ecs::EcsMegaInstance* current = ecs.GetColumnValue<Ecs::EcsMegaInstance>(m_Rows[row]);
+        if (current == nullptr)
+        {
+            return true;
+        }
+        // 変換と範囲の版は保ち、この行の非表示の印だけを書き換える
+        Ecs::EcsMegaInstance instance = *current;
+        instance.Flags = bHidden ? instance.Flags | kScatterFlagHidden : instance.Flags & ~kScatterFlagHidden;
+        ecs.WriteColumnValueOf(m_Rows[row], instance);
+        const ScatterRange& range = m_Ranges[row / kRangeRows];
+        Rendering::SceneView* view = m_pRowWorld->GetSceneView();
+        if (range.bPublished && view != nullptr)
+        {
+            if (bHidden)
+            {
+                view->RemoveMegaGeometryProxy(Rendering::MakeMegaScatterProxyKey(m_BatchId, inputIndex));
+            }
+            else
+            {
+                // 書き直し待ちでも、今の行と同じ版のメッシュの表で 1 行だけ戻す
+                PublishRowProxy(*view, ecs, row, FindMeshTable(range.MeshGeneration), view->IsMegaFullSync());
+            }
+        }
+        return true;
+    }
+
+    bool MegaGeometryScatterComponent::IsInstanceHidden(uint32_t inputIndex) const
+    {
+        return inputIndex < m_InputHidden.size() && m_InputHidden[inputIndex] != 0;
+    }
+
     void MegaGeometryScatterComponent::SetVisible(bool bVisible)
     {
         this->bVisible = bVisible;
@@ -424,6 +515,7 @@ namespace NorvesLib::Core::Component
         assert(!Ecs::Detail::EcsIsParallelActive());
         ReleaseRows();
         m_Instances.assign(instances.begin(), instances.end());
+        m_InputHidden.assign(m_Instances.size(), 0);
         m_Layout = layout;
         InstanceCount = static_cast<uint32_t>(m_Instances.size());
         World *world = ResolveWorld();
@@ -841,7 +933,8 @@ namespace NorvesLib::Core::Component
 
     void MegaGeometryScatterComponent::WriteRow(Ecs::EcsWorld &ecs, uint32_t row)
     {
-        const MegaScatterInstance &input = m_Instances[m_RowToInput[row]];
+        const uint32_t inputIndex = m_RowToInput[row];
+        const MegaScatterInstance &input = m_Instances[inputIndex];
         // 行のワールドの変換 = 所有者のワールドの変換 × 入力の局所の変換（階層のシステムと同じ式）
         const Math::Transform world =
             Ecs::EcsComposeTransform(m_OwnerWorld, Math::Transform(input.Position, input.Rotation, input.Scale));
@@ -850,6 +943,12 @@ namespace NorvesLib::Core::Component
         Ecs::EcsMegaInstance instance{};
         instance.MeshIndex = input.MeshIndex;
         instance.Flags = bCastShadow.Get() ? kScatterFlagCastShadow : 0u;
+        if (m_InputHidden[inputIndex] != 0)
+        {
+            instance.Flags |= kScatterFlagHidden;
+        }
+        instance.Tint = input.Tint;
+        instance.VariationSeed = GetInstanceVariationSeed(inputIndex);
         instance.Scale = std::max(world.scale.x, std::max(world.scale.y, world.scale.z));
         ecs.WriteColumnValueOf(entity, instance);
         ecs.WriteColumnValueOf(entity, Ecs::EcsScatterOwner{m_BatchId});
@@ -934,6 +1033,10 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
+        if ((instance->Flags & kScatterFlagHidden) != 0)
+        {
+            return false;
+        }
         if (meshes == nullptr || instance->MeshIndex >= meshes->Handles.size())
         {
             return false;
@@ -964,6 +1067,8 @@ namespace NorvesLib::Core::Component
         outProxy.bCastShadow = (instance->Flags & kScatterFlagCastShadow) != 0;
         outProxy.LayerMask = Rendering::RenderLayer::Default;
         outProxy.SceneSlot = slot->Value;
+        outProxy.Tint = instance->Tint;
+        outProxy.VariationSeed = instance->VariationSeed;
         return true;
     }
 
@@ -1006,38 +1111,43 @@ namespace NorvesLib::Core::Component
             return;
         }
         Ecs::EcsWorld &ecs = m_pRowWorld->GetEcsWorld();
-        Ecs::EcsGpuSceneSlotTable &table = ecs.GetGpuSceneSlots();
         const bool bFullSync = view->IsMegaFullSync();
         // 範囲の行を書いたときのメッシュの表で作る（書き直しを待つ範囲は前の表のメッシュのまま）
         const MeshTable *meshes = FindMeshTable(target.MeshGeneration);
-        Rendering::MegaGeometryProxy proxy;
         for (uint32_t row = target.FirstRow; row < target.FirstRow + target.RowCount; ++row)
         {
-            if (!BuildProxy(ecs, row, meshes, proxy))
-            {
-                // 描けない行（メッシュが表の外・無効）は、前に公開した proxy も外す
-                view->RemoveMegaGeometryProxy(Rendering::MakeMegaScatterProxyKey(m_BatchId, m_RowToInput[row]));
-                continue;
-            }
-            // 差分の同期は前の変換の履歴つきで公開し、全量の同期は前の変換をパケットが付け直す（World の公開と同じ）
-            if (bFullSync)
-            {
-                view->UpdateMegaGeometryProxy(proxy);
-            }
-            else
-            {
-                view->PublishMegaGeometryProxy(proxy);
-            }
-            // 席の範囲の AABB を、公開した proxy の境界を包むところまで広げる
-            if (const Ecs::EcsGpuSceneSlot *slot = ecs.GetColumnValue<Ecs::EcsGpuSceneSlot>(m_Rows[row]))
-            {
-                Math::Vector3 boundsMin;
-                Math::Vector3 boundsMax;
-                SphereToBox(proxy.WorldBounds, boundsMin, boundsMax);
-                table.NoteBounds(*slot, boundsMin, boundsMax);
-            }
+            PublishRowProxy(*view, ecs, row, meshes, bFullSync);
         }
         target.bPublished = true;
+    }
+
+    void MegaGeometryScatterComponent::PublishRowProxy(Rendering::SceneView& view, Ecs::EcsWorld& ecs,
+                                                        uint32_t row, const MeshTable* meshes, bool bFullSync)
+    {
+        Rendering::MegaGeometryProxy proxy;
+        if (!BuildProxy(ecs, row, meshes, proxy))
+        {
+            // 描けない行（非表示・メッシュが表の外・無効）は、前に公開した proxy も外す
+            view.RemoveMegaGeometryProxy(Rendering::MakeMegaScatterProxyKey(m_BatchId, m_RowToInput[row]));
+            return;
+        }
+        // 差分の同期は前の変換の履歴つきで公開し、全量の同期は前の変換をパケットが付け直す（World の公開と同じ）
+        if (bFullSync)
+        {
+            view.UpdateMegaGeometryProxy(proxy);
+        }
+        else
+        {
+            view.PublishMegaGeometryProxy(proxy);
+        }
+        // 席の範囲の AABB を、公開した proxy の境界を包むところまで広げる
+        if (const Ecs::EcsGpuSceneSlot* slot = ecs.GetColumnValue<Ecs::EcsGpuSceneSlot>(m_Rows[row]))
+        {
+            Math::Vector3 boundsMin;
+            Math::Vector3 boundsMax;
+            SphereToBox(proxy.WorldBounds, boundsMin, boundsMax);
+            ecs.GetGpuSceneSlots().NoteBounds(*slot, boundsMin, boundsMax);
+        }
     }
 
     void MegaGeometryScatterComponent::ReflectAllRanges(bool bRepublish)
@@ -1060,6 +1170,24 @@ namespace NorvesLib::Core::Component
         {
             const ScatterRange &range = m_Ranges[rangeIndex];
             ++audit.Ranges;
+            // 非公開の範囲も含め、作った生存行の非表示の印を入力ごとの印と突き合わせる
+            if (range.bCreated)
+            {
+                for (uint32_t row = range.FirstRow; row < range.FirstRow + range.RowCount; ++row)
+                {
+                    if (m_Rows[row].IsNull() || !ecs.IsAlive(m_Rows[row]))
+                    {
+                        continue;
+                    }
+                    const Ecs::EcsMegaInstance* instance = ecs.GetColumnValue<Ecs::EcsMegaInstance>(m_Rows[row]);
+                    if (instance == nullptr ||
+                        ((instance->Flags & kScatterFlagHidden) != 0) != IsInstanceHidden(m_RowToInput[row]))
+                    {
+                        NoteAuditFailure(audit, "散布 %u の範囲 %u の行 %u の非表示の印が入力と違う", m_BatchId,
+                                         rangeIndex, row);
+                    }
+                }
+            }
             if (view == nullptr)
             {
                 continue;
@@ -1085,6 +1213,17 @@ namespace NorvesLib::Core::Component
                         NoteAuditFailure(audit, "散布 %u の公開中の範囲 %u の行 %u が無い", m_BatchId, rangeIndex, row);
                         break;
                     }
+                    const Ecs::EcsMegaInstance* instance = ecs.GetColumnValue<Ecs::EcsMegaInstance>(m_Rows[row]);
+                    if (instance != nullptr && (instance->Flags & kScatterFlagHidden) != 0)
+                    {
+                        if (actual != nullptr)
+                        {
+                            NoteAuditFailure(audit, "散布 %u の範囲 %u の隠した行 %u の proxy が残っている", m_BatchId,
+                                             rangeIndex, row);
+                            break;
+                        }
+                        continue;
+                    }
                     if (!BuildProxy(ecs, row, meshes, expected))
                     {
                         if (actual != nullptr)
@@ -1102,7 +1241,8 @@ namespace NorvesLib::Core::Component
                     }
                     if (actual->SceneSlot != expected.SceneSlot || !(actual->MegaMeshHandle == expected.MegaMeshHandle) ||
                         std::memcmp(&actual->WorldTransform, &expected.WorldTransform, sizeof(expected.WorldTransform)) != 0 ||
-                        actual->bCastShadow != expected.bCastShadow)
+                        actual->bCastShadow != expected.bCastShadow || actual->Tint != expected.Tint ||
+                        actual->VariationSeed != expected.VariationSeed)
                     {
                         NoteAuditFailure(audit, "散布 %u の公開中の範囲 %u の行 %u の proxy が行の値と違う", m_BatchId, rangeIndex,
                                          row);
