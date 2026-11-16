@@ -11758,3 +11758,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 回さなかったもの: done-when の `VfxEffectSystemTest` のケースと `GpuParticleTypesTest` は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。
 - 決めたこと: 曲線は `VfxValueType` を増やさず（Game のエディタが型ごとに分岐するため）、CurveOverLife の KeyCount と Key0〜Key7（Vector2 = 正規化した年齢, 値）で持ち、評価は `Math::CurveKeyframe` の折れ線。WrapPolicy の Die は CameraBox の形があるときだけ箱の外の粒を消す（形が無ければ今と同じ）。通し番号は空きで切り詰めても要求数で進める（GPU の生成の計画と同じ）。SpawnChild の子は刻みの最後にまとめて生成し、その刻みでは動かさない。既存のエフェクト（新しいモジュールなし・設定が既定値）は乱数の引き方・積分の式・生成数を変えていない。
 - Next: GPU の実行先（G7-GR57-GPU-SIMULATION）がこの定義・型・生成の計画・割り当てを使う。`ParticleSystem` は CPU の実行先を今も `Tick(deltaTime)`（風なし・カメラ原点の既定の文脈）で呼ぶ。描画は変えていないので、人が見るときはヒットエフェクトと撃破の血のエフェクトが今までどおり出ることだけを見る。
+
+## G2-GR79-EMISSIVE-NORMALSCALE 取り込んだ材質の発光テクスチャと NormalScale を描画まで届ける（2026-11-16、run 20261116-093812）
+- Done: `MegaMeshMaterial`・`MaterialCreateData`・`MaterialResourceData` に `EmissiveTexture`（sRGB）と `NormalScale`（既定 1。非有限は 1）を足し、`ImportedOpaqueRuntime.cpp` の `normalScale_requires_shader_support`・`emissiveTexture_requires_shader_support` の拒否を外した。静的（NVMESH v1。`FinalizeImportedMaterial`）とスキン（`SkinnedMaterialBuilder`）は、正の nits かつ EmissivePath があるときだけ発光画像を sRGB で検査・作成して渡す（nits の 65504 未満の検査と `emissiveNitsPerUnit` 未設定の拒否は変えていない）。
+- Done: 描画は 4 経路で 発光 = テクスチャ × EmissiveColor × nits、法線 = 法線マップの XY × NormalScale を正規化（`PbrMaterialEvaluation.glsl` の `ApplyPbrNormalScale`）。GBuffer（通常・スキン）は binding 14、MegaGeometry は binding 25 に発光テクスチャを足し、UBO の大きさは変えずに予約の `specularAAParams.y` = NormalScale、`.z` = 印（1 = 発光テクスチャ、2 = NormalScale）にした。可視バッファの材質の表 `MaterialEntry` は `TexturesE[4]` を足して 160 バイト、印 `MATERIAL_FLAG_EMISSIVE_TEXTURE = 1024`・`MATERIAL_FLAG_NORMAL_SCALE = 2048`、材質ごとのタイルの解決は binding 38 で発光テクスチャを束ねる（直接 dispatch の版は発光の定数だけ）。印が立たない材質は今と同じ演算・同じ表の値で、地形・スプラットの法線には NormalScale を掛けない。`ImportedOpaqueRuntime.md`・`GpuLayoutRegistry.md` を合わせた。
+- 証拠: `.harness/runs/20261116-093812/verify-build-game-slot-G2-GR79.txt`（枠で `cmake --build build --config Debug --target Game -- /m:1` が EXIT CODE 0・` error ` の行 0、Game.exe までリンク）。シェーダーは gbuffer・gbuffer_alphaclip・megageometry・megageometry_clearance・visbuffer_resolve（4 種）・lighting・forward_transparent・RTGI/DiffuseIndirect を 2 通りのマクロで glslc に通して 22 件すべて OK。
+- Next: ランナーの評価者の反証（危険地帯: GBuffer・MegaGeometry・可視バッファの材質の表・Public API の `MaterialCreateData`）。人が見るときの見どころ: 発光テクスチャか normalScale≠1 を持つ glTF を取り込んだ材質（静的・スキン）を置いたシーンで、発光の模様がテクスチャどおりに光るか、法線の凹凸の強さが normalScale に従うか（0 で平ら）。既定の材質だけのシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）は見た目が変わらないこと。
+- Notes: 試験は作らない決まりにより、done-when の試験の追加（`ImportedOpaqueRuntimeTest`・`VisibilityMaterialTableTest`・`RenderingHdrSceneCaptureTest` の束の 2 場合）はしていない。verify の ctest の行は外す決まりで選ばれる試験が無いので回していない。撮影・GPU の確かめも回さない決まり。
+- Notes: 統合ブランチ feature/scene-launcher の取り込み（2026-11-16）: `GBufferFragment.glsl`（ディゾルブの変種の発光にも発光テクスチャを掛けた色度を使う）と `VisibilityResolve.glsl`（冒頭の説明に発光テクスチャとインスタンスの色味の両方を残す）の衝突を解いた。取り込みで変わったシェーダー 28 本を 2 通りのマクロで glslc に通して 56 件すべて OK、`cmake --build build --config Debug --target Game -- /m:1` は EXIT=0（証拠 `.harness/runs/20261116-093812/merge-build-Game.txt`）。ctest は回さない決まりで回していない。
+- U1 材質の型に発光テクスチャと NormalScale を足し、店のコピーと共通の GLSL 関数を用意する: 着地(直し 0 回)
+- U2 取り込みの拒否を外し、静的とスキンの両方で発光テクスチャと NormalScale を材質へ渡す: 着地(直し 0 回)
+- U3 通常とスキンの GBuffer で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U4 MegaGeometry のラスタで発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U5 可視バッファの材質の表と解決で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
