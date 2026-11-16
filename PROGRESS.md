@@ -11802,3 +11802,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（volumetrics は全シーンの霞に効く危険地帯）。草原での有効化と見え方の確かめは G11-GR52-FOG-CHECK。
 - U1 資産の束縛の核（AssetBinding.h/.cpp）と Component::OnPropertyApplied の口を足す: 着地(直し 0 回)
 - U2 MegaGeometryResources に GetModelSourcePath(ModelHandle) を足す: 着地(直し 0 回)
+- U3 MegaGeometryComponent が ModelAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
