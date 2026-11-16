@@ -36,7 +36,7 @@ vec2 ShutterMotion(ivec2 texel)
     if (IsBackgroundDepth(depth) && params.cameraPositionAndHistory.w > 0.5)
     {
         vec2 ndc = (vec2(texel) + 0.5) / size * 2.0 - 1.0;
-        vec4 world = params.inverseViewProjection * vec4(ndc, 1.0, 1.0);
+        vec4 world = params.inverseViewProjection * vec4(ndc, kDepthClear, 1.0);
         velocity = vec2(0.0);
         if (abs(world.w) > 1.0e-12)
         {

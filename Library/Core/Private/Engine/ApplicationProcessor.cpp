@@ -22,6 +22,7 @@
 #include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
 #include "Platform/PlatformInputDevices.h"
+#include "Debug/DebugConfig.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
@@ -526,6 +527,35 @@ namespace
         }
         return false;
     }
+
+#if NORVES_BUILD_DEVELOPMENT
+    // --depth-convention=reversed|standard: カメラの深度の規約（既定は逆 Z）
+    bool TryParseDepthConventionOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::DepthConventionMode& outMode,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--depth-convention=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("reversed"))
+        {
+            outMode = NorvesLib::Core::Rendering::DepthConventionMode::Reversed;
+            return true;
+        }
+        if (value == TEXT("standard"))
+        {
+            outMode = NorvesLib::Core::Rendering::DepthConventionMode::Standard;
+            return true;
+        }
+        return false;
+    }
+#endif
 
     // --shadow-method=csm|vsm
     bool TryParseShadowMethodOption(
@@ -1269,6 +1299,10 @@ namespace NorvesLib::Core::Engine
         float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         bool bShadowProbe = false;
         bool bShadowProbePointOnly = false;
+#if NORVES_BUILD_DEVELOPMENT
+        Rendering::DepthConventionMode depthConventionMode = Rendering::DepthConventionMode::Reversed;
+        bool bInvalidDepthConvention = false;
+#endif
         // 既定は BootConfig の値（Game は VSM、検証アプリは CSM）。--shadow-method で上書きする
         Rendering::ShadowMethod shadowMethod = config.DefaultSunShadowMethod;
         bool bInvalidShadowMethod = false;
@@ -1451,6 +1485,17 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px "
                             "を無視します: 値は正の数にしてください");
             }
+
+#if NORVES_BUILD_DEVELOPMENT
+            // --depth-convention=reversed|standard: 起動時に深度の規約を選ぶ。不正な値は起動時のエラー
+            bool bMatchedDepthConvention = false;
+            if (!TryParseDepthConventionOption(args[i], depthConventionMode, bMatchedDepthConvention) &&
+                bMatchedDepthConvention)
+            {
+                bInvalidDepthConvention = true;
+                LOG_ERROR("ApplicationProcessor の起動引数 --depth-convention の値が不正です: 'reversed' か 'standard' にしてください");
+            }
+#endif
 
             // --shadow-method=csm|vsm: 太陽の影の方式（既定は BootConfig::DefaultSunShadowMethod）。不正な値は起動時のエラー
             bool bMatchedShadowMethod = false;
@@ -1689,6 +1734,17 @@ namespace NorvesLib::Core::Engine
         {
             return false;
         }
+
+#if NORVES_BUILD_DEVELOPMENT
+        if (bInvalidDepthConvention)
+        {
+            return false;
+        }
+        // ハンドラの事前初期化と描画の初期化より前に、深度の規約を一度だけ確定する。
+        NorvesLib::Core::GEngine.SetDepthConventionMode(depthConventionMode);
+        LOG_INFO("DEPTH_CONVENTION mode=%s",
+                 depthConventionMode == Rendering::DepthConventionMode::Reversed ? "reversed" : "standard");
+#endif
 
         // OnPreInitialize呼び出し
         auto *handler = GEngine->GetApplicationHandler();

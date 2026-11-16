@@ -397,13 +397,13 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
 // ========================================
 
 // 画素の位置（中心なら +0.5 した値）を通る光線（カメラ相対のワールド空間。原点がカメラの位置）。
-// 深度 0.25 と 0.75 の 2 点（標準・反転のどちらの深度でも有限）から作るので、直交投影（光線が平行）でも成り立つ。
+// 深度の規約に応じて手前と奥の有限な 2 点を選ぶので、直交投影（光線が平行）でも成り立つ。
 // ビュー空間の位置をそのまま回すだけで、大きなワールド座標を引かない。
 void VisPixelRay(vec2 pixel, out vec3 origin, out vec3 direction)
 {
     const vec2 ndc = (pixel - params.viewport.xy) / params.viewport.zw * 2.0 - 1.0;
-    const vec4 nearPoint = params.invProj * vec4(ndc, 0.25, 1.0);
-    const vec4 farPoint = params.invProj * vec4(ndc, 0.75, 1.0);
+    const vec4 nearPoint = params.invProj * vec4(ndc, DepthAsStandard(0.25), 1.0);
+    const vec4 farPoint = params.invProj * vec4(ndc, DepthAsStandard(0.75), 1.0);
     const mat3 rotation = mat3(params.invView);
     const vec3 viewNear = nearPoint.xyz / nearPoint.w;
     const vec3 viewFar = farPoint.xyz / farPoint.w;

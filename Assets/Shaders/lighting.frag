@@ -1107,8 +1107,8 @@ void main()
         }
         if (params.bIBLEnabled != 0u)
         {
-            // スクリーンUVからワールド方向を復元（far planeのdepth=1.0を使用）
-            vec4 clipPos = vec4(fragUV * 2.0 - 1.0, 1.0, 1.0);
+            // スクリーンUVからワールド方向を復元（遠方面（深度の規約のクリア値）の点を使う）
+            vec4 clipPos = vec4(fragUV * 2.0 - 1.0, kDepthClear, 1.0);
             vec4 worldPos4 = params.invViewProjection * clipPos;
             vec3 worldPos = worldPos4.xyz / worldPos4.w;
             vec3 rayDir = normalize(worldPos - params.cameraPosition.xyz);
