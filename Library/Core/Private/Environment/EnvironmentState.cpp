@@ -59,6 +59,7 @@ namespace NorvesLib::Core::Environment
                                                    const Rendering::WindParameters& wind)
     {
         EnvironmentState result;
+        result.CloudCover = sky.CloudCover;
         result.SunAltitudeDegrees = sky.SunAltitudeDegrees;
         result.SunAzimuthDegrees = sky.SunAzimuthDegrees;
         result.FogDensityAtBaseHeight = fog.DensityAtBaseHeight;
@@ -66,6 +67,12 @@ namespace NorvesLib::Core::Environment
         result.FogHeightFalloffPerUnit = fog.HeightFalloffPerUnit;
         result.FogMaxDistanceMeters = fog.MaxDistanceMeters;
         result.FogAmbientScale = fog.AmbientScale;
+        for (uint32_t channel = 0; channel < 3; ++channel)
+        {
+            result.FogTint[channel] = fog.Tint[channel];
+        }
+        result.FogSkyBlend = fog.SkyBlend;
+        result.FogReferenceElevationDegrees = fog.ReferenceElevationDegrees;
         result.bCloudLayerEnabled = cloudLayer.bEnabled;
         result.CloudLayerCoverage = cloudLayer.Coverage;
         result.WindDirectionYawDegrees = wind.DirectionYawDegrees;
@@ -97,7 +104,17 @@ namespace NorvesLib::Core::Environment
         result.FogHeightFalloffPerUnit = ClampMinimumFinite(in.FogHeightFalloffPerUnit, defaults.FogHeightFalloffPerUnit, 0.0f);
         result.FogMaxDistanceMeters = ClampMinimumFinite(in.FogMaxDistanceMeters, defaults.FogMaxDistanceMeters, 0.0f);
         result.FogAmbientScale = ClampMinimumFinite(in.FogAmbientScale, defaults.FogAmbientScale, 0.0f);
+        for (uint32_t channel = 0; channel < 3; ++channel)
+        {
+            result.FogTint[channel] = ClampFinite(in.FogTint[channel], defaults.FogTint[channel], 0.0f, 16.0f);
+        }
+        result.FogSkyBlend = ClampFinite(in.FogSkyBlend, defaults.FogSkyBlend, 0.0f, 1.0f);
+        result.FogReferenceElevationDegrees = ClampFinite(in.FogReferenceElevationDegrees, defaults.FogReferenceElevationDegrees, 0.0f, 90.0f);
         result.CloudLayerCoverage = ClampFinite(in.CloudLayerCoverage, defaults.CloudLayerCoverage, 0.0f, 1.0f);
+        if (in.SunMode != EEnvironmentSunMode::Manual && in.SunMode != EEnvironmentSunMode::Clock)
+        {
+            result.SunMode = defaults.SunMode;
+        }
         result.SunAltitudeDegrees = ClampFinite(in.SunAltitudeDegrees, defaults.SunAltitudeDegrees, -90.0f, 90.0f);
         result.SunAzimuthDegrees = ClampFinite(in.SunAzimuthDegrees, defaults.SunAzimuthDegrees, -360.0f, 360.0f);
         result.TimeOfDayHours = WrapFinite(in.TimeOfDayHours, defaults.TimeOfDayHours, 24.0f);
@@ -117,6 +134,8 @@ namespace NorvesLib::Core::Environment
     EnvironmentResolved ResolveEnvironment(const EnvironmentState& state, const EnvironmentSceneBase& base)
     {
         EnvironmentResolved result{base.Sky, base.Fog, base.CloudLayer, base.Wind, {}};
+        result.Sky.CloudCover = std::round(ClampFinite(state.CloudCover, 0.0f, 0.0f, 1.0f) * 100.0f) / 100.0f;
+        // Clock も現在は状態の高度と方位で解決する。
         result.Sky.SunAltitudeDegrees = state.SunAltitudeDegrees;
         result.Sky.SunAzimuthDegrees = state.SunAzimuthDegrees;
         result.Fog.DensityAtBaseHeight = state.FogDensityAtBaseHeight;
@@ -124,6 +143,12 @@ namespace NorvesLib::Core::Environment
         result.Fog.HeightFalloffPerUnit = state.FogHeightFalloffPerUnit;
         result.Fog.MaxDistanceMeters = state.FogMaxDistanceMeters;
         result.Fog.AmbientScale = state.FogAmbientScale;
+        for (uint32_t channel = 0; channel < 3; ++channel)
+        {
+            result.Fog.Tint[channel] = state.FogTint[channel];
+        }
+        result.Fog.SkyBlend = state.FogSkyBlend;
+        result.Fog.ReferenceElevationDegrees = state.FogReferenceElevationDegrees;
         result.CloudLayer.bEnabled = state.bCloudLayerEnabled;
         result.CloudLayer.Coverage = state.CloudLayerCoverage;
         result.Wind.DirectionYawDegrees = state.WindDirectionYawDegrees;
@@ -194,6 +219,11 @@ namespace NorvesLib::Core::Environment
         case EEnvironmentField::SunAzimuth: return state.SunAzimuthDegrees;
         case EEnvironmentField::TimeOfDayHours: return state.TimeOfDayHours;
         case EEnvironmentField::Wetness: return state.Wetness;
+        case EEnvironmentField::FogTintR: return state.FogTint[0];
+        case EEnvironmentField::FogTintG: return state.FogTint[1];
+        case EEnvironmentField::FogTintB: return state.FogTint[2];
+        case EEnvironmentField::FogSkyBlend: return state.FogSkyBlend;
+        case EEnvironmentField::FogReferenceElevation: return state.FogReferenceElevationDegrees;
         default: return 0.0f;
         }
     }
@@ -218,6 +248,11 @@ namespace NorvesLib::Core::Environment
         case EEnvironmentField::SunAzimuth: state.SunAzimuthDegrees = value; break;
         case EEnvironmentField::TimeOfDayHours: state.TimeOfDayHours = value; break;
         case EEnvironmentField::Wetness: state.Wetness = value; break;
+        case EEnvironmentField::FogTintR: state.FogTint[0] = value; break;
+        case EEnvironmentField::FogTintG: state.FogTint[1] = value; break;
+        case EEnvironmentField::FogTintB: state.FogTint[2] = value; break;
+        case EEnvironmentField::FogSkyBlend: state.FogSkyBlend = value; break;
+        case EEnvironmentField::FogReferenceElevation: state.FogReferenceElevationDegrees = value; break;
         default: break;
         }
     }
