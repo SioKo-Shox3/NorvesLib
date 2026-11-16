@@ -46,6 +46,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t VertexAnimationWindBindingIndex = 12;
         // 濡れに使う環境の定数の binding（Common/GBufferFragment.glsl の NORVES_DECLARE_ENVIRONMENT_UBO と同じ）
         constexpr uint32_t EnvironmentBindingIndex = 13;
+        // 材質の発光テクスチャの binding
+        constexpr uint32_t EmissiveTextureBindingIndex = 14;
 
         float ResolveGBufferDrawOpacity(const DrawCommand& command)
         {
@@ -197,6 +199,11 @@ namespace NorvesLib::Core::Rendering
             environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
             environmentBinding.stages = RHI::ShaderStage::Pixel;
             uboDescSetDesc.bindings.push_back(environmentBinding);
+            RHI::DescriptorBinding emissiveBinding;
+            emissiveBinding.binding = EmissiveTextureBindingIndex;
+            emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            emissiveBinding.stages = RHI::ShaderStage::Pixel;
+            uboDescSetDesc.bindings.push_back(emissiveBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
@@ -860,7 +867,7 @@ namespace NorvesLib::Core::Rendering
             float shadingModel[4]; // x=GBuffer の ID、y=cutoff、z=切り抜き方式（0/1/2）、w=Hash の位相
             float vertexAnimInstanceParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
             float vertexAnimTime[4];
-            float specularAAParams[4]; // x=鏡面の AA の強さ（SpecularAAStrength、0 で無効）、yzw=予約の 0
+            float specularAAParams[4]; // x=鏡面の AA の強さ、y=NormalScale、z=材質のテクスチャの印（1=発光テクスチャ、2=NormalScale）、w=予約の 0
             float vertexAnimMaterial0[4];
             float vertexAnimMaterial1[4];
             ViewClearanceGpuData viewClearance;
@@ -933,7 +940,9 @@ namespace NorvesLib::Core::Rendering
         const TextureResources::VirtualTextureFeedbackTarget feedbackTarget = textures->GetVirtualTextureFeedbackTarget();
 
         // この記録の中だけで使う（記述子はビュー・フレームの定数と Hash の位相を含み、次の記録へ持ち越さない）
-        Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
+        // 材質 ID と発光テクスチャ ID の組で記述子を共有する。
+        using MaterialTextureDescriptorCache = Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr>;
+        Container::UnorderedMap<uint64_t, MaterialTextureDescriptorCache> materialDescriptorCache;
         // 共有の切れ端は読み取りだけ。無いときも現在の記録の口から借り、パスの共有状態へ保存しない。
         const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
@@ -977,6 +986,8 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matAO;
             TextureHandle matORM;
             TextureHandle matHeight;
+            TextureHandle matEmissive;
+            float matNormalScale = 1.0f;
             bool bMatNormalTwoChannel = false;
             float matHeightScale = 0.05f;
             float matMetallicValue = -1.0f;
@@ -1005,6 +1016,8 @@ namespace NorvesLib::Core::Rendering
                     matAO = matData->AOTexture;
                     matORM = matData->ORMTexture;
                     matHeight = matData->HeightTexture;
+                    matEmissive = matData->EmissiveTexture;
+                    matNormalScale = matData->NormalScale;
                     bMatNormalTwoChannel = matData->bNormalTwoChannel;
                     matHeightScale = matData->HeightScale;
                     matMetallicValue = matData->Metallic;
@@ -1061,6 +1074,15 @@ namespace NorvesLib::Core::Rendering
             uboData.emissiveChromaticityAndLuminanceNits[2] = matEmissiveChromaticityB;
             uboData.emissiveChromaticityAndLuminanceNits[3] = matEmissiveLuminanceNits;
 
+            const uint32_t materialTextureFlags =
+                (matEmissive.IsValid() && matEmissiveLuminanceNits > 0.0f ? 1u : 0u) |
+                (matNormalScale != 1.0f ? 2u : 0u);
+            if (materialTextureFlags != 0u)
+            {
+                uboData.specularAAParams[1] = matNormalScale;
+                uboData.specularAAParams[2] = static_cast<float>(materialTextureFlags);
+            }
+
             uboData.pomParams[0] = matHeightScale;
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
             // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
@@ -1099,6 +1121,7 @@ namespace NorvesLib::Core::Rendering
                 aoTex = ormTex;
             }
             RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
+            RHI::TexturePtr emissiveTex = ResolveTexture(matEmissive, m_DefaultWhiteTexture);
 
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
             uboData.frameParams[2] =
@@ -1128,6 +1151,8 @@ namespace NorvesLib::Core::Rendering
             allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
             allocation.DescriptorSet->BindTexture(6, heightTex);
             allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(EmissiveTextureBindingIndex, emissiveTex);
+            allocation.DescriptorSet->BindSampler(EmissiveTextureBindingIndex, m_DefaultLinearSampler);
             if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
             {
                 allocation.DescriptorSet->BindStorageBuffer(8,
@@ -1227,9 +1252,10 @@ namespace NorvesLib::Core::Rendering
                 RHI::DescriptorSetPtr descriptorSet;
                 if (!bSkinned && bMaterialDescriptorCacheEnabled)
                 {
-                    descriptorSet = ResolveMaterialDescriptor<decltype(materialDescriptorCache), RHI::DescriptorSetPtr>(
-                        materialDescriptorCache,
-                        materialKey,
+                    const uint64_t emissiveTextureKey = materialData ? materialData->EmissiveTexture.Id : 0u;
+                    descriptorSet = ResolveMaterialDescriptor<MaterialTextureDescriptorCache, RHI::DescriptorSetPtr>(
+                        materialDescriptorCache[materialKey],
+                        emissiveTextureKey,
                         [&](uint64_t) { return BuildMaterialDescriptor(drawCommand); });
                 }
                 else
@@ -2048,6 +2074,11 @@ namespace NorvesLib::Core::Rendering
         environmentBinding.type = RHI::ResourceBindType::ConstantBuffer;
         environmentBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(environmentBinding);
+        RHI::DescriptorBinding emissiveBinding;
+        emissiveBinding.binding = EmissiveTextureBindingIndex;
+        emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        emissiveBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(emissiveBinding);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);

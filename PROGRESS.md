@@ -11675,3 +11675,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 枠での再検証の直し（反復 2）: 枠の直下に `build/` が無く verify のビルドの行が「build is not a directory」で落ちていた（単位の確かめは単位の作業ツリーの build で回していた）。枠で `Library/ThirdParty/freetype` のサブモジュールを手元の複製を参照して初期化し、`cmake -B build -S . -G "Visual Studio 17 2022"`（終了コード 0）で構成して、`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 件で Game.exe を生成した（証拠 `.harness/runs/20261116-053245/configure-slot.txt`・`verify-build-game-slot.txt`）。コードは変えていない。
 - U1 材質の型に発光テクスチャと NormalScale を足し、店のコピーと共通の GLSL 関数を用意する: 着地(直し 0 回)
 - U2 取り込みの拒否を外し、静的とスキンの両方で発光テクスチャと NormalScale を材質へ渡す: 着地(直し 0 回)
+- U3 通常とスキンの GBuffer で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
