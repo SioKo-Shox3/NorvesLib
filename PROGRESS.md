@@ -11881,3 +11881,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: `ImpostorBaker --input <球か木の .glb> --output <dir>` の `<name>_normal.png` で、各セルの中心の色が見る人の向きの法線（真上のセルなら +Y の色）になり、反転した補色になっていないこと。
 - Next: ランナーの評価者の反証（RHI・GPU の資源の寿命 = 危険地帯）。実行時に GBuffer へ書く描画は G12-GR48-IMPOSTOR-GBUFFER。
 - Notes: 評価の残課題（ORM の画像が無い材質で `OcclusionStrength` を AO の定数にする）は、`MegaGeometryPass.cpp:4293` も同じく遮蔽の定数の 1×1 を使うので近景と一致しており、そのままにした。
+- U1 遠景の雨のカーテンのフラグメントシェーダーを足す: 着地(直し 0 回)
