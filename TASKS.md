@@ -7082,7 +7082,7 @@
 - notes: 2026-11-02 の GR136 の決定（ロードマップ 4228 行。PROGRESS.md 8659 行）に従う: 効果の定義は GR136 の `VfxEffectAsset` の 1 つだけで、GR57 の設計案の `.pfx.json`・`ParticleEffectDesc` は作らない。GR57 は同じ定義を GPU で回す実行先で、GR136 の CPU の実行先が GPU の試験の「CPU 参照実装」を兼ねる。食い違いの決定: GR136 の乱数は xorshift32 の列（ParticleSystem と同じ。VfxEffectSystem.h:155）で、粒を並列に作る GPU では同じ列を再現できない。そこで乱数の流れを選べるようにし、GPU の実行先のエミッタは粒ごとの通し番号から引く Counter（PCG ハッシュ）にする。既存のエフェクトは Sequential のまま（結果を変えない）。GR57 の設計案の semi-implicit Euler は GR136 の順（速度を先に更新）と同じ式なので、GR136 の順をそのまま使う。寿命の曲線は GR136 が「共通の曲線が決まってから」としていた（ロードマップ 4245 行）が、`Math/Curves.h` の折れ線（`TryEvaluatePiecewiseLinear`）が統合ブランチにあるのでそれを使う。表面・ボーンのエミッタ（GR57 の P6。シ者の皮膚の表面から出す分）は段階をまたぐ注意の直す点（4459・4467 行）を採り、G7 では作らず G10 の `G10-GR60-SKIN-SURFACE-EMITTER` に任せた（GR19 の後）。その項目はこの定義（Executor=Gpu のエミッタの形に SkinSurface・Bone を足す）とシミュレーションの道を使う。理由: G10 の節が P6 を GR19 の後に作るとし、GR57 の設計案も垂直スライスの雨が使うのは P1〜P4 と書く。そのため G7 は GR12・GR13 を待たない。単発の放出（段階をまたぐ注意 4461 行）は GR136 の `RaiseEvent` と `SpawnOnEvent` を GPU の実行先でも受け、GameThread から RenderThread への値の列 `GpuParticleBurstQueue` は G7-GR57-GPU-SIMULATION で作る（G10 の EmitBurst・G11 の DropletEmitRequest はこの名前へ揃える）。試験を足す理由（`GpuParticleTypesTest`）: C++ と GLSL の構造体の並びのずれと、生成数の端数の持ち越しの誤りは、粒の数が少し違うだけで黙って起きる。CPU の GPU 試験の前提（並びと計画）を GPU なしで固定する。危険地帯は無い（CPU の Particle と新しい型だけ）が、Public の Particle の型を広げるので互換（既存の .vfx のクックと元の形式の読み）を試験で守る。要件 `#### GR57` の設計案（フェーズ P1）、データ形式、ロードマップ 1539・1553 行。
 
 ## G7-GR57-GPU-SIMULATION: GPU の実行先のエミッタを GameThread から値で RenderThread へ渡し、常駐のプールで生成・更新・寿命・衝突（深度・平面・高さ）を compute で回す
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DEFINITION, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G4-GR02-FIXED-FRAME-CLOCK
 - gr: GR57
 - needs-gr: GR25, GR02
@@ -7694,7 +7694,7 @@
 - notes: 設計はロードマップ 2258 行（GR47 の衝突: 幹のカプセルの記録を GR09 へ渡す）、リスクは 2735 行。衝突の形の自動生成（GR81、G17）は範囲外で、形は種の表に人が書く（生成AIの木の形から幹のカプセルを作る作業は GR81 に任せる）。草は物理を持たない前提（ロードマップ 2072 行）なので、foliage の種の当たりは作らない（種の表で形を書けば付く）。共有のファイル（`Test/Modules/Physics/CMakeLists.txt`）は差分を小さくする。試験を足す理由: 反証する契約は「描いている木に当たりがあり、隠した・離れた木には当たらず、出し入れで数が戻る」こと。破れると見えない木に阻まれる・木を素通りするとして、遊んでいるときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（物理・Object の寿命）なので評価者を通す。
 
 ## G12-GR48-IMPOSTOR-BAKE: インポスターのベイクを GPU で実装し、八面体の方向からアルベドと被覆・法線・材質・深度のアトラスを焼いて、オフラインの道具が PNG と寸法の情報を書き出す
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `ImpostorBakeService::BakeProceduralAtlas`（今はテクスチャを作って空のコマンドリストを Begin/End/Submit するだけ。`Library/Core/Private/Rendering/ImpostorBake.cpp:108-160`）が、セルごとに八面体（既定は上半球の hemi-octahedral。設定で全球）の方向から正射影でメッシュを描き、1 つのレンダーパスの MRT で albedo + coverage（RGBA8）・法線（オブジェクト空間を符号化、RGBA8）・ORM（AO・粗さ・金属度）・深度（R8）を各セルのビューポートへ書く（初期値 8 × 8 セル・1 セル 192px。設定で変えられる）。`impostor_bake.vert/.frag` は `gbuffer.frag` と同じ材質の読み方（`Common/PbrMaterialTextureSampling.glsl`）にする。(2) 八面体の軸の規約を「Y-up のオブジェクトの座標へ回してから符号化する」に統一し、`ImpostorMath`（`EncodeOctahedralDirection`。`ImpostorMath.h:21`）と `impostor.frag`（`EncodeOctahedral`。今は極が +Z）とベイクが同じ関数・同じ式を使う。(3) オフラインの道具 `Tools/ImpostorBaker`（新しい CLI。`Tools/CMakeLists.txt` に足す。ヘッドレスの Vulkan）が、cook 済みのメッシュか glTF を読んでベイクし、`CopyTextureToBuffer` で読み戻して PNG 4 枚と `.impostor.json`（寸法・半径・ピボット・セルの数・方式）を書く。PNG は AssetCook のテクスチャの cook（`--usage albedo`・`orm`・`single`。法線は 3 チャンネルなので BC7 linear）で焼く。(4) 試験: `ImpostorOctahedralTest` に Y-up の規約での符号化 → 復号の往復と、ベイクと実行時のセルの選択が同じ方向で同じセルを返すケースを足す。`RHITextureUpdateVulkanTest` の束へ `ImpostorBakeVulkanTest` を MEMBER で足す（UV 球と立方体を焼き、(a) 各セルの中心で coverage が閾値以上、(b) 法線のアトラスを復号した値が解析の値と 3 度以内（球）、(c) 深度が球の形に単調、(d) セルの境に隣のセルの色がにじまない）。既存の `ImpostorBakeServiceTest` の寸法・メタデータの検証が通る。`ImpostorBaker` がビルドできる。
 - verify: `cmake --build build --config Debug --target ImpostorBaker ImpostorBakeServiceTest ImpostorLODSwitchTest RHITextureUpdateVulkanTest -- /m:1`
@@ -10844,3 +10844,11 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RenderedObjectHistory.h, Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
 - from: G7-GR49-ENV-SYSTEM
+
+## G12-GR48-IMPOSTOR-GBUFFER-P1: GBuffer へ書くインポスターで、アトラスの方式(上半球・全球)と個体の回転を使ってセルを選び、法線をワールドへ戻す
+- status: todo
+- after: G12-GR48-IMPOSTOR-GBUFFER
+- done-when: (1) 計画の文書にある要件なのに、どのタスクにも入っていない作業(上の 3 に当たる)。ロードマップ 2275 行は、ベイクと実行時の両方で「Y-up のオブジェクトの座標へ回してから符号化する」規約にそろえると決めている。ところが今の実行時の `impostor.frag:44-46` は、個体の回転を無いものとして扱い、方式を `IMPOSTOR_LAYOUT_HEMI_OCTAHEDRAL` に決め打ちしていて、コメントにも「全球のアトラスは選べない」とある。G12-GR48-IMPOSTOR-GBUFFER の done-when にもこの点は無い。一方で `Tools/ImpostorBaker/Main.cpp:371` は `FullOctahedral` で焼けて、`ImpostorBakeMetadata::Layout`(`ImpostorBake.h:34`)に方式を残す。また、後に回る G12-GR48-LAYER-SHADOW は、GR47 の配置の層にある回った個体を `ImpostorGBufferPass` で描く。そこで次の (2)〜(5) を満たす。(2) `ImpostorBatch`(またはそのパスの束ごとの定数)が、アトラスの `ImpostorBakeMetadata::Layout` を運ぶ。`impostor_gbuffer.frag` は決め打ちの上半球をやめ、その方式を `EncodeImpostorOctahedral`(`Assets/Shaders/Common/ImpostorOctahedral.glsl`)に渡してセルを選ぶ。全球で焼いたアトラスも、ベイクと同じ関数・同じ式でセルを引く。(3) 視線の向きは、`packet.InstanceData` にある個体の世界行列の回転の逆(拡縮は除いて正規化する)で Y-up のオブジェクトの座標へ回してから符号化する。アトラスから読んだオブジェクトの空間の法線は、同じ回転でワールドへ戻す。深度のアトラスで `gl_FragDepth` を補正するときも、同じオブジェクトの空間の視線を使う。(4) 回っていない上半球の個体では、セルの選び方が変更の前と同じになる。F11 のインポスターの見本と既定の起動画面は変えない(絶対規則 7)。(5) Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/impostor_gbuffer.vert, Assets/Shaders/impostor_gbuffer.frag, Library/Core/Public/Rendering/ImpostorGBufferPass.h, Library/Core/Private/Rendering/ImpostorGBufferPass.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Component/ImpostorComponent.cpp, TASKS.md, PROGRESS.md
+- from: G12-GR48-IMPOSTOR-GBUFFER
