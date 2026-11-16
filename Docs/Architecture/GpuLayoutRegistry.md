@@ -29,7 +29,7 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 プログラムの FS は上の表の 5 枚へ同じ location・形式・意味で出力し、Normal・Material・Emissive は `Common/GBufferEncoding.glsl` の `GBufferEncodeNormal`・`GBufferEncodeMaterial`・`GBufferEncodeEmissive` を通す。標準 FS の本体は `Common/GBufferFragment.glsl` である。
 
-VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。FS は GBuffer へ書く前に `ApplyWetSurfaceFromEnvironment` を呼ぶ。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
+VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）、14 は発光テクスチャ（ピクセルのみ）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。FS は GBuffer へ書く前に `ApplyWetSurfaceFromEnvironment` を呼ぶ。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
 
 ### 材質値の優先と ID
 
@@ -120,10 +120,12 @@ GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert`
 | 352 | `shadingModel: float[4]` | `shadingModel: vec4` | x = GBuffer のシェーディングモデル ID、yzw = 0 |
 | 368 | `vertexAnimInstanceParams: float[4]` | `vertexAnimInstanceParams: vec4`（頂点側のみ） | 16 バイト。スキンの描画の生の `ShadingParams`（負は未指定のまま）。静的メッシュでは全成分 -1 で、頂点側はインスタンス表を読む |
 | 384 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
-| 400 | `specularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、yzw = 0 |
+| 400 | `specularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、y = `NormalScale`、z = 材質のテクスチャの印、w = 予約の 0 |
 | 416 | `vertexAnimMaterial0: float[4]` | `vertexAnimMaterial0: vec4`（頂点側のみ） | 16 バイト。材質の `mode` / `amplitude` / `heightStart` / `heightEnd` |
 | 432 | `vertexAnimMaterial1: float[4]` | `vertexAnimMaterial1: vec4`（頂点側のみ） | 16 バイト。材質の `frequencyScale` / `branchFactor` / `phaseRandom` / `stiffness` |
 | 448 | `viewClearance: ViewClearanceGpuData` | `viewClearance: ViewClearanceData`（断片側のみ） | 64 バイト（vec4 × 4）。遮蔽物のディザ。並びは下記の共通表 |
+
+両経路の `specularAAParams.z` は印を足し合わせた float で、1 は発光テクスチャ、2 は `NormalScale` の適用を表し、シェーダーは `uint(z + 0.5)` で戻す。発光テクスチャが有効かつ nits が正なら 1、`NormalScale != 1` なら 2 を立てる。印が 0 のときは y も 0 のままにし、既定の演算を保つ。
 
 `vtFeedbackParams.w`（332 バイト）は `gbuffer.frag` が `> 0.5` を判定し、`Normal.w` の `DIFFUSE_ONLY` の印へ変換する。`Material.a` の意味には使わない。
 
@@ -151,7 +153,7 @@ GLSL は `Assets/Shaders/megageometry.vert` の `MVPData` が先頭 560 バイ�
 | 368 | `TerrainParams: float[40]` | `terrainParams: vec4[10]` | 下表の地形 3 層のパラメータ |
 | 528 | `ShadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数 |
 | 544 | `VertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
-| 560 | `SpecularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、yzw = 0 |
+| 560 | `SpecularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、y = `NormalScale`、z = 材質のテクスチャの印、w = 予約の 0 |
 | 576 | `ViewClearance: ViewClearanceGpuData` | `viewClearance: ViewClearanceData`（断片側のみ） | 64 バイト（vec4 × 4）。遮蔽物のディザ。並びは下記の共通表 |
 
 MegaGeometry の `vtFeedbackParams.w` は `MegaMeshMaterial::Shading` から変換した ID であり、GBuffer の同名成分の `DIFFUSE_ONLY` 入力とは異なる。`ShadingParams` には `MegaMeshMaterial::ShadingParams` を写す。`megageometry.frag` は地形の場合に `TERRAIN` の印を書く。
@@ -188,15 +190,16 @@ C++ は `Library/Core/Public/Rendering/ViewClearance.h::ViewClearanceGpuData`、
 
 ### スプラットの UBO と配列テクスチャ
 
-スプラットの追加では上記の `SectionUniformData` を変更せず、別の `TerrainSplatBlock` に値を置く。`MegaGeometryPass.cpp` は `TERRAIN_SPLAT_PARAM_FLOATS = 48` 個の float を別の定数バッファとして確保し、`megageometry.frag` は `std140` の `terrainSplat[12]`（`vec4` × 12 = **192 バイト**）として読む。以下はいずれも `set 0` の束縛である。
+スプラットの追加では上記の `SectionUniformData` を変更せず、別の `TerrainSplatBlock` に値を置く。`MegaGeometryPass.cpp` は `TERRAIN_SPLAT_PARAM_FLOATS = 48` 個の float を別の定数バッファとして確保し、`megageometry.frag` は `std140` の `terrainSplat[12]`（`vec4` × 12 = **192 バイト**）として読む。以下はスプラットと区間の発光テクスチャの `set 0` の束縛である。スプラットの定数は `TerrainBlendShading.h`、発光の定数は `MegaGeometryPass.cpp` にある。
 
-| binding | C++ 定数（`TerrainBlendShading.h`） | GLSL 宣言（`megageometry.frag`） | 用途 |
+| binding | C++ 定数 | GLSL 宣言（`megageometry.frag`） | 用途 |
 |---|---|---|---|
 | 18 | `TERRAIN_SPLAT_MEGA_ALBEDO_BINDING` | `sampler2DArray terrainSplatAlbedoArray` | 各層のアルベド |
 | 19 | `TERRAIN_SPLAT_MEGA_NORMAL_BINDING` | `sampler2DArray terrainSplatNormalArray` | 各層の法線 |
 | 20 | `TERRAIN_SPLAT_MEGA_ARM_BINDING` | `sampler2DArray terrainSplatArmArray` | 各層の AO・粗さ・金属度・高さ |
 | 21 | `TERRAIN_SPLAT_MEGA_SPLAT_BINDING` | `sampler2DArray terrainSplatArray` | 層の重みの地図 |
 | 23 | `TERRAIN_SPLAT_MEGA_PARAMS_BINDING` | `uniform TerrainSplatBlock` | 下表の `terrainSplat[12]` |
+| 25 | `EmissiveTextureBindingIndex` | `sampler2D emissiveTexture` | 区間の発光テクスチャ |
 
 値の正本は `TerrainBlendShading.h::PackTerrainSplatParams`、GLSL の対応名は `Common/TerrainLayerBlend.glsl::TerrainSplatParams` と `MakeTerrainSplatParams`。オフセットは `terrainSplat` の先頭からのバイト数で、各行の型は C++ の `float[4]`、GLSL の `vec4`。この並びは可視バッファの解決と RTGI でも共通である。
 
@@ -392,7 +395,7 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 
 ## 7. 可視バッファの材質表
 
-C++ は `Library/Core/Public/Rendering/VisibilityMaterialTable.h` の `VisibilityBuffer::MaterialEntry`。`alignas(16)` の 1 件は **144 バイト**で、同ファイルに大きさ・整列と `Header`、`TexturesA`、`TexturesD`、`ShadingParams` のオフセットの `static_assert` がある。GLSL は `Assets/Shaders/Common/VisibilityResolve.glsl` の `VisMaterialEntry` で、`std430`、set 0 / binding 3 の `MaterialTable` から読む。
+C++ は `Library/Core/Public/Rendering/VisibilityMaterialTable.h` の `VisibilityBuffer::MaterialEntry`。`alignas(16)` の 1 件は **160 バイト**で、同ファイルに大きさ・整列と `Header`（48）、`TexturesA`（64）、`TexturesD`（112）、`ShadingParams`（128）、`TexturesE`（144）のオフセットの `static_assert` がある。GLSL は `Assets/Shaders/Common/VisibilityResolve.glsl` の `VisMaterialEntry` で、`std430`、set 0 / binding 3 の `MaterialTable` から読む。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w 順） |
 |---|---|---|---|
@@ -405,25 +408,31 @@ C++ は `Library/Core/Public/Rendering/VisibilityMaterialTable.h` の `Visibilit
 | 96 | `TexturesC: uint32_t[4]` | `texturesC: uvec4` | AO のハンドル下位・上位 / ORM のハンドル下位・上位 |
 | 112 | `TexturesD: uint32_t[4]` | `texturesD: uvec4` | 高さのハンドル下位・上位 / MegaGeometry の定数 AO の float ビット列 / 予約 |
 | 128 | `ShadingParams: float[4]` | `shadingParams: vec4` | `P0` / `P1` / 予約 / 被覆率の乗数。初期値は全成分 -1 |
+| 144 | `TexturesE: uint32_t[4]` | `texturesE: uvec4` | 発光テクスチャのハンドル下位・上位 / `NormalScale` の float ビット列 / 予約の 0 |
 
 材質表の作成は `VisibilityMaterialTable.cpp::MakeMaterialEntry`。`Header[1]` には 1 節の変換後の ID を格納する。手続きメッシュのインスタンス値は解決時にインスタンス表から読み、スキニングのインスタンス値は表を作るときに材質値へ重ねる。
+
+`Header[0]` の `MATERIAL_FLAG_EMISSIVE_TEXTURE = 1024`（bit 10）は有効な発光テクスチャと正の nits がある場合、`MATERIAL_FLAG_NORMAL_SCALE = 2048`（bit 11）は有限の `NormalScale != 1` の場合に立つ。印が立たない対応欄は 0 のままである。材質ごとのタイルの解決は両方を適用する。ただし地形・スプラットの法線には `NormalScale` を適用しない。直接 dispatch の解決は発光を定数の色度と nits だけから求め、テクスチャや `NormalScale` を適用しない。
 
 `VisMaterialEntry` の宣言は `Common/VisibilityResolve.glsl` の 1 か所にあり、`visbuffer_resolve.comp`、`visbuffer_resolve_dump.comp`、`visbuffer_resolve_tiles.comp`、`visbuffer_resolve_tiles_dump.comp` が同ファイルを include する。
 
 `VisibilityMaterialTable.cpp::MakeMaterialEntry` はスプラットの材質に `Header[0]` の `MATERIAL_FLAG_TERRAIN_SPLAT = 128`（bit 7）を立て、`Header[3]` に `HashTerrainSplat` の値を入れる。定数は `VisibilityMaterialTable.h` にあり、3 層の `MATERIAL_FLAG_TERRAIN_BLEND` とは別の印である。
 
-### 材質ごとの解決の UBO と配列テクスチャ
+### 材質ごとの解決の UBO とテクスチャ
 
 `NORVES_VISRESOLVE_TILES` の `ResolveTileParams` は `tile`・`vt`・3 層の `terrain[10]` に続けて `terrainSplat[12]` を持つ。後者はオフセット 192 から **192 バイト**で、UBO 全体は従来の 192 バイトから **384 バイト**になった。`VisibilityResolvePass.cpp` の `TileParamsBytes` が 384 を検査し、`Common/VisibilityResolve.glsl` の `VIS_TILE_BINDING` は通常版が binding 11、dump 版が binding 12。`terrainSplat` の各成分は 2 節の表と同じ。
 
 `tileParams.tile.z` の `TILE_FLAG_TERRAIN_SPLAT` / `VIS_TILE_FLAG_TERRAIN_SPLAT` は 32（bit 5）で、スプラットの配列と並びを使う印。C++ の定数は `VisibilityResolvePass.h`、GLSL の定数は `Common/VisibilityResolve.glsl` にある。材質表の `Header[0]` の bit 7 とは別のフィールドである。
 
-| set | binding | C++ 定数（`TerrainBlendShading.h`） | GLSL 宣言（`VisibilityResolve.glsl`） | 用途 |
+| set | binding | C++ 定数 | GLSL 宣言（`VisibilityResolve.glsl`） | 用途 |
 |---|---|---|---|---|
 | 0 | 33 | `TERRAIN_SPLAT_VIS_ALBEDO_BINDING` | `sampler2DArray terrainSplatAlbedoTexture` | 各層のアルベド |
 | 0 | 34 | `TERRAIN_SPLAT_VIS_NORMAL_BINDING` | `sampler2DArray terrainSplatNormalTexture` | 各層の法線 |
 | 0 | 35 | `TERRAIN_SPLAT_VIS_ARM_BINDING` | `sampler2DArray terrainSplatArmTexture` | 各層の AO・粗さ・金属度・高さ |
 | 0 | 36 | `TERRAIN_SPLAT_VIS_SPLAT_BINDING` | `sampler2DArray terrainSplatMapTexture` | 層の重みの地図 |
+| 0 | 38 | `EmissiveTextureBindingIndex`（`VisibilityResolvePass.cpp`） | `sampler2D emissiveTexture` | 材質の発光テクスチャ |
+
+33〜36 の定数は `TerrainBlendShading.h` にある。
 
 ## 8. 可視バッファのフレーム定数と頂点アニメの生値表
 
