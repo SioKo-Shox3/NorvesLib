@@ -11791,3 +11791,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 NVSKEL role2 の任意節 LODS・PART の型・符号化・検査と書式の文書: 着地(直し 0 回)
 - U2 取り込み設定の skinnedLod 節: 着地(直し 0 回)
 - U3 スキン LOD の前処理と部位の分割: 着地(直し 0 回)
+- U4 CookedSkinMeshV1 に LOD・部位の表をつなぐ: 着地(直し 0 回)
