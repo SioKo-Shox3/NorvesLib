@@ -231,6 +231,7 @@ namespace NorvesLib::Core::Rendering
          * の枠をすべてこれで埋める（シェーダーは金属度の枠だけを読む） */
         RHI::TexturePtr ORM;
         RHI::TexturePtr Height;
+        RHI::TexturePtr Emissive;
         /** @brief 金属度・粗さのテクスチャの指定が無いときに使うスカラー値（1x1
          * のテクスチャにする）。負は未指定（既定の黒・中間灰） */
         float MetallicConstant = -1.0f;

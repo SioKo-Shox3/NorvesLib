@@ -7344,7 +7344,7 @@
 - notes: 確かめ直し (b) の実物と起動の部分。Handoff 6 節(Blender の glTF に `skin.skeleton` が無い)の実物での確認と、要件の実物の受入れ GR82「クリップ 10 本以上の犬のリグを cook」、GR83「実キャラを論理パスで読み、別の場面でクリップ名を指定して再生」「cooked が無いときの挙動をログで確認」、GR84「V01full を読んで…数値で記録」「Blender で読み frame 0/17/33 の関節ワールド位置と --dump-fk の差が 1e-3 m 以内」に当たる。dog_rigged は GR77 の受入れで旧経路(animation 0 で status 8)の拒否だけが記録されていて(`AssetImportPipeline.md` の「### 骨格」)、v1 の経路では誰も通していない。B4 は「実犬・DCC・GPU の受入れはこの項目に含めない」と書いて done になっている。手元の実 BVH は 2 本だけ(`Y:/AI/MoCapAnything/outputs_doggame` の下を数えた)。role の写像のファイルの中身(犬の関節名の対応)は作者の素材に依るので、作れなければ未実行として理由を書く。Blender は背景の実行で窓を出さないが重い処理なので、利用者が別のアプリを使っていないときに回す。verify の撮影の行の論理パスと clip 名は (2)(3) の cook に合わせて直してよい。
 
 ## G2-GR79-EMISSIVE-NORMALSCALE: 取り込んだ材質の発光テクスチャと normalScale を描画まで届け、今の「シェーダーが対応しない」拒否を外す
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G2-GR79-SKINNED-MATERIAL-BUILDER, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR79
 - needs-gr: GR26

@@ -39,12 +39,14 @@ namespace NorvesLib::Core::ResourceIO
                               Container::VariableArray<Container::TSharedPtr<const void>>& owners,
                               Container::AnsiString& reason)
         {
-            Rendering::PreparedTextureAsset prepared[3];
-            const Container::AnsiString* paths[] = {&source.AlbedoPath, &source.NormalPath, &source.ArmPath};
-            const char* roles[] = {"albedo", "normal", "arm"};
-            for (size_t i = 0; i < 3; ++i)
+            Rendering::PreparedTextureAsset prepared[4];
+            const Container::AnsiString* paths[] = {&source.AlbedoPath, &source.NormalPath, &source.ArmPath,
+                                                    &source.EmissivePath};
+            const char* roles[] = {"albedo", "normal", "arm", "emissive"};
+            for (size_t i = 0; i < 4; ++i)
             {
-                if (paths[i]->empty() || (i == 2 && source.ArmMask == 0))
+                if (paths[i]->empty() || (i == 2 && source.ArmMask == 0) ||
+                    (i == 3 && !(source.EmissiveLuminanceNits > 0.0f)))
                 {
                     continue;
                 }
@@ -58,8 +60,8 @@ namespace NorvesLib::Core::ResourceIO
                     return false;
                 }
                 if (!ModelStaging::ValidateImportedTexture(prepared[i].Payload->Texture,
-                                                          i == 0 ? Asset::CookedTextureColorSpace::SRGB
-                                                                 : Asset::CookedTextureColorSpace::Linear,
+                                                          (i == 0 || i == 3) ? Asset::CookedTextureColorSpace::SRGB
+                                                                             : Asset::CookedTextureColorSpace::Linear,
                                                           i == 0 && source.Alpha == ModelStaging::ImportedAlphaMode::Opaque,
                                                           reason))
                 {
@@ -110,6 +112,17 @@ namespace NorvesLib::Core::ResourceIO
                 }
             }
 
+            if (prepared[3].Payload)
+            {
+                data.EmissiveTexture =
+                    textures.FinalizePreparedTextureAsset(prepared[3], TextureRole, TextureRequestId);
+                if (!data.EmissiveTexture.IsValid())
+                {
+                    reason = "imported_opaque: texture_finalize role=emissive";
+                    return false;
+                }
+            }
+
             Rendering::TextureHandle* channels[] = {&data.AOTexture, &data.RoughnessTexture, &data.MetallicTexture};
             const char* suffixes[] = {"_AO", "_Roughness", "_Metallic"};
             for (size_t i = 0; i < 3; ++i)
@@ -154,7 +167,7 @@ namespace NorvesLib::Core::ResourceIO
                                     static_cast<uint32_t>(level), 0);
                 }
             }
-            // 発光画像は正の nits なら検査で拒否し、0 nits なら寄与しない。
+            // 発光画像は正の nits とパスがある場合に読み込み、0 nits では読み込まない。
             return true;
         }
     } // namespace
@@ -299,6 +312,7 @@ namespace NorvesLib::Core::ResourceIO
                 data.EmissiveLuminanceNits = staging.EmissiveLuminanceNits;
                 data.Metallic = staging.Metallic;
                 data.Roughness = staging.Roughness;
+                data.NormalScale = staging.NormalScale;
                 data.Blend = Rendering::BlendMode::Opaque;
                 data.bTwoSided = false;
                 data.Shading = Rendering::ShadingModel::DefaultLit;
