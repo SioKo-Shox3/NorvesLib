@@ -11883,3 +11883,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 評価の残課題（ORM の画像が無い材質で `OcclusionStrength` を AO の定数にする）は、`MegaGeometryPass.cpp:4293` も同じく遮蔽の定数の 1×1 を使うので近景と一致しており、そのままにした。
 - U1 遠景の雨のカーテンのフラグメントシェーダーを足す: 着地(直し 0 回)
 - U2 RainCurtainPass の C++ と Core の CMake への登録: 着地(直し 0 回)
+- U3 SceneView の遅延の経路に体積の霧の直後へ組み込み、Game をビルドする: 着地(直し 0 回)
