@@ -100,6 +100,16 @@ namespace NorvesLib::Tools::AssetCook
             species.WindStiffness = static_cast<float>(rule.WindStiffness);
             species.WindPhaseSeed = static_cast<uint32_t>(rule.WindPhaseSeed);
             species.Flags = rule.bCollision ? 1u : 0u;
+            species.SkyOccluderShape = rule.SkyOccluderShape;
+            species.bSkyOccluderCanopy = rule.bSkyOccluderCanopy;
+            // 正の値が float32 で 0 に丸まる場合も、正の最小値として保存する。
+            const double minPositive = static_cast<double>(std::numeric_limits<float>::denorm_min());
+            species.SkyOccluderRadiusMeters = static_cast<float>(rule.SkyOccluderRadiusMeters > 0.0
+                ? std::max(rule.SkyOccluderRadiusMeters, minPositive) : rule.SkyOccluderRadiusMeters);
+            species.SkyOccluderHeightMeters = static_cast<float>(rule.SkyOccluderHeightMeters > 0.0
+                ? std::max(rule.SkyOccluderHeightMeters, minPositive) : rule.SkyOccluderHeightMeters);
+            species.SkyOccluderBaseRatio = static_cast<float>(rule.SkyOccluderBaseRatio);
+            species.SkyOccluderKappa = static_cast<float>(rule.SkyOccluderKappa);
             output.Species.push_back(species);
         }
         VariableArray<ScatterChunkCoord> chunks;

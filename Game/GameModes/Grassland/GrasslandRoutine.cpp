@@ -30,6 +30,7 @@
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
+#include "Core/Public/Rendering/SkyOcclusion.h"
 #include "Core/Public/Rendering/Terrain/TerrainHeightField.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Rendering/Wind.h"
@@ -841,6 +842,33 @@ namespace Game::GameModes
         }
 #endif
 
+        void PublishSkyOcclusionGround(GameModeContext& ctx, GrasslandData& data)
+        {
+            if (data.m_bSkyOcclusionGroundPublished || data.m_pTerrain == nullptr)
+            {
+                return;
+            }
+            const auto heightField = data.m_pTerrain->GetHeightField();
+            if (!heightField)
+            {
+                return;
+            }
+            SkyOcclusionFieldLayout layout{};
+            Container::VariableArray<float> heights;
+            const float fallbackHeight = MakeDefaultSkyOcclusionParameters().GroundHeightMeters;
+            if (!BuildSkyOcclusionGroundHeights(*heightField, 1024u, fallbackHeight, layout, heights))
+            {
+                return;
+            }
+            auto& renderWorld = ctx.EngineRef.GetRenderWorld();
+            renderWorld.SetExtensionData(kSkyOcclusionGroundLayoutKey, layout);
+            renderWorld.SetExtensionArray(kSkyOcclusionGroundHeightsKey,
+                Container::Span<const float>{heights.data(), heights.size()});
+            data.m_bSkyOcclusionGroundPublished = true;
+            LOG_INFO("GRASSLAND_SKY_OCCLUSION width=%u height=%u texel=%.2f 地形の高さを空の遮蔽へ渡しました",
+                     layout.Width, layout.Height, static_cast<double>(layout.TexelMeters));
+        }
+
         void ApplyEnvironment(GameModeContext& ctx)
         {
             SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
@@ -848,6 +876,9 @@ namespace Game::GameModes
             sky.SunAltitudeDegrees = kSunAltitudeDegrees;
             sky.SunAzimuthDegrees = kSunAzimuthDegrees;
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(sky);
+            SkyOcclusionParameters skyOcclusion = MakeDefaultSkyOcclusionParameters();
+            skyOcclusion.bEnabled = true;
+            ctx.EngineRef.GetRenderWorld().SetSkyOcclusionParameters(skyOcclusion);
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
             WindParameters wind = MakeDefaultWindParameters();
             wind.bEnabled = kWindEnabled;
@@ -863,9 +894,14 @@ namespace Game::GameModes
         }
 
         /// 環境の設定を、ほかのモードへ持ち越さないよう既定へ戻す
-        void ResetEnvironment(GameModeContext& ctx)
+        void ResetEnvironment(GameModeContext& ctx, GrasslandData& data)
         {
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(MakeDefaultSkyAtmosphereParameters());
+            auto& renderWorld = ctx.EngineRef.GetRenderWorld();
+            renderWorld.SetSkyOcclusionParameters(MakeDefaultSkyOcclusionParameters());
+            renderWorld.RemoveExtensionData(kSkyOcclusionGroundLayoutKey.Name);
+            renderWorld.RemoveExtensionData(kSkyOcclusionGroundHeightsKey.Name);
+            data.m_bSkyOcclusionGroundPublished = false;
             ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
             ctx.EngineRef.GetRenderWorld().SetWindParameters(MakeDefaultWindParameters());
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
@@ -878,6 +914,7 @@ namespace Game::GameModes
     {
         LOG_INFO("grassland を開始します");
         data.m_TickCount = 0;
+        data.m_bSkyOcclusionGroundPublished = false;
 #if NORVES_BUILD_DEVELOPMENT
         data.m_bStreamingSnapRequested = false;
         data.m_bStreamingSnapReceived = false;
@@ -913,7 +950,7 @@ namespace Game::GameModes
         if (!CreateTerrain(ctx, data) || !CreateGrassField(ctx) || !CreateRunningBody(ctx, data, pose))
         {
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
-            ResetEnvironment(ctx);
+            ResetEnvironment(ctx, data);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
@@ -927,7 +964,7 @@ namespace Game::GameModes
             LOG_ERROR("grassland: カメラを作れませんでした");
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
             data.m_Scatter = Scatter::kInvalidScatterHandle;
-            ResetEnvironment(ctx);
+            ResetEnvironment(ctx, data);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
@@ -945,7 +982,7 @@ namespace Game::GameModes
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
             data.m_Scatter = Scatter::kInvalidScatterHandle;
             data.m_Rig.Leave(ctx);
-            ResetEnvironment(ctx);
+            ResetEnvironment(ctx, data);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
@@ -1017,6 +1054,7 @@ namespace Game::GameModes
     void GrasslandRoutine::Tick(GameModeContext& ctx, GrasslandData& data, float deltaTime)
     {
         ++data.m_TickCount;
+        PublishSkyOcclusionGround(ctx, data);
         if (data.m_TerrainFarPlane == 0.0f && data.m_pTerrain != nullptr)
         {
             float minX = 0.0f;
@@ -1275,7 +1313,7 @@ namespace Game::GameModes
         data.m_bTerrainColliderAttempted = false;
         // 地形・草の場・カメラの Entity は GameModeScope::Cleanup が返す。各 Component の EndPlay で登録を返す。
         // 空は RenderWorld の設定なので戻す。
-        ResetEnvironment(ctx);
+        ResetEnvironment(ctx, data);
         LOG_INFO("grassland を終了します");
     }
 

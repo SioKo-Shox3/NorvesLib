@@ -338,6 +338,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetDecals(const DecalScene& decals);
 
+        /** @brief GPU の粒の写しを設定する。GameThread 専用。毎フレーム呼び、写しは次のパケットだけで使う。 */
+        void SetGpuParticleFrame(const GpuParticleScene& frame);
+
         /**
          * @brief 拡張の値を設定する（GameThread 専用、SetFoliageSource と同じ規約でロック無し）。
          *

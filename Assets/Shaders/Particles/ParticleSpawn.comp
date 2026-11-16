@@ -1,0 +1,90 @@
+﻿// 生成要求から粒を常駐プールのリングへ書き込む。
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "Particles/ParticleSimulation.glsl"
+
+layout(local_size_x = 64) in;
+
+// 生成位置を含む最後のジョブを求める。
+uint FindSpawnJob(uint spawnIndex)
+{
+    uint first = 0u;
+    uint last = simulation.spawnJobCount;
+    while (first < last)
+    {
+        uint middle = first + (last - first) / 2u;
+        if (spawnJobs[middle].outputOffset <= spawnIndex)
+        {
+            first = middle + 1u;
+        }
+        else
+        {
+            last = middle;
+        }
+    }
+    return first - 1u;
+}
+
+// ジョブの後ろに続く生成位置から単発の放出を求める。
+uint FindBurst(uint spawnIndex)
+{
+    uint first = 0u;
+    uint last = simulation.burstCount;
+    while (first < last)
+    {
+        uint middle = first + (last - first) / 2u;
+        if (bursts[middle].outputOffset <= spawnIndex)
+        {
+            first = middle + 1u;
+        }
+        else
+        {
+            last = middle;
+        }
+    }
+    return first - 1u;
+}
+
+void main()
+{
+    uint spawnIndex = gl_GlobalInvocationID.x;
+    if (spawnIndex >= simulation.totalSpawnCount)
+    {
+        return;
+    }
+
+    uint emitterIndex;
+    uint serial;
+    vec3 basePosition;
+    vec3 normal = vec3(0.0);
+    vec3 addVelocity = vec3(0.0);
+    if (spawnIndex < simulation.jobSpawnCount)
+    {
+        GpuSpawnJob job = spawnJobs[FindSpawnJob(spawnIndex)];
+        emitterIndex = job.emitterIndex;
+        serial = job.firstSerial + (spawnIndex - job.outputOffset);
+        basePosition = emitters[emitterIndex].positionLifetime.xyz;
+    }
+    else
+    {
+        GpuParticleBurst burst = bursts[FindBurst(spawnIndex)];
+        emitterIndex = burst.emitterIndex;
+        serial = burst.firstSerial + (spawnIndex - burst.outputOffset);
+        basePosition = burst.position;
+        normal = burst.normal;
+        addVelocity = burst.velocity;
+    }
+
+    GpuEmitterParams emitter = emitters[emitterIndex];
+    if (emitter.poolCapacitySeedFlags.y == 0u)
+    {
+        return;
+    }
+    if (ParticleShape(emitter) == kVfxShapeCameraBox)
+    {
+        basePosition = simulation.cameraPosition + emitter.positionLifetime.xyz;
+    }
+    uint slot = GpuParticleRingSlot(emitter.poolCapacitySeedFlags.x, emitter.poolCapacitySeedFlags.y, serial);
+    particles[slot] = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
+}

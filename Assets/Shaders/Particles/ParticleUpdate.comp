@@ -1,0 +1,338 @@
+﻿// 常駐プールの粒を更新し、面との衝突に応答する。
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "Particles/ParticleSimulation.glsl"
+#include "Common/Wind.glsl"
+#include "Common/DepthConvention.glsl"
+#include "Common/GBufferEncoding.glsl"
+
+layout(local_size_x = 64) in;
+
+bool IsFiniteScalar(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+bool IsFiniteVector(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+// 無効な風や格子の範囲外では CPU と同じく風速をゼロにする。
+vec3 ParticleWindVelocity(vec3 position)
+{
+    if (simulation.windA.z == 0.0 || !(simulation.windB.y > 0.0) ||
+        !IsFiniteVector(position) || !IsFiniteScalar(simulation.windB.w))
+    {
+        return vec3(0.0);
+    }
+    float argument = WindGustArgument(position.xz, simulation.windB.w, simulation.windA.xy,
+        simulation.windB.y, simulation.windB.x);
+    float turbulenceArgument = argument * 3.1;
+    const float gridLimit = 2147483648.0;
+    if (!IsFiniteScalar(argument) || !IsFiniteScalar(turbulenceArgument) ||
+        argument < -gridLimit || argument >= gridLimit ||
+        turbulenceArgument < -gridLimit || turbulenceArgument >= gridLimit)
+    {
+        return vec3(0.0);
+    }
+    return WindVelocity(position, simulation.windB.w, simulation.windA.xy, simulation.windA.z,
+        simulation.windA.w, simulation.windB.x, simulation.windB.y, simulation.windB.z);
+}
+
+// 両端を含む箱を保ち、外に出た分だけ反対側へ折り返す。
+float WrapParticleAxis(float position, float center, float halfSize)
+{
+    float minimum = center - halfSize;
+    float maximum = center + halfSize;
+    if (halfSize == 0.0)
+    {
+        return minimum;
+    }
+    if (position >= minimum && position <= maximum)
+    {
+        return position;
+    }
+    float size = halfSize * 2.0;
+    float offset = position - minimum;
+    return minimum + offset - size * floor(offset / size);
+}
+
+// テクスチャの端の画素を範囲の端に対応させて双線形補間する。
+bool SampleParticleHeight(vec3 position, out float surface)
+{
+    if (simulation.heightFieldBound == 0u ||
+        any(lessThanEqual(simulation.heightFieldWorldSize, vec2(0.0))))
+    {
+        return false;
+    }
+    vec2 uv = (position.xz - simulation.heightFieldWorldMin) / simulation.heightFieldWorldSize;
+    if (any(isnan(uv)) || any(isinf(uv)) || any(lessThan(uv, vec2(0.0))) ||
+        any(greaterThan(uv, vec2(1.0))))
+    {
+        return false;
+    }
+    ivec2 size = textureSize(heightField, 0);
+    vec2 coordinate = uv * vec2(size - ivec2(1));
+    ivec2 lower = ivec2(floor(coordinate));
+    ivec2 upper = min(lower + ivec2(1), size - ivec2(1));
+    vec2 fraction = coordinate - vec2(lower);
+    float h00 = texelFetch(heightField, lower, 0).r;
+    float h10 = texelFetch(heightField, ivec2(upper.x, lower.y), 0).r;
+    float h01 = texelFetch(heightField, ivec2(lower.x, upper.y), 0).r;
+    float h11 = texelFetch(heightField, upper, 0).r;
+    float h0 = h00 + (h10 - h00) * fraction.x;
+    float h1 = h01 + (h11 - h01) * fraction.x;
+    surface = h0 + (h1 - h0) * fraction.y;
+    return true;
+}
+
+// 現在の画素の面を復元し、手前から奥へ厚み以内に横切ったか調べる。
+bool FindDepthCollision(vec3 previousPosition, vec3 position, float thickness,
+    out vec3 hitPosition, out vec3 hitNormal)
+{
+    if (simulation.depthCollisionEnabled == 0u)
+    {
+        return false;
+    }
+    vec4 previousClip = simulation.viewProjection * vec4(previousPosition, 1.0);
+    vec4 currentClip = simulation.viewProjection * vec4(position, 1.0);
+    if (!(previousClip.w > 0.0) || !(currentClip.w > 0.0) ||
+        !IsFiniteScalar(previousClip.z) || !IsFiniteScalar(previousClip.w) ||
+        !IsFiniteVector(currentClip.xyz) || !IsFiniteScalar(currentClip.w))
+    {
+        return false;
+    }
+    vec3 ndc = currentClip.xyz / currentClip.w;
+    if (!IsFiniteVector(ndc) || any(lessThan(ndc.xy, vec2(-1.0))) ||
+        any(greaterThanEqual(ndc.xy, vec2(1.0))) || ndc.z < 0.0 || ndc.z > 1.0)
+    {
+        return false;
+    }
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    ivec2 pixel = ivec2(uv * simulation.screenSize);
+    float surfaceDepth = texelFetch(gbufferDepth, pixel, 0).r;
+    float previousDepth = previousClip.z / previousClip.w;
+    if (!IsFiniteScalar(surfaceDepth) || !IsFiniteScalar(previousDepth) ||
+        IsBackgroundDepth(surfaceDepth) || !IsCloserDepth(previousDepth, surfaceDepth) ||
+        !IsCloserDepth(surfaceDepth, ndc.z))
+    {
+        return false;
+    }
+    vec4 world = simulation.inverseViewProjection * vec4(ndc.xy, surfaceDepth, 1.0);
+    if (!IsFiniteVector(world.xyz) || !IsFiniteScalar(world.w) || abs(world.w) <= 1.0e-8)
+    {
+        return false;
+    }
+    hitPosition = world.xyz / world.w;
+    float distanceBehind = length(position - simulation.cameraPosition) -
+        length(hitPosition - simulation.cameraPosition);
+    if (!IsFiniteVector(hitPosition) || !IsFiniteScalar(distanceBehind) ||
+        distanceBehind < 0.0 || distanceBehind > thickness)
+    {
+        return false;
+    }
+    vec3 normal = GBufferDecodeNormal(texelFetch(gbufferNormal, pixel, 0)).normal;
+    float normalLengthSquared = dot(normal, normal);
+    if (!IsFiniteVector(normal) || !IsFiniteScalar(normalLengthSquared) || normalLengthSquared <= 1.0e-8)
+    {
+        return false;
+    }
+    hitNormal = normal * inversesqrt(normalLengthSquared);
+    return true;
+}
+
+// 子の番号は専用の head から取り、衝突点を基準に初期化する。
+void SpawnCollisionChild(GpuEmitterParams parent, GpuParticle particle,
+    GpuCollisionParams collision, vec3 hitPosition)
+{
+    uint childIndex = collision.childEmitter;
+    if (childIndex == kGpuParticleInvalidEmitter || childIndex >= simulation.emitterCount ||
+        !(VfxCounterUnitFloat(parent.poolCapacitySeedFlags.z, particle.meta.x, kVfxRandomDrawChildSpawn) <
+            collision.childProbability))
+    {
+        return;
+    }
+    GpuEmitterParams child = emitters[childIndex];
+    GpuEmitterFrameExtra childExtra = emitterExtras[childIndex];
+    uint capacity = child.poolCapacitySeedFlags.y;
+    if (capacity == 0u || childExtra.poolSlot >= 1024u)
+    {
+        return;
+    }
+    uint head = atomicAdd(emitterHeads[childExtra.poolSlot], 1u);
+    uint slot = child.poolCapacitySeedFlags.x + head % capacity;
+    uint serial = head | 0x80000000u;
+    particles[slot] = InitParticle(child, childExtra, serial, hitPosition, vec3(0.0), vec3(0.0));
+}
+
+// 死んだときは false、残ったときは true を返す。
+bool ApplyParticleCollision(GpuEmitterParams emitter, GpuCollisionParams collision,
+    vec3 hitPosition, vec3 normal, bool depthSurface, inout GpuParticle particle)
+{
+    if (collision.response == kVfxCollisionKill)
+    {
+        particle.meta.z &= ~kGpuParticleFlagAlive;
+        return false;
+    }
+    if (collision.response == kVfxCollisionStick)
+    {
+        particle.posAge.xyz = hitPosition;
+        particle.velLife.xyz = vec3(0.0);
+        particle.meta.z |= kGpuParticleFlagStuck;
+    }
+    else if (collision.response == kVfxCollisionBounce)
+    {
+        particle.posAge.xyz = hitPosition;
+        if (depthSurface)
+        {
+            float normalVelocity = dot(particle.velLife.xyz, normal);
+            if (normalVelocity < 0.0)
+            {
+                particle.velLife.xyz -= (1.0 + collision.restitution) * normalVelocity * normal;
+            }
+        }
+        else if (particle.velLife.y < 0.0)
+        {
+            particle.velLife.y = -particle.velLife.y * collision.restitution;
+        }
+    }
+    else if (collision.response == kVfxCollisionSpawnChild)
+    {
+        SpawnCollisionChild(emitter, particle, collision, hitPosition);
+        particle.meta.z &= ~kGpuParticleFlagAlive;
+        return false;
+    }
+    return true;
+}
+
+void main()
+{
+    uint updateIndex = gl_GlobalInvocationID.x;
+    if (updateIndex >= simulation.updateCount || simulation.emitterCount == 0u)
+    {
+        return;
+    }
+    uint emitterIndex = FindUpdateEmitter(updateIndex);
+    GpuEmitterParams emitter = emitters[emitterIndex];
+    GpuEmitterFrameExtra extra = emitterExtras[emitterIndex];
+    uint localIndex = updateIndex - extra.updateOffset;
+    uint slot = emitter.poolCapacitySeedFlags.x + localIndex;
+
+    if (simulation.substepIndex == 0u && (extra.flags & kGpuEmitterExtraFlagReset) != 0u)
+    {
+        particles[slot] = GpuParticle(vec4(0.0), vec4(0.0), uvec4(0u));
+        if (localIndex == 0u)
+        {
+            emitterHeads[extra.poolSlot] = 0u;
+        }
+        return;
+    }
+
+    GpuParticle particle = particles[slot];
+    if ((particle.meta.z & kGpuParticleFlagAlive) == 0u)
+    {
+        return;
+    }
+    uint flags = emitter.poolCapacitySeedFlags.w;
+    float dt = (flags & kGpuEmitterFlagUnscaledTime) != 0u ?
+        simulation.unscaledDeltaTime : simulation.deltaTime;
+    bool outside = false;
+    if ((particle.meta.z & kGpuParticleFlagStuck) == 0u)
+    {
+        vec3 previousPosition = particle.posAge.xyz;
+        vec3 acceleration = emitter.accelerationWindScale.xyz;
+        if ((flags & kGpuEmitterFlagDrag) != 0u)
+        {
+            acceleration -= particle.velLife.xyz * emitter.velocityMinDrag.w;
+        }
+        if ((flags & kGpuEmitterFlagWind) != 0u)
+        {
+            vec3 windVelocity = ParticleWindVelocity(particle.posAge.xyz);
+            acceleration += (windVelocity * emitter.accelerationWindScale.w - particle.velLife.xyz) *
+                emitter.velocityMaxWindCoupling.w;
+        }
+        if ((flags & kGpuEmitterFlagTurbulence) != 0u)
+        {
+            acceleration += VfxTurbulenceAcceleration(particle.posAge.xyz,
+                emitter.sizeTurbulenceStrengthFrequency.w, emitter.sizeTurbulenceStrengthFrequency.z,
+                emitter.poolCapacitySeedFlags.z);
+        }
+        particle.velLife.xyz += acceleration * dt;
+        particle.posAge.xyz += particle.velLife.xyz * dt;
+
+        if ((flags & kGpuEmitterFlagCollisionPlane) != 0u)
+        {
+            if (particle.posAge.y < emitter.activationFractionRampGroundKillY.w)
+            {
+                particle.meta.z &= ~kGpuParticleFlagAlive;
+                particles[slot] = particle;
+                return;
+            }
+            float surface = emitter.activationFractionRampGroundKillY.z;
+            if (particle.posAge.y < surface)
+            {
+                vec3 hit = vec3(particle.posAge.x, surface, particle.posAge.z);
+                if (!ApplyParticleCollision(emitter, emitter.planeCollision, hit, vec3(0.0, 1.0, 0.0), false, particle))
+                {
+                    particles[slot] = particle;
+                    return;
+                }
+            }
+        }
+        if ((particle.meta.z & kGpuParticleFlagStuck) == 0u &&
+            (flags & kGpuEmitterFlagCollisionHeightField) != 0u)
+        {
+            float surface;
+            if (SampleParticleHeight(particle.posAge.xyz, surface) && particle.posAge.y < surface)
+            {
+                vec3 hit = vec3(particle.posAge.x, surface, particle.posAge.z);
+                if (!ApplyParticleCollision(emitter, emitter.heightFieldCollision, hit, vec3(0.0, 1.0, 0.0), false, particle))
+                {
+                    particles[slot] = particle;
+                    return;
+                }
+            }
+        }
+        if ((particle.meta.z & kGpuParticleFlagStuck) == 0u &&
+            (flags & kGpuEmitterFlagCollisionDepth) != 0u)
+        {
+            vec3 hit;
+            vec3 normal;
+            if (FindDepthCollision(previousPosition, particle.posAge.xyz,
+                emitter.radiusConeAngleLengthDepthThickness.w, hit, normal) &&
+                !ApplyParticleCollision(emitter, emitter.depthCollision, hit, normal, true, particle))
+            {
+                particles[slot] = particle;
+                return;
+            }
+        }
+
+        if (ParticleShape(emitter) == kVfxShapeCameraBox)
+        {
+            vec3 halfSize = emitter.boxHalfExtentsNearFadeDistance.xyz;
+            if ((flags & kGpuEmitterFlagWrapInCameraBox) != 0u)
+            {
+                particle.posAge.x = WrapParticleAxis(particle.posAge.x, simulation.cameraPosition.x, halfSize.x);
+                particle.posAge.y = WrapParticleAxis(particle.posAge.y, simulation.cameraPosition.y, halfSize.y);
+                particle.posAge.z = WrapParticleAxis(particle.posAge.z, simulation.cameraPosition.z, halfSize.z);
+            }
+            else
+            {
+                outside = any(lessThan(particle.posAge.xyz, simulation.cameraPosition - halfSize)) ||
+                    any(greaterThan(particle.posAge.xyz, simulation.cameraPosition + halfSize));
+            }
+        }
+    }
+    particle.posAge.w += dt;
+    if (outside || !(particle.posAge.w < particle.velLife.w))
+    {
+        particle.meta.z &= ~kGpuParticleFlagAlive;
+    }
+    else
+    {
+        UpdateParticleActivation(emitter, particle);
+    }
+    particles[slot] = particle;
+}

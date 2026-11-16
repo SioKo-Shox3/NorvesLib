@@ -7082,7 +7082,7 @@
 - notes: 2026-11-02 の GR136 の決定（ロードマップ 4228 行。PROGRESS.md 8659 行）に従う: 効果の定義は GR136 の `VfxEffectAsset` の 1 つだけで、GR57 の設計案の `.pfx.json`・`ParticleEffectDesc` は作らない。GR57 は同じ定義を GPU で回す実行先で、GR136 の CPU の実行先が GPU の試験の「CPU 参照実装」を兼ねる。食い違いの決定: GR136 の乱数は xorshift32 の列（ParticleSystem と同じ。VfxEffectSystem.h:155）で、粒を並列に作る GPU では同じ列を再現できない。そこで乱数の流れを選べるようにし、GPU の実行先のエミッタは粒ごとの通し番号から引く Counter（PCG ハッシュ）にする。既存のエフェクトは Sequential のまま（結果を変えない）。GR57 の設計案の semi-implicit Euler は GR136 の順（速度を先に更新）と同じ式なので、GR136 の順をそのまま使う。寿命の曲線は GR136 が「共通の曲線が決まってから」としていた（ロードマップ 4245 行）が、`Math/Curves.h` の折れ線（`TryEvaluatePiecewiseLinear`）が統合ブランチにあるのでそれを使う。表面・ボーンのエミッタ（GR57 の P6。シ者の皮膚の表面から出す分）は段階をまたぐ注意の直す点（4459・4467 行）を採り、G7 では作らず G10 の `G10-GR60-SKIN-SURFACE-EMITTER` に任せた（GR19 の後）。その項目はこの定義（Executor=Gpu のエミッタの形に SkinSurface・Bone を足す）とシミュレーションの道を使う。理由: G10 の節が P6 を GR19 の後に作るとし、GR57 の設計案も垂直スライスの雨が使うのは P1〜P4 と書く。そのため G7 は GR12・GR13 を待たない。単発の放出（段階をまたぐ注意 4461 行）は GR136 の `RaiseEvent` と `SpawnOnEvent` を GPU の実行先でも受け、GameThread から RenderThread への値の列 `GpuParticleBurstQueue` は G7-GR57-GPU-SIMULATION で作る（G10 の EmitBurst・G11 の DropletEmitRequest はこの名前へ揃える）。試験を足す理由（`GpuParticleTypesTest`）: C++ と GLSL の構造体の並びのずれと、生成数の端数の持ち越しの誤りは、粒の数が少し違うだけで黙って起きる。CPU の GPU 試験の前提（並びと計画）を GPU なしで固定する。危険地帯は無い（CPU の Particle と新しい型だけ）が、Public の Particle の型を広げるので互換（既存の .vfx のクックと元の形式の読み）を試験で守る。要件 `#### GR57` の設計案（フェーズ P1）、データ形式、ロードマップ 1539・1553 行。
 
 ## G7-GR57-GPU-SIMULATION: GPU の実行先のエミッタを GameThread から値で RenderThread へ渡し、常駐のプールで生成・更新・寿命・衝突（深度・平面・高さ）を compute で回す
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DEFINITION, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G4-GR02-FIXED-FRAME-CLOCK
 - gr: GR57
 - needs-gr: GR25, GR02
@@ -7517,7 +7517,7 @@
 - notes: 要件 `#### GR55` の受け入れ確認の撮影の分（夜の撮影・自動露出の収束・時計無効で不変）。`-SunElevations` の負の値は G11-GR55-NIGHT で台本が受けるようにする。`-GpuTimingFrames 1800` は時間の倍率 60 で 30 分のゲーム時間（30 秒）を回す目安で、根拠はこの見積もりだけ。黒つぶれの閾値と領域は着手時に決めて記録に書く（根拠なし）。コードは夜の下限のデータ以外変えない。ロードマップ 1999 行。
 
 ## G11-GR56-SKY-OCC-WORLD: 空の遮蔽の入力に、地形の高さ・散布のチャンクの樹木と岩・草の場の下草の層・曇天の空の明るさの分布をつなぐ
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-MAP, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT, G5-GR90-SCATTER-BAKE, G5-GR90-SCATTER-RUNTIME
 - gr: GR56
 - needs-gr: GR37, GR42, GR44, GR50, GR90

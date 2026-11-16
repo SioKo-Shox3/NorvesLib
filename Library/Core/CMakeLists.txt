@@ -260,6 +260,7 @@ set(PRIVATE_SOURCES
     # Rendering
     Private/Rendering/GpuParticle/GpuParticleSpawnPlanner.cpp
     Private/Rendering/GpuParticle/GpuParticleEmitterAllocator.cpp
+    Private/Rendering/GpuParticle/GpuParticleSimulationPass.cpp
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/CanvasView.cpp
@@ -502,6 +503,7 @@ set(PRIVATE_SOURCES
     Private/Component/TerrainComponent.cpp
     Private/Component/GrassFieldComponent.cpp
     Private/Component/WitherSourceComponent.cpp
+    Private/Component/ParticleEmitterComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -747,6 +749,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h
     Public/Rendering/GpuParticle/GpuParticleTypes.h
+    Public/Rendering/GpuParticle/GpuParticleFrame.h
+    Public/Rendering/GpuParticle/GpuParticleSimulationPass.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
@@ -941,6 +945,7 @@ set(PUBLIC_HEADERS
     Public/Component/MegaGeometryComponent.h
     Public/Component/GrassFieldComponent.h
     Public/Component/WitherSourceComponent.h
+    Public/Component/ParticleEmitterComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

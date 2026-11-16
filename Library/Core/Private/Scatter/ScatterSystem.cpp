@@ -65,6 +65,10 @@ namespace NorvesLib::Core::Scatter
 
     void ScatterSystem::SetRenderWorld(Rendering::RenderWorld* renderWorld)
     {
+        if (m_RenderWorld != renderWorld)
+        {
+            m_bSkyOccludersDirty = true;
+        }
         m_RenderWorld = renderWorld;
     }
 
@@ -112,6 +116,16 @@ namespace NorvesLib::Core::Scatter
         scatter.Data = std::move(data);
         scatter.Chunks.resize(scatter.Data->Chunks.size());
         scatter.Species.resize(scatter.Data->Species.size());
+        // 取っ手に 24 ビット、格子の各軸に 20 ビットを割り当てる。
+        scatter.bSkyOccluderKeysValid = scatter.Handle < (1u << 24);
+        for (const auto& chunk : scatter.Data->Chunks)
+        {
+            scatter.bSkyOccluderKeysValid &= chunk.ChunkX < (1u << 20) && chunk.ChunkZ < (1u << 20);
+        }
+        if (!scatter.bSkyOccluderKeysValid)
+        {
+            LOG_WARNING("散布の取っ手か格子座標が鍵の範囲を超えるため遮蔽物を作りません handle=%u", scatter.Handle);
+        }
         const auto fail = [&]()
         {
             ReleaseEntities(scatter);
@@ -160,6 +174,16 @@ namespace NorvesLib::Core::Scatter
             species.ResidencyDistance = binding->ResidencyDistance;
             species.Priority = binding->Priority;
             species.Chunks.resize(scatter.Data->Chunks.size());
+            auto& occluder = species.SkyOccluderDesc;
+            occluder.bEnabled = source.SkyOccluderShape == 1u || source.SkyOccluderShape == 2u;
+            occluder.Shape = source.SkyOccluderShape == 2u
+                ? Rendering::SkyOccluderShape::Box : Rendering::SkyOccluderShape::Ellipsoid;
+            occluder.Class = source.bSkyOccluderCanopy
+                ? Rendering::SkyOccluderClass::Canopy : Rendering::SkyOccluderClass::Solid;
+            occluder.RadiusMeters = source.SkyOccluderRadiusMeters;
+            occluder.HeightMeters = source.SkyOccluderHeightMeters;
+            occluder.BaseRatio = source.SkyOccluderBaseRatio;
+            occluder.Kappa = source.SkyOccluderKappa;
             if (source.RenderPath == Asset::ScatterRenderPath::Foliage)
             {
                 species.FoliageTemplate = binding->FoliageTemplate;
@@ -329,9 +353,11 @@ namespace NorvesLib::Core::Scatter
             if (it->Handle == handle)
             {
                 ReleaseEntities(*it);
+                m_bSkyOccludersDirty |= !it->SkyOccluderChunks.empty();
                 m_Scatters.erase(it);
                 RebuildFoliageScene();
                 RecountStats();
+                PublishSkyOccluders();
                 return;
             }
         }
@@ -339,6 +365,10 @@ namespace NorvesLib::Core::Scatter
 
     void ScatterSystem::RecordEvent(ScatterState& scatter, uint32_t chunk, uint32_t species, bool bResident)
     {
+        if (scatter.Species[species].SkyOccluderDesc.bEnabled)
+        {
+            RebuildSkyOccluderChunk(scatter, chunk);
+        }
         if (scatter.Log.size() < kMaxLogEvents)
         {
             scatter.Log.push_back({m_Frame, chunk, species, bResident});
@@ -801,6 +831,167 @@ namespace NorvesLib::Core::Scatter
         {
             RebuildFoliageScene();
         }
+        PublishSkyOccluders();
+    }
+
+    void ScatterSystem::RebuildSkyOccluderChunk(ScatterState& scatter, uint32_t chunkIndex)
+    {
+        if (!scatter.bSkyOccluderKeysValid)
+        {
+            return;
+        }
+        SkyOccluderChunk rebuilt;
+        const auto& chunk = scatter.Data->Chunks[chunkIndex];
+        rebuilt.ChunkIndex = chunkIndex;
+        rebuilt.Key = (static_cast<uint64_t>(scatter.Handle) << 40) |
+                      (static_cast<uint64_t>(chunk.ChunkZ) << 20) | chunk.ChunkX;
+        // 描画用の並べ替えには依存せず、元の種・インスタンスの順で作る。
+        for (uint32_t speciesIndex = 0; speciesIndex < scatter.Species.size(); ++speciesIndex)
+        {
+            const auto& species = scatter.Species[speciesIndex];
+            if (!species.SkyOccluderDesc.bEnabled || chunkIndex >= species.Chunks.size() ||
+                !species.Chunks[chunkIndex].bResident)
+            {
+                continue;
+            }
+            const auto& source = scatter.Data->Species[speciesIndex];
+            const auto bytes = scatter.Data->GetInstances(chunkIndex, speciesIndex);
+            const size_t count = bytes.size() / sizeof(Asset::InstanceRecord16);
+            for (size_t index = 0; index < count; ++index)
+            {
+                Asset::InstanceRecord16 record;
+                Asset::ScatterInstanceValue value;
+                if (!Asset::ReadScatterInstance(bytes.subspan(index * sizeof(record), sizeof(record)), record) ||
+                    !Asset::DecodeScatterInstance(record, chunk, source, scatter.Data->ChunkSizeMeters,
+                                                  scatter.Data->OriginX, scatter.Data->OriginZ, value))
+                {
+                    continue;
+                }
+                Rendering::SkyOccluderProxy proxy;
+                // 復号済みの角度はラジアン、尺度は ScaleMin〜ScaleMax の実寸。
+                if (Rendering::MakeSkyOccluderFromInstance(species.SkyOccluderDesc,
+                    static_cast<float>(value.PositionX), static_cast<float>(value.PositionY),
+                    static_cast<float>(value.PositionZ), value.YawRadians, value.Scale, proxy))
+                {
+                    rebuilt.Occluders.push_back(proxy);
+                }
+            }
+        }
+        auto& chunks = scatter.SkyOccluderChunks;
+        auto existing = std::find_if(chunks.begin(), chunks.end(), [chunkIndex](const SkyOccluderChunk& entry)
+        {
+            return entry.ChunkIndex == chunkIndex;
+        });
+        if (rebuilt.Occluders.empty())
+        {
+            if (existing != chunks.end())
+            {
+                chunks.erase(existing);
+                m_bSkyOccludersDirty = true;
+            }
+            return;
+        }
+        // Clear や再常駐でも番号を戻さず、同じ鍵の古い版と混同させない。
+        if (m_SkyOccluderRevision == std::numeric_limits<uint64_t>::max())
+        {
+            LOG_WARNING("散布の遮蔽物の版番号を使い切ったため更新できません");
+            return;
+        }
+        rebuilt.Revision = ++m_SkyOccluderRevision;
+        if (existing != chunks.end())
+        {
+            *existing = std::move(rebuilt);
+        }
+        else
+        {
+            chunks.push_back(std::move(rebuilt));
+        }
+        m_bSkyOccludersDirty = true;
+    }
+
+    void ScatterSystem::PublishSkyOccluders()
+    {
+        if (!m_bSkyOccludersDirty || m_RenderWorld == nullptr || !m_RenderWorld->IsInitialized())
+        {
+            return;
+        }
+        // 不正な配列は出さず、次に内容が変わるまで再公開を試みない。
+        m_bSkyOccludersDirty = false;
+        Container::VariableArray<const SkyOccluderChunk*> chunks;
+        size_t totalCount = 0;
+        for (const auto& scatter : m_Scatters)
+        {
+            for (const auto& chunk : scatter.SkyOccluderChunks)
+            {
+                if (chunk.Occluders.size() > std::numeric_limits<uint32_t>::max() - totalCount)
+                {
+                    LOG_WARNING("散布の遮蔽物が範囲の表の上限を超えるため公開しません");
+                    return;
+                }
+                totalCount += chunk.Occluders.size();
+                chunks.push_back(&chunk);
+            }
+        }
+        if (totalCount == 0)
+        {
+            m_RenderWorld->RemoveExtensionData(Rendering::kSkyOcclusionChunkRangesKey.Name);
+            m_RenderWorld->RemoveExtensionData(Rendering::kSkyOcclusionChunkOccludersKey.Name);
+            return;
+        }
+        std::sort(chunks.begin(), chunks.end(), [](const SkyOccluderChunk* a, const SkyOccluderChunk* b)
+        {
+            return a->Key < b->Key;
+        });
+        Container::VariableArray<Rendering::SkyOccluderChunkRange> ranges;
+        Container::VariableArray<Rendering::SkyOccluderProxy> occluders;
+        ranges.reserve(chunks.size());
+        occluders.reserve(totalCount);
+        const auto roundOutward = [](double value, bool bUpper)
+        {
+            float rounded = static_cast<float>(value);
+            if (bUpper ? static_cast<double>(rounded) < value : static_cast<double>(rounded) > value)
+            {
+                rounded = std::nextafter(rounded, bUpper ? std::numeric_limits<float>::infinity()
+                                                       : -std::numeric_limits<float>::infinity());
+            }
+            return rounded;
+        };
+        for (const auto* chunk : chunks)
+        {
+            Rendering::SkyOccluderChunkRange range;
+            range.ChunkKey = chunk->Key;
+            range.Revision = chunk->Revision;
+            range.Offset = static_cast<uint32_t>(occluders.size());
+            range.Count = static_cast<uint32_t>(chunk->Occluders.size());
+            double minX = std::numeric_limits<double>::infinity();
+            double minZ = minX;
+            double maxX = -minX;
+            double maxZ = -minX;
+            for (const auto& proxy : chunk->Occluders)
+            {
+                double proxyMinX, proxyMinZ, proxyMaxX, proxyMaxZ;
+                Rendering::GetSkyOccluderHorizontalBounds(proxy, proxyMinX, proxyMinZ, proxyMaxX, proxyMaxZ);
+                minX = std::min(minX, proxyMinX);
+                minZ = std::min(minZ, proxyMinZ);
+                maxX = std::max(maxX, proxyMaxX);
+                maxZ = std::max(maxZ, proxyMaxZ);
+            }
+            range.MinX = roundOutward(minX, false);
+            range.MinZ = roundOutward(minZ, false);
+            range.MaxX = roundOutward(maxX, true);
+            range.MaxZ = roundOutward(maxZ, true);
+            ranges.push_back(range);
+            occluders.insert(occluders.end(), chunk->Occluders.begin(), chunk->Occluders.end());
+        }
+        if (!Rendering::IsValidSkyOccluderChunkRanges({ranges.data(), ranges.size()}, occluders.size()))
+        {
+            LOG_WARNING("散布の遮蔽物の範囲の表が不正なため公開しません");
+            return;
+        }
+        m_RenderWorld->SetExtensionArray(Rendering::kSkyOcclusionChunkRangesKey,
+            Container::Span<const Rendering::SkyOccluderChunkRange>(ranges.data(), ranges.size()));
+        m_RenderWorld->SetExtensionArray(Rendering::kSkyOcclusionChunkOccludersKey,
+            Container::Span<const Rendering::SkyOccluderProxy>(occluders.data(), occluders.size()));
     }
 
     bool ScatterSystem::MakeFoliageResident(ScatterState& scatter, uint32_t chunkIndex, uint32_t speciesIndex)
@@ -1035,9 +1226,11 @@ namespace NorvesLib::Core::Scatter
         for (auto& scatter : m_Scatters)
         {
             ReleaseEntities(scatter);
+            m_bSkyOccludersDirty |= !scatter.SkyOccluderChunks.empty();
         }
         m_Scatters.clear();
         m_Stats = {};
         RebuildFoliageScene();
+        PublishSkyOccluders();
     }
 } // namespace NorvesLib::Core::Scatter

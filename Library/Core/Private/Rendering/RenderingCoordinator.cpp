@@ -4639,6 +4639,9 @@ namespace NorvesLib::Core::Rendering
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
+        packet.Scene.GpuParticles = m_GpuParticles;
+        // GPU の粒はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
+        m_GpuParticles.Clear();
         m_ExtensionData.SnapshotTo(packet.Scene.Extensions);
         packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
@@ -6865,6 +6868,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetDecals(const DecalScene& decals)
     {
         m_Decals = decals;
+    }
+
+    void RenderingCoordinator::SetGpuParticleFrame(const GpuParticleScene& frame)
+    {
+        m_GpuParticles = frame;
     }
 
     void RenderingCoordinator::SetDistortions(const DistortionScene& distortions)

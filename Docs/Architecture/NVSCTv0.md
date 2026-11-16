@@ -86,11 +86,16 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 72 | `float32` | `WindStiffness` | 風の硬さ。有限で非負 |
 | 76 | `uint32` | `WindPhaseSeed` | 風の位相の種 |
 | 80 | `uint32` | `Flags` | bit 0 は衝突の印として予約。bit 1..31 は 0 |
-| 84 | `uint32` | `Reserved0` | 0 |
-| 88 | `uint64` | `Reserved1` | 0 |
+| 84 | `uint32` | `SkyOccluderBits` | bit 0..1 は形（0 = なし、1 = 楕円体、2 = 箱）、bit 2 は canopy、bit 8..15 は底の比、bit 16..23 は κ。その他のビットは 0 |
+| 88 | `float32` | `SkyOccluderRadiusMeters` | 遮蔽物の半径 [m]。形がある場合は有限の `(0, 256]` |
+| 92 | `float32` | `SkyOccluderHeightMeters` | 遮蔽物の高さ [m]。形がある場合は有限の `(0, 256]` |
 
 `LodCount` 以上の未使用のパス参照は位置・長さとも 0。書き手は文字列を各種の名前、LOD0 から
 有効な LOD の順に隙間なく追加し、重複文字列も個別に書く。読み手は文字列参照の範囲を検査し、順序や共有は制限しない。
+
+底の比と κ はそれぞれ `round(value * 255)` で量子化し、読み手は `q / 255` に戻す。
+底の比の量子化値は 0..242、κ は 0..255。形が 0 のとき 84..95 の 12 バイトはすべて 0 で、
+遮蔽物なしとして読む。旧形式の予約欄が 0 のファイルも遮蔽物なしとして読める。
 
 ## チャンク表（1 件 48 バイト）
 
@@ -165,7 +170,8 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 5. 種数が範囲外なら `SpeciesOutOfRange`、チャンク数が格子を超えれば `ChunkOutOfRange`。
 6. 表・文字列表・配列の位置、長さ、順序、整列、ファイル終端が不正なら `TableOutOfRange`。隙間が 0 以外なら `ReservedNonZero`。
 7. 種の描画経路・LOD 数・数値が不正なら `SpeciesOutOfRange`、文字列参照が空または範囲外なら `StringOutOfRange`。
-   未使用 LOD 参照・予約欄・未定義フラグが 0 以外なら `ReservedNonZero`。
+   未使用 LOD 参照・予約欄・未定義フラグ・遮蔽物の未使用ビットが 0 以外、または形が 0 で 84..95 がすべて 0 でなければ `ReservedNonZero`。
+   遮蔽物の形が範囲外、半径・高さが不正、底の比の量子化値が 242 を超える場合は `InvalidSkyOccluder`。
 8. チャンク座標が範囲外または重複なら `ChunkOutOfRange`、Y 範囲または AABB が不正なら `InvalidChunkBounds`、予約欄が 0 以外なら `ReservedNonZero`。
 9. 範囲表の offset・count がインスタンス配列の外なら `InstanceRangeOutOfRange`。
 
@@ -263,7 +269,8 @@ JSON は UTF-8（先頭 BOM 可）。全オブジェクトで未知の鍵・重�
     "exclude": { "road_threshold": 0.5, "wetness": [0.0, 0.8] },
     "scale_range": [0.7, 1.4], "slope_follow": 0.8,
     "brightness_variation": 0.1, "dry_from_mask": false, "collision": false,
-    "wind": { "stiffness": 1.0, "phase_seed": 7 }
+    "wind": { "stiffness": 1.0, "phase_seed": 7 },
+    "sky_occluder": { "shape": "ellipsoid", "class": "solid", "radius_m": 1.0, "height_m": 1.3 }
   }]
 }
 ```
@@ -301,6 +308,12 @@ JSON は UTF-8（先頭 BOM 可）。全オブジェクトで未知の鍵・重�
 | `wind` | 下位項目の既定 | 風の属性オブジェクト。空のオブジェクトも可 |
 | `wind.stiffness` | 1.0 | 有限で非負 |
 | `wind.phase_seed` | 0 | uint32 範囲の10進整数または10進文字列 |
+| `sky_occluder` | 遮蔽物なし | 遮蔽物の属性オブジェクト |
+| `sky_occluder.shape` | 必須 | `ellipsoid` または `box` |
+| `sky_occluder.class` | 必須 | `solid` または `canopy` |
+| `sky_occluder.radius_m` / `height_m` | 必須 | 有限の `(0, 256]` [m]。float32 で 0 に丸まる正の値は最小の正の値として保存 |
+| `sky_occluder.base_ratio` | 0 | 有限の `0..0.95` |
+| `sky_occluder.kappa` | solid では 1、canopy では必須 | 有限の `0..1` |
 
 density の layer 形式は `{"source":"layer","layer":"GRS0","channel":"r"}`。
 寸法・半径・間隔・拡大・基準密度・標高・風の硬さは有限の float の最大値以下とする。

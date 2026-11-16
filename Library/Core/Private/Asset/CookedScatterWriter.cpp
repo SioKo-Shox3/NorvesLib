@@ -97,6 +97,19 @@ namespace NorvesLib::Core::Asset
             {
                 return Status::InvalidSpecies;
             }
+            if (species.SkyOccluderShape > 2 ||
+                (species.SkyOccluderShape != 0 &&
+                 (!std::isfinite(species.SkyOccluderRadiusMeters) || species.SkyOccluderRadiusMeters <= 0.0f ||
+                  species.SkyOccluderRadiusMeters > 256.0f ||
+                  !std::isfinite(species.SkyOccluderHeightMeters) || species.SkyOccluderHeightMeters <= 0.0f ||
+                  species.SkyOccluderHeightMeters > 256.0f ||
+                  !std::isfinite(species.SkyOccluderBaseRatio) || species.SkyOccluderBaseRatio < 0.0f ||
+                  species.SkyOccluderBaseRatio > 0.95f ||
+                  !std::isfinite(species.SkyOccluderKappa) || species.SkyOccluderKappa < 0.0f ||
+                  species.SkyOccluderKappa > 1.0f)))
+            {
+                return Status::InvalidSpecies;
+            }
             for (uint32_t lod = 0; lod < MaxLodCount; ++lod)
             {
                 if ((lod < species.LodCount && !AddStringSize(species.LodPaths[lod], stringSize)) ||
@@ -212,6 +225,16 @@ namespace NorvesLib::Core::Asset
             WriteFloat(data, record + SpeciesRecordOffset::WindStiffness, species.WindStiffness);
             WriteLe(data, record + SpeciesRecordOffset::WindPhaseSeed, species.WindPhaseSeed, 4);
             WriteLe(data, record + SpeciesRecordOffset::Flags, species.Flags, 4);
+            if (species.SkyOccluderShape != 0)
+            {
+                const uint32_t base = static_cast<uint32_t>(std::round(static_cast<double>(species.SkyOccluderBaseRatio) * 255.0));
+                const uint32_t kappa = static_cast<uint32_t>(std::round(static_cast<double>(species.SkyOccluderKappa) * 255.0));
+                const uint32_t bits = species.SkyOccluderShape | (species.bSkyOccluderCanopy ? 4u : 0u) |
+                                      (base << 8) | (kappa << 16);
+                WriteLe(data, record + SpeciesRecordOffset::SkyOccluderBits, bits, 4);
+                WriteFloat(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters, species.SkyOccluderRadiusMeters);
+                WriteFloat(data, record + SpeciesRecordOffset::SkyOccluderHeightMeters, species.SkyOccluderHeightMeters);
+            }
         }
         for (size_t i = 0; i < desc.Chunks.size(); ++i)
         {
