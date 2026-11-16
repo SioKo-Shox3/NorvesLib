@@ -11776,3 +11776,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 SceneView の RT の除外の印と、TLAS の選択からの除外: 着地(直し 0 回)
 - U4 ScatterSystem が色味・個体差の種・影・RT の印を描画先へ渡す: 着地(直し 0 回)
 - U3 AssetCook に配置の一覧（JSON）の cook を足す: 着地(直し 0 回)
+- U5 ScatterSystem に空間の照会・1 本の非表示・非表示の集合の保存と復元を足す: 着地(直し 0 回)

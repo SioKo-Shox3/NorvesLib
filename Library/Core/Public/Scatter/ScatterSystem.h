@@ -1,5 +1,6 @@
 ﻿// 焼いた散布の要求・常駐予算・解放と、種ごとの描画経路を GameThread で管理する。
 // セルからチャンクの常駐を固定・解除し、休眠を切り替える口を持つ。
+// 常駐個体の空間照会と個体ごとの非表示、および非表示集合の保存・復元を提供する。
 // ScatterSystem は Engine::Engine が所有し、Entity は Load に渡した World の木が所有する。
 // Unload で Entity を World に返し、CookedScatterData は共有参照で保持する。
 // World が先に Finalize された場合、Clear は Entity に触らず状態だけ捨てる。
@@ -80,6 +81,30 @@ namespace NorvesLib::Core::Scatter
     using ScatterHandle = uint32_t;
     inline constexpr ScatterHandle kInvalidScatterHandle = 0;
 
+    /// 散布の 1 本の識別子。Index は種の番号順に各種の範囲を続けて数えたチャンク内の通し番号。
+    struct ScatterInstanceId
+    {
+        ScatterHandle Scatter = kInvalidScatterHandle;
+        uint32_t Chunk = 0;
+        uint32_t Index = 0;
+    };
+
+    /// Scatter が無効なら全散布。SpeciesMask は種の番号のビット（64 種まで）。
+    struct ScatterQueryFilter
+    {
+        ScatterHandle Scatter = kInvalidScatterHandle;
+        uint64_t SpeciesMask = ~0ull;
+    };
+
+    struct ScatterQueryHit
+    {
+        ScatterInstanceId Id;
+        uint32_t Species = 0;
+        Math::Vector3 Position;
+        float YawRadians = 0.0f;
+        float Scale = 1.0f;
+    };
+
     /// すべての操作は GameThread の並列の段の外で行う。
     class ScatterSystem
     {
@@ -130,6 +155,30 @@ namespace NorvesLib::Core::Scatter
         void GetChunkRanges(ScatterHandle handle, uint32_t chunk, uint32_t species,
                             uint32_t& outFirst, uint32_t& outCount) const;
         bool IsResident(ScatterHandle handle, uint32_t chunk, uint32_t species) const;
+        /// center から 3 次元の距離が radius 以下の常駐個体を渡す。隠した個体は渡さない。
+        /// 球と交わるチャンクの対象の単位がすべて常駐なら true。負・非有限の radius は何も呼ばず true。
+        template <typename TVisitor>
+        bool ForEachInstanceInRadius(const Math::Vector3& center, float radius, const ScatterQueryFilter& filter,
+                                     TVisitor&& visitor) const
+        {
+            auto callback = [&visitor](const ScatterQueryHit& hit)
+            {
+                visitor(hit);
+            };
+            return VisitInstancesInRadius(center, radius, filter, &callback,
+                                          [](void* context, const ScatterQueryHit& hit)
+            {
+                (*static_cast<decltype(callback)*>(context))(hit);
+            });
+        }
+        /// 範囲外の識別子は false。非表示の印はチャンクの解放後も保持する。
+        bool SetInstanceHidden(const ScatterInstanceId& id, bool bHidden);
+        bool IsInstanceHidden(const ScatterInstanceId& id) const;
+        uint32_t GetHiddenInstanceCount(ScatterHandle handle) const;
+        /// 非表示の集合をバイト列にする。失敗時は出力を変えない。
+        bool SerializeHiddenInstances(ScatterHandle handle, Container::VariableArray<uint8_t>& outBytes) const;
+        /// バイト列から非表示の集合を置き換える。失敗時は何も変えない。
+        bool RestoreHiddenInstances(ScatterHandle handle, Container::Span<const uint8_t> bytes);
         void Clear();
 
     private:
@@ -176,6 +225,8 @@ namespace NorvesLib::Core::Scatter
             bool bDistanceResidency = true;
             Container::VariableArray<ChunkState> Chunks;
             Container::VariableArray<SpeciesState> Species;
+            /// 描画用の常駐配列とは独立した、チャンク内の番号の昇順集合。
+            Container::VariableArray<Container::VariableArray<uint32_t>> HiddenInstances;
             Container::VariableArray<ScatterResidencyEvent> Log;
         };
 
@@ -188,6 +239,13 @@ namespace NorvesLib::Core::Scatter
         void RecordEvent(ScatterState& scatter, uint32_t chunk, uint32_t species, bool bResident);
         bool ReleaseChunkUnits(ScatterState& scatter, uint32_t chunk);
         bool MakeFoliageResident(ScatterState& scatter, uint32_t chunk, uint32_t species);
+        bool BuildFoliageUnit(const ScatterState& scatter, uint32_t chunk, uint32_t species,
+                              const Container::VariableArray<uint32_t>& hidden, ChunkUnit& outUnit) const;
+        bool ResolveInstanceIndex(const ScatterState& scatter, uint32_t chunk, uint32_t index,
+                                  uint32_t& outSpecies, uint32_t& outLocalIndex) const;
+        void ApplyMegaHiddenInstances(const ScatterState& scatter, uint32_t chunk, uint32_t species) const;
+        bool VisitInstancesInRadius(const Math::Vector3& center, float radius, const ScatterQueryFilter& filter,
+                                    void* context, void (*visitor)(void*, const ScatterQueryHit&)) const;
         void RebuildFoliageScene();
 
         Container::VariableArray<ScatterState> m_Scatters;

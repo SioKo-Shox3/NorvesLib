@@ -61,6 +61,34 @@ namespace NorvesLib::Core::Scatter
             return std::sqrt(squared);
         }
 
+        uint64_t SpeciesInstanceOffset(const Asset::CookedScatterData& data, uint32_t chunk, uint32_t species)
+        {
+            uint64_t offset = 0;
+            for (uint32_t index = 0; index < species; ++index)
+            {
+                offset += data.GetInstances(chunk, index).size() / sizeof(Asset::InstanceRecord16);
+            }
+            return offset;
+        }
+
+        void WriteHiddenInteger(Container::VariableArray<uint8_t>& bytes, uint64_t value, uint32_t width)
+        {
+            for (uint32_t byte = 0; byte < width; ++byte)
+            {
+                bytes.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+            }
+        }
+
+        uint64_t ReadHiddenInteger(Container::Span<const uint8_t> bytes, size_t offset, uint32_t width)
+        {
+            uint64_t value = 0;
+            for (uint32_t byte = 0; byte < width; ++byte)
+            {
+                value |= static_cast<uint64_t>(bytes[offset + byte]) << (byte * 8);
+            }
+            return value;
+        }
+
         Math::Quaternion InstanceRotation(const Asset::ScatterInstanceValue& value, float slopeFollow)
         {
             const Math::Vector3 up(0.0f, 1.0f, 0.0f);
@@ -125,6 +153,7 @@ namespace NorvesLib::Core::Scatter
         scatter.WorldPtr = &world;
         scatter.Data = std::move(data);
         scatter.Chunks.resize(scatter.Data->Chunks.size());
+        scatter.HiddenInstances.resize(scatter.Data->Chunks.size());
         scatter.Species.resize(scatter.Data->Species.size());
         const auto fail = [&]()
         {
@@ -557,6 +586,7 @@ namespace NorvesLib::Core::Scatter
                 }
             }
             unit.bResident = true;
+            ApplyMegaHiddenInstances(*scatter, chunk, speciesIndex);
             RecordEvent(*scatter, chunk, speciesIndex, true);
         }
         RecountStats();
@@ -835,6 +865,7 @@ namespace NorvesLib::Core::Scatter
                 }
             }
             unit.bResident = true;
+            ApplyMegaHiddenInstances(scatter, candidate.Chunk, candidate.Species);
             ++m_Stats.ResidentThisFrame;
             m_Stats.BytesThisFrame += unit.Bytes;
             RecordEvent(scatter, candidate.Chunk, candidate.Species, true);
@@ -848,8 +879,14 @@ namespace NorvesLib::Core::Scatter
 
     bool ScatterSystem::MakeFoliageResident(ScatterState& scatter, uint32_t chunkIndex, uint32_t speciesIndex)
     {
-        auto& species = scatter.Species[speciesIndex];
-        auto& unit = species.Chunks[chunkIndex];
+        return BuildFoliageUnit(scatter, chunkIndex, speciesIndex, scatter.HiddenInstances[chunkIndex],
+                                scatter.Species[speciesIndex].Chunks[chunkIndex]);
+    }
+
+    bool ScatterSystem::BuildFoliageUnit(const ScatterState& scatter, uint32_t chunkIndex, uint32_t speciesIndex,
+                                         const Container::VariableArray<uint32_t>& hidden, ChunkUnit& unit) const
+    {
+        const auto& species = scatter.Species[speciesIndex];
         const auto& source = scatter.Data->Species[speciesIndex];
         const auto& chunk = scatter.Data->Chunks[chunkIndex];
         const auto bytes = scatter.Data->GetInstances(chunkIndex, speciesIndex);
@@ -858,8 +895,15 @@ namespace NorvesLib::Core::Scatter
         instances.reserve(count);
         bool bSorted = true;
         uint8_t previousRank = 0;
+        const uint64_t firstIndex = SpeciesInstanceOffset(*scatter.Data, chunkIndex, speciesIndex);
+        auto hiddenIt = std::lower_bound(hidden.begin(), hidden.end(), firstIndex);
         for (size_t index = 0; index < count; ++index)
         {
+            if (hiddenIt != hidden.end() && *hiddenIt == firstIndex + index)
+            {
+                ++hiddenIt;
+                continue;
+            }
             Asset::InstanceRecord16 record;
             Asset::ScatterInstanceValue value;
             if (!Asset::ReadScatterInstance(bytes.subspan(index * sizeof(record), sizeof(record)), record) ||
@@ -1071,6 +1115,367 @@ namespace NorvesLib::Core::Scatter
         const auto* scatter = Find(handle);
         return scatter != nullptr && species < scatter->Species.size() && chunk < scatter->Species[species].Chunks.size() &&
                scatter->Species[species].Chunks[chunk].bResident;
+    }
+
+    bool ScatterSystem::ResolveInstanceIndex(const ScatterState& scatter, uint32_t chunk, uint32_t index,
+                                              uint32_t& outSpecies, uint32_t& outLocalIndex) const
+    {
+        if (chunk >= scatter.Chunks.size())
+        {
+            return false;
+        }
+        uint64_t remaining = index;
+        for (uint32_t species = 0; species < scatter.Species.size(); ++species)
+        {
+            const size_t count = scatter.Data->GetInstances(chunk, species).size() / sizeof(Asset::InstanceRecord16);
+            if (remaining < count)
+            {
+                outSpecies = species;
+                outLocalIndex = static_cast<uint32_t>(remaining);
+                return true;
+            }
+            remaining -= count;
+        }
+        return false;
+    }
+
+    void ScatterSystem::ApplyMegaHiddenInstances(const ScatterState& scatter, uint32_t chunk, uint32_t speciesIndex) const
+    {
+        const auto& species = scatter.Species[speciesIndex];
+        auto* component = ResolveMega(scatter, species);
+        if (component == nullptr || chunk >= species.Chunks.size())
+        {
+            return;
+        }
+        const auto& unit = species.Chunks[chunk];
+        const uint64_t first = SpeciesInstanceOffset(*scatter.Data, chunk, speciesIndex);
+        const uint64_t end = first + scatter.Data->GetInstances(chunk, speciesIndex).size() / sizeof(Asset::InstanceRecord16);
+        const auto& hidden = scatter.HiddenInstances[chunk];
+        for (auto it = std::lower_bound(hidden.begin(), hidden.end(), first); it != hidden.end() && *it < end; ++it)
+        {
+            component->SetInstanceHidden(unit.FirstRange * kRangeRows + static_cast<uint32_t>(*it - first), true);
+        }
+    }
+
+    bool ScatterSystem::VisitInstancesInRadius(const Math::Vector3& center, float radius,
+                                                const ScatterQueryFilter& filter, void* context,
+                                                void (*visitor)(void*, const ScatterQueryHit&)) const
+    {
+        if (radius < 0.0f || !std::isfinite(radius))
+        {
+            return true;
+        }
+        bool bComplete = true;
+        const double radiusSquared = static_cast<double>(radius) * radius;
+        for (const auto& scatter : m_Scatters)
+        {
+            if (filter.Scatter != kInvalidScatterHandle && filter.Scatter != scatter.Handle)
+            {
+                continue;
+            }
+            const auto& data = *scatter.Data;
+            for (uint32_t chunkIndex = 0; chunkIndex < data.Chunks.size(); ++chunkIndex)
+            {
+                const auto& chunk = data.Chunks[chunkIndex];
+                // 箱との距離も double で計算し、大きい有限の半径での二乗の桁あふれを避ける。
+                const double coordinates[] = {center.x, center.y, center.z};
+                double chunkDistanceSquared = 0.0;
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    const double delta = std::max(static_cast<double>(chunk.AabbMin[axis]) - coordinates[axis],
+                                                  std::max(0.0, coordinates[axis] - chunk.AabbMax[axis]));
+                    chunkDistanceSquared += delta * delta;
+                }
+                if (chunkDistanceSquared > radiusSquared)
+                {
+                    continue;
+                }
+                uint64_t firstIndex = 0;
+                const auto& hidden = scatter.HiddenInstances[chunkIndex];
+                for (uint32_t speciesIndex = 0; speciesIndex < scatter.Species.size(); ++speciesIndex)
+                {
+                    const auto bytes = data.GetInstances(chunkIndex, speciesIndex);
+                    const size_t count = bytes.size() / sizeof(Asset::InstanceRecord16);
+                    const uint64_t speciesFirst = firstIndex;
+                    firstIndex += count;
+                    const auto& species = scatter.Species[speciesIndex];
+                    if (speciesIndex >= 64 || (filter.SpeciesMask & (1ull << speciesIndex)) == 0 ||
+                        species.Chunks.empty() || count == 0)
+                    {
+                        continue;
+                    }
+                    if (!species.Chunks[chunkIndex].bResident)
+                    {
+                        bComplete = false;
+                        continue;
+                    }
+                    auto hiddenIt = std::lower_bound(hidden.begin(), hidden.end(), speciesFirst);
+                    for (size_t index = 0; index < count; ++index)
+                    {
+                        const uint64_t instanceIndex = speciesFirst + index;
+                        if (hiddenIt != hidden.end() && *hiddenIt == instanceIndex)
+                        {
+                            ++hiddenIt;
+                            continue;
+                        }
+                        Asset::InstanceRecord16 record;
+                        Asset::ScatterInstanceValue value;
+                        if (!Asset::ReadScatterInstance(bytes.subspan(index * sizeof(record), sizeof(record)), record) ||
+                            !Asset::DecodeScatterInstance(record, chunk, data.Species[speciesIndex], data.ChunkSizeMeters,
+                                                          data.OriginX, data.OriginZ, value))
+                        {
+                            continue;
+                        }
+                        const double dx = value.PositionX - center.x;
+                        const double dy = value.PositionY - center.y;
+                        const double dz = value.PositionZ - center.z;
+                        if (dx * dx + dy * dy + dz * dz <= radiusSquared &&
+                            instanceIndex <= std::numeric_limits<uint32_t>::max())
+                        {
+                            ScatterQueryHit hit;
+                            hit.Id = {scatter.Handle, chunkIndex, static_cast<uint32_t>(instanceIndex)};
+                            hit.Species = speciesIndex;
+                            hit.Position = Math::Vector3(static_cast<float>(value.PositionX), static_cast<float>(value.PositionY),
+                                                         static_cast<float>(value.PositionZ));
+                            hit.YawRadians = value.YawRadians;
+                            hit.Scale = value.Scale;
+                            visitor(context, hit);
+                        }
+                    }
+                }
+            }
+        }
+        return bComplete;
+    }
+
+    bool ScatterSystem::SetInstanceHidden(const ScatterInstanceId& id, bool bHidden)
+    {
+        auto* scatter = Find(id.Scatter);
+        uint32_t speciesIndex = 0;
+        uint32_t localIndex = 0;
+        if (scatter == nullptr || !ResolveInstanceIndex(*scatter, id.Chunk, id.Index, speciesIndex, localIndex))
+        {
+            return false;
+        }
+        auto& hidden = scatter->HiddenInstances[id.Chunk];
+        const auto it = std::lower_bound(hidden.begin(), hidden.end(), id.Index);
+        const bool bWasHidden = it != hidden.end() && *it == id.Index;
+        if (bWasHidden == bHidden)
+        {
+            return true;
+        }
+        if (bHidden && GetHiddenInstanceCount(id.Scatter) == std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        auto replacement = hidden;
+        const auto replacementIt = std::lower_bound(replacement.begin(), replacement.end(), id.Index);
+        if (bHidden)
+        {
+            replacement.insert(replacementIt, id.Index);
+        }
+        else
+        {
+            replacement.erase(replacementIt);
+        }
+        auto& species = scatter->Species[speciesIndex];
+        const bool bRebuildFoliage = species.RenderPath == Asset::ScatterRenderPath::Foliage &&
+                                    !species.Chunks.empty() && species.Chunks[id.Chunk].bResident;
+        ChunkUnit rebuilt;
+        if (bRebuildFoliage)
+        {
+            rebuilt.bWarnedUnsortedRank = species.Chunks[id.Chunk].bWarnedUnsortedRank;
+            if (!BuildFoliageUnit(*scatter, id.Chunk, speciesIndex, replacement, rebuilt))
+            {
+                return false;
+            }
+        }
+        hidden = std::move(replacement);
+        if (auto* component = ResolveMega(*scatter, species))
+        {
+            component->SetInstanceHidden(species.Chunks[id.Chunk].FirstRange * kRangeRows + localIndex, bHidden);
+        }
+        if (bRebuildFoliage)
+        {
+            auto& unit = species.Chunks[id.Chunk];
+            unit.FoliageInstances = std::move(rebuilt.FoliageInstances);
+            unit.FoliageBounds = rebuilt.FoliageBounds;
+            unit.bWarnedUnsortedRank = rebuilt.bWarnedUnsortedRank;
+            RebuildFoliageScene();
+        }
+        return true;
+    }
+
+    bool ScatterSystem::IsInstanceHidden(const ScatterInstanceId& id) const
+    {
+        const auto* scatter = Find(id.Scatter);
+        uint32_t species = 0;
+        uint32_t localIndex = 0;
+        if (scatter == nullptr || !ResolveInstanceIndex(*scatter, id.Chunk, id.Index, species, localIndex))
+        {
+            return false;
+        }
+        const auto& hidden = scatter->HiddenInstances[id.Chunk];
+        return std::binary_search(hidden.begin(), hidden.end(), id.Index);
+    }
+
+    uint32_t ScatterSystem::GetHiddenInstanceCount(ScatterHandle handle) const
+    {
+        const auto* scatter = Find(handle);
+        uint32_t count = 0;
+        if (scatter != nullptr)
+        {
+            for (const auto& hidden : scatter->HiddenInstances)
+            {
+                count += static_cast<uint32_t>(hidden.size());
+            }
+        }
+        return count;
+    }
+
+    bool ScatterSystem::SerializeHiddenInstances(ScatterHandle handle, Container::VariableArray<uint8_t>& outBytes) const
+    {
+        const auto* scatter = Find(handle);
+        if (scatter == nullptr)
+        {
+            return false;
+        }
+        Container::VariableArray<uint8_t> bytes;
+        const uint32_t count = GetHiddenInstanceCount(handle);
+        bytes.reserve(24ull + static_cast<uint64_t>(count) * 8);
+        bytes.push_back('N');
+        bytes.push_back('V');
+        bytes.push_back('H');
+        bytes.push_back('D');
+        WriteHiddenInteger(bytes, 0, 4);
+        WriteHiddenInteger(bytes, scatter->Data->PayloadHash, 8);
+        WriteHiddenInteger(bytes, scatter->Chunks.size(), 4);
+        WriteHiddenInteger(bytes, count, 4);
+        for (uint32_t chunk = 0; chunk < scatter->HiddenInstances.size(); ++chunk)
+        {
+            for (uint32_t index : scatter->HiddenInstances[chunk])
+            {
+                WriteHiddenInteger(bytes, chunk, 4);
+                WriteHiddenInteger(bytes, index, 4);
+            }
+        }
+        outBytes = std::move(bytes);
+        return true;
+    }
+
+    bool ScatterSystem::RestoreHiddenInstances(ScatterHandle handle, Container::Span<const uint8_t> bytes)
+    {
+        auto* scatter = Find(handle);
+        if (scatter == nullptr || bytes.size() < 24 || bytes[0] != 'N' || bytes[1] != 'V' ||
+            bytes[2] != 'H' || bytes[3] != 'D' || ReadHiddenInteger(bytes, 4, 4) != 0 ||
+            ReadHiddenInteger(bytes, 8, 8) != scatter->Data->PayloadHash ||
+            ReadHiddenInteger(bytes, 16, 4) != scatter->Chunks.size())
+        {
+            return false;
+        }
+        const uint64_t count = ReadHiddenInteger(bytes, 20, 4);
+        if (bytes.size() != 24 + count * 8)
+        {
+            return false;
+        }
+        Container::VariableArray<Container::VariableArray<uint32_t>> replacement(scatter->Chunks.size());
+        uint32_t previousChunk = 0;
+        uint32_t previousIndex = 0;
+        for (uint64_t entry = 0; entry < count; ++entry)
+        {
+            const size_t offset = static_cast<size_t>(24 + entry * 8);
+            const uint32_t chunk = static_cast<uint32_t>(ReadHiddenInteger(bytes, offset, 4));
+            const uint32_t index = static_cast<uint32_t>(ReadHiddenInteger(bytes, offset + 4, 4));
+            uint32_t species = 0;
+            uint32_t localIndex = 0;
+            if ((entry != 0 && (chunk < previousChunk || (chunk == previousChunk && index <= previousIndex))) ||
+                !ResolveInstanceIndex(*scatter, chunk, index, species, localIndex))
+            {
+                return false;
+            }
+            replacement[chunk].push_back(index);
+            previousChunk = chunk;
+            previousIndex = index;
+        }
+        // foliage の復号も置き換え前に済ませ、失敗時に集合や描画を変えない。
+        struct FoliageReplacement
+        {
+            uint32_t Chunk = 0;
+            uint32_t Species = 0;
+            ChunkUnit Unit;
+        };
+        Container::VariableArray<FoliageReplacement> foliage;
+        for (uint32_t chunk = 0; chunk < replacement.size(); ++chunk)
+        {
+            const auto& oldHidden = scatter->HiddenInstances[chunk];
+            const auto& newHidden = replacement[chunk];
+            for (uint32_t speciesIndex = 0; speciesIndex < scatter->Species.size(); ++speciesIndex)
+            {
+                const auto& species = scatter->Species[speciesIndex];
+                if (species.RenderPath != Asset::ScatterRenderPath::Foliage || species.Chunks.empty() ||
+                    !species.Chunks[chunk].bResident)
+                {
+                    continue;
+                }
+                const uint64_t first = SpeciesInstanceOffset(*scatter->Data, chunk, speciesIndex);
+                const uint64_t end = first + scatter->Data->GetInstances(chunk, speciesIndex).size() / sizeof(Asset::InstanceRecord16);
+                const auto oldBegin = std::lower_bound(oldHidden.begin(), oldHidden.end(), first);
+                const auto oldEnd = std::lower_bound(oldBegin, oldHidden.end(), end);
+                const auto newBegin = std::lower_bound(newHidden.begin(), newHidden.end(), first);
+                const auto newEnd = std::lower_bound(newBegin, newHidden.end(), end);
+                if (std::equal(oldBegin, oldEnd, newBegin, newEnd))
+                {
+                    continue;
+                }
+                foliage.emplace_back();
+                auto& prepared = foliage.back();
+                prepared.Chunk = chunk;
+                prepared.Species = speciesIndex;
+                prepared.Unit.bWarnedUnsortedRank = species.Chunks[chunk].bWarnedUnsortedRank;
+                if (!BuildFoliageUnit(*scatter, chunk, speciesIndex, newHidden, prepared.Unit))
+                {
+                    return false;
+                }
+            }
+        }
+        auto previous = std::move(scatter->HiddenInstances);
+        scatter->HiddenInstances = std::move(replacement);
+        for (uint32_t chunk = 0; chunk < previous.size(); ++chunk)
+        {
+            const auto& hidden = scatter->HiddenInstances[chunk];
+            for (uint32_t index : previous[chunk])
+            {
+                if (!std::binary_search(hidden.begin(), hidden.end(), index))
+                {
+                    uint32_t speciesIndex = 0;
+                    uint32_t localIndex = 0;
+                    if (ResolveInstanceIndex(*scatter, chunk, index, speciesIndex, localIndex))
+                    {
+                        const auto& species = scatter->Species[speciesIndex];
+                        if (auto* component = ResolveMega(*scatter, species))
+                        {
+                            component->SetInstanceHidden(species.Chunks[chunk].FirstRange * kRangeRows + localIndex, false);
+                        }
+                    }
+                }
+            }
+            for (uint32_t species = 0; species < scatter->Species.size(); ++species)
+            {
+                ApplyMegaHiddenInstances(*scatter, chunk, species);
+            }
+        }
+        for (auto& prepared : foliage)
+        {
+            auto& unit = scatter->Species[prepared.Species].Chunks[prepared.Chunk];
+            unit.FoliageInstances = std::move(prepared.Unit.FoliageInstances);
+            unit.FoliageBounds = prepared.Unit.FoliageBounds;
+            unit.bWarnedUnsortedRank = prepared.Unit.bWarnedUnsortedRank;
+        }
+        if (!foliage.empty())
+        {
+            RebuildFoliageScene();
+        }
+        return true;
     }
 
     void ScatterSystem::Clear()
