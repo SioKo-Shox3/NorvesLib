@@ -7115,7 +7115,7 @@
 - notes: 要件 `#### GR57` の設計案（d）Compact とフェーズ P5。間接の描画は GR28 の非インデックスの `DrawIndirect` を使い、静的な 6 要素のインデックスの経路（設計案の DrawIndexedIndirect）は作らない（GR28 が非インデックスの口を足すので、インデックスのバッファが要らない）。atomic の順で描画の順が毎フレーム変わりうるので、premultiplied の重なりが多いエミッタはスロットの順の描画を選べる、と注釈に書く。`firstInstance` を GPU が詰める使い方はしない（GR28 の notes の `bDrawIndirectFirstInstance` の前提を避ける。スロットは詰めた列から引く）。性能の記録（5 万粒で生成・更新・詰め・描画の合計 1.5 ms 以下が目標、合否にしない）は G7-GR57-CHECK。試験を足す理由: 詰めた数と描いた数のずれは粒が少し欠けるだけで、撮影では気づけず黙って起きる。危険地帯（RHI の間接の描画・RenderThread）なので評価者を通す。
 
 ## G7-GR58-RAIN-MODEL: 雨量から雨の本数・不透明度・太さ・傾き・遠景の層・霧の増分への写像を純関数にし、調整の値をデータに置いて、雨量に応じて霧を濃くする
-- status: todo
+- status: done
 - after: G7-GR49-ENV-SYSTEM, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46

@@ -10,6 +10,7 @@
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
 #include "Wind.h"
+#include "RainModel.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -208,6 +209,13 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
         void SetWindParameters(const WindParameters& parameters);
+
+        /**
+         * @brief 雨の調整の値を設定する（GameThread）。シーンに入ったときに一度渡す。
+         * 値が同じなら共有の値を使い回し、次の FramePacket からポインタで写る。
+         * シーンの revision には入らない。
+         */
+        void SetRainTuning(const RainTuning& tuning);
 
         /** @brief 天気と時刻の環境の値を次の FramePacket へ値で公開する（GameThread）。 */
         void SetEnvironmentParameters(const EnvironmentParameters& parameters);
