@@ -18,6 +18,8 @@ NVSCT v0 は、地形上に個別に配置する物の種・チャンク・イ�
 | `EndianMarker` | `0x01020304` |
 | `SpeciesRecordSize` / `ChunkRecordSize` | 96 / 48 バイト |
 | `RangeRecordSize` / `InstanceRecordSize` | 16 / 16 バイト |
+| `CollisionRecordSize` / `VariationSeedRecordSize` | 48 / 4 バイト |
+| `MaxCollisionShapesPerSpecies` | 16 |
 | `MaxSpeciesCount` / `MaxLodCount` | 64 / 4 |
 | `InstanceAlignment` | 16 バイト |
 
@@ -25,11 +27,12 @@ NVSCT v0 は、地形上に個別に配置する物の種・チャンク・イ�
 C++ 構造体のメモリ配置をファイルへの変換に使わない。特記しない位置はファイル先頭からのバイト位置。
 
 ```text
-ヘッダ -> 種表 -> チャンク表 -> 範囲表 -> 文字列表 -> 0 埋め -> インスタンス配列
+ヘッダ -> 種表 -> チャンク表 -> 範囲表 -> 衝突の形の表 -> 文字列表 -> 0 埋め -> インスタンス配列 -> 個体差の種の配列
 ```
 
 表はこの順に隙間なく並び、文字列表の終端を 16 バイト境界に切り上げてインスタンス配列を置く。
-0 埋めの各バイトは予約欄で、配列の終端はファイルの終端と一致する。
+0 埋めの各バイトは予約欄。個体差の種の配列はインスタンス配列の直後から始まり、その終端がファイルの終端となる。
+衝突の形の表と個体差の種の配列は省略でき、省略時の長さは 0。
 `PayloadHash` は名前にかかわらず、ファイル全体のうちオフセット 32..39 の 8 バイトを**除いた**バイト列の FNV-1a64
 （offset basis `14695981039346656037`、prime `1099511628211`）。ハッシュ欄をゼロにして含める方式ではない。
 
@@ -57,9 +60,10 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 96 / 104 | `uint64` × 2 | `SpeciesTableOffset` / `SpeciesTableSize` | 192 / `SpeciesCount * 96` |
 | 112 / 120 | `uint64` × 2 | `ChunkTableOffset` / `ChunkTableSize` | 種表の直後 / `ChunkCount * 48` |
 | 128 / 136 | `uint64` × 2 | `RangeTableOffset` / `RangeTableSize` | チャンク表の直後 / `ChunkCount * SpeciesCount * 16` |
-| 144 / 152 | `uint64` × 2 | `StringTableOffset` / `StringTableSize` | 範囲表の直後 / 文字列のバイト数。最大 `UINT32_MAX` |
+| 144 / 152 | `uint64` × 2 | `StringTableOffset` / `StringTableSize` | 範囲表の終端 + `CollisionTableSize` / 文字列のバイト数。最大 `UINT32_MAX` |
 | 160 / 168 | `uint64` × 2 | `InstanceOffset` / `InstanceSize` | 文字列表の終端を 16 の倍数に切り上げた位置 / 配列のバイト数。大きさは 16 の倍数 |
-| 176 / 184 | `uint64` × 2 | `Reserved2` / `Reserved3` | 0 |
+| 176 | `uint64` | `CollisionTableSize` | 範囲表の直後にある衝突の形の表のバイト数。48 の倍数、0 可 |
+| 184 | `uint64` | `VariationSeedSize` | インスタンス配列の直後にある個体差の種の配列のバイト数。0 または `(InstanceSize / 16) * 4` |
 
 原点と格子の外端 `OriginX + GridCountX * ChunkSizeMeters`、`OriginZ + GridCountZ * ChunkSizeMeters` は有限。
 
@@ -85,12 +89,17 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 68 | `float32` | `BrightnessVariation` | 明度の揺らぎ。有限で非負 |
 | 72 | `float32` | `WindStiffness` | 風の硬さ。有限で非負 |
 | 76 | `uint32` | `WindPhaseSeed` | 風の位相の種 |
-| 80 | `uint32` | `Flags` | bit 0 は衝突の印として予約。bit 1..31 は 0 |
-| 84 | `uint32` | `Reserved0` | 0 |
-| 88 | `uint64` | `Reserved1` | 0 |
+| 80 | `uint32` | `Flags` | bit 0 = 衝突の印、bit 1 = TLAS の選択に入れない、bit 2 = 影を落とさない。bit 3..31 は 0 |
+| 84 | `uint32` | `CollisionFirst` | 衝突の形の表での先頭レコード番号 |
+| 88 | `uint32` | `CollisionCount` | 形の数。0..16 |
+| 92 | `uint32` | `Reserved1` | 0 |
 
 `LodCount` 以上の未使用のパス参照は位置・長さとも 0。書き手は文字列を各種の名前、LOD0 から
 有効な LOD の順に隙間なく追加し、重複文字列も個別に書く。読み手は文字列参照の範囲を検査し、順序や共有は制限しない。
+
+`CollisionFirst + CollisionCount` は形の総数以下とし、`CollisionCount == 0` なら `CollisionFirst == 0`。
+衝突の印と形の数は独立で、規則による cook は形がなくても bit 0 を立てられる。
+bit 1・bit 2 の既定は 0 で、TLAS の選択に入り、影を落とす。
 
 ## チャンク表（1 件 48 バイト）
 
@@ -120,6 +129,23 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 `Offset <= InstanceSize / 16`、`Count <= InstanceSize / 16 - Offset`。読み手は範囲同士の重なりや
 配列に参照されないレコードの存在を制限しない。書き手は与えられた範囲・配列の順序を保持する。
 
+## 衝突の形の表（1 件 48 バイト）
+
+各レコードは種のローカル座標で表し、個体のヨーと拡大に従って回転・拡大する。
+`A`・`B`・`Radius` の値はすべて有限。種ごとの参照は重なってもよく、参照されない形も置ける。
+
+| オフセット | 型 | 項目 | 意味・規則 |
+| ---: | --- | --- | --- |
+| 0 | `uint32` | `Type` | 0 = `Capsule`、1 = `Sphere`、2 = `Box` |
+| 4 | `uint32` | `Reserved0` | 0 |
+| 8 | `float32[3]` | `A` | カプセルの線分の一端、球または箱の中心 |
+| 20 | `float32[3]` | `B` | カプセルの線分の他端、球では全成分 0、箱では各軸の半分の寸法 |
+| 32 | `float32` | `Radius` | カプセル・球では正の半径、箱では 0 |
+| 36 | `uint32` | `Reserved1` | 0 |
+| 40 | `uint64` | `Reserved2` | 0 |
+
+箱の `B` は全成分が正。箱の軸は種のローカル軸に沿う。
+
 ## インスタンス配列（1 件 16 バイト）
 
 | オフセット | 型 | 項目 | 意味 |
@@ -129,7 +155,7 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 | 8 | `uint8` | `Scale` | 種の拡大率の対数量子化値 |
 | 9 | `uint8` | `Rank` | 間引きの順序に使う値 |
 | 10 / 11 | `uint8` × 2 | `NormalOct` | 地面法線の八面体符号化 |
-| 12 / 13 / 14 | `uint8` × 3 | `Tint` | RGB の 0..1 を 0..255 に量子化 |
+| 12 / 13 / 14 | `uint8` × 3 | `Tint` | RGB の色の倍率の半分を 0..255 に量子化 |
 | 15 | `uint8` | `Dry` | 枯れ度の 0..1 を 0..255 に量子化 |
 
 量子化は範囲を 0..1 に写し、最も近い整数へ四捨五入する。チャンクの最小の角は
@@ -146,13 +172,22 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 `(x,y) = ((1-abs(y))*signNotZero(x), (1-abs(x))*signNotZero(y))` に折り返す。
 各成分を `round((v * 0.5 + 0.5) * 255)` に写す。復号時は `x = qx*2/255-1`、`y = qy*2/255-1`、
 `z = 1-abs(x)-abs(y)` を求め、`z < 0` なら同じ折り返しを X/Y に適用してから正規化する。
-`signNotZero(0) = +1`。色・枯れ度の復号は `q / 255`。
+`signNotZero(0) = +1`。`Tint` の各値 `q` は色の倍率の半分を表し、倍率は `2q / 255`。
+規則による cook の `128` はほぼ 1 倍に相当する。描画先へ渡すときは倍率を 1 で切るため、1 より明るくはできない。
+現行の `ScatterSystem` は復号した `Tint` をまだ描画入力へ渡していない。
+`EncodeScatterInstance` と `DecodeScatterInstance` の `ScatterInstanceValue::Tint` は倍率の半分を表し、
+復号値は `q / 255`。枯れ度の復号も `q / 255`。
 
 `EncodeScatterInstance` は範囲外や非有限の位置・拡大率・色・枯れ度、ゼロまたは非有限の法線を拒否する。
 各軸について符号化後に復号した位置と入力との差が `ChunkSizeMeters / 65535` を超える場合も失敗する。
 特に Y 範囲がチャンク寸法に比べて非常に広い場合は、16 ビットで必要な精度を表せない位置がある。
 極端に大きい原点でも浮動小数点の精度により同様に失敗する場合がある。ヨーは任意の有限値を受けて巡回させる。
 エンコードとデコードにはヘッダのチャンク寸法・原点、対象チャンク・種を渡し、座標は `double` で返す。
+
+## 個体差の種の配列（1 件 4 バイト）
+
+配列があるときはインスタンスと同数の `uint32` リトルエンディアン値を、インスタンス配列と同じ番号順に格納する。
+値 0 は既定の種を使う意味。配列がないとき `VariationSeedSize` は 0。
 
 ## 読み込みの拒否と検査の順
 
@@ -163,16 +198,23 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 3. 実際のファイル長と宣言が違えば `FileSizeMismatch`、ハッシュ不一致は `HashMismatch`。
 4. ヘッダ予約欄が 0 以外なら `ReservedNonZero`。チャンク寸法・格子・原点が不正なら `InvalidDimensions`。
 5. 種数が範囲外なら `SpeciesOutOfRange`、チャンク数が格子を超えれば `ChunkOutOfRange`。
-6. 表・文字列表・配列の位置、長さ、順序、整列、ファイル終端が不正なら `TableOutOfRange`。隙間が 0 以外なら `ReservedNonZero`。
-7. 種の描画経路・LOD 数・数値が不正なら `SpeciesOutOfRange`、文字列参照が空または範囲外なら `StringOutOfRange`。
-   未使用 LOD 参照・予約欄・未定義フラグが 0 以外なら `ReservedNonZero`。
+6. 衝突の形の表の長さ、表・文字列表・配列の位置、長さ、順序、整列、ファイル終端が不正なら `TableOutOfRange`。個体差の種の配列の長さもここで検査する。隙間が 0 以外なら `ReservedNonZero`。
+7. 各種について、描画経路・LOD 数、名前と LOD の文字列参照、未定義フラグと予約欄、数値、衝突の形の参照の順に検査する。
+   描画経路・LOD 数・数値が不正なら `SpeciesOutOfRange`、文字列参照が空または範囲外なら `StringOutOfRange`。
+   未使用 LOD 参照・予約欄・未定義フラグが 0 以外なら `ReservedNonZero`、衝突の形の参照が不正なら `CollisionOutOfRange`。
 8. チャンク座標が範囲外または重複なら `ChunkOutOfRange`、Y 範囲または AABB が不正なら `InvalidChunkBounds`、予約欄が 0 以外なら `ReservedNonZero`。
 9. 範囲表の offset・count がインスタンス配列の外なら `InstanceRangeOutOfRange`。
+10. 各衝突の形について、予約欄が 0 以外なら `ReservedNonZero`、種類または数値が不正なら `CollisionOutOfRange`。
 
 成功時は `CookedScatterData::Source` が元のバイト列の寿命を保持する。
 `GetInstances(chunkIndex, speciesIndex)` はその範囲の非所有バイトビューを返し、無効な添字・範囲では空を返す。
-`ReadScatterInstance` で 16 バイトを構造体へ読み取る。blob の開始位置自体の整列を前提にしない。
-書き手は同じ制約を検査し、失敗時は出力を空にする。
+`GetVariationSeeds(chunkIndex, speciesIndex)` は同じ範囲の個体差の種の非所有バイトビューを返し、
+配列がない場合や無効な添字・範囲では空を返す。`GetCollisionShapes(speciesIndex)` は種が参照する形の非所有ビューを返し、
+範囲外では空を返す。形のビューの寿命は `CookedScatterData` の配列に従う。
+`ReadScatterInstance` と `ReadScatterVariationSeed` はそれぞれ 16 バイトと 4 バイトを読み取る。
+blob の開始位置自体の整列を前提にしない。
+書き手は同じ制約を検査し、衝突の形やその参照の不正は `InvalidCollision`、個体差の種の本数の不正は
+`InvalidVariationSeeds` とする。失敗時は出力を空にする。
 
 ## 配置の規則
 

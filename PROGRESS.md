@@ -11772,3 +11772,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 MegaGeometry のラスタで発光テクスチャと NormalScale を使う: 着地(直し 0 回)
 - U5 可視バッファの材質の表と解決で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
 - U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
+- U1 NVSCT v0 に種の印・衝突の形の表・個体差の種の配列を足す: 着地(直し 0 回)

@@ -39,6 +39,32 @@ namespace NorvesLib::Core::Asset
             return offset <= total && size <= total - offset;
         }
 
+        bool ValidCollisionShape(const CookedScatterCollisionShape& shape) noexcept
+        {
+            if (!std::isfinite(shape.Radius))
+            {
+                return false;
+            }
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                if (!std::isfinite(shape.A[axis]) || !std::isfinite(shape.B[axis]))
+                {
+                    return false;
+                }
+            }
+            switch (shape.Type)
+            {
+            case ScatterCollisionShapeType::Capsule:
+                return shape.Radius > 0.0f;
+            case ScatterCollisionShapeType::Sphere:
+                return shape.Radius > 0.0f && shape.B[0] == 0.0f && shape.B[1] == 0.0f && shape.B[2] == 0.0f;
+            case ScatterCollisionShapeType::Box:
+                return shape.Radius == 0.0f && shape.B[0] > 0.0f && shape.B[1] > 0.0f && shape.B[2] > 0.0f;
+            default:
+                return false;
+            }
+        }
+
         CookedScatterParseResult Fail(CookedScatterParseStatus status)
         {
             CookedScatterParseResult result;
@@ -114,6 +140,55 @@ namespace NorvesLib::Core::Asset
         }
         return {bytes.data() + static_cast<size_t>(InstanceOffset + range.Offset * InstanceRecordSize),
                 static_cast<size_t>(range.Count * InstanceRecordSize)};
+    }
+
+    Container::Span<const CookedScatterCollisionShape> CookedScatterData::GetCollisionShapes(uint32_t speciesIndex) const noexcept
+    {
+        if (speciesIndex >= Species.size())
+        {
+            return {};
+        }
+        const auto& species = Species[speciesIndex];
+        if (species.CollisionCount == 0 || !Within(species.CollisionFirst, species.CollisionCount, CollisionShapes.size()))
+        {
+            return {};
+        }
+        return {CollisionShapes.data() + species.CollisionFirst, species.CollisionCount};
+    }
+
+    Container::Span<const uint8_t> CookedScatterData::GetVariationSeeds(uint32_t chunkIndex, uint32_t speciesIndex) const noexcept
+    {
+        if (!Source.IsValid() || VariationSeedSize == 0 || chunkIndex >= Chunks.size() || speciesIndex >= Species.size())
+        {
+            return {};
+        }
+        const size_t index = static_cast<size_t>(chunkIndex) * Species.size() + speciesIndex;
+        if (index >= SpeciesRanges.size())
+        {
+            return {};
+        }
+        const auto& range = SpeciesRanges[index];
+        const auto bytes = Source.GetSpan();
+        if (!Within(InstanceOffset, InstanceSize, bytes.size()) || InstanceSize % InstanceRecordSize != 0 ||
+            VariationSeedOffset != InstanceOffset + InstanceSize ||
+            VariationSeedSize != (InstanceSize / InstanceRecordSize) * VariationSeedRecordSize ||
+            !Within(VariationSeedOffset, VariationSeedSize, bytes.size()) ||
+            !Within(range.Offset, range.Count, InstanceSize / InstanceRecordSize))
+        {
+            return {};
+        }
+        return {bytes.data() + static_cast<size_t>(VariationSeedOffset + range.Offset * VariationSeedRecordSize),
+                static_cast<size_t>(range.Count * VariationSeedRecordSize)};
+    }
+
+    bool ReadScatterVariationSeed(Container::Span<const uint8_t> bytes, uint32_t& out) noexcept
+    {
+        if (bytes.size() < VariationSeedRecordSize || bytes.data() == nullptr)
+        {
+            return false;
+        }
+        out = Read32(bytes.data(), 0);
+        return true;
     }
 
     bool ReadScatterInstance(Container::Span<const uint8_t> bytes, InstanceRecord16& out) noexcept
@@ -310,8 +385,7 @@ namespace NorvesLib::Core::Asset
         {
             return Fail(Status::HashMismatch);
         }
-        if (Read32(data, HeaderOffset::Reserved0) != 0 || Read32(data, HeaderOffset::Reserved1) != 0 ||
-            Read64(data, HeaderOffset::Reserved2) != 0 || Read64(data, HeaderOffset::Reserved3) != 0)
+        if (Read32(data, HeaderOffset::Reserved0) != 0 || Read32(data, HeaderOffset::Reserved1) != 0)
         {
             return Fail(Status::ReservedNonZero);
         }
@@ -347,17 +421,23 @@ namespace NorvesLib::Core::Asset
         const uint64_t stringSize = Read64(data, HeaderOffset::StringTableSize);
         const uint64_t instanceOffset = Read64(data, HeaderOffset::InstanceOffset);
         const uint64_t instanceSize = Read64(data, HeaderOffset::InstanceSize);
+        const uint64_t collisionTableSize = Read64(data, HeaderOffset::CollisionTableSize);
+        const uint64_t variationSeedSize = Read64(data, HeaderOffset::VariationSeedSize);
         const uint64_t rangeCount = static_cast<uint64_t>(chunkCount) * speciesCount;
+        const uint64_t collisionOffset = rangeOffset + rangeSize;
+        const uint64_t variationSeedOffset = instanceOffset + instanceSize;
         if (speciesOffset != HeaderSize || speciesSize != static_cast<uint64_t>(speciesCount) * SpeciesRecordSize ||
             !Within(speciesOffset, speciesSize, fileSize) || chunkOffset != speciesOffset + speciesSize ||
             chunkTableSize != static_cast<uint64_t>(chunkCount) * ChunkRecordSize || !Within(chunkOffset, chunkTableSize, fileSize) ||
             rangeOffset != chunkOffset + chunkTableSize || rangeSize != rangeCount * RangeRecordSize ||
-            !Within(rangeOffset, rangeSize, fileSize) || stringOffset != rangeOffset + rangeSize ||
+            !Within(rangeOffset, rangeSize, fileSize) || collisionTableSize % CollisionRecordSize != 0 ||
+            !Within(collisionOffset, collisionTableSize, fileSize) || stringOffset != collisionOffset + collisionTableSize ||
             !Within(stringOffset, stringSize, fileSize) || stringSize > UINT32_MAX ||
             stringOffset + stringSize > UINT64_MAX - (InstanceAlignment - 1) ||
             instanceOffset != ((stringOffset + stringSize + InstanceAlignment - 1) & ~uint64_t(InstanceAlignment - 1)) ||
             !Within(instanceOffset, instanceSize, fileSize) || instanceSize % InstanceRecordSize != 0 ||
-            instanceOffset + instanceSize != fileSize)
+            (variationSeedSize != 0 && variationSeedSize != (instanceSize / InstanceRecordSize) * VariationSeedRecordSize) ||
+            !Within(variationSeedOffset, variationSeedSize, fileSize) || variationSeedOffset + variationSeedSize != fileSize)
         {
             return Fail(Status::TableOutOfRange);
         }
@@ -418,8 +498,13 @@ namespace NorvesLib::Core::Asset
             species.WindStiffness = ReadFloat(data, record + SpeciesRecordOffset::WindStiffness);
             species.WindPhaseSeed = Read32(data, record + SpeciesRecordOffset::WindPhaseSeed);
             species.Flags = Read32(data, record + SpeciesRecordOffset::Flags);
-            if ((species.Flags & ~1u) != 0 || Read32(data, record + SpeciesRecordOffset::Reserved0) != 0 ||
-                Read64(data, record + SpeciesRecordOffset::Reserved1) != 0) return Fail(Status::ReservedNonZero);
+            species.CollisionFirst = Read32(data, record + SpeciesRecordOffset::CollisionFirst);
+            species.CollisionCount = Read32(data, record + SpeciesRecordOffset::CollisionCount);
+            if ((species.Flags & ~ScatterSpeciesKnownFlags) != 0 ||
+                Read32(data, record + SpeciesRecordOffset::Reserved1) != 0)
+            {
+                return Fail(Status::ReservedNonZero);
+            }
             if (!std::isfinite(species.MeshRadiusMeters) || species.MeshRadiusMeters < 0.0f ||
                 !std::isfinite(species.MinSpacingMeters) || species.MinSpacingMeters <= 0.0f ||
                 !std::isfinite(species.ScaleMin) || !std::isfinite(species.ScaleMax) || species.ScaleMin <= 0.0f ||
@@ -429,6 +514,12 @@ namespace NorvesLib::Core::Asset
                 !std::isfinite(species.WindStiffness) || species.WindStiffness < 0.0f)
             {
                 return Fail(Status::SpeciesOutOfRange);
+            }
+            if (species.CollisionCount > MaxCollisionShapesPerSpecies ||
+                (species.CollisionCount == 0 && species.CollisionFirst != 0) ||
+                !Within(species.CollisionFirst, species.CollisionCount, collisionTableSize / CollisionRecordSize))
+            {
+                return Fail(Status::CollisionOutOfRange);
             }
         }
         scatter.Chunks.resize(chunkCount);
@@ -486,8 +577,33 @@ namespace NorvesLib::Core::Asset
                 return Fail(Status::InstanceRangeOutOfRange);
             }
         }
+        scatter.CollisionShapes.resize(static_cast<size_t>(collisionTableSize / CollisionRecordSize));
+        for (size_t i = 0; i < scatter.CollisionShapes.size(); ++i)
+        {
+            const size_t record = static_cast<size_t>(collisionOffset + i * CollisionRecordSize);
+            if (Read32(data, record + CollisionRecordOffset::Reserved0) != 0 ||
+                Read32(data, record + CollisionRecordOffset::Reserved1) != 0 ||
+                Read64(data, record + CollisionRecordOffset::Reserved2) != 0)
+            {
+                return Fail(Status::ReservedNonZero);
+            }
+            auto& shape = scatter.CollisionShapes[i];
+            shape.Type = static_cast<ScatterCollisionShapeType>(Read32(data, record + CollisionRecordOffset::Type));
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                shape.A[axis] = ReadFloat(data, record + CollisionRecordOffset::A + axis * 4);
+                shape.B[axis] = ReadFloat(data, record + CollisionRecordOffset::B + axis * 4);
+            }
+            shape.Radius = ReadFloat(data, record + CollisionRecordOffset::Radius);
+            if (!ValidCollisionShape(shape))
+            {
+                return Fail(Status::CollisionOutOfRange);
+            }
+        }
         scatter.InstanceOffset = instanceOffset;
         scatter.InstanceSize = instanceSize;
+        scatter.VariationSeedOffset = variationSeedOffset;
+        scatter.VariationSeedSize = variationSeedSize;
         scatter.Source = std::move(sourceBlob);
         result.Status = Status::Success;
         return result;
@@ -514,6 +630,7 @@ namespace NorvesLib::Core::Asset
         case CookedScatterParseStatus::ChunkOutOfRange: return "ChunkOutOfRange";
         case CookedScatterParseStatus::InvalidChunkBounds: return "InvalidChunkBounds";
         case CookedScatterParseStatus::InstanceRangeOutOfRange: return "InstanceRangeOutOfRange";
+        case CookedScatterParseStatus::CollisionOutOfRange: return "CollisionOutOfRange";
         }
         return "Unknown";
     }
