@@ -1,8 +1,10 @@
 ﻿#pragma once
 
+#include "Math/Curves.h"
 #include "Math/Matrix4x4.h"
 #include "Particle/VfxEffectTypes.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/Wind.h"
 
 #include <limits>
 
@@ -13,6 +15,33 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core::Particle
 {
+    /// 衝突の高さ場。Heights は行優先 [z * Width + x]、XZ の WorldMin から WorldSize の範囲を覆う。
+    struct VfxHeightFieldView
+    {
+        const float* Heights = nullptr;
+        uint32_t Width = 0u;
+        uint32_t Height = 0u;
+        Math::Vector2 WorldMin = Math::Vector2(0.0f, 0.0f);
+        Math::Vector2 WorldSize = Math::Vector2(0.0f, 0.0f);
+
+        bool IsBound() const;
+    };
+
+    /// 1 刻みに外から渡す値。
+    struct VfxTickContext
+    {
+        /// 無倍率の刻み幅。負または非有限なら deltaTime と同じ。
+        float UnscaledDeltaTime = -1.0f;
+        /// カメラを中心にした生成領域と折り返しに使う位置。
+        Math::Vector3 CameraPosition = Math::Vector3(0.0f, 0.0f, 0.0f);
+        /// 共通の風の設定。既定では無効。
+        Rendering::WindParameters Wind;
+        /// Rendering::WindClockSeconds で作った風の時刻。
+        float WindTimeSeconds = 0.0f;
+        /// 未結合なら CollisionHeightField は無効。
+        VfxHeightFieldView HeightField;
+    };
+
     struct VfxEffectHandle
     {
         uint32_t Index = std::numeric_limits<uint32_t>::max();
@@ -57,11 +86,23 @@ namespace NorvesLib::Core::Particle
         Math::Vector3 Velocity;
         Math::Vector4 Color;
         Math::Vector2 Size;
+        /// 寿命の曲線を適用する前の生成時の色。
+        Math::Vector4 BaseColor;
+        /// 寿命の曲線を適用する前の生成時の大きさ。
+        Math::Vector2 BaseSize;
         Math::Vector4 UVRect = Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
         float Age = 0.0f;
         float Lifetime = 1.0f;
         double BirthTime = 0.0;
         uint32_t Frame = 0u;
+        /// エミッタ内で生成要求ごとに割り当てる粒の通し番号。
+        uint32_t Serial = 0u;
+        /// 寿命の曲線で指定する伸び。
+        float Stretch = 1.0f;
+        /// 描画時の不透明度に掛ける有効の重み。
+        float Activation = 1.0f;
+        /// 衝突面に留まり、年齢だけを進める粒か。
+        bool bStuck = false;
     };
 
     class VfxEffectSystem
@@ -85,6 +126,7 @@ namespace NorvesLib::Core::Particle
         bool RaiseOrientedEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position,
             const Math::Vector3& normal, double timeSeconds);
         void Tick(float deltaTime);
+        void Tick(float deltaTime, const VfxTickContext& context);
         double GetInstanceTime(VfxEffectHandle handle) const;
         uint32_t GetEmitterCount(VfxEffectHandle handle) const;
         bool CopyParticles(VfxEffectHandle handle, uint32_t emitterIndex, VariableArray<VfxParticleState>& outParticles) const;
@@ -97,17 +139,64 @@ namespace NorvesLib::Core::Particle
     private:
         struct ModuleBinding
         {
-            uint32_t Arguments[6] = {};
+            uint32_t Arguments[16] = {};
+        };
+
+        struct WindInfluenceState
+        {
+            float Coupling = 0.0f;
+            float Scale = 0.0f;
+        };
+
+        struct TurbulenceState
+        {
+            float Strength = 0.0f;
+            float Frequency = 0.0f;
+        };
+
+        struct LifeCurveState
+        {
+            Math::CurveKeyframe Keys[kVfxMaxCurveKeys] = {};
+            Math::Vector4 Color;
+            uint32_t KeyCount = 0u;
+        };
+
+        struct CollisionState
+        {
+            VfxModuleType Type = VfxModuleType::CollisionPlane;
+            VfxCollisionResponse Response = VfxCollisionResponse::Kill;
+            float GroundY = 0.0f;
+            float KillBelowY = 0.0f;
+            float Restitution = 0.0f;
+            float ChildProbability = 0.0f;
+            uint32_t ChildEmitterIndex = std::numeric_limits<uint32_t>::max();
+        };
+
+        struct ChildSpawn
+        {
+            uint32_t EmitterIndex = 0u;
+            Math::Vector3 Position;
         };
 
         struct EmitterState
         {
             VariableArray<VfxParticleState> Particles;
             VariableArray<ModuleBinding> Bindings;
+            VariableArray<WindInfluenceState> WindInfluences;
+            VariableArray<TurbulenceState> Turbulences;
+            VariableArray<CollisionState> Collisions;
+            LifeCurveState Curves[static_cast<uint32_t>(VfxCurveTarget::Stretch) + 1u];
             float SpawnAccumulator = 0.0f;
             uint32_t RandomState = 0u;
+            uint32_t StreamSeed = 0u;
+            uint32_t NextSerial = 0u;
             uint32_t Seed = 0u;
             uint32_t MaxParticles = 0u;
+            VfxExecutor Executor = VfxExecutor::Cpu;
+            VfxRandomStream RandomStream = VfxRandomStream::Sequential;
+            VfxTimeChannel TimeChannel = VfxTimeChannel::Particle;
+            VfxWrapPolicy WrapPolicy = VfxWrapPolicy::Die;
+            VfxSpawnShape Shape = VfxSpawnShape::Point;
             uint32_t Space = 0u;
             uint32_t SortKey = 0u;
             uint32_t Layer = 0u;
@@ -117,6 +206,18 @@ namespace NorvesLib::Core::Particle
             bool bHasMeshRenderer = false;
             bool bAlignToVelocity = false;
             bool bHasVelocity = false;
+            bool bHasDrag = false;
+            bool bHasCurves = false;
+            bool bHasActivation = false;
+            float Drag = 0.0f;
+            float ActivationFraction = 1.0f;
+            float ActivationRamp = 0.0f;
+            float ShapeRadius = 0.0f;
+            float ConeAngle = 0.0f;
+            float ConeLength = 0.0f;
+            Math::Vector3 BoxHalfExtents;
+            float CameraBoxHalfWidth = 0.0f;
+            float CameraBoxHeight = 0.0f;
             Math::Vector3 Offset;
             Math::Vector3 VelocityMin;
             Math::Vector3 VelocityMax;
@@ -145,7 +246,7 @@ namespace NorvesLib::Core::Particle
             VfxInstanceDesc Desc;
             VariableArray<EmitterState> Emitters;
             VariableArray<PendingEvent> Events;
-            uint32_t PropertyIndices[3] = {};
+            uint32_t PropertyIndices[8] = {};
             double Time = 0.0;
             uint32_t Generation = 1u;
             bool bActive = false;
@@ -154,11 +255,15 @@ namespace NorvesLib::Core::Particle
 
         static uint32_t InitialRandomState(uint32_t seed, uint32_t emitterIndex);
         static float NextUnitFloat(uint32_t& state);
-        static void CacheBindings(InstanceSlot& slot);
+        static bool CacheBindings(InstanceSlot& slot);
         static void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
+        static void UpdateOverLife(const EmitterState& emitter, VfxParticleState& particle);
+        static bool ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
+            const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children);
         static void SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
-            const Math::Vector3& position, double birthTime, float age, const Math::Vector3* orientationNormal = nullptr);
+            const Math::Vector3& position, double birthTime, float age, const VfxTickContext& context,
+            const Math::Vector3* orientationNormal = nullptr, bool bUsePositionForCameraBox = false);
         void ReleaseSlot(uint32_t index);
 
         VariableArray<InstanceSlot> m_Instances;

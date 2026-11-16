@@ -246,6 +246,11 @@ namespace NorvesLib::Core::Rendering
         bool bCastShadow = true;
         RenderLayer LayerMask = RenderLayer::Default;
 
+        /// 散布の 1 本ごとの色味（RGBA8。白は色を変えない）。1 本ずつの MegaGeometryComponent は既定のまま
+        uint32_t Tint = 0xFFFFFFFFu;
+        /// 散布の 1 本ごとの個体差の種。1 本ずつの MegaGeometryComponent は既定のまま
+        uint32_t VariationSeed = 0;
+
         // 行の席（EcsGpuSceneSlot の値 = 席の番号 + 1。0 は席なし）。World が公開するときに書く。
         // 値の比較や hash には含めない（席は行の寿命で決まり、proxy の内容ではない）
         uint32_t SceneSlot = 0;
