@@ -11776,3 +11776,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 八面体の符号化を Y が極のオブジェクト空間にそろえ、上半球と全球を選べるようにする: 着地(直し 1 回)
 - U4 Tools/ImpostorBaker の骨組みと、glTF・cook 済みメッシュの読み込み: 着地(直し 1 回)
 - U3 ImpostorBakeService で各セルを GPU で描き、4 枚のアトラスを作る: 着地(直し 0 回)
+- U5 ImpostorBaker でベイクして読み戻し、PNG 4 枚・.impostor.json・NVTEX を書き出す: 着地(直し 0 回)
