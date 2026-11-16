@@ -483,6 +483,10 @@ namespace NorvesLib::Core::Rendering
          */
         void SetCloudLayer(const CloudLayerParameters& parameters);
         const CloudLayerParameters& GetCloudLayer() const { return m_CloudLayer; }
+        /// GameThread が最後に SetSkyAtmosphere・SetVolumetricFogParameters・SetWindParameters で渡した値（気象を場面の値から有効にするときに読む）。
+        const SkyAtmosphereParameters& GetSkyAtmosphere() const { return m_SkyAtmosphere; }
+        const VolumetricFogParameters& GetVolumetricFogParameters() const { return m_VolumetricFog; }
+        const WindParameters& GetWindParameters() const { return m_Wind; }
 
         /**
          * @brief 草・低木の株の束と風を設定する（GameThread）
