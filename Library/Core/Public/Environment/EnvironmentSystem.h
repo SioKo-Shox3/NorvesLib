@@ -4,6 +4,7 @@
 #include "Container/VariableArray.h"
 #include "Delegate/MulticastDelegate.h"
 #include "Environment/EnvironmentState.h"
+#include "Rendering/RainModel.h"
 
 #include <cstdint>
 
@@ -36,6 +37,8 @@ namespace NorvesLib::Core::Environment
      * Enable 後はポーズ中も毎フレーム、空・霧・雲の層・風・環境を書き出すため、シーンの直接設定は
      * 次のフレームで上書きされる。有効中の天気と太陽は SetTarget または SetImmediate で変える。
      * 解決には Enable で受けた場面の土台を使い、状態にある欄だけを重ねて大気定数などを保持する。
+     * Enable で RainTuning.json を読み、上書き後の雨量に応じた霧の密度の増分を Resolve で足す。
+     * 霧と雨の調整値はシーンの revision に入らない。
      * Disable 後の最初の PublishTo は環境の値（EnvironmentParameters）だけを既定値へ一度戻す。
      * 空・霧・雲の層・風は書き戻さず、同じフレームで次のシーンが書いた値を残す。
      *
@@ -67,7 +70,9 @@ namespace NorvesLib::Core::Environment
         /// 上書きの層を掛ける前の状態。
         const EnvironmentState& GetBaseState() const;
         const EnvironmentSceneBase& GetSceneBase() const;
-        /// 上書きの層を掛けた状態を場面の土台へ重ねて解決した描画用の値。
+        /// 現在の雨の調整値を返す。
+        const Rendering::RainTuning& GetRainTuning() const;
+        /// 上書きの層を掛けた状態を場面の土台へ重ね、霧の密度に雨の増分を足した描画用の値。
         EnvironmentResolved Resolve() const;
 
         bool PushOverride(EnvironmentOverrideScope scope, const EnvironmentTarget& target);
@@ -105,6 +110,8 @@ namespace NorvesLib::Core::Environment
 
         bool m_bEnabled = false;
         bool m_bRestorePending = false;
+        bool m_bRainTuningPublishPending = false;
+        Rendering::RainTuning m_RainTuning = Rendering::MakeDefaultRainTuning();
         EnvironmentSceneBase m_SceneBase;
         EnvironmentState m_BaseState;
         EnvironmentState m_EffectiveState;
