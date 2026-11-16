@@ -11779,3 +11779,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 ScatterSystem に空間の照会・1 本の非表示・非表示の集合の保存と復元を足す: 着地(直し 0 回)
 - U6 grassland の森の配置の見本を足して焼く: 着地(直し 0 回)
 - U7 grassland が森の配置を規則の散布と並べて置き、開発引数で外せるようにする: 着地(直し 1 回)
+
+## G12-GR47-PLACEMENT-COOK 手で置く森・岩の配置の一覧を NVSCT に焼き、散布に空間の照会・1 本の非表示・RT の指定を足す（2026-11-16、run 20261116-141756）
+- Done: NVSCT v0 に入力の口を足した（新しい形式は作らない）。種の Flags の bit1 = TLAS に入れない・bit2 = 影を落とさない、種ごとの衝突の形の表（幹のカプセルなど。種のローカル）、個体差の種の配列。新しい欄がすべて 0 のときは旧の予約欄と同じ並びで、規則で焼くファイルはバイト単位で今と同じ。`Docs/Architecture/NVSCTv0.md` を合わせた。
+- Done: AssetCook の散布の入口（`--kind world --format nvsct.v0.inst16`）が、規則の spec のほかに配置の一覧の JSON（種の表: メッシュの論理パス・描く経路・影・`ray_tracing`（既定 真）・衝突の形の一覧、個体の列: 種・位置・ヨー・拡大・色味・種）を読み、地形の格子のチャンクに位置で分けて同じ書き手で焼く（`Tools/AssetCook/ScatterPlacementList.{h,cpp}`）。量子化は NVSCT v0 の規則に従い、範囲外の拡大・NaN・未知の種・チャンクの寸法の不正を種別つきで拒否する。
+- Done: `ScatterSystem` が NVSCT の色味・個体差の種を `MegaScatterInstance` へ渡し、種の印で影と TLAS への参加を切り替える（TLAS は `SceneView` が ComponentId ごとの除外の印を持ち、公開の時に `MegaGeometryProxy::bRayTracing` を付けて SCN-MEGA-RT-SELECT の選択から外す。既存の散布は印が無いので今どおり入る）。`ForEachInstanceInRadius`（常駐のチャンクだけを AABB で先に捨てて走り、範囲が全部常駐かを返す）、`SetInstanceHidden`・`IsInstanceHidden`（`ScatterInstanceId` = 散布・チャンク・チャンク内の番号。チャンクの解放と読み直しをまたいで覚え、常駐のたびに当て直す）、`SerializeHiddenInstances`・`RestoreHiddenInstances`（セーブへ渡す口。結線は GR76 の側）を足した。
+- Done: `Assets/Scatter/grassland.forest.placement.json`（針葉樹 14000・枯れ木 4000（`ray_tracing` 偽）・岩 2000 の 2 万本、仮のメッシュ）を足し、資産の一覧 `GrasslandTerrain.json` で `Assets/Terrain/Grassland/GrasslandForest.nvsct` に焼く。grassland は地形の準備ができたら森を別の散布 `grassland_forest`（距離の常駐。木 384 m・岩 256 m）として規則の散布と並べて置き、シーンの終了・入場の失敗で外す。開発ビルドだけ `--grassland-forest=off` で森だけを外せる（既定 on。重複・不正な値は起動を止める）。
+- 証拠: `.harness/runs/20261116-141756/verify-G12-GR47-PLACEMENT-COOK-U7.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0、Game.exe までリンク。CookAssets で森を焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・`COOK_ASSETS cooked=1 skipped=0`・EXIT=0）。
+- 回さなかったもの: done-when の `ScatterSystemQueryTest` の新設と `CookedScatterTest` のケースの追加は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。撮影・アプリの起動はしない決まり。
+- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布（岩・倒木・低木・草花）と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えて規則の散布は残ること、遠くへ動くと森が 384 m（岩は 256 m）で出入りすること。ほかのシーン（Rendering3DTest・荒野のバナナ・岩の散布）は見た目が変わらないこと。
+- Notes: `--grassland-forest=` の解析とモードへの受け渡しは置き場が `Game/GameApplicationHandler.{h,cpp}`（paths の外）にしか無いため、引数 1 つの解析とメンバ 2 つ・キャプチャ 1 つだけを足した。
+- Notes: verify の `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` は回していない。全体のクックの manifest がこの枠に無く「対象外の項目が既存の manifest に無い」で落ちることを反復 2 に再現済みで、Debug の全体のクックは何時間もかかる。代わりに `worlds` を Grassland の 3 項目に絞った一時の資産の一覧（`-SpecDir`）で焼いた出力を証拠にした。
+- Notes: 要起票: 枠に全体のクックの manifest が無いと `CookAssets.ps1 -OnlyLogicalPath` の verify が「対象外の項目が既存の manifest に無い（先に全体をクック）」で EXIT=1 になる（反復 2、NorvesLib-2-u2 で地形を 14 分焼いたあと GrasslandGrassField.nvgfld で落ちた）。
