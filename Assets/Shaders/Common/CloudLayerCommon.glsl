@@ -264,7 +264,7 @@ CloudRayResult MakeEmptyCloudRayResult()
 bool ComputeCloudRayDirection(vec2 uv, out vec3 rayDirection)
 {
     rayDirection = vec3(0.0, 1.0, 0.0);
-    vec4 clipPosition = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 clipPosition = vec4(uv * 2.0 - 1.0, kDepthClear, 1.0);
     vec4 farPosition = params.inverseViewProjection * clipPosition;
     if (!IsFiniteFloat(farPosition.w) || abs(farPosition.w) <= 1.0e-8)
     {

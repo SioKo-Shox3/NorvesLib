@@ -994,7 +994,7 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = false;
-        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
 
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = true;
@@ -1082,7 +1082,7 @@ namespace NorvesLib::Core::Rendering
 
         boardPipelineDesc.depthStencilState.depthTestEnable = true;
         boardPipelineDesc.depthStencilState.depthWriteEnable = false;
-        boardPipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
+        boardPipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
 
         RHI::BlendAttachmentDesc boardBlendAttachment;
         boardBlendAttachment.blendEnable = true;

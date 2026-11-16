@@ -7650,7 +7650,7 @@ namespace NorvesLib::Core::Rendering
         // デプステスト有効
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOp();
 
         // MRT用ブレンドステート（Albedo・Normal・Material・Emissive・Velocity の5カラーアタッチメント分）
         for (int i = 0; i < 5; ++i)

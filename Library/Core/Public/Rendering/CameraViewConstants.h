@@ -40,6 +40,7 @@ namespace NorvesLib::Core::Rendering
         bool bHasCamera = false;
 
         static CameraViewConstants Build(const CameraProxy &camera, float aspectRatio);
+        // デバイスのクリップ空間へ調整した後、起動時の深度規約に合わせて射影と逆行列を作る（既定は逆 Z）。
         static CameraViewConstants BuildForDevice(const CameraProxy &camera,
                                                   float aspectRatio,
                                                   const RHI::IDevice *device,
@@ -59,7 +60,7 @@ namespace NorvesLib::Core::Rendering
         void CopyShaderInverseViewProjection(float *out) const;
         void CopyShaderCameraRelativeInverseViewProjection(float *out) const;
         // 深度から前方への距離を求める定数: out[0] = 近方面（m）、out[1] = 近方面 ÷ 遠方面。前方への距離は
-        // out[0] / ((1 - 深度) + 深度 * out[1])。正射影では 0, 0
+        // 逆 Z は out[0] / (深度 + (1 - 深度) * out[1])、標準 Z は out[0] / ((1 - 深度) + 深度 * out[1])。正射影では 0, 0
         void CopyDepthLinearization(float *out) const;
         void CopyCameraPosition(float *out, uint32_t count = 4) const;
     };

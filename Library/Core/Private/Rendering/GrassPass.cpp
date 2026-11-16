@@ -385,7 +385,7 @@ namespace NorvesLib::Core::Rendering
         neutral->Update(&zero, sizeof(zero), sizeof(zero));
         indexBuffer->Update(indices.empty() ? &emptyIndex : indices.data(), indexBytes);
         desc.descriptorSetLayouts.push_back(layoutDesc);
-        desc.depthCompareOp = DepthConvention::DepthCompareOp;
+        desc.depthCompareOp = DepthConvention::DepthCompareOp();
         desc.cullMode = RHI::CullMode::None;
         desc.debugName = "GrassPass";
         desc.failureLogPrefix = "GRASS_DRAW";
@@ -562,7 +562,7 @@ namespace NorvesLib::Core::Rendering
                 if (m_DummyHiZ && m_Sampler)
                 {
                     // 初期化時の一度の転送で ShaderResource にし、中止されたフレームにも依存させない。
-                    const float depth = DepthConvention::ClearDepth;
+                    const float depth = DepthConvention::ClearDepth();
                     m_DummyHiZ->Update(&depth, sizeof(depth), sizeof(depth));
                     bReady = true;
                 }

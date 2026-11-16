@@ -10,6 +10,7 @@
 #include "Scripting/ScriptRuntime.h"
 #include "Save/GameStateStore.h"
 #include "Save/SaveService.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/Screen.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RenderThread.h"
@@ -188,10 +189,16 @@ namespace NorvesLib::Core
         Save::SaveService& GetSaveService();
         const Save::SaveService& GetSaveService() const;
 
+        /** @brief 起動時に決まったカメラの深度の規約を取得する */
+        Rendering::DepthConventionMode GetDepthConventionMode() const;
+        /** @brief 描画の初期化より前に 1 回だけ呼び、その後は規約を変更しない */
+        void SetDepthConventionMode(Rendering::DepthConventionMode mode);
+
         ScriptRuntime& GetScriptRuntime();
         const ScriptRuntime& GetScriptRuntime() const;
 
     private:
+        Rendering::DepthConventionMode m_DepthConventionMode = Rendering::DepthConventionMode::Reversed;
         Thread::Atomic<bool> m_isRunning;             ///< エンジンが実行中かどうか
         NorvesLib::Core::Container::String m_version; ///< エンジンのバージョン
         uint64_t m_FrameCounter = 0;                  ///< AssetRegistry更新用フレーム番号
