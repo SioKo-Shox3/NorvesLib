@@ -2371,6 +2371,9 @@ namespace NorvesLib::Core::Engine
             Container::VariableArray<Rendering::BoardProxy> frameTransient;
             GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);
             GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);
+            Rendering::GpuParticleScene gpuParticles;
+            GEngine->GetParticleSystem().BuildGpuParticleFrame(gpuParticles);
+            GEngine->GetRenderWorld().SetGpuParticleFrame(gpuParticles);
             auto& coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
             auto sceneView = coordinator.GetMainSceneView();
             auto canvasView = coordinator.GetCanvasView();
@@ -3097,7 +3100,7 @@ namespace NorvesLib::Core::Engine
             [](void*, const Context& context) { GEngine->UpdateGameModeStateMachine(context.DeltaTime); });
 
         add(EFrameStage::PostTick, "PostTick.Particles",
-            [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+            [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime, GEngine->GetTimeSystem().GetFrameTimes().Unscaled); });
         // 気象は World のチャンネルの dt で進める（この段の dt は粒子の dt なので使わない）
         add(EFrameStage::PostTick, "PostTick.Environment",
             [](void*, const Context&) { GEngine->GetEnvironment().Tick(GEngine->GetTimeSystem().GetFrameTimes().World); });
