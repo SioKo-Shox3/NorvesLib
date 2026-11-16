@@ -58,6 +58,10 @@ namespace NorvesLib::Core::Ecs
         uint32_t MeshIndex;
         uint32_t Flags;
         float Scale;
+        /// 入力ごとの色味（RGBA8。白は色を変えない）
+        uint32_t Tint;
+        /// 既定の指定を解決した個体差の種
+        uint32_t VariationSeed;
     };
 
     /// 軽い行の持ち主の散布（BatchId）

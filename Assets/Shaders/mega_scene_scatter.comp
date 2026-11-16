@@ -8,8 +8,8 @@
 // 表はどれも device-local で、フレームをまたいで残る。ホストは変わった行だけを staging（記録の列）へ書き、
 // このシェーダーが散在書き込みする。値は uvec4 のまま写す（浮動小数の変換をしない）。
 //
-// 段 0（header.y == 0）: 席の表（席ごと 128 B: 変換・前の変換）へ、変わった席の行を写す。
-//   記録 1 件 = 9 語（uvec4）: [0].x = 席の番号, [1..4] = 変換, [5..8] = 前の変換
+// 段 0（header.y == 0）: 席の表（席ごと 144 B: 変換・前の変換・色味・種）へ、変わった席の行を写す。
+//   記録 1 件 = 10 語（uvec4）: [0].x = 席の番号, [1..4] = 変換, [5..8] = 前の変換, [9] = (0, 0, 色味, 種)
 // 段 1（header.y == 1）: 描く順の表（Common/MegaInstanceTable.glsl の MegaInstanceRow。144 B）を席の表から組み、
 //   影の表（48 B）とメッシュの表（80 B）の変わった行を写す。段 0 の書き込みの後（バリアを挟んで）に走る。
 //   描く順の記録 1 件 = 2 語: [0] = (描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ), [1] = 予約
@@ -37,7 +37,7 @@ layout(std430, set = 0, binding = 0) readonly buffer SceneScatterRecords
     uvec4 recordWords[];
 };
 
-// 席の表（席ごと 8 語）
+// 席の表（席ごと 9 語）
 layout(std430, set = 0, binding = 1) buffer SceneSlotRows
 {
     uvec4 slotWords[];
@@ -67,7 +67,8 @@ layout(std430, set = 0, binding = 5) buffer SceneRangeBounds
     vec4 rangeBounds[];
 };
 
-const uint SlotRowWords = 8u;
+const uint SlotRowWords = 9u;
+const uint SlotMatrixWords = 8u;
 const uint InstanceRowWords = 9u;
 const uint ShadowRowWords = 3u;
 const uint MeshRowWords = 5u;
@@ -179,7 +180,7 @@ void BuildRangeBounds()
     {
         flags = RANGE_FLAG_HAS_ROWS;
         const uint rowBase = row * InstanceRowWords;
-        const uint meshIndex = instanceWords[rowBase + SlotRowWords].x;
+        const uint meshIndex = instanceWords[rowBase + SlotMatrixWords].x;
         const vec4 sphere = uintBitsToFloat(meshWords[meshIndex * MeshRowWords + MeshBoundsWord]);
         // 変換の列 0〜3（列 3 が平行移動。Common/MegaGeometryCull.glsl の TransformClusterCenterToWorld・ComputeWorldRadiusScale と同じ）
         const vec3 axisX = uintBitsToFloat(instanceWords[rowBase + 0u]).xyz;
@@ -262,11 +263,12 @@ void main()
         const uvec4 entry = recordWords[base];
         const uint dense = entry.x;
         const uint slot = entry.y;
-        for (uint word = 0u; word < SlotRowWords; ++word)
+        for (uint word = 0u; word < SlotMatrixWords; ++word)
         {
             instanceWords[dense * InstanceRowWords + word] = slotWords[slot * SlotRowWords + word];
         }
-        instanceWords[dense * InstanceRowWords + SlotRowWords] = uvec4(entry.z, entry.w, 0u, 0u);
+        const uvec4 tail = slotWords[slot * SlotRowWords + SlotMatrixWords];
+        instanceWords[dense * InstanceRowWords + SlotMatrixWords] = uvec4(entry.z, entry.w, tail.z, tail.w);
         return;
     }
     index -= entryCount;

@@ -54,6 +54,14 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    // カリングで LOD の段とインポスターの切り替えを決めるためのカメラの値
+    struct SceneViewScreenSizeContext
+    {
+        bool bOrthographic = false;
+        float TanHalfFovY = 0.0f; // 透視のときの tan(縦の視野角/2)
+        float OrthoHeight = 0.0f; // 正射影のときの画面の縦の世界の長さ
+    };
+
     /**
      * @brief SceneView
      *
@@ -593,17 +601,29 @@ namespace NorvesLib::Core::Rendering
         bool DistanceCull(const MeshProxy &proxy, const Math::Vector3 &cameraPosition) const;
         bool DistanceCull(const BoardProxy &proxy, const Math::Vector3 &cameraPosition) const;
 
+        // 板の段を選び、可視の板と抑える元を集める。
         void CullBoardProxy(BoardProxy& proxy,
                             const CameraProxy& camera,
                             const Math::Matrix4x4& viewProjection,
                             const Math::Vector3& cameraPosition,
-                            Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds);
+                            const SceneViewScreenSizeContext& context,
+                            Container::UnorderedSet<uint64_t>& suppressedMeshComponentIds,
+                            bool& bRebuiltMegaIndex);
+        // 散布を除く MegaGeometry の元を探し、必要なときだけ索引を作り直す。
+        const MegaGeometryProxy* FindImpostorMegaProxy(const BoardProxy& board, bool& bRebuiltIndex);
+        // 元の表示を切り替え、復帰の遅れを板で補う。
+        void ApplyImpostorMegaSuppression();
 
         void CullMeshProxyRange(size_t begin, size_t end,
                                 const Math::Matrix4x4& viewProjection,
                                 const Math::Vector3& cameraPosition,
-                                Container::VariableArray<MeshProxy*>& outVisible);
-        void CullMeshProxies(const Math::Matrix4x4& viewProjection, const Math::Vector3& cameraPosition);
+                                const SceneViewScreenSizeContext& context,
+                                Container::VariableArray<MeshProxy*>& outVisible,
+                                Container::VariableArray<MeshProxy>& outLODCopies);
+        void CullMeshProxies(const Math::Matrix4x4& viewProjection,
+                             const Math::Vector3& cameraPosition,
+                             const SceneViewScreenSizeContext& context,
+                             Container::VariableArray<MeshProxy>& outLODCopies);
 
         void AppendWorldBoardDrawCommands();
 
@@ -633,12 +653,22 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
+        // 散布を除く ComponentId から ObjectId への索引。
+        Container::UnorderedMap<uint64_t, uint64_t> m_MegaComponentObjectIds;
+        // 散布以外の追加・削除・ComponentId の変更で立ち、索引の作り直しで下ろす印。
+        bool m_bMegaComponentIndexMayBeStale = false;
+        // 前回と今回の抑制対象（ObjectId と板の ComponentId）。
+        Container::UnorderedMap<uint64_t, uint64_t> m_SuppressedMegaBoardIds;
+        Container::UnorderedMap<uint64_t, uint64_t> m_NextSuppressedMegaBoardIds;
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;
+        // 選んだ段の写しは、次のカリングまで可視一覧の参照先として保持する
+        Container::VariableArray<MeshProxy> m_LODProxyCopies;
         Container::UnorderedSet<uint64_t> m_SuppressedMeshComponentIds;
         // チャンクごとの可視一覧の確保をフレーム間で使い回す
         Container::VariableArray<Container::VariableArray<MeshProxy*>> m_CullChunkVisible;
+        Container::VariableArray<Container::VariableArray<MeshProxy>> m_CullChunkLODCopies;
         Container::VariableArray<BoardProxy *> m_VisibleBoardProxies;
 
         // バッチャー

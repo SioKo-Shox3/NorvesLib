@@ -7071,7 +7071,7 @@
 - notes: G7-S2（ロードマップ 4529 行）は推奨の (A) を採る。理由: 環境の値はフレームで 1 つの値で、物ごとに写すのは無駄。書き手が 6 経路あり、可視バッファの解決は compute で per-object の UBO を持たない。10-02 の「MegaGeometry の per-object UBO に余白が無い」は古く（今は `SectionUniformData` の 768 バイト以下。G5-GR26-MATERIAL-PARAMS の notes）、(B) の理由はもう無いが、(A) の方が書き手を増やしても形が変わらない。lighting.frag だけで濡らす (C) は採らない（SSR は GBuffer の粗さで反射を切り〈SceneView の RoughnessCutoff〉、RTGI の cross-bilateral は GBuffer の材質で棄却するので、乾いた値のまま）。濡れの感度を GR26 の P0 にするのは G7-S6 の (A)（G7-GR53-WET-MODEL の notes）。GR26 の材質の値が届く前に着手しないよう needs-gr に GR26 を置く。草（G5 の GR43）は垂直スライスの主な面なので待つ。UNCERTAIN: 草の断片シェーダーとパスの名前（`grass.frag`・`GrassPass.cpp` は G5-GR43-GRASS-DRAW の記述からの推定）は統合ブランチで確かめ、違えば paths の読み替えを PROGRESS.md に書く。GBufferPass は材質の記述子のキャッシュ（`GBufferMaterialDescriptorCacheTest`）にフレームの値を焼かない今の作りを崩さない（環境の UBO はキャッシュの鍵に入れず、別の binding で毎フレーム結ぶ）。RTGI・PT の命中面は濡れない（instance の色から作る）。これは既知の方式差として G7-GR53-CHECK で受入れの記録に書き、G18 の GR104 で扱う。共有のシェーダーと Pass は差分を小さくし、試験の束の CMakeLists.txt は登録の数行だけ。試験を足す理由: 経路ごとの式の同期の崩れ（MegaGeometry だけ濡れない等）は場面の照明に紛れ、黙って起きる。危険地帯（GBuffer・可視バッファ・ライティングの入力・RenderThread）なので評価者を通す。要件 `#### GR53` の設計案【経路】【材質】【SSR との関係】、ロードマップ 1538・1552・1565 行。
 
 ## G7-GR57-GPU-DEFINITION: GR136 の効果の定義に GPU の実行先で使うエミッタの設定とモジュールを足し、CPU の実行先を同じ式の参照にして、GPU へ詰める型・生成数の計画・プールの割り当てを CPU で作る
-- status: todo
+- status: done
 - after: G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR57
 - needs-gr: GR46
@@ -7255,7 +7255,7 @@
 - notes: 完了条件はロードマップ 2613〜2615 行の GPU と撮影の部分。`grassland-wither=0,20,30` の座標と半径は仮で、着手時に near の視点の前方に置き直す（CaptureScene.ps1 の -GameArgs は「カンマの次が英字で始まらない限り分けない」ので数の並びは 1 つの引数のまま渡る）。「この段階の前の撮影」は G5 の草の確かめ（G5-GR43-GRASS-CHECK）の撮影の出力を使い、無ければ前の段階のコミットで撮る。直す必要が出たら、この項目では直さずに `G12-GR45-FIX-<名前>` を足す。
 
 ## G12-GR47-INSTANCE-VARIATION: 散布の 1 本ごとに色味と個体差の種を持たせ、1 本だけを記録を書き換えずに隠せるようにする
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR47
 - needs-gr: GR26, GR30
@@ -7299,7 +7299,7 @@
 - notes: 要件 `#### GR111` の受け入れ確認の「マニフェストの規模」「起動ベンチマーク」と P0 の計測（ロードマップ 2545・2673・2675 行）。計測は RelWithDebInfo（AGENTS.md の絶対規則 8。ロードマップは Release と書く）。数千資産での実の費用は未計測（ロードマップ 2801 行）なので、閾値は測ってから決める。マニフェストの JSON の解析の時間が小さければ二値の索引は作らない（同じ行）。荒野の起動の読み込みの比べは、`SummarizeAssetLoadProfile.ps1` の使い方を `Docs/Performance/AssetLoadBaseline.md` の流儀に合わせる。
 
 ## G12-GR48-MESH-LOD-SELECT: メッシュの LOD の鎖を画面の大きさとヒステリシスで選び、インポスターへの切り替えも同じ判定で決める
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `MeshProxy`（`Library/Core/Public/Rendering/SceneProxy.h`。今は `MeshHandle` 1 つと保持だけの `LODLevel`）が LOD の鎖（最大 4 段のメッシュのハンドルと、段ごとの画面の大きさのしきい値）を持ち、`MeshComponent` に鎖を設定する口がある（今は `CurrentLODLevel` を決めるコードが無い。`MeshComponent.h:186・286`）。(2) `SceneView::CullProxies` の 2 つの版が、境界球の画面の大きさ = 半径 / (距離 × tan(fov/2))（正射影のカメラでは半径 / (OrthoHeight/2)）から段を選び、ヒステリシス（しきい値の上下の帯）で 1 フレームごとに往復しない。`ForcedLODLevel`（-1 = 自動）を優先する。選んだ段のメッシュとサブメッシュの範囲（`TryGetSubMeshRanges`。`Library/Core/Private/Rendering/ProceduralMeshGpuStore.h`）へ、バッチへ渡す前に差し替える。`LODGroup::GetLODLevel`（`MeshTypes.h:193-213`）の定義と画面の大きさの式を 1 つにそろえる。(3) インポスターへの切り替え（今は `ImpostorComponent` の `LODSwitchDistance` の距離のしきい値。`ImpostorComponent.h:31・44`）を、同じ画面の大きさの判定の最後の段として扱い、元のメッシュが静的メッシュでも MegaGeometry のインスタンスでも同じ規則で元を抑える。(4) 試験（`SceneViewProxyLookupTest` の束へ MEMBER）: `MeshLODSelectionTest`（画面の大きさ → 段の対応、しきい値のちょうど・手前・奥、ForcedLODLevel の優先、ヒステリシスで往復しない、段が 1 つだけのメッシュ、正射影の式、インポスターへの切り替えと元の抑制、距離の単調性）。既存の `SceneViewProxyLookupTest`・`SceneViewProxyReconcileTest`・`SceneViewViewportCommandTest`・`MeshBatcherTest`・`ImpostorLODSwitchTest`・`ImpostorOctahedralTest` が通る。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest SceneViewViewportCommandTest MeshBatcherInstancingTest ImpostorLODSwitchTest -- /m:1`

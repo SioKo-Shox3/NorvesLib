@@ -742,18 +742,18 @@ namespace NorvesLib::Core::Particle
         }
 
         bool ReadValues(CookedReader& reader, const VfxObjectSchema& schema, const char* field,
-            VariableArray<VfxValue>& values, Container::String& error)
+            uint32_t storedParameterCount, VariableArray<VfxValue>& values, Container::String& error)
         {
             uint32_t count = 0;
             if (!reader.ReadNumber(count, schema.Name) || !reader.CheckCount(count, 2u, schema.Name))
             {
                 return false;
             }
-            if (count != schema.ParameterCount)
+            if (count != storedParameterCount || count > schema.ParameterCount)
             {
                 return Fail(error, "parameter_count", schema.Name, field);
             }
-            values.reserve(count);
+            values.reserve(schema.ParameterCount);
             for (uint32_t index = 0; index < count; ++index)
             {
                 VfxValue value;
@@ -762,6 +762,10 @@ namespace NorvesLib::Core::Particle
                     return false;
                 }
                 values.push_back(std::move(value));
+            }
+            for (uint32_t index = count; index < schema.ParameterCount; ++index)
+            {
+                values.push_back(MakeVfxDefaultValue(schema.Parameters[index]));
             }
             return true;
         }
@@ -1001,7 +1005,7 @@ namespace NorvesLib::Core::Particle
         {
             return false;
         }
-        if (version != kVfxCookedVersion)
+        if (version != kVfxCookedVersion && version != kVfxCookedVersionLegacyV1)
         {
             return Fail(outError, "bad_version", "Effect.Header");
         }
@@ -1055,11 +1059,13 @@ namespace NorvesLib::Core::Particle
             return false;
         }
         const VfxObjectSchema& emitterSchema = GetVfxEmitterSchema();
+        // 版 1 には MaxParticles・Space・Seed の先頭 3 設定だけが保存されている。
+        const uint32_t emitterPropertyCount = version == kVfxCookedVersionLegacyV1 ? 3u : emitterSchema.ParameterCount;
         for (uint32_t index = 0; index < emitterCount; ++index)
         {
             VfxEmitterAsset emitter;
             if (!reader.ReadString(emitter.Name, "Emitter.Name") ||
-                !ReadValues(reader, emitterSchema, "Properties", emitter.Properties, outError))
+                !ReadValues(reader, emitterSchema, "Properties", emitterPropertyCount, emitter.Properties, outError))
             {
                 return false;
             }
@@ -1083,7 +1089,7 @@ namespace NorvesLib::Core::Particle
                 {
                     return Fail(outError, "unknown_module", "Module", "Type");
                 }
-                if (!ReadValues(reader, *schema, "Values", module.Values, outError))
+                if (!ReadValues(reader, *schema, "Values", schema->ParameterCount, module.Values, outError))
                 {
                     return false;
                 }

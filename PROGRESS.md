@@ -11715,18 +11715,46 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (4) の `DissolveMathTest` と (5) の GPU の試験（`RenderingSkinnedDissolveVulkanTest` ほか）は作っていない。golden・`MeshParticleDissolveVulkanTest`・`RenderingAlphaClipVulkanTest` も撮影・GPU の確かめを回さない決まりで回していない。
 - Notes: 既知の限界: 影の切り抜きの経路ではディゾルブの材質に風の頂点アニメを重ねない（切り抜きの材質と同じ扱い）。スキンの入力の頂点のアドレスが取れないときは、VSM の影は削らずに全体を残す。
 - 再確認（反復 3）: 枠の直下に `build/` が無く verify の再実行が落ちたので、`git submodule update --init Library/ThirdParty/freetype` と `cmake -B build -S . -G "Visual Studio 17 2022"` で枠に構成を作り、`cmake --build build --config Debug --target Game -- /m:1` を回して終了コード 0・エラーの行 0（Core.lib と Game.exe まで。`.harness/runs/20261116-053238/verify-G10-GR60-DISSOLVE-build.txt`）。コードの変更は無し。
-- U1 CreateIblResources を IblGeneration へ出す: 着地(直し 0 回)
-- U2 空の model と放射輝度の源の保持体 SkyAtmosphereSourceCache を置く: 着地(直し 0 回)
-- U3 空由来 IBL を SkyAtmospherePass で保持体から作り、ViewRenderContext で公開する: 着地(直し 0 回)
-- U4 LightingPass を空のパスの IBL を読む側に替え、自前の空由来 IBL を消す: 着地(直し 0 回)
 
-## G11-GR54-SKY-SOURCE-SHARE 空の model と放射輝度の源の共有、空由来 IBL の空のパスへの移動（2026-11-16、run 20261116-111156 の反復 1）
-- Done: `SkyAtmosphereSourceCache`（Private/Rendering）を足した。Sanitize 後の空のパラメータを鍵に `SkyAtmosphereModel`（BuildSkyViewTable 済み・読み取り専用）と空由来 IBL の放射輝度の源（正距円筒 RGBA32F）を 1 回だけ作る。鍵の比較は `AreSkyAtmosphereParametersEqual`、作り直しは前の model を渡して太陽に依らない表を写す。SkyAtmospherePass が保持体を持ち、空の LUT と空由来 IBL の両方をここから引く（太陽高度の変化 1 回で model の構築が 2 回 → 1 回）。
-- Done: `CreateIblResources` を `IblGeneration.{h,cpp}` へ出した（中身は同じ。全球の平均照度の戻りも保つ）。LightingPass に残る 4 か所の呼び手（一様な環境・検証用の環境）は同じ結果。
-- Done: 空由来 IBL の 3 枚の生成と所有を SkyAtmospherePass へ移し、`ViewRenderContext::SkyAtmosphere.Ibl`（`SkyAtmosphereIblResources`）で公開した。LightingPass は `EnsureSkyAtmosphereIbl` と自前の model・3 枚を消し、束縛・PhysicalLighting の公開・全球の平均照度の選択をそこから読む（選ぶ式・公開の名前は同じ）。差し替えた古い 3 枚は SkyAtmospherePass の `GpuRetireQueue` に預け、そのフレームの通し番号が完了してから捨てる。
-- Done: 作り直しのたびに `Sky LUT generated in ... ms` に並べて `Sky IBL generated in ... ms (environment 256x128, diffuse 64x32, specular 256x128 mips 9, sky_model_builds=N)` を出す。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（Game.exe まで。`.harness/runs/20261116-111156/verify-G11-GR54-SKY-SOURCE-SHARE-U4.txt`）。`git grep` で `MakeUnique<SkyAtmosphereModel>` は保持体の 1 か所だけ、LightingPass の空由来 IBL の名前（`EnsureSkyAtmosphereIbl`・`m_SkyAtmosphere*Texture` など）は 0 件。
-- Next: ランナーの評価者の反証（危険地帯: 照明・RenderThread・IBL の所有）。所要時間の実測は G11-GR54-SKY-MEASURE。人が見るときの見どころ: 荒野と Rendering3DTest で太陽高度を動かし、空・地面の環境光・鏡面の映り込みが前と同じに見えること。ログで、太陽を 1 回動かすごとに `Sky LUT generated`（`reused_tables=1`）と `Sky IBL generated` が 1 行ずつ出て `sky_model_builds` が 1 ずつ増えること。
-- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyAtmosphereSourceCacheTest` は作っていない。`SkyAtmosphereModelTest`・golden・PT の試験も回していない（撮影・GPU・試験を回さない決まり）。
-- Notes: 判断: `GpuRetireQueue` は RenderResources の中にあってパスから届かないので、SkyAtmospherePass が自前のキューを持ち、`CompletedRenderFrameSerial` と `ResolveRenderFrameSerial()`（フレームの通し番号の系列）で回す。RenderingCoordinator を通さない手組みの文脈（完了の通し番号 0）では、預けた物は Shutdown まで残る。
-- Notes: 既知の限界: PT の経路（`SceneView::SetupPathTracingPipeline`）も SkyAtmospherePass を使うので、空が変わると読まれない空由来 IBL も作る（CPU の時間だけで絵は変わらない）。
+- U6 画面の大きさの式と LOD の段の選び方を MeshTypes.h にまとめ、proxy に LOD の鎖・インポスターの画面の大きさ・抑制の印を足す(切り直し): 着地(直し 0 回)
+- U7 MeshComponent に LOD の鎖を設定する口を足し、proxy へ段ごとのメッシュとサブメッシュの範囲を詰める(切り直し): 着地(直し 0 回)
+- U8 ImpostorComponent に画面の大きさのしきい値を足し、BoardProxy へ渡す(切り直し): 着地(直し 0 回)
+- U9 SceneView のカリングで画面の大きさとヒステリシスからメッシュの段を選び、選んだ段のメッシュとサブメッシュの範囲へ差し替えてバッチへ渡す(切り直し): 着地(直し 1 回)
+- U5 インポスターへの切り替えを同じ画面の大きさの判定の最後の段にし、元が静的メッシュでも MegaGeometry でも同じ規則で抑える: 着地(直し 1 回)
+
+### G12-GR48-MESH-LOD-SELECT 仕上げ（2026-11-16、run 20261116-053232・反復 2）
+- Done: メッシュの LOD の鎖（最大 4 段。段ごとのメッシュ・サブメッシュの範囲・画面の大きさのしきい値と ForcedLODLevel）を `MeshProxy` と `MeshComponent`（`SetLODChain`・`ClearLODChain`・`GetLODLevelCount`）に足し、`SceneView::CullProxies` の 2 つの版で境界球の画面の大きさ（透視 = 半径 / (距離 × tan(fov/2))、正射影 = 半径 / (OrthoHeight/2)）とヒステリシス（しきい値の ±10 % の帯）から段を選び、選んだ段のメッシュとサブメッシュの範囲へ差し替えた写しをバッチへ渡す。式と選び方は `MeshTypes.h` にまとめ、`LODGroup::GetLODLevel` も同じ比較にそろえた。インポスターへの切り替えは `ImpostorComponent` の `LODSwitchScreenSize`（0 なら `LODSwitchDistance` を同じ式でしきい値へ換算。正射影では距離の比）で同じヒステリシスの 2 段の選択にし、元が静的メッシュなら同じフレームに、MegaGeometry（同じ Object の ObjectId で引き、無ければ散布の行を除いた ComponentId の索引で引く）なら `bHiddenByImpostor` で抑える。MegaGeometry の proxy は描画側へ 1 フレーム遅れて届くので、元へ戻す最初のフレームは板を残す。板の前の段と MegaGeometry の抑制の印は、proxy の差し替えでも引き継ぐ。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で SceneView.cpp を再コンパイルし Core.lib と Game.exe を生成（`.harness/runs/20261116-053232/verify-G12-GR48-MESH-LOD-SELECT-U5.txt`）。
+- 作らなかったもの: done-when (4) の `MeshLODSelectionTest` と既存の試験の実行は、試験を作らない・回さない決まり（絶対規則 11）で作っていない・回していない。撮影・計測の確かめは回さない決まり。
+- 人が見るときの見どころ: Rendering3DTest の煙の球のインポスター（`LODSwitchDistance` 3.5）。ヒステリシスの帯のぶん、遠ざかるときは境界まで約 3.9、近づくときは約 3.2 で切り替わる（前は 3.5 ちょうど）。カメラを前後させて境目でちらつかないこと、切り替えの瞬間に穴が空かないことを見る。LOD の鎖を設定したメッシュは今のシーンには無い（鎖の生成は GR80 の担当）。
+- 採った判断: 板の段は視錐台のカリングの前に選ぶ（視錐台の出入りで状態が飛ばない）。元を抑えるのは、段 1 の板が視錐台・距離のカリングを通ったときだけ（今の静的メッシュの規則のまま）。
+- 既知の限界: 複数の Viewport を持つ SceneView では、最後にカリングした Viewport の判定が MegaGeometry の抑制の印に残る。一時の板（transient）は前の段を持たず、MegaGeometry を戻すときの板の残しも効かない。MegaGeometry の元を抑えると、そのインスタンスは影（VSM）と TLAS の入力からも外れる見込み。
+- Next: ランナーの評価者の反証（SceneView のカリングと RenderThread へ渡す MegaGeometry の proxy の印 = 危険地帯）。クロスフェードは G12-GR48-CROSSFADE、インポスターの GBuffer の描画は G12-GR48-IMPOSTOR-GBUFFER。
+
+### G12-GR48-MESH-LOD-SELECT 再検証（2026-11-16、run 20261116-053232・反復 3）
+- Done: 差し戻し（枠に `build/` が無く verify が `build is not a directory` で落ちた）を直した。枠で freetype の submodule を初期化し、`cmake -B build -S . -G "Visual Studio 17 2022"` で構成し直してから verify を回した。実装の変更は無い。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で SceneView.cpp・MeshComponent.cpp・ImpostorComponent.cpp を含めてコンパイルし Game.exe を生成（`.harness/runs/20261116-053232/verify-G12-GR48-MESH-LOD-SELECT-iter3.txt`）。
+- Next: ランナーの評価者の反証（危険地帯）。
+
+## G12-GR47-INSTANCE-VARIATION 散布の 1 本ごとの色味・個体差の種と、1 本だけの非表示（2026-11-16、run 20261116-082030）
+- U1 散布の入力 1 本ごとの色味・種・非表示を CPU 側で持ち、行と proxy へ通す: 着地(直し 0 回)
+- U2 GPU の席の表を 144 B に広げ、描く順の表の空きの 2 語に色味と種を入れる: 着地(直し 0 回)
+- U3 proxy の色味と種をインスタンスへ写し、可視バッファの解決と MegaGeometry のラスタで Albedo に色味を掛け、割り当て表に登録する: 着地(直し 0 回)
+- Done: `MegaScatterInstance` に `Tint`（RGBA8 を詰めた uint32。R が下位 8 bit。既定 0xFFFFFFFF = 白）と `VariationSeed`（0 は既定 = `DefaultVariationSeed(散布の Seed, 入力の番号)`。murmur の fmix32 の決定的な式）を足し、軽い行の値 `EcsMegaInstance`（解決済みの種）→ `MegaGeometryProxy`（`HashProxy` にも入れた）→ `MegaGeometryPass::MegaMeshInstance` → 席の表の行 `GPUMegaSlotRow`（128→144 B。末尾 16 B = 予約 0・予約 0・色味・種）→ `mega_scene_scatter.comp` の段 1 が描く順の表 `GPUMegaInstance` の空きの 2 語（`MegaInstanceRow.info.zw`）へ写す。席の行と描く順の行は色味・種の位置（136・140）を揃え、`offsetof` の static_assert で検査する。色味だけの変化も席の行の memcmp と変化の印で、その席と描く順の行だけが送り直される。`Common/MegaInstanceTable.glsl` に `MegaInstance.tint`・`variationSeed`、`MegaTintIsWhite`・`MegaTintRgb`・`LoadMegaInstanceTint`・`MegaVariationPhase`（種の上位 24 bit から [0,1) の位相。頂点アニメの instanceParams の風の位相へ渡せる形）を置いた。`megageometry.vert` の `fragObjectColor` と `Common/VisibilityResolve.glsl` の `VisObjectColor`（MegaGeometry のクラスタだけ）が材質の基本色に色味の RGB を掛け、RGB が白なら掛けない分岐でビット単位で今と同じ。`MegaGeometryScatterComponent::SetInstanceHidden(inputIndex, bool)`・`IsInstanceHidden` を足した: 入力ごとの印を持ち、切り替えはその 1 行の `Flags` の非表示のビットと、公開中の範囲ならその 1 本の proxy の取り下げ・公開だけ（範囲の全行・版・席は変えない）。隠した行は `BuildProxy` が公開しないので、範囲の出し入れ・`UpdateInstances`・書き直しの後も隠したまま、proxy が無いので描く順の表・影・RT のどれにも入らない（カリングより前に落ちる）。`SetSeed` は値が変わると全範囲を書き直す。検査 MASS_RANGES は作った全行の非表示のビットと入力の印の一致、公開中の範囲の隠した行に proxy が無いこと、proxy の色味・種と行の値の一致を確かめる。`Docs/Architecture/GpuLayoutRegistry.md` の 15 節に 2 つの表の並び・記録の形・色味の並び・種の既定の式と位相・非表示の扱いを登録した。
+- 証拠: `.harness/runs/20261116-082030/G12-GR47-U3-final-verify.txt`（HEAD e8f2fdc0 の内容。`cmake --build build --config Debug --target Game -- /m:1` が EXIT_CODE 0・error の行なし・Game.exe までリンク（ImGui 有効の構成）、`megageometry.vert`・`.frag`・`megageometry_clearance.frag`・`visbuffer_resolve*.comp` 4 本・`mega_scene_scatter.comp` を BOM を除いた写しで glslc が全部 OK、numstat の 2 通りが一致）。`.harness/relay/G12-GR47-INSTANCE-VARIATION-U2-verify.txt`（`MegaInstanceTable.glsl` を include する 17 本を glslc が全部 OK）、`-U1-verify.txt`（散布の変更で Game のビルドが EXIT 0）。verify のビルドの行は試験のターゲットが無いので `--target Game` だけを回した。verify の ctest の行と done-when の試験（`MegaScatterVariationTest`・`VisibilityResolveVulkanTest` の色味のケース）は、試験を作らない・回さない決まりで作っても回してもいない。
+- Next: ランナーの評価者の反証（Object の寿命・RenderThread のデータ契約・Public API の危険地帯）。人が見るときの見どころ: 既定は全部白・種は既定・非表示なしなので、既存のシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン、荒野の崖錐の岩と崖の塊、MegaBananas・MegaStress の散布）の見た目は変わらない。色味・1 本の非表示を使う呼び手はまだ無く、森で確かめるのは G12-GR47-FOREST-CHECK。
+- Notes: paths の外で触ったファイル: `Library/Core/Public/Rendering/SceneProxy.h`・`SceneProxyHash.h`（`MegaGeometryProxy` が MegaGeometry の GameThread→RenderThread の唯一の運び手なので色味と種の 2 欄を足した）。採った判断: 席の表の行を別の列にせず 144 B に広げた（席の行の memcmp と変化の印がそのまま使える）、1 本の非表示は GPU に印を持たず proxy を取り下げる形、種 0 は既定の意味。既知の限界: RTGI・パストレーサーの命中面には色味を掛けない。種はまだ頂点アニメへ渡していない（MegaGeometry の instanceParams は `vec4(-1.0)` のまま）。色味の A は使っていない。入力を与え直す（`SetInstances`）と非表示の印は外れる。1 本ずつの `MegaGeometryComponent` は色味・種を持たない（既定のまま）。
+
+- U1 CPU と GPU で共有する乱数・生成数・乱れの式のヘッダを足す: 着地(直し 0 回)
+- U2 効果の定義にエミッタの設定と新しいモジュールを足し、スキーマと検証に載せる: 着地(直し 0 回)
+- U3 焼いた形式を版 2 にし、版 1 のエミッタの設定を既定値で補って読む: 着地(直し 0 回)
+- U4 CPU の実行先に刻みの文脈・新しい設定・位置の形・抗力・風・乱れを足す: 着地(直し 0 回)
+- U6 GPU へ詰める型と GLSL の共通の定義を足す: 着地(直し 0 回)
+- U7 生成数の計画とプールのエミッタの割り当てを Private に足す: 着地(直し 0 回)
+- U5 CPU の実行先に寿命の曲線・有効割合・衝突と応答を足す: 着地(直し 0 回)
+### G7-GR57-GPU-DEFINITION 完了（2026-11-16、run 20261116-073249）
+- Done: GR136 の効果の定義 `VfxEffectAsset` のエミッタに Executor・RandomStream・Capacity・TimeChannel・WrapPolicy を、モジュールに InitShape・Drag・WindInfluence・Turbulence・CurveOverLife・ActivationFraction・CollisionPlane・CollisionHeightField・CollisionDepth・GpuSpriteRenderer を足し、`VfxSchema` に型・範囲・単位・既定値と組み合わせの検証（Gpu は Counter と World が必要、GPU だけのモジュール、カメラの箱、子のエミッタ名など）を載せた。CPU の実行先 `VfxEffectSystem` は CollisionDepth と描画の設定を除く全部を GR136 の積分の順で回す（刻みの文脈 `VfxTickContext` に未スケールの dt・カメラの位置・風・高さ場の口）。共有の式は `Particle/VfxSimulationMath.h`（PCG の Counter 乱数・有効割合・生成数の端数・位置ハッシュの乱れ）と GLSL の `Particles/ParticleCommon.glsl`。GPU へ詰める型 `GpuParticle` 48 B・`GpuEmitterParams` 256 B・`GpuSpawnJob` 16 B・`GpuCurveKey` 8 B を `Rendering/GpuParticle/GpuParticleTypes.h` に static_assert で固定し（GLSL の std430 の並びも SPIR-V の逆アセンブルで一致を確認）、Private に `GpuParticleSpawnPlanner` と `GpuParticleEmitterAllocator` を置いた。焼いた形式は版 2 にし、版 1 はエミッタの設定の欠けた分を既定値で補って読む。
+- 証拠: `cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT 0（`.harness/runs/20261116-073249/verify-G7-GR57-GPU-DEFINITION-U8.txt`）。AssetCook の `--cook-vfx` が新しいモジュールを含む 2 エミッタの JSON を 606 バイトに焼けた。
+- 回さなかったもの: done-when の `VfxEffectSystemTest` のケースと `GpuParticleTypesTest` は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。
+- 決めたこと: 曲線は `VfxValueType` を増やさず（Game のエディタが型ごとに分岐するため）、CurveOverLife の KeyCount と Key0〜Key7（Vector2 = 正規化した年齢, 値）で持ち、評価は `Math::CurveKeyframe` の折れ線。WrapPolicy の Die は CameraBox の形があるときだけ箱の外の粒を消す（形が無ければ今と同じ）。通し番号は空きで切り詰めても要求数で進める（GPU の生成の計画と同じ）。SpawnChild の子は刻みの最後にまとめて生成し、その刻みでは動かさない。既存のエフェクト（新しいモジュールなし・設定が既定値）は乱数の引き方・積分の式・生成数を変えていない。
+- Next: GPU の実行先（G7-GR57-GPU-SIMULATION）がこの定義・型・生成の計画・割り当てを使う。`ParticleSystem` は CPU の実行先を今も `Tick(deltaTime)`（風なし・カメラ原点の既定の文脈）で呼ぶ。描画は変えていないので、人が見るときはヒットエフェクトと撃破の血のエフェクトが今までどおり出ることだけを見る。
