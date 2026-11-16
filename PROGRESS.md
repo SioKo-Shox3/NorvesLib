@@ -11719,3 +11719,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 空の model と放射輝度の源の保持体 SkyAtmosphereSourceCache を置く: 着地(直し 0 回)
 - U3 空由来 IBL を SkyAtmospherePass で保持体から作り、ViewRenderContext で公開する: 着地(直し 0 回)
 - U4 LightingPass を空のパスの IBL を読む側に替え、自前の空由来 IBL を消す: 着地(直し 0 回)
+
+## G11-GR54-SKY-SOURCE-SHARE 空の model と放射輝度の源の共有、空由来 IBL の空のパスへの移動（2026-11-16、run 20261116-111156 の反復 1）
+- Done: `SkyAtmosphereSourceCache`（Private/Rendering）を足した。Sanitize 後の空のパラメータを鍵に `SkyAtmosphereModel`（BuildSkyViewTable 済み・読み取り専用）と空由来 IBL の放射輝度の源（正距円筒 RGBA32F）を 1 回だけ作る。鍵の比較は `AreSkyAtmosphereParametersEqual`、作り直しは前の model を渡して太陽に依らない表を写す。SkyAtmospherePass が保持体を持ち、空の LUT と空由来 IBL の両方をここから引く（太陽高度の変化 1 回で model の構築が 2 回 → 1 回）。
+- Done: `CreateIblResources` を `IblGeneration.{h,cpp}` へ出した（中身は同じ。全球の平均照度の戻りも保つ）。LightingPass に残る 4 か所の呼び手（一様な環境・検証用の環境）は同じ結果。
+- Done: 空由来 IBL の 3 枚の生成と所有を SkyAtmospherePass へ移し、`ViewRenderContext::SkyAtmosphere.Ibl`（`SkyAtmosphereIblResources`）で公開した。LightingPass は `EnsureSkyAtmosphereIbl` と自前の model・3 枚を消し、束縛・PhysicalLighting の公開・全球の平均照度の選択をそこから読む（選ぶ式・公開の名前は同じ）。差し替えた古い 3 枚は SkyAtmospherePass の `GpuRetireQueue` に預け、そのフレームの通し番号が完了してから捨てる。
+- Done: 作り直しのたびに `Sky LUT generated in ... ms` に並べて `Sky IBL generated in ... ms (environment 256x128, diffuse 64x32, specular 256x128 mips 9, sky_model_builds=N)` を出す。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（Game.exe まで。`.harness/runs/20261116-111156/verify-G11-GR54-SKY-SOURCE-SHARE-U4.txt`）。`git grep` で `MakeUnique<SkyAtmosphereModel>` は保持体の 1 か所だけ、LightingPass の空由来 IBL の名前（`EnsureSkyAtmosphereIbl`・`m_SkyAtmosphere*Texture` など）は 0 件。
+- Next: ランナーの評価者の反証（危険地帯: 照明・RenderThread・IBL の所有）。所要時間の実測は G11-GR54-SKY-MEASURE。人が見るときの見どころ: 荒野と Rendering3DTest で太陽高度を動かし、空・地面の環境光・鏡面の映り込みが前と同じに見えること。ログで、太陽を 1 回動かすごとに `Sky LUT generated`（`reused_tables=1`）と `Sky IBL generated` が 1 行ずつ出て `sky_model_builds` が 1 ずつ増えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyAtmosphereSourceCacheTest` は作っていない。`SkyAtmosphereModelTest`・golden・PT の試験も回していない（撮影・GPU・試験を回さない決まり）。
+- Notes: 判断: `GpuRetireQueue` は RenderResources の中にあってパスから届かないので、SkyAtmospherePass が自前のキューを持ち、`CompletedRenderFrameSerial` と `ResolveRenderFrameSerial()`（フレームの通し番号の系列）で回す。RenderingCoordinator を通さない手組みの文脈（完了の通し番号 0）では、預けた物は Shutdown まで残る。
+- Notes: 既知の限界: PT の経路（`SceneView::SetupPathTracingPipeline`）も SkyAtmospherePass を使うので、空が変わると読まれない空由来 IBL も作る（CPU の時間だけで絵は変わらない）。
