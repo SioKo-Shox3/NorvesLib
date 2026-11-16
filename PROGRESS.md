@@ -11803,3 +11803,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 資産の束縛の核（AssetBinding.h/.cpp）と Component::OnPropertyApplied の口を足す: 着地(直し 0 回)
 - U2 MegaGeometryResources に GetModelSourcePath(ModelHandle) を足す: 着地(直し 0 回)
 - U3 MegaGeometryComponent が ModelAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
+- U4 MeshComponent の MeshHandle を PROPERTY から外し、ProceduralMeshSpec を PROPERTY にする: 着地(直し 0 回)
