@@ -11694,3 +11694,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（2 周目。前回の指摘 2 件への対応差分）。人が見るときの見どころは前のとおり（既定は無効なので、起動→ランチャー→各シーンの空・霧・雲・風が前と同じこと）。
 - Notes: 上の「判断と既知の限界」のうち、`Disable` の後に土台の空・霧・雲の層・風を書き戻す点は反復 4 でやめ、環境の値の既定値だけを 1 回書く形に変えた。太陽の方位は [0, 360) へ折り返さず [-360, 360] に収める（風の向き・時刻は折り返しのまま。WindParameters の整えも [0, 360)）。
 - U1 雨の調整の値 RainTuning と写像の純関数・JSON の読み込みを置く: 着地(直し 0 回)
+- U2 RenderWorld::SetRainTuning から FramePacket の SceneProxy まで RainTuning を共有ポインタで運ぶ: 着地(直し 0 回)
