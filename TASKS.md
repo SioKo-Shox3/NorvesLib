@@ -7126,7 +7126,7 @@
 - notes: G7-S5（ロードマップ 4532 行）の推奨 (A) を採る。理由: 雨量が EnvironmentParameters と RainParameters の 2 か所に載ると食い違いうる。値の出所が 1 つで、見た目の調整に再ビルドが要らない。近距離の雨のエフェクトの定義（Rain_Near）は G7-GR58-RAIN-NEAR が GR136 の形式で書き、RainTuning の近距離の値はそのエフェクトの上書きの値として渡す。数値の既定は全部仮（コンセプト案の雨は構図の確かめ用で採否は未定）。犬の走る速さ（動き取り）で筋の見え方が変わったら StreakShutterSeconds と落ちる速さを見直す。試験を足す理由: 写像の不連続（雨量の小さな変化で本数が跳ぶ）と霧の増分で履歴が切れることは、撮影 1 枚では気づけず黙って起きる。要件 `#### GR58` の設計案（C）と【フェーズ】P1、ロードマップ 1540・1554 行。
 
 ## G7-GR58-RAIN-CURTAIN: 遠景の雨のカーテンを、体積の霧の直後に全画面の手続きの 3 層で描き、近い物の手前には描かないようにする
-- status: todo
+- status: done
 - after: G7-GR58-RAIN-MODEL, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46
