@@ -11696,3 +11696,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 雨の調整の値 RainTuning と写像の純関数・JSON の読み込みを置く: 着地(直し 0 回)
 - U2 RenderWorld::SetRainTuning から FramePacket の SceneProxy まで RainTuning を共有ポインタで運ぶ: 着地(直し 0 回)
 - U3 EnvironmentSystem が Enable で RainTuning.json を読み、Resolve の霧の密度に雨の増分を足す: 着地(直し 0 回)
+- U4 EnvironmentSystem::PublishTo が公開待ちの RainTuning を RenderWorld へ一度渡す(タスクの verify): 着地(直し 0 回)

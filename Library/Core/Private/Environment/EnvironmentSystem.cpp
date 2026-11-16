@@ -322,6 +322,12 @@ namespace NorvesLib::Core::Environment
     {
         if (m_bEnabled)
         {
+            if (m_bRainTuningPublishPending)
+            {
+                renderWorld.SetRainTuning(m_RainTuning);
+                m_bRainTuningPublishPending = false;
+            }
+
             const EnvironmentResolved resolved = Resolve();
             renderWorld.SetSkyAtmosphere(resolved.Sky);
             renderWorld.SetVolumetricFogParameters(resolved.Fog);

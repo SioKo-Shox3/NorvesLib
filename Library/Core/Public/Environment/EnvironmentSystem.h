@@ -38,6 +38,7 @@ namespace NorvesLib::Core::Environment
      * 次のフレームで上書きされる。有効中の天気と太陽は SetTarget または SetImmediate で変える。
      * 解決には Enable で受けた場面の土台を使い、状態にある欄だけを重ねて大気定数などを保持する。
      * Enable で RainTuning.json を読み、上書き後の雨量に応じた霧の密度の増分を Resolve で足す。
+     * Enable 後の最初の PublishTo で雨の調整値を一度渡す。
      * 霧と雨の調整値はシーンの revision に入らない。
      * Disable 後の最初の PublishTo は環境の値（EnvironmentParameters）だけを既定値へ一度戻す。
      * 空・霧・雲の層・風は書き戻さず、同じフレームで次のシーンが書いた値を残す。
