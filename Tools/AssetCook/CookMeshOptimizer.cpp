@@ -123,6 +123,28 @@ namespace NorvesLib::Tools::AssetCook
         return true;
     }
 
+    bool OptimizeVertexCacheTriangles(Core::Container::VariableArray<uint32_t>& indices,
+                                      size_t vertexCount,
+                                      Core::Container::AnsiString& error)
+    {
+        if (vertexCount == 0 || indices.empty() || indices.size() % 3 != 0)
+        {
+            error = "skinned_lod_invalid_cache_mesh";
+            return false;
+        }
+        for (uint32_t index : indices)
+        {
+            if (index >= vertexCount)
+            {
+                error = "skinned_lod_invalid_cache_mesh";
+                return false;
+            }
+        }
+        meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertexCount);
+        error.clear();
+        return true;
+    }
+
     Core::Container::VariableArray<uint8_t> FindBoundaryVertices(const float* positions,
                                                                  size_t vertexCount,
                                                                  size_t positionStrideBytes,

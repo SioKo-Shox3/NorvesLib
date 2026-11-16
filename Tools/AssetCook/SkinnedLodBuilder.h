@@ -1,7 +1,10 @@
-﻿// スキンメッシュの LOD 簡略化に必要な前処理と部位分割を行う。
-// GR80 の修復と G11 の影専用メッシュでも利用できる入力と出力を持つ。
+﻿// スキンメッシュを部位に分け、境界頂点を固定した LOD の鎖を作る。
+// 誤差は LOD0 の頂点から LOD の面までの位置誤差と、関節の重みの変化によるスキン誤差の大きい方。
+// スキン誤差の基準角度 θref の既定 0.5 rad は仮の値。境界の固定や小さい部位では目標に届かないことがある。
+// 法線 3、UV 2、部位の関節の重み最大 16 の計 21 属性は meshoptimizer の上限 32 以下。
 #pragma once
 
+#include "Container/FixedArray.h"
 #include "Container/Span.h"
 #include "Container/String.h"
 #include "Container/VariableArray.h"
@@ -71,6 +74,51 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<uint8_t> BoundaryVertex;
     };
 
+    // 結果の索引配列における一部位・一 LOD の範囲。
+    struct SkinnedLodPartRange
+    {
+        uint32_t FirstIndex = 0;
+        uint32_t IndexCount = 0;
+    };
+
+    // 関節の正の重みを持つ部位の頂点を包む、メッシュ空間のバインド姿勢の箱。
+    struct SkinnedLodJointBounds
+    {
+        uint32_t JointIndex = 0;
+        Core::Container::FixedArray<float, 3> Min{};
+        Core::Container::FixedArray<float, 3> Max{};
+    };
+
+    // サブメッシュに属する部位と、LOD ごとの範囲および関節番号昇順の箱。
+    struct SkinnedLodPartResult
+    {
+        uint32_t SubMeshIndex = 0;
+        Core::Container::VariableArray<SkinnedLodPartRange> LodRanges;
+        Core::Container::VariableArray<SkinnedLodJointBounds> JointBounds;
+    };
+
+    // LOD の実際と目標の三角形数、および最大誤差。LOD0 の誤差は 0。
+    struct SkinnedLodLevelResult
+    {
+        uint32_t TriangleCount = 0;
+        uint32_t TargetTriangleCount = 0;
+        float PositionError = 0.0f; // LOD0 の頂点から LOD の面までの距離の最大、頂点と同じ単位。
+        float SkinError = 0.0f; // Σ|Δw_j|×r_j×θref の最大。
+        float MaxError = 0.0f; // 位置誤差とスキン誤差の大きい方。
+    };
+
+    // 元の頂点番号を、LOD ごと・サブメッシュ順の部位ごとに並べた結果。
+    struct SkinnedLodResult
+    {
+        Core::Container::VariableArray<uint32_t> Indices;
+        Core::Container::VariableArray<SkinnedLodSubMeshRange> SubMeshes; // LOD0 の範囲。
+        Core::Container::VariableArray<SkinnedLodLevelResult> Lods;
+        Core::Container::VariableArray<SkinnedLodPartResult> Parts;
+        uint32_t ZeroWeightVertexCount = 0;
+        uint32_t DegenerateTriangleCount = 0;
+        uint32_t DuplicateTriangleCount = 0;
+    };
+
     // 入力を検査し、位置の溶接、重みの正規化、退化と重複の除去を行う。
     [[nodiscard]] bool PreprocessSkinnedMesh(const SkinnedLodInput& input,
                                              SkinnedLodPreprocessed& out,
@@ -83,4 +131,10 @@ namespace NorvesLib::Tools::AssetCook
                                             const SkinnedLodParams& params,
                                             SkinnedLodPartition& out,
                                             Core::Container::AnsiString& error);
+
+    // 前処理と部位分割の後、部位ごとの LOD、誤差と関節の箱を作る。失敗時は out を変えない。
+    [[nodiscard]] bool BuildSkinnedLods(const SkinnedLodInput& input,
+                                        const SkinnedLodParams& params,
+                                        SkinnedLodResult& out,
+                                        Core::Container::AnsiString& error);
 }
