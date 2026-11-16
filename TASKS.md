@@ -7255,7 +7255,7 @@
 - notes: 完了条件はロードマップ 2613〜2615 行の GPU と撮影の部分。`grassland-wither=0,20,30` の座標と半径は仮で、着手時に near の視点の前方に置き直す（CaptureScene.ps1 の -GameArgs は「カンマの次が英字で始まらない限り分けない」ので数の並びは 1 つの引数のまま渡る）。「この段階の前の撮影」は G5 の草の確かめ（G5-GR43-GRASS-CHECK）の撮影の出力を使い、無ければ前の段階のコミットで撮る。直す必要が出たら、この項目では直さずに `G12-GR45-FIX-<名前>` を足す。
 
 ## G12-GR47-INSTANCE-VARIATION: 散布の 1 本ごとに色味と個体差の種を持たせ、1 本だけを記録を書き換えずに隠せるようにする
-- status: todo
+- status: done
 - after: G5-GR26-MATERIAL-PARAMS, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR26-GBUFFER-CONTRACT, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR47
 - needs-gr: GR26, GR30
