@@ -54,9 +54,13 @@ namespace NorvesLib::Core::Rendering
             float FogRange[4];
             float FogTintAndSkyBlend[4];    // rgb=霧の色味, w=空への寄せ（0..1）
             float FogReferenceElevation[4]; // x=基準の仰角の正弦, y=余弦, zw=未使用
+            // x=歩の配置（0=等間隔、1=指数）、y=指数の比、z=影つきの散乱を積む距離の上限（m、0 で上限なし）、w=参照の 256 歩なら 1
+            float FogSteps[4];
+            // x=画素ごとのずらしが有効なら 1、y=TAA が掛かるフレームで時間方向のずらしが有効なら 1、z=時間の位相（フレーム番号を 64 で割った余り）、w=未使用
+            float FogJitter[4];
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 832u + 2u * SkyAerialProfileSize * 16u);
+        static_assert(sizeof(GPUVolumetricsParams) == 864u + 2u * SkyAerialProfileSize * 16u);
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc(bool bUseVsm)
         {
@@ -247,6 +251,7 @@ namespace NorvesLib::Core::Rendering
                                     const RHI::TexturePtr& skyRadianceTexture,
                                     const RHI::TexturePtr& skyTransmittanceTexture,
                                     bool bActualShadowMapAvailable,
+                                    bool bReferenceSteps,
                                     GPUVolumetricsParams& outParams,
                                     VolumetricsParamsState& outState)
         {
@@ -292,6 +297,18 @@ namespace NorvesLib::Core::Rendering
                 outParams.FogTintAndSkyBlend[component] = heightFog.TintAndSkyBlend[component];
                 outParams.FogReferenceElevation[component] = heightFog.ReferenceElevationSinCos[component];
             }
+
+            outParams.FogSteps[0] = fog.StepDistribution == VolumetricFogStepDistribution::Exponential ? 1.0f : 0.0f;
+            outParams.FogSteps[1] = fog.StepDistribution == VolumetricFogStepDistribution::Exponential
+                                        ? fog.ExponentialStepRatio
+                                        : 0.0f;
+            outParams.FogSteps[2] = fog.ScatteringCutoffMeters;
+            outParams.FogSteps[3] = bReferenceSteps ? 1.0f : 0.0f;
+            const bool bTemporal = fog.bTemporalJitter && context.bTemporalAAApplied;
+            outParams.FogJitter[0] = (fog.bPixelJitter || fog.bTemporalJitter) ? 1.0f : 0.0f;
+            outParams.FogJitter[1] = bTemporal ? 1.0f : 0.0f;
+            outParams.FogJitter[2] = bTemporal ? static_cast<float>(context.TemporalFrameIndex % 64u) : 0.0f;
+            outParams.FogJitter[3] = 0.0f;
 
             outParams.FallbackFogColor[0] = heightFog.FallbackColorAndAmbientScale[0];
             outParams.FallbackFogColor[1] = heightFog.FallbackColorAndAmbientScale[1];
@@ -430,13 +447,28 @@ namespace NorvesLib::Core::Rendering
         {
             m_DefaultVsmBuffer->Update(&emptyVsmWord, sizeof(emptyVsmWord));
         }
-        if (!m_SceneDepthSampler || !m_SkyRadianceSampler || !m_SkyTransmittanceSampler ||
-            !m_DescriptorSetLayout || !m_DefaultVsmBuffer)
+        if (!m_SceneDepthSampler || !m_SkyRadianceSampler ||
+            !m_SkyTransmittanceSampler || !m_DescriptorSetLayout || !m_DefaultVsmBuffer)
         {
             NORVES_LOG_ERROR("VolumetricsPass", "サンプラ・記述子セットのレイアウト・VSM の既定のバッファを作れませんでした");
             Shutdown();
             return false;
         }
+
+#if NORVES_BUILD_DEVELOPMENT
+        char* referenceStepsValue = nullptr;
+        size_t referenceStepsLength = 0;
+        m_bReferenceSteps = _dupenv_s(&referenceStepsValue, &referenceStepsLength,
+                                      "NORVES_VOLUMETRIC_FOG_REFERENCE_STEPS") == 0 &&
+                            referenceStepsValue && std::strcmp(referenceStepsValue, "1") == 0;
+        std::free(referenceStepsValue);
+        if (m_bReferenceSteps)
+        {
+            NORVES_LOG_INFO("VolumetricsPass", "霧と空気遠近を参照の 256 歩で積みます");
+        }
+#else
+        m_bReferenceSteps = false;
+#endif
 
         m_bInitialized = true;
         return true;
@@ -655,6 +687,7 @@ namespace NorvesLib::Core::Rendering
                                skyRadianceTexture,
                                skyTransmittanceTexture,
                                bActualShadowMapAvailable,
+                               m_bReferenceSteps,
                                params,
                                paramsState);
         const bool bAerialPerspectiveAvailable = paramsState.bAerialAvailable;
@@ -1351,6 +1384,7 @@ namespace NorvesLib::Core::Rendering
                                    skyRadianceTexture,
                                    skyTransmittanceTexture,
                                    bActualShadowMapAvailable,
+                                   false,
                                    mediumParams[medium],
                                    mediumParamsState[medium]);
         }

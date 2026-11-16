@@ -7602,7 +7602,7 @@
 - notes: 要件 `#### GR59` の受け入れ確認の撮影・基準画像・計測の分（要件 6038・6040 行）。雨の強さは G7 の引数 `--rain=`（G7-GR49-ENV-INTERFACES）で決める。犬が走る場面は G4 の犬の移動の確かめの場面（`--dog-movement-smoke`。シーンの一覧には無い）か、grassland に犬が置かれていればそれを使う。`Scripts/UpdateRenderingGoldenBaselines.ps1` は Indoor・Outdoor の 2 枚専用（引数に 2 枚の SHA-256 を要する）なので、雨の場面の基準画像は GTAO の場面（`RenderingGTAOCornellRoomVulkanTest`）と同じ置き方で `Test/Core/Rendering/Baselines` に置き、承認の記録を GoldenBaselines.md に書く（UNCERTAIN: GTAO の場面の基準の置き方を読んでいない。着手時に確かめる）。目標の 0.3 ms は要件の目標値（未計測）で、合否は GR109 で決め、ここは記録。コードは基準画像と閾値の TSV 以外変えない。
 
 ## G11-GR52-FOG-STEPS: 霧と空気遠近の光線の歩を、手前を細かくする指数の配置と画素・時間のずらしにし、少ない歩で光の筋が参照に近づくようにする（既定は今のまま）
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR51
