@@ -11677,3 +11677,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 取り込みの拒否を外し、静的とスキンの両方で発光テクスチャと NormalScale を材質へ渡す: 着地(直し 0 回)
 - U3 通常とスキンの GBuffer で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
 - U4 MegaGeometry のラスタで発光テクスチャと NormalScale を使う: 着地(直し 0 回)
+- U5 可視バッファの材質の表と解決で発光テクスチャと NormalScale を使う: 着地(直し 0 回)
