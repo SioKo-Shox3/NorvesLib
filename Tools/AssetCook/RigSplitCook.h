@@ -2,6 +2,7 @@
 // 明示library入口。候補bytes/manifestを所有し、file公開や増分skipは行わない。
 #include "RigSplitImageInputs.h"
 #include "SkeletalImportReport.h"
+#include "SkinnedLodBuilder.h"
 #include "ClipOptimizeCliOptions.h"
 #include "Asset/CookedSkinMeshV1.h"
 #include "Asset/AssetManifest.h"
@@ -35,6 +36,13 @@ namespace NorvesLib::Tools::AssetCook
         Core::Asset::AssetCookedReference Reference;
         Core::Container::VariableArray<uint8_t> Payload, Package;
     };
+    // LOD の作成結果と、入力の整理で検出した件数。
+    struct RigSplitSkinnedLodReport
+    {
+        bool bBuilt = false;
+        uint32_t PartCount = 0, ZeroWeightVertexCount = 0, DegenerateTriangleCount = 0, DuplicateTriangleCount = 0;
+        Core::Container::VariableArray<SkinnedLodLevelResult> Lods;
+    };
     struct RigSplitCookResult
     {
         RigSplitCookEntry Skeleton, Mesh, Bank;
@@ -45,6 +53,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<uint64_t> SlotSourceMaterials;
         Core::AssetImport::LoadedImportSettingsDocument Import;
         Core::Skeletal::SkeletalGltfDecodeReport DecodeReport;
+        RigSplitSkinnedLodReport SkinnedLod;
         uint64_t SourceHash = 0;
         uint32_t DuplicateMaterialNameGroups = 0;
         Core::Container::VariableArray<Core::Container::AnsiString> Warnings;
@@ -62,6 +71,6 @@ namespace NorvesLib::Tools::AssetCook
     [[nodiscard]] bool CookRigSplitV1NativePath(Core::Container::Span<const uint8_t> source, const RigSplitCookRequest&,
                                                 RigSplitCookResult& out, Core::Skeletal::RigV1Report&,
                                                 Core::Container::AnsiString& error);
-    // 焼いた材質があるときだけ、stderrへskeletalのimport_reportを1行出す。無いときは何も出さない。
+    // 焼いた材質があるときは import_report、LOD を焼いたときは skinned_lod_report を stderr に 1 行ずつ出す。
     void PrintRigSplitBaseColorImportReport(const RigSplitCookRequest&, const RigSplitCookResult&);
 } // namespace NorvesLib::Tools::AssetCook

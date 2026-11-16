@@ -1,5 +1,6 @@
 ﻿#include "RigSplitCook.h"
 #include "Animation/RigRootFrame.h"
+#include "Animation/SkeletalBindRowMath.h"
 #include "MeshMaterialV1Plan.h"
 #include "AssetCookOutput.h"
 #include "GeometryInspection.h"
@@ -16,6 +17,8 @@ namespace NorvesLib::Tools::AssetCook
     namespace S = Core::Skeletal;
     namespace I = Core::AssetImport;
     namespace A = Core::Asset;
+    static_assert(I::MaximumSkinnedLodTargets == S::MaximumSkinLodCount);
+    static_assert(I::MaximumSkinnedLodParts == S::MaximumSkinPartCount);
     namespace
     {
         using Text = C::AnsiString;
@@ -739,6 +742,19 @@ namespace NorvesLib::Tools::AssetCook
             {
                 hash.String("norves.clip-quantize.v1");
             }
+            if (candidate.Import.Settings.SkinnedLod.bRequested)
+            {
+                const auto& settings = candidate.Import.Settings.SkinnedLod;
+                hash.String("norves.skinned-lod.v1");
+                hash.Number(settings.MinParts);
+                hash.Number(settings.MaxParts);
+                hash.Number(settings.Targets.size());
+                for (double target : settings.Targets)
+                {
+                    hash.Number(std::bit_cast<uint64_t>(target));
+                }
+                hash.Number(std::bit_cast<uint64_t>(settings.ThetaRef));
+            }
             candidate.SourceHash = hash.Value;
             if (request.bInventoryOnly)
             {
@@ -766,8 +782,102 @@ namespace NorvesLib::Tools::AssetCook
                 !S::BuildSkinMeshV1(rig, skeleton, request.SkeletonPath, slots, mesh, report, request.Limits,
                                     request.Profile) ||
                 !S::BuildClipBankV1({&rig, 1}, bank, report, request.Limits, request.Profile,
-                                    bAnalyzeClips ? &analysisOptions : nullptr, optimizedClips) ||
-                !S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
+                                    bAnalyzeClips ? &analysisOptions : nullptr, optimizedClips))
+            {
+                return fail("split_role_payload");
+            }
+            if (candidate.Import.Settings.SkinnedLod.bRequested)
+            {
+                const auto& settings = candidate.Import.Settings.SkinnedLod;
+                const auto& data = *mesh.GetData();
+                C::VariableArray<SkinnedLodSubMeshRange> subMeshRanges;
+                subMeshRanges.reserve(data.SubMeshes.size());
+                for (const auto& subMesh : data.SubMeshes)
+                {
+                    subMeshRanges.push_back({subMesh.IndexStart, subMesh.IndexCount});
+                }
+                // 逆バインド行列の逆を行ベクトルとして読み、メッシュ空間の関節位置を取る。
+                C::VariableArray<float> jointBindPositions;
+                jointBindPositions.reserve(data.InverseBindMatrices.size() * 3);
+                for (const auto& v : data.InverseBindMatrices)
+                {
+                    const Math::Matrix4x4 inverseBind(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+                                                       v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]);
+                    Math::Matrix4x4 bind;
+                    if (!Core::Animation::Detail::TryInverseMatrix(inverseBind, bind))
+                    {
+                        return fail("skinned_lod_build");
+                    }
+                    const auto position = bind.GetTranslationRow();
+                    jointBindPositions.push_back(position.x);
+                    jointBindPositions.push_back(position.y);
+                    jointBindPositions.push_back(position.z);
+                }
+                const SkinnedLodInput input{
+                    {data.Vertices.data(), data.Vertices.size()},
+                    {data.Indices.data(), data.Indices.size()},
+                    {subMeshRanges.data(), subMeshRanges.size()},
+                    uint32_t(data.Topology.Joints.size()),
+                    {jointBindPositions.data(), jointBindPositions.size()}};
+                SkinnedLodParams params;
+                params.MinParts = settings.MinParts;
+                params.MaxParts = settings.MaxParts;
+                params.MaxPartJoints = S::MaximumSkinPartJointCount;
+                params.Targets.clear();
+                for (double target : settings.Targets)
+                {
+                    params.Targets.push_back(float(target));
+                }
+                params.ThetaRef = float(settings.ThetaRef);
+                SkinnedLodResult lodResult;
+                Text lodError;
+                if (!BuildSkinnedLods(input, params, lodResult, lodError))
+                {
+                    return fail(lodError.empty() ? "skinned_lod_build" : lodError.c_str());
+                }
+                S::SkinLodTablesV1 tables;
+                tables.Lods.reserve(lodResult.Lods.size());
+                for (const auto& lod : lodResult.Lods)
+                {
+                    tables.Lods.push_back({lod.TriangleCount, lod.MaxError});
+                }
+                tables.Parts.reserve(lodResult.Parts.size());
+                for (const auto& sourcePart : lodResult.Parts)
+                {
+                    S::SkinPartV1 part;
+                    part.SubMeshIndex = sourcePart.SubMeshIndex;
+                    for (size_t i = 0; i < sourcePart.LodRanges.size(); ++i)
+                    {
+                        part.LodRanges[i] = {sourcePart.LodRanges[i].FirstIndex, sourcePart.LodRanges[i].IndexCount};
+                    }
+                    part.JointBounds.reserve(sourcePart.JointBounds.size());
+                    for (const auto& bounds : sourcePart.JointBounds)
+                    {
+                        part.JointBounds.push_back({bounds.JointIndex, bounds.Min, bounds.Max});
+                    }
+                    tables.Parts.push_back(std::move(part));
+                }
+                auto subMeshes = data.SubMeshes;
+                for (size_t i = 0; i < subMeshes.size(); ++i)
+                {
+                    subMeshes[i].IndexStart = lodResult.SubMeshes[i].IndexStart;
+                    subMeshes[i].IndexCount = lodResult.SubMeshes[i].IndexCount;
+                }
+                S::SkinMeshV1 meshWithLods;
+                if (!S::AttachSkinMeshLodsV1(mesh, std::move(lodResult.Indices), std::move(subMeshes),
+                                             std::move(tables), meshWithLods, report, request.Limits, request.Profile))
+                {
+                    return fail("skinned_lod_attach");
+                }
+                mesh = std::move(meshWithLods);
+                candidate.SkinnedLod.bBuilt = true;
+                candidate.SkinnedLod.PartCount = uint32_t(lodResult.Parts.size());
+                candidate.SkinnedLod.ZeroWeightVertexCount = lodResult.ZeroWeightVertexCount;
+                candidate.SkinnedLod.DegenerateTriangleCount = lodResult.DegenerateTriangleCount;
+                candidate.SkinnedLod.DuplicateTriangleCount = lodResult.DuplicateTriangleCount;
+                candidate.SkinnedLod.Lods = std::move(lodResult.Lods);
+            }
+            if (!S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile,
                                     S::ClipBankV1WriteOptions{.bQuantize = request.ClipOptimize.bQuantize}))
@@ -851,6 +961,23 @@ namespace NorvesLib::Tools::AssetCook
     }
     void PrintRigSplitBaseColorImportReport(const RigSplitCookRequest& request, const RigSplitCookResult& result)
     {
+        if (result.SkinnedLod.bBuilt)
+        {
+            const auto& lodReport = result.SkinnedLod;
+            std::fprintf(stderr, "skinned_lod_report={\"parts\":%u,\"zero_weight_vertices\":%u,"
+                                 "\"degenerate_triangles\":%u,\"duplicate_triangles\":%u,\"lods\":[",
+                         lodReport.PartCount, lodReport.ZeroWeightVertexCount, lodReport.DegenerateTriangleCount,
+                         lodReport.DuplicateTriangleCount);
+            for (size_t i = 0; i < lodReport.Lods.size(); ++i)
+            {
+                const auto& lod = lodReport.Lods[i];
+                std::fprintf(stderr, "%s{\"triangles\":%u,\"target_triangles\":%u,\"max_error\":%.9g,"
+                                     "\"position_error\":%.9g,\"skin_error\":%.9g}",
+                             i ? "," : "", lod.TriangleCount, lod.TargetTriangleCount,
+                             double(lod.MaxError), double(lod.PositionError), double(lod.SkinError));
+            }
+            std::fprintf(stderr, "]}\n");
+        }
         if (result.BaseColorBakes.empty())
         {
             return;

@@ -339,6 +339,98 @@ namespace NorvesLib::Core::AssetImport
             out = std::move(candidate);
             return SettingsResult::Success;
         }
+        SettingsResult ReadSkinnedLod(const JsonValue& skinnedLod, SkinnedLodImportSettings& out)
+        {
+            SkinnedLodImportSettings candidate;
+            if (!skinnedLod.IsValid())
+            {
+                out = std::move(candidate);
+                return SettingsResult::Success;
+            }
+            constexpr const char* fields[] = {"parts", "targets", "thetaRef"};
+            auto result = CheckFields(skinnedLod, fields);
+            if (result != SettingsResult::Success)
+            {
+                return result;
+            }
+            candidate.bRequested = true;
+            const auto parts = skinnedLod.FindMember("parts");
+            if (parts.IsValid())
+            {
+                if (!parts.IsArray())
+                {
+                    return SettingsResult::InvalidType;
+                }
+                if (parts.GetArraySize() != 2)
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                uint32_t limits[2] = {};
+                for (size_t index = 0; index < 2; ++index)
+                {
+                    double value = 0;
+                    result = ReadNumber(parts.GetArrayElement(index), value);
+                    if (result != SettingsResult::Success)
+                    {
+                        return result;
+                    }
+                    if (value < 1 || value > MaximumSkinnedLodParts || std::floor(value) != value)
+                    {
+                        return SettingsResult::InvalidValue;
+                    }
+                    limits[index] = static_cast<uint32_t>(value);
+                }
+                if (limits[0] > limits[1])
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                candidate.MinParts = limits[0];
+                candidate.MaxParts = limits[1];
+            }
+            const auto targets = skinnedLod.FindMember("targets");
+            if (targets.IsValid())
+            {
+                if (!targets.IsArray())
+                {
+                    return SettingsResult::InvalidType;
+                }
+                if (targets.GetArraySize() == 0 || targets.GetArraySize() > MaximumSkinnedLodTargets)
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                candidate.Targets.clear();
+                candidate.Targets.reserve(targets.GetArraySize());
+                for (size_t index = 0; index < targets.GetArraySize(); ++index)
+                {
+                    double value = 0;
+                    result = ReadNumber(targets.GetArrayElement(index), value);
+                    if (result != SettingsResult::Success)
+                    {
+                        return result;
+                    }
+                    if (value <= 0 || value > 1 || (index == 0 ? value != 1 : value >= candidate.Targets.back()))
+                    {
+                        return SettingsResult::InvalidValue;
+                    }
+                    candidate.Targets.push_back(value);
+                }
+            }
+            const auto thetaRef = skinnedLod.FindMember("thetaRef");
+            if (thetaRef.IsValid())
+            {
+                result = ReadNumber(thetaRef, candidate.ThetaRef);
+                if (result != SettingsResult::Success)
+                {
+                    return result;
+                }
+                if (candidate.ThetaRef <= 0 || candidate.ThetaRef > 3.141592653589793)
+                {
+                    return SettingsResult::InvalidValue;
+                }
+            }
+            out = std::move(candidate);
+            return SettingsResult::Success;
+        }
         SettingsResult CheckMeta(const JsonValue& meta)
         {
             if (!meta.IsValid())
@@ -384,8 +476,8 @@ namespace NorvesLib::Core::AssetImport
             return SettingsResult::InvalidRoot;
         }
         constexpr const char* fields[] = {"version", "meta", "units", "axes", "origin", "mesh",
-            "repair", "lod", "material", "collision", "clip", "audio", "materials"};
-        auto result = CheckFields(root, fields, allowMaterial ? 13 : 12);
+            "repair", "lod", "material", "collision", "clip", "audio", "skinnedLod", "materials"};
+        auto result = CheckFields(root, fields, allowMaterial ? 14 : 13);
         if (result != SettingsResult::Success)
         {
             return result;
@@ -421,9 +513,10 @@ namespace NorvesLib::Core::AssetImport
         {
             return result;
         }
-        for (const char* name : {"repair", "lod", "material", "collision", "clip", "audio"})
+        for (const char* name : {"repair", "lod", "material", "collision", "clip", "audio", "skinnedLod"})
         {
-            if (allowMaterial && (std::strcmp(name, "material") == 0 || std::strcmp(name, "clip") == 0))
+            if (allowMaterial && (std::strcmp(name, "material") == 0 || std::strcmp(name, "clip") == 0 ||
+                std::strcmp(name, "skinnedLod") == 0))
             {
                 continue;
             }
@@ -453,6 +546,11 @@ namespace NorvesLib::Core::AssetImport
             return status;
         }
         status = ReadClip(root.FindMember("clip"), candidate.Clip);
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        status = ReadSkinnedLod(root.FindMember("skinnedLod"), candidate.SkinnedLod);
         if (status != SettingsResult::Success)
         {
             return status;

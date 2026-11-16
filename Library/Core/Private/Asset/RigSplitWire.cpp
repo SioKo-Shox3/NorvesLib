@@ -4,6 +4,7 @@
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 namespace NorvesLib::Core::Skeletal::SplitWire
@@ -148,7 +149,8 @@ namespace NorvesLib::Core::Skeletal::SplitWire
                                           Four('V', 'E', 'R', 'T'), Four('I', 'N', 'D', 'X'), Four('I', 'B', 'M', 'S'),
                                           Four('M', 'N', 'G', 'T'), Four('S', 'U', 'B', 'M'), Four('M', 'S', 'L', 'T'),
                                           Four('M', 'A', 'T', 'S'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
-                                          Four('S', 'A', 'M', 'P'), Four('S', 'O', 'C', 'K')};
+                                          Four('S', 'A', 'M', 'P'), Four('S', 'O', 'C', 'K'), Four('L', 'O', 'D', 'S'),
+                                          Four('P', 'A', 'R', 'T')};
             return (IsStaticRootFrameProfile(profile) && code == Four('A', 'F', 'R', 'M')) ||
                    std::find(std::begin(codes), std::end(codes), code) != std::end(codes);
         }
@@ -328,6 +330,297 @@ namespace NorvesLib::Core::Skeletal::SplitWire
         out = std::move(bytes);
         return RigV1Status::Success;
     }
+    RigV1Status WriteSkinLodTables(const SkinLodTablesV1& tables, Bytes& lods, Bytes& parts)
+    {
+        if (&lods == &parts || tables.Lods.empty() != tables.Parts.empty())
+        {
+            return RigV1Status::InvalidInput;
+        }
+        if (tables.Lods.size() > MaximumSkinLodCount || tables.Parts.size() > MaximumSkinPartCount ||
+            uint64_t(tables.Lods.size()) * uint64_t(tables.Parts.size()) > MaximumSkinPartLodRangeCount)
+        {
+            return RigV1Status::LimitExceeded;
+        }
+        for (const auto& part : tables.Parts)
+        {
+            if (part.JointBounds.size() > MaximumSkinPartJointCount)
+            {
+                return RigV1Status::LimitExceeded;
+            }
+            if (part.JointBounds.empty())
+            {
+                return RigV1Status::InvalidInput;
+            }
+        }
+
+        Bytes lodBytes(tables.Lods.size() * 16, 0);
+        Bytes partBytes(tables.Parts.size() * 528, 0);
+        for (size_t i = 0; i < tables.Lods.size(); ++i)
+        {
+            const size_t offset = i * 16;
+            W32(lodBytes, offset, tables.Lods[i].TriangleCount);
+            WF(lodBytes, offset + 4, tables.Lods[i].MaxError);
+        }
+        for (size_t i = 0; i < tables.Parts.size(); ++i)
+        {
+            const auto& part = tables.Parts[i];
+            const size_t offset = i * 528;
+            W32(partBytes, offset, part.SubMeshIndex);
+            W32(partBytes, offset + 4, uint32_t(part.JointBounds.size()));
+            for (size_t k = 0; k < tables.Lods.size(); ++k)
+            {
+                W32(partBytes, offset + 16 + k * 8, part.LodRanges[k].FirstIndex);
+                W32(partBytes, offset + 20 + k * 8, part.LodRanges[k].IndexCount);
+            }
+            for (size_t j = 0; j < part.JointBounds.size(); ++j)
+            {
+                const auto& bounds = part.JointBounds[j];
+                const size_t jointOffset = offset + 80 + j * 28;
+                W32(partBytes, jointOffset, bounds.JointIndex);
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    WF(partBytes, jointOffset + 4 + axis * 4, bounds.Min[axis]);
+                    WF(partBytes, jointOffset + 16 + axis * 4, bounds.Max[axis]);
+                }
+            }
+        }
+        lods = std::move(lodBytes);
+        parts = std::move(partBytes);
+        return RigV1Status::Success;
+    }
+
+    RigV1Status ReadSkinLodTables(View bytes, const Section& lods, const Section& parts, SkinLodTablesV1& out)
+    {
+        const bool bLodsAbsent = lods.Offset == 0 && lods.Size == 0 && lods.Count == 0;
+        const bool bPartsAbsent = parts.Offset == 0 && parts.Size == 0 && parts.Count == 0;
+        if (bLodsAbsent != bPartsAbsent)
+        {
+            return RigV1Status::BadWire;
+        }
+        if (bLodsAbsent)
+        {
+            out = SkinLodTablesV1{};
+            return RigV1Status::Success;
+        }
+        if (!lods.Count || lods.Count > MaximumSkinLodCount || !parts.Count || parts.Count > MaximumSkinPartCount ||
+            uint64_t(lods.Count) * parts.Count > MaximumSkinPartLodRangeCount)
+        {
+            return RigV1Status::LimitExceeded;
+        }
+        if (!bytes.data() || lods.Record != 16 || parts.Record != 528 || !lods.Offset || !parts.Offset ||
+            lods.Size != uint64_t(lods.Count) * 16 || parts.Size != uint64_t(parts.Count) * 528 ||
+            lods.Offset > bytes.size() || lods.Size > bytes.size() - lods.Offset ||
+            parts.Offset > bytes.size() || parts.Size > bytes.size() - parts.Offset)
+        {
+            return RigV1Status::BadWire;
+        }
+
+        SkinLodTablesV1 candidate;
+        candidate.Lods.resize(lods.Count);
+        for (size_t i = 0; i < candidate.Lods.size(); ++i)
+        {
+            const size_t offset = size_t(lods.Offset) + i * 16;
+            if (!Zero(bytes, offset + 8, offset + 16))
+            {
+                return RigV1Status::BadWire;
+            }
+            candidate.Lods[i].TriangleCount = U32(bytes, offset);
+            candidate.Lods[i].MaxError = F32(bytes, offset + 4);
+        }
+        candidate.Parts.resize(parts.Count);
+        for (size_t i = 0; i < candidate.Parts.size(); ++i)
+        {
+            const size_t offset = size_t(parts.Offset) + i * 528;
+            const uint32_t count = U32(bytes, offset + 4);
+            if (!count || count > MaximumSkinPartJointCount)
+            {
+                return RigV1Status::LimitExceeded;
+            }
+            if (!Zero(bytes, offset + 8, offset + 16) ||
+                !Zero(bytes, offset + 16 + size_t(lods.Count) * 8, offset + 80) ||
+                !Zero(bytes, offset + 80 + size_t(count) * 28, offset + 528))
+            {
+                return RigV1Status::BadWire;
+            }
+            auto& part = candidate.Parts[i];
+            part.SubMeshIndex = U32(bytes, offset);
+            for (size_t k = 0; k < candidate.Lods.size(); ++k)
+            {
+                part.LodRanges[k].FirstIndex = U32(bytes, offset + 16 + k * 8);
+                part.LodRanges[k].IndexCount = U32(bytes, offset + 20 + k * 8);
+            }
+            part.JointBounds.resize(count);
+            for (size_t j = 0; j < part.JointBounds.size(); ++j)
+            {
+                auto& bounds = part.JointBounds[j];
+                const size_t jointOffset = offset + 80 + j * 28;
+                bounds.JointIndex = U32(bytes, jointOffset);
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    bounds.Min[axis] = F32(bytes, jointOffset + 4 + axis * 4);
+                    bounds.Max[axis] = F32(bytes, jointOffset + 16 + axis * 4);
+                }
+            }
+        }
+        out = std::move(candidate);
+        return RigV1Status::Success;
+    }
+
+    RigV1Status ValidateSkinLodTables(const SkinLodTablesV1& tables, C::Span<const uint32_t> allIndices,
+                                     C::Span<const SkeletalSubMesh> subMeshes, uint64_t vertexCount,
+                                     uint32_t jointCount)
+    {
+        if (tables.IsEmpty())
+        {
+            return RigV1Status::Success;
+        }
+        if (tables.Lods.empty() || tables.Parts.empty())
+        {
+            return RigV1Status::InvalidInput;
+        }
+        if (tables.Lods.size() > MaximumSkinLodCount || tables.Parts.size() > MaximumSkinPartCount ||
+            uint64_t(tables.Lods.size()) * uint64_t(tables.Parts.size()) > MaximumSkinPartLodRangeCount)
+        {
+            return RigV1Status::LimitExceeded;
+        }
+        if (!allIndices.data() || !subMeshes.data() || subMeshes.empty() || subMeshes.size() > tables.Parts.size())
+        {
+            return RigV1Status::InvalidInput;
+        }
+
+        uint64_t totalIndexCount = 0;
+        for (const auto& lod : tables.Lods)
+        {
+            if (!lod.TriangleCount || !std::isfinite(lod.MaxError) || lod.MaxError < 0.0f)
+            {
+                return RigV1Status::InvalidInput;
+            }
+            totalIndexCount += uint64_t(lod.TriangleCount) * 3;
+        }
+        if (totalIndexCount != allIndices.size())
+        {
+            return RigV1Status::InvalidInput;
+        }
+        const uint64_t lod0IndexCount = uint64_t(tables.Lods[0].TriangleCount) * 3;
+        uint64_t submeshIndexCount = 0;
+        for (const auto& subMesh : subMeshes)
+        {
+            submeshIndexCount += subMesh.IndexCount;
+        }
+        if (submeshIndexCount != lod0IndexCount)
+        {
+            return RigV1Status::InvalidInput;
+        }
+
+        for (const auto& part : tables.Parts)
+        {
+            if (part.SubMeshIndex >= subMeshes.size())
+            {
+                return RigV1Status::InvalidInput;
+            }
+            if (part.JointBounds.size() > MaximumSkinPartJointCount)
+            {
+                return RigV1Status::LimitExceeded;
+            }
+            if (part.JointBounds.empty())
+            {
+                return RigV1Status::InvalidInput;
+            }
+            for (size_t k = tables.Lods.size(); k < MaximumSkinLodCount; ++k)
+            {
+                if (part.LodRanges[k].FirstIndex || part.LodRanges[k].IndexCount)
+                {
+                    return RigV1Status::InvalidInput;
+                }
+            }
+            for (size_t j = 0; j < part.JointBounds.size(); ++j)
+            {
+                const auto& bounds = part.JointBounds[j];
+                if (bounds.JointIndex >= jointCount || (j && bounds.JointIndex <= part.JointBounds[j - 1].JointIndex))
+                {
+                    return RigV1Status::InvalidInput;
+                }
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    if (!std::isfinite(bounds.Min[axis]) || !std::isfinite(bounds.Max[axis]) ||
+                        bounds.Min[axis] > bounds.Max[axis])
+                    {
+                        return RigV1Status::InvalidInput;
+                    }
+                }
+            }
+        }
+
+        uint64_t lodStart = 0;
+        for (size_t k = 0; k < tables.Lods.size(); ++k)
+        {
+            const uint64_t lodEnd = lodStart + uint64_t(tables.Lods[k].TriangleCount) * 3;
+            uint64_t next = lodStart;
+            for (const auto& part : tables.Parts)
+            {
+                const auto& range = part.LodRanges[k];
+                if (range.FirstIndex != next || range.IndexCount % 3 != 0)
+                {
+                    return RigV1Status::InvalidInput;
+                }
+                next += range.IndexCount;
+            }
+            if (next != lodEnd)
+            {
+                return RigV1Status::InvalidInput;
+            }
+            lodStart = lodEnd;
+        }
+
+        size_t partIndex = 0;
+        for (size_t subIndex = 0; subIndex < subMeshes.size(); ++subIndex)
+        {
+            if (partIndex == tables.Parts.size() || tables.Parts[partIndex].SubMeshIndex != subIndex ||
+                tables.Parts[partIndex].LodRanges[0].FirstIndex != subMeshes[subIndex].IndexStart)
+            {
+                return RigV1Status::InvalidInput;
+            }
+            do
+            {
+                ++partIndex;
+            } while (partIndex < tables.Parts.size() && tables.Parts[partIndex].SubMeshIndex == subIndex);
+            const auto& last = tables.Parts[partIndex - 1].LodRanges[0];
+            if (uint64_t(last.FirstIndex) + last.IndexCount !=
+                uint64_t(subMeshes[subIndex].IndexStart) + subMeshes[subIndex].IndexCount)
+            {
+                return RigV1Status::InvalidInput;
+            }
+        }
+        if (partIndex != tables.Parts.size())
+        {
+            return RigV1Status::InvalidInput;
+        }
+
+        for (const uint32_t index : allIndices)
+        {
+            if (uint64_t(index) >= vertexCount)
+            {
+                return RigV1Status::InvalidInput;
+            }
+        }
+        if (tables.Lods.size() > 1)
+        {
+            C::VariableArray<uint8_t> lod0Vertices(size_t(vertexCount), 0);
+            for (size_t i = 0; i < size_t(lod0IndexCount); ++i)
+            {
+                lod0Vertices[allIndices[i]] = 1;
+            }
+            for (size_t i = size_t(lod0IndexCount); i < allIndices.size(); ++i)
+            {
+                if (!lod0Vertices[allIndices[i]])
+                {
+                    return RigV1Status::InvalidInput;
+                }
+            }
+        }
+        return RigV1Status::Success;
+    }
+
     RigV1Status ReadTopology(View b, View strings, const Section& section, const RigV1Limits& limits, RigTopology& out)
     {
         if (!section.Count || section.Count > limits.MaxJoints)

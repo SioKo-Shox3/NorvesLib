@@ -93,7 +93,13 @@ namespace NorvesLib::Core
         if (m_SplitMesh)
         {
             size += sizeof(Skeletal::SkinMeshV1Data) + m_SplitMesh->Vertices.size() * sizeof(Skeletal::SkeletalVertex) +
-                    m_SplitMesh->Indices.size() * sizeof(uint32_t);
+                    (m_SplitMesh->Indices.size() + m_SplitMesh->LodIndices.size()) * sizeof(uint32_t);
+            size += m_SplitMesh->LodTables.Lods.size() * sizeof(Skeletal::SkinLodV1) +
+                    m_SplitMesh->LodTables.Parts.size() * sizeof(Skeletal::SkinPartV1);
+            for (const auto& part : m_SplitMesh->LodTables.Parts)
+            {
+                size += part.JointBounds.size() * sizeof(Skeletal::SkinPartJointBoundsV1);
+            }
             size += m_SplitMesh->InverseBindMatrices.size() * sizeof(Container::FixedArray<float, 16>);
             size += m_SplitMesh->Topology.CanonicalBytes.size() + m_SplitMesh->SkeletonPath.size();
             size += m_SplitMesh->SubMeshes.size() * sizeof(Skeletal::SkeletalSubMesh);

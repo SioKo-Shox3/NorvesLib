@@ -1,6 +1,8 @@
 ﻿#pragma once
 // 分離role専用の有限wire外枠。受入済みClipBank codecの意味とbytesは変更しない。
 #include "Animation/RigV1Types.h"
+#include "Asset/SkinnedMeshLodTables.h"
+#include "Resource/SkeletalSubMesh.h"
 namespace NorvesLib::Core::Skeletal::SplitWire
 {
     using Bytes = Container::VariableArray<uint8_t>;
@@ -49,5 +51,14 @@ namespace NorvesLib::Core::Skeletal::SplitWire
                               const RigV1Limits&, RigImportProfile = RigImportProfile::DirectTrs128);
     RigV1Status ReadTopology(View, View strings, const Section&, const RigV1Limits&, RigTopology&);
     void WriteTopology(const RigTopology&, Bytes& strings, Bytes& joints);
+    // 呼出側で ValidateSkinLodTables を済ませた後、LODS と PART の bytes を作る。
+    RigV1Status WriteSkinLodTables(const SkinLodTablesV1& tables, Bytes& lods, Bytes& parts);
+    // 外枠で解決済みの節の予約領域と件数を検査する。成功時だけ out を置換する。
+    // 索引・サブメッシュとの整合は呼出側が ValidateSkinLodTables で検査する。
+    RigV1Status ReadSkinLodTables(View bytes, const Section& lods, const Section& parts, SkinLodTablesV1& out);
+    // INDX 全体（LOD0 の後ろに LOD1 以降が続く）とサブメッシュ・頂点・関節の整合を検査する。
+    RigV1Status ValidateSkinLodTables(const SkinLodTablesV1& tables, Container::Span<const uint32_t> allIndices,
+                                     Container::Span<const SkeletalSubMesh> subMeshes, uint64_t vertexCount,
+                                     uint32_t jointCount);
     uint64_t RootIdentityHash();
 } // namespace NorvesLib::Core::Skeletal::SplitWire
