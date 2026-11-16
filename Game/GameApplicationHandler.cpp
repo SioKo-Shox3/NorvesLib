@@ -447,6 +447,21 @@ namespace Game
         Environment::EnvironmentTarget s_EnvironmentPresetTarget;
         bool s_bEnvironmentApplyPending = false;
 
+        String ResolveEnvironmentPresetRoot()
+        {
+            // 作業ディレクトリは実行ファイルのディレクトリなので、資産が無ければリポジトリの根を使う。
+            std::error_code existsError;
+            if (std::filesystem::is_directory("Assets/Data/Environment", existsError) && !existsError)
+            {
+                return {};
+            }
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            return String(std::filesystem::path(NORVES_SOURCE_ASSET_DIR).parent_path().string().c_str());
+#else
+            return {};
+#endif
+        }
+
         bool HasEnvironmentArguments()
         {
             return s_bHasRain || s_bHasWetness || s_bHasCloudCover || s_bHasWind || s_bHasEnvironmentPreset;
@@ -1309,7 +1324,8 @@ namespace Game
             if (TryStripPrefix(args[i], kEnvironmentPresetOption, environmentValue))
             {
                 String error;
-                if (!Environment::LoadEnvironmentPreset(environmentValue, s_EnvironmentPresetTarget, &error))
+                if (!Environment::LoadEnvironmentPreset(ResolveEnvironmentPresetRoot(), environmentValue,
+                                                        s_EnvironmentPresetTarget, &error))
                 {
                     LOG_ERROR("--environment-preset の読み込みに失敗しました: %s", error.c_str());
                     return false;
@@ -4067,6 +4083,7 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            engine->GetEnvironment().SetPresetRoot(ResolveEnvironmentPresetRoot());
             // RenderWorld の設定はシーン切り替えを通して保持される。
             if (s_bSkyOcclusion)
             {

@@ -56,6 +56,10 @@ namespace NorvesLib::Core::Environment
         bool IsEnabled() const;
 
         void SetTarget(const EnvironmentTarget& target);
+        /// プリセットの根を設定する。無効中も受け付け、有効・無効の切り替え後も保持する。空なら作業ディレクトリを使う。
+        void SetPresetRoot(const Container::String& rootDirectory);
+        /// プリセットの根を返す。空なら作業ディレクトリを使う。
+        const Container::String& GetPresetRoot() const;
         /// 名前のプリセットを読み、遷移の目標として SetTarget へ渡す。DiscontinuityId は進めない。
         bool ApplyPreset(const Container::String& name);
         void SetImmediate(const EnvironmentTarget& target);
@@ -108,6 +112,8 @@ namespace NorvesLib::Core::Environment
 
         bool m_bEnabled = false;
         bool m_bRestorePending = false;
+        /// プリセットの根。既定の空文字列は作業ディレクトリを表す。
+        Container::String m_PresetRoot;
         EnvironmentSceneBase m_SceneBase;
         EnvironmentState m_BaseState;
         EnvironmentState m_EffectiveState;

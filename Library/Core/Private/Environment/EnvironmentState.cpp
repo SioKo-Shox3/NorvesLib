@@ -395,6 +395,12 @@ namespace NorvesLib::Core::Environment
 
     bool LoadEnvironmentPreset(const Container::String& name, EnvironmentTarget& outTarget, Container::String* pOutError)
     {
+        return LoadEnvironmentPreset(Container::String{}, name, outTarget, pOutError);
+    }
+
+    bool LoadEnvironmentPreset(const Container::String& rootDirectory, const Container::String& name,
+                               EnvironmentTarget& outTarget, Container::String* pOutError)
+    {
         if (pOutError)
         {
             pOutError->clear();
@@ -406,7 +412,8 @@ namespace NorvesLib::Core::Environment
         }
         try
         {
-            const std::filesystem::path filePath(path.c_str());
+            const std::filesystem::path filePath = rootDirectory.empty() ? std::filesystem::path(path.c_str()) :
+                std::filesystem::path(rootDirectory.c_str()) / std::filesystem::path(path.c_str());
             std::error_code error;
             if (!std::filesystem::is_regular_file(filePath, error) || error)
             {

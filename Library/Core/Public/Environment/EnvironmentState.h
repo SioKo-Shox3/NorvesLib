@@ -165,9 +165,13 @@ namespace NorvesLib::Core::Environment
     /// 英数字・'_'・'-' の 1〜64 文字の名前から Assets/Data/Environment/<name>.env.json を作る。
     bool MakeEnvironmentPresetPath(const Container::String& name, Container::String& outPath);
 
-    /// 作業ディレクトリからの相対パスで名前のプリセットを読み、遷移の目標を返す。
+    /// 作業ディレクトリを根として名前のプリセットを読み、遷移の目標を返す。
     bool LoadEnvironmentPreset(const Container::String& name, EnvironmentTarget& outTarget,
                                Container::String* pOutError = nullptr);
+
+    /// 指定した根からの相対パスで名前のプリセットを読む。根が空なら作業ディレクトリを使う。
+    bool LoadEnvironmentPreset(const Container::String& rootDirectory, const Container::String& name,
+                               EnvironmentTarget& outTarget, Container::String* pOutError = nullptr);
 
     /// 全欄に同じ遷移時間と進み方を設定する。
     void SetEnvironmentTargetDuration(EnvironmentTarget& target, float seconds, ETransitionCurve curve);
