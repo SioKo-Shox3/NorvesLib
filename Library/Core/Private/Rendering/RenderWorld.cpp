@@ -459,6 +459,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetDecals(decals);
     }
 
+    void RenderWorld::SetGpuParticleFrame(const GpuParticleScene& frame)
+    {
+        m_RenderingCoordinator.SetGpuParticleFrame(frame);
+    }
+
     void RenderWorld::SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data)
     {
         m_RenderingCoordinator.GetExtensionDataStore().SetBytes(name, layoutHash, elementSize, count, data);

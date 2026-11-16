@@ -11,6 +11,8 @@
 namespace NorvesLib::Core::Rendering
 {
     struct BoardProxy;
+    struct GpuParticleScene;
+    struct GpuEmitterParams;
 }
 
 namespace NorvesLib::Core::Particle
@@ -108,7 +110,12 @@ namespace NorvesLib::Core::Particle
     class VfxEffectSystem
     {
     public:
-        VfxEffectSystem() = default;
+        VfxEffectSystem();
+        ~VfxEffectSystem();
+        VfxEffectSystem(VfxEffectSystem&&) noexcept;
+        VfxEffectSystem& operator=(VfxEffectSystem&&) noexcept;
+        VfxEffectSystem(const VfxEffectSystem&) = delete;
+        VfxEffectSystem& operator=(const VfxEffectSystem&) = delete;
 
         VfxEffectHandle CreateInstance(const VfxEffectAsset& asset, const VfxInstanceDesc& desc, Container::String* outError = nullptr);
         bool DestroyInstance(VfxEffectHandle handle);
@@ -125,8 +132,13 @@ namespace NorvesLib::Core::Particle
          */
         bool RaiseOrientedEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position,
             const Math::Vector3& normal, double timeSeconds);
+        bool RaiseGpuBurst(VfxEffectHandle handle, uint32_t emitterIndex, const Math::Vector3& position,
+            const Math::Vector3& normal, const Math::Vector3& velocity, uint32_t count);
         void Tick(float deltaTime);
         void Tick(float deltaTime, const VfxTickContext& context);
+        // CPU 側の時間入力を保ちながら GPU 側だけに無倍率時間を渡す。
+        void Tick(float deltaTime, const VfxTickContext& context, float gpuUnscaledDeltaTime);
+        void BuildGpuParticleFrame(Rendering::GpuParticleScene& out);
         double GetInstanceTime(VfxEffectHandle handle) const;
         uint32_t GetEmitterCount(VfxEffectHandle handle) const;
         bool CopyParticles(VfxEffectHandle handle, uint32_t emitterIndex, VariableArray<VfxParticleState>& outParticles) const;
@@ -137,6 +149,8 @@ namespace NorvesLib::Core::Particle
         static Math::Vector4 ComputeFlipbookUVRect(const VfxFlipbookImportSettings& flipbook, uint32_t frame);
 
     private:
+        struct GpuExecutionState;
+
         struct ModuleBinding
         {
             uint32_t Arguments[16] = {};
@@ -192,6 +206,13 @@ namespace NorvesLib::Core::Particle
             uint32_t NextSerial = 0u;
             uint32_t Seed = 0u;
             uint32_t MaxParticles = 0u;
+            uint32_t GpuPoolIndex = std::numeric_limits<uint32_t>::max();
+            uint32_t GpuPoolGeneration = 0u;
+            uint32_t GpuEpoch = 0u;
+            uint32_t GpuPendingBurstCount = 0u;
+            uint32_t GpuDuplicateWarnings = 0u;
+            float GpuPendingDeltaTime = 0.0f;
+            bool bGpuAllocationWarned = false;
             VfxExecutor Executor = VfxExecutor::Cpu;
             VfxRandomStream RandomStream = VfxRandomStream::Sequential;
             VfxTimeChannel TimeChannel = VfxTimeChannel::Particle;
@@ -248,7 +269,9 @@ namespace NorvesLib::Core::Particle
             VariableArray<PendingEvent> Events;
             uint32_t PropertyIndices[8] = {};
             double Time = 0.0;
+            Math::Vector3 PreviousGpuPosition;
             uint32_t Generation = 1u;
+            bool bHasPreviousGpuPosition = false;
             bool bActive = false;
             bool bRetired = false;
         };
@@ -256,7 +279,10 @@ namespace NorvesLib::Core::Particle
         static uint32_t InitialRandomState(uint32_t seed, uint32_t emitterIndex);
         static float NextUnitFloat(uint32_t& state);
         static bool CacheBindings(InstanceSlot& slot);
-        static void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
+        void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
+        GpuExecutionState& EnsureGpuState();
+        static Rendering::GpuEmitterParams PackGpuEmitterParams(const InstanceSlot& slot, uint32_t emitterIndex,
+            EmitterState& emitter, const VariableArray<uint32_t>& frameIndices, Rendering::GpuParticleScene& out);
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
         static void UpdateOverLife(const EmitterState& emitter, VfxParticleState& particle);
         static bool ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
@@ -266,6 +292,7 @@ namespace NorvesLib::Core::Particle
             const Math::Vector3* orientationNormal = nullptr, bool bUsePositionForCameraBox = false);
         void ReleaseSlot(uint32_t index);
 
+        TUniquePtr<GpuExecutionState> m_GpuState;
         VariableArray<InstanceSlot> m_Instances;
         VariableArray<uint32_t> m_FreeInstanceIndices;
     };
