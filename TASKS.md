@@ -7422,7 +7422,7 @@
 - notes: 要件 `#### GR114` の受け入れ確認のうち、撮影で測る分（影の先端の幾何の検算・GPU 時間・草とファーの方針）をここに分けた。`CaptureStartupScene.ps1` の `-SunElevations` は今 0〜90 の度（GR55 で負へ広げる）。GPU A/B の新しい試験（要件の `MegaGeometryDirectionalShadowVulkanTest`）は足さない: MegaGeometry の CSM 描画は SS-CSM-MEGA-CASTERS で撮影の昼・夕の確かめと基準画像の試験が済み、欠ければ撮影と `RenderingGolden*` で気づける（Docs/Testing.md の試験を足す条件に当たらない）。GPU 時間の目標は GR109（G19）で決め、ここは記録だけ。自動停止の 2000 lux は試しの値で根拠なし（撮影で曇天の地表照度を見て決め、決めた値を記録に書く）。grassland の視点名は G5-GR43-GRASS-CHECK と同じ。ロードマップ 2002 行。
 
 ## G11-GR54-SKY-SOURCE-SHARE: 空のモデルと放射輝度の源を空の LUT と空由来 IBL で 1 回だけ作って共有し、IBL の生成を空のパスへ移して所要時間を記録する
-- status: todo
+- status: done
 - after: G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR54
 - needs-gr: GR50

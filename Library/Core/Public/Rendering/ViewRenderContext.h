@@ -449,6 +449,33 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    /** @brief 空由来 IBL の 3 枚（SkyAtmospherePass が空の LUT と同じ空の model から作る）。作れなければ空で bValid が偽。 */
+    struct SkyAtmosphereIblResources
+    {
+        /** @brief 地表から見た空の環境（視線方向の透過率込みの正距円筒）。RTGI・DDGI の不交差へ公開する。 */
+        RHI::TexturePtr EnvironmentTexture;
+        /** @brief 空由来の拡散照度。 */
+        RHI::TexturePtr DiffuseIrradianceTexture;
+        /** @brief 空由来の鏡面の前フィルタ。 */
+        RHI::TexturePtr PrefilteredSpecularTexture;
+        /** @brief 拡散照度の全球の平均照度（強度を掛ける前）。 */
+        float AverageIrradiance[3] = {};
+        bool bValid = false;
+
+        /** @brief 公開する IBL の資源と値を既定へ戻す。 */
+        void Reset()
+        {
+            EnvironmentTexture.reset();
+            DiffuseIrradianceTexture.reset();
+            PrefilteredSpecularTexture.reset();
+            for (float& irradiance : AverageIrradiance)
+            {
+                irradiance = 0.0f;
+            }
+            bValid = false;
+        }
+    };
+
     struct SkyAtmosphereRenderResources
     {
         SkyAtmosphereParameters Parameters;
@@ -458,6 +485,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr Sampler;
         // 空気遠近の高度ごとの表（LUT と同じ空の model から作った値）
         SkyAerialProfile AerialProfile;
+        /** @brief LUT と同じ空の model から作った空由来 IBL。 */
+        SkyAtmosphereIblResources Ibl;
         float PreExposure = 1.0f;
         float SunDiskPreExposedLuminance = 0.0f;
         bool bSnapshotEnabled = false;
@@ -472,6 +501,7 @@ namespace NorvesLib::Core::Rendering
             SunDiskTexture.reset();
             Sampler.reset();
             AerialProfile = SkyAerialProfile{};
+            Ibl.Reset();
             PreExposure = 1.0f;
             SunDiskPreExposedLuminance = 0.0f;
             bSnapshotEnabled = false;
