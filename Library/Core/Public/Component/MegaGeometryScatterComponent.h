@@ -20,6 +20,9 @@
  *     行の削除の後始末は列が持つので、Component が先に消えても続く。
  *     散布の番号（proxy の鍵）は席を予約するたびに列から新しく取るので、与え直した入力の proxy と解放中の前の行は鍵で区別できる。
  * - Active と可視は範囲の印で切り替える（印を変えた範囲だけを公開・取り下げる）。
+ * - 入力ごとの色味（RGBA8）と個体差の種を行と proxy に運ぶ。種が 0 なら散布の種と入力の番号から決める。
+ * - 1 本の非表示は入力の値と別の印で持ち、対象の行と proxy だけを変える（範囲の全行は書き直さない）。
+ *   作成待ちや書き直し待ちでも印を保持し、範囲を公開し直した後も隠したままにする。
  * - 行は散布ごとのチャンクの組（EcsWorld::AcquireChunkGroup）のアーキタイプに入れ、ほかの散布や行とチャンクを共有しない。
  * - メッシュは表で持ち、入力ごとに表の番号（MeshIndex）を選ぶ。1 つの散布に種類の違うメッシュを混ぜられる。
  * - 検査 MASS_RANGES: 公開中の範囲は全行がそろっている（行が生きていて、全行の proxy が行の値と一致する）、
@@ -46,6 +49,11 @@ namespace NorvesLib::Core
     class World;
 }
 
+namespace NorvesLib::Core::Rendering
+{
+    class SceneView;
+}
+
 namespace NorvesLib::Core::Component
 {
     /// 散布の 1 個の入力（所有者の Entity からの局所の変換と、メッシュの表の番号）
@@ -55,6 +63,10 @@ namespace NorvesLib::Core::Component
         Math::Quaternion Rotation;
         Math::Vector3 Scale;
         uint32_t MeshIndex = 0;
+        /// 色味（RGBA8。R が下位 8 bit、G・B・A の順。GLSL の unpackUnorm4x8 と同じ並び）。白は色を変えない
+        uint32_t Tint = 0xFFFFFFFFu;
+        /// 個体差の種。0 なら散布の種と入力の番号から既定の種を決める
+        uint32_t VariationSeed = 0;
     };
 
     /// 入力から行を作る順
@@ -101,8 +113,18 @@ namespace NorvesLib::Core::Component
         void SetVisible(bool bVisible);
         bool IsVisible() const { return bVisible.Get(); }
         /// 配置の種（保存する引数。値は使う側が決める）
-        void SetSeed(uint32_t seed) { Seed = seed; }
+        void SetSeed(uint32_t seed);
         uint32_t GetSeed() const { return Seed.Get(); }
+        /// 散布の種と入力の番号から決定的な個体差の種を作る
+        static uint32_t DefaultVariationSeed(uint32_t scatterSeed, uint32_t inputIndex);
+        /// 入力の色味（入力の外は白）
+        uint32_t GetInstanceTint(uint32_t inputIndex) const;
+        /// 入力の個体差の種（0 の指定は既定の種に解決する。入力の外は 0）
+        uint32_t GetInstanceVariationSeed(uint32_t inputIndex) const;
+        /// 入力の値を変えずに 1 本を隠す。GameThread の並列の段の外で呼ぶ（入力の外は false）
+        bool SetInstanceHidden(uint32_t inputIndex, bool bHidden);
+        /// 1 本の非表示の印（入力の外は false）
+        bool IsInstanceHidden(uint32_t inputIndex) const;
 
         /**
          * @brief 入力を与え直す。前の行と範囲は解放し（行の削除は予算で分ける）、入力の Morton 順に席の塊を予約する。
@@ -225,11 +247,16 @@ namespace NorvesLib::Core::Component
         bool ShouldPublish(const ScatterRange &range) const;
         /// 印と状態に合わせて範囲を公開・取り下げる。bRepublish なら公開中の範囲も公開し直す。作っていない範囲は何もしない
         void ReflectRange(uint32_t range, bool bRepublish);
+        /// 1 行を範囲が指すメッシュの表で公開し、描けなければ前の proxy も外す
+        void PublishRowProxy(Rendering::SceneView& view, Ecs::EcsWorld& ecs, uint32_t row,
+                             const MeshTable* meshes, bool bFullSync);
         void ReflectAllRanges(bool bRepublish);
         void Audit(Ecs::EcsMassAudit &audit) const;
 
         /// 入力（入力の番号の順）
         Container::VariableArray<MegaScatterInstance> m_Instances;
+        /// 入力の番号ごとの非表示の印（入力を与え直すと全て外す）
+        Container::VariableArray<uint8_t> m_InputHidden;
         /// 行の並べ方と範囲の初期の印（World の木に付いたときも使う）
         MegaScatterLayout m_Layout;
         /// メッシュの表の版（末尾が今の表。前の表は、書き直しを待つ範囲が指している間だけ残る）
