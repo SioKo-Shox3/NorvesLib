@@ -38,6 +38,16 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     /**
+     * @brief メッシュのLODの鎖にある段1以降のデータ。
+     */
+    struct MeshLODChainLevel
+    {
+        MeshDataHandle MeshHandle; // この段のメッシュ
+        Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes; // この段のサブメッシュ範囲
+        uint32_t SubMeshCount = 0;
+    };
+
+    /**
      * @brief 描画用メッシュプロキシ
      *
      * GameThreadからRenderThreadへ渡される描画に必要な最小限の情報。
@@ -61,10 +71,21 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         MeshDataHandle MeshHandle; // メッシュデータへのハンドル
-        uint8_t LODLevel = 0;      // 現在のLODレベル
+        // MeshHandle・SubMeshes が表す段。SceneView が段を差し替えた1フレームの写しでは選んだ段。
+        uint8_t LODLevel = 0;
 
         Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes;
         uint32_t SubMeshCount = 0;
+
+        // 段1～3。段0は MeshHandle・SubMeshes・SubMeshCount に入る。
+        Container::FixedArray<MeshLODChainLevel, MAX_MESH_LOD_LEVELS - 1> LODChain;
+        // 境界球の画面の大きさに対する段ごとのしきい値。
+        Container::FixedArray<float, MAX_MESH_LOD_LEVELS> LODScreenSizeThresholds =
+            Container::FixedArray<float, MAX_MESH_LOD_LEVELS>(0.0f);
+        uint8_t LODLevelCount = 1; // 段0を含む段数。1ならLODなし。
+        int8_t ForcedLODLevel = -1; // -1は自動、0以上はその段に固定。
+        // SceneView が前のフレームに選んだ段。proxy の内容ではないため hash に含めない。
+        uint8_t LODSelectionState = 0;
 
         // ========================================
         // トランスフォーム
@@ -229,9 +250,13 @@ namespace NorvesLib::Core::Rendering
         // 値の比較や hash には含めない（席は行の寿命で決まり、proxy の内容ではない）
         uint32_t SceneSlot = 0;
 
+        // SceneView がインポスターへ切り替えた元を抑える印。World が公開する proxy では常に false。
+        // proxy の内容ではないため hash に含めない。
+        bool bHiddenByImpostor = false;
+
         bool IsValid() const
         {
-            return MegaMeshHandle.IsValid() && bVisible;
+            return MegaMeshHandle.IsValid() && bVisible && !bHiddenByImpostor;
         }
     };
 
@@ -260,6 +285,10 @@ namespace NorvesLib::Core::Rendering
         float SortDepth = 0.0f;
         uint64_t SourceMeshComponentId = 0;
         float LODSwitchDistance = 0.0f;
+        // インポスターへ切り替える画面の大きさのしきい値。0なら LODSwitchDistance を使う。
+        float LODSwitchScreenSize = 0.0f;
+        // SceneView が前のフレームに選んだ段（0は元のメッシュ、1はインポスター）。hash には含めない。
+        uint8_t LODSelectionState = 0;
         uint32_t ImpostorCellResolution = 0;
         uint32_t ImpostorAxisCellCountX = 0;
         uint32_t ImpostorAxisCellCountY = 0;

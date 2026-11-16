@@ -11715,3 +11715,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (4) の `DissolveMathTest` と (5) の GPU の試験（`RenderingSkinnedDissolveVulkanTest` ほか）は作っていない。golden・`MeshParticleDissolveVulkanTest`・`RenderingAlphaClipVulkanTest` も撮影・GPU の確かめを回さない決まりで回していない。
 - Notes: 既知の限界: 影の切り抜きの経路ではディゾルブの材質に風の頂点アニメを重ねない（切り抜きの材質と同じ扱い）。スキンの入力の頂点のアドレスが取れないときは、VSM の影は削らずに全体を残す。
 - 再確認（反復 3）: 枠の直下に `build/` が無く verify の再実行が落ちたので、`git submodule update --init Library/ThirdParty/freetype` と `cmake -B build -S . -G "Visual Studio 17 2022"` で枠に構成を作り、`cmake --build build --config Debug --target Game -- /m:1` を回して終了コード 0・エラーの行 0（Core.lib と Game.exe まで。`.harness/runs/20261116-053238/verify-G10-GR60-DISSOLVE-build.txt`）。コードの変更は無し。
+
+- U6 画面の大きさの式と LOD の段の選び方を MeshTypes.h にまとめ、proxy に LOD の鎖・インポスターの画面の大きさ・抑制の印を足す(切り直し): 着地(直し 0 回)
+- U7 MeshComponent に LOD の鎖を設定する口を足し、proxy へ段ごとのメッシュとサブメッシュの範囲を詰める(切り直し): 着地(直し 0 回)
+- U8 ImpostorComponent に画面の大きさのしきい値を足し、BoardProxy へ渡す(切り直し): 着地(直し 0 回)
+- U9 SceneView のカリングで画面の大きさとヒステリシスからメッシュの段を選び、選んだ段のメッシュとサブメッシュの範囲へ差し替えてバッチへ渡す(切り直し): 着地(直し 1 回)
+- U5 インポスターへの切り替えを同じ画面の大きさの判定の最後の段にし、元が静的メッシュでも MegaGeometry でも同じ規則で抑える: 着地(直し 1 回)
+
+### G12-GR48-MESH-LOD-SELECT 仕上げ（2026-11-16、run 20261116-053232・反復 2）
+- Done: メッシュの LOD の鎖（最大 4 段。段ごとのメッシュ・サブメッシュの範囲・画面の大きさのしきい値と ForcedLODLevel）を `MeshProxy` と `MeshComponent`（`SetLODChain`・`ClearLODChain`・`GetLODLevelCount`）に足し、`SceneView::CullProxies` の 2 つの版で境界球の画面の大きさ（透視 = 半径 / (距離 × tan(fov/2))、正射影 = 半径 / (OrthoHeight/2)）とヒステリシス（しきい値の ±10 % の帯）から段を選び、選んだ段のメッシュとサブメッシュの範囲へ差し替えた写しをバッチへ渡す。式と選び方は `MeshTypes.h` にまとめ、`LODGroup::GetLODLevel` も同じ比較にそろえた。インポスターへの切り替えは `ImpostorComponent` の `LODSwitchScreenSize`（0 なら `LODSwitchDistance` を同じ式でしきい値へ換算。正射影では距離の比）で同じヒステリシスの 2 段の選択にし、元が静的メッシュなら同じフレームに、MegaGeometry（同じ Object の ObjectId で引き、無ければ散布の行を除いた ComponentId の索引で引く）なら `bHiddenByImpostor` で抑える。MegaGeometry の proxy は描画側へ 1 フレーム遅れて届くので、元へ戻す最初のフレームは板を残す。板の前の段と MegaGeometry の抑制の印は、proxy の差し替えでも引き継ぐ。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で SceneView.cpp を再コンパイルし Core.lib と Game.exe を生成（`.harness/runs/20261116-053232/verify-G12-GR48-MESH-LOD-SELECT-U5.txt`）。
+- 作らなかったもの: done-when (4) の `MeshLODSelectionTest` と既存の試験の実行は、試験を作らない・回さない決まり（絶対規則 11）で作っていない・回していない。撮影・計測の確かめは回さない決まり。
+- 人が見るときの見どころ: Rendering3DTest の煙の球のインポスター（`LODSwitchDistance` 3.5）。ヒステリシスの帯のぶん、遠ざかるときは境界まで約 3.9、近づくときは約 3.2 で切り替わる（前は 3.5 ちょうど）。カメラを前後させて境目でちらつかないこと、切り替えの瞬間に穴が空かないことを見る。LOD の鎖を設定したメッシュは今のシーンには無い（鎖の生成は GR80 の担当）。
+- 採った判断: 板の段は視錐台のカリングの前に選ぶ（視錐台の出入りで状態が飛ばない）。元を抑えるのは、段 1 の板が視錐台・距離のカリングを通ったときだけ（今の静的メッシュの規則のまま）。
+- 既知の限界: 複数の Viewport を持つ SceneView では、最後にカリングした Viewport の判定が MegaGeometry の抑制の印に残る。一時の板（transient）は前の段を持たず、MegaGeometry を戻すときの板の残しも効かない。MegaGeometry の元を抑えると、そのインスタンスは影（VSM）と TLAS の入力からも外れる見込み。
+- Next: ランナーの評価者の反証（SceneView のカリングと RenderThread へ渡す MegaGeometry の proxy の印 = 危険地帯）。クロスフェードは G12-GR48-CROSSFADE、インポスターの GBuffer の描画は G12-GR48-IMPOSTOR-GBUFFER。
+
+### G12-GR48-MESH-LOD-SELECT 再検証（2026-11-16、run 20261116-053232・反復 3）
+- Done: 差し戻し（枠に `build/` が無く verify が `build is not a directory` で落ちた）を直した。枠で freetype の submodule を初期化し、`cmake -B build -S . -G "Visual Studio 17 2022"` で構成し直してから verify を回した。実装の変更は無い。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で SceneView.cpp・MeshComponent.cpp・ImpostorComponent.cpp を含めてコンパイルし Game.exe を生成（`.harness/runs/20261116-053232/verify-G12-GR48-MESH-LOD-SELECT-iter3.txt`）。
+- Next: ランナーの評価者の反証（危険地帯）。

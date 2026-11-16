@@ -28,8 +28,13 @@ namespace NorvesLib::Core::Component
                                Rendering::RenderWorld *renderWorld = nullptr);
         void SetSourceMeshComponentId(uint64_t componentId);
         uint64_t GetSourceMeshComponentId() const { return m_SourceMeshComponentId; }
+        /// 画面の大きさのしきい値が 0 のときに使う、距離の予備しきい値を設定する。
         void SetLODSwitchDistance(float distance);
         float GetLODSwitchDistance() const { return LODSwitchDistance; }
+        /// 板の境界球の画面の大きさ（半径 / (距離 × tan(fov/2))、正射影は半径 / (OrthoHeight/2)）が
+        /// この値より小さいとインポスターにする。0 なら LODSwitchDistance の距離のしきい値を使う。
+        void SetLODSwitchScreenSize(float screenSize);
+        float GetLODSwitchScreenSize() const { return LODSwitchScreenSize; }
 
         Rendering::TextureHandle GetBakedAtlasTextureHandle() const { return BakedAtlasTextureHandle; }
         const Rendering::ImpostorBakeMetadata &GetBakedAtlasMetadata() const { return BakedAtlasMetadata; }
@@ -42,6 +47,7 @@ namespace NorvesLib::Core::Component
         PROPERTY(Rendering::TextureHandle, BakedAtlasTextureHandle)
         PROPERTY(Rendering::ImpostorBakeMetadata, BakedAtlasMetadata)
         PROPERTY(float, LODSwitchDistance)
+        PROPERTY(float, LODSwitchScreenSize)
         uint64_t m_SourceMeshComponentId = 0;
     };
 
