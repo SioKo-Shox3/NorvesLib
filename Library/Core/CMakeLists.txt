@@ -356,6 +356,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/DDGIProbePass.cpp
     Private/Rendering/VolumetricsPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
+    Private/Rendering/IblGeneration.h
+    Private/Rendering/IblGeneration.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
