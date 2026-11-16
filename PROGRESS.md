@@ -11693,3 +11693,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 4): `.harness/runs/20261116-053253/verify-G7-GR49-ENV-SYSTEM-u4.txt`（全単位を着地させた木の内容で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0、`error C`・`error LNK` が 0 件、Game.exe を生成。触った 4 ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、UTF-8 BOM + CRLF を保持）。試験は作らない・回さない決まり、撮影・計測・アプリの起動の確かめは回さない決まり。
 - Next: ランナーの評価者の反証（2 周目。前回の指摘 2 件への対応差分）。人が見るときの見どころは前のとおり（既定は無効なので、起動→ランチャー→各シーンの空・霧・雲・風が前と同じこと）。
 - Notes: 上の「判断と既知の限界」のうち、`Disable` の後に土台の空・霧・雲の層・風を書き戻す点は反復 4 でやめ、環境の値の既定値だけを 1 回書く形に変えた。太陽の方位は [0, 360) へ折り返さず [-360, 360] に収める（風の向き・時刻は折り返しのまま。WindParameters の整えも [0, 360)）。
+- U1 雨の調整の値 RainTuning と写像の純関数・JSON の読み込みを置く: 着地(直し 0 回)
