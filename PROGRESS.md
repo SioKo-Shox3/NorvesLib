@@ -11801,3 +11801,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: 上限を影の届く距離より手前に置くと、霧だけの経路では上限より奥の影の中の霧も太陽で光る。霧と空気遠近の経路でずらしを有効にすると、空気遠近の透過率も画素ごとにわずかに揺れる（TAA で均される前提）。
 - Next: ランナーの評価者の反証（volumetrics は全シーンの霞に効く危険地帯）。草原での有効化と見え方の確かめは G11-GR52-FOG-CHECK。
 - U1 資産の束縛の核（AssetBinding.h/.cpp）と Component::OnPropertyApplied の口を足す: 着地(直し 0 回)
+- U2 MegaGeometryResources に GetModelSourcePath(ModelHandle) を足す: 着地(直し 0 回)
