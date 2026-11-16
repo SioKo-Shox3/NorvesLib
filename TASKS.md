@@ -6993,7 +6993,7 @@
 - notes: 選定課題 G7-S3（ロードマップ 4530 行）は推奨の (A) を採る。理由: RTGI・DDGI・RayTracing のシェーダーは霧を読まず（`Assets/Shaders/RTGI`・`DDGI`・`RayTracing` に fog・aerial・cloud の記述が 0 件。2026-11-03 に grep）、パストレーサーは `HashPathFog`（PathTracingPass.inl:296）で別に再累積する。今は霧が revision に入っている（RenderingCoordinator.cpp:266-277）ので、雨量に連動した霧の増分（GR58）が入ると RTGI の履歴が毎フレーム捨てられる。外す前に `ComputeSceneRevisionHash`・`HashSceneRevisionInternal`（RenderingCoordinator.cpp:1201、:288）の読み手を grep で全部読み、霧を入力に使う履歴が無いことを確かめて PROGRESS.md に書く。将来霧を GI の入力にするときは入れ直す、と関数の注釈に書く。空気遠近・雲の層・空の欄（:223-252）はハッシュに残す（GR50 の CloudCover は入れない。段階をまたぐ注意 4462 行）。入口は RenderWorld.h:178-237 の Set 群、SceneProxy.h:548-625、`SnapshotSceneParameters`（RenderingCoordinator.cpp:4560）。GPU の UBO（`GPUEnvironmentParams`）は G7-GR53-WET-WRITERS で作り、時刻・雨量の値は G7-GR49-ENV-SYSTEM が入れる（ここでは既定の 0）。UNCERTAIN: R3 の sweep の scenario が今の HEAD で通るか（10-07 の受入れの後に霧・空気遠近が変わっている）。通らなければ G7-GR49-CHECK で原因を分け、霧の変更が原因でなければ基準を撮り直さず記録する。試験を足す理由（Docs/Testing.md の 3 点）: 写し漏れと履歴の毎フレームの破棄は撮影 1 枚やログで気づけず、黙って起きる。危険地帯（Public API・FramePacket・RenderThread へ渡す値）なので評価者を通す。要件 `#### GR49` の設計案【1】【6】、ロードマップ 1535・1548・1562 行。
 
 ## G7-GR49-ENV-SYSTEM: GameThread の気象の正本 EnvironmentState と EnvironmentSystem を Engine に置き、ゲームの時間で遷移と濡れを進めて空・霧・雲・風・環境の値へ解決する
-- status: todo
+- status: done
 - after: G7-GR49-ENV-PARAMS, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR49
 - needs-gr: GR46
@@ -10837,3 +10837,10 @@
   - todo の `G2-GR83-ASSET-PREVIEW-SCENE` は「骨格つきは `SkeletalAssetSession` で読み、材質は `G2-GR79-SKINNED-MATERIAL-BUILDER` で付ける」を前提にしている。`G10-GR63-LOD-RUNTIME` も lease を「RigSplit の読み込みから」作る前提にしている。それなのに、split に lease を出す作業はどのタスクにも無い。
   - BonePalette は split でも split の InverseBind と InverseMesh で作られる(`SkeletalPoseBuilder.cpp:68-71, 290`)。なので lease の頂点は split の mesh の頂点のままでよい。
   - 危険地帯(アセットロード・Resource の寿命・Public API)なので、評価者を通す。
+
+## G7-GR49-ENV-SYSTEM-P1: 拡張のパスに渡すゲームの時間 GameTotalTime を、壁時計の FramePacket::TotalTime から World のチャンネルの積算に替え、ポーズの間は風の位相と頂点の動きを止める
+- status: todo
+- done-when: (根拠) 計画の文書 `Docs/Plans/GameFeatureRoadmap.md` の 4460 行は「EnvironmentSystem の時計は GR02 の World チャンネル(ポーズの門の中)で進め、FramePacket::TotalTime(実時間)は位相の源に使わない」と決めている。1563 行には「壁時計を雨・風・雲・粒子の位相の源にすると、ポーズ中に動き、撮影が再現しない」とある。G5-GR46-WIND-FIELD の notes-board(TASKS.md 5510 行)も、風の時刻を「GR25 の GameTotalTime(World のチャンネル。ポーズで止まる)」から取る前提で書かれている。ところが実際は `RenderingCoordinator.cpp:5881` が `RenderExtensionFrameInfo::GameTotalTime` に `packet->TotalTime` を入れている。その値は `BeginFrame` が壁時計の dt で積んだもの(4497〜4526 行)なので、共通の風(GrassPass.cpp:909・FoliagePass.cpp:482・VirtualShadowMapPass.cpp:1393)と頂点の動き(VertexAnimation.h)がポーズ中も進む。源を替える作業は、一覧のどのタスクにも入っていない。(1) `FramePacket` にゲームの時間の欄 `GameTime`(double)と `GameDeltaTime`(float)を足す。ApplicationProcessor が EnvironmentSystem の Tick と同じ dt(`GEngine->GetTimeSystem().GetFrameTimes().World`)で、シミュレーションを進めるフレームのときだけ積み、パケットへ書く。`bAdvanceSimulation=false` とポーズの間は同じ値のまま `GameDeltaTime=0` にし、ヒットストップで World の倍率が下がれば遅くなる。(2) `RenderingCoordinator.cpp` の `RenderExtensionFrameInfo` の `GameTotalTime`・`GameDeltaTime` と、`RenderedObjectHistory.h` の `PreviousRenderedTotalTime`(今は `packet.TotalTime` を覚えている)を、その欄から取る。(3) 決定的な撮影では、今と同じ 1/60 の刻みを保ち、エポックの 0 番のフレームで 0 から数え直す。撮影でパスに渡る時刻の列は今と同じにする。(4) `FramePacket::TotalTime` を読むほかのパス(雲の層・WorldField・自動露出・歪みなど)と、共通の風が無効なときの従来の草・低木の時計(FoliagePass.cpp:495)は変えない。(5) `RenderExtensionData.h` の `GameTotalTime` の注釈を「World のチャンネルの dt の積算。ポーズで止まる。EnvironmentState::GameTimeSeconds と刻みは同じ源で、起点は別(Enable・SkipTime・LoadState で動くのは環境の側だけ)」に直す。(6) Debug の Game のビルドが通る
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RenderedObjectHistory.h, Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
+- from: G7-GR49-ENV-SYSTEM

@@ -23,6 +23,7 @@
 #include "Input/InputRebindCaptureManager.h"
 #include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
+#include "Environment/EnvironmentSystem.h"
 #include "Streaming/StreamingSystem.h"
 #include "Vegetation/Vegetation.h"
 #include "Thread/Atomic.h"
@@ -402,6 +403,17 @@ namespace NorvesLib::Core::Engine
             return m_ParticleSystem;
         }
 
+        // GameThread の気象の正本を取得する。
+        Environment::EnvironmentSystem& GetEnvironment()
+        {
+            return m_EnvironmentSystem;
+        }
+
+        const Environment::EnvironmentSystem& GetEnvironment() const
+        {
+            return m_EnvironmentSystem;
+        }
+
         /// セルのストリーミングを管理する。GameThread で使用する。
         Streaming::StreamingSystem& GetStreamingSystem()
         {
@@ -567,6 +579,8 @@ namespace NorvesLib::Core::Engine
         World m_World;
 
         Particle::ParticleSystem m_ParticleSystem;
+        // GameThread の気象の正本。
+        Environment::EnvironmentSystem m_EnvironmentSystem;
         Streaming::StreamingSystem m_StreamingSystem;
         Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
