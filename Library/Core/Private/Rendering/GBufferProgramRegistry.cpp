@@ -35,9 +35,10 @@ namespace NorvesLib::Core::Rendering
     {
         GBufferPipelineKey key;
         key.Program = material ? material->ProgramId : kStandardGBufferProgramId;
-        // 両面の材質はカリングせず、Masked の材質と残像は切り抜きを有効にする。
+        // 両面はカリングせず、Masked・視界確保の遮蔽物・残像は切り抜きの変種で描く。
         key.Cull = material && material->bTwoSided ? RHI::CullMode::None : RHI::CullMode::Back;
-        key.bAlphaClip = (material && material->Blend == BlendMode::Masked) || IsSkinnedGhostOpacity(opacity);
+        key.bAlphaClip = (material && (material->Blend == BlendMode::Masked || material->bViewClearanceOccluder)) ||
+                         IsSkinnedGhostOpacity(opacity);
         key.Polygon = bWireframe ? RHI::PolygonMode::Line : RHI::PolygonMode::Fill;
         key.bSkinned = bSkinned;
         return key;
@@ -60,9 +61,11 @@ namespace NorvesLib::Core::Rendering
 
     bool RequiresGBufferOverlay(const MaterialResourceData* material, float opacity)
     {
+        // 視界確保の遮蔽物と残像も ID のラスタから外し、解決の後に重ねる。
         return IsSkinnedGhostOpacity(opacity) ||
                (material && (material->ProgramId != kStandardGBufferProgramId ||
-                             material->Blend == BlendMode::Masked || material->bTwoSided));
+                             material->Blend == BlendMode::Masked || material->bTwoSided ||
+                             material->bViewClearanceOccluder));
     }
 
     struct GBufferProgramRegistry::State
@@ -136,6 +139,13 @@ namespace NorvesLib::Core::Rendering
     GBufferProgramRegistry::GBufferProgramRegistry()
         : m_State(Container::MakeUnique<State>())
     {
+        // 全 SceneView の登録簿が持つ組み込みのプログラムを、初期化の窓が開いている間に登録する。
+        GBufferProgramDesc dissolve;
+        dissolve.Name = DissolveGBufferProgramName;
+        dissolve.VertexShader = "gbuffer_dissolve.vert";
+        dissolve.FragmentShader = "gbuffer_dissolve.frag";
+        dissolve.SkinnedVertexShader = "skinned_gbuffer_dissolve.vert";
+        (void)Register(dissolve);
     }
 
     GBufferProgramRegistry::~GBufferProgramRegistry() = default;

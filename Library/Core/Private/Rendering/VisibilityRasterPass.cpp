@@ -256,7 +256,7 @@ namespace NorvesLib::Core::Rendering
         // ハードのラスタ（LessOrEqual）と同じ比較。同じ深度ならソフトウェアラスタの ID が残る
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
-        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOpOrEqual;
+        pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOpOrEqual();
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = false;
         blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
@@ -724,7 +724,7 @@ namespace NorvesLib::Core::Rendering
             //    起動画面の差は 0〜2 階調だが、ワイヤーフレームの表示では材質の境目の線の色が入れ替わる（約 50 階調）。
             pipelineDesc.depthStencilState.depthTestEnable = true;
             pipelineDesc.depthStencilState.depthWriteEnable = true;
-            pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOpOrEqual;
+            pipelineDesc.depthStencilState.depthCompareOp = DepthConvention::DepthCompareOpOrEqual();
 
             // 整数の添付はブレンドしない
             RHI::BlendAttachmentDesc blendAttachment;

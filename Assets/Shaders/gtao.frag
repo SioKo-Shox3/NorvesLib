@@ -115,7 +115,7 @@ void main()
     vec2 centerUV = (vec2(centerTexel) + 0.5) / vec2(depthSize);
     vec3 centerPos = ReconstructViewPos(centerUV, depth);
     // 面からカメラへの向き。透視・正射影のどちらでも、同じ画素の近い面の点から求める。
-    vec3 viewDir = normalize(ReconstructViewPos(centerUV, 0.0) - centerPos);
+    vec3 viewDir = normalize(ReconstructViewPos(centerUV, kDepthNearest) - centerPos);
 
     vec3 worldNormal = texelFetch(gbufferNormal, centerTexel, 0).rgb;
     if (dot(worldNormal, worldNormal) < 1.0e-8)

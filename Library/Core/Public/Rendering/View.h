@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Rendering
         bool bClearColor = true;
         float ClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         bool bClearDepth = true;
-        float ClearDepth = DepthConvention::ClearDepth;
+        float ClearDepth = DepthConvention::ClearDepth();
     };
 
     /**
@@ -341,7 +341,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_Width = 1280;
         uint32_t m_Height = 720;
         float m_ClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-        float m_ClearDepth = DepthConvention::ClearDepth;
+        float m_ClearDepth = DepthConvention::ClearDepth();
         bool m_bClearColor = true;
         bool m_bClearDepth = true;
         bool m_bEnabled = true;

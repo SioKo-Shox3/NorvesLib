@@ -8,6 +8,7 @@
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
 #include "PathTracing/PathTracingCommon.glsl"
+#include "Common/DepthConvention.glsl"
 #include "Common/HeightFog.glsl"
 #include "PathTracing/PathTracingScene.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
@@ -613,7 +614,7 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         pixelOffset = vec2(0.5);
     }
     vec2 uv = (vec2(pixel) + pixelOffset) / vec2(extent);
-    vec4 farPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 farPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, kDepthClear, 1.0);
     if (isnan(farPoint.w) || isinf(farPoint.w) || abs(farPoint.w) < 0.000001)
     {
         return vec4(0.0, 0.0, 0.0, 1.0);
@@ -622,8 +623,8 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
     vec3 direction = normalize(farPoint.xyz / farPoint.w - origin);
     if ((parameters.sampleState.y & 1u) != 0u)
     {
-        // 正射影は画素ごとに近平面上の点から視線方向へ平行に飛ばす（深度は近平面0・遠平面1）。
-        vec4 nearPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+        // 正射影は深度の規約に従い、画素ごとに近方面の点から遠方面へ平行に光線を飛ばす。
+        vec4 nearPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, kDepthNearest, 1.0);
         if (isnan(nearPoint.w) || isinf(nearPoint.w) || abs(nearPoint.w) < 0.000001)
         {
             return vec4(0.0, 0.0, 0.0, 1.0);

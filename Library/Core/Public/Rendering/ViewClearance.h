@@ -2,6 +2,7 @@
 
 #include "Math/Vector3.h"
 #include <cstddef>
+#include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -29,6 +30,8 @@ namespace NorvesLib::Core::Rendering
         bool bAffectGrass = true;
         bool bAffectOccluders = true;
         bool bHeroSilhouette = false;
+        // 隠れた主人公として描くスキンの持ち主の Object 番号。0 は無し。カメラのスプリングアームの pivot から埋める。
+        uint64_t HeroObjectId = 0;
     };
 
     // std140 の vec4 4 本。Common/ViewClearance.glsl と同じ並び。
@@ -37,7 +40,7 @@ namespace NorvesLib::Core::Rendering
         float CameraRadius[4] = {}; // xyz: カメラ位置、w: CameraRadius
         float TargetRadius[4] = {}; // xyz: 注視点、w: TargetRadius
         float Shape[4] = {};        // x: FeatherRatio、y: NearFadeStart、z: NearFadeEnd、w: MinHeightScale
-        float Control[4] = {};      // x: Strength、y: 有効なら 1、それ以外は 0。zw は予約の 0
+        float Control[4] = {};      // x: Strength、y: 有効なら 1、z: 遮蔽物のディザの位相（0〜63。印の付いた材質だけ）、w は予約の 0
     };
     static_assert(alignof(ViewClearanceGpuData) == 16);
     static_assert(sizeof(ViewClearanceGpuData) == 64);
