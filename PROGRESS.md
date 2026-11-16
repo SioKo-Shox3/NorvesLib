@@ -11793,3 +11793,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 スキン LOD の前処理と部位の分割: 着地(直し 0 回)
 - U4 CookedSkinMeshV1 に LOD・部位の表をつなぐ: 着地(直し 0 回)
 - U5 部位ごとの簡略化・頂点キャッシュの最適化・索引の組み立て・誤差・関節の AABB: 着地(直し 0 回)
+- U6 --rig-split の cook に LOD をつなぎ、報告を出し、全体を確かめる: 着地(直し 0 回)

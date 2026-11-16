@@ -87,7 +87,9 @@ object 以外は `InvalidType`、未知のキーは `UnknownField`、重複は `
 旧 `ParseSettings` の経路では空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。
 
 節があると cook が部位に分けて LOD を焼き、NVSKEL の SkinnedMesh に `LODS`・`PART` を足す。書式は [RigSplitV1Wire.md](RigSplitV1Wire.md) を参照する。
-節が無い cook の出力と `source_hash` は従来と同じである。節を変えると sidecar の bytes が `source_hash` に入っているため再 cook になる。
+LOD を焼くと stderr に `skinned_lod_report=` に続く JSON を 1 行出す。`parts` は部位数、`zero_weight_vertices` は重みの合計が 0 の頂点数、`degenerate_triangles` と `duplicate_triangles` は除去した退化三角形数と重複三角形数である。`lods` は LOD 順の配列で、各要素の `triangles`・`target_triangles` は実際と目標の三角形数、`max_error` は `position_error`（位置誤差）と `skin_error`（スキン誤差）の大きい方を表す。
+
+節が無い cook の出力と `source_hash` は従来と同じである。節を変えると sidecar の bytes が `source_hash` に入っているため再 cook になる。節があるときは算法の印 `norves.skinned-lod.v1` に続けて `MinParts`・`MaxParts`・`Targets` の数・各 `Targets`・`ThetaRef` をこの順で `source_hash` に連結する。印は長さ付き文字列、数と各値の bit 列は 64 bit little endian で、`Targets` と `ThetaRef` は IEEE 754 binary64 を使う。
 `skinnedLod` は geometry の正規化 bytes（下記の 52 byte）には入れず、hash は sidecar の bytes と cook が足す算法の印で決まる。
 
 ## 正規化bytes
