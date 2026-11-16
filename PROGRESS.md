@@ -11774,3 +11774,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
 - U2 ベイクのシェーダー impostor_bake.vert/.frag を書く: 着地(直し 0 回)
 - U1 八面体の符号化を Y が極のオブジェクト空間にそろえ、上半球と全球を選べるようにする: 着地(直し 1 回)
+- U4 Tools/ImpostorBaker の骨組みと、glTF・cook 済みメッシュの読み込み: 着地(直し 1 回)
