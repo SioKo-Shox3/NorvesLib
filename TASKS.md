@@ -7517,7 +7517,7 @@
 - notes: 要件 `#### GR55` の受け入れ確認の撮影の分（夜の撮影・自動露出の収束・時計無効で不変）。`-SunElevations` の負の値は G11-GR55-NIGHT で台本が受けるようにする。`-GpuTimingFrames 1800` は時間の倍率 60 で 30 分のゲーム時間（30 秒）を回す目安で、根拠はこの見積もりだけ。黒つぶれの閾値と領域は着手時に決めて記録に書く（根拠なし）。コードは夜の下限のデータ以外変えない。ロードマップ 1999 行。
 
 ## G11-GR56-SKY-OCC-WORLD: 空の遮蔽の入力に、地形の高さ・散布のチャンクの樹木と岩・草の場の下草の層・曇天の空の明るさの分布をつなぐ
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-MAP, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT, G5-GR90-SCATTER-BAKE, G5-GR90-SCATTER-RUNTIME
 - gr: GR56
 - needs-gr: GR37, GR42, GR44, GR50, GR90

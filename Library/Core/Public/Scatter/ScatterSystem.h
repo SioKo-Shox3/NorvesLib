@@ -14,6 +14,7 @@
 #include "Object/EntityHandle.h"
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/SkyOcclusion.h"
 
 namespace NorvesLib::Core
 {
@@ -156,6 +157,7 @@ namespace NorvesLib::Core::Scatter
             uint32_t Priority = 0;
             Rendering::FoliageBatch FoliageTemplate;
             bool bCastShadow = true;
+            Rendering::SkyOccluderSpeciesDesc SkyOccluderDesc;
             Container::VariableArray<ChunkUnit> Chunks;
         };
 
@@ -163,6 +165,14 @@ namespace NorvesLib::Core::Scatter
         {
             bool bPinned = false;
             bool bDormant = false;
+        };
+
+        struct SkyOccluderChunk
+        {
+            uint32_t ChunkIndex = 0;
+            uint64_t Key = 0;
+            uint64_t Revision = 0;
+            Container::VariableArray<Rendering::SkyOccluderProxy> Occluders;
         };
 
         struct ScatterState
@@ -175,6 +185,8 @@ namespace NorvesLib::Core::Scatter
             Container::VariableArray<ChunkState> Chunks;
             Container::VariableArray<SpeciesState> Species;
             Container::VariableArray<ScatterResidencyEvent> Log;
+            bool bSkyOccluderKeysValid = true;
+            Container::VariableArray<SkyOccluderChunk> SkyOccluderChunks;
         };
 
         ScatterState* Find(ScatterHandle handle);
@@ -187,12 +199,16 @@ namespace NorvesLib::Core::Scatter
         bool ReleaseChunkUnits(ScatterState& scatter, uint32_t chunk);
         bool MakeFoliageResident(ScatterState& scatter, uint32_t chunk, uint32_t species);
         void RebuildFoliageScene();
+        void RebuildSkyOccluderChunk(ScatterState& scatter, uint32_t chunk);
+        void PublishSkyOccluders();
 
         Container::VariableArray<ScatterState> m_Scatters;
         ScatterBudget m_Budget;
         ScatterResidencyStats m_Stats;
         Rendering::FoliageScene m_FoliageScene;
         uint64_t m_FoliageVersion = 0;
+        uint64_t m_SkyOccluderRevision = 0;
+        bool m_bSkyOccludersDirty = false;
         /// foliage の描画先の借用参照。初期化済みの間だけ一覧を渡す。
         Rendering::RenderWorld* m_RenderWorld = nullptr;
         ScatterHandle m_NextHandle = 1;

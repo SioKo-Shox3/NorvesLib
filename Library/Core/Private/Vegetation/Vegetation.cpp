@@ -94,6 +94,19 @@ namespace NorvesLib::Core::Vegetation
         {
             renderWorld.SetGrassField(nullptr);
         }
+        Rendering::SkyOcclusionFieldLayout layout{};
+        Container::VariableArray<Rendering::SkyOcclusionUndergrowthTexel> texels;
+        if (m_pGrassField != nullptr && m_pGrassField->BuildSkyOcclusionUndergrowth(layout, texels))
+        {
+            renderWorld.SetExtensionData(Rendering::kSkyOcclusionUndergrowthLayoutKey, layout);
+            renderWorld.SetExtensionArray(Rendering::kSkyOcclusionUndergrowthKey,
+                Container::Span<const Rendering::SkyOcclusionUndergrowthTexel>{texels.data(), texels.size()});
+        }
+        else
+        {
+            renderWorld.RemoveExtensionData(Rendering::kSkyOcclusionUndergrowthLayoutKey.Name);
+            renderWorld.RemoveExtensionData(Rendering::kSkyOcclusionUndergrowthKey.Name);
+        }
         m_PublishedRevision = revision;
         m_pPublishedField = m_pGrassField;
         m_bPublishedOnce = true;

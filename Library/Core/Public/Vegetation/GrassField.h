@@ -3,6 +3,7 @@
 #include "Vegetation/GrassSpecies.h"
 #include "Vegetation/GroundHeightSource.h"
 #include "Rendering/GrassFieldRenderData.h"
+#include "Rendering/SkyOcclusion.h"
 
 namespace NorvesLib::Core::Vegetation
 {
@@ -81,6 +82,14 @@ namespace NorvesLib::Core::Vegetation
         GrassSurface QuerySurface(float x, float z) const;
         float GetCameraClearance(const Math::Vector3& position) const;
         Container::TSharedPtr<const Rendering::GrassFieldRenderData> BuildRenderData() const;
+        /**
+         * @brief 保持する全チャンクを覆う下草の層を、テクセル中心の草丈と密度から作る。
+         * 不正な幅・解像度、チャンクなし、配置を表せない場合は false を返し、出力を変更しない。
+         * 解像度の上限は配置の制約に合わせて最大 8192 とする。
+         */
+        bool BuildSkyOcclusionUndergrowth(Rendering::SkyOcclusionFieldLayout& outLayout,
+            Container::VariableArray<Rendering::SkyOcclusionUndergrowthTexel>& outTexels,
+            float texelMeters = 1.0f, uint32_t maxResolution = 1024u) const;
 
     private:
         struct Chunk
