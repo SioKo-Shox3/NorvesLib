@@ -1,6 +1,7 @@
 ﻿// GameThread の気象の正本。2 つ以上の系が参照する値だけを持ち、毛の濡れや局所の雨遮蔽などは持たない。
 #pragma once
 
+#include "Container/String.h"
 #include "Rendering/EnvironmentParameters.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/VolumetricFog.h"
@@ -11,6 +12,13 @@
 
 namespace NorvesLib::Core::Environment
 {
+    /** @brief 太陽の指定の方式。 */
+    enum class EEnvironmentSunMode : uint8_t
+    {
+        Manual,  // 高度・方位を直接持つ。
+        Clock    // 時刻から求める（現在は Manual と同じく高度・方位で解決する）。
+    };
+
     /** @brief GameThread で共有する気象の状態。 */
     struct EnvironmentState
     {
@@ -19,6 +27,8 @@ namespace NorvesLib::Core::Environment
         /// 積分して更新する地表の濡れ（無次元、[0, 1]）。
         float Wetness = 0.0f;
         /// 均一な曇天の度合い（無次元、[0, 1]）。雲の層の被覆とは別。
+        /// 解決時に空の SkyAtmosphereParameters::CloudCover へ 0.01 刻みで書く。
+        /// 曇り度が変わると空の LUT と空由来の IBL を CPU で作り直すため、遷移中の再生成の頻度を抑える。
         float CloudCover = 0.0f;
 
         /// 風が吹いていく水平な方位（度、[0, 360)）。
@@ -38,12 +48,20 @@ namespace NorvesLib::Core::Environment
         float FogMaxDistanceMeters = 0.0f;
         /// 霧の周りの光に掛ける倍率（無次元、0 以上）。
         float FogAmbientScale = 1.0f;
+        /// 霧の色に掛ける色味（線形 RGB の倍率、各 [0, 16]）。
+        float FogTint[3] = {1.0f, 1.0f, 1.0f};
+        /// 霧の色を、視線の方位を保って基準の仰角へ傾けた方向の空の放射輝度へ寄せる割合（無次元、[0, 1]）。
+        float FogSkyBlend = 0.0f;
+        /// 寄せる先の仰角（度、[0, 90]）。
+        float FogReferenceElevationDegrees = 10.0f;
 
         /// 雲の層を使うか（false または true）。
         bool bCloudLayerEnabled = false;
         /// 雲の層が空を覆う割合の目安（無次元、[0, 1]）。
         float CloudLayerCoverage = 0.45f;
 
+        /// 太陽の指定の方式。
+        EEnvironmentSunMode SunMode = EEnvironmentSunMode::Manual;
         /// 手動で指定する太陽の高度（度、[-90, 90]）。
         float SunAltitudeDegrees = 45.0f;
         /// 手動で指定する太陽の方位（度、[-360, 360]。空の SkyAtmosphereParameters と同じ範囲）。
@@ -88,6 +106,11 @@ namespace NorvesLib::Core::Environment
         SunAzimuth,
         TimeOfDayHours,
         Wetness,
+        FogTintR,
+        FogTintG,
+        FogTintB,
+        FogSkyBlend,
+        FogReferenceElevation,
         Count
     };
 
@@ -126,6 +149,30 @@ namespace NorvesLib::Core::Environment
         ETransitionCurve Curves[EnvironmentFieldCount] = {};
     };
 
+    inline constexpr uint32_t EnvironmentStateFormatVersion = 1;
+
+    /// 気象の状態を JSON v1 の文字列にする（整形つき）。
+    Container::String ToJson(const EnvironmentState& state);
+
+    /// JSON v1 を読む。未知のキー・型違い・範囲外は警告し、その欄を既定値にする。
+    /// 欠けたキーは警告せず既定値にする。構文・根・formatVersion が不正なら false。
+    bool FromJson(const Container::String& text, EnvironmentState& outState, Container::String* pOutError = nullptr);
+
+    /// 状態と同じ形式に transitionSeconds と curve を加えたプリセットを遷移の目標として読む。
+    bool EnvironmentPresetFromJson(const Container::String& text, EnvironmentTarget& outTarget,
+                                   Container::String* pOutError = nullptr);
+
+    /// 英数字・'_'・'-' の 1〜64 文字の名前から Assets/Data/Environment/<name>.env.json を作る。
+    bool MakeEnvironmentPresetPath(const Container::String& name, Container::String& outPath);
+
+    /// 作業ディレクトリを根として名前のプリセットを読み、遷移の目標を返す。
+    bool LoadEnvironmentPreset(const Container::String& name, EnvironmentTarget& outTarget,
+                               Container::String* pOutError = nullptr);
+
+    /// 指定した根からの相対パスで名前のプリセットを読む。根が空なら作業ディレクトリを使う。
+    bool LoadEnvironmentPreset(const Container::String& rootDirectory, const Container::String& name,
+                               EnvironmentTarget& outTarget, Container::String* pOutError = nullptr);
+
     /// 全欄に同じ遷移時間と進み方を設定する。
     void SetEnvironmentTargetDuration(EnvironmentTarget& target, float seconds, ETransitionCurve curve);
 
@@ -149,6 +196,7 @@ namespace NorvesLib::Core::Environment
     };
 
     /// 場面の空・霧・雲の層・風から共有する欄を写し、残りを既定値にした状態を返す。
+    /// 空の曇り度と霧の色味・空への寄せ・基準の仰角も写す。
     EnvironmentState MakeEnvironmentStateFromScene(const Rendering::SkyAtmosphereParameters& sky,
                                                    const Rendering::VolumetricFogParameters& fog,
                                                    const Rendering::CloudLayerParameters& cloudLayer,
@@ -163,7 +211,8 @@ namespace NorvesLib::Core::Environment
     /// 非有限値を既定値に戻し、各欄を定められた範囲へ整える。
     EnvironmentState SanitizeEnvironmentState(const EnvironmentState& in);
 
-    /// 場面の土台に状態の欄を重ね、値を整えずに描画用の設定を返す。
+    /// 場面の土台に状態の欄を重ね、雲量を [0, 1] に収めて 0.01 刻みで空の曇り度へ書く。
+    /// 霧の色味・空への寄せ・基準の仰角も霧へ書き、それ以外の値は整えない。
     EnvironmentResolved ResolveEnvironment(const EnvironmentState& state, const EnvironmentSceneBase& base);
 
     /**
