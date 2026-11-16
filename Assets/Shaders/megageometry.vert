@@ -26,7 +26,7 @@ layout(set = 0, binding = 0) uniform MVPData
 
 #include "Common/VertexAnimation.glsl"
 
-// インスタンスの表（binding 8）とメッシュの表（binding 22）。描画が引くのは変換だけ。
+// インスタンスの表（binding 8）とメッシュの表（binding 22）。描画は変換と色味を読む。
 #define MEGA_INSTANCE_BINDING 8
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
@@ -63,7 +63,7 @@ void main()
     mat3 normalMatrix = mat3(world);
     fragNormal = normalize(normalMatrix * inNormal);
 
-    fragObjectColor = mvp.objectColor.rgb;
+    fragObjectColor = MegaTintIsWhite(instance.tint) ? mvp.objectColor.rgb : mvp.objectColor.rgb * MegaTintRgb(instance.tint);
     fragEmissiveColor = mvp.emissiveColor;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
