@@ -11674,3 +11674,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 洗い出しで直した逆 Z で近と遠が入れ替わる決め打ち: Hi-Z の遮蔽の番兵 `1.0e30` と近方面の判定 `clip.z < 0`、GTAO の視線の近い点 `0.0`、IBL・雲・モーションブラーの遠方面 `1.0`、可視バッファの解決の光線の深度 `0.25`・`0.75`、パストレーサーのカメラの光線（正射影で逆向きになっていた）。影の地図（CSM・点光源・VSM）と上からの高さの地図はカメラの深度と別の規約なので変えていない。荒野の近 0.5 m・遠 400 km は変えていない。
 - Notes: 枠での再検証の直し（反復 2）: 枠の直下に `build/` が無く verify のビルドの行が「build is not a directory」で落ちていた（単位の確かめは単位の作業ツリーの build で回していた）。枠で `Library/ThirdParty/freetype` のサブモジュールを手元の複製を参照して初期化し、`cmake -B build -S . -G "Visual Studio 17 2022"`（終了コード 0）で構成して、`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 件で Game.exe を生成した（証拠 `.harness/runs/20261116-053245/configure-slot.txt`・`verify-build-game-slot.txt`）。コードは変えていない。
 - U1 材質の型に発光テクスチャと NormalScale を足し、店のコピーと共通の GLSL 関数を用意する: 着地(直し 0 回)
+- U2 取り込みの拒否を外し、静的とスキンの両方で発光テクスチャと NormalScale を材質へ渡す: 着地(直し 0 回)
