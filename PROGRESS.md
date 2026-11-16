@@ -11335,3 +11335,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 採った判断: 板の段は視錐台のカリングの前に選ぶ（視錐台の出入りで状態が飛ばない）。元を抑えるのは、段 1 の板が視錐台・距離のカリングを通ったときだけ（今の静的メッシュの規則のまま）。
 - 既知の限界: 複数の Viewport を持つ SceneView では、最後にカリングした Viewport の判定が MegaGeometry の抑制の印に残る。一時の板（transient）は前の段を持たず、MegaGeometry を戻すときの板の残しも効かない。MegaGeometry の元を抑えると、そのインスタンスは影（VSM）と TLAS の入力からも外れる見込み。
 - Next: ランナーの評価者の反証（SceneView のカリングと RenderThread へ渡す MegaGeometry の proxy の印 = 危険地帯）。クロスフェードは G12-GR48-CROSSFADE、インポスターの GBuffer の描画は G12-GR48-IMPOSTOR-GBUFFER。
+
+### G12-GR48-MESH-LOD-SELECT 再検証（2026-11-16、run 20261116-053232・反復 3）
+- Done: 差し戻し（枠に `build/` が無く verify が `build is not a directory` で落ちた）を直した。枠で freetype の submodule を初期化し、`cmake -B build -S . -G "Visual Studio 17 2022"` で構成し直してから verify を回した。実装の変更は無い。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0 で SceneView.cpp・MeshComponent.cpp・ImpostorComponent.cpp を含めてコンパイルし Game.exe を生成（`.harness/runs/20261116-053232/verify-G12-GR48-MESH-LOD-SELECT-iter3.txt`）。
+- Next: ランナーの評価者の反証（危険地帯）。
