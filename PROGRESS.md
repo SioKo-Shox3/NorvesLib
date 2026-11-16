@@ -11633,3 +11633,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 焼いた形式を版 2 にし、版 1 のエミッタの設定を既定値で補って読む: 着地(直し 0 回)
 - U4 CPU の実行先に刻みの文脈・新しい設定・位置の形・抗力・風・乱れを足す: 着地(直し 0 回)
 - U6 GPU へ詰める型と GLSL の共通の定義を足す: 着地(直し 0 回)
+- U7 生成数の計画とプールのエミッタの割り当てを Private に足す: 着地(直し 0 回)

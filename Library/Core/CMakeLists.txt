@@ -258,6 +258,8 @@ set(PRIVATE_SOURCES
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
     # Rendering
+    Private/Rendering/GpuParticle/GpuParticleSpawnPlanner.cpp
+    Private/Rendering/GpuParticle/GpuParticleEmitterAllocator.cpp
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/CanvasView.cpp
