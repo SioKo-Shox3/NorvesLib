@@ -12,6 +12,7 @@
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
 #include "Wind.h"
+#include "RainModel.h"
 #include "EnvironmentParameters.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
@@ -38,6 +39,16 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     /**
+     * @brief メッシュのLODの鎖にある段1以降のデータ。
+     */
+    struct MeshLODChainLevel
+    {
+        MeshDataHandle MeshHandle; // この段のメッシュ
+        Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes; // この段のサブメッシュ範囲
+        uint32_t SubMeshCount = 0;
+    };
+
+    /**
      * @brief 描画用メッシュプロキシ
      *
      * GameThreadからRenderThreadへ渡される描画に必要な最小限の情報。
@@ -61,10 +72,21 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         MeshDataHandle MeshHandle; // メッシュデータへのハンドル
-        uint8_t LODLevel = 0;      // 現在のLODレベル
+        // MeshHandle・SubMeshes が表す段。SceneView が段を差し替えた1フレームの写しでは選んだ段。
+        uint8_t LODLevel = 0;
 
         Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes;
         uint32_t SubMeshCount = 0;
+
+        // 段1～3。段0は MeshHandle・SubMeshes・SubMeshCount に入る。
+        Container::FixedArray<MeshLODChainLevel, MAX_MESH_LOD_LEVELS - 1> LODChain;
+        // 境界球の画面の大きさに対する段ごとのしきい値。
+        Container::FixedArray<float, MAX_MESH_LOD_LEVELS> LODScreenSizeThresholds =
+            Container::FixedArray<float, MAX_MESH_LOD_LEVELS>(0.0f);
+        uint8_t LODLevelCount = 1; // 段0を含む段数。1ならLODなし。
+        int8_t ForcedLODLevel = -1; // -1は自動、0以上はその段に固定。
+        // SceneView が前のフレームに選んだ段。proxy の内容ではないため hash に含めない。
+        uint8_t LODSelectionState = 0;
 
         // ========================================
         // トランスフォーム
@@ -225,13 +247,22 @@ namespace NorvesLib::Core::Rendering
         bool bCastShadow = true;
         RenderLayer LayerMask = RenderLayer::Default;
 
+        /// 散布の 1 本ごとの色味（RGBA8。白は色を変えない）。1 本ずつの MegaGeometryComponent は既定のまま
+        uint32_t Tint = 0xFFFFFFFFu;
+        /// 散布の 1 本ごとの個体差の種。1 本ずつの MegaGeometryComponent は既定のまま
+        uint32_t VariationSeed = 0;
+
         // 行の席（EcsGpuSceneSlot の値 = 席の番号 + 1。0 は席なし）。World が公開するときに書く。
         // 値の比較や hash には含めない（席は行の寿命で決まり、proxy の内容ではない）
         uint32_t SceneSlot = 0;
 
+        // SceneView がインポスターへ切り替えた元を抑える印。World が公開する proxy では常に false。
+        // proxy の内容ではないため hash に含めない。
+        bool bHiddenByImpostor = false;
+
         bool IsValid() const
         {
-            return MegaMeshHandle.IsValid() && bVisible;
+            return MegaMeshHandle.IsValid() && bVisible && !bHiddenByImpostor;
         }
     };
 
@@ -260,6 +291,10 @@ namespace NorvesLib::Core::Rendering
         float SortDepth = 0.0f;
         uint64_t SourceMeshComponentId = 0;
         float LODSwitchDistance = 0.0f;
+        // インポスターへ切り替える画面の大きさのしきい値。0なら LODSwitchDistance を使う。
+        float LODSwitchScreenSize = 0.0f;
+        // SceneView が前のフレームに選んだ段（0は元のメッシュ、1はインポスター）。hash には含めない。
+        uint8_t LODSelectionState = 0;
         uint32_t ImpostorCellResolution = 0;
         uint32_t ImpostorAxisCellCountX = 0;
         uint32_t ImpostorAxisCellCountY = 0;
@@ -586,6 +621,12 @@ namespace NorvesLib::Core::Rendering
         PaleFlatParameters PaleFlat = MakeDefaultPaleFlatParameters();
         // 世界で共通の風。SceneRevision には含めない。
         WindParameters Wind = MakeDefaultWindParameters();
+        /**
+         * @brief RenderThread が雨の写像の評価に使う調整の値。
+         * 値が変わったときだけ新しい共有の値になり、パケットへはポインタだけを写す。
+         * SceneRevision に入れない。
+         */
+        Container::TSharedPtr<const RainTuning> RainTuningSnapshot;
         // 天気と時刻の環境の値。SceneRevision には DiscontinuityId だけを含める。
         EnvironmentParameters Environment = MakeDefaultEnvironmentParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
@@ -647,6 +688,7 @@ namespace NorvesLib::Core::Rendering
             VolumetricFog = MakeDefaultVolumetricFogParameters();
             PaleFlat = MakeDefaultPaleFlatParameters();
             Wind = MakeDefaultWindParameters();
+            RainTuningSnapshot = nullptr;
             Environment = MakeDefaultEnvironmentParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();

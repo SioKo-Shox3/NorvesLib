@@ -1,6 +1,7 @@
 ﻿#include "Rendering/VisibilityMaterialTable.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering::VisibilityBuffer
@@ -13,6 +14,22 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         {
             words[0] = static_cast<uint32_t>(id & 0xFFFFFFFFull);
             words[1] = static_cast<uint32_t>(id >> 32);
+        }
+
+        // 既定の材質は追加の枠を 0 のまま保ち、同じ値の材質を同じ件へまとめる
+        void StoreAdditionalMaterialValues(MaterialEntry& entry, TextureHandle emissiveTexture,
+                                           float emissiveLuminanceNits, float normalScale)
+        {
+            if (emissiveTexture.IsValid() && emissiveLuminanceNits > 0.0f)
+            {
+                StoreHandle(&entry.TexturesE[0], emissiveTexture.Id);
+                entry.Header[0] |= MATERIAL_FLAG_EMISSIVE_TEXTURE;
+            }
+            if (std::isfinite(normalScale) && normalScale != 1.0f)
+            {
+                std::memcpy(&entry.TexturesE[2], &normalScale, sizeof(float));
+                entry.Header[0] |= MATERIAL_FLAG_NORMAL_SCALE;
+            }
         }
 
         // ハンドルの 64bit を、下位・上位の 2 語から戻す
@@ -164,6 +181,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         StoreHandle(&entry.TexturesC[0], data->AOTexture.Id);
         StoreHandle(&entry.TexturesC[2], data->ORMTexture.Id);
         StoreHandle(&entry.TexturesD[0], data->HeightTexture.Id);
+        StoreAdditionalMaterialValues(entry, data->EmissiveTexture, data->EmissiveLuminanceNits, data->NormalScale);
         return entry;
     }
 
@@ -240,6 +258,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         StoreHandle(&entry.TexturesC[0], material.AOTexture.Id);
         StoreHandle(&entry.TexturesC[2], material.ORMTexture.Id);
         StoreHandle(&entry.TexturesD[0], material.HeightTexture.Id);
+        StoreAdditionalMaterialValues(entry, material.EmissiveTexture, material.EmissiveLuminanceNits, material.NormalScale);
         return entry;
     }
 
@@ -253,6 +272,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         handles.AO = LoadHandle(&entry.TexturesC[0]);
         handles.ORM = LoadHandle(&entry.TexturesC[2]);
         handles.Height = LoadHandle(&entry.TexturesD[0]);
+        handles.Emissive = LoadHandle(&entry.TexturesE[0]);
         return handles;
     }
 

@@ -51,10 +51,27 @@ namespace NorvesLib::Core::Particle
         constexpr const char* kLayerNames[] = {"Default", "Transparent", "UI"};
         constexpr const char* kBlendNames[] = {"Opaque", "Masked", "Translucent", "Additive", "Modulate"};
 
+        constexpr const char* kExecutorNames[] = {"Cpu", "Gpu"};
+        constexpr const char* kRandomStreamNames[] = {"Sequential", "Counter"};
+        constexpr const char* kTimeChannelNames[] = {"Particle", "Unscaled"};
+        constexpr const char* kWrapPolicyNames[] = {"Die", "WrapInCameraBox"};
+        constexpr const char* kSpawnShapeNames[] = {"Point", "Sphere", "Cone", "Box", "CameraBox"};
+        constexpr const char* kCurveTargetNames[] = {"Size", "Color", "Opacity", "Stretch"};
+        constexpr const char* kCollisionResponseNames[] = {"Kill", "Stick", "Bounce", "SpawnChild"};
+        constexpr const char* kGpuSpriteOrientationNames[] = {"Billboard", "VelocityStretch", "SurfaceAligned"};
+        constexpr const char* kGpuSpriteBlendNames[] = {"PremultipliedAlpha", "Additive"};
+        constexpr const char* kGpuSpritePassNames[] = {"PreTAA", "PostTAA"};
+        constexpr const char* kGpuSpriteLightingNames[] = {"Unlit", "AmbientTinted"};
+
         constexpr VfxParameterSchema kEmitterParameters[] = {
             UIntParameter("MaxParticles", 1u, 65536u, "count", 128u, "粒の最大数"),
             EnumParameter("Space", kSpaceNames, CountOf(kSpaceNames), 0u, "シミュレーション空間"),
-            UIntParameter("Seed", 0u, 4294967295u, "", 0u, "エミッタの乱数種")
+            UIntParameter("Seed", 0u, 4294967295u, "", 0u, "エミッタの乱数種"),
+            EnumParameter("Executor", kExecutorNames, CountOf(kExecutorNames), 0u, "実行先"),
+            EnumParameter("RandomStream", kRandomStreamNames, CountOf(kRandomStreamNames), 0u, "乱数の流れ"),
+            UIntParameter("Capacity", 0u, 16777216u, "count", 0u, "粒のプールの容量。0 は MaxParticles を使う"),
+            EnumParameter("TimeChannel", kTimeChannelNames, CountOf(kTimeChannelNames), 0u, "積分と生成の速さに使う時間"),
+            EnumParameter("WrapPolicy", kWrapPolicyNames, CountOf(kWrapPolicyNames), 0u, "カメラの箱を出た粒の扱い")
         };
         constexpr VfxParameterSchema kFlipbookParameters[] = {
             UIntParameter("Columns", 1u, 64u, "count", 1u, "列数"),
@@ -110,6 +127,77 @@ namespace NorvesLib::Core::Particle
             VectorParameter("EdgeColor", VfxValueType::Color, 0.0, 64.0, "linear_rgba", 4.0f, 1.5f, 0.3f, 1.0f, "縁の色(線形)")
         };
 
+        constexpr VfxParameterSchema kInitShapeParameters[] = {
+            EnumParameter("Shape", kSpawnShapeNames, CountOf(kSpawnShapeNames), 0u, "位置の形"),
+            VectorParameter("Radius", VfxValueType::Float, 0.0, 1e5, "space", 1.0f, 0.0f, 0.0f, 0.0f, "球の半径"),
+            VectorParameter("ConeAngle", VfxValueType::Float, 0.0, 90.0, "deg", 30.0f, 0.0f, 0.0f, 0.0f, "円錐の半頂角"),
+            VectorParameter("ConeLength", VfxValueType::Float, 0.0, 1e5, "space", 1.0f, 0.0f, 0.0f, 0.0f, "円錐の長さ（頂点から +Y）"),
+            VectorParameter("BoxHalfExtents", VfxValueType::Vector3, 0.0, 1e5, "space", 1.0f, 1.0f, 1.0f, 0.0f, "箱の半径"),
+            VectorParameter("CameraBoxHalfWidth", VfxValueType::Float, 0.0, 1e5, "space", 20.0f, 0.0f, 0.0f, 0.0f, "カメラの箱の水平の半幅"),
+            VectorParameter("CameraBoxHeight", VfxValueType::Float, 0.0, 1e5, "space", 20.0f, 0.0f, 0.0f, 0.0f, "カメラの箱の高さ（カメラを中心に上下へ半分ずつ）")
+        };
+        constexpr VfxParameterSchema kDragParameters[] = {
+            VectorParameter("Coefficient", VfxValueType::Float, 0.0, 1000.0, "1/s", 1.0f, 0.0f, 0.0f, 0.0f, "速度に比例する抗力の係数")
+        };
+        constexpr VfxParameterSchema kWindInfluenceParameters[] = {
+            VectorParameter("Coupling", VfxValueType::Float, 0.0, 1000.0, "1/s", 1.0f, 0.0f, 0.0f, 0.0f, "風の速度へ寄る速さ"),
+            VectorParameter("Scale", VfxValueType::Float, 0.0, 10.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "風の速度の倍率")
+        };
+        constexpr VfxParameterSchema kTurbulenceParameters[] = {
+            VectorParameter("Strength", VfxValueType::Float, 0.0, 1e5, "space/s^2", 1.0f, 0.0f, 0.0f, 0.0f, "乱れの加速度の振れ幅"),
+            VectorParameter("Frequency", VfxValueType::Float, 0.0001, 1000.0, "1/space", 1.0f, 0.0f, 0.0f, 0.0f, "乱れの格子の細かさ")
+        };
+        constexpr VfxParameterSchema kCurveOverLifeParameters[] = {
+            EnumParameter("Target", kCurveTargetNames, CountOf(kCurveTargetNames), 0u, "曲線を掛ける量"),
+            UIntParameter("KeyCount", 1u, kVfxMaxCurveKeys, "count", 2u, "使うキーの数"),
+            VectorParameter("Key0", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 0.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key1", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key2", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key3", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key4", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key5", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key6", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Key7", VfxValueType::Vector2, 0.0, 100000.0, "life,value", 1.0f, 1.0f, 0.0f, 0.0f, "キー（x = 正規化した年齢 0〜1、y = 値）"),
+            VectorParameter("Color", VfxValueType::Color, 0.0, 64.0, "linear_rgba", 1.0f, 1.0f, 1.0f, 1.0f, "Target が Color のとき、値 1 で到達する色")
+        };
+        constexpr VfxParameterSchema kActivationFractionParameters[] = {
+            VectorParameter("Fraction", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "有効にする粒の割合"),
+            VectorParameter("Ramp", VfxValueType::Float, 0.0, 0.5, "", 0.01f, 0.0f, 0.0f, 0.0f, "境目で不透明度を上げる幅")
+        };
+        constexpr VfxParameterSchema kCollisionPlaneParameters[] = {
+            VectorParameter("GroundY", VfxValueType::Float, -1e6, 1e6, "space", 0.0f, 0.0f, 0.0f, 0.0f, "地面の高さ"),
+            VectorParameter("KillBelowY", VfxValueType::Float, -1e6, 1e6, "space", -1e6f, 0.0f, 0.0f, 0.0f, "これより下の粒を消す高さ"),
+            EnumParameter("Response", kCollisionResponseNames, CountOf(kCollisionResponseNames), 0u, "衝突したときの扱い"),
+            VectorParameter("Restitution", VfxValueType::Float, 0.0, 1.0, "", 0.5f, 0.0f, 0.0f, 0.0f, "Bounce の反発係数"),
+            NameParameter("ChildEmitter", 0u, 63u, "", "SpawnChild で生成する子のエミッタ名"),
+            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率")
+        };
+        constexpr VfxParameterSchema kCollisionHeightFieldParameters[] = {
+            EnumParameter("Response", kCollisionResponseNames, CountOf(kCollisionResponseNames), 0u, "衝突したときの扱い"),
+            VectorParameter("Restitution", VfxValueType::Float, 0.0, 1.0, "", 0.5f, 0.0f, 0.0f, 0.0f, "Bounce の反発係数"),
+            NameParameter("ChildEmitter", 0u, 63u, "", "SpawnChild で生成する子のエミッタ名"),
+            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率")
+        };
+        constexpr VfxParameterSchema kCollisionDepthParameters[] = {
+            VectorParameter("Thickness", VfxValueType::Float, 0.0, 100.0, "space", 0.1f, 0.0f, 0.0f, 0.0f, "深度の厚み"),
+            EnumParameter("Response", kCollisionResponseNames, CountOf(kCollisionResponseNames), 0u, "衝突したときの扱い"),
+            VectorParameter("Restitution", VfxValueType::Float, 0.0, 1.0, "", 0.5f, 0.0f, 0.0f, 0.0f, "Bounce の反発係数"),
+            NameParameter("ChildEmitter", 0u, 63u, "", "SpawnChild で生成する子のエミッタ名"),
+            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率")
+        };
+        constexpr VfxParameterSchema kGpuSpriteRendererParameters[] = {
+            EnumParameter("Orientation", kGpuSpriteOrientationNames, CountOf(kGpuSpriteOrientationNames), 0u, "スプライトの向き"),
+            EnumParameter("Blend", kGpuSpriteBlendNames, CountOf(kGpuSpriteBlendNames), 0u, "ブレンド方式"),
+            EnumParameter("Pass", kGpuSpritePassNames, CountOf(kGpuSpritePassNames), 0u, "描画の段階"),
+            VectorParameter("SoftDistance", VfxValueType::Float, 0.0, 100.0, "space", 0.5f, 0.0f, 0.0f, 0.0f, "ソフトパーティクルの距離"),
+            EnumParameter("Lighting", kGpuSpriteLightingNames, CountOf(kGpuSpriteLightingNames), 0u, "照明の方式"),
+            VectorParameter("FogInfluence", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "霧の影響"),
+            VectorParameter("StreakShutterSeconds", VfxValueType::Float, 0.0, 1.0, "s", 0.0208333f, 0.0f, 0.0f, 0.0f, "伸びのシャッター時間"),
+            BoolParameter("SubPixelCompensation", true, "幅 1px 未満の補償"),
+            VectorParameter("NearFadeDistance", VfxValueType::Float, 0.0, 100.0, "space", 0.5f, 0.0f, 0.0f, 0.0f, "近距離のフェード"),
+            NameParameter("Texture", 0u, 63u, "", "テクスチャの資産名")
+        };
+
         constexpr VfxObjectSchema kEmitterSchema = {
             "Emitter", static_cast<VfxModuleType>(0), VfxModuleStage::Object,
             kEmitterParameters, CountOf(kEmitterParameters)
@@ -129,7 +217,17 @@ namespace NorvesLib::Core::Particle
             {"InitSize", VfxModuleType::InitSize, VfxModuleStage::Initialize, kInitSizeParameters, CountOf(kInitSizeParameters)},
             {"Acceleration", VfxModuleType::Acceleration, VfxModuleStage::Update, kAccelerationParameters, CountOf(kAccelerationParameters)},
             {"SpriteRenderer", VfxModuleType::SpriteRenderer, VfxModuleStage::Render, kSpriteRendererParameters, CountOf(kSpriteRendererParameters)},
-            {"MeshRenderer", VfxModuleType::MeshRenderer, VfxModuleStage::Render, kMeshRendererParameters, CountOf(kMeshRendererParameters)}
+            {"MeshRenderer", VfxModuleType::MeshRenderer, VfxModuleStage::Render, kMeshRendererParameters, CountOf(kMeshRendererParameters)},
+            {"InitShape", VfxModuleType::InitShape, VfxModuleStage::Initialize, kInitShapeParameters, CountOf(kInitShapeParameters)},
+            {"Drag", VfxModuleType::Drag, VfxModuleStage::Update, kDragParameters, CountOf(kDragParameters)},
+            {"WindInfluence", VfxModuleType::WindInfluence, VfxModuleStage::Update, kWindInfluenceParameters, CountOf(kWindInfluenceParameters)},
+            {"Turbulence", VfxModuleType::Turbulence, VfxModuleStage::Update, kTurbulenceParameters, CountOf(kTurbulenceParameters)},
+            {"CurveOverLife", VfxModuleType::CurveOverLife, VfxModuleStage::Update, kCurveOverLifeParameters, CountOf(kCurveOverLifeParameters)},
+            {"ActivationFraction", VfxModuleType::ActivationFraction, VfxModuleStage::Update, kActivationFractionParameters, CountOf(kActivationFractionParameters)},
+            {"CollisionPlane", VfxModuleType::CollisionPlane, VfxModuleStage::Update, kCollisionPlaneParameters, CountOf(kCollisionPlaneParameters)},
+            {"CollisionHeightField", VfxModuleType::CollisionHeightField, VfxModuleStage::Update, kCollisionHeightFieldParameters, CountOf(kCollisionHeightFieldParameters)},
+            {"CollisionDepth", VfxModuleType::CollisionDepth, VfxModuleStage::Update, kCollisionDepthParameters, CountOf(kCollisionDepthParameters)},
+            {"GpuSpriteRenderer", VfxModuleType::GpuSpriteRenderer, VfxModuleStage::Render, kGpuSpriteRendererParameters, CountOf(kGpuSpriteRendererParameters)}
         };
 
         bool Fail(Container::String* outError, const char* code, const char* object, const char* parameter)
@@ -143,6 +241,12 @@ namespace NorvesLib::Core::Particle
                 *outError += parameter != nullptr ? parameter : "Unknown";
             }
             return false;
+        }
+
+        bool IsCollisionModule(VfxModuleType type)
+        {
+            return type == VfxModuleType::CollisionPlane || type == VfxModuleType::CollisionHeightField ||
+                type == VfxModuleType::CollisionDepth;
         }
 
         const char* FindParameterOwner(const VfxParameterSchema& parameter)
@@ -520,6 +624,20 @@ namespace NorvesLib::Core::Particle
                 return Fail(outError, "min_greater_than_max", schema->Name, "Min");
             }
         }
+        if (module.Type == VfxModuleType::CurveOverLife)
+        {
+            const uint32_t keyCount = module.Values[1].UInt;
+            for (uint32_t index = 0u; index < keyCount; ++index)
+            {
+                const uint32_t parameterIndex = 2u + index;
+                const float age = module.Values[parameterIndex].Vector.x;
+                if (age < 0.0f || age > 1.0f ||
+                    (index > 0u && age <= module.Values[parameterIndex - 1u].Vector.x))
+                {
+                    return Fail(outError, "out_of_range", schema->Name, schema->Parameters[parameterIndex].Name);
+                }
+            }
+        }
         return true;
     }
 
@@ -540,15 +658,43 @@ namespace NorvesLib::Core::Particle
                 return false;
             }
         }
+        const uint32_t executorIndex = static_cast<uint32_t>(FindVfxParameterIndex(kEmitterSchema, "Executor"));
+        const uint32_t randomStreamIndex = static_cast<uint32_t>(FindVfxParameterIndex(kEmitterSchema, "RandomStream"));
+        const uint32_t spaceIndex = static_cast<uint32_t>(FindVfxParameterIndex(kEmitterSchema, "Space"));
+        const uint32_t wrapPolicyIndex = static_cast<uint32_t>(FindVfxParameterIndex(kEmitterSchema, "WrapPolicy"));
+        const bool bGpu = emitter.Properties[executorIndex].UInt == static_cast<uint32_t>(VfxExecutor::Gpu);
+        const bool bWorld = emitter.Properties[spaceIndex].UInt == static_cast<uint32_t>(VfxSimulationSpace::World);
+        if (bGpu && emitter.Properties[randomStreamIndex].UInt != static_cast<uint32_t>(VfxRandomStream::Counter))
+        {
+            return Fail(outError, "gpu_requires_counter_stream", "Emitter", "RandomStream");
+        }
+        if (bGpu && !bWorld)
+        {
+            return Fail(outError, "gpu_requires_world_space", "Emitter", "Space");
+        }
+
         bool bHasRenderer = false;
         bool bHasMeshRenderer = false;
+        bool bHasShape = false;
+        bool bHasCameraBox = false;
+        bool bCurveTargets[CountOf(kCurveTargetNames)] = {};
         for (const VfxModule& module : emitter.Modules)
         {
             if (!ValidateVfxModule(module, outError))
             {
                 return false;
             }
-            if (module.Type == VfxModuleType::SpriteRenderer || module.Type == VfxModuleType::MeshRenderer)
+            const VfxObjectSchema& schema = *FindVfxModuleSchema(module.Type);
+            if (!bGpu && (module.Type == VfxModuleType::CollisionDepth || module.Type == VfxModuleType::GpuSpriteRenderer))
+            {
+                return Fail(outError, "requires_gpu_executor", schema.Name, "Executor");
+            }
+            if (bGpu && (module.Type == VfxModuleType::SpriteRenderer || module.Type == VfxModuleType::MeshRenderer))
+            {
+                return Fail(outError, "requires_cpu_executor", schema.Name, "Executor");
+            }
+            if (module.Type == VfxModuleType::SpriteRenderer || module.Type == VfxModuleType::MeshRenderer ||
+                module.Type == VfxModuleType::GpuSpriteRenderer)
             {
                 if (bHasRenderer)
                 {
@@ -557,11 +703,46 @@ namespace NorvesLib::Core::Particle
                 bHasRenderer = true;
                 bHasMeshRenderer = module.Type == VfxModuleType::MeshRenderer;
             }
+            if (module.Type == VfxModuleType::InitShape)
+            {
+                if (bHasShape)
+                {
+                    return Fail(outError, "multiple_shapes", "Emitter", "Modules");
+                }
+                bHasShape = true;
+                bHasCameraBox = module.Values[0].UInt == static_cast<uint32_t>(VfxSpawnShape::CameraBox);
+                if (bHasCameraBox && !bWorld)
+                {
+                    return Fail(outError, "camera_box_requires_world_space", "InitShape", "Space");
+                }
+            }
+            if (module.Type == VfxModuleType::CurveOverLife)
+            {
+                const uint32_t target = module.Values[0].UInt;
+                if (bCurveTargets[target])
+                {
+                    return Fail(outError, "duplicate_curve_target", "CurveOverLife", "Target");
+                }
+                bCurveTargets[target] = true;
+            }
+            if (IsCollisionModule(module.Type))
+            {
+                const uint32_t responseIndex = static_cast<uint32_t>(FindVfxParameterIndex(schema, "Response"));
+                const uint32_t childIndex = static_cast<uint32_t>(FindVfxParameterIndex(schema, "ChildEmitter"));
+                if (module.Values[responseIndex].UInt == static_cast<uint32_t>(VfxCollisionResponse::SpawnChild) &&
+                    module.Values[childIndex].Name.empty())
+                {
+                    return Fail(outError, "missing_child_emitter", schema.Name, "ChildEmitter");
+                }
+            }
         }
-        const uint32_t spaceIndex = static_cast<uint32_t>(FindVfxParameterIndex(kEmitterSchema, "Space"));
-        if (bHasMeshRenderer && emitter.Properties[spaceIndex].UInt == static_cast<uint32_t>(VfxSimulationSpace::Screen))
+        if (bHasMeshRenderer && !bWorld)
         {
             return Fail(outError, "mesh_requires_world_space", "MeshRenderer", "Space");
+        }
+        if (emitter.Properties[wrapPolicyIndex].UInt == static_cast<uint32_t>(VfxWrapPolicy::WrapInCameraBox) && !bHasCameraBox)
+        {
+            return Fail(outError, "wrap_requires_camera_box", "Emitter", "WrapPolicy");
         }
         return true;
     }
@@ -630,6 +811,32 @@ namespace NorvesLib::Core::Particle
             }
             for (const VfxModule& module : emitter.Modules)
             {
+                if (IsCollisionModule(module.Type))
+                {
+                    const VfxObjectSchema& schema = *FindVfxModuleSchema(module.Type);
+                    const uint32_t responseIndex = static_cast<uint32_t>(FindVfxParameterIndex(schema, "Response"));
+                    if (module.Values[responseIndex].UInt == static_cast<uint32_t>(VfxCollisionResponse::SpawnChild))
+                    {
+                        const uint32_t childIndex = static_cast<uint32_t>(FindVfxParameterIndex(schema, "ChildEmitter"));
+                        const Container::String& childName = module.Values[childIndex].Name;
+                        bool bFound = false;
+                        if (!(childName == emitter.Name))
+                        {
+                            for (const VfxEmitterAsset& child : effect.Emitters)
+                            {
+                                if (child.Name == childName)
+                                {
+                                    bFound = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!bFound)
+                        {
+                            return Fail(outError, "unknown_child_emitter", schema.Name, "ChildEmitter");
+                        }
+                    }
+                }
                 if (module.Type != VfxModuleType::SpriteRenderer)
                 {
                     continue;

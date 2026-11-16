@@ -34,9 +34,13 @@ layout(std430, set = 0, binding = 8) readonly buffer VsmPoolBuffer
 #include "Common/VirtualShadowMap.glsl"
 #endif
 
-// 空気遠近の高度ごとの表の段の数（SkyAerialProfileSize）と、霧と空気遠近を一緒に積む視線の歩数
+// 空気遠近の高度ごとの表の段数と、霧・空気遠近・参照の視線の歩数
 const uint kAerialProfileSize = 128u;
 const int kAtmosphereSteps = 32;
+const int kFogOnlySteps = 24;
+const int kAtmosphereFarSteps = 8;
+const int kReferenceSteps = 256;
+const float kMinimumExponentialStepRatio = 1.0001;
 
 layout(std140, set = 0, binding = 2) uniform VolumetricsParams
 {
@@ -60,11 +64,94 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     vec4 fogRange; // x=霧の距離の上限(m、0 で視線全体), y=周りの光の倍率, zw=未使用
     vec4 fogTintAndSkyBlend;    // rgb=霧の色味, w=空への寄せ（0..1）
     vec4 fogReferenceElevation; // x=基準の仰角の正弦, y=余弦, zw=未使用
+    vec4 fogSteps;  // x=歩の配置（0=等間隔、1=指数）, y=指数の比, z=影つきの散乱を歩で積む距離の上限(m、0で上限なし), w=参照の256歩なら1
+    vec4 fogJitter; // x=画素ごとのずらしが有効なら1, y=TAAが掛かるフレームで時間方向のずらしが有効なら1, z=フレーム番号を64で割った余り, w=未使用
 } params;
 
 bool IsFiniteFloat(float value)
 {
     return !isnan(value) && !isinf(value);
+}
+
+struct FogStep
+{
+    float Start;
+    float Length;
+};
+
+// 視線の区間を分け、指数配置では手前から隣の歩の長さを比率に従って伸ばす。
+FogStep PlaceFogStep(int stepIndex, int stepCount, float span, bool bExponential, float ratio)
+{
+    FogStep step;
+    if (!bExponential || !IsFiniteFloat(ratio) || ratio < kMinimumExponentialStepRatio || stepCount <= 1)
+    {
+        step.Length = span / float(stepCount);
+        step.Start = float(stepIndex) * step.Length;
+        return step;
+    }
+    float denominator = pow(ratio, float(stepCount)) - 1.0;
+    float growth = pow(ratio, float(stepIndex));
+    step.Start = span * (growth - 1.0) / denominator;
+    step.Length = span * growth * (ratio - 1.0) / denominator;
+    return step;
+}
+
+// 距離の上限より奥がある場合、手前は選んだ配置、奥は等間隔で分ける。
+FogStep PlaceAtmosphereMarchStep(int stepIndex, int stepCount, float rayDistance,
+                                bool bExponential, float ratio, float cutoff)
+{
+    if (cutoff > 0.0 && rayDistance > cutoff && stepCount > kAtmosphereFarSteps)
+    {
+        int nearCount = stepCount - kAtmosphereFarSteps;
+        if (stepIndex < nearCount)
+        {
+            return PlaceFogStep(stepIndex, nearCount, cutoff, bExponential, ratio);
+        }
+        FogStep farStep = PlaceFogStep(stepIndex - nearCount, kAtmosphereFarSteps,
+                                       rayDistance - cutoff, false, 1.0);
+        farStep.Start += cutoff;
+        return farStep;
+    }
+    return PlaceFogStep(stepIndex, stepCount, rayDistance, bExponential, ratio);
+}
+
+// 原点からの等間隔では、標本距離を従来と同じ演算順で求める。
+float FogSampleDistance(FogStep step, int stepIndex, float sampleOffset, bool bUniformFromOrigin)
+{
+    if (bUniformFromOrigin)
+    {
+        return (float(stepIndex) + sampleOffset) * step.Length;
+    }
+    return step.Start + sampleOffset * step.Length;
+}
+
+// 整数の画素座標から画素ごとに固定されたノイズを求める（Jimenez 2014）。
+float InterleavedGradientNoise(vec2 p)
+{
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
+// 参照と大気の書き出しは中点を使い、必要に応じて画素と時間で標本をずらす。
+float FogStepOffset(vec2 pixelPosition, bool bJitterFog, bool bLegacyPixelJitter)
+{
+    if (params.fogSteps.w > 0.5 || !bJitterFog)
+    {
+        return 0.5;
+    }
+    if (params.fogJitter.x > 0.5)
+    {
+        vec2 p = floor(pixelPosition);
+        if (params.fogJitter.y > 0.5)
+        {
+            p += vec2(5.588238 * params.fogJitter.z);
+        }
+        return InterleavedGradientNoise(p);
+    }
+    if (bLegacyPixelJitter)
+    {
+        return InterleavedGradientNoise(floor(pixelPosition));
+    }
+    return 0.5;
 }
 
 vec2 EquirectangularUV(vec3 direction)
@@ -212,12 +299,19 @@ vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, 
                                        1.0e-4);
     const float phase = (1.0 - anisotropy * anisotropy) /
                         (12.5663706 * pow(phaseDenominator, 1.5));
-    const float stepLength = rayDistance / 24.0;
+    bool bReference = params.fogSteps.w > 0.5;
+    int stepCount = bReference ? kReferenceSteps : kFogOnlySteps;
+    float span = !bReference && params.fogSteps.z > 0.0 ? min(rayDistance, params.fogSteps.z) : rayDistance;
+    bool bExponential = !bReference && params.fogSteps.x > 0.5;
+    float ratio = bReference ? 1.0 : params.fogSteps.y;
+    bool bUniformFromOrigin = !bExponential || !IsFiniteFloat(ratio) ||
+                              ratio < kMinimumExponentialStepRatio || stepCount <= 1;
     vec3 scatteringRadiance = vec3(0.0);
 
-    for (int stepIndex = 0; stepIndex < 24; ++stepIndex)
+    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        float sampleDistance = (float(stepIndex) + sampleOffset) * stepLength;
+        FogStep step = PlaceFogStep(stepIndex, stepCount, span, bExponential, ratio);
+        float sampleDistance = FogSampleDistance(step, stepIndex, sampleOffset, bUniformFromOrigin);
         vec3 samplePosition = params.cameraPositionAndPreExposure.xyz +
                               rayDirection * sampleDistance;
         float densityExponent = -params.fogParameters.z *
@@ -235,7 +329,24 @@ vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, 
         {
             scatteringRadiance += params.directionalLightRadianceAndEnabled.rgb *
                                   (phase * localDensity * viewTransmittance *
-                                   shadowVisibility * stepLength);
+                                   shadowVisibility * step.Length);
+        }
+    }
+    if (span < rayDistance)
+    {
+        // 上限より奥は影を引かず、解析した透過率の差で散乱を足す。
+        float nearTransmittance = ComputeAnalyticTransmittance(
+            params.cameraPositionAndPreExposure.y, rayDirection.y, span);
+        float farTransmittance = ComputeAnalyticTransmittance(
+            params.cameraPositionAndPreExposure.y, rayDirection.y, rayDistance);
+        if (IsFiniteFloat(nearTransmittance) && IsFiniteFloat(farTransmittance))
+        {
+            vec3 farRadiance = params.directionalLightRadianceAndEnabled.rgb *
+                               (phase * max(nearTransmittance - farTransmittance, 0.0));
+            if (IsFiniteFloat(farRadiance.x) && IsFiniteFloat(farRadiance.y) && IsFiniteFloat(farRadiance.z))
+            {
+                scatteringRadiance += farRadiance;
+            }
         }
     }
     return scatteringRadiance;
@@ -289,8 +400,9 @@ struct VolumetricsRayResult
 // 掛け始める距離より手前は数えない。各点の空の散乱の源は空の LUT と同じ大気の値で、太陽の単一散乱（Rayleigh と Mie の位相 ×
 // 高度ごとの表の太陽の照度 × 透過率）と多重散乱（散乱係数 × 表の Ψ_ms）。霧は太陽の単一散乱（影つき）と周りの光を散乱する。
 // 霧の周りの光は空の媒質と同じ多重散乱の表 Ψ_ms（等方の近似）で数える。視線の向きの空の輝度を使うと、その輝度が視線の奥の
-// 太陽の散乱まで含むので、霧の点の周りの光を多く数える（正解 B の 1.3〜1.6 倍）。中点則で kAtmosphereSteps 歩
-void MarchFogAndAerial(vec3 rayDirection, float rayDistance, float fogDistance,
+// 太陽の散乱まで含むので、霧の点の周りの光を多く数える（正解 B の 1.3〜1.6 倍）。歩は等間隔または指数に配置し、上限より奥は等間隔に分ける。
+// 標本は画素と時間でずらせる。参照の 256 歩と大気の書き出しは中点を使う。
+void MarchFogAndAerial(vec3 rayDirection, float rayDistance, float fogDistance, float sampleOffset,
                        inout VolumetricsRayResult result)
 {
     float startDistance = max(params.aerialPerspective.z, 0.0);
@@ -309,16 +421,27 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, float fogDistance,
     float fogPhase = HenyeyGreensteinPhase(
         clamp(dot(params.directionalLightDirectionAndAnisotropy.xyz, -rayDirection), -1.0, 1.0), fogAnisotropy);
 
-    float stepLength = rayDistance / float(kAtmosphereSteps);
+    bool bReference = params.fogSteps.w > 0.5;
+    int stepCount = bReference ? kReferenceSteps : kAtmosphereSteps;
+    bool bExponential = !bReference && params.fogSteps.x > 0.5;
+    float ratio = bReference ? 1.0 : params.fogSteps.y;
+    float cutoff = bReference ? 0.0 : params.fogSteps.z;
+    bool bSplitAtCutoff = cutoff > 0.0 && rayDistance > cutoff && stepCount > kAtmosphereFarSteps;
+    int nearCount = bSplitAtCutoff ? stepCount - kAtmosphereFarSteps : stepCount;
+    bool bUniformNear = !bExponential || !IsFiniteFloat(ratio) ||
+                        ratio < kMinimumExponentialStepRatio || nearCount <= 1;
     vec3 airDepth = vec3(0.0);
     float fogDepth = 0.0;
     vec3 single = vec3(0.0);
     vec3 multiple = vec3(0.0);
     vec3 fogAmbient = vec3(0.0);
     vec3 fogDirectional = vec3(0.0);
-    for (int stepIndex = 0; stepIndex < kAtmosphereSteps; ++stepIndex)
+    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
     {
-        float sampleDistance = (float(stepIndex) + 0.5) * stepLength;
+        FogStep step = PlaceAtmosphereMarchStep(stepIndex, stepCount, rayDistance, bExponential, ratio, cutoff);
+        bool bUniformFromOrigin = bUniformNear && (!bSplitAtCutoff || stepIndex < nearCount);
+        float sampleDistance = FogSampleDistance(step, stepIndex, sampleOffset, bUniformFromOrigin);
+        float stepLength = step.Length;
         vec3 fromCenter = vec3(rayDirection.x * sampleDistance,
                                planetRadius + originHeight + rayDirection.y * sampleDistance,
                                rayDirection.z * sampleDistance);
@@ -339,8 +462,9 @@ void MarchFogAndAerial(vec3 rayDirection, float rayDistance, float fogDistance,
 
         vec3 stepAirDepth = airExtinction * stepLength;
         float stepFogDepth = fogScattering * stepLength;
-        // その歩の中点までの透過率（空の媒質と霧の両方）
-        vec3 transmittance = exp(-(airDepth + 0.5 * stepAirDepth) - vec3(fogDepth + 0.5 * stepFogDepth));
+        // その歩の標本までの透過率（空の媒質と霧の両方）
+        vec3 transmittance = exp(-(airDepth + sampleOffset * stepAirDepth) -
+                                 vec3(fogDepth + sampleOffset * stepFogDepth));
         vec3 sunIlluminance = SampleAerialProfile(0u, altitude);
         vec3 multipleScattering = SampleAerialProfile(1u, altitude);
         single += transmittance * (rayleighScattering * rayleighPhase + vec3(mieScattering * miePhase)) *
@@ -400,18 +524,15 @@ VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance
     }
     if (params.aerialPerspective.x > 0.5 && rayDistance > 0.0)
     {
-        MarchFogAndAerial(rayDirection, rayDistance, fogDistance, result);
+        MarchFogAndAerial(rayDirection, rayDistance, fogDistance,
+                          FogStepOffset(pixelPosition, bJitterFog, false), result);
     }
     else if (result.FogOpacity > 0.0)
     {
-        // 霧だけ: 周りの光は不透明度を掛け、太陽の単一散乱は霧の透過率だけで減らして積む
+        // 霧だけ: 周りの光には不透明度を掛け、太陽の散乱は選んだ配置とずらしで積む。
+        // 距離の上限より奥は、影を引かずに解析した透過率の差を使う。
         result.FogAmbient = result.FogRadiance * result.FogOpacity * params.fogRange.y;
-        float sampleOffset = 0.5;
-        if (bJitterFog && params.fogRange.x > 0.0)
-        {
-            // 画素ごとに固定した Interleaved Gradient Noise で歩の位置をずらす。
-            sampleOffset = fract(52.9829189 * fract(dot(floor(pixelPosition), vec2(0.06711056, 0.00583715))));
-        }
+        float sampleOffset = FogStepOffset(pixelPosition, bJitterFog, params.fogRange.x > 0.0);
         result.FogDirectional = IntegrateDirectionalSingleScattering(rayDirection, fogDistance, sampleOffset);
     }
     return result;

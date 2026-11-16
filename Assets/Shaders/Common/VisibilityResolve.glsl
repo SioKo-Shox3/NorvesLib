@@ -47,8 +47,8 @@
 //     Albedo = インスタンスの色 × アルベドのテクスチャ（α = テクスチャの α）、Normal = 法線マップを適用したワールド法線、
 //     Material = 金属度・粗さ・AO、Velocity = (現在の NDC - 前の NDC) * 0.5、
 //     Emissive = 材質の表の発光（色度 × 輝度 × フレームのプリエクスポージャ。65504 で頭打ち。α = 1。表の外の材質は 0）。
-//     発光はテクスチャを引かず材質の表の件だけで決まるので、直接 dispatch・材質ごとの形のどちらも同じ式で書く。
-//   - インスタンスの色は、MegaGeometry は材質の表の基本色（区間の材質の値）、手続きメッシュはインスタンスの表の色、
+//     タイルの版は発光テクスチャ（binding 38）を掛け、直接 dispatch の版は表の定数だけで書く。
+//   - インスタンスの色は、MegaGeometry は区間の材質の基本色 × インスタンスの色味、手続きメッシュはインスタンスの表の色、
 //     スキニングは 1。
 //
 // デバッグの表示も、この解決が GBuffer へ書く。クラスタの色・LOD の段は MegaGeometry の画素でここが色を差し替え、
@@ -114,7 +114,7 @@ const uint RESOLVE_DEBUG_LOD_LEVEL = 2u;
 
 layout(set = 0, binding = 2) uniform usampler2D idTexture;
 
-// フレームの材質の表の 1 件（VisibilityMaterialTable.h の MaterialEntry と同じ 144 バイト）
+// フレームの材質の表の 1 件（VisibilityMaterialTable.h の MaterialEntry と同じ 160 バイト）
 struct VisMaterialEntry
 {
     vec4 baseColor;
@@ -126,6 +126,7 @@ struct VisMaterialEntry
     uvec4 texturesC;
     uvec4 texturesD;
     vec4 shadingParams;
+    uvec4 texturesE;
 };
 
 layout(std430, set = 0, binding = 3) readonly buffer MaterialTable
@@ -208,6 +209,7 @@ layout(set = 0, binding = VIS_TILE_BINDING + 5) uniform sampler2D metallicTextur
 layout(set = 0, binding = VIS_TILE_BINDING + 6) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = VIS_TILE_BINDING + 7) uniform sampler2D aoTexture;
 layout(set = 0, binding = VIS_TILE_BINDING + 8) uniform sampler2D heightTexture;
+layout(set = 0, binding = 38) uniform sampler2D emissiveTexture;
 
 // 地形の 2・3 層目（土・岩肌）のアルベド・法線・ORM（VisibilityResolvePass.cpp の TerrainTextureBindingFirst と同じ。
 // メッシュの表（22）の後ろ。地形でない材質は 1 層目のテクスチャが張られ、読まない）
@@ -265,6 +267,9 @@ const uint VIS_MATERIAL_FLAG_TERRAIN_SURFACE = 32u;
 const uint VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA = 256u;
 // VisibilityMaterialTable.h の MATERIAL_FLAG_TWO_SIDED と同じ値
 const uint VIS_MATERIAL_FLAG_TWO_SIDED = 512u;
+// 発光テクスチャと、接空間の法線への NormalScale の適用（TexturesE）
+const uint VIS_MATERIAL_FLAG_EMISSIVE_TEXTURE = 1024u;
+const uint VIS_MATERIAL_FLAG_NORMAL_SCALE = 2048u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから。頂点・インデックスの読み出しは Common/VisibilityTriangleFetch.glsl と共有）
@@ -591,7 +596,7 @@ vec2 VisComputeVelocity(vec2 pixelCenter, vec4 previousClip)
 bool VisLoadMaterial(uint materialIndex, out VisMaterialEntry entry)
 {
     entry = VisMaterialEntry(vec4(1.0), vec4(0.0), vec4(-1.0, -1.0, 0.05, 0.0), uvec4(0u), uvec4(0u), uvec4(0u),
-                             uvec4(0u), uvec4(0u), vec4(-1.0));
+                             uvec4(0u), uvec4(0u), vec4(-1.0), uvec4(0u));
     if (materialIndex >= uint(materials.length()))
     {
         return false;
@@ -600,7 +605,7 @@ bool VisLoadMaterial(uint materialIndex, out VisMaterialEntry entry)
     return true;
 }
 
-// ラスタの頂点シェーダーが fragObjectColor へ渡す色。MegaGeometry は区間の材質の基本色（材質の表の基本色）、
+// ラスタの頂点シェーダーが fragObjectColor へ渡す色。MegaGeometry は区間の材質の基本色 × インスタンスの色味、
 // 手続きメッシュはインスタンスの表の色、スキニングは 1
 vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bHasMaterial)
 {
@@ -614,7 +619,20 @@ vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bH
     {
         return vec3(1.0);
     }
-    return bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
+    const vec3 color = bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
+    if (kind == VIS_KIND_MEGA_CLUSTER)
+    {
+        const uint instanceIndex = VisRecordInstanceIndex(record);
+        if (instanceIndex < uint(megaInstanceRows.length()))
+        {
+            const uint tint = LoadMegaInstanceTint(instanceIndex);
+            if (!MegaTintIsWhite(tint))
+            {
+                return color * MegaTintRgb(tint);
+            }
+        }
+    }
+    return color;
 }
 
 // 手続きの描画だけインスタンスの表を読む。スキニングの値は材質の表へ重ね済み
@@ -639,6 +657,7 @@ struct VisMaterialSurface
     vec3 normalDx;   // 書く法線の画素あたりの変化（x+1）
     vec3 normalDy;   // 書く法線の画素あたりの変化（y+1）
     vec3 material;   // 金属度・粗さ・AO
+    vec3 emissiveSample; // タイルの版で標本した発光テクスチャの RGB
     uint receiverFlags; // 地形などの受け手の印（材質 ID と合わせて法線の A に書く）
 };
 
@@ -654,6 +673,7 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
 {
     VisMaterialSurface surface;
     surface.albedo = vec4(objectColor, 1.0);
+    surface.emissiveSample = vec3(1.0);
     surface.normal = resolved.normal;
     surface.normalDx = resolved.normalDx;
     surface.normalDy = resolved.normalDy;
@@ -828,6 +848,11 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     }
 
     vec3 tangentNormal = samples.TangentNormal;
+    const bool bNormalScale = !bTerrain && !bTerrainSplat && (entry.header.x & VIS_MATERIAL_FLAG_NORMAL_SCALE) != 0u;
+    if (bNormalScale)
+    {
+        tangentNormal = ApplyPbrNormalScale(tangentNormal, uintBitsToFloat(entry.texturesE.z));
+    }
     vec3 coarseNormal = vec3(0.0, 0.0, 1.0);
     if (bDisplaced)
     {
@@ -839,6 +864,12 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     }
 
     VisMaterialSurface surface;
+    surface.emissiveSample = vec3(1.0);
+    if ((entry.header.x & VIS_MATERIAL_FLAG_EMISSIVE_TEXTURE) != 0u)
+    {
+        // アルベドと同じ POM 後の UV・解析的な勾配・サンプラーで標本する。発光は VT ではない。
+        surface.emissiveSample = textureGrad(emissiveTexture, texCoord, footprint.UvDx, footprint.UvDy).rgb;
+    }
     const bool bOpaqueAlbedoAlpha = (entry.header.x & VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA) != 0u;
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples),
                           bOpaqueAlbedoAlpha ? 1.0 : samples.Albedo.a);
@@ -858,6 +889,11 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
         vec3 tangentNormalY = DecodePbrTangentNormal(
             SampleMaterialTextureTracked(normalTexture, texCoord + resolved.duvdy, footprint, footprint.NormalLod,
                                          bVirtualTexture, bUnusedEscaped), bNormalTwoChannel);
+        if (bNormalScale)
+        {
+            tangentNormalX = ApplyPbrNormalScale(tangentNormalX, uintBitsToFloat(entry.texturesE.z));
+            tangentNormalY = ApplyPbrNormalScale(tangentNormalY, uintBitsToFloat(entry.texturesE.z));
+        }
         if (bDisplaced)
         {
             tangentNormalX = VisRemoveDisplacedNormalSlope(tangentNormalX, coarseNormal);
@@ -952,6 +988,7 @@ void main()
         const uint payload = VisRecordLodPayload(record);
         surface.albedo = vec4(debugView == RESOLVE_DEBUG_CLUSTERS ? ClusterDebugColor(payload) : LODLevelDebugColor(payload), 1.0);
         surface.normal = resolved.normal;
+        surface.emissiveSample = vec3(1.0);
         surface.normalDx = vec3(0.0);
         surface.normalDy = vec3(0.0);
         surface.material = vec3(0.0, 1.0, 1.0);
@@ -999,8 +1036,15 @@ void main()
     imageStore(materialImage, ivec2(pixel), GBufferEncodeMaterialForShadingModel(surface.material, shadingParams.x, shadingModelId));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
+    vec3 emissiveChromaticity = materialEntry.emissive.rgb;
+#ifdef NORVES_VISRESOLVE_TILES
+    if (bHasMaterial && !bDebugView && (materialEntry.header.x & VIS_MATERIAL_FLAG_EMISSIVE_TEXTURE) != 0u)
+    {
+        emissiveChromaticity *= surface.emissiveSample;
+    }
+#endif
     const vec3 emissive = (bHasMaterial && !bDebugView)
-                              ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a, params.frame.x)
+                              ? ComputePreExposedEmissive(emissiveChromaticity, materialEntry.emissive.a, params.frame.x)
                               : vec3(0.0);
     imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, shadingParams.y));
     if ((params.screen.z & RESOLVE_FLAG_GEOMETRIC_NORMAL) != 0u)

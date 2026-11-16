@@ -73,15 +73,9 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         {
             return Fail(reason, "alphaMode_blend_unsupported");
         }
-        if (material.NormalScale != 1)
-        {
-            return Fail(reason, "normalScale_requires_shader_support");
-        }
-        if (material.EmissiveLuminanceNits > 0 && !material.EmissivePath.empty())
-        {
-            return Fail(reason, "emissiveTexture_requires_shader_support");
-        }
-        // OPAQUEのfactor alphaは仕様どおり無視。nits0の発光画像も寄与0で、読み込まない。
+        // OPAQUE の factor alpha は仕様どおり無視する。
+        // 0 nits の発光画像は寄与 0 のため読み込まず、正の nits なら sRGB で読み込む。
+        // normalScale は法線マップの XY に掛ける。
         // MASKはテクスチャのα×factor alphaを被覆率としAlphaCutoffで切るが、MegaGeometryでは切り抜かない。
         return true;
     }
