@@ -11630,3 +11630,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: この枠には `build/` が無く freetype のサブモジュールも未取得だったので、`git submodule update --init Library/ThirdParty/freetype` の後に構成した。
 - U1 CPU と GPU で共有する乱数・生成数・乱れの式のヘッダを足す: 着地(直し 0 回)
 - U2 効果の定義にエミッタの設定と新しいモジュールを足し、スキーマと検証に載せる: 着地(直し 0 回)
+- U3 焼いた形式を版 2 にし、版 1 のエミッタの設定を既定値で補って読む: 着地(直し 0 回)
