@@ -11,7 +11,7 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent()
         : Component()
     {
-        getTextureHandle().Set(Rendering::TextureHandle::Invalid());
+        StoreTextureHandle(Rendering::TextureHandle::Invalid());
         getbVisible().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::UI);
         getSpace().Set(Rendering::BoardSpace::ScreenSpace);
@@ -30,7 +30,7 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent(const FieldInitializer *initializer)
         : Component(initializer)
     {
-        getTextureHandle().Set(Rendering::TextureHandle::Invalid());
+        StoreTextureHandle(Rendering::TextureHandle::Invalid());
         getbVisible().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::UI);
         getSpace().Set(Rendering::BoardSpace::ScreenSpace);
@@ -49,7 +49,7 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent(const IUnknown *sourceObject)
         : Component(sourceObject)
     {
-        getTextureHandle().Set(Rendering::TextureHandle::Invalid());
+        StoreTextureHandle(Rendering::TextureHandle::Invalid());
         getbVisible().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::UI);
         getSpace().Set(Rendering::BoardSpace::ScreenSpace);
@@ -80,9 +80,20 @@ namespace NorvesLib::Core::Component
         ApplyCurrentFlipbookFrameToUV();
     }
 
+    void BoardComponent::Finalize()
+    {
+        Component::Finalize();
+        m_TextureBinding.Reset();
+    }
+
     void BoardComponent::BeginPlay()
     {
         Component::BeginPlay();
+        if (!TextureAsset->IsEmpty() && !LoadTextureHandle().IsValid())
+        {
+            m_TextureBinding.RequestTexture(TextureAsset.Get());
+        }
+        PollAssetBindings();
         if (bPlayOnBeginPlay)
         {
             Play();
@@ -91,13 +102,101 @@ namespace NorvesLib::Core::Component
 
     void BoardComponent::TickFlipbook(float deltaTime)
     {
+        PollAssetBindings();
         AdvanceFlipbook(deltaTime);
     }
 
     void BoardComponent::SetTextureHandle(Rendering::TextureHandle texture)
     {
-        getTextureHandle().Set(texture);
+        StoreTextureHandle(texture);
+        m_TextureBinding.Reset();
+        TextureAsset = TextureAssetRef{};
         MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetTextureHandle(Rendering::TextureHandle texture, Container::StringView sourcePath)
+    {
+        StoreTextureHandle(texture);
+        if (!TextureAsset->TrySet(sourcePath))
+        {
+            TextureAsset = TextureAssetRef{};
+        }
+        m_TextureBinding.MarkExternal(Asset::AssetKind::Texture, TextureAsset->GetLogicalPath());
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetTextureAsset(const TextureAssetRef& reference)
+    {
+        TextureAsset = reference;
+        OnPropertyApplied(*s_PropertyPtr_TextureAsset);
+    }
+
+    void BoardComponent::OnPropertyApplied(const ClassProperty& property)
+    {
+        Component::OnPropertyApplied(property);
+        if (&property != s_PropertyPtr_TextureAsset ||
+            TextureAsset->GetLogicalPath() == m_TextureBinding.GetLogicalPath())
+        {
+            return;
+        }
+
+        StoreTextureHandle(Rendering::TextureHandle::Invalid());
+        MarkRenderStateDirty();
+        m_TextureBinding.Reset();
+        if (!TextureAsset->IsEmpty() && bBegunPlay)
+        {
+            m_TextureBinding.RequestTexture(TextureAsset.Get());
+            PollAssetBindings();
+        }
+    }
+
+    void BoardComponent::PollAssetBindings()
+    {
+        Rendering::TextureHandle texture;
+        if (m_TextureBinding.TakeReadyTexture(texture))
+        {
+            StoreTextureHandle(texture);
+            MarkRenderStateDirty();
+        }
+    }
+
+    bool BoardComponent::IsWaitingForAssetBinding() const
+    {
+        return !TextureAsset->IsEmpty() && m_TextureBinding.IsWaiting();
+    }
+
+    Rendering::TextureHandle BoardComponent::LoadTextureHandle() const
+    {
+        Rendering::TextureHandle texture = m_TextureHandle;
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsBoardRender>().Type,
+                                   static_cast<uint32_t>(offsetof(Ecs::EcsBoardRender, Texture)),
+                                   static_cast<uint32_t>(sizeof(texture)), &texture);
+        return texture;
+    }
+
+    void BoardComponent::StoreTextureHandle(Rendering::TextureHandle texture)
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsBoardRender>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsWriteColumnPart(row, type, static_cast<uint32_t>(offsetof(Ecs::EcsBoardRender, Texture)),
+                                    static_cast<uint32_t>(sizeof(texture)), &texture);
+            return;
+        }
+        m_TextureHandle = texture;
+    }
+
+    void BoardComponent::OnEcsRowAttached()
+    {
+        Component::OnEcsRowAttached();
+        StoreTextureHandle(m_TextureHandle);
+    }
+
+    void BoardComponent::OnEcsRowDetaching()
+    {
+        Component::OnEcsRowDetaching();
+        m_TextureHandle = LoadTextureHandle();
     }
 
     void BoardComponent::SetVisible(bool bNewVisible)
@@ -569,7 +668,7 @@ namespace NorvesLib::Core::Component
     {
         (void)materials;
 
-        if (!IsVisible())
+        if (!IsVisible() || IsWaitingForAssetBinding())
         {
             return false;
         }
@@ -577,7 +676,7 @@ namespace NorvesLib::Core::Component
         outProxy = Rendering::BoardProxy{};
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = ComponentId;
-        outProxy.Texture = getTextureHandle().Get();
+        outProxy.Texture = LoadTextureHandle();
         outProxy.WorldTransform = m_WorldTransform;
         outProxy.PreviousWorldTransform = m_PreviousWorldTransform;
         outProxy.LayerMask = getRenderLayerProp().Get();

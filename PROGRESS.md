@@ -11804,3 +11804,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 MegaGeometryResources に GetModelSourcePath(ModelHandle) を足す: 着地(直し 0 回)
 - U3 MegaGeometryComponent が ModelAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
 - U4 MeshComponent の MeshHandle を PROPERTY から外し、ProceduralMeshSpec を PROPERTY にする: 着地(直し 0 回)
+- U5 BoardComponent（と BillboardComponent）が TextureAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
