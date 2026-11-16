@@ -62,6 +62,20 @@ namespace NorvesLib::Core::Rendering
             float Opacity = 0.0f;
         };
 
+        struct TileIndexEntry
+        {
+            int32_t TileX = 0;
+            int32_t TileZ = 0;
+            size_t WorkIndex = 0u;
+        };
+
+        struct LevelTileIndex
+        {
+            Container::VariableArray<TileIndexEntry> Entries;
+            // 索引に存在するタイル座標の最小値と最大値（両端を含む）。
+            Rect Bounds;
+        };
+
         int64_t FloorDivTile(int64_t value)
         {
             const int64_t quotient = value / kTileSize;
@@ -153,13 +167,18 @@ namespace NorvesLib::Core::Rendering
 
         WorldBounds GetBounds(const SkyOccluderProxy& proxy)
         {
-            const double cosine = std::abs(std::cos(static_cast<double>(proxy.Yaw)));
-            const double sine = std::abs(std::sin(static_cast<double>(proxy.Yaw)));
-            // GPU 側の三角関数の丸め差を含め、ビンから交差物を落とさない。
-            const double extentX = (cosine * proxy.HalfExtentX + sine * proxy.HalfExtentZ) * 1.000001;
-            const double extentZ = (sine * proxy.HalfExtentX + cosine * proxy.HalfExtentZ) * 1.000001;
-            return {proxy.CenterX - extentX, proxy.CenterZ - extentZ,
-                    proxy.CenterX + extentX, proxy.CenterZ + extentZ};
+            WorldBounds bounds;
+            GetSkyOccluderHorizontalBounds(proxy, bounds.MinX, bounds.MinZ, bounds.MaxX, bounds.MaxZ);
+            return bounds;
+        }
+
+        void AddOccluderBoundsRect(TileGrid& grid, const WorldBounds& bounds, float texelMeters)
+        {
+            const double scale = static_cast<double>(texelMeters);
+            AddSplatRect(grid, {FloorCoordinate(bounds.MinX / scale) - 1,
+                                FloorCoordinate(bounds.MinZ / scale) - 1,
+                                FloorCoordinate(bounds.MaxX / scale) + 2,
+                                FloorCoordinate(bounds.MaxZ / scale) + 2});
         }
 
         void AddOccluderRect(TileGrid& grid, const SkyOccluderProxy& proxy, float texelMeters)
@@ -168,12 +187,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return;
             }
-            const WorldBounds bounds = GetBounds(proxy);
-            const double scale = static_cast<double>(texelMeters);
-            AddSplatRect(grid, {FloorCoordinate(bounds.MinX / scale) - 1,
-                                FloorCoordinate(bounds.MinZ / scale) - 1,
-                                FloorCoordinate(bounds.MaxX / scale) + 2,
-                                FloorCoordinate(bounds.MaxZ / scale) + 2});
+            AddOccluderBoundsRect(grid, GetBounds(proxy), texelMeters);
         }
 
         void AddChangedOccluders(TileGrid& grid, float texelMeters,
@@ -197,6 +211,42 @@ namespace NorvesLib::Core::Rendering
                 if (bHasCurrent)
                 {
                     AddOccluderRect(grid, current[index], texelMeters);
+                }
+            }
+        }
+
+        void AddChangedChunkRanges(TileGrid& grid, float texelMeters,
+                                   const Container::VariableArray<SkyOccluderChunkRange>& previous,
+                                   Container::Span<const SkyOccluderChunkRange> current)
+        {
+            const auto addRange = [&](const SkyOccluderChunkRange& range)
+            {
+                AddOccluderBoundsRect(grid, {range.MinX, range.MinZ, range.MaxX, range.MaxZ}, texelMeters);
+            };
+            size_t previousIndex = 0u;
+            size_t currentIndex = 0u;
+            while (previousIndex < previous.size() || currentIndex < current.size())
+            {
+                if (currentIndex == current.size() ||
+                    (previousIndex < previous.size() &&
+                     previous[previousIndex].ChunkKey < current[currentIndex].ChunkKey))
+                {
+                    addRange(previous[previousIndex++]);
+                }
+                else if (previousIndex == previous.size() ||
+                         current[currentIndex].ChunkKey < previous[previousIndex].ChunkKey)
+                {
+                    addRange(current[currentIndex++]);
+                }
+                else
+                {
+                    if (previous[previousIndex].Revision != current[currentIndex].Revision)
+                    {
+                        addRange(previous[previousIndex]);
+                        addRange(current[currentIndex]);
+                    }
+                    ++previousIndex;
+                    ++currentIndex;
                 }
             }
         }
@@ -296,32 +346,88 @@ namespace NorvesLib::Core::Rendering
             {
                 return lhs.Opacity != rhs.Opacity ? lhs.Opacity < rhs.Opacity : lhs.PackedIndex < rhs.PackedIndex;
             });
-            for (SkyOcclusionWorkTile& tile : tiles)
+            const uint64_t maxIndexWords = maxStorageBytes / sizeof(uint32_t);
+            if (indices.size() > maxIndexWords || tiles.size() > maxIndexWords - indices.size())
             {
-                if (indices.size() >= maxStorageBytes / sizeof(uint32_t))
+                return false;
+            }
+            uint64_t indexWordCount = indices.size() + tiles.size();
+            LevelTileIndex levels[SkyOcclusionMaxLevelCount];
+            Container::VariableArray<Container::VariableArray<uint32_t>> tileIndices(tiles.size());
+            const auto tileLess = [](const TileIndexEntry& lhs, const TileIndexEntry& rhs)
+            {
+                return lhs.TileZ != rhs.TileZ ? lhs.TileZ < rhs.TileZ : lhs.TileX < rhs.TileX;
+            };
+            for (size_t workIndex = 0u; workIndex < tiles.size(); ++workIndex)
+            {
+                const SkyOcclusionWorkTile& tile = tiles[workIndex];
+                LevelTileIndex& level = levels[tile.Level];
+                if (level.Entries.empty())
                 {
-                    return false;
+                    level.Bounds = {tile.TileX, tile.TileZ, tile.TileX, tile.TileZ};
                 }
-                tile.ListOffset = static_cast<uint32_t>(indices.size());
-                indices.push_back(0u);
-                const double scale = texelMeters[tile.Level];
-                const double minX = static_cast<double>(tile.TileX) * kTileSize * scale;
-                const double minZ = static_cast<double>(tile.TileZ) * kTileSize * scale;
-                const double maxX = (static_cast<double>(tile.TileX) * kTileSize + kTileSize) * scale;
-                const double maxZ = (static_cast<double>(tile.TileZ) * kTileSize + kTileSize) * scale;
-                for (const BinnedOccluder& item : sorted)
+                level.Bounds.MinX = std::min<int64_t>(level.Bounds.MinX, tile.TileX);
+                level.Bounds.MinZ = std::min<int64_t>(level.Bounds.MinZ, tile.TileZ);
+                level.Bounds.MaxX = std::max<int64_t>(level.Bounds.MaxX, tile.TileX);
+                level.Bounds.MaxZ = std::max<int64_t>(level.Bounds.MaxZ, tile.TileZ);
+                level.Entries.push_back({tile.TileX, tile.TileZ, workIndex});
+            }
+            for (LevelTileIndex& level : levels)
+            {
+                std::sort(level.Entries.begin(), level.Entries.end(), tileLess);
+            }
+            // 遮蔽物を従来と同じ順に配ることで、各タイルの添字列の順序も保つ。
+            for (const BinnedOccluder& item : sorted)
+            {
+                for (uint32_t levelIndex = 0u; levelIndex < SkyOcclusionMaxLevelCount; ++levelIndex)
                 {
-                    if (item.Bounds.MaxX >= minX && item.Bounds.MinX <= maxX &&
-                        item.Bounds.MaxZ >= minZ && item.Bounds.MinZ <= maxZ)
+                    const LevelTileIndex& level = levels[levelIndex];
+                    if (level.Entries.empty())
                     {
-                        if (indices.size() >= maxStorageBytes / sizeof(uint32_t))
+                        continue;
+                    }
+                    const double scale = texelMeters[levelIndex];
+                    const double tileMeters = kTileSize * scale;
+                    // 境界で接するタイルと除算の丸めを含め、候補を一周広く取る。
+                    const int64_t x0 = std::max(level.Bounds.MinX, FloorCoordinate(item.Bounds.MinX / tileMeters) - 1);
+                    const int64_t z0 = std::max(level.Bounds.MinZ, FloorCoordinate(item.Bounds.MinZ / tileMeters) - 1);
+                    const int64_t x1 = std::min(level.Bounds.MaxX, FloorCoordinate(item.Bounds.MaxX / tileMeters) + 1);
+                    const int64_t z1 = std::min(level.Bounds.MaxZ, FloorCoordinate(item.Bounds.MaxZ / tileMeters) + 1);
+                    if (x0 > x1 || z0 > z1)
+                    {
+                        continue;
+                    }
+                    for (int64_t z = z0; z <= z1; ++z)
+                    {
+                        const TileIndexEntry key{static_cast<int32_t>(x0), static_cast<int32_t>(z), 0u};
+                        auto entry = std::lower_bound(level.Entries.begin(), level.Entries.end(), key, tileLess);
+                        for (; entry != level.Entries.end() && entry->TileZ == z && entry->TileX <= x1; ++entry)
                         {
-                            return false;
+                            const double minX = static_cast<double>(entry->TileX) * kTileSize * scale;
+                            const double minZ = static_cast<double>(entry->TileZ) * kTileSize * scale;
+                            const double maxX = (static_cast<double>(entry->TileX) * kTileSize + kTileSize) * scale;
+                            const double maxZ = (static_cast<double>(entry->TileZ) * kTileSize + kTileSize) * scale;
+                            if (item.Bounds.MaxX >= minX && item.Bounds.MinX <= maxX &&
+                                item.Bounds.MaxZ >= minZ && item.Bounds.MinZ <= maxZ)
+                            {
+                                if (indexWordCount >= maxIndexWords)
+                                {
+                                    return false;
+                                }
+                                tileIndices[entry->WorkIndex].push_back(item.PackedIndex);
+                                ++indexWordCount;
+                            }
                         }
-                        indices.push_back(item.PackedIndex);
-                        ++indices[tile.ListOffset];
                     }
                 }
+            }
+            indices.reserve(static_cast<size_t>(indexWordCount));
+            for (size_t workIndex = 0u; workIndex < tiles.size(); ++workIndex)
+            {
+                tiles[workIndex].ListOffset = static_cast<uint32_t>(indices.size());
+                const Container::VariableArray<uint32_t>& bin = tileIndices[workIndex];
+                indices.push_back(static_cast<uint32_t>(bin.size()));
+                indices.insert(indices.end(), bin.begin(), bin.end());
             }
             return true;
         }
@@ -523,6 +629,8 @@ namespace NorvesLib::Core::Rendering
         m_IntegrateDispatches.clear();
         m_LastOccluders.clear();
         m_PreparedOccluders.clear();
+        m_LastChunkRanges.clear();
+        m_PreparedChunkRanges.clear();
         m_PreparedGroundUpload = {};
         m_PreparedUndergrowthUpload = {};
         m_PreparedEmptyUndergrowthUpload = {};
@@ -579,6 +687,7 @@ namespace NorvesLib::Core::Rendering
         m_bHasAnchor = false;
         m_bHasValidData = false;
         m_bPrepared = false;
+        m_bWarnedInvalidChunkRanges = false;
         m_bInitialized = false;
     }
 
@@ -653,6 +762,20 @@ namespace NorvesLib::Core::Rendering
         }
 
         const RenderExtensionDataSet& extensions = scene.Extensions;
+        Container::Span<const SkyOccluderChunkRange> chunkRanges =
+            FindRenderExtensionArray(extensions, kSkyOcclusionChunkRangesKey);
+        Container::Span<const SkyOccluderProxy> chunkOccluders =
+            FindRenderExtensionArray(extensions, kSkyOcclusionChunkOccludersKey);
+        if (!IsValidSkyOccluderChunkRanges(chunkRanges, chunkOccluders.size()))
+        {
+            if (!m_bWarnedInvalidChunkRanges)
+            {
+                NORVES_LOG_WARNING("SkyOcclusionMapPass", "チャンクの遮蔽物の範囲が不正なため、空として扱います");
+                m_bWarnedInvalidChunkRanges = true;
+            }
+            chunkRanges = {};
+            chunkOccluders = {};
+        }
         const SkyOcclusionFieldLayout* groundLayout =
             FindRenderExtensionValue(extensions, kSkyOcclusionGroundLayoutKey);
         const Container::Span<const float> groundHeights =
@@ -805,6 +928,11 @@ namespace NorvesLib::Core::Rendering
         m_PreparedAnchorZ = anchorZ;
         m_PreparedRevision = scene.SkyOcclusionRevision;
         m_PreparedOccluders = scene.SkyOccluders;
+        m_PreparedChunkRanges.clear();
+        if (!chunkRanges.empty())
+        {
+            m_PreparedChunkRanges.assign(chunkRanges.begin(), chunkRanges.end());
+        }
         SkyOcclusionMapGpuParams constants;
         constants.counts[0] = parameters.LevelCount;
         constants.counts[1] = parameters.Resolution;
@@ -874,6 +1002,7 @@ namespace NorvesLib::Core::Rendering
             {
                 AddChangedOccluders(grids[level], scale, m_LastOccluders, scene.SkyOccluders);
             }
+            AddChangedChunkRanges(grids[level], scale, m_LastChunkRanges, chunkRanges);
             AddWindowBands(grids[level], previous, scale, GetSkyOcclusionOwnLevelReach(parameters, level),
                            level + 1u == parameters.LevelCount, parameters.MaxHorizonMeters);
         }
@@ -903,11 +1032,17 @@ namespace NorvesLib::Core::Rendering
         FrameUploadAllocation indicesAllocation;
         if (!splatTiles.empty())
         {
+            Container::VariableArray<SkyOccluderProxy> input = scene.SkyOccluders;
+            for (const SkyOccluderChunkRange& range : chunkRanges)
+            {
+                const Container::Span<const SkyOccluderProxy> chunk = chunkOccluders.subspan(range.Offset, range.Count);
+                input.insert(input.end(), chunk.begin(), chunk.end());
+            }
             Container::VariableArray<SkyOccluderProxy> packed;
             Container::VariableArray<uint32_t> indices;
             const uint64_t deviceLimit = m_Device->GetCapabilities().MaxStorageBufferRange;
             const uint64_t storageLimit = deviceLimit == 0u ? UINT32_MAX : std::min<uint64_t>(deviceLimit, UINT32_MAX);
-            if (!BuildBins(splatTiles, scene.SkyOccluders, m_PreparedTexelMeters, packed, indices, storageLimit))
+            if (!BuildBins(splatTiles, input, m_PreparedTexelMeters, packed, indices, storageLimit))
             {
                 NORVES_LOG_WARNING("SkyOcclusionMapPass", "遮蔽物の一覧がストレージバッファの上限を超えました");
                 return false;
@@ -1266,6 +1401,7 @@ namespace NorvesLib::Core::Rendering
         m_LastSkyWeight[1] = m_PreparedSkyWeight[1];
         m_bLastHasGround = m_bPreparedHasGround;
         m_LastOccluders = std::move(m_PreparedOccluders);
+        m_LastChunkRanges = std::move(m_PreparedChunkRanges);
         m_bHasAnchor = true;
         m_bHasValidData = true;
         PublishContextResources(resources, context);

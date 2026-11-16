@@ -11722,3 +11722,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 空の遮蔽パスに地形の高さテクスチャと曇天の重みを入れる: 着地(直し 0 回)
 - U6 Grassland で空の遮蔽を有効にし、地形の高さを公開する: 着地(直し 0 回)
 - U7 空の遮蔽パスに下草の層と踏み倒しを入れる: 着地(直し 0 回)
+- U8 チャンクの遮蔽物を差分で写し、振り分けを格子の索引にする: 着地(直し 0 回)

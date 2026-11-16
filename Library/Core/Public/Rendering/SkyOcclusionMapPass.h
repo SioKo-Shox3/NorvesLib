@@ -162,6 +162,8 @@ namespace NorvesLib::Core::Rendering
         int32_t m_WindowOrigin[SkyOcclusionMaxLevelCount][2] = {};
         Container::VariableArray<SkyOccluderProxy> m_LastOccluders;
         Container::VariableArray<SkyOccluderProxy> m_PreparedOccluders;
+        Container::VariableArray<SkyOccluderChunkRange> m_LastChunkRanges;
+        Container::VariableArray<SkyOccluderChunkRange> m_PreparedChunkRanges;
         Container::VariableArray<PreparedDispatch> m_SplatDispatches;
         Container::VariableArray<PreparedDispatch> m_IntegrateDispatches;
         SkyOcclusionParameters m_PreparedParameters;
@@ -199,5 +201,6 @@ namespace NorvesLib::Core::Rendering
         bool m_bHasAnchor = false;
         bool m_bHasValidData = false;
         bool m_bPrepared = false;
+        bool m_bWarnedInvalidChunkRanges = false;
     };
 } // namespace NorvesLib::Core::Rendering
