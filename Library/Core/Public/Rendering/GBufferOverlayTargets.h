@@ -21,7 +21,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RHI::VertexBindingDesc> vertexBindings;
         Container::VariableArray<RHI::VertexAttributeDesc> vertexAttributes;
         Container::VariableArray<RHI::DescriptorSetDesc> descriptorSetLayouts;
-        RHI::CompareOp depthCompareOp = DepthConvention::DepthCompareOpOrEqual;
+        RHI::CompareOp depthCompareOp = DepthConvention::DepthCompareOpOrEqual();
         RHI::CullMode cullMode = RHI::CullMode::None;
         const char* debugName = "GBufferOverlayTargets";
         const char* failureLogPrefix = "GBUFFER_OVERLAY";

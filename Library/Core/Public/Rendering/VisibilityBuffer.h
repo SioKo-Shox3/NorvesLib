@@ -16,12 +16,12 @@
 // （VisibilityBufferEncodingTest が定数を照合する）。
 
 #include "Container/Containers.h"
+#include "Rendering/DepthConvention.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/MeshIndexChunks.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "RHI/RHITypes.h"
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -45,9 +45,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief ソフトウェアラスタの 64bit のバッファ（画素ごとに uint64 を 1 つ）の値の詰め方（GLSL の VIS_KEY_* と一致）
          *
-         * 上位 32bit = float の深度のビット（std::bit_cast<uint32_t>）、下位 32bit = ID。深度は符号ビットが 0 の有限な float（+0.0 以上。-0.0 のビットは 0x80000000 で最も奥と扱われるので、+0.0 にそろえてから詰める）なので
-         * ビットの整数の大小が深度の大小と一致し、atomicMin 1 回で「手前の深度、同じ深度なら小さい ID」が残る。
-         * 空（何も書かれていない）はすべてのビットが 1 で、深度が 1.0 以下の値より必ず大きい。
+         * 上位 32bit = 深度の「より手前が小さい」鍵、下位 32bit = ID。標準 Z は深度のビットそのもの、逆 Z は反転したビット。
+         * 深度は有限な非負の float（-0.0 は +0.0 にそろえる）。atomicMin 1 回で「手前の深度、同じ深度なら小さい ID」が残る。
+         * 空（何も書かれていない）はすべてのビットが 1 で、逆 Z では深度 0（クリア値）へ戻る。
          */
         constexpr uint32_t KEY_DEPTH_SHIFT = 32;
         constexpr uint32_t KEY_ID_BITS = 32;
@@ -58,17 +58,16 @@ namespace NorvesLib::Core::Rendering
 
         static_assert(KEY_DEPTH_SHIFT + KEY_ID_BITS == 64, "深度と ID で 64bit を使い切る");
 
-        /** @brief 深度のビット。-0.0（0x80000000）は +0.0 にそろえる（符号つきでない整数の atomicMin では最も奥になり、深度の比較では最も手前になって食い違うため） */
+        /** @brief より手前ほど小さい深度の鍵。-0.0 は +0.0 にそろえる */
         inline uint32_t DepthBits(float depth)
         {
-            const uint32_t bits = std::bit_cast<uint32_t>(depth);
-            return bits == 0x80000000u ? 0u : bits;
+            return DepthConvention::CloserKeyBits(depth);
         }
 
         /** @brief 深度と ID から 64bit の値を作る（深度は符号ビットが 0 の有限な float。-0.0 は +0.0 にそろえる。負・NaN は詰められない値として呼び出し側が避ける） */
         inline uint64_t PackKey(float depth, uint32_t id)
         {
-            return (static_cast<uint64_t>(DepthBits(depth)) << KEY_DEPTH_SHIFT) | static_cast<uint64_t>(id);
+            return (static_cast<uint64_t>(DepthConvention::CloserKeyBits(depth)) << KEY_DEPTH_SHIFT) | static_cast<uint64_t>(id);
         }
 
         constexpr bool IsKeyEmpty(uint64_t key)
@@ -78,7 +77,7 @@ namespace NorvesLib::Core::Rendering
 
         inline float KeyDepth(uint64_t key)
         {
-            return std::bit_cast<float>(static_cast<uint32_t>(key >> KEY_DEPTH_SHIFT));
+            return DepthConvention::DepthFromCloserKeyBits(static_cast<uint32_t>(key >> KEY_DEPTH_SHIFT));
         }
 
         constexpr uint32_t KeyId(uint64_t key)

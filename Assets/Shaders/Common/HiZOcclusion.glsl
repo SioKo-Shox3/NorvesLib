@@ -2,12 +2,12 @@
 // Hi-Z（HZB）による遮蔽の判定（保守的な矩形の判定）
 //
 // 境界の球を包む AABB の8点を画面へ投影した矩形と、その最も手前の深度で判定する。
-// 矩形が HZB の 2x2 texel 以内に収まるミップを選び、その範囲の texel の最大（最も遠い深度）と比べる。
-// 手前の深度が範囲の最大より遠ければ、矩形のどの画素でも既に描かれた面の後ろなので、完全に隠れている。
+// 矩形が HZB の 2x2 texel 以内に収まるミップを選び、その範囲の texel の最も遠い深度と比べる。
+// 手前の深度が範囲の最も遠い深度より遠ければ、矩形のどの画素でも既に描かれた面の後ろなので、完全に隠れている。
 // 見えているものを隠れていると判定しないことを優先し、迷うときは「隠れていない」を返す。
 //
 // 規約:
-//   - 深度は [0,1] の Less の標準の向き（手前ほど小さい）。HZB は HiZPyramid が作る（2x2 の最大で縮める）。
+//   - 深度は [0,1] で、向きはカメラの深度の規約に従う。HZB は HiZPyramid が FarthestDepth で縮める。
 //   - HZB のミップ0 は深度の半分の解像度（切り上げ）。ミップ m の texel i は深度の画素 [i<<(m+1), (i+1)<<(m+1)) を覆い、
 //     最後の列・行だけは深度の端まで伸びる。投影は深度の解像度（depthSize）で画素へ直してから texel を求める。
 //   - viewProjection は列ベクトル規約の mat4（C++ からは Transpose して渡した View/Proj の積）。
@@ -55,14 +55,14 @@ bool HiZIsSphereOccluded(sampler2D hiZ,
     // 最も手前の深度も8点のどれかにある（射影は線分に沿って深度の順序を保つ）。
     vec2 ndcMin = vec2(1.0e30);
     vec2 ndcMax = vec2(-1.0e30);
-    float nearestDepth = 1.0e30;
+    float nearestDepth = kDepthBeyondFar;
     for (int corner = 0; corner < 8; ++corner)
     {
         vec3 offset = vec3((corner & 1) != 0 ? radius : -radius,
                            (corner & 2) != 0 ? radius : -radius,
                            (corner & 4) != 0 ? radius : -radius);
         vec4 clip = viewProjection * vec4(center + offset, 1.0);
-        if (!(clip.w > 1.0e-6) || clip.z < 0.0)
+        if (!(clip.w > 1.0e-6) || ClipCrossesNearPlane(clip))
         {
             return false; // カメラの後ろにかかる、または近平面をまたぐ
         }
