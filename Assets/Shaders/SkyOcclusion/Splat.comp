@@ -34,6 +34,7 @@ layout(std430, set = 0, binding = 3) readonly buffer SkyOcclusionIndices
 } lists;
 
 layout(rgba32f, set = 0, binding = 4) uniform writeonly image2DArray occluderMap;
+layout(set = 0, binding = 5) uniform sampler2D groundHeight;
 
 bool EvaluateSkyOccluderColumn(SkyOccluderProxy proxy, vec2 worldPosition,
     out float bottom, out float top)
@@ -95,6 +96,14 @@ void main()
     }
     vec2 worldPosition = SkyOcclusionWorldCenter(worldTexel, tile.level);
     float ground = map.heights.x;
+    if (map.inputs.x > 0.5)
+    {
+        vec2 uv = worldPosition * map.groundUv.xy + map.groundUv.zw;
+        if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
+        {
+            ground = textureLod(groundHeight, uv, 0.0).r;
+        }
+    }
     float bottom = ground;
     float top = ground;
     float transmittance = 1.0;

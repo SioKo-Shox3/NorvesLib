@@ -4,6 +4,7 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderExtension/RenderExtensionData.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/ICommandList.h"
@@ -335,6 +336,14 @@ namespace NorvesLib::Core::Rendering
                    previous.MaxHorizonMeters != current.MaxHorizonMeters;
         }
 
+        bool AreGroundLayoutsEqual(const SkyOcclusionFieldLayout& lhs, const SkyOcclusionFieldLayout& rhs)
+        {
+            return lhs.OriginX == rhs.OriginX && lhs.OriginZ == rhs.OriginZ &&
+                   lhs.TexelMeters == rhs.TexelMeters && lhs.Width == rhs.Width && lhs.Height == rhs.Height &&
+                   lhs.Reserved[0] == rhs.Reserved[0] && lhs.Reserved[1] == rhs.Reserved[1] &&
+                   lhs.Reserved[2] == rhs.Reserved[2];
+        }
+
         bool IsAnchorRepresentable(const SkyOcclusionParameters& parameters, float x, float z)
         {
             if (!std::isfinite(x) || !std::isfinite(z))
@@ -368,6 +377,14 @@ namespace NorvesLib::Core::Rendering
                              (bSplat ? binding < 4u : binding == 1u)
                                  ? RHI::ResourceBindType::StructuredBuffer : RHI::ResourceBindType::RWTexture;
                 desc.bindings.push_back(entry);
+            }
+            if (bSplat)
+            {
+                RHI::DescriptorBinding ground;
+                ground.binding = 5u;
+                ground.type = RHI::ResourceBindType::CombinedImageSampler;
+                ground.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(ground);
             }
             return desc;
         }
@@ -480,8 +497,11 @@ namespace NorvesLib::Core::Rendering
                 samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
                 samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
                 m_Sampler = m_Device->CreateSampler(samplerDesc);
+                samplerDesc.filterMin = RHI::FilterMode::Linear;
+                samplerDesc.filterMag = RHI::FilterMode::Linear;
+                m_GroundSampler = m_Device->CreateSampler(samplerDesc);
             }
-            m_bInitialized = m_SplatPipeline && m_IntegratePipeline && m_Sampler;
+            m_bInitialized = m_SplatPipeline && m_IntegratePipeline && m_Sampler && m_GroundSampler;
         }
         catch (const std::exception&)
         {
@@ -502,16 +522,22 @@ namespace NorvesLib::Core::Rendering
         m_IntegrateDispatches.clear();
         m_LastOccluders.clear();
         m_PreparedOccluders.clear();
+        m_PreparedGroundUpload = {};
+        m_GroundTexture.reset();
+        m_EmptyGroundTexture.reset();
+        m_PreparedGroundTexture.reset();
         m_OccludersTexture.reset();
         m_VisibilityTexture.reset();
         m_AuxTexture.reset();
         m_Sampler.reset();
+        m_GroundSampler.reset();
         m_SplatPipeline.reset();
         m_IntegratePipeline.reset();
         m_SplatShader.reset();
         m_IntegrateShader.reset();
         m_SplatDescriptorSetLayout.reset();
         m_IntegrateDescriptorSetLayout.reset();
+        m_GroundHandle = {};
         m_OccludersHandle = {};
         m_VisibilityHandle = {};
         m_AuxHandle = {};
@@ -519,6 +545,17 @@ namespace NorvesLib::Core::Rendering
         m_LastParameters = {};
         m_LastUpdateSubmission = {};
         m_LastSkyOcclusionRevision = 0u;
+        m_PreparedGroundLayout = {};
+        m_LastGroundLayout = {};
+        m_PreparedGroundLayoutRevision = 0u;
+        m_PreparedGroundHeightsRevision = 0u;
+        m_LastGroundLayoutRevision = 0u;
+        m_LastGroundHeightsRevision = 0u;
+        m_PreparedSkyWeight[0] = m_PreparedSkyWeight[1] = 0.0f;
+        m_LastSkyWeight[0] = m_LastSkyWeight[1] = 0.0f;
+        m_bPreparedHasGround = false;
+        m_bLastHasGround = false;
+        m_bEmptyGroundInitialized = false;
         m_bHasAnchor = false;
         m_bHasValidData = false;
         m_bPrepared = false;
@@ -592,6 +629,82 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const RenderExtensionDataSet& extensions = scene.Extensions;
+        const SkyOcclusionFieldLayout* groundLayout =
+            FindRenderExtensionValue(extensions, kSkyOcclusionGroundLayoutKey);
+        const Container::Span<const float> groundHeights =
+            FindRenderExtensionArray(extensions, kSkyOcclusionGroundHeightsKey);
+        const RenderExtensionBlob* layoutBlob = FindRenderExtensionBlob(
+            extensions, kSkyOcclusionGroundLayoutKey.Name, ComputeRenderExtensionLayoutHash<SkyOcclusionFieldLayout>());
+        const RenderExtensionBlob* heightsBlob = FindRenderExtensionBlob(
+            extensions, kSkyOcclusionGroundHeightsKey.Name, ComputeRenderExtensionLayoutHash<float>());
+        m_PreparedGroundLayoutRevision = layoutBlob ? layoutBlob->Revision : 0u;
+        m_PreparedGroundHeightsRevision = heightsBlob ? heightsBlob->Revision : 0u;
+        m_bPreparedHasGround = groundLayout && IsValidSkyOcclusionFieldLayout(*groundLayout) &&
+            groundHeights.size() == static_cast<size_t>(groundLayout->Width) * groundLayout->Height;
+        m_PreparedGroundLayout = m_bPreparedHasGround ? *groundLayout : SkyOcclusionFieldLayout{};
+        const bool bGroundChanged = m_bPreparedHasGround != m_bLastHasGround ||
+            m_PreparedGroundLayoutRevision != m_LastGroundLayoutRevision ||
+            m_PreparedGroundHeightsRevision != m_LastGroundHeightsRevision ||
+            !AreGroundLayoutsEqual(m_PreparedGroundLayout, m_LastGroundLayout);
+
+        if (m_bPreparedHasGround && (bGroundChanged || !m_GroundTexture))
+        {
+            RHI::TextureDesc desc;
+            desc.Width = groundLayout->Width;
+            desc.Height = groundLayout->Height;
+            desc.TextureFormat = RHI::Format::R32_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyOcclusion.GroundHeight";
+            m_PreparedGroundTexture = m_Device->CreateTexture(desc);
+            if (!m_PreparedGroundTexture || !context.FrameResources)
+            {
+                return false;
+            }
+            // コピーだけに使う切れ端は、ストレージ記述子の大きさの上限を受けない。
+            m_PreparedGroundUpload = context.FrameResources->AllocateUploadData(
+                groundHeights.data(), static_cast<uint64_t>(groundHeights.size()) * sizeof(float),
+                FrameUploadUsage::Vertex);
+            if (!m_PreparedGroundUpload.IsValid())
+            {
+                return false;
+            }
+        }
+        else if (m_bPreparedHasGround)
+        {
+            m_PreparedGroundTexture = m_GroundTexture;
+        }
+        else
+        {
+            if (!m_EmptyGroundTexture)
+            {
+                RHI::TextureDesc desc;
+                desc.TextureFormat = RHI::Format::R32_FLOAT;
+                desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+                desc.DebugName = "SkyOcclusion.EmptyGroundHeight";
+                m_EmptyGroundTexture = m_Device->CreateTexture(desc);
+            }
+            if (!m_EmptyGroundTexture)
+            {
+                return false;
+            }
+            m_PreparedGroundTexture = m_EmptyGroundTexture;
+            if (!m_bEmptyGroundInitialized)
+            {
+                if (!context.FrameResources)
+                {
+                    return false;
+                }
+                const float emptyHeight = 0.0f;
+                m_PreparedGroundUpload = context.FrameResources->AllocateUploadData(
+                    &emptyHeight, sizeof(emptyHeight), FrameUploadUsage::Vertex);
+                if (!m_PreparedGroundUpload.IsValid())
+                {
+                    return false;
+                }
+            }
+        }
+
         m_PreparedParameters = parameters;
         m_PreparedAnchorX = anchorX;
         m_PreparedAnchorZ = anchorZ;
@@ -603,8 +716,19 @@ namespace NorvesLib::Core::Rendering
         constants.heights[0] = parameters.GroundHeightMeters;
         constants.heights[1] = parameters.ReceiverHeightMeters;
         constants.heights[2] = parameters.MaxHorizonMeters;
+        if (m_bPreparedHasGround)
+        {
+            ComputeSkyOcclusionFieldWorldToUv(m_PreparedGroundLayout, constants.groundUv);
+            constants.inputs[0] = 1.0f;
+        }
+        ComputeSkyOcclusionSkyWeightCoefficients(scene.SkyAtmosphere.CloudCover,
+            scene.SkyAtmosphere.OvercastZenithToHorizonRatio, m_PreparedSkyWeight[0], m_PreparedSkyWeight[1]);
+        constants.skyWeight[0] = m_PreparedSkyWeight[0];
+        constants.skyWeight[1] = m_PreparedSkyWeight[1];
+        const bool bSkyWeightChanged = std::abs(m_PreparedSkyWeight[0] - m_LastSkyWeight[0]) > 1.0e-4f ||
+                                       std::abs(m_PreparedSkyWeight[1] - m_LastSkyWeight[1]) > 1.0e-4f;
         TileGrid grids[SkyOcclusionMaxLevelCount];
-        const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters);
+        const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters) || bGroundChanged;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
         {
             m_PreparedWindowOrigin[level][0] = 0;
@@ -628,6 +752,10 @@ namespace NorvesLib::Core::Rendering
                 AddSplatRect(grids[level], grids[level].Window);
                 MarkTiles(grids[level], grids[level].Window, grids[level].Integrate);
                 continue;
+            }
+            if (bSkyWeightChanged)
+            {
+                MarkTiles(grids[level], grids[level].Window, grids[level].Integrate);
             }
             const Rect previous = {m_WindowOrigin[level][0], m_WindowOrigin[level][1],
                                    static_cast<int64_t>(m_WindowOrigin[level][0]) + parameters.Resolution,
@@ -712,6 +840,8 @@ namespace NorvesLib::Core::Rendering
                     BindStorage(set, 2u, work);
                     BindStorage(set, 3u, indicesAllocation);
                     set->BindStorageTexture(4u, m_OccludersTexture);
+                    set->BindTexture(5u, m_PreparedGroundTexture);
+                    set->BindSampler(5u, m_GroundSampler);
                 }
                 else
                 {
@@ -743,6 +873,9 @@ namespace NorvesLib::Core::Rendering
         m_bPrepared = false;
         m_SplatDispatches.clear();
         m_IntegrateDispatches.clear();
+        m_PreparedGroundUpload = {};
+        m_PreparedGroundTexture.reset();
+        m_GroundHandle = {};
         m_OccludersHandle = {};
         m_VisibilityHandle = {};
         m_AuxHandle = {};
@@ -764,6 +897,9 @@ namespace NorvesLib::Core::Rendering
                 m_OccludersTexture.reset();
                 m_VisibilityTexture.reset();
                 m_AuxTexture.reset();
+                m_GroundTexture.reset();
+                m_EmptyGroundTexture.reset();
+                m_bEmptyGroundInitialized = false;
                 m_bHasValidData = false;
                 m_bHasAnchor = false;
             }
@@ -785,13 +921,15 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_WARNING("SkyOcclusionMapPass", "空の遮蔽マップの更新を準備できませんでした");
             return;
         }
+        m_GroundHandle = builder.ImportTexture(m_PreparedGroundTexture,
+            GetTextureState(*context, m_PreparedGroundTexture), "SkyOcclusion.GroundHeight");
         const RGResourceHandle occluders = builder.ImportTexture(m_OccludersTexture,
             GetTextureState(*context, m_OccludersTexture), "SkyOcclusion.Occluders");
         const RGResourceHandle visibility = builder.ImportTexture(m_VisibilityTexture,
             GetTextureState(*context, m_VisibilityTexture), "SkyOcclusion.Visibility");
         const RGResourceHandle aux = builder.ImportTexture(m_AuxTexture,
             GetTextureState(*context, m_AuxTexture), "SkyOcclusion.Aux");
-        if (!occluders.IsValid() || !visibility.IsValid() || !aux.IsValid() ||
+        if (!m_GroundHandle.IsValid() || !occluders.IsValid() || !visibility.IsValid() || !aux.IsValid() ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionOccluders, occluders) ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionVisibility, visibility) ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionAux, aux) ||
@@ -801,6 +939,14 @@ namespace NorvesLib::Core::Rendering
         {
             m_bPrepared = false;
             return;
+        }
+        if (m_PreparedGroundUpload.IsValid())
+        {
+            builder.Write(m_GroundHandle, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+        }
+        else
+        {
+            builder.Read(m_GroundHandle, RHI::ResourceState::ShaderResource);
         }
         if (!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
@@ -832,13 +978,25 @@ namespace NorvesLib::Core::Rendering
 
     void SkyOcclusionMapPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
-        if (!m_bPrepared || !context.CommandList || !resources.GetTexture(m_OccludersHandle) ||
-            !resources.GetTexture(m_VisibilityHandle) || !resources.GetTexture(m_AuxHandle) ||
-            ((!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty()) && !context.FrameResources))
+        if (!m_bPrepared || !context.CommandList || !resources.GetTexture(m_GroundHandle) ||
+            !resources.GetTexture(m_OccludersHandle) || !resources.GetTexture(m_VisibilityHandle) ||
+            !resources.GetTexture(m_AuxHandle) ||
+            ((m_PreparedGroundUpload.IsValid() || !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty()) &&
+             !context.FrameResources))
         {
             return;
         }
         RHI::ICommandList& commands = *context.CommandList;
+        const bool bGroundUpload = m_PreparedGroundUpload.IsValid();
+        if (bGroundUpload)
+        {
+            // グラフが CopyDest へ移した後、写し込みより先に高さを転送して読み取り状態へ戻す。
+            commands.CopyBufferToTexture(m_PreparedGroundUpload.Buffer, m_PreparedGroundTexture,
+                m_PreparedGroundTexture->GetWidth(), m_PreparedGroundTexture->GetHeight(),
+                m_PreparedGroundUpload.Offset);
+            commands.TextureBarrier(m_PreparedGroundTexture, RHI::ResourceState::CopyDest,
+                                    RHI::ResourceState::ShaderResource);
+        }
         if (!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
             commands.SetPipeline(m_SplatPipeline);
@@ -864,9 +1022,25 @@ namespace NorvesLib::Core::Rendering
                                     RHI::ResourceState::ShaderResource);
             commands.TextureBarrier(m_AuxTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
+        }
+        if (bGroundUpload || !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
+        {
             // 借りる口が提出の成否を保持し、中止された更新の再利用を防ぐ。
             m_LastUpdateSubmission = context.FrameResources->GetGeneration();
         }
+        if (m_bPreparedHasGround)
+        {
+            m_GroundTexture = m_PreparedGroundTexture;
+        }
+        else
+        {
+            m_GroundTexture.reset();
+            if (bGroundUpload)
+            {
+                m_bEmptyGroundInitialized = true;
+            }
+        }
+        m_PreparedGroundUpload = {};
         m_AnchorX = m_PreparedAnchorX;
         m_AnchorZ = m_PreparedAnchorZ;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
@@ -876,6 +1050,12 @@ namespace NorvesLib::Core::Rendering
         }
         m_LastParameters = m_PreparedParameters;
         m_LastSkyOcclusionRevision = m_PreparedRevision;
+        m_LastGroundLayout = m_PreparedGroundLayout;
+        m_LastGroundLayoutRevision = m_PreparedGroundLayoutRevision;
+        m_LastGroundHeightsRevision = m_PreparedGroundHeightsRevision;
+        m_LastSkyWeight[0] = m_PreparedSkyWeight[0];
+        m_LastSkyWeight[1] = m_PreparedSkyWeight[1];
+        m_bLastHasGround = m_bPreparedHasGround;
         m_LastOccluders = std::move(m_PreparedOccluders);
         m_bHasAnchor = true;
         m_bHasValidData = true;

@@ -82,7 +82,8 @@ void main()
                 nextEnd *= SKY_OCCLUSION_HORIZON_STEP_RATIO;
             }
             float b = bOpaque ? 1.0 : 1.0 - exp(-opticalDepth);
-            sum += b * vec4(1.0, cosine * direction.x, sine, cosine * direction.y);
+            float w = map.skyWeight.x + map.skyWeight.y * sine;
+            sum += b * w * vec4(1.0, cosine * direction.x, sine, cosine * direction.y);
         }
     }
     float weight = 1.0 / (2.0 * float(SKY_OCCLUSION_AZIMUTH_COUNT) * float(SKY_OCCLUSION_ELEVATION_COUNT));

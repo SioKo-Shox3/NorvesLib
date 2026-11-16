@@ -18,6 +18,11 @@ layout(std140, set = 0, binding = 0) uniform SkyOcclusionMapParams
     vec4 heights;         // x: 地面高、y: 受け手の高さ、z: 水平線までの最大距離。
     ivec4 windowOrigin[4]; // xy: 各段の窓の最小ワールドテクセル、zw: 予約。
     vec4 texelMeters;     // 各段のテクセル幅。使わない段はゼロ。
+    vec4 groundUv;        // 地面の高さのワールド座標から UV への尺度と加算値。
+    vec4 undergrowthUv;   // 下草の層のワールド座標から UV への尺度と加算値。
+    vec4 skyWeight;       // xy: 空の重みの定数項と傾き、zw: 予約。
+    vec4 inputs;          // xyz: 地面・下草・世界の場の入力の有無、w: 予約。
+    vec4 worldField;      // 世界の場の窓。
 } map;
 
 struct SkyOcclusionWorkTile
