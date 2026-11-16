@@ -11660,3 +11660,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261116-053218/verify-merge2-build-all.txt`（`cmake --build build --config Debug -- /m:1` が EXIT_CODE=0・`error C/LNK/MSB` の行 0、Game.exe までリンク）、`verify-merge2-build-game.txt`（`--target Game` が EXIT_CODE=0）、`verify-merge2-shaders.txt`（glslc で gbuffer・skinned_gbuffer・megageometry・hero_silhouette の頂点と断片が全部 EXIT=0。`gbuffer_alphaclip.frag` の `viewClearance` は Offset 448 で C++ の `offsetof` と一致、discard は印の無い `gbuffer.frag`・`megageometry.frag` が 0、ディザの変種が 2・1）。統合ブランチとの差分の numstat は 2 通りで一致。verify の ctest の行は試験を回さない決まりで回していない。
 - Next: ランナーの評価者の反証（危険地帯: GBuffer の UBO の並びが変わった）。人が見るときの見どころは前の節のまま（草原で H キーの主人公視点、幹が点描で抜けて影は残る）。
 - U1 散布の入力 1 本ごとの色味・種・非表示を CPU 側で持ち、行と proxy へ通す: 着地(直し 0 回)
+- U2 GPU の席の表を 144 B に広げ、描く順の表の空きの 2 語に色味と種を入れる: 着地(直し 0 回)
