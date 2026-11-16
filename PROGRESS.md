@@ -11659,3 +11659,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: `feature/scene-launcher` を取り込んだ（fdad2d33）。衝突は `GpuLayoutRegistry.md`・`GrasslandRoutine.cpp`・`GBufferPass.cpp` の 3 件。GBuffer の `PerObjectUBO` は統合側の頂点アニメの材質（416・432 バイト）の後ろに視界の確保（448 バイト）を置いて 512 バイトにし、`GBufferFragment.glsl` の `MVPData` にも材質の 2 欄を足して同じ並びにした。草原は主人公シルエットの登録と枯れ度の源の配置を両方残した。
 - 証拠: `.harness/runs/20261116-053218/verify-merge2-build-all.txt`（`cmake --build build --config Debug -- /m:1` が EXIT_CODE=0・`error C/LNK/MSB` の行 0、Game.exe までリンク）、`verify-merge2-build-game.txt`（`--target Game` が EXIT_CODE=0）、`verify-merge2-shaders.txt`（glslc で gbuffer・skinned_gbuffer・megageometry・hero_silhouette の頂点と断片が全部 EXIT=0。`gbuffer_alphaclip.frag` の `viewClearance` は Offset 448 で C++ の `offsetof` と一致、discard は印の無い `gbuffer.frag`・`megageometry.frag` が 0、ディザの変種が 2・1）。統合ブランチとの差分の numstat は 2 通りで一致。verify の ctest の行は試験を回さない決まりで回していない。
 - Next: ランナーの評価者の反証（危険地帯: GBuffer の UBO の並びが変わった）。人が見るときの見どころは前の節のまま（草原で H キーの主人公視点、幹が点描で抜けて影は残る）。
+
+## G7-GR49-ENV-SYSTEM（統合ブランチの取り込み）
+- Done: feature/scene-launcher を取り込み、Library/Core/CMakeLists.txt の衝突は両側の行（Environment/EnvironmentState・EnvironmentSystem と Rendering/EnvironmentGpuParams）を残して解いた。Debug の Game のビルドが通る（EXIT=0）。
+- Notes: 試験の ctest は回さない決まり。撮影・計測の確かめは回さない決まり。
