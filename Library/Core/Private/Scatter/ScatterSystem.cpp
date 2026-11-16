@@ -5,6 +5,7 @@
 #include "Logging/LogMacros.h"
 #include "Object/World.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/SceneView.h"
 
 #include <algorithm>
 #include <chrono>
@@ -18,6 +19,19 @@ namespace NorvesLib::Core::Scatter
     {
         constexpr uint32_t kRangeRows = Component::MegaGeometryScatterComponent::kRangeRows;
         constexpr size_t kMaxLogEvents = 1u << 20;
+
+        uint32_t PackMegaTint(const float (&tint)[3])
+        {
+            // NVSCT の色は倍率の半分なので 2 倍し、1 で打ち切って 8 ビットに四捨五入する。
+            uint32_t packed = 0xFF000000u;
+            for (uint32_t channel = 0; channel < 3; ++channel)
+            {
+                const float multiplier = std::min(1.0f, 2.0f * tint[channel]);
+                const uint32_t value = static_cast<uint32_t>(std::round(multiplier * 255.0f));
+                packed |= value << (channel * 8);
+            }
+            return packed;
+        }
 
         float FoliageWindPhase(uint32_t seed, uint32_t chunk, uint32_t index)
         {
@@ -165,7 +179,7 @@ namespace NorvesLib::Core::Scatter
                 species.FoliageTemplate = binding->FoliageTemplate;
                 species.FoliageTemplate.Instances.reset();
                 species.FoliageTemplate.Cells.reset();
-                species.bCastShadow = binding->bCastShadow;
+                species.bCastShadow = binding->bCastShadow && (source.Flags & Asset::ScatterSpeciesFlagNoCastShadow) == 0;
                 uint64_t speciesInstances = 0;
                 for (uint32_t chunkIndex = 0; chunkIndex < species.Chunks.size(); ++chunkIndex)
                 {
@@ -184,7 +198,13 @@ namespace NorvesLib::Core::Scatter
             for (uint32_t chunkIndex = 0; chunkIndex < species.Chunks.size(); ++chunkIndex)
             {
                 const auto bytes = scatter.Data->GetInstances(chunkIndex, speciesIndex);
+                const auto variationSeeds = scatter.Data->GetVariationSeeds(chunkIndex, speciesIndex);
                 const size_t count = bytes.size() / sizeof(Asset::InstanceRecord16);
+                constexpr size_t seedSize = Asset::CookedScatterFormatV0::VariationSeedRecordSize;
+                if (!variationSeeds.empty() && variationSeeds.size() != count * seedSize)
+                {
+                    return fail();
+                }
                 const size_t paddedCount = ((count + kRangeRows - 1) / kRangeRows) * kRangeRows;
                 if (paddedCount > std::numeric_limits<uint32_t>::max() - instances.size())
                 {
@@ -211,6 +231,13 @@ namespace NorvesLib::Core::Scatter
                     instance.Rotation = InstanceRotation(value, source.SlopeFollow);
                     instance.Scale = Math::Vector3(value.Scale, value.Scale, value.Scale);
                     instance.MeshIndex = 0;
+                    instance.Tint = PackMegaTint(value.Tint);
+                    if (!variationSeeds.empty() &&
+                        !Asset::ReadScatterVariationSeed(variationSeeds.subspan(index * seedSize, seedSize),
+                                                         instance.VariationSeed))
+                    {
+                        return fail();
+                    }
                     instances.push_back(instance);
                 }
                 for (size_t index = count; index < paddedCount; ++index)
@@ -234,8 +261,16 @@ namespace NorvesLib::Core::Scatter
                 return fail();
             }
             species.ComponentId = component->GetComponentId();
+            if ((source.Flags & Asset::ScatterSpeciesFlagNoRayTracing) != 0)
+            {
+                if (auto* sceneView = world.GetSceneView())
+                {
+                    sceneView->SetMegaGeometryRayTracing(species.ComponentId, false);
+                    species.bRayTracingExcluded = true;
+                }
+            }
             component->SetMegaMeshHandle(binding->MegaMesh);
-            component->SetCastShadow(binding->bCastShadow);
+            component->SetCastShadow(binding->bCastShadow && (source.Flags & Asset::ScatterSpeciesFlagNoCastShadow) == 0);
             if (!component->SetInstances({instances.data(), instances.size()},
                                          {Component::MegaScatterRowOrder::Input, false}))
             {
@@ -312,6 +347,13 @@ namespace NorvesLib::Core::Scatter
     {
         for (auto& species : scatter.Species)
         {
+            if (species.bRayTracingExcluded && scatter.WorldPtr != nullptr && scatter.WorldPtr->HasFlag(OF_Initialized))
+            {
+                if (auto* sceneView = scatter.WorldPtr->GetSceneView())
+                {
+                    sceneView->SetMegaGeometryRayTracing(species.ComponentId, true);
+                }
+            }
             if (Entity* owner = ResolveOwner(scatter, species))
             {
                 scatter.WorldPtr->RemoveEntity(owner);
@@ -319,6 +361,7 @@ namespace NorvesLib::Core::Scatter
             species.OwnerHandle = {};
             species.ObjectId = 0;
             species.ComponentId = 0;
+            species.bRayTracingExcluded = false;
         }
     }
 

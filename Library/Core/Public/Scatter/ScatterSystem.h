@@ -4,7 +4,8 @@
 // Unload で Entity を World に返し、CookedScatterData は共有参照で保持する。
 // World が先に Finalize された場合、Clear は Entity に触らず状態だけ捨てる。
 // foliage はチャンクを FoliageCell とし、常駐の組が変わったときだけ種ごとの束を作り直す。
-// foliage の影は結び付けの bCastShadow に従い、無効なら束の ShadowDistance を 0 にする。
+// mega に色味・個体差の種・RT の印を渡し、mega と foliage の影に NVSCT の印を反映する。
+// foliage の影は結び付けと NVSCT の印に従い、無効なら束の ShadowDistance を 0 にする。
 #pragma once
 
 #include "Asset/CookedScatterFormat.h"
@@ -156,6 +157,7 @@ namespace NorvesLib::Core::Scatter
             uint32_t Priority = 0;
             Rendering::FoliageBatch FoliageTemplate;
             bool bCastShadow = true;
+            bool bRayTracingExcluded = false;
             Container::VariableArray<ChunkUnit> Chunks;
         };
 

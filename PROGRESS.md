@@ -11774,3 +11774,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 対応範囲と GPU の配置の文書を直し、タスクの verify を通す: 着地(直し 0 回)
 - U1 NVSCT v0 に種の印・衝突の形の表・個体差の種の配列を足す: 着地(直し 0 回)
 - U2 SceneView の RT の除外の印と、TLAS の選択からの除外: 着地(直し 0 回)
+- U4 ScatterSystem が色味・個体差の種・影・RT の印を描画先へ渡す: 着地(直し 0 回)
