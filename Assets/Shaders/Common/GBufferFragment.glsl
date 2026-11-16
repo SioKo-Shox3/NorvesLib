@@ -3,6 +3,7 @@
 // 材質ごとのプログラムの FS も、環境の UBO（set 0 / binding 13）を読み、GBuffer へ書く前に
 // ApplyWetSurfaceFromEnvironment を呼ぶ。濡れの感度は DefaultLit の P0、未指定は 1。
 // 材質ごとのプログラムの FS も法線の確定直後に SpecularAAFilterMaterial を通す（強さは MVPData.specularAAParams.x）。
+// 発光テクスチャは binding 14、specularAAParams.z の印は 1=発光テクスチャ、2=NormalScale。
 // GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質に使う。
 // 切り抜きの変種は、視界の確保の印の付いた材質のディザも受け持つ。
 // discard で深度の書き込みも止めるため、切り抜きの FS では早期の深度テストを宣言しない。
@@ -43,7 +44,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 shadingModel; // x=GBuffer のシェーディングモデル ID, y=切り抜き閾値 cutoff（0〜1）, z=切り抜き方式（0=なし、1=Test、2=Hash）, w=Hash の位相（0〜7、TAA のジッタの番号）
     vec4 vertexAnimInstanceParams; // FS では読まない。
     vec4 vertexAnimTime; // FS では読まない。
-    vec4 specularAAParams; // x=鏡面の AA の強さ, yzw=0
+    vec4 specularAAParams; // x=鏡面の AA の強さ, y=NormalScale, z=材質のテクスチャの印（1=発光テクスチャ、2=NormalScale）, w=予約の 0
     vec4 vertexAnimMaterial0; // FS では読まない。
     vec4 vertexAnimMaterial1; // FS では読まない。
     ViewClearanceData viewClearance; // 視界の確保の遮蔽物のディザ（印の付いた材質だけ値が入る。印の無い材質は全 0）
@@ -62,6 +63,7 @@ layout(set = 0, binding = 3) uniform sampler2D metallicTexture;
 layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
+layout(set = 0, binding = 14) uniform sampler2D emissiveTexture;
 
 #include "Common/GBufferEncoding.glsl"
 #include "Common/VelocityEncoding.glsl"
@@ -103,6 +105,7 @@ void main()
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;
     bool bVirtualTexture = mvp.frameParams.z > 0.5;
+    uint materialTextureFlags = uint(mvp.specularAAParams.z + 0.5);
 
     // 高さのフィードバックの標本ミップ。POM の前の元の UV で、画素ごとに分かれる分岐・ループより前に取る（画面微分は一様な位置でだけ有効）。
     float heightLod = 0.0;
@@ -130,6 +133,12 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord, footprint,
         mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
+    // discard より前に、POM の後の UV で発光テクスチャを標本する。
+    vec3 emissiveSample = vec3(1.0);
+    if ((materialTextureFlags & 1u) != 0u)
+    {
+        emissiveSample = texture(emissiveTexture, texCoord).rgb;
+    }
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.frameParams.w),
@@ -147,7 +156,12 @@ void main()
     vec4 params = ResolveShadingParams(fragInstanceShadingParams, mvp.shadingParams);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
-    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
+    vec3 tangentNormal = textureSamples.TangentNormal;
+    if ((materialTextureFlags & 2u) != 0u)
+    {
+        tangentNormal = ApplyPbrNormalScale(tangentNormal, mvp.specularAAParams.y);
+    }
+    vec3 normal = ApplyTangentSpaceNormal(TBN, tangentNormal);
     // discard（OpKill）の後は画面微分が未定義になるため、切り抜きの判定より前に取る。
     vec3 normalDx = dFdxFine(normal);
     vec3 normalDy = dFdyFine(normal);
@@ -220,8 +234,13 @@ void main()
 
     // 発光のプリエクスポージャ後の値とシェーディングパラメータ P1 を書く。
     // 発光は Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛ける（Lighting は露出を掛けずに足す）。
+    vec3 emissiveChromaticity = fragEmissiveChromaticityAndLuminanceNits.rgb;
+    if ((materialTextureFlags & 1u) != 0u)
+    {
+        emissiveChromaticity *= emissiveSample;
+    }
 #ifdef GBUFFER_DISSOLVE
-    vec3 emissive = ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
+    vec3 emissive = ComputePreExposedEmissive(emissiveChromaticity,
                                             fragEmissiveChromaticityAndLuminanceNits.a,
                                             mvp.frameParams.y);
     emissive += ComputePreExposedEmissive(mvp.dissolveEdge.rgb,
@@ -229,7 +248,7 @@ void main()
                                          mvp.frameParams.y);
     outEmissive = GBufferEncodeEmissive(min(emissive, vec3(GBUFFER_PRE_EXPOSED_EMISSIVE_MAX)), params.y);
 #else
-    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
+    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(emissiveChromaticity,
                                                                 fragEmissiveChromaticityAndLuminanceNits.a,
                                                                 mvp.frameParams.y),
                                        params.y);

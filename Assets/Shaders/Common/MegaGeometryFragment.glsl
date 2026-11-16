@@ -33,7 +33,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 terrainParams[10]; // 地形の 3 層の混ぜ合わせ（Common/TerrainLayerBlend.glsl の TerrainBlendParams。layers.x が 0 なら 1 層の材質）
     vec4 shadingParams; // x=P0, y=P1, z=albedo.a を 1 にするか（1/0）, w=被覆率の乗数（負は未指定）
     vec4 vertexAnimTime; // FS では読まない
-    vec4 specularAAParams; // x=鏡面の AA の強さ、yzw=0
+    vec4 specularAAParams; // x=鏡面の AA の強さ, y=NormalScale, z=材質のテクスチャの印（1=発光テクスチャ、2=NormalScale）, w=予約の 0
     ViewClearanceData viewClearance; // 印の付いた区間だけ値が入り、ほかは全 0
 } mvp;
 
@@ -44,6 +44,7 @@ layout(set = 0, binding = 3) uniform sampler2D metallicTexture;
 layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
+layout(set = 0, binding = 25) uniform sampler2D emissiveTexture;
 // 地形の 2 層目（乾いた土）・3 層目（岩肌）のアルベド・法線・ORM（地形でない材質は 1 層目と同じテクスチャが張られ、読まない）
 layout(set = 0, binding = 10) uniform sampler2D terrainDirtAlbedoTexture;
 layout(set = 0, binding = 11) uniform sampler2D terrainDirtNormalTexture;
@@ -145,6 +146,7 @@ void main()
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;
     bool bVirtualTexture = mvp.materialParams.z > 0.5;
+    uint materialTextureFlags = uint(mvp.specularAAParams.z + 0.5);
     float displacementUVSpacing = mvp.frameParams.z;
 
     // 画面微分を使う量（高さ・各層の標本ミップと POM の後の UV の勾配）は、デバッグ表示の早期 return（描画ごとの UBO の値で分かれる）や
@@ -193,6 +195,12 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord, footprint,
         mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5, bVirtualTexture);
+    // ディザで画素を間引く前に、POM の後の UV で発光テクスチャを標本する。
+    vec3 emissiveTextureColor = vec3(1.0);
+    if ((materialTextureFlags & 1u) != 0u)
+    {
+        emissiveTextureColor = texture(emissiveTexture, texCoord).rgb;
+    }
     // 地形の材質は、砂・土・岩肌の 3 層をワールドの位置から標本して傾斜・高さ・ノイズで混ぜ、法線もワールドの向きで得る
     // （上の 1 層の標本は VT の要求にだけ使う）
     TerrainBlendParams terrain = TerrainBlendParams(mvp.terrainParams[0], mvp.terrainParams[1], mvp.terrainParams[2],
@@ -246,6 +254,10 @@ void main()
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 tangentNormal = textureSamples.TangentNormal;
+    if ((materialTextureFlags & 2u) != 0u && !(bTerrain || bTerrainSplat))
+    {
+        tangentNormal = ApplyPbrNormalScale(tangentNormal, mvp.specularAAParams.y);
+    }
     if (displacementUVSpacing > 0.0)
     {
         tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
@@ -278,7 +290,12 @@ void main()
         params.x, id);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
-    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(fragEmissiveColor.rgb,
+    vec3 emissiveChromaticity = fragEmissiveColor.rgb;
+    if ((materialTextureFlags & 1u) != 0u)
+    {
+        emissiveChromaticity *= emissiveTextureColor;
+    }
+    outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(emissiveChromaticity,
                                                                 fragEmissiveColor.a,
                                                                 mvp.frameParams.y),
                                        params.y);

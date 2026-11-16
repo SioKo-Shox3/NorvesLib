@@ -222,6 +222,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         MegaGeometry::MegaMeshMaterial canonicalMaterial = createInfo.Material;
+        if (!std::isfinite(canonicalMaterial.NormalScale))
+        {
+            canonicalMaterial.NormalScale = 1.0f;
+        }
         for (uint32_t index = 0; index < ShadingParamCount; ++index)
         {
             canonicalMaterial.ShadingParams[index] = SanitizeShadingParam(createInfo.Material.ShadingParams[index]);
