@@ -341,6 +341,9 @@ namespace Game
         uint32_t m_ParallelPoseGrain = 0;
         /// --grassland-scatter-stress で指定された、合成する散布の本数（0 なら通常の散布）。
         uint32_t m_GrasslandScatterStressCount = 0;
+        /// --grassland-forest で森の配置を切り替える。
+        bool m_bGrasslandForest = true;
+        bool m_bGrasslandForestSet = false;
         /// --grassland-streaming で草原をセル単位で出し入れする。
         bool m_bGrasslandStreaming = false;
         /// --streaming-snap-test=<x>,<z> で組み立て後にスナップロードと自由飛行カメラの移動を一度行う。

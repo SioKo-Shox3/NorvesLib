@@ -11778,3 +11778,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 AssetCook に配置の一覧（JSON）の cook を足す: 着地(直し 0 回)
 - U5 ScatterSystem に空間の照会・1 本の非表示・非表示の集合の保存と復元を足す: 着地(直し 0 回)
 - U6 grassland の森の配置の見本を足して焼く: 着地(直し 0 回)
+- U7 grassland が森の配置を規則の散布と並べて置き、開発引数で外せるようにする: 着地(直し 1 回)

@@ -896,6 +896,8 @@ namespace Game::GameModes
         data.m_TerrainFarPlane = 0.0f;
         data.m_Scatter = Scatter::kInvalidScatterHandle;
         data.m_bScatterPending = data.m_ScatterStressCount > 0;
+        data.m_Forest = Scatter::kInvalidScatterHandle;
+        data.m_bForestPending = data.m_bForestPlacement;
         data.m_pTerrainCollider = nullptr;
         data.m_bTerrainColliderAttempted = false;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
@@ -913,6 +915,9 @@ namespace Game::GameModes
         if (!CreateTerrain(ctx, data) || !CreateGrassField(ctx) || !CreateRunningBody(ctx, data, pose))
         {
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
+            ctx.EngineRef.GetScatterSystem().Unload(data.m_Forest);
+            data.m_Forest = Scatter::kInvalidScatterHandle;
+            data.m_bForestPending = false;
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
@@ -926,6 +931,9 @@ namespace Game::GameModes
         {
             LOG_ERROR("grassland: カメラを作れませんでした");
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
+            ctx.EngineRef.GetScatterSystem().Unload(data.m_Forest);
+            data.m_Forest = Scatter::kInvalidScatterHandle;
+            data.m_bForestPending = false;
             data.m_Scatter = Scatter::kInvalidScatterHandle;
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
@@ -943,6 +951,9 @@ namespace Game::GameModes
         {
             StopGrasslandStreaming(ctx, data);
             ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
+            ctx.EngineRef.GetScatterSystem().Unload(data.m_Forest);
+            data.m_Forest = Scatter::kInvalidScatterHandle;
+            data.m_bForestPending = false;
             data.m_Scatter = Scatter::kInvalidScatterHandle;
             data.m_Rig.Leave(ctx);
             ResetEnvironment(ctx);
@@ -1172,6 +1183,11 @@ namespace Game::GameModes
             data.m_Scatter = LoadGrasslandScatter(ctx, data.m_ScatterStressCount);
             data.m_bScatterPending = false;
         }
+        if (data.m_bForestPending && data.m_bForestPlacement && bTerrainReady)
+        {
+            data.m_Forest = LoadGrasslandForest(ctx);
+            data.m_bForestPending = false;
+        }
         Component::CameraComponent* scatterCamera = data.m_Rig.GetCamera();
 #if NORVES_BUILD_DEVELOPMENT
         if (data.m_bHeroView)
@@ -1230,6 +1246,9 @@ namespace Game::GameModes
         ctx.EngineRef.GetScatterSystem().Unload(data.m_Scatter);
         data.m_Scatter = Scatter::kInvalidScatterHandle;
         data.m_bScatterPending = false;
+        ctx.EngineRef.GetScatterSystem().Unload(data.m_Forest);
+        data.m_Forest = Scatter::kInvalidScatterHandle;
+        data.m_bForestPending = false;
 #if NORVES_BUILD_DEVELOPMENT
         if (data.m_bViewInputRegistered)
         {
