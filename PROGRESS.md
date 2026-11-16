@@ -11693,7 +11693,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 4): `.harness/runs/20261116-053253/verify-G7-GR49-ENV-SYSTEM-u4.txt`（全単位を着地させた木の内容で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0、`error C`・`error LNK` が 0 件、Game.exe を生成。触った 4 ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、UTF-8 BOM + CRLF を保持）。試験は作らない・回さない決まり、撮影・計測・アプリの起動の確かめは回さない決まり。
 - Next: ランナーの評価者の反証（2 周目。前回の指摘 2 件への対応差分）。人が見るときの見どころは前のとおり（既定は無効なので、起動→ランチャー→各シーンの空・霧・雲・風が前と同じこと）。
 - Notes: 上の「判断と既知の限界」のうち、`Disable` の後に土台の空・霧・雲の層・風を書き戻す点は反復 4 でやめ、環境の値の既定値だけを 1 回書く形に変えた。太陽の方位は [0, 360) へ折り返さず [-360, 360] に収める（風の向き・時刻は折り返しのまま。WindParameters の整えも [0, 360)）。
+## G7-GR58-RAIN-MODEL 雨量の写像の純関数・調整の値のデータ・雨の霧の増分（2026-11-16、run 20261116-103702）
+
 - U1 雨の調整の値 RainTuning と写像の純関数・JSON の読み込みを置く: 着地(直し 0 回)
 - U2 RenderWorld::SetRainTuning から FramePacket の SceneProxy まで RainTuning を共有ポインタで運ぶ: 着地(直し 0 回)
 - U3 EnvironmentSystem が Enable で RainTuning.json を読み、Resolve の霧の密度に雨の増分を足す: 着地(直し 0 回)
 - U4 EnvironmentSystem::PublishTo が公開待ちの RainTuning を RenderWorld へ一度渡す(タスクの verify): 着地(直し 0 回)
+- Done: `Rendering/RainModel.h`・`.cpp` に `RainTuning`（近距離の箱・落ちる速さ 7〜9 m/s・ばらつき 10%・有効な割合と不透明度の曲線・太さ・`StreakShutterSeconds` 1/48・近距離のフェード 0.5 m で 0・色の倍率、遠景 3 層の距離 18/40/90 m・不透明度・スクロール・せん断、霧の増分の曲線）と純関数 `SanitizeRainTuning`・`EvaluateRainNear`・`EvaluateRainCurtain`・`MakeRainFogBoost`、JSON の読み込み（`TryLoadRainTuningFromJsonText`・`LoadRainTuningFile`。未知のキー・型違い・範囲外は警告して既定）を置き、`Assets/Data/Environment/RainTuning.json` に既定値を書いた。`RenderWorld::SetRainTuning` → `RenderingCoordinator`（Sanitize し、バイト列が同じなら共有の値を使い回す）→ `packet.Scene.RainTuningSnapshot`（ポインタの写しだけ。SceneRevision に入れない）。`EnvironmentSystem` は `Enable` で RainTuning.json を読み、`Resolve` で霧の `DensityAtBaseHeight` に `MakeRainFogBoost(上書き後の雨量)` を足し、`Enable` の後の最初の `PublishTo` で `SetRainTuning` を一度呼ぶ。雨の強さと風の出所は `EnvironmentParameters`（雨量）と `WindParameters` だけ（G7-S5 の (A)）
+- 証拠: `.harness/runs/20261116-103702/verify-G7-GR58-RAIN-MODEL-build.txt`（全単位を着地させた木で `cmake --build build --config Debug --target Game -- -m:1` が終了コード 0、Game.exe までリンク、行末の乖離なし）。verify の ctest の行と `RainParametersTest`・`EnvironmentStateTest` の追加は、試験を作らない・回さない決まりで行わない
+- 判断（推奨を採った）: 雨量の曲線は冪（有効な割合の指数 0.7・不透明度 0.5・遠景の層 1.0・霧 1.5）で、雨量 0 でちょうど 0、単調・連続。既定で雨量 0.50→0.51 の有効な割合の変化は 1.02^0.7 ≈ 1.4 %。落ちる速さと太さは雨量で線形、傾きは `atan2(wind.BaseSpeed, 落ちる速さ)`（4 m/s・8 m/s で 26.57°）。範囲外・非有限の欄と大小が崩れた組は丸めずに既定へ戻す。霧の増分は雨量 1 で +0.02 /m。数値の既定はすべて仮
+- 見どころ: 今は `EnvironmentSystem` を `Enable` するシーンも雨の描画（RAIN-NEAR・RAIN-CURTAIN）もまだ無く、ランチャーと各シーンの見た目は変わらない。`EnvironmentSystem` を有効にしたシーンで雨量を上げると、霧が雨量に応じて濃くなる（雨量 1 で基準高度の密度 +0.02）
+- Next: G7-GR58-RAIN-NEAR・G7-GR58-RAIN-CURTAIN が `packet.Scene.RainTuningSnapshot` と `Environment.RainIntensity`・`Wind` で `EvaluateRainNear`・`EvaluateRainCurtain` を評価して描く
+- Notes: RainTuning.json の道は作業ディレクトリ相対（`Assets/Data/state_keys.json` と同じ）。`RainTuningSnapshot` は coordinator が既定の共有の値で初期化するので読み手には常に非 null（SceneProxy を既定へ戻す所では nullptr にするが毎フレーム写し直す）
