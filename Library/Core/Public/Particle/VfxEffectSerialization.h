@@ -5,7 +5,8 @@
 namespace NorvesLib::Core::Particle
 {
     constexpr uint32_t kVfxCookedMagic = 0x5846564Eu;
-    constexpr uint32_t kVfxCookedVersion = 1u;
+    constexpr uint32_t kVfxCookedVersion = 2u;
+    constexpr uint32_t kVfxCookedVersionLegacyV1 = 1u;
 
     bool LoadVfxEffectFromJson(const Container::String& text, VfxEffectAsset& outAsset, Container::String& outError);
     /** @brief エフェクト資産を検証し、JSON 文字列に書き出す。 */
