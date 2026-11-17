@@ -7444,7 +7444,7 @@
 - notes: GR54 の P1 の後半（ロードマップ 1987 行、要件 `#### GR54` の「キーの洞察」と P1）。空の放射輝度・拡散照度・GGX の前計算はどれも放射輝度に線形なので、晴天と単位曇天の重み付き和で雲量の連続変化を作り直し無しに追える（要件 5317 行）。雲量 0 で今の絵と同じにするため、重み (1,0) は写しにする。空の放射輝度 LUT も混ぜないと、背景と霧の色を作り直すことになり「CPU 再生成 0 回」を満たさない（要件は「LUT・IBL の再生成 0 回」）。太陽円盤と直達の弱め方は GR50 の CPU の小さな計算のまま（作り直しの対象でない）。段階をまたぐ注意（ロードマップ 4470・4474 行）: GPU で混ぜると CPU の平均照度が古くなるので同じ重みで混ぜる。雲量は SceneRevision に入れない前提（ロードマップ 4462 行）だが、今の `HashSceneEnvironmentRevision` は雲の層の `Coverage` を入れている（RenderingCoordinator.cpp:232）。GR50 の `CloudCover` をどう扱うかは G7 の決定に従い、入っていれば G11-GR55-CLOCK-SKIP で外す。`GameApplicationHandler.cpp` は共有のファイルなので差分を小さくする。計測（雲量 0 → 1 を 120 フレームで、フレーム時間の最大が中央値の 2 倍以内）は G11-GR54-SKY-MEASURE。危険地帯（照明・RenderThread・永続テクスチャの更新の順）。評価者の反証を省かない。試験を足す理由: 反証する契約は「混ぜた結果が CPU のモデルと一致する」「雲量 0 で今の絵を変えない」。誤差やミップの取り違えは曇天の撮影 1 枚では見分けにくく、黙って起きる。
 
 ## G11-GR54-SUN-KEYFRAMES: 太陽が連続して動いても空 LUT・IBL を止まらずに追えるよう、高度をはさむ晴天のキーフレーム 2 枚を GPU に持ち、次を JobSystem で作る
-- status: todo
+- status: done
 - after: G11-GR54-CLOUD-BLEND
 - gr: GR54
 - done-when: (1) `IblGeneration` を CPU の計算（`SkyAtmosphereModel`・放射輝度の源・拡散と鏡面の畳み込みの値の配列を作る。スレッド安全で装置に触れない）と RenderThread での転送に分ける。(2) キーフレームの窓（`Library/Core/Private/Rendering/SkyKeyframeWindow.{h,cpp}`）が、今の太陽高度をはさむ晴天のキーフレーム a・b を GPU に持ち、高度が b を越える前に次の c を `JobSystem::SubmitTask`（`Library/Core/Public/Thread/JobSystem.h:46`）のワーカーで CPU 生成し、できたら転送して窓を進める。キーフレームの高度は非一様の表（地平線付近 0〜6° を細かく。表はデータで変えられ、GR55 の夜の範囲の負の高度も置ける）。(3) `SkyCloudBlend.comp` を「晴天 a・晴天 b・単位曇天」の 3 入力の重み付き和と、太陽方位の経度方向のずらし（正距円筒の u のずらし）へ広げ、方位だけの変化は作り直さない。(4) 生成が間に合わないときは直前のキーフレームに留め（重みを端で止める）、警告を 1 回だけ出し、黒画面・落ちる・古い参照の解放が起きない。(5) Game に開発用の引数 `--sun-sweep=<開始の度>,<終わりの度>,<秒>` を足し、掃引の間は毎フレーム `SKY_SWEEP frame=… altitude=… key_a=… key_b=… weight_a=… weight_b=… mean_irradiance=…`（混ぜた全球の平均照度。CPU で重みから求める値）を出す。試験が通る: `SkyKeyframeWindowTest`（`CameraViewConstantsTest` の束へ MEMBER）で、高度の列に対する窓の選択と重みが連続（キーフレームの切り替えの前後で重みの和と各入力の寄与が跳ばない）、生成の遅れを模したとき端で留まること、表が非一様でも単調な高度の列で同じキーを 2 回作らないこと。`SkyAtmosphereModelTest` に、同じパラメータのモデルを複数のワーカーで同時に作った結果が逐次に作った結果とビット一致するケースを足す。`SkyCloudBlendVulkanTest` に、キーフレームの間の高度と方位のずらしを混ぜた結果と、その高度・方位で CPU のモデルを作り直した値との差のケースを足す（許容は空の放射輝度 LUT 3%・拡散 3%・鏡面 5% から始め、地平線付近の実測の誤差を記録して決める）。`RenderingGolden*` の 4 試験と `PathTracingOutdoorVulkanTest` が変わらない。
@@ -7481,7 +7481,7 @@
 - notes: 選定課題 G11-S6（GR55 の時刻・天候の既定値と範囲。ロードマップ 4553 行）は推奨の (A) を採る: 仮の既定値（北緯 55°・夏至寄りの日付 172・北のずれ 0、天候は曇天中心で雨量と霧が変わる表、セル 15 分）で作り、企画が決まったらデータだけ差し替える。理由: 作者の決定で、企画で保留の機能も採り、決めていない数値はデータにする（BRIEF）。値の根拠: 北緯 55° は要件の「議論記録の寒冷で草の高い地域（カムチャツカ）」の例で、企画の決定ではない（根拠なしの仮）。月明かり・夜は G11-GR55-NIGHT、時計・スキップは G11-GR55-CLOCK-SKIP。純関数とデータだけで、描画も環境状態も変えない。風の値は G5 の GR46 の `WindParameters`（G7-S1 の決定）へ写せる形（向き・速さ・突風）で持ち、式は持たない。試験を足す理由: 反証する契約は「同じ種と時刻で同じ天気（セーブは種と時刻だけ）」「遷移表の制約」「太陽の既知の高度」。決定論の崩れや稀な遷移は撮影 1 枚では見えず、ロードの後に天気が変わる形で黙って起きる。ロードマップ 1988・1999 行、要件 `#### GR55` の (W)(T)。
 
 ## G11-GR55-CLOCK-SKIP: 環境状態を時計と天候の予定表で動かし、時刻の一括スキップ（濡れの復元・不連続の印・通知）と、動く太陽・天候で RTGI の履歴を毎フレーム捨てない扱いを入れる
-- status: todo
+- status: done
 - after: G11-GR55-SUN-WEATHER, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR55
 - needs-gr: GR49, GR50
@@ -7528,7 +7528,7 @@
 - notes: GR56 の P4 の前半（要件 5587 行、草の根元・岩陰は 5571-5577 行）。名前とディレクトリは G5 の項目に合わせた（G5-GR90-SCATTER-RUNTIME の `Library/Core/{Public,Private}/Scatter/ScatterSystem`、G5-GR42-GRASS-FIELD-CORE の `Library/Core/{Public,Private}/Vegetation/GrassField`、G5-GR37-TERRAIN-COMPONENT の TerrainComponent）。G5 が別の名前で入れていれば実物に合わせる。遮蔽物の欄は G5 の種の表（G5-GR90-SCATTER-BAKE の `Assets/Scatter`。NVSCT の文書 `Docs/Architecture/NVSCTv0.md`）に足し、cook が通すようにする。草の根元の暗さは草の材質 AO（G5 の GR43。G11-S4 の (A)）が受け持ち、ここは圃場の大きさの暗さだけ。森の大量の配置（GR47）は G12 で、当面は GR90 の散布と手置きで代える（ロードマップ 2005 行）。ストリーミング（GR40）も G12 で、ここは GR90 のチャンクの常駐・解放の通知だけを使う。取り込み時に遮蔽物の形を推定する（サイドカー GR78）のは G17 の GR81 の範囲で、ここは種の表の値と手置き。`Game/GameModes/Grassland` は G5 が作るシーンで、遮蔽を有効にして森の縁を見せる設定だけを足す（差分を小さくする）。危険地帯（RenderThread の入力・SceneRevision とは別の版）。評価者の反証を省かない。試験を足す理由: 反証する契約は「チャンクの常駐・解放と遮蔽物が一致する」「地形の高さがそのまま地面になる」。解放の漏れは遠くへ歩いた後にだけ出る黒い跡として、黙って起きる。
 
 ## G11-GR56-SKY-OCC-RT: RTGI・DDGI を使うときに樹冠だけの遮蔽で拡散を補い、樹冠を PT の参照だけに当たる instance mask 0x04 で TLAS へ入れる
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-WORLD, G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - done-when: (1) クリップマップに「樹冠の種別だけ」の L1 の第 2 組を足し（積分の費用と記憶域が約 2 倍。要件 5553 行）、RTGI か DDGI が選ばれたフレームは、拡散に「樹冠だけ」の可視率を掛ける（RTGI は `EvaluateRTGIEndpoint` の拡散の項、DDGI は DDGI の照度の項）。地形・岩・小屋は今 TLAS に入って光線が解くので、全種別の組は使わない。鏡面は常に G11-GR56-SKY-OCC-SPECULAR の円錐。(2) instance mask: `FramePacket.h:63-65` と `Assets/Shaders/Common/RayTracingInstanceMask.glsl` に 0x04（`RayTracingInstanceMaskSkyMapProxy`）を足す。樹冠の種別の遮蔽物に対応する描画物（散布の樹木・手置きで印を付けた物）は mask 0x02|0x04 で TLAS に入り、DDGI・RTGI の光線（cull mask 0x01。ProbeRadiance.comp・ProbeIrradianceUpdate.comp・ProbeEmitterSampling.glsl・DiffuseIndirect.comp）には当たらず、PT（全 bit）には当たる。RT の影の光線（RayTracingShadowRayGen.glsl）の cull mask を 0x05 にして樹冠も影を落とす。印は MeshProxy → DrawParams（DrawCommand.h の bCastShadow の隣）→ `BuildFrameSnapshot`、MegaGeometry の写しの経路（RenderingCoordinator.cpp:1642）の両方に通し、バッチの鍵にも入れる。試験が通る: `RTGIDiffuseIndirectVulkanTest` に、mask 0x04 の instance が RTGI の光線に当たらないケース、`DDGIProbeRayQueryVulkanTest` に DDGI の光線に当たらないケース、`PathTracingVulkanTest` に PT には当たるケースを足す。`RenderingRayTracingShadowVulkanTest` が cull mask 0x05 にしても変わらない（0x04 の物が無い場面）。`RenderingSkyOcclusionCanopyVulkanTest` に RTGI 有効の変種（樹冠だけの組で拡散を補う）を足し、樹冠の下の地面の比が RTGI 無効の結果と ±15% 以内。`RenderingGolden*` の 4 試験が変わらない。
@@ -7576,7 +7576,7 @@
 - notes: GR59 の P3（要件 5995 行）。今あるもの: 窓のイベント（Begin・End）とイベントの列（G3-GR11 done）、ソケット（G3-GR13 done、`SocketTypes.h`）。接地のイベントの名前を出すのは todo の G3-GR11-FOOT-CONTACT-SOURCE（needs-gr の GR11 でつながる）。UniRig の 14 関節には足先が無い（ロードマップ 2011 行）ので、足先の骨が無いときは足首＋データのずれで代える（GR103 の共通の骨格が入れば骨を使う）。要件の暫定（GR05 の歩様の位相から歩幅ごとに出す）は、接地のイベントが G3 で入るので作らない。放出の列 `GpuParticleBurstQueue`（位置・法線・速度・個数・エミッタ）は G7-GR57-GPU-SIMULATION の名前と欄に合わせた。足が水たまりを踏んだときの波紋は G11-GR59-PUDDLES の手続きの波紋の範囲外（雨の波紋だけ）。試験を足す理由: 反証する契約は「乾いた地面では出ない・接地の点から出る」。ずれは足の下でなく横から出るしぶきとして動いているときだけ見え、黙って起きる。ロードマップ 1990・2001 行。
 
 ## G11-GR59-PUDDLES: 雨の量と乾きで水位が上下する水たまり（被覆・暗化・つや・手続きの波紋・空の見え方を掛けた反射）と、屋根の下は濡れない雨の遮蔽を地面と一般のメッシュに入れる
-- status: todo
+- status: done
 - after: G11-GR59-OVERHEAD-MAP, G11-GR59-PUDDLE-MASK, G11-GR56-SKY-OCC-SPECULAR, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR53-WET-MODEL, G7-GR53-WET-WRITERS
 - gr: GR59
 - needs-gr: GR37, GR44, GR49, GR53
@@ -10862,3 +10862,15 @@
 - effort: high
 - from: SCN-MEGA-RT-SELECT
 - notes: 判断の理由（1. 実際に起きている不具合）: 枠 NorvesLib-2-u2 の反復 2 で、地形を 14 分焼いたあとに 415 行の throw で EXIT=1 になった。原因は、枠のマニフェストが G5-GR42-GRASS-FIELD-ASSET で足された `GrasslandTerrain.json` の草の場の項目より古いこと。資産の一覧に項目が足されるたびに、全体をクックし直していない枠では絞ったクックがすべて落ちる。`-OnlyLogicalPath` を verify に使う todo のタスク（G12-GR47-PLACEMENT-COOK、G5-GR37-TERRAIN-COMPONENT-P1 など）も同じ落ち方をする。
+
+## G6-GR35-WETNESS-STATE-P1: 毛の濡れの当たり方を、真上の屋根・樹冠の判定と雨宿りの体積の小さい方にする
+- status: todo
+- after: G6-GR35-WETNESS-STATE
+- done-when: `FurCoatComponent` が `ETickGroup::PostPhysics` の Tick で、Entity の世界位置について `ComputeOverheadRainExposure`(`Library/Core/Private/Rendering/OverheadHeightMapMath.h:126`)を求める。これを `RainShelterVolume` が `SetRainExposure` で渡す値と別に持ち、小さい方を `AdvanceCoatWetness` の当たり方として使う。`ComputeOverheadRainExposure` に渡す遮蔽物の集合は、雨の遮蔽マップと同じものにする。具体的には、`RenderWorld::RegisterSkyOccluder` で登録した手置きの遮蔽物と、`ScatterSystem::PublishSkyOccluders` が出す散布のチャンクの遮蔽物のうち、雨を遮るもの。GameThread からこの集合を読む口を `RenderWorld` に足す(RenderThread のデータは読まない)。`RainShelterVolume` の重なりの数え方と `SetRainExposure` の意味は変えない。屋根の無い場所で体積の外にいるときは、当たり方を今と同じ 1 にする。Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Component/FurCoatComponent.h, Library/Core/Private/Component/FurCoatComponent.cpp, Library/Core/Public/Rendering/RenderWorld.h, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: G6-GR35-WETNESS-STATE
+- notes: 根拠は 3 つ(「元の done-when の取りこぼし」と「計画の要件が一覧に無い」の両方に当たる)。
+  - 1 つ目: G11-GR59-PUDDLES の done-when (5) が「犬の毛の当たり方も遮蔽物の形から屋根を求めて渡す(`RainShelterVolume` と重なるときは小さい方)」を求めている(TASKS.md 7583 行)。しかし `FurCoatComponent` がまだ無かったので繋がれていない(PROGRESS.md 12069 行の既知の限界)。
+  - 2 つ目: G6-GR35-WETNESS-STATE の notes は、樹冠の下の遮蔽を GR59 が入れる前提にしている(ロードマップ 1461 行)。ところが GR59 の残りの項目(RAIN-HIT・FOOT-SPLASH)にも、G11-GR36-WETNESS-DYNAMICS にもこの作業は無い。
+  - 3 つ目: CPU の判定 `ComputeOverheadRainExposure` は実装済みだが、遮蔽物の一覧を GameThread から読む公開の口が無い。今の `RenderingCoordinator` には `GetSkyOccluderCount` しか無く、散布の遮蔽物は拡張データで RenderThread へ出ているだけ。

@@ -90,6 +90,23 @@ vec2 TerrainSplatUv(TerrainSplatParams p, vec2 worldXZ)
     return (worldXZ - p.map.xy) * p.map.zw;
 }
 
+// 地形の水たまりの凹み度（cook の PDL0）。スプラットの配列の 3 枚目の R。
+// スプラットが無効・配列が 3 枚未満なら 0。
+float TerrainSplatPuddlePotential(sampler2DArray splatArray, TerrainSplatParams p, vec2 worldXZ)
+{
+    if (p.shape.x < 1.0 || !IsTerrainSplatEnabled(p) || p.map.w == 0.0)
+    {
+        return 0.0;
+    }
+    if (textureSize(splatArray, 0).z < 3)
+    {
+        return 0.0;
+    }
+    const vec2 uv = TerrainSplatUv(p, worldXZ);
+    const float potential = textureLod(splatArray, vec3(uv, 2.0), 0.0).r;
+    return isnan(potential) ? 0.0 : clamp(potential, 0.0, 1.0);
+}
+
 // 塗りの重みを層の数で切り、崖の塗りは傾斜の重みで置き換えて、全体の和を 1 にする。
 void TerrainSplatLayerWeights(TerrainSplatParams p, vec4 spl0, vec4 spl1, float slopeRadians,
                                out float weights[8])

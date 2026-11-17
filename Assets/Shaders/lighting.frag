@@ -150,10 +150,21 @@ layout(location = 2) out vec4 outSpecularReflectance;
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/ShadingModels.glsl"
 #include "Common/SkyOcclusion.glsl"
+#include "Common/Puddle.glsl"
+
+NORVES_DECLARE_PUDDLE_SURFACE_UBO(0, 31)
+layout(set = 0, binding = 32) uniform sampler2D overheadHeightMap;
 
 SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N)
 {
     return EvaluateSkyOcclusion(P, N, skyOcclusionVisibility, skyOcclusionAux,
+        params.skyOcclusionInfo, params.skyOcclusionParams,
+        params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
+}
+
+float EvaluateSkyCanopyVisibility(vec3 P, vec3 N)
+{
+    return EvaluateSkyCanopyVisibility(P, N, skyOcclusionVisibility, skyOcclusionAux,
         params.skyOcclusionInfo, params.skyOcclusionParams,
         params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
 }
@@ -1490,12 +1501,34 @@ void main()
             }
         }
 
+        // RTGI・DDGI の光線は樹冠（instance mask 0x04）に当たらないので、樹冠だけの空の遮蔽で拡散を補う。
+        // 地形・岩・小屋は光線が解くので全種別の組は使わない。鏡面は円錐のまま。
+        if (params.skyOcclusionInfo.x != 0u && (bRTGIAvailable || bDDGIAvailable))
+        {
+            float canopyVisibility = EvaluateSkyCanopyVisibility(worldPos, N);
+            rtgiDiffuseRadiance *= canopyVisibility;
+            ddgiIrradiance *= canopyVisibility;
+        }
+
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
         float skyConeSpecularOcclusion = 1.0;
         if (params.skyOcclusionInfo.x != 0u)
         {
             skyConeSpecularOcclusion = EvaluateSkySpecularOcclusion(worldPos, N, reflect(-V, N), iblRoughness);
+        }
+        // 水たまりの画素（DefaultLit の P1 = 被覆）は、雨の遮蔽マップの上の空の見え方で空由来の鏡面を遮る。
+        float puddleCoverage = 0.0;
+        if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT)
+        {
+            float coverage = GBufferDecodeP1(texture(gbufferEmissive, fragUV));
+            puddleCoverage = isnan(coverage) ? 0.0 : clamp(coverage, 0.0, 1.0);
+        }
+        if (puddleCoverage > 0.0)
+        {
+            skyConeSpecularOcclusion *= mix(1.0,
+                OverheadHeightMapSkyVisibility(overheadHeightMap, PuddleOverheadView(u_PuddleSurface.params), worldPos),
+                puddleCoverage);
         }
         // RTGI の鏡面の光線が空へ抜けた割合と、当たった面が返す光（EvaluateRTGIEnvironmentSpecular）
         float rtgiSkySpecularOcclusion = 1.0;

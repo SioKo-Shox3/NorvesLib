@@ -27,6 +27,10 @@ namespace NorvesLib::Core::Rendering
         result.bEnabled = in.bEnabled;
         result.Seed = in.Seed;
         result.DiscontinuityId = in.DiscontinuityId;
+        result.SunRevisionQuantizationDegrees =
+            std::isfinite(in.SunRevisionQuantizationDegrees) && in.SunRevisionQuantizationDegrees >= 0.0f
+                ? in.SunRevisionQuantizationDegrees
+                : 0.0f;
         result.RainIntensity = ClampUnitOrDefault(in.RainIntensity, result.RainIntensity);
         result.Wetness = ClampUnitOrDefault(in.Wetness, result.Wetness);
         result.CloudCover = ClampUnitOrDefault(in.CloudCover, result.CloudCover);

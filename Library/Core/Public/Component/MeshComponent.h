@@ -173,6 +173,14 @@ namespace NorvesLib::Core::Component
         }
         bool GetCastShadow() const { return getbCastShadow().Get(); }
 
+        /** @brief 空の遮蔽のマップが遮蔽を受け持つ物かを設定する。 */
+        void SetSkyMapProxy(bool bSkyMapProxy)
+        {
+            this->bSkyMapProxy = bSkyMapProxy;
+            MarkRenderStateDirty();
+        }
+        bool IsSkyMapProxy() const { return bSkyMapProxy.Get(); }
+
         /**
          * @brief シャドウレシーブ設定
          */
@@ -354,6 +362,10 @@ namespace NorvesLib::Core::Component
         ECS_PROPERTY(Ecs::EcsMeshRender, bCastShadow, bool, bCastShadow)
         ECS_PROPERTY(Ecs::EcsMeshRender, bReceiveShadow, bool, bReceiveShadow)
         ECS_PROPERTY(Ecs::EcsMeshRender, Layer, Rendering::RenderLayer, RenderLayerProp)
+
+        // 空の遮蔽のマップ（樹冠だけの組）が光線の代わりに遮蔽を受け持つ物か（手置きの樹木など）。
+        // 立てると TLAS へ instance mask 0x04 で入り、DDGI・RTGI の光線に当たらない
+        PROPERTY(bool, bSkyMapProxy)
 
         // LOD
         PROPERTY(int32_t, ForcedLODLevel) // -1 = 自動
