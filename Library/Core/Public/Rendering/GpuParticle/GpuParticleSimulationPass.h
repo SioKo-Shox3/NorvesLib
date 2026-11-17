@@ -32,6 +32,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t LastUsedFrameNumber = 0;
             RHI::BufferPtr Pool;
             RHI::BufferPtr Heads;
+            RHI::BufferPtr DrawList;
+            RHI::BufferPtr DrawArgs;
             uint32_t LastGeneration[kGpuParticleMaxEmitters] = {};
             double ParticleTime = 0.0;
             double UnscaledTime = 0.0;
@@ -44,8 +46,10 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_UpdateShader;
         RHI::ShaderPtr m_SpawnShader;
+        RHI::ShaderPtr m_CompactShader;
         RHI::PipelinePtr m_UpdatePipeline;
         RHI::PipelinePtr m_SpawnPipeline;
+        RHI::PipelinePtr m_CompactPipeline;
         RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
         RHI::TexturePtr m_EmptyTexture;
         RHI::TexturePtr m_EmptyHeightTexture;
@@ -55,6 +59,8 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle m_NormalHandle;
         RGResourceHandle m_PoolHandle;
         RGResourceHandle m_HeadsHandle;
+        RGResourceHandle m_DrawListHandle;
+        RGResourceHandle m_DrawArgsHandle;
         bool m_bReportedClampedTime = false;
     };
 

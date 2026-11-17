@@ -12069,20 +12069,37 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: done-when (5) の犬の毛の当たり方は、`FurCoatComponent` がまだ無い（G6-GR35-WETNESS-STATE が todo）ので繋いでいない。CPU の判定 `ComputeOverheadRainExposure` は用意したので、毛の当たり方へ `RainShelterVolume` の値との小さい方を渡すだけが残る。
 - 要起票: G6-GR35-WETNESS-STATE の完了後に、`FurCoatComponent::SetRainExposure` へ `ComputeOverheadRainExposure`（雨を遮る `SkyOccluderProxy` から犬の位置の上の屋根を判定）と `RainShelterVolume` の値の小さい方を渡す作業。G6-GR35 は口だけを作り GR59 が入れる前提で、どの項目にも無い。
 - Next: ランナーの評価者の反証（危険地帯: GBuffer の書き手・lighting.frag）。
-- U1 局所霧の値の型・解析の光学的深さ・近い順の選択・GPU の並びを CPU 側に置く: 着地(直し 0 回)
-- U4 前向きと体積の霧が共有する局所霧の GLSL の関数を HeightFog.glsl に足す: 着地(直し 0 回)
-- U2 局所霧の登録・解除と、スナップショットで近い 8 個をパケットへ写す経路を足す: 着地(直し 0 回)
-- U5 体積の霧の視線に局所霧の透過率と散乱を足し、空の画素にも局所霧を掛ける: 着地(直し 0 回)
-- U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
-- U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
-- U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
 
-## G11-GR52-LOCAL-FOG Entity に付けて動かせる楕円体の局所霧（2026-11-17、run 20261117-181235・反復 1）
-- Done: `LocalFogVolumeComponent`（中心のずれ・半径・密度・色・減衰〔半径が標準偏差の何倍か〕・濃淡の量・濃淡の大きさを PROPERTY で保存）が持ち主の変換から `LocalFogVolumeProxy` を作り、変わったときだけ `RenderWorld` → `RenderingCoordinator` の表へ更新し、スナップショットでカメラに近い順に最大 8 個を `SceneProxy::LocalFogVolumes` に値で写す（9 個目以降は落として 1 回だけ警告）。密度 ρ0·exp(−½|M(p−c)|²)（M は持ち主の回転で回した軸 ÷ 標準偏差）の視線の光学的深さを erf の閉じた形で求める式を CPU（`ComputeLocalFogOpticalDepth`）と GLSL（`Common/HeightFog.glsl` の `LocalFogVolumeOpticalDepth`）に同じ形で置いた。体積の霧（`VolumetricsCommon.glsl` の `IntegrateLocalFog`）は透過率を解析で求め、局所霧の範囲を 16 歩で進めて周りの光（空気遠近の Ψ_ms か空の放射輝度）と太陽の単一散乱（`CalculateVolumetricShadowVisibility` の影つき）を積み、濃淡（3D の値の雑音）を散乱の放射だけに掛ける。雑音は `Common/Wind.glsl` の `WindVelocity` を呼んで風で流す。局所霧は高さフォグ・空気遠近より手前とみなして重ね、空の画素にも掛ける。半透明（`forward_transparent.frag`）とワールドの板（`world_board.frag`）は高さフォグの後に `EvaluateLocalFogForward` を掛ける。霧と空気遠近が無効でも局所霧があれば `VolumetricsPass` を回す。局所霧が 0 個のときは新しい枝を通らず、今の演算と同じ。
-- 証拠: `.harness/runs/20261117-181235/verify-G11-GR52-LOCAL-FOG-final.txt`（全単位を入れた版で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`Game.vcxproj -> ...Game.exe`、霧の関数を含む 9 本のシェーダー〔volumetrics・volumetrics_probe・forward_transparent・world_board・impostor・ribbon_trail・rain_curtain・ParticleDraw・PathTracingRayGen〕を BOM を外して glslc に通して `GLSL_CHECK failed=0 total=9`）。解析の積分は倍精度の細かい数値積分（Simpson 30 万分割）と相対誤差 1.3e-15 で一致（GLSL の erf は Abramowitz–Stegun 7.1.26、最大誤差 1.5e-7）。
-- 試験: done-when の `VolumetricFogModelTest`・`RenderingVolumetricLocalFogVulkanTest`（`--fog-scenario=local-fog`）・`SceneFileRoundTripTest` のケースは、試験を作らない・回さない決まりにより作っていない（`Test/` も無い）。verify の ctest の行は回していない。撮影・GPU 時間の計測は回さない決まり。
-- 人が見るときの見どころ: 今はどのシーンにも局所霧を置いていないので、Rendering3DTest とランチャーの各シーンは前と同じに見えること。局所霧は G11-GR52-FOG-CHECK が grassland の低い視点に谷の朝霧の形で置く。置いた後は、霧の塊が楕円体の形で柔らかく薄れ、空を背にした所でも切れないこと、濃淡が風の向きに流れること、太陽の当たる所が明るく建物・木の影の中が暗いこと、半透明と板が霧の奥で同じく霞むこと。
-- 既知の限界: 前向きの描画の局所霧は周りの光だけで太陽の単一散乱を含めない（GR51 の前向きの高さフォグと同じ）ので、日の当たる局所霧の中の半透明は不透明より少し暗く霞む。局所霧は高さフォグ・空気遠近より手前とみなすので、遠い局所霧の手前の高さフォグの分だけ順が違う。GPU の粒子・インポスター・剣のトレイル・雨の幕には局所霧が掛からない（paths の外）。PT・RT・DDGI は局所霧を知らない（方式差）。濃淡の流れは風の時計の折り返し（4096 秒）ごとに 1 回跳ぶ。コンポーネントのクラスはコードから参照されたときに登録される（既存のコンポーネントと同じ）ので、局所霧を参照するコードの無い実行でシーンのファイルから読むと落とされる。
-- Notes: 同期の経路を空の遮蔽物と同じ形にするため、paths の外の `RenderWorld.h/.cpp`・`RenderingCoordinator.h` に登録・解除の宣言と表を、空の画素に局所霧を掛けるため `volumetrics.frag` に背景の分岐と合成を、どれも追記だけで足した。雲の影（G11-GR52-CLOUD-SHAFTS）が `CalculateVolumetricShadowVisibility` に掛かれば、局所霧の太陽の散乱にも同じく掛かる。
-- 要起票: GPU の粒子（`Particles/ParticleDraw.glsl`・`GpuParticleDrawPass`）・インポスター（`impostor.frag`）・剣のトレイル（`ribbon_trail.frag`）・雨の幕（`rain_curtain.frag`）の前向きの霧に局所霧を掛ける作業。done-when (3) の「粒子にも局所霧が効く」の要件だが、どの項目の paths にも無い（各 UBO の末尾に `GPULocalFogParams` を足し、`EvaluateLocalFogForward` と `ApplyLocalFog*` を掛けるだけ）。
-- Next: ランナーの評価者の反証（危険地帯: volumetrics・半透明）。
+## G11-GR54-SUN-KEYFRAMES 太陽が連続して動いても、高度をはさむ晴天のキーフレーム 2 枚を混ぜて空 LUT・IBL を止まらずに追う（2026-11-17、run 20261117-140059 の反復 1〜3）
+- Done: `IblGeneration` を装置に触れない CPU の計算（`ComputeIblCpuData`。環境・拡散・鏡面の各ミップの texel と平均照度）と RenderThread での転送（`UploadIblResources`）に分けた。`CreateIblResources` は 2 つを順に呼ぶだけで出力は前と同じ。空のモデルの側に、太陽の高度・方位を除いた大気の鍵（`MakeSkyKeyframeSetKey`・`AreSkyKeyframeSetKeysEqual`）、晴天の水平面の照度からの曇天の重み（`ComputeSkyCloudBlendWeightsFromIlluminance`）、スレッド安全な晴天の源（`BuildSkyRadianceSource`）、開発用の印 `bDebugLogSunSweep` を足した。
+- Done: `Library/Core/Private/Rendering/SkyKeyframeWindow.{h,cpp}` を足した。非一様の既定の高度の表（0, 0.5, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50, 60, 70, 80, 90 度。`SkyAtmospherePassSettings::KeyframeAltitudesDegrees` で差し替えられ、負の高度も置ける）に、リセット時の今の高度（錨）を足した実効の表から、今の高度をはさむキー a・b と重み（線形）を選ぶ。必要なキーが常駐していなければ常駐する最も近いキーに重み 1 で留まり、警告を 1 回だけ出す。先読みは今の区間の [-1, +2] を高度に近い順に（作成中は最大 2）、範囲の外の常駐キーは手放す。キーの CPU 生成（`BuildSkyKeyframeCpuData`：モデル・放射輝度 LUT・晴天の源・IBL・空気遠近の表・太陽の地表の透過率・晴天の水平面の照度）は `SkyKeyframeBuilder` が `JobSystem::SubmitTask` のワーカーへ投げ、終わったものを RenderThread で `UploadSkyKeyframe` が転送する。
+- Done: `SkyCloudBlend.comp` と記録器を、晴天 a・晴天 b・単位曇天の 3 入力の重み付き和と、晴天のキーごとの経度のずらし（正距円筒の u。表のキーは方位 0 で作り、今の方位との差だけずらす）へ広げた。方位だけの変化では何も作り直さない。
+- Done: `SkyAtmospherePass` は晴天の鍵が変わるたびの同期の作り直しをやめた。大気の鍵が変わったとき（初回を含む）と、1 フレームで 10 度（`KeyframeJumpThresholdDegrees`）を超えて高度が跳んだときだけ、常駐キーを退役のキューへ預けて今の高度・方位そのもので錨を同期で作る（太陽が止まっていれば錨の重み 1・ずらし 0 で、出力は前とビット一致する作り）。毎フレーム、終わったジョブを世代で照合して転送し、窓で選び、手放し、次を投げる。空気遠近の表・太陽の地表の透過率・晴天の照度は重みで混ぜ、全球の平均照度は晴天 a・b と単位曇天の重みで混ぜて公開する。混ぜの再ディスパッチはキーの転送の通し番号・重み・ずらしのどれかが変わったときだけ。`GetSkyModelBuildCount` は保持体・ワーカー・同期の錨の回数の合計。
+- Done: Game に開発用の引数 `--sun-sweep=<開始の度>,<終わりの度>,<秒>`（開発ビルドだけ）を足した。掃引の間は空のパスが、高度・方位・選択が変わったフレームごとに `SKY_SWEEP frame=… altitude=… key_a=… key_b=… weight_a=… weight_b=… mean_irradiance=…`（mean_irradiance は公開する全球の平均照度の Y）を出す。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`.harness/runs/20261117-140059/G11-GR54-SUN-KEYFRAMES-U6-verify.txt`）。編集したファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread・ワーカーとの受け渡し・テクスチャの寿命）。計測は G11-GR54-SKY-MEASURE、太陽角の SceneRevision への量子化は G11-GR55-CLOCK-SKIP、負の高度（夜）の空は GR55。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: Rendering3DTest か荒野を `--sun-sweep=0,90,60` で起動し、空の背景・地平線の色・霧の色・地面の環境光・鏡面の映り込みが段差なしに日の出から正午へ移ること（特に地平線付近 0〜6 度）、ログの `SKY_SWEEP` の weight_a・weight_b が連続し、`空の錨と LUT を … 生成しました` が起動時の 1 行だけで掃引中に出ないこと、`空のキーフレームの生成が間に合わないため…` が出ても空が黒くならず止まるだけであること。`--sun-sweep` を付けない起動画面が前と同じに見えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyKeyframeWindowTest`・`SkyAtmosphereModelTest` の同時構築のケース・`SkyCloudBlendVulkanTest` の高度と方位のケースは作っていない。`RenderingGolden*`・`PathTracingOutdoorVulkanTest` も回していない。変えた API を使う既存の試験は無い。
+- Notes: 判断: 錨は今の方位で作り（静止した太陽でずらし 0）、表のキーは方位 0 で作る。同時に作成中のキーは 2 まで。跳びの閾値は 10 度。混ぜが使えない文脈（記録器の初期化の失敗・フレームの持ち主の無い文脈）では重みの大きい方のキーをそのまま公開する。
+- Notes: 既知の限界: 混ぜが使えない文脈で表のキー（方位 0）が重みの大きい側になると、空の太陽の向きの明るさが方位の差だけずれる。sanitize が高度を 0〜90 度に丸めるので、負の高度のキーは 0 度のキーと同じ中身になる。リセットの前に投げたジョブはワーカーで最後まで走ってから捨てられる。JobSystem が受け付けないときは投げ手がその場（RenderThread）で作る。空気遠近の表の 4 番目の成分（定数 1）も重みで混ぜるので、区間の途中では 1 からわずかにずれる（参照する側は無い）。
+- 統合ブランチ feature/scene-launcher を取り込んだ（G11-GR55-CLOCK-SKIP の時計と同じ箇所で衝突した `GameApplicationHandler.cpp` は、時計の初期状態と掃引の印を両方残す形に解いた）。確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（`.harness/runs/20261117-140059/verify-merge-build-game.txt`）。`--clock` と `--sun-sweep` を併せたときの扱いは決めていない（時計が太陽を毎フレーム書く）。
+- U2 空のモデルの周りに、キーフレームが使う鍵・重み・源の関数と開発用の欄を足す: 着地(直し 0 回)
+- U4 キーフレームの窓の選択の論理（GPU・ジョブに触れない）: 着地(直し 0 回)
+- U1 IblGeneration を CPU の計算と転送に分ける: 着地(直し 0 回)
+- U3 混ぜのシェーダーと記録器を、晴天 a・晴天 b・単位曇天の 3 入力と経度のずらしへ広げる: 着地(直し 0 回)
+- U5 キーの CPU 生成（JobSystem のジョブ）と GPU への転送の道具を足す: 着地(直し 0 回)
+- U7 Game に開発用の引数 --sun-sweep を足す: 着地(直し 0 回)
+- U6 空のパスをキーフレームの窓で回し、SKY_SWEEP を出す: 着地(直し 0 回)
+
+### G7-GR57-GPU-INDIRECT 生きている粒だけを詰めて間接の描画で描く（2026-11-17、run 20261117-152611・反復 2、完了）
+
+- Done: `ParticleCompact.comp` が更新・生成の後に、生きている粒のスロットをバケット（PreTAA・PostTAA × premultiplied・加算の 4 つ。添字は `段 × 2 + ブレンド`）ごとの列へ atomicAdd で詰め、1 スレッドの仕上げの dispatch がバケットごとの `DrawIndirectCommand` {6, 生きている数, 0, 0} と `DrawIndirectCount` 用の描画数（0 か 1）を書く。列（4 × 262144 個の uint）と引数（`GpuParticleDrawArgs` 96 バイト）はビューごとに持ち、`GpuParticle.DrawList`・`GpuParticle.DrawArgs` の名前でグラフに公開する（入口と出口は UAV）。
+- Done: `GpuParticleDrawPass` は描画の前に引数を `UAV → IndirectArgument`、列を `UAV → GenericRead` へ移し、バケットごとに `DrawIndirectCount`（`bDrawIndirectCount` があるとき）か `DrawIndirect` で描き、リアクティブを含む全部の描画の後に UAV へ戻す。頂点は `Flags[3]`（0 = 直、1 + バケット = 間接）が 0 でなければ詰めた列からスロットを引く（`firstInstance` は使わない）。戻り値が false・資源が無い・記述子を確保できないときは今の `DrawInstanced` の経路へ落ち、理由ごとにログを 1 回出す。
+- Done: `GpuSpriteRenderer` に `DrawInSlotOrder`（既定 false。RenderFlags の bit 6）を足した。true のエミッタは詰めずにスロットの順の `DrawInstanced` で描く（詰めは atomic の順で描く順が毎フレーム変わりうるので、重なりの順に依る premultiplied のエミッタ向け）。焼いた VFX の形式を版 3 にし、版 1・2 は DrawInSlotOrder を false として読む。
+- Done: 開発ビルドだけの起動の引数 `--gpu-particle-stress=<1〜262144>` を Game に足した。Rendering3DTest の起動カメラの前に Executor=Gpu の効果（premultiplied・PreTAA と加算・PostTAA の 2 エミッタ、粒は半分ずつ）を置き、シーンを出るときに消す。引数が無ければ何も置かない。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0（`Game.exe` までリンク。警告は shaderc の PDB 不在の LNK4099 だけ）。`ParticleDraw.vert`・`ParticleDraw.frag`・`ParticleCompact.comp`・`ParticleUpdate.comp`・`ParticleSpawn.comp` を BOM を除いた写しで glslc（vulkan1.3）にかけて 5 本とも通った。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。出力は `.harness/runs/20261117-152611/verify-G7-GR57-GPU-INDIRECT-U4.txt`。done-when の試験（`GpuParticleIndirectVulkanTest`、`GpuParticleShaderCompileTest` への追加）は試験を作らない決まりで作っていない。verify の ctest の行は対象の試験が無く「No tests were found」。
+- Next: ランナーの評価者の反証（危険地帯: RHI の間接の描画・RenderThread）。性能の記録は G7-GR57-CHECK（撮影・GPU の計測は回さない決まり）。人が見るときの見どころ: 開発ビルドの Game を `--scene=rendering3dtest --gpu-particle-stress=50000` で起動し、カメラの前の粒（premultiplied は TAA の前、加算は TAA の後）が欠けたりちらついたりせずに出ること。引数なしでは Rendering3DTest（天球・地面・球・岩）の見た目が変わらないこと。
+- Notes: 既知の限界: シミュレーション側で列と引数を公開した後に詰めの記述子を確保できなかったフレームは引数が 0 のままになり、スロットの順でないエミッタの粒がそのフレームだけ描かれない（描画側は失敗を見分けられない）。列か引数のバッファを作れないときはプールも公開されず、粒は描かれない。どちらも資源の確保に失敗したときだけ起きる。premultiplied の粒の重なりの順は詰めた順で、毎フレーム変わりうる（並べ替えはしない）。
+- U1 詰めた描画の共有の定義と、エミッタの「スロットの順に描く」設定: 着地(直し 0 回)
+- U2 Game の開発用の起動の引数 --gpu-particle-stress=<粒の数>: 着地(直し 1 回)
+- U3 ParticleCompact.comp で生きている粒をバケットごとに詰め、間接の引数を書く: 着地(直し 0 回)
+- U4 描画のパスを詰めた列の間接の描画へ切り替え、能力が無ければ直の描画へ落とす: 着地(直し 0 回)

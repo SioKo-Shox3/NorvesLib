@@ -10,6 +10,15 @@
 namespace NorvesLib::Core::Rendering
 {
     /**
+     * @brief モデルから正距円筒 RGBA32F の晴天の放射輝度の源を作る。失敗したら outSource を空にして false を返す。
+     *
+     * 装置にもキャッシュにも触れない。SampleSkyView は const なので、同じ const のモデルを複数のスレッドから
+     * 同時に読んでよい（モデルは変更せず、各呼び出しの outSource は別に用意する）。
+     */
+    bool BuildSkyRadianceSource(const SkyAtmosphereModel& model, uint32_t width, uint32_t height,
+                                Container::VariableArray<float>& outSource);
+
+    /**
      * @brief 空の大気モデルと空由来 IBL の放射輝度の源を保持する
      *
      * RenderThread だけが触り、GameThread からは使わない。
