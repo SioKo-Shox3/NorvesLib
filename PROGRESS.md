@@ -11946,3 +11946,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 空の遮蔽のクリップマップに樹冠だけの組を足し、RTGI・DDGI の拡散に掛ける: 着地(直し 0 回)
 - U2 instance mask 0x04 を定義し、印を DrawParams・バッチの鍵・TLAS の mask・RT の影の光線へ通す: 着地(直し 0 回)
 - U3 散布の樹冠の種と手置きの物に印を立て、Game をビルドする: 着地(直し 0 回)
+- U4 空の遮蔽が無効のフレームは樹冠の印を TLAS の mask に使わず、0x01 のまま光線に当てる: 着地(直し 0 回)
