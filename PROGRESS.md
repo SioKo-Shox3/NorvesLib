@@ -12213,3 +12213,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
 - U2 太陽は地平線の下で方向光を作らず、月明かりの方向光を作る関数を足して描画の光源表へつなぐ（最後）: 着地(直し 0 回)
 - U3 保存済みの U1・U2 の差分を当て、PrefabAsset を Prefab ファイルへ保存する（BuildPrefabDocument・SavePrefabToFile）: 着地(直し 0 回)
+- U8 見本の領域のシーン Assets/Levels/Sample/Region_Main.scene.json を置く（地面は Plane）: 着地(直し 0 回)
