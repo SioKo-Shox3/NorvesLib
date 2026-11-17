@@ -40,6 +40,10 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGpuParticleDrawOutputColor = 0u;
     inline constexpr uint32_t kGpuParticleDrawOutputReactive = 1u;
 
+    /// 描画拡張の名前。RenderExtensionRegistry は Ext.<Game>.<Name> の形を受け付ける。
+    inline constexpr const char* kGpuParticleDrawPreTAAExtensionName = "Ext.Engine.GpuParticleDrawPreTAA";
+    inline constexpr const char* kGpuParticleDrawPostTAAExtensionName = "Ext.Engine.GpuParticleDrawPostTAA";
+
     /// 粒の描画定数。std140 で 368 バイト。
     struct alignas(16) GpuParticleDrawConstants
     {

@@ -93,7 +93,8 @@ namespace NorvesLib::Core::Rendering
 
     const char* GpuParticleDrawPass::GetName() const
     {
-        return m_DrawPass == kGpuParticleDrawPassPreTAA ? "GpuParticleDrawPreTAA" : "GpuParticleDrawPostTAA";
+        return m_DrawPass == kGpuParticleDrawPassPreTAA ? kGpuParticleDrawPreTAAExtensionName
+            : kGpuParticleDrawPostTAAExtensionName;
     }
 
     bool GpuParticleDrawPass::Initialize(ViewRenderContext& context)
@@ -620,11 +621,11 @@ namespace NorvesLib::Core::Rendering
     bool RegisterGpuParticleDrawExtensions(RenderExtensionRegistry& registry)
     {
         RenderExtensionDesc desc;
-        desc.Name = "GpuParticleDrawPreTAA";
+        desc.Name = kGpuParticleDrawPreTAAExtensionName;
         desc.Stage = RenderExtensionStage::Transparent;
         desc.Order = 0;
         const bool bPreRegistered = registry.Register(desc, {CreateGpuParticleDrawPassPreTAA, nullptr});
-        desc.Name = "GpuParticleDrawPostTAA";
+        desc.Name = kGpuParticleDrawPostTAAExtensionName;
         desc.Stage = RenderExtensionStage::PostTemporalAA;
         const bool bPostRegistered = registry.Register(desc, {CreateGpuParticleDrawPassPostTAA, nullptr});
         return bPreRegistered && bPostRegistered;
