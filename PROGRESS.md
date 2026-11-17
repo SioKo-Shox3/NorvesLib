@@ -12247,20 +12247,50 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（`Rendering3DTestRoutine.cpp` の `m_F11ImpostorComponents`。既定では出ない）を出し、遠景の木の板が太陽の向きで陰影を持ち、霧へ色が寄り、影を受けること。既定の起動画面は変わらない。
 - Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。
 
-- U3 保存済みの U1・U2 の差分を当て、PrefabAsset を Prefab ファイルへ保存する（BuildPrefabDocument・SavePrefabToFile）: 着地(直し 0 回)
-- U8 見本の領域のシーン Assets/Levels/Sample/Region_Main.scene.json を置く（地面は Plane）: 着地(直し 0 回)
-- U4 Prefab ファイルを AssetSystem から読み、論理パスで 1 つにキャッシュし、World へ加算で読む: 着地(直し 1 回)
-- U6 Game に --load-scene=<論理パス> を足し、Sandbox の自由飛行カメラでシーン・Prefab のファイルを加算で読む: 着地(直し 0 回)
+- U1 衝突の 2 つ目の子・子の法線の下限・屋根の下の子・手続きのフリップブックのコマ数を GPU の定数とスキーマに足す: 着地(直し 0 回)
+- U4 着水の予算（p と滴りの確率）の純関数とデータを足す: 着地(直し 0 回)
+- U2 粒の更新に雨の遮蔽マップを高さ場として結び、屋根の下の隠し・屋根の当たり・2 つの子・滴りを入れる: 着地(直し 0 回)
+- U3 描画で Sheltered の粒を描かず、FlipbookFrames > 0 の板を手続きの王冠のコマで描く: 着地(直し 0 回)
+- U5 近距離の雨に Splash と Droplet を足し、EnvironmentSystem が毎フレーム p と滴りの確率を渡す: 着地(直し 0 回)
+## G11-GR59-RAIN-HIT 雨の着水・屋根の下の隠し・樹冠の滴り（2026-11-18、run 20261118-013229）
+- Done: GPU の粒の `CollisionHeightField` に雨の遮蔽マップ（`OverheadHeightMap`）を結んだ。`GpuParticleSimulationPass` が描画グラフから読み、このフレーム・このビューのマップのときだけ結合 9 に結んで窓と深度を定数（272 バイト）へ詰める。使えないときは空のテクスチャと `HeightFieldBound = 0` で高さ場の衝突を外して縮退する。
+- Done: 更新は屋根を最近傍で引き、上から横切った粒を roofY で当てて応答を当てる（巻き戻る雨は消さずに屋根の下を見えないまま落とす）。生まれた・巻き戻った・流された位置が屋根の下の粒は旗 Sheltered で隠し（巻き戻らないエミッタは消す）、詰めと描画で除く。地面の当たりは深度の衝突のまま。子は当たり 1 回につき確率の引き 1 回で、命中の法線 y ≥ ChildMinNormalY のとき 1 つ目（Splash）、2 つ目（Droplet）は法線を問わず生む。屋根の下の粒が地面に当たり、屋根との差が ShelterMinClearance（3 m）を超えると、別の引きで滴り（Droplet）を生む。
+- Done: `Assets/Data/Vfx/Rain_Near.vfx.json` に子のエミッタ Splash（容量 2000 = 同時に生きる数の上限・寿命 0.32 秒・寿命にわたり 0.05→0.15 m・SurfaceAligned・PostTAA・premultiplied・手続きの王冠のしぶき 16 コマ）と Droplet（容量 4096・寿命 0.3 秒・上向き 1〜2 m/s・重力・VelocityStretch）を足し、雨の CollisionHeightField と CollisionDepth を SpawnChild（ChildMinNormalY 0.5）にした。
+- Done: `RainSplashBudget`（`Library/Core/{Public,Private}/Environment/RainSplashBudget.*`、データ `Assets/Data/Vfx/RainSplashBudget.json`）が、有効な粒の数 × 落ちる速さ ÷ 箱の高さで秒あたりの当たりを見積もり、着水の秒あたりの上限（4000）と同時に生きる数の上限（2000 ÷ 寿命）を超えない p を逆算し、草の密度で最小 0.25 倍まで下げる（雨量 0 で 0）。滴りの確率も返す。`EnvironmentSystem` が毎フレーム求めて ChildProbability・ShelterChildProbability・ShelterMinClearance を値が変わったときだけ渡す。草の密度は描画の世界の草の写し（LayerA の R）をメインのカメラの XZ で最近傍に引く。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U5-verify.txt`。全単位を着地させた木で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0 で Game.exe までリンク。AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）。粒のシェーダー 5 本を glslc（vulkan1.3）で通し、更新の定数の C++ の offsetof と SPIR-V の Offset が 22 項目一致。行末は numstat の 2 通りが一致。
+- 試験は作らない決まりで、done-when の `RainSplashBudgetTest`・`GpuParticleRainCollisionVulkanTest` は作っていない。verify の ctest の行も回していない。撮影・GPU の計測・Game の起動の確かめも回さない決まり。
+- 採った判断: GPU の形式は寿命と大きさがエミッタごとに 1 値なので、Splash の寿命は要件の 0.25〜0.4 秒の中の 0.32 秒に固定し、大きさは寿命にわたる曲線で 0.05→0.15 m にした。p は 1 フレームに 1 つで、カメラの位置の草の密度で下げる（草の場の中の場所ごとには変えない）。Droplet の初速はワールドの上向き（面の法線で回さない）。
+- 既知の限界: 屋根は移動後の位置で最近傍に引くので、縁はテクセル（約 9.4 cm）単位の段になり、1 刻みに細い屋根を横に通り過ぎる速い粒は当たりを取りこぼしうる。衝突で子を書く所と子自身の更新が同じ dispatch の同じスロットに重なりうる競合は GR57 の作りから。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの読み・GPU の粒のシェーダー・EnvironmentSystem の毎フレームの経路）。人が見るときの見どころ: `--environment-preset=heavy_rain` で屋根や木のあるシーンに入り、地面の着水に王冠のしぶきと跳ねる小粒が出ること、屋根・樹冠の下で雨筋が消えること、高い樹冠の下で時々滴りが落ちること、草の多い所でしぶきが減ること。雨の無い場面の見た目は前と変わらない。
+- U6 有効でない雨粒から着水・滴りの子を生まず、箱の上面へ戻した粒の遮蔽を判定し直し、SpawnChild の空の ChildEmitter の検証を戻す: 着地(直し 0 回)
+- Done: 描かれない（有効割合の外の）雨粒からは着水の子と樹冠の下の滴りを生まないようにした（`ParticleUpdate.comp` の `SpawnCollisionChildren`・`SpawnShelterChild` が旗 Active の無い粒で戻る）。CPU の p の見積りの入力（有効な粒の数）と GPU の当たりの数が揃い、弱い雨で着水が秒あたりの上限を超えることと、滴りが雨量に比例しないことを直した。地面に当たって箱の上面へ戻した粒は、その位置で屋根の下かを判定し直して隠す。`VfxSchema` の検証で、応答が SpawnChild の衝突の `ChildEmitter` が空なら前と同じく `unknown_child_emitter` で失敗する（2 つ目の子と屋根の下の子の空は許す）。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U6-verify.txt`。粒のシェーダー 5 本の glslc が失敗 0、AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）、`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0 で Game.exe までリンク（error C・error LNK 0 件）、numstat の 2 通りが一致。
+- Notes: 旗 Active は前の刻みの終わりの値なので、雨量が変わる間は子の生成と描画の有効が最大 1 刻みずれる。
 
-## G12-GR92-PREFAB-FILE Prefab を入れ子とオーバーライドごと JSON に保存・読み込みし、論理パスで共有し、Game が --load-scene でシーンのファイルから場面を組める（2026-11-18、run 20261118-013238 の反復 1）
-- Done: `PrefabAsset` に `GetNextNestedInstanceId`・`SetNextNestedInstanceId`・`RestoreNestedPrefab`（番号を変えずに入れ子を積む。番号 0・重複・親の alias が木に無い・`WouldCreateNestedPrefabCycle` を拒否し、次の番号を max(次, id+1) に上げる）を足した。`AddNestedPrefab` の採番は変えていない。
-- Done: `*.prefab.json` の形（`PrefabDocument`: SceneDocument と同じ 1 ルートの木＋`kind:"prefab"`＋`nextNestedInstanceId`＋`nested:[{instanceId, parentAlias, prefab, overrides:[{target:{nested[], alias}, property:{name, propertyId, type, typeId}, value}]}]`）と `PrefabToJson`・`TryParsePrefabJson`。シーンの `ToJson`・`TryParseJson` は本体を共有の関数へ移しただけで結果は変えていない。保存は `BuildPrefabDocument`・`SavePrefabToFile`（木の alias をそのまま書き、入れ子の Prefab の論理パスを assets に Raw で載せ、一時ファイル → 置換）。上書きの対象のパスは、上書きを持つ入れ子の Prefab の木を基点にする（`World.cpp` の `ApplyPrefabOverrideSet` と同じ）。
-- Done: `SceneSerializer::LoadPrefabFromAsset(registry, assetSystem, logicalPath, stats)`: `AssetKind::Raw` で引き、alias を保つ照合で木を戻し、入れ子を再帰で読む。キャッシュの鍵・ResourcePath・循環の比較は `Asset::AssetPath::Normalize` の論理パス（先頭の `Assets/` を除いた形）。読み込み中の列で循環を見つけたら最上位まで失敗にし、World に何も足さない。欠けた・壊れた入れ子は警告してその入れ子だけ落とし（`SceneLoadStats::DroppedNestedPrefabs`）、対象・型・値の合わない上書きは落とす（`DroppedOverrides`）。成功した Prefab だけを registry に論理パスで登録し、2 回目からはそれを返す。
-- Done: registry 付きの `LoadIntoWorldFromAsset(world, registry, assetSystem, path, ...)`: `.prefab.json` は Prefab として 1 ルートを生成し、それ以外は今のシーンの読み込みへ渡す。続けて呼べば領域・Gameplay・Props のファイルを重ねて読める。
-- Done: Game の `--load-scene=<論理パス>[,<論理パス>...]`（Sandbox と同じく開発ビルドだけ）: Sandbox に直接入り、格子の地面を作らず、各ファイルを指定順に加算で読み、ルートを GameModeScope に預ける。sandbox 以外の `--scene` と併用したら `--scene` を優先してエラーをログに出す。AssetSystem は `ctx.EngineRef.GetTerrainSystem().GetAssetSystem()`（無ければソースの Assets）。`--load-scene` の無い起動は変えていない。
-- Done: 見本 `Assets/Levels/Sample/Region_Main.scene.json`（v3・1 ルート。200 m 四方の手続きの平面、岩 `Models/boulder_01_4k.gltf/boulder_01_4k.gltf`、小屋 `Models/Cottage_Clean/Cottage_Clean.gltf` を MegaGeometryComponent の ModelAsset で参照）。
-- 確かめ: 全単位を載せた版で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0（`.harness/runs/20261118-013238/G12-GR92-PREFAB-FILE-final-verify.txt`）。編集したファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
-- Next: ランナーの評価者の反証（危険地帯: Object/Resource の寿命と資産の読み込み）。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: `Game.exe --load-scene=Levels/Sample/Region_Main.scene.json` で Sandbox の既定の視点（(0, 4, −12) から +Z 向き）に、格子の代わりに平面、手前に岩、奥（z = 18）に小屋が見えること。ログに「sandbox: 読み込み成功 … ルート=1」が出ること。`--load-scene` を付けない sandbox とランチャーが前と同じに見えること。
-- Notes: 試験は作らない決まり（絶対規則 11）なので done-when (5) の `PrefabFileRoundTripTest` と (3) の `Test/Core/Object` の合成の fixture は作っていない（`Test/` は既に無い）。verify の ctest の行は回していない。
-- Notes: 判断: 手続きのメッシュに箱の種類が無い（`ProceduralMeshKind` は None・UVSphere・Plane）ので、見本の地面は箱でなく Plane にした（Library の範囲を広げない）。平面の材質は参照の形で持てないので既定の描画のまま。
-- Notes: 既知の限界: Prefab の木・上書きの EntityRefId は、`World::SpawnPrefab` が ObjectId を張り替えないので、参照なし（0）だけ戻し、参照ありは警告して落とす。外側が循環で失敗しても、それより先に読めた有効な入れ子の Prefab は registry に残る。`World::SpawnPrefab` の入れ子の深さの上限（16）を超える Prefab は読めても生成に失敗する。上書きの値の検査はシーンの読み込みと同じ基準（型と `DeserializeStable`）で、setter が値を拒むと SpawnPrefab 全体が失敗しうる（シーンと同じ既知の経路）。
+- U1 ScatterSystem にチャンクの当たりの出し入れの通知と当たりの半径を足す: 着地(直し 0 回)
+- U2 Physics モジュールが散布の当たりの通知を受けて detached のチャンクを登録・解除する: 着地(直し 0 回)
+
+## 2026-11-18 G12-GR47-SCATTER-COLLIDERS（run 20261118-013234 の反復 2）
+- Done: `ScatterSystem` に当たりの通知（`IScatterColliderListener` / `ScatterColliderChunkEvent`。チャンクの鍵・種ごとの NVSCT の衝突の形・常駐の個体の変換と番号、隠した個体を除く）と、描画の常駐とは別の当たりの半径（`SetColliderRadius`、既定 `kDefaultScatterColliderRadiusMeters` = 150 m）を足した。焦点から半径に入った常駐のチャンクを登録、出たチャンク・解放・Unload・Clear・受け手の付け替えで解除を通知し、1 本の非表示の切り替えと非表示の集合の復元ではそのチャンクだけ登録し直す。Core の散布は Physics を参照しない。
+- Done: Physics モジュールの `ScatterColliderBinding`（`StaticColliderPayloadHandler.h/.cpp`）が Install で受け手になり、通知のたびに形をワールドの `StaticColliderDesc`（カプセルは両端から中点・半分の長さ・Y 軸からの回転、球、箱。拡大は寸法へ畳んで 1）にして `RegisterStaticColliderChunk` / `UnregisterStaticColliderChunk` を呼ぶ。鍵は上位 8 ビットの出どころ 0x02（セルの static-colliders は 0x01）＋散布のハンドル（24 ビット）＋チャンクで、ぶつからない。物理の Initialize で常駐中のチャンクを登録し直し、ResetTransientState で鍵の集合も捨て、Uninstall では自分が受け手のときだけ外す。
+- 証拠: 最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1`）はエラー 0・EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりなので `ScatterColliderTest` は作っていない（verify の ctest の行は回していない）。
+- Next: ランナーの評価者の反証（物理・Object の寿命の危険地帯）。人が見るときの見どころ: ランチャーから grassland に入り、手で置いた森（`Assets/Scatter/grassland.forest.placement.json` の幹のカプセル 0.3〜1.8 m・半径 0.25 m、岩の球 半径 1.25 m）へ歩いて、幹と岩に阻まれること・150 m より遠くへ離れて戻っても当たりが戻ること・1 本を隠すとその木を素通りできること。
+- Notes: 形が不正（非有限・0 以下の寸法）な記述はチャンク全体を落とさずに除き、件数を `SCATTER_COLLIDERS_INVALID_SHAPES` で 1 回警告する。物理の Initialize の前に常駐している当たりは登録に失敗して `SCATTER_COLLIDERS_REGISTER_FAILED` を出すが、Initialize で登録し直す。foliage の種は種の表に形が無いので当たりは付かない。
+
+### G6-GR103-RIG-SPEC-VALIDATE 共通骨格の仕様（skeleton_spec.json）と、Blender の出力をエンジンへ渡す前に検査する validate_rig.py・段の記録をまとめる pipeline.py（2026-11-18、run 20261118-025854 の反復 1、完了）
+
+- Done: `Scripts/Blender/skeleton_spec.json`（四足の語彙 quadruped_v1 の 23 role → 29 関節。chain は spine 3・neck 2・tail 4。必須 20 role（jaw と前脚の clavicle は任意）・関節の上限 128・影響 4・重みの和の許容 1e-3・命名の正規表現 `^[a-z]+(_([a-z]+|[LR]|[0-9]{2}))*$`・UV は TEXCOORD_0 のみで 0〜1・morph 不可・補間 LINEAR/STEP）と `skeleton_spec.py`（仕様の検査 `--check`、`--emit-role-profile` で role profile v1 の `vocabulary`・`target_roles`。C は恒等を明示）を足した。
+- Done: `Scripts/Blender/common.py`（`--` の後ろの JSON 設定、`MESH_STATS` と同じ `<TAG> key=value` の 1 行、SHA-256（ファイル・木・正準 JSON）、記録 JSON（入力と設定のハッシュ・Blender の版・段の名前・出力のハッシュ））を足した。bpy に依らない。
+- Done: `Scripts/Blender/validate_rig.py` を足した。.gltf（外部 .bin・data URI）と .glb を標準ライブラリで読み、関節数・影響数・重みの和・重み 0 の頂点・必須 role の関節と命名・UV・morph・補間（warning）・時刻の単調増加・アニメーションする非関節の祖先を検査し、`MESH_STATS`・`RIG_ISSUE`・`RIG_RESULT` の行と `--report` の JSON に出す。違反は終了コード 1、仕様の誤りは 2。
+- Done: `Scripts/Blender/pipeline.py`（段の表 rebuild・weights・export（Blender の段）・validate・cook を表の順に起動し、`<out>/record.json` に各段の argv・終了コード・入出力のハッシュを書く。`--dry-run` は `PIPELINE_STAGE index=.. name=.. argv=[..]` の列だけ。cook は `AssetCook --rig-split --input <asset> --out <out>/cooked --logical <stem>`）と `Docs/Architecture/BlenderRigPipeline.md`（段・入出力・仕様の欄・検査の code の表・検査の規則とエンジンの規則の分担）を足した。
+- 確かめ: `cmake --build build --config Debug --target AssetCook -- /m:1` 終了コード 0（全単位を載せた版。`.harness/runs/20261118-025854/G6-GR103-RIG-SPEC-VALIDATE-final-verify.txt`）。`.harness/` の下だけで作った使い捨ての合成 glTF（立方体・既定の仕様の 29 関節）で、正例（1 クリップ・2 クリップの .gltf と .glb）が validate を通り、1・2 クリップとも実際の `AssetCook --rig-split` が終了コード 0。負例（関節 129・UV 無し・影響 5・重みの和 0.9・重み 0 の頂点・front_L_paw の欠落・morph・アニメーションする非関節の祖先）はそれぞれ期待した code の error 1 件だけで終了コード 1、CUBICSPLINE は warning だけで 0、壊した仕様は `spec_error` で 2。`pipeline.py --stages validate,cook` の通しは終了コード 0・record.json の status ok、必須 role の欠けた入力は validate で止まり cook を起動しない（status failed・1 段）。`--emit-role-profile` は 23 role がすべて語彙の中で root は 1 要素、`--dry-run` は 2 回の出力が一致。
+- Next: ランナーの評価者の反証。Blender の段の中身（rebuild_on_base.py・transfer_weights.py・export_gltf.py）は G6-GR103-BLENDER-STAGES が足す。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/RigValidateTest.py` は作っていない。verify の 2 行目はその試験を指すので回していない（同じ正例・負例・AssetCook の確かめは、上のとおり使い捨ての glTF で回した）。Blender は起動していない。
+- Notes: 判断: 必須 role は jaw と前脚の clavicle を除く 20 role（簡素な犬のリグに顎・肩甲骨が無い場合を許す。足の IK が要る前脚の upper・lower・paw と後脚の thigh・shin・hock・paw は必須に入れた）。関節名は role 名、chain は `<role>_NN`。語彙にない関節（耳など）は命名と関節数の上限だけを受ける。
+- Notes: 既知の限界: `Assets/Models/M9Skinned/*.gltf` は参照先の `fixture.bin` が無く読めない（消した試験が実行時に作っていた）。pipeline の記録は .gltf 本体だけをハッシュし、外部の .bin は含まない。子プロセスが 0 で終われば、想定の出力が無くても段は成功の扱い。pipeline は AssetCook の `--morph drop` などのオプションを渡さない。
+- U1 共通の道具 common.py: 着地(直し 0 回)
+- U2 共通骨格の仕様 skeleton_spec.json と skeleton_spec.py: 着地(直し 0 回)
+- U4 段の起動役 pipeline.py: 着地(直し 0 回)
+- U3 リグの事前検査 validate_rig.py: 着地(直し 1 回)
+- U5 文書 BlenderRigPipeline.md と全体の確かめ: 着地(直し 0 回)
+- Notes: 2026-11-18（run 20261118-025854 の反復 3）: verify の 2 行目（`python -B Test/Tools/Blender/RigValidateTest.py ...`）は、試験を作らない決まり（絶対規則 11）に従って TASKS.md から外した。試験ファイルは作っていない。正例（1・2 クリップ）と 8 種の負例、実際の `AssetCook --rig-split` は、反復 1 で `.harness/` の下の使い捨ての合成 glTF で確かめ済み（`.harness/runs/20261118-025854/iter-1.out.txt`・`G6-GR103-RIG-SPEC-VALIDATE-final-verify.txt`）。この反復の `cmake --build build --config Debug --target AssetCook -- /m:1` は終了コード 0（`.harness/runs/20261118-025854/G6-GR103-RIG-SPEC-VALIDATE-iter3-build.txt`）。`Scripts/Blender/` と文書は変えていない。

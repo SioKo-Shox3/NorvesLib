@@ -354,6 +354,7 @@ set(PRIVATE_SOURCES
     Private/Environment/EnvironmentSystem.cpp
     Private/Environment/EnvironmentDataFile.h
     Private/Environment/EnvironmentDataFile.cpp
+    Private/Environment/RainSplashBudget.cpp
     Private/Environment/SunPath.cpp
     Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
@@ -792,6 +793,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Environment/RainSplashBudget.h
     Public/Environment/SunPath.h
     Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
