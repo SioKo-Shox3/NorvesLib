@@ -260,6 +260,8 @@ namespace NorvesLib::Core::Scatter
             species.ComponentId = component->GetComponentId();
             component->SetMegaMeshHandle(binding->MegaMesh);
             component->SetCastShadow(binding->bCastShadow);
+            // 樹冠の種は空の遮蔽のマップの樹冠だけの組が RTGI・DDGI の拡散を補うので、TLAS では影と PT にだけ当てる
+            component->SetSkyMapProxy(occluder.bEnabled && occluder.Class == Rendering::SkyOccluderClass::Canopy);
             if (!component->SetInstances({instances.data(), instances.size()},
                                          {Component::MegaScatterRowOrder::Input, false}))
             {

@@ -28,6 +28,8 @@ namespace NorvesLib::Core::Component
         constexpr uint32_t kScatterFlagCastShadow = 1u << 0;
         /// 行ごとの非表示の印
         constexpr uint32_t kScatterFlagHidden = 1u << 1;
+        /// 空の遮蔽のマップが遮蔽を受け持つ印
+        constexpr uint32_t kScatterFlagSkyMapProxy = 1u << 2;
         /// 検査 MASS_RANGES の名前と、仕事の無いフレームに突き合わせる間隔（列の Run の回数）
         constexpr const char *kMassRangesCheckName = "MASS_RANGES";
         constexpr uint64_t kMassRangesIdleInterval = 60;
@@ -320,6 +322,7 @@ namespace NorvesLib::Core::Component
     {
         MegaMeshHandleValue = Rendering::MegaGeometry::MegaMeshHandle::Invalid();
         bCastShadow = true;
+        bSkyMapProxy = false;
         bVisible = true;
         Seed = 0;
         InstanceCount = 0;
@@ -330,6 +333,7 @@ namespace NorvesLib::Core::Component
     {
         MegaMeshHandleValue = Rendering::MegaGeometry::MegaMeshHandle::Invalid();
         bCastShadow = true;
+        bSkyMapProxy = false;
         bVisible = true;
         Seed = 0;
         InstanceCount = 0;
@@ -408,6 +412,15 @@ namespace NorvesLib::Core::Component
     {
         this->bCastShadow = bCastShadow;
         BumpContentVersion();
+    }
+
+    void MegaGeometryScatterComponent::SetSkyMapProxy(bool bSkyMapProxy)
+    {
+        if (this->bSkyMapProxy.Get() != bSkyMapProxy)
+        {
+            this->bSkyMapProxy = bSkyMapProxy;
+            BumpContentVersion();
+        }
     }
 
     void MegaGeometryScatterComponent::SetSeed(uint32_t seed)
@@ -943,6 +956,10 @@ namespace NorvesLib::Core::Component
         Ecs::EcsMegaInstance instance{};
         instance.MeshIndex = input.MeshIndex;
         instance.Flags = bCastShadow.Get() ? kScatterFlagCastShadow : 0u;
+        if (bSkyMapProxy.Get())
+        {
+            instance.Flags |= kScatterFlagSkyMapProxy;
+        }
         if (m_InputHidden[inputIndex] != 0)
         {
             instance.Flags |= kScatterFlagHidden;
@@ -1065,6 +1082,7 @@ namespace NorvesLib::Core::Component
         outProxy.WorldBounds.Radius = localRadius * maxScale;
         outProxy.bVisible = true;
         outProxy.bCastShadow = (instance->Flags & kScatterFlagCastShadow) != 0;
+        outProxy.bSkyMapProxy = (instance->Flags & kScatterFlagSkyMapProxy) != 0;
         outProxy.LayerMask = Rendering::RenderLayer::Default;
         outProxy.SceneSlot = slot->Value;
         outProxy.Tint = instance->Tint;
@@ -1241,7 +1259,8 @@ namespace NorvesLib::Core::Component
                     }
                     if (actual->SceneSlot != expected.SceneSlot || !(actual->MegaMeshHandle == expected.MegaMeshHandle) ||
                         std::memcmp(&actual->WorldTransform, &expected.WorldTransform, sizeof(expected.WorldTransform)) != 0 ||
-                        actual->bCastShadow != expected.bCastShadow || actual->Tint != expected.Tint ||
+                        actual->bCastShadow != expected.bCastShadow || actual->bSkyMapProxy != expected.bSkyMapProxy ||
+                        actual->Tint != expected.Tint ||
                         actual->VariationSeed != expected.VariationSeed)
                     {
                         NoteAuditFailure(audit, "散布 %u の公開中の範囲 %u の行 %u の proxy が行の値と違う", m_BatchId, rangeIndex,

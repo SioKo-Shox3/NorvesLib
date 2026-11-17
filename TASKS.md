@@ -7093,7 +7093,7 @@
 - notes: 選定課題 G7-S7（ロードマップ 4531 行）は推奨の (A) を採る: GR57 のパスは G5 の GR25 の描画の拡張の段へファクトリで登録する（シミュレーションは GBuffer の段の最後、描画は Transparent と PostTemporalAA の段。G7-GR57-GPU-DRAW）。理由: `SetupDeferredPipeline`（SceneView.cpp:1058）の組み直しで消えず、段の位置が名前で決まる。10-02 の後に可視バッファ・DecalPass・FoliagePass・CloudLayerPass・DistortionPass が入り（SceneView.cpp:1094〜1371）、直に AddPass する (B) は並びが変わるたびに直す所が増える。GR25 の段の錨は G5-GR25-STAGE-REGISTRY の done-when にある。エンジンの内部のパスでも同じ登録の口を使い、パス名の規約（`Ext.<Game>.<Name>`）に合わなければエンジン用の接頭辞を GR25 の文書に足す。時計（段階をまたぐ注意 4460 行の直す点）: 粒の dt は TimeSystem の Particle のチャンネル（ApplicationProcessor.cpp:2723 の `PostTick` の群と同じ値）。`ViewRenderContext::DeltaTime` は RenderThread のフレームの時間なので積分に使わない。描画がゲームのフレームを飛ばしたときは、写しに載った時刻の差で進める（上限 1/15 秒、超えたら分けて刻む）。CPU への読み戻し（命中の通知）はしない（ロードマップ 1546 行の非ゴール）。`ParticleEmitterComponent` の更新は ECS の作り（`Docs/Plans/EcsUpdatePathPlan.md`）に合わせ、今の Component の登録の仕組みで系に載せる（UNCERTAIN: 今の Component から毎フレームの描画の変換を読む正しい場所は、`SocketAttachmentComponent`〈GAME-GR130-VFX-CHECK-P1〉の扱いを読んで確かめる）。間接の描画と生き残りの詰め込みは G7-GR57-GPU-INDIRECT。試験を足す理由: GPU と CPU の積分のずれ・衝突の取りこぼしは画面の粒の数と位置が少し違うだけで、撮影では気づけず黙って起きる。危険地帯（RenderThread・FramePacket・Public API の Component・RenderWorld）なので評価者を通す。共有の ApplicationProcessor.cpp・SceneView.cpp・試験の束の CMakeLists.txt は差分を小さくする。要件 `#### GR57` の設計案のパス構成 1)、（2）〜（6）、フェーズ P2 と P4 の衝突、ロードマップ 1539・1553・1563 行。
 
 ## G7-GR57-GPU-DRAW: GPU の粒をワールドの空間の板・速度で伸ばした筋・面に沿う板として、ソフト・霧・環境光の色つきで TAA の前と後の段に描く
-- status: todo
+- status: done
 - after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR57
 - needs-gr: GR25, GR30
@@ -7481,7 +7481,7 @@
 - notes: 選定課題 G11-S6（GR55 の時刻・天候の既定値と範囲。ロードマップ 4553 行）は推奨の (A) を採る: 仮の既定値（北緯 55°・夏至寄りの日付 172・北のずれ 0、天候は曇天中心で雨量と霧が変わる表、セル 15 分）で作り、企画が決まったらデータだけ差し替える。理由: 作者の決定で、企画で保留の機能も採り、決めていない数値はデータにする（BRIEF）。値の根拠: 北緯 55° は要件の「議論記録の寒冷で草の高い地域（カムチャツカ）」の例で、企画の決定ではない（根拠なしの仮）。月明かり・夜は G11-GR55-NIGHT、時計・スキップは G11-GR55-CLOCK-SKIP。純関数とデータだけで、描画も環境状態も変えない。風の値は G5 の GR46 の `WindParameters`（G7-S1 の決定）へ写せる形（向き・速さ・突風）で持ち、式は持たない。試験を足す理由: 反証する契約は「同じ種と時刻で同じ天気（セーブは種と時刻だけ）」「遷移表の制約」「太陽の既知の高度」。決定論の崩れや稀な遷移は撮影 1 枚では見えず、ロードの後に天気が変わる形で黙って起きる。ロードマップ 1988・1999 行、要件 `#### GR55` の (W)(T)。
 
 ## G11-GR55-CLOCK-SKIP: 環境状態を時計と天候の予定表で動かし、時刻の一括スキップ（濡れの復元・不連続の印・通知）と、動く太陽・天候で RTGI の履歴を毎フレーム捨てない扱いを入れる
-- status: todo
+- status: done
 - after: G11-GR55-SUN-WEATHER, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR55
 - needs-gr: GR49, GR50
@@ -7528,7 +7528,7 @@
 - notes: GR56 の P4 の前半（要件 5587 行、草の根元・岩陰は 5571-5577 行）。名前とディレクトリは G5 の項目に合わせた（G5-GR90-SCATTER-RUNTIME の `Library/Core/{Public,Private}/Scatter/ScatterSystem`、G5-GR42-GRASS-FIELD-CORE の `Library/Core/{Public,Private}/Vegetation/GrassField`、G5-GR37-TERRAIN-COMPONENT の TerrainComponent）。G5 が別の名前で入れていれば実物に合わせる。遮蔽物の欄は G5 の種の表（G5-GR90-SCATTER-BAKE の `Assets/Scatter`。NVSCT の文書 `Docs/Architecture/NVSCTv0.md`）に足し、cook が通すようにする。草の根元の暗さは草の材質 AO（G5 の GR43。G11-S4 の (A)）が受け持ち、ここは圃場の大きさの暗さだけ。森の大量の配置（GR47）は G12 で、当面は GR90 の散布と手置きで代える（ロードマップ 2005 行）。ストリーミング（GR40）も G12 で、ここは GR90 のチャンクの常駐・解放の通知だけを使う。取り込み時に遮蔽物の形を推定する（サイドカー GR78）のは G17 の GR81 の範囲で、ここは種の表の値と手置き。`Game/GameModes/Grassland` は G5 が作るシーンで、遮蔽を有効にして森の縁を見せる設定だけを足す（差分を小さくする）。危険地帯（RenderThread の入力・SceneRevision とは別の版）。評価者の反証を省かない。試験を足す理由: 反証する契約は「チャンクの常駐・解放と遮蔽物が一致する」「地形の高さがそのまま地面になる」。解放の漏れは遠くへ歩いた後にだけ出る黒い跡として、黙って起きる。
 
 ## G11-GR56-SKY-OCC-RT: RTGI・DDGI を使うときに樹冠だけの遮蔽で拡散を補い、樹冠を PT の参照だけに当たる instance mask 0x04 で TLAS へ入れる
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-WORLD, G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - done-when: (1) クリップマップに「樹冠の種別だけ」の L1 の第 2 組を足し（積分の費用と記憶域が約 2 倍。要件 5553 行）、RTGI か DDGI が選ばれたフレームは、拡散に「樹冠だけ」の可視率を掛ける（RTGI は `EvaluateRTGIEndpoint` の拡散の項、DDGI は DDGI の照度の項）。地形・岩・小屋は今 TLAS に入って光線が解くので、全種別の組は使わない。鏡面は常に G11-GR56-SKY-OCC-SPECULAR の円錐。(2) instance mask: `FramePacket.h:63-65` と `Assets/Shaders/Common/RayTracingInstanceMask.glsl` に 0x04（`RayTracingInstanceMaskSkyMapProxy`）を足す。樹冠の種別の遮蔽物に対応する描画物（散布の樹木・手置きで印を付けた物）は mask 0x02|0x04 で TLAS に入り、DDGI・RTGI の光線（cull mask 0x01。ProbeRadiance.comp・ProbeIrradianceUpdate.comp・ProbeEmitterSampling.glsl・DiffuseIndirect.comp）には当たらず、PT（全 bit）には当たる。RT の影の光線（RayTracingShadowRayGen.glsl）の cull mask を 0x05 にして樹冠も影を落とす。印は MeshProxy → DrawParams（DrawCommand.h の bCastShadow の隣）→ `BuildFrameSnapshot`、MegaGeometry の写しの経路（RenderingCoordinator.cpp:1642）の両方に通し、バッチの鍵にも入れる。試験が通る: `RTGIDiffuseIndirectVulkanTest` に、mask 0x04 の instance が RTGI の光線に当たらないケース、`DDGIProbeRayQueryVulkanTest` に DDGI の光線に当たらないケース、`PathTracingVulkanTest` に PT には当たるケースを足す。`RenderingRayTracingShadowVulkanTest` が cull mask 0x05 にしても変わらない（0x04 の物が無い場面）。`RenderingSkyOcclusionCanopyVulkanTest` に RTGI 有効の変種（樹冠だけの組で拡散を補う）を足し、樹冠の下の地面の比が RTGI 無効の結果と ±15% 以内。`RenderingGolden*` の 4 試験が変わらない。
