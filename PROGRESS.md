@@ -12054,3 +12054,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 雲の影のマスクの compute と、引く側の共有 include: 着地(直し 0 回)
 - U3 CloudShadowMaskPass（マスクを書き、ViewRenderContext へ出す）: 着地(直し 0 回)
 - U4 霧の太陽の散乱にマスクを掛け、一様の直達の弱めを外す: 着地(直し 1 回)
+- U5 地面の太陽の直達にマスクを掛ける選択と、全体のビルドの確かめ: 着地(直し 0 回)

@@ -2,6 +2,7 @@
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/DirectionalShadowLightSelection.h"
+#include "Rendering/SkySunLight.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/PassOwnedTextureBarrier.h"
 #include "Rendering/GBufferPass.h"
@@ -1323,6 +1324,13 @@ namespace NorvesLib::Core::Rendering
             dsDesc.bindings.push_back(skyOcclusionBinding);
         }
 
+        // 地面の太陽の直達に掛ける雲の影。使わないフレームも既定の2D画像を束縛する。
+        RHI::DescriptorBinding cloudShadowBinding;
+        cloudShadowBinding.binding = 31u;
+        cloudShadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        cloudShadowBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(cloudShadowBinding);
+
         return dsDesc;
     }
 
@@ -2172,6 +2180,11 @@ namespace NorvesLib::Core::Rendering
                                skyOcclusionHandle, RHI::ResourceState::ShaderResource);
         builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionAux,
                                skyOcclusionHandle, RHI::ResourceState::ShaderResource);
+
+        // 名前を公開したマスクのパスが Execute で bValid を立てるため、ここでは依存だけを宣言する。
+        RGTextureHandle cloudShadowHandle;
+        (void)builder.TryReadTexture(RenderGraphResourceNames::CloudShadowMask,
+                                     cloudShadowHandle, RHI::ResourceState::ShaderResource);
 
         RGTextureHandle ssaoHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::SSAOBlurred,
@@ -4165,6 +4178,29 @@ namespace NorvesLib::Core::Rendering
             ddgiParameters.info[2] = IsRTGILegacySpecularRequested() ? 1u : 0u;
         }
         lightingParams.ddgi = ddgiParameters;
+        const CloudShadowRenderResources& cloud = context.CloudShadow;
+        const LightProxy* shadowedLight = SelectShadowedDirectionalLight(context.SnapshotLightProxies);
+        const bool bUseCloudShadow = cloud.bValid && cloud.MaskTexture && cloud.Sampler &&
+            cloud.Parameters.bApplyToGroundDirect && context.SnapshotScene && shadowedLight &&
+            IsSkySunLight(*shadowedLight) &&
+            context.PhysicalLighting.CascadedShadow.LightId == SkySunLightId;
+        if (bUseCloudShadow)
+        {
+            // 霧と同じ空のスナップショットから、一様の直達の係数とその逆数を求める。
+            const SkyAtmosphereParameters sky =
+                SanitizeSkyAtmosphereParameters(context.SnapshotScene->SkyAtmosphere);
+            const float directFactor = ComputeCloudDirectFactor(sky);
+            lightingParams.CloudShadowCenterAndExtent[0] = cloud.CenterX;
+            lightingParams.CloudShadowCenterAndExtent[1] = cloud.CenterZ;
+            lightingParams.CloudShadowCenterAndExtent[2] = cloud.ExtentMeters;
+            lightingParams.CloudShadowCenterAndExtent[3] = 1.0f;
+            lightingParams.CloudShadowSunAndBottom[0] = cloud.SunDirection.x;
+            lightingParams.CloudShadowSunAndBottom[1] = cloud.SunDirection.y;
+            lightingParams.CloudShadowSunAndBottom[2] = cloud.SunDirection.z;
+            lightingParams.CloudShadowSunAndBottom[3] = cloud.BottomAltitudeMeters;
+            lightingParams.CloudShadowOutside[0] = directFactor;
+            lightingParams.CloudShadowOutside[1] = 1.0f / directFactor;
+        }
         const ExecuteUpload lightingParamsUpload = BorrowUpload(context,
                                                                 &lightingParams,
                                                                 LIGHTING_PARAMS_SIZE,
@@ -4509,6 +4545,9 @@ namespace NorvesLib::Core::Rendering
             ? context.SkyOcclusion.Sampler : m_GBufferSampler;
         lightingDescriptorSet->BindSampler(29, skyOcclusionSampler);
         lightingDescriptorSet->BindSampler(30, skyOcclusionSampler);
+
+        lightingDescriptorSet->BindTexture(31u, bUseCloudShadow ? cloud.MaskTexture : m_DefaultBlackTexture);
+        lightingDescriptorSet->BindSampler(31u, bUseCloudShadow ? cloud.Sampler : m_GBufferSampler);
 
         lightingDescriptorSet->Update();
 

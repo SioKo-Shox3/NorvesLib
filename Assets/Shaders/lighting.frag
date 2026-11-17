@@ -1,5 +1,7 @@
 #version 450
 
+#include "Common/CloudShadowMaskSample.glsl"
+
 layout(location = 0) in vec2 fragUV;
 
 // GBufferテクスチャ
@@ -48,6 +50,9 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 paleFlatColorAndWrapMin; // rgb=PaleFlat のリニア色（ConvertPaleFlatColorToLinear）、w=WrapMin
     vec4 paleFlatShape; // x=ShadowStrength、y=AmbientLocalMix、z=SpecularScale、w=Flatness
     vec4 paleFlatAverageIrradiance; // rgb=拡散照度の資源と組の全球の平均照度 E_avg（ambientColor.w を掛ける前）、w=有効1・無効0（rgbも0）
+    vec4 cloudShadowCenterAndExtent; // x=中心X(m), y=中心Z(m), z=一辺(m), w=地面の太陽の直達に雲の影を掛けるなら1
+    vec4 cloudShadowSunAndBottom; // xyz=太陽へ向かう向き, w=雲の底の高度(m)
+    vec4 cloudShadowOutside; // x=マスクの外の透過率（一様の直達の係数f）, y=1/f, zw=未使用
 } params;
 
 // ライトデータ構造
@@ -90,6 +95,7 @@ layout(set = 0, binding = 27) uniform sampler2D rtgiSpecularHit;
 layout(set = 0, binding = 28) uniform sampler2D rtgiSpecularSky;
 layout(set = 0, binding = 29) uniform sampler2DArray skyOcclusionVisibility;
 layout(set = 0, binding = 30) uniform sampler2DArray skyOcclusionAux;
+layout(set = 0, binding = 31) uniform sampler2D cloudShadowMask;
 // 点光源のキューブシャドウ（キューブiに光源からの距離/範囲を格納。無いフレームは距離1の既定値）
 layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 
@@ -1299,6 +1305,13 @@ void main()
         LightData light = lightBuffer.lights[i];
         float lightType = light.position.w;
         vec3 lightColor = light.chromaticityAndIntensity.rgb * light.chromaticityAndIntensity.w;
+        if (lightType < 0.5 && light.attenuation.z > 0.5 && params.cloudShadowCenterAndExtent.w > 0.5)
+        {
+            // 空の太陽に含まれる一様の減光を外し、この場所の雲の透過率へ置き換える。
+            lightColor *= params.cloudShadowOutside.y * CloudShadowMaskLookup(
+                cloudShadowMask, worldPos, params.cloudShadowCenterAndExtent,
+                params.cloudShadowSunAndBottom, params.cloudShadowOutside.x);
+        }
 
         vec3 L;
         float attenuation = 1.0;
