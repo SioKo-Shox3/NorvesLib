@@ -276,8 +276,8 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters result = MakeDefaultSkyAtmosphereParameters();
         result.bEnabled = parameters.bEnabled;
         result.SunAltitudeDegrees = ClampFinite(parameters.SunAltitudeDegrees,
-                                                0.0f,
-                                                90.0f,
+                                                SkySunMinAltitudeDegrees,
+                                                SkySunMaxAltitudeDegrees,
                                                 result.SunAltitudeDegrees);
         result.SunAzimuthDegrees = ClampFinite(parameters.SunAzimuthDegrees,
                                                -360.0f,
@@ -347,6 +347,19 @@ namespace NorvesLib::Core::Rendering
         result.OvercastTint.y = ClampFinite(parameters.OvercastTint.y, 0.0f, 4.0f, result.OvercastTint.y);
         result.OvercastTint.z = ClampFinite(parameters.OvercastTint.z, 0.0f, 4.0f, result.OvercastTint.z);
         result.bDebugLogSunSweep = parameters.bDebugLogSunSweep;
+        result.MoonIlluminanceLux = ClampFinite(parameters.MoonIlluminanceLux,
+                                                0.0f, 10.0f, result.MoonIlluminanceLux);
+        result.MoonAltitudeDegrees = ClampFinite(parameters.MoonAltitudeDegrees,
+                                                 0.0f, 90.0f, result.MoonAltitudeDegrees);
+        result.MoonAzimuthDegrees = ClampFinite(parameters.MoonAzimuthDegrees,
+                                                -360.0f, 360.0f, result.MoonAzimuthDegrees);
+        result.MoonColor.x = ClampFinite(parameters.MoonColor.x, 0.0f, 4.0f, result.MoonColor.x);
+        result.MoonColor.y = ClampFinite(parameters.MoonColor.y, 0.0f, 4.0f, result.MoonColor.y);
+        result.MoonColor.z = ClampFinite(parameters.MoonColor.z, 0.0f, 4.0f, result.MoonColor.z);
+        result.bMoonCastShadows = parameters.bMoonCastShadows;
+        result.bOverrideAutoExposureMinEV100 = parameters.bOverrideAutoExposureMinEV100;
+        result.AutoExposureMinEV100 = ClampFinite(parameters.AutoExposureMinEV100,
+                                                 -10.0f, 20.0f, result.AutoExposureMinEV100);
         return result;
     }
 
@@ -447,8 +460,16 @@ namespace NorvesLib::Core::Rendering
             -1.0,
             1.0));
         m_SunDiskIrradiance = ComputeSunDiskIrradianceFromSanitized(m_Parameters);
-        m_SunGroundTransmittance = ComputeAtmosphereTransmittanceFromSanitized(
-            m_Parameters, GroundAltitudeFraction(m_Parameters), sun.y);
+        // 高地で太陽への光路が惑星を外れる場合も、負の太陽高度では地表の直達光を消す。
+        if (m_Parameters.SunAltitudeDegrees < 0.0f)
+        {
+            m_SunGroundTransmittance = Math::Vector3::Zero;
+        }
+        else
+        {
+            m_SunGroundTransmittance = ComputeAtmosphereTransmittanceFromSanitized(
+                m_Parameters, GroundAltitudeFraction(m_Parameters), sun.y);
+        }
 
         // 多重散乱の表は透過率の表を、地表の空の照度は両方の表を引く。
         // 2 つの表は太陽に依らないので、同じ大気の previous があれば写す。
@@ -1289,7 +1310,7 @@ namespace NorvesLib::Core::Rendering
     {
         const SkyAtmosphereParameters sanitized =
             SanitizeSkyAtmosphereParameters(parameters);
-        if (!sanitized.bEnabled)
+        if (!sanitized.bEnabled || sanitized.SunAltitudeDegrees < 0.0f)
         {
             return Math::Vector3::Zero;
         }
@@ -1366,7 +1387,7 @@ namespace NorvesLib::Core::Rendering
     {
         const SkyAtmosphereParameters sanitized =
             SanitizeSkyAtmosphereParameters(parameters);
-        if (!sanitized.bEnabled)
+        if (!sanitized.bEnabled || sanitized.SunAltitudeDegrees < 0.0f)
         {
             return Math::Vector3::Zero;
         }

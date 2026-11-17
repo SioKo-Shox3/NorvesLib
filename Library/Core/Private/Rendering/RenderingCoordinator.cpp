@@ -891,6 +891,28 @@ namespace NorvesLib::Core::Rendering
             return range;
         }
 
+        // ビュー内のインスタンス添字をパケット全体の添字へ移し、束を写す。
+        CommandRange AppendRebasedImpostorBatches(const Container::VariableArray<ImpostorBatch> &source,
+                                                  uint32_t baseInstance,
+                                                  Container::VariableArray<ImpostorBatch> &destination)
+        {
+            if (source.empty())
+            {
+                return {};
+            }
+
+            CommandRange range;
+            range.First = static_cast<uint32_t>(destination.size());
+            range.Count = static_cast<uint32_t>(source.size());
+            for (const ImpostorBatch &batch : source)
+            {
+                ImpostorBatch rebased = batch;
+                rebased.InstanceDataOffset += baseInstance;
+                destination.push_back(rebased);
+            }
+            return range;
+        }
+
         CommandRange CombineCommandRanges(const CommandRange &opaqueRange,
                                           const CommandRange &transparentRange)
         {
@@ -1464,7 +1486,7 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t index = 0; index < static_cast<uint32_t>(megaProxies.size()); ++index)
         {
             const MegaGeometryProxy& proxy = megaProxies[index];
-            if (!proxy.IsValid() || !IsFiniteRayTracingTransform(proxy.WorldTransform))
+            if (!proxy.bRayTracing || !proxy.IsValid() || !IsFiniteRayTracingTransform(proxy.WorldTransform))
             {
                 continue;
             }
@@ -1659,7 +1681,7 @@ namespace NorvesLib::Core::Rendering
                                                      MegaSlotEntry& entry)
     {
         entry = MegaSlotEntry{};
-        if (!proxy || !proxy->IsValid() || !IsFiniteRayTracingTransform(proxy->WorldTransform))
+        if (!proxy || !proxy->bRayTracing || !proxy->IsValid() || !IsFiniteRayTracingTransform(proxy->WorldTransform))
         {
             return;
         }
@@ -4647,6 +4669,34 @@ namespace NorvesLib::Core::Rendering
         {
             packet.Scene.SkyOccluders.push_back(entry.Proxy);
         }
+        m_LocalFogVolumeScratch.clear();
+        m_LocalFogVolumeScratch.reserve(m_LocalFogVolumes.size());
+        for (const LocalFogVolumeEntry& entry : m_LocalFogVolumes)
+        {
+            m_LocalFogVolumeScratch.push_back(entry.Proxy);
+        }
+        const float cameraPosition[3] = {
+            packet.bHasMainCamera ? packet.Scene.MainCamera.PositionX : 0.0f,
+            packet.bHasMainCamera ? packet.Scene.MainCamera.PositionY : 0.0f,
+            packet.bHasMainCamera ? packet.Scene.MainCamera.PositionZ : 0.0f};
+        LocalFogVolumeProxy selectedLocalFogVolumes[MaxLocalFogVolumes];
+        uint32_t droppedLocalFogVolumeCount = 0u;
+        const uint32_t selectedLocalFogVolumeCount = SelectNearestLocalFogVolumes(
+            m_LocalFogVolumeScratch.data(), static_cast<uint32_t>(m_LocalFogVolumeScratch.size()),
+            cameraPosition, selectedLocalFogVolumes, droppedLocalFogVolumeCount);
+        packet.Scene.LocalFogVolumes.clear();
+        packet.Scene.LocalFogVolumes.reserve(selectedLocalFogVolumeCount);
+        for (uint32_t i = 0u; i < selectedLocalFogVolumeCount; ++i)
+        {
+            packet.Scene.LocalFogVolumes.push_back(selectedLocalFogVolumes[i]);
+        }
+        if (droppedLocalFogVolumeCount > 0u && !m_bLocalFogVolumeOverflowWarned)
+        {
+            NORVES_LOG_WARNING("RenderingCoordinator",
+                               "局所霧が上限 %u 個を超えた（登録 %u 個）。カメラから遠いものを描かない。",
+                               MaxLocalFogVolumes, static_cast<uint32_t>(m_LocalFogVolumes.size()));
+            m_bLocalFogVolumeOverflowWarned = true;
+        }
         packet.Scene.SkyOcclusionRevision = m_SkyOcclusionRevision;
         packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.Scene.StaticEnvironmentMaxRadiance = m_StaticEnvironmentMaxRadiance;
@@ -4656,6 +4706,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.bSkinnedViewCulling = m_bSkinnedViewCulling;
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
+        packet.Scene.CloudShadow = m_CloudShadow;
         packet.Scene.Foliage = m_Foliage;
         packet.GrassField = m_GrassField;
         packet.WorldFieldInteractors.clear();
@@ -4763,11 +4814,11 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::UpdatePacketLights(const Container::VariableArray<LightProxy>& sceneLights, bool bRebuild)
     {
-        // パケットの光源表は SceneView の光源と同じ位置に同じ光源を置き、その後に空の太陽を 1 つ置く
+        // パケットの光源表は SceneView の光源と同じ位置に同じ光源を置き、その後に空の方向光（太陽か月）を 1 つ置く
         // （空の太陽の LightId は Component の通し番号と重ならないので、SceneView の光源には含まれない）
         m_PacketLightChanged.clear();
         LightProxy sun;
-        const bool bHasSun = MakeSkySunLightProxy(m_SkyAtmosphere, sun);
+        const bool bHasSun = MakeSkyDirectionalLightProxy(m_SkyAtmosphere, sun);
         const size_t oldSize = m_PacketLights.size();
         const size_t oldSceneCount = m_PacketSceneLightCount;
         const size_t sceneCount = sceneLights.size();
@@ -4972,6 +5023,8 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->SkinnedMeshFrameLeases.clear();
             m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
+            m_CurrentPacket->ImpostorBatches.clear();
+            m_CurrentPacket->ImpostorBatchRange = CommandRange{};
             m_CurrentPacket->Views.clear();
             m_CurrentPacket->Stats = FrameStatsSnapshot{};
             m_CurrentPacket->GeneratedDrawCommandCount = 0;
@@ -5020,6 +5073,7 @@ namespace NorvesLib::Core::Rendering
                 CommandRange opaqueCommandRange;
                 CommandRange transparentCommandRange;
                 CommandRange drawCommandRange;
+                CommandRange impostorBatchRange;
                 if (m_CurrentPacket)
                 {
                     opaqueCommandRange =
@@ -5034,6 +5088,10 @@ namespace NorvesLib::Core::Rendering
                                                   instanceBase,
                                                   m_CurrentPacket->DrawCommands);
                     drawCommandRange = CombineCommandRanges(opaqueCommandRange, transparentCommandRange);
+                    impostorBatchRange =
+                        AppendRebasedImpostorBatches(sceneView->GetImpostorBatches(),
+                                                     instanceBase,
+                                                     m_CurrentPacket->ImpostorBatches);
                     AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
                 }
 
@@ -5042,6 +5100,7 @@ namespace NorvesLib::Core::Rendering
                     m_CurrentPacket->DrawCommandRange = drawCommandRange;
                     m_CurrentPacket->OpaqueCommandRange = opaqueCommandRange;
                     m_CurrentPacket->TransparentCommandRange = transparentCommandRange;
+                    m_CurrentPacket->ImpostorBatchRange = impostorBatchRange;
                     bLegacyCommandsSet = true;
                 }
             }
@@ -5092,6 +5151,10 @@ namespace NorvesLib::Core::Rendering
                         viewportPlan.DrawCommandRange =
                             CombineCommandRanges(viewportPlan.OpaqueCommandRange,
                                                  viewportPlan.TransparentCommandRange);
+                        viewportPlan.ImpostorBatchRange =
+                            AppendRebasedImpostorBatches(sceneView->GetImpostorBatches(),
+                                                         instanceBase,
+                                                         m_CurrentPacket->ImpostorBatches);
                         AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
                     }
 
@@ -5100,6 +5163,7 @@ namespace NorvesLib::Core::Rendering
                         m_CurrentPacket->DrawCommandRange = viewportPlan.DrawCommandRange;
                         m_CurrentPacket->OpaqueCommandRange = viewportPlan.OpaqueCommandRange;
                         m_CurrentPacket->TransparentCommandRange = viewportPlan.TransparentCommandRange;
+                        m_CurrentPacket->ImpostorBatchRange = viewportPlan.ImpostorBatchRange;
                         bLegacyCommandsSet = true;
                     }
                 }
@@ -5950,6 +6014,8 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotMeshProxies =
             packet->MeshDelta.bActive ? &m_MeshMirror.GetProxies() : &packet->Scene.MeshProxies;
         viewContext.SnapshotInstanceData = &packet->InstanceData;
+        viewContext.SnapshotImpostorBatches = &packet->ImpostorBatches;
+        viewContext.SnapshotImpostorBatchRange = packet->ImpostorBatchRange;
         viewContext.SnapshotSkinnedMeshProxies = packet->SkinnedMeshDelta.bActive
                                                      ? &m_SkinnedMeshMirror.GetProxies()
                                                      : &packet->Scene.SkinnedMeshProxies;
@@ -6829,6 +6895,49 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    LocalFogVolumeHandle RenderingCoordinator::RegisterLocalFogVolume(const LocalFogVolumeProxy& proxy)
+    {
+        const LocalFogVolumeProxy sanitized = SanitizeLocalFogVolumeProxy(proxy);
+        if (!IsValidLocalFogVolumeProxy(sanitized) || m_NextLocalFogVolumeHandle == 0u)
+        {
+            return 0u;
+        }
+        const LocalFogVolumeHandle handle = m_NextLocalFogVolumeHandle;
+        m_LocalFogVolumes.push_back(LocalFogVolumeEntry{handle, sanitized});
+        ++m_NextLocalFogVolumeHandle;
+        return handle;
+    }
+
+    void RenderingCoordinator::UpdateLocalFogVolume(LocalFogVolumeHandle handle, const LocalFogVolumeProxy& proxy)
+    {
+        const LocalFogVolumeProxy sanitized = SanitizeLocalFogVolumeProxy(proxy);
+        if (!IsValidLocalFogVolumeProxy(sanitized))
+        {
+            UnregisterLocalFogVolume(handle);
+            return;
+        }
+        for (LocalFogVolumeEntry& entry : m_LocalFogVolumes)
+        {
+            if (entry.Handle == handle)
+            {
+                entry.Proxy = sanitized;
+                return;
+            }
+        }
+    }
+
+    void RenderingCoordinator::UnregisterLocalFogVolume(LocalFogVolumeHandle handle)
+    {
+        for (auto it = m_LocalFogVolumes.begin(); it != m_LocalFogVolumes.end(); ++it)
+        {
+            if (it->Handle == handle)
+            {
+                m_LocalFogVolumes.erase(it);
+                return;
+            }
+        }
+    }
+
     void RenderingCoordinator::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_StaticEnvironmentIntensityScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
@@ -6875,6 +6984,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetCloudLayer(const CloudLayerParameters& parameters)
     {
         m_CloudLayer = SanitizeCloudLayerParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetCloudShadow(const CloudShadowParameters& parameters)
+    {
+        m_CloudShadow = SanitizeCloudShadowParameters(parameters);
     }
 
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)

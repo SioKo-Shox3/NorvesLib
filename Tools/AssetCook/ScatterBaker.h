@@ -32,6 +32,9 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<ScatterBakeSpeciesStats> Species;
     };
 
+    // 空の遮蔽物を、両入力形式で同じ float32 の値として種表へ写す。
+    void CopyScatterSkyOccluder(const ScatterSpeciesRule& rule, Core::Asset::CookedScatterSpecies& species);
+
     // onlyChunks が空なら全チャンク。重複した座標は一度だけ焼く。
     // 失敗時は outBytes と stats を空にし、成功時は error を空にする。
     [[nodiscard]] bool BakeScatter(const ScatterBakeDesc& desc, const Core::Asset::CookedTerrainData& terrain,

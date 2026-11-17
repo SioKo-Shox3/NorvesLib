@@ -4,6 +4,7 @@
 #include "Viewport.h"
 #include "ViewportSnapshot.h"
 #include "SceneProxy.h"
+#include "Rendering/ImpostorBatch.h"
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
@@ -171,6 +172,12 @@ namespace NorvesLib::Core::Rendering
          * @param proxy 追加するProxy
          */
         void AddMegaGeometryProxy(const MegaGeometryProxy &proxy);
+
+        /** @brief ComponentId ごとの TLAS への参加を設定し、保持中の proxy にも反映する。除外の印は proxy の全消去後も保持する。 */
+        void SetMegaGeometryRayTracing(uint64_t componentId, bool bRayTracing);
+
+        /** @brief ComponentId が TLAS の除外対象でなければ true を返す（既定は参加）。 */
+        bool IsMegaGeometryRayTracing(uint64_t componentId) const;
 
         /**
          * @brief LightProxyを削除
@@ -541,6 +548,9 @@ namespace NorvesLib::Core::Rendering
          */
         const Container::VariableArray<GPUSceneInstanceData> &GetInstanceData() const { return m_InstanceData; }
 
+        /** @brief 可視インポスターの束を取得 */
+        const Container::VariableArray<ImpostorBatch> &GetImpostorBatches() const { return m_ImpostorBatches; }
+
         // ========================================
         // 設定
         // ========================================
@@ -653,6 +663,8 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
+        // TLAS から外す ComponentId。proxy の有無とは独立し、所有元が設定を解除する。
+        Container::UnorderedSet<uint64_t> m_RayTracingExcludedMegaComponentIds;
         // 散布を除く ComponentId から ObjectId への索引。
         Container::UnorderedMap<uint64_t, uint64_t> m_MegaComponentObjectIds;
         // 散布以外の追加・削除・ComponentId の変更で立ち、索引の作り直しで下ろす印。
@@ -679,6 +691,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<DrawCommand> m_OpaqueCommands;
         Container::VariableArray<DrawCommand> m_TransparentCommands;
         Container::VariableArray<GPUSceneInstanceData> m_InstanceData;
+        Container::VariableArray<ImpostorBatch> m_ImpostorBatches;
 
         // 設定
         bool m_bEnableFrustumCulling = true;

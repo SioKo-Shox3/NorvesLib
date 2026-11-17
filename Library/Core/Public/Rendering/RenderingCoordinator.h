@@ -14,6 +14,7 @@
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/CloudShadow.h"
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/Wind.h"
 #include "Rendering/RainModel.h"
@@ -63,6 +64,7 @@ namespace NorvesLib::Core::Rendering
     class FrameCaptureReadbackHelper;
 
     // 0 は無効。解除済みのハンドルは再利用しない。
+    using LocalFogVolumeHandle = uint32_t;
     using SkyOccluderHandle = uint32_t;
 
     /**
@@ -436,6 +438,11 @@ namespace NorvesLib::Core::Rendering
         void UnregisterSkyOccluder(SkyOccluderHandle handle);
         uint32_t GetSkyOccluderCount() const { return static_cast<uint32_t>(m_SkyOccluders.size()); }
 
+        LocalFogVolumeHandle RegisterLocalFogVolume(const LocalFogVolumeProxy& proxy);
+        void UpdateLocalFogVolume(LocalFogVolumeHandle handle, const LocalFogVolumeProxy& proxy);
+        void UnregisterLocalFogVolume(LocalFogVolumeHandle handle);
+        uint32_t GetLocalFogVolumeCount() const { return static_cast<uint32_t>(m_LocalFogVolumes.size()); }
+
         /**
          * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を次のFramePacketへ公開する
          * @param scale 0以上の有限の倍率（1で従来どおり）。範囲外は1へ戻す
@@ -487,6 +494,12 @@ namespace NorvesLib::Core::Rendering
          */
         void SetCloudLayer(const CloudLayerParameters& parameters);
         const CloudLayerParameters& GetCloudLayer() const { return m_CloudLayer; }
+
+        /**
+         * @brief 雲の影を GameThread で無害化して保持し、次の FramePacket へ値コピーする。
+         * 既定は無効。雲の層と空が有効なときだけ効き、SunGap は最大 4 個。SceneRevision には含めない。
+         */
+        void SetCloudShadow(const CloudShadowParameters& parameters);
         /// GameThread が最後に SetSkyAtmosphere・SetVolumetricFogParameters・SetWindParameters で渡した値（気象を場面の値から有効にするときに読む）。
         const SkyAtmosphereParameters& GetSkyAtmosphere() const { return m_SkyAtmosphere; }
         const VolumetricFogParameters& GetVolumetricFogParameters() const { return m_VolumetricFog; }
@@ -776,6 +789,15 @@ namespace NorvesLib::Core::Rendering
         // 連番が一周したら登録を拒否し、古いハンドルとの衝突を防ぐ。
         SkyOccluderHandle m_NextSkyOccluderHandle = 1u;
         uint64_t m_SkyOcclusionRevision = 0;
+        struct LocalFogVolumeEntry
+        {
+            LocalFogVolumeHandle Handle;
+            LocalFogVolumeProxy Proxy;
+        };
+        Container::VariableArray<LocalFogVolumeEntry> m_LocalFogVolumes;
+        LocalFogVolumeHandle m_NextLocalFogVolumeHandle = 1u;
+        Container::VariableArray<LocalFogVolumeProxy> m_LocalFogVolumeScratch;
+        bool m_bLocalFogVolumeOverflowWarned = false;
         float m_StaticEnvironmentIntensityScale = 1.0f;
         float m_StaticEnvironmentMaxRadiance = 0.0f;
         bool m_bStaticEnvironmentUniform = false;
@@ -784,6 +806,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bSkinnedViewCulling = true;
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
+        CloudShadowParameters m_CloudShadow;
         FoliageScene m_Foliage;
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;

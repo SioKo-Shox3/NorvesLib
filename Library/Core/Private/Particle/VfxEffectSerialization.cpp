@@ -1,6 +1,7 @@
 ﻿#include "Particle/VfxEffectSerialization.h"
 
 #include "Particle/VfxSchema.h"
+#include "Platform/PlatformFile.h"
 #include "Text/JsonDocument.h"
 #include "Text/JsonUnicodeScalar.h"
 #include "Text/JsonWriter.h"
@@ -770,6 +771,46 @@ namespace NorvesLib::Core::Particle
             return true;
         }
     } // namespace
+
+    bool LoadVfxEffectFile(const Container::String& path, VfxEffectAsset& asset, Container::String& error)
+    {
+        Container::VariableArray<uint8_t> bytes;
+        const auto read = Platform::ReadFileBytes(path, bytes);
+        if (!read.bSuccess)
+        {
+            error = read.Message;
+            return false;
+        }
+
+        uint32_t magic = 0u;
+        if (bytes.size() >= 4u)
+        {
+            for (uint32_t i = 0u; i < 4u; ++i)
+            {
+                magic |= static_cast<uint32_t>(bytes[i]) << (i * 8u);
+            }
+        }
+        if (magic == kVfxCookedMagic)
+        {
+            return LoadCookedVfxEffect({bytes.data(), bytes.size()}, asset, error);
+        }
+
+        // UTF-8 の BOM を除いて JSON の文字列に変換する。
+        const size_t skip = bytes.size() >= 3u && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3u : 0u;
+        Container::String text;
+        text.reserve(bytes.size() - skip);
+        const uint8_t* data = bytes.empty() ? nullptr : bytes.data() + skip;
+        if (!TextDetail::ForEachUnicodeScalar<uint8_t>({data, bytes.size() - skip}, [&](uint32_t scalar)
+            {
+                const auto encoded = TextDetail::EncodeJsonUnicodeScalar<Container::String::value_type>(scalar);
+                text.append(encoded.Units, encoded.Count);
+            }))
+        {
+            error = "効果の JSON が有効な UTF-8 ではありません";
+            return false;
+        }
+        return LoadVfxEffectFromJson(text, asset, error);
+    }
 
     bool LoadVfxEffectFromJson(const Container::String& text, VfxEffectAsset& outAsset, Container::String& outError)
     {

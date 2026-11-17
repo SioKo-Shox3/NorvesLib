@@ -1,12 +1,14 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "Rendering/ImpostorMath.h"
 #include "MeshTypes.h"
 #include "MaterialTypes.h"
 #include "SkinnedMeshTypes.h"
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "CloudShadow.h"
 #include "SunShadowParameters.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
@@ -249,6 +251,7 @@ namespace NorvesLib::Core::Rendering
 
         bool bVisible = true;
         bool bCastShadow = true;
+        bool bRayTracing = true; // TLAS の選択に入れるか
         // 空の遮蔽のマップ（樹冠だけの組）が光線の代わりに遮蔽を受け持つ物か。
         // 影を落とす物はTLASへinstance mask 0x04で入り、DDGI・RTGIの光線に当たらない。
         bool bSkyMapProxy = false;
@@ -307,6 +310,14 @@ namespace NorvesLib::Core::Rendering
         uint32_t ImpostorAxisCellCountY = 0;
         uint32_t ImpostorAtlasWidth = 0;
         uint32_t ImpostorAtlasHeight = 0;
+        /// インポスターのオブジェクト空間法線。無効なら GBuffer パスが既定値を使う。
+        TextureHandle ImpostorNormalTexture = TextureHandle::Invalid();
+        /// インポスターの ORM。無効なら GBuffer パスが既定値を使う。
+        TextureHandle ImpostorOrmTexture = TextureHandle::Invalid();
+        /// インポスターの深度。無効なら GBuffer パスが既定値を使う。
+        TextureHandle ImpostorDepthTexture = TextureHandle::Invalid();
+        /// 焼きの ImpostorBakeMetadata::Layout が表す八面体の配置。
+        ImpostorOctahedralLayout ImpostorLayout = ImpostorOctahedralLayout::HemiOctahedral;
         Math::Vector4 Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
         bool bFlipX = false;
         bool bFlipY = false;
@@ -638,6 +649,8 @@ namespace NorvesLib::Core::Rendering
         EnvironmentParameters Environment = MakeDefaultEnvironmentParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         Container::VariableArray<SkyOccluderProxy> SkyOccluders;
+        // 楕円体の局所霧。スナップショットでカメラに近い順に最大 MaxLocalFogVolumes 個。SceneRevision には含めない。
+        Container::VariableArray<LocalFogVolumeProxy> LocalFogVolumes;
         // 遮蔽物と値が変わったときだけ進む版。SceneRevision とは別で、RTGI の履歴を捨てない。
         uint64_t SkyOcclusionRevision = 0;
         // 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率（1で従来どおり。夜の環境光などに使う）
@@ -660,6 +673,8 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters AerialPerspective;
         // 空に描く雲の層。空が有効なときだけ CloudLayerPass が描く
         CloudLayerParameters CloudLayer;
+        // 雲の影の値。既定は無効で、SceneRevision には含めない。
+        CloudShadowParameters CloudShadow;
         // 草・低木の株の束と風。FoliagePass が GBuffer へ描く
         FoliageScene Foliage;
         // このフレームの帯の頂点と描画範囲
@@ -701,6 +716,7 @@ namespace NorvesLib::Core::Rendering
             Environment = MakeDefaultEnvironmentParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
+            LocalFogVolumes.clear();
             SkyOcclusionRevision = 0;
             StaticEnvironmentIntensityScale = 1.0f;
             StaticEnvironmentMaxRadiance = 0.0f;
@@ -710,6 +726,7 @@ namespace NorvesLib::Core::Rendering
             bSkinnedViewCulling = true;
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
+            CloudShadow = CloudShadowParameters{};
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};

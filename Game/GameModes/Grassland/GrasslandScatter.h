@@ -12,4 +12,6 @@ namespace Game::GameModes
 {
     NorvesLib::Core::Scatter::ScatterHandle LoadGrasslandScatter(
         NorvesLib::Core::GameMode::GameModeContext& ctx, uint32_t stressCount);
+    NorvesLib::Core::Scatter::ScatterHandle LoadGrasslandForest(
+        NorvesLib::Core::GameMode::GameModeContext& ctx);
 } // namespace Game::GameModes

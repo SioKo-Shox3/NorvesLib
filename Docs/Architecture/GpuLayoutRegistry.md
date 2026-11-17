@@ -289,7 +289,7 @@ C++ は `Library/Core/Public/Rendering/ViewClearance.h::ViewClearanceGpuData`、
 | `Common/VisibilityResolve.glsl` | 0 / 5 | `world`, `previousWorld`, `objectColor.rgb`, `shadingParams` |
 | `board2d.vert` | 0 / 7 | `world`, 板用の `normalRows`, `objectColor`, `customData.xy` |
 | `world_board.vert` | 0 / 7 | `world[3]`, 板用の `normalRows`, `objectColor` |
-| `impostor.vert` | 0 / 7 | `world[3]`, 板・アトラス用の `normalRows`, `objectColor`, `customData` |
+| `impostor_gbuffer.vert` | 0 / 7 | `world[3]`, 板・アトラス用の `normalRows`, `objectColor`, `customData` |
 
 MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。この 56 float の表と混同しない。
 

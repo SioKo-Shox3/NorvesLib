@@ -11,6 +11,7 @@
 #include "Rendering/DepthOfFieldPass.h"
 #include "Rendering/MotionBlurPass.h"
 #include "Rendering/FoliagePass.h"
+#include "Rendering/ImpostorGBufferPass.h"
 #include "Rendering/GrassPass.h"
 #include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
@@ -275,6 +276,7 @@ namespace NorvesLib::Core::Rendering
         m_OpaqueCommands.clear();
         m_TransparentCommands.clear();
         m_InstanceData.clear();
+        m_ImpostorBatches.clear();
 
         // Batcherをクリア
         m_Batcher.Clear();
@@ -593,6 +595,7 @@ namespace NorvesLib::Core::Rendering
             }
             const bool bHiddenByImpostor = current.bHiddenByImpostor;
             current = proxy;
+            current.bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
             current.bHiddenByImpostor = bHiddenByImpostor;
             NoteMegaChanged(indexIt->second);
             return;
@@ -600,6 +603,7 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t index = static_cast<uint32_t>(m_MegaGeometryProxies.size());
         m_MegaGeometryProxies.push_back(proxy);
+        m_MegaGeometryProxies.back().bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
         m_MegaGeometryProxyIndex[proxy.ObjectId] = index;
         if (!IsMegaScatterProxyKey(proxy.ObjectId))
         {
@@ -750,12 +754,40 @@ namespace NorvesLib::Core::Rendering
             }
             const bool bHiddenByImpostor = current.bHiddenByImpostor;
             current = proxy;
+            current.bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
             current.bHiddenByImpostor = bHiddenByImpostor;
             NoteMegaChanged(indexIt->second);
             return;
         }
 
         AddMegaGeometryProxy(proxy);
+    }
+
+    void SceneView::SetMegaGeometryRayTracing(uint64_t componentId, bool bRayTracing)
+    {
+        if (bRayTracing)
+        {
+            m_RayTracingExcludedMegaComponentIds.erase(componentId);
+        }
+        else
+        {
+            m_RayTracingExcludedMegaComponentIds.insert(componentId);
+        }
+
+        for (uint32_t index = 0; index < static_cast<uint32_t>(m_MegaGeometryProxies.size()); ++index)
+        {
+            MegaGeometryProxy& proxy = m_MegaGeometryProxies[index];
+            if (proxy.ComponentId == componentId && proxy.bRayTracing != bRayTracing)
+            {
+                proxy.bRayTracing = bRayTracing;
+                NoteMegaChanged(index);
+            }
+        }
+    }
+
+    bool SceneView::IsMegaGeometryRayTracing(uint64_t componentId) const
+    {
+        return m_RayTracingExcludedMegaComponentIds.find(componentId) == m_RayTracingExcludedMegaComponentIds.end();
     }
 
     void SceneView::NoteMegaChanged(uint32_t index)
@@ -966,6 +998,7 @@ namespace NorvesLib::Core::Rendering
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
+        context.CloudShadow.Reset();
         context.bTemporalAAApplied = false;
         context.TemporalAAJitterIndex = 0u;
         context.OverheadHeightMap.Invalidate();
@@ -1279,6 +1312,10 @@ namespace NorvesLib::Core::Rendering
         // 束が無いフレームは何も宣言しない（既定の描画は変えない）
         AddPass(MakeUnique<FoliagePass>());
 
+        // インポスターを、解決・GBuffer の描画の後の GBuffer と深度へ重ねて描く。
+        // SSAO・照明の前に置き、照明・影の受け・霧・濡れに参加させる。束が無いフレームは何も宣言しない。
+        AddPass(MakeUnique<ImpostorGBufferPass>());
+
         // GrassPass: 草の場からタイルごとのブレードと間接描画の引数を生成する。
         auto grassPass = MakeUnique<GrassPass>();
         grassPass->SetMegaGeometryPass(megaGeometryPassPtr);
@@ -1298,6 +1335,8 @@ namespace NorvesLib::Core::Rendering
         // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
         AddPass(std::move(skyAtmospherePass));
+        // 雲の影のマスクを霧と照明より先に更新して公開する。
+        AddPass(MakeUnique<CloudShadowMaskPass>());
 
         // VirtualShadowMapPass: 太陽の VSM の物理ページのプールとページの表などを作り、名前で公開し、影を落とす手続きメッシュと
         // スキニング（SkinningComputePass が変形した頂点）を物理ページへ描く（--shadow-method=vsm のときだけ）。
@@ -1970,10 +2009,20 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::AppendWorldBoardDrawCommands()
     {
+        Container::VariableArray<const BoardProxy *> impostorProxies;
         for (const BoardProxy *proxy : m_VisibleBoardProxies)
         {
             if (!proxy || !proxy->IsValid() || proxy->Space != BoardSpace::WorldSpace)
             {
+                continue;
+            }
+
+            if (proxy->RenderSubtype == BoardRenderSubtype::Impostor)
+            {
+                if (proxy->Texture.IsValid())
+                {
+                    impostorProxies.push_back(proxy);
+                }
                 continue;
             }
 
@@ -1999,6 +2048,54 @@ namespace NorvesLib::Core::Rendering
             command.SortKey = proxy->SortKey;
             m_DrawCommands.push_back(command);
         }
+
+        // 同じアトラスの組を隣接させ、同じ組の中では可視一覧の順序を保つ。
+        std::stable_sort(impostorProxies.begin(), impostorProxies.end(),
+                         [](const BoardProxy *lhs, const BoardProxy *rhs)
+                         {
+                             if (lhs->Texture != rhs->Texture)
+                             {
+                                 return lhs->Texture < rhs->Texture;
+                             }
+                             if (lhs->ImpostorNormalTexture != rhs->ImpostorNormalTexture)
+                             {
+                                 return lhs->ImpostorNormalTexture < rhs->ImpostorNormalTexture;
+                             }
+                             if (lhs->ImpostorOrmTexture != rhs->ImpostorOrmTexture)
+                             {
+                                 return lhs->ImpostorOrmTexture < rhs->ImpostorOrmTexture;
+                             }
+                             if (lhs->ImpostorDepthTexture != rhs->ImpostorDepthTexture)
+                             {
+                                 return lhs->ImpostorDepthTexture < rhs->ImpostorDepthTexture;
+                             }
+                             return lhs->ImpostorLayout < rhs->ImpostorLayout;
+                         });
+
+        for (const BoardProxy *proxy : impostorProxies)
+        {
+            if (m_ImpostorBatches.empty() ||
+                m_ImpostorBatches.back().AlbedoAtlas != proxy->Texture ||
+                m_ImpostorBatches.back().NormalAtlas != proxy->ImpostorNormalTexture ||
+                m_ImpostorBatches.back().OrmAtlas != proxy->ImpostorOrmTexture ||
+                m_ImpostorBatches.back().DepthAtlas != proxy->ImpostorDepthTexture ||
+                m_ImpostorBatches.back().Layout != proxy->ImpostorLayout)
+            {
+                ImpostorBatch batch;
+                batch.AlbedoAtlas = proxy->Texture;
+                batch.NormalAtlas = proxy->ImpostorNormalTexture;
+                batch.OrmAtlas = proxy->ImpostorOrmTexture;
+                batch.DepthAtlas = proxy->ImpostorDepthTexture;
+                batch.Layout = proxy->ImpostorLayout;
+                batch.InstanceDataOffset = static_cast<uint32_t>(m_InstanceData.size());
+                m_ImpostorBatches.push_back(batch);
+            }
+
+            GPUSceneInstanceData instanceData;
+            FillWorldBoardInstanceData(*proxy, instanceData);
+            m_InstanceData.push_back(instanceData);
+            ++m_ImpostorBatches.back().InstanceCount;
+        }
     }
 
     void SceneView::GenerateCommands()
@@ -2007,6 +2104,7 @@ namespace NorvesLib::Core::Rendering
         m_OpaqueCommands.clear();
         m_TransparentCommands.clear();
         m_InstanceData.clear();
+        m_ImpostorBatches.clear();
 
         // バッチャーからDrawCommandを生成
         m_Batcher.GenerateDrawCommands(m_DrawCommands,

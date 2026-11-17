@@ -13,6 +13,7 @@
 
 #include "DirectionalLightEditSubRoutine.h"
 #include "SkySunControl.h"
+#include "Core/Public/Rendering/SkyAtmosphere.h"
 
 #include "imgui.h"
 
@@ -43,7 +44,7 @@ namespace Game::GameModes
             float azimuth = 0.0f;
             ConvertLightControllerAnglesToSkySun(m_pController->GetYaw(), m_pController->GetPitch(),
                                                  altitude, azimuth);
-            const bool bAltitudeChanged = ImGui::SliderFloat("仰角 (度)", &altitude, 0.0f, 90.0f);
+            const bool bAltitudeChanged = ImGui::SliderFloat("仰角 (度)", &altitude, NorvesLib::Core::Rendering::SkySunMinAltitudeDegrees, 90.0f);
             const bool bAzimuthChanged = ImGui::SliderFloat("方位 (度)", &azimuth, -180.0f, 180.0f);
             if (bAltitudeChanged || bAzimuthChanged)
             {

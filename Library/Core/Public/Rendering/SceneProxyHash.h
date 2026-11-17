@@ -185,6 +185,7 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.WorldBounds);
         h.Add(p.bVisible);
         h.Add(p.bCastShadow);
+        h.Add(p.bRayTracing);
         h.Add(p.bSkyMapProxy);
         h.Add(p.LayerMask);
         h.Add(p.Tint);
@@ -215,6 +216,10 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.ImpostorAxisCellCountY);
         h.Add(p.ImpostorAtlasWidth);
         h.Add(p.ImpostorAtlasHeight);
+        h.Add(p.ImpostorNormalTexture);
+        h.Add(p.ImpostorOrmTexture);
+        h.Add(p.ImpostorDepthTexture);
+        h.Add(p.ImpostorLayout);
         h.Add(p.Tint);
         h.Add(p.bFlipX);
         h.Add(p.bFlipY);
