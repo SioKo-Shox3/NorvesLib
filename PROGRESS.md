@@ -12312,3 +12312,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので done-when (5) の `PrefabFileRoundTripTest` と (3) の `Test/Core/Object` の合成の fixture は作っていない（`Test/` は既に無い）。verify の ctest の行は回していない。
 - Notes: 判断: 手続きのメッシュに箱の種類が無い（`ProceduralMeshKind` は None・UVSphere・Plane）ので、見本の地面は箱でなく Plane にした（Library の範囲を広げない）。平面の材質は参照の形で持てないので既定の描画のまま。
 - Notes: 既知の限界: Prefab の木・上書きの EntityRefId は、`World::SpawnPrefab` が ObjectId を張り替えないので、参照なし（0）だけ戻し、参照ありは警告して落とす。外側が循環で失敗しても、それより先に読めた有効な入れ子の Prefab は registry に残る。`World::SpawnPrefab` の入れ子の深さの上限（16）を超える Prefab は読めても生成に失敗する。上書きの値の検査はシーンの読み込みと同じ基準（型と `DeserializeStable`）で、setter が値を拒むと SpawnPrefab 全体が失敗しうる（シーンと同じ既知の経路）。
+
+- U1 コアの前半（設定の検査・入力の型・頂点ごとの流れと量と領域・PNG の読み書き）: 着地(直し 0 回)
+- U2 コアの後半（UV のヤコビアン・texel への焼き・16px の膨張・補正マスク・4 枚と fur_maps.json・npz と CLI）: 着地(直し 0 回)
+- U3 Blender 側の入出力 fur_flow.py: 着地(直し 0 回)
+- U4 流れの線画 fur_preview.py: 着地(直し 0 回)
+- U5 規約の文書 FurMaps.md と最終の確かめ: 着地(直し 0 回)
+
+### G6-GR91-FUR-FLOW-MAPS 土台メッシュの骨とウェイトから毛の流れ・長さ・密度と束・領域の 4 枚のマップを UV 空間へ焼く台本と、手描きの補正・頂点カラーの代わりの道（2026-11-18、run 20261118-063232 の反復 4、完了）
+
+- Done: `Scripts/Blender/fur_maps_core.py`（numpy だけ。bpy に依らない）を足した。設定 JSON の検査（骨名の正規表現 → mode・sign・region の表。既定は胴・首が頭 → 尾、顔が鼻 → 後頭、四肢・尾が根元 → 先。領域は 1〜8 個）、頂点ごとの 3D の流れ d = Σ w・dir（`sources.flow = auto` で頂点カラー fur_flow があればそちら）、接平面への射影と長さが ε 未満の頂点を近傍の平均で埋める反復、三角形の UV のヤコビアンの計量 G から G⁻¹[v・T, v・B] で UV の向きを求めて texel の中心へ重心補間（領域 ID は補間せず重心係数が最大の角の値）、8 近傍の 16px 膨張、補正マスク（R8。8bit の 127・128 が恒等）、Length（グレー）・Flow（RGB、B = 0、単位長さ）・DensityClump（RGB、B = 0）・Region（グレー）の 8bit PNG（標準ライブラリの zlib で書く）と `fur_maps.json`（解像度・UV のセット・V の向き down・入力のメッシュと設定の SHA-256・補正の SHA-256）、`fur_mesh.npz` の保存・読み込みと npz から焼き直す CLI。
+- Done: `Scripts/Blender/fur_flow.py`（`blender --background --factory-startup --python fur_flow.py -- <設定 JSON> [--paint-overlay 対象=PATH]`）。.blend・.glb・.gltf の土台メッシュから、ワールド空間の頂点・法線・三角形・角ごとの UV0（glTF の V 下向きへ直す）・変形骨の head と tail・ウェイト・頂点グループ fur_length・fur_density・fur_clump・頂点カラー fur_length・fur_density・fur_flow を取り出し、`fur_mesh.npz` を残してコアで焼く。頂点カラーの道も同じ 4 枚になり、エンジンの頂点の形式は変えていない。
+- Done: `Scripts/Blender/fur_preview.py`（numpy だけ）。`fur_maps.json` と 4 枚を読み、長さ・領域・黒の背景の上に格子の種から流れに沿った線と根元の印を描いた UV の線画 PNG を書く。
+- Done: `Docs/Architecture/FurMaps.md`（4 枚の形と cook の形式・UV の規約・焼き方・設定 JSON の欄・既定の骨と領域の表・量の出どころの優先順・補正マスク・`fur_maps.json` と npz の形・コマンド・既知の限界）。
+- 確かめ: 全単位を載せた版で `cmake --build build --config Debug --target AssetCook -- /m:1` 終了コード 0・error の行 0。3 本の `py_compile` 終了コード 0。リポジトリの外で作った合成の円柱（Y 軸・32 分割 × 8 段・骨 1 本 tail_01 (0,0,0) → (0,1,0)・64px）を npz にしてコアの CLI で焼き（退化 0・埋まらない頂点 0・空の texel 0）、`fur_preview.py` も終了コード 0。焼いた 4 枚を実際の `AssetCook --kind texture` で fur_length・fur_region は `nvtex.v0.r8.linear`（1 バイト/画素）、fur_flow・fur_density_clump は `nvtex.v0.rg8.linear`（2 バイト/画素）へ cook し、4 回とも終了コード 0（64×64・ミップ 7 段）。出力は `.harness/runs/20261118-063232/G6-GR91-FUR-FLOW-MAPS-final-verify.txt`。
+- Next: ランナーの評価者の反証。実物の土台メッシュで `fur_flow.py` を Blender で回す確かめは G6-GR91-FUR-MAPS-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/FurMapsCoreTest.py` は作っていない。verify の 2 行目はその試験を指すので TASKS.md から外した（G6-GR103-RIG-SPEC-VALIDATE と同じ扱い）。Blender・アプリは起動していない。
+- Notes: 判断: 補正マスクは 0.5 が 8bit で表せないので 127 と 128 の両方を恒等にした。流れは膨張の後に単位化して書き、膨張の後も空の texel は (128,128,0)。重なる UV は後の三角形が勝つ。補正は膨張の後・量子化の前に画像全体へ重ね、Region には補正が無い。
+- Notes: 既知の限界: UniRig の 14 関節ほどの骨格では四肢の先と顔の流れが足りないので、領域の表・頂点の塗り・補正マスクで補う前提。頭の先・耳・尾の付け根では骨の向きが法線に近く、近傍の平均でも埋まらない頂点が残りうる。`fur_flow.py` はポーズや modifier を適用する前の元のメッシュを読む。頂点カラーの CORNER は頂点ごとの平均になる。
