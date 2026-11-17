@@ -1,0 +1,97 @@
+﻿{
+    "format": "norves.vfx",
+    "version": 1,
+    "name": "Rain_Near",
+    "flipbooks": [],
+    "emitters": [
+        {
+            "name": "RainNear",
+            "properties": {
+                "MaxParticles": 24000,
+                "Space": "World",
+                "Seed": 1380009294,
+                "Executor": "Gpu",
+                "RandomStream": "Counter",
+                "Capacity": 24000,
+                "TimeChannel": "Particle",
+                "WrapPolicy": "WrapInCameraBox"
+            },
+            "modules": [
+                {
+                    "type": "SpawnBurst",
+                    "Count": 24000,
+                    "Time": 0
+                },
+                {
+                    "type": "SpawnRate",
+                    "Rate": 6.6666667
+                },
+                {
+                    "type": "InitPosition",
+                    "Offset": [0, 0, 0]
+                },
+                {
+                    "type": "InitShape",
+                    "Shape": "CameraBox",
+                    "CameraBoxHalfWidth": 8,
+                    "CameraBoxHeight": 10
+                },
+                {
+                    "type": "InitVelocityBox",
+                    "Min": [0, -8.8, 0],
+                    "Max": [0, -7.2, 0]
+                },
+                {
+                    "type": "InitLifetime",
+                    "Lifetime": 3600
+                },
+                {
+                    "type": "InitColor",
+                    "Color": [1, 1, 1, 0.35]
+                },
+                {
+                    "type": "InitSize",
+                    "Size": [0.003, 0.003]
+                },
+                {
+                    "type": "Acceleration",
+                    "Acceleration": [0, -12, 0]
+                },
+                {
+                    "type": "WindInfluence",
+                    "Coupling": 1.5,
+                    "Scale": 1
+                },
+                {
+                    "type": "ActivationFraction",
+                    "Fraction": 0,
+                    "Ramp": 0.02
+                },
+                {
+                    "type": "CollisionPlane",
+                    "GroundY": -1000,
+                    "KillBelowY": -1000000,
+                    "Response": "ReturnToCameraBoxTop"
+                },
+                {
+                    "type": "CollisionDepth",
+                    "Thickness": 0.5,
+                    "Response": "ReturnToCameraBoxTop"
+                },
+                {
+                    "type": "GpuSpriteRenderer",
+                    "Orientation": "VelocityStretch",
+                    "Blend": "PremultipliedAlpha",
+                    "Pass": "PostTAA",
+                    "SoftDistance": 0.1,
+                    "Lighting": "AmbientTinted",
+                    "FogInfluence": 1,
+                    "StreakShutterSeconds": 0.0208333,
+                    "SubPixelCompensation": true,
+                    "NearFadeDistance": 1.5,
+                    "Texture": ""
+                }
+            ]
+        }
+    ]
+}

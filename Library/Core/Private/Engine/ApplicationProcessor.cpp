@@ -2915,8 +2915,10 @@ namespace NorvesLib::Core::Engine
             GEngine->GetWorld().LateTick(times);
         }
         GEngine->UpdateWorldFieldInteractors();
-        // 気象の解決値はポーズの間も毎フレーム書く（値は変わらない）。無効なら何も書かない
+        // 気象の解決値はポーズの間も毎フレーム書く（値は変わらない）。無効なら何も書かない。
+        // 近距離の雨のインスタンスも同じ所で作る・更新する・破棄する。
         GEngine->GetEnvironment().PublishTo(GEngine->GetRenderWorld());
+        GEngine->GetEnvironment().UpdateRainNear(GEngine->GetParticleSystem().GetVfxEffects());
         if (bAdvanceSimulation)
         {
             RunFrameStage(EFrameStage::PostLateTick, times.Unscaled, handler);
