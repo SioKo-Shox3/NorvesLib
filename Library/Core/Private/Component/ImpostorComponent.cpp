@@ -153,6 +153,9 @@ namespace NorvesLib::Core::Component
         if (!m_bBakedAtlasExternal)
         {
             m_BakedAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedNormalAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedOrmAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedDepthAtlasTexture = Rendering::TextureHandle::Invalid();
             MarkRenderStateDirty();
         }
         m_AtlasBinding.Reset();
@@ -182,6 +185,9 @@ namespace NorvesLib::Core::Component
         if (!m_bBakedAtlasExternal)
         {
             m_BakedAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedNormalAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedOrmAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedDepthAtlasTexture = Rendering::TextureHandle::Invalid();
         }
         m_AtlasBinding.Reset();
         MarkRenderStateDirty();
@@ -208,6 +214,9 @@ namespace NorvesLib::Core::Component
                 return;
             }
             m_BakedAtlasTexture = texture;
+            m_BakedNormalAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedOrmAtlasTexture = Rendering::TextureHandle::Invalid();
+            m_BakedDepthAtlasTexture = Rendering::TextureHandle::Invalid();
             m_bBakedAtlasExternal = false;
             MarkRenderStateDirty();
         }
@@ -251,6 +260,37 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    bool ImpostorComponent::SetBakedMaterialAtlases(Rendering::TextureHandle normal,
+                                                    Rendering::TextureHandle orm,
+                                                    Rendering::TextureHandle depth)
+    {
+        if (!HasBakedAtlas() || !m_bBakedAtlasExternal)
+        {
+            return false;
+        }
+
+        if ((m_BakedNormalAtlasTexture.IsValid() && m_BakedNormalAtlasTexture != normal) ||
+            (m_BakedOrmAtlasTexture.IsValid() && m_BakedOrmAtlasTexture != orm) ||
+            (m_BakedDepthAtlasTexture.IsValid() && m_BakedDepthAtlasTexture != depth))
+        {
+            NORVES_LOG_ERROR("ImpostorComponent",
+                             "既存の材質アトラスを先にReleaseBakedAtlasで返してください");
+            return false;
+        }
+
+        m_BakedNormalAtlasTexture = normal;
+        m_BakedOrmAtlasTexture = orm;
+        m_BakedDepthAtlasTexture = depth;
+        MarkRenderStateDirty();
+        return true;
+    }
+
+    bool ImpostorComponent::SetBakedAtlases(const Rendering::ImpostorBakeResult& result)
+    {
+        return SetBakedAtlas(result.AtlasTexture, result.Metadata) &&
+               SetBakedMaterialAtlases(result.NormalAtlasTexture, result.OrmAtlasTexture, result.DepthAtlasTexture);
+    }
+
     void ImpostorComponent::SetSourceMeshComponentId(uint64_t componentId)
     {
         m_SourceMeshComponentId = componentId;
@@ -280,9 +320,24 @@ namespace NorvesLib::Core::Component
         if (m_bBakedAtlasExternal && m_BakedAtlasTexture.IsValid())
         {
             textures.ReleaseTexture(m_BakedAtlasTexture);
+            if (m_BakedNormalAtlasTexture.IsValid())
+            {
+                textures.ReleaseTexture(m_BakedNormalAtlasTexture);
+            }
+            if (m_BakedOrmAtlasTexture.IsValid())
+            {
+                textures.ReleaseTexture(m_BakedOrmAtlasTexture);
+            }
+            if (m_BakedDepthAtlasTexture.IsValid())
+            {
+                textures.ReleaseTexture(m_BakedDepthAtlasTexture);
+            }
         }
 
         m_BakedAtlasTexture = Rendering::TextureHandle::Invalid();
+        m_BakedNormalAtlasTexture = Rendering::TextureHandle::Invalid();
+        m_BakedOrmAtlasTexture = Rendering::TextureHandle::Invalid();
+        m_BakedDepthAtlasTexture = Rendering::TextureHandle::Invalid();
         m_bBakedAtlasExternal = false;
         m_AtlasBinding.Reset();
         BakedAtlasMetadata = ImpostorAtlasMetadataValue{};
@@ -314,6 +369,10 @@ namespace NorvesLib::Core::Component
             outProxy.ImpostorAxisCellCountY = metadata.AxisCellCountY;
             outProxy.ImpostorAtlasWidth = metadata.AtlasWidth;
             outProxy.ImpostorAtlasHeight = metadata.AtlasHeight;
+            outProxy.ImpostorNormalTexture = m_BakedNormalAtlasTexture;
+            outProxy.ImpostorOrmTexture = m_BakedOrmAtlasTexture;
+            outProxy.ImpostorDepthTexture = m_BakedDepthAtlasTexture;
+            outProxy.ImpostorLayout = metadata.Layout;
         }
 
         outProxy.Space = Rendering::BoardSpace::WorldSpace;

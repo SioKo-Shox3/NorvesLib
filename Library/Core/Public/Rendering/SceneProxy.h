@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "Rendering/ImpostorMath.h"
 #include "MeshTypes.h"
 #include "MaterialTypes.h"
 #include "SkinnedMeshTypes.h"
@@ -309,6 +310,14 @@ namespace NorvesLib::Core::Rendering
         uint32_t ImpostorAxisCellCountY = 0;
         uint32_t ImpostorAtlasWidth = 0;
         uint32_t ImpostorAtlasHeight = 0;
+        /// インポスターのオブジェクト空間法線。無効なら GBuffer パスが既定値を使う。
+        TextureHandle ImpostorNormalTexture = TextureHandle::Invalid();
+        /// インポスターの ORM。無効なら GBuffer パスが既定値を使う。
+        TextureHandle ImpostorOrmTexture = TextureHandle::Invalid();
+        /// インポスターの深度。無効なら GBuffer パスが既定値を使う。
+        TextureHandle ImpostorDepthTexture = TextureHandle::Invalid();
+        /// 焼きの ImpostorBakeMetadata::Layout が表す八面体の配置。
+        ImpostorOctahedralLayout ImpostorLayout = ImpostorOctahedralLayout::HemiOctahedral;
         Math::Vector4 Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
         bool bFlipX = false;
         bool bFlipY = false;

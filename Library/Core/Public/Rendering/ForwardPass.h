@@ -169,13 +169,10 @@ namespace NorvesLib::Core::Rendering
         bool m_bReactiveDeclared = false;
         RHI::PipelinePtr m_WorldBoardPipeline;
         RibbonTrailRenderer m_RibbonTrailRenderer;
-        RHI::PipelinePtr m_ImpostorPipeline;
         RHI::ShaderPtr m_TransparentVertexShader;
         RHI::ShaderPtr m_TransparentFragmentShader;
         RHI::ShaderPtr m_WorldBoardVertexShader;
         RHI::ShaderPtr m_WorldBoardFragmentShader;
-        RHI::ShaderPtr m_ImpostorVertexShader;
-        RHI::ShaderPtr m_ImpostorFragmentShader;
 
         // 透明フォワード用PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
