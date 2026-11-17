@@ -36,6 +36,63 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool BuildSkyRadianceSource(const SkyAtmosphereModel& model, uint32_t width, uint32_t height,
+                                Container::VariableArray<float>& outSource)
+    {
+        outSource.clear();
+        if (width == 0u || height == 0u ||
+            static_cast<size_t>(width) > std::numeric_limits<size_t>::max() /
+                                         static_cast<size_t>(height))
+        {
+            return false;
+        }
+
+        const size_t pixelCount = static_cast<size_t>(width) * height;
+        if (pixelCount > std::numeric_limits<size_t>::max() / 4u)
+        {
+            return false;
+        }
+
+        try
+        {
+            outSource.resize(pixelCount * 4u, 0.0f);
+        }
+        catch (const std::bad_alloc&)
+        {
+            outSource.clear();
+            return false;
+        }
+        catch (const std::length_error&)
+        {
+            outSource.clear();
+            return false;
+        }
+
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const SkyRadianceSample sample = model.SampleSkyView(
+                    SkyDirectionFromEquirectangular(x, y, width, height));
+                if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
+                    !std::isfinite(sample.Radiance.y) ||
+                    !std::isfinite(sample.Radiance.z))
+                {
+                    outSource.clear();
+                    return false;
+                }
+
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+                outSource[offset + 0u] = ClampSkyRadianceForFp16(sample.Radiance.x);
+                outSource[offset + 1u] = ClampSkyRadianceForFp16(sample.Radiance.y);
+                outSource[offset + 2u] = ClampSkyRadianceForFp16(sample.Radiance.z);
+                outSource[offset + 3u] = 1.0f;
+            }
+        }
+
+        return true;
+    }
+
     const SkyAtmosphereModel* SkyAtmosphereSourceCache::AcquireModel(const SkyAtmosphereParameters& parameters)
     {
         const SkyAtmosphereParameters clearKey = MakeSkyAtmosphereClearKey(parameters);
@@ -93,51 +150,15 @@ namespace NorvesLib::Core::Rendering
         m_RadianceSourceHeight = height;
         m_bRadianceSourceBuilt = true;
         m_bRadianceSourceValid = false;
-        try
-        {
-            m_RadianceSource.resize(pixelCount * 4u, 0.0f);
-        }
-        catch (const std::bad_alloc&)
-        {
-            return nullptr;
-        }
-        catch (const std::length_error&)
-        {
-            return nullptr;
-        }
-
-        for (uint32_t y = 0u; y < height; ++y)
-        {
-            for (uint32_t x = 0u; x < width; ++x)
-            {
-                const SkyRadianceSample sample = model->SampleSkyView(
-                    SkyDirectionFromEquirectangular(x, y, width, height));
-                if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
-                    !std::isfinite(sample.Radiance.y) ||
-                    !std::isfinite(sample.Radiance.z))
-                {
-                    m_RadianceSource.clear();
-                    return nullptr;
-                }
-
-                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
-                m_RadianceSource[offset + 0u] = ClampSkyRadianceForFp16(sample.Radiance.x);
-                m_RadianceSource[offset + 1u] = ClampSkyRadianceForFp16(sample.Radiance.y);
-                m_RadianceSource[offset + 2u] = ClampSkyRadianceForFp16(sample.Radiance.z);
-                m_RadianceSource[offset + 3u] = 1.0f;
-            }
-        }
-
-        m_bRadianceSourceValid = true;
-        return &m_RadianceSource;
+        m_bRadianceSourceValid = BuildSkyRadianceSource(*model, width, height, m_RadianceSource);
+        return m_bRadianceSourceValid ? &m_RadianceSource : nullptr;
     }
 
     const Container::VariableArray<float>* SkyAtmosphereSourceCache::AcquireUnitOvercastRadianceSource(
         const SkyAtmosphereParameters& parameters, uint32_t width, uint32_t height)
     {
         const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
-        const SkyAtmosphereModel* model = AcquireModel(sanitized);
-        if (model == nullptr)
+        if (!sanitized.bEnabled)
         {
             return nullptr;
         }
@@ -164,6 +185,12 @@ namespace NorvesLib::Core::Rendering
             m_UnitOvercastParameters.OvercastZenithToHorizonRatio == sanitized.OvercastZenithToHorizonRatio)
         {
             return m_bUnitOvercastSourceValid ? &m_UnitOvercastRadianceSource : nullptr;
+        }
+
+        const SkyAtmosphereModel* model = AcquireModel(sanitized);
+        if (model == nullptr)
+        {
+            return nullptr;
         }
 
         m_UnitOvercastRadianceSource.clear();
