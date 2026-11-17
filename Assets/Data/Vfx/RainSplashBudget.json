@@ -1,0 +1,8 @@
+﻿{
+  "maxSplashesPerSecond": 4000.0,
+  "maxAliveSplashes": 2000.0,
+  "grassDensityForMinScale": 1.0,
+  "grassMinScale": 0.25,
+  "canopyMinClearanceMeters": 3.0,
+  "canopyDripsPerSecondAtFullRain": 30.0
+}

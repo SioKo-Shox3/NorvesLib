@@ -12116,3 +12116,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: 近距離のフェードは描画の既存の 1 つの距離（近面から NearFadeDistance で 0→1）で、RainTuning の NearFadeZeroMeters（0.5 m）は使っていない（NearFadeFullMeters 1.5 m を渡す）。箱の縁のフェードの帯（半径の 15%）はシェーダーの定数で、効果のデータでは変えられない（どちらもデータにするには `GpuParticleTypes.h` の GPU のエミッタの定数に欄が要る）。落ちる速さのばらつき（10%）は初速度にだけ入り、風への寄せ（時定数 1/1.5 s）で薄れる。生成の速さで入れ替わる粒（毎秒約 6.7 個）は箱の中のどこにでも現れる。
 - Next: ランナーの評価者の反証（危険地帯: EnvironmentSystem の寿命・ApplicationProcessor の毎フレームの経路・GPU の粒のシェーダー）。撮影・golden・TAA の比較は G7-GR58-CHECK（回さない決まり）。人が見るときの見どころ: `--scene=rendering3dtest --environment-preset=heavy_rain` で、カメラの周りに雨筋が降り、風で傾き、カメラを動かすと筋が伸びること。雨量を下げる・上げると筋が突然現れず薄く減り増えること。カメラの周り 8 m の縁と頭上 5 m で筋が急に切れないこと。画面に見える地面や屋根で筋が止まること。雨の無いシーン（ランチャーの各シーン・Rendering3DTest の既定）の見た目が変わらないこと。
 - U1 衝突の 2 つ目の子・子の法線の下限・屋根の下の子・手続きのフリップブックのコマ数を GPU の定数とスキーマに足す: 着地(直し 0 回)
+- U4 着水の予算（p と滴りの確率）の純関数とデータを足す: 着地(直し 0 回)
