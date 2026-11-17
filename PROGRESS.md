@@ -12320,3 +12320,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 pipeline.py を 3 段の実装に合わせる: 着地(直し 0 回)
 - U7 文書と全体の確かめ: 着地(直し 0 回)
 - U8 前回の段の記録を全体の記録に取り込まない: 着地(直し 0 回)
+
+### G6-GR103-BLENDER-STAGES Blender のバッチの 3 段（張り直しとベイク・ウェイトの保持と転送・複数クリップの書き出し）と pipeline.py の通し（2026-11-18、run 20261118-063226 の反復 2、完了）
+
+- Done: `Scripts/Blender/rig_core.py`（bpy に依らない: Procrustes（Horn の四元数法。2 点以下・退化・鏡映を拒否）と箱の合わせ、距離の統計（最大・p95・体長比）、関節名の対応表、段ごとの設定の検査（未知の鍵の拒否・既定値・パスの絶対化）、glTF 書き出しのオプション名の版の表（5.2 系だけ））と `Scripts/Blender/bpy_stage.py`（段の入口・終了コード 0/1/2・記録 JSON、シーン操作の道具）を足した。
+- Done: `rebuild_on_base.py`（箱か 3 点以上のランドマークで土台の座標へ合わせ、Shrinkwrap（NEAREST_SURFACEPOINT・PROJECT）と Smooth を回数だけ掛け、displacement と residual の最大・p95・体長比を `MESH_STATS` に出し、Cycles の CPU・サンプル数とシード固定・cage・max_ray_distance で色と接空間の法線を土台の UV へ焼く。法線の前に高ポリ側の複製を平滑化できる。しきい値（既定は体長の 1%）を超えたら出力と記録を書いて終了コード 1）を足した。
+- Done: `transfer_weights.py`（keep: 正規化と `vertex_group_limit_total` で 4 本へ。transfer: ドナーを `norves_source_to_base` で土台の座標へ写し、関節名の対応表で付け替え、DataTransfer の VGROUP_WEIGHTS・POLYINTERP_NEAREST で写す。どちらも重み 0 の頂点を数える）と `export_gltf.py`（`bpy.app.version` を版の表と演算子の RNA で照合し 5.2 系以外は止める。骨格に結び付いたメッシュを 1 つに結合して材質のスロットで分け、変形の骨だけ・morph 無し・サンプリング強制・ACTIONS でアクションごとのクリップを GLB か .gltf+.bin へ。アクションが無ければ 2 フレームの静止のクリップ）を足した。
+- Done: `pipeline.py` を 3 段に合わせた（Blender の起動は `--background --factory-startup --python-exit-code 1 --python`、段の間は .blend、書き出しは設定の形式（既定 .glb）、`--config` で入力・論理名・仕様・段・設定を 1 つの JSON から読む、Blender の段の設定を起動前に検査・正規化、段の記録の outputs を拾い、起動前に古い段の記録を消す）。`Docs/Architecture/BlenderRigPipeline.md` を実装に合わせて書き直した。
+- 確かめ: 着地後の版（04bc1b1a）で `Scripts/Blender/*.py` の py_compile 終了コード 0、全ファイル BOM 付き UTF-8・CRLF、`skeleton_spec.py --check` ok、rig_core の数値の確かめ（既知の回転・拡大 2.5・平行移動を 6 点と 3 点から 1e-6 で復元、2 点・0 点・一直線・鏡映・未知の鍵・版 5.3 と 4.2 の拒否、対応表に無い関節名の報告、5.2.2 の表の引き当て）`CORE_CHECK ok`、3 段が参照する rig_core・bpy_stage の名前の照合 ok、`pipeline.py --dry-run` 3 通り（設定なしの全段は `rebuild.base は必須` で 2、`--stages export,validate,cook` は 0 で .glb、`--config` は 0 で .blend・.blend・.gltf）（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-final-verify.txt`）。Python と文書だけの変更で、C++ のターゲットは触っていない。
+- Next: ランナーの評価者の反証。3 段を Blender の上で回すのは G6-GR103-BLENDER-CHECK（bake・`datalayout_transfer`・`vertex_group_*` の文脈、書き出し器の補間とアクションのスロットなど、Blender の上でしか分からない誤りはそこで見つけて直す）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/BlenderStagesCoreTest.py` と `test_pipeline.py` は作っていない。verify の 2 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は試験ファイルが無いので回していない（同じ数値の確かめは上の使い捨ての確かめで回した）。Blender は起動していない。
+- Notes: 判断: 書き出し器は `export_force_sampling=True` でもキーの無いチャンネルや値の変わらない 2 キーを STEP で書くので、書き出しの後の補間の検査は骨格の仕様の `interpolations`（LINEAR・STEP。エンジンも両方を受ける）に無いものだけを落とす。ウェイトの掃除は `keep_single=True`（掃除で重み 0 の頂点を作らない）。段の間は .blend で渡す（GLB では骨格の無い頂点グループや焼いた画像の材質が落ちる）。`rebuild` を選ぶなら `rebuild.base` が必須で、設定なしで全段を選ぶと引数の誤り（2）。
+- Notes: 既知の限界: G6-GR103-BLENDER-CHECK の done-when (1) は `test_pipeline.py` を回す前提だが、試験を作らない決まりで作っていない（CHECK は今 backlog）。土台メッシュは作者が手で作る資産でリポジトリに無い。
