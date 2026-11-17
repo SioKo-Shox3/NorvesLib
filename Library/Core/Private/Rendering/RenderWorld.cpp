@@ -375,6 +375,21 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.UnregisterSkyOccluder(handle);
     }
 
+    LocalFogVolumeHandle RenderWorld::RegisterLocalFogVolume(const LocalFogVolumeProxy& proxy)
+    {
+        return m_RenderingCoordinator.RegisterLocalFogVolume(proxy);
+    }
+
+    void RenderWorld::UpdateLocalFogVolume(LocalFogVolumeHandle handle, const LocalFogVolumeProxy& proxy)
+    {
+        m_RenderingCoordinator.UpdateLocalFogVolume(handle, proxy);
+    }
+
+    void RenderWorld::UnregisterLocalFogVolume(LocalFogVolumeHandle handle)
+    {
+        m_RenderingCoordinator.UnregisterLocalFogVolume(handle);
+    }
+
     void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
@@ -413,6 +428,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetCloudLayer(const CloudLayerParameters& parameters)
     {
         m_RenderingCoordinator.SetCloudLayer(parameters);
+    }
+
+    void RenderWorld::SetCloudShadow(const CloudShadowParameters& parameters)
+    {
+        m_RenderingCoordinator.SetCloudShadow(parameters);
     }
 
     void RenderWorld::SetFoliageSource(FoliageSourceSlot slot, const FoliageScene& foliage)

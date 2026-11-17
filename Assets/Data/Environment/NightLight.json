@@ -1,0 +1,10 @@
+﻿{
+  "formatVersion": 1,
+  "moonIlluminanceLux": 0.2,
+  "moonColor": [0.75, 0.85, 1.0],
+  "moonCastShadows": false,
+  "moonRampStartSunAltitudeDegrees": 0.0,
+  "moonRampEndSunAltitudeDegrees": -6.0,
+  "moonMinimumAltitudeDegrees": 30.0,
+  "nightMinEV100": -1.0
+}

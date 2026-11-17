@@ -500,7 +500,8 @@ namespace NorvesLib::Core::Rendering
                 // 観測点から見た空（視線の透過率と地平線より下の地面を含む）。
                 const SkyRadianceSample sample = model.SampleSkyView(direction);
                 const float cosineToSun = std::clamp(Dot(direction, sunDirection), -1.0f, 1.0f);
-                const bool bInSunDisk = std::acos(cosineToSun) <= solarDiskRadius;
+                const bool bInSunDisk = parameters.SunAltitudeDegrees >= 0.0f &&
+                                        std::acos(cosineToSun) <= solarDiskRadius;
                 const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
                 outTexels[offset + 0u] = FloatToHalfRne(
                     sample.bValid && IsFiniteRadiance(sample.Radiance) ? sample.Radiance.x : 0.0f);
@@ -577,7 +578,9 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        const float requested = ComputeSunDiskPreExposedLuminance(parameters, preExposure);
+        // 負の高度では 0° のキーから透過率が混ざっても円盤を光らせない。
+        const float requested = parameters.SunAltitudeDegrees < 0.0f
+            ? 0.0f : ComputeSunDiskPreExposedLuminance(parameters, preExposure);
         const float safetyFraction = std::clamp(m_Settings.SunDiskSafetyFraction,
                                                 0.0f,
                                                 1.0f);
@@ -1052,6 +1055,11 @@ namespace NorvesLib::Core::Rendering
         AdvanceRetireQueue(*context);
 
         m_LastParameters = SanitizeSkyAtmosphereParameters(ResolveSnapshot(*context));
+        if (m_LastParameters.SunAltitudeDegrees < 0.0f)
+        {
+            m_LastSunDiskPreExposedLuminance = 0.0f;
+            m_bLastSunDiskSaturated = false;
+        }
         if (m_Keyframes)
         {
             if (m_LastParameters.bDebugLogSunSweep)

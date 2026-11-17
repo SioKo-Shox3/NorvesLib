@@ -344,6 +344,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ViewClearance.cpp
     Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/CloudShadow.cpp
     Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
     Private/Rendering/RainModel.cpp
@@ -505,6 +506,7 @@ set(PRIVATE_SOURCES
     Private/Component/SpringArmComponent.cpp
     Private/Component/ViewClearanceComponent.cpp
     Private/Component/SkyOccluderComponent.cpp
+    Private/Component/LocalFogVolumeComponent.cpp
     Private/Component/TextComponent.cpp
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
@@ -782,6 +784,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/HeroSilhouettePass.h
     Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/CloudShadow.h
     Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
     Public/Rendering/RainModel.h
@@ -932,6 +935,7 @@ set(PUBLIC_HEADERS
     Public/Component/SpringArmComponent.h
     Public/Component/ViewClearanceComponent.h
     Public/Component/SkyOccluderComponent.h
+    Public/Component/LocalFogVolumeComponent.h
     Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h

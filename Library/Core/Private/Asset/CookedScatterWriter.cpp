@@ -31,6 +31,32 @@ namespace NorvesLib::Core::Asset
             return offset <= total && count <= total - offset;
         }
 
+        bool ValidCollisionShape(const CookedScatterCollisionShape& shape) noexcept
+        {
+            if (!std::isfinite(shape.Radius))
+            {
+                return false;
+            }
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                if (!std::isfinite(shape.A[axis]) || !std::isfinite(shape.B[axis]))
+                {
+                    return false;
+                }
+            }
+            switch (shape.Type)
+            {
+            case ScatterCollisionShapeType::Capsule:
+                return shape.Radius > 0.0f;
+            case ScatterCollisionShapeType::Sphere:
+                return shape.Radius > 0.0f && shape.B[0] == 0.0f && shape.B[1] == 0.0f && shape.B[2] == 0.0f;
+            case ScatterCollisionShapeType::Box:
+                return shape.Radius == 0.0f && shape.B[0] > 0.0f && shape.B[1] > 0.0f && shape.B[2] > 0.0f;
+            default:
+                return false;
+            }
+        }
+
         bool AddStringSize(const Container::AnsiString& value, uint64_t& size) noexcept
         {
             if (value.empty() || value.size() > UINT32_MAX - size)
@@ -86,7 +112,7 @@ namespace NorvesLib::Core::Asset
         for (const auto& species : desc.Species)
         {
             if (static_cast<uint32_t>(species.RenderPath) > 1 || species.LodCount == 0 || species.LodCount > MaxLodCount ||
-                (species.Flags & ~1u) != 0 || !std::isfinite(species.MeshRadiusMeters) || species.MeshRadiusMeters < 0.0f ||
+                (species.Flags & ~ScatterSpeciesKnownFlags) != 0 || !std::isfinite(species.MeshRadiusMeters) || species.MeshRadiusMeters < 0.0f ||
                 !std::isfinite(species.MinSpacingMeters) || species.MinSpacingMeters <= 0.0f ||
                 !std::isfinite(species.ScaleMin) || !std::isfinite(species.ScaleMax) || species.ScaleMin <= 0.0f ||
                 species.ScaleMin > species.ScaleMax || !std::isfinite(species.SlopeFollow) ||
@@ -157,21 +183,63 @@ namespace NorvesLib::Core::Asset
             }
         }
 
-        // 件数の上限により、文字列表までの表の積と和は uint64 に収まる。
+        for (const auto& species : desc.Species)
+        {
+            if (species.CollisionCount > MaxCollisionShapesPerSpecies ||
+                (species.CollisionCount == 0 && species.CollisionFirst != 0) ||
+                !Within(species.CollisionFirst, species.CollisionCount, desc.CollisionShapes.size()))
+            {
+                return Status::InvalidCollision;
+            }
+        }
+        for (const auto& shape : desc.CollisionShapes)
+        {
+            if (!ValidCollisionShape(shape))
+            {
+                return Status::InvalidCollision;
+            }
+        }
+        if (!desc.VariationSeeds.empty() && desc.VariationSeeds.size() != desc.Instances.size())
+        {
+            return Status::InvalidVariationSeeds;
+        }
+
+        // 件数の上限により、範囲表までの表の積と和は uint64 に収まる。
         const uint64_t speciesOffset = HeaderSize;
         const uint64_t speciesSize = speciesCount * SpeciesRecordSize;
         const uint64_t chunkOffset = speciesOffset + speciesSize;
         const uint64_t chunkSize = chunkCount * ChunkRecordSize;
         const uint64_t rangeOffset = chunkOffset + chunkSize;
         const uint64_t rangeSize = rangeCount * RangeRecordSize;
-        const uint64_t stringOffset = rangeOffset + rangeSize;
+        const uint64_t collisionOffset = rangeOffset + rangeSize;
+        // 形が 1 つも無ければ節ごと書かず、規則の散布のファイルの並びを変えない。
+        const uint64_t collisionRangeSize =
+            desc.CollisionShapes.empty() ? 0 : speciesCount * CollisionSpeciesRangeRecordSize;
+        const uint64_t collisionShapeOffset = collisionOffset + collisionRangeSize;
+        if (desc.CollisionShapes.size() > (UINT64_MAX - collisionShapeOffset) / CollisionRecordSize)
+        {
+            return Status::TooLarge;
+        }
+        const uint64_t collisionTableSize =
+            collisionRangeSize + static_cast<uint64_t>(desc.CollisionShapes.size()) * CollisionRecordSize;
+        const uint64_t stringOffset = collisionOffset + collisionTableSize;
+        if (stringOffset > UINT64_MAX - stringSize - (InstanceAlignment - 1))
+        {
+            return Status::TooLarge;
+        }
         const uint64_t instanceOffset = (stringOffset + stringSize + InstanceAlignment - 1) & ~uint64_t(InstanceAlignment - 1);
         if (desc.Instances.size() > (UINT64_MAX - instanceOffset) / InstanceRecordSize)
         {
             return Status::TooLarge;
         }
         const uint64_t instanceSize = static_cast<uint64_t>(desc.Instances.size()) * InstanceRecordSize;
-        const uint64_t fileSize = instanceOffset + instanceSize;
+        const uint64_t variationSeedOffset = instanceOffset + instanceSize;
+        const uint64_t variationSeedSize = static_cast<uint64_t>(desc.VariationSeeds.size()) * VariationSeedRecordSize;
+        if (variationSeedOffset > UINT64_MAX - variationSeedSize)
+        {
+            return Status::TooLarge;
+        }
+        const uint64_t fileSize = variationSeedOffset + variationSeedSize;
         Container::VariableArray<uint8_t> bytes;
         if (fileSize > bytes.max_size())
         {
@@ -203,6 +271,8 @@ namespace NorvesLib::Core::Asset
         WriteLe(data, HeaderOffset::StringTableSize, stringSize, 8);
         WriteLe(data, HeaderOffset::InstanceOffset, instanceOffset, 8);
         WriteLe(data, HeaderOffset::InstanceSize, instanceSize, 8);
+        WriteLe(data, HeaderOffset::CollisionTableSize, collisionTableSize, 8);
+        WriteLe(data, HeaderOffset::VariationSeedSize, variationSeedSize, 8);
         uint32_t writtenStrings = 0;
         for (size_t i = 0; i < desc.Species.size(); ++i)
         {
@@ -235,6 +305,12 @@ namespace NorvesLib::Core::Asset
                 WriteFloat(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters, species.SkyOccluderRadiusMeters);
                 WriteFloat(data, record + SpeciesRecordOffset::SkyOccluderHeightMeters, species.SkyOccluderHeightMeters);
             }
+            if (collisionTableSize != 0)
+            {
+                const size_t rangeRecord = static_cast<size_t>(collisionOffset + i * CollisionSpeciesRangeRecordSize);
+                WriteLe(data, rangeRecord + CollisionSpeciesRangeOffset::First, species.CollisionFirst, 4);
+                WriteLe(data, rangeRecord + CollisionSpeciesRangeOffset::Count, species.CollisionCount, 4);
+            }
         }
         for (size_t i = 0; i < desc.Chunks.size(); ++i)
         {
@@ -256,6 +332,18 @@ namespace NorvesLib::Core::Asset
             WriteLe(data, record + RangeRecordOffset::Offset, desc.SpeciesRanges[i].Offset, 8);
             WriteLe(data, record + RangeRecordOffset::Count, desc.SpeciesRanges[i].Count, 8);
         }
+        for (size_t i = 0; i < desc.CollisionShapes.size(); ++i)
+        {
+            const auto& shape = desc.CollisionShapes[i];
+            const size_t record = static_cast<size_t>(collisionShapeOffset + i * CollisionRecordSize);
+            WriteLe(data, record + CollisionRecordOffset::Type, static_cast<uint32_t>(shape.Type), 4);
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                WriteFloat(data, record + CollisionRecordOffset::A + axis * 4, shape.A[axis]);
+                WriteFloat(data, record + CollisionRecordOffset::B + axis * 4, shape.B[axis]);
+            }
+            WriteFloat(data, record + CollisionRecordOffset::Radius, shape.Radius);
+        }
         for (size_t i = 0; i < desc.Instances.size(); ++i)
         {
             const auto& instance = desc.Instances[i];
@@ -273,6 +361,10 @@ namespace NorvesLib::Core::Asset
                 data[record + 12 + channel] = instance.Tint[channel];
             }
             data[record + 15] = instance.Dry;
+        }
+        for (size_t i = 0; i < desc.VariationSeeds.size(); ++i)
+        {
+            WriteLe(data, static_cast<size_t>(variationSeedOffset + i * VariationSeedRecordSize), desc.VariationSeeds[i], 4);
         }
         WriteLe(data, HeaderOffset::PayloadHash, ComputeCookedScatterFileHash(Container::Span<const uint8_t>(bytes)), 8);
         outBytes = std::move(bytes);

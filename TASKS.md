@@ -7137,7 +7137,7 @@
 - notes: 要件 `#### GR58` の設計案（B）。G7-S7 の (A)（G7-GR57-GPU-SIMULATION の notes）を採っても、Volumetrics の直後は GR25 の段に当たらない（AfterLighting は Lighting の直後で SSR・CloudLayer・Volumetrics の前）ので、このパスだけは SetupDeferredPipeline の中に直に置く（ロードマップ 4531 行の注記どおり）。Forward・DoF・動きぼけ・TAA より前なので全部が自然に掛かり、細かい筋は TAA で平均されて霞に見える。世界の向きに固定した近似で視差は無い（層の数と距離はデータで替えられる）。時刻は G7-GR49-ENV-SYSTEM のゲームの時刻で、ポーズで止まる。共有の SceneView.cpp は AddPass の数行だけにする。試験を足す理由: 近い物の手前にカーテンが描かれる・雨量 0 で色が変わる・並びの誤りは、場面によって見落とし黙って起きる。危険地帯（RenderThread・パスの並び）なので評価者を通す。ロードマップ 1540・1554 行。
 
 ## G7-GR58-RAIN-NEAR: カメラの周りの箱で巻き戻る GPU の粒の雨筋を、雨量に連続に追随し、風と落ちる速さで傾き、相対速度で伸びる形で TAA の後に描く
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR58
 - needs-gr: GR46, GR30
@@ -7492,7 +7492,7 @@
 - notes: 要件 `#### GR55` の (S) と時計の結合・SceneRevision の扱い（要件 5391・5395・5397 行）。名前は G7 の項目（G7-GR49-ENV-SYSTEM・G7-GR49-ENV-PARAMS: `EnvironmentState`・`EnvironmentSystem`・`SkipTime`・`EnvironmentParameters`・`DiscontinuityId`）に合わせた。試験の置き場は G7 の `Test/Core/Engine/EnvironmentStateTest.cpp` の隣。SceneRevision の量子化は要件の案のうち「量子化してハッシュ」を採る（空の太陽をハッシュから外して LightRevision に任せる案は、今の RTGI の履歴の判定〔LightingPass の SceneRevision 比較〕を変えるので採らない）。天候の値を入れない理由: 毎フレーム変わると RTGI の履歴が毎フレーム捨てられる（ロードマップ 2008 行、段階をまたぐ注意 4462 行）。雲の層は空の上にだけ描かれ、照明と RTGI には入らない（SkyAtmosphere.h:95-101 のコメント）ので外しても履歴の誤りにならない。霧の値をハッシュから外すのは G7 の決定（G7-S3 の (A)）。PT は `HashPathSky` で別に再累積するので変えない。不連続の印は、段階をまたぐ注意（4415 行）のとおり 5 つあるが、ここは G7 の `DiscontinuityId` だけを使い、新しい印を作らない（`OnTimeSkipped` は時刻を飛ばしたことの通知で、履歴を切る印ではない）。ファストトラベル・寝床の画面と暗転は G15（GR68・GR71）。連続して太陽を動かしたときの引っ掛かりは G11-GR54-SUN-KEYFRAMES が入るまで残る（Clock は既定で無効）。`GameApplicationHandler.cpp`・`Rendering3DTestRoutine.cpp` は共有のファイルなので差分を小さくする。危険地帯（RenderThread の契約・RTGI の履歴）。評価者の反証を省かない。試験を足す理由: 反証する契約は「スキップの後の濡れと履歴の印」「SceneRevision が 1° ごとにだけ変わる」。履歴が毎フレーム捨てられても絵は一見同じでノイズが増えるだけで、黙って起きる。ロードマップ 1988・1999 行。
 
 ## G11-GR55-NIGHT: 太陽が地平線の下（−20° まで）でも空・照明が壊れず暗くなり、月明かりの弱い方向光と夜の露出の下限で夜が見えるようにする
-- status: todo
+- status: done
 - after: G11-GR55-CLOCK-SKIP, G11-GR54-SUN-KEYFRAMES, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR55
 - needs-gr: GR49, GR50
@@ -7613,7 +7613,7 @@
 - notes: GR52 の P1 の (a)(b)（要件 5176-5180 行）。今あるもの: 霧と空気遠近は同じ 32 歩の中点則のマーチ（SCN-WL-HAZE-ONE-MEDIUM・SCN-WL-SKY-SCATTER で大気の正解に合わせた）、霧だけのときの画素ごとの固定のずらし、霧の散乱を VSM の影で遮る（SCN-INTERIOR-SHAFTS）。要件の「固定 24 歩・ジッタなし」は古い。荒野の空と霞は Cycles・大気の正解に合わせて調整済みなので、既定を変えず欄で選ぶ（要件の「新機能を全て無効にして golden が不変」と AGENTS.md の絶対規則 7）。grassland で有効にするのは G11-GR52-FOG-CHECK で見てから。G7 の GR51 が `Common/HeightFog.glsl` に霧の関数を出すので、その後に触る（needs-gr）。froxel 化（P3）は作らない: 測定で P1・P2 が足りないと出たときだけ別計画（ロードマップ 1993 行の非ゴール）。危険地帯（volumetrics は全シーンの霞に効く）。評価者の反証を省かない。試験を足す理由: 反証する契約は「少ない歩で参照に近い」「既定で絵を変えない」。歩の偏りは光の筋の明るさの差としてしか見えず、黙って起きる。ロードマップ 1986・1997 行、要件 `#### GR52`。
 
 ## G11-GR52-CLOUD-SHAFTS: 空に見えている雲の層から太陽の向きの雲の影のマスクを作り、作者が置く雲の切れ間（SunGap）と合わせて霧の中の光の筋を出す
-- status: todo
+- status: done
 - after: G11-GR52-FOG-STEPS, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR52
 - needs-gr: GR49, GR50
@@ -7624,7 +7624,7 @@
 - notes: GR52 の P1 の (c)（要件 5182 行）。選定課題 G11-S7（雲間の光の筋の作り方。ロードマップ 4554 行）は推奨の (C) を採る: SunGap を主にし、雲の影のマスクを従にする。地面の直達に雲の影を掛けるかは見た目で決める選択制で既定は掛けない（掛けるとラスタと PT の方式差が増える）。要件の「ノイズの雲被覆（fBm の小さな compute）」は作らず、今ある雲の層（SCN-CLOUDS・SCN-WL-CLOUD-* で Cycles に合わせた体積の雲）の密度から作る: 空に見える雲と光の筋の位置が合い、雲の式を 2 つ持たない。雲の層は今は太陽を遮らず IBL にも入らない（SkyAtmosphere.h:95-101）。マスクは霧の散乱と（選んだときの）地面の直達だけに掛け、空由来 IBL には入れない。局所霧と雲の影は PT・RT・DDGI が知らない（方式差として記録。ロードマップ 2011 行）。雲の層の値は SceneRevision に入っている（RenderingCoordinator.cpp:230-236）が、マスクの欄は入れない。危険地帯（volumetrics・lighting.frag・CloudLayerPass）。評価者の反証を省かない。共有のファイル（CloudLayerPass.inl・lighting.frag・SceneView.cpp）は差分を小さくする。試験を足す理由: 反証する契約は「SunGap の所に筋が出て、無効で消える」「雲の影の写しの向き」。向きの誤りは筋が雲の切れ間からずれて出る形で、撮影 1 枚では見分けにくく黙って起きる。ロードマップ 1986・1997 行。
 
 ## G11-GR52-LOCAL-FOG: Entity に付けて動かせる楕円体の局所霧（最大 8）を、密度の解析の線積分と、風で流れる濃淡で霧の経路と前向きの描画に入れる
-- status: todo
+- status: done
 - after: G11-GR52-FOG-STEPS, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR46, GR49, GR51
@@ -7672,7 +7672,7 @@
 - notes: GR36 の (C)(D)（要件 3835-3841 行）。段階をまたぐ注意（ロードマップ 4386・4452・4473 行）に従い、表面の点は `SurfaceSampleTable`、位置だけのスキニングは G3 の `SkinPosition`（G3-GR12 で done。SkeletalPoseBounds.h:43）を使い、自前で作らない。`SurfaceSampleTable` は GR57 の P6 が G10 の GR60 へ移った（4431 行の案のとおり。G10-GR60-SKIN-SURFACE-EMITTER）ので、G10 の GR60 を needs-gr に入れた（G11 は G10 を段階として待たないが、この項目だけは表を待つ）。放出の列 `GpuParticleBurstQueue` と効果の形は G7 の項目の名前（G7-GR57-GPU-SIMULATION・G7-GR57-GPU-DEFINITION）に合わせた。要件の「表面のサンプル点を自前で選ぶ（最寄りの頂点の簡易版）」は作らない。UniRig の 14 関節では耳・頬の揺れからの飛散は出ない（要件のリスク。共通の骨格 GR103 で良くなる）。動画由来の BVH は 1 コマ 1/30 秒と書かれるが入力の動画は 16fps なので、取り込みの時間の直しは G2 の範囲（速度の差分に直接効く）。点の数（128〜512）と上限は要件の案で、根拠は要件だけ。試験を足す理由: 反証する契約は「表面の点の速度が回転の解析値に合う」「濡れていない・止まっているときに出ない」「上限を守る」。速度の誤りは水滴の飛ぶ向きの不自然さとしてしか見えず、数の超過は後のフレーム時間として出るので黙って起きる。ロードマップ 1985・1996 行。
 
 ## G12-GR47-PLACEMENT-COOK: 手で置く森・岩の配置の一覧を NVSCT に cook し、散布に空間の照会・1 本の非表示の保存・RT に入れるかの指定を足す
-- status: todo
+- status: done
 - after: G5-GR90-SCATTER-RUNTIME, G12-GR47-INSTANCE-VARIATION, G5-GR90-SCATTER-BAKE
 - gr: GR47
 - needs-gr: GR90
@@ -7731,7 +7731,7 @@
 
 ## G10-GR63-LOD-RUNTIME: 焼いた LOD と部位の表を実行時に持ち、画面の誤差とヒステリシスで部位ごとの LOD を選んで範囲で描き、LOD0 に固定する口を足す
 - status: todo
-- after: G10-GR63-LOD-BUILDER, G10-GR63-SKIN-CULL
+- after: G10-GR63-LOD-BUILDER, G10-GR63-SKIN-CULL, G2-GR79-SKINNED-MATERIAL-BUILDER-P1
 - gr: GR63
 - needs-gr: GR32, GR82
 - done-when: (1) `SkinnedMeshAssetLease`（`Library/Core/Public/Rendering/SkinnedMeshTypes.h:60`）に、G10-GR63-LOD-BUILDER の `LODS`・`PART` から作る不変の LOD の表・部位の表を持たせる（RigSplit の読み込みから。表の無い資産は空）。(2) `SkinnedDrawParams`（`DrawCommand.h:63`）に部位の描画の列 `PartDraws`（FirstIndex・IndexCount・Lod）を値で足し、描画の全経路が範囲ごとに描く: fallback の `SceneRenderer::RecordSkinnedDrawCall`（`SceneRenderer.cpp:572`）は範囲ごとの `DrawIndexed`、可視バッファのラスタと `SkinningComputePass` の計画（`SkinningComputePlanDraw` の `SourceFirstIndex`・`SourceIndexCount`）は範囲ごとの描画、CSM・点光源の影・VSM の塊は影の LOD の範囲。表の無い資産は今どおり全体を 1 回描き、表のある資産で `PartDraws` が空なら描かない（全 LOD が重なって描かれる事故を防ぐ）。(3) 選択: G10-GR63-SKIN-CULL の `SkinnedLodSelection` に純関数を足す。画面の誤差 px = 誤差(m) × ワールドの最大スケール × ビューポートの高さ /(2 × 距離 × tan(fov/2))、距離は部位の境界までの最短距離（部位の境界が無い間は描画全体の境界）。GBuffer は閾値 1 px・上げ 1.0・下げ 0.8 のヒステリシス、CSM はカスケードの `TexelSize` で誤差/テクセル ≤ 1、点光源の影は面の解像度、VSM は段のテクセルで同様に決め、影の LOD は GBuffer の LOD 以上に粗い。閾値は描画の定数で既定は仮。ヒステリシスの状態は RenderThread の `SkinnedMeshGpuStore` に ComponentId を鍵で持ち、`CollectReleased` と同じ寿命で消す。(4) `SkinnedMeshProxy`（`SkinnedMeshTypes.h:175`）に `MinLod`（これより細かくしない）と `ForcedLod`（固定。-1 は無し）を足し、`SkinnedMeshComponent` の `SetMinLod`・`SetForcedLod` から値で渡す（GR19 のアンカーの間と GR64 のゴーストが使う）。 (5) `SkinnedLodSelectionTest` にケースを足す: 距離に対して LOD が単調に粗くなる、距離を ±5% で往復させても LOD がちらつかない、影の LOD が GBuffer 以上に粗い、`ForcedLod` は常にその LOD・`MinLod` より細かくならない、表の無い資産は全体の 1 描画。(6) GPU の `RenderingSkinnedLodVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、可視バッファの on と `--visibility-buffer=off` の `RenderingSkinnedLodGBufferFallbackVulkanTest` を登録）: LOD を焼いた縮小の `SkinnedGiantFixture` を 3 つの距離に置き、記録されたスキンの描画数・三角形数が選択の結果と一致し、LOD0 の画像との差が FLIP の閾値内（手順は `Docs/RenderingValidation/PerceptualDiffSelection.md`、閾値の TSV は `Test/Core/Rendering/Thresholds/RenderingValidation/`）。G10-GR63-SKIN-CULL の試験、`SkinnedSubmeshDrawContractTest`・`ComputeSkinningVulkanTest`・`VirtualShadowMapVulkanTest` と golden 4 本が通る。
@@ -10881,3 +10881,12 @@
   - 1 つ目: G11-GR59-PUDDLES の done-when (5) が「犬の毛の当たり方も遮蔽物の形から屋根を求めて渡す(`RainShelterVolume` と重なるときは小さい方)」を求めている(TASKS.md 7583 行)。しかし `FurCoatComponent` がまだ無かったので繋がれていない(PROGRESS.md 12069 行の既知の限界)。
   - 2 つ目: G6-GR35-WETNESS-STATE の notes は、樹冠の下の遮蔽を GR59 が入れる前提にしている(ロードマップ 1461 行)。ところが GR59 の残りの項目(RAIN-HIT・FOOT-SPLASH)にも、G11-GR36-WETNESS-DYNAMICS にもこの作業は無い。
   - 3 つ目: CPU の判定 `ComputeOverheadRainExposure` は実装済みだが、遮蔽物の一覧を GameThread から読む公開の口が無い。今の `RenderingCoordinator` には `GetSkyOccluderCount` しか無く、散布の遮蔽物は拡張データで RenderThread へ出ているだけ。
+
+## G11-GR52-CLOUD-SHAFTS-P1: GPU の粒子・インポスター・剣のトレイルの前向きの霧に、局所霧を掛ける
+- status: todo
+- done-when: (1) `Assets/Shaders/Particles/ParticleDraw.glsl` の描画定数の UBO の末尾に `LocalFogParams localFog` を足す。C++ 側は `GpuParticleDraw.h` の定数の型の末尾に `GPULocalFogParams` を足し、offset と大きさを `static_assert` で固定する。`GpuParticleDrawPass.cpp` は `BuildLocalFogGpuParams` でこの欄を埋める（`context.SnapshotScene->LocalFogVolumes` から。`VolumetricsPass.cpp:758` と同じ呼び方）。`ParticleDraw.frag` は `forward_transparent.frag`・`world_board.frag` と同じ順と関数で `EvaluateLocalFogForward` を評価し、高さフォグの後に掛ける。掛け方はブレンドで分け、アルファは `ApplyLocalFogPremultiplied`、加算は `ApplyLocalFogAdditive` を使う。(2) `impostor.frag` の `WorldBoardForwardData` に `LocalFogParams localFog` を足し、同じ形で掛ける。置き場は C++ の `WorldBoardForwardUBO` と同じ offset 288 で、C++ 側は既に埋めているので触らない。(3) `RibbonTrailRenderer.h` の `RibbonTrailHeightFog` に `GPULocalFogParams` の欄を足す。`RibbonTrailRenderer.cpp` はその値を UBO の末尾へ写す（`static_assert` 付き）。`ForwardPass.cpp` の `RibbonTrailHeightFog` を作る所（1796 行付近）で、既にある `localFogParams` を渡す。`ribbon_trail.frag` は加算とアルファの別に合わせて局所霧を掛ける。(4) 局所霧が 0 個のときは、3 つのシェーダーとも出力が今と同じになる（`EvaluateLocalFogForward` が恒等になる経路を通る）。`rain_curtain.frag` は対象外。霧の放射輝度を幕の色に使っているだけで、前向きの霧の透過は掛けていないため。(5) Debug で Game のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/Particles/ParticleDraw.glsl, Assets/Shaders/Particles/ParticleDraw.frag, Assets/Shaders/impostor.frag, Assets/Shaders/ribbon_trail.frag, Library/Core/Public/Rendering/GpuParticle/GpuParticleDraw.h, Library/Core/Private/Rendering/GpuParticle/GpuParticleDrawPass.cpp, Library/Core/Public/Rendering/RibbonTrailRenderer.h, Library/Core/Private/Rendering/RibbonTrailRenderer.cpp, Library/Core/Private/Rendering/ForwardPass.cpp, TASKS.md, PROGRESS.md
+- effort: high
+- from: G11-GR52-CLOUD-SHAFTS
+- notes: G11-GR52-LOCAL-FOG の done-when (3)（TASKS.md 7631 行）の取りこぼし。要件は「`Common/HeightFog.glsl` に同じ項を足し、半透明・板・粒子（GR51 が霧を掛ける前向きの描画）にも局所霧が効く」。ところが局所霧を掛けているのは `forward_transparent.frag` と `world_board.frag` だけで、`ParticleDraw.frag`・`impostor.frag`・`ribbon_trail.frag` は高さフォグしか掛けていない（`LocalFog` を grep しても当たらない）。インポスターは板と同じ UBO を使い、C++ 側は局所霧を offset 288 に既に詰めているので、変更はシェーダーの宣言と呼び出しだけで済む。局所霧は危険地帯（半透明・volumetrics）で、`ForwardPass.cpp` は共有のファイルなので、差分は呼び出しの 1 か所に絞る。試験は足さない（決まり）。

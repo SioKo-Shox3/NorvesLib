@@ -473,6 +473,12 @@ namespace NorvesLib::Core::Rendering
 
     void AutoExposurePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
+        const SkyAtmosphereParameters& sky =
+            context.SnapshotScene ? context.SnapshotScene->SkyAtmosphere : context.SkyAtmosphereSnapshot;
+        m_Settings.bOverrideMinEV100 =
+            sky.bEnabled && sky.bOverrideAutoExposureMinEV100 && std::isfinite(sky.AutoExposureMinEV100);
+        m_Settings.MinEV100Override = sky.AutoExposureMinEV100;
+
         if (!m_bInitialized && !Initialize(context))
         {
             return;
