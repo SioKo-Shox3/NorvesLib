@@ -1579,6 +1579,15 @@ namespace NorvesLib::Core::Rendering::Terrain
         return static_cast<float>(grid.PuddlePotential[static_cast<size_t>(row) * grid.Columns + column]) / 255.0f;
     }
 
+    Container::Span<const uint8_t> TerrainHeightField::GetPuddlePotential() const
+    {
+        if (!HasPuddlePotential())
+        {
+            return {};
+        }
+        return {m_Grid->PuddlePotential.data(), m_Grid->PuddlePotential.size()};
+    }
+
     uint32_t TerrainHeightField::GetSplatLayerCount() const
     {
         return m_Grid ? m_Grid->SplatLayerCount : 0;

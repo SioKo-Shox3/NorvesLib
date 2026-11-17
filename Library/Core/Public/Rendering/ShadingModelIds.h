@@ -1,5 +1,6 @@
 ﻿// GBuffer の Normal.w にシェーディングモデル ID と受け手の印を整数として詰める。
 // Material.a は材質値 P0、Emissive.a は材質値 P1 を保持する。
+// DefaultLit の P1 は水たまりの被覆 0〜1（水たまりが無ければ 0）。
 // シェーディングモデル ID の 4〜15 は予約する。
 // Assets/Shaders/Common/GBufferEncoding.glsl と同じ定数表を保ち、ShadingModelContractTest が突き合わせる。
 // 半透明（forward_transparent.frag）とパストレーサーは ID を読まず DefaultLit として扱う。

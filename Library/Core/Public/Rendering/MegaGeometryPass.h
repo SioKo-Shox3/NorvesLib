@@ -946,6 +946,10 @@ namespace NorvesLib::Core::Rendering
             FrameSlot *Slot = nullptr;
             float TerrainWetness = 0.0f; // 同じフレームの写しから読んだ地形の濡れ度
             FrameUploadAllocation EnvironmentConstants; // 同じフレームの記録へ渡す環境の定数
+            FrameUploadAllocation PuddleSurfaceConstants; // 同じフレームの水たまりと雨の遮蔽の定数
+            RHI::TexturePtr OverheadHeightMap;
+            RHI::SamplerPtr OverheadHeightMapSampler;
+            RHI::TexturePtr PuddleField;
         };
 
         /**
@@ -1213,7 +1217,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief グラフの GBuffer の Texture を引いて、添付に使うかを決める */
         void ResolveGraphGBufferTextures(RenderGraphResources &resources);
         /** @brief 表の準備（PrepareSceneTables）と、記録を ID のラスタへ移すかを決め、Execute が積むものを返す */
-        PreparedFrameAction PrepareFrame(ViewRenderContext &context);
+        PreparedFrameAction PrepareFrame(ViewRenderContext &context, RenderGraphResources *resources);
         /** @brief 記録（ID のラスタのワーカー）が引く材質の定数の 1x1 テクスチャ（作成と転送を伴う）を先に作る */
         void PrepareConstantMaterialTextures();
 
@@ -1428,10 +1432,12 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_GBufferDepthHandle;
         RGResourceHandle m_GBufferVelocityHandle;
+        RGTextureHandle m_PuddleFieldHandle;
 
         // デフォルトPBRテクスチャ（マテリアル未設定時のフォールバック）
         Container::TUniquePtr<ConstantMaterialTextureCache> m_ConstantMaterialTextures;
         RHI::BufferPtr m_DefaultEnvironmentBuffer; // 環境を借りられないときの不変な既定値
+        RHI::BufferPtr m_DefaultPuddleSurfaceBuffer; // 水たまりの定数を借りられないときの無効値
         RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 — Albedo/AO/Roughnessデフォルト
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト

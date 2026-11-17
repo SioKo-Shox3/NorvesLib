@@ -354,6 +354,7 @@ set(PRIVATE_SOURCES
     Private/Environment/SunPath.cpp
     Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
+    Private/Rendering/PuddleSurfaceParams.h
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp

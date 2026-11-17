@@ -345,7 +345,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         TextureHandle NormalArrayTexture;   // 2D 配列（bNormalTwoChannel なら BC5 の XY）
         TextureHandle ArmArrayTexture;      // 2D 配列（R=AO・G=粗さ・B=金属度・A=高さ）
         bool bNormalTwoChannel = false;
-        TextureHandle SplatArrayTexture;    // 2 層の 2D 配列（RGBA8 線形。層 0 = SPL0 = 層 0〜3 の重み、層 1 = SPL1 = 層 4〜7）
+        TextureHandle SplatArrayTexture;    // 3 層の 2D 配列（RGBA8 線形。層 0 = SPL0 = 層 0〜3 の重み、層 1 = SPL1 = 層 4〜7、層 2 の R = PDL0 = 水たまりの凹み度）
         float SplatMinXZ[2] = {0.0f, 0.0f}; // 地図の外縁（画素の縁）のワールドの X・Z の最小（u = 0・v = 0）
         float SplatMaxXZ[2] = {0.0f, 0.0f}; // 同じく最大（u = 1・v = 1）
         int32_t CliffLayer = -1;            // 崖の層（塗りでなく傾斜で重みを決め、3 方向投影で標本する。負ならなし）
