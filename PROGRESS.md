@@ -12105,3 +12105,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 描画のパスを詰めた列の間接の描画へ切り替え、能力が無ければ直の描画へ落とす: 着地(直し 0 回)
 - U2 足のしぶきの効果のデータと、効果のファイルの読み込みの関数: 着地(直し 0 回)
 - U1 足のしぶきの放出を決める純関数 FootSplashPlanner: 着地(直し 1 回)
+- U3 接地のイベントから放出を積む FootSplashComponent: 着地(直し 1 回)
