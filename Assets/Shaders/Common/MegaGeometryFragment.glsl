@@ -74,6 +74,10 @@ layout(std140, set = 0, binding = 23) uniform TerrainSplatBlock
 #include "Common/WetSurface.glsl"
 #include "Common/VelocityEncoding.glsl"
 NORVES_DECLARE_ENVIRONMENT_UBO(0, 24)
+// MegaGeometryPass.cpp の PuddleSurfaceBindingIndex・OverheadHeightMapBindingIndex・PuddleFieldBindingIndex
+NORVES_DECLARE_PUDDLE_SURFACE_UBO(0, 26)
+layout(set = 0, binding = 27) uniform sampler2D overheadHeightMap;
+layout(set = 0, binding = 28) uniform sampler2D puddleField;
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SpecularAntiAliasing.glsl"
 #include "Common/SparseResidencySampling.glsl"
@@ -277,10 +281,14 @@ void main()
     vec4 params = ResolveShadingParams(vec4(-1.0), mvp.shadingParams);
     uint id = uint(mvp.vtFeedbackParams.w + 0.5);
     vec3 material = textureSamples.Material;
-    ApplyWetSurfaceFromEnvironment(albedo, material.y, material.x, normal, normalize(geometricNormal),
-                                   u_Environment.params,
-                                   ResolveWetSurfaceResponse(-1.0, mvp.shadingParams.x,
-                                                             id == GBUFFER_SHADING_MODEL_DEFAULT_LIT));
+    float rainExposure = PuddleRainExposure(overheadHeightMap, u_PuddleSurface.params, fragWorldPos);
+    float puddleCavity = bTerrainSplat
+        ? TerrainSplatPuddlePotential(terrainSplatArray, splat, fragWorldPos.xz)
+        : SamplePuddleFieldLayer(puddleField, u_PuddleSurface.params.puddleField, fragWorldPos.xz);
+    float puddleCoverage = ApplyWetSurfaceWithPuddle(
+        albedo, material.y, material.x, normal, normalize(geometricNormal), u_Environment.params,
+        ResolveWetSurfaceResponse(-1.0, mvp.shadingParams.x, id == GBUFFER_SHADING_MODEL_DEFAULT_LIT),
+        rainExposure, puddleCavity, fragWorldPos.xz);
     outAlbedo = vec4(albedo, mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a);
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
@@ -298,6 +306,6 @@ void main()
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(emissiveChromaticity,
                                                                 fragEmissiveColor.a,
                                                                 mvp.frameParams.y),
-                                       params.y);
+                                       id == GBUFFER_SHADING_MODEL_DEFAULT_LIT ? puddleCoverage : params.y);
     outVelocity = ComputeVelocity();
 }

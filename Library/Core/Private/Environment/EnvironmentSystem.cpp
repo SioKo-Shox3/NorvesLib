@@ -92,6 +92,27 @@ namespace NorvesLib::Core::Environment
             (void)command;
         }
 
+        double ClockHoursForGameTime(double seconds)
+        {
+            double hours = std::fmod(seconds / 3600.0, 24.0);
+            if (hours < 0.0)
+            {
+                hours += 24.0;
+            }
+            return std::isfinite(hours) && hours < 24.0 ? hours : 0.0;
+        }
+
+        void WarnClockDataLoadFailure(const char* fileName, const Container::String& error)
+        {
+#ifdef UNICODE
+            LOG_WARNING("EnvironmentSystem の時計の資料 %s を読み込めません: %ls", fileName, error.c_str());
+#else
+            LOG_WARNING("EnvironmentSystem の時計の資料 %s を読み込めません: %s", fileName, error.c_str());
+#endif
+            (void)fileName;
+            (void)error;
+        }
+
         double FieldPeriod(EEnvironmentField field)
         {
             switch (field)
@@ -121,6 +142,7 @@ namespace NorvesLib::Core::Environment
         m_bRainTuningPublishPending = true;
         m_SceneBase = base;
         m_BaseState = SanitizeEnvironmentState(initial);
+        LoadClockData();
         ClearTransitions();
         m_Overrides.clear();
         m_TotalNanoseconds = NanosecondsForGameTime(m_BaseState.GameTimeSeconds);
@@ -131,6 +153,13 @@ namespace NorvesLib::Core::Environment
         m_StepCount = StepsForNanoseconds(m_TotalNanoseconds);
         m_bEnabled = true;
         m_bRestorePending = false;
+        ApplyClock();
+        if (IsClockActive())
+        {
+            const double endSeconds = m_BaseState.GameTimeSeconds;
+            m_BaseState.Wetness = RestoreClockWetness(endSeconds - WetnessRestoreWindowSeconds,
+                                                      endSeconds, m_BaseState.Wetness);
+        }
         RebuildEffective();
         Notify(EEnvironmentChange::Enabled);
     }
@@ -153,6 +182,32 @@ namespace NorvesLib::Core::Environment
     bool EnvironmentSystem::IsEnabled() const
     {
         return m_bEnabled;
+    }
+
+    bool EnvironmentSystem::IsClockActive() const
+    {
+        return m_bEnabled && m_BaseState.SunMode == EEnvironmentSunMode::Clock;
+    }
+
+    double EnvironmentSystem::GetClockHours() const
+    {
+        return ClockHoursForGameTime(m_BaseState.GameTimeSeconds);
+    }
+
+    void EnvironmentSystem::SetManualSunOverride(float altitudeDegrees, float azimuthDegrees)
+    {
+        EnvironmentTarget target;
+        target.Mask = EnvironmentFieldBit(EEnvironmentField::SunAltitude) |
+                      EnvironmentFieldBit(EEnvironmentField::SunAzimuth);
+        target.Values = m_BaseState;
+        target.Values.SunAltitudeDegrees = altitudeDegrees;
+        target.Values.SunAzimuthDegrees = azimuthDegrees;
+        PushOverride(ManualSunOverrideScope, target);
+    }
+
+    void EnvironmentSystem::ClearManualSunOverride()
+    {
+        PopOverride(ManualSunOverrideScope);
     }
 
     void EnvironmentSystem::SetTarget(const EnvironmentTarget& target)
@@ -289,9 +344,14 @@ namespace NorvesLib::Core::Environment
             return;
         }
 
+        const uint32_t previousSeed = m_BaseState.Seed;
         const uint32_t nextDiscontinuityId = m_BaseState.DiscontinuityId + 1u;
         m_BaseState = SanitizeEnvironmentState(state);
         m_BaseState.DiscontinuityId = nextDiscontinuityId;
+        if (m_BaseState.Seed != previousSeed)
+        {
+            RebuildWeatherTrack();
+        }
         ClearTransitions();
         m_TotalNanoseconds = NanosecondsForGameTime(m_BaseState.GameTimeSeconds);
         if (m_TotalNanoseconds == std::numeric_limits<uint64_t>::max())
@@ -299,15 +359,41 @@ namespace NorvesLib::Core::Environment
             m_BaseState.GameTimeSeconds = static_cast<double>(m_TotalNanoseconds) * 1e-9;
         }
         m_StepCount = StepsForNanoseconds(m_TotalNanoseconds);
+        ApplyClock();
+        if (IsClockActive())
+        {
+            const double endSeconds = m_BaseState.GameTimeSeconds;
+            m_BaseState.Wetness = RestoreClockWetness(endSeconds - WetnessRestoreWindowSeconds,
+                                                      endSeconds, m_BaseState.Wetness);
+        }
         RebuildEffective();
         Notify(EEnvironmentChange::Loaded);
     }
 
     void EnvironmentSystem::SkipTime(double seconds)
     {
+        SkipBy(seconds);
+    }
+
+    void EnvironmentSystem::SkipTo(double gameTimeSeconds)
+    {
         if (!m_bEnabled)
         {
-            WarnDisabledCommand("SkipTime");
+            WarnDisabledCommand("SkipTo");
+            return;
+        }
+        if (!std::isfinite(gameTimeSeconds) || gameTimeSeconds <= m_BaseState.GameTimeSeconds)
+        {
+            return;
+        }
+        SkipBy(gameTimeSeconds - m_BaseState.GameTimeSeconds);
+    }
+
+    void EnvironmentSystem::SkipBy(double seconds)
+    {
+        if (!m_bEnabled)
+        {
+            WarnDisabledCommand("SkipTo");
             return;
         }
         if (!std::isfinite(seconds) || seconds <= 0.0)
@@ -315,11 +401,37 @@ namespace NorvesLib::Core::Environment
             return;
         }
 
-        const double delta = seconds < MaxSkipSeconds ? seconds : MaxSkipSeconds;
-        AdvanceNanoseconds(static_cast<uint64_t>(std::llround(delta * static_cast<double>(NanosecondsPerSecond))));
+        if (seconds > MaxSkipSeconds)
+        {
+            LOG_WARNING("EnvironmentSystem の SkipTo の移動時間が上限を超えたため丸めます");
+            seconds = MaxSkipSeconds;
+        }
+
+        const double oldTimeSeconds = m_BaseState.GameTimeSeconds;
+        const uint64_t nanoseconds = static_cast<uint64_t>(std::llround(seconds * static_cast<double>(NanosecondsPerSecond)));
+        if (IsClockActive())
+        {
+            const uint64_t maximum = std::numeric_limits<uint64_t>::max();
+            m_TotalNanoseconds = nanoseconds > maximum - m_TotalNanoseconds
+                ? maximum : m_TotalNanoseconds + nanoseconds;
+            m_StepCount = StepsForNanoseconds(m_TotalNanoseconds);
+            RefreshFields();
+            m_BaseState.GameTimeSeconds = static_cast<double>(m_TotalNanoseconds) * 1e-9;
+            ApplyClock();
+            const double windowStartSeconds = m_BaseState.GameTimeSeconds - WetnessRestoreWindowSeconds;
+            m_BaseState.Wetness = RestoreClockWetness(oldTimeSeconds > windowStartSeconds
+                                                          ? oldTimeSeconds : windowStartSeconds,
+                                                      m_BaseState.GameTimeSeconds, m_BaseState.Wetness);
+        }
+        else
+        {
+            AdvanceNanoseconds(nanoseconds);
+        }
+        const double newTimeSeconds = m_BaseState.GameTimeSeconds;
         ++m_BaseState.DiscontinuityId;
         RebuildEffective();
         Notify(EEnvironmentChange::TimeSkipped);
+        m_OnTimeSkipped.Broadcast(oldTimeSeconds, newTimeSeconds);
     }
 
     void EnvironmentSystem::Tick(float worldDeltaSeconds)
@@ -329,8 +441,16 @@ namespace NorvesLib::Core::Environment
             return;
         }
 
-        const double delta = static_cast<double>(worldDeltaSeconds) < MaxTickDeltaSeconds
+        double delta = static_cast<double>(worldDeltaSeconds) < MaxTickDeltaSeconds
             ? static_cast<double>(worldDeltaSeconds) : MaxTickDeltaSeconds;
+        if (IsClockActive())
+        {
+            delta *= m_BaseState.ClockTimeScale;
+        }
+        if (delta <= 0.0)
+        {
+            return;
+        }
         AdvanceNanoseconds(static_cast<uint64_t>(std::llround(delta * static_cast<double>(NanosecondsPerSecond))));
     }
 
@@ -358,6 +478,19 @@ namespace NorvesLib::Core::Environment
     {
         EnvironmentResolved resolved = ResolveEnvironment(m_EffectiveState, m_SceneBase);
         resolved.Fog.DensityAtBaseHeight += Rendering::MakeRainFogBoost(m_EffectiveState.RainIntensity, m_RainTuning);
+        bool bSunOverridden = false;
+        constexpr EnvironmentFieldMask sunMask = EnvironmentFieldBit(EEnvironmentField::SunAltitude) |
+                                                 EnvironmentFieldBit(EEnvironmentField::SunAzimuth);
+        for (const OverrideEntry& entry : m_Overrides)
+        {
+            if ((entry.Target.Mask & sunMask) != 0)
+            {
+                bSunOverridden = true;
+                break;
+            }
+        }
+        resolved.Environment.SunRevisionQuantizationDegrees = IsClockActive() && !bSunOverridden
+            ? ClockSunRevisionQuantizationDegrees : 0.0f;
         return resolved;
     }
 
@@ -632,6 +765,124 @@ namespace NorvesLib::Core::Environment
         return m_OnChanged;
     }
 
+    MulticastDelegate<double, double>& EnvironmentSystem::OnTimeSkipped()
+    {
+        return m_OnTimeSkipped;
+    }
+
+    void EnvironmentSystem::LoadClockData()
+    {
+        Container::String error;
+        m_SunPath = SunPathSettings{};
+        if (!LoadSunPath(m_PresetRoot, m_SunPath, &error))
+        {
+            WarnClockDataLoadFailure("SunPath.json", error);
+        }
+        m_WeatherSchedule = MakeDefaultWeatherScheduleSettings();
+        if (!LoadWeatherSchedule(m_PresetRoot, m_WeatherSchedule, &error))
+        {
+            WarnClockDataLoadFailure("WeatherSchedule.json", error);
+        }
+        m_bWeatherReady = false;
+        m_WeatherPresets.clear();
+        if (!LoadWeatherPresets(m_PresetRoot, m_WeatherSchedule, m_WeatherPresets, &error))
+        {
+            WarnClockDataLoadFailure("*.env.json", error);
+            LOG_WARNING("EnvironmentSystem の時計は天候の資料が揃わないため太陽だけを動かします");
+            return;
+        }
+        RebuildWeatherTrack();
+    }
+
+    void EnvironmentSystem::RebuildWeatherTrack()
+    {
+        m_bWeatherReady = !m_WeatherPresets.empty() &&
+                          m_WeatherPresets.size() == m_WeatherSchedule.PresetNames.size() &&
+                          MakeWeatherTrack(m_WeatherSchedule, m_BaseState.Seed, m_WeatherTrack);
+        if (!m_bWeatherReady)
+        {
+            LOG_WARNING("EnvironmentSystem の天候の並びを作れないため時計は太陽だけを動かします");
+        }
+    }
+
+    bool EnvironmentSystem::EvaluateClockWeather(double gameTimeSeconds, EnvironmentTarget& outTarget) const
+    {
+        if (!m_bWeatherReady)
+        {
+            return false;
+        }
+        const WeatherSample sample = SampleWeatherTrack(m_WeatherSchedule, m_WeatherTrack,
+                                                       ClockHoursForGameTime(gameTimeSeconds));
+        BlendWeatherPresets(m_WeatherPresets[sample.FromPreset], m_WeatherPresets[sample.ToPreset],
+                            sample.Blend, outTarget);
+        return true;
+    }
+
+    float EnvironmentSystem::ScheduledRainAt(double gameTimeSeconds) const
+    {
+        EnvironmentTarget target;
+        return EvaluateClockWeather(gameTimeSeconds, target) &&
+               (target.Mask & EnvironmentFieldBit(EEnvironmentField::RainIntensity)) != 0
+            ? target.Values.RainIntensity : m_BaseState.RainIntensity;
+    }
+
+    float EnvironmentSystem::RestoreClockWetness(double windowStartSeconds, double endSeconds, float startWetness) const
+    {
+        float wetness = startWetness;
+        double timeSeconds = windowStartSeconds;
+        while (timeSeconds < endSeconds)
+        {
+            const double nextStepSeconds = timeSeconds + WetnessRestoreStepSeconds;
+            const double nextTimeSeconds = nextStepSeconds < endSeconds ? nextStepSeconds : endSeconds;
+            const double deltaSeconds = nextTimeSeconds - timeSeconds;
+            float rain = ScheduledRainAt(timeSeconds + deltaSeconds * 0.5);
+            for (const OverrideEntry& entry : m_Overrides)
+            {
+                if ((entry.Target.Mask & EnvironmentFieldBit(EEnvironmentField::RainIntensity)) != 0)
+                {
+                    rain = entry.Target.Values.RainIntensity;
+                }
+            }
+            wetness = AdvanceEnvironmentWetness(wetness, rain, deltaSeconds,
+                                                m_BaseState.WetTimeConstantSeconds,
+                                                m_BaseState.DryTimeConstantSeconds);
+            timeSeconds = nextTimeSeconds;
+        }
+        return wetness;
+    }
+
+    void EnvironmentSystem::ApplyClock()
+    {
+        if (!IsClockActive())
+        {
+            return;
+        }
+        const float hours = static_cast<float>(GetClockHours());
+        m_BaseState.TimeOfDayHours = hours < 24.0f ? hours : 0.0f;
+        const SunAltAz sun = ComputeSunAltAz(m_BaseState.TimeOfDayHours, m_SunPath);
+        m_BaseState.SunAltitudeDegrees = sun.AltitudeDegrees;
+        m_BaseState.SunAzimuthDegrees = sun.AzimuthDegrees;
+
+        EnvironmentTarget target;
+        if (!EvaluateClockWeather(m_BaseState.GameTimeSeconds, target))
+        {
+            return;
+        }
+        constexpr EnvironmentFieldMask excludedMask = EnvironmentFieldBit(EEnvironmentField::SunAltitude) |
+            EnvironmentFieldBit(EEnvironmentField::SunAzimuth) | EnvironmentFieldBit(EEnvironmentField::TimeOfDayHours) |
+            EnvironmentFieldBit(EEnvironmentField::Wetness);
+        const EnvironmentFieldMask mask = target.Mask & ~excludedMask;
+        for (uint32_t index = 0; index < EnvironmentFieldCount; ++index)
+        {
+            const auto field = static_cast<EEnvironmentField>(index);
+            if ((mask & EnvironmentFieldBit(field)) != 0)
+            {
+                SetEnvironmentField(m_BaseState, field, GetEnvironmentField(target.Values, field));
+                m_Transitions[index].bActive = false;
+            }
+        }
+    }
+
     void EnvironmentSystem::ClearTransitions()
     {
         for (FieldTransition& transition : m_Transitions)
@@ -726,7 +977,9 @@ namespace NorvesLib::Core::Environment
 
     void EnvironmentSystem::StepOnce()
     {
-        float rain = EvaluateField(EEnvironmentField::RainIntensity, m_StepCount);
+        float rain = IsClockActive() && m_bWeatherReady
+            ? ScheduledRainAt(static_cast<double>(m_StepCount) / static_cast<double>(StepsPerSecond))
+            : EvaluateField(EEnvironmentField::RainIntensity, m_StepCount);
         for (const OverrideEntry& entry : m_Overrides)
         {
             if ((entry.Target.Mask & EnvironmentFieldBit(EEnvironmentField::RainIntensity)) != 0)
@@ -753,6 +1006,7 @@ namespace NorvesLib::Core::Environment
         }
         RefreshFields();
         m_BaseState.GameTimeSeconds = static_cast<double>(m_TotalNanoseconds) * 1e-9;
+        ApplyClock();
         RebuildEffective();
     }
 

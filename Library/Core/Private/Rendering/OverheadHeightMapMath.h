@@ -107,6 +107,25 @@ namespace NorvesLib::Core::Rendering
     bool EvaluateOverheadRoofTopY(
         const SkyOccluderProxy& proxy, float x, float z, float& outTopY);
 
+    /** @brief GLSL の OVERHEAD_RAIN_SURFACE_BIAS_METERS と同じ雨の表面バイアス。 */
+    inline constexpr float OverheadRainSurfaceBiasMeters = 0.15f;
+
+    /**
+     * @brief 点の真上の最も高い天面によって雨が遮られるかを返す。
+     * 屋根があれば outRoofY に最高点を書き、屋根がないか座標が非有限なら変更しない。
+     * 遮蔽マップの窓では切り取らず、呼び手から近くの遮蔽物を受け取る。
+     */
+    bool IsPointShelteredFromRain(
+        Container::Span<const SkyOccluderProxy> occluders, float x, float y, float z,
+        float* outRoofY = nullptr);
+
+    /**
+     * @brief 屋根の下なら 0、雨に当たるなら 1 を返す。
+     * 犬の毛の FurCoatComponent::SetRainExposure には、雨宿りの体積の値とこの値の小さい方を渡す。
+     */
+    float ComputeOverheadRainExposure(
+        Container::Span<const SkyOccluderProxy> occluders, float x, float y, float z);
+
     // 雨の遮蔽パスが描画済みと準備中の窓、遮蔽物の収集結果を保持する。
     struct OverheadHeightMapPassState
     {

@@ -4,6 +4,8 @@
 #include "Container/VariableArray.h"
 #include "Delegate/MulticastDelegate.h"
 #include "Environment/EnvironmentState.h"
+#include "Environment/SunPath.h"
+#include "Environment/WeatherSchedule.h"
 #include "Particle/VfxEffectSystem.h"
 #include "Rendering/RainModel.h"
 
@@ -36,7 +38,10 @@ namespace NorvesLib::Core::Environment
      *
      * 既定では無効で、無効の間は空・霧・雲の層・風を書き込まず、シーンの直接設定が効く。
      * Enable 後はポーズ中も毎フレーム、空・霧・雲の層・風・環境を書き出すため、シーンの直接設定は
-     * 次のフレームで上書きされる。有効中の天気と太陽は SetTarget または SetImmediate で変える。
+     * 次のフレームで上書きされる。Manual では天気と太陽を SetTarget または SetImmediate で変える。
+     * Clock では GameTimeSeconds / 3600 を 24 時間に巻き、太陽は SunPath、天候は種から作る予定表で決める。
+     * ClockTimeScale は Clock の Tick の進みにだけ掛け、手動の太陽は上書きの層で重ねる。
+     * Clock が太陽を動かす間だけ、SceneRevision の太陽の量子化の幅を 1 度にする。
      * 解決には Enable で受けた場面の土台を使い、状態にある欄だけを重ねて大気定数などを保持する。
      * Enable で RainTuning.json を読み、上書き後の雨量に応じた霧の密度の増分を Resolve で足す。
      * Enable 後の最初の PublishTo で雨の調整値を一度渡す。
@@ -47,7 +52,8 @@ namespace NorvesLib::Core::Environment
      *
      * Tick には TimeSystem の World チャンネルの dt を渡し、ポーズの門の中でのみ呼ぶ。
      * World の倍率は遷移と濡れにも適用され、FramePacket::TotalTime の壁時計は使わない。
-     * SetImmediate・SnapToTarget・LoadState・SkipTime は描画履歴を切る DiscontinuityId を増やす。
+     * SetImmediate・SnapToTarget・LoadState・SkipTime・SkipTo は描画履歴を切る DiscontinuityId を増やす。
+     * OnTimeSkipped は時刻の通知であり、描画履歴を切る印ではない。
      * SetTarget と上書きの層は増やさない。無効中の状態変更命令は無視して警告する。
      */
     class EnvironmentSystem
@@ -56,10 +62,25 @@ namespace NorvesLib::Core::Environment
         static constexpr uint64_t StepsPerSecond = 30;
         static constexpr double MaxTickDeltaSeconds = 1.0;
         static constexpr double MaxSkipSeconds = 86400.0;
+        /// 濡れの復元で積分する過去の長さ（秒）と刻み（秒）。
+        static constexpr double WetnessRestoreWindowSeconds = 3600.0;
+        static constexpr double WetnessRestoreStepSeconds = 10.0;
+        /// 時計が太陽を動かすときに SceneRevision へ渡す量子化の幅（度）。
+        static constexpr float ClockSunRevisionQuantizationDegrees = 1.0f;
+        /// 手動の太陽の上書きに使う上書きの層の識別子。
+        static constexpr EnvironmentOverrideScope ManualSunOverrideScope = 0xFFFFFFFFu;
 
         void Enable(const EnvironmentState& initial, const EnvironmentSceneBase& base);
         void Disable();
         bool IsEnabled() const;
+        /// 有効で、太陽の指定が Clock なら true。
+        bool IsClockActive() const;
+        /// 時計の時刻（時、[0, 24)）。GameTimeSeconds / 3600 を 24 時間に巻いた値。
+        double GetClockHours() const;
+        /// 手動の太陽を上書きの層で重ねる。Clock の太陽より勝つ。DiscontinuityId は進めない。
+        void SetManualSunOverride(float altitudeDegrees, float azimuthDegrees);
+        /// 手動の太陽の上書きを外す。
+        void ClearManualSunOverride();
 
         void SetTarget(const EnvironmentTarget& target);
         /// プリセットの根を設定する。無効中も受け付け、有効・無効の切り替え後も保持する。空なら作業ディレクトリを使う。
@@ -73,6 +94,10 @@ namespace NorvesLib::Core::Environment
         /// JSON から読んだ状態（FromJson）を当てる口。DiscontinuityId を 1 進める。
         void LoadState(const EnvironmentState& state);
         void SkipTime(double seconds);
+        /// ゲーム時刻を T（秒）まで飛ばす。T が今以下・非有限なら何もしない。飛ばす長さは MaxSkipSeconds で挟む。
+        /// Clock では天候を T の値にし、濡れを予定表の雨量で復元する。DiscontinuityId を 1 進め、OnChanged（TimeSkipped）と
+        /// OnTimeSkipped をそれぞれ 1 回呼ぶ。暗転などの画面の演出は呼ぶ側が受け持つ。
+        void SkipTo(double gameTimeSeconds);
         void Tick(float worldDeltaSeconds);
 
         /// 上書きの層を掛けた後の状態。読み手はこれを読む。
@@ -97,6 +122,8 @@ namespace NorvesLib::Core::Environment
 
         /// 状態を変える命令のたびに、変化の種類と上書き後の状態を通知する。
         MulticastDelegate<EEnvironmentChange, const EnvironmentState&>& OnChanged();
+        /// 時刻を飛ばしたあとに、飛ばす前と後のゲーム時刻（秒）を通知する。履歴を切る印ではない（印は DiscontinuityId）。
+        MulticastDelegate<double, double>& OnTimeSkipped();
 
     private:
         enum class RainNearParameter : uint32_t
@@ -151,6 +178,13 @@ namespace NorvesLib::Core::Environment
         bool LoadRainNearEffect(Container::String& error);
         void SetRainNearParameter(Particle::VfxEffectSystem& effects, RainNearParameter parameter,
             uint32_t moduleIndex, const char* name, const Particle::VfxValue& value);
+        void LoadClockData();
+        void RebuildWeatherTrack();
+        void ApplyClock();
+        bool EvaluateClockWeather(double gameTimeSeconds, EnvironmentTarget& outTarget) const;
+        float ScheduledRainAt(double gameTimeSeconds) const;
+        float RestoreClockWetness(double windowStartSeconds, double endSeconds, float startWetness) const;
+        void SkipBy(double seconds);
         void ClearTransitions();
         float EvaluateField(EEnvironmentField field, uint64_t step) const;
         void RefreshFields();
@@ -175,6 +209,11 @@ namespace NorvesLib::Core::Environment
         bool m_bRainNearParameterWarning = false;
         /// プリセットの根。既定の空文字列は作業ディレクトリを表す。
         Container::String m_PresetRoot;
+        SunPathSettings m_SunPath;
+        WeatherScheduleSettings m_WeatherSchedule;
+        Container::VariableArray<EnvironmentTarget> m_WeatherPresets;
+        WeatherTrack m_WeatherTrack;
+        bool m_bWeatherReady = false;
         EnvironmentSceneBase m_SceneBase;
         EnvironmentState m_BaseState;
         EnvironmentState m_EffectiveState;
@@ -183,5 +222,6 @@ namespace NorvesLib::Core::Environment
         FieldTransition m_Transitions[EnvironmentFieldCount] = {};
         Container::VariableArray<OverrideEntry> m_Overrides;
         MulticastDelegate<EEnvironmentChange, const EnvironmentState&> m_OnChanged;
+        MulticastDelegate<double, double> m_OnTimeSkipped;
     };
 } // namespace NorvesLib::Core::Environment

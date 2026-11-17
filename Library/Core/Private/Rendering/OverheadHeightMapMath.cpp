@@ -408,4 +408,47 @@ namespace NorvesLib::Core::Rendering
         outTopY = static_cast<float>(proxy.CenterY + proxy.HalfExtentY * top);
         return true;
     }
+
+    bool IsPointShelteredFromRain(
+        Container::Span<const SkyOccluderProxy> occluders, float x, float y, float z, float* outRoofY)
+    {
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+        {
+            return false;
+        }
+
+        bool bFoundRoof = false;
+        float roofY = 0.0f;
+        for (const SkyOccluderProxy& proxy : occluders)
+        {
+            if (!IsValidSkyOccluderProxy(proxy) || !DoesSkyOccluderBlockRain(proxy))
+            {
+                continue;
+            }
+
+            float candidateY = 0.0f;
+            const SkyOccluderProxy sanitized = SanitizeSkyOccluderProxy(proxy);
+            if (EvaluateOverheadRoofTopY(sanitized, x, z, candidateY) &&
+                (!bFoundRoof || candidateY > roofY))
+            {
+                bFoundRoof = true;
+                roofY = candidateY;
+            }
+        }
+        if (!bFoundRoof)
+        {
+            return false;
+        }
+        if (outRoofY != nullptr)
+        {
+            *outRoofY = roofY;
+        }
+        return roofY > y + OverheadRainSurfaceBiasMeters;
+    }
+
+    float ComputeOverheadRainExposure(
+        Container::Span<const SkyOccluderProxy> occluders, float x, float y, float z)
+    {
+        return IsPointShelteredFromRain(occluders, x, y, z) ? 0.0f : 1.0f;
+    }
 } // namespace NorvesLib::Core::Rendering

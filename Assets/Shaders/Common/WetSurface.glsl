@@ -1,6 +1,7 @@
 ﻿// GBuffer を書く描画シェーダーが共有する濡れの式。
 // GBuffer の書き手は環境の UBO（NORVES_DECLARE_ENVIRONMENT_UBO）を読み、GBuffer へ書く前に
 // ApplyWetSurfaceFromEnvironment（か ApplyWetSurface）を呼ぶ。
+// 水たまりと雨の遮蔽は ApplyWetSurfaceWithPuddle で掛ける。
 // アルベド・粗さ・金属度・法線へ GBuffer 書き込み前に適用し、最終的な w は GBuffer に書き戻さない。
 // Material.a は材質の値のままとする。
 // CPU 側の写し: Library/Core/Public/Rendering/WetSurface.h
@@ -80,6 +81,8 @@ struct EnvironmentGpuParams
     vec4 reserved; // 予約
 };
 
+#include "Common/Puddle.glsl"
+
 // シェーダーで 1 回だけ宣言し、値は u_Environment.params から読む。
 #define NORVES_DECLARE_ENVIRONMENT_UBO(SET_INDEX, BINDING_INDEX) layout(std140, set = SET_INDEX, binding = BINDING_INDEX) uniform EnvironmentParamsBlock { EnvironmentGpuParams params; } u_Environment;
 
@@ -102,6 +105,25 @@ void ApplyWetSurfaceFromEnvironment(inout vec3 albedo, inout float roughness, in
                                     vec3 geomN, EnvironmentGpuParams env, float response)
 {
     ApplyWetSurface(albedo, roughness, metallic, N, geomN, env.surface.x, env.weather.x, env.surface.y, response);
+}
+
+// 画素ごとの雨の遮蔽 rainExposure（0 = 屋根の下・1 = 雨に当たる）で環境の既定の当たり方を上書きして濡れを掛け、
+// 続けて水たまりを重ねる。返り値は水たまりの被覆（DefaultLit の画素は GBuffer の P1 へ書く）。
+// rainExposure = 1・puddleCavity = 0 なら ApplyWetSurfaceFromEnvironment と同じ演算になる。
+float ApplyWetSurfaceWithPuddle(inout vec3 albedo, inout float roughness, inout float metallic, inout vec3 N,
+                                vec3 geomN, EnvironmentGpuParams env, float response,
+                                float rainExposure, float puddleCavity, vec2 worldXZ)
+{
+    float rain = (rainExposure >= 0.0) ? min(rainExposure, 1.0) : 0.0;
+    float exposure = env.surface.y * rain;
+    exposure = isnan(exposure) ? 0.0 : exposure;
+    ApplyWetSurface(albedo, roughness, metallic, N, geomN, env.surface.x, env.weather.x, exposure, response);
+
+    float sensitivity = (response >= 0.0) ? min(response, 1.0) : 0.0;
+    float coverage = PuddleCoverage(puddleCavity, PuddleWaterLevel(env.weather.x), geomN, exposure) * sensitivity;
+    float rainStrength = (env.weather.y >= 0.0) ? min(env.weather.y, 1.0) : 0.0;
+    ApplyPuddleSurface(albedo, roughness, metallic, N, geomN, coverage, rainStrength * coverage, worldXZ, env.weather.w);
+    return coverage;
 }
 
 #endif

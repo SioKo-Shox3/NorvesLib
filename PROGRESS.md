@@ -12034,14 +12034,38 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: RTGI・DDGI の当たりの点の太陽の影の問い合わせ（`DiffuseIndirect.comp`・`ProbeRadiance.comp`・`ProbeEmitterSampling.glsl` の 0x01）は樹冠を見ないので、光線が当たった樹冠の下の地面は日なたとして照り返しを返す。CPU の正解（`SkyOcclusionReference`）に樹冠だけの組は無い。半透明（`forward_transparent.frag`）は樹冠だけの組を使わない。空の遮蔽の公開を見送ったフレーム（遮蔽物の列の上限超え）は、TLAS は 0x04 のまま照明の補いだけが抜ける。
 - Next: ランナーの評価者の反証（RT の契約・lighting.frag・Public API の危険地帯）。起動と GPU 時間の確かめは G11-GR56-SKY-OCC-CHECK。
 - Notes: 統合ブランチ（feature/scene-launcher）の取り込みの後、TEST-REMOVE-1114 で試験のターゲットが消えて元の verify のビルドの行は MSBuild が MSB1009 で落ちる（取り込み直後の 1 回目は同時に走るほかの枠のビルドで MSBuild が OutOfMemoryException）。verify を残るターゲットの Game のビルド 1 行に揃えた（done-when は変えていない）。取り込み後の `cmake --build build --config Debug --target Game -- /m:1` は EXIT=0・エラー 0 件（`.harness/runs/20261117-113256/sync-rebuild-game.txt`）。
-## G7-GR58-RAIN-NEAR 近距離の雨筋（2026-11-17、run 20261117-163228）
-- U1 カメラの箱の上面へ戻す衝突の応答を CPU と GPU に足す: 着地(直し 0 回)
-- U2 カメラの箱で折り返す粒の描画に箱の縁のフェードを掛ける: 着地(直し 0 回)
-- U3 EnvironmentSystem が近距離の雨のインスタンスを持ち、毎フレーム雨量と風から値を渡す: 着地(直し 1 回)
-- U4 近距離の雨の効果のデータを置き、全体を確かめる: 着地(直し 0 回)
-- Done: `Assets/Data/Vfx/Rain_Near.vfx.json`（GR136 の元の形式。エミッタ 1 つ: Executor=Gpu・RandomStream=Counter・容量 24000・InitShape の CameraBox（半幅 8 m・高さ 10 m）・WrapInCameraBox・SpawnBurst 24000＋SpawnRate 24000/3600・WindInfluence（Coupling 1.5）・ActivationFraction（Ramp 0.02）・CollisionPlane と CollisionDepth を ReturnToCameraBoxTop・GpuSpriteRenderer の VelocityStretch・PostTAA・AmbientTinted・霧の影響 1・シャッター 1/48 s・幅 1px 未満の補償・近距離のフェード 1.5 m）を置いた。`EnvironmentSystem::Enable` がこれを `LoadVfxEffectFromJson`（スキーマの検証つき）で読み、読めない・エミッタが 1 つでない・Executor が Gpu でない・必要なモジュールが欠けるときは警告のログを出して雨を出さない。`EnvironmentSystem::UpdateRainNear(VfxEffectSystem&)` を `ApplicationProcessor` の `PublishTo` の直後で毎フレーム呼び、有効で雨量 > 0 の間だけ `GetParticleSystem().GetVfxEffects()` にインスタンスを 1 つ持ち、`EvaluateRainNear` の有効な割合・不透明度（色の倍率と組）・太さ・落ちる速さ（初速度と加速度）と RainTuning の箱・シャッター・近距離のフェードを、変わったときに `SetModuleParameter` で渡す。雨量 0・無効・読めないときは破棄する（粒も描画も 0）。粒の衝突の応答 `ReturnToCameraBoxTop`（値 4）を CPU と GPU に足した（CameraBox の粒が箱の上面より下の面に着いたら高さだけ上面へ戻し、同じ刻みの残りの衝突を調べない。面が上面以上なら無視、CameraBox 以外は Kill）。GPU の粒の描画に箱の縁のフェード（CameraBox で WrapInCameraBox のエミッタだけ、各軸の半径の 15% の帯）を足した。箱の中心は前からの GPU 側の扱い（シミュレーションも描画もパケットのメインのカメラの位置）で Entity を動かさない。筋の長さは前からの VelocityStretch（粒とカメラの相対速度 × StreakShutterSeconds、カメラが不連続なフレームはカメラの項 0）。
-- 証拠: `.harness/runs/20261117-163228/G7-GR58-RAIN-NEAR-U4-verify.txt`。全単位を着地させた木で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・コンパイラとリンカの error 0 件で Game.exe までリンク。AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が `vfx_cooked bytes=440 emitters=1` で終了コード 0（スキーマの検証を通る）。粒のシェーダー 4 本（ParticleUpdate.comp・ParticleSpawn.comp・ParticleDraw.frag・ParticleDraw.vert）が glslc で SHADER_OK。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
-- 試験は作らない決まりで、done-when の `RainStreakVulkanTest`・`R58RainSweepVulkanTest`・`R58RainTaaVulkanTest`・閾値の `R58RainSweep.tsv`・`RainParametersTest` と `EnvironmentStateTest` への追加は作っていない。verify の ctest の行も回していない。撮影・GPU の計測・Game の起動の確かめも回さない決まり。
-- 採った判断: 雨は天候用の常駐 Entity（ParticleEmitterComponent）でなく、EnvironmentSystem が VfxEffectSystem のインスタンスを持つ（雨は場面の物でなく気象の一部で、雨量と同じ所で寿命を決められ、シーンのデータに雨の Entity を置かずに済むため）。EnvironmentSystem は VfxEffectSystem へのポインタを持たず（エンジンのメンバの破棄の順に依らない）、毎フレームの呼び出しのために paths の外の `Library/Core/Private/Engine/ApplicationProcessor.cpp` に呼び出しの 1 行を足した。WindInfluence は速度の 3 軸を風（y は 0）へ寄せるので、加速度に (0, −落ちる速さ × Coupling, 0) を渡して定常の速度を (風, −落ちる速さ) にした（傾きは atan(風速 / 落ちる速さ)、風 4 m/s・落ちる速さ 8 m/s で 26.6°）。2.4 万粒は作った時の SpawnBurst で箱を満たし、寿命 3600 s（スキーマの上限）の粒を SpawnRate 24000/3600 で入れ替えてリングの中で数を保つ。平面の衝突は場面に依らない床の下限（GroundY −1000 m）にし、見える面は深度の衝突が受け持つ（固定の高さの平面は、地面の低い場面で空中に雨の床を作るため）。評価の値に当たるエミッタの性質が無いので SetEmitterProperty は使っていない。値は変わったときだけ渡す（`SetModuleParameter` は毎回効果全体を検証するため）。
-- 既知の限界: 近距離のフェードは描画の既存の 1 つの距離（近面から NearFadeDistance で 0→1）で、RainTuning の NearFadeZeroMeters（0.5 m）は使っていない（NearFadeFullMeters 1.5 m を渡す）。箱の縁のフェードの帯（半径の 15%）はシェーダーの定数で、効果のデータでは変えられない（どちらもデータにするには `GpuParticleTypes.h` の GPU のエミッタの定数に欄が要る）。落ちる速さのばらつき（10%）は初速度にだけ入り、風への寄せ（時定数 1/1.5 s）で薄れる。生成の速さで入れ替わる粒（毎秒約 6.7 個）は箱の中のどこにでも現れる。
-- Next: ランナーの評価者の反証（危険地帯: EnvironmentSystem の寿命・ApplicationProcessor の毎フレームの経路・GPU の粒のシェーダー）。撮影・golden・TAA の比較は G7-GR58-CHECK（回さない決まり）。人が見るときの見どころ: `--scene=rendering3dtest --environment-preset=heavy_rain` で、カメラの周りに雨筋が降り、風で傾き、カメラを動かすと筋が伸びること。雨量を下げる・上げると筋が突然現れず薄く減り増えること。カメラの周り 8 m の縁と頭上 5 m で筋が急に切れないこと。画面に見える地面や屋根で筋が止まること。雨の無いシーン（ランチャーの各シーン・Rendering3DTest の既定）の見た目が変わらないこと。
+
+- U1 SceneRevision の太陽の量子化と、雲の層の被覆・風をハッシュから外す: 着地(直し 0 回)
+- U2 気象の状態に時計の倍率の欄を足し、JSON の保存に載せる: 着地(直し 0 回)
+- U3 EnvironmentSystem の時計(太陽・天候・倍率・手動の上書き・量子化の幅): 着地(直し 0 回)
+- U4 SkipTo と濡れの復元・OnTimeSkipped・時計の状態の読み込みでの復元: 着地(直し 0 回)
+- U5 Game の時計の引数と Rendering3DTest の手動の太陽の上書き: 着地(直し 0 回)
+## G11-GR55-CLOCK-SKIP 気象を時計と天候の予定表で動かし、時刻の一括スキップと動く太陽での RTGI の履歴の扱いを入れる（2026-11-17、run 20261117-131620）
+- Done: `EnvironmentParameters::SunRevisionQuantizationDegrees` を足し、`HashSceneEnvironmentRevision` は幅が正のとき空の太陽の高度・方位を幅ごとの格子番号で入れる（手動のときは 0 で今のまま）。雲の層の `Coverage` と風を SceneRevision のハッシュから外した。
+- Done: `EnvironmentState::ClockTimeScale`（JSON の `sun.timeScale`）を足した。`EnvironmentSystem` は Clock のとき、時刻 = ゲーム時刻 / 3600 を 24 時間に巻いた値から `ComputeSunAltAz` で太陽を、`WeatherAt` の予定表から雨量・雲量・風・霧・雲の層の被覆を決め、濡れの各刻みの雨量も予定表から取る。Tick の dt に倍率を掛ける。手動の太陽の上書き（`SetManualSunOverride`・`ClearManualSunOverride`）が時計の太陽に勝つ。Clock かつ上書きが無いときだけ太陽の量子化の幅 1° を Resolve で渡す。
+- Done: `EnvironmentSystem::SkipTo(T)` と `OnTimeSkipped(oldT, newT)` を足した。Clock では 30 Hz で刻まずに時刻を飛ばし、天候を T の値にし、濡れを `max(旧時刻, T − 60 分)` から T まで 10 秒刻み（刻みの中点の予定表の雨量、上書きの層の雨量が勝つ）で厳密解に通して復元する。`DiscontinuityId` は 1 だけ進み、`OnChanged(TimeSkipped)` と `OnTimeSkipped` は各 1 回。`SkipTime` も同じ経路を通る（Manual は今の 30 Hz の積分のまま）。`Enable`・`LoadState` は Clock のとき `[T − 60 分, T]` の濡れを同じく復元するので、種とゲーム時刻と Clock だけの JSON から同じ天候・太陽・時刻に戻る。
+- Done: Game に `--clock`・`--time-of-day=<0〜24、既定 12>`・`--weather-seed=<0〜4294967295、既定 0>`・`--time-scale=<0〜3600、既定 1>` を足した。時計のとき明示の気象の値（`--rain` など）は Game の引数用の上書きの層に重ね、`--sun-elevation`・`--sun-azimuth` と Rendering3DTest の矢印キーは手動の太陽の上書きにする。`--clock` が無いときの流れは変えていない（3 つの引数だけなら警告して無視）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`.harness/runs/20261117-131620/G11-GR55-CLOCK-SKIP-U5-verify.txt`。全単位を含む先頭で取った）。各単位で `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: 連続して太陽を動かしたときの 1° ごとの引っ掛かりは G11-GR54-SUN-KEYFRAMES が入るまで残る。ファストトラベル・寝床の画面と暗転は G15（GR68・GR71）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `EnvironmentClockSkipTest`・`SceneRevisionEnvironmentTest` は作っていない。`Test/` は無く、verify の ctest の行が選ぶ試験は無い。撮影・計測の確かめは回さない決まり。
+- Notes: 人が見る所: `--scene=rendering3dtest --clock --time-of-day=6 --time-scale=600` で太陽が東から昇り、1° をまたぐときだけ RTGI の履歴が切れること（間は蓄積が保たれてノイズが増えない）。同じく矢印キーで太陽を動かすと時計より操作が勝つこと。`--clock --weather-seed=<数>` で雲量・雨・霧が予定表に沿って変わっても RTGI がざらつかないこと。
+- Notes: 既知の限界: 濡れの復元は窓の始まりの濡れを今の値（読み込みでは保存された値）とするので、乾きの時定数 900 秒の下で窓の外の影響が最大で約 1.8 % 残る。無効のとき `SkipTime` の警告の文言は `SkipTo` の名前で出る。
+
+- U1 水たまりの式（Puddle.glsl）と、濡れの式へ雨の遮蔽と水たまりを重ねる関数: 着地(直し 0 回)
+- U2 地形の凹み度 PDL0 をスプラットの配列の 3 枚目に載せ、TerrainLayerBlend.glsl で引く: 着地(直し 0 回)
+- U3 水たまりの層の型・手置きの水たまりの源の経路・共有の UBO を詰める口: 着地(直し 0 回)
+- U4 世界空間のフィールドに水たまりの層（手置きの源から）を作って公開する: 着地(直し 0 回)
+- U5 可視バッファの解決（既定の経路）で雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 0 回)
+- U6 MegaGeometry のハードのラスタで雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 0 回)
+- U8 照明で、水たまりの画素の空の鏡面に雨の遮蔽マップの上の空の見え方を掛ける: 着地(直し 0 回)
+- U9 CPU の屋根の判定（雨を遮る遮蔽物の天面が点の上にあるか）: 着地(直し 0 回)
+- U7 通常のメッシュの GBuffer（gbuffer.frag）で雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 1 回)
+- U10 地形の凹み度を水たまりの層へ写す: 着地(直し 0 回)
+- U11 GBuffer と束縛の契約の文書を直し、タスクの verify のビルドを通す（最後）: 着地(直し 0 回)
+- Done: 雨の量と乾きで水位が上下する水たまりと、屋根の下は濡れない雨の遮蔽を、GBuffer の全部の書き手（可視バッファの解決・MegaGeometry のハードのラスタ・通常のメッシュと材質ごとの GBuffer プログラム）と照明に入れた。式の正本は `Common/Puddle.glsl`（水位 = 環境の地面の濡れから、被覆 = smoothstep(閾値, 凹み度) × 上向き度 × 雨の当たり方、アルベド 0.6 倍・粗さ 0.03〜0.1・法線を上向きへ、0.35 m のセルの 2 層の波紋で時刻は環境 UBO の `fmod(ゲーム時刻, 4096)`）、`Common/WetSurface.glsl::ApplyWetSurfaceWithPuddle` が画素ごとの雨の遮蔽マップの当たり方で濡れの当たり方を上書きしてから濡れ・水たまりの順に掛け、被覆を DefaultLit の P1 に書く。地形は PDL0 をスプラットの配列の 3 枚目から引き、一般のメッシュは世界空間のフィールドの `WorldField.PuddleNear`（256² × 0.25 m・R8。地形の PDL0 の写しと手置きの源 `RenderWorld::SetWorldFieldPuddles` の最大）を引く。照明は水たまりの画素の空由来の鏡面に、GR56 の円錐の遮りに加えて雨の遮蔽マップの上の空の見え方を被覆の割合で掛ける。CPU の屋根の判定 `ComputeOverheadRainExposure`（`OverheadHeightMapMath.h`）を足した。配置は `Docs/Architecture/GpuLayoutRegistry.md` の 16 節。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が全単位を合わせた状態でエラー 0（BUILD_EXIT=0、Game.exe を生成）、触ったシェーダー 68 通りの glslc がすべて成功（SHADER_CHECK_OK）。
+- 作らなかったもの: done-when の `PuddleSurfaceTest`・`RenderingRainPuddleVulkanTest`（`--rain-scenario=puddles`）と golden の 4 試験の実行は、試験を作らない・回さない決まりと、撮影・GPU の確かめを回さない決まりにより作らず回していない。
+- 人が見るときの見どころ: 荒野など地形のあるシーンを `--rain=1 --wetness=1` で起動し、地形の窪地に暗くつやのある水たまりができて雨の波紋が揺れること、`--wetness` を下げると水たまりが縮むこと、建物の軒下・屋根の下の地面と物が濡れず水たまりもできないこと、屋根・樹冠の下の水たまりに空が映らず開けた所の水たまりには空が映ること。`--wetness=0`（既定）では Rendering3DTest とランチャーの各シーンが前と同じに見えること。
+- 既知の限界: done-when (5) の犬の毛の当たり方は、`FurCoatComponent` がまだ無い（G6-GR35-WETNESS-STATE が todo）ので繋いでいない。CPU の判定 `ComputeOverheadRainExposure` は用意したので、毛の当たり方へ `RainShelterVolume` の値との小さい方を渡すだけが残る。
+- 要起票: G6-GR35-WETNESS-STATE の完了後に、`FurCoatComponent::SetRainExposure` へ `ComputeOverheadRainExposure`（雨を遮る `SkyOccluderProxy` から犬の位置の上の屋根を判定）と `RainShelterVolume` の値の小さい方を渡す作業。G6-GR35 は口だけを作り GR59 が入れる前提で、どの項目にも無い。
+- Next: ランナーの評価者の反証（危険地帯: GBuffer の書き手・lighting.frag）。

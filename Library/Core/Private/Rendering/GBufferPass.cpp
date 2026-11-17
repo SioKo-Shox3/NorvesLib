@@ -2,6 +2,7 @@
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MaterialDescriptorCache.h"
 #include "Rendering/EnvironmentGpuParams.h"
+#include "Rendering/PuddleSurfaceParams.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VertexAnimation.h"
 #include "Rendering/ViewClearance.h"
@@ -49,6 +50,25 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t EnvironmentBindingIndex = 13;
         // 材質の発光テクスチャの binding
         constexpr uint32_t EmissiveTextureBindingIndex = 14;
+
+        // 水たまりの定数・雨の遮蔽・世界フィールドの層の binding。
+        constexpr uint32_t PuddleSurfaceBindingIndex = 15;
+        constexpr uint32_t OverheadHeightMapBindingIndex = 16;
+        constexpr uint32_t PuddleFieldBindingIndex = 17;
+
+        void AddPuddleSurfaceBindings(RHI::DescriptorSetDesc& desc)
+        {
+            RHI::DescriptorBinding binding;
+            binding.binding = PuddleSurfaceBindingIndex;
+            binding.type = RHI::ResourceBindType::ConstantBuffer;
+            binding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(binding);
+            binding.type = RHI::ResourceBindType::CombinedImageSampler;
+            binding.binding = OverheadHeightMapBindingIndex;
+            desc.bindings.push_back(binding);
+            binding.binding = PuddleFieldBindingIndex;
+            desc.bindings.push_back(binding);
+        }
 
         float ResolveGBufferDrawOpacity(const DrawCommand& command)
         {
@@ -120,6 +140,16 @@ namespace NorvesLib::Core::Rendering
 
         m_bInitialized = true;
 
+        // 部分的に作った資源を手放し、再試行に必要なパスの接続先を残す。
+        const auto cleanupFailedInitialization = [this]()
+        {
+            SceneView* sceneView = m_SceneView;
+            SceneRenderer* sceneRenderer = m_SceneRenderer;
+            Shutdown();
+            m_SceneView = sceneView;
+            m_SceneRenderer = sceneRenderer;
+        };
+
         // フレームの持ち主が無い文脈でも、濡れの無い環境定数を常に束縛する。初期化後は書き換えない。
         const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
         RHI::BufferDesc environmentDesc(sizeof(GPUEnvironmentParams), RHI::ResourceUsage::ConstantBuffer,
@@ -131,6 +161,19 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
         m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+
+        // 借りられない場合は、雨の遮蔽と水たまりの層が無効な定数を使う。
+        const PuddleSurfaceGpuParams defaultPuddleSurface{};
+        RHI::BufferDesc puddleDesc(sizeof(PuddleSurfaceGpuParams), RHI::ResourceUsage::ConstantBuffer,
+                                   true, "GBufferDefaultPuddleSurface");
+        m_DefaultPuddleSurfaceBuffer = m_Device->CreateBuffer(puddleDesc);
+        if (!m_DefaultPuddleSurfaceBuffer)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "既定の水たまり定数バッファを作れませんでした");
+            cleanupFailedInitialization();
+            return false;
+        }
+        m_DefaultPuddleSurfaceBuffer->Update(&defaultPuddleSurface, sizeof(defaultPuddleSurface));
 
         // ========================================
         // DynamicUniformAllocator初期化
@@ -205,6 +248,7 @@ namespace NorvesLib::Core::Rendering
             emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             emissiveBinding.stages = RHI::ShaderStage::Pixel;
             uboDescSetDesc.bindings.push_back(emissiveBinding);
+            AddPuddleSurfaceBindings(uboDescSetDesc);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
@@ -283,6 +327,22 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_ERROR("GBufferPass", "Failed to create default sampler");
                 return false;
             }
+
+            // 水たまりの層は端を固定して線形に標本する。
+            RHI::SamplerDesc puddleSamplerDesc;
+            puddleSamplerDesc.filterMin = RHI::FilterMode::Linear;
+            puddleSamplerDesc.filterMag = RHI::FilterMode::Linear;
+            puddleSamplerDesc.filterMip = RHI::FilterMode::Linear;
+            puddleSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+            puddleSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+            puddleSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+            m_PuddleFieldSampler = m_Device->CreateSampler(puddleSamplerDesc);
+            if (!m_PuddleFieldSampler)
+            {
+                NORVES_LOG_ERROR("GBufferPass", "水たまりの層のサンプラーを作れませんでした");
+                cleanupFailedInitialization();
+                return false;
+            }
         }
 
         NORVES_LOG_INFO("GBufferPass", "GBufferPass initialized");
@@ -308,6 +368,8 @@ namespace NorvesLib::Core::Rendering
         m_EmissiveHandle = {};
         m_VelocityHandle = {};
         m_DepthHandle = {};
+        m_PuddleFieldHandle = {};
+        m_PuddleFieldTexture.reset();
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
         m_Pipelines.Clear();
@@ -328,8 +390,10 @@ namespace NorvesLib::Core::Rendering
         m_DefaultMidGrayTexture.reset();
         m_ConstantGrayTextures.clear();
         m_DefaultLinearSampler.reset();
+        m_PuddleFieldSampler.reset();
         m_UniformAllocator.Shutdown();
         m_DefaultEnvironmentBuffer.reset();
+        m_DefaultPuddleSurfaceBuffer.reset();
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
         m_Device = nullptr;
@@ -423,6 +487,15 @@ namespace NorvesLib::Core::Rendering
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
+
+        // 読めないフレームは既定のテクスチャを使う。
+        m_PuddleFieldHandle = {};
+        m_PuddleFieldTexture.reset();
+        RGTextureHandle overheadHeightMap;
+        builder.TryReadTexture(RenderGraphResourceNames::OverheadHeightMap, overheadHeightMap,
+                               RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::WorldFieldPuddleNear, m_PuddleFieldHandle,
+                               RHI::ResourceState::ShaderResource);
         m_bConstantTexturesPrepared = false;
         m_bPipelinesPrepared = false;
         m_bParallelAttachmentsReady = false;
@@ -538,6 +611,11 @@ namespace NorvesLib::Core::Rendering
 
     void GBufferPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
+        if (!m_bPipelinesPrepared)
+        {
+            // 準備段を経ない直列の記録では、ここで水たまりの層を決める。
+            m_PuddleFieldTexture = m_PuddleFieldHandle.IsValid() ? resources.GetTexture(m_PuddleFieldHandle) : RHI::TexturePtr{};
+        }
         // 並列の準備に失敗したとき、作業スレッドで資源や表の作成を再試行しない。
         if (m_bPipelinesPrepared && !m_bParallelAttachmentsReady)
         {
@@ -589,7 +667,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Execute(context);
+        ExecuteWithPuddleField(context, m_PuddleFieldTexture);
         m_bConstantTexturesPrepared = false;
         m_bPipelinesPrepared = false;
         m_bParallelAttachmentsReady = false;
@@ -613,6 +691,8 @@ namespace NorvesLib::Core::Rendering
 
     void GBufferPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
     {
+        // 記録前に層を決め、GBuffer と重ね描きの並列記録ではどちらも読むだけにする。
+        m_PuddleFieldTexture = m_PuddleFieldHandle.IsValid() ? resources.GetTexture(m_PuddleFieldHandle) : RHI::TexturePtr{};
         m_bPipelinesPrepared = false;
         m_bParallelAttachmentsReady = false;
         if (!m_bInitialized && !Initialize(context))
@@ -686,6 +766,11 @@ namespace NorvesLib::Core::Rendering
 
     void GBufferPass::Execute(ViewRenderContext &context)
     {
+        ExecuteWithPuddleField(context, RHI::TexturePtr{});
+    }
+
+    void GBufferPass::ExecuteWithPuddleField(ViewRenderContext &context, const RHI::TexturePtr& puddleField)
+    {
         if (!context.CommandList)
         {
             return;
@@ -745,7 +830,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        RecordGBufferDraws(context, m_GBufferRenderPass, m_GBufferFramebuffer, DrawSelection::All);
+        RecordGBufferDraws(context, m_GBufferRenderPass, m_GBufferFramebuffer, DrawSelection::All, puddleField);
     }
 
     void GBufferPass::PrepareProgramOverlay(const ViewRenderContext& context)
@@ -798,14 +883,15 @@ namespace NorvesLib::Core::Rendering
         }
         // 記録中は準備した表とテクスチャを読むだけにする。
         m_bConstantTexturesPrepared = true;
-        RecordGBufferDraws(context, renderPass, framebuffer, DrawSelection::OverlayOnly);
+        RecordGBufferDraws(context, renderPass, framebuffer, DrawSelection::OverlayOnly, m_PuddleFieldTexture);
         m_bConstantTexturesPrepared = false;
     }
 
     void GBufferPass::RecordGBufferDraws(ViewRenderContext& context,
                                          const RHI::RenderPassPtr& renderPass,
                                          const RHI::FramebufferPtr& framebuffer,
-                                         DrawSelection selection)
+                                         DrawSelection selection,
+                                         const RHI::TexturePtr& puddleField)
     {
         const DrawCommandView opaqueCommands = context.GetActiveOpaqueCommands();
         auto* materials = context.Resources.Materials;
@@ -954,6 +1040,12 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, MaterialTextureDescriptorCache> materialDescriptorCache;
         // 共有の切れ端は読み取りだけ。無いときも現在の記録の口から借り、パスの共有状態へ保存しない。
         const FrameUploadAllocation environmentConstants = AcquireEnvironmentConstants(context);
+        const FrameUploadAllocation puddleSurfaceConstants = AcquirePuddleSurfaceConstants(context);
+        const bool bOverheadUsable = IsOverheadHeightMapUsable(context);
+        const RHI::TexturePtr overheadTexture = bOverheadUsable ? context.OverheadHeightMap.Texture : m_DefaultBlackTexture;
+        const RHI::SamplerPtr overheadSampler = bOverheadUsable && context.OverheadHeightMap.Sampler
+                                                    ? context.OverheadHeightMap.Sampler : m_PuddleFieldSampler;
+        const RHI::TexturePtr puddleTexture = puddleField ? puddleField : m_DefaultBlackTexture;
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
 
         auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
@@ -1218,6 +1310,20 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer,
                                                               0, sizeof(GPUEnvironmentParams));
             }
+            if (puddleSurfaceConstants.IsValid())
+            {
+                allocation.DescriptorSet->BindConstantBuffer(PuddleSurfaceBindingIndex, puddleSurfaceConstants.Buffer,
+                                                              puddleSurfaceConstants.GetOffset32(), puddleSurfaceConstants.GetSize32());
+            }
+            else
+            {
+                allocation.DescriptorSet->BindConstantBuffer(PuddleSurfaceBindingIndex, m_DefaultPuddleSurfaceBuffer,
+                                                              0, sizeof(PuddleSurfaceGpuParams));
+            }
+            allocation.DescriptorSet->BindTexture(OverheadHeightMapBindingIndex, overheadTexture);
+            allocation.DescriptorSet->BindSampler(OverheadHeightMapBindingIndex, overheadSampler);
+            allocation.DescriptorSet->BindTexture(PuddleFieldBindingIndex, puddleTexture);
+            allocation.DescriptorSet->BindSampler(PuddleFieldBindingIndex, m_PuddleFieldSampler);
             BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->BindConstantBuffer(VertexAnimationWindBindingIndex,
                                                          windAllocation.Buffer,
@@ -2108,6 +2214,7 @@ namespace NorvesLib::Core::Rendering
         emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
         emissiveBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(emissiveBinding);
+        AddPuddleSurfaceBindings(dsDesc);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         RHI::PipelinePtr pipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);

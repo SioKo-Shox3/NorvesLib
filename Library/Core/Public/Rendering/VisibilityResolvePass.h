@@ -326,6 +326,13 @@ namespace NorvesLib::Core::Rendering
         uint64_t FeedbackBytes = 0;
         /** @brief フレームの持ち主から借りた環境定数。無効なら初期化時の常駐の既定値を使う */
         FrameUploadAllocation EnvironmentConstants;
+        /** @brief フレームの持ち主から借りた水たまり定数。無効なら遮蔽・層を無効にした常駐の既定値を使う */
+        FrameUploadAllocation PuddleSurfaceConstants;
+        /** @brief 雨の遮蔽マップと専用サンプラー。無効なら既定の 1×1 テクスチャを束ねる */
+        RHI::TexturePtr OverheadHeightMap;
+        RHI::SamplerPtr OverheadHeightMapSampler;
+        /** @brief 水たまりの層。無ければ既定の黒い 1×1 テクスチャを束ねる */
+        RHI::TexturePtr PuddleField;
         VisibilityResolveGeometry::ResolveParams Params;
 
         /**
@@ -465,6 +472,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_Placeholder;
         // フレームの環境定数を持たない文脈のための、書き換えない既定値（48 バイト）。
         RHI::BufferPtr m_DefaultEnvironmentUniform;
+        // フレームの水たまり定数を持たない文脈のための、遮蔽・層が無効の既定値。
+        RHI::BufferPtr m_DefaultPuddleSurfaceUniform;
         // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー。
         // m_MaterialSampler は手続き・スキニング用（GBufferPass と同じ異方性 4、Wrap）、m_MegaMaterialSampler は
         // MegaGeometry 用（MegaGeometryPass と同じ等方の Linear、maxAnisotropy 指定なし、Wrap）、m_TerrainMaterialSampler は
@@ -629,6 +638,9 @@ namespace NorvesLib::Core::Rendering
         const MaterialTileClassifyPass* m_ClassifyPass = nullptr;
         VisibilityResolve m_Resolve;
         RGTextureHandle m_IdHandle;
+        // 任意の入力。公開されないフレームも解決を続ける。
+        RGTextureHandle m_OverheadHeightMapHandle;
+        RGTextureHandle m_PuddleFieldHandle;
         RGResourceHandle m_AlbedoHandle;
         RGResourceHandle m_NormalHandle;
         RGResourceHandle m_MaterialHandle;

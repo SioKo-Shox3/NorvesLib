@@ -16,7 +16,7 @@ namespace NorvesLib::Core::Environment
     enum class EEnvironmentSunMode : uint8_t
     {
         Manual,  // 高度・方位を直接持つ。
-        Clock    // 時刻から求める（現在は Manual と同じく高度・方位で解決する）。
+        Clock    // ゲーム時刻から時刻・太陽・天候を決める。時刻は GameTimeSeconds / 3600 を 24 時間に巻いた値。
     };
 
     /** @brief GameThread で共有する気象の状態。 */
@@ -66,14 +66,17 @@ namespace NorvesLib::Core::Environment
         float SunAltitudeDegrees = 45.0f;
         /// 手動で指定する太陽の方位（度、[-360, 360]。空の SkyAtmosphereParameters と同じ範囲）。
         float SunAzimuthDegrees = 0.0f;
-        /// 保持する時刻（時、[0, 24)）。自動では進めない。
+        /// 時刻（時、[0, 24)）。Manual では保持するだけで進めない。Clock では EnvironmentSystem がゲーム時刻から毎フレーム書く。
         float TimeOfDayHours = 12.0f;
+        /// 時計（SunMode が Clock）のときにゲーム時刻を進める倍率（無次元、[0, 3600]）。1 は実時間と同じ、0 は時計を止める。
+        float ClockTimeScale = 1.0f;
 
         /// 雨量 1 のとき、平衡との差が約 5 % になる時間（秒、0.001 以上）。
         float WetTimeConstantSeconds = 45.0f;
         /// 雨量 0 のとき、平衡との差が約 5 % になる時間（秒、0.001 以上）。
         float DryTimeConstantSeconds = 900.0f;
         /// ゲーム内の経過時刻（秒、0 以上）。
+        /// Clock では 0 時からの経過秒として時刻を決める。Seed・ClockTimeScale とともに時計の状態の正本。
         double GameTimeSeconds = 0.0;
         /// 気象の乱数の種（無次元、uint32_t の全範囲）。
         uint32_t Seed = 0;
