@@ -260,9 +260,9 @@ RIG_RESULT status=<ok|fail> errors=<n> warnings=<n>
 
 ファイルの記録は絶対 `path` と内容の `sha256`。ディレクトリは絶対 `path`、相対 `path` と `sha256` の一覧 `files`、その一覧の `sha256` を持つ。一覧は相対パス順。JSON のハッシュは鍵順を整え、空白を除いた UTF-8 表現から計算する。
 
-`pipeline.py` は `<out>/record.json` に `record_version`（1）、`logical`、`spec`、`input`、`stages`、`status` を書く。`spec` と `input` は上記のファイルまたはディレクトリの記録。`stages` の各要素の鍵は `name`、`kind`、`argv`、`exit_code`、`inputs`、`config_sha256`、`outputs`、`blender_version`。`kind` は `blender`・`python`・`assetcook`。Blender の `config_sha256` は設定 JSON、他の段は `argv` の JSON のハッシュである。Blender の版と `outputs` は各段の記録があればそこから読み、記録に `outputs` がなければ主出力が存在する場合にその記録を使う。Blender 以外の版は `null`。段の共通入口は存在する入出力だけを記録する。パイプライン自体は主出力の不存在を失敗として扱わず、子の `exit_code` が 0 なら `outputs` が空でも成功し得る。各段の `status` 欄はなく、子プロセスの終了コードを `exit_code` に記録する。全体の `status` は `ok` または `failed`。
+`pipeline.py` は `<out>/record.json` に `record_version`（1）、`logical`、`spec`、`input`、`stages`、`status` を書く。`spec` と `input` は上記のファイルまたはディレクトリの記録。`stages` の各要素の鍵は `name`、`kind`、`argv`、`exit_code`、`inputs`、`config_sha256`、`outputs`、`blender_version`。`kind` は `blender`・`python`・`assetcook`。Blender の `config_sha256` は設定 JSON、他の段は `argv` の JSON のハッシュである。Blender の版と `outputs` はその段が書いた記録から読み、記録があり `outputs` がなければ、主出力が存在する場合に主出力の記録を使う。Blender 以外の段も主出力が存在する場合に主出力の記録を使い、版は `null`。段の共通入口は存在する入出力だけを記録する。パイプライン自体は主出力の不存在を失敗として扱わず、子の `exit_code` が 0 なら `outputs` が空でも成功し得る。各段の `status` 欄はなく、子プロセスの終了コードを `exit_code` に記録する。全体の `status` は `ok` または `failed`。
 
-同じ出力先で再実行し、Blender の段が新しい記録を書く前に失敗すると、以前の `<stage>/record.json` の `outputs` と `blender_version` を全体記録に取り込む場合がある。`exit_code` は今回の失敗を示すが、これらの欄は今回の出力とは限らない。
+Blender の段の記録 `<out>/<stage>/record.json` は段の起動前に消す。段が記録を書く前に失敗するなど、記録がない場合は、その段の `outputs` は空、`blender_version` は `null` となる。
 
 ファイル入力のハッシュは指定ファイル自体のものなので、外部 `.bin` などの参照ファイルは含まれない。事前確認が失敗した場合はパイプラインの記録を作らない。
 

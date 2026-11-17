@@ -12319,3 +12319,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 書き出しの段 export_gltf.py: 着地(直し 1 回)
 - U6 pipeline.py を 3 段の実装に合わせる: 着地(直し 0 回)
 - U7 文書と全体の確かめ: 着地(直し 0 回)
+- U8 前回の段の記録を全体の記録に取り込まない: 着地(直し 0 回)

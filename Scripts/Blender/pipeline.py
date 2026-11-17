@@ -265,6 +265,12 @@ def run_pipeline(args, invocations: list[Invocation], settings: dict) -> int:
         try:
             stage_input = common.path_entry(invocation.input_path)
             os.makedirs(os.path.dirname(invocation.output_path), exist_ok=True)
+            if stage.kind == "blender":
+                version_path = absolute_path(os.path.join(args.out, stage.name, "record.json"))
+                try:
+                    os.remove(version_path)
+                except FileNotFoundError:
+                    pass
         except OSError as error:
             report_io_error(f"{stage.name} 段の入力または出力先を準備できません。", error)
             succeeded = False
@@ -295,7 +301,6 @@ def run_pipeline(args, invocations: list[Invocation], settings: dict) -> int:
         try:
             outputs = None
             if stage.kind == "blender":
-                version_path = absolute_path(os.path.join(args.out, stage.name, "record.json"))
                 if os.path.exists(version_path):
                     stage_details = common.read_json(version_path)
                     if not isinstance(stage_details, dict):
@@ -305,6 +310,8 @@ def run_pipeline(args, invocations: list[Invocation], settings: dict) -> int:
                         outputs = stage_details["outputs"]
                         if not isinstance(outputs, list):
                             raise ValueError("段の出力記録は配列ではありません。")
+                else:
+                    outputs = []
             if outputs is not None:
                 stage_record["outputs"] = outputs
             elif os.path.exists(invocation.output_path):
