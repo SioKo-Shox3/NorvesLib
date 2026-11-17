@@ -510,6 +510,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief このフレームの枯れ度の源を無害化して置き換える（GameThread）。呼ばれなければ前の源を保つ。 */
         void SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources);
 
+        /** @brief 手置きの水たまりの源を設定する（GameThread）。呼ばれなければ前の源を保つ。 */
+        void SetWorldFieldPuddles(Container::Span<const WorldFieldPuddleSource> sources);
+
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          * @param trails 描画コマンド生成前に設定し、FramePacket へ値コピーした後は保持を空にする
@@ -785,6 +788,7 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;
         Container::VariableArray<WorldFieldDrynessSource> m_WorldFieldDrynessSources;
+        Container::VariableArray<WorldFieldPuddleSource> m_WorldFieldPuddleSources;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
         GpuParticleScene m_GpuParticles;

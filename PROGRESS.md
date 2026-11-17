@@ -11964,3 +11964,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 反復 2（再検証の落ち）: ランナーの再検証のビルドは、`Component.h` の変更で Core の約 75 本の翻訳単位をまとめて再コンパイルするところで `error C1060`（コンパイラのヒープの不足）で落ちた。エラーはこれだけで、24 論理コアの `/MP` が 15.7 GB の機械でほかの枠のビルドと重なったための資源の不足。コードは変えず、主の枠で cl の並列を 6 に絞って `cmake --build build --config Debug --target Game -- /m:1` を通し（終了コード 0・Game.exe を生成。`.harness/runs/20261117-103232/aux-G12-GR92-ASSET-BIND-rebuild-game.txt`）、絞らない同じ行の増分のビルドも再コンパイルなしで Game.exe まで通ることを確かめた。
 - U1 水たまりの式（Puddle.glsl）と、濡れの式へ雨の遮蔽と水たまりを重ねる関数: 着地(直し 0 回)
 - U2 地形の凹み度 PDL0 をスプラットの配列の 3 枚目に載せ、TerrainLayerBlend.glsl で引く: 着地(直し 0 回)
+- U3 水たまりの層の型・手置きの水たまりの源の経路・共有の UBO を詰める口: 着地(直し 0 回)

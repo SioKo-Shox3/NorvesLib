@@ -349,6 +349,7 @@ set(PRIVATE_SOURCES
     Private/Environment/EnvironmentState.cpp
     Private/Environment/EnvironmentSystem.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
+    Private/Rendering/PuddleSurfaceParams.h
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
