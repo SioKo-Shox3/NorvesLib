@@ -12075,3 +12075,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 体積の霧の視線に局所霧の透過率と散乱を足し、空の画素にも局所霧を掛ける: 着地(直し 0 回)
 - U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
 - U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
+- U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
