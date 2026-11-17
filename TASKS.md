@@ -8032,7 +8032,7 @@
 - notes-board: AssetKind の番号は段階をまたいで次のとおりに割り振る(計画役ごとに決めた番号が重なったため): World = 7(G5。入れ済み)・Material = 8(G6-GR91)・Collision = 9(G17-GR81)・Video = 10(G14-GR127)。ほかの番号を使わない
 
 ## G6-GR91-FUR-FLOW-MAPS: 土台メッシュの骨とウェイトから毛の流れ・長さ・密度と束・領域の 4 枚のマップを UV 空間へ自動で焼くスクリプトと、手描きの補正の重ね・頂点カラーの代わりの道を作る
-- status: todo
+- status: done
 - after: G6-GR103-RIG-SPEC-VALIDATE
 - gr: GR91
 - done-when: `Scripts/Blender/fur_maps_core.py`（numpy だけ。bpy に依らない）が、頂点・法線・UV0・三角形・ウェイト・骨の head と tail を受けて、(1) 頂点ごとの 3D の流れ d = Σ w・dir（dir は骨の head → tail の単位ベクトル × 設定の符号。骨名の正規表現 → モード・符号・領域の表を設定 JSON で持つ。既定は胴と首が頭 → 尾、四肢と尾が根元 → 先、顔が鼻 → 後頭）、(2) 接平面への射影と、長さが ε 未満の頂点を近傍の平均で埋める反復、(3) 三角形ごとの UV のヤコビアンの計量 G から 2D の方向 = G⁻¹[v・T, v・B] を求めて texel へ重心補間、(4) 縫い目の膨張（16px）、(5) 長さ・密度・束を頂点グループ（fur_length・fur_density・fur_clump）か設定の領域の表から同じ手順で焼き、領域 ID を補間せずに焼く、(6) 補正マスク（R8、0.5 = 無修正）を `--paint-overlay` で重ねる、を行い、8bit PNG 4 枚（Length はグレー・Flow は RG〔B = 0〕・DensityClump は RG・Region はグレー。PNG は標準ライブラリの zlib で書く）と `fur_maps.json`（解像度・UV のセット・V の向き・入力のメッシュと設定のハッシュ）を出す。V は glTF の下向きに合わせる。`Scripts/Blender/fur_flow.py`（`blender --background --factory-startup --python fur_flow.py -- <設定 JSON>`。土台メッシュから配列と頂点グループと頂点カラー fur_length・fur_density・fur_flow を取り出してコアを呼ぶだけ）と、流れを UV の上の線画にする `Scripts/Blender/fur_preview.py`（numpy だけ）を置く。試験 `Test/Tools/Blender/FurMapsCoreTest.py`（unittest。Blender を起動しない）が通る: 軸が Y の円柱で単一の骨のとき流れが骨の向きと一致する。UV を鏡映・回転しても 3D の流れの向きが同じ（ヤコビアンの経路）。膨張の後、有効な texel から 16px 以内の texel が全部埋まる。領域 ID の境界で中間の値が出ない。補正マスク 0.5 が恒等。出力の PNG の大きさ・ビット深度・チャネル数が cook の入力の規約に合い、実際の `AssetCook --kind texture` で `nvtex.v0.r8.linear`・`nvtex.v0.rg8.linear` へ終了コード 0 で cook できる。

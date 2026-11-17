@@ -12312,25 +12312,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので done-when (5) の `PrefabFileRoundTripTest` と (3) の `Test/Core/Object` の合成の fixture は作っていない（`Test/` は既に無い）。verify の ctest の行は回していない。
 - Notes: 判断: 手続きのメッシュに箱の種類が無い（`ProceduralMeshKind` は None・UVSphere・Plane）ので、見本の地面は箱でなく Plane にした（Library の範囲を広げない）。平面の材質は参照の形で持てないので既定の描画のまま。
 - Notes: 既知の限界: Prefab の木・上書きの EntityRefId は、`World::SpawnPrefab` が ObjectId を張り替えないので、参照なし（0）だけ戻し、参照ありは警告して落とす。外側が循環で失敗しても、それより先に読めた有効な入れ子の Prefab は registry に残る。`World::SpawnPrefab` の入れ子の深さの上限（16）を超える Prefab は読めても生成に失敗する。上書きの値の検査はシーンの読み込みと同じ基準（型と `DeserializeStable`）で、setter が値を拒むと SpawnPrefab 全体が失敗しうる（シーンと同じ既知の経路）。
-- U2 Blender の段が共有する bpy の道具 bpy_stage.py: 着地(直し 0 回)
-- U1 bpy に依らない計算と設定の検査 rig_core.py: 着地(直し 1 回)
-- U3 張り直しとベイクの段 rebuild_on_base.py: 着地(直し 0 回)
-- U4 ウェイトの保持と転送の段 transfer_weights.py: 着地(直し 1 回)
-- U5 書き出しの段 export_gltf.py: 着地(直し 1 回)
-- U6 pipeline.py を 3 段の実装に合わせる: 着地(直し 0 回)
-- U7 文書と全体の確かめ: 着地(直し 0 回)
-- U8 前回の段の記録を全体の記録に取り込まない: 着地(直し 0 回)
 
-### G6-GR103-BLENDER-STAGES Blender のバッチの 3 段（張り直しとベイク・ウェイトの保持と転送・複数クリップの書き出し）と pipeline.py の通し（2026-11-18、run 20261118-063226 の反復 2、完了）
+- U1 コアの前半（設定の検査・入力の型・頂点ごとの流れと量と領域・PNG の読み書き）: 着地(直し 0 回)
+- U2 コアの後半（UV のヤコビアン・texel への焼き・16px の膨張・補正マスク・4 枚と fur_maps.json・npz と CLI）: 着地(直し 0 回)
+- U3 Blender 側の入出力 fur_flow.py: 着地(直し 0 回)
+- U4 流れの線画 fur_preview.py: 着地(直し 0 回)
+- U5 規約の文書 FurMaps.md と最終の確かめ: 着地(直し 0 回)
 
-- Done: `Scripts/Blender/rig_core.py`（bpy に依らない: Procrustes（Horn の四元数法。2 点以下・退化・鏡映を拒否）と箱の合わせ、距離の統計（最大・p95・体長比）、関節名の対応表、段ごとの設定の検査（未知の鍵の拒否・既定値・パスの絶対化）、glTF 書き出しのオプション名の版の表（5.2 系だけ））と `Scripts/Blender/bpy_stage.py`（段の入口・終了コード 0/1/2・記録 JSON、シーン操作の道具）を足した。
-- Done: `rebuild_on_base.py`（箱か 3 点以上のランドマークで土台の座標へ合わせ、Shrinkwrap（NEAREST_SURFACEPOINT・PROJECT）と Smooth を回数だけ掛け、displacement と residual の最大・p95・体長比を `MESH_STATS` に出し、Cycles の CPU・サンプル数とシード固定・cage・max_ray_distance で色と接空間の法線を土台の UV へ焼く。法線の前に高ポリ側の複製を平滑化できる。しきい値（既定は体長の 1%）を超えたら出力と記録を書いて終了コード 1）を足した。
-- Done: `transfer_weights.py`（keep: 正規化と `vertex_group_limit_total` で 4 本へ。transfer: ドナーを `norves_source_to_base` で土台の座標へ写し、関節名の対応表で付け替え、DataTransfer の VGROUP_WEIGHTS・POLYINTERP_NEAREST で写す。どちらも重み 0 の頂点を数える）と `export_gltf.py`（`bpy.app.version` を版の表と演算子の RNA で照合し 5.2 系以外は止める。骨格に結び付いたメッシュを 1 つに結合して材質のスロットで分け、変形の骨だけ・morph 無し・サンプリング強制・ACTIONS でアクションごとのクリップを GLB か .gltf+.bin へ。アクションが無ければ 2 フレームの静止のクリップ）を足した。
-- Done: `pipeline.py` を 3 段に合わせた（Blender の起動は `--background --factory-startup --python-exit-code 1 --python`、段の間は .blend、書き出しは設定の形式（既定 .glb）、`--config` で入力・論理名・仕様・段・設定を 1 つの JSON から読む、Blender の段の設定を起動前に検査・正規化、段の記録の outputs を拾い、起動前に古い段の記録を消す）。`Docs/Architecture/BlenderRigPipeline.md` を実装に合わせて書き直した。
-- 確かめ: 着地後の版（04bc1b1a）で `Scripts/Blender/*.py` の py_compile 終了コード 0、全ファイル BOM 付き UTF-8・CRLF、`skeleton_spec.py --check` ok、rig_core の数値の確かめ（既知の回転・拡大 2.5・平行移動を 6 点と 3 点から 1e-6 で復元、2 点・0 点・一直線・鏡映・未知の鍵・版 5.3 と 4.2 の拒否、対応表に無い関節名の報告、5.2.2 の表の引き当て）`CORE_CHECK ok`、3 段が参照する rig_core・bpy_stage の名前の照合 ok、`pipeline.py --dry-run` 3 通り（設定なしの全段は `rebuild.base は必須` で 2、`--stages export,validate,cook` は 0 で .glb、`--config` は 0 で .blend・.blend・.gltf）（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-final-verify.txt`）。Python と文書だけの変更で、C++ のターゲットは触っていない。
-- Next: ランナーの評価者の反証。3 段を Blender の上で回すのは G6-GR103-BLENDER-CHECK（bake・`datalayout_transfer`・`vertex_group_*` の文脈、書き出し器の補間とアクションのスロットなど、Blender の上でしか分からない誤りはそこで見つけて直す）。
-- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/BlenderStagesCoreTest.py` と `test_pipeline.py` は作っていない。verify の 2 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は試験ファイルが無いので回していない（同じ数値の確かめは上の使い捨ての確かめで回した）。Blender は起動していない。
-- Notes: 判断: 書き出し器は `export_force_sampling=True` でもキーの無いチャンネルや値の変わらない 2 キーを STEP で書くので、書き出しの後の補間の検査は骨格の仕様の `interpolations`（LINEAR・STEP。エンジンも両方を受ける）に無いものだけを落とす。ウェイトの掃除は `keep_single=True`（掃除で重み 0 の頂点を作らない）。段の間は .blend で渡す（GLB では骨格の無い頂点グループや焼いた画像の材質が落ちる）。`rebuild` を選ぶなら `rebuild.base` が必須で、設定なしで全段を選ぶと引数の誤り（2）。
-- Notes: 既知の限界: G6-GR103-BLENDER-CHECK の done-when (1) は `test_pipeline.py` を回す前提だが、試験を作らない決まりで作っていない（CHECK は今 backlog）。土台メッシュは作者が手で作る資産でリポジトリに無い。
-- Notes: 反復 4（判断役の判断に従う）: 試験の verify 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は絶対規則 11 に従って外し、構文の確かめ `python -B -m py_compile Scripts/Blender/bpy_stage.py Scripts/Blender/common.py Scripts/Blender/export_gltf.py Scripts/Blender/pipeline.py Scripts/Blender/rebuild_on_base.py Scripts/Blender/rig_core.py Scripts/Blender/transfer_weights.py` に置き換えた。87cc8f15 で終了コード 0（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-iter4-verify.txt`）。`Scripts/Blender/` と文書は変えていない。
-- Notes: Blender の上での 3 段の確かめ（ベイク・ウェイトの転送・書き出しの実際の動き）は G6-GR103-BLENDER-CHECK で行う。
+### G6-GR91-FUR-FLOW-MAPS 土台メッシュの骨とウェイトから毛の流れ・長さ・密度と束・領域の 4 枚のマップを UV 空間へ焼く台本と、手描きの補正・頂点カラーの代わりの道（2026-11-18、run 20261118-063232 の反復 4、完了）
+
+- Done: `Scripts/Blender/fur_maps_core.py`（numpy だけ。bpy に依らない）を足した。設定 JSON の検査（骨名の正規表現 → mode・sign・region の表。既定は胴・首が頭 → 尾、顔が鼻 → 後頭、四肢・尾が根元 → 先。領域は 1〜8 個）、頂点ごとの 3D の流れ d = Σ w・dir（`sources.flow = auto` で頂点カラー fur_flow があればそちら）、接平面への射影と長さが ε 未満の頂点を近傍の平均で埋める反復、三角形の UV のヤコビアンの計量 G から G⁻¹[v・T, v・B] で UV の向きを求めて texel の中心へ重心補間（領域 ID は補間せず重心係数が最大の角の値）、8 近傍の 16px 膨張、補正マスク（R8。8bit の 127・128 が恒等）、Length（グレー）・Flow（RGB、B = 0、単位長さ）・DensityClump（RGB、B = 0）・Region（グレー）の 8bit PNG（標準ライブラリの zlib で書く）と `fur_maps.json`（解像度・UV のセット・V の向き down・入力のメッシュと設定の SHA-256・補正の SHA-256）、`fur_mesh.npz` の保存・読み込みと npz から焼き直す CLI。
+- Done: `Scripts/Blender/fur_flow.py`（`blender --background --factory-startup --python fur_flow.py -- <設定 JSON> [--paint-overlay 対象=PATH]`）。.blend・.glb・.gltf の土台メッシュから、ワールド空間の頂点・法線・三角形・角ごとの UV0（glTF の V 下向きへ直す）・変形骨の head と tail・ウェイト・頂点グループ fur_length・fur_density・fur_clump・頂点カラー fur_length・fur_density・fur_flow を取り出し、`fur_mesh.npz` を残してコアで焼く。頂点カラーの道も同じ 4 枚になり、エンジンの頂点の形式は変えていない。
+- Done: `Scripts/Blender/fur_preview.py`（numpy だけ）。`fur_maps.json` と 4 枚を読み、長さ・領域・黒の背景の上に格子の種から流れに沿った線と根元の印を描いた UV の線画 PNG を書く。
+- Done: `Docs/Architecture/FurMaps.md`（4 枚の形と cook の形式・UV の規約・焼き方・設定 JSON の欄・既定の骨と領域の表・量の出どころの優先順・補正マスク・`fur_maps.json` と npz の形・コマンド・既知の限界）。
+- 確かめ: 全単位を載せた版で `cmake --build build --config Debug --target AssetCook -- /m:1` 終了コード 0・error の行 0。3 本の `py_compile` 終了コード 0。リポジトリの外で作った合成の円柱（Y 軸・32 分割 × 8 段・骨 1 本 tail_01 (0,0,0) → (0,1,0)・64px）を npz にしてコアの CLI で焼き（退化 0・埋まらない頂点 0・空の texel 0）、`fur_preview.py` も終了コード 0。焼いた 4 枚を実際の `AssetCook --kind texture` で fur_length・fur_region は `nvtex.v0.r8.linear`（1 バイト/画素）、fur_flow・fur_density_clump は `nvtex.v0.rg8.linear`（2 バイト/画素）へ cook し、4 回とも終了コード 0（64×64・ミップ 7 段）。出力は `.harness/runs/20261118-063232/G6-GR91-FUR-FLOW-MAPS-final-verify.txt`。
+- Next: ランナーの評価者の反証。実物の土台メッシュで `fur_flow.py` を Blender で回す確かめは G6-GR91-FUR-MAPS-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/FurMapsCoreTest.py` は作っていない。verify の 2 行目はその試験を指すので TASKS.md から外した（G6-GR103-RIG-SPEC-VALIDATE と同じ扱い）。Blender・アプリは起動していない。
+- Notes: 判断: 補正マスクは 0.5 が 8bit で表せないので 127 と 128 の両方を恒等にした。流れは膨張の後に単位化して書き、膨張の後も空の texel は (128,128,0)。重なる UV は後の三角形が勝つ。補正は膨張の後・量子化の前に画像全体へ重ね、Region には補正が無い。
+- Notes: 既知の限界: UniRig の 14 関節ほどの骨格では四肢の先と顔の流れが足りないので、領域の表・頂点の塗り・補正マスクで補う前提。頭の先・耳・尾の付け根では骨の向きが法線に近く、近傍の平均でも埋まらない頂点が残りうる。`fur_flow.py` はポーズや modifier を適用する前の元のメッシュを読む。頂点カラーの CORNER は頂点ごとの平均になる。
