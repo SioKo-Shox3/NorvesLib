@@ -59,6 +59,8 @@ namespace NorvesLib::Core::Rendering
     Container::VariableArray<float> MakeDefaultSkyKeyframeAltitudes()
     {
         return Container::VariableArray<float>{
+            -20.0f, -18.0f, -15.0f, -12.0f, -10.0f, -8.0f, -6.0f,
+            -5.0f, -4.0f, -3.0f, -2.0f, -1.0f, -0.5f,
             0.0f, 0.5f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
             8.0f, 10.0f, 12.0f, 15.0f, 18.0f, 22.0f, 26.0f, 30.0f,
             35.0f, 40.0f, 45.0f, 50.0f, 60.0f, 70.0f, 80.0f, 90.0f
