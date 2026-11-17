@@ -284,6 +284,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/ImpostorGBufferPass.cpp
     Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
     Private/Rendering/GrassBladeMesh.cpp
@@ -353,6 +354,7 @@ set(PRIVATE_SOURCES
     Private/Environment/EnvironmentSystem.cpp
     Private/Environment/EnvironmentDataFile.h
     Private/Environment/EnvironmentDataFile.cpp
+    Private/Environment/RainSplashBudget.cpp
     Private/Environment/SunPath.cpp
     Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
@@ -791,6 +793,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Environment/RainSplashBudget.h
     Public/Environment/SunPath.h
     Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
@@ -834,6 +837,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/ImpostorGBufferPass.h
+    Public/Rendering/ImpostorBatch.h
     Public/Rendering/GrassPass.h
     Public/Rendering/WorldFieldPass.h
     Public/Rendering/WorldFieldTypes.h

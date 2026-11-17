@@ -12228,20 +12228,41 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 接地のイベントから放出を積む FootSplashComponent: 着地(直し 1 回)
 - Notes: 2026-11-18（run 20261118-013230 の反復 1）: 前回の評価が枠切れ（429）で回らず status が doing に戻ったため、実装は変えずに done に戻した。最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0）以降、Library・Assets の変更は無い。評価者の反証はランナーが回す。
 
-### G6-GR103-RIG-SPEC-VALIDATE 共通骨格の仕様（skeleton_spec.json）と、Blender の出力をエンジンへ渡す前に検査する validate_rig.py・段の記録をまとめる pipeline.py（2026-11-18、run 20261118-025854 の反復 1、完了）
+- U1 インポスターの部品とプロキシに法線・ORM・深度のアトラスと八面体の配置を持たせる: 着地(直し 0 回)
+- U3 GBuffer へ書くインポスターのシェーダー（impostor_gbuffer.vert/.frag）を足す: 着地(直し 0 回)
+- U5 前方描画からインポスターの専用のパイプラインを外す: 着地(直し 0 回)
+- U2 インポスターの束を SceneView から FramePacket・描画の文脈まで渡す: 着地(直し 1 回)
+- U4 ImpostorGBufferPass を足して遅延の流れの FoliagePass の隣に置く: 着地(直し 0 回)
 
-- Done: `Scripts/Blender/skeleton_spec.json`（四足の語彙 quadruped_v1 の 23 role → 29 関節。chain は spine 3・neck 2・tail 4。必須 20 role（jaw と前脚の clavicle は任意）・関節の上限 128・影響 4・重みの和の許容 1e-3・命名の正規表現 `^[a-z]+(_([a-z]+|[LR]|[0-9]{2}))*$`・UV は TEXCOORD_0 のみで 0〜1・morph 不可・補間 LINEAR/STEP）と `skeleton_spec.py`（仕様の検査 `--check`、`--emit-role-profile` で role profile v1 の `vocabulary`・`target_roles`。C は恒等を明示）を足した。
-- Done: `Scripts/Blender/common.py`（`--` の後ろの JSON 設定、`MESH_STATS` と同じ `<TAG> key=value` の 1 行、SHA-256（ファイル・木・正準 JSON）、記録 JSON（入力と設定のハッシュ・Blender の版・段の名前・出力のハッシュ））を足した。bpy に依らない。
-- Done: `Scripts/Blender/validate_rig.py` を足した。.gltf（外部 .bin・data URI）と .glb を標準ライブラリで読み、関節数・影響数・重みの和・重み 0 の頂点・必須 role の関節と命名・UV・morph・補間（warning）・時刻の単調増加・アニメーションする非関節の祖先を検査し、`MESH_STATS`・`RIG_ISSUE`・`RIG_RESULT` の行と `--report` の JSON に出す。違反は終了コード 1、仕様の誤りは 2。
-- Done: `Scripts/Blender/pipeline.py`（段の表 rebuild・weights・export（Blender の段）・validate・cook を表の順に起動し、`<out>/record.json` に各段の argv・終了コード・入出力のハッシュを書く。`--dry-run` は `PIPELINE_STAGE index=.. name=.. argv=[..]` の列だけ。cook は `AssetCook --rig-split --input <asset> --out <out>/cooked --logical <stem>`）と `Docs/Architecture/BlenderRigPipeline.md`（段・入出力・仕様の欄・検査の code の表・検査の規則とエンジンの規則の分担）を足した。
-- 確かめ: `cmake --build build --config Debug --target AssetCook -- /m:1` 終了コード 0（全単位を載せた版。`.harness/runs/20261118-025854/G6-GR103-RIG-SPEC-VALIDATE-final-verify.txt`）。`.harness/` の下だけで作った使い捨ての合成 glTF（立方体・既定の仕様の 29 関節）で、正例（1 クリップ・2 クリップの .gltf と .glb）が validate を通り、1・2 クリップとも実際の `AssetCook --rig-split` が終了コード 0。負例（関節 129・UV 無し・影響 5・重みの和 0.9・重み 0 の頂点・front_L_paw の欠落・morph・アニメーションする非関節の祖先）はそれぞれ期待した code の error 1 件だけで終了コード 1、CUBICSPLINE は warning だけで 0、壊した仕様は `spec_error` で 2。`pipeline.py --stages validate,cook` の通しは終了コード 0・record.json の status ok、必須 role の欠けた入力は validate で止まり cook を起動しない（status failed・1 段）。`--emit-role-profile` は 23 role がすべて語彙の中で root は 1 要素、`--dry-run` は 2 回の出力が一致。
-- Next: ランナーの評価者の反証。Blender の段の中身（rebuild_on_base.py・transfer_weights.py・export_gltf.py）は G6-GR103-BLENDER-STAGES が足す。
-- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/RigValidateTest.py` は作っていない。verify の 2 行目はその試験を指すので回していない（同じ正例・負例・AssetCook の確かめは、上のとおり使い捨ての glTF で回した）。Blender は起動していない。
-- Notes: 判断: 必須 role は jaw と前脚の clavicle を除く 20 role（簡素な犬のリグに顎・肩甲骨が無い場合を許す。足の IK が要る前脚の upper・lower・paw と後脚の thigh・shin・hock・paw は必須に入れた）。関節名は role 名、chain は `<role>_NN`。語彙にない関節（耳など）は命名と関節数の上限だけを受ける。
-- Notes: 既知の限界: `Assets/Models/M9Skinned/*.gltf` は参照先の `fixture.bin` が無く読めない（消した試験が実行時に作っていた）。pipeline の記録は .gltf 本体だけをハッシュし、外部の .bin は含まない。子プロセスが 0 で終われば、想定の出力が無くても段は成功の扱い。pipeline は AssetCook の `--morph drop` などのオプションを渡さない。
-- U1 共通の道具 common.py: 着地(直し 0 回)
-- U2 共通骨格の仕様 skeleton_spec.json と skeleton_spec.py: 着地(直し 0 回)
-- U4 段の起動役 pipeline.py: 着地(直し 0 回)
-- U3 リグの事前検査 validate_rig.py: 着地(直し 1 回)
-- U5 文書 BlenderRigPipeline.md と全体の確かめ: 着地(直し 0 回)
-- Notes: 2026-11-18（run 20261118-025854 の反復 3）: verify の 2 行目（`python -B Test/Tools/Blender/RigValidateTest.py ...`）は、試験を作らない決まり（絶対規則 11）に従って TASKS.md から外した。試験ファイルは作っていない。正例（1・2 クリップ）と 8 種の負例、実際の `AssetCook --rig-split` は、反復 1 で `.harness/` の下の使い捨ての合成 glTF で確かめ済み（`.harness/runs/20261118-025854/iter-1.out.txt`・`G6-GR103-RIG-SPEC-VALIDATE-final-verify.txt`）。この反復の `cmake --build build --config Debug --target AssetCook -- /m:1` は終了コード 0（`.harness/runs/20261118-025854/G6-GR103-RIG-SPEC-VALIDATE-iter3-build.txt`）。`Scripts/Blender/` と文書は変えていない。
+### G12-GR48-IMPOSTOR-GBUFFER 仕上げ（2026-11-17、run 20261117-192359・反復 2）
+- Done: インポスターを前方描画の半透明の合成でなく、GBuffer へ書く専用のパス `ImpostorGBufferPass` で描くようにした。`SceneView` はインポスターの板を DrawCommand にせず、アトラスの組（色・法線・ORM・深度・配置）ごとに連続したインスタンスの `ImpostorBatch` にまとめ、`RenderingCoordinator` がビューごとに基点をずらして `FramePacket::ImpostorBatches` へ入れる（不透明・半透明の DrawCommand の範囲には混ぜない。インスタンスは `FramePacket::InstanceData` = SSBO binding 7 を共有）。RenderThread は `ViewRenderContext::GetActiveImpostorBatches()` で今のビューの束を読む。`ImpostorGBufferPass` は `SetupDeferredPipeline` の `FoliagePass` の直後（SSAO・照明の前）に置き、`GBufferOverlayTargets` で GBuffer の 5 枚と深度を Load/Store で開き、束ごとに `DrawInstanced(6, 数, 0, InstanceDataOffset)` で描く。`impostor_gbuffer.vert` はカメラ向きの四角形をインスタンスごとに展開し、`impostor_gbuffer.frag` は近い 3 セルを補間して albedo・法線・ORM・深度を引き、被覆で discard、法線をワールドへ戻し、深度のアトラスで `gl_FragDepth` を補正し、濡れを掛けて GBuffer の 5 枚（Albedo.a = 1、velocity を含む）へ書く。法線・ORM・深度のアトラスが無い束は 1×1 の既定を結び、視線へ向く法線・既定の材質（粗さ 0.8・金属度 0）・板の面の深度で描く。`ImpostorComponent` と `BoardProxy` は法線・ORM・深度のアトラスと八面体の配置を持つ（`SetBakedMaterialAtlases`・`SetBakedAtlases`）。前方描画からインポスター専用のパイプラインと `impostor.vert/.frag` を外した。束が無いフレームは何も宣言しないので、既定の描画と起動画面は変わらない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が最後の版で終了コード 0・警告 0 で、`ImpostorGBufferPass.cpp` のコンパイルから `Core.lib`・`Game.exe` のリンクまで通った（最後の単位の確かめの出力）。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。シェーダーは `glslc --target-env=vulkan1.2` で頂点・断片とも通り、UBO（336 バイト）と binding 0〜5・7 を C++ の定数・記述子のレイアウトと突き合わせた。verify の ctest の行は回さない決まりで回していない。done-when (3) の試験（ImpostorGBufferVulkanTest・閾値の表）は試験を作らない決まりで作っていない。外したシェーダー・パイプラインを参照する試験は無い。
+- 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（既定では出ない）を出すと、板が前方描画の半透明でなく GBuffer に入り、太陽・IBL の照明と影を受け、遠いほど霧へ寄り、雨のときは濡れる。見本のアトラスは色だけ（手続きの画像）なので、法線は視線へ向く形・材質は既定の粗さで描かれる。焼いたアトラス（`Tools/ImpostorBaker` の 4 枚）を `SetBakedAtlases` で渡すと法線・ORM・深度を引く。束の数が変わると `IMPOSTOR_GBUFFER_DRAW batches=… instances=…` がログに 1 行出る。
+- Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。個体の回転を使ったセルの選択は G12-GR48-IMPOSTOR-GBUFFER-P1、遷移のディザは G12-GR48-CROSSFADE、影の投影と配置の層は G12-GR48-LAYER-SHADOW。
+- Notes: 採った判断: (1) 束の鍵は色・法線・ORM・深度のアトラスと配置で、同じ組の中は可視一覧の順を保つ。(2) 色のアトラスが無効な板は描かない。(3) 範囲がパケットの InstanceData か GPU の InstanceDataBuffer の大きさを超える束は飛ばす。(4) 全部の束の定数・記述子を借りて書いてから記録を始める（FoliagePass と同じ）。既知の限界: インポスターは TLAS に入らないので、DDGI・RTGI・RT の影・パストレーサーでは遠景のインポスターが無いものとして扱われる。描画結果は確かめていない（アプリの起動・撮影は回さない決まり）。
+
+### G12-GR48-IMPOSTOR-GBUFFER 再仕上げ（2026-11-18、run 20261118-013233・反復 1）
+- Done: 前回の反復で全単位（部品とプロキシのアトラス・GBuffer のシェーダー・前方描画からの撤去・束の受け渡し・`ImpostorGBufferPass`）が着地済み。評価が枠切れで行われず `doing` に戻っていたので、コードは変えずに `done` へ戻した。
+- 証拠: この枠の `ImpostorGBufferPass.h/.cpp`・`SceneView.cpp`・`CMakeLists.txt`・`impostor_gbuffer.vert/.frag`・`FramePacket.h`・`RenderingCoordinator.cpp`・`ForwardPass.cpp`・`ImpostorComponent.cpp` が、`cmake --build build --config Debug --target Game -- /m:1` を終了コード 0 で通した作業ツリーの中身とバイト単位で一致することを確かめた。verify の ctest の行は回さない決まりで回していない。
+- 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（`Rendering3DTestRoutine.cpp` の `m_F11ImpostorComponents`。既定では出ない）を出し、遠景の木の板が太陽の向きで陰影を持ち、霧へ色が寄り、影を受けること。既定の起動画面は変わらない。
+- Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。
+
+- U1 衝突の 2 つ目の子・子の法線の下限・屋根の下の子・手続きのフリップブックのコマ数を GPU の定数とスキーマに足す: 着地(直し 0 回)
+- U4 着水の予算（p と滴りの確率）の純関数とデータを足す: 着地(直し 0 回)
+- U2 粒の更新に雨の遮蔽マップを高さ場として結び、屋根の下の隠し・屋根の当たり・2 つの子・滴りを入れる: 着地(直し 0 回)
+- U3 描画で Sheltered の粒を描かず、FlipbookFrames > 0 の板を手続きの王冠のコマで描く: 着地(直し 0 回)
+- U5 近距離の雨に Splash と Droplet を足し、EnvironmentSystem が毎フレーム p と滴りの確率を渡す: 着地(直し 0 回)
+## G11-GR59-RAIN-HIT 雨の着水・屋根の下の隠し・樹冠の滴り（2026-11-18、run 20261118-013229）
+- Done: GPU の粒の `CollisionHeightField` に雨の遮蔽マップ（`OverheadHeightMap`）を結んだ。`GpuParticleSimulationPass` が描画グラフから読み、このフレーム・このビューのマップのときだけ結合 9 に結んで窓と深度を定数（272 バイト）へ詰める。使えないときは空のテクスチャと `HeightFieldBound = 0` で高さ場の衝突を外して縮退する。
+- Done: 更新は屋根を最近傍で引き、上から横切った粒を roofY で当てて応答を当てる（巻き戻る雨は消さずに屋根の下を見えないまま落とす）。生まれた・巻き戻った・流された位置が屋根の下の粒は旗 Sheltered で隠し（巻き戻らないエミッタは消す）、詰めと描画で除く。地面の当たりは深度の衝突のまま。子は当たり 1 回につき確率の引き 1 回で、命中の法線 y ≥ ChildMinNormalY のとき 1 つ目（Splash）、2 つ目（Droplet）は法線を問わず生む。屋根の下の粒が地面に当たり、屋根との差が ShelterMinClearance（3 m）を超えると、別の引きで滴り（Droplet）を生む。
+- Done: `Assets/Data/Vfx/Rain_Near.vfx.json` に子のエミッタ Splash（容量 2000 = 同時に生きる数の上限・寿命 0.32 秒・寿命にわたり 0.05→0.15 m・SurfaceAligned・PostTAA・premultiplied・手続きの王冠のしぶき 16 コマ）と Droplet（容量 4096・寿命 0.3 秒・上向き 1〜2 m/s・重力・VelocityStretch）を足し、雨の CollisionHeightField と CollisionDepth を SpawnChild（ChildMinNormalY 0.5）にした。
+- Done: `RainSplashBudget`（`Library/Core/{Public,Private}/Environment/RainSplashBudget.*`、データ `Assets/Data/Vfx/RainSplashBudget.json`）が、有効な粒の数 × 落ちる速さ ÷ 箱の高さで秒あたりの当たりを見積もり、着水の秒あたりの上限（4000）と同時に生きる数の上限（2000 ÷ 寿命）を超えない p を逆算し、草の密度で最小 0.25 倍まで下げる（雨量 0 で 0）。滴りの確率も返す。`EnvironmentSystem` が毎フレーム求めて ChildProbability・ShelterChildProbability・ShelterMinClearance を値が変わったときだけ渡す。草の密度は描画の世界の草の写し（LayerA の R）をメインのカメラの XZ で最近傍に引く。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U5-verify.txt`。全単位を着地させた木で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0 で Game.exe までリンク。AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）。粒のシェーダー 5 本を glslc（vulkan1.3）で通し、更新の定数の C++ の offsetof と SPIR-V の Offset が 22 項目一致。行末は numstat の 2 通りが一致。
+- 試験は作らない決まりで、done-when の `RainSplashBudgetTest`・`GpuParticleRainCollisionVulkanTest` は作っていない。verify の ctest の行も回していない。撮影・GPU の計測・Game の起動の確かめも回さない決まり。
+- 採った判断: GPU の形式は寿命と大きさがエミッタごとに 1 値なので、Splash の寿命は要件の 0.25〜0.4 秒の中の 0.32 秒に固定し、大きさは寿命にわたる曲線で 0.05→0.15 m にした。p は 1 フレームに 1 つで、カメラの位置の草の密度で下げる（草の場の中の場所ごとには変えない）。Droplet の初速はワールドの上向き（面の法線で回さない）。
+- 既知の限界: 屋根は移動後の位置で最近傍に引くので、縁はテクセル（約 9.4 cm）単位の段になり、1 刻みに細い屋根を横に通り過ぎる速い粒は当たりを取りこぼしうる。衝突で子を書く所と子自身の更新が同じ dispatch の同じスロットに重なりうる競合は GR57 の作りから。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの読み・GPU の粒のシェーダー・EnvironmentSystem の毎フレームの経路）。人が見るときの見どころ: `--environment-preset=heavy_rain` で屋根や木のあるシーンに入り、地面の着水に王冠のしぶきと跳ねる小粒が出ること、屋根・樹冠の下で雨筋が消えること、高い樹冠の下で時々滴りが落ちること、草の多い所でしぶきが減ること。雨の無い場面の見た目は前と変わらない。
+- U6 有効でない雨粒から着水・滴りの子を生まず、箱の上面へ戻した粒の遮蔽を判定し直し、SpawnChild の空の ChildEmitter の検証を戻す: 着地(直し 0 回)
+- Done: 描かれない（有効割合の外の）雨粒からは着水の子と樹冠の下の滴りを生まないようにした（`ParticleUpdate.comp` の `SpawnCollisionChildren`・`SpawnShelterChild` が旗 Active の無い粒で戻る）。CPU の p の見積りの入力（有効な粒の数）と GPU の当たりの数が揃い、弱い雨で着水が秒あたりの上限を超えることと、滴りが雨量に比例しないことを直した。地面に当たって箱の上面へ戻した粒は、その位置で屋根の下かを判定し直して隠す。`VfxSchema` の検証で、応答が SpawnChild の衝突の `ChildEmitter` が空なら前と同じく `unknown_child_emitter` で失敗する（2 つ目の子と屋根の下の子の空は許す）。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U6-verify.txt`。粒のシェーダー 5 本の glslc が失敗 0、AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）、`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0 で Game.exe までリンク（error C・error LNK 0 件）、numstat の 2 通りが一致。
+- Notes: 旗 Active は前の刻みの終わりの値なので、雨量が変わる間は子の生成と描画の有効が最大 1 刻みずれる。

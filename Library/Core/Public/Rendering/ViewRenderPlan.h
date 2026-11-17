@@ -50,6 +50,7 @@ namespace NorvesLib::Core::Rendering
         CommandRange DrawCommandRange;
         CommandRange OpaqueCommandRange;
         CommandRange TransparentCommandRange;
+        CommandRange ImpostorBatchRange;
 
         Container::VariableArray<CanvasLayerCompositeSnapshot> CanvasLayerComposites;
 
@@ -75,6 +76,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
             TransparentCommandRange = CommandRange{};
+            ImpostorBatchRange = CommandRange{};
             CanvasLayerComposites.clear();
         }
     };

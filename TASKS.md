@@ -7554,7 +7554,7 @@
 - notes: 要件 `#### GR56` の受け入れ確認の撮影・計測の分（要件 5625・5626・5628 行）。`Scripts/CameraScripts/grassland-sweep.txt` は G5-GR43-GRASS-CHECK が使う台本（G5 が足す。無ければ同じ形で足す）。grassland に `sky-occlusion` の引数が効くのは G11-GR56-SKY-OCC-WORLD の設定から。数値の合否は G11-GR56-SKY-OCC-SPECULAR と G11-GR56-SKY-OCC-REFERENCE の試験が持ち、ここは目で見る確かめと記録だけ。コードは変えない（直す必要が出たら新しい項目を提案する）。
 
 ## G11-GR59-RAIN-HIT: 雨粒が雨の遮蔽マップで屋根・樹冠の下では消え、屋根や地面に当たると着水のしぶきと小粒を出し、樹冠の下では滴りを出すようにする
-- status: todo
+- status: done
 - after: G11-GR59-OVERHEAD-MAP, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT, G7-GR58-RAIN-MODEL, G7-GR58-RAIN-CURTAIN, G7-GR58-RAIN-NEAR
 - gr: GR59
 - needs-gr: GR42, GR49, GR57, GR58
@@ -7710,7 +7710,7 @@
 - notes: 設計はロードマップ 2269〜2275 行（GR48 の 2. インポスターのベイク）。決定（ロードマップ 2275 行が「実測で決める」とするセルの割り付け）: 既定を上半球の hemi-octahedral にし、全球の八面体は設定で選べるようにする。理由: 舞台の視点は地面にいて水平の付近に集中し（ロードマップ 2745 行のリスク）、下からの視線はほぼ無いので、同じセルの数で水平の帯の方位の分解能が約 2 倍になる。実の AI の木で足りなければ G12-GR48-CHECK で全球や方位 × 仰角の格子との比べを記録する。GPU で焼く理由: AI のメッシュは数十万〜百万の三角形で、材質のテクスチャを近景と同じ式で引きたい（CPU のラスタは材質の再現が別の実装になる。ロードマップ 2273 行）。今の NVTEX は BC があるので（`CookedTextureFormat.h:23-37`）、アトラスはロードマップ 2742 行の見積もり（無圧縮で 1 樹種あたり約 30〜40MB）より小さく焼ける。`Tools/ImpostorBaker` は道具の実行ファイルで、試験の実行ファイルではない。ベイクの見た目（法線・AO の二重の暗さ、深度の食い違い）が近景とずれると遷移で明るさが跳ぶ（ロードマップ 2743 行）ので、材質の読み方を `gbuffer.frag` と共有する。危険地帯（RHI/Vulkan）なので評価者を通す。やらないこと: 実行時の GBuffer の描画、遷移。
 
 ## G12-GR48-IMPOSTOR-GBUFFER: インポスターを半透明の前方描画でなく GBuffer へ書く専用のパスで描き、ライティング・影の受け・霧・濡れに参加させる
-- status: todo
+- status: done
 - after: G12-GR48-IMPOSTOR-BAKE, G12-GR48-MESH-LOD-SELECT, G5-GR43-GRASS-DRAW, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR48
 - needs-gr: GR26
