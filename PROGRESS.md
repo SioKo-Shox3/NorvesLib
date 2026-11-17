@@ -12342,3 +12342,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
 - Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
 - Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
+
+### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
+
+- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
+- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
