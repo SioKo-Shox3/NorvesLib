@@ -355,6 +355,7 @@ set(PRIVATE_SOURCES
     Private/Environment/SunPath.cpp
     Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
+    Private/Rendering/PuddleSurfaceParams.h
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -372,6 +373,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/IblGeneration.cpp
     Private/Rendering/SkyAtmosphereSourceCache.h
     Private/Rendering/SkyAtmosphereSourceCache.cpp
+    Private/Rendering/SkyKeyframeWindow.h
+    Private/Rendering/SkyKeyframeWindow.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp

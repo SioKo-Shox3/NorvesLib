@@ -20,6 +20,11 @@ namespace NorvesLib::Core::Rendering
     inline constexpr float WorldFieldDrynessDefaultFarTexelMeters = 2.0f;
     inline constexpr float WorldFieldDrynessDefaultNearBlendMeters = 4.0f;
 
+    /** @brief 手置きの水たまりの源の上限と、層の解像度・既定のテクセル幅（m）。 */
+    inline constexpr uint32_t WorldFieldPuddleMaxSources = 64u;
+    inline constexpr uint32_t WorldFieldPuddleResolution = 256u;
+    inline constexpr float WorldFieldPuddleDefaultTexelMeters = 0.25f;
+
     /** @brief 世界座標 m のカプセル。std430 の配列へそのまま転送できる並び。 */
     struct alignas(16) WorldFieldInteractor
     {
@@ -67,6 +72,33 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(WorldFieldDrynessSource, Reserved0) == 32);
     static_assert(offsetof(WorldFieldDrynessSource, Reserved1) == 48);
 
+    /** @brief 手置きの水たまりの楕円。std140 の配列へそのまま写せる並び。
+     * Level は凹み度 0〜1、Falloff は縁で 0 へ落とす幅の割合 0〜1。
+     */
+    struct alignas(16) WorldFieldPuddleSource
+    {
+        float CenterXZ[2] = {};
+        float RadiusA = 0.0f;
+        float RadiusB = 0.0f;
+        float CosYaw = 1.0f;
+        float SinYaw = 0.0f;
+        float Falloff = 0.0f;
+        float Level = 0.0f;
+        float Reserved0[4] = {};
+        float Reserved1[4] = {};
+    };
+    static_assert(alignof(WorldFieldPuddleSource) == 16);
+    static_assert(sizeof(WorldFieldPuddleSource) == 64);
+    static_assert(offsetof(WorldFieldPuddleSource, CenterXZ) == 0);
+    static_assert(offsetof(WorldFieldPuddleSource, RadiusA) == 8);
+    static_assert(offsetof(WorldFieldPuddleSource, RadiusB) == 12);
+    static_assert(offsetof(WorldFieldPuddleSource, CosYaw) == 16);
+    static_assert(offsetof(WorldFieldPuddleSource, SinYaw) == 20);
+    static_assert(offsetof(WorldFieldPuddleSource, Falloff) == 24);
+    static_assert(offsetof(WorldFieldPuddleSource, Level) == 28);
+    static_assert(offsetof(WorldFieldPuddleSource, Reserved0) == 32);
+    static_assert(offsetof(WorldFieldPuddleSource, Reserved1) == 48);
+
     /** @brief 画像を記録した世界座標。uv = (worldXZ - OriginXZ) / ExtentMeters。 */
     struct WorldFieldState
     {
@@ -84,6 +116,8 @@ namespace NorvesLib::Core::Rendering
         WorldFieldState DrynessNear;
         WorldFieldState DrynessFar;
         float DrynessNearBlendMeters = 0.0f;
+        /** @brief 水たまりの層の座標。uv = (worldXZ - OriginXZ) / ExtentMeters。 */
+        WorldFieldState PuddleNear;
     };
 
     inline constexpr float WorldFieldDefaultBendScale = 0.7f;
@@ -192,6 +226,12 @@ namespace NorvesLib::Core::Rendering
      */
     uint32_t SanitizeWorldFieldDrynessSources(Container::Span<const WorldFieldDrynessSource> input,
         Container::VariableArray<WorldFieldDrynessSource>& output);
+
+    /** @brief 先頭 WorldFieldPuddleMaxSources 件を検査し、有限の中心と正の有限半径を持つ源で出力を置換する。
+     * Level・Falloff は 0〜1、回転は単位長、予約欄は 0 に整える。入力が出力自身を参照していても使用できる。
+     */
+    uint32_t SanitizeWorldFieldPuddleSources(Container::Span<const WorldFieldPuddleSource> input,
+        Container::VariableArray<WorldFieldPuddleSource>& output);
 
     /** @brief フィールド左下の原点を表す整数画素座標（XZ）。初回は無効にする。 */
     struct WorldFieldOrigin

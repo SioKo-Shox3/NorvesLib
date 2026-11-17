@@ -95,7 +95,7 @@ layout(set = 0, binding = 27) uniform sampler2D rtgiSpecularHit;
 layout(set = 0, binding = 28) uniform sampler2D rtgiSpecularSky;
 layout(set = 0, binding = 29) uniform sampler2DArray skyOcclusionVisibility;
 layout(set = 0, binding = 30) uniform sampler2DArray skyOcclusionAux;
-layout(set = 0, binding = 31) uniform sampler2D cloudShadowMask;
+layout(set = 0, binding = 33) uniform sampler2D cloudShadowMask; // LIGHTING_CLOUD_SHADOW_MASK_BINDING
 // 点光源のキューブシャドウ（キューブiに光源からの距離/範囲を格納。無いフレームは距離1の既定値）
 layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 
@@ -156,6 +156,10 @@ layout(location = 2) out vec4 outSpecularReflectance;
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/ShadingModels.glsl"
 #include "Common/SkyOcclusion.glsl"
+#include "Common/Puddle.glsl"
+
+NORVES_DECLARE_PUDDLE_SURFACE_UBO(0, 31)
+layout(set = 0, binding = 32) uniform sampler2D overheadHeightMap;
 
 SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N)
 {
@@ -1525,6 +1529,19 @@ void main()
         if (params.skyOcclusionInfo.x != 0u)
         {
             skyConeSpecularOcclusion = EvaluateSkySpecularOcclusion(worldPos, N, reflect(-V, N), iblRoughness);
+        }
+        // 水たまりの画素（DefaultLit の P1 = 被覆）は、雨の遮蔽マップの上の空の見え方で空由来の鏡面を遮る。
+        float puddleCoverage = 0.0;
+        if (normalData.shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT)
+        {
+            float coverage = GBufferDecodeP1(texture(gbufferEmissive, fragUV));
+            puddleCoverage = isnan(coverage) ? 0.0 : clamp(coverage, 0.0, 1.0);
+        }
+        if (puddleCoverage > 0.0)
+        {
+            skyConeSpecularOcclusion *= mix(1.0,
+                OverheadHeightMapSkyVisibility(overheadHeightMap, PuddleOverheadView(u_PuddleSurface.params), worldPos),
+                puddleCoverage);
         }
         // RTGI の鏡面の光線が空へ抜けた割合と、当たった面が返す光（EvaluateRTGIEnvironmentSpecular）
         float rtgiSkySpecularOcclusion = 1.0;

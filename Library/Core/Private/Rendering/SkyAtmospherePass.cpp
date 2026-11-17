@@ -4,6 +4,7 @@
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/IblGeneration.h"
 #include "Rendering/SkyAtmosphereSourceCache.h"
+#include "Rendering/SkyKeyframeWindow.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -132,6 +133,63 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    struct SkyAtmospherePass::KeyframeState
+    {
+        SkyKeyframeWindow Window;
+        SkyKeyframeBuilder Builder;
+        Container::VariableArray<SkyKeyframeGpu> Keys;
+        Container::VariableArray<uint64_t> UploadSerials;
+        uint64_t NextUploadSerial = 0u;
+        SkyAtmosphereParameters SetKey;
+        bool bSetKeyValid = false;
+        Container::TSharedPtr<const SkyAtmosphereModel> ReferenceModel;
+        uint64_t SyncBuildCount = 0u;
+        SkyKeyframeSelection Selection;
+        Math::Vector3 ClearHorizontalIlluminance = Math::Vector3::Zero;
+        SkyAerialProfile ClearAerialProfile;
+        bool bFailureWarningLogged = false;
+        bool bLateWarningLogged = false;
+        SkyCloudBlendInputWeights LastBlendWeights;
+        uint64_t LastBlendSerialA = 0u;
+        uint64_t LastBlendSerialB = 0u;
+        uint64_t SweepFrame = 0u;
+        bool bSweepPreviousValid = false;
+        float SweepPreviousAltitude = 0.0f;
+        float SweepPreviousAzimuth = 0.0f;
+        SkyKeyframeSelection SweepPreviousSelection;
+
+        void RetireKey(uint32_t index, GpuRetireQueue& retireQueue)
+        {
+            auto& key = Keys[index];
+            retireQueue.Retire(std::move(key.Radiance));
+            retireQueue.Retire(std::move(key.Environment));
+            retireQueue.Retire(std::move(key.Diffuse));
+            retireQueue.Retire(std::move(key.Prefilter));
+            key = {};
+            UploadSerials[index] = 0u;
+        }
+
+        void RetireAllKeys(GpuRetireQueue& retireQueue)
+        {
+            for (size_t index = 0u; index < Keys.size(); ++index)
+            {
+                RetireKey(static_cast<uint32_t>(index), retireQueue);
+            }
+            Keys.clear();
+            UploadSerials.clear();
+            Selection = {};
+        }
+
+        void WarnFailure()
+        {
+            if (!bFailureWarningLogged)
+            {
+                NORVES_LOG_WARNING("SkyAtmospherePass", "空のキーフレームを生成または転送できませんでした");
+                bFailureWarningLogged = true;
+            }
+        }
+    };
+
     SkyAtmospherePass::SkyAtmospherePass(const SkyAtmospherePassSettings& settings)
         : m_Settings(settings)
         , m_SourceCache(Container::MakeUnique<SkyAtmosphereSourceCache>())
@@ -170,6 +228,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_Keyframes = Container::MakeUnique<KeyframeState>();
+        if (!m_Keyframes->Window.Configure({m_Settings.KeyframeAltitudesDegrees,
+                                            m_Settings.KeyframeJumpThresholdDegrees, 2u}))
+        {
+            NORVES_LOG_WARNING("SkyAtmospherePass", "空のキーフレームの設定が不正なため、既定値で続けます");
+        }
+
         m_Device = context.Device;
         m_FragmentShader = context.ShaderMgr->LoadShader("sky_atmosphere.frag",
                                                          RHI::ShaderStage::Pixel);
@@ -206,6 +271,16 @@ namespace NorvesLib::Core::Rendering
 
     void SkyAtmospherePass::Shutdown()
     {
+        if (m_Keyframes)
+        {
+            // ワーカーが入力と結果を使い終わってから、常駐キーと専用状態を捨てる。
+            m_Keyframes->Builder.WaitAll();
+            Container::VariableArray<SkyKeyframeBuildResult> results;
+            m_Keyframes->Builder.CollectCompleted(results);
+            results.clear();
+            m_Keyframes->RetireAllKeys(*m_RetireQueue);
+            m_Keyframes.reset();
+        }
         if (m_CloudBlend)
         {
             m_CloudBlend->Shutdown();
@@ -230,10 +305,8 @@ namespace NorvesLib::Core::Rendering
         m_bUnitOvercastIblAttempted = false;
         m_bUnitOvercastWarningLogged = false;
         m_bMissingOvercastWarningLogged = false;
-        m_LastCloudBlendWeights = {};
         m_bCloudBlendDirty = true;
         m_bUseCloudBlend = false;
-        m_ClearAerialProfile = {};
         m_TransmittanceTexture.reset();
         m_RadianceTexture.reset();
         m_SunDiskTexture.reset();
@@ -257,7 +330,6 @@ namespace NorvesLib::Core::Rendering
         m_SunDiskHandle = {};
         m_Device = nullptr;
         m_LastParameters = SkyAtmosphereParameters{};
-        m_LutParameters = SkyAtmosphereParameters{};
         m_LutSunGroundTransmittance = Math::Vector3::Zero;
         m_AerialProfile = SkyAerialProfile{};
         m_bLutValid = false;
@@ -275,7 +347,8 @@ namespace NorvesLib::Core::Rendering
 
     uint64_t SkyAtmospherePass::GetSkyModelBuildCount() const
     {
-        return m_SourceCache ? m_SourceCache->GetModelBuildCount() : 0u;
+        return (m_SourceCache ? m_SourceCache->GetModelBuildCount() : 0u) +
+            (m_Keyframes ? m_Keyframes->Builder.GetBuildCount() + m_Keyframes->SyncBuildCount : 0u);
     }
 
     void SkyAtmospherePass::AdvanceRetireQueue(const ViewRenderContext& context)
@@ -337,24 +410,28 @@ namespace NorvesLib::Core::Rendering
         textureDesc.TextureFormat = m_Settings.LutFormat;
         textureDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
         textureDesc.DebugName = debugName;
+        m_RetireQueue->Retire(std::move(outTexture));
         outTexture = m_Device->CreateTexture(textureDesc);
-        // 作り直したテクスチャは中身が無いので、次の準備でLUTを作る。
-        m_bLutValid = false;
         return outTexture != nullptr;
     }
 
     bool SkyAtmospherePass::EnsureResources()
     {
+        const bool bTransmittanceMatches = m_TransmittanceTexture &&
+            m_TransmittanceTexture->GetWidth() == m_Settings.TransmittanceWidth &&
+            m_TransmittanceTexture->GetHeight() == m_Settings.TransmittanceHeight &&
+            m_TransmittanceTexture->GetFormat() == m_Settings.LutFormat;
         const RHI::ITexture* previousSunDisk = m_SunDiskTexture.get();
         const bool bCreated = CreateTexture(m_TransmittanceTexture,
                                             m_Settings.TransmittanceWidth,
                                             m_Settings.TransmittanceHeight,
                                             "SkyAtmosphere.Transmittance") &&
-                              CreateTexture(m_RadianceTexture,
-                                            m_Settings.RadianceWidth,
-                                            m_Settings.RadianceHeight,
-                                            "SkyAtmosphere.ClearRadiance") &&
                               CreateTexture(m_SunDiskTexture, 1u, 1u, "SkyAtmosphere.SunDisk");
+        if (!bTransmittanceMatches)
+        {
+            // 透過率 LUT が作り直されたら、次の準備で窓も作り直す。
+            m_bLutValid = false;
+        }
         if (m_SunDiskTexture.get() != previousSunDisk)
         {
             m_bSunDiskTextureInitialized = false;
@@ -487,23 +564,6 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool SkyAtmospherePass::GenerateRadianceLut(const SkyAtmosphereModel& model)
-    {
-        if (!m_RadianceTexture)
-        {
-            return false;
-        }
-
-        const uint32_t width = m_Settings.RadianceWidth;
-        const uint32_t height = m_Settings.RadianceHeight;
-        Container::VariableArray<uint16_t> data;
-        BuildSkyRadianceLutTexels(model, width, height, data);
-
-        const uint32_t rowPitch = width * 4u * sizeof(uint16_t);
-        m_RadianceTexture->Update(data.data(), rowPitch, rowPitch * height);
-        return true;
-    }
-
     bool SkyAtmospherePass::GenerateSunDiskTexture(
         const SkyAtmosphereParameters& parameters,
         float preExposure,
@@ -566,43 +626,152 @@ namespace NorvesLib::Core::Rendering
         float preExposure,
         FrameResourceLane* frameResources)
     {
-        if (!m_bLutValid || !AreSkyAtmosphereClearKeysEqual(m_LutParameters, parameters))
+        if (!m_Keyframes)
         {
-            // 晴天の鍵（太陽の向きを含む）が変わったときだけ LUT と晴天 IBL を作る。
-            m_bLutValid = false;
+            return false;
+        }
+        auto& state = *m_Keyframes;
+        const bool bFullReset = !m_bLutValid || !state.bSetKeyValid ||
+            !AreSkyKeyframeSetKeysEqual(state.SetKey, parameters);
+        if (bFullReset || state.Window.IsJump(parameters.SunAltitudeDegrees))
+        {
             const auto startTime = std::chrono::steady_clock::now();
-            const SkyAtmosphereModel* model = m_SourceCache ? m_SourceCache->AcquireModel(parameters) : nullptr;
-            if (model == nullptr)
+            state.bSetKeyValid = false;
+            state.RetireAllKeys(*m_RetireQueue);
+            if (bFullReset)
             {
+                // 大気が異なるモデルの表は次の錨へ引き継がない。旧世代の仕事は回収時に捨てる。
+                state.ReferenceModel.reset();
+                m_bLutValid = false;
+            }
+            const uint32_t anchor = state.Window.Reset(parameters.SunAltitudeDegrees);
+            state.Keys.resize(state.Window.GetKeyCount());
+            state.UploadSerials.resize(state.Window.GetKeyCount(), 0u);
+            SkyKeyframeCpuData data;
+            // 錨は今の高度・方位そのもので作り、静止中の重みを 1、ずらしを 0 にする。
+            if (!BuildSkyKeyframeCpuData(MakeSkyAtmosphereClearKey(parameters), state.ReferenceModel.get(),
+                                        m_Settings.RadianceWidth, m_Settings.RadianceHeight, data) ||
+                !UploadSkyKeyframe(m_Device, data, state.Keys[anchor]))
+            {
+                state.Window.MarkFailed(anchor);
+                state.WarnFailure();
                 return false;
             }
-            if (!GenerateTransmittanceLut(*model) || !GenerateRadianceLut(*model))
+            state.Window.MarkResident(anchor);
+            state.ReferenceModel = data.Model;
+            ++state.SyncBuildCount;
+            state.UploadSerials[anchor] = ++state.NextUploadSerial;
+            if (bFullReset && !GenerateTransmittanceLut(*data.Model))
             {
+                state.WarnFailure();
                 return false;
             }
+            state.SetKey = MakeSkyKeyframeSetKey(parameters);
+            state.bSetKeyValid = true;
+            m_bLutValid = true;
+            m_bCloudBlendDirty = true;
             const double elapsedMilliseconds = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - startTime).count();
             NORVES_LOG_INFO("SkyAtmospherePass",
-                            "Sky LUT generated in %.1f ms (radiance %ux%u, transmittance %ux%u, "
+                            "空の錨と LUT を %.1f ms で生成しました (radiance %ux%u, transmittance %ux%u, "
                             "sun altitude %.2f, azimuth %.2f, reused_tables=%d)",
-                            elapsedMilliseconds,
-                            m_Settings.RadianceWidth,
-                            m_Settings.RadianceHeight,
-                            m_Settings.TransmittanceWidth,
-                            m_Settings.TransmittanceHeight,
-                            parameters.SunAltitudeDegrees,
-                            parameters.SunAzimuthDegrees,
-                            model->ReusedSunIndependentTables() ? 1 : 0);
-            m_LutParameters = parameters;
-            m_LutSunGroundTransmittance = model->GetSunGroundTransmittance();
-            // 保持体のモデルは晴天の鍵なので、この表の直達光係数は厳密に 1。
-            BuildSkyAerialProfile(*model, m_ClearAerialProfile);
-            m_bCloudBlendDirty = true;
-            m_bLutValid = true;
-            // IBL が作れなくても LUT は使う。照明のパスは IBL が無ければ空の照明を黒にする。
-            GenerateSkyIbl(parameters);
+                            elapsedMilliseconds, m_Settings.RadianceWidth, m_Settings.RadianceHeight,
+                            m_Settings.TransmittanceWidth, m_Settings.TransmittanceHeight,
+                            parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees,
+                            data.Model->ReusedSunIndependentTables() ? 1 : 0);
         }
-        m_AerialProfile = m_ClearAerialProfile;
+
+        Container::VariableArray<SkyKeyframeBuildResult> results;
+        state.Builder.CollectCompleted(results);
+        for (const auto& result : results)
+        {
+            if (result.Generation != state.Window.GetGeneration())
+            {
+                continue;
+            }
+            if (!result.Data || !result.Data->bValid)
+            {
+                state.Window.MarkFailed(result.KeyIndex);
+                state.WarnFailure();
+                continue;
+            }
+            state.RetireKey(result.KeyIndex, *m_RetireQueue);
+            if (UploadSkyKeyframe(m_Device, *result.Data, state.Keys[result.KeyIndex]))
+            {
+                state.Window.MarkResident(result.KeyIndex);
+                state.UploadSerials[result.KeyIndex] = ++state.NextUploadSerial;
+            }
+            else
+            {
+                state.Window.MarkFailed(result.KeyIndex);
+                state.WarnFailure();
+            }
+        }
+
+        state.Selection = state.Window.Update(parameters.SunAltitudeDegrees);
+        if (state.Selection.bValid && state.Selection.WeightB == 0.0f)
+        {
+            // 隣のキーも常駐している場合でも、寄与しない入力は a と同じキーへそろえる。
+            state.Selection.KeyB = state.Selection.KeyA;
+        }
+        const auto& selection = state.Selection;
+        if (!selection.bValid)
+        {
+            state.WarnFailure();
+            return false;
+        }
+        if (selection.bClamped && state.Window.ConsumeLateWarning() && !state.bLateWarningLogged)
+        {
+            NORVES_LOG_WARNING("SkyAtmospherePass",
+                "空のキーフレームの生成が間に合わないため、直前のキーフレームに留めます (altitude=%.3f)",
+                parameters.SunAltitudeDegrees);
+            state.bLateWarningLogged = true;
+        }
+        Container::VariableArray<uint32_t> indices;
+        state.Window.CollectEvictions(indices);
+        for (uint32_t index : indices)
+        {
+            state.RetireKey(index, *m_RetireQueue);
+            state.Window.MarkEvicted(index);
+        }
+        state.Window.CollectRequests(indices);
+        for (uint32_t index : indices)
+        {
+            auto keyParameters = MakeSkyAtmosphereClearKey(parameters);
+            keyParameters.SunAltitudeDegrees = state.Window.GetKeyAltitude(index);
+            keyParameters.SunAzimuthDegrees = 0.0f;
+            state.Window.MarkPending(index);
+            state.Builder.Submit(index, state.Window.GetGeneration(), keyParameters, state.ReferenceModel,
+                                 m_Settings.RadianceWidth, m_Settings.RadianceHeight);
+        }
+
+        const auto& a = state.Keys[selection.KeyA];
+        const auto& b = state.Keys[selection.KeyB];
+        const float wa = selection.WeightA;
+        const float wb = selection.WeightB;
+        // 重み 0 の項を計算せず、錨の数値と表をそのまま写す。
+        state.ClearHorizontalIlluminance = a.ClearHorizontalIlluminance;
+        m_LutSunGroundTransmittance = a.SunGroundTransmittance;
+        state.ClearAerialProfile = a.AerialProfile;
+        if (wb != 0.0f)
+        {
+            state.ClearHorizontalIlluminance = a.ClearHorizontalIlluminance * wa + b.ClearHorizontalIlluminance * wb;
+            m_LutSunGroundTransmittance = a.SunGroundTransmittance * wa + b.SunGroundTransmittance * wb;
+            for (uint32_t index = 0u; index < SkyAerialProfileSize; ++index)
+            {
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    state.ClearAerialProfile.SunIlluminance[index][channel] =
+                        a.AerialProfile.SunIlluminance[index][channel] * wa + b.AerialProfile.SunIlluminance[index][channel] * wb;
+                    state.ClearAerialProfile.MultipleScattering[index][channel] =
+                        a.AerialProfile.MultipleScattering[index][channel] * wa + b.AerialProfile.MultipleScattering[index][channel] * wb;
+                }
+            }
+        }
+        state.ClearAerialProfile.SunCosine = MakeSunDirectionFromAltitudeAzimuth(
+            parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees).y;
+        state.ClearAerialProfile.bValid = a.AerialProfile.bValid && (wb == 0.0f || b.AerialProfile.bValid);
+        m_AerialProfile = state.ClearAerialProfile;
         const float cloudDirectFactor = ComputeCloudDirectFactor(parameters);
         for (uint32_t index = 0u; index < SkyAerialProfileSize; ++index)
         {
@@ -611,64 +780,14 @@ namespace NorvesLib::Core::Rendering
                 m_AerialProfile.SunIlluminance[index][channel] *= cloudDirectFactor;
             }
         }
+        const auto& dominant = wa >= wb ? a : b;
+        m_RadianceTexture = dominant.Radiance;
+        m_IblEnvironmentTexture = dominant.Environment;
+        m_IblDiffuseIrradianceTexture = dominant.Diffuse;
+        m_IblPrefilteredSpecularTexture = dominant.Prefilter;
+        std::copy_n(dominant.AverageIrradiance, 3u, m_IblAverageIrradiance);
+        m_bIblValid = dominant.IsValid();
         return GenerateSunDiskTexture(parameters, preExposure, frameResources);
-    }
-
-    bool SkyAtmospherePass::GenerateSkyIbl(const SkyAtmosphereParameters& parameters)
-    {
-        const auto startTime = std::chrono::steady_clock::now();
-        m_RetireQueue->Retire(std::move(m_IblEnvironmentTexture));
-        m_RetireQueue->Retire(std::move(m_IblDiffuseIrradianceTexture));
-        m_RetireQueue->Retire(std::move(m_IblPrefilteredSpecularTexture));
-        std::fill_n(m_IblAverageIrradiance, 3u, 0.0f);
-        m_bIblValid = false;
-
-        const uint32_t width = m_Settings.RadianceWidth;
-        const uint32_t height = m_Settings.RadianceHeight;
-        const Container::VariableArray<float>* source =
-            m_SourceCache->AcquireRadianceSource(parameters, width, height);
-        if (source == nullptr)
-        {
-            NORVES_LOG_WARNING("SkyAtmospherePass",
-                               "Sky atmosphere radiance source generation failed; using black IBL (sky_model_builds=%llu)",
-                               static_cast<unsigned long long>(m_SourceCache->GetModelBuildCount()));
-            return false;
-        }
-
-        RHI::TexturePtr environment;
-        RHI::TexturePtr diffuse;
-        RHI::TexturePtr prefilter;
-        float averageIrradiance[3] = {};
-        if (!CreateIblResources(m_Device, *source, width, height,
-                                "SkyAtmosphere.ClearEnvironment",
-                                "SkyAtmosphere.ClearDiffuseIrradiance",
-                                "SkyAtmosphere.ClearPrefilteredSpecular",
-                                environment, diffuse, prefilter, averageIrradiance))
-        {
-            NORVES_LOG_WARNING("SkyAtmospherePass",
-                               "Sky atmosphere IBL generation failed; using black IBL (sky_model_builds=%llu)",
-                               static_cast<unsigned long long>(m_SourceCache->GetModelBuildCount()));
-            return false;
-        }
-
-        m_IblEnvironmentTexture = std::move(environment);
-        m_IblDiffuseIrradianceTexture = std::move(diffuse);
-        m_IblPrefilteredSpecularTexture = std::move(prefilter);
-        std::copy_n(averageIrradiance, 3u, m_IblAverageIrradiance);
-        m_bIblValid = m_IblEnvironmentTexture &&
-                      m_IblDiffuseIrradianceTexture &&
-                      m_IblPrefilteredSpecularTexture;
-
-        const double elapsedMilliseconds = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - startTime).count();
-        NORVES_LOG_INFO("SkyAtmospherePass",
-                        "Sky IBL generated in %.1f ms (environment %ux%u, diffuse %ux%u, specular %ux%u mips %u, sky_model_builds=%llu)",
-                        elapsedMilliseconds,
-                        width, height,
-                        IblDiffuseWidth, IblDiffuseHeight,
-                        IblWorkingWidth, IblWorkingHeight, IblPrefilterMipCount,
-                        static_cast<unsigned long long>(m_SourceCache->GetModelBuildCount()));
-        return m_bIblValid;
     }
 
     void SkyAtmospherePass::GenerateUnitOvercastIbl(const SkyAtmosphereParameters& parameters)
@@ -743,20 +862,22 @@ namespace NorvesLib::Core::Rendering
     bool SkyAtmospherePass::PrepareCloudBlend(const SkyAtmosphereParameters& parameters,
                                               FrameResourceLane& lane)
     {
-        const SkyAtmosphereModel* model = m_SourceCache->AcquireModel(parameters);
-        if (!model)
+        if (!m_Keyframes || !m_Keyframes->Selection.bValid)
         {
             return false;
         }
+        auto& state = *m_Keyframes;
+        const auto& selection = state.Selection;
+        const auto& a = state.Keys[selection.KeyA];
+        const auto& b = state.Keys[selection.KeyB];
         GenerateUnitOvercastIbl(parameters);
-        const RHI::TexturePtr clearTextures[4] = {m_RadianceTexture, m_IblEnvironmentTexture,
-                                                m_IblDiffuseIrradianceTexture, m_IblPrefilteredSpecularTexture};
+        const RHI::TexturePtr clearTexturesA[4] = {a.Radiance, a.Environment, a.Diffuse, a.Prefilter};
+        const RHI::TexturePtr clearTexturesB[4] = {b.Radiance, b.Environment, b.Diffuse, b.Prefilter};
         const char* names[4] = {"SkyAtmosphere.Radiance", "SkyAtmosphere.Environment",
                                 "SkyAtmosphere.DiffuseIrradiance", "SkyAtmosphere.PrefilteredSpecular"};
-        const size_t targetCount = m_bIblValid ? 4u : 1u;
         const bool bUnitOvercastValid = m_UnitOvercastTextures[0] &&
             m_UnitOvercastTextures[1] && m_UnitOvercastTextures[2];
-        SkyCloudBlendWeights weights = ComputeSkyCloudBlendWeights(*model, parameters);
+        SkyCloudBlendWeights weights = ComputeSkyCloudBlendWeightsFromIlluminance(state.ClearHorizontalIlluminance, parameters);
         if (!bUnitOvercastValid)
         {
             weights = {};
@@ -766,43 +887,98 @@ namespace NorvesLib::Core::Rendering
                 m_bMissingOvercastWarningLogged = true;
             }
         }
+        const SkyCloudBlendInputWeights inputWeights{
+            weights.ClearWeight * selection.WeightA,
+            weights.ClearWeight * selection.WeightB,
+            weights.OvercastWeight,
+            parameters.SunAzimuthDegrees == a.AzimuthDegrees ? 0.0f :
+                (parameters.SunAzimuthDegrees - a.AzimuthDegrees) / 360.0f,
+            parameters.SunAzimuthDegrees == b.AzimuthDegrees ? 0.0f :
+                (parameters.SunAzimuthDegrees - b.AzimuthDegrees) / 360.0f};
         SkyCloudBlendTarget targets[4];
-        for (size_t index = 0u; index < targetCount; ++index)
+        for (size_t index = 0u; index < 4u; ++index)
         {
-            if (!EnsureCloudBlendOutput(m_CloudBlendOutputs[index], clearTextures[index], names[index]))
+            if (!EnsureCloudBlendOutput(m_CloudBlendOutputs[index], clearTexturesA[index], names[index]))
             {
                 return false;
             }
-            targets[index] = {clearTextures[index],
-                bUnitOvercastValid ? m_UnitOvercastTextures[index == 0u ? 0u : index - 1u] : clearTextures[index],
+            targets[index] = {clearTexturesA[index], clearTexturesB[index],
+                bUnitOvercastValid ? m_UnitOvercastTextures[index == 0u ? 0u : index - 1u] : clearTexturesA[index],
                 m_CloudBlendOutputs[index]};
         }
-        const bool bWeightsChanged = weights.ClearWeight != m_LastCloudBlendWeights.ClearWeight ||
-            weights.OvercastWeight.x != m_LastCloudBlendWeights.OvercastWeight.x ||
-            weights.OvercastWeight.y != m_LastCloudBlendWeights.OvercastWeight.y ||
-            weights.OvercastWeight.z != m_LastCloudBlendWeights.OvercastWeight.z;
-        if (m_bCloudBlendDirty || bWeightsChanged)
+        const auto& lastWeights = state.LastBlendWeights;
+        const bool bInputsChanged = state.UploadSerials[selection.KeyA] != state.LastBlendSerialA ||
+            state.UploadSerials[selection.KeyB] != state.LastBlendSerialB ||
+            inputWeights.ClearWeightA != lastWeights.ClearWeightA ||
+            inputWeights.ClearWeightB != lastWeights.ClearWeightB ||
+            inputWeights.OvercastWeight.x != lastWeights.OvercastWeight.x ||
+            inputWeights.OvercastWeight.y != lastWeights.OvercastWeight.y ||
+            inputWeights.OvercastWeight.z != lastWeights.OvercastWeight.z ||
+            inputWeights.ShiftA != lastWeights.ShiftA || inputWeights.ShiftB != lastWeights.ShiftB;
+        if (m_bCloudBlendDirty || bInputsChanged)
         {
-            // 失敗した準備は次のフレームで再試行し、今のフレームは晴天入力を公開する。
+            // 失敗した準備は次のフレームで再試行し、今のフレームは重みの大きい晴天キーを公開する。
             m_bCloudBlendDirty = true;
-            if (!m_CloudBlend->Prepare(lane, targets, targetCount, weights.ClearWeight, weights.OvercastWeight))
+            if (!m_CloudBlend->Prepare(lane, targets, 4u, inputWeights))
             {
                 return false;
             }
             m_CloudBlendLane = &lane;
-            m_LastCloudBlendWeights = weights;
+            state.LastBlendWeights = inputWeights;
+            state.LastBlendSerialA = state.UploadSerials[selection.KeyA];
+            state.LastBlendSerialB = state.UploadSerials[selection.KeyB];
             m_bCloudBlendDirty = false;
         }
-        const bool bCopyClear = weights.ClearWeight == 1.0f && weights.OvercastWeight.x == 0.0f &&
-            weights.OvercastWeight.y == 0.0f && weights.OvercastWeight.z == 0.0f;
+        const bool bCopyClear = inputWeights.ClearWeightA == 1.0f && inputWeights.ClearWeightB == 0.0f &&
+            weights.OvercastWeight.x == 0.0f && weights.OvercastWeight.y == 0.0f && weights.OvercastWeight.z == 0.0f;
         const float overcastWeights[3] = {weights.OvercastWeight.x, weights.OvercastWeight.y, weights.OvercastWeight.z};
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
-            m_CloudBlendAverageIrradiance[channel] = bCopyClear ? m_IblAverageIrradiance[channel] :
-                weights.ClearWeight * m_IblAverageIrradiance[channel] +
-                overcastWeights[channel] * m_UnitOvercastAverageIrradiance[channel];
+            if (bCopyClear)
+            {
+                m_CloudBlendAverageIrradiance[channel] = a.AverageIrradiance[channel];
+            }
+            else if (selection.WeightB == 0.0f)
+            {
+                // 重み 0 の項を省き、晴天と曇天の二項をこの順序で加算する。
+                m_CloudBlendAverageIrradiance[channel] = weights.ClearWeight * a.AverageIrradiance[channel] +
+                    overcastWeights[channel] * m_UnitOvercastAverageIrradiance[channel];
+            }
+            else
+            {
+                m_CloudBlendAverageIrradiance[channel] = inputWeights.ClearWeightA * a.AverageIrradiance[channel] +
+                    inputWeights.ClearWeightB * b.AverageIrradiance[channel] +
+                    overcastWeights[channel] * m_UnitOvercastAverageIrradiance[channel];
+            }
         }
         return true;
+    }
+
+    void SkyAtmospherePass::LogSunSweep()
+    {
+        if (!m_LastParameters.bDebugLogSunSweep || !m_Keyframes || !m_Keyframes->Selection.bValid)
+        {
+            return;
+        }
+        auto& state = *m_Keyframes;
+        const auto& selection = state.Selection;
+        const auto& previous = state.SweepPreviousSelection;
+        if (!state.bSweepPreviousValid || state.SweepPreviousAltitude != m_LastParameters.SunAltitudeDegrees ||
+            state.SweepPreviousAzimuth != m_LastParameters.SunAzimuthDegrees ||
+            previous.KeyA != selection.KeyA || previous.KeyB != selection.KeyB ||
+            previous.WeightA != selection.WeightA || previous.WeightB != selection.WeightB)
+        {
+            const float* average = m_bUseCloudBlend ? m_CloudBlendAverageIrradiance : m_IblAverageIrradiance;
+            const float meanIrradiance = 0.2126f * average[0] + 0.7152f * average[1] + 0.0722f * average[2];
+            NORVES_LOG_INFO("SkyAtmospherePass", "SKY_SWEEP frame=%llu altitude=%.3f key_a=%.3f key_b=%.3f weight_a=%.4f weight_b=%.4f mean_irradiance=%.4f",
+                static_cast<unsigned long long>(state.SweepFrame), m_LastParameters.SunAltitudeDegrees,
+                state.Window.GetKeyAltitude(selection.KeyA), state.Window.GetKeyAltitude(selection.KeyB),
+                selection.WeightA, selection.WeightB, meanIrradiance);
+        }
+        state.SweepPreviousAltitude = m_LastParameters.SunAltitudeDegrees;
+        state.SweepPreviousAzimuth = m_LastParameters.SunAzimuthDegrees;
+        state.SweepPreviousSelection = selection;
+        state.bSweepPreviousValid = true;
     }
 
     void SkyAtmospherePass::DiscardCloudBlend()
@@ -813,7 +989,7 @@ namespace NorvesLib::Core::Rendering
             if (m_CloudBlendLane)
             {
                 // 空集合の準備は借用を増やさず、記録しなかった定数・記述子への参照だけを捨てる。
-                m_CloudBlend->Prepare(*m_CloudBlendLane, nullptr, 0u, 1.0f, Math::Vector3::Zero);
+                m_CloudBlend->Prepare(*m_CloudBlendLane, nullptr, 0u, SkyCloudBlendInputWeights{});
             }
         }
         m_CloudBlendLane = nullptr;
@@ -876,6 +1052,18 @@ namespace NorvesLib::Core::Rendering
         AdvanceRetireQueue(*context);
 
         m_LastParameters = SanitizeSkyAtmosphereParameters(ResolveSnapshot(*context));
+        if (m_Keyframes)
+        {
+            if (m_LastParameters.bDebugLogSunSweep)
+            {
+                ++m_Keyframes->SweepFrame;
+            }
+            else
+            {
+                m_Keyframes->SweepFrame = 0u;
+                m_Keyframes->bSweepPreviousValid = false;
+            }
+        }
         m_bSnapshotEnabled = m_LastParameters.bEnabled;
         if (!m_bSnapshotEnabled)
         {
@@ -896,6 +1084,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_bUseCloudBlend = PrepareCloudBlend(m_LastParameters, *context->FrameResources);
         }
+
+        LogSunSweep();
 
         const RGResourceHandle transmittanceResource = builder.ImportTexture(
             m_TransmittanceTexture,

@@ -25,6 +25,7 @@
 #include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/IblGeneration.h"
+#include "PuddleSurfaceParams.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -120,6 +121,9 @@ namespace NorvesLib::Core::Rendering
     }
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
+    static constexpr uint32_t LIGHTING_PUDDLE_SURFACE_BINDING = 31u;
+    static constexpr uint32_t LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING = 32u;
+    static constexpr uint32_t LIGHTING_CLOUD_SHADOW_MASK_BINDING = 33u;
     // SSRPassへ渡す、SceneColorへ足した環境光の鏡面反射（露出後）と、その反射率（0〜1）の形式
     static constexpr RHI::Format LIGHTING_INDIRECT_SPECULAR_FORMAT = RHI::Format::R16G16B16A16_FLOAT;
     static constexpr RHI::Format LIGHTING_SPECULAR_REFLECTANCE_FORMAT = RHI::Format::R8G8B8A8_UNORM;
@@ -1326,10 +1330,22 @@ namespace NorvesLib::Core::Rendering
 
         // 地面の太陽の直達に掛ける雲の影。使わないフレームも既定の2D画像を束縛する。
         RHI::DescriptorBinding cloudShadowBinding;
-        cloudShadowBinding.binding = 31u;
+        cloudShadowBinding.binding = LIGHTING_CLOUD_SHADOW_MASK_BINDING;
         cloudShadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
         cloudShadowBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(cloudShadowBinding);
+
+        RHI::DescriptorBinding puddleSurfaceBinding;
+        puddleSurfaceBinding.binding = LIGHTING_PUDDLE_SURFACE_BINDING;
+        puddleSurfaceBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        puddleSurfaceBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(puddleSurfaceBinding);
+
+        RHI::DescriptorBinding overheadHeightMapBinding;
+        overheadHeightMapBinding.binding = LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING;
+        overheadHeightMapBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        overheadHeightMapBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(overheadHeightMapBinding);
 
         return dsDesc;
     }
@@ -2175,6 +2191,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 公開されたフレームだけ、遮蔽マップの書き込みから照明への依存を作る。
+        RGTextureHandle overheadHeightMapHandle;
+        builder.TryReadTexture(RenderGraphResourceNames::OverheadHeightMap,
+                               overheadHeightMapHandle, RHI::ResourceState::ShaderResource);
         RGTextureHandle skyOcclusionHandle;
         builder.TryReadTexture(RenderGraphResourceNames::SkyOcclusionVisibility,
                                skyOcclusionHandle, RHI::ResourceState::ShaderResource);
@@ -4213,6 +4232,26 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        const FrameUploadAllocation puddleSurfaceConstants = AcquirePuddleSurfaceConstants(context);
+        ExecuteUpload puddleSurfaceUpload{puddleSurfaceConstants.Buffer,
+                                          puddleSurfaceConstants.Offset,
+                                          puddleSurfaceConstants.Size};
+        if (!context.FrameResources)
+        {
+            const PuddleSurfaceGpuParams puddleSurfaceParams = MakePuddleSurfaceGpuParams(context);
+            puddleSurfaceUpload = BorrowUpload(context,
+                                               &puddleSurfaceParams,
+                                               sizeof(puddleSurfaceParams),
+                                               FrameUploadUsage::Constants,
+                                               "LightingPuddleSurfaceParams.Unowned");
+        }
+        if (!puddleSurfaceUpload.IsValid())
+        {
+            NORVES_LOG_ERROR("LightingPass", "水たまりの定数を借りられないため、照明を描きません");
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
             LightingOutputTargets targets;
@@ -4546,8 +4585,21 @@ namespace NorvesLib::Core::Rendering
         lightingDescriptorSet->BindSampler(29, skyOcclusionSampler);
         lightingDescriptorSet->BindSampler(30, skyOcclusionSampler);
 
-        lightingDescriptorSet->BindTexture(31u, bUseCloudShadow ? cloud.MaskTexture : m_DefaultBlackTexture);
-        lightingDescriptorSet->BindSampler(31u, bUseCloudShadow ? cloud.Sampler : m_GBufferSampler);
+        lightingDescriptorSet->BindTexture(LIGHTING_CLOUD_SHADOW_MASK_BINDING,
+            bUseCloudShadow ? cloud.MaskTexture : m_DefaultBlackTexture);
+        lightingDescriptorSet->BindSampler(LIGHTING_CLOUD_SHADOW_MASK_BINDING,
+            bUseCloudShadow ? cloud.Sampler : m_GBufferSampler);
+
+        // 借りた定数と雨の遮蔽マップは Execute ごとに束ね、前のフレームの切れ端を残さない。
+        lightingDescriptorSet->BindConstantBuffer(LIGHTING_PUDDLE_SURFACE_BINDING,
+                                                  puddleSurfaceUpload.Buffer,
+                                                  puddleSurfaceUpload.GetOffset32(),
+                                                  puddleSurfaceUpload.GetSize32());
+        const bool bOverheadHeightMapUsable = IsOverheadHeightMapUsable(context);
+        lightingDescriptorSet->BindTexture(LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING,
+            bOverheadHeightMapUsable ? context.OverheadHeightMap.Texture : m_DefaultBlackTexture);
+        lightingDescriptorSet->BindSampler(LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING,
+            bOverheadHeightMapUsable ? context.OverheadHeightMap.Sampler : m_GBufferSampler);
 
         lightingDescriptorSet->Update();
 

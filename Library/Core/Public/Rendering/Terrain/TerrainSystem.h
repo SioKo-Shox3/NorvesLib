@@ -10,6 +10,7 @@
 #include "Container/VariableArray.h"
 #include "Math/Vector2.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/RenderExtension/RenderExtensionData.h"
 
 #include <cstdint>
@@ -30,6 +31,18 @@ namespace NorvesLib::Core::Rendering::Terrain
 
     inline constexpr RenderExtensionDataKey<TerrainWetnessRenderData> kTerrainWetnessRenderKey{
         Identity::Literal("TerrainWetness", sizeof("TerrainWetness") - 1)};
+
+    /// 地形のスプラット配列と地図の外縁を描画へ渡す。
+    struct TerrainPuddleRenderData
+    {
+        TextureHandle SplatArrayTexture;
+        float SplatMinXZ[2] = {};
+        float SplatMaxXZ[2] = {};
+        bool bValid = false;
+    };
+
+    inline constexpr RenderExtensionDataKey<TerrainPuddleRenderData> kTerrainPuddleRenderKey{
+        Identity::Literal("TerrainPuddle", sizeof("TerrainPuddle") - 1)};
 
     /// 地形の登録を識別する世代付きハンドル。
     struct TerrainHandle
@@ -133,6 +146,9 @@ namespace NorvesLib::Core::Rendering::Terrain
         /// GR49（天候）・GR53 が来るまでの受け口。地形全体で 1 つの値。
         void SetWetness(float wetness);
 
+        /// 登録済み地形の水たまり地図を更新し、描画用の写しを公開する。
+        void SetPuddleRenderData(TerrainHandle handle, const TerrainPuddleRenderData& data);
+
         /// GameThread で地形全体の濡れ度を取得する。
         float GetWetness() const;
 
@@ -143,6 +159,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         struct TerrainSlot
         {
             Container::TSharedPtr<const TerrainHeightField> Field;
+            TerrainPuddleRenderData Puddle;
             uint32_t Generation = 1u;
             uint32_t Previous = TerrainHandle::InvalidIndex;
             uint32_t Next = TerrainHandle::InvalidIndex;
@@ -152,6 +169,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         const TerrainHeightField* FindTerrainRaw(float x, float z) const;
         bool IsLiveHandle(TerrainHandle handle) const;
         void ReleaseSlot(uint32_t index);
+        void PublishPuddleRenderData() const;
 
         Container::VariableArray<TerrainSlot> m_Slots;
         uint32_t m_FirstTerrain = TerrainHandle::InvalidIndex;

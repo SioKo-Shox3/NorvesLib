@@ -851,6 +851,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 枯れ度の源のスナップショット（FramePacket::WorldFieldDrynessSources を指す）。 */
         const Container::VariableArray<WorldFieldDrynessSource>* SnapshotWorldFieldDrynessSources = nullptr;
 
+        /** @brief 手置きの水たまりの源のスナップショット（FramePacket::WorldFieldPuddleSources を指す）。 */
+        const Container::VariableArray<WorldFieldPuddleSource>* SnapshotWorldFieldPuddleSources = nullptr;
+
         /** @brief 帯の頂点と描画範囲のスナップショット（FramePacket::Scene.RibbonTrails を指す） */
         const RibbonTrailScene *SnapshotRibbonTrails = nullptr;
         /** @brief 箱で投影するデカールの一覧（FramePacket::Scene.Decals を指す） */

@@ -23,6 +23,7 @@
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/ProceduralMeshGenerator.h"
+#include "PuddleSurfaceParams.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -78,6 +79,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t EnvironmentBindingIndex = 24;
         // 区間の発光テクスチャ（断片シェーダーだけが読む）
         constexpr uint32_t EmissiveTextureBindingIndex = 25;
+        // MegaGeometryFragment.glsl の水たまり UBO と雨の遮蔽・水たまりの地図
+        constexpr uint32_t PuddleSurfaceBindingIndex = 26;
+        constexpr uint32_t OverheadHeightMapBindingIndex = 27;
+        constexpr uint32_t PuddleFieldBindingIndex = 28;
         // スプラットの配列 4 枚（18〜21）は TerrainBlendShading.h の TERRAIN_SPLAT_MEGA_*_BINDING を使う
         // スプラットの並びの UBO（23）は同じヘッダの TERRAIN_SPLAT_MEGA_PARAMS_BINDING を使う
 
@@ -710,6 +715,20 @@ namespace NorvesLib::Core::Rendering
         const GPUEnvironmentParams defaultEnvironment = MakeDefaultEnvironmentGpuParams();
         m_DefaultEnvironmentBuffer->Update(&defaultEnvironment, sizeof(defaultEnvironment));
 
+        // フレームの定数を借りられないときは両方の地図を無効にする。
+        RHI::BufferDesc defaultPuddleDesc(sizeof(PuddleSurfaceGpuParams),
+                                          RHI::ResourceUsage::ConstantBuffer,
+                                          true,
+                                          "MegaGeometry_DefaultPuddleSurfaceUBO");
+        m_DefaultPuddleSurfaceBuffer = m_Device->CreateBuffer(defaultPuddleDesc);
+        if (!m_DefaultPuddleSurfaceBuffer)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "既定の水たまり UBO の作成に失敗しました");
+            return false;
+        }
+        const PuddleSurfaceGpuParams defaultPuddle{};
+        m_DefaultPuddleSurfaceBuffer->Update(&defaultPuddle, sizeof(defaultPuddle));
+
         // デフォルトPBRテクスチャの作成
         auto createDefault1x1 = [this](const char *debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
         {
@@ -969,8 +988,10 @@ namespace NorvesLib::Core::Rendering
         m_GBufferEmissiveHandle = {};
         m_GBufferDepthHandle = {};
         m_GBufferVelocityHandle = {};
+        m_PuddleFieldHandle = {};
 
         m_DefaultEnvironmentBuffer.reset();
+        m_DefaultPuddleSurfaceBuffer.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -1606,6 +1627,14 @@ namespace NorvesLib::Core::Rendering
         m_GBufferEmissiveHandle = {};
         m_GBufferDepthHandle = {};
         m_GBufferVelocityHandle = {};
+        m_PuddleFieldHandle = {};
+
+        // 地図が無いフレームも描けるよう、公開されているものだけ読み取りを宣言する。
+        RGTextureHandle overheadHeightMap;
+        builder.TryReadTexture(RenderGraphResourceNames::OverheadHeightMap, overheadHeightMap,
+                               RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::WorldFieldPuddleNear, m_PuddleFieldHandle,
+                               RHI::ResourceState::ShaderResource);
 
         if (m_IndirectDrawBuffer)
         {
@@ -1735,6 +1764,8 @@ namespace NorvesLib::Core::Rendering
         {
             ResolveGraphGBufferTextures(resources);
             Setup(context);
+            m_PreparedAction = PrepareFrame(context, &resources);
+            m_bFramePrepared = true;
         }
         Execute(context);
         if (!bPrepared)
@@ -1814,7 +1845,7 @@ namespace NorvesLib::Core::Rendering
     {
         ResolveGraphGBufferTextures(resources);
         Setup(context);
-        m_PreparedAction = PrepareFrame(context);
+        m_PreparedAction = PrepareFrame(context, &resources);
         m_bFramePrepared = true;
         // 記録（ID のラスタの Execute）と同時に読まれないよう、ここで戻す（Execute の添付の状態遷移は決めた結果で積む）
         m_bPreferRenderGraphGBufferResources = false;
@@ -1876,7 +1907,7 @@ namespace NorvesLib::Core::Rendering
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
         // 準備段が決めたフレームはその結果で積む（1 本の記録ではここで決める）
-        const PreparedFrameAction action = m_bFramePrepared ? m_PreparedAction : PrepareFrame(context);
+        const PreparedFrameAction action = m_bFramePrepared ? m_PreparedAction : PrepareFrame(context, nullptr);
         m_bFramePrepared = false;
         if (action == PreparedFrameAction::EmptyTransition)
         {
@@ -1895,12 +1926,16 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    MegaGeometryPass::PreparedFrameAction MegaGeometryPass::PrepareFrame(ViewRenderContext &context)
+    MegaGeometryPass::PreparedFrameAction MegaGeometryPass::PrepareFrame(ViewRenderContext &context, RenderGraphResources *resources)
     {
         MakeVertexAnimationTimeConstants(context.ExtensionFrame, context.bVertexAnimationTestDisplacement,
                                          m_VertexAnimTime);
         m_bFrameRecordDeferred = false;
         m_PreparedSceneTables.EnvironmentConstants = {};
+        m_PreparedSceneTables.PuddleSurfaceConstants = {};
+        m_PreparedSceneTables.OverheadHeightMap.reset();
+        m_PreparedSceneTables.OverheadHeightMapSampler.reset();
+        m_PreparedSceneTables.PuddleField.reset();
 
         const bool bCanEnqueueEmptyTransitionPass =
             m_bPreferRenderGraphGBufferResources &&
@@ -1941,6 +1976,18 @@ namespace NorvesLib::Core::Rendering
         PrepareSceneTables(drawCommand.MegaGeometry, context.CommandList);
         // 記録の間だけ、フレームの持ち主から借りた環境の定数を渡す。
         m_PreparedSceneTables.EnvironmentConstants = AcquireEnvironmentConstants(context);
+        m_PreparedSceneTables.PuddleSurfaceConstants = AcquirePuddleSurfaceConstants(context);
+        const bool bOverheadUsable = IsOverheadHeightMapUsable(context);
+        m_PreparedSceneTables.OverheadHeightMap = bOverheadUsable
+            ? context.OverheadHeightMap.Texture : m_DefaultWhiteTexture;
+        m_PreparedSceneTables.OverheadHeightMapSampler = bOverheadUsable && context.OverheadHeightMap.Sampler
+            ? context.OverheadHeightMap.Sampler : m_TerrainSplatSampler;
+        m_PreparedSceneTables.PuddleField = resources && m_PuddleFieldHandle.IsValid()
+            ? resources->GetTexture(m_PuddleFieldHandle) : RHI::TexturePtr{};
+        if (!m_PreparedSceneTables.PuddleField)
+        {
+            m_PreparedSceneTables.PuddleField = m_DefaultBlackTexture;
+        }
         // 記録のコマンドには描画コンテキストがないため、同じフレームの準備結果へ濡れ度を写す
         const auto *wetness = context.FindExtension(Terrain::kTerrainWetnessRenderKey);
         m_PreparedSceneTables.TerrainWetness = wetness ? wetness->Wetness : 0.0f;
@@ -3733,6 +3780,16 @@ namespace NorvesLib::Core::Rendering
             m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
             m_PreparedSceneTables.InFlightIndex == command.InFlightIndex
                 ? m_PreparedSceneTables.EnvironmentConstants : FrameUploadAllocation{};
+        const bool bMatchingPuddleFrame = m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
+                                          m_PreparedSceneTables.InFlightIndex == command.InFlightIndex;
+        const FrameUploadAllocation puddleSurfaceConstants = bMatchingPuddleFrame
+            ? m_PreparedSceneTables.PuddleSurfaceConstants : FrameUploadAllocation{};
+        const RHI::TexturePtr overheadHeightMap = bMatchingPuddleFrame && m_PreparedSceneTables.OverheadHeightMap
+            ? m_PreparedSceneTables.OverheadHeightMap : m_DefaultWhiteTexture;
+        const RHI::SamplerPtr overheadHeightMapSampler = bMatchingPuddleFrame && m_PreparedSceneTables.OverheadHeightMapSampler
+            ? m_PreparedSceneTables.OverheadHeightMapSampler : m_TerrainSplatSampler;
+        const RHI::TexturePtr puddleField = bMatchingPuddleFrame && m_PreparedSceneTables.PuddleField
+            ? m_PreparedSceneTables.PuddleField : m_DefaultBlackTexture;
         m_PreparedSceneTables = PreparedSceneTables{};
         if (!bPreparedTables)
         {
@@ -4422,6 +4479,20 @@ namespace NorvesLib::Core::Rendering
                 descriptorSet->BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(GPUEnvironmentParams)));
             }
+            if (puddleSurfaceConstants.IsValid())
+            {
+                descriptorSet->BindConstantBuffer(PuddleSurfaceBindingIndex, puddleSurfaceConstants.Buffer,
+                                                  puddleSurfaceConstants.GetOffset32(), puddleSurfaceConstants.GetSize32());
+            }
+            else
+            {
+                descriptorSet->BindConstantBuffer(PuddleSurfaceBindingIndex, m_DefaultPuddleSurfaceBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(PuddleSurfaceGpuParams)));
+            }
+            descriptorSet->BindTexture(OverheadHeightMapBindingIndex, overheadHeightMap);
+            descriptorSet->BindSampler(OverheadHeightMapBindingIndex, overheadHeightMapSampler);
+            descriptorSet->BindTexture(PuddleFieldBindingIndex, puddleField);
+            descriptorSet->BindSampler(PuddleFieldBindingIndex, m_TerrainSplatSampler);
             descriptorSet->BindConstantBuffer(TERRAIN_SPLAT_MEGA_PARAMS_BINDING, sectionDraw.TerrainSplatUniform, 0,
                                               static_cast<uint32_t>(sizeof(splatParams)));
 
@@ -6212,6 +6283,19 @@ namespace NorvesLib::Core::Rendering
         emissiveTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
         emissiveTextureBinding.stages = RHI::ShaderStage::Pixel;
         desc.bindings.push_back(emissiveTextureBinding);
+        RHI::DescriptorBinding puddleSurfaceBinding;
+        puddleSurfaceBinding.binding = PuddleSurfaceBindingIndex;
+        puddleSurfaceBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        puddleSurfaceBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(puddleSurfaceBinding);
+        for (const uint32_t binding : {OverheadHeightMapBindingIndex, PuddleFieldBindingIndex})
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = binding;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(texBinding);
+        }
         if (UsesVirtualTextureFeedbackBinding(m_Device))
         {
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);

@@ -60,6 +60,9 @@ namespace NorvesLib::Core::Rendering
         float SunDiskHiddenAboveCover = 0.9f;
         // 曇天の空の色味（RGB の倍率、無次元）。
         Math::Vector3 OvercastTint = Math::Vector3(1.0f, 1.0f, 1.0f);
+        // 開発用の診断の印。真のとき空のパスが太陽の掃引の行（SKY_SWEEP）を出す。
+        // 作り直しの鍵・等価・ハッシュには入れない。
+        bool bDebugLogSunSweep = false;
     };
 
     /**
@@ -192,6 +195,13 @@ namespace NorvesLib::Core::Rendering
 
     /** sanitize 後の曇天に関する 7 項目を既定値に戻し、晴天モデルの鍵を作る。 */
     SkyAtmosphereParameters MakeSkyAtmosphereClearKey(const SkyAtmosphereParameters& parameters);
+
+    /** 太陽高度の表のキーフレームの組は、この鍵が同じあいだ使い回す。太陽の高度・方位と診断の印を除く。 */
+    SkyAtmosphereParameters MakeSkyKeyframeSetKey(const SkyAtmosphereParameters& parameters);
+
+    /** 太陽高度の表のキーフレームの組を使い回せる、同じ鍵かを比べる。 */
+    bool AreSkyKeyframeSetKeysEqual(const SkyAtmosphereParameters& lhs,
+                                   const SkyAtmosphereParameters& rhs);
 
     /**
      * @brief 空のパラメータ1組に対する前計算を持つ、球殻の大気の評価器
@@ -416,6 +426,15 @@ namespace NorvesLib::Core::Rendering
      */
     SkyCloudBlendWeights ComputeSkyCloudBlendWeights(const SkyAtmosphereModel& clearModel,
                                                     const SkyAtmosphereParameters& parameters);
+
+    /**
+     * @brief 晴天の水平面の全天照度と sanitize 後の曇天設定から、晴天と単位曇天の混合重みを求める
+     *
+     * 太陽高度の異なる晴天のキーを重みで混ぜるとき、混ぜた晴天の水平面の照度を渡す（照度に対して線形）。
+     * 空が無効か雲量が 0 以下なら厳密に晴天 1・曇天 0 を返し、非有限の重みは 0 とする。
+     */
+    SkyCloudBlendWeights ComputeSkyCloudBlendWeightsFromIlluminance(
+        const Math::Vector3& clearHorizontalIlluminance, const SkyAtmosphereParameters& parameters);
 
     /**
      * @brief 観測点から見た空の放射輝度をSkyAtmosphereModelで評価する

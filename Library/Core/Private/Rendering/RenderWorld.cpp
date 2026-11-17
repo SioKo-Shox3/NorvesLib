@@ -454,6 +454,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetWorldFieldDryness(sources);
     }
 
+    void RenderWorld::SetWorldFieldPuddles(Container::Span<const WorldFieldPuddleSource> sources)
+    {
+        m_RenderingCoordinator.SetWorldFieldPuddles(sources);
+    }
+
     void RenderWorld::SetRibbonTrails(const RibbonTrailScene& trails)
     {
         m_RenderingCoordinator.SetRibbonTrails(trails);
