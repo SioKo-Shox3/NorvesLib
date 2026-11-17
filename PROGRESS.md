@@ -12094,3 +12094,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 Game の引数・Rendering3DTest の太陽操作・撮影の台本の太陽高度の範囲を −20〜90 へ広げる: 着地(直し 0 回)
 - U4 夜の光のデータ（NightLight.json）と月明かりの規則を足し、EnvironmentSystem の解決で空へ書く: 着地(直し 1 回)
 - U5 自動露出の MinEV100 を上書きする口を足し、パスが空のスナップショットから毎フレーム当てる: 着地(直し 1 回)
+- U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
