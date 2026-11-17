@@ -82,6 +82,7 @@ set(PRIVATE_SOURCES
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
+    Private/Particle/FootSplashPlanner.cpp
     Private/Particle/HitEffectEmitter.cpp
     Private/Particle/VfxEffectSystem.cpp
     Private/Particle/DefeatBloodSequence.cpp
@@ -516,6 +517,7 @@ set(PRIVATE_SOURCES
     Private/Component/TerrainComponent.cpp
     Private/Component/GrassFieldComponent.cpp
     Private/Component/WitherSourceComponent.cpp
+    Private/Component/FootSplashComponent.cpp
     Private/Component/ParticleEmitterComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
@@ -688,6 +690,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
+    Public/Particle/FootSplashPlanner.h
     Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
     Public/Particle/VfxSimulationMath.h
@@ -968,6 +971,7 @@ set(PUBLIC_HEADERS
     Public/Component/MegaGeometryComponent.h
     Public/Component/GrassFieldComponent.h
     Public/Component/WitherSourceComponent.h
+    Public/Component/FootSplashComponent.h
     Public/Component/ParticleEmitterComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h

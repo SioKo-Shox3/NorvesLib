@@ -12213,21 +12213,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
 - U2 太陽は地平線の下で方向光を作らず、月明かりの方向光を作る関数を足して描画の光源表へつなぐ（最後）: 着地(直し 0 回)
 
-- U1 インポスターの部品とプロキシに法線・ORM・深度のアトラスと八面体の配置を持たせる: 着地(直し 0 回)
-- U3 GBuffer へ書くインポスターのシェーダー（impostor_gbuffer.vert/.frag）を足す: 着地(直し 0 回)
-- U5 前方描画からインポスターの専用のパイプラインを外す: 着地(直し 0 回)
-- U2 インポスターの束を SceneView から FramePacket・描画の文脈まで渡す: 着地(直し 1 回)
-- U4 ImpostorGBufferPass を足して遅延の流れの FoliagePass の隣に置く: 着地(直し 0 回)
+### G11-GR59-FOOT-SPLASH 犬の足が濡れた地面に着くたびに、接地の点から濡れ度と速さに応じた水しぶきを出す（2026-11-17、run 20261117-215954 の反復 1、完了）
 
-### G12-GR48-IMPOSTOR-GBUFFER 仕上げ（2026-11-17、run 20261117-192359・反復 2）
-- Done: インポスターを前方描画の半透明の合成でなく、GBuffer へ書く専用のパス `ImpostorGBufferPass` で描くようにした。`SceneView` はインポスターの板を DrawCommand にせず、アトラスの組（色・法線・ORM・深度・配置）ごとに連続したインスタンスの `ImpostorBatch` にまとめ、`RenderingCoordinator` がビューごとに基点をずらして `FramePacket::ImpostorBatches` へ入れる（不透明・半透明の DrawCommand の範囲には混ぜない。インスタンスは `FramePacket::InstanceData` = SSBO binding 7 を共有）。RenderThread は `ViewRenderContext::GetActiveImpostorBatches()` で今のビューの束を読む。`ImpostorGBufferPass` は `SetupDeferredPipeline` の `FoliagePass` の直後（SSAO・照明の前）に置き、`GBufferOverlayTargets` で GBuffer の 5 枚と深度を Load/Store で開き、束ごとに `DrawInstanced(6, 数, 0, InstanceDataOffset)` で描く。`impostor_gbuffer.vert` はカメラ向きの四角形をインスタンスごとに展開し、`impostor_gbuffer.frag` は近い 3 セルを補間して albedo・法線・ORM・深度を引き、被覆で discard、法線をワールドへ戻し、深度のアトラスで `gl_FragDepth` を補正し、濡れを掛けて GBuffer の 5 枚（Albedo.a = 1、velocity を含む）へ書く。法線・ORM・深度のアトラスが無い束は 1×1 の既定を結び、視線へ向く法線・既定の材質（粗さ 0.8・金属度 0）・板の面の深度で描く。`ImpostorComponent` と `BoardProxy` は法線・ORM・深度のアトラスと八面体の配置を持つ（`SetBakedMaterialAtlases`・`SetBakedAtlases`）。前方描画からインポスター専用のパイプラインと `impostor.vert/.frag` を外した。束が無いフレームは何も宣言しないので、既定の描画と起動画面は変わらない。
-- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が最後の版で終了コード 0・警告 0 で、`ImpostorGBufferPass.cpp` のコンパイルから `Core.lib`・`Game.exe` のリンクまで通った（最後の単位の確かめの出力）。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。シェーダーは `glslc --target-env=vulkan1.2` で頂点・断片とも通り、UBO（336 バイト）と binding 0〜5・7 を C++ の定数・記述子のレイアウトと突き合わせた。verify の ctest の行は回さない決まりで回していない。done-when (3) の試験（ImpostorGBufferVulkanTest・閾値の表）は試験を作らない決まりで作っていない。外したシェーダー・パイプラインを参照する試験は無い。
-- 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（既定では出ない）を出すと、板が前方描画の半透明でなく GBuffer に入り、太陽・IBL の照明と影を受け、遠いほど霧へ寄り、雨のときは濡れる。見本のアトラスは色だけ（手続きの画像）なので、法線は視線へ向く形・材質は既定の粗さで描かれる。焼いたアトラス（`Tools/ImpostorBaker` の 4 枚）を `SetBakedAtlases` で渡すと法線・ORM・深度を引く。束の数が変わると `IMPOSTOR_GBUFFER_DRAW batches=… instances=…` がログに 1 行出る。
-- Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。個体の回転を使ったセルの選択は G12-GR48-IMPOSTOR-GBUFFER-P1、遷移のディザは G12-GR48-CROSSFADE、影の投影と配置の層は G12-GR48-LAYER-SHADOW。
-- Notes: 採った判断: (1) 束の鍵は色・法線・ORM・深度のアトラスと配置で、同じ組の中は可視一覧の順を保つ。(2) 色のアトラスが無効な板は描かない。(3) 範囲がパケットの InstanceData か GPU の InstanceDataBuffer の大きさを超える束は飛ばす。(4) 全部の束の定数・記述子を借りて書いてから記録を始める（FoliagePass と同じ）。既知の限界: インポスターは TLAS に入らないので、DDGI・RTGI・RT の影・パストレーサーでは遠景のインポスターが無いものとして扱われる。描画結果は確かめていない（アプリの起動・撮影は回さない決まり）。
-
-### G12-GR48-IMPOSTOR-GBUFFER 再仕上げ（2026-11-18、run 20261118-013233・反復 1）
-- Done: 前回の反復で全単位（部品とプロキシのアトラス・GBuffer のシェーダー・前方描画からの撤去・束の受け渡し・`ImpostorGBufferPass`）が着地済み。評価が枠切れで行われず `doing` に戻っていたので、コードは変えずに `done` へ戻した。
-- 証拠: この枠の `ImpostorGBufferPass.h/.cpp`・`SceneView.cpp`・`CMakeLists.txt`・`impostor_gbuffer.vert/.frag`・`FramePacket.h`・`RenderingCoordinator.cpp`・`ForwardPass.cpp`・`ImpostorComponent.cpp` が、`cmake --build build --config Debug --target Game -- /m:1` を終了コード 0 で通した作業ツリーの中身とバイト単位で一致することを確かめた。verify の ctest の行は回さない決まりで回していない。
-- 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（`Rendering3DTestRoutine.cpp` の `m_F11ImpostorComponents`。既定では出ない）を出し、遠景の木の板が太陽の向きで陰影を持ち、霧へ色が寄り、影を受けること。既定の起動画面は変わらない。
-- Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。
+- Done: `Particle::PlanFootSplash`（`Library/Core/Public/Particle/FootSplashPlanner.h`）を足した。接地 1 件（脚の番号・通し番号・接地の点と法線・足の速度・濡れ度・地形の凹み度）と係数 `FootSplashTuning`（データ）と種から、放出 1 件（位置・法線・速度・個数・エミッタ番号）を返す純関数。濡れ度 0 以下なら水たまりがあっても 0 個、既定の係数で濡れ度 1・基準の速さ 1.5 m/s なら 9.6〜14.4 → 10〜14 個、速さ（法線に直交する成分）に対して減らない、乱数は種・脚・通し番号だけの PCG ハッシュで同じ入力から同じ結果。水たまりの被覆は `Puddle.glsl` の PuddleWaterLevel・PuddleCoverage を同じ演算順で写して濡れ度へ足す。位置は接地の点そのもの。
+- Done: `Assets/Vfx/FootSplash.vfx.json`（エミッタ 0 の `Droplet`。Executor=Gpu・World・Counter、容量 512、常時の生成なし、寿命 0.32 秒・大きさ 0.018 m・重力・弱い抗力、`GpuSpriteRenderer` の Billboard・PostTAA・premultiplied）と、パスから .vfx.json か焼いた .nvfx を読む `Particle::LoadVfxEffectFile` を足した。
+- Done: `FootSplashComponent`（`Library/Core/Public/Component/`）を足した。同じ Entity の `AnimatorComponent::OnEvent` で `Foot.<脚>.Down`（既定 LF・RF・LH・RH）を受けて脚ごとに保留し、PostPhysics の tick で足先（ソケット `Toe.<脚>`、無ければ足首の骨 `front_L_paw` などとデータのずれ）の位置と速度を読み、`SceneQuery::QueryGround`（取れなければ `TerrainSystem::SampleGround`）で接地の点と法線を求め、濡れ度（環境が有効なら `EnvironmentState::Wetness`、無効なら `TerrainSystem::GetWetness`）と地形の凹み度を添えて計画器を呼び、個数が 1 以上なら `VfxEffectSystem::RaiseGpuBurst` で 1 件積む。係数・効果のパス・種・照会の範囲（上 0.5 m・下 1.0 m・足先の高さの上限 0.15 m）は PROPERTY。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0（全単位を載せた版）。`AssetCook --cook-vfx Assets/Vfx/FootSplash.vfx.json` が終了コード 0（`vfx_cooked bytes=259 emitters=1`）。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF。
+- Next: ランナーの評価者の反証（Public API の Component）。人が見るときの見どころは G11-GR59-RAIN-CHECK（雨の草原）で、犬に `FootSplashComponent` を付けて濡れ度を上げ、歩く・走る犬の足の真下から（横からでなく）小粒が跳ね、乾いた地面（濡れ度 0）では何も出ず、走るほど多いこと。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `FootSplashPlannerTest` は作っていない。verify の ctest の行は対象の試験が無い。撮影・起動の確かめは回さない決まり。
+- Notes: 判断: G11-GR59-RAIN-HIT の `Splash`・`Droplet` はまだ無いので、流用せず足のしぶき専用の小粒の効果 `FootSplash.vfx.json` を置いた（RAIN-HIT と同じファイル名にしないことで衝突を避けた。効果のパスは PROPERTY なので後で差し替えられる）。放出は 1 接地 1 件（エミッタ 0）。Engine で `SceneQuery::SetTerrainSystem` を結ぶ G5-GR38-PHYSICS-HEIGHTFIELD-P1 が未着手で、物理の地形コライダーが無いと `QueryGround` が地形を引けないため、`TerrainSystem::SampleGround` へ落とす経路を足した。
+- Notes: 既知の限界: Animator が後から付いたときは、結ぶ前のイベントは拾えない。同じ脚の同じ tick の中の複数の接地は最後の 1 件になる。足先を読めない tick は保留と前の位置を捨てる。足の速度は tick ごとの位置の差で、最初の接地では 0（止まった足の倍率 0.25）。
+- U2 足のしぶきの効果のデータと、効果のファイルの読み込みの関数: 着地(直し 0 回)
+- U1 足のしぶきの放出を決める純関数 FootSplashPlanner: 着地(直し 1 回)
+- U3 接地のイベントから放出を積む FootSplashComponent: 着地(直し 1 回)
+- Notes: 2026-11-18（run 20261118-013230 の反復 1）: 前回の評価が枠切れ（429）で回らず status が doing に戻ったため、実装は変えずに done に戻した。最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0）以降、Library・Assets の変更は無い。評価者の反証はランナーが回す。

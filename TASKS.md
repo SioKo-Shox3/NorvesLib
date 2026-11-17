@@ -7565,7 +7565,7 @@
 - notes: GR59 の P2 と、P6 のうち樹冠の滴り（要件 5985・5987-5993 行）。GR57（GPU パーティクル）と GR58（雨）は G7 で、今のコードに無い（`GpuParticle`・`BurstQueue` の grep で 0 件。今あるのは CPU の `VfxEffectSystem`〔`Library/Core/Public/Particle/VfxEffectSystem.h`〕と画面空間の `ParticleSystem`）。名前と置き場（`Library/Core/{Public,Private}/Rendering/GpuParticle/`、`CollisionHeightField`、応答の SpawnChild、`Assets/Shaders/Particles`）は G7 の項目（G7-GR57-GPU-DEFINITION・G7-GR57-GPU-SIMULATION）に合わせた。効果の `.vfx.json` の置き場（`Assets/Vfx` と書いた）は G7 が決める置き場に合わせる。当たった面の種別は GBuffer の法線だけで分ける（GR26 のシェーディングモデルの ID で毛・葉の見た目を分けるのは要件の「スライスでは法線のみ」に従い、ここでは作らない）。上限と寿命・大きさの値は要件の案で、根拠は要件だけ（データで変えられる）。試験を足す理由: 反証する契約は「屋根の下で雨が消え、着水の数が予算を超えない」。屋根の下の雨は撮影の 1 枚で目立たないこともあり、数の超過はフレーム時間として後からしか出ず、黙って起きる。ロードマップ 1990・2001 行。
 
 ## G11-GR59-FOOT-SPLASH: 犬の足が濡れた地面に着くたびに、接地の点から濡れ度と速さに応じた水しぶきを出す
-- status: todo
+- status: done
 - after: G3-GR11-FOOT-CONTACT-SOURCE, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD, G7-GR53-WET-MODEL, G7-GR53-WET-WRITERS, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR59
 - needs-gr: GR11, GR13, GR38, GR53, GR57
