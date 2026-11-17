@@ -29,13 +29,13 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 プログラムの FS は上の表の 5 枚へ同じ location・形式・意味で出力し、Normal・Material・Emissive は `Common/GBufferEncoding.glsl` の `GBufferEncodeNormal`・`GBufferEncodeMaterial`・`GBufferEncodeEmissive` を通す。標準 FS の本体は `Common/GBufferFragment.glsl` である。
 
-VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）、14 は発光テクスチャ（ピクセルのみ）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。FS は GBuffer へ書く前に `ApplyWetSurfaceFromEnvironment` を呼ぶ。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
+VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）、14 は発光テクスチャ、15 は水たまりの UBO、16 は雨の遮蔽マップ、17 は水たまりの層（14〜17 はいずれもピクセルのみ。水たまりの配置は 16 節）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。FS は GBuffer へ書く前に `ApplyWetSurfaceWithPuddle` を呼び、`DefaultLit` は返り値の水たまりの被覆を `P1` に書く。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
 
 組み込みのプログラム `Dissolve` は `GBufferProgramRegistry` の構築時に登録する。通常の VS は `gbuffer_dissolve.vert`、スキンの VS は `skinned_gbuffer_dissolve.vert`、FS は `gbuffer_dissolve.frag`。標準の location 0〜8 に加え、VS から FS へ location 9 の `vec3 fragRestPosition`（変形前の局所位置。スキンはバインド姿勢）と location 10 の `float fragDissolveProtect`（保護する骨の重み。静的メッシュは 0）を渡す。ディゾルブの閾値は `P0`（`ShadingParams.x`）で、インスタンス値を優先し、未指定なら材質値を使う。PaleFlat の消滅度と同じ `P0` の欄を使い、専用の閾値欄は増やさない。`P0` が閾値なので、ディゾルブの FS は濡れの感度に `P0` を使わず 1 とする。
 
 ### 材質値の優先と ID
 
-`ShadingParams` は x = `P0`、y = `P1`、z = インスタンスの頂点アニメの種類（材質側は予約）、w = 被覆率の乗数（1 で不変）。各成分は `MeshComponent::SetShadingParams` / `SkinnedMeshComponent::SetShadingParams` のインスタンス値が 0 以上ならそれを使い、負なら `MaterialResourceData::ShadingParams` / `MegaMeshMaterial::ShadingParams` の材質値を使う。両方とも負なら `P0 = P1 = 0`、z = 0、w = 1。未指定の初期値は各成分 `-1` である。GLSL の解決は `Common/GBufferEncoding.glsl::ResolveShadingParams` に従う。スキニングのインスタンス値は CPU で材質値に重ねる。現行の MegaGeometry はインスタンス値を渡さず、材質値を使う。
+`ShadingParams` は x = `P0`、y = `P1`、z = インスタンスの頂点アニメの種類（材質側は予約）、w = 被覆率の乗数（1 で不変）。各成分は `MeshComponent::SetShadingParams` / `SkinnedMeshComponent::SetShadingParams` のインスタンス値が 0 以上ならそれを使い、負なら `MaterialResourceData::ShadingParams` / `MegaMeshMaterial::ShadingParams` の材質値を使う。両方とも負なら `P0 = P1 = 0`、z = 0、w = 1。未指定の初期値は各成分 `-1` である。GLSL の解決は `Common/GBufferEncoding.glsl::ResolveShadingParams` に従う。スキニングのインスタンス値は CPU で材質値に重ねる。現行の MegaGeometry はインスタンス値を渡さず、材質値を使う。ただし `DefaultLit` の GBuffer の `P1` はこの入力値を使わず、書き手が求めた水たまりの被覆で置き換える。
 
 `DefaultLit` の `P0` は濡れの感度であり、`Common/WetSurface.glsl::ResolveWetSurfaceResponse` がインスタンスの指定を材質より優先して解決する。両方が未指定（負または NaN）なら感度は 1、`DefaultLit` 以外も 1。これは GBuffer に書く `P0` の解決とは別で、両方未指定の `Material.a` は従来どおり 0 である。スキニングでは CPU がインスタンス値を材質側へ重ねた値を使う。
 
@@ -61,13 +61,13 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 
 | ID | C++ 定数（`GBufferContract`） | GLSL 定数 | 意味 | P0 | P1 |
 |---|---|---|---|---|---|
-| 0 | `ShadingModelDefaultLit` | `GBUFFER_SHADING_MODEL_DEFAULT_LIT` | 標準のライティング | 濡れの感度（`ResolveWetSurfaceResponse`） | 未使用 |
+| 0 | `ShadingModelDefaultLit` | `GBUFFER_SHADING_MODEL_DEFAULT_LIT` | 標準のライティング | 濡れの感度（`ResolveWetSurfaceResponse`） | 水たまりの被覆 0〜1（書き手が `ApplyWetSurfaceWithPuddle` の返り値を書く。水たまりが無ければ 0） |
 | 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 | 濡れ度 | シェルの高さの割合 |
 | 2 | `ShadingModelEye` | `GBUFFER_SHADING_MODEL_EYE` | 目 | 湿り（鏡面の強さ） | 未使用 |
 | 3 | `ShadingModelPaleFlat` | `GBUFFER_SHADING_MODEL_PALE_FLAT` | 淡い平坦な面 | 消滅度 | 未使用 |
 | 4〜15 | 予約 | 予約 | 未割当 | 未割当 | 未割当 |
 
-ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0 のみで、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
+ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0（鏡面の強さ）と DefaultLit の P1（水たまりの被覆。空由来の鏡面の遮りに使う）で、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
 PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係数は `mix(max(NdotL, 0) * shadow, mix(WrapMin, 1, clamp(NdotL * 0.5 + 0.5, 0, 1) * mix(1, shadow, ShadowStrength)), Flatness)`（shadow は 0〜1 に補正）とする。
 環境光の拡散は `Color / PI * flatAmbientIrradiance` と AO・RTGI・DDGI・空の遮蔽を含む局所の拡散を `mix(1, AmbientLocalMix, Flatness)` の重みで混ぜる。`flatAmbientIrradiance` は IBL が有効なら `E_avg * ambientColor.w`（平均照度が無効なら 0）、IBL が無効なら `ambientColor.rgb * ambientColor.w * PI` とする。
 直接・間接の鏡面と間接鏡面の反射率には、それぞれ `SpecularScale` を掛ける。
@@ -226,6 +226,8 @@ C++ は `Library/Core/Public/Rendering/ViewClearance.h::ViewClearanceGpuData`、
 
 `flags.x` は `TERRAIN_SPLAT_FLAG_NORMAL_TWO_CHANNEL = 1`（bit 0）と `TERRAIN_SPLAT_FLAG_ALBEDO_SRGB_DECODE = 2`（bit 1）。`PackTerrainSplatParams` は層数を `MegaTerrainSplatMaxLayers = 8` に制限し、範囲外の崖の層を -1 とする。各層の UV 倍率は `1 / max(TileMeters, 1e-3)`、濡れやすさは 0〜1 に制限し、使わない層は 0。UV 回転の波長が正でなければ `cliff.z = 0`。濡れ度は有限なら 0〜1 に制限し、非有限なら 0 とする。
 
+`MegaTerrainSplat::SplatArrayTexture` は RGBA8 線形の 3 層配列で、層 0・1 は `SPL0`・`SPL1` の重み、層 2（3 枚目）の R は `PDL0` の水たまりの凹み度 0〜1、GBA は 0。`TerrainComponent.cpp` が `GetPuddlePotential()` を層 2 の R へ写す。`Common/TerrainLayerBlend.glsl::TerrainSplatPuddlePotential` はこの R を読み、スプラットが無効・配列が 3 枚未満なら 0 とする。
+
 `PackTerrainSplatParams` は呼び出し側の `bEnabled` または `splat.bEnabled` が偽、層数が 0、地図の幅または奥行きが 1e-3 以下の場合、48 個すべてを 0 にする。`TerrainSplatUv` は `(worldXZ - map.xy) * map.zw` で地図の座標を求める。
 
 ## 3. GPUSceneInstanceData
@@ -328,7 +330,9 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | 0 | 28 | `sampler2D` | `rtgiSpecularSky` | `BindTexture(28, ...)`。このフレームの RTGI 履歴 `Normal`、または既定黒 |
 | 0 | 29 | `sampler2DArray` | `skyOcclusionVisibility` | `BindTexture(29, ...)`。公開済み Visibility、またはゼロの既定配列 |
 | 0 | 30 | `sampler2DArray` | `skyOcclusionAux` | `BindTexture(30, ...)`。公開済み Aux、またはゼロの既定配列 |
-| 0 | 31 以降 | 未割当 | 空き | このレイアウトには宣言なし |
+| 0 | 31 | `uniform PuddleSurfaceParamsBlock`（`std140`） | `u_PuddleSurface.params` | `BindConstantBuffer(LIGHTING_PUDDLE_SURFACE_BINDING, puddleSurfaceUpload.Buffer, ...)`。48 バイト（16 節） |
+| 0 | 32 | `sampler2D` | `overheadHeightMap` | `BindTexture(LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING, ...)`。有効な雨の遮蔽マップ、または既定黒 |
+| 0 | 33 以降 | 未割当 | 空き | このレイアウトには宣言なし |
 
 `LightingParams` の `shadingModelParams` はオフセット 944（32 バイト）で、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。Fur・Eye の C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants`（`FurWrap`・`FurMinSpecularRoughness`・`EyeSpecularBoostPerP0`）であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
 
@@ -337,7 +341,7 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | 予約（0） |
 | `shadingModelParams[1]` | 予約（0）。PaleFlat は `paleFlatColorAndWrapMin`・`paleFlatShape`・`paleFlatAverageIrradiance` を使う | 予約（0） | 予約（0） | 予約（0） |
 
-0〜30 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
+0〜32 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
 
 C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み取り専用 SSBO は `StructuredBuffer`、24 は `RWBuffer`。27・28 の履歴資源名は `Depth` / `Normal` だが、ここでは鏡面の蓄積値として使用する。`rtgiSpecularHit.gba` は当たった面が返す露出後の光の平均、`rtgiSpecularSky.a` は空へ抜けた割合である。
 
@@ -791,7 +795,13 @@ GLSL は `NORVES_DECLARE_ENVIRONMENT_UBO(SET_INDEX, BINDING_INDEX)` をシェー
 | デカール | 0 / 3 | Pixel | `decal.frag` | `DecalPass.cpp::kEnvironmentBinding` |
 | 半透明の前方 | 0 / 19 | Pixel | `forward_transparent.frag` | `ForwardPass.cpp::EnvironmentBindingIndex`（15 は VT の要求バッファ、18 は空の放射輝度 LUT） |
 
-GBuffer の書き手は、書き込み直前のアルベド・粗さ・金属度・シェーディング法線に `ApplyWetSurfaceFromEnvironment` を掛ける。草は後述のとおり `ApplyWetSurface` を直接使う。ワールド空間の幾何法線（Y が上）と、一様の凹み `surface.x` を使い、AO は凹みに使わない。内部の `ApplyWetSurface` は `w = wetness * exposure * response` が 0 以下または NaN なら何も変えず戻る。最終の `w` は書き戻さず、材質がある経路の `Material.a` は解決済みの `P0`、`Emissive.a` は `P1` のままにし、ID と受け手の印も保つ。株と草の `P0` / `P1` は 0。`wetness = 0` では全経路の出力を濡れ処理導入前とビット一致させる契約である。
+通常メッシュ（材質ごとの GBuffer プログラムを含む）・MegaGeometry・可視バッファの解決は、書き込み直前のアルベド・粗さ・金属度・シェーディング法線に `ApplyWetSurfaceWithPuddle` を掛ける。`PuddleRainExposure` は画素のワールド位置を雨の遮蔽マップで調べ、屋根の下なら 0、雨に当たるなら 1 を返す。無効なマップや範囲外は開けていると扱う。環境の既定の当たり方にこの値を掛けた `exposure = surface.y * rainExposure` で濡れの当たり方を上書きし、濡れ、水たまりの順で適用する。
+
+濡れはワールド空間の幾何法線（Y が上）と一様の凹み `surface.x` を使い、AO は凹みに使わない。水たまり用の凹み度は、地形のスプラットが有効な MegaGeometry・可視バッファのタイル解決では `TerrainSplatPuddlePotential` の PDL0、それ以外は `SamplePuddleFieldLayer` の水たまりの層から取る（16 節）。内部の `ApplyWetSurface` は `w = wetness * exposure * response` が 0 以下または NaN なら何も変えず戻る。最終の `w` は書き戻さず、`Material.a` は解決済みの `P0`、`Emissive.a` は DefaultLit なら返り値の水たまりの被覆、それ以外は解決済みの `P1` とし、ID と受け手の印も保つ。株と草の `P0` / `P1` は 0。`wetness = 0` では濡れと水たまりによる面の変更はなく、DefaultLit の被覆は 0 になる。
+
+水たまりの式の正本は `Common/Puddle.glsl`。水位は `clamp((wetness - 0.3) / 0.7, 0, 1)`、閾値は `1 - 0.8 * 水位`。被覆は `smoothstep(閾値, 閾値 + 0.1, 凹み度)` に上向きの重み `smoothstep(0.90, 0.98, geomN.y)`・当たり方・0〜1 に収めた感度を掛ける。被覆 `c` に応じ、アルベドを `mix(1, 0.6, c)` 倍、粗さを `mix(0.1, 0.03, c)` へ重み `c` で補間、金属度を `1 - c` 倍、法線を幾何法線へ補間する。雨の強さ × 被覆を強度とする波紋を法線に足す。波紋は 0.35 m のセルを 2 層重ね、最大半径 0.15 m・波長 0.04 m・合計の傾き上限 0.14054、時刻は環境 UBO の `weather.w` を使う。
+
+草・株・デカール・半透明の前方は環境の既定の当たり方 `surface.y` を使い、画素ごとの雨の遮蔽と水たまりを掛けない。草は `ApplyWetSurface`、ほかは `ApplyWetSurfaceFromEnvironment` を使う。
 
 - `GBufferPass` と材質ごとのプログラムは、インスタンスの `P0`、材質の `P0`、`DefaultLit` かどうかを `ResolveWetSurfaceResponse` に渡す。MegaGeometry はインスタンスを未指定（-1）とし材質の `P0` を使う。半透明の前方もインスタンスを未指定（-1）とし、材質の `P0` を `TransparentForwardUBO::sceneColorParams.z` で渡す。材質がなければ -1 で感度 1 とし、ID を読まず `DefaultLit` として扱う。可視バッファの解決も材質があれば GBuffer と同じ優先で解決し、材質がなければ感度 1。幾何法線はラスタと同じ補間された頂点法線。MegaGeometry と可視バッファのデバッグ表示は濡らさない。
 - 株は材質の `P0` を持たないため感度 1、幾何法線は画面微分から求めた面の法線（退化時は元の法線）。草も感度 1 で、環境の濡れを描画定数の `Surface.x` に詰め、頂点が LayerA の moisture により場所ごとに調整した `fragWetness` を使う。種の濡れ色・濡れ粗さを適用してから `ApplyWetSurface` を直接呼ぶ。
@@ -854,3 +864,46 @@ return h;
 `Common/MegaInstanceTable.glsl::MegaVariationPhase(seed)` は `(seed >> 8) / 2^24` を返す。範囲は [0, 1) で、頂点アニメの `instanceParams` に風の位相を渡すときに使う。現在の可視バッファ解決とラスタは、MegaGeometry の `instanceParams` に引き続き `vec4(-1.0)` を渡す（8 節）。
 
 1 本の非表示は GPU の表に印を持たず、散布がその 1 本の proxy を `SceneView` から取り下げるため、描く順の表・影・RT のいずれにも入らない。
+
+## 16. 水たまりの定数・束縛・世界フィールド
+
+### PuddleSurfaceGpuParams
+
+C++ は `Library/Core/Private/Rendering/PuddleSurfaceParams.h::PuddleSurfaceGpuParams`、GLSL は `Assets/Shaders/Common/Puddle.glsl` の同名構造体。`std140`、16 バイト整列、合計 **48 バイト**。C++ の `static_assert` が大きさ・整列・各欄の位置を検査する。GLSL は `NORVES_DECLARE_PUDDLE_SURFACE_UBO(SET_INDEX, BINDING_INDEX)` で `PuddleSurfaceParamsBlock` を宣言し、`u_PuddleSurface.params` から読む。
+
+| オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（x / y / z / w） |
+|---|---|---|---|
+| 0 | `OverheadWindow: float[4]` | `overheadWindow: vec4` | 雨の遮蔽マップの窓の原点 X / Z（m）/ 範囲（m）/ テクセル幅（m） |
+| 16 | `OverheadDepth: float[4]` | `overheadDepth: vec4` | 上端 Y（m）/ 深度の範囲（m）/ 解像度 / 有効 1・無効 0 |
+| 32 | `PuddleField: float[4]` | `puddleField: vec4` | 水たまりの層の原点 X / Z（m）/ 範囲の逆数（1/m）/ 有効 1・無効 0 |
+
+`MakePuddleSurfaceGpuParams` は現在のフレーム・ビューに属する有効な雨の遮蔽マップの窓と深度を写し、それ以外は先頭 2 欄を 0 にする。水たまりの座標は `PhysicalLighting.WorldField.PuddleNear` が有効で、原点・正の範囲と変換結果が有限なときに写し、それ以外は末尾欄を 0 にする。`AcquirePuddleSurfaceConstants` はフレームの持ち主から定数を借りる。
+
+### 書き手と照明の束縛
+
+すべて set 0。各行の 3 番号は水たまりの UBO（`ConstantBuffer`）/ 雨の遮蔽マップ（`sampler2D`）/ 水たまりの層（`sampler2D`）の順。画像は C++ でテクスチャと sampler を同じ binding に束ねる。
+
+| 経路・段 | UBO | 雨の遮蔽 | 水たまりの層 | GLSL / C++ の正本 |
+|---|---|---|---|---|
+| 通常メッシュ・材質ごとのプログラム・Pixel のみ | 15 | 16 | 17 | `Common/GBufferFragment.glsl` / `GBufferPass.cpp` |
+| MegaGeometry・地形・Pixel | 26 | 27 | 28 | `Common/MegaGeometryFragment.glsl` / `MegaGeometryPass.cpp` |
+| 可視バッファの解決（通常・タイル・各 dump）・Compute | 39 | 40 | 41 | `Common/VisibilityResolve.glsl` / `VisibilityResolvePass.cpp` |
+| 照明・Pixel | 31 | 32 | 束縛なし | `lighting.frag` / `LightingPass.cpp` |
+
+書き手の C++ の定数名は順に `PuddleSurfaceBindingIndex` / `OverheadHeightMapBindingIndex` / `PuddleFieldBindingIndex`。照明は `LIGHTING_PUDDLE_SURFACE_BINDING = 31` / `LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING = 32`。照明は DefaultLit の P1 を 0〜1 に収め、空の鏡面の遮蔽へ `mix(1, OverheadHeightMapSkyVisibility(...), 被覆)` を掛けるため、水たまりの層そのものは読まない。
+
+### WorldField.PuddleNear
+
+`WorldFieldPass.cpp` が描画グラフ名 `WorldField.PuddleNear`（`RenderGraphResourceNames::WorldFieldPuddleNear`）で公開する。形式は **R8_UNORM**、解像度は `WorldFieldPuddleResolution = 256` × 256、`WorldFieldPuddleDefaultTexelMeters = 0.25` m/画素、範囲は 64 m × 64 m。R は水たまりの凹み度 0〜1。カメラの XZ に追従して原点を画素格子へ合わせ、源・原点・地形が同じなら記録済みの層を再利用する。
+
+`RenderWorld::SetWorldFieldPuddles` は `WorldFieldTypes.h::WorldFieldPuddleSource` の配列を `RenderingCoordinator::SetWorldFieldPuddles` へ渡す。源は最大 64 個の手置きの楕円で、世界の中心 XZ・半径 A/B（m）、回転の cos/sin、縁の減衰幅 `Falloff`、凹み度 `Level` を持つ。`WorldFieldPuddle.comp` は地形スプラット配列の層 2 の R（PDL0）の写しと、各楕円の `Level * shape` の最大を取り、0〜1 に収めて層へ書く。履歴の蓄積ではない。
+
+| set / binding | GLSL 宣言 | C++ の束縛 |
+|---|---|---|
+| 0 / 0 | `layout(r8) writeonly image2D uPuddleNear` | `BindStorageTexture(0, m_PuddleTexture)` |
+| 0 / 1 | `std140 uniform WorldFieldPuddleParams` | `BindConstantBuffer(1, paramsAllocation.Buffer, ...)` |
+| 0 / 2 | `sampler2DArray uTerrainSplat` | `BindTexture(2, terrainState.Texture または代替画像)` と `BindSampler(2, m_PuddleTerrainSampler)` |
+
+`WorldFieldPuddleParams` は `WorldFieldPass.h` と GLSL に対応し、合計 **4144 バイト**。0: `OriginXZ`（vec2）、8: `TexelSize`（float）、12: `SourceCount`（uint）、16: `TerrainMap`（vec4。最小 XZ と広さの逆数）、32: `TerrainEnabled`（uint）、36・40: 地形の最大 X・Z（float）、44: 予約（uint）、48: `Sources[64]`。源は 1 個 **64 バイト**で、0: `CenterRadii`（中心 XZ・半径 A/B）、16: `RotationFalloffLevel`（cos/sin・Falloff・Level）、32・48: 予約の vec4。C++ の源は `WorldFieldPuddleSource`、GLSL は `WorldFieldPuddleSourceGpu`。ワークグループは 8 × 8 × 1、dispatch は 32 × 32 × 1。
+
+`SamplePuddleFieldLayer` は `uv = (worldXZ - 原点XZ) * 範囲の逆数` で R を読み、無効時と [0, 1) の外では 0。縁から 2 m の幅で 0 へ減衰させる。水たまりの層は非地形のメッシュにも地形 PDL0 の写しを供給する。R8 の storage・sampled の対応と `bShaderStorageImageExtendedFormats` がすべてそろわなければ、この層は無効になる。

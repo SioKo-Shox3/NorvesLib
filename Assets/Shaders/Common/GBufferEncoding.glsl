@@ -49,6 +49,7 @@ vec4 GBufferEncodeMaterialForShadingModel(vec3 metallicRoughnessAo, float p0, ui
 }
 
 // プリエクスポージャを掛けた発光と材質値 P1 を格納する。
+// DefaultLit の P1 は水たまりの被覆 0〜1（水たまりが無ければ 0）。
 vec4 GBufferEncodeEmissive(vec3 preExposedEmissive, float p1)
 {
     return vec4(preExposedEmissive, p1);

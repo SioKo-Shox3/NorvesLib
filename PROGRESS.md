@@ -11972,3 +11972,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 CPU の屋根の判定（雨を遮る遮蔽物の天面が点の上にあるか）: 着地(直し 0 回)
 - U7 通常のメッシュの GBuffer（gbuffer.frag）で雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 1 回)
 - U10 地形の凹み度を水たまりの層へ写す: 着地(直し 0 回)
+- U11 GBuffer と束縛の契約の文書を直し、タスクの verify のビルドを通す（最後）: 着地(直し 0 回)
