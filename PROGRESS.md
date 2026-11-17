@@ -12052,3 +12052,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: 濡れの復元は窓の始まりの濡れを今の値（読み込みでは保存された値）とするので、乾きの時定数 900 秒の下で窓の外の影響が最大で約 1.8 % 残る。無効のとき `SkipTime` の警告の文言は `SkipTo` の名前で出る。
 - U1 雲の影の値の型・純関数と、RenderWorld → FramePacket の受け渡し: 着地(直し 0 回)
 - U2 雲の影のマスクの compute と、引く側の共有 include: 着地(直し 0 回)
+- U3 CloudShadowMaskPass（マスクを書き、ViewRenderContext へ出す）: 着地(直し 0 回)

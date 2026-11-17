@@ -513,6 +513,340 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace CloudLayerPassDetail
 
+    namespace CloudShadowMaskPassDetail
+    {
+        // CloudShadowMask.comp の std140 と同じ並び。未使用の切れ間は全成分を 0 にする。
+        struct alignas(16) GPUMaskParams
+        {
+            float CenterAndExtent[4] = {};
+            float SunDirectionAndGapCount[4] = {};
+            float SunGaps[MaxCloudSunGaps][4] = {};
+            float SunGapStrengths[4] = {};
+
+            bool operator==(const GPUMaskParams&) const = default;
+        };
+        static_assert(sizeof(GPUMaskParams) == 112u);
+
+        // 密度に使う成分だけを比較し、カメラ・露出・時間方向の雑音の位相は含めない。
+        struct DensityParams
+        {
+            float LayerAltitudesAndCoverage[4] = {};
+            float ExtinctionAndInverseScales[4] = {};
+            float ShapeAndWeatherOffset[4] = {};
+            float DetailOffset[4] = {};
+            float WeatherHighOffset[4] = {};
+
+            bool operator==(const DensityParams&) const = default;
+        };
+
+        DensityParams MakeDensityParams(const CloudLayerPassDetail::GPUCloudLayerParams& params)
+        {
+            DensityParams density;
+            std::memcpy(density.LayerAltitudesAndCoverage, params.LayerAltitudesAndCoverage,
+                        sizeof(density.LayerAltitudesAndCoverage));
+            std::memcpy(density.ExtinctionAndInverseScales, params.ExtinctionAndInverseScales,
+                        sizeof(density.ExtinctionAndInverseScales));
+            std::memcpy(density.ShapeAndWeatherOffset, params.ShapeAndWeatherOffset,
+                        sizeof(density.ShapeAndWeatherOffset));
+            std::memcpy(density.DetailOffset, params.DetailOffset, sizeof(density.DetailOffset));
+            std::memcpy(density.WeatherHighOffset, params.WeatherHighOffset, sizeof(density.WeatherHighOffset));
+            return density;
+        }
+
+        RHI::DescriptorSetDesc CreateDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc;
+            const RHI::ResourceBindType types[5] = {
+                RHI::ResourceBindType::ConstantBuffer,
+                RHI::ResourceBindType::CombinedImageSampler,
+                RHI::ResourceBindType::CombinedImageSampler,
+                RHI::ResourceBindType::RWTexture,
+                RHI::ResourceBindType::ConstantBuffer,
+            };
+            for (uint32_t index = 0u; index < 5u; ++index)
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = index + 2u;
+                binding.type = types[index];
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
+            }
+            return desc;
+        }
+    } // namespace CloudShadowMaskPassDetail
+
+    struct CloudShadowMaskPass::State
+    {
+        RHI::IDevice* Device = nullptr;
+        RHI::ShaderPtr Shader;
+        RHI::PipelinePtr Pipeline;
+        RHI::DescriptorSetLayoutPtr DescriptorSetLayout;
+        RHI::SamplerPtr NoiseSampler;
+        RHI::SamplerPtr MaskSampler;
+        RHI::TexturePtr ShapeNoiseTexture;
+        RHI::TexturePtr DetailNoiseTexture;
+        RHI::TexturePtr MaskTexture;
+        bool bNoiseGenerationFailed = false;
+        bool bHasValidData = false;
+        bool bNeedsUpdate = false;
+        RGResourceHandle MaskHandle;
+        FrameResourceGeneration LastUpdateSubmission;
+        CloudShadowParameters Parameters;
+        CloudLayerParameters CloudLayer;
+        CloudShadowMaskPlacement Placement;
+        Math::Vector3 SunDirection = Math::Vector3::Zero;
+        CloudLayerPassDetail::GPUCloudLayerParams CloudParams{};
+        CloudShadowMaskPassDetail::GPUMaskParams MaskParams;
+        CloudShadowMaskPassDetail::GPUMaskParams LastMaskParams;
+        CloudShadowMaskPassDetail::DensityParams LastDensityParams;
+    };
+
+    CloudShadowMaskPass::CloudShadowMaskPass() = default;
+
+    CloudShadowMaskPass::~CloudShadowMaskPass()
+    {
+        Shutdown();
+    }
+
+    bool CloudShadowMaskPass::Initialize(ViewRenderContext& context)
+    {
+        if (m_bInitialized)
+        {
+            return true;
+        }
+        if (!context.Device || !context.ShaderMgr)
+        {
+            return false;
+        }
+        try
+        {
+            m_State = Container::MakeUnique<State>();
+            State& state = *m_State;
+            state.Device = context.Device;
+            state.Shader = context.ShaderMgr->LoadShader("Sky/CloudShadowMask.comp", RHI::ShaderStage::Compute);
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Linear;
+            samplerDesc.filterMag = RHI::FilterMode::Linear;
+            samplerDesc.filterMip = RHI::FilterMode::Linear;
+            samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+            state.NoiseSampler = state.Device->CreateSampler(samplerDesc);
+            samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+            state.MaskSampler = state.Device->CreateSampler(samplerDesc);
+            const RHI::DescriptorSetDesc layout = CloudShadowMaskPassDetail::CreateDescriptorSetDesc();
+            state.DescriptorSetLayout = state.Device->GetOrCreateDescriptorSetLayout(layout);
+            if (state.Shader && state.DescriptorSetLayout && state.NoiseSampler && state.MaskSampler)
+            {
+                RHI::ComputePipelineDesc pipelineDesc;
+                pipelineDesc.computeShader = state.Shader;
+                pipelineDesc.descriptorSetLayouts.push_back(layout);
+                state.Pipeline = state.Device->CreateComputePipeline(pipelineDesc);
+            }
+            m_bInitialized = state.Pipeline != nullptr;
+        }
+        catch (...)
+        {
+            m_bInitialized = false;
+        }
+        if (!m_bInitialized)
+        {
+            Shutdown();
+        }
+        return m_bInitialized;
+    }
+
+    void CloudShadowMaskPass::Shutdown()
+    {
+        m_State.reset();
+        m_bInitialized = false;
+    }
+
+    void CloudShadowMaskPass::Setup(ViewRenderContext& /*context*/)
+    {
+    }
+
+    void CloudShadowMaskPass::Execute(ViewRenderContext& /*context*/)
+    {
+        // 記録と公開は描画グラフ経由で行う。
+    }
+
+    void CloudShadowMaskPass::Declare(RenderGraphBuilder& builder)
+    {
+        if (!m_State)
+        {
+            return;
+        }
+        State& state = *m_State;
+        state.MaskHandle = {};
+        state.bNeedsUpdate = false;
+        const ViewRenderContext* context = builder.GetContext();
+        const SceneProxy* scene = context ? context->SnapshotScene : nullptr;
+        const CameraProxy* camera = context ? context->GetActiveCamera() : nullptr;
+        if (!m_bInitialized || !m_bEnabled || !scene || !camera || !context->CommandList || !context->FrameResources)
+        {
+            return;
+        }
+        state.Parameters = SanitizeCloudShadowParameters(scene->CloudShadow);
+        state.CloudLayer = SanitizeCloudLayerParameters(scene->CloudLayer);
+        const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(scene->SkyAtmosphere);
+        if (!state.Parameters.bEnabled || !state.CloudLayer.bEnabled || !sky.bEnabled)
+        {
+            return;
+        }
+        state.SunDirection = MakeSunDirectionFromAltitudeAzimuth(sky.SunAltitudeDegrees, sky.SunAzimuthDegrees);
+        state.Placement = ComputeCloudShadowMaskPlacement(
+            Math::Vector3(camera->PositionX, camera->PositionY, camera->PositionZ), state.SunDirection,
+            state.CloudLayer.BottomAltitudeMeters, state.Parameters.MaskExtentMeters);
+        if (!state.Placement.bValid)
+        {
+            return;
+        }
+
+        if (state.LastUpdateSubmission.IsSet())
+        {
+            const FrameSubmissionOutcome outcome = context->FrameResources->GetSubmissionOutcome(state.LastUpdateSubmission);
+            if (outcome == FrameSubmissionOutcome::Aborted || outcome == FrameSubmissionOutcome::Unknown)
+            {
+                // 中止された記録では画像の遷移も実行されないので、画像から作り直す。
+                state.MaskTexture.reset();
+                state.bHasValidData = false;
+            }
+            if (outcome != FrameSubmissionOutcome::Recording)
+            {
+                state.LastUpdateSubmission = {};
+            }
+        }
+        try
+        {
+            if (!state.ShapeNoiseTexture || !state.DetailNoiseTexture)
+            {
+                if (state.bNoiseGenerationFailed)
+                {
+                    return;
+                }
+                if (!CloudLayerPassDetail::CreateNoiseTextures(state.Device, "CloudShadowMaskPass",
+                                                              state.ShapeNoiseTexture, state.DetailNoiseTexture))
+                {
+                    state.bNoiseGenerationFailed = true;
+                    return;
+                }
+            }
+            if (!state.MaskTexture)
+            {
+                RHI::TextureDesc desc;
+                desc.Width = CloudShadowMaskResolution;
+                desc.Height = CloudShadowMaskResolution;
+                desc.TextureFormat = RHI::Format::R32_FLOAT;
+                desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
+                desc.DebugName = "CloudShadowMask";
+                state.MaskTexture = state.Device->CreateTexture(desc);
+                state.bHasValidData = false;
+                if (!state.MaskTexture)
+                {
+                    return;
+                }
+            }
+        }
+        catch (...)
+        {
+            return;
+        }
+        CloudLayerPassDetail::BuildCloudLayerParams(*context, *camera, state.CloudLayer, sky,
+                                                    Math::Vector3::Zero, state.CloudParams);
+        state.MaskParams = {};
+        state.MaskParams.CenterAndExtent[0] = state.Placement.CenterX;
+        state.MaskParams.CenterAndExtent[1] = state.Placement.CenterZ;
+        state.MaskParams.CenterAndExtent[2] = state.Placement.ExtentMeters;
+        state.MaskParams.CenterAndExtent[3] = static_cast<float>(CloudShadowMaskResolution);
+        state.MaskParams.SunDirectionAndGapCount[0] = state.SunDirection.x;
+        state.MaskParams.SunDirectionAndGapCount[1] = state.SunDirection.y;
+        state.MaskParams.SunDirectionAndGapCount[2] = state.SunDirection.z;
+        state.MaskParams.SunDirectionAndGapCount[3] = static_cast<float>(state.Parameters.SunGapCount);
+        for (uint32_t index = 0u; index < state.Parameters.SunGapCount; ++index)
+        {
+            const CloudSunGap& gap = state.Parameters.SunGaps[index];
+            state.MaskParams.SunGaps[index][0] = gap.CenterX;
+            state.MaskParams.SunGaps[index][1] = gap.CenterZ;
+            state.MaskParams.SunGaps[index][2] = gap.RadiusMeters;
+            state.MaskParams.SunGaps[index][3] = gap.SoftnessMeters;
+            state.MaskParams.SunGapStrengths[index] = gap.Strength;
+        }
+        state.bNeedsUpdate = !state.bHasValidData || state.MaskParams != state.LastMaskParams ||
+            CloudShadowMaskPassDetail::MakeDensityParams(state.CloudParams) != state.LastDensityParams;
+        const RHI::TextureLayout layout = context->CommandList->GetTextureLayout(state.MaskTexture.get());
+        const RHI::ResourceState initialState = layout == RHI::TextureLayout::ShaderReadOnly
+            ? RHI::ResourceState::ShaderResource : layout == RHI::TextureLayout::General
+            ? RHI::ResourceState::UnorderedAccess : RHI::ResourceState::Undefined;
+        const RGResourceHandle mask = builder.ImportTexture(state.MaskTexture, initialState, "CloudShadowMask");
+        if (!mask.IsValid() || !builder.PublishTexture(RenderGraphResourceNames::CloudShadowMask, mask))
+        {
+            return;
+        }
+        state.MaskHandle = mask;
+        if (state.bNeedsUpdate)
+        {
+            builder.Write(mask, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
+        }
+        else
+        {
+            builder.Read(mask, RHI::ResourceState::ShaderResource);
+        }
+        // 公開した CPU の値も後の霧と照明へ届くように、直列の記録と登録順を保つ。
+        builder.PreserveInsertionOrder();
+    }
+
+    void CloudShadowMaskPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        if (!m_State || !m_State->MaskHandle.IsValid() || !context.CommandList ||
+            !resources.GetTexture(m_State->MaskHandle))
+        {
+            return;
+        }
+        State& state = *m_State;
+        if (state.bNeedsUpdate)
+        {
+            // 借りる口へ提出の成否を問い合わせ、未提出の画像を次のフレームで使わない。
+            state.LastUpdateSubmission = context.FrameResources->GetGeneration();
+            const FrameUploadAllocation cloudConstants = context.FrameResources->AllocateConstants(state.CloudParams);
+            const FrameUploadAllocation maskConstants = context.FrameResources->AllocateConstants(state.MaskParams);
+            const FrameDescriptorAllocation descriptor = context.FrameResources->AllocateDescriptorSet(state.DescriptorSetLayout);
+            const bool bCanDispatch = cloudConstants.IsValid() && maskConstants.IsValid() && descriptor.IsValid();
+            if (bCanDispatch)
+            {
+                descriptor.Set->BindConstantBuffer(2u, cloudConstants.Buffer, cloudConstants.GetOffset32(), cloudConstants.GetSize32());
+                descriptor.Set->BindTexture(3u, state.ShapeNoiseTexture);
+                descriptor.Set->BindSampler(3u, state.NoiseSampler);
+                descriptor.Set->BindTexture(4u, state.DetailNoiseTexture);
+                descriptor.Set->BindSampler(4u, state.NoiseSampler);
+                descriptor.Set->BindStorageTexture(5u, state.MaskTexture);
+                descriptor.Set->BindConstantBuffer(6u, maskConstants.Buffer, maskConstants.GetOffset32(), maskConstants.GetSize32());
+                descriptor.Set->Update();
+                context.CommandList->SetPipeline(state.Pipeline);
+                context.CommandList->SetDescriptorSet(descriptor.Set, 0u);
+                context.CommandList->Dispatch(CloudShadowMaskResolution / 8u, CloudShadowMaskResolution / 8u, 1u);
+            }
+            // 借りられなかった場合も宣言した最終の状態へ戻し、このフレームの公開はしない。
+            context.CommandList->TextureBarrier(state.MaskTexture, RHI::ResourceState::UnorderedAccess,
+                                                RHI::ResourceState::ShaderResource);
+            if (!bCanDispatch)
+            {
+                return;
+            }
+            state.LastMaskParams = state.MaskParams;
+            state.LastDensityParams = CloudShadowMaskPassDetail::MakeDensityParams(state.CloudParams);
+            state.bHasValidData = true;
+        }
+        if (state.bHasValidData)
+        {
+            context.CloudShadow.Publish(state.Parameters, state.MaskTexture, state.MaskSampler,
+                                        state.Placement.CenterX, state.Placement.CenterZ, state.Placement.ExtentMeters,
+                                        state.SunDirection, state.CloudLayer.BottomAltitudeMeters);
+        }
+    }
+
     void BuildCloudNoiseTexels(Container::VariableArray<uint8_t>& outShape, Container::VariableArray<uint8_t>& outDetail)
     {
         CloudLayerPassDetail::GenerateShapeNoise(outShape);

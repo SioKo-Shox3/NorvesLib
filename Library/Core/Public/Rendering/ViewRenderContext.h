@@ -8,6 +8,7 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/CloudShadow.h"
 #include "Rendering/SkyOcclusion.h"
 #include "Rendering/WorldFieldTypes.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
@@ -591,6 +592,50 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    /** @brief 雲の影のマスク（CloudShadowMaskPass が書く）を霧と照明へ渡す資源。無効・作れないフレームは bValid が偽。 */
+    struct CloudShadowRenderResources
+    {
+        CloudShadowParameters Parameters; // Sanitize 済み
+        RHI::TexturePtr MaskTexture; // R32_SFLOAT 256²。texel の列が雲の底の平面の X、行が Z
+        RHI::SamplerPtr Sampler; // 線形・端で止める
+        float CenterX = 0.0f;
+        float CenterZ = 0.0f;
+        float ExtentMeters = 0.0f;
+        Math::Vector3 SunDirection = Math::Vector3::Zero; // 太陽へ向かう向き（正規化済み）
+        float BottomAltitudeMeters = 0.0f;
+        bool bValid = false;
+
+        void Reset()
+        {
+            Parameters = CloudShadowParameters{};
+            MaskTexture.reset();
+            Sampler.reset();
+            CenterX = 0.0f;
+            CenterZ = 0.0f;
+            ExtentMeters = 0.0f;
+            SunDirection = Math::Vector3::Zero;
+            BottomAltitudeMeters = 0.0f;
+            bValid = false;
+        }
+
+        void Publish(const CloudShadowParameters& parameters,
+                     const RHI::TexturePtr& maskTexture,
+                     const RHI::SamplerPtr& sampler,
+                     float centerX, float centerZ, float extentMeters,
+                     const Math::Vector3& sunDirection, float bottomAltitudeMeters)
+        {
+            Parameters = parameters;
+            MaskTexture = maskTexture;
+            Sampler = sampler;
+            CenterX = centerX;
+            CenterZ = centerZ;
+            ExtentMeters = extentMeters;
+            SunDirection = sunDirection;
+            BottomAltitudeMeters = bottomAltitudeMeters;
+            bValid = true;
+        }
+    };
+
     /**
      * @brief 真上からの雨の遮蔽の深度マップを後続のパスへ渡す資源。
      *
@@ -678,6 +723,7 @@ namespace NorvesLib::Core::Rendering
         PhysicalLightingResources PhysicalLighting;
         SkyAtmosphereRenderResources SkyAtmosphere;
         SkyOcclusionRenderResources SkyOcclusion;
+        CloudShadowRenderResources CloudShadow;
         OverheadHeightMapResources OverheadHeightMap;
 
         // ========================================

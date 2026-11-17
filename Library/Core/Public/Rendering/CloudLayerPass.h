@@ -7,6 +7,7 @@
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
+#include "Container/PointerTypes.h"
 #include "Math/Vector3.h"
 #include <cstdint>
 
@@ -78,6 +79,31 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_CurrentHeight = 0;
         RHI::Format m_CurrentFormat = RHI::Format::UNKNOWN;
         RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;
+    };
+
+    /**
+     * @brief 雲の底から太陽への透過率を 256² のマスクへ書き、ViewRenderContext::CloudShadow へ渡すパス
+     *
+     * 雲の影・雲の層・空と投影が有効なフレームだけ公開する。密度の定数・置き場・太陽・切れ間が変わったときに
+     * 書き直し、同じ値なら持ち続ける画像を使う。描画グラフの CloudShadowMask を霧と照明が読み取る。
+     */
+    class CloudShadowMaskPass : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        CloudShadowMaskPass();
+        ~CloudShadowMaskPass() override;
+
+        const char* GetName() const override { return "CloudShadowMaskPass"; }
+        bool Initialize(ViewRenderContext& context) override;
+        void Shutdown() override;
+        void Setup(ViewRenderContext& context) override;
+        void Execute(ViewRenderContext& context) override;
+        void Declare(RenderGraphBuilder& builder) override;
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+
+    private:
+        struct State;
+        Container::TUniquePtr<State> m_State;
     };
 
     /**
