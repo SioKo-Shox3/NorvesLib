@@ -12036,3 +12036,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 統合ブランチ（feature/scene-launcher）の取り込みの後、TEST-REMOVE-1114 で試験のターゲットが消えて元の verify のビルドの行は MSBuild が MSB1009 で落ちる（取り込み直後の 1 回目は同時に走るほかの枠のビルドで MSBuild が OutOfMemoryException）。verify を残るターゲットの Game のビルド 1 行に揃えた（done-when は変えていない）。取り込み後の `cmake --build build --config Debug --target Game -- /m:1` は EXIT=0・エラー 0 件（`.harness/runs/20261117-113256/sync-rebuild-game.txt`）。
 - U1 カメラの箱の上面へ戻す衝突の応答を CPU と GPU に足す: 着地(直し 0 回)
 - U2 カメラの箱で折り返す粒の描画に箱の縁のフェードを掛ける: 着地(直し 0 回)
+- U3 EnvironmentSystem が近距離の雨のインスタンスを持ち、毎フレーム雨量と風から値を渡す: 着地(直し 1 回)

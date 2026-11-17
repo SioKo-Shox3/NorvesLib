@@ -2,6 +2,9 @@
 #include "Environment/EnvironmentSystem.h"
 
 #include "Logging/LogMacros.h"
+#include "Particle/VfxEffectSerialization.h"
+#include "Particle/VfxSchema.h"
+#include "Platform/PlatformFile.h"
 #include "Rendering/RenderWorld.h"
 
 #include <cmath>
@@ -12,6 +15,53 @@ namespace NorvesLib::Core::Environment
     namespace
     {
         constexpr uint64_t NanosecondsPerSecond = 1'000'000'000;
+        constexpr const char* RainNearEffectPath = "Assets/Data/Vfx/Rain_Near.vfx.json";
+        constexpr uint32_t RainNearSeed = 0x5241494Eu;
+
+        bool FindRainNearModule(const Particle::VfxEmitterAsset& emitter, Particle::VfxModuleType type,
+            uint32_t& outIndex, Container::String& error)
+        {
+            const Particle::VfxObjectSchema* schema = Particle::FindVfxModuleSchema(type);
+            if (schema == nullptr)
+            {
+                error = "必要なモジュールのスキーマがありません";
+                return false;
+            }
+            bool bFound = false;
+            for (uint32_t index = 0; index < emitter.Modules.size(); ++index)
+            {
+                if (emitter.Modules[index].Type != type)
+                {
+                    continue;
+                }
+                if (bFound)
+                {
+                    error = "必要なモジュールが複数あります: ";
+                    error += schema->Name;
+                    return false;
+                }
+                outIndex = index;
+                bFound = true;
+            }
+            if (!bFound)
+            {
+                error = "必要なモジュールがありません: ";
+                error += schema->Name;
+            }
+            return bFound;
+        }
+
+        const Particle::VfxValue* FindRainNearValue(const Particle::VfxModule& module, const char* name)
+        {
+            const Particle::VfxObjectSchema* schema = Particle::FindVfxModuleSchema(module.Type);
+            if (schema == nullptr)
+            {
+                return nullptr;
+            }
+            const int32_t index = Particle::FindVfxParameterIndex(*schema, name);
+            return index >= 0 && static_cast<uint32_t>(index) < module.Values.size()
+                ? &module.Values[static_cast<uint32_t>(index)] : nullptr;
+        }
 
         uint64_t StepsForNanoseconds(uint64_t nanoseconds)
         {
@@ -60,6 +110,14 @@ namespace NorvesLib::Core::Environment
     void EnvironmentSystem::Enable(const EnvironmentState& initial, const EnvironmentSceneBase& base)
     {
         m_RainTuning = Rendering::LoadRainTuningFile(Rendering::DefaultRainTuningPath);
+        m_bRainNearRecreatePending = true;
+        Container::String rainError;
+        m_bRainNearAssetReady = LoadRainNearEffect(rainError);
+        if (!m_bRainNearAssetReady)
+        {
+            NORVES_LOG_WARNING("General", "EnvironmentSystem の近距離の雨を読み込めません: %s: %s",
+                RainNearEffectPath, rainError.c_str());
+        }
         m_bRainTuningPublishPending = true;
         m_SceneBase = base;
         m_BaseState = SanitizeEnvironmentState(initial);
@@ -84,6 +142,7 @@ namespace NorvesLib::Core::Environment
             return;
         }
         m_bEnabled = false;
+        // 効果の所有者には触れず、次の UpdateRainNear でインスタンスを破棄する。
         m_bRestorePending = true;
         ClearTransitions();
         m_Overrides.clear();
@@ -372,6 +431,200 @@ namespace NorvesLib::Core::Environment
             renderWorld.SetEnvironmentParameters(Rendering::MakeDefaultEnvironmentParameters());
             m_bRestorePending = false;
         }
+    }
+
+    bool EnvironmentSystem::LoadRainNearEffect(Container::String& error)
+    {
+        Container::VariableArray<uint8_t> bytes;
+        const Platform::FileOperationResult result = Platform::ReadFileBytes(RainNearEffectPath, bytes);
+        if (!result.bSuccess)
+        {
+            error = "ファイルを読めません: ";
+            error += result.Message;
+            return false;
+        }
+        size_t offset = 0;
+        if (bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
+        {
+            offset = 3;
+        }
+        Container::String text;
+        if (bytes.size() > offset)
+        {
+            text.append(reinterpret_cast<const char*>(bytes.data() + offset), bytes.size() - offset);
+        }
+        Particle::VfxEffectAsset asset;
+        if (!Particle::LoadVfxEffectFromJson(text, asset, error))
+        {
+            return false;
+        }
+        if (asset.Emitters.size() != 1)
+        {
+            error = "エミッタの数が 1 ではありません";
+            return false;
+        }
+        const Particle::VfxEmitterAsset& emitter = asset.Emitters[0];
+        const int32_t executorIndex = Particle::FindVfxParameterIndex(Particle::GetVfxEmitterSchema(), "Executor");
+        if (executorIndex < 0 || static_cast<uint32_t>(executorIndex) >= emitter.Properties.size() ||
+            emitter.Properties[static_cast<uint32_t>(executorIndex)].UInt != static_cast<uint32_t>(Particle::VfxExecutor::Gpu))
+        {
+            error = "エミッタの実行先が GPU ではありません";
+            return false;
+        }
+
+        RainNearModules modules;
+        if (!FindRainNearModule(emitter, Particle::VfxModuleType::InitShape, modules.Box, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::InitVelocityBox, modules.Velocity, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::InitColor, modules.Color, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::InitSize, modules.Size, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::Acceleration, modules.Acceleration, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::WindInfluence, modules.Wind, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::ActivationFraction, modules.Activation, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::GpuSpriteRenderer, modules.Renderer, error))
+        {
+            return false;
+        }
+        const Particle::VfxModule& box = emitter.Modules[modules.Box];
+        const Particle::VfxModule& velocity = emitter.Modules[modules.Velocity];
+        const Particle::VfxModule& wind = emitter.Modules[modules.Wind];
+        const Particle::VfxValue* coupling = FindRainNearValue(wind, "Coupling");
+        const Particle::VfxValue* scale = FindRainNearValue(wind, "Scale");
+        if (FindRainNearValue(box, "CameraBoxHalfWidth") == nullptr ||
+            FindRainNearValue(box, "CameraBoxHeight") == nullptr ||
+            FindRainNearValue(velocity, "Min") == nullptr || FindRainNearValue(velocity, "Max") == nullptr ||
+            coupling == nullptr || scale == nullptr)
+        {
+            error = "必要なモジュールの引数がありません";
+            return false;
+        }
+        m_RainNearWindCoupling = coupling->Vector.x;
+        m_RainNearWindScale = scale->Vector.x;
+        m_RainNearModules = modules;
+        m_RainNearAsset = asset;
+        return true;
+    }
+
+    void EnvironmentSystem::SetRainNearParameter(Particle::VfxEffectSystem& effects, RainNearParameter parameter,
+        uint32_t moduleIndex, const char* name, const Particle::VfxValue& value)
+    {
+        RainNearParameterState& previous = m_RainNearParameters[static_cast<uint32_t>(parameter)];
+        if (previous.bSent && previous.Value == value)
+        {
+            return;
+        }
+        Container::String error;
+        if (effects.SetModuleParameter(m_RainNearHandle, 0, moduleIndex, name, value, &error))
+        {
+            previous.Value = value;
+            previous.bSent = true;
+        }
+        else if (!m_bRainNearParameterWarning)
+        {
+            NORVES_LOG_WARNING("General", "EnvironmentSystem の近距離の雨の引数を更新できません: %s: %s: %s",
+                RainNearEffectPath, name, error.c_str());
+            m_bRainNearParameterWarning = true;
+        }
+    }
+
+    void EnvironmentSystem::UpdateRainNear(Particle::VfxEffectSystem& effects)
+    {
+        const float intensity = m_EffectiveState.RainIntensity;
+        const bool bWant = m_bEnabled && m_bRainNearAssetReady && std::isfinite(intensity) && intensity > 0.0f;
+        if (!bWant || m_bRainNearRecreatePending)
+        {
+            if (effects.IsLiveInstance(m_RainNearHandle))
+            {
+                effects.DestroyInstance(m_RainNearHandle);
+            }
+            m_RainNearHandle = {};
+            m_bRainNearRecreatePending = false;
+            if (!bWant)
+            {
+                return;
+            }
+        }
+        if (!effects.IsLiveInstance(m_RainNearHandle))
+        {
+            Particle::VfxInstanceDesc desc;
+            desc.Position = Math::Vector3(0.0f, 0.0f, 0.0f);
+            desc.Seed = RainNearSeed;
+            Container::String error;
+            m_RainNearHandle = effects.CreateInstance(m_RainNearAsset, desc, &error);
+            if (!effects.IsLiveInstance(m_RainNearHandle))
+            {
+                if (!m_bRainNearCreateWarning)
+                {
+                    NORVES_LOG_WARNING("General", "EnvironmentSystem の近距離の雨を作成できません: %s: %s",
+                        RainNearEffectPath, error.c_str());
+                    m_bRainNearCreateWarning = true;
+                }
+                return;
+            }
+            for (RainNearParameterState& state : m_RainNearParameters)
+            {
+                state = {};
+            }
+            const Particle::VfxModule& velocity = m_RainNearAsset.Emitters[0].Modules[m_RainNearModules.Velocity];
+            m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::VelocityMin)].Value = *FindRainNearValue(velocity, "Min");
+            m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::VelocityMax)].Value = *FindRainNearValue(velocity, "Max");
+        }
+
+        const Rendering::WindParameters wind = Resolve().Wind;
+        const Rendering::RainNearEvaluation rain = Rendering::EvaluateRainNear(intensity, wind, m_RainTuning);
+        float windX = 0.0f;
+        float windZ = 0.0f;
+        if (wind.bEnabled)
+        {
+            Rendering::WindDirectionXZ(wind, windX, windZ);
+            windX *= wind.BaseSpeed * m_RainNearWindScale;
+            windZ *= wind.BaseSpeed * m_RainNearWindScale;
+        }
+        const float fall = rain.FallSpeedMetersPerSecond;
+        const float variation = m_RainTuning.NearFallSpeedVariation;
+        const Math::Vector3 velocityMin(windX, -fall * (1.0f + variation), windZ);
+        const Math::Vector3 velocityMax(windX, -fall * (1.0f - variation), windZ);
+
+        SetRainNearParameter(effects, RainNearParameter::BoxHalfWidth, m_RainNearModules.Box,
+            "CameraBoxHalfWidth", Particle::VfxValue::MakeFloat(m_RainTuning.NearBoxHalfWidthMeters));
+        SetRainNearParameter(effects, RainNearParameter::BoxHeight, m_RainNearModules.Box,
+            "CameraBoxHeight", Particle::VfxValue::MakeFloat(m_RainTuning.NearBoxHeightMeters));
+
+        // 下限と上限は個別に検証されるため、一度範囲を広げてから目的の値へ縮める。
+        const Math::Vector4 oldMin = m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::VelocityMin)].Value.Vector;
+        const Math::Vector4 oldMax = m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::VelocityMax)].Value.Vector;
+        const Math::Vector3 expandedMin(oldMin.x < velocityMin.x ? oldMin.x : velocityMin.x,
+            oldMin.y < velocityMin.y ? oldMin.y : velocityMin.y, oldMin.z < velocityMin.z ? oldMin.z : velocityMin.z);
+        const Math::Vector3 expandedMax(oldMax.x > velocityMax.x ? oldMax.x : velocityMax.x,
+            oldMax.y > velocityMax.y ? oldMax.y : velocityMax.y, oldMax.z > velocityMax.z ? oldMax.z : velocityMax.z);
+        const Particle::VfxValue expandedMinValue = Particle::VfxValue::MakeVector3(expandedMin);
+        const Particle::VfxValue expandedMaxValue = Particle::VfxValue::MakeVector3(expandedMax);
+        if (!(m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::VelocityMin)].Value == expandedMinValue))
+        {
+            SetRainNearParameter(effects, RainNearParameter::VelocityMin, m_RainNearModules.Velocity, "Min", expandedMinValue);
+        }
+        if (!(m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::VelocityMax)].Value == expandedMaxValue))
+        {
+            SetRainNearParameter(effects, RainNearParameter::VelocityMax, m_RainNearModules.Velocity, "Max", expandedMaxValue);
+        }
+        SetRainNearParameter(effects, RainNearParameter::VelocityMin, m_RainNearModules.Velocity,
+            "Min", Particle::VfxValue::MakeVector3(velocityMin));
+        SetRainNearParameter(effects, RainNearParameter::VelocityMax, m_RainNearModules.Velocity,
+            "Max", Particle::VfxValue::MakeVector3(velocityMax));
+        SetRainNearParameter(effects, RainNearParameter::Color, m_RainNearModules.Color, "Color",
+            Particle::VfxValue::MakeColor(Math::Vector4(m_RainTuning.NearColorScale[0], m_RainTuning.NearColorScale[1],
+                m_RainTuning.NearColorScale[2], rain.Opacity)));
+        SetRainNearParameter(effects, RainNearParameter::Size, m_RainNearModules.Size, "Size",
+            Particle::VfxValue::MakeVector2(Math::Vector2(rain.ThicknessMeters, rain.ThicknessMeters)));
+        // WindInfluence は Y 速度も 0 へ寄せるため、落下速度に Coupling を掛けた加速度で補う。
+        // これにより定常速度は（風、-fall）となり、雨筋の傾きは風速と落下速度で決まる。
+        SetRainNearParameter(effects, RainNearParameter::Acceleration, m_RainNearModules.Acceleration, "Acceleration",
+            Particle::VfxValue::MakeVector3(Math::Vector3(0.0f, -fall * m_RainNearWindCoupling, 0.0f)));
+        SetRainNearParameter(effects, RainNearParameter::Fraction, m_RainNearModules.Activation, "Fraction",
+            Particle::VfxValue::MakeFloat(rain.ActiveFraction));
+        SetRainNearParameter(effects, RainNearParameter::Shutter, m_RainNearModules.Renderer, "StreakShutterSeconds",
+            Particle::VfxValue::MakeFloat(m_RainTuning.StreakShutterSeconds));
+        SetRainNearParameter(effects, RainNearParameter::FadeDistance, m_RainNearModules.Renderer, "NearFadeDistance",
+            Particle::VfxValue::MakeFloat(m_RainTuning.NearFadeFullMeters));
     }
 
     MulticastDelegate<EEnvironmentChange, const EnvironmentState&>& EnvironmentSystem::OnChanged()

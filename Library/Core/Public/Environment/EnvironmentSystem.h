@@ -4,6 +4,7 @@
 #include "Container/VariableArray.h"
 #include "Delegate/MulticastDelegate.h"
 #include "Environment/EnvironmentState.h"
+#include "Particle/VfxEffectSystem.h"
 #include "Rendering/RainModel.h"
 
 #include <cstdint>
@@ -39,6 +40,7 @@ namespace NorvesLib::Core::Environment
      * 解決には Enable で受けた場面の土台を使い、状態にある欄だけを重ねて大気定数などを保持する。
      * Enable で RainTuning.json を読み、上書き後の雨量に応じた霧の密度の増分を Resolve で足す。
      * Enable 後の最初の PublishTo で雨の調整値を一度渡す。
+     * 近距離の雨は雨量と連動する効果として管理し、毎フレーム PublishTo の後で更新する。
      * 霧と雨の調整値はシーンの revision に入らない。
      * Disable 後の最初の PublishTo は環境の値（EnvironmentParameters）だけを既定値へ一度戻す。
      * 空・霧・雲の層・風は書き戻さず、同じフレームで次のシーンが書いた値を残す。
@@ -88,10 +90,48 @@ namespace NorvesLib::Core::Environment
 
         void PublishTo(Rendering::RenderWorld& renderWorld);
 
+        /// 有効で雨量 > 0 の間だけ近距離の雨の効果のインスタンスを 1 つ持ち、
+        /// 雨量・風・調整値から求めた値を変わったときに渡す。
+        /// 雨量 0・無効・効果が読めないときは破棄する。毎フレーム PublishTo の後に呼ぶ。
+        void UpdateRainNear(Particle::VfxEffectSystem& effects);
+
         /// 状態を変える命令のたびに、変化の種類と上書き後の状態を通知する。
         MulticastDelegate<EEnvironmentChange, const EnvironmentState&>& OnChanged();
 
     private:
+        enum class RainNearParameter : uint32_t
+        {
+            BoxHalfWidth,
+            BoxHeight,
+            VelocityMin,
+            VelocityMax,
+            Color,
+            Size,
+            Acceleration,
+            Fraction,
+            Shutter,
+            FadeDistance,
+            Count
+        };
+
+        struct RainNearParameterState
+        {
+            Particle::VfxValue Value;
+            bool bSent = false;
+        };
+
+        struct RainNearModules
+        {
+            uint32_t Box = 0;
+            uint32_t Velocity = 0;
+            uint32_t Color = 0;
+            uint32_t Size = 0;
+            uint32_t Acceleration = 0;
+            uint32_t Wind = 0;
+            uint32_t Activation = 0;
+            uint32_t Renderer = 0;
+        };
+
         struct FieldTransition
         {
             bool bActive = false;
@@ -108,6 +148,9 @@ namespace NorvesLib::Core::Environment
             EnvironmentTarget Target;
         };
 
+        bool LoadRainNearEffect(Container::String& error);
+        void SetRainNearParameter(Particle::VfxEffectSystem& effects, RainNearParameter parameter,
+            uint32_t moduleIndex, const char* name, const Particle::VfxValue& value);
         void ClearTransitions();
         float EvaluateField(EEnvironmentField field, uint64_t step) const;
         void RefreshFields();
@@ -120,6 +163,16 @@ namespace NorvesLib::Core::Environment
         bool m_bRestorePending = false;
         bool m_bRainTuningPublishPending = false;
         Rendering::RainTuning m_RainTuning = Rendering::MakeDefaultRainTuning();
+        Particle::VfxEffectAsset m_RainNearAsset;
+        RainNearModules m_RainNearModules;
+        Particle::VfxEffectHandle m_RainNearHandle;
+        RainNearParameterState m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::Count)];
+        float m_RainNearWindCoupling = 0.0f;
+        float m_RainNearWindScale = 0.0f;
+        bool m_bRainNearAssetReady = false;
+        bool m_bRainNearRecreatePending = false;
+        bool m_bRainNearCreateWarning = false;
+        bool m_bRainNearParameterWarning = false;
         /// プリセットの根。既定の空文字列は作業ディレクトリを表す。
         Container::String m_PresetRoot;
         EnvironmentSceneBase m_SceneBase;
