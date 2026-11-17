@@ -28,6 +28,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
+#include "Core/Public/Rendering/GpuParticle/GpuParticleFrame.h"
 #include "GameModes/AssetPreview/AssetPreviewMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
@@ -238,6 +239,10 @@ namespace Game
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         // mega-stress では、指定したときだけ同じ配置のバナナ n 本を個別の Entity と同時に置く（混在の負荷）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
+#if NORVES_BUILD_DEVELOPMENT
+        // --gpu-particle-stress=<n>: Rendering3DTest のカメラ前に置く GPU の粒の数（1〜262144）。
+        constexpr const TCHAR *kGpuParticleStressOption = TEXT("--gpu-particle-stress=");
+#endif
         // --stress-entities=<n>: mega-stress の Entity の数（1〜kMaxStressEntityCount。既定 kDefaultStressEntityCount）。
         constexpr const TCHAR *kStressEntitiesOption = TEXT("--stress-entities=");
         // --stress-moving-percent=<p>: mega-stress で毎フレーム動かす Entity の割合[%]（0〜100。既定 0）。
@@ -1114,6 +1119,7 @@ namespace Game
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
         m_CameraPathCaptureWaitedFrames = 0;
+        m_GpuParticleStressCount = 0;
 #endif
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
@@ -2077,6 +2083,26 @@ namespace Game
 #endif
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kGpuParticleStressOption, sceneValue))
+            {
+                uint32_t particleCount = 0;
+                if (m_GpuParticleStressCount != 0)
+                {
+                    LOG_ERROR_F("%s が重複しています", "--gpu-particle-stress");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, particleCount) || particleCount == 0 ||
+                    particleCount > NorvesLib::Core::Rendering::kGpuParticlePoolCapacity)
+                {
+                    LOG_ERROR_F("--gpu-particle-stress は 1〜%u の整数で指定してください",
+                                NorvesLib::Core::Rendering::kGpuParticlePoolCapacity);
+                    return false;
+                }
+                m_GpuParticleStressCount = particleCount;
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kBananaCountOption, sceneValue))
             {
                 uint32_t bananaCount = 0;
@@ -5763,6 +5789,9 @@ namespace Game
                 mode->GetData().m_LateCameraSlot = lateCameraSlot;
                 // カメラの台本（--camera-script。開発ビルドだけ）は軌道カメラへ流す
                 mode->GetData().m_CameraScriptPath = m_CameraScriptPath;
+#if NORVES_BUILD_DEVELOPMENT
+                mode->GetData().m_GpuParticleStressCount = m_GpuParticleStressCount;
+#endif
                 mode->GetData().m_pScriptCapture = &m_CameraScriptCapture;
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_bUseCookedModel = bUseCookedModel;

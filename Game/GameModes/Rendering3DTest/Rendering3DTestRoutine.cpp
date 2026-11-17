@@ -2111,6 +2111,92 @@ namespace Game::GameModes
             LOG_INFO("Rendering3DTest vfx effect created valid=%d", data.m_VfxEmbers.IsValid());
         }
 
+#if NORVES_BUILD_DEVELOPMENT
+        if (data.m_GpuParticleStressCount > 0)
+        {
+            using namespace NorvesLib::Core::Particle;
+            VfxEffectAsset effect;
+            effect.Name = "Rendering3DTestGpuParticleStress";
+            Container::String error;
+            const auto addEmitter = [&effect, &error](const char* name, uint32_t capacity, bool bAdditive)
+            {
+                // N=1 のときは割当が 0 の煙を省き、火の粉だけを生成する。
+                if (capacity == 0)
+                {
+                    return true;
+                }
+                constexpr float kLifetimeSeconds = 2.0f;
+                VfxEmitterAsset emitter = MakeVfxDefaultEmitter(name);
+                VfxModule spawnRate = MakeVfxDefaultModule(VfxModuleType::SpawnRate);
+                VfxModule shape = MakeVfxDefaultModule(VfxModuleType::InitShape);
+                VfxModule velocity = MakeVfxDefaultModule(VfxModuleType::InitVelocityBox);
+                VfxModule lifetime = MakeVfxDefaultModule(VfxModuleType::InitLifetime);
+                VfxModule color = MakeVfxDefaultModule(VfxModuleType::InitColor);
+                VfxModule size = MakeVfxDefaultModule(VfxModuleType::InitSize);
+                VfxModule renderer = MakeVfxDefaultModule(VfxModuleType::GpuSpriteRenderer);
+                const float particleSize = bAdditive ? 0.04f : 0.12f;
+                const Math::Vector4 particleColor = bAdditive
+                    ? Math::Vector4(0.8f, 0.24f, 0.04f, 0.08f)
+                    : Math::Vector4(0.18f, 0.18f, 0.18f, 0.12f);
+                // Capacity は実行時の粒数上限。MaxParticles のスキーマ上限を超える数も指定できる。
+                const bool bConfigured =
+                    SetVfxEmitterProperty(emitter, "Capacity", VfxValue::MakeUInt(capacity), &error) &&
+                    SetVfxEmitterProperty(emitter, "Executor", VfxValue::MakeEnum(static_cast<uint32_t>(VfxExecutor::Gpu)), &error) &&
+                    SetVfxEmitterProperty(emitter, "RandomStream", VfxValue::MakeEnum(static_cast<uint32_t>(VfxRandomStream::Counter)), &error) &&
+                    SetVfxEmitterProperty(emitter, "Space", VfxValue::MakeEnum(static_cast<uint32_t>(VfxSimulationSpace::World)), &error) &&
+                    SetVfxModuleParameter(spawnRate, "Rate", VfxValue::MakeFloat(static_cast<float>(capacity) / kLifetimeSeconds), &error) &&
+                    SetVfxModuleParameter(shape, "Shape", VfxValue::MakeEnum(static_cast<uint32_t>(VfxSpawnShape::Box)), &error) &&
+                    SetVfxModuleParameter(shape, "BoxHalfExtents", VfxValue::MakeVector3(Math::Vector3(1.5f, 1.0f, 1.0f)), &error) &&
+                    SetVfxModuleParameter(velocity, "Min", VfxValue::MakeVector3(Math::Vector3(-0.1f, 0.05f, -0.1f)), &error) &&
+                    SetVfxModuleParameter(velocity, "Max", VfxValue::MakeVector3(Math::Vector3(0.1f, 0.25f, 0.1f)), &error) &&
+                    SetVfxModuleParameter(lifetime, "Lifetime", VfxValue::MakeFloat(kLifetimeSeconds), &error) &&
+                    SetVfxModuleParameter(color, "Color", VfxValue::MakeColor(particleColor), &error) &&
+                    SetVfxModuleParameter(size, "Size", VfxValue::MakeVector2(Math::Vector2(particleSize, particleSize)), &error) &&
+                    SetVfxModuleParameter(renderer, "Blend", VfxValue::MakeEnum(bAdditive ? 1u : 0u), &error) &&
+                    SetVfxModuleParameter(renderer, "Pass", VfxValue::MakeEnum(bAdditive ? 1u : 0u), &error);
+                if (!bConfigured)
+                {
+                    return false;
+                }
+                emitter.Modules.push_back(spawnRate);
+                emitter.Modules.push_back(shape);
+                emitter.Modules.push_back(velocity);
+                emitter.Modules.push_back(lifetime);
+                emitter.Modules.push_back(color);
+                emitter.Modules.push_back(size);
+                emitter.Modules.push_back(renderer);
+                effect.Emitters.push_back(emitter);
+                return true;
+            };
+            const uint32_t smokeCount = data.m_GpuParticleStressCount / 2u;
+            if (!addEmitter("StressPremultiplied", smokeCount, false) ||
+                !addEmitter("StressAdditive", data.m_GpuParticleStressCount - smokeCount, true))
+            {
+                LOG_ERROR("GPU の粒の負荷用エフェクトの設定に失敗しました: %s", error.c_str());
+            }
+            else
+            {
+                // 初期化済みの起動カメラのワールド位置と向きから、前方 5 m の箱の中心を決める。
+                const auto cameraTransform = data.m_pCameraObject->GetWorldTransform();
+                const Math::Vector3 cameraForward = cameraTransform.rotation * Math::Vector3::Forward;
+                VfxInstanceDesc instanceDesc;
+                instanceDesc.Position = cameraTransform.position + cameraForward * 5.0f;
+                instanceDesc.Seed = 0x47505553u;
+                instanceDesc.Texture = TextureHandle::Invalid();
+                instanceDesc.bEnabled = true;
+                data.m_VfxGpuParticleStress = ctx.EngineRef.GetParticleSystem().GetVfxEffects().CreateInstance(effect, instanceDesc, &error);
+                if (!data.m_VfxGpuParticleStress.IsValid())
+                {
+                    LOG_ERROR("GPU の粒の負荷用エフェクトの生成に失敗しました: %s", error.c_str());
+                }
+                else
+                {
+                    LOG_INFO("GPU の粒の負荷用エフェクトを生成しました: %u 粒", data.m_GpuParticleStressCount);
+                }
+            }
+        }
+#endif
+
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
         // ========================================
@@ -4357,6 +4443,13 @@ namespace Game::GameModes
             ctx.EngineRef.GetParticleSystem().GetVfxEffects().DestroyInstance(data.m_VfxEmbers);
             data.m_VfxEmbers = {};
         }
+#if NORVES_BUILD_DEVELOPMENT
+        if (data.m_VfxGpuParticleStress.IsValid())
+        {
+            ctx.EngineRef.GetParticleSystem().GetVfxEffects().DestroyInstance(data.m_VfxGpuParticleStress);
+            data.m_VfxGpuParticleStress = {};
+        }
+#endif
     }
 
 } // namespace Game::GameModes
