@@ -749,9 +749,11 @@ namespace NorvesLib::Core::Rendering
     bool SkyOcclusionMapPass::EnsureTextures(const SkyOcclusionParameters& parameters)
     {
         const uint32_t arraySize = std::max(parameters.LevelCount, 2u);
+        const uint32_t visibilityArraySize = std::max(2u * parameters.LevelCount, 2u);
         if (m_OccludersTexture && m_UndergrowthTexture && m_VisibilityTexture && m_AuxTexture &&
             m_OccludersTexture->GetWidth() == parameters.Resolution &&
-            m_OccludersTexture->GetArraySize() == arraySize)
+            m_OccludersTexture->GetArraySize() == arraySize &&
+            m_VisibilityTexture->GetArraySize() == visibilityArraySize)
         {
             return true;
         }
@@ -768,8 +770,11 @@ namespace NorvesLib::Core::Rendering
         desc.DebugName = "SkyOcclusion.Undergrowth";
         RHI::TexturePtr undergrowth = m_Device->CreateTexture(desc);
         desc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        // 可視率は前半に全種別、後半に樹冠だけの段を並べる。
+        desc.ArraySize = visibilityArraySize;
         desc.DebugName = "SkyOcclusion.Visibility";
         RHI::TexturePtr visibility = m_Device->CreateTexture(desc);
+        desc.ArraySize = arraySize;
         desc.DebugName = "SkyOcclusion.Aux";
         RHI::TexturePtr aux = m_Device->CreateTexture(desc);
         if (!occluders || !undergrowth || !visibility || !aux)

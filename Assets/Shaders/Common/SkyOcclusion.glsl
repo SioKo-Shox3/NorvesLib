@@ -37,9 +37,9 @@ vec3 SkyOcclusionNormalizeBent(vec3 bent)
     return magnitude < 1.0e-4 ? vec3(0.0, 1.0, 0.0) : bent / magnitude;
 }
 
-SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N,
+SkyOcclusionResult EvaluateSkyOcclusionInternal(vec3 P, vec3 N,
     sampler2DArray visibilityMap, sampler2DArray auxMap,
-    uvec4 info, vec4 settings, ivec4 windowOrigin[4], vec4 texelMeters)
+    uvec4 info, vec4 settings, ivec4 windowOrigin[4], vec4 texelMeters, int visibilityLayerOffset)
 {
     SkyOcclusionResult result;
     result.visibility = 1.0;
@@ -71,7 +71,7 @@ SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N,
         vec2 fromCenter = abs(local - 0.5 * resolution) / (0.5 * resolution);
         float fineWeight = clamp((1.0 - max(fromCenter.x, fromCenter.y)) / 0.2, 0.0, 1.0);
         vec4 coefficients = SampleSkyOcclusionLevel(visibilityMap, P.xz,
-            origin, spacing, int(info.z), level);
+            origin, spacing, int(info.z), level + visibilityLayerOffset);
         vec4 aux = SampleSkyOcclusionLevel(auxMap, P.xz,
             origin, spacing, int(info.z), level);
         float blocked = coefficients.x + (2.0 / 3.0) * dot(coefficients.yzw, N);
@@ -101,6 +101,25 @@ SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N,
     result.coneAxis = SkyOcclusionNormalizeBent(result.coneAxis);
     result.bentNormal = SkyOcclusionNormalizeBent(result.bentNormal);
     return result;
+}
+
+SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N,
+    sampler2DArray visibilityMap, sampler2DArray auxMap,
+    uvec4 info, vec4 settings, ivec4 windowOrigin[4], vec4 texelMeters)
+{
+    return EvaluateSkyOcclusionInternal(P, N, visibilityMap, auxMap,
+        info, settings, windowOrigin, texelMeters, 0);
+}
+
+/// 可視率の層 k は全種別、層 N+k（N は段の数）は樹冠だけの組。
+/// RTGI・DDGI の光線が樹冠に当たらないときの補いとして、樹冠だけの可視率を返す。
+float EvaluateSkyCanopyVisibility(vec3 P, vec3 N,
+    sampler2DArray visibilityMap, sampler2DArray auxMap,
+    uvec4 info, vec4 settings, ivec4 windowOrigin[4], vec4 texelMeters)
+{
+    SkyOcclusionResult sky = EvaluateSkyOcclusionInternal(P, N, visibilityMap, auxMap,
+        info, settings, windowOrigin, texelMeters, int(info.y));
+    return sky.visibility;
 }
 
 // CPU の正解（SkyOcclusionReference.cpp の EvaluateSkySpecularOcclusionCone）と同じ式。
