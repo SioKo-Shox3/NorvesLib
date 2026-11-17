@@ -53,12 +53,17 @@ namespace NorvesLib::Core::Rendering
         const RHI::ITexture* m_ColorTarget = nullptr;
         RHI::Format m_TargetFormat = RHI::Format::UNKNOWN;
         RGBufferHandle m_PoolHandle;
+        RGBufferHandle m_DrawListHandle;
+        RGBufferHandle m_DrawArgsHandle;
         RGTextureHandle m_ColorHandle;
         RGTextureHandle m_DepthHandle;
         RGTextureHandle m_SkyHandle;
         bool m_bReactiveDeclared = false;
         bool m_bReportedReactiveFailure = false;
         bool m_bReportedInitializationFailure = false;
+        bool m_bReportedCompactionUnavailable = false;
+        bool m_bReportedIndirectPreparationFailure = false;
+        bool m_bReportedIndirectFailure = false;
     };
 
     /** @brief TAA の前後へ粒の描画を生成・登録する。 */

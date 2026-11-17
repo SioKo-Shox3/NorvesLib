@@ -23,6 +23,7 @@ namespace NorvesLib::Core::Rendering
     namespace
     {
         constexpr uint32_t PoolBytes = kGpuParticlePoolCapacity * sizeof(GpuParticle);
+        constexpr uint32_t DrawListBytes = kGpuParticleDrawListCapacity * sizeof(uint32_t);
 
         RHI::DescriptorSetDesc MakeDescriptorSetDesc()
         {
@@ -33,8 +34,8 @@ namespace NorvesLib::Core::Rendering
                 binding.binding = index;
                 binding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
                 binding.type = index == kGpuParticleDrawBindingConstants ? RHI::ResourceBindType::ConstantBuffer
-                    : (index < kGpuParticleDrawBindingSceneDepth ? RHI::ResourceBindType::StructuredBuffer
-                                                               : RHI::ResourceBindType::CombinedImageSampler);
+                    : (index >= kGpuParticleDrawBindingSceneDepth && index <= kGpuParticleDrawBindingHeightFogSky
+                        ? RHI::ResourceBindType::CombinedImageSampler : RHI::ResourceBindType::StructuredBuffer);
                 desc.bindings.push_back(binding);
             }
             return desc;
@@ -148,6 +149,8 @@ namespace NorvesLib::Core::Rendering
     void GpuParticleDrawPass::ResetHandles()
     {
         m_PoolHandle = {};
+        m_DrawListHandle = {};
+        m_DrawArgsHandle = {};
         m_ColorHandle = {};
         m_DepthHandle = {};
         m_SkyHandle = {};
@@ -224,6 +227,17 @@ namespace NorvesLib::Core::Rendering
         }
         // グラフの入口と出口は UAV。頂点の読みは Execute 内で GenericRead に移してから戻す。
         builder.Read(m_PoolHandle.ToResourceHandle(), RHI::ResourceState::UnorderedAccess);
+        if (builder.TryGetBuffer(kGpuParticleDrawListResourceName, m_DrawListHandle) &&
+            builder.TryGetBuffer(kGpuParticleDrawArgsResourceName, m_DrawArgsHandle))
+        {
+            builder.Read(m_DrawListHandle.ToResourceHandle(), RHI::ResourceState::UnorderedAccess);
+            builder.Read(m_DrawArgsHandle.ToResourceHandle(), RHI::ResourceState::UnorderedAccess);
+        }
+        else
+        {
+            m_DrawListHandle = {};
+            m_DrawArgsHandle = {};
+        }
         if (!builder.TryReadTexture(RenderGraphResourceNames::SceneDepth, m_DepthHandle, RHI::ResourceState::ShaderResource) ||
             !builder.TryLoadStoreColorAttachment(colorName, m_ColorHandle, RHI::AttachmentLoadOp::Load,
                 RHI::AttachmentStoreOp::Store, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource))
@@ -416,6 +430,8 @@ namespace NorvesLib::Core::Rendering
         const GpuParticleScene& scene = context.SnapshotScene->GpuParticles;
         Container::VariableArray<GpuEmitterParams> emitters;
         emitters.reserve(scene.Emitters.size());
+        bool bHasBlendEmitters[2] = {};
+        bool bHasCompactEmitters[2] = {};
         uint32_t slotToEmitter[kGpuParticleMaxEmitters];
         for (uint32_t& index : slotToEmitter)
         {
@@ -427,6 +443,10 @@ namespace NorvesLib::Core::Rendering
             {
                 slotToEmitter[emitter.PoolSlot] = static_cast<uint32_t>(emitters.size());
                 emitters.push_back(emitter.Params);
+                const uint32_t blend = (emitter.Params.RenderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask;
+                const uint32_t slotOrder = (emitter.Params.RenderFlags >> kGpuEmitterRenderSlotOrderShift) & kGpuEmitterRenderSlotOrderMask;
+                bHasBlendEmitters[blend] = true;
+                bHasCompactEmitters[blend] = bHasCompactEmitters[blend] || slotOrder == 0u;
             }
         }
         if (emitters.empty())
@@ -434,7 +454,31 @@ namespace NorvesLib::Core::Rendering
             finishWithoutDraw();
             return;
         }
+        const RHI::BufferPtr drawList = m_DrawListHandle.IsValid() ? resources.GetBuffer(m_DrawListHandle) : nullptr;
+        const RHI::BufferPtr drawArgs = m_DrawArgsHandle.IsValid() ? resources.GetBuffer(m_DrawArgsHandle) : nullptr;
+        const bool bIndirectResourcesAvailable = drawList && drawArgs &&
+            drawList->GetSize() >= DrawListBytes && drawArgs->GetSize() >= sizeof(GpuParticleDrawArgs);
+        if (!bIndirectResourcesAvailable && !m_bReportedCompactionUnavailable)
+        {
+            NORVES_LOG_WARNING("GpuParticleDraw", "粒の詰めの資源が無いため、直描画を使います");
+            m_bReportedCompactionUnavailable = true;
+        }
+        bool bUseIndirect = bIndirectResourcesAvailable;
         FrameResourceLane& lane = *context.FrameResources;
+        const uint32_t zeroSlot = 0u;
+        FrameUploadAllocation dummyListData;
+        if (!bIndirectResourcesAvailable)
+        {
+            dummyListData = lane.AllocateUploadData(&zeroSlot, sizeof(zeroSlot), FrameUploadUsage::Storage);
+            if (!dummyListData.IsValid())
+            {
+                finishWithoutDraw();
+                return;
+            }
+        }
+        const RHI::BufferPtr descriptorList = bIndirectResourcesAvailable ? drawList : dummyListData.Buffer;
+        const uint32_t descriptorListOffset = bIndirectResourcesAvailable ? 0u : dummyListData.GetOffset32();
+        const uint32_t descriptorListSize = bIndirectResourcesAvailable ? DrawListBytes : dummyListData.GetSize32();
         const GpuCurveKey zeroKey{};
         const FrameUploadAllocation emitterData = lane.AllocateUploadData(
             emitters.data(), emitters.size() * sizeof(GpuEmitterParams), FrameUploadUsage::Storage);
@@ -496,18 +540,24 @@ namespace NorvesLib::Core::Rendering
         constants.Flags[0] = m_DrawPass;
         constants.Flags[1] = bLightingAvailable ? 1u : 0u;
         constants.Flags[2] = kGpuParticleDrawOutputColor;
+        constants.Flags[3] = kGpuParticleDrawSourceDirect;
         const RHI::TexturePtr sky = m_SkyHandle.IsValid() ? resources.GetTexture(m_SkyHandle) : nullptr;
         constants.HeightFog = BuildHeightFogGpuParams(context, camera, static_cast<bool>(sky));
-        const FrameUploadAllocation uniform = lane.AllocateConstants(constants);
-        const FrameDescriptorAllocation descriptor = lane.AllocateDescriptorSet(m_DescriptorSetLayout);
-        if (!emitterData.IsValid() || !slotData.IsValid() || !curveData.IsValid() || !uniform.IsValid() || !descriptor.IsValid())
+        if (!emitterData.IsValid() || !slotData.IsValid() || !curveData.IsValid())
         {
             finishWithoutDraw();
             return;
         }
-        const auto bindDescriptor = [&](RHI::IDescriptorSet& set, const FrameUploadAllocation& allocation)
+        const auto makeDescriptor = [&](const GpuParticleDrawConstants& setConstants) -> FrameDescriptorAllocation
         {
-            set.BindConstantBuffer(kGpuParticleDrawBindingConstants, allocation.Buffer, allocation.GetOffset32(), allocation.GetSize32());
+            const FrameUploadAllocation uniform = lane.AllocateConstants(setConstants);
+            const FrameDescriptorAllocation descriptor = lane.AllocateDescriptorSet(m_DescriptorSetLayout);
+            if (!uniform.IsValid() || !descriptor.IsValid())
+            {
+                return {};
+            }
+            RHI::IDescriptorSet& set = *descriptor.Set;
+            set.BindConstantBuffer(kGpuParticleDrawBindingConstants, uniform.Buffer, uniform.GetOffset32(), uniform.GetSize32());
             set.BindStorageBuffer(kGpuParticleDrawBindingPool, pool, 0, PoolBytes);
             set.BindStorageBuffer(kGpuParticleDrawBindingEmitters, emitterData.Buffer, emitterData.GetOffset32(), emitterData.GetSize32());
             set.BindStorageBuffer(kGpuParticleDrawBindingSlotToEmitter, slotData.Buffer, slotData.GetOffset32(), slotData.GetSize32());
@@ -518,26 +568,27 @@ namespace NorvesLib::Core::Rendering
             set.BindSampler(kGpuParticleDrawBindingDiffuseIrradiance, m_LinearSampler);
             set.BindTexture(kGpuParticleDrawBindingHeightFogSky, sky ? sky : m_BlackTexture);
             set.BindSampler(kGpuParticleDrawBindingHeightFogSky, m_LinearSampler);
+            set.BindStorageBuffer(kGpuParticleDrawBindingDrawList, descriptorList, descriptorListOffset, descriptorListSize);
             set.Update();
+            return descriptor;
         };
-        bindDescriptor(*descriptor.Set, uniform);
+        const FrameDescriptorAllocation descriptor = makeDescriptor(constants);
+        if (!descriptor.IsValid())
+        {
+            finishWithoutDraw();
+            return;
+        }
 
         FrameDescriptorAllocation reactiveDescriptor;
+        GpuParticleDrawConstants reactiveConstants = constants;
+        reactiveConstants.Flags[2] = kGpuParticleDrawOutputReactive;
         if (bReactivePrepared)
         {
             if (EnsureReactivePipeline())
             {
-                GpuParticleDrawConstants reactiveConstants = constants;
-                reactiveConstants.Flags[2] = kGpuParticleDrawOutputReactive;
-                const FrameUploadAllocation reactiveUniform = lane.AllocateConstants(reactiveConstants);
-                reactiveDescriptor = lane.AllocateDescriptorSet(m_DescriptorSetLayout);
-                if (reactiveUniform.IsValid() && reactiveDescriptor.IsValid())
+                reactiveDescriptor = makeDescriptor(reactiveConstants);
+                if (!reactiveDescriptor.IsValid())
                 {
-                    bindDescriptor(*reactiveDescriptor.Set, reactiveUniform);
-                }
-                else
-                {
-                    reactiveDescriptor = {};
                     ReportReactiveFailure("定数または記述子を確保できませんでした");
                 }
             }
@@ -547,8 +598,44 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        FrameDescriptorAllocation compactDescriptors[2];
+        FrameDescriptorAllocation reactiveCompactDescriptor;
+        if (bUseIndirect)
+        {
+            for (uint32_t blend = 0; blend < 2; ++blend)
+            {
+                if (bHasCompactEmitters[blend])
+                {
+                    GpuParticleDrawConstants compactConstants = constants;
+                    compactConstants.Flags[3] = GpuParticleDrawSourceList(GpuParticleDrawBucket(m_DrawPass, blend));
+                    compactDescriptors[blend] = makeDescriptor(compactConstants);
+                    if (!compactDescriptors[blend].IsValid())
+                    {
+                        bUseIndirect = false;
+                        break;
+                    }
+                }
+            }
+            if (bUseIndirect && reactiveDescriptor.IsValid() && bHasCompactEmitters[0])
+            {
+                reactiveConstants.Flags[3] = GpuParticleDrawSourceList(GpuParticleDrawBucket(m_DrawPass, 0u));
+                reactiveCompactDescriptor = makeDescriptor(reactiveConstants);
+                bUseIndirect = reactiveCompactDescriptor.IsValid();
+            }
+            if (!bUseIndirect && !m_bReportedIndirectPreparationFailure)
+            {
+                NORVES_LOG_WARNING("GpuParticleDraw", "粒の間接描画の定数または記述子を確保できないため、直描画を使います");
+                m_bReportedIndirectPreparationFailure = true;
+            }
+        }
+
         // ShaderResource の同期段には頂点が無いので、頂点の storage 読みを含む GenericRead へ明示的に移す。
         commands.BufferBarrier(pool, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        if (bIndirectResourcesAvailable)
+        {
+            commands.BufferBarrier(drawArgs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+            commands.BufferBarrier(drawList, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        }
         commands.BeginRenderPass(m_RenderPass, m_Framebuffer);
         RHI::Viewport viewport;
         viewport.width = constants.TargetSizeInvSize[0];
@@ -559,22 +646,68 @@ namespace NorvesLib::Core::Rendering
         commands.SetViewport(viewport);
         commands.SetScissor(scissor);
         // フレームの写しにテクスチャが無いためテクスチャとフリップブック UV は使わず手続きの形だけを描き、粒の深度順は並べ替えない。
-        for (uint32_t blend = 0; blend < 2; ++blend)
+        // 詰めは atomic の順なので描く順が毎フレーム変わりうる。重なりの順に依る premultiplied のエミッタは DrawInSlotOrder を選ぶ。
+        const auto drawBlend = [&](uint32_t blend, const FrameDescriptorAllocation& directSet,
+                                   const FrameDescriptorAllocation& compactSet)
         {
-            bool bPipelineBound = false;
-            for (const GpuEmitterParams& emitter : emitters)
+            bool bDrawCompactDirect = bHasCompactEmitters[blend];
+            if (bDrawCompactDirect && bUseIndirect)
             {
-                if (((emitter.RenderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask) != blend)
+                const uint32_t bucket = GpuParticleDrawBucket(m_DrawPass, blend);
+                const uint64_t commandOffset = offsetof(GpuParticleDrawArgs, Commands) +
+                    static_cast<uint64_t>(bucket) * sizeof(RHI::DrawIndirectCommand);
+                const uint64_t countOffset = offsetof(GpuParticleDrawArgs, DrawCounts) +
+                    static_cast<uint64_t>(bucket) * sizeof(uint32_t);
+                constexpr uint32_t stride = sizeof(RHI::DrawIndirectCommand);
+                commands.SetDescriptorSet(compactSet.Set, 0);
+                const bool bRecorded = m_Device->GetCapabilities().bDrawIndirectCount
+                    ? commands.DrawIndirectCount(drawArgs, commandOffset, drawArgs, countOffset, 1u, stride)
+                    : commands.DrawIndirect(drawArgs, commandOffset, 1u, stride);
+                if (bRecorded)
+                {
+                    bDrawCompactDirect = false;
+                }
+                else
+                {
+                    if (!m_bReportedIndirectFailure)
+                    {
+                        NORVES_LOG_WARNING("GpuParticleDraw", "粒の間接描画を記録できないため、このフレームの残りは直描画を使います");
+                        m_bReportedIndirectFailure = true;
+                    }
+                    bUseIndirect = false;
+                }
+            }
+
+            bool bDirectBound = false;
+            for (uint32_t slotOrder = 0; slotOrder < 2; ++slotOrder)
+            {
+                if (slotOrder == 0u && !bDrawCompactDirect)
                 {
                     continue;
                 }
-                if (!bPipelineBound)
+                for (const GpuEmitterParams& emitter : emitters)
                 {
-                    commands.SetPipeline(blend == 0 ? m_PremultipliedPipeline : m_AdditivePipeline);
-                    commands.SetDescriptorSet(descriptor.Set, 0);
-                    bPipelineBound = true;
+                    const uint32_t emitterBlend = (emitter.RenderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask;
+                    const uint32_t emitterSlotOrder = (emitter.RenderFlags >> kGpuEmitterRenderSlotOrderShift) & kGpuEmitterRenderSlotOrderMask;
+                    if (emitterBlend != blend || emitterSlotOrder != slotOrder)
+                    {
+                        continue;
+                    }
+                    if (!bDirectBound)
+                    {
+                        commands.SetDescriptorSet(directSet.Set, 0);
+                        bDirectBound = true;
+                    }
+                    commands.DrawInstanced(6, emitter.Capacity, 0, emitter.PoolOffset);
                 }
-                commands.DrawInstanced(6, emitter.Capacity, 0, emitter.PoolOffset);
+            }
+        };
+        for (uint32_t blend = 0; blend < 2; ++blend)
+        {
+            if (bHasBlendEmitters[blend])
+            {
+                commands.SetPipeline(blend == 0 ? m_PremultipliedPipeline : m_AdditivePipeline);
+                drawBlend(blend, descriptor, compactDescriptors[blend]);
             }
         }
         commands.EndRenderPass();
@@ -593,19 +726,17 @@ namespace NorvesLib::Core::Rendering
             if (m_ReactivePipeline && reactiveDescriptor.IsValid())
             {
                 commands.SetPipeline(m_ReactivePipeline);
-                commands.SetDescriptorSet(reactiveDescriptor.Set, 0);
-                for (const GpuEmitterParams& emitter : emitters)
-                {
-                    if (((emitter.RenderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask) == 0u)
-                    {
-                        commands.DrawInstanced(6, emitter.Capacity, 0, emitter.PoolOffset);
-                    }
-                }
+                drawBlend(0u, reactiveDescriptor, reactiveCompactDescriptor);
             }
             commands.EndRenderPass();
         }
         // インポートの最終状態はグラフが自動では戻さないため、次の描画段と次フレームの入口へ戻す。
         commands.BufferBarrier(pool, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        if (bIndirectResourcesAvailable)
+        {
+            commands.BufferBarrier(drawArgs, RHI::ResourceState::IndirectArgument, RHI::ResourceState::UnorderedAccess);
+            commands.BufferBarrier(drawList, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        }
     }
 
     Container::TUniquePtr<IViewPass> CreateGpuParticleDrawPassPreTAA(void*)

@@ -154,7 +154,10 @@ namespace NorvesLib::Core::Particle
         /// @brief 衝突面で粒を跳ね返す。
         Bounce = 2,
         /// @brief 指定した子エミッタから粒を生成する。
-        SpawnChild = 3
+        SpawnChild = 3,
+        /// @brief 初期位置の形が CameraBox のとき、着いた粒をカメラの箱の上面へ戻して速度を保つ。
+        /// 着いた面が上面以上なら衝突を無視する。CameraBox 以外では Kill と同じ。
+        ReturnToCameraBoxTop = 4
     };
 
     /// @brief GPU スプライトの向き。値は VfxValue::UInt の列挙添字と一致する。

@@ -1,14 +1,17 @@
 ﻿// 高さフォグと空気遠近の評価（volumetrics.frag の合成と、撮影の大気の書き出し volumetrics_probe.frag が同じ式を使うための共通の include）。
 // 記述子の束縛（0〜3）と定数（VolumetricsParams）もここで宣言する。値は VolumetricsPass が詰める。
 // 束縛 4（空の透過率 LUT）は記述子の形に残っているが、空気遠近は高度ごとの表（定数）で積むので読まない。
+// 局所霧は透過率と散乱光を別に求め、既存の結果の手前に重ねる。
 
 #ifndef VOLUMETRICS_COMMON_GLSL
 #define VOLUMETRICS_COMMON_GLSL
 #include "Common/HeightFog.glsl"
+#include "Common/CloudShadowMaskSample.glsl"
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
 layout(set = 0, binding = 3) uniform sampler2DArray cascadedShadowMap;
+layout(set = 0, binding = 10) uniform sampler2D cloudShadowMask;
 
 #ifdef VOLUMETRICS_USE_VSM
 // 大気の書き出しは CSM のまま。VSM の資源は画面へ霧を重ねるときだけ束縛する。
@@ -38,6 +41,7 @@ layout(std430, set = 0, binding = 8) readonly buffer VsmPoolBuffer
 const uint kAerialProfileSize = 128u;
 const int kAtmosphereSteps = 32;
 const int kFogOnlySteps = 24;
+const int kLocalFogSteps = 16;
 const int kAtmosphereFarSteps = 8;
 const int kReferenceSteps = 256;
 const float kMinimumExponentialStepRatio = 1.0001;
@@ -66,6 +70,10 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     vec4 fogReferenceElevation; // x=基準の仰角の正弦, y=余弦, zw=未使用
     vec4 fogSteps;  // x=歩の配置（0=等間隔、1=指数）, y=指数の比, z=影つきの散乱を歩で積む距離の上限(m、0で上限なし), w=参照の256歩なら1
     vec4 fogJitter; // x=画素ごとのずらしが有効なら1, y=TAAが掛かるフレームで時間方向のずらしが有効なら1, z=フレーム番号を64で割った余り, w=未使用
+    vec4 cloudShadowCenterAndExtent; // x=中心X(m), y=中心Z(m), z=一辺(m), w=有効なら1
+    vec4 cloudShadowSunAndBottom; // xyz=太陽への向き, w=雲の底の高度(m)
+    vec4 cloudShadowOutside; // x=マスクの外の透過率, yzw=未使用
+    LocalFogParams localFog; // 局所霧（C++ の GPULocalFogParams）
 } params;
 
 bool IsFiniteFloat(float value)
@@ -206,7 +214,7 @@ float SampleVolumetricShadowCascade(vec3 worldPosition, uint cascadeIndex)
     return receiverDepth - 0.005 > storedDepth ? 0.0 : 1.0;
 }
 
-float CalculateVolumetricShadowVisibility(vec3 worldPosition)
+float CalculateVolumetricShadowMapVisibility(vec3 worldPosition)
 {
     if (params.cameraForwardAndScatteringEnabled.w <= 0.5 ||
         params.directionalLightRadianceAndEnabled.w <= 0.5)
@@ -279,6 +287,19 @@ float CalculateVolumetricShadowVisibility(vec3 worldPosition)
     return visibility;
 }
 
+float CalculateVolumetricShadowVisibility(vec3 worldPosition)
+{
+    float visibility = CalculateVolumetricShadowMapVisibility(worldPosition);
+    if (params.cloudShadowCenterAndExtent.w > 0.5)
+    {
+        return visibility * CloudShadowMaskLookup(cloudShadowMask, worldPosition,
+                                                   params.cloudShadowCenterAndExtent,
+                                                   params.cloudShadowSunAndBottom,
+                                                   params.cloudShadowOutside.x);
+    }
+    return visibility;
+}
+
 vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, float sampleOffset)
 {
     if (params.cameraForwardAndScatteringEnabled.w <= 0.5 ||
@@ -343,6 +364,10 @@ vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, 
         {
             vec3 farRadiance = params.directionalLightRadianceAndEnabled.rgb *
                                (phase * max(nearTransmittance - farTransmittance, 0.0));
+            if (params.cloudShadowCenterAndExtent.w > 0.5)
+            {
+                farRadiance *= params.cloudShadowOutside.x;
+            }
             if (IsFiniteFloat(farRadiance.x) && IsFiniteFloat(farRadiance.y) && IsFiniteFloat(farRadiance.z))
             {
                 scatteringRadiance += farRadiance;
@@ -373,7 +398,132 @@ float HenyeyGreensteinPhase(float cosine, float anisotropy)
     return (1.0 - anisotropy * anisotropy) / (12.5663706 * pow(denominator, 1.5));
 }
 
-// 1 本の視線（カメラから rayDirection の向きに rayDistance m）の高さフォグと空気遠近（どれも事前露出の前の値）
+// 局所霧の透過率は解析し、交差する楕円体の範囲だけを進んで周りの光と影つきの太陽を積む。
+void IntegrateLocalFog(vec3 rayDirection, float rayDistance, float sampleOffset,
+                       out float transmittance, out vec3 radiance)
+{
+    transmittance = 1.0;
+    radiance = vec3(0.0);
+    int count = LocalFogCount(params.localFog);
+    if (count == 0)
+    {
+        return;
+    }
+
+    vec3 camera = params.cameraPositionAndPreExposure.xyz;
+    transmittance = exp(-min(LocalFogOpticalDepth(params.localFog, camera, rayDirection,
+                                                0.0, rayDistance), 80.0));
+
+    // 視線の区間に交わる体積だけから、歩で進む範囲を求める。
+    float rangeStart = rayDistance;
+    float rangeEnd = 0.0;
+    for (int volumeIndex = 0; volumeIndex < count; ++volumeIndex)
+    {
+        vec2 volumeRange = LocalFogVolumeRange(params.localFog.volumes[volumeIndex],
+                                               camera, rayDirection);
+        float start = max(volumeRange.x, 0.0);
+        float end = min(volumeRange.y, rayDistance);
+        if (volumeRange.x <= volumeRange.y && start < end)
+        {
+            rangeStart = min(rangeStart, start);
+            rangeEnd = max(rangeEnd, end);
+        }
+    }
+    if (rangeStart >= rangeEnd)
+    {
+        return;
+    }
+
+    bool bAerialEnabled = params.aerialPerspective.x > 0.5;
+    vec3 fallbackAmbient = vec3(0.0);
+    if (!bAerialEnabled)
+    {
+        fallbackAmbient = HeightFogRadiance(skyAtmosphereRadiance, params.fogParameters.w > 0.5,
+                                            params.fallbackFogColor.rgb, rayDirection,
+                                            vec4(1.0, 1.0, 1.0, params.fogTintAndSkyBlend.w),
+                                            params.fogReferenceElevation) * params.fogRange.y;
+    }
+
+    bool bDirectionalEnabled = params.cameraForwardAndScatteringEnabled.w > 0.5 &&
+                               params.directionalLightRadianceAndEnabled.w > 0.5;
+    vec3 directionalRadiance = vec3(0.0);
+    if (bDirectionalEnabled)
+    {
+        float cosine = clamp(dot(params.directionalLightDirectionAndAnisotropy.xyz, -rayDirection),
+                             -1.0, 1.0);
+        float anisotropy = clamp(params.directionalLightDirectionAndAnisotropy.w, -0.95, 0.95);
+        directionalRadiance = params.directionalLightRadianceAndEnabled.rgb *
+                              HenyeyGreensteinPhase(cosine, anisotropy);
+    }
+
+    float fogDistance = params.fogRange.x > 0.0 ? min(rayDistance, params.fogRange.x) : rayDistance;
+    float opticalDepth = LocalFogOpticalDepth(params.localFog, camera, rayDirection, 0.0, rangeStart);
+    float stepLength = (rangeEnd - rangeStart) / float(kLocalFogSteps);
+    float planetRadius = params.aerialScattering.z;
+    float originHeight = camera.y + params.mieExtinctionAndScaleHeight.z;
+    for (int stepIndex = 0; stepIndex < kLocalFogSteps; ++stepIndex)
+    {
+        float ta = rangeStart + float(stepIndex) * stepLength;
+        float tb = stepIndex == kLocalFogSteps - 1
+            ? rangeEnd : rangeStart + float(stepIndex + 1) * stepLength;
+        float sampleDistance = ta + sampleOffset * (tb - ta);
+        vec3 samplePosition = camera + rayDirection * sampleDistance;
+        float stepDepth = 0.0;
+        vec3 weightedColor = vec3(0.0);
+        for (int volumeIndex = 0; volumeIndex < count; ++volumeIndex)
+        {
+            LocalFogVolume volume = params.localFog.volumes[volumeIndex];
+            float volumeDepth = LocalFogVolumeOpticalDepth(volume, camera, rayDirection, ta, tb);
+            if (volumeDepth > 0.0)
+            {
+                stepDepth += volumeDepth;
+                weightedColor += volumeDepth * volume.colorAndReserved.rgb *
+                                 LocalFogNoiseFactor(params.localFog, volume, samplePosition);
+            }
+        }
+        if (stepDepth <= 0.0)
+        {
+            continue;
+        }
+
+        vec3 ambient = fallbackAmbient;
+        if (bAerialEnabled)
+        {
+            vec3 fromCenter = vec3(rayDirection.x * sampleDistance,
+                                   planetRadius + originHeight + rayDirection.y * sampleDistance,
+                                   rayDirection.z * sampleDistance);
+            float altitude = length(fromCenter) - planetRadius;
+            if (!IsFiniteFloat(altitude))
+            {
+                opticalDepth += stepDepth;
+                continue;
+            }
+            ambient = SampleAerialProfile(1u, altitude) * params.fogRange.y;
+        }
+
+        vec3 sun = vec3(0.0);
+        if (bDirectionalEnabled)
+        {
+            float shadowVisibility = CalculateVolumetricShadowVisibility(samplePosition);
+            if (IsFiniteFloat(shadowVisibility) && shadowVisibility > 0.0)
+            {
+                sun = directionalRadiance * shadowVisibility;
+            }
+        }
+        float heightTransmittance = ComputeAnalyticTransmittance(camera.y, rayDirection.y,
+                                                                 min(sampleDistance, fogDistance));
+        vec3 stepRadiance = exp(-opticalDepth) * heightTransmittance *
+                            (1.0 - exp(-stepDepth)) * (weightedColor / stepDepth) * (ambient + sun);
+        vec3 accumulatedRadiance = radiance + stepRadiance;
+        if (LocalFogIsFinite(accumulatedRadiance))
+        {
+            radiance = accumulatedRadiance;
+        }
+        opticalDepth += stepDepth;
+    }
+}
+
+// 1 本の視線（カメラから rayDirection の向きに rayDistance m）の高さフォグ・空気遠近・局所霧（どれも事前露出の前の値）
 struct VolumetricsRayResult
 {
     // 高さフォグの透過率と不透明度（1 - 透過率）
@@ -393,6 +543,9 @@ struct VolumetricsRayResult
     vec3 AerialScattering;
     vec3 AerialSingle;
     vec3 AerialMultiple;
+    // 局所霧だけの透過率と散乱光
+    float LocalFogTransmittance;
+    vec3 LocalFogRadiance;
 };
 
 // 空気遠近が有効なとき: 霧と空の媒質（Rayleigh・Mie）を 1 本の視線で一緒に進め、各点の散乱光をその点までの両方の透過率で減らして
@@ -516,6 +669,8 @@ VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance
     result.AerialScattering = vec3(0.0);
     result.AerialSingle = vec3(0.0);
     result.AerialMultiple = vec3(0.0);
+    result.LocalFogTransmittance = 1.0;
+    result.LocalFogRadiance = vec3(0.0);
     if (result.FogOpacity > 0.0)
     {
         result.FogRadiance = HeightFogRadiance(skyAtmosphereRadiance, params.fogParameters.w > 0.5,
@@ -534,6 +689,11 @@ VolumetricsRayResult EvaluateVolumetricsRay(vec3 rayDirection, float rayDistance
         result.FogAmbient = result.FogRadiance * result.FogOpacity * params.fogRange.y;
         float sampleOffset = FogStepOffset(pixelPosition, bJitterFog, params.fogRange.x > 0.0);
         result.FogDirectional = IntegrateDirectionalSingleScattering(rayDirection, fogDistance, sampleOffset);
+    }
+    if (LocalFogCount(params.localFog) > 0)
+    {
+        IntegrateLocalFog(rayDirection, rayDistance, FogStepOffset(pixelPosition, bJitterFog, true),
+                          result.LocalFogTransmittance, result.LocalFogRadiance);
     }
     return result;
 }

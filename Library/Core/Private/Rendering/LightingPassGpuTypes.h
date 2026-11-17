@@ -55,6 +55,9 @@ namespace NorvesLib::Core::Rendering
         float paleFlatColorAndWrapMin[4]; // rgb=PaleFlat のリニア色（ConvertPaleFlatColorToLinear）、w=WrapMin
         float paleFlatShape[4]; // x=ShadowStrength、y=AmbientLocalMix、z=SpecularScale、w=Flatness
         float paleFlatAverageIrradiance[4]; // rgb=拡散照度の資源と組の全球の平均照度 E_avg（ambientColor.w を掛ける前）、w=有効1・無効0（rgbも0）
+        float CloudShadowCenterAndExtent[4]; // 中心X(m)、中心Z(m)、一辺(m)、地面の直達への適用フラグ
+        float CloudShadowSunAndBottom[4]; // 太陽へ向かう向きxyz、雲の底の高度(m)
+        float CloudShadowOutside[4]; // マスクの外の透過率f、1/f、未使用0、未使用0
     };
 
     struct GPULightData
@@ -70,7 +73,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
     static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
     static_assert(offsetof(GPUDDGILightingParams, info) == 48);
-    static_assert(sizeof(GPULightingParams) == 1152);
+    static_assert(sizeof(GPULightingParams) == 1200);
     static_assert(offsetof(GPULightingParams, invViewProjection) == 0);
     static_assert(offsetof(GPULightingParams, cameraPosition) == 64);
     static_assert(offsetof(GPULightingParams, ambientColor) == 80);
@@ -104,6 +107,9 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, paleFlatColorAndWrapMin) == 1104);
     static_assert(offsetof(GPULightingParams, paleFlatShape) == 1120);
     static_assert(offsetof(GPULightingParams, paleFlatAverageIrradiance) == 1136);
+    static_assert(offsetof(GPULightingParams, CloudShadowCenterAndExtent) == 1152);
+    static_assert(offsetof(GPULightingParams, CloudShadowSunAndBottom) == 1168);
+    static_assert(offsetof(GPULightingParams, CloudShadowOutside) == 1184);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

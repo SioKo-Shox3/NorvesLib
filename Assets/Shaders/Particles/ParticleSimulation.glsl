@@ -1,4 +1,4 @@
-﻿// GPU の粒の生成と更新で共有する入力と初期化処理。
+﻿// GPU の粒の生成・更新・詰めで共有する入力と初期化処理。
 #ifndef NORVES_PARTICLE_SIMULATION_GLSL
 #define NORVES_PARTICLE_SIMULATION_GLSL
 
@@ -14,6 +14,7 @@ const uint kVfxCollisionKill = 0u;
 const uint kVfxCollisionStick = 1u;
 const uint kVfxCollisionBounce = 2u;
 const uint kVfxCollisionSpawnChild = 3u;
+const uint kVfxCollisionReturnToCameraBoxTop = 4u;
 
 // CPU の GpuParticleBurst と同じ 64 バイトの並び。
 struct GpuParticleBurst
@@ -56,7 +57,7 @@ layout(std140, set = 0, binding = 0) uniform GpuParticleSimulationConstants
     uint totalSpawnCount;
     uint depthCollisionEnabled;
     uint heightFieldBound;
-    uint reserved0;
+    uint compactPhase; // 詰めは 0、仕上げは 1。
     vec2 screenSize;
     vec2 invScreenSize;
     vec4 windA;

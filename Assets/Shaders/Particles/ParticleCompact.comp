@@ -1,0 +1,70 @@
+﻿// 生きている粒のスロットを描画バケットに詰め、間接描画の引数を書く。
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "Particles/ParticleSimulation.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 10) buffer GpuParticleDrawList
+{
+    uint slots[];
+};
+
+// GpuParticleDrawArgs と同じ並び（commands 0・drawCounts 64・aliveCounters 80、全 96 バイト）。
+layout(std430, set = 0, binding = 11) buffer GpuParticleDrawArgs
+{
+    uvec4 commands[kGpuParticleDrawBucketCount];
+    uint drawCounts[kGpuParticleDrawBucketCount];
+    uint aliveCounters[kGpuParticleDrawBucketCount];
+};
+
+void main()
+{
+    if (simulation.compactPhase == 1u)
+    {
+        if (gl_LocalInvocationIndex == 0u)
+        {
+            for (uint bucket = 0u; bucket < kGpuParticleDrawBucketCount; ++bucket)
+            {
+                uint count = min(aliveCounters[bucket], kGpuParticlePoolCapacity);
+                commands[bucket] = uvec4(6u, count, 0u, 0u);
+                drawCounts[bucket] = count > 0u ? 1u : 0u;
+            }
+        }
+        return;
+    }
+
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= simulation.updateCount)
+    {
+        return;
+    }
+    uint emitterIndex = FindUpdateEmitter(i);
+    GpuEmitterParams emitter = emitters[emitterIndex];
+    uint capacity = emitter.poolCapacitySeedFlags.y;
+    if (capacity == 0u)
+    {
+        return;
+    }
+    uint localIndex = i - emitterExtras[emitterIndex].updateOffset;
+    if (localIndex >= capacity)
+    {
+        return;
+    }
+    uint slot = emitter.poolCapacitySeedFlags.x + localIndex;
+    uvec4 meta = particles[slot].meta;
+    uint slotOrder = (emitter.renderFlags >> kGpuEmitterRenderSlotOrderShift) & kGpuEmitterRenderSlotOrderMask;
+    if ((meta.z & kGpuParticleFlagAlive) == 0u || meta.y != emitterExtras[emitterIndex].poolSlot || slotOrder != 0u)
+    {
+        return;
+    }
+    uint pass = (emitter.renderFlags >> kGpuEmitterRenderPassShift) & kGpuEmitterRenderPassMask;
+    uint blend = (emitter.renderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask;
+    uint bucket = pass * 2u + blend;
+    uint count = atomicAdd(aliveCounters[bucket], 1u);
+    if (count < kGpuParticlePoolCapacity)
+    {
+        slots[bucket * kGpuParticlePoolCapacity + count] = slot;
+    }
+}

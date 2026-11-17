@@ -71,7 +71,22 @@ void main()
     float nearFade = e.boxHalfExtentsNearFadeDistance.w;
     float nearWeight = nearFade > 0.0 ?
         clamp((partLin - drawConstants.nearFarParams.x) / nearFade, 0.0, 1.0) : 1.0;
-    float alpha = vColor.a * shape * soft * nearWeight;
+    float edgeWeight = 1.0;
+    uint flags = e.poolCapacitySeedFlags.w;
+    if ((flags & kGpuEmitterFlagShape) != 0u &&
+        ((flags >> kGpuEmitterShapeShift) & kGpuEmitterShapeMask) == 4u &&
+        (flags & kGpuEmitterFlagWrapInCameraBox) != 0u)
+    {
+        // 箱の半径の 15% の帯で縁へ向けて薄める。巻き戻りで筋が縁に急に現れ・消えるのを隠す。値は仮。
+        const float kCameraBoxEdgeFadeFraction = 0.15;
+        vec3 halfSize = e.boxHalfExtentsNearFadeDistance.xyz;
+        vec3 cameraPosition = drawConstants.cameraPositionPreExposure.xyz;
+        vec3 distanceToEdge = halfSize - abs(vWorldPos - cameraPosition);
+        vec3 band = max(halfSize * kCameraBoxEdgeFadeFraction, vec3(1e-4));
+        vec3 w = clamp(distanceToEdge / band, 0.0, 1.0);
+        edgeWeight = min(min(w.x, w.y), w.z);
+    }
+    float alpha = vColor.a * shape * soft * nearWeight * edgeWeight;
     if (alpha <= 1.0 / 1024.0)
     {
         discard;

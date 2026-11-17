@@ -54,11 +54,19 @@ layout(set = 0, binding = 6) uniform sampler2D diffuseIrradianceTexture;
 // GpuParticleDraw.h の kGpuParticleDrawBindingHeightFogSky（7）。
 layout(set = 0, binding = 7) uniform sampler2D heightFogSkyTexture;
 
+// GpuParticleDraw.h の kGpuParticleDrawBindingDrawList（8）。
+layout(std430, set = 0, binding = 8) readonly buffer GpuParticleDrawList
+{
+    uint slots[];
+} drawList;
+
 // GpuParticleDraw.h と同じ描画段・出力方式。
 const uint kGpuParticleDrawPassPreTAA = 0u;
 const uint kGpuParticleDrawPassPostTAA = 1u;
 const uint kGpuParticleDrawOutputColor = 0u;
 const uint kGpuParticleDrawOutputReactive = 1u;
+// gl_InstanceIndex をそのまま粒のスロットに使う。
+const uint kGpuParticleDrawSourceDirect = 0u;
 
 // エミッタの描画設定から各項目を取り出す。
 uint GpuParticleOrientation(GpuEmitterParams e)
