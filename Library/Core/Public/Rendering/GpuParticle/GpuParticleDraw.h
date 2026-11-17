@@ -39,7 +39,9 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGpuParticleDrawBindingDiffuseIrradiance = 6u;
     /// 高さフォグの空の放射輝度 LUT は断片で読む。
     inline constexpr uint32_t kGpuParticleDrawBindingHeightFogSky = 7u;
-    inline constexpr uint32_t kGpuParticleDrawBindingCount = 8u;
+    /// 生きている粒を詰めたスロットの列は頂点で読む。
+    inline constexpr uint32_t kGpuParticleDrawBindingDrawList = 8u;
+    inline constexpr uint32_t kGpuParticleDrawBindingCount = 9u;
 
     /// 描画の段と出力の方式。
     inline constexpr uint32_t kGpuParticleDrawPassPreTAA = 0u;
