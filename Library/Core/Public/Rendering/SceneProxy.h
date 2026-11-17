@@ -639,6 +639,8 @@ namespace NorvesLib::Core::Rendering
         EnvironmentParameters Environment = MakeDefaultEnvironmentParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
         Container::VariableArray<SkyOccluderProxy> SkyOccluders;
+        // 楕円体の局所霧。スナップショットでカメラに近い順に最大 MaxLocalFogVolumes 個。SceneRevision には含めない。
+        Container::VariableArray<LocalFogVolumeProxy> LocalFogVolumes;
         // 遮蔽物と値が変わったときだけ進む版。SceneRevision とは別で、RTGI の履歴を捨てない。
         uint64_t SkyOcclusionRevision = 0;
         // 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率（1で従来どおり。夜の環境光などに使う）
@@ -704,6 +706,7 @@ namespace NorvesLib::Core::Rendering
             Environment = MakeDefaultEnvironmentParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
+            LocalFogVolumes.clear();
             SkyOcclusionRevision = 0;
             StaticEnvironmentIntensityScale = 1.0f;
             StaticEnvironmentMaxRadiance = 0.0f;

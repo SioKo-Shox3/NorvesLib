@@ -234,6 +234,10 @@ namespace NorvesLib::Core::Rendering
         void UpdateSkyOccluder(SkyOccluderHandle handle, const SkyOccluderProxy& proxy);
         void UnregisterSkyOccluder(SkyOccluderHandle handle);
 
+        LocalFogVolumeHandle RegisterLocalFogVolume(const LocalFogVolumeProxy& proxy);
+        void UpdateLocalFogVolume(LocalFogVolumeHandle handle, const LocalFogVolumeProxy& proxy);
+        void UnregisterLocalFogVolume(LocalFogVolumeHandle handle);
+
         /**
          * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を設定する（GameThread）
          * @param scale 0以上の有限の倍率（1で従来どおり）。次のFramePacketへ値コピーする

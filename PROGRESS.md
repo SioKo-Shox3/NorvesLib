@@ -12132,3 +12132,28 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 CloudShadowMaskPass（マスクを書き、ViewRenderContext へ出す）: 着地(直し 0 回)
 - U4 霧の太陽の散乱にマスクを掛け、一様の直達の弱めを外す: 着地(直し 1 回)
 - U5 地面の太陽の直達にマスクを掛ける選択と、全体のビルドの確かめ: 着地(直し 0 回)
+
+## G11-GR52-LOCAL-FOG Entity に付けて動かせる楕円体の局所霧（2026-11-17、run 20261117-181235・反復 1）
+- Done: `LocalFogVolumeComponent`（中心のずれ・半径・密度・色・減衰〔半径が標準偏差の何倍か〕・濃淡の量・濃淡の大きさを PROPERTY で保存）が持ち主の変換から `LocalFogVolumeProxy` を作り、変わったときだけ `RenderWorld` → `RenderingCoordinator` の表へ更新し、スナップショットでカメラに近い順に最大 8 個を `SceneProxy::LocalFogVolumes` に値で写す（9 個目以降は落として 1 回だけ警告）。密度 ρ0·exp(−½|M(p−c)|²)（M は持ち主の回転で回した軸 ÷ 標準偏差）の視線の光学的深さを erf の閉じた形で求める式を CPU（`ComputeLocalFogOpticalDepth`）と GLSL（`Common/HeightFog.glsl` の `LocalFogVolumeOpticalDepth`）に同じ形で置いた。体積の霧（`VolumetricsCommon.glsl` の `IntegrateLocalFog`）は透過率を解析で求め、局所霧の範囲を 16 歩で進めて周りの光（空気遠近の Ψ_ms か空の放射輝度）と太陽の単一散乱（`CalculateVolumetricShadowVisibility` の影つき）を積み、濃淡（3D の値の雑音）を散乱の放射だけに掛ける。雑音は `Common/Wind.glsl` の `WindVelocity` を呼んで風で流す。局所霧は高さフォグ・空気遠近より手前とみなして重ね、空の画素にも掛ける。半透明（`forward_transparent.frag`）とワールドの板（`world_board.frag`）は高さフォグの後に `EvaluateLocalFogForward` を掛ける。霧と空気遠近が無効でも局所霧があれば `VolumetricsPass` を回す。局所霧が 0 個のときは新しい枝を通らず、今の演算と同じ。
+- 証拠: `.harness/runs/20261117-181235/verify-G11-GR52-LOCAL-FOG-final.txt`（全単位を入れた版で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`Game.vcxproj -> ...Game.exe`、霧の関数を含む 9 本のシェーダー〔volumetrics・volumetrics_probe・forward_transparent・world_board・impostor・ribbon_trail・rain_curtain・ParticleDraw・PathTracingRayGen〕を BOM を外して glslc に通して `GLSL_CHECK failed=0 total=9`）。解析の積分は倍精度の細かい数値積分（Simpson 30 万分割）と相対誤差 1.3e-15 で一致（GLSL の erf は Abramowitz–Stegun 7.1.26、最大誤差 1.5e-7）。
+- 試験: done-when の `VolumetricFogModelTest`・`RenderingVolumetricLocalFogVulkanTest`（`--fog-scenario=local-fog`）・`SceneFileRoundTripTest` のケースは、試験を作らない・回さない決まりにより作っていない（`Test/` も無い）。verify の ctest の行は回していない。撮影・GPU 時間の計測は回さない決まり。
+- 人が見るときの見どころ: 今はどのシーンにも局所霧を置いていないので、Rendering3DTest とランチャーの各シーンは前と同じに見えること。局所霧は G11-GR52-FOG-CHECK が grassland の低い視点に谷の朝霧の形で置く。置いた後は、霧の塊が楕円体の形で柔らかく薄れ、空を背にした所でも切れないこと、濃淡が風の向きに流れること、太陽の当たる所が明るく建物・木の影の中が暗いこと、半透明と板が霧の奥で同じく霞むこと。
+- 既知の限界: 前向きの描画の局所霧は周りの光だけで太陽の単一散乱を含めない（GR51 の前向きの高さフォグと同じ）ので、日の当たる局所霧の中の半透明は不透明より少し暗く霞む。局所霧は高さフォグ・空気遠近より手前とみなすので、遠い局所霧の手前の高さフォグの分だけ順が違う。GPU の粒子・インポスター・剣のトレイル・雨の幕には局所霧が掛からない（paths の外）。PT・RT・DDGI は局所霧を知らない（方式差）。濃淡の流れは風の時計の折り返し（4096 秒）ごとに 1 回跳ぶ。コンポーネントのクラスはコードから参照されたときに登録される（既存のコンポーネントと同じ）ので、局所霧を参照するコードの無い実行でシーンのファイルから読むと落とされる。
+- Notes: 同期の経路を空の遮蔽物と同じ形にするため、paths の外の `RenderWorld.h/.cpp`・`RenderingCoordinator.h` に登録・解除の宣言と表を、空の画素に局所霧を掛けるため `volumetrics.frag` に背景の分岐と合成を、どれも追記だけで足した。雲の影（G11-GR52-CLOUD-SHAFTS）が `CalculateVolumetricShadowVisibility` に掛かれば、局所霧の太陽の散乱にも同じく掛かる。
+- 要起票: GPU の粒子（`Particles/ParticleDraw.glsl`・`GpuParticleDrawPass`）・インポスター（`impostor.frag`）・剣のトレイル（`ribbon_trail.frag`）・雨の幕（`rain_curtain.frag`）の前向きの霧に局所霧を掛ける作業。done-when (3) の「粒子にも局所霧が効く」の要件だが、どの項目の paths にも無い（各 UBO の末尾に `GPULocalFogParams` を足し、`EvaluateLocalFogForward` と `ApplyLocalFog*` を掛けるだけ）。
+- Next: ランナーの評価者の反証（危険地帯: volumetrics・半透明）。
+- 統合ブランチの取り込み（2026-11-18、run 20261117-232307）: G11-GR52-CLOUD-SHAFTS が入った `feature/scene-launcher` を取り込み、`VolumetricsCommon.glsl` の `VolumetricsParams` と `VolumetricsPass.cpp` の `GPUVolumetricsParams` の衝突を、雲の影の 3 項目（`cloudShadowCenterAndExtent`・`cloudShadowSunAndBottom`・`cloudShadowOutside`）の後ろに局所霧を置く並びで解いた（`static_assert` は 912 + 表 + `GPULocalFogParams`）。局所霧の太陽の散乱は `CalculateVolumetricShadowVisibility` を通るので、雲の影のマスクが掛かる。証拠: `.harness/runs/20261117-232307/verify-build-game.txt`（`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0・エラー 0）、`.harness/runs/20261117-232307/verify-glslc.txt`（volumetrics・volumetrics_probe・forward_transparent・world_board・CloudShadowMask・cloud_layer・lighting・impostor・ribbon_trail・rain_curtain の 10 本を BOM を外して glslc に通して全部 EXIT=0）。試験と撮影は回さない決まり。
+- U1 局所霧の値の型・解析の光学的深さ・近い順の選択・GPU の並びを CPU 側に置く: 着地(直し 0 回)
+- U4 前向きと体積の霧が共有する局所霧の GLSL の関数を HeightFog.glsl に足す: 着地(直し 0 回)
+- U2 局所霧の登録・解除と、スナップショットで近い 8 個をパケットへ写す経路を足す: 着地(直し 0 回)
+- U5 体積の霧の視線に局所霧の透過率と散乱を足し、空の画素にも局所霧を掛ける: 着地(直し 0 回)
+- U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
+- U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
+- U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
+- U1 局所霧の値の型・解析の光学的深さ・近い順の選択・GPU の並びを CPU 側に置く: 着地(直し 0 回)
+- U4 前向きと体積の霧が共有する局所霧の GLSL の関数を HeightFog.glsl に足す: 着地(直し 0 回)
+- U2 局所霧の登録・解除と、スナップショットで近い 8 個をパケットへ写す経路を足す: 着地(直し 0 回)
+- U5 体積の霧の視線に局所霧の透過率と散乱を足し、空の画素にも局所霧を掛ける: 着地(直し 0 回)
+- U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
+- U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
+- U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
