@@ -12315,3 +12315,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 殻の数の欄・LOD の関数・Fur の写しを描画コマンドに載せ、殻を instanced で記録する: 着地(直し 0 回)
 - U2 殻の共通部品（UBO・流れの角・毛の判定の関数）と殻の頂点シェーダー: 着地(直し 0 回)
 - U4 GBufferPass に fur_shell を登録して、LOD・視錐台・ファーの UBO・テクスチャの読み替えで描く: 着地(直し 0 回)
+- U3 殻の断片シェーダー（毛の判定・細り・AO・色・法線・GBuffer の書き込み）: 着地(直し 0 回)
