@@ -12315,3 +12315,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 World にクラスを実行時に指定する Entity と Component の生成を足す: 着地(直し 0 回)
 - U2 資産の根の中のパスの検査を共有の部品へ切り出す: 着地(直し 0 回)
 - U3 BridgeSceneDocumentService を作る: 着地(直し 1 回)
+- U4 Adapter の 3 か所を部品へつなぐ（SDK 入りの構成でビルド）: 着地(直し 1 回)
