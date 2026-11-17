@@ -11981,3 +11981,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 気象の状態に時計の倍率の欄を足し、JSON の保存に載せる: 着地(直し 0 回)
 - U3 EnvironmentSystem の時計(太陽・天候・倍率・手動の上書き・量子化の幅): 着地(直し 0 回)
 - U4 SkipTo と濡れの復元・OnTimeSkipped・時計の状態の読み込みでの復元: 着地(直し 0 回)
+- U5 Game の時計の引数と Rendering3DTest の手動の太陽の上書き: 着地(直し 0 回)
