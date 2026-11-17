@@ -12069,3 +12069,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: done-when (5) の犬の毛の当たり方は、`FurCoatComponent` がまだ無い（G6-GR35-WETNESS-STATE が todo）ので繋いでいない。CPU の判定 `ComputeOverheadRainExposure` は用意したので、毛の当たり方へ `RainShelterVolume` の値との小さい方を渡すだけが残る。
 - 要起票: G6-GR35-WETNESS-STATE の完了後に、`FurCoatComponent::SetRainExposure` へ `ComputeOverheadRainExposure`（雨を遮る `SkyOccluderProxy` から犬の位置の上の屋根を判定）と `RainShelterVolume` の値の小さい方を渡す作業。G6-GR35 は口だけを作り GR59 が入れる前提で、どの項目にも無い。
 - Next: ランナーの評価者の反証（危険地帯: GBuffer の書き手・lighting.frag）。
+- U1 局所霧の値の型・解析の光学的深さ・近い順の選択・GPU の並びを CPU 側に置く: 着地(直し 0 回)
