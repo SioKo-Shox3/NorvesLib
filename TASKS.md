@@ -7104,7 +7104,7 @@
 - notes: 要件 `#### GR57` の設計案のパス構成 2)（フェーズ P3 と P4 の霧・環境光・PostTAA）。TAA の velocity の書き込みは GR30 の領分で、細い筋（雨・しぶき）は PostTAA に置いて TAA を通さない。PreTAA の大きくソフトな粒（灰・埃）だけがリアクティブを書く（G5-GR30-REACTIVE の notes の約束どおり）。PostTAA の筋は被写界深度・動きぼけ・SSR の対象外（G14 の GR62 で扱う。ロードマップ 1558 行）。既定の環境の IBL（grasslands_sunset の HDR）だと夕焼けの色が着くので、空が無効のシーンでは注意と注釈に書く。粒の深度の並べ替えはしない（ロードマップ 1546 行の非ゴール）。描き順が毎フレーム変わりうる重なりは、順に依らない加算か、スロットの順の描画で選べる。共有の SceneView.cpp と試験の束の CMakeLists.txt は差分を小さくする。試験を足す理由: 並びの誤り（粒が TAA の前に入る・組み直しで消える）と筋の長さ・幅の誤りは、撮影 1 枚で気づきにくく黙って起きる。危険地帯（RenderThread・パスの並び・TAA の入力）なので評価者を通す。ロードマップ 1539・1553・1566 行。
 
 ## G7-GR57-GPU-INDIRECT: 生きている粒だけをバケットごとに詰めて間接の描画で描き、容量ぶんの描画をやめる
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DRAW, G5-GR28-DRAW-INDIRECT
 - gr: GR57
 - needs-gr: GR28

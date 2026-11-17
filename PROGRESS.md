@@ -12018,6 +12018,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0（`Core.lib` と `Game.exe` ができた）。`"GpuParticleDrawPreTAA"`・`"GpuParticleDrawPostTAA"` の裸の文字列は grep で 0 件。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。試験は作らない決まりで作っておらず、ctest も回していない。撮影・GPU の計測・Game の起動の確かめは回さない決まり。
 - Next: ランナーの評価者の反証（危険地帯: RenderThread・パスの並び・TAA の入力）。人が見るときの見どころ: Game の起動のログに `拡張 'GpuParticleDraw...' の登録を拒否しました` と「GPU の粒の更新拡張を登録できませんでした」が出ないこと。既存のシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）は GPU のエミッタが 0 件なので見た目が変わらないこと。
 - Notes: 反復 1 の Done の行にある `GpuParticleDrawPreTAA`・`GpuParticleDrawPostTAA` は、今は `Ext.Engine.` の付いた名前。
+
+### G7-GR57-GPU-INDIRECT 生きている粒だけを詰めて間接の描画で描く（2026-11-17、run 20261117-152611・反復 2、完了）
+
+- Done: `ParticleCompact.comp` が更新・生成の後に、生きている粒のスロットをバケット（PreTAA・PostTAA × premultiplied・加算の 4 つ。添字は `段 × 2 + ブレンド`）ごとの列へ atomicAdd で詰め、1 スレッドの仕上げの dispatch がバケットごとの `DrawIndirectCommand` {6, 生きている数, 0, 0} と `DrawIndirectCount` 用の描画数（0 か 1）を書く。列（4 × 262144 個の uint）と引数（`GpuParticleDrawArgs` 96 バイト）はビューごとに持ち、`GpuParticle.DrawList`・`GpuParticle.DrawArgs` の名前でグラフに公開する（入口と出口は UAV）。
+- Done: `GpuParticleDrawPass` は描画の前に引数を `UAV → IndirectArgument`、列を `UAV → GenericRead` へ移し、バケットごとに `DrawIndirectCount`（`bDrawIndirectCount` があるとき）か `DrawIndirect` で描き、リアクティブを含む全部の描画の後に UAV へ戻す。頂点は `Flags[3]`（0 = 直、1 + バケット = 間接）が 0 でなければ詰めた列からスロットを引く（`firstInstance` は使わない）。戻り値が false・資源が無い・記述子を確保できないときは今の `DrawInstanced` の経路へ落ち、理由ごとにログを 1 回出す。
+- Done: `GpuSpriteRenderer` に `DrawInSlotOrder`（既定 false。RenderFlags の bit 6）を足した。true のエミッタは詰めずにスロットの順の `DrawInstanced` で描く（詰めは atomic の順で描く順が毎フレーム変わりうるので、重なりの順に依る premultiplied のエミッタ向け）。焼いた VFX の形式を版 3 にし、版 1・2 は DrawInSlotOrder を false として読む。
+- Done: 開発ビルドだけの起動の引数 `--gpu-particle-stress=<1〜262144>` を Game に足した。Rendering3DTest の起動カメラの前に Executor=Gpu の効果（premultiplied・PreTAA と加算・PostTAA の 2 エミッタ、粒は半分ずつ）を置き、シーンを出るときに消す。引数が無ければ何も置かない。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0（`Game.exe` までリンク。警告は shaderc の PDB 不在の LNK4099 だけ）。`ParticleDraw.vert`・`ParticleDraw.frag`・`ParticleCompact.comp`・`ParticleUpdate.comp`・`ParticleSpawn.comp` を BOM を除いた写しで glslc（vulkan1.3）にかけて 5 本とも通った。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。出力は `.harness/runs/20261117-152611/verify-G7-GR57-GPU-INDIRECT-U4.txt`。done-when の試験（`GpuParticleIndirectVulkanTest`、`GpuParticleShaderCompileTest` への追加）は試験を作らない決まりで作っていない。verify の ctest の行は対象の試験が無く「No tests were found」。
+- Next: ランナーの評価者の反証（危険地帯: RHI の間接の描画・RenderThread）。性能の記録は G7-GR57-CHECK（撮影・GPU の計測は回さない決まり）。人が見るときの見どころ: 開発ビルドの Game を `--scene=rendering3dtest --gpu-particle-stress=50000` で起動し、カメラの前の粒（premultiplied は TAA の前、加算は TAA の後）が欠けたりちらついたりせずに出ること。引数なしでは Rendering3DTest（天球・地面・球・岩）の見た目が変わらないこと。
+- Notes: 既知の限界: シミュレーション側で列と引数を公開した後に詰めの記述子を確保できなかったフレームは引数が 0 のままになり、スロットの順でないエミッタの粒がそのフレームだけ描かれない（描画側は失敗を見分けられない）。列か引数のバッファを作れないときはプールも公開されず、粒は描かれない。どちらも資源の確保に失敗したときだけ起きる。premultiplied の粒の重なりの順は詰めた順で、毎フレーム変わりうる（並べ替えはしない）。
 - U1 詰めた描画の共有の定義と、エミッタの「スロットの順に描く」設定: 着地(直し 0 回)
 - U2 Game の開発用の起動の引数 --gpu-particle-stress=<粒の数>: 着地(直し 1 回)
 - U3 ParticleCompact.comp で生きている粒をバケットごとに詰め、間接の引数を書く: 着地(直し 0 回)
