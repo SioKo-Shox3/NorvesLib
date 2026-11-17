@@ -1,6 +1,7 @@
 ﻿// 焼いた散布の要求・常駐予算・解放と、種ごとの描画経路を GameThread で管理する。
 // セルからチャンクの常駐を固定・解除し、休眠を切り替える口を持つ。
 // 常駐個体の空間照会と個体ごとの非表示、および非表示集合の保存・復元を提供する。
+// 常駐する当たり付き個体をチャンク単位で登録・解除する通知を出す。
 // ScatterSystem は Engine::Engine が所有し、Entity は Load に渡した World の木が所有する。
 // Unload で Entity を World に返し、CookedScatterData は共有参照で保持する。
 // World が先に Finalize された場合、Clear は Entity に触らず状態だけ捨てる。
@@ -12,6 +13,7 @@
 #include "Asset/CookedScatterFormat.h"
 #include "Container/PointerTypes.h"
 #include "Container/StringView.h"
+#include "Math/Transform.h"
 #include "Math/Vector3.h"
 #include "Object/EntityHandle.h"
 #include "Rendering/FoliageTypes.h"
@@ -81,6 +83,40 @@ namespace NorvesLib::Core::Scatter
 
     using ScatterHandle = uint32_t;
     inline constexpr ScatterHandle kInvalidScatterHandle = 0;
+    /// 当たりの半径の仮の既定値[m]。
+    inline constexpr float kDefaultScatterColliderRadiusMeters = 150.0f;
+
+    /// 当たりを持つ個体 1 本。変換は描画と同じで、Index はチャンク内の通し番号。
+    struct ScatterColliderInstance
+    {
+        Math::Transform Transform;
+        uint32_t Index = 0;
+    };
+
+    /// 当たりを持つ種 1 種分。形は種の局所座標で、個体は非表示を除く。
+    struct ScatterColliderSpecies
+    {
+        uint32_t Species = 0;
+        Container::Span<const Asset::CookedScatterCollisionShape> Shapes;
+        Container::Span<const ScatterColliderInstance> Instances;
+    };
+
+    /// チャンクの当たりの出し入れ。解除時の Species は空で、ビューは呼び出し中だけ有効。
+    struct ScatterColliderChunkEvent
+    {
+        ScatterHandle Scatter = kInvalidScatterHandle;
+        uint32_t Chunk = 0;
+        bool bRegister = true;
+        Container::Span<const ScatterColliderSpecies> Species;
+    };
+
+    /// GameThread で通知を受ける。通知の中から ScatterSystem を操作しない。
+    class IScatterColliderListener
+    {
+    public:
+        virtual ~IScatterColliderListener() = default;
+        virtual void OnScatterColliderChunk(const ScatterColliderChunkEvent& event) = 0;
+    };
 
     /// 散布の 1 本の識別子。Index は種の番号順に各種の範囲を続けて数えたチャンク内の通し番号。
     struct ScatterInstanceId
@@ -117,6 +153,13 @@ namespace NorvesLib::Core::Scatter
         void SetRenderWorld(Rendering::RenderWorld* renderWorld);
         void SetBudget(const ScatterBudget& budget);
         const ScatterBudget& GetBudget() const;
+        /// 借用する受け手を付け替え、登録中のチャンクを引き継ぐ。
+        void SetColliderListener(IScatterColliderListener* listener);
+        IScatterColliderListener* GetColliderListener() const;
+        /// 負・非有限は受け付けず、0 なら次の照合で当たりをすべて解除する。
+        bool SetColliderRadius(float meters);
+        float GetColliderRadius() const;
+        bool IsChunkColliderRegistered(ScatterHandle handle, uint32_t chunk) const;
         /// mega の種ごとに原点・単位変換の Entity と Component を作る。失敗時は 0。
         ScatterHandle Load(World& world, Container::TSharedPtr<const Asset::CookedScatterData> data,
                            Container::Span<const ScatterSpeciesBinding> bindings);
@@ -216,6 +259,8 @@ namespace NorvesLib::Core::Scatter
         {
             bool bPinned = false;
             bool bDormant = false;
+            bool bColliderRegistered = false;
+            uint64_t ColliderSpeciesMask = 0;
         };
 
         struct SkyOccluderChunk
@@ -233,6 +278,8 @@ namespace NorvesLib::Core::Scatter
             Container::TSharedPtr<const Asset::CookedScatterData> Data;
             Container::AnsiString Name;
             bool bDistanceResidency = true;
+            /// 当たりの形がある種を記憶し、形のない散布の照合を省く。
+            uint64_t ColliderSpeciesMask = 0;
             Container::VariableArray<ChunkState> Chunks;
             Container::VariableArray<SpeciesState> Species;
             /// 描画用の常駐配列とは独立した、チャンク内の番号の昇順集合。
@@ -249,6 +296,10 @@ namespace NorvesLib::Core::Scatter
         void ReleaseEntities(ScatterState& scatter);
         void RecountStats();
         void RecordEvent(ScatterState& scatter, uint32_t chunk, uint32_t species, bool bResident);
+        void NotifyColliderChunk(const ScatterState& scatter, uint32_t chunk, bool bRegister);
+        void UnregisterColliderChunk(ScatterState& scatter, uint32_t chunk);
+        void ReconcileColliderChunk(ScatterState& scatter, uint32_t chunk);
+        void RefreshColliderChunk(const ScatterState& scatter, uint32_t chunk);
         bool ReleaseChunkUnits(ScatterState& scatter, uint32_t chunk);
         bool MakeFoliageResident(ScatterState& scatter, uint32_t chunk, uint32_t species);
         bool BuildFoliageUnit(const ScatterState& scatter, uint32_t chunk, uint32_t species,
@@ -265,6 +316,13 @@ namespace NorvesLib::Core::Scatter
         Container::VariableArray<ScatterState> m_Scatters;
         ScatterBudget m_Budget;
         ScatterResidencyStats m_Stats;
+        IScatterColliderListener* m_ColliderListener = nullptr;
+        float m_ColliderRadius = kDefaultScatterColliderRadiusMeters;
+        Math::Vector3 m_ColliderFocus;
+        bool m_bHasColliderFocus = false;
+        Container::VariableArray<ScatterColliderSpecies> m_ColliderSpecies;
+        Container::VariableArray<ScatterColliderInstance> m_ColliderInstances;
+        Container::VariableArray<size_t> m_ColliderInstanceOffsets;
         Rendering::FoliageScene m_FoliageScene;
         uint64_t m_FoliageVersion = 0;
         uint64_t m_SkyOccluderRevision = 0;
