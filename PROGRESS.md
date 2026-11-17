@@ -12089,3 +12089,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 キーの CPU 生成（JobSystem のジョブ）と GPU への転送の道具を足す: 着地(直し 0 回)
 - U7 Game に開発用の引数 --sun-sweep を足す: 着地(直し 0 回)
 - U6 空のパスをキーフレームの窓で回し、SKY_SWEEP を出す: 着地(直し 0 回)
+- U1 インポスターの部品とプロキシに法線・ORM・深度のアトラスと八面体の配置を持たせる: 着地(直し 0 回)
