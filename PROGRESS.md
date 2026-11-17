@@ -12313,3 +12313,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: 手続きのメッシュに箱の種類が無い（`ProceduralMeshKind` は None・UVSphere・Plane）ので、見本の地面は箱でなく Plane にした（Library の範囲を広げない）。平面の材質は参照の形で持てないので既定の描画のまま。
 - Notes: 既知の限界: Prefab の木・上書きの EntityRefId は、`World::SpawnPrefab` が ObjectId を張り替えないので、参照なし（0）だけ戻し、参照ありは警告して落とす。外側が循環で失敗しても、それより先に読めた有効な入れ子の Prefab は registry に残る。`World::SpawnPrefab` の入れ子の深さの上限（16）を超える Prefab は読めても生成に失敗する。上書きの値の検査はシーンの読み込みと同じ基準（型と `DeserializeStable`）で、setter が値を拒むと SpawnPrefab 全体が失敗しうる（シーンと同じ既知の経路）。
 - U1 コアの前半（設定の検査・入力の型・頂点ごとの流れと量と領域・PNG の読み書き）: 着地(直し 0 回)
+- U2 コアの後半（UV のヤコビアン・texel への焼き・16px の膨張・補正マスク・4 枚と fur_maps.json・npz と CLI）: 着地(直し 0 回)
