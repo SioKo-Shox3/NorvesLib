@@ -12104,31 +12104,31 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ParticleCompact.comp で生きている粒をバケットごとに詰め、間接の引数を書く: 着地(直し 0 回)
 - U4 描画のパスを詰めた列の間接の描画へ切り替え、能力が無ければ直の描画へ落とす: 着地(直し 0 回)
 
-- U1 NVSCT v0 に種の印・衝突の形の表・個体差の種の配列を足す: 着地(直し 0 回)
-- U2 SceneView の RT の除外の印と、TLAS の選択からの除外: 着地(直し 0 回)
-- U4 ScatterSystem が色味・個体差の種・影・RT の印を描画先へ渡す: 着地(直し 0 回)
-- U3 AssetCook に配置の一覧（JSON）の cook を足す: 着地(直し 0 回)
-- U5 ScatterSystem に空間の照会・1 本の非表示・非表示の集合の保存と復元を足す: 着地(直し 0 回)
-- U6 grassland の森の配置の見本を足して焼く: 着地(直し 0 回)
-- U7 grassland が森の配置を規則の散布と並べて置き、開発引数で外せるようにする: 着地(直し 1 回)
+- U1 カメラの箱の上面へ戻す衝突の応答を CPU と GPU に足す: 着地(直し 0 回)
+- U2 カメラの箱で折り返す粒の描画に箱の縁のフェードを掛ける: 着地(直し 0 回)
+- U3 EnvironmentSystem が近距離の雨のインスタンスを持ち、毎フレーム雨量と風から値を渡す: 着地(直し 1 回)
+- U4 近距離の雨の効果のデータを置き、全体を確かめる: 着地(直し 0 回)
+## G7-GR58-RAIN-NEAR 近距離の雨筋（2026-11-17、run 20261117-163228）
+- Done: `Assets/Data/Vfx/Rain_Near.vfx.json`（GR136 の元の形式。エミッタ 1 つ: Executor=Gpu・RandomStream=Counter・容量 24000・InitShape の CameraBox（半幅 8 m・高さ 10 m）・WrapInCameraBox・SpawnBurst 24000＋SpawnRate 24000/3600・WindInfluence（Coupling 1.5）・ActivationFraction（Ramp 0.02）・CollisionPlane と CollisionDepth を ReturnToCameraBoxTop・GpuSpriteRenderer の VelocityStretch・PostTAA・AmbientTinted・霧の影響 1・シャッター 1/48 s・幅 1px 未満の補償・近距離のフェード 1.5 m）を置いた。`EnvironmentSystem::Enable` がこれを `LoadVfxEffectFromJson`（スキーマの検証つき）で読み、読めない・エミッタが 1 つでない・Executor が Gpu でない・必要なモジュールが欠けるときは警告のログを出して雨を出さない。`EnvironmentSystem::UpdateRainNear(VfxEffectSystem&)` を `ApplicationProcessor` の `PublishTo` の直後で毎フレーム呼び、有効で雨量 > 0 の間だけ `GetParticleSystem().GetVfxEffects()` にインスタンスを 1 つ持ち、`EvaluateRainNear` の有効な割合・不透明度（色の倍率と組）・太さ・落ちる速さ（初速度と加速度）と RainTuning の箱・シャッター・近距離のフェードを、変わったときに `SetModuleParameter` で渡す。雨量 0・無効・読めないときは破棄する（粒も描画も 0）。粒の衝突の応答 `ReturnToCameraBoxTop`（値 4）を CPU と GPU に足した（CameraBox の粒が箱の上面より下の面に着いたら高さだけ上面へ戻し、同じ刻みの残りの衝突を調べない。面が上面以上なら無視、CameraBox 以外は Kill）。GPU の粒の描画に箱の縁のフェード（CameraBox で WrapInCameraBox のエミッタだけ、各軸の半径の 15% の帯）を足した。箱の中心は前からの GPU 側の扱い（シミュレーションも描画もパケットのメインのカメラの位置）で Entity を動かさない。筋の長さは前からの VelocityStretch（粒とカメラの相対速度 × StreakShutterSeconds、カメラが不連続なフレームはカメラの項 0）。
+- 証拠: `.harness/runs/20261117-163228/G7-GR58-RAIN-NEAR-U4-verify.txt`。全単位を着地させた木で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・コンパイラとリンカの error 0 件で Game.exe までリンク。AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が `vfx_cooked bytes=440 emitters=1` で終了コード 0（スキーマの検証を通る）。粒のシェーダー 4 本（ParticleUpdate.comp・ParticleSpawn.comp・ParticleDraw.frag・ParticleDraw.vert）が glslc で SHADER_OK。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
+- 試験は作らない決まりで、done-when の `RainStreakVulkanTest`・`R58RainSweepVulkanTest`・`R58RainTaaVulkanTest`・閾値の `R58RainSweep.tsv`・`RainParametersTest` と `EnvironmentStateTest` への追加は作っていない。verify の ctest の行も回していない。撮影・GPU の計測・Game の起動の確かめも回さない決まり。
+- 採った判断: 雨は天候用の常駐 Entity（ParticleEmitterComponent）でなく、EnvironmentSystem が VfxEffectSystem のインスタンスを持つ（雨は場面の物でなく気象の一部で、雨量と同じ所で寿命を決められ、シーンのデータに雨の Entity を置かずに済むため）。EnvironmentSystem は VfxEffectSystem へのポインタを持たず（エンジンのメンバの破棄の順に依らない）、毎フレームの呼び出しのために paths の外の `Library/Core/Private/Engine/ApplicationProcessor.cpp` に呼び出しの 1 行を足した。WindInfluence は速度の 3 軸を風（y は 0）へ寄せるので、加速度に (0, −落ちる速さ × Coupling, 0) を渡して定常の速度を (風, −落ちる速さ) にした（傾きは atan(風速 / 落ちる速さ)、風 4 m/s・落ちる速さ 8 m/s で 26.6°）。2.4 万粒は作った時の SpawnBurst で箱を満たし、寿命 3600 s（スキーマの上限）の粒を SpawnRate 24000/3600 で入れ替えてリングの中で数を保つ。平面の衝突は場面に依らない床の下限（GroundY −1000 m）にし、見える面は深度の衝突が受け持つ（固定の高さの平面は、地面の低い場面で空中に雨の床を作るため）。評価の値に当たるエミッタの性質が無いので SetEmitterProperty は使っていない。値は変わったときだけ渡す（`SetModuleParameter` は毎回効果全体を検証するため）。
+- 既知の限界: 近距離のフェードは描画の既存の 1 つの距離（近面から NearFadeDistance で 0→1）で、RainTuning の NearFadeZeroMeters（0.5 m）は使っていない（NearFadeFullMeters 1.5 m を渡す）。箱の縁のフェードの帯（半径の 15%）はシェーダーの定数で、効果のデータでは変えられない（どちらもデータにするには `GpuParticleTypes.h` の GPU のエミッタの定数に欄が要る）。落ちる速さのばらつき（10%）は初速度にだけ入り、風への寄せ（時定数 1/1.5 s）で薄れる。生成の速さで入れ替わる粒（毎秒約 6.7 個）は箱の中のどこにでも現れる。
+- Next: ランナーの評価者の反証（危険地帯: EnvironmentSystem の寿命・ApplicationProcessor の毎フレームの経路・GPU の粒のシェーダー）。撮影・golden・TAA の比較は G7-GR58-CHECK（回さない決まり）。人が見るときの見どころ: `--scene=rendering3dtest --environment-preset=heavy_rain` で、カメラの周りに雨筋が降り、風で傾き、カメラを動かすと筋が伸びること。雨量を下げる・上げると筋が突然現れず薄く減り増えること。カメラの周り 8 m の縁と頭上 5 m で筋が急に切れないこと。画面に見える地面や屋根で筋が止まること。雨の無いシーン（ランチャーの各シーン・Rendering3DTest の既定）の見た目が変わらないこと。
 
-## G12-GR47-PLACEMENT-COOK 手で置く森・岩の配置の一覧を NVSCT に焼き、散布に空間の照会・1 本の非表示・RT の指定を足す（2026-11-16、run 20261116-141756）
-- Done: NVSCT v0 に入力の口を足した（新しい形式は作らない）。種の Flags の bit1 = TLAS に入れない・bit2 = 影を落とさない、種ごとの衝突の形の表（幹のカプセルなど。種のローカル）、個体差の種の配列。新しい欄がすべて 0 のときは旧の予約欄と同じ並びで、規則で焼くファイルはバイト単位で今と同じ。`Docs/Architecture/NVSCTv0.md` を合わせた。
-- Done: AssetCook の散布の入口（`--kind world --format nvsct.v0.inst16`）が、規則の spec のほかに配置の一覧の JSON（種の表: メッシュの論理パス・描く経路・影・`ray_tracing`（既定 真）・衝突の形の一覧、個体の列: 種・位置・ヨー・拡大・色味・種）を読み、地形の格子のチャンクに位置で分けて同じ書き手で焼く（`Tools/AssetCook/ScatterPlacementList.{h,cpp}`）。量子化は NVSCT v0 の規則に従い、範囲外の拡大・NaN・未知の種・チャンクの寸法の不正を種別つきで拒否する。
-- Done: `ScatterSystem` が NVSCT の色味・個体差の種を `MegaScatterInstance` へ渡し、種の印で影と TLAS への参加を切り替える（TLAS は `SceneView` が ComponentId ごとの除外の印を持ち、公開の時に `MegaGeometryProxy::bRayTracing` を付けて SCN-MEGA-RT-SELECT の選択から外す。既存の散布は印が無いので今どおり入る）。`ForEachInstanceInRadius`（常駐のチャンクだけを AABB で先に捨てて走り、範囲が全部常駐かを返す）、`SetInstanceHidden`・`IsInstanceHidden`（`ScatterInstanceId` = 散布・チャンク・チャンク内の番号。チャンクの解放と読み直しをまたいで覚え、常駐のたびに当て直す）、`SerializeHiddenInstances`・`RestoreHiddenInstances`（セーブへ渡す口。結線は GR76 の側）を足した。
-- Done: `Assets/Scatter/grassland.forest.placement.json`（針葉樹 14000・枯れ木 4000（`ray_tracing` 偽）・岩 2000 の 2 万本、仮のメッシュ）を足し、資産の一覧 `GrasslandTerrain.json` で `Assets/Terrain/Grassland/GrasslandForest.nvsct` に焼く。grassland は地形の準備ができたら森を別の散布 `grassland_forest`（距離の常駐。木 384 m・岩 256 m）として規則の散布と並べて置き、シーンの終了・入場の失敗で外す。開発ビルドだけ `--grassland-forest=off` で森だけを外せる（既定 on。重複・不正な値は起動を止める）。
-- 証拠: `.harness/runs/20261116-141756/verify-G12-GR47-PLACEMENT-COOK-U7.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0、Game.exe までリンク。CookAssets で森を焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・`COOK_ASSETS cooked=1 skipped=0`・EXIT=0）。
-- 回さなかったもの: done-when の `ScatterSystemQueryTest` の新設と `CookedScatterTest` のケースの追加は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。撮影・アプリの起動はしない決まり。
-- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布（岩・倒木・低木・草花）と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えて規則の散布は残ること、遠くへ動くと森が 384 m（岩は 256 m）で出入りすること。ほかのシーン（Rendering3DTest・荒野のバナナ・岩の散布）は見た目が変わらないこと。
-- Notes: `--grassland-forest=` の解析とモードへの受け渡しは置き場が `Game/GameApplicationHandler.{h,cpp}`（paths の外）にしか無いため、引数 1 つの解析とメンバ 2 つ・キャプチャ 1 つだけを足した。
-- Notes: （2026-11-17、判断役の判断で再開）verify の 3 行目を `CookAssets.ps1 -OnlyLogicalPath` から AssetCook で森の配置を直接焼く形に替え、試験の行を外した。全体のクック（`-OnlyLogicalPath` なしの CookAssets と `.harness/relay/precook` の系）は止めて再開しない。枠 NorvesLib-2 の `build/CookedAssets` に残る途中の全体のクック（14 項目の manifest）は使わない。manifest が無いときの `-OnlyLogicalPath` の拒否は SCN-MEGA-RT-SELECT-P1 で扱う。
-- U8 配置の一覧の種の表で空の遮蔽物の欄を規則の種の表と同じ読み手で受け、タスクの verify を回す: 着地(直し 0 回)
-
-## G12-GR47-PLACEMENT-COOK 統合ブランチの取り込みと仕上げ（2026-11-17、run 20261117-203902）
-- Done: 統合ブランチ feature/scene-launcher を取り込み、10 ファイルの衝突を解いた。NVSCT v0 の種の記録は統合ブランチの形（84〜96 は空の遮蔽物の欄）のまま残し、種ごとの衝突の形の範囲 {first, count} は衝突の表の節（ヘッダ 176）の頭に種の数だけ並べる形へ移した。形が 1 つも無いファイルは節ごと書かないので、新しい欄を使わない規則の散布のファイルは統合ブランチの出力と同じ並びになる。`Docs/Architecture/NVSCTv0.md` を合わせた。
-- Done: `SceneProxy` は `bRayTracing` と `bSkyMapProxy` を両方持ち、ハッシュにも両方入れる。`ray_tracing` が偽の種は TLAS の選択から外し、樹冠の空の遮蔽の組（instance mask 0x04）にも入れない。`ScatterSystem` は隠した個体を空の遮蔽物の配列にも入れず、常駐中に `SetInstanceHidden` で切り替えたときと `RestoreHiddenInstances` で集合を戻したときは、そのチャンクの遮蔽物の配列を作り直して公開する（常駐・解放のときは非表示の当て直しと同じ場所で配列を作る）。
-- Done: 配置の一覧の種の表で任意の `sky_occluder` を受ける。規則の散布 spec と同じ `ScatterSpecInput::SkyOccluder` で読み、種への写しは `CopyScatterSkyOccluder`（ScatterBaker と共有）で行う。欄の無い森の配置の出力はバイト単位で変わらない（SHA256 一致）。
-- 証拠: `.harness/runs/20261117-203902/verify-final.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0。AssetCook で森の配置を直接焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・EXIT=0）。取り込み直後のビルドは `.harness/runs/20261117-203902/merge-build-1.txt`（EXIT=0）。
-- 回さなかったもの: 試験は作らない・回さない決まりで、ctest の行は回していない。撮影・アプリの起動はしない決まり。
-- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えること、森が 384 m（岩は 256 m）で出入りすること。規則の散布の樹冠の空の遮蔽（統合ブランチで入った見た目）が取り込みの前と変わらないこと。
-- Notes: 判断役が決めた 2 点（衝突の形の範囲を種の記録の外に置く・`ray_tracing` 偽を樹冠の 0x04 より優先する）をそのまま採った。森の配置の見本には `sky_occluder` を付けていない（欄は任意）。
+## G11-GR52-CLOUD-SHAFTS 空の雲の層から太陽の向きの雲の影のマスクを作り、SunGap と合わせて霧の中の光の筋を出す（2026-11-17、run 20261117-172954）
+- Done: `CloudShadow.h/.cpp` に `CloudShadowParameters`（有効・マスクの一辺 既定 8000 m・`CloudSunGap` 最大 4（雲の底の平面の中心 XZ・半径・柔らかさ・強さ）・`bApplyToGroundDirect` 既定 偽）と、Sanitize・等価・切れ間の重みと開き・雲の底の平面への写し・マスクの置き場（カメラを写した XZ を texel の格子へ丸める）の関数を置き、`RenderWorld::SetCloudShadow` → `RenderingCoordinator` → `FramePacket` の `Scene.CloudShadow` で渡す（SceneRevision には入れない）。
+- Done: `Sky/CloudShadowMask.comp` が空に描く雲と同じ `SampleCloudDensity`（同じ定数・同じ風のずれ・同じノイズ）を雲の底の平面から太陽の向きに殻の中で 24 歩積んだ透過率に切れ間の開きを掛け、256² の R32F へ書く。`CloudLayerCommon.glsl` は `CLOUD_LAYER_DENSITY_ONLY` で画面用の束縛を外せる。引く側の写し・重み・縁で外の値へ寄せる関数は `Common/CloudShadowMaskSample.glsl`。
+- Done: `CloudShadowMaskPass`（`CloudLayerPass.inl`。SkyAtmospherePass の直後）が、雲の影・雲の層・空が有効で太陽の高さが 0.02 以上のフレームだけ、密度に効く雲の定数かマスクの定数（置き場・太陽・切れ間）が変わったときに compute で書き直し、描画グラフの `CloudShadowMask` と `ViewRenderContext::CloudShadow` へ出す。
+- Done: 霧（`VolumetricsCommon.glsl` の `CalculateVolumetricShadowVisibility`）の戻りにマスクの透過率を掛ける（束縛 10）。マスクを使うときは空の太陽の灯の放射輝度を 1/f（f = `ComputeCloudDirectFactor`）倍して一様の直達の弱めを外し、影を積む上限より奥の解析の項には f を戻す。大気の書き出しは使わない。地面の太陽の直達（`lighting.frag`、束縛 31）は `bApplyToGroundDirect` が真で影を掛ける方向光が空の太陽のときだけ 1/f × マスクを掛ける。無効のときは定数が 0 で分岐に入らず、今と同じ演算。
+- 確かめ: 全単位を着地させた先頭で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・`error C`／`error LNK` 0 件。`lighting.frag`・`volumetrics.frag`・`volumetrics_probe.frag`・`Sky/CloudShadowMask.comp`・`cloud_layer.frag`・`cloud_layer_probe.frag`・`cloud_layer_opacity.frag` を実行時と同じ vulkan1.2・include の根・define の組で glslc に通して 10 通りとも exit 0（`.harness/runs/20261117-172954/G11-GR52-CLOUD-SHAFTS-final-verify.txt`）。各単位で `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: シーンへの SunGap の置き方と受け入れの撮影は 7644 行の GR52 の受け入れのタスク。今は `SetCloudShadow` を呼ぶ所が無いので、どのシーンも既定（無効）のまま絵は変わらない。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `CloudShadowMaskTest`・`RenderingVolumetricSunGapVulkanTest` と `--fog-scenario=sun-gap` は作っていない。verify の ctest の行が選ぶ試験は回さない決まりの試験（Vulkan・Golden）か存在しない試験なので回していない。撮影・計測の確かめは回さない決まり。
+- Notes: 人が見る所: SunGap を置いたシーン（受け入れのタスクの grassland の near・low）で、霧の中の光の筋が切れ間の真下ではなく太陽の向きへ写した位置から地面へ届くこと、空に見える雲の切れ目と筋の位置が合うこと、`bEnabled` を偽にすると今の一様な弱めの霧に戻ること、マスクの一辺（既定 8 km）の縁で明るさの段が出ないこと。
+- Notes: 採った判断: 雲の層は球殻でなく平面として積む（カメラの近く数 km では曲がりは 1 m ほど）。マスクの縁の 20 % で外の値 f へ寄せる。マスクの書き直しの判定に時間方向の雑音の位相は入れない（風が吹いていれば毎フレーム書き直す）。地面の直達の既定の画像は 1×1 の黒の 2D。局所霧と雲の影は PT・RT・DDGI・空由来 IBL に入らない（方式差）。
+- Notes: 統合ブランチの取り込み（2026-11-17・反復 3）: 照明パスの記述子の binding 31・32 を水たまりの定数と雨の遮蔽マップ（G11-GR59-PUDDLES）が使うため、地面の直達の雲の影のマスクを binding 33（`LIGHTING_CLOUD_SHADOW_MASK_BINDING`）へ移した。取り込み後の `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0、`lighting.frag` と `Sky/CloudShadowMask.comp` は BOM を外した写しを glslc（vulkan1.3）で組み立てて終了コード 0、前処理後の lighting.frag に binding の重複なし。
+- U1 雲の影の値の型・純関数と、RenderWorld → FramePacket の受け渡し: 着地(直し 0 回)
+- U2 雲の影のマスクの compute と、引く側の共有 include: 着地(直し 0 回)
+- U3 CloudShadowMaskPass（マスクを書き、ViewRenderContext へ出す）: 着地(直し 0 回)
+- U4 霧の太陽の散乱にマスクを掛け、一様の直達の弱めを外す: 着地(直し 1 回)
+- U5 地面の太陽の直達にマスクを掛ける選択と、全体のビルドの確かめ: 着地(直し 0 回)

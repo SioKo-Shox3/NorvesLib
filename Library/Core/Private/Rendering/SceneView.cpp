@@ -996,6 +996,7 @@ namespace NorvesLib::Core::Rendering
                                                context.LightRevision);
         context.SkyAtmosphere.Reset();
         context.SkyOcclusion.Reset();
+        context.CloudShadow.Reset();
         context.bTemporalAAApplied = false;
         context.TemporalAAJitterIndex = 0u;
         context.OverheadHeightMap.Invalidate();
@@ -1328,6 +1329,8 @@ namespace NorvesLib::Core::Rendering
         // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
         AddPass(std::move(skyAtmospherePass));
+        // 雲の影のマスクを霧と照明より先に更新して公開する。
+        AddPass(MakeUnique<CloudShadowMaskPass>());
 
         // VirtualShadowMapPass: 太陽の VSM の物理ページのプールとページの表などを作り、名前で公開し、影を落とす手続きメッシュと
         // スキニング（SkinningComputePass が変形した頂点）を物理ページへ描く（--shadow-method=vsm のときだけ）。

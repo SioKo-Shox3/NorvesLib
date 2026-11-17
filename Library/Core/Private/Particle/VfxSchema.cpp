@@ -57,7 +57,8 @@ namespace NorvesLib::Core::Particle
         constexpr const char* kWrapPolicyNames[] = {"Die", "WrapInCameraBox"};
         constexpr const char* kSpawnShapeNames[] = {"Point", "Sphere", "Cone", "Box", "CameraBox"};
         constexpr const char* kCurveTargetNames[] = {"Size", "Color", "Opacity", "Stretch"};
-        constexpr const char* kCollisionResponseNames[] = {"Kill", "Stick", "Bounce", "SpawnChild"};
+        constexpr const char* kCollisionResponseNames[] = {
+            "Kill", "Stick", "Bounce", "SpawnChild", "ReturnToCameraBoxTop"};
         constexpr const char* kGpuSpriteOrientationNames[] = {"Billboard", "VelocityStretch", "SurfaceAligned"};
         constexpr const char* kGpuSpriteBlendNames[] = {"PremultipliedAlpha", "Additive"};
         constexpr const char* kGpuSpritePassNames[] = {"PreTAA", "PostTAA"};
