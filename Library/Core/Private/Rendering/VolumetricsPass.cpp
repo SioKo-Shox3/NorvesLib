@@ -11,11 +11,13 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/Wind.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 #include "RHI/ICommandList.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -58,9 +60,19 @@ namespace NorvesLib::Core::Rendering
             float FogSteps[4];
             // x=画素ごとのずらしが有効なら 1、y=TAA が掛かるフレームで時間方向のずらしが有効なら 1、z=時間の位相（フレーム番号を 64 で割った余り）、w=未使用
             float FogJitter[4];
+            GPULocalFogParams LocalFog; // 局所霧（Common/HeightFog.glsl の LocalFogParams）
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 864u + 2u * SkyAerialProfileSize * 16u);
+        static_assert(sizeof(GPUVolumetricsParams) ==
+                      864u + 2u * SkyAerialProfileSize * 16u + sizeof(GPULocalFogParams));
+        static_assert(offsetof(GPUVolumetricsParams, LocalFog) == 864u + 2u * SkyAerialProfileSize * 16u);
+
+        uint32_t GetLocalFogVolumeCount(const ViewRenderContext* context)
+        {
+            return context && context->SnapshotScene
+                       ? static_cast<uint32_t>(context->SnapshotScene->LocalFogVolumes.size())
+                       : 0u;
+        }
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc(bool bUseVsm)
         {
@@ -285,7 +297,7 @@ namespace NorvesLib::Core::Rendering
                 outParams.CameraForwardAndScatteringEnabled[2] =
                     static_cast<float>(camera.ForwardZ * inverseForwardLength);
             }
-            // 霧が無効で空気遠近だけ掛けるときは、霧の密度を 0 にして霧の分を消す
+            // 高さフォグが無効なら密度を 0 にし、空気遠近や局所霧だけを掛ける
             outParams.FogParameters[0] = heightFog.DensityBaseHeightFalloffSkyAvailable[0];
             outParams.FogParameters[1] = heightFog.DensityBaseHeightFalloffSkyAvailable[1];
             outParams.FogParameters[2] = heightFog.DensityBaseHeightFalloffSkyAvailable[2];
@@ -534,7 +546,8 @@ namespace NorvesLib::Core::Rendering
                                   : AerialPerspectiveParameters{};
         // 空気遠近は空の LUT から求めるので、空が無効なら掛けない
         m_AerialPerspective.bEnabled = m_AerialPerspective.bEnabled && m_SkyParameters.bEnabled;
-        if (!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled)
+        if (!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled &&
+            GetLocalFogVolumeCount(context) == 0u)
         {
             return;
         }
@@ -620,7 +633,8 @@ namespace NorvesLib::Core::Rendering
     void VolumetricsPass::Execute(RenderGraphResources& resources,
                                   ViewRenderContext& context)
     {
-        if ((!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled) ||
+        if ((!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled &&
+             GetLocalFogVolumeCount(&context) == 0u) ||
             !m_SceneColorHandle.IsValid() ||
             !m_SceneDepthHandle.IsValid())
         {
@@ -690,6 +704,14 @@ namespace NorvesLib::Core::Rendering
                                m_bReferenceSteps,
                                params,
                                paramsState);
+        const uint32_t localFogCount = GetLocalFogVolumeCount(&context);
+        if (localFogCount > 0u)
+        {
+            params.LocalFog = BuildLocalFogGpuParams(context.SnapshotScene->LocalFogVolumes.data(),
+                                                    localFogCount,
+                                                    context.Wind,
+                                                    WindClockSeconds(context.ExtensionFrame.GameTotalTime));
+        }
         const bool bAerialPerspectiveAvailable = paramsState.bAerialAvailable;
 
         // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
