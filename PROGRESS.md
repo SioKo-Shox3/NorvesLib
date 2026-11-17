@@ -11934,3 +11934,14 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 太陽の軌道の純関数と SunPath.json、データ読み込みの共通の補助: 着地(直し 0 回)
 - U2 天候の予定表のデータ(遷移表・補間の長さ)の読み書きと検証、WeatherSchedule.json: 着地(直し 0 回)
 - U3 種から 96 セルの WeatherTrack を作り、WeatherAt で境界を補間し、プリセットを混ぜる: 着地(直し 0 回)
+
+## G11-GR55-SUN-WEATHER 太陽の軌道と、種と時刻だけで決まる天候の予定表（2026-11-17、run 20261117-103236 の反復 1）
+
+- Done: `Library/Core/Public/Environment/SunPath.h`・`Private/Environment/SunPath.cpp` に `ComputeSunAltAz(hours, dayOfYear, latitudeDegrees, northAzimuthOffsetDegrees)` を足した。赤緯 δ=23.44°·sin(2π(284+N)/365)、時角 H=15°(h−12)、sin α=sin φ sin δ + cos φ cos δ cos H を double で計算し、高度は負も返す。方位は北から東回りの角 A を atan2 で求め、エンジンの方位 = A + 北のずれ（[0, 360) に巻く）。エンジンは右手系 Y 上（`MatrixUtils` の LookAt）で、`MakeSunDirection` の +X→+Z の回りが上から見て時計回りなので東回りと同じ向き。北のずれ 0 で北 = +X・東 = +Z。入力が有限でなければ {0, 0}。
+- Done: `SunPathSettings`（緯度・日付・北のずれ）の JSON v1 の読み書きと `LoadSunPath`。既定のデータ `Assets/Data/Environment/SunPath.json`（北緯 55°・日付 172・北のずれ 0。仮の値）。欠けた欄は既定、型違い・範囲外・formatVersion 違いは拒否して前の値を保つ。ファイル読み（BOM 除去・大きさの上限）は Private の `EnvironmentDataFile.{h,cpp}` の `ReadEnvironmentDataFile` に置き、天候の予定表と共有する。
+- Done: `WeatherSchedule.{h,cpp}` に天候の予定表を足した。データ `WeatherScheduleSettings` は G7 のプリセット名（`clear`・`overcast`・`rain`・`heavy_rain`）・重みつきの遷移表（(From, To) の昇順の正規形）・補間の長さ（分、(0, 15]）。検証は名前の形と重複、重み 1〜1000000、出ていく遷移の有無、各プリセットからちょうど 96 歩で戻れること。既定の表は曇天中心（晴れ → 雨・強雨、曇り → 強雨は無い）で、`Assets/Data/Environment/WeatherSchedule.json` と同じ値。
+- Done: `MakeWeatherTrack(settings, seed)` は SplitMix64 の (種, セル番号) だけのハッシュで 96 セル（15 分）を選ぶ。セル 0 から「残りの歩数でセル 0 へ戻れる集合」に候補を絞る環状の歩みなので、セル 95 → セル 0 も遷移表に従う。`SampleWeatherTrack`・`WeatherAt(settings, seed, T)` は T を 24 時間に巻き、セルの境界を中心に補間の長さで smoothstep して前後のプリセットを混ぜる（境界ちょうどで 0.5、24 時間の継ぎ目も同じ式）。`LoadWeatherPresets`・`BlendWeatherPresets`（濡れは除く、風の向きは短い弧、雲の層の有無は 0.5 で切り替え）・`EvaluateWeather` で `EnvironmentTarget` を返す。風は既存の欄（向き・速さ・突風）のまま持ち、`WindParameters` への写しはここに持たない。描画・環境状態は変えていない（呼ぶ側はまだ無い）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0、新しいファイルからの警告なし（`.harness/runs/20261117-103236/G11-GR55-SUN-WEATHER-U3-verify.txt`）。新規ファイルは UTF-8 BOM + CRLF、`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: 月明かり・夜は G11-GR55-NIGHT、時計・スキップ（環境状態へ時刻と天候をつなぐ）は G11-GR55-CLOCK-SKIP。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SunPathTest`・`WeatherScheduleTest` は作っていない。verify の ctest の行が選ぶ試験は無い。人が見る所は、G11-GR55-CLOCK-SKIP で環境状態へつないだ後に、ランチャーの荒野・Rendering3DTest で時刻を進めたときの太陽の向き（正午に南、北緯 55°・夏至の正午で高度約 58°）と、天候が 15 分のセルの境界で滑らかに移ること。
+- Notes: 判断: 選定課題 G11-S6 は推奨の (A)（仮の既定値で作り、企画が決まったらデータだけ差し替える）。重みの上限 1000000 は JSON の読みと検証で同じにし、検証を通った設定は必ず書けて読み直せる。既知の限界: 24 時間の並びは毎日同じ繰り返し（種を日ごとに変えると日の継ぎ目が連続しない）。
