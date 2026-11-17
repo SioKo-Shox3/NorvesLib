@@ -1,5 +1,6 @@
 ﻿#include "Scene/SceneSerializer.h"
 
+#include "Asset/AssetPath.h"
 #include "Asset/AssetRef.h"
 #include "Asset/AssetSystem.h"
 #include "Component/Component.h"
@@ -1580,9 +1581,31 @@ namespace NorvesLib::Core::Scene
             return PropertyReconcileResult::Accepted;
         }
 
+        bool ReconcilePrefabReference(const IClass& cls, const ScenePropertyRecord& record,
+                                      const SceneReferenceFixup& reference, ProjectedPropertyValue& outValue)
+        {
+            if (reference.Target.Alias != InvalidSubtreeSnapshotAliasId)
+            {
+                NORVES_LOG_WARNING("Scene", "参照プロパティ '%s' は Prefab の生成時に参照先を張り替えられないため除外します",
+                                   record.Name.c_str());
+                return false;
+            }
+
+            const TypeInfo* typeInfo = TypeRegistry::Get().Find(reference.Property->GetRuntimeTypeId());
+            if (!typeInfo)
+            {
+                return false;
+            }
+            outValue.Property = MakeSceneStablePropertyId(cls.GetClassName().GetView(),
+                                                         reference.Property->GetName().GetView());
+            outValue.Type = typeInfo->StableId;
+            outValue.SerializedValue = "0";
+            return true;
+        }
+
         void ReconcileObjectInto(const IClass& cls, const SceneObjectRecord& record, ObjectSnapshot& outSnapshot,
                                  SceneLoadStats& stats, size_t rootIndex, SubtreeSnapshotAliasId ownerAlias,
-                                 SceneReferencePlan& references)
+                                 SceneReferencePlan& references, bool bPreserveAliases)
         {
             outSnapshot.Class = MakeSceneStableClassId(cls.GetClassName().GetView());
             outSnapshot.Path = record.Path;
@@ -1599,9 +1622,23 @@ namespace NorvesLib::Core::Scene
                 }
                 else if (result == PropertyReconcileResult::DeferredReference)
                 {
-                    reference.OwnerRootIndex = rootIndex;
-                    reference.OwnerAlias = ownerAlias;
-                    references.Fixups.push_back(reference);
+                    if (bPreserveAliases)
+                    {
+                        if (ReconcilePrefabReference(cls, propertyRecord, reference, value))
+                        {
+                            outSnapshot.Properties.push_back(std::move(value));
+                        }
+                        else
+                        {
+                            ++stats.DroppedProperties;
+                        }
+                    }
+                    else
+                    {
+                        reference.OwnerRootIndex = rootIndex;
+                        reference.OwnerAlias = ownerAlias;
+                        references.Fixups.push_back(reference);
+                    }
                 }
                 else if (result == PropertyReconcileResult::Dropped)
                 {
@@ -1617,7 +1654,8 @@ namespace NorvesLib::Core::Scene
             EntitySubtreeSnapshotNode& outNode,
             SceneLoadStats& stats,
             size_t rootIndex,
-            SceneReferencePlan& references)
+            SceneReferencePlan& references,
+            bool bPreserveAliases)
         {
             const IClass* cls = ResolveRecordClass(record.Object);
             if (!cls || !cls->IsChildOf(Entity::StaticClass()))
@@ -1630,10 +1668,11 @@ namespace NorvesLib::Core::Scene
                 return false;
             }
 
-            outNode.Alias = nextAlias++;
+            outNode.Alias = bPreserveAliases ? record.Alias : nextAlias++;
             outNode.ParentAlias = parentAlias;
             references.EntityAliases[rootIndex][record.Alias] = outNode.Alias;
-            ReconcileObjectInto(*cls, record.Object, outNode.Object, stats, rootIndex, outNode.Alias, references);
+            ReconcileObjectInto(*cls, record.Object, outNode.Object, stats, rootIndex, outNode.Alias, references,
+                                bPreserveAliases);
 
             outNode.Components.reserve(record.Components.size());
             for (const SceneComponentRecord& componentRecord : record.Components)
@@ -1649,10 +1688,10 @@ namespace NorvesLib::Core::Scene
                 }
 
                 ComponentSubtreeSnapshot componentSnapshot;
-                componentSnapshot.Alias = nextAlias++;
+                componentSnapshot.Alias = bPreserveAliases ? componentRecord.Alias : nextAlias++;
                 componentSnapshot.OwnerAlias = outNode.Alias;
                 ReconcileObjectInto(*componentClass, componentRecord.Object, componentSnapshot.Object, stats,
-                                    rootIndex, componentSnapshot.Alias, references);
+                                    rootIndex, componentSnapshot.Alias, references, bPreserveAliases);
                 outNode.Components.push_back(std::move(componentSnapshot));
             }
 
@@ -1660,7 +1699,8 @@ namespace NorvesLib::Core::Scene
             for (const SceneEntityRecord& childRecord : record.Children)
             {
                 EntitySubtreeSnapshotNode childNode;
-                if (ReconcileEntityRecord(childRecord, outNode.Alias, nextAlias, childNode, stats, rootIndex, references))
+                if (ReconcileEntityRecord(childRecord, outNode.Alias, nextAlias, childNode, stats, rootIndex,
+                                          references, bPreserveAliases))
                 {
                     outNode.Children.push_back(std::move(childNode));
                 }
@@ -2416,11 +2456,36 @@ namespace NorvesLib::Core::Scene
 
     namespace
     {
+        bool ValidatePrefabAliases(const SceneEntityRecord& node,
+                                   Container::UnorderedSet<SubtreeSnapshotAliasId>& aliases)
+        {
+            if (node.Alias == InvalidSubtreeSnapshotAliasId || !aliases.insert(node.Alias).second)
+            {
+                return false;
+            }
+            for (const SceneComponentRecord& component : node.Components)
+            {
+                if (component.Alias == InvalidSubtreeSnapshotAliasId || !aliases.insert(component.Alias).second)
+                {
+                    return false;
+                }
+            }
+            for (const SceneEntityRecord& child : node.Children)
+            {
+                if (!ValidatePrefabAliases(child, aliases))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         bool ReconcileWithSchemaInternal(
             const SceneDocument& document,
             Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
             SceneLoadStats& outStats,
-            SceneReferencePlan& references)
+            SceneReferencePlan& references,
+            bool bPreserveAliases = false)
         {
             outRoots.clear();
             outStats = SceneLoadStats(); // outRootsのclear()と対称にゼロ化する（累積させない）
@@ -2443,6 +2508,17 @@ namespace NorvesLib::Core::Scene
             for (size_t rootIndex = 0; rootIndex < document.Roots.size(); ++rootIndex)
             {
                 const SceneRootRecord& rootRecord = document.Roots[rootIndex];
+                if (bPreserveAliases)
+                {
+                    Container::UnorderedSet<SubtreeSnapshotAliasId> aliases;
+                    if (rootRecord.RootAlias == InvalidSubtreeSnapshotAliasId ||
+                        rootRecord.RootAlias != rootRecord.Root.Alias ||
+                        !ValidatePrefabAliases(rootRecord.Root, aliases))
+                    {
+                        NORVES_LOG_WARNING("Scene", "Prefab の alias が無効か重複しています");
+                        return false;
+                    }
+                }
                 // root単位のformatVersionはトップレベルと同方針で検証するが、
                 // ファイル全体は殺さず該当ルートのみ警告付きdrop（寛容ロード）。
                 if (rootRecord.FormatVersion != SceneSerializer::SceneFileFormatVersion)
@@ -2456,12 +2532,12 @@ namespace NorvesLib::Core::Scene
 
                 EntitySubtreeSnapshot snapshot;
                 snapshot.FormatVersion = rootRecord.FormatVersion;
-                snapshot.RootAlias = 1;
+                snapshot.RootAlias = bPreserveAliases ? rootRecord.RootAlias : 1;
                 snapshot.RootPath = rootRecord.RootPath;
 
                 SubtreeSnapshotAliasId nextAlias = 1;
                 if (!ReconcileEntityRecord(rootRecord.Root, InvalidSubtreeSnapshotAliasId, nextAlias, snapshot.Root,
-                                           outStats, rootIndex, references))
+                                           outStats, rootIndex, references, bPreserveAliases))
                 {
                     continue; // ルートごとdrop（警告出力済み）
                 }
@@ -2639,6 +2715,216 @@ namespace NorvesLib::Core::Scene
             }
         }
 
+
+        enum class PrefabLoadStatus : uint8_t
+        {
+            Success,
+            Failed,
+            Cycle
+        };
+
+        struct PrefabLoadResult
+        {
+            PrefabLoadStatus Status = PrefabLoadStatus::Failed;
+            ResourceRef<PrefabAsset> Prefab;
+            Container::String Reason;
+        };
+
+        bool ReconcilePrefabOverride(const PrefabAsset& prefab, const PrefabOverrideRecord& record,
+                                     PrefabPropertyOverride& outOverride)
+        {
+            outOverride.Target.NestedInstances = record.TargetNested;
+            outOverride.Target.Alias = record.TargetAlias;
+            const ObjectSnapshot* target = ResolvePrefabOverrideTarget(prefab, outOverride.Target);
+            if (!target)
+            {
+                return false;
+            }
+
+            SceneObjectRecord classRecord;
+            classRecord.ClassId = target->Class;
+            const IClass* cls = ResolveRecordClass(classRecord);
+            if (!cls)
+            {
+                return false;
+            }
+
+            SceneReferenceFixup reference;
+            const PropertyReconcileResult result =
+                ReconcileProperty(*cls, record.Property, outOverride.Value, reference);
+            if (result == PropertyReconcileResult::DeferredReference)
+            {
+                if (!ReconcilePrefabReference(*cls, record.Property, reference, outOverride.Value))
+                {
+                    return false;
+                }
+            }
+            else if (result != PropertyReconcileResult::Accepted)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        PrefabLoadResult LoadPrefabRecursive(ResourceRegistry& registry, const Asset::AssetSystem& assetSystem,
+                                             Container::AnsiStringView logicalPath,
+                                             Container::VariableArray<Container::String>& loadingPaths,
+                                             SceneLoadStats& stats)
+        {
+            PrefabLoadResult result;
+            const Asset::AssetPath normalized = Asset::AssetPath::Normalize(logicalPath);
+            if (!normalized.IsValid() || normalized.IsAbsolute() || !normalized.HasLogicalPath())
+            {
+                result.Reason = "論理パスが不正です";
+                return result;
+            }
+            const Container::String path(normalized.GetLogicalPath());
+
+            for (const Container::String& loadingPath : loadingPaths)
+            {
+                if (loadingPath == path)
+                {
+                    Container::String chain;
+                    for (const Container::String& entry : loadingPaths)
+                    {
+                        if (!chain.empty())
+                        {
+                            chain += " -> ";
+                        }
+                        chain += entry;
+                    }
+                    chain += " -> ";
+                    chain += path;
+                    NORVES_LOG_ERROR("Scene", "Prefab の循環を検出しました: %s", chain.c_str());
+                    result.Status = PrefabLoadStatus::Cycle;
+                    result.Reason = chain;
+                    return result;
+                }
+            }
+
+            const ResourceHandle<PrefabAsset> cached = registry.FindHandle<PrefabAsset>(path);
+            if (cached.IsValid())
+            {
+                result.Prefab = ResourceRef<PrefabAsset>(registry, cached);
+                if (result.Prefab.IsValid())
+                {
+                    result.Status = PrefabLoadStatus::Success;
+                    return result;
+                }
+            }
+
+            const Container::AnsiString& normalizedPath = normalized.GetLogicalPath();
+            const Asset::AssetResolveResult resolved = assetSystem.ResolveAsset(
+                Container::AnsiStringView(normalizedPath.data(), normalizedPath.size()), Asset::AssetKind::Raw);
+            if (!resolved.Succeeded())
+            {
+                result.Reason = Container::String("資産を解決できません: ") + resolved.Reason;
+                return result;
+            }
+
+            const size_t byteCount = resolved.Blob.GetSize();
+            Container::String jsonText(byteCount, '\0');
+            if (byteCount > 0)
+            {
+                std::memcpy(&jsonText[0], resolved.Blob.GetData(), byteCount);
+            }
+
+            PrefabDocument document;
+            Container::String parseError;
+            if (!SceneSerializer::TryParsePrefabJson(jsonText, document, &parseError))
+            {
+                result.Reason = Container::String("JSON を解析できません: ") + parseError;
+                return result;
+            }
+
+            Container::VariableArray<EntitySubtreeSnapshot> roots;
+            SceneReferencePlan references;
+            SceneLoadStats treeStats;
+            const bool bReconciled = ReconcileWithSchemaInternal(document.Tree, roots, treeStats, references, true);
+            stats.DroppedEntities += treeStats.DroppedEntities;
+            stats.DroppedComponents += treeStats.DroppedComponents;
+            stats.DroppedProperties += treeStats.DroppedProperties;
+            if (!bReconciled || roots.size() != 1)
+            {
+                result.Reason = "Prefab の木を復元できません";
+                return result;
+            }
+
+            Container::TSharedPtr<PrefabAsset> prefab = registry.CreateResource<PrefabAsset>(path);
+            if (!prefab)
+            {
+                result.Reason = "Prefab を作成できません";
+                return result;
+            }
+            prefab->SetTree(std::move(roots[0]));
+            if (!prefab->HasTree())
+            {
+                result.Reason = "Prefab のルートが不正です";
+                return result;
+            }
+
+            loadingPaths.push_back(path);
+            for (const PrefabNestedRecord& nested : document.Nested)
+            {
+                const PrefabLoadResult child = LoadPrefabRecursive(
+                    registry, assetSystem, Container::AnsiStringView(nested.PrefabPath.data(), nested.PrefabPath.size()),
+                    loadingPaths, stats);
+                if (child.Status == PrefabLoadStatus::Cycle)
+                {
+                    loadingPaths.pop_back();
+                    return child;
+                }
+                if (child.Status != PrefabLoadStatus::Success)
+                {
+                    NORVES_LOG_WARNING("Scene", "Prefab '%s' の入れ子 '%s' を除外します: %s",
+                                       path.c_str(), nested.PrefabPath.c_str(), child.Reason.c_str());
+                    ++stats.DroppedNestedPrefabs;
+                    continue;
+                }
+
+                PrefabOverrideSet overrides;
+                overrides.Properties.reserve(nested.Overrides.size());
+                for (const PrefabOverrideRecord& record : nested.Overrides)
+                {
+                    PrefabPropertyOverride value;
+                    if (!ReconcilePrefabOverride(*child.Prefab.Get(), record, value))
+                    {
+                        NORVES_LOG_WARNING("Scene", "Prefab '%s' の入れ子 %llu の上書き '%s' を除外します",
+                                           path.c_str(), static_cast<unsigned long long>(nested.InstanceId),
+                                           record.Property.Name.c_str());
+                        ++stats.DroppedOverrides;
+                        continue;
+                    }
+                    overrides.Properties.push_back(std::move(value));
+                }
+
+                if (!prefab->RestoreNestedPrefab(nested.InstanceId, nested.ParentAlias, child.Prefab, overrides))
+                {
+                    NORVES_LOG_WARNING("Scene", "Prefab '%s' の入れ子 %llu を復元できないため除外します",
+                                       path.c_str(), static_cast<unsigned long long>(nested.InstanceId));
+                    ++stats.DroppedNestedPrefabs;
+                }
+            }
+            loadingPaths.pop_back();
+
+            if (!prefab->SetNextNestedInstanceId(document.NextNestedInstanceId))
+            {
+                NORVES_LOG_WARNING("Scene", "Prefab '%s' の次の入れ子番号を復元できないため現在の番号を使います",
+                                   path.c_str());
+            }
+
+            const ResourceHandle<PrefabAsset> handle = registry.Register<PrefabAsset>(prefab, path);
+            result.Prefab = ResourceRef<PrefabAsset>(registry, handle);
+            if (!result.Prefab.IsValid())
+            {
+                result.Reason = "Prefab を登録できません";
+                return result;
+            }
+            result.Status = PrefabLoadStatus::Success;
+            return result;
+        }
+
         bool LoadSceneJson(World& world, const Container::String& jsonText, const Container::String& sourceName,
                            SceneLoadStats* pOutStats, Container::VariableArray<Entity*>* pOutRoots)
         {
@@ -2779,6 +3065,85 @@ namespace NorvesLib::Core::Scene
             std::memcpy(&jsonText[0], resolved.Blob.GetData(), byteCount);
         }
         return LoadSceneJson(world, jsonText, sourceName, pOutStats, pOutRoots);
+    }
+
+
+    ResourceRef<PrefabAsset> SceneSerializer::LoadPrefabFromAsset(ResourceRegistry& registry,
+                                                                 const Asset::AssetSystem& assetSystem,
+                                                                 Container::AnsiStringView logicalPath,
+                                                                 SceneLoadStats* pOutStats)
+    {
+        SceneLoadStats stats;
+        if (pOutStats)
+        {
+            *pOutStats = stats;
+        }
+        Container::VariableArray<Container::String> loadingPaths;
+        PrefabLoadResult result = LoadPrefabRecursive(registry, assetSystem, logicalPath, loadingPaths, stats);
+        if (result.Status == PrefabLoadStatus::Success)
+        {
+            stats.LoadedRoots = 1;
+        }
+        else if (result.Status != PrefabLoadStatus::Cycle)
+        {
+            const Container::String sourceName(logicalPath);
+            NORVES_LOG_ERROR("Scene", "Prefab '%s' の読み込みに失敗しました: %s",
+                             sourceName.c_str(), result.Reason.c_str());
+        }
+        if (pOutStats)
+        {
+            *pOutStats = stats;
+        }
+        return result.Prefab;
+    }
+
+    bool SceneSerializer::LoadIntoWorldFromAsset(World& world, ResourceRegistry& registry,
+                                                const Asset::AssetSystem& assetSystem,
+                                                Container::AnsiStringView logicalPath, SceneLoadStats* pOutStats,
+                                                Container::VariableArray<Entity*>* pOutRoots)
+    {
+        ResetSceneLoadOutputs(pOutStats, pOutRoots);
+        const Container::String sourceName(logicalPath);
+        const size_t suffixLength = std::strlen(PrefabFileSuffix);
+        if (sourceName.size() < suffixLength ||
+            sourceName.substr(sourceName.size() - suffixLength) != PrefabFileSuffix)
+        {
+            return LoadIntoWorldFromAsset(world, assetSystem, logicalPath, pOutStats, pOutRoots);
+        }
+
+        SceneLoadStats stats;
+        const ResourceRef<PrefabAsset> prefab = LoadPrefabFromAsset(registry, assetSystem, logicalPath, &stats);
+        stats.LoadedRoots = 0;
+        if (!prefab.IsValid())
+        {
+            if (pOutStats)
+            {
+                *pOutStats = stats;
+            }
+            return false;
+        }
+
+        Entity* root = world.SpawnPrefab(*prefab.Get());
+        if (!root)
+        {
+            NORVES_LOG_ERROR("Scene", "Prefab '%s' のルートの生成に失敗しました", sourceName.c_str());
+            if (pOutStats)
+            {
+                *pOutStats = stats;
+            }
+            return false;
+        }
+
+        stats.LoadedRoots = 1;
+        if (pOutRoots)
+        {
+            pOutRoots->push_back(root);
+        }
+        if (pOutStats)
+        {
+            *pOutStats = stats;
+        }
+        return true;
     }
 
 } // namespace NorvesLib::Core::Scene

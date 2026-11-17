@@ -9,6 +9,9 @@ namespace NorvesLib::Core
 {
     class Entity;
     class PrefabAsset;
+    class ResourceRegistry;
+    template <typename T>
+    class ResourceRef;
     class World;
 
     namespace Asset
@@ -130,6 +133,8 @@ namespace NorvesLib::Core::Scene
         size_t DroppedEntities = 0;
         size_t DroppedComponents = 0;
         size_t DroppedProperties = 0;
+        size_t DroppedNestedPrefabs = 0;
+        size_t DroppedOverrides = 0;
     };
 
     /**
@@ -208,6 +213,19 @@ namespace NorvesLib::Core::Scene
          * 出力と所有権はLoadIntoWorldと同じ。失敗時も生成に成功したルートは残る。
          */
         static bool LoadIntoWorldFromAsset(World& world, const Asset::AssetSystem& assetSystem,
+                                           Container::AnsiStringView logicalPath,
+                                           SceneLoadStats* pOutStats = nullptr,
+                                           Container::VariableArray<Entity*>* pOutRoots = nullptr);
+
+        /// 論理パスの Prefab を読み、registry に登録済みなら再利用する。
+        static ResourceRef<PrefabAsset> LoadPrefabFromAsset(ResourceRegistry& registry,
+                                                           const Asset::AssetSystem& assetSystem,
+                                                           Container::AnsiStringView logicalPath,
+                                                           SceneLoadStats* pOutStats = nullptr);
+
+        /// Prefab またはシーンの資産を World に加算する。
+        static bool LoadIntoWorldFromAsset(World& world, ResourceRegistry& registry,
+                                           const Asset::AssetSystem& assetSystem,
                                            Container::AnsiStringView logicalPath,
                                            SceneLoadStats* pOutStats = nullptr,
                                            Container::VariableArray<Entity*>* pOutRoots = nullptr);
