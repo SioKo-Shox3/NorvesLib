@@ -82,6 +82,7 @@ set(PRIVATE_SOURCES
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
+    Private/Particle/FootSplashPlanner.cpp
     Private/Particle/HitEffectEmitter.cpp
     Private/Particle/VfxEffectSystem.cpp
     Private/Particle/DefeatBloodSequence.cpp
@@ -685,6 +686,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
+    Public/Particle/FootSplashPlanner.h
     Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
     Public/Particle/VfxSimulationMath.h
