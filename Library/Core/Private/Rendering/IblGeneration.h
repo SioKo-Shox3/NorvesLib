@@ -26,6 +26,39 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t IblDiffuseHeight = 32u;
     inline constexpr uint32_t IblPrefilterMipCount = 9u;
 
+    /// 装置に依存しない IBL の計算結果。
+    struct IblCpuData
+    {
+        Container::VariableArray<uint16_t> Environment; // RGBA16F、EnvironmentWidth × EnvironmentHeight、行 y = 0 から
+        uint32_t EnvironmentWidth = 0u;
+        uint32_t EnvironmentHeight = 0u;
+        Container::VariableArray<uint16_t> Diffuse; // RGBA16F、IblDiffuseWidth × IblDiffuseHeight
+        Container::VariableArray<uint16_t> PrefilterMips[IblPrefilterMipCount]; // ミップ m は max(1, W >> m) × max(1, H >> m)
+        float AverageIrradiance[3] = {};
+        bool bValid = false;
+    };
+
+    /// 線形放射輝度（RGBA32F）を検査し、半精度化・再標本化・拡散積分・GGX 前フィルタ・平均照度を計算する。
+    /// 装置には触れず、別々の出力に対して複数のワーカーから同時に呼べる。
+    /// 失敗時は配列を空、寸法と平均照度を 0、bValid を false にする。
+    bool ComputeIblCpuData(const Container::VariableArray<float>& sourceData,
+                           uint32_t sourceWidth,
+                           uint32_t sourceHeight,
+                           IblCpuData& outData);
+
+    /// CPU の計算結果から RGBA16F の IBL テクスチャを作成し、同期的にアップロードする。
+    /// RenderThread でコマンド記録の外から呼ぶ。
+    /// 無効な結果・配列サイズの不一致・作成失敗時は出力を空、平均照度を 0 にして false を返す。
+    bool UploadIblResources(RHI::IDevice* device,
+                            const IblCpuData& data,
+                            const char* environmentName,
+                            const char* diffuseName,
+                            const char* prefilterName,
+                            RHI::TexturePtr& outEnvironment,
+                            RHI::TexturePtr& outDiffuse,
+                            RHI::TexturePtr& outPrefilter,
+                            float outAverageIrradiance[3]);
+
     /// 正距円筒の線形放射輝度（RGBA32F、行 y = 0 が天頂）から IBL 資源を生成する。
     /// 出力は RGBA16F の環境（入力と同じ大きさ、1 ミップ）、
     /// 拡散照度（IblDiffuseWidth × IblDiffuseHeight、余弦で重み付けした全球の積分）、
