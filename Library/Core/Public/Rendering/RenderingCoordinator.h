@@ -519,6 +519,9 @@ namespace NorvesLib::Core::Rendering
         void SetDecals(const DecalScene& decals);
         const DecalScene& GetDecals() const { return m_Decals; }
 
+        /** @brief GPU の粒の写しを設定する。GameThread 専用。毎フレーム呼び、写しは次のパケットだけで使う。 */
+        void SetGpuParticleFrame(const GpuParticleScene& frame);
+
         /** @brief 拡張データの保持を取得する（GameThread 専用、ロック無し）。 */
         RenderExtensionDataStore& GetExtensionDataStore() { return m_ExtensionData; }
 
@@ -784,6 +787,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<WorldFieldDrynessSource> m_WorldFieldDrynessSources;
         RibbonTrailScene m_RibbonTrails;
         DecalScene m_Decals;
+        GpuParticleScene m_GpuParticles;
         RenderExtensionDataStore m_ExtensionData;
         DistortionScene m_Distortions;
         bool m_bRTGIEnabled = true;

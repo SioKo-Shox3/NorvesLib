@@ -418,8 +418,35 @@ namespace NorvesLib::Core::Asset
             species.WindStiffness = ReadFloat(data, record + SpeciesRecordOffset::WindStiffness);
             species.WindPhaseSeed = Read32(data, record + SpeciesRecordOffset::WindPhaseSeed);
             species.Flags = Read32(data, record + SpeciesRecordOffset::Flags);
-            if ((species.Flags & ~1u) != 0 || Read32(data, record + SpeciesRecordOffset::Reserved0) != 0 ||
-                Read64(data, record + SpeciesRecordOffset::Reserved1) != 0) return Fail(Status::ReservedNonZero);
+            const uint32_t occluderBits = Read32(data, record + SpeciesRecordOffset::SkyOccluderBits);
+            const uint32_t occluderShape = occluderBits & 3u;
+            if ((species.Flags & ~1u) != 0 || (occluderBits & ~0x00ffff07u) != 0 ||
+                (occluderShape == 0 &&
+                 (occluderBits != 0 || Read64(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters) != 0)))
+            {
+                return Fail(Status::ReservedNonZero);
+            }
+            if (occluderShape > 2)
+            {
+                return Fail(Status::InvalidSkyOccluder);
+            }
+            if (occluderShape != 0)
+            {
+                const uint32_t base = (occluderBits >> 8) & 0xffu;
+                species.SkyOccluderRadiusMeters = ReadFloat(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters);
+                species.SkyOccluderHeightMeters = ReadFloat(data, record + SpeciesRecordOffset::SkyOccluderHeightMeters);
+                if (base > 242 || !std::isfinite(species.SkyOccluderRadiusMeters) ||
+                    species.SkyOccluderRadiusMeters <= 0.0f || species.SkyOccluderRadiusMeters > 256.0f ||
+                    !std::isfinite(species.SkyOccluderHeightMeters) ||
+                    species.SkyOccluderHeightMeters <= 0.0f || species.SkyOccluderHeightMeters > 256.0f)
+                {
+                    return Fail(Status::InvalidSkyOccluder);
+                }
+                species.SkyOccluderShape = occluderShape;
+                species.bSkyOccluderCanopy = (occluderBits & 4u) != 0;
+                species.SkyOccluderBaseRatio = static_cast<float>(base) / 255.0f;
+                species.SkyOccluderKappa = static_cast<float>((occluderBits >> 16) & 0xffu) / 255.0f;
+            }
             if (!std::isfinite(species.MeshRadiusMeters) || species.MeshRadiusMeters < 0.0f ||
                 !std::isfinite(species.MinSpacingMeters) || species.MinSpacingMeters <= 0.0f ||
                 !std::isfinite(species.ScaleMin) || !std::isfinite(species.ScaleMax) || species.ScaleMin <= 0.0f ||
@@ -514,6 +541,7 @@ namespace NorvesLib::Core::Asset
         case CookedScatterParseStatus::ChunkOutOfRange: return "ChunkOutOfRange";
         case CookedScatterParseStatus::InvalidChunkBounds: return "InvalidChunkBounds";
         case CookedScatterParseStatus::InstanceRangeOutOfRange: return "InstanceRangeOutOfRange";
+        case CookedScatterParseStatus::InvalidSkyOccluder: return "InvalidSkyOccluder";
         }
         return "Unknown";
     }

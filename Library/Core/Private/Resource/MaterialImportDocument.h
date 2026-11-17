@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "Resource/ImportSettings.h"
 #include "Resource/ClipImportSettings.h"
+#include "Resource/SkinnedLodImportSettings.h"
 #include "Resource/MaterialImportSettings.h"
 #include "Resource/MaterialSelection.h"
 #include "Container/VariableArray.h"
@@ -22,6 +23,7 @@ namespace NorvesLib::Core::AssetImport
     {
         ImportSettings Geometry;
         ClipImportSettings Clip;
+        SkinnedLodImportSettings SkinnedLod;
         MaterialSourceProfile Profile = MaterialSourceProfile::Source;
         MaterialSettingsLayer AssetMaterial;
         bool bAssetMaterialSpecified = false;

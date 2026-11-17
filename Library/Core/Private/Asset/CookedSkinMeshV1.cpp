@@ -50,8 +50,9 @@ namespace NorvesLib::Core::Skeletal
                                       W::Four('S', 'R', 'E', 'F'), W::Four('V', 'E', 'R', 'T'),
                                       W::Four('I', 'N', 'D', 'X'), W::Four('I', 'B', 'M', 'S'),
                                       W::Four('M', 'N', 'G', 'T'), W::Four('S', 'U', 'B', 'M'),
-                                      W::Four('M', 'S', 'L', 'T'), W::Four('M', 'A', 'T', 'S')};
-        constexpr uint32_t Records[] = {1, 24, 64, 64, 4, 64, 64, 64, 32, 128};
+                                      W::Four('M', 'S', 'L', 'T'), W::Four('M', 'A', 'T', 'S'),
+                                      W::Four('L', 'O', 'D', 'S'), W::Four('P', 'A', 'R', 'T')};
+        constexpr uint32_t Records[] = {1, 24, 64, 64, 4, 64, 64, 64, 32, 128, 16, 528};
         bool MatrixValid(const C::FixedArray<float, 16>& v)
         {
             // glTF affineのみ。GPU用column列を行ベクトルとして読む既存規約と同じ。
@@ -92,6 +93,7 @@ namespace NorvesLib::Core::Skeletal
             }
             if (d.Topology.Joints.empty() || d.Topology.Joints.size() > limits.MaxJoints || d.Vertices.empty() ||
                 d.Vertices.size() > limits.MaxVertices || d.Indices.empty() || d.Indices.size() > limits.MaxIndices ||
+                d.LodIndices.size() > limits.MaxIndices - d.Indices.size() ||
                 d.SubMeshes.empty() || d.SubMeshes.size() > MaximumSubmeshCount || d.Slots.empty() ||
                 d.Slots.size() > MaximumMaterialSlotCount || d.Materials.empty() ||
                 d.Materials.size() > MaximumMaterialSlotCount ||
@@ -203,6 +205,21 @@ namespace NorvesLib::Core::Skeletal
             {
                 return RigV1Status::InvalidInput;
             }
+            if (d.LodTables.IsEmpty())
+            {
+                if (!d.LodIndices.empty())
+                {
+                    return RigV1Status::InvalidInput;
+                }
+            }
+            else
+            {
+                C::VariableArray<uint32_t> allIndices = d.Indices;
+                allIndices.insert(allIndices.end(), d.LodIndices.begin(), d.LodIndices.end());
+                return W::ValidateSkinLodTables(d.LodTables, {allIndices.data(), allIndices.size()},
+                                               {d.SubMeshes.data(), d.SubMeshes.size()}, d.Vertices.size(),
+                                               uint32_t(d.Topology.Joints.size()));
+            }
             return RigV1Status::Success;
         }
         RigV1Status Encode(const SkinMeshV1Data& d, W::Bytes& out, const RigV1Limits& limits)
@@ -213,24 +230,29 @@ namespace NorvesLib::Core::Skeletal
             {
                 return status;
             }
+            const bool bHasTables = !d.LodTables.IsEmpty();
+            const size_t sectionCount = bHasTables ? 12 : 10;
             const uint64_t sizes[] = {
-                stringBytes,          d.Topology.Joints.size() * 24,     64, d.Vertices.size() * 64,
-                d.Indices.size() * 4, d.InverseBindMatrices.size() * 64, 64, d.SubMeshes.size() * 64,
-                d.Slots.size() * 32,  d.Materials.size() * 128};
-            uint64_t total = 576;
-            for (const auto size : sizes)
+                stringBytes, d.Topology.Joints.size() * 24, 64, d.Vertices.size() * 64,
+                (d.Indices.size() + d.LodIndices.size()) * 4, d.InverseBindMatrices.size() * 64, 64,
+                d.SubMeshes.size() * 64, d.Slots.size() * 32, d.Materials.size() * 128,
+                d.LodTables.Lods.size() * 16, d.LodTables.Parts.size() * 528};
+            // 表が無い場合は従来の 10 節のディレクトリと見積もりを保つ。
+            uint64_t total = bHasTables ? 640 : 576;
+            for (size_t i = 0; i < sectionCount; ++i)
             {
-                total = ((total + 15) & ~uint64_t{15}) + size;
+                total = ((total + 15) & ~uint64_t{15}) + sizes[i];
             }
             if (total > limits.MaxWireBytes)
             {
                 return RigV1Status::LimitExceeded;
             }
-            W::OutputSection sections[10];
-            for (size_t i = 0; i < 10; ++i)
+            W::OutputSection sections[12];
+            for (size_t i = 0; i < sectionCount; ++i)
             {
                 sections[i].Code = Codes[i];
                 sections[i].Record = Records[i];
+                sections[i].Required = i < 10;
                 sections[i].Data.reserve(size_t(sizes[i]));
             }
             W::WriteTopology(d.Topology, sections[0].Data, sections[1].Data);
@@ -261,10 +283,14 @@ namespace NorvesLib::Core::Skeletal
                     W::WF(vertices, o + 48 + j * 4, v.JointWeights[j]);
                 }
             }
-            sections[4].Data.resize(d.Indices.size() * 4, 0);
+            sections[4].Data.resize(size_t(sizes[4]), 0);
             for (size_t i = 0; i < d.Indices.size(); ++i)
             {
                 W::W32(sections[4].Data, i * 4, d.Indices[i]);
+            }
+            for (size_t i = 0; i < d.LodIndices.size(); ++i)
+            {
+                W::W32(sections[4].Data, (d.Indices.size() + i) * 4, d.LodIndices[i]);
             }
             sections[5].Data.resize(d.InverseBindMatrices.size() * 64, 0);
             for (size_t i = 0; i < d.InverseBindMatrices.size(); ++i)
@@ -325,7 +351,15 @@ namespace NorvesLib::Core::Skeletal
                     return RigV1Status::InvalidInput;
                 }
             }
-            return W::WriteEnvelope(2, d.Topology.SkeletonId, {sections, 10}, out, limits, d.Profile);
+            if (bHasTables)
+            {
+                const auto tableStatus = W::WriteSkinLodTables(d.LodTables, sections[10].Data, sections[11].Data);
+                if (tableStatus != RigV1Status::Success)
+                {
+                    return tableStatus;
+                }
+            }
+            return W::WriteEnvelope(2, d.Topology.SkeletonId, {sections, sectionCount}, out, limits, d.Profile);
         }
     } // namespace
     bool BuildSkinMeshV1(const RigAuthoringCpu& source, const SkeletonV1& skeleton, const C::AnsiString& path,
@@ -512,6 +546,47 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
+    bool AttachSkinMeshLodsV1(const SkinMeshV1& source, C::VariableArray<uint32_t> allIndices,
+                              C::VariableArray<SkeletalSubMesh> subMeshes, SkinLodTablesV1 tables, SkinMeshV1& out,
+                              RigV1Report& report, const RigV1Limits& limits, RigImportProfile profile)
+    {
+        report = {};
+        try
+        {
+            const auto* original = source.GetData();
+            if (!original || original->Profile != profile || tables.Lods.empty() || tables.Parts.empty())
+            {
+                return false;
+            }
+            if (allIndices.size() > limits.MaxIndices)
+            {
+                report.Status = RigV1Status::LimitExceeded;
+                return false;
+            }
+            const uint64_t lod0IndexCount = uint64_t(tables.Lods[0].TriangleCount) * 3;
+            if (!lod0IndexCount || lod0IndexCount > allIndices.size())
+            {
+                return false;
+            }
+            SkinMeshV1Data data = *original;
+            data.Indices.assign(allIndices.begin(), allIndices.begin() + size_t(lod0IndexCount));
+            data.LodIndices.assign(allIndices.begin() + size_t(lod0IndexCount), allIndices.end());
+            data.SubMeshes = std::move(subMeshes);
+            data.LodTables = std::move(tables);
+            W::Bytes bytes;
+            report.Status = Encode(data, bytes, limits);
+            if (report.Status != RigV1Status::Success)
+            {
+                return false;
+            }
+            return ParseSkinMeshV1(W::ViewOf(bytes), out, report, limits, profile);
+        }
+        catch (...)
+        {
+            report.Status = RigV1Status::Exception;
+            return false;
+        }
+    }
     bool WriteSkinMeshV1(const SkinMeshV1& mesh, W::Bytes& out, RigV1Report& report, const RigV1Limits& limits,
                          RigImportProfile profile)
     {
@@ -568,13 +643,14 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = status;
                 return false;
             };
-            W::Section s[10];
-            for (size_t i = 0; i < 10; ++i)
+            W::Section s[12];
+            for (size_t i = 0; i < 12; ++i)
             {
                 s[i].Code = Codes[i];
                 s[i].Record = Records[i];
+                s[i].Required = i < 10;
             }
-            report.Status = W::ReadEnvelope(bytes, 2, {s, 10}, limits, profile);
+            report.Status = W::ReadEnvelope(bytes, 2, {s, 12}, limits, profile);
             if (report.Status != RigV1Status::Success)
             {
                 return false;
@@ -665,10 +741,27 @@ namespace NorvesLib::Core::Skeletal
                     v.JointWeights[j] = W::F32(bytes, o + 48 + j * 4);
                 }
             }
-            d->Indices.resize(s[4].Count);
+            report.Status = W::ReadSkinLodTables(bytes, s[10], s[11], d->LodTables);
+            if (report.Status != RigV1Status::Success)
+            {
+                return false;
+            }
+            const uint64_t lod0IndexCount = d->LodTables.IsEmpty()
+                                               ? s[4].Count
+                                               : uint64_t(d->LodTables.Lods[0].TriangleCount) * 3;
+            if (!lod0IndexCount || lod0IndexCount > s[4].Count)
+            {
+                return fail(RigV1Status::InvalidInput);
+            }
+            d->Indices.resize(size_t(lod0IndexCount));
             for (size_t i = 0; i < d->Indices.size(); ++i)
             {
                 d->Indices[i] = W::U32(bytes, size_t(s[4].Offset) + i * 4);
+            }
+            d->LodIndices.resize(size_t(s[4].Count - lod0IndexCount));
+            for (size_t i = 0; i < d->LodIndices.size(); ++i)
+            {
+                d->LodIndices[i] = W::U32(bytes, size_t(s[4].Offset) + (d->Indices.size() + i) * 4);
             }
             d->InverseBindMatrices.resize(s[5].Count);
             for (size_t i = 0; i < d->InverseBindMatrices.size(); ++i)

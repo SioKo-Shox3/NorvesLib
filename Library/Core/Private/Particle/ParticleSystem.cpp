@@ -133,6 +133,11 @@ namespace NorvesLib::Core::Particle
 
     void ParticleSystem::Tick(float deltaTime)
     {
+        Tick(deltaTime, -1.0f);
+    }
+
+    void ParticleSystem::Tick(float deltaTime, float gpuUnscaledDeltaTime)
+    {
         if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
         {
             return;
@@ -184,7 +189,12 @@ namespace NorvesLib::Core::Particle
             }
         }
         m_HitEffects.Dispatch(m_VfxEffects);
-        m_VfxEffects.Tick(deltaTime);
+        m_VfxEffects.Tick(deltaTime, VfxTickContext{}, gpuUnscaledDeltaTime);
+    }
+
+    void ParticleSystem::BuildGpuParticleFrame(Rendering::GpuParticleScene& out)
+    {
+        m_VfxEffects.BuildGpuParticleFrame(out);
     }
 
     void ParticleSystem::AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const
