@@ -12213,3 +12213,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
 - U2 太陽は地平線の下で方向光を作らず、月明かりの方向光を作る関数を足して描画の光源表へつなぐ（最後）: 着地(直し 0 回)
 - U1 表面の標本の記録の型と NVSKEL role2 の任意節 SURF の読み書き: 着地(直し 0 回)
+- U4 GPU の放出の記述に SkinSurface・Bone の欄と、スキンの源の行と、骨の選び方の道具を足す: 着地(直し 0 回)
