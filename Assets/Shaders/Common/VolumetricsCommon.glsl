@@ -6,10 +6,12 @@
 #ifndef VOLUMETRICS_COMMON_GLSL
 #define VOLUMETRICS_COMMON_GLSL
 #include "Common/HeightFog.glsl"
+#include "Common/CloudShadowMaskSample.glsl"
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
 layout(set = 0, binding = 3) uniform sampler2DArray cascadedShadowMap;
+layout(set = 0, binding = 10) uniform sampler2D cloudShadowMask;
 
 #ifdef VOLUMETRICS_USE_VSM
 // 大気の書き出しは CSM のまま。VSM の資源は画面へ霧を重ねるときだけ束縛する。
@@ -68,6 +70,9 @@ layout(std140, set = 0, binding = 2) uniform VolumetricsParams
     vec4 fogReferenceElevation; // x=基準の仰角の正弦, y=余弦, zw=未使用
     vec4 fogSteps;  // x=歩の配置（0=等間隔、1=指数）, y=指数の比, z=影つきの散乱を歩で積む距離の上限(m、0で上限なし), w=参照の256歩なら1
     vec4 fogJitter; // x=画素ごとのずらしが有効なら1, y=TAAが掛かるフレームで時間方向のずらしが有効なら1, z=フレーム番号を64で割った余り, w=未使用
+    vec4 cloudShadowCenterAndExtent; // x=中心X(m), y=中心Z(m), z=一辺(m), w=有効なら1
+    vec4 cloudShadowSunAndBottom; // xyz=太陽への向き, w=雲の底の高度(m)
+    vec4 cloudShadowOutside; // x=マスクの外の透過率, yzw=未使用
     LocalFogParams localFog; // 局所霧（C++ の GPULocalFogParams）
 } params;
 
@@ -209,7 +214,7 @@ float SampleVolumetricShadowCascade(vec3 worldPosition, uint cascadeIndex)
     return receiverDepth - 0.005 > storedDepth ? 0.0 : 1.0;
 }
 
-float CalculateVolumetricShadowVisibility(vec3 worldPosition)
+float CalculateVolumetricShadowMapVisibility(vec3 worldPosition)
 {
     if (params.cameraForwardAndScatteringEnabled.w <= 0.5 ||
         params.directionalLightRadianceAndEnabled.w <= 0.5)
@@ -282,6 +287,19 @@ float CalculateVolumetricShadowVisibility(vec3 worldPosition)
     return visibility;
 }
 
+float CalculateVolumetricShadowVisibility(vec3 worldPosition)
+{
+    float visibility = CalculateVolumetricShadowMapVisibility(worldPosition);
+    if (params.cloudShadowCenterAndExtent.w > 0.5)
+    {
+        return visibility * CloudShadowMaskLookup(cloudShadowMask, worldPosition,
+                                                   params.cloudShadowCenterAndExtent,
+                                                   params.cloudShadowSunAndBottom,
+                                                   params.cloudShadowOutside.x);
+    }
+    return visibility;
+}
+
 vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, float sampleOffset)
 {
     if (params.cameraForwardAndScatteringEnabled.w <= 0.5 ||
@@ -346,6 +364,10 @@ vec3 IntegrateDirectionalSingleScattering(vec3 rayDirection, float rayDistance, 
         {
             vec3 farRadiance = params.directionalLightRadianceAndEnabled.rgb *
                                (phase * max(nearTransmittance - farTransmittance, 0.0));
+            if (params.cloudShadowCenterAndExtent.w > 0.5)
+            {
+                farRadiance *= params.cloudShadowOutside.x;
+            }
             if (IsFiniteFloat(farRadiance.x) && IsFiniteFloat(farRadiance.y) && IsFiniteFloat(farRadiance.z))
             {
                 scatteringRadiance += farRadiance;

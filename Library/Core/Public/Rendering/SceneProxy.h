@@ -7,6 +7,7 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "CloudShadow.h"
 #include "SunShadowParameters.h"
 #include "ViewClearance.h"
 #include "VolumetricFog.h"
@@ -662,6 +663,8 @@ namespace NorvesLib::Core::Rendering
         AerialPerspectiveParameters AerialPerspective;
         // 空に描く雲の層。空が有効なときだけ CloudLayerPass が描く
         CloudLayerParameters CloudLayer;
+        // 雲の影の値。既定は無効で、SceneRevision には含めない。
+        CloudShadowParameters CloudShadow;
         // 草・低木の株の束と風。FoliagePass が GBuffer へ描く
         FoliageScene Foliage;
         // このフレームの帯の頂点と描画範囲
@@ -713,6 +716,7 @@ namespace NorvesLib::Core::Rendering
             bSkinnedViewCulling = true;
             AerialPerspective = AerialPerspectiveParameters{};
             CloudLayer = CloudLayerParameters{};
+            CloudShadow = CloudShadowParameters{};
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};

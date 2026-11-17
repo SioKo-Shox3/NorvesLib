@@ -76,6 +76,8 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         Identity::Literal("SkyAtmosphere.Radiance", sizeof("SkyAtmosphere.Radiance") - 1);
     inline constexpr Identity SkyAtmosphereSunDisk =
         Identity::Literal("SkyAtmosphere.SunDisk", sizeof("SkyAtmosphere.SunDisk") - 1);
+    // 雲の底から太陽への透過率。CloudShadowMaskPass が書き、霧と照明が読む。
+    inline constexpr Identity CloudShadowMask = Identity::Literal("CloudShadowMask", sizeof("CloudShadowMask") - 1);
     inline constexpr Identity SkyOcclusionOccluders =
         Identity::Literal("SkyOcclusion.Occluders", sizeof("SkyOcclusion.Occluders") - 1);
     inline constexpr Identity SkyOcclusionVisibility =

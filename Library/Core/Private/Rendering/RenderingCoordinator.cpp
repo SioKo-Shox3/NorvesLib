@@ -4684,6 +4684,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.bSkinnedViewCulling = m_bSkinnedViewCulling;
         packet.Scene.AerialPerspective = m_AerialPerspective;
         packet.Scene.CloudLayer = m_CloudLayer;
+        packet.Scene.CloudShadow = m_CloudShadow;
         packet.Scene.Foliage = m_Foliage;
         packet.GrassField = m_GrassField;
         packet.WorldFieldInteractors.clear();
@@ -6946,6 +6947,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetCloudLayer(const CloudLayerParameters& parameters)
     {
         m_CloudLayer = SanitizeCloudLayerParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetCloudShadow(const CloudShadowParameters& parameters)
+    {
+        m_CloudShadow = SanitizeCloudShadowParameters(parameters);
     }
 
     void RenderingCoordinator::SetFoliage(const FoliageScene& foliage)

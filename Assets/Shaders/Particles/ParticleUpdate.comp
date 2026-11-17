@@ -167,9 +167,9 @@ void SpawnCollisionChild(GpuEmitterParams parent, GpuParticle particle,
     particles[slot] = InitParticle(child, childExtra, serial, hitPosition, vec3(0.0), vec3(0.0));
 }
 
-// 死んだときは false、残ったときは true を返す。
+// 死んだときは false、残ったときは true を返し、箱の上面へ戻したかを渡す。
 bool ApplyParticleCollision(GpuEmitterParams emitter, GpuCollisionParams collision,
-    vec3 hitPosition, vec3 normal, bool depthSurface, inout GpuParticle particle)
+    vec3 hitPosition, vec3 normal, bool depthSurface, inout GpuParticle particle, inout bool returnedToCameraBoxTop)
 {
     if (collision.response == kVfxCollisionKill)
     {
@@ -205,6 +205,20 @@ bool ApplyParticleCollision(GpuEmitterParams emitter, GpuCollisionParams collisi
         SpawnCollisionChild(emitter, particle, collision, hitPosition);
         particle.meta.z &= ~kGpuParticleFlagAlive;
         return false;
+    }
+    else if (collision.response == kVfxCollisionReturnToCameraBoxTop)
+    {
+        if (ParticleShape(emitter) != kVfxShapeCameraBox)
+        {
+            particle.meta.z &= ~kGpuParticleFlagAlive;
+            return false;
+        }
+        float top = simulation.cameraPosition.y + emitter.boxHalfExtentsNearFadeDistance.y;
+        if (hitPosition.y < top)
+        {
+            particle.posAge.y = top;
+            returnedToCameraBoxTop = true;
+        }
     }
     return true;
 }
@@ -264,6 +278,7 @@ void main()
         particle.velLife.xyz += acceleration * dt;
         particle.posAge.xyz += particle.velLife.xyz * dt;
 
+        bool returnedToCameraBoxTop = false;
         if ((flags & kGpuEmitterFlagCollisionPlane) != 0u)
         {
             if (particle.posAge.y < emitter.activationFractionRampGroundKillY.w)
@@ -276,35 +291,37 @@ void main()
             if (particle.posAge.y < surface)
             {
                 vec3 hit = vec3(particle.posAge.x, surface, particle.posAge.z);
-                if (!ApplyParticleCollision(emitter, emitter.planeCollision, hit, vec3(0.0, 1.0, 0.0), false, particle))
+                if (!ApplyParticleCollision(emitter, emitter.planeCollision, hit, vec3(0.0, 1.0, 0.0),
+                    false, particle, returnedToCameraBoxTop))
                 {
                     particles[slot] = particle;
                     return;
                 }
             }
         }
-        if ((particle.meta.z & kGpuParticleFlagStuck) == 0u &&
+        if (!returnedToCameraBoxTop && (particle.meta.z & kGpuParticleFlagStuck) == 0u &&
             (flags & kGpuEmitterFlagCollisionHeightField) != 0u)
         {
             float surface;
             if (SampleParticleHeight(particle.posAge.xyz, surface) && particle.posAge.y < surface)
             {
                 vec3 hit = vec3(particle.posAge.x, surface, particle.posAge.z);
-                if (!ApplyParticleCollision(emitter, emitter.heightFieldCollision, hit, vec3(0.0, 1.0, 0.0), false, particle))
+                if (!ApplyParticleCollision(emitter, emitter.heightFieldCollision, hit, vec3(0.0, 1.0, 0.0),
+                    false, particle, returnedToCameraBoxTop))
                 {
                     particles[slot] = particle;
                     return;
                 }
             }
         }
-        if ((particle.meta.z & kGpuParticleFlagStuck) == 0u &&
+        if (!returnedToCameraBoxTop && (particle.meta.z & kGpuParticleFlagStuck) == 0u &&
             (flags & kGpuEmitterFlagCollisionDepth) != 0u)
         {
             vec3 hit;
             vec3 normal;
             if (FindDepthCollision(previousPosition, particle.posAge.xyz,
                 emitter.radiusConeAngleLengthDepthThickness.w, hit, normal) &&
-                !ApplyParticleCollision(emitter, emitter.depthCollision, hit, normal, true, particle))
+                !ApplyParticleCollision(emitter, emitter.depthCollision, hit, normal, true, particle, returnedToCameraBoxTop))
             {
                 particles[slot] = particle;
                 return;

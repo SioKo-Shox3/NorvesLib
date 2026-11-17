@@ -7137,7 +7137,7 @@
 - notes: 要件 `#### GR58` の設計案（B）。G7-S7 の (A)（G7-GR57-GPU-SIMULATION の notes）を採っても、Volumetrics の直後は GR25 の段に当たらない（AfterLighting は Lighting の直後で SSR・CloudLayer・Volumetrics の前）ので、このパスだけは SetupDeferredPipeline の中に直に置く（ロードマップ 4531 行の注記どおり）。Forward・DoF・動きぼけ・TAA より前なので全部が自然に掛かり、細かい筋は TAA で平均されて霞に見える。世界の向きに固定した近似で視差は無い（層の数と距離はデータで替えられる）。時刻は G7-GR49-ENV-SYSTEM のゲームの時刻で、ポーズで止まる。共有の SceneView.cpp は AddPass の数行だけにする。試験を足す理由: 近い物の手前にカーテンが描かれる・雨量 0 で色が変わる・並びの誤りは、場面によって見落とし黙って起きる。危険地帯（RenderThread・パスの並び）なので評価者を通す。ロードマップ 1540・1554 行。
 
 ## G7-GR58-RAIN-NEAR: カメラの周りの箱で巻き戻る GPU の粒の雨筋を、雨量に連続に追随し、風と落ちる速さで傾き、相対速度で伸びる形で TAA の後に描く
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR58
 - needs-gr: GR46, GR30
@@ -7613,7 +7613,7 @@
 - notes: GR52 の P1 の (a)(b)（要件 5176-5180 行）。今あるもの: 霧と空気遠近は同じ 32 歩の中点則のマーチ（SCN-WL-HAZE-ONE-MEDIUM・SCN-WL-SKY-SCATTER で大気の正解に合わせた）、霧だけのときの画素ごとの固定のずらし、霧の散乱を VSM の影で遮る（SCN-INTERIOR-SHAFTS）。要件の「固定 24 歩・ジッタなし」は古い。荒野の空と霞は Cycles・大気の正解に合わせて調整済みなので、既定を変えず欄で選ぶ（要件の「新機能を全て無効にして golden が不変」と AGENTS.md の絶対規則 7）。grassland で有効にするのは G11-GR52-FOG-CHECK で見てから。G7 の GR51 が `Common/HeightFog.glsl` に霧の関数を出すので、その後に触る（needs-gr）。froxel 化（P3）は作らない: 測定で P1・P2 が足りないと出たときだけ別計画（ロードマップ 1993 行の非ゴール）。危険地帯（volumetrics は全シーンの霞に効く）。評価者の反証を省かない。試験を足す理由: 反証する契約は「少ない歩で参照に近い」「既定で絵を変えない」。歩の偏りは光の筋の明るさの差としてしか見えず、黙って起きる。ロードマップ 1986・1997 行、要件 `#### GR52`。
 
 ## G11-GR52-CLOUD-SHAFTS: 空に見えている雲の層から太陽の向きの雲の影のマスクを作り、作者が置く雲の切れ間（SunGap）と合わせて霧の中の光の筋を出す
-- status: todo
+- status: done
 - after: G11-GR52-FOG-STEPS, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR52
 - needs-gr: GR49, GR50

@@ -6,6 +6,7 @@
 #include "FoliageTypes.h"
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
+#include "CloudShadow.h"
 #include "SunShadowParameters.h"
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
@@ -298,6 +299,12 @@ namespace NorvesLib::Core::Rendering
          * @param parameters bEnabled が偽（既定）なら描かない
          */
         void SetCloudLayer(const CloudLayerParameters& parameters);
+
+        /**
+         * @brief 雲の影を設定する（GameThread）。既定は無効で、雲の層と空が有効なときだけ効く。
+         * SunGap は最大 4 個。無害化した値を次の FramePacket へコピーする。
+         */
+        void SetCloudShadow(const CloudShadowParameters& parameters);
 
         /**
          * @brief 草・低木の株の束を出どころごとに設定する（GameThread）
