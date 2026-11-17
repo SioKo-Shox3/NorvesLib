@@ -12034,3 +12034,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: RTGI・DDGI の当たりの点の太陽の影の問い合わせ（`DiffuseIndirect.comp`・`ProbeRadiance.comp`・`ProbeEmitterSampling.glsl` の 0x01）は樹冠を見ないので、光線が当たった樹冠の下の地面は日なたとして照り返しを返す。CPU の正解（`SkyOcclusionReference`）に樹冠だけの組は無い。半透明（`forward_transparent.frag`）は樹冠だけの組を使わない。空の遮蔽の公開を見送ったフレーム（遮蔽物の列の上限超え）は、TLAS は 0x04 のまま照明の補いだけが抜ける。
 - Next: ランナーの評価者の反証（RT の契約・lighting.frag・Public API の危険地帯）。起動と GPU 時間の確かめは G11-GR56-SKY-OCC-CHECK。
 - Notes: 統合ブランチ（feature/scene-launcher）の取り込みの後、TEST-REMOVE-1114 で試験のターゲットが消えて元の verify のビルドの行は MSBuild が MSB1009 で落ちる（取り込み直後の 1 回目は同時に走るほかの枠のビルドで MSBuild が OutOfMemoryException）。verify を残るターゲットの Game のビルド 1 行に揃えた（done-when は変えていない）。取り込み後の `cmake --build build --config Debug --target Game -- /m:1` は EXIT=0・エラー 0 件（`.harness/runs/20261117-113256/sync-rebuild-game.txt`）。
+
+- U1 SceneRevision の太陽の量子化と、雲の層の被覆・風をハッシュから外す: 着地(直し 0 回)
+- U2 気象の状態に時計の倍率の欄を足し、JSON の保存に載せる: 着地(直し 0 回)
+- U3 EnvironmentSystem の時計(太陽・天候・倍率・手動の上書き・量子化の幅): 着地(直し 0 回)
+- U4 SkipTo と濡れの復元・OnTimeSkipped・時計の状態の読み込みでの復元: 着地(直し 0 回)
+- U5 Game の時計の引数と Rendering3DTest の手動の太陽の上書き: 着地(直し 0 回)
+## G11-GR55-CLOCK-SKIP 気象を時計と天候の予定表で動かし、時刻の一括スキップと動く太陽での RTGI の履歴の扱いを入れる（2026-11-17、run 20261117-131620）
+- Done: `EnvironmentParameters::SunRevisionQuantizationDegrees` を足し、`HashSceneEnvironmentRevision` は幅が正のとき空の太陽の高度・方位を幅ごとの格子番号で入れる（手動のときは 0 で今のまま）。雲の層の `Coverage` と風を SceneRevision のハッシュから外した。
+- Done: `EnvironmentState::ClockTimeScale`（JSON の `sun.timeScale`）を足した。`EnvironmentSystem` は Clock のとき、時刻 = ゲーム時刻 / 3600 を 24 時間に巻いた値から `ComputeSunAltAz` で太陽を、`WeatherAt` の予定表から雨量・雲量・風・霧・雲の層の被覆を決め、濡れの各刻みの雨量も予定表から取る。Tick の dt に倍率を掛ける。手動の太陽の上書き（`SetManualSunOverride`・`ClearManualSunOverride`）が時計の太陽に勝つ。Clock かつ上書きが無いときだけ太陽の量子化の幅 1° を Resolve で渡す。
+- Done: `EnvironmentSystem::SkipTo(T)` と `OnTimeSkipped(oldT, newT)` を足した。Clock では 30 Hz で刻まずに時刻を飛ばし、天候を T の値にし、濡れを `max(旧時刻, T − 60 分)` から T まで 10 秒刻み（刻みの中点の予定表の雨量、上書きの層の雨量が勝つ）で厳密解に通して復元する。`DiscontinuityId` は 1 だけ進み、`OnChanged(TimeSkipped)` と `OnTimeSkipped` は各 1 回。`SkipTime` も同じ経路を通る（Manual は今の 30 Hz の積分のまま）。`Enable`・`LoadState` は Clock のとき `[T − 60 分, T]` の濡れを同じく復元するので、種とゲーム時刻と Clock だけの JSON から同じ天候・太陽・時刻に戻る。
+- Done: Game に `--clock`・`--time-of-day=<0〜24、既定 12>`・`--weather-seed=<0〜4294967295、既定 0>`・`--time-scale=<0〜3600、既定 1>` を足した。時計のとき明示の気象の値（`--rain` など）は Game の引数用の上書きの層に重ね、`--sun-elevation`・`--sun-azimuth` と Rendering3DTest の矢印キーは手動の太陽の上書きにする。`--clock` が無いときの流れは変えていない（3 つの引数だけなら警告して無視）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`.harness/runs/20261117-131620/G11-GR55-CLOCK-SKIP-U5-verify.txt`。全単位を含む先頭で取った）。各単位で `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: 連続して太陽を動かしたときの 1° ごとの引っ掛かりは G11-GR54-SUN-KEYFRAMES が入るまで残る。ファストトラベル・寝床の画面と暗転は G15（GR68・GR71）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `EnvironmentClockSkipTest`・`SceneRevisionEnvironmentTest` は作っていない。`Test/` は無く、verify の ctest の行が選ぶ試験は無い。撮影・計測の確かめは回さない決まり。
+- Notes: 人が見る所: `--scene=rendering3dtest --clock --time-of-day=6 --time-scale=600` で太陽が東から昇り、1° をまたぐときだけ RTGI の履歴が切れること（間は蓄積が保たれてノイズが増えない）。同じく矢印キーで太陽を動かすと時計より操作が勝つこと。`--clock --weather-seed=<数>` で雲量・雨・霧が予定表に沿って変わっても RTGI がざらつかないこと。
+- Notes: 既知の限界: 濡れの復元は窓の始まりの濡れを今の値（読み込みでは保存された値）とするので、乾きの時定数 900 秒の下で窓の外の影響が最大で約 1.8 % 残る。無効のとき `SkipTime` の警告の文言は `SkipTo` の名前で出る。

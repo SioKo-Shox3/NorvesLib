@@ -216,6 +216,8 @@ namespace NorvesLib::Core::Rendering
          * @brief 構成 revision のハッシュに、proxy 集合の後に続く環境の値を加える
          *
          * 環境光・静的環境・SunShadow・空気遠近・雲の層・空・DDGI・環境の不連続の印を含めます。
+         * 雲の層の被覆と風は空の上にだけ描かれ、照明と RTGI に入らないため含めません。
+         * 天候による連続変化で履歴を毎フレーム捨てないためです。太陽の角度は正の幅で量子化します。
          * 霧の値（高さフォグと Scene の霧の欄）は含めません。RTGI・DDGI は霧を入力に使わず、
          * パストレーサーは霧の署名（HashPathFog）で累積を別に切るためです。
          * 霧が変わるたびに RTGI の履歴を捨てないようにします。
@@ -244,16 +246,38 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, cloudLayer.bEnabled);
             hash = HashRevisionValue(hash, cloudLayer.BottomAltitudeMeters);
             hash = HashRevisionValue(hash, cloudLayer.TopAltitudeMeters);
-            hash = HashRevisionValue(hash, cloudLayer.Coverage);
             hash = HashRevisionValue(hash, cloudLayer.ExtinctionPerMeter);
             hash = HashRevisionValue(hash, cloudLayer.ShapeScaleMeters);
-            hash = HashRevisionValue(hash, cloudLayer.WindVelocityX);
-            hash = HashRevisionValue(hash, cloudLayer.WindVelocityZ);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
-            hash = HashRevisionValue(hash, sky.SunAltitudeDegrees);
-            hash = HashRevisionValue(hash, sky.SunAzimuthDegrees);
+            const float quantizationDegrees = packet.Scene.Environment.SunRevisionQuantizationDegrees;
+            if (quantizationDegrees > 0.0f)
+            {
+                const auto hashQuantizedAngle = [quantizationDegrees](uint64_t angleHash, float angle)
+                {
+                    // 格子番号が非有限または int64 の範囲外なら、角度をそのまま使う。
+                    constexpr double indexLimit = 0x1p63;
+                    const double ratio = static_cast<double>(angle) / static_cast<double>(quantizationDegrees);
+                    if (!std::isfinite(ratio) || ratio < -indexLimit || ratio >= indexLimit)
+                    {
+                        return HashRevisionValue(angleHash, angle);
+                    }
+                    const float index = angle / quantizationDegrees;
+                    if (index < -indexLimit || index >= indexLimit)
+                    {
+                        return HashRevisionValue(angleHash, angle);
+                    }
+                    return HashRevisionValue(angleHash, static_cast<int64_t>(std::floor(index)));
+                };
+                hash = hashQuantizedAngle(hash, sky.SunAltitudeDegrees);
+                hash = hashQuantizedAngle(hash, sky.SunAzimuthDegrees);
+            }
+            else
+            {
+                hash = HashRevisionValue(hash, sky.SunAltitudeDegrees);
+                hash = HashRevisionValue(hash, sky.SunAzimuthDegrees);
+            }
             hash = HashRevisionValue(hash, sky.SunLuminanceNits);
             hash = HashRevisionValue(hash, sky.PlanetRadiusMeters);
             hash = HashRevisionValue(hash, sky.AtmosphereHeightMeters);
@@ -278,8 +302,8 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, ddgi.ProbeCountY);
             hash = HashRevisionValue(hash, ddgi.ProbeCountZ);
 
-            // 環境の値は不連続の印だけを入れる。雨量・濡れ・雲量・時刻は連続に変わり、
-            // 入れると RTGI の履歴が毎フレーム捨てられる。
+            // 環境の不連続の印を入れ、太陽には上の量子化の幅を使う。
+            // 雨量・濡れ・雲量・時刻は連続に変わるため、履歴を毎フレーム捨てないよう入れない。
             hash = HashRevisionValue(hash, packet.Scene.Environment.DiscontinuityId);
 
             return hash;

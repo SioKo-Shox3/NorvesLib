@@ -3583,13 +3583,21 @@ namespace Game::GameModes
                 {
                     using namespace NorvesLib::Core::Environment;
                     // 気象が有効な間は空を PublishTo が毎フレーム書くので、操作の角度は状態の Manual の太陽へ書く。
-                    // 所要 0 秒の SetTarget は即時で、描画の履歴を切る DiscontinuityId は進めない。
-                    EnvironmentTarget target;
-                    target.Mask = EnvironmentFieldBit(EEnvironmentField::SunAltitude) | EnvironmentFieldBit(EEnvironmentField::SunAzimuth);
-                    target.Values = environment.GetBaseState();
-                    target.Values.SunAltitudeDegrees = altitude;
-                    target.Values.SunAzimuthDegrees = azimuth;
-                    environment.SetTarget(target);
+                    // 時計のときは手動の太陽の上書きで、時計の太陽より操作の角度を優先する。
+                    if (environment.IsClockActive())
+                    {
+                        environment.SetManualSunOverride(altitude, azimuth);
+                    }
+                    else
+                    {
+                        // 所要 0 秒の SetTarget は即時で、描画の履歴を切る DiscontinuityId は進めない。
+                        EnvironmentTarget target;
+                        target.Mask = EnvironmentFieldBit(EEnvironmentField::SunAltitude) | EnvironmentFieldBit(EEnvironmentField::SunAzimuth);
+                        target.Values = environment.GetBaseState();
+                        target.Values.SunAltitudeDegrees = altitude;
+                        target.Values.SunAzimuthDegrees = azimuth;
+                        environment.SetTarget(target);
+                    }
                 }
                 else
                 {
