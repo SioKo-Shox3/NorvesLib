@@ -1,8 +1,166 @@
 ﻿// 生成要求から粒を常駐プールのリングへ書き込む。
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 
 #include "Particles/ParticleSimulation.glsl"
+
+layout(std430, set = 0, binding = 12) readonly buffer GpuSkinPaletteBuffer
+{
+    mat4 skinPalette[];
+};
+
+layout(std430, set = 0, binding = 13) readonly buffer GpuSkinSourceBuffer
+{
+    GpuSkinSource skinSources[];
+};
+
+mat4 SkinnedSurfaceMatrix(uint index)
+{
+    return skinPalette[index];
+}
+
+#include "Common/SkinnedSurface.glsl"
+#include "Common/Dissolve.glsl"
+
+// 範囲外や欠けた源を参照せず、生成位置が決まらない粒を死んだままにする。
+bool ResolveSkinSpawn(GpuEmitterParams emitter, uint serial,
+    out vec3 position, out vec3 normal, inout vec3 addVelocity)
+{
+    position = vec3(0.0);
+    normal = vec3(0.0);
+    if (emitter.skinSourceIndex == kGpuSkinSourceNone || emitter.skinSourceIndex >= uint(skinSources.length()))
+    {
+        return false;
+    }
+    GpuSkinSource source = skinSources[emitter.skinSourceIndex];
+    uint paletteCount = uint(skinPalette.length());
+    if (source.boneCount > 128u || source.paletteOffset >= paletteCount ||
+        source.previousPaletteOffset >= paletteCount ||
+        2u + 2u * source.boneCount > paletteCount - source.paletteOffset ||
+        1u + source.boneCount > paletteCount - source.previousPaletteOffset)
+    {
+        return false;
+    }
+    uint seed = emitter.poolCapacitySeedFlags.z;
+    vec3 previousPosition;
+    if (ParticleShape(emitter) == kGpuEmitterShapeSkinSurface)
+    {
+        if (source.sampleCount == 0u || source.vertexCount == 0u ||
+            all(equal(source.vertexAddress, uvec2(0u))) || all(equal(source.sampleAddress, uvec2(0u))) ||
+            !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.paletteOffset)) ||
+            !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.paletteOffset + 1u)) ||
+            !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.previousPaletteOffset)))
+        {
+            return false;
+        }
+        bool accepted = false;
+        for (uint attempt = 0u; attempt < kGpuSkinMaxAttempts; ++attempt)
+        {
+            uint draw = kGpuSkinRandomDrawAttemptBase + 2u * attempt;
+            uint sampleIndex = min(uint(VfxCounterUnitFloat(seed, serial, draw) * source.sampleCount), source.sampleCount - 1u);
+            uvec3 vertices;
+            vec3 barycentrics;
+            SkinnedSurfaceUnpackSample(SkinnedSurfaceLoadSample(source.sampleAddress, sampleIndex), vertices, barycentrics);
+            SkinnedSurfacePoint point;
+            if (!SkinnedSurfaceEvaluatePoint(source.vertexAddress, source.vertexCount, vertices, barycentrics,
+                source.paletteOffset, source.previousPaletteOffset, source.boneCount, point))
+            {
+                continue;
+            }
+            bool accept = emitter.skinAcceptMode == kGpuSkinAcceptUniform;
+            if (emitter.skinAcceptMode == kGpuSkinAcceptDissolveEdge && source.dissolveEnabled != 0u)
+            {
+                float protect = 0.0;
+                for (uint corner = 0u; corner < 3u; ++corner)
+                {
+                    protect += barycentrics[corner] * DissolveProtect(point.joints[corner], point.weights[corner], source.dissolveProtectBones);
+                }
+                float mask = DissolveMask(point.restPosition, protect, source.dissolveThreshold,
+                    source.dissolveDirection, source.dissolveDirectionBias, source.dissolveNoiseScale);
+                accept = 0.0 <= mask && mask <= source.dissolveEdgeWidth;
+            }
+            else if (emitter.skinAcceptMode == kGpuSkinAcceptBoneMask)
+            {
+                float fraction = 0.0;
+                for (uint corner = 0u; corner < 3u; ++corner)
+                {
+                    fraction += barycentrics[corner] * DissolveProtect(point.joints[corner], point.weights[corner], emitter.skinBoneMask);
+                }
+                accept = VfxCounterUnitFloat(seed, serial, draw + 1u) < fraction;
+            }
+            if (accept)
+            {
+                position = point.position;
+                previousPosition = point.previousPosition;
+                normal = point.normal;
+                accepted = true;
+                break;
+            }
+        }
+        if (!accepted)
+        {
+            return false;
+        }
+        addVelocity += normal * emitter.skinNormalSpeed;
+    }
+    else
+    {
+        uint bone = emitter.skinBoneIndex;
+        if (bone == kGpuSkinNoBone)
+        {
+            uint count = 0u;
+            for (uint index = 0u; index < source.boneCount; ++index)
+            {
+                count += (emitter.skinBoneMask[index >> 5u] >> (index & 31u)) & 1u;
+            }
+            if (count == 0u)
+            {
+                return false;
+            }
+            uint selected = min(uint(VfxCounterUnitFloat(seed, serial, kGpuSkinRandomDrawBonePick) * count), count - 1u);
+            for (uint index = 0u; index < source.boneCount; ++index)
+            {
+                if (((emitter.skinBoneMask[index >> 5u] >> (index & 31u)) & 1u) != 0u)
+                {
+                    if (selected == 0u)
+                    {
+                        bone = index;
+                        break;
+                    }
+                    --selected;
+                }
+            }
+        }
+        if (bone >= source.boneCount)
+        {
+            return false;
+        }
+        uint boneMatrix = source.paletteOffset + 2u + 2u * bone;
+        uint previousBoneMatrix = source.previousPaletteOffset + 1u + bone;
+        if (!SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.paletteOffset)) ||
+            !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(boneMatrix)) ||
+            !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.previousPaletteOffset)) ||
+            !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(previousBoneMatrix)))
+        {
+            return false;
+        }
+        position = SkinnedSurfaceTransformPoint(source.paletteOffset,
+            SkinnedSurfaceTransformPoint(boneMatrix, emitter.skinBindPosition));
+        previousPosition = SkinnedSurfaceTransformPoint(source.previousPaletteOffset,
+            SkinnedSurfaceTransformPoint(previousBoneMatrix, emitter.skinBindPosition));
+    }
+    if (any(isnan(position)) || any(isinf(position)) || any(isnan(previousPosition)) ||
+        any(isinf(previousPosition)) || any(isnan(normal)) || any(isinf(normal)))
+    {
+        return false;
+    }
+    vec3 bodyVelocity = source.frameDeltaSeconds > 0.0 ?
+        (position - previousPosition) / source.frameDeltaSeconds : vec3(0.0);
+    addVelocity += bodyVelocity * emitter.skinVelocityInheritance;
+    return true;
+}
 
 layout(local_size_x = 64) in;
 
@@ -86,5 +244,16 @@ void main()
         basePosition = simulation.cameraPosition + emitter.positionLifetime.xyz;
     }
     uint slot = GpuParticleRingSlot(emitter.poolCapacitySeedFlags.x, emitter.poolCapacitySeedFlags.y, serial);
+    uint shape = ParticleShape(emitter);
+    if ((shape == kGpuEmitterShapeSkinSurface || shape == kGpuEmitterShapeBone) &&
+        !ResolveSkinSpawn(emitter, serial, basePosition, normal, addVelocity))
+    {
+        GpuParticle deadParticle;
+        deadParticle.posAge = vec4(0.0);
+        deadParticle.velLife = vec4(0.0);
+        deadParticle.meta = uvec4(serial, emitterExtras[emitterIndex].poolSlot, 0u, 0u);
+        particles[slot] = deadParticle;
+        return;
+    }
     particles[slot] = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
 }

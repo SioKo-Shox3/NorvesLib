@@ -3,11 +3,13 @@
 
 #include "Rendering/GpuParticle/GpuParticleDraw.h"
 #include "Rendering/GpuParticle/GpuParticleDrawPass.h"
+#include "Rendering/GpuParticle/GpuSkinEmitter.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderExtension/RenderExtension.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/Wind.h"
@@ -15,12 +17,15 @@
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
+#include "Container/UnorderedMap.h"
+#include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <exception>
+#include <limits>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -40,7 +45,7 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetDesc MakeDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
-            for (uint32_t index = 0; index < 12; ++index)
+            for (uint32_t index = 0; index < 14; ++index)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = index;
@@ -49,11 +54,11 @@ namespace NorvesLib::Core::Rendering
                 {
                     binding.type = RHI::ResourceBindType::ConstantBuffer;
                 }
-                else if (index == 1 || index == 6 || index >= 10)
+                else if (index == 1 || index == 6 || index == 10 || index == 11)
                 {
                     binding.type = RHI::ResourceBindType::RWBuffer;
                 }
-                else if (index < 7)
+                else if (index < 7 || index >= 12)
                 {
                     binding.type = RHI::ResourceBindType::StructuredBuffer;
                 }
@@ -64,6 +69,126 @@ namespace NorvesLib::Core::Rendering
                 desc.bindings.push_back(binding);
             }
             return desc;
+        }
+
+        // 不透明の描画が保持する lease から、部品ごとのパレットと表面の源を借りる。
+        uint32_t AppendSkinSource(const ViewRenderContext& context, uint64_t componentId, bool requireSurface,
+                                  Container::VariableArray<float>& palette,
+                                  Container::VariableArray<GpuSkinSource>& sources)
+        {
+            if (!context.SnapshotSkinnedMeshFrameLeases)
+            {
+                return kGpuSkinSourceNone;
+            }
+            const DrawCommand* firstDraw = nullptr;
+            GpuSkinSource source{};
+            for (const DrawCommand& command : context.GetActiveOpaqueCommands())
+            {
+                if (command.Draw.SourceMeshComponentId != componentId ||
+                    command.Draw.PayloadKind != DrawPayloadKind::Skinned ||
+                    command.Skinned.FrameLeaseIndex >= context.SnapshotSkinnedMeshFrameLeases->size())
+                {
+                    continue;
+                }
+                const auto& lease = (*context.SnapshotSkinnedMeshFrameLeases)[command.Skinned.FrameLeaseIndex];
+                if (!lease || !lease->IsValid() ||
+                    (lease->ComponentId != 0 && lease->ComponentId != command.Draw.SourceMeshComponentId))
+                {
+                    continue;
+                }
+                if (!firstDraw)
+                {
+                    firstDraw = &command;
+                    SkinnedSurfaceGpuSource surface;
+                    if (context.SkinnedMeshes &&
+                        context.SkinnedMeshes->TryGetSurfaceSource(lease->AssetLease->GetHandle(), surface))
+                    {
+                        const uint64_t vertexAddress = surface.VertexBuffer ? surface.VertexBuffer->GetDeviceAddress() : 0;
+                        const uint64_t sampleAddress = surface.SurfaceSampleBuffer ?
+                            surface.SurfaceSampleBuffer->GetDeviceAddress() : 0;
+                        if (vertexAddress != 0)
+                        {
+                            source.VertexAddress[0] = static_cast<uint32_t>(vertexAddress);
+                            source.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32u);
+                            source.VertexCount = surface.VertexCount;
+                            if (sampleAddress != 0 && surface.SurfaceSampleCount != 0)
+                            {
+                                source.SampleAddress[0] = static_cast<uint32_t>(sampleAddress);
+                                source.SampleAddress[1] = static_cast<uint32_t>(sampleAddress >> 32u);
+                                source.SampleCount = surface.SurfaceSampleCount;
+                            }
+                        }
+                    }
+                }
+                // 姿勢を取った描画の材質によらず、最初のディゾルブの描画を採る。
+                if (source.DissolveEnabled == 0 && context.Resources.Materials)
+                {
+                    const MaterialResourceData* material = context.Resources.Materials->GetData(command.Draw.MaterialHandle);
+                    if (IsDissolveMaterial(material))
+                    {
+                        source.DissolveEnabled = 1;
+                        source.DissolveThreshold = ResolveDissolveThreshold(command.Draw.ShadingParams[ShadingParamP0], material);
+                        const DissolveMaterialData& dissolve = material->Dissolve;
+                        source.DissolveNoiseScale = dissolve.NoiseScale;
+                        source.DissolveEdgeWidth = dissolve.EdgeWidth;
+                        source.DissolveDirectionBias = dissolve.DirectionBias;
+                        for (uint32_t index = 0; index < 3; ++index)
+                        {
+                            source.DissolveDirection[index] = dissolve.Direction[index];
+                        }
+                        for (uint32_t index = 0; index < 4; ++index)
+                        {
+                            source.DissolveProtectBones[index] = dissolve.ProtectBoneGroup[index];
+                        }
+                    }
+                }
+            }
+            if (!firstDraw || (requireSurface && (source.SampleCount == 0 || source.VertexCount == 0)))
+            {
+                return kGpuSkinSourceNone;
+            }
+
+            const SkinnedDrawParams& skinned = firstDraw->Skinned;
+            source.BoneCount = static_cast<uint32_t>(std::min(skinned.BonePalette.size(), static_cast<size_t>(kGpuSkinMaxBones)));
+            const uint64_t currentMatrixCount = 2u + 2u * source.BoneCount;
+            const uint64_t matrixCount = currentMatrixCount + 1u + source.BoneCount;
+            const uint64_t paletteMatrixCount = palette.size() / 16u;
+            // 添字だけでなく、記述子へ渡すバイト範囲も 32 bit に収まる行だけを作る。
+            constexpr uint64_t maxUploadBytes = std::numeric_limits<uint32_t>::max();
+            if (paletteMatrixCount + matrixCount > maxUploadBytes / (16u * sizeof(float)) ||
+                sources.size() >= maxUploadBytes / sizeof(GpuSkinSource))
+            {
+                return kGpuSkinSourceNone;
+            }
+            source.PaletteOffset = static_cast<uint32_t>(paletteMatrixCount);
+            source.PreviousPaletteOffset = static_cast<uint32_t>(paletteMatrixCount + currentMatrixCount);
+            palette.resize(static_cast<size_t>((paletteMatrixCount + matrixCount) * 16u));
+            float* current = palette.data() + static_cast<size_t>(source.PaletteOffset) * 16u;
+            Math::MatrixUtils::CopyToShaderData(firstDraw->Draw.WorldMatrix, current);
+            Math::MatrixUtils::CopyToShaderData(Math::MatrixUtils::CreateNormalMatrix(firstDraw->Draw.WorldMatrix), current + 16u);
+            for (uint32_t bone = 0; bone < source.BoneCount; ++bone)
+            {
+                const Math::Matrix4x4& matrix = skinned.BonePalette[bone];
+                Math::MatrixUtils::CopyToShaderData(matrix, current + (2u + 2u * bone) * 16u);
+                Math::MatrixUtils::CopyToShaderData(Math::MatrixUtils::CreateNormalMatrix(matrix), current + (3u + 2u * bone) * 16u);
+            }
+            const bool hasPrevious = skinned.bHasPrevious && skinned.PreviousBonePalette.size() == skinned.BonePalette.size();
+            const auto& previousBones = hasPrevious ? skinned.PreviousBonePalette : skinned.BonePalette;
+            float* previous = palette.data() + static_cast<size_t>(source.PreviousPaletteOffset) * 16u;
+            Math::MatrixUtils::CopyToShaderData(hasPrevious ? skinned.PreviousWorldMatrix : firstDraw->Draw.WorldMatrix, previous);
+            for (uint32_t bone = 0; bone < source.BoneCount; ++bone)
+            {
+                Math::MatrixUtils::CopyToShaderData(previousBones[bone], previous + (1u + bone) * 16u);
+            }
+            double delta = context.ExtensionFrame.GameTotalTime - context.ExtensionFrame.PreviousRenderedTotalTime;
+            if (!std::isfinite(delta) || delta <= 0.0)
+            {
+                delta = context.ExtensionFrame.GameDeltaTime;
+            }
+            source.FrameDeltaSeconds = std::isfinite(delta) && delta > 0.0 ? static_cast<float>(delta) : 0.0f;
+            const uint32_t index = static_cast<uint32_t>(sources.size());
+            sources.push_back(source);
+            return index;
         }
 
         void ClearBuffer(RHI::ICommandList& commands, const RHI::BufferPtr& buffer, uint32_t size)
@@ -329,10 +454,41 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<GpuEmitterFrameExtra> extras;
         emitters.reserve(scene.Emitters.size());
         extras.reserve(scene.Emitters.size());
+        Container::VariableArray<float> skinPalette;
+        Container::VariableArray<GpuSkinSource> skinSources;
+        Container::UnorderedMap<uint64_t, uint32_t> skinSourceIndices;
         uint32_t updateCount = 0;
         for (const GpuParticleEmitterFrame& emitter : scene.Emitters)
         {
             GpuEmitterParams params = emitter.Params;
+            const uint32_t shape = (params.Flags >> kGpuEmitterShapeShift) & kGpuEmitterShapeMask;
+            if ((params.Flags & kGpuEmitterFlagShape) != 0 &&
+                (shape == kGpuEmitterShapeSkinSurface || shape == kGpuEmitterShapeBone))
+            {
+                params.SkinSourceIndex = kGpuSkinSourceNone;
+                if (emitter.SkinComponentId != 0)
+                {
+                    const auto found = skinSourceIndices.find(emitter.SkinComponentId);
+                    if (found != skinSourceIndices.end())
+                    {
+                        params.SkinSourceIndex = found->second;
+                    }
+                    else
+                    {
+                        params.SkinSourceIndex = AppendSkinSource(context, emitter.SkinComponentId,
+                            shape == kGpuEmitterShapeSkinSurface, skinPalette, skinSources);
+                        if (params.SkinSourceIndex != kGpuSkinSourceNone)
+                        {
+                            skinSourceIndices.emplace(emitter.SkinComponentId, params.SkinSourceIndex);
+                        }
+                    }
+                    if (params.SkinSourceIndex != kGpuSkinSourceNone && shape == kGpuEmitterShapeSkinSurface &&
+                        (skinSources[params.SkinSourceIndex].SampleCount == 0 || skinSources[params.SkinSourceIndex].VertexCount == 0))
+                    {
+                        params.SkinSourceIndex = kGpuSkinSourceNone;
+                    }
+                }
+            }
             GpuEmitterFrameExtra extra{};
             extra.PoolSlot = emitter.PoolSlot;
             extra.UpdateOffset = updateCount;
@@ -425,11 +581,22 @@ namespace NorvesLib::Core::Rendering
         {
             return lane.AllocateUploadData(size ? data : &zero, size ? size : sizeof(zero), FrameUploadUsage::Storage);
         };
+        if (skinPalette.empty())
+        {
+            skinPalette.resize(16u, 0.0f);
+        }
+        if (skinSources.empty())
+        {
+            skinSources.push_back(GpuSkinSource{});
+        }
+        const FrameUploadAllocation skinPaletteData = upload(skinPalette.data(), skinPalette.size() * sizeof(float));
+        const FrameUploadAllocation skinSourceData = upload(skinSources.data(), skinSources.size() * sizeof(GpuSkinSource));
         const FrameUploadAllocation emitterData = upload(emitters.data(), emitters.size() * sizeof(GpuEmitterParams));
         const FrameUploadAllocation extraData = upload(extras.data(), extras.size() * sizeof(GpuEmitterFrameExtra));
         const FrameUploadAllocation jobData = upload(scene.SpawnJobs.data(), scene.SpawnJobs.size() * sizeof(GpuSpawnJob));
         const FrameUploadAllocation burstData = upload(scene.Bursts.Bursts.data(), scene.Bursts.Bursts.size() * sizeof(GpuParticleBurst));
-        if (!emitterData.IsValid() || !extraData.IsValid() || !jobData.IsValid() || !burstData.IsValid())
+        if (!emitterData.IsValid() || !extraData.IsValid() || !jobData.IsValid() || !burstData.IsValid() ||
+            !skinPaletteData.IsValid() || !skinSourceData.IsValid())
         {
             return;
         }
@@ -458,6 +625,8 @@ namespace NorvesLib::Core::Rendering
             set.BindSampler(9, m_Sampler);
             set.BindStorageBuffer(10, view->DrawList, 0, DrawListBytes);
             set.BindStorageBuffer(11, view->DrawArgs, 0, DrawArgsBytes);
+            set.BindStorageBuffer(12, skinPaletteData.Buffer, skinPaletteData.GetOffset32(), skinPaletteData.GetSize32());
+            set.BindStorageBuffer(13, skinSourceData.Buffer, skinSourceData.GetOffset32(), skinSourceData.GetSize32());
             set.Update();
             return descriptor;
         };
