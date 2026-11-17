@@ -11808,3 +11808,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 BoardComponent の「束縛まで不可視」をテクスチャのハンドルの有無で決める: 着地(直し 0 回)
 - U6 ImpostorComponent が焼いたアトラスを TextureAssetRef とメタデータの値で保存し、非同期で束縛する: 着地(直し 0 回)
 - U7 SkinnedMeshComponent が骨格の資産・材質の AssetRef と再生の状態を PROPERTY に持ち、非同期で束縛する: 着地(直し 0 回)
+- U8 Rendering3DTest の SetMegaMeshHandle の呼び出しへ元パスを渡し、Game をビルドする: 着地(直し 0 回)
