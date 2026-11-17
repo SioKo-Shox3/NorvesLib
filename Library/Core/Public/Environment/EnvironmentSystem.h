@@ -4,6 +4,7 @@
 #include "Container/VariableArray.h"
 #include "Delegate/MulticastDelegate.h"
 #include "Environment/EnvironmentState.h"
+#include "Environment/RainSplashBudget.h"
 #include "Environment/SunPath.h"
 #include "Environment/WeatherSchedule.h"
 #include "Particle/VfxEffectSystem.h"
@@ -116,7 +117,7 @@ namespace NorvesLib::Core::Environment
         void PublishTo(Rendering::RenderWorld& renderWorld);
 
         /// 有効で雨量 > 0 の間だけ近距離の雨の効果のインスタンスを 1 つ持ち、
-        /// 雨量・風・調整値から求めた値を変わったときに渡す。
+        /// 雨量・風・調整値と草の密度から求めた値と、着水・滴りの確率を変わったときに渡す。
         /// 雨量 0・無効・効果が読めないときは破棄する。毎フレーム PublishTo の後に呼ぶ。
         void UpdateRainNear(Particle::VfxEffectSystem& effects);
 
@@ -138,6 +139,10 @@ namespace NorvesLib::Core::Environment
             Fraction,
             Shutter,
             FadeDistance,
+            HeightFieldChildProbability,
+            DepthChildProbability,
+            ShelterChildProbability,
+            ShelterMinClearance,
             Count
         };
 
@@ -157,6 +162,8 @@ namespace NorvesLib::Core::Environment
             uint32_t Wind = 0;
             uint32_t Activation = 0;
             uint32_t Renderer = 0;
+            uint32_t HeightField = 0;
+            uint32_t Depth = 0;
         };
 
         struct FieldTransition
@@ -197,10 +204,14 @@ namespace NorvesLib::Core::Environment
         bool m_bRestorePending = false;
         bool m_bRainTuningPublishPending = false;
         Rendering::RainTuning m_RainTuning = Rendering::MakeDefaultRainTuning();
+        RainSplashBudgetSettings m_RainSplashBudget = MakeDefaultRainSplashBudgetSettings();
         Particle::VfxEffectAsset m_RainNearAsset;
         RainNearModules m_RainNearModules;
         Particle::VfxEffectHandle m_RainNearHandle;
         RainNearParameterState m_RainNearParameters[static_cast<uint32_t>(RainNearParameter::Count)];
+        uint32_t m_RainNearParticleCount = 0;
+        float m_RainSplashLifetimeSeconds = 0.0f;
+        float m_RainNearGrassDensity = 0.0f;
         float m_RainNearWindCoupling = 0.0f;
         float m_RainNearWindScale = 0.0f;
         bool m_bRainNearAssetReady = false;

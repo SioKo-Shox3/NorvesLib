@@ -12119,3 +12119,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 着水の予算（p と滴りの確率）の純関数とデータを足す: 着地(直し 0 回)
 - U2 粒の更新に雨の遮蔽マップを高さ場として結び、屋根の下の隠し・屋根の当たり・2 つの子・滴りを入れる: 着地(直し 0 回)
 - U3 描画で Sheltered の粒を描かず、FlipbookFrames > 0 の板を手続きの王冠のコマで描く: 着地(直し 0 回)
+- U5 近距離の雨に Splash と Droplet を足し、EnvironmentSystem が毎フレーム p と滴りの確率を渡す: 着地(直し 0 回)
